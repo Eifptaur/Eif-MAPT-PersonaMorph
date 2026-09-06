@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import logging
+import random
 import threading
 import time
 
@@ -53,10 +54,48 @@ class SendQueue:
         by_len = min(8000, len(text or "") * int(cfg.get("by_length_ms") or 20))
         return min(15000, max(min_gap, rand_int(min_gap, max_gap) * 0.5 + by_len * 0.5)) / 1000.0
 
+    def _should_auto_quote(self, chat_key: str):
+        """「新一段对话」开始时，大概率引用对方最近一句话（默认 70%）。
+
+        判定：
+        - send.quote_on_new_talk 未关闭；
+        - 概率 send.quote_reply_probability（默认 0.7）命中；
+        - 机器人在该群**上一条消息已超过 quote_new_talk_gap_s（默认 300 秒）**——
+          即对话已冷场、本轮算是"重新开始的一段对话"；
+        - 找到最近一条「别人」发的文本消息。
+        返回 (text, sender_name) 或 None（调用方传了显式 reply_to_message_id 时以显式为准）。
+        """
+        try:
+            cfg = get_config().get("send", {})
+            if cfg.get("quote_on_new_talk") is False:
+                return None
+            prob = float(cfg.get("quote_reply_probability", 0.7))
+            gap_s = max(0, int(cfg.get("quote_new_talk_gap_s", 300)))
+            msgs = self.store.recent(chat_key, limit=60)
+            my_last = max((int(m.get("ts") or 0) for m in msgs if m.get("self")), default=0)
+            if my_last and (time.time() * 1000 - my_last) < gap_s * 1000:
+                return None  # 还在连续对话中，不重复开引用
+            if random.random() >= prob:
+                return None  # 概率未触发
+            for m in reversed(msgs):
+                txt = str(m.get("text") or "").strip()
+                sid = str(m.get("sender_id") or "")
+                if not m.get("self") and sid.startswith("wxid_") and txt and not txt.startswith("["):
+                    return (txt[:200], str(m.get("sender_name") or ""))
+        except Exception:
+            pass
+        return None
+
     def send_text_batch(self, chat_key: str, messages, reply_to_mid=None, at_user_id=None, reply_text="",
                         reply_sender_name=""):
         """发送一批文本。返回 {sent, failed}。reply_text 为被引用消息的原文（定位用），
-        reply_sender_name 为被引用消息的发送者（头像定位用，缺省靠文本匹配）。"""
+        reply_sender_name 为被引用消息的发送者（头像定位用，缺省靠文本匹配）。
+
+        引用规则（程序级，不依赖模型自觉）：
+        - 模型显式传 reply_to_message_id → 按模型的引用；
+        - 否则若「新一段对话开始」（机器人上条消息超 300s + 概率 70%）→ 自动引用
+          对方最近一句话（send.quote_on_new_talk / quote_reply_probability / quote_new_talk_gap_s 可调）。
+        """
         kind, chat_id = self._parse_key(chat_key)
         list_msgs = list(messages) if isinstance(messages, (list, tuple)) else [messages]
         if not list_msgs:
@@ -76,6 +115,14 @@ class SendQueue:
 
         sent = []
         failed = []
+        # 程序级自动引用：新一段对话开始 + 概率命中 → 引用对方最近一句话
+        auto_quote = None
+        if not reply_to_mid:
+            auto_quote = self._should_auto_quote(chat_key)
+            if auto_quote:
+                reply_text = auto_quote[0]
+                reply_sender_name = auto_quote[1] or reply_sender_name
+                log.info("新对话开始，自动引用对方最近一句：%s", reply_text[:40])
         with self._lock:
             for i, text in enumerate(parts):
                 is_first = i == 0
@@ -87,7 +134,7 @@ class SendQueue:
                         time.sleep(gap)
                     # 引用 / @ 只在第一条上生效；引用是「引用最近一条消息」（近似），失败退回普通发送
                     use_at = at_user_id if is_first else None
-                    use_quote = reply_to_mid if is_first else None
+                    use_quote = (reply_to_mid or auto_quote) if is_first else None
                     if use_quote:
                         ok, msg = self.wechat.reply_quote(chat_id, text, target_text=reply_text,
                                                           target_sender_name=reply_sender_name)

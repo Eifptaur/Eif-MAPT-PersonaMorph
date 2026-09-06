@@ -371,6 +371,12 @@ th{color:var(--tx2);font-weight:500}
         <div class="row"><label>每小时上限</label><input type="number" min="1" data-cfg="send.max_per_hour"></div>
         <div class="row"><label>超长切分(字)</label><input type="number" min="0" step="100" data-cfg="send.hard_split_at"></div>
       </div>
+      <div class="mid" style="margin-top:10px">
+        <div class="row"><label>新对话自动引用</label><input type="checkbox" data-cfg="send.quote_on_new_talk" title="新一轮对话开始时自动引用对方最近一句话"></div>
+        <div class="row"><label>引用概率(0~1)</label><input type="number" min="0" max="1" step="0.05" data-cfg="send.quote_reply_probability"></div>
+        <div class="row"><label>对话冷却(秒)</label><input type="number" min="0" step="30" data-cfg="send.quote_new_talk_gap_s" title="机器人上条消息超过该秒数才算「新一轮对话」"></div>
+      </div>
+      <div class="hint" style="margin-top:8px">引用规则：机器人上一条消息超过「对话冷却」秒（对话已冷场）时，以「引用概率」（默认 70%）自动引用对方最近的一句话，让"新开头"更像真人接话；模型显式指定引用时以模型为准。</div>
       <div class="btns"><button class="pri" data-save>保存设置（发送限制）</button></div>
     </section>
 

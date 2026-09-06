@@ -848,16 +848,17 @@ class WeChatAdapter:
 
     @staticmethod
     def _bubble_point(gui, ax: int, ay: int, db_text: str = "") -> tuple:
-        """气泡点击点（渲染相对）。实测标定（2026-09-06）：
+        """气泡点击点（渲染相对）：取「气泡中部」而非左缘，容错更高。
 
-        微信 4.x 消息行的**头像中心（ay）在行内偏上，气泡中心在其下方约 30~40px**——
-        用 ay 右键会落在「ID 与气泡之间的缝隙」，菜单不弹（用户截图实锤）。
-        所以 y 必须取「OCR 文本行中心」，x 固定 头像中心+70（左对齐气泡左缘恒定，
-        长/短文本都命中，标定 (553,545) 命中「引用」菜单）。
-
-        返回 (x, y)；找不到文本时回退 头像中心+70、ay+30。
+        标定事实（2026-09-06）：
+        - y：头像中心在行内偏上，气泡中心在其下约 30~40px，必须用 OCR 文本行中心；
+        - x：气泡左缘 ≈ 头像中心+70（左对齐恒定）；往气泡中带移动更安全
+          （左缘有圆角/内边距，点中带内几乎必然触发右键菜单）。
+        返回 (x, y)：x = 头像中心+70 再往右移 60（长气泡中部）；名字匹配不到
+        文本行时回退 头像中心+70、ay+30。
         """
         _norm = WeChatAdapter._norm_ocr
+        base_x = ax + 130  # 气泡中带（左缘 +60 容错）
         try:
             items = gui.ocr_zoomed((gui.right_pane_left, max(0, ay - 90),
                                     gui.render_w, min(gui.render_h, ay + 90)), scale=3)
@@ -881,7 +882,7 @@ class WeChatAdapter:
                         if best_y is None or abs(yc - ay) < abs(best_y - ay):
                             best_y = yc
             if best_y is not None:
-                return ax + 70, best_y
+                return base_x, best_y
         except Exception:
             pass
         return ax + 70, ay + 30
@@ -1264,10 +1265,10 @@ class WeChatAdapter:
                     located = self._send_poke_locate(gui, target_sender_name or "", target_text, scroll=True)
                 if located:
                     ax, ay, _score = located
-                    # 候选点：① 气泡文本起点（OCR 定位，最准——连续消息折叠时行内没有头像，
-                    # 但气泡一定在）② 头像中心 +70（头像显示时的固定回退）③ +95
+                    # 候选点：① 气泡中带（OCR 行中心 y + 左缘+60，标定最优）② 中带偏右
+                    # ③ 左缘（短气泡）④ 左缘偏右 —— 多点依次试，弹菜单即成功
                     px, py = self._bubble_point(gui, ax, ay, target_text)
-                    points = [(px, py), (ax + 70, ay + 30), (ax + 95, ay + 30)]
+                    points = [(px, py), (ax + 130, ay + 30), (ax + 70, py), (ax + 100, ay + 30)]
                 else:
                     # 没有定位到目标行：不做任何"乱点兜底"（防止点到侧栏群名称/空白）。
                     # 滚动搜索交给 _send_poke_locate(scroll=True)，这里直接失败并提示。
