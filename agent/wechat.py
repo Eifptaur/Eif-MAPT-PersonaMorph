@@ -624,9 +624,9 @@ class WeChatAdapter:
 
             def _match(nm: str) -> bool:
                 nm = self._norm_ocr(nm)
-                return bool(nm) and (nm == target or _seq_ratio(nm[:24], target[:24]) > 0.5)
+                return bool(nm) and (nm == target or _seq_ratio(nm[:24], target[:24]) > 0.7)
 
-            # 1) 可视区先找（避免无谓翻页）
+            # 1) 可视区先找：精确命中立即返回；模糊命中阈值 0.7（防止把相似旧消息当目标）
             try:
                 lst = uia._message_list()
                 if lst is not None:
@@ -643,7 +643,7 @@ class WeChatAdapter:
                             best = ch
                             break
                         sc = _seq_ratio(nm[:24], target[:24]) if nm else 0.0
-                        if sc > 0.5 and sc > best_score:
+                        if sc > 0.7 and sc > best_score:
                             best_score = sc
                             best = ch
                     if best is not None:
@@ -923,25 +923,29 @@ class WeChatAdapter:
                         break
                 except Exception:
                     continue
-            if menu_found is None:
-                # OCR 兜底：看光标右下方向有没有菜单字条
+            # 关闭菜单：只有确认 UIA 找到真实菜单节点（mmui::XMenuView）才按 Esc——
+            # 否则 Esc 会直接关掉微信聊天窗口/整个窗口（之前的教训）
+            if menu_found is not None:
                 try:
-                    items = gui.ocr_zoomed((gui.right_pane_left, max(0, rel_y - 40),
-                                            gui.render_w, min(gui.render_h, rel_y + 360)), scale=3)
+                    gui._input.key(0x1B)
                 except Exception:
-                    items = []
-                for text, *_ in items:
-                    if text.strip() in ("引用", "回复", "转发") or "引用" in text or "拍一拍" in text:
-                        menu_found = text.strip()[:10]
-                        break
-            # 关闭菜单（Esc）
+                    pass
+                return {"ok": True, "detail": "右键弹出了微信菜单（UIA 检测到「%s」）——点击投递正常，与拍一拍同链路" % menu_found}
+            # OCR 只做报告（不按键），防止把聊天文本里的「引用/回复」误当菜单而误按键
+            ocr_hit = ""
             try:
-                gui._input.key(0x1B)
+                items = gui.ocr_zoomed((gui.right_pane_left, max(0, rel_y - 40),
+                                        gui.render_w, min(gui.render_h, rel_y + 360)), scale=3)
             except Exception:
-                pass
-            if menu_found:
-                return {"ok": True, "detail": "右键弹出了微信菜单（检测到「%s」）——点击投递正常，与拍一拍同链路" % menu_found}
-            return {"ok": False, "detail": "右键后未检测到菜单（按拍一拍同款移动+右键逻辑执行）——点击投递异常"}
+                items = []
+            for text, *_ in items:
+                t = text.strip()
+                if t in ("引用", "回复", "转发") or "拍一拍" in t:
+                    ocr_hit = t[:10]
+                    break
+            if ocr_hit:
+                return {"ok": True, "detail": "右键弹出菜单（OCR 检测到「%s」，未按任何键）——点击投递正常，与拍一拍同链路" % ocr_hit}
+            return {"ok": False, "detail": "右键后未检测到菜单（按拍一拍同款移动+右键逻辑执行，未按任何键）——点击投递异常"}
         except Exception as e:
             return {"ok": False, "detail": "异常：%s" % e}
 
