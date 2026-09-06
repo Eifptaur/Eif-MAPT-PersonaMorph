@@ -190,14 +190,9 @@ def dismiss_overlays(wechat_hwnds: tuple = ()) -> list:
             time.sleep(0.2)
     if cleaned:
         time.sleep(0.6)
-        # 宿主进程兜底：TabTip / TextInputHost
-        for name in ("TabTip", "TextInputHost"):
-            try:
-                subprocess.run(["taskkill", "/F", "/IM", name + ".exe"],
-                               capture_output=True, timeout=15)
-            except Exception:
-                pass
-        time.sleep(0.6)
+        # 注意：不 taskkill TabTip/TextInputHost——那是触控键盘宿主，
+        # 强杀会让触屏机器的指针/拖拽状态异常（桌面图标拖不动的一类根因）；
+        # 只隐藏画布窗口本身（Win 输入体验会自动回收）。
 
     if not get_config().get("ui", {}).get("clean_overlays", True):
         return handled
@@ -270,20 +265,45 @@ def prepare_screen(gui) -> bool:
         return False
 
 
+def heal_input():
+    """输入状态自愈：释放所有鼠标按键 + 轻微移动光标 + 广播取消模式。
+
+    高频合成点击后偶发「拖动无效/桌面图标拖不动」，多为输入队列残留：
+    多余的 up 事件无害，若有丢失的 up 会在此补上；WM_CANCELMODE 会关闭
+    可能残留的菜单/拖拽捕获。每个点击批次后调用一次。
+    """
+    try:
+        for flag in (0x0004, 0x0010, 0x0040):  # LEFTUP / RIGHTUP / MIDDLEUP
+            _user32.mouse_event(flag, 0, 0, 0, 0)
+            time.sleep(0.05)
+        pt = wintypes.POINT()
+        _user32.GetCursorPos(ctypes.byref(pt))
+        x, y = int(pt.x), int(pt.y)
+        _user32.SetCursorPos(x + 4, y + 2)
+        time.sleep(0.05)
+        _user32.SetCursorPos(x, y)
+        _user32.PostMessageW(0xFFFF, 0x001F, 0, 0)  # WM_CANCELMODE 广播
+    except Exception:
+        pass
+
+
 def click(gui, x: int, y: int, right: bool = False, scale=None) -> tuple:
     """统一点击入口（wx_click 的适配层）。
 
     x/y 为微信渲染窗口相对坐标（截图/OCR 空间）。会：
       换算鼠标空间（CPI 缩放）→ 归属校验（确保点是微信）→ wx_click。
-    返回 (ok, 消息)。
+    返回 (ok, 消息)。每次点击后自动做输入自愈，避免残留输入状态影响拖拽。
     """
-    sx, sy = to_click(x + gui.origin_x, y + gui.origin_y, scale)
-    ok, why = ensure_point(sx, sy, (gui.main_hwnd, gui.render_hwnd))
-    if not ok:
-        return False, why
     try:
-        gui.wx_click(sx, sy, right=right)
-        return True, ""
+        sx, sy = to_click(x + gui.origin_x, y + gui.origin_y, scale)
+        ok, why = ensure_point(sx, sy, (gui.main_hwnd, gui.render_hwnd))
+        if not ok:
+            return False, why
+        try:
+            gui.wx_click(sx, sy, right=right)
+            return True, ""
+        finally:
+            heal_input()
     except Exception as e:
         return False, str(e)
 

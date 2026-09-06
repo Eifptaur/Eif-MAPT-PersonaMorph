@@ -132,6 +132,7 @@ class Orchestrator:
         self._consolidating: set = set()
         self._executor = ThreadPoolExecutor(max_workers=max(1, int(get_config().get("max_concurrent_runs") or 2)))
         self._proactive_timer = None
+        self._last_trigger: dict = {}  # chat_key -> (触发消息指纹, 时间戳, 上次是否成功)
         self.stats = {"sessions": 0, "tokens": 0, "sent": 0, "calls": 0, "cost": 0.0}
         # 小鲸鱼余额挂件：服务端记账（每次调用计成本，会话结束结算“每轮消耗”）
         self.whale = WhaleWidget(os.path.join(ROOT, "data"))
@@ -194,6 +195,19 @@ class Orchestrator:
         if not pending:
             return
 
+        # 触发去重：5 分钟内同一批未读消息（上次处理成功过）→ 跳过，防补发唤醒重复发言
+        try:
+            fp = tuple(str(m.get("mid") or m.get("id") or str(m.get("text") or "")[:24]) for m in pending)
+            now = time.time()
+            last = self._last_trigger.get(chat_key)
+            if last and last[0] == fp and last[2] and (now - last[1]) < 300:
+                marked = self.store.mark_all_read(chat_key)
+                log.info("%s 同一批消息 5 分钟内已处理过，跳过重复唤醒（标记 %d 条已读）", chat_key, marked)
+                return
+            self._last_trigger[chat_key] = (fp, now, False)
+        except Exception:
+            pass
+
         self_nickname = cfg.get("persona", {}).get("self_nickname") or cfg.get("wechat", {}).get("bot_nickname") or ""
         bot_name = cfg.get("persona", {}).get("bot_name") or ""
         self_id = self.wechat.self_wxid
@@ -230,6 +244,13 @@ class Orchestrator:
                 time.sleep(wait)
         if last_error:
             log.error("运行 %s 出错: %s", chat_key, getattr(last_error, "message", last_error))
+        else:
+            # 处理成功：记录触发指纹，供 5 分钟去重判断
+            try:
+                self._last_trigger[chat_key] = (self._last_trigger.get(chat_key, ((), 0, False))[0],
+                                                time.time(), True)
+            except Exception:
+                pass
 
     def run_agent(self, chat_key: str, trigger, tier_result, session: dict):
         cfg = get_config()
