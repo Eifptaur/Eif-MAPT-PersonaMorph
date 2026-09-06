@@ -572,20 +572,26 @@ def main():
             return {"error": str(e)}
 
     def poke_test_fn():
-        # 拍一拍诊断：找最近发言的非机器人群友，完整跑一遍流程并输出分步结果
+        # 拍一拍诊断：找「最近有群友发过言」的目标群 + 该群最近发言的非机器人，
+        # 完整跑一遍流程并输出分步结果
         try:
             if wechat is None or not targets:
                 return {"ok": False, "error": "微信未就绪或没有目标群"}
-            chat_key = "group:%s" % targets[0]["wxid"]
-            msgs = [m for m in orch.store.recent(chat_key, limit=100) if not m.get("self")]
-            if not msgs:
-                return {"ok": False, "error": "存档里没有群友消息，请先让群里有人说句话"}
-            m = msgs[-1]
-            chat_id = targets[0]["wxid"]
-            result = wechat.poke_diag(chat_id, m.get("sender_name") or m.get("sender_id"),
+            best = None  # (chat_key, wxid, 群名, 消息)
+            for g in targets:
+                chat_key = "group:%s" % g["wxid"]
+                msgs = [m for m in orch.store.recent(chat_key, limit=100) if not m.get("self")]
+                if msgs:
+                    cand = (chat_key, g["wxid"], g["name"], msgs[-1])
+                    if best is None or cand[3].get("ts", 0) > best[3].get("ts", 0):
+                        best = cand
+            if best is None:
+                return {"ok": False, "error": "所有目标群存档里都没有群友消息，请先在群里@机器人说句话"}
+            chat_key, wxid, gname, m = best
+            result = wechat.poke_diag(wxid, m.get("sender_name") or m.get("sender_id"),
                                       m.get("sender_id") or "")
             result["target"] = {"name": m.get("sender_name"), "id": m.get("sender_id")}
-            result["group"] = targets[0]["name"]
+            result["group"] = gname
             return result
         except Exception as e:
             return {"ok": False, "error": str(e)}
