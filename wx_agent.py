@@ -642,23 +642,15 @@ def main():
                 ("发现 %d 个输入叠加层（手写画布/输入体验）" % overlays["n"]) if overlays["n"] else "无（正常）",
                 "点击前会自动清理；若反复出现请关闭触控键盘（Win+Ctrl+O）")
             if gui is not None:
-                import ctypes
-                from ctypes import wintypes
-                u = ctypes.windll.user32
-                box = gui.get_input_box()
-                pt_x = gui.origin_x + (gui.right_pane_left + gui.render_w) // 2
-                pt_y = gui.origin_y + ((box[1] + box[3]) // 2 if box else gui.render_h // 2)
-                r = ui_adapt.self_test(gui, point=(pt_x, pt_y))
-                if r.get("is_wechat"):
-                    add("适配·点击命中测试", "ok",
-                        "缩放 %.1fx，命中=微信，光标移动%s" % (r.get("scale_used", 1.0),
-                                                         "正常" if r.get("mouse_moved") else "异常"))
-                else:
-                    add("适配·点击命中测试", "fail",
-                        "命中『%s / %s』，光标移动=%s" % (r.get("hit_class", "?"),
-                                                     r.get("hit_title", "?")[:40],
-                                                     "正常" if r.get("mouse_moved") else "无"),
-                        r.get("input_isolated_suspect") or "请点「鼠标点击自检」看详情；确保机器人由 scripts\\启动机器人.bat 启动")
+                # 真实点击自检：与拍一拍完全相同「移动+右键」逻辑，右键一条消息看菜单是否弹出
+                try:
+                    cr = wechat.click_self_test()
+                    add("适配·点击实测(拍一拍同链路)", "ok" if cr.get("ok") else "fail",
+                        cr.get("detail", ""),
+                        "" if cr.get("ok") else "点击投递异常：检查是否在真实桌面启动(scripts\\启动机器人.bat)、"
+                        "是否打开了群聊、机器是否卡顿/有拦截软件")
+                except Exception as e:
+                    add("适配·点击实测", "fail", str(e))
         except Exception as e:
             add("界面适配检查", "fail", str(e))
 

@@ -653,16 +653,67 @@ class WeChatAdapter:
                 pass
             if not scroll:
                 return None
-            # 2) 滚轮向上翻页查找
+            # 2) 滚轮向上翻页查找（最多 20 屏），找到后把目标行滚到视野中部再返回
             res = uia.find_in_message_list(
                 lambda cn, nm: cn == "mmui::ChatTextItemView" and _match(nm),
-                match_last=False, max_scrolls=12)
+                match_last=False, max_scrolls=20)
             if res:
                 r = res[2]
+                try:
+                    lst = uia._message_list()
+                    lr = lst.BoundingRectangle
+                    for _ in range(3):  # 最多再滚 3 次让该行摆脱窗口边缘
+                        cur = None
+                        for ch_ in list(lst.GetChildren()):
+                            try:
+                                if ch_.ClassName != "mmui::ChatTextItemView":
+                                    continue
+                                nm = self._norm_ocr(ch_.Name or "")
+                            except Exception:
+                                continue
+                            if nm and (nm == target or _seq_ratio(nm[:24], target[:24]) > 0.5):
+                                cur = ch_
+                                break
+                        if cur is None:
+                            break
+                        rr = cur.BoundingRectangle
+                        if rr.top > lr.top + 60 and rr.bottom < lr.bottom - 60:
+                            return (rr.left, rr.top, rr.right, rr.bottom)
+                        cx = (lr.left + lr.right) // 2
+                        cy = (lr.top + lr.bottom) // 2
+                        uia._set_cursor(cx, cy)
+                        # 行偏上 → 向「最新」滚（-120）；偏下 → 向「历史」滚（+120）
+                        delta = -120 if rr.top <= lr.top + 60 else 120
+                        uia._mouse_wheel(delta)
+                        time.sleep(0.15)
+                        uia._mouse_wheel(delta)
+                        time.sleep(0.25)
+                except Exception:
+                    pass
                 return (r.left, r.top, r.right, r.bottom)
             return None
         except Exception:
             return None
+
+    @staticmethod
+    def _scroll_to_bottom(gui):
+        """把消息列表滚回最新（底部）。"""
+        try:
+            uia = gui._get_uia()
+            if uia is None:
+                return
+            lst = uia._message_list()
+            if lst is None:
+                return
+            lr = lst.BoundingRectangle
+            cx = (lr.left + lr.right) // 2
+            cy = (lr.top + lr.bottom) // 2
+            uia._set_cursor(cx, cy)
+            for _ in range(6):
+                uia._mouse_wheel(-120)
+                time.sleep(0.12)
+        except Exception:
+            pass
 
     def _find_avatar_center(self, box):
         """运行时定位头像：在给定屏幕像素矩形内找「彩色饱和像素斑块」中心。
@@ -803,6 +854,7 @@ class WeChatAdapter:
                 gui.origin_x + ax, gui.origin_y + ay))
             menu_hit = self._right_click_menu(gui, ax, ay, "拍一拍")
             _d("   光标最终位置：%s（右键后）" % (_cursor_pos(),))
+            self._scroll_to_bottom(gui)  # 翻过页的话把聊天滚回最新，不影响用户
             if menu_hit:
                 _d("7) ✔ 右键菜单里找到了「拍一拍」并已点击")
                 ok, msg = self._verify_poke(chat_id, target_name, base_seq)
@@ -826,6 +878,72 @@ class WeChatAdapter:
         steps: list = []
         ok, msg = self.send_poke(chat_id, target_name, target_id, dbg=steps)
         return {"ok": ok, "message": msg, "steps": steps}
+
+    def click_self_test(self) -> dict:
+        """真实点击自检：用与拍一拍完全相同的「移动+右键」逻辑，验证点击投递。
+
+        右键一条可见消息 → 检测微信右键菜单（UIA XMenuView 优先，OCR 兜底）→ Esc 关闭。
+        不点菜单项、不发消息，安全性 OK。
+        """
+        try:
+            gui = self._get_gui()
+            if gui is None or not gui.is_alive():
+                return {"ok": False, "detail": "微信窗口不可用（未找到/已退出）"}
+            if not self._ensure_foreground(gui):
+                return {"ok": False, "detail": "把微信置前失败"}
+            uia = gui._get_uia()
+            if uia is None:
+                return {"ok": False, "detail": "UIA 驱动不可用"}
+            lst = uia._message_list()
+            if lst is None:
+                return {"ok": False, "detail": "消息列表不可用——请先打开一个群聊（可以用「拍一拍诊断」或让群友@机器人）"}
+            target = None
+            for ch in list(lst.GetChildren()):
+                try:
+                    if ch.ClassName == "mmui::ChatTextItemView" and (ch.Name or "").strip():
+                        target = ch
+                        break
+                except Exception:
+                    continue
+            if target is None:
+                return {"ok": False, "detail": "没有可见的消息行"}
+            r = target.BoundingRectangle
+            rel_x = (r.left + r.right) // 2 - gui.origin_x
+            rel_y = (r.top + r.bottom) // 2 - gui.origin_y
+            ok, why = self._click(gui, rel_x, rel_y, right=True)
+            if not ok:
+                return {"ok": False, "detail": "右键被拦截：%s" % why}
+            time.sleep(0.9)
+            menu_found = None
+            for label in ("引用", "回复", "转发", "拍一拍"):
+                try:
+                    mi = uia._uia_find_menu_item(label)
+                    if mi is not None:
+                        menu_found = label
+                        break
+                except Exception:
+                    continue
+            if menu_found is None:
+                # OCR 兜底：看光标右下方向有没有菜单字条
+                try:
+                    items = gui.ocr_zoomed((gui.right_pane_left, max(0, rel_y - 40),
+                                            gui.render_w, min(gui.render_h, rel_y + 360)), scale=3)
+                except Exception:
+                    items = []
+                for text, *_ in items:
+                    if text.strip() in ("引用", "回复", "转发") or "引用" in text or "拍一拍" in text:
+                        menu_found = text.strip()[:10]
+                        break
+            # 关闭菜单（Esc）
+            try:
+                gui._input.key(0x1B)
+            except Exception:
+                pass
+            if menu_found:
+                return {"ok": True, "detail": "右键弹出了微信菜单（检测到「%s」）——点击投递正常，与拍一拍同链路" % menu_found}
+            return {"ok": False, "detail": "右键后未检测到菜单（按拍一拍同款移动+右键逻辑执行）——点击投递异常"}
+        except Exception as e:
+            return {"ok": False, "detail": "异常：%s" % e}
 
     def _row_inner_text(self, row: dict) -> str:
         """取消息行里的真实文本；若是 zstd 压缩的 appmsg 则解压（用于验证拍拍事件）。"""
@@ -917,13 +1035,17 @@ class WeChatAdapter:
                 rel_y = y
                 rel_x = (gui.render_w + gui.right_pane_left) // 2
             if not self._right_click_menu(gui, rel_x, rel_y, "引用"):
+                self._scroll_to_bottom(gui)
                 return False, "右键菜单里没找到「引用」（目标消息可能不在屏幕内，已尝试向上翻页）"
             time.sleep(0.5)
             if not gui.input_text(text):
+                self._scroll_to_bottom(gui)
                 return False, "输入文字失败"
             if not gui.click_send():
+                self._scroll_to_bottom(gui)
                 return False, "发送失败"
             self._mark_sent(text)
+            self._scroll_to_bottom(gui)
             return True, "已引用并发送"
         except Exception as e:
             return False, str(e)
