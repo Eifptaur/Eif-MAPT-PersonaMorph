@@ -339,7 +339,8 @@ class WeChatAdapter:
                 if parsed.get("sender_wxid"):
                     sender_wxid = parsed["sender_wxid"]
             else:
-                text = "[文件/链接/卡片]"        elif mtype == "红包":
+                text = "[文件/链接/卡片]"
+        elif mtype == "红包":
             text = "[红包]"
         else:
             text = "[%s]" % mtype
