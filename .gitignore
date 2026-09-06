@@ -23,3 +23,6 @@ Thumbs.db
 desktop.ini
 .idea/
 .vscode/
+
+# 压缩包（发布用，勿提交）
+*.zip
