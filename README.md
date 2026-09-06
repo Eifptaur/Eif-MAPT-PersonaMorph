@@ -68,3 +68,6 @@ Web 控制台
 · scripts\watchdog.py / stop_bot.py —— 看门狗 / 停止器本体
 · scripts\安装依赖.bat / 自检.bat / 备份配置.bat —— 装依赖 / 环境自检 / 备份
 · scripts\开机自启.bat / 取消开机自启.bat —— 注册/取消登录自启
+
+离线部署：仓库已含 offline\（全部依赖 wheels + 绿色版 Python 3.10），目标电脑没网时
+直接双击 scripts\安装依赖.bat 即可（自动识别离线模式）；微信 4.x 请自行安装。
