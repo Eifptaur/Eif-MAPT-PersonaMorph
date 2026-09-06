@@ -306,6 +306,7 @@ class WeChatAdapter:
         sender_wxid = ""
         text = ""
         media = []
+        parsed = None  # 「文件/链接/卡片」解析结果（引用/拍一拍），其他分支不涉及
         if mtype == "文本":
             m = _SENDER_RE.match(content)
             if m:
