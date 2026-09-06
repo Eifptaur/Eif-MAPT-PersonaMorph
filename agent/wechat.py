@@ -207,11 +207,17 @@ class WeChatAdapter:
             type_m = re.search(r"<type>(\d+)</type>", txt)
             if type_m and type_m.group(1) == "62":
                 poker = ""
+                poker_wxid = ""
                 pm = re.search(r"「([^」]+)」拍拍", title)
                 if pm:
                     poker = pm.group(1)
+                # 拍的人 wxid（patinfo.fromusername），用于「拍回去」
+                pm2 = re.search(r"<patinfo>.*?<fromusername>([^<]+)</fromusername>", txt, re.S)
+                if pm2:
+                    poker_wxid = pm2.group(1)
                 return {"text": "[拍一拍]" + ("（%s）" % poker if poker else ""),
-                        "media": [], "sender_wxid": "", "poke": True, "poker": poker}
+                        "media": [], "sender_wxid": "", "poke": True, "poker": poker,
+                        "poker_wxid": poker_wxid}
 
             # ── 引用消息（type 57，有 <refermsg>）──
             if "<refermsg>" not in txt:
@@ -333,8 +339,7 @@ class WeChatAdapter:
                 if parsed.get("sender_wxid"):
                     sender_wxid = parsed["sender_wxid"]
             else:
-                text = "[文件/链接/卡片]"
-        elif mtype == "红包":
+                text = "[文件/链接/卡片]"        elif mtype == "红包":
             text = "[红包]"
         else:
             text = "[%s]" % mtype
@@ -358,6 +363,7 @@ class WeChatAdapter:
             "text": text,
             "media": media,
             "mtype": mtype,
+            "poker_wxid": (parsed.get("poker_wxid") if parsed else ""),
         }
 
     # ── 发送 ─────────────────────────────────────────────────────────────
@@ -793,7 +799,13 @@ class WeChatAdapter:
                 time.sleep(1.0)
                 raws = self._db.get_new_messages(chat_id, base_seq, 10)
                 for row in raws:
-                    txt = self._row_inner_text(row)
+                    # get_new_messages 的 content 已被友好化（zstd→"[文件/链接/卡片]"），
+                    # 必须用 get_message_row 取原始字节再解压才看得到「拍拍」
+                    try:
+                        raw_row = self._db.get_message_row(chat_id, int(row.get("local_id") or 0))
+                    except Exception:
+                        raw_row = None
+                    txt = self._row_inner_text(raw_row or row)
                     if "拍拍" in txt:
                         return True, "已拍一拍「%s」（已验证：数据库中新增拍一拍事件）" % target_name
         except Exception as e:
