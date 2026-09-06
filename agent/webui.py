@@ -565,6 +565,12 @@ class WebUI:
                         self._json({"ok": False, "error": str(e)})
                 elif path == "/api/logs":
                     self._json({"lines": list(parent.log_buffer)})
+                elif path == "/api/wechat-groups":
+                    # 检测到的群聊列表（白名单勾选用，GET）
+                    try:
+                        self._json(parent.groups_fn())
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e), "groups": []})
                 else:
                     self._json({"error": "not found"}, 404)
 

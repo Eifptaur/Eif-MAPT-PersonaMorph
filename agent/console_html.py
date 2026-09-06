@@ -178,15 +178,23 @@ th{color:var(--tx2);font-weight:500}
       <div class="desc">密钥在控制台首次引导填入后自动保存，无需再改 config.json。</div>
       <div class="row"><label>Base URL</label><div class="grow"><input type="text" data-cfg="api.base_url"></div></div>
       <div class="row"><label>API Key</label><div class="grow"><input type="password" data-cfg="api.api_key" title="保存后即生效，无需改文件"></div></div>
+      <div class="row"><label>模型厂商</label>
+        <div class="grow"><select id="providerSel">
+          <option value="deepseek">DeepSeek（默认，见下方模型列表）</option>
+          <option value="moonshot">Moonshot Kimi</option>
+          <option value="zhipu">智谱 GLM</option>
+          <option value="qwen">通义千问（阿里）</option>
+          <option value="minimax">MiniMax</option>
+          <option value="doubao">豆包（火山方舟）</option>
+          <option value="custom">自定义（手动填 URL/Key/模型）</option>
+        </select>
+        <div class="hint">切换厂商会自动替换 Base URL，并弹窗让您填入该厂商的 API Key；模型列表现场切换。</div>
+      </div></div>
       <div class="row"><label>模型</label>
-        <div class="grow"><input type="text" data-cfg="api.model" list="modelList" placeholder="选择预设或自行输入">
-          <datalist id="modelList">
-            <option value="deepseek-v4-flash-vision-exp">v4 Flash 视觉版（默认，能看图）</option>
-            <option value="deepseek-v4-flash">v4 Flash</option>
-            <option value="deepseek-v4-pro">v4 Pro（更强更贵）</option>
-            <option value="deepseek-chat">deepseek-chat</option>
-            <option value="deepseek-reasoner">deepseek-reasoner（推理）</option>
-          </datalist>
+        <div class="grow">
+          <select id="modelSel" style="margin-bottom:6px"></select>
+          <input type="text" id="modelCustom" class="dn" placeholder="自定义模型名（如 glm-4-plus）">
+          <div class="hint">所选厂商的常用模型都在下拉里；不够用就选「自定义」手填，或改原始 JSON。</div>
         </div></div>
       <div class="row"><label>视觉(看图)</label><input type="checkbox" data-cfg="api.vision"><span class="hint">模型支持图片则勾选</span></div>
       <div class="row"><label>温度</label><input type="range" id="api.temperature" min="0" max="1" step="0.05" data-cfg="api.temperature"><span class="val" id="api.temperature-v">0.8</span></div>
@@ -383,6 +391,23 @@ function syncToForm(){
   $('api.temperature-v').textContent = getPath(cfg,'api.temperature') ?? '0.8';
   $('rawjson').value = JSON.stringify(cfg, null, 2);
   $('model-badge').textContent = getPath(cfg,'api.model') || '未设置';
+  /* 模型厂商/模型（下拉选择，换厂商自动带出 Base URL 与模型列表） */
+  {
+    const base = getPath(cfg,'api.base_url') || '';
+    const prov = detectProvider(base);
+    $('providerSel').value = prov;
+    renderModelSel(prov);
+    const model = getPath(cfg,'api.model') || '';
+    const p = PROVIDERS[prov];
+    if(p.models.includes(model)){
+      $('modelSel').value = model;
+      $('modelCustom').classList.add('dn');
+    } else {
+      $('modelSel').value = '';
+      $('modelCustom').classList.remove('dn');
+      $('modelCustom').value = model;
+    }
+  }
 }
 
 function syncFromForm(){
@@ -398,6 +423,14 @@ function syncFromForm(){
     }
     setPath(cfg, path, v);
   });
+  /* 模型厂商/模型：按当前下拉写入模型与 Base URL */
+  {
+    const prov = $('providerSel').value;
+    const p = PROVIDERS[prov];
+    const model = (p.models.length ? $('modelSel').value : '').trim() || $('modelCustom').value.trim();
+    if(model) setPath(cfg, 'api.model', model);
+    if(p.base) setPath(cfg, 'api.base_url', p.base);
+  }
 }
 
 /* ── 左上角小鲸鱼（Canvas 绘制 + 悬停粒子动效，参考 DSH 官网颗粒感）── */
@@ -496,49 +529,122 @@ async function saveAllBtn(btn){
   }catch(e){ toast('保存失败：'+e.message); }
 }
 
-/* ── 左上角小鲸鱼 Logo：Canvas 绘制 + 悬停粒子爆发（参考 DSH 官网颗粒动效）── */
-(function(){
-  const lc = $('logoFx'); if(!lc) return;
-  const ctx = lc.getContext('2d');
-  const W = 152, H = 60;
-  function drawWhale(){
-    ctx.clearRect(0,0,W,H);
-    ctx.save(); ctx.scale(2,2);
-    ctx.fillStyle = '#4D6BFE';
-    ctx.beginPath(); ctx.ellipse(24,28,17,10.5,0,0,Math.PI*2); ctx.fill();      // 身体
-    ctx.beginPath(); ctx.moveTo(39,23); ctx.lineTo(53,13); ctx.lineTo(48,26);   // 尾巴上瓣
-    ctx.lineTo(55,37); ctx.lineTo(39,31); ctx.closePath(); ctx.fill();
-    ctx.fillStyle = '#fff';
-    ctx.beginPath(); ctx.arc(19,25,2.4,0,Math.PI*2); ctx.fill();               // 眼睛
-    ctx.fillStyle = 'rgba(77,107,254,.18)';
-    ctx.beginPath(); ctx.ellipse(30,33,8,3.6,0,0,Math.PI*2); ctx.fill();        // 肚皮
-    ctx.restore();
+/* ── 模型厂商预设：切换即换 BaseURL/模型，弹窗要 Key ── */
+const PROVIDERS = {
+  deepseek:{label:'DeepSeek', base:'https://api.deepseek.com/v1', keyHint:'sk-',
+    models:['deepseek-v4-flash-vision-exp','deepseek-v4-flash','deepseek-v4-pro','deepseek-chat','deepseek-reasoner']},
+  moonshot:{label:'Moonshot Kimi', base:'https://api.moonshot.cn/v1', keyHint:'sk-',
+    models:['kimi-k2-0711-preview','kimi-k2-0905-preview','moonshot-v1-128k','moonshot-v1-32k','moonshot-v1-8k']},
+  zhipu:{label:'智谱 GLM', base:'https://open.bigmodel.cn/api/paas/v4', keyHint:'',
+    models:['glm-4.5','glm-4.5-air','glm-4-plus','glm-4-flash','glm-4v-plus']},
+  qwen:{label:'通义千问（阿里）', base:'https://dashscope.aliyuncs.com/compatible-mode/v1', keyHint:'sk-',
+    models:['qwen-max','qwen-plus','qwen-turbo','qwen-vl-max','qwen2.5-72b-instruct']},
+  minimax:{label:'MiniMax', base:'https://api.minimax.chat/v1', keyHint:'',
+    models:['MiniMax-M1-80k','abab6.5s-chat']},
+  doubao:{label:'豆包（火山方舟）', base:'https://ark.cn-beijing.volces.com/api/v3', keyHint:'',
+    models:['doubao-seed-1.6-250615','doubao-1.5-pro-32k','doubao-vision-pro-32k']},
+  custom:{label:'自定义', base:'', keyHint:'', models:[]}
+};
+function renderModelSel(provider){
+  const sel=$('modelSel'); sel.innerHTML='';
+  const p = PROVIDERS[provider] || PROVIDERS.deepseek;
+  p.models.forEach(m=>{ const o=document.createElement('option'); o.value=m; o.textContent=m; sel.appendChild(o); });
+  if(!p.models.length){
+    const o=document.createElement('option'); o.value=''; o.textContent='（无预设，请在下方手填）'; sel.appendChild(o);
   }
-  drawWhale();
-  let parts = [], running = false;
-  function burst(x, y){
-    for(let i=0;i<30;i++){
-      const a = Math.random()*Math.PI*2, sp = 0.8 + Math.random()*2.6;
-      parts.push({x:x, y:y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp-1.1,
-                  life:34+Math.random()*22, r:1+Math.random()*2.2,
-                  c:Math.random()<.5?'#4D6BFE':'#9DB4FF'});
+  $('modelCustom').classList.toggle('dn', p.models.length>0);
+}
+function detectProvider(base){
+  const b = String(base||'').trim();
+  for(const k of Object.keys(PROVIDERS)){
+    if(k!=='custom' && b && b.startsWith(PROVIDERS[k].base)) return k;
+  }
+  return b ? 'custom' : 'deepseek';
+}
+function applyProvider(provider, askKey){
+  const p = PROVIDERS[provider] || PROVIDERS.deepseek;
+  if(p.base){
+    const be = document.querySelector('[data-cfg="api.base_url"]');
+    if(be) be.value = p.base;
+  }
+  renderModelSel(provider);
+  const pk = document.querySelector('[data-cfg="api.api_key"]');
+  if(askKey && provider!=='deepseek'){
+    const have = (pk&&pk.value||'').trim();
+    if(!have || provider!==detectProvider(document.querySelector('[data-cfg="api.base_url"]').value)){
+      const m=document.createElement('div'); m.className='mask';
+      m.innerHTML='<div class="box"><h1>'+p.label+' API Key</h1><p>已为你切换到 '+p.label+'（Base URL：'+p.base+'）。请粘贴该公司的 API Key（'+p.keyHint+'开头）。</p><input type="password" id="pkCmd" placeholder="'+p.keyHint+'..."><div class="btns" style="justify-content:center"><button class="pri" id="pkOk">保存 Key</button><button class="ghost" id="pkNo">稍后再说</button></div></div>';
+      document.body.appendChild(m);
+      $('pkOk').onclick=()=>{ const v=$('pkCmd').value.trim(); if(v&&pk) pk.value=v; m.remove(); toast('已填入 '+p.label+' Key，记得点「保存设置」'); };
+      $('pkNo').onclick=()=>m.remove();
     }
-    if(!running){ running = true; requestAnimationFrame(tick); }
   }
-  function tick(){
+}
+$('providerSel').addEventListener('change', ()=>applyProvider($('providerSel').value, true));
+/* ── 左上角小鲸鱼 Logo：完整造型 + 悬停「溶解成粒子游动 / 离开重组」（参考官网粒子 Logo 思路）── */
+(function(){
+  const lc = $('logoFx'), ctx = lc.getContext('2d');
+  const W = 112, H = 52;
+  lc.width = W; lc.height = H;
+  lc.style.width = '96px'; lc.style.height = '44px';
+  // 鲸鱼形状：身体椭圆 + 尾巴多边形
+  const E = {cx:34, cy:31, rx:20, ry:12.5};
+  const TAIL = [[50,26],[66,12],[61,27],[70,39],[50,33]];
+  function inWhale(x, y){
+    const ex = (x - E.cx) / E.rx, ey = (y - E.cy) / E.ry;
+    if (ex*ex + ey*ey <= 1) return true;
+    let inside = false;
+    for (let i=0, j=TAIL.length-1; i<TAIL.length; j=i++){
+      const [xi,yi] = TAIL[i], [xj,yj] = TAIL[j];
+      if (((yi > y) !== (yj > y)) && (x < (xj-xi)*(y-yi)/(yj-yi)+xi)) inside = !inside;
+    }
+    return inside;
+  }
+  // 采样鲸鱼内部的粒子家坐标
+  const home = [];
+  for (let y=6; y<H; y+=3) for (let x=4; x<W; x+=3){
+    if (inWhale(x,y) && home.length < 150) home.push({x, y});
+  }
+  const dots = home.map((p,i)=>({hx:p.x, hy:p.y, x:p.x, y:p.y, ph:Math.random()*6.28, r:1.1+Math.random()*0.9}));
+  function drawSolid(){
     ctx.clearRect(0,0,W,H);
-    drawWhale();
-    parts = parts.filter(p => p.life > 0);
-    for(const p of parts){
-      p.x += p.vx; p.y += p.vy; p.vy += 0.085; p.life--;
-      ctx.globalAlpha = Math.min(1, p.life/18);
-      ctx.fillStyle = p.c;
-      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#4D6BFE';
+    ctx.beginPath(); ctx.ellipse(E.cx,E.cy,E.rx,E.ry,0,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(TAIL[0][0],TAIL[0][1]);
+    for(let i=1;i<TAIL.length;i++) ctx.lineTo(TAIL[i][0],TAIL[i][1]);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,.75)';
+    ctx.beginPath(); ctx.arc(26,28,2.6,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle = 'rgba(77,107,254,.16)';
+    ctx.beginPath(); ctx.ellipse(36,36,9,3.4,0,0,Math.PI*2); ctx.fill();
+  }
+  drawSolid();
+  let hov = false, running = false, t0 = null;
+  function frame(ts){
+    if(t0 === null) t0 = ts;
+    const t = (ts - t0) / 1000;
+    ctx.clearRect(0,0,W,H);
+    for (const d of dots){
+      let tx = d.hx, ty = d.hy;
+      if (hov){ // 悬停：鲸鱼“游动”——粒子围绕原位做波浪游走
+        tx = d.hx + Math.sin(t*4 + d.ph) * 3.2;
+        ty = d.hy + Math.cos(t*3 + d.ph) * 1.6;
+      }
+      d.x += (tx - d.x) * 0.14;
+      d.y += (ty - d.y) * 0.14;
+      ctx.globalAlpha = hov ? 0.92 : 1;
+      ctx.fillStyle = '#4D6BFE';
+      ctx.beginPath(); ctx.arc(d.x, d.y, d.r, 0, Math.PI*2); ctx.fill();
     }
     ctx.globalAlpha = 1;
-    if(parts.length){ requestAnimationFrame(tick); } else { running = false; drawWhale(); }
+    if (hov || dots.some(d => Math.abs(d.x-d.hx) > 0.4 || Math.abs(d.y-d.hy) > 0.4)){
+      requestAnimationFrame(frame);
+    } else {
+      running = false; drawSolid();
+    }
   }
-  lc.addEventListener('mouseenter', ()=>{ burst(46, 30); });
+  lc.addEventListener('mouseenter', ()=>{ hov = true; if(!running){ running = true; t0 = null; requestAnimationFrame(frame); } });
+  lc.addEventListener('mouseleave', ()=>{ hov = false; if(!running){ running = true; t0 = null; requestAnimationFrame(frame); } });
 })();
 
 /* ── 首次运行引导 ── */
