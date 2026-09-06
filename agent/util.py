@@ -1,0 +1,197 @@
+# -*- coding: utf-8 -*-
+"""通用小工具：无业务逻辑（移植自 qq-agent src/util.js + md-to-plain.js + tier-slider.js）。"""
+from __future__ import annotations
+
+import json
+import random
+import re
+import time
+
+WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+
+
+def sleep(ms: float) -> None:
+    time.sleep(max(0.0, float(ms or 0) / 1000.0))
+
+
+def rand_int(min_v: float, max_v: float) -> int:
+    lo = int(min(min_v, max_v))
+    hi = int(max(min_v, max_v))
+    if hi <= lo:
+        return lo
+    return random.randint(lo, hi)
+
+
+def now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+def pad2(n: int) -> str:
+    return str(n).zfill(2)
+
+
+def format_full_time(ts: float | None = None) -> str:
+    """2026-08-30 21:33:05（周六）"""
+    if ts is None:
+        ts = time.time()
+    lt = time.localtime(ts / 1000.0 if ts > 1e12 else ts)
+    return "%d-%s-%s %s:%s:%s（%s）" % (
+        lt.tm_year, pad2(lt.tm_mon), pad2(lt.tm_mday),
+        pad2(lt.tm_hour), pad2(lt.tm_min), pad2(lt.tm_sec),
+        WEEKDAYS[lt.tm_wday],
+    )
+
+
+def format_short_time(ts: float | None = None) -> str:
+    """08-30 21:33"""
+    if ts is None:
+        ts = time.time()
+    lt = time.localtime(ts / 1000.0 if ts > 1e12 else ts)
+    return "%s-%s %s:%s" % (pad2(lt.tm_mon), pad2(lt.tm_mday), pad2(lt.tm_hour), pad2(lt.tm_min))
+
+
+def format_clock_time(ts: float | None = None) -> str:
+    """21:33:05"""
+    if ts is None:
+        ts = time.time()
+    lt = time.localtime(ts / 1000.0 if ts > 1e12 else ts)
+    return "%s:%s:%s" % (pad2(lt.tm_hour), pad2(lt.tm_min), pad2(lt.tm_sec))
+
+
+def today_key(ts: float | None = None) -> str:
+    if ts is None:
+        ts = time.time()
+    lt = time.localtime(ts / 1000.0 if ts > 1e12 else ts)
+    return "%d-%s-%s" % (lt.tm_year, pad2(lt.tm_mon), pad2(lt.tm_mday))
+
+
+# ── 文本处理 ─────────────────────────────────────────────────────────────
+
+def sanitize_user_text(text: str) -> str:
+    """防提示注入/泄露：把疑似系统标记的方括号弱化，避免群友伪装成系统段骗模型。"""
+    s = str(text or "")
+    return re.sub(
+        r"\[(本次唤醒|系统|管理员|owner|角色扮演|会话令牌|当前时间)[^\]]*\]",
+        r"(\1)",
+        s,
+        flags=re.IGNORECASE,
+    )
+
+
+def unquote_json_string(value):
+    """兼容模型把单条消息序列化成 JSON 字符串的情况：'"你好"' -> '你好'。"""
+    if not isinstance(value, str):
+        return value
+    t = value.strip()
+    if t.startswith('"'):
+        try:
+            parsed = json.loads(t)
+            if isinstance(parsed, str):
+                return parsed
+        except Exception:
+            pass
+    return value
+
+
+def normalize_message_list(value):
+    """兼容模型把数组序列化成 JSON 字符串传入；字符串 -> 单元素数组。"""
+    v = value
+    if isinstance(v, str):
+        t = v.strip()
+        if t.startswith("["):
+            try:
+                parsed = json.loads(t)
+                if isinstance(parsed, list):
+                    v = parsed
+            except Exception:
+                pass
+        elif t.startswith('"'):
+            uq = unquote_json_string(t)
+            if isinstance(uq, str):
+                v = uq
+    if isinstance(v, list):
+        return [str(m or "").strip() for m in v if str(m or "").strip()]
+    return [str(v or "").strip()] if str(v or "").strip() else []
+
+
+def truncate(text: str, max_len: int = 400) -> str:
+    s = str(text or "")
+    return s if len(s) <= max_len else "%s…(共%d字)" % (s[:max_len], len(s))
+
+
+# ── Markdown → 纯文本（微信/QQ 都不渲染 Markdown）────────────────────────
+
+def md_to_plain(md: str) -> str:
+    s = str(md or "")
+    # 代码块：保留内容，去掉围栏
+    s = re.sub(r"```[a-zA-Z0-9_+-]*\n?([\s\S]*?)```", lambda m: m.group(1).rstrip("\n"), s)
+    # 行内代码
+    s = re.sub(r"`([^`\n]+)`", r"\1", s)
+    # 图片/链接：保留文字，链接附在括号里
+    s = re.sub(r"!\[([^\]]*)\]\(([^)\s]+)\)", lambda m: (m.group(1) or m.group(2)), s)
+    s = re.sub(r"\[([^\]]+)\]\(([^)\s]+)\)", r"\1 (\2)", s)
+    # 粗体/斜体/删除线
+    s = re.sub(r"\*\*\*([^*]+)\*\*\*", r"\1", s)
+    s = re.sub(r"\*\*([^*]+)\*\*", r"\1", s)
+    s = re.sub(r"\*([^*]+)\*", r"\1", s)
+    s = re.sub(r"~~([^~]+)~~", r"\1", s)
+    s = re.sub(r"__([^_]+)__", r"\1", s)
+    # 标题符 / 引用符
+    s = re.sub(r"^#{1,6}\s+", "", s, flags=re.MULTILINE)
+    s = re.sub(r"^>\s?", "", s, flags=re.MULTILINE)
+    # 列表符
+    s = re.sub(r"^\s*[-*+]\s+", "• ", s, flags=re.MULTILINE)
+    # 表格：去竖线
+    s = re.sub(r"^\s*\|", "", s, flags=re.MULTILINE)
+    s = re.sub(r"\|\s*$", "", s, flags=re.MULTILINE)
+    # 折叠连续空行
+    s = re.sub(r"\n{3,}", "\n\n", s)
+    return s.strip()
+
+
+def split_for_wx(text: str, max_len: int = 2000):
+    """按微信单条消息长度上限切分（群聊长文安全切分）。"""
+    safe_max = max(1, int(max_len))
+    parts = []
+    rest = text
+    while len(rest) > safe_max:
+        cut = rest.rfind("\n", 0, safe_max)
+        eat = 0
+        if cut <= 0:
+            cut = safe_max
+        else:
+            eat = 1
+        # 切点落在 emoji 代理对中间时前移
+        if cut > 0 and 0xD800 <= ord(rest[cut - 1]) <= 0xDBFF:
+            cut -= 1
+        if cut <= 0:
+            cut = 1
+            eat = 0
+        parts.append(rest[: cut + eat])
+        rest = rest[cut + eat:]
+    if rest:
+        parts.append(rest)
+    return parts
+
+
+# ── 响应档位滑条换算（tier-slider.js）────────────────────────────────────
+
+TIER_SLIDER_BANDS = {"tier1_end": 10, "tier2_end": 20, "tier3_end": 90}
+
+
+def slider_to_tier(pos) -> dict:
+    """滑条位置 0~100 -> {tier, randomPercent}。非法值按 100（4 档）处理。"""
+    b = TIER_SLIDER_BANDS
+    try:
+        raw = float(pos)
+    except (TypeError, ValueError):
+        return {"tier": 4, "randomPercent": 100}
+    p = min(100, max(0, raw))
+    if p <= b["tier1_end"]:
+        return {"tier": 1, "randomPercent": 0}
+    if p <= b["tier2_end"]:
+        return {"tier": 2, "randomPercent": 0}
+    if p <= b["tier3_end"]:
+        pct = (p - b["tier2_end"]) / (b["tier3_end"] - b["tier2_end"]) * 100
+        return {"tier": 3, "randomPercent": round(pct * 10) / 10}
+    return {"tier": 4, "randomPercent": 100}

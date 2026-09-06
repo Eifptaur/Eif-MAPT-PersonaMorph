@@ -1,0 +1,25 @@
+# ── 敏感文件（含 API Key、访问口令，绝不能上传）──
+config.json
+config/*.txt
+
+# ── 运行时生成 ──
+data/
+logs/
+media/
+backups/
+*.log
+
+# ── Python 缓存 ──
+__pycache__/
+*.pyc
+*.pyo
+
+# ── 离线部署包（二进制体积大，可用 git-lfs 或单独发布）──
+offline/
+
+# ── 系统 / 编辑器 ──
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/

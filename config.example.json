@@ -1,0 +1,139 @@
+{
+  "api": {
+    "base_url": "https://api.deepseek.com/v1",
+    "api_key": "",
+    "model": "deepseek-v4-flash-vision-exp",
+    "provider": "",
+    "vision": true,
+    "temperature": 0.8,
+    "max_rounds": 12,
+    "timeout_ms": 180000,
+    "price_input_per_m": 0.0,
+    "price_output_per_m": 0.0,
+    "price_cached_per_m": 0.0,
+    "use_official_price": true,
+    "model_prices": {}
+  },
+  "wechat": {
+    "bot_nickname": "群deepseek",
+    "group_name_white_list": [],
+    "poll_interval": 3,
+    "rate_limit_per_minute": 20,
+    "media_dir": "media",
+    "db_dir": "",
+    "minimize_warning": true
+  },
+  "persona": {
+    "bot_name": "小鲸鱼",
+    "self_nickname": "",
+    "role_text": "",
+    "participation": "medium",
+    "custom_rules": ""
+  },
+  "web_search": {
+    "enabled": true,
+    "provider": "bing",
+    "search_url": "https://cn.bing.com/search",
+    "max_results": 6,
+    "deepseek": {
+      "api_key": "",
+      "base_url": "https://api.deepseek.com/responses",
+      "model": "deepseek-chat",
+      "timeout_ms": 60000
+    },
+    "zhipu": {
+      "api_key": "",
+      "base_url": "https://open.bigmodel.cn/api/paas/v4/web_search",
+      "engine": "search_std",
+      "count": 10,
+      "timeout_ms": 20000
+    },
+    "bocha": {
+      "api_key": "",
+      "base_url": "https://api.bochaai.com/v1/web-search",
+      "count": 10,
+      "timeout_ms": 20000
+    },
+    "baidu": {
+      "api_key": "",
+      "base_url": "https://qianfan.baidubce.com/v2/ai_search/web_search",
+      "count": 6,
+      "timeout_ms": 20000
+    },
+    "metaso": {
+      "api_key": "",
+      "base_url": "https://metaso.cn/api/open/v1/search",
+      "count": 6,
+      "timeout_ms": 20000
+    },
+    "custom": {
+      "name": "",
+      "type": "openai",
+      "base_url": "",
+      "api_key": "",
+      "model": "",
+      "count": 6,
+      "timeout_ms": 20000
+    },
+    "providers": []
+  },
+  "security": {
+    "allow_private_image_hosts": false
+  },
+  "allow": {
+    "groups": [],
+    "private": []
+  },
+  "deny": {
+    "groups": [],
+    "private": []
+  },
+  "wake_delay_ms": 2000,
+  "drain_delay_ms": 1200,
+  "max_concurrent_runs": 2,
+  "send": {
+    "min_gap_ms": 1000,
+    "max_gap_ms": 3000,
+    "by_length_ms": 20,
+    "max_per_minute": 20,
+    "max_per_hour": 500,
+    "hard_split_at": 2000
+  },
+  "proactive": {
+    "enabled": false,
+    "check_interval_min_ms": 1800000,
+    "check_interval_max_ms": 5400000,
+    "idle_threshold_ms": 1800000,
+    "probability": 0.25
+  },
+  "store": {
+    "max_messages_per_chat": 0,
+    "context_tier": 4,
+    "context_slider_pos": null,
+    "at_count": 20,
+    "keyword_count": 15,
+    "keywords": [],
+    "random_percent": 10,
+    "random_count": 8,
+    "all_count": 80
+  },
+  "memory": {
+    "consolidate_enabled": true,
+    "consolidate_min_interval_ms": 21600000,
+    "consolidate_min_impressions": 4,
+    "max_impressions_per_member": 5,
+    "discover_min_messages": 20,
+    "discover_max_members": 3,
+    "use_chat_model": true,
+    "provider": "",
+    "model": ""
+  },
+  "server": {
+    "enabled": true,
+    "host": "127.0.0.1",
+    "port": 3210,
+    "token": "",
+    "auto_open_browser": true
+  },
+  "member_notes": {}
+}

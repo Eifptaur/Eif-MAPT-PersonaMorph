@@ -1,0 +1,425 @@
+# -*- coding: utf-8 -*-
+"""Web 控制台：在浏览器里改设置、看状态、看日志、测试 API（移植自 qq-agent 的控制台思路）。
+
+零第三方依赖，纯标准库 http.server，单文件 HTML（内联 CSS/JS，无框架）。
+只监听本机回环地址，含可选访问口令。
+"""
+from __future__ import annotations
+
+import json
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse
+
+from .config import get_config, save_config, set_config
+
+HTML = r"""<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wx-agent 控制台</title>
+<style>
+:root{
+  --bg:#0f1115; --bg2:#161a22; --bg3:#1d232e; --bd:#2a3242;
+  --tx:#e6e9ef; --tx2:#9aa4b2; --acc:#4c8dff; --ok:#34d399; --warn:#fbbf24; --err:#f87171;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--tx);font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;padding:16px}
+a{color:var(--acc)}
+header{display:flex;align-items:center;gap:12px;padding:4px 0 16px;flex-wrap:wrap}
+header h1{font-size:20px}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--err)}
+.dot.on{background:var(--ok)}
+.badge{padding:2px 10px;border:1px solid var(--bd);border-radius:20px;color:var(--tx2);font-size:12px}
+.wrap{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:960px){.wrap{grid-template-columns:1fr}}
+.card{background:var(--bg2);border:1px solid var(--bd);border-radius:10px;padding:16px;margin-bottom:16px}
+.card h2{font-size:15px;margin-bottom:12px;color:var(--tx)}
+.row{display:flex;gap:10px;margin-bottom:10px;align-items:center;flex-wrap:wrap}
+.row label{width:130px;color:var(--tx2);flex-shrink:0}
+.row input[type=text],.row input[type=password],.row select,.row textarea{
+  flex:1;min-width:180px;background:var(--bg3);border:1px solid var(--bd);color:var(--tx);
+  border-radius:6px;padding:7px 10px;font:inherit}
+.row textarea{width:100%;min-height:90px;font-family:ui-monospace,Consolas,monospace;font-size:12px}
+.row input[type=range]{flex:1}
+.row .val{width:34px;text-align:right;color:var(--acc)}
+.row input[type=checkbox]{width:18px;height:18px}
+.btns{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}
+button{background:var(--acc);border:0;color:#fff;border-radius:6px;padding:8px 16px;cursor:pointer;font:inherit}
+button.ghost{background:var(--bg3);border:1px solid var(--bd);color:var(--tx)}
+button.danger{background:var(--err)}
+button:disabled{opacity:.5;cursor:not-allowed}
+.hint{color:var(--tx2);font-size:12px;margin-top:6px}
+#log{background:var(--bg3);border:1px solid var(--bd);border-radius:6px;padding:10px;
+  font-family:ui-monospace,Consolas,monospace;font-size:12px;height:360px;overflow:auto;white-space:pre-wrap;word-break:break-all}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--bd)}
+th{color:var(--tx2);font-weight:500}
+.pill{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;background:var(--bg3)}
+.pill.ok{background:rgba(52,211,153,.15);color:var(--ok)}
+.pill.off{background:rgba(248,113,113,.15);color:var(--err)}
+#toast{position:fixed;right:20px;bottom:20px;background:var(--bg3);border:1px solid var(--bd);
+  padding:10px 16px;border-radius:8px;display:none;z-index:99}
+.stat{display:flex;gap:18px;flex-wrap:wrap;margin-bottom:8px}
+.stat b{font-size:20px;display:block}
+.stat span{color:var(--tx2);font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <span class="dot" id="dot"></span>
+  <h1>wx-agent 控制台</h1>
+  <span class="badge" id="model-badge">模型未知</span>
+  <span class="badge" id="balance-badge" title="点击刷新余额">余额：查询中…</span>
+  <span class="badge" id="addr-badge"></span>
+  <span style="flex:1"></span>
+  <button id="pauseBtn" class="ghost">暂停</button>
+  <a href="/api/config" target="_blank" style="text-decoration:none"><button class="ghost">查看原始 JSON</button></a>
+</header>
+
+<div class="wrap">
+  <div>
+    <div class="card">
+      <h2>状态</h2>
+      <div class="stat">
+        <div><b id="st-sessions">0</b><span>会话数</span></div>
+        <div><b id="st-tokens">0</b><span>总 token</span></div>
+        <div><b id="st-sent">0</b><span>已发消息</span></div>
+        <div><b id="st-cost">¥0</b><span>估算成本</span></div>
+        <div><b id="st-groups">0</b><span>目标群</span></div>
+      </div>
+      <table id="group-table"><thead><tr><th>群名</th><th>目标</th></tr></thead><tbody></tbody></table>
+    </div>
+
+    <div class="card">
+      <h2>模型 API</h2>
+      <div class="row"><label>Base URL</label><input type="text" id="api.base_url"></div>
+      <div class="row"><label>API Key</label><input type="password" id="api.api_key"></div>
+      <div class="row"><label>模型</label><input type="text" id="api.model"></div>
+      <div class="row"><label>视觉(看图)</label><input type="checkbox" id="api.vision"></div>
+      <div class="row"><label>温度</label><input type="range" id="api.temperature" min="0" max="1" step="0.05"><span class="val" id="api.temperature-v">0.8</span></div>
+      <div class="btns">
+        <button id="testApi">测试 API 连通</button>
+        <span class="hint" id="testResult"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>微信</h2>
+      <div class="row"><label>机器人昵称</label><input type="text" id="wechat.bot_nickname"></div>
+      <div class="row"><label>轮询间隔(秒)</label><input type="text" id="wechat.poll_interval"></div>
+      <div class="row"><label>群白名单</label><input type="text" id="wechat.group_name_white_list" placeholder="逗号分隔，留空=所有群"></div>
+    </div>
+
+    <div class="card">
+      <h2>人设与响应档位</h2>
+      <div class="row"><label>人设名</label><input type="text" id="persona.bot_name"></div>
+      <div class="row"><label>参与度</label>
+        <select id="persona.participation">
+          <option value="low">安静型</option><option value="medium">普通群友</option><option value="high">活跃型</option>
+        </select></div>
+      <div class="row"><label>响应档位</label>
+        <select id="store.context_tier">
+          <option value="1">1 档：仅艾特</option><option value="2">2 档：+关键词</option>
+          <option value="3">3 档：+随机</option><option value="4">4 档：全响应</option>
+        </select></div>
+      <div class="row"><label>关键词(逗号)</label><input type="text" id="store.keywords" placeholder="命中即响应（2档起）"></div>
+    </div>
+
+    <div class="card">
+      <h2>联网搜索</h2>
+      <div class="row"><label>启用</label><input type="checkbox" id="web_search.enabled"></div>
+      <div class="row"><label>引擎</label>
+        <select id="web_search.provider">
+          <option value="bing">Bing（免key）</option><option value="deepseek">DeepSeek</option>
+          <option value="zhipu">智谱</option><option value="bocha">博查</option>
+          <option value="baidu">百度千帆</option><option value="metaso">秘塔</option><option value="custom">自定义</option>
+        </select></div>
+    </div>
+
+    <div class="card">
+      <h2>完整配置 JSON（高级）</h2>
+      <textarea id="rawjson" spellcheck="false"></textarea>
+      <div class="btns">
+        <button id="save">保存设置</button>
+        <button id="reload" class="ghost">重新加载</button>
+      </div>
+      <div class="hint">保存后需要重启机器人（或至少重启核心循环）才完全生效；部分设置即时生效。</div>
+    </div>
+  </div>
+
+  <div>
+    <div class="card">
+      <h2>运行日志</h2>
+      <div class="btns" style="margin-top:0;margin-bottom:10px">
+        <button id="refreshLog" class="ghost">刷新</button>
+        <label style="color:var(--tx2)"><input type="checkbox" id="autolog" checked> 自动刷新</label>
+      </div>
+      <div id="log">加载中…</div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+let cfg = null;
+
+function toast(msg){const t=$('toast');t.textContent=msg;t.style.display='block';clearTimeout(t._h);t._h=setTimeout(()=>t.style.display='none',2500)}
+
+async function getJSON(url, opts){
+  const r = await fetch(url, opts);
+  if(!r.ok) throw new Error((await r.text())||r.status);
+  return r.json();
+}
+
+function syncToForm(){
+  if(!cfg) return;
+  const map = {
+    'api.base_url': cfg.api.base_url, 'api.api_key': cfg.api.api_key, 'api.model': cfg.api.model,
+    'api.vision': cfg.api.vision, 'api.temperature': cfg.api.temperature,
+    'wechat.bot_nickname': cfg.wechat.bot_nickname, 'wechat.poll_interval': cfg.wechat.poll_interval,
+    'wechat.group_name_white_list': (cfg.wechat.group_name_white_list||[]).join(','),
+    'persona.bot_name': cfg.persona.bot_name, 'persona.participation': cfg.persona.participation,
+    'store.context_tier': String(cfg.store.context_tier||4),
+    'store.keywords': (cfg.store.keywords||[]).join(','),
+    'web_search.enabled': cfg.web_search.enabled, 'web_search.provider': cfg.web_search.provider,
+  };
+  for(const k in map){ const el=$(k); if(el) el.value = map[k]; if(el && el.type==='checkbox') el.checked = !!map[k]; }
+  $('api.temperature-v').textContent = cfg.api.temperature;
+  $('rawjson').value = JSON.stringify(cfg, null, 2);
+  $('model-badge').textContent = '模型：' + (cfg.api.model||'未设置');
+}
+
+function syncFromForm(){
+  cfg.api.base_url = $('api.base_url').value.trim();
+  cfg.api.api_key = $('api.api_key').value.trim();
+  cfg.api.model = $('api.model').value.trim();
+  cfg.api.vision = $('api.vision').checked;
+  cfg.api.temperature = parseFloat($('api.temperature').value);
+  cfg.wechat.bot_nickname = $('wechat.bot_nickname').value.trim();
+  cfg.wechat.poll_interval = parseFloat($('wechat.poll_interval').value)||3;
+  cfg.wechat.group_name_white_list = $('wechat.group_name_white_list').value.split(',').map(s=>s.trim()).filter(Boolean);
+  cfg.persona.bot_name = $('persona.bot_name').value.trim();
+  cfg.persona.participation = $('persona.participation').value;
+  cfg.store.context_tier = parseInt($('store.context_tier').value)||4;
+  cfg.store.keywords = $('store.keywords').value.split(',').map(s=>s.trim()).filter(Boolean);
+  cfg.web_search.enabled = $('web_search.enabled').checked;
+  cfg.web_search.provider = $('web_search.provider').value;
+}
+
+async function load(){
+  try{ cfg = await getJSON('/api/config'); syncToForm(); }catch(e){ toast('加载配置失败：'+e.message) }
+  loadStatus(); loadLog(); loadBalance();
+}
+
+async function loadBalance(){
+  const el = $('balance-badge');
+  try{
+    const b = await getJSON('/api/balance');
+    if(b.ok === false){ el.textContent = '余额：' + b.error; return; }
+    const cur = b.currency === 'USD' ? '$' : '¥';
+    el.textContent = '余额 ' + cur + b.total_balance + '（充值 ' + b.topped_up_balance + ' / 赠送 ' + b.granted_balance + '）';
+    el.title = '点击刷新余额';
+  }catch(e){ el.textContent = '余额：查询失败'; }
+}
+
+async function loadStatus(){
+  try{
+    const s = await getJSON('/api/status');
+    $('dot').className = 'dot ' + (s.wechat_connected ? 'on':'');
+    $('st-sessions').textContent = s.stats.sessions;
+    $('st-tokens').textContent = s.stats.tokens;
+    $('st-sent').textContent = s.stats.sent;
+    $('st-cost').textContent = '¥' + (s.stats.cost||0).toFixed(4);
+    $('st-groups').textContent = s.groups.filter(g=>g.target).length;
+    $('pauseBtn').textContent = s.paused ? '恢复' : '暂停';
+    const tb = $('group-table').querySelector('tbody'); tb.innerHTML='';
+    for(const g of s.groups){
+      const tr=document.createElement('tr');
+      tr.innerHTML = '<td>'+esc(g.name)+'</td><td><span class="pill '+(g.target?'ok':'off')+'">'+(g.target?'监听':'忽略')+'</span></td>';
+      tb.appendChild(tr);
+    }
+  }catch(e){}
+}
+
+async function loadLog(){
+  try{ const l = await getJSON('/api/logs'); $('log').textContent = l.lines.join('\n'); $('log').scrollTop = $('log').scrollHeight; }catch(e){}
+}
+
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+
+$('api.temperature').addEventListener('input', ()=>$('api.temperature-v').textContent=$('api.temperature').value);
+$('save').onclick = async ()=>{
+  try{
+    // 若用户直接改过 rawjson 则优先用 rawjson，否则用表单
+    let raw = null;
+    try{ raw = JSON.parse($('rawjson').value); }catch(e){}
+    if(raw){ cfg = raw; } else { syncFromForm(); }
+    const saved = await getJSON('/api/config', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(cfg)});
+    toast('已保存 ' + new Date().toLocaleTimeString());
+    syncToForm();
+  }catch(e){ toast('保存失败：'+e.message) }
+};
+$('reload').onclick = load;
+$('refreshLog').onclick = loadLog;
+$('balance-badge').onclick = loadBalance;
+$('pauseBtn').onclick = async ()=>{
+  try{ await getJSON($('pauseBtn').textContent==='暂停'?'/api/pause':'/api/resume', {method:'POST'}); loadStatus(); }catch(e){toast(e.message)}
+};
+$('testApi').onclick = async ()=>{
+  const btn=$('testApi'); btn.disabled=true; $('testResult').textContent='测试中…';
+  try{
+    const r = await getJSON('/api/test-api', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({})});
+    if(r.ok) $('testResult').textContent = '✅ 延迟 '+r.latency_ms+'ms，模型 '+r.model+'：'+r.reply;
+    else $('testResult').textContent = '❌ '+(r.error||'失败');
+  }catch(e){ $('testResult').textContent='❌ '+e.message; }
+  finally{ btn.disabled=false; }
+};
+
+load();
+setInterval(loadStatus, 8000);
+setInterval(loadBalance, 30000);
+setInterval(()=>{ if($('autolog').checked) loadLog(); }, 4000);
+</script>
+</body>
+</html>
+"""
+
+
+class WebUI:
+    """启动一个仅监听本机的 HTTP 服务，提供设置/状态/日志/测试 API 接口。"""
+
+    def __init__(self, status_provider, log_buffer, test_api_fn=None, on_save=None,
+                 pause_fn=None, resume_fn=None, balance_fn=None):
+        self.status_provider = status_provider      # () -> dict
+        self.log_buffer = log_buffer                # collections.deque[str]
+        self.test_api_fn = test_api_fn              # () -> dict
+        self.on_save = on_save                      # (new_cfg) -> None（可选，用于通知运行中组件）
+        self.pause_fn = pause_fn or (lambda: None)  # () -> None
+        self.resume_fn = resume_fn or (lambda: None)  # () -> None
+        self.balance_fn = balance_fn or (lambda: {"error": "未提供 balance_fn"})  # () -> dict
+        self._server = None
+        self._thread = None
+        self.port = 0
+
+    def start(self) -> int:
+        cfg = get_config().get("server", {})
+        if cfg.get("enabled") is False:
+            return 0
+        host = str(cfg.get("host") or "127.0.0.1")
+        port = int(cfg.get("port") or 3210)
+
+        parent = self
+
+        class Handler(BaseHTTPRequestHandler):
+            server_version = "wx-agent/1.0"
+
+            def log_message(self, fmt, *args):
+                pass  # 静默，避免刷屏
+
+            def _json(self, obj, code=200):
+                body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def _auth_ok(self):
+                token = str(get_config().get("server", {}).get("token") or "").strip()
+                if not token:
+                    return True
+                # 支持 ?token= 或 Authorization: Bearer
+                q = urlparse(self.path).query
+                from urllib.parse import parse_qs
+                if token in parse_qs(q).get("token", []):
+                    return True
+                auth = self.headers.get("Authorization", "")
+                return auth == "Bearer " + token
+
+            def do_GET(self):
+                if not self._auth_ok():
+                    return self._json({"error": "unauthorized"}, 401)
+                path = urlparse(self.path).path
+                if path in ("/", "/index.html"):
+                    body = HTML.encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                elif path == "/api/config":
+                    self._json(get_config())
+                elif path == "/api/status":
+                    self._json(parent.status_provider())
+                elif path == "/api/balance":
+                    try:
+                        self._json(parent.balance_fn())
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/logs":
+                    self._json({"lines": list(parent.log_buffer)})
+                else:
+                    self._json({"error": "not found"}, 404)
+
+            def do_POST(self):
+                if not self._auth_ok():
+                    return self._json({"error": "unauthorized"}, 401)
+                path = urlparse(self.path).path
+                length = int(self.headers.get("Content-Length") or 0)
+                raw = self.rfile.read(length) if length else b"{}"
+                try:
+                    data = json.loads(raw.decode("utf-8")) if raw else {}
+                except Exception:
+                    data = {}
+                if path == "/api/config":
+                    try:
+                        new_cfg = data if isinstance(data, dict) and data else get_config()
+                        set_config(new_cfg)
+                        save_config(new_cfg)
+                        if parent.on_save:
+                            parent.on_save(new_cfg)
+                        self._json({"ok": True})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)}, 500)
+                elif path == "/api/test-api":
+                    try:
+                        if parent.test_api_fn:
+                            self._json(parent.test_api_fn())
+                        else:
+                            self._json({"ok": False, "error": "未提供 test_api_fn"})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/pause":
+                    parent.pause_fn()
+                    self._json({"ok": True})
+                elif path == "/api/resume":
+                    parent.resume_fn()
+                    self._json({"ok": True})
+                else:
+                    self._json({"error": "not found"}, 404)
+
+        # 端口自适应：被占用则顺延
+        for offset in range(20):
+            try:
+                self._server = ThreadingHTTPServer((host, port + offset), Handler)
+                self.port = port + offset
+                break
+            except OSError:
+                continue
+        if self._server is None:
+            raise RuntimeError("无法启动 Web 控制台：端口 %d-%d 均被占用" % (port, port + 19))
+
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._thread.start()
+        return self.port
+
+    def stop(self):
+        if self._server:
+            self._server.shutdown()
+            self._server.server_close()
+            self._server = None

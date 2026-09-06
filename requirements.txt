@@ -1,0 +1,28 @@
+# wx-agent 依赖清单（Python 3.10+，Windows 64 位）
+
+# —— 微信接入（核心，无注入 UIA 模式）——
+wechatauto-replica==1.1.5.1
+
+# —— HTTP / 大模型调用 ——
+requests>=2.28.2
+urllib3>=1.26.0
+
+# —— 图片处理（视觉识图 / 图片编码）——
+Pillow>=9.0.0
+
+# —— 微信数据库/媒体解密底层依赖（wechatauto 依赖它们）——
+cryptography>=41.0.0
+zstandard>=0.25.0
+uiautomation>=2.0.18
+comtypes>=1.4.0
+pywin32>=305
+pyperclip>=1.8.2
+psutil>=5.9.0
+colorama>=0.4.6
+winsdk>=1.0.0b10
+imageio-ffmpeg>=0.4.9
+
+# 说明：
+# 1. 完全离线部署时，把上面所有包（含 wechatauto）的 .whl 放进 offline/wheels/，
+#    然后 `pip install --no-index --find-links=offline/wheels -r requirements.txt`。
+# 2. wechatauto-replica 不是 PyPI 官方包，需从项目 B 的 offline/wheels/ 目录获取同名 wheel。
