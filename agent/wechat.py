@@ -389,9 +389,10 @@ class WeChatAdapter:
     def _install_ui_patches(self, gui):
         """给 GUI 实例装「界面适配」补丁（每个实例只装一次）。
 
-        把 wechatauto 内部的 wx_click / ensure_visible 换成适配层版本，
-        让所有内部点击（@、发图、引用、发送按钮回退、open_chat 回退等）
-        都自动：换算 DPI 缩放 + 清理遮挡层/系统叠加层 + 校验点击点属于微信。
+        把 wechatauto 内部的 wx_click / ensure_visible / 回车发送 换成适配层版本：
+          · wx_click / ensure_visible → DPI 缩放 + 清理遮挡层/系统叠加层 + 点击归属校验；
+          · 回车（VK_RETURN）加 1.5 秒冷却 → 防「发送后输入框未及时清空 → 重试回车」
+            把同一条消息发两遍（库内部的重试也会被拦住；分条连发间隔 3~5 秒不受影响）。
         这样换电脑（带缩放/多显示器/触屏手写画布）也不用改 wechatauto。
         """
         if getattr(gui, "_wx_agent_ui_ok", False):
@@ -400,7 +401,9 @@ class WeChatAdapter:
             from . import ui_adapt
             orig_ensure = gui.ensure_visible
             orig_click = gui.wx_click
+            orig_key = getattr(gui._input, "key", None)
             adapter = self
+            _last_enter = [0.0]
 
             def ensure_visible(*a, **kw):
                 try:
@@ -420,8 +423,18 @@ class WeChatAdapter:
                     raise WeChatError("点击被拦截：%s" % why)
                 orig_click(sx, sy, right=right)
 
+            def key(vk, ctrl=False, shift=False):
+                if int(vk) == 0x0D:  # VK_RETURN
+                    now = time.time()
+                    if now - _last_enter[0] < 1.5:
+                        return  # 1.5 秒内补按的回车 = 重复发送竞态，拦掉
+                    _last_enter[0] = now
+                return orig_key(vk, ctrl=ctrl, shift=shift)
+
             gui.ensure_visible = ensure_visible
             gui.wx_click = wx_click
+            if orig_key is not None:
+                gui._input.key = key
             gui._wx_agent_ui_ok = True
         except Exception:
             pass
