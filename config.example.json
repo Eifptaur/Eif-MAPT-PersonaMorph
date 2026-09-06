@@ -12,7 +12,8 @@
     "price_output_per_m": 0.0,
     "price_cached_per_m": 0.0,
     "use_official_price": true,
-    "model_prices": {}
+    "model_prices": {},
+    "provider_keys": {}
   },
   "wechat": {
     "bot_nickname": "群deepseek",
@@ -137,7 +138,9 @@
   },
   "ui": {
     "coord_scale": "auto",
-    "clean_overlays": true
+    "clean_overlays": true,
+    "poke_degraded": false,
+    "poke_fail_count": 0
   },
   "member_notes": {}
 }

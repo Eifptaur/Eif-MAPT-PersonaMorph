@@ -148,6 +148,7 @@ th{color:var(--tx2);font-weight:500}
       <a href="#sec-overview" class="on">概览</a>
       <a href="#sec-model">模型 API</a>
       <a href="#sec-wechat">微信</a>
+      <a href="#sec-memory">记忆</a>
       <a href="#sec-persona">人设与响应</a>
       <a href="#sec-send">发送限制</a>
       <a href="#sec-memory">记忆</a>
@@ -183,7 +184,12 @@ th{color:var(--tx2);font-weight:500}
       <h2>模型 API</h2>
       <div class="desc">密钥在控制台首次引导填入后自动保存，无需再改 config.json。</div>
       <div class="row"><label>Base URL</label><div class="grow"><input type="text" data-cfg="api.base_url"></div></div>
-      <div class="row"><label>API Key</label><div class="grow"><input type="password" data-cfg="api.api_key" title="保存后即生效，无需改文件"></div></div>
+      <div class="row"><label>API Key</label>
+        <div class="grow">
+          <input type="password" id="apiKeyInput" data-cfg="api.api_key" placeholder="sk-...">
+          <div class="btns" style="margin-top:6px"><button id="keyReset" class="ghost">重置 Key（重新填写）</button></div>
+          <div class="hint">默认只显示打码值（sk-***…尾4位），真实密钥只保存在服务器 config.json。</div>
+        </div></div>
       <div class="row"><label>模型厂商</label>
         <div class="grow"><select id="providerSel">
           <option value="deepseek">DeepSeek（默认，见下方模型列表）</option>
@@ -235,6 +241,19 @@ th{color:var(--tx2);font-weight:500}
       <div class="row"><label>媒体目录</label><div class="grow"><input type="text" data-cfg="wechat.media_dir"></div></div>
       <div class="row"><label>数据库目录</label><div class="grow"><input type="text" data-cfg="wechat.db_dir" placeholder="留空=自动探测微信数据目录"></div></div>
       <div class="btns"><button class="pri" data-save>保存设置（微信）</button></div>
+    </section>
+
+    <section id="sec-memory" class="card" data-sec>
+      <h2>记忆（群友印象）</h2>
+      <div class="desc">每个群友的长期印象，机器人回复时会参考。点「保存设置」不影响此处；删除即从记忆中移除。</div>
+      <div class="row"><label>选择群聊</label>
+        <div class="grow">
+          <select id="memChats"><option value="">（加载中…）</option></select>
+          <button id="memRefresh" class="ghost" style="margin-top:6px">刷新</button>
+        </div>
+      </div>
+      <table id="memTable"><thead><tr><th>成员</th><th>印象数</th><th>更新时间</th><th></th></tr></thead><tbody></tbody></table>
+      <div class="hint" id="memEmpty">（无记忆数据）</div>
     </section>
 
     <section id="sec-persona" class="card" data-sec>
@@ -438,6 +457,12 @@ function syncFromForm(){
     const model = (p.models.length ? $('modelSel').value : '').trim() || $('modelCustom').value.trim();
     if(model) setPath(cfg, 'api.model', model);
     if(p.base) setPath(cfg, 'api.base_url', p.base);
+    // 按厂商存 Key（真实值才存；打码值不动）
+    const pkv = ($('apiKeyInput') || {}).value || '';
+    if(pkv && !pkv.includes('••••') && !pkv.startsWith('sk-***')){
+      if(!cfg.api.provider_keys) cfg.api.provider_keys = {};
+      cfg.api.provider_keys[prov] = pkv;
+    }
   }
 }
 
@@ -461,6 +486,7 @@ $('customGroup').addEventListener('keydown',e=>{
     $('customGroup').value=''; e.preventDefault();
   }
 });
+$('keyReset').onclick = ()=>{ const k=$('apiKeyInput'); k.value=''; k.focus(); };
 $('pickGroups').onclick = async ()=>{
   try{
     const r = await getJSON('/api/wechat-groups');
@@ -562,6 +588,13 @@ function renderModelSel(provider){
   }
   $('modelCustom').classList.toggle('dn', p.models.length>0);
 }
+function providerSavedKey(provider){
+  // 该厂商是否存过 Key（打码也算存过）
+  try{
+    if(cfg && cfg.api && cfg.api.provider_keys && cfg.api.provider_keys[provider]) return true;
+  }catch(e){}
+  return false;
+}
 function detectProvider(base){
   const b = String(base||'').trim();
   for(const k of Object.keys(PROVIDERS)){
@@ -576,9 +609,14 @@ function applyProvider(provider, askKey){
     if(be) be.value = p.base;
   }
   renderModelSel(provider);
+  // 已存过该厂商 Key → 自动回填（打码值则不回填，防误存）
+  const pk = document.querySelector('[data-cfg="api.api_key"]');
+  try{
+    const saved = cfg && cfg.api && cfg.api.provider_keys && cfg.api.provider_keys[provider];
+    if(saved && pk && !String(saved).includes('••••') && !String(saved).startsWith('sk-***')) pk.value = saved;
+  }catch(e){}
   if(askKey && provider !== 'deepseek'){
     // 换厂商必弹：让用户确认该公司的 API Key（预填当前值，可覆盖/跳过）
-    const pk = document.querySelector('[data-cfg="api.api_key"]');
     const have = (pk && pk.value || '').trim();
     const m=document.createElement('div'); m.className='mask';
     m.innerHTML='<div class="box"><h1>'+p.label+' API Key</h1><p>已切换到 '+p.label+'（Base URL：'+p.base+'）。请填写该公司的 API Key（'+(p.keyHint||'见官网')+' 开头）。</p><input type="password" id="pkCmd" placeholder="'+(p.keyHint||'')+'..." value="'+have.replace(/"/g,'')+'"><div class="btns" style="justify-content:center"><button class="pri" id="pkOk">保存 Key</button><button class="ghost" id="pkSame">沿用现有 Key</button><button class="ghost" id="pkNo">暂不填</button></div></div>';
@@ -655,29 +693,57 @@ $('providerSel').addEventListener('change', ()=>applyProvider($('providerSel').v
   lc.addEventListener('mouseleave', ()=>{ hov = false; if(!running){ running = true; t0 = null; requestAnimationFrame(frame); } });
 })();
 
-/* ── 首次运行引导 ── */
+/* ── 首次运行向导：Key → 检测微信+勾选群 → 一键体检 → 完成 ── */
 async function onboarding(){
   if(!cfg) return;
   const key = getPath(cfg,'api.api_key') || '';
-  if(key && !key.includes('在这里填') && key!=='******') return;
-  const m = document.createElement('div');
-  m.className='mask'; m.id='onboard';
-  m.innerHTML='<div class="box">'+ICON+'<h1>欢迎使用 wx-agent</h1>'+
-    '<p>还差最后一步：填入你的 DeepSeek API Key（sk- 开头）。保存后自动生效，无需再改任何文件。</p>'+
+  if(key && !key.includes('在这里填') && key!=='******' && !key.includes('••••')) return;
+  const m = document.createElement('div'); m.className='mask'; m.id='onboard';
+  m.innerHTML='<div class="box">'+ICON+'<h1>欢迎使用 wx-agent · 三步上手</h1>'+
+    '<p id="obDesc">第 1 步/共 3 步：填入你的 API Key（默认 DeepSeek，sk- 开头）。保存后无需再改文件。</p>'+
     '<input type="password" id="obKey" placeholder="sk-...">'+
-    '<div class="btns" style="justify-content:center"><button class="pri" id="obSave">保存并测试</button><button class="ghost" id="obLater">稍后再说</button></div></div>';
+    '<div id="obBody"></div>'+
+    '<div class="btns" style="justify-content:center;margin-top:10px"><button class="pri" id="obNext">下一步</button><button class="ghost" id="obLater">跳过向导</button></div></div>';
   document.body.appendChild(m);
-  $('obSave').onclick = async ()=>{
-    const k = $('obKey').value.trim();
-    if(!k){ toast('请先粘贴 API Key'); return; }
-    setPath(cfg,'api.api_key',k);
+  let step = 1, picked = [];
+  $('obNext').onclick = async ()=>{
     try{
-      await getJSON('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});
-      toast('已保存，测试连通中…');
-      const r = await getJSON('/api/test-api',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
-      if(r.ok){ m.remove(); toast('✅ 连通成功（'+r.latency_ms+'ms，模型 '+r.model+'）'); load(); }
-      else { toast('Key 已保存但测试失败：'+(r.error||'')); }
-    }catch(e){ toast('保存失败：'+e.message); }
+      if(step===1){
+        const k=$('obKey').value.trim();
+        if(k){ setPath(cfg,'api.api_key',k); await getJSON('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)}); }
+        const r = await getJSON('/api/wechat-groups');
+        const groups = r.groups||[];
+        $('obDesc').textContent = '第 2 步/共 3 步：勾选需要机器人监听的群（全不勾=监听所有群）。检测到 '+groups.length+' 个群聊。';
+        $('obKey').style.display='none';
+        const body=$('obBody'); body.innerHTML='';
+        if(!groups.length){ body.innerHTML='<div class="hint">未检测到群聊——请确认微信已登录，重启机器人后再试。</div>'; }
+        groups.forEach(g=>{
+          const lab=document.createElement('label'); lab.className='opt';
+          const inp=document.createElement('input'); inp.type='checkbox'; inp.checked = (wlList||[]).includes(g.name);
+          inp.onchange=()=>{ if(inp.checked) picked.push(g.name); else picked=picked.filter(x=>x!==g.name); };
+          lab.appendChild(inp);
+          const b=document.createElement('b'); b.textContent=g.name; lab.appendChild(b);
+          const h=document.createElement('span'); h.className='hint'; h.style.marginLeft='8px'; h.textContent=g.wxid; lab.appendChild(h);
+          body.appendChild(lab);
+        });
+        $('obNext').textContent='下一步'; step=2; return;
+      }
+      if(step===2){
+        if(picked.length){ wlList = picked.slice(); setPath(cfg,'wechat.group_name_white_list', wlList.slice()); await getJSON('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)}); renderChips(); }
+        $('obDesc').textContent = '第 3 步/共 3 步：一键体检（约 10~20 秒，会移动光标+真实右键测试，请勿动鼠标）。';
+        $('obBody').innerHTML='<pre class="out" id="obCheck" style="height:190px">体检中…</pre>';
+        $('obNext').textContent='完成'; step=3;
+        const r = await getJSON('/api/selfcheck',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+        let lines=[r.summary||'',''];
+        for(const c of (r.checks||[])){
+          lines.push((c.status==='ok'?'✅':(c.status==='warn'?'⚠️':'❌'))+' '+c.name+'：'+c.detail);
+          if(c.hint) lines.push('   建议：'+c.hint);
+        }
+        $('obCheck').textContent = lines.join('\n');
+        return;
+      }
+      if(step===3){ m.remove(); load(); loadMemory(''); toast('🎉 部署完成！'); }
+    }catch(e){ toast('出错：'+e.message); }
   };
   $('obLater').onclick = ()=>m.remove();
 }
@@ -744,6 +810,47 @@ $('pokeTest').onclick = async ()=>{
   }catch(e){ $('uiTestResult').textContent='❌ '+e.message; }
   finally{ btn.disabled=false; }
 };
+/* ── 记忆页面 ── */
+function memTime(ts){
+  if(!ts) return '—';
+  const d=new Date(ts>1e12?ts:ts*1000);
+  const p=n=>String(n).padStart(2,'0');
+  return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes());
+}
+async function loadMemory(chat_key){
+  try{
+    const r = await getJSON('/api/memory'+(chat_key?('?chat_key='+encodeURIComponent(chat_key)):''));
+    const chats = r.chats||[];
+    const sel = $('memChats');
+    const prev = sel.value;
+    sel.innerHTML = '<option value="">— 选择群聊 —</option>';
+    chats.forEach(c=>{ const o=document.createElement('option'); o.value=c.chat_key; o.textContent=c.name+'（'+c.count+' 人）'; sel.appendChild(o); });
+    if(prev && chats.some(c=>c.chat_key===prev)) sel.value=prev; else sel.value = r.chat_key || '';
+    memMembers = r.members||[];
+    const tb=$('memTable').querySelector('tbody'); tb.innerHTML='';
+    $('memEmpty').style.display = memMembers.length?'none':'block';
+    for(const m of memMembers){
+      const tr=document.createElement('tr');
+      const name = m.name || m.userId || '某人';
+      const n = (Array.isArray(m.impressions)?m.impressions.length:0);
+      const del=document.createElement('button'); del.className='ghost'; del.textContent='删除';
+      del.onclick=async ()=>{
+        if(!confirm('删除「'+name+'」的全部印象？')) return;
+        try{
+          await getJSON('/api/memory',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_key:sel.value,user_id:m.userId})});
+          toast('已删除'); loadMemory(sel.value);
+        }catch(e){ toast('删除失败：'+e.message); }
+      };
+      tr.innerHTML='<td>'+esc(name)+'</td><td>'+n+'</td><td>'+memTime(m.updatedAt)+'</td>';
+      tr.appendChild(del);
+      tb.appendChild(tr);
+    }
+  }catch(e){ $('memEmpty').style.display='block'; $('memEmpty').textContent='加载失败：'+e.message; }
+}
+let memMembers = [];
+$('memChats').addEventListener('change', ()=>loadMemory($('memChats').value));
+$('memRefresh').onclick = ()=>loadMemory($('memChats').value);
+
 /* 导航高亮 */
 document.querySelectorAll('#nav a').forEach(a=>{
   a.addEventListener('click',()=>{
@@ -772,6 +879,7 @@ async function checkAlive(){
 
 load();
 onboarding();
+loadMemory('');
 setInterval(loadStatus, 8000);
 setInterval(loadBalance, 30000);
 setInterval(()=>{ if($('autolog').checked) loadLog(); }, 4000);

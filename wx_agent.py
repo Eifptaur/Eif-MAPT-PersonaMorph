@@ -37,6 +37,17 @@ from agent.tools import build_tool_defs, execute_tool, to_openai_tools
 from agent.wechat import WeChatAdapter, WeChatError
 from agent.whale import WhaleWidget
 from agent.webui import WebUI
+from agent.util import redact_secrets
+
+
+class _SecretFormatter(logging.Formatter):
+    """日志格式化时统一脱敏（sk-***），防止 Key 写进日志/控制台。"""
+
+    def format(self, record):
+        try:
+            return redact_secrets(super().format(record))
+        except Exception:
+            return super().format(record)
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 LOG_DIR = os.path.join(ROOT, "logs")
@@ -44,12 +55,14 @@ os.makedirs(LOG_DIR, exist_ok=True)
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         logging.StreamHandler(sys.stdout),
         logging.FileHandler(os.path.join(LOG_DIR, "wx_agent.log"), encoding="utf-8"),
     ],
 )
+_fmt = _SecretFormatter("%(asctime)s [%(levelname)s] %(message)s")
+for _h in logging.getLogger().handlers:
+    _h.setFormatter(_fmt)
 log = logging.getLogger("wx-agent")
 
 # Web 控制台的日志环形缓冲（近 500 条）
@@ -69,7 +82,7 @@ class _RingHandler(logging.Handler):
 
 
 _ring = _RingHandler(log_buffer)
-_ring.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+_ring.setFormatter(_SecretFormatter("%(asctime)s [%(levelname)s] %(message)s"))
 logging.getLogger().addHandler(_ring)
 
 
@@ -667,10 +680,29 @@ def main():
                 # 真实点击自检：与拍一拍完全相同「移动+右键」逻辑，右键一条消息看菜单是否弹出
                 try:
                     cr = wechat.click_self_test()
-                    add("适配·点击实测(拍一拍同链路)", "ok" if cr.get("ok") else "fail",
+                    ok_click = bool(cr.get("ok"))
+                    add("适配·点击实测(拍一拍同链路)", "ok" if ok_click else "fail",
                         cr.get("detail", ""),
-                        "" if cr.get("ok") else "点击投递异常：检查是否在真实桌面启动(scripts\\启动机器人.bat)、"
+                        "" if ok_click else "点击投递异常：检查是否在真实桌面启动(scripts\\启动机器人.vbs)、"
                         "是否打开了群聊、机器是否卡顿/有拦截软件")
+                    # 低功率模式：点击实测连续失败 2 次 → 拍一拍降级（不再空耗尝试）
+                    ui_cfg = dict(cfg.get("ui") or {})
+                    fails = int(ui_cfg.get("poke_fail_count") or 0)
+                    if ok_click:
+                        if fails or ui_cfg.get("poke_degraded"):
+                            ui_cfg["poke_fail_count"] = 0
+                            ui_cfg["poke_degraded"] = False
+                            cfg["ui"] = ui_cfg
+                            save_config(cfg)
+                            add("拍一拍·低功率", "ok", "点击实测恢复，已清除低功率模式")
+                    else:
+                        ui_cfg["poke_fail_count"] = fails + 1
+                        ui_cfg["poke_degraded"] = ui_cfg["poke_fail_count"] >= 2
+                        cfg["ui"] = ui_cfg
+                        save_config(cfg)
+                        if ui_cfg["poke_degraded"]:
+                            add("拍一拍·低功率", "warn",
+                                "连续 %d 次点击实测失败，已进入低功率：拍一拍将不再空耗尝试，直接如实说明" % ui_cfg["poke_fail_count"])
                 except Exception as e:
                     add("适配·点击实测", "fail", str(e))
         except Exception as e:
@@ -719,6 +751,39 @@ def main():
             gs = []
         return {"ok": True, "groups": gs}
 
+    def memory_fn(action, chat_key="", user_id=""):
+        # 记忆页面：list（各群成员印象） / delete（删某成员印象）
+        try:
+            if action == "list":
+                chats = []
+                try:
+                    for ck in orch.store.list_chats():
+                        mems = orch.memory.members(ck) if hasattr(orch.memory, "members") else []
+                        if not mems:
+                            continue
+                        gname = ck
+                        try:
+                            if ":" in ck:
+                                gname = wechat.group_name(ck.split(":", 1)[1])
+                        except Exception:
+                            pass
+                        chats.append({"chat_key": ck, "name": str(gname), "count": len(mems)})
+                except Exception:
+                    pass
+                members = []
+                if chat_key:
+                    try:
+                        members = orch.memory.members(chat_key) or []
+                    except Exception:
+                        members = []
+                return {"ok": True, "chats": chats, "chat_key": chat_key, "members": members}
+            if action == "delete":
+                ok = orch.memory.remove(chat_key, "memberImpression", user_id=user_id)
+                return {"ok": bool(ok)}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": "未知操作"}
+
     def shutdown_fn():
         log.info("收到停止指令，正在停止机器人…")
         try:
@@ -763,7 +828,7 @@ def main():
                   pause_fn=lambda: orch.set_paused(True), resume_fn=lambda: orch.set_paused(False),
                   shutdown_fn=shutdown_fn, whale=orch.whale,
                   poke_test_fn=poke_test_fn, selfcheck_fn=selfcheck_fn, restart_fn=restart_fn,
-                  groups_fn=groups_fn)
+                  groups_fn=groups_fn, memory_fn=memory_fn)
     try:
         port = webui.start()
         if port:

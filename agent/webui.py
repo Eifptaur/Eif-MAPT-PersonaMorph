@@ -16,10 +16,33 @@ from urllib.parse import parse_qs, urlparse
 
 from .config import get_config, save_config, set_config
 from .console_html import HTML  # 界面模板（蓝白设计，设置项全量，独立文件便于改版）
+from .util import mask_secret, redact_secrets
 
 # 给挂件脚本（whale-widget/client/widget.js）注入访问口令：把脚本里的 /dsh-whale/*
 # 绝对路径都补上 ?token=xxx，保证前端轮询/音频请求都带上口令
 _WHALE_URL_RE = re.compile(r"(/dsh-whale/[^'\"\s?]+)(\?[^'\"\s]*)?")
+
+_MASKED_MARK = "••••"
+
+
+def _is_masked(v) -> bool:
+    return isinstance(v, str) and (_MASKED_MARK in v or v.startswith("sk-***"))
+
+
+def _protect_secrets(new_cfg: dict):
+    """保存配置时：若密钥字段还是打码值，则不覆盖真实密钥。"""
+    old = get_config()
+    api_new = new_cfg.get("api")
+    if isinstance(api_new, dict):
+        api_old = old.get("api") or {}
+        if _is_masked(api_new.get("api_key")):
+            api_new["api_key"] = api_old.get("api_key") or ""
+        pk_new = api_new.get("provider_keys")
+        if isinstance(pk_new, dict):
+            pk_old = (api_old.get("provider_keys") or {}) if isinstance(api_old, dict) else {}
+            for k, v in pk_new.items():
+                if _is_masked(v):
+                    pk_new[k] = pk_old.get(k) or ""
 
 # ── 旧版界面模板（无操作字符串，仅保留防外部引用；实际界面见 agent/console_html.py）──
 r"""
@@ -407,7 +430,7 @@ class WebUI:
     def __init__(self, status_provider, log_buffer, test_api_fn=None, on_save=None,
                  pause_fn=None, resume_fn=None, balance_fn=None, shutdown_fn=None,
                  whale=None, poke_test_fn=None, selfcheck_fn=None, restart_fn=None,
-                 groups_fn=None):
+                 groups_fn=None, memory_fn=None):
         self.status_provider = status_provider      # () -> dict
         self.log_buffer = log_buffer                # collections.deque[str]
         self.test_api_fn = test_api_fn              # () -> dict
@@ -421,6 +444,8 @@ class WebUI:
         self.poke_test_fn = poke_test_fn or (lambda: {"error": "未提供 poke_test_fn"})  # () -> dict
         self.selfcheck_fn = selfcheck_fn or (lambda: {"ok": False, "error": "未提供 selfcheck_fn"})  # () -> dict
         self.groups_fn = groups_fn or (lambda: {"ok": True, "groups": []})  # () -> dict（群列表）
+        self.memory_fn = memory_fn or (lambda action, chat_key="", user_id="": {"ok": True,
+                                                                               "chats": [], "members": []})  # (action, chat_key, user_id) -> dict
         self._server = None
         self._thread = None
         self.port = 0
@@ -486,6 +511,20 @@ class WebUI:
             self._whale_js_cache.clear()
         self._whale_js_cache[token] = body
         return body
+
+    # ── 配置脱敏 ──────────────────────────────────────────────────────────
+
+    def masked_config(self) -> dict:
+        """返回配置副本：所有 API Key 打码（真实值只存服务器 config.json）。"""
+        cfg = dict(get_config())
+        api = dict(cfg.get("api") or {})
+        if api.get("api_key"):
+            api["api_key"] = mask_secret(api["api_key"])
+        pk = api.get("provider_keys")
+        if isinstance(pk, dict):
+            api["provider_keys"] = {k: mask_secret(v) for k, v in pk.items() if v}
+        cfg["api"] = api
+        return cfg
 
     def start(self) -> int:
         cfg = get_config().get("server", {})
@@ -555,7 +594,15 @@ class WebUI:
                     self.end_headers()
                     self.wfile.write(body)
                 elif path == "/api/config":
-                    self._json(get_config())
+                    self._json(parent.masked_config())
+                elif path == "/api/memory":
+                    # 记忆页面：?chat_key= 传群则返回该群成员印象列表
+                    q = parse_qs(parsed.query)
+                    chat_key = (q.get("chat_key") or [""])[0]
+                    try:
+                        self._json(parent.memory_fn("list", chat_key))
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
                 elif path == "/api/status":
                     self._json(parent.status_provider())
                 elif path == "/api/balance":
@@ -596,11 +643,20 @@ class WebUI:
                 if path == "/api/config":
                     try:
                         new_cfg = data if isinstance(data, dict) and data else get_config()
+                        _protect_secrets(new_cfg)  # 掩码值不覆盖真实密钥
                         set_config(new_cfg)
                         save_config(new_cfg)
                         if parent.on_save:
                             parent.on_save(new_cfg)
                         self._json({"ok": True})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)}, 500)
+                elif path == "/api/memory":
+                    # 删除某成员的印象（记忆页）
+                    try:
+                        r = parent.memory_fn("delete", str(data.get("chat_key") or ""),
+                                             str(data.get("user_id") or ""))
+                        self._json(r)
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)}, 500)
                 elif path == "/dsh-whale/size.json":

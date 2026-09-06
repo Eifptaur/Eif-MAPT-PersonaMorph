@@ -26,6 +26,29 @@ def now_ms() -> int:
     return int(time.time() * 1000)
 
 
+# ── 密钥脱敏（控制台/日志不暴露完整 API Key）─────────────────────────────
+
+_SECRET_RE = re.compile(r"(sk-[A-Za-z0-9_\-]{8,})")
+
+
+def mask_secret(secret) -> str:
+    """sk-xxxx…后4位 的展示形式；非 sk 前缀也按首尾截断。"""
+    s = str(secret or "")
+    if not s:
+        return ""
+    if len(s) <= 8:
+        return "••••"
+    return s[:5] + "••••" + s[-4:]
+
+
+def redact_secrets(text) -> str:
+    """把文本里的 sk- 长密钥替换为 sk-***（日志/存档脱敏用）。"""
+    t = str(text or "")
+    if "sk-" not in t:
+        return t
+    return _SECRET_RE.sub(lambda m: (m.group(1)[:3] + "***"), t)
+
+
 def pad2(n: int) -> str:
     return str(n).zfill(2)
 
