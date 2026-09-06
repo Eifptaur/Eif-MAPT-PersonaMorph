@@ -467,12 +467,13 @@ class WeChatAdapter:
             return True, "重复发送已拦截（3 秒内同一文本）"
         name = self.group_name(chat_id)
         try:
-            gui = self._get_gui()
-            r = gui.send_msg(text, who=name, verify=False)
-            ok = bool(getattr(r, "is_success", False))
-            if ok:
-                self._mark_sent(text)
-            return ok, str(getattr(r, "message", "") or "")
+            with self._send_lock:  # 所有碰微信窗口的操作统一串行（发消息/引用/拍一拍/回拍不打架）
+                gui = self._get_gui()
+                r = gui.send_msg(text, who=name, verify=False)
+                ok = bool(getattr(r, "is_success", False))
+                if ok:
+                    self._mark_sent(text)
+                return ok, str(getattr(r, "message", "") or "")
         except Exception as e:
             return False, str(e)
 
@@ -482,12 +483,13 @@ class WeChatAdapter:
             return True, "重复发送已拦截（3 秒内同一文本）"
         name = self.group_name(chat_id)
         try:
-            gui = self._get_gui()
-            r = gui.at_member(member_name, text, who=name, verify=False)
-            ok = bool(getattr(r, "is_success", False))
-            if ok:
-                self._mark_sent(text)
-            return ok, str(getattr(r, "message", "") or "")
+            with self._send_lock:
+                gui = self._get_gui()
+                r = gui.at_member(member_name, text, who=name, verify=False)
+                ok = bool(getattr(r, "is_success", False))
+                if ok:
+                    self._mark_sent(text)
+                return ok, str(getattr(r, "message", "") or "")
         except Exception as e:
             return False, str(e)
 
@@ -495,9 +497,10 @@ class WeChatAdapter:
         """发送本地图片。返回 (ok, message)。"""
         name = self.group_name(chat_id)
         try:
-            gui = self._get_gui()
-            r = gui.send_image(local_path, who=name, verify=False)
-            return bool(getattr(r, "is_success", False)), str(getattr(r, "message", "") or "")
+            with self._send_lock:
+                gui = self._get_gui()
+                r = gui.send_image(local_path, who=name, verify=False)
+                return bool(getattr(r, "is_success", False)), str(getattr(r, "message", "") or "")
         except Exception as e:
             return False, str(e)
 
@@ -838,6 +841,32 @@ class WeChatAdapter:
         return None
 
     def send_poke(self, chat_id: str, target_name: str, target_id: str = "", dbg: list | None = None):
+        """拍一拍某位成员（串行锁内执行）：右键头像 → 菜单选「拍一拍」；头像未显示时改走气泡菜单。
+        返回 (ok, message)；验证失败如实返回，不假报。"""
+        with self._send_lock:
+            return self._send_poke_inner(chat_id, target_name, target_id, dbg)
+
+    @staticmethod
+    def _bubble_point(gui, ax: int, ay: int) -> tuple:
+        """基于 OCR 求该行「气泡文本起点」（渲染坐标）；失败回退 头像中心+70。
+
+        连续消息折叠时该行可能没有头像，气泡位置必须靠文本列推断；
+        OCR 给出的是裁剪内相对坐标，渲染 x = right_pane_left + x。
+        """
+        try:
+            items = gui.ocr_zoomed((gui.right_pane_left, max(0, ay - 36),
+                                    gui.render_w, min(gui.render_h, ay + 36)), scale=3)
+            xs = [x for t, x, y, w, h in items
+                  if (t or "").strip() and abs((y + h / 2) - ay) < 46]
+            if xs:
+                px = gui.right_pane_left + min(xs) - 8
+                if gui.right_pane_left + 60 < px < gui.render_w - 120:
+                    return px, ay
+        except Exception:
+            pass
+        return ax + 70, ay
+
+    def _send_poke_inner(self, chat_id: str, target_name: str, target_id: str = "", dbg: list | None = None):
         """拍一拍某位成员：右键对方头像 → 菜单选「拍一拍」。靠 UIA/OCR 定位 + 数据库验证。
 
         返回 (ok, message)。对方最近发过言、名字在可见消息区里才比较容易成功。
@@ -878,9 +907,16 @@ class WeChatAdapter:
             else:
                 path = "左侧消息兜底"
             _d("5) 头像位置：渲染坐标 (%d,%d)，定位方式：%s" % (ax, ay, path))
-            _d("6) 移动到 (%d,%d) 并右键…（光标位置与命中窗口将在成功/失败时回读）" % (
-                gui.origin_x + ax, gui.origin_y + ay))
-            menu_hit = self._right_click_menu(gui, ax, ay, "拍一拍")
+            # 头像未显示（连续消息折叠 / 无彩色斑块）→ 改走「气泡」路径：
+            # 消息右键菜单同样含「拍一拍」，拍的是该消息的发送者（安全）
+            if score < 0.6:
+                px, py = self._bubble_point(gui, ax, ay)
+                _d("   → 未检测到彩色头像（可能是连续消息未显示头像），改为右键气泡 (%d,%d) 里的「拍一拍」" % (px, py))
+                menu_hit = self._right_click_menu(gui, px, py, "拍一拍")
+            else:
+                _d("6) 移动到 (%d,%d) 并右键…（光标位置与命中窗口将在成功/失败时回读）" % (
+                    gui.origin_x + ax, gui.origin_y + ay))
+                menu_hit = self._right_click_menu(gui, ax, ay, "拍一拍")
             _d("   光标最终位置：%s（右键后）" % (_cursor_pos(),))
             self._scroll_to_bottom(gui)  # 翻过页的话把聊天滚回最新，不影响用户
             if menu_hit:
@@ -970,6 +1006,15 @@ class WeChatAdapter:
 
     def _verify_poke_menu(self, chat_id: str, target_name: str, target_id: str = "",
                           dbg: list | None = None) -> tuple:
+        """简易拍一拍检测（串行锁内执行）：只确认「定位 → 右键能弹出含拍一拍的菜单」。
+
+        不点菜单项（Esc 关闭），确保不会误拍任何群友。返回 (ok, message)。
+        """
+        with self._send_lock:
+            return self._verify_poke_menu_inner(chat_id, target_name, target_id, dbg)
+
+    def _verify_poke_menu_inner(self, chat_id: str, target_name: str, target_id: str = "",
+                                dbg: list | None = None) -> tuple:
         """简易拍一拍检测：只确认「定位到头像 → 右键能弹出含拍一拍的菜单」。
 
         不点菜单项（Esc 关闭），确保不会误拍任何群友。
@@ -992,6 +1037,11 @@ class WeChatAdapter:
                 return False, "未定位到头像，请让对方先发条消息"
             ax, ay, score = located
             _d("头像位置：渲染坐标 (%d,%d)" % (ax, ay))
+            # 头像未显示（连续消息折叠）→ 改右键气泡（消息菜单同样含「拍一拍」）
+            if score < 0.6:
+                px, py = self._bubble_point(gui, ax, ay)
+                _d("   → 未检测到彩色头像（连续消息折叠），改右键气泡 (%d,%d)" % (px, py))
+                ax, ay = px, py
             ok, why = self._click(gui, ax, ay, right=True)
             if not ok:
                 _d("✘ 右键被拦截：%s" % why)
@@ -1008,15 +1058,20 @@ class WeChatAdapter:
                     except Exception:
                         continue
             if menu is None:
-                # OCR 兜底（只判断，不点击）
+                # OCR 兜底（只判断，不点击）；严格「真菜单」过滤：
+                # 聊天文本（如「@E 第二条：拍一拍拍不上…」）含有 @、长于 12 字或行高
+                # 远超菜单字条 h<46 · scale=3 还原后 → 全部剔除，杜绝误报成功
                 try:
                     items = gui.ocr_zoomed((gui.right_pane_left, max(0, ay - 40),
                                             gui.render_w, min(gui.render_h, ay + 360)), scale=3)
                 except Exception:
                     items = []
                 for text, x, y, w, h in items:
-                    if "拍一拍" in text or text.strip() in ("引用", "回复", "转发"):
-                        menu = text.strip()[:8]
+                    t = (text or "").strip()
+                    if not t or "@" in t or len(t) > 12 or h > 46:
+                        continue
+                    if t in ("拍一拍", "引用", "回复", "转发"):
+                        menu = t
                         break
             # 关闭菜单：只有 UIA 确认到菜单节点才按 Esc（防误关聊天窗）
             if uia is not None and menu is not None and (menu in ("拍一拍", "引用", "回复", "转发")):
@@ -1145,6 +1200,12 @@ class WeChatAdapter:
         return False, "已点「拍一拍」但数据库与界面都未验证到（可能没点中/没拍到，如实告诉对方这次没拍上，稍后再试）"
 
     def reply_quote(self, chat_id: str, text: str, target_text: str = "", target_sender_name: str = ""):
+        """引用一条消息并发送文字（串行锁内执行）。"""
+        with self._send_lock:
+            return self._reply_quote_inner(chat_id, text, target_text, target_sender_name)
+
+    def _reply_quote_inner(self, chat_id: str, text: str, target_text: str = "",
+                           target_sender_name: str = ""):
         """引用一条消息并发送文字：定位「对方头像」→ 右键头像右侧的气泡起点 → 菜单「引用」→ 输入 → 发送。
 
         为什么不用「整行中央」：微信 4.x UIA 的 ChatTextItemView 矩形是**全宽行**，
@@ -1183,20 +1244,10 @@ class WeChatAdapter:
                     located = self._send_poke_locate(gui, target_sender_name or "", target_text, scroll=True)
                 if located:
                     ax, ay, _score = located
-                    # 只点「气泡文本」：头像中心 +70px 起（头像右缘+空档+气泡内边距），
-                    # 绝不点在 ID/头像与气泡之间的空白（实测不弹菜单）
-                    points = [(ax + 70, ay), (ax + 95, ay)]
-                    try:
-                        items = gui.ocr_zoomed((gui.right_pane_left, max(0, ay - 36),
-                                                gui.render_w, min(gui.render_h, ay + 36)), scale=3)
-                        xs = [x for t, x, y, w, h in items
-                              if (t or "").strip() and abs((y + h / 2) - ay) < 46]
-                        if xs:
-                            px = gui.right_pane_left + min(xs) - 8
-                            if gui.right_pane_left + 60 < px < gui.render_w - 120:
-                                points.append((px, ay))
-                    except Exception:
-                        pass
+                    # 候选点：① 气泡文本起点（OCR 定位，最准——连续消息折叠时行内没有头像，
+                    # 但气泡一定在）② 头像中心 +70（头像显示时的固定回退）③ +95
+                    px, py = self._bubble_point(gui, ax, ay)
+                    points = [(px, py), (ax + 70, ay), (ax + 95, ay)]
                 else:
                     # 没有定位到目标行：不做任何"乱点兜底"（防止点到侧栏群名称/空白）。
                     # 滚动搜索交给 _send_poke_locate(scroll=True)，这里直接失败并提示。

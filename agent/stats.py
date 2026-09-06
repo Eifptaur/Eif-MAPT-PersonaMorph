@@ -49,7 +49,8 @@ class UsageStats:
             self.data["total"] = {**_empty(), **(d.get("total") or {})}
             self.data["history"] = list(d.get("history") or [])[-_HISTORY_MAX:]
             ps = str(d.get("period_start") or "")
-            if ps > _period_start(None, self.period):
+            if ps >= _period_start(None, self.period):
+                # 同一周期内（或文件时间在未来）：保留周期数据
                 self.data["period_start"] = ps
                 self.data["period"] = {**_empty(), **(d.get("period") or {})}
             else:

@@ -604,10 +604,13 @@ async function loadStatus(){
     $('st-tokens').textContent = s.stats.tokens;
     $('st-sent').textContent = s.stats.sent;
     $('st-cost').textContent = '¥' + (s.stats.cost||0).toFixed(4);
-    const u = s.usage || {}, p = u.period || {};
-    $('st-pcost').textContent = '¥' + (p.cost||0).toFixed(4) + ' · ' + (p.tokens||0) + ' tok';
+    const u = s.usage || {}, p = (u && u.period) || {};
+    const has = p && (parseFloat(p.cost||0) > 0 || parseInt(p.tokens||0) > 0 || parseInt(p.sessions||0) > 0);
+    $('st-pcost').textContent = has ? ('¥' + (p.cost||0).toFixed(4) + ' · ' + (p.tokens||0) + ' tok') : '—';
     const lbl = {daily:'今日', weekly:'本周', monthly:'本月'};
-    $('st-plabel').textContent = (lbl[u.period_type]||'本周期') + ' 用量（' + (p.sessions||0) + ' 会话 / ' + (p.sent||0) + ' 条）';
+    $('st-plabel').textContent = has
+      ? ((lbl[u.period_type]||'本周期') + ' 用量（' + (p.sessions||0) + ' 会话 / ' + (p.sent||0) + ' 条）')
+      : ((lbl[u.period_type]||'本周期') + ' 用量（暂无消耗）');
     $('st-groups').textContent = s.groups.filter(g=>g.target).length;
     $('pauseBtn').textContent = s.paused ? '恢复' : '暂停';
     const tb = $('group-table').querySelector('tbody'); tb.innerHTML='';
