@@ -604,46 +604,63 @@ class WeChatAdapter:
         s = s.replace("@", "").replace("@", "")
         return s
 
-    def _uia_target_row_rect(self, gui, db_text: str):
+    def _uia_target_row_rect(self, gui, db_text: str, scroll: bool = False):
         """用 UIA 消息列表匹配目标最近一条消息的行矩形（屏幕坐标）。
 
         微信 4.x 的消息列表在 UIA 树里是 chat_message_list（mmui::RecyclerListView），
         每行 mmui::ChatTextItemView 的 Name 就是消息原文（可能被截断）——
         先精确匹配，再按前 24 字做相似度匹配（防截断/OCR 噪声）。
+        scroll=True 且可视区没有时，会用滚轮向上翻页查找（最多 12 屏），
+        解决「消息多、目标消息滚出可见区」的情况。
         返回 (left, top, right, bottom) 或 None。
         """
         try:
             uia = gui._get_uia()
             if uia is None:
                 return None
-            lst = uia._message_list()
-            if lst is None:
-                return None
             target = self._norm_ocr(db_text)
             if not target:
                 return None
-            best = None
-            best_score = 0.0
-            for ch in list(lst.GetChildren()):
-                try:
-                    if ch.ClassName != "mmui::ChatTextItemView":
-                        continue
-                    nm = self._norm_ocr(ch.Name or "")
-                except Exception:
-                    continue
-                if not nm:
-                    continue
-                if nm == target:
-                    best = ch
-                    break
-                score = _seq_ratio(nm[:24], target[:24])
-                if score > 0.5 and score > best_score:
-                    best_score = score
-                    best = ch
-            if best is None:
+
+            def _match(nm: str) -> bool:
+                nm = self._norm_ocr(nm)
+                return bool(nm) and (nm == target or _seq_ratio(nm[:24], target[:24]) > 0.5)
+
+            # 1) 可视区先找（避免无谓翻页）
+            try:
+                lst = uia._message_list()
+                if lst is not None:
+                    best = None
+                    best_score = 0.0
+                    for ch in list(lst.GetChildren()):
+                        try:
+                            if ch.ClassName != "mmui::ChatTextItemView":
+                                continue
+                            nm = self._norm_ocr(ch.Name or "")
+                        except Exception:
+                            continue
+                        if nm == target:
+                            best = ch
+                            break
+                        sc = _seq_ratio(nm[:24], target[:24]) if nm else 0.0
+                        if sc > 0.5 and sc > best_score:
+                            best_score = sc
+                            best = ch
+                    if best is not None:
+                        r = best.BoundingRectangle
+                        return (r.left, r.top, r.right, r.bottom)
+            except Exception:
+                pass
+            if not scroll:
                 return None
-            r = best.BoundingRectangle
-            return (r.left, r.top, r.right, r.bottom)
+            # 2) 滚轮向上翻页查找
+            res = uia.find_in_message_list(
+                lambda cn, nm: cn == "mmui::ChatTextItemView" and _match(nm),
+                match_last=False, max_scrolls=12)
+            if res:
+                r = res[2]
+                return (r.left, r.top, r.right, r.bottom)
+            return None
         except Exception:
             return None
 
@@ -682,8 +699,8 @@ class WeChatAdapter:
         ③ OCR 相似度匹配 → 彩色头像检测；④ 左侧消息块兜底。
         返回第三位 score 供日志说明路径（1.0=UIA 精确行 / 0.8=彩色检测 / 0.0=兜底）。
         """
-        # 1) UIA 行匹配 + 彩色头像检测
-        row = self._uia_target_row_rect(gui, db_text)
+        # 1) UIA 行匹配（可向上翻页查找）+ 彩色头像检测
+        row = self._uia_target_row_rect(gui, db_text, scroll=True)
         if row:
             av = self._find_avatar_center((row[0], row[1], row[0] + 130, row[3]))
             if av:
@@ -869,8 +886,12 @@ class WeChatAdapter:
             pass
         return False, "已点「拍一拍」但数据库与界面都未验证到（可能没点中/没拍到，如实告诉对方这次没拍上，稍后再试）"
 
-    def reply_quote(self, chat_id: str, text: str):
-        """引用最近一条消息并发送文字：右键最近消息 → 菜单选「引用」→ 输入 → 发送。"""
+    def reply_quote(self, chat_id: str, text: str, target_text: str = ""):
+        """引用一条消息并发送文字：右键该消息 → 菜单选「引用」→ 输入 → 发送。
+
+        target_text 非空时：先按文本在消息列表里找（可视区找不到会向上翻页
+        最多 12 屏），右键那一条的正文；为空时引用「最近一条消息」（近似）。
+        """
         try:
             gui = self._get_gui()
             group = self.group_name(chat_id)
@@ -879,12 +900,24 @@ class WeChatAdapter:
             if not gui.open_chat(group):
                 return False, "打开会话失败"
             time.sleep(0.8)
-            y = gui._last_message_y()
-            if y is None:
-                return False, "未检测到消息区"
-            rel_x = (gui.render_w + gui.right_pane_left) // 2
-            if not self._right_click_menu(gui, rel_x, y, "引用"):
-                return False, "右键菜单里没找到「引用」"
+            if target_text.strip():
+                row = self._uia_target_row_rect(gui, target_text, scroll=True)
+                if row:
+                    rel_x = (row[0] + row[2]) // 2 - gui.origin_x
+                    rel_y = (row[1] + row[3]) // 2 - gui.origin_y
+                else:
+                    # 找不到目标消息：退回最近一条并如实告诉调用方
+                    y = gui._last_message_y()
+                    rel_y = y if y is not None else gui.render_h - 120
+                    rel_x = (gui.render_w + gui.right_pane_left) // 2
+            else:
+                y = gui._last_message_y()
+                if y is None:
+                    return False, "未检测到消息区"
+                rel_y = y
+                rel_x = (gui.render_w + gui.right_pane_left) // 2
+            if not self._right_click_menu(gui, rel_x, rel_y, "引用"):
+                return False, "右键菜单里没找到「引用」（目标消息可能不在屏幕内，已尝试向上翻页）"
             time.sleep(0.5)
             if not gui.input_text(text):
                 return False, "输入文字失败"

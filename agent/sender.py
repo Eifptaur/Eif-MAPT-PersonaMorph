@@ -50,8 +50,8 @@ class SendQueue:
         by_len = min(8000, len(text or "") * int(cfg.get("by_length_ms") or 20))
         return min(15000, max(min_gap, rand_int(min_gap, max_gap) * 0.5 + by_len * 0.5)) / 1000.0
 
-    def send_text_batch(self, chat_key: str, messages, reply_to_mid=None, at_user_id=None):
-        """发送一批文本。返回 {sent, failed}。"""
+    def send_text_batch(self, chat_key: str, messages, reply_to_mid=None, at_user_id=None, reply_text=""):
+        """发送一批文本。返回 {sent, failed}。reply_text 为被引用消息的原文（定位用）。"""
         kind, chat_id = self._parse_key(chat_key)
         list_msgs = list(messages) if isinstance(messages, (list, tuple)) else [messages]
         if not list_msgs:
@@ -84,7 +84,7 @@ class SendQueue:
                     use_at = at_user_id if is_first else None
                     use_quote = reply_to_mid if is_first else None
                     if use_quote:
-                        ok, msg = self.wechat.reply_quote(chat_id, text)
+                        ok, msg = self.wechat.reply_quote(chat_id, text, target_text=reply_text)
                         if not ok:
                             ok, msg = self.wechat.send_text(chat_id, text)
                     elif use_at:

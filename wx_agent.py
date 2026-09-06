@@ -557,20 +557,6 @@ def main():
     def balance_fn():
         return query_balance()
 
-    def ui_test_fn():
-        # 界面适配自检：检测 DPI 缩放、把鼠标移到微信窗口内回读命中窗口
-        try:
-            from agent import ui_adapt
-            if wechat is None:
-                return ui_adapt.self_test(None)
-            gui = wechat._get_gui()
-            box = gui.get_input_box()
-            pt = (gui.origin_x + (gui.right_pane_left + gui.render_w) // 2,
-                  gui.origin_y + ((box[1] + box[3]) // 2 if box else gui.render_h // 2))
-            return ui_adapt.self_test(gui, point=pt)
-        except Exception as e:
-            return {"error": str(e)}
-
     def selfcheck_fn():
         """一键体检：把「换电脑容易踩的坑」做成可自助检查的清单。
 
@@ -728,7 +714,7 @@ def main():
 
     webui = WebUI(status_provider, log_buffer, test_api_fn=test_api_fn, balance_fn=balance_fn,
                   pause_fn=lambda: orch.set_paused(True), resume_fn=lambda: orch.set_paused(False),
-                  shutdown_fn=shutdown_fn, whale=orch.whale, ui_test_fn=ui_test_fn,
+                  shutdown_fn=shutdown_fn, whale=orch.whale,
                   poke_test_fn=poke_test_fn, selfcheck_fn=selfcheck_fn)
     try:
         port = webui.start()

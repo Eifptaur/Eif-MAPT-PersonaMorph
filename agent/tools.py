@@ -217,10 +217,18 @@ def _exec_send_message(ctx, args):
         messages = normalize_message_list(args.get("messages"))
         if not messages:
             return _err("消息内容为空")
+        # 引用时把被引用消息的原文带给发送层（用于在消息列表里定位它，即便已滚出可视区）
+        reply_text = ""
+        rmid = args.get("reply_to_message_id")
+        if rmid:
+            entry = ctx["store"].find_by_mid(ctx["chat_key"], rmid)
+            if entry:
+                reply_text = str(entry.get("text") or "")
         result = ctx["sender"].send_text_batch(
             ctx["chat_key"], messages,
-            reply_to_mid=args.get("reply_to_message_id"),
+            reply_to_mid=rmid,
             at_user_id=args.get("at_user_id"),
+            reply_text=reply_text,
         )
         ctx["session"]["sent"].extend([{"type": "text", "text": s["text"], "at": s.get("at")} for s in result["sent"]])
         note = "已发送。不要输出\"已发送\"类汇报，继续思考下一步或直接结束。"
