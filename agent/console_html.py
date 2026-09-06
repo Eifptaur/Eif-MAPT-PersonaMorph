@@ -398,8 +398,9 @@ function toast(msg){const t=$('toast');t.textContent=msg;t.style.display='block'
 function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 
 const URL_TOKEN = new URLSearchParams(location.search).get('token') || '';
-/* 内嵌 SVG 鲸鱼图标（服务停止后图片路由不可用，弹层一律用它，不再依赖 /assets） */
-const ICON = '<svg width="72" height="66" viewBox="0 0 96 88" style="margin-bottom:12px"><rect x="4" y="4" width="88" height="80" rx="22" fill="#4D6BFE"/><ellipse cx="44" cy="47" rx="27" ry="16" fill="#fff"/><path d="M66 39 L88 22 L81 45 L91 63 L64 50 Z" fill="#fff"/><circle cx="31" cy="43" r="3.6" fill="#4D6BFE"/></svg>';
+/* 内嵌原版 DeepSeek 蓝鲸 Logo（base64，服务挂了也能显示；渲染与粒子效果都在用） */
+const LOGO_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADoAAAA2CAYAAACWeYpTAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAATOSURBVGhD7ZhPUxpnHMe/xKXCgCPP2EedNIdCb8GT+wbc4itoFfoGTOw0uXXS9hAzxhwar3oweuilFwjTnjsD4gso9oI59EB6KDPClu466gRk0R5g191nd4FdcGoIn5mdWX6/h2W/z+/P8zx4ms3LK3wA3GENw8pI6LDhUUY1OlyMhA4bI6HDxkjobaBWv0StfsmaXfG/rKMVSUEuf9a+b0LgA5iL+Nhh2HpdReVfBRsPZ1iXY25EaEVSUCjWDLZpwuGoWEMuf46K1NDs0bDfVsgX3/8FAHj+YNZyIpwwMKGFYg1HxRqSGZl1dWTnu3uYJhxrBnRCp4kXAh9AYjHEDtGoSArWdsvY/vYuuDEP6x5MjT59Vcba7rFjkWhPkBUVSdHdN5DMyFh9WWLsrcxp+f42ZApLXxGtSAq2UlUcvX3HunqmU7Seviqbni3wExD4ANZ2jw12lV9+/JQ1Af1EdBAioYuWVTbMfTbOmnBUrNmKFPgJ1qThWuggROpJZmRsva4abAIfNHxGe2LsEPgAa9K4c3UFOL32fz8bqEiVXP4UD1+WtN+hIQ6Plj5mh1mSiIUQDftM76periKazJ6wpoEhSg2sbpa0zwIf7CiWEi/WV2YRt6hxPZ6G4rwZfflDq+3fJJR4sbEyA9peelY3SxB1aZuIhXA/4ut5fXUs9I8/3+HFT2VA92MAIEoKCm/rOMifMt9wDyVefD4fACUcttP/aPZo2I/nD6w3GXY4FvrrwQl+/k0CJV7sPPmEdUNsr3O5/Bn2D88NUbAjEQuBEg65/HlPtb/AT+Dx0hRr7oirGkW7llRReijhQAmH+GIIGyszWOjQ8vVQwuHx8hQSsc61BgBzYfOy0w3HQqWz69NE2UKoHko4fBWb7PryZbmJ7XRVm6Bu43utSz2OhZLg9Vfe2Gzf9Kgvv/PkHijxsm6gvQnQZ4jABxEN+9lhGmqDcoJjoaGJMe2+UKwbfJ2ghMPGinUDUetYzRBKONvFv9dSYHEsNHz3I+2+IpuPY52ghMP6yixr1thOV5HKyCi0j3NWCPPWE9ANx0Ing9cRFaUGcofWL2THXMRnW4Oi1EAyK+PZ3rFl942G/a7qE26EkokxQ/0cOYioSrcatCO+OMmaesaxUDCbZ1FqYCtt3Ix3Q11KnNBPNOFW6FzEZ+igB/lTpCyOWZ2gpPcNOwDHE8PiSiglHBIxYxrtH57bNqatdBWrmyWTX+CDtvWqR9059cOdKwBurgU+aGj1otTAdrqKZEY2jVX9z/Zaf7ewz+lUr9GwH8uLIdMznV6uIqqSiE0aUliUGkhlZVMa66Ofysr4erOkbQ4o4fBoecpWbDQybsoEN3guHG7qWURJwdpe2bR5p8QLYT6A+xEf3hRrSGWN4lW/eo4UJQXJ7Int6YcSL+KxSct/HXqhb6Fov2Quf2YS0wuUeBGN+BBtb9RT2RPTpKlEw36sOzyeqQxEqEoqI7sSq0KJF98sTWGGcFq66lPcbTQBwHPRaA5MKACIsoJc/tyx4HgshDjTyQfJwIWqiLKCQrHePpkoqEhNiHIrJWmo1cCikXFME+5GBapcC/W0+7Ad77nfc6HcTERvGzeWureNvjYM7xMjocPGSOiw8cEI9dRHy8twMRI6bPwHTfhdUJub1u0AAAAASUVORK5CYII=';
+const ICON = '<img src="'+LOGO_URL+'" style="width:64px;height:60px;margin-bottom:12px" alt="whale">';
 
 async function getJSON(url, opts){
   opts = opts || {};
@@ -695,93 +696,55 @@ function applyProvider(provider, askKey){
   }
 }
 $('providerSel').addEventListener('change', ()=>applyProvider($('providerSel').value, true));
-/* ── 左上角 Logo：DeepSeek 风「蓝圆角方块 + 白鲸」商标式设计；悬停白鲸溶解成粒子游动/离开重组 ── */
+/* ── 左上角 Logo：官方 DeepSeek 蓝鲸原图 + 像素级「溶解游动/重组」粒子效果 ── */
 (function(){
   const lc = $('logoFx'), ctx = lc.getContext('2d');
-  const W = 152, H = 88;                      // 画布内部分辨率（CSS 76×44，等比不拉伸）
+  const W = 152, H = 88;
   lc.width = W; lc.height = H;
   lc.style.width = '76px'; lc.style.height = '44px';
-  const TILE = [10, 8, 132, 72, 22];          // x,y,w,h,r
-  const E = {cx: 62, cy: 52, rx: 34, ry: 19}; // 白鲸身体
-  const TAIL = [[92,44],[122,22],[113,50],[126,72],[92,56]]; // 尾巴
-  function inWhale(x, y){
-    const ex = (x - E.cx) / E.rx, ey = (y - E.cy) / E.ry;
-    if (ex*ex + ey*ey <= 1) return true;
-    let inside = false;
-    for (let i=0, j=TAIL.length-1; i<TAIL.length; j=i++){
-      const [xi,yi] = TAIL[i], [xj,yj] = TAIL[j];
-      if (((yi > y) !== (yj > y)) && (x < (xj-xi)*(y-yi)/(yj-yi)+xi)) inside = !inside;
+  const img = new Image();
+  let dots = [], ready = false, hov = false, running = false, t0 = null;
+  img.onload = function(){
+    // 把 logo 画进离屏画布，按不透明像素采样粒子
+    const scale = Math.min(W / img.width, H / img.height) * 0.92;
+    const dw = img.width * scale, dh = img.height * scale;
+    const ox = (W - dw) / 2, oy = (H - dh) / 2;
+    const off = document.createElement('canvas'); off.width = W; off.height = H;
+    const octx = off.getContext('2d');
+    octx.drawImage(img, ox, oy, dw, dh);
+    let data = null;
+    try { data = octx.getImageData(0, 0, W, H).data; } catch(e){}
+    if (data){
+      const step = 3;
+      for (let y=0; y<H; y+=step) for (let x=0; x<W; x+=step){
+        const a = data[(y*W+x)*4+3];
+        if (a > 128 && dots.length < 260) dots.push({hx:x, hy:y, x:x, y:y, ph:Math.random()*6.28, r:1.2+Math.random()*0.9});
+      }
     }
-    return inside;
-  }
-  const home = [];
-  for (let y=20; y<76; y+=3) for (let x=22; x<130; x+=3){
-    if (inWhale(x,y) && home.length < 170) home.push({x,y});
-  }
-  const dots = home.map(p=>({hx:p.x, hy:p.y, x:p.x, y:p.y, ph:Math.random()*6.28, r:1.4+Math.random()*1.0}));
-  function drawBase(){
+    ready = true; drawStatic();
+  };
+  img.src = LOGO_URL;
+  function drawStatic(){
     ctx.clearRect(0,0,W,H);
-    const g = ctx.createLinearGradient(0,0,TILE[2],TILE[3]);
-    g.addColorStop(0,'#5A78FF'); g.addColorStop(1,'#3D5BF0');
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    const [x,y,w,h,r] = TILE;
-    ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
-    ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); ctx.fill();
+    ctx.drawImage(img, (W-img.width*1.4)/2, (H-img.height*1.4)/2, img.width*1.4, img.height*1.4);
   }
-  function drawWhaleSolid(){
-    drawBase();
-    // 主色调改绿色：鲸身绿、底蓝、细节白/黑（可一行改回官方蓝：#34D399→#4D6BFE）
-    const green = ctx.createLinearGradient(50,20,90,80);
-    green.addColorStop(0,'#34D399'); green.addColorStop(1,'#059669');
-    ctx.fillStyle = green;
-    // 身体（更饱满）：主椭圆 + 前额隆起
-    ctx.beginPath(); ctx.ellipse(E.cx,E.cy,E.rx,E.ry,-0.06,0,Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(44,40,20,15,-0.10,0,Math.PI*2); ctx.fill();
-    // 尾巴（分叉带缺口）
-    ctx.beginPath();
-    ctx.moveTo(TAIL[0][0],TAIL[0][1]); ctx.lineTo(TAIL[1][0],TAIL[1][1]);
-    ctx.lineTo(TAIL[2][0],TAIL[2][1]); ctx.lineTo(TAIL[3][0],TAIL[3][1]);
-    ctx.lineTo(TAIL[4][0],TAIL[4][1]);
-    ctx.lineTo(TAIL[2][0]+8,TAIL[2][1]+6);   // 缺口向里
-    ctx.lineTo(TAIL[3][0]+(TAIL[3][0]-TAIL[2][0])*2-14,TAIL[3][1]+2);
-    ctx.closePath(); ctx.fill();
-    // 背鳍
-    ctx.beginPath();
-    ctx.moveTo(74,34); ctx.quadraticCurveTo(84,16,92,30); ctx.quadraticCurveTo(86,32,80,38);
-    ctx.closePath(); ctx.fill();
-    // 喷水（白色小点 x2）
-    ctx.fillStyle = 'rgba(255,255,255,.9)';
-    ctx.beginPath(); ctx.arc(96,18,2.6,0,Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(103,25,1.9,0,Math.PI*2); ctx.fill();
-    // 黑眼睛 + 白高光
-    ctx.fillStyle = '#0F172A';
-    ctx.beginPath(); ctx.arc(46,47,4.4,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#FFFFFF';
-    ctx.beginPath(); ctx.arc(44,45,1.6,0,Math.PI*2); ctx.fill();
-    // 腹部白过渡
-    ctx.fillStyle = 'rgba(255,255,255,.25)';
-    ctx.beginPath(); ctx.ellipse(58,58,16,7,0.08,0,Math.PI*2); ctx.fill();
-  }
-  drawWhaleSolid();
-  let hov = false, running = false, t0 = null;
   function frame(ts){
     if(t0 === null) t0 = ts;
     const t = (ts - t0) / 1000;
-    drawBase();
+    ctx.clearRect(0,0,W,H);
     for (const d of dots){
       let tx = d.hx, ty = d.hy;
-      if (hov){ tx = d.hx + Math.sin(t*4 + d.ph) * 4.2; ty = d.hy + Math.cos(t*3 + d.ph) * 2.0; }
+      if (hov){ tx = d.hx + Math.sin(t*4 + d.ph) * 4.0; ty = d.hy + Math.cos(t*3 + d.ph) * 2.0; }
       d.x += (tx - d.x) * 0.14; d.y += (ty - d.y) * 0.14;
-      ctx.globalAlpha = 0.96; ctx.fillStyle = '#10B981';
+      ctx.globalAlpha = 0.95; ctx.fillStyle = '#3D5BF0';
       ctx.beginPath(); ctx.arc(d.x, d.y, d.r, 0, Math.PI*2); ctx.fill();
     }
     ctx.globalAlpha = 1;
     if (hov || dots.some(d => Math.abs(d.x-d.hx) > 0.4 || Math.abs(d.y-d.hy) > 0.4)){
       requestAnimationFrame(frame);
-    } else { running = false; drawWhaleSolid(); }
+    } else { running = false; drawStatic(); }
   }
-  lc.addEventListener('mouseenter', ()=>{ hov = true; if(!running){ running = true; t0 = null; requestAnimationFrame(frame); } });
+  lc.addEventListener('mouseenter', ()=>{ if(!ready) return; hov = true; if(!running){ running = true; t0 = null; requestAnimationFrame(frame); } });
   lc.addEventListener('mouseleave', ()=>{ hov = false; if(!running){ running = true; t0 = null; requestAnimationFrame(frame); } });
 })();
 
