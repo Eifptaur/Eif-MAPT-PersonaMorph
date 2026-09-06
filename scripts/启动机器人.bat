@@ -1,6 +1,5 @@
 @echo off
-cd /d "%~dp0.."
-setlocal
-:: 无窗口启动：看门狗以隐藏窗口方式运行，机器人用 pythonw 后台跑；双击后界面立即结束，不再有黑色 cmd 窗口
-start "" powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "scripts\看门狗.ps1"
+:: 兼容旧习惯：此 bat 会通过 wscript 调起无窗口启动器（会有极小概率闪一下自身），
+:: 完全无窗口请双击同目录的「启动机器人.vbs」
+start "" wscript "%~dp0启动机器人.vbs"
 exit /b 0

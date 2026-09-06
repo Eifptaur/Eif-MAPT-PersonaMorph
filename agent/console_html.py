@@ -61,9 +61,12 @@ button:active{transform:scale(.97)}
 .chips .c b{cursor:pointer;font-weight:700;color:var(--blue)}
 .chips .c b:hover{color:var(--err)}
 .pick{margin-top:4px}
-.pick .opt{display:flex;align-items:center;gap:8px;padding:7px 10px;border:1px solid var(--bd);border-radius:8px;margin-bottom:6px;cursor:pointer}
-.pick .opt:hover{border-color:var(--blue)}
-.pick .opt input{accent-color:var(--blue)}
+.pick .opt{display:grid;grid-template-columns:18px minmax(0,1fr) auto;align-items:center;column-gap:8px;
+  padding:8px 12px;border:1px solid var(--bd);border-radius:10px;margin-bottom:6px;cursor:pointer}
+.pick .opt:hover{border-color:var(--blue);background:#F8FAFF}
+.pick .opt b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pick .opt .hint{margin:0;white-space:nowrap;font-size:11px;color:var(--tx2)}
+.pick .opt input{width:16px;height:16px;accent-color:var(--blue)}
 .dlist{background:#fff;border:1px solid var(--bd);border-radius:8px;padding:4px;font-size:13px}
 .main{min-width:0}
 
@@ -74,9 +77,12 @@ button:active{transform:scale(.97)}
 .row label{width:150px;color:var(--tx2);flex-shrink:0;font-size:13px}
 .row .grow{flex:1;min-width:220px}
 .row input[type=text],.row input[type=password],.row input[type=number],.row select,.row textarea{
-  width:100%;background:#FBFCFE;border:1px solid var(--bd);color:var(--tx);
-  border-radius:8px;padding:8px 10px;font:inherit;outline:none;transition:border .15s}
-.row input:focus,.row select:focus,.row textarea:focus{border-color:var(--blue)}
+  width:100%;background:#F8FAFE;border:1px solid #DCE4FF;color:var(--tx);
+  border-radius:10px;padding:8px 12px;font:inherit;outline:none;transition:border .15s,box-shadow .15s}
+.row input:focus,.row select:focus,.row textarea:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(77,107,254,.12)}
+.row select{appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23 4D6BFE' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 12px center;padding-right:30px;border-radius:10px}
+.row select option{border-radius:10px;background:#fff;color:var(--tx);padding:6px}
 .row textarea{min-height:84px;font-family:ui-monospace,Consolas,monospace;font-size:12.5px}
 .row input[type=range]{flex:1}
 .row .val{width:44px;text-align:right;color:var(--blue);font-weight:600}
@@ -359,6 +365,8 @@ function toast(msg){const t=$('toast');t.textContent=msg;t.style.display='block'
 function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 
 const URL_TOKEN = new URLSearchParams(location.search).get('token') || '';
+/* 内嵌 SVG 鲸鱼图标（服务停止后图片路由不可用，弹层一律用它，不再依赖 /assets） */
+const ICON = '<svg width="72" height="66" viewBox="0 0 96 88" style="margin-bottom:12px"><rect x="4" y="4" width="88" height="80" rx="22" fill="#4D6BFE"/><ellipse cx="44" cy="47" rx="27" ry="16" fill="#fff"/><path d="M66 39 L88 22 L81 45 L91 63 L64 50 Z" fill="#fff"/><circle cx="31" cy="43" r="3.6" fill="#4D6BFE"/></svg>';
 
 async function getJSON(url, opts){
   opts = opts || {};
@@ -568,28 +576,28 @@ function applyProvider(provider, askKey){
     if(be) be.value = p.base;
   }
   renderModelSel(provider);
-  const pk = document.querySelector('[data-cfg="api.api_key"]');
-  if(askKey && provider!=='deepseek'){
-    const have = (pk&&pk.value||'').trim();
-    if(!have || provider!==detectProvider(document.querySelector('[data-cfg="api.base_url"]').value)){
-      const m=document.createElement('div'); m.className='mask';
-      m.innerHTML='<div class="box"><h1>'+p.label+' API Key</h1><p>已为你切换到 '+p.label+'（Base URL：'+p.base+'）。请粘贴该公司的 API Key（'+p.keyHint+'开头）。</p><input type="password" id="pkCmd" placeholder="'+p.keyHint+'..."><div class="btns" style="justify-content:center"><button class="pri" id="pkOk">保存 Key</button><button class="ghost" id="pkNo">稍后再说</button></div></div>';
-      document.body.appendChild(m);
-      $('pkOk').onclick=()=>{ const v=$('pkCmd').value.trim(); if(v&&pk) pk.value=v; m.remove(); toast('已填入 '+p.label+' Key，记得点「保存设置」'); };
-      $('pkNo').onclick=()=>m.remove();
-    }
+  if(askKey && provider !== 'deepseek'){
+    // 换厂商必弹：让用户确认该公司的 API Key（预填当前值，可覆盖/跳过）
+    const pk = document.querySelector('[data-cfg="api.api_key"]');
+    const have = (pk && pk.value || '').trim();
+    const m=document.createElement('div'); m.className='mask';
+    m.innerHTML='<div class="box"><h1>'+p.label+' API Key</h1><p>已切换到 '+p.label+'（Base URL：'+p.base+'）。请填写该公司的 API Key（'+(p.keyHint||'见官网')+' 开头）。</p><input type="password" id="pkCmd" placeholder="'+(p.keyHint||'')+'..." value="'+have.replace(/"/g,'')+'"><div class="btns" style="justify-content:center"><button class="pri" id="pkOk">保存 Key</button><button class="ghost" id="pkSame">沿用现有 Key</button><button class="ghost" id="pkNo">暂不填</button></div></div>';
+    document.body.appendChild(m);
+    $('pkOk').onclick=()=>{ const v=$('pkCmd').value.trim(); if(v&&pk) pk.value=v; m.remove(); toast('已填入 '+p.label+' Key，记得点「保存设置」'); };
+    $('pkSame').onclick=()=>m.remove();
+    $('pkNo').onclick=()=>m.remove();
   }
 }
 $('providerSel').addEventListener('change', ()=>applyProvider($('providerSel').value, true));
-/* ── 左上角小鲸鱼 Logo：完整造型 + 悬停「溶解成粒子游动 / 离开重组」（参考官网粒子 Logo 思路）── */
+/* ── 左上角 Logo：DeepSeek 风「蓝圆角方块 + 白鲸」商标式设计；悬停白鲸溶解成粒子游动/离开重组 ── */
 (function(){
   const lc = $('logoFx'), ctx = lc.getContext('2d');
-  const W = 112, H = 52;
+  const W = 152, H = 88;                      // 画布内部分辨率（CSS 76×44，等比不拉伸）
   lc.width = W; lc.height = H;
-  lc.style.width = '96px'; lc.style.height = '44px';
-  // 鲸鱼形状：身体椭圆 + 尾巴多边形
-  const E = {cx:34, cy:31, rx:20, ry:12.5};
-  const TAIL = [[50,26],[66,12],[61,27],[70,39],[50,33]];
+  lc.style.width = '76px'; lc.style.height = '44px';
+  const TILE = [10, 8, 132, 72, 22];          // x,y,w,h,r
+  const E = {cx: 62, cy: 52, rx: 34, ry: 19}; // 白鲸身体
+  const TAIL = [[92,44],[122,22],[113,50],[126,72],[92,56]]; // 尾巴
   function inWhale(x, y){
     const ex = (x - E.cx) / E.rx, ey = (y - E.cy) / E.ry;
     if (ex*ex + ey*ey <= 1) return true;
@@ -600,48 +608,48 @@ $('providerSel').addEventListener('change', ()=>applyProvider($('providerSel').v
     }
     return inside;
   }
-  // 采样鲸鱼内部的粒子家坐标
   const home = [];
-  for (let y=6; y<H; y+=3) for (let x=4; x<W; x+=3){
-    if (inWhale(x,y) && home.length < 150) home.push({x, y});
+  for (let y=20; y<76; y+=3) for (let x=22; x<130; x+=3){
+    if (inWhale(x,y) && home.length < 170) home.push({x,y});
   }
-  const dots = home.map((p,i)=>({hx:p.x, hy:p.y, x:p.x, y:p.y, ph:Math.random()*6.28, r:1.1+Math.random()*0.9}));
-  function drawSolid(){
+  const dots = home.map(p=>({hx:p.x, hy:p.y, x:p.x, y:p.y, ph:Math.random()*6.28, r:1.4+Math.random()*1.0}));
+  function drawBase(){
     ctx.clearRect(0,0,W,H);
-    ctx.fillStyle = '#4D6BFE';
+    const g = ctx.createLinearGradient(0,0,TILE[2],TILE[3]);
+    g.addColorStop(0,'#5A78FF'); g.addColorStop(1,'#3D5BF0');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    const [x,y,w,h,r] = TILE;
+    ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
+    ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); ctx.fill();
+  }
+  function drawWhaleSolid(){
+    drawBase();
+    ctx.fillStyle = '#FFFFFF';
     ctx.beginPath(); ctx.ellipse(E.cx,E.cy,E.rx,E.ry,0,0,Math.PI*2); ctx.fill();
     ctx.beginPath(); ctx.moveTo(TAIL[0][0],TAIL[0][1]);
     for(let i=1;i<TAIL.length;i++) ctx.lineTo(TAIL[i][0],TAIL[i][1]);
     ctx.closePath(); ctx.fill();
-    ctx.fillStyle = 'rgba(255,255,255,.75)';
-    ctx.beginPath(); ctx.arc(26,28,2.6,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle = 'rgba(77,107,254,.16)';
-    ctx.beginPath(); ctx.ellipse(36,36,9,3.4,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#4D6BFE';
+    ctx.beginPath(); ctx.arc(50,50,4.2,0,Math.PI*2); ctx.fill();
   }
-  drawSolid();
+  drawWhaleSolid();
   let hov = false, running = false, t0 = null;
   function frame(ts){
     if(t0 === null) t0 = ts;
     const t = (ts - t0) / 1000;
-    ctx.clearRect(0,0,W,H);
+    drawBase();
     for (const d of dots){
       let tx = d.hx, ty = d.hy;
-      if (hov){ // 悬停：鲸鱼“游动”——粒子围绕原位做波浪游走
-        tx = d.hx + Math.sin(t*4 + d.ph) * 3.2;
-        ty = d.hy + Math.cos(t*3 + d.ph) * 1.6;
-      }
-      d.x += (tx - d.x) * 0.14;
-      d.y += (ty - d.y) * 0.14;
-      ctx.globalAlpha = hov ? 0.92 : 1;
-      ctx.fillStyle = '#4D6BFE';
+      if (hov){ tx = d.hx + Math.sin(t*4 + d.ph) * 4.2; ty = d.hy + Math.cos(t*3 + d.ph) * 2.0; }
+      d.x += (tx - d.x) * 0.14; d.y += (ty - d.y) * 0.14;
+      ctx.globalAlpha = 0.96; ctx.fillStyle = '#FFFFFF';
       ctx.beginPath(); ctx.arc(d.x, d.y, d.r, 0, Math.PI*2); ctx.fill();
     }
     ctx.globalAlpha = 1;
     if (hov || dots.some(d => Math.abs(d.x-d.hx) > 0.4 || Math.abs(d.y-d.hy) > 0.4)){
       requestAnimationFrame(frame);
-    } else {
-      running = false; drawSolid();
-    }
+    } else { running = false; drawWhaleSolid(); }
   }
   lc.addEventListener('mouseenter', ()=>{ hov = true; if(!running){ running = true; t0 = null; requestAnimationFrame(frame); } });
   lc.addEventListener('mouseleave', ()=>{ hov = false; if(!running){ running = true; t0 = null; requestAnimationFrame(frame); } });
@@ -654,7 +662,7 @@ async function onboarding(){
   if(key && !key.includes('在这里填') && key!=='******') return;
   const m = document.createElement('div');
   m.className='mask'; m.id='onboard';
-  m.innerHTML='<div class="box"><img src="/assets/icon.png"><h1>欢迎使用 wx-agent</h1>'+
+  m.innerHTML='<div class="box">'+ICON+'<h1>欢迎使用 wx-agent</h1>'+
     '<p>还差最后一步：填入你的 DeepSeek API Key（sk- 开头）。保存后自动生效，无需再改任何文件。</p>'+
     '<input type="password" id="obKey" placeholder="sk-...">'+
     '<div class="btns" style="justify-content:center"><button class="pri" id="obSave">保存并测试</button><button class="ghost" id="obLater">稍后再说</button></div></div>';
@@ -685,12 +693,14 @@ $('pauseBtn').onclick = async ()=>{
   try{ await getJSON($('pauseBtn').textContent==='暂停'?'/api/pause':'/api/resume',{method:'POST'}); loadStatus(); }catch(e){toast(e.message)}
 };
 $('stopBtn').onclick = async ()=>{
-  if(!confirm('确定停止机器人？停止后可用「重启」按钮或双击启动机器人.bat 恢复。')) return;
+  if(!confirm('确定停止机器人？停止后可用「重启」按钮或双击启动机器人.vbs 恢复。')) return;
   try{
     await getJSON('/api/shutdown',{method:'POST'});
-    toast('已停止机器人，页面稍后自动显示停止提示');
+    toast('已发出停止指令，机器人即将退出…');
     $('dot').className='dot';
-  }catch(e){ toast('停止失败：'+e.message); }
+  }catch(e){
+    toast('停止指令未送达（机器人可能已经不在运行）——页面稍后会显示「机器人已停止」');
+  }
 };
 $('restartBtn').onclick = async ()=>{
   if(!confirm('重启机器人？会在后台无窗口方式重新启动（约 2 秒）。')) return;
@@ -752,9 +762,9 @@ async function checkAlive(){
   }catch(e){
     offlineShown=true;
     const ov=document.createElement('div'); ov.className='mask';
-    ov.innerHTML='<div class="box"><img src="/assets/icon.png"><h1>机器人已停止</h1>'+
-      '<p>后台进程已退出。可双击「启动机器人.bat」或在有运行实例时点「重启」恢复。</p>'+
-      '<div class="hint">本页面稍后尝试自动关闭…</div></div>';
+    ov.innerHTML='<div class="box">'+ICON+'<h1>机器人已停止</h1>'+
+      '<p>后台进程已退出。可双击「启动机器人.vbs」（完全无窗口）或在有运行实例时点「重启」恢复。</p>'+
+      '<div class="hint">浏览器可能拦截自动关闭——请手动关闭本标签页（页面不会自己关掉属正常现象）。</div></div>';
     document.body.appendChild(ov);
     setTimeout(()=>{ try{window.close();}catch(_e){} }, 5000);
   }
