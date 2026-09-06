@@ -322,6 +322,20 @@ def self_test(gui=None, point=None) -> dict:
         h = _user32.WindowFromPoint(int(sx), int(sy))
         root = _user32.GetAncestor(h, 2)
         cls, title, pid, rect = _window_info(root or h)
+
+        # 全局命中测试对照：再采样「前台窗口」和屏幕中心两点，
+        # 若所有窗口（含其他应用如浏览器）都命中桌面/Progman，说明
+        # 当前进程的窗口命中测试被会话沙箱/输入隔离虚拟化——不是机器问题
+        probes = []
+        for (px, py) in [(sx, sy), (int(_user32.GetSystemMetrics(0) / 2), int(_user32.GetSystemMetrics(1) / 2))]:
+            hh = _user32.WindowFromPoint(int(px), int(py))
+            root2 = _user32.GetAncestor(hh, 2)
+            c2, _, _, _ = _window_info(root2 or hh)
+            probes.append({"point": (int(px), int(py)), "class": c2,
+                           "is_desktop": c2 in ("Progman", "WorkerW")})
+        all_desktop = bool(probes) and all(p["is_desktop"] for p in probes)
+        susceptible = "会话输入被隔离/虚拟化（沙箱或远程会话）：所有窗口的命中测试都返回桌面——请用正常桌面启动机器人（不要用托管调试会话），并重跑本自检" if all_desktop else ""
+
         result.update({
             "point_logical": (pt_x, pt_y),
             "point_click": (sx, sy),
@@ -335,6 +349,8 @@ def self_test(gui=None, point=None) -> dict:
             "hit_rect": list(rect),
             "is_wechat": bool(gui and (root in (gui.main_hwnd, gui.render_hwnd) or
                                        h in (gui.main_hwnd, gui.render_hwnd))),
+            "ctrl_probes": probes,
+            "input_isolated_suspect": susceptible,
         })
     except Exception as e:
         result["error"] = str(e)
