@@ -135,5 +135,9 @@
     "token": "",
     "auto_open_browser": true
   },
+  "ui": {
+    "coord_scale": "auto",
+    "clean_overlays": true
+  },
   "member_notes": {}
 }

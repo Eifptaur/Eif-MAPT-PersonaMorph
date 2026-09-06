@@ -352,7 +352,48 @@ class WeChatAdapter:
                     self._gui.calibrate_layout(save=True)
             except Exception:
                 pass
+            self._install_ui_patches(self._gui)
         return self._gui
+
+    def _install_ui_patches(self, gui):
+        """给 GUI 实例装「界面适配」补丁（每个实例只装一次）。
+
+        把 wechatauto 内部的 wx_click / ensure_visible 换成适配层版本，
+        让所有内部点击（@、发图、引用、发送按钮回退、open_chat 回退等）
+        都自动：换算 DPI 缩放 + 清理遮挡层/系统叠加层 + 校验点击点属于微信。
+        这样换电脑（带缩放/多显示器/触屏手写画布）也不用改 wechatauto。
+        """
+        if getattr(gui, "_wx_agent_ui_ok", False):
+            return
+        try:
+            from . import ui_adapt
+            orig_ensure = gui.ensure_visible
+            orig_click = gui.wx_click
+            adapter = self
+
+            def ensure_visible(*a, **kw):
+                try:
+                    if ui_adapt.prepare_screen(gui):
+                        return True
+                except Exception:
+                    pass
+                try:
+                    return orig_ensure(*a, **kw)
+                except Exception:
+                    return False
+
+            def wx_click(x, y, right=False):
+                sx, sy = ui_adapt.to_click(x, y)
+                ok, why = ui_adapt.ensure_point(sx, sy, (gui.main_hwnd, gui.render_hwnd))
+                if not ok:
+                    raise WeChatError("点击被拦截：%s" % why)
+                orig_click(sx, sy, right=right)
+
+            gui.ensure_visible = ensure_visible
+            gui.wx_click = wx_click
+            gui._wx_agent_ui_ok = True
+        except Exception:
+            pass
 
     def send_text(self, chat_id: str, text: str):
         """发送文本到群。返回 (ok, message)。"""
@@ -393,29 +434,46 @@ class WeChatAdapter:
     # ── 右键菜单操作（拍一拍 / 引用）──────────────────────────────────
 
     def _ensure_foreground(self, gui) -> bool:
-        """把微信窗口带到前台并最小化遮挡窗。
+        """把微信窗口带到前台并清理一切挡点击的东西（系统叠加层/遮挡窗口）。
 
         不用 gui.ensure_visible()：它的"桌面可用"检测数白色像素占比，
         深色主题下永远返回 False（实测误报"锁屏/不可见"）。
+        用 agent.ui_adapt：DPI 感知、TabTip 手写画布等系统叠加层、普通遮挡窗，
+        各种电脑（不同缩放/多显示器）都能保持一致。
         """
         try:
-            gui._minimize_blockers()
-            time.sleep(0.5)
-            gui.bring_to_front(keep_topmost=True)
-            time.sleep(0.5)
-            gui._update_render_rect()
-            return gui.is_alive()
+            from . import ui_adapt
+            return ui_adapt.prepare_screen(gui)
         except Exception:
-            return False
+            try:
+                gui._minimize_blockers()
+                time.sleep(0.5)
+                gui.bring_to_front(keep_topmost=True)
+                time.sleep(0.5)
+                gui._update_render_rect()
+                return gui.is_alive()
+            except Exception:
+                return False
+
+    def _click(self, gui, rel_x: int, rel_y: int, right: bool = False) -> tuple:
+        """统一点击入口：换 DPI 空间 + 校验点击点属于微信 + wx_click。
+
+        返回 (ok, 消息)。
+        """
+        try:
+            from . import ui_adapt
+            return ui_adapt.click(gui, int(rel_x), int(rel_y), right=right)
+        except Exception as e:
+            return False, str(e)
 
     def _right_click_menu(self, gui, rel_x: int, rel_y: int, label: str, delay: float = 0.7) -> bool:
         """在相对坐标 (rel_x, rel_y) 处右键，OCR 弹出菜单，点含 label 的项。
 
         菜单文字较小，优先放大 3 倍 OCR（识别更稳），失败再退回原尺寸。
+        右键走 ui_adapt.click（DPI/遮挡适配），菜单点击后再回读确认可见。
         """
-        try:
-            gui.wx_click(int(gui.origin_x + rel_x), int(gui.origin_y + rel_y), right=True)
-        except Exception:
+        ok, why = self._click(gui, rel_x, rel_y, right=True)
+        if not ok:
             return False
         time.sleep(delay)
         top = max(0, rel_y - 220)
@@ -430,9 +488,9 @@ class WeChatAdapter:
                 return False
         for text, x, y, w, h in items:
             if label and label in text:
-                try:
-                    gui.wx_click(int(gui.origin_x + x + w // 2), int(gui.origin_y + y + h // 2))
-                except Exception:
+                # 命中菜单文字后，点击也用适配层（先校验归属）
+                ok2, _ = self._click(gui, x + w // 2, y + h // 2, right=False)
+                if not ok2:
                     return False
                 return True
         return False

@@ -66,7 +66,7 @@ PROJECT_MODULES = [
     "agent.config", "agent.util", "agent.llm", "agent.web_search",
     "agent.safe_fetch", "agent.store", "agent.memory", "agent.sender",
     "agent.persona", "agent.prompt", "agent.tools", "agent.wechat",
-    "agent.webui", "agent.whale",
+    "agent.webui", "agent.whale", "agent.ui_adapt",
 ]
 for mod in PROJECT_MODULES:
     try:

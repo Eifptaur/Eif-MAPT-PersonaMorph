@@ -149,6 +149,27 @@ th{color:var(--tx2);font-weight:500}
     </div>
 
     <div class="card">
+      <h2>界面适配（DPI / 遮挡）</h2>
+      <div class="row"><label>显示缩放</label>
+        <select id="ui.coord_scale">
+          <option value="auto">按系统自动检测</option>
+          <option value="1.0">100%（无缩放）</option>
+          <option value="1.25">125%</option>
+          <option value="1.5">150%</option>
+          <option value="1.75">175%</option>
+          <option value="2.0">200%</option>
+        </select></div>
+      <div class="row"><label>点击前清遮挡</label>
+        <input type="checkbox" id="ui.clean_overlays" title="自动关闭手写输入画布等系统叠加层、最小化遮挡窗口（推荐开启）">
+      </div>
+      <div class="btns">
+        <button id="uiSelfTest" class="ghost">鼠标点击自检</button>
+        <span class="hint" id="uiTestResult"></span>
+      </div>
+      <div class="hint">自检会把鼠标移到目标点并回读「命中的窗口」，用于诊断点击不生效的原因（DPI 缩放、手写画布、遮挡窗等）。不同电脑（缩放/多显示器/触屏）建议各自点一次自检看结果。</div>
+    </div>
+
+    <div class="card">
       <h2>完整配置 JSON（高级）</h2>
       <textarea id="rawjson" spellcheck="false"></textarea>
       <div class="btns">
@@ -207,6 +228,9 @@ function syncToForm(){
     'web_search.enabled': cfg.web_search.enabled, 'web_search.provider': cfg.web_search.provider,
   };
   for(const k in map){ const el=$(k); if(el) el.value = map[k]; if(el && el.type==='checkbox') el.checked = !!map[k]; }
+  const ui = cfg.ui || {};
+  $('ui.coord_scale').value = String(ui.coord_scale !== undefined ? ui.coord_scale : 'auto');
+  $('ui.clean_overlays').checked = ui.clean_overlays !== false;
   $('api.temperature-v').textContent = cfg.api.temperature;
   $('rawjson').value = JSON.stringify(cfg, null, 2);
   $('model-badge').textContent = '模型：' + (cfg.api.model||'未设置');
@@ -227,6 +251,10 @@ function syncFromForm(){
   cfg.store.keywords = $('store.keywords').value.split(',').map(s=>s.trim()).filter(Boolean);
   cfg.web_search.enabled = $('web_search.enabled').checked;
   cfg.web_search.provider = $('web_search.provider').value;
+  if(!cfg.ui) cfg.ui = {};
+  const uiScale = $('ui.coord_scale').value;
+  cfg.ui.coord_scale = uiScale === 'auto' ? 'auto' : parseFloat(uiScale) || 'auto';
+  cfg.ui.clean_overlays = $('ui.clean_overlays').checked;
 }
 
 async function load(){
@@ -313,6 +341,15 @@ $('testApi').onclick = async ()=>{
   }catch(e){ $('testResult').textContent='❌ '+e.message; }
   finally{ btn.disabled=false; }
 };
+$('uiSelfTest').onclick = async ()=>{
+  const btn=$('uiSelfTest'); btn.disabled=true; $('uiTestResult').textContent='自检中…';
+  try{
+    const r = await getJSON('/api/ui-selftest', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({})});
+    const ok = r.ok ? '' : '❌ ';
+    $('uiTestResult').textContent = ok + '缩放='+r.scale_used+'x 命中窗口『'+(r.hit_class||'?')+' / '+(r.hit_title||'?')+'』 '+ (r.is_wechat ? '✅是微信' : '❌非微信');
+  }catch(e){ $('uiTestResult').textContent='❌ '+e.message; }
+  finally{ btn.disabled=false; }
+};
 
 load();
 setInterval(loadStatus, 8000);
@@ -329,7 +366,7 @@ class WebUI:
 
     def __init__(self, status_provider, log_buffer, test_api_fn=None, on_save=None,
                  pause_fn=None, resume_fn=None, balance_fn=None, shutdown_fn=None,
-                 whale=None):
+                 whale=None, ui_test_fn=None):
         self.status_provider = status_provider      # () -> dict
         self.log_buffer = log_buffer                # collections.deque[str]
         self.test_api_fn = test_api_fn              # () -> dict
@@ -339,6 +376,7 @@ class WebUI:
         self.balance_fn = balance_fn or (lambda: {"error": "未提供 balance_fn"})  # () -> dict
         self.shutdown_fn = shutdown_fn or (lambda: None)  # () -> None
         self.whale = whale                          # agent.whale.WhaleWidget（小鲸鱼挂件，可选）
+        self.ui_test_fn = ui_test_fn or (lambda: {"error": "未提供 ui_test_fn"})  # () -> dict
         self._server = None
         self._thread = None
         self.port = 0
@@ -530,6 +568,14 @@ class WebUI:
                             self._json(parent.test_api_fn())
                         else:
                             self._json({"ok": False, "error": "未提供 test_api_fn"})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/ui-selftest":
+                    # 界面适配自检：把鼠标移到微信窗口中央并回读命中窗口
+                    try:
+                        r = parent.ui_test_fn()
+                        r["ok"] = bool(r.get("is_wechat")) if "is_wechat" in r else True
+                        self._json(r)
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)})
                 elif path == "/api/pause":

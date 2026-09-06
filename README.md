@@ -56,6 +56,7 @@ wx-agent —— 微信智能机器人（QQ Agent 大脑 + wechatauto 微信接�
 · 多模态识图：引用图片后说「分析这张」，机器人解密看图作答（视觉模型）。
 · Web 控制台：浏览器里改设置 / 看状态 / 看日志 / 测试 API / 查余额（默认 http://127.0.0.1:3210）。
 · 小鲸鱼余额挂件：右下角常驻鲸鱼娘（迁移自 DeepSeek-Balance-Whale-Widget 完整版）——余额 60 秒自动刷新 + 数字滚动、今日已用、每轮对话消耗泡泡、拖拽四边吸附/左吸附镜像翻转、按压 Q 弹、汉堡菜单（大小/音效/音量/气泡开关）、按压音效、随机台词（含 gif）。
+· 界面适配：DPI 缩放自动检测 + 控制台设置（100~200%）、点击前自动清理遮挡窗口/Windows 手写输入画布、点击归属校验、「鼠标点击自检」按钮——换电脑（缩放/多显示器/触屏）无需逐个适配。
 · 运维脚本：启动/停止/备份/开机自启/看门狗崩溃自启/自检。
 
 已移除的 QQ 专属能力（微信 UIA 无法可靠实现）：收藏表情库、合并转发展开。
@@ -71,10 +72,10 @@ wx-agent/
 ├── LICENSE              ← MIT 许可（含上游项目许可说明）
 ├── .gitignore           ← 忽略敏感文件/运行时产物
 ├── README.md / 使用说明.md / 更新日志.md
-├── agent/               ← 智能大脑（15 个模块）
+├── agent/               ← 智能大脑（16 个模块）
 │   ├── config.py  util.py  llm.py  web_search.py  safe_fetch.py
 │   ├── store.py  memory.py  sender.py  persona.py  prompt.py
-│   ├── tools.py  wechat.py  webui.py  whale.py（小鲸鱼挂件服务端）
+│   ├── tools.py  wechat.py  webui.py  whale.py（挂件服务端） ui_adapt.py（界面适配）
 ├── whale-widget/        ← DeepSeek-Balance-Whale-Widget 原项目（0.2.10，MIT）完整留档
 │   ├── client/widget.js ← 浏览器侧挂件脚本（原样提取自原版，服务端注入口令后下发）
 │   ├── assets/          ← 鲸鱼图 / rua.gif / 小黄鸭与音效1 mp3
@@ -100,6 +101,8 @@ wx-agent/
 · web_search.provider —— 搜索引擎
 · send.max_per_minute / max_per_hour —— 发送限频
 · server.port / token / auto_open_browser —— 控制台端口 / 访问口令（留空自动生成随机口令）/ 自动开浏览器
+· ui.coord_scale —— 显示缩放（"auto" 自动检测，或 1.25/1.5/2.0…）
+· ui.clean_overlays —— 点击前自动清理遮挡窗/手写输入画布（默认 true）
 
 Web 控制台
 
