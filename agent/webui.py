@@ -164,9 +164,10 @@ th{color:var(--tx2);font-weight:500}
       </div>
       <div class="btns">
         <button id="uiSelfTest" class="ghost">鼠标点击自检</button>
+        <button id="pokeTest" class="ghost">拍一拍诊断</button>
         <span class="hint" id="uiTestResult"></span>
       </div>
-      <div class="hint">自检会把鼠标移到目标点并回读「命中的窗口」，用于诊断点击不生效的原因（DPI 缩放、手写画布、遮挡窗等）。不同电脑（缩放/多显示器/触屏）建议各自点一次自检看结果。</div>
+      <div class="hint" id="uiTestDetail">自检：把鼠标移到目标点并回读「命中的窗口」，用于诊断点击不生效的原因（DPI 缩放、手写画布、遮挡窗等）。拍一拍诊断：完整执行 定位头像→右键→点拍一拍→数据库验证，并输出每一步结果（点击前请勿动鼠标）。</div>
     </div>
 
     <div class="card">
@@ -345,8 +346,18 @@ $('uiSelfTest').onclick = async ()=>{
   const btn=$('uiSelfTest'); btn.disabled=true; $('uiTestResult').textContent='自检中…';
   try{
     const r = await getJSON('/api/ui-selftest', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({})});
-    const ok = r.ok ? '' : '❌ ';
-    $('uiTestResult').textContent = ok + '缩放='+r.scale_used+'x 命中窗口『'+(r.hit_class||'?')+' / '+(r.hit_title||'?')+'』 '+ (r.is_wechat ? '✅是微信' : '❌非微信');
+    $('uiTestResult').textContent = '缩放='+r.scale_used+'x 光标移动='+(r.mouse_moved?'是':'否')+' 光标停留='+(r.cursor_stayed!==false?'是':'否【被弹回！】')+' 命中窗口『'+(r.hit_class||'?')+' / '+(r.hit_title||'?')+'』 '+(r.is_wechat ? '✅是微信' : '❌非微信');
+    $('uiTestDetail').textContent = (r.input_isolated_suspect || (r.cursor_stayed===false ? r.cursor_snapback_hint : '')) || ('自检点 '+JSON.stringify(r.point_click)+' 回读 '+JSON.stringify(r.cursor_after));
+  }catch(e){ $('uiTestResult').textContent='❌ '+e.message; }
+  finally{ btn.disabled=false; }
+};
+$('pokeTest').onclick = async ()=>{
+  const btn=$('pokeTest'); btn.disabled=true; $('uiTestResult').textContent='诊断中（约 15~30 秒，请勿动鼠标）…';
+  try{
+    const r = await getJSON('/api/poke-test', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({})});
+    const steps = (r.steps||[]).join('\n');
+    $('uiTestResult').textContent = (r.ok?'✅ ':'❌ ')+r.message;
+    $('uiTestDetail').textContent = '步骤：\n'+steps;
   }catch(e){ $('uiTestResult').textContent='❌ '+e.message; }
   finally{ btn.disabled=false; }
 };
@@ -366,7 +377,7 @@ class WebUI:
 
     def __init__(self, status_provider, log_buffer, test_api_fn=None, on_save=None,
                  pause_fn=None, resume_fn=None, balance_fn=None, shutdown_fn=None,
-                 whale=None, ui_test_fn=None):
+                 whale=None, ui_test_fn=None, poke_test_fn=None):
         self.status_provider = status_provider      # () -> dict
         self.log_buffer = log_buffer                # collections.deque[str]
         self.test_api_fn = test_api_fn              # () -> dict
@@ -377,6 +388,7 @@ class WebUI:
         self.shutdown_fn = shutdown_fn or (lambda: None)  # () -> None
         self.whale = whale                          # agent.whale.WhaleWidget（小鲸鱼挂件，可选）
         self.ui_test_fn = ui_test_fn or (lambda: {"error": "未提供 ui_test_fn"})  # () -> dict
+        self.poke_test_fn = poke_test_fn or (lambda: {"error": "未提供 poke_test_fn"})  # () -> dict
         self._server = None
         self._thread = None
         self.port = 0
@@ -576,6 +588,12 @@ class WebUI:
                         r = parent.ui_test_fn()
                         r["ok"] = bool(r.get("is_wechat")) if "is_wechat" in r else True
                         self._json(r)
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/poke-test":
+                    # 拍一拍诊断：完整跑一遍并返回分步结果
+                    try:
+                        self._json(parent.poke_test_fn())
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)})
                 elif path == "/api/pause":

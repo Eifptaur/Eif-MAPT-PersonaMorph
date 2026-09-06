@@ -41,6 +41,28 @@ def _seq_ratio(a: str, b: str) -> float:
         return 0.0
 
 
+def _user32_is_visible(hwnd) -> bool:
+    """查询窗口可见性（IsWindowVisible）。"""
+    try:
+        import ctypes
+        return bool(ctypes.windll.user32.IsWindowVisible(int(hwnd)))
+    except Exception:
+        return False
+
+
+def _cursor_pos() -> tuple:
+    """当前光标位置（屏幕坐标）。"""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        pt = wintypes.POINT()
+        if ctypes.windll.user32.GetCursorPos(ctypes.byref(pt)):
+            return (pt.x, pt.y)
+    except Exception:
+        pass
+    return (0, 0)
+
+
 class WeChatError(Exception):
     pass
 
@@ -606,31 +628,64 @@ class WeChatAdapter:
             return ax, first_y - 32, 0.0
         return None
 
-    def send_poke(self, chat_id: str, target_name: str, target_id: str = ""):
+    def send_poke(self, chat_id: str, target_name: str, target_id: str = "", dbg: list | None = None):
         """拍一拍某位成员：右键对方头像 → 菜单选「拍一拍」。靠 UIA/OCR 定位 + 数据库验证。
 
         返回 (ok, message)。对方最近发过言、名字在可见消息区里才比较容易成功。
         验证失败会如实返回，不会假报成功。
+        dbg 传入列表时，每一步的中间结果会追加进去（供控制台「拍一拍诊断」展示）。
         """
+        def _d(msg):
+            if dbg is not None:
+                dbg.append(msg)
         try:
             gui = self._get_gui()
-            group = self.group_name(chat_id)
+            rec = gui.render_rect
+            _d("1) 微信窗口：%s 可见=%s" % (
+                rec, _user32_is_visible(gui.main_hwnd)))
             if not self._ensure_foreground(gui):
                 return False, "微信窗口未找到或已退出，无法操作"
-            if not gui.open_chat(group):
+            _d("2) 已清理遮挡层并把微信置前")
+            if not gui.open_chat(group := self.group_name(chat_id)):
                 return False, "打开会话失败"
+            _d("3) 已打开会话「%s」" % group)
             time.sleep(0.9)
             base_seq = self.latest_seq(chat_id)
             db_text = self._last_target_text(chat_id, target_id) if target_id else ""
+            _d("4) 目标最近消息（数据库后 60 条内匹配）：%r" % (db_text[:40] or "(未找到，用空文本)"))
             located = self._send_poke_locate(gui, target_name, db_text)
-            if located:
-                ax, ay, score = located
-                if self._right_click_menu(gui, ax, ay, "拍一拍"):
-                    return self._verify_poke(chat_id, target_name, base_seq)
-                return False, "右键菜单里没找到「拍一拍」（头像点 (%d,%d) 可能没点中）" % (ax, ay)
-            return False, ("未在可见消息里定位到「%s」的头像；让对方先发条消息再试" % target_name)
+            if not located:
+                _d("5) ✘ 定位失败：未找到「%s」的头像位置（UIA 行匹配/OCR 相似度/左侧消息兜底都失败）" % target_name)
+                return False, ("未在可见消息里定位到「%s」的头像；让对方先发条消息再试" % target_name)
+            ax, ay, score = located
+            _d("5) 头像位置：渲染坐标 (%d,%d)，匹配度 %.2f（UIA 行匹配=1.0）" % (ax, ay, score))
+            _d("6) 移动到 (%d,%d) 并右键…（光标位置与命中窗口将在成功/失败时回读）" % (
+                gui.origin_x + ax, gui.origin_y + ay))
+            menu_hit = self._right_click_menu(gui, ax, ay, "拍一拍")
+            _d("   光标最终位置：%s（右键后）" % (_cursor_pos(),))
+            if menu_hit:
+                _d("7) ✔ 右键菜单里找到了「拍一拍」并已点击")
+                ok, msg = self._verify_poke(chat_id, target_name, base_seq)
+                _d("8) 验证结果：%s" % msg)
+                return ok, msg
+            # 说明为什么没找到（把菜单区域 OCR 抓回来，提示可读性）
+            try:
+                items = gui.ocr((gui.right_pane_left, max(0, ay - 220),
+                                 gui.render_w, min(gui.render_h, ay + 320)))
+                texts = [t for t, *_ in items if t][:10]
+            except Exception:
+                texts = []
+            _d("7) ✘ 右键没有出现「拍一拍」菜单（弹窗区域 OCR：%s）" % (" / ".join(texts) or "无内容"))
+            return False, "右键菜单里没找到「拍一拍」（头像点 (%d,%d) 可能没点中）" % (ax, ay)
         except Exception as e:
+            _d("✘ 异常：%s" % e)
             return False, str(e)
+
+    def poke_diag(self, chat_id: str, target_name: str, target_id: str = "") -> dict:
+        """控制台「拍一拍诊断」：跑一遍完整流程并返回分步结果。"""
+        steps: list = []
+        ok, msg = self.send_poke(chat_id, target_name, target_id, dbg=steps)
+        return {"ok": ok, "message": msg, "steps": steps}
 
     def _row_inner_text(self, row: dict) -> str:
         """取消息行里的真实文本；若是 zstd 压缩的 appmsg 则解压（用于验证拍拍事件）。"""

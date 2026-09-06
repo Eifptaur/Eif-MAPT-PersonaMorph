@@ -571,6 +571,25 @@ def main():
         except Exception as e:
             return {"error": str(e)}
 
+    def poke_test_fn():
+        # 拍一拍诊断：找最近发言的非机器人群友，完整跑一遍流程并输出分步结果
+        try:
+            if wechat is None or not targets:
+                return {"ok": False, "error": "微信未就绪或没有目标群"}
+            chat_key = "group:%s" % targets[0]["wxid"]
+            msgs = [m for m in orch.store.recent(chat_key, limit=100) if not m.get("self")]
+            if not msgs:
+                return {"ok": False, "error": "存档里没有群友消息，请先让群里有人说句话"}
+            m = msgs[-1]
+            chat_id = targets[0]["wxid"]
+            result = wechat.poke_diag(chat_id, m.get("sender_name") or m.get("sender_id"),
+                                      m.get("sender_id") or "")
+            result["target"] = {"name": m.get("sender_name"), "id": m.get("sender_id")}
+            result["group"] = targets[0]["name"]
+            return result
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
     def shutdown_fn():
         log.info("收到停止指令，正在停止机器人…")
         try:
@@ -589,7 +608,8 @@ def main():
 
     webui = WebUI(status_provider, log_buffer, test_api_fn=test_api_fn, balance_fn=balance_fn,
                   pause_fn=lambda: orch.set_paused(True), resume_fn=lambda: orch.set_paused(False),
-                  shutdown_fn=shutdown_fn, whale=orch.whale, ui_test_fn=ui_test_fn)
+                  shutdown_fn=shutdown_fn, whale=orch.whale, ui_test_fn=ui_test_fn,
+                  poke_test_fn=poke_test_fn)
     try:
         port = webui.start()
         if port:

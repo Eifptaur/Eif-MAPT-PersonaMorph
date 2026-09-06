@@ -319,6 +319,10 @@ def self_test(gui=None, point=None) -> dict:
         time.sleep(0.3)
         _user32.GetCursorPos(_ct.byref(pt))
         moved = (pt.x, pt.y)
+        # 光标「停留」检查：再等 0.5s 回读，若被弹回说明有鼠标锁定/拦截软件
+        time.sleep(0.5)
+        _user32.GetCursorPos(_ct.byref(pt))
+        stayed = (pt.x, pt.y) == moved
         h = _user32.WindowFromPoint(int(sx), int(sy))
         root = _user32.GetAncestor(h, 2)
         cls, title, pid, rect = _window_info(root or h)
@@ -341,6 +345,8 @@ def self_test(gui=None, point=None) -> dict:
             "point_click": (sx, sy),
             "cursor_after": moved,
             "mouse_moved": moved != before,
+            "cursor_stayed": stayed,
+            "cursor_snapback_hint": "光标被弹回（移动后又回到原位）：可能有鼠标锁定/拦截软件（游戏加加/Razer/按键精灵类）在抢光标，请关闭或加白名单",
             "hit_hwnd": (h & 0xFFFFFFFF),
             "hit_root": hex(root & 0xFFFFFFFF),
             "hit_class": cls,
