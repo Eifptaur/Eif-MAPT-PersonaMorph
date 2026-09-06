@@ -50,6 +50,10 @@ a{color:var(--blue)}
 .side .status{background:var(--blue-soft);border:1px solid var(--blue-line);border-radius:10px;padding:10px 12px;margin-bottom:8px}
 .side .status b{font-size:13px;color:var(--blue)}
 .side .status p{font-size:12px;color:var(--tx2)}
+.nav{position:relative}
+.nav-ind{position:absolute;left:0;width:3px;border-radius:2px;background:var(--blue);
+  top:0;height:3px;opacity:0;transition:top .28s cubic-bezier(.34,1.4,.64,1),opacity .2s}
+.nav a{position:relative;z-index:1}
 .nav a{display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:9px;color:var(--tx2);
   text-decoration:none;font-size:13.5px;margin:2px 0}
 .nav a:hover{background:var(--bg)}
@@ -730,73 +734,58 @@ function applyProvider(provider, askKey){
   }
 }
 $('providerSel').addEventListener('change', ()=>applyProvider($('providerSel').value, true));
-/* ── 左上角 Logo：官方 DeepSeek 蓝鲸原图 + 像素级「溶解游动/重组」粒子效果 ── */
+/* ── 左上角 Logo：官方蓝鲸大图标 + 悬停「Q 弹跳」动画（重力轨迹，落地压扁回弹）── */
 (function(){
   const lc = $('logoFx'), ctx = lc.getContext('2d');
-  const W = 152, H = 88;
+  const W = 160, H = 118;
   lc.width = W; lc.height = H;
-  lc.style.width = '76px'; lc.style.height = '44px';
+  lc.style.width = '80px'; lc.style.height = '59px';
   const img = new Image();
-  let dots = [], ready = false, hov = false, running = false, t0 = null;
-  img.onload = function(){
-    // 把 logo 画进离屏画布，按不透明像素采样粒子
-    const scale = Math.min(W / img.width, H / img.height) * 0.92;
-    const dw = img.width * scale, dh = img.height * scale;
-    const ox = (W - dw) / 2, oy = (H - dh) / 2;
-    const off = document.createElement('canvas'); off.width = W; off.height = H;
-    const octx = off.getContext('2d');
-    octx.drawImage(img, ox, oy, dw, dh);
-    let data = null;
-    try { data = octx.getImageData(0, 0, W, H).data; } catch(e){}
-    if (data){
-      const step = 3;
-      for (let y=0; y<H; y+=step) for (let x=0; x<W; x+=step){
-        const a = data[(y*W+x)*4+3];
-        if (a > 128 && dots.length < 260) dots.push({hx:x, hy:y, x:x, y:y, ph:Math.random()*6.28, r:1.2+Math.random()*0.9});
-      }
-    }
-    ready = true; drawStatic();
-  };
+  let ready = false;
+  img.onload = function(){ ready = true; drawStatic(); };
   img.src = LOGO_URL;
-  const LOGO_VIEW = 1.4; // 显示倍率
-  function drawStatic(){
+  const BASE_Y = H - 8;                 // 落脚点
+  const HERO_W = 118, HERO_H = 70;      // 显示尺寸（更大）
+  const CW = HERO_W, CH = HERO_H;
+  function drawStatic(yOff, squash){
     ctx.clearRect(0,0,W,H);
-    const w = img.width * LOGO_VIEW, h = img.height * LOGO_VIEW;
-    ctx.drawImage(img, (W - w) / 2, (H - h) / 2, w, h);
+    const w = CW * squash, h = CH * (2 - squash);
+    if(squash !== 1){ // 压扁时底部对齐
+      ctx.drawImage(img, (W - w)/2, BASE_Y - h + yOff, w, h);
+    } else {
+      ctx.drawImage(img, (W - w)/2, BASE_Y - h + yOff, w, h);
+    }
   }
-  let hovT = 0; // 0=纯原图 1=纯粒子（平滑渐变系数）
+  // 弹跳物理：v<0 往上，g 下坠，落地 vy=-vy*0.5，位移趋 0 停
+  let hov = false, y = 0, vy = 0, squash = 1, running = false, t0 = null;
   function frame(ts){
     if(t0 === null) t0 = ts;
-    const t = (ts - t0) / 1000;
-    const target = hov ? 1 : 0;
-    hovT += (target - hovT) * 0.08;                 // 渐变过渡（不突变）
-    const k = hovT;
-    ctx.clearRect(0,0,W,H);
-    // 原图随渐变淡出（悬停到位仍保留 22% 底影，轮廓始终可见）
-    ctx.globalAlpha = 1 - k * 0.78;
-    drawStatic();
-    // 粒子随渐变淡入，位置 = 像素原位 + 渐变系数加权游动
-    if (k > 0.01){
-      ctx.globalAlpha = k;
-      ctx.fillStyle = '#3D5BF0';
-      const sway = 4.2;
-      for (const d of dots){
-        const px = d.hx + Math.sin(t*4 + d.ph) * sway * k;
-        const py = d.hy + Math.cos(t*3 + d.ph) * 2.2 * k;
-        ctx.globalAlpha = k * 0.9;
-        ctx.beginPath(); ctx.arc(px, py, d.r, 0, Math.PI*2); ctx.fill();
+    const dt = Math.min(0.05, (ts - (t0 || ts)) / 1000 || 0.016);
+    t0 = ts;
+    if(hov){
+      vy += 2600 * dt;                 // 重力
+      y += vy * dt;
+      if(y >= 0){                      // 着地
+        if(vy > 520){ y = 0; vy = -vy * 0.45; squash = 0.72; }  // 反弹+压扁
+        else if(vy > 40){ y = 0; vy = -vy * 0.5; squash = 0.82; }
+        else { y = 0; vy = 0; squash += (1 - squash) * 0.25; }
+      } else {
+        squash += (1 - squash) * 0.30; // 空中恢复原形
+        // 起跳瞬间也轻微拉伸表现
       }
-    }
-    ctx.globalAlpha = 1;
-    if (Math.abs(hovT - target) > 0.005 || (k > 0.01 && k < 0.999)){
+      drawStatic(-y, squash);
       requestAnimationFrame(frame);
     } else {
-      running = false; hovT = target;
-      drawStatic();
+      y += vy * dt; vy += 2600 * dt;
+      if(y >= 0){ y = 0; vy = 0; squash += (1 - squash) * 0.3; }
+      else squash += (1 - squash) * 0.3;
+      drawStatic(-y, squash);
+      if(y === 0 && Math.abs(squash - 1) < 0.01){ running = false; drawStatic(0, 1); return; }
+      requestAnimationFrame(frame);
     }
   }
-  lc.addEventListener('mouseenter', ()=>{ if(!ready) return; hov = true; if(!running){ running = true; t0 = null; requestAnimationFrame(frame); } });
-  lc.addEventListener('mouseleave', ()=>{ hov = false; if(!running){ running = true; t0 = null; requestAnimationFrame(frame); } });
+  lc.addEventListener('mouseenter', ()=>{ if(!ready || hov) return; hov = true; vy = -620; squash = 1; if(!running){ running = true; t0 = null; requestAnimationFrame(frame); } });
+  lc.addEventListener('mouseleave', ()=>{ hov = false; if(!running){ if(y === 0 && squash === 1){ return; } running = true; requestAnimationFrame(frame); } });
 })();
 
 /* ── 首次运行向导：Key → 检测微信+勾选群 → 一键体检 → 完成 ── */
@@ -988,13 +977,32 @@ let memMembers = [];
 $('memChats').addEventListener('change', ()=>loadMemory($('memChats').value));
 $('memRefresh').onclick = ()=>loadMemory($('memChats').value);
 
-/* 导航高亮 */
-document.querySelectorAll('#nav a').forEach(a=>{
-  a.addEventListener('click',()=>{
-    document.querySelectorAll('#nav a').forEach(x=>x.classList.remove('on'));
-    a.classList.add('on');
-  });
-});
+/* 导航：滚动同步高亮 + 蓝色指示条平滑滑动 */
+(function(){
+  const navEl = document.querySelector('#nav');
+  const ind = document.createElement('div'); ind.className='nav-ind';
+  navEl.insertBefore(ind, navEl.firstChild);
+  const links = Array.from(document.querySelectorAll('#nav a'));
+  function moveInd(a){ ind.style.opacity=1; ind.style.top = Math.round(a.offsetTop + a.offsetHeight/2 - 1.5)+'px'; }
+  function currentSection(){
+    const secs = Array.from(document.querySelectorAll('section[data-sec]'));
+    const y = window.scrollY + 90;
+    let cur = secs[0];
+    for(const s of secs){ if(s.offsetTop <= y) cur = s; }
+    return cur;
+  }
+  function sync(){
+    const cur = currentSection();
+    const a = links.find(x => x.getAttribute('href') === '#'+cur.id);
+    if(a){ links.forEach(x=>x.classList.toggle('on', x===a)); moveInd(a); }
+  }
+  window.addEventListener('scroll', ()=>requestAnimationFrame(sync), {passive:true});
+  links.forEach(a=>a.addEventListener('click', ()=>{
+    links.forEach(x=>x.classList.remove('on'));
+    a.classList.add('on'); moveInd(a);
+  }));
+  setTimeout(sync, 400);
+})();
 
 /* 断线检测：机器人停止后显示全屏提示，并尝试自动关闭 */
 let offlineShown=false;

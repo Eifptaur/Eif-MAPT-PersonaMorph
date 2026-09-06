@@ -700,32 +700,32 @@ def main():
                 "summary": "通过 %d 项 / 注意 %d 项 / 失败 %d 项" % (ok_n, warn_n, fail_n)}
 
     def poke_test_fn(group_wxid="", verify_only=False):
-        # 拍一拍诊断：group_wxid 指定目标群（空=自动选最近有发言的群）；
-        # verify_only=True 只验证菜单可弹出，不实际拍（防误拍他人）
+        # 拍一拍诊断：目标直接从微信数据库取（不依赖控制台存档，任何群有人说过话即可）；
+        # group_wxid 指定群（空=自动找最近有群友发言的群）；verify_only=只验菜单可弹
         try:
             if wechat is None or not targets:
                 return {"ok": False, "error": "微信未就绪或没有目标群"}
-            if group_wxid:
-                g = next((g for g in targets if g["wxid"] == group_wxid), None)
-                if g is None:
-                    return {"ok": False, "error": "目标群不在监听列表：%s" % group_wxid}
-                gs = [g]
-            else:
-                gs = targets
-            best = None  # (chat_key, wxid, 群名, 消息)
+            gs = [g for g in targets if g["wxid"] == group_wxid] if group_wxid else list(targets)
+            if not gs:
+                return {"ok": False, "error": "该群不在监听列表里（先勾选到白名单）"}
+            best = None
             for g in gs:
-                chat_key = "group:%s" % g["wxid"]
-                msgs = [m for m in orch.store.recent(chat_key, limit=100) if not m.get("self")]
-                if msgs:
-                    cand = (chat_key, g["wxid"], g["name"], msgs[-1])
-                    if best is None or cand[3].get("ts", 0) > best[3].get("ts", 0):
+                name, sid = wechat._latest_friend(g["wxid"])
+                if sid:
+                    cand = (g["wxid"], g["name"], name, sid)
+                    if best is None:
                         best = cand
+                    # 取 sort_seq 最新的群：用 DB 末尾比较
+                    try:
+                        if wechat.latest_seq(g["wxid"]) > wechat.latest_seq(best[0]):
+                            best = cand
+                    except Exception:
+                        pass
             if best is None:
-                return {"ok": False, "error": "该群存档里没有群友消息，请先@机器人说句话"}
-            chat_key, wxid, gname, m = best
-            result = wechat.poke_diag(wxid, m.get("sender_name") or m.get("sender_id"),
-                                      m.get("sender_id") or "", verify_only=verify_only)
-            result["target"] = {"name": m.get("sender_name"), "id": m.get("sender_id")}
+                return {"ok": False, "error": "这些群里暂时没有群友的消息记录（让对方在群里说句话即可，不需要存档）"}
+            wxid, gname, name, sid = best
+            result = wechat.poke_diag(wxid, name, sid, verify_only=verify_only)
+            result["target"] = {"name": name, "id": sid}
             result["group"] = gname
             result["verify_only"] = bool(verify_only)
             return result

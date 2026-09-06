@@ -578,6 +578,23 @@ class WeChatAdapter:
                 return True
         return False
 
+    def _latest_friend(self, chat_id: str) -> tuple:
+        """从微信数据库找该群最近一条「非机器人」消息的 (名字, wxid)。
+
+        不依赖控制台存档——任何群只要有群友说过话即可（诊断选群用）。
+        """
+        try:
+            for raw in self._db.get_messages(chat_id, limit=60):
+                norm = self.normalize(raw, chat_id)
+                if not norm:
+                    continue
+                sid = str(norm.get("sender_id") or "")
+                if sid.startswith("wxid_"):
+                    return (str(norm.get("sender_name") or sid), sid)
+        except Exception:
+            pass
+        return ("", "")
+
     def _last_target_text(self, chat_id: str, wxid: str) -> str:
         """从数据库找目标**最近**一条消息的文本（用于 UIA/OCR 定位）。
 
