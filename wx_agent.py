@@ -15,6 +15,7 @@ import os
 import re
 import secrets
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -718,6 +719,30 @@ def main():
         # 强制退出进程，确保完全停止
         threading.Timer(1.0, lambda: os._exit(0)).start()
 
+    def restart_fn():
+        # 后台无窗口重启：用 pythonw 拉起新实例（约 1.5 秒后旧进程已释放端口），本进程退出
+        log.info("收到重启指令，正在后台拉起新实例…")
+        try:
+            import subprocess as _sp
+            exe = sys.executable
+            if exe.lower().endswith("python.exe"):
+                pyw = exe[:-10] + "pythonw.exe"  # 无控制台窗口
+                if os.path.exists(pyw):
+                    exe = pyw
+            flags = 0
+            if os.name == "nt":
+                flags = 0x00000008 | 0x00000200 | 0x08000000  # DETACHED|CREATE_NEW_PROCESS_GROUP|CREATE_NO_WINDOW
+            _sp.Popen([exe, os.path.join(ROOT, "wx_agent.py")],
+                      cwd=ROOT, creationflags=flags,
+                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as e:
+            log.error("重启拉起新实例失败：%s", e)
+        try:
+            orch.shutdown()
+        except Exception:
+            pass
+        threading.Timer(1.5, lambda: os._exit(0)).start()
+
     # ── 控制台访问口令：留空则启动时自动生成一串随机口令，避免和别人撞端口/被猜到 ──
     server_cfg = cfg.get("server", {})
     if not str(server_cfg.get("token") or "").strip():
@@ -728,7 +753,7 @@ def main():
     webui = WebUI(status_provider, log_buffer, test_api_fn=test_api_fn, balance_fn=balance_fn,
                   pause_fn=lambda: orch.set_paused(True), resume_fn=lambda: orch.set_paused(False),
                   shutdown_fn=shutdown_fn, whale=orch.whale,
-                  poke_test_fn=poke_test_fn, selfcheck_fn=selfcheck_fn)
+                  poke_test_fn=poke_test_fn, selfcheck_fn=selfcheck_fn, restart_fn=restart_fn)
     try:
         port = webui.start()
         if port:

@@ -15,14 +15,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from .config import get_config, save_config, set_config
+from .console_html import HTML  # 界面模板（蓝白设计，设置项全量，独立文件便于改版）
 
 # 给挂件脚本（whale-widget/client/widget.js）注入访问口令：把脚本里的 /dsh-whale/*
 # 绝对路径都补上 ?token=xxx，保证前端轮询/音频请求都带上口令
 _WHALE_URL_RE = re.compile(r"(/dsh-whale/[^'\"\s?]+)(\?[^'\"\s]*)?")
 
-HTML = r"""<!DOCTYPE html>
-<html lang="zh-CN" data-theme="dark">
-<head>
+# ── 旧版界面模板（无操作字符串，仅保留防外部引用；实际界面见 agent/console_html.py）──
+r"""
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>wx-agent 控制台</title>
@@ -406,7 +406,7 @@ class WebUI:
 
     def __init__(self, status_provider, log_buffer, test_api_fn=None, on_save=None,
                  pause_fn=None, resume_fn=None, balance_fn=None, shutdown_fn=None,
-                 whale=None, poke_test_fn=None, selfcheck_fn=None):
+                 whale=None, poke_test_fn=None, selfcheck_fn=None, restart_fn=None):
         self.status_provider = status_provider      # () -> dict
         self.log_buffer = log_buffer                # collections.deque[str]
         self.test_api_fn = test_api_fn              # () -> dict
@@ -415,6 +415,7 @@ class WebUI:
         self.resume_fn = resume_fn or (lambda: None)  # () -> None
         self.balance_fn = balance_fn or (lambda: {"error": "未提供 balance_fn"})  # () -> dict
         self.shutdown_fn = shutdown_fn or (lambda: None)  # () -> None
+        self.restart_fn = restart_fn or (lambda: None)    # () -> None（后台无窗口重启）
         self.whale = whale                          # agent.whale.WhaleWidget（小鲸鱼挂件，可选）
         self.poke_test_fn = poke_test_fn or (lambda: {"error": "未提供 poke_test_fn"})  # () -> dict
         self.selfcheck_fn = selfcheck_fn or (lambda: {"ok": False, "error": "未提供 selfcheck_fn"})  # () -> dict
@@ -633,6 +634,10 @@ class WebUI:
                     self._json({"ok": True, "note": "正在停止机器人…"})
                     # 稍等响应返回后再触发停止，避免连接被切断
                     threading.Timer(0.5, parent.shutdown_fn).start()
+                elif path == "/api/restart":
+                    # 重启：后台无窗口拉起新实例（释放端口后接替），当前实例退出
+                    self._json({"ok": True, "note": "正在后台重启机器人…"})
+                    threading.Timer(0.5, parent.restart_fn).start()
                 else:
                     self._json({"error": "not found"}, 404)
 
