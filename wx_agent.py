@@ -534,6 +534,62 @@ def _check_prerequisites(cfg) -> list:
     return problems
 
 
+def _kill_watchdog():
+    """结束看门狗（data 目录下 watchdog.pid 优先，wmic 按命令行回退）。
+
+    控制台「停止/重启」必须连看门狗一起处理：否则机器人退出 5 秒后会被看门狗重新拉起，
+    表现为「点了停止却又弹出一个新控制台」。
+    """
+    wp = os.path.join(ROOT, "data", "watchdog.pid")
+    try:
+        if os.path.exists(wp):
+            with open(wp, "r", encoding="utf-8") as f:
+                pid = int(f.read().strip())
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
+                           creationflags=0x08000000, timeout=10,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                os.remove(wp)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    try:
+        r = subprocess.run(
+            ["wmic", "process", "where",
+             "name like 'python%.exe' and commandline like '%watchdog.py%'",
+             "get", "processid", "/value"],
+            capture_output=True, creationflags=0x08000000, timeout=15)
+        for line in r.stdout.decode("utf-8", "ignore").splitlines():
+            line = line.strip()
+            if line.startswith("ProcessId="):
+                v = line.split("=", 1)[1].strip()
+                if v.isdigit() and int(v) > 0:
+                    try:
+                        subprocess.run(["taskkill", "/F", "/T", "/PID", v],
+                                       creationflags=0x08000000, timeout=10,
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
+
+def _spawn_watchdog():
+    """隐藏拉起新看门狗（pythonw 运行 scripts/watchdog.py，等价 启动机器人.vbs）。"""
+    exe = sys.executable
+    if exe.lower().endswith("python.exe"):
+        pyw = exe[:-10] + "pythonw.exe"
+        if os.path.exists(pyw):
+            exe = pyw
+    flags = 0
+    if os.name == "nt":
+        flags = 0x00000008 | 0x00000200 | 0x08000000  # DETACHED|CREATE_NEW_PROCESS_GROUP|CREATE_NO_WINDOW
+    subprocess.Popen([exe, os.path.join(ROOT, "scripts", "watchdog.py")],
+                     cwd=ROOT, creationflags=flags,
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
 def main():
     try:
         os.system("chcp 65001 >nul 2>&1")
@@ -791,36 +847,44 @@ def main():
 
     def shutdown_fn():
         log.info("收到停止指令，正在停止机器人…")
+        # 先杀看门狗：否则 5 秒后被自动拉起，会「停止后又弹出新控制台」
+        _kill_watchdog()
         try:
             orch.shutdown()
         except Exception:
             pass
-        # 强制退出进程，确保完全停止
-        threading.Timer(1.0, lambda: os._exit(0)).start()
+        # 强制退出进程（os._exit 不走 atexit，主动清理 PID 文件）
+        def _exit_now():
+            try:
+                _p = os.path.join(ROOT, "data", "bot.pid")
+                if os.path.exists(_p):
+                    os.remove(_p)
+            except Exception:
+                pass
+            os._exit(0)
+        threading.Timer(1.0, _exit_now).start()
 
     def restart_fn():
-        # 后台无窗口重启：用 pythonw 拉起新实例（约 1.5 秒后旧进程已释放端口），本进程退出
+        # 后台无窗口重启：先杀旧看门狗（防复活/双实例），再用 pythonw 拉起新看门狗接管，本进程退出
         log.info("收到重启指令，正在后台拉起新实例…")
+        _kill_watchdog()
         try:
-            import subprocess as _sp
-            exe = sys.executable
-            if exe.lower().endswith("python.exe"):
-                pyw = exe[:-10] + "pythonw.exe"  # 无控制台窗口
-                if os.path.exists(pyw):
-                    exe = pyw
-            flags = 0
-            if os.name == "nt":
-                flags = 0x00000008 | 0x00000200 | 0x08000000  # DETACHED|CREATE_NEW_PROCESS_GROUP|CREATE_NO_WINDOW
-            _sp.Popen([exe, os.path.join(ROOT, "wx_agent.py")],
-                      cwd=ROOT, creationflags=flags,
-                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            _spawn_watchdog()
         except Exception as e:
-            log.error("重启拉起新实例失败：%s", e)
+            log.error("重启拉起看门狗失败：%s", e)
         try:
             orch.shutdown()
         except Exception:
             pass
-        threading.Timer(1.5, lambda: os._exit(0)).start()
+        def _exit_now():
+            try:
+                _p = os.path.join(ROOT, "data", "bot.pid")
+                if os.path.exists(_p):
+                    os.remove(_p)
+            except Exception:
+                pass
+            os._exit(0)
+        threading.Timer(1.5, _exit_now).start()
 
     # ── 控制台访问口令：留空则启动时自动生成一串随机口令，避免和别人撞端口/被猜到 ──
     server_cfg = cfg.get("server", {})

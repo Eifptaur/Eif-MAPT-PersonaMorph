@@ -30,7 +30,7 @@ a{color:var(--blue)}
 .topbar{position:sticky;top:0;z-index:50;display:flex;align-items:center;gap:12px;padding:10px 20px;
   background:rgba(255,255,255,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--bd)}
 .topbar .logo{display:flex;align-items:center;gap:10px;font-size:17px;font-weight:700}
-.topbar .logo canvas{width:38px;height:30px;display:block;cursor:pointer}
+.topbar .logo canvas{width:100px;height:70px;display:block;cursor:pointer}
 .topbar .sp{flex:1}
 .chip{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:16px;background:var(--bg);
   border:1px solid var(--bd);color:var(--tx2);font-size:12px;white-space:nowrap}
@@ -737,17 +737,19 @@ $('providerSel').addEventListener('change', ()=>applyProvider($('providerSel').v
 /* ── 左上角 Logo：官方蓝鲸大图标 + 悬停「Q 弹跳」动画（重力轨迹，落地压扁回弹）── */
 (function(){
   const lc = $('logoFx'), ctx = lc.getContext('2d');
-  const W = 160, H = 118;
+  const W = 200, H = 140;               // 物理画布（CSS 显示 100×70，比例 2:1.4）
   lc.width = W; lc.height = H;
-  lc.style.width = '80px'; lc.style.height = '59px';
+  lc.style.width = '100px'; lc.style.height = '70px';
   const img = new Image();
   let ready = false;
-  img.onload = function(){ ready = true; drawStatic(); };
+  img.onload = function(){ ready = true; drawStatic(0, 1); };
   img.src = LOGO_URL;
-  const BASE_Y = H - 8;                 // 落脚点
-  const HERO_W = 118, HERO_H = 70;      // 显示尺寸（更大）
+  const BASE_Y = H - 8;                 // 落脚点（画布底部留 8px）
+  const HERO_W = 106, HERO_H = 100;     // 显示尺寸（约 1.06:1，贴近原图比例）
   const CW = HERO_W, CH = HERO_H;
   function drawStatic(yOff, squash){
+    if(yOff === undefined) yOff = 0;
+    if(squash === undefined) squash = 1;
     ctx.clearRect(0,0,W,H);
     const w = CW * squash, h = CH * (2 - squash);
     if(squash !== 1){ // 压扁时底部对齐
@@ -784,7 +786,7 @@ $('providerSel').addEventListener('change', ()=>applyProvider($('providerSel').v
       requestAnimationFrame(frame);
     }
   }
-  lc.addEventListener('mouseenter', ()=>{ if(!ready || hov) return; hov = true; vy = -620; squash = 1; if(!running){ running = true; t0 = null; requestAnimationFrame(frame); } });
+  lc.addEventListener('mouseenter', ()=>{ if(!ready || hov) return; hov = true; vy = -360; squash = 1; if(!running){ running = true; t0 = null; requestAnimationFrame(frame); } });
   lc.addEventListener('mouseleave', ()=>{ hov = false; if(!running){ if(y === 0 && squash === 1){ return; } running = true; requestAnimationFrame(frame); } });
 })();
 
