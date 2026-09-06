@@ -710,6 +710,15 @@ def main():
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
+    def groups_fn():
+        # 群聊列表（控制台「检测群聊并勾选」用）
+        try:
+            gs = [{"name": g.get("name"), "wxid": g.get("wxid")}
+                  for g in (wechat.list_groups() if wechat is not None else [])]
+        except Exception as e:
+            gs = []
+        return {"ok": True, "groups": gs}
+
     def shutdown_fn():
         log.info("收到停止指令，正在停止机器人…")
         try:
@@ -753,7 +762,8 @@ def main():
     webui = WebUI(status_provider, log_buffer, test_api_fn=test_api_fn, balance_fn=balance_fn,
                   pause_fn=lambda: orch.set_paused(True), resume_fn=lambda: orch.set_paused(False),
                   shutdown_fn=shutdown_fn, whale=orch.whale,
-                  poke_test_fn=poke_test_fn, selfcheck_fn=selfcheck_fn, restart_fn=restart_fn)
+                  poke_test_fn=poke_test_fn, selfcheck_fn=selfcheck_fn, restart_fn=restart_fn,
+                  groups_fn=groups_fn)
     try:
         port = webui.start()
         if port:

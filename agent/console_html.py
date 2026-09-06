@@ -30,7 +30,7 @@ a{color:var(--blue)}
 .topbar{position:sticky;top:0;z-index:50;display:flex;align-items:center;gap:12px;padding:10px 20px;
   background:rgba(255,255,255,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--bd)}
 .topbar .logo{display:flex;align-items:center;gap:10px;font-size:17px;font-weight:700}
-.topbar .logo img{width:34px;height:34px;border-radius:10px;box-shadow:0 2px 8px rgba(77,107,254,.25)}
+.topbar .logo canvas{width:38px;height:30px;display:block;cursor:pointer}
 .topbar .sp{flex:1}
 .chip{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:16px;background:var(--bg);
   border:1px solid var(--bd);color:var(--tx2);font-size:12px;white-space:nowrap}
@@ -50,7 +50,21 @@ a{color:var(--blue)}
 .nav a{display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:9px;color:var(--tx2);
   text-decoration:none;font-size:13.5px;margin:2px 0}
 .nav a:hover{background:var(--bg)}
-.nav a.on{background:var(--blue);color:#fff;font-weight:600}
+.nav a.on{background:var(--blue-soft);color:var(--blue);font-weight:600;position:relative}
+.nav a.on::before{content:"";position:absolute;left:0;top:9px;bottom:9px;width:3px;border-radius:2px;background:var(--blue)}
+.card{transition:box-shadow .2s ease,transform .2s ease}
+.card:hover{box-shadow:0 2px 6px rgba(31,41,55,.07),0 16px 40px rgba(77,107,254,.10)}
+button:active{transform:scale(.97)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.chips .c{display:inline-flex;align-items:center;gap:6px;background:var(--blue-soft);border:1px solid var(--blue-line);
+  color:var(--blue);border-radius:14px;padding:3px 10px;font-size:12.5px}
+.chips .c b{cursor:pointer;font-weight:700;color:var(--blue)}
+.chips .c b:hover{color:var(--err)}
+.pick{margin-top:4px}
+.pick .opt{display:flex;align-items:center;gap:8px;padding:7px 10px;border:1px solid var(--bd);border-radius:8px;margin-bottom:6px;cursor:pointer}
+.pick .opt:hover{border-color:var(--blue)}
+.pick .opt input{accent-color:var(--blue)}
+.dlist{background:#fff;border:1px solid var(--bd);border-radius:8px;padding:4px;font-size:13px}
 .main{min-width:0}
 
 .card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:18px 20px;margin-bottom:16px;box-shadow:var(--shadow)}
@@ -111,7 +125,7 @@ th{color:var(--tx2);font-weight:500}
 <body>
 
 <div class="topbar">
-  <div class="logo"><img src="/assets/icon.png"><span>wx-agent 控制台</span></div>
+  <div class="logo"><canvas id="logoFx" width="152" height="60" title="小鲸鱼"></canvas><span>wx-agent 控制台</span></div>
   <div class="sp"></div>
   <span class="chip"><span class="dot" id="dot"></span><b id="runText">连接中…</b></span>
   <span class="chip">模型 <b id="model-badge">? </b></span>
@@ -164,7 +178,16 @@ th{color:var(--tx2);font-weight:500}
       <div class="desc">密钥在控制台首次引导填入后自动保存，无需再改 config.json。</div>
       <div class="row"><label>Base URL</label><div class="grow"><input type="text" data-cfg="api.base_url"></div></div>
       <div class="row"><label>API Key</label><div class="grow"><input type="password" data-cfg="api.api_key" title="保存后即生效，无需改文件"></div></div>
-      <div class="row"><label>模型</label><div class="grow"><input type="text" data-cfg="api.model"></div></div>
+      <div class="row"><label>模型</label>
+        <div class="grow"><input type="text" data-cfg="api.model" list="modelList" placeholder="选择预设或自行输入">
+          <datalist id="modelList">
+            <option value="deepseek-v4-flash-vision-exp">v4 Flash 视觉版（默认，能看图）</option>
+            <option value="deepseek-v4-flash">v4 Flash</option>
+            <option value="deepseek-v4-pro">v4 Pro（更强更贵）</option>
+            <option value="deepseek-chat">deepseek-chat</option>
+            <option value="deepseek-reasoner">deepseek-reasoner（推理）</option>
+          </datalist>
+        </div></div>
       <div class="row"><label>视觉(看图)</label><input type="checkbox" data-cfg="api.vision"><span class="hint">模型支持图片则勾选</span></div>
       <div class="row"><label>温度</label><input type="range" id="api.temperature" min="0" max="1" step="0.05" data-cfg="api.temperature"><span class="val" id="api.temperature-v">0.8</span></div>
       <div class="row"><label>单次工具轮数</label><div class="grow"><input type="number" data-cfg="api.max_rounds" min="1" max="50"></div></div>
@@ -185,7 +208,16 @@ th{color:var(--tx2);font-weight:500}
       <div class="row"><label>自我称呼</label><div class="grow"><input type="text" data-cfg="persona.self_nickname" placeholder="留空=机器人昵称，用于识别「我」"></div></div>
       <div class="row"><label>轮询间隔(秒)</label><div class="grow"><input type="number" step="0.5" min="0.5" data-cfg="wechat.poll_interval"></div></div>
       <div class="row"><label>每分钟限发</label><div class="grow"><input type="number" min="1" data-cfg="wechat.rate_limit_per_minute"></div></div>
-      <div class="row"><label>群白名单</label><div class="grow"><input type="text" data-cfg="wechat.group_name_white_list" placeholder="逗号分隔，留空=所有群"></div></div>
+      <div class="row"><label>群白名单</label>
+        <div class="grow">
+          <div class="chips" id="wlChips"></div>
+          <div class="btns" style="margin-top:0">
+            <button id="pickGroups" class="ghost">检测群聊并勾选</button>
+            <input id="customGroup" type="text" placeholder="自定义群名，回车添加" style="flex:1;background:#FBFCFE;border:1px solid var(--bd);border-radius:8px;padding:7px 10px">
+          </div>
+          <div class="hint">留空=所有群都监听；勾选的群才响应（也可配合「暂停」）。</div>
+        </div>
+      </div>
       <div class="row"><label>媒体目录</label><div class="grow"><input type="text" data-cfg="wechat.media_dir"></div></div>
       <div class="row"><label>数据库目录</label><div class="grow"><input type="text" data-cfg="wechat.db_dir" placeholder="留空=自动探测微信数据目录"></div></div>
       <div class="btns"><button class="pri" data-save>保存设置（微信）</button></div>
@@ -337,6 +369,11 @@ function syncToForm(){
   document.querySelectorAll('[data-cfg]').forEach(el=>{
     const path = el.dataset.cfg;
     const isCheck = el.type==='checkbox';
+    if(path === 'wechat.group_name_white_list'){
+      wlList = Array.isArray(getPath(cfg,path)) ? getPath(cfg,path).slice() : [];
+      renderChips();
+      return;
+    }
     let v = getPath(cfg, path);
     if(isCheck){ el.checked = !!v; return; }
     if(v==null) v = '';
@@ -351,18 +388,62 @@ function syncToForm(){
 function syncFromForm(){
   document.querySelectorAll('[data-cfg]').forEach(el=>{
     const path = el.dataset.cfg;
+    if(path === 'wechat.group_name_white_list'){ setPath(cfg, path, wlList.slice()); return; }
     let v;
     if(el.type==='checkbox') v = el.checked;
     else if(el.type==='number') v = parseFloat(el.value);
     else {
       v = el.value;
-      // 逗号分隔的数组字段：白名单/关键词
-      if(['wechat.group_name_white_list','store.keywords'].includes(path))
-        v = v.split(',').map(s=>s.trim()).filter(Boolean);
+      if(path === 'store.keywords') v = v.split(',').map(s=>s.trim()).filter(Boolean);
     }
     setPath(cfg, path, v);
   });
 }
+
+/* ── 左上角小鲸鱼（Canvas 绘制 + 悬停粒子动效，参考 DSH 官网颗粒感）── */
+let wlList = [];
+function renderChips(){
+  const box=$('wlChips'); if(!box) return;
+  box.innerHTML='';
+  if(!wlList.length){ box.innerHTML='<span class="hint">（未勾选=监听所有群）</span>'; return; }
+  wlList.forEach(g=>{
+    const s=document.createElement('span'); s.className='c'; s.textContent=g;
+    const x=document.createElement('b'); x.textContent='×'; x.title='移除';
+    x.onclick=()=>{ wlList=wlList.filter(v=>v!==g); renderChips(); };
+    s.appendChild(x); box.appendChild(s);
+  });
+}
+$('customGroup').addEventListener('keydown',e=>{
+  if(e.key==='Enter'){
+    const v=$('customGroup').value.trim();
+    if(v && !wlList.includes(v)){ wlList.push(v); renderChips(); }
+    $('customGroup').value=''; e.preventDefault();
+  }
+});
+$('pickGroups').onclick = async ()=>{
+  try{
+    const r = await getJSON('/api/wechat-groups');
+    const groups = r.groups||[];
+    const m=document.createElement('div'); m.className='mask';
+    m.innerHTML='<div class="box" style="text-align:left"><h1>选择监听的群</h1><p>检测到 '+groups.length+' 个群聊，勾选机器人需要监听的群（全不勾=监听所有群）。</p><div class="pick" id="groupPick" style="max-height:340px;overflow:auto"></div><div class="btns" style="justify-content:flex-end;margin-top:10px"><button class="pri" id="gpOk">确定</button><button class="ghost" id="gpCancel">取消</button></div></div>';
+    document.body.appendChild(m);
+    const box=$('groupPick');
+    const pick = new Set(wlList);
+    if(!groups.length){ box.innerHTML='<div class="hint">没有检测到群聊——请确认微信已登录，重启机器人后再试。</div>'; }
+    groups.forEach(g=>{
+      const lab=document.createElement('label'); lab.className='opt';
+      const inp=document.createElement('input'); inp.type='checkbox'; inp.checked = pick.has(g.name);
+      lab.appendChild(inp);
+      lab.appendChild(document.createTextNode(' '));
+      const b=document.createElement('b'); b.textContent=g.name; lab.appendChild(b);
+      const h=document.createElement('span'); h.className='hint'; h.style.marginLeft='8px'; h.textContent=g.wxid; lab.appendChild(h);
+      inp.onchange=()=>{ if(inp.checked) pick.add(g.name); else pick.delete(g.name); };
+      box.appendChild(lab);
+    });
+    $('gpOk').onclick=()=>{ wlList=[...pick]; renderChips(); m.remove(); };
+    $('gpCancel').onclick=()=>m.remove();
+  }catch(e){ toast('检测失败：'+e.message); }
+};
 
 async function load(){
   try{ cfg = await getJSON('/api/config'); syncToForm(); }catch(e){ toast('加载配置失败：'+e.message) }
@@ -415,7 +496,52 @@ async function saveAllBtn(btn){
   }catch(e){ toast('保存失败：'+e.message); }
 }
 
-/* 首次运行引导：API Key 为空 */
+/* ── 左上角小鲸鱼 Logo：Canvas 绘制 + 悬停粒子爆发（参考 DSH 官网颗粒动效）── */
+(function(){
+  const lc = $('logoFx'); if(!lc) return;
+  const ctx = lc.getContext('2d');
+  const W = 152, H = 60;
+  function drawWhale(){
+    ctx.clearRect(0,0,W,H);
+    ctx.save(); ctx.scale(2,2);
+    ctx.fillStyle = '#4D6BFE';
+    ctx.beginPath(); ctx.ellipse(24,28,17,10.5,0,0,Math.PI*2); ctx.fill();      // 身体
+    ctx.beginPath(); ctx.moveTo(39,23); ctx.lineTo(53,13); ctx.lineTo(48,26);   // 尾巴上瓣
+    ctx.lineTo(55,37); ctx.lineTo(39,31); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(19,25,2.4,0,Math.PI*2); ctx.fill();               // 眼睛
+    ctx.fillStyle = 'rgba(77,107,254,.18)';
+    ctx.beginPath(); ctx.ellipse(30,33,8,3.6,0,0,Math.PI*2); ctx.fill();        // 肚皮
+    ctx.restore();
+  }
+  drawWhale();
+  let parts = [], running = false;
+  function burst(x, y){
+    for(let i=0;i<30;i++){
+      const a = Math.random()*Math.PI*2, sp = 0.8 + Math.random()*2.6;
+      parts.push({x:x, y:y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp-1.1,
+                  life:34+Math.random()*22, r:1+Math.random()*2.2,
+                  c:Math.random()<.5?'#4D6BFE':'#9DB4FF'});
+    }
+    if(!running){ running = true; requestAnimationFrame(tick); }
+  }
+  function tick(){
+    ctx.clearRect(0,0,W,H);
+    drawWhale();
+    parts = parts.filter(p => p.life > 0);
+    for(const p of parts){
+      p.x += p.vx; p.y += p.vy; p.vy += 0.085; p.life--;
+      ctx.globalAlpha = Math.min(1, p.life/18);
+      ctx.fillStyle = p.c;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI*2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    if(parts.length){ requestAnimationFrame(tick); } else { running = false; drawWhale(); }
+  }
+  lc.addEventListener('mouseenter', ()=>{ burst(46, 30); });
+})();
+
+/* ── 首次运行引导 ── */
 async function onboarding(){
   if(!cfg) return;
   const key = getPath(cfg,'api.api_key') || '';

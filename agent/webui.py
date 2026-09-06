@@ -406,7 +406,8 @@ class WebUI:
 
     def __init__(self, status_provider, log_buffer, test_api_fn=None, on_save=None,
                  pause_fn=None, resume_fn=None, balance_fn=None, shutdown_fn=None,
-                 whale=None, poke_test_fn=None, selfcheck_fn=None, restart_fn=None):
+                 whale=None, poke_test_fn=None, selfcheck_fn=None, restart_fn=None,
+                 groups_fn=None):
         self.status_provider = status_provider      # () -> dict
         self.log_buffer = log_buffer                # collections.deque[str]
         self.test_api_fn = test_api_fn              # () -> dict
@@ -419,6 +420,7 @@ class WebUI:
         self.whale = whale                          # agent.whale.WhaleWidget（小鲸鱼挂件，可选）
         self.poke_test_fn = poke_test_fn or (lambda: {"error": "未提供 poke_test_fn"})  # () -> dict
         self.selfcheck_fn = selfcheck_fn or (lambda: {"ok": False, "error": "未提供 selfcheck_fn"})  # () -> dict
+        self.groups_fn = groups_fn or (lambda: {"ok": True, "groups": []})  # () -> dict（群列表）
         self._server = None
         self._thread = None
         self.port = 0
@@ -624,6 +626,12 @@ class WebUI:
                         self._json(parent.selfcheck_fn())
                     except Exception as e:
                         self._json({"ok": False, "checks": [], "summary": str(e)})
+                elif path == "/api/wechat-groups":
+                    # 检测到的群聊列表（白名单勾选用）
+                    try:
+                        self._json(parent.groups_fn())
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e), "groups": []})
                 elif path == "/api/pause":
                     parent.pause_fn()
                     self._json({"ok": True})
