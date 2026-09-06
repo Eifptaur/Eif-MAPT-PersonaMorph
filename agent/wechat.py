@@ -781,17 +781,19 @@ class WeChatAdapter:
     def _verify_poke(self, chat_id: str, target_name: str, base_seq: int = 0):
         """拍完后回读数据库，确认真的出现了**新的**拍拍事件。绝不假报成功。
 
-        从 base_seq 之后新出现的消息里找含「拍拍/拍了拍」的（可能是 zstd appmsg，
-        也可能是普通系统文本），找到才算成功。
+        微信落库有 2~6 秒延迟，轮询最多 10 秒（每 1 秒读一次），
+        从 base_seq 之后新出现的消息里找含「拍拍/拍了拍」的
+        （可能是 zstd appmsg，也可能是普通系统文本），找到才算成功。
         """
         try:
-            time.sleep(1.5)  # 等微信落库
-            raws = self._db.get_new_messages(chat_id, base_seq, 10)
-            for row in raws:
-                txt = self._row_inner_text(row)
-                if "拍拍" in txt:
-                    return True, "已拍一拍「%s」（已验证：群里出现新的拍一拍事件）" % target_name
-            return False, "已点「拍一拍」但群里没出现新的拍一拍事件（可能没点中/没拍到，如实告诉对方这次没拍上，稍后再试）"
+            for _ in range(10):
+                time.sleep(1.0)  # 等微信落库（可多等几轮）
+                raws = self._db.get_new_messages(chat_id, base_seq, 10)
+                for row in raws:
+                    txt = self._row_inner_text(row)
+                    if "拍拍" in txt:
+                        return True, "已拍一拍「%s」（已验证：群里出现新的拍一拍事件）" % target_name
+            return False, "已点「拍一拍」但十秒内没在群里验证到新的拍一拍事件（可能没点中/没拍到，如实告诉对方这次没拍上，稍后再试）"
         except Exception as e:
             return False, "已点「拍一拍」但无法验证（%s），不能保证拍到" % e
 
