@@ -7,10 +7,12 @@
 from __future__ import annotations
 
 import base64
+import html
 import os
 import re
 import threading
 import time
+from collections import deque
 
 from .config import get_config
 
@@ -47,6 +49,7 @@ class WeChatAdapter:
         self._self_nickname = ""
         self._img_key_ready = False
         self._send_lock = threading.Lock()
+        self._recent_sent = deque(maxlen=200)   # 最近自己发过的消息文本 (text, ts)，用于过滤回声
         self._init_db()
 
     # ── 初始化 ───────────────────────────────────────────────────────────
@@ -148,12 +151,86 @@ class WeChatAdapter:
             return []
         out = []
         for raw in raws:
-            norm = self.normalize(raw)
+            norm = self.normalize(raw, wxid)
             if norm:
                 out.append(norm)
         return out
 
-    def normalize(self, raw: dict):
+    def _parse_quote(self, chat_id: str, local_id):
+        """解析「引用 / 拍一拍」这类 zstd 压缩的 appmsg 消息，提取正文与被引用图片。"""
+        try:
+            row = self._db.get_message_row(chat_id, int(local_id))
+            if not row:
+                return None
+            content = row.get("content")
+            if not isinstance(content, bytes) or not content.startswith(b"\x28\xb5\x2f\xfd"):
+                return None
+            import zstandard
+            dctx = zstandard.ZstdDecompressor()
+            txt = dctx.decompress(content, max_output_size=200000).decode("utf-8", "ignore")
+
+            title_m = re.search(r"<title>(.*?)</title>", txt, re.S)
+            title = html.unescape(title_m.group(1)).strip() if title_m else ""
+
+            # ── 拍一拍事件（appmsg type=62，标题形如「E」拍拍「群deepseek」）──
+            type_m = re.search(r"<type>(\d+)</type>", txt)
+            if type_m and type_m.group(1) == "62":
+                poker = ""
+                pm = re.search(r"「([^」]+)」拍拍", title)
+                if pm:
+                    poker = pm.group(1)
+                return {"text": "[拍一拍]" + ("（%s）" % poker if poker else ""),
+                        "media": [], "sender_wxid": "", "poke": True, "poker": poker}
+
+            # ── 引用消息（type 57，有 <refermsg>）──
+            if "<refermsg>" not in txt:
+                return None
+            sender_wxid = ""
+            sm = _SENDER_RE.match(txt)
+            if sm:
+                sender_wxid = sm.group(1)
+            media = []
+            ref_type = re.search(r"<refermsg>.*?<type>(\d+)</type>", txt, re.S)
+            svrid_m = re.search(r"<svrid>(\d+)</svrid>", txt)
+            if ref_type and ref_type.group(1) == "3" and svrid_m:
+                try:
+                    conn, table = self._db._msg_conn(chat_id)
+                    try:
+                        rr = conn.execute(
+                            "SELECT local_id FROM %s WHERE server_id=?" % table,
+                            (int(svrid_m.group(1)),)).fetchone()
+                    finally:
+                        conn.close()
+                    if rr:
+                        media = [{"kind": "image", "local_id": rr[0]}]
+                except Exception:
+                    pass
+            return {"text": title or "[引用消息]", "media": media, "sender_wxid": sender_wxid}
+        except Exception:
+            return None
+
+    def _mark_sent(self, text: str):
+        """记录一条自己刚发出去的消息文本（用于过滤数据库回读的"回声"）。"""
+        t = str(text or "").strip()
+        if t:
+            self._recent_sent.append((t, time.time()))
+
+    def _is_self_echo(self, text: str) -> bool:
+        """判断一条消息是不是自己刚发的（数据库回读回声）。
+
+        微信 UIA 发出的消息会写回本地库，且群聊里 sender_id 不可靠，
+        所以用"文本完全一致 + 时间窗口 30 秒"来兜底过滤，避免自问自答死循环。
+        """
+        t = str(text or "").strip()
+        if not t:
+            return False
+        now = time.time()
+        for sent_text, sent_ts in self._recent_sent:
+            if sent_text == t and (now - sent_ts) < 30:
+                return True
+        return False
+
+    def normalize(self, raw: dict, chat_id: str | None = None):
         """把 wechatauto 原始消息归一化。返回 None 表示应跳过（自己/系统）。"""
         mtype = str(raw.get("type") or "")
         local_id = raw.get("local_id")
@@ -165,7 +242,8 @@ class WeChatAdapter:
             content = content.decode("utf-8", "ignore")
 
         # 自己发的消息跳过（避免自问自答）
-        if sender_id == 2:
+        # 微信 4.x 群聊里 real_sender_id 不可靠：实测"自己"是 3，别人是 7 等（真实 wxid 在内容前缀里）
+        if str(sender_id) in ("2", "3"):
             return None
         # 系统消息：只保留「拍一拍」事件，其余（撤回/进群/邀请等）跳过
         if mtype in ("系统消息",):
@@ -198,6 +276,9 @@ class WeChatAdapter:
                 text = content[m.end():].strip()
             else:
                 text = content.strip()
+            # 自己发的消息：发送者 wxid 是机器人自己 → 跳过（群聊 sender_id 不可靠，用 wxid 兜底）
+            if self._self_wxid and sender_wxid and sender_wxid == self._self_wxid:
+                return None
         elif mtype == "图片":
             sender_wxid = str(sender_id or "") if sender_id not in (0, 2, None) else ""
             text = "[图片]"
@@ -211,13 +292,27 @@ class WeChatAdapter:
         elif mtype == "位置":
             text = "[位置]"
         elif mtype == "文件/链接/卡片":
-            text = "[文件/链接/卡片]"
+            # 可能是「引用图片/文本」的引用消息：尝试解压解析出被引用内容
+            parsed = None
+            if chat_id:
+                parsed = self._parse_quote(chat_id, local_id)
+            if parsed:
+                text = parsed.get("text") or "[引用消息]"
+                media = parsed.get("media") or []
+                if parsed.get("sender_wxid"):
+                    sender_wxid = parsed["sender_wxid"]
+            else:
+                text = "[文件/链接/卡片]"
         elif mtype == "红包":
             text = "[红包]"
         else:
             text = "[%s]" % mtype
 
         if not text.strip():
+            return None
+
+        # 回声过滤：这条消息是自己刚发出去的（文本完全一致）→ 跳过，避免自问自答死循环
+        if text and self._is_self_echo(text):
             return None
 
         sender_name = self._nick_map.get(sender_wxid, sender_wxid) if sender_wxid else (
@@ -256,7 +351,10 @@ class WeChatAdapter:
         try:
             gui = self._get_gui()
             r = gui.send_msg(text, who=name, verify=False)
-            return bool(getattr(r, "is_success", False)), str(getattr(r, "message", "") or "")
+            ok = bool(getattr(r, "is_success", False))
+            if ok:
+                self._mark_sent(text)
+            return ok, str(getattr(r, "message", "") or "")
         except Exception as e:
             return False, str(e)
 
@@ -266,7 +364,10 @@ class WeChatAdapter:
         try:
             gui = self._get_gui()
             r = gui.at_member(member_name, text, who=name, verify=False)
-            return bool(getattr(r, "is_success", False)), str(getattr(r, "message", "") or "")
+            ok = bool(getattr(r, "is_success", False))
+            if ok:
+                self._mark_sent(text)
+            return ok, str(getattr(r, "message", "") or "")
         except Exception as e:
             return False, str(e)
 
@@ -282,19 +383,26 @@ class WeChatAdapter:
 
     # ── 右键菜单操作（拍一拍 / 引用）──────────────────────────────────
 
-    def _right_click_menu(self, gui, rel_x: int, rel_y: int, label: str) -> bool:
-        """在相对坐标 (rel_x, rel_y) 处右键，OCR 弹出菜单，点含 label 的项。"""
+    def _right_click_menu(self, gui, rel_x: int, rel_y: int, label: str, delay: float = 0.7) -> bool:
+        """在相对坐标 (rel_x, rel_y) 处右键，OCR 弹出菜单，点含 label 的项。
+
+        菜单文字较小，优先放大 3 倍 OCR（识别更稳），失败再退回原尺寸。
+        """
         try:
             gui.wx_click(int(gui.origin_x + rel_x), int(gui.origin_y + rel_y), right=True)
         except Exception:
             return False
-        time.sleep(0.7)
-        top = max(0, rel_y - 140)
-        bottom = min(gui.render_h, rel_y + 240)
+        time.sleep(delay)
+        top = max(0, rel_y - 220)
+        bottom = min(gui.render_h, rel_y + 320)
+        items = None
         try:
-            items = gui.ocr((gui.right_pane_left, top, gui.render_w, bottom))
+            items = gui.ocr_zoomed((gui.right_pane_left, top, gui.render_w, bottom), scale=3)
         except Exception:
-            return False
+            try:
+                items = gui.ocr((gui.right_pane_left, top, gui.render_w, bottom))
+            except Exception:
+                return False
         for text, x, y, w, h in items:
             if label and label in text:
                 try:
@@ -305,9 +413,10 @@ class WeChatAdapter:
         return False
 
     def send_poke(self, chat_id: str, target_name: str):
-        """拍一拍某位成员：右键对方头像 → 菜单选「拍一拍」。实验性，靠 OCR 定位。
+        """拍一拍某位成员：右键对方头像 → 菜单选「拍一拍」。靠 OCR 定位 + 数据库验证。
 
         返回 (ok, message)。对方最近发过言、名字在可见消息区里才比较容易成功。
+        验证失败会如实返回，不会假报成功。
         """
         try:
             gui = self._get_gui()
@@ -329,30 +438,50 @@ class WeChatAdapter:
                     break
             if not hit:
                 return False, "未在可见消息里找到「%s」，可让对方先发一条消息、或先往上翻到他的消息" % target_name
-            # 头像在消息区最左边缘、与名字同一行 → 右键头像
-            ax = gui.right_pane_left + 28
+            # 头像在消息区最左边缘、与名字同一行 → 右键头像；头像中心位置随版本略有偏移，
+            # 菜单没弹出来时换几个偏移重试
+            base_seq = self.latest_seq(chat_id)
             ay = hit[1] + hit[3] // 2
-            if self._right_click_menu(gui, ax, ay, "拍一拍"):
-                return self._verify_poke(chat_id, target_name)
-            return False, "右键菜单里没找到「拍一拍」"
+            tried = []
+            for ax_off in (28, 22, 36):
+                tried.append(ax_off)
+                ax = gui.right_pane_left + ax_off
+                if self._right_click_menu(gui, ax, ay, "拍一拍"):
+                    return self._verify_poke(chat_id, target_name, base_seq)
+                time.sleep(0.4)
+            return False, "右键菜单里没找到「拍一拍」（已试头像偏移 %s），可能对方的头像不在可见消息里" % "/".join(map(str, tried))
         except Exception as e:
             return False, str(e)
 
-    def _verify_poke(self, chat_id: str, target_name: str):
-        """拍完后回读数据库，确认是否真的出现了「拍了拍」。"""
+    def _row_inner_text(self, row: dict) -> str:
+        """取消息行里的真实文本；若是 zstd 压缩的 appmsg 则解压（用于验证拍拍事件）。"""
+        content = row.get("content")
+        if isinstance(content, bytes):
+            if content.startswith(b"\x28\xb5\x2f\xfd"):
+                try:
+                    import zstandard
+                    return zstandard.ZstdDecompressor().decompress(content, max_output_size=200000).decode("utf-8", "ignore")
+                except Exception:
+                    return ""
+            return content.decode("utf-8", "ignore")
+        return str(content or "")
+
+    def _verify_poke(self, chat_id: str, target_name: str, base_seq: int = 0):
+        """拍完后回读数据库，确认真的出现了**新的**拍拍事件。绝不假报成功。
+
+        从 base_seq 之后新出现的消息里找含「拍拍/拍了拍」的（可能是 zstd appmsg，
+        也可能是普通系统文本），找到才算成功。
+        """
         try:
-            time.sleep(1.2)  # 等微信落库
-            msgs = self._db.get_messages(chat_id, limit=6)
-            for m in msgs:
-                content = str(m.get("content") or "")
-                if "拍了拍" not in content:
-                    continue
-                # 自己发起的拍一拍：sender_id==2；或内容里同时含目标名
-                if m.get("sender_id") == 2 or target_name in content:
-                    return True, "已拍一拍「%s」（已验证）" % target_name
-            return False, "已点「拍一拍」但未验证到结果（可能没点中，或微信还没落库）"
-        except Exception:
-            return True, "已拍一拍「%s」（点击成功，验证跳过）" % target_name
+            time.sleep(1.5)  # 等微信落库
+            raws = self._db.get_new_messages(chat_id, base_seq, 10)
+            for row in raws:
+                txt = self._row_inner_text(row)
+                if "拍拍" in txt:
+                    return True, "已拍一拍「%s」（已验证：群里出现新的拍一拍事件）" % target_name
+            return False, "已点「拍一拍」但群里没出现新的拍一拍事件（可能没点中/没拍到，如实告诉对方这次没拍上，稍后再试）"
+        except Exception as e:
+            return False, "已点「拍一拍」但无法验证（%s），不能保证拍到" % e
 
     def reply_quote(self, chat_id: str, text: str):
         """引用最近一条消息并发送文字：右键最近消息 → 菜单选「引用」→ 输入 → 发送。"""
@@ -375,6 +504,7 @@ class WeChatAdapter:
                 return False, "输入文字失败"
             if not gui.click_send():
                 return False, "发送失败"
+            self._mark_sent(text)
             return True, "已引用并发送"
         except Exception as e:
             return False, str(e)

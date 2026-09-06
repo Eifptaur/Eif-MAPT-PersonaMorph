@@ -34,6 +34,7 @@ from agent.sender import SendQueue
 from agent.store import ChatStore
 from agent.tools import build_tool_defs, execute_tool, to_openai_tools
 from agent.wechat import WeChatAdapter, WeChatError
+from agent.whale import WhaleWidget
 from agent.webui import WebUI
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -132,6 +133,8 @@ class Orchestrator:
         self._executor = ThreadPoolExecutor(max_workers=max(1, int(get_config().get("max_concurrent_runs") or 2)))
         self._proactive_timer = None
         self.stats = {"sessions": 0, "tokens": 0, "sent": 0, "calls": 0, "cost": 0.0}
+        # 小鲸鱼余额挂件：服务端记账（每次调用计成本，会话结束结算“每轮消耗”）
+        self.whale = WhaleWidget(os.path.join(ROOT, "data"))
 
     # ── 入站 ─────────────────────────────────────────────────────────────
 
@@ -289,6 +292,10 @@ class Orchestrator:
             session["model"] = response.get("model") or session["model"]
             add_usage(session["usage"], response.get("usage"))
             session["usage"]["calls"] += 1
+            try:
+                self.whale.note_call(session["model"], response.get("usage"))
+            except Exception:
+                pass
             session["activity"] = ""
 
             msg = response["message"]
@@ -351,6 +358,10 @@ class Orchestrator:
         self.stats["calls"] += int(session["usage"]["calls"])
         try:
             self.stats["cost"] += float(estimate_cost(session["usage"], session["model"])["cost"])
+        except Exception:
+            pass
+        try:
+            self.whale.note_turn_done()
         except Exception:
             pass
         log.info("[%s] 结束（%s）：发 %d 条 / 工具 %d 轮 / 联网 %d 次 / token=%s",
@@ -546,6 +557,15 @@ def main():
     def balance_fn():
         return query_balance()
 
+    def shutdown_fn():
+        log.info("收到停止指令，正在停止机器人…")
+        try:
+            orch.shutdown()
+        except Exception:
+            pass
+        # 强制退出进程，确保完全停止
+        threading.Timer(1.0, lambda: os._exit(0)).start()
+
     # ── 控制台访问口令：留空则启动时自动生成一串随机口令，避免和别人撞端口/被猜到 ──
     server_cfg = cfg.get("server", {})
     if not str(server_cfg.get("token") or "").strip():
@@ -554,7 +574,8 @@ def main():
         log.info("已自动生成控制台访问口令（保存在 config.json 的 server.token）")
 
     webui = WebUI(status_provider, log_buffer, test_api_fn=test_api_fn, balance_fn=balance_fn,
-                  pause_fn=lambda: orch.set_paused(True), resume_fn=lambda: orch.set_paused(False))
+                  pause_fn=lambda: orch.set_paused(True), resume_fn=lambda: orch.set_paused(False),
+                  shutdown_fn=shutdown_fn, whale=orch.whale)
     try:
         port = webui.start()
         if port:

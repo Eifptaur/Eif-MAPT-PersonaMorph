@@ -7,12 +7,18 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from .config import get_config, save_config, set_config
+
+# 给挂件脚本（whale-widget/client/widget.js）注入访问口令：把脚本里的 /dsh-whale/*
+# 绝对路径都补上 ?token=xxx，保证前端轮询/音频请求都带上口令
+_WHALE_URL_RE = re.compile(r"(/dsh-whale/[^'\"\s?]+)(\?[^'\"\s]*)?")
 
 HTML = r"""<!DOCTYPE html>
 <html lang="zh-CN" data-theme="dark">
@@ -66,6 +72,7 @@ th{color:var(--tx2);font-weight:500}
 .stat b{font-size:20px;display:block}
 .stat span{color:var(--tx2);font-size:12px}
 </style>
+<link rel="icon" href="/assets/icon.png" type="image/png">
 </head>
 <body>
 <header>
@@ -73,10 +80,12 @@ th{color:var(--tx2);font-weight:500}
   <h1>wx-agent 控制台</h1>
   <span class="badge" id="model-badge">模型未知</span>
   <span class="badge" id="balance-badge" title="点击刷新余额">余额：查询中…</span>
+  <span class="badge" title="右下角为 DeepSeek 小鲸鱼余额挂件（可拖拽/缩放/调音效，菜单里可关）">鲸鱼挂件已启用</span>
   <span class="badge" id="addr-badge"></span>
   <span style="flex:1"></span>
   <button id="pauseBtn" class="ghost">暂停</button>
-  <a href="/api/config" target="_blank" style="text-decoration:none"><button class="ghost">查看原始 JSON</button></a>
+  <button id="stopBtn" class="danger">停止机器人</button>
+  <button id="rawJsonBtn" class="ghost">查看原始 JSON</button>
 </header>
 
 <div class="wrap">
@@ -164,13 +173,22 @@ th{color:var(--tx2);font-weight:500}
 
 <div id="toast"></div>
 
+<!-- 小鲸鱼余额挂件（DeepSeek-Balance-Whale-Widget 迁移版，原项目客户端脚本原样引入） -->
+<script defer src="/dsh-whale/widget.js?token=__TKN__"></script>
+
 <script>
 const $ = id => document.getElementById(id);
 let cfg = null;
 
 function toast(msg){const t=$('toast');t.textContent=msg;t.style.display='block';clearTimeout(t._h);t._h=setTimeout(()=>t.style.display='none',2500)}
 
+// 从网址里取访问口令（形如 ?token=xxxx），后续所有请求都带上，避免 401
+const URL_TOKEN = new URLSearchParams(location.search).get('token') || '';
+
 async function getJSON(url, opts){
+  opts = opts || {};
+  opts.headers = opts.headers || {};
+  if(URL_TOKEN) opts.headers['Authorization'] = 'Bearer ' + URL_TOKEN;
   const r = await fetch(url, opts);
   if(!r.ok) throw new Error((await r.text())||r.status);
   return r.json();
@@ -220,11 +238,16 @@ async function loadBalance(){
   const el = $('balance-badge');
   try{
     const b = await getJSON('/api/balance');
-    if(b.ok === false){ el.textContent = '余额：' + b.error; return; }
+    if(b.ok === false){
+      el.textContent = '余额：' + b.error;
+      return;
+    }
     const cur = b.currency === 'USD' ? '$' : '¥';
-    el.textContent = '余额 ' + cur + b.total_balance + '（充值 ' + b.topped_up_balance + ' / 赠送 ' + b.granted_balance + '）';
-    el.title = '点击刷新余额';
-  }catch(e){ el.textContent = '余额：查询失败'; }
+    const txt = '余额 ' + cur + b.total_balance + '（充值 ' + b.topped_up_balance + ' / 赠送 ' + b.granted_balance + '）';
+    el.textContent = txt; el.title = '点击刷新余额';
+  }catch(e){
+    el.textContent = '余额：查询失败';
+  }
 }
 
 async function loadStatus(){
@@ -267,8 +290,19 @@ $('save').onclick = async ()=>{
 $('reload').onclick = load;
 $('refreshLog').onclick = loadLog;
 $('balance-badge').onclick = loadBalance;
+$('rawJsonBtn').onclick = ()=>{
+  window.open('/api/config' + (URL_TOKEN ? ('?token=' + URL_TOKEN) : ''), '_blank');
+};
 $('pauseBtn').onclick = async ()=>{
   try{ await getJSON($('pauseBtn').textContent==='暂停'?'/api/pause':'/api/resume', {method:'POST'}); loadStatus(); }catch(e){toast(e.message)}
+};
+$('stopBtn').onclick = async ()=>{
+  if(!confirm('确定停止机器人？停止后需重新双击「启动机器人.bat」才能再跑。')) return;
+  try{
+    await getJSON('/api/shutdown', {method:'POST'});
+    toast('已停止机器人');
+    $('dot').className = 'dot';
+  }catch(e){ toast('停止失败：'+e.message); }
 };
 $('testApi').onclick = async ()=>{
   const btn=$('testApi'); btn.disabled=true; $('testResult').textContent='测试中…';
@@ -294,7 +328,8 @@ class WebUI:
     """启动一个仅监听本机的 HTTP 服务，提供设置/状态/日志/测试 API 接口。"""
 
     def __init__(self, status_provider, log_buffer, test_api_fn=None, on_save=None,
-                 pause_fn=None, resume_fn=None, balance_fn=None):
+                 pause_fn=None, resume_fn=None, balance_fn=None, shutdown_fn=None,
+                 whale=None):
         self.status_provider = status_provider      # () -> dict
         self.log_buffer = log_buffer                # collections.deque[str]
         self.test_api_fn = test_api_fn              # () -> dict
@@ -302,9 +337,73 @@ class WebUI:
         self.pause_fn = pause_fn or (lambda: None)  # () -> None
         self.resume_fn = resume_fn or (lambda: None)  # () -> None
         self.balance_fn = balance_fn or (lambda: {"error": "未提供 balance_fn"})  # () -> dict
+        self.shutdown_fn = shutdown_fn or (lambda: None)  # () -> None
+        self.whale = whale                          # agent.whale.WhaleWidget（小鲸鱼挂件，可选）
         self._server = None
         self._thread = None
         self.port = 0
+        self._whale_js_cache = {}  # token -> bytes（注入口令后的挂件脚本缓存）
+        # 加载图标（assets/icon.png），用于 favicon
+        self._icon_bytes = b""
+        try:
+            icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "icon.png")
+            with open(icon_path, "rb") as f:
+                self._icon_bytes = f.read()
+        except Exception:
+            self._icon_bytes = b""
+
+    # ── 小鲸鱼挂件路由（/dsh-whale/*，实现与原版插件一致的接口）───────────
+
+    def _whale_get(self, handler, path: str, query: str):
+        """GET /dsh-whale/* 分发。handler 是当前 HTTP Handler（带 _json/_bytes）。"""
+        whale = self.whale
+        if whale is None:
+            return handler._json({"error": "not found"}, 404)
+        if path == "/dsh-whale/balance.json":
+            try:
+                handler._json(whale.balance_payload())
+            except Exception as e:
+                handler._json({"ok": False, "error": str(e)[:200]})
+        elif path == "/dsh-whale/size.json":
+            handler._json(whale.size_payload())
+        elif path == "/dsh-whale/last-turn.json":
+            handler._json(whale.last_turn_payload())
+        elif path == "/dsh-whale/image.png":
+            handler._bytes(whale.asset_bytes("DSniang1.png") or b"", "image/png")
+        elif path == "/dsh-whale/rua.gif":
+            handler._bytes(whale.asset_bytes("rua.gif") or b"", "image/gif")
+        elif path in ("/dsh-whale/sound/press.mp3", "/dsh-whale/sound/release.mp3"):
+            kind = "press" if path.endswith("press.mp3") else "release"
+            sound_set = (parse_qs(query).get("set") or [""])[0]
+            data = whale.sound_bytes(kind, sound_set)
+            handler._bytes(data or b"", "audio/mpeg")
+        elif path == "/dsh-whale/widget.js":
+            handler._bytes(self._whale_js_injected(), "application/javascript; charset=utf-8")
+        else:
+            handler._json({"error": "not found"}, 404)
+
+    def _whale_js_injected(self) -> bytes:
+        """返回注入口令后的挂件脚本字节（带缓存）。"""
+        token = str(get_config().get("server", {}).get("token") or "").strip()
+        if token in self._whale_js_cache:
+            return self._whale_js_cache[token]
+        try:
+            js_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                   "whale-widget", "client", "widget.js")
+            with open(js_path, "r", encoding="utf-8") as f:
+                js = f.read()
+        except Exception:
+            return b""
+        if token:
+            def _inj(m):
+                base, q = m.group(1), (m.group(2) or "")[1:]
+                return base + "?token=" + token + ("&" + q if q else "")
+            js = _WHALE_URL_RE.sub(_inj, js)
+        body = js.encode("utf-8")
+        if len(self._whale_js_cache) > 4:
+            self._whale_js_cache.clear()
+        self._whale_js_cache[token] = body
+        return body
 
     def start(self) -> int:
         cfg = get_config().get("server", {})
@@ -329,6 +428,16 @@ class WebUI:
                 self.end_headers()
                 self.wfile.write(body)
 
+            def _bytes(self, body, ctype="application/octet-stream", code=200):
+                if not body:
+                    body = b""
+                self.send_response(code)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
+
             def _auth_ok(self):
                 token = str(get_config().get("server", {}).get("token") or "").strip()
                 if not token:
@@ -344,11 +453,22 @@ class WebUI:
             def do_GET(self):
                 if not self._auth_ok():
                     return self._json({"error": "unauthorized"}, 401)
-                path = urlparse(self.path).path
+                parsed = urlparse(self.path)
+                path = parsed.path
                 if path in ("/", "/index.html"):
-                    body = HTML.encode("utf-8")
+                    token = str(get_config().get("server", {}).get("token") or "").strip()
+                    body = HTML.replace("__TKN__", token).encode("utf-8")
                     self.send_response(200)
                     self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                elif path.startswith("/dsh-whale/"):
+                    parent._whale_get(self, path, parsed.query)
+                elif path == "/assets/icon.png":
+                    body = parent._icon_bytes
+                    self.send_response(200)
+                    self.send_header("Content-Type", "image/png")
                     self.send_header("Content-Length", str(len(body)))
                     self.end_headers()
                     self.wfile.write(body)
@@ -369,6 +489,15 @@ class WebUI:
             def do_POST(self):
                 if not self._auth_ok():
                     return self._json({"error": "unauthorized"}, 401)
+                self._handle_body_request()
+
+            def do_PUT(self):
+                # 小鲸鱼挂件前端用 PUT 保存配置（fetch SIZE_URL, {method:'PUT'}）
+                if not self._auth_ok():
+                    return self._json({"error": "unauthorized"}, 401)
+                self._handle_body_request()
+
+            def _handle_body_request(self):
                 path = urlparse(self.path).path
                 length = int(self.headers.get("Content-Length") or 0)
                 raw = self.rfile.read(length) if length else b"{}"
@@ -386,6 +515,15 @@ class WebUI:
                         self._json({"ok": True})
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)}, 500)
+                elif path == "/dsh-whale/size.json":
+                    # 小鲸鱼挂件配置保存（前端 PUT）
+                    if parent.whale is None:
+                        self._json({"error": "not found"}, 404)
+                    else:
+                        try:
+                            self._json(parent.whale.save_size(data))
+                        except Exception as e:
+                            self._json({"ok": False, "error": str(e)}, 500)
                 elif path == "/api/test-api":
                     try:
                         if parent.test_api_fn:
@@ -400,6 +538,10 @@ class WebUI:
                 elif path == "/api/resume":
                     parent.resume_fn()
                     self._json({"ok": True})
+                elif path == "/api/shutdown":
+                    self._json({"ok": True, "note": "正在停止机器人…"})
+                    # 稍等响应返回后再触发停止，避免连接被切断
+                    threading.Timer(0.5, parent.shutdown_fn).start()
                 else:
                     self._json({"error": "not found"}, 404)
 
