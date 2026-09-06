@@ -374,6 +374,27 @@ load();
 setInterval(loadStatus, 8000);
 setInterval(loadBalance, 30000);
 setInterval(()=>{ if($('autolog').checked) loadLog(); }, 4000);
+
+// 断线检测：机器人停止后显示全屏「已停止」提示，并尝试自动关闭本页面
+let offlineShown = false;
+async function checkAlive(){
+  if(offlineShown) return;
+  try{
+    const r = await fetch('/api/status', {headers: URL_TOKEN?{Authorization:'Bearer '+URL_TOKEN}:{}});
+    if(!r.ok) throw new Error(r.status);
+  }catch(e){
+    offlineShown = true;
+    const ov=document.createElement('div');
+    ov.id='stoppedOverlay';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(15,17,21,.97);z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#e6e9ef;font:15px/2 sans-serif;text-align:center;padding:20px';
+    ov.innerHTML='<div style="font-size:30px;font-weight:700;margin-bottom:10px">机器人已停止</div>'+
+      '<div>后台进程已退出。请双击「启动机器人.bat」重新启动。</div>'+
+      '<div style="margin-top:14px;color:#9aa4b2">本页面将在几秒后尝试自动关闭…</div>';
+    document.body.appendChild(ov);
+    setTimeout(()=>{ try{window.close();}catch(_e){} }, 4000);
+  }
+}
+setInterval(checkAlive, 6000);
 </script>
 </body>
 </html>
