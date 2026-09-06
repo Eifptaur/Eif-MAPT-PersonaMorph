@@ -383,6 +383,22 @@ class WeChatAdapter:
 
     # ── 右键菜单操作（拍一拍 / 引用）──────────────────────────────────
 
+    def _ensure_foreground(self, gui) -> bool:
+        """把微信窗口带到前台并最小化遮挡窗。
+
+        不用 gui.ensure_visible()：它的"桌面可用"检测数白色像素占比，
+        深色主题下永远返回 False（实测误报"锁屏/不可见"）。
+        """
+        try:
+            gui._minimize_blockers()
+            time.sleep(0.5)
+            gui.bring_to_front(keep_topmost=True)
+            time.sleep(0.5)
+            gui._update_render_rect()
+            return gui.is_alive()
+        except Exception:
+            return False
+
     def _right_click_menu(self, gui, rel_x: int, rel_y: int, label: str, delay: float = 0.7) -> bool:
         """在相对坐标 (rel_x, rel_y) 处右键，OCR 弹出菜单，点含 label 的项。
 
@@ -421,35 +437,45 @@ class WeChatAdapter:
         try:
             gui = self._get_gui()
             group = self.group_name(chat_id)
-            if not gui.ensure_visible():
-                return False, "微信窗口不可见（可能锁屏或最小化）"
+            if not self._ensure_foreground(gui):
+                return False, "微信窗口未找到或已退出，无法操作"
             if not gui.open_chat(group):
                 return False, "打开会话失败"
-            time.sleep(0.8)
+            time.sleep(0.9)
             box = gui.get_input_box()
             if not box:
                 return False, "未检测到输入框，无法定位消息区"
-            top = max(80, box[1] - 600)
-            items = gui.ocr((gui.right_pane_left, top, gui.render_w, box[1]))
-            hit = None
-            for text, x, y, w, h in items:
-                if target_name and target_name in text:
-                    hit = (x, y, w, h)
-                    break
-            if not hit:
-                return False, "未在可见消息里找到「%s」，可让对方先发一条消息、或先往上翻到他的消息" % target_name
-            # 头像在消息区最左边缘、与名字同一行 → 右键头像；头像中心位置随版本略有偏移，
-            # 菜单没弹出来时换几个偏移重试
             base_seq = self.latest_seq(chat_id)
-            ay = hit[1] + hit[3] // 2
-            tried = []
-            for ax_off in (28, 22, 36):
-                tried.append(ax_off)
-                ax = gui.right_pane_left + ax_off
+            top = max(80, box[1] - 620)
+            items = gui.ocr((gui.right_pane_left, top, gui.render_w, box[1]))
+            mid_x = (gui.right_pane_left + gui.render_w) // 2
+
+            # 头像列在聊天区左侧（微信 4.x 居中卡片布局），从「名字标签」精确推导：
+            # 名字是独立 OCR 行（在左半区、不含"拍"字），头像中心 ≈ 名字中心 (-52, +11)
+            # （实测校准：名字「E」标签中心 (559,601)，头像中心 (500,612)，头像 45×45）
+            labels = [(x, y, w, h) for t, x, y, w, h in items
+                      if target_name and t == target_name and x < mid_x and "拍" not in t]
+            if labels:
+                x, y, w, h = max(labels, key=lambda b: b[1])  # 最新的（y 最大）
+                ax = x + w // 2 - 52
+                ay = y + h // 2 + 11
                 if self._right_click_menu(gui, ax, ay, "拍一拍"):
                     return self._verify_poke(chat_id, target_name, base_seq)
-                time.sleep(0.4)
-            return False, "右键菜单里没找到「拍一拍」（已试头像偏移 %s），可能对方的头像不在可见消息里" % "/".join(map(str, tried))
+
+            # 兜底 1：消息文本里含目标名（名字标签没被 OCR 到）→
+            # 名字标签在气泡第一行之上，头像 ≈ (文本行左 - 78, 文本行上 - 44)
+            hit = None
+            for t, x, y, w, h in items:
+                if target_name and target_name in t and "拍" not in t and mid_x > x > gui.right_pane_left:
+                    hit = (x, y, w, h)
+                    break
+            if hit:
+                ax = hit[0] - 78
+                ay = hit[1] + hit[3] // 2 - 44
+                if self._right_click_menu(gui, ax, ay, "拍一拍"):
+                    return self._verify_poke(chat_id, target_name, base_seq)
+
+            return False, "右键菜单里没找到「拍一拍」，未在可见消息里定位到「%s」的头像（让对方先发条消息、或往上翻到他的消息再试）" % target_name
         except Exception as e:
             return False, str(e)
 
@@ -488,8 +514,8 @@ class WeChatAdapter:
         try:
             gui = self._get_gui()
             group = self.group_name(chat_id)
-            if not gui.ensure_visible():
-                return False, "微信窗口不可见（可能锁屏或最小化）"
+            if not self._ensure_foreground(gui):
+                return False, "微信窗口未找到或已退出，无法操作"
             if not gui.open_chat(group):
                 return False, "打开会话失败"
             time.sleep(0.8)
