@@ -5,7 +5,7 @@
   - 智能大脑：qq-agent（无状态会话 / 响应档位 / 工具集 / 记忆 / 联网搜索 / 人设）
   - 微信接入：wechat-deepseek-bot（wechatauto UIA 无注入读消息 + 屏幕自动化发送）
 
-运行：python wx_agent.py   （或双击 scripts/启动机器人.bat）
+运行：python wx_agent.py   （或双击 启动机器人.vbs）
 """
 from __future__ import annotations
 

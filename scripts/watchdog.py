@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """wx-agent 看门狗（无窗口）：机器人崩溃/退出后自动重启。
 
-与 看门狗.ps1 等价，但用 pythonw 运行、零 PowerShell 依赖（无 cmd、无 powershell 窗口）。
+用 pythonw 运行、零 PowerShell 依赖（无 cmd、无 powershell 窗口）。
 启动时把自己的 PID 写到 data/watchdog.pid，供 停止机器人 读取。
 """
 import os
