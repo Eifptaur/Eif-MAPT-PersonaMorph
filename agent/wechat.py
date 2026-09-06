@@ -779,23 +779,44 @@ class WeChatAdapter:
         return str(content or "")
 
     def _verify_poke(self, chat_id: str, target_name: str, base_seq: int = 0):
-        """拍完后回读数据库，确认真的出现了**新的**拍拍事件。绝不假报成功。
+        """拍完后确认真的出现了**新的**拍拍提示。绝不假报成功。
 
-        微信落库有 2~6 秒延迟，轮询最多 10 秒（每 1 秒读一次），
-        从 base_seq 之后新出现的消息里找含「拍拍/拍了拍」的
-        （可能是 zstd appmsg，也可能是普通系统文本），找到才算成功。
+        双重验证：
+          ① 数据库轮询 5 秒：微信落库有延迟，找 base_seq 之后「新出现」的
+             （zstd appmsg 或普通系统文本）含「拍拍/拍了拍」的行；
+          ② 界面 OCR：自己发起的「你拍了拍…」提示可能不落库（实测），改为
+             截图聊天区底部 180px（新提示总在最下面）找「拍了拍」——只认它，
+             预防旧提示误报。
         """
         try:
-            for _ in range(10):
-                time.sleep(1.0)  # 等微信落库（可多等几轮）
+            for _ in range(5):
+                time.sleep(1.0)
                 raws = self._db.get_new_messages(chat_id, base_seq, 10)
                 for row in raws:
                     txt = self._row_inner_text(row)
                     if "拍拍" in txt:
-                        return True, "已拍一拍「%s」（已验证：群里出现新的拍一拍事件）" % target_name
-            return False, "已点「拍一拍」但十秒内没在群里验证到新的拍一拍事件（可能没点中/没拍到，如实告诉对方这次没拍上，稍后再试）"
+                        return True, "已拍一拍「%s」（已验证：数据库中新增拍一拍事件）" % target_name
         except Exception as e:
-            return False, "已点「拍一拍」但无法验证（%s），不能保证拍到" % e
+            pass
+        # 界面 OCR 验证（自己拍的提示不落库时用）
+        try:
+            gui = self._get_gui()
+            box = gui.get_input_box()
+            bottom = box[1] if box else gui.render_h - 60
+            for _ in range(4):
+                time.sleep(0.8)
+                region = (gui.right_pane_left, max(80, bottom - 185), gui.render_w, bottom + 10)
+                try:
+                    items = gui.ocr_zoomed(region, scale=2)
+                except Exception:
+                    items = gui.ocr(region)
+                for text, *_ in items:
+                    tn = self._norm_ocr(text)
+                    if "拍了拍" in tn or ("拍拍" in tn and ("你" in tn or "我" in tn[:4])):
+                        return True, "已拍一拍「%s」（已验证：界面出现「你拍了拍…」提示）" % target_name
+        except Exception:
+            pass
+        return False, "已点「拍一拍」但数据库与界面都未验证到（可能没点中/没拍到，如实告诉对方这次没拍上，稍后再试）"
 
     def reply_quote(self, chat_id: str, text: str):
         """引用最近一条消息并发送文字：右键最近消息 → 菜单选「引用」→ 输入 → 发送。"""
