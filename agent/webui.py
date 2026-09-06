@@ -356,8 +356,8 @@ $('pokeTest').onclick = async ()=>{
   try{
     const r = await getJSON('/api/poke-test', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({})});
     const steps = (r.steps||[]).join('\n');
-    $('uiTestResult').textContent = (r.ok?'✅ ':'❌ ')+r.message;
-    $('uiTestDetail').textContent = '步骤：\n'+steps;
+    $('uiTestResult').textContent = (r.ok?'✅ ':'❌ ')+(r.message || r.error || '(无结果)');
+    $('uiTestDetail').textContent = '目标：'+(r.target?(r.target.name+' / '+r.target.id+' 在群「'+(r.group||'?')+'」'):'未解析')+'\n步骤：\n'+(steps || (r.error||''));
   }catch(e){ $('uiTestResult').textContent='❌ '+e.message; }
   finally{ btn.disabled=false; }
 };
