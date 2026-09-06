@@ -266,11 +266,11 @@ def prepare_screen(gui) -> bool:
 
 
 def heal_input():
-    """输入状态自愈：释放所有鼠标按键 + 轻微移动光标 + 广播取消模式。
+    """输入状态自愈：释放所有鼠标按键 + 轻微移动光标。
 
     高频合成点击后偶发「拖动无效/桌面图标拖不动」，多为输入队列残留：
-    多余的 up 事件无害，若有丢失的 up 会在此补上；WM_CANCELMODE 会关闭
-    可能残留的菜单/拖拽捕获。每个点击批次后调用一次。
+    多余的 up 事件无害，若有丢失的 up 会在此补上。
+    注意：不做 WM_CANCELMODE 广播（会让无辜窗口闪动）。
     """
     try:
         for flag in (0x0004, 0x0010, 0x0040):  # LEFTUP / RIGHTUP / MIDDLEUP
@@ -282,7 +282,6 @@ def heal_input():
         _user32.SetCursorPos(x + 4, y + 2)
         time.sleep(0.05)
         _user32.SetCursorPos(x, y)
-        _user32.PostMessageW(0xFFFF, 0x001F, 0, 0)  # WM_CANCELMODE 广播
     except Exception:
         pass
 
