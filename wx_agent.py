@@ -389,7 +389,18 @@ class Orchestrator:
                     assistant_entry["tool_calls"] = tool_calls
 
             if not tool_calls:
-                break  # 模型结束思考（文本不会发送）
+                _final = str(content or "").strip()
+                if _final and not session["sent"]:
+                    # 兜底：模型决定「说完就结束」但没调发送工具 → 把最终文本当作回复自动发出，
+                    # 避免「想好了却没发出去」的沉默（noreply；曾实测：模型写完回复就结束）
+                    try:
+                        res = self.sender.send_text_batch(chat_key, _final)
+                        session["sent"].extend(res.get("sent") or [])
+                        if res.get("sent"):
+                            log.info("[%s] 模型未调发送工具，按最终文本自动补发 %d 条", chat_key, len(res["sent"]))
+                    except Exception as e:
+                        log.warning("自动补发最终文本失败：%s", e)
+                break  # 模型结束思考（不会再调工具）
 
             tool_results = []
             image_user_msgs = []
