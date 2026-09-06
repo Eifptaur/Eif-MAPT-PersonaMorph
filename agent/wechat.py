@@ -450,7 +450,7 @@ class WeChatAdapter:
             return True
         now = time.time()
         key = (chat_id, t)
-        while self._send_recent and now - self._send_recent[0][1] > 30:
+        while self._send_recent and now - self._send_recent[0][2] > 30:
             self._send_recent.popleft()
         for ck, ct, ts in self._send_recent:
             if ck == key[0] and ct == key[1] and (now - ts) < 3.0:
