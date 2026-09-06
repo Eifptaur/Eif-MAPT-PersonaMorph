@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import html
 import os
+import random
 import re
 import threading
 import time
@@ -82,6 +83,8 @@ class WeChatAdapter:
         self._send_lock = threading.Lock()
         self._recent_sent = deque(maxlen=200)   # 最近自己发过的消息文本 (text, ts)，用于过滤回声
         self._send_recent = deque(maxlen=50)    # 发送去重 (chat_id, text, ts)，防回车重试发两遍
+        self._poke_back_cd: dict = {}           # wxid -> 上次「系统回拍」时间戳（30 分钟冷却，防连环拍）
+        self._poke_playful: dict = {}           # 日期(yyyy-mm-dd) -> [ts...] 主动皮一下记录（按天限频）
         self._init_db()
 
     # ── 初始化 ───────────────────────────────────────────────────────────
@@ -545,16 +548,22 @@ class WeChatAdapter:
         if not ok:
             return False
         time.sleep(delay)
-        # 1) UIA 菜单树优先
-        try:
-            uia = gui._get_uia()
-            if uia is not None:
-                mi = uia._uia_find_menu_item(label)
-                if mi is not None:
-                    if uia._uia_click_menu_item(mi):
-                        return True
-        except Exception:
-            pass
+        # 1) UIA 菜单树优先（第一次右键可能只完成窗口聚焦而不弹菜单 → 重试一次）
+        for _attempt in range(2):
+            try:
+                uia = gui._get_uia()
+                if uia is not None:
+                    mi = uia._uia_find_menu_item(label)
+                    if mi is not None:
+                        if uia._uia_click_menu_item(mi):
+                            return True
+            except Exception:
+                pass
+            if _attempt == 0:
+                ok, why = self._click(gui, rel_x, rel_y, right=True)
+                if not ok:
+                    return False
+                time.sleep(delay)
         # 2) OCR 兜底（放大 3 倍），带真菜单过滤
         top = max(0, rel_y - 220)
         bottom = min(gui.render_h, rel_y + 320)
@@ -699,8 +708,9 @@ class WeChatAdapter:
                         cx = (lr.left + lr.right) // 2
                         cy = (lr.top + lr.bottom) // 2
                         uia._set_cursor(cx, cy)
-                        # 行偏上 → 向「最新」滚（-120）；偏下 → 向「历史」滚（+120）
-                        delta = -120 if rr.top <= lr.top + 60 else 120
+                        # 行偏上（目标在顶部边缘）→ 向「历史」滚（+120），让行下移到视野中部；
+                        # 行偏下 → 向「最新」滚（-120）。注意 -120=最新（scroll_to_bottom 同向）。
+                        delta = 120 if rr.top <= lr.top + 60 else -120
                         uia._mouse_wheel(delta)
                         time.sleep(0.15)
                         uia._mouse_wheel(delta)
@@ -760,15 +770,16 @@ class WeChatAdapter:
         except Exception:
             return None
 
-    def _send_poke_locate(self, gui, target_name: str, db_text: str):
+    def _send_poke_locate(self, gui, target_name: str, db_text: str, scroll: bool = True):
         """定位目标头像（渲染相对坐标），返回 (ax, ay, score) 或 None。
 
         路径优先级：① UIA 行匹配（精确/模糊）→ 彩色头像检测；② UIA 行固定偏移；
         ③ OCR 相似度匹配 → 彩色头像检测；④ 左侧消息块兜底。
         返回第三位 score 供日志说明路径（1.0=UIA 精确行 / 0.8=彩色检测 / 0.0=兜底）。
+        scroll=False 只在当前视口找（先滚到最新再调用，用于引用定位避免翻页漂移）。
         """
         # 1) UIA 行匹配（可向上翻页查找）+ 彩色头像检测
-        row = self._uia_target_row_rect(gui, db_text, scroll=True)
+        row = self._uia_target_row_rect(gui, db_text, scroll=scroll)
         if row:
             av = self._find_avatar_center((row[0], row[1], row[0] + 130, row[3]))
             if av:
@@ -890,6 +901,59 @@ class WeChatAdapter:
             _d("✘ 异常：%s" % e)
             return False, str(e)
 
+    # ── 拍一拍概率门控（回拍 90% / 主动皮一下低频）────────────────────────
+
+    @staticmethod
+    def _poke_cfg():
+        return get_config().get("poke") or {}
+
+    def try_send_poke_back(self, chat_id: str, target_name: str, target_id: str = ""):
+        """「对方拍了拍我」→ 回拍：概率（默认 90%）+ 每人 30 分钟冷却。
+
+        系统级回拍（不依赖模型自觉），返回 (ok, msg)；被冷却/概率拦下时如实返回
+        （ok=False），日志可查，绝不假报拍到了。
+        """
+        cfg = self._poke_cfg()
+        prob = float(cfg.get("reply_probability", 0.9))
+        cooldown = float(cfg.get("cooldown_seconds", 1800))
+        if target_id and target_id == self._self_wxid:
+            return False, "不能拍自己"
+        if target_id:
+            last = self._poke_back_cd.get(target_id, 0)
+            if time.time() - last < cooldown:
+                return False, "30 分钟内已经拍过 TA（冷却中），这次不拍了"
+        if random.random() > prob:
+            return False, "回拍概率未触发（当前 %.0f%%），这次不回拍" % (prob * 100)
+        ok, msg = self.send_poke(chat_id, target_name, target_id)
+        if ok and target_id:
+            self._poke_back_cd[target_id] = time.time()
+        return ok, msg
+
+    def try_send_poke_active(self, chat_id: str, target_name: str, target_id: str = ""):
+        """主动/皮一下拍人：低频门控（默认 10% 概率 + 每天最多 3 次）。
+
+        群友明确要求（request）不走这里；只有模型「偶尔皮一下」才经过此门控。
+        """
+        cfg = self._poke_cfg()
+        prob = float(cfg.get("active_probability", 0.1))
+        daily = int(cfg.get("active_daily_limit", 3))
+        today = time.strftime("%Y-%m-%d")
+        recs = self._poke_playful.setdefault(today, [])
+        if len(recs) >= daily:
+            return False, "今天主动拍一拍次数已用完（%d 次），不拍了" % daily
+        if random.random() > prob:
+            return False, "这次皮一下被概率拦下了（主动拍一拍概率 %.0f%%），不拍了" % (prob * 100)
+        ok, msg = self.send_poke(chat_id, target_name, target_id)
+        if ok:
+            recs.append(time.time())
+        return ok, msg
+
+    def poke_back_cooldown_left(self, target_id: str) -> int:
+        """某 wxid 距冷却结束还剩多少秒（供提示/日志/控制台展示）。"""
+        last = self._poke_back_cd.get(target_id, 0)
+        cd = float(self._poke_cfg().get("cooldown_seconds", 1800))
+        return max(0, int(cd - (time.time() - last)))
+
     def poke_diag(self, chat_id: str, target_name: str, target_id: str = "",
                   verify_only: bool = False) -> dict:
         """控制台「拍一拍诊断」：跑一遍完整流程并返回分步结果。
@@ -968,74 +1032,58 @@ class WeChatAdapter:
             return False, "异常：%s" % e
 
     def click_self_test(self) -> dict:
-        """真实点击自检：用与拍一拍完全相同的「移动+右键」逻辑，验证点击投递。
+        """真实点击自检：与「拍一拍检测」完全同链路（定位头像→右键→菜单识别→Esc）。
 
-        右键一条可见消息 → 检测微信右键菜单（UIA XMenuView 优先，OCR 兜底）→ Esc 关闭。
-        不点菜单项、不发消息，安全性 OK。
+        直接复用已验证的 verify-only 路径（用户实测拍一拍检测是好的），
+        保证体检结论与拍一拍检测一致；不点菜单项、不发消息、不拍任何人。
         """
         try:
-            gui = self._get_gui()
-            if gui is None or not gui.is_alive():
-                return {"ok": False, "detail": "微信窗口不可用（未找到/已退出）"}
-            if not self._ensure_foreground(gui):
-                return {"ok": False, "detail": "把微信置前失败"}
-            uia = gui._get_uia()
-            if uia is None:
-                return {"ok": False, "detail": "UIA 驱动不可用"}
-            lst = uia._message_list()
-            if lst is None:
-                return {"ok": False, "detail": "消息列表不可用——请先打开一个群聊（可以用「拍一拍诊断」或让群友@机器人）"}
-            target = None
-            for ch in list(lst.GetChildren()):
-                try:
-                    if ch.ClassName == "mmui::ChatTextItemView" and (ch.Name or "").strip():
-                        target = ch
-                        break
-                except Exception:
-                    continue
-            if target is None:
-                return {"ok": False, "detail": "没有可见的消息行"}
-            r = target.BoundingRectangle
-            rel_x = (r.left + r.right) // 2 - gui.origin_x
-            rel_y = (r.top + r.bottom) // 2 - gui.origin_y
-            ok, why = self._click(gui, rel_x, rel_y, right=True)
-            if not ok:
-                return {"ok": False, "detail": "右键被拦截：%s" % why}
-            time.sleep(0.9)
-            menu_found = None
-            for label in ("引用", "回复", "转发", "拍一拍"):
-                try:
-                    mi = uia._uia_find_menu_item(label)
-                    if mi is not None:
-                        menu_found = label
-                        break
-                except Exception:
-                    continue
-            # 关闭菜单：只有确认 UIA 找到真实菜单节点（mmui::XMenuView）才按 Esc——
-            # 否则 Esc 会直接关掉微信聊天窗口/整个窗口（之前的教训）
-            if menu_found is not None:
-                try:
-                    gui._input.key(0x1B)
-                except Exception:
-                    pass
-                return {"ok": True, "detail": "右键弹出了微信菜单（UIA 检测到「%s」）——点击投递正常，与拍一拍同链路" % menu_found}
-            # OCR 只做报告（不按键），防止把聊天文本里的「引用/回复」误当菜单而误按键
-            ocr_hit = ""
-            try:
-                items = gui.ocr_zoomed((gui.right_pane_left, max(0, rel_y - 40),
-                                        gui.render_w, min(gui.render_h, rel_y + 360)), scale=3)
-            except Exception:
-                items = []
-            for text, *_ in items:
-                t = text.strip()
-                if t in ("引用", "回复", "转发") or "拍一拍" in t:
-                    ocr_hit = t[:10]
+            any_group = None
+            for g in self.list_groups():
+                name, sid = self._latest_friend(g["wxid"])
+                if sid:
+                    any_group = (g["wxid"], g["name"], name, sid)
                     break
-            if ocr_hit:
-                return {"ok": True, "detail": "右键弹出菜单（OCR 检测到「%s」，未按任何键）——点击投递正常，与拍一拍同链路" % ocr_hit}
-            return {"ok": False, "detail": "右键后未检测到菜单（按拍一拍同款移动+右键逻辑执行，未按任何键）——点击投递异常"}
+            if any_group is None:
+                return {"ok": False,
+                        "detail": "没有找到有群友消息的群（在任意群里说一句话后再试，不需要控制台存档）"}
+            chat_id, gname, name, sid = any_group
+            result = self.poke_diag(chat_id, name, sid, verify_only=True)
+            detail = result.get("message") or result.get("steps")
+            if not isinstance(detail, str):
+                detail = "；".join(str(s) for s in (detail or [])[:4])
+            return {"ok": bool(result.get("ok")), "detail": detail, "group": gname, "target": name}
         except Exception as e:
             return {"ok": False, "detail": "异常：%s" % e}
+
+    @staticmethod
+    def _uia_quote_finish(gui, text: str) -> bool:
+        """UIA 直进输入框：粘贴 → 回车 → 读回验证（输入框被清空=已发出）。
+
+        引用模式的输入框仍是同一个 UIA Edit 控件（位置/高度变化不影响），
+        因此比像素探测稳定得多。返回 False 时调用方回退坐标路径。
+        """
+        try:
+            uia = gui._get_uia()
+            if uia is None:
+                return False
+            e = uia._chat_input()
+            if e is None:
+                return False
+            uia._paste_into(e, text, clear=True)
+            time.sleep(0.4)
+            for _ in range(2):
+                e.SendKeys("{Enter}", waitTime=0.05)
+                time.sleep(0.7)
+                try:
+                    cur = str(e.GetValuePattern().Value or "")
+                except Exception:
+                    cur = str(getattr(e, "Value", "") or "")
+                if text[:16].replace("\r", "").replace("\n", "") not in cur.replace("\r", "").replace("\n", ""):
+                    return True
+            return False
+        except Exception:
+            return False
 
     def _row_inner_text(self, row: dict) -> str:
         """取消息行里的真实文本；若是 zstd 压缩的 appmsg 则解压（用于验证拍拍事件）。"""
@@ -1096,11 +1144,14 @@ class WeChatAdapter:
             pass
         return False, "已点「拍一拍」但数据库与界面都未验证到（可能没点中/没拍到，如实告诉对方这次没拍上，稍后再试）"
 
-    def reply_quote(self, chat_id: str, text: str, target_text: str = ""):
-        """引用一条消息并发送文字：右键该消息 → 菜单选「引用」→ 输入 → 发送。
+    def reply_quote(self, chat_id: str, text: str, target_text: str = "", target_sender_name: str = ""):
+        """引用一条消息并发送文字：定位「对方头像」→ 右键头像右侧的气泡起点 → 菜单「引用」→ 输入 → 发送。
 
-        target_text 非空时：先按文本在消息列表里找（可视区找不到会向上翻页
-        最多 12 屏），右键那一条的正文；为空时引用「最近一条消息」（近似）。
+        为什么不用「整行中央」：微信 4.x UIA 的 ChatTextItemView 矩形是**全宽行**，
+        行中央往往是空白，右键不弹菜单（这就是之前「不会引用了 / 点击实测失败」的根因）。
+        这里改用与拍一拍完全相同的头像定位（_send_poke_locate），再以 OCR 找气泡左端做
+        命中测试；多个候选点逐一试右键，任一出菜单即点「引用」。
+        target_text 空 = 引用「数据库最新一条群友消息」（近似）。
         """
         try:
             gui = self._get_gui()
@@ -1110,30 +1161,89 @@ class WeChatAdapter:
             if not gui.open_chat(group):
                 return False, "打开会话失败"
             time.sleep(0.8)
-            if target_text.strip():
-                row = self._uia_target_row_rect(gui, target_text, scroll=True)
-                if row:
-                    rel_x = (row[0] + row[2]) // 2 - gui.origin_x
-                    rel_y = (row[1] + row[3]) // 2 - gui.origin_y
+
+            if not target_text.strip():
+                # 引用「最近一条群友消息」：从数据库取最新文本做定位
+                try:
+                    for raw in self._db.get_messages(chat_id, limit=20):
+                        norm = self.normalize(raw, chat_id)
+                        if norm and str(norm.get("sender_id") or "").startswith("wxid_") \
+                                and str(norm.get("text") or "").strip():
+                            target_text = str(norm["text"])
+                            target_sender_name = str(norm.get("sender_name") or "")
+                            break
+                except Exception:
+                    pass
+
+            hit = False
+            for _round in range(2):
+                located = None
+                if target_text.strip():
+                    # 翻页找目标并居中到视口中部（方向已修正），弹右键才稳定
+                    located = self._send_poke_locate(gui, target_sender_name or "", target_text, scroll=True)
+                if located:
+                    ax, ay, _score = located
+                    # 实测（本机 WeChat 4.x）：气泡文本区起点 ≈ 头像中心 +70px
+                    # （头像右缘+空档+气泡内边距）；行中央/头像边缘均不弹菜单，
+                    # 必须点中气泡文本本身。文字短时气泡左端相同（左对齐），70px 依然命中。
+                    points = [(ax + 70, ay), (ax + 95, ay), (ax + 46, ay)]
+                    try:
+                        items = gui.ocr_zoomed((gui.right_pane_left, max(0, ay - 36),
+                                                gui.render_w, min(gui.render_h, ay + 36)), scale=3)
+                        xs = [x for t, x, y, w, h in items
+                              if (t or "").strip() and abs((y + h / 2) - ay) < 46]
+                        if xs:
+                            points.append((gui.right_pane_left + min(xs) - 8, ay))
+                    except Exception:
+                        pass
                 else:
-                    # 找不到目标消息：退回最近一条并如实告诉调用方
                     y = gui._last_message_y()
-                    rel_y = y if y is not None else gui.render_h - 120
-                    rel_x = (gui.render_w + gui.right_pane_left) // 2
-            else:
-                y = gui._last_message_y()
-                if y is None:
-                    return False, "未检测到消息区"
-                rel_y = y
-                rel_x = (gui.render_w + gui.right_pane_left) // 2
-            if not self._right_click_menu(gui, rel_x, rel_y, "引用"):
+                    if y is None:
+                        break
+                    bw = gui.render_w - gui.right_pane_left
+                    points = [(gui.right_pane_left + bw // 3, y), (gui.right_pane_left + bw // 4, y)]
+                for cx, cy in points:
+                    if self._right_click_menu(gui, cx, cy, "引用"):
+                        hit = True
+                        break
+                if hit:
+                    break
+                # 一轮都没出菜单：滚回最新消息再重新定位（滚动位置/行位置可能已漂移）
+                try:
+                    self._scroll_to_bottom(gui)
+                    time.sleep(1.0)
+                except Exception:
+                    pass
+            if not hit:
+                # 若菜单确实弹出过但没找到「引用」，安全关闭（UIA 确认到菜单节点才按 Esc）
+                try:
+                    uia = gui._get_uia()
+                    if uia is not None and uia._uia_find_menu_item("转发") is not None:
+                        gui._input.key(0x1B)
+                except Exception:
+                    pass
                 self._scroll_to_bottom(gui)
-                return False, "右键菜单里没找到「引用」（目标消息可能不在屏幕内，已尝试向上翻页）"
+                return False, "右键菜单里没找到「引用」（已按头像/气泡起点多次尝试；目标可能是自己最近发的消息或不在可见区——让对方说句话再试）"
             time.sleep(0.5)
-            if not gui.input_text(text):
+            # 优先 UIA 直进输入框（粘贴+回车+读回验证），不依赖像素探测——
+            # 引用模式下输入框探测（全宽白区+分界线）常失败，这正是「引用发送失败」的根因
+            if self._uia_quote_finish(gui, text):
+                self._mark_sent(text)
+                self._scroll_to_bottom(gui)
+                return True, "已引用并发送"
+            # 回退 1：固定矩形 fast 路径
+            box = (gui.right_pane_left + 4, max(60, gui.render_h - 250),
+                   gui.render_w - 4, gui.render_h - 60)
+            ok_in = gui.input_text(text, box=box, fast=True)
+            if not ok_in:
+                ok_in = gui.input_text(text)  # 回退完整探测路径
+            if not ok_in:
                 self._scroll_to_bottom(gui)
                 return False, "输入文字失败"
-            if not gui.click_send():
+            ok_send = gui.click_send(fast=True)
+            if not ok_send:
+                ok_send = gui.click_send()
+            if not ok_send:
                 self._scroll_to_bottom(gui)
                 return False, "发送失败"
             self._mark_sent(text)

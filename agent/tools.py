@@ -117,10 +117,14 @@ def build_tool_defs() -> list:
         },
         {
             "name": "send_poke",
-            "description": "拍一拍群里的某位成员（右键对方头像 → 菜单选「拍一拍」）。targetUserId 填对方 wxid（不知道就先调 get_active_members 查）。实验性：靠屏幕 OCR 定位头像和菜单，可能失败；适合代替一句废话、回应对方或逗一下熟人，别频繁。",
+            "description": "拍一拍群里的某位成员（右键对方头像 → 菜单选「拍一拍」）。targetUserId 填对方 wxid（不知道就先调 get_active_members 查）。reason 三选一：reply=回拍（对方刚拍了你，通常系统会自动回拍，无需重复调用）；request=群友明确要求拍某人（不设概率门）；playful=偶尔皮一下（受 10% 概率 + 每天 3 次限制，可能被拦）。实验性：靠屏幕 OCR 定位头像和菜单，可能失败。",
             "parameters": {
                 "type": "object",
-                "properties": {"target_user_id": {"description": "要拍的群友 wxid"}},
+                "properties": {
+                    "target_user_id": {"description": "要拍的群友 wxid"},
+                    "reason": {"type": "string", "enum": ["reply", "request", "playful"],
+                               "description": "拍一拍原因：reply/request/playful，默认 playful"}
+                },
                 "required": ["target_user_id"],
             },
             "execute": _exec_send_poke,
@@ -217,18 +221,21 @@ def _exec_send_message(ctx, args):
         messages = normalize_message_list(args.get("messages"))
         if not messages:
             return _err("消息内容为空")
-        # 引用时把被引用消息的原文带给发送层（用于在消息列表里定位它，即便已滚出可视区）
+        # 引用时把被引用消息的原文 + 发送者名字带给发送层（用于定位头像/气泡，即便已滚出可视区）
         reply_text = ""
+        reply_sender_name = ""
         rmid = args.get("reply_to_message_id")
         if rmid:
             entry = ctx["store"].find_by_mid(ctx["chat_key"], rmid)
             if entry:
                 reply_text = str(entry.get("text") or "")
+                reply_sender_name = str(entry.get("sender_name") or "")
         result = ctx["sender"].send_text_batch(
             ctx["chat_key"], messages,
             reply_to_mid=rmid,
             at_user_id=args.get("at_user_id"),
             reply_text=reply_text,
+            reply_sender_name=reply_sender_name,
         )
         ctx["session"]["sent"].extend([{"type": "text", "text": s["text"], "at": s.get("at")} for s in result["sent"]])
         note = "已发送。不要输出\"已发送\"类汇报，继续思考下一步或直接结束。"
@@ -332,21 +339,30 @@ def _exec_send_image(ctx, args):
 
 
 def _exec_send_poke(ctx, args):
-    """拍一拍某位群友（实验性）。"""
+    """拍一拍某位群友：按 reason 走不同门控（回拍 90% / 要求直拍 / 皮一下 10%+每天3次）。"""
     user_id = str(args.get("target_user_id") or "").strip()
     if not user_id:
         return _err("target_user_id 不能为空")
+    reason = str(args.get("reason") or "playful").strip().lower()
+    if reason not in ("reply", "request", "playful"):
+        reason = "playful"
     name = ctx["wechat"].member_name(ctx["chat_id"], user_id)
     if not name or name == user_id:
         for m in ctx["store"].active_members(ctx["chat_key"], 20):
             if m["user_id"] == user_id and m.get("name"):
                 name = m["name"]
                 break
-    ok_flag, msg = ctx["wechat"].send_poke(ctx["chat_id"], name or user_id, user_id)
+    chat_id = ctx["chat_id"]
+    if reason == "reply":
+        ok_flag, msg = ctx["wechat"].try_send_poke_back(chat_id, name or user_id, user_id)
+    elif reason == "request":
+        ok_flag, msg = ctx["wechat"].send_poke(chat_id, name or user_id, user_id)
+    else:
+        ok_flag, msg = ctx["wechat"].try_send_poke_active(chat_id, name or user_id, user_id)
     if ok_flag:
         ctx["session"]["sent"].append({"type": "poke", "text": "[拍一拍]"})
         return _ok({"poked": True, "note": "已拍。不要输出\"已拍\"类汇报。"})
-    return _err("拍一拍失败：%s" % msg)
+    return _err("没拍：%s" % msg)
 
 
 def _exec_memory_append(ctx, args):

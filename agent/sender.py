@@ -9,11 +9,14 @@
 """
 from __future__ import annotations
 
+import logging
 import threading
 import time
 
 from .config import get_config
 from .util import format_clock_time, md_to_plain, rand_int, sleep, split_for_wx
+
+log = logging.getLogger("wx-agent")
 
 
 class SendQueue:
@@ -50,8 +53,10 @@ class SendQueue:
         by_len = min(8000, len(text or "") * int(cfg.get("by_length_ms") or 20))
         return min(15000, max(min_gap, rand_int(min_gap, max_gap) * 0.5 + by_len * 0.5)) / 1000.0
 
-    def send_text_batch(self, chat_key: str, messages, reply_to_mid=None, at_user_id=None, reply_text=""):
-        """发送一批文本。返回 {sent, failed}。reply_text 为被引用消息的原文（定位用）。"""
+    def send_text_batch(self, chat_key: str, messages, reply_to_mid=None, at_user_id=None, reply_text="",
+                        reply_sender_name=""):
+        """发送一批文本。返回 {sent, failed}。reply_text 为被引用消息的原文（定位用），
+        reply_sender_name 为被引用消息的发送者（头像定位用，缺省靠文本匹配）。"""
         kind, chat_id = self._parse_key(chat_key)
         list_msgs = list(messages) if isinstance(messages, (list, tuple)) else [messages]
         if not list_msgs:
@@ -84,8 +89,10 @@ class SendQueue:
                     use_at = at_user_id if is_first else None
                     use_quote = reply_to_mid if is_first else None
                     if use_quote:
-                        ok, msg = self.wechat.reply_quote(chat_id, text, target_text=reply_text)
+                        ok, msg = self.wechat.reply_quote(chat_id, text, target_text=reply_text,
+                                                          target_sender_name=reply_sender_name)
                         if not ok:
+                            log.warning("引用发送失败（第%d条），退回普通发送：%s", i + 1, msg)
                             ok, msg = self.wechat.send_text(chat_id, text)
                     elif use_at:
                         name = self.wechat.member_name(chat_id, use_at)

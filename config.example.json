@@ -142,5 +142,11 @@
     "poke_degraded": false,
     "poke_fail_count": 0
   },
+  "poke": {
+    "reply_probability": 0.9,
+    "cooldown_seconds": 1800,
+    "active_probability": 0.1,
+    "active_daily_limit": 3
+  },
   "member_notes": {}
 }

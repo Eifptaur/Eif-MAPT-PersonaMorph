@@ -53,11 +53,22 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 LOG_DIR = os.path.join(ROOT, "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
 
+class _FlushFileHandler(logging.FileHandler):
+    """每行立即落盘：pythonw 进程被强杀时缓冲不丢，日志文件始终完整。"""
+
+    def emit(self, record):
+        super().emit(record)
+        try:
+            self.flush()
+        except Exception:
+            pass
+
+
 logging.basicConfig(
     level=logging.INFO,
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler(os.path.join(LOG_DIR, "wx_agent.log"), encoding="utf-8"),
+        _FlushFileHandler(os.path.join(LOG_DIR, "wx_agent.log"), encoding="utf-8"),
     ],
 )
 _fmt = _SecretFormatter("%(asctime)s [%(levelname)s] %(message)s")
@@ -590,6 +601,51 @@ def _spawn_watchdog():
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+def _poke_name_of(nm: dict) -> str:
+    """从 [拍一拍]（名字）文本里取出拍者名字。"""
+    t = str(nm.get("text") or "")
+    m = re.search(r"（([^）]+)）", t)
+    return m.group(1).strip() if m else ""
+
+
+def _schedule_poke_back(wechat, store, chat_key: str, chat_id: str, group_name: str, nm: dict):
+    """别人拍了机器人 → 延迟 ~18 秒后系统回拍（90% 概率 + 30 分钟冷却）。
+
+    延迟是为了让模型先自然回应一句，并保证拍一拍事件先落库；
+    结果只写日志（poker 自己能看到被回拍），不对群发言、不打扰讨论。
+    """
+    try:
+        poker_name = _poke_name_of(nm)
+        poker_wxid = str(nm.get("poker_wxid") or "")
+        if not poker_wxid:
+            # 系统消息路径拿不到 wxid：按名字在活跃成员里反查
+            for m in store.active_members(chat_key, 20):
+                if m.get("name") and m["name"] == poker_name:
+                    poker_wxid = m["user_id"]
+                    break
+        # 自己拍的（回读回声）不回拍
+        if poker_wxid and poker_wxid == wechat._self_wxid:
+            return
+        if poker_name and wechat._self_nickname and poker_name == wechat._self_nickname:
+            return
+        if not poker_wxid:
+            log.debug("拍者 %r 未找到 wxid，跳过回拍", poker_name)
+            return
+
+        def _do():
+            try:
+                ok, msg = wechat.try_send_poke_back(chat_id, poker_name, poker_wxid)
+                log.info("%s → 回拍「%s」：%s", group_name, poker_name, msg)
+            except Exception as e:
+                log.warning("回拍异常：%s", e)
+
+        t = threading.Timer(18.0, _do)
+        t.daemon = True
+        t.start()
+    except Exception as e:
+        log.debug("调度回拍失败：%s", e)
+
+
 def main():
     try:
         os.system("chcp 65001 >nul 2>&1")
@@ -950,6 +1006,10 @@ def main():
                     max_seq = max(max_seq, nm["sort_seq"])
                     store.append_incoming(chat_key, nm["mid"], nm["ts"], nm["sender_id"],
                                           nm["sender_name"], nm["text"], media=nm["media"])
+                    # ── 系统自动回拍：别人拍一拍机器人 → 延迟 ~18 秒后按概率回拍（90%）──
+                    if str(nm.get("text") or "").startswith("[拍一拍]"):
+                        _schedule_poke_back(wechat, store, chat_key, wxid, g["name"], nm)
+
                 since_seq[wxid] = max_seq
                 orch.on_incoming(chat_key)
         except Exception as e:
