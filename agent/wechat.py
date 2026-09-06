@@ -491,13 +491,26 @@ class WeChatAdapter:
     def _right_click_menu(self, gui, rel_x: int, rel_y: int, label: str, delay: float = 0.7) -> bool:
         """在相对坐标 (rel_x, rel_y) 处右键，OCR 弹出菜单，点含 label 的项。
 
-        菜单文字较小，优先放大 3 倍 OCR（识别更稳），失败再退回原尺寸。
-        右键走 ui_adapt.click（DPI/遮挡适配），菜单点击后再回读确认可见。
+        优先 UIA 菜单树（微信 4.x 右键菜单热激活后物化为 mmui::XMenuView，
+        用 Invoke 点击最可靠、无坐标漂移）；OCR 兜底并做「真菜单」过滤：
+        菜单项是小字条（高 < 46）、位于光标右下方附近——防止把聊天文本里
+        的「拍一拍」误当成菜单项。
         """
         ok, why = self._click(gui, rel_x, rel_y, right=True)
         if not ok:
             return False
         time.sleep(delay)
+        # 1) UIA 菜单树优先
+        try:
+            uia = gui._get_uia()
+            if uia is not None:
+                mi = uia._uia_find_menu_item(label)
+                if mi is not None:
+                    if uia._uia_click_menu_item(mi):
+                        return True
+        except Exception:
+            pass
+        # 2) OCR 兜底（放大 3 倍），带真菜单过滤
         top = max(0, rel_y - 220)
         bottom = min(gui.render_h, rel_y + 320)
         items = None
@@ -510,7 +523,9 @@ class WeChatAdapter:
                 return False
         for text, x, y, w, h in items:
             if label and label in text:
-                # 命中菜单文字后，点击也用适配层（先校验归属）
+                # 真菜单过滤：菜单在光标右下方的小字条（高 < 46），远离聊天文本区
+                if not (y > rel_y - 30 and x > rel_x - 120 and h < 46):
+                    continue
                 ok2, _ = self._click(gui, x + w // 2, y + h // 2, right=False)
                 if not ok2:
                     return False
@@ -573,15 +588,48 @@ class WeChatAdapter:
         except Exception:
             return None
 
+    def _find_avatar_center(self, row_rect):
+        """运行时定位头像：在消息行左侧找「彩色饱和像素斑块」中心。
+
+        真人头像是有颜色的图片，气泡/名字/背景都是灰白/黑（低饱和度），
+        用 max(R,G,B)-min(R,G,B) > 28 筛彩色像素完全能区分（深浅色主题通用）。
+        返回屏幕坐标 (x, y) 或 None。
+        """
+        try:
+            from PIL import ImageGrab
+            img = ImageGrab.grab(bbox=(row_rect[0], row_rect[1], row_rect[0] + 130, row_rect[3]))
+            px = img.convert("RGB").load()
+            w, h = img.size
+            xs, ys = [], []
+            for y in range(h):
+                for x in range(w):
+                    r, g, b = px[x, y]
+                    if max(r, g, b) - min(r, g, b) > 28:  # 彩色饱和像素
+                        xs.append(x)
+                        ys.append(y)
+            if len(xs) < 50:  # 太少视为误检（如气泡彩字）
+                return None
+            xs.sort()
+            ys.sort()
+            cx = xs[len(xs) // 2]
+            cy = ys[len(ys) // 2]
+            return row_rect[0] + int(cx), row_rect[1] + int(cy)
+        except Exception:
+            return None
+
     def _send_poke_locate(self, gui, target_name: str, db_text: str):
         """定位目标头像（渲染相对坐标），返回 (ax, ay, score) 或 None。
 
-        优先 UIA 消息行矩形（精确），其次 OCR 相似度匹配，最后左侧消息块兜底。
-        头像中心 ≈ 行内 (+54, +48)（实测校准：头像 45~50px，行左缘 +54 即头像中心）。
+        优先 UIA 消息行矩形 + 「彩色像素块」运行时检测头像中心（精确）；
+        次选 UIA 行的固定偏移 (+54, +48)（实测校准：头像 45~50px）；
+        再 OCR 相似度匹配、最后左侧消息块兜底。
         """
-        # 1) UIA 行精确匹配
+        # 1) UIA 行精确匹配 + 彩色头像检测
         row = self._uia_target_row_rect(gui, db_text)
         if row:
+            av = self._find_avatar_center(row)
+            if av:
+                return av[0] - gui.origin_x, av[1] - gui.origin_y, 1.0
             return row[0] + 54 - gui.origin_x, row[1] + 48 - gui.origin_y, 1.0
         # 2) OCR 相似度匹配
         items = []
