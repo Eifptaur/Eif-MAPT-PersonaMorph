@@ -1,9 +1,8 @@
 @echo off
-chcp 65001 >nul
-echo æ­£åœ¨åœæ­¢ wx-agentï¼ˆæœºå™¨äºº + çœ‹é—¨ç‹—ï¼‰â€¦
-powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { (($_.Name -eq 'python.exe' -and $_.CommandLine -like '*wx_agent.py*') -or ($_.Name -eq 'powershell.exe' -and $_.CommandLine -like '*çœ‹é—¨ç‹—.ps1*' -and $_.CommandLine -notlike '*Get-CimInstance*')) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; Write-Host ('å·²åœæ­¢ PID ' + $_.ProcessId) }"
+echo ÕýÔÚÍ£Ö¹ wx-agent£¨»úÆ÷ÈË + ¿´ÃÅ¹·£©¡­
+powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { (($_.Name -eq 'python.exe' -and $_.CommandLine -like '*wx_agent.py*') -or ($_.Name -eq 'powershell.exe' -and $_.CommandLine -like '*¿´ÃÅ¹·.ps1*' -and $_.CommandLine -notlike '*Get-CimInstance*')) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; Write-Host ('ÒÑÍ£Ö¹ PID ' + $_.ProcessId) }"
 echo.
-echo æœºå™¨äººè¿›ç¨‹å·²è¢«ç»ˆæ­¢ï¼ŒæŽ§åˆ¶å°é¡µé¢å°†è‡ªåŠ¨æ˜¾ç¤ºã€Œæœºå™¨äººå·²åœæ­¢ã€ã€‚
+echo »úÆ÷ÈË½ø³ÌÒÑ±»ÖÕÖ¹£¬¿ØÖÆÌ¨Ò³Ãæ½«×Ô¶¯ÏÔÊ¾¡¸»úÆ÷ÈËÒÑÍ£Ö¹¡¹¡£
 echo.
-echo æŒ‰ä»»æ„é”®å…³é—­æœ¬çª—å£â€¦
+echo °´ÈÎÒâ¼ü¹Ø±Õ±¾´°¿Ú¡­
 pause >nul
