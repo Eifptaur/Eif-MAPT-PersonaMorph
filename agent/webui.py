@@ -430,7 +430,7 @@ class WebUI:
     def __init__(self, status_provider, log_buffer, test_api_fn=None, on_save=None,
                  pause_fn=None, resume_fn=None, balance_fn=None, shutdown_fn=None,
                  whale=None, poke_test_fn=None, selfcheck_fn=None, restart_fn=None,
-                 groups_fn=None, memory_fn=None):
+                 groups_fn=None, memory_fn=None, sessions_fn=None):
         self.status_provider = status_provider      # () -> dict
         self.log_buffer = log_buffer                # collections.deque[str]
         self.test_api_fn = test_api_fn              # () -> dict
@@ -446,6 +446,7 @@ class WebUI:
         self.groups_fn = groups_fn or (lambda: {"ok": True, "groups": []})  # () -> dict（群列表）
         self.memory_fn = memory_fn or (lambda action, chat_key="", user_id="": {"ok": True,
                                                                                "chats": [], "members": []})  # (action, chat_key, user_id) -> dict
+        self.sessions_fn = sessions_fn or (lambda limit: [])  # (limit) -> list（运行明细）
         self._server = None
         self._thread = None
         self.port = 0
@@ -603,6 +604,14 @@ class WebUI:
                         self._json(parent.memory_fn("list", chat_key))
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)})
+                elif path == "/api/sessions":
+                    # 运行明细（思考/token/工具）：?limit=30
+                    q = parse_qs(parsed.query)
+                    try:
+                        self._json({"ok": True, "sessions": parent.sessions_fn(
+                            int((q.get("limit") or ["30"])[0]))})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
                 elif path == "/api/status":
                     self._json(parent.status_provider())
                 elif path == "/api/balance":
@@ -657,6 +666,13 @@ class WebUI:
                         r = parent.memory_fn("delete", str(data.get("chat_key") or ""),
                                              str(data.get("user_id") or ""))
                         self._json(r)
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)}, 500)
+                elif path == "/api/sessions":
+                    # 运行明细：思考过程 / token / 工具调用
+                    try:
+                        self._json({"ok": True, "sessions": parent.sessions_fn(
+                            int(data.get("limit") or 30))})
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)}, 500)
                 elif path == "/dsh-whale/size.json":

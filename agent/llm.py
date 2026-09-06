@@ -149,6 +149,8 @@ _OFFICIAL_PRICES = {
     "deepseek-chat": {"in": 2.0, "out": 8.0, "cached": 0.2},
     "deepseek-reasoner": {"in": 4.0, "out": 16.0, "cached": 1.0},
 }
+# 未知/新模型（如内置实验型号）也按主流档位估算，避免成本恒显示 0.0000
+_DEFAULT_PRICE = {"in": 2.0, "out": 8.0, "cached": 0.2}
 
 
 def estimate_cost(usage: dict, model: str | None = None) -> dict:
@@ -184,6 +186,13 @@ def estimate_cost(usage: dict, model: str | None = None) -> dict:
         cached_price = float(p.get("cached") or 0) or in_price
         source = "official"
         matched = True
+    else:
+        # 未知模型：按主流档位估算（可选择关闭 use_official_price 或配置 model_prices 精确覆盖）
+        in_price = float(_DEFAULT_PRICE["in"])
+        out_price = float(_DEFAULT_PRICE["out"])
+        cached_price = float(_DEFAULT_PRICE["cached"])
+        source = "estimated"
+        matched = False
 
     cost = (fresh / 1e6) * in_price + (cached / 1e6) * cached_price + (completion / 1e6) * out_price
     return {

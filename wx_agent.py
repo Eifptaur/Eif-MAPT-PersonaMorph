@@ -32,6 +32,8 @@ from agent.llm import (add_usage, chat_completion, chat_completion_with_retry,
 from agent.memory import MemoryStore
 from agent.prompt import build_system_prompt, build_user_prompt, resolve_context_tier
 from agent.sender import SendQueue
+from agent.session_log import SessionLog
+from agent.stats import UsageStats
 from agent.store import ChatStore
 from agent.tools import build_tool_defs, execute_tool, to_openai_tools
 from agent.wechat import WeChatAdapter, WeChatError
@@ -158,7 +160,14 @@ class Orchestrator:
         self._executor = ThreadPoolExecutor(max_workers=max(1, int(get_config().get("max_concurrent_runs") or 2)))
         self._proactive_timer = None
         self._last_trigger: dict = {}  # chat_key -> (触发消息指纹, 时间戳, 上次是否成功)
-        self.stats = {"sessions": 0, "tokens": 0, "sent": 0, "calls": 0, "cost": 0.0}
+        # 用量统计（持久化 + 按周期重置）与运行明细（思考/token/工具）
+        self.stats_store = UsageStats(os.path.join(ROOT, "data"),
+                                      str(get_config().get("stats", {}).get("period") or "weekly"))
+        self.session_log = SessionLog(os.path.join(ROOT, "data"))
+        _t = self.stats_store.snapshot().get("total") or {}
+        self.stats = {"sessions": int(_t.get("sessions") or 0), "tokens": int(_t.get("tokens") or 0),
+                      "sent": int(_t.get("sent") or 0), "calls": int(_t.get("calls") or 0),
+                      "cost": float(_t.get("cost") or 0.0)}
         # 小鲸鱼余额挂件：服务端记账（每次调用计成本，会话结束结算“每轮消耗”）
         self.whale = WhaleWidget(os.path.join(ROOT, "data"))
 
@@ -269,6 +278,14 @@ class Orchestrator:
                 time.sleep(wait)
         if last_error:
             log.error("运行 %s 出错: %s", chat_key, getattr(last_error, "message", last_error))
+            try:
+                _cn = self.wechat.group_name(chat_key.split(":", 1)[1]) if ":" in chat_key else chat_key
+                self.session_log.append({
+                    "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "chat_key": chat_key, "chat_name": _cn,
+                    "trigger": "", "reasoning": "", "tools": [], "status": "error", "ok": False,
+                    "error": str(getattr(last_error, "message", last_error))[:300]})
+            except Exception:
+                pass
         else:
             # 处理成功：记录触发指纹，供 5 分钟去重判断
             try:
@@ -281,6 +298,11 @@ class Orchestrator:
         cfg = get_config()
         kind, chat_id = chat_key.split(":", 1)
         chat_name = self.wechat.group_name(chat_id) if kind == "group" else chat_id
+        # 运行明细：思考过程 / token / 工具调用（控制台「运行明细」）
+        _t0 = time.time()
+        _entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "chat_key": chat_key, "chat_name": chat_name,
+                  "trigger": "\n".join(str(t.get("text") or "")[:120] for t in (trigger or [])),
+                  "reasoning": "", "tools": [], "status": "running", "ok": None}
         persona = cfg.get("persona", {})
         self_nickname = persona.get("self_nickname") or cfg.get("wechat", {}).get("bot_nickname") or persona.get("bot_name")
         bot_name = persona.get("bot_name")
@@ -345,6 +367,10 @@ class Orchestrator:
             session["activity"] = ""
 
             msg = response["message"]
+            # 记录思考过程（兼容 reasoning_content / reasoning / thinking 字段）
+            _reason = (msg.get("reasoning_content") or msg.get("reasoning") or msg.get("thinking") or "")
+            if _reason:
+                _entry["reasoning"] = (_entry["reasoning"] + "\n" + str(_reason))[:8000]
             assistant_entry = {"role": "assistant", "content": msg.get("content")}
             if msg.get("tool_calls"):
                 assistant_entry["tool_calls"] = msg["tool_calls"]
@@ -376,6 +402,7 @@ class Orchestrator:
                 session["activity"] = "正在调用 %s…" % name
                 result = execute_tool(tool_defs, ctx, name, args_raw)
                 session["activity"] = ""
+                _entry["tools"].append({"name": name, "args": str(args_raw)[:180]})
 
                 content_str = ""
                 images = []
@@ -402,10 +429,25 @@ class Orchestrator:
         self.stats["tokens"] += int(session["usage"]["total_tokens"])
         self.stats["sent"] += len(session["sent"])
         self.stats["calls"] += int(session["usage"]["calls"])
+        _cost = 0.0
         try:
-            self.stats["cost"] += float(estimate_cost(session["usage"], session["model"])["cost"])
+            _cost = float(estimate_cost(session["usage"], session["model"])["cost"])
+            self.stats["cost"] += _cost
         except Exception:
             pass
+        # 持久化用量（累计保留 + 按周期重置）与运行明细
+        self.stats_store.record(sessions=1, calls=int(session["usage"]["calls"]),
+                                tokens=int(session["usage"]["total_tokens"]),
+                                sent=len(session["sent"]), cost=_cost)
+        _entry.update({
+            "status": status, "ok": status == "done",
+            "latency_ms": int((time.time() - _t0) * 1000),
+            "tokens": int(session["usage"]["total_tokens"]),
+            "cost": round(_cost, 6), "calls": int(session["usage"]["calls"]),
+            "model": session.get("model") or "",
+            "reply": "\n".join(str(x.get("text") or "")[:200] for x in session["sent"])[:1200],
+        })
+        self.session_log.append(_entry)
         try:
             self.whale.note_turn_done()
         except Exception:
@@ -702,6 +744,7 @@ def main():
             "groups": gs,
             "running_chats": sorted(orch.running_chats),
             "stats": dict(orch.stats),
+            "usage": orch.stats_store.snapshot(),
             "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         }
 
@@ -953,7 +996,8 @@ def main():
                   pause_fn=lambda: orch.set_paused(True), resume_fn=lambda: orch.set_paused(False),
                   shutdown_fn=shutdown_fn, whale=orch.whale,
                   poke_test_fn=poke_test_fn, selfcheck_fn=selfcheck_fn, restart_fn=restart_fn,
-                  groups_fn=groups_fn, memory_fn=memory_fn)
+                  groups_fn=groups_fn, memory_fn=memory_fn,
+                  sessions_fn=lambda limit: orch.session_log.recent(limit))
     try:
         port = webui.start()
         if port:

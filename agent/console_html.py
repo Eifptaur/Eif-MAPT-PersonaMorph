@@ -168,6 +168,7 @@ th{color:var(--tx2);font-weight:500}
     <nav class="nav" id="nav">
       <a href="#sec-overview" class="on">概览</a>
       <a href="#sec-check">体检与功能自检</a>
+      <a href="#sec-sessions">运行明细</a>
       <a href="#sec-model">模型 API</a>
       <a href="#sec-wechat">微信</a>
       <a href="#sec-memory">记忆</a>
@@ -187,10 +188,11 @@ th{color:var(--tx2);font-weight:500}
       <h2>概览</h2>
       <div class="desc">机器人运作状态与账户信息（数据每 8 秒自动刷新）。</div>
       <div class="stat">
-        <div class="s"><b id="st-sessions">0</b><span>会话数</span></div>
-        <div class="s"><b id="st-tokens">0</b><span>总 token</span></div>
+        <div class="s"><b id="st-sessions">0</b><span>累计会话数</span></div>
+        <div class="s"><b id="st-tokens">0</b><span>累计 token</span></div>
         <div class="s"><b id="st-sent">0</b><span>已发消息</span></div>
-        <div class="s"><b id="st-cost">¥0</b><span>估算成本</span></div>
+        <div class="s"><b id="st-cost">¥0</b><span>累计成本</span></div>
+        <div class="s" style="grid-column:span 2"><b id="st-pcost">—</b><span id="st-plabel">本周期</span></div>
         <div class="s"><b id="st-groups">0</b><span>目标群</span></div>
       </div>
       <table id="group-table"><thead><tr><th>群名</th><th>目标</th></tr></thead><tbody></tbody></table>
@@ -242,6 +244,18 @@ th{color:var(--tx2);font-weight:500}
         </tbody>
       </table>
       <div class="btns" style="margin-top:8px"><button id="ckReset" class="ghost">重置勾选</button><span class="hint" id="ckCount" style="align-self:center"></span></div>
+    </section>
+
+    <section id="sec-sessions" class="card" data-sec>
+      <h2>运行明细</h2>
+      <div class="desc">每轮对话的思考过程、token 用量与工具调用（服务端按天落盘，最近 30 轮）。</div>
+      <div class="btns">
+        <button id="sessRefresh" class="pri">刷新</button>
+        <span class="hint" style="align-self:center">点击「思考」可展开/收起推理内容；思考为模型返回的空闲字段，未返回时无内容。</span>
+      </div>
+      <div id="sessList" style="display:flex;flex-direction:column;gap:10px;margin-top:10px">
+        <div class="hint" style="padding:14px;text-align:center;color:var(--tx2)">加载中…</div>
+      </div>
     </section>
 
     <section id="sec-model" class="card" data-sec>
@@ -590,6 +604,10 @@ async function loadStatus(){
     $('st-tokens').textContent = s.stats.tokens;
     $('st-sent').textContent = s.stats.sent;
     $('st-cost').textContent = '¥' + (s.stats.cost||0).toFixed(4);
+    const u = s.usage || {}, p = u.period || {};
+    $('st-pcost').textContent = '¥' + (p.cost||0).toFixed(4) + ' · ' + (p.tokens||0) + ' tok';
+    const lbl = {daily:'今日', weekly:'本周', monthly:'本月'};
+    $('st-plabel').textContent = (lbl[u.period_type]||'本周期') + ' 用量（' + (p.sessions||0) + ' 会话 / ' + (p.sent||0) + ' 条）';
     $('st-groups').textContent = s.groups.filter(g=>g.target).length;
     $('pauseBtn').textContent = s.paused ? '恢复' : '暂停';
     const tb = $('group-table').querySelector('tbody'); tb.innerHTML='';
@@ -603,6 +621,41 @@ async function loadStatus(){
 
 async function loadLog(){
   try{ const l = await getJSON('/api/logs'); $('log').textContent = l.lines.join('\n'); $('log').scrollTop = $('log').scrollHeight; }catch(e){}
+}
+
+/* ── 运行明细：思考过程 / token / 工具调用 ── */
+async function loadSessions(){
+  const el = $('sessList');
+  try{
+    const r = await getJSON('/api/sessions?limit=30');
+    const list = (r && r.sessions) || [];
+    if(!list.length){
+      el.innerHTML = '<div class="hint" style="padding:14px;text-align:center;color:var(--tx2)">还没有运行记录——群里 @ 机器人说句话后，这里会出现每一轮的思考过程 / token / 工具调用。</div>';
+      return;
+    }
+    el.innerHTML='';
+    for(const e of list){
+      const card=document.createElement('div');
+      card.className='dlist';
+      const tools=(e.tools||[]).map(t=>'<span class="pill">'+esc(t.name)+'</span>').join(' ');
+      const reason=(e.reasoning||'').trim();
+      let html='<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
+        +'<b>'+esc(e.chat_name||e.chat_key)+'</b>'
+        +'<span class="pill '+(e.ok?'ok':'off')+'">'+esc(e.status||'')+'</span>'
+        +'<span class="hint" style="font-size:11px">'+esc((e.ts||'').replace('T',' '))+' · '+esc(e.latency_ms||0)+'ms</span>'
+        +'<span class="hint" style="font-size:11px">tokens='+esc(e.tokens||0)+' · ¥'+((e.cost||0).toFixed(6))+'</span></div>';
+      if(e.trigger) html+='<div class="hint" style="margin-top:6px">触发：'+esc(e.trigger.slice(0,120))+'</div>';
+      if(tools) html+='<div style="margin-top:6px">工具：'+tools+'</div>';
+      if(e.reply) html+='<div style="margin-top:6px">回复：'+esc(e.reply)+'</div>';
+      if(e.error) html+='<div style="margin-top:6px;color:#B91C1C">失败：'+esc(e.error)+'</div>';
+      if(reason){
+        html+='<details style="margin-top:6px"><summary class="hint" style="cursor:pointer;user-select:none">思考过程（'+reason.length+' 字）</summary>'
+          +'<pre class="out" style="margin-top:6px;max-height:220px;overflow:auto;white-space:pre-wrap;cursor:text">'+esc(reason)+'</pre></details>';
+      }
+      card.innerHTML=html;
+      el.appendChild(card);
+    }
+  }catch(e){ el.innerHTML='<div class="hint" style="padding:14px;text-align:center">加载失败：'+esc(String(e))+'</div>'; }
 }
 
 async function saveAllBtn(btn){
@@ -1034,6 +1087,8 @@ setInterval(loadStatus, 8000);
 setInterval(loadBalance, 30000);
 setInterval(()=>{ if($('autolog').checked) loadLog(); }, 4000);
 setInterval(checkAlive, 6000);
+$('sessRefresh').onclick = ()=>loadSessions();
+addEventListener('hashchange', ()=>{ if(location.hash==='#sec-sessions') loadSessions(); });
 </script>
 </body>
 </html>

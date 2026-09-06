@@ -1179,29 +1179,28 @@ class WeChatAdapter:
             for _round in range(2):
                 located = None
                 if target_text.strip():
-                    # 翻页找目标并居中到视口中部（方向已修正），弹右键才稳定
+                    # 翻页查找目标行并居中（找不到就继续上翻，绝不落到"乱点"兜底）
                     located = self._send_poke_locate(gui, target_sender_name or "", target_text, scroll=True)
                 if located:
                     ax, ay, _score = located
-                    # 实测（本机 WeChat 4.x）：气泡文本区起点 ≈ 头像中心 +70px
-                    # （头像右缘+空档+气泡内边距）；行中央/头像边缘均不弹菜单，
-                    # 必须点中气泡文本本身。文字短时气泡左端相同（左对齐），70px 依然命中。
-                    points = [(ax + 70, ay), (ax + 95, ay), (ax + 46, ay)]
+                    # 只点「气泡文本」：头像中心 +70px 起（头像右缘+空档+气泡内边距），
+                    # 绝不点在 ID/头像与气泡之间的空白（实测不弹菜单）
+                    points = [(ax + 70, ay), (ax + 95, ay)]
                     try:
                         items = gui.ocr_zoomed((gui.right_pane_left, max(0, ay - 36),
                                                 gui.render_w, min(gui.render_h, ay + 36)), scale=3)
                         xs = [x for t, x, y, w, h in items
                               if (t or "").strip() and abs((y + h / 2) - ay) < 46]
                         if xs:
-                            points.append((gui.right_pane_left + min(xs) - 8, ay))
+                            px = gui.right_pane_left + min(xs) - 8
+                            if gui.right_pane_left + 60 < px < gui.render_w - 120:
+                                points.append((px, ay))
                     except Exception:
                         pass
                 else:
-                    y = gui._last_message_y()
-                    if y is None:
-                        break
-                    bw = gui.render_w - gui.right_pane_left
-                    points = [(gui.right_pane_left + bw // 3, y), (gui.right_pane_left + bw // 4, y)]
+                    # 没有定位到目标行：不做任何"乱点兜底"（防止点到侧栏群名称/空白）。
+                    # 滚动搜索交给 _send_poke_locate(scroll=True)，这里直接失败并提示。
+                    break
                 for cx, cy in points:
                     if self._right_click_menu(gui, cx, cy, "引用"):
                         hit = True
