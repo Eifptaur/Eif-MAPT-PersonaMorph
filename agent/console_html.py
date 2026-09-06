@@ -192,7 +192,8 @@ th{color:var(--tx2);font-weight:500}
         <div class="s"><b id="st-tokens">0</b><span>累计 token</span></div>
         <div class="s"><b id="st-sent">0</b><span>已发消息</span></div>
         <div class="s"><b id="st-cost">¥0</b><span>累计成本</span></div>
-        <div class="s" style="grid-column:span 2"><b id="st-pcost">—</b><span id="st-plabel">本周期</span></div>
+        <div class="s" style="grid-column:span 2"><b id="st-dcost">—</b><span id="st-dlabel">今日用量</span></div>
+        <div class="s"><b id="st-pcost">—</b><span id="st-plabel">本周期</span></div>
         <div class="s"><b id="st-groups">0</b><span>目标群</span></div>
       </div>
       <table id="group-table"><thead><tr><th>群名</th><th>目标</th></tr></thead><tbody></tbody></table>
@@ -604,13 +605,15 @@ async function loadStatus(){
     $('st-tokens').textContent = s.stats.tokens;
     $('st-sent').textContent = s.stats.sent;
     $('st-cost').textContent = '¥' + (s.stats.cost||0).toFixed(4);
-    const u = s.usage || {}, p = (u && u.period) || {};
-    const has = p && (parseFloat(p.cost||0) > 0 || parseInt(p.tokens||0) > 0 || parseInt(p.sessions||0) > 0);
-    $('st-pcost').textContent = has ? ('¥' + (p.cost||0).toFixed(4) + ' · ' + (p.tokens||0) + ' tok') : '—';
+    const u = s.usage || {};
+    const fmt = (o) => (o && (parseFloat(o.cost||0) > 0 || parseInt(o.tokens||0) > 0 || parseInt(o.sessions||0) > 0))
+      ? ('¥' + (o.cost||0).toFixed(4) + ' · ' + (o.tokens||0) + ' tok · ' + (o.sessions||0) + ' 会话')
+      : '—';
     const lbl = {daily:'今日', weekly:'本周', monthly:'本月'};
-    $('st-plabel').textContent = has
-      ? ((lbl[u.period_type]||'本周期') + ' 用量（' + (p.sessions||0) + ' 会话 / ' + (p.sent||0) + ' 条）')
-      : ((lbl[u.period_type]||'本周期') + ' 用量（暂无消耗）');
+    $('st-dcost').textContent = fmt(u.day);
+    $('st-dlabel').textContent = '今日用量（' + (u.day.sent||0) + ' 条）';
+    $('st-pcost').textContent = fmt(u.period);
+    $('st-plabel').textContent = (lbl[u.period_type]||'本周期') + '用量（' + (u.period.sent||0) + ' 条）';
     $('st-groups').textContent = s.groups.filter(g=>g.target).length;
     $('pauseBtn').textContent = s.paused ? '恢复' : '暂停';
     const tb = $('group-table').querySelector('tbody'); tb.innerHTML='';

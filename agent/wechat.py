@@ -847,24 +847,44 @@ class WeChatAdapter:
             return self._send_poke_inner(chat_id, target_name, target_id, dbg)
 
     @staticmethod
-    def _bubble_point(gui, ax: int, ay: int) -> tuple:
-        """基于 OCR 求该行「气泡文本起点」（渲染坐标）；失败回退 头像中心+70。
+    def _bubble_point(gui, ax: int, ay: int, db_text: str = "") -> tuple:
+        """气泡点击点（渲染相对）。实测标定（2026-09-06）：
 
-        连续消息折叠时该行可能没有头像，气泡位置必须靠文本列推断；
-        OCR 给出的是裁剪内相对坐标，渲染 x = right_pane_left + x。
+        微信 4.x 消息行的**头像中心（ay）在行内偏上，气泡中心在其下方约 30~40px**——
+        用 ay 右键会落在「ID 与气泡之间的缝隙」，菜单不弹（用户截图实锤）。
+        所以 y 必须取「OCR 文本行中心」，x 固定 头像中心+70（左对齐气泡左缘恒定，
+        长/短文本都命中，标定 (553,545) 命中「引用」菜单）。
+
+        返回 (x, y)；找不到文本时回退 头像中心+70、ay+30。
         """
+        _norm = WeChatAdapter._norm_ocr
         try:
-            items = gui.ocr_zoomed((gui.right_pane_left, max(0, ay - 36),
-                                    gui.render_w, min(gui.render_h, ay + 36)), scale=3)
-            xs = [x for t, x, y, w, h in items
-                  if (t or "").strip() and abs((y + h / 2) - ay) < 46]
-            if xs:
-                px = gui.right_pane_left + min(xs) - 8
-                if gui.right_pane_left + 60 < px < gui.render_w - 120:
-                    return px, ay
+            items = gui.ocr_zoomed((gui.right_pane_left, max(0, ay - 90),
+                                    gui.render_w, min(gui.render_h, ay + 90)), scale=3)
+            needle = ""
+            if db_text:
+                need = _norm(db_text[:12])
+                if need:
+                    needle = need
+            best_y = None
+            for t, x, y, w, h in items:
+                tn = _norm(t or "")
+                if not tn or len(tn) > 120:
+                    continue
+                if needle:
+                    if needle in tn or tn[:12] in needle:
+                        best_y = y + h // 2
+                        break
+                else:
+                    yc = y + h // 2
+                    if 6 < h < 60 and abs(yc - ay) < 90:
+                        if best_y is None or abs(yc - ay) < abs(best_y - ay):
+                            best_y = yc
+            if best_y is not None:
+                return ax + 70, best_y
         except Exception:
             pass
-        return ax + 70, ay
+        return ax + 70, ay + 30
 
     def _send_poke_inner(self, chat_id: str, target_name: str, target_id: str = "", dbg: list | None = None):
         """拍一拍某位成员：右键对方头像 → 菜单选「拍一拍」。靠 UIA/OCR 定位 + 数据库验证。
@@ -910,7 +930,7 @@ class WeChatAdapter:
             # 头像未显示（连续消息折叠 / 无彩色斑块）→ 改走「气泡」路径：
             # 消息右键菜单同样含「拍一拍」，拍的是该消息的发送者（安全）
             if score < 0.6:
-                px, py = self._bubble_point(gui, ax, ay)
+                px, py = self._bubble_point(gui, ax, ay, db_text if db_text else target_name)
                 _d("   → 未检测到彩色头像（可能是连续消息未显示头像），改为右键气泡 (%d,%d) 里的「拍一拍」" % (px, py))
                 menu_hit = self._right_click_menu(gui, px, py, "拍一拍")
             else:
@@ -1039,7 +1059,7 @@ class WeChatAdapter:
             _d("头像位置：渲染坐标 (%d,%d)" % (ax, ay))
             # 头像未显示（连续消息折叠）→ 改右键气泡（消息菜单同样含「拍一拍」）
             if score < 0.6:
-                px, py = self._bubble_point(gui, ax, ay)
+                px, py = self._bubble_point(gui, ax, ay, db_text if db_text else target_name)
                 _d("   → 未检测到彩色头像（连续消息折叠），改右键气泡 (%d,%d)" % (px, py))
                 ax, ay = px, py
             ok, why = self._click(gui, ax, ay, right=True)
@@ -1246,8 +1266,8 @@ class WeChatAdapter:
                     ax, ay, _score = located
                     # 候选点：① 气泡文本起点（OCR 定位，最准——连续消息折叠时行内没有头像，
                     # 但气泡一定在）② 头像中心 +70（头像显示时的固定回退）③ +95
-                    px, py = self._bubble_point(gui, ax, ay)
-                    points = [(px, py), (ax + 70, ay), (ax + 95, ay)]
+                    px, py = self._bubble_point(gui, ax, ay, target_text)
+                    points = [(px, py), (ax + 70, ay + 30), (ax + 95, ay + 30)]
                 else:
                     # 没有定位到目标行：不做任何"乱点兜底"（防止点到侧栏群名称/空白）。
                     # 滚动搜索交给 _send_poke_locate(scroll=True)，这里直接失败并提示。
