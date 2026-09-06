@@ -83,6 +83,20 @@ button:active{transform:scale(.97)}
 .row select{appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23 4D6BFE' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
   background-repeat:no-repeat;background-position:right 12px center;padding-right:30px;border-radius:10px}
 .row select option{border-radius:10px;background:#fff;color:var(--tx);padding:6px}
+/* 自绘下拉（原生弹层无法样式化，全部替换为这个） */
+.dsel{position:relative;width:100%}
+.dsel-btn{width:100%;display:flex;align-items:center;justify-content:space-between;gap:8px;
+  background:#F8FAFE;border:1px solid #DCE4FF;border-radius:10px;padding:8px 12px;color:var(--tx);
+  font:inherit;font-weight:500;text-align:left;cursor:pointer}
+.dsel-btn:hover{border-color:var(--blue)}
+.dsel-btn .arr{color:var(--blue);font-size:11px;transform:translateY(-1px)}
+.dsel-menu{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:60;background:#fff;
+  border:1px solid #DCE4FF;border-radius:10px;box-shadow:0 10px 30px rgba(77,107,254,.14);
+  max-height:260px;overflow:auto;padding:5px}
+.dsel-menu li{list-style:none;padding:8px 12px;border-radius:8px;cursor:pointer;font-size:13.5px;color:var(--tx)}
+.dsel-menu li:hover{background:var(--blue-soft);color:var(--blue)}
+.dsel-menu li.on{background:var(--blue);color:#fff;font-weight:600}
+body.locked{overflow:hidden}
 .row textarea{min-height:84px;font-family:ui-monospace,Consolas,monospace;font-size:12.5px}
 .row input[type=range]{flex:1}
 .row .val{width:44px;text-align:right;color:var(--blue);font-weight:600}
@@ -507,8 +521,8 @@ $('pickGroups').onclick = async ()=>{
       inp.onchange=()=>{ if(inp.checked) pick.add(g.name); else pick.delete(g.name); };
       box.appendChild(lab);
     });
-    $('gpOk').onclick=()=>{ wlList=[...pick]; renderChips(); m.remove(); };
-    $('gpCancel').onclick=()=>m.remove();
+    $('gpOk').onclick=()=>{ wlList=[...pick]; renderChips(); maskClose(m); m.remove(); };
+    $('gpCancel').onclick=()=>{ maskClose(m); m.remove(); };
   }catch(e){ toast('检测失败：'+e.message); }
 };
 
@@ -561,6 +575,60 @@ async function saveAllBtn(btn){
     toast('已保存 ' + new Date().toLocaleTimeString());
     syncToForm();
   }catch(e){ toast('保存失败：'+e.message); }
+}
+
+/* ── 自绘下拉组件：替换所有原生 select（弹层样式可控，DeepSeek 风）── */
+function enhanceSelects(){
+  document.querySelectorAll('select').forEach(sel=>{
+    if(sel._enhanced) return;
+    sel._enhanced = true;
+    const wrap = document.createElement('div'); wrap.className='dsel';
+    const btn = document.createElement('button'); btn.type='button'; btn.className='dsel-btn';
+    btn.innerHTML = '<span class="txt"></span><span class="arr">▾</span>';
+    const menu = document.createElement('div'); menu.className='dsel-menu dn';
+    const sel2 = sel; // 原 select 隐藏但保留值
+    sel2.style.display = 'none';
+    function refreshText(){
+      const o = sel2.options[sel2.selectedIndex];
+      btn.querySelector('.txt').textContent = (o && o.textContent) || sel2.value || '—';
+    }
+    function buildMenu(){
+      menu.innerHTML='';
+      Array.from(sel2.options).forEach((o,i)=>{
+        const li=document.createElement('li');
+        li.dataset.i=i; li.textContent=o.textContent;
+        if(i===sel2.selectedIndex) li.classList.add('on');
+        li.addEventListener('click',()=>{
+          sel2.selectedIndex=i;
+          sel2.dispatchEvent(new Event('change'));
+          buildMenu(); refreshText(); menu.classList.add('dn');
+        });
+        menu.appendChild(li);
+      });
+    }
+    btn.addEventListener('click', e=>{
+      e.stopPropagation();
+      const open = !menu.classList.contains('dn');
+      document.querySelectorAll('.dsel-menu').forEach(m=>m.classList.add('dn'));
+      if(!open){ buildMenu(); refreshText(); menu.classList.remove('dn'); }
+    });
+    document.addEventListener('click', ()=>menu.classList.add('dn'));
+    sel2.addEventListener('change', ()=>{ buildMenu(); refreshText(); });
+    sel2.insertAdjacentElement('afterend', wrap);
+    wrap.appendChild(btn); wrap.appendChild(menu);
+    refreshText();
+  });
+}
+/* 遮罩锁滚动：显示弹层时锁定 body，关闭恢复（修复停止页下层还能滚） */
+const _maskStack = [];
+function lockBody(on){ document.body.classList.toggle('locked', on); }
+function maskOpen(el){
+  _maskStack.push(el); lockBody(true);
+}
+function maskClose(el){
+  const i=_maskStack.indexOf(el);
+  if(i>=0) _maskStack.splice(i,1);
+  if(!_maskStack.length) lockBody(false);
 }
 
 /* ── 模型厂商预设：切换即换 BaseURL/模型，弹窗要 Key ── */
@@ -620,10 +688,10 @@ function applyProvider(provider, askKey){
     const have = (pk && pk.value || '').trim();
     const m=document.createElement('div'); m.className='mask';
     m.innerHTML='<div class="box"><h1>'+p.label+' API Key</h1><p>已切换到 '+p.label+'（Base URL：'+p.base+'）。请填写该公司的 API Key（'+(p.keyHint||'见官网')+' 开头）。</p><input type="password" id="pkCmd" placeholder="'+(p.keyHint||'')+'..." value="'+have.replace(/"/g,'')+'"><div class="btns" style="justify-content:center"><button class="pri" id="pkOk">保存 Key</button><button class="ghost" id="pkSame">沿用现有 Key</button><button class="ghost" id="pkNo">暂不填</button></div></div>';
-    document.body.appendChild(m);
-    $('pkOk').onclick=()=>{ const v=$('pkCmd').value.trim(); if(v&&pk) pk.value=v; m.remove(); toast('已填入 '+p.label+' Key，记得点「保存设置」'); };
-    $('pkSame').onclick=()=>m.remove();
-    $('pkNo').onclick=()=>m.remove();
+    document.body.appendChild(m); maskOpen(m);
+    $('pkOk').onclick=()=>{ const v=$('pkCmd').value.trim(); if(v&&pk) pk.value=v; maskClose(m); m.remove(); toast('已填入 '+p.label+' Key，记得点「保存设置」'); };
+    $('pkSame').onclick=()=>{ maskClose(m); m.remove(); };
+    $('pkNo').onclick=()=>{ maskClose(m); m.remove(); };
   }
 }
 $('providerSel').addEventListener('change', ()=>applyProvider($('providerSel').value, true));
@@ -663,13 +731,37 @@ $('providerSel').addEventListener('change', ()=>applyProvider($('providerSel').v
   }
   function drawWhaleSolid(){
     drawBase();
-    ctx.fillStyle = '#FFFFFF';
-    ctx.beginPath(); ctx.ellipse(E.cx,E.cy,E.rx,E.ry,0,0,Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.moveTo(TAIL[0][0],TAIL[0][1]);
-    for(let i=1;i<TAIL.length;i++) ctx.lineTo(TAIL[i][0],TAIL[i][1]);
+    // 主色调改绿色：鲸身绿、底蓝、细节白/黑（可一行改回官方蓝：#34D399→#4D6BFE）
+    const green = ctx.createLinearGradient(50,20,90,80);
+    green.addColorStop(0,'#34D399'); green.addColorStop(1,'#059669');
+    ctx.fillStyle = green;
+    // 身体（更饱满）：主椭圆 + 前额隆起
+    ctx.beginPath(); ctx.ellipse(E.cx,E.cy,E.rx,E.ry,-0.06,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(44,40,20,15,-0.10,0,Math.PI*2); ctx.fill();
+    // 尾巴（分叉带缺口）
+    ctx.beginPath();
+    ctx.moveTo(TAIL[0][0],TAIL[0][1]); ctx.lineTo(TAIL[1][0],TAIL[1][1]);
+    ctx.lineTo(TAIL[2][0],TAIL[2][1]); ctx.lineTo(TAIL[3][0],TAIL[3][1]);
+    ctx.lineTo(TAIL[4][0],TAIL[4][1]);
+    ctx.lineTo(TAIL[2][0]+8,TAIL[2][1]+6);   // 缺口向里
+    ctx.lineTo(TAIL[3][0]+(TAIL[3][0]-TAIL[2][0])*2-14,TAIL[3][1]+2);
     ctx.closePath(); ctx.fill();
-    ctx.fillStyle = '#4D6BFE';
-    ctx.beginPath(); ctx.arc(50,50,4.2,0,Math.PI*2); ctx.fill();
+    // 背鳍
+    ctx.beginPath();
+    ctx.moveTo(74,34); ctx.quadraticCurveTo(84,16,92,30); ctx.quadraticCurveTo(86,32,80,38);
+    ctx.closePath(); ctx.fill();
+    // 喷水（白色小点 x2）
+    ctx.fillStyle = 'rgba(255,255,255,.9)';
+    ctx.beginPath(); ctx.arc(96,18,2.6,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(103,25,1.9,0,Math.PI*2); ctx.fill();
+    // 黑眼睛 + 白高光
+    ctx.fillStyle = '#0F172A';
+    ctx.beginPath(); ctx.arc(46,47,4.4,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#FFFFFF';
+    ctx.beginPath(); ctx.arc(44,45,1.6,0,Math.PI*2); ctx.fill();
+    // 腹部白过渡
+    ctx.fillStyle = 'rgba(255,255,255,.25)';
+    ctx.beginPath(); ctx.ellipse(58,58,16,7,0.08,0,Math.PI*2); ctx.fill();
   }
   drawWhaleSolid();
   let hov = false, running = false, t0 = null;
@@ -681,7 +773,7 @@ $('providerSel').addEventListener('change', ()=>applyProvider($('providerSel').v
       let tx = d.hx, ty = d.hy;
       if (hov){ tx = d.hx + Math.sin(t*4 + d.ph) * 4.2; ty = d.hy + Math.cos(t*3 + d.ph) * 2.0; }
       d.x += (tx - d.x) * 0.14; d.y += (ty - d.y) * 0.14;
-      ctx.globalAlpha = 0.96; ctx.fillStyle = '#FFFFFF';
+      ctx.globalAlpha = 0.96; ctx.fillStyle = '#10B981';
       ctx.beginPath(); ctx.arc(d.x, d.y, d.r, 0, Math.PI*2); ctx.fill();
     }
     ctx.globalAlpha = 1;
@@ -704,7 +796,7 @@ async function onboarding(){
     '<input type="password" id="obKey" placeholder="sk-...">'+
     '<div id="obBody"></div>'+
     '<div class="btns" style="justify-content:center;margin-top:10px"><button class="pri" id="obNext">下一步</button><button class="ghost" id="obLater">跳过向导</button></div></div>';
-  document.body.appendChild(m);
+  document.body.appendChild(m); maskOpen(m);
   let step = 1, picked = [];
   $('obNext').onclick = async ()=>{
     try{
@@ -742,10 +834,10 @@ async function onboarding(){
         $('obCheck').textContent = lines.join('\n');
         return;
       }
-      if(step===3){ m.remove(); load(); loadMemory(''); toast('🎉 部署完成！'); }
+      if(step===3){ maskClose(m); m.remove(); load(); loadMemory(''); toast('🎉 部署完成！'); }
     }catch(e){ toast('出错：'+e.message); }
   };
-  $('obLater').onclick = ()=>m.remove();
+  $('obLater').onclick = ()=>{ maskClose(m); m.remove(); };
 }
 
 /* 事件绑定 */
@@ -872,7 +964,7 @@ async function checkAlive(){
     ov.innerHTML='<div class="box">'+ICON+'<h1>机器人已停止</h1>'+
       '<p>后台进程已退出。可双击「启动机器人.vbs」（完全无窗口）或在有运行实例时点「重启」恢复。</p>'+
       '<div class="hint">浏览器可能拦截自动关闭——请手动关闭本标签页（页面不会自己关掉属正常现象）。</div></div>';
-    document.body.appendChild(ov);
+    document.body.appendChild(ov); maskOpen(ov);
     setTimeout(()=>{ try{window.close();}catch(_e){} }, 5000);
   }
 }
@@ -880,6 +972,7 @@ async function checkAlive(){
 load();
 onboarding();
 loadMemory('');
+enhanceSelects();
 setInterval(loadStatus, 8000);
 setInterval(loadBalance, 30000);
 setInterval(()=>{ if($('autolog').checked) loadLog(); }, 4000);
