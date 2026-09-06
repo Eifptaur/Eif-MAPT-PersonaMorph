@@ -819,14 +819,6 @@ class WeChatAdapter:
         def _d(msg):
             if dbg is not None:
                 dbg.append(msg)
-        # 低功率模式：体检确认点击投递异常后，不再空耗 30 秒尝试
-        try:
-            ui_cfg = dict(get_config().get("ui") or {})
-            if ui_cfg.get("poke_degraded"):
-                _d("0) 低功率模式：体检已确认本环境点击投递受限（ui.poke_degraded），直接如实反馈")
-                return False, "低功率模式：体检检测到当前环境点击投递受限，我拍不了（可以手动拍，或先修复环境后再体检恢复）"
-        except Exception:
-            pass
         try:
             gui = self._get_gui()
             rec = gui.render_rect

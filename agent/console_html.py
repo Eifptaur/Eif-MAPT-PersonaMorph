@@ -43,7 +43,10 @@ a{color:var(--blue)}
 .shell{display:grid;grid-template-columns:216px 1fr;gap:16px;max-width:1280px;margin:16px auto;padding:0 16px}
 @media(max-width:900px){.shell{grid-template-columns:1fr}}
 .side{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:10px;height:fit-content;
-  position:sticky;top:70px;box-shadow:var(--shadow)}
+  position:sticky;top:70px;max-height:calc(100vh - 96px);overflow-y:auto;box-shadow:var(--shadow)}
+.side::-webkit-scrollbar{width:8px}
+.side::-webkit-scrollbar-thumb{background:#DCE4FF;border-radius:4px}
+.side::-webkit-scrollbar-thumb:hover{background:var(--blue)}
 .side .status{background:var(--blue-soft);border:1px solid var(--blue-line);border-radius:10px;padding:10px 12px;margin-bottom:8px}
 .side .status b{font-size:13px;color:var(--blue)}
 .side .status p{font-size:12px;color:var(--tx2)}
@@ -724,25 +727,41 @@ $('providerSel').addEventListener('change', ()=>applyProvider($('providerSel').v
     ready = true; drawStatic();
   };
   img.src = LOGO_URL;
+  const IX = (W - img.width*1.4) / 2, IY = (H - img.height*1.4) / 2, IW = img.width*1.4, IH = img.height*1.4;
   function drawStatic(){
     ctx.clearRect(0,0,W,H);
-    ctx.drawImage(img, (W-img.width*1.4)/2, (H-img.height*1.4)/2, img.width*1.4, img.height*1.4);
+    ctx.drawImage(img, IX, IY, IW, IH);
   }
+  let hovT = 0; // 0=纯原图 1=纯粒子（平滑渐变系数）
   function frame(ts){
     if(t0 === null) t0 = ts;
     const t = (ts - t0) / 1000;
+    const target = hov ? 1 : 0;
+    hovT += (target - hovT) * 0.08;                 // 渐变过渡（不突变）
+    const k = hovT;
     ctx.clearRect(0,0,W,H);
-    for (const d of dots){
-      let tx = d.hx, ty = d.hy;
-      if (hov){ tx = d.hx + Math.sin(t*4 + d.ph) * 4.0; ty = d.hy + Math.cos(t*3 + d.ph) * 2.0; }
-      d.x += (tx - d.x) * 0.14; d.y += (ty - d.y) * 0.14;
-      ctx.globalAlpha = 0.95; ctx.fillStyle = '#3D5BF0';
-      ctx.beginPath(); ctx.arc(d.x, d.y, d.r, 0, Math.PI*2); ctx.fill();
+    // 原图随渐变淡出（悬停到位仍保留 22% 底影，轮廓始终可见）
+    ctx.globalAlpha = 1 - k * 0.78;
+    ctx.drawImage(img, IX, IY, IW, IH);
+    // 粒子随渐变淡入，位置 = 像素原位 + 渐变系数加权游动
+    if (k > 0.01){
+      ctx.globalAlpha = k;
+      ctx.fillStyle = '#3D5BF0';
+      const sway = 4.2;
+      for (const d of dots){
+        const px = d.hx + Math.sin(t*4 + d.ph) * sway * k;
+        const py = d.hy + Math.cos(t*3 + d.ph) * 2.2 * k;
+        ctx.globalAlpha = k * 0.9;
+        ctx.beginPath(); ctx.arc(px, py, d.r, 0, Math.PI*2); ctx.fill();
+      }
     }
     ctx.globalAlpha = 1;
-    if (hov || dots.some(d => Math.abs(d.x-d.hx) > 0.4 || Math.abs(d.y-d.hy) > 0.4)){
+    if (Math.abs(hovT - target) > 0.005 || (k > 0.01 && k < 0.999)){
       requestAnimationFrame(frame);
-    } else { running = false; drawStatic(); }
+    } else {
+      running = false; hovT = target;
+      drawStatic();
+    }
   }
   lc.addEventListener('mouseenter', ()=>{ if(!ready) return; hov = true; if(!running){ running = true; t0 = null; requestAnimationFrame(frame); } });
   lc.addEventListener('mouseleave', ()=>{ hov = false; if(!running){ running = true; t0 = null; requestAnimationFrame(frame); } });

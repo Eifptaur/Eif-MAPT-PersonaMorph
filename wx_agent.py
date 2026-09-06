@@ -678,31 +678,13 @@ def main():
                 "点击前会自动清理；若反复出现请关闭触控键盘（Win+Ctrl+O）")
             if gui is not None:
                 # 真实点击自检：与拍一拍完全相同「移动+右键」逻辑，右键一条消息看菜单是否弹出
+                # 仅报告，不写状态（不再自动进入低功率——曾导致拍一拍被长期禁用）
                 try:
                     cr = wechat.click_self_test()
-                    ok_click = bool(cr.get("ok"))
-                    add("适配·点击实测(拍一拍同链路)", "ok" if ok_click else "fail",
+                    add("适配·点击实测(拍一拍同链路)", "ok" if cr.get("ok") else "fail",
                         cr.get("detail", ""),
-                        "" if ok_click else "点击投递异常：检查是否在真实桌面启动(scripts\\启动机器人.vbs)、"
+                        "" if cr.get("ok") else "点击投递异常：检查是否在真实桌面启动(scripts\\启动机器人.vbs)、"
                         "是否打开了群聊、机器是否卡顿/有拦截软件")
-                    # 低功率模式：点击实测连续失败 2 次 → 拍一拍降级（不再空耗尝试）
-                    ui_cfg = dict(cfg.get("ui") or {})
-                    fails = int(ui_cfg.get("poke_fail_count") or 0)
-                    if ok_click:
-                        if fails or ui_cfg.get("poke_degraded"):
-                            ui_cfg["poke_fail_count"] = 0
-                            ui_cfg["poke_degraded"] = False
-                            cfg["ui"] = ui_cfg
-                            save_config(cfg)
-                            add("拍一拍·低功率", "ok", "点击实测恢复，已清除低功率模式")
-                    else:
-                        ui_cfg["poke_fail_count"] = fails + 1
-                        ui_cfg["poke_degraded"] = ui_cfg["poke_fail_count"] >= 2
-                        cfg["ui"] = ui_cfg
-                        save_config(cfg)
-                        if ui_cfg["poke_degraded"]:
-                            add("拍一拍·低功率", "warn",
-                                "连续 %d 次点击实测失败，已进入低功率：拍一拍将不再空耗尝试，直接如实说明" % ui_cfg["poke_fail_count"])
                 except Exception as e:
                     add("适配·点击实测", "fail", str(e))
         except Exception as e:
