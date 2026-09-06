@@ -699,14 +699,21 @@ def main():
         return {"ok": fail_n == 0, "checks": checks,
                 "summary": "通过 %d 项 / 注意 %d 项 / 失败 %d 项" % (ok_n, warn_n, fail_n)}
 
-    def poke_test_fn():
-        # 拍一拍诊断：找「最近有群友发过言」的目标群 + 该群最近发言的非机器人，
-        # 完整跑一遍流程并输出分步结果
+    def poke_test_fn(group_wxid="", verify_only=False):
+        # 拍一拍诊断：group_wxid 指定目标群（空=自动选最近有发言的群）；
+        # verify_only=True 只验证菜单可弹出，不实际拍（防误拍他人）
         try:
             if wechat is None or not targets:
                 return {"ok": False, "error": "微信未就绪或没有目标群"}
+            if group_wxid:
+                g = next((g for g in targets if g["wxid"] == group_wxid), None)
+                if g is None:
+                    return {"ok": False, "error": "目标群不在监听列表：%s" % group_wxid}
+                gs = [g]
+            else:
+                gs = targets
             best = None  # (chat_key, wxid, 群名, 消息)
-            for g in targets:
+            for g in gs:
                 chat_key = "group:%s" % g["wxid"]
                 msgs = [m for m in orch.store.recent(chat_key, limit=100) if not m.get("self")]
                 if msgs:
@@ -714,12 +721,13 @@ def main():
                     if best is None or cand[3].get("ts", 0) > best[3].get("ts", 0):
                         best = cand
             if best is None:
-                return {"ok": False, "error": "所有目标群存档里都没有群友消息，请先在群里@机器人说句话"}
+                return {"ok": False, "error": "该群存档里没有群友消息，请先@机器人说句话"}
             chat_key, wxid, gname, m = best
             result = wechat.poke_diag(wxid, m.get("sender_name") or m.get("sender_id"),
-                                      m.get("sender_id") or "")
+                                      m.get("sender_id") or "", verify_only=verify_only)
             result["target"] = {"name": m.get("sender_name"), "id": m.get("sender_id")}
             result["group"] = gname
+            result["verify_only"] = bool(verify_only)
             return result
         except Exception as e:
             return {"ok": False, "error": str(e)}

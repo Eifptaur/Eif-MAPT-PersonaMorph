@@ -678,8 +678,10 @@ class WebUI:
                         self._json({"ok": False, "error": str(e)})
                 elif path == "/api/poke-test":
                     # 拍一拍诊断：完整跑一遍并返回分步结果
+                    # body: {group_wxid?, verify_only?}
                     try:
-                        self._json(parent.poke_test_fn())
+                        self._json(parent.poke_test_fn(str(data.get("group_wxid") or ""),
+                                                       bool(data.get("verify_only"))))
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)})
                 elif path == "/api/selfcheck":

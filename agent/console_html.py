@@ -163,16 +163,15 @@ th{color:var(--tx2);font-weight:500}
     <div class="status"><b>运行状态</b><p id="sideStatus">未连接</p></div>
     <nav class="nav" id="nav">
       <a href="#sec-overview" class="on">概览</a>
+      <a href="#sec-check">体检与功能自检</a>
       <a href="#sec-model">模型 API</a>
       <a href="#sec-wechat">微信</a>
       <a href="#sec-memory">记忆</a>
       <a href="#sec-persona">人设与响应</a>
       <a href="#sec-send">发送限制</a>
-      <a href="#sec-memory">记忆</a>
       <a href="#sec-search">联网搜索</a>
       <a href="#sec-server">服务器</a>
       <a href="#sec-ui">界面适配</a>
-      <a href="#sec-diag">体检与诊断</a>
       <a href="#sec-log">运行日志</a>
       <a href="#sec-json">原始 JSON</a>
     </nav>
@@ -195,6 +194,50 @@ th{color:var(--tx2);font-weight:500}
         <button id="testApi" class="pri">测试 API 连通</button>
         <span class="hint" id="testResult" style="align-self:center"></span>
       </div>
+    </section>
+
+    <section id="sec-check" class="card" data-sec>
+      <h2>体检与功能自检</h2>
+      <div class="desc">按重要性从上到下逐项检测。先跑「一键体检」（环境/配置/点击），再按清单逐项验证功能；拍一拍建议用「简易检测」确认菜单可弹，避免误拍。</div>
+      <div class="btns">
+        <button id="selfCheck" class="pri">一键体检</button>
+        <span class="hint" id="selfCheckTip" style="align-self:center"></span>
+      </div>
+      <pre class="out dn" id="selfCheckResult"></pre>
+      <hr style="border:none;border-top:1px solid var(--bd);margin:14px 0">
+      <div class="row"><label>拍一拍目标群</label>
+        <div class="grow"><select id="pokeGroup">
+          <option value="">自动（最近有人发言的群）</option>
+        </select></div>
+      </div>
+      <div class="row"><label>简易检测</label><input type="checkbox" id="pokeVerifyOnly" checked title="只验证右键头像能弹出「拍一拍」菜单，不点击、不拍任何人">
+        <span class="hint">勾选=只验证菜单可弹（绝不到任何群友）；取消勾选=完整执行拍一拍（会真正拍一下）</span>
+      </div>
+      <div class="btns">
+        <button id="pokeTest" class="pri">拍一拍检测</button>
+        <span class="hint" id="uiTestResult" style="align-self:center"></span>
+      </div>
+      <div class="hint" style="color:#B91C1C">⚠️ 拍一拍是右键「对方头像」触发：头像由程序识别，若群内同名/头像辨识不清，理论上有拍到其他群友的风险——所以默认用「简易检测」，确认无误后再完整执行。</div>
+      <div class="hint" id="uiTestDetail"></div>
+      <hr style="border:none;border-top:1px solid var(--bd);margin:14px 0">
+      <h2>功能自检清单（按重要性排序）</h2>
+      <table id="checkList">
+        <thead><tr><th style="width:26px">✓</th><th>项目</th><th>怎么测</th><th>预期</th></tr></thead>
+        <tbody>
+          <tr><td><input type="checkbox" class="ck"></td><td>1. 环境体检</td><td>点上方「一键体检」</td><td>无 ❌ 项（允许 ⚠️ 提示）</td></tr>
+          <tr><td><input type="checkbox" class="ck"></td><td>2. 发消息</td><td>群里 @机器人 说句话</td><td>机器人正常回复，且不重复</td></tr>
+          <tr><td><input type="checkbox" class="ck"></td><td>3. 拍一拍</td><td>先「简易检测」，再完整检测</td><td>简易=菜单可弹；完整=群里出现拍一拍提示</td></tr>
+          <tr><td><input type="checkbox" class="ck"></td><td>4. 引用回复</td><td>让机器人 引用某条消息回复</td><td>出现引用样式（灰底卡片）且内容正确</td></tr>
+          <tr><td><input type="checkbox" class="ck"></td><td>5. 发图</td><td>发一张带图消息，让机器人「发一张图」</td><td>群里出现机器人转发的图片</td></tr>
+          <tr><td><input type="checkbox" class="ck"></td><td>6. 识图</td><td>引用图片 + @机器人 分析这张</td><td>机器人正确描述图片内容</td></tr>
+          <tr><td><input type="checkbox" class="ck"></td><td>7. 联网搜索</td><td>@机器人 今天的天气/新闻</td><td>给出实时信息（联网层开启）</td></tr>
+          <tr><td><input type="checkbox" class="ck"></td><td>8. 记忆</td><td>聊天里让机器人记住一件事 → 控制台「记忆」页看</td><td>印象出现、可删除</td></tr>
+          <tr><td><input type="checkbox" class="ck"></td><td>9. 挂件</td><td>看右下角鲸鱼挂件（余额/今日已用/每轮消耗）</td><td>数据变化、点击刷新、可拖拽</td></tr>
+          <tr><td><input type="checkbox" class="ck"></td><td>10. 启停重启</td><td>顶部 停止/重启（无窗口）→ 双击 启动机器人.vbs</td><td>页面变「已停止」、重启后台接管</td></tr>
+          <tr><td><input type="checkbox" class="ck"></td><td>11. 多厂商切换</td><td>模型 API 切到 Kimi/智谱 等 → 保存 → 测试连通</td><td>默认弹 Key 输入，测试通过</td></tr>
+        </tbody>
+      </table>
+      <div class="btns" style="margin-top:8px"><button id="ckReset" class="ghost">重置勾选</button><span class="hint" id="ckCount" style="align-self:center"></span></div>
     </section>
 
     <section id="sec-model" class="card" data-sec>
@@ -353,18 +396,6 @@ th{color:var(--tx2);font-weight:500}
         <option value="1.75">175%</option><option value="2.0">200%</option></select></div></div>
       <div class="row"><label>点击前清遮挡</label><input type="checkbox" data-cfg="ui.clean_overlays"></div>
       <div class="btns"><button class="pri" data-save>保存设置（界面适配）</button></div>
-    </section>
-
-    <section id="sec-diag" class="card" data-sec>
-      <h2>体检与诊断</h2>
-      <div class="desc">一键体检检查配置/微信/消息库/目标群/缩放叠加层/点击实测；拍一拍诊断完整跑一遍定位→右键→点菜单→验证（目标不在可见区会自动翻页）。点击期间请勿动鼠标。</div>
-      <div class="btns">
-        <button id="selfCheck" class="pri">一键体检</button>
-        <button id="pokeTest" class="ghost">拍一拍诊断</button>
-        <span class="hint" id="uiTestResult" style="align-self:center"></span>
-      </div>
-      <pre class="out dn" id="selfCheckResult"></pre>
-      <div class="hint" id="uiTestDetail"></div>
     </section>
 
     <section id="sec-log" class="card" data-sec>
@@ -727,10 +758,11 @@ $('providerSel').addEventListener('change', ()=>applyProvider($('providerSel').v
     ready = true; drawStatic();
   };
   img.src = LOGO_URL;
-  const IX = (W - img.width*1.4) / 2, IY = (H - img.height*1.4) / 2, IW = img.width*1.4, IH = img.height*1.4;
+  const LOGO_VIEW = 1.4; // 显示倍率
   function drawStatic(){
     ctx.clearRect(0,0,W,H);
-    ctx.drawImage(img, IX, IY, IW, IH);
+    const w = img.width * LOGO_VIEW, h = img.height * LOGO_VIEW;
+    ctx.drawImage(img, (W - w) / 2, (H - h) / 2, w, h);
   }
   let hovT = 0; // 0=纯原图 1=纯粒子（平滑渐变系数）
   function frame(ts){
@@ -742,7 +774,7 @@ $('providerSel').addEventListener('change', ()=>applyProvider($('providerSel').v
     ctx.clearRect(0,0,W,H);
     // 原图随渐变淡出（悬停到位仍保留 22% 底影，轮廓始终可见）
     ctx.globalAlpha = 1 - k * 0.78;
-    ctx.drawImage(img, IX, IY, IW, IH);
+    drawStatic();
     // 粒子随渐变淡入，位置 = 像素原位 + 渐变系数加权游动
     if (k > 0.01){
       ctx.globalAlpha = k;
@@ -876,14 +908,45 @@ $('selfCheck').onclick = async ()=>{
 };
 $('pokeTest').onclick = async ()=>{
   const btn=$('pokeTest'); btn.disabled=true;
-  $('uiTestResult').textContent='诊断中（约 15~30 秒，请勿动鼠标）…'; $('uiTestDetail').textContent='';
+  const only = $('pokeVerifyOnly').checked;
+  $('uiTestResult').textContent=(only?'简易检测中':'完整执行中')+'（约 10~25 秒，请勿动鼠标）…'; $('uiTestDetail').textContent='';
   try{
-    const r = await getJSON('/api/poke-test',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const r = await getJSON('/api/poke-test',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({group_wxid: $('pokeGroup').value||'', verify_only:only})});
     $('uiTestResult').textContent = (r.ok?'✅ ':'❌ ')+(r.message||r.error||'(无结果)');
-    $('uiTestDetail').textContent = '目标：'+(r.target?(r.target.name+' / '+r.target.id+' 在群「'+(r.group||'?')+'」'):'未解析')+'\n步骤：\n'+((r.steps||[]).join('\n')||(r.error||''));
+    $('uiTestDetail').textContent = '目标：'+(r.target?(r.target.name+' / '+r.target.id+' 在群「'+(r.group||'?')+'」'):'未解析')+
+      (r.verify_only?'\n（简易模式：仅验证菜单可弹，未实际拍）':'')+
+      '\n步骤：\n'+((r.steps||[]).join('\n')||(r.error||''));
   }catch(e){ $('uiTestResult').textContent='❌ '+e.message; }
   finally{ btn.disabled=false; }
 };
+/* 拍一拍目标群下拉（填充监听目标群） */
+async function loadPokeGroups(){
+  try{
+    const r = await getJSON('/api/wechat-groups');
+    const sel = $('pokeGroup'); const cur = sel.value;
+    sel.innerHTML = '<option value="">自动（最近有人发言的群）</option>';
+    (r.groups||[]).forEach(g=>{ const o=document.createElement('option'); o.value=g.wxid; o.textContent=g.name; sel.appendChild(o); });
+    if(cur) sel.value = cur;
+  }catch(e){}
+}
+/* 功能自检清单：localStorage 记忆勾选 */
+function ckInit(){
+  let saved = [];
+  try{ saved = JSON.parse(localStorage.getItem('wxAgent.checklist')||'[]'); }catch(e){}
+  document.querySelectorAll('#checkList .ck').forEach((ck,i)=>{ ck.checked = saved.includes(i);
+    ck.addEventListener('change', ckCount);
+  });
+  ckCount();
+}
+function ckCount(){
+  const list = document.querySelectorAll('#checkList .ck');
+  let arr = [];
+  list.forEach((ck,i)=>{ if(ck.checked) arr.push(i); });
+  try{ localStorage.setItem('wxAgent.checklist', JSON.stringify(arr)); }catch(e){}
+  $('ckCount').textContent = '已完成 '+arr.length+' / '+list.length;
+}
+$('ckReset').onclick = ()=>{ document.querySelectorAll('#checkList .ck').forEach(ck=>ck.checked=false); ckCount(); };
 /* ── 记忆页面 ── */
 function memTime(ts){
   if(!ts) return '—';
@@ -954,6 +1017,8 @@ async function checkAlive(){
 load();
 onboarding();
 loadMemory('');
+loadPokeGroups();
+ckInit();
 enhanceSelects();
 setInterval(loadStatus, 8000);
 setInterval(loadBalance, 30000);

@@ -873,11 +873,82 @@ class WeChatAdapter:
             _d("✘ 异常：%s" % e)
             return False, str(e)
 
-    def poke_diag(self, chat_id: str, target_name: str, target_id: str = "") -> dict:
-        """控制台「拍一拍诊断」：跑一遍完整流程并返回分步结果。"""
+    def poke_diag(self, chat_id: str, target_name: str, target_id: str = "",
+                  verify_only: bool = False) -> dict:
+        """控制台「拍一拍诊断」：跑一遍完整流程并返回分步结果。
+
+        verify_only=True：仅验证「右键头像能弹出拍一拍菜单」，不点击、不实际拍——
+        （防止识别偏差误拍其他群友）。
+        """
         steps: list = []
-        ok, msg = self.send_poke(chat_id, target_name, target_id, dbg=steps)
+        if verify_only:
+            ok, msg = self._verify_poke_menu(chat_id, target_name, target_id, dbg=steps)
+        else:
+            ok, msg = self.send_poke(chat_id, target_name, target_id, dbg=steps)
         return {"ok": ok, "message": msg, "steps": steps}
+
+    def _verify_poke_menu(self, chat_id: str, target_name: str, target_id: str = "",
+                          dbg: list | None = None) -> tuple:
+        """简易拍一拍检测：只确认「定位到头像 → 右键能弹出含拍一拍的菜单」。
+
+        不点菜单项（Esc 关闭），确保不会误拍任何群友。
+        返回 (ok, message)。
+        """
+        def _d(msg):
+            if dbg is not None:
+                dbg.append(msg)
+        try:
+            gui = self._get_gui()
+            if not self._ensure_foreground(gui):
+                return False, "微信窗口未找到或已退出，无法操作"
+            if not gui.open_chat(self.group_name(chat_id)):
+                return False, "打开会话失败"
+            time.sleep(0.9)
+            db_text = self._last_target_text(chat_id, target_id) if target_id else ""
+            located = self._send_poke_locate(gui, target_name, db_text)
+            if not located:
+                _d("✘ 定位失败：未找到「%s」的头像位置" % target_name)
+                return False, "未定位到头像，请让对方先发条消息"
+            ax, ay, score = located
+            _d("头像位置：渲染坐标 (%d,%d)" % (ax, ay))
+            ok, why = self._click(gui, ax, ay, right=True)
+            if not ok:
+                _d("✘ 右键被拦截：%s" % why)
+                return False, "右键被拦截：%s" % why
+            time.sleep(0.9)
+            uia = gui._get_uia()
+            menu = None
+            if uia is not None:
+                for label in ("拍一拍", "引用", "回复", "转发"):
+                    try:
+                        if uia._uia_find_menu_item(label) is not None:
+                            menu = label
+                            break
+                    except Exception:
+                        continue
+            if menu is None:
+                # OCR 兜底（只判断，不点击）
+                try:
+                    items = gui.ocr_zoomed((gui.right_pane_left, max(0, ay - 40),
+                                            gui.render_w, min(gui.render_h, ay + 360)), scale=3)
+                except Exception:
+                    items = []
+                for text, x, y, w, h in items:
+                    if "拍一拍" in text or text.strip() in ("引用", "回复", "转发"):
+                        menu = text.strip()[:8]
+                        break
+            # 关闭菜单：只有 UIA 确认到菜单节点才按 Esc（防误关聊天窗）
+            if uia is not None and menu is not None and (menu in ("拍一拍", "引用", "回复", "转发")):
+                try:
+                    gui._input.key(0x1B)
+                except Exception:
+                    pass
+            self._scroll_to_bottom(gui)
+            if menu:
+                return True, "✅ 菜单可弹出（识别到「%s」）——仅验证，未执行拍一拍" % menu
+            return False, "✘ 右键后未识别到菜单（未执行任何点击，未拍任何人）"
+        except Exception as e:
+            return False, "异常：%s" % e
 
     def click_self_test(self) -> dict:
         """真实点击自检：用与拍一拍完全相同的「移动+右键」逻辑，验证点击投递。
