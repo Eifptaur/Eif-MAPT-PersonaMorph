@@ -81,6 +81,7 @@ class WeChatAdapter:
         self._img_key_ready = False
         self._send_lock = threading.Lock()
         self._recent_sent = deque(maxlen=200)   # 最近自己发过的消息文本 (text, ts)，用于过滤回声
+        self._send_recent = deque(maxlen=50)    # 发送去重 (chat_id, text, ts)，防回车重试发两遍
         self._init_db()
 
     # ── 初始化 ───────────────────────────────────────────────────────────
@@ -425,8 +426,29 @@ class WeChatAdapter:
         except Exception:
             pass
 
+    def _dedup_send(self, chat_id: str, text: str) -> bool:
+        """3 秒内对同一会话发送完全相同的文本 → 视为重复点击重试，直接跳过。
+
+        微信 UIA 发送的「输入框未及时清空 → 重试回车」会把同一条发两遍，
+        这里做硬拦截（正常没人会在 3 秒内发两条一模一样的）。
+        """
+        t = str(text or "").strip()
+        if not t:
+            return True
+        now = time.time()
+        key = (chat_id, t)
+        while self._send_recent and now - self._send_recent[0][1] > 30:
+            self._send_recent.popleft()
+        for ck, ct, ts in self._send_recent:
+            if ck == key[0] and ct == key[1] and (now - ts) < 3.0:
+                return False
+        self._send_recent.append((key[0], key[1], now))
+        return True
+
     def send_text(self, chat_id: str, text: str):
         """发送文本到群。返回 (ok, message)。"""
+        if not self._dedup_send(chat_id, text):
+            return True, "重复发送已拦截（3 秒内同一文本）"
         name = self.group_name(chat_id)
         try:
             gui = self._get_gui()
@@ -440,6 +462,8 @@ class WeChatAdapter:
 
     def send_text_at(self, chat_id: str, member_name: str, text: str):
         """在群里 @ 成员并发送文本。返回 (ok, message)。"""
+        if not self._dedup_send(chat_id, text):
+            return True, "重复发送已拦截（3 秒内同一文本）"
         name = self.group_name(chat_id)
         try:
             gui = self._get_gui()

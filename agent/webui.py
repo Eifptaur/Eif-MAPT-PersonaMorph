@@ -163,11 +163,13 @@ th{color:var(--tx2);font-weight:500}
         <input type="checkbox" id="ui.clean_overlays" title="自动关闭手写输入画布等系统叠加层、最小化遮挡窗口（推荐开启）">
       </div>
       <div class="btns">
+        <button id="selfCheck" class="ghost">一键体检</button>
         <button id="uiSelfTest" class="ghost">鼠标点击自检</button>
         <button id="pokeTest" class="ghost">拍一拍诊断</button>
         <span class="hint" id="uiTestResult"></span>
       </div>
-      <div class="hint" id="uiTestDetail">自检：把鼠标移到目标点并回读「命中的窗口」，用于诊断点击不生效的原因（DPI 缩放、手写画布、遮挡窗等）。拍一拍诊断：完整执行 定位头像→右键→点拍一拍→数据库验证，并输出每一步结果（点击前请勿动鼠标）。</div>
+      <pre id="selfCheckResult" class="hint" style="white-space:pre-wrap;margin-top:8px;display:none"></pre>
+      <div class="hint" id="uiTestDetail">一键体检：检查配置/微信窗口/消息库/目标群/缩放叠加层/点击命中测试，输出每项通过/注意/失败与建议。自检：移动光标+回读命中窗口。拍一拍诊断：完整执行 定位头像→右键→点拍一拍→验证，并输出每一步结果（点击前请勿动鼠标）。</div>
     </div>
 
     <div class="card">
@@ -342,6 +344,22 @@ $('testApi').onclick = async ()=>{
   }catch(e){ $('testResult').textContent='❌ '+e.message; }
   finally{ btn.disabled=false; }
 };
+$('selfCheck').onclick = async ()=>{
+  const btn=$('selfCheck'); btn.disabled=true;
+  const pre=$('selfCheckResult'); pre.style.display='block';
+  pre.textContent='体检中（约 10~20 秒，会移动光标做命中测试）…';
+  try{
+    const r = await getJSON('/api/selfcheck', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({})});
+    let lines = ['===== 一键体检 =====', r.summary || '', ''];
+    for(const c of (r.checks||[])){
+      const mark = c.status==='ok' ? '✅' : (c.status==='warn' ? '⚠️' : (c.status==='fail' ? '❌' : 'ℹ️'));
+      lines.push(mark+' '+c.name+'：'+c.detail);
+      if(c.hint) lines.push('     建议：'+c.hint);
+    }
+    pre.textContent = lines.join('\n');
+  }catch(e){ pre.textContent='体检失败：'+e.message; }
+  finally{ btn.disabled=false; }
+};
 $('uiSelfTest').onclick = async ()=>{
   const btn=$('uiSelfTest'); btn.disabled=true; $('uiTestResult').textContent='自检中…';
   try{
@@ -377,7 +395,7 @@ class WebUI:
 
     def __init__(self, status_provider, log_buffer, test_api_fn=None, on_save=None,
                  pause_fn=None, resume_fn=None, balance_fn=None, shutdown_fn=None,
-                 whale=None, ui_test_fn=None, poke_test_fn=None):
+                 whale=None, ui_test_fn=None, poke_test_fn=None, selfcheck_fn=None):
         self.status_provider = status_provider      # () -> dict
         self.log_buffer = log_buffer                # collections.deque[str]
         self.test_api_fn = test_api_fn              # () -> dict
@@ -389,6 +407,7 @@ class WebUI:
         self.whale = whale                          # agent.whale.WhaleWidget（小鲸鱼挂件，可选）
         self.ui_test_fn = ui_test_fn or (lambda: {"error": "未提供 ui_test_fn"})  # () -> dict
         self.poke_test_fn = poke_test_fn or (lambda: {"error": "未提供 poke_test_fn"})  # () -> dict
+        self.selfcheck_fn = selfcheck_fn or (lambda: {"ok": False, "error": "未提供 selfcheck_fn"})  # () -> dict
         self._server = None
         self._thread = None
         self.port = 0
@@ -596,6 +615,12 @@ class WebUI:
                         self._json(parent.poke_test_fn())
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)})
+                elif path == "/api/selfcheck":
+                    # 一键体检：配置/微信/数据/界面适配/命中测试 全套
+                    try:
+                        self._json(parent.selfcheck_fn())
+                    except Exception as e:
+                        self._json({"ok": False, "checks": [], "summary": str(e)})
                 elif path == "/api/pause":
                     parent.pause_fn()
                     self._json({"ok": True})

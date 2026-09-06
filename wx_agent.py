@@ -571,6 +571,120 @@ def main():
         except Exception as e:
             return {"error": str(e)}
 
+    def selfcheck_fn():
+        """一键体检：把「换电脑容易踩的坑」做成可自助检查的清单。
+
+        只读检查（不动微信、不发消息）；点击类项会移动光标做命中测试。
+        每项返回 ok/warn/fail + 说明 + 建议。
+        """
+        checks = []
+
+        def add(name, status, detail, hint=""):
+            checks.append({"name": name, "status": status, "detail": detail, "hint": hint})
+
+        # 1) 配置
+        try:
+            cfg = get_config()
+            key = str(cfg.get("api", {}).get("api_key") or "")
+            model = str(cfg.get("api", {}).get("model") or "")
+            base = str(cfg.get("api", {}).get("base_url") or "")
+            add("配置·API Key", "ok" if key and "在这里填" not in key and key != "******" else "fail",
+                "Key 已填" if key else "未填", "在「模型 API」卡填你的 DeepSeek Key")
+            add("配置·模型/地址", "ok" if base and model else "fail",
+                "%s / %s" % (base or "?", model or "?"), "填 Base URL 与模型名")
+        except Exception as e:
+            add("配置读取", "fail", str(e))
+
+        # 2) 微信连接
+        gui = None
+        try:
+            if wechat is not None:
+                gui = wechat._get_gui()
+                alive = gui.is_alive()
+                import ctypes
+                vis = bool(ctypes.windll.user32.IsWindowVisible(gui.main_hwnd))
+                add("微信·窗口", "ok" if (alive and vis) else "fail",
+                    "进程在，窗口可见" if (alive and vis) else ("窗口不可见（可能最小化/退出）" if alive else "未找到微信窗口"),
+                    "打开电脑微信并登录小号，别最小化")
+            else:
+                add("微信·窗口", "fail", "微信适配器未初始化（微信可能没开）", "打开电脑微信再重启机器人")
+        except Exception as e:
+            add("微信·窗口", "fail", str(e), "打开电脑微信后重试")
+
+        # 3) 微信数据/群
+        try:
+            groups = wechat.list_groups() if wechat is not None else []
+            add("微信·目标群", "ok" if targets else "warn",
+                "发现 %d 个群，目标 %d 个：%s" % (len(groups), len(targets),
+                                               "、".join(g["name"] for g in targets) or "(空)"),
+                "在配置 wechat.group_name_white_list 里加群名，留空=所有群")
+            if targets:
+                seq = wechat.latest_seq(targets[0]["wxid"])
+                add("微信·消息库可读", "ok" if seq else "fail",
+                    "目标群 %s 最新序号=%s" % (targets[0]["name"], seq),
+                    "若读数是 0 且群里已说话，可能是微信数据库位置不对（wechat.db_dir）")
+        except Exception as e:
+            add("微信·数据", "fail", str(e))
+
+        # 4) 界面适配/点击
+        try:
+            from agent import ui_adapt
+            scale = ui_adapt.coord_scale()
+            add("适配·显示缩放", "ok" if abs(scale - 1.0) < 0.01 else "warn",
+                "检测到 %.2fx%s" % (scale, "" if abs(scale - 1.0) < 0.01 else "（自动换算点击坐标）"),
+                "若点击异常可在控制台「显示缩放」手动指定档位")
+            try:
+                import ctypes
+                from ctypes import wintypes
+                u = ctypes.windll.user32
+                overlays = {"n": 0}
+                CB = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+
+                def cb(h, l):
+                    if u.IsWindowVisible(h):
+                        cls = ctypes.create_unicode_buffer(256)
+                        u.GetClassNameW(h, cls, 256)
+                        if cls.value in ("ShellHandwritingCanvas", "Windows.UI.Core.CoreWindow"):
+                            overlays["n"] += 1
+                    return True
+
+                ref = CB(cb)
+                u.EnumWindows(ref, 0)
+            except Exception:
+                overlays["n"] = 0
+            add("适配·系统叠加层", "warn" if overlays["n"] else "ok",
+                ("发现 %d 个输入叠加层（手写画布/输入体验）" % overlays["n"]) if overlays["n"] else "无（正常）",
+                "点击前会自动清理；若反复出现请关闭触控键盘（Win+Ctrl+O）")
+            if gui is not None:
+                import ctypes
+                from ctypes import wintypes
+                u = ctypes.windll.user32
+                box = gui.get_input_box()
+                pt_x = gui.origin_x + (gui.right_pane_left + gui.render_w) // 2
+                pt_y = gui.origin_y + ((box[1] + box[3]) // 2 if box else gui.render_h // 2)
+                r = ui_adapt.self_test(gui, point=(pt_x, pt_y))
+                if r.get("is_wechat"):
+                    add("适配·点击命中测试", "ok",
+                        "缩放 %.1fx，命中=微信，光标移动%s" % (r.get("scale_used", 1.0),
+                                                         "正常" if r.get("mouse_moved") else "异常"))
+                else:
+                    add("适配·点击命中测试", "fail",
+                        "命中『%s / %s』，光标移动=%s" % (r.get("hit_class", "?"),
+                                                     r.get("hit_title", "?")[:40],
+                                                     "正常" if r.get("mouse_moved") else "无"),
+                        r.get("input_isolated_suspect") or "请点「鼠标点击自检」看详情；确保机器人由 scripts\\启动机器人.bat 启动")
+        except Exception as e:
+            add("界面适配检查", "fail", str(e))
+
+        add("拍一拍", "info", "请用「拍一拍诊断」按钮实测（定位/右键/验证一步一报告）")
+        add("发送防重复", "info", "已启用 3 秒重复发送拦截（回车重试竞态防护）")
+
+        ok_n = sum(1 for c in checks if c["status"] == "ok")
+        warn_n = sum(1 for c in checks if c["status"] == "warn")
+        fail_n = sum(1 for c in checks if c["status"] == "fail")
+        return {"ok": fail_n == 0, "checks": checks,
+                "summary": "通过 %d 项 / 注意 %d 项 / 失败 %d 项" % (ok_n, warn_n, fail_n)}
+
     def poke_test_fn():
         # 拍一拍诊断：找「最近有群友发过言」的目标群 + 该群最近发言的非机器人，
         # 完整跑一遍流程并输出分步结果
@@ -615,7 +729,7 @@ def main():
     webui = WebUI(status_provider, log_buffer, test_api_fn=test_api_fn, balance_fn=balance_fn,
                   pause_fn=lambda: orch.set_paused(True), resume_fn=lambda: orch.set_paused(False),
                   shutdown_fn=shutdown_fn, whale=orch.whale, ui_test_fn=ui_test_fn,
-                  poke_test_fn=poke_test_fn)
+                  poke_test_fn=poke_test_fn, selfcheck_fn=selfcheck_fn)
     try:
         port = webui.start()
         if port:
