@@ -523,8 +523,9 @@ class WeChatAdapter:
                 return False
         for text, x, y, w, h in items:
             if label and label in text:
-                # 真菜单过滤：菜单在光标右下方的小字条（高 < 46），远离聊天文本区
-                if not (y > rel_y - 30 and x > rel_x - 120 and h < 46):
+                # 真菜单过滤：菜单是贴光标右下方的紧凑小字条（高 < 46），
+                # 距离限制在光标附近 ±320px，防止把聊天文本里的「拍一拍」误当菜单项
+                if not (y > rel_y - 30 and rel_x - 120 < x < rel_x + 320 and h < 46):
                     continue
                 ok2, _ = self._click(gui, x + w // 2, y + h // 2, right=False)
                 if not ok2:
@@ -555,10 +556,11 @@ class WeChatAdapter:
         return s
 
     def _uia_target_row_rect(self, gui, db_text: str):
-        """用 UIA 消息列表精确匹配目标最近一条消息的行矩形（屏幕坐标）。
+        """用 UIA 消息列表匹配目标最近一条消息的行矩形（屏幕坐标）。
 
         微信 4.x 的消息列表在 UIA 树里是 chat_message_list（mmui::RecyclerListView），
-        每行 mmui::ChatTextItemView 的 Name 就是消息原文——比 OCR 可靠得多。
+        每行 mmui::ChatTextItemView 的 Name 就是消息原文（可能被截断）——
+        先精确匹配，再按前 24 字做相似度匹配（防截断/OCR 噪声）。
         返回 (left, top, right, bottom) 或 None。
         """
         try:
@@ -572,6 +574,7 @@ class WeChatAdapter:
             if not target:
                 return None
             best = None
+            best_score = 0.0
             for ch in list(lst.GetChildren()):
                 try:
                     if ch.ClassName != "mmui::ChatTextItemView":
@@ -579,8 +582,15 @@ class WeChatAdapter:
                     nm = self._norm_ocr(ch.Name or "")
                 except Exception:
                     continue
-                if nm and (nm == target or (len(nm) >= 6 and target.startswith(nm))):
-                    best = ch  # 取最后一个（最新）
+                if not nm:
+                    continue
+                if nm == target:
+                    best = ch
+                    break
+                score = _seq_ratio(nm[:24], target[:24])
+                if score > 0.5 and score > best_score:
+                    best_score = score
+                    best = ch
             if best is None:
                 return None
             r = best.BoundingRectangle
@@ -588,8 +598,8 @@ class WeChatAdapter:
         except Exception:
             return None
 
-    def _find_avatar_center(self, row_rect):
-        """运行时定位头像：在消息行左侧找「彩色饱和像素斑块」中心。
+    def _find_avatar_center(self, box):
+        """运行时定位头像：在给定屏幕像素矩形内找「彩色饱和像素斑块」中心。
 
         真人头像是有颜色的图片，气泡/名字/背景都是灰白/黑（低饱和度），
         用 max(R,G,B)-min(R,G,B) > 28 筛彩色像素完全能区分（深浅色主题通用）。
@@ -597,39 +607,38 @@ class WeChatAdapter:
         """
         try:
             from PIL import ImageGrab
-            img = ImageGrab.grab(bbox=(row_rect[0], row_rect[1], row_rect[0] + 130, row_rect[3]))
+            img = ImageGrab.grab(bbox=box)
             px = img.convert("RGB").load()
             w, h = img.size
             xs, ys = [], []
-            for y in range(h):
+            step_y = max(1, h // 120)
+            for y in range(0, h, step_y):
                 for x in range(w):
                     r, g, b = px[x, y]
                     if max(r, g, b) - min(r, g, b) > 28:  # 彩色饱和像素
                         xs.append(x)
                         ys.append(y)
-            if len(xs) < 50:  # 太少视为误检（如气泡彩字）
+            if len(xs) < 40:  # 太少视为误检（如气泡彩字/残影）
                 return None
             xs.sort()
             ys.sort()
-            cx = xs[len(xs) // 2]
-            cy = ys[len(ys) // 2]
-            return row_rect[0] + int(cx), row_rect[1] + int(cy)
+            return box[0] + int(xs[len(xs) // 2]), box[1] + int(ys[len(ys) // 2])
         except Exception:
             return None
 
     def _send_poke_locate(self, gui, target_name: str, db_text: str):
         """定位目标头像（渲染相对坐标），返回 (ax, ay, score) 或 None。
 
-        优先 UIA 消息行矩形 + 「彩色像素块」运行时检测头像中心（精确）；
-        次选 UIA 行的固定偏移 (+54, +48)（实测校准：头像 45~50px）；
-        再 OCR 相似度匹配、最后左侧消息块兜底。
+        路径优先级：① UIA 行匹配（精确/模糊）→ 彩色头像检测；② UIA 行固定偏移；
+        ③ OCR 相似度匹配 → 彩色头像检测；④ 左侧消息块兜底。
+        返回第三位 score 供日志说明路径（1.0=UIA 精确行 / 0.8=彩色检测 / 0.0=兜底）。
         """
-        # 1) UIA 行精确匹配 + 彩色头像检测
+        # 1) UIA 行匹配 + 彩色头像检测
         row = self._uia_target_row_rect(gui, db_text)
         if row:
-            av = self._find_avatar_center(row)
+            av = self._find_avatar_center((row[0], row[1], row[0] + 130, row[3]))
             if av:
-                return av[0] - gui.origin_x, av[1] - gui.origin_y, 1.0
+                return av[0] - gui.origin_x, av[1] - gui.origin_y, 0.8
             return row[0] + 54 - gui.origin_x, row[1] + 48 - gui.origin_y, 1.0
         # 2) OCR 相似度匹配
         items = []
@@ -660,6 +669,13 @@ class WeChatAdapter:
                 best_score = score
                 best = (x, y, w, h)
         if best and db_norm:
+            # 彩色头像检测：在行带上找（行带取气泡左缘向左 130px、首行上下 60px）
+            bx, by, bw, bh = best
+            av = self._find_avatar_center((gui.origin_x + max(gui.right_pane_left + 40, bx - 140),
+                                           gui.origin_y + by - 55,
+                                           gui.origin_x + bx, gui.origin_y + by + 75))
+            if av:
+                return av[0] - gui.origin_x, av[1] - gui.origin_y, 0.6
             return ax, best[1] - 32, best_score
 
         # 3) 兜底：左侧可见消息的最后一条（文本块第一行）
@@ -706,7 +722,17 @@ class WeChatAdapter:
                 _d("5) ✘ 定位失败：未找到「%s」的头像位置（UIA 行匹配/OCR 相似度/左侧消息兜底都失败）" % target_name)
                 return False, ("未在可见消息里定位到「%s」的头像；让对方先发条消息再试" % target_name)
             ax, ay, score = located
-            _d("5) 头像位置：渲染坐标 (%d,%d)，匹配度 %.2f（UIA 行匹配=1.0）" % (ax, ay, score))
+            if score >= 1.0:
+                path = "UIA 行 + 固定偏移"
+            elif score >= 0.8:
+                path = "UIA 行 + 彩色头像检测"
+            elif score >= 0.6:
+                path = "OCR 匹配 + 彩色头像检测"
+            elif score > 0.0:
+                path = "OCR 相似度匹配"
+            else:
+                path = "左侧消息兜底"
+            _d("5) 头像位置：渲染坐标 (%d,%d)，定位方式：%s" % (ax, ay, path))
             _d("6) 移动到 (%d,%d) 并右键…（光标位置与命中窗口将在成功/失败时回读）" % (
                 gui.origin_x + ax, gui.origin_y + ay))
             menu_hit = self._right_click_menu(gui, ax, ay, "拍一拍")
