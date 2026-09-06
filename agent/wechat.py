@@ -534,10 +534,14 @@ class WeChatAdapter:
         return False
 
     def _last_target_text(self, chat_id: str, wxid: str) -> str:
-        """从数据库找目标最近一条消息的文本（用于 OCR 模糊匹配定位）。"""
+        """从数据库找目标**最近**一条消息的文本（用于 UIA/OCR 定位）。
+
+        注意 wechatauto.get_messages 是 ORDER BY sort_seq DESC（最新在前），
+        按序取第一条匹配即最新；曾误用 reversed() 取到最旧——已修。
+        """
         try:
             raws = self._db.get_messages(chat_id, limit=60)
-            for raw in reversed(raws):
+            for raw in raws:  # 最新在前，第一条匹配即最新
                 norm = self.normalize(raw, chat_id)
                 if norm and str(norm.get("sender_id") or "") == str(wxid):
                     txt = str(norm.get("text") or "").strip()
