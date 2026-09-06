@@ -540,6 +540,17 @@ def main():
     except Exception:
         pass
 
+    # 写入 PID 文件，供「停止机器人」按 PID 无窗口结束（零 PowerShell 依赖）
+    _pid_file = os.path.join(ROOT, "data", "bot.pid")
+    try:
+        os.makedirs(os.path.dirname(_pid_file), exist_ok=True)
+        with open(_pid_file, "w", encoding="utf-8") as _f:
+            _f.write(str(os.getpid()))
+        import atexit
+        atexit.register(lambda: os.path.exists(_pid_file) and os.remove(_pid_file))
+    except Exception:
+        pass
+
     cfg = get_config()
     log.info("===== wx-agent 启动 =====")
     problems = _check_prerequisites(cfg)
@@ -701,13 +712,17 @@ def main():
 
     def poke_test_fn(group_wxid="", verify_only=False):
         # 拍一拍诊断：目标直接从微信数据库取（不依赖控制台存档，任何群有人说过话即可）；
+        # 手动诊断不受白名单限制（自动拍一拍仍只拍监控中的群）；
         # group_wxid 指定群（空=自动找最近有群友发言的群）；verify_only=只验菜单可弹
         try:
-            if wechat is None or not targets:
-                return {"ok": False, "error": "微信未就绪或没有目标群"}
-            gs = [g for g in targets if g["wxid"] == group_wxid] if group_wxid else list(targets)
+            if wechat is None:
+                return {"ok": False, "error": "微信未就绪"}
+            all_groups = list(groups)
+            if not all_groups:
+                return {"ok": False, "error": "没有发现任何群聊"}
+            gs = [g for g in all_groups if g["wxid"] == group_wxid] if group_wxid else all_groups
             if not gs:
-                return {"ok": False, "error": "该群不在监听列表里（先勾选到白名单）"}
+                return {"ok": False, "error": "没找到这个群（可能微信会话列表里已不存在）"}
             best = None
             for g in gs:
                 name, sid = wechat._latest_friend(g["wxid"])

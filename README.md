@@ -125,15 +125,17 @@ Web 控制台
 
 注：微信「收藏表情包 / 从表情库发送」因表情面板是自绘 UI、无法可靠定位，暂未实现；发图用 send_image 代替。
 
-运维脚本
+运维脚本（无需 PowerShell，全部无窗口）
 
-· scripts\启动机器人.bat —— 日常启动（带看门狗自动重启）
-· scripts\停止机器人.bat —— 一键停止
+· 启动机器人.vbs —— 首选启动：pyw/pythonw 隐藏运行看门狗（无任何 cmd/PowerShell 窗口）
+· 停止机器人.vbs —— 首选停止：按 PID 文件隐藏结束机器人+看门狗
+· scripts\启动机器人.bat / 停止机器人.bat —— bat 兼容入口（最终也是调上面的 vbs）
+· scripts\watchdog.py —— 看门狗（pythonw 运行，崩溃/退出后自动重启），等价于旧 scripts\看门狗.ps1
+· scripts\stop_bot.py —— 无窗口停止器（读 data\bot.pid / data\watchdog.pid）
 · scripts\安装依赖.bat —— 一键装依赖（自动识别离线/联网）
 · scripts\自检.bat —— 环境/依赖/逻辑自检
 · scripts\备份配置.bat —— 备份 config.json 与 data/
-· scripts\开机自启.bat / 取消开机自启.bat —— 注册/取消登录自启
-· scripts\看门狗.ps1 —— 崩溃/退出自动重启守护
+· scripts\开机自启.bat / 取消开机自启.bat —— 注册/取消登录自启（wscript 无窗口方式）
 
 致谢与免责声明
 

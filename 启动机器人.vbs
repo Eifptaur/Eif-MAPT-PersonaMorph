@@ -1,7 +1,21 @@
-' wx-agent 无窗口启动器：双击即启动（后台隐藏运行看门狗 + pythonw 机器人）
-' 无任何命令行窗口/黑框闪现；停止用 停止机器人.bat 或控制台「停止」
+' wx-agent launcher (no window): starts the hidden watchdog (pyw/pythonw hidden).
+' The project does NOT need PowerShell at all - no cmd/PowerShell window is shown.
+Option Explicit
+Dim fso, sh, root, script, cmd
 Set fso = CreateObject("Scripting.FileSystemObject")
 Set sh  = CreateObject("WScript.Shell")
 root = fso.GetParentFolderName(WScript.ScriptFullName)
-cmd = "powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & root & "\scripts\看门狗.ps1"""
+script = root & "\scripts\watchdog.py"
+On Error Resume Next
+cmd = "pyw.exe -3 """ & script & """"
 sh.Run cmd, 0, False
+If Err.Number <> 0 Then
+    Err.Clear
+    cmd = "pythonw.exe """ & script & """"
+    sh.Run cmd, 0, False
+    If Err.Number <> 0 Then
+        Err.Clear
+        cmd = "python.exe """ & script & """"
+        sh.Run cmd, 0, False
+    End If
+End If
