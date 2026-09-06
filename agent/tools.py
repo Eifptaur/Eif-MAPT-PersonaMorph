@@ -334,7 +334,7 @@ def _exec_send_poke(ctx, args):
             if m["user_id"] == user_id and m.get("name"):
                 name = m["name"]
                 break
-    ok_flag, msg = ctx["wechat"].send_poke(ctx["chat_id"], name or user_id)
+    ok_flag, msg = ctx["wechat"].send_poke(ctx["chat_id"], name or user_id, user_id)
     if ok_flag:
         ctx["session"]["sent"].append({"type": "poke", "text": "[拍一拍]"})
         return _ok({"poked": True, "note": "已拍。不要输出\"已拍\"类汇报。"})

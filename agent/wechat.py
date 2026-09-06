@@ -32,6 +32,15 @@ TYPE_LABEL = {
 _SENDER_RE = re.compile(r"^(wxid_[0-9a-zA-Z_-]+|.*@chatroom):\s*")
 
 
+def _seq_ratio(a: str, b: str) -> float:
+    """文本相似度 0~1（difflib，OCR 与数据库文本比对用）。"""
+    try:
+        import difflib
+        return difflib.SequenceMatcher(None, str(a or ""), str(b or "")).ratio()
+    except Exception:
+        return 0.0
+
+
 class WeChatError(Exception):
     pass
 
@@ -428,8 +437,119 @@ class WeChatAdapter:
                 return True
         return False
 
-    def send_poke(self, chat_id: str, target_name: str):
-        """拍一拍某位成员：右键对方头像 → 菜单选「拍一拍」。靠 OCR 定位 + 数据库验证。
+    def _last_target_text(self, chat_id: str, wxid: str) -> str:
+        """从数据库找目标最近一条消息的文本（用于 OCR 模糊匹配定位）。"""
+        try:
+            raws = self._db.get_messages(chat_id, limit=60)
+            for raw in reversed(raws):
+                norm = self.normalize(raw, chat_id)
+                if norm and str(norm.get("sender_id") or "") == str(wxid):
+                    txt = str(norm.get("text") or "").strip()
+                    if txt and not txt.startswith("["):
+                        return txt
+        except Exception:
+            pass
+        return ""
+
+    @staticmethod
+    def _norm_ocr(s: str) -> str:
+        """OCR 行 vs 数据库文本的归一化：去空白，@/# 与"群"互换等 OCR 常见误读。"""
+        s = re.sub(r"[\s\u00a0]+", "", str(s or ""))
+        s = s.replace("#", "群").replace("＃", "群")
+        s = s.replace("@", "").replace("@", "")
+        return s
+
+    def _uia_target_row_rect(self, gui, db_text: str):
+        """用 UIA 消息列表精确匹配目标最近一条消息的行矩形（屏幕坐标）。
+
+        微信 4.x 的消息列表在 UIA 树里是 chat_message_list（mmui::RecyclerListView），
+        每行 mmui::ChatTextItemView 的 Name 就是消息原文——比 OCR 可靠得多。
+        返回 (left, top, right, bottom) 或 None。
+        """
+        try:
+            uia = gui._get_uia()
+            if uia is None:
+                return None
+            lst = uia._message_list()
+            if lst is None:
+                return None
+            target = self._norm_ocr(db_text)
+            if not target:
+                return None
+            best = None
+            for ch in list(lst.GetChildren()):
+                try:
+                    if ch.ClassName != "mmui::ChatTextItemView":
+                        continue
+                    nm = self._norm_ocr(ch.Name or "")
+                except Exception:
+                    continue
+                if nm and (nm == target or (len(nm) >= 6 and target.startswith(nm))):
+                    best = ch  # 取最后一个（最新）
+            if best is None:
+                return None
+            r = best.BoundingRectangle
+            return (r.left, r.top, r.right, r.bottom)
+        except Exception:
+            return None
+
+    def _send_poke_locate(self, gui, target_name: str, db_text: str):
+        """定位目标头像（渲染相对坐标），返回 (ax, ay, score) 或 None。
+
+        优先 UIA 消息行矩形（精确），其次 OCR 相似度匹配，最后左侧消息块兜底。
+        头像中心 ≈ 行内 (+54, +48)（实测校准：头像 45~50px，行左缘 +54 即头像中心）。
+        """
+        # 1) UIA 行精确匹配
+        row = self._uia_target_row_rect(gui, db_text)
+        if row:
+            return row[0] + 54 - gui.origin_x, row[1] + 48 - gui.origin_y, 1.0
+        # 2) OCR 相似度匹配
+        items = []
+        try:
+            box = gui.get_input_box()
+            top = max(80, box[1] - 620) if box else 80
+            items = gui.ocr((gui.right_pane_left, top, gui.render_w, box[1]))
+        except Exception:
+            return None
+        mid_x = (gui.right_pane_left + gui.render_w) // 2
+        pane_w = max(1, gui.render_w - gui.right_pane_left)
+        # 头像列中心 ≈ 会话区左缘 + 18.5% 会话区宽（实测：深色 197px、浅色 201px，取 0.185；头像 45~50px，容差 ±10px）
+        ax = gui.right_pane_left + int(pane_w * 0.185)
+
+        # 剔除垃圾项（侧栏碎片/小残片）与右侧（机器人自己的消息）
+        items = [it for it in items
+                 if it[3] > 30 and (gui.right_pane_left + 60) < it[1] < mid_x]
+
+        db_norm = self._norm_ocr(db_text)
+        best = None
+        best_score = 0.0
+        for t, x, y, w, h in items:
+            tn = self._norm_ocr(t)
+            if not tn:
+                continue
+            score = _seq_ratio(tn, db_norm[:120] if db_norm else "")
+            if score > 0.5 and score > best_score:
+                best_score = score
+                best = (x, y, w, h)
+        if best and db_norm:
+            return ax, best[1] - 32, best_score
+
+        # 3) 兜底：左侧可见消息的最后一条（文本块第一行）
+        if items:
+            items.sort(key=lambda b: b[1])
+            last = items[-1]
+            first_y = last[1]
+            for i in range(len(items) - 1, 0, -1):
+                if last[1] - items[i - 1][1] > 36:
+                    first_y = items[i][1]
+                    break
+            else:
+                first_y = items[0][1]
+            return ax, first_y - 32, 0.0
+        return None
+
+    def send_poke(self, chat_id: str, target_name: str, target_id: str = ""):
+        """拍一拍某位成员：右键对方头像 → 菜单选「拍一拍」。靠 UIA/OCR 定位 + 数据库验证。
 
         返回 (ok, message)。对方最近发过言、名字在可见消息区里才比较容易成功。
         验证失败会如实返回，不会假报成功。
@@ -442,40 +562,15 @@ class WeChatAdapter:
             if not gui.open_chat(group):
                 return False, "打开会话失败"
             time.sleep(0.9)
-            box = gui.get_input_box()
-            if not box:
-                return False, "未检测到输入框，无法定位消息区"
             base_seq = self.latest_seq(chat_id)
-            top = max(80, box[1] - 620)
-            items = gui.ocr((gui.right_pane_left, top, gui.render_w, box[1]))
-            mid_x = (gui.right_pane_left + gui.render_w) // 2
-
-            # 头像列在聊天区左侧（微信 4.x 居中卡片布局），从「名字标签」精确推导：
-            # 名字是独立 OCR 行（在左半区、不含"拍"字），头像中心 ≈ 名字中心 (-52, +11)
-            # （实测校准：名字「E」标签中心 (559,601)，头像中心 (500,612)，头像 45×45）
-            labels = [(x, y, w, h) for t, x, y, w, h in items
-                      if target_name and t == target_name and x < mid_x and "拍" not in t]
-            if labels:
-                x, y, w, h = max(labels, key=lambda b: b[1])  # 最新的（y 最大）
-                ax = x + w // 2 - 52
-                ay = y + h // 2 + 11
+            db_text = self._last_target_text(chat_id, target_id) if target_id else ""
+            located = self._send_poke_locate(gui, target_name, db_text)
+            if located:
+                ax, ay, score = located
                 if self._right_click_menu(gui, ax, ay, "拍一拍"):
                     return self._verify_poke(chat_id, target_name, base_seq)
-
-            # 兜底 1：消息文本里含目标名（名字标签没被 OCR 到）→
-            # 名字标签在气泡第一行之上，头像 ≈ (文本行左 - 78, 文本行上 - 44)
-            hit = None
-            for t, x, y, w, h in items:
-                if target_name and target_name in t and "拍" not in t and mid_x > x > gui.right_pane_left:
-                    hit = (x, y, w, h)
-                    break
-            if hit:
-                ax = hit[0] - 78
-                ay = hit[1] + hit[3] // 2 - 44
-                if self._right_click_menu(gui, ax, ay, "拍一拍"):
-                    return self._verify_poke(chat_id, target_name, base_seq)
-
-            return False, "右键菜单里没找到「拍一拍」，未在可见消息里定位到「%s」的头像（让对方先发条消息、或往上翻到他的消息再试）" % target_name
+                return False, "右键菜单里没找到「拍一拍」（头像点 (%d,%d) 可能没点中）" % (ax, ay)
+            return False, ("未在可见消息里定位到「%s」的头像；让对方先发条消息再试" % target_name)
         except Exception as e:
             return False, str(e)
 
