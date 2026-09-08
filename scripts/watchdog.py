@@ -19,13 +19,21 @@ os.makedirs(DATA, exist_ok=True)
 
 
 def find_pythonw():
-    if shutil.which("pythonw"):
-        return shutil.which("pythonw")
-    if sys.executable and os.path.basename(sys.executable).lower() == "python.exe":
-        pyw = sys.executable[:-10] + "pythonw.exe"
-        if os.path.exists(pyw):
-            return pyw
-    return sys.executable or "pythonw"
+    """返回与当前进程同版本的 Python（优先 pythonw）。
+    绝不能回退到系统 PATH 的 pythonw：版本可能不同（如系统 3.14 vs 便携 3.10），
+    依赖全部装在当前解释器的环境里，版本不一致机器人启动即崩溃（本实例由 onestart
+    用同一解释器拉起，直接取 sys.executable 才是版本一致的来源）。"""
+    if sys.executable:
+        base = os.path.basename(sys.executable).lower()
+        if base.endswith("pythonw.exe"):
+            return sys.executable
+        if base == "python.exe":
+            pyw = sys.executable[:-10] + "pythonw.exe"
+            if os.path.exists(pyw):
+                return pyw
+            return sys.executable  # 无 pythonw（便携 embed）→ 用 python.exe，DETACHED 保证无窗口
+        return sys.executable
+    return "pythonw"
 
 
 def main():
