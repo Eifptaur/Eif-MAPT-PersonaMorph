@@ -11,6 +11,7 @@ import sys
 import subprocess
 import threading
 import time
+import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOG_DIR = os.path.join(ROOT, "logs")
@@ -168,7 +169,49 @@ def main():
     except Exception as e:
         log("启动失败: %s" % e)
         return 1
-    log("机器人已启动 ✔（首次运行会自动打开 Web 控制台）")
+    log("机器人已启动 ✔（等待控制台就绪，随后自动打开浏览器；完成后本窗口自动关闭）")
+    # 轮询等控制台就绪再打开浏览器：webui 会因微信布局校准等延迟就绪，只试一次会漏掉
+    try:
+        import json as _j
+        cfg = _j.load(open(os.path.join(ROOT, "config.json"), encoding="utf-8"))
+        _tok = str(cfg.get("server", {}).get("token") or "")
+        _port = int(cfg.get("server", {}).get("port") or 3210)
+        _url = "http://127.0.0.1:%d" % _port + (("/?token=" + _tok) if _tok else "")
+        t0 = time.time()
+        opened = False
+        _nxt_hint = 15
+        while time.time() - t0 < 120:
+            try:
+                import socket as _sock
+                _s = _sock.socket()
+                _s.settimeout(1.5)
+                _up = _s.connect_ex(("127.0.0.1", _port)) == 0
+                _s.close()
+                if _up:
+                    try:
+                        import webbrowser
+                        webbrowser.open(_url)
+                        log("控制台就绪，已打开浏览器：%s（窗口即将关闭）" % _url)
+                    except Exception as e:
+                        log("控制台已就绪但打开浏览器失败（请手动访问 %s）：%s" % (_url, e))
+                    opened = True
+                    break
+            except Exception:
+                pass
+            spent = int(time.time() - t0)
+            if spent >= _nxt_hint:
+                log("等待控制台就绪（已 %d 秒，微信/控制台初始化中）…" % spent)
+                _nxt_hint += 15
+            time.sleep(2)
+        if not opened:
+            log("120 秒内控制台仍未就绪 —— 请查看 logs\\wx_agent.log / data\\bot_crash.log")
+            try:
+                import webbrowser
+                webbrowser.open(_url)
+            except Exception:
+                pass
+    except Exception:
+        pass
     log("一键启动完成。")
     return 0
 
