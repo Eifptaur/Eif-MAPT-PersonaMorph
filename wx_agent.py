@@ -2243,28 +2243,20 @@ def main():
             log.info("Web 控制台：%s", url)
             if server_cfg.get("auto_open_browser", True) is not False:
                 try:
-                    # 只开一次：已有同地址浏览器窗口则不再开（防连续启动重复弹）
+                    # 每次机器人进程启动打开一次控制台（此前的"浏览器已有页面就不再打开"检测
+                    # 会误伤用户手动访问过的标签页，造成"什么都没弹"）
                     import subprocess as _sp
-                    _already = False
-                    try:
-                        _out = _sp.run(["wmic", "process", "where",
-                                         "name like '%msedge%' or name like '%chrome%' or name like '%firefox%'",
-                                         "get", "commandline"],
-                                        capture_output=True, timeout=8,
-                                        creationflags=0x08000000)
-                        _cmdline = (_out.stdout or b"").decode("gbk", "ignore").lower()
-                        _already = ("127.0.0.1:%d" % port) in _cmdline
-                    except Exception:
-                        _already = False
-                    if _already:
-                        log.info("浏览器已有控制台窗口，不再重复打开")
-                    else:
-                        _sp.Popen(["cmd", "/c", "start", "", url],
-                                  creationflags=0x08000000,
-                                  stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
-                        log.info("已在默认浏览器打开控制台")
+                    _sp.Popen(["cmd", "/c", "start", "", url],
+                              creationflags=0x08000000,
+                              stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+                    log.info("已请求默认浏览器打开控制台：%s", url)
                 except Exception as e:
                     log.warning("打开浏览器失败（请手动访问 %s）：%s", url, e)
+                    try:
+                        import webbrowser as _wb
+                        _wb.open(url)
+                    except Exception:
+                        pass
     except Exception as e:
         log.warning("Web 控制台启动失败：%s", e)
 
