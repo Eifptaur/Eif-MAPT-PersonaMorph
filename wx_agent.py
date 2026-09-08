@@ -1289,6 +1289,13 @@ def main():
                              "user": u.get("score"), "model": u.get("model"),
                              "model_reason": u.get("model_reason", ""),
                              "note": u.get("note", "")})
+            # 自定义卡（编辑区/自定义人设）的模型分在评分表中同步显示（模型评分按钮写入 __custom__）
+            cu = ratings.get("__custom__") or {}
+            if cu.get("model") is not None:
+                rows.append({"key": "__custom__", "name": "自定义卡（编辑区）",
+                             "sys": 0, "silent": False,
+                             "user": cu.get("score"), "model": cu.get("model"),
+                             "model_reason": cu.get("model_reason", ""), "note": cu.get("note", "")})
             rows.sort(key=lambda x: -x["sys"])
             return {"ok": True, "rows": rows, "total": len(rows)}
         except Exception as e:
