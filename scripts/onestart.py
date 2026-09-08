@@ -32,7 +32,9 @@ def log(msg):
 
 
 def run_stream(cmd, timeout=900):
-    """运行子命令并实时转发输出到窗口（同时截留尾部进日志）。"""
+    """运行子命令并实时转发输出到窗口（同时截留尾部进日志）。
+    子命令以 -u 启动保证输出立即到达；无输出超 30 秒打印心跳行，
+    安装/下载期间窗口不会显得"卡住"。"""
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 creationflags=0x08000000)
@@ -45,7 +47,7 @@ def run_stream(cmd, timeout=900):
     def _reader():
         try:
             while True:
-                chunk = proc.stdout.read(1024)
+                chunk = proc.stdout.read(4096)
                 if not chunk:
                     break
                 txt = chunk.decode("utf-8", "replace")
@@ -61,12 +63,23 @@ def run_stream(cmd, timeout=900):
             done.set()
 
     threading.Thread(target=_reader, daemon=True).start()
-    try:
-        rc = proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        rc = proc.wait()
-        log("[超时] 命令超过 %d 秒未完成，已终止。" % timeout)
+    t0 = time.time()
+    last_out = t0
+    rc = None
+    while rc is None:
+        if proc.poll() is not None and done.is_set():
+            rc = proc.poll()
+            break
+        if time.time() - t0 > timeout:
+            proc.kill()
+            rc = proc.wait()
+            log("[超时] 命令超过 %d 秒未完成，已终止。" % timeout)
+            break
+        if time.time() - last_out > 30:
+            log("  ...仍在运行（已 %d 秒，通常为下载/安装中，请耐心等待）"
+                % int(time.time() - t0))
+            last_out = time.time()
+        time.sleep(1)
     done.wait(5)
     tail = "".join(parts)
     if tail.strip():
@@ -93,7 +106,7 @@ def main():
     py = sys.executable or "python"
 
     # 1. 依赖
-    ok, tail = run_stream([py, "-X", "utf8", os.path.join(ROOT, "scripts", "setup_deps.py")])
+    ok, tail = run_stream([py, "-X", "utf8", "-u", os.path.join(ROOT, "scripts", "setup_deps.py")])
     if not ok:
         log("[失败] 依赖未就绪，请查看上方日志后重试。")
         popup_fail("依赖安装未通过（见最近日志）", tail)
@@ -103,7 +116,7 @@ def main():
 
     # 2. 自检
     log("一键启动（2/3 自检 53 项）")
-    ok, tail = run_stream([py, "-X", "utf8", os.path.join(ROOT, "scripts", "selftest.py")])
+    ok, tail = run_stream([py, "-X", "utf8", "-u", os.path.join(ROOT, "scripts", "selftest.py")])
     if not ok:
         # 提取失败项行（FAIL 开头）供提示
         lines = [ln for ln in str(tail).splitlines() if "FAIL" in ln][:8]
