@@ -15,6 +15,8 @@ DATA = os.path.join(ROOT, "data")
 PID_FILE = os.path.join(DATA, "watchdog.pid")
 CRASH_LOG = os.path.join(DATA, "bot_crash.log")
 STOP_FLAG = os.path.join(DATA, "stopped.flag")
+# 看门狗逻辑版本：解释器选择等关键行为变更时自增，旧版看门狗会被新版自动接管
+WATCHDOG_VER = "2"
 os.makedirs(DATA, exist_ok=True)
 
 
@@ -36,33 +38,61 @@ def find_pythonw():
     return "pythonw"
 
 
+def _read_watchdog_pid():
+    """读 data/watchdog.pid，返回 (pid, 版本号)；旧版文件只有一行 pid。"""
+    try:
+        with open(PID_FILE, "r", encoding="utf-8") as f:
+            lines = f.read().strip().splitlines()
+        pid = int(lines[0].strip() or 0)
+        ver = lines[1].strip() if len(lines) > 1 else ""
+        return pid, ver
+    except Exception:
+        return 0, ""
+
+
 def main():
     try:
         with open(PID_FILE, "w", encoding="utf-8") as f:
-            f.write(str(os.getpid()))
+            f.write("%s\n%s" % (os.getpid(), WATCHDOG_VER))
     except Exception:
         pass
-    # 单实例看门狗：已有 watchdog 存活（多 watchdog 会互相拉起→窗口反复跳出）→ 本实例退出
+    # 单实例看门狗：已有旧版看门狗 → 结束并接管（旧版可能用错误解释器循环拉起机器人）；
+    # 已有同版本 → 本实例退出（多 watchdog 会互相拉起→窗口反复跳出）。
     try:
         import ctypes
-        if os.path.exists(PID_FILE):
-            with open(PID_FILE, "r", encoding="utf-8") as f:
-                old = int(f.read().strip() or 0)
-            if old and old != os.getpid():
-                if os.name == "nt":
-                    h = ctypes.windll.kernel32.OpenProcess(0x1000, False, old)
-                    if h:
-                        ctypes.windll.kernel32.CloseHandle(h)
-                        print("已有看门狗在运行（pid=%d），本实例退出" % old)
-                        return 0
-                else:
-                    try:
-                        os.kill(old, 0)
-                        return 0
-                    except Exception:
-                        pass
+        for _ in range(3):
+            old, ver = _read_watchdog_pid()
+            if not old or old == os.getpid():
+                break
+            alive = False
+            if os.name == "nt":
+                h = ctypes.windll.kernel32.OpenProcess(0x1000, False, old)
+                if h:
+                    ctypes.windll.kernel32.CloseHandle(h)
+                    alive = True
+            else:
+                try:
+                    os.kill(old, 0)
+                    alive = True
+                except Exception:
+                    pass
+            if not alive:
+                break
+            if ver == WATCHDOG_VER:
+                print("已有看门狗在运行（pid=%d），本实例退出" % old)
+                return 0
+            print("检测到旧版看门狗（pid=%d），结束并由新版接管" % old)
+            try:
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(old)],
+                               creationflags=0x08000000, timeout=10,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
+            time.sleep(1)
         with open(PID_FILE, "w", encoding="utf-8") as f:
-            f.write(str(os.getpid()))
+            f.write("%s\n%s" % (os.getpid(), WATCHDOG_VER))
+    except Exception:
+        pass
     except Exception:
         pass
     exe = find_pythonw()
