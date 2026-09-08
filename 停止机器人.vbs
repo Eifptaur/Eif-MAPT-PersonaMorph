@@ -26,7 +26,9 @@ If pyCmd = "" Then
     pid = Replace(pid, vbCrLf, "")
     pid = Replace(pid, vbCr, "")
     pid = Replace(pid, vbLf, "")
-    If pid <> "" Then sh.Run("taskkill /F /PID " & pid & " /T", 0, True)
+    If pid <> "" Then
+      sh.Run "taskkill /F /PID " & pid & " /T", 0, True
+    End If
   End If
   On Error GoTo 0
   fso.DeleteFile pidFile, True
