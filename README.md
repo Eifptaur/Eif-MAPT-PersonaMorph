@@ -43,7 +43,7 @@ Windows 微信群聊机器人：监听微信群消息，按设定人设回复；
 ## 目录结构（简述）
 
 - `wx_agent.py` 主程序；`agent\` 核心模块；`scripts\` 辅助脚本（启动/停止/看门狗/自检/依赖安装）
-- `一键启动.vbs` / `停止机器人.vbs`；`安装依赖.bat`；`offline\` 离线依赖包
+- `一键启动.vbs` / `停止机器人.vbs`；`offline\` 离线依赖包
 - `data\` `logs\` `media\` 运行时数据（含隐私与 API Key 相关，请勿外发）
 - `config.json` 你的配置（含 API Key，**不要上传/外发**）；`config.example.json` 配置模板
 

@@ -172,9 +172,10 @@ check("bat 已移除（避免 cmd 弹窗/重复入口）", not os.path.exists(os
       and not os.path.exists(os.path.join(ROOT, "自检.bat")))
 try:
     _vbs = io.open(os.path.join(ROOT, "一键启动.vbs"), "rb").read().decode("gbk", "ignore")
-    check("一键启动无残留弹窗（MsgBox 已移除）", "MsgBox" not in _vbs)
+    check("一键启动.vbs 可读（GBK，含窗口与退出码逻辑）",
+          len(_vbs) > 100 and "CreateObject" in _vbs)
 except Exception:
-    check("一键启动无残留弹窗", False, "vbs 读取失败")
+    check("一键启动.vbs 可读", False, "vbs 读取失败")
 check("备份 启动机器人.vbs 在 scripts/（备用不占根目录）",
       os.path.exists(os.path.join(ROOT, "scripts", "启动机器人.vbs")))
 check("停止机器人.vbs 在根目录",

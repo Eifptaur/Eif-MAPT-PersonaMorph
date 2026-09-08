@@ -2,7 +2,7 @@
 """wx-agent 自检脚本：验证 Python 环境、依赖、项目模块、纯逻辑与配置。
 
 不需要微信已登录即可运行（微信接入部分只做"能不能导入"级别的检查）。
-运行：python scripts/selftest.py   或双击 scripts/自检.bat
+运行：python scripts/selftest.py   （或双击 一键启动.vbs，会自动执行本自检）
 退出码：0 = 全部通过；1 = 有失败项
 """
 from __future__ import annotations
@@ -195,7 +195,7 @@ if fails:
     print("失败项：")
     for name, _, detail in fails:
         print("  - %s  %s" % (name, detail))
-    print("\n提示：依赖缺失请运行 安装依赖.bat；配置缺失请编辑 config.json。")
+    print("\n提示：依赖缺失请双击 一键启动.vbs（自动安装）；配置缺失请编辑 config.json。")
 else:
     print("全部通过 ✔")
 print("")
