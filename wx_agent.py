@@ -27,6 +27,12 @@ from concurrent.futures import ThreadPoolExecutor
 sys.stdout.reconfigure(encoding="utf-8", errors="replace") if hasattr(sys.stdout, "reconfigure") else None
 sys.stderr.reconfigure(encoding="utf-8", errors="replace") if hasattr(sys.stderr, "reconfigure") else None
 
+# 内置绿色版 Python（embed）由 python*. _pth 固定搜索路径（不含程序目录），
+# 必须把本文件目录手动加入 sys.path，否则 import agent 失败（watchdog 拉起即崩）。
+ROOT = os.path.dirname(os.path.abspath(__file__))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
 from agent.config import get_config, save_config
 from agent.llm import (add_usage, chat_completion, chat_completion_with_retry,
                        empty_usage, estimate_cost, is_retryable_error, query_balance)
@@ -42,6 +48,11 @@ from agent.whale import WhaleWidget
 from agent.webui import WebUI
 from agent.util import redact_secrets
 
+# 内部自检开关：WX_IMPORT_CHECK=1 时仅验证模块导入后退出（绿色版/无微信场景验证用）
+if os.environ.get("WX_IMPORT_CHECK") == "1":
+    print("WX_AGENT IMPORT OK")
+    sys.exit(0)
+
 
 class _SecretFormatter(logging.Formatter):
     """日志格式化时统一脱敏（sk-***），防止 Key 写进日志/控制台。"""
@@ -52,7 +63,6 @@ class _SecretFormatter(logging.Formatter):
         except Exception:
             return super().format(record)
 
-ROOT = os.path.dirname(os.path.abspath(__file__))
 LOG_DIR = os.path.join(ROOT, "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
 
