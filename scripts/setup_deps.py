@@ -61,6 +61,9 @@ def main():
         print(out)
         if r.returncode != 0:
             print("[失败] 安装失败，见上方日志。")
+            if "Building wheel" in out or "failed" in out.lower():
+                print("提示：若失败于 winsdk 等本地编译，多为系统 Python 版本过新（需 3.10~3.12）；")
+                print("      删除 logs\\python_path.txt 后重新双击「一键启动.vbs」，会自动改用内置绿色版 3.10。")
             return 1
     except Exception as e:
         print("[失败] 安装异常：%s" % e)

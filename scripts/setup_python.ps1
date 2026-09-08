@@ -19,21 +19,24 @@ function Set-PyPath($cmd) {
     try { Set-Content -Path $pathTxt -Value $cmd -Encoding ascii } catch {}
 }
 
-# --- 1) 系统 Python ---
+# --- 1) 系统 Python（仅接受 3.10~3.12：winsdk 等依赖的最新预编译版只到 cp312）---
 if (-not $env:WX_FORCE_PORTABLE) {
     foreach ($c in @('py -3', 'py', 'python')) {
-        $ok = $false
+        $ver = ''
         try {
-            & cmd /c "$c -c `"import sys; raise SystemExit(0 if sys.version_info>=(3,10) else 1)`" 2>nul" | Out-Null
-            if ($LASTEXITCODE -eq 0) { $ok = $true }
+            $raw = & cmd /c "$c -c `"import sys; print(str(sys.version_info[0])+'.'+str(sys.version_info[1]))`" 2>nul"
+            $ver = (($raw | Select-Object -First 1) -as [string]).Trim()
         } catch {}
-        if ($ok) {
-            Log "使用系统 Python：$c"
+        if ($ver -match '^3\.(10|11|12)$') {
+            Log "使用系统 Python：$c（$ver）"
             Set-PyPath $c
             exit 0
         }
+        if ($ver -match '^\d+\.\d+$') {
+            Log "系统 Python $ver 不在支持范围（需 3.10~3.12）：改用内置绿色版 3.10"
+        }
     }
-    Log "未找到系统 Python（>=3.10），改用绿色版（无需安装）…"
+    Log "未找到可用系统 Python（需 3.10~3.12），改用绿色版（无需安装）…"
 } else {
     Log "WX_FORCE_PORTABLE=1：跳过系统 Python 检测（测试模式）"
 }
