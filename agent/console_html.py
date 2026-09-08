@@ -386,6 +386,11 @@ th{color:var(--tx2);font-weight:500}
   src="/wallpaper/海的眼睛.mp4"
   style="position:fixed;inset:0;width:100%;height:100%;object-fit:cover;z-index:-2;pointer-events:none;display:none"></video>
 <div id="wallTint" style="position:fixed;inset:0;z-index:-1;pointer-events:none;display:none;background:linear-gradient(160deg,rgba(150,200,235,.30),rgba(210,232,248,.22) 60%,rgba(225,215,245,.28))"></div>
+<!-- 隐藏彩蛋（左下角，正常大小但低调；连点三下再点一下出"档案"，属于留待用户自己发现的彩蛋，不进任何说明） -->
+<button id="easterEgg" class="ghost" type="button"
+  style="position:fixed;left:12px;bottom:12px;z-index:9997;padding:5px 12px;font-size:12px;color:#ff5252;opacity:.5"
+  title="……？">不要点！</button>
+
 <!-- 水光透镜：跟随鼠标的扭曲圆环（backdrop-filter 只影响圈内；初始藏于屏外） -->
 <div id="waveLens"></div>
 
@@ -3320,6 +3325,51 @@ if($('uiRecalibrate')) $('uiRecalibrate').onclick = async ()=>{
 })();
 
 /* ── 🐋 鲸语版界面文案：DeepSeek 梗（V我50/服务器繁忙/CPU在烧/先白嫖）；功能说明照旧 ── */
+/* 彩蛋按钮状态机（不放任何文档；用户点四下自己发现） */
+const _EASTER_TXT = [
+  "🤫 小鲸鱼的秘密档案（阅后即焚）\n\n" +
+  "· 顶栏那只鲸鱼：可以按住拖出来放飞，它会自己游回来。\n" +
+  "· 光标设置：点一下预览图（或按住指针），它会点头。\n" +
+  "· 界面适配 → 界面文案风格换成「🐋 鲸语」：整页小鲸鱼开始碎碎念。\n" +
+  "· 水光波纹：往水面上丢颗石子，看它一圈圈荡开。\n" +
+  "· 顶栏的构建号（b.xxxx-xxxx）每次更新都会变——没变说明连的是旧版本。\n\n" +
+  "——这不是功能说明，这只是一只小鲸鱼自己写的小抄。🐋"
+];
+(function(){
+  const b = document.getElementById('easterEgg');
+  if(!b) return;
+  let step = 0;
+  function render(){
+    b.style.transition = 'transform .25s ease, color .25s ease';
+    if(step === 0){ b.textContent='不要点！'; b.style.color='#ff5252'; b.style.transform='none'; b.style.opacity='.5'; }
+    else if(step === 1){ b.textContent='绝对不要点'; b.style.color='#ff5252';
+      b.style.transform='scale(.92) skew(-8deg)'; b.style.opacity='.6'; }
+    else if(step === 2){ b.textContent='一键揭秘'; b.style.color='#111'; b.style.transform='scale(1)'; b.style.opacity='.7'; }
+    else { b.textContent='一键揭秘'; }
+  }
+  b.onclick = (e)=>{
+    e.stopPropagation();
+    step += 1;
+    if(step >= 3){
+      if(step === 3){ render(); return; }   // 第 3 次：文案变"一键揭秘"
+      // 第 4 次：弹出档案
+      const box=document.createElement('div');
+      box.className='box bill-dlg';
+      box.style.cssText='width:min(560px,92vw);max-height:80vh;display:flex;flex-direction:column;text-align:left';
+      box.innerHTML='<div class="bd-head"><b class="whale-tag">🐋 小鲸鱼的秘密档案</b>'
+        +'<span class="sp" style="flex:1"></span><button class="ghost tiny" id="easterClose">✕ 关上</button></div>'
+        +'<pre class="hint" style="white-space:pre-wrap;line-height:1.9;margin:4px 0 0;font-size:13.5px;color:var(--tx)">'+esc(_EASTER_TXT[0])+'</pre>';
+      const mm=document.createElement('div'); mm.className='mask'; mm.style.background='rgba(5,9,17,.88)';
+      mm.appendChild(box); document.body.appendChild(mm); maskOpen(mm);
+      box.style.animation='calPop .3s cubic-bezier(.2,1.4,.4,1)';
+      box.querySelector('#easterClose').onclick=()=>{ maskClose(mm); mm.remove(); };
+      step = 0; render();
+      return;
+    }
+    render();
+  };
+})();
+
 const WHALE_TXT = {
   "wx-agent 控制台": "🐋 鲸鲸号 · 深度摸鱼",
   "概览": "🐋 概览 · 我是AI，别催，CPU还在烧",
