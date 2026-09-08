@@ -115,7 +115,7 @@ def main():
     log("依赖检查通过 ✔")
 
     # 2. 自检
-    log("一键启动（2/3 自检 53 项）")
+    log("一键启动（2/3 自检 55 项）")
     ok, tail = run_stream([py, "-X", "utf8", "-u", os.path.join(ROOT, "scripts", "selftest.py")])
     if not ok:
         # 提取失败项行（FAIL 开头）供提示

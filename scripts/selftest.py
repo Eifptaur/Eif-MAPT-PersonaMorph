@@ -18,6 +18,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 results = []   # (name, ok, detail)
+warns = []     # 提示项（配置待办，不阻断启动）
+
+# 自检说明：依赖/环境/模块是"能不能用"的硬项；API Key 等配置项缺失只提示不阻断
+# （一键启动会继续拉起机器人并打开控制台，首次向导填写密钥）。
 
 
 def section(title: str):
@@ -28,6 +32,13 @@ def check(name: str, ok: bool, detail: str = ""):
     results.append((name, bool(ok), detail))
     mark = "OK  " if ok else "FAIL"
     print("%s  %s%s" % (mark, name, ("  -> " + detail) if detail else ""))
+
+
+def warn(name: str, detail: str = ""):
+    """配置提示项：计入总数但不作为失败（不阻断一键启动）。"""
+    results.append((name, True, detail))
+    warns.append(name)
+    print("WARN  %s%s" % (name, ("  -> " + detail) if detail else ""))
 
 
 # ── 1. Python 版本 ────────────────────────────────────────────────────────
@@ -172,7 +183,7 @@ try:
     if key.startswith("sk-") and "在这里填" not in key:
         check("api.api_key 已配置", True, key[:6] + "…")
     else:
-        check("api.api_key 已配置", False, "请填真实的 DeepSeek 密钥（当前为占位符）")
+        warn("api.api_key 待配置", "打开控制台「模型 API」页填写真实密钥（当前为占位符）")
     if api.get("model"):
         check("api.model 已配置", True, api["model"])
     else:
@@ -191,6 +202,9 @@ except Exception as e:
 section("汇总")
 fails = [r for r in results if not r[1]]
 print("\n共 %d 项，通过 %d 项，失败 %d 项" % (len(results), len(results) - len(fails), len(fails)))
+if warns:
+    print("提示：%d 项配置待办（不影响启动，打开控制台处理即可）：%s"
+          % (len(warns), "、".join(warns)))
 if fails:
     print("失败项：")
     for name, _, detail in fails:
