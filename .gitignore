@@ -14,7 +14,7 @@ __pycache__/
 *.pyc
 *.pyo
 
-# ── 离线部署包：wheels + 绿色版 Python 随仓库发布；微信安装包不在内（腾讯版权，请自行安装微信 4.x）──
+# ── 离线部署包：wheels + 绿色版 Python 随仓库发布；微信安装包不入库（腾讯版权，请自行安装微信 4.x）──
 offline/*
 !offline/wheels/
 !offline/python/
@@ -33,11 +33,12 @@ desktop.ini
 *.zip
 !offline/python/*.zip
 
-# ── 运行时产物（不入库）：自定义光标（上传生成）、临时脚本 ──
+# ── 运行时产物（不入库）：自定义光标（上传生成）──
 assets/custom-cursor.png
+assets/custom-cursor-nod.png
 wechatauto_logs/
 
-# ── 大媒体壁纸（发布包内含，源码 git 不放大视频）──
+# ── 大媒体素材（发布包内包含，源码 git 不放视频）──
 assets/wallpaper/*.mp4
 
 # ── 本地私有文档（交接/笔记，不随仓库分发）──
@@ -47,6 +48,5 @@ assets/wallpaper/*.mp4
 # ── 开发期诊断/临时脚本与截图（含 API 口令，绝不提交）──
 _scratch/
 
-# 逐动绿色 Python 运�检(一锏�吊�臊�解飶成�缾，不入�?) 
+# ── 自动落盘的便携 Python 运行环境（一键启动自动生成）──
 runtime/
-assets/custom-cursor-nod.png
