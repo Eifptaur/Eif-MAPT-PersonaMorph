@@ -1,13 +1,15 @@
 # -*- coding: utf-8 -*-
-"""一键启动：依赖检查 →（缺则自动安装）→ 自检 → 启动机器人（无窗口）。
+"""一键启动：依赖检查 →（缺则自动安装）→ 自检 → 启动机器人（可见进度窗口）。
 
-由 一键启动.vbs 以 pythonw 隐藏调用；完整进度写入 logs/onestart.log，
-用户可在 Web 控制台「运行日志」或日志文件查看。
+由 一键启动.vbs 以可见 console 调用：安装/自检输出实时显示在窗口
+（下载百分比、依赖安装进度），全部成功后进程退出、窗口自动关闭；
+失败则弹窗说明原因。完整进度同步写入 logs/onestart.log。
 """
 from __future__ import annotations
 import os
 import sys
 import subprocess
+import threading
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -29,21 +31,47 @@ def log(msg):
         pass
 
 
-def run_visible(cmd, timeout=900):
-    """运行一个可能显示输出的命令（安装/自检），捕获输出进日志。"""
+def run_stream(cmd, timeout=900):
+    """运行子命令并实时转发输出到窗口（同时截留尾部进日志）。"""
     try:
-        r = subprocess.run(cmd, capture_output=True, timeout=timeout,
-                           creationflags=0x08000000)
-        out = (r.stdout or b"").decode("utf-8", "replace")
-        err = (r.stderr or b"").decode("utf-8", "replace")
-        if out:
-            log("  " + out.strip().replace("\n", "\n  ")[-3000:])
-        if err:
-            log("  [err] " + err.strip().replace("\n", "\n  ")[-1000:])
-        return r.returncode == 0, (out + "\n" + err)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                creationflags=0x08000000)
     except Exception as e:
-        log("命令失败: %s" % e)
+        log("命令启动失败: %s" % e)
         return False, str(e)
+    parts = []
+    done = threading.Event()
+
+    def _reader():
+        try:
+            while True:
+                chunk = proc.stdout.read(1024)
+                if not chunk:
+                    break
+                txt = chunk.decode("utf-8", "replace")
+                parts.append(txt)
+                try:
+                    sys.stdout.write(txt)
+                    sys.stdout.flush()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        finally:
+            done.set()
+
+    threading.Thread(target=_reader, daemon=True).start()
+    try:
+        rc = proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        rc = proc.wait()
+        log("[超时] 命令超过 %d 秒未完成，已终止。" % timeout)
+    done.wait(5)
+    tail = "".join(parts)
+    if tail.strip():
+        log("  " + tail.strip().replace("\n", "\n  ")[-3000:])
+    return rc == 0, tail
 
 
 def popup_fail(reason, tail=""):
@@ -59,12 +87,13 @@ def popup_fail(reason, tail=""):
 
 
 def main():
+    check_only = (os.environ.get("WX_ONESTART_CHECK") == "1") or ("--check-only" in sys.argv[1:])
     log("=" * 46)
     log("一键启动开始（1/3 依赖检查）")
     py = sys.executable or "python"
 
     # 1. 依赖
-    ok, tail = run_visible([py, "-X", "utf8", os.path.join(ROOT, "scripts", "setup_deps.py")])
+    ok, tail = run_stream([py, "-X", "utf8", os.path.join(ROOT, "scripts", "setup_deps.py")])
     if not ok:
         log("[失败] 依赖未就绪，请查看上方日志后重试。")
         popup_fail("依赖安装未通过（见最近日志）", tail)
@@ -74,7 +103,7 @@ def main():
 
     # 2. 自检
     log("一键启动（2/3 自检 53 项）")
-    ok, tail = run_visible([py, "-X", "utf8", os.path.join(ROOT, "scripts", "selftest.py")])
+    ok, tail = run_stream([py, "-X", "utf8", os.path.join(ROOT, "scripts", "selftest.py")])
     if not ok:
         # 提取失败项行（FAIL 开头）供提示
         lines = [ln for ln in str(tail).splitlines() if "FAIL" in ln][:8]
@@ -86,6 +115,10 @@ def main():
     log("自检全部通过 ✔")
 
     # 3. 启动机器人（复用 watchdog）；已有实例在跑 → 直接打开控制台（不再重复拉起）
+    if check_only:
+        log("验证模式：仅执行依赖与自检，不拉起机器人（WX_ONESTART_CHECK=1）。")
+        log("一键启动（验证）通过。")
+        return 0
     log("一键启动（3/3 启动机器人）")
     watchdog = os.path.join(ROOT, "scripts", "watchdog.py")
     existing = None

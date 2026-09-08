@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-r"""一键依赖安装（带已装检测与跳过）：运行根目录 安装依赖.bat 或 py -3 -X utf8 scripts\setup_deps.py。
+r"""一键依赖安装（带已装检测与跳过）：运行 py -3 -X utf8 scripts\setup_deps.py
+（一键启动会自动调用本脚本）。
 
 行为：
   · 依赖全部就绪且版本正确 → 打印"已满足，跳过安装"，直接建议下一步（运行自检）；
@@ -29,7 +30,7 @@ def main():
     if ok:
         print("-" * 52)
         print("全部依赖已就绪且版本正确，跳过安装 ✔")
-        print("下一步：运行 自检.bat 验证，然后双击 启动机器人.vbs。")
+        print("下一步：双击 一键启动.vbs 即可（已装依赖会自动跳过）。")
         return 0
 
     py_exe = sys.executable or "py"
@@ -50,7 +51,7 @@ def main():
                        "https://pypi.org/simple"]
             r = None
             for idx in indexes:
-                cmd = [py_exe, "-m", "pip", "install", "-U", "-q",
+                cmd = [py_exe, "-m", "pip", "install", "-U", "--progress-bar", "on",
                        "-i", idx, "--timeout", "60", "-r", req]
                 r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
                 if r.returncode == 0:
@@ -68,7 +69,7 @@ def main():
     rows2, ok2 = dep_check()
     print("-" * 52)
     print("复查：" + ("全部满足 ✔" if ok2 else "仍有缺失: " + ", ".join(r[0] for r in rows2 if not r[3])))
-    print("下一步：运行 自检.bat 验证，然后双击 启动机器人.vbs。")
+    print("下一步：双击 一键启动.vbs 即可（已装依赖会自动跳过）。")
     return 0 if ok2 else 1
 
 

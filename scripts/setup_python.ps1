@@ -48,6 +48,17 @@ $urls = @(
     'https://www.python.org/ftp/python/3.10.11/python-3.10.11-embed-amd64.zip'
 )
 
+function Download-Win($url, $dst) {
+    # 优先 curl.exe（自带进度条，可见百分比）；旧系统无 curl 则退回 Invoke-WebRequest
+    $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+    if ($curl) {
+        & $curl.Source -L --fail --progress-bar --ssl-no-revoke --connect-timeout 15 --retry 2 -o $dst $url
+        return ($LASTEXITCODE -eq 0 -and (Test-Path $dst))
+    }
+    Invoke-WebRequest -Uri $url -OutFile $dst -UseBasicParsing -TimeoutSec 120
+    return $true
+}
+
 function Ensure-Runtime {
     if (Test-Path $pyExe) { return $true }
     New-Item -ItemType Directory -Force -Path $runtime | Out-Null
@@ -61,10 +72,12 @@ function Ensure-Runtime {
         $down = $false
         foreach ($u in $urls) {
             try {
-                Invoke-WebRequest -Uri $u -OutFile $zipUse -UseBasicParsing -TimeoutSec 120
-                Log "下载成功：$u"
-                $down = $true
-                break
+                if (Download-Win $u $zipUse) {
+                    Log "下载成功：$u"
+                    $down = $true
+                    break
+                }
+                Log "下载失败：$u"
             } catch {
                 Log "下载失败：$u（$($_.Exception.Message)）"
             }
@@ -104,12 +117,16 @@ if (-not $pipOk) {
         Log "从离线 wheels 解包 pip：$($pipWheel.Name)"
         try {
             New-Item -ItemType Directory -Force -Path $sitePkgs | Out-Null
-            Expand-Archive -Path $pipWheel.FullName -DestinationPath $sitePkgs -Force
+            # PS5.1 的 Expand-Archive 只认 .zip 扩展名，.whl 必须用 .NET ZipFile 解
+            Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+            [System.IO.Compression.ZipFile]::ExtractToDirectory($pipWheel.FullName, $sitePkgs)
             $setWheel = Get-ChildItem (Join-Path $root 'offline\wheels') -Filter 'setuptools-*-py3-none-any.whl' -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($setWheel) { Expand-Archive -Path $setWheel.FullName -DestinationPath $sitePkgs -Force }
+            if ($setWheel) { [System.IO.Compression.ZipFile]::ExtractToDirectory($setWheel.FullName, $sitePkgs) }
             $pv = & $pyExe -m pip --version 2>&1
             if ($LASTEXITCODE -eq 0 -and ("$pv" -match 'pip \d')) { $pipOk = $true }
-        } catch {}
+        } catch {
+            Log "pip wheel 解包失败：$($_.Exception.Message)"
+        }
     }
     if (-not $pipOk) {
         Log "尝试联网 get-pip.py…"
