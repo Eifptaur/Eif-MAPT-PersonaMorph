@@ -40,10 +40,22 @@ def run_visible(cmd, timeout=900):
             log("  " + out.strip().replace("\n", "\n  ")[-3000:])
         if err:
             log("  [err] " + err.strip().replace("\n", "\n  ")[-1000:])
-        return r.returncode == 0
+        return r.returncode == 0, (out + "\n" + err)
     except Exception as e:
         log("命令失败: %s" % e)
-        return False
+        return False, str(e)
+
+
+def popup_fail(reason, tail=""):
+    """失败时弹窗给出具体原因（获取不到终端时用户也能看懂）。"""
+    try:
+        import ctypes
+        msg = ("wx-agent 一键启动失败：%s\n\n" % reason)
+        if tail:
+            msg += "—— 最近日志（看前几行即可定位）：\n" + tail[-1500:]
+        ctypes.windll.user32.MessageBoxW(0, msg, "wx-agent 启动失败", 0x10)
+    except Exception:
+        pass
 
 
 def main():
@@ -52,18 +64,23 @@ def main():
     py = sys.executable or "python"
 
     # 1. 依赖
-    ok = run_visible([py, "-X", "utf8", os.path.join(ROOT, "scripts", "setup_deps.py")])
+    ok, tail = run_visible([py, "-X", "utf8", os.path.join(ROOT, "scripts", "setup_deps.py")])
     if not ok:
         log("[失败] 依赖未就绪，请查看上方日志后重试。")
+        popup_fail("依赖安装未通过（见最近日志）", tail)
         log("一键启动结束（失败：依赖）")
         return 1
     log("依赖检查通过 ✔")
 
     # 2. 自检
     log("一键启动（2/3 自检 53 项）")
-    ok = run_visible([py, "-X", "utf8", os.path.join(ROOT, "scripts", "selftest.py")])
+    ok, tail = run_visible([py, "-X", "utf8", os.path.join(ROOT, "scripts", "selftest.py")])
     if not ok:
+        # 提取失败项行（FAIL 开头）供提示
+        lines = [ln for ln in str(tail).splitlines() if "FAIL" in ln][:8]
+        hint = ("\n".join(lines) if lines else "：多数是 依赖未装全 / 微信未安装 / 网络问题，见日志")
         log("[失败] 自检未全部通过（通常是未填 API Key；到控制台首次向导填写）。")
+        popup_fail("自检未通过（失败项：%s）" % hint, tail)
         log("一键启动结束（失败：自检）")
         return 1
     log("自检全部通过 ✔")
