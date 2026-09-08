@@ -51,12 +51,17 @@ $urls = @(
 function Ensure-Runtime {
     if (Test-Path $pyExe) { return $true }
     New-Item -ItemType Directory -Force -Path $runtime | Out-Null
-    if (-not (Test-Path $zip)) {
+    # 源码包可能没有 offline\python 目录：联网下载时把 zip 放到 runtime 下
+    $zipUse = $zip
+    if (-not (Test-Path $zipUse)) {
+        $zipUse = Join-Path $runtime 'python-3.10.11-embed-amd64.zip'
+    }
+    if (-not (Test-Path $zipUse)) {
         Log "需要下载绿色版 Python（约 8MB）…"
         $down = $false
         foreach ($u in $urls) {
             try {
-                Invoke-WebRequest -Uri $u -OutFile $zip -UseBasicParsing -TimeoutSec 120
+                Invoke-WebRequest -Uri $u -OutFile $zipUse -UseBasicParsing -TimeoutSec 120
                 Log "下载成功：$u"
                 $down = $true
                 break
@@ -67,7 +72,8 @@ function Ensure-Runtime {
         if (-not $down) { return $false }
     }
     Log "解压绿色版 Python 到 runtime\python …"
-    Expand-Archive -Path $zip -DestinationPath $runtime -Force
+    Expand-Archive -Path $zipUse -DestinationPath $runtime -Force
+    if ($zipUse -ne $zip) { Remove-Item $zipUse -Force -ErrorAction SilentlyContinue }
     if (-not (Test-Path $pyExe)) { return $false }
     $pth = Get-ChildItem $runtime -Filter 'python*._pth' | Select-Object -First 1
     if ($pth) {
