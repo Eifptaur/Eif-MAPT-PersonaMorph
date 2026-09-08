@@ -11,6 +11,9 @@ sh.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -File """ & root & "\s
 pyCmd = ""
 If fso.FileExists(pyPath) Then
   pyCmd = Trim(fso.OpenTextFile(pyPath, 1, 0).ReadAll())
+  pyCmd = Replace(pyCmd, vbCrLf, "")
+  pyCmd = Replace(pyCmd, vbCr, "")
+  pyCmd = Replace(pyCmd, vbLf, "")
 End If
 script = root & "\scripts\stop_bot.py"
 If pyCmd = "" Then
@@ -20,6 +23,9 @@ If pyCmd = "" Then
   pidFile = root & "\data\bot.pid"
   If fso.FileExists(pidFile) Then
     pid = Trim(fso.OpenTextFile(pidFile, 1, 0).ReadAll())
+    pid = Replace(pid, vbCrLf, "")
+    pid = Replace(pid, vbCr, "")
+    pid = Replace(pid, vbLf, "")
     If pid <> "" Then sh.Run("taskkill /F /PID " & pid & " /T", 0, True)
   End If
   On Error GoTo 0

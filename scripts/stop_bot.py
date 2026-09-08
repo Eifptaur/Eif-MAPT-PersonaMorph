@@ -54,6 +54,7 @@ def kill_by_cmdline(marker):
 
 def main():
     killed = 0
+    failed = 0
     # 标记「手动停止」：watchdog 见标记不再自动拉起
     try:
         with open(os.path.join(DATA, "stopped.flag"), "w", encoding="utf-8") as f:
@@ -68,6 +69,8 @@ def main():
                 os.remove(os.path.join(DATA, name))
             except Exception:
                 pass
+        elif pid and pid != os.getpid():
+            failed += 1
     # 回退：老进程没有 pid 文件时按命令行特征找
     try:
         for pid in kill_by_cmdline("wx_agent.py"):
@@ -76,9 +79,12 @@ def main():
     except Exception:
         pass
     print("已结束 %d 个进程" % killed)
+    if failed:
+        print("有 %d 个进程未能结束（权限或已退出），请重试" % failed)
+        sys.exit(1)
     if killed == 0:
-        print("未发现正在运行的机器人进程")
-    sys.exit(0 if killed else 1)
+        print("未发现正在运行的机器人进程（已处于停止状态）")
+    sys.exit(0)
 
 
 if __name__ == "__main__":
