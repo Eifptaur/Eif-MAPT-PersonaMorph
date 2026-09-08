@@ -4,6 +4,7 @@
 #  3) 为绿色版引导 pip（优先离线 wheels 里的 pip 轮子，其次 get-pip.py）
 # 结果写入 logs\python_path.txt（ASCII）。退出码 0=成功。
 $ErrorActionPreference = 'Continue'
+try { $Host.UI.RawUI.WindowTitle = 'wx-agent 准备环境' } catch {}
 
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $logDir = Join-Path $root 'logs'

@@ -14,6 +14,8 @@ import time
 import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
 LOG_DIR = os.path.join(ROOT, "logs")
 LOG_PATH = os.path.join(LOG_DIR, "onestart.log")
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -100,6 +102,27 @@ def popup_fail(reason, tail=""):
         pass
 
 
+def _open_console(url, browser_path=""):
+    """打开控制台浏览器：配置/探测的浏览器 exe 优先，否则系统默认（start）。"""
+    try:
+        from agent.util import pick_browser
+        bp = pick_browser(browser_path)
+        if bp:
+            subprocess.Popen([bp, url], creationflags=0x08000000)
+            log("已打开浏览器：%s" % bp)
+            return True
+    except Exception:
+        pass
+    try:
+        import webbrowser
+        webbrowser.open(url)
+        log("已打开浏览器（系统默认）")
+        return True
+    except Exception as e:
+        log("打开浏览器失败：%s（请手动访问 %s）" % (e, url))
+        return False
+
+
 def main():
     check_only = (os.environ.get("WX_ONESTART_CHECK") == "1") or ("--check-only" in sys.argv[1:])
     log("=" * 46)
@@ -176,6 +199,7 @@ def main():
         cfg = _j.load(open(os.path.join(ROOT, "config.json"), encoding="utf-8"))
         _tok = str(cfg.get("server", {}).get("token") or "")
         _port = int(cfg.get("server", {}).get("port") or 3210)
+        _bpath = str((cfg.get("server", {}) or {}).get("browser_path") or "")
         _url = "http://127.0.0.1:%d" % _port + (("/?token=" + _tok) if _tok else "")
         t0 = time.time()
         opened = False
@@ -189,9 +213,7 @@ def main():
                 _s.close()
                 if _up:
                     try:
-                        import webbrowser
-                        webbrowser.open(_url)
-                        log("控制台就绪，已打开浏览器：%s（窗口即将关闭）" % _url)
+                        _open_console(_url, _bpath)
                     except Exception as e:
                         log("控制台已就绪但打开浏览器失败（请手动访问 %s）：%s" % (_url, e))
                     opened = True
@@ -206,8 +228,7 @@ def main():
         if not opened:
             log("120 秒内控制台仍未就绪 —— 请查看 logs\\wx_agent.log / data\\bot_crash.log")
             try:
-                import webbrowser
-                webbrowser.open(_url)
+                _open_console(_url, _bpath)
             except Exception:
                 pass
     except Exception:

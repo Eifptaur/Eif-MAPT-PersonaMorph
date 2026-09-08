@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import random
 import re
 import time
@@ -20,6 +21,31 @@ def rand_int(min_v: float, max_v: float) -> int:
     if hi <= lo:
         return lo
     return random.randint(lo, hi)
+
+
+# ── 打开控制台浏览器：配置优先 → 自动探测 Edge/Chrome → 系统默认 ──────────
+
+def pick_browser(exe_path: str = "") -> str:
+    """返回要用于打开控制台的浏览器路径；空串 = 用系统默认浏览器。
+
+    优先级：显式路径（server.browser_path）→ 常见 Edge/Chrome 安装位置 → ""。
+    解决 Server 系统没有设置默认浏览器（start 不起作用/弹选择框/IE 白屏）的问题。
+    """
+    if exe_path and os.path.exists(exe_path):
+        return exe_path
+    for p in (
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files\Tencent\QQBrowser\QQBrowser.exe",
+        r"C:\Program Files (x86)\Tencent\QQBrowser\QQBrowser.exe",
+        r"C:\Program Files (x86)\360\360se6\Application\360se.exe",
+        r"C:\Program Files\360\360se6\Application\360se.exe",
+    ):
+        if os.path.exists(p):
+            return p
+    return ""
 
 
 # ── 密钥脱敏（控制台/日志不暴露完整 API Key）─────────────────────────────

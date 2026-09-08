@@ -3,6 +3,7 @@ Option Explicit
 '  1) setup_python.ps1：确保有 Python（系统已有则直接用；没有则自动解压/下载绿色版，下载显示百分比）→ 写入 logs\python_path.txt
 '  2) onestart.py：依赖检查 → 自动安装缺失依赖（实时进度）→ 55 项自检 → 拉起机器人（并打开 Web 控制台）
 ' 成功后窗口自动关闭；失败弹窗说明原因（完整进度也记录在 logs\onestart.log）。
+' 窗口标题：准备环境（powershell，仅首次配置 Python 时停留）/ 一键启动（python）。
 Dim fso, sh, root, code, pyCmd, pyPath, runCmd, onestart, code2
 Set fso = CreateObject("Scripting.FileSystemObject")
 Set sh  = CreateObject("WScript.Shell")
@@ -35,10 +36,10 @@ Else
   runCmd = """" & pyCmd & """"
 End If
 
-' 2) 一键启动主体（依赖 → 自检 → 启动；窗口样式 1=可见实时进度，成功后自动关闭）
+' 2) 一键启动主体（依赖 → 自检 → 启动；窗口样式 1=可见实时进度，标题=一键启动，成功后自动关闭）
 onestart = root & "\scripts\onestart.py"
 On Error Resume Next
-code2 = sh.Run(runCmd & " -X utf8 """ & onestart & """", 1, True)
+code2 = sh.Run("cmd /c title wx-agent 一键启动& " & runCmd & " -X utf8 """ & onestart & """", 1, True)
 If Err.Number <> 0 Then
   Err.Clear
   code2 = sh.Run("cmd /c " & runCmd & " -X utf8 """ & onestart & """", 1, True)

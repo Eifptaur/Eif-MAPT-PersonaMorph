@@ -46,7 +46,7 @@ from agent.tools import build_tool_defs, execute_tool, to_openai_tools
 from agent.wechat import WeChatAdapter, WeChatError, wechat_version_info
 from agent.whale import WhaleWidget
 from agent.webui import WebUI
-from agent.util import redact_secrets
+from agent.util import pick_browser, redact_secrets
 
 # 内部自检开关：WX_IMPORT_CHECK=1 时仅验证模块导入后退出（绿色版/无微信场景验证用）
 if os.environ.get("WX_IMPORT_CHECK") == "1":
@@ -2253,13 +2253,19 @@ def main():
             log.info("Web 控制台：%s", url)
             if server_cfg.get("auto_open_browser", True) is not False:
                 try:
-                    # 每次机器人进程启动打开一次控制台（此前的"浏览器已有页面就不再打开"检测
-                    # 会误伤用户手动访问过的标签页，造成"什么都没弹"）
+                    # 每次机器人进程启动打开一次控制台：配置/探测的浏览器优先
+                    # （Server/无默认浏览器环境 start 可能弹选择框或拉起 IE）
                     import subprocess as _sp
-                    _sp.Popen(["cmd", "/c", "start", "", url],
-                              creationflags=0x08000000,
-                              stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
-                    log.info("已请求默认浏览器打开控制台：%s", url)
+                    bp = pick_browser(str(server_cfg.get("browser_path") or ""))
+                    if bp:
+                        _sp.Popen([bp, url], creationflags=0x08000000,
+                                  stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+                        log.info("已打开控制台浏览器：%s", bp)
+                    else:
+                        _sp.Popen(["cmd", "/c", "start", "", url],
+                                  creationflags=0x08000000,
+                                  stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+                        log.info("已请求默认浏览器打开控制台：%s", url)
                 except Exception as e:
                     log.warning("打开浏览器失败（请手动访问 %s）：%s", url, e)
                     try:

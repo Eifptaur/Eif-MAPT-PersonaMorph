@@ -199,7 +199,8 @@ DEFAULT_CONFIG = {
         "host": "127.0.0.1",          # 只监听本机
         "port": 3210,                 # 端口被占用会自动顺延
         "token": "",                  # 访问口令；留空 = 启动时自动生成一串随机口令（保存回 config.json）
-        "auto_open_browser": True,    # 启动后是否自动用默认浏览器打开控制台
+        "auto_open_browser": True,    # 启动后是否自动打开控制台
+        "browser_path": "",           # 指定浏览器 exe（如 QQ/Edge/Chrome 路径）；留空=自动探测或系统默认
     },
     # ── 群友备注（管理员设置，模型优先用备注称呼）──────────────────────
     "member_notes": {},
