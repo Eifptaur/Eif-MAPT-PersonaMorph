@@ -41,10 +41,21 @@ def main():
         if offline:
             cmd = [py_exe, "-m", "pip", "install", "--no-index", "--find-links", wheels,
                    "-r", os.path.join(ROOT, "requirements.txt")]
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
         else:
-            cmd = [py_exe, "-m", "pip", "install", "-U",
-                   "-r", os.path.join(ROOT, "requirements.txt")]
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+            # 联网：主源用国内镜像（快/稳），失败再回退官方 PyPI
+            req = os.path.join(ROOT, "requirements.txt")
+            indexes = ["https://pypi.tuna.tsinghua.edu.cn/simple",
+                       "https://mirrors.aliyun.com/pypi/simple/",
+                       "https://pypi.org/simple"]
+            r = None
+            for idx in indexes:
+                cmd = [py_exe, "-m", "pip", "install", "-U", "-q",
+                       "-i", idx, "--timeout", "60", "-r", req]
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+                if r.returncode == 0:
+                    break
+                print("  镜像 %s 失败，切换下一个源..." % idx)
         out = (r.stdout or "")[-1200:] or (r.stderr or "")[-600:]
         print(out)
         if r.returncode != 0:
