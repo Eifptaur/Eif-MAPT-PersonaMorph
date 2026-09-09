@@ -484,38 +484,47 @@ def _exec_list_emojis(ctx, args):
 
 
 def _exec_send_emoji(ctx, args):
-    """用鼠标发送收藏的表情（程序点输入栏笑脸→爱心→点表情；微信认可的唯一稳妥路径）。
-    优先按 name_or_id 匹配概述/路径取面板格序号；否则模型从概述里选；否则发最近收藏(0)。"""
+    """发送收藏的表情：优先本地收藏夹直接发送（不受微信面板布局/用户预收藏顺序影响——
+    面板格序号以微信收藏顺序计，用户先前收藏的表情会造成本地序号错位，故不再按格子序号点面板）。
+    本地收藏夹没有匹配时，才用真实微信表情面板作兜底。"""
+    import os as _os
     from agent import emoji_lib as _el
     name = str(args.get("name_or_id") or "").strip()
-    index = None
+    emojis = ctx["wechat"].list_emojis()
+    target = None
     if name:
-        for s in _el.list_summaries():
-            if name in str(s["summary"]) or name in str(s.get("path") or ""):
-                index = int(s["index"]); break
-    if index is None:
-        index = _el.pick(str(args.get("context") or ""))
-    if index is None or index < 0:
-        index = 0
+        target = next((e for e in emojis if e["name"] == name
+                       or e["path"].lower().endswith(name.lower())), None)
+    idx = None
+    if target is None:
+        if name:
+            for s in _el.list_summaries():
+                if name in str(s["summary"]) or name in str(s.get("path") or ""):
+                    idx = s["index"]
+                    break
+        if idx is None:
+            idx = _el.pick(str(args.get("context") or ""))
+        if idx is not None and idx >= 0:
+            for s in _el.list_summaries():
+                if s["index"] == idx and s.get("path") and _os.path.exists(s["path"]):
+                    target = {"path": s["path"], "name": _os.path.basename(s["path"])}
+                    break
+        if target is None and idx is not None and idx >= 0 and idx < len(emojis):
+            target = emojis[idx]
+    if target is not None:
+        ctx["sender"].send_image(ctx["chat_key"], target["path"])
+        ctx["session"]["sent"].append({"type": "image", "text": "[表情]"})
+        return _ok({"sent": True, "note": "已发送收藏表情（本地直发，不受微信面板布局/预收藏影响）。"})
+    # 本地收藏夹无匹配 → 微信真实表情面板兜底（面板格序号仅对纯本地收藏序列有效）
     try:
-        # ① 真实微信表情面板（笑脸→爱心→点第 index 个），程序全程鼠标操作
         ok, msg = ctx["wechat"].emoji_panel_open()
         if not ok:
-            # ② 本地收藏夹兜底（send_image；微信可见模拟点击同样有效）
-            if name:
-                emojis = ctx["wechat"].list_emojis()
-                target = next((e for e in emojis if e["name"] == name), None)
-                if not target:
-                    return _err("表情面板打开失败（%s）；收藏夹也没有 %s" % (msg, name))
-                ctx["sender"].send_image(ctx["chat_key"], target["path"])
-                ctx["session"]["sent"].append({"type": "image", "text": "[表情]"})
-                return _ok({"sent": True, "note": "面板未打开，已用本地收藏夹发送 %s。" % name})
-            return _err("表情面板打开失败：%s（可能需要微信窗口在前台）" % msg)
-        ok2, msg2 = ctx["wechat"].emoji_panel_send(index)
+            return _err("没有匹配的收藏表情，面板打开也失败：%s（可先 collect_emoji 收藏后重试）" % msg)
+        ok2, msg2 = ctx["wechat"].emoji_panel_send(idx if idx is not None and idx >= 0 else 0)
         if not ok2:
             return _err("表情面板发送失败：%s（已取消，未发送）" % msg2)
         ctx["session"]["sent"].append({"type": "image", "text": "[表情]"})
-        return _ok({"sent": True, "index": index, "note": msg2})
+        return _ok({"sent": True, "index": idx, "note": msg2})
     except Exception as e:
         return _err(str(e))
 

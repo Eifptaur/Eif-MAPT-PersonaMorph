@@ -1800,8 +1800,8 @@ function openBillDlg(bills){
   box.querySelector('#bdCancel').onclick = close;
   box.querySelector('#bdOk').onclick = async ()=>{
     const days = selDays();
-    if(!days.length){ alert('请先勾选要删除的天'); return; }
-    if(!confirm('确认删除所选 '+days.length+' 天的计费日志？删除后不可恢复。')) return;
+    if(!days.length){ toast('请先勾选要删除的天'); return; }
+    if(!await uiConfirm('确认删除所选 '+days.length+' 天的计费日志？删除后不可恢复。')) return;
     try{
       const r = await getJSON('/api/stats/cal_delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({days})});
       if(r.ok){
@@ -1810,8 +1810,8 @@ function openBillDlg(bills){
         if(typeof loadStatus==='function') loadStatus();          // 概览自动刷新（含今日/累计/日历）
         if(window.__renderCal) window.__renderCal();              // 日历重绘（删掉的天从日历与明细消失）
         if(window.applyDay && window.__calDay) window.applyDay({sessions:0,tokens:0,sent:0,cost:0}, window.__calDay);
-      } else alert(r.error||'删除失败');
-    }catch(e){ alert('删除失败：'+e.message); }
+      } else toast(r.error||'删除失败');
+    }catch(e){ toast('删除失败：'+e.message); }
   };
   sum();
 }
@@ -1821,11 +1821,11 @@ async function loadSessions(){
   if($('sessSelDel')) $('sessSelDel').onclick = async ()=>{
     const sel=[...document.querySelectorAll('#sessList .sessSel:checked')].map(x=>x.dataset.date).filter(Boolean);
     if(!sel.length){ return; }
-    if(!confirm('确认删除所选 '+sel.length+' 个日期的运行明细与对话历史？')) return;
+    if(!await uiConfirm('确认删除所选 '+sel.length+' 个日期的运行明细与对话历史？')) return;
     try{
       const r=await getJSON('/api/sessions/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dates:sel})});
-      if(r.ok) loadSessions(); else alert(r.error||'删除失败');
-    }catch(e){ alert('删除失败：'+e.message); }
+      if(r.ok) loadSessions(); else toast(r.error||'删除失败');
+    }catch(e){ toast('删除失败：'+e.message); }
   };
   const el = $('sessList');
   try{
@@ -2683,6 +2683,32 @@ async function loadMemGroups(){
     });
   }catch(e){ box.innerHTML = '<span class="hint">群列表读取失败：'+e.message+'</span>'; }
 }
+
+/* ── 控制台内弹窗（替代浏览器原生 alert/confirm/prompt）── */
+function uiConfirm(msg){
+  return new Promise((res)=>{
+    const m = confirmBox('确认操作', [msg], '确定', ()=>res(true), true);
+    const no = m.querySelector('#cboxNo');
+    if(no) no.onclick = ()=>{ maskClose(m); m.remove(); res(false); };
+  });
+}
+function uiPrompt(msg, def){
+  return new Promise((res)=>{
+    const m = document.createElement('div'); m.className='mask';
+    m.innerHTML = '<div class="box">'
+      + '<h1>输入</h1><p style="text-align:left;margin:6px 0">'+msg+'</p>'
+      + '<input id="uiPromptInput" class="inp" value="'+String(def||'')+'" style="width:100%;margin:6px 0">'
+      + '<div class="btns" style="justify-content:center">'
+      + '<button class="pri" id="uiPromptOk">确定</button>'
+      + '<button class="ghost" id="uiPromptNo">取消</button></div></div>';
+    document.body.appendChild(m); maskOpen(m);
+    const inp = m.querySelector('#uiPromptInput');
+    inp.focus(); inp.select();
+    m.querySelector('#uiPromptOk').onclick = ()=>{ const v=inp.value.trim(); maskClose(m); m.remove(); res(v||null); };
+    m.querySelector('#uiPromptNo').onclick = ()=>{ maskClose(m); m.remove(); res(null); };
+  });
+}
+
 function syncMemGroupsToCfg(){
   if(!cfg) return;
   const names = [];
@@ -2800,7 +2826,7 @@ function syncMemGroupsToCfg(){
         x.title = '删除分区「'+c+'」（分区下的自定义卡会移回 📝 自定义）';
         x.onclick = async (ev)=>{
           ev.stopPropagation();
-          if(!confirm('删除分区「'+c+'」？其中自定义角色会自动移回「📝 自定义」。')) return;
+          if(!await uiConfirm('删除分区「'+c+'」？其中自定义角色会自动移回「📝 自定义」。')) return;
           try{
             await getJSON('/api/persona/cats/del',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:c})});
             delete userCats[c];
@@ -2908,7 +2934,7 @@ function syncMemGroupsToCfg(){
       const delBtn = card.querySelector('.del');
       if(delBtn) delBtn.onclick = async (ev)=>{
         ev.stopPropagation();
-        if(!confirm('删除「'+p.name+'」？')) return;
+        if(!await uiConfirm('删除「'+p.name+'」？')) return;
         try{
           await getJSON('/api/personas/custom/del',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:p.key})});
           toast('已删除'); rc_load();
@@ -2918,7 +2944,7 @@ function syncMemGroupsToCfg(){
       if(mvBtn) mvBtn.onclick = async (ev)=>{
         ev.stopPropagation();
         const cats = allCats().join('、');
-        const cat = prompt('移到哪个分区？可填已有分区（'+cats+'）或输入新名字自动新建', p.cat);
+        const cat = await uiPrompt('移到哪个分区？可填已有分区（'+cats+'）或输入新名字自动新建', p.cat);
         if(cat===null) return;
         if(!cat.trim()){ toast('分区名不能为空'); return; }
         try{
@@ -2949,7 +2975,7 @@ function syncMemGroupsToCfg(){
       rp.onclick = async ()=>{
         const prev = getPath(cfg,'persona.last_used') || {};
         if(!prev.name && !prev.text){ toast('还没有可恢复的人设（先应用过一次）'); return; }
-        if(!confirm('恢复上个人设「'+ (prev.name||'未命名') +'」？当前人设将被替换。')) return;
+        if(!await uiConfirm('恢复上个人设「'+ (prev.name||'未命名') +'」？当前人设将被替换。')) return;
         try{
           if(!cfg.persona) cfg.persona = {};
           // 当前人设备份（再点恢复一次可回到它？不，保持单向：恢复后 last_used=当前，避免循环）
@@ -3545,7 +3571,7 @@ function renderEmojis(){
     del.style.cssText = 'position:absolute;top:-5px;right:-5px;width:18px;height:18px;line-height:16px;padding:0;border-radius:50%;background:var(--err);color:#fff;font-size:12px;cursor:pointer;border:none';
     del.onclick = async (ev)=>{
       ev.stopPropagation();
-      if(!confirm('删除表情「'+e.name+'」？')) return;
+      if(!await uiConfirm('删除表情「'+e.name+'」？')) return;
       try{
         const r = await getJSON('/api/emojis/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:e.name})});
         if(r.ok){ toast('已删除'); loadEmojis(); } else toast('删除失败：'+(r.error||''));
@@ -3616,7 +3642,7 @@ async function loadMemory(chat_key){
       const n = (Array.isArray(m.impressions)?m.impressions.length:0);
       const del=document.createElement('button'); del.className='ghost'; del.textContent='删除';
       del.onclick=async ()=>{
-        if(!confirm('删除「'+name+'」的全部印象？')) return;
+        if(!await uiConfirm('删除「'+name+'」的全部印象？')) return;
         try{
           await getJSON('/api/memory',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_key:sel.value,user_id:m.userId})});
           toast('已删除'); loadMemory(sel.value);
@@ -3661,7 +3687,7 @@ let memMembers = [];
   selB.onclick = async ()=>{
     const picked = Array.from(document.querySelectorAll('.memPick:checked'));
     if(!picked.length){ toast('请先勾选要清除的成员'); return; }
-    if(!confirm('清除勾选的 '+picked.length+' 位成员全部印象？')) return;
+    if(!await uiConfirm('清除勾选的 '+picked.length+' 位成员全部印象？')) return;
     try{
       for(const p of picked){
         await getJSON('/api/memory',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -3673,7 +3699,7 @@ let memMembers = [];
     }catch(e){ toast('清除失败：'+e.message); }
   };
   allB.onclick = async ()=>{
-    if(!confirm('⚠️ 清除全部记忆（所有群所有成员印象+共享记忆）？不可恢复！')) return;
+    if(!await uiConfirm('⚠️ 清除全部记忆（所有群所有成员印象+共享记忆）？不可恢复！')) return;
     try{
       const r = await getJSON('/api/memory',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({action:'clear_all'})});
@@ -3687,7 +3713,7 @@ let memMembers = [];
     selB.disabled = !e.target.checked;
   };
   if(sessB) sessB.onclick = async ()=>{
-    if(!confirm('⚠️ 清除全部会话日志（运行明细里的对话历史）？模型之后不会再记得这些对话。')) return;
+    if(!await uiConfirm('⚠️ 清除全部会话日志（运行明细里的对话历史）？模型之后不会再记得这些对话。')) return;
     try{
       const r = await getJSON('/api/memory',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({action:'clear_sessions'})});
@@ -3828,7 +3854,7 @@ $('unifiedTierChk').addEventListener('change', ()=>renderGroupTierBox());
   if(url) url.addEventListener('input', syncState);
   if(fbUrl) fbUrl.addEventListener('input', syncState);
   ub.onclick = async ()=>{
-    if(!confirm('确认把当前种子库上传到配置的服务器？')) return;
+    if(!await uiConfirm('确认把当前种子库上传到配置的服务器？')) return;
     try{
       const r = await getJSON('/api/community/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:'holyshits'})});
       const msg = r && r.ok ? ('✅ 已上传 '+((r.count||r.uploaded||0))+' 条') : ('上传失败：'+(r.error||'未配置'));
@@ -3836,7 +3862,7 @@ $('unifiedTierChk').addEventListener('change', ()=>renderGroupTierBox());
     }catch(e){ $('uploadRst').textContent = '上传失败：'+e.message; }
   };
   if(fbBtn) fbBtn.onclick = async ()=>{
-    if(!confirm('确认把意见反馈上传到配置的服务器？')) return;
+    if(!await uiConfirm('确认把意见反馈上传到配置的服务器？')) return;
     try{
       const r = await getJSON('/api/community/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:'feedback'})});
       const msg = r && r.ok ? ('✅ 意见已上传 '+((r.count||r.uploaded||0))+' 条') : ('上传失败：'+(r.error||'未配置'));
@@ -3850,20 +3876,20 @@ $('unifiedTierChk').addEventListener('change', ()=>renderGroupTierBox());
   const all = document.getElementById('costClearAll');
   const sel = document.getElementById('costClearSel');
   if(all) all.onclick = async ()=>{
-    if(!confirm('确认一键删除全部计费历史（今日/周期/累计用量的历史记录）？')) return;
+    if(!await uiConfirm('确认一键删除全部计费历史（今日/周期/累计用量的历史记录）？')) return;
     try{
       const r=await getJSON('/api/stats/cal_clear',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
-      alert(r.ok?('已清空计费历史'):(r.error||'失败'));
+      toast(r.ok?('已清空计费历史'):(r.error||'失败'));
       if(r.ok) loadStatus();
-    }catch(e){ alert('失败：'+e.message); }
+    }catch(e){ toast('失败：'+e.message); }
   };
   if(sel) sel.onclick = async ()=>{
     try{
       const r = await getJSON('/api/stats/cal_list',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
       const bills = (r && r.bills) || [];
-      if(!bills.length){ alert('当前没有可删除的计费日志'); return; }
+      if(!bills.length){ toast('当前没有可删除的计费日志'); return; }
       openBillDlg(bills);
-    }catch(e){ alert('加载计费日志失败：'+e.message); }
+    }catch(e){ toast('加载计费日志失败：'+e.message); }
   };
 })();
 
