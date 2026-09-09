@@ -117,6 +117,90 @@ def run_stream(cmd, timeout=900, on_line=None):
     return rc == 0, tail
 
 
+def _ask_shortcut():
+    """安装完成弹窗：桌面无「一键启动」快捷方式时，弹自定义窗口询问是否创建
+    （图标+标题+说明+彩色按钮，不是系统简陋消息框）。选择「立即创建」则生成 lnk。"""
+    try:
+        desktop = os.path.join(os.environ.get("USERPROFILE", ""), "Desktop")
+        lnk = os.path.join(desktop, "一键启动 wx-agent.lnk")
+        if os.path.exists(lnk):
+            log("桌面快捷方式已存在，跳过询问。")
+            return
+        icon_png = os.path.join(ROOT, "assets", "app-icon.png")
+        icon_ico = os.path.join(ROOT, "assets", "app.ico")
+        vbs = os.path.join(ROOT, "一键启动.vbs")
+        if not (os.path.exists(vbs) and os.path.exists(icon_ico)):
+            return
+        ps = r'''
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+$f = New-Object System.Windows.Forms.Form
+$f.Text = 'wx-agent 安装完成'
+$f.StartPosition = 'CenterScreen'
+$f.FormBorderStyle = 'FixedDialog'
+$f.MaximizeBox = $false; $f.MinimizeBox = $false
+$f.BackColor = [System.Drawing.Color]::FromArgb(246,248,252)
+$f.ClientSize = New-Object System.Drawing.Size(470, 244)
+try { $f.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon('__ICONICO__') } catch {}
+$pic = New-Object System.Windows.Forms.PictureBox
+try { $pic.Image = [System.Drawing.Image]::FromFile('__ICONPNG__') } catch {}
+$pic.SizeMode = 'Zoom'
+$pic.Location = New-Object System.Drawing.Point(26, 26)
+$pic.Size = New-Object System.Drawing.Size(76, 76)
+$f.Controls.Add($pic)
+$l1 = New-Object System.Windows.Forms.Label
+$l1.Text = 'wx-agent 安装完成'
+$l1.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 15, [System.Drawing.FontStyle]::Bold)
+$l1.Location = New-Object System.Drawing.Point(118, 26)
+$l1.AutoSize = $true
+$f.Controls.Add($l1)
+$l2 = New-Object System.Windows.Forms.Label
+$l2.Text = '机器人已启动，Web 控制台已打开。' + [char]10 + '之后双击桌面快捷方式即可一键启动。' + [char]10 + [char]10 + '是否在桌面创建「一键启动」快捷方式？'
+$l2.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9.5)
+$l2.ForeColor = [System.Drawing.Color]::FromArgb(76,92,118)
+$l2.Location = New-Object System.Drawing.Point(118, 70)
+$l2.Size = New-Object System.Drawing.Size(330, 92)
+$f.Controls.Add($l2)
+$ok = New-Object System.Windows.Forms.Button
+$ok.Text = '立即创建'
+$ok.Size = New-Object System.Drawing.Size(150, 36)
+$ok.Location = New-Object System.Drawing.Point(296, 190)
+$ok.FlatStyle = 'Flat'
+$ok.BackColor = [System.Drawing.Color]::FromArgb(64, 140, 255)
+$ok.ForeColor = [System.Drawing.Color]::White
+$ok.DialogResult = 'OK'
+$f.Controls.Add($ok)
+$no = New-Object System.Windows.Forms.Button
+$no.Text = '暂不'
+$no.Size = New-Object System.Drawing.Size(90, 36)
+$no.Location = New-Object System.Drawing.Point(190, 190)
+$no.FlatStyle = 'Flat'
+$no.DialogResult = 'Cancel'
+$f.Controls.Add($no)
+$f.AcceptButton = $ok
+$f.CancelButton = $no
+if ($f.ShowDialog() -eq 'OK') {
+    $ws = New-Object -ComObject WScript.Shell
+    $s = $ws.CreateShortcut([Environment]::GetFolderPath('Desktop') + '\一键启动 wx-agent.lnk')
+    $s.TargetPath = '__VBS__'
+    $s.WorkingDirectory = '__DIR__'
+    $s.IconLocation = '__ICONICO__'
+    $s.Save()
+}
+'''
+        ps = ps.replace("__ICONPNG__", icon_png).replace("__ICONICO__", icon_ico) \
+               .replace("__VBS__", vbs).replace("__DIR__", ROOT)
+        import base64
+        enc = base64.b64encode(ps.encode("utf-16-le")).decode("ascii")
+        import subprocess as _sp
+        _sp.Popen(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                   "-WindowStyle", "Hidden", "-EncodedCommand", enc],
+                  creationflags=0x08000000, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+        log("已弹窗询问：是否创建桌面快捷方式（自动创建则双击即可启动）")
+    except Exception as e:
+        log("快捷方式询问失败：%s" % e)
+
+
 def popup_fail(reason, tail=""):
     """失败时弹窗给出具体原因（获取不到终端时用户也能看懂）。"""
     try:
@@ -283,6 +367,7 @@ def main():
     except Exception:
         pass
     log("一键启动完成。")
+    _ask_shortcut()
     return 0
 
 
