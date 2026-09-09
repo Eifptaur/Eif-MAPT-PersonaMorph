@@ -35,7 +35,7 @@ def _compile_all():
     files = []
     for root, dirs, fs in os.walk(os.path.join(ROOT, "agent")):
         files += [os.path.join(root, f) for f in fs if f.endswith(".py")]
-    files += [os.path.join(ROOT, "wx_agent.py")]
+    files += [os.path.join(ROOT, "scripts", "wx_agent.py")]
     files += [os.path.join(ROOT, "scripts", f) for f in os.listdir(os.path.join(ROOT, "scripts")) if f.endswith(".py")]
     for fp in files:
         try:
@@ -189,7 +189,7 @@ def run(verbose_deps: bool = False) -> dict:
             return open(os.path.join(ROOT, name), encoding="utf-8").read()
         except Exception:
             return ""
-    _wx = _src("wx_agent.py")
+    _wx = _src("scripts/wx_agent.py")
     _webui = os.path.join(ROOT, "agent", "webui.py")
     _wui = _src("agent/webui.py")
     _wechat = _src("agent/wechat.py")

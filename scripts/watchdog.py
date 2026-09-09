@@ -117,7 +117,7 @@ def main():
             crash = open(CRASH_LOG, "a", encoding="utf-8")
             crash.write("\n[watchdog] %s 拉起 wx_agent…\n" % time.strftime("%Y-%m-%d %H:%M:%S"))
             crash.flush()
-            p = subprocess.Popen([exe, os.path.join(ROOT, "wx_agent.py")],
+            p = subprocess.Popen([exe, os.path.join(ROOT, "scripts", "wx_agent.py")],
                                  cwd=ROOT, creationflags=flags,
                                  stdin=subprocess.DEVNULL, stdout=crash, stderr=crash)
             crash.close()

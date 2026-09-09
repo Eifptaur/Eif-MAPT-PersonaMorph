@@ -29,7 +29,7 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace") if hasattr(sys.stderr
 
 # 内置绿色版 Python（embed）由 python*. _pth 固定搜索路径（不含程序目录），
 # 必须把本文件目录手动加入 sys.path，否则 import agent 失败（watchdog 拉起即崩）。
-ROOT = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 

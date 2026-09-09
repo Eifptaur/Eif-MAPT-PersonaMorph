@@ -117,6 +117,11 @@ PROJECT_MODULES = [
 ]
 for mod in PROJECT_MODULES:
     try:
+        if mod == "wx_agent":
+            # wx_agent.py 位于 scripts/（主程序按目录分层，根目录只保留启动器/文档）
+            _sp = os.path.join(ROOT, "scripts")
+            if _sp not in sys.path:
+                sys.path.insert(0, _sp)
         importlib.import_module(mod)
         check("导入 " + mod, True)
     except Exception as e:
