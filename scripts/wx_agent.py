@@ -2343,17 +2343,15 @@ def main():
                         pass
                     if not _bp_skip:
                         bp = pick_browser(str(server_cfg.get("browser_path") or ""))
-                    else:
-                        bp = None
-                    if bp:
-                        _sp.Popen([bp, url], creationflags=0x08000000,
-                                  stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
-                        log.info("已打开控制台浏览器：%s", bp)
-                    else:
-                        _sp.Popen(["cmd", "/c", "start", "", url],
-                                  creationflags=0x08000000,
-                                  stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
-                        log.info("已请求默认浏览器打开控制台：%s", url)
+                        if bp:
+                            _sp.Popen([bp, url], creationflags=0x08000000,
+                                      stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+                            log.info("已打开控制台浏览器：%s", bp)
+                        else:
+                            _sp.Popen(["cmd", "/c", "start", "", url],
+                                      creationflags=0x08000000,
+                                      stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+                            log.info("已请求默认浏览器打开控制台：%s", url)
                 except Exception as e:
                     log.warning("打开浏览器失败（请手动访问 %s）：%s", mask_url_token(url), e)
                     try:
