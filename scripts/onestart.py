@@ -19,6 +19,17 @@ if ROOT not in sys.path:
 LOG_DIR = os.path.join(ROOT, "logs")
 LOG_PATH = os.path.join(LOG_DIR, "onestart.log")
 os.makedirs(LOG_DIR, exist_ok=True)
+# GUI 模式（WX_GUI=1）：stdout 只输出 ASCII 事件行（@@PHASE/@@PROG/@@DONE/@@FAIL/@@REQ_SHORTCUT），
+# 由 scripts/installer.ps1 安装器窗口解析驱动进度条；详细日志仍写 onestart.log。
+GUI = os.environ.get("WX_GUI") == "1"
+
+
+def evt(kind, *args):
+    """GUI 事件行（ASCII）。"""
+    try:
+        print("@@%s:%s" % (kind, ":".join(str(a) for a in args)), flush=True)
+    except Exception:
+        pass
 
 
 def log(msg):
@@ -28,10 +39,11 @@ def log(msg):
             f.write(line + "\n")
     except Exception:
         pass
-    try:
-        print(line, flush=True)
-    except Exception:
-        pass
+    if not GUI:
+        try:
+            print(line, flush=True)
+        except Exception:
+            pass
 
 
 _LAST_PROG = {}
@@ -41,6 +53,10 @@ def _prog(prefix, done, total):
     """进度行（每 5% 打印一次，避免刷屏；done==total 必打完成行）。"""
     try:
         pct = int(done * 100 / max(1, total))
+        if GUI:
+            key = {"依赖检查": "deps", "自检": "selftest", "安装依赖": "install"}.get(prefix, "step")
+            evt("PROG", key, done, total)
+            return
         if _LAST_PROG.get(prefix) == pct:
             return
         if pct % 5 != 0 and done < total:
@@ -126,6 +142,9 @@ def _ask_shortcut():
         if os.path.exists(lnk):
             log("桌面快捷方式已存在，跳过询问。")
             return
+        if GUI:
+            evt("REQ_SHORTCUT")
+            return
         icon_png = os.path.join(ROOT, "assets", "app-icon.png")
         icon_ico = os.path.join(ROOT, "assets", "app.ico")
         vbs = os.path.join(ROOT, "一键启动.vbs")
@@ -203,6 +222,9 @@ if ($f.ShowDialog() -eq 'OK') {
 
 def popup_fail(reason, tail=""):
     """失败时弹窗给出具体原因（获取不到终端时用户也能看懂）。"""
+    if GUI:
+        evt("FAIL", "failed")
+        return
     try:
         import ctypes
         msg = ("wx-agent 一键启动失败：%s\n\n" % reason)
@@ -245,6 +267,7 @@ def main():
 
     # 1. 依赖（检查表 14 项逐项百分比；安装阶段由 pip 自带百分比条显示）
     deps_done = [0]
+    evt("PHASE", "deps")
 
     def _deps_progress(ln):
         if ln.startswith("OK"):
@@ -265,6 +288,7 @@ def main():
     # 2. 自检（55 项逐项百分比；WARN 提示项也计入完成）
     log("")
     log("[2/3] 环境自检 55 项（每项实时百分比见下）")
+    evt("PHASE", "selftest")
     st_done = [0]
 
     def _st_progress(ln):
@@ -285,9 +309,12 @@ def main():
     log("自检全部通过 ✔")
 
     # 3. 启动机器人（复用 watchdog）；已有实例在跑 → 直接打开控制台（不再重复拉起）
+    evt("PHASE", "boot")
     if check_only:
         log("验证模式：仅执行依赖与自检，不拉起机器人（WX_ONESTART_CHECK=1）。")
         log("一键启动（验证）通过。")
+        if GUI:
+            evt("DONE")
         return 0
     log("[3/3] 启动机器人（等待控制台就绪，随后自动打开浏览器）")
     watchdog = os.path.join(ROOT, "scripts", "watchdog.py")
@@ -368,6 +395,8 @@ def main():
         pass
     log("一键启动完成。")
     _ask_shortcut()
+    if GUI:
+        evt("DONE")
     return 0
 
 
