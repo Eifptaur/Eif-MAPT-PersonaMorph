@@ -1343,6 +1343,47 @@ class WebUI:
                                                                int(data.get("rounds") or 1)))
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)})
+                elif path == "/api/persona/web-fetch":
+                    # 联网收集角色真实资料（搜索其说过的话/做过的事；只返回搜索摘要，绝不编造）
+                    try:
+                        from . import web_search as _ws
+                        name = str((data or {}).get("name") or "").strip()
+                        if not name:
+                            raise ValueError("请填写角色名")
+                        results, notes = [], []
+                        for q in (name + " 经典语录", name + " 访谈 原话", name + " 名言 金句"):
+                            try:
+                                r = _ws.web_search(q)
+                                items = (r or {}).get("results") or (r or {}).get("items") or []
+                                ans = (r or {}).get("answer")
+                                if ans:
+                                    notes.append(str(ans)[:300])
+                                for it in items[:6]:
+                                    results.append({
+                                        "title": str(it.get("title") or "")[:120],
+                                        "url": str(it.get("url") or ""),
+                                        "snippet": str(it.get("snippet") or "")[:300]})
+                            except Exception as e:
+                                notes.append("查询「%s」失败：%s" % (q[:16], str(e)[:80]))
+                        quotes = []
+                        seen = set()
+                        for it in results:
+                            for seg in (it["snippet"] + " " + it["title"]).split("。"):
+                                seg = seg.strip(" \n\t·")
+                                if not seg or len(seg) < 4 or len(seg) > 200:
+                                    continue
+                                if any(c in seg for c in ("“", "”", "「", "」", "\"", "\u201c", "\u201d")) and seg not in seen:
+                                    seen.add(seg)
+                                    quotes.append(seg)
+                        if not results:
+                            self._json({"ok": False, "name": name,
+                                        "note": "未检索到第一手资料（搜索引擎无相关真实资料）；请人工核实后再填入，切勿编造"})
+                        else:
+                            self._json({"ok": True, "name": name, "results": results[:20],
+                                        "quotes": quotes[:10], "notes": notes[:5],
+                                        "note": "以上均为搜索引擎返回的真实资料摘要（含来源链接，未做任何编造）；请人工核对后提取进角色卡。"})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
                 elif path == "/api/ui/background":
                     # 自定义背景图（POST {data: base64(dataURL)}, 或 {clear:true}）
                     try:

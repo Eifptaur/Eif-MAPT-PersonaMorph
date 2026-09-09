@@ -827,12 +827,15 @@ th{color:var(--tx2);font-weight:500}
         <div class="btns" style="justify-content:flex-start;gap:8px">
           <button id="pScoreLLM" class="ghost">模型评分</button>
           <button id="pEnrich" class="ghost">模型补足</button>
+          <button id="pWebFetch" class="ghost">联网收集真实资料</button>
           <label style="display:flex;align-items:center;gap:6px">补足轮数
             <select id="pRounds" style="width:64px"><option value="1">1 轮</option><option value="2">2 轮</option><option value="3">3 轮</option></select>
           </label>
           <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="pUseLlm" checked>允许模型处理</label>
         </div>
         <span class="hint" id="pScoreRst"></span>
+        <div class="hint">「联网收集真实资料」：按角色名检索主流媒体/官方/百科中**角色真实说过的话、做过的事**（语录/访谈/言论），只返回搜索引擎摘要原文（含来源链接），**绝不编造**；检索不到会明确提示"未检索到第一手资料"。请人工核对后提取进角色卡再保存。</div>
+        <div class="hint" style="color:var(--warn)">⚠️「模型补足 / 自动学习（机器学习）」**仅默认角色卡（小鲸鱼）启用**有效——AI 本体学习真实表达不易 OOC；**其他角色卡一律不应用**（防跑偏 OOC）。</div>
         <div class="hint">【评分细则】风格辨识25%/角色贴合30%/内在一致20%/表达自然15%/完整可用10%，每维 0~100.00 精确百分位；无口头禅→风格≤45；通用词口头禅→≤70；AI套话→表达≤65；客服口吻→贴合≤60；换角色都能用→≤50；示例占位→完整≤75；沉默类无扩展→≤70；缺说话规则→≤70；满分唯一条件=仅凭提示词+一次提醒即逐句贴合本人（否则一律<95，优秀 88~94.99）。</div>
         <div class="hint">「模型补足」按人设驱动（让说话更贴近本人，不是为分数调整）；每轮补足后自动重评：分数上升才继续下一轮，不升/降即停止；轮数可选（1~3 轮，每轮约 10~30 秒耗少量 token）；完成后点「保存」落盘。</div>
       </div></div>
@@ -2789,13 +2792,38 @@ function syncMemGroupsToCfg(){
   window.addEventListener('load', ()=>loadMemGroups());
 })();
 
-/* ── 自定义角色卡：模型评分 / 模型补足 ── */
+/* ── 自定义角色卡：模型评分 / 模型补足 / 联网真实资料收集 ── */
 (async function(){
   const btn = document.getElementById('pScoreLLM');
   const en = document.getElementById('pEnrich');
   const rst = document.getElementById('pScoreRst');
   if(!btn) return;
   function curText(){ const ta = document.querySelector('[data-cfg="persona.role_text"]'); return ta ? ta.value : ''; }
+  const wf = document.getElementById('pWebFetch');
+  if(wf) wf.onclick = async ()=>{
+    const name = ((document.querySelector('[data-cfg="persona.bot_name"]')||{}).value||'').trim();
+    if(!name){ rst.textContent = '请先填「人设名」（按角色名联网检索其真实言论资料）'; return; }
+    rst.textContent = '联网检索「'+name+'」的真实语录/访谈/言论…（3 组查询，约 20~60 秒）';
+    wf.disabled = true;
+    try{
+      const r = await getJSON('/api/persona/web-fetch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
+      if(r && r.ok){
+        let head = '【联网真实资料 · 来源为主流媒体/官方/百科搜索摘要，未做编造 —— 请人工核对后提取】\n';
+        (r.quotes||[]).forEach(q=>{ head += '- "'+q+'"\n'; });
+        (r.notes||[]).slice(0,2).forEach(n=>{ if(n) head += '· '+n+'\n'; });
+        head += '\n【来源链接】\n';
+        (r.results||[]).slice(0,8).forEach(it=>{ head += '- '+it.title+'：'+it.url+'\n'; });
+        if(!(r.quotes||[]).length) head += '\n（未提取到带引号的原文语录，仅以下摘要供核对）\n';
+        const ta = document.querySelector('[data-cfg="persona.role_text"]');
+        if(ta){ ta.value = (ta.value.trim()? ta.value.trim()+'\n\n' : '') + head; }
+        rst.textContent = '✅ 已收集真实资料（'+((r.results||[]).length)+' 条来源/摘要），已追加到角色文本下方——请人工核对、提取，再点「保存」';
+        toast('✅ 联网资料已收集，核对后保存');
+      } else {
+        rst.textContent = (r && (r.note||r.error)) || '检索失败';
+      }
+    }catch(e){ rst.textContent = '检索失败：'+e.message; }
+    wf.disabled = false;
+  };
   btn.onclick = async ()=>{
     if(!document.getElementById('pUseLlm').checked){ rst.textContent = '未勾选"允许模型处理"——本地规则无法保证贴合度，评分需模型参与（勾选后点此）'; return; }
     const t = curText();
