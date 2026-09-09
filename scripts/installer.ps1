@@ -1,4 +1,4 @@
-﻿# wx-agent 一键启动安装器窗口：图标 + 步骤进度 + 进度条（无命令行黑窗）
+﻿# wx-agent 一键启动启动器窗口：图标 + 步骤进度 + 进度条（无命令行黑窗）
 # 由 一键启动.vbs 隐藏启动；依次：准备 Python → onestart(事件解析) → 快捷方式询问 → 完成。
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -20,7 +20,7 @@ try {
         if ($otherInst) {
             Add-Type -AssemblyName System.Windows.Forms
             [System.Windows.Forms.MessageBox]::Show(
-                "安装器已在运行中。`r`n若看不到窗口，请稍候或用「一键关闭」结束后重试。",
+                "启动器已在运行中。`r`n若看不到窗口，请稍候或用「一键关闭」结束后重试。",
                 'wx-agent 一键启动', [System.Windows.Forms.MessageBoxButtons]::OK,
                 [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
             exit 0
@@ -227,7 +227,7 @@ function Parse-Line([string]$line) {
     elseif ($line.StartsWith('@@REQ_SHORTCUT')) {
         # 自定义询问窗（图标 + 说明 + 彩色按钮，不用系统 MessageBox）
         $q = New-Object System.Windows.Forms.Form
-        $q.Text = 'wx-agent 安装完成'
+        $q.Text = 'wx-agent 启动完成'
         $q.StartPosition = 'CenterScreen'
         $q.FormBorderStyle = 'FixedDialog'
         $q.MaximizeBox = $false; $q.MinimizeBox = $false
@@ -241,7 +241,7 @@ function Parse-Line([string]$line) {
         $pic2.Size = New-Object System.Drawing.Size -ArgumentList 66, 66
         $q.Controls.Add($pic2)
         $q1 = New-Object System.Windows.Forms.Label
-        $q1.Text = 'wx-agent 安装完成'
+        $q1.Text = 'wx-agent 启动完成'
         $q1.Font = [System.Drawing.Font]::new('Microsoft YaHei UI', 14, [System.Drawing.FontStyle]::Bold)
         $q1.Location = New-Object System.Drawing.Point -ArgumentList 108, 26
         $q1.AutoSize = $true
@@ -287,7 +287,7 @@ function Parse-Line([string]$line) {
         }
     }
     elseif ($line.StartsWith('@@DONE')) {
-        Set-State '安装完成 ✔' 100 4 ''
+        Set-State '启动完成 ✔' 100 4 ''
         $btnClose.Enabled = $true
         Start-Sleep -Milliseconds 2500
         $f.Close()

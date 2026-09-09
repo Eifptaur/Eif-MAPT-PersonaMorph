@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """一键启动：依赖检查 →（缺则自动安装）→ 自检 → 启动机器人（可见进度窗口）。
 
 由 一键启动.vbs 以可见 console 调用：安装/自检输出实时显示在窗口
@@ -140,7 +140,7 @@ def run_stream(cmd, timeout=900, on_line=None):
 
 
 def _ask_shortcut():
-    """安装完成弹窗：桌面无「一键启动」快捷方式时，弹自定义窗口询问是否创建
+    """启动完成弹窗：桌面无「一键启动」快捷方式时，弹自定义窗口询问是否创建
     （图标+标题+说明+彩色按钮，不是系统简陋消息框）。选择「立即创建」则生成 lnk。"""
     try:
         desktop = os.path.join(os.environ.get("USERPROFILE", ""), "Desktop")
@@ -160,7 +160,7 @@ def _ask_shortcut():
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 $f = New-Object System.Windows.Forms.Form
-$f.Text = 'wx-agent 安装完成'
+$f.Text = 'wx-agent 启动完成'
 $f.StartPosition = 'CenterScreen'
 $f.FormBorderStyle = 'FixedDialog'
 $f.MaximizeBox = $false; $f.MinimizeBox = $false
@@ -174,7 +174,7 @@ $pic.Location = New-Object System.Drawing.Point(26, 26)
 $pic.Size = New-Object System.Drawing.Size(76, 76)
 $f.Controls.Add($pic)
 $l1 = New-Object System.Windows.Forms.Label
-$l1.Text = 'wx-agent 安装完成'
+$l1.Text = 'wx-agent 启动完成'
 $l1.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 15, [System.Drawing.FontStyle]::Bold)
 $l1.Location = New-Object System.Drawing.Point(118, 26)
 $l1.AutoSize = $true
