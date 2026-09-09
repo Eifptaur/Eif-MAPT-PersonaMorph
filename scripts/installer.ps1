@@ -1,4 +1,4 @@
-﻿# wx-agent 一键启动安装器窗口：图标 + 步骤进度 + 进度条（无命令行黑窗）
+# wx-agent 一键启动安装器窗口：图标 + 步骤进度 + 进度条（无命令行黑窗）
 # 由 一键启动.vbs 隐藏启动；依次：准备 Python → onestart(事件解析) → 快捷方式询问 → 完成。
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -14,18 +14,38 @@ $lkPath = Join-Path $root 'logs\installer.lock'
 $locked = $false
 try {
     if (Test-Path $lkPath) {
-        $age = (Get-Date) - (Get-Item $lkPath).LastWriteTime
-        if ($age.TotalMinutes -lt 10) {
-            Add-Type -AssemblyName System.Windows.Forms
-            [System.Windows.Forms.MessageBox]::Show(
-                "安装器已在运行中。`r`n若看不到窗口，请稍等片刻或结束残留进程后重试。",
-                'wx-agent 一键启动', [System.Windows.Forms.MessageBoxButtons]::OK,
-                [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
-            exit 0
+        # 智能判定：锁文件里记录 PID，进程还活着才拦截；已死/残留自动失效
+        $lkPid = -1
+        try { $pt = ([IO.File]::ReadAllText($lkPath)).Trim(); if ($pt -match '^\d+$') { $lkPid = [int]$pt } } catch {}
+        if ($lkPid -gt 0) {
+            $lkAlive = Get-Process -Id $lkPid -ErrorAction SilentlyContinue
+            if ($lkAlive) {
+                Add-Type -AssemblyName System.Windows.Forms
+                [System.Windows.Forms.MessageBox]::Show(
+                    "安装器已在运行中。`r`n若看不到窗口，请稍候或用「一键关闭」结束后重试。",
+                    'wx-agent 一键启动', [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
+                exit 0
+            }
+            try { [IO.File]::Delete($lkPath) } catch { Remove-Item $lkPath -Force -ErrorAction SilentlyContinue }
+        } else {
+            # 旧格式锁（无 PID）：按时间判定
+            $age = (Get-Date) - (Get-Item $lkPath).LastWriteTime
+            if ($age.TotalMinutes -lt 10) {
+                Add-Type -AssemblyName System.Windows.Forms
+                [System.Windows.Forms.MessageBox]::Show(
+                    "安装器已在运行中。`r`n若看不到窗口，请稍等片刻或结束残留进程后重试。",
+                    'wx-agent 一键启动', [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
+                exit 0
+            }
+            Remove-Item $lkPath -Force -ErrorAction SilentlyContinue
         }
-        Remove-Item $lkPath -Force -ErrorAction SilentlyContinue
     }
     $lkStream = [IO.File]::Open($lkPath, 'CreateNew', 'ReadWrite', 'None')
+    $lkWriter = New-Object IO.StreamWriter($lkStream)
+    $lkWriter.Write([string]$PID)
+    $lkWriter.Flush()
     $locked = $true
 } catch { }
 # 退出时释放（句柄随进程结束自动释放，文件保留供"年龄"判断）
