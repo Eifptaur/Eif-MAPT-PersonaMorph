@@ -231,7 +231,8 @@ def dismiss_overlays(wechat_hwnds: tuple = ()) -> list:
                     break
             if overlap:
                 try:
-                    _user32.ShowWindow(h, 6)  # SW_MINIMIZE
+                    # 置于下层（HWND_BOTTOM）而不是最小化：最小化会把用户窗口"收起"（体验突兀）
+                    _user32.SetWindowPos(h, -1, 0, 0, 0, 0, 0x0001 | 0x0002)
                     handled.append(("window", cls, title[:50], pid))
                 except Exception:
                     pass
