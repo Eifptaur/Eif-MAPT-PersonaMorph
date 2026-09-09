@@ -1,4 +1,4 @@
-﻿# wx-agent 一键关闭：结束机器人/看门狗/安装器等全部相关进程（无窗口，完成后弹结果）
+# wx-agent 一键关闭：结束机器人/看门狗/安装器等全部相关进程（无窗口，完成后弹结果）
 Add-Type -AssemblyName System.Windows.Forms
 $markers = @('onestart.py', 'installer.ps1', 'setup_python.ps1', 'wx_agent.py', 'watchdog.py', 'stop_bot.py', 'close_all.ps1')
 $killed = @()
@@ -38,4 +38,5 @@ try {
     ($(if ($killed.Count) { $killed -join ', ' } else { '没有残留进程（早已关闭）' })),
     'wx-agent 一键关闭', [System.Windows.Forms.MessageBoxButtons]::OK,
     [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+try { Remove-Item (Join-Path $PSScriptRoot '..\logs\installer.lock') -Force -ErrorAction SilentlyContinue } catch {}
 exit 0
