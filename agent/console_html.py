@@ -4011,8 +4011,21 @@ $('unifiedTierChk').addEventListener('change', ()=>renderGroupTierBox());
   if(!b) return;
   b.onclick = ()=>{
     const i = document.querySelector('[data-cfg="server.port"]');
-    if(i){ i.value = '3210'; setPath(cfg, 'server.port', 3210); toast('端口已改回 3210（保存设置后重启机器人生效）'); }
+    if(i){ i.value = '3210'; setPath(cfg, 'server.port', 3210); toast('端口已改回 3210（保存设置 + 重启后生效）；请关闭旧端口标签'); }
   };
+  // 保存服务器设置时若端口变化 → 重启生效提示（旧端口标签需手动关闭——不同端口视为不同站点，JS 无法跨端口关闭）
+  const saveBtn = document.querySelector('[data-save="服务器"]') || document.querySelector('[data-save]');
+  if(saveBtn){
+    const orig = saveBtn.onclick;
+    saveBtn.addEventListener('click', ()=>{
+      const inp = document.querySelector('[data-cfg="server.port"]');
+      if(inp){
+        const cur = (getPath(cfg,'server.port')||3210);
+        const newv = parseInt(inp.value||'3210');
+        if(newv !== cur) setTimeout(()=>toast('端口已改为 '+newv+'：请 ①点「重启机器人」②关闭浏览器里旧端口标签（'+cur+'），否则会看到两个控制台'), 1200);
+      }
+    });
+  }
 })();
 /* ── 访问口令掩码显示切换 ── */
 (function(){
