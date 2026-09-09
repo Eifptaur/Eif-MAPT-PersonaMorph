@@ -1,4 +1,4 @@
-# wx-agent 一键启动安装器窗口：图标 + 步骤进度 + 进度条（无命令行黑窗）
+﻿# wx-agent 一键启动安装器窗口：图标 + 步骤进度 + 进度条（无命令行黑窗）
 # 由 一键启动.vbs 隐藏启动；依次：准备 Python → onestart(事件解析) → 快捷方式询问 → 完成。
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -8,6 +8,27 @@ $logFile = Join-Path $root 'logs\onestart.log'
 $diag = Join-Path $root 'logs\installer.log'
 try { New-Item -ItemType Directory -Force -Path (Join-Path $root 'logs') | Out-Null } catch {}
 function Diag([string]$m) { try { [IO.File]::AppendAllText($diag, "[" + (Get-Date -Format 'HH:mm:ss') + "] " + $m + "`r`n") } catch {} }
+
+# ── 单实例锁：重复双击只跑一个安装器（并发会互相抢 get-pip/依赖文件）──
+$lkPath = Join-Path $root 'logs\installer.lock'
+$locked = $false
+try {
+    if (Test-Path $lkPath) {
+        $age = (Get-Date) - (Get-Item $lkPath).LastWriteTime
+        if ($age.TotalMinutes -lt 10) {
+            Add-Type -AssemblyName System.Windows.Forms
+            [System.Windows.Forms.MessageBox]::Show(
+                '安装器已在运行中。`r`n若看不到窗口，请稍等片刻或结束残留进程后重试。',
+                'wx-agent 一键启动', [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
+            exit 0
+        }
+        Remove-Item $lkPath -Force -ErrorAction SilentlyContinue
+    }
+    $lkStream = [IO.File]::Open($lkPath, 'CreateNew', 'ReadWrite', 'None')
+    $locked = $true
+} catch { }
+# 退出时释放（句柄随进程结束自动释放，文件保留供"年龄"判断）
 
 # ── 窗口 ──
 $f = New-Object System.Windows.Forms.Form
