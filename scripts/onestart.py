@@ -288,11 +288,17 @@ def _build_tag_local():
 
 
 def _probe_running_instance(timeout=2):
-    """探测 3210：'same'=当前版本在跑 / 'old'=旧版本在跑 / 'none'=无实例。"""
+    """探测控制台：'same'=当前版本在跑 / 'old'=旧版本在跑 / 'none'=无实例（端口从 config 读取，与启动器一致）。"""
     try:
         import urllib.request
         import json as _j
-        with urllib.request.urlopen("http://127.0.0.1:3210/api/version", timeout=timeout) as _r:
+        _port = 3210
+        try:
+            from agent.config import get_config
+            _port = int(get_config().get("server", {}).get("port") or 3210)
+        except Exception:
+            pass
+        with urllib.request.urlopen("http://127.0.0.1:%d/api/version" % _port, timeout=timeout) as _r:
             _d = _j.loads(_r.read().decode("utf-8", "replace"))
             return "same" if str(_d.get("ver") or "") == _build_tag_local() else "old"
     except Exception:
