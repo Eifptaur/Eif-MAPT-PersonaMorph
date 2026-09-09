@@ -1254,18 +1254,40 @@ class WeChatAdapter:
                 self.moments_close()
                 return False, "朋友圈窗口未找到（未发布）"
             # 相机位置：朋友圈窗口左上角图标排（🔔 铃铛 | 📷 相机 | 🔄 刷新）。
-            # 实测抓图(682×979)：铃铛≈(57,38)、相机≈(105,38)、刷新≈(153,38)。
-            # 0624 修：之前写死 (66,36) 会点到铃铛（弹「全部互动消息」），改按比例自适应窗口大小。
+            # 实测弹窗(682×979)：铃铛≈(57,38)、相机≈(105,38)、刷新≈(153,38)。
+            # 多形态自适应：弹窗=左上角；内嵌（主窗右侧内容区）=顶部右侧工具栏；多次位置候选 + OCR 确认输入区出现。
             _w, _h = max(1, int(rect[2] - rect[0])), max(1, int(rect[3] - rect[1]))
-            cam_x, cam_y = int(rect[0] + _w * 0.154), int(rect[1] + _h * 0.039)
-            # 长按：down → 2.0s → up
             user32 = ctypes.windll.user32
-            user32.SetCursorPos(cam_x, cam_y)
-            user32.mouse_event(0x0002, 0, 0, 0, 0)
-            time.sleep(2.0)
-            user32.mouse_event(0x0004, 0, 0, 0, 0)
-            time.sleep(1.5)
-            if _shot: _shot("moments_2_cam_popup.png")
+            _cam_candidates = [(0.154, 0.039), (0.86, 0.045), (0.72, 0.04), (0.60, 0.04)]
+            _cam_hit = False
+            for _px, _py in _cam_candidates:
+                cam_x, cam_y = int(rect[0] + _w * _px), int(rect[1] + _h * _py)
+                user32.SetCursorPos(cam_x, cam_y)
+                user32.mouse_event(0x0002, 0, 0, 0, 0)
+                time.sleep(2.0)
+                user32.mouse_event(0x0004, 0, 0, 0, 0)
+                time.sleep(1.2)
+                if _shot:
+                    _shot("moments_2_cam_popup.png")
+                # OCR 确认"这一刻的想法"输入区出现（长按相机成功的标志）
+                try:
+                    _items = self._moments_shot_ocr((int(rect[0]), int(rect[1]), int(rect[2]), int(rect[3])))
+                    if any(("这一刻" in (t or "")) or ("想法" in (t or "")) for t, *_x in _items):
+                        _cam_hit = True
+                        break
+                except Exception:
+                    pass
+                # 未命中：悬停校验无输入区 → 恢复指针到内容区中部并按 ESC 关闭误触弹层
+                try:
+                    user32.SetCursorPos(int(rect[0] + _w * 0.5), int(rect[1] + _h * 0.5))
+                    user32.keybd_event(0x1B, 0, 0, 0)  # ESC
+                    user32.keybd_event(0x1B, 0, 2, 0)
+                    time.sleep(0.8)
+                except Exception:
+                    pass
+            if not _cam_hit:
+                self.moments_close()
+                return False, "未定位到朋友圈相机（弹窗/内嵌均未命中），未发布"
             # 纯文字输入栏出现：「这一刻的想法…」输入区是弹窗内的独立输入框——
             # 不能走 gui.input_text（它探测主窗口输入框，会把文字打到聊天栏）。
             # 点进弹窗输入区（实测弹窗内输入区约：x 0.147w~0.821w，y 0.215h~0.337h）
