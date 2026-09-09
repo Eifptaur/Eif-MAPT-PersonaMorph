@@ -1342,9 +1342,31 @@ def main():
         try:
             from agent.persona_rating import WEIGHTS as _W2, RULES_TEXT, compute as _compute
             from agent.llm import chat_completion
+            # 联网检索真实资料（评分参考：贴合度应以真实言论/事迹为准，严禁以编造内容评价为贴合）
+            _wn = ""
+            try:
+                from agent import web_search as _ws2
+                _its = []
+                try:
+                    _r = _ws2.web_search(str(name) + " 经典语录 名言")
+                    _its += (_r or {}).get("results") or (_r or {}).get("items") or []
+                except Exception:
+                    pass
+                _ls = []
+                for _it in _its[:8]:
+                    _seg = str(_it.get("snippet") or "").strip()
+                    if _seg:
+                        _ls.append(_seg[:160])
+                if _ls:
+                    _wn = "\n".join("· " + l for l in _ls[:8])
+            except Exception:
+                pass
             prompt = (
                 "你是角色设定严格评审员。按细则给分（细则如下），每维 0~100.00（精确 0.01）。\n"
                 + RULES_TEXT +
+                "\n以下是从网络检索到的该角色真实资料（权威事实来源）：\n"
+                + (_wn or "（未检索到第一手资料——贴合度按卡片自洽与口吻判断，严禁把编造内容当贴合）")
+                + "\n「贴合度」评分必须以真实资料比对（卡里出现真实资料之外的编造台词/事迹 → 贴合度≤30）；真实资料里有的细节卡里缺失 → 按细则正常压分。\n"
                 "\n第一行输出：{\"dims\":{\"style\":<估>,\"fit\":<估>,\"coher\":<估>,\"natural\":<估>,\"usable\":<估>}}"
                 "（0.01 精度，如 84.37）\n"
                 "第二行输出：{\"reason\":\"一句话指出人设层面最大缺点（必须针对该卡）\"}\n"
@@ -1422,11 +1444,37 @@ def main():
                 return {"ok": False, "error": "请先填角色名"}
             from agent.llm import chat_completion
             cur = (text or "").strip()
+            # 联网检索该角色第一手真实资料（语录/访谈/事迹摘要）；补足与评分都以它为唯一事实来源
+            web_notes = ""
+            try:
+                from agent import web_search as _ws
+                _items = []
+                for _q in (name + " 经典语录 名言", name + " 访谈 原话 言论"):
+                    try:
+                        _r = _ws.web_search(_q)
+                        _items += (_r or {}).get("results") or (_r or {}).get("items") or []
+                    except Exception:
+                        pass
+                _lines = []
+                for _it in _items[:12]:
+                    for _f in ("snippet", "title"):
+                        _seg = str(_it.get(_f) or "").strip()
+                        if _seg:
+                            _lines.append(_seg[:180])
+                _lines = _lines[:12]
+                if _lines:
+                    web_notes = "\n".join("· " + l for l in _lines)
+            except Exception:
+                pass
+            web_block = ("\n【真实资料（联网检索结果原文摘录，作为唯一事实来源）】\n"
+                         + (web_notes or "（未检索到该角色第一手资料——补足时严禁编造台词/事迹，只能按口吻写并标注（拟））")
+                         + "\n补足与评分只基于以上真实资料与本角色卡；超出真实资料的台词/事迹一律视为编造 → 0 分处理。\n")
             last_score = None
             trace = []
             for rnd in range(1, max(1, min(3, int(rounds or 1))) + 1):
                 prompt = (
                     "你是角色塑造专家。请让下面的机器人角色卡**更像角色本人脱口而出**——最高标准是「就是本人！」\n"
+                    + web_block +
                     "【第一步·先认识本人】凭你对该角色的真实认知（游戏/动画/小说/影视原台词），先写出："
                     "1) 他是谁（作品+身份）；2) 他最要说出口的【真实台词/口头禅 3~5 条】——必须是他在原作品里说过的原话或原话样式（例：「Rules are made to be broken… like buildings!」），"
                     "**禁止自编台词冒充原话**；若你不确定原话，写「按其口吻」并直接按该角色语气造，但标注（拟）。\n"
