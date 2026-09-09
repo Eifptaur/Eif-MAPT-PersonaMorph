@@ -3003,9 +3003,10 @@ function syncMemGroupsToCfg(){
         menu.style.cssText = 'position:absolute;right:6px;top:22px;z-index:60;display:block';
         const items = [
           ['为模型打星', async ()=>{ await getJSON('/api/personas/rate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:p.key, score:5})}); toast('✅ 已为「'+p.name+'」打星'); render(); }],
-          ['编辑角色卡', async ()=>{ const ta=document.querySelector('[data-cfg="persona.role_text"]'); if(ta){ ta.value=p.text; } syncToForm(); toast('已填入编辑区，点保存生效'); }],
+          ['编辑角色卡', async ()=>{ const ta=document.querySelector('[data-cfg="persona.role_text"]'); if(ta){ ta.value=p.text; } syncToForm(); toast('已填入下方「自定义角色文本」编辑区（人设与响应页），点「保存设置」后生效'); }],
           ['导出其评分', async ()=>{ await getJSON('/api/community/export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:'persona_ratings'})}); toast('✅ 评分已导出'); }],
           ['复制角色名', async ()=>{ await navigator.clipboard.writeText(p.name); toast('已复制'); }],
+          ['删除角色（自定义）', async ()=>{ if(!p.key || p.key.indexOf('custom:')!==0){ toast('仅自定义角色可删除；内置/默认角色不可删'); return; } if(!await uiConfirm('删除自定义角色「'+p.name+'」？')) return; try{ await getJSON('/api/personas/custom/del',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:p.key})}); toast('✅ 已删除'); render(); }catch(e){ toast('删除失败：'+e.message); } }],
         ];
         menu.innerHTML = items.map((x,i)=>'<li data-i="'+i+'">'+x[0]+'</li>').join('');
         card.appendChild(menu);

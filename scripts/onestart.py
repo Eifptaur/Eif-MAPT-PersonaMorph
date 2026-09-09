@@ -317,8 +317,11 @@ def _kick_old_instance():
 
 
 def _open_current_console():
-    """同版本已在运行：直接打开控制台（读 config 的端口/token）。"""
+    """同版本已在运行：走原子锁拿到才打开（否则不重复开第二个）。"""
     try:
+        if not _try_browser_lock():
+            log("浏览器已打开（同版本控制台在运行），本次不重复打开。")
+            return True
         from agent.config import get_config
         sc = get_config().get("server", {})
         url = "http://127.0.0.1:%s/?token=%s" % (int(sc.get("port") or 3210), str(sc.get("token") or ""))
