@@ -758,8 +758,8 @@ class WeChatAdapter:
         u.mouse_event(0x0004, 0, 0, 0, 0)
 
     def _find_green_discover(self, gui):
-        """运行时颜色定位（不依赖标定）：侧栏绿色圆＝「发现」图标（新 UI 固定特征）。
-        扫主窗左侧栏绿色像素团 → 返回 (屏幕x, 屏幕y)；未找到返回 None。"""
+        """运行时颜色定位（不依赖标定）：侧栏绿色圆＝「发现」图标（仅选中态变绿；
+        未选中为灰色，此时走图标列聚类）。返回 (屏幕x, 屏幕y)；未找到返回 None。"""
         try:
             import ctypes
             from ctypes import wintypes
@@ -785,9 +785,55 @@ class WeChatAdapter:
         except Exception:
             return None
 
+    def _detect_sidebar_icons(self, gui):
+        """运行时图标列聚类（不依赖标定）：侧栏带纵向暗像素分段 → 各图标中心 y（渲染相对）。
+        返回有序 y 列表（含消息/通讯录/发现/设置等；设置=最后一枚，永远跳过）。"""
+        try:
+            import ctypes
+            from ctypes import wintypes
+            from PIL import ImageGrab
+            u = ctypes.windll.user32
+            r = wintypes.RECT()
+            u.GetWindowRect(int(gui.main_hwnd), ctypes.byref(r))
+            l, t, rt, b = r.left, r.top, r.right, r.bottom
+            W, H = rt - l, b - t
+            img = ImageGrab.grab((l, t, rt, b)).convert("L")
+            px = img.load()
+            x0, x1 = 3, max(4, int(W * 0.085))
+            items = []
+            cur = None
+            for y in range(int(H * 0.10), int(H * 0.99)):
+                dark = 0
+                for x in range(x0, x1, 2):
+                    if px[x, y] < 190:
+                        dark += 1
+                if dark >= 2:
+                    if cur is None:
+                        cur = [y, y]
+                    else:
+                        cur[1] = y
+                else:
+                    if cur is not None:
+                        items.append((cur[0] + cur[1]) // 2)
+                        cur = None
+            if cur is not None:
+                items.append((cur[0] + cur[1]) // 2)
+            # 合并过近段（图标内微小分离）
+            merged = []
+            for y in items:
+                if merged and y - merged[-1] < int(H * 0.012):
+                    merged[-1] = (merged[-1] + y) // 2
+                else:
+                    merged.append(y)
+            return merged
+        except Exception:
+            return []
+
     def _moments_open_discover(self, gui):
-        """新 UI（4.1 发现页）路径：置顶微信 → 绿圆（发现）颜色定位点击（失败回退多候选位置，
-        绝不经过设置/三条杠）→ OCR 定位「朋友圈」点击，未识别按发现页首项相对位置兜底。"""
+        """新 UI（4.1 发现页）路径：置顶微信 → 点「发现」：
+        ① 绿圆颜色定位（已选中时）→ ② 侧栏图标列聚类（从后往前试，最后一枚=设置必跳过）
+        → ③ 相对多候选兜底；每点均验证发现页出现（OCR「搜一搜/小程序/游戏」）。
+        然后 OCR 定位「朋友圈」点击（未识别按发现页首项相对位置兜底）。"""
         try:
             import ctypes
             from ctypes import wintypes
@@ -809,27 +855,36 @@ class WeChatAdapter:
                         return (x, y, w, h)
                 return None
 
-            # 1) 点「发现」：绿圆颜色定位（不依赖标定/序位），失败回退多候选（都在设置之上）
-            pos = self._find_green_discover(gui)
-            got_discover = False
-            if pos:
-                self._click_screen(pos[0], pos[1])
+            def _discover_visible():
+                return bool(_ocr_find("搜一搜") or _ocr_find("小程序") or _ocr_find("游戏"))
+
+            def _try_click(px, py):
+                self._click_screen(px, py)
                 time.sleep(1.2)
-                if _ocr_find("搜一搜") or _ocr_find("小程序") or _ocr_find("游戏"):
-                    got_discover = True
-                    print("[moments] 发现页出现（绿圆定位）", flush=True)
-                else:
-                    pos = None
+                return _discover_visible()
+
+            got_discover = False
+            # ① 绿圆（发现已选中/打开过）
+            pos = self._find_green_discover(gui)
+            if pos and not _discover_visible():
+                got_discover = _try_click(pos[0], pos[1])
+            elif pos and _discover_visible():
+                got_discover = True
+            # ② 图标列聚类：从后往前试（最后 1 枚=设置，跳过；发现通常在倒数第 2 枚）
+            if not got_discover:
+                ys = self._detect_sidebar_icons(gui)
+                for yi in reversed(ys[-3:]):
+                    if not got_discover:
+                        got_discover = _try_click(l + int(W * 0.043), t + yi)
+            # ③ 相对多候选兜底（全部在设置之上）
             if not got_discover:
                 for y_ratio in (0.80, 0.85, 0.90):
-                    self._click_screen(l + int(W * 0.043), t + int(H * y_ratio))
-                    time.sleep(1.2)
-                    if _ocr_find("搜一搜") or _ocr_find("小程序") or _ocr_find("游戏"):
+                    if _try_click(l + int(W * 0.043), t + int(H * y_ratio)):
                         got_discover = True
                         break
             if not got_discover:
                 return False, "发现页未出现（点侧栏「发现」图标失败）"
-            # 2) 点「朋友圈」：OCR 优先（左侧列表区），未识别按首项相对位置兜底
+            # 点「朋友圈」：OCR 优先（左侧列表区），未识别按首项相对位置兜底
             tgt = _ocr_find("朋友圈", x_max=W * 0.55)
             if tgt is None:
                 tgt = (int(W * 0.22), int(H * 0.112), int(W * 0.10), int(H * 0.03))
