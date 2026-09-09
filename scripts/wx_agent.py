@@ -2319,21 +2319,25 @@ def main():
                         if os.path.exists(_mk):
                             try:
                                 _t = float(open(_mk, encoding="utf-8").read().strip() or 0)
+                                log.info("[browser-lock] 锁存在 t=%.1f(%.1f)", _t, time.time() - _t)
                                 if time.time() - _t < 90:
                                     log.info("浏览器已由一键启动打开，本次不再重复打开")
                                     _bp_skip = True
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                log.info("[browser-lock] 读锁异常：%s", e)
                             if not _bp_skip:
                                 try:
                                     os.remove(_mk)
+                                    log.info("[browser-lock] 锁已过期，清除")
                                 except Exception:
                                     pass
                         if not _bp_skip:
                             _fd = os.open(_mk, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
                             os.write(_fd, str(time.time()).encode("ascii", "replace"))
                             os.close(_fd)
+                            log.info("[browser-lock] 本进程创建锁，将打开浏览器")
                     except FileExistsError:
+                        log.info("[browser-lock] 创建失败(已被抢)，本次不打开")
                         _bp_skip = True
                     except Exception:
                         pass
