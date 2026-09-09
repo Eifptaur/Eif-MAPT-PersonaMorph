@@ -152,17 +152,17 @@ function Run-HiddenLogWatch([string]$exe, [string]$argLine, [string]$envName, [s
     while (-not $p.WaitForExit(100)) {
         try {
             if (Test-Path $logFile) {
-                $fs = [IO.File]::Open($logFile, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
-                $fs.Seek($script:logPos, [IO.SeekOrigin]::Begin) | Out-Null
-                $sr = New-Object IO.StreamReader($fs)
-                while (-not $sr.EndOfStream) {
-                    $ln = $sr.ReadLine()
-                    if ($ln -and $ln.StartsWith('@@')) {
-                        try { Parse-Line $ln } catch { Diag ('Parse EX: ' + $_.Exception.Message) }
+                # 按行数增量处理（ReadAllLines 全量读，避免 StreamReader 缓冲丢事件）
+                $all = [IO.File]::ReadAllLines($logFile, [Text.Encoding]::UTF8)
+                if ($all.Length -gt $script:lineCount) {
+                    for ($i = $script:lineCount; $i -lt $all.Length; $i++) {
+                        $ln = $all[$i]
+                        if ($ln -and $ln.StartsWith('@@')) {
+                            try { Parse-Line $ln } catch { Diag ('Parse EX: ' + $_.Exception.Message) }
+                        }
                     }
+                    $script:lineCount = $all.Length
                 }
-                $script:logPos = $fs.Position
-                $sr.Close(); $fs.Close()
             }
         } catch { }
         [System.Windows.Forms.Application]::DoEvents()
@@ -261,7 +261,7 @@ function Wait-Close {
 }
 
 # ── 主流程 ──
-$script:logPos = 0
+$script:lineCount = 0
 try {
 $f.Show()
 Diag 'step: window shown'
