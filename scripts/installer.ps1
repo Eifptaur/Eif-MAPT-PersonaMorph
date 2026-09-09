@@ -147,16 +147,15 @@ function Run-Hidden([string]$exe, [string]$argLine, [string]$envName, [string]$e
     $p.StartInfo = $psi
     try { $ok = $p.Start() } catch { return @{ code = 1; err = ('start failed: ' + $_.Exception.Message) } }
     if (-not $ok) { return @{ code = 1; err = 'start returned false' } }
-    # 异步读输出 → 入队列；主循环在 UI 线程消费（事件线程直接改控件会异常闪退）
-    $script:lineQ = New-Object System.Collections.ArrayList
-    $p.add_OutputDataReceived({ param($s, $e) if ($e.Data) { [void]$script:lineQ.Add($e.Data) } })
-    $p.add_ErrorDataReceived({ param($s, $e) if ($e.Data) { [void]$script:lineQ.Add(('ERR ' + $e.Data)) } })
+    # 异步读输出 → 线程安全队列；主循环在 UI 线程消费（事件线程直接改控件会异常闪退）
+    $script:lineQ = New-Object 'System.Collections.Concurrent.ConcurrentQueue[string]'
+    $p.add_OutputDataReceived({ param($s, $e) if ($e.Data) { $script:lineQ.Enqueue($e.Data) } })
+    $p.add_ErrorDataReceived({ param($s, $e) if ($e.Data) { $script:lineQ.Enqueue(('ERR ' + $e.Data)) } })
     $p.BeginOutputReadLine()
     $p.BeginErrorReadLine()
     while (-not $p.WaitForExit(100)) {
-        if ($script:lineQ.Count -gt 0) {
-            $ln = $script:lineQ[0]
-            $script:lineQ.RemoveAt(0)
+        $ln = $null
+        while ($script:lineQ.TryDequeue([ref]$ln)) {
             try { Parse-Line $ln } catch { Diag ('Parse EX: ' + $_.Exception.Message) }
         }
         [System.Windows.Forms.Application]::DoEvents()
