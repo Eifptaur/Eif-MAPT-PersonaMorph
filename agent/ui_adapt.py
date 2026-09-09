@@ -346,6 +346,37 @@ def prepare_screen(gui) -> bool:
     try:
         # ① 不再强制 SetWindowPos（每次动窗口会把表情弹出菜单"刷掉"——这是"点完笑脸菜单消失"的真凶）
         #   仅当窗口被移到极小/出屏时才自愈，正常流程绝不碰窗口几何。
+        # 窗口位置/尺寸**明显偏离**基准（拖动超过阈值）→ 拉回标准位置（按 DPI 换算+限屏）
+        try:
+            hwnd = getattr(gui, "main_hwnd", 0)
+            if hwnd:
+                cfg = __import__("agent.config", fromlist=["get_config"]).get_config()
+                if (cfg.get("ui") or {}).get("lock_window_pos", True) is not False:
+                    try:
+                        _scale = max(1.0, _user32.GetDpiForWindow(hwnd) / 96.0)
+                    except Exception:
+                        _scale = 1.25
+                    try:
+                        _sw = int(_user32.GetSystemMetrics(0))
+                        _sh = int(_user32.GetSystemMetrics(1))
+                    except Exception:
+                        _sw, _sh = 1920, 1080
+                    _tw = min(int(1250 * _scale), int(_sw * 0.92))
+                    _th = min(int(1100 * _scale), int(_sh * 0.92))
+                    _tx = min(int(120 * _scale), max(10, _sw - _tw - 40))
+                    _ty = min(int(80 * _scale), max(10, _sh - _th - 60))
+                    r = wintypes.RECT()
+                    _user32.GetWindowRect(hwnd, ctypes.byref(r))
+                    _need = (abs(r.left - _tx) > 150 or abs(r.top - _ty) > 150
+                             or abs((r.right - r.left) - _tw) > _tw * 0.12
+                             or abs((r.bottom - r.top) - _th) > _th * 0.12)
+                    if _need:
+                        _user32.ShowWindow(hwnd, 9)
+                        _user32.SetWindowPos(hwnd, 0, _tx, _ty, _tw, _th,
+                                             0x0001 | 0x0002 | 0x0020 | 0x0040)
+                        time.sleep(0.2)
+        except Exception:
+            pass
         # 窗口被移出屏幕（多屏切换/DPI 变化常见）→ 自动还原到可见区
         try:
             hwnd = getattr(gui, "main_hwnd", 0)

@@ -758,31 +758,57 @@ class WeChatAdapter:
         u.mouse_event(0x0004, 0, 0, 0, 0)
 
     def _moments_open_discover(self, gui):
-        """新 UI（4.1 发现页）路径：点侧栏底部「发现」→ 发现页 OCR 定位「朋友圈」→ 点击。
-        主窗截图 OCR，文字坐标按窗口左上角换算，适应任意 DPI/分辨率。"""
+        """新 UI（4.1 发现页）路径：先置顶微信 → 多点候选点「发现」（侧栏绿色圆图标：
+        默认 0.885H，顺序试 0.845/0.925/0.80H，每点验证发现页出现）→ OCR 定位「朋友圈」点击，
+        未识别时按发现页首项相对位置兜底。主窗截图 OCR 适应任意 DPI/分辨率。"""
         try:
             import ctypes
             from ctypes import wintypes
+            from . import ui_adapt
             u = ctypes.windll.user32
+            if not ui_adapt.prepare_screen(gui):
+                return False, "屏幕预检失败"
             r = wintypes.RECT()
             u.GetWindowRect(int(gui.main_hwnd), ctypes.byref(r))
             l, t, rt, b = r.left, r.top, r.right, r.bottom
             W, H = rt - l, b - t
             if W < 300 or H < 300:
                 return False, "微信主窗过小"
-            # 1) 侧栏底部「发现」绿色图标（新 UI 固定左下角）
-            self._click_screen(l + int(W * 0.043), t + int(H * 0.935))
-            time.sleep(1.3)
-            # 2) 发现页 OCR 找「朋友圈」文字
-            items = self._moments_shot_ocr((l, t, rt, b))
-            tgt = None
-            for txt, x, y, w, h in items:
-                if "朋友圈" in txt:
-                    tgt = (x, y, w, h)
+            print("[moments] 主窗矩形=(%d,%d,%d,%d)" % (l, t, rt, b), flush=True)
+
+            def _ocr_find(text):
+                items = self._moments_shot_ocr((l, t, rt, b))
+                for txt, x, y, w, h in items:
+                    if text in txt:
+                        return (x, y, w, h)
+                return None
+
+            # 1) 点「发现」：多候选位置，每次等待并验证发现页（含「朋友圈/搜一搜/游戏」文字）
+            got_discover = False
+            for y_ratio in (0.885, 0.845, 0.925, 0.80):
+                self._click_screen(l + int(W * 0.043), t + int(H * y_ratio))
+                time.sleep(1.2)
+                hit = _ocr_find("搜一搜") or _ocr_find("小程序") or _ocr_find("游戏")
+                if hit:
+                    print("[moments] 发现页出现（y_ratio=%.3f）" % y_ratio, flush=True)
+                    got_discover = True
                     break
-            if not tgt:
-                return False, "发现页未出现（未识别到「朋友圈」文字）"
-            # 3) 点击「朋友圈」
+            if not got_discover:
+                return False, "发现页未出现（点侧栏「发现」图标失败）"
+            # 2) 点「朋友圈」：OCR 优先（列表项在左侧 0.20~0.50 宽内），未识别按首项相对位置兜底
+            tgt = None
+            try:
+                items = self._moments_shot_ocr((l, t, rt, b))
+                for txt, x, y, w, h in items:
+                    if "朋友圈" in txt and x < W * 0.55:
+                        tgt = (x, y, w, h)
+                        break
+            except Exception:
+                pass
+            if tgt is None:
+                # 兜底：发现页首项「朋友圈」位置（左侧列表第一行）
+                print("[moments] 未 OCR 到「朋友圈」，用相对位置兜底", flush=True)
+                tgt = (int(W * 0.22), int(H * 0.112), int(W * 0.10), int(H * 0.03))
             self._click_screen(l + tgt[0] + tgt[2] // 2, t + tgt[1] + tgt[3] // 2)
             time.sleep(1.5)
             return True, "已点击「发现 → 朋友圈」"
