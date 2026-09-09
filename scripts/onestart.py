@@ -34,10 +34,31 @@ def log(msg):
         pass
 
 
-def run_stream(cmd, timeout=900):
+_LAST_PROG = {}
+
+
+def _prog(prefix, done, total):
+    """进度行（每 5% 打印一次，避免刷屏；done==total 必打完成行）。"""
+    try:
+        pct = int(done * 100 / max(1, total))
+        if _LAST_PROG.get(prefix) == pct:
+            return
+        if pct % 5 != 0 and done < total:
+            return
+        _LAST_PROG[prefix] = pct
+        try:
+            bar = "█" * (pct // 5) + "░" * (20 - pct // 5)
+        except Exception:
+            bar = ""
+        print("  ┃ %s %3d%% [%s] (%d/%d)" % (prefix, pct, bar, done, total), flush=True)
+    except Exception:
+        pass
+
+
+def run_stream(cmd, timeout=900, on_line=None):
     """运行子命令并实时转发输出到窗口（同时截留尾部进日志）。
     子命令以 -u 启动保证输出立即到达；无输出超 30 秒打印心跳行，
-    安装/下载期间窗口不会显得"卡住"。"""
+    安装/下载期间窗口不会显得"卡住"。on_line 用于统计行做阶段百分比。"""
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 creationflags=0x08000000)
@@ -55,6 +76,12 @@ def run_stream(cmd, timeout=900):
                     break
                 txt = chunk.decode("utf-8", "replace")
                 parts.append(txt)
+                if on_line:
+                    try:
+                        for ln in txt.splitlines():
+                            on_line(ln)
+                    except Exception:
+                        pass
                 try:
                     sys.stdout.write(txt)
                     sys.stdout.flush()
@@ -132,8 +159,18 @@ def main():
     log("[1/3] 依赖检查（缺则自动安装；已装自动跳过）")
     py = sys.executable or "python"
 
-    # 1. 依赖
-    ok, tail = run_stream([py, "-X", "utf8", "-u", os.path.join(ROOT, "scripts", "setup_deps.py")])
+    # 1. 依赖（检查表 14 项逐项百分比；安装阶段由 pip 自带百分比条显示）
+    deps_done = [0]
+
+    def _deps_progress(ln):
+        if ln.startswith("OK"):
+            deps_done[0] += 1
+            _prog("依赖检查", min(deps_done[0], 14), 14)
+        elif ("安装缺失" in ln or "正在安装" in ln) and _LAST_PROG.get("安装依赖") is None:
+            _prog("安装依赖", 14, 14)
+
+    ok, tail = run_stream([py, "-X", "utf8", "-u", os.path.join(ROOT, "scripts", "setup_deps.py")],
+                          on_line=_deps_progress)
     if not ok:
         log("[失败] 依赖未就绪，请查看上方日志后重试。")
         popup_fail("依赖安装未通过（见最近日志）", tail)
@@ -141,10 +178,18 @@ def main():
         return 1
     log("依赖检查通过 ✔")
 
-    # 2. 自检
+    # 2. 自检（55 项逐项百分比；WARN 提示项也计入完成）
     log("")
-    log("[2/3] 环境自检 55 项（依赖/微信/模块/配置）")
-    ok, tail = run_stream([py, "-X", "utf8", "-u", os.path.join(ROOT, "scripts", "selftest.py")])
+    log("[2/3] 环境自检 55 项（每项实时百分比见下）")
+    st_done = [0]
+
+    def _st_progress(ln):
+        if ln.startswith("OK") or ln.startswith("FAIL") or ln.startswith("WARN"):
+            st_done[0] += 1
+            _prog("自检", st_done[0], 55)
+
+    ok, tail = run_stream([py, "-X", "utf8", "-u", os.path.join(ROOT, "scripts", "selftest.py")],
+                          on_line=_st_progress)
     if not ok:
         # 提取失败项行（FAIL 开头）供提示
         lines = [ln for ln in str(tail).splitlines() if "FAIL" in ln][:8]
