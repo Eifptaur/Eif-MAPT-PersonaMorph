@@ -282,7 +282,7 @@ if ($r.code -ne 0) {
 $pyCmd = ''
 $pth = Join-Path $root 'logs\python_path.txt'
 if (Test-Path $pth) {
-    $pyCmd = (Get-Content $pth -Raw).Trim()
+    $pyCmd = ([IO.File]::ReadAllText($pth, [Text.Encoding]::GetEncoding(936))).Trim()
 }
 if (-not $pyCmd) {
     Set-State '未找到可用的 Python' 0 0 '点击「关闭」后重试或检查网络'
@@ -294,7 +294,7 @@ if (-not (Test-Path $pyCmd)) {
     Diag ('pyCmd 无效，重跑 setup_python: [' + $pyCmd + ']')
     $r3 = Run-HiddenLogWatch 'powershell.exe' ('-NoProfile -ExecutionPolicy Bypass -File "' + $ps1 + '"') '' ''
     $pyCmd = ''
-    if (Test-Path $pth) { $pyCmd = ([IO.File]::ReadAllText($pth)).Trim() }
+    if (Test-Path $pth) { $pyCmd = ([IO.File]::ReadAllText($pth, [Text.Encoding]::GetEncoding(936))).Trim() }
     Diag ('重读 pyCmd=[' + $pyCmd + ']')
     if (-not $pyCmd -or -not (Test-Path $pyCmd)) {
         Set-State 'Python 环境异常' 0 0 'runtime\python\python.exe 不存在，请重新解压完整包'

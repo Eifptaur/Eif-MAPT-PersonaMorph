@@ -17,7 +17,7 @@ function Log($m) {
 }
 
 function Set-PyPath($cmd) {
-    try { Set-Content -Path $pathTxt -Value $cmd -Encoding ascii } catch {}
+    try { Set-Content -Path $pathTxt -Value $cmd -Encoding Default } catch {}
 }
 
 # --- 1) 系统 Python（仅接受 3.10~3.12：winsdk 等依赖的最新预编译版只到 cp312）---
