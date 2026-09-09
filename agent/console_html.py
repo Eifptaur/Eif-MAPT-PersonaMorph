@@ -994,7 +994,7 @@ th{color:var(--tx2);font-weight:500}
     <section id="sec-server" class="card" data-sec>
       <h2>服务器</h2>
       <div class="row"><label>监听地址</label><div class="grow"><input type="text" data-cfg="server.host" title="默认只允许本机访问"></div></div>
-      <div class="row"><label>端口</label><div class="grow"><input type="number" min="1" max="65535" data-cfg="server.port"></div></div>
+      <div class="row"><label>端口</label><div class="grow"><input type="number" min="1" max="65535" data-cfg="server.port" style="max-width:140px"><button class="ghost" id="portRestore" type="button" title="恢复默认端口 3210" style="margin-left:8px">恢复原端口(3210)</button><span class="hint" style="margin-left:8px">修改后需重启机器人生效（一键关闭→一键启动）</span></div></div>
       <div class="row"><label>自动开浏览器</label><input type="checkbox" data-cfg="server.auto_open_browser"></div>
       <div class="row"><label>访问口令（掩码）</label><div class="grow" style="display:flex;align-items:center;gap:8px"><input type="password" data-cfg="server.token" placeholder="留空=启动时自动生成" style="flex:1"><button class="ghost" id="tkShow" type="button">显示</button><span class="hint">网址里 ?token= 后就是它；访问口令=控制台钥匙，请保密</span></div></div>
       <div class="row"><label>统计周期</label><div class="grow"><select data-cfg="stats.period">
@@ -4005,6 +4005,15 @@ $('unifiedTierChk').addEventListener('change', ()=>renderGroupTierBox());
   };
 })();
 
+/* ── 端口一键恢复 ── */
+(function(){
+  const b = document.getElementById('portRestore');
+  if(!b) return;
+  b.onclick = ()=>{
+    const i = document.querySelector('[data-cfg="server.port"]');
+    if(i){ i.value = '3210'; setPath(cfg, 'server.port', 3210); toast('端口已改回 3210（保存设置后重启机器人生效）'); }
+  };
+})();
 /* ── 访问口令掩码显示切换 ── */
 (function(){
   const b = document.getElementById('tkShow');
