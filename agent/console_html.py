@@ -476,10 +476,10 @@ th{color:var(--tx2);font-weight:500}
             <option value="1">高峰（工作日 9-12 / 14-18）</option>
           </select>
         </div>
-        <div class="row" style="margin:6px 0"><label></label>
-          <button class="pri" id="fcCalc" type="button">计算</button>
+        <div class="row" style="margin:8px 0;justify-content:center">
+          <button class="pri" id="fcCalc" type="button" style="min-width:160px">计算</button>
         </div>
-        <div class="row" style="margin:6px 0"><label></label><b id="fcResult" style="color:var(--blue)">—</b></div>
+        <div id="fcResult" style="margin:10px 0 2px;padding:14px 16px;border:1px solid var(--bd);border-radius:12px;background:var(--input-bg);font-size:14.5px;line-height:2;color:var(--tx);white-space:pre-wrap">—</div>
       </div>
       <div style="margin:10px 0 2px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         <b style="color:var(--blue)">📅 每日明细</b>
@@ -4049,11 +4049,16 @@ $('unifiedTierChk').addEventListener('change', ()=>renderGroupTierBox());
     const prCached = (p.cached!=null) ? (peak ? p.cached*2 : p.cached) : prIn;
     const per = (ti*prIn + to*prOut)/1e6;
     const perHit = (ti*prCached + to*prOut)/1e6;
-    document.getElementById('fcResult').textContent =
-      k+' 每消息 ≈ '+fmt(per)+
+    const res = document.getElementById('fcResult');
+    res.textContent =
+      '模型：' + k +
+      '　|　单价：输入 '+prIn+' 元/百万'+(p.cached!=null?('（缓存 '+prCached+'）'):'')+'，输出 '+prOut+' 元/百万'+
+      '\n──────────────────────────'+
+      '\n每消息 ≈ ' + fmt(per) +
       ((p.cached!=null && prCached<prIn) ? ('（输入全缓存命中 ≈ '+fmt(perHit)+'）') : '')+
-      '；每日 '+msgs+' 条 ≈ '+fmt(msgs*per)+'；月 ≈ '+fmt(msgs*per*30)+
-      (('deepseek'.indexOf(k)===0 && !peak) ? '（高峰月 '+fmt(msgs*per*60)+'）' : '');
+      '\n每日 '+msgs+' 条 ≈ ' + fmt(msgs*per) +
+      '\n月成本 ≈ ' + fmt(msgs*per*30) +
+      (('deepseek'.indexOf(k)===0 && !peak) ? '　（若全高峰月 '+fmt(msgs*per*60)+'）' : '');
   };
 })();
 /* ── 概览右上角计费删除按钮：页面加载级绑定（不依赖 loadSessions 是否执行过）── */
