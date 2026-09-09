@@ -446,12 +446,40 @@ class WeChatAdapter:
                 except Exception:
                     raise WeChatError("不可用：微信主窗口不可见（恢复失败）。请打开电脑微信后重试。")
             try:
+                self._limit_wechat_window(self._gui)
+            except Exception:
+                pass
+            try:
                 if self._gui.desktop_available():
                     self._gui.calibrate_layout(save=True)
             except Exception:
                 pass
             self._install_ui_patches(self._gui)
         return self._gui
+
+    def _limit_wechat_window(self, gui) -> None:
+        """微信窗口强制限位：把主窗 MoveWindow 到目标尺寸（1160×780，小屏自适应），
+        避免 wechatauto 因"当前尺寸与校准差异过大(>15%)"而忽略布局（坐标漂移根源）。"""
+        try:
+            import ctypes
+            from ctypes import wintypes
+            hwnd = int(gui.main_hwnd)
+            u = ctypes.windll.user32
+            r = wintypes.RECT()
+            u.GetWindowRect(hwnd, ctypes.byref(r))
+            sw = int(u.GetSystemMetrics(0))
+            sh = int(u.GetSystemMetrics(1))
+            tw = 1160 if sw >= 1366 else int(sw * 0.82)
+            th = 780 if sh >= 860 else int(sh * 0.84)
+            if r.right - r.left != tw or r.bottom - r.top != th:
+                u.MoveWindow(hwnd, r.left, max(40, r.top), tw, th, True)
+                time.sleep(0.4)
+                try:
+                    gui.refresh()
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     def _install_ui_patches(self, gui):
         """给 GUI 实例装「界面适配」补丁（每个实例只装一次）。
