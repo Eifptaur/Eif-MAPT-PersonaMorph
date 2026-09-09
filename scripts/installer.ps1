@@ -18,7 +18,7 @@ try {
         if ($age.TotalMinutes -lt 10) {
             Add-Type -AssemblyName System.Windows.Forms
             [System.Windows.Forms.MessageBox]::Show(
-                '安装器已在运行中。`r`n若看不到窗口，请稍等片刻或结束残留进程后重试。',
+                "安装器已在运行中。`r`n若看不到窗口，请稍等片刻或结束残留进程后重试。",
                 'wx-agent 一键启动', [System.Windows.Forms.MessageBoxButtons]::OK,
                 [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
             exit 0
@@ -147,13 +147,18 @@ function Run-Hidden([string]$exe, [string]$argLine, [string]$envName, [string]$e
     $p.StartInfo = $psi
     try { $ok = $p.Start() } catch { return @{ code = 1; err = ('start failed: ' + $_.Exception.Message) } }
     if (-not $ok) { return @{ code = 1; err = 'start returned false' } }
-    # 异步读输出（事件驱动，不阻塞主线程）；主循环 WaitForExit(100)+DoEvents 泵消息——
-    # 否则窗口消息循环不跑 → "未响应 / 进度条不动"
-    $p.add_OutputDataReceived({ param($s, $e) if ($e.Data) { Diag ('OUT> ' + $e.Data); Parse-Line $e.Data } })
-    $p.add_ErrorDataReceived({ param($s, $e) if ($e.Data) { Diag ('ERR> ' + $e.Data) } })
+    # 异步读输出 → 入队列；主循环在 UI 线程消费（事件线程直接改控件会异常闪退）
+    $script:lineQ = New-Object System.Collections.ArrayList
+    $p.add_OutputDataReceived({ param($s, $e) if ($e.Data) { [void]$script:lineQ.Add($e.Data) } })
+    $p.add_ErrorDataReceived({ param($s, $e) if ($e.Data) { [void]$script:lineQ.Add(('ERR ' + $e.Data)) } })
     $p.BeginOutputReadLine()
     $p.BeginErrorReadLine()
     while (-not $p.WaitForExit(100)) {
+        if ($script:lineQ.Count -gt 0) {
+            $ln = $script:lineQ[0]
+            $script:lineQ.RemoveAt(0)
+            try { Parse-Line $ln } catch { Diag ('Parse EX: ' + $_.Exception.Message) }
+        }
         [System.Windows.Forms.Application]::DoEvents()
     }
     return @{ code = $p.ExitCode; err = '' }
