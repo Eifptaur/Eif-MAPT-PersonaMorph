@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """Web 控制台界面（独立模板，便于大改样式而不动逻辑）。
 
 设计（参考 DeepSeek 品牌蓝 + 现代蓝白后台方案）：
@@ -3765,6 +3765,33 @@ async function loadMemory(chat_key){
         $('memEditCancel').onclick=()=>{ maskClose(mm); mm.remove(); };
       };
       tr.appendChild(editBtn);
+      const deepBtn=document.createElement('button'); deepBtn.className='ghost'; deepBtn.textContent='深度印象';
+      deepBtn.onclick=async ()=>{
+        toast('正在整理「'+name+'」的全部历史印象…');
+        try{
+          const r = await getJSON('/api/memory/deep-profile',{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({user_id:m.userId||'', name:m.name||''})});
+          if(r && r.ok){
+            const box=document.createElement('div'); box.className='box'; box.style.textAlign='left';
+            box.innerHTML='<h1>「'+esc(name)+'」深度印象</h1><p>'+esc(r.note||'')+'</p>'+
+              '<textarea id="memDeep" rows="10" class="out">'+esc(r.text||'')+'</textarea>'+
+              '<div class="btns" style="justify-content:flex-end;margin-top:10px"><button class="pri" id="memDeepOk">追加为印象</button><button class="ghost" id="memDeepCancel">取消</button></div>';
+            const mm2=document.createElement('div'); mm2.className='mask'; mm2.appendChild(box);
+            document.body.appendChild(mm2); maskOpen(mm2);
+            $('memDeepCancel').onclick=()=>{ maskClose(mm2); mm2.remove(); };
+            $('memDeepOk').onclick=async ()=>{
+              try{
+                const lines=($('memDeep').value||'').split('\n').map(s=>s.trim()).filter(Boolean);
+                const cur=(m.impressions||[]).map(e=>e.content||'').concat(lines);
+                await getJSON('/api/memory',{method:'POST',headers:{'Content-Type':'application/json'},
+                  body:JSON.stringify({action:'update',chat_key:sel.value,user_id:m.userId,name:m.name,contents:cur})});
+                toast('已追加印象'); maskClose(mm2); mm2.remove(); loadMemory(sel.value);
+              }catch(e){ toast('保存失败：'+e.message); }
+            };
+          } else toast('暂无可整理的记录：'+((r&&r.note)||(r&&r.error)||''));
+        }catch(e){ toast('整理失败：'+e.message); }
+      };
+      tr.appendChild(deepBtn);
       tr.appendChild(del);
       tb.appendChild(tr);
     }

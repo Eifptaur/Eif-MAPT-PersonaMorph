@@ -155,6 +155,36 @@ class MemoryStore:
         m[key] = member
         return entry
 
+    def collect_member_texts(self, user_id: str, name: str = "") -> list:
+        """跨所有群收集该成员的全部印象文本（真实记录，供深度提炼）。"""
+        texts = []
+        seen = set()
+        root = _data_dir()
+        try:
+            for ck in os.listdir(root):
+                cdir = os.path.join(root, ck)
+                if not os.path.isdir(cdir):
+                    continue
+                for fn in os.listdir(cdir):
+                    if not fn.endswith(".json") or fn == "_meta.json":
+                        continue
+                    try:
+                        raw = _read_json(os.path.join(cdir, fn), None)
+                    except Exception:
+                        continue
+                    if not raw:
+                        continue
+                    if str(raw.get("userId") or "") != str(user_id) and not (name and str(raw.get("name") or "") == name):
+                        continue
+                    for it in raw.get("impressions") or []:
+                        c = str(it.get("content") or "").strip()
+                        if c and len(c) >= 4 and c not in seen:
+                            seen.add(c)
+                            texts.append(c)
+        except Exception:
+            pass
+        return texts
+
     def append(self, chat_key: str, category: str, content: str, extra: dict | None = None):
         if category != "memberImpression":
             return None

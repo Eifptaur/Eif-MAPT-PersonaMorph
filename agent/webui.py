@@ -1335,8 +1335,46 @@ class WebUI:
                         self._json({"ok": True})
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)})
+                elif path == "/api/memory/deep-profile":
+                    # 群友深度印象：采集该成员全部历史真实记录 → 本地统计提炼（口癖/语气/行为），附真实原话
+                    try:
+                        from agent import memory as _mem
+                        wxid = str((data or {}).get("user_id") or "").strip()
+                        name = str((data or {}).get("name") or "").strip()
+                        if not wxid and not name:
+                            raise ValueError("缺少成员标识")
+                        mm = _mem.MemoryStore()
+                        texts = mm.collect_member_texts(wxid, name)
+                        if not texts:
+                            self._json({"ok": False, "note": "该成员暂无印象记录（机器人还没留意过 TA）；先让机器人在群里互动积累"})
+                        else:
+                            # 提炼（全部基于真实记录，不做虚构）
+                            import collections as _co
+                            import re as _re
+                            emojis = _co.Counter()
+                            for t in texts:
+                                for ch in t:
+                                    if ord(ch) > 0x2600:
+                                        emojis[ch] += 1
+                            top_emoji = [("%s×%d" % (e, c)) for e, c in emojis.most_common(5)]
+                            lens = [len(t) for t in texts]
+                            avg_len = int(sum(lens) / max(1, len(lens)))
+                            ends = _co.Counter()
+                            for t in texts:
+                                tail = t.strip()[-2:] if len(t.strip()) >= 2 else t.strip()
+                                if tail:
+                                    ends[tail] += 1
+                            top_ends = ["%s×%d" % (e, c) for e, c in ends.most_common(5)]
+                            profile = ("【群友深度印象 · 由 %d 条真实记录自动整理（未做虚构）】\n"
+                                        "高频符号/表情：%s\n平均句长：%d 字；常用结尾语气：%s\n"
+                                        "真实原话示例（逐字保留）：\n%s" %
+                                        (len(texts), "、".join(top_emoji) or "无", avg_len,
+                                         "、".join(top_ends) or "—",
+                                         "\n".join("· %s" % t[:80] for t in texts[:6])))
+                            self._json({"ok": True, "count": len(texts), "text": profile, "note": "已整理；可点「追加为印象」写入记忆"})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
                 elif path == "/api/persona/ai-enrich":
-                    # 模型补足（POST {name, text?, rounds?}；rounds=补足轮数，人设导向+分升停止）
                     try:
                         self._json(parent.persona_ai_enrich_fn(str(data.get("name") or ""),
                                                                str(data.get("text") or ""),
