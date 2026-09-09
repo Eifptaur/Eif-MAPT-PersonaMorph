@@ -1363,9 +1363,26 @@ const WHALE_CURSOR = (function(){
     let st = document.getElementById('whaleCursorStyle');
     if(!st){ st = document.createElement('style'); st.id = 'whaleCursorStyle'; document.head.appendChild(st); }
     // 注意：cursor:url() 需同时覆盖 html 与所有元素；图片加载失败用 auto（系统默认）兜底
-    st.textContent = 'html.whale-cursor,html.whale-cursor *,html.whale-cursor iframe,html.whale-cursor iframe *{cursor:url("'+u+'") 8 8, auto!important}';
+    st.textContent = 'html.whale-cursor,html.whale-cursor *{cursor:url("'+u+'") 8 8, auto!important}';
   }
-  function apply(){ setStyle(url + '?v=' + Date.now()); }
+  // 挂件 iframe（widget.js 动态创建）CSS 无法穿透：向同源 iframe 文档注入光标样式（每 2 秒扫描，已注入跳过）
+  function injectFrames(){
+    if(!enabled) return;
+    try{
+      document.querySelectorAll('iframe').forEach(f=>{
+        if(f.dataset.whaleCursorDone === url) return;
+        try{
+          const d = f.contentDocument;
+          if(!d || !d.documentElement || !d.head) return;
+          let st = d.getElementById('whaleCursorStyle');
+          if(!st){ st = d.createElement('style'); st.id = 'whaleCursorStyle'; d.head.appendChild(st); }
+          st.textContent = 'html,body,html *{cursor:url("'+url+'") 8 8, auto!important}';
+          f.dataset.whaleCursorDone = url;
+        }catch(e){}
+      });
+    }catch(e){}
+  }
+  function apply(){ setStyle(url + '?v=' + Date.now()); injectFrames(); }
   function applyNod(){ setStyle(nodUrl + '?v=' + Date.now()); }
   // 点击时点头：mousedown 换成歪头帧，180ms 后换回
   document.addEventListener('mousedown', ()=>{
@@ -1394,6 +1411,7 @@ const WHALE_CURSOR = (function(){
     }
   }
   apply();
+  setInterval(injectFrames, 2000);   // 挂件 iframe 动态出现后自动注入光标
   return { set, setCustom, url: ()=>url };
 })();
 function syncCursorFromCfg(){
