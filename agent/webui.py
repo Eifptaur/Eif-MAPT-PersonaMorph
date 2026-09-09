@@ -18,6 +18,72 @@ from .config import deep_merge, get_config, save_config, set_config
 from .console_html import HTML  # 界面模板（蓝白设计，设置项全量，独立文件便于改版）
 from .util import mask_secret, redact_secrets
 
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+# ── 数据迁移包（导出/导入：计费+对话记录 data/sessions/*.jsonl）────────────
+
+def _data_export(root: str) -> bytes:
+    """所有计费/对话记录导成一个 zip（sessions/YYYY-MM-DD.jsonl + manifest）。"""
+    import io
+    import zipfile
+    import json as _j
+    import glob
+    buf = io.BytesIO()
+    sdir = os.path.join(root, "data", "sessions")
+    files = []
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        if os.path.isdir(sdir):
+            for fp in sorted(glob.glob(os.path.join(sdir, "*.jsonl"))):
+                z.write(fp, "sessions/" + os.path.basename(fp))
+                files.append(os.path.basename(fp))
+        z.writestr("manifest.json", _j.dumps(
+            {"app": "wx-agent", "v": 1, "files": files}, ensure_ascii=False))
+    return buf.getvalue()
+
+
+def _data_import(root: str, body: bytes) -> dict:
+    """导入迁移包：按日文件合并，行级内容 md5 去重（同一条记录不重复）。"""
+    import io
+    import zipfile
+    import os as _os
+    import hashlib
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(body))
+    except Exception:
+        return {"ok": False, "error": "不是有效的迁移包（应选择「导出记录」生成的文件）"}
+    sdir = _os.path.join(root, "data", "sessions")
+    _os.makedirs(sdir, exist_ok=True)
+    added = 0
+    days = []
+    for name in zf.namelist():
+        base = _os.path.basename(name)
+        if not (name.startswith("sessions/") and base.endswith(".jsonl")):
+            continue
+        data = zf.read(name)
+        lines = [l for l in data.decode("utf-8", "replace").splitlines() if l.strip()]
+        dst = _os.path.join(sdir, base)
+        exists = set()
+        if _os.path.exists(dst):
+            with open(dst, "r", encoding="utf-8", errors="replace") as f:
+                for l in f:
+                    exists.add(hashlib.md5(l.strip().encode("utf-8", "replace")).hexdigest())
+        new_lines = []
+        for l in lines:
+            l = l.strip()
+            h = hashlib.md5(l.encode("utf-8", "replace")).hexdigest()
+            if h in exists:
+                continue
+            exists.add(h)
+            new_lines.append(l)
+        if new_lines:
+            with open(dst, "a", encoding="utf-8", errors="replace") as f:
+                f.write("\n".join(new_lines) + "\n")
+            added += len(new_lines)
+            days.append(base)
+    return {"ok": True, "added": added, "days": days,
+            "note": "新导入 %d 条记录（覆盖 %d 个日期文件，同内容自动去重）" % (added, len(days))}
+
 # 给挂件脚本（whale-widget/client/widget.js）注入访问口令：把脚本里的 /dsh-whale/*
 # 绝对路径都补上 ?token=xxx，保证前端轮询/音频请求都带上口令
 _WHALE_URL_RE = re.compile(r"(/dsh-whale/[^'\"\s?]+)(\?[^'\"\s]*)?")
@@ -721,6 +787,18 @@ class WebUI:
                         self._json(parent.selfcheck_fn(_mode))
                     except Exception as e:
                         self._json({"ok": False, "checks": [], "summary": str(e)})
+                elif path == "/api/data/export":
+                    # 导出全部计费+对话记录为一个迁移包（zip）
+                    try:
+                        self._bytes(_data_export(ROOT), "application/zip")
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/data/import":
+                    # 导入迁移包（body=zip 原始字节；合并、按内容去重）
+                    try:
+                        self._json(_data_import(ROOT, raw if isinstance(raw, (bytes, bytearray)) else b""))
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
                 elif path == "/api/wechat-groups":
                     # 检测到的群聊列表（白名单勾选用）
                     try:

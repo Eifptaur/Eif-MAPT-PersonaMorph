@@ -436,6 +436,9 @@ th{color:var(--tx2);font-weight:500}
       <span class="ov-tools">
         <button class="ghost tiny" id="costClearAll" type="button" title="一键删除全部计费历史记录">🗑 一键删</button>
         <button class="ghost tiny" id="costClearSel" type="button" title="打开计费日志弹窗，勾选删除">☑ 勾选删</button>
+        <button class="ghost tiny" id="dataExport" type="button" title="导出全部计费与对话记录为一个迁移包"><img src="/assets/icon-whale.png" style="width:14px;height:14px;vertical-align:-2px;margin-right:4px">导出记录</button>
+        <button class="ghost tiny" id="dataImport" type="button" title="从迁移包导入（合并到当前数据，按内容去重）"><img src="/assets/icon-whale.png" style="width:14px;height:14px;vertical-align:-2px;margin-right:4px">迁移数据</button>
+        <input type="file" id="dataImportFile" accept=".zip" style="display:none">
       </span>
       <h2>概览</h2>
       <div class="desc">机器人运作状态与账户信息（数据每 8 秒自动刷新）。</div>
@@ -3893,6 +3896,43 @@ $('unifiedTierChk').addEventListener('change', ()=>renderGroupTierBox());
 (function(){
   const all = document.getElementById('costClearAll');
   const sel = document.getElementById('costClearSel');
+  const ex = document.getElementById('dataExport');
+  const im = document.getElementById('dataImport');
+  const file = document.getElementById('dataImportFile');
+  const q = URL_TOKEN ? ('?token='+URL_TOKEN) : '';
+  if(ex) ex.onclick = async ()=>{
+    try{
+      const r = await fetch('/api/data/export'+q, {method:'POST'});
+      if(!r.ok){ toast('导出失败：HTTP '+r.status); return; }
+      const blob = await r.blob();
+      const d = new Date();
+      const ds = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'wx-agent-数据迁移-'+ds+'.zip';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(a.href), 5000);
+      toast('已导出记录（计费+对话），文件名见下载');
+    }catch(e){ toast('导出失败：'+e.message); }
+  };
+  if(im) im.onclick = ()=>{ if(file) file.click(); };
+  if(file) file.onchange = async ()=>{
+    const f = file.files && file.files[0];
+    if(!f) return;
+    try{
+      const r = await fetch('/api/data/import'+q, {method:'POST', body: f});
+      const j = await r.json();
+      if(j && j.ok){
+        toast('迁移完成：'+j.note);
+        if(typeof loadSessions==='function') loadSessions();
+        if(window.__renderCal) window.__renderCal();
+        if(typeof loadStatus==='function') loadStatus();
+      } else {
+        toast('迁移失败：'+((j && j.error) || '未知'));
+      }
+    }catch(e){ toast('迁移失败：'+e.message); }
+    file.value='';
+  };
   if(all) all.onclick = async ()=>{
     if(!await uiConfirm('确认一键删除全部计费历史（今日/周期/累计用量的历史记录）？')) return;
     try{
