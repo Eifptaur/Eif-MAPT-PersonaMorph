@@ -2169,8 +2169,9 @@ class WeChatAdapter:
         return (int(render[2] * 0.302), int(render[3] * 0.879 - 18))
 
     def _panel_rect(self, gui):
-        """动态定位表情面板（WinUI Popup/SiteBridge 可见窗）矩形（屏幕坐标）。
-        面板几何随窗口尺寸变化，绝对比例不准；按面板自身矩形相对定位才稳定。"""
+        """动态定位表情面板矩形（屏幕坐标）。
+        优先 SiteBridge/PopupWindow（旧 UI 独立窗）；新版（WinUI 内嵌弹层）按微信子窗尺寸特征找；
+        都找不到时按主窗右下区域（输入框上方）估算，保证布局推理有基准。"""
         try:
             import ctypes
             from ctypes import wintypes
@@ -2179,7 +2180,8 @@ class WeChatAdapter:
             user32.GetWindowThreadProcessId(int(gui.main_hwnd), ctypes.byref(pid))
             wx_pid = pid.value
             CB = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
-            out = [None]
+            found = [None]
+
             def cb(h, l):
                 if h == int(gui.main_hwnd) or not user32.IsWindowVisible(h):
                     return True
@@ -2190,16 +2192,29 @@ class WeChatAdapter:
                 buf = ctypes.create_unicode_buffer(256)
                 user32.GetClassNameW(h, buf, 256)
                 cls = buf.value or ""
+                r = wintypes.RECT(); user32.GetWindowRect(h, ctypes.byref(r))
+                w, hh = r.right - r.left, r.bottom - r.top
                 if "SiteBridge" in cls or cls.startswith("PopupWindow"):
-                    r = wintypes.RECT(); user32.GetWindowRect(h, ctypes.byref(r))
-                    w, hh = r.right - r.left, r.bottom - r.top
-                    if w < 400 or hh < 380 or w > 1200 or hh > 900:
-                        return True
-                    out[0] = (r.left, r.top, r.right, r.bottom)
-                    return False
-                return True
+                    if 380 <= w <= 1300 and 360 <= hh <= 950:
+                        found[0] = (r.left, r.top, r.right, r.bottom)
+                        return False
+                elif w < 200 or hh < 200 or w > 1300 or hh > 950:
+                    return True
+                # 新 UI 内嵌/独立弹层：尺寸像面板的微信子窗（位于主窗下半部）
+                found[0] = (r.left, r.top, r.right, r.bottom)
+                return False
             ref = CB(cb); user32.EnumWindows(ref, 0)
-            return out[0]
+            if found[0]:
+                return found[0]
+        except Exception:
+            pass
+        # 兜底：主窗右下面板估算（输入栏上方）
+        try:
+            r = wintypes.RECT()
+            ctypes.windll.user32.GetWindowRect(int(gui.main_hwnd), ctypes.byref(r))
+            l, t, rt, b = r.left, r.top, r.right, r.bottom
+            W, H = rt - l, b - t
+            return (l + int(W * 0.30), t + int(H * 0.20), max(l + int(W * 0.30) + 460, l + W - 40), t + H - 130)
         except Exception:
             return None
 
@@ -2338,71 +2353,52 @@ class WeChatAdapter:
         except Exception:
             return None
 
-    def emoji_panel_send(self, index: int = 0) -> tuple:
-        """点爱心（标签行最右）→ 点第 index 个收藏表情格（单击即发送）。
+    def _emoji_bottom_bar(self, sx, sy, sw, sh) -> bool:
+        """面板底部 0.92~0.985 高度带是否有图标暗点 → 新 UI 底部工具栏（面板默认即收藏视图）。"""
+        try:
+            from PIL import ImageGrab as _IG
+            img = _IG.grab((sx, sy, sx + sw, sy + sh)).convert("L")
+            px = img.load()
+            dark = 0
+            for yy in range(int(sh * 0.92), int(sh * 0.985), 2):
+                for xx in range(int(sw * 0.04), int(sw * 0.60), 2):
+                    if px[xx % max(1, sw), yy % max(1, sh)] < 210:
+                        dark += 1
+            return dark >= 8
+        except Exception:
+            return False
 
-        自适应几何（全部用「渲染窗比例」，随 DPI/分辨率缩放；窗口被 _force_geometry 固定为标准尺寸）：
-          · 5 列；第一格中心 (0.092, 0.277)；列距 0.107；行距 0.125（客服实测：表情图107px+间隙23px≈130~140px/格，=132/1055）。
-          · 顶/底特殊半行 ≈0.081（=85px/1055，用户实测 84/86px），只是布局说明，目标行只在完整行内点。
-        滚轮（实测方向）：+wheel=向顶部/更早滚，-wheel=向后面/底部滚；微信为平滑滚动会并吞快速事件，
-          故每格留 0.35~0.5s。滚一行所需 wheel 单位 = 行距px / 0.44（每单位约滚 0.44 渲染px），随 DPI/分辨率自适应。
-        """
+    def emoji_panel_send(self, index: int = 0) -> tuple:
+        """发送收藏表情：布局自适应 —— 旧 UI：点爱心（面板标签行）→ 点第 index 格；
+        新 UI：面板默认即收藏视图（底栏工具栏），直接点第 index 格。
+        网格几何按面板自身矩形推算（5 列），随 DPI/分辨率/面板尺寸自适应。"""
         import ctypes
         try:
             gui = self._get_gui()
             from . import ui_adapt
+            panel = self._panel_rect(gui)
+            if not panel:
+                return False, "找不到表情面板"
+            px0, py0, px1, py1 = panel
+            pw, ph = px1 - px0, py1 - py0
             render = gui.render_rect or gui._update_render_rect() or (0, 0, 0, 0)
-            sx, sy, sw, sh = render
-            # ① 点爱心（面板底栏标签行最右）
-            tags_x = sx + int(sw * 0.171)
-            tags_y = sy + int(sh * 0.804 - 13)
-            ui_adapt.click(gui, tags_x - sx, tags_y - sy, heal=False)
-            time.sleep(0.6)
-            # ② 点第 index 个表情格（5 列网格）
+            rx, ry = int(render[0]), int(render[1])
+            # ① 旧 UI 才点爱心；新 UI（底部有工具栏图标）默认即收藏视图
+            if not self._emoji_bottom_bar(px0, py0, pw, ph):
+                old_x = px0 + int(pw * 0.171)
+                old_y = py0 + int(ph * 0.804 - 13)
+                ui_adapt.click(gui, old_x - rx, old_y - ry, heal=False)
+                time.sleep(0.6)
+            # ② 网格（5 列，相对面板）：第一列中心 0.10W，列距 0.19W；行距 0.14H
             cols = 5
             col = index % cols
             row = index // cols
-            VISIBLE = 4          # 每屏完整行数（顶部/底部另有 85px 半行）
-            ROW0, PITCH_R, COL0, PITCH_C = 0.277, 0.125, 0.092, 0.107
-            # 滚轮：+wheel=顶部/更早，-wheel=底部/更后；实测「每 -150 ≈ 整一行(132px)」
-            #（-300 会一次滚约2行，导致目标行滚过一行；故每行用 -150）。
-            WHEEL_ROW = 150
-            click_row = row
-            _base = None
-            # 总是先【向上滚到最顶】（+wheel=向顶部；微信会记住上次滚动位置，发送前必须回顶，
-            # 否则"第一个"会错点成记忆位置处的格；加速=压紧间隔+少几次，但微信平滑滚动会并吞快速事件）
-            inp = gui._input
-            inp._user32.SetCursorPos(sx + int(sw * COL0), sy + int(sh * ROW0))
-            time.sleep(0.15)
-            for _top in range(10):
-                inp.wheel(500)
-                time.sleep(0.14)          # 压缩到顶等待（原 0.22；仍给微信平滑滚动留间隔防并吞）
-            time.sleep(0.4)
-            _base = self._emoji_base_center(gui)
-            if row >= VISIBLE:
-                # 向下滚到目标行：要 row R 落到「底部完整行」(viewport row 3)，需下滚 (R-3) 行
-                _rolls = row - (VISIBLE - 1)
-                for _s in range(_rolls):
-                    inp.wheel(-WHEEL_ROW)      # -wheel = 向列表后面/底部滚；每格≈一行
-                    time.sleep(0.3)            # 原 0.4 压缩
-                time.sleep(0.35)
-                click_row = VISIBLE - 1
-            # 点击点（渲染相对坐标）：
-            #  · 中间行(目标不是最底)：视口 base+click_row×132（实测对 第21/27/24）。
-            #  · 最后一行(滚到底/顶部露半行)：用「检测最底部完整行中心」（实测对 第31）。
-            grid_x = sx + int(sw * (COL0 + col * PITCH_C))
-            if row >= 6:                      # 较晚的行视为接近末尾，用检测最底部完整行中心
-                _rc = self._emoji_bottom_center(gui)
-                if _rc is not None:
-                    grid_y = sy + _rc
-                else:
-                    grid_y = sy + _base + int(click_row * self.EMOJI_ROW_PX)
-            elif _base is not None:
-                grid_y = sy + _base + int(click_row * self.EMOJI_ROW_PX)
-            else:
-                grid_y = sy + int(sh * (ROW0 + click_row * PITCH_R))
-            # 已删除"每次整窗 ImageGrab 存调试截图"——它让每次发送额外多几秒，属程序冗余（提速）。
-            ok, why = ui_adapt.click(gui, grid_x - sx, grid_y - sy, heal=False)
+            ROWS = 5   # 一屏完整行（面板约 6~7 行，预留）
+            if row >= ROWS:
+                return False, "收藏较多（%d 个）超出面板首屏，请先发送靠前的收藏" % (index + 1)
+            grid_x = px0 + int(pw * (0.10 + col * 0.19))
+            grid_y = py0 + int(ph * (0.085 + row * 0.14))
+            ok, why = ui_adapt.click(gui, grid_x - rx, grid_y - ry, heal=False)
             if not ok:
                 return False, "点表情失败：%s" % why
             time.sleep(1.0)
