@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """Web 控制台界面（独立模板，便于大改样式而不动逻辑）。
 
 设计（参考 DeepSeek 品牌蓝 + 现代蓝白后台方案）：
@@ -1010,12 +1010,12 @@ th{color:var(--tx2);font-weight:500}
         <option value="1.75">175%</option><option value="2.0">200%</option></select></div></div>
       <div class="row"><label>自定义背景</label><div class="grow">
         <div class="btns" style="justify-content:flex-start;gap:8px">
-          <button id="bgUpload" class="ghost">上传背景图</button>
+          <button id="bgUpload" class="ghost">上传背景图/视频</button>
           <button id="bgClear" class="ghost">恢复默认</button>
           <span class="hint" id="bgRst"></span>
         </div>
-        <input type="file" id="bgFile" accept="image/*" style="display:none">
-        <div class="hint">选一张图片（≤1920px，自动压缩）：深蓝海/星河等任意图；点「恢复默认」回到内置背景。</div>
+        <input type="file" id="bgFile" accept="image/*,video/*" style="display:none">
+        <div class="hint">图片：PNG / JPEG / WEBP / GIF（≤1920px 自动压缩）；视频：MP4 / WEBM / OGG（自动全屏循环）。点「恢复默认」回到内置海浪。</div>
       </div></div>
       <div class="row"><label>控制台主题</label><div class="grow"><select data-cfg="ui.theme">
         <option value="whale">🐋 鲸落（默认：深海蓝渐变）</option>
@@ -1549,8 +1549,26 @@ async function load(){
 function applyCustomBg(){
   try{
     const has = cfg && (getPath(cfg,'ui.background')||'') === 'custom';
+    const vt = (cfg && getPath(cfg,'ui.bg_type')) || 'image';
     document.body.classList.toggle('custom-bg', !!has);
-    // 默认背景=海浪（assets/wallpaper/ocean1.jpg）；自定义后=ui-bg.jpg
+    // 默认背景=海浪（assets/wallpaper/ocean1.jpg）；自定义后=ui-bg.*
+    if(has && vt === 'video'){
+      document.body.classList.add('wall-video');
+      document.body.classList.add('custom-video-bg');
+      document.body.style.setProperty('--bgimg', 'url(/assets/ui-bg.jpg)');
+      const v = document.getElementById('wallVideo');
+      if(v){
+        for(const ext of ['mp4','webm','ogg']){
+          const src = '/assets/ui-bg.'+ext;
+          const xhr = new XMLHttpRequest();
+          xhr.open('HEAD', src, true);
+          xhr.onreadystatechange = ()=>{ if(xhr.readyState===4 && xhr.status===200){ v.src = src; v.load(); v.play().catch(()=>{}); } };
+          xhr.send(); break;  // 由后端清旧ext保证唯一，mp4 优先
+        }
+      }
+      return;
+    }
+    document.body.classList.remove('custom-video-bg');
     document.body.style.setProperty('--bgimg', has ? 'url(/assets/ui-bg.jpg)' : 'url(/wallpaper/ocean1.jpg)');
     if(has && !document.body.classList.contains('wall-video')) document.body.style.setProperty('--bgimg', 'url(/assets/ui-bg.jpg)');
     if(has) document.body.classList.remove('wall-video');

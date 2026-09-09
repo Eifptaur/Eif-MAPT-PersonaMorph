@@ -1366,18 +1366,42 @@ class WebUI:
                             try:
                                 img_bytes = _b64.b64decode(raw, validate=False)
                             except Exception:
-                                raise ValueError("base64 解码失败（图片数据损坏？请重试或换一张图）")
-                            from PIL import Image
-                            import io as _io
-                            try:
-                                im = Image.open(_io.BytesIO(img_bytes)).convert("RGB")
-                            except Exception:
-                                raise ValueError("图片格式无法识别（仅支持 PNG/JPEG/WEBP/GIF）")
-                            im.thumbnail((1920, 1080))
-                            im.save(_p, "JPEG", quality=82)
+                                raise ValueError("base64 解码失败（文件数据损坏？请重试）")
+                            # 格式探测（图片 + 视频全兼容：png/jpg/jpeg/webp/gif/mp4/webm/ogg）
+                            import io as _io2
+                            head = img_bytes[:64]
+                            mime = ""
+                            if head[:8] == b"\x89PNG\r\n\x1a\n":
+                                mime, ext, is_video = "image/png", "png", False
+                            elif head[:3] == b"\xff\xd8\xff":
+                                mime, ext, is_video = "image/jpeg", "jpg", False
+                            elif head[:12] == b"RIFF" and head[8:12] == b"WEBP":
+                                mime, ext, is_video = "image/webp", "webp", False
+                            elif head[:6] in (b"GIF87a", b"GIF89a"):
+                                mime, ext, is_video = "image/gif", "gif", False
+                            elif head[4:12] == b"ftypmp4" or head[4:12] == b"ftypisom" or b"ftyp" in head[4:12]:
+                                mime, ext, is_video = "video/mp4", "mp4", True
+                            elif head[:4] == b"\x1aE\xdf\xa3":
+                                mime, ext, is_video = "video/webm", "webm", True
+                            elif head[:4] == b"OggS":
+                                mime, ext, is_video = "video/ogg", "ogg", True
+                            else:
+                                raise ValueError("格式无法识别：图片支持 PNG/JPEG/WEBP/GIF；视频支持 MP4/WEBM/OGG")
+                            _p2 = parent._data_path("ui_bg." + ext)
+                            with open(_p2, "wb") as _fw:
+                                _fw.write(img_bytes)
+                            # 清掉旧的其他扩展（避免残留）
+                            for _old in ("jpg", "png", "webp", "gif", "mp4", "webm", "ogg"):
+                                if _old != ext:
+                                    try:
+                                        _oo = parent._data_path("ui_bg." + _old)
+                                        if os.path.exists(_oo):
+                                            os.remove(_oo)
+                                    except Exception:
+                                        pass
                             try:
                                 from agent.config import get_config as _gc, save_config as _sc
-                                _c = _gc(); _c.setdefault("ui", {})["background"] = "custom"; _sc(_c)
+                                _c = _gc(); _c.setdefault("ui", {})["background"] = "custom"; _c.setdefault("ui", {})["bg_type"] = "video" if is_video else "image"; _sc(_c)
                             except Exception:
                                 pass
                             self._json({"ok": True, "note": "背景已保存并应用"})
