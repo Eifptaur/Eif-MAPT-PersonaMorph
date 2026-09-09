@@ -104,8 +104,12 @@ check("agent.wechat（含版本检测）", module_ok, module_detail)
 if _wvi is not None:
     _wi = _wvi()
     detail = _wi.get("detail") or ""
-    check("微信版本检测", bool(_wi.get("found")) and bool(_wi.get("supported")),
-          "微信 %s · 适配层 %s" % (_wi.get("version") or "未检测到", _wi.get("adapter") or "-"))
+    if _wi.get("found") and _wi.get("supported"):
+        check("微信版本检测", True, "微信 %s · 适配层 %s" % (_wi.get("version") or "?", _wi.get("adapter") or "-"))
+    else:
+        # 微信未打开/不可见：不阻断启动——机器人打开控制台后，监听循环每 10 秒会自动重试接入（微信在线即用）
+        warn("微信未检测到（请保持微信登录；机器人会自动重试接入，不影响控制台使用）")
+        _warn_notes.append("微信未检测到（自动重试接入中）")
 else:
     check("微信版本检测", False, "module import 失败")
 PROJECT_MODULES = [
