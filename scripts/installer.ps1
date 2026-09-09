@@ -147,7 +147,7 @@ function Run-HiddenLogWatch([string]$exe, [string]$argLine, [string]$envName, [s
     if ($env:WX_ONESTART_CHECK) { $psi.EnvironmentVariables['WX_ONESTART_CHECK'] = $env:WX_ONESTART_CHECK }
     $p = New-Object System.Diagnostics.Process
     $p.StartInfo = $psi
-    try { $ok = $p.Start() } catch { return @{ code = 1; err = ('start failed: ' + $_.Exception.Message) } }
+    try { $ok = $p.Start() } catch { Diag ('start fail: exe=[' + $exe + '] arg=[' + $argLine + '] exists=' + (Test-Path $exe)); return @{ code = 1; err = ('start failed: ' + $_.Exception.Message) } }
     if (-not $ok) { return @{ code = 1; err = 'start returned false' } }
     while (-not $p.WaitForExit(100)) {
         try {
@@ -182,7 +182,7 @@ function Run-Hidden([string]$exe, [string]$argLine, [string]$envName, [string]$e
     if ($env:WX_ONESTART_CHECK) { $psi.EnvironmentVariables['WX_ONESTART_CHECK'] = $env:WX_ONESTART_CHECK }
     $p = New-Object System.Diagnostics.Process
     $p.StartInfo = $psi
-    try { $ok = $p.Start() } catch { return @{ code = 1; err = ('start failed: ' + $_.Exception.Message) } }
+    try { $ok = $p.Start() } catch { Diag ('start fail: exe=[' + $exe + '] arg=[' + $argLine + '] exists=' + (Test-Path $exe)); return @{ code = 1; err = ('start failed: ' + $_.Exception.Message) } }
     if (-not $ok) { return @{ code = 1; err = 'start returned false' } }
     # 异步读输出 → 线程安全队列；主循环在 UI 线程消费（事件线程直接改控件会异常闪退）
     $script:lineQ = New-Object 'System.Collections.Concurrent.ConcurrentQueue[string]'
@@ -288,6 +288,19 @@ if (-not $pyCmd) {
     Set-State '未找到可用的 Python' 0 0 '点击「关闭」后重试或检查网络'
     Wait-Close
     return
+}
+if (-not (Test-Path $pyCmd)) {
+    # Python 路径失效（runtime 被删/换目录）：重跑准备脚本再读一次
+    Diag ('pyCmd 无效，重跑 setup_python: [' + $pyCmd + ']')
+    $r3 = Run-HiddenLogWatch 'powershell.exe' ('-NoProfile -ExecutionPolicy Bypass -File "' + $ps1 + '"') '' ''
+    $pyCmd = ''
+    if (Test-Path $pth) { $pyCmd = ([IO.File]::ReadAllText($pth)).Trim() }
+    Diag ('重读 pyCmd=[' + $pyCmd + ']')
+    if (-not $pyCmd -or -not (Test-Path $pyCmd)) {
+        Set-State 'Python 环境异常' 0 0 'runtime\python\python.exe 不存在，请重新解压完整包'
+        Wait-Close
+        return
+    }
 }
 Set-State '检查 / 安装依赖…' 12 1 'Python 就绪'
 Diag ('step: pyCmd=[' + $pyCmd + ']')
