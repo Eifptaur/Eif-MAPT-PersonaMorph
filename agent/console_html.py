@@ -462,6 +462,30 @@ th{color:var(--tx2);font-weight:500}
         <div class="s"><b id="st-extra">—</b><span>今日其他工具成本</span></div>
         <div class="s"><b id="st-extra2">—</b><span>累计其他工具成本</span></div>
       </div>
+      <div class="card" id="feeCalc" style="margin-bottom:14px">
+        <h2>🧮 费用计算器（官方峰谷价）</h2>
+        <div class="desc">选模型与每日用量估算成本；高峰=工作日 9:00-12:00 / 14:00-18:00，其余为空闲价（周末全天空闲价）</div>
+        <div class="row" style="margin:4px 0"><label>模型</label>
+          <select id="fcModel">
+            <option value="flash">deepseek-v4-flash</option>
+            <option value="vision">deepseek-v4-flash-vision-exp</option>
+          </select>
+        </div>
+        <div class="row" style="margin:4px 0"><label>每日消息数</label><input id="fcMsgs" type="number" value="200" min="0" style="width:130px"></div>
+        <div class="row" style="margin:4px 0"><label>每消息输入 Token</label><input id="fcIn" type="number" value="800" min="0" style="width:130px"></div>
+        <div class="row" style="margin:4px 0"><label>每消息输出 Token</label><input id="fcOut" type="number" value="800" min="0" style="width:130px"></div>
+        <div class="row" style="margin:4px 0"><label>时段</label>
+          <select id="fcPeak">
+            <option value="0">空闲（夜间/周末）</option>
+            <option value="1">高峰（工作日 9-12 / 14-18）</option>
+          </select>
+        </div>
+        <div class="row" style="margin:6px 0"><label></label>
+          <button class="pri" id="fcCalc" type="button">计算</button>
+          <span class="hint" style="margin-left:8px">输入缓存命中按 0.02/0.04 元计价</span>
+        </div>
+        <div class="row" style="margin:6px 0"><label></label><b id="fcResult" style="color:var(--blue)">—</b></div>
+      </div>
       <div style="margin:10px 0 2px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         <b style="color:var(--blue)">📅 每日明细</b>
         <span class="hint" style="flex:1">点日期查看当天会话/词数/成本；点「年月」任意地方跳转年份</span>
@@ -3898,6 +3922,25 @@ $('unifiedTierChk').addEventListener('change', ()=>renderGroupTierBox());
   };
 })();
 
+/* ── 费用计算器（官方峰谷价）── */
+(function(){
+  const btn = document.getElementById('fcCalc');
+  if(!btn) return;
+  const fmt = n => n>=0.01 ? ('¥'+n.toFixed(2)) : ('¥'+n.toFixed(4));
+  btn.onclick = () => {
+    const msgs = Math.max(0, parseFloat(document.getElementById('fcMsgs').value)||0);
+    const ti = Math.max(0, parseFloat(document.getElementById('fcIn').value)||0);
+    const to = Math.max(0, parseFloat(document.getElementById('fcOut').value)||0);
+    const peak = document.getElementById('fcPeak').value === '1';
+    const pIn = peak ? 2 : 1, pOut = peak ? 8 : 4, pHit = peak ? 0.04 : 0.02;
+    const per = (ti*pIn + to*pOut)/1e6;
+    const perHit = (ti*pHit + to*pOut)/1e6;
+    const day = msgs*per, dayHit = msgs*perHit;
+    document.getElementById('fcResult').textContent =
+      '每消息 ≈ '+fmt(per)+(perHit<per?('（缓存命中输入 ≈ '+fmt(perHit)+'）'):'')+
+      '；每日 '+msgs+' 条 ≈ '+fmt(day)+'；月成本 ≈ '+fmt(day*30)+'（空闲月 = '+fmt(day*15)+'）';
+  };
+})();
 /* ── 概览右上角计费删除按钮：页面加载级绑定（不依赖 loadSessions 是否执行过）── */
 (function(){
   const all = document.getElementById('costClearAll');
