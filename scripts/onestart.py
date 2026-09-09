@@ -252,6 +252,18 @@ def _mark_browser_opened():
         pass
 
 
+def _browser_recently_opened(seconds=90):
+    try:
+        mk = os.path.join(LOG_DIR, "browser_opened.txt")
+        if os.path.exists(mk):
+            with open(mk, encoding="utf-8") as f:
+                t = float((f.read() or "0").strip() or 0)
+            return time.time() - t < seconds
+    except Exception:
+        pass
+    return False
+
+
 def _open_console(url, browser_path=""):
     """打开控制台浏览器：配置/探测的浏览器 exe 优先，否则系统默认（start）。"""
     try:
