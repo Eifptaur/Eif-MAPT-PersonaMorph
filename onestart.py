@@ -140,7 +140,7 @@ def run_stream(cmd, timeout=900, on_line=None):
 
 
 def _ask_shortcut():
-    """安装完成弹窗：桌面无「一键启动」快捷方式时，弹自定义窗口询问是否创建
+    """启动完成弹窗：桌面无「一键启动」快捷方式时，弹自定义窗口询问是否创建
     （图标+标题+说明+彩色按钮，不是系统简陋消息框）。选择「立即创建」则生成 lnk。"""
     try:
         desktop = os.path.join(os.environ.get("USERPROFILE", ""), "Desktop")
@@ -160,7 +160,7 @@ def _ask_shortcut():
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 $f = New-Object System.Windows.Forms.Form
-$f.Text = 'wx-agent 安装完成'
+$f.Text = 'wx-agent 启动完成'
 $f.StartPosition = 'CenterScreen'
 $f.FormBorderStyle = 'FixedDialog'
 $f.MaximizeBox = $false; $f.MinimizeBox = $false
@@ -174,7 +174,7 @@ $pic.Location = New-Object System.Drawing.Point(26, 26)
 $pic.Size = New-Object System.Drawing.Size(76, 76)
 $f.Controls.Add($pic)
 $l1 = New-Object System.Windows.Forms.Label
-$l1.Text = 'wx-agent 安装完成'
+$l1.Text = 'wx-agent 启动完成'
 $l1.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 15, [System.Drawing.FontStyle]::Bold)
 $l1.Location = New-Object System.Drawing.Point(118, 26)
 $l1.AutoSize = $true
@@ -252,6 +252,82 @@ def _mark_browser_opened():
         pass
 
 
+def _try_browser_lock(seconds=90):
+    """原子抢占"打开浏览器"锁：并发下只有一个进程成功（O_CREAT|O_EXCL 不可重入）。"""
+    mk = os.path.join(LOG_DIR, "browser_opened.lock")
+    try:
+        if os.path.exists(mk):
+            try:
+                with open(mk, encoding="utf-8") as f:
+                    t = float((f.read() or "0").strip() or 0)
+                if time.time() - t < seconds:
+                    return False      # 别人刚打开（锁未过期）
+            except Exception:
+                pass
+            try:
+                os.remove(mk)
+            except Exception:
+                pass
+        fd = os.open(mk, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.write(fd, str(time.time()).encode("ascii", "replace"))
+        os.close(fd)
+        return True                   # 拿到锁 → 我来打开
+    except FileExistsError:
+        return False
+    except Exception:
+        return True                   # 极端情况：放开（避免全都不打开）
+
+
+def _build_tag_local():
+    try:
+        import datetime
+        mt = os.path.getmtime(os.path.join(ROOT, "agent", "console_html.py"))
+        return "b." + datetime.datetime.fromtimestamp(mt).strftime("%m%d-%H%M")
+    except Exception:
+        return "b?"
+
+
+def _probe_running_instance(timeout=2):
+    """探测 3210：'same'=当前版本在跑 / 'old'=旧版本在跑 / 'none'=无实例。"""
+    try:
+        import urllib.request
+        import json as _j
+        with urllib.request.urlopen("http://127.0.0.1:3210/api/version", timeout=timeout) as _r:
+            _d = _j.loads(_r.read().decode("utf-8", "replace"))
+            return "same" if str(_d.get("ver") or "") == _build_tag_local() else "old"
+    except Exception:
+        return "none"
+
+
+def _kick_old_instance():
+    """踢掉旧版本实例（3210 的 wx_agent/watchdog + 启动器/关闭器进程）。"""
+    try:
+        out = subprocess.check_output(
+            'wmic process where "name like \'python%\' or name like \'cscript%\'" get processid,commandline '
+            '/format:csv', shell=True, text=True, errors="replace")
+        for line in out.splitlines():
+            if any(k in line for k in ("wx_agent.py", "watchdog.py", "onestart.py")) and "plugin" not in line:
+                parts = line.rsplit(",", 1)
+                if parts and parts[-1].strip().isdigit():
+                    subprocess.run(["taskkill", "/F", "/PID", parts[-1].strip()],
+                                   capture_output=True, creationflags=0x08000000)
+    except Exception:
+        pass
+    time.sleep(1.5)
+
+
+def _open_current_console():
+    """同版本已在运行：直接打开控制台（读 config 的端口/token）。"""
+    try:
+        from agent.config import get_config
+        sc = get_config().get("server", {})
+        url = "http://127.0.0.1:%s/?token=%s" % (int(sc.get("port") or 3210), str(sc.get("token") or ""))
+        return _open_console(url)
+    except Exception as e:
+        log("打开控制台失败：%s" % e)
+        return False
+
+
 def _open_console(url, browser_path=""):
     """打开控制台浏览器：配置/探测的浏览器 exe 优先，否则系统默认（start）。"""
     try:
@@ -281,6 +357,25 @@ def main():
     log("╔══════════════════════════════════════════════╗")
     log("║        wx-agent 一键启动（全程进度）         ║")
     log("╚══════════════════════════════════════════════╝")
+
+    # 自动检测旧实例：同版本→直接开控制台；旧版本→踢掉再启动新版（杜绝 404/旧代码）
+    if not check_only:
+        try:
+            _st = _probe_running_instance()
+            if _st == "same":
+                log("检测到当前版本控制台已在运行，直接打开浏览器（不再重复启动）。")
+                evt("PHASE", "boot")
+                _open_current_console()
+                evt("DONE")
+                return 0
+            if _st == "old":
+                log("检测到旧版本实例（/api/version 指纹不同），自动踢出旧进程后启动新版…")
+                evt("PHASE", "boot")
+                _kick_old_instance()
+                log("旧实例已清理，继续一键启动。")
+        except Exception:
+            pass
+
     log("[1/3] 依赖检查（缺则自动安装；已装自动跳过）")
     py = sys.executable or "python"
 
@@ -288,12 +383,22 @@ def main():
     deps_done = [0]
     evt("PHASE", "deps")
 
+    # 依赖安装实时进度：统计 requirements 包数作为总量，逐包 +1（pip Collecting/Downloading/安装缺失 均计）
+    try:
+        _req_n = len([_l for _l in open(os.path.join(ROOT, "requirements.txt"), encoding="utf-8")
+                      if _l.strip() and not _l.strip().startswith("#")])
+    except Exception:
+        _req_n = 21
+    deps_install = [0]
+
     def _deps_progress(ln):
         if ln.startswith("OK"):
             deps_done[0] += 1
             _prog("依赖检查", min(deps_done[0], 14), 14)
-        elif ("安装缺失" in ln or "正在安装" in ln) and _LAST_PROG.get("安装依赖") is None:
-            _prog("安装依赖", 14, 14)
+        elif ("安装缺失" in ln or "正在安装" in ln or ln.startswith("Collecting")
+                or ln.startswith("Downloading")):
+            deps_install[0] += 1
+            _prog("安装依赖", min(deps_install[0], _req_n), _req_n)
 
     ok, tail = run_stream([py, "-X", "utf8", "-u", os.path.join(ROOT, "scripts", "setup_deps.py")],
                           on_line=_deps_progress)
