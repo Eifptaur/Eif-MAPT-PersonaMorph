@@ -2271,6 +2271,11 @@ def main():
                         if os.path.exists(_mk):
                             _t = float(open(_mk, encoding="utf-8").read().strip() or 0)
                             if time.time() - _t < 90:
+                                try:
+                                    with open(os.path.join(ROOT, "logs", "browser_opened.txt"), "w", encoding="utf-8") as _f:
+                                        _f.write(str(time.time()))
+                                except Exception:
+                                    pass
                                 log.info("浏览器已由一键启动打开，本次不再重复打开")
                                 _bp_skip = True
                     except Exception:

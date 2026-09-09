@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """Web 控制台界面（独立模板，便于大改样式而不动逻辑）。
 
 设计（参考 DeepSeek 品牌蓝 + 现代蓝白后台方案）：
@@ -184,7 +184,7 @@ a{color:var(--blue)}
 .topbar .logo span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 /* 鲸鱼徽章：绿底 + 白鲸主体（可拖拽：按住鲸鱼拖出，松开随机三态返回）；flex 不收缩，尺寸恒定 */
 .whale-badge{position:relative;flex:0 0 52px;min-width:52px;width:52px;height:52px;border-radius:13px;overflow:hidden;cursor:grab;
-  background:url(/assets/logo-bg.png) center/cover;box-shadow:0 2px 8px rgba(31,41,55,.15)}
+  background:#14161a center/cover;box-shadow:0 2px 8px rgba(31,41,55,.15)}
 .whale-badge.whale-open{overflow:visible}      /* 拖拽中取消裁切 */
 .whale-badge img{position:absolute;left:8px;bottom:6px;width:36px;height:36px;
   transform-origin:bottom center;will-change:transform}
@@ -3931,7 +3931,8 @@ $('unifiedTierChk').addEventListener('change', ()=>renderGroupTierBox());
   let PRICES = {};
   const q = URL_TOKEN ? ('?token='+URL_TOKEN) : '';
   fetch('/api/prices'+q).then(r=>r.json()).then(P=>{
-    if(!P || P.__err){ return; }
+    if(P && P.__err){ note.textContent = '加载价目失败：'+P.__err+'（请重启机器人在控制台重试）'; return; }
+    if(!P){ note.textContent = '价目加载失败（请重启机器人在控制台重试）'; return; }
     PRICES = P;
     const groups = {};
     for(const k in P){
