@@ -9,7 +9,22 @@ Set sh  = CreateObject("WScript.Shell")
 root = fso.GetParentFolderName(WScript.ScriptFullName)
 code = sh.Run("powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & root & "\scripts\installer.ps1""", 0, True)
 If code <> 0 Then
-  MsgBox "一键启动未完成，请查看：\logs\onestart.log", 48, "wx-agent"
+  Dim diag
+  diag = ""
+  If fso.FileExists(root & "\logs\installer.log") Then
+    Dim f, all, lines, k, cnt
+    Set f = fso.OpenTextFile(root & "\logs\installer.log", 1, 0)
+    all = f.ReadAll()
+    f.Close
+    lines = Split(all, vbCrLf)
+    cnt = UBound(lines)
+    If cnt >= 8 Then k = cnt - 8 Else k = 0
+    Do While k <= cnt
+      If Trim(lines(k)) <> "" Then diag = diag & lines(k) & vbCrLf
+      k = k + 1
+    Loop
+  End If
+  MsgBox "一键启动未完成，请查看：\logs\onestart.log" & vbCrLf & vbCrLf & "—— 最近诊断（logs\installer.log）——" & vbCrLf & diag, 48, "wx-agent"
   WScript.Quit 1
 End If
 WScript.Quit 0

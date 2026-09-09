@@ -153,12 +153,16 @@ function Run-Hidden([string]$exe, [string]$argLine, [string]$envName, [string]$e
     $p.add_ErrorDataReceived({ param($s, $e) if ($e.Data) { $script:lineQ.Enqueue(('ERR ' + $e.Data)) } })
     $p.BeginOutputReadLine()
     $p.BeginErrorReadLine()
-    while (-not $p.WaitForExit(100)) {
-        $ln = $null
-        while ($script:lineQ.TryDequeue([ref]$ln)) {
-            try { Parse-Line $ln } catch { Diag ('Parse EX: ' + $_.Exception.Message) }
+    try {
+        while (-not $p.WaitForExit(100)) {
+            $ln = $null
+            while ($script:lineQ.TryDequeue([ref]$ln)) {
+                try { Parse-Line $ln } catch { Diag ('Parse EX: ' + $_.Exception.Message) }
+            }
+            [System.Windows.Forms.Application]::DoEvents()
         }
-        [System.Windows.Forms.Application]::DoEvents()
+    } catch {
+        Diag ('mainloop EX: ' + $_.Exception.Message)
     }
     return @{ code = $p.ExitCode; err = '' }
 }
