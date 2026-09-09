@@ -287,6 +287,28 @@ def _build_tag_local():
         return "b?"
 
 
+def _bot_opens_console():
+    """机器人侧是否承担"打开控制台"职责（server.auto_open_browser=True 即由它单点执行）。"""
+    try:
+        from agent.config import get_config
+        return bool(get_config().get("server", {}).get("auto_open_browser", True))
+    except Exception:
+        return True
+
+
+def _probe_browser_was_opened():
+    """浏览器是否已被打开（原子锁存在且 90 秒内 = 已执行过一次打开）。"""
+    try:
+        mk = os.path.join(LOG_DIR, "browser_opened.lock")
+        if os.path.exists(mk):
+            with open(mk, encoding="utf-8") as f:
+                t = float((f.read() or "0").strip() or 0)
+            return time.time() - t < 90
+    except Exception:
+        pass
+    return False
+
+
 def _probe_running_instance(timeout=2):
     """探测控制台：'same'=当前版本在跑 / 'old'=旧版本在跑 / 'none'=无实例（端口从 config 读取，与启动器一致）。"""
     try:
@@ -505,10 +527,19 @@ def main():
                 _up = _s.connect_ex(("127.0.0.1", _port)) == 0
                 _s.close()
                 if _up:
-                    try:
-                        _open_console(_url, _bpath)
-                    except Exception as e:
-                        log("控制台已就绪但打开浏览器失败（请手动访问 %s）：%s" % (mask_url_token(_url), e))
+                    # 单点打开策略：打开动作由机器人侧（webui 就绪后、原子锁保护）唯一执行；
+                    # 启动器只等待就绪，绝不自己打开（避免与 bot 抢开 → 双开）。
+                    # 若 bot 未打开（探测锁未命中且长期无人开），此处兜底触发（仍走同一把原子锁）。
+                    if not _bot_opens_console():
+                        pass  # bot 已处理（锁表示已开/或 bot 将开），无需兜底
+                    _opened_by_bot = _probe_browser_was_opened()
+                    if not _opened_by_bot:
+                        try:
+                            _open_console(_url, _bpath)
+                        except Exception as e:
+                            log("控制台已就绪但打开浏览器失败（请手动访问 %s）：%s" % (mask_url_token(_url), e))
+                    else:
+                        log("浏览器已由机器人侧打开（单点执行），启动器不再打开。")
                     opened = True
                     break
             except Exception:
