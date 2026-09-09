@@ -1010,12 +1010,12 @@ th{color:var(--tx2);font-weight:500}
         <option value="1.75">175%</option><option value="2.0">200%</option></select></div></div>
       <div class="row"><label>自定义背景</label><div class="grow">
         <div class="btns" style="justify-content:flex-start;gap:8px">
-          <button id="bgUpload" class="ghost">上传背景图/视频</button>
+          <button id="bgUpload" class="ghost">上传背景</button>
           <button id="bgClear" class="ghost">恢复默认</button>
           <span class="hint" id="bgRst"></span>
         </div>
         <input type="file" id="bgFile" accept="image/*,video/*" style="display:none">
-        <div class="hint">图片：PNG / JPEG / WEBP / GIF（≤1920px 自动压缩）；视频：MP4 / WEBM / OGG（自动全屏循环）。点「恢复默认」回到内置海浪。</div>
+        <div class="hint">支持图片（PNG / JPEG / WEBP / GIF）与视频（MP4 / WEBM / OGG），视频自动全屏循环；点「恢复默认」回内置海浪。</div>
       </div></div>
       <div class="row"><label>控制台主题</label><div class="grow"><select data-cfg="ui.theme">
         <option value="whale">🐋 鲸落（默认：深海蓝渐变）</option>
