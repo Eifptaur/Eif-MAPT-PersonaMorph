@@ -171,13 +171,13 @@ def add_usage(target: dict, usage) -> dict:
 # 内置官方/公开参考单价表（元 / 百万 token；cached 为缓存命中价，缺省按输入价近似）
 # 139 条来自 QQ-agent 同源价目（2026-09-03 采集），其余为控制台预设目录历史型号的补充行。
 _OFFICIAL_PRICES = {
-    'deepseek-v4-flash': { 'in': 1.5, 'out': 4.5, 'cached': 0.05, 'note': '闲时价；高峰翻倍' },
-    'deepseek-v4-flash-0731': { 'in': 1.5, 'out': 4.5, 'cached': 0.05, 'note': '闲时价；高峰翻倍' },
-    'deepseek-v4-flash-vision-exp': { 'in': 1.5, 'out': 4.5, 'cached': 0.05, 'note': '视觉版，费率同 Flash；图片另按 384 token/张 上限计费' },
-    'deepseek-v4-pro': { 'in': 4.5, 'out': 13.5, 'cached': 0.15, 'note': '闲时价；高峰翻倍' },
-    'deepseek-v4-pro-0813': { 'in': 4.5, 'out': 13.5, 'cached': 0.15, 'note': '闲时价；高峰翻倍' },
-    'deepseek-chat': { 'in': 1.5, 'out': 4.5, 'cached': 0.05, 'note': '映射到 V4-Flash 档' },
-    'deepseek-reasoner': { 'in': 4.5, 'out': 13.5, 'cached': 0.15, 'note': '映射到 V4-Pro 档' },
+    'deepseek-v4-flash': { 'in': 1, 'out': 4, 'cached': 0.02, 'note': '官方2026-09-10闲时价；高峰×2（2/8/0.04）' },
+    'deepseek-v4-flash-0731': { 'in': 1, 'out': 4, 'cached': 0.02, 'note': '官方2026-09-10闲时价；高峰×2' },
+    'deepseek-v4-flash-vision-exp': { 'in': 1, 'out': 4, 'cached': 0.02, 'note': '视觉版，官方2026-09-10闲时价；高峰×2；图片另按384token/张上限' },
+    'deepseek-v4-pro': { 'in': 2, 'out': 8, 'cached': 0.04, 'note': '官方2026-09-10闲时价；高峰×2' },
+    'deepseek-v4-pro-0813': { 'in': 2, 'out': 8, 'cached': 0.04, 'note': '官方2026-09-10闲时价；高峰×2' },
+    'deepseek-chat': { 'in': 1, 'out': 4, 'cached': 0.02, 'note': '映射 V4-Flash：官方2026-09-10闲时价' },
+    'deepseek-reasoner': { 'in': 2, 'out': 8, 'cached': 0.04, 'note': '映射 V4-Pro：官方2026-09-10闲时价' },
     'deepseek-v3.1-terminus': { 'in': 1.5, 'out': 4.5, 'cached': 0.05, 'note': '旧代，按现价近似' },
     'deepseek-r1-0528': { 'in': 4.5, 'out': 13.5, 'cached': 0.15, 'note': '旧代，按现价近似' },
     'glm-5.3': { 'in': 8, 'out': 28, 'cached': 2, 'note': '1M 上下文；缓存存储限时免费' },

@@ -787,6 +787,13 @@ class WebUI:
                         self._json(parent.selfcheck_fn(_mode))
                     except Exception as e:
                         self._json({"ok": False, "checks": [], "summary": str(e)})
+                elif path == "/api/prices":
+                    # 内置官方价目（llm._OFFICIAL_PRICES，费用计算器用）
+                    try:
+                        from . import llm as _llm_mod
+                        self._json(getattr(_llm_mod, "_OFFICIAL_PRICES", {}) or {})
+                    except Exception as _e:
+                        self._json({"__err": str(_e)})
                 elif path == "/api/data/export":
                     # 导出全部计费+对话记录为一个迁移包（zip）
                     try:

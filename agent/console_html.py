@@ -463,14 +463,10 @@ th{color:var(--tx2);font-weight:500}
         <div class="s"><b id="st-extra2">—</b><span>累计其他工具成本</span></div>
       </div>
       <div class="card" id="feeCalc" style="margin-bottom:14px">
-        <h2>🧮 费用计算器（官方峰谷价）</h2>
-        <div class="desc">选模型与每日用量估算成本；高峰=工作日 9:00-12:00 / 14:00-18:00，其余为空闲价（周末全天空闲价）</div>
-        <div class="row" style="margin:4px 0"><label>模型</label>
-          <select id="fcModel">
-            <option value="flash">deepseek-v4-flash</option>
-            <option value="vision">deepseek-v4-flash-vision-exp</option>
-          </select>
-        </div>
+        <h2>🧮 费用计算器（官方价目 · 全厂商分区）</h2>
+        <div class="desc">选厂商与模型自动带出官方单价；高峰=工作日 9:00-12:00 / 14:00-18:00（×2），周末/夜间空闲价；缓存命中按 cached 价</div>
+        <div class="row" style="margin:4px 0"><label>厂商</label><select id="fcVendor"><option value="">加载中…</option></select></div>
+        <div class="row" style="margin:4px 0"><label>模型</label><select id="fcModel"></select><span class="hint" id="fcNote"></span></div>
         <div class="row" style="margin:4px 0"><label>每日消息数</label><input id="fcMsgs" type="number" value="200" min="0" style="width:130px"></div>
         <div class="row" style="margin:4px 0"><label>每消息输入 Token</label><input id="fcIn" type="number" value="800" min="0" style="width:130px"></div>
         <div class="row" style="margin:4px 0"><label>每消息输出 Token</label><input id="fcOut" type="number" value="800" min="0" style="width:130px"></div>
@@ -482,7 +478,6 @@ th{color:var(--tx2);font-weight:500}
         </div>
         <div class="row" style="margin:6px 0"><label></label>
           <button class="pri" id="fcCalc" type="button">计算</button>
-          <span class="hint" style="margin-left:8px">输入缓存命中按 0.02/0.04 元计价</span>
         </div>
         <div class="row" style="margin:6px 0"><label></label><b id="fcResult" style="color:var(--blue)">—</b></div>
       </div>
@@ -3922,23 +3917,69 @@ $('unifiedTierChk').addEventListener('change', ()=>renderGroupTierBox());
   };
 })();
 
-/* ── 费用计算器（官方峰谷价）── */
+/* ── 费用计算器（官方价目 · 全厂商分区）── */
 (function(){
+  const ven = document.getElementById('fcVendor');
+  const mdl = document.getElementById('fcModel');
+  const note = document.getElementById('fcNote');
   const btn = document.getElementById('fcCalc');
-  if(!btn) return;
+  if(!ven || !btn) return;
+  const VENDORS = {'deepseek':'DeepSeek','glm':'智谱 GLM','kimi':'月之暗面 Kimi','minimax':'MiniMax',
+    'qwen':'阿里百炼','hunyuan':'腾讯混元','doubao':'火山方舟','ernie':'百度千帆',
+    'oai':'OpenAI','gpt':'OpenAI','claude':'Anthropic','gemini':'Google','grok':'xAI',
+    'mi':'小米 MiMo','mimo':'小米 MiMo','openrouter':'OpenRouter'};
+  let PRICES = {};
+  const q = URL_TOKEN ? ('?token='+URL_TOKEN) : '';
+  fetch('/api/prices'+q).then(r=>r.json()).then(P=>{
+    if(!P || P.__err){ return; }
+    PRICES = P;
+    const groups = {};
+    for(const k in P){
+      let g = '其他';
+      for(const pre in VENDORS){ if(k.indexOf(pre)===0){ g = VENDORS[pre]; break; } }
+      (groups[g]=groups[g]||[]).push(k);
+    }
+    const names = Object.keys(groups).sort();
+    ven.innerHTML = '';
+    names.forEach(g=>{ const o=document.createElement('option'); o.value=g; o.textContent=g; ven.appendChild(o); });
+    fillModels();
+  });
+  function fillModels(){
+    const g = ven.value;
+    const list = [];
+    for(const k in PRICES){ let gg='其他';
+      for(const pre in VENDORS){ if(k.indexOf(pre)===0){ gg=VENDORS[pre]; break; } }
+      if(gg===g) list.push(k);
+    }
+    list.sort();
+    mdl.innerHTML = '';
+    list.forEach(k=>{ const o=document.createElement('option'); o.value=k; o.textContent=k; mdl.appendChild(o); });
+    updateNote();
+  }
+  function updateNote(){
+    const k = mdl.value, p = PRICES[k];
+    note.textContent = p ? ('输入 '+p.in+' / 输出 '+p.out+' / 缓存 '+((p.cached!=null)?p.cached:'—')+' 元·百万 Token'+(p.note?('；'+p.note):'')) : '';
+  }
+  ven.onchange = fillModels;
+  mdl.onchange = updateNote;
   const fmt = n => n>=0.01 ? ('¥'+n.toFixed(2)) : ('¥'+n.toFixed(4));
   btn.onclick = () => {
+    const k = mdl.value, p = PRICES[k];
+    if(!p){ document.getElementById('fcResult').textContent = '请先选择模型'; return; }
     const msgs = Math.max(0, parseFloat(document.getElementById('fcMsgs').value)||0);
     const ti = Math.max(0, parseFloat(document.getElementById('fcIn').value)||0);
     const to = Math.max(0, parseFloat(document.getElementById('fcOut').value)||0);
     const peak = document.getElementById('fcPeak').value === '1';
-    const pIn = peak ? 2 : 1, pOut = peak ? 8 : 4, pHit = peak ? 0.04 : 0.02;
-    const per = (ti*pIn + to*pOut)/1e6;
-    const perHit = (ti*pHit + to*pOut)/1e6;
-    const day = msgs*per, dayHit = msgs*perHit;
+    const prIn = peak ? (p.in*2) : p.in;
+    const prOut = peak ? (p.out*2) : p.out;
+    const prCached = (p.cached!=null) ? (peak ? p.cached*2 : p.cached) : prIn;
+    const per = (ti*prIn + to*prOut)/1e6;
+    const perHit = (ti*prCached + to*prOut)/1e6;
     document.getElementById('fcResult').textContent =
-      '每消息 ≈ '+fmt(per)+(perHit<per?('（缓存命中输入 ≈ '+fmt(perHit)+'）'):'')+
-      '；每日 '+msgs+' 条 ≈ '+fmt(day)+'；月成本 ≈ '+fmt(day*30)+'（空闲月 = '+fmt(day*15)+'）';
+      k+' 每消息 ≈ '+fmt(per)+
+      ((p.cached!=null && prCached<prIn) ? ('（输入全缓存命中 ≈ '+fmt(perHit)+'）') : '')+
+      '；每日 '+msgs+' 条 ≈ '+fmt(msgs*per)+'；月 ≈ '+fmt(msgs*per*30)+
+      (('deepseek'.indexOf(k)===0 && !peak) ? '（高峰月 '+fmt(msgs*per*60)+'）' : '');
   };
 })();
 /* ── 概览右上角计费删除按钮：页面加载级绑定（不依赖 loadSessions 是否执行过）── */
