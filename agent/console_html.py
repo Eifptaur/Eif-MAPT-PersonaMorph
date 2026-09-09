@@ -1991,6 +1991,14 @@ async function saveAllBtn(btn){
     toast('✅ 已保存，刷新页面生效…');
     setTimeout(()=>{
       const u = new URL(location.href);
+      // 取消「地址栏乱码化」后保存 → 恢复正常路径再刷新（否则一直停在乱码地址）
+      if(!(cfg && getPath(cfg,'ui.obscure_url'))){
+        u.pathname = '/';
+        u.search = '';
+        u.searchParams.set('v', Date.now());
+        location.replace(u.toString());
+        return;
+      }
       u.searchParams.set('v', Date.now());   // 带时间戳刷新=不读缓存（鲸语切换必生效）
       location.replace(u.toString());
     }, 700);
