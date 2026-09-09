@@ -46,7 +46,7 @@ from agent.tools import build_tool_defs, execute_tool, to_openai_tools
 from agent.wechat import WeChatAdapter, WeChatError, wechat_version_info
 from agent.whale import WhaleWidget
 from agent.webui import WebUI
-from agent.util import pick_browser, redact_secrets
+from agent.util import mask_url_token, pick_browser, redact_secrets
 
 # 内部自检开关：WX_IMPORT_CHECK=1 时仅验证模块导入后退出（绿色版/无微信场景验证用）
 if os.environ.get("WX_IMPORT_CHECK") == "1":
@@ -2246,7 +2246,7 @@ def main():
         if port:
             token = str(server_cfg.get("token") or "").strip()
             url = "http://127.0.0.1:%d" % port + (("/?token=" + token) if token else "")
-            log.info("Web 控制台：%s", url)
+            log.info("Web 控制台：%s", mask_url_token(url))
             if server_cfg.get("auto_open_browser", True) is not False:
                 try:
                     # 每次机器人进程启动打开一次控制台：配置/探测的浏览器优先
@@ -2263,7 +2263,7 @@ def main():
                                   stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
                         log.info("已请求默认浏览器打开控制台：%s", url)
                 except Exception as e:
-                    log.warning("打开浏览器失败（请手动访问 %s）：%s", url, e)
+                    log.warning("打开浏览器失败（请手动访问 %s）：%s", mask_url_token(url), e)
                     try:
                         import webbrowser as _wb
                         _wb.open(url)

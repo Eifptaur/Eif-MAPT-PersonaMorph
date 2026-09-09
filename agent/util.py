@@ -53,6 +53,14 @@ def pick_browser(exe_path: str = "") -> str:
 _SECRET_RE = re.compile(r"(sk-[A-Za-z0-9_\-]{8,})")
 
 
+def mask_url_token(url: str) -> str:
+    """控制台地址里 ?token= 后的访问口令掩码显示（日志防泄露）；浏览器打开仍用完整地址。"""
+    if "?token=" in url:
+        head, tail = url.split("?token=", 1)
+        return head + "?token=" + (tail[:3] + "***" if tail else "***")
+    return url
+
+
 def mask_secret(secret) -> str:
     """sk-xxxx…后4位 的展示形式；非 sk 前缀也按首尾截断。"""
     s = str(secret or "")

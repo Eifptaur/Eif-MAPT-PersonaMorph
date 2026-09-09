@@ -105,7 +105,7 @@ def popup_fail(reason, tail=""):
 def _open_console(url, browser_path=""):
     """打开控制台浏览器：配置/探测的浏览器 exe 优先，否则系统默认（start）。"""
     try:
-        from agent.util import pick_browser
+        from agent.util import mask_url_token, pick_browser
         bp = pick_browser(browser_path)
         if bp:
             subprocess.Popen([bp, url], creationflags=0x08000000)
@@ -119,7 +119,7 @@ def _open_console(url, browser_path=""):
         log("已打开浏览器（系统默认）")
         return True
     except Exception as e:
-        log("打开浏览器失败：%s（请手动访问 %s）" % (e, url))
+        log("打开浏览器失败：%s（请手动访问 %s）" % (e, mask_url_token(url)))
         return False
 
 
@@ -215,7 +215,7 @@ def main():
                     try:
                         _open_console(_url, _bpath)
                     except Exception as e:
-                        log("控制台已就绪但打开浏览器失败（请手动访问 %s）：%s" % (_url, e))
+                        log("控制台已就绪但打开浏览器失败（请手动访问 %s）：%s" % (mask_url_token(_url), e))
                     opened = True
                     break
             except Exception:
