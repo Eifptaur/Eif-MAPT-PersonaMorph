@@ -1849,12 +1849,12 @@ def main():
                 os.remove(_p)
         except Exception:
             pass
-        # 关机总结印象（可选）：线程执行、最多等 20 秒——绝不阻塞"停止"；被强杀则本次跳过
+        # 关机总结印象（可选）：最多等 5 秒——绝不阻塞"停止"；被强杀则本次跳过
         try:
-            log.info("关机总结印象中（最多 20 秒）…")
+            log.info("关机总结印象中（最多 5 秒）…")
             _sm = threading.Thread(target=_summarize_on_exit, daemon=True)
             _sm.start()
-            _sm.join(20)
+            _sm.join(5)
         except Exception:
             pass
         try:
