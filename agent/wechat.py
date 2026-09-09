@@ -469,8 +469,10 @@ class WeChatAdapter:
             u.GetWindowRect(hwnd, ctypes.byref(r))
             sw = int(u.GetSystemMetrics(0))
             sh = int(u.GetSystemMetrics(1))
+            # 目标尺寸：宽 1160；高 900（微信 PC 侧栏在高度不足时会把部分图标收进"…"省略号，
+            # 导致"发现/朋友圈"等不可见——900 高保证全部侧栏图标常显；小屏按比例收缩但不低于 820）
             tw = 1160 if sw >= 1366 else int(sw * 0.82)
-            th = 780 if sh >= 860 else int(sh * 0.84)
+            th = min(900, max(820, sh - 100))
             if r.right - r.left != tw or r.bottom - r.top != th:
                 u.MoveWindow(hwnd, r.left, max(40, r.top), tw, th, True)
                 time.sleep(0.4)
