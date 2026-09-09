@@ -2265,19 +2265,28 @@ def main():
                     # 每次机器人进程启动打开一次控制台：配置/探测的浏览器优先
                     # （Server/无默认浏览器环境 start 可能弹选择框或拉起 IE）
                     import subprocess as _sp
-                    # 一键启动/安装器已打开过（90 秒内）→ 不再重复弹（防双开控制台）
+                    # 原子锁（O_EXCL）：并发下只有一方打开浏览器（防双开）
                     try:
-                        _mk = os.path.join(ROOT, "logs", "browser_opened.txt")
+                        _mk = os.path.join(ROOT, "logs", "browser_opened.lock")
                         if os.path.exists(_mk):
-                            _t = float(open(_mk, encoding="utf-8").read().strip() or 0)
-                            if time.time() - _t < 90:
+                            try:
+                                _t = float(open(_mk, encoding="utf-8").read().strip() or 0)
+                                if time.time() - _t < 90:
+                                    log.info("浏览器已由一键启动打开，本次不再重复打开")
+                                    _bp_skip = True
+                            except Exception:
+                                pass
+                            if not _bp_skip:
                                 try:
-                                    with open(os.path.join(ROOT, "logs", "browser_opened.txt"), "w", encoding="utf-8") as _f:
-                                        _f.write(str(time.time()))
+                                    os.remove(_mk)
                                 except Exception:
                                     pass
-                                log.info("浏览器已由一键启动打开，本次不再重复打开")
-                                _bp_skip = True
+                        if not _bp_skip:
+                            _fd = os.open(_mk, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                            os.write(_fd, str(time.time()).encode("ascii", "replace"))
+                            os.close(_fd)
+                    except FileExistsError:
+                        _bp_skip = True
                     except Exception:
                         pass
                     if not _bp_skip:

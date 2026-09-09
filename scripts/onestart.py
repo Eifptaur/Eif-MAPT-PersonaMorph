@@ -252,16 +252,30 @@ def _mark_browser_opened():
         pass
 
 
-def _browser_recently_opened(seconds=90):
+def _try_browser_lock(seconds=90):
+    """原子抢占"打开浏览器"锁：并发下只有一个进程成功（O_CREAT|O_EXCL 不可重入）。"""
+    mk = os.path.join(LOG_DIR, "browser_opened.lock")
     try:
-        mk = os.path.join(LOG_DIR, "browser_opened.txt")
         if os.path.exists(mk):
-            with open(mk, encoding="utf-8") as f:
-                t = float((f.read() or "0").strip() or 0)
-            return time.time() - t < seconds
+            try:
+                with open(mk, encoding="utf-8") as f:
+                    t = float((f.read() or "0").strip() or 0)
+                if time.time() - t < seconds:
+                    return False      # 别人刚打开（锁未过期）
+            except Exception:
+                pass
+            try:
+                os.remove(mk)
+            except Exception:
+                pass
+        fd = os.open(mk, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.write(fd, str(time.time()).encode("ascii", "replace"))
+        os.close(fd)
+        return True                   # 拿到锁 → 我来打开
+    except FileExistsError:
+        return False
     except Exception:
-        pass
-    return False
+        return True                   # 极端情况：放开（避免全都不打开）
 
 
 def _open_console(url, browser_path=""):
