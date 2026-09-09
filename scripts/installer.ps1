@@ -1,16 +1,19 @@
-# wx-agent 一键启动安装器窗口：图标 + 步骤进度 + 进度条（无命令行黑窗）
+﻿# wx-agent 一键启动安装器窗口：图标 + 步骤进度 + 进度条（无命令行黑窗）
 # 由 一键启动.vbs 隐藏启动；依次：准备 Python → onestart(事件解析) → 快捷方式询问 → 完成。
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $logFile = Join-Path $root 'logs\onestart.log'
+$diag = Join-Path $root 'logs\installer.log'
+try { New-Item -ItemType Directory -Force -Path (Join-Path $root 'logs') | Out-Null } catch {}
+function Diag([string]$m) { try { [IO.File]::AppendAllText($diag, "[" + (Get-Date -Format 'HH:mm:ss') + "] " + $m + "`r`n") } catch {} }
 
 # ── 窗口 ──
 $f = New-Object System.Windows.Forms.Form
 $f.Text = 'wx-agent 一键启动'
-$f.StartPosition = 'CenterScreen'
-$f.FormBorderStyle = 'FixedDialog'
+$f.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
+$f.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
 $f.MaximizeBox = $false; $f.MinimizeBox = $false
 $f.BackColor = [System.Drawing.Color]::FromArgb(246, 248, 252)
 $f.ClientSize = New-Object System.Drawing.Size -ArgumentList 500, 420
@@ -109,10 +112,10 @@ function Add-Log([string]$t) {
     [System.Windows.Forms.Application]::DoEvents()
 }
 
-function Run-Hidden([string]$exe, [string]$args, [string]$envName, [string]$envVal) {
+function Run-Hidden([string]$exe, [string]$argLine, [string]$envName, [string]$envVal) {
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $exe
-    $psi.Arguments = $args
+    $psi.Arguments = $argLine
     $psi.UseShellExecute = $false
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
@@ -121,13 +124,15 @@ function Run-Hidden([string]$exe, [string]$args, [string]$envName, [string]$envV
     if ($env:WX_ONESTART_CHECK) { $psi.EnvironmentVariables['WX_ONESTART_CHECK'] = $env:WX_ONESTART_CHECK }
     $p = New-Object System.Diagnostics.Process
     $p.StartInfo = $psi
-    $p.Start() | Out-Null
+    try { $ok = $p.Start() } catch { return @{ code = 1; err = ('start failed: ' + $_.Exception.Message) } }
+    if (-not $ok) { return @{ code = 1; err = 'start returned false' } }
     while (-not $p.StandardOutput.EndOfStream) {
         $line = $p.StandardOutput.ReadLine()
+        Diag ('OUT> ' + $line)
         Parse-Line $line
     }
     $err = $p.StandardError.ReadToEnd()
-    $p.WaitForExit()
+    try { $p.WaitForExit() } catch {}
     return @{ code = $p.ExitCode; err = $err }
 }
 
@@ -188,12 +193,15 @@ function Wait-Close {
 }
 
 # ── 主流程 ──
+try {
 $f.Show()
+Diag 'step: window shown'
 Set-State '准备 Python 环境…' 5 0 '检测系统/绿色版 Python（无需手动安装）'
 
 # 1) 准备 Python（隐藏执行）
 $ps1 = Join-Path $root 'scripts\setup_python.ps1'
 $r = Run-Hidden 'powershell.exe' ('-NoProfile -ExecutionPolicy Bypass -File "' + $ps1 + '"') '' ''
+Diag ('step: setup_python done rc=' + $r.code)
 if ($r.code -ne 0) {
     Set-State 'Python 准备失败，请查看日志' 0 0 ('checks logs\onestart.log')
     Add-Log ('setup_python 退出码 ' + $r.code)
@@ -213,10 +221,12 @@ if (-not $pyCmd) {
     return
 }
 Set-State '检查 / 安装依赖…' 12 1 'Python 就绪'
+Diag ('step: pyCmd=[' + $pyCmd + ']')
 
 # 2) onestart（GUI 事件驱动进度）
 $onestart = Join-Path $root 'scripts\onestart.py'
 $r2 = Run-Hidden $pyCmd ('-X utf8 "' + $onestart + '"') 'WX_GUI' '1'
+Diag ('step: onestart done rc=' + $r2.code)
 if ($r2.code -ne 0) {
     Set-State '启动失败（依赖/自检/机器人）' 0 0 '详见 logs\onestart.log'
     Add-Log ('onestart 退出码 ' + $r2.code)
@@ -226,3 +236,8 @@ if ($r2.code -ne 0) {
 }
 
 Wait-Close
+} catch {
+    Diag ('EXCEPTION: ' + $_.Exception.Message)
+    try { Set-State '运行异常' 0 0 '详见 logs\installer.log' } catch {}
+    Wait-Close
+}
