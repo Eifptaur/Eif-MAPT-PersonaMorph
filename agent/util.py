@@ -34,10 +34,10 @@ def pick_browser(exe_path: str = "") -> str:
     if exe_path and os.path.exists(exe_path):
         return exe_path
     for p in (
-        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
         r"C:\Program Files\Google\Chrome\Application\chrome.exe",
         r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
         r"C:\Program Files\Tencent\QQBrowser\QQBrowser.exe",
         r"C:\Program Files (x86)\Tencent\QQBrowser\QQBrowser.exe",
         r"C:\Program Files (x86)\360\360se6\Application\360se.exe",

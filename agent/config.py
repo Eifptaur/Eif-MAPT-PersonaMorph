@@ -56,8 +56,8 @@ DEFAULT_CONFIG = {
     # ── 联网搜索（保留 qq-agent 的完整实现）────────────────────────────
     "web_search": {
         "enabled": True,
-        "provider": "bing",                 # bing | google | deepseek | zhipu | bocha | baidu | metaso | custom
-        "google_first": True,               # 免费搜索 Google 优先（不可达自动回退 Bing）
+        "provider": "bing",                 # 默认 DeepSeek 优先；显式选第三方才用该引擎（zhipu/bocha/baidu/metaso/custom）
+        "google_first": True,               # DeepSeek 不可用时，免费搜索 Google 优先（再回退 Bing）
         "search_url": "https://cn.bing.com/search",
         "max_results": 6,
         "deepseek": {"api_key": "", "base_url": "https://api.deepseek.com/responses",

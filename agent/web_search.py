@@ -91,8 +91,12 @@ def web_search(query: str) -> dict:
         raise RuntimeError("查询词为空")
     cfg = get_config().get("web_search", {})
     provider = str(cfg.get("provider") or "bing").lower()
-    if provider == "deepseek":
-        return _deepseek_search(clean)
+    # DeepSeek 联网搜索优先（复用主 API Key）；显式配置了第三方引擎（zhipu/bocha/baidu/metaso/custom）才按其用
+    if provider in ("", "bing", "google", "deepseek"):
+        try:
+            return _deepseek_search(clean)
+        except Exception:
+            pass  # 无 key/服务不可用 → 下方免费引擎回退
     if provider == "zhipu":
         return _zhipu_search(clean)
     if provider == "bocha":
@@ -120,9 +124,14 @@ def web_fetch(url: str) -> dict:
 
 def _deepseek_search(query: str) -> dict:
     cfg = get_config().get("web_search", {}).get("deepseek", {})
-    api_key = str(cfg.get("api_key") or os.environ.get("DEEPSEEK_API_KEY") or "").strip()
+    # 优先搜索段自己的 key，其次主 API Key（api.api_key），最后环境变量
+    api_key = str(cfg.get("api_key") or "").strip()
     if not api_key:
-        raise RuntimeError("DeepSeek 搜索需要 API Key")
+        api_key = str(os.environ.get("DEEPSEEK_API_KEY") or "").strip()
+    if not api_key:
+        api_key = str(get_config().get("api", {}).get("api_key") or "").strip()
+    if not api_key:
+        raise RuntimeError("DeepSeek 搜索需要 API Key（可用主 API 配置）")
     base = str(cfg.get("base_url") or "https://api.deepseek.com/responses").rstrip("/")
     model = str(cfg.get("model") or "deepseek-chat")
     resp = requests.post(base, headers={"content-type": "application/json", "authorization": "Bearer " + api_key},
@@ -133,7 +142,14 @@ def _deepseek_search(query: str) -> dict:
     if resp.status_code != 200:
         raise RuntimeError("DeepSeek 搜索 HTTP %d：%s" % (resp.status_code, resp.text[:300]))
     data = resp.json()
-    out = str(data.get("output_text") or "").strip()
+    # Responses API：正文在 output[] 中 type=message 的 content[].text
+    out = ""
+    for item in (data.get("output") or []):
+        if isinstance(item, dict) and item.get("type") == "message":
+            for c in (item.get("content") or []):
+                if isinstance(c, dict) and c.get("type") == "output_text":
+                    out += str(c.get("text") or "")
+    out = out.strip() or str(data.get("output_text") or "").strip()
     if not out:
         raise RuntimeError("DeepSeek 搜索没有返回文本")
     return {"query": query, "results": [{"title": "DeepSeek 搜索", "url": "", "snippet": out}]}
