@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """Web 控制台界面（独立模板，便于大改样式而不动逻辑）。
 
 设计（参考 DeepSeek 品牌蓝 + 现代蓝白后台方案）：
@@ -834,8 +834,8 @@ th{color:var(--tx2);font-weight:500}
           <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="pUseLlm" checked>允许模型处理</label>
         </div>
         <span class="hint" id="pScoreRst"></span>
-        <div class="hint">「联网收集真实资料」：按角色名检索主流媒体/官方/百科中**角色真实说过的话、做过的事**（语录/访谈/言论），只返回搜索引擎摘要原文（含来源链接），**绝不编造**；检索不到会明确提示"未检索到第一手资料"。请人工核对后提取进角色卡再保存。</div>
-        <div class="hint" style="color:var(--warn)">⚠️「模型补足 / 自动学习（机器学习）」**仅默认角色卡（小鲸鱼）启用**有效——AI 本体学习真实表达不易 OOC；**其他角色卡一律不应用**（防跑偏 OOC）。</div>
+        <div class="hint">「联网收集真实资料」：按角色名检索主流媒体/官方/百科中**角色真实说过的话、做过的事**（语录/访谈/言论），只返回搜索引擎摘要原文（含来源链接），**绝不编造**；检索不到会明确提示"未检索到第一手资料"。**所有角色卡均可使用**（联网取真实资料 → 模型补足，逻辑正确不会 OOC）。</div>
+        <div class="hint" style="color:var(--warn)">⚠️ **机器学习（金句素材库训练 / 学习评估）仅默认角色卡（小鲸鱼）启用**——AI 本体学习真实表达不易 OOC；**其他角色卡不应用机器学习**，但联网收集/模型补足不受限。</div>
         <div class="hint">【评分细则】风格辨识25%/角色贴合30%/内在一致20%/表达自然15%/完整可用10%，每维 0~100.00 精确百分位；无口头禅→风格≤45；通用词口头禅→≤70；AI套话→表达≤65；客服口吻→贴合≤60；换角色都能用→≤50；示例占位→完整≤75；沉默类无扩展→≤70；缺说话规则→≤70；满分唯一条件=仅凭提示词+一次提醒即逐句贴合本人（否则一律<95，优秀 88~94.99）。</div>
         <div class="hint">「模型补足」按人设驱动（让说话更贴近本人，不是为分数调整）；每轮补足后自动重评：分数上升才继续下一轮，不升/降即停止；轮数可选（1~3 轮，每轮约 10~30 秒耗少量 token）；完成后点「保存」落盘。</div>
       </div></div>
@@ -3976,7 +3976,7 @@ $('unifiedTierChk').addEventListener('change', ()=>renderGroupTierBox());
     'mi':'小米 MiMo','mimo':'小米 MiMo','openrouter':'OpenRouter'};
   let PRICES = {};
   const q = URL_TOKEN ? ('?token='+URL_TOKEN) : '';
-  fetch('/api/prices'+q).then(r=>r.json()).then(P=>{
+  fetch('/api/prices'+q,{method:'POST'}).then(r=>r.json()).then(P=>{
     if(P && P.__err){ note.textContent = '加载价目失败：'+P.__err+'（请重启机器人在控制台重试）'; return; }
     if(!P){ note.textContent = '价目加载失败（请重启机器人在控制台重试）'; return; }
     PRICES = P;
