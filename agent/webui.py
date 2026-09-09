@@ -715,8 +715,10 @@ class WebUI:
                         self._json({"ok": False, "error": str(e)})
                 elif path == "/api/selfcheck":
                     # 一键体检：配置/微信/数据/界面适配/命中测试 全套
+                    # body.mode="code" = 只做代码与依赖级检查（不动鼠标；首次向导用）
                     try:
-                        self._json(parent.selfcheck_fn())
+                        _mode = "code" if str((data or {}).get("mode") or "") == "code" else "full"
+                        self._json(parent.selfcheck_fn(_mode))
                     except Exception as e:
                         self._json({"ok": False, "checks": [], "summary": str(e)})
                 elif path == "/api/wechat-groups":

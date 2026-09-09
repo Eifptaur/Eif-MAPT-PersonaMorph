@@ -1363,7 +1363,7 @@ const WHALE_CURSOR = (function(){
     let st = document.getElementById('whaleCursorStyle');
     if(!st){ st = document.createElement('style'); st.id = 'whaleCursorStyle'; document.head.appendChild(st); }
     // 注意：cursor:url() 需同时覆盖 html 与所有元素；图片加载失败用 auto（系统默认）兜底
-    st.textContent = 'html.whale-cursor,html.whale-cursor *{cursor:url("'+u+'") 8 8, auto!important}';
+    st.textContent = 'html.whale-cursor,html.whale-cursor *,html.whale-cursor iframe,html.whale-cursor iframe *{cursor:url("'+u+'") 8 8, auto!important}';
   }
   function apply(){ setStyle(url + '?v=' + Date.now()); }
   function applyNod(){ setStyle(nodUrl + '?v=' + Date.now()); }
@@ -2474,10 +2474,10 @@ async function onboarding(){
       }
       if(step===2){
         if(picked.length){ wlList = picked.slice(); setPath(cfg,'wechat.group_name_white_list', wlList.slice()); await getJSON('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)}); renderChips(); }
-        $('obDesc').textContent = '第 3 步/共 3 步：鼠标操作检测（约 60~100 秒：环境/配置/点击 + 11 项程序鼠标操作，请勿动鼠标）。';
+        $('obDesc').textContent = '第 3 步/共 3 步：代码与依赖检测（不动鼠标，几秒完成：环境/依赖/微信接入/配置逐项检查）。需要更多「鼠标操作检测」可在检测中心用单独按钮。';
         $('obBody').innerHTML='<pre class="out" id="obCheck" style="height:190px">体检中…</pre>';
         $('obNext').textContent='完成'; step=3;
-        const r = await getJSON('/api/selfcheck',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}',timeoutMs:180000});
+        const r = await getJSON('/api/selfcheck',{method:'POST',headers:{'Content-Type':'application/json'},body:'{"mode":"code"}',timeoutMs:60000});
         let lines=[r.summary||'',''];
         for(const c of (r.checks||[])){
           lines.push((c.status==='ok'?'✅':(c.status==='warn'?'⚠️':'❌'))+' '+c.name+'：'+c.detail);

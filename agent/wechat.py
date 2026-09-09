@@ -731,30 +731,108 @@ class WeChatAdapter:
     # ── 朋友圈（PC 版有入口：侧栏第 4 图标=朋友圈，窗口标题"朋友圈"；实测确认）──
     # 操作链：点图标 → 验证「朋友圈」窗口出现 → 干活 → 关闭窗口（点右上角叉号，落败兜底）。
 
+    def _moments_shot_ocr(self, rect, scale=2):
+        """截图指定屏幕区域并 OCR → [(text, 区域内x, y, w, h)]。"""
+        try:
+            from PIL import ImageGrab
+            from wechatauto import ScreenOCR
+            img = ImageGrab.grab(rect)
+            res = ScreenOCR.recognize(img)
+            out = []
+            for item in (res or []):
+                if isinstance(item, dict):
+                    t = str(item.get("text") or ""); x = int(item.get("x") or 0)
+                    y = int(item.get("y") or 0); w = int(item.get("w") or 0); h = int(item.get("h") or 0)
+                else:
+                    t, x, y, w, h = (list(item) + [0, 0, 0, 0])[:5]
+                out.append((str(t), int(x), int(y), int(w), int(h)))
+            return out
+        except Exception:
+            return []
+
+    def _click_screen(self, x, y):
+        import ctypes
+        u = ctypes.windll.user32
+        u.SetCursorPos(int(x), int(y))
+        u.mouse_event(0x0002, 0, 0, 0, 0)
+        u.mouse_event(0x0004, 0, 0, 0, 0)
+
+    def _moments_open_discover(self, gui):
+        """新 UI（4.1 发现页）路径：点侧栏底部「发现」→ 发现页 OCR 定位「朋友圈」→ 点击。
+        主窗截图 OCR，文字坐标按窗口左上角换算，适应任意 DPI/分辨率。"""
+        try:
+            import ctypes
+            from ctypes import wintypes
+            u = ctypes.windll.user32
+            r = wintypes.RECT()
+            u.GetWindowRect(int(gui.main_hwnd), ctypes.byref(r))
+            l, t, rt, b = r.left, r.top, r.right, r.bottom
+            W, H = rt - l, b - t
+            if W < 300 or H < 300:
+                return False, "微信主窗过小"
+            # 1) 侧栏底部「发现」绿色图标（新 UI 固定左下角）
+            self._click_screen(l + int(W * 0.043), t + int(H * 0.935))
+            time.sleep(1.3)
+            # 2) 发现页 OCR 找「朋友圈」文字
+            items = self._moments_shot_ocr((l, t, rt, b))
+            tgt = None
+            for txt, x, y, w, h in items:
+                if "朋友圈" in txt:
+                    tgt = (x, y, w, h)
+                    break
+            if not tgt:
+                return False, "发现页未出现（未识别到「朋友圈」文字）"
+            # 3) 点击「朋友圈」
+            self._click_screen(l + tgt[0] + tgt[2] // 2, t + tgt[1] + tgt[3] // 2)
+            time.sleep(1.5)
+            return True, "已点击「发现 → 朋友圈」"
+        except Exception as e:
+            return False, str(e)
+
     def moments_open(self) -> tuple:
-        """点击侧栏朋友圈图标 → 等待 → 验证「朋友圈」窗口出现（轮询+重试）。"""
+        """打开朋友圈（UI 自适应）：① 新 UI（发现→朋友圈，OCR 定位文字）
+        ② 旧 UI（侧栏相机图标）兜底。验证两种形态：独立「朋友圈」子窗口（弹窗）/
+        微信主窗内嵌（右侧内容区 OCR 识别「朋友圈」标题，位置过滤防误判发现页）。"""
         try:
             from . import wechat_ui
             gui = self._get_gui()
-            ok, msg = wechat_ui.hit("sidebar.moments", gui, retries=3)
+            ok, msg = self._moments_open_discover(gui)
             if not ok:
-                return False, "朋友圈图标点击失败：%s" % msg
-            # 轮询等窗口出现（最多 4 秒）；无窗口→先关掉可能误开的其它子窗（视频号等）再重试
+                ok, msg = wechat_ui.hit("sidebar.moments", gui, retries=3)
+                if not ok:
+                    return False, "朋友圈打开失败：%s" % msg
+            # 验证：弹窗（子窗口）或内嵌（主窗右侧 OCR「朋友圈」标题）
             for attempt in range(3):
-                deadline = time.time() + 4.0
+                deadline = time.time() + 3.0
                 while time.time() < deadline:
                     try:
                         for hwnd, title, rect in wechat_ui._wechat_subwindows(gui.main_hwnd):
-                            if "朋友圈" in title or title == "Weixin":
-                                return True, "朋友圈窗口已打开"
+                            if "朋友圈" in title:
+                                return True, "朋友圈已打开（独立窗口）"
                     except Exception:
                         pass
-                    time.sleep(0.4)
-                if attempt < 2:
-                    wechat_ui.close_leftover_windows(gui)   # 防误开窗口残留/拦截
+                    try:
+                        import ctypes
+                        from ctypes import wintypes
+                        u = ctypes.windll.user32
+                        r = wintypes.RECT()
+                        u.GetWindowRect(int(gui.main_hwnd), ctypes.byref(r))
+                        W = r.right - r.left
+                        items = self._moments_shot_ocr((r.left, r.top, r.right, r.bottom))
+                        for txt, x, y, w, h in items:
+                            # 内嵌标题在右侧内容区（x > 30% 宽），发现页列表项在左侧不算
+                            if "朋友圈" in txt and x > W * 0.30 and y < (r.bottom - r.top) * 0.10:
+                                return True, "朋友圈已打开（微信内嵌）"
+                    except Exception:
+                        pass
                     time.sleep(0.5)
-                    wechat_ui.hit("sidebar.moments", gui, retries=2)
-            return True, "已点击朋友圈图标（窗口待加载）"
+                if attempt < 2:
+                    wechat_ui.close_leftover_windows(gui)
+                    time.sleep(0.5)
+                    ok2, msg2 = self._moments_open_discover(gui)
+                    if not ok2:
+                        wechat_ui.hit("sidebar.moments", gui, retries=2)
+            return True, "已点击朋友圈（窗口待加载）"
         except Exception as e:
             return False, str(e)
 

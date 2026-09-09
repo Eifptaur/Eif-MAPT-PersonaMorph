@@ -214,6 +214,14 @@ def dismiss_overlays(wechat_hwnds: tuple = ()) -> list:
                 continue  # 微信自身不动
             if pid in (0,) or not title.strip():
                 continue  # 系统无标题窗口（如桌面相关的空壳）不动
+            # 浏览器窗口绝不碰（用户正在用浏览器/控制台；最小化会误以为被关掉）
+            _cls_l = (cls or "").lower()
+            _tit_l = (title or "").lower()
+            if ("chrome" in _cls_l or "msedge" in _cls_l or "firefox" in _cls_l
+                    or "qqbrowser" in _cls_l or "360se" in _cls_l or "iexplore" in _cls_l
+                    or "chrome" in _tit_l or "edge" in _tit_l or "firefox" in _tit_l
+                    or "qq浏览器" in _tit_l or "360" in _tit_l):
+                continue
             # 检查与微信窗口是否重叠
             overlap = False
             for wrect in (w[4] for w in wins if w[0] in wechat_hwnds):
@@ -314,11 +322,18 @@ def _force_geometry(gui) -> None:
             _scale = max(1.0, _user32.GetDpiForWindow(hwnd) / 96.0)
         except Exception:
             _scale = 1.25
+        # 目标尺寸按 DPI 换算，但限制在屏幕内（小分辨率屏幕不超出；避免窗口出屏）
+        try:
+            _sw = int(_user32.GetSystemMetrics(0))
+            _sh = int(_user32.GetSystemMetrics(1))
+        except Exception:
+            _sw, _sh = 1920, 1080
+        _w = min(int(1250 * _scale), int(_sw * 0.92))
+        _h = min(int(1100 * _scale), int(_sh * 0.92))
+        _x = min(int(120 * _scale), max(10, _sw - _w - 40))
+        _y = min(int(80 * _scale), max(10, _sh - _h - 60))
         _user32.ShowWindow(hwnd, 9)
-        _user32.SetWindowPos(hwnd, 0,
-                             int(120 * _scale), int(80 * _scale),
-                             int(1250 * _scale), int(1100 * _scale),
-                             0x0001 | 0x0002 | 0x0020 | 0x0040)
+        _user32.SetWindowPos(hwnd, 0, _x, _y, _w, _h, 0x0001 | 0x0002 | 0x0020 | 0x0040)
         time.sleep(0.15)
         gui._update_render_rect()
     except Exception:

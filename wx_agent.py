@@ -1483,8 +1483,9 @@ def main():
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
-    def selfcheck_fn():
-        """一键体检：环境/配置/点击 + 程序鼠标操作检验（约 40~70 秒）。
+    def selfcheck_fn(mode="full"):
+        """一键体检：mode="full" = 环境/配置/点击 + 程序鼠标操作检验（约 40~70 秒）；
+        mode="code" = 只做代码/依赖/接入级检查（不动鼠标、秒级完成；首次向导用）。
 
         只读检查（不动微信、不发消息）；点击类项会移动光标做命中测试。
         每项返回 ok/warn/fail + 说明 + 建议。
@@ -1568,7 +1569,7 @@ def main():
             add("适配·系统叠加层", "warn" if overlays["n"] else "ok",
                 ("发现 %d 个输入叠加层（手写画布/输入体验）" % overlays["n"]) if overlays["n"] else "无（正常）",
                 "点击前会自动清理；若反复出现请关闭触控键盘（Win+Ctrl+O）")
-            if gui is not None:
+            if gui is not None and mode != "code":
                 # 真实点击自检：与拍一拍完全相同「移动+右键」逻辑，右键一条消息看菜单是否弹出
                 # 仅报告，不写状态（不再自动进入低功率——曾导致拍一拍被长期禁用）
                 try:
@@ -1586,30 +1587,41 @@ def main():
         add("发送防重复", "info", "已启用 3 秒重复发送拦截（回车重试竞态防护）")
 
         # 5) 程序鼠标操作检验（11 项；每项约 3~8 秒，合计约 60~100 秒；期间请勿动鼠标）
-        add("程序鼠标检验", "info",
-            "以下 11 项为「程序直接操控微信鼠标」实测：朋友圈打开/关闭/点赞/评论/滚动、表情收藏/面板发送、消息收藏/撤回、窗口清理、UI 标定（消息收藏/撤回/表情收藏3项体检中不自动执行，防误点，单项按钮可测）",
-            "全程接管鼠标约 40~70 秒，请勿动鼠标；评论为真实操作（会在你的朋友圈留下记录）")
-        for kind, label in _UI_TEST_LIST:
-            if _selfcheck_cancel[0]:
-                add("程序鼠标检验", "warn", "检测已被手动停止",
-                    "可再点「一键体检」重新开始；停止不会影响机器人与微信")
-                break
-            t0 = time.time()
-            try:
-                # 高险/易误击三项：体检中不自动执行（避免点开别的会话/搜索框），改为指引手测
-                if kind in ("emoji_collect", "message_collect", "message_recall"):
-                    add("鼠标·" + label, "info",
-                        "已跳过自动执行（防止误点其它会话/搜索框）——点下方对应单独按钮人工触发",
-                        "单独按钮执行时会显示详细结果")
-                    continue
-                r = ui_test_fn(kind)
-                ok = bool(r.get("ok"))
-                add("鼠标·" + label,
-                    "ok" if ok else "fail",
-                    (r.get("note") or "成功") if ok else ("失败：" + str(r.get("error") or r.get("note") or ""))[:120],
-                    "" if ok else "可点下方单独按钮重测该单项（看具体原因）")
-            except Exception as e:
-                add("鼠标·" + label, "fail", str(e)[:120], "可点对应单独按钮重测；单项失败不中断整轮检测（逐个完成后出总报告）")
+        if mode == "code":
+            add("程序鼠标检验", "info",
+                "未执行（本次为代码级检查）：需要鼠标实测请在「检测中心」点「鼠标操作检测」")
+        else:
+            add("程序鼠标检验", "info",
+                "以下 11 项为「程序直接操控微信鼠标」实测：朋友圈打开/关闭/点赞/评论/滚动、表情收藏/面板发送、消息收藏/撤回、窗口清理、UI 标定（消息收藏/撤回/表情收藏3项体检中不自动执行，防误点，单项按钮可测）",
+                "全程接管鼠标约 40~70 秒，请勿动鼠标；评论为真实操作（会在你的朋友圈留下记录）")
+            for kind, label in _UI_TEST_LIST:
+                if _selfcheck_cancel[0]:
+                    add("程序鼠标检验", "warn", "检测已被手动停止",
+                        "可再点「一键体检」重新开始；停止不会影响机器人与微信")
+                    break
+                t0 = time.time()
+                try:
+                    # 高险/易误击三项：体检中不自动执行（避免点开别的会话/搜索框），改为指引手测
+                    if kind in ("emoji_collect", "message_collect", "message_recall"):
+                        add("鼠标·" + label, "info",
+                            "已跳过自动执行（防止误点其它会话/搜索框）——点下方对应单独按钮人工触发",
+                            "单独按钮执行时会显示详细结果")
+                        continue
+                    r = ui_test_fn(kind)
+                    ok = bool(r.get("ok"))
+                    add("鼠标·" + label,
+                        "ok" if ok else "fail",
+                        (r.get("note") or "成功") if ok else ("失败：" + str(r.get("error") or r.get("note") or ""))[:120],
+                        "" if ok else "可点下方单独按钮重测该单项（看具体原因）")
+                    if not ok:
+                        add("程序鼠标检验", "warn",
+                            "检测在「%s」失败，已终止后续项（修复问题后重测；也可用单独按钮逐项诊断）" % label,
+                            "常见原因：微信窗口被最小化/遮挡、版本 UI 变化、点击目标不存在")
+                        break
+                except Exception as e:
+                    add("鼠标·" + label, "fail", str(e)[:120], "可点对应单独按钮重测；单点失败已中止后续项")
+                    add("程序鼠标检验", "warn", "检测在「%s」异常，已终止后续项" % label)
+                    break
 
         ok_n = sum(1 for c in checks if c["status"] == "ok")
         warn_n = sum(1 for c in checks if c["status"] == "warn")
