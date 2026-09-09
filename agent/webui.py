@@ -846,11 +846,19 @@ class WebUI:
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)}, 500)
                 elif path == "/api/learning/start":
-                    # 确定学习：确保评分引擎打开（群友24h热烈回应→该话术加分；真实启动学习）
+                    # 确定学习：仅默认角色卡（小鲸鱼）可用（AI 本体学完不 OOC；其他角色卡不应用机器学习）
                     try:
                         from agent.config import get_config as _gc, save_config as _sc
-                        _c = _gc(); _c.setdefault("scoring", {})["enabled"] = True; _sc(_c)
-                        self._json({"ok": True, "note": "✅ 机器学习已开启：之后每条发言，群友24h内热烈回应(接话/追问/@)会为该话术加分，冷场降权；会话越久越贴合。评分引擎已在工作。"})
+                        _c = _gc()
+                        # 默认卡判定：未自定义角色文本 / 名称是内置小鲸鱼
+                        _role = str(_c.get("persona", {}).get("role_text") or "").strip()
+                        _name = str(_c.get("persona", {}).get("bot_name") or "").strip()
+                        if _role or (_name and "小鲸鱼" not in _name and "小鲷鱼" not in _name):
+                            self._json({"ok": False,
+                                        "error": "机器学习（金句素材库训练/学习评估）仅默认角色卡（小鲸鱼）可用——其他角色卡不应用机器学习，防止 OOC；联网收集/模型补足不受限"})
+                            return
+                        _c.setdefault("scoring", {})["enabled"] = True; _sc(_c)
+                        self._json({"ok": True, "note": "✅ 机器学习已开启：之后每条发言，群友24h内热烈回应(接话/追问/@)会为该话术加分，冷场降权；会话越久越贴合。评分引擎已在工作。（默认角色卡·小鲸鱼）"})
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)})
                 elif path == "/api/learning/evaluate":
