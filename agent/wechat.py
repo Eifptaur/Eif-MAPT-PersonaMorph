@@ -757,10 +757,37 @@ class WeChatAdapter:
         u.mouse_event(0x0002, 0, 0, 0, 0)
         u.mouse_event(0x0004, 0, 0, 0, 0)
 
+    def _find_green_discover(self, gui):
+        """运行时颜色定位（不依赖标定）：侧栏绿色圆＝「发现」图标（新 UI 固定特征）。
+        扫主窗左侧栏绿色像素团 → 返回 (屏幕x, 屏幕y)；未找到返回 None。"""
+        try:
+            import ctypes
+            from ctypes import wintypes
+            from PIL import ImageGrab
+            u = ctypes.windll.user32
+            r = wintypes.RECT()
+            u.GetWindowRect(int(gui.main_hwnd), ctypes.byref(r))
+            l, t, rt, b = r.left, r.top, r.right, r.bottom
+            W, H = rt - l, b - t
+            img = ImageGrab.grab((l, t, rt, b)).convert("RGB")
+            px = img.load()
+            pts = []
+            for y in range(int(H * 0.55), int(H * 0.99), 2):
+                for x in range(2, max(3, int(W * 0.10)), 2):
+                    rr, gg, bb = px[x, y]
+                    if gg > 110 and gg - rr > 45 and gg - bb > 45:
+                        pts.append((x, y))
+            if len(pts) < 12:
+                return None
+            cx = sum(p[0] for p in pts) / len(pts)
+            cy = sum(p[1] for p in pts) / len(pts)
+            return (l + int(cx), t + int(cy))
+        except Exception:
+            return None
+
     def _moments_open_discover(self, gui):
-        """新 UI（4.1 发现页）路径：先置顶微信 → 多点候选点「发现」（侧栏绿色圆图标：
-        默认 0.885H，顺序试 0.845/0.925/0.80H，每点验证发现页出现）→ OCR 定位「朋友圈」点击，
-        未识别时按发现页首项相对位置兜底。主窗截图 OCR 适应任意 DPI/分辨率。"""
+        """新 UI（4.1 发现页）路径：置顶微信 → 绿圆（发现）颜色定位点击（失败回退多候选位置，
+        绝不经过设置/三条杠）→ OCR 定位「朋友圈」点击，未识别按发现页首项相对位置兜底。"""
         try:
             import ctypes
             from ctypes import wintypes
@@ -774,40 +801,37 @@ class WeChatAdapter:
             W, H = rt - l, b - t
             if W < 300 or H < 300:
                 return False, "微信主窗过小"
-            print("[moments] 主窗矩形=(%d,%d,%d,%d)" % (l, t, rt, b), flush=True)
 
-            def _ocr_find(text):
+            def _ocr_find(text, x_max=None):
                 items = self._moments_shot_ocr((l, t, rt, b))
                 for txt, x, y, w, h in items:
-                    if text in txt:
+                    if text in txt and (x_max is None or x < x_max):
                         return (x, y, w, h)
                 return None
 
-            # 1) 点「发现」：多候选位置，每次等待并验证发现页（含「朋友圈/搜一搜/游戏」文字）
+            # 1) 点「发现」：绿圆颜色定位（不依赖标定/序位），失败回退多候选（都在设置之上）
+            pos = self._find_green_discover(gui)
             got_discover = False
-            for y_ratio in (0.885, 0.845, 0.925, 0.80):
-                self._click_screen(l + int(W * 0.043), t + int(H * y_ratio))
+            if pos:
+                self._click_screen(pos[0], pos[1])
                 time.sleep(1.2)
-                hit = _ocr_find("搜一搜") or _ocr_find("小程序") or _ocr_find("游戏")
-                if hit:
-                    print("[moments] 发现页出现（y_ratio=%.3f）" % y_ratio, flush=True)
+                if _ocr_find("搜一搜") or _ocr_find("小程序") or _ocr_find("游戏"):
                     got_discover = True
-                    break
+                    print("[moments] 发现页出现（绿圆定位）", flush=True)
+                else:
+                    pos = None
+            if not got_discover:
+                for y_ratio in (0.80, 0.85, 0.90):
+                    self._click_screen(l + int(W * 0.043), t + int(H * y_ratio))
+                    time.sleep(1.2)
+                    if _ocr_find("搜一搜") or _ocr_find("小程序") or _ocr_find("游戏"):
+                        got_discover = True
+                        break
             if not got_discover:
                 return False, "发现页未出现（点侧栏「发现」图标失败）"
-            # 2) 点「朋友圈」：OCR 优先（列表项在左侧 0.20~0.50 宽内），未识别按首项相对位置兜底
-            tgt = None
-            try:
-                items = self._moments_shot_ocr((l, t, rt, b))
-                for txt, x, y, w, h in items:
-                    if "朋友圈" in txt and x < W * 0.55:
-                        tgt = (x, y, w, h)
-                        break
-            except Exception:
-                pass
+            # 2) 点「朋友圈」：OCR 优先（左侧列表区），未识别按首项相对位置兜底
+            tgt = _ocr_find("朋友圈", x_max=W * 0.55)
             if tgt is None:
-                # 兜底：发现页首项「朋友圈」位置（左侧列表第一行）
-                print("[moments] 未 OCR 到「朋友圈」，用相对位置兜底", flush=True)
                 tgt = (int(W * 0.22), int(H * 0.112), int(W * 0.10), int(H * 0.03))
             self._click_screen(l + tgt[0] + tgt[2] // 2, t + tgt[1] + tgt[3] // 2)
             time.sleep(1.5)
@@ -2184,14 +2208,16 @@ class WeChatAdapter:
         return False
 
     def _emoji_btn_pos(self, gui):
-        """笑脸按钮（输入框左下方工具栏第一个）——按实测截图比例（与输入框联动，自适应窗口）。
-        实测：box(249,1073,1133,1254) 时笑脸在渲染 (366,1317) → x=box.left+0.132*box.w, y=box.bottom+63。"""
+        """笑脸按钮（输入框左下方工具栏第一个）。优先按输入框（get_input_box）动态定位——
+        左侧列表宽度变化时输入框位置跟着变，笑脸随输入框走（旧版固定渲染比例会偏）；
+        输入框拿不到时回退渲染比例。"""
         box = gui.get_input_box()
-        if not box:
-            return None
-        # 固定几何（恒定窗口）实测：笑脸位于 (0.297*sw, 0.879*sh)（截图 1234×1055 基准）
         render = gui.render_rect or gui._update_render_rect() or (0, 0, 0, 0)
-        # 对准笑脸**中上部往右上一点**（中心略偏下会落到图标下缘/空白；右上更稳）
+        if box:
+            # box=(x0,y0,x1,y1) 屏幕坐标 → 转渲染相对；笑脸在输入框左下角稍上（实测偏移）
+            rx, ry = int(render[0]), int(render[1])
+            return (int(box[0] - rx + (box[2] - box[0]) * 0.132),
+                    int(box[3] - ry + 63))
         return (int(render[2] * 0.302), int(render[3] * 0.879 - 18))
 
     def _panel_rect(self, gui):
