@@ -1090,6 +1090,8 @@ def main():
     # 失败则仅警告继续（控制台先行）；监听循环内每 10 秒由主线程重试接入。
     wechat_box = [None]
     try:
+        if os.environ.get("WXAGENT_NO_WECHAT") == "1":
+            raise RuntimeError("WXAGENT_NO_WECHAT（测试开关）")
         wechat_box[0] = WeChatAdapter(cfg)
         log.info("微信接入成功（主线程同步）")
     except BaseException as e:
@@ -2239,13 +2241,7 @@ def main():
                   persona_score_custom_fn=persona_score_custom_fn,
                   persona_ai_enrich_fn=persona_ai_enrich_fn)
     try:
-        # 首步：把微信窗口移到固定位置+标准大小（几何恒定，坐标只按 DPI 换算）
-        try:
-            if wechat is not None:
-                from agent.ui_adapt import _force_geometry as _fg
-                _fg(wechat._get_gui())
-        except Exception:
-            pass
+        # 控制台永远先启动（微信 UIA 几何调整可能因校准耗时/卡住，不能挡在它前面）
         port = webui.start()
         if port:
             token = str(server_cfg.get("token") or "").strip()
@@ -2275,6 +2271,15 @@ def main():
                         pass
     except Exception as e:
         log.warning("Web 控制台启动失败：%s", e)
+
+    # 首步：把微信窗口移到固定位置+标准大小（几何恒定，坐标只按 DPI 换算；
+    # 放在控制台之后——UIA 校准可能耗数十秒甚至卡住，不能拖累控制台）
+    try:
+        if wechat is not None:
+            from agent.ui_adapt import _force_geometry as _fg
+            _fg(wechat._get_gui())
+    except Exception:
+        pass
 
     # 初始化轮询游标（只处理启动之后的新消息，不重放历史）
     since_seq = {}
