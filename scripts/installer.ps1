@@ -133,6 +133,43 @@ function Add-Log([string]$t) {
     [System.Windows.Forms.Application]::DoEvents()
 }
 
+
+function Run-HiddenLogWatch([string]$exe, [string]$argLine, [string]$envName, [string]$envVal) {
+    # 不重定向子进程输出（无事件线程 → 无跨线程崩溃）；改为主循环轮询 onestart.log 的 @@ 事件行
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $exe
+    $psi.Arguments = $argLine
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $false
+    $psi.RedirectStandardError = $false
+    $psi.CreateNoWindow = $true
+    if ($envName) { $psi.EnvironmentVariables[$envName] = $envVal }
+    if ($env:WX_ONESTART_CHECK) { $psi.EnvironmentVariables['WX_ONESTART_CHECK'] = $env:WX_ONESTART_CHECK }
+    $p = New-Object System.Diagnostics.Process
+    $p.StartInfo = $psi
+    try { $ok = $p.Start() } catch { return @{ code = 1; err = ('start failed: ' + $_.Exception.Message) } }
+    if (-not $ok) { return @{ code = 1; err = 'start returned false' } }
+    while (-not $p.WaitForExit(100)) {
+        try {
+            if (Test-Path $logFile) {
+                $fs = [IO.File]::Open($logFile, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+                $fs.Seek($script:logPos, [IO.SeekOrigin]::Begin) | Out-Null
+                $sr = New-Object IO.StreamReader($fs)
+                while (-not $sr.EndOfStream) {
+                    $ln = $sr.ReadLine()
+                    if ($ln -and $ln.StartsWith('@@')) {
+                        try { Parse-Line $ln } catch { Diag ('Parse EX: ' + $_.Exception.Message) }
+                    }
+                }
+                $script:logPos = $fs.Position
+                $sr.Close(); $fs.Close()
+            }
+        } catch { }
+        [System.Windows.Forms.Application]::DoEvents()
+    }
+    return @{ code = $p.ExitCode; err = '' }
+}
+
 function Run-Hidden([string]$exe, [string]$argLine, [string]$envName, [string]$envVal) {
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $exe
@@ -224,6 +261,7 @@ function Wait-Close {
 }
 
 # ── 主流程 ──
+$script:logPos = 0
 try {
 $f.Show()
 Diag 'step: window shown'
@@ -231,7 +269,7 @@ Set-State '准备 Python 环境…' 5 0 '检测系统/绿色版 Python（无需�
 
 # 1) 准备 Python（隐藏执行）
 $ps1 = Join-Path $root 'scripts\setup_python.ps1'
-$r = Run-Hidden 'powershell.exe' ('-NoProfile -ExecutionPolicy Bypass -File "' + $ps1 + '"') '' ''
+$r = Run-HiddenLogWatch 'powershell.exe' ('-NoProfile -ExecutionPolicy Bypass -File "' + $ps1 + '"') '' ''
 Diag ('step: setup_python done rc=' + $r.code)
 if ($r.code -ne 0) {
     Set-State 'Python 准备失败，请查看日志' 0 0 ('checks logs\onestart.log')
@@ -256,7 +294,7 @@ Diag ('step: pyCmd=[' + $pyCmd + ']')
 
 # 2) onestart（GUI 事件驱动进度）
 $onestart = Join-Path $root 'scripts\onestart.py'
-$r2 = Run-Hidden $pyCmd ('-X utf8 "' + $onestart + '"') 'WX_GUI' '1'
+$r2 = Run-HiddenLogWatch $pyCmd ('-X utf8 "' + $onestart + '"') 'WX_GUI' '1'
 Diag ('step: onestart done rc=' + $r2.code)
 if ($r2.code -ne 0) {
     Set-State '启动失败（依赖/自检/机器人）' 0 0 '详见 logs\onestart.log'

@@ -25,9 +25,15 @@ GUI = os.environ.get("WX_GUI") == "1"
 
 
 def evt(kind, *args):
-    """GUI 事件行（ASCII）。"""
+    """GUI 事件行（ASCII）：stdout（安装器读取）+ 日志文件（installer 轮询日志，无事件线程）。"""
+    line = "@@%s:%s" % (kind, ":".join(str(a) for a in args))
     try:
-        print("@@%s:%s" % (kind, ":".join(str(a) for a in args)), flush=True)
+        with open(LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:
+        pass
+    try:
+        print(line, flush=True)
     except Exception:
         pass
 
