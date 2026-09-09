@@ -51,6 +51,40 @@ def bing_search(query: str, search_url: str | None = None) -> dict:
     return {"query": query, "results": results}
 
 
+def google_search(query: str) -> dict:
+    """Google 网页搜索（免费 HTML 解析，无需 key）。不可达/反爬时抛错，由调用方回退。"""
+    cfg = get_config().get("web_search", {})
+    max_results = max(1, min(10, int(cfg.get("max_results") or 6)))
+    url = "https://www.google.com/search?" + urlencode({"q": query, "hl": "zh-CN"})
+    resp = requests.get(url, headers={"user-agent": UA,
+                                      "accept-language": "zh-CN,zh;q=0.9,en;q=0.8"}, timeout=(3, 8))
+    if resp.status_code != 200:
+        raise RuntimeError("Google 搜索 HTTP %d" % resp.status_code)
+    html_text = resp.text
+    results = []
+    for block in re.split(r'<div class="[^"]*(?:MjjYud|g)"', html_text)[1:]:
+        href_m = re.search(r'href="(/url\?q=([^"&]+)|https?://[^"]+)"', block, re.IGNORECASE)
+        if not href_m:
+            continue
+        if href_m.group(1).startswith("/url?q="):
+            from urllib.parse import unquote as _uq
+            url_str = _uq(_decode_html(href_m.group(2)))
+        else:
+            url_str = _decode_html(href_m.group(1))
+        title_m = re.search(r"<h3[^>]*>([\s\S]*?)</h3>", block, re.IGNORECASE)
+        title = _decode_html(title_m.group(1)) if title_m else ""
+        snip_m = (re.search(r'<div class="VwiC3b[^"]*"[^>]*>([\s\S]*?)</div>', block, re.IGNORECASE)
+                  or re.search(r'<span class="aCOpRe[^"]*"[^>]*>([\s\S]*?)</span>', block, re.IGNORECASE))
+        snippet = _decode_html(snip_m.group(1)) if snip_m else ""
+        if url_str and title:
+            results.append({"title": title, "url": url_str, "snippet": snippet})
+        if len(results) >= max_results:
+            break
+    if not results:
+        raise RuntimeError("Google 搜索没有解析到结果")
+    return {"query": query, "results": results}
+
+
 def web_search(query: str) -> dict:
     clean = sanitize_query(query)
     if not clean:
@@ -69,6 +103,12 @@ def web_search(query: str) -> dict:
         return _metaso_search(clean)
     if provider == "custom" or provider.startswith("custom:"):
         return _custom_search(clean, provider)
+    # 免费网页解析：Google 优先（有谷歌用谷歌），不可达自动回退 Bing
+    if cfg.get("google_first", True) is not False or provider == "google":
+        try:
+            return google_search(clean)
+        except Exception:
+            pass  # Google 不可达（无代理/超时/反爬）→ 回退
     return bing_search(clean)
 
 
