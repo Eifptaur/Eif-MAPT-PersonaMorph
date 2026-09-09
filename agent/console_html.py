@@ -20,11 +20,11 @@ HTML = r"""<!DOCTYPE html>
   /* ── 默认主题：「鲸落」深蓝海（whale）——海浪底图 + 深蓝 tint + 慢速动效 ──
      背景=实拍海浪（assets/wallpaper/ocean1.jpg，本机文件），深蓝 tint 与慢速缩放；
      卡片=浅蓝半透毛玻璃、导航栏=更深蓝实体——色差分三层凸显透明 */
-  --blue:#63C8FF; --blue2:#2FA6F0; --blue-soft:rgba(63,168,240,.16); --blue-line:rgba(90,180,255,.4);
+  --blue:#6FCFFF; --blue2:#4FB3F2; --blue-soft:rgba(63,168,240,.15); --blue-line:rgba(120,190,255,.32);
   --bg:linear-gradient(160deg,rgba(8,30,58,.62),rgba(12,44,84,.45) 45%,rgba(18,48,96,.55) 100%);
   --bg-solid:rgba(12,34,62,.86);
-  --card:rgba(150,206,255,.14);
-  --bd:rgba(170,215,255,.34); --tx:#EAF6FF; --tx2:#A9D1EC;
+  --card:rgba(150,206,255,.10);
+  --bd:rgba(170,215,255,.26); --tx:#EAF6FF; --tx2:#A9D1EC;
   --ok:#35F0C0; --warn:#FFD166; --err:#FF8A8A;
   --shadow:inset 0 1px 0 rgba(255,255,255,.26),0 10px 34px rgba(10,40,80,.5),0 2px 8px rgba(0,20,40,.4);
   --input-bg:rgba(255,255,255,.09); --hover-bg:rgba(255,255,255,.16); --input-bd:rgba(160,210,255,.35); --topbar:rgba(8,24,46,.7);
@@ -33,8 +33,8 @@ HTML = r"""<!DOCTYPE html>
 }
 /* 浅色主题（手动）——明亮蓝白 */
 :root[data-theme=light]{
-  --blue:#4D6BFE; --blue2:#3D5BF0; --blue-soft:#EEF2FF; --blue-line:#DCE4FF;
-  --bg:#F4F6FC; --bg-solid:#F4F6FC; --card:#FFFFFF; --bd:#E6EAF5; --tx:#1F2937; --tx2:#6B7280;
+  --blue:#5B78F7; --blue2:#4A67F0; --blue-soft:#EEF2FF; --blue-line:#DCE4FF;
+  --bg:#F5F7FD; --bg-solid:#F5F7FD; --card:#FFFFFF; --bd:#EBEFF8; --tx:#1F2937; --tx2:#6B7280;
   --ok:#10B981; --warn:#F59E0B; --err:#EF4444; --shadow:0 1px 3px rgba(31,41,55,.06),0 8px 24px rgba(77,107,254,.06);
   --input-bg:#F8FAFE; --hover-bg:#F8FAFF; --input-bd:#DCE4FF; --topbar:rgba(255,255,255,.92);
   --code-bg:#0F172A; --code-tx:#D8E0F0; --ok-soft:#D1FAE5; --ok-tx:#047857;
@@ -231,7 +231,8 @@ a{color:var(--blue)}
 .nav-ind{position:absolute;left:0;width:3px;border-radius:2px;background:var(--blue);
   top:0;height:3px;opacity:0;transition:top .28s cubic-bezier(.34,1.4,.64,1),opacity .2s}
 .nav a{position:relative;z-index:1}
-.nav a{display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:9px;color:var(--tx2);
+.nav a{display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:11px;color:var(--tx2);
+  transition:background .18s ease,color .18s ease}
   text-decoration:none;font-size:13.5px;margin:2px 0}
 .nav a:hover{background:var(--bg-solid)}
 .nav a.on{background:var(--blue-soft);color:var(--blue);font-weight:600;position:relative}
@@ -260,8 +261,13 @@ button:active{transform:scale(.97)}
 .dlist{background:var(--menu-bg);border:1px solid var(--bd);border-radius:8px;padding:4px;font-size:13px}
 .main{min-width:0}
 
-.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:18px 20px;margin-bottom:16px;box-shadow:var(--shadow);position:relative;overflow:hidden}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:18px;padding:18px 20px;margin-bottom:16px;box-shadow:var(--shadow);position:relative;overflow:hidden}
 .card h2{font-size:15px;margin-bottom:4px;color:var(--blue);display:flex;align-items:center;gap:6px}
+/* 柔和过渡：卡片/按钮/输入/导航淡入与浮起 */
+.card,button.pri,button.ghost,.nav a,.chips .c,.row input,.row select,.row textarea,.dsel-btn,.pick .opt{transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease,background .18s ease,color .18s ease}
+@keyframes wxpage{from{opacity:.4;transform:translateY(5px)}to{opacity:1;transform:none}}
+.card{animation:wxpage .3s ease}
+.mask .box{animation:wxpage .22s ease}
 /* 首页右上角工具按钮（计费删除）——绝对定位到卡片右上角，与标题分离，保证可点层级 */
 .ov-tools{position:absolute;top:14px;right:16px;display:flex;gap:6px;font-weight:400;z-index:80;pointer-events:auto}
 #sec-overview h2{padding-right:240px}

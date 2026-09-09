@@ -1,4 +1,4 @@
-﻿# wx-agent 一键启动安装器窗口：图标 + 步骤进度 + 进度条（无命令行黑窗）
+# wx-agent 一键启动安装器窗口：图标 + 步骤进度 + 进度条（无命令行黑窗）
 # 由 一键启动.vbs 隐藏启动；依次：准备 Python → onestart(事件解析) → 快捷方式询问 → 完成。
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -126,14 +126,16 @@ function Run-Hidden([string]$exe, [string]$argLine, [string]$envName, [string]$e
     $p.StartInfo = $psi
     try { $ok = $p.Start() } catch { return @{ code = 1; err = ('start failed: ' + $_.Exception.Message) } }
     if (-not $ok) { return @{ code = 1; err = 'start returned false' } }
-    while (-not $p.StandardOutput.EndOfStream) {
-        $line = $p.StandardOutput.ReadLine()
-        Diag ('OUT> ' + $line)
-        Parse-Line $line
+    # 异步读输出（事件驱动，不阻塞主线程）；主循环 WaitForExit(100)+DoEvents 泵消息——
+    # 否则窗口消息循环不跑 → "未响应 / 进度条不动"
+    $p.add_OutputDataReceived({ param($s, $e) if ($e.Data) { Diag ('OUT> ' + $e.Data); Parse-Line $e.Data } })
+    $p.add_ErrorDataReceived({ param($s, $e) if ($e.Data) { Diag ('ERR> ' + $e.Data) } })
+    $p.BeginOutputReadLine()
+    $p.BeginErrorReadLine()
+    while (-not $p.WaitForExit(100)) {
+        [System.Windows.Forms.Application]::DoEvents()
     }
-    $err = $p.StandardError.ReadToEnd()
-    try { $p.WaitForExit() } catch {}
-    return @{ code = $p.ExitCode; err = $err }
+    return @{ code = $p.ExitCode; err = '' }
 }
 
 function Parse-Line([string]$line) {
