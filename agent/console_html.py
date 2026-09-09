@@ -996,7 +996,7 @@ th{color:var(--tx2);font-weight:500}
       <div class="row"><label>监听地址</label><div class="grow"><input type="text" data-cfg="server.host" title="默认只允许本机访问"></div></div>
       <div class="row"><label>端口</label><div class="grow"><input type="number" min="1" max="65535" data-cfg="server.port"></div></div>
       <div class="row"><label>自动开浏览器</label><input type="checkbox" data-cfg="server.auto_open_browser"></div>
-      <div class="row"><label>访问口令</label><div class="grow"><input type="text" data-cfg="server.token" placeholder="留空=启动时自动生成"></div></div>
+      <div class="row"><label>访问口令（掩码）</label><div class="grow" style="display:flex;align-items:center;gap:8px"><input type="password" data-cfg="server.token" placeholder="留空=启动时自动生成" style="flex:1"><button class="ghost" id="tkShow" type="button">显示</button><span class="hint">网址里 ?token= 后就是它；访问口令=控制台钥匙，请保密</span></div></div>
       <div class="row"><label>统计周期</label><div class="grow"><select data-cfg="stats.period">
         <option value="daily">每日（每天 0 点重置）</option>
         <option value="weekly">每周（默认，周一重置）</option>
@@ -3990,6 +3990,18 @@ $('unifiedTierChk').addEventListener('change', ()=>renderGroupTierBox());
   };
 })();
 
+/* ── 访问口令掩码显示切换 ── */
+(function(){
+  const b = document.getElementById('tkShow');
+  if(!b) return;
+  b.onclick = ()=>{
+    const i = document.querySelector('[data-cfg="server.token"]');
+    if(!i) return;
+    const show = i.type === 'password';
+    i.type = show ? 'text' : 'password';
+    b.textContent = show ? '隐藏' : '显示';
+  };
+})();
 /* ── 费用计算器（官方价目 · 全厂商分区）── */
 (function(){
   const ven = document.getElementById('fcVendor');
