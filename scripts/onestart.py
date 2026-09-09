@@ -278,6 +278,56 @@ def _try_browser_lock(seconds=90):
         return True                   # 极端情况：放开（避免全都不打开）
 
 
+def _build_tag_local():
+    try:
+        import datetime
+        mt = os.path.getmtime(os.path.join(ROOT, "agent", "console_html.py"))
+        return "b." + datetime.datetime.fromtimestamp(mt).strftime("%m%d-%H%M")
+    except Exception:
+        return "b?"
+
+
+def _probe_running_instance(timeout=2):
+    """探测 3210：'same'=当前版本在跑 / 'old'=旧版本在跑 / 'none'=无实例。"""
+    try:
+        import urllib.request
+        import json as _j
+        with urllib.request.urlopen("http://127.0.0.1:3210/api/version", timeout=timeout) as _r:
+            _d = _j.loads(_r.read().decode("utf-8", "replace"))
+            return "same" if str(_d.get("ver") or "") == _build_tag_local() else "old"
+    except Exception:
+        return "none"
+
+
+def _kick_old_instance():
+    """踢掉旧版本实例（3210 的 wx_agent/watchdog + 启动器/关闭器进程）。"""
+    try:
+        out = subprocess.check_output(
+            'wmic process where "name like \'python%\' or name like \'cscript%\'" get processid,commandline '
+            '/format:csv', shell=True, text=True, errors="replace")
+        for line in out.splitlines():
+            if any(k in line for k in ("wx_agent.py", "watchdog.py", "onestart.py")) and "plugin" not in line:
+                parts = line.rsplit(",", 1)
+                if parts and parts[-1].strip().isdigit():
+                    subprocess.run(["taskkill", "/F", "/PID", parts[-1].strip()],
+                                   capture_output=True, creationflags=0x08000000)
+    except Exception:
+        pass
+    time.sleep(1.5)
+
+
+def _open_current_console():
+    """同版本已在运行：直接打开控制台（读 config 的端口/token）。"""
+    try:
+        from agent.config import get_config
+        sc = get_config().get("server", {})
+        url = "http://127.0.0.1:%s/?token=%s" % (int(sc.get("port") or 3210), str(sc.get("token") or ""))
+        return _open_console(url)
+    except Exception as e:
+        log("打开控制台失败：%s" % e)
+        return False
+
+
 def _open_console(url, browser_path=""):
     """打开控制台浏览器：配置/探测的浏览器 exe 优先，否则系统默认（start）。"""
     try:
@@ -307,6 +357,25 @@ def main():
     log("╔══════════════════════════════════════════════╗")
     log("║        wx-agent 一键启动（全程进度）         ║")
     log("╚══════════════════════════════════════════════╝")
+
+    # 自动检测旧实例：同版本→直接开控制台；旧版本→踢掉再启动新版（杜绝 404/旧代码）
+    if not check_only:
+        try:
+            _st = _probe_running_instance()
+            if _st == "same":
+                log("检测到当前版本控制台已在运行，直接打开浏览器（不再重复启动）。")
+                evt("PHASE", "boot")
+                _open_current_console()
+                evt("DONE")
+                return 0
+            if _st == "old":
+                log("检测到旧版本实例（/api/version 指纹不同），自动踢出旧进程后启动新版…")
+                evt("PHASE", "boot")
+                _kick_old_instance()
+                log("旧实例已清理，继续一键启动。")
+        except Exception:
+            pass
+
     log("[1/3] 依赖检查（缺则自动安装；已装自动跳过）")
     py = sys.executable or "python"
 

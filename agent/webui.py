@@ -493,6 +493,10 @@ class WebUI:
                     return parent._serve_asset(path, self)
                 if path.startswith("/wallpaper/"):
                     return parent._serve_wallpaper(path, self, parsed.query)
+                if path == "/api/version":
+                    # 免认证版本指纹（启动器/新实例探测旧实例用；不含隐私）
+                    self._json({"ver": parent._build_tag()})
+                    return
                 if not self._auth_ok():
                     return self._json({"error": "unauthorized"}, 401)
                 # 防窥视：地址栏乱码路径（单段 /aB3$xy…，无 API/静态前缀）也返回控制台页面
