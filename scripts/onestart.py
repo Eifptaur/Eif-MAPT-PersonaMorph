@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """一键启动：依赖检查 →（缺则自动安装）→ 自检 → 启动机器人（可见进度窗口）。
 
 由 一键启动.vbs 以可见 console 调用：安装/自检输出实时显示在窗口
@@ -314,12 +314,22 @@ def main():
     deps_done = [0]
     evt("PHASE", "deps")
 
+    # 依赖安装实时进度：统计 requirements 包数作为总量，逐包 +1（pip Collecting/Downloading/安装缺失 均计）
+    try:
+        _req_n = len([_l for _l in open(os.path.join(ROOT, "requirements.txt"), encoding="utf-8")
+                      if _l.strip() and not _l.strip().startswith("#")])
+    except Exception:
+        _req_n = 21
+    deps_install = [0]
+
     def _deps_progress(ln):
         if ln.startswith("OK"):
             deps_done[0] += 1
             _prog("依赖检查", min(deps_done[0], 14), 14)
-        elif ("安装缺失" in ln or "正在安装" in ln) and _LAST_PROG.get("安装依赖") is None:
-            _prog("安装依赖", 14, 14)
+        elif ("安装缺失" in ln or "正在安装" in ln or ln.startswith("Collecting")
+                or ln.startswith("Downloading")):
+            deps_install[0] += 1
+            _prog("安装依赖", min(deps_install[0], _req_n), _req_n)
 
     ok, tail = run_stream([py, "-X", "utf8", "-u", os.path.join(ROOT, "scripts", "setup_deps.py")],
                           on_line=_deps_progress)
