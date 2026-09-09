@@ -109,7 +109,6 @@ if _wvi is not None:
     else:
         # 微信未打开/不可见：不阻断启动——机器人打开控制台后，监听循环每 10 秒会自动重试接入（微信在线即用）
         warn("微信未检测到（请保持微信登录；机器人会自动重试接入，不影响控制台使用）")
-        _warn_notes.append("微信未检测到（自动重试接入中）")
 else:
     check("微信版本检测", False, "module import 失败")
 PROJECT_MODULES = [
