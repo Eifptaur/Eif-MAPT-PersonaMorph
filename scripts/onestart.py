@@ -125,8 +125,11 @@ def _open_console(url, browser_path=""):
 
 def main():
     check_only = (os.environ.get("WX_ONESTART_CHECK") == "1") or ("--check-only" in sys.argv[1:])
-    log("=" * 46)
-    log("一键启动开始（1/3 依赖检查）")
+    log("")
+    log("╔══════════════════════════════════════════════╗")
+    log("║        wx-agent 一键启动（全程进度）         ║")
+    log("╚══════════════════════════════════════════════╝")
+    log("[1/3] 依赖检查（缺则自动安装；已装自动跳过）")
     py = sys.executable or "python"
 
     # 1. 依赖
@@ -139,7 +142,8 @@ def main():
     log("依赖检查通过 ✔")
 
     # 2. 自检
-    log("一键启动（2/3 自检 55 项）")
+    log("")
+    log("[2/3] 环境自检 55 项（依赖/微信/模块/配置）")
     ok, tail = run_stream([py, "-X", "utf8", "-u", os.path.join(ROOT, "scripts", "selftest.py")])
     if not ok:
         # 提取失败项行（FAIL 开头）供提示
@@ -156,7 +160,7 @@ def main():
         log("验证模式：仅执行依赖与自检，不拉起机器人（WX_ONESTART_CHECK=1）。")
         log("一键启动（验证）通过。")
         return 0
-    log("一键启动（3/3 启动机器人）")
+    log("[3/3] 启动机器人（等待控制台就绪，随后自动打开浏览器）")
     watchdog = os.path.join(ROOT, "scripts", "watchdog.py")
     existing = None
     try:

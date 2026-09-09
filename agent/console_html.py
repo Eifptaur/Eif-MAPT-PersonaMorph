@@ -4048,6 +4048,6 @@ $('exportMessages').onclick = ()=>doExport('messages','Messages');
 const _tierSel = document.querySelector('[data-cfg="store.context_tier"]');
 if(_tierSel) _tierSel.addEventListener('change', ()=>updateTierRows());
 </script>
-</body>
+<div style="position:fixed;left:4px;bottom:2px;font-size:10px;color:#8aa0c0;opacity:.55;z-index:9">wx-agent build 2026-09-09</div></body>
 </html>
 """

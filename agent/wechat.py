@@ -870,15 +870,17 @@ class WeChatAdapter:
                 got_discover = _try_click(pos[0], pos[1])
             elif pos and _discover_visible():
                 got_discover = True
-            # ② 图标列聚类：从后往前试（最后 1 枚=设置，跳过；发现通常在倒数第 2 枚）
+            # ② 图标列聚类：**排除最后一枚（设置）**，从倒数第二（发现）开始往前试
             if not got_discover:
                 ys = self._detect_sidebar_icons(gui)
-                for yi in reversed(ys[-3:]):
-                    if not got_discover:
-                        got_discover = _try_click(l + int(W * 0.043), t + yi)
-            # ③ 相对多候选兜底（全部在设置之上）
+                cands = list(reversed(ys[-3:-1])) if len(ys) >= 2 else []
+                for yi in cands:
+                    if got_discover:
+                        break
+                    got_discover = _try_click(l + int(W * 0.043), t + yi)
+            # ③ 相对多候选兜底（只在下半部中上区域，不接近设置/三条杠）
             if not got_discover:
-                for y_ratio in (0.80, 0.85, 0.90):
+                for y_ratio in (0.70, 0.76, 0.82):
                     if _try_click(l + int(W * 0.043), t + int(H * y_ratio)):
                         got_discover = True
                         break
