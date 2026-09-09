@@ -2291,6 +2291,8 @@ def main():
                         pass
                     if not _bp_skip:
                         bp = pick_browser(str(server_cfg.get("browser_path") or ""))
+                    else:
+                        bp = None
                     if bp:
                         _sp.Popen([bp, url], creationflags=0x08000000,
                                   stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
