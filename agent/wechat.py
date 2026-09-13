@@ -1213,12 +1213,19 @@ class WeChatAdapter:
             if not isinstance(backend, ib.MessageBackend):
                 return False, "当前输入后端不是投递档（config.input.backend=%s）" % backend.name
             ok_open, why_open = self.chat_is_open(chat_id, gui=gui)
+            if not ok_open and not confirm_open:
+                return False, "发文件要求目标会话已打开且被确认：%s" % why_open
             if not ok_open:
-                if not confirm_open:
-                    return False, "发文件要求目标会话已打开且被确认：%s" % why_open
                 # 人工确认通道：**只在用户当面确认「当前开着的就是目标会话」时用**
                 # （会话标题是浅灰细字、本机 OCR 读不出，E 这种会话自动闸门可能永远判不过）
                 log.warning("发文件：用户当面确认当前会话＝目标会话，跳过自动会话闸（自动判据：%s）", why_open)
+            # ⛔ 内容级身份闸（2026-09-13 发错会话事故后加）：**名字判据会骗人**——
+            #    群聊行的预览带发言人前缀（`E: 提交信息…`），会被当成"会话名＝E"从而点进那个群。
+            idn, idn_why = self.chat_identity_ok(chat_id, gui=gui)
+            if idn is False:
+                return False, "⛔ 内容核对不通过，拒绝发送（防发错会话）：%s" % idn_why
+            if idn is None and not confirm_open:
+                return False, "拿不到内容级证据，拒绝发送：%s（确已人工确认可用 confirm_open）" % idn_why
             main_hwnd = int(getattr(gui, "main_hwnd", 0) or 0) or ib.find_main_window()
             if not main_hwnd:
                 return False, "找不到微信主窗"
@@ -1396,6 +1403,37 @@ class WeChatAdapter:
     # 收到表情时它即会话最新一条，可截取为 PNG 存进收藏夹 data/emojis/。
 
     EMOJI_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "emojis")
+
+    def last_text_of(self, chat_id: str, limit: int = 8) -> str:
+        """取目标会话最近一条**文本**内容（给内容级身份核对当指纹用）。"""
+        try:
+            for r in (self._db.get_messages(chat_id, limit=limit) or []):
+                c = str(r.get("content") or "").strip()
+                if len(c) >= 6 and not c.startswith("<msg"):
+                    return c
+        except Exception:
+            pass
+        return ""
+
+    def chat_identity_ok(self, chat_id: str, gui=None):
+        """**内容级**身份核对：当前聊天区里应看得到目标会话最近那条文本。
+
+        返回 `(True/False/None, 说明)`；`None`＝拿不到可比对的内容（调用方按"没有正面证据"处理）。
+        ⚠️ 为什么不能只信名字（2026-09-13 发错会话事故）：群聊行的预览带**发言人前缀**（`E: 提交信息…`），
+        被当成"会话名＝E"后点进了那个群 ⇒ 发送前的最后一道闸必须是**内容**，不是名字。
+        """
+        needle = self.last_text_of(chat_id)
+        if not needle:
+            return None, "目标会话最近几条里没有可用作文本的比对内容（都是图片/文件？）"
+        try:
+            from . import chat_ocr as _co
+            pane = _co.pane_text(_co.capture_best(gui=gui or self._get_gui(), frames=3), limit=400)
+            if _co.content_match(pane, needle):
+                return True, "聊天区里认出了目标会话最近的内容（%r…）" % needle[:16]
+            return False, ("聊天区里**没有**目标会话最近的内容（指望 %r…）⇒ 当前开着的很可能不是目标会话"
+                           % needle[:16])
+        except Exception as e:
+            return None, "内容核对异常：%s" % type(e).__name__
 
     def _chat_obj(self, chat_id: str):
         """构造 wechatauto Chat（复用当前 db/gui），用于表情截图。"""

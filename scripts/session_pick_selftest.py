@@ -31,6 +31,7 @@ def ok(name, cond, detail=""):
 
 from agent import chat_ocr as CO  # noqa: E402
 from agent import input_backend as IB  # noqa: E402
+from agent import wechat as W  # noqa: E402
 
 print("── A2. 名字切分：单字母会话名（E）以前永远配不上 ──")
 ok("OCR 行「E:提交信息还．“」切成名字 E", CO.split_name("E:提交信息还．“") == "E", repr(CO.split_name("E:提交信息还．“")))
@@ -162,6 +163,32 @@ try:
 finally:
     CO.session_rows, CO._green_at = _rs, _ga
 ok("chat_ocr 有 pane_text", hasattr(CO, "pane_text"))
+
+print("── E2. 内容级身份核对（名字会骗人：群聊预览带「发言人:」前缀）──")
+ok("content_match：认出同一段内容", CO.content_match("……前面的废话 这是一条独特内容 abcdef 后面的", "这是一条独特内容 abcdef"))
+ok("content_match：内容不同 ⇒ False", CO.content_match("完全不相干的一段话在这里", "这是一条独特内容 abcdef") is False)
+ok("content_match：太短不给结论（fail-closed）", CO.content_match("abc", "abcd") is False)
+ok("content_match：容忍 OCR 吞字（多尺度片段）",
+   CO.content_match("这是一条独特内 abcdef", "这是一条独特内容 abcdef") is True)
+_real_cb, _real_pt = CO.capture_best, CO.pane_text
+try:
+    class _FakeDB:
+        @staticmethod
+        def get_messages(chat_id, limit=8):
+            return [{"content": "这是一条独特内容 abcdef"}]
+
+    ad2 = W.WeChatAdapter.__new__(W.WeChatAdapter)
+    ad2._db = _FakeDB()
+    CO.capture_best = lambda gui=None, frames=3: object()
+    CO.pane_text = lambda img, limit=200: "……这是一条独特内容 abcdef……"
+    ok("内容一致 ⇒ 判 True（可以发）", ad2.chat_identity_ok("x", gui=object())[0] is True)
+    CO.pane_text = lambda img, limit=200: "完全是别的会话的内容在这里"
+    ok("内容不符 ⇒ 判 False（拒绝发送）", ad2.chat_identity_ok("x", gui=object())[0] is False)
+    _FakeDB.get_messages = staticmethod(lambda chat_id, limit=8: [{"content": "<msg>图片</msg>"}])
+    ok("目标没有可比文本 ⇒ None（当「没有正面证据」处理）", ad2.chat_identity_ok("x", gui=object())[0] is None)
+finally:
+    CO.capture_best, CO.pane_text = _real_cb, _real_pt
+ok("send_file_posted 接了内容级闸", "chat_identity_ok(chat_id, gui=gui)" in _src)
 
 print("\n%d/%d 通过" % (PASS, PASS + FAIL))
 sys.exit(1 if FAIL else 0)
