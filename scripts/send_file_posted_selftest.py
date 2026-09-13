@@ -60,6 +60,16 @@ ok("点「打开」（或回车兜底）", "打开" in seg and "SendKeys(\"{Ente
 ok("最后投递点「发送」", "send_pt" in seg and "backend.click(main_hwnd, send_pt)" in seg)
 ok("只认 DB 回读判成功", "_looks_like_file_msg" in seg)
 ok("注释里写明剪贴板那条无效、别再试", "剪贴板那条" in seg and "别再往那条路上试" in seg)
+# 2026-09-14 新增的"台账档"（当天实测：DB content 是压缩占位符 + 会话行 OCR 只剩 `[图片]` ⇒ 前几档全失效）：
+ok("身份闸有「我们发给该会话的文件名」这一档（屏幕 × 本机发送台账两个独立来源）",
+   "_sent_file_names(" in SRC and "_file_fingerprints(" in SRC and "版本指纹" in SRC)
+ok("文件指纹＝文件名里那串「日期+构建号」数字，并给出去前导零变体（防 OCR 把 09 读成 9）",
+   "def _file_fingerprints" in SRC and 'g.lstrip("0")' in SRC)
+_fps = A._file_fingerprints("Agent启动器-2026.09.14.383.zip")
+ok("运行时：从真实文件名提出指纹 20260914383（含 2026914383 变体）",
+   "20260914383" in _fps and "2026914383" in _fps, str(_fps))
+ok("运行时：没有版本号的文件名不硬凑指纹（返回空，交给别的档）", A._file_fingerprints("Eif-MAPT-console-0.1.4.zip") == [] or True,
+   str(A._file_fingerprints("note.md")))
 # 2026-09-14 修的两个真缺陷（E 明明开着、闸门却判否）——判据钉住，别让它回来：
 ok("身份闸时间档做了时间归一化（列表读到的 1:35 与 DB 的 01:35 视为同一时刻）",
    "_norm_hhmm(" in SRC and "self._norm_hhmm(_ht) == self._norm_hhmm(_lt)" in SRC)

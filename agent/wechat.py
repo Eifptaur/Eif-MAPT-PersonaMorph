@@ -1871,6 +1871,18 @@ class WeChatAdapter:
             f_ok, f_why = self.pane_file_card_ok(chat_id, pane)
             if f_ok is True:
                 return True, f_why
+            # 再一档：**我们自己发给过这个会话的文件名**出现在聊天区（屏幕 OCR × 本机发送台账，两个独立来源）
+            #   实测为什么必须有这一档（2026-09-14）：DB 里 content 是压缩占位符、会话行 OCR 只剩 `[图片]`
+            #   ⇒ 文本档/文件卡档/时间档**同时**失效，而聊天区里明明就摆着我们发过去的文件卡。
+            try:
+                _pane_norm = _co.norm_alnum(pane)
+                for _nm, _ts in self._sent_file_names(chat_id):
+                    for _fp in self._file_fingerprints(_nm):
+                        if _fp and _fp in _pane_norm:
+                            return True, ("聊天区里能看到我们发给该会话的文件（%s）—— 版本指纹 %s 命中"
+                                          % (_nm, _fp))
+            except Exception:
+                pass
             # 再一档：**高亮行时间**（单字母名字读不出时唯一还读得准的信号）——高亮行＝当前打开的会话，
             # 它的时间戳对上目标会话最后一条消息的时间，且聊天区里也出现同一时间 ⇒ 认它。
             # 实测依据（2026-09-13）：E 那一行名字 OCR=''，但高亮行时间 21:41 == 370 文件卡那一刻，
@@ -1921,6 +1933,49 @@ class WeChatAdapter:
             return time.strftime("%H:%M", lt)
         except Exception:
             return ""
+
+    @staticmethod
+    def _file_fingerprints(name: str) -> list:
+        """从文件名里取出"版本号那一串数字"当指纹（例：Agent启动器-2026.09.14.383.zip ⇒ 20260914383）。
+
+        为什么不整名匹配（2026-09-14 实测）：会话行/文件卡的 OCR 会把汉字读错（实测 "Agent启动器"
+        被读成 "器一"），但**日期+构建号那串数字几乎不会被读错**，而它对这个会话足够独特。
+        同时给出"去前导零"的变体，防 OCR 把 09 读成 9（或反之）。
+        """
+        out = []
+        try:
+            m = re.search(r"(\d{4})[.\-_](\d{1,2})[.\-_](\d{1,2})[.\-_](\d{1,6})", str(name or ""))
+            if m:
+                out.append("".join(m.groups()))
+                out.append("".join((g.lstrip("0") or "0") for g in m.groups()))
+        except Exception:
+            pass
+        return [x for x in out if len(x) >= 8]
+
+    def _sent_file_names(self, chat_id: str, limit: int = 8) -> list:
+        """本机发送台账里"发给过这个会话"的文件名（按时间倒序）——给身份闸当"屏幕 × 台账"证据。
+
+        为什么需要（2026-09-14 实测）：E 那个会话最近几条是图片/文件卡，DB 里 content 是压缩占位符
+        （`[图片]` / `[文件/链接/卡片]`）⇒ 文本档、文件卡档都拿不到指纹；而会话列表那一行在"图片预览"
+        布局下整行 OCR 只剩 `[图片]`（名字是单字母、时间也没读出来）⇒ 时间档也失效。
+        此时唯一还准的信号是：**聊天区里能看到我们曾发给这个会话的文件名**。
+        ⚠️ 局限：若同一个文件也发给过别的会话、而那个会话正开着，这一档可能误认（台账按会话分键，
+        外加只取最近 limit 条、指纹是版本级数字串，实际风险很小）。
+        """
+        out = []
+        try:
+            import json as _json
+            with open(self._sent_file_log_path(), "r", encoding="utf-8") as f:
+                data = _json.load(f) or {}
+            for k, ts in data.items():
+                parts = str(k).split("|")
+                if len(parts) < 2 or parts[0] != chat_id:
+                    continue
+                out.append((os.path.basename(parts[1]), float(ts or 0)))
+        except Exception:
+            return out
+        out.sort(key=lambda x: x[1], reverse=True)
+        return out[:max(1, int(limit))]
 
     @staticmethod
     def _norm_hhmm(s: str) -> str:
