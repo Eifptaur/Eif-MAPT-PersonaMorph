@@ -124,6 +124,16 @@ DEFAULT_CONFIG = {
         "avoid_recent": 30,          # 记住最近发过的 N 张，尽量不重复
         "include_gif": True,         # 是否把 .gif 也算进图库
     },
+    # ── 语音转文字（本地、离线、零下载优先；默认关）─────────────────────────
+    #   链路：微信语音 .silk →[pilk / silk_v3_decoder]→ WAV →[Windows 内置 SAPI 听写]→ 文本。
+    #   **探不到引擎就如实报「没有可用引擎」，绝不假装识别过**（实现与实测见 agent/voice.py）。
+    "voice": {
+        "enabled": False,            # 总开关（控制台可切）
+        "engine": "auto",            # auto＝按实测可用性自动挑 | sapi＝只用 Windows 内置 | off＝关
+        "dir": "media/voice",        # 音频落地目录（相对项目根）
+        "max_seconds": 60,           # 单条识别时限（SAPI 听写不适合长音频）
+        "keep_audio": False,         # 识别后是否保留中间 wav（默认只留 .silk）
+    },
     # ── 输入后端（最高目标「全程后台、不抢鼠标」的档位；实现与实测证据见 agent/input_backend.py）──
     #   auto＝有微信主窗就走投递（L5），找不到窗口退回真鼠标（L0）；message＝强制投递；real＝强制真鼠标
     "input": {
