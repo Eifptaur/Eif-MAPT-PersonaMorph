@@ -150,11 +150,14 @@
 | `assets/icon.png` | favicon（`console_html.py:17` + `webui.py:256/403`）。**2026-09-13 已换成新鲸鱼**（＝app-icon 同源：黑圆角方 + 白鲸） | ⚠️ `webui.py:254-258` 是**启动时读一次**存内存 ⇒ **换 favicon 后必须重启控制台**才生效（浏览器还要 Ctrl+F5）；`assets/` 里其它素材是每请求读盘，不用重启 |
 
 **一键启动.exe / 一键关闭.exe 是 csc 编译产物（重要，之前没人写下来）：**
-- 源码：`_scratch\launcher.cs`、`_scratch\close.cs`；编译器：`C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe`
+- 源码：**`launcher-src\launcher.cs`、`launcher-src\close.cs`**（2026-09-13 W6 从 `_scratch/` 移入版本管理：发布物必须有源）；编译器：`C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe`
+- W6 起 一键启动.exe **必须引用 WebView2**：`lib\Microsoft.Web.WebView2.Core.dll` + `lib\Microsoft.Web.WebView2.WinForms.dll`，且 **`WebView2Loader.dll` 放在 exe 同目录（根目录）**（程序集解析在 `StyleKit.Prep()` 用 `AssemblyResolve` 挂到 `lib\`）
+- 自检入口（W6）：`一键启动.exe --console <url>`（自带 WebView2 窗口开控制台，Python 侧不再开浏览器）· `--shot <dir>`（全部弹窗离屏渲染 PNG 作视觉证据）· `--dlgprobe`（打印弹窗/控件清单，机械核对主题与边框）
+- **硬规矩：0 系统 MessageBox**（`grep "MessageBox\.Show" launcher-src\*.cs` 必须 0）；外观只在 `StyleKit` 一处定义，新窗体先 `StyleKit.Apply(this, "标题")`
 - 命令（换图标后重新编译，已在 2026-09-13 实测通过）：
   ```powershell
-  csc /nologo /target:winexe /optimize+ /win32icon:assets\exe.ico /out:一键启动.exe _scratch\launcher.cs
-  csc /nologo /target:winexe /optimize+ /win32icon:assets\exe.ico /r:System.Management.dll /out:一键关闭.exe _scratch\close.cs
+  csc /nologo /target:winexe /optimize+ /win32icon:assets\exe.ico /r:lib\Microsoft.Web.WebView2.Core.dll /r:lib\Microsoft.Web.WebView2.WinForms.dll /out:一键启动.exe launcher-src\launcher.cs
+  csc /nologo /target:winexe /optimize+ /win32icon:assets\exe.ico /r:System.Management.dll /out:一键关闭.exe launcher-src\close.cs
   ```
 - **验收（比肉眼硬）**：`[System.Drawing.Icon]::ExtractAssociatedIcon(新exe)` → 与 `app-icon.png` 缩到 32 的帧做像素比对，应当**最大差 0**（2026-09-13 实测两个 exe 都是 0）
 - 编译只出 3 个"未使用变量"警告（`launcher.cs` 的 `ex`/`done`/`_asking`），正常
