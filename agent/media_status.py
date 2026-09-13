@@ -63,7 +63,19 @@ def snapshot() -> dict:
                         "max_chars": int(rcfg.get("max_chars") or 120),
                         "min_gap_seconds": int(rcfg.get("min_gap_seconds") or 30)},
                 "note": "当前形态：把回复合成为音频**文件**发出去（不是微信语音条）"},
+        # 群友要图（生图链条）：只暴露只读快照（开关/触发条件/后端数/过滤链/红线）——
+        # 真后端待用户拍板（本地 ComfyUI 还是在线 API），没配后端时 generate() 会明确说"没后端"
+        "image_gen": _image_gen_snapshot(),
     }
+
+
+def _image_gen_snapshot() -> dict:
+    """`agent/image_gen.py` 的只读快照（这个模块 import 它失败也不该把整个 status 拖挂）。"""
+    try:
+        from . import image_gen as IG
+        return IG.snapshot()
+    except Exception as e:
+        return {"enabled": False, "error": type(e).__name__, "why": str(e)[:80]}
 
 
 if __name__ == "__main__":                     # 直接跑这个文件看一眼（相对导入要靠包路径）

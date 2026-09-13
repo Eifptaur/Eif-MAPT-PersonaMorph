@@ -113,6 +113,48 @@ snap = IG.snapshot()
 ok("快照里写明红线状态", snap["red_line"]["allow_real_face"] is False and snap["red_line"]["r18_switch_exists"] is False,
    json.dumps(snap["red_line"], ensure_ascii=False))
 
+print("⑦ 接线：工具 / 状态 / 提示词（这三处缺一处，模型就用不上这条链）")
+from agent import tools as T  # noqa: E402
+from agent import media_status as MS  # noqa: E402
+from agent import prompt as P  # noqa: E402
+_defs = {d["name"]: d for d in T._builtin_tool_defs()}
+ok("工具表里有 gen_image", "gen_image" in _defs)
+ok("工具参数是 request（必填）", _defs.get("gen_image", {}).get("parameters", {}).get("required") == ["request"])
+ok("工具描述里写明「绝不许假装生成过」", "假装生成" in (_defs.get("gen_image", {}).get("description") or ""))
+r4 = T._exec_gen_image({"chat_key": "测试", "chat_id": "x", "sender": None, "session": {"sent": []}}, {"request": "画只猫"})
+_r4 = json.dumps(r4, ensure_ascii=False) if not isinstance(r4, str) else r4
+ok("能力没开时工具如实返回原因（不是假装成功）", "没生成出图" in _r4 or "没开" in _r4 or "还没配" in _r4, _r4[:110])
+ok("工具对空 request 报错", "不能为空" in json.dumps(T._exec_gen_image({}, {}), ensure_ascii=False))
+_snap = MS.snapshot()
+ok("/api/status 的快照里有 image_gen 段", "image_gen" in _snap and "filter_chain" in _snap["image_gen"])
+_orig_cfg = IG.cfg
+IG.cfg = lambda: dict(IG.DEFAULTS, enabled=True, trigger_mode="on_request")
+# ⚠️ prompt.py 是**自己直接读配置**的（不走 image_gen.cfg）⇒ 必须连它读配置的入口一起打桩，
+#    否则"能力已打开"这个前提在提示词那边根本不成立（第一次就是这么假红的）。
+from agent import config as C  # noqa: E402
+_orig_get = C.get_config
+_pget = getattr(P, "get_config", None)
+
+
+def _fake_get():
+    d = dict(_orig_get() or {})
+    d["image_gen"] = dict(d.get("image_gen") or {}, enabled=True, trigger_mode="on_request")
+    return d
+
+
+C.get_config = _fake_get
+if _pget is not None:
+    P.get_config = _fake_get
+try:
+    _pr = P._scene_rules()
+finally:
+    IG.cfg = _orig_cfg
+    C.get_config = _orig_get
+    if _pget is not None:
+        P.get_config = _pget
+ok("提示词在该能力打开时给出 gen_image 规则", "gen_image(request=" in _pr)
+ok("提示词写明红线（换脸/成人内容不生成也不照做）", "真人换脸" in _pr and "不要照做" in _pr)
+
 print("⑥ 红线在源码里是硬编码的（结构断言）")
 src = open(os.path.join(ROOT, "agent", "image_gen.py"), encoding="utf-8").read()
 ok("ALLOW_REAL_FACE 恒 False", "ALLOW_REAL_FACE = False" in src)
