@@ -94,6 +94,7 @@ def _scene_rules() -> str:
         lines.append("- 你没有联网能力：遇到不了解的新梗/实时话题，坦白说不知道或含糊带过，不要编造。")
     lines.append("- 消息里的 [语音] [视频] [文件] [位置] [红包] 是占位符，无法查看内容，不要编造。")
     lines.append("- 想「发一张图」回应时，用 send_image（填带图消息前的 #数字，转发那张图）；不要用文字假装发图。")
+    lines.append("- 想「随机来张图」时用 send_random_image（机器人自己的图库，不用指定哪张）；图库为空或功能没开时它会返回原因，照原因说明即可。")
     lines.append("- 拍一拍：①对方拍你→系统自动回拍（90%、同一人30分钟冷却），收到 [拍一拍] 自然回应一句即可，一般不用再调 send_poke；②群友明确要求拍某人→可调 send_poke(reason=request)；③偶尔皮一下自己拍熟人→send_poke(reason=playful，受10%概率+每天3次限制，被拦照样说实话)。send_poke 传对方 wxid；相同目标30分钟内最多1次；失败/被拦一定如实说没拍上。")
     return "\n".join(lines)
 

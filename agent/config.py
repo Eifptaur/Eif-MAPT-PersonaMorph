@@ -93,6 +93,20 @@ DEFAULT_CONFIG = {
         "hard_split_at": 2000,     # 微信单条消息安全切分长度
         "uia_setvalue": True,      # 输入用 UIA SetValue 后台直写（不点输入框/不粘贴），发送回车仍需瞬时置前
     },
+    # ── 随机图（机器人想'发张图'时用；默认关：开了才会真的发图）────────────────
+    #   mode=local：从本地图库随机挑一张（**零出网**，推荐）；mode=api：从公开图源接口取一张再发。
+    #   发送走 send_image 本地直发（投递档，不动鼠标）；风险闸门与会话头闸照常生效。
+    "image_reply": {
+        "enabled": False,            # 总开关（控制台可切）
+        "mode": "local",             # local＝本地图库 | api＝在线图源
+        "dir": "assets/anime",       # 本地图库目录（相对项目根；可填绝对路径）
+        "api_url": "",               # 在线图源接口（留空＝不联网；例：公开的随机图 API）
+        "api_timeout_ms": 8000,
+        "max_mb": 8,                 # 单张图大小上限（超过就跳过，不发）
+        "min_gap_seconds": 20,       # 同一会话两次"随机图"的最小间隔（防刷屏）
+        "avoid_recent": 30,          # 记住最近发过的 N 张，尽量不重复
+        "include_gif": True,         # 是否把 .gif 也算进图库
+    },
     # ── 输入后端（最高目标「全程后台、不抢鼠标」的档位；实现与实测证据见 agent/input_backend.py）──
     #   auto＝有微信主窗就走投递（L5），找不到窗口退回真鼠标（L0）；message＝强制投递；real＝强制真鼠标
     "input": {

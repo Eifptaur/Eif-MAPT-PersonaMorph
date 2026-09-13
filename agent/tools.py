@@ -108,6 +108,12 @@ def build_tool_defs() -> list:
             "execute": _exec_send_image,
         },
         {
+            "name": "send_random_image",
+            "description": "随机发一张图（从机器人自己的图库随机挑，不用指定哪张）。想「随机来张图」活跃气氛时用；图库为空或功能没开时它会返回原因，照原因说明即可。",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+            "execute": _exec_send_random_image,
+        },
+        {
             "name": "collect_emoji",
             "description": "用鼠标把一条表情/图片消息收藏进微信表情库（右键气泡→添加到表情）。messageId=[表情] 或 [图片] 消息前的 #数字。最终由程序操作鼠标完成。",
             "parameters": {
@@ -428,6 +434,24 @@ def _exec_send_image(ctx, args):
         ctx["sender"].send_image(ctx["chat_key"], path)
         ctx["session"]["sent"].append({"type": "image", "text": "[图片]"})
         return _ok({"sent": True, "note": "图片已发送。不要输出\"已发送\"类汇报。"})
+    except Exception as e:
+        return _err(str(e))
+
+
+def _exec_send_random_image(ctx, args):
+    """随机发一张图（从本地图库随机挑，零出网；图库没图/功能关闭时讲清原因）。"""
+    try:
+        from . import image_lib as _il
+        cfg = get_config()
+        if not (cfg.get("image_reply") or {}).get("enabled"):
+            return _err("随机图功能没开（控制台「随机图」面板打开后可用）；想发群里已有的图请用 send_image")
+        path, why = _il.next_image(cfg, chat_id=ctx.get("chat_id") or "")
+        if not path:
+            return _err(why)
+        ctx["sender"].send_image(ctx["chat_key"], path)
+        ctx["session"]["sent"].append({"type": "image", "text": "[图片]"})
+        return _ok({"sent": True, "file": _os.path.basename(path),
+                    "note": "%s。不要输出『已发送』类汇报。" % why})
     except Exception as e:
         return _err(str(e))
 
