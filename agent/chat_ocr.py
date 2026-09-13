@@ -401,6 +401,31 @@ def highlight_relative(img, min_top: float = 0.05, ratio: float = 2.5) -> tuple:
         return None, "相对判据异常：%s" % type(e).__name__
 
 
+def _nz(s: str) -> str:
+    return "".join(ch for ch in str(s or "") if ch.isalnum())
+
+
+def content_match(pane: str, needle: str) -> bool:
+    """聊天区 OCR 文本里能不能认出「目标会话最近的内容」——**按内容认会话**，不靠名字。
+
+    为什么需要（2026-09-13 发错会话事故）：名字判据会骗人——群聊行的预览里带着**发言人前缀**
+    （`E: 提交信息…`），被当成"会话名 = E"后就点进了那个群。内容比对不依赖任何名字：
+    把目标会话最近一条**文本**拿来，在当前聊天区里找它的显著片段即可。
+    """
+    a, b = _nz(pane), _nz(needle)
+    if len(a) < 6 or len(b) < 6:
+        return False
+    if b[:16] and b[:16] in a:
+        return True
+    for n in (12, 10, 8, 6):                       # OCR 常吞字 ⇒ 多尺度片段逐一找
+        step = max(1, n // 2)
+        for i in range(0, max(0, len(b) - n) + 1, step):
+            if b[i:i + n] in a:
+                return True
+    import difflib
+    return difflib.SequenceMatcher(None, a, b).ratio() > 0.5
+
+
 def pane_text(img, limit: int = 200) -> str:
     """聊天区（面板左沿往右那一块）的 OCR 文字摘要——用来判"切会话到底发没发生"（只读）。"""
     try:
