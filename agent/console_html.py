@@ -741,6 +741,14 @@ th{color:var(--tx2);font-weight:500}
     </section>
 
     <section id="sec-wechat" class="card" data-sec>      <div class="row"><label>微信版本</label><div class="grow"><b id="wxver">检测中…</b></div></div>
+      <div id="wxInstall" class="row" style="display:none"><label>微信装没装</label><div class="grow">
+        <div id="wxInstallText" class="hint"></div>
+        <div class="btns" style="margin-top:6px">
+          <button id="wxOpenSite" class="ghost">打开官网下载</button>
+          <button id="wxRecheck" class="ghost">我装好了，重新检测</button>
+        </div>
+        <div class="hint">我们不会替你静默安装（要下安装包 + 管理员权限）——只带你去官网，装好登录后点右边那颗重新检测。</div>
+      </div></div>
       <h2>微信</h2>
       <div class="desc">机器人微信身份与轮询 / 白名单。改完保存后需要重启才能完全生效。</div>
       <div class="row"><label>机器人昵称</label><div class="grow"><input type="text" data-cfg="wechat.bot_nickname"></div></div>
@@ -1671,6 +1679,19 @@ async function loadStatus(){
         el.textContent = (wv.version ? ('微信 ' + wv.version + ' · 适配层 ' + (wv.adapter||'-')) : '未检测到')
           + (wv.supported===false ? '（⚠️ 低于 4.0，请升级微信）' : '');
         el.style.color = wv.supported===false ? 'var(--err-tx)' : '';
+      }
+      const wi = s.wechat_install || null;
+      const box = $('wxInstall');
+      if(box && wi){
+        const show = (wi.state === 'missing' || wi.state === 'installed_not_running');
+        box.style.display = show ? '' : 'none';
+        if(show){
+          const tx = $('wxInstallText');
+          if(tx){
+            tx.textContent = (wi.state === 'missing' ? '❌ 本机没检测到微信。' : '⚠️ 微信已安装但没在运行。') + (wi.detail || '');
+            tx.style.color = wi.state === 'missing' ? 'var(--err-tx)' : 'var(--warn-tx)';
+          }
+        }
       }
       const dh = $('depHint');
       if(dh){
@@ -3973,6 +3994,25 @@ setInterval(()=>{ if($('autolog').checked) loadLog(); }, 4000);
 setInterval(checkAlive, 6000);
 $('sessRefresh').onclick = ()=>loadSessions();
 addEventListener('hashchange', ()=>{ if(location.hash==='#sec-sessions') loadSessions(); });
+/* 微信装没装：两个动作（2026-09-13） */
+(function(){
+  const openBtn = document.getElementById('wxOpenSite');
+  const recheckBtn = document.getElementById('wxRecheck');
+  if(openBtn) openBtn.onclick = ()=>{
+    const u = ((window.__wxInstall && window.__wxInstall.official_url) || 'https://weixin.qq.com/');
+    try{ window.open(u, '_blank'); }catch(e){}
+    toast('已尝试打开官网：' + u + '（打不开就手动复制到浏览器）');
+  };
+  if(recheckBtn) recheckBtn.onclick = async ()=>{
+    try{
+      const r = await getJSON('/api/wechat/recheck');
+      const inst = (r && r.install) || {};
+      toast(inst.state === 'running' ? '✅ 检测到微信在运行'
+        : (inst.state === 'installed_not_running' ? '✅ 微信已安装，登录后即可用' : '❌ 仍未检测到微信'));
+      loadStatus();
+    }catch(e){ toast('重新检测失败：' + e.message); }
+  };
+})();
 $('sessExpand').addEventListener('change', ()=>loadSessions());
 /* ── 社区与学习：每群档位 / 屏蔽名单 / 导出 / 导入 ── */
 function renderGroupTierBox(){

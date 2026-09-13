@@ -3228,6 +3228,119 @@ class WeChatAdapter:
 
 # ── 微信版本自动检测（启动/自检/控制台/检查脚本共用）────────────────
 
+def wechat_install_state(proc_found=False, proc_path=""):
+    r"""微信"装没装"三态检测（2026-09-13 用户要求：没装微信要带他去装）。
+
+    只看**只读**来源，三条任一命中即算装了：
+      ① 注册表卸载项（HKCU/HKLM 的 ...\Uninstall\* 里 DisplayName 含 微信/WeChat/Weixin）
+      ② 常见安装路径（含非默认盘：Program Files、D 盘/M 盘等根目录下的 Tencent/Weixin）
+      ③ 开始菜单快捷方式（*.lnk 名含 微信/WeChat）
+    返回 dict：
+      state         missing / installed_not_running / running
+      installed     是否装了（注册表/路径/快捷方式任一命中）
+      path          找到的安装路径（可能为空）
+      sources       命中的来源（给用户看"我凭什么说装了"）
+      official_url  官网下载页（没装时给用户点）
+      detail        给用户看的一句话
+      action        建议动作：install / start / none
+    """
+    import glob as _glob
+    out = {"state": "missing", "installed": False, "path": str(proc_path or ""),
+           "sources": [], "official_url": "https://weixin.qq.com/", "detail": "", "action": "install"}
+    if proc_found:
+        out["state"] = "running"
+        out["installed"] = True
+        out["sources"].append("进程在跑")
+        out["detail"] = "微信正在运行"
+        out["action"] = "none"
+        return out
+    # ① 注册表卸载项
+    try:
+        import winreg
+        keys = [(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
+                (winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
+                (winreg.HKEY_LOCAL_MACHINE, r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall")]
+        for hive, sub in keys:
+            try:
+                k = winreg.OpenKey(hive, sub)
+            except Exception:
+                continue
+            try:
+                n = winreg.QueryInfoKey(k)[0]
+                for i in range(min(n, 400)):
+                    try:
+                        name = winreg.EnumKey(k, i)
+                        sk = winreg.OpenKey(k, name)
+                        try:
+                            dn = str(winreg.QueryValueEx(sk, "DisplayName")[0])
+                        except Exception:
+                            dn = ""
+                        low = dn.lower()
+                        if ("微信" in dn) or ("wechat" in low) or ("weixin" in low):
+                            out["installed"] = True
+                            out["sources"].append("注册表：" + dn)
+                            try:
+                                loc = str(winreg.QueryValueEx(sk, "InstallLocation")[0])
+                                if loc and not out["path"]:
+                                    out["path"] = loc
+                            except Exception:
+                                pass
+                    except Exception:
+                        continue
+            finally:
+                try:
+                    winreg.CloseKey(k)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    # ② 常见安装路径（含非默认盘）
+    if not out["installed"]:
+        cands = []
+        for env in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
+            base = os.environ.get(env)
+            if base:
+                cands += [os.path.join(base, "Tencent", "WeChat", "WeChat.exe"),
+                          os.path.join(base, "Tencent", "Weixin", "Weixin.exe")]
+        for drive in ("C:\\", "D:\\", "E:\\", "F:\\", "M:\\"):
+            cands += [drive + "WX\\Weixin\\Weixin.exe", drive + "Tencent\\Weixin\\Weixin.exe",
+                      drive + "Program Files\\Tencent\\Weixin\\Weixin.exe"]
+        for c in cands:
+            try:
+                if os.path.isfile(c):
+                    out["installed"] = True
+                    out["path"] = c
+                    out["sources"].append("安装路径：" + c)
+                    break
+            except Exception:
+                continue
+    # ③ 开始菜单快捷方式
+    if not out["installed"]:
+        try:
+            ap = os.environ.get("APPDATA") or ""
+            for pat in (ap + r"\Microsoft\Windows\Start Menu\Programs\**\*微信*.lnk",
+                        ap + r"\Microsoft\Windows\Start Menu\Programs\**\*WeChat*.lnk",
+                        ap + r"\Microsoft\Windows\Start Menu\Programs\**\*Weixin*.lnk",
+                        r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\**\*微信*.lnk"):
+                hits = _glob.glob(pat, recursive=True)
+                if hits:
+                    out["installed"] = True
+                    out["sources"].append("开始菜单：" + os.path.basename(hits[0]))
+                    break
+        except Exception:
+            pass
+    if out["installed"]:
+        out["state"] = "installed_not_running"
+        out["detail"] = "微信已安装但没在运行（登录后本工具才能读到消息；不用重装）"
+        out["action"] = "start"
+    else:
+        out["state"] = "missing"
+        out["detail"] = ("本机没检测到微信。本工具需要**你自己的**微信客户端在本机登录后才能读消息、发消息；"
+                         "我们不会替你静默安装（要下安装包 + 管理员权限），请点「打开官网下载」装好并登录，"
+                         "再点「我装好了，重新检测」。")
+        out["action"] = "install"
+    return out
+
 def wechat_version_info():
     """检测微信进程版本（Weixin.exe / WeChat.exe）与适配层 wechatauto 版本。
 
@@ -3275,7 +3388,18 @@ def wechat_version_info():
             out["supported"] = int(v.split(".")[0] or 0) >= 4
         except Exception:
             pass
-    if not out["found"]:
+    try:
+        _ins = wechat_install_state(proc_found=bool(out["found"]), proc_path=out.get("path") or "")
+        out["state"] = _ins["state"]
+        out["installed"] = _ins["installed"]
+        out["install"] = _ins
+        if _ins["state"] in ("missing", "installed_not_running"):
+            out["detail"] = _ins["detail"]
+    except Exception as _e:
+        out["state"] = "running" if out["found"] else "unknown"
+        out["installed"] = bool(out["found"])
+        out["install"] = None
+    if not out["found"] and out.get("state") not in ("missing", "installed_not_running"):
         out["detail"] = "未检测到微信进程（微信未启动或已退出）"
     elif not v:
         out["detail"] = "微信在运行但读不到版本号（不影响使用；需要核对时查看任务管理器）"
