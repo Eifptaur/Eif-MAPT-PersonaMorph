@@ -159,7 +159,8 @@
   csc /nologo /target:winexe /optimize+ /win32icon:assets\exe.ico /r:lib\Microsoft.Web.WebView2.Core.dll /r:lib\Microsoft.Web.WebView2.WinForms.dll /out:一键启动.exe launcher-src\launcher.cs
   csc /nologo /target:winexe /optimize+ /win32icon:assets\exe.ico /r:System.Management.dll /out:一键关闭.exe launcher-src\close.cs
   ```
-- **验收（比肉眼硬）**：`[System.Drawing.Icon]::ExtractAssociatedIcon(新exe)` → 与 `app-icon.png` 缩到 32 的帧做像素比对，应当**最大差 0**（2026-09-13 实测两个 exe 都是 0）
+- **验收（比肉眼硬，口径 2026-09-13 W6 修正）**：`[System.Drawing.Icon]::ExtractAssociatedIcon(新exe).ToBitmap()` 应与 **`assets\app.ico` / `assets\exe.ico` 的 32 帧**逐一比对，**最大像素差 = 0**（本轮实测两个 exe、两个 ico 全是 0 ✓）。
+  ⚠️ **别拿 `app-icon.png` 缩到 32 来当基准**：PNG→Bitmap 的默认重采样与 ico 内嵌帧不一致，会得到"最大差 580"的**假红**（本轮踩过；两者本就不是同一条渲染路径）。
 - 编译只出 3 个"未使用变量"警告（`launcher.cs` 的 `ex`/`done`/`_asking`），正常
 
 **图像处理工具**：`py -3` 可用且带 **PIL 12.3.0**（`python` 命令本身没装，用 `py -3`）；本机 `python` 会落到 Store 别名而报错。
