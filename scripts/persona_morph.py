@@ -33,6 +33,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+from agent import listener_watermark          # W2：持久化水位（成功才推进 / 重试留痕 / 每会话串行）
+from agent.config import DATA_DIR
 from agent.config import get_config, save_config
 from agent.llm import (add_usage, chat_completion, chat_completion_with_retry,
                        empty_usage, estimate_cost, is_retryable_error, query_balance)
@@ -2371,13 +2373,21 @@ def main():
     except Exception:
         pass
 
-    # 初始化轮询游标（只处理启动之后的新消息，不重放历史）
-    since_seq = {}
+    # 初始化轮询游标（W2）：**优先读持久化水位** —— 重启后从上次的位置继续（停机期间的新消息会补上），
+    # 只有在第一次运行（没有水位文件）时才用 latest_seq 当起点（不重放历史）。
+    _wm_path = os.path.join(DATA_DIR, "listener_watermark.json")
+    _dl_path = os.path.join(DATA_DIR, "listener_failed.jsonl")
+    wm = listener_watermark.Watermark(_wm_path)
+    _wm_log = listener_watermark.make_log(log)
     for g in targets:
-        try:
-            since_seq[g["wxid"]] = (wechat_box[0] or wechat).latest_seq(g["wxid"])
-        except Exception:
-            since_seq[g["wxid"]] = 0
+        _key0 = "group:" + g["wxid"]
+        if wm.get(_key0, 0) <= 0:
+            try:
+                wm.set(_key0, (wechat_box[0] or wechat).latest_seq(g["wxid"]))
+            except Exception:
+                wm.set(_key0, 0)
+    wm.flush()
+    log.info("监听水位已载入：%s（重启不丢、不重放）", _wm_path)
 
     def _stop(signum=None, frame=None):
         log.info("收到退出信号，正在停止…")
@@ -2400,47 +2410,57 @@ def main():
         poll_interval = max(1.0, float(get_config().get("wechat", {}).get("poll_interval") or 3))
         try:
             for g in targets:
+                wxid = g["wxid"]
+                chat_key = "group:" + wxid
                 if orch.paused:
-                    # 暂停期间不响应，但游标仍推进到最新：恢复时不会重放暂停期间的积压消息
+                    # 暂停期间不响应，但水位仍推进到最新**并落盘**：恢复时不会重放暂停期间的积压消息
                     # （否则恢复瞬间会把暂停期间几十条旧消息逐批触发，表现为"每条都回"）
-                    wxid = g["wxid"]
                     try:
-                        since_seq[wxid] = wechat.latest_seq(wxid)
+                        wm.set(chat_key, wechat.latest_seq(wxid))
+                        wm.flush()
                     except Exception:
                         pass
                     continue
-                wxid = g["wxid"]
-                chat_key = "group:" + wxid
                 try:
-                    new = wechat.poll_new_messages(wxid, since_seq.get(wxid, 0), limit=50)
+                    new = wechat.poll_new_messages(wxid, wm.get(chat_key, 0), limit=50)
                 except Exception as e:
                     log.debug("读取群[%s]异常：%s", g["name"], e)
                     continue
                 if not new:
                     continue
-                max_seq = since_seq.get(wxid, 0)
-                # 屏蔽名单（按群）：{群名: [昵称/wxid...]}——命中的不存档、不触发
+                # 屏蔽名单（按群）：{群名: [昵称/wxid...]}——命中的不存档、不触发（但仍算"已处理"，水位可推进）
                 blist = (get_config().get("store", {}).get("group_blocklist") or {}).get(g["name"]) or []
                 blocked = {str(b).strip().lower() for b in blist if str(b).strip()}
-                for nm in new:
-                    max_seq = max(max_seq, nm["sort_seq"])
-                    if blocked:
-                        who = str(nm.get("sender_name") or "").strip().lower()
-                        wid = str(nm.get("sender_id") or "").strip().lower()
-                        if who in blocked or wid in blocked:
-                            log.info("群[%s]屏蔽用户消息已丢弃（%s/%s）", g["name"], who or wid, who or wid)
-                            continue
-                    store.append_incoming(chat_key, nm["mid"], nm["ts"], nm["sender_id"],
-                                          nm["sender_name"], nm["text"], media=nm["media"])
+
+                def _handle_one(nm, _chat_key=chat_key, _g=g, _wxid=wxid, _blocked=blocked):
+                    """W2：返回真值＝这条已被下游接受（append_incoming 落盘成功后返回 entry）。"""
+                    who = str(nm.get("sender_name") or "").strip().lower()
+                    wid = str(nm.get("sender_id") or "").strip().lower()
+                    if _blocked and (who in _blocked or wid in _blocked):
+                        log.info("群[%s]屏蔽用户消息已丢弃（%s/%s）", _g["name"], who or wid, who or wid)
+                        return {"dropped": "blocklist"}
+                    entry = store.append_incoming(_chat_key, nm["mid"], nm["ts"], nm["sender_id"],
+                                                  nm["sender_name"], nm["text"], media=nm["media"])
+                    if not entry:
+                        return None                     # 没落库 ⇒ 判失败，交给 process_batch 重试
                     # ── 系统自动回拍：别人拍一拍机器人 → 延迟 ~18 秒后按概率回拍（90%）──
                     if str(nm.get("text") or "").startswith("[拍一拍]"):
-                        _schedule_poke_back(wechat, store, chat_key, wxid, g["name"], nm)
+                        _schedule_poke_back(wechat, store, _chat_key, _wxid, _g["name"], nm)
+                    orch.on_incoming(_chat_key)
+                    return entry
 
-                since_seq[wxid] = max_seq
-                orch.on_incoming(chat_key)
+                st = listener_watermark.process_batch(chat_key, new, _handle_one, wm,
+                                                      log=_wm_log, deadletter_path=_dl_path)
+                if st.get("failed"):
+                    log.warning("群[%s]本批 %d 条失败（已记 dead-letter 并越过）· 成功 %d · 水位 %s",
+                                g["name"], st["failed"], st["processed"], st["advanced_to"])
         except Exception as e:
             log.error("轮询循环异常：%s", e)
         time.sleep(poll_interval)
+    try:
+        wm.flush()
+    except Exception:
+        pass
 
     log.info("机器人已退出")
 
