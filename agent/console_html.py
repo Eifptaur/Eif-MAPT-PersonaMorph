@@ -603,6 +603,37 @@ th{color:var(--tx2);font-weight:500}
         <div class="row"><label>发-每日上限</label><input type="number" min="0" data-cfg="behavior.moments_publish.daily_limit"></div>
         <div class="row"><label>发-冷却(秒)</label><input type="number" min="0" data-cfg="behavior.moments_publish.cooldown_s"></div>
       </div>
+      <div class="desc">🛡️ 风险闸门（默认只管内容与任务层；节奏类默认不限，交给你自己把控）</div>
+      <div class="hint" style="margin-top:0">
+        默认把关的是<b>内容与任务</b>：同一内容短时间发给多个会话（群发特征）· 同会话重复内容 · 链接堆积（只记录）· 你自己填的禁止词。<br>
+        频率与夜间静默默认<b>不限 / 关闭</b>；想自己掐节奏就在下面填数字，<b>0＝不限</b>。账号风险由使用者自行把控与承担。
+      </div>
+      <div class="mid">
+        <div class="row"><label>闸门总开关</label><input type="checkbox" data-cfg="risk.enabled"><span class="hint">取消勾选＝完全不做内容/任务把关</span></div>
+        <div class="row"><label>暂停所有发送</label><input type="checkbox" data-cfg="risk.paused"><span class="hint">勾上＝立刻停发（本机生效，不会给对方发任何提示）</span></div>
+      </div>
+      <div class="mid">
+        <div class="row"><label>每分钟上限</label><input type="number" min="0" data-cfg="risk.per_minute"><span class="hint">0＝不限</span></div>
+        <div class="row"><label>每小时上限</label><input type="number" min="0" data-cfg="risk.per_hour"><span class="hint">0＝不限</span></div>
+      </div>
+      <div class="mid">
+        <div class="row"><label>每天上限</label><input type="number" min="0" data-cfg="risk.per_day"><span class="hint">0＝不限</span></div>
+        <div class="row"><label>单会话每小时</label><input type="number" min="0" data-cfg="risk.per_chat_per_hour"><span class="hint">0＝不限</span></div>
+      </div>
+      <div class="mid">
+        <div class="row"><label>同会话最小间隔(秒)</label><input type="number" min="0" data-cfg="risk.min_gap_seconds"><span class="hint">0＝不限</span></div>
+        <div class="row"><label>群发判定：会话数</label><input type="number" min="0" data-cfg="risk.broadcast_chats"><span class="hint">同一内容窗口内发给 N 个不同会话即判群发；0＝关</span></div>
+      </div>
+      <div class="mid">
+        <div class="row"><label>群发判定：窗口(秒)</label><input type="number" min="0" data-cfg="risk.broadcast_window_seconds"></div>
+        <div class="row"><label>单条链接上限</label><input type="number" min="0" data-cfg="risk.max_links"><span class="hint">超过只记录不拦</span></div>
+      </div>
+      <div class="mid">
+        <div class="row"><label>重复内容窗口(秒)</label><input type="number" min="0" data-cfg="risk.dup_window_seconds"></div>
+        <div class="row"><label>重复判定最短字数</label><input type="number" min="0" data-cfg="risk.dup_min_len"></div>
+      </div>
+      <div class="row"><label>禁止词</label><div class="grow"><input data-cfg="risk.block_keywords" placeholder="逗号分隔，命中即拦下；留空＝不启用"></div></div>
+      <div class="row"><label>观察词</label><div class="grow"><input data-cfg="risk.watch_keywords" placeholder="逗号分隔，命中只记录不拦"></div></div>
       <div class="desc">🐋 微信 UI 图标库（一次性标定；自动检测侧栏图标序列，坐标按窗口尺寸换算）：</div>
       <div class="row"><label>当前布局</label><div class="grow">
         <span class="hint" id="uiLayoutStat">加载中…</span>
@@ -1235,6 +1266,10 @@ function syncFromForm(){
     else {
       v = el.value;
       if(path === 'store.keywords') v = v.split(/[,，]/).map(s=>s.trim()).filter(Boolean);
+      else if(path === 'risk.block_keywords' || path === 'risk.watch_keywords'){
+        // 风险闸门的关键词是数组：这里按中文/英文逗号切（不切就会存成字符串 ⇒ 闸门逐字符当关键词，满屏误拦）
+        v = v.split(/[,，]/).map(s=>s.trim()).filter(Boolean);
+      }
       else if(path === 'api.model_prices'){        // JSON 文本 → dict（非法 JSON 时给空对象，前台提示）
         try{ v = v.trim() ? JSON.parse(v) : {}; }
         catch(e){ v = {}; toast('按型号单价 JSON 格式有误，已忽略；示例：{"模型id": {"in":1.5,"out":4.5}}'); }

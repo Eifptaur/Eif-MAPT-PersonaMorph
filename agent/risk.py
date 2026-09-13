@@ -117,6 +117,21 @@ class Verdict(object):
                                        self.level, self.code)
 
 
+def _as_list(v, sep=r"[,，;；\s]+"):
+    """把"逗号分隔字符串"也当列表用（用户手改 config.json 或控制台存成字符串时防炸）。
+
+    背景：风险闸门早期版本直接 `for kw in cfg['block_keywords']`，若该值是字符串，
+    就会**逐字符**当关键词 ⇒ 满屏误拦。这里做一次归一化。
+    """
+    if v is None:
+        return []
+    if isinstance(v, (list, tuple)):
+        return [str(x).strip() for x in v if str(x).strip()]
+    if isinstance(v, str):
+        return [s for s in re.split(sep, v.strip()) if s]
+    return [str(v)]
+
+
 def _cfg() -> dict:
     raw = {}
     try:
@@ -125,6 +140,9 @@ def _cfg() -> dict:
         raw = {}
     out = dict(DEFAULTS)
     out.update({k: v for k, v in raw.items() if v is not None})
+    out["watch_keywords"] = _as_list(out.get("watch_keywords"))
+    out["block_keywords"] = _as_list(out.get("block_keywords"))
+    out["quiet_hours"] = _as_list(out.get("quiet_hours"))
     return out
 
 
