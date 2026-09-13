@@ -191,5 +191,54 @@ check("snapshot 字段齐全", need <= set(sn.keys()), str(need - set(sn.keys())
 for d in TMPDIRS:
     shutil.rmtree(d, ignore_errors=True)
 
+# ── 18 默认（节奏不限）必须不拦：口径＝节奏交给用户，闸门重心在内容/任务层 ──
+C.set_config(copy.deepcopy(C.get_config()))     # 清掉前面 set_risk 的覆盖
+g14, d14 = new_gate(); TMPDIRS.append(d14)
+allowed_all = True
+for i in range(10):
+    v = g14.check("group:u%d" % i, "今天聊点别的 %d" % i, now=BASE + i * 0.5)
+    if not v.allowed:
+        allowed_all = False
+        break
+check("默认节奏不限：连发 10 个会话都放行", allowed_all, repr(v))
+check("默认默认值就是 0/关", (R.DEFAULTS["per_minute"] == 0 and R.DEFAULTS["per_hour"] == 0
+                              and R.DEFAULTS["per_day"] == 0
+                              and R.DEFAULTS["per_chat_per_hour"] == 0
+                              and R.DEFAULTS["min_gap_seconds"] == 0
+                              and R.DEFAULTS["quiet_hours"] == []), str(R.DEFAULTS))
+
+# ── 19 任务层红线：同一内容发给多个会话 ⇒ 判群发 ────────────────────────
+set_risk(broadcast_chats=3, broadcast_window_seconds=300, per_minute=99,
+         per_chat_per_hour=99, min_gap_seconds=0, quiet_hours=[])
+g15, d15 = new_gate(); TMPDIRS.append(d15)
+same = "今晚八点直播间不见不散快来下单"
+g15.note_sent("group:a1", same, now=BASE)
+v1 = g15.check("group:a2", same, now=BASE + 1)
+check("发到第 2 个会话还没判群发", v1.allowed, repr(v1))
+g15.note_sent("group:a2", same, now=BASE + 1)
+v2 = g15.check("group:a3", same, now=BASE + 2)
+check("同一内容第 3 个会话 ⇒ 拦（群发特征）", (not v2.allowed) and v2.code == "broadcast", repr(v2))
+check("群发拦截文案说明是任务层红线", "群发" in v2.message and "不做" in v2.message, v2.message)
+check("群发拦截带会话明细", isinstance(v2.detail.get("chats"), list) and len(v2.detail["chats"]) >= 2, str(v2.detail))
+
+# ── 20 群发判定的防误报 ─────────────────────────────────────────────────
+set_risk(broadcast_chats=3, broadcast_window_seconds=300)
+g16, d16 = new_gate(); TMPDIRS.append(g16)
+for i in range(4):
+    g16.note_sent("group:b%d" % i, "各聊各的 %d" % i, now=BASE + i)
+v = g16.check("group:b9", "又是另一句完全不同的内容", now=BASE + 5)
+check("内容各不相同 ⇒ 不判群发（防误报）", v.allowed, repr(v))
+g17, d17 = new_gate(); TMPDIRS.append(d17)
+for i in range(3):
+    g17.note_sent("group:c%d" % i, "嗯嗯", now=BASE + i)
+v = g17.check("group:c9", "嗯嗯", now=BASE + 5)
+check("过短内容不判群发（防误报）", v.allowed, repr(v))
+set_risk(broadcast_chats=0)
+g18, d18 = new_gate(); TMPDIRS.append(d18)
+for i in range(4):
+    g18.note_sent("group:d%d" % i, "同一条广告词发发发", now=BASE + i)
+v = g18.check("group:d9", "同一条广告词发发发", now=BASE + 5)
+check("broadcast_chats=0 ⇒ 用户关掉群发判定就完全不拦", v.allowed, repr(v))
+
 print("\n=== 风险闸门自测：%d PASS / %d FAIL ===" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
