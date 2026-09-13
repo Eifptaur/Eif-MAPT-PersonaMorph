@@ -421,6 +421,44 @@ def find_row_info(img, name: str, zoom: int = 2, want_time: str = ""):
         return None
 
 
+def row_time_at(img, y_abs: int, tol: int = 34) -> str:
+    """离 `y_abs` 最近的那一行里出现的时间戳（归一化成 `H:MM`）；取不到返回 ''。"""
+    best, best_d = "", 10 ** 9
+    try:
+        for r in session_rows(img):
+            d = abs(int(r["y_abs"]) - int(y_abs))
+            if d > tol or d >= best_d:
+                continue
+            for m in _time_re.finditer(str(r.get("full") or "")):
+                t = m.group(0).replace("：", ":").replace(" ", "")
+                try:
+                    hh, mm = t.split(":")
+                    best, best_d = "%d:%02d" % (int(hh), int(mm)), d
+                    break
+                except Exception:
+                    pass
+    except Exception:
+        return ""
+    return best
+
+
+def highlight_time(img):
+    """当前**高亮行**（＝打开的会话）的时间戳与它所在的 y：返回 `(H:MM, y)`，取不到给 `("", None)`。
+
+    为什么要这个：单字母/短名字的会话行**名字读不出来**（实测 E: `name_of_row` 给空串），
+    但那一行右侧的时间戳读得准 ⇒ "高亮行的时间 == 目标会话最后一条消息的时间"是还读得出来的身份信号。
+    """
+    hl = None
+    try:
+        hl = highlight_relative(img)[0] or highlight(img)
+    except Exception:
+        hl = None
+    if not hl:
+        return "", None
+    y = int(hl["y_abs"])
+    return row_time_at(img, y), y
+
+
 def highlight(img, min_green: float = 0.12):
     """当前**绿底高亮行**（＝打开的会话行）：返回 `{'y_abs','score','name'}`，没有则 None（只读）。
 

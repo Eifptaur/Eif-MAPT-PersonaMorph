@@ -1006,7 +1006,9 @@ class WeChatAdapter:
             tgt = ib.find_render_child(main) or main
             # 点前的聊天区文字（用来判"切会话到底发没发生"——绿底那项判据会被帧质量骗）
             _pane0 = _co.pane_text(_chh.capture_image(gui=gui))
-            ok, why = backend.click(tgt, (ox + int(pos[0]), oy + int(pos[1])))
+            # ⚠️ 会话行必须用**慢节奏**点击（2026-09-13 A/B：快节奏投渲染子窗高亮不动；
+            #   悬停 300ms + 按住 150ms 高亮立刻跳到目标行）——见 input_backend.click 的注释
+            ok, why = backend.click(tgt, (ox + int(pos[0]), oy + int(pos[1])), hover_ms=300, press_ms=150)
             if not ok:
                 return False, "投递点击会话行失败：%s" % why
             self._pick_last[str(chat_id)] = (time.time(), clicked_y)
@@ -1794,10 +1796,41 @@ class WeChatAdapter:
             f_ok, f_why = self.pane_file_card_ok(chat_id, pane)
             if f_ok is True:
                 return True, f_why
+            # 再一档：**高亮行时间**（单字母名字读不出时唯一还读得准的信号）——高亮行＝当前打开的会话，
+            # 它的时间戳对上目标会话最后一条消息的时间，且聊天区里也出现同一时间 ⇒ 认它。
+            # 实测依据（2026-09-13）：E 那一行名字 OCR=''，但高亮行时间 21:41 == 370 文件卡那一刻，
+            # 聊天区 OCR 里也确实有 '21：41'。
+            _lt = self._last_time_hhmm(chat_id)
+            if _lt:
+                try:
+                    _himg = _co.capture_best(gui=gui or self._get_gui(), frames=2)
+                    _ht, _hy = _co.highlight_time(_himg) if _himg is not None else ("", None)
+                except Exception:
+                    _ht, _hy = "", None
+                if _ht and _ht == _lt and _lt in str(pane or "").replace("：", ":"):
+                    return True, ("高亮行（y=%s）时间 %s ＝目标会话最后一条消息时间，聊天区里也出现同一时间"
+                                  % (_hy, _ht))
             return False, ("聊天区里**没有**目标会话最近的任何一条文本（试过 %d 条，如 %r…；文件卡档：%s）"
                            "⇒ 当前开着的很可能不是目标会话" % (len(needles), needles[0][:16], f_why))
         except Exception as e:
             return None, "内容核对异常：%s" % type(e).__name__
+
+    def _last_time_hhmm(self, chat_id: str) -> str:
+        """目标会话**最后一条消息**在会话列表里显示的时间（`H:MM`）；不是今天的消息就返回 ''。
+
+        会话列表对"今天的消息"显示 HH:MM、更早的显示日期 ⇒ 只有今天才可用（这也是判据的一部分：
+        拿不到时间就退回别的指纹，不许瞎凑）。
+        """
+        try:
+            rows = self._db.get_messages(chat_id, limit=1) or []
+            if not rows:
+                return ""
+            lt = time.localtime(int(rows[0].get("create_time") or 0))
+            if lt.tm_yday != time.localtime().tm_yday:
+                return ""
+            return time.strftime("%H:%M", lt)
+        except Exception:
+            return ""
 
     @staticmethod
     def _bigrams(s: str) -> set:
