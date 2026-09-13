@@ -32,11 +32,13 @@ def ck(name, cond, extra=""):
 
 
 def fake_window(text, size=(1139, 890), offset=0):
-    """造一张像微信主窗的图：会话头区域用真字体写一段文字（贴合实机 28px 字号），其余留白。"""
+    """造一张像微信主窗的图：**左侧会话列表浅灰 + 右侧聊天区纯白**（好让 detect_pane_left 有边界可找），
+    文字带里用真字体写会话名（贴合实机 28px 字号）。"""
     img = Image.new("RGB", size, (245, 245, 245))
     d = ImageDraw.Draw(img)
-    box = ch.crop_box(size)
-    d.rectangle(box, fill=(255, 255, 255))
+    pl = int(size[0] * ch.PANE_LEFT_REL)
+    d.rectangle((pl, 0, size[0], size[1]), fill=(255, 255, 255))
+    box = ch.crop_box(size, pane_left_px=pl)
     try:
         font = ImageFont.truetype("C:/Windows/Fonts/msyh.ttc", 28)
     except Exception:
@@ -51,6 +53,13 @@ box = ch.crop_box(size)
 ck("H1 区域框在窗口内且非空",
    0 <= box[0] < box[2] <= size[0] and 0 <= box[1] < box[3] <= size[1], str(box))
 ck("H2 区域避开左侧会话列表（left >= 0.26w）", box[0] >= int(size[0] * 0.26), "left=%d" % box[0])
+pl_det = ch.detect_pane_left(fake_window("文件传输助手"))
+ck("H2b detect_pane_left 能测出面板左沿（≈0.26w ± 24px）",
+   abs(pl_det - int(size[0] * ch.PANE_LEFT_REL)) <= 24, "测得 %d（期望 %d）"
+   % (pl_det, int(size[0] * ch.PANE_LEFT_REL)))
+ck("H2c 面板左沿在不同窗口宽度下也能测（会话列表是固定像素宽的实机场景见 §三实测）",
+   ch.detect_pane_left(fake_window("文件传输助手", size=(900, 680))) > 0,
+   "测得 %d" % ch.detect_pane_left(fake_window("文件传输助手", size=(900, 680))))
 
 fa = ch.fingerprint(fake_window("文件传输助手"))
 fb = ch.fingerprint(fake_window("群deepseek"))
@@ -82,6 +91,17 @@ with tempfile.TemporaryDirectory() as td:
     ch.remember("filehelper", fa, path=p)   # 参照换成"文件传输助手"，当前图是"群deepseek"
     ck("S6 参照≠当前 ⇒ 不匹配（这就是防发错会话的那道闸）",
        ch.match(ch.reference("filehelper", p), ch.fingerprint(img)) is False)
+    # —— 分尺寸记忆（2026-09-13 实测：指纹**不可跨窗口尺寸复用**，微信会按尺寸重排表头）——
+    ck("S7 size_key 形如 宽x高", ch.size_key((1139, 890)) == "1139x890")
+    ch.remember("filehelper", fa, path=p, size="1139x890")
+    ch.remember("filehelper", fb, path=p, size="900x680")
+    ck("S8 同一会话可存多个尺寸，且按尺寸取回",
+       ch.reference("filehelper", p, size="900x680") == fb
+       and ch.reference("filehelper", p, size="1139x890") == fa,
+       "已有尺寸：%s" % ch.ref_sizes("filehelper", p))
+    ck("S9 严格取参照时，该尺寸没有 ⇒ 返回空（check() 会判 no_ref ⇒ 不拦只留痕，而不是拿别的尺寸误拦）",
+       ch.reference("filehelper", p, size="777x555", strict=True) == []
+       and ch.reference("filehelper", p, size="1139x890", strict=True) == fa)
 
 print("[L] 实机（抓不到不算失败）")
 fp1 = ch.capture()

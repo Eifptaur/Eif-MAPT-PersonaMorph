@@ -669,14 +669,15 @@ class WeChatAdapter:
             if not gui.render_rect:
                 gui._update_render_rect()
             # 会话头校验（防发错会话）：投递**不会切会话**，所以发之前先确认"还是那个会话"。
-            # 有参照就强制校验；没参照（第一次用）只提示不拦，避免把功能锁死。
+            # 三态（见 chat_header.check）：mismatch ⇒ 拦；no_ref（刚改过窗口尺寸/第一次用）⇒ 不拦但留痕，
+            # 并在本次 DB 回读成功之后自动补一条该尺寸的参照。**绝不因为"没参照"就把功能锁死。**
             try:
                 from . import chat_header as _ch
-                _ok, _why = _ch.verify(chat_id)
-                if not _ok and _ch.reference(chat_id):
-                    return False, "会话头不匹配，拒绝投递（防发错会话）：%s" % _why
-                if not _ch.reference(chat_id):
-                    log.info("会话头无参照，本轮未校验（%s）", chat_id)
+                _st = _ch.check(chat_id)
+                if _st["status"] == "mismatch":
+                    return False, "会话头不匹配，拒绝投递（防发错会话）：%s" % _st["note"]
+                if _st["status"] in ("no_ref", "no_capture"):
+                    log.info("会话头未校验（%s）：%s", _st["status"], _st["note"])
             except Exception as _e:
                 log.warning("会话头校验跳过：%s", _e)
             r = gui.render_rect or (0, 0, 0, 0)
@@ -708,6 +709,17 @@ class WeChatAdapter:
                 if rows and str(rows[0].get("local_id")) != base_sig:
                     head = rows[0]
                     if str(text)[:20] in str(head.get("content") or ""):
+                        # DB 回读确认成功 ⇒ 自动补一条"当前窗口尺寸"下的会话头参照
+                        # （尺寸变了以后不用人工重标；下次同尺寸就能真正校验）
+                        try:
+                            from . import chat_header as _ch
+                            _img = _ch.capture_image(gui=gui)
+                            if _img is not None:
+                                _ch.remember(chat_id, _ch.fingerprint(_img),
+                                             note="auto-learned after DB-confirmed send",
+                                             size=_ch.size_key(_img))
+                        except Exception as _e:
+                            log.info("自动补会话头参照失败（不影响发送）：%s", _e)
                         return True, "投递发送成功（DB 回读 local_id=%s type=%s）" % (
                             head.get("local_id"), head.get("type"))
                     return True, "DB 有新行但内容与本次不一致（local_id=%s，可能上一条刚写库）" % head.get("local_id")
