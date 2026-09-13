@@ -796,15 +796,28 @@ class WeChatAdapter:
             return "", "OCR 判当前会话异常：%s" % e
 
     def chat_is_open(self, chat_id: str, gui=None, name: str = None):
-        """只读：当前打开的会话是不是 chat_id（名字级比对，容忍 OCR 截断）。返回 (bool, 说明)。"""
+        """只读：当前打开的会话是不是 chat_id。返回 (bool, 说明)。
+
+        两个独立信号取或：①**OCR 名字**（会话列表绿底行，能答"现在是谁"但抓图偶发拿不到帧）
+        ②**会话头指纹闸**（`chat_header.check`，快、稳，但需要该尺寸的参照）。
+        OCR 拿不到帧时**不要直接判否**（否则会把"其实开着"误判成"没开"⇒ 白白退回真鼠标路径）。
+        """
         want = name or self.display_name(chat_id) or chat_id
         got, why = self.current_chat_name(gui=gui)
         try:
             from . import chat_ocr as _co
-            ok = bool(got) and _co.matches(got, want)
+            if got and _co.matches(got, want):
+                return True, "当前会话 OCR=%r（目标 %r）· %s" % (got, want, why)
         except Exception:
-            ok = False
-        return ok, "当前会话 OCR=%r（目标 %r）· %s" % (got, want, why)
+            pass
+        try:                                   # OCR 不可用/没抓到帧时的第二信号
+            from . import chat_header as _ch
+            st = _ch.check(chat_id, gui=gui)
+            if st.get("status") == "ok":
+                return True, "会话头指纹判 ok（OCR 这次给的是 %r：%s）" % (got, str(why)[:40])
+        except Exception as _e:
+            pass
+        return False, "当前会话 OCR=%r（目标 %r）· %s" % (got, want, why)
 
     def switch_chat_posted(self, chat_id: str, gui=None, name: str = None, confirm_s: float = 8.0):
         """**投递版切会话**：库的**只读** OCR 定位会话行 → **投递点击**那一行 → **OCR 按名字确认**已打开。
@@ -940,12 +953,13 @@ class WeChatAdapter:
         except Exception as e:
             return False, str(e)
 
-    def send_image_posted(self, chat_id: str, local_path: str, wait_s: float = 25.0):
-        """**投递发图**（L5）：剪贴板放图（CF_DIB）→ 投递 `WM_PASTE` 给主窗 → 投递点「发送」→ **DB 回读认图片**。
+    def send_image_posted(self, chat_id: str, local_path: str, wait_s: float = 60.0):
+        """**投递发图**（L5）：剪贴板放图（CF_DIB）→ 投递 **Ctrl+V 组合键给渲染子窗** → 投递点「发送」→ **DB 回读认图片**。
 
-        与真实路径的区别：全程**不动光标、不抢前台**（真鼠标那条实测 96s 还会谎报成功）。
-        前提＝目标会话已打开（用 `chat_is_open` 的 OCR 名字判据把门；没有正面证据就不发）。
-        成功判据：**只认 DB 回读**（轮询到 `local_id` 变新且类型像图片）。
+        实测（2026-09-13）：①**必须投给渲染子窗 `MMUIRenderSubWindowHW`**（投主窗完全无效）；
+        ②图片消息的 **DB 落库延迟可达 30~60s**（文本只要 2~3s）⇒ 轮询窗口默认给到 60s，
+        否则会把"其实发出去了"误判成"没生效"（本轮就因此把一次成功误判成失败）。
+        全程**不动光标、不抢前台**；成功判据**只认 DB 回读**。
         """
         from . import input_backend as ib
         from . import clipboard as _cb
@@ -957,6 +971,7 @@ class WeChatAdapter:
             main = int(getattr(gui, "main_hwnd", 0) or 0) or ib.find_main_window()
             if not main:
                 return False, "找不到微信主窗"
+            child = int(getattr(gui, "render_hwnd", 0) or 0) or main      # 粘贴/按键要打渲染子窗
             ok_open, why_open = self.chat_is_open(chat_id, gui=gui)
             if not ok_open:
                 return False, "投递发图要求目标会话已打开：%s" % why_open
@@ -981,17 +996,17 @@ class WeChatAdapter:
             ok_cb, why_cb = _cb.set_image(local_path)
             if not ok_cb:
                 return False, "放剪贴板失败：%s" % why_cb
-            ok_p, why_p = backend.paste(main)
+            ok_p, why_p = backend.keys(child, [ib.VK_CONTROL, ib.VK_V])
             if not ok_p:
-                return False, "投递粘贴失败：%s" % why_p
-            time.sleep(1.2)                       # 等缩略图渲染进输入框
+                return False, "投递 Ctrl+V 失败：%s" % why_p
+            time.sleep(1.4)                       # 等缩略图渲染进输入框
             send_pt = (int(r[0]) + int(rw * 0.932), int(r[1]) + int(rh * 0.945))
             ok_c, why_c = backend.click(main, send_pt)
             if not ok_c:
                 return False, "投递点发送失败：%s" % why_c
-            deadline = time.time() + max(5.0, float(wait_s))
+            deadline = time.time() + max(10.0, float(wait_s))
             while time.time() < deadline:
-                time.sleep(0.8)
+                time.sleep(1.2)
                 rows = _rows()
                 if rows:
                     top = rows[0]

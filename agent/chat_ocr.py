@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import re
+import time
 
 from . import chat_header as ch
 
@@ -299,25 +300,40 @@ def find_row(img, name: str, zoom: int = 2):
         return None
 
 
-def current_chat_name(img=None, gui=None, min_green: float = 0.20) -> tuple:
+def current_chat_name(img=None, gui=None, min_green: float = 0.20, retries: int = 3) -> tuple:
     """只读：返回 (当前打开的会话名, 依据)。依据串里写明是靠哪一行的绿底判出来的。
 
     ⚠️ 不能让"标题"来当判据：实测微信 4.1.15.8 的会话标题是**浅灰细字**，WinRT OCR 读不出来
        （同一张图里会话列表的名字/预览/时间戳都读得出）⇒ 用**会话列表 + 绿底高亮行**这两个独立信号。
+    ⚠️ 抓图会**偶发拿到没渲染完的一帧**（实测：同一次调用里 `detect_pane_left=0`、只识别到 2 行、
+       找不到绿底；紧接着再抓就正常 331/13 行/0.96）⇒ 自己抓图时**重试几帧、取最好的一帧**。
     """
-    if img is None:
-        img = ch.capture_image(gui=gui)
-    if img is None:
-        return "", "抓图失败"
-    rows = session_rows(img)
-    if not rows:
-        return "", "会话列表没读到文字"
-    best, score = None, 0.0
-    for r in rows:
-        sc = _green_at(img, r["y_abs"])
-        if sc > score:
-            best, score = r, sc
-    if best is None or score < min_green:
-        return "", "没找到绿底高亮行（最高占比 %.2f，共 %d 行）" % (score, len(rows))
-    name = name_of_row(img, best["y_abs"], best["name"])
-    return name, "绿底行「%s」占比 %.2f（整行 OCR：%s）" % (name[:16], score, best["name"][:22])
+    tries = 1 if img is not None else max(1, int(retries))
+    best = ("", "抓图失败")
+    best_rows = -1
+    for _i in range(tries):
+        use = img if img is not None else ch.capture_image(gui=gui)
+        if use is None:
+            best = ("", "抓图失败")
+        else:
+            rows = session_rows(use)
+            if not rows:
+                if best_rows < 0:
+                    best = ("", "会话列表没读到文字")
+            else:
+                pick, score = None, 0.0
+                for r in rows:
+                    sc = _green_at(use, r["y_abs"])
+                    if sc > score:
+                        pick, score = r, sc
+                if pick is not None and score >= min_green:
+                    name = name_of_row(use, pick["y_abs"], pick["name"])
+                    if name:
+                        return name, "绿底行「%s」占比 %.2f（整行 OCR：%s）" % (name[:16], score, pick["name"][:22])
+                if len(rows) > best_rows:
+                    best_rows = len(rows)
+                    best = ("", "没找到绿底高亮行（最高占比 %.2f，共 %d 行）" % (score, len(rows)))
+        if img is not None:
+            break
+        time.sleep(0.45)
+    return best
