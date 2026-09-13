@@ -421,6 +421,7 @@ th{color:var(--tx2);font-weight:500}
       <a href="#sec-model">模型 API</a>
       <a href="#sec-wechat">微信</a>
       <a href="#sec-vermat">版本能力矩阵</a>
+      <a href="#sec-media">媒体与语音</a>
       <a href="#sec-poke">拍一拍</a>
       <a href="#sec-memory">记忆</a>
       <a href="#sec-memory-set">记忆共享</a>
@@ -751,6 +752,49 @@ th{color:var(--tx2);font-weight:500}
         <div class="hint">只对本次运行有效（重启后重新拦），我们不会把"放行"写进配置。</div>
       </div></div>
       <div id="vmList" class="hint"></div>
+    </section>
+    <section id="sec-media" class="card" data-sec>
+      <h2>媒体与语音（随机图 / 语音转文字 / 视频·文件）</h2>
+      <div class="desc">三项能力的状态都在这一屏：能用的显示**实测**结果，不能用的写清缺哪一环、怎么补。下面这些开关**默认都是关的**——开着才会真的动。</div>
+
+      <div class="sub">① 语音转文字</div>
+      <div class="row"><label>引擎状态</label><div class="grow"><b id="vsWhy">检测中…</b>
+        <div id="vsList" class="hint"></div></div></div>
+      <div class="row"><label>总开关</label><input type="checkbox" data-cfg="voice.enabled">
+        <span class="hint">关着时不会去转写语音（不影响读文字消息）。</span></div>
+      <div class="row"><label>识别引擎</label><div class="grow"><select data-cfg="voice.engine">
+        <option value="auto">自动（按实测可用性挑）</option>
+        <option value="sapi">只用 Windows 内置识别</option>
+        <option value="off">关</option></select>
+        <span class="hint">音频只在本机解码与识别，**不出网、不上传**。</span></div></div>
+      <div class="row"><label>音频目录</label><div class="grow"><input data-cfg="voice.dir" placeholder="media/voice">
+        <span class="hint">语音原文件（.silk）落这里；转写用的中间 wav 默认用完就删。</span></div></div>
+      <div class="row"><label>单条时限(秒)</label><input type="number" min="5" max="180" data-cfg="voice.max_seconds">
+        <span class="hint">超过这个长度不识别（长音频又慢又不准）。</span></div>
+      <div class="btns"><button id="vsTest" class="ghost">测试引擎（合成一句跑完整链路）</button></div>
+      <div id="vsTestOut" class="hint">点一下就会在本机合成一句中文 → 编码成微信用的 SILK → 解码 → 识别，把每一步结果摆出来（不需要微信、不出网）。</div>
+
+      <div class="sub">② 随机图</div>
+      <div class="row"><label>总开关</label><input type="checkbox" data-cfg="image_reply.enabled">
+        <span class="hint">默认关：开着机器人才会在合适的时候发一张图。</span></div>
+      <div class="row"><label>取图方式</label><div class="grow"><select data-cfg="image_reply.mode">
+        <option value="local">本地图库（零出网，推荐）</option>
+        <option value="online">在线图源（pixiv 等）</option>
+        <option value="api">单个自定义接口</option></select>
+        <span class="hint">在线图源会过三段过滤（安全分级 + 标签黑名单 + 视觉审核），**任何一道说不行就不发**。</span></div></div>
+      <div class="row"><label>图库目录</label><div class="grow"><input data-cfg="image_reply.dir" placeholder="assets/anime">
+        <div id="irState" class="hint">检测中…</div></div></div>
+      <div class="row"><label>只发安全的</label><input type="checkbox" data-cfg="image_reply.safe_only">
+        <span class="hint">关掉它不建议：宁可这次发不出，也不要发出不该发的图。</span></div>
+
+      <div class="sub">③ 视频 / 文件 / 链接</div>
+      <div class="row"><label>链接</label><div class="grow"><b>不用下载，直接发</b>
+        <span class="hint">群友发的链接当文本发出去就行——全程后台（投递档，不动鼠标、不抢前台）。</span></div></div>
+      <div class="row"><label>视频/文件下载</label><div class="grow"><b>可用</b>
+        <span class="hint">下载到 media/video、media/file；**只下载不发送**（要发出去看下面这个开关）。</span></div></div>
+      <div class="row"><label>转发视频/文件</label><input type="checkbox" data-cfg="send.file_forward_optin">
+        <div id="fwState" class="hint">检测中…</div></div>
+      <div class="btns"><button class="pri" data-save>保存设置（媒体与语音）</button></div>
     </section>
     <section id="sec-wechat" class="card" data-sec>      <div class="row"><label>微信版本</label><div class="grow"><b id="wxver">检测中…</b></div></div>
       <div id="wxInstall" class="row" style="display:none"><label>微信装没装</label><div class="grow">
@@ -1710,6 +1754,51 @@ async function loadStatus(){
             return mark + ' ' + c.label + '（' + c.status + '）';
           });
           v3.textContent = (vm.summary || '') + ' ｜ ' + rows.join(' · ');
+        }
+      }catch(e){}
+      try{
+        const md = s.media || {};
+        const v = md.voice || {};
+        const w1 = $('vsWhy');
+        if(w1 && !md.error){
+          w1.textContent = v.ok ? ('✅ ' + (v.why || '可用')) : ('⛔ ' + (v.why || '没有可用引擎'));
+          w1.style.color = v.ok ? 'var(--ok-tx)' : 'var(--err-tx)';
+        }else if(w1){ w1.textContent = '⛔ 状态读取失败：' + md.error; w1.style.color = 'var(--err-tx)'; }
+        const w2 = $('vsList');
+        if(w2){
+          w2.textContent = '';
+          const rows2 = []
+            .concat((v.decode || []).map(function(d){ return {ok:d.ok, t:d.name + '：' + d.detail}; }))
+            .concat((v.recognize || []).map(function(r){ return {ok:r.ok, t:String(r.name||'').trim() + '：' + r.detail}; }));
+          rows2.forEach(function(row){
+            const div = document.createElement('div');
+            div.textContent = (row.ok ? '✅ ' : '❌ ') + row.t;
+            w2.appendChild(div);
+          });
+          if(v.ok === false){
+            const tip = document.createElement('div');
+            tip.textContent = '补齐办法：缺解码器 → pip install pilk（可选第三方，GPL-3.0，不随包分发）；缺识别引擎 → 系统里装中文语音识别（Windows 设置 → 时间和语言 → 语音）。';
+            w2.appendChild(tip);
+          }
+        }
+        const im = md.image || {};
+        const i1 = $('irState');
+        if(i1 && !md.error){
+          if(im.count > 0){
+            i1.textContent = '图库里有 ' + im.count + ' 张图（' + im.dir + '）· 当前 ' + (im.mode || 'local') + ' 模式';
+            i1.style.color = '';
+          }else{
+            i1.textContent = '图库是空的：把图片拷进 ' + im.dir + ' 就能用了（当前 ' + (im.mode || 'local') + ' 模式，支持 jpg/png/gif/webp/bmp）。';
+            i1.style.color = 'var(--warn-tx)';
+          }
+        }
+        const f1 = $('fwState');
+        if(f1 && !md.error){
+          const fo = md.forward || {};
+          f1.textContent = fo.optin
+            ? '✅ 已开启：转发视频/文件时会**短暂抢一次前台**（那次要用系统「选择文件」对话框）'
+            : '⛔ 默认关：开启后转发视频/文件会短暂抢一次前台；不开启时模型会照实说明，链接不受影响。';
+          f1.style.color = fo.optin ? 'var(--warn-tx)' : '';
         }
       }catch(e){}
       const wi = s.wechat_install || null;
@@ -4034,6 +4123,25 @@ addEventListener('hashchange', ()=>{ if(location.hash==='#sec-sessions') loadSes
     const u = ((window.__wxInstall && window.__wxInstall.official_url) || 'https://weixin.qq.com/');
     try{ window.open(u, '_blank'); }catch(e){}
     toast('已尝试打开官网：' + u + '（打不开就手动复制到浏览器）');
+  };
+  const vsTestBtn = document.getElementById('vsTest');
+  if(vsTestBtn) vsTestBtn.onclick = async ()=>{
+    const out = document.getElementById('vsTestOut');
+    if(out){ out.textContent = '测试中…（合成一句中文 → 编码成微信 SILK → 解码 → 识别，约几秒）'; out.style.color = ''; }
+    try{
+      const r = await getJSON('/api/voice/test');
+      const res = (r && r.result) || {};
+      const lines = (res.steps || []).map(function(st){ return (st.ok ? '✅ ' : '❌ ') + st.name + '：' + st.detail; });
+      const allOk = !!(r && r.ok);
+      if(out){
+        out.textContent = (allOk ? '✅ 链路可用。' : '❌ 链路跑不通。') + lines.join(' ｜ ')
+          + (res.text ? (' ｜ 识别到：' + res.text) : (res.err ? (' ｜ ' + res.err) : ''));
+        out.style.color = allOk ? 'var(--ok-tx)' : 'var(--err-tx)';
+      }
+      toast(allOk ? '语音链路测试通过（识别到：' + (res.text || '') + '）' : '语音链路测试没通过，看面板详情');
+    }catch(e){
+      if(out){ out.textContent = '测试失败：' + e.message; out.style.color = 'var(--err-tx)'; }
+    }
   };
   const allowBtn = document.getElementById('vmAllow');
   if(allowBtn) allowBtn.onclick = async ()=>{
