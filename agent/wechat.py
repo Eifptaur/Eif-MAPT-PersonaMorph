@@ -965,9 +965,20 @@ class WeChatAdapter:
                     time.sleep(0.5)
                 except Exception:
                     pass
+            # 目标会话"最后一条消息"的显示时间（HH:MM）——给行定位当**不依赖名字**的第二条信号：
+            # 名字只有一个字母的会话（E）靠 OCR 认不稳，而行右侧的时间戳读得准（实测）。
+            _want_time = ""
+            try:
+                _last = self._db.get_messages(chat_id, limit=1) or []
+                if _last:
+                    _lt = time.localtime(int(_last[0].get("create_time") or 0))
+                    if _lt.tm_yday == time.localtime().tm_yday:      # 今天的消息 ⇒ 行上显示 HH:MM
+                        _want_time = time.strftime("%H:%M", _lt)
+            except Exception:
+                _want_time = ""
             info, flog = _co.find_row_scrolled(
                 capture_fn=lambda: _chh.capture_image(gui=gui),
-                find_fn=lambda img: (_co.find_row_info(img, name) if img is not None else None),
+                find_fn=lambda img: (_co.find_row_info(img, name, want_time=_want_time) if img is not None else None),
                 scroll_fn=_scroll_fn, max_steps=6, per_step=3, settle_s=0.45,
                 tries_per_step=3, gap_s=0.35)      # 抓图偶发只读到 2~4 行 ⇒ 每一步多抓几帧再判
             if not info:
