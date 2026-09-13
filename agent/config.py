@@ -93,6 +93,23 @@ DEFAULT_CONFIG = {
         "hard_split_at": 2000,     # 微信单条消息安全切分长度
         "uia_setvalue": True,      # 输入用 UIA SetValue 后台直写（不点输入框/不粘贴），发送回车仍需瞬时置前
     },
+    # ── 风险闸门（只管行为特征；细节与「误报来源/用户可见面/弹窗文案」见 agent/risk.py）──
+    "risk": {
+        "enabled": True,
+        "paused": False,             # 停机开关（控制台可一键暂停/恢复；连续被拦会自升级）
+        "per_minute": 8,
+        "per_hour": 60,
+        "per_day": 300,
+        "per_chat_per_hour": 20,
+        "min_gap_seconds": 3,        # 同一会话两条之间的最小间隔
+        "quiet_hours": [],           # 例 [22, 7]；空 = 不启用夜间静默
+        "max_links": 3,              # 超过只在控制台记录（L3），不拦
+        "watch_keywords": [],        # 命中只记录
+        "block_keywords": [],        # 命中直接拦（默认空，用户自己加）
+        "escalate_after": 5,         # 连续被拦 N 次 → 自动暂停
+        "dup_window_seconds": 120,
+        "dup_min_len": 8,
+    },
     # ── 拍一拍（回拍 90% + 冷却 30 分钟 + 主动皮一下低频）────────────────
     "poke": {
         "reply_probability": 0.9,     # 别人拍你，回拍概率（0~1）
