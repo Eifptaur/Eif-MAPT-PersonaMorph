@@ -50,3 +50,6 @@ _scratch/
 
 # ── 自动落盘的便携 Python 运行环境（一键启动自动生成）──
 runtime/
+报告/
+dist/
+dist2/
