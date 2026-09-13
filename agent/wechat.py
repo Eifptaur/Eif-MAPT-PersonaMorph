@@ -16,6 +16,7 @@ import time
 from collections import deque
 
 from .config import get_config
+from . import replica_adapter  # W1：驱动库（wechatauto-replica）私有 API 的唯一收口点 + 版本守卫
 
 # 调试开关：WX_DEBUG=1 时输出分步计时/调参日志（平时完全静默，不写 _scratch）
 _DEBUG = str(os.environ.get("WX_DEBUG") or "").strip() in ("1", "true", "yes")
@@ -140,41 +141,18 @@ class WeChatAdapter:
             self._img_key_ready = False
 
     def _load_nicknames(self) -> dict:
-        mapping = {}
+        # W1：contact 整表映射走适配层（原来直接摸 _db_files/_open 两个私有接口）
         try:
-            for rel, path, _ in self._db._db_files:
-                if os.path.basename(path) != "contact.db":
-                    continue
-                conn = self._db._open(rel)
-                try:
-                    rows = conn.execute("SELECT username, nick_name, remark FROM contact").fetchall()
-                finally:
-                    conn.close()
-                for r in rows:
-                    mapping[str(r["username"])] = str(r["remark"] or r["nick_name"] or r["username"])
-                break
+            return replica_adapter.load_nickname_map(self._db)
         except Exception:
-            pass
-        return mapping
+            return {}
 
     def _load_groups(self) -> list:
-        groups = []
+        # W1：优先用公开 get_groups()，拿不到才回退（回退路径也在适配层里，调用点不再碰私有接口）
         try:
-            for rel, path, _ in self._db._db_files:
-                if os.path.basename(path) != "contact.db":
-                    continue
-                conn = self._db._open(rel)
-                try:
-                    rows = conn.execute(
-                        "SELECT username, nick_name, remark FROM contact WHERE username LIKE '%@chatroom'").fetchall()
-                finally:
-                    conn.close()
-                for r in rows:
-                    groups.append({"name": str(r["remark"] or r["nick_name"] or r["username"]), "wxid": str(r["username"])})
-                break
+            return replica_adapter.load_groups(self._db)
         except Exception:
-            pass
-        return groups
+            return []
 
     # ── 读取 ─────────────────────────────────────────────────────────────
 
@@ -263,15 +241,10 @@ class WeChatAdapter:
             svrid_m = re.search(r"<svrid>(\d+)</svrid>", txt)
             if ref_type and ref_type.group(1) == "3" and svrid_m:
                 try:
-                    conn, table = self._db._msg_conn(chat_id)
-                    try:
-                        rr = conn.execute(
-                            "SELECT local_id FROM %s WHERE server_id=?" % table,
-                            (int(svrid_m.group(1)),)).fetchone()
-                    finally:
-                        conn.close()
-                    if rr:
-                        media = [{"kind": "image", "local_id": rr[0]}]
+                    # W1：1.2.2 起 _msg_conn 只返回第一个命中分片 ⇒ 改为跨全部分片查（适配层负责遍历与关闭）
+                    local_id = replica_adapter.find_server_id_local_id(self._db, chat_id, int(svrid_m.group(1)))
+                    if local_id is not None:
+                        media = [{"kind": "image", "local_id": local_id}]
                 except Exception:
                     pass
             return {"text": title or "[引用消息]", "media": media, "sender_wxid": sender_wxid}
@@ -2678,7 +2651,7 @@ def wechat_version_info():
 # ---- 关键依赖最低版本校验（自检/检查脚本共用）----
 
 MIN_VER = {
-    "wechatauto-replica": "1.1.5.1",
+    "wechatauto-replica": replica_adapter.MIN_VERSION,   # W1：最低版本由适配层定义（不再钉死某个具体版本）
     "psutil": "5.9.0",
     "uiautomation": "2.0.18",
     "comtypes": "1.4.0",
@@ -2709,9 +2682,8 @@ def dep_check():
             inst = md.version(pkg)
         except Exception:
             inst = ""
-        if pkg == "wechatauto-replica":
-            ok = bool(inst) and str(inst).strip().lower() == str(req).strip().lower()
-        else:
-            ok = bool(inst) and _ver_tuple(inst) >= _ver_tuple(req)
+        # W1：不再对 wechatauto-replica 做"严格等值"（那会把驱动库钉死在一个版本上）。
+        # 统一按"≥ 最低要求"判定；高于适配层实测版本时只由适配层给"未实测"提示，不阻断。
+        ok = bool(inst) and _ver_tuple(inst) >= _ver_tuple(req)
         rows.append((pkg, inst or "", req, ok))
     return rows, all(r[3] for r in rows)
