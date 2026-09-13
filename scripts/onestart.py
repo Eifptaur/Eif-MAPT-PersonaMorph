@@ -360,7 +360,21 @@ def _open_current_console():
 
 
 def _open_console(url, browser_path=""):
-    """打开控制台浏览器：配置/探测的浏览器 exe 优先，否则系统默认（start）。"""
+    """打开控制台。
+
+    W6（用户 2026-09-13 口径："做和启动器一样的软件自己开弹窗显示控制台，不再依赖浏览器"）：
+    **优先用我们自己的 WebView2 窗口** —— `一键启动.exe --console <url>`；
+    只有它不可用（exe 缺失 / WebView2 运行时装不上 / 启动异常）才回退浏览器。
+    """
+    try:
+        exe = os.path.join(ROOT, "一键启动.exe")
+        if os.path.exists(exe):
+            subprocess.Popen([exe, "--console", url], creationflags=0x08000000)
+            log("已在我们自己的窗口里打开控制台（不依赖浏览器）")
+            _mark_browser_opened()
+            return True
+    except Exception as e:
+        log("内嵌控制台窗口启动失败（回退浏览器）：%s" % e)
     try:
         from agent.util import mask_url_token, pick_browser
         bp = pick_browser(browser_path)
