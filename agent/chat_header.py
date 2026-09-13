@@ -263,33 +263,153 @@ def _too_dark(img) -> bool:
         return False
 
 
-def grab_render(gui=None, render=None):
-    """取"渲染区"图像：**优先 PrintWindow（遮挡/后台也能拿）**，失败才退回抓屏。"""
-    render = render or (gui.render_rect if gui else None)
+def _crop_render(img, main, render):
+    """从"整个顶层窗"的图里裁出渲染区（顶层窗那条路要减窗口原点）。"""
     try:
-        main = int(getattr(gui, "main_hwnd", 0) or 0) if gui else 0
-        if main and render:
-            import ctypes
-            from ctypes import wintypes
-            img = _print_window(main)
-            if img is not None and not _too_dark(img):
-                r = wintypes.RECT()
-                ctypes.windll.user32.GetWindowRect(main, ctypes.byref(r))
-                l = int(render[0]) - int(r.left)
-                t = int(render[1]) - int(r.top)
-                sub = img.crop((max(0, l), max(0, t),
-                                min(img.size[0], l + int(render[2] - render[0])),
-                                min(img.size[1], t + int(render[3] - render[1]))))
-                if sub.size[0] > 60 and sub.size[1] > 40:
-                    return sub
+        import ctypes
+        from ctypes import wintypes
+        r = wintypes.RECT()
+        ctypes.windll.user32.GetWindowRect(int(main), ctypes.byref(r))
+        l = int(render[0]) - int(r.left)
+        t = int(render[1]) - int(r.top)
+        sub = img.crop((max(0, l), max(0, t),
+                        min(img.size[0], l + int(render[2] - render[0])),
+                        min(img.size[1], t + int(render[3] - render[1]))))
+        return sub if (sub.size[0] > 60 and sub.size[1] > 40) else None
     except Exception:
-        pass
+        return None
+
+
+def _frame_ok(img) -> bool:
+    """判"这幅图是不是真画面"：既不能近乎全黑，也不能是**纯色**（黑屏/白屏/没画完的帧）。
+
+    实测依据（2026-09-13）：好帧 mean≈198~236、std≈75；PrintWindow 失败帧 mean 0~6.6、std≈0。
+    只看 mean 会把"半黑半白/没画完"的帧放进来，所以**同时要求 std > 12**。
+    """
+    try:
+        from PIL import ImageStat
+        st = ImageStat.Stat(img.convert("L"))
+        return st.mean[0] > 25 and st.stddev[0] > 12
+    except Exception:
+        return False
+
+
+def _region_occluded(render, main_pid: int, samples: int = 3) -> bool:
+    """渲染区是不是被**别的进程**盖着（盖着时不许退回抓屏——那读到的是别人家的像素）。
+
+    实测（2026-09-13）：用户的浏览器盖在微信上时，退回 `ImageGrab` 会拿到 Chrome 的画面，
+    下游 OCR 于是"读到"浏览器内容（会话列表 0~1 行、搜索框区域被污染），**全程不报错**。
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+        u32 = ctypes.windll.user32
+        x0, y0, x1, y1 = [int(v) for v in render]
+        if x1 - x0 < 8 or y1 - y0 < 8:
+            return False
+        hits = other = 0
+        for i in range(samples):
+            for j in range(samples):
+                x = x0 + (x1 - x0) * (2 * i + 1) // (2 * samples)
+                y = y0 + (y1 - y0) * (2 * j + 1) // (2 * samples)
+                h = u32.WindowFromPoint(wintypes.POINT(x, y))
+                pid = wintypes.DWORD()
+                u32.GetWindowThreadProcessId(h, ctypes.byref(pid))
+                if not pid.value:
+                    continue
+                hits += 1
+                if int(pid.value) != int(main_pid):
+                    other += 1
+        return hits > 0 and other >= max(1, hits // 4)
+    except Exception:
+        return False
+
+
+def grab_render(gui=None, render=None, tries: int = 12):
+    """取"渲染区"图像：**优先 PrintWindow（遮挡也能拿）**，失败才退回抓屏（且**遮挡时不退**）。
+
+    2026-09-13 实测四条（"抓图不可靠"的真因，别再回退）：
+      ① **渲染子窗 `MMUIRenderSubWindowHW` 整幅就是渲染区**（实测 1139×890 ＝ render_rect 的尺寸）
+         ⇒ 对它 PrintWindow 得到的图**坐标＝渲染区相对**，省掉"按窗口原点裁剪"的换算。
+      ② **PrintWindow 对微信是"冷启动会连失几枪"**：实测同一窗口，连打 4~6 枪全是 None，之后
+         连中两枪（mean 236）。⇒ 必须**多试几枪**（`tries=12`，等价约 1 秒预算），一枪不成不能退。
+      ③ **抓到的帧要看质量**：`_frame_ok` 同时要求"不太暗 + 有内容（std>12）"——只看 mean 会把
+         "没画完的纯色帧"当成功。
+      ④ **退回抓屏必须带遮挡校验**：`WindowFromPoint` 采样发现渲染区被别的进程盖着 ⇒ **不退回抓屏**，
+         宁可返回 None 让上层说"抓不到画面"（实测过：退回后读到的是用户的浏览器画面，全程不报错）。
+    """
+    render = render or (gui.render_rect if gui else None)
+    main = int(getattr(gui, "main_hwnd", 0) or 0) if gui else 0
+    best = None
+    if main:
+        cands = []
+        try:                                   # 渲染子窗优先：省换算、1:1 对齐渲染区
+            from . import input_backend as _ib
+            ch = _ib.find_render_child(main)
+            if ch:
+                cands.append(int(ch))
+        except Exception:
+            pass
+        cands.append(main)
+        for _round in range(max(1, int(tries))):
+            for hwnd in cands:
+                try:
+                    img = _print_window(hwnd)
+                except Exception:
+                    img = None
+                if img is None or _too_dark(img):
+                    continue
+                if not _frame_ok(img):
+                    if best is None:
+                        best = img            # 留一帧"质量可疑但有内容"的兜底
+                    continue
+                if hwnd != main:
+                    return img                # 渲染子窗的图就是渲染区，零换算
+                sub = _crop_render(img, main, render) if render else img
+                if sub is not None and _frame_ok(sub):
+                    return sub
+            time.sleep(0.08)
+    if best is not None:
+        return _crop_render(best, main, render) if (render and main) else best
     try:
         from PIL import ImageGrab
+        if not render:
+            return None
+        main_pid = 0
+        if main:
+            import ctypes
+            from ctypes import wintypes
+            _p = wintypes.DWORD()
+            ctypes.windll.user32.GetWindowThreadProcessId(main, ctypes.byref(_p))
+            main_pid = int(_p.value)
+        if main_pid and _region_occluded(render, main_pid):
+            log.warning("渲染区被别的窗口遮挡（PrintWindow 也没拿到帧）⇒ 不退回抓屏："
+                        "抓屏会读到别人家的像素，返回 None 更诚实")
+            return None
         return ImageGrab.grab((int(render[0]), int(render[1]), int(render[2]), int(render[3])))
     except Exception as e:
         log.warning("渲染区抓取失败：%s", e)
         return None
+
+
+def shot_window(hwnd, tries: int = 8, sleep_s: float = 0.12):
+    """抓**任意独立顶层窗**自己的画面（浮层/面板/子窗用；它们不在主窗渲染区里）。
+
+    为什么要重试：实测微信的 `Qt51514QWindowToolSaveBits` 浮层（表情面板 / 搜索浮层）**第一枪常常
+    返回 0**，第二三枪才成功（本机实测 0/2 → 1/2 成功）⇒ 单次调用会得到 None 让人误判"抓不到"。
+    """
+    for _i in range(max(1, int(tries))):
+        for fl in (2, 0):
+            try:
+                im = _print_window(int(hwnd), fl)
+            except Exception:
+                im = None
+            if im is None:
+                continue
+            if _frame_ok(im):
+                return im
+        time.sleep(sleep_s)
+    return None
 
 
 def capture_image(gui=None, render=None):
