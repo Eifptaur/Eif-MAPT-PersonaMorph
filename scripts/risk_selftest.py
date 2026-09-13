@@ -240,5 +240,20 @@ for i in range(4):
 v = g18.check("group:d9", "同一条广告词发发发", now=BASE + 5)
 check("broadcast_chats=0 ⇒ 用户关掉群发判定就完全不拦", v.allowed, repr(v))
 
+# ── 21 关键词写成"逗号分隔字符串"也要正确切分（防逐字符误拦）────────────
+set_risk(block_keywords="刷单,加粉", watch_keywords="发票 退税", paused=False,
+         escalate_after=0, per_minute=0, per_chat_per_hour=0, min_gap_seconds=0,
+         broadcast_chats=0)
+g19, d19 = new_gate(); TMPDIRS.append(d19)
+check("字符串型禁止词被切成列表", R._as_list("刷单,加粉") == ["刷单", "加粉"],
+      str(R._as_list("刷单,加粉")))
+check("空格/分号也能切", R._as_list("a;b c，d") == ["a", "b", "c", "d"], str(R._as_list("a;b c，d")))
+v = g19.check("group:kw", "帮我刷单", now=BASE)
+check("字符串型禁止词：完整词命中 ⇒ 拦", (not v.allowed) and v.code == "block_keyword", repr(v))
+v = g19.check("group:kw", "今天刷了个单子", now=BASE)
+check("字符串型禁止词：单字'单'不误拦（证明没逐字符）", v.allowed, repr(v))
+v = g19.check("group:kw", "需要开发票吗", now=BASE)
+check("字符串型观察词命中 ⇒ 放行但记录", v.allowed and v.code == "watch_keyword", repr(v))
+
 print("\n=== 风险闸门自测：%d PASS / %d FAIL ===" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
