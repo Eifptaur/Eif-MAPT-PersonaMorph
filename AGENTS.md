@@ -82,7 +82,13 @@
 3. 新增只读 `agent/uia_probe.py`：输出 `is_materialized()` + `describe_layout()` 到 `wechatauto_logs/ui_probe/<微信版本>.json`，控制台加按钮；并实测 `uiautomation.Control.Click()` 是否移动光标（本机 2.0.29 走 `SetCursorPos`）——**这条决定 §2 的 L2 选型能不能成立**，必须落到 §2.0 那套"三档各 30 次"的实测里。
 
 > 取证来源：`_scratch\refs\wechatauto-replica-可借鉴.md`（14 条机制 / 37 行结论表 / 我没验证到的）；插件体系与热更新参照 `_scratch\refs\miloto-可借鉴.md`（机制 1..20）。
-> 第 4 个对标对象（2026-09-13 用户给的同类产品）：张苹果「最新微信群聊机器人」v1.8.1（**闭源**，只有安装包）⇒ `_scratch\refs\张苹果-微信群聊机器人-可借鉴.md`（四档分类；**真缺口三条**＝①微信自动更新对策——本机刚被自动升级到 4.1.15.8 ②**注册表法暴露 UIA 树**，若成立可替代"往 `Weixin.dll` 写 gate 字节"这条红线项 ③开放接口与本机程序对接；**不借鉴**＝它的"挪窗＋真实鼠标、让用户别动鼠标"路线，以及撞红线的"群成员活跃统计"）。
+> 第 4 个对标对象：张苹果「最新微信群聊机器人」v1.8.1（**闭源分发包，但已按用户要求逐层扒开**，产物在 `~/.dsh/scratch/refs/zhangpingguo/`，结论见 `_scratch\refs\张苹果-微信群聊机器人-可借鉴.md` §3）。
+> **它是什么**：NSIS 壳 → Electron+Vue 前端（`app.asar`，JS 混淆）→ PyInstaller 冻结的 Python 3.12 后端（`backend.exe` + `_internal`）→ 业务是 **`wxauto4` 的换皮分支**（包名改 `wechatpro`，`ui/main.py.backup` 里明写 `from wxauto4…`）。
+> **⭐ 最值钱的借鉴＝微信 4.x 的 UIA 控件通讯录**（wxauto4 现成的类名，抄进 W4/W7 省几天反查）：主窗 `mmui::MainWindow`（`mmui::MainTabBar#main_tabbar`、`mmui::ChatMasterView`、`mmui::ChatMessagePage`→`mmui::XSplitterView`）· 会话列表 `mmui::ChatSessionList`/`mmui::XTableView` · 搜索 `mmui::XSearchField` + 弹层 `mmui::SearchContentPopover` · 聊天区 `mmui::MessageView` + **`mmui::ChatInputField`** + 发送按钮 `Name=发送(S)` · 气泡 `mmui::ChatBubbleItemView`/`ChatTextItemView`/… · **独立子窗 `mmui::FramelessMainWindow`**（wxauto4 原话：通过子窗口发送不切换主窗口）· 聊天信息 AutomationId 路径 `top_content_h_view…current_chat_name_label`。
+> **⚠️ 但它那条路在本机当前版本走不通（已实测否定）**：微信 4.1.15.8 上原版 `uiautomation 2.0.29` 遍历主窗只有 **2 个节点**（`Qt51514QWindowIcon` + `MMUIRenderSubWindowHW`），`mmui::ChatInputField`/`发送(S)` 都不存在；**"屏幕阅读器标记能物化 UIA 树"的猜想也被证伪**（`SPI_GETSCREENREADER` 本就是 True，置位后重扫仍是 2 个节点）；它的后端里**没有任何物化 UIA 的代码**（无 `Weixin.dll`/`VirtualProtect`/`WriteProcessMemory`）⇒ 它只在"树本来就在"的微信版本上有效，这正是它反复叮嘱"请勿随意更新微信"的原因。
+> **🚩 绝对不抄两件**：①它把用户**微信数据库密钥上传到自己服务器**（`zhangpingguo.com/api/submitWechatSecretKey` + `:wechatpro-secret-salt` + 授权验证）②**机器指纹/虚拟机检测**（`reg query …VirtualMachineId` / `…ProductId` 做授权绑定）。**不抄的还有**：真鼠标真键盘的操作路线（它自己的文档写着"不要动鼠标"，比我们已实测的 L5 落后）、群成员活跃统计（§3.1 红线）、混淆与自保护（我们开源）。
+> **值得抄的小件**：启动后端前"检查并清理端口"的流程与话术 · 开放接口用环境变量传 token 且界面可**轮换** token（正对 W3 要修的 `webui.py:450-452` 空 token 放行）· 子窗口思路（将来 UIA 可用时，比投消息更干净的发送路径）。
+> **真缺口（顺序）**：①微信自动更新对策（本机当日刚被自动升到 4.1.15.8，库的 UIA 当场退化成 OCR）②UIA 物化机制（本机当前版本无解，需要另找；已否定 SPI 屏幕阅读器标记）③开放接口与本机程序对接。
 
 ## 3. 红线
 
