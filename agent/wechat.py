@@ -1306,6 +1306,13 @@ class WeChatAdapter:
             if not main:
                 return False, "找不到微信主窗"
             child = int(getattr(gui, "render_hwnd", 0) or 0) or main      # 粘贴/按键要打渲染子窗
+            # ⛔99 发送前**大图自动压缩**（对账清单第 22 条）：压不动/不必压 ⇒ 原样发，说明进回执。
+            _cnote = ""
+            try:
+                from . import img_compress as _ic
+                local_path, _cnote = _ic.compress_if_needed(local_path)
+            except Exception as _e:
+                _cnote = "压缩环节异常（%s），原样发送" % type(_e).__name__
             ok_open, why_open = self.chat_is_open(chat_id, gui=gui)
             if not ok_open:
                 return False, "投递发图要求目标会话已打开：%s" % why_open

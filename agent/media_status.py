@@ -66,7 +66,17 @@ def snapshot() -> dict:
         # 群友要图（生图链条）：只暴露只读快照（开关/触发条件/后端数/过滤链/红线）——
         # 真后端待用户拍板（本地 ComfyUI 还是在线 API），没配后端时 generate() 会明确说"没后端"
         "image_gen": _image_gen_snapshot(),
+        # 大图自动压缩（对账清单第 22 条）：只读快照，面板上的键是 send.image_compress.*
+        "img_compress": _img_compress_snapshot(),
     }
+
+
+def _img_compress_snapshot() -> dict:
+    try:
+        from . import img_compress as IC
+        return IC.snapshot()
+    except Exception as e:
+        return {"enabled": False, "error": type(e).__name__, "why": str(e)[:80]}
 
 
 def _image_gen_snapshot() -> dict:
