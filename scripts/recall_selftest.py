@@ -12,6 +12,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 try:
@@ -162,6 +163,53 @@ def main():
     un = open(rc.UNMATCHED_PATH, encoding="utf-8").read().strip().splitlines() if os.path.exists(rc.UNMATCHED_PATH) else []
     ok("疑似撤回答不出的形态会留证（认得出的不写）", len(un) == 1 and "认不出的形态" in un[0], len(un))
 
+    print("== D2. 撤回核对 sweep：微信「原地改写那一行」的兜底 ==")
+    now_ms = int(time.time() * 1000)
+    st6 = ChatStore()
+    st6.append_incoming("group:g6", 601, now_ms - 60000, "wxid_e", "E", "正常的一句话")
+    st6.append_incoming("group:g6", 602, now_ms - 60000, "wxid_f", "F", "后来被撤的那句")
+    st6.append_incoming("group:g6", None, now_ms - 60000, "wxid_g", "G", "没有 mid 的老消息")
+    st6.append_incoming("group:g6", 604, now_ms - 900000, "wxid_h", "H", "五分钟以前的老消息")
+    reads = []
+
+    def _fetch(mid):
+        reads.append(mid)
+        if mid == 602:
+            return XML_PEER
+        return "这是一条正常消息"
+
+    state = {}
+    sw = rc.sweep(st6, "group:g6", _fetch, state=state, window_ms=300000, interval_ms=15000, log=log)
+    ok("原地改写的那条被核对出来并剔除", sw["removed"] == 1 and sw["checked"] >= 2, sw)
+    ok("存档里被改写的条目已打 recalled 标记", st6.find_by_mid("group:g6", 602).get("recalled") is True)
+    ok("正常的那条没被牵连", st6.find_by_mid("group:g6", 601).get("recalled") is not True)
+    ok("没有 mid 的老消息不读库（无从核对）", None not in reads and "None" not in [str(x) for x in reads])
+    ok("超过时间窗的老消息不读库", 604 not in reads, reads)
+    ok("命中写进了审计（how=rowcheck）",
+       any(r.get("how") == "rowcheck" for r in
+           [json.loads(l) for l in open(rc.LOG_PATH, encoding="utf-8").read().strip().splitlines()]))
+    n1 = len(reads)
+    sw2 = rc.sweep(st6, "group:g6", _fetch, state=state, window_ms=300000, interval_ms=15000, log=log)
+    ok("限频：间隔内不重复扫", sw2["skipped"] == "interval" and len(reads) == n1, sw2)
+    state["last"] = 0
+    sw3 = rc.sweep(st6, "group:g6", _fetch, state=state, window_ms=300000, interval_ms=15000, log=log)
+    ok("已核对过的不再重复读库（每条只读一次）", len(reads) == n1 and sw3["removed"] == 0, len(reads))
+    st7 = ChatStore()
+    st7.append_incoming("group:g7", 701, 200000, "wxid_e", "E", "读不到行的那条")
+    sw4 = rc.sweep(st7, "group:g7", lambda mid: (_ for _ in ()).throw(RuntimeError("db 炸了")),
+                   state={}, window_ms=300000, interval_ms=0, log=log)
+    ok("读库抛异常时不炸、也不动存档",
+       sw4["removed"] == 0 and len(st7.recent("group:g7", limit=10)) == 1)
+    sw5 = rc.sweep(st7, "group:g7", lambda mid: None, state={}, window_ms=300000, interval_ms=0, log=log)
+    ok("行已被删（读不到）⇒ 一律不动（宁漏不误删）",
+       sw5["removed"] == 0 and len(st7.recent("group:g7", limit=10)) == 1)
+    st8 = ChatStore()
+    st8.append_incoming("group:g8", 801, now_ms - 60000, "wxid_x", "张三", "群友恰好打出的那句话")
+    sw6 = rc.sweep(st8, "group:g8", lambda mid: 'wxid_x:\n张三 撤回了一条消息',
+                   state={}, window_ms=300000, interval_ms=0, log=log)
+    ok("群友恰好打出「X 撤回了一条消息」不被误判成撤回（只认 revokemsg 报文）",
+       sw6["removed"] == 0 and len(st8.recent("group:g8", limit=10)) == 1, sw6)
+
     print("== E. 接线断言（源码级：不能只写模块不接上）==")
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     wx = open(os.path.join(root, "agent", "wechat.py"), encoding="utf-8").read()
@@ -172,7 +220,11 @@ def main():
     ok("认撤回在「自己发的跳过」之前（自己撤回才不会被丢）",
        wx.find("recall_mod.parse_recall") < wx.find('if str(sender_id) in ("2", "3")'))
     ok("认不出的疑似撤回留证", "recall_mod.note_unmatched" in wx)
+    ok("纯文本撤回只在系统消息类型里认（防群友打出这句话被误判）",
+       'form") == "xml" or mtype == "系统消息"' in wx)
     ok("有 server_id→local_id 的收口方法", "def local_id_by_server_id" in wx)
+    ok("有只读的「读某条当前内容」方法（核对原地改写用）", "def message_content" in wx)
+    ok("监听循环里做撤回核对（原地改写兜底）", "recall.sweep(" in pm)
     ok("监听循环里调 purge", "recall.purge(" in pm)
     ok("撤回事件不触发回复（直接 return，不到 on_incoming）",
        "recall.purge(" in pm and pm.find("recall.purge(") < pm.find("orch.on_incoming(_chat_key)"))
