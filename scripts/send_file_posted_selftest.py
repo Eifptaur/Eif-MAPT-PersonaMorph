@@ -63,6 +63,8 @@ ok("注释里写明剪贴板那条无效、别再试", "剪贴板那条" in seg 
 # 2026-09-14 新增的"台账档"（当天实测：DB content 是压缩占位符 + 会话行 OCR 只剩 `[图片]` ⇒ 前几档全失效）：
 ok("身份闸有「我们发给该会话的文件名」这一档（屏幕 × 本机发送台账两个独立来源）",
    "_sent_file_names(" in SRC and "_file_fingerprints(" in SRC and "版本指纹" in SRC)
+ok("刚发完的文件卡有「截断兜底」：按文件名开头 3 字认，但**必须**带「文件」前缀（否则正文提到文件名会假阳性 ⇒ 发错会话）",
+   '("文件" + _head) in _pane_norm' in SRC and "_head = \"\".join(ch for ch in _stem if ch.isalnum())[:3]" in SRC)
 ok("文件指纹＝文件名里那串「日期+构建号」数字，并给出去前导零变体（防 OCR 把 09 读成 9）",
    "def _file_fingerprints" in SRC and 'g.lstrip("0")' in SRC)
 _fps = A._file_fingerprints("Agent启动器-2026.09.14.383.zip")

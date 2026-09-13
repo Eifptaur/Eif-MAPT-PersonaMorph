@@ -49,6 +49,9 @@ SCAN = [
 ALLOW = (
     # .gitignore 里的 `_scratch/` 是"别把本地草稿提交进来"这条规则本身，属正常仓库配置
     (".gitignore", "开发资料引用"),
+    # 这条是**脱敏判据的输入夹具**：那一行故意塞满假 PII（假手机号/假邮箱/假姓名/假身份证/`wxid_abc123`），
+    # 用来断言 scrub_prompt 会把它们都抹掉。它是合成的样本，不是真实账号数据 ⇒ 显式放行并写明理由。
+    ("scripts/image_gen_selftest.py", "微信账号/数据"),
 )
 
 SKIP_BIN = re.compile(r"\.(png|jpe?g|gif|ico|woff2?|ttf|mp4|zip|db|sqlite3?)$", re.I)
