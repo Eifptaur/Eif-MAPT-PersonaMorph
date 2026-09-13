@@ -28,6 +28,7 @@ EXCLUDE = (
     "AGENTS.md",          # 开发守则：含红线自述与用户原话，不随包发
     "docs/",              # 开发资料：任务清单 / changelog 归档
     "whale-widget/",      # 另一个项目（鲸鱼挂件）的素材，与本包无关
+    "scripts/pack_online.py",   # 打包器自身：里面有扫描规则字面量（含用户名样本），不进包
     "offline/",           # 离线运行时与 wheel（在线包不需要）
     "_scratch/", "报告/", "wechatauto_logs/", "data/", "runtime/", "logs/",
 )
