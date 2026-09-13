@@ -35,7 +35,8 @@ def main():
 
     py_exe = sys.executable or "py"
     wheels = os.path.join(ROOT, "offline", "wheels")
-    offline = os.path.exists(os.path.join(wheels, "wechatauto_replica-1.1.5.1-py3-none-any.whl"))
+    offline = any(f.startswith("wechatauto_replica-") and f.endswith(".whl")
+                for f in os.listdir(wheels)) if os.path.isdir(wheels) else False
     print("-" * 52)
     print("[%s] 开始安装缺失/需升级的依赖 ..." % ("离线" if offline else "联网"))
     try:

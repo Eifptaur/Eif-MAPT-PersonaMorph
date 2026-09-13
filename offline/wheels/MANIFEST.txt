@@ -1,0 +1,41 @@
+# 离线包清单（由 scripts/pack_offline.py 生成，勿手改）
+# 生成时间：2026-09-13 15:45:11
+# 安装方式：pip install --no-index --find-links=offline/wheels -r requirements.txt
+# 包数：34（对 requirements 覆盖 24，缺 0）
+
+colorama                     0.4.6        colorama-0.4.6-py2.py3-none-any.whl                      25335  4f1d9991f5acc0ca
+comtypes                     1.4.16       comtypes-1.4.16-py3-none-any.whl                        296230  e18d85179ff12955
+cryptography                 50.0.1       cryptography-50.0.1-cp39-abi3-win_amd64.whl            3875429  55d16b1ef3ee0958
+imageio-ffmpeg               0.6.0        imageio_ffmpeg-0.6.0-py3-none-win_amd64.whl           31246824  02fa47c83703c37d
+mouseinfo                    0.1.3        mouseinfo-0.1.3-py3-none-any.whl                         10959  3efdaef7e9c789be
+numpy                        2.2.6        numpy-2.2.6-cp310-cp310-win_amd64.whl                 12904620  f0fd6321b839904e
+opencv-python                5.0.0.93     opencv_python-5.0.0.93-cp37-abi3-win_amd64.whl        44000345  f90ba04b8f73bc5c
+pillow                       12.3.0       pillow-12.3.0-cp310-cp310-win_amd64.whl                7226887  300557495eb45ebb
+psutil                       7.2.2        psutil-7.2.2-cp37-abi3-win_amd64.whl                    137737  eb7e81434c8d223e
+pyautogui                    0.9.54       pyautogui-0.9.54-py3-none-any.whl                        37708  c453cd0db1336a59
+pygetwindow                  0.0.9        pygetwindow-0.0.9-py3-none-any.whl                       11137  a7fb847e43b9cf9c
+pymsgbox                     2.0.1        pymsgbox-2.0.1-py3-none-any.whl                           9994  5de8ec19bca2ca7e
+pyperclip                    1.11.0       pyperclip-1.11.0-py3-none-any.whl                        11063  299403e9ff44581c
+pypinyin                     0.55.0       pypinyin-0.55.0-py2.py3-none-any.whl                    840203  d53b1e8ad2cdb815
+pyrect                       0.2.0        pyrect-0.2.0-py2.py3-none-any.whl                        11305  0c8883fd543f7274
+pyscreeze                    1.0.1        pyscreeze-1.0.1-py3-none-any.whl                         14480  32cfeffef56fec51
+pytweening                   1.2.0        pytweening-1.2.0-py3-none-any.whl                         8134  fc72ac8caf279c31
+pywin32                      312          pywin32-312-cp310-cp310-win_amd64.whl                  6926780  5dbc35d2b5320dc0
+requests                     2.34.2       requests-2.34.2-py3-none-any.whl                         73075  2a0d60c172f83ac6
+uiautomation                 2.0.29       uiautomation-2.0.29-py3-none-any.whl                    198985  5dd51c9e77e70470
+urllib3                      2.7.0        urllib3-2.7.0-py3-none-any.whl                          131087  9fb4c81ebbb1ce95
+wechatauto-replica           1.2.2.2      wechatauto_replica-1.2.2.2-py3-none-any.whl             302998  c1d4405a500337da
+winsdk                       1.0.0b10     winsdk-1.0.0b10-cp310-cp310-win_amd64.whl             12009746  c3be3fbf692b8888
+zstandard                    0.25.0       zstandard-0.25.0-cp310-cp310-win_amd64.whl              506100  ea9d54cc3d806426
+
+# 额外带的包（不在 requirements 里，供排查/兼容用）：
+#   certifi-2026.7.22-py3-none-any.whl
+#   cffi-2.1.1-cp310-cp310-win_amd64.whl
+#   charset_normalizer-3.5.1-cp310-cp310-win_amd64.whl
+#   idna-3.19-py3-none-any.whl
+#   packaging-26.3-py3-none-any.whl
+#   pip-26.2.1-py3-none-any.whl
+#   pycparser-3.0-py3-none-any.whl
+#   setuptools-84.0.0-py3-none-any.whl
+#   typing_extensions-4.16.0-py3-none-any.whl
+#   wheel-0.48.0-py3-none-any.whl
