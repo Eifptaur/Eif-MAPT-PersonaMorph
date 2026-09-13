@@ -40,6 +40,19 @@ TYPE_LABEL = {    "文本": "text",
 }
 
 
+def wx_version_for_gate() -> str:
+    """给**版本门**用的当前微信版本号（读不到就返回空串 ⇒ 门自己按"未验证"处理）。
+
+    ⚠️ 为什么要有这个函数（2026-09-13 实测 bug）：三处发送入口调 `version_gate.check("send")` 时
+    **都没把版本传进去**，而 `check()` 内部是 `w = wechat or "unknown"` ⇒ 门**永远**回
+    "读不到微信版本（微信没在跑？）"、**每一次自动发送都被拦**（微信明明在跑）。
+    """
+    try:
+        return str((wechat_version_info() or {}).get("version") or "")
+    except Exception:
+        return ""
+
+
 def _resp_msg(r) -> str:
     """从驱动库的返回值里取"人话原因"。
 
@@ -692,7 +705,7 @@ class WeChatAdapter:
         # W7 版本门：没实测过的版本对默认暂停自动发送（控制台可临时放行）
         try:
             from . import version_gate as _vg
-            _g = _vg.check("send")
+            _g = _vg.check("send", wechat=wx_version_for_gate())
             if not _g["allow"]:
                 return False, _g["reason"]
         except Exception:
@@ -972,6 +985,160 @@ class WeChatAdapter:
         except Exception as e:
             return False, "投递切会话异常：%s" % e
 
+    def _find_search_popover(self, main: int = None):
+        """找微信的**搜索浮层**并抓下它的画面：返回 `(hwnd, rect, img)` 或 None。
+
+        实测口径（2026-09-13，本机 4.1.15.8）：独立顶层窗、class＝`Qt51514QWindowToolSaveBits`、
+        标题 `Weixin`、浮在主窗上方（(264,126)-(816,464) 那一带）；**输入前 552×338、出结果后
+        552×891**（同一个窗口会变高）⇒ **不许按尺寸/宽高比筛**（它和表情面板同类名，按形状筛
+        会误判：曾把高浮层当表情面板排除、误报"浮层没弹出来"）。判据改成**画面内容**
+        （`chat_ocr.looks_like_search_popover`：最近在搜 / 联系人 / 群聊 / 聊天记录…）。
+        """
+        try:
+            import win32gui
+            import win32process
+            from . import chat_ocr as _co
+            from . import chat_header as _chh
+            pid = win32process.GetWindowThreadProcessId(int(main))[1]
+            cands = []
+
+            def _cb(h, _):
+                try:
+                    if win32process.GetWindowThreadProcessId(h)[1] != pid or int(h) == int(main):
+                        return
+                    if not win32gui.IsWindowVisible(h):
+                        return
+                    if win32gui.GetClassName(h) != 'Qt51514QWindowToolSaveBits':
+                        return
+                    x0, y0, x1, y1 = win32gui.GetWindowRect(h)
+                    if x1 - x0 > 4 and y1 - y0 > 4:
+                        cands.append((int(h), (int(x0), int(y0), int(x1), int(y1))))
+                except Exception:
+                    pass
+
+            win32gui.EnumWindows(_cb, None)
+            for h, rect in cands:
+                im = _chh.shot_window(h)
+                hit, why = _co.looks_like_search_popover(im)
+                if hit:
+                    return h, rect, im, why
+                log.info("浮层候选 hwnd=%s %s 不像搜索浮层：%s", h, rect, why)
+            return None
+        except Exception as e:
+            log.warning("找搜索浮层失败：%s", e)
+            return None
+
+    def open_chat_by_search(self, chat_id: str, name: str = "", gui=None):
+        """**投递版「搜索框找会话」**：不依赖滚动（会话列表被遮挡/目标在折叠线外时用）。
+
+        链路：投递点搜索框（左上角读到「搜索」字样的那一行）→ 投递 `WM_CHAR` 打字 → 等结果 →
+        OCR 结果行找名字匹配的那行 → 投递点它 → **内容级复核**（`chat_identity_ok`）。
+        返回 `(ok, 说明)`；拿不到内容级正面证据就不算成功（fail-closed）。
+        """
+        from . import input_backend as ib
+        try:
+            gui = gui or self._get_gui()
+            name = name or self.display_name(chat_id) or chat_id
+            backend = ib.select_backend(gui=gui)
+            if not isinstance(backend, ib.MessageBackend):
+                return False, "当前输入后端不是投递档（config.input.backend=%s）" % backend.name
+            main = int(getattr(gui, "main_hwnd", 0) or 0) or ib.find_main_window()
+            if not main:
+                return False, "找不到微信主窗"
+            tgt = ib.find_render_child(main) or main
+            try:
+                gui._update_render_rect()
+            except Exception:
+                pass
+            ox, oy = int(getattr(gui, "origin_x", 0)), int(getattr(gui, "origin_y", 0))
+            r = getattr(gui, "render_rect", None) or (0, 0, 0, 0)
+            rw = int(r[2] - r[0])
+            if rw <= 0:
+                return False, "渲染区未知（窗口不可见？）"
+            from . import chat_ocr as _co
+            from . import chat_header as _chh
+            try:
+                pane = int(gui.detect_pane_left())
+            except Exception:
+                pane = int(rw * _chh.PANE_LEFT_REL)
+            # ① 搜索入口：**两套 UI 都要认**（用户 2026-09-13 口径：本机"没有搜索框了，只有搜索的
+            #    一个图标，摁了之后才有搜索框"；另一台电脑"是有搜索框的"⇒ 两种形态都必须是正路，
+            #    不许假设其中一种）。认字优先（读到「搜索」＝搜索框形态，点文字最稳），
+            #    读不到就认图标（标题带里最靠左的那个 ≈30px 深色块＝放大镜；「＋」在它右边，别点错）。
+            img = _chh.capture_image(gui=gui)
+            if img is None:
+                return False, "抓不到画面（窗口不可见？）"
+            ent = _co.find_search_entry(img, left=pane or None)
+            if not ent:
+                return False, ("找不到搜索入口：标题带里既没读到「搜索」字样，也没识别出放大镜图标"
+                               "（窗口尺寸/主题/微信版本不同？⇒ 把当前微信窗口截图发我，或改用会话列表点击）")
+            variant = ent.get("variant")
+            if variant == "icon":
+                # —— 图标形态（本机 4.1.15.8）：点开后**搜索框是一个独立顶层窗（浮层）**，
+                #    主窗渲染区里**看不到它**（实测：主窗像素只多了图标 hover 态，band_diff≈0.05）
+                #    ⇒ 必须找到那个窗口、抓它自己的画面、往它投字与点击。判据不许再用"主窗像素变了"。
+                #    点之前先看有没有已经开着的浮层（有就直接用，避免把自己点关）。
+                pop = self._find_search_popover(main)
+                if not pop:
+                    backend.click(main, (ox + int(ent["x"]), oy + int(ent["y"])))
+                    for _i in range(12):
+                        time.sleep(0.25)
+                        pop = self._find_search_popover(main)
+                        if pop:
+                            break
+                if not pop:
+                    return False, ("点了搜索图标（依据：%s）但没看到搜索浮层弹出来 ⇒ 不往下打字"
+                                   "（fail-closed）" % ent.get("why"))
+                pop_hwnd, prect, pimg, pwhy = pop
+                ok_t, why_t = backend.send_text(int(pop_hwnd), name)
+                if not ok_t:
+                    return False, "往搜索浮层投字失败：%s" % why_t
+                row, shot_size = None, None
+                for _i in range(5):
+                    time.sleep(0.6)
+                    im3 = _chh.shot_window(int(pop_hwnd))
+                    if im3 is None:
+                        continue
+                    shot_size = im3.size
+                    row = _co.find_popover_row(im3, name)
+                    if row:
+                        break
+                if not row:
+                    return False, "搜索浮层的画面里没认出「%s」那一行（浮层截图 %s）" % (name, shot_size)
+                backend.click(int(pop_hwnd), (int(prect[0]) + int(row["x"]), int(prect[1]) + int(row["y"])))
+                time.sleep(1.0)
+                idn, idn_why = self.chat_identity_ok(chat_id, gui=gui)
+                if idn is True:
+                    return True, ("搜索浮层路线成功（浮层 hwnd=%s，%s，%s，落点 %s）：%s"
+                                  % (pop_hwnd, pwhy, row.get("why"), (row["x"], row["y"]), idn_why))
+                return False, ("点了搜索浮层的「%s」行（%s，落点 %s），但内容级复核没过：%s"
+                               % (name, row.get("why"), (row["x"], row["y"]), idn_why))
+            # —— box 形态（另一台机 / 老 UI：搜索框直接摆着）：点它 → 主窗打字 → 结果行在主窗里找
+            backend.click(main, (ox + int(ent["x"]), oy + int(ent["y"])))
+            time.sleep(0.45)
+            ok_t, why_t = backend.send_text(main, name)
+            if not ok_t:
+                return False, "搜索框打字失败：%s" % why_t
+            # 结果里找名字匹配的行（多抓几帧）
+            info = None
+            for _i in range(4):
+                time.sleep(0.5)
+                im2 = _chh.capture_image(gui=gui)
+                info = _co.find_row_info(im2, name) if im2 is not None else None
+                if info:
+                    break
+            if not info:
+                return False, "搜索结果里没认出「%s」（可能没有这条会话，或结果区 OCR 读不出）" % name
+            backend.click(main, (ox + int(info["pos"][0]), oy + int(info["pos"][1])))
+            time.sleep(0.9)
+            # 内容级复核：认得出目标会话最近的内容才算成功
+            idn, idn_why = self.chat_identity_ok(chat_id, gui=gui)
+            if idn is True:
+                return True, "搜索框路线成功（点的是 OCR「%s」那行）：%s" % (str(info.get("name"))[:10], idn_why)
+            return bool(idn is None), "点过搜索结果了，但内容复核={} （{}）".format(idn, idn_why)
+        except Exception as e:
+            return False, "搜索框切会话异常：%s" % e
+
     def send_text_posted(self, text: str, chat_id: str = "filehelper", wait_s: float = 15.0,
                          allow_no_ref: bool = False):
         """**投递发送**（L5，2026-09-13 实测过的那条链）：投递 WM_CHAR 打字 + 投递点「发送」按钮。
@@ -1147,13 +1314,18 @@ class WeChatAdapter:
     def _sent_file_log_path() -> str:
         return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "sent_files.json")
 
-    def _repeat_guard(self, chat_id: str, path: str, window_s: int = 600):
+    def _repeat_guard(self, chat_id: str, path: str, window_s: int = 600, note: bool = False):
         """防重复发送：同一会话 + 同一文件（绝对路径+大小+mtime）在 window_s 内发过 ⇒ 拒绝。
 
         为什么加（2026-09-13 用户当场发现"你发了两个文件给我，一模一样的"）：我先跑脚本探针、
         又跑产品函数各发一次同一个 zip ⇒ 同一个会话里出现两份一模一样的文件。
         验证"这条路可行"只需要**一次**实发；重复实发既浪费又让用户困惑 ⇒ 加这道闸。
         返回 (ok, why)；守卫自身出错时**放行**（它只是安全网，不该挡住正常发送），但会记一行日志。
+
+        ⚠️ **默认只读、不记账**（2026-09-13 实测 bug）：原实现"检查时就写台账"，于是一次因为
+        **别的原因**失败（名字闸/内容闸拦下）的尝试也会把台账写脏 ⇒ 之后 10 分钟内的真重试全被判
+        "已经发过了"，而且每次失败重试还会把时间戳刷新，**永远发不出去**。记账改到**发送成功
+        （DB 回读确认新文件行）之后**由 `note=True` 那次调用完成。
         """
         import json as _json
         try:
@@ -1169,7 +1341,7 @@ class WeChatAdapter:
                 data = {}
             now = time.time()
             prev = float(data.get(full) or 0)
-            if prev and (now - prev) < window_s:
+            if prev and (now - prev) < window_s and not note:
                 return False, "同一文件在 %d 秒内已经发给这个会话了（%s）——拒绝重复发送；确实要再发请显式传 allow_repeat=True" % (
                     int(now - prev), os.path.basename(path))
             data[full] = now
@@ -1213,7 +1385,7 @@ class WeChatAdapter:
         # W7 版本门：没实测过的版本对默认暂停自动发送（控制台可临时放行）
         try:
             from . import version_gate as _vg
-            _g = _vg.check("send")
+            _g = _vg.check("send", wechat=wx_version_for_gate())
             if not _g["allow"]:
                 return False, _g["reason"]
         except Exception:
@@ -1235,7 +1407,13 @@ class WeChatAdapter:
                 return False, "当前输入后端不是投递档（config.input.backend=%s）" % backend.name
             ok_open, why_open = self.chat_is_open(chat_id, gui=gui)
             if not ok_open and not confirm_open:
-                return False, "发文件要求目标会话已打开且被确认：%s" % why_open
+                # ⚠️ 名字闸判不过时，**内容级正面证据可以顶替**（2026-09-13 实测）：E 这种会话的
+                #    绿底行名字本机 OCR 读不出（`current_chat_name` 返回空），但聊天区里能认出
+                #    目标会话独有的短指纹（`2qqwq`）⇒ 后者是更硬的证据（项目口径：最后一道闸是内容）。
+                _idn0, _why0 = self.chat_identity_ok(chat_id, gui=gui)
+                if _idn0 is not True:
+                    return False, "发文件要求目标会话已打开且被确认：%s" % why_open
+                ok_open, why_open = True, "内容级证据顶替名字闸：%s" % _why0
             if not ok_open:
                 # 人工确认通道：**只在用户当面确认「当前开着的就是目标会话」时用**
                 # （会话标题是浅灰细字、本机 OCR 读不出，E 这种会话自动闸门可能永远判不过）
@@ -1368,6 +1546,10 @@ class WeChatAdapter:
                     if nid > base_id:
                         top = rows[0]
                         if self._looks_like_file_msg(top):
+                            try:                      # 记账只在**DB 回读确认**之后
+                                self._repeat_guard(chat_id, local_path, note=True)
+                            except Exception:
+                                pass
                             return True, "投递发文件成功（DB 回读 local_id=%s type=%s）" % (
                                 top.get("local_id"), top.get("type_name") or top.get("type"))
                         return False, "发出了新消息但不是文件类（local_id=%s type=%s）" % (
@@ -1387,7 +1569,7 @@ class WeChatAdapter:
         # W7 版本门：没实测过的版本对默认暂停自动发送（控制台可临时放行）
         try:
             from . import version_gate as _vg
-            _g = _vg.check("send")
+            _g = _vg.check("send", wechat=wx_version_for_gate())
             if not _g["allow"]:
                 return False, _g["reason"]
         except Exception:
@@ -1436,25 +1618,104 @@ class WeChatAdapter:
             pass
         return ""
 
+    def recent_texts(self, chat_id: str, limit: int = 12, keep: int = 6, min_len: int = 4) -> list:
+        """取目标会话最近的若干条**文本**内容（内容级身份核对用**多条**指纹）。
+
+        为什么多条（2026-09-13 实测）：E 那个会话最近几条是**文件/链接**（`<msg><appmsg…` 开头），
+        而 `last_text_of` 只回"最新的那条文本"（实测＝「检验91000」）—— 那条在**当前视口之外**
+        ⇒ 会话明明已经打开，闸门却判"不是目标会话"，于是正确的切换被判失败、文件发不出去。
+
+        为什么 `min_len=4`（而不是原来的 6）：E 会话里**唯一能区分它和文件传输助手**的文本指纹恰好
+        是 5 个字母数字的短 token（实测：`2qqwq` 只出现在 E 的最近 120 条里、`aavv` 只出现在文件助手
+        里，两边的**文件卡标题却完全一样**）⇒ 短文本要收；但**文件卡 `<title>` 一律不进指纹**
+        （实测拿它当指纹时 filehelper 的重合率 42% > E 的 39%，根本分不开）。
+        """
+        out = []
+        try:
+            for r in (self._db.get_messages(chat_id, limit=max(int(limit), 1)) or []):
+                c = str(r.get("content") or "").strip()
+                if c.startswith("<msg"):
+                    continue          # 文件/图片/链接卡：标题在不同会话里会重复 ⇒ 一律不当指纹
+                alnum = "".join(ch for ch in c if ch.isalnum())
+                if len(alnum) < max(4, int(min_len)):
+                    continue
+                if c not in out:
+                    out.append(c)
+                if len(out) >= max(1, int(keep)):
+                    break
+        except Exception:
+            pass
+        return out
+
     def chat_identity_ok(self, chat_id: str, gui=None):
-        """**内容级**身份核对：当前聊天区里应看得到目标会话最近那条文本。
+        """**内容级**身份核对：当前聊天区里应看得到目标会话最近若干条文本里的**任意一条**。
 
         返回 `(True/False/None, 说明)`；`None`＝拿不到可比对的内容（调用方按"没有正面证据"处理）。
         ⚠️ 为什么不能只信名字（2026-09-13 发错会话事故）：群聊行的预览带**发言人前缀**（`E: 提交信息…`），
         被当成"会话名＝E"后点进了那个群 ⇒ 发送前的最后一道闸必须是**内容**，不是名字。
+        ⚠️ 为什么要多条指纹：见 `recent_texts()` 的注释（单条指纹会因为"最新那条文本不在视口里"误判）。
         """
-        needle = self.last_text_of(chat_id)
-        if not needle:
+        needles = self.recent_texts(chat_id)
+        if not needles:
             return None, "目标会话最近几条里没有可用作文本的比对内容（都是图片/文件？）"
         try:
             from . import chat_ocr as _co
             pane = _co.pane_text(_co.capture_best(gui=gui or self._get_gui(), frames=3), limit=400)
-            if _co.content_match(pane, needle):
-                return True, "聊天区里认出了目标会话最近的内容（%r…）" % needle[:16]
-            return False, ("聊天区里**没有**目标会话最近的内容（指望 %r…）⇒ 当前开着的很可能不是目标会话"
-                           % needle[:16])
+            pane_n = _co.norm_alnum(pane)
+            for nd in needles:
+                nn = _co.norm_alnum(nd)
+                if len(nn) >= 6:
+                    if _co.content_match(pane, nd):
+                        return True, "聊天区里认出了目标会话最近的内容（%r…）" % nd[:16]
+                elif nn and nn in pane_n:
+                    return True, "聊天区里认出了目标会话的短指纹 %r（严格子串）" % nd[:12]
+            return False, ("聊天区里**没有**目标会话最近的任何一条文本（试过 %d 条，如 %r…）"
+                           "⇒ 当前开着的很可能不是目标会话" % (len(needles), needles[0][:16]))
         except Exception as e:
             return None, "内容核对异常：%s" % type(e).__name__
+
+    @staticmethod
+    def _bigrams(s: str) -> set:
+        t = "".join(ch for ch in str(s or "") if ch.isalnum())
+        return {t[i:i + 2] for i in range(max(0, len(t) - 1))}
+
+    def recent_blob(self, chat_id: str, limit: int = 10) -> str:
+        """目标会话最近若干条消息的**全部文字**（含文件卡的 `<title>`）——给弱指纹用。"""
+        out = []
+        try:
+            for r in (self._db.get_messages(chat_id, limit=max(1, int(limit))) or []):
+                c = str(r.get("content") or "")
+                if c.startswith("<msg"):
+                    for m in re.findall(r"<title>(.*?)</title>", c, re.S):
+                        out.append(m)
+                else:
+                    out.append(c)
+        except Exception:
+            pass
+        return " ".join(out)
+
+    def pane_tail_matches(self, chat_id: str, pane: str, limit: int = 10,
+                          min_ratio: float = 0.45, min_hits: int = 8):
+        """**弱指纹**：聊天区可见文字是不是"这个会话"的（返回 (bool, 说明)）。
+
+        为什么需要：`chat_identity_ok` 用的是"≥6 字文本"指纹，遇上**最近几条都是文件卡 + 短文本**的
+        会话就一条都对不上（实测 E：最新 8 条里 3 条是 `<msg><appmsg…>` 文件卡、最新文本是 5 字的
+        `2qqwq`）⇒ 会出现"会话其实开着、闸门却说不是目标会话"，把正确的切换判死、文件发不出去。
+        这一层改判**内容归属**：目标会话最近 10 条（含文件标题）的二字组集合，与聊天区可见文字的
+        二字组求交——命中率 ≥0.45 且命中数 ≥8 才算过（两个下界都是为了压"短文本偶合"）。
+        """
+        try:
+            blob = self.recent_blob(chat_id, limit=limit)
+            a, b = self._bigrams(blob), self._bigrams(pane)
+            if len(b) < 6:
+                return False, "聊天区文字太少（%d 个二字组），不判" % len(b)
+            hit = len(a & b)
+            ratio = hit / float(len(b))
+            ok = ratio >= float(min_ratio) and hit >= int(min_hits)
+            return ok, ("聊天区二字组 %d 个，落在目标会话最近 %d 条里的有 %d 个（%.0f%%，门槛 %.0f%%/%d）"
+                        % (len(b), limit, hit, ratio * 100, min_ratio * 100, min_hits))
+        except Exception as e:
+            return False, "弱指纹异常：%s" % type(e).__name__
 
     def _chat_obj(self, chat_id: str):
         """构造 wechatauto Chat（复用当前 db/gui），用于表情截图。"""
