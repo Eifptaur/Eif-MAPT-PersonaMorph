@@ -607,6 +607,23 @@ class WebUI:
                     except Exception:
                         pass
                     self._json(st)
+                elif path == "/api/tts/test":
+                    # 「试听一句」：真跑一遍本机合成（不出网、不发送），把产物路径/格式/大小报出来
+                    try:
+                        from . import tts as _tt
+                        txt = "这是一条语音回复的试听"
+                        try:
+                            q = parse_qs(urlparse(self.path).query)
+                            if (q.get("text") or [""])[0]:
+                                txt = str((q.get("text") or [""])[0])[:120]
+                        except Exception:
+                            pass
+                        p, err, info = _tt.make(txt)
+                        self._json({"ok": bool(p), "path": p or "", "err": err or "",
+                                    "info": info, "size": (os.path.getsize(p) if p and os.path.exists(p) else 0),
+                                    "note": "试听只做合成，不会发送；发出去的是音频文件，不是微信语音条"})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
                 elif path == "/api/voice/test":
                     # 「测试引擎」：真跑一遍 TTS→WAV→SILK(微信帧)→解码→识别（不需要微信、不出网）
                     try:

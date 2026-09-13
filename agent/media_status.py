@@ -41,11 +41,13 @@ def image_count(path: str = "") -> int:
 
 
 def snapshot() -> dict:
+    from . import tts as T
     from . import voice as V
     from .config import get_config
     cfg = get_config()
     vcfg = cfg.get("voice") or {}
     icfg = cfg.get("image_reply") or {}
+    rcfg = cfg.get("voice_reply") or {}
     d = image_dir()
     return {
         "voice": V.status(),
@@ -54,6 +56,13 @@ def snapshot() -> dict:
                   "dir": d, "count": image_count(d), "sources": list(icfg.get("sources") or [])},
         "forward": {"optin": bool((cfg.get("send") or {}).get("file_forward_optin")),
                     "note": "转发视频/文件要过一次系统「选择文件」对话框，会短暂抢前台 ⇒ 默认关"},
+        # 语音回复（TTS）：合成是实测的；**发出去是音频文件不是语音条**（库里没有发语音条的接口）
+        "tts": {"status": T.status(),
+                "cfg": {"enabled": bool(rcfg.get("enabled")), "voice": str(rcfg.get("voice") or ""),
+                        "rate": int(rcfg.get("rate") or 0), "format": str(rcfg.get("format") or "mp3"),
+                        "max_chars": int(rcfg.get("max_chars") or 120),
+                        "min_gap_seconds": int(rcfg.get("min_gap_seconds") or 30)},
+                "note": "当前形态：把回复合成为音频**文件**发出去（不是微信语音条）"},
     }
 
 
