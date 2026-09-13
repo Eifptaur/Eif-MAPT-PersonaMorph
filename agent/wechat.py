@@ -18,6 +18,7 @@ from collections import deque
 
 from .config import get_config
 from . import replica_adapter  # W1：驱动库（wechatauto-replica）私有 API 的唯一收口点 + 版本守卫
+from . import recall as recall_mod  # 第 14 条：撤回事件识别（用于把已进上下文的消息剔除）
 
 # 模块级 logger（2026-09-13 修）：本文件里多处 `log.info(...)` 一直没定义 `log` ⇒
 # 只要走到"投递前置不满足 / 学会话头"这些分支就抛 NameError，被外层 except 吞掉后表现为
@@ -272,6 +273,16 @@ class WeChatAdapter:
                 out.append(norm)
         return out
 
+    def local_id_by_server_id(self, chat_id: str, server_id: int):
+        """server_id（消息 svrid / 撤回报文里的 newmsgid）→ local_id；查不到返回 None。
+
+        撤回事件用它把「被撤的那条」与存档条目**精确对上**（比按发送者+时间猜可靠）。
+        """
+        try:
+            return replica_adapter.find_server_id_local_id(self._db, chat_id, int(server_id))
+        except Exception:
+            return None
+
     def _parse_quote(self, chat_id: str, local_id):
         """解析「引用 / 拍一拍」这类 zstd 压缩的 appmsg 消息，提取正文与被引用图片。"""
         try:
@@ -358,6 +369,31 @@ class WeChatAdapter:
         if isinstance(content, bytes):
             content = content.decode("utf-8", "ignore")
 
+        # ── 撤回事件（第三方 v0.4 对账清单第 14 条）────────────────────────
+        # 必须放在"自己发的消息跳过"**之前**：自己撤回时 sender_id 同样是 2/3，
+        # 若先跳过就会把撤回事件静默丢掉（原来正是如此 ⇒ 已进上下文的撤回消息没人清）。
+        _ts_ms = int(create_time) * 1000 if create_time and create_time < 1e12 else int(create_time or 0)
+        _rec = None
+        if isinstance(content, str) and content.strip():
+            try:
+                _rec = recall_mod.parse_recall(content, self._self_wxid)
+            except Exception as e:
+                log.debug("撤回识别异常：%s", e)
+                _rec = None
+        if _rec:
+            _rec = dict(_rec, ts=_ts_ms or int(time.time() * 1000))
+            return {
+                "mid": local_id,
+                "ts": _rec["ts"],
+                "sort_seq": sort_seq,
+                "sender_id": "",          # 撤回事件的 sender_id 不可靠（自己/别人都是 2/3）
+                "sender_name": "",
+                "text": "",
+                "media": [],
+                "mtype": "系统消息",
+                "recall": _rec,
+            }
+
         # 自己发的消息跳过（避免自问自答）
         # 微信 4.x 群聊里 real_sender_id 不可靠：实测"自己"是 3，别人是 7 等（真实 wxid 在内容前缀里）
         if str(sender_id) in ("2", "3"):
@@ -379,6 +415,12 @@ class WeChatAdapter:
                     "media": [],
                     "mtype": "系统消息",
                 }
+            # 认不出的系统消息：疑似撤回就留证（下次照它把解析器补齐，不猜、也不静默）
+            try:
+                recall_mod.note_unmatched(raw_text, {"chat": chat_id, "mtype": mtype,
+                                                     "create_time": create_time})
+            except Exception:
+                pass
             return None
 
         ts = int(create_time) * 1000 if create_time and create_time < 1e12 else int(create_time or 0)

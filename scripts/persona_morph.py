@@ -35,6 +35,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from agent import listener_watermark          # W2：持久化水位（成功才推进 / 重试留痕 / 每会话串行）
+from agent import recall                       # 第 14 条：撤回后把已进上下文的那条剔除
 from agent.config import DATA_DIR
 from agent.config import get_config, save_config
 from agent.llm import (add_usage, chat_completion, chat_completion_with_retry,
@@ -2450,6 +2451,27 @@ def main():
 
                 def _handle_one(nm, _chat_key=chat_key, _g=g, _wxid=wxid, _blocked=blocked):
                     """W2：返回真值＝这条已被下游接受（append_incoming 落盘成功后返回 entry）。"""
+                    # ── 撤回事件（第 14 条）：把已进上下文/存档的那条剔除，**不触发回复** ──
+                    _rc = nm.get("recall")
+                    if _rc:
+                        _rcfg = get_config().get("store", {}).get("recall") or {}
+                        if not bool(_rcfg.get("enabled", True)):
+                            log.info("群[%s]收到撤回事件，但「撤回后剔除上下文」已关闭（只记日志）", _g["name"])
+                            return {"recall": {"disabled": True}}
+                        try:
+                            _res = recall.purge(
+                                store, _chat_key, _rc,
+                                resolver=lambda sv: wechat.local_id_by_server_id(_wxid, sv),
+                                memory=memory,
+                                window_ms=int(_rcfg.get("window_sec") or 180) * 1000,
+                                heuristic=bool(_rcfg.get("heuristic", True)), log=log)
+                        except Exception as e:
+                            log.warning("群[%s]撤回处理异常：%s", _g["name"], e)
+                            return {"recall": {"error": str(e)[:80]}}
+                        if not _res.get("removed"):
+                            log.info("群[%s]撤回事件没匹配到存档条目（谁=%s 方式=%s）——已写审计，未动任何存档",
+                                     _g["name"], _res.get("who") or "?", _res.get("how"))
+                        return {"recall": _res}
                     who = str(nm.get("sender_name") or "").strip().lower()
                     wid = str(nm.get("sender_id") or "").strip().lower()
                     if _blocked and (who in _blocked or wid in _blocked):

@@ -604,6 +604,12 @@ class WebUI:
                                 st["media"] = _ms.snapshot()
                             except Exception as _e2:
                                 st["media"] = {"error": str(_e2)}
+                            # 撤回剔除（第 14 条）：已剔除多少条 + 最近一条的现场
+                            try:
+                                from . import recall as _rcl
+                                st["recall"] = _rcl.summary()
+                            except Exception as _e5:
+                                st["recall"] = {"error": str(_e5)}
                             # 本地文件搜索（找文件并发送）：现场读目录状态 + 台账
                             try:
                                 from . import file_search as _fsx

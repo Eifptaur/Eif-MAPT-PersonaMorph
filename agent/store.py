@@ -123,10 +123,10 @@ class ChatStore:
             return entry
 
     def drain_unread(self, chat_key: str):
-        """快照当前未读并全部置为已读。"""
+        """快照当前未读并全部置为已读（**已撤回的不算未读**，不触发回复）。"""
         with self._lock:
             st = self._state(chat_key)
-            unread = [m for m in st["messages"] if not m["read"] and not m["self"]]
+            unread = [m for m in st["messages"] if not m["read"] and not m["self"] and not m.get("recalled")]
             for m in st["messages"]:
                 m["read"] = True
             _save_chat(st)
@@ -146,17 +146,49 @@ class ChatStore:
 
     def unread_count(self, chat_key: str) -> int:
         st = self._state(chat_key)
-        return sum(1 for m in st["messages"] if not m["read"] and not m["self"])
+        return sum(1 for m in st["messages"] if not m["read"] and not m["self"] and not m.get("recalled"))
 
     def peek_unread(self, chat_key: str, limit: int = 3):
         st = self._state(chat_key)
-        return [m for m in st["messages"] if not m["read"] and not m["self"]][: max(1, int(limit or 3))]
+        return [m for m in st["messages"]
+                if not m["read"] and not m["self"] and not m.get("recalled")][: max(1, int(limit or 3))]
 
-    def recent(self, chat_key: str, limit: int = 80, offset: int = 0, include_self: bool = True):
+    def recent(self, chat_key: str, limit: int = 80, offset: int = 0, include_self: bool = True,
+               include_recalled: bool = False):
+        """最近 N 条。**默认不返回已撤回的**——提示词、记忆提炼、工具取上下文都在这一处生效。"""
         st = self._state(chat_key)
         all_msgs = st["messages"] if include_self else [m for m in st["messages"] if not m["self"]]
+        if not include_recalled:
+            all_msgs = [m for m in all_msgs if not m.get("recalled")]
         start = max(0, len(all_msgs) - max(0, int(offset or 0)))
         return all_msgs[:start][-max(1, int(limit or 1)):]
+
+    def find_by_id(self, chat_key: str, entry_id):
+        st = self._state(chat_key)
+        for m in st["messages"]:
+            if str(m.get("id")) == str(entry_id):
+                return m
+        return None
+
+    def mark_recalled(self, chat_key: str, entry_id, info: dict | None = None):
+        """给一条存档打「已撤回」标记（保留记录本身，只让它不再进上下文）。
+
+        返回被标记的条目；找不到该 id 时返回 None（调用方据此如实报告，不假装成功）。
+        """
+        info = dict(info or {})
+        with self._lock:
+            st = self._state(chat_key)
+            for m in st["messages"]:
+                if str(m.get("id")) != str(entry_id):
+                    continue
+                m["recalled"] = True
+                m["recall_ts"] = int(info.get("ts") or __import__("time").time() * 1000)
+                m["recall_who"] = str(info.get("who") or ("自己" if info.get("self") else ""))
+                m["recall_note"] = str(info.get("note") or "")[:120]
+                m["read"] = True
+                _save_chat(st)
+                return m
+            return None
 
     def find_by_mid(self, chat_key: str, mid):
         st = self._state(chat_key)
@@ -170,7 +202,7 @@ class ChatStore:
         st = self._state(chat_key)
         by_id: dict = {}
         for m in st["messages"]:
-            if m["self"] or not m.get("sender_id"):
+            if m["self"] or not m.get("sender_id") or m.get("recalled"):
                 continue
             sid = m["sender_id"]
             prev = by_id.get(sid)
