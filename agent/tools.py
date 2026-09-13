@@ -41,6 +41,20 @@ def _image_parts(text, data_urls):
 
 
 def build_tool_defs() -> list:
+    defs = _builtin_tool_defs()
+    # 用户自定义工具（声明式 HTTP）：总开关关着就一个都不加；**重名在加载时已被拒**
+    try:
+        from . import user_tools as _ut
+        extra, _problems, _all = _ut.as_tool_defs(builtin_names=[d["name"] for d in defs])
+        for d in extra:
+            if d["name"] not in {x["name"] for x in defs}:
+                defs.append(d)
+    except Exception:
+        pass
+    return defs
+
+
+def _builtin_tool_defs() -> list:
     return [
         {
             "name": "send_message",
@@ -967,6 +981,13 @@ def execute_tool(defs: list, ctx, name: str, args_json: str):
     if not isinstance(args, dict):
         args = {}
     try:
-        return def_obj["execute"](ctx, args)
+        res = def_obj["execute"](ctx, args)
     except Exception as e:
-        return {"content": "错误：%s" % e, "is_error": True}
+        res = {"content": "错误：%s" % e, "is_error": True}
+    # 按工具名记一笔（唯一分发点 ⇒ 内置与自定义都覆盖；只记名字/次数，不记参数内容）
+    try:
+        from . import tool_stats as _ts
+        _ts.note(name, ok=not (isinstance(res, dict) and res.get("is_error")))
+    except Exception:
+        pass
+    return res
