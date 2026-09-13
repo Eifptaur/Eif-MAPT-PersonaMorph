@@ -40,6 +40,21 @@ TYPE_LABEL = {    "文本": "text",
 }
 
 
+def _resp_msg(r) -> str:
+    """从驱动库的返回值里取"人话原因"。
+
+    ⚠️ `WxResponse` 是 **dict 子类**（`{'status','message','data'}`），不是普通对象：
+    用 `getattr(r, "message", "")` 永远拿到空串 ⇒ 失败原因全丢（2026-09-13 实测：
+    "发送失败"时我们报给上层的原因一直是空的，白查了一轮）。
+    """
+    try:
+        if isinstance(r, dict) and r.get("message"):
+            return str(r.get("message"))
+        return str(getattr(r, "message", "") or "")
+    except Exception:
+        return ""
+
+
 def _force_foreground(user32, hwnd: int) -> bool:
     """把指定窗口带到前台（AttachThreadInput 提权，绕开 Windows 前台锁）。
 
@@ -677,13 +692,26 @@ class WeChatAdapter:
                             log.info("投递前置未满足（%s）：改走真实路径", st["status"])
                     except Exception as e:
                         log.info("投递优先判定异常，退回真实路径：%s", e)
+                # 真实路径要真点真敲 ⇒ 先做一次遮挡预检：被别的窗口挡住时，库会重试到 40~70 秒
+                # 才抛"点击被拦截"（2026-09-13 实测：被资源管理器挡住时 open_chat 花了 47.5s + UIA 探测 15.5s）。
+                # 这里提前把原因说清楚，用户不用白等（预检自己会尝试把微信置前一次）。
+                try:
+                    from . import ui_adapt as _ua
+                    rr = gui.render_rect or (0, 0, 0, 0)
+                    rw_, rh_ = int(rr[2] - rr[0]), int(rr[3] - rr[1])
+                    if rw_ > 0 and rh_ > 0:
+                        ok_pt, why_pt = _ua.ensure_point(int(rr[0] + rw_ * 0.55), int(rr[1] + rh_ * 0.5), gui=gui)
+                        if not ok_pt:
+                            return False, "真实路径前置检查未过：%s" % why_pt
+                except Exception as e:
+                    log.info("遮挡预检跳过（不影响发送）：%s", e)
                 r = self._send_with_foreground(
                     lambda g=gui: g.send_msg(text, who=name, verify=False))
                 ok = bool(getattr(r, "is_success", False))
                 if ok:
                     self._mark_sent(text)
                     self._learn_chat_header(chat_id, gui=gui)   # 让下次能走投递
-                return ok, str(getattr(r, "message", "") or "")
+                return ok, _resp_msg(r)
         except Exception as e:
             return False, str(e)
 
@@ -700,7 +728,7 @@ class WeChatAdapter:
                 ok = bool(getattr(r, "is_success", False))
                 if ok:
                     self._mark_sent(text)
-                return ok, str(getattr(r, "message", "") or "")
+                return ok, _resp_msg(r)
         except Exception as e:
             return False, str(e)
 
@@ -796,7 +824,7 @@ class WeChatAdapter:
                 ok = bool(getattr(r, "is_success", False))
                 if ok:
                     self._mark_sent("[图片]")
-                return ok, str(getattr(r, "message", "") or "")
+                return ok, _resp_msg(r)
         except Exception as e:
             return False, str(e)
 
