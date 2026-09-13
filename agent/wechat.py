@@ -1882,9 +1882,24 @@ class WeChatAdapter:
                     _ht, _hy = _co.highlight_time(_himg) if _himg is not None else ("", None)
                 except Exception:
                     _ht, _hy = "", None
-                if _ht and _ht == _lt and _lt in str(pane or "").replace("：", ":"):
-                    return True, ("高亮行（y=%s）时间 %s ＝目标会话最后一条消息时间，聊天区里也出现同一时间"
-                                  % (_hy, _ht))
+                if _ht and self._norm_hhmm(_ht) == self._norm_hhmm(_lt):
+                    # 第二道证据**二选一**：①聊天区里也出现同一时刻 ②该时刻在会话列表里只出现一次（＝就是高亮那一行）。
+                    #   原来是"必须①"——2026-09-14 实测：E 最近一条（01:35）的时刻在聊天区里没渲染出来
+                    #   （新消息不带时间分隔），于是明明开着的就是 E、闸门也判否 ⇒ 补②。
+                    #   两者强度同档（都是"时间对上且唯一"），只是不再依赖聊天区一定画出时间。
+                    _pane_hit = self._norm_hhmm(_lt) in self._norm_times(pane)
+                    _uniq = False
+                    try:
+                        _rows = _co.session_rows(_himg)
+                        _hits = [r for r in _rows
+                                 if self._norm_hhmm(_lt) in self._norm_times(str(r.get("full") or "") + " " + str(r.get("name") or ""))]
+                        _uniq = (len(_hits) == 1)
+                    except Exception:
+                        _uniq = False
+                    if _pane_hit or _uniq:
+                        return True, ("高亮行（y=%s）时间 %s ＝目标会话最后一条消息时间%s"
+                                      % (_hy, _ht, "，聊天区里也出现同一时间" if _pane_hit
+                                         else "，且该时刻在会话列表里唯一（只有一个会话是它）"))
             return False, ("聊天区里**没有**目标会话最近的任何一条文本（试过 %d 条，如 %r…；文件卡档：%s）"
                            "⇒ 当前开着的很可能不是目标会话" % (len(needles), needles[0][:16], f_why))
         except Exception as e:
@@ -1906,6 +1921,24 @@ class WeChatAdapter:
             return time.strftime("%H:%M", lt)
         except Exception:
             return ""
+
+    @staticmethod
+    def _norm_hhmm(s: str) -> str:
+        """把 `'01:35'` / `'1：35'` 统一成 `'1:35'`。
+
+        为什么必须归一化（2026-09-14 实测）：`chat_ocr.highlight_time()` 读到的是 `1:35`（会话列表不补前导零），
+        而 `_last_time_hhmm()` 是 `strftime('%H:%M')` ⇒ `01:35`；两个字符串**不相等**，
+        于是"高亮行时间档"对 10 点以前的时刻**永远不成立**（单字母会话名读不出时，这是唯一还准的信号）。
+        """
+        t = str(s or "").replace("：", ":").strip()
+        m = re.match(r"^(\d{1,2}):(\d{2})$", t)
+        return "" if not m else "%d:%s" % (int(m.group(1)), m.group(2))
+
+    @staticmethod
+    def _norm_times(text: str) -> str:
+        """把一段文字里所有 `H:MM` / `HH:MM` 都去前导零、统一冒号 —— 用于"在整行/整屏里找同一个时刻"。"""
+        t = re.sub(r"(?<!\d)0(\d)\s*[:：]\s*(\d{2})", r"\1:\2", str(text or ""))
+        return t.replace("：", ":")
 
     @staticmethod
     def _bigrams(s: str) -> set:

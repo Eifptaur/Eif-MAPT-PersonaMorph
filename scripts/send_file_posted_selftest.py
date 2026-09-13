@@ -60,6 +60,11 @@ ok("点「打开」（或回车兜底）", "打开" in seg and "SendKeys(\"{Ente
 ok("最后投递点「发送」", "send_pt" in seg and "backend.click(main_hwnd, send_pt)" in seg)
 ok("只认 DB 回读判成功", "_looks_like_file_msg" in seg)
 ok("注释里写明剪贴板那条无效、别再试", "剪贴板那条" in seg and "别再往那条路上试" in seg)
+# 2026-09-14 修的两个真缺陷（E 明明开着、闸门却判否）——判据钉住，别让它回来：
+ok("身份闸时间档做了时间归一化（列表读到的 1:35 与 DB 的 01:35 视为同一时刻）",
+   "_norm_hhmm(" in SRC and "self._norm_hhmm(_ht) == self._norm_hhmm(_lt)" in SRC)
+ok("时间档第二道证据有「该时刻在会话列表里唯一」这一档（聊天区不渲染时间时也能认）",
+   "_uniq = (len(_hits) == 1)" in SRC and "_pane_hit or _uniq" in SRC)
 
 print("── D. 防重复发送闸（2026-09-13 用户当场发现『你发了两个文件给我，一模一样的』）──")
 import tempfile          # noqa: E402

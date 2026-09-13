@@ -217,8 +217,14 @@ ok("MessageBackend.click 支持 hover_ms / press_ms",
 ok("会话行点击用的是慢节奏（hover_ms=300, press_ms=150）",
    "hover_ms=300, press_ms=150" in _w_src)
 ok("身份闸有「高亮行时间」这一档", "highlight_time" in _w_src and "def highlight_time(img)" in _co_src)
-ok("高亮行时间档要求聊天区里也出现同一时间（两个独立信号）",
-   '_lt in str(pane or "").replace("：", ":")' in _w_src)
+# [2026-09-14 改向] 原来这里要求"聊天区里必须也出现同一时间"。实测：E 最近一条（01:35）的时刻**在聊天区里没渲染出来**
+#   （新消息不带时间分隔）⇒ 会话明明开着，闸门仍判否、文件发不出去。改成：
+#   两个独立来源＝**屏幕（高亮行时间 OCR）× DB（目标会话最后一条消息时间）**；第二道证据二选一——
+#   ①聊天区里也出现同一时刻 ②该时刻在会话列表里**唯一**（只有这一个会话是它）。
+ok("高亮行时间档：屏幕×DB 两个独立来源 + 时间格式归一化（列表的 1:35 与 DB 的 01:35 视为同一时刻）",
+   "self._norm_hhmm(_ht) == self._norm_hhmm(_lt)" in _w_src and "def _norm_hhmm" in _w_src)
+ok("第二道证据二选一：聊天区出现同一时间 **或** 该时刻在会话列表里唯一（两者都不成立 ⇒ 照旧判否，fail-closed）",
+   "_pane_hit or _uniq" in _w_src and "_uniq = (len(_hits) == 1)" in _w_src)
 
 print("\n%d/%d 通过" % (PASS, PASS + FAIL))
 sys.exit(1 if FAIL else 0)
