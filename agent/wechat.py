@@ -896,9 +896,22 @@ class WeChatAdapter:
                 return False, "会话列表里（只读截图 + OCR，含平滑下滚 6 轮）没定位到「%s」（%s）" % (name, flog)
             pos = info["pos"]
             clicked_y = int(info["y_abs"])
+            # ⛔ 一次切会话**最多一枪**：冷却期内只复核、不补点（用户口径：连点两下会把聊天框关掉）
+            self._pick_last = getattr(self, "_pick_last", {})
+            _last_ts, _last_y = self._pick_last.get(str(chat_id), (0.0, -1))
+            _allow, _why_cd = _co.click_allowed(_last_ts, time.time())
+            if not _allow:
+                img0 = _co.capture_best(gui=gui, frames=2)
+                hl0 = _co.highlight(img0) if img0 is not None else None
+                if hl0 and abs(int(hl0["y_abs"]) - int(_last_y)) <= 28:
+                    return True, "上一枪已生效（%.1fs 前点的第 %d 行，现在正是绿底高亮行 %.2f）" % (
+                        time.time() - _last_ts, int(_last_y), hl0["score"])
+                return False, "会话行在（OCR「%s」），但%s ⇒ **不补点**。若确需重试请稍后再调。" % (
+                    str(info.get("name"))[:12], _why_cd)
             ok, why = backend.click(main, (ox + int(pos[0]), oy + int(pos[1])))
             if not ok:
                 return False, "投递点击会话行失败：%s" % why
+            self._pick_last[str(chat_id)] = (time.time(), clicked_y)
             # 复核（自洽证据）：**我们按名字点的那一行**现在是不是绿底高亮行
             deadline = time.time() + max(1.0, float(confirm_s))
             last = ""

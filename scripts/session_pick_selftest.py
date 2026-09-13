@@ -41,6 +41,16 @@ ok("名字后面的时间先被 clean 掉", CO.split_name("腾讯新闻14：47")
 ok("session_rows 用的是切过的名字（源码断言）", 'r["name"] = split_name(r["name"])' in
    open(os.path.join("agent", "chat_ocr.py"), encoding="utf-8").read())
 
+print("── A3. 一次切会话最多一枪（连点两下会把聊天框关掉）──")
+ok("刚点过（0.5s）⇒ 不许再点", CO.click_allowed(100.0, 100.5, 3.0)[0] is False, CO.click_allowed(100.0, 100.5)[1])
+ok("超过冷却（3.1s）⇒ 允许", CO.click_allowed(100.0, 103.1, 3.0)[0] is True)
+ok("从没点过（last=0）⇒ 允许", CO.click_allowed(0.0, 100.0, 3.0)[0] is True)
+ok("异常输入不炸（允许）", CO.click_allowed(None, "x", 3.0)[0] is True)
+_src_w = open(os.path.join("agent", "wechat.py"), encoding="utf-8").read()
+ok("切会话里接了点击冷却", "_co.click_allowed(" in _src_w)
+ok("冷却期内只复核、明确「不补点」", "不补点" in _src_w)
+ok("点完记账（_pick_last 记时间与行 y）", "_pick_last[str(chat_id)] = (time.time(), clicked_y)" in _src_w)
+
 print("── A. find_row_scrolled：找不到就平滑下滚再找 ──")
 calls = {"n": 0, "scrolls": []}
 

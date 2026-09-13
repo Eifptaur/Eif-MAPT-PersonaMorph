@@ -320,6 +320,22 @@ def split_name(text: str) -> str:
     return head or t.strip()
 
 
+def click_allowed(last_ts: float, now: float, cooldown_s: float = 3.0) -> tuple:
+    """离"上一枪"不足 `cooldown_s` 秒就不许再点（返回 `(允许, 说明)`）。
+
+    用户 2026-09-13 当场定的规矩：「**点击不能点两下，不然聊天框都关掉了。之前不是有这个问题吗**」
+    —— 早前实验里那次"多点了会话框一下，把会话和聊天框全都点掉了"就是这么来的。
+    ⇒ 冷却期内**只许重新读图复核，绝不补第二枪**；一次切会话最多一枪。
+    """
+    try:
+        dt = float(now) - float(last_ts or 0.0)
+    except Exception:
+        dt = 999.0
+    if last_ts and dt < float(cooldown_s):
+        return False, "距上一枪仅 %.2fs（冷却 %.1fs：连点两下会把聊天框关掉）" % (dt, float(cooldown_s))
+    return True, ""
+
+
 def find_row_info(img, name: str, zoom: int = 2):
     """同 `find_row`，但返回整条信息 `{'pos':(x,y),'y_abs':int,'name':str}`（点击后要拿 y_abs 复核高亮）。"""
     try:
