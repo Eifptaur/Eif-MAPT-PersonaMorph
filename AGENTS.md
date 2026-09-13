@@ -25,6 +25,8 @@
 
 **当前 群相灵 的实测状态**：`wechat.py` 里大量使用 `user32.mouse_event(...)`（如 L787/L1026/L1087/L1268/L1302）＝ **目前主要靠 L0 真实输入**；未见 `uiautomation` / `pywinauto` / `wxauto` 引用。⇒ 想做到"不动鼠标"，需要把 UI 动作**抽成一个后端接口**（`click/send_text/scroll/find` 四个原语），按 L5 → L4 → L2 → L0 顺序尝试，上层命中就绝不动光标。
 
+**W0-1 只读发现（2026-09-13，微信 4.1.13.65，脚本 `_scratch\w0_discover.py` → `_scratch\w0-ui-discovery.{txt,json}`）**：主窗 `Qt51514QWindowIcon`（hwnd 24250632，1161×901）+ 渲染子窗 `MMUIRenderSubWindowHW`（1139×890）；**UIA 从主窗只拿到 2 个节点、输入框候选 0** ⇒ **L2（UI Automation）在微信 4.x 上基本不可依赖**（同一口径：别人能不代表这儿能，必须本机实测）；另：`data/ui_layout.json` 的标定尺寸（237）与当前窗口（1139）差一个量级，库自己打了"忽略本次校准" ⇒ **UI 校准/指纹已经过期**（W7c 要的就是"按版本+尺寸的指纹"）。L5/L4 两档能否成立，由 W0 的三档实测给出。
+
 ### 2.0 ⚠️ 动手之前必须先做的最小实验（1 小时，别跳过）
 **MAA 只证明了"后台注入在它面对的程序上可行"，没有任何一手证据表明微信 PC 客户端接受它**（MaaFramework 官方原话：*"Different programs on Win32 handle input differently, so there is no universal method."*，且从未针对微信表态）。所以**不许从 MAA 外推**：
 
