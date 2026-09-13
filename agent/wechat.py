@@ -612,19 +612,71 @@ class WeChatAdapter:
         finally:
             self._fg_exit()
 
+    def _learn_chat_header(self, chat_id: str, gui=None) -> bool:
+        """DB 回读确认发送成功后，补一条"当前窗口尺寸"下的会话头参照。
+
+        这样**真实路径发过一次之后，下一次就能走投递**（否则 no_ref 永远退回真实路径）。
+        """
+        try:
+            from . import chat_header as _ch
+            img = _ch.capture_image(gui=gui)
+            if img is None:
+                return False
+            # 只有"面板左沿能探到"才学 —— 探不到说明这张图的口径可疑（遮挡/异形布局），
+            # 学进去就会变成坏参照（2026-09-13 实测踩过：一条坏参照让同一会话长期判 0.653）
+            pl = _ch.detect_pane_left(img)
+            if not pl:
+                log.info("自动学会话头跳过：这次没探到聊天面板左沿（口径可疑）")
+                return False
+            _ch.remember(chat_id, _ch.fingerprint(img),
+                         note="auto-learned after DB-confirmed send", size=_ch.size_key(img))
+            return True
+        except Exception as e:
+            log.info("补会话头参照失败（不影响发送）：%s", e)
+            return False
+
+    def _posted_preferred(self) -> bool:
+        """当前配置下是否允许"投递优先"（config.input.backend = auto/message）。"""
+        try:
+            from . import input_backend as _ib
+            return isinstance(_ib.select_backend(gui=self._get_gui()), _ib.MessageBackend)
+        except Exception:
+            return False
+
     def send_text(self, chat_id: str, text: str):
-        """发送文本到群。返回 (ok, message)。"""
+        """发送文本到群。返回 (ok, message)。
+
+        **投递优先**（2026-09-13）：若会话头三态闸判 `ok`（确认目标会话就是当前打开的），
+        直接走 `send_text_posted`（不动光标、不抢前台、不要求窗口可见）；
+        否则（`mismatch`/`no_ref`/抓不到）**退回真实路径**——真实路径会先按名字打开会话，
+        顺便把这个尺寸下的会话头学到手，于是**下一次就能走投递**。
+        """
         if not self._dedup_send(chat_id, text):
             return True, "重复发送已拦截（3 秒内同一文本）"
         name = self.group_name(chat_id)
         try:
             with self._send_lock:  # 所有碰微信窗口的操作统一串行（发消息/引用/拍一拍/回拍不打架）
                 gui = self._get_gui()
+                if self._posted_preferred():
+                    try:
+                        from . import chat_header as _ch
+                        st = _ch.check(chat_id, gui=gui)
+                        if st["status"] == "ok":
+                            ok, msg = self.send_text_posted(text, chat_id)
+                            if ok:
+                                self._mark_sent(text)
+                                return True, "%s（投递档 L5）" % msg
+                            log.info("投递发送失败，退回真实路径：%s", msg)
+                        else:
+                            log.info("投递前置未满足（%s）：改走真实路径", st["status"])
+                    except Exception as e:
+                        log.info("投递优先判定异常，退回真实路径：%s", e)
                 r = self._send_with_foreground(
                     lambda g=gui: g.send_msg(text, who=name, verify=False))
                 ok = bool(getattr(r, "is_success", False))
                 if ok:
                     self._mark_sent(text)
+                    self._learn_chat_header(chat_id, gui=gui)   # 让下次能走投递
                 return ok, str(getattr(r, "message", "") or "")
         except Exception as e:
             return False, str(e)
@@ -711,15 +763,7 @@ class WeChatAdapter:
                     if str(text)[:20] in str(head.get("content") or ""):
                         # DB 回读确认成功 ⇒ 自动补一条"当前窗口尺寸"下的会话头参照
                         # （尺寸变了以后不用人工重标；下次同尺寸就能真正校验）
-                        try:
-                            from . import chat_header as _ch
-                            _img = _ch.capture_image(gui=gui)
-                            if _img is not None:
-                                _ch.remember(chat_id, _ch.fingerprint(_img),
-                                             note="auto-learned after DB-confirmed send",
-                                             size=_ch.size_key(_img))
-                        except Exception as _e:
-                            log.info("自动补会话头参照失败（不影响发送）：%s", _e)
+                        self._learn_chat_header(chat_id, gui=gui)
                         return True, "投递发送成功（DB 回读 local_id=%s type=%s）" % (
                             head.get("local_id"), head.get("type"))
                     return True, "DB 有新行但内容与本次不一致（local_id=%s，可能上一条刚写库）" % head.get("local_id")
