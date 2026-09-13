@@ -94,6 +94,14 @@ DEFAULT_CONFIG = {
         "max_per_hour": 500,
         "hard_split_at": 2000,     # 微信单条消息安全切分长度
         "uia_setvalue": True,      # 输入用 UIA SetValue 后台直写（不点输入框/不粘贴），发送回车仍需瞬时置前
+        # 大图自动压缩（对账清单第 22 条）：发送前按"最长边 / 文件大小"双阈值压一压，见 agent/img_compress.py。
+        #   默认**开**：这是"省事"型能力（不改语义、压不动就原样发并说明），关掉也不会更安全。
+        "image_compress": {
+            "enabled": True,
+            "max_mb": 8.0,         # 超过这个大小就压
+            "max_px": 1600,        # 最长边上限
+            "quality": 82,         # JPEG 质量
+        },
         # 转发「文件/视频」必须过一次系统「选择文件」对话框（会短暂抢前台一次）⇒ 与最高目标冲突，
         # **默认关**：开了模型才允许调 forward_media 转发文件/视频；链接转发不需要它（走文本投递，纯后台）。
         "file_forward_optin": False,
@@ -172,6 +180,20 @@ DEFAULT_CONFIG = {
         "max_tools": 30,         # 最多加载几个
         "timeout_ms": 8000,      # 单次请求超时
         "max_chars": 4000,       # 结果截断
+    },
+    # ── 群友要图：按需求生成（设计稿 docs/设计-群友要图-生图链条.md；实现在 agent/image_gen.py）──
+    #   七段链条＝触发→意图解析→挑后端→生成→**可插拔过滤链**→发送→回执；红线硬编码（不做真人换脸、无 r18 入口）。
+    #   backends 在控制台是一个输入框，格式 `id | local/online | url`，多个用分号分隔（image_gen.cfg() 负责解析）。
+    "image_gen": {
+        "enabled": False,                # 总开关（默认关）
+        "trigger_mode": "on_request",    # on_request＝被要求时 | sometimes＝偶尔主动 | off＝不主动
+        "max_count": 2,                  # 单次最多生成几张
+        "size_default": "square",        # square | portrait | landscape
+        "online_allowed": False,         # 允许出网到在线生图 API（默认关 ⇒ 在线后端根本不会被选中）
+        "backends": "",                  # `id | local/online | url`，分号分隔
+        "style_allow": "",               # 风格白名单（逗号分隔；非空＝只放行这些）
+        "style_block": "",               # 风格黑名单（逗号分隔；命中即拒）
+        "filter_chain": {"size": True, "dup": True, "blacklist": True, "text": True, "classifier": True},
     },
     # ── 输入后端（最高目标「全程后台、不抢鼠标」的档位；实现与实测证据见 agent/input_backend.py）──
     #   auto＝有微信主窗就走投递（L5），找不到窗口退回真鼠标（L0）；message＝强制投递；real＝强制真鼠标

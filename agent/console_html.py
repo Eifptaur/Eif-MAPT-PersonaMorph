@@ -823,6 +823,16 @@ th{color:var(--tx2);font-weight:500}
       <div class="row"><label>大小上限(MB)</label><input type="number" min="1" max="2048" data-cfg="file_search.max_mb"></div>
       <div class="btns"><button id="fsGuide" class="ghost">怎么让机器人帮我发文件？</button></div>
       <div id="fsRecent" class="hint"></div>
+      <div class="sep"></div>
+      <div class="desc">大图自动压缩：发送前按「最长边 / 文件大小」双阈值压一压（等比缩放、宽高比保持）。压不动或本来就不大 ⇒ <b>原样发送并在回执里说明</b>，不会静默改你的图。</div>
+      <div class="row"><label>大图压缩</label><input type="checkbox" data-cfg="send.image_compress.enabled">
+        <span class="hint">默认开：这是"省事"型能力，关掉也不会更安全。</span></div>
+      <div class="row"><label>最大边长(px)</label><input type="number" min="320" max="4096" data-cfg="send.image_compress.max_px">
+        <span class="hint">超过就等比缩小（宽高比保持 ±2%）。</span></div>
+      <div class="row"><label>大小上限(MB)</label><input type="number" min="0.1" max="100" step="0.5" data-cfg="send.image_compress.max_mb">
+        <span class="hint">压完仍超这个数就再降一档质量；还超就原样发。</span></div>
+      <div class="row"><label>JPEG 质量</label><input type="number" min="40" max="95" data-cfg="send.image_compress.quality">
+        <span class="hint">82 左右够用；越低越小越糊。</span></div>
       <div class="btns"><button class="pri" data-save>保存设置（媒体与语音）</button></div>
     </section>
     <section id="sec-tts" class="card" data-sec>
@@ -856,6 +866,41 @@ th{color:var(--tx2);font-weight:500}
         <button class="pri" data-save>保存设置（语音回复）</button>
       </div>
       <div id="ttsOut" class="hint">点「试听一句」会在本机合成一条示例音频并报出产物路径 / 格式 / 大小；**不会发到任何会话**。</div>
+    </section>
+    <section id="sec-imggen" class="card" data-sec>
+      <h2>群友要图（按需求生成）</h2>
+      <div class="desc">群友说「画一张 / 生成一张 / 来张 xx 的图」时，让模型调 <code>gen_image</code>：先解析要什么，再挑一个生图后端生成，**生成后必过过滤链**，任一层不确定就不发。<b>现在还没配后端</b>（本地 ComfyUI / 在线 API 二选一），所以打开它也只是会如实回「还没配后端」——**不会假装生成过**。红线是硬的：不生成真人换脸/换身体、不生成成人内容，且这些要求本身也不照做。</div>
+      <div class="row"><label>后端状态</label><div class="grow"><b id="igWhy">检测中…</b>
+        <div id="igList" class="hint"></div></div></div>
+      <div class="row"><label>总开关</label><input type="checkbox" data-cfg="image_gen.enabled">
+        <span class="hint">默认关：开着模型才会在群友要图时考虑生成。</span></div>
+      <div class="row"><label>触发条件</label><div class="grow"><select data-cfg="image_gen.trigger_mode">
+        <option value="on_request">只在被要求时（推荐）</option>
+        <option value="sometimes">可以偶尔主动</option>
+        <option value="off">不主动</option></select>
+        <span class="hint">这一档**真的改变给模型的指令**。</span></div></div>
+      <div class="row"><label>生图后端</label><div class="grow"><input type="text" data-cfg="image_gen.backends" placeholder="本地示例： comfy | local | http://127.0.0.1:8188/prompt">
+        <div class="hint">格式：<code>id | local/online | 接口地址</code>，多个用分号分隔。填 <code>online</code> 的还要打开下面的「允许出网」。</div></div></div>
+      <div class="row"><label>允许出网</label><input type="checkbox" data-cfg="image_gen.online_allowed">
+        <span class="hint">默认关：不打开时**在线后端根本不会被选中**（图不出网）。</span></div>
+      <div class="row"><label>单次上限(张)</label><input type="number" min="1" max="8" data-cfg="image_gen.max_count">
+        <span class="hint">群友一次要更多也只按这个数生成。</span></div>
+      <div class="row"><label>风格白名单</label><div class="grow"><input type="text" data-cfg="image_gen.style_allow" placeholder="例如： 动漫, 水彩 （留空＝不限）">
+        <div class="hint">非空时**只放行**含这些词的请求。逗号分隔。</div></div></div>
+      <div class="row"><label>风格黑名单</label><div class="grow"><input type="text" data-cfg="image_gen.style_block" placeholder="例如： 政治, 明星 （命中直接拒）">
+        <div class="hint">命中即拒（生成前就拦，省得白生成）。逗号分隔。</div></div></div>
+      <div class="row"><label>过滤链</label><div class="grow">
+        <label class="hint" style="margin-right:10px"><input type="checkbox" data-cfg="image_gen.filter_chain.size"> 尺寸/损坏</label>
+        <label class="hint" style="margin-right:10px"><input type="checkbox" data-cfg="image_gen.filter_chain.dup"> 重复图</label>
+        <label class="hint" style="margin-right:10px"><input type="checkbox" data-cfg="image_gen.filter_chain.blacklist"> 风格黑白名单</label>
+        <label class="hint" style="margin-right:10px"><input type="checkbox" data-cfg="image_gen.filter_chain.text"> 图内文字/水印</label>
+        <label class="hint"><input type="checkbox" data-cfg="image_gen.filter_chain.classifier"> 内容分类器</label>
+        <div class="hint">**关掉任何一层都会让"不确定"变成"照发"**——「图内文字/水印」和「内容分类器」现在还没接，所以默认开着时它们判不出来 ⇒ 整链判否、不发（fail-closed）。</div></div></div>
+      <div class="btns">
+        <button id="igGuide" class="ghost">怎么接一个生图后端？红线是什么？</button>
+        <button id="igTest" class="ghost">试一次（只跑链条，不发到任何会话）</button>
+      </div>
+      <div id="igOut" class="hint">点「试一次」会拿一句话跑完整条链（解析 → 挑后端 → 生成 → 过滤），并把每一步的结论原样贴出来；**不会发到任何会话**。</div>
     </section>
     <section id="sec-tools" class="card" data-sec>
       <h2>工具与插件（自定义工具）</h2>
@@ -1905,6 +1950,28 @@ async function loadStatus(){
             o.value = v; o.textContent = v; sel.appendChild(o);
           });
         }
+        // 群友要图（生图链条）的状态：只读展示"有没有后端 / 过滤链哪几层没接"，
+        // 权威结论永远来自 /api/status 的 image_gen 段（不看本地猜测）
+        const ig = md.image_gen || {};
+        const g1 = $('igWhy');
+        if(g1 && !md.error){
+          const n = (ig.backends || []).length;
+          g1.textContent = ig.enabled
+            ? (n ? ('已开 · ' + n + ' 个后端可用（' + (ig.backends || []).map(function(b){ return b.id; }).join(' / ') + '）')
+                 : '已开，但还没配生图后端 ⇒ 调 gen_image 会如实回「还没配后端」')
+            : '未开启（默认关）';
+          g1.style.color = (ig.enabled && n) ? 'var(--ok-tx)' : (ig.enabled ? 'var(--warn-tx)' : '');
+        }
+        const g2 = $('igList');
+        if(g2 && ig.filter_chain){
+          const fc = ig.filter_chain || {};
+          const off = Object.keys(fc).filter(function(k){ return fc[k] === false; });
+          g2.textContent = ['在线出网：' + (ig.online_allowed ? '允许' : '不允许'),
+                            '单次上限：' + (ig.max_count || 1) + ' 张',
+                            '过滤链：' + (off.length ? ('已关 ' + off.join('/') + ' ⇒ 那几层不再把关') : '五层全开'),
+                            '红线：真人换脸 ' + ((ig.red_line || {}).allow_real_face ? '允许' : '禁止') + ' · r18 开关 ' + ((ig.red_line || {}).r18_switch_exists ? '存在' : '不存在')]
+            .join(' ｜ ');
+        }
         const f = $('ttsFmt');
         if(f){
           f.textContent = ts.ffmpeg ? ('✅ 有 ffmpeg（可转 mp3）：' + (ts.ffmpeg_path || ''))
@@ -2927,6 +2994,19 @@ const GUIDES = {
     ],
     copy: [],
     actions: []
+  },
+  imggen: {
+    title: '怎么让机器人"按群友要求把图生成出来"',
+    intro: '这条链是**本机跑**的：解析要求 → 挑一个生图后端 → 生成 → **过过滤链** → 才发。现在**还没配后端**，所以开了它也只是会如实回「还没配生图后端」。',
+    steps: [
+      '① 先准备一个生图后端（二选一）：**本地 ComfyUI / SD WebUI**（不出网）或**在线生图 API**（要 key、图会出网）——这个要你拍板，选哪个我们接哪个',
+      '② 在「生图后端」里按格式填：`id | local 或 online | 接口地址`，多个用分号分隔；填 online 的还要把「允许出网」打开',
+      '③ 打开「总开关」+ 选一档「触发条件」（这一档真的改变给模型的指令）；风格白/黑名单用逗号分隔，黑名单命中时**生成前就拒**',
+      '④ 过滤链建议全开：「图内文字/水印」和「内容分类器」现在还没接，开着时它们判不出来 ⇒ **整链判否、不发**（这是我们故意的：不确定就不发）',
+      '⑤ 点「试一次」跑一遍链条看结论（不会发到任何会话）；红线是硬的：不生成真人换脸/换身体、不生成成人内容'
+    ],
+    copy: [{label: '复制后端格式示例', text: 'comfy | local | http://127.0.0.1:8188/prompt'}],
+    actions: [{label: '去看「群友要图」那一栏', kind: 'goto', arg: '#sec-imggen'}]
   },
   file: {
     title: '怎么让机器人帮你找文件、并发出去',
@@ -4472,7 +4552,7 @@ addEventListener('hashchange', ()=>{ if(location.hash==='#sec-sessions') loadSes
     toast('已尝试打开官网：' + u + '（打不开就手动复制到浏览器）');
   };
   /* 应用内引导按钮：所有"怎么办"都在弹窗里（不再叫用户去读文件） */
-  [['utGuide','tools'], ['ttsGuide','tts'], ['vsGuide','voice'], ['irGuide','image'], ['fwGuide','forward'], ['fsGuide','file']]
+  [['utGuide','tools'], ['ttsGuide','tts'], ['igGuide','imggen'], ['vsGuide','voice'], ['irGuide','image'], ['fwGuide','forward'], ['fsGuide','file']]
     .forEach(function(pair){
       const b = document.getElementById(pair[0]);
       if(b) b.onclick = function(){ openGuide(pair[1]); };
@@ -4498,6 +4578,21 @@ addEventListener('hashchange', ()=>{ if(location.hash==='#sec-sessions') loadSes
       toast('清单已重扫：' + n + ' 个工具' + (bad ? ('，' + bad + ' 条问题（看面板）') : ''));
       loadStatus();
     }catch(e){ toast('重扫失败：' + e.message); }
+  };
+  const igBtn = document.getElementById('igTest');
+  if(igBtn) igBtn.onclick = async ()=>{
+    const out = document.getElementById('igOut');
+    if(out){ out.textContent = '跑链条中…（只在本机跑，不会发到任何会话）'; out.style.color = ''; }
+    try{
+      const r = await getJSON('/api/image_gen/test');
+      const res = (r && r.result) || {};
+      if(out){
+        out.textContent = (r && r.ok)
+          ? ('✅ ' + (res.why || '链条跑通') + '｜解析：' + JSON.stringify(res.intent || {}))
+          : ('⛔ ' + ((res.why) || (r && (r.error || r.err)) || '未知原因'));
+        out.style.color = (r && r.ok) ? 'var(--ok-tx)' : 'var(--err-tx)';
+      }
+    }catch(e){ if(out){ out.textContent = '跑链条失败：' + e.message; out.style.color = 'var(--err-tx)'; } }
   };
   const ttsBtn = document.getElementById('ttsTest');
   if(ttsBtn) ttsBtn.onclick = async ()=>{
