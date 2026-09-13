@@ -426,6 +426,12 @@ class WebUI:
         if cfg.get("enabled") is False:
             return 0
         host = str(cfg.get("host") or "127.0.0.1")
+        # 回环收口：控制台里有个人聊天记录与访问口令，非回环地址一律拒（要远程先显式开开关）
+        if host not in ("127.0.0.1", "localhost", "::1", ""):
+            if not cfg.get("allow_remote"):
+                logging.getLogger("persona-morph").warning(
+                    "server.host=%s 不是回环地址，已强制改回 127.0.0.1（确需远程访问请显式设 server.allow_remote=true）", host)
+                host = "127.0.0.1"
         port = int(cfg.get("port") or 3210)
 
         parent = self
@@ -449,7 +455,17 @@ class WebUI:
             def _auth_ok(self):
                 token = str(get_config().get("server", {}).get("token") or "").strip()
                 if not token:
-                    return True
+                    # 旧行为是「空口令 = 放行」，等于控制台裸奔（本机任何进程、任何网页都能进）。
+                    # 现在：拒绝 + 明确告诉怎么修（口令在启动时自动生成，见 scripts/persona_morph.py）。
+                    try:
+                        if not getattr(self.server, "_warned_no_token", False):
+                            self.server._warned_no_token = True
+                            logging.getLogger("persona-morph").warning(
+                                "控制台访问口令为空 ⇒ 已拒绝全部请求。请重启机器人（会自动生成口令），"
+                                "或在 config.json 的 server.token 里手填一个。")
+                    except Exception:
+                        pass
+                    return False
                 # ① 会话 Cookie（登录后 URL 不带 token，防他人复制地址登入）
                 try:
                     import http.cookies as _hc
@@ -547,7 +563,15 @@ class WebUI:
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)})
                 elif path == "/api/status":
-                    self._json(parent.status_provider())
+                    st = parent.status_provider()
+                    try:
+                        from . import risk as _risk
+                        if isinstance(st, dict):
+                            st = dict(st)
+                            st["risk"] = _risk.snapshot()
+                    except Exception:
+                        pass
+                    self._json(st)
                 elif path == "/api/balance":
                     try:
                         self._json(parent.balance_fn())
@@ -671,7 +695,19 @@ class WebUI:
                     data = json.loads(raw.decode("utf-8")) if raw else {}
                 except Exception:
                     data = {}
-                if path == "/api/config":
+                if path == "/api/risk":
+                    # 风险闸门：暂停/恢复/查看（只影响本机行为，绝不往微信侧发任何提示）
+                    try:
+                        from . import risk as _risk
+                        act = str((data or {}).get("action") or "show")
+                        if act == "pause":
+                            _risk.pause(str((data or {}).get("reason") or "手动暂停"))
+                        elif act == "resume":
+                            _risk.resume()
+                        self._json({"ok": True, "risk": _risk.snapshot()})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)}, 500)
+                elif path == "/api/config":
                     try:
                         new_cfg = data if isinstance(data, dict) and data else get_config()
                         # 部分字段保存不丢段：与当前配置深合并（新值优先，缺失键保留旧值）
