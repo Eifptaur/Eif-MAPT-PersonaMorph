@@ -1898,6 +1898,21 @@ class WeChatAdapter:
                         if len(_head) >= 3 and ("文件" + _head) in _pane_norm:
                             return True, ("聊天区里能看到刚发给该会话的文件卡（%s）—— 按「文件+名字开头 %r」命中"
                                           % (_nm0, _head))
+                        # 再补一手（2026-09-14 实测）：**聊天区可能停在别的滚动位置**（比如用户把一段长文本
+                        #   贴在会话里、视口正好停在它上面），这时文件卡不在可见区 ⇒ 上面那条匹配不到。
+                        #   但**会话列表里那一行（绿底高亮行＝当前打开的会话）本身就显示着这张文件卡**
+                        #   （实测高亮行 OCR = `[文件]兼容性．“`）⇒ 把这一行的文字也纳入同一约束（同样要求
+                        #   `文件`+名字开头）—— 屏幕（列表行）× 本机台账，仍然是两个独立来源。
+                        if len(_head) >= 3:
+                            try:
+                                _himg2 = _co.capture_best(gui=gui or self._get_gui(), frames=2)
+                                _hl2 = _co.highlight(_himg2) if _himg2 is not None else None
+                                _row_txt = str((_hl2 or {}).get("name") or "")
+                            except Exception:
+                                _row_txt = ""
+                            if _row_txt and ("文件" + _head) in _co.norm_alnum(_row_txt):
+                                return True, ("当前会话那一行显示着刚发给该会话的文件卡（%s）—— 行文字 %r"
+                                              % (_nm0, _row_txt[:24]))
             except Exception:
                 pass
             # 再一档：**高亮行时间**（单字母名字读不出时唯一还读得准的信号）——高亮行＝当前打开的会话，
