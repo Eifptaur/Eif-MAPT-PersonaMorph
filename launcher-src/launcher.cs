@@ -684,6 +684,10 @@ namespace WxLauncher
         internal static extern int SetThreadDpiAwarenessContext(IntPtr ctx);
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         internal static extern uint SetErrorMode(uint mode);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        internal static extern IntPtr GetForegroundWindow();
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        internal static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
 
         /// 进程级准备：高 DPI（PerMonitorV2），并关掉系统崩溃/严重错误弹窗（不许弹系统 MessageBox）
         public static void Prep()
@@ -984,17 +988,23 @@ namespace WxLauncher
         {
             try
             {
+                IntPtr fg0 = StyleKit.GetForegroundWindow();
                 f.StartPosition = FormStartPosition.Manual;
-                f.Location = new Point(-4000, -4000);   // 离屏：不出现在屏幕上、不抢焦点
+                f.Location = new Point(-4000, -4000);   // 离屏
                 f.ShowInTaskbar = false;
-                f.Show();
+                // 关键：不调 f.Show()（它默认会**激活**窗口、抢前台）
+                // 改成「建句柄 → SWP_NOACTIVATE|SWP_SHOWWINDOW 显示 → 离屏 DrawToBitmap」
+                f.CreateControl();
+                StyleKit.SetWindowPos(f.Handle, IntPtr.Zero, -4000, -4000, f.Width, f.Height, 0x0010 | 0x0040);
                 for (int i = 0; i < 12; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(20); }
                 using (Bitmap bmp = new Bitmap(f.Width, f.Height))
                 {
                     f.DrawToBitmap(bmp, new Rectangle(0, 0, f.Width, f.Height));
                     string p = Path.Combine(dir, name + ".png");
                     bmp.Save(p, System.Drawing.Imaging.ImageFormat.Png);
-                    sb.AppendLine(name + " " + f.Width + "x" + f.Height + " controls=" + f.Controls.Count + " -> " + p);
+                    bool fg_kept = (StyleKit.GetForegroundWindow() == fg0);
+                    sb.AppendLine(name + " " + f.Width + "x" + f.Height + " controls=" + f.Controls.Count
+                                  + " 前台未变=" + fg_kept + " -> " + p);
                 }
                 f.Close();
             }
