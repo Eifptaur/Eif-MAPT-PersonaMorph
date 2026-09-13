@@ -16,10 +16,103 @@ import time
 
 import requests
 
-from .config import get_config, resolve_api_key
+from .config import DATA_DIR, get_config, resolve_api_key
 
 # 复用的 HTTP 会话（长连接复用，省去每次请求的 TCP/TLS 握手，实测延迟可降 100~300ms）
 _session = requests.Session()
+
+# ── 备选模型（第三方 v0.4 对账清单第 3 条：API 错误重试 + 备选模型逐个重试）──────
+# 语义：**同一次对话请求**里，主模型失败 ⇒ 按 `api.fallback_models` 的顺序逐个改用备选
+# （同一个 Base URL / Key）。做成"落在 chat_completion 里"而不是加新函数，是为了让
+# 现有 17 个调用点**一处生效、处处生效**（不接就等于没做）。
+MAX_FALLBACK = 3
+
+
+def _stats_path() -> str:
+    return DATA_DIR + "/fallback_stats.json"
+
+
+def fallback_models(api: dict | None = None) -> list:
+    """读配置里的备选模型清单（数组，或逗号/换行分隔的字符串），去重、截断到 MAX_FALLBACK。"""
+    api = api if api is not None else effective_api()
+    raw = api.get("fallback_models")
+    if isinstance(raw, str):
+        raw = re.split(r"[,，\n]", raw)
+    out = []
+    for m in (raw or []):
+        m = str(m or "").strip()
+        if m and m not in out:
+            out.append(m)
+    return out[:MAX_FALLBACK]
+
+
+def candidates(api: dict | None = None) -> list:
+    """这次请求要依次尝试的模型清单：主模型在前，备选在后（主模型为空时只剩备选）。"""
+    api = api if api is not None else effective_api()
+    primary = str(api.get("model") or "").strip()
+    out = [primary] if primary else []
+    for m in fallback_models(api):
+        if m not in out:
+            out.append(m)
+    return out
+
+
+def is_fallback_eligible(error) -> bool:
+    """这个错误值不值得换备选模型：
+    · 值得：可重试类（5xx/429/超时/断网/非 JSON 响应）与「模型名不存在」类
+      （主模型下线/改名是最常见的"换一个就能跑"情形）；
+    · 不值得：鉴权与权限类（401/403/invalid api key）——同一个 Key 换模型也救不了。
+    """
+    msg = str(getattr(error, "message", None) or error or "")
+    if re.search(r"unauthorized|forbidden|invalid api.?key|incorrect api.?key|HTTP\s*(401|403)", msg, re.IGNORECASE):
+        return False
+    if re.search(r"HTTP\s*404|no such model|unknown model|model[^\n]{0,24}(not found|does not exist|不存在|无效|不合法|invalid)",
+                 msg, re.IGNORECASE):
+        return True
+    return is_retryable_error(error)
+
+
+def _note_fallback(info: dict, error) -> None:
+    """记一笔"这次用的是备选模型"（控制台读数 + 复盘用）。任何异常都不许影响主流程。"""
+    import json
+    import os
+    rec = {"ts": int(time.time() * 1000), "used": info.get("used"), "from": info.get("from"),
+           "tried": info.get("tried") or [],
+           "error": str(getattr(error, "message", None) or error or "")[:200]}
+    try:
+        path = _stats_path()
+        cur = {"count": 0, "last": None}
+        try:
+            with open(path, "r", encoding="utf-8-sig") as f:
+                d = json.load(f)
+            if isinstance(d, dict):
+                cur = d
+        except Exception:
+            pass
+        cur["count"] = int(cur.get("count") or 0) + 1
+        cur["last"] = rec
+        cur["updatedAt"] = rec["ts"]
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(cur, f, ensure_ascii=False, indent=1)
+        os.replace(tmp, path)
+    except Exception:
+        pass
+
+
+def fallback_status() -> dict:
+    """给控制台/`/api/status` 用的只读读数（不写盘）。"""
+    import json
+    out = {"models": fallback_models(), "count": 0, "last": None}
+    try:
+        with open(_stats_path(), "r", encoding="utf-8-sig") as f:
+            d = json.load(f)
+        if isinstance(d, dict):
+            out["count"] = int(d.get("count") or 0)
+            out["last"] = d.get("last") or None
+    except Exception:
+        pass
+    return out
 
 
 def join_url(base: str, path: str) -> str:
@@ -54,7 +147,7 @@ def is_retryable_error(error) -> bool:
         return True
     if re.search(r"ETIMEDOUT|ECONNRESET|ECONNREFUSED|ECONNABORTED|ENOTFOUND|EAI_AGAIN|EHOSTUNREACH|EPIPE|socket hang up|fetch failed|network|ConnectionError|ConnectTimeout|ReadTimeout", msg, re.IGNORECASE):
         return True
-    if re.search(r"无法解析的 JSON|Unexpected end|unexpected token|JSONDecodeError|Expecting value", msg, re.IGNORECASE):
+    if re.search(r"无法解析的 JSON|Unexpected end|unexpected token|JSONDecodeError|Expecting value|缺少 choices", msg, re.IGNORECASE):
         return True
     return False
 
@@ -65,12 +158,40 @@ class LLMError(Exception):
         self.message = message
 
 
-def chat_completion(messages, tools=None, tool_choice="auto", temperature=None, overrides=None):
-    """单次对话请求。返回 {message, finish_reason, usage, model, raw}。"""
+def chat_completion(messages, tools=None, tool_choice="auto", temperature=None, overrides=None, _models=None):
+    """单次对话请求。返回 {message, finish_reason, usage, model, raw}。
+
+    **主模型失败时会按 `api.fallback_models` 逐个改用备选**（同一个 Base URL / Key）；
+    走备选时返回值多一个 `fallback` 字段（{used, from, tried}），供控制台与日志如实显示。
+    `_models` 只给内部/测试用（显式指定候选清单，绕过配置）。
+    """
     api = overrides or effective_api()
     if not str(api.get("base_url") or "").strip():
         raise LLMError("模型 API Base URL 未配置")
-    body = {"model": api.get("model"), "messages": messages, "stream": False}
+    models = [str(m).strip() for m in (_models if _models is not None else candidates(api))]
+    models = [m for m in models if m] or [""]
+    last_error = None
+    for idx, model in enumerate(models):
+        try:
+            ret = _post_once(api, model, messages, tools, tool_choice, temperature)
+            if idx > 0:
+                info = {"used": ret.get("model") or model, "from": models[0], "tried": models[:idx]}
+                ret["fallback"] = info
+                _note_fallback(info, last_error)
+                print("[llm] 主模型 %s 不可用，本次改用备选 %s" % (models[0] or "-", info["used"]))
+            return ret
+        except Exception as e:
+            last_error = e
+            if idx >= len(models) - 1 or not is_fallback_eligible(e):
+                raise
+            print("[llm] 模型 %s 失败（%s）⇒ 试下一个：%s"
+                  % (model or "-", str(getattr(e, "message", e))[:120], models[idx + 1] or "-"))
+    raise last_error
+
+
+def _post_once(api: dict, model: str, messages, tools, tool_choice, temperature):
+    """对**某一个模型**发一次请求（失败抛 LLMError / requests 异常）。"""
+    body = {"model": model, "messages": messages, "stream": False}
     if tools:
         body["tools"] = tools
         body["tool_choice"] = tool_choice
@@ -113,7 +234,7 @@ def chat_completion(messages, tools=None, tool_choice="auto", temperature=None, 
         "message": choice.get("message") or {},
         "finish_reason": choice.get("finish_reason"),
         "usage": data.get("usage"),
-        "model": data.get("model") or api.get("model"),
+        "model": data.get("model") or model,
         "raw": data,
     }
     if _USAGE_HOOK[0] is not None:
@@ -125,18 +246,39 @@ def chat_completion(messages, tools=None, tool_choice="auto", temperature=None, 
 
 
 def chat_completion_with_retry(args, retries=2):
-    """带重试的单次请求（仅对可重试错误，1s→2s 指数退避）。"""
+    """带重试的单次请求（仅对可重试错误，1s→2s 指数退避）。
+
+    同一模型用尽重试后，**再按 `api.fallback_models` 逐个换模型**（每个备选各一次）。
+    非可重试错误（参数/鉴权类）不在同一模型上浪费重试次数，直接判断能否换备选。
+    """
     last_error = None
+    api = (args or {}).get("overrides") or effective_api()
+    cands = candidates(api)
+    primary, rest = (cands[0] if cands else ""), cands[1:]
     for attempt in range(retries + 1):
         try:
-            return chat_completion(**args)
+            kwargs = dict(args or {})
+            kwargs["_models"] = [primary]
+            return chat_completion(**kwargs)
         except Exception as e:
             last_error = e
             if attempt >= retries or not is_retryable_error(e):
-                raise
+                break
             wait = 1.0 * (2 ** attempt)
             print("[llm] 请求失败（第 %d 次尝试），%.0fms 后重试：%s" % (attempt + 1, wait * 1000, getattr(e, "message", e)))
             time.sleep(wait)
+    if rest and last_error is not None and is_fallback_eligible(last_error):
+        kwargs = dict(args or {})
+        kwargs["_models"] = rest
+        ret = chat_completion(**kwargs)
+        if isinstance(ret, dict):
+            inner = ret.get("fallback") or {}
+            info = {"used": ret.get("model") or rest[0], "from": primary,
+                    "tried": [primary] + list(inner.get("tried") or [])}
+            ret["fallback"] = info
+            if not inner:                      # 链内已经记过一次就不重复记（免得控制台计数翻倍）
+                _note_fallback(info, last_error)
+        return ret
     raise last_error
 
 

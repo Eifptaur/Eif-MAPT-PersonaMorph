@@ -33,6 +33,7 @@ DEFAULT_CONFIG = {
         "price_cached_per_m": 0.0,   # 命中缓存输入单价；0 时按输入价计
         "use_official_price": True,
         "model_prices": {},          # {模型id: {in, out, cached}} 按模型单价，优先级最高
+        "fallback_models": [],       # 备选模型（第 3 条）：主模型失败时按顺序逐个改用；空=关闭；最多 3 个
     },
     # ── 微信接入（源自 wechat 机器人整合包）────────────────────────────
     "wechat": {

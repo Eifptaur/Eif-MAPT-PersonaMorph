@@ -604,6 +604,12 @@ class WebUI:
                                 st["media"] = _ms.snapshot()
                             except Exception as _e2:
                                 st["media"] = {"error": str(_e2)}
+                            # 备选模型（第 3 条）：清单 + 最近一次"改用备选"的现场
+                            try:
+                                from .llm import fallback_status as _fbs
+                                st["fallback"] = _fbs()
+                            except Exception as _e6:
+                                st["fallback"] = {"error": str(_e6)}
                             # 撤回剔除（第 14 条）：已剔除多少条 + 最近一条的现场
                             try:
                                 from . import recall as _rcl

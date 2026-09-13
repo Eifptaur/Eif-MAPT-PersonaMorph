@@ -13,6 +13,7 @@
   "price_cached_per_m": 0.0,
   "use_official_price": true,
   "model_prices": {},
+  "fallback_models": [],
   "provider_keys": {},
   "thinking": "off"
  },

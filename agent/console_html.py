@@ -733,6 +733,13 @@ th{color:var(--tx2);font-weight:500}
           <input type="text" id="modelCustom" class="dn" placeholder="自定义模型名（如 glm-4-plus）">
           <div class="hint">所选厂商的常用模型都在下拉里；不够用就选「自定义」手填，或改原始 JSON。</div>
         </div></div>
+      <div class="row"><label>备选模型</label><div class="grow">
+        <textarea data-cfg="api.fallback_models" rows="2" spellcheck="false" placeholder="如：deepseek-chat, glm-4-flash（逗号或换行分隔；留空＝关闭）"></textarea>
+        <div class="hint">主模型失败时<b>按顺序逐个改用下面的模型</b>（同一个 Base URL 与 Key）：
+        可重试的错误（5xx / 429 限流 / 超时 / 断网 / 返回的不是 JSON）以及「模型名不存在」这类会切换；
+        鉴权错误（401 / 403 / Key 无效）不切换（换模型也救不了 Key）。最多试 3 个。</div>
+      </div></div>
+      <div class="row"><label>备选使用</label><div class="grow"><span id="fallbackStat" class="hint">读取中…</span></div></div>
       <div class="row"><label>视觉(看图)</label><input type="checkbox" data-cfg="api.vision"><span class="hint">模型支持图片则勾选</span></div>
       <label class="think-card" id="thinkCard" title="模型返回的「推理文本」是生成的思考链式输出，并非真实内部思维；它按输出价计费，通常占一个会话 token 的 50~90%。">
         <input type="checkbox" data-cfg="api.thinking" id="thinkOffChk" checked>
@@ -1482,6 +1489,9 @@ function syncFromForm(){
     else {
       v = el.value;
       if(path === 'store.keywords') v = v.split(/[,，]/).map(s=>s.trim()).filter(Boolean);
+      else if(path === 'api.fallback_models'){   // 备选模型：逗号/换行 → 数组（不切就会存成字符串）
+        v = String(v||'').split(/[,，\n]/).map(s=>s.trim()).filter(Boolean);
+      }
       else if(path === 'risk.block_keywords' || path === 'risk.watch_keywords'){
         // 风险闸门的关键词是数组：这里按中文/英文逗号切（不切就会存成字符串 ⇒ 闸门逐字符当关键词，满屏误拦）
         v = v.split(/[,，]/).map(s=>s.trim()).filter(Boolean);
@@ -1905,6 +1915,18 @@ async function loadStatus(){
             return mark + ' ' + c.label + '（' + c.status + '）';
           });
           v3.textContent = (vm.summary || '') + ' ｜ ' + rows.join(' · ');
+        }
+      }catch(e){}
+      try{
+        const fb = s.fallback || {};
+        const el = $('fallbackStat');
+        if(el){
+          const n = (fb.models || []).length;
+          const last = fb.last || {};
+          let line = n ? ('已配置 ' + n + ' 个备选：' + (fb.models || []).join(' → ')) : '未配置备选模型（主模型失败就直接报错）';
+          line += ' ｜ 已启用备选 ' + (fb.count || 0) + ' 次';
+          if(last.used) line += ' ｜ 最近：' + (last.from || '主模型') + ' 失败 ⇒ 用了 ' + last.used;
+          el.textContent = line;
         }
       }catch(e){}
       try{
