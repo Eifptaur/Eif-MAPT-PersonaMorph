@@ -676,6 +676,13 @@ class WebUI:
                         self._json({"ok": bool(ok_t), "why": why_t, "tools": _ut4.snapshot()})
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)})
+                elif path == "/api/image_gen/test":
+                    try:
+                        from . import image_gen as _ig
+                        _r = _ig.generate("", "帮我画一张两只猫的图")
+                        self._json({"ok": bool(_r.get("ok")), "result": _r})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
                 elif path == "/api/tts/test":
                     # 「试听一句」：真跑一遍本机合成（不出网、不发送），把产物路径/格式/大小报出来
                     try:
