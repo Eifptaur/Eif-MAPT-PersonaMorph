@@ -497,21 +497,17 @@ def main():
     watchdog = os.path.join(ROOT, "scripts", "watchdog.py")
     existing = None
     try:
+        # 单实例判据＝命名互斥体（probe 只查不占；旧版实例只写 pid 文件、没有互斥体，用 legacy_holder 兜住）
+        from agent.single_instance import probe as _si_probe, legacy_holder as _si_legacy
         _lk = os.path.join(ROOT, "data", "bot.lock")
-        if os.path.exists(_lk):
-            with open(_lk, "r", encoding="utf-8") as f:
-                pid = int((f.read().strip() or "0"))
-            if pid and os.name == "nt":
-                import ctypes
-                h = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
-                if h:
-                    ctypes.windll.kernel32.CloseHandle(h)
-                    existing = pid
+        _held, _hpid = _si_probe(lock_path=_lk)
+        existing = ((_hpid or -1) if _held else (_si_legacy(_lk) or None))
     except Exception:
         existing = None
-    if existing:
-        log("检测到机器人已在运行（pid=%s）→ 打开控制台，不再重复启动。%s" % (
-            existing, "如想重启请先「停止机器人」."))
+    if existing is not None:
+        _who = ("pid=%s" % existing) if (existing and existing > 0) else "pid 未知"
+        log("检测到机器人已在运行（%s）→ 打开控制台，不再重复启动。%s" % (
+            _who, "如想重启请先「停止机器人」."))
         try:
             import json as _j
             cfg = _j.load(open(os.path.join(ROOT, "config.json"), encoding="utf-8"))
