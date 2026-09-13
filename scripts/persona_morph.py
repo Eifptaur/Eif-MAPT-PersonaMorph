@@ -39,6 +39,7 @@ from agent import recall                       # 第 14 条：撤回后把已进
 from agent import tier_control                 # 第 15/16/18 条：固定 4 档 / 峰谷映射 / 指令禁言
 from agent import timers                       # 第 12 条：计时提醒（只对当前会话 + 过风险闸门 + 条数上限）
 from agent import holidays                     # 第 13 条：节假日问候（默认只在提示词里提一句）
+from agent import archive_filter               # 第 10 条：按会话/按条屏蔽存档消息
 from agent.config import DATA_DIR
 from agent.config import get_config, save_config
 from agent.llm import (add_usage, chat_completion, chat_completion_with_retry,
@@ -2309,6 +2310,7 @@ def main():
                   poke_test_fn=poke_test_fn, selfcheck_fn=selfcheck_fn, restart_fn=restart_fn,
                   groups_fn=groups_fn, memory_fn=memory_fn,
                   sessions_fn=lambda limit: orch.session_log.recent(limit),
+  store=orch.store,
                   community_export_fn=community_export_fn,
                   community_upload_fn=community_upload_fn,
                   scoring_import_fn=scoring_import_fn,
@@ -2470,6 +2472,9 @@ def main():
 
                 def _handle_one(nm, _chat_key=chat_key, _g=g, _wxid=wxid, _blocked=blocked):
                     """W2：返回真值＝这条已被下游接受（append_incoming 落盘成功后返回 entry）。"""
+                    # ── 屏蔽存档的会话（第 10 条）：不落库、不触发、不进记忆；水位照推 ──
+                    if archive_filter.is_blocked(chat_key=_chat_key, group_name=_g["name"]):
+                        return {"dropped": "archive-block"}
                     # ── 撤回事件（第 14 条）：把已进上下文/存档的那条剔除，**不触发回复** ──
                     _rc = nm.get("recall")
                     if _rc:

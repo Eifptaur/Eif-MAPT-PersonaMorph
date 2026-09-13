@@ -276,6 +276,7 @@ DEFAULT_CONFIG = {
         "unified_tier": True,         # true=上方档位对所有群生效；false=可按群单独设置（group_tier）
         "group_tier": {},             # {群名: 1~4} 仅 unified_tier=false 时生效；未设置的群跟随全局
         "group_blocklist": {},        # {群名: [昵称, wxid...]} 被屏蔽群员：不存档、不触发、不进提示词
+        "archive_block_chats": [],    # 屏蔽存档的会话（群名或 group:wxid）——整会话消息不入存档（第 10 条）
         "sticker_level": 0,           # 表情包积极度 0~3：不鼓励/偶尔/较积极/爱好者（提示词引导）
         "recall": {                   # 撤回后剔除上下文（第三方 v0.4 对账清单第 14 条）
             "enabled": True,          # 关掉＝撤回事件只记日志、不动存档与记忆

@@ -715,6 +715,19 @@ th{color:var(--tx2);font-weight:500}
           <div class="hint" style="padding:14px;text-align:center;color:var(--tx2)">加载中…</div>
         </div>
       </div>
+      <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
+      <h3 style="font-size:14px;margin:6px 0">存档：按条屏蔽 / 清除</h3>
+      <div class="desc">上面的「屏蔽存档的会话」管整个会话；这里管<b>单条消息</b>：<b>屏蔽</b>＝留着但不再进上下文/记忆（可随时解除），<b>清除</b>＝真删（不可恢复，必须点名条目）。</div>
+      <div class="btns">
+        <select id="arcChat" style="min-width:200px"></select>
+        <input type="number" id="arcLimit" value="30" min="1" max="200" style="width:80px" title="读取最近多少条">
+        <button id="arcLoad" class="pri">读取该会话存档</button>
+        <button id="arcReload" class="ghost">刷新会话列表</button>
+        <span class="hint" id="arcInfo" style="align-self:center">—</span>
+      </div>
+      <div id="arcList" style="max-height:300px;overflow-y:auto;border:1px solid var(--bd);border-radius:10px;padding:10px 12px;background:var(--input-bg)">
+        <div class="hint" style="padding:10px;text-align:center">点「读取该会话存档」后，这里按条显示（#编号 发送者：内容），每行可单独屏蔽 / 解除 / 清除。</div>
+      </div>
     </section>
 
     <section id="sec-model" class="card" data-sec>
@@ -1175,6 +1188,10 @@ th{color:var(--tx2);font-weight:500}
         <textarea id="blocklistBox" data-cfg="store.group_blocklist" rows="3" placeholder='{"群名": ["昵称或wxid", ...]}'></textarea>
         <div class="hint">JSON 格式：{群名: [要屏蔽的昵称/wxid…]}。被屏蔽者消息不存档、不触发、不进提示词。</div>
       </div></div>
+      <div class="row"><label>屏蔽存档的会话</label><div class="grow">
+        <textarea data-cfg="store.archive_block_chats" rows="2" spellcheck="false" placeholder="如：某广告群, group:wxid_xxx（逗号或换行分隔）"></textarea>
+        <div class="hint">名单里的<b>整个会话</b>：消息<b>不写进存档</b> ⇒ 也就不回、不进记忆、不进未读触发（监听水位照常推进、日志会写明原因）。与上面的「按群按人屏蔽」不是一件事：那个只管某个群友，这个管整个会话。</div>
+      </div></div>
       <div class="row"><label>表情包积极度</label><div class="grow"><select data-cfg="store.sticker_level">
         <option value="0">0：不鼓励</option><option value="1">1：偶尔</option>
         <option value="2">2：较积极</option><option value="3">3：表情包爱好者</option></select>
@@ -1554,6 +1571,9 @@ function syncFromForm(){
     else {
       v = el.value;
       if(path === 'store.keywords') v = v.split(/[,，]/).map(s=>s.trim()).filter(Boolean);
+      else if(path === 'store.archive_block_chats'){   // 屏蔽存档的会话：逗号/换行 → 数组
+        v = String(v||'').split(/[,，\n]/).map(s=>s.trim()).filter(Boolean);
+      }
       else if(path === 'store.tier_cmd_admins' || path === 'holiday.greet_chats'){   // 名单类：逗号/换行 → 数组
         v = String(v||'').split(/[,，\n]/).map(s=>s.trim()).filter(Boolean);
       }
@@ -2693,7 +2713,83 @@ async function undoLast(){
   }
   const ub = $('undoBtn');
   if(ub) ub.addEventListener('click', undoLast);
-  /* 系统提示词编辑（第 11 条）：预览走真 build_system_prompt（服务端现算），不是前端拼的 */
+/* ── 存档按条屏蔽 / 清除（第 10 条）── */
+async function arcLoadChats(){
+  const sel = $('arcChat'); if(!sel) return;
+  try{
+    const r = await getJSON('/api/archive');
+    const cur = sel.value;
+    sel.innerHTML = '';
+    (r.chats || []).forEach(o=>{
+      const op = document.createElement('option');
+      op.value = o.chat_key;
+      op.textContent = o.chat_key + '（' + (o.messages || 0) + ' 条' + (o.only_in_blocklist ? '，仅名单' : '') + '）';
+      sel.appendChild(op);
+    });
+    if(cur) sel.value = cur;
+    const info = $('arcInfo'), s = r.snapshot || {};
+    if(info) info.textContent = '屏蔽会话 ' + ((s.chats||[]).length) + ' 个 ｜ 已屏蔽条目 ' + (s.blocked_entries || 0) + ' 条';
+  }catch(e){ toast('读会话列表失败：' + e.message); }
+}
+async function arcLoadList(){
+  const sel = $('arcChat'), box = $('arcList');
+  if(!sel || !box) return;
+  const ck = sel.value;
+  if(!ck){ box.innerHTML = '<div class="hint" style="padding:10px">还没有可选会话（先让机器人跑一会儿，或直接在上面填名单）。</div>'; return; }
+  box.innerHTML = '<div class="hint" style="padding:10px">读取中…</div>';
+  try{
+    const lim = Math.max(1, Math.min(200, parseInt(($('arcLimit')||{}).value || 30, 10)));
+    const r = await getJSON('/api/archive?chat_key=' + encodeURIComponent(ck) + '&limit=' + lim);
+    const items = r.items || [];
+    if(!items.length){ box.innerHTML = '<div class="hint" style="padding:10px">这个会话还没有存档条目。</div>'; return; }
+    box.innerHTML = '';
+    items.forEach(m=>{
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-bottom:1px solid var(--bd)';
+      const tag = m.blocked ? '［已屏蔽］' : (m.recalled ? '［已撤回］' : '');
+      const txt = document.createElement('div');
+      txt.style.cssText = 'flex:1;font-size:12.5px;line-height:1.5;word-break:break-all';
+      txt.textContent = '#' + m.id + ' ' + (m.self ? '我' : (m.sender || '?')) + '：' + tag + m.text;
+      if(m.blocked) txt.style.opacity = '0.55';
+      row.appendChild(txt);
+      const mk = (label, cls, fn)=>{ const b = document.createElement('button'); b.className = cls; b.textContent = label;
+                                     b.style.cssText = 'padding:2px 10px;border-radius:8px;font-size:12px'; b.onclick = fn; return b; };
+      const ids = [m.id];
+      if(!m.blocked){
+        row.appendChild(mk('屏蔽', 'ghost', async ()=>{
+          try{ await getJSON('/api/archive/block', {method:'POST', headers:{'Content-Type':'application/json'},
+                                                    body: JSON.stringify({chat_key:ck, ids:ids})});
+               toast('已屏蔽 #' + m.id + '（留在存档里，可解除）'); arcLoadList(); }
+          catch(e){ toast('屏蔽失败：' + e.message); }
+        }));
+      } else {
+        row.appendChild(mk('解除', 'ghost', async ()=>{
+          try{ await getJSON('/api/archive/unblock', {method:'POST', headers:{'Content-Type':'application/json'},
+                                                      body: JSON.stringify({chat_key:ck, ids:ids})});
+               toast('已解除 #' + m.id); arcLoadList(); }
+          catch(e){ toast('解除失败：' + e.message); }
+        }));
+      }
+      row.appendChild(mk('清除', 'danger', async ()=>{
+        if(!await uiConfirm('真删第 #' + m.id + ' 条存档？不可恢复。')) return;
+        try{ const r2 = await getJSON('/api/archive/delete', {method:'POST', headers:{'Content-Type':'application/json'},
+                                                              body: JSON.stringify({chat_key:ck, ids:ids})});
+             toast(r2.ok ? ('已删除 ' + r2.changed + ' 条') : ('删除失败：' + (r2.error||'')));
+             arcLoadList(); }
+        catch(e){ toast('删除失败：' + e.message); }
+      }));
+      box.appendChild(row);
+    });
+  }catch(e){ box.innerHTML = '<div class="hint" style="padding:10px">读取失败：' + e.message + '</div>'; }
+}
+{
+  const b1 = $('arcLoad'), b2 = $('arcReload');
+  if(b1) b1.addEventListener('click', arcLoadList);
+  if(b2) b2.addEventListener('click', ()=>{ arcLoadChats(); toast('会话列表已刷新'); });
+  if($('arcChat')) arcLoadChats();
+}
+
+/* ── 系统提示词编辑（第 11 条）：预览走真 build_system_prompt（服务端现算），不是前端拼的 */
   const pb = $('promptPreviewBtn');
   if(pb) pb.addEventListener('click', async ()=>{
     const box = $('promptPreview'), info = $('promptInfo');

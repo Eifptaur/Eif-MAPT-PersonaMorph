@@ -214,7 +214,8 @@ class WebUI:
                  selfcheck_stop_fn=None, ui_stop_fn=None,
                  persona_scores_fn=None, persona_rate_fn=None,
                  persona_score_custom_fn=None, persona_ai_enrich_fn=None,
-                 community_export_fn=None, community_upload_fn=None, scoring_import_fn=None):
+                 community_export_fn=None, community_upload_fn=None, scoring_import_fn=None,
+                 store=None):
         self.status_provider = status_provider      # () -> dict
         self.log_buffer = log_buffer                # collections.deque[str]
         self.test_api_fn = test_api_fn              # () -> dict
@@ -231,6 +232,7 @@ class WebUI:
         self.memory_fn = memory_fn or (lambda action, chat_key="", user_id="": {"ok": True,
                                                                                "chats": [], "members": []})  # (action, chat_key, user_id) -> dict
         self.sessions_fn = sessions_fn or (lambda limit: [])  # (limit) -> list（运行明细）
+        self.store = store                                   # ChatStore（第 10 条：按会话/按条屏蔽存档）
         self.emojis_fn = emojis_fn or (lambda: [])            # () -> list（表情包收藏夹）
         self.recalibrate_fn = recalibrate_fn or (lambda: {"ok": False, "error": "未提供"})
         self.open_path_fn = open_path_fn or (lambda path: {"ok": False, "error": "未提供"})
@@ -604,6 +606,12 @@ class WebUI:
                                 st["media"] = _ms.snapshot()
                             except Exception as _e2:
                                 st["media"] = {"error": str(_e2)}
+                            # 存档屏蔽（第 10 条）：名单 + 存档里被屏蔽的条数
+                            try:
+                                from . import archive_filter as _af2
+                                st["archive"] = _af2.snapshot(getattr(parent, "store", None))
+                            except Exception as _e9:
+                                st["archive"] = {"error": str(_e9)}
                             # 计时提醒 + 节假日问候（第 12/13 条）
                             try:
                                 from . import timers as _tmr
@@ -896,6 +904,43 @@ class WebUI:
                         if parent.on_save:
                             parent.on_save(new_cfg)
                         self._json({"ok": True})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)}, 500)
+                elif path == "/api/archive":
+                    # 存档屏蔽（第 10 条）：GET 列消息（带 recalled/blocked 标记）/ 屏蔽名单 / 读数
+                    try:
+                        from . import archive_filter as _af
+                        st = getattr(parent, "store", None)
+                        if st is None:
+                            self._json({"ok": False, "error": "机器人未启动：拿不到存档句柄"})
+                        else:
+                            q = parse_qs(urlparse(self.path).query)
+                            ck = str((q.get("chat_key") or [""])[0]).strip()
+                            lim = int((q.get("limit") or ["30"])[0] or 30)
+                            out = {"ok": True, "snapshot": _af.snapshot(st), "chats": _af.chat_options(st)}
+                            if ck:
+                                out.update(_af.list_chat(st, ck, limit=max(1, min(200, lim))))
+                            self._json(out)
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)}, 500)
+                elif path in ("/api/archive/block", "/api/archive/unblock", "/api/archive/delete"):
+                    # 按条屏蔽 / 解除 / 清除（清除必须点名 id，绝不做"清空"）
+                    try:
+                        from . import archive_filter as _af
+                        st = getattr(parent, "store", None)
+                        if st is None:
+                            self._json({"ok": False, "error": "机器人未启动：拿不到存档句柄"})
+                        else:
+                            ck = str((data or {}).get("chat_key") or "").strip()
+                            ids = (data or {}).get("ids") or []
+                            if not ck:
+                                self._json({"ok": False, "error": "chat_key 不能为空"})
+                            elif path.endswith("block"):
+                                self._json(_af.block(st, ck, ids, reason=str((data or {}).get("reason") or "面板操作")))
+                            elif path.endswith("unblock"):
+                                self._json(_af.unblock(st, ck, ids))
+                            else:
+                                self._json(_af.delete(st, ck, ids))
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)}, 500)
                 elif path == "/api/prompt/preview":

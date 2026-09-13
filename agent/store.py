@@ -126,7 +126,8 @@ class ChatStore:
         """快照当前未读并全部置为已读（**已撤回的不算未读**，不触发回复）。"""
         with self._lock:
             st = self._state(chat_key)
-            unread = [m for m in st["messages"] if not m["read"] and not m["self"] and not m.get("recalled")]
+            unread = [m for m in st["messages"]
+                      if not m["read"] and not m["self"] and not m.get("recalled") and not m.get("blocked")]
             for m in st["messages"]:
                 m["read"] = True
             _save_chat(st)
@@ -146,22 +147,75 @@ class ChatStore:
 
     def unread_count(self, chat_key: str) -> int:
         st = self._state(chat_key)
-        return sum(1 for m in st["messages"] if not m["read"] and not m["self"] and not m.get("recalled"))
+        return sum(1 for m in st["messages"]
+                   if not m["read"] and not m["self"] and not m.get("recalled") and not m.get("blocked"))
 
     def peek_unread(self, chat_key: str, limit: int = 3):
         st = self._state(chat_key)
         return [m for m in st["messages"]
-                if not m["read"] and not m["self"] and not m.get("recalled")][: max(1, int(limit or 3))]
+                if not m["read"] and not m["self"] and not m.get("recalled")
+                and not m.get("blocked")][: max(1, int(limit or 3))]
 
     def recent(self, chat_key: str, limit: int = 80, offset: int = 0, include_self: bool = True,
-               include_recalled: bool = False):
-        """最近 N 条。**默认不返回已撤回的**——提示词、记忆提炼、工具取上下文都在这一处生效。"""
+               include_recalled: bool = False, include_blocked: bool = False):
+        """最近 N 条。**默认不返回已撤回、已屏蔽的**——提示词、记忆提炼、工具取上下文都在这一处生效。"""
         st = self._state(chat_key)
         all_msgs = st["messages"] if include_self else [m for m in st["messages"] if not m["self"]]
         if not include_recalled:
             all_msgs = [m for m in all_msgs if not m.get("recalled")]
+        if not include_blocked:
+            all_msgs = [m for m in all_msgs if not m.get("blocked")]
         start = max(0, len(all_msgs) - max(0, int(offset or 0)))
         return all_msgs[:start][-max(1, int(limit or 1)):]
+
+    def list_entries(self, chat_key: str, limit: int = 30, include_self: bool = True):
+        """给控制台/接口用的原始列表（**带上 recalled/blocked 标记**，便于"屏蔽/解除"这类操作）。"""
+        st = self._state(chat_key)
+        msgs = st["messages"] if include_self else [m for m in st["messages"] if not m["self"]]
+        return list(msgs[-max(1, int(limit or 1)):])
+
+    def _flag_entries(self, chat_key: str, entry_ids, field: str, value=True, reason: str = "") -> int:
+        """批量打/清标记（blocked / recalled 用的是同一套）。返回实际改动条数。"""
+        want = {str(x) for x in (entry_ids or [])}
+        if not want:
+            return 0
+        with self._lock:
+            st = self._state(chat_key)
+            n = 0
+            for m in st["messages"]:
+                if str(m.get("id")) not in want:
+                    continue
+                if field == "blocked":
+                    m["blocked"] = bool(value)
+                    m["block_reason"] = str(reason or "")[:120] if value else ""
+                    m["read"] = True
+                else:
+                    m[field] = value
+                n += 1
+            if n:
+                _save_chat(st)
+            return n
+
+    def block_entries(self, chat_key: str, entry_ids, reason: str = "") -> int:
+        """按条屏蔽：条目留在存档里（可追溯、可解除），但**不再进上下文/记忆/未读触发**。"""
+        return self._flag_entries(chat_key, entry_ids, "blocked", True, reason)
+
+    def unblock_entries(self, chat_key: str, entry_ids) -> int:
+        return self._flag_entries(chat_key, entry_ids, "blocked", False)
+
+    def delete_entries(self, chat_key: str, entry_ids) -> int:
+        """按条真删（不可恢复）。只删指定 id，**不做"顺手清空"**。"""
+        want = {str(x) for x in (entry_ids or [])}
+        if not want:
+            return 0
+        with self._lock:
+            st = self._state(chat_key)
+            before = len(st["messages"])
+            st["messages"] = [m for m in st["messages"] if str(m.get("id")) not in want]
+            n = before - len(st["messages"])
+            if n:
+                _save_chat(st)
+            return n
 
     def find_by_id(self, chat_key: str, entry_id):
         st = self._state(chat_key)
@@ -202,7 +256,7 @@ class ChatStore:
         st = self._state(chat_key)
         by_id: dict = {}
         for m in st["messages"]:
-            if m["self"] or not m.get("sender_id") or m.get("recalled"):
+            if m["self"] or not m.get("sender_id") or m.get("recalled") or m.get("blocked"):
                 continue
             sid = m["sender_id"]
             prev = by_id.get(sid)
