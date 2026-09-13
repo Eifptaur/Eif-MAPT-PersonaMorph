@@ -218,6 +218,96 @@ def note_unmatched(content, extra: dict | None = None) -> None:
     _append_jsonl(UNMATCHED_PATH, rec)
 
 
+def _clean_memory(memory, chat_key: str, target: dict, log=None) -> None:
+    """长期印象里若已沉淀过同样内容，一并删掉（只删内容完全相同的，不做模糊匹配）。"""
+    if memory is None or target.get("self"):
+        return
+    text = str(target.get("text") or "")
+    if not text:
+        return
+    uid = str(target.get("sender_id") or "")
+    name = str(target.get("sender_name") or "")
+    key = text[:300]
+    for kw in ({"user_id": uid} if uid else {}, {"target": name} if name else {}):
+        if not kw:
+            continue
+        try:
+            memory.remove(chat_key, "memberImpression", content=key, **kw)
+        except Exception as e:
+            _log(log, "debug", "撤回：清理长期印象失败 %s", e)
+
+
+def sweep(store, chat_key: str, fetch_row, memory=None, state: dict | None = None,
+          window_ms: int = 300000, interval_ms: int = 15000, limit: int = 60, log=None) -> dict:
+    """核对存档里「还没被标撤回」的近期消息。
+
+    为什么需要它：微信**可能不产生新的系统行，而是把被撤的那一行原地改写**成撤回报文
+    （不同版本/不同客户端行为不一致，我们没拿到一手证据）⇒ 只认"新出现的系统行"会漏。
+    这里读每条近期消息**当前在库里的内容**：若已变成撤回报文，就地把这条标记撤回。
+
+    · `fetch_row(mid) -> str|None`：调用方提供（只读）。拿不到（行被删/查询失败）**一律不动**。
+    · `state`：调用方持有的 dict（每会话一个），用 `checked` 去重、`last` 限频 ⇒ 不会反复读同一条。
+    · 只在 `window_ms` 内找（微信撤回限 2 分钟，5 分钟窗已足够宽）。
+    """
+    state = state if state is not None else {}
+    now_ms = int(time.time() * 1000)
+    out = {"checked": 0, "removed": 0, "skipped": "interval"}
+    if interval_ms and now_ms - int(state.get("last") or 0) < int(interval_ms):
+        return out
+    state["last"] = now_ms
+    checked = state.setdefault("checked", set())
+    try:
+        msgs = store.recent(chat_key, limit=int(limit), include_recalled=False)
+    except Exception:
+        return out
+    out["skipped"] = ""
+    for m in msgs:
+        mid = m.get("mid")
+        if mid in (None, "", 0):
+            continue
+        key = str(mid)
+        if key in checked:
+            continue
+        ts = int(m.get("ts") or 0)
+        if window_ms and ts and (now_ms - ts) > int(window_ms):
+            checked.add(key)          # 太老的消息不可能被撤回了 ⇒ 不再读库
+            continue
+        checked.add(key)
+        out["checked"] += 1
+        try:
+            content = fetch_row(mid)
+        except Exception as e:
+            _log(log, "debug", "撤回核对：读第 %s 条失败 %s", mid, e)
+            continue
+        if not content:
+            continue                  # 读不到 ⇒ 不动（宁可漏删，也不误删）
+        info = parse_recall(content)
+        if not info:
+            continue
+        # 只认 XML 形态：库里读到的是**原始行内容**（可能带 `wxid_x:` 前缀），
+        # 群友恰好打出的「张三 撤回了一条消息」不能被当成"这条已被撤回"。
+        if info.get("form") != "xml":
+            _log(log, "debug", "撤回核对：第 %s 条内容像纯文本撤回但不含 revokemsg 报文，跳过", mid)
+            continue
+        info = dict(info, ts=now_ms, note=(info.get("note") or "") + "［原地改写核对］", how="rowcheck")
+        try:
+            store.mark_recalled(chat_key, m.get("id"), info)
+        except Exception as e:
+            _log(log, "warning", "撤回核对：标记失败 %s", e)
+            continue
+        _clean_memory(memory, chat_key, m, log=log)
+        res = {"ok": True, "removed": 1, "how": "rowcheck", "chat": chat_key,
+               "who": info.get("who") or ("自己" if info.get("self") else ""),
+               "note": info.get("note"), "mid": mid, "text": str(m.get("text") or "")[:120],
+               "ts": now_ms, "form": info.get("form") or ""}
+        _append_jsonl(LOG_PATH, res)
+        _write_stats(res)
+        _log(log, "info", "撤回核对：发现第 %s 条已被原地改写为撤回报文 ⇒ 已剔除「%s」",
+             mid, res["text"][:30])
+        out["removed"] += 1
+    return out
+
+
 def purge(store, chat_key: str, info: dict, resolver=None, memory=None,
           window_ms: int = 180000, heuristic: bool = True, log=None) -> dict:
     """把这一条撤回落实到位。**永远返回 dict（真值）**，让水位可以推进。"""
@@ -261,18 +351,8 @@ def purge(store, chat_key: str, info: dict, resolver=None, memory=None,
         except Exception as e:
             res["error"] = "标记失败：%s" % str(e)[:80]
             _log(log, "warning", "撤回：标记存档失败 %s", e)
-        if res["ok"] and memory is not None and not target.get("self"):
-            # 长期印象里若已沉淀过同样内容，一并删掉（只删内容完全相同的，不做模糊匹配）
-            uid = str(target.get("sender_id") or "")
-            name = str(target.get("sender_name") or "")
-            key = text[:300]
-            for kw in ({"user_id": uid} if uid else {}, {"target": name} if name else {}):
-                if not kw:
-                    continue
-                try:
-                    memory.remove(chat_key, "memberImpression", content=key, **kw)
-                except Exception as e:
-                    _log(log, "debug", "撤回：清理长期印象失败 %s", e)
+        if res["ok"]:
+            _clean_memory(memory, chat_key, target, log=log)
     _log(log, "info", "撤回处理：会话=%s 谁=%s 方式=%s 撤掉=「%s」",
          chat_key, res["who"] or "?", res["how"], (res.get("text") or "")[:40])
     _append_jsonl(LOG_PATH, res)

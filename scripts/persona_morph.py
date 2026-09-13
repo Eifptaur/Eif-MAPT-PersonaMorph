@@ -2417,6 +2417,7 @@ def main():
         pass
 
     log.info("开始监听群消息（目标群 %d 个）… Ctrl+C 退出（轮询间隔在控制台修改保存即生效）", len(targets))
+    _recall_state = {}   # 第 14 条：每会话的撤回核对去重/限频状态（内存即可，重启重扫一遍无害）
     # 主动开话题（默认关；控制台开启后循环启动，暂停/停止时跳 tick）
     try:
         orch.start_proactive_loop()
@@ -2443,6 +2444,19 @@ def main():
                 except Exception as e:
                     log.debug("读取群[%s]异常：%s", g["name"], e)
                     continue
+                # ── 撤回核对（第 14 条兜底）：微信可能把被撤的那行**原地改写**（不新增系统行），
+                #    只认"新出现的系统行"会漏 ⇒ 定期回读近期消息在库里的当前内容核对。
+                #    限频 15 秒、只查 5 分钟内的、每条只读一次（记在 _recall_state 里）。
+                try:
+                    _rcfg2 = get_config().get("store", {}).get("recall") or {}
+                    if bool(_rcfg2.get("enabled", True)):
+                        recall.sweep(store, chat_key,
+                                     lambda mid, _w=wxid: wechat.message_content(_w, mid),
+                                     memory=memory,
+                                     state=_recall_state.setdefault(chat_key, {}),
+                                     interval_ms=15000, window_ms=300000, log=log)
+                except Exception as e:
+                    log.debug("群[%s]撤回核对异常：%s", g["name"], e)
                 if not new:
                     continue
                 # 屏蔽名单（按群）：{群名: [昵称/wxid...]}——命中的不存档、不触发（但仍算"已处理"，水位可推进）

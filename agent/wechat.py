@@ -283,6 +283,24 @@ class WeChatAdapter:
         except Exception:
             return None
 
+    def message_content(self, chat_id: str, local_id):
+        """只读：读某条消息**当前**在库里的原始内容（撤回核对用）。
+
+        为什么需要：微信可能不新增系统行，而是把被撤的那一行**原地改写**成撤回报文；
+        只认"新出现的系统行"会漏 ⇒ 由 `agent/recall.py::sweep()` 定期回读核对。
+        读不到（行被删/查询异常）返回 None —— 调用方一律按"不动"处理。
+        """
+        try:
+            row = self._db.get_message_row(chat_id, int(local_id))
+        except Exception:
+            return None
+        if not row:
+            return None
+        c = row.get("content")
+        if isinstance(c, bytes):
+            c = c.decode("utf-8", "ignore")
+        return str(c or "")
+
     def _parse_quote(self, chat_id: str, local_id):
         """解析「引用 / 拍一拍」这类 zstd 压缩的 appmsg 消息，提取正文与被引用图片。"""
         try:
@@ -376,10 +394,15 @@ class WeChatAdapter:
         _rec = None
         if isinstance(content, str) and content.strip():
             try:
-                _rec = recall_mod.parse_recall(content, self._self_wxid)
+                _cand = recall_mod.parse_recall(content, self._self_wxid)
             except Exception as e:
                 log.debug("撤回识别异常：%s", e)
-                _rec = None
+                _cand = None
+            # 防误判：纯文本形态只在**系统消息**里认 —— 否则群友恰好打出一句
+            # 「张三 撤回了一条消息」就会被当成撤回事件、把上一条别人说的话删掉。
+            # XML（`<sysmsg type="revokemsg">`）形态本身无歧义，不看类型。
+            if _cand and (_cand.get("form") == "xml" or mtype == "系统消息"):
+                _rec = _cand
         if _rec:
             _rec = dict(_rec, ts=_ts_ms or int(time.time() * 1000))
             return {
