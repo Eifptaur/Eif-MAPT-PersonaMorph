@@ -604,9 +604,35 @@ class WebUI:
                                 st["media"] = _ms.snapshot()
                             except Exception as _e2:
                                 st["media"] = {"error": str(_e2)}
+                            # 自定义工具（工具与插件面板）：清单现场扫 + 调用统计
+                            try:
+                                from . import user_tools as _ut2
+                                st["user_tools"] = _ut2.snapshot()
+                            except Exception as _e3:
+                                st["user_tools"] = {"error": str(_e3)}
                     except Exception:
                         pass
                     self._json(st)
+                elif path == "/api/tools/reload":
+                    # 重新扫清单目录（快照本来就是现场算的；这个端点让"重新加载"有个明确的动作与回执）
+                    try:
+                        from . import user_tools as _ut3
+                        snap = _ut3.snapshot()
+                        self._json({"ok": True, "tools": snap,
+                                    "note": "清单已重扫；正在跑的会话在下一轮构建工具清单时生效"})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/tools/toggle":
+                    # 勾选启停：直接改清单文件里的 enabled
+                    try:
+                        from . import user_tools as _ut4
+                        q = parse_qs(urlparse(self.path).query)
+                        nm = str((q.get("name") or [""])[0])
+                        on = str((q.get("on") or ["1"])[0]) not in ("0", "false", "False", "")
+                        ok_t, why_t = _ut4.set_enabled(nm, on)
+                        self._json({"ok": bool(ok_t), "why": why_t, "tools": _ut4.snapshot()})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
                 elif path == "/api/tts/test":
                     # 「试听一句」：真跑一遍本机合成（不出网、不发送），把产物路径/格式/大小报出来
                     try:
