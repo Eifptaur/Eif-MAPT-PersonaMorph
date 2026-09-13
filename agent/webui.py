@@ -598,9 +598,23 @@ class WebUI:
                             st["deps"] = {"summary": _dh.summary_line(),
                                           "offline_available": _dh.offline_available(),
                                           "source": _dh.probe_source()}
+                            # 媒体与语音（能力 A/B/C）：引擎链实测状态 + 图库现状 + 转发开关
+                            try:
+                                from . import media_status as _ms
+                                st["media"] = _ms.snapshot()
+                            except Exception as _e2:
+                                st["media"] = {"error": str(_e2)}
                     except Exception:
                         pass
                     self._json(st)
+                elif path == "/api/voice/test":
+                    # 「测试引擎」：真跑一遍 TTS→WAV→SILK(微信帧)→解码→识别（不需要微信、不出网）
+                    try:
+                        from . import voice as _vt
+                        r = _vt.selftest_loop()
+                        self._json({"ok": bool(r.get("ok")), "result": r})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
                 elif path == "/api/wechat/recheck":
                     try:
                         from .wechat import wechat_version_info as _wvi2
