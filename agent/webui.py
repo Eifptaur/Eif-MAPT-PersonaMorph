@@ -576,6 +576,21 @@ class WebUI:
                             st["input"] = _ib.status()
                             # 版本能力矩阵 + 版本门（W7：版本变了要出横幅、按未验证处理）
                             st["version"] = _vm.current()
+                            # 微信装没装（2026-09-13：没装就带用户去官网，不做静默安装）
+                            try:
+                                from .wechat import wechat_version_info as _wvi
+                                _wi = _wvi() or {}
+                                st["wechat_install"] = _wi.get("install") or {
+                                    "state": _wi.get("state") or "unknown",
+                                    "installed": bool(_wi.get("installed")),
+                                    "detail": _wi.get("detail") or "",
+                                    "official_url": "https://weixin.qq.com/",
+                                    "action": "none"}
+                            except Exception as _e:
+                                st["wechat_install"] = {"state": "unknown", "installed": False,
+                                                        "detail": "检测异常：" + str(_e),
+                                                        "official_url": "https://weixin.qq.com/",
+                                                        "action": "none"}
                             # 依赖体检（盯项目运行时的 site-packages，不是当前进程）
                             st["deps"] = {"summary": _dh.summary_line(),
                                           "offline_available": _dh.offline_available(),
@@ -583,6 +598,13 @@ class WebUI:
                     except Exception:
                         pass
                     self._json(st)
+                elif path == "/api/wechat/recheck":
+                    try:
+                        from .wechat import wechat_version_info as _wvi2
+                        info = _wvi2() or {}
+                        self._json({"ok": True, "version": info, "install": info.get("install") or {}})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
                 elif path == "/api/balance":
                     try:
                         self._json(parent.balance_fn())
