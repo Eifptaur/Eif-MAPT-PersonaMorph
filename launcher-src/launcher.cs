@@ -1,4 +1,4 @@
-﻿// 群相灵 一键启动.exe：图形安装器（C# WinForms，嵌入鲸鱼图标，无控制台）
+// 群相灵 一键启动.exe：图形安装器（C# WinForms，嵌入鲸鱼图标，无控制台）
 // 流程：准备 Python → onestart(事件) → 快捷方式询问 → 自动收尾
 using System;
 using System.Diagnostics;
@@ -15,7 +15,7 @@ namespace WxLauncher
         string Root;
         PictureBox pic;
         Label lblTitle, lblState;
-        Label[] stepLabels = new Label[4];
+        StepList stepList;   // W6b：4 个裸 Label 换成自绘步骤列表（徽章 + 连接线 + 当前行高亮）
         ProgressBar bar;
         Label lblSub;
         TextBox logBox;
@@ -61,17 +61,10 @@ namespace WxLauncher
             lblState.Location = new Point(106, 60); lblState.AutoSize = true;
             Controls.Add(lblState);
 
-            string[] steps = { "准备 Python 环境", "检查 / 安装依赖", "环境自检（55 项）", "启动机器人（打开控制台）" };
-            for (int i = 0; i < 4; i++)
-            {
-                stepLabels[i] = new Label();
-                stepLabels[i].Text = "　" + (i + 1) + ". " + steps[i];
-                stepLabels[i].Font = new Font("Microsoft YaHei UI", 9.5f);
-                stepLabels[i].Location = new Point(50, 116 + i * 32);
-                stepLabels[i].AutoSize = true;
-                stepLabels[i].ForeColor = Color.FromArgb(150, 158, 172);
-                Controls.Add(stepLabels[i]);
-            }
+            stepList = new StepList();
+            stepList.SetSteps(new string[] { "准备 Python 环境", "检查 / 安装依赖", "环境自检（55 项）", "启动机器人（打开控制台）" });
+            stepList.Location = new Point(50, 116); stepList.Size = new Size(400, 124);
+            Controls.Add(stepList);
 
             bar = new RoundBar();   // W6：自绘圆角进度条（Value/Maximum 语义不变，流程代码无需改）
             bar.Location = new Point(50, 256); bar.Size = new Size(400, 20);
@@ -91,7 +84,7 @@ namespace WxLauncher
             logBox.Location = new Point(50, 312); logBox.Size = new Size(400, 74);
             Controls.Add(logBox);
 
-            btnClose = new Button();
+            btnClose = new RoundButton();
             btnClose.Text = "关闭";
             btnClose.Size = new Size(104, 34);
             btnClose.Location = new Point(346, 394);
@@ -110,19 +103,20 @@ namespace WxLauncher
             if (logBox.Lines.Length > 60) { var t2 = logBox.Lines; logBox.Lines = t2.SubArray(t2.Length - 50); }
             logBox.AppendText(t + "\r\n"); }
 
+        /// 取证用：把界面推到"进行到第 stepIdx 步"的样子（只动显示，不碰安装流程）
+        public void ProbeState(int stepIdx)
+        {
+            SetState("环境自检（55 项）…", 70, stepIdx, "Python 就绪 · 依赖已就绪");
+            Log("[取证] 步骤列表渲染到第 " + (stepIdx + 1) + " 步（绿勾/蓝点/灰号三态同框）");
+        }
+
         void SetState(string txt, int pct, int stepIdx, string sub)
         {
             if (InvokeRequired) { BeginInvoke((Action)(() => SetState(txt, pct, stepIdx, sub))); return; }
             lblState.Text = txt;
             bar.Value = Math.Min(100, Math.Max(0, pct));
             lblSub.Text = sub ?? "";
-            string[] steps = { "准备 Python 环境", "检查 / 安装依赖", "环境自检（55 项）", "启动机器人（打开控制台）" };
-            for (int i = 0; i < 4; i++)
-            {
-                if (i < stepIdx) { stepLabels[i].Text = "✔ " + steps[i]; stepLabels[i].ForeColor = Color.FromArgb(52, 150, 90); }
-                else if (i == stepIdx) { stepLabels[i].Text = "▶ " + steps[i]; stepLabels[i].ForeColor = Color.FromArgb(40, 110, 200); }
-                else { stepLabels[i].Text = "　" + (i + 1) + ". " + steps[i]; stepLabels[i].ForeColor = Color.FromArgb(150, 158, 172); }
-            }
+            stepList.SetProgress(stepIdx);   // 徽章/连接线/高亮全在 StepList 里自绘
         }
 
         void ParseLine(string line)
@@ -188,7 +182,7 @@ namespace WxLauncher
             q.FormBorderStyle = FormBorderStyle.FixedDialog;
             q.MaximizeBox = false; q.MinimizeBox = false;
             q.BackColor = Color.FromArgb(246, 248, 252);
-            q.ClientSize = new Size(460, 210);
+            q.ClientSize = new Size(460, 256);
             try { if (File.Exists(Path.Combine(Root, "assets", "app.ico"))) q.Icon = ExtractIcon(Path.Combine(Root, "assets", "app.ico")); } catch { }
             PictureBox qp = new PictureBox();
             try { if (File.Exists(Path.Combine(Root, "assets", "app-icon.png"))) qp.Image = Image.FromFile(Path.Combine(Root, "assets", "app-icon.png")); } catch { }
@@ -204,21 +198,21 @@ namespace WxLauncher
             qm.Text = "欢迎使用 群相灵！\r\n\r\n机器人已启动，建议在桌面创建「一键启动」快捷方式。\r\n是否现在创建？";
             qm.Font = new Font("Microsoft YaHei UI", 9.5f);
             qm.ForeColor = Color.FromArgb(76, 92, 118);
-            qm.Location = new Point(108, 66); qm.Size = new Size(330, 92);
+            qm.Location = new Point(108, 66); qm.Size = new Size(330, 128);   // 高 92 放不下三行（实测 need=125）
             q.Controls.Add(qm);
-            Button qok = new Button();
+            Button qok = new RoundButton();
             qok.Text = "立即创建";
             qok.Size = new Size(146, 36);
-            qok.Location = new Point(300, 162);
+            qok.Location = new Point(300, 204);
             qok.FlatStyle = FlatStyle.Flat;
             qok.BackColor = Color.FromArgb(64, 140, 255);
             qok.ForeColor = Color.White;
             qok.DialogResult = DialogResult.OK;
             q.Controls.Add(qok);
-            Button qno = new Button();
+            Button qno = new RoundButton();
             qno.Text = "暂不";
             qno.Size = new Size(88, 36);
-            qno.Location = new Point(200, 162);
+            qno.Location = new Point(200, 204);
             qno.FlatStyle = FlatStyle.Flat;
             qno.DialogResult = DialogResult.Cancel;
             q.Controls.Add(qno);
@@ -246,6 +240,7 @@ namespace WxLauncher
             {
                 if (!Visible) Application.Exit();
             };
+            StyleKit.Apply(q, "群相灵 启动完成");   // 与 AskForm 同一套外观（此前这个内联窗还是系统标题栏）
             q.Show();
             _asking = false;
         }
@@ -328,13 +323,12 @@ namespace WxLauncher
         public BusyForm()
         {
             string root = Path.GetDirectoryName(Application.ExecutablePath);
-            StyleKit.Apply(this, "群相灵 正在启动");
             Text = "群相灵 一键启动";
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false; MinimizeBox = false;
             BackColor = Color.FromArgb(246, 248, 252);
-            ClientSize = new Size(400, 190);
+            ClientSize = new Size(400, 222);
             try { string ico = Path.Combine(root, "assets", "app.ico"); if (File.Exists(ico)) Icon = Icon.ExtractAssociatedIcon(ico); } catch { }
             PictureBox pic = new PictureBox();
             try { string png = Path.Combine(root, "assets", "app-icon.png"); if (File.Exists(png)) pic.Image = Image.FromFile(png); } catch { }
@@ -350,18 +344,19 @@ namespace WxLauncher
             m.Text = "检测到一键启动已在运行。" + Environment.NewLine + "若看不到窗口，请稍候，" + Environment.NewLine + "或先点「一键关闭.exe」结束后重试。";
             m.Font = new Font("Microsoft YaHei UI", 9.5f);
             m.ForeColor = Color.FromArgb(76, 92, 118);
-            m.Location = new Point(98, 60); m.Size = new Size(280, 80);
+            m.Location = new Point(98, 60); m.Size = new Size(280, 104);   // 高 80 会把最后一行截掉（--dlgprobe 的 need 判据实测 100）
             Controls.Add(m);
-            Button ok = new Button();
+            Button ok = new RoundButton();
             ok.Text = "好的";
             ok.Size = new Size(110, 34);
-            ok.Location = new Point(158, 142);
+            ok.Location = new Point(158, 174);
             ok.FlatStyle = FlatStyle.Flat;
             ok.BackColor = Color.FromArgb(64, 140, 255);
             ok.ForeColor = Color.White;
             ok.DialogResult = DialogResult.OK;
             Controls.Add(ok);
             AcceptButton = ok;
+            StyleKit.Apply(this, "群相灵 正在启动");   // ⚠️ 必须最后调：Apply 之前设 FixedDialog，之后不得再改边框（否则系统标题栏会回来，和自绘标题栏叠成两条）
         }
     }
 
@@ -404,11 +399,10 @@ namespace WxLauncher
             Root = Path.GetDirectoryName(Application.ExecutablePath);
             Text = "群相灵 启动完成";
             StartPosition = FormStartPosition.CenterScreen;
-            StyleKit.Apply(this, "群相灵 启动完成");
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false; MinimizeBox = false;
             BackColor = Color.FromArgb(246, 248, 252);
-            ClientSize = new Size(460, 210);
+            ClientSize = new Size(460, 256);
             try { string ico = Path.Combine(Root, "assets", "app.ico"); if (File.Exists(ico)) Icon = Icon.ExtractAssociatedIcon(ico); } catch { }
             PictureBox qp = new PictureBox();
             try { string png = Path.Combine(Root, "assets", "app-icon.png"); if (File.Exists(png)) qp.Image = Image.FromFile(png); } catch { }
@@ -424,12 +418,12 @@ namespace WxLauncher
             qm.Text = "欢迎使用 群相灵！\r\n\r\n机器人已启动，建议在桌面创建「一键启动」快捷方式。\r\n是否现在创建？";
             qm.Font = new Font("Microsoft YaHei UI", 9.5f);
             qm.ForeColor = Color.FromArgb(76, 92, 118);
-            qm.Location = new Point(108, 66); qm.Size = new Size(330, 92);
+            qm.Location = new Point(108, 66); qm.Size = new Size(330, 128);   // 高 92 放不下三行（实测 need=125）
             Controls.Add(qm);
-            Button qok = new Button();
+            Button qok = new RoundButton();
             qok.Text = "立即创建";
             qok.Size = new Size(146, 36);
-            qok.Location = new Point(300, 162);
+            qok.Location = new Point(300, 204);
             qok.FlatStyle = FlatStyle.Flat;
             qok.BackColor = Color.FromArgb(64, 140, 255);
             qok.ForeColor = Color.White;
@@ -450,10 +444,10 @@ namespace WxLauncher
                 Close();
             };
             Controls.Add(qok);
-            Button qno = new Button();
+            Button qno = new RoundButton();
             qno.Text = "暂不";
             qno.Size = new Size(88, 36);
-            qno.Location = new Point(200, 162);
+            qno.Location = new Point(200, 204);
             qno.FlatStyle = FlatStyle.Flat;
             qno.Click += (s, e) => Close();
             Controls.Add(qno);
@@ -477,6 +471,7 @@ namespace WxLauncher
             };
             watch.Start();
             FormClosed += (s, e) => { try { watch.Stop(); } catch { } };
+            StyleKit.Apply(this, "群相灵 启动完成");   // 同 BusyForm：Apply 放最后，避免系统标题栏与自绘标题栏叠两条
         }
     }
 
@@ -585,7 +580,7 @@ namespace WxLauncher
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false; MinimizeBox = false;
             BackColor = Color.FromArgb(246, 248, 252);
-            ClientSize = new Size(440, 210);
+            ClientSize = new Size(440, 254);
             try { string ico = Path.Combine(root, "assets", "app.ico"); if (File.Exists(ico)) Icon = Icon.ExtractAssociatedIcon(ico); } catch { }
             PictureBox pic = new PictureBox();
             try { string png = Path.Combine(root, "assets", "app-icon.png"); if (File.Exists(png)) pic.Image = Image.FromFile(png); } catch { }
@@ -619,12 +614,12 @@ namespace WxLauncher
                 "为保持唯一，本次不再重复打开浏览器窗口。" + Environment.NewLine + "需要打开控制台请点下方按钮。";
             m.Font = new Font("Microsoft YaHei UI", 9.5f);
             m.ForeColor = Color.FromArgb(76, 92, 118);
-            m.Location = new Point(104, 64); m.Size = new Size(315, 92);
+            m.Location = new Point(104, 64); m.Size = new Size(315, 128);   // 高 92 放不下四行（实测 need=125）
             Controls.Add(m);
-            Button ok = new Button();
+            Button ok = new RoundButton();
             ok.Text = "打开控制台";
             ok.Size = new Size(136, 36);
-            ok.Location = new Point(290, 160);
+            ok.Location = new Point(290, 202);
             ok.FlatStyle = FlatStyle.Flat;
             ok.BackColor = Color.FromArgb(64, 140, 255);
             ok.ForeColor = Color.White;
@@ -639,10 +634,10 @@ namespace WxLauncher
                 Close();
             };
             Controls.Add(ok);
-            Button no = new Button();
+            Button no = new RoundButton();
             no.Text = "知道了";
             no.Size = new Size(92, 36);
-            no.Location = new Point(188, 160);
+            no.Location = new Point(188, 202);
             no.FlatStyle = FlatStyle.Flat;
             no.Click += (ss, ee) => Close();
             Controls.Add(no);
@@ -652,235 +647,6 @@ namespace WxLauncher
     }
 
     // ================= W6：统一外观（StyleKit）=================
-    internal static class StyleKit
-    {
-        public static readonly Color Bg = Color.FromArgb(247, 249, 252);
-        public static readonly Color Card = Color.White;
-        public static readonly Color Ink = Color.FromArgb(26, 38, 61);
-        public static readonly Color Sub = Color.FromArgb(108, 122, 145);
-        public static readonly Color Accent = Color.FromArgb(52, 132, 247);
-        public static readonly Color Line = Color.FromArgb(222, 230, 241);
-        public static readonly Color ConsoleBg = Color.FromArgb(15, 23, 35);
-        public static readonly Color ConsoleInk = Color.FromArgb(206, 220, 236);
-
-        public static Font Ui(float size, FontStyle fs)
-        {
-            try { return new Font("Microsoft YaHei UI", size, fs); }
-            catch { return new Font(FontFamily.GenericSansSerif, size, fs); }
-        }
-        public static Font Mono(float size)
-        {
-            try { return new Font("Consolas", size); }
-            catch { return new Font(FontFamily.GenericMonospace, size); }
-        }
-
-        [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
-        static extern int DwmSetWindowAttribute(IntPtr h, int attr, ref int val, int size);
-        [System.Runtime.InteropServices.DllImport("user32.dll")]
-        static extern bool ReleaseCapture();
-        [System.Runtime.InteropServices.DllImport("user32.dll")]
-        static extern IntPtr SendMessage(IntPtr h, int msg, IntPtr wp, IntPtr lp);
-        [System.Runtime.InteropServices.DllImport("user32.dll")]
-        internal static extern int SetThreadDpiAwarenessContext(IntPtr ctx);
-        [System.Runtime.InteropServices.DllImport("user32.dll")]
-        internal static extern uint SetErrorMode(uint mode);
-        [System.Runtime.InteropServices.DllImport("user32.dll")]
-        internal static extern IntPtr GetForegroundWindow();
-        [System.Runtime.InteropServices.DllImport("user32.dll")]
-        internal static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
-
-        /// 进程级准备：高 DPI（PerMonitorV2），并关掉系统崩溃/严重错误弹窗（不许弹系统 MessageBox）
-        public static void Prep()
-        {
-            try { SetErrorMode(0x0001 | 0x0002 | 0x8000); } catch { }
-            try { SetThreadDpiAwarenessContext((IntPtr)(-4)); } catch { }
-            // WebView2 的程序集放在 lib\ 下：.NET 默认不探子目录 ⇒ 自己挂解析（找不到就自然回退浏览器）
-            try { AppDomain.CurrentDomain.AssemblyResolve += ResolveFromLib; } catch { }
-        }
-
-        static System.Reflection.Assembly ResolveFromLib(object sender, ResolveEventArgs e)
-        {
-            try
-            {
-                string dir = Path.GetDirectoryName(Application.ExecutablePath);
-                string name = new System.Reflection.AssemblyName(e.Name).Name;
-                foreach (string d in new string[] { Path.Combine(dir, "lib"), dir })
-                {
-                    string p = Path.Combine(d, name + ".dll");
-                    if (File.Exists(p)) return System.Reflection.Assembly.LoadFrom(p);
-                }
-            }
-            catch { }
-            return null;
-        }
-
-        /// 统一外观：圆角（DWM）+ 标题栏配色 + 字体/底色，并把子控件按同一套语言重刷一遍
-        public static void Apply(Form f, string title)
-        {
-            try
-            {
-                f.Text = title;
-                f.BackColor = Bg;
-                f.Font = Ui(9.5f, FontStyle.Regular);
-                if (f.FormBorderStyle == FormBorderStyle.FixedDialog || f.FormBorderStyle == FormBorderStyle.Sizable)
-                {
-                    // 去系统标题栏，换成自绘标题栏；既有子控件整体下移 BarH，绝对坐标布局不受影响
-                    f.FormBorderStyle = FormBorderStyle.None;
-                    f.MinimizeBox = false; f.MaximizeBox = false;
-                    f.Padding = new Padding(1);
-                    Panel bar = BuildTitleBar(f, title);
-                    f.Controls.Add(bar);
-                    bar.BringToFront();
-                    foreach (Control c in f.Controls)
-                    {
-                        if (c != bar) c.Top += BarH;
-                    }
-                    f.ClientSize = new Size(f.ClientSize.Width, f.ClientSize.Height + BarH);
-                }
-                f.HandleCreated += delegate { Decorate(f); };
-                if (f.IsHandleCreated) Decorate(f);
-                Restyle(f);
-                // 有些窗体在构造函数里靠后还会再设一遍颜色/字体 ⇒ Load 时统一再落一次（幂等）
-                f.Load += delegate
-                {
-                    try
-                    {
-                        f.BackColor = Bg;
-                        f.Font = Ui(9.5f, FontStyle.Regular);
-                        Restyle(f);
-                        Decorate(f);
-                    }
-                    catch { }
-                };
-            }
-            catch { }
-        }
-
-        static void Decorate(Form f)
-        {
-            int v;
-            try { v = 2; DwmSetWindowAttribute(f.Handle, 33, ref v, 4); } catch { }   // 圆角：DWMWCP_ROUND
-            try { v = ColorTranslator.ToWin32(Bg); DwmSetWindowAttribute(f.Handle, 35, ref v, 4); } catch { }  // 标题栏底色
-            try { v = ColorTranslator.ToWin32(Ink); DwmSetWindowAttribute(f.Handle, 36, ref v, 4); } catch { }  // 标题文字色
-            if (f.FormBorderStyle == FormBorderStyle.None)
-            {
-                try
-                {
-                    using (var p = RoundBar.RoundRect(new Rectangle(0, 0, f.Width, f.Height), 12))
-                        f.Region = new Region(p);
-                }
-                catch { }
-            }
-        }
-
-        internal const int BarH = 38;
-
-        /// 自绘标题栏：标题文字 + 最小化/关闭（拖动靠 Drag）
-        static Panel BuildTitleBar(Form f, string title)
-        {
-            Panel bar = new Panel();
-            bar.Height = BarH; bar.Dock = DockStyle.Top; bar.BackColor = Bg;
-            bar.MouseDown += delegate { Drag(f.Handle); };
-            Label t = new Label();
-            t.Text = title;
-            t.Font = Ui(9.5f, FontStyle.Bold);
-            t.ForeColor = Ink;
-            t.AutoSize = true;
-            t.Location = new Point(14, 11);
-            t.MouseDown += delegate { Drag(f.Handle); };
-            bar.Controls.Add(t);
-            Button cls = new Button();
-            cls.Text = "✕"; cls.Size = new Size(34, 26); cls.FlatStyle = FlatStyle.Flat;
-            cls.FlatAppearance.BorderSize = 0; cls.BackColor = Bg; cls.ForeColor = Sub;
-            cls.Dock = DockStyle.Right;   // 用 Dock 而不是 Anchor：Anchor 在 Dock 重排后会二次位移
-            cls.Click += delegate { f.Close(); };
-            bar.Controls.Add(cls);
-            return bar;
-        }
-
-        /// 拖动无边框窗口（自绘标题栏用）
-        public static void Drag(IntPtr h)
-        {
-            try { ReleaseCapture(); SendMessage(h, 0xA1, (IntPtr)2, IntPtr.Zero); } catch { }
-        }
-
-        /// 把一棵控件树刷成同一套语言：主按钮用强调色、次按钮描边、日志/文本框用卡片色
-        public static void Restyle(Control root)
-        {
-            if (root == null) return;
-            foreach (Control c in root.Controls)
-            {
-                Button b = c as Button;
-                if (b != null)
-                {
-                    b.FlatStyle = FlatStyle.Flat;
-                    b.Font = Ui(9.5f, FontStyle.Regular);
-                    b.FlatAppearance.BorderSize = 1;
-                    b.FlatAppearance.BorderColor = Line;
-                    b.BackColor = Card;
-                    b.ForeColor = Ink;
-                    bool primary = b.BackColor.B > 200 && b.BackColor.R < 120;
-                    if (primary) { b.BackColor = Accent; b.ForeColor = Color.White; b.FlatAppearance.BorderColor = Accent; }
-                    b.Height = Math.Max(b.Height, 34);
-                }
-                else
-                {
-                    TextBox tb = c as TextBox;
-                    if (tb != null)
-                    {
-                        tb.BackColor = Card; tb.ForeColor = Ink;
-                        if (tb.Multiline)
-                        {
-                            tb.BorderStyle = BorderStyle.FixedSingle;
-                            tb.Font = Mono(9f);
-                            tb.BackColor = ConsoleBg;    // 深底浅字：日志区像控制台，字更清楚
-                            tb.ForeColor = ConsoleInk;
-                        }
-                    }
-                    else
-                    {
-                        Label lb = c as Label;
-                        if (lb != null && lb.Font != null && lb.Font.Size >= 13f) { lb.ForeColor = Ink; }
-                    }
-                }
-                if (c.HasChildren) Restyle(c);
-            }
-        }
-    }
-
-    /// 自绘圆角进度条：保留 ProgressBar 的 Value/Maximum API，流程代码零改动
-    public class RoundBar : ProgressBar
-    {
-        public RoundBar() { SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true); }
-        protected override void OnPaint(PaintEventArgs e)
-        {
-            Graphics g = e.Graphics;
-            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            Rectangle r = new Rectangle(0, 0, Width - 1, Height - 1);
-            using (var bk = new SolidBrush(Color.FromArgb(232, 238, 247)))
-            using (var pth = RoundRect(r, Height / 2))
-                g.FillPath(bk, pth);
-            int max = Maximum > 0 ? Maximum : 100;
-            int w = (int)Math.Round((Width - 2) * (Math.Min(Value, max) / (double)max));
-            if (w > 2)
-            {
-                using (var fg = new SolidBrush(StyleKit.Accent))
-                using (var pth = RoundRect(new Rectangle(1, 1, Math.Max(2, w - 2), Height - 3), (Height - 3) / 2))
-                    g.FillPath(fg, pth);
-            }
-        }
-        internal static System.Drawing.Drawing2D.GraphicsPath RoundRect(Rectangle r, int radius)
-        {
-            var p = new System.Drawing.Drawing2D.GraphicsPath();
-            int d = Math.Max(2, radius * 2);
-            p.AddArc(r.X, r.Y, d, d, 180, 90);
-            p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
-            p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
-            p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
-            p.CloseFigure();
-            return p;
-        }
-    }
 
     /// WebView2 内嵌控制台：自带标题栏（无边框 + 圆角 + 可拖动），WebView2 不可用时回退到浏览器
     public class ConsoleForm : Form
@@ -905,14 +671,14 @@ namespace WxLauncher
             t.AutoSize = true; t.Location = new Point(14, 12);
             t.MouseDown += delegate { StyleKit.Drag(Handle); };
             bar.Controls.Add(t);
-            Button min = new Button();
+            Button min = new RoundButton();
             min.Text = "—"; min.Size = new Size(34, 26); min.FlatStyle = FlatStyle.Flat;
             min.FlatAppearance.BorderSize = 0; min.BackColor = StyleKit.Bg; min.ForeColor = StyleKit.Sub;
             min.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             min.Location = new Point(bar.Width - 82, 8);
             min.Click += delegate { WindowState = FormWindowState.Minimized; };
             bar.Controls.Add(min);
-            Button cls = new Button();
+            Button cls = new RoundButton();
             cls.Text = "✕"; cls.Size = new Size(34, 26); cls.FlatStyle = FlatStyle.Flat;
             cls.FlatAppearance.BorderSize = 0; cls.BackColor = StyleKit.Bg; cls.ForeColor = StyleKit.Sub;
             cls.Anchor = AnchorStyles.Top | AnchorStyles.Right;
@@ -971,6 +737,7 @@ namespace WxLauncher
             var sb = new StringBuilder();
             try { Directory.CreateDirectory(dir); } catch { }
             TryShot(dir, sb, "launcher", delegate { return new LauncherForm() { ProbeMode = true }; });
+            TryShot(dir, sb, "launcher-step3", delegate { LauncherForm lf = new LauncherForm() { ProbeMode = true }; lf.ProbeState(2); return lf; });
             TryShot(dir, sb, "busy", delegate { return new BusyForm(); });
             TryShot(dir, sb, "ask", delegate { return new AskForm(); });
             TryShot(dir, sb, "notice", delegate { return new NoticeForm(); });
@@ -988,24 +755,8 @@ namespace WxLauncher
         {
             try
             {
-                IntPtr fg0 = StyleKit.GetForegroundWindow();
-                f.StartPosition = FormStartPosition.Manual;
-                f.Location = new Point(-4000, -4000);   // 离屏
-                f.ShowInTaskbar = false;
-                // 关键：不调 f.Show()（它默认会**激活**窗口、抢前台）
-                // 改成「建句柄 → SWP_NOACTIVATE|SWP_SHOWWINDOW 显示 → 离屏 DrawToBitmap」
-                f.CreateControl();
-                StyleKit.SetWindowPos(f.Handle, IntPtr.Zero, -4000, -4000, f.Width, f.Height, 0x0010 | 0x0040);
-                for (int i = 0; i < 12; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(20); }
-                using (Bitmap bmp = new Bitmap(f.Width, f.Height))
-                {
-                    f.DrawToBitmap(bmp, new Rectangle(0, 0, f.Width, f.Height));
-                    string p = Path.Combine(dir, name + ".png");
-                    bmp.Save(p, System.Drawing.Imaging.ImageFormat.Png);
-                    bool fg_kept = (StyleKit.GetForegroundWindow() == fg0);
-                    sb.AppendLine(name + " " + f.Width + "x" + f.Height + " controls=" + f.Controls.Count
-                                  + " 前台未变=" + fg_kept + " -> " + p);
-                }
+                string p = Path.Combine(dir, name + ".png");
+                sb.AppendLine(name + " " + StyleKit.CaptureOffscreen(f, p));   // 离屏 + 不抢前台（实现见 StyleKit）
                 f.Close();
             }
             catch (Exception ex) { sb.AppendLine(name + " FAIL " + ex.Message); }
@@ -1035,7 +786,18 @@ namespace WxLauncher
                 }
                 catch { }
                 sb.AppendLine(f.GetType().Name + " client=" + f.ClientSize.Width + "x" + f.ClientSize.Height + " controls=" + f.Controls.Count + " border=" + f.FormBorderStyle + " back=" + f.BackColor);
-                foreach (Control c in f.Controls) sb.AppendLine("   - " + c.GetType().Name + " " + c.Bounds + " text=" + (c.Text ?? ""));
+                foreach (Control c in f.Controls)
+                {
+                    // 机械判据：文字需要的高度 > 控件高度 ⇒ 截断（此前只能靠肉眼看图，本轮改成可判定的读数）
+                    string extra = "";
+                    Label lb = c as Label;
+                    if (lb != null && !string.IsNullOrEmpty(lb.Text))
+                    {
+                        Size need = TextRenderer.MeasureText(lb.Text, lb.Font, new Size(Math.Max(8, lb.Width), int.MaxValue), TextFormatFlags.WordBreak);
+                        extra = " need=" + need.Width + "x" + need.Height + ((need.Height > lb.Height) ? " CLIP" : "");
+                    }
+                    sb.AppendLine("   - " + c.GetType().Name + " " + c.Bounds + " text=" + (c.Text ?? "") + extra);
+                }
                 f.Dispose();
             }
             return sb.ToString();

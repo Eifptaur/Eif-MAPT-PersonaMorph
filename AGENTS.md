@@ -201,27 +201,33 @@
 
 **🏷️ W6b 产品名统一（2026-09-13 完成一部分）**：启动器与关闭器里所有**用户可见**的 "wx-agent" 已改为「**群相灵**」——`launcher.cs` 24 处（窗口标题 / 自绘标题 / 步骤标题 / "启动完成" 弹窗 / "欢迎使用 群相灵！" / "检测到 群相灵 控制台已在运行。" / 桌面快捷方式名）+ `close.cs` 3 处；**进程名 `wx_agent.py` 原样保留**（close_all 靠它匹配进程），**旧快捷方式名做兼容检查**（`一键启动 群相灵.lnk` 或 `一键启动 wx-agent.lnk` 任一存在就不重复创建）。**验收（机械）**：csc 重编两个 exe exit 0（仍是那 3 个已知告警）· `一键启动.exe --dlgprobe` 读出 `text=群相灵 一键启动 / 群相灵 启动完成 / 欢迎使用 群相灵！/ 检测到 群相灵 控制台已在运行。`（**注意 dlgprobe 输出是系统 ANSI 代码页，读的时候要 `-Encoding Default`，否则中文看着像乱码**）· exe 图标与 `assets\app.ico` 的 32 帧**最大像素差 0**。**W6b 剩余**：步骤列表/按钮的深度视觉重绘、`close.cs` 也接入 StyleKit 主题。
 
+**🎨 W6b 弹窗族深度重绘（2026-09-13 完成，提交随本次）**：外观层从 `launcher.cs` 抽出成 **`launcher-src\stylekit.cs`**（`StyleKit` + `RoundBar` + 新增 **`RoundButton`**（圆角：主按钮强调色填充/悬停变亮、次按钮卡片底描边、标题栏按钮无边框悬停淡灰）+ **`StepList`**（编号徽章：完成绿勾／进行蓝点／待办灰号 + 连接线 + 当前行高亮底，`SetProgress(idx)` 语义不变）＋ `CaptureOffscreen`），**两个 exe 共用**同一次编译（`close.cs` 也终于套上了 StyleKit）。修掉三个 W6 遗留真缺陷：①`BusyForm`/`AskForm` 在 `StyleKit.Apply` **之后**又设 `FormBorderStyle=FixedDialog` ⇒ 系统标题栏 + 自绘标题栏叠成两条（现在 Apply 一律放构造函数最后）；②`StyleKit.Restyle` 的主按钮判定写在覆盖 `BackColor` 之后、条件是 Card 的 R/B ⇒ **恒为 false**，主按钮从没上过强调色；③`--shot` 出图全白（见下条）。**验收**：csc 两个 exe exit 0（仍是那 3 个已知告警）· `--dlgprobe` 里 5 个窗体 `border=None`、**`CLIP` 计数 0**（三个正文 Label 原来分别需要 100/125/125 却被设成 80/92/92 ⇒ 都截了最后一行，已按 need 值放大并把按钮下移、客户区加高）· `--shot` 6 张**像素色数=9**（`console.png` 是 1＝空，WebView2 内容在探针里本来就没有）且**前台未变=True** · 实拍拼图 `_scratch\w6b-shots\sheet.png` 六图一屏核对通过。
+
+**📸 离屏出图的正确姿势（2026-09-13 四组对照实测，脚本 `_scratch\shot_probe.cs` / `shot_probe2.cs`）**：W6 的 `--shot` 用 `CreateControl()` + `SetWindowPos(SWP_NOACTIVATE|SWP_SHOWWINDOW)` → PNG **只有底色**（子控件一个都不画）——**那 5 张"渲染成功"的截图其实全是空白**，当时只验了"文件生成了"没验像素。正确做法（现落在 `StyleKit.CaptureOffscreen`）：`CreateControl()` 建句柄 → 加 **`WS_EX_NOACTIVATE`** → **`Show()`**（风格档住了激活 ⇒ 前台不变，实测 `前台未变=True`）→ **`DrawToBitmap`**。测得矩阵（无边框+Region 窗体）：CreateControl+SWP→DrawToBitmap/B 全 =**1 色**；`Show()`+还原前台 =35 色（会短暂抢前台）；**`WS_EX_NOACTIVATE`+Show+DrawToBitmap =35 色且前台不变** ✓；同条件下 `PrintWindow(PW_RENDERFULLCONTENT)` 仍是 1 色。⇒ 输出行现在带 **`像素色数=N`**，**≤2 自动打 ⚠️空白图**（不许再把"文件存在"当成功）。
+
 **📦 打包口径：只有"在线包"，不再有"离线包"（用户 2026-09-13 定）**
 - 原话："**模型运行不是要用网的吗？所以离线包实际上是不用的…离线包就算离线，它也运行模型，也要网，所以这是压根没必要的。就不应该有这个包。**"
 - ⇒ 落地：**发给别的机器的只有在线包**（＝版本库里的代码，约 **3.7MB / 108 文件**）；`offline/`（wheels 118MB + 绿色 Python 8MB + 微信安装包 244MB）**已从版本库摘除**（`git rm --cached offline` + `.gitignore` 加 `offline/`），**本机文件保留**仅作"无网时装依赖"的加速；`一键启动.exe` 在别的机器上会**联网准备 Python**（`setup_python.ps1` 可下载）并**走镜像装依赖**（`setup_deps.py` 的联网分支）。
 - 旧的"离线包/预装运行时"两种口味都已废弃并删除（曾误打成 456MB / 357MB / 127MB 三个包）。
 
 **一键启动.exe / 一键关闭.exe 是 csc 编译产物（重要，之前没人写下来）：**
-- 源码：**`launcher-src\launcher.cs`、`launcher-src\close.cs`**（2026-09-13 W6 从 `_scratch/` 移入版本管理：发布物必须有源）；编译器：`C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe`
+- 源码：**`launcher-src\launcher.cs`、`launcher-src\close.cs`、`launcher-src\stylekit.cs`**（2026-09-13 W6 从 `_scratch/` 移入版本管理：发布物必须有源；W6b 抽出 `stylekit.cs` 供两个 exe 共用）；编译器：`C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe`
 - W6 起 一键启动.exe **必须引用 WebView2**：`lib\Microsoft.Web.WebView2.Core.dll` + `lib\Microsoft.Web.WebView2.WinForms.dll`，且 **`WebView2Loader.dll` 放在 exe 同目录（根目录）**（程序集解析在 `StyleKit.Prep()` 用 `AssemblyResolve` 挂到 `lib\`）
 - 自检入口（W6）：`一键启动.exe --console <url>`（自带 WebView2 窗口开控制台，Python 侧不再开浏览器）· `--shot <dir>`（全部弹窗离屏渲染 PNG 作视觉证据）· `--dlgprobe`（打印弹窗/控件清单，机械核对主题与边框）
 - **硬规矩：0 系统 MessageBox**（`grep "MessageBox\.Show" launcher-src\*.cs` 必须 0）；外观只在 `StyleKit` 一处定义，新窗体先 `StyleKit.Apply(this, "标题")`
 - 命令（换图标后重新编译，已在 2026-09-13 实测通过）：
   ```powershell
-  csc /nologo /target:winexe /optimize+ /win32icon:assets\exe.ico /r:lib\Microsoft.Web.WebView2.Core.dll /r:lib\Microsoft.Web.WebView2.WinForms.dll /out:一键启动.exe launcher-src\launcher.cs
-  csc /nologo /target:winexe /optimize+ /win32icon:assets\exe.ico /r:System.Management.dll /out:一键关闭.exe launcher-src\close.cs
+  csc /nologo /target:winexe /optimize+ /win32icon:assets\exe.ico /r:lib\Microsoft.Web.WebView2.Core.dll /r:lib\Microsoft.Web.WebView2.WinForms.dll /out:一键启动.exe launcher-src\launcher.cs launcher-src\stylekit.cs
+  csc /nologo /target:winexe /optimize+ /win32icon:assets\exe.ico /r:System.Management.dll /out:一键关闭.exe launcher-src\close.cs launcher-src\stylekit.cs
   ```
 - **验收（比肉眼硬，口径 2026-09-13 W6 修正）**：`[System.Drawing.Icon]::ExtractAssociatedIcon(新exe).ToBitmap()` 应与 **`assets\app.ico` / `assets\exe.ico` 的 32 帧**逐一比对，**最大像素差 = 0**（本轮实测两个 exe、两个 ico 全是 0 ✓）。
   ⚠️ **别拿 `app-icon.png` 缩到 32 来当基准**：PNG→Bitmap 的默认重采样与 ico 内嵌帧不一致，会得到"最大差 580"的**假红**（本轮踩过；两者本就不是同一条渲染路径）。
 - 编译只出 3 个"未使用变量"警告（`launcher.cs` 的 `ex`/`done`/`_asking`），正常
 
 **取证时的"打扰纪律"（2026-09-13 用户察觉后补 + 当场修）**：用户问"你测鼠标/切窗口的时候是不是切前台了"——**确实发生过**，分三种，必须分清：
-- ①**截图取证默认不能抢前台**：老写法用 `Form.Show()` + 离屏位置，**`Show()` 默认会激活窗口**（抢前台）。已改成 `CreateControl()` → `SetWindowPos(..., SWP_NOACTIVATE | SWP_SHOWWINDOW)` → 离屏 `DrawToBitmap`；`--shot` **每次打印「前台未变=True/False」当判据**（本机实测 5 个弹窗全 **True** ✓）。
+- ①**截图取证默认不能抢前台**：老写法用 `Form.Show()` + 离屏位置，**`Show()` 默认会激活窗口**（抢前台）。现行做法见上面「📸 离屏出图的正确姿势」（`WS_EX_NOACTIVATE` + `Show()` + `DrawToBitmap`，落在 `StyleKit.CaptureOffscreen`）；`--shot` **每次打印「前台未变=True/False」与「像素色数」当判据**（本机实测 6 张全 `前台未变=True`、`像素色数=9` ✓）。
+  ⚠️ **`StyleKit.Apply(this, …)` 必须是窗体构造函数最后一句**：它把 `FixedDialog` 改成无边框、加自绘标题栏、子控件整体下移 38px；之后再碰 `FormBorderStyle` 就叠两条标题栏（W6 的 `BusyForm`/`AskForm` 就是这么错的）。
+  ⚠️ **弹窗改几何后必须跑 `--dlgprobe` 看 `CLIP`**：每个 Label 现在带 `need=WxH`（`TextRenderer.MeasureText` 实测）与 `CLIP` 标记，`CLIP` 计数必须 **0**——之前三个正文 Label 都截了最后一行而肉眼看图不一定看得出来。
 - ②**真键鼠只允许出现在"阳性对照"分支**（本轮 `mouse_panel_ab` / `mouse_post_win` 的 REAL 组确实动了真鼠标，用完还原光标）——这是"判据是否成立"的必要代价，但**必须在脚本头部写明**，且与产品行为分开记。
 - ③**窗口置顶（TOPMOST）只在"必须抓屏且目标被遮挡"时短暂使用**，用完立刻 NOTOPMOST；它会把窗口怼到用户脸上，属**可见打扰**，优先级排在所有零打扰判据之后。
 - 排序原则：**零打扰判据（DB 回读 / 窗口枚举 / 控件状态 / 标题…）> 无激活截图 > 真输入阳性对照 > 置顶抓屏**——能不用后面的就不用。
