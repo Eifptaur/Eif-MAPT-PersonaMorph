@@ -40,6 +40,47 @@ TYPE_LABEL = {    "文本": "text",
 }
 
 
+def _close_file_dialog(hwnd: int) -> None:
+    """关掉系统「选择文件」对话框（`#32770`）——异常路径的兜底，**绝不留模态框在用户屏幕上**。"""
+    try:
+        import win32con
+        import win32gui
+        if hwnd and win32gui.IsWindow(int(hwnd)):
+            win32gui.PostMessage(int(hwnd), win32con.WM_CLOSE, 0, 0)
+    except Exception:
+        pass
+
+
+def _close_stale_file_dialogs() -> int:
+    """清掉**残留**的「选择文件」对话框（上一次异常留在屏幕上的），返回关掉几个。
+
+    为什么要在发文件之前先做这一步：那个模态框会挡住微信的输入区，之后的发送/切会话全部无效，
+    而且看起来像"发文件功能坏了"（2026-09-13 实测踩到：UIA 抛错后框留在屏幕上）。
+    """
+    n = 0
+    try:
+        import win32con
+        import win32gui
+        hits = []
+
+        def _cb(h, _):
+            try:
+                if win32gui.GetClassName(h) == "#32770" and win32gui.IsWindowVisible(h):
+                    t = win32gui.GetWindowText(h)
+                    if "选择文件" in t or "打开" in t:
+                        hits.append(h)
+            except Exception:
+                pass
+
+        win32gui.EnumWindows(_cb, None)
+        for h in hits:
+            win32gui.PostMessage(int(h), win32con.WM_CLOSE, 0, 0)
+            n += 1
+    except Exception:
+        pass
+    return n
+
+
 def wx_version_for_gate() -> str:
     """给**版本门**用的当前微信版本号（读不到就返回空串 ⇒ 门自己按"未验证"处理）。
 
@@ -1090,19 +1131,32 @@ class WeChatAdapter:
                     return False, ("点了搜索图标（依据：%s）但没看到搜索浮层弹出来 ⇒ 不往下打字"
                                    "（fail-closed）" % ent.get("why"))
                 pop_hwnd, prect, pimg, pwhy = pop
-                ok_t, why_t = backend.send_text(int(pop_hwnd), name)
-                if not ok_t:
-                    return False, "往搜索浮层投字失败：%s" % why_t
                 row, shot_size = None, None
-                for _i in range(5):
-                    time.sleep(0.6)
-                    im3 = _chh.shot_window(int(pop_hwnd))
-                    if im3 is None:
-                        continue
-                    shot_size = im3.size
-                    row = _co.find_popover_row(im3, name)
-                    if row:
-                        break
+                # ⚠️ 浮层会**保留上次的查询词**（实测：再次打开时它还高着开、词还在）——这时再打字会变成
+                #    「E」+「E」⇒ 查不到任何联系人、浮层里也就没有「联系人」段（本轮就是这么失败的：
+                #    "搜索浮层的画面里没认出「E」那一行"）。⇒ 先拿现成画面找一次；找不到再**清空**（投 8 个
+                #    退格，输入框空着时是无害的）重新打字。
+                if pimg is not None:
+                    shot_size = pimg.size
+                    row = _co.find_popover_row(pimg, name)
+                if not row:
+                    try:
+                        backend.send_text(int(pop_hwnd), "\b" * 8)
+                        time.sleep(0.3)
+                    except Exception:
+                        pass
+                    ok_t, why_t = backend.send_text(int(pop_hwnd), name)
+                    if not ok_t:
+                        return False, "往搜索浮层投字失败：%s" % why_t
+                    for _i in range(5):
+                        time.sleep(0.6)
+                        im3 = _chh.shot_window(int(pop_hwnd))
+                        if im3 is None:
+                            continue
+                        shot_size = im3.size
+                        row = _co.find_popover_row(im3, name)
+                        if row:
+                            break
                 if not row:
                     return False, "搜索浮层的画面里没认出「%s」那一行（浮层截图 %s）" % (name, shot_size)
                 backend.click(int(pop_hwnd), (int(prect[0]) + int(row["x"]), int(prect[1]) + int(row["y"])))
@@ -1344,6 +1398,10 @@ class WeChatAdapter:
             if prev and (now - prev) < window_s and not note:
                 return False, "同一文件在 %d 秒内已经发给这个会话了（%s）——拒绝重复发送；确实要再发请显式传 allow_repeat=True" % (
                     int(now - prev), os.path.basename(path))
+            # ⚠️ 只有 note=True（＝调用方已用 DB 回读确认发出去了）才写台账：默认的"检查"必须**只读**，
+            #    否则一次因为别的原因（身份闸/名字闸）失败的尝试也会留下记录，把之后 10 分钟的真重试全堵死。
+            if not note:
+                return True, ""
             data[full] = now
             for k in list(data.keys()):
                 try:
@@ -1451,6 +1509,9 @@ class WeChatAdapter:
             base_id = int(base[0].get("local_id") or 0) if base else 0
 
             # ② 打开系统文件对话框
+            _stale = _close_stale_file_dialogs()
+            if _stale:
+                log.warning("发文件前清掉了 %d 个残留的「选择文件」对话框（上一次异常留下的）", _stale)
             pt = self._file_panel_point(r, pane)
             ok_c, why_c = backend.click(main_hwnd, pt)
             if not ok_c:
@@ -1479,16 +1540,23 @@ class WeChatAdapter:
             hwnd = _find_dlg(10.0)
             if not hwnd:
                 return False, "没等到「选择文件」对话框（微信版本/主题不同可能按钮位置变了）"
-            dlg = auto.ControlFromHandle(hwnd)
-            edits, buttons = [], []
-            for c, _d in auto.WalkControl(dlg, maxDepth=14):
-                try:
-                    if c.ControlTypeName == "EditControl" and c.IsEnabled:
-                        edits.append(c)
-                    elif c.ControlTypeName == "ButtonControl" and c.IsEnabled:
-                        buttons.append(c)
-                except Exception:
-                    continue
+            # ⚠️ UIA 偶发抛 COM 错（实测 2026-09-13：`(-2147220991, '事件无法调用任何订户')`）——
+            #    原来的写法一抛就 return，**把「选择文件」这个模态框留在屏幕上**，之后微信/发送全被它挡住。
+            #    ⇒ 这里一律 try 住：出错就把对话框关掉再返回（绝不留模态框）。
+            try:
+                dlg = auto.ControlFromHandle(hwnd)
+                edits, buttons = [], []
+                for c, _d in auto.WalkControl(dlg, maxDepth=14):
+                    try:
+                        if c.ControlTypeName == "EditControl" and c.IsEnabled:
+                            edits.append(c)
+                        elif c.ControlTypeName == "ButtonControl" and c.IsEnabled:
+                            buttons.append(c)
+                    except Exception:
+                        continue
+            except Exception as e:
+                _close_file_dialog(int(hwnd))
+                return False, "驱动「选择文件」对话框时出错（已把对话框关掉，不会留在你屏幕上）：%s" % e
             target = None
             for c in edits:
                 if str(c.AutomationId) == "1148":
@@ -1634,8 +1702,11 @@ class WeChatAdapter:
         try:
             for r in (self._db.get_messages(chat_id, limit=max(int(limit), 1)) or []):
                 c = str(r.get("content") or "").strip()
-                if c.startswith("<msg"):
-                    continue          # 文件/图片/链接卡：标题在不同会话里会重复 ⇒ 一律不当指纹
+                # ⚠️ 图片/文件/引用这类消息的 content 是**原始报文**：有的以 `<msg` 开头，有的以
+                #    `<?xml version="1.0"?>` 开头（2026-09-13 实测：只判 `<msg` 会漏掉后者 ⇒ 指纹表
+                #    被 6 条 XML 塞满、把「2qqwq」这类真文本挤出 keep 名额 ⇒ 身份闸对**正确**的会话也判否）。
+                if c.startswith("<msg") or c.startswith("<?xml") or "<msg" in c[:200]:
+                    continue          # 报文一律不当指纹（标题在不同会话里会重复）
                 alnum = "".join(ch for ch in c if ch.isalnum())
                 if len(alnum) < max(4, int(min_len)):
                     continue
@@ -1646,6 +1717,45 @@ class WeChatAdapter:
         except Exception:
             pass
         return out
+
+    def recent_file_title(self, chat_id: str, limit: int = 6) -> str:
+        """目标会话最近若干条里最后一条**文件/链接卡**的标题（取不到返回空串）。"""
+        try:
+            for r in (self._db.get_messages(chat_id, limit=max(int(limit), 1)) or []):
+                c = str(r.get("content") or "")
+                if c.startswith("<msg") and "<title>" in c:
+                    m = re.findall(r"<title>(.*?)</title>", c, re.S)
+                    if m and str(m[0]).strip():
+                        return str(m[0]).strip()
+        except Exception:
+            pass
+        return ""
+
+    def pane_file_card_ok(self, chat_id: str, pane: str, peers=("filehelper",)):
+        """**文件卡指纹**：会话最近一条文件卡的标题**在别的会话里没出现过**，且聊天区里认得出它。
+
+        为什么要这一档（2026-09-13 实测）：E 这种会话最近几条全是文件卡，而"≥6 字文本"指纹
+        全在视口之上 ⇒ 明明开着的就是 E，闸门也判否。文件名单独用不够（实测 368 那份包在 E 和
+        文件助手里都有），但**"这个名字只在一个会话里出现过"＋"聊天区认得出它"**两条合起来就有
+        区分度了。拿不到唯一性就返回 None（不许当证据）。
+        """
+        title = self.recent_file_title(chat_id)
+        if not title:
+            return None, "目标会话最近没有文件卡可当指纹"
+        for p in peers:
+            try:
+                for r in (self._db.get_messages(p, limit=20) or []):
+                    if title in str(r.get("content") or ""):
+                        return None, "同一文件名在 %s 的最近记录里也出现过 ⇒ 不具区分度" % p
+            except Exception:
+                pass
+        a = "".join(ch for ch in title if ch.isalnum())
+        b = "".join(ch for ch in str(pane or "") if ch.isalnum())
+        frag = a[-12:] if len(a) >= 12 else a
+        if len(frag) >= 8 and frag in b:
+            return True, ("聊天区里认出了目标会话最近那条文件卡（%r…；该文件名在同机其它会话的最近记录里没有出现）"
+                          % title[:18])
+        return None, "文件卡标题的显著片段没出现在聊天区（%r）" % title[:18]
 
     def chat_identity_ok(self, chat_id: str, gui=None):
         """**内容级**身份核对：当前聊天区里应看得到目标会话最近若干条文本里的**任意一条**。
@@ -1669,8 +1779,12 @@ class WeChatAdapter:
                         return True, "聊天区里认出了目标会话最近的内容（%r…）" % nd[:16]
                 elif nn and nn in pane_n:
                     return True, "聊天区里认出了目标会话的短指纹 %r（严格子串）" % nd[:12]
-            return False, ("聊天区里**没有**目标会话最近的任何一条文本（试过 %d 条，如 %r…）"
-                           "⇒ 当前开着的很可能不是目标会话" % (len(needles), needles[0][:16]))
+            # 最后一档：文件卡指纹（会话最近几条全是文件卡时，上面两档会全部落空）
+            f_ok, f_why = self.pane_file_card_ok(chat_id, pane)
+            if f_ok is True:
+                return True, f_why
+            return False, ("聊天区里**没有**目标会话最近的任何一条文本（试过 %d 条，如 %r…；文件卡档：%s）"
+                           "⇒ 当前开着的很可能不是目标会话" % (len(needles), needles[0][:16], f_why))
         except Exception as e:
             return None, "内容核对异常：%s" % type(e).__name__
 
