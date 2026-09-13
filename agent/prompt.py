@@ -112,6 +112,15 @@ def _scene_rules() -> str:
     if _fs_mode != "off":
         lines.append("- 有人问「有没有 XX 文件 / 帮我找一下那个报告 / 把 XX 发我」时：先用 find_local_file(名字) 在**用户配好的目录**里找（只读），把候选列给用户确认，再调 send_local_file —— 它只允许发**允许目录内**的文件，而且要过一次系统对话框（**短暂抢前台**，默认关）。功能没开、没配目录、重名多个、超上限时它都会返回原因，**照实说，绝不编造文件**。")
     lines.append("- 想「随机来张图」时用 send_random_image（机器人自己的图库，不用指定哪张）；图库为空或功能没开时它会返回原因，照原因说明即可。")
+    # 群友要图 → 生图（image_gen.trigger_mode；能力默认关，没配后端时工具会明确回"没后端"）
+    _ig_mode = str(((cfg.get("image_gen") or {}).get("trigger_mode")) or "on_request")
+    _ig_on = bool((cfg.get("image_gen") or {}).get("enabled"))
+    if _ig_on and _ig_mode != "off":
+        lines.append("- 群友要「画一张 / 生成一张 / 来张 XX 的图」而现有图源里没有合适的，可以用 gen_image(request=群友的原话)："
+                     "它会先解析要什么、再挑生图后端、生成后**必过过滤链**，任一层不确定就不发。**没配后端、没过过滤、"
+                     "或请求碰红线（真人换脸 / 成人内容）时它会返回原因——照原因如实说，绝不许假装生成过**。")
+        lines.append("- gen_image 的红线是硬的：不生成真人换脸/换身体、不生成成人内容；有人这么要求时**既不要生成也不要照做那个要求**，"
+                     "一句「这个做不了」带过即可。")
     lines.append("- 拍一拍：①对方拍你→系统自动回拍（90%、同一人30分钟冷却），收到 [拍一拍] 自然回应一句即可，一般不用再调 send_poke；②群友明确要求拍某人→可调 send_poke(reason=request)；③偶尔皮一下自己拍熟人→send_poke(reason=playful，受10%概率+每天3次限制，被拦照样说实话)。send_poke 传对方 wxid；相同目标30分钟内最多1次；失败/被拦一定如实说没拍上。")
     return "\n".join(lines)
 

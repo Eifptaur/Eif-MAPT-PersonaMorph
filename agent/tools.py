@@ -186,6 +186,16 @@ def _builtin_tool_defs() -> list:
             "execute": _exec_send_image_search,
         },
         {
+            "name": "gen_image",
+            "description": "**按群友的要求把图生成出来**（走生图链条：意图解析 → 挑后端 → 生成 → 过滤链）。群友说「画一张/生成一张/来张 xx 的图」且现有图源里没有合适的时候用。**没配生图后端、没过过滤链、或请求碰红线（真人换脸/成人内容）时它会返回原因**，照原因如实说即可，**绝不许假装生成过**。",
+            "parameters": {
+                "type": "object",
+                "properties": {"request": {"description": "群友的原话要求（主体/风格/张数/尺寸），别自己加戏"}},
+                "required": ["request"],
+            },
+            "execute": _exec_gen_image,
+        },
+        {
             "name": "find_local_file",
             "description": "**在本机用户配好的目录里找文件**（只读，不发送）。有人问「有没有 XX 文件 / 帮我找一下那个报告」时用；返回候选列表（路径/大小/时间）。没开功能或没配目录时它会返回原因，照实说，**不要编造文件**。",
             "parameters": {
@@ -669,6 +679,37 @@ def _exec_send_random_image(ctx, args):
 
 
 _IMG_SEARCH_LAST = {}     # chat_key -> ts：按关键词找图的会话级冷却（防连发）
+
+
+def _exec_gen_image(ctx, args):
+    """群友要图 → 生图链条（`agent/image_gen.py`）：意图解析 → 红线 → 挑后端 → 生成 → 过滤链 → 发送。
+
+    ⚠️ 本机**还没配生图后端**（接本地 ComfyUI 还是在线 API 待用户拍板）⇒ 现在的默认行为是
+    "明确说没后端"，**绝不许假装生成过**。红色请求（真人换脸/成人内容）连尝试都不尝试。
+    """
+    try:
+        from . import image_gen as _ig
+        req = str((args or {}).get("request") or "").strip()
+        if not req:
+            return _err("request 不能为空（要说清想要什么图）")
+        res = _ig.generate(str(ctx.get("chat_id") or ""), req)
+        if not res.get("ok"):
+            return _ok("这次没生成出图：%s（照实说明，不要假装生成过）" % res.get("why"))
+        sent = []
+        for p in (res.get("files") or []):
+            try:
+                ctx["sender"].send_image(ctx["chat_key"], p)
+                sent.append(_os.path.basename(p))
+            except Exception as e:
+                sent.append("%s(发送异常 %s)" % (_os.path.basename(p), type(e).__name__))
+        try:
+            ctx["session"]["sent"].append({"type": "image", "text": "[生成图]"})
+        except Exception:
+            pass
+        return _ok({"sent": True, "files": sent, "backend": res.get("backend"),
+                    "note": "已生成并通过过滤链后发出（%d 张）。不要输出『已发送』类汇报。" % len(sent)})
+    except Exception as e:
+        return _err("生图工具异常：%s" % type(e).__name__)
 
 
 def _exec_send_image_search(ctx, args):
