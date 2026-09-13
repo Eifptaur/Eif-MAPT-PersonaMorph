@@ -218,6 +218,9 @@ def session_rows(img, zoom: int = 2) -> list:
                 rows[-1]["preview"] += ln["text"]
         else:
             rows.append({"name": ln["text"], "preview": None, "y_abs": ln["y_abs"]})
+    for r in rows:                       # 名字里可能粘着预览（`E:提交信息…`）⇒ 统一切干净
+        r["full"] = r["name"]
+        r["name"] = split_name(r["name"])
     return rows
 
 
@@ -300,7 +303,126 @@ def find_row(img, name: str, zoom: int = 2):
         return None
 
 
-def current_chat_name(img=None, gui=None, min_green: float = 0.20, retries: int = 3) -> tuple:
+_sep_re = re.compile(r"[:：]")
+
+
+def split_name(text: str) -> str:
+    """从会话行文本里切出**名字**：先清时间/省略号，再取第一个 `:`/`：` 之前的部分。
+
+    为什么要切（2026-09-13 实测）：OCR 会把一行读成「名字 + 预览」连在一起，
+    例如 E 的那行读出来是 `E:提交信息还．“` —— 单字母名字在 `matches()` 里只走"完全相等"分支，
+    带着预览就永远配不上 ⇒ **E 这类会话以前永远选不中**。切开之后名字就是 `E`。
+    """
+    t = clean(text) or ""
+    if not t:
+        return ""
+    head = _sep_re.split(t, 1)[0].strip()
+    return head or t.strip()
+
+
+def find_row_info(img, name: str, zoom: int = 2):
+    """同 `find_row`，但返回整条信息 `{'pos':(x,y),'y_abs':int,'name':str}`（点击后要拿 y_abs 复核高亮）。"""
+    try:
+        w, h = img.size
+        left = 0
+        try:
+            left = ch.detect_pane_left(img) or 0
+        except Exception:
+            left = 0
+        if not left:
+            left = int(w * ch.PANE_LEFT_REL)
+        for r in session_rows(img, zoom=zoom):
+            if matches(r.get("name") or "", name):
+                return {"pos": (max(0, left - 150), min(h - 2, int(r["y_abs"]) + 16)),
+                        "y_abs": int(r["y_abs"]), "name": r.get("name") or ""}
+        return None
+    except Exception:
+        return None
+
+
+def highlight(img, min_green: float = 0.12):
+    """当前**绿底高亮行**（＝打开的会话行）：返回 `{'y_abs','score','name'}`，没有则 None（只读）。
+
+    ⚠️ 阈值为什么是 0.12：实测高亮行占比随帧质量在 **0.18~0.74** 之间跳（2026-09-13 同一窗口连续测），
+       而普通行只有 **0.00~0.01** ⇒ 0.12 仍留十倍余量；用 0.20 会把"真高亮但帧偏糊"的那一帧判成没有。
+    """
+    try:
+        if img is None:
+            return None
+        best, score = None, 0.0
+        for r in session_rows(img):
+            sc = _green_at(img, r["y_abs"])
+            if sc > score:
+                best, score = r, sc
+        if best is not None and score >= float(min_green):
+            return {"y_abs": int(best["y_abs"]), "score": float(score), "name": best.get("name") or ""}
+        return None
+    except Exception:
+        return None
+
+
+def find_row_scrolled(capture_fn, find_fn, scroll_fn=None, max_steps: int = 6,
+                      per_step: int = 3, settle_s: float = 0.45,
+                      tries_per_step: int = 1, gap_s: float = 0.35) -> tuple:
+    """**先看当前视野，找不到就平滑下滚再找**（后台：`scroll_fn` 由调用方注入投递滚轮，不碰鼠标）。
+
+    为什么要滚（用户 2026-09-13 原话：「你滚得太不顺滑了，**一下一下地滚，导致没有看到**」）：
+    截图一次只覆盖会话列表露出来的那几行 ⇒ 目标在下面时**永远找不到**；要一格一格连滚、每轮重新读图。
+    这里把「捕获 / 查找 / 滚动」三个动作都做成注入式，判据可以完全脱机自测（`chat_ocr_selftest`）。
+    返回 `(info 或 None, 过程说明)`。
+    """
+    logs = []
+    steps = max(0, int(max_steps))
+    tries = max(1, int(tries_per_step))
+    for step in range(steps + 1):
+        info = None
+        for _t in range(tries):
+            img = capture_fn()
+            info = find_fn(img) if img is not None else None
+            if info:
+                break
+            if _t + 1 < tries:
+                time.sleep(max(0.0, float(gap_s)))
+        if info:
+            logs.append("第 %d 轮第 %d 帧命中" % (step + 1, _t + 1))
+            return info, "；".join(logs)
+        if step >= steps or scroll_fn is None:
+            break
+        try:
+            ok = bool(scroll_fn(int(per_step)))
+        except Exception as e:
+            ok = False
+            logs.append("滚轮异常 %s" % type(e).__name__)
+        logs.append("第 %d 次未命中→下滚 %d 格%s" % (step + 1, per_step, "" if ok else "（失败）"))
+        time.sleep(max(0.0, float(settle_s)))
+    if not logs:
+        logs.append("一次都没捕获到画面")
+    return None, "；".join(logs)
+
+
+def capture_best(gui=None, frames: int = 3, img=None, good_rows: int = 8) -> object:
+    """多抓几帧，挑「会话列表读到行数最多」的那帧返回（只读，不碰鼠标）。
+
+    为什么需要（2026-09-13 实测）：同一窗口连续抓图，OCR 行数会在 **2 行 ↔ 13 行**之间跳——
+    抓到没渲染完/被遮挡的那一帧时，会话列表几乎读不出来 ⇒ 单帧判定会得出"找不到该会话"的**假结论**。
+    宁可多抓两帧（每帧约 0.3s），也不要拿一帧坏图下结论。
+    """
+    best, best_n = None, -1
+    for _i in range(max(1, int(frames))):
+        im = img if img is not None else ch.capture_image(gui=gui)
+        if im is None:
+            time.sleep(0.3)
+            continue
+        n = len(list_rows(im))
+        if n > best_n:
+            best, best_n = im, n
+        if n >= int(good_rows):
+            break
+        time.sleep(0.35)
+    return best
+
+
+def current_chat_name(img=None, gui=None, min_green: float = 0.12, retries: int = 3) -> tuple:
     """只读：返回 (当前打开的会话名, 依据)。依据串里写明是靠哪一行的绿底判出来的。
 
     ⚠️ 不能让"标题"来当判据：实测微信 4.1.15.8 的会话标题是**浅灰细字**，WinRT OCR 读不出来

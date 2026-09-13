@@ -863,24 +863,57 @@ class WeChatAdapter:
             #    后者找不到时会用**真实鼠标**悬停/滚动会话列表（实测光标会动），违反"不动鼠标"。
             from . import chat_ocr as _co
             from . import chat_header as _chh
-            img = _chh.capture_image(gui=gui)
-            pos = _co.find_row(img, name) if img is not None else None
-            if not pos:
-                return False, "会话列表里（只读截图 + OCR）没定位到「%s」" % name
             ox, oy = int(getattr(gui, "origin_x", 0)), int(getattr(gui, "origin_y", 0))
             if not ox and not oy:
                 return False, "渲染区原点未知（窗口不可见？）"
+            r = getattr(gui, "render_rect", None) or (0, 0, 0, 0)
+            rw, rh = int(r[2] - r[0]), int(r[3] - r[1])
+            if rw <= 0 or rh <= 0:
+                return False, "渲染区未知（窗口不可见？）"
+            try:
+                pane = int(gui.detect_pane_left()) or int(rw * _chh.PANE_LEFT_REL)
+            except Exception:
+                pane = int(rw * _chh.PANE_LEFT_REL)
+            # 会话列表列中心（滚轮落点）：列表在面板左沿往左约 240px 的那一列
+            wheel_pt = (ox + max(30, pane - 130), oy + int(rh * 0.55))
+
+            def _scroll(times: int) -> bool:
+                ok_s, _why_s = backend.wheel(main, wheel_pt, -120, times=max(1, int(times)), gap_ms=70)
+                return bool(ok_s)
+
+            # 先把会话列表滚到**顶**（目标也可能在当前视野**上方**——只往下扫会永远找不到）
+            try:
+                backend.wheel(main, wheel_pt, 120, times=8, gap_ms=70)
+                time.sleep(0.5)
+            except Exception:
+                pass
+            info, flog = _co.find_row_scrolled(
+                capture_fn=lambda: _chh.capture_image(gui=gui),
+                find_fn=lambda img: (_co.find_row_info(img, name) if img is not None else None),
+                scroll_fn=_scroll, max_steps=6, per_step=3, settle_s=0.45,
+                tries_per_step=3, gap_s=0.35)      # 抓图偶发只读到 2~4 行 ⇒ 每一步多抓几帧再判
+            if not info:
+                return False, "会话列表里（只读截图 + OCR，含平滑下滚 6 轮）没定位到「%s」（%s）" % (name, flog)
+            pos = info["pos"]
+            clicked_y = int(info["y_abs"])
             ok, why = backend.click(main, (ox + int(pos[0]), oy + int(pos[1])))
             if not ok:
                 return False, "投递点击会话行失败：%s" % why
+            # 复核（自洽证据）：**我们按名字点的那一行**现在是不是绿底高亮行
             deadline = time.time() + max(1.0, float(confirm_s))
             last = ""
             while time.time() < deadline:
-                time.sleep(0.4)
+                time.sleep(0.35)
+                img2 = _co.capture_best(gui=gui, frames=3)
+                hl = _co.highlight(img2) if img2 is not None else None
+                if hl and abs(int(hl["y_abs"]) - clicked_y) <= 28:
+                    return True, ("投递点击第 %d 行（OCR「%s」）后该行成绿底高亮（占比 %.2f）｜%s"
+                                  % (clicked_y, str(info.get("name"))[:12], hl["score"], flog))
                 hit, last = self.chat_is_open(chat_id, gui=gui, name=name)
                 if hit:
                     return True, "投递点击会话行后 OCR 已确认打开「%s」（%s）" % (name, last)
-            return False, "投递点击已发出，但 OCR 没能确认「%s」已打开（%s）" % (name, last)
+            return False, ("投递点击已发出，但既没看到该行变绿底、也没能 OCR 确认「%s」（%s；最后一帧：%s）"
+                           % (name, flog, str(last)[:60]))
         except Exception as e:
             return False, "投递切会话异常：%s" % e
 
@@ -1107,7 +1140,8 @@ class WeChatAdapter:
                 pass
             return True, ""
 
-    def send_file_posted(self, chat_id: str, local_path: str, wait_s: float = 90.0, allow_repeat: bool = False):
+    def send_file_posted(self, chat_id: str, local_path: str, wait_s: float = 90.0, allow_repeat: bool = False,
+                         confirm_open: bool = False):
         """**消息驱动发文件**（全程不动鼠标；会短暂弹出「选择文件」对话框）。
 
         链路（2026-09-13 在文件传输助手实测成功，DB 回读 `local_id=567 type=文件/链接/卡片`）：
@@ -1146,7 +1180,11 @@ class WeChatAdapter:
                 return False, "当前输入后端不是投递档（config.input.backend=%s）" % backend.name
             ok_open, why_open = self.chat_is_open(chat_id, gui=gui)
             if not ok_open:
-                return False, "发文件要求目标会话已打开且被确认：%s" % why_open
+                if not confirm_open:
+                    return False, "发文件要求目标会话已打开且被确认：%s" % why_open
+                # 人工确认通道：**只在用户当面确认「当前开着的就是目标会话」时用**
+                # （会话标题是浅灰细字、本机 OCR 读不出，E 这种会话自动闸门可能永远判不过）
+                log.warning("发文件：用户当面确认当前会话＝目标会话，跳过自动会话闸（自动判据：%s）", why_open)
             main_hwnd = int(getattr(gui, "main_hwnd", 0) or 0) or ib.find_main_window()
             if not main_hwnd:
                 return False, "找不到微信主窗"

@@ -236,6 +236,27 @@ class MessageBackend(InputBackend):
         _post(int(hwnd), WM_LBUTTONUP, 0, pack_lparam(cx, cy))
         return True, ""
 
+    def wheel(self, hwnd: int, screen_pt, delta: int = -120, times: int = 1, gap_ms: int = 60) -> tuple:
+        """投递滚轮（`WM_MOUSEWHEEL`）：`delta` 一格＝±120（负＝向下滚），`times` 可一次发多格。
+
+        为什么带 `times` 和间隔：用户 2026-09-13 反馈「你滚得太不顺滑了，**一下一下地滚，导致没有看到**」
+        －－单发一格、中间不歇，自绘列表容易处理不过来或只滚一点点；连续多格 + 每格 60ms 才像人滚。
+        ⚠️ `WM_MOUSEWHEEL` 的 lParam 是**屏幕坐标**（与 `WM_LBUTTONDOWN` 用客户区坐标不同）。
+        """
+        if not hwnd:
+            return False, "窗口句柄为空"
+        try:
+            x, y = int(screen_pt[0]), int(screen_pt[1])
+        except Exception:
+            return False, "滚轮落点无效"
+        self._wake(hwnd)
+        _post(int(hwnd), WM_MOUSEMOVE, 0, pack_lparam(*to_client(hwnd, (x, y))))
+        n = max(1, int(times))
+        for _ in range(n):
+            _post(int(hwnd), WM_MOUSEWHEEL, ((int(delta) & 0xFFFF) << 16), pack_lparam(x, y))
+            time.sleep(max(0, int(gap_ms)) / 1000.0)
+        return True, ""
+
     def send_text(self, hwnd: int, text: str) -> tuple:
         """逐字投递 `WM_CHAR`。实测：不点输入框、不预设焦点也能进框（提交由调用方点发送按钮）。"""
         if not hwnd:
