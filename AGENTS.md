@@ -101,8 +101,8 @@
 |---|---|---|
 | `assets/icon-whale.png` | **主体层**（256×256 正方形画布，鲸鱼内容宽 240、上下留白对称） | 被 5 处引用：左上徽章（36×36）、导出/迁移按钮内联（14×14）、大图标（52×52）、拖出动画（`.whale-fly` 44×44）、`ICON` 常量。**画布必须是正方形**——CSS 里 `width/height` 都写死同值，非方形图会被拉伸变形 |
 | `.whale-badge` 的背景 | `console_html.py:187` 的 `background:#14161a`（近黑圆角方，圆角 13px） | **不动**。鲸鱼层是叠在它上面的独立 `<img>`（`left:8 bottom:6`，`transform-origin:bottom center`） |
-| `assets/app-icon.png` | 黑圆角方 + 白鲸（256×256，**圆角半径 68，底色 `#0E1014`**） | 被 `onestart.py:154`、`installer.ps1`、`close_all.ps1` 引用（窗口图标 + 快捷方式图片） |
-| `assets/app.ico` / `assets/exe.ico` | 多尺寸 ico（**16/24/32/48/64 用 DIB 帧、128/256 用 PNG 帧** —— 项目验证过的配方；DIB 帧的 AND 掩码必须按 alpha 生成，否则老渲染路径会画黑方块） | `app.ico` 被 `installer.ps1:41/234/281`、`close_all.ps1:45` 用（快捷方式图标）；`exe.ico` 由下面的编译命令用 |
+| `assets/app-icon.png` | 黑圆角方 + 白鲸（256×256，**圆角半径 68，底色 `#0E1014`**） | 被 `onestart.py:154`、`scripts\installer.ps1`、`scripts\close_all.ps1` 引用（窗口图标 + 快捷方式图片） |
+| `assets/app.ico` / `assets/exe.ico` | 多尺寸 ico（**16/24/32/48/64 用 DIB 帧、128/256 用 PNG 帧** —— 项目验证过的配方；DIB 帧的 AND 掩码必须按 alpha 生成，否则老渲染路径会画黑方块） | `app.ico` 被 `scripts\installer.ps1`、`scripts\close_all.ps1` 用（快捷方式图标）；`exe.ico` 由下面的编译命令用 |
 | `assets/cursor.png` / `cursor-nod.png` | 默认光标 + 点击点头帧（64×64） | **热点写死在 CSS**：`cursor:url(...) 8 8`（`webui.py:1403/1416`）⇒ 图要"头朝左、主体铺满宽、垂直居中"；两帧画布位置必须一致否则切换会抖。浏览器硬限制 ≤128×128 |
 | `assets/custom-cursor*.png` | 用户上传的自定义光标 | **运行时生成，不要手改** |
 | `assets/icon.png` | favicon（`console_html.py:17` + `webui.py:256/403`）。**2026-09-13 已换成新鲸鱼**（＝app-icon 同源：黑圆角方 + 白鲸） | ⚠️ `webui.py:254-258` 是**启动时读一次**存内存 ⇒ **换 favicon 后必须重启控制台**才生效（浏览器还要 Ctrl+F5）；`assets/` 里其它素材是每请求读盘，不用重启 |
