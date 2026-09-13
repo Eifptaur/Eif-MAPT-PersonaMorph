@@ -404,6 +404,37 @@ def _builtin_tool_defs() -> list:
             "execute": _exec_report,
         },
         {
+            "name": "set_timer",
+            "description": ("设一个定时提醒：到点后由你在**当前会话**发一条提醒（例如群友说「5 分钟后提醒我喝水」）。"
+                            "只对当前这个会话生效，不能一次给多个会话设提醒；每条会话最多挂 3 条、全局最多 20 条；"
+                            "时间范围 30 秒 ~ 7 天。设完把「几点提醒什么」告诉对方（别假装已经等到了）。"),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "note": {"type": "string", "description": "到点要提醒的内容（写清提醒谁、提醒什么）"},
+                    "seconds": {"type": "integer", "description": "多少秒后提醒（与 minutes 二选一）"},
+                    "minutes": {"type": "integer", "description": "多少分钟后提醒（与 seconds 二选一）"},
+                },
+                "required": ["note"],
+            },
+            "execute": _exec_set_timer,
+        },
+        {
+            "name": "list_timers",
+            "description": "看看当前会话还有哪些定时提醒没到点（返回编号与剩余秒数）。",
+            "parameters": {"type": "object", "properties": {}},
+            "execute": _exec_list_timers,
+        },
+        {
+            "name": "cancel_timer",
+            "description": "取消当前会话的定时提醒：传编号只取消那一条；不传编号取消本会话全部。",
+            "parameters": {
+                "type": "object",
+                "properties": {"timer_id": {"description": "可选：list_timers 返回的编号；不传＝取消本会话全部"}},
+            },
+            "execute": _exec_cancel_timer,
+        },
+        {
             "name": "finish",
             "description": "结束本次处理（可选）。看完不打算说话时调用，summary 写一句不发言的理由；不调也可以，直接结束输出同样代表结束。",
             "parameters": {
@@ -417,6 +448,48 @@ def _builtin_tool_defs() -> list:
 
 
 # ── 各工具执行 ───────────────────────────────────────────────────────────
+
+def _exec_set_timer(ctx, args):
+    """定时提醒（第 12 条）：只能设到**当前会话**——参数里根本没有"发给谁"这一项，这是红线而不是疏忽。"""
+    from . import timers
+    from .config import get_config as _gc
+    if not ctx.get("chat_key"):
+        return _err("没有会话上下文，无法设提醒")
+    try:
+        cfg = _gc() or {}
+    except Exception:
+        cfg = {}
+    if (cfg.get("timers") or {}).get("enabled") is False:
+        return _err("定时提醒功能已在控制台关闭（timers.enabled=false）")
+    res = timers.add(ctx["chat_key"], args.get("note"), seconds=args.get("seconds"),
+                     minutes=args.get("minutes"), by=str(ctx.get("self_nickname") or ""))
+    if not res.get("ok"):
+        return _err(res.get("error") or "设置失败")
+    mins = max(1, int(round(res["seconds"] / 60.0)))
+    extra = "（时长超出范围，已按最近允许值调整）" if res.get("clamped") else ""
+    return _ok("已记下：%d 分钟后在本会话提醒「%s」%s。本会话最多挂 %d 条、全局最多 %d 条。"
+               % (mins, res["note"], extra, timers.MAX_PENDING_PER_CHAT, timers.MAX_PENDING_TOTAL))
+
+
+def _exec_list_timers(ctx, args):
+    from . import timers
+    items = timers.list_all(ctx.get("chat_key"))
+    if not items:
+        return _ok("当前会话没有待触发的提醒。")
+    lines = ["当前会话待触发提醒（最多 %d 条）：" % timers.MAX_PENDING_PER_CHAT]
+    for it in items:
+        lines.append("- #%s %d 秒后：%s" % (it.get("id"), int(it.get("left_seconds") or 0), it.get("note")))
+    return _ok("\n".join(lines))
+
+
+def _exec_cancel_timer(ctx, args):
+    from . import timers
+    tid = args.get("timer_id")
+    ok_flag = timers.cancel(ctx.get("chat_key"), tid)
+    if not ok_flag:
+        return _err("没有找到可取消的提醒（可能已经到点或已被取消）")
+    return _ok("已取消本会话的提醒%s。" % ((" #%s" % tid) if tid is not None else "（全部）"))
+
 
 def _exec_send_message(ctx, args):
     try:

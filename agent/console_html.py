@@ -678,6 +678,23 @@ th{color:var(--tx2);font-weight:500}
         <button id="seedReload" class="ghost" style="margin-left:8px">刷新</button>
         <span class="hint">趣味种子库（内置官方 212 条 + 你导入的金句，合计可在下方状态看到）；「社区与学习」页可导入金句墙种子。</span>
       </div></div>
+      <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
+      <div class="row"><label>计时提醒</label><input type="checkbox" data-cfg="timers.enabled">
+        <span class="hint">群友在对话里让你「N 分钟后提醒」，模型就调 set_timer —— <b>只能设到当前会话</b>（工具参数里没有"发给谁"），每条会话最多挂 3 条、全局最多 20 条、30 秒~7 天；到点发送<b>仍然过风险闸门</b>，暂停/禁言期间不发、恢复后补发</span></div>
+      <div class="row"><label>节日问候</label><div class="grow"><select data-cfg="holiday.mode">
+        <option value="off">off：完全不提</option>
+        <option value="passive">passive：只在对话里自然带一句（默认，绝不主动发）</option>
+        <option value="active">active：到点主动问候（必须填下面的白名单）</option></select>
+        <div class="hint">默认 passive ＝ 只往提示词里加一句「今天是 X 节」，<b>一条消息都不会主动发</b>；active 才主动发，且受"白名单 + 每天每会话一次 + 只在 9~21 点"三重限制</div>
+      </div></div>
+      <div class="mid" id="holidayRows">
+        <div class="row"><label>问候白名单</label><div class="grow">
+          <textarea data-cfg="holiday.greet_chats" rows="2" spellcheck="false" placeholder="如：群deepseek, 文件传输助手（逗号或换行分隔）"></textarea>
+          <div class="hint">只有名单里的会话会被主动问候；<b>留空＝即使选了 active 也不会主动发</b>（防"节日变群发"）</div>
+        </div></div>
+        <div class="row"><label>起始小时</label><input type="number" min="0" max="20" data-cfg="holiday.greet_hour"><span class="hint">默认 9：只在 9 点到 21 点之间主动问候</span></div>
+      </div>
+      <div class="row"><label>提醒/节日现状</label><div class="grow"><span id="timerStat" class="hint">读取中…</span></div></div>
     </section>
 
     <section id="sec-sessions" class="card" data-sec>
@@ -1520,7 +1537,7 @@ function syncFromForm(){
     else {
       v = el.value;
       if(path === 'store.keywords') v = v.split(/[,，]/).map(s=>s.trim()).filter(Boolean);
-      else if(path === 'store.tier_cmd_admins'){   // 指令白名单：逗号/换行 → 数组
+      else if(path === 'store.tier_cmd_admins' || path === 'holiday.greet_chats'){   // 名单类：逗号/换行 → 数组
         v = String(v||'').split(/[,，\n]/).map(s=>s.trim()).filter(Boolean);
       }
       else if(path === 'store.tier_schedule.table'){   // 峰谷映射表：JSON 文本 → 数组
@@ -1953,6 +1970,19 @@ async function loadStatus(){
             return mark + ' ' + c.label + '（' + c.status + '）';
           });
           v3.textContent = (vm.summary || '') + ' ｜ ' + rows.join(' · ');
+        }
+      }catch(e){}
+      try{
+        const tv = s.timers || {}, ho = s.holiday || {};
+        const el = $('timerStat');
+        if(el){
+          let line = '计时提醒：待触发 ' + (tv.pending || 0) + ' 条';
+          if(tv.next) line += '（最近一条 ' + Math.max(0, Math.round((tv.next.fire_at - Date.now())/60000)) + ' 分钟后：' + String(tv.next.note||'').slice(0,16) + '）';
+          line += ' ｜ 节日问候：' + (ho.mode === 'active' ? ('主动（白名单 ' + ((ho.greet_chats||[]).length) + ' 个）') : (ho.mode === 'off' ? '不提' : '只在对话里提一句'));
+          line += ' ｜ 今天：' + (ho.today || '不是节日');
+          if(ho.mode === 'active' && !(ho.greet_chats||[]).length) line += '（⚠️ 没配白名单 ⇒ 不会主动发）';
+          if((ho.greeted_today||[]).length) line += '（今天已问候 ' + ho.greeted_today.length + ' 个会话）';
+          el.textContent = line;
         }
       }catch(e){}
       try{

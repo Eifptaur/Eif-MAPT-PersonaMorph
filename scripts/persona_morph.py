@@ -37,6 +37,8 @@ if ROOT not in sys.path:
 from agent import listener_watermark          # W2：持久化水位（成功才推进 / 重试留痕 / 每会话串行）
 from agent import recall                       # 第 14 条：撤回后把已进上下文的那条剔除
 from agent import tier_control                 # 第 15/16/18 条：固定 4 档 / 峰谷映射 / 指令禁言
+from agent import timers                       # 第 12 条：计时提醒（只对当前会话 + 过风险闸门 + 条数上限）
+from agent import holidays                     # 第 13 条：节假日问候（默认只在提示词里提一句）
 from agent.config import DATA_DIR
 from agent.config import get_config, save_config
 from agent.llm import (add_usage, chat_completion, chat_completion_with_retry,
@@ -2424,6 +2426,8 @@ def main():
         orch.start_proactive_loop()
     except Exception as e:
         log.warning("主动话题循环启动失败：%s", e)
+    # 计时提醒 + 节假日问候巡检（第 12/13 条）：20 秒一跳；暂停中一条都不发（恢复后补发）
+    _sched = _start_timer_holiday_loop(orch, wechat)
 
     while not orch.stopped:
         poll_interval = max(1.0, float(get_config().get("wechat", {}).get("poll_interval") or 3))
@@ -2536,6 +2540,64 @@ def main():
         pass
 
     log.info("机器人已退出")
+
+
+def _start_timer_holiday_loop(orch, wechat, interval_s: float = 20.0):
+    """计时提醒 + 节假日问候的巡检（第 12/13 条）。
+
+    为什么单独一个循环、而不是并进主动话题循环：两者的周期差两个数量级（提醒要准、话题是小时级），
+    而且**到点必须照发**——所以这里只做两件小事，任何异常都吞掉并留日志，绝不让它拖垮主循环。
+    暂停中一条都不发（`timers.run_once(paused=True)` 直接返回、也不推进状态 ⇒ 恢复后补发）。
+    """
+    state = {"timer": None}
+
+    def tick():
+        try:
+            cfg = get_config()
+            paused = bool(getattr(orch, "paused", False) or getattr(orch, "stopped", False))
+            if (cfg.get("timers") or {}).get("enabled") is not False:
+                def _send(chat_key, text):
+                    try:
+                        r = orch.sender.send_text_batch(chat_key, text)
+                        return bool((r or {}).get("sent"))
+                    except Exception as e:
+                        log.warning("定时提醒发送被拦/失败：%s", e)
+                        return False
+                st = timers.run_once(_send, paused=paused,
+                                     muted=lambda ck: bool(tier_control.is_muted(ck)), log=log)
+                if st.get("sent") or st.get("failed"):
+                    log.info("定时巡检：到期 %s · 发出 %s · 失败 %s", st.get("due"), st.get("sent"), st.get("failed"))
+            if not paused:
+                try:
+                    for g in holidays.due_greetings(cfg, wechat.groups()):
+                        try:
+                            r = orch.sender.send_text_batch(g["chat_key"], g["text"])
+                        except Exception as e:
+                            log.warning("节日问候发送失败（%s）：%s", g.get("name"), e)
+                            continue
+                        if (r or {}).get("sent"):
+                            holidays.mark_greeted(g["day"], g["chat_key"])
+                            log.info("节日问候已发出：%s（%s）", g.get("name"), g.get("festival"))
+                except Exception as e:
+                    log.debug("节日问候巡检异常：%s", e)
+        except Exception as e:
+            log.warning("定时巡检异常：%s", e)
+        finally:
+            try:
+                if not getattr(orch, "stopped", False):
+                    t = threading.Timer(max(5.0, float(interval_s)), tick)
+                    t.daemon = True
+                    state["timer"] = t
+                    t.start()
+            except Exception:
+                pass
+
+    t0 = threading.Timer(3.0, tick)
+    t0.daemon = True
+    state["timer"] = t0
+    t0.start()
+    log.info("定时巡检已启动（计时提醒 + 节假日问候，%s 秒一跳）", interval_s)
+    return state
 
 
 def _auto_pythonw():
