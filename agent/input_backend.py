@@ -63,13 +63,19 @@ _user32.WindowFromPoint.restype = wintypes.HWND
 WM_ACTIVATE, WM_NCACTIVATE, WM_MOUSEACTIVATE = 0x0006, 0x0086, 0x0021
 WM_MOUSEMOVE, WM_LBUTTONDOWN, WM_LBUTTONUP = 0x0200, 0x0201, 0x0202
 WM_CHAR, WM_KEYDOWN, WM_KEYUP = 0x0102, 0x0100, 0x0101
+WM_PASTE, WM_DROPFILES, WM_MOUSEWHEEL = 0x0302, 0x0233, 0x020A
 
 MAIN_CLASS = "Qt51514QWindowIcon"        # 微信主窗
 PANEL_CLASS = "Qt51514QWindowToolSaveBits"   # 表情面板等弹层
 LEVEL_MESSAGE = "message"                # L5
 LEVEL_REAL = "real"                      # L0
 
+_user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, ctypes.c_ssize_t, ctypes.c_ssize_t]
+_user32.PostMessageW.restype = wintypes.BOOL
 _post = _user32.PostMessageW             # 单点可替换，供自检做无微信单测
+# ⚠️ 上面两行必须声明 argtypes/restype：不声明时 64 位下的 WPARAM/LPARAM 会被当 32 位，
+#    传 HDROP 句柄（64 位整数）直接 `OverflowError: int too long to convert`（2026-09-13 实测踩过）。
+#    同类坑还有 clipboard.py 里的 GlobalLock —— 那边更狠，会直接崩进程。
 
 
 def pack_lparam(x: int, y: int) -> int:
@@ -238,6 +244,59 @@ class MessageBackend(InputBackend):
         for ch in str(text):
             _post(int(hwnd), WM_CHAR, ord(ch), 1)
         return True, ""
+
+    def paste(self, hwnd: int) -> tuple:
+        """投递 `WM_PASTE`（配合剪贴板里的图片/文件）。**只在剪贴板已放好东西时调用。**"""
+        if not hwnd:
+            return False, "窗口句柄为空"
+        self._wake(hwnd)
+        _post(int(hwnd), WM_PASTE, 0, 0)
+        return True, ""
+
+    def drop_files(self, hwnd: int, paths) -> tuple:
+        """投递 `WM_DROPFILES`（把文件"拖"进目标窗口）——`WM_PASTE` 不吃文件时的备选。
+
+        HDROP 结构：DROPFILES 头 + 双 NUL 结尾的路径列表（全路径、多路径用 \\0 分隔）。
+        分配在**本进程**的全局内存里即可（消息是异步投递的，调用方需保证内存活到消息被处理完）。
+        """
+        if not hwnd:
+            return False, "窗口句柄为空"
+        if isinstance(paths, str):
+            paths = [paths]
+        paths = [str(p) for p in (paths or []) if p]
+        if not paths:
+            return False, "没有要拖入的文件"
+        try:
+            import ctypes as _ct
+            from ctypes import wintypes as _wt
+
+            class DROPFILES(_ct.Structure):
+                _fields_ = [("pFiles", _wt.DWORD), ("pt", _wt.POINT),
+                            ("fNC", _wt.BOOL), ("fWide", _wt.BOOL)]
+
+            data = "\0".join(paths) + "\0\0"
+            raw = data.encode("utf-16-le")
+            hdr = DROPFILES()
+            hdr.pFiles = _ct.sizeof(DROPFILES)
+            hdr.fWide = True
+            buf = bytes(hdr) + raw
+            GMEM_MOVEABLE, GMEM_ZEROINIT = 0x0002, 0x0040
+            _k32 = _ct.windll.kernel32
+            _k32.GlobalAlloc.restype = _wt.HGLOBAL
+            h = _k32.GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, len(buf))
+            if not h:
+                return False, "GlobalAlloc 失败"
+            p = _k32.GlobalLock(h)
+            if not p:
+                _k32.GlobalFree(h)
+                return False, "GlobalLock 失败"
+            _ct.memmove(p, buf, len(buf))
+            _k32.GlobalUnlock(h)
+            self._wake(hwnd)
+            _post(int(hwnd), WM_DROPFILES, int(h), 0)
+            return True, ""
+        except Exception as e:
+            return False, "投递 WM_DROPFILES 失败：%s: %s" % (type(e).__name__, e)
 
 
 class RealInputBackend(InputBackend):
