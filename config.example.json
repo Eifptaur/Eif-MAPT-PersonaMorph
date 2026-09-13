@@ -140,6 +140,12 @@
    "heuristic": true
   }
  },
+ "system_prompt": {
+  "custom": "",
+  "enable_scene_rules": true,
+  "enable_memory_rules": true,
+  "enable_holiday_hint": true
+ },
  "timers": {
   "enabled": true
  },
