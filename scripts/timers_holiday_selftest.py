@@ -172,9 +172,13 @@ def main():
        'paused = bool(getattr(orch, "paused", False) or getattr(orch, "stopped", False))' in pm
        and "tier_control.is_muted(ck)" in pm)
     ok("节日问候发成功才记账（标记 greeted）", "holidays.mark_greeted(g[\"day\"], g[\"chat_key\"])" in pm)
-    ok("提示词里有 set_timer 规则与节日提示句",
-       "set_timer(note=" in open(os.path.join(root, "agent", "prompt.py"), encoding="utf-8").read()
-       and "holidays as _hol" in open(os.path.join(root, "agent", "prompt.py"), encoding="utf-8").read())
+    pr_src = open(os.path.join(root, "agent", "prompt.py"), encoding="utf-8").read()
+    sp_src = open(os.path.join(root, "agent", "system_prompt.py"), encoding="utf-8").read()
+    ok("提示词里有 set_timer 规则",
+       "set_timer(note=" in pr_src)
+    ok("节日提示句挂在系统提示词的独立小节（第 11 条给了它开关）",
+       "def _holiday_hint_line" in pr_src and "_sp.holiday_hint()" in pr_src
+       and "from . import holidays as _hol" in sp_src)
     ok("控制台有四个键 + 现状读数",
        all(t in html for t in ('data-cfg="timers.enabled"', 'data-cfg="holiday.mode"',
                                'data-cfg="holiday.greet_chats"', 'data-cfg="holiday.greet_hour"', 'id="timerStat"')))

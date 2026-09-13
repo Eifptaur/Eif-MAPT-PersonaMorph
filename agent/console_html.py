@@ -1117,6 +1117,23 @@ th{color:var(--tx2);font-weight:500}
       </div></div>
       <div class="row"><label>额外规则</label><div class="grow"><textarea data-cfg="persona.custom_rules" placeholder="如：回复永远不超过 5 个字"></textarea></div></div>
       <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
+      <div class="row"><label>系统提示词补充</label><div class="grow">
+        <textarea data-cfg="system_prompt.custom" rows="5" spellcheck="false" placeholder="写在这里的文字会追加到系统提示词的最末尾，并标注为「管理员补充系统提示词（最高优先级）」。例：群里有人聊游戏时别插嘴；回复里不要出现「哈哈」两个字。"></textarea>
+        <div class="hint">保存后<b>下一轮就生效</b>（不用重启）。不知道怎么改就先点「预览」，看着真实提示词再写；写坏了点「清空」即可。<b>安全规则与工具协议永远在，改不掉</b>。</div>
+        <div class="btns">
+          <button id="promptPreviewBtn" class="ghost">预览当前系统提示词</button>
+          <button id="promptClearBtn" class="ghost">清空补充</button>
+          <span class="hint" id="promptInfo" style="align-self:center">—</span>
+        </div>
+        <pre id="promptPreview" class="out" style="display:none;max-height:320px;overflow:auto;white-space:pre-wrap"></pre>
+      </div></div>
+      <div class="row"><label>模块开关</label><div class="grow">
+        <label class="hint" style="display:inline-block;margin-right:14px"><input type="checkbox" data-cfg="system_prompt.enable_scene_rules"> 微信场景规则</label>
+        <label class="hint" style="display:inline-block;margin-right:14px"><input type="checkbox" data-cfg="system_prompt.enable_memory_rules"> 记忆使用规则</label>
+        <label class="hint" style="display:inline-block"><input type="checkbox" data-cfg="system_prompt.enable_holiday_hint"> 节日提示</label>
+        <div class="hint">关掉哪一块，系统提示词里就少哪一段（安全规则、工具协议不在可关之列）；改组队或老手才需要动。</div>
+      </div></div>
+      <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
       <div class="row"><label>响应档位</label><div class="grow"><select data-cfg="store.context_tier" id="ctxTier">
         <option value="1">1 档：仅艾特</option><option value="2">2 档：+关键词</option>
         <option value="3">3 档：+随机</option><option value="4">4 档：全响应</option></select>
@@ -2676,6 +2693,32 @@ async function undoLast(){
   }
   const ub = $('undoBtn');
   if(ub) ub.addEventListener('click', undoLast);
+  /* 系统提示词编辑（第 11 条）：预览走真 build_system_prompt（服务端现算），不是前端拼的 */
+  const pb = $('promptPreviewBtn');
+  if(pb) pb.addEventListener('click', async ()=>{
+    const box = $('promptPreview'), info = $('promptInfo');
+    try{
+      const r = await getJSON('/api/prompt/preview');
+      if(r && r.error){ if(box) box.textContent = '预览失败：' + r.error; if(info) info.textContent = ''; }
+      else{
+        if(box){ box.style.display = 'block'; box.textContent = r.system || '（空）'; }
+        if(info){
+          const on = (r.modules||[]).filter(m=>m.enabled).map(m=>m.name).join('、');
+          info.textContent = r.chars + ' 字符 ｜ 已启用模块：' + (on || '无') + ' ｜ 自定义补充 ' + (r.custom_chars||0) + ' 字符';
+        }
+      }
+    }catch(e){ if(box){ box.style.display='block'; box.textContent = '预览失败：' + e.message; } }
+  });
+  const pclr = $('promptClearBtn');
+  if(pclr) pclr.addEventListener('click', async ()=>{
+    const el = document.querySelector('[data-cfg="system_prompt.custom"]');
+    if(!el) return;
+    if(!el.value){ toast('本来就是空的'); return; }
+    if(!await uiConfirm('清空「系统提示词补充」？清空后立即生效（安全规则不受影响）。')) return;
+    el.value = '';
+    el.dispatchEvent(new Event('change', {bubbles:true}));   // 让「改完即生效」那条链把它落盘
+    toast('已清空系统提示词补充（若开关是手动保存模式，请点该分区的「保存设置」）');
+  });
   /* 一个委托监听器覆盖全部 data-cfg 字段（含动态生成的），比给每个元素挂 listener 稳 */
   document.addEventListener('change', (ev)=>{
     const el = ev.target;

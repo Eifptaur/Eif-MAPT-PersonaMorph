@@ -127,14 +127,8 @@ def _scene_rules() -> str:
         lines.append("- 群友让你「N 分钟/小时 后提醒我…」时，用 set_timer(note=要提醒的内容, seconds=或 minutes=) —— "
                      "**只对当前这个会话生效**，别承诺给别的群/别人设提醒；设完把「多久后提醒什么」说清楚即可，"
                      "不要假装已经等到了那一刻。想看还剩哪些用 list_timers，取消用 cancel_timer。")
-    # 节假日（第 13 条）：passive 模式**只给一句提示**，绝不主动发消息
-    try:
-        from . import holidays as _hol
-        _fest = _hol.scene_line()
-        if _fest:
-            lines.append("- %s 若对话自然，可以顺口带一句应景的问候；**别硬凑、别无中生有地群发**，也别反复提。" % _fest)
-    except Exception:
-        pass
+    # 节假日（第 13 条）：这段已挪到 build_system_prompt 的独立小节（第 11 条给了开关），
+    # 这里不再重复注入，避免同一句话出现两遍。
     return "\n".join(lines)
 
 
@@ -193,6 +187,26 @@ def _report_ban() -> str:
     ])
 
 
+def _holiday_hint_line() -> str:
+    """「今天是 X 节」那一句（第 13 条；第 11 条给了独立开关）。非节日或关掉 ⇒ 空串。"""
+    try:
+        from . import system_prompt as _sp
+        return _sp.holiday_hint()
+    except Exception:
+        return ""
+
+
+def _mod_on(mid: str) -> bool:
+    """系统提示词的模块开关（第 11 条）：安全规则/工具协议**永远开**，不做成开关。"""
+    try:
+        from . import system_prompt as _sp
+        if mid in _sp.ALWAYS_ON:
+            return True
+        return _sp.module_enabled(mid)
+    except Exception:
+        return True
+
+
 def build_system_prompt(persona: dict | None = None) -> str:
     cfg = persona or get_config().get("persona", {})
     role_text = str(cfg.get("role_text") or "").strip()
@@ -212,8 +226,9 @@ def build_system_prompt(persona: dict | None = None) -> str:
         _tool_protocol(), "",
         _anti_ai_flavor(), "",
         _quote_and_at(), "",
-        _memory_rules(), "",
-        _scene_rules(), "",
+        (_memory_rules() if _mod_on("memory_rules") else ""), "",
+        (_scene_rules() if _mod_on("scene_rules") else ""), "",
+        (_holiday_hint_line() if _mod_on("holiday_hint") else ""), "",
         _sticker_rule(), "",
         "",
         # 注意：系统提示保持【纯静态】（角色卡+规则）——DeepSeek 前缀缓存命中率靠它，
@@ -222,6 +237,12 @@ def build_system_prompt(persona: dict | None = None) -> str:
     ]
     if str(cfg.get("custom_rules") or "").strip():
         parts.extend(["", "【管理员附加规则】", str(cfg.get("custom_rules")).strip()])
+    # 系统提示词编辑（第 11 条）：自定义补充追加在**最末尾**；落盘即生效（改完下一轮就变，不用重启）
+    try:
+        from . import system_prompt as _sp
+        _sp.append_custom(parts)
+    except Exception:
+        pass
     return "\n".join(parts)
 
 

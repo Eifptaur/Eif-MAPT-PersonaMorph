@@ -898,6 +898,13 @@ class WebUI:
                         self._json({"ok": True})
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)}, 500)
+                elif path == "/api/prompt/preview":
+                    # 系统提示词编辑（第 11 条）：让用户看见"此刻真正送出的系统提示词"
+                    try:
+                        from . import system_prompt as _spv
+                        self._json(_spv.preview())
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)}, 500)
                 elif path == "/api/cursor/upload":
                     # 自定义光标：base64 PNG/JPEG → assets/custom-cursor.png
                     # 浏览器 css cursor 硬限制：≤128×128、PNG/SVG/ICO、透明底最佳、加载失败静默回退（白箭头根因=404空图）
