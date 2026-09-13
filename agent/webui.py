@@ -566,9 +566,12 @@ class WebUI:
                     st = parent.status_provider()
                     try:
                         from . import risk as _risk
+                        from . import input_backend as _ib
                         if isinstance(st, dict):
                             st = dict(st)
                             st["risk"] = _risk.snapshot()
+                            # 当前输入后端档位（AGENTS §2.1 第 4 条：用了哪一档必须看得见）
+                            st["input"] = _ib.status()
                     except Exception:
                         pass
                     self._json(st)
