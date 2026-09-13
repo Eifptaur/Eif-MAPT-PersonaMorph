@@ -489,7 +489,15 @@ def build_user_prompt(ctx) -> str:
     for m in (past.get("messages") or []):
         if m.get("sender_id") and not m.get("self"):
             relevant_ids.add(str(m["sender_id"]))
-    mem_text = ctx["memory"].format_for_prompt(ctx["chat_key"], user_ids=list(relevant_ids))
+    # 2026-09-13：把 store 与本轮触发批传给记忆层 ⇒ 除了"对群友的印象"，还带一行「上次聊过「…」」。
+    #   触发批必须排除（那是本轮要回答的内容，不是"上次"）；老实现不接受这两个参数时退回旧调用。
+    try:
+        mem_text = ctx["memory"].format_for_prompt(
+            ctx["chat_key"], user_ids=list(relevant_ids),
+            store=ctx.get("store"),
+            exclude_ids=[m.get("id") for m in (ctx.get("trigger_entries") or [])])
+    except TypeError:
+        mem_text = ctx["memory"].format_for_prompt(ctx["chat_key"], user_ids=list(relevant_ids))
     if mem_text:
         parts.append("【记忆】\n%s" % mem_text)
 

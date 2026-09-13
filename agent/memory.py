@@ -284,7 +284,66 @@ class MemoryStore:
         m[uid] = member
         return member
 
-    def format_for_prompt(self, chat_key: str, user_ids=None) -> str:
+    @staticmethod
+    def _rel_time(ts_ms: int) -> str:
+        """把时间戳说成人话（给"上次聊过"用）。"""
+        try:
+            import time as _t
+            mins = int((_t.time() * 1000 - int(ts_ms or 0)) / 60000)
+        except Exception:
+            return ""
+        if mins < 1:
+            return "刚刚"
+        if mins < 60:
+            return "%d 分钟前" % mins
+        if mins < 60 * 24:
+            return "%d 小时前" % int(round(mins / 60.0))
+        return "%d 天前" % int(round(mins / 1440.0))
+
+    def _last_talk(self, member, store, chat_key: str, exclude_ids=None):
+        """这位群友**本轮之前**的最后一次发言 ⇒ 给"上次聊过"用（纯读库，不花 token）。
+
+        为什么要排除本轮触发批：本轮那几条正是"现在要回答的"，不能拿它当"上次"。
+        找不到（第一次来 / 只发过图且无文字）就返回 None —— 不编内容。
+        """
+        if store is None:
+            return None
+        uid = str(member.get("userId") or "")
+        name = str(member.get("name") or "")
+        if not uid and not name:
+            return None
+        try:
+            msgs = store.recent(chat_key, limit=200)
+        except Exception:
+            return None
+        ex = {str(x) for x in (exclude_ids or [])}
+        hit = None
+        for m in reversed(list(msgs or [])):
+            if m.get("self"):
+                continue
+            if str(m.get("id")) in ex:
+                continue
+            sid = str(m.get("sender_id") or "")
+            snm = str(m.get("sender_name") or "")
+            if (uid and sid == uid) or ((not uid) and name and snm == name):
+                hit = m
+                break
+        if not hit:
+            return None
+        txt = " ".join(str(hit.get("text") or "").split())[:30]
+        if not txt:
+            txt = "（发过图片/表情）" if hit.get("media") else ""
+        if not txt:
+            return None
+        return {"text": txt, "ts": int(hit.get("ts") or 0)}
+
+    def format_for_prompt(self, chat_key: str, user_ids=None, store=None, exclude_ids=None) -> str:
+        """给提示词用的一段"对群友的印象"。
+
+        store/exclude_ids（可选）：传进来时，额外给每位群友带一行「上次聊过「…」（X 前）」——
+        用户 2026-09-13 的需求："让他不仅能记得群友是什么人，而且记得上次聊过的话题"。
+        这条**只从消息库现读**（不花 token、不凭空编）；没传 store 时行为与以前完全一致。
+        """
         notes = get_config().get("member_notes") or {}
         all_members = self.members(chat_key)
         if not all_members:
@@ -301,6 +360,10 @@ class MemoryStore:
             who = notes.get(str(m["userId"])) or m["name"] or str(m["userId"] or "") or "某人"
             for e in m["impressions"][-3:]:
                 lines.append("- %s：%s" % (who, e["content"]))
+            lt = self._last_talk(m, store, chat_key, exclude_ids=exclude_ids)
+            if lt:
+                ago = self._rel_time(lt["ts"])
+                lines.append("- %s：上次聊过「%s」%s" % (who, lt["text"], ("（%s）" % ago) if ago else ""))
         return "\n".join(lines)
 
     # ── 自动整理 ─────────────────────────────────────────────────────────
