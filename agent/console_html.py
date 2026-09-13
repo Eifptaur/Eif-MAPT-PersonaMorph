@@ -1268,6 +1268,23 @@ th{color:var(--tx2);font-weight:500}
         </div>
       </div></div>
       <div class="row"><label>意见上传 URL</label><div class="grow"><input type="text" data-cfg="community.feedback_upload_url" placeholder="留空=仅本地导出"></div></div>
+      <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
+      <div class="row"><label>上云（预留）</label><input type="checkbox" data-cfg="cloud.enabled">
+        <span class="hint">默认关：<b>关着时一个字节都不会上传</b>。这里只把接口留好——接收端网址填进去、点「测试连通」看通不通；要真发再打开这个开关</span></div>
+      <div class="mid" id="cloudRows">
+        <div class="row"><label>人设接收端</label><div class="grow"><div class="btns" style="justify-content:flex-start;gap:8px">
+          <input type="text" data-cfg="cloud.persona_url" placeholder="https://你的服务器/hook/persona" style="flex:1">
+          <button class="ghost" data-cloud-test="persona">测试连通</button>
+        </div></div></div>
+        <div class="row"><label>名单接收端</label><div class="grow"><div class="btns" style="justify-content:flex-start;gap:8px">
+          <input type="text" data-cfg="cloud.blocklist_url" placeholder="https://你的服务器/hook/blocklist" style="flex:1">
+          <button class="ghost" data-cloud-test="blocklist">测试连通</button>
+        </div></div></div>
+        <div class="row"><label>接收端 Token</label><div class="grow"><input type="password" data-cfg="cloud.token" placeholder="对方要求鉴权时才填（Bearer）">
+          <div class="hint">探测连通<b>不带 Token</b>；只有真上传时才带上。接收端要满足什么，见 <b>docs\上云接口契约.md</b>（方法/路径/请求体/响应约定都写在里面，可直接发给对方）</div>
+        </div></div>
+        <div class="row"><label>连通结果</label><div class="grow"><span id="cloudStat" class="hint">还没测过</span></div></div>
+      </div>
     </section>
 
     <section id="sec-send" class="card" data-sec>
@@ -2021,6 +2038,14 @@ async function loadStatus(){
             return mark + ' ' + c.label + '（' + c.status + '）';
           });
           v3.textContent = (vm.summary || '') + ' ｜ ' + rows.join(' · ');
+        }
+      }catch(e){}
+      try{
+        const cl = s.cloud || {};
+        const el = $('cloudStat');
+        if(el && cl.endpoints){
+          const parts = (cl.endpoints || []).map(e => e.label + '：' + (e.configured ? (e.valid ? '已填' + (e.token_set ? '（有 Token）' : '') : '网址格式不对') : '未配置'));
+          el.textContent = (cl.enabled ? '总开关：开' : '总开关：关（不会上传）') + ' ｜ ' + parts.join(' ｜ ');
         }
       }catch(e){}
       try{
@@ -2823,6 +2848,33 @@ async function arcLoadList(){
   if(b2) b2.addEventListener('click', ()=>{ arcLoadChats(); toast('会话列表已刷新'); });
   if($('arcChat')) arcLoadChats();
 }
+
+/* ── 上云预留接口（2026-09-14）：只做"填网址 + 测连通"，上传默认关 ── */
+document.querySelectorAll('[data-cloud-test]').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const which = btn.dataset.cloudTest;
+    const el = document.querySelector('[data-cfg="cloud.' + which + '_url"]');
+    const url = el ? el.value.trim() : '';
+    const out = $('cloudStat');
+    // 先把界面上的值存下来（否则测的是磁盘上的旧值）
+    if(el){ el.dispatchEvent(new Event('change', {bubbles:true})); }
+    btn.disabled = true; const old = btn.textContent; btn.textContent = '测试中…';
+    if(out) out.textContent = '正在探测 ' + (url || '（未配置）') + ' …';
+    try{
+      const r = await getJSON('/api/cloud/test', {method:'POST', headers:{'Content-Type':'application/json'},
+                                                 body: JSON.stringify({which: which, url: url})});
+      const name = which === 'persona' ? '人设' : '名单';
+      if(r && r.ok){
+        if(out) out.textContent = name + '：可达（' + (r.stage || '') + ' · HTTP ' + (r.status || '?') + ' · ' + (r.ms||0) + 'ms）' + (r.why ? ' ｜ ' + r.why : '');
+        toast('✅ ' + name + '接收端可达');
+      }else{
+        if(out) out.textContent = name + '：不通 ｜ 卡在「' + ((r&&r.stage)||'?') + '」段 · ' + ((r&&r.why)||'未知原因');
+        toast('测不通：' + ((r&&r.why)||'未知原因'));
+      }
+    }catch(e){ if(out) out.textContent = '探测失败：' + e.message; toast('探测失败：' + e.message); }
+    finally{ btn.disabled = false; btn.textContent = old; }
+  });
+});
 
 /* ── 系统提示词编辑（第 11 条）：预览走真 build_system_prompt（服务端现算），不是前端拼的 */
   const pb = $('promptPreviewBtn');

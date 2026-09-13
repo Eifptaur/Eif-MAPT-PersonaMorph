@@ -160,6 +160,14 @@
   "greet_chats": [],
   "greet_hour": 9
  },
+ "cloud": {
+  "enabled": false,
+  "persona_url": "",
+  "blocklist_url": "",
+  "token": "",
+  "timeout_ms": 8000,
+  "allow_private": false
+ },
  "video_read": {
   "enabled": true,
   "max_frames": 4,
