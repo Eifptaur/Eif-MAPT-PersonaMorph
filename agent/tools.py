@@ -435,6 +435,21 @@ def _builtin_tool_defs() -> list:
             "execute": _exec_cancel_timer,
         },
         {
+            "name": "read_video",
+            "description": ("读一条 [视频] 消息：抽几帧画面给你（按「带图」模型分流）+ 本机离线识别视频里的说话内容。"
+                            "**没有 ffmpeg 或识别引擎时它会说明原因——照实说读不了，绝不假装看过**；"
+                            "抽帧后你要像看图片一样描述你看到的画面，别编造。"),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message_id": {"description": "视频消息的 id（聊天记录里 [视频] 前的 #数字）"},
+                    "frames": {"description": "抽几帧，默认 4，最多 8"},
+                },
+                "required": ["message_id"],
+            },
+            "execute": _exec_read_video,
+        },
+        {
             "name": "finish",
             "description": "结束本次处理（可选）。看完不打算说话时调用，summary 写一句不发言的理由；不调也可以，直接结束输出同样代表结束。",
             "parameters": {
@@ -489,6 +504,52 @@ def _exec_cancel_timer(ctx, args):
     if not ok_flag:
         return _err("没有找到可取消的提醒（可能已经到点或已被取消）")
     return _ok("已取消本会话的提醒%s。" % ((" #%s" % tid) if tid is not None else "（全部）"))
+
+
+def _exec_read_video(ctx, args):
+    """读视频（第 20 条）：抽帧（交给视觉模型）+ 音频离线识别。做不到就如实说。"""
+    from . import video_read
+    from .config import get_config as _gc
+    try:
+        cfg = _gc() or {}
+    except Exception:
+        cfg = {}
+    if (cfg.get("video_read") or {}).get("enabled") is False:
+        return _err("视频读取功能已在控制台关闭（video_read.enabled=false）")
+    items, bad = _media_items(ctx, args.get("message_id"), "video")
+    if bad:
+        return bad
+    if not items:
+        return _ok("消息 %s 里没有可读的视频（只有 [视频] 消息才有）" % args.get("message_id"))
+    lim = (cfg.get("video_read") or {})
+    try:
+        n = int(args.get("frames") or lim.get("max_frames") or video_read.DEFAULT_FRAMES)
+    except (TypeError, ValueError):
+        n = video_read.DEFAULT_FRAMES
+    secs = int(lim.get("max_seconds") or video_read.DEFAULT_MAX_SECONDS)
+    res = video_read.read_message(ctx["wechat"], ctx["chat_id"], items[0]["local_id"],
+                                  max_frames=n, max_seconds=secs)
+    if not res.get("ok"):
+        return _ok("这段视频我读不了：%s（别假装看过；可以如实告诉对方）" % (res.get("error") or "未知原因"))
+    data_urls = []
+    for p in res.get("frames") or []:
+        try:
+            with open(p, "rb") as f:
+                import base64
+                data_urls.append("data:image/png;base64," + base64.b64encode(f.read()).decode("ascii"))
+        except Exception:
+            continue
+    video_read.cleanup(res.get("dir") or "")
+    head = "视频内容（%s）：下面是按时间均匀抽出的 %d 帧画面，请直接看图描述你看到了什么）" % (
+        res.get("note") or "", len(data_urls))
+    if res.get("audio_ok") and res.get("audio_text"):
+        head += "\n视频里的说话内容（本机离线识别，可能有错）：%s" % res["audio_text"][:300]
+    elif res.get("audio_why"):
+        head += "\n这段视频的音频没识别出来：%s" % res["audio_why"]
+    head += "\n（抽帧是采样，不是完整视频；不确定的地方别猜。）"
+    if not data_urls:
+        return _ok(head)
+    return {"content": _image_parts(head, data_urls)}
 
 
 def _exec_send_message(ctx, args):

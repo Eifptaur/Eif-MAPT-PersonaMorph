@@ -14,6 +14,11 @@
   "use_official_price": true,
   "model_prices": {},
   "fallback_models": [],
+  "model_routes": {
+   "text": "",
+   "image": "",
+   "video": ""
+  },
   "provider_keys": {},
   "thinking": "off"
  },
@@ -154,6 +159,11 @@
   "mode": "passive",
   "greet_chats": [],
   "greet_hour": 9
+ },
+ "video_read": {
+  "enabled": true,
+  "max_frames": 4,
+  "max_seconds": 60
  },
  "memory": {
   "consolidate_enabled": true,

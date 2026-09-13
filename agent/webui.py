@@ -606,6 +606,14 @@ class WebUI:
                                 st["media"] = _ms.snapshot()
                             except Exception as _e2:
                                 st["media"] = {"error": str(_e2)}
+                            # 图/文/视频分流 + 视频读取（第 20 条）
+                            try:
+                                from . import model_routes as _mrt
+                                from . import video_read as _vrd
+                                st["model_routes"] = _mrt.snapshot()
+                                st["video_read"] = _vrd.snapshot()
+                            except Exception as _e10:
+                                st["model_routes"] = {"error": str(_e10)}
                             # 存档屏蔽（第 10 条）：名单 + 存档里被屏蔽的条数
                             try:
                                 from . import archive_filter as _af2

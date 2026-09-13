@@ -46,10 +46,22 @@ def fallback_models(api: dict | None = None) -> list:
     return out[:MAX_FALLBACK]
 
 
-def candidates(api: dict | None = None) -> list:
-    """这次请求要依次尝试的模型清单：主模型在前，备选在后（主模型为空时只剩备选）。"""
+def candidates(api: dict | None = None, kind: str | None = None) -> list:
+    """这次请求要依次尝试的模型清单：**分流模型（若配了）在前，然后是主模型与备选**。
+
+    `kind` 为空时自动判（带图 ⇒ image）；分流命中就当主模型用，备选链照旧接在它后面。
+    """
     api = api if api is not None else effective_api()
     primary = str(api.get("model") or "").strip()
+    try:
+        from . import model_routes as _mr
+        if kind is None:
+            kind = "text"
+        routed = _mr.route(api, kind)
+        if routed:
+            primary = routed
+    except Exception:
+        pass
     out = [primary] if primary else []
     for m in fallback_models(api):
         if m not in out:
@@ -158,22 +170,39 @@ class LLMError(Exception):
         self.message = message
 
 
-def chat_completion(messages, tools=None, tool_choice="auto", temperature=None, overrides=None, _models=None):
+def chat_completion(messages, tools=None, tool_choice="auto", temperature=None, overrides=None, _models=None,
+                    kind=None):
     """单次对话请求。返回 {message, finish_reason, usage, model, raw}。
 
     **主模型失败时会按 `api.fallback_models` 逐个改用备选**（同一个 Base URL / Key）；
     走备选时返回值多一个 `fallback` 字段（{used, from, tried}），供控制台与日志如实显示。
+    `kind`：输入类型（text/image/video）；**不传就自动判**（请求里带图 ⇒ image）⇒ 走 `api.model_routes` 分流。
     `_models` 只给内部/测试用（显式指定候选清单，绕过配置）。
     """
     api = overrides or effective_api()
     if not str(api.get("base_url") or "").strip():
         raise LLMError("模型 API Base URL 未配置")
-    models = [str(m).strip() for m in (_models if _models is not None else candidates(api))]
+    _kind = str(kind or "")
+    if not _kind:
+        try:
+            from . import model_routes as _mr
+            _kind = _mr.kind_of(messages)
+        except Exception:
+            _kind = "text"
+    models = [str(m).strip() for m in (_models if _models is not None else candidates(api, kind=_kind))]
     models = [m for m in models if m] or [""]
     last_error = None
     for idx, model in enumerate(models):
         try:
             ret = _post_once(api, model, messages, tools, tool_choice, temperature)
+            try:
+                from . import model_routes as _mr2
+                _routed = _mr2.route(api, _kind)
+                if _routed or _kind != "text":
+                    _mr2.note(_kind, _routed or models[0], reason="分流命中" if _routed else "未配分流，用主模型")
+                    ret["route"] = {"kind": _kind, "routed": bool(_routed), "model": ret.get("model") or model}
+            except Exception:
+                pass
             if idx > 0:
                 info = {"used": ret.get("model") or model, "from": models[0], "tried": models[:idx]}
                 ret["fallback"] = info
