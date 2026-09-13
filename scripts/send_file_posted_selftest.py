@@ -71,7 +71,15 @@ fake = os.path.join(tempfile.mkdtemp(prefix="sfp_"), "same_file.zip")
 with open(fake, "wb") as f:
     f.write(b"x" * 1024)
 ok1, why1 = inst._repeat_guard("filehelper", fake)
-ok("第一次发送：放行", ok1 is True, why1 or "ok")
+ok("第一次发送：只读检查放行", ok1 is True, why1 or "ok")
+# ⚠ 判据更新（2026-09-14）：原来这里直接再调一次就期望"拦下"，但 2026-09-13 已经把默认调用改成
+#   **只读、不记账**（原实现"检查时就写台账"，于是一次因为别的原因失败的尝试也会写脏台账，
+#   之后 10 分钟内的真重试全被判"已经发过了" ⇒ 永远发不出去）。记账改到"DB 回读确认发出之后"，
+#   由调用方传 note=True 那一次完成。⇒ 判据必须照这个语义走：先只读、再 note=True 记账、然后才拦。
+_ledger_clean = (not os.path.exists(tmp)) or (os.path.basename(fake) not in open(tmp, encoding="utf-8").read())
+ok("默认检查不写台账（检查即写那个坑不能回来）", _ledger_clean)
+okN, whyN = inst._repeat_guard("filehelper", fake, note=True)
+ok("确认发出后记账（note=True 才写台账）", okN is True, whyN or "ok")
 ok2, why2 = inst._repeat_guard("filehelper", fake)
 ok("同会话同文件立刻再发：拦下", ok2 is False, why2[:64])
 ok3, _ = inst._repeat_guard("wxid_other", fake)
