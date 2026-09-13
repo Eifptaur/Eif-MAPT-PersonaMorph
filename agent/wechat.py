@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import html
+import logging
 import os
 import random
 import re
@@ -18,7 +19,12 @@ from collections import deque
 from .config import get_config
 from . import replica_adapter  # W1：驱动库（wechatauto-replica）私有 API 的唯一收口点 + 版本守卫
 
-# 调试开关：WX_DEBUG=1 时输出分步计时/调参日志（平时完全静默，不写 _scratch）
+# 模块级 logger（2026-09-13 修）：本文件里多处 `log.info(...)` 一直没定义 `log` ⇒
+# 只要走到"投递前置不满足 / 学会话头"这些分支就抛 NameError，被外层 except 吞掉后表现为
+# **整条发送静默失败（send_text 返回 False 且什么都没发）**。教训：只测"绿灯路"会漏掉日志分支。
+log = logging.getLogger("persona-morph")
+
+# 调试开关：WX_DEBUG=1 时输出分步计时/调参日志（平时完全静默，不写本地草稿目录）
 _DEBUG = str(os.environ.get("WX_DEBUG") or "").strip() in ("1", "true", "yes")
 
 # 微信消息类型标签 → 内部占位文本
@@ -698,7 +704,8 @@ class WeChatAdapter:
         except Exception as e:
             return False, str(e)
 
-    def send_text_posted(self, text: str, chat_id: str = "filehelper", wait_s: float = 15.0):
+    def send_text_posted(self, text: str, chat_id: str = "filehelper", wait_s: float = 15.0,
+                         allow_no_ref: bool = False):
         """**投递发送**（L5，2026-09-13 实测过的那条链）：投递 WM_CHAR 打字 + 投递点「发送」按钮。
 
         与 `send_text` 的区别（也是它的适用边界）：
@@ -707,7 +714,7 @@ class WeChatAdapter:
             调用方要么自己确认会话已打开，要么先用别的方式切过去。
         成功判据：**只认 DB 回读**（轮询到新行且内容含本段文本），不信 GUI 返回值。
 
-        参考实测：`_scratch/send_postclick.py`（3/3、DB 回读命中）与 `_scratch/live_posted_send.py`。
+        参考实测：投递打字 + 投递点「发送」（3/3、DB 回读命中）。
         """
         from . import input_backend as ib
         try:
@@ -720,16 +727,23 @@ class WeChatAdapter:
                 return False, "找不到微信主窗"
             if not gui.render_rect:
                 gui._update_render_rect()
-            # 会话头校验（防发错会话）：投递**不会切会话**，所以发之前先确认"还是那个会话"。
-            # 三态（见 chat_header.check）：mismatch ⇒ 拦；no_ref（刚改过窗口尺寸/第一次用）⇒ 不拦但留痕，
-            # 并在本次 DB 回读成功之后自动补一条该尺寸的参照。**绝不因为"没参照"就把功能锁死。**
+            # 会话头校验（防发错会话）：投递**不会切会话** ⇒ 必须有"当前会话＝目标会话"的**正面证据**才准发。
+            # ⛔ 2026-09-13 实测事故（检验包自测暴露）：no_ref（当前尺寸没参照）时照发 ⇒ 文本被打进
+            #    **当时打开的另一个会话**并真的发了出去（发给了联系人 E），而 DB 里查目标会话自然查不到，
+            #    表观症状只是"发送未生效"，**发错会话这件事被完全掩盖**。
+            # ⇒ 现在：mismatch / no_ref / no_capture **一律拒绝投递**；`allow_no_ref=True` 只在调用方
+            #    自己已经确认过"目标会话就是当前打开的"时使用（例如已用真实路径打开过）。
             try:
                 from . import chat_header as _ch
                 _st = _ch.check(chat_id)
                 if _st["status"] == "mismatch":
                     return False, "会话头不匹配，拒绝投递（防发错会话）：%s" % _st["note"]
+                if _st["status"] in ("no_ref", "no_capture") and not allow_no_ref:
+                    return False, ("当前尺寸没有目标会话的参照（%s）⇒ 无法确认打开的会话就是目标会话，"
+                                   "拒绝投递（先按名字打开一次该会话学会参照，或走 send_text 的真实路径兜底）"
+                                   % _st["status"])
                 if _st["status"] in ("no_ref", "no_capture"):
-                    log.info("会话头未校验（%s）：%s", _st["status"], _st["note"])
+                    log.info("会话头未校验（调用方显式允许，%s）：%s", _st["status"], _st["note"])
             except Exception as _e:
                 log.warning("会话头校验跳过：%s", _e)
             r = gui.render_rect or (0, 0, 0, 0)
@@ -1326,11 +1340,11 @@ class WeChatAdapter:
     def moments_publish_text(self, text: str, dry: bool = False, shots: bool = False) -> tuple:
         """长按左上角相机 ~2 秒 → 纯文字输入栏 → 输入 → 点「发表」（变绿后）→ 关窗。
         dry=True：验证到「输入栏可输入」即止（不点发表、不回车），用于检验避免真的发朋友圈。
-        shots=True：dry 模式下每步截图到 _scratch/shots/moments_*.png（逐屏存证，UI 检验用）。"""
+        shots=True：dry 模式下每步截图到 logs/dry_shots/moments_*.png（逐屏存证，UI 检验用）。"""
         _shot = None
         if shots:
             import os as _os
-            _sdir = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "_scratch", "shots")
+            _sdir = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "logs", "dry_shots")
             _os.makedirs(_sdir, exist_ok=True)
             def _shot(name):
                 try:
