@@ -774,6 +774,13 @@ th{color:var(--tx2);font-weight:500}
         鉴权错误（401 / 403 / Key 无效）不切换（换模型也救不了 Key）。最多试 3 个。</div>
       </div></div>
       <div class="row"><label>备选使用</label><div class="grow"><span id="fallbackStat" class="hint">读取中…</span></div></div>
+      <div class="row"><label>模型分流</label><div class="grow">
+        <div class="hint" style="margin-bottom:6px">按输入类型分别指定模型：<b>留空＝用上面的主模型</b>（默认行为不变）。带图的请求会走「带图」那一档（群友发图、看图工具、视频抽帧都算带图）。</div>
+        <div class="row"><label>纯文字</label><input type="text" data-cfg="api.model_routes.text" placeholder="留空＝主模型"></div>
+        <div class="row"><label>带图</label><input type="text" data-cfg="api.model_routes.image" placeholder="如：deepseek-v4-flash-vision-exp"></div>
+        <div class="row"><label>视频</label><input type="text" data-cfg="api.model_routes.video" placeholder="留空＝跟「带图」同一个"></div>
+        <div class="hint" id="routeStat">读取中…</div>
+      </div></div>
       <div class="row"><label>视觉(看图)</label><input type="checkbox" data-cfg="api.vision"><span class="hint">模型支持图片则勾选</span></div>
       <label class="think-card" id="thinkCard" title="模型返回的「推理文本」是生成的思考链式输出，并非真实内部思维；它按输出价计费，通常占一个会话 token 的 50~90%。">
         <input type="checkbox" data-cfg="api.thinking" id="thinkOffChk" checked>
@@ -888,6 +895,13 @@ th{color:var(--tx2);font-weight:500}
         <span class="hint">压完仍超这个数就再降一档质量；还超就原样发。</span></div>
       <div class="row"><label>JPEG 质量</label><input type="number" min="40" max="95" data-cfg="send.image_compress.quality">
         <span class="hint">82 左右够用；越低越小越糊。</span></div>
+      <div class="row"><label>视频读取</label><input type="checkbox" data-cfg="video_read.enabled">
+        <span class="hint">群友发 [视频] 时，机器人可以调 read_video：<b>抽几帧画面</b>（交给「带图」模型看图）+ <b>本机离线识别视频里的说话</b>（SAPI，不出网）。没有 ffmpeg 或识别引擎时会如实说读不了，绝不假装看过</span></div>
+      <div class="mid" id="videoRows">
+        <div class="row"><label>抽帧数</label><input type="number" min="1" max="8" data-cfg="video_read.max_frames"><span class="hint">默认 4，最多 8；抽帧是采样，不是完整视频</span></div>
+        <div class="row"><label>识别上限(秒)</label><input type="number" min="5" max="600" data-cfg="video_read.max_seconds"><span class="hint">视频音频最多识别多少秒（默认 60）</span></div>
+        <div class="row"><label>视频链路现状</label><div class="grow"><span id="videoStat" class="hint">读取中…</span></div></div>
+      </div>
       <div class="btns"><button class="pri" data-save>保存设置（媒体与语音）</button></div>
     </section>
     <section id="sec-tts" class="card" data-sec>
@@ -2007,6 +2021,27 @@ async function loadStatus(){
             return mark + ' ' + c.label + '（' + c.status + '）';
           });
           v3.textContent = (vm.summary || '') + ' ｜ ' + rows.join(' · ');
+        }
+      }catch(e){}
+      try{
+        const mr = s.model_routes || {};
+        const el = $('routeStat');
+        if(el){
+          const r = mr.routes || {};
+          const cnt = Object.keys(mr.counts || {}).map(k=>k + '×' + mr.counts[k]).join(' · ');
+          let line = '分流：文字→' + (r.text || '主模型') + ' ｜ 带图→' + (r.image || (r.text || '主模型')) + ' ｜ 视频→' + (r.video || r.image || '主模型');
+          if(cnt) line += ' ｜ 已用：' + cnt;
+          el.textContent = line;
+        }
+      }catch(e){}
+      try{
+        const vr = s.video_read || {};
+        const el = $('videoStat');
+        if(el){
+          const a = vr.asr || {};
+          el.textContent = vr.ready
+            ? ('可用：ffmpeg 已就绪 ｜ 音频识别' + (a.ok ? '可用' : ('不可用（' + (a.why || '') + '）')) + ' ｜ 默认抽 ' + ((vr.limits||{}).default_frames || 4) + ' 帧')
+            : ('不可用：' + (vr.why || '缺 ffmpeg') + ' —— 群里发视频时会如实说读不了');
         }
       }catch(e){}
       try{

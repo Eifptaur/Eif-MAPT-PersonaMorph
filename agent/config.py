@@ -34,6 +34,11 @@ DEFAULT_CONFIG = {
         "use_official_price": True,
         "model_prices": {},          # {模型id: {in, out, cached}} 按模型单价，优先级最高
         "fallback_models": [],       # 备选模型（第 3 条）：主模型失败时按顺序逐个改用；空=关闭；最多 3 个
+        "model_routes": {            # 图/文/视频分流选模型（第 20 条）：留空＝用主模型（默认行为不变）
+            "text": "",              # 纯文字请求
+            "image": "",             # 带图请求（群友发图、看图工具、视频抽帧）
+            "video": "",             # 视频链路专用；留空＝跟 image 同一个
+        },
     },
     # ── 微信接入（源自 wechat 机器人整合包）────────────────────────────
     "wechat": {
@@ -303,6 +308,12 @@ DEFAULT_CONFIG = {
         "mode": "passive",            # off=不提 | passive=只在提示词里提一句（默认，绝不主动发）| active=到点主动问候
         "greet_chats": [],            # active 的白名单会话名（群名 / 文件传输助手）；空＝不主动问候
         "greet_hour": 9,              # active 的起始小时（只在 9~21 点之间发）
+    },
+    # ── 视频读取（第 20 条）：抽帧给视觉模型 + 本机离线识别音频 ──────────────
+    "video_read": {
+        "enabled": True,
+        "max_frames": 4,              # 默认抽 4 帧（上限 8，见 agent/video_read.py::MAX_FRAMES）
+        "max_seconds": 60,            # 音频最多识别这么多秒
     },
     # ── 记忆 ───────────────────────────────────────────────────────────
     "memory": {
