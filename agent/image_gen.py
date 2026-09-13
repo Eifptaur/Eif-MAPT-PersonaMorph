@@ -51,6 +51,34 @@ def wants_real_face(text: str) -> bool:
     return any(rx.search(t) for rx in _REAL_FACE_RX)
 
 
+def _as_list(v):
+    """配置里的"列表"允许写成字符串（控制台就是一个输入框 ⇒ 省掉自定义端点）：
+    `风格A,风格B` 或分号分隔都认；已经是 list 就原样返回。"""
+    if isinstance(v, (list, tuple)):
+        return [x for x in v]
+    if isinstance(v, str):
+        parts = re.split(r"[,，;；\n]", v)
+        return [p.strip() for p in parts if p.strip()]
+    return []
+
+
+def _as_backends(v):
+    """后端列表：list[dict] 直接用；字符串按 `id|local|url; id|online|url` 解析（格式不对的条目丢弃）。
+
+    为什么不给控制台单独做增删端点：照用户"低成本优先"的原则，一个输入框 + 一种人话格式就够用；
+    解析不出来 ⇒ 后端列表为空 ⇒ `generate()` 会明确说"还没配生图后端"（不会静默当成功）。
+    """
+    if isinstance(v, (list, tuple)):
+        return [x for x in v if isinstance(x, dict)]
+    out = []
+    if isinstance(v, str):
+        for chunk in re.split(r"[;；\n]", v):
+            f = [x.strip() for x in chunk.split("|")]
+            if len(f) >= 3 and f[0] and f[2]:
+                out.append({"id": f[0], "kind": (f[1] or "local"), "url": f[2]})
+    return out
+
+
 def cfg() -> dict:
     d = dict(DEFAULTS)
     try:
@@ -59,6 +87,11 @@ def cfg() -> dict:
             d.update(got)
     except Exception:
         pass
+    # 归一化：控制台把列表项当普通输入框编辑 ⇒ 到这里统一转成真正的 list
+    d["style_allow"] = _as_list(d.get("style_allow"))
+    d["style_block"] = _as_list(d.get("style_block"))
+    d["backends"] = _as_backends(d.get("backends"))
+    d["filter_chain"] = dict(DEFAULTS["filter_chain"], **(d.get("filter_chain") or {}))
     return d
 
 
@@ -128,17 +161,34 @@ def parse_intent(text: str) -> dict:
 
 # ————————————————— ③ 后端选择 —————————————————
 def backends() -> list:
-    out = []
+    """可用后端＝**配置里填的** ∪ **本机探测到的**（用户口径：别等他选型，能用的先认出来）。
+
+    去重按 id；在线后端（含免密钥的 pollinations）仍必须 `online_allowed=True` 才出现。
+    """
+    out, seen = [], set()
     for b in (cfg().get("backends") or []):
         try:
             if not isinstance(b, dict) or not b.get("id") or not b.get("url"):
                 continue
             if str(b.get("kind") or "local") == "online" and not cfg().get("online_allowed"):
                 continue                      # 在线后端必须显式允许出网
-            out.append({"id": str(b["id"]), "kind": str(b.get("kind") or "local"),
-                        "url": str(b["url"]), "timeout": int(b.get("timeout") or 120)})
+            b = dict(b)
+            b.setdefault("proto", "generic")
+            b.setdefault("kind", "local")
+            out.append(b)
+            seen.add(str(b["id"]))
         except Exception:
             continue
+    try:
+        for b in detect_local():
+            if str(b["id"]) in seen:
+                continue
+            out.append(b)
+            seen.add(str(b["id"]))
+    except Exception:
+        pass
+    if cfg().get("online_allowed") and ONLINE_FREE["id"] not in seen:
+        out.append(dict(ONLINE_FREE))          # 免密钥在线（仍受"允许出网"这一档管）
     return out
 
 
@@ -149,18 +199,122 @@ def pick_backend():
         online = [b for b in (cfg().get("backends") or []) if isinstance(b, dict) and str(b.get("kind")) == "online"]
         if online and not cfg().get("online_allowed"):
             return None, "只配了在线生图后端，但 image_gen.online_allowed=False（出网未允许）"
-        return None, "还没配生图后端（本地 ComfyUI / 在线 API 二选一，配好后再试）"
+        return None, ("本机没探到常见生图服务（A1111/Fooocus :7860/:7865 · ComfyUI :8188 · InvokeAI :9090），"
+                      "也没有在控制台填后端 ⇒ 把其中一个跑起来，或打开「允许出网」用免密钥在线生图")
     return bs[0], ""
 
 
-def call_backend(backend: dict, prompt: str, count: int = 1, size: str = "square"):
-    """真的去生图（HTTP）。**未接后端时不会被调用**；请求体里不构造任何 r18 字段。"""
+# ————— ③-b 后端协议适配：本地自动发现 + 免密钥在线（用户口径：别等我选型，直接找能用的）—————
+#   本地：常见生图服务的默认端口 + 一个只读探测路径（探到就用，不用用户手配）。
+#   在线：pollinations 是**免密钥**的 text-to-image（GET 一个 URL 就出图）；出网仍受 online_allowed 管。
+SIZE_PX = {"square": (1024, 1024), "portrait": (832, 1216), "landscape": (1216, 832)}
+LOCAL_PROBES = (
+    {"id": "a1111", "kind": "local", "proto": "a1111", "port": 7860, "path": "/sdapi/v1/sd-models",
+     "url": "http://127.0.0.1:7860"},
+    {"id": "comfyui", "kind": "local", "proto": "comfyui", "port": 8188, "path": "/system_stats",
+     "url": "http://127.0.0.1:8188"},
+    {"id": "fooocus", "kind": "local", "proto": "a1111", "port": 7865, "path": "/sdapi/v1/sd-models",
+     "url": "http://127.0.0.1:7865"},
+    {"id": "invokeai", "kind": "local", "proto": "a1111", "port": 9090, "path": "/api/v1/app/version",
+     "url": "http://127.0.0.1:9090"},
+)
+ONLINE_FREE = {"id": "pollinations", "kind": "online", "proto": "pollinations",
+               "url": "https://image.pollinations.ai/prompt/"}
+
+
+def detect_local(timeout: float = 1.2, probes=None) -> list:
+    """探一遍常见本地生图服务（**只读 GET**，不动对方任何状态）⇒ 探到就返回可用的后端。
+
+    为什么要有它：用户 2026-09-13 明确说"生图，不能直接去找那些能生图的模型或者工具吗"——别让他先选型、
+    再手工填地址；本机在跑 ComfyUI/A1111/Fooocus/InvokeAI 就自己认出来。
+    """
     import urllib.request
-    body = json.dumps({"prompt": prompt, "n": int(count), "size": size}).encode("utf-8")
-    req = urllib.request.Request(backend["url"], data=body,
-                                 headers={"Content-Type": "application/json"}, method="POST")
-    with urllib.request.urlopen(req, timeout=int(backend.get("timeout") or 120)) as resp:
-        return json.loads(resp.read().decode("utf-8") or "{}")
+    out = []
+    for p in (probes if probes is not None else LOCAL_PROBES):
+        try:
+            req = urllib.request.Request("http://127.0.0.1:%d%s" % (p["port"], p["path"]), method="GET")
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                code = int(getattr(r, "status", 200) or 200)
+            if code < 500:
+                out.append({"id": p["id"], "kind": "local", "proto": p["proto"], "url": p["url"]})
+        except Exception:
+            continue
+    return out
+
+
+def _save_image_bytes(data: bytes, backend_id: str = "gen") -> str:
+    """把生图结果落盘到 `data/gen_images/<日期>/`（**只落盘，不写台账**——台账要在过滤通过之后写）。"""
+    day = time.strftime("%Y%m%d")
+    d = os.path.join("data", "gen_images", day)
+    os.makedirs(d, exist_ok=True)
+    p = os.path.join(d, "%s_%s.png" % (backend_id, time.strftime("%H%M%S")))
+    with open(p, "wb") as f:
+        f.write(data)
+    return p
+
+
+def _note_generated(path: str, backend_id: str = "gen") -> str:
+    """**过滤通过之后**才把这张图记进台账（返回 sha256）。
+
+    ⚠️ 为什么不能在图一落盘就记（2026-09-13 自己踩的同类坑，和 wx-agent 的"重复发送台账写太早"一模一样）：
+    落盘即记 ⇒ `dup` 层读到的是**自己**的 sha ⇒ **每张新图都被判成重复**、一张都发不出去。
+    正确顺序：落盘 → 过滤链 → 全过 → 记账（下次生成才拿它去重）。
+    """
+    import hashlib
+    try:
+        with open(path, "rb") as f:
+            h = hashlib.sha256(f.read()).hexdigest()
+        os.makedirs(os.path.join("data", "gen_images"), exist_ok=True)
+        with open(os.path.join("data", "gen_images", "index.jsonl"), "a", encoding="utf-8") as f:
+            f.write(json.dumps({"path": path, "sha256": h, "backend": backend_id,
+                                "when": time.strftime("%Y-%m-%d %H:%M:%S")}, ensure_ascii=False) + "\n")
+        return h
+    except Exception:
+        return ""
+
+
+def call_backend(backend: dict, prompt: str, count: int = 1, size: str = "square"):
+    """真去生图：按后端协议分发。**未接后端时不会被调用**；请求体里不构造任何 r18 字段。
+
+    支持三种协议：`a1111`（SD WebUI / Fooocus / InvokeAI 兼容层，POST /sdapi/v1/txt2img）·
+    `pollinations`（免密钥在线，GET 一个 URL 就出图）· `generic`（用户自己填的 HTTP 端点，POST {prompt,n,size}）。
+    `comfyui` 目前只做**探测**：它要一份工作流 JSON，还没内置（探到会在面板里说明）。
+    """
+    import base64
+    import urllib.parse
+    import urllib.request
+    w, h = SIZE_PX.get(size or "square", SIZE_PX["square"])
+    proto = str(backend.get("proto") or "generic")
+    n = max(1, int(count or 1))
+    files = []
+    if proto == "a1111":
+        body = json.dumps({"prompt": prompt, "width": w, "height": h, "batch_size": n,
+                           "n_iter": 1, "steps": int(backend.get("steps") or 20)}).encode("utf-8")
+        req = urllib.request.Request(backend["url"].rstrip("/") + "/sdapi/v1/txt2img", data=body,
+                                     headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=int(backend.get("timeout") or 180)) as resp:
+            j = json.loads(resp.read().decode("utf-8") or "{}")
+        for i, b64 in enumerate(j.get("images") or []):
+            files.append(_save_image_bytes(base64.b64decode(b64.split(",")[-1]),
+                                           "%s_%d" % (backend.get("id") or "a1111", i)))
+    elif proto == "pollinations":
+        for i in range(n):
+            url = (backend["url"].rstrip("/") + "/" + urllib.parse.quote(prompt)
+                   + "?width=%d&height=%d&nologo=true&seed=%d" % (w, h, int(time.time()) + i))
+            req = urllib.request.Request(url, method="GET")
+            with urllib.request.urlopen(req, timeout=int(backend.get("timeout") or 180)) as resp:
+                data = resp.read()
+            if not data or len(data) < 128:
+                raise ValueError("在线生图返回的数据太小（%d 字节）" % len(data or b""))
+            files.append(_save_image_bytes(data, str(backend.get("id") or "pollinations")))
+    else:                                     # generic：用户自填端点，约定返回 {"files":[...]}
+        body = json.dumps({"prompt": prompt, "n": n, "size": size}).encode("utf-8")
+        req = urllib.request.Request(backend["url"], data=body,
+                                     headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=int(backend.get("timeout") or 180)) as resp:
+            j = json.loads(resp.read().decode("utf-8") or "{}")
+        files = [str(p) for p in (j.get("files") or [])]
+    return {"files": files, "proto": proto}
 
 
 # ————————————————— ④ 可插拔过滤链（任一层判否/出错 ⇒ 不发）—————————————————
@@ -272,6 +426,8 @@ def generate(chat_id: str, request_text: str, out_dir: str = None):
     for p in files:
         ok, res = run_filters(p, {"prompt": intent["subject"], "chat_id": chat_id,
                                   "backend": backend["id"], "when": time.strftime("%Y-%m-%d %H:%M:%S")})
+        if ok:
+            _note_generated(p, str(backend.get("id") or "gen"))     # ⚠️ 记账必须在过滤通过之后（见 _note_generated 注释）
         out.append({"path": p, "ok": ok, "filters": res})
     good = [x for x in out if x["ok"]]
     if not good:
