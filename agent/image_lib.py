@@ -170,16 +170,76 @@ def fetch_api(cfg: dict, root: str = None) -> tuple:
 
 
 def next_image(cfg: dict, root: str = None, chat_id: str = "") -> tuple:
-    """按配置挑下一张要发的图：返回 (路径, 说明)。总开关关着就直接说明原因。"""
+    """按配置挑下一张要发的图：返回 (路径, 说明)。总开关关着就直接说明原因。
+
+    mode=online 时：逐个图源取元数据 → 下载 → **过过滤链**（agent/image_filter.py）→ 通过才返回；
+    被拒的会写 reject 日志并换下一个图源；全都不行就把每个图源/过滤器的原因汇总返回。
+    """
     conf = (cfg or {}).get("image_reply") or {}
     if not conf.get("enabled"):
         return None, "随机图功能当前是关闭的（控制台「随机图」面板可打开）"
     left = cooldown_left(cfg, chat_id, root)
     if left:
         return None, "同一会话两次随机图要间隔 %d 秒，还需等 %d 秒" % (conf.get("min_gap_seconds", 20), left)
-    if str(conf.get("mode") or "local") == "api":
-        return fetch_api(cfg, root)
+    mode = str(conf.get("mode") or "local")
+    if mode == "online":
+        return fetch_filtered(cfg, root, chat_id)
+    if mode == "api":
+        path, why = fetch_api(cfg, root)
+        if not path:
+            return None, why
+        return _filter_or_reject(path, {"source": "api", "rating": "", "tags": []}, cfg, root, why)
     return pick(cfg, root, chat_id)
+
+
+def _filter_or_reject(path: str, meta: dict, cfg: dict, root: str, why: str) -> tuple:
+    """过一遍过滤链：通过就返回路径，不通过就删掉临时文件并返回原因。"""
+    try:
+        from . import image_filter as _f
+        res = _f.check(path, meta, cfg, root=root)
+    except Exception as e:
+        return None, "过滤链异常（按不安全处理）：%s: %s" % (type(e).__name__, str(e)[:100])
+    if res.get("ok"):
+        return path, "%s · %s" % (why, res.get("reason"))
+    return None, "被过滤链拦下（%s）：%s" % (res.get("rejected_by"), res.get("reason"))
+
+
+def fetch_filtered(cfg: dict, root: str = None, chat_id: str = "") -> tuple:
+    """mode=online：按 sources 顺序取图并过过滤链，返回第一张通过的。"""
+    conf = (cfg or {}).get("image_reply") or {}
+    try:
+        from . import image_sources as _src
+    except Exception as e:
+        return None, "图源模块不可用：%s" % e
+    sources = [str(s).strip().lower() for s in (conf.get("sources") or _src.available()) if str(s).strip()]
+    per_try = max(1, int(conf.get("sources_per_try", 4) or 4))
+    dest = os.path.join(root or _root(), "media", "images")
+    tries, errs = 0, []
+    for src in sources:
+        if tries >= per_try:
+            break
+        tries += 1
+        meta, err = _src.fetch_meta(src, {"tag": conf.get("tag"), "timeout_ms": conf.get("api_timeout_ms"),
+                                          "category": conf.get("category")})
+        if err:
+            errs.append(err)
+            continue
+        path, derr = _src.download(meta["url"], dest, max_mb=conf.get("max_mb", 8),
+                                   timeout_ms=conf.get("api_timeout_ms") or 9000)
+        if derr:
+            errs.append("图源 %s：%s" % (src, derr))
+            continue
+        got, why = _filter_or_reject(path, meta, cfg, root, "图源 %s 取图" % src)
+        if got:
+            return got, "%s（%s）" % (why, meta.get("page") or "")
+        errs.append("图源 %s：%s" % (src, why))
+        try:
+            os.remove(path)                      # 被拒的临时文件不留（日志里已记）
+        except OSError:
+            pass
+    if not errs:
+        return None, "没有可用的图源（配置里的 sources 都不认识）"
+    return None, "试了 %d 个图源都没通过过滤：%s" % (tries, "；".join(errs[:4]))
 
 
 def status(cfg: dict = None, root: str = None) -> dict:

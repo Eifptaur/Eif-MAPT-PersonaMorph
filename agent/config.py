@@ -98,10 +98,25 @@ DEFAULT_CONFIG = {
     #   发送走 send_image 本地直发（投递档，不动鼠标）；风险闸门与会话头闸照常生效。
     "image_reply": {
         "enabled": False,            # 总开关（控制台可切）
-        "mode": "local",             # local＝本地图库 | api＝在线图源
+        "mode": "local",             # local＝本地图库 | online＝从图源取（pixiv 等）| api＝单个自定义接口
         "dir": "assets/anime",       # 本地图库目录（相对项目根；可填绝对路径）
-        "api_url": "",               # 在线图源接口（留空＝不联网；例：公开的随机图 API）
+        "api_url": "",               # mode=api 时的单个接口地址（留空＝不联网）
         "api_timeout_ms": 8000,
+        # ── 在线图源（mode=online）：按顺序尝试，取不到就换下一个 ──────────────────
+        #   pixiv＝经公开代理接口取 Pixiv 作品（**强制 r18=0**）· konachan/yande＝强制 rating:safe
+        #   safebooru/nekos＝全年龄站 · waifu＝只走 waifu.pics 的 /sfw/ 端点
+        "sources": ["pixiv", "konachan", "safebooru", "waifu", "nekos", "yande"],
+        "sources_per_try": 4,        # 一次最多试几个图源（每张都要过过滤链）
+        "tag": "",                   # 可选：给 pixiv 图源加个偏好标签（如 "风景"）
+        # ── 过滤（纵深防御：任何一道说不行就不发；细节见 agent/image_filter.py）──
+        "safe_only": True,           # 只允许安全分级（限制级一律拒）
+        "allow_questionable": False, # 是否放宽到"暧昧级"（默认否，不建议开）
+        "tag_blacklist": [],         # 空＝用内置黑名单（r18/explicit/nsfw/hentai/エロ/裸/色情/福利/guro/loli…）
+        "skin_max_ratio": 0.45,      # 肤色像素占比上限（本地启发式；0＝关）
+        "min_side": 300,             # 最小边长（太小的图丢掉）
+        "vision_filter": True,       # 发之前让视觉模型再看一眼（SAFE/UNSAFE；不确定按 UNSAFE 处理）
+        "vision_fail_open": False,   # 视觉审核失败时是否放行（默认否＝宁可发不出）
+        # ── 其它 ────────────────────────────────────────────────────────────
         "max_mb": 8,                 # 单张图大小上限（超过就跳过，不发）
         "min_gap_seconds": 20,       # 同一会话两次"随机图"的最小间隔（防刷屏）
         "avoid_recent": 30,          # 记住最近发过的 N 张，尽量不重复
