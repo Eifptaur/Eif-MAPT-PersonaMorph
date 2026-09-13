@@ -668,6 +668,17 @@ class WeChatAdapter:
                 return False, "找不到微信主窗"
             if not gui.render_rect:
                 gui._update_render_rect()
+            # 会话头校验（防发错会话）：投递**不会切会话**，所以发之前先确认"还是那个会话"。
+            # 有参照就强制校验；没参照（第一次用）只提示不拦，避免把功能锁死。
+            try:
+                from . import chat_header as _ch
+                _ok, _why = _ch.verify(chat_id)
+                if not _ok and _ch.reference(chat_id):
+                    return False, "会话头不匹配，拒绝投递（防发错会话）：%s" % _why
+                if not _ch.reference(chat_id):
+                    log.info("会话头无参照，本轮未校验（%s）", chat_id)
+            except Exception as _e:
+                log.warning("会话头校验跳过：%s", _e)
             r = gui.render_rect or (0, 0, 0, 0)
             rw, rh = int(r[2] - r[0]), int(r[3] - r[1])
             if rw <= 0 or rh <= 0:
