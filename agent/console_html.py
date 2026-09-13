@@ -773,7 +773,8 @@ th{color:var(--tx2);font-weight:500}
         <span class="hint">语音原文件（.silk）落这里；转写用的中间 wav 默认用完就删。</span></div></div>
       <div class="row"><label>单条时限(秒)</label><input type="number" min="5" max="180" data-cfg="voice.max_seconds">
         <span class="hint">超过这个长度不识别（长音频又慢又不准）。</span></div>
-      <div class="btns"><button id="vsTest" class="ghost">测试引擎（合成一句跑完整链路）</button></div>
+      <div class="btns"><button id="vsGuide" class="ghost">缺引擎怎么办？</button>
+        <button id="vsTest" class="ghost">测试引擎（合成一句跑完整链路）</button></div>
       <div id="vsTestOut" class="hint">点一下就会在本机合成一句中文 → 编码成微信用的 SILK → 解码 → 识别，把每一步结果摆出来（不需要微信、不出网）。</div>
 
       <div class="sub">② 随机图</div>
@@ -785,7 +786,8 @@ th{color:var(--tx2);font-weight:500}
         <option value="api">单个自定义接口</option></select>
         <span class="hint">在线图源会过三段过滤（安全分级 + 标签黑名单 + 视觉审核），**任何一道说不行就不发**。</span></div></div>
       <div class="row"><label>图库目录</label><div class="grow"><input data-cfg="image_reply.dir" placeholder="assets/anime">
-        <div id="irState" class="hint">检测中…</div></div></div>
+        <div id="irState" class="hint">检测中…</div>
+        <div class="btns"><button id="irGuide" class="ghost">怎么放图？</button></div></div></div>
       <div class="row"><label>只发安全的</label><input type="checkbox" data-cfg="image_reply.safe_only">
         <span class="hint">关掉它不建议：宁可这次发不出，也不要发出不该发的图。</span></div>
 
@@ -795,7 +797,8 @@ th{color:var(--tx2);font-weight:500}
       <div class="row"><label>视频/文件下载</label><div class="grow"><b>可用</b>
         <span class="hint">下载到 media/video、media/file；**只下载不发送**（要发出去看下面这个开关）。</span></div></div>
       <div class="row"><label>转发视频/文件</label><input type="checkbox" data-cfg="send.file_forward_optin">
-        <div id="fwState" class="hint">检测中…</div></div>
+        <div id="fwState" class="hint">检测中…</div>
+        <div class="btns"><button id="fwGuide" class="ghost">为什么默认关？</button></div></div>
       <div class="btns"><button class="pri" data-save>保存设置（媒体与语音）</button></div>
     </section>
     <section id="sec-tts" class="card" data-sec>
@@ -819,6 +822,7 @@ th{color:var(--tx2);font-weight:500}
       <div class="row"><label>同内容间隔(秒)</label><input type="number" min="0" max="600" data-cfg="voice_reply.min_gap_seconds">
         <span class="hint">同一会话里同样的内容在这个时间内不重复发（防刷屏）。</span></div>
       <div class="btns">
+        <button id="ttsGuide" class="ghost">为什么发出去是文件、不是语音条？</button>
         <button id="ttsTest" class="ghost">试听一句（只在本机合成，不发送）</button>
         <button class="pri" data-save>保存设置（语音回复）</button>
       </div>
@@ -826,7 +830,7 @@ th{color:var(--tx2);font-weight:500}
     </section>
     <section id="sec-tools" class="card" data-sec>
       <h2>工具与插件（自定义工具）</h2>
-      <div class="desc">把 <b>一个工具一个 <code>.json</code></b> 丢进 <code>tools.d/</code>，在这里**勾选**后模型才能用它。边界先说清：<b>只发 HTTP、不执行任何本地代码</b>；<code>allow_hosts</code> 域名白名单必填，<b>内网/本机地址永远拒绝</b>（写进白名单也一样）；参数必须是合法 JSON Schema；**坏清单会在下面逐条列出来**（不会静默跳过）。清单字段见 <code>tools.d/README.md</code>。</div>
+      <div class="desc">把 <b>一个工具一个 <code>.json</code></b> 丢进 <code>tools.d/</code>，在这里**勾选**后模型才能用它。边界先说清：<b>只发 HTTP、不执行任何本地代码</b>；<code>allow_hosts</code> 域名白名单必填，<b>内网/本机地址永远拒绝</b>（写进白名单也一样）；参数必须是合法 JSON Schema；**坏清单会在下面逐条列出来**（不会静默跳过）。<b>不知道怎么写？点下面的「怎么加工具」——三步 + 可复制模板 + 一键生成，全在弹窗里。</b></div>
       <div class="row"><label>总开关</label><input type="checkbox" data-cfg="user_tools.enabled">
         <span class="hint">默认关：关着时这些清单一个都不加载，模型也看不到。</span></div>
       <div class="row"><label>清单现状</label><div class="grow"><b id="utGlobals">检测中…</b>
@@ -839,6 +843,7 @@ th{color:var(--tx2);font-weight:500}
       <div class="row"><label>单次超时(毫秒)</label><input type="number" min="500" max="60000" data-cfg="user_tools.timeout_ms"></div>
       <div class="row"><label>结果截断(字符)</label><input type="number" min="200" max="20000" data-cfg="user_tools.max_chars"></div>
       <div class="btns">
+        <button id="utGuide" class="ghost">怎么加工具（看这里）</button>
         <button id="utReload" class="ghost">重新加载清单</button>
         <button class="pri" data-save>保存设置（工具与插件）</button>
       </div>
@@ -1891,7 +1896,7 @@ async function loadStatus(){
           const tools = ut.tools || [];
           if(!tools.length){
             const d = document.createElement('div');
-            d.textContent = '还没有自定义工具：把一个 .json 清单丢进 ' + (ut.dir || 'tools.d') + '/ 就能用（格式见 tools.d/README.md）。';
+            d.textContent = '还没有自定义工具：点上面的「怎么加工具」——它能在 tools.d/ 里直接生成一份可编辑的模板。';
             listBox.appendChild(d);
           }
           tools.forEach(function(t){
@@ -2796,6 +2801,136 @@ $('providerSel').addEventListener('change', ()=>applyProvider($('providerSel').v
 /* ── 首次运行向导：厂商/模型/Key → 检测微信+勾选群 → 点击测试 → 完成 ── */
 // 首次向导：页面生命周期内只弹一次（完成/跳过后不再弹，防止「完成→重载→又弹」循环）
 let _onboardOnce = false;
+/* ── 应用内引导：所有"怎么办"都在弹窗里，不叫用户去读文件 ───────────────────────── */
+const GUIDES = {
+  tools: {
+    title: '怎么给机器人加一个工具',
+    intro: '一个工具 ＝ 一个 .json 文件。它**只发 HTTP**，不会在你电脑上跑任何代码，也不会读你的文件。',
+    steps: [
+      '① 点下面的「生成模板清单」，会在 tools.d/ 里写好一个可编辑的示例（也可以先复制模板再自己建文件）',
+      '② 改 4 个地方：name（工具名，小写字母/下划线）、description（什么时候该用它）、url（接口地址）、allow_hosts（域名白名单，必须包含 url 的域名）',
+      '③ 回本页点「重新加载清单」→ 打开总开关 → 在列表里勾选你的工具 ⇒ 下一轮对话模型就能用它',
+      '出错不用猜：坏清单会一条条列在「清单现状」下面；运行时的报错会原样返回给模型。'
+    ],
+    copy: [{label: '复制最小模板', text: '{\n  "name": "my_tool",\n  "description": "这个工具做什么、什么时候用",\n  "enabled": false,\n  "method": "GET",\n  "url": "https://api.example.com/x",\n  "allow_hosts": ["api.example.com"],\n  "params": {"type": "object", "properties": {}, "required": []}\n}'}],
+    actions: [{label: '生成模板清单到 tools.d/', kind: 'gen'}, {label: '打开 tools.d 目录', kind: 'open', arg: 'tools.d'}]
+  },
+  voice: {
+    title: '语音转文字：缺引擎怎么办',
+    intro: '链路＝微信语音(.silk) → 解码 → Windows 内置听写。两段各缺各补，缺哪段面板上会写出来。',
+    steps: [
+      '缺**解码器**：装一个 Python 包 pilk（可选第三方依赖，GPL-3.0，不随本项目分发）——命令在下面，复制到终端跑一次即可',
+      '缺**识别引擎**：Windows 设置 → 时间和语言 → 语音 → 安装中文语音识别（装完回来点「测试引擎」）',
+      '两样齐了，面板顶上的状态会变成「✅ 可用」；引擎没配好时机器人**不会假装识别过**，它会照实说缺什么。'
+    ],
+    copy: [{label: '复制安装命令', text: 'pip install pilk'}],
+    actions: [{label: '测试引擎（跑一遍完整链路）', kind: 'test', arg: 'voice'}]
+  },
+  tts: {
+    title: '语音回复：为什么发出去是「文件」不是「语音条」',
+    intro: '合成这一段我们是真做好了（Windows 内置 SAPI，零下载、不出网）；卡住的是"发出去"这一段。',
+    steps: [
+      '微信 PC 端**没有**"把任意音频发成语音条"的接口——驱动库只能**转发**别人发过的语音条，不能自造',
+      '所以当前形态是：把合成好的音频当**文件**发出去（对方收到文件卡片，点开能听）——这条路零风险、现在就能用',
+      '想要**真语音条**只有一条路：装一个虚拟声卡（VB-CABLE 之类），再用微信的 🎤 录音按钮把 TTS 播进虚拟麦。这要动系统层（装驱动），**要你点头才做**',
+      '合成全程在本机，内容不出网；"试听一句"也只合成、不发送。'
+    ],
+    copy: [],
+    actions: [{label: '试听一句（只合成）', kind: 'test', arg: 'tts'}]
+  },
+  image: {
+    title: '随机图：怎么把图放进图库',
+    intro: '默认走**本地图库**（零出网）：把图片丢进一个目录就行，不用配接口。',
+    steps: [
+      '点下面的「打开图库目录」，把 .jpg / .png / .gif / .webp / .bmp 直接拷进去（可以混放）',
+      '回本页看「图库目录」那一行：有图它会写"图库里有 N 张"；空的时候会提示你放图',
+      '打开「随机图」总开关，机器人才会在合适的时候发一张（同一会话默认 20 秒内只发一次、最近发过的尽量不重复）',
+      '想用在线图源就把"取图方式"改成 online/api：会过三段过滤（安全分级 + 标签黑名单 + 视觉审核），任何一道说不行就不发。'
+    ],
+    copy: [{label: '复制目录名', text: 'assets/anime'}],
+    actions: [{label: '打开图库目录', kind: 'open', arg: 'assets/anime'}]
+  },
+  forward: {
+    title: '转发视频/文件：为什么默认关着',
+    intro: '这一步和我们的最高目标（**全程后台、不抢前台**）冲突，所以默认不开。',
+    steps: [
+      '转发文件必须过一次系统的「选择文件」对话框——那一下会**短暂抢一次前台**（你正在别的程序里打字时会被打断）',
+      '**链接不受影响**：让机器人直接把链接发出去是纯后台的，不需要这个开关',
+      '确实需要转发文件时再打开它：开启后它会照实标注"这次会短暂抢前台"；关着时模型也会如实说明原因，不会假装发过。'
+    ],
+    copy: [],
+    actions: []
+  },
+  wechat: {
+    title: '没检测到微信？照着做就行',
+    intro: '我们**不替你静默安装**微信（那要下安装包 + 管理员权限），只带你去官网。',
+    steps: [
+      '① 点下面的「打开官网下载」，装好微信并**登录**（机器人用的是你本机的微信客户端）',
+      '② 回来点「重新检测」——检测到在运行就会变绿',
+      '③ 装好后还建议看一眼「版本能力矩阵」：没实测过的微信版本会让发送先停一下，等你点「本次允许发送」。'
+    ],
+    copy: [],
+    actions: [{label: '打开官网下载', kind: 'openUrl'}, {label: '重新检测', kind: 'test', arg: 'wechat'}]
+  }
+};
+
+function copyText(t){
+  try{ navigator.clipboard.writeText(t); toast('已复制'); }
+  catch(e){ toast('复制失败：手动选中复制即可'); }
+}
+
+function openGuide(key){
+  const g = GUIDES[key];
+  if(!g){ toast('没有这条引导'); return; }
+  const old = document.getElementById('guide'); if(old && old.remove) old.remove();
+  const m = document.createElement('div'); m.className = 'mask'; m.id = 'guide';
+  const box = document.createElement('div'); box.className = 'box'; box.style.maxWidth = '640px';
+  const h = document.createElement('h1'); h.textContent = g.title; box.appendChild(h);
+  if(g.intro){ const p = document.createElement('p'); p.textContent = g.intro; box.appendChild(p); }
+  if(g.steps && g.steps.length){
+    const wrap = document.createElement('div'); wrap.className = 'mid'; wrap.style.textAlign = 'left';
+    g.steps.forEach(function(s){ const d = document.createElement('div'); d.className = 'row'; d.textContent = s; wrap.appendChild(d); });
+    box.appendChild(wrap);
+  }
+  (g.copy || []).forEach(function(c){
+    const row = document.createElement('div'); row.className = 'row';
+    const code = document.createElement('code');
+    code.textContent = c.text;
+    code.style.cssText = 'display:block;white-space:pre-wrap;word-break:break-all;background:rgba(127,127,127,.14);padding:8px 10px;border-radius:8px;font-size:12px;line-height:1.6';
+    const btn = document.createElement('button'); btn.className = 'ghost'; btn.textContent = c.label || '复制';
+    btn.onclick = function(){ copyText(c.text); };
+    row.appendChild(code); row.appendChild(btn); box.appendChild(row);
+  });
+  const btns = document.createElement('div'); btns.className = 'btns'; btns.style.justifyContent = 'center';
+  (g.actions || []).forEach(function(a){
+    const b = document.createElement('button'); b.className = 'ghost'; b.textContent = a.label;
+    b.onclick = function(){ guideAction(a); };
+    btns.appendChild(b);
+  });
+  const okBtn = document.createElement('button'); okBtn.className = 'pri'; okBtn.textContent = '知道了';
+  okBtn.onclick = function(){ maskClose(m); m.remove(); };
+  btns.appendChild(okBtn);
+  box.appendChild(btns); m.appendChild(box); document.body.appendChild(m); maskOpen(m);
+}
+
+async function guideAction(a){
+  try{
+    if(a.kind === 'open'){
+      const r = await getJSON('/api/open-path', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({path:a.arg})});
+      toast((r && r.ok) ? '已打开' : ('打开失败：' + ((r && (r.error || r.note)) || '')));
+    }else if(a.kind === 'gen'){
+      const r = await getJSON('/api/tools/new_manifest', {method:'POST'});
+      toast((r && r.ok) ? ('已生成模板：' + r.path + '（改完点「重新加载清单」）') : ('生成失败：' + ((r && r.error) || '')));
+      loadStatus();
+    }else if(a.kind === 'test'){
+      const el = (a.arg === 'voice') ? $('vsTest') : (a.arg === 'tts' ? $('ttsTest') : $('wxRecheck'));
+      if(el) el.click(); else toast('先切到对应面板再点测试');
+    }else if(a.kind === 'openUrl'){
+      window.open((window.__wxInstall && window.__wxInstall.official_url) || 'https://weixin.qq.com/', '_blank');
+    }
+  }catch(e){ toast('操作失败：' + e.message); }
+}
+
 async function onboarding(){
   if(!cfg || _onboardOnce) return;
   const key = getPath(cfg,'api.api_key') || '';
@@ -4251,6 +4386,12 @@ addEventListener('hashchange', ()=>{ if(location.hash==='#sec-sessions') loadSes
     try{ window.open(u, '_blank'); }catch(e){}
     toast('已尝试打开官网：' + u + '（打不开就手动复制到浏览器）');
   };
+  /* 应用内引导按钮：所有"怎么办"都在弹窗里（不再叫用户去读文件） */
+  [['utGuide','tools'], ['ttsGuide','tts'], ['vsGuide','voice'], ['irGuide','image'], ['fwGuide','forward']]
+    .forEach(function(pair){
+      const b = document.getElementById(pair[0]);
+      if(b) b.onclick = function(){ openGuide(pair[1]); };
+    });
   const utBtn = document.getElementById('utReload');
   if(utBtn) utBtn.onclick = async ()=>{
     try{
