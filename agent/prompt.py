@@ -108,6 +108,9 @@ def _scene_rules() -> str:
         lines.append("- 有人让你「说句话 / 发条语音 / 念一下」时，用 send_voice_reply(text=…)：本机合成音频发出去。**它发出去的是音频文件，不是微信语音条**；功能默认关，关着时它会返回原因，照实说，不要假装发过语音。")
     if _vc_mode == "sometimes":
         lines.append("- 你偶尔可以用语音回一句（send_voice_reply），只在你觉得比文字更有意思的时候用，别抢戏。")
+    _fs_mode = str(((cfg.get("file_search") or {}).get("trigger_mode")) or "on_request")
+    if _fs_mode != "off":
+        lines.append("- 有人问「有没有 XX 文件 / 帮我找一下那个报告 / 把 XX 发我」时：先用 find_local_file(名字) 在**用户配好的目录**里找（只读），把候选列给用户确认，再调 send_local_file —— 它只允许发**允许目录内**的文件，而且要过一次系统对话框（**短暂抢前台**，默认关）。功能没开、没配目录、重名多个、超上限时它都会返回原因，**照实说，绝不编造文件**。")
     lines.append("- 想「随机来张图」时用 send_random_image（机器人自己的图库，不用指定哪张）；图库为空或功能没开时它会返回原因，照原因说明即可。")
     lines.append("- 拍一拍：①对方拍你→系统自动回拍（90%、同一人30分钟冷却），收到 [拍一拍] 自然回应一句即可，一般不用再调 send_poke；②群友明确要求拍某人→可调 send_poke(reason=request)；③偶尔皮一下自己拍熟人→send_poke(reason=playful，受10%概率+每天3次限制，被拦照样说实话)。send_poke 传对方 wxid；相同目标30分钟内最多1次；失败/被拦一定如实说没拍上。")
     return "\n".join(lines)
