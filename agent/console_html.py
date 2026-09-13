@@ -500,15 +500,15 @@ th{color:var(--tx2);font-weight:500}
     </section>
 
     <section id="sec-check" class="card" data-sec>
-      <h2>检测中心（代码检测 / 鼠标操作检测）</h2>
-      <div class="desc">「代码检测」= 纯代码层检查（编译/依赖/角色卡评估/种子库/UI 标定/提示词静态/保护机制——不动鼠标、零风险，实测约 0.5~3 秒）；「鼠标操作检测」= 环境/配置/点击 + 程序鼠标操作检验（约 40~70 秒，期间接管鼠标请勿动；评论/收藏为真实操作）。想单独测某项用下方「🖱️ 程序鼠标检验」的独立按钮。</div>
+      <h2>检测中心（代码检测 / 点击测试）</h2>
+      <div class="desc">「代码检测」= 纯代码层检查（编译/依赖/角色卡评估/种子库/UI 标定/提示词静态/保护机制——不动鼠标、零风险，实测约 0.5~3 秒）；「点击测试」= 环境/配置/点击 + 程序鼠标操作检验（约 40~70 秒，期间接管鼠标请勿动；评论/收藏为真实操作）。想单独测某项用下方「🖱️ 程序鼠标检验」的独立按钮。</div>
       <div class="btns">
         <button id="codeCheck" class="pri">代码检测</button>
         <button id="codeCheckDeps" class="ghost" title="额外跑依赖版本详细核对（55 项，稍慢）">代码检测＋依赖核对</button>
         <button class="ghost" id="codeCheckTip2" title="点击切换到概览查看常驻状态条" onclick="document.getElementById('sec-overview').scrollIntoView({behavior:'smooth'})">查看进度条</button>
       </div>
       <div class="btns">
-        <button id="selfCheck" class="pri">鼠标操作检测</button>
+        <button id="selfCheck" class="pri">点击测试</button>
         <button id="selfCheckStop" class="ghost" disabled>停止检测</button>
         <span class="hint" id="selfCheckTip" style="align-self:center">进行中约 40~70 秒（含程序鼠标操作；可随时「停止检测」）</span>
       </div>
@@ -540,7 +540,7 @@ th{color:var(--tx2);font-weight:500}
       <table id="checkList">
         <thead><tr><th style="width:26px">✓</th><th>项目</th><th>怎么测</th><th>预期</th></tr></thead>
         <tbody>
-          <tr><td><input type="checkbox" class="ck"></td><td>1. 环境体检</td><td>点上方「鼠标操作检测」</td><td>无 ❌ 项（允许 ⚠️ 提示）</td></tr>
+          <tr><td><input type="checkbox" class="ck"></td><td>1. 环境体检</td><td>点上方「点击测试」</td><td>无 ❌ 项（允许 ⚠️ 提示）</td></tr>
           <tr><td><input type="checkbox" class="ck"></td><td>2. 发消息</td><td>群里 @机器人 说句话</td><td>机器人正常回复，且不重复</td></tr>
           <tr><td><input type="checkbox" class="ck"></td><td>3. 拍一拍</td><td>先「简易检测」，再完整检测</td><td>简易=菜单可弹；完整=群里出现拍一拍提示</td></tr>
           <tr><td><input type="checkbox" class="ck"></td><td>4. 引用回复</td><td>让机器人 引用某条消息回复</td><td>出现引用样式（灰底卡片）且内容正确</td></tr>
@@ -2523,7 +2523,7 @@ $('providerSel').addEventListener('change', ()=>applyProvider($('providerSel').v
   }
 })();
 
-/* ── 首次运行向导：厂商/模型/Key → 检测微信+勾选群 → 鼠标操作检测 → 完成 ── */
+/* ── 首次运行向导：厂商/模型/Key → 检测微信+勾选群 → 点击测试 → 完成 ── */
 // 首次向导：页面生命周期内只弹一次（完成/跳过后不再弹，防止「完成→重载→又弹」循环）
 let _onboardOnce = false;
 async function onboarding(){
@@ -2590,7 +2590,7 @@ async function onboarding(){
       }
       if(step===2){
         if(picked.length){ wlList = picked.slice(); setPath(cfg,'wechat.group_name_white_list', wlList.slice()); await getJSON('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)}); renderChips(); }
-        $('obDesc').textContent = '第 3 步/共 3 步：代码与依赖检测（不动鼠标，几秒完成：环境/依赖/微信接入/配置逐项检查）。需要更多「鼠标操作检测」可在检测中心用单独按钮。';
+        $('obDesc').textContent = '第 3 步/共 3 步：代码与依赖检测（不动鼠标，几秒完成：环境/依赖/微信接入/配置逐项检查）。需要更多「点击测试」可在检测中心用单独按钮。';
         $('obBody').innerHTML='<pre class="out" id="obCheck" style="height:190px">体检中…</pre>';
         $('obNext').textContent='完成'; step=3;
         const r = await getJSON('/api/selfcheck',{method:'POST',headers:{'Content-Type':'application/json'},body:'{"mode":"code"}',timeoutMs:60000});
@@ -2743,10 +2743,10 @@ $('selfCheck').onclick = async ()=>{
   const btn=$('selfCheck'); btn.disabled=true;
   if($('selfCheckStop')) $('selfCheckStop').disabled=false;
   const pre=$('selfCheckResult'); pre.classList.remove('dn');
-  pre.textContent='鼠标操作检测中（约 40~70 秒：环境/配置/点击 + 程序鼠标操作，期间请勿动鼠标；可随时点「停止检测」）…';
+  pre.textContent='点击测试中（约 40~70 秒：环境/配置/点击 + 程序鼠标操作，期间请勿动鼠标；可随时点「停止检测」）…';
   try{
     const r = await getJSON('/api/selfcheck',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}',timeoutMs:180000});
-    let lines=['===== 鼠标操作检测 =====', r.summary||'', ''];
+    let lines=['===== 点击测试 =====', r.summary||'', ''];
     for(const c of (r.checks||[])){
       const mark = c.status==='ok'?'✅':(c.status==='warn'?'⚠️':(c.status==='fail'?'❌':'ℹ️'));
       lines.push(mark+' '+c.name+'：'+c.detail);
@@ -3541,7 +3541,7 @@ const _EASTER_TXT = [
 const WHALE_TXT = {
   "群相灵 控制台": "🐋 鲸鲸号 · 深度摸鱼",
   "概览": "🐋 概览 · 我是AI，别催，CPU还在烧",
-  "检测中心（代码检测 / 鼠标操作检测）": "检测中心（先体检，再摸鱼）",
+  "检测中心（代码检测 / 点击测试）": "检测中心（先体检，再摸鱼）",
   "体检与功能自检": "检测中心 · 出远门前先体检",
   "功能自检清单（按重要性排序）": "功能自检清单（按重要性，一个一个过）",
   "调试 · 高级功能": "调试 · 高级功能（一般人我不告诉他）",
@@ -3579,8 +3579,8 @@ const WHALE_TXT = {
   "代码检测＋依赖核对": "代码检测＋依赖核对（少了什么先补课）",
   "代码检测": "代码检测（先查bug，再查心情）",
   "查看进度条": "查看进度条（别催，在跑了）",
-  "鼠标操作检测": "鼠标操作检测（AI也要做视力检查）",
-  "一键体检": "鼠标操作检测（AI也要做视力检查）",
+  "点击测试": "点击测试（AI也要做视力检查）",
+  "一键体检": "点击测试（AI也要做视力检查）",
   "停止检测": "停止检测（不测了，我摊牌）",
   "拍一拍检测": "拍一拍检测（别真拍我）",
   "模型评分": "模型评分（AI打分，绝不偏袒）",
