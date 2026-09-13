@@ -635,8 +635,14 @@ class WeChatAdapter:
             self._fg_exit()
             try:
                 if cur0 and cur0 != (0, 0) and _cursor_pos() != cur0:
-                    ctypes.windll.user32.SetCursorPos(int(cur0[0]), int(cur0[1]))
-                    log.info("真实路径结束后已把光标还原到 %s", cur0)
+                    import ctypes as _ct
+                    ok_cur = _ct.windll.user32.SetCursorPos(int(cur0[0]), int(cur0[1]))
+                    if ok_cur:
+                        log.info("真实路径结束后已把光标还原到 %s", cur0)
+                    else:
+                        # 实测：本机 SetCursorPos 会返回 0（失败）且 GetLastError=0 —— 此时**不要谎报已还原**，
+                        # 如实记一行，方便下次定位"为什么光标没回来"（2026-09-13 记录）
+                        log.warning("光标还原失败：SetCursorPos 返回 0（目标 %s，当前位置 %s）", cur0, _cursor_pos())
             except Exception as _e:
                 log.info("光标还原失败（不影响发送）：%s", _e)
 
