@@ -105,7 +105,7 @@ DEFAULT_CONFIG = {
         # ── 在线图源（mode=online）：按顺序尝试，取不到就换下一个 ──────────────────
         #   pixiv＝经公开代理接口取 Pixiv 作品（**强制 r18=0**）· konachan/yande＝强制 rating:safe
         #   safebooru/nekos＝全年龄站 · waifu＝只走 waifu.pics 的 /sfw/ 端点
-        "sources": ["pixiv", "konachan", "safebooru", "waifu", "nekos", "yande"],
+        "sources": ["pixiv", "safebooru", "nekos", "konachan", "waifu", "yande"],
         "sources_per_try": 4,        # 一次最多试几个图源（每张都要过过滤链）
         "tag": "",                   # 可选：给 pixiv 图源加个偏好标签（如 "风景"）
         # ── 过滤（纵深防御：任何一道说不行就不发；细节见 agent/image_filter.py）──
