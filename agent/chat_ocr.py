@@ -405,6 +405,11 @@ def _nz(s: str) -> str:
     return "".join(ch for ch in str(s or "") if ch.isalnum())
 
 
+def norm_alnum(s: str) -> str:
+    """只留字母数字（给"短指纹严格子串"用）。"""
+    return _nz(s)
+
+
 def content_match(pane: str, needle: str) -> bool:
     """聊天区 OCR 文本里能不能认出「目标会话最近的内容」——**按内容认会话**，不靠名字。
 
@@ -543,3 +548,266 @@ def current_chat_name(img=None, gui=None, min_green: float = 0.12, retries: int 
             break
         time.sleep(0.45)
     return best
+
+
+# ————————————————— 「搜索」入口：**两套 UI 都要认** —————————————————
+# 用户 2026-09-13 口径：「没有搜索框了，只有搜索的一个图标，摁了之后才有搜索框」+
+# 「我另外一台电脑是有搜索框的，你要把两套 UI 的兼容做好」⇒ 入口有两种形态，都得能定位：
+#   · **box**（老 UI / 另一台机）：顶部直接摆着搜索框（占位文本「搜索」/「Search」）⇒ 点文字
+#   · **icon**（本机 4.1.15.8 实测）：顶部**只有放大镜图标**（旁边还有「＋」圆圈），点它才展开搜索框
+# 判据优先级：**先认字**（读到"搜索"就一定是 box 形态，点它最稳）→ 读不到再**认图标**
+# （标题带里的深色连通块：放大镜是其中最靠左、宽高都 ≈ 30px 的那个；「＋」在它右边）。
+SEARCH_BAND = (30, 135)              # 兜底用的标题带（正常走 `_search_band()` 现算）
+PANEL_TOP_MAX = 170                  # 会话列表面板上沿的搜索上限（超过就认为没找到）
+SEARCH_ICON_W = (9, 46)              # 图标横向宽度合理区间
+SEARCH_ICON_H = (9, 46)              # 图标纵向高度合理区间
+
+
+def _panel_top(img, x0, x1, light: int = 205, need: float = 0.8):
+    """会话列表**面板的上沿**：跳过窗口顶部那条（浅灰或深灰的）标题栏带，返回第一个足够亮的 y。
+
+    为什么必须有这一步（2026-09-13 实测）：`PrintWindow` 抓到的帧**有的带上标题栏、有的不带**——
+    带上时 y∈[0,45] 是一整条通宽深色（实测灰值 117），`_dark_blocks` 会把它并成**一个 234×105
+    的大块**（超宽高，被滤掉），而标题栏下面的放大镜/加号反而**一个都认不出来**。
+    """
+    try:
+        g = img.convert("L")
+        px = g.load()
+        w = int(x1) - int(x0)
+        if w < 8:
+            return 0
+        step = max(1, w // 40)
+        xs = list(range(int(x0), int(x1), step))
+        for y in range(0, min(PANEL_TOP_MAX, img.size[1])):
+            hit = sum(1 for x in xs if px[x, y] > light)
+            if hit >= need * len(xs):
+                return y
+        return 0
+    except Exception:
+        return 0
+
+
+def _search_band(img, x0, x1):
+    """标题带的纵向范围（面板上沿往下 4..82px：实测放大镜中心在面板上沿 +37px）。"""
+    top = _panel_top(img, x0, x1)
+    y0 = max(0, int(top) + 4)
+    y1 = min(img.size[1], y0 + 78)
+    return y0, y1
+
+
+def _list_span(img, left=None):
+    """会话列表列的横向范围 (x0, x1)（与 `list_rows` 同一套口径）。"""
+    w = img.size[0]
+    if left is None:
+        try:
+            left = ch.detect_pane_left(img) or 0
+        except Exception:
+            left = 0
+    if not left:
+        left = int(w * ch.PANE_LEFT_REL)
+    x0 = max(0, left - 240)
+    x1 = max(x0 + 40, left - 6)
+    return x0, x1, int(left)
+
+
+def _rail_right(img, max_frac: float = 0.25, dark: int = 120, need: float = 0.6) -> int:
+    """左侧导航栏的右沿（实测本机 ≈89px）：拿它当"图标不许出现在更左边"的下界。
+
+    为什么要它：`detect_pane_left()` 在 PrintWindow 抓到的帧上**有时返回 0**，此时列范围会按比例
+    兜底（本机 0.26·w）⇒ 左边会把导航栏（连头像那张深色图）圈进来，头像块的大小恰好落在
+    "图标"的尺寸区间里，会被误当成放大镜 ⇒ 必须显式把导航栏排除。
+    """
+    try:
+        g = img.convert("L")
+        px = g.load()
+        w, h = img.size
+        ys = list(range(int(h * 0.25), int(h * 0.9), max(1, h // 40)))
+        if not ys:
+            return 0
+        right = 0
+        for x in range(0, int(w * max_frac)):
+            n = sum(1 for y in ys if px[x, y] < dark)
+            if n >= need * len(ys):
+                right = x
+        return right
+    except Exception:
+        return 0
+
+
+def _dark_blocks(img, x0, y0, x1, y1, thr: int = 150, min_px: int = 14):
+    """标题带里的深色块：**二维连通域**（不是按列投影）。
+
+    2026-09-13 实测：按列投影时，窗口标题栏那条通宽深色带会和它下面的图标**并成一个大块**
+    ⇒ 图标一个都认不出。二维连通域能把"上面一条带、下面两个图标"干净地分开。
+    返回 [(cx, cy, w, h)]（绝对坐标）。
+    """
+    g = img.convert("L").crop((int(x0), int(y0), int(x1), int(y1)))
+    px = g.load()
+    w, h = g.size
+    if w <= 0 or h <= 0:
+        return []
+    mask = bytearray(w * h)
+    for y in range(h):
+        base = y * w
+        for x in range(w):
+            if px[x, y] < thr:
+                mask[base + x] = 1
+    seen = bytearray(w * h)
+    out = []
+    for i in range(w * h):
+        if not mask[i] or seen[i]:
+            continue
+        stack = [i]
+        seen[i] = 1
+        n = 0
+        mnx = mxx = i % w
+        mny = mxy = i // w
+        while stack:
+            j = stack.pop()
+            n += 1
+            jx, jy = j % w, j // w
+            if jx < mnx:
+                mnx = jx
+            elif jx > mxx:
+                mxx = jx
+            if jy < mny:
+                mny = jy
+            elif jy > mxy:
+                mxy = jy
+            if jx > 0 and mask[j - 1] and not seen[j - 1]:
+                seen[j - 1] = 1
+                stack.append(j - 1)
+            if jx + 1 < w and mask[j + 1] and not seen[j + 1]:
+                seen[j + 1] = 1
+                stack.append(j + 1)
+            if jy > 0 and mask[j - w] and not seen[j - w]:
+                seen[j - w] = 1
+                stack.append(j - w)
+            if jy + 1 < h and mask[j + w] and not seen[j + w]:
+                seen[j + w] = 1
+                stack.append(j + w)
+        if n >= min_px:
+            out.append((int(x0) + int((mnx + mxx) / 2), int(y0) + int((mny + mxy) / 2),
+                        int(mxx - mnx + 1), int(mxy - mny + 1)))
+    return out
+
+
+def find_search_entry(img, left=None, zoom: int = 2):
+    """定位「搜索」入口，**兼容两套 UI**。返回 dict 或 None。
+
+    {'variant': 'box'|'icon', 'x': 图内x, 'y': 图内y, 'why': 依据, 'cands': [...]}
+    """
+    if img is None:
+        return None
+    x0, x1, left = _list_span(img, left=left)
+    y0, y1 = _search_band(img, x0, x1)
+    # ① 认字：老 UI 的搜索框占位文本（box 形态优先——读到字就一定点字）
+    try:
+        crop = img.crop((x0, y0, x1, y1))
+        if zoom > 1:
+            crop = crop.resize((crop.width * zoom, crop.height * zoom))
+        for t, x, y, w, hh in recognize(crop):
+            s = str(t)
+            if "搜索" in s or "search" in s.lower():
+                return {"variant": "box", "x": x0 + int(x / zoom), "y": y0 + int(y / zoom),
+                        "why": "读到搜索框占位文本 %r" % s[:12]}
+    except Exception:
+        pass
+    # ② 认图标：**整条上部区域**扫二维深色块（有的帧带标题栏、有的不带，不写死 y）。
+    #    三条规矩（都来自实测）：a) 大小要像图标 b) 要在导航栏右边（头像那张深色图大小也像图标）
+    #    c) **取"最上面那一排"里最靠左的那个**——放大镜与「＋」同一排，会话行的头像/名字在更下面
+    try:
+        rail = _rail_right(img)
+        ceil = min(img.size[1], max(y1 + 60, 170))
+        cands = []
+        for cx, cy, bw, bh in _dark_blocks(img, x0, 0, x1, ceil):
+            if not (SEARCH_ICON_W[0] <= bw <= SEARCH_ICON_W[1] and SEARCH_ICON_H[0] <= bh <= SEARCH_ICON_H[1]):
+                continue
+            if cx <= rail + 4:
+                continue
+            cands.append((cx, cy, bw, bh))
+        if cands:
+            top = min(b[1] for b in cands)
+            row = [b for b in cands if b[1] <= top + 14]      # 同一排（图标行）
+            row.sort(key=lambda b: b[0])
+            cx, cy, bw, bh = row[0]
+            return {"variant": "icon", "x": cx, "y": cy,
+                    "why": "最上一排最靠左的图标块 %dx%d（该排 %d 块 / 共 %d 块，导航栏右沿 %d）"
+                           % (bw, bh, len(row), len(cands), rail),
+                    "cands": cands}
+    except Exception:
+        pass
+    return None
+
+
+def band_signature(img, left=None, size=(72, 18)):
+    """会话列表**标题带**的低分辨率灰度指纹（只看"这一带变没变"，不判内容）。"""
+    if img is None:
+        return None
+    try:
+        x0, x1, _l = _list_span(img, left=left)
+        y0, y1 = _search_band(img, x0, x1)
+        return img.convert("L").crop((x0, y0, x1, y1)).resize(size).tobytes()
+    except Exception:
+        return None
+
+
+def band_diff(a, b) -> float:
+    """两个标题带指纹的平均绝对差（0~1）。"""
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    return sum(abs(int(p) - int(q)) for p, q in zip(a, b)) / (255.0 * len(a))
+
+
+POPOVER_MARKERS = ("最近在搜", "搜索网络结果", "搜索", "联系人", "群聊", "聊天记录", "公众号", "视频号")
+
+
+def looks_like_search_popover(img) -> tuple:
+    """判这张图是不是**搜索浮层**：返回 (bool, 依据)。
+
+    为什么必须靠内容判：搜索浮层与**表情面板**的窗口类名、所属进程完全一样
+    （都是 `Qt51514QWindowToolSaveBits`、都是微信），尺寸还会随查询结果变化
+    （实测同一浮层：输入前 552×338、出结果后 552×891；换成搜过的词还会直接高着开）
+    ⇒ 按"宽高比/尺寸"筛**必然误判**（实测过一次：把高浮层当表情面板排除掉 ⇒ 误报"浮层没弹出来"）。
+    表情面板里没有下面这些字样，所以用它们当判据。
+    """
+    if img is None:
+        return False, "没有图"
+    try:
+        txt = " ".join(str(t) for t, *_ in recognize(img))
+    except Exception as e:
+        return False, "OCR 失败：%s" % e
+    for m in POPOVER_MARKERS:
+        if m in txt:
+            return True, "画面里有浮层标志「%s」" % m
+    return False, "画面里没有搜索浮层的标志字样（读到：%s）" % txt[:40]
+
+
+def find_popover_row(img, name: str, zoom: int = 2):
+    """在**搜索浮层**的截图里找目标那一行，返回 {'x','y','why'}（浮层客户区坐标）或 None。
+
+    实测口径（2026-09-13，本机 4.1.15.8，浮层 552×891）：
+      · 分区标题「联系人」在 (54,112)，**第一行＝头像 + 名字（名字在 x≈122）**，行中心 ≈ 标题下方 60px；
+      · 右边 (≈0.86·w) 有个 ⓘ 按钮 ⇒ 落点固定取 **0.35·w**，绝不碰右边那半；
+      · 单字母名字（如「E」）OCR 会读成别的（这次读成 'O'）⇒ 名字命中用**整体相等**判、不相等就退到
+        「联系人」段第一行——最终能不能用仍由**内容级复核**说了算（点了错行＝发不出去，不会误发）。
+    """
+    if img is None:
+        return None
+    try:
+        w, h = img.size
+        items = recognize(img.crop((0, 80, int(w * 0.8), min(h, int(h * 0.55)))))
+    except Exception:
+        return None
+    sec_y = None
+    for t, x, y, ww, hh in items:
+        s = str(t)
+        cy = int(y) + 80
+        if norm(s) == norm(name) and norm(name):
+            return {"x": max(60, int(w * 0.35)), "y": int(cy + hh / 2), "why": "OCR 命中 %r" % s[:12]}
+        if sec_y is None and ("联系人" in s or "Contacts" in s):
+            sec_y = cy
+    if sec_y is not None:
+        return {"x": max(60, int(w * 0.35)), "y": int(sec_y + 60),
+                "why": "「联系人」段第一行（标题 y=%d）" % sec_y}
+    return None
