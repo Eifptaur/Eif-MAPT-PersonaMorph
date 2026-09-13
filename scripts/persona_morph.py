@@ -942,7 +942,7 @@ def _schedule_poke_back(wechat, store, chat_key: str, chat_id: str, group_name: 
 def _version_issues() -> list:
     """启动体检：返回"版本不匹配"的问题清单（空 = 全部匹配）。
 
-    覆盖：微信本体（需 4.x）、适配层 wechatauto-replica（需 1.1.5.1）、关键依赖最低版本。
+    覆盖：微信本体（需 4.x）、适配层 wechatauto-replica（需 ≥1.1.5.1，本仓库实测 1.2.2.2）、关键依赖最低版本。
     """
     issues = []
     try:
@@ -953,7 +953,7 @@ def _version_issues() -> list:
         rows, _ = dep_check()
         bad = [r for r in rows if not r[3]]
         if any(r[0] == "wechatauto-replica" for r in bad):
-            issues.append("适配层 wechatauto-replica 需为 1.1.5.1（当前 %s）" % (info.get("adapter") or "未安装"))
+            issues.append("适配层 wechatauto-replica 需 ≥1.1.5.1（本仓库实测 1.2.2.2；当前 %s）" % (info.get("adapter") or "未安装"))
         for r in bad:
             if r[0] == "wechatauto-replica":
                 continue
