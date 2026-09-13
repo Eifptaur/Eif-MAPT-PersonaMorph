@@ -81,6 +81,19 @@ body.whale-anim::after{content:"";position:fixed;inset:0;z-index:-1;pointer-even
 .side::after{background:repeating-linear-gradient(115deg,rgba(255,255,255,.10) 0 1px,transparent 1px 22px);opacity:.5}
 .side .nav a{background:transparent}
 .side .nav a.on{background:rgba(63,168,240,.22);color:#fff;font-weight:600}
+/* ⛔100 左侧导航（用户 2026-09-13 定稿方向 B）：图标自绘 + 可滚动 + 名字可收起（像 DeepSeek 那样） */
+.side .nav{overflow-y:auto;overflow-x:hidden;max-height:calc(100vh - 210px);padding-right:2px;scrollbar-width:thin}
+.side .nav::-webkit-scrollbar{width:6px}
+.side .nav::-webkit-scrollbar-thumb{background:rgba(160,210,255,.35);border-radius:3px}
+.side .nav::-webkit-scrollbar-track{background:transparent}
+.side .nav a{display:flex;align-items:center;gap:9px}
+.side .nav a svg{width:16px;height:16px;flex:none;opacity:.92}
+.side .nav a .lb{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.side.tight{width:64px}
+.side.tight .nav a{justify-content:center;gap:0}
+.side.tight .nav a .lb{display:none}
+.side.tight .status{display:none}
+.nav-tg{display:block;width:100%;margin:0 0 8px;font-size:11.5px}
 /* ── 海洋动态背景：三层大波浪 + 浪尖高光线（SVG 平移；无外部素材依赖）── */
 .ocean-wave{position:fixed;left:0;right:0;bottom:0;height:40vh;z-index:-1;pointer-events:none;opacity:.95}
 .ocean-wave svg{position:absolute;bottom:0;left:-50%;width:200%;height:100%;display:block}
@@ -413,30 +426,31 @@ th{color:var(--tx2);font-weight:500}
 <div class="shell">
   <aside class="side">
     <div class="status"><b>运行状态</b><p id="sideStatus">未连接</p></div>
+    <button id="navToggle" class="ghost nav-tg" title="收起 / 展开导航名字">收起</button>
     <nav class="nav" id="nav">
-      <a href="#sec-overview" class="on">概览</a>
-      <a href="#sec-check">体检与功能自检</a>
-      <a href="#sec-advanced">调试·高级功能</a>
-      <a href="#sec-sessions">运行明细</a>
-      <a href="#sec-model">模型 API</a>
-      <a href="#sec-wechat">微信</a>
-      <a href="#sec-vermat">版本能力矩阵</a>
-      <a href="#sec-media">媒体与语音</a>
-      <a href="#sec-tts">语音回复</a>
-      <a href="#sec-tools">工具与插件</a>
-      <a href="#sec-poke">拍一拍</a>
-      <a href="#sec-memory">记忆</a>
-      <a href="#sec-memory-set">记忆共享</a>
-      <a href="#sec-persona">人设与响应</a>
-      <a href="#sec-community">社区与学习</a>
-      <a href="#sec-send">发送限制</a>
-      <a href="#sec-search">联网搜索</a>
-      <a href="#sec-server">服务器</a>
-      <a href="#sec-ui">界面适配</a>
-      <a href="#sec-cursor">光标设置</a>
-      <a href="#sec-wavefx">🌊 水光波纹</a>
-      <a href="#sec-log">运行日志</a>
-      <a href="#sec-json">原始 JSON</a>
+      <a href="#sec-overview" class="on"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 8l3.1-2.2" stroke="currentColor" stroke-width="1.4" fill="none"/></svg><span class="lb">概览</span></a>
+      <a href="#sec-check"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M5 8.2l2.1 2.1L11 6" fill="none" stroke="currentColor" stroke-width="1.5"/></svg><span class="lb">体检</span></a>
+      <a href="#sec-advanced"><svg viewBox="0 0 16 16"><path d="M2 5h12M2 11h12" stroke="currentColor" stroke-width="1.4" fill="none"/><circle cx="6" cy="5" r="1.9" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="11" cy="11" r="1.9" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">高级</span></a>
+      <a href="#sec-sessions"><svg viewBox="0 0 16 16"><path d="M3 4.5h10M3 8h10M3 11.5h10" stroke="currentColor" stroke-width="1.4" fill="none"/><circle cx="1.5" cy="4.5" r=".9" fill="currentColor"/><circle cx="1.5" cy="8" r=".9" fill="currentColor"/><circle cx="1.5" cy="11.5" r=".9" fill="currentColor"/></svg><span class="lb">明细</span></a>
+      <a href="#sec-model"><svg viewBox="0 0 16 16"><rect x="4" y="4" width="8" height="8" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M6.5 1.6v2.4M9.5 1.6v2.4M6.5 12v2.4M9.5 12v2.4M1.6 6.5h2.4M1.6 9.5h2.4M12 6.5h2.4M12 9.5h2.4" stroke="currentColor" stroke-width="1.3" fill="none"/></svg><span class="lb">模型</span></a>
+      <a href="#sec-wechat"><svg viewBox="0 0 16 16"><path d="M6.2 3.2c-2.6 0-4.7 1.7-4.7 3.9 0 1.2.6 2.3 1.7 3l-.4 1.6 1.8-.9c.5.1 1 .2 1.6.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M9.9 6.6c-2.2 0-4 1.5-4 3.4 0 1.9 1.8 3.4 4 3.4.4 0 .9-.1 1.3-.2l1.5.8-.3-1.4c.9-.6 1.5-1.5 1.5-2.6 0-1.9-1.8-3.4-4-3.4z" fill="none" stroke="currentColor" stroke-width="1.3"/></svg><span class="lb">微信</span></a>
+      <a href="#sec-vermat"><svg viewBox="0 0 16 16"><path d="M8 1.8l5.4 2.7v6.9L8 14.2 2.6 11.4V4.5z" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M2.8 4.6L8 7.3l5.2-2.7M8 7.3v6.8" fill="none" stroke="currentColor" stroke-width="1.2"/></svg><span class="lb">版本</span></a>
+      <a href="#sec-media"><svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="5.6" cy="6.4" r="1.3" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M2.6 11.4l3.4-3 2.7 2.4 2.2-1.9 2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg><span class="lb">媒体</span></a>
+      <a href="#sec-tts"><svg viewBox="0 0 16 16"><path d="M3 6.4v3.2M6 4.2v7.6M9 2.8v10.4M12 5.4v5.2" stroke="currentColor" stroke-width="1.4" fill="none"/></svg><span class="lb">语音</span></a>
+      <a href="#sec-tools"><svg viewBox="0 0 16 16"><rect x="3" y="3" width="7" height="7" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10 6.4h1.6a1.6 1.6 0 010 3.2H10" fill="none" stroke="currentColor" stroke-width="1.4"/><rect x="6" y="10" width="7" height="3.4" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">插件</span></a>
+      <a href="#sec-poke"><svg viewBox="0 0 16 16"><circle cx="8" cy="7" r="2.4" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M2.6 12.6c.7-2.4 2.9-3.6 5.4-3.6s4.7 1.2 5.4 3.6" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="12.6" cy="3.4" r="1.2" fill="currentColor"/></svg><span class="lb">拍拍</span></a>
+      <a href="#sec-memory"><svg viewBox="0 0 16 16"><path d="M4 2.4h8v11.2L8 11.4l-4 2.2z" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">记忆</span></a>
+      <a href="#sec-memory-set"><svg viewBox="0 0 16 16"><circle cx="3.6" cy="8" r="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="12.4" cy="4" r="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="12.4" cy="12" r="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M5.2 7.2l5.6-2.4M5.2 8.8l5.6 2.4" stroke="currentColor" stroke-width="1.3" fill="none"/></svg><span class="lb">共享</span></a>
+      <a href="#sec-persona"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="6" cy="7" r=".9" fill="currentColor"/><circle cx="10" cy="7" r=".9" fill="currentColor"/><path d="M5.6 10.2c1.4 1.1 3.4 1.1 4.8 0" fill="none" stroke="currentColor" stroke-width="1.3"/></svg><span class="lb">人设</span></a>
+      <a href="#sec-community"><svg viewBox="0 0 16 16"><circle cx="5" cy="6" r="2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="11" cy="6" r="2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M1.6 12.4c.5-1.8 1.9-2.8 3.4-2.8s2.9 1 3.4 2.8M8.6 9.9c.6-.2 1.2-.3 1.8-.3 1.5 0 2.9 1 3.4 2.8" fill="none" stroke="currentColor" stroke-width="1.3"/></svg><span class="lb">社区</span></a>
+      <a href="#sec-send"><svg viewBox="0 0 16 16"><path d="M14 2L2 7.4l4.2 1.6L13 4l-4.8 6.6.6 3.4z" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">发送</span></a>
+      <a href="#sec-search"><svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10.4 10.4L14 14" stroke="currentColor" stroke-width="1.5" fill="none"/></svg><span class="lb">搜索</span></a>
+      <a href="#sec-server"><svg viewBox="0 0 16 16"><rect x="2.4" y="3" width="11.2" height="4.2" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.4"/><rect x="2.4" y="8.8" width="11.2" height="4.2" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="4.8" cy="5.1" r=".8" fill="currentColor"/><circle cx="4.8" cy="10.9" r=".8" fill="currentColor"/></svg><span class="lb">服务</span></a>
+      <a href="#sec-ui"><svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M6 3v10" stroke="currentColor" stroke-width="1.3" fill="none"/></svg><span class="lb">界面</span></a>
+      <a href="#sec-cursor"><svg viewBox="0 0 16 16"><path d="M4 2l8.2 6.1-3.4.5 2 3.6-1.8 1-2-3.7L4.6 12z" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">光标</span></a>
+      <a href="#sec-wavefx"><svg viewBox="0 0 16 16"><path d="M1.6 9.2c1.6-3.2 3.2-3.2 4.8 0s3.2 3.2 4.8 0 3.2-3.2 4.8 0" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">波纹</span></a>
+      <a href="#sec-log"><svg viewBox="0 0 16 16"><path d="M4 2h5.6L13 5.4V14H4z" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M9.4 2v3.6H13" fill="none" stroke="currentColor" stroke-width="1.2"/></svg><span class="lb">日志</span></a>
+      <a href="#sec-json"><svg viewBox="0 0 16 16"><path d="M6.4 2.6C4.8 2.6 5 4.4 5 5.6s-.6 1.8-1.6 2.4c1 .6 1.6 1.2 1.6 2.4s-.2 3 1.4 3M9.6 2.6c1.6 0 1.4 1.8 1.4 3s.6 1.8 1.6 2.4c-1 .6-1.6 1.2-1.6 2.4s.2 3-1.4 3" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">JSON</span></a>
     </nav>
   </aside>
 
@@ -4500,6 +4514,21 @@ $('memSearch').addEventListener('keydown', (e)=>{
     if(a){ links.forEach(x=>x.classList.toggle('on', x===a)); moveInd(a); }
   }
   window.addEventListener('scroll', ()=>requestAnimationFrame(sync), {passive:true});
+  // ⛔100 导航名字收起/展开（用户口径："像 DeepSeek 一样，可以展开看到全部名字，或者收起那些名字"）
+  try{
+    const sideEl = document.querySelector('.side'), tgEl = document.getElementById('navToggle');
+    const tight = (function(){ try{ return localStorage.getItem('navTight')==='1'; }catch(e){ return false; } })();
+    if(tight && sideEl) sideEl.classList.add('tight');
+    if(tgEl){
+      tgEl.textContent = tight ? '展开' : '收起';
+      tgEl.addEventListener('click', ()=>{
+        const now = sideEl.classList.toggle('tight');
+        try{ localStorage.setItem('navTight', now ? '1' : '0'); }catch(e){}
+        tgEl.textContent = now ? '展开' : '收起';
+        try{ sync(); }catch(e){}          // 收起后指示条位置要重算
+      });
+    }
+  }catch(e){}
   links.forEach(a=>a.addEventListener('click', ()=>{
     links.forEach(x=>x.classList.remove('on'));
     a.classList.add('on'); moveInd(a);
