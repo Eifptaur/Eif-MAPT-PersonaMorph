@@ -567,11 +567,19 @@ class WebUI:
                     try:
                         from . import risk as _risk
                         from . import input_backend as _ib
+                        from . import version_matrix as _vm
+                        from . import dep_heal as _dh
                         if isinstance(st, dict):
                             st = dict(st)
                             st["risk"] = _risk.snapshot()
                             # 当前输入后端档位（AGENTS §2.1 第 4 条：用了哪一档必须看得见）
                             st["input"] = _ib.status()
+                            # 版本能力矩阵 + 版本门（W7：版本变了要出横幅、按未验证处理）
+                            st["version"] = _vm.current()
+                            # 依赖体检（盯项目运行时的 site-packages，不是当前进程）
+                            st["deps"] = {"summary": _dh.summary_line(),
+                                          "offline_available": _dh.offline_available(),
+                                          "source": _dh.probe_source()}
                     except Exception:
                         pass
                     self._json(st)
