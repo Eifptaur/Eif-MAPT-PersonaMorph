@@ -114,6 +114,42 @@ def build_tool_defs() -> list:
             "execute": _exec_send_random_image,
         },
         {
+            "name": "transcribe_voice",
+            "description": "把某条语音消息转成文字（本机离线识别，音频不出网、不上传）。message_id=[语音] 消息前的 #数字。没有可用识别引擎时它会返回原因，照原因说明即可，**绝不要猜语音内容**。",
+            "parameters": {
+                "type": "object",
+                "properties": {"message_id": {"description": "语音消息的 id（聊天记录里的 #数字）"}},
+                "required": ["message_id"],
+            },
+            "execute": _exec_transcribe_voice,
+        },
+        {
+            "name": "download_media",
+            "description": "把某条消息里的视频或文件下载到本机（只下载、不发送）。message_id=[视频] 或 [文件/链接/卡片] 消息前的 #数字；kind=video 或 file。返回本地路径。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message_id": {"description": "消息 id（聊天记录里的 #数字）"},
+                    "kind": {"description": "video 或 file"},
+                },
+                "required": ["message_id", "kind"],
+            },
+            "execute": _exec_download_media,
+        },
+        {
+            "name": "forward_media",
+            "description": "把某条消息里的视频/文件转发到当前会话。⚠️ 这一步要用系统「选择文件」对话框，**会短暂抢一次前台**，所以默认关闭；关闭时它返回原因，照原因告诉用户即可。**链接不需要它**——直接用 send_message 把链接发出去是纯后台的。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message_id": {"description": "消息 id（聊天记录里的 #数字）"},
+                    "kind": {"description": "video 或 file"},
+                },
+                "required": ["message_id", "kind"],
+            },
+            "execute": _exec_forward_media,
+        },
+        {
             "name": "collect_emoji",
             "description": "用鼠标把一条表情/图片消息收藏进微信表情库（右键气泡→添加到表情）。messageId=[表情] 或 [图片] 消息前的 #数字。最终由程序操作鼠标完成。",
             "parameters": {
@@ -415,6 +451,84 @@ def _exec_get_images(ctx, args):
             return _err("图片获取失败：%s" % "；".join(failed))
         note = ("（另有 %d 张获取失败）" % len(failed)) if failed else ""
         return {"content": _image_parts("消息 %s 的图片内容%s：" % (args.get("message_id"), note), data_urls)}
+    except Exception as e:
+        return _err(str(e))
+
+
+def _media_items(ctx, message_id, kind):
+    """取某条消息里指定 kind 的媒体条目（找不到返回 (None, 错误结果)）。"""
+    entry = ctx["store"].find_by_mid(ctx["chat_key"], message_id)
+    if not entry:
+        return None, _err("当前会话找不到消息 %s。%s" % (message_id, _mid_hint(ctx)))
+    items = [m for m in (entry.get("media") or []) if m.get("kind") == kind and m.get("local_id")]
+    return (items or None), None
+
+
+def _exec_transcribe_voice(ctx, args):
+    """语音转文字（本地离线）。引擎不可用就如实说缺哪一环，绝不编造语音内容。"""
+    try:
+        from .voice import status as _vstatus, transcribe_message
+        st = _vstatus()
+        if not st.get("ok"):
+            return _ok("本机没有可用的语音识别引擎（%s）。把缺的那一环告诉用户，不要猜语音内容。" % st.get("why"))
+        items, bad = _media_items(ctx, args.get("message_id"), "voice")
+        if bad:
+            return bad
+        if not items:
+            return _ok("消息 %s 不是语音（只有 [语音] 消息能转文字）" % args.get("message_id"))
+        text, err, info = transcribe_message(ctx["wechat"], ctx["chat_id"], items[0]["local_id"])
+        if err and not text:
+            return _ok("这条语音没转出来：%s。（解码器=%s 引擎=%s）" % (err, info.get("decoder") or "-", info.get("engine") or "-"))
+        return _ok({"voice_text": text,
+                    "note": "这是本机转写的文字（可能有错别字），用来理解内容即可，不要原样复述给用户。"})
+    except Exception as e:
+        return _err(str(e))
+
+
+def _exec_download_media(ctx, args):
+    """把视频/文件下到本机（只下载，不发送）。"""
+    try:
+        kind = str(args.get("kind") or "").strip().lower()
+        if kind not in ("video", "file"):
+            return _err("kind 只能是 video 或 file")
+        items, bad = _media_items(ctx, args.get("message_id"), kind)
+        if bad:
+            return bad
+        if not items:
+            return _ok("消息 %s 里没有可下载的%s（只有 [视频] / [文件/链接/卡片] 这类消息才有）"
+                       % (args.get("message_id"), "视频" if kind == "video" else "文件"))
+        path = ctx["wechat"].download_media(ctx["chat_id"], items[0]["local_id"], kind)
+        if not path:
+            return _ok("没下下来：微信本地缓存里可能已经没有这个%s了（让对方在微信里点开一次再试）"
+                       % ("视频" if kind == "video" else "文件"))
+        return _ok({"saved_to": path,
+                    "note": "已下载到本机。要发出去的话：链接用 send_message 直接发（纯后台）；视频/文件要用户开启转发开关后才能用 forward_media。"})
+    except Exception as e:
+        return _err(str(e))
+
+
+def _exec_forward_media(ctx, args):
+    """转发视频/文件（opt-in：会过一次系统「选择文件」对话框 ⇒ 短暂抢前台一次）。"""
+    try:
+        cfg = get_config()
+        if not bool((cfg.get("send") or {}).get("file_forward_optin")):
+            return _ok("转发视频/文件默认关闭：它必须过一次系统「选择文件」对话框，会**短暂抢一次前台**（与「不抢前台」的最高目标冲突），"
+                       "需要用户在控制台把 send.file_forward_optin 打开才允许。**链接不受影响**——用 send_message 直接发链接是纯后台的。")
+        kind = str(args.get("kind") or "").strip().lower()
+        if kind not in ("video", "file"):
+            return _err("kind 只能是 video 或 file")
+        items, bad = _media_items(ctx, args.get("message_id"), kind)
+        if bad:
+            return bad
+        if not items:
+            return _ok("消息 %s 里没有可转发的%s" % (args.get("message_id"), "视频" if kind == "video" else "文件"))
+        path = ctx["wechat"].download_media(ctx["chat_id"], items[0]["local_id"], kind)
+        if not path:
+            return _ok("没下下来（本地缓存可能已清理），转发不了")
+        ok_flag, msg = ctx["wechat"].send_file_posted(ctx["chat_id"], path)
+        if not ok_flag:
+            return _ok("转发没成功：%s" % msg)
+        return _ok({"sent": True, "note": "已转发（这一步短暂用过前台）。不要输出\"已发送\"类汇报。"})
     except Exception as e:
         return _err(str(e))
 

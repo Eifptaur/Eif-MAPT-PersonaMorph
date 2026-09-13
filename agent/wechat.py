@@ -352,9 +352,12 @@ class WeChatAdapter:
             text = "[表情]"
             media = [{"kind": "emoji", "local_id": local_id}]
         elif mtype == "语音":
+            # media 携带 local_id 供「语音转文字」工具按需下载+本地识别（agent/voice.py）
             text = "[语音]"
+            media = [{"kind": "voice", "local_id": local_id}]
         elif mtype == "视频":
             text = "[视频]"
+            media = [{"kind": "video", "local_id": local_id}]
         elif mtype == "位置":
             text = "[位置]"
         elif mtype == "文件/链接/卡片":
@@ -377,6 +380,7 @@ class WeChatAdapter:
                     media = [{"kind": "merge", "local_id": local_id}]
                 else:
                     text = "[文件/链接/卡片]"
+                    media = [{"kind": "file", "local_id": local_id}]
         elif mtype == "红包":
             text = "[红包]"
         else:
