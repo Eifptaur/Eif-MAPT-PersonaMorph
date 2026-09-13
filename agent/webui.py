@@ -613,6 +613,15 @@ class WebUI:
                     except Exception:
                         pass
                     self._json(st)
+                elif path == "/api/tools/new_manifest":
+                    # 「怎么加工具」弹窗的一键动作：在 tools.d/ 里生成一份可编辑模板
+                    try:
+                        from . import user_tools as _ut5
+                        p, why = _ut5.write_template()
+                        self._json({"ok": bool(p), "path": p or "", "why": why,
+                                    "note": "改完点「重新加载清单」，再勾选即可；坏清单会在面板里逐条列出"})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
                 elif path == "/api/tools/reload":
                     # 重新扫清单目录（快照本来就是现场算的；这个端点让"重新加载"有个明确的动作与回执）
                     try:

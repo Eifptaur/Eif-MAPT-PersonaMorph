@@ -262,6 +262,43 @@ def as_tool_defs(builtin_names=()) -> tuple:
     return defs, problems, tools
 
 
+TEMPLATE = {
+    "name": "my_tool",
+    "description": "这个工具做什么、什么时候该用它（会进提示词）",
+    "enabled": False,
+    "method": "GET",
+    "url": "https://api.example.com/x",
+    "allow_hosts": ["api.example.com"],
+    "params": {"type": "object", "properties": {}, "required": []},
+}
+
+
+def write_template(name: str = "") -> tuple:
+    """在清单目录里写一份**可编辑的模板**（控制台「怎么加工具」弹窗的一键动作）。返回 `(路径, 说明)`。"""
+    d = manifest_dir()
+    try:
+        os.makedirs(d, exist_ok=True)
+    except Exception as e:
+        return None, "建目录失败：%s" % type(e).__name__
+    base = str(name or "my-tool").strip() or "my-tool"
+    p = os.path.join(d, base + ".json")
+    i = 2
+    while os.path.exists(p):                        # 不覆盖已有清单
+        p = os.path.join(d, "%s-%d.json" % (base, i))
+        i += 1
+    tmpl = dict(TEMPLATE)
+    tmpl["name"] = os.path.splitext(os.path.basename(p))[0].replace("-", "_").lower()
+    tmpl["name"] = re.sub(r"[^a-z0-9_]", "_", tmpl["name"])
+    if not NAME_RE.match(tmpl["name"]):
+        tmpl["name"] = "my_tool"
+    try:
+        with open(p, "w", encoding="utf-8") as fh:
+            json.dump(tmpl, fh, ensure_ascii=False, indent=2)
+        return p, "模板已生成（改完点「重新加载清单」再勾选）"
+    except Exception as e:
+        return None, "写模板失败：%s" % type(e).__name__
+
+
 def set_enabled(name: str, on: bool) -> tuple:
     """在清单文件里改 `enabled`（控制台勾选启停用）。返回 `(ok, 说明)`。原子写。"""
     n = str(name or "").strip().lower()
