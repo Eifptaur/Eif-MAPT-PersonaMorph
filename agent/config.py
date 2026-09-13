@@ -150,6 +150,16 @@ DEFAULT_CONFIG = {
         "max_chars": 120,        # 单条合成上限（太长又慢又不合适）
         "min_gap_seconds": 30,   # 同一会话两条相同语音的最小间隔（防刷屏）
     },
+    # ── 用户自定义工具（声明式 HTTP 工具；默认关）────────────────────────────
+    #   用户往 `tools.d/*.json` 丢清单，**勾选后**才给模型用。只发 HTTP、**不跑本地代码**、域名白名单必填、
+    #   参数必须是合法 JSON Schema；坏清单不静默（收集问题给控制台）。实现在 agent/user_tools.py。
+    "user_tools": {
+        "enabled": False,        # 总开关（控制台可切）
+        "dir": "tools.d",        # 清单目录（相对项目根）
+        "max_tools": 30,         # 最多加载几个
+        "timeout_ms": 8000,      # 单次请求超时
+        "max_chars": 4000,       # 结果截断
+    },
     # ── 输入后端（最高目标「全程后台、不抢鼠标」的档位；实现与实测证据见 agent/input_backend.py）──
     #   auto＝有微信主窗就走投递（L5），找不到窗口退回真鼠标（L0）；message＝强制投递；real＝强制真鼠标
     "input": {
