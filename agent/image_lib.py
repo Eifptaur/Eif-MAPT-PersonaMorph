@@ -204,9 +204,13 @@ def _filter_or_reject(path: str, meta: dict, cfg: dict, root: str, why: str) -> 
     return None, "被过滤链拦下（%s）：%s" % (res.get("rejected_by"), res.get("reason"))
 
 
-def fetch_filtered(cfg: dict, root: str = None, chat_id: str = "") -> tuple:
-    """mode=online：按 sources 顺序取图并过过滤链，返回第一张通过的。"""
+def fetch_filtered(cfg: dict, root: str = None, chat_id: str = "", tag: str = "") -> tuple:
+    """mode=online：按 sources 顺序取图并过过滤链，返回第一张通过的。
+
+    `tag`：本次请求的**关键词覆盖**（用户/模型说"找张猫的图"时用），留空则用配置里的 `image_reply.tag`。
+    """
     conf = (cfg or {}).get("image_reply") or {}
+    use_tag = str(tag or conf.get("tag") or "").strip()
     try:
         from . import image_sources as _src
     except Exception as e:
@@ -219,7 +223,7 @@ def fetch_filtered(cfg: dict, root: str = None, chat_id: str = "") -> tuple:
         if tries >= per_try:
             break
         tries += 1
-        meta, err = _src.fetch_meta(src, {"tag": conf.get("tag"), "timeout_ms": conf.get("api_timeout_ms"),
+        meta, err = _src.fetch_meta(src, {"tag": use_tag, "timeout_ms": conf.get("api_timeout_ms"),
                                           "category": conf.get("category")})
         if err:
             errs.append(err)
@@ -240,6 +244,21 @@ def fetch_filtered(cfg: dict, root: str = None, chat_id: str = "") -> tuple:
     if not errs:
         return None, "没有可用的图源（配置里的 sources 都不认识）"
     return None, "试了 %d 个图源都没通过过滤：%s" % (tries, "；".join(errs[:4]))
+
+
+def search_image(cfg: dict, keyword: str, root: str = None, chat_id: str = "") -> tuple:
+    """**按关键词找一张图**（在线图源 + 同一套过滤链）。返回 `(路径 或 None, 说明)`。
+
+    与 `next_image` 的区别：这是"**有人点名要什么图**"，关键词由请求带进来（`image_reply.tag` 只是默认偏好）。
+    过滤链完全复用（安全分级 / 标签黑名单 / 肤色比 / 视觉审核）——任何一道说不行就不返回。
+    """
+    kw = str(keyword or "").strip()
+    if not kw:
+        return None, "没给关键词（比如「猫」「风景」「赛博朋克」）"
+    conf = (cfg or {}).get("image_reply") or {}
+    if not conf.get("allow_search", True):
+        return None, "「按关键词找图」被设置关掉了（控制台「随机图」面板 → 允许按关键词找图）"
+    return fetch_filtered(cfg, root=root, chat_id=chat_id, tag=kw)
 
 
 def status(cfg: dict = None, root: str = None) -> dict:
