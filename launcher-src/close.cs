@@ -1,4 +1,4 @@
-﻿// wx-agent 一键关闭.exe：结束机器人/看门狗/启动器等全部相关进程 + 清理启动锁（自定义结果窗）
+﻿// 群相灵 一键关闭.exe：结束机器人/看门狗/启动器等全部相关进程 + 清理启动锁（自定义结果窗）
 using System;
 using System.Diagnostics;
 using System.Drawing;
@@ -60,7 +60,7 @@ namespace WxCloser
 
             // 结果窗（自定义 UI）
             Form f = new Form();
-            f.Text = "wx-agent 一键关闭";
+            f.Text = "群相灵 一键关闭";
             f.StartPosition = FormStartPosition.CenterScreen;
             f.FormBorderStyle = FormBorderStyle.FixedDialog;
             f.MaximizeBox = false; f.MinimizeBox = false;
@@ -73,7 +73,7 @@ namespace WxCloser
             pic.Location = new Point(22, 20); pic.Size = new Size(60, 60);
             f.Controls.Add(pic);
             Label t = new Label();
-            t.Text = "wx-agent 一键关闭";
+            t.Text = "群相灵 一键关闭";
             t.Font = new Font("Microsoft YaHei UI", 13, FontStyle.Bold);
             t.Location = new Point(100, 24); t.AutoSize = true;
             f.Controls.Add(t);
