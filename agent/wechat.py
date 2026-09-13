@@ -3232,6 +3232,27 @@ class WeChatAdapter:
         except Exception:
             return None
 
+    def download_media(self, chat_id: str, local_id, kind: str) -> str | None:
+        """下载语音 / 视频 / 文件到 `media/<kind>/`，返回本地路径；失败返回 None。
+
+        kind = `voice` | `video` | `file`（分别对应驱动库的 download_voice / download_video / download_file）。
+        语音落盘是 `.silk`（微信那套 `\\x02#!SILK_V3` 帧），转文字见 `agent/voice.py`。
+        """
+        if self._md is None:
+            return None
+        k = str(kind or "").strip().lower()
+        fn = {"voice": "download_voice", "video": "download_video", "file": "download_file"}.get(k)
+        if not fn:
+            return None
+        base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            str(self.cfg.get("wechat", {}).get("media_dir") or "media"))
+        sub = os.path.join(base, k)
+        os.makedirs(sub, exist_ok=True)
+        try:
+            return getattr(self._md, fn)(chat_id, int(local_id), save_dir=sub)
+        except Exception:
+            return None
+
     @staticmethod
     def image_to_base64(path: str, max_side: int = 1000) -> str | None:
         """本地图片 → data URL（jpeg，压缩尺寸）。"""
