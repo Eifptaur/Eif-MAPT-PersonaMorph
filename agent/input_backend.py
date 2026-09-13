@@ -64,6 +64,7 @@ WM_ACTIVATE, WM_NCACTIVATE, WM_MOUSEACTIVATE = 0x0006, 0x0086, 0x0021
 WM_MOUSEMOVE, WM_LBUTTONDOWN, WM_LBUTTONUP = 0x0200, 0x0201, 0x0202
 WM_CHAR, WM_KEYDOWN, WM_KEYUP = 0x0102, 0x0100, 0x0101
 WM_PASTE, WM_DROPFILES, WM_MOUSEWHEEL = 0x0302, 0x0233, 0x020A
+VK_CONTROL, VK_V, VK_RETURN = 0x11, 0x56, 0x0D
 
 MAIN_CLASS = "Qt51514QWindowIcon"        # 微信主窗
 PANEL_CLASS = "Qt51514QWindowToolSaveBits"   # 表情面板等弹层
@@ -251,6 +252,26 @@ class MessageBackend(InputBackend):
             return False, "窗口句柄为空"
         self._wake(hwnd)
         _post(int(hwnd), WM_PASTE, 0, 0)
+        return True, ""
+
+    def keys(self, hwnd: int, vks, hold_ms: int = 30) -> tuple:
+        """投递一组**组合键**（例：`[VK_CONTROL, VK_V]` ＝ Ctrl+V）。
+
+        ⚠️ 实测（2026-09-13）：**发图要投给渲染子窗 `MMUIRenderSubWindowHW`** —— 投给主窗完全无效；
+        且正因如此，"剪贴板 + 投递 Ctrl+V" 成了**纯后台发图**的通路（不动光标、不抢前台）。
+        """
+        if not hwnd:
+            return False, "窗口句柄为空"
+        vks = [int(v) for v in (vks or [])]
+        if not vks:
+            return False, "没有按键"
+        self._wake(hwnd)
+        for vk in vks:
+            _post(int(hwnd), WM_KEYDOWN, vk, 0)
+            time.sleep(max(0, hold_ms) / 1000.0)
+        for vk in reversed(vks):
+            _post(int(hwnd), WM_KEYUP, vk, 0)
+            time.sleep(max(0, hold_ms) / 1000.0)
         return True, ""
 
     def drop_files(self, hwnd: int, paths) -> tuple:
