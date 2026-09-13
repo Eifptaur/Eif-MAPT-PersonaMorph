@@ -27,24 +27,65 @@ log = logging.getLogger("persona-morph")
 
 STORE_PATH = os.path.join(ROOT, "data", "chat_headers.json")
 # 会话名区域（**渲染区相对比例**）：避开左侧会话列表（<0.26）、右侧按钮与窗口按钮
-HEADER_REL = (0.28, 0.045, 0.60, 0.105)   # 收紧到会话名的文字带（避开上下留白，抬高暗点占比）
-BINS = 64                # 逐列暗点密度剖面维数
-DARK = 165               # 暗点阈值（会话名是深色字，背景近白）
-DEFAULT_THRESHOLD = 0.90  # 相似度阈值（1.0=完全一致）
+PANE_LEFT_REL = 0.26          # 会话列表面板右边界（**兜底**比例；优先用 detect_pane_left 实测）
+BAND_PX = (10, 38, 340, 56)   # 文字带：(距面板左边界 dx, y, 宽, 高) —— **固定物理像素**
+                              # ⇒ 与窗口尺寸无关（实测：会话列表是"固定像素宽"，不是按窗口比例缩放）
+BINS = 64                     # 逐列暗点密度剖面维数
+DARK = 165                    # 暗点阈值（会话名是深色字，背景近白）
+WHITE = 250                   # 判定"聊天面板底色"（浅色主题下会话列表是浅灰、聊天区是纯白）
+DEFAULT_THRESHOLD = 0.90      # 相似度阈值（1.0=完全一致）
 
 
 # ── 纯函数（可用合成图单测，不需要微信）──────────────────────────────────
-def crop_box(size, header_rel=HEADER_REL) -> tuple:
-    """按渲染区尺寸算出会话头区域的像素框 (l, t, r, b)。"""
+def detect_pane_left(img, lo_rel: float = 0.15, hi_rel: float = 0.60, need: int = 24) -> int:
+    """探测**聊天面板左沿**（像素）：从 lo 往右找连续 need 列都接近纯白的起点。
+
+    为什么不能只按比例：实测会话列表是**固定像素宽（约 300px）**，窗口一变窄，
+    `0.26×宽` 就漂进会话列表里，指纹跟着错（相似度掉到 0.70~0.90）。
+    找不到（深色主题/特殊皮肤）就返回 0，由调用方退回比例兜底。
+    """
+    try:
+        g = img.convert("L")
+        w, h = g.size
+        px = g.load()
+        y0, y1 = int(h * 0.25), int(h * 0.75)
+        step = max(1, (y1 - y0) // 12)
+        run, start = 0, 0
+        for x in range(int(w * lo_rel), min(w, int(w * hi_rel))):
+            tot = n = 0
+            for y in range(y0, y1, step):
+                tot += px[x, y]
+                n += 1
+            bright = tot / max(1, n)
+            if bright >= WHITE:
+                if run == 0:
+                    start = x
+                run += 1
+                if run >= need:
+                    return start
+            else:
+                run = 0
+        return 0
+    except Exception:
+        return 0
+
+
+def crop_box(size, pane_left_rel=None, band_px=None, pane_left_px: int = 0) -> tuple:
+    """按渲染区尺寸算出会话头文字带的像素框 (l, t, r, b)（夹在图像内）。"""
     w, h = int(size[0]), int(size[1])
-    l = int(w * header_rel[0])
-    t = int(h * header_rel[1])
-    r = max(l + 1, int(w * header_rel[2]))
-    b = max(t + 1, int(h * header_rel[3]))
-    return (l, t, r, b)
+    if pane_left_px and pane_left_px > 0:
+        pl = int(pane_left_px)
+    else:
+        pl = int(w * (PANE_LEFT_REL if pane_left_rel is None else pane_left_rel))
+    dx, y0, bw, bh = band_px or BAND_PX
+    l = max(0, pl + int(dx))
+    t = max(0, int(y0))
+    r = min(w, l + int(bw))
+    b = min(h, t + int(bh))
+    return (l, t, max(l + 1, r), max(t + 1, b))
 
 
-def fingerprint(img, header_rel=HEADER_REL, bins: int = BINS) -> list:
+def fingerprint(img, pane_left_rel=None, band_px=None, bins: int = BINS) -> list:
     """会话头区域的**逐列暗点密度剖面**（bins 维，0~255）。
 
     为什么不用"缩略灰度图"：自测当场证否 —— 文字缩到 24×6 就被抹平，
@@ -54,7 +95,7 @@ def fingerprint(img, header_rel=HEADER_REL, bins: int = BINS) -> list:
     try:
         if not hasattr(img, "size"):
             return []
-        box = crop_box(img.size, header_rel)
+        box = crop_box(img.size, pane_left_rel, band_px)
         g = img.convert("L").crop(box)
         w, h = g.size
         if w < bins or h < 4:
