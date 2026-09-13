@@ -291,20 +291,44 @@ def resolve_context_tier(trigger_entries, self_nickname="", bot_name="", self_id
         raw_tier = float(raw_tier)
     except (TypeError, ValueError):
         raw_tier = 4
-    # 滑条位置优先
-    if c.get("context_slider_pos") is not None:
+    # 滑条位置优先（第 15 条：tier_mode="fixed" 时**不参与**，档位就是 1/2/3/4 四个离散值）
+    if c.get("context_slider_pos") is not None and str(c.get("tier_mode") or "fixed") != "fixed":
         sl = slider_to_tier(c.get("context_slider_pos"))
         raw_tier = sl["tier"]
         c = dict(c, random_percent=sl["randomPercent"])
+    # 峰谷映射（第 16 条）：当前时段命中就用该时段的档位（含 0＝静默），没命中才用全局档位
+    tier_src = "全局档位"
+    try:
+        from . import tier_control as _tc
+        _sch = _tc.scheduled_tier(cfg=get_config())
+    except Exception:
+        _sch = None
+    if _sch:
+        if int(_sch["tier"]) <= 0:
+            return {"tier": 0, "count": 0, "reason": "峰谷静默(%s)" % _sch["window"],
+                    "should_respond": False, "tier_source": "峰谷映射 %s" % _sch["window"]}
+        raw_tier = float(_sch["tier"])
+        tier_src = "峰谷映射 %s" % _sch["window"]
     # 每群独立档位：unified_tier=false 且该群有单独设置 → 覆盖
     if group_name and not c.get("unified_tier", True):
         gt = c.get("group_tier") or {}
         if str(group_name) in gt:
             try:
                 raw_tier = float(gt[str(group_name)])
+                tier_src = "本群独立档位"
             except (TypeError, ValueError):
                 pass
     tier = 4 if (raw_tier is None or raw_tier != raw_tier) else min(4, max(1, round(raw_tier)))
+    # 指令禁言（第 18 条）：会话被禁言期间**档位固定降到 1 档**（只回艾特）
+    _mute = None
+    if chat_key:
+        try:
+            _mute = _tc.is_muted(chat_key)
+        except Exception:
+            _mute = None
+    if _mute:
+        tier = 1
+        tier_src = "指令禁言（剩 %d 分钟，%s）" % (_mute["left_min"], _mute["by"] or "群友")
 
     texts = [str(e.get("text") or "") for e in (trigger_entries or [])]
     at_me = False
@@ -326,14 +350,18 @@ def resolve_context_tier(trigger_entries, self_nickname="", bot_name="", self_id
             return 0
 
     if tier >= 4:
-        return {"tier": 4, "count": n0(c.get("all_count")), "reason": "全部响应", "should_respond": True}
+        return {"tier": 4, "count": n0(c.get("all_count")), "reason": "全部响应",
+                "should_respond": True, "tier_source": tier_src}
     if at_me:
-        return {"tier": 1, "count": n0(c.get("at_count")), "reason": "被艾特", "should_respond": True}
+        return {"tier": 1, "count": n0(c.get("at_count")), "reason": "被艾特",
+                "should_respond": True, "tier_source": tier_src}
     if tier >= 2 and keyword:
-        return {"tier": 2, "count": n0(c.get("keyword_count")), "reason": "关键词命中", "should_respond": True}
+        return {"tier": 2, "count": n0(c.get("keyword_count")), "reason": "关键词命中",
+                "should_respond": True, "tier_source": tier_src}
     if tier >= 3 and random_hit:
-        return {"tier": 3, "count": n0(c.get("random_count")), "reason": "随机命中(%d%%)" % round(roll_value), "should_respond": True}
-    return {"tier": 0, "count": 0, "reason": "未触发", "should_respond": False}
+        return {"tier": 3, "count": n0(c.get("random_count")), "reason": "随机命中(%d%%)" % round(roll_value),
+                "should_respond": True, "tier_source": tier_src}
+    return {"tier": 0, "count": 0, "reason": "未触发", "should_respond": False, "tier_source": tier_src}
 
 
 def _gap_text(minutes: int) -> str:

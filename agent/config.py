@@ -257,6 +257,14 @@ DEFAULT_CONFIG = {
         "max_messages_per_chat": 0,   # 0 = 不限制
         "context_tier": 2,            # 1=仅艾特 2=+关键词 3=+随机 4=全读（默认 2 档：省 token 且够活跃）
         "context_slider_pos": None,   # 滑条位置（可选，优先于 context_tier）
+        "tier_mode": "fixed",         # fixed=固定 4 档（滑条不参与，第 15 条）| slider=允许滑条连续微调（旧行为）
+        "tier_schedule": {            # 峰谷映射（第 16 条）：时段 → 档位；tier=0 表示该时段完全不回应
+            "enabled": False,
+            # 表内顺序＝优先级（取第一个命中的窗口）；支持跨午夜（如 22:00 → 02:00）
+            "table": [{"from": "09:00", "to": "12:00", "tier": 2, "note": "工作时段：只回艾特/关键词"},
+                      {"from": "00:00", "to": "08:00", "tier": 0, "note": "夜间静默"}],
+        },
+        "tier_cmd_admins": [],        # 指令禁言白名单（第 18 条）：昵称或 wxid；**留空＝谁都不能下指令**
         "at_count": 12,
         "keyword_count": 10,
         "keywords": [],

@@ -125,6 +125,15 @@
   "random_count": 8,
   "all_count": 80,
   "past_window_min": 30,
+  "tier_mode": "fixed",
+  "tier_schedule": {
+   "enabled": false,
+   "table": [
+    {"from": "09:00", "to": "12:00", "tier": 2, "note": "工作时段：只回艾特/关键词"},
+    {"from": "00:00", "to": "08:00", "tier": 0, "note": "夜间静默"}
+   ]
+  },
+  "tier_cmd_admins": [],
   "recall": {
    "enabled": true,
    "window_sec": 180,
