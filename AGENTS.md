@@ -7,7 +7,7 @@
 ## 1. 这是什么
 
 群相灵（Persona Morph）后端（Python）。入口：`persona_morph.py`（主流程）、`wechat.py`（微信客户端操作）、`llm.py`（模型）、`memory.py`（记忆）、`console_html.py` / `webui.py`（浏览器控制台）。产物：`一键启动.exe` / `一键关闭.exe`。
-既定方向（用户 2026-09-11）：**控制台以后做成 exe，不再依赖浏览器**。
+既定方向（用户 2026-09-11）是**控制台不再依赖浏览器**；**2026-09-13 用户把口径讲细了**（原话："重绘一下 Persona Morph 的启动弹窗，太简陋了，其他弹窗也重绘一下，把弹窗清晰度提上来，然后要做和启动器一样的软件自己开弹窗显示控制台，不再依赖浏览器…你自己考虑分析清楚"）⇒ **不是把控制台重做成原生 GUI/exe**（PyInstaller / Nuitka / jpackage 那批**不在本轮范围**），而是**换承载窗口**：web 控制台原样保留，用我们自己的 **WebView2 内嵌窗口**显示（照 `dsh启动器` 已跑通的 `FrmDshWindow`：无边框 + DWM 圆角 + 自绘拖动条 + 边缘缩放子窗钩子 + `SetThreadDpiAwarenessContext(-4)` PerMonitorV2 + WebView2 数据目录固定）；只改"谁来开窗"这一跳（端口/token 定源、`/api/version` 同版本判定、token 打码、就绪轮询全部保留；WebView2 缺失时退回 `webbrowser.open`）。**弹窗族一并重绘、做到 0 系统 MessageBox**（清单与取证见交接件 §3-4 的 W6）。
 
 ## 2. 窗口自动化分层（本文的重点：怎么"不动鼠标"操作窗口）
 
