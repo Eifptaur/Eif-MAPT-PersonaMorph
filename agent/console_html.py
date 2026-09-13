@@ -422,6 +422,7 @@ th{color:var(--tx2);font-weight:500}
       <a href="#sec-wechat">微信</a>
       <a href="#sec-vermat">版本能力矩阵</a>
       <a href="#sec-media">媒体与语音</a>
+      <a href="#sec-tts">语音回复</a>
       <a href="#sec-poke">拍一拍</a>
       <a href="#sec-memory">记忆</a>
       <a href="#sec-memory-set">记忆共享</a>
@@ -795,6 +796,32 @@ th{color:var(--tx2);font-weight:500}
       <div class="row"><label>转发视频/文件</label><input type="checkbox" data-cfg="send.file_forward_optin">
         <div id="fwState" class="hint">检测中…</div></div>
       <div class="btns"><button class="pri" data-save>保存设置（媒体与语音）</button></div>
+    </section>
+    <section id="sec-tts" class="card" data-sec>
+      <h2>语音回复（TTS）</h2>
+      <div class="desc">让机器人**用语音回一句**：文字在**本机**合成成音频再发出去。**当前形态＝音频文件，不是微信语音条**——微信 PC 没有"把任意音频发成语音条"的接口；真语音条要装虚拟声卡 + 用微信录音按钮（属待拍板项）。合成全程本机、内容不出网。</div>
+      <div class="row"><label>引擎状态</label><div class="grow"><b id="ttsWhy">检测中…</b>
+        <div id="ttsList" class="hint"></div></div></div>
+      <div class="row"><label>总开关</label><input type="checkbox" data-cfg="voice_reply.enabled">
+        <span class="hint">默认关：开着模型才能在合适的时候用语音回一句。</span></div>
+      <div class="row"><label>声音</label><div class="grow"><select data-cfg="voice_reply.voice" id="ttsVoice">
+        <option value="">自动（优先中文声音）</option></select>
+        <span class="hint">选项来自本机**实测**可用的合成声音。</span></div></div>
+      <div class="row"><label>语速</label><input type="number" min="-10" max="10" data-cfg="voice_reply.rate">
+        <span class="hint">-10 最慢 ~ 10 最快，0＝默认。</span></div>
+      <div class="row"><label>格式</label><div class="grow"><select data-cfg="voice_reply.format">
+        <option value="mp3">mp3（有 ffmpeg 时体积小）</option>
+        <option value="wav">wav（不依赖 ffmpeg）</option></select>
+        <div id="ttsFmt" class="hint">检测中…</div></div></div>
+      <div class="row"><label>单条字数上限</label><input type="number" min="10" max="500" data-cfg="voice_reply.max_chars">
+        <span class="hint">超过就直接拒绝，不会硬合成。</span></div>
+      <div class="row"><label>同内容间隔(秒)</label><input type="number" min="0" max="600" data-cfg="voice_reply.min_gap_seconds">
+        <span class="hint">同一会话里同样的内容在这个时间内不重复发（防刷屏）。</span></div>
+      <div class="btns">
+        <button id="ttsTest" class="ghost">试听一句（只在本机合成，不发送）</button>
+        <button class="pri" data-save>保存设置（语音回复）</button>
+      </div>
+      <div id="ttsOut" class="hint">点「试听一句」会在本机合成一条示例音频并报出产物路径 / 格式 / 大小；**不会发到任何会话**。</div>
     </section>
     <section id="sec-wechat" class="card" data-sec>      <div class="row"><label>微信版本</label><div class="grow"><b id="wxver">检测中…</b></div></div>
       <div id="wxInstall" class="row" style="display:none"><label>微信装没装</label><div class="grow">
@@ -1799,6 +1826,35 @@ async function loadStatus(){
             ? '✅ 已开启：转发视频/文件时会**短暂抢一次前台**（那次要用系统「选择文件」对话框）'
             : '⛔ 默认关：开启后转发视频/文件会短暂抢一次前台；不开启时模型会照实说明，链接不受影响。';
           f1.style.color = fo.optin ? 'var(--warn-tx)' : '';
+        }
+      }catch(e){}
+      try{
+        const tt = (s.media || {}).tts || {};
+        const ts = tt.status || {};
+        const t1 = $('ttsWhy');
+        if(t1 && !(s.media || {}).error){
+          t1.textContent = ts.ok ? ('✅ ' + (ts.why || '可用')) : ('⛔ ' + (ts.why || '不可用'));
+          t1.style.color = ts.ok ? 'var(--ok-tx)' : 'var(--err-tx)';
+        }
+        const t2 = $('ttsList');
+        if(t2 && ts.voices){
+          t2.textContent = ['引擎：' + (ts.engine || '-'),
+                            '可用声音：' + ((ts.voices || []).join(' / ') || '（没有）'),
+                            '产物目录：' + (ts.dir || '-'),
+                            '形态：' + (tt.note || '')].join(' ｜ ');
+        }
+        const sel = $('ttsVoice');
+        if(sel && ts.voices && sel.options.length <= 1){
+          (ts.voices || []).forEach(function(v){
+            const o = document.createElement('option');
+            o.value = v; o.textContent = v; sel.appendChild(o);
+          });
+        }
+        const f = $('ttsFmt');
+        if(f){
+          f.textContent = ts.ffmpeg ? ('✅ 有 ffmpeg（可转 mp3）：' + (ts.ffmpeg_path || ''))
+                                    : '没有 ffmpeg ⇒ 自动回落 wav（不影响使用）';
+          f.style.color = ts.ffmpeg ? '' : 'var(--warn-tx)';
         }
       }catch(e){}
       const wi = s.wechat_install || null;
@@ -4123,6 +4179,22 @@ addEventListener('hashchange', ()=>{ if(location.hash==='#sec-sessions') loadSes
     const u = ((window.__wxInstall && window.__wxInstall.official_url) || 'https://weixin.qq.com/');
     try{ window.open(u, '_blank'); }catch(e){}
     toast('已尝试打开官网：' + u + '（打不开就手动复制到浏览器）');
+  };
+  const ttsBtn = document.getElementById('ttsTest');
+  if(ttsBtn) ttsBtn.onclick = async ()=>{
+    const out = document.getElementById('ttsOut');
+    if(out){ out.textContent = '合成中…（本机合成，约 1 秒；不会发送任何东西）'; out.style.color = ''; }
+    try{
+      const r = await getJSON('/api/tts/test');
+      const info = (r && r.info) || {};
+      if(out){
+        out.textContent = (r && r.ok)
+          ? ('✅ 合成成功：' + r.path + '（' + (info.fmt || '-') + ' / ' + r.size + ' 字节 / 声音：' + (info.voice || '-') + '）' + (r.err ? (' ⚠ ' + r.err) : ''))
+          : ('❌ 合成失败：' + ((r && (r.err || r.error)) || '未知原因'));
+        out.style.color = (r && r.ok) ? 'var(--ok-tx)' : 'var(--err-tx)';
+      }
+      toast((r && r.ok) ? '合成成功（没有发送任何东西）' : '合成失败，看面板详情');
+    }catch(e){ if(out){ out.textContent = '试听失败：' + e.message; out.style.color = 'var(--err-tx)'; } }
   };
   const vsTestBtn = document.getElementById('vsTest');
   if(vsTestBtn) vsTestBtn.onclick = async ()=>{

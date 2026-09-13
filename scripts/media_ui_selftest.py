@@ -100,5 +100,32 @@ try:
 except Exception as e:
     ok("console_html 的 JS 过语法检查", False, "%s: %s" % (type(e).__name__, e))
 
+print("── H. 语音回复（TTS）面板 ──")
+_HTML = CH.HTML
+ok("导航有 #sec-tts 链接", 'href="#sec-tts"' in _HTML and "语音回复" in _HTML)
+ok("有 sec-tts 分区且带 data-sec", 'id="sec-tts" class="card" data-sec' in _HTML)
+_i2, _i3 = _HTML.find('id="sec-tts"'), _HTML.find('id="sec-wechat"')
+_seg2 = _HTML[_i2:_i3] if (_i2 > 0 and _i3 > _i2) else ""
+ok("分区在 sec-wechat 之前且已闭合", bool(_seg2) and "</section>" in _seg2)
+for key in ("voice_reply.enabled", "voice_reply.voice", "voice_reply.rate",
+            "voice_reply.format", "voice_reply.max_chars", "voice_reply.min_gap_seconds"):
+    ok("设置项 %s 在语音回复分区里" % key, ('data-cfg="%s"' % key) in _seg2)
+ok("有保存按钮（语音回复）", "保存设置（语音回复）" in _seg2)
+ok("文案写明形态是音频文件不是语音条", "不是微信语音条" in _seg2)
+ok("文案写明合成不出网", "不出网" in _seg2)
+ok("试听按钮写明清不会发送", "不会发到任何会话" in _seg2)
+for el in ("ttsWhy", "ttsList", "ttsFmt", "ttsVoice"):
+    ok("JS 会填 #%s" % el, ("$('%s')" % el) in _HTML)
+ok("试听按钮打到 /api/tts/test", "/api/tts/test" in _HTML and "ttsTest" in _HTML)
+_src_wu2 = open(os.path.join("agent", "webui.py"), encoding="utf-8").read()
+ok("后端有 /api/tts/test 路由", 'elif path == "/api/tts/test"' in _src_wu2)
+_snap2 = MS.snapshot()
+ok("快照含 tts 块（status/cfg/note）",
+   all(k in (_snap2.get("tts") or {}) for k in ("status", "cfg", "note")))
+ok("tts.status 有 ok/why/voices/ffmpeg", all(k in (_snap2["tts"]["status"]) for k in ("ok", "why", "voices", "ffmpeg")))
+ok("voice_reply 的配置键都在默认配置里",
+   all(k in (__import__("agent.config", fromlist=["get_config"]).get_config().get("voice_reply") or {})
+       for k in ("enabled", "voice", "rate", "format", "max_chars", "min_gap_seconds")))
+
 print("\n%d/%d 通过" % (PASS, PASS + FAIL))
 sys.exit(1 if FAIL else 0)
