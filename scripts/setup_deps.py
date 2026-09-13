@@ -21,7 +21,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def main():
     print("=" * 52)
-    print(" wx-agent 依赖检查 / 安装")
+    print(" Persona Morph 依赖检查 / 安装")
     print("=" * 52)
     rows, ok = dep_check()
     for pkg, inst, req, good in rows:

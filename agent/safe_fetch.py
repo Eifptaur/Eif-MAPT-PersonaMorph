@@ -114,7 +114,7 @@ def _pinned_request(scheme, host, port, path, ip, max_bytes, as_binary):
     conn = cls(host, ip, port=port, timeout=20)
     conn.request("GET", path, headers={
         "Host": host,
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) wx-agent/1.0",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Persona Morph/1.0",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8,image/*;q=0.8",
         "Accept-Language": "zh-CN,zh;q=0.9",
     })

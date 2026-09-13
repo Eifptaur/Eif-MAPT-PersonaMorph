@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""wx-agent 看门狗（无窗口）：机器人崩溃/退出后自动重启。
+"""Persona Morph 看门狗（无窗口）：机器人崩溃/退出后自动重启。
 
 用 pythonw 运行、零 PowerShell 依赖（无 cmd、无 powershell 窗口）。
 启动时把自己的 PID 写到 data/watchdog.pid，供 停止机器人 读取。
@@ -113,11 +113,11 @@ def main():
             return 0
         try:
             # stderr 重定向到崩溃日志：下次机器人无声挂掉时能查到原因
-            # （wx_agent 若 import 失败/启动即崩溃，之前 stderr=DEVNULL 会静默重启，无从排查）
+            # （persona_morph 若 import 失败/启动即崩溃，之前 stderr=DEVNULL 会静默重启，无从排查）
             crash = open(CRASH_LOG, "a", encoding="utf-8")
-            crash.write("\n[watchdog] %s 拉起 wx_agent…\n" % time.strftime("%Y-%m-%d %H:%M:%S"))
+            crash.write("\n[watchdog] %s 拉起 persona_morph…\n" % time.strftime("%Y-%m-%d %H:%M:%S"))
             crash.flush()
-            p = subprocess.Popen([exe, os.path.join(ROOT, "scripts", "wx_agent.py")],
+            p = subprocess.Popen([exe, os.path.join(ROOT, "scripts", "persona_morph.py")],
                                  cwd=ROOT, creationflags=flags,
                                  stdin=subprocess.DEVNULL, stdout=crash, stderr=crash)
             crash.close()

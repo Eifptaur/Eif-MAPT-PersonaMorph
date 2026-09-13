@@ -13,7 +13,7 @@ HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>wx-agent 控制台</title>
+<title>群相灵 控制台</title>
 <link rel="icon" href="/assets/icon.png" type="image/png">
 <style>
 :root{
@@ -401,7 +401,7 @@ th{color:var(--tx2);font-weight:500}
 <div id="waveLens"></div>
 
 <div class="topbar">
-  <div class="logo"><div class="whale-badge" id="whaleBadge" title="小鲸鱼"><img src="/assets/icon-whale.png" alt=""></div><span>wx-agent 控制台 <small style="font-weight:400;color:var(--tx2);font-size:12px" title="构建号（换新包后如果这里不变，说明连的是旧实例——先停止再启动）">vβ·Ⅱ（__VER__）</small></span></div>  <div class="sp"></div>
+  <div class="logo"><div class="whale-badge" id="whaleBadge" title="小鲸鱼"><img src="/assets/icon-whale.png" alt=""></div><span>群相灵 控制台 <small style="font-weight:400;color:var(--tx2);font-size:12px" title="构建号（换新包后如果这里不变，说明连的是旧实例——先停止再启动）">vβ·Ⅱ（__VER__）</small></span></div>  <div class="sp"></div>
   <span class="chip"><span class="dot" id="dot"></span><b id="runText">连接中…</b></span>
   <span class="chip">模型 <b id="model-badge">? </b></span>
   <span class="chip" id="balance-badge" title="点击刷新余额">余额：查询中…</span>
@@ -1112,9 +1112,9 @@ function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt
 const URL_TOKEN = new URLSearchParams(location.search).get('token') || '';
 /* 控制台窗口互斥：只允许一个入口窗口（关掉其他同名控制台窗口/标签） */
 try{
-  const other = window.open('', 'wx-agent-console');
+  const other = window.open('', 'Persona Morph-console');
   if(other && other !== window){ try{ other.close(); }catch(e){} }
-  window.name = 'wx-agent-console';
+  window.name = 'Persona Morph-console';
 }catch(e){}
 /* 内嵌原版 DeepSeek 蓝鲸 Logo（base64，服务挂了也能显示；渲染与粒子效果都在用） */
 const LOGO_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADoAAAA2CAYAAACWeYpTAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAATOSURBVGhD7ZhPUxpnHMe/xKXCgCPP2EedNIdCb8GT+wbc4itoFfoGTOw0uXXS9hAzxhwar3oweuilFwjTnjsD4gso9oI59EB6KDPClu466gRk0R5g191nd4FdcGoIn5mdWX6/h2W/z+/P8zx4ms3LK3wA3GENw8pI6LDhUUY1OlyMhA4bI6HDxkjobaBWv0StfsmaXfG/rKMVSUEuf9a+b0LgA5iL+Nhh2HpdReVfBRsPZ1iXY25EaEVSUCjWDLZpwuGoWEMuf46K1NDs0bDfVsgX3/8FAHj+YNZyIpwwMKGFYg1HxRqSGZl1dWTnu3uYJhxrBnRCp4kXAh9AYjHEDtGoSArWdsvY/vYuuDEP6x5MjT59Vcba7rFjkWhPkBUVSdHdN5DMyFh9WWLsrcxp+f42ZApLXxGtSAq2UlUcvX3HunqmU7Seviqbni3wExD4ANZ2jw12lV9+/JQ1Af1EdBAioYuWVTbMfTbOmnBUrNmKFPgJ1qThWuggROpJZmRsva4abAIfNHxGe2LsEPgAa9K4c3UFOL32fz8bqEiVXP4UD1+WtN+hIQ6Plj5mh1mSiIUQDftM76periKazJ6wpoEhSg2sbpa0zwIf7CiWEi/WV2YRt6hxPZ6G4rwZfflDq+3fJJR4sbEyA9peelY3SxB1aZuIhXA/4ut5fXUs9I8/3+HFT2VA92MAIEoKCm/rOMifMt9wDyVefD4fACUcttP/aPZo2I/nD6w3GXY4FvrrwQl+/k0CJV7sPPmEdUNsr3O5/Bn2D88NUbAjEQuBEg65/HlPtb/AT+Dx0hRr7oirGkW7llRReijhQAmH+GIIGyszWOjQ8vVQwuHx8hQSsc61BgBzYfOy0w3HQqWz69NE2UKoHko4fBWb7PryZbmJ7XRVm6Bu43utSz2OhZLg9Vfe2Gzf9Kgvv/PkHijxsm6gvQnQZ4jABxEN+9lhGmqDcoJjoaGJMe2+UKwbfJ2ghMPGinUDUetYzRBKONvFv9dSYHEsNHz3I+2+IpuPY52ghMP6yixr1thOV5HKyCi0j3NWCPPWE9ANx0Ing9cRFaUGcofWL2THXMRnW4Oi1EAyK+PZ3rFl942G/a7qE26EkokxQ/0cOYioSrcatCO+OMmaesaxUDCbZ1FqYCtt3Ix3Q11KnNBPNOFW6FzEZ+igB/lTpCyOWZ2gpPcNOwDHE8PiSiglHBIxYxrtH57bNqatdBWrmyWTX+CDtvWqR9059cOdKwBurgU+aGj1otTAdrqKZEY2jVX9z/Zaf7ewz+lUr9GwH8uLIdMznV6uIqqSiE0aUliUGkhlZVMa66Ofysr4erOkbQ4o4fBoecpWbDQybsoEN3guHG7qWURJwdpe2bR5p8QLYT6A+xEf3hRrSGWN4lW/eo4UJQXJ7Int6YcSL+KxSct/HXqhb6Fov2Quf2YS0wuUeBGN+BBtb9RT2RPTpKlEw36sOzyeqQxEqEoqI7sSq0KJF98sTWGGcFq66lPcbTQBwHPRaA5MKACIsoJc/tyx4HgshDjTyQfJwIWqiLKCQrHePpkoqEhNiHIrJWmo1cCikXFME+5GBapcC/W0+7Ad77nfc6HcTERvGzeWureNvjYM7xMjocPGSOiw8cEI9dRHy8twMRI6bPwHTfhdUJub1u0AAAAASUVORK5CYII=';
@@ -2491,7 +2491,7 @@ async function onboarding(){
   if(key && !key.includes('在这里填') && key !== '******' && !key.includes('••••')) return;  // 真实=已配置
   _onboardOnce = true;
   const m = document.createElement('div'); m.className='mask'; m.id='onboard';
-  m.innerHTML='<div class="box" style="max-width:620px">'+ICON+'<h1>欢迎使用 wx-agent · 三步上手</h1>'+
+  m.innerHTML='<div class="box" style="max-width:620px">'+ICON+'<h1>欢迎使用 Persona Morph · 三步上手</h1>'+
     '<p id="obDesc">第 1 步/共 3 步：选择模型厂商 → 选择模型 → 填入该厂商的 API Key。</p>'+
     '<div class="mid" style="text-align:left">'+
       '<div class="row"><label>模型厂商</label><div class="grow"><select id="obProvider">'+
@@ -2611,7 +2611,7 @@ $('stopBtn').onclick = ()=>{
       const m = confirmBox('机器人已停止 ✔', [
         '已结束全部进程（机器人 + 看门狗）。',
         '想再次运行：双击项目根目录 <b>启动机器人.vbs</b>，或点「重启」按钮。<br>',
-        '控制台将自动关闭；日志已保存在 logs\\wx_agent.log。',
+        '控制台将自动关闭；日志已保存在 logs\\persona_morph.log。',
       ], '知道了');
       /* 关闭自动 tag */
       setTimeout(()=>{ try{ if(!window.closed) window.close(); }catch(_e){} }, 4000);
@@ -3495,7 +3495,7 @@ const _EASTER_TXT = [
 })();
 
 const WHALE_TXT = {
-  "wx-agent 控制台": "🐋 鲸鲸号 · 深度摸鱼",
+  "群相灵 控制台": "🐋 鲸鲸号 · 深度摸鱼",
   "概览": "🐋 概览 · 我是AI，别催，CPU还在烧",
   "检测中心（代码检测 / 鼠标操作检测）": "检测中心（先体检，再摸鱼）",
   "体检与功能自检": "检测中心 · 出远门前先体检",
@@ -3560,7 +3560,7 @@ function applyWhale(){
     // 顶栏徽标
     const lg = document.querySelector('.logo span');
     if(lg && lg.textContent.indexOf('鲸鲸号') < 0){
-      lg.innerHTML = lg.innerHTML.replace('wx-agent 控制台', '🐋 鲸鲸号 · 深度摸鱼');
+      lg.innerHTML = lg.innerHTML.replace('群相灵 控制台', '🐋 鲸鲸号 · 深度摸鱼');
     }
     document.title = '🐋 鲸鲸号 · 深度摸鱼';
   }catch(e){}
@@ -3907,7 +3907,7 @@ async function checkAlive(){
       '<p style="text-align:left;margin:4px 0">· 全部进程已结束（机器人 + 看门狗），不会再自动拉起。</p>'+
       '<p style="text-align:left;margin:4px 0">· 想再次运行：双击根目录 <b>启动机器人.vbs</b>（完全无窗口），或 <b>一键启动.bat</b>（依赖检查+自检+启动）。</p>'+
       '<p style="text-align:left;margin:4px 0">· 群聊与存档数据不会丢失，下次启动自动恢复。</p>'+
-      '<p style="text-align:left;margin:4px 0">· 日志已保存在 logs\\wx_agent.log，供排查。</p>'+
+      '<p style="text-align:left;margin:4px 0">· 日志已保存在 logs\\persona_morph.log，供排查。</p>'+
       '<div class="hint">正在尝试自动关闭本标签页；约 3 秒后关不掉就请手动关闭（浏览器会拦截脚本关闭，属正常现象）。</div></div>';
     document.body.appendChild(ov); maskOpen(ov);
     // 稳定关闭：先 window.open 建立「脚本可关」的同源窗口再 close（绕过浏览器限制）
@@ -4096,7 +4096,7 @@ $('unifiedTierChk').addEventListener('change', ()=>renderGroupTierBox());
       const ds = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = 'wx-agent-数据迁移-'+ds+'.zip';
+      a.download = 'Persona Morph-数据迁移-'+ds+'.zip';
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(()=>URL.revokeObjectURL(a.href), 5000);
       toast('已导出记录（计费+对话），文件名见下载');
@@ -4275,6 +4275,6 @@ $('exportMessages').onclick = ()=>doExport('messages','Messages');
 const _tierSel = document.querySelector('[data-cfg="store.context_tier"]');
 if(_tierSel) _tierSel.addEventListener('change', ()=>updateTierRows());
 </script>
-<div style="position:fixed;left:4px;bottom:2px;font-size:10px;color:#8aa0c0;opacity:.55;z-index:9">wx-agent build 2026-09-09</div></body>
+<div style="position:fixed;left:4px;bottom:2px;font-size:10px;color:#8aa0c0;opacity:.55;z-index:9">Persona Morph build 2026-09-09</div></body>
 </html>
 """

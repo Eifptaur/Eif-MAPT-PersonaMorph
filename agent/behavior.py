@@ -10,7 +10,7 @@
   1. 全部决策 = 确定性规则（无 LLM 调用，零 token）；
   2. 随机性用本地 random（种子化，可测试），时机窗口由时间/计数状态机控制；
   3. 决策结果只下发"行为意图"（collect_emoji / send_emoji / like_moments…），
-     由调用方（wx_agent）执行对应 wechat/tools 动作；
+     由调用方（persona_morph）执行对应 wechat/tools 动作；
   4. 每类行为有：基础概率 × 人设系数 × 冷却时间 × 每日上限，全部可调。
 
 人设档位（persona.participation: low/medium/high）+ sticker_level 自动映射成系数：

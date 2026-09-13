@@ -38,7 +38,7 @@ def _data_export(root: str) -> bytes:
                 z.write(fp, "sessions/" + os.path.basename(fp))
                 files.append(os.path.basename(fp))
         z.writestr("manifest.json", _j.dumps(
-            {"app": "wx-agent", "v": 1, "files": files}, ensure_ascii=False))
+            {"app": "Persona Morph", "v": 1, "files": files}, ensure_ascii=False))
     return buf.getvalue()
 
 
@@ -136,7 +136,7 @@ class WebUI:
         except Exception:
             return html
         T = {
-            "wx-agent 控制台": "🐋 鲸鲸号 · 深度摸鱼",
+            "群相灵 控制台": "🐋 鲸鲸号 · 深度摸鱼",
             "概览": "🐋 概览 · 我是AI，别催，CPU还在烧",
             "检测中心（代码检测 / 鼠标操作检测）": "检测中心（先体检，再摸鱼）",
             "体检与功能自检": "检测中心 · 出远门前先体检",
@@ -431,7 +431,7 @@ class WebUI:
         parent = self
 
         class Handler(BaseHTTPRequestHandler):
-            server_version = "wx-agent/1.0"
+            server_version = "Persona Morph/1.0"
 
             def log_message(self, fmt, *args):
                 pass  # 静默，避免刷屏

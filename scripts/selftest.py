@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""wx-agent 自检脚本：验证 Python 环境、依赖、项目模块、纯逻辑与配置。
+"""Persona Morph 自检脚本：验证 Python 环境、依赖、项目模块、纯逻辑与配置。
 
 不需要微信已登录即可运行（微信接入部分只做"能不能导入"级别的检查）。
 运行：python scripts/selftest.py   （或双击 一键启动.vbs，会自动执行本自检）
@@ -116,12 +116,12 @@ PROJECT_MODULES = [
     "agent.safe_fetch", "agent.store", "agent.memory", "agent.sender",
     "agent.persona", "agent.prompt", "agent.tools", "agent.wechat",
     "agent.webui", "agent.whale", "agent.ui_adapt", "agent.scoring",
-    "agent.behavior", "agent.wechat_ui", "wx_agent",
+    "agent.behavior", "agent.wechat_ui", "persona_morph",
 ]
 for mod in PROJECT_MODULES:
     try:
-        if mod == "wx_agent":
-            # wx_agent.py 位于 scripts/（主程序按目录分层，根目录只保留启动器/文档）
+        if mod == "persona_morph":
+            # persona_morph.py 位于 scripts/（主程序按目录分层，根目录只保留启动器/文档）
             _sp = os.path.join(ROOT, "scripts")
             if _sp not in sys.path:
                 sys.path.insert(0, _sp)

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""wx-agent 整合包：QQ Agent 的智能大脑 + wechatauto 的微信接入层。
+"""Persona Morph 整合包：QQ Agent 的智能大脑 + wechatauto 的微信接入层。
 
 模块划分：
   config       统一配置加载 / 默认值

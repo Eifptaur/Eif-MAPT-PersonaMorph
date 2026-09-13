@@ -72,7 +72,7 @@ def render_table(models: list[tuple[str, dict]]) -> str:
 
 def main() -> None:
     lines = []
-    lines.append("# 价目表与用量估算（wx-agent）\n")
+    lines.append("# 价目表与用量估算（Persona Morph）\n")
     lines.append("> 单位：人民币元 / 百万 token（海外厂商按 1 USD≈7.2 元折算后计入）。**价格以各厂商官网为准**。\n")
     lines.append("> **计算口径（本表由脚本自动重算）**：每轮成本 = 0.024 × 输入单价 + 0.006 × 输出单价"
                 "（实测每轮 ≈30000 token：输入约 24000 + 输出约 6000，忽略缓存）；10 元可用轮数 = 10 ÷ 每轮成本。\n")

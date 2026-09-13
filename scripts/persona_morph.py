@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-"""wx-agent 主程序 —— 微信智能机器人。
+"""Persona Morph 主程序 —— 微信智能机器人。
 
 整合自两个项目：
   - 智能大脑：qq-agent（无状态会话 / 响应档位 / 工具集 / 记忆 / 联网搜索 / 人设）
   - 微信接入：wechat-deepseek-bot（wechatauto UIA 无注入读消息 + 屏幕自动化发送）
 
-运行：双击 启动机器人.vbs（无窗口推荐）或 python wx_agent.py --foreground（调试看日志）
+运行：双击 启动机器人.vbs（无窗口推荐）或 python persona_morph.py --foreground（调试看日志）
 """
 from __future__ import annotations
 
@@ -81,13 +81,13 @@ logging.basicConfig(
     level=logging.INFO,
     handlers=[
         logging.StreamHandler(sys.stdout),
-        _FlushFileHandler(os.path.join(LOG_DIR, "wx_agent.log"), encoding="utf-8"),
+        _FlushFileHandler(os.path.join(LOG_DIR, "persona_morph.log"), encoding="utf-8"),
     ],
 )
 _fmt = _SecretFormatter("%(asctime)s [%(levelname)s] %(message)s")
 for _h in logging.getLogger().handlers:
     _h.setFormatter(_fmt)
-log = logging.getLogger("wx-agent")
+log = logging.getLogger("persona-morph")
 
 # Web 控制台的日志环形缓冲（近 500 条）
 log_buffer = deque(maxlen=500)
@@ -1022,7 +1022,7 @@ def _wechat_watchdog(wechat):
                 user32.MessageBoxW(None,
                                    "检测到微信卡死，已自动关闭并重新启动微信程序。\n\n"
                                    "请到微信窗口重新登录（扫码/确认登录）——机器人会自动恢复连接。",
-                                   "wx-agent 微信守护", 0x30)
+                                   "Persona Morph 微信守护", 0x30)
             except Exception:
                 pass
         except Exception as e:
@@ -1054,8 +1054,8 @@ def main():
                 except Exception:
                     _alive = False
                 if _alive:
-                    log.error("已有 wx-agent 实例在运行（pid=%s）。为避免旧版本/接口冲突，本实例退出；请先「停止机器人」再启动。", _lpid)
-                    print("已有 wx-agent 实例在运行（pid=%s）。本实例退出；请先停止旧实例再启动。" % _lpid)
+                    log.error("已有 Persona Morph 实例在运行（pid=%s）。为避免旧版本/接口冲突，本实例退出；请先「停止机器人」再启动。", _lpid)
+                    print("已有 Persona Morph 实例在运行（pid=%s）。本实例退出；请先停止旧实例再启动。" % _lpid)
                     sys.exit(3)
         with open(_lock, "w", encoding="utf-8") as _lf:
             _lf.write(str(os.getpid()))
@@ -1079,7 +1079,7 @@ def main():
         pass
 
     cfg = get_config()
-    log.info("===== wx-agent 启动 =====")
+    log.info("===== Persona Morph 启动 =====")
     log.info("[checkpoint] 配置与就绪检查…")
     problems = _check_prerequisites(cfg)
     if problems:
@@ -2448,7 +2448,7 @@ def main():
 def _auto_pythonw():
     """用 python.exe 直接启动时自动改由 pythonw 无窗口运行。
 
-    · 双击 wx_agent.py / 命令行 python wx_agent.py：默认都不再常驻黑框（自动转 pythonw）；
+    · 双击 persona_morph.py / 命令行 python persona_morph.py：默认都不再常驻黑框（自动转 pythonw）；
     · 调试需要看窗口：加 --foreground 参数或设环境变量 WXAGENT_FOREGROUND=1；
     · 一键启动（启动机器人.vbs / watchdog.py）本来就走 pythonw，不受影响。
     """

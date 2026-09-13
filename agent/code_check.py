@@ -35,7 +35,7 @@ def _compile_all():
     files = []
     for root, dirs, fs in os.walk(os.path.join(ROOT, "agent")):
         files += [os.path.join(root, f) for f in fs if f.endswith(".py")]
-    files += [os.path.join(ROOT, "scripts", "wx_agent.py")]
+    files += [os.path.join(ROOT, "scripts", "persona_morph.py")]
     files += [os.path.join(ROOT, "scripts", f) for f in os.listdir(os.path.join(ROOT, "scripts")) if f.endswith(".py")]
     for fp in files:
         try:
@@ -189,7 +189,7 @@ def run(verbose_deps: bool = False) -> dict:
             return open(os.path.join(ROOT, name), encoding="utf-8").read()
         except Exception:
             return ""
-    _wx = _src("scripts/wx_agent.py")
+    _wx = _src("scripts/persona_morph.py")
     _webui = os.path.join(ROOT, "agent", "webui.py")
     _wui = _src("agent/webui.py")
     _wechat = _src("agent/wechat.py")
@@ -240,7 +240,7 @@ def run(verbose_deps: bool = False) -> dict:
                 "服务端按 cfg 注入+HTML no-store")
     _code_check("保存后自动刷新(带时间戳)", "u.searchParams.set('v', Date.now())" in _html,
                 "保存→ ?v= 刷新（不吃缓存）")
-    _code_check("单实例锁(旧版本冲突)", "bot.lock" in _wx and "已有 wx-agent 实例" in _wx,
+    _code_check("单实例锁(旧版本冲突)", "bot.lock" in _wx and "已有 Persona Morph 实例" in _wx,
                 "单实例锁+冲突提示")
     _code_check("停止必停(stopped.flag)", "stopped.flag" in _wx and "STOP_FLAG" in (_src("scripts/watchdog.py")),
                 "停止写标志，看门狗见标志退出")

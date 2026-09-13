@@ -12,7 +12,7 @@
   扣分：通用套话/模板占位/角色冲突（声音不像本人）
 """
 import sys
-sys.path.insert(0, r"C:\Users\ptmou\Desktop\WX-chatbot\wx-agent")
+sys.path.insert(0, r"C:\Users\ptmou\Desktop\WX-chatbot\Persona Morph")
 from agent.persona import PERSONAS
 
 AI_TEMPLATE = ["综上所述", "总而言之", "作为一个语言模型", "希望这个回答对你有帮助",

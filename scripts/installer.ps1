@@ -1,4 +1,4 @@
-﻿# wx-agent 一键启动启动器窗口：图标 + 步骤进度 + 进度条（无命令行黑窗）
+﻿# 群相灵 一键启动启动器窗口：图标 + 步骤进度 + 进度条（无命令行黑窗）
 # 由 一键启动.vbs 隐藏启动；依次：准备 Python → onestart(事件解析) → 快捷方式询问 → 完成。
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -21,7 +21,7 @@ try {
             Add-Type -AssemblyName System.Windows.Forms
             [System.Windows.Forms.MessageBox]::Show(
                 "启动器已在运行中。`r`n若看不到窗口，请稍候或用「一键关闭」结束后重试。",
-                'wx-agent 一键启动', [System.Windows.Forms.MessageBoxButtons]::OK,
+                '群相灵 一键启动', [System.Windows.Forms.MessageBoxButtons]::OK,
                 [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
             exit 0
         }
@@ -34,7 +34,7 @@ try {
 
 # ── 窗口 ──
 $f = New-Object System.Windows.Forms.Form
-$f.Text = 'wx-agent 一键启动'
+$f.Text = '群相灵 一键启动'
 $f.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
 $f.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
 $f.MaximizeBox = $false; $f.MinimizeBox = $false
@@ -50,7 +50,7 @@ $pic.Size = New-Object System.Drawing.Size -ArgumentList 64, 64
 $f.Controls.Add($pic)
 
 $lTitle = New-Object System.Windows.Forms.Label
-$lTitle.Text = 'wx-agent 一键启动'
+$lTitle.Text = '群相灵 一键启动'
 $lTitle.Font = [System.Drawing.Font]::new('Microsoft YaHei UI', [single]15, [System.Drawing.FontStyle]::Bold)
 $lTitle.Location = New-Object System.Drawing.Point -ArgumentList 104, 22
 $lTitle.AutoSize = $true
@@ -227,7 +227,7 @@ function Parse-Line([string]$line) {
     elseif ($line.StartsWith('@@REQ_SHORTCUT')) {
         # 自定义询问窗（图标 + 说明 + 彩色按钮，不用系统 MessageBox）
         $q = New-Object System.Windows.Forms.Form
-        $q.Text = 'wx-agent 启动完成'
+        $q.Text = 'Persona Morph 启动完成'
         $q.StartPosition = 'CenterScreen'
         $q.FormBorderStyle = 'FixedDialog'
         $q.MaximizeBox = $false; $q.MinimizeBox = $false
@@ -241,12 +241,12 @@ function Parse-Line([string]$line) {
         $pic2.Size = New-Object System.Drawing.Size -ArgumentList 66, 66
         $q.Controls.Add($pic2)
         $q1 = New-Object System.Windows.Forms.Label
-        $q1.Text = 'wx-agent 启动完成'
+        $q1.Text = 'Persona Morph 启动完成'
         $q1.Font = [System.Drawing.Font]::new('Microsoft YaHei UI', 14, [System.Drawing.FontStyle]::Bold)
         $q1.Location = New-Object System.Drawing.Point -ArgumentList 108, 26
         $q1.AutoSize = $true
         $q.Controls.Add($q1)
-        $qmsg = '欢迎使用 wx-agent！' + [char]10 + [char]10 + '机器人已启动，建议在桌面创建「一键启动」快捷方式。' + [char]10 + '是否现在创建？'
+        $qmsg = '欢迎使用 Persona Morph！' + [char]10 + [char]10 + '机器人已启动，建议在桌面创建「一键启动」快捷方式。' + [char]10 + '是否现在创建？'
         $q2 = New-Object System.Windows.Forms.Label
         $q2.Text = $qmsg
         $q2.Font = [System.Drawing.Font]::new('Microsoft YaHei UI', 9.5)
@@ -277,12 +277,12 @@ function Parse-Line([string]$line) {
         if ($m -eq [System.Windows.Forms.DialogResult]::OK) {
             try {
                 $ws = New-Object -ComObject WScript.Shell
-                $s = $ws.CreateShortcut([Environment]::GetFolderPath('Desktop') + '\一键启动 wx-agent.lnk')
+                $s = $ws.CreateShortcut([Environment]::GetFolderPath('Desktop') + '\一键启动 Persona Morph.lnk')
                 $s.TargetPath = (Join-Path $root '一键启动.vbs')
                 $s.WorkingDirectory = $root
                 $s.IconLocation = (Join-Path $root 'assets\app.ico')
                 $s.Save()
-                Add-Log '桌面快捷方式已创建（一键启动 wx-agent）'
+                Add-Log '桌面快捷方式已创建（一键启动 Persona Morph）'
             } catch { Add-Log '快捷方式创建失败' }
         }
     }

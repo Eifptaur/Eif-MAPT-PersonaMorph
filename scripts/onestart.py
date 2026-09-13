@@ -144,7 +144,7 @@ def _ask_shortcut():
     （图标+标题+说明+彩色按钮，不是系统简陋消息框）。选择「立即创建」则生成 lnk。"""
     try:
         desktop = os.path.join(os.environ.get("USERPROFILE", ""), "Desktop")
-        lnk = os.path.join(desktop, "一键启动 wx-agent.lnk")
+        lnk = os.path.join(desktop, "一键启动 Persona Morph.lnk")
         if os.path.exists(lnk):
             log("桌面快捷方式已存在，跳过询问。")
             return
@@ -160,7 +160,7 @@ def _ask_shortcut():
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 $f = New-Object System.Windows.Forms.Form
-$f.Text = 'wx-agent 启动完成'
+$f.Text = 'Persona Morph 启动完成'
 $f.StartPosition = 'CenterScreen'
 $f.FormBorderStyle = 'FixedDialog'
 $f.MaximizeBox = $false; $f.MinimizeBox = $false
@@ -174,7 +174,7 @@ $pic.Location = New-Object System.Drawing.Point(26, 26)
 $pic.Size = New-Object System.Drawing.Size(76, 76)
 $f.Controls.Add($pic)
 $l1 = New-Object System.Windows.Forms.Label
-$l1.Text = 'wx-agent 启动完成'
+$l1.Text = 'Persona Morph 启动完成'
 $l1.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 15, [System.Drawing.FontStyle]::Bold)
 $l1.Location = New-Object System.Drawing.Point(118, 26)
 $l1.AutoSize = $true
@@ -206,7 +206,7 @@ $f.AcceptButton = $ok
 $f.CancelButton = $no
 if ($f.ShowDialog() -eq 'OK') {
     $ws = New-Object -ComObject WScript.Shell
-    $s = $ws.CreateShortcut([Environment]::GetFolderPath('Desktop') + '\一键启动 wx-agent.lnk')
+    $s = $ws.CreateShortcut([Environment]::GetFolderPath('Desktop') + '\一键启动 Persona Morph.lnk')
     $s.TargetPath = '__VBS__'
     $s.WorkingDirectory = '__DIR__'
     $s.IconLocation = '__ICONICO__'
@@ -233,10 +233,10 @@ def popup_fail(reason, tail=""):
         return
     try:
         import ctypes
-        msg = ("wx-agent 一键启动失败：%s\n\n" % reason)
+        msg = ("群相灵 一键启动失败：%s\n\n" % reason)
         if tail:
             msg += "—— 最近日志（看前几行即可定位）：\n" + tail[-1500:]
-        ctypes.windll.user32.MessageBoxW(0, msg, "wx-agent 启动失败", 0x10)
+        ctypes.windll.user32.MessageBoxW(0, msg, "Persona Morph 启动失败", 0x10)
     except Exception:
         pass
 
@@ -328,13 +328,13 @@ def _probe_running_instance(timeout=2):
 
 
 def _kick_old_instance():
-    """踢掉旧版本实例（3210 的 wx_agent/watchdog + 启动器/关闭器进程）。"""
+    """踢掉旧版本实例（3210 的 persona_morph/watchdog + 启动器/关闭器进程）。"""
     try:
         out = subprocess.check_output(
             'wmic process where "name like \'python%\' or name like \'cscript%\'" get processid,commandline '
             '/format:csv', shell=True, text=True, errors="replace")
         for line in out.splitlines():
-            if any(k in line for k in ("wx_agent.py", "watchdog.py", "onestart.py")) and "plugin" not in line:
+            if any(k in line for k in ("persona_morph.py", "watchdog.py", "onestart.py")) and "plugin" not in line:
                 parts = line.rsplit(",", 1)
                 if parts and parts[-1].strip().isdigit():
                     subprocess.run(["taskkill", "/F", "/PID", parts[-1].strip()],
@@ -386,7 +386,7 @@ def main():
     check_only = (os.environ.get("WX_ONESTART_CHECK") == "1") or ("--check-only" in sys.argv[1:])
     log("")
     log("╔══════════════════════════════════════════════╗")
-    log("║        wx-agent 一键启动（全程进度）         ║")
+    log("║        群相灵 一键启动（全程进度）         ║")
     log("╚══════════════════════════════════════════════╝")
 
     # 自动检测旧实例：同版本→直接开控制台；旧版本→踢掉再启动新版（杜绝 404/旧代码）
@@ -550,7 +550,7 @@ def main():
                 _nxt_hint += 15
             time.sleep(2)
         if not opened:
-            log("120 秒内控制台仍未就绪 —— 请查看 logs\\wx_agent.log / data\\bot_crash.log")
+            log("120 秒内控制台仍未就绪 —— 请查看 logs\\persona_morph.log / data\\bot_crash.log")
             try:
                 _open_console(_url, _bpath)
             except Exception:

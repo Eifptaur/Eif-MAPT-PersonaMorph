@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""停止 wx-agent（无窗口）：按 PID 结束机器人 + 看门狗，零 PowerShell 依赖。
+"""停止 Persona Morph（无窗口）：按 PID 结束机器人 + 看门狗，零 PowerShell 依赖。
 
-pid 文件由机器人(wx_agent.py)/看门狗(看门狗.py)启动时写入。
+pid 文件由机器人(persona_morph.py)/看门狗(看门狗.py)启动时写入。
 若 PID 文件缺失（升级前的老进程），回退到按命令行特征查找并结束。
 """
 import os
@@ -61,7 +61,7 @@ def main():
             f.write(time.strftime("%Y-%m-%d %H:%M:%S"))
     except Exception:
         pass
-    for name, marker in (("bot.pid", "wx_agent.py"), ("watchdog.pid", "watchdog")):
+    for name, marker in (("bot.pid", "persona_morph.py"), ("watchdog.pid", "watchdog")):
         pid = read_pid(name)
         if pid and pid != os.getpid() and kill_pid(pid):
             killed += 1
@@ -73,7 +73,7 @@ def main():
             failed += 1
     # 回退：老进程没有 pid 文件时按命令行特征找
     try:
-        for pid in kill_by_cmdline("wx_agent.py"):
+        for pid in kill_by_cmdline("persona_morph.py"):
             if pid != os.getpid() and kill_pid(pid):
                 killed += 1
     except Exception:

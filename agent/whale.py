@@ -5,7 +5,7 @@
 这里把它整体迁移进来：
   - 浏览器侧脚本：whale-widget/client/widget.js（原样提取自原项目 WIDGET_JS，零改动）
   - 服务端：本模块按原项目的 /dsh-whale/* 接口约定用 Python 重新实现，
-    挂到 wx-agent Web 控制台（agent/webui.py）下。
+    挂到 Persona Morph Web 控制台（agent/webui.py）下。
 
 接口约定（与原版一致）：
   GET  /dsh-whale/widget.js       浏览器侧脚本（按 token 注入，webui 处理）
@@ -141,7 +141,7 @@ class WhaleWidget:
         cost = (fresh / 1e6) * p["miss"][pi] + (cached / 1e6) * p["hit"][pi] + ((completion + reasoning) / 1e6) * p["out"][pi]
         return cost, prompt + completion + reasoning
 
-    # ── 记账 API（由 wx_agent 调用）─────────────────────────────────────
+    # ── 记账 API（由 persona_morph 调用）─────────────────────────────────────
 
     def note_call(self, model: str, usage: dict, ts: float | None = None):
         """每次 LLM 调用成功后计入当前轮的累计（价格按调用时刻的峰谷档位）。"""

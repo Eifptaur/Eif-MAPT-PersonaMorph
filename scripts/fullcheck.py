@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""wx-agent 全面检验清单（每次修改后必跑）
+"""Persona Morph 全面检验清单（每次修改后必跑）
 
 覆盖：
   A. 控制台可调项映射（每个 config 键在 console_html 有 data-cfg 或专用组件）
@@ -217,7 +217,7 @@ except Exception as e:
 
 # ═══════════ J. 程序鼠标检验并入一键自检 ═══════════
 try:
-    _wx_src = io.open(os.path.join(ROOT, "scripts", "wx_agent.py"), encoding="utf-8").read()
+    _wx_src = io.open(os.path.join(ROOT, "scripts", "persona_morph.py"), encoding="utf-8").read()
     _ui_tests_n = _wx_src.count('"moments_' ) + _wx_src.count('"emoji_') + _wx_src.count('"message_') + _wx_src.count('"windows_') + _wx_src.count('"recalibrate')
     check("一键自检含 11 项程序鼠标检验", "_UI_TEST_LIST" in _wx_src and "程序鼠标检验" in _wx_src
           and "60~100" in _wx_src)

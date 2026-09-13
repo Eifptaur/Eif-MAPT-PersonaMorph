@@ -1,10 +1,10 @@
-﻿# wx-agent 自动保障 Python（无需用户安装）：
+﻿# Persona Morph 自动保障 Python（无需用户安装）：
 #  1) 系统已有 Python 3.10+（py / python） → 直接用
 #  2) 否则用绿色版：解压 offline\python\python-3.10.11-embed-amd64.zip（或联网下载）
 #  3) 为绿色版引导 pip（优先离线 wheels 里的 pip 轮子，其次 get-pip.py）
 # 结果写入 logs\python_path.txt（ASCII）。退出码 0=成功。
 $ErrorActionPreference = 'Continue'
-try { $Host.UI.RawUI.WindowTitle = 'wx-agent 准备环境' } catch {}
+try { $Host.UI.RawUI.WindowTitle = 'Persona Morph 准备环境' } catch {}
 
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $logDir = Join-Path $root 'logs'

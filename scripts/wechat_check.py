@@ -29,7 +29,7 @@ except Exception:
 def main():
     info = wechat_version_info()
     print("=" * 56)
-    print(" wx-agent 版本体检（微信 + 依赖，版本不匹配会自动提示/修正）")
+    print(" Persona Morph 版本体检（微信 + 依赖，版本不匹配会自动提示/修正）")
     print("=" * 56)
     print("【微信本体】")
     print("  进程   ：%s" % ("检测到" if info["found"] else "未检测到（请先登录微信）"))

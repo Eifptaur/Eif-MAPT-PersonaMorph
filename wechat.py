@@ -2,7 +2,7 @@
 """wechatauto 适配层：读消息 / 发消息 / 下载图片。
 
 对 wechatauto 的 WeChatDB / WeChatGUI / MediaDownloader 做统一封装，
-把微信原始消息归一化成 wx-agent 内部结构，屏蔽底层差异。
+把微信原始消息归一化成 Persona Morph 内部结构，屏蔽底层差异。
 """
 from __future__ import annotations
 
@@ -492,7 +492,7 @@ class WeChatAdapter:
             把同一条消息发两遍（库内部的重试也会被拦住；分条连发间隔 3~5 秒不受影响）。
         这样换电脑（带缩放/多显示器/触屏手写画布）也不用改 wechatauto。
         """
-        if getattr(gui, "_wx_agent_ui_ok", False):
+        if getattr(gui, "_persona_morph_ui_ok", False):
             return
         try:
             from . import ui_adapt
@@ -532,7 +532,7 @@ class WeChatAdapter:
             gui.wx_click = wx_click
             if orig_key is not None:
                 gui._input.key = key
-            gui._wx_agent_ui_ok = True
+            gui._persona_morph_ui_ok = True
         except Exception:
             pass
 

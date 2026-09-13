@@ -1,4 +1,4 @@
-# wx-agent 依赖清单（Python 3.10+，Windows 64 位）
+# 群相灵（Persona Morph） 依赖清单（Python 3.10+，Windows 64 位）
 
 # —— 微信接入（核心，无注入 UIA 模式）——
 wechatauto-replica==1.1.5.1
