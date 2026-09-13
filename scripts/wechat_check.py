@@ -43,7 +43,7 @@ def main():
     _rows_, _dep_all = dep_check()
     _wx_row = next((r for r in _rows_ if r[0] == "wechatauto-replica"), None)
     adapter_ok = bool(info["supported"]) and bool(_wx_row and _wx_row[3])
-    print("  结论   ：%s" % ("匹配（适配层 1.1.5.1 支持微信 4.x）" if adapter_ok else
+    print("  结论   ：%s" % ("匹配（适配层 ≥1.1.5.1，本仓库实测 1.2.2.2，支持微信 4.x）" if adapter_ok else
                             "⚠️ 不匹配：适配层无需重装微信，请运行本脚本加 --update 自动升级适配层"))
     print()
     print("【Python】")
@@ -56,7 +56,7 @@ def main():
         print("  %s %-20s 已装 %-10s 需 >= %s" % (mark, pkg, inst or "-", req))
     print()
     print("微信官方更新界面后功能异常怎么办：")
-    print("  1) 先跑本脚本看结论（微信 4.x + 适配层 1.1.5.1 + 依赖全 OK 才算匹配）；")
+    print("  1) 先跑本脚本看结论（微信 4.x + 适配层 ≥1.1.5.1（实测 1.2.2.2）+ 依赖全 OK 才算匹配）；")
     print("  2) 异常就运行「检查微信版本.bat」（右键→运行，或命令行加 --update）自动修正；")
     print("  3) 微信本体升级请从微信官网下载安装包，本程序不会自动替换微信。")
     if "--update" in sys.argv:
