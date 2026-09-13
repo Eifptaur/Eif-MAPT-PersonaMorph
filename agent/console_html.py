@@ -3618,7 +3618,7 @@ const UI_TESTS = [
   {id:"moments_like",  name:"朋友圈：点赞第一条",  desc:"蓝点→「赞」→自动关窗（对第一条动态）"},
   {id:"moments_comment", name:"朋友圈：评论第一条", desc:"蓝点→「评论」→输入测试评论→发送→关窗（会真评论）"},
   {id:"moments_scroll", name:"朋友圈：滚动刷",     desc:"滚轮滚动信息流（幅度按窗口高）→ 关窗"},
-  {id:"moments_publish", name:"朋友圈：纯文字发布 dry", desc:"长按相机2秒→弹窗输入测试文字→到输入框即止（不点发表、不真发；逐屏截图 _scratch/shots）"},
+  {id:"moments_publish", name:"朋友圈：纯文字发布 dry", desc:"长按相机2秒→弹窗输入测试文字→到输入框即止（不点发表、不真发；dry 模式可逐屏截图留证）"},
   {id:"emoji_collect", name:"表情：收藏（右键）",  desc:"右键最近一条 [表情]/[图片] →「添加到表情」（会真收藏）"},
   {id:"emoji_panel",   name:"表情：面板发送",      desc:"点输入栏笑脸→面板→爱心→点表情→发送（未指定名字时）"},
   {id:"message_collect", name:"消息：收藏",        desc:"右键最新消息→「收藏」（验证菜单通路）"},

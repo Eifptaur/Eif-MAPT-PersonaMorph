@@ -2128,7 +2128,7 @@ def main():
                 # dry 实测：点侧栏图标→长按相机2秒→输入框输入；不点发表、不真发；逐屏截图
                 _txt = str(data.get("text") or "检验朋友圈：程序鼠标没问题")
                 ok, msg = wx.moments_publish_text(_txt, dry=True, shots=True)
-                note = msg + "（截图：_scratch/shots/moments_*.png）" if ok else msg
+                note = msg + "（截图：logs/dry_shots/moments_*.png）" if ok else msg
                 return {"ok": ok, "note": note}
             if kind == "emoji_collect":
                 # 最近一条 emoji/image 消息右键收藏（真操作；用任一有表情消息的群）
@@ -2199,7 +2199,7 @@ def main():
                     _inp.wheel(500); time.sleep(0.35)
                 time.sleep(1.0)
                 # 到顶基线截图
-                _sdir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_scratch", "shots")
+                _sdir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs", "dry_shots")
                 os.makedirs(_sdir, exist_ok=True)
                 _dn = str(_delta).replace("-", "n")
                 def _snap(_n):
