@@ -1637,7 +1637,10 @@ class WeChatAdapter:
                             top.get("local_id"), top.get("type_name") or top.get("type"))
             return False, "已走完对话框与发送，但 %ds 内 DB 没等到新行（发文件未生效）" % int(wait_s)
         except Exception as e:
-            return False, "投递发文件异常：%s" % e
+            # ⚠️ 外层异常也会**留下「选择文件」模态框**（实测：UIA 抛 COM 错时不一定落在内层 try 里，
+            #    2026-09-13 一次真实发送失败后框就留在屏幕上挡住了微信）⇒ 这里再兜一次。
+            _n = _close_stale_file_dialogs()
+            return False, "投递发文件异常：%s%s" % (e, ("（已清掉 %d 个残留对话框）" % _n) if _n else "")
 
     def send_image(self, chat_id: str, local_path: str):
         """发送本地图片。返回 (ok, message)。
