@@ -627,11 +627,18 @@ class WeChatAdapter:
         取消置顶 → 恢复原前台窗口（AttachThreadInput 提权）→ 放底/最小化。
         """
         self._fg_enter()
+        cur0 = _cursor_pos()      # 最高目标硬判据②：L0 真实路径"用完必须把光标还回去"
         try:
             result = fn(*args, **kwargs)
             return result
         finally:
             self._fg_exit()
+            try:
+                if cur0 and cur0 != (0, 0) and _cursor_pos() != cur0:
+                    ctypes.windll.user32.SetCursorPos(int(cur0[0]), int(cur0[1]))
+                    log.info("真实路径结束后已把光标还原到 %s", cur0)
+            except Exception as _e:
+                log.info("光标还原失败（不影响发送）：%s", _e)
 
     def _learn_chat_header(self, chat_id: str, gui=None) -> bool:
         """DB 回读确认发送成功后，补一条"当前窗口尺寸"下的会话头参照。
@@ -689,7 +696,28 @@ class WeChatAdapter:
                                 return True, "%s（投递档 L5）" % msg
                             log.info("投递发送失败，退回真实路径：%s", msg)
                         else:
-                            log.info("投递前置未满足（%s）：改走真实路径", st["status"])
+                            # 投递不切会话，但"切会话"这一步本身也能投递（投递点击会话行 + 库只读确认）。
+                            # 切成功后"当前会话＝目标会话"有正面证据 ⇒ 允许 allow_no_ref=True 投递发送。
+                            sw_ok, sw_msg = self.switch_chat_posted(chat_id, gui=gui)
+                            log.info("投递切会话：%s —— %s", sw_ok, sw_msg)
+                            if sw_ok:
+                                try:
+                                    self._learn_chat_header(chat_id, gui=gui)   # 顺手把该尺寸的会话头参照学到手
+                                except Exception as _e:
+                                    log.info("学会话头参照失败（不影响发送）：%s", _e)
+                                # ⛔ 切完**再问一次头闸**：只有拿到"当前会话＝目标会话"的参照证据才准投递。
+                                #    2026-09-13 实测：库的只读判据 `_chat_is_open` **不稳定**（同一次调用里返回 True、
+                                #    紧接着外面查又是 False）⇒ **绝不能拿它当授权发送的正面证据**（那等于回到事故模式）。
+                                st2 = _ch.check(chat_id, gui=gui)
+                                if st2["status"] == "ok":
+                                    ok, msg = self.send_text_posted(text, chat_id)
+                                    if ok:
+                                        self._mark_sent(text)
+                                        return True, "%s（投递档 L5 · 先投递切会话）" % msg
+                                    log.info("投递切会话后发送失败：%s", msg)
+                                else:
+                                    log.info("投递切会话后仍无参照（%s）⇒ 不投递（无证据不发送）", st2["status"])
+                            log.info("投递前置未满足（%s）且投递切会话未成功：改走真实路径", st["status"])
                     except Exception as e:
                         log.info("投递优先判定异常，退回真实路径：%s", e)
                 # 真实路径要真点真敲 ⇒ 先做一次遮挡预检：被别的窗口挡住时，库会重试到 40~70 秒
@@ -731,6 +759,51 @@ class WeChatAdapter:
                 return ok, _resp_msg(r)
         except Exception as e:
             return False, str(e)
+
+    def switch_chat_posted(self, chat_id: str, gui=None, name: str = None, confirm_s: float = 6.0):
+        """**投递版切会话**：库的**只读** OCR 定位会话行 → **投递点击**那一行 → 库的**只读**判据确认已打开。
+
+        为什么需要：投递（L5）不切会话；而真实路径（L0）会真点真敲、被别的窗口挡住就失败，实测 `open_chat`
+        三次重试全败、`send_text` 耗 140.7s 才返回失败（2026-09-13）。这条链**全程不碰真实鼠标、不抢前台**。
+
+        返回 (ok, 说明)。⚠️ **它只负责"切"，不负责"授权发送"**：验收用的是库的只读判据 `_chat_is_open`，
+        而该判据 2026-09-13 实测**不稳定**（同一次调用里 True、紧接着外面查却是 False）⇒ 切完之后
+        **必须再问一次头闸** `chat_header.check()`，只有 `ok` 才准投递（拿不稳定的判据当授权证据，
+        就等于回到"no_ref 照发"的事故模式）。
+        """
+        from . import input_backend as ib
+        try:
+            gui = gui or self._get_gui()
+            name = name or self.group_name(chat_id) or chat_id
+            backend = ib.select_backend(gui=gui)
+            if not isinstance(backend, ib.MessageBackend):
+                return False, "当前输入后端不是投递档（config.input.backend=%s）" % backend.name
+            main = int(getattr(gui, "main_hwnd", 0) or 0) or ib.find_main_window()
+            if not main:
+                return False, "找不到微信主窗"
+            try:
+                gui._update_render_rect()          # 只读：重算渲染区原点（坐标全靠它）
+            except Exception:
+                pass
+            if gui._chat_is_open(name):
+                return True, "目标会话已经是当前打开的会话"
+            pos = gui.find_session(name)           # 只读：OCR 在会话列表里找那一行
+            if not pos:
+                return False, "会话列表里没定位到「%s」（可能需要先滚动/搜索）" % name
+            ox, oy = int(getattr(gui, "origin_x", 0)), int(getattr(gui, "origin_y", 0))
+            if not ox and not oy:
+                return False, "渲染区原点未知（窗口不可见？）"
+            ok, why = backend.click(main, (ox + int(pos[0]), oy + int(pos[1])))
+            if not ok:
+                return False, "投递点击会话行失败：%s" % why
+            deadline = time.time() + max(1.0, float(confirm_s))
+            while time.time() < deadline:
+                time.sleep(0.4)
+                if gui._chat_is_open(name):
+                    return True, "投递点击会话行后已确认打开「%s」" % name
+            return False, "投递点击已发出，但库没能确认「%s」已打开" % name
+        except Exception as e:
+            return False, "投递切会话异常：%s" % e
 
     def send_text_posted(self, text: str, chat_id: str = "filehelper", wait_s: float = 15.0,
                          allow_no_ref: bool = False):
