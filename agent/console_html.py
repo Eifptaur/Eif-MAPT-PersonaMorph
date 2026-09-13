@@ -173,7 +173,8 @@ input,select,textarea{backdrop-filter:blur(8px)}
 .topbar{backdrop-filter:blur(14px) saturate(1.4)}
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--bg);color:var(--tx);font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;min-height:100vh}
-a{color:var(--blue)}
+a{color:var(--blue);text-decoration:none}
+a:hover,a:focus,a:visited,a:active{text-decoration:none}   /* ⛔ 控制台所有字不带下划线（先生 2026-09-13 定调） */
 .icon{width:18px;height:18px;vertical-align:-3px;margin-right:6px}
 
 /* ── 顶栏 ── */
@@ -231,9 +232,8 @@ a{color:var(--blue)}
 .nav-ind{position:absolute;left:0;width:3px;border-radius:2px;background:var(--blue);
   top:0;height:3px;opacity:0;transition:top .28s cubic-bezier(.34,1.4,.64,1),opacity .2s}
 .nav a{position:relative;z-index:1}
-.nav a{display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:11px;color:var(--tx2);
-  transition:background .18s ease,color .18s ease}
-  text-decoration:none;font-size:13.5px;margin:2px 0}
+".nav a{display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:11px;color:var(--tx2);"
+  "text-decoration:none;font-size:13.5px;margin:2px 0;transition:background .18s ease,color .18s ease}"   // 原第 2 行提前闭括号 ⇒ 这三项被浏览器整段丢弃（下划线就是这么露出来的）
 .nav a:hover{background:var(--bg-solid)}
 .nav a.on{background:var(--blue-soft);color:var(--blue);font-weight:600;position:relative}
 .nav a.on::before{content:"";position:absolute;left:0;top:9px;bottom:9px;width:3px;border-radius:2px;background:var(--blue)}
