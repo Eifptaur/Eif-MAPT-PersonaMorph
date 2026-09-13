@@ -153,6 +153,16 @@ DEFAULT_CONFIG = {
         "min_gap_seconds": 30,   # 同一会话两条相同语音的最小间隔（防刷屏）
         "trigger_mode": "on_request",  # 触发条件（交给用户自定义）：on_request＝只被要求时才发 | sometimes＝偶尔主动 | off＝不主动
     },
+    # ── 本地文件搜索（「把某个文件发给我」；默认关）─────────────────────────────
+    #   机器人可以自己找文件 — 但**只在你配的目录里找**（默认空＝不搜），而且**发出去**另过
+    #   send.file_forward_optin（发文件要过一次系统对话框、会短暂抢前台 ⇒ 默认关）。
+    "file_search": {
+        "enabled": False,        # 总开关（控制台可切）
+        "dirs": [],              # 可搜目录（绝对路径或相对项目根）；空＝不搜
+        "max_results": 20,       # 最多返回几个候选
+        "max_mb": 100,           # 单文件大小上限（超过就拒绝发送）
+        "trigger_mode": "on_request",  # 触发条件：on_request＝被要求时才找 | sometimes＝偶尔主动 | off＝不主动
+    },
     # ── 用户自定义工具（声明式 HTTP 工具；默认关）────────────────────────────
     #   用户往 `tools.d/*.json` 丢清单，**勾选后**才给模型用。只发 HTTP、**不跑本地代码**、域名白名单必填、
     #   参数必须是合法 JSON Schema；坏清单不静默（收集问题给控制台）。实现在 agent/user_tools.py。

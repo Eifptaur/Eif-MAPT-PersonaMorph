@@ -604,6 +604,12 @@ class WebUI:
                                 st["media"] = _ms.snapshot()
                             except Exception as _e2:
                                 st["media"] = {"error": str(_e2)}
+                            # 本地文件搜索（找文件并发送）：现场读目录状态 + 台账
+                            try:
+                                from . import file_search as _fsx
+                                st["file_search"] = _fsx.snapshot()
+                            except Exception as _e4:
+                                st["file_search"] = {"error": str(_e4)}
                             # 自定义工具（工具与插件面板）：清单现场扫 + 调用统计
                             try:
                                 from . import user_tools as _ut2
@@ -613,6 +619,34 @@ class WebUI:
                     except Exception:
                         pass
                     self._json(st)
+                elif path in ("/api/file_search/add", "/api/file_search/del"):
+                    # 管理"可搜目录"（面板上加入/移除）
+                    try:
+                        from . import file_search as _fsd
+                        from .config import get_config as _gc4, save_config as _scv4, set_config as _sc4
+                        d = ""
+                        if isinstance(data, dict):
+                            d = str(data.get("dir") or "")
+                        if not d:
+                            _q4 = parse_qs(urlparse(self.path).query)
+                            d = str((_q4.get("dir") or [""])[0])
+                        d = d.strip()
+                        c4 = _gc4()
+                        c4.setdefault("file_search", {})
+                        cur = [str(x) for x in (c4["file_search"].get("dirs") or [])]
+                        if path.endswith("/add"):
+                            if d and d not in cur:
+                                cur.append(d)
+                            note = ("已加入：%s" % d) if d else "没给目录"
+                        else:
+                            cur = [x for x in cur if x != d]
+                            note = ("已移除：%s" % d) if d else "没给目录"
+                        c4["file_search"]["dirs"] = cur
+                        _sc4(c4)
+                        _scv4(c4)
+                        self._json({"ok": True, "note": note, "file_search": _fsd.snapshot()})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
                 elif path == "/api/tools/new_manifest":
                     # 「怎么加工具」弹窗的一键动作：在 tools.d/ 里生成一份可编辑模板
                     try:

@@ -788,6 +788,13 @@ th{color:var(--tx2);font-weight:500}
       <div class="row"><label>图库目录</label><div class="grow"><input data-cfg="image_reply.dir" placeholder="assets/anime">
         <div id="irState" class="hint">检测中…</div>
         <div class="btns"><button id="irGuide" class="ghost">怎么放图？</button></div></div></div>
+      <div class="row"><label>触发条件</label><div class="grow"><select data-cfg="image_reply.trigger_mode">
+        <option value="on_request">只在被点名要图时发（推荐）</option>
+        <option value="sometimes">可以偶尔主动发</option>
+        <option value="off">不主动发（被点名仍可发）</option></select>
+        <span class="hint">这一档**真的改变给模型的指令**（提示词里动态增删）。</span></div></div>
+      <div class="row"><label>允许按关键词找图</label><input type="checkbox" data-cfg="image_reply.allow_search">
+        <span class="hint">关掉后只能用本地图库，不能按"找张猫的图"去在线图源找。</span></div>
       <div class="row"><label>只发安全的</label><input type="checkbox" data-cfg="image_reply.safe_only">
         <span class="hint">关掉它不建议：宁可这次发不出，也不要发出不该发的图。</span></div>
 
@@ -799,6 +806,23 @@ th{color:var(--tx2);font-weight:500}
       <div class="row"><label>转发视频/文件</label><input type="checkbox" data-cfg="send.file_forward_optin">
         <div id="fwState" class="hint">检测中…</div>
         <div class="btns"><button id="fwGuide" class="ghost">为什么默认关？</button></div></div>
+      <div class="sub">④ 本地文件（找文件并发送）</div>
+      <div class="row"><label>总开关</label><input type="checkbox" data-cfg="file_search.enabled">
+        <span class="hint">默认关。开了它只是"**能找**"；**发出去**还要开上面那个「转发视频/文件」（那一步会短暂抢前台）。</span></div>
+      <div class="row"><label>可搜目录</label><div class="grow">
+        <input id="fsNewDir" placeholder="例如 D:\下载 或 报告（相对项目根）">
+        <div class="btns"><button id="fsAdd" class="ghost">加入目录</button></div>
+        <div id="fsList" class="hint">检测中…</div>
+        <div class="hint">只在列出的这些目录里找（含子目录、最多 3 层）；`.git` / `node_modules` / `__pycache__` 这类噪声目录自动跳过，**永远不搜全盘**。</div></div></div>
+      <div class="row"><label>触发条件</label><div class="grow"><select data-cfg="file_search.trigger_mode">
+        <option value="on_request">只在被要求时找（推荐）</option>
+        <option value="sometimes">可以偶尔主动找</option>
+        <option value="off">不主动找</option></select>
+        <span class="hint">这一档**真的改变给模型的指令**。</span></div></div>
+      <div class="row"><label>最多候选</label><input type="number" min="1" max="200" data-cfg="file_search.max_results"></div>
+      <div class="row"><label>大小上限(MB)</label><input type="number" min="1" max="2048" data-cfg="file_search.max_mb"></div>
+      <div class="btns"><button id="fsGuide" class="ghost">怎么让机器人帮我发文件？</button></div>
+      <div id="fsRecent" class="hint"></div>
       <div class="btns"><button class="pri" data-save>保存设置（媒体与语音）</button></div>
     </section>
     <section id="sec-tts" class="card" data-sec>
@@ -819,6 +843,11 @@ th{color:var(--tx2);font-weight:500}
         <div id="ttsFmt" class="hint">检测中…</div></div></div>
       <div class="row"><label>单条字数上限</label><input type="number" min="10" max="500" data-cfg="voice_reply.max_chars">
         <span class="hint">超过就直接拒绝，不会硬合成。</span></div>
+      <div class="row"><label>触发条件</label><div class="grow"><select data-cfg="voice_reply.trigger_mode">
+        <option value="on_request">只在被要求时说（推荐）</option>
+        <option value="sometimes">可以偶尔主动说</option>
+        <option value="off">不主动说</option></select>
+        <span class="hint">这一档**真的改变给模型的指令**。</span></div></div>
       <div class="row"><label>同内容间隔(秒)</label><input type="number" min="0" max="600" data-cfg="voice_reply.min_gap_seconds">
         <span class="hint">同一会话里同样的内容在这个时间内不重复发（防刷屏）。</span></div>
       <div class="btns">
@@ -1933,6 +1962,44 @@ async function loadStatus(){
           });
         }
       }catch(e){}
+      try{
+        const fs = s.file_search || {};
+        const fbox = $('fsList');
+        if(fbox && !fs.error){
+          fbox.textContent = '';
+          const ds = fs.dirs || [];
+          if(!ds.length){
+            fbox.textContent = '还没有可搜目录：在上面输入一个目录（比如 D:\\下载）点「加入目录」。';
+          }
+          ds.forEach(function(d){
+            const row = document.createElement('div'); row.className = 'row';
+            const t = document.createElement('span');
+            t.textContent = d.dir + (d.exists ? ('　（' + (d.count >= 0 ? d.count : '?') + ' 个文件）') : '　（目录不存在）');
+            if(!d.exists) t.style.color = 'var(--err-tx)';
+            row.appendChild(t);
+            const b1 = document.createElement('button'); b1.className = 'ghost'; b1.textContent = '打开';
+            b1.onclick = async function(){
+              try{ await getJSON('/api/open-path', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({path:d.dir})}); }
+              catch(e){ toast('打开失败：' + e.message); }
+            };
+            const b2 = document.createElement('button'); b2.className = 'ghost'; b2.textContent = '移除';
+            b2.onclick = async function(){
+              try{
+                const r = await getJSON('/api/file_search/del', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({dir:d.dir})});
+                toast((r && r.note) || '已移除'); loadStatus();
+              }catch(e){ toast('移除失败：' + e.message); }
+            };
+            row.appendChild(b1); row.appendChild(b2); fbox.appendChild(row);
+          });
+        }
+        const frc = $('fsRecent');
+        if(frc && !fs.error){
+          const rs = fs.recent || [];
+          frc.textContent = rs.length
+            ? ('最近发过的文件：' + rs.slice(0, 3).map(function(x){ return String(x.path || '').split('\\').pop(); }).join('、'))
+            : ('当前状态：找文件' + (fs.enabled ? '已开' : '未开') + ' ｜ 发文件开关' + (fs.send_optin ? '已开（会短暂抢前台）' : '未开') + ' ｜ 触发条件：' + (fs.trigger_mode || 'on_request'));
+        }
+      }catch(e){}
       const wi = s.wechat_install || null;
       const box = $('wxInstall');
       if(box && wi){
@@ -2861,6 +2928,18 @@ const GUIDES = {
     copy: [],
     actions: []
   },
+  file: {
+    title: '怎么让机器人帮你找文件、并发出去',
+    intro: '它**只在你配的目录里找**；而"发出去"这一步会过一次系统「选择文件」对话框（**短暂抢一次前台**），所以两个开关是分开的。',
+    steps: [
+      '① 打开「总开关」（找文件）→ 在「可搜目录」里加入你想让它看的文件夹（如 下载 / 报告 / 素材），加完可点「打开」核对',
+      '② 想真的发出去，还要打开上面的「转发视频/文件」——那一步会短暂抢前台，**默认关是故意的**；链接不受影响',
+      '③ 之后有人在群里说「把周报发我」，它会先 find_local_file 找候选 → 确认唯一后再 send_local_file 发出去；重名多个、不在允许目录、超过大小上限时它会照实说',
+      '④ 「触发条件」那一档（只在被要求 / 偶尔主动 / 不主动）**真的改变给模型的指令**；改完点保存。'
+    ],
+    copy: [{label: '复制一个目录示例', text: 'D:\\下载'}],
+    actions: [{label: '去看「本地文件」那一栏', kind: 'goto', arg: '#sec-media'}]
+  },
   wechat: {
     title: '没检测到微信？照着做就行',
     intro: '我们**不替你静默安装**微信（那要下安装包 + 管理员权限），只带你去官网。',
@@ -2925,6 +3004,12 @@ async function guideAction(a){
     }else if(a.kind === 'test'){
       const el = (a.arg === 'voice') ? $('vsTest') : (a.arg === 'tts' ? $('ttsTest') : $('wxRecheck'));
       if(el) el.click(); else toast('先切到对应面板再点测试');
+    }else if(a.kind === 'goto'){
+      try{
+        const el = document.querySelector(a.arg);
+        if(el && el.scrollIntoView){ el.scrollIntoView({block:'start'}); toast('已定位到对应面板'); }
+        else toast('找不到那个面板');
+      }catch(e){ toast('定位失败'); }
     }else if(a.kind === 'openUrl'){
       window.open((window.__wxInstall && window.__wxInstall.official_url) || 'https://weixin.qq.com/', '_blank');
     }
@@ -4387,11 +4472,23 @@ addEventListener('hashchange', ()=>{ if(location.hash==='#sec-sessions') loadSes
     toast('已尝试打开官网：' + u + '（打不开就手动复制到浏览器）');
   };
   /* 应用内引导按钮：所有"怎么办"都在弹窗里（不再叫用户去读文件） */
-  [['utGuide','tools'], ['ttsGuide','tts'], ['vsGuide','voice'], ['irGuide','image'], ['fwGuide','forward']]
+  [['utGuide','tools'], ['ttsGuide','tts'], ['vsGuide','voice'], ['irGuide','image'], ['fwGuide','forward'], ['fsGuide','file']]
     .forEach(function(pair){
       const b = document.getElementById(pair[0]);
       if(b) b.onclick = function(){ openGuide(pair[1]); };
     });
+  const fsAddBtn = document.getElementById('fsAdd');
+  if(fsAddBtn) fsAddBtn.onclick = async ()=>{
+    const i = document.getElementById('fsNewDir');
+    const dir = i ? i.value.trim() : '';
+    if(!dir){ toast('先填一个目录，比如 D:\\下载'); return; }
+    try{
+      const r = await getJSON('/api/file_search/add', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({dir:dir})});
+      toast((r && r.note) || '已加入目录');
+      if(i) i.value = '';
+      loadStatus();
+    }catch(e){ toast('加入失败：' + e.message); }
+  };
   const utBtn = document.getElementById('utReload');
   if(utBtn) utBtn.onclick = async ()=>{
     try{

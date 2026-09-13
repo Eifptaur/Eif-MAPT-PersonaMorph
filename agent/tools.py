@@ -186,6 +186,26 @@ def _builtin_tool_defs() -> list:
             "execute": _exec_send_image_search,
         },
         {
+            "name": "find_local_file",
+            "description": "**在本机用户配好的目录里找文件**（只读，不发送）。有人问「有没有 XX 文件 / 帮我找一下那个报告」时用；返回候选列表（路径/大小/时间）。没开功能或没配目录时它会返回原因，照实说，**不要编造文件**。",
+            "parameters": {
+                "type": "object",
+                "properties": {"name": {"description": "要搜的文件名（可以只写一部分，比如「周报」「.pdf」）"}},
+                "required": ["name"],
+            },
+            "execute": _exec_find_local_file,
+        },
+        {
+            "name": "send_local_file",
+            "description": "把本机**已配目录里**的某个文件发到当前会话（会过一次系统「选择文件」对话框、**短暂抢一次前台**，所以默认关）。有人明确说「把 XX 文件发我」且 find_local_file 已定位到唯一文件时用；功能没开、文件不在允许目录、重名多个、超大小上限时它都会返回原因。",
+            "parameters": {
+                "type": "object",
+                "properties": {"name_or_path": {"description": "文件名（唯一命中）或完整路径（必须在允许目录内）"}},
+                "required": ["name_or_path"],
+            },
+            "execute": _exec_send_local_file,
+        },
+        {
             "name": "collect_emoji",
             "description": "用鼠标把一条表情/图片消息收藏进微信表情库（右键气泡→添加到表情）。messageId=[表情] 或 [图片] 消息前的 #数字。最终由程序操作鼠标完成。",
             "parameters": {
@@ -678,6 +698,60 @@ def _exec_send_image_search(ctx, args):
             pass
         return _ok({"sent": True, "keyword": kw, "file": _os.path.basename(path),
                     "note": "已找到并发出一张「%s」的图（过滤链全程生效）。不要输出『已发送』类汇报。" % kw})
+    except Exception as e:
+        return _err(str(e))
+
+
+def _exec_find_local_file(ctx, args):
+    """在本机配好的目录里找文件（只读）。"""
+    try:
+        from . import file_search as _fs
+        hits, why = _fs.search(args.get("name"))
+        if not hits:
+            return _ok("没找到：%s（要搜别的目录，去控制台「媒体与语音 → 本地文件」里加）" % why)
+        return _ok({"count": len(hits),
+                    "files": [{"name": h["name"], "path": h["path"], "kb": int(h["size"] / 1024),
+                               "time": time.strftime("%Y-%m-%d %H:%M", time.localtime(h["mtime"]))}
+                              for h in hits[:10]],
+                    "note": "这是候选清单（只读）。用户确认要发哪个之后，再调 send_local_file。"})
+    except Exception as e:
+        return _err(str(e))
+
+
+def _exec_send_local_file(ctx, args):
+    """把允许目录里的文件发到当前会话（复用发文件那条链 + opt-in 闸）。"""
+    try:
+        from . import file_search as _fs
+        cfg = get_config()
+        conf = cfg.get("file_search") or {}
+        if not conf.get("enabled"):
+            return _ok("「找文件」功能默认关闭（控制台「媒体与语音 → 本地文件」里打开后才可用）。")
+        if not (cfg.get("send") or {}).get("file_forward_optin"):
+            return _ok("发文件默认关闭：这一步要过一次系统「选择文件」对话框、**会短暂抢一次前台**，"
+                       "需要在控制台把「转发视频/文件」打开（链接不受影响）。")
+        path, why = _fs.resolve(args.get("name_or_path"))
+        if not path:
+            if "不在允许目录内" in str(why):
+                return _err("安全闸：%s" % why)     # 安全类拒绝标成 error，防模型反复试
+            return _ok("没能确定要发哪个文件：%s" % why)
+        if not _fs.is_inside(path):
+            return _err("安全闸：文件不在允许目录内，拒绝发送（%s）" % path)
+        try:
+            mb = _os.path.getsize(path) / (1024.0 * 1024.0)
+        except OSError:
+            return _ok("读取文件失败（可能已被移走）")
+        if mb > float(conf.get("max_mb") or 100):
+            return _ok("文件太大（%.1fMB > 上限 %.0fMB），不发。" % (mb, float(conf.get("max_mb") or 100)))
+        ok_flag, msg = ctx["wechat"].send_file_posted(ctx["chat_id"], path)
+        if not ok_flag:
+            return _ok("没发出去：%s" % msg)
+        _fs.note_sent(path, ctx.get("chat_id") or "")
+        try:
+            ctx["session"]["sent"].append({"type": "file", "text": _os.path.basename(path)})
+        except Exception:
+            pass
+        return _ok({"sent": True, "file": _os.path.basename(path), "mb": round(mb, 2),
+                    "note": "已发出（这一步短暂用过前台）。不要输出\"已发送\"类汇报。"})
     except Exception as e:
         return _err(str(e))
 
