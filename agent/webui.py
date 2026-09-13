@@ -606,6 +606,12 @@ class WebUI:
                                 st["media"] = _ms.snapshot()
                             except Exception as _e2:
                                 st["media"] = {"error": str(_e2)}
+                            # 上云（预留接口）：端点三态 + 是否配了 Token
+                            try:
+                                from . import cloud as _cl2
+                                st["cloud"] = _cl2.snapshot()
+                            except Exception as _e11:
+                                st["cloud"] = {"error": str(_e11)}
                             # 图/文/视频分流 + 视频读取（第 20 条）
                             try:
                                 from . import model_routes as _mrt
@@ -949,6 +955,15 @@ class WebUI:
                                 self._json(_af.unblock(st, ck, ids))
                             else:
                                 self._json(_af.delete(st, ck, ids))
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)}, 500)
+                elif path == "/api/cloud/test":
+                    # 上云预留接口：只探测连通性（DNS→TCP→TLS→HEAD），**不带凭据、不发任何用户数据**
+                    try:
+                        from . import cloud as _cl
+                        which = str((data or {}).get("which") or "")
+                        url = str((data or {}).get("url") or "")
+                        self._json(_cl.probe(which=which, url=url))
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)}, 500)
                 elif path == "/api/prompt/preview":

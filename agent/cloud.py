@@ -1,0 +1,182 @@
+# -*- coding: utf-8 -*-
+"""上云接口（第 10 条排期里"上云三件"的**预留接口层**）。
+
+用户口径（2026-09-13/14）：**上云三件先不做**，但①**留"可以输网址"的接口** ②**UI 里做完整的交互设计**
+（未配置 / 已配置 / 测不通 三态 + 中文文案）③顺带把"能不能真传到那个网址、怎么传、被墙 / 需要对方有接收端怎么办"讲清楚。
+
+本模块只做三件事，**一条数据都不上传**：
+1. `normalize_url()`：URL 校验（只允许 http/https；环回/内网默认拒，除非显式 `allow_private`）；
+2. `probe()`：**连通性探测**（DNS → TCP → TLS → HEAD/GET），用来回答"这个网址到不到得了"。
+   探测**不带凭据、不带任何用户数据**（不发 Authorization、不发 body）；
+3. `upload()`：真正要发数据的那一步——**默认关**，没显式开启时直接拒绝并说明（留接口、不启用）。
+
+被墙 / 需要对方接收端 / 需要鉴权这三种情况，`probe()` 的返回会把**卡在哪一段**说清楚（dns/tcp/tls/http），
+配合 `docs/上云接口契约.md` 里给对方的接口要求，就能判断是"我们发不出去"还是"对方没接"。
+"""
+from __future__ import annotations
+
+import json
+import re
+import socket
+import ssl
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+DEFAULTS = {
+    "enabled": False,          # ⛔ 总开关：默认关＝永不真上传（用户口径"先不做"）
+    "persona_url": "",         # 人设上云的接收端（留空＝未配置）
+    "blocklist_url": "",       # 屏蔽名单上云的接收端（留空＝未配置）
+    "token": "",               # 接收端要求时的 Bearer Token（打码回显、只存本机）
+    "timeout_ms": 8000,
+    "allow_private": False,    # 允许环回/内网地址（默认拒：防止误把私人接口当公网接收端）
+}
+
+KINDS = [("persona", "人设", "persona_url"), ("blocklist", "屏蔽名单", "blocklist_url")]
+
+
+def cfg() -> dict:
+    try:
+        from .config import get_config
+        c = dict(DEFAULTS)
+        c.update(((get_config() or {}).get("cloud") or {}))
+        return c
+    except Exception:
+        return dict(DEFAULTS)
+
+
+def normalize_url(raw: str) -> tuple:
+    """URL 校验 → (ok, 规范化后的 url, 原因)。空串＝未配置（不算错）。"""
+    u = str(raw or "").strip()
+    if not u:
+        return True, "", "未配置"
+    if not re.match(r"^https?://", u, re.I):
+        return False, "", "必须以 http:// 或 https:// 开头"
+    try:
+        p = urllib.parse.urlsplit(u)
+    except Exception as e:
+        return False, "", "URL 解析失败：%s" % str(e)[:60]
+    if not p.netloc:
+        return False, "", "缺少主机名"
+    host = (p.hostname or "").lower()
+    c = cfg()
+    private = (host in ("localhost", "127.0.0.1", "::1", "0.0.0.0")
+               or host.endswith(".local") or re.match(r"^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)", host))
+    if private and not c.get("allow_private"):
+        return False, "", "看起来是环回/内网地址；确实要发到内网请显式打开 cloud.allow_private"
+    return True, u.rstrip("/"), ""
+
+
+def _split_host(url: str):
+    p = urllib.parse.urlsplit(url)
+    return p.hostname or "", (p.port or (443 if p.scheme == "https" else 80)), p.scheme
+
+
+def probe(which: str = "", url: str = "", timeout_ms: int = 0) -> dict:
+    """连通性探测：DNS → TCP → TLS → HTTP(HEAD)。**不带凭据、不带用户数据。**
+
+    返回 {ok, stage, status, ms, url, why}；stage 告诉你卡在哪一段（用于判断是否"被墙"）。
+    """
+    c = cfg()
+    if not url:
+        key = dict((k, f) for k, _l, f in KINDS).get(which)
+        if not key:
+            return {"ok": False, "stage": "config", "why": "不知道要测哪一项（which 只能是 persona / blocklist）",
+                    "status": 0, "ms": 0, "url": ""}
+        url = str(c.get(key) or "")
+    ok, fixed, why = normalize_url(url)
+    if not ok:
+        return {"ok": False, "stage": "config", "why": why, "status": 0, "ms": 0, "url": url}
+    if not fixed:
+        return {"ok": False, "stage": "config", "why": "未配置接收端网址", "status": 0, "ms": 0, "url": ""}
+    t0 = time.time()
+    ms = lambda: int((time.time() - t0) * 1000)  # noqa: E731
+    host, port, scheme = _split_host(fixed)
+    try:
+        socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+    except Exception as e:
+        return {"ok": False, "stage": "dns", "why": "域名解析不了（%s）——常见于网址写错、或本机 DNS/网络被限制" % str(e)[:60],
+                "status": 0, "ms": ms(), "url": fixed}
+    try:
+        with socket.create_connection((host, port), timeout=max(2.0, (timeout_ms or c["timeout_ms"]) / 1000.0)):
+            pass
+    except Exception as e:
+        return {"ok": False, "stage": "tcp", "why": "连不上端口 %d（%s）——可能被墙/防火墙挡、或对方没起服务"
+                % (port, str(e)[:60]), "status": 0, "ms": ms(), "url": fixed}
+    if scheme == "https":
+        try:
+            ctx = ssl.create_default_context()
+            with socket.create_connection((host, port), timeout=max(2.0, (timeout_ms or c["timeout_ms"]) / 1000.0)) as s:
+                with ctx.wrap_socket(s, server_hostname=host):
+                    pass
+        except Exception as e:
+            return {"ok": False, "stage": "tls", "why": "TLS 握手失败（%s）——证书/中间人/需要信任链" % str(e)[:60],
+                    "status": 0, "ms": ms(), "url": fixed}
+    # HTTP 段：只发 HEAD，不带 Authorization、不带 body
+    try:
+        req = urllib.request.Request(fixed, method="HEAD", headers={"User-Agent": "PersonaMorph/probe"})
+        with urllib.request.urlopen(req, timeout=max(2.0, (timeout_ms or c["timeout_ms"]) / 1000.0)) as r:
+            return {"ok": True, "stage": "http", "status": int(getattr(r, "status", 0) or 0),
+                    "ms": ms(), "url": fixed, "why": "可达（HEAD 成功）"}
+    except urllib.error.HTTPError as e:
+        # 4xx/5xx 也算"能连上"：说明地址通、只是不接受 HEAD 或路径不对
+        return {"ok": True, "stage": "http", "status": int(e.code), "ms": ms(), "url": fixed,
+                "why": "地址可达，但服务返回 HTTP %d（多数接收端只收 POST，看到 405/404 属正常）" % e.code}
+    except Exception as e:
+        return {"ok": False, "stage": "http", "why": "连上了但这个地址没给出 HTTP 应答（%s）" % str(e)[:60],
+                "status": 0, "ms": ms(), "url": fixed}
+
+
+def endpoints() -> list:
+    c = cfg()
+    out = []
+    for k, label, field in KINDS:
+        raw = str(c.get(field) or "")
+        ok, fixed, why = normalize_url(raw)
+        out.append({"id": k, "label": label, "url": raw, "normalized": fixed,
+                    "configured": bool(fixed), "valid": bool(ok), "why": why,
+                    "token_set": bool(str(c.get("token") or "").strip())})
+    return out
+
+
+def upload(which: str, payload: dict, dry: bool = True) -> dict:
+    """真上传这一步——**默认永远拒绝**（除非 cloud.enabled 显式打开）。
+
+    留接口的意义：接收端确定后，只要打开开关 + 填 URL，就能直接接上；
+    现在调用它只会拿到一句明确的拒绝，**不会发出任何请求**（判据里有"打桩计数必须为 0"）。
+    """
+    c = cfg()
+    if not c.get("enabled"):
+        return {"ok": False, "stage": "disabled", "sent": False,
+                "why": "上云总开关是关的（cloud.enabled=false）⇒ 一个字节都没发。要真发：先在控制台填好接收端网址并打开总开关"}
+    key = dict((k, f) for k, _l, f in KINDS).get(which)
+    if not key:
+        return {"ok": False, "stage": "config", "sent": False, "why": "which 只能是 persona / blocklist"}
+    ok, fixed, why = normalize_url(str(c.get(key) or ""))
+    if not ok or not fixed:
+        return {"ok": False, "stage": "config", "sent": False, "why": why or "接收端网址未配置"}
+    if dry:
+        return {"ok": True, "stage": "dry", "sent": False, "url": fixed,
+                "bytes": len(json.dumps(payload or {}, ensure_ascii=False).encode("utf-8")),
+                "why": "干跑：只算体积，没发出去"}
+    body = json.dumps(payload or {}, ensure_ascii=False).encode("utf-8")
+    headers = {"content-type": "application/json; charset=utf-8", "user-agent": "PersonaMorph/1.0"}
+    if str(c.get("token") or "").strip():
+        headers["authorization"] = "Bearer " + str(c["token"]).strip()
+    req = urllib.request.Request(fixed, data=body, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=max(2.0, c["timeout_ms"] / 1000.0)) as r:
+            return {"ok": True, "stage": "sent", "sent": True, "url": fixed,
+                    "status": int(getattr(r, "status", 0) or 0), "bytes": len(body)}
+    except Exception as e:
+        return {"ok": False, "stage": "sent", "sent": True, "url": fixed, "bytes": len(body),
+                "why": "发出去了但这个地址没接住：%s" % str(e)[:120]}
+
+
+def snapshot() -> dict:
+    c = cfg()
+    return {"enabled": bool(c.get("enabled")), "token_set": bool(str(c.get("token") or "").strip()),
+            "timeout_ms": int(c.get("timeout_ms") or 0), "allow_private": bool(c.get("allow_private")),
+            "endpoints": endpoints(),
+            "note": "接口已留好：填网址 + 打开总开关即可接上；默认关＝不会上传任何数据"}
