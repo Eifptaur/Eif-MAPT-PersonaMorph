@@ -210,5 +210,15 @@ ok("时间命中但名字明显是别的会话 ⇒ 不算（宁可不点）",
 ok("switch_chat_posted 会把目标会话的最后消息时间传进去",
    "want_time=_want_time" in _w_src and "_want_time = time.strftime(\"%H:%M\", _lt)" in _w_src)
 
+# ⛔ 会话行必须用**慢节奏**点击（2026-09-13 A/B：快节奏投渲染子窗高亮不动；悬停 300 + 按住 150 高亮立刻跳）
+_ib_src = open(os.path.join(ROOT, "agent", "input_backend.py"), encoding="utf-8").read()
+ok("MessageBackend.click 支持 hover_ms / press_ms",
+   "def click(self, hwnd: int, screen_pt, right: bool = False, hover_ms: int = 0, press_ms: int = None)" in _ib_src)
+ok("会话行点击用的是慢节奏（hover_ms=300, press_ms=150）",
+   "hover_ms=300, press_ms=150" in _w_src)
+ok("身份闸有「高亮行时间」这一档", "highlight_time" in _w_src and "def highlight_time(img)" in _co_src)
+ok("高亮行时间档要求聊天区里也出现同一时间（两个独立信号）",
+   '_lt in str(pane or "").replace("：", ":")' in _w_src)
+
 print("\n%d/%d 通过" % (PASS, PASS + FAIL))
 sys.exit(1 if FAIL else 0)

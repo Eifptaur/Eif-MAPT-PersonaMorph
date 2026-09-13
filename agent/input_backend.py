@@ -249,7 +249,14 @@ class MessageBackend(InputBackend):
         _post(int(hwnd), WM_NCACTIVATE, 1, 0)
         time.sleep(0.08)
 
-    def click(self, hwnd: int, screen_pt, right: bool = False) -> tuple:
+    def click(self, hwnd: int, screen_pt, right: bool = False, hover_ms: int = 0, press_ms: int = None) -> tuple:
+        """投递点击。`hover_ms`＝按下前**先悬停**多久（默认 0 ⇒ 沿用 50ms 落点稳定），
+        `press_ms`＝按住多久（默认 self.press_ms）。
+
+        ⚠️ 微信**会话列表行**必须要"慢节奏"才认（2026-09-13 A/B 实测，判据＝高亮行 y 有没有移到我点的那一行）：
+          ① 只投主窗 ✗；② 投渲染子窗但用快节奏（悬停 50ms + 按住 60ms）**✗ 高亮不动**；
+          ③ 投渲染子窗 + **悬停 300ms + 按住 150ms** ✓ 高亮立刻跳到目标行。⇒ 会话行点击一律用慢节奏。
+        """
         if not hwnd:
             return False, "窗口句柄为空"
         if right:
@@ -257,9 +264,9 @@ class MessageBackend(InputBackend):
         cx, cy = to_client(hwnd, screen_pt)
         self._wake(hwnd)
         _post(int(hwnd), WM_MOUSEMOVE, 0, pack_lparam(cx, cy))
-        time.sleep(0.05)
+        time.sleep(0.05 if not hover_ms else max(0.05, int(hover_ms) / 1000.0))
         _post(int(hwnd), WM_LBUTTONDOWN, 1, pack_lparam(cx, cy))
-        time.sleep(self.press_ms / 1000.0)
+        time.sleep((self.press_ms if press_ms is None else int(press_ms)) / 1000.0)
         _post(int(hwnd), WM_LBUTTONUP, 0, pack_lparam(cx, cy))
         return True, ""
 
