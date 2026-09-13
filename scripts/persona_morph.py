@@ -1057,35 +1057,30 @@ def main():
     # 代码已用 UTF-8 模式运行（-X utf8 / 编码头），无需 chcp。
 
     # ── 单实例锁：防止旧进程/多实例并存（根治「旧版本界面/接口 not found」）──
-    try:
-        _lock = os.path.join(ROOT, "data", "bot.lock")
-        os.makedirs(os.path.dirname(_lock), exist_ok=True)
-        if os.path.exists(_lock):
-            import ast
-            with open(_lock, "r", encoding="utf-8") as _lf:
-                _ltxt = _lf.read().strip()
-                _lpid = int(_ltxt) if _ltxt.isdigit() else 0
-            if _lpid and _lpid != os.getpid():
-                try:
-                    _alive = False
-                    if os.name == "nt":
-                        import ctypes
-                        _alive = bool(ctypes.windll.kernel32.OpenProcess(0x1000, False, _lpid))
-                        ctypes.windll.kernel32.CloseHandle(_lpid)
-                    else:
-                        os.kill(_lpid, 0); _alive = True
-                except Exception:
-                    _alive = False
-                if _alive:
-                    log.error("已有 Persona Morph 实例在运行（pid=%s）。为避免旧版本/接口冲突，本实例退出；请先「停止机器人」再启动。", _lpid)
-                    print("已有 Persona Morph 实例在运行（pid=%s）。本实例退出；请先停止旧实例再启动。" % _lpid)
-                    sys.exit(3)
-        with open(_lock, "w", encoding="utf-8") as _lf:
-            _lf.write(str(os.getpid()))
-        import atexit
-        atexit.register(lambda: os.path.exists(_lock) and os.remove(_lock))
-    except Exception:
-        pass
+    #    判据＝命名互斥体（进程一死由内核释放 ⇒ 不怕 pid 复用、不怕残留文件、不怕同时启动）；
+    #    data\bot.lock 降级为「给人看 + 旧读取方兼容」的证据，内容仍是纯 pid。
+    #    拿不到锁就**拒启动**（旧实现整段 try/except pass ⇒ 出错时静默没有锁）。
+    import atexit
+    from agent.single_instance import InstanceLock, legacy_holder
+    _bot_lock_path = os.path.join(ROOT, "data", "bot.lock")
+    _legacy_pid = legacy_holder(_bot_lock_path)
+    if _legacy_pid:
+        log.error("已有 Persona Morph 实例在运行（pid=%s；旧版实例只写 pid 文件、没有互斥体）。"
+                  "为避免旧版本/接口冲突，本实例退出；请先「停止机器人」再启动。"
+                  "若确认没有实例在跑，删掉 data\\bot.lock 后重试。", _legacy_pid)
+        print("已有 Persona Morph 实例在运行（pid=%s）。本实例退出；请先停止旧实例再启动。" % _legacy_pid)
+        sys.exit(3)
+    _bot_lock = InstanceLock(lock_path=_bot_lock_path)
+    _lock_res = _bot_lock.acquire()
+    if not _lock_res.ok:
+        _who = ("pid=%s" % _lock_res.holder_pid) if _lock_res.holder_pid else "pid 未知"
+        log.error("已有 Persona Morph 实例在运行（%s）。为避免旧版本/接口冲突，本实例退出；请先「停止机器人」再启动。（%s）",
+                  _who, _lock_res.reason)
+        print("已有 Persona Morph 实例在运行（%s）。本实例退出；请先停止旧实例再启动。" % _who)
+        sys.exit(3)
+    if _lock_res.note:
+        log.warning("单实例锁：%s", _lock_res.note)
+    atexit.register(_bot_lock.release)
 
     # 启动自动体检：版本不匹配（微信/适配层/依赖）→ 弹窗询问是否立即修正
     _maybe_auto_fix()
