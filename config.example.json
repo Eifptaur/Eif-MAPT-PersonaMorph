@@ -125,6 +125,7 @@
   "random_count": 8,
   "all_count": 80,
   "past_window_min": 30,
+  "archive_block_chats": [],
   "tier_mode": "fixed",
   "tier_schedule": {
    "enabled": false,
