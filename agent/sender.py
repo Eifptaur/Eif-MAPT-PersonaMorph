@@ -113,6 +113,14 @@ class SendQueue:
         if not parts:
             raise RuntimeError("消息内容为空")
 
+        # 风险闸门：**发之前**判（拦下的提示只在本机/控制台出现，绝不往微信侧发）
+        from . import risk as _risk
+        for _t in parts:
+            _v = _risk.check(chat_key, _t)
+            if not _v.allowed:
+                log.warning("风险闸门拦下出站消息（%s/%s）：%s", _v.level, _v.code, _v.message)
+                raise _risk.RiskBlocked(_v)
+
         sent = []
         failed = []
         # 程序级自动引用：新一段对话开始 + 概率命中 → 引用对方最近一句话
@@ -155,6 +163,7 @@ class SendQueue:
                         raise RuntimeError(msg or "发送失败")
                     ts = int(time.time() * 1000)
                     self.store.append_self(chat_key, text, ts=ts)
+                    _risk.note_sent(chat_key, text)   # 记账（闸门的窗口计数只认机器人出站路径）
                     if self.on_sent:
                         self.on_sent(chat_key, text)
                     # 反应评分：记录这条 reaction（群友后续回应会在 on_incoming 里加分）
@@ -176,6 +185,10 @@ class SendQueue:
     def send_image(self, chat_key: str, local_path: str):
         """发送一张本地图片（微信剪贴板粘贴）。"""
         kind, chat_id = self._parse_key(chat_key)
+        from . import risk as _risk
+        _v = _risk.check(chat_key, "[图片]")
+        if not _v.allowed:
+            raise _risk.RiskBlocked(_v)
         with self._lock, self.wechat.fg_hold():
             self._check_rate(chat_key)
             time.sleep(rand_int(600, 1500) / 1000.0)
@@ -184,6 +197,7 @@ class SendQueue:
                 raise RuntimeError(msg or "图片发送失败")
             ts = int(time.time() * 1000)
             self.store.append_self(chat_key, "[图片]", ts=ts)
+            _risk.note_sent(chat_key, "[图片]")
             if self.on_sent:
                 self.on_sent(chat_key, "[图片]")
             return {"sent": True}
