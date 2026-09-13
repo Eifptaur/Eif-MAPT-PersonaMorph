@@ -190,5 +190,13 @@ finally:
     CO.capture_best, CO.pane_text = _real_cb, _real_pt
 ok("send_file_posted 接了内容级闸", "chat_identity_ok(chat_id, gui=gui)" in _src)
 
+# ⛔ 单字母名字的会话行（2026-09-13 实测 bug）：E 的行 OCR 成 `[草稿]EE`（草稿标记＋名字＋草稿内容），
+#    老 matches 要求 len(name)>=2 才走包含判断 ⇒ 名字一个字母的会话永远定位不到。
+ok("单字母名字：`[草稿]EE` 能匹配上 E", CO.matches("[草稿]EE", "E") is True, str(CO.matches("[草稿]EE", "E")))
+ok("单字母名字：纯 `E` 也能匹配", CO.matches("E", "E") is True)
+ok("单字母名字：不误配到别的会话（`群里的人`）", CO.matches("群里的人", "E") is False)
+ok("单字母名字：`[草稿]` 之外的前缀也会被剥掉（Draft）", CO.matches("[Draft]EE", "E") is True)
+ok("多字名字不受影响（仍是包含判断）", CO.matches("海绵宝宝课堂19：29", "海绵宝宝") is True)
+
 print("\n%d/%d 通过" % (PASS, PASS + FAIL))
 sys.exit(1 if FAIL else 0)
