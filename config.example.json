@@ -123,7 +123,12 @@
   "random_percent": 60,
   "random_count": 8,
   "all_count": 80,
-  "past_window_min": 30
+  "past_window_min": 30,
+  "recall": {
+   "enabled": true,
+   "window_sec": 180,
+   "heuristic": true
+  }
  },
  "memory": {
   "consolidate_enabled": true,

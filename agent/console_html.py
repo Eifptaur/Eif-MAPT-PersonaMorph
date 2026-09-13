@@ -1118,6 +1118,16 @@ th{color:var(--tx2);font-weight:500}
         <div class="hint">提示词层面引导，不强制。</div>
       </div></div>
       <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
+      <div class="row"><label>撤回后剔除</label><input type="checkbox" data-cfg="store.recall.enabled">
+        <span class="hint">群友撤回消息后，把已经进过上下文的那条从存档里剔除：模型不再引用、记忆不再提炼它（存档条目会保留为「已撤回」标记，便于追溯）</span></div>
+      <div class="mid" id="recallRows">
+        <div class="row"><label>兜底时间窗(秒)</label><div class="grow"><input type="number" min="0" data-cfg="store.recall.window_sec" title="拿不到 newmsgid 时，只在这个时间窗内找同一发送者的最近一条">
+          <span class="hint">微信报文里没有 newmsgid 时才启用兜底匹配；窗口越小越不容易删错</span></div></div>
+        <div class="row"><label>兜底匹配</label><div class="grow"><input type="checkbox" data-cfg="store.recall.heuristic">
+          <span class="hint">关掉＝只认 newmsgid 精确匹配（宁可漏删，也不误删别人刚说的话）</span></div></div>
+        <div class="row"><label>已剔除</label><div class="grow"><span id="recallStat" class="hint">读取中…</span></div></div>
+      </div>
+      <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
       <div class="row"><label>主动开话题</label><input type="checkbox" data-cfg="proactive.enabled">
         <span class="hint">群冷场超过阈值后，按概率主动抛一个话题（默认关；费少量 token）</span></div>
       <div class="mid" id="proactiveRows">
@@ -1895,6 +1905,21 @@ async function loadStatus(){
             return mark + ' ' + c.label + '（' + c.status + '）';
           });
           v3.textContent = (vm.summary || '') + ' ｜ ' + rows.join(' · ');
+        }
+      }catch(e){}
+      try{
+        const rc = s.recall || {};
+        const el = $('recallStat');
+        if(el){
+          const last = rc.last || {};
+          let line = '已剔除 ' + (rc.count || 0) + ' 条';
+          if(last.text){
+            line += ' ｜ 最近：' + (last.who || '某人') + '「' + String(last.text).slice(0, 18) + '」'
+                 + (last.how === 'heuristic' ? '（按时间窗兜底匹配）' : '（按 newmsgid 精确匹配）');
+          }else{
+            line += '（还没遇到过撤回事件）';
+          }
+          el.textContent = line;
         }
       }catch(e){}
       try{
