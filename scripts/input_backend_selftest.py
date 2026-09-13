@@ -107,6 +107,14 @@ ck("C5 真鼠标档标记 touches_cursor=True（控制台要能看见代价）",
    ib.RealInputBackend().touches_cursor is True and b.touches_cursor is False)
 st = ib.status()
 ck("C6 status() 暴露当前档位与 DPI", st.get("backend") and st.get("dpi_mode") and "touches_cursor" in st)
+# C7~C9：挑主窗（纯函数）—— 同类名兄弟窗 + 隐藏态都不许选错/降级
+ck("C7 优先选「带渲染子窗」的那个（朋友圈编辑窗也同类名但没有渲染子窗）",
+   ib.pick_main_window([(111, False, 615 * 675, True), (222, True, 1139 * 890, True)]) == 222)
+ck("C8 同带渲染子窗时取面积最大的",
+   ib.pick_main_window([(333, True, 100 * 100, True), (444, True, 1139 * 890, True)]) == 444)
+ck("C9 **隐藏/最小化的主窗也要能选中**（否则 auto 会静默降级成真鼠标档）",
+   ib.pick_main_window([(555, True, 1139 * 890, False), (666, False, 615 * 675, True)]) == 555)
+ck("C10 一个候选都没有 ⇒ 返回 0（此时才允许退回真鼠标）", ib.pick_main_window([]) == 0)
 ib.find_main_window = orig_find
 
 ib._post, ib.to_client, ib.time.sleep = orig_post, orig_to_client, _real_sleep

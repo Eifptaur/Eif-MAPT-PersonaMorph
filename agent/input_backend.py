@@ -32,14 +32,21 @@ _user32 = ctypes.windll.user32
 
 
 def _lock_dpi() -> str:
+    """锁 DPI 上下文 —— **必须检查返回值**：这些 API 失败时只返回 0、不抛异常
+    （2026-09-13 实测：老写法"以为锁上了"，实际进程仍读虚拟坐标）。"""
     try:
-        _user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))   # PerMonitorV2
-        return "PerMonitorV2"
+        if _user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)):   # PerMonitorV2
+            return "PerMonitorV2"
     except Exception:
         pass
     try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(2)
-        return "shcore/2"
+        if int(ctypes.windll.shcore.SetProcessDpiAwareness(2)) == 0:     # S_OK
+            return "shcore/2"
+    except Exception:
+        pass
+    try:
+        _user32.SetProcessDPIAware()
+        return "user32/legacy"
     except Exception:
         return "none"
 
@@ -115,39 +122,44 @@ def _child_classes(hwnd: int) -> set:
 RENDER_CHILD = "MMUIRenderSubWindowHW"     # 主窗特有的渲染子窗
 
 
+def pick_main_window(cands) -> int:
+    """从候选里挑主窗（**纯函数，可单测**）。
+
+    cands: [(hwnd, has_render_child, area, visible)]
+    规则：①优先"带渲染子窗"的（朋友圈编辑窗也同类名，但它没有渲染子窗）②同分取面积最大
+    ③**不看可见性** —— 窗口被隐藏/最小化时也要认得出主窗，否则 auto 会静默降级成真鼠标档
+    （2026-09-13 实测就是这个降级：窗口一 SW_HIDE，投递档就悄悄换成 L0 了）。
+    """
+    best, best_key = 0, None
+    for hwnd, has_child, area, _vis in (cands or []):
+        key = (1 if has_child else 0, int(area or 0))
+        if best_key is None or key > best_key:
+            best, best_key = int(hwnd), key
+    return best
+
+
 def find_main_window() -> int:
     """微信**主窗**（投递键盘消息、点笑脸都发它）。
 
     ⚠️ 不能用 `FindWindow(类名)`：表情面板之外的**朋友圈纯文字编辑窗也是
     `Qt51514QWindowIcon`**，`FindWindow` 返回的是第一个命中的那个（2026-09-13 实测踩到——
-    投递全打到编辑窗上，发送自然失败）。判据：**带渲染子窗 `MMUIRenderSubWindowHW` 的那个**；
-    退而取同进程里面积最大的。
+    投递全打到编辑窗上，发送自然失败）。
+    ⚠️ **也不能只认"可见"的窗口**：主窗被收进托盘/隐藏时，按可见性过滤会返回 0，
+    于是 `auto` 档悄悄降级成真鼠标档（会动用户光标）——这正是最高目标里"不许悄悄降级"的场景。
     """
     cands = []
     CB = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
 
     def cb(h, _l):
-        if _user32.IsWindowVisible(h) and _class_of(h) == MAIN_CLASS:
-            cands.append(int(h))
+        if _class_of(h) == MAIN_CLASS:
+            r = window_rect(h)
+            area = max(0, (r[2] - r[0])) * max(0, (r[3] - r[1]))
+            cands.append((int(h), RENDER_CHILD in _child_classes(h), area,
+                          bool(_user32.IsWindowVisible(h))))
         return True
 
     _user32.EnumWindows(CB(cb), 0)
-    if not cands:
-        return 0
-    best, best_area = 0, -1
-    for h in cands:
-        r = window_rect(h)
-        area = max(0, (r[2] - r[0])) * max(0, (r[3] - r[1]))
-        if RENDER_CHILD in _child_classes(h) and area > best_area:
-            best, best_area = h, area
-    if best:
-        return best
-    for h in cands:                          # 没有渲染子窗（异常形态）⇒ 取最大的
-        r = window_rect(h)
-        area = max(0, (r[2] - r[0])) * max(0, (r[3] - r[1]))
-        if area > best_area:
-            best, best_area = h, area
-    return best
+    return pick_main_window(cands)
 
 
 def find_panel_window(main_hwnd: int = 0) -> int:
@@ -265,7 +277,8 @@ def select_backend(cfg: dict | None = None, gui=None) -> InputBackend:
         return RealInputBackend(gui)
     if want == LEVEL_MESSAGE:
         return MessageBackend()
-    # auto：Windows 上主窗在就走投递；找不到窗口就退回真鼠标（保守）
+    # auto：有微信主窗（**不论是否可见/最小化**）就走投递；一个窗口都找不到才退回真鼠标。
+    # ⚠️ 绝不能因为"窗口不可见"就退回 L0 —— 那会在用户毫无察觉时动他的光标。
     return MessageBackend() if find_main_window() else RealInputBackend(gui)
 
 
