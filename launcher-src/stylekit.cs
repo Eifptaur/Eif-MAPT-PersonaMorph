@@ -172,7 +172,7 @@ namespace WxLauncher
         }
 
         /// 离屏取证：把窗体真实画面写成 PNG —— 显示但**抢不到前台**、且不像素判据自欺。
-        /// 姿势（2026-09-13 四组对照实测得出，脚本 `_scratch\shot_probe2.cs`）：
+        /// 姿势（2026-09-13 四组对照实测得出）：
         ///   ①先 `CreateControl()` 建句柄 → ②给窗口加 `WS_EX_NOACTIVATE` → ③`Show()`（会激活但风格档住了 ⇒ 前台不变）
         ///   → ④`DrawToBitmap`（**只有它在无边框+Region 的窗体上出得来像素**）。
         /// ⚠️ 两条被实测证否的老路：`CreateControl`+`SWP_SHOWWINDOW`（WinForms 不认为窗口 Visible ⇒ 子控件不画，全白图，

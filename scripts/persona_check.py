@@ -11,8 +11,10 @@
   E 少言合理 10 分：沉默类不扣分（人设如此），但必须"被问能答"（必要扩展在卡内）
   扣分：通用套话/模板占位/角色冲突（声音不像本人）
 """
+import os
 import sys
-sys.path.insert(0, r"C:\Users\ptmou\Desktop\WX-chatbot\Persona Morph")
+# 直接以脚本方式运行时，把包根目录加进 sys.path（相对本文件算，不写死任何本机路径）
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from agent.persona import PERSONAS
 
 AI_TEMPLATE = ["综上所述", "总而言之", "作为一个语言模型", "希望这个回答对你有帮助",
