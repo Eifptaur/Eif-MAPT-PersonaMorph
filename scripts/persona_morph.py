@@ -36,12 +36,13 @@ if ROOT not in sys.path:
 
 from agent import listener_watermark          # W2：持久化水位（成功才推进 / 重试留痕 / 每会话串行）
 from agent import recall                       # 第 14 条：撤回后把已进上下文的那条剔除
+from agent import tier_control                 # 第 15/16/18 条：固定 4 档 / 峰谷映射 / 指令禁言
 from agent.config import DATA_DIR
 from agent.config import get_config, save_config
 from agent.llm import (add_usage, chat_completion, chat_completion_with_retry,
                        empty_usage, estimate_cost, is_retryable_error, query_balance)
 from agent.memory import MemoryStore
-from agent.prompt import build_system_prompt, build_user_prompt, resolve_context_tier
+from agent.prompt import build_system_prompt, build_user_prompt, resolve_context_tier, is_at_me
 from agent.sender import SendQueue
 from agent.session_log import SessionLog
 from agent.stats import UsageStats
@@ -2491,6 +2492,26 @@ def main():
                     if _blocked and (who in _blocked or wid in _blocked):
                         log.info("群[%s]屏蔽用户消息已丢弃（%s/%s）", _g["name"], who or wid, who or wid)
                         return {"dropped": "blocklist"}
+                    # ── 指令禁言（第 18 条）：@机器人 + 指令 ⇒ 本会话档位固定降到 1 档 ──
+                    #    只认白名单（store.tier_cmd_admins；留空＝谁都不能下指令），且**不回复**（只在日志/控制台可见）
+                    try:
+                        _txt = str(nm.get("text") or "")
+                        _pcfg = get_config().get("persona") or {}
+                        _pnick = str(_pcfg.get("self_nickname") or "")
+                        _pbot = str(_pcfg.get("bot_name") or "")
+                        _at = is_at_me(_txt, _pnick, _pbot, wechat.self_wxid) \
+                            or bool(wechat.self_nickname and is_at_me(_txt, wechat.self_nickname, "", ""))
+                        _cmd = tier_control.handle_command(_chat_key, nm, bool(_at))
+                    except Exception as e:
+                        _cmd = {"handled": False}
+                        log.debug("群[%s]指令解析异常：%s", _g["name"], e)
+                    if _cmd.get("handled"):
+                        if _cmd.get("action") == "denied":
+                            log.info("群[%s]收到禁言指令但发送者不在白名单（%s）——未生效",
+                                     _g["name"], _cmd.get("who") or "?")
+                        else:
+                            log.info("群[%s]指令禁言：%s ⇒ %s", _g["name"], _cmd.get("action"), _cmd.get("note"))
+                        return {"command": _cmd}
                     entry = store.append_incoming(_chat_key, nm["mid"], nm["ts"], nm["sender_id"],
                                                   nm["sender_name"], nm["text"], media=nm["media"])
                     if not entry:

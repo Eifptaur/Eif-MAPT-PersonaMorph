@@ -604,6 +604,12 @@ class WebUI:
                                 st["media"] = _ms.snapshot()
                             except Exception as _e2:
                                 st["media"] = {"error": str(_e2)}
+                            # 响应等级三件（第 15/16/18 条）：档位模式 / 峰谷映射 / 指令禁言现状
+                            try:
+                                from . import tier_control as _tcl
+                                st["tier"] = _tcl.snapshot()
+                            except Exception as _e7:
+                                st["tier"] = {"error": str(_e7)}
                             # 备选模型（第 3 条）：清单 + 最近一次"改用备选"的现场
                             try:
                                 from .llm import fallback_status as _fbs

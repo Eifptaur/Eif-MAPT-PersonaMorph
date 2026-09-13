@@ -1105,6 +1105,24 @@ th{color:var(--tx2);font-weight:500}
         <option value="3">3 档：+随机</option><option value="4">4 档：全响应</option></select>
         <div class="hint">1 档只回艾特；2 档加关键词；3 档再加随机；4 档全回。关键词在 2/3 档生效，随机只在 3 档生效。</div>
       </div></div>
+      <div class="row"><label>档位模式</label><div class="grow"><select data-cfg="store.tier_mode">
+        <option value="fixed">固定 4 档（推荐：1/2/3/4 四个离散值，滑条不参与）</option>
+        <option value="slider">滑条微调（旧行为：随机比例由滑条位置决定）</option></select>
+        <div class="hint">「固定 4 档」＝档位只有 1/2/3/4；想用老版本的滑条连续微调就切到第二项。</div>
+      </div></div>
+      <div class="row"><label>峰谷映射</label><input type="checkbox" data-cfg="store.tier_schedule.enabled">
+        <span class="hint">按「时段 → 档位」自动切换：命中哪个时段就用哪个档（表格见下方）</span></div>
+      <div class="mid" id="schedRows">
+        <div class="row"><label>时段表(JSON)</label><div class="grow">
+          <textarea data-cfg="store.tier_schedule.table" rows="3" spellcheck="false" placeholder='[{"from":"09:00","to":"12:00","tier":2,"note":"工作时间"},{"from":"00:00","to":"08:00","tier":0,"note":"夜间静默"}]'></textarea>
+          <div class="hint">数组，<b>按顺序取第一个命中的窗口</b>；支持跨午夜（22:00 → 02:00）；<b>tier 只能 0~4</b>，其中 <b>0＝该时段完全不回应（静默）</b>。没命中任何窗口就用上面的全局档位。</div>
+        </div></div>
+      </div>
+      <div class="row"><label>指令白名单</label><div class="grow">
+        <textarea data-cfg="store.tier_cmd_admins" rows="2" spellcheck="false" placeholder="如：群主昵称, wxid_xxx（逗号或换行分隔）"></textarea>
+        <div class="hint">在群里 <b>@机器人 +「禁言」/「禁言 15」/「解除禁言」</b> ⇒ 本群档位临时固定到 <b>1 档（只回艾特）</b>，到期自动恢复（默认 30 分钟，最长 24 小时）。<b>留空＝谁都不能下这个指令</b>（否则群里任何人喊一句就能把机器人按住）。指令不会在群里回话，只在日志与控制台可见。</div>
+      </div></div>
+      <div class="row"><label>响应等级现状</label><div class="grow"><span id="tierStat" class="hint">读取中…</span></div></div>
       <div class="row" data-tier="2,3"><label>关键词(逗号)</label><div class="grow"><input type="text" data-cfg="store.keywords" placeholder="2/3档命中即响应"></div></div>
       <div class="row" data-tier="3"><label>随机概率%</label><div class="grow"><input type="number" min="0" max="100" data-cfg="store.random_percent"></div></div>
       <div class="mid">
@@ -1420,6 +1438,10 @@ function syncToForm(){
       return;
     }
     let v = getPath(cfg, path);
+    if(path === 'store.tier_schedule.table'){   // 表是「对象数组」，不能按关键词那样拼成字符串
+      el.value = JSON.stringify(Array.isArray(v) ? v : [], null, 1);
+      return;
+    }
     if(isCheck){
       if(path==='api.thinking'){ el.checked = (String(v||'').toLowerCase()==='off'); }
       else { el.checked = !!v; }
@@ -1498,6 +1520,13 @@ function syncFromForm(){
     else {
       v = el.value;
       if(path === 'store.keywords') v = v.split(/[,，]/).map(s=>s.trim()).filter(Boolean);
+      else if(path === 'store.tier_cmd_admins'){   // 指令白名单：逗号/换行 → 数组
+        v = String(v||'').split(/[,，\n]/).map(s=>s.trim()).filter(Boolean);
+      }
+      else if(path === 'store.tier_schedule.table'){   // 峰谷映射表：JSON 文本 → 数组
+        try{ v = v.trim() ? JSON.parse(v) : []; }
+        catch(e){ v = []; toast('峰谷映射表 JSON 格式有误，已忽略；示例：[{"from":"09:00","to":"12:00","tier":2}]'); }
+      }
       else if(path === 'api.fallback_models'){   // 备选模型：逗号/换行 → 数组（不切就会存成字符串）
         v = String(v||'').split(/[,，\n]/).map(s=>s.trim()).filter(Boolean);
       }
@@ -1924,6 +1953,22 @@ async function loadStatus(){
             return mark + ' ' + c.label + '（' + c.status + '）';
           });
           v3.textContent = (vm.summary || '') + ' ｜ ' + rows.join(' · ');
+        }
+      }catch(e){}
+      try{
+        const tc = s.tier || {};
+        const el = $('tierStat');
+        if(el){
+          const sch = tc.schedule || {}, nowSch = sch.now || {}, muted = Object.keys(tc.muted || {});
+          let line = '模式：' + (tc.mode === 'slider' ? '滑条微调' : '固定 4 档');
+          if(sch.enabled){
+            line += ' ｜ 峰谷映射：已开（' + (sch.rows || 0) + ' 个时段';
+            line += (nowSch.window ? ('，当前 ' + nowSch.window + ' ⇒ ' + (nowSch.tier === 0 ? '静默' : (nowSch.tier + ' 档'))) : '，当前未命中任何时段');
+            line += '）';
+          } else line += ' ｜ 峰谷映射：关';
+          line += ' ｜ 指令白名单：' + (((tc.admins || []).length) ? (tc.admins || []).join('/') : '空（谁都不能下指令）');
+          line += ' ｜ 禁言中：' + (muted.length ? muted.join('、') : '无');
+          el.textContent = line;
         }
       }catch(e){}
       try{
