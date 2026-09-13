@@ -75,6 +75,8 @@ DEFAULT_CONFIG = {
         "providers": [],
     },
     # ── 安全例外（默认全部关闭）────────────────────────────────────────
+    #   allow_private_image_hosts：允许「在线图源」指向内网/环回地址（默认关＝SSRF 防护全开）。
+    #   只有自建图库服务（本机 http 图源）才需要开；**故意不做控制台开关**，要放开请手改 config.json。
     "security": {"allow_private_image_hosts": False},
     # ── 白名单 / 黑名单（群名，空规则 = 不限制）────────────────────────
     "allow": {"groups": [], "private": []},
@@ -204,9 +206,6 @@ DEFAULT_CONFIG = {
         "max_impressions_per_member": 5,
         "discover_min_messages": 20,
         "discover_max_members": 3,
-        "use_chat_model": True,
-        "provider": "",
-        "model": "",
         "share_across_groups": False, # true=所有群共享一个记忆池（群间互通）；false=每群独立（默认）
         "shared_groups": [],          # 可选：只在这几个群间共享记忆（填群名；比全共享更精准，需勾选下方群）
     },
@@ -216,7 +215,6 @@ DEFAULT_CONFIG = {
         "seed_library": True,         # 内置有趣种子库（few-shot 参考）
         "online_scoring": False,      # 可选：每次 reaction 后调 LLM 打分（费 token，默认关）
         "heat_decay": True,           # 热度衰减（老梗降权，防饱和）
-        "import_seed_file": "",       # 可选：从金句墙导出的 JSON/文本导入种子库
     },
     # ── 社区分享（本地导出 + 可选上传 URL，默认关）──────────────────────
     "community": {
@@ -229,8 +227,6 @@ DEFAULT_CONFIG = {
     "ui": {
         "coord_scale": "auto",        # 显示缩放 auto | 1.25 等
         "clean_overlays": True,       # 点击前清遮挡
-        "poke_degraded": False,
-        "poke_fail_count": 0,
         "theme": "whale",             # 主题：whale（默认鲸落深海）| light | dark | system
         "whale_cursor": True,         # 鲸鱼指针光标（点击时向下点头）
         "cursor_image": "",           # 自定义光标图片名（assets/custom-cursor.png 或留空=默认鲸鱼 22）
@@ -239,7 +235,6 @@ DEFAULT_CONFIG = {
             "plane": 1.0,             # 纸飞机（较快）：距离每 100px ≈ 170ms×系数
             "zap": 1.0,               # 扎入（距离自适应，含 0.5s 消失+0.3s 冒出）：每 100px ≈ 90ms×系数
         },
-        "moments_entry": "",          # 朋友圈入口坐标 "x,y"（渲染区相对；留空=自动尝试；各电脑校准一次）
         "obscure_url": False,         # 地址栏乱码化（默认关）：进入页面把路径换随机乱码，防复制 URL 登入
         "wave_fx": {                  # 水光波纹（鼠标投石入水效果；控制台可调）
             "enabled": False,         # 总开关（默认关——需用户在「🌊 水光波纹」卡手动开启）

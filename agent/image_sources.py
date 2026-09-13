@@ -22,6 +22,8 @@ import time
 import urllib.parse
 import urllib.request
 
+from .safe_fetch import FetchError, validate_url
+
 UA = "PersonaMorph/1.0 (+random image; safe-mode)"
 DEFAULT_TIMEOUT_MS = 9000
 
@@ -41,7 +43,25 @@ def available() -> list:
     return [k for k in DEFAULT_SOURCES if k in SOURCES]
 
 
+def allow_private_hosts() -> bool:
+    """图源是否允许指向内网/环回主机（`config.security.allow_private_image_hosts`，默认关）。
+
+    只有自建图库服务（例如跑在本机的 http 图源）才需要开；开了就等于放开这一路的 SSRF 防护，
+    所以**故意不做控制台开关**，要放开请手改 `config.json`。
+    """
+    try:
+        from .config import get_config
+        return bool((get_config().get("security") or {}).get("allow_private_image_hosts"))
+    except Exception:
+        return False
+
+
 def _get(url: str, timeout_ms: int = DEFAULT_TIMEOUT_MS, tag: str = "") -> bytes:
+    # SSRF 闸门：默认拒绝内网/环回/链路本地等私有地址（与 safe_fetch 同一套判定）
+    try:
+        validate_url(url, allow_private=allow_private_hosts())
+    except FetchError as e:
+        raise RuntimeError("图源地址被安全策略拒绝：%s（确需内网图源请开 security.allow_private_image_hosts）" % e)
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "*/*"})
     if tag:
         req.add_header("X-Tag", tag)          # 给单测/日志用，服务端会忽略
