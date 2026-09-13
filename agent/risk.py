@@ -5,10 +5,18 @@
 判据里**不出现**"是否后台""是否动鼠标"（那是实现手段，不是风险）。
 
 四层（L0 最严 → L3 只记录）：
-    L0  停机开关        `risk.paused`（控制台大红开关 / 连续被拦自动升级）
-    L1  全局节奏        每分钟 / 每小时 / 每天总量；夜间静默时段
-    L2  会话节奏与重复  同会话每小时上限；同会话最小间隔；短时间重复内容
-    L3  内容可疑度     链接过多 / 命中观察词 ⇒ **放行但记录**（控制台可见）
+    L0  停机开关        `risk.paused`（控制台大红开关；`escalate_after>0` 时连续被拦会自动升级）
+    L1  可选节奏旋钮   每分钟/每小时/每天总量、夜间静默 —— **默认全部 0/关**，只给"想自己掐"的用户
+    L2  内容与任务层   ★**现在的重心**：群发特征（同一内容短时间发给多个不同会话）· 同会话重复内容
+    L3  内容可疑度     链接过多 / 命中观察词 ⇒ **放行但记录**（控制台可见）；禁止词 ⇒ 拦
+
+**为什么节奏默认不限（用户 2026-09-13 定，原话）**：
+    "L1 全局节奏…L2 会话节奏没必要限制得这么死，只要限制发送的内容，或者某些任务不做就行，
+     就是之前说的那些红线。只在内容层上做筛选。"
+    "这个全局节奏、会话节奏应该可以交给用户自定义，让他们自己把控账号的风险。"
+    "到时候我会在介绍里面声明，让他们自己把控账号，账号封了也别怪我。"
+⇒ 我们的默认把关点是**内容 / 任务**（营销群发、群控加粉这类能力本来就不提供），
+  节奏类阈值全部作为**可配置旋钮**（config.json 的 `risk.*`，控制台面板待接）。
 
 **误报来源与防误报规则（用户必问的三件套之一，写在这里备查）**
     · 系统休眠/挂起后恢复、系统时间被改 → 窗口统计用 `time.time()` 单调推进，遇到
@@ -49,19 +57,30 @@ STATE_PATH = os.path.join(DATA_DIR, "risk_state.json")
 EVENT_PATH = os.path.join(DATA_DIR, "risk_events.jsonl")
 
 # 闸门自己的默认值（config.json 的 risk 段缺哪项就用这里的；不在 config 里也能跑）
+#
+# ⚠️ 口径（用户 2026-09-13 定，**改变闸门重心**）：原话——
+#    "L1 全局节奏…L2 会话节奏没必要限制得这么死，只要限制发送的内容，或者某些任务不做就行，
+#     就是之前说的那些红线。只在内容层上做筛选。"
+#    "这个全局节奏、会话节奏应该可以交给用户自定义，让他们自己把控账号的风险。"
+#    "到时候我会在介绍里面声明，让他们自己把控账号，账号封了也别怪我。"
+# ⇒ **频率/节奏类阈值默认全部为 0（＝不限）**，只作为"用户想自己掐时"的旋钮（config.json / 控制台）；
+#   闸门默认真正把关的是**内容层与任务层**：群发特征（同一内容短时间发给多个会话）、链接堆积、
+#   禁止词（用户自己填）；"某些任务不做"落在功能层（群控/加粉/营销群发这些能力我们本来就不提供）。
 DEFAULTS = {
     "enabled": True,
     "paused": False,
-    "per_minute": 8,
-    "per_hour": 60,
-    "per_day": 300,
-    "per_chat_per_hour": 20,
-    "min_gap_seconds": 3,
-    "quiet_hours": [],           # 例：[22, 7]；空 = 不启用
-    "max_links": 3,
+    "per_minute": 0,             # 0 = 不限（节奏交给用户自己把控账号风险）
+    "per_hour": 0,
+    "per_day": 0,
+    "per_chat_per_hour": 0,
+    "min_gap_seconds": 0,
+    "quiet_hours": [],           # 例：[22, 7]；空 = 不启用夜间静默（默认关）
+    "max_links": 3,              # 单条链接超限 ⇒ 记录（L3），不拦
     "watch_keywords": [],        # 命中只记录（L3）
-    "block_keywords": [],        # 命中直接拦（默认空，用户自己加）
-    "escalate_after": 5,         # 连续被拦 N 次 → 自动暂停
+    "block_keywords": [],        # 命中直接拦（默认空，用户按自己的红线填）
+    "broadcast_chats": 3,        # 同一内容在窗口内发给 ≥N 个不同会话 ⇒ 判为群发（任务层红线）
+    "broadcast_window_seconds": 300,
+    "escalate_after": 0,         # 0 = 不自动暂停（频率不限时"连续被拦"没有意义）
     "dup_window_seconds": 120,   # 重复内容判定窗口
     "dup_min_len": 8,            # 多短算"同一句"
 }
@@ -118,7 +137,7 @@ class RiskGate(object):
         self._lock = threading.RLock()
         self._st = {"paused": False, "paused_reason": "", "blocks": 0,
                     "min": [], "hour": [], "day": [], "day_key": "",
-                    "chats": {}, "events": []}
+                    "chats": {}, "events": [], "recent": []}
         self._load()
 
     # ── 状态读写 ────────────────────────────────────────────────────────
@@ -255,6 +274,19 @@ class RiskGate(object):
                         return verdict(False, "L2", "duplicate",
                                        "和刚发过的内容几乎一样，已拦下（防刷屏）")
 
+            # ★ 任务层红线（闸门现在的重心）：群发特征 —— 同一内容短时间发给多个不同会话
+            bc = int(cfg.get("broadcast_chats") or 0)
+            bw = float(cfg.get("broadcast_window_seconds") or 0)
+            if bc > 0 and bw > 0 and len(norm) >= max(4, dup_min):
+                peers = {str(c) for s, c, ts in (self._st.get("recent") or [])
+                         if s == norm and (now - float(ts)) < bw}
+                peers.add(str(chat_key))
+                if len(peers) >= bc:
+                    return verdict(False, "L2", "broadcast",
+                                   "同一内容将发给 %d 个不同会话（%d 秒内 ≥%d 个即判群发），已拦下"
+                                   "——营销群发是我们不做的任务" % (len(peers), int(bw), bc),
+                                   detail={"chats": sorted(peers)[:6]})
+
             # L3 内容可疑度（放行，只记录）
             links = len(_LINK_RE.findall(text))
             max_links = int(cfg.get("max_links") or 0)
@@ -288,6 +320,8 @@ class RiskGate(object):
             norm = re.sub(r"\s+", "", str(text or ""))[:200]
             if norm:
                 ch["last_texts"] = (ch.get("last_texts") or [])[-4:] + [[norm, now]]
+                # 跨会话留一条"最近发过什么"（群发特征检测用；不记明文全文，只留归一化片段）
+                self._st["recent"] = (self._st.get("recent") or [])[-49:] + [[norm, str(chat_key), now]]
             self._save()
 
     def _prune(self, cfg: dict, now: float):
@@ -317,6 +351,9 @@ class RiskGate(object):
                     ch["last_ts"] = 0.0
             except Exception:
                 ch["last_ts"] = 0.0
+        # 跨会话近期发送记录（群发特征检测）
+        self._st["recent"] = [[s, c, t] for s, c, t in (self._st.get("recent") or [])
+                              if keep(t, max(60.0, float(cfg.get("broadcast_window_seconds") or 300)))]
 
     # ── 给控制台 ────────────────────────────────────────────────────────
     def snapshot(self) -> dict:

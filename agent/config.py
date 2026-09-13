@@ -93,20 +93,25 @@ DEFAULT_CONFIG = {
         "hard_split_at": 2000,     # 微信单条消息安全切分长度
         "uia_setvalue": True,      # 输入用 UIA SetValue 后台直写（不点输入框/不粘贴），发送回车仍需瞬时置前
     },
-    # ── 风险闸门（只管行为特征；细节与「误报来源/用户可见面/弹窗文案」见 agent/risk.py）──
+    # ── 风险闸门（重心＝内容/任务层；细节与「误报来源/用户可见面/弹窗文案」见 agent/risk.py）──
+    # 口径（用户 2026-09-13）：节奏没必要掐那么死，"只要限制发送的内容，或者某些任务不做就行"；
+    #   "全局节奏、会话节奏应该可以交给用户自定义，让他们自己把控账号的风险"（介绍里会声明）。
+    # ⇒ 所有频率类阈值默认 0＝不限，只作为用户自控的旋钮；默认把关的是内容与任务层。
     "risk": {
         "enabled": True,
-        "paused": False,             # 停机开关（控制台可一键暂停/恢复；连续被拦会自升级）
-        "per_minute": 8,
-        "per_hour": 60,
-        "per_day": 300,
-        "per_chat_per_hour": 20,
-        "min_gap_seconds": 3,        # 同一会话两条之间的最小间隔
+        "paused": False,             # 停机开关（控制台可一键暂停/恢复）
+        "per_minute": 0,             # 0 = 不限
+        "per_hour": 0,
+        "per_day": 0,
+        "per_chat_per_hour": 0,
+        "min_gap_seconds": 0,        # 0 = 不限
         "quiet_hours": [],           # 例 [22, 7]；空 = 不启用夜间静默
         "max_links": 3,              # 超过只在控制台记录（L3），不拦
         "watch_keywords": [],        # 命中只记录
-        "block_keywords": [],        # 命中直接拦（默认空，用户自己加）
-        "escalate_after": 5,         # 连续被拦 N 次 → 自动暂停
+        "block_keywords": [],        # 命中直接拦（默认空，用户按自己的红线填）
+        "broadcast_chats": 3,        # 同一内容窗口内发给 ≥N 个不同会话 ⇒ 判群发（任务层红线）
+        "broadcast_window_seconds": 300,
+        "escalate_after": 0,         # 0 = 不自动暂停
         "dup_window_seconds": 120,
         "dup_min_len": 8,
     },
