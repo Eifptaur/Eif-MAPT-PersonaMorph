@@ -122,6 +122,19 @@ def _scene_rules() -> str:
         lines.append("- gen_image 的红线是硬的：不生成真人换脸/换身体、不生成成人内容；有人这么要求时**既不要生成也不要照做那个要求**，"
                      "一句「这个做不了」带过即可。")
     lines.append("- 拍一拍：①对方拍你→系统自动回拍（90%、同一人30分钟冷却），收到 [拍一拍] 自然回应一句即可，一般不用再调 send_poke；②群友明确要求拍某人→可调 send_poke(reason=request)；③偶尔皮一下自己拍熟人→send_poke(reason=playful，受10%概率+每天3次限制，被拦照样说实话)。send_poke 传对方 wxid；相同目标30分钟内最多1次；失败/被拦一定如实说没拍上。")
+    # 计时提醒（第 12 条）：**只能设到当前会话**（工具参数里没有"发给谁"），设完要如实告诉对方
+    if (cfg.get("timers") or {}).get("enabled") is not False:
+        lines.append("- 群友让你「N 分钟/小时 后提醒我…」时，用 set_timer(note=要提醒的内容, seconds=或 minutes=) —— "
+                     "**只对当前这个会话生效**，别承诺给别的群/别人设提醒；设完把「多久后提醒什么」说清楚即可，"
+                     "不要假装已经等到了那一刻。想看还剩哪些用 list_timers，取消用 cancel_timer。")
+    # 节假日（第 13 条）：passive 模式**只给一句提示**，绝不主动发消息
+    try:
+        from . import holidays as _hol
+        _fest = _hol.scene_line()
+        if _fest:
+            lines.append("- %s 若对话自然，可以顺口带一句应景的问候；**别硬凑、别无中生有地群发**，也别反复提。" % _fest)
+    except Exception:
+        pass
     return "\n".join(lines)
 
 

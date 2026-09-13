@@ -140,6 +140,14 @@
    "heuristic": true
   }
  },
+ "timers": {
+  "enabled": true
+ },
+ "holiday": {
+  "mode": "passive",
+  "greet_chats": [],
+  "greet_hour": 9
+ },
  "memory": {
   "consolidate_enabled": true,
   "consolidate_min_interval_ms": 21600000,

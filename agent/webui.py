@@ -604,6 +604,14 @@ class WebUI:
                                 st["media"] = _ms.snapshot()
                             except Exception as _e2:
                                 st["media"] = {"error": str(_e2)}
+                            # 计时提醒 + 节假日问候（第 12/13 条）
+                            try:
+                                from . import timers as _tmr
+                                from . import holidays as _hol2
+                                st["timers"] = _tmr.snapshot()
+                                st["holiday"] = _hol2.snapshot()
+                            except Exception as _e8:
+                                st["timers"] = {"error": str(_e8)}
                             # 响应等级三件（第 15/16/18 条）：档位模式 / 峰谷映射 / 指令禁言现状
                             try:
                                 from . import tier_control as _tcl
