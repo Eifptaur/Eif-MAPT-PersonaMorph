@@ -262,6 +262,30 @@ def as_tool_defs(builtin_names=()) -> tuple:
     return defs, problems, tools
 
 
+def set_enabled(name: str, on: bool) -> tuple:
+    """在清单文件里改 `enabled`（控制台勾选启停用）。返回 `(ok, 说明)`。原子写。"""
+    n = str(name or "").strip().lower()
+    if not n:
+        return False, "没给工具名"
+    tools, _problems, _d = load()
+    for t in tools:
+        if t["name"] != n:
+            continue
+        p = t.get("file") or ""
+        try:
+            with open(p, "r", encoding="utf-8") as fh:
+                mf = json.load(fh)
+            mf["enabled"] = bool(on)
+            tmp = p + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(mf, fh, ensure_ascii=False, indent=2)
+            os.replace(tmp, p)
+            return True, "%s 已%s（下次构建工具清单时生效）" % (n, "启用" if on else "停用")
+        except Exception as e:
+            return False, "写清单失败：%s: %s" % (type(e).__name__, str(e)[:80])
+    return False, "清单里没有名为 %s 的工具" % n
+
+
 def snapshot() -> dict:
     """控制台「工具与插件」面板的数据源（现场读清单目录 + 统计）。"""
     from . import tool_stats

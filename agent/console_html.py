@@ -423,6 +423,7 @@ th{color:var(--tx2);font-weight:500}
       <a href="#sec-vermat">版本能力矩阵</a>
       <a href="#sec-media">媒体与语音</a>
       <a href="#sec-tts">语音回复</a>
+      <a href="#sec-tools">工具与插件</a>
       <a href="#sec-poke">拍一拍</a>
       <a href="#sec-memory">记忆</a>
       <a href="#sec-memory-set">记忆共享</a>
@@ -822,6 +823,26 @@ th{color:var(--tx2);font-weight:500}
         <button class="pri" data-save>保存设置（语音回复）</button>
       </div>
       <div id="ttsOut" class="hint">点「试听一句」会在本机合成一条示例音频并报出产物路径 / 格式 / 大小；**不会发到任何会话**。</div>
+    </section>
+    <section id="sec-tools" class="card" data-sec>
+      <h2>工具与插件（自定义工具）</h2>
+      <div class="desc">把 <b>一个工具一个 <code>.json</code></b> 丢进 <code>tools.d/</code>，在这里**勾选**后模型才能用它。边界先说清：<b>只发 HTTP、不执行任何本地代码</b>；<code>allow_hosts</code> 域名白名单必填，<b>内网/本机地址永远拒绝</b>（写进白名单也一样）；参数必须是合法 JSON Schema；**坏清单会在下面逐条列出来**（不会静默跳过）。清单字段见 <code>tools.d/README.md</code>。</div>
+      <div class="row"><label>总开关</label><input type="checkbox" data-cfg="user_tools.enabled">
+        <span class="hint">默认关：关着时这些清单一个都不加载，模型也看不到。</span></div>
+      <div class="row"><label>清单现状</label><div class="grow"><b id="utGlobals">检测中…</b>
+        <div id="utProblems" class="hint"></div></div></div>
+      <div id="utList" class="hint"></div>
+      <div class="row"><label>清单目录</label><div class="grow"><input data-cfg="user_tools.dir" placeholder="tools.d">
+        <span class="hint">相对项目根；一个工具一个 .json，文件名随意。</span></div></div>
+      <div class="row"><label>最多加载</label><input type="number" min="1" max="200" data-cfg="user_tools.max_tools">
+        <span class="hint">超过就只加载前面这些（并在下面提示）。</span></div>
+      <div class="row"><label>单次超时(毫秒)</label><input type="number" min="500" max="60000" data-cfg="user_tools.timeout_ms"></div>
+      <div class="row"><label>结果截断(字符)</label><input type="number" min="200" max="20000" data-cfg="user_tools.max_chars"></div>
+      <div class="btns">
+        <button id="utReload" class="ghost">重新加载清单</button>
+        <button class="pri" data-save>保存设置（工具与插件）</button>
+      </div>
+      <div class="hint">调用次数来自唯一分发点的统计（内置与自定义工具都算）——一眼能看出哪些工具只是摆设。</div>
     </section>
     <section id="sec-wechat" class="card" data-sec>      <div class="row"><label>微信版本</label><div class="grow"><b id="wxver">检测中…</b></div></div>
       <div id="wxInstall" class="row" style="display:none"><label>微信装没装</label><div class="grow">
@@ -1855,6 +1876,56 @@ async function loadStatus(){
           f.textContent = ts.ffmpeg ? ('✅ 有 ffmpeg（可转 mp3）：' + (ts.ffmpeg_path || ''))
                                     : '没有 ffmpeg ⇒ 自动回落 wav（不影响使用）';
           f.style.color = ts.ffmpeg ? '' : 'var(--warn-tx)';
+        }
+      }catch(e){}
+      try{
+        const ut = s.user_tools || {};
+        const g = $('utGlobals');
+        const listBox = $('utList');
+        if(g && !ut.error){
+          g.textContent = (ut.enabled ? '总开关：开' : '总开关：关（清单不加载）') +
+            ' ｜ 目录：' + (ut.dir || '-') + ' ｜ 已装 ' + ((ut.tools || []).length) + ' 个 ｜ 累计调用 ' + (ut.counts_total || 0) + ' 次';
+        }else if(g && ut.error){ g.textContent = '⛔ 读取失败：' + ut.error; g.style.color = 'var(--err-tx)'; }
+        if(listBox && !ut.error){
+          listBox.textContent = '';
+          const tools = ut.tools || [];
+          if(!tools.length){
+            const d = document.createElement('div');
+            d.textContent = '还没有自定义工具：把一个 .json 清单丢进 ' + (ut.dir || 'tools.d') + '/ 就能用（格式见 tools.d/README.md）。';
+            listBox.appendChild(d);
+          }
+          tools.forEach(function(t){
+            const row = document.createElement('div'); row.className = 'row';
+            const lab = document.createElement('label');
+            const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!t.enabled;
+            cb.onclick = async function(){
+              try{
+                await getJSON('/api/tools/toggle?name=' + encodeURIComponent(t.name) + '&on=' + (cb.checked ? 1 : 0));
+                toast((cb.checked ? '已勾选 ' : '已取消 ') + t.name);
+                loadStatus();
+              }catch(e){ cb.checked = !cb.checked; toast('切换失败：' + e.message); }
+            };
+            lab.appendChild(cb); lab.appendChild(document.createTextNode(' ' + t.name));
+            row.appendChild(lab);
+            const v = document.createElement('div'); v.className = 'grow';
+            v.textContent = '[' + (t.source || '第三方') + '] ' + (t.host || '-') + ' · ' + (t.description || '') +
+              ' ｜ 调用 ' + (t.calls || 0) + ' 次' + (t.errors ? ('（失败 ' + t.errors + '）') : '') +
+              (t.last ? (' ｜ 最近 ' + new Date(t.last * 1000).toLocaleString()) : '');
+            row.appendChild(v);
+            listBox.appendChild(row);
+          });
+        }
+        const pr = $('utProblems');
+        if(pr && !ut.error){
+          pr.textContent = '';
+          const ps = ut.problems || [];
+          if(!ps.length){ pr.textContent = '清单没有问题。'; }
+          ps.forEach(function(p){
+            const d = document.createElement('div');
+            d.textContent = '⚠ ' + (p.file || '') + '：' + (p.why || '');
+            d.style.color = 'var(--warn-tx)';
+            pr.appendChild(d);
+          });
         }
       }catch(e){}
       const wi = s.wechat_install || null;
@@ -4179,6 +4250,16 @@ addEventListener('hashchange', ()=>{ if(location.hash==='#sec-sessions') loadSes
     const u = ((window.__wxInstall && window.__wxInstall.official_url) || 'https://weixin.qq.com/');
     try{ window.open(u, '_blank'); }catch(e){}
     toast('已尝试打开官网：' + u + '（打不开就手动复制到浏览器）');
+  };
+  const utBtn = document.getElementById('utReload');
+  if(utBtn) utBtn.onclick = async ()=>{
+    try{
+      const r = await getJSON('/api/tools/reload');
+      const n = ((r && r.tools && r.tools.tools) || []).length;
+      const bad = ((r && r.tools && r.tools.problems) || []).length;
+      toast('清单已重扫：' + n + ' 个工具' + (bad ? ('，' + bad + ' 条问题（看面板）') : ''));
+      loadStatus();
+    }catch(e){ toast('重扫失败：' + e.message); }
   };
   const ttsBtn = document.getElementById('ttsTest');
   if(ttsBtn) ttsBtn.onclick = async ()=>{
