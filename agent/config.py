@@ -190,6 +190,7 @@ DEFAULT_CONFIG = {
         "random_count": 6,
         "all_count": 30,
         "past_window_min": 30,        # 历史上下文只带最近 N 分钟（0=不限，防回应很久前的旧艾特/旧话题）
+        "past_floor_count": 8,       # 时间窗外至少保留最近 N 条（防止长时间静默后看不到上文；0=关闭兜底）
         "unified_tier": True,         # true=上方档位对所有群生效；false=可按群单独设置（group_tier）
         "group_tier": {},             # {群名: 1~4} 仅 unified_tier=false 时生效；未设置的群跟随全局
         "group_blocklist": {},        # {群名: [昵称, wxid...]} 被屏蔽群员：不存档、不触发、不进提示词

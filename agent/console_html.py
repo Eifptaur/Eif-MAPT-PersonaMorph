@@ -898,6 +898,7 @@ th{color:var(--tx2);font-weight:500}
       </div>
       <div class="row"><label>单档上下文上限</label><div class="grow"><input type="number" min="1" data-cfg="store.all_count"></div></div>
       <div class="row"><label>历史窗口(分钟)</label><div class="grow"><input type="number" min="0" data-cfg="store.past_window_min" title="0=不限"> <span class="hint">只把最近 N 分钟内的消息给模型当历史，防它回应很久之前的艾特/旧话题</span></div></div>
+      <div class="row"><label>历史兜底条数</label><div class="grow"><input type="number" min="0" data-cfg="store.past_floor_count" title="时间窗外至少保留最近 N 条；0=关闭"> <span class="hint">长时间静默后仍能看到上文</span></div></div>
       <div class="row"><label>每群消息上限</label><div class="grow"><input type="number" min="0" data-cfg="store.max_messages_per_chat" title="0=不限制"></div></div>
       <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
       <div class="row"><label>每群独立档位</label><input type="checkbox" data-cfg="store.unified_tier" id="unifiedTierChk" checked><span class="hint">取消勾选后，可在下方按群单独设置响应档位（未设置的群跟随全局）</span></div>
