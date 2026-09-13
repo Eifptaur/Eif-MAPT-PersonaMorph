@@ -576,6 +576,9 @@ class WebUI:
                             st["input"] = _ib.status()
                             # 版本能力矩阵 + 版本门（W7：版本变了要出横幅、按未验证处理）
                             st["version"] = _vm.current()
+                            # 版本门（W7）：没实测过的版本对 ⇒ 默认暂停发送；本会话是否已放行也一并暴露
+                            from . import version_gate as _vg2
+                            st["version_gate"] = _vg2.status()
                             # 微信装没装（2026-09-13：没装就带用户去官网，不做静默安装）
                             try:
                                 from .wechat import wechat_version_info as _wvi
@@ -603,6 +606,13 @@ class WebUI:
                         from .wechat import wechat_version_info as _wvi2
                         info = _wvi2() or {}
                         self._json({"ok": True, "version": info, "install": info.get("install") or {}})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/version/allow":
+                    try:
+                        from . import version_gate as _vg3
+                        _vg3.allow_session("console")
+                        self._json({"ok": True, "gate": _vg3.status()})
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)})
                 elif path == "/api/balance":

@@ -420,6 +420,7 @@ th{color:var(--tx2);font-weight:500}
       <a href="#sec-sessions">运行明细</a>
       <a href="#sec-model">模型 API</a>
       <a href="#sec-wechat">微信</a>
+      <a href="#sec-vermat">版本能力矩阵</a>
       <a href="#sec-poke">拍一拍</a>
       <a href="#sec-memory">记忆</a>
       <a href="#sec-memory-set">记忆共享</a>
@@ -740,6 +741,17 @@ th{color:var(--tx2);font-weight:500}
       <div class="btns"><button class="pri" data-save>保存设置（模型 API）</button></div>
     </section>
 
+    <section id="sec-vermat" class="card" data-sec>
+      <h2>版本能力矩阵</h2>
+      <div class="desc">当前「微信版本 × 适配层版本」下每个能力的实测状态。没有实测记录的版本对一律按未知处理：发送会先被版本门拦下，等你点「本次允许发送」才临时放行。</div>
+      <div class="row"><label>当前版本对</label><div class="grow"><b id="vmVer">检测中…</b></div></div>
+      <div class="row"><label>版本门</label><div class="grow">
+        <b id="vmGate">检测中…</b>
+        <div class="btns" style="margin-top:6px"><button id="vmAllow" class="ghost">本次允许发送</button></div>
+        <div class="hint">只对本次运行有效（重启后重新拦），我们不会把"放行"写进配置。</div>
+      </div></div>
+      <div id="vmList" class="hint"></div>
+    </section>
     <section id="sec-wechat" class="card" data-sec>      <div class="row"><label>微信版本</label><div class="grow"><b id="wxver">检测中…</b></div></div>
       <div id="wxInstall" class="row" style="display:none"><label>微信装没装</label><div class="grow">
         <div id="wxInstallText" class="hint"></div>
@@ -1680,6 +1692,26 @@ async function loadStatus(){
           + (wv.supported===false ? '（⚠️ 低于 4.0，请升级微信）' : '');
         el.style.color = wv.supported===false ? 'var(--err-tx)' : '';
       }
+      try{
+        const vm = s.version || {};
+        const vg = s.version_gate || {};
+        const v1 = $('vmVer');
+        if(v1) v1.textContent = '微信 ' + (vm.wechat||'unknown') + ' × 适配层 ' + (vm.adapter||'-');
+        const v2 = $('vmGate');
+        if(v2){
+          v2.textContent = vg.allow ? '⚠️ 未实测版本对：已临时放行（本会话有效）'
+            : (vg.level === 'ok' ? '✅ 版本对已实测：放行' : '⛔ 未实测版本对：已暂停自动发送');
+          v2.style.color = vg.allow ? 'var(--warn-tx)' : (vg.level === 'ok' ? 'var(--ok-tx)' : 'var(--err-tx)');
+        }
+        const v3 = $('vmList');
+        if(v3 && vm.caps){
+          const rows = Object.keys(vm.caps).map(function(k){
+            const c = vm.caps[k]; const mark = c.status==='ok'?'✅':(c.status==='no'?'❌':(c.status==='user_gated'?'🔒':'❔'));
+            return mark + ' ' + c.label + '（' + c.status + '）';
+          });
+          v3.textContent = (vm.summary || '') + ' ｜ ' + rows.join(' · ');
+        }
+      }catch(e){}
       const wi = s.wechat_install || null;
       const box = $('wxInstall');
       if(box && wi){
@@ -4002,6 +4034,11 @@ addEventListener('hashchange', ()=>{ if(location.hash==='#sec-sessions') loadSes
     const u = ((window.__wxInstall && window.__wxInstall.official_url) || 'https://weixin.qq.com/');
     try{ window.open(u, '_blank'); }catch(e){}
     toast('已尝试打开官网：' + u + '（打不开就手动复制到浏览器）');
+  };
+  const allowBtn = document.getElementById('vmAllow');
+  if(allowBtn) allowBtn.onclick = async ()=>{
+    try{ await getJSON('/api/version/allow'); toast('已放行（只对本次运行有效）：发送会按未验证版本对继续，出问题请到「检查微信版本」升级适配层'); loadStatus(); }
+    catch(e){ toast('放行失败：' + e.message); }
   };
   if(recheckBtn) recheckBtn.onclick = async ()=>{
     try{
