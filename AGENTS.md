@@ -197,6 +197,11 @@
 | `assets/custom-cursor*.png` | 用户上传的自定义光标 | **运行时生成，不要手改** |
 | `assets/icon.png` | favicon（`console_html.py:17` + `webui.py:256/403`）。**2026-09-13 已换成新鲸鱼**（＝app-icon 同源：黑圆角方 + 白鲸） | ⚠️ `webui.py:254-258` 是**启动时读一次**存内存 ⇒ **换 favicon 后必须重启控制台**才生效（浏览器还要 Ctrl+F5）；`assets/` 里其它素材是每请求读盘，不用重启 |
 
+**📦 打包口径：只有"在线包"，不再有"离线包"（用户 2026-09-13 定）**
+- 原话："**模型运行不是要用网的吗？所以离线包实际上是不用的…离线包就算离线，它也运行模型，也要网，所以这是压根没必要的。就不应该有这个包。**"
+- ⇒ 落地：**发给别的机器的只有在线包**（＝版本库里的代码，约 **3.7MB / 108 文件**）；`offline/`（wheels 118MB + 绿色 Python 8MB + 微信安装包 244MB）**已从版本库摘除**（`git rm --cached offline` + `.gitignore` 加 `offline/`），**本机文件保留**仅作"无网时装依赖"的加速；`一键启动.exe` 在别的机器上会**联网准备 Python**（`setup_python.ps1` 可下载）并**走镜像装依赖**（`setup_deps.py` 的联网分支）。
+- 旧的"离线包/预装运行时"两种口味都已废弃并删除（曾误打成 456MB / 357MB / 127MB 三个包）。
+
 **一键启动.exe / 一键关闭.exe 是 csc 编译产物（重要，之前没人写下来）：**
 - 源码：**`launcher-src\launcher.cs`、`launcher-src\close.cs`**（2026-09-13 W6 从 `_scratch/` 移入版本管理：发布物必须有源）；编译器：`C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe`
 - W6 起 一键启动.exe **必须引用 WebView2**：`lib\Microsoft.Web.WebView2.Core.dll` + `lib\Microsoft.Web.WebView2.WinForms.dll`，且 **`WebView2Loader.dll` 放在 exe 同目录（根目录）**（程序集解析在 `StyleKit.Prep()` 用 `AssemblyResolve` 挂到 `lib\`）
