@@ -198,5 +198,17 @@ ok("单字母名字：不误配到别的会话（`群里的人`）", CO.matches(
 ok("单字母名字：`[草稿]` 之外的前缀也会被剥掉（Draft）", CO.matches("[Draft]EE", "E") is True)
 ok("多字名字不受影响（仍是包含判断）", CO.matches("海绵宝宝课堂19：29", "海绵宝宝") is True)
 
+# ⛔ 按"最后一条消息的时间"定位行（2026-09-13 实测：E 的名字行 OCR 给空串 ⇒ 名字这条路根本走不通；
+#    而 21：41 这种时间戳 OCR 读得准，实测按时间一次命中 y=246 那一行）
+_co_src = open(os.path.join(ROOT, "agent", "chat_ocr.py"), encoding="utf-8").read()
+_w_src = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
+ok("find_row_info 支持 want_time（按时间定位）", "def find_row_info(img, name: str, zoom: int = 2, want_time: str = \"\")" in _co_src)
+ok("时间是从整行文本 full 里找的（只看 name 永远找不到时间）",
+   'r.get("full")' in _co_src and "_time_re.finditer(_blob)" in _co_src)
+ok("时间命中但名字明显是别的会话 ⇒ 不算（宁可不点）",
+   "if got and not matches(got, name):" in _co_src)
+ok("switch_chat_posted 会把目标会话的最后消息时间传进去",
+   "want_time=_want_time" in _w_src and "_want_time = time.strftime(\"%H:%M\", _lt)" in _w_src)
+
 print("\n%d/%d 通过" % (PASS, PASS + FAIL))
 sys.exit(1 if FAIL else 0)

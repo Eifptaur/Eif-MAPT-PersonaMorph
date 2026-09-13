@@ -350,8 +350,16 @@ def click_allowed(last_ts: float, now: float, cooldown_s: float = 3.0) -> tuple:
     return True, ""
 
 
-def find_row_info(img, name: str, zoom: int = 2):
-    """同 `find_row`，但返回整条信息 `{'pos':(x,y),'y_abs':int,'name':str}`（点击后要拿 y_abs 复核高亮）。"""
+def find_row_info(img, name: str, zoom: int = 2, want_time: str = ""):
+    """同 `find_row`，但返回整条信息 `{'pos':(x,y),'y_abs':int,'name':str,'why':str}`。
+
+    `want_time`＝目标会话**最后一条消息的时间**（`HH:MM`，由调用方从 DB 取）——给一条**不依赖名字**的路：
+    2026-09-13 实测，名字只有一个字母的会话（E）靠 OCR 认不稳（认不出、或被别的行的草稿文本骗到），
+    而每行右侧那个时间戳 OCR 读得很准（实测 19：41 / 21：41 / 20：36 都读得出）。两条信号合起来用：
+      · 有 `want_time`：优先选**时间命中**且（名字也命中 或 名字那一行 OCR 为空/不可信）的行；
+        如果这行名字能读出来、而且明显是别的会话 ⇒ 这一行不算（宁可找不到，不许点错）。
+      · 没有 `want_time`：退回原来的名字匹配（含长度 ≤2 时的名字行全等复核）。
+    """
     try:
         w, h = img.size
         left = 0
@@ -361,22 +369,53 @@ def find_row_info(img, name: str, zoom: int = 2):
             left = 0
         if not left:
             left = int(w * ch.PANE_LEFT_REL)
-        for r in session_rows(img, zoom=zoom):
-            if not matches(r.get("name") or "", name):
+        want = (want_time or "").strip().replace("：", ":")
+        rows = session_rows(img, zoom=zoom)
+        for r in rows:
+            nm = r.get("name") or ""
+            y = int(r["y_abs"])
+            hit_t = False
+            if want:
+                # ⚠️ 时间戳在**整行拼起来**的文本里（`full`＝名字＋预览＋时间，实测 '文件传．“19：41'），
+                #    只看 `name` 永远找不到时间 ⇒ 一开始就是这么写错的（按时间定位一直返回 None）。
+                _blob = str(r.get("full") or "") + " " + nm
+                for m in _time_re.finditer(_blob):
+                    t = m.group(0).replace("：", ":").replace(" ", "")
+                    try:
+                        hh, mm = t.split(":")
+                        if "%d:%02d" % (int(hh), int(mm)) == want:
+                            hit_t = True
+                            break
+                    except Exception:
+                        pass
+            if want and hit_t:
+                # 时间命中：再看名字那一行——读得出且明显不是它 ⇒ 不算（宁可找不到，不许点错）
+                got = ""
+                try:
+                    got = name_of_row(img, y, nm, zoom=3)
+                except Exception:
+                    got = ""
+                if got and not matches(got, name):
+                    continue
+                return {"pos": (max(0, left - 150), min(h - 2, y + 16)), "y_abs": y, "name": nm,
+                        "why": "按最后消息时间 %s 命中（该行名字 OCR=%r）" % (want, got)}
+            if want:
                 continue
-            # ⚠️ 单字/单字母名字必须**复核这一行的名字行**（2026-09-13 实测假阳性：E 的目标行是第 2 行，
+            if not matches(nm, name):
+                continue
+            # ⚠️ 单字/单字母名字必须**复核这一行的名字行**（2026-09-13 实测假阳性：目标行是第 2 行，
             #    而第 3 行"宋孟"的预览里带着草稿内容 `[草稿]EE` ⇒ 放宽后的前缀匹配把**宋孟那一行**认成了 E，
             #    点下去打开了别的会话）。复核用 `name_of_row()`（只 OCR 名字那一行、zoom=3），要求**全等**。
             if len(norm(name)) <= 2:
                 got = ""
                 try:
-                    got = name_of_row(img, r["y_abs"], r.get("name") or "", zoom=3)
+                    got = name_of_row(img, y, nm, zoom=3)
                 except Exception:
                     got = ""
                 if norm(got) != norm(name):
                     continue
-            return {"pos": (max(0, left - 150), min(h - 2, int(r["y_abs"]) + 16)),
-                    "y_abs": int(r["y_abs"]), "name": r.get("name") or ""}
+            return {"pos": (max(0, left - 150), min(h - 2, y + 16)), "y_abs": y, "name": nm,
+                    "why": "按名字匹配（%r）" % nm}
         return None
     except Exception:
         return None
