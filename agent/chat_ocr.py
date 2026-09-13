@@ -783,6 +783,9 @@ def looks_like_search_popover(img) -> tuple:
     return False, "画面里没有搜索浮层的标志字样（读到：%s）" % txt[:40]
 
 
+POPOVER_SECTIONS = ("联系", "群聊", "最常", "聊天记录", "Contacts", "Group", "Recent", "Chat")
+
+
 def find_popover_row(img, name: str, zoom: int = 2):
     """在**搜索浮层**的截图里找目标那一行，返回 {'x','y','why'}（浮层客户区坐标）或 None。
 
@@ -800,14 +803,22 @@ def find_popover_row(img, name: str, zoom: int = 2):
     except Exception:
         return None
     sec_y = None
+    sec_name = ""
     for t, x, y, ww, hh in items:
         s = str(t)
         cy = int(y) + 80
         if norm(s) == norm(name) and norm(name):
             return {"x": max(60, int(w * 0.35)), "y": int(cy + hh / 2), "why": "OCR 命中 %r" % s[:12]}
-        if sec_y is None and ("联系人" in s or "Contacts" in s):
-            sec_y = cy
+        if sec_y is None:
+            for k in POPOVER_SECTIONS:
+                if k in s:
+                    sec_y, sec_name = cy, k
+                    break
     if sec_y is not None:
-        return {"x": max(60, int(w * 0.35)), "y": int(sec_y + 60),
-                "why": "「联系人」段第一行（标题 y=%d）" % sec_y}
+        # ⚠️ 段的标题**不一定是「联系人」**（2026-09-13 实测：同一个搜索词，浮层有时给的是
+        #    「最常使用」→ 结果行，有时是「联系人」；而单字母名字（E）OCR 根本读不出来）
+        #    ⇒ 只要认到**任一段标题**，就取它下面第一行（实测行中心 ≈ 标题下方 55px）；
+        #      点到的是不是目标会话，仍由点完之后的**内容级复核**说了算（错行 ⇒ 不发送）。
+        return {"x": max(60, int(w * 0.35)), "y": int(sec_y + 55),
+                "why": "「%s」段第一行（标题 y=%d）" % (sec_name, sec_y)}
     return None
