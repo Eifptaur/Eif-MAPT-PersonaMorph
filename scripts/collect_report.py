@@ -16,17 +16,18 @@
     runtime\\python\\python.exe scripts\\collect_report.py --send-test # 额外做一次投递发送实测（会真发一条测试消息）
 """
 import argparse
+import re
 import ctypes
 import json
 import os
 import platform
 import subprocess
 import sys
+import threading
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-sys.path.insert(0, os.path.join(ROOT, "_scratch"))
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 except Exception:
@@ -34,6 +35,24 @@ except Exception:
 
 OUT_DIR = os.path.join(ROOT, "报告")
 SECTIONS = []       # [(标题, 行列表, 原始dict)]
+
+
+def redact(s):
+    """打码：家目录 → %USERPROFILE% · 主机名 → %COMPUTERNAME%。
+    用户口径（2026-09-13）：发回来的报告里不许带他的个人信息。"""
+    try:
+        home = os.path.expanduser("~")
+        if home:
+            s = s.replace(home, "%USERPROFILE%")
+            s = s.replace(home.replace("\\", "/"), "%USERPROFILE%")
+        s = re.sub(r"[A-Za-z]:\\+Users\\+[^\\\s\"']+", "%USERPROFILE%", s)
+        s = re.sub(r"[A-Za-z]:/Users/[^/\s\"']+", "%USERPROFILE%", s)
+        node = platform.node()
+        if node:
+            s = s.replace(node, "%COMPUTERNAME%")
+    except Exception:
+        pass
+    return s
 
 
 def add(title, lines, raw=None):
@@ -57,13 +76,24 @@ def sec_system():
     lines.append("  Python: %s (%s)" % (platform.python_version(), sys.executable))
     lines.append("  是否 64 位解释器: %s" % (sys.maxsize > 2 ** 32))
     try:
-        import dpi as _dpi
-        lines.append("  DPI 上下文: %s" % _dpi.fix())
-        wh = _dpi.where()
-        raw["dpi"] = wh
-        lines.append("  物理分辨率: %s×%s · 进程所见: %s×%s ⇒ 缩放 %s×" % (
-            wh.get("physical", ("?", "?"))[0], wh.get("physical", ("?", "?"))[1],
-            wh.get("seen", ("?", "?"))[0], wh.get("seen", ("?", "?"))[1], wh.get("scale")))
+        # 自包含的 DPI 自查（不依赖任何开发期模块）
+        u32 = ctypes.windll.user32
+        try:
+            u32.SetProcessDpiAwarenessContext.argtypes = [ctypes.c_void_p]
+            u32.SetProcessDpiAwarenessContext.restype = ctypes.c_bool
+            aware = bool(u32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)))
+        except Exception:
+            aware = False
+        gdi = ctypes.windll.gdi32
+        gdi.GetDeviceCaps.restype = ctypes.c_int
+        hdc0 = u32.GetDC(0)
+        phys_w, phys_h = gdi.GetDeviceCaps(hdc0, 118), gdi.GetDeviceCaps(hdc0, 117)   # DESKTOPHORZRES/VERTRES
+        seen_w, seen_h = gdi.GetDeviceCaps(hdc0, 8), gdi.GetDeviceCaps(hdc0, 10)       # HORZRES/VERTRES
+        u32.ReleaseDC(0, hdc0)
+        scale = round(phys_w / seen_w, 2) if seen_w else None
+        raw["dpi"] = {"permonitorv2": aware, "physical": (phys_w, phys_h), "seen": (seen_w, seen_h), "scale": scale}
+        lines.append("  DPI 上下文: %s（SetProcessDpiAwarenessContext(-4) 的返回值）" % ("PerMonitorV2" if aware else "未锁上/已是别的档"))
+        lines.append("  物理分辨率: %s×%s · 进程所见: %s×%s ⇒ 缩放 %s×" % (phys_w, phys_h, seen_w, seen_h, scale))
     except Exception as e:
         lines.append("  DPI 自查失败: %s" % e)
     try:
@@ -218,21 +248,39 @@ def sec_send_test():
     lines, raw = [], {}
     token = "检验%05d" % (int(time.time()) % 100000)
     try:
-        from agent.chat_header import verify, reference, seed_from_main
+        from agent.chat_header import check, reference, ref_sizes
         from agent.wechat import WeChatAdapter
         wx = WeChatAdapter()
-        ok_ref = bool(reference("filehelper"))
-        lines.append("  文件传输助手参照存在: %s" % ok_ref)
-        if not ok_ref:
-            ok, msg = seed_from_main("filehelper", note="检验包首次运行")
-            lines.append("  首次取参照: %s %s" % (ok, msg))
-        else:
-            okv, whyv = verify("filehelper")
-            lines.append("  会话头校验: %s（%s）" % (okv, whyv))
+        lines.append("  文件传输助手参照: %s · 已学尺寸 %s" % (bool(reference("filehelper")), ref_sizes("filehelper")))
+        st = check("filehelper")
+        lines.append("  发送前会话头三态: %s · %s" % (st.get("status"), st.get("note")))
+        # ⚠️ 一律走**生产路径** `send_text`：会话头判 ok 才投递，否则真实路径（按名字打开会话 +
+        #    顺手学该尺寸的参照，下次即可投递）。**不允许"没参照就直接投递"**——
+        #    2026-09-13 自测事故：no_ref 照发 ⇒ 消息被打进当时打开的另一个会话（发给了联系人 E）。
         t0 = time.time()
-        ok, msg = wx.send_text_posted(token, "filehelper")
-        lines.append("  投递发送: %s · %s · %.1fs · token=%s" % (ok, msg, time.time() - t0, token))
-        raw.update({"token": token, "ok": bool(ok), "msg": str(msg)})
+        # ⚠️ 发送必须带**硬超时**：真实路径兜底可能长时间不返回（实测 >120s 未回），
+        #    没有这道闸会让整份报告卡死 ⇒ 违反本工具"永不卡住"的设计原则。
+        _box = {}
+
+        def _do_send():
+            try:
+                _box["r"] = wx.send_text("filehelper", token)
+            except Exception as _e:      # noqa: BLE001
+                _box["e"] = "%s: %s" % (type(_e).__name__, str(_e)[:150])
+
+        _th = threading.Thread(target=_do_send, daemon=True)
+        _th.start()
+        _th.join(90)
+        if _th.is_alive():
+            ok, msg = False, "发送实测超时（90 秒未返回）⇒ 放弃等待；报告继续（这本身是有用的现象）"
+        elif "e" in _box:
+            ok, msg = False, "发送抛异常：%s" % _box["e"]
+        else:
+            ok, msg = _box.get("r", (False, "无返回"))
+        lines.append("  发送结果: %s · %s · %.1fs · token=%s" % (ok, msg, time.time() - t0, token))
+        raw.update({"token": token, "ok": bool(ok), "msg": str(msg), "gate": st.get("status")})
+        if "投递档" not in str(msg):
+            lines.append("  说明: 本次没走投递（前置未满足）⇒ 用了真实路径兜底（会短暂动光标/切前台，属库的既有兜底）")
         if not ok:
             lines.append("  ⇒ 请把本报告发回；若希望用真鼠标兜底，可在控制台把 input.backend 设为 real 再试")
     except Exception as e:
@@ -266,18 +314,18 @@ def main():
                "elapsed_s": round(time.time() - t0, 1), "send_test": bool(args.send_test),
                "sections": [{"title": t, "lines": ln, "raw": r} for t, ln, r in SECTIONS]}
     with open(base + ".json", "w", encoding="utf-8") as f:
-        json.dump(raw_all, f, ensure_ascii=False, indent=1)
+        f.write(redact(json.dumps(raw_all, ensure_ascii=False, indent=1)))
+    txt = ["群相灵 · 环境检验报告",
+           "生成时间: %s · 主机: %s · 耗时 %.1fs · 发送实测: %s" % (
+               raw_all["when"], raw_all["host"], raw_all["elapsed_s"], "是" if args.send_test else "否"),
+           "=" * 72]
+    for t, ln, _r in SECTIONS:
+        txt.append("\n【%s】" % t)
+        txt.extend(ln)
+    txt.append("\n" + "=" * 72)
+    txt.append("把本文件（或同名 .json）发回即可定位问题。")
     with open(base + ".txt", "w", encoding="utf-8") as f:
-        f.write("群相灵 · 环境检验报告\n")
-        f.write("生成时间: %s · 主机: %s · 耗时 %.1fs · 发送实测: %s\n" % (
-            raw_all["when"], raw_all["host"], raw_all["elapsed_s"], "是" if args.send_test else "否"))
-        f.write("=" * 72 + "\n")
-        for t, ln, _r in SECTIONS:
-            f.write("\n【%s】\n" % t)
-            for x in ln:
-                f.write(x + "\n")
-        f.write("\n" + "=" * 72 + "\n")
-        f.write("把本文件（或同名 .json）发回即可定位问题。\n")
+        f.write(redact("\n".join(txt) + "\n"))
     print("[完成] 报告已生成：")
     print("  " + base + ".txt")
     print("  " + base + ".json")
