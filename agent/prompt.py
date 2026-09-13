@@ -310,11 +310,30 @@ def resolve_context_tier(trigger_entries, self_nickname="", bot_name="", self_id
     return {"tier": 0, "count": 0, "reason": "未触发", "should_respond": False}
 
 
+def _gap_text(minutes: int) -> str:
+    """把"静默了多久"说成人话（给模型看的标记用）。"""
+    try:
+        m = max(0, int(minutes))
+    except (TypeError, ValueError):
+        m = 0
+    if m < 60:
+        return "%d 分钟" % m
+    if m < 60 * 24:
+        return "%d 小时" % round(m / 60.0, 1)
+    return "%d 天" % round(m / 1440.0, 1)
+
+
 def build_past_state(store, chat_key, exclude_ids=None, limit=None):
     """组装"过去状态"文本：消息 JSON 的最近一段。读取条数由上下文档位决定。
 
-    时间窗：默认只带最近 past_window_min 分钟内的消息（0=不限），
-    避免模型把很久之前的艾特/旧话题误当成"现在要回答"的内容。
+    时间窗（`past_window_min`）：优先只带窗内的消息，避免模型把很久之前的艾特/旧话题
+    误当成"现在要回答"的内容。
+
+    ⛔ 兜底（`past_floor_count`，默认 8，0=关闭）：**窗内不足 floor 条时，把窗外最近的消息补进来**，
+    并加一条"距上一条已过去 X 的标记"。为什么必须补：群里长时间静默后突然被触发时，
+    窗内一条都没有 ⇒ 过去状态是空的 ⇒ 模型被明确告知"这是你第一次参与这个会话"，
+    于是完全不看上文（2026-09-13 用户报的现象，已复现）。
+    返回字段：text/count/messages（原有）+ gap_min/stale/widened/store_has（取证用）。
     """
     cfg = get_config().get("store", {})
     max_limit = 80 if limit is None else max(0, int(limit or 0))
@@ -327,14 +346,38 @@ def build_past_state(store, chat_key, exclude_ids=None, limit=None):
         window_min = max(0, int(float(cfg.get("past_window_min") or 0)))
     except (TypeError, ValueError):
         window_min = 0
+    raw_floor = cfg.get("past_floor_count", 8)
+    try:
+        floor = max(0, int(raw_floor))
+    except (TypeError, ValueError):
+        floor = 8
     exclude = set(exclude_ids or [])
     if max_limit <= 0:
-        return {"text": "", "count": 0, "messages": []}
-    messages = [m for m in store.recent(chat_key, limit=max_limit + len(exclude)) if m.get("id") not in exclude]
+        return {"text": "", "count": 0, "messages": [], "gap_min": 0, "stale": False,
+                "widened": 0, "store_has": 0}
+    all_msgs = [m for m in store.recent(chat_key, limit=max_limit + len(exclude)) if m.get("id") not in exclude]
+    now_ms = int(__import__("time").time() * 1000)
     if window_min > 0:
-        cutoff = int(__import__("time").time() * 1000) - window_min * 60000
-        messages = [m for m in messages if int(m.get("ts") or 0) >= cutoff]
-    messages = messages[-max_limit:]
+        cutoff = now_ms - window_min * 60000
+        in_win = [m for m in all_msgs if int(m.get("ts") or 0) >= cutoff]
+    else:
+        cutoff = 0
+        in_win = list(all_msgs)
+    messages = in_win[-max_limit:]
+    width = min(floor, max_limit)
+    widened = 0
+    if width and len(messages) < width:
+        have = {id(m) for m in messages}
+        older = [m for m in all_msgs if id(m) not in have][-(width - len(messages)):]
+        widened = len(older)
+        messages = older + messages
+    stale = bool(window_min) and any(int(m.get("ts") or 0) < cutoff for m in messages)
+    gap_min = 0
+    if messages:
+        try:
+            gap_min = max(0, int((now_ms - int(messages[-1].get("ts") or now_ms)) / 60000))
+        except (TypeError, ValueError):
+            gap_min = 0
     # ⑥ 上下文压缩（向 harness 看齐）：最近 8 条详细，更早的只保留「发送者+前40字」摘要——降 token 且不丢"谁说过"信息
     NEAR = 8
     near = messages[-NEAR:]
@@ -344,7 +387,16 @@ def build_past_state(store, chat_key, exclude_ids=None, limit=None):
         t = str(m.get("text") or "").strip()[:40]
         s = str(m.get("sender_name") or m.get("sender_id") or "某人")
         lines.append("（%s：%s）" % (s, t if t else "[消息]"))
-    return {"text": "\n".join(lines), "count": len(lines), "messages": near}
+    if stale and lines:
+        # 把"这是旧历史"显式标出来：兜底把窗外消息带进来之后，必须让模型知道别把它当本轮问题
+        if gap_min > 0:
+            lines.insert(0, "（提醒：这个会话最近一条消息已经是 %s 之前的事了；下面是更早的聊天记录，"
+                            "只用来帮你了解上下文，不是本轮要回答的内容）" % _gap_text(gap_min))
+        else:
+            lines.insert(0, "（提醒：时间窗之外的更早记录也一并带上了，只用来帮你了解上下文，"
+                            "不是本轮要回答的内容）")
+    return {"text": "\n".join(lines), "count": len(lines), "messages": near,
+            "gap_min": gap_min, "stale": stale, "widened": widened, "store_has": len(all_msgs)}
 
 
 def _trigger_labels(entry, ctx) -> list:
@@ -413,6 +465,8 @@ def build_user_prompt(ctx) -> str:
     # 过去状态
     if past["text"]:
         parts.append("【过去状态】以下是这个会话最近的聊天记录（按时间排序，你的发言标为\"我\"；这些都已经看过，不需要逐条回应；带图的消息前有 #消息id，看图工具要用它）：\n%s" % past["text"])
+    elif past.get("store_has"):
+        parts.append("【过去状态】（这个会话此前的记录都没能取到——不是\"第一次参与\"，别当成新会话处理）")
     else:
         parts.append("【过去状态】（暂无历史记录，这是你第一次参与这个会话）")
 
