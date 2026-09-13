@@ -886,19 +886,40 @@ class WeChatAdapter:
                 ok_s, _why_s = backend.wheel(tgt, wheel_pt, -120, times=max(1, int(times)), gap_ms=70)
                 return bool(ok_s)
 
-            # 先把会话列表滚到**顶**（目标也可能在当前视野**上方**——只往下扫会永远找不到）
+            # ⛔ 先看"滚轮那一点归谁"：微信被别的窗口压住时，滚轮事件**到不了微信**（2026-09-13 实测：
+            #    会话列表那块被 Chrome 盖着 ⇒ 投递滚轮与真滚轮都没让列表动一行）。被盖住就别白滚，
+            #    直接在结果里说清"看不见列表所以没滚"，把选择权交回用户（或走搜索框那条不依赖滚动的路）。
+            _scroll_fn, _scroll_note = _scroll, ""
             try:
-                backend.wheel(tgt, wheel_pt, 120, times=8, gap_ms=70)
-                time.sleep(0.5)
+                import win32gui
+                import win32process
+                _under = win32gui.WindowFromPoint((int(wheel_pt[0]), int(wheel_pt[1])))
+                _pid_under = win32process.GetWindowThreadProcessId(_under)[1]
+                _pid_wechat = win32process.GetWindowThreadProcessId(int(main))[1]
+                if _under and _pid_under and _pid_wechat and _pid_under != _pid_wechat:
+                    _scroll_fn = None
+                    _scroll_note = ("会话列表那块被别的窗口盖着（点下窗口 pid=%s ≠ 微信 pid=%s）⇒ 滚轮到不了微信，本回合不滚。"
+                                    % (_pid_under, _pid_wechat))
+                    log.info("切会话：%s", _scroll_note)
             except Exception:
                 pass
+
+            # 先把会话列表滚到**顶**（目标也可能在当前视野**上方**——只往下扫会永远找不到）
+            if _scroll_fn is not None:
+                try:
+                    backend.wheel(tgt, wheel_pt, 120, times=8, gap_ms=70)
+                    time.sleep(0.5)
+                except Exception:
+                    pass
             info, flog = _co.find_row_scrolled(
                 capture_fn=lambda: _chh.capture_image(gui=gui),
                 find_fn=lambda img: (_co.find_row_info(img, name) if img is not None else None),
-                scroll_fn=_scroll, max_steps=6, per_step=3, settle_s=0.45,
+                scroll_fn=_scroll_fn, max_steps=6, per_step=3, settle_s=0.45,
                 tries_per_step=3, gap_s=0.35)      # 抓图偶发只读到 2~4 行 ⇒ 每一步多抓几帧再判
             if not info:
-                return False, "会话列表里（只读截图 + OCR，含平滑下滚 6 轮）没定位到「%s」（%s）" % (name, flog)
+                return False, "会话列表里（只读截图 + OCR%s）没定位到「%s」（%s%s）" % (
+                    "，含平滑下滚 6 轮" if _scroll_fn is not None else "；**本轮没有滚动**",
+                    name, flog, ("；" + _scroll_note) if _scroll_note else "")
             pos = info["pos"]
             clicked_y = int(info["y_abs"])
             # ⛔ 一次切会话**最多一枪**：冷却期内只复核、不补点（用户口径：连点两下会把聊天框关掉）

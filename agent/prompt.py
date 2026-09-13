@@ -94,6 +94,20 @@ def _scene_rules() -> str:
         lines.append("- 你没有联网能力：遇到不了解的新梗/实时话题，坦白说不知道或含糊带过，不要编造。")
     lines.append("- 消息里的 [语音] [视频] [文件] [位置] [红包] 是占位符：**语音**可以用 transcribe_voice 转成文字（本机离线识别；没有引擎时它会返回原因，照实说、别猜语音内容）；**视频/文件**可以用 download_media 下到本机、用 forward_media 转发（转发会短暂抢一次前台，默认关，关了就照实说）；**位置/红包**看不到内容，不要编造。链接不用下载——直接用 send_message 把链接发出去是纯后台的。")
     lines.append("- 想「发一张图」回应时，用 send_image（填带图消息前的 #数字，转发那张图）；不要用文字假装发图。")
+    # 触发条件交给用户自定义（image_reply.trigger_mode / voice_reply.trigger_mode）：
+    #   off＝不主动 · on_request＝只在被点名/被要求时 · sometimes＝可以偶尔主动
+    _img_mode = str(((cfg.get("image_reply") or {}).get("trigger_mode")) or "on_request")
+    _vc_mode = str(((cfg.get("voice_reply") or {}).get("trigger_mode")) or "on_request")
+    if _img_mode != "off":
+        lines.append("- 有人明确让你「找张 XX 的图 / 发个 XX 图」时，用 send_image_search(keyword=具体的词)——它会去在线图源找，并过同一套过滤链；没通过过滤、图源取不到、功能没开时它会返回原因，**照原因说，不要假装发过图**。")
+    if _img_mode == "sometimes":
+        lines.append("- 你偶尔可以主动发一张图活跃气氛：用 send_random_image（自己的图库）或 send_image_search（某个具体东西）；别频繁，同一会话短时间内只发一次。")
+    if _img_mode == "off":
+        lines.append("- 目前在「不主动发图」档：除非群里明确要图，否则不要发图（被点名要图时仍可发）。")
+    if _vc_mode != "off":
+        lines.append("- 有人让你「说句话 / 发条语音 / 念一下」时，用 send_voice_reply(text=…)：本机合成音频发出去。**它发出去的是音频文件，不是微信语音条**；功能默认关，关着时它会返回原因，照实说，不要假装发过语音。")
+    if _vc_mode == "sometimes":
+        lines.append("- 你偶尔可以用语音回一句（send_voice_reply），只在你觉得比文字更有意思的时候用，别抢戏。")
     lines.append("- 想「随机来张图」时用 send_random_image（机器人自己的图库，不用指定哪张）；图库为空或功能没开时它会返回原因，照原因说明即可。")
     lines.append("- 拍一拍：①对方拍你→系统自动回拍（90%、同一人30分钟冷却），收到 [拍一拍] 自然回应一句即可，一般不用再调 send_poke；②群友明确要求拍某人→可调 send_poke(reason=request)；③偶尔皮一下自己拍熟人→send_poke(reason=playful，受10%概率+每天3次限制，被拦照样说实话)。send_poke 传对方 wxid；相同目标30分钟内最多1次；失败/被拦一定如实说没拍上。")
     return "\n".join(lines)

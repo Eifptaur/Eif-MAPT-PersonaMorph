@@ -113,6 +113,8 @@ DEFAULT_CONFIG = {
         "sources": ["pixiv", "safebooru", "nekos", "konachan", "waifu", "yande"],
         "sources_per_try": 4,        # 一次最多试几个图源（每张都要过过滤链）
         "tag": "",                   # 可选：给 pixiv 图源加个偏好标签（如 "风景"）
+        "allow_search": True,        # 允许模型**按请求里的关键词**去找图（send_image_search）；false 就只能用本地图库
+        "trigger_mode": "on_request",  # 触发条件（交给用户自定义）：on_request＝只被点名要图时才发 | sometimes＝偶尔主动发 | off＝不主动
         # ── 过滤（纵深防御：任何一道说不行就不发；细节见 agent/image_filter.py）──
         "safe_only": True,           # 只允许安全分级（限制级一律拒）
         "allow_questionable": False, # 是否放宽到"暧昧级"（默认否，不建议开）
@@ -149,6 +151,7 @@ DEFAULT_CONFIG = {
         "dir": "media/tts",      # 合成产物目录
         "max_chars": 120,        # 单条合成上限（太长又慢又不合适）
         "min_gap_seconds": 30,   # 同一会话两条相同语音的最小间隔（防刷屏）
+        "trigger_mode": "on_request",  # 触发条件（交给用户自定义）：on_request＝只被要求时才发 | sometimes＝偶尔主动 | off＝不主动
     },
     # ── 用户自定义工具（声明式 HTTP 工具；默认关）────────────────────────────
     #   用户往 `tools.d/*.json` 丢清单，**勾选后**才给模型用。只发 HTTP、**不跑本地代码**、域名白名单必填、

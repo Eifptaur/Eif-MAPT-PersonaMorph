@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import os as _os
 import time
 
 from .config import get_config
@@ -173,6 +174,16 @@ def _builtin_tool_defs() -> list:
                 "required": ["text"],
             },
             "execute": _exec_send_voice_reply,
+        },
+        {
+            "name": "send_image_search",
+            "description": "**按关键词去找一张图并发到当前会话**（在线图源 + 同一套过滤链）。有人明确说「找张猫的图/发个风景图/来张赛博朋克」时用。关键词要具体（如 猫、风景、赛博朋克、星空）。功能没开、没通过过滤、图源取不到时会返回原因，照原因说明即可，不要假装发过图。",
+            "parameters": {
+                "type": "object",
+                "properties": {"keyword": {"description": "要找什么图（一句短词，中文或英文都可以）"}},
+                "required": ["keyword"],
+            },
+            "execute": _exec_send_image_search,
         },
         {
             "name": "collect_emoji",
@@ -633,6 +644,40 @@ def _exec_send_random_image(ctx, args):
         ctx["session"]["sent"].append({"type": "image", "text": "[图片]"})
         return _ok({"sent": True, "file": _os.path.basename(path),
                     "note": "%s。不要输出『已发送』类汇报。" % why})
+    except Exception as e:
+        return _err(str(e))
+
+
+_IMG_SEARCH_LAST = {}     # chat_key -> ts：按关键词找图的会话级冷却（防连发）
+
+
+def _exec_send_image_search(ctx, args):
+    """按关键词找一张图并发出去（在线图源 + 三段过滤；功能没开/没通过就照实说）。"""
+    try:
+        from . import image_lib as _il
+        cfg = get_config()
+        conf = cfg.get("image_reply") or {}
+        if not conf.get("enabled"):
+            return _err("随机图/找图功能没开（控制台「随机图」面板打开后可用）；想发群里已有的图请用 send_image")
+        kw = str(args.get("keyword") or "").strip()
+        if not kw:
+            return _err("keyword 不能为空（比如「猫」「风景」）")
+        gap = int(conf.get("min_gap_seconds") or 20)
+        key = str(ctx.get("chat_key") or "")
+        last = float(_IMG_SEARCH_LAST.get(key) or 0)
+        if last and (time.time() - last) < gap:
+            return _ok("刚发过图（%.0fs 内），先缓一下再说。" % gap)
+        path, why = _il.search_image(cfg, kw, chat_id=ctx.get("chat_id") or "")
+        if not path:
+            return _ok("这次没找到能发的图：%s" % why)
+        ctx["sender"].send_image(ctx["chat_key"], path)
+        _IMG_SEARCH_LAST[key] = time.time()
+        try:
+            ctx["session"]["sent"].append({"type": "image", "text": "[图片]"})
+        except Exception:
+            pass
+        return _ok({"sent": True, "keyword": kw, "file": _os.path.basename(path),
+                    "note": "已找到并发出一张「%s」的图（过滤链全程生效）。不要输出『已发送』类汇报。" % kw})
     except Exception as e:
         return _err(str(e))
 
