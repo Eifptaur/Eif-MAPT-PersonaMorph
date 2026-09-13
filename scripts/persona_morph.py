@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import logging.handlers
 import os
 import re
 import secrets
@@ -68,15 +69,28 @@ class _SecretFormatter(logging.Formatter):
 LOG_DIR = os.path.join(ROOT, "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
 
-class _FlushFileHandler(logging.FileHandler):
-    """每行立即落盘：pythonw 进程被强杀时缓冲不丢，日志文件始终完整。"""
+class _FlushFileHandler(logging.handlers.RotatingFileHandler):
+    """按体积轮转 + 每行立即落盘。
+
+    · 轮转：单文件 5MB、保留 3 份 `.1/.2/.3`（此前是**没有任何上限的普通 FileHandler**，
+      挂着跑会一直涨 —— 2026-09-13 体检发现）；
+    · 每行 flush：pythonw 进程被强杀时缓冲不丢，日志文件始终完整。
+    """
+
+    def __init__(self, filename, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"):
+        logging.handlers.RotatingFileHandler.__init__(
+            self, filename, mode="a", maxBytes=maxBytes, backupCount=backupCount,
+            encoding=encoding, delay=True)
 
     def emit(self, record):
-        super().emit(record)
         try:
+            super().emit(record)
             self.flush()
         except Exception:
-            pass
+            try:
+                self.handleError(record)
+            except Exception:
+                pass
 
 
 logging.basicConfig(
@@ -110,6 +124,13 @@ class _RingHandler(logging.Handler):
 _ring = _RingHandler(log_buffer)
 _ring.setFormatter(_SecretFormatter("%(asctime)s [%(levelname)s] %(message)s"))
 logging.getLogger().addHandler(_ring)
+
+# 启动时做一次日志体积治理（主日志轮转在 handler 里，这里处理"只追加"的那几份）
+try:
+    from agent import log_housekeeping as _lh
+    _lh.sweep(ROOT, log=log)
+except Exception as _e:      # 治理失败绝不能挡住启动
+    log.warning("日志治理跳过：%s", _e)
 
 
 def _parse_inline_calls(text: str) -> list:

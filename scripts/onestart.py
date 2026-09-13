@@ -14,6 +14,14 @@ import time
 import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+
+# 启动即治理日志体积（主日志在 persona_morph 里轮转，这里处理"只追加"的那几份）
+try:
+    from agent import log_housekeeping as _lh
+    _lh.sweep(ROOT)
+except Exception:
+    pass
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 LOG_DIR = os.path.join(ROOT, "logs")
