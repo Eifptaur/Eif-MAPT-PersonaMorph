@@ -685,6 +685,14 @@ class WeChatAdapter:
         否则（`mismatch`/`no_ref`/抓不到）**退回真实路径**——真实路径会先按名字打开会话，
         顺便把这个尺寸下的会话头学到手，于是**下一次就能走投递**。
         """
+        # W7 版本门：没实测过的版本对默认暂停自动发送（控制台可临时放行）
+        try:
+            from . import version_gate as _vg
+            _g = _vg.check("send")
+            if not _g["allow"]:
+                return False, _g["reason"]
+        except Exception:
+            pass
         if not self._dedup_send(chat_id, text):
             return True, "重复发送已拦截（3 秒内同一文本）"
         name = self.group_name(chat_id)
@@ -1109,6 +1117,14 @@ class WeChatAdapter:
         是"不抢鼠标 + 会闪一个系统对话框"；产品侧要做成显式开关。剪贴板那条（CF_HDROP+投递 Ctrl+V）
         实测**完全无效**（微信 4.1.15.8 不收），别再往那条路上试。
         """
+        # W7 版本门：没实测过的版本对默认暂停自动发送（控制台可临时放行）
+        try:
+            from . import version_gate as _vg
+            _g = _vg.check("send")
+            if not _g["allow"]:
+                return False, _g["reason"]
+        except Exception:
+            pass
         from . import input_backend as ib
         try:
             import uiautomation as auto
@@ -1264,6 +1280,14 @@ class WeChatAdapter:
         （OCR 名字判据）就走投递（剪贴板放图 + 投递 `WM_PASTE` + 投递点发送 + **DB 回读**），
         拿不到正面证据才退回真实路径（那条会用真鼠标，用完保管光标）。
         """
+        # W7 版本门：没实测过的版本对默认暂停自动发送（控制台可临时放行）
+        try:
+            from . import version_gate as _vg
+            _g = _vg.check("send")
+            if not _g["allow"]:
+                return False, _g["reason"]
+        except Exception:
+            pass
         name = self.display_name(chat_id)
         try:
             with self._send_lock:
