@@ -1021,6 +1021,241 @@ class WeChatAdapter:
         except Exception as e:
             return False, "投递发图异常：%s" % e
 
+    # ── 发文件（消息驱动；2026-09-13 实测打通）─────────────────────────────
+    @staticmethod
+    def _file_panel_point(render_rect, pane_left: int):
+        """微信输入区工具栏「文件」（文件夹图标）的位置。
+
+        实测（2026-09-13，微信 4.1.15.8 / 150% DPI）：工具栏图标行在**渲染区底部往上 50px**，
+        图标 x 是**相对聊天面板左沿的固定偏移**（库的注释：输入框与底部工具栏高度固定，窗口缩放只改变消息区高度）：
+        😊表情=+43 · 📦收藏=+97 · 📁文件=+151 · ✂️截图=+205 · 🎤语音=+280。
+        ⛔ 别用窗口宽度比例推算（那会把"收藏"当成"文件"——已踩过：点 428 弹出的是收藏选择窗）。
+        """
+        r = render_rect or (0, 0, 0, 0)
+        rh = int(r[3] - r[1])
+        return (int(r[0]) + int(pane_left) + 151, int(r[1]) + rh - 50)
+
+    @staticmethod
+    def _looks_like_file_msg(row) -> bool:
+        """DB 回读的行是不是"文件类"消息（本机实测文件消息 type='文件/链接/卡片'）。"""
+        if not row:
+            return False
+        t = str(row.get("type_name") or row.get("type") or "")
+        return ("文件" in t) or ("链接" in t) or ("卡片" in t)
+
+    @staticmethod
+    def _sent_file_log_path() -> str:
+        return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "sent_files.json")
+
+    def _repeat_guard(self, chat_id: str, path: str, window_s: int = 600):
+        """防重复发送：同一会话 + 同一文件（绝对路径+大小+mtime）在 window_s 内发过 ⇒ 拒绝。
+
+        为什么加（2026-09-13 用户当场发现"你发了两个文件给我，一模一样的"）：我先跑脚本探针、
+        又跑产品函数各发一次同一个 zip ⇒ 同一个会话里出现两份一模一样的文件。
+        验证"这条路可行"只需要**一次**实发；重复实发既浪费又让用户困惑 ⇒ 加这道闸。
+        返回 (ok, why)；守卫自身出错时**放行**（它只是安全网，不该挡住正常发送），但会记一行日志。
+        """
+        import json as _json
+        try:
+            fp = self._sent_file_log_path()
+            st = os.stat(os.path.abspath(path))
+            key = "%s|%d|%d" % (os.path.abspath(path), st.st_size, int(st.st_mtime))
+            full = chat_id + "|" + key
+            data = {}
+            try:
+                with open(fp, "r", encoding="utf-8") as f:
+                    data = _json.load(f) or {}
+            except Exception:
+                data = {}
+            now = time.time()
+            prev = float(data.get(full) or 0)
+            if prev and (now - prev) < window_s:
+                return False, "同一文件在 %d 秒内已经发给这个会话了（%s）——拒绝重复发送；确实要再发请显式传 allow_repeat=True" % (
+                    int(now - prev), os.path.basename(path))
+            data[full] = now
+            for k in list(data.keys()):
+                try:
+                    if now - float(data[k] or 0) > 7 * 86400:
+                        data.pop(k, None)
+                except Exception:
+                    data.pop(k, None)
+            try:
+                os.makedirs(os.path.dirname(fp), exist_ok=True)
+                tmp = fp + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    _json.dump(data, f, ensure_ascii=False)
+                os.replace(tmp, fp)
+            except Exception as e:
+                log.warning("发文件去重台账写盘失败（不影响本次发送）：%s", e)
+            return True, ""
+        except Exception as e:
+            try:
+                log.warning("发文件去重守卫异常（放行）：%s", e)
+            except Exception:
+                pass
+            return True, ""
+
+    def send_file_posted(self, chat_id: str, local_path: str, wait_s: float = 90.0, allow_repeat: bool = False):
+        """**消息驱动发文件**（全程不动鼠标；会短暂弹出「选择文件」对话框）。
+
+        链路（2026-09-13 在文件传输助手实测成功，DB 回读 `local_id=567 type=文件/链接/卡片`）：
+          ① 会话闸：目标会话必须已打开且被 OCR 正面确认（拿不到证据就**拒绝**，防误发）；
+          ② **投递点击**微信工具栏的「文件」图标 → 弹出系统「选择文件」对话框；
+          ③ **UIA（不碰鼠标）**：文件名框 `SetValue(路径)` → 点「打开」（没找到按钮就对该框回车）；
+          ④ **投递点击**「发送」（微信此时只是把文件挂成草稿，必须再点一次发送）；
+          ⑤ **只认 DB 回读**：出现"文件/链接/卡片"类型的新行才算成功。
+
+        ⚠️ 已知代价：第②步会弹出一个**系统文件对话框**（会短暂抢前台）——所以这条不是"纯后台"，
+        是"不抢鼠标 + 会闪一个系统对话框"；产品侧要做成显式开关。剪贴板那条（CF_HDROP+投递 Ctrl+V）
+        实测**完全无效**（微信 4.1.15.8 不收），别再往那条路上试。
+        """
+        from . import input_backend as ib
+        try:
+            import uiautomation as auto
+        except Exception as e:
+            return False, "发文件需要 uiautomation（UIA 驱动系统对话框）：%s" % e
+        import win32gui
+        try:
+            if not allow_repeat:
+                ok_rep, why_rep = self._repeat_guard(chat_id, local_path)
+                if not ok_rep:
+                    return False, why_rep
+            gui = self._get_gui()
+            backend = ib.select_backend(gui=gui)
+            if not isinstance(backend, ib.MessageBackend):
+                return False, "当前输入后端不是投递档（config.input.backend=%s）" % backend.name
+            ok_open, why_open = self.chat_is_open(chat_id, gui=gui)
+            if not ok_open:
+                return False, "发文件要求目标会话已打开且被确认：%s" % why_open
+            main_hwnd = int(getattr(gui, "main_hwnd", 0) or 0) or ib.find_main_window()
+            if not main_hwnd:
+                return False, "找不到微信主窗"
+            try:
+                gui._update_render_rect()
+            except Exception:
+                pass
+            r = gui.render_rect or (0, 0, 0, 0)
+            rw, rh = int(r[2] - r[0]), int(r[3] - r[1])
+            if rw <= 0 or rh <= 0:
+                return False, "渲染区未知（窗口不可见？）"
+            try:
+                pane = int(gui.detect_pane_left())
+            except Exception:
+                pane = 331
+
+            def _rows():
+                try:
+                    return list(self._db.get_messages(chat_id, limit=6) or [])
+                except Exception:
+                    return []
+
+            base = _rows()
+            base_id = int(base[0].get("local_id") or 0) if base else 0
+
+            # ② 打开系统文件对话框
+            pt = self._file_panel_point(r, pane)
+            ok_c, why_c = backend.click(main_hwnd, pt)
+            if not ok_c:
+                return False, "投递点「文件」图标失败：%s" % why_c
+
+            def _find_dlg(timeout=10.0):
+                import time as _t
+                dl = _t.time() + timeout
+                while _t.time() < dl:
+                    hits = []
+
+                    def cb(h, _):
+                        try:
+                            if win32gui.GetClassName(h) == "#32770" and win32gui.IsWindowVisible(h):
+                                t = win32gui.GetWindowText(h)
+                                if "选择文件" in t or "打开" in t:
+                                    hits.append(h)
+                        except Exception:
+                            pass
+                    win32gui.EnumWindows(cb, None)
+                    if hits:
+                        return hits[0]
+                    _t.sleep(0.3)
+                return 0
+
+            hwnd = _find_dlg(10.0)
+            if not hwnd:
+                return False, "没等到「选择文件」对话框（微信版本/主题不同可能按钮位置变了）"
+            dlg = auto.ControlFromHandle(hwnd)
+            edits, buttons = [], []
+            for c, _d in auto.WalkControl(dlg, maxDepth=14):
+                try:
+                    if c.ControlTypeName == "EditControl" and c.IsEnabled:
+                        edits.append(c)
+                    elif c.ControlTypeName == "ButtonControl" and c.IsEnabled:
+                        buttons.append(c)
+                except Exception:
+                    continue
+            target = None
+            for c in edits:
+                if str(c.AutomationId) == "1148":
+                    target = c
+                    break
+            if target is None and edits:
+                target = edits[-1]
+            if target is None:
+                try:
+                    dlg.GetPattern(auto.PatternId.WindowPattern).Close()
+                except Exception:
+                    pass
+                return False, "文件对话框里找不到文件名输入框"
+            try:
+                target.GetValuePattern().SetValue(os.path.abspath(local_path))
+            except Exception as e:
+                return False, "写文件名失败：%s" % e
+            btn = None
+            for c in buttons:
+                if (c.Name or "").strip().startswith("打开"):
+                    btn = c
+                    break
+            try:
+                if btn is not None:
+                    btn.GetInvokePattern().Invoke()
+                else:
+                    target.SendKeys("{Enter}")
+            except Exception:
+                try:
+                    target.SendKeys("{Enter}")
+                except Exception as e2:
+                    return False, "点「打开」失败：%s" % e2
+            time.sleep(2.0)
+            try:
+                if win32gui.IsWindow(hwnd) and win32gui.IsWindowVisible(hwnd):
+                    target.SendKeys("{Enter}")      # 有些版本要点一次回车才关
+                    time.sleep(1.5)
+            except Exception:
+                pass
+
+            # ④ 补一次「发送」（文件此时挂在输入框里当草稿）
+            send_pt = (int(r[0]) + int(rw * 0.932), int(r[1]) + int(rh * 0.945))
+            backend.click(main_hwnd, send_pt)
+
+            # ⑤ 只认 DB 回读
+            deadline = time.time() + max(15.0, float(wait_s))
+            while time.time() < deadline:
+                time.sleep(2.0)
+                rows = _rows()
+                if rows:
+                    try:
+                        nid = int(rows[0].get("local_id") or 0)
+                    except Exception:
+                        nid = 0
+                    if nid > base_id:
+                        top = rows[0]
+                        if self._looks_like_file_msg(top):
+                            return True, "投递发文件成功（DB 回读 local_id=%s type=%s）" % (
+                                top.get("local_id"), top.get("type_name") or top.get("type"))
+                        return False, "发出了新消息但不是文件类（local_id=%s type=%s）" % (
+                            top.get("local_id"), top.get("type_name") or top.get("type"))
+            return False, "已走完对话框与发送，但 %ds 内 DB 没等到新行（发文件未生效）" % int(wait_s)
+        except Exception as e:
+            return False, "投递发文件异常：%s" % e
+
     def send_image(self, chat_id: str, local_path: str):
         """发送本地图片。返回 (ok, message)。
 
