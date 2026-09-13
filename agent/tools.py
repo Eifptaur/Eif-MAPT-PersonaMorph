@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import time
 
 from .config import get_config
 from .util import normalize_message_list, unquote_json_string
@@ -148,6 +149,16 @@ def build_tool_defs() -> list:
                 "required": ["message_id", "kind"],
             },
             "execute": _exec_forward_media,
+        },
+        {
+            "name": "send_voice_reply",
+            "description": "把一句话合成成音频发到当前会话（本机 TTS，零下载；**发出去的是音频文件，不是微信语音条**）。适合「用语音回一句」。功能没开 / 文本太长 / 没合成引擎 / 发失败时它会返回原因，照原因如实说明即可。",
+            "parameters": {
+                "type": "object",
+                "properties": {"text": {"description": "要说的话（建议 ≤120 字，别带表情符号堆叠）"}},
+                "required": ["text"],
+            },
+            "execute": _exec_send_voice_reply,
         },
         {
             "name": "collect_emoji",
@@ -529,6 +540,48 @@ def _exec_forward_media(ctx, args):
         if not ok_flag:
             return _ok("转发没成功：%s" % msg)
         return _ok({"sent": True, "note": "已转发（这一步短暂用过前台）。不要输出\"已发送\"类汇报。"})
+    except Exception as e:
+        return _err(str(e))
+
+
+_VOICE_LAST = {}          # chat_key -> (ts, text)：同会话同内容的最小间隔（防刷屏）
+
+
+def _exec_send_voice_reply(ctx, args):
+    """文字 → 本机合成音频 → 发到当前会话（**形态是音频文件，不是微信语音条**）。"""
+    try:
+        from . import tts as _tts
+        vcfg = get_config().get("voice_reply") or {}
+        if not vcfg.get("enabled"):
+            return _ok("语音回复默认关闭：本机能把文字合成音频，但**发出去是音频文件（不是微信语音条）**，"
+                       "所以要先在控制台「语音回复」里打开才允许发。")
+        text = str(args.get("text") or "").strip()
+        if not text:
+            return _err("text 不能为空")
+        mx = int(vcfg.get("max_chars") or 120)
+        if len(text) > mx:
+            return _ok("这条太长（%d 字，上限 %d）：语音回复请压到 %d 字以内。" % (len(text), mx, mx))
+        st = _tts.status()
+        if not st.get("ok"):
+            return _ok("本机没有可用的语音合成引擎：%s（照实说明，别假装发过语音）" % st.get("why"))
+        gap = int(vcfg.get("min_gap_seconds") or 30)
+        key = str(ctx.get("chat_key") or "")
+        last = _VOICE_LAST.get(key) or (0.0, "")
+        if last[1] == text and (time.time() - last[0]) < gap:
+            return _ok("刚发过一模一样的语音（%.0fs 内），这次不重复发。" % gap)
+        path, err, info = _tts.make(text)
+        if not path:
+            return _ok("合成失败：%s" % (err or "未知原因"))
+        ok_flag, msg = ctx["wechat"].send_file_posted(ctx["chat_id"], path)
+        if not ok_flag:
+            return _ok("语音没发出去：%s" % msg)
+        _VOICE_LAST[key] = (time.time(), text)
+        try:
+            ctx["session"]["sent"].append({"type": "voice_file", "text": text})
+        except Exception:
+            pass
+        return _ok({"sent": True, "voice": info.get("voice") or "", "fmt": info.get("fmt") or "",
+                    "note": "已发（形态：音频文件，不是语音条）。不要输出\"已发送\"类汇报。"})
     except Exception as e:
         return _err(str(e))
 
