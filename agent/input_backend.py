@@ -145,6 +145,33 @@ def pick_main_window(cands) -> int:
     return best
 
 
+def find_render_child(main_hwnd: int) -> int:
+    """主窗里的**渲染子窗**（`MMUIRenderSubWindowHW`）：Qt 自绘界面真正绘制/接收鼠标的那一层。
+
+    为什么需要：键盘、点「发送」按钮投给**主窗**是有效的；但会话列表行的点击可能归这一层处理
+    （2026-09-13 实测：投主窗点了会话行之后，绿底高亮没有转到目标行 ⇒ 怀疑投错了窗口）。
+    """
+    if not main_hwnd:
+        return 0
+    import win32gui
+    hits = []
+
+    def cb(h, _l):
+        try:
+            cls = win32gui.GetClassName(h)
+        except Exception:
+            return True
+        if "MMUIRender" in cls or "RenderSubWindow" in cls:
+            hits.append(int(h))
+        return True
+
+    try:
+        win32gui.EnumChildWindows(int(main_hwnd), cb, None)
+    except Exception:
+        return 0
+    return hits[0] if hits else 0
+
+
 def find_main_window() -> int:
     """微信**主窗**（投递键盘消息、点笑脸都发它）。
 
