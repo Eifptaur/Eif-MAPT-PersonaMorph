@@ -56,7 +56,7 @@
 
 **三件必办（验收写死，细节见 `_scratch\四个对标项目-可借鉴总报告.md` §6 第 0 条）**
 1. ✅ **已做（2026-09-13）**：驱动库升到 **1.2.2.2**（装进 `runtime\python`；顺带拉进 pyautogui/opencv 等新依赖 ⇒ 离线包清单要同步）；私有 API 收进 **`agent/replica_adapter.py`（唯一收口点 + 版本守卫：≥1.1.5.1 最低、>1.2.2.2 只提示"未实测"）**；`wechat.py` 三处调用点改写（昵称映射 / 群列表 / 引用消息取图）——其中引用消息取图**从"只看第一个命中分片"改成遍历全部分片**（1.2.2 起 `_msg_conn` 已是兼容降级接口，不改就是静默少查）；`dep_check` 去掉对它的**严格等值**判定（实测 `1.2.2.2 / min 1.1.5.1 / ok=True`）。判据＝`py -3 scripts\replica_adapter_selftest.py`（假 DB 单测，**18/0**，不需要微信在跑）+ `scripts\selftest.py` **55/55**。
-2. 监听水位重做：**处理成功才推进** + 失败重试 3 次并留痕 + 水位原子落盘 + 每会话一条串行 worker。（现在是自己轮询 `:202-220`，seq 由 `persona_morph.py` 维护 ⇒ **动手前先确认它何时推进、是否落盘**。）
+2. ✅ **已做（2026-09-13）**：新增 **`agent/listener_watermark.py`**（`Watermark` 原子落盘 + `process_batch`：handler 返回真值才推进水位 / 失败重试 3 次线性退避 / 仍失败写 dead-letter 并**越过**毒消息 / 每会话 RLock 串行）；`scripts/persona_morph.py` 监听循环改为**从 `data/listener_watermark.json` 读回水位**（重启后继续，停机期间消息会补上，不再跳 `latest_seq`）、逐条以 `append_incoming` **是否返回 entry** 判成功、失败留痕 `data/listener_failed.jsonl`、退出前 `flush`。判据＝`py -3 scripts/watermark_selftest.py`（**17/0**，不需要微信）+ `scripts/selftest.py` **55/55**。**改前基线（取证）**：`since_seq` 只在内存、批末**无条件推进**、失败无重试无留痕、重启直接跳 `latest_seq`。
 3. 新增只读 `agent/uia_probe.py`：输出 `is_materialized()` + `describe_layout()` 到 `wechatauto_logs/ui_probe/<微信版本>.json`，控制台加按钮；并实测 `uiautomation.Control.Click()` 是否移动光标（本机 2.0.29 走 `SetCursorPos`）——**这条决定 §2 的 L2 选型能不能成立**，必须落到 §2.0 那套"三档各 30 次"的实测里。
 
 > 取证来源：`_scratch\refs\wechatauto-replica-可借鉴.md`（14 条机制 / 37 行结论表 / 我没验证到的）；插件体系与热更新参照 `_scratch\refs\miloto-可借鉴.md`（机制 1..20）。
