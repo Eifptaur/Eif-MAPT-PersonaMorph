@@ -1881,6 +1881,23 @@ class WeChatAdapter:
                         if _fp and _fp in _pane_norm:
                             return True, ("聊天区里能看到我们发给该会话的文件（%s）—— 版本指纹 %s 命中"
                                           % (_nm, _fp))
+                # 追加（2026-09-14 实测）：**刚发完**一个文件时，微信把它显示成文件卡，长名字会被截断
+                #   （实测 `兼容性矩阵.md` 显示成 `[文件]兼容性…`），而这类文件名里没有版本号 ⇒ 上面那条
+                #   指纹提不出来。此时用"文件名开头 3 个字 + 刚刚发过（10 分钟内）"这一组合来认：
+                #   会话是从台账里按 chat_id 取的，加上"就在刚刚"，实际指向非常具体。
+                _recent = self._sent_file_names(chat_id, limit=1)
+                if _recent:
+                    _nm0, _ts0 = _recent[0]
+                    if (time.time() - float(_ts0 or 0)) < 600:
+                        _stem = os.path.splitext(_nm0)[0]
+                        _head = "".join(ch for ch in _stem if ch.isalnum())[:3]
+                        # ⚠️ 必须带上"文件卡前缀"一起匹配：微信把文件显示成 `[文件]<名字>…`，
+                        #   只匹配名字开头会**误吞普通聊天文字**（实测：一条提到《…清单.md》的消息就把
+                        #   「另一台…」三个字凑出来了 ⇒ 那是会发错会话的假阳性）。要求 `文件+开头` 同时出现，
+                        #   等于限定"这是一张文件卡"，而不是"谁在文字里提过这个名字"。
+                        if len(_head) >= 3 and ("文件" + _head) in _pane_norm:
+                            return True, ("聊天区里能看到刚发给该会话的文件卡（%s）—— 按「文件+名字开头 %r」命中"
+                                          % (_nm0, _head))
             except Exception:
                 pass
             # 再一档：**高亮行时间**（单字母名字读不出时唯一还读得准的信号）——高亮行＝当前打开的会话，
