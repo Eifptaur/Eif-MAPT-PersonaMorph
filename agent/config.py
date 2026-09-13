@@ -267,6 +267,10 @@ DEFAULT_CONFIG = {
         "coord_scale": "auto",        # 显示缩放 auto | 1.25 等
         "clean_overlays": True,       # 点击前清遮挡
         "theme": "whale",             # 主题：whale（默认鲸落深海）| light | dark | system
+        # ── 背景（默认＝海：实拍海浪 assets/wallpaper/ocean1.jpg + CSS 波浪；鲸鱼主题另有视频壁纸）──
+        #   用户可在控制台「界面适配 → 自定义背景」上传图片/视频；留空＝保持默认的海。
+        "background": "",             # ""＝默认海 | "custom"＝用上传的背景（bg_type 决定是图还是视频）
+        "bg_type": "image",           # image | video（上传时自动写）
         "whale_cursor": True,         # 鲸鱼指针光标（点击时向下点头）
         "cursor_image": "",           # 自定义光标图片名（assets/custom-cursor.png 或留空=默认鲸鱼 22）
         "whale_anim": {               # 拖拽返回动画时长系数（倍率；1=标准；距离×系数=毫秒）
