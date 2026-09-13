@@ -940,12 +940,97 @@ class WeChatAdapter:
         except Exception as e:
             return False, str(e)
 
+    def send_image_posted(self, chat_id: str, local_path: str, wait_s: float = 25.0):
+        """**投递发图**（L5）：剪贴板放图（CF_DIB）→ 投递 `WM_PASTE` 给主窗 → 投递点「发送」→ **DB 回读认图片**。
+
+        与真实路径的区别：全程**不动光标、不抢前台**（真鼠标那条实测 96s 还会谎报成功）。
+        前提＝目标会话已打开（用 `chat_is_open` 的 OCR 名字判据把门；没有正面证据就不发）。
+        成功判据：**只认 DB 回读**（轮询到 `local_id` 变新且类型像图片）。
+        """
+        from . import input_backend as ib
+        from . import clipboard as _cb
+        try:
+            gui = self._get_gui()
+            backend = ib.select_backend(gui=gui)
+            if not isinstance(backend, ib.MessageBackend):
+                return False, "当前输入后端不是投递档（config.input.backend=%s）" % backend.name
+            main = int(getattr(gui, "main_hwnd", 0) or 0) or ib.find_main_window()
+            if not main:
+                return False, "找不到微信主窗"
+            ok_open, why_open = self.chat_is_open(chat_id, gui=gui)
+            if not ok_open:
+                return False, "投递发图要求目标会话已打开：%s" % why_open
+            try:
+                gui._update_render_rect()
+            except Exception:
+                pass
+            r = gui.render_rect or (0, 0, 0, 0)
+            rw, rh = int(r[2] - r[0]), int(r[3] - r[1])
+            if rw <= 0 or rh <= 0:
+                return False, "渲染区未知（窗口不可见？）"
+
+            def _rows():
+                try:
+                    return list(self._db.get_messages(chat_id, limit=8) or [])
+                except Exception:
+                    return []
+
+            base = _rows()
+            base_id = int(base[0].get("local_id") or 0) if base else 0
+
+            ok_cb, why_cb = _cb.set_image(local_path)
+            if not ok_cb:
+                return False, "放剪贴板失败：%s" % why_cb
+            ok_p, why_p = backend.paste(main)
+            if not ok_p:
+                return False, "投递粘贴失败：%s" % why_p
+            time.sleep(1.2)                       # 等缩略图渲染进输入框
+            send_pt = (int(r[0]) + int(rw * 0.932), int(r[1]) + int(rh * 0.945))
+            ok_c, why_c = backend.click(main, send_pt)
+            if not ok_c:
+                return False, "投递点发送失败：%s" % why_c
+            deadline = time.time() + max(5.0, float(wait_s))
+            while time.time() < deadline:
+                time.sleep(0.8)
+                rows = _rows()
+                if rows:
+                    top = rows[0]
+                    try:
+                        new_id = int(top.get("local_id") or 0)
+                    except Exception:
+                        new_id = 0
+                    if new_id > base_id:
+                        return True, "投递发图成功（DB 回读 local_id=%s type=%s）" % (
+                            top.get("local_id"), top.get("type_name") or top.get("type"))
+            return False, "已投递粘贴并点了发送，但 %ds 内 DB 没等到新行（发图未生效）" % int(wait_s)
+        except Exception as e:
+            return False, "投递发图异常：%s" % e
+
     def send_image(self, chat_id: str, local_path: str):
-        """发送本地图片。返回 (ok, message)。"""
-        name = self.group_name(chat_id)
+        """发送本地图片。返回 (ok, message)。
+
+        **投递优先**（2026-09-13）：真鼠标那条（`gui.send_image`）实测**会谎报成功**——返回
+        "图片已发送：…" 但 DB 里没有任何新图片、耗时 96s、还抢前台 ⇒ 改为：目标会话已确认
+        （OCR 名字判据）就走投递（剪贴板放图 + 投递 `WM_PASTE` + 投递点发送 + **DB 回读**），
+        拿不到正面证据才退回真实路径（那条会用真鼠标，用完保管光标）。
+        """
+        name = self.display_name(chat_id)
         try:
             with self._send_lock:
                 gui = self._get_gui()
+                if self._posted_preferred():
+                    try:
+                        ok_open, why_open = self.chat_is_open(chat_id, gui=gui)
+                        if ok_open:
+                            ok, msg = self.send_image_posted(chat_id, local_path)
+                            if ok:
+                                self._mark_sent("[图片]")
+                                return True, "%s（投递档 L5）" % msg
+                            log.info("投递发图失败，退回真实路径：%s", msg)
+                        else:
+                            log.info("投递发图前置未满足（%s）：改走真实路径", why_open)
+                    except Exception as e:
+                        log.info("投递发图判定异常，退回真实路径：%s", e)
                 r = self._send_with_foreground(
                     lambda g=gui: g.send_image(local_path, who=name))
                 ok = bool(getattr(r, "is_success", False))
