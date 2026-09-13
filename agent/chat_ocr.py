@@ -104,12 +104,26 @@ def norm(text: str) -> str:
 
 
 def matches(text: str, name: str) -> bool:
-    """OCR 文本与目标会话名是否算同一个（互相包含即可，容忍 OCR 漏字/多字/截断省略号）。"""
+    """OCR 文本与目标会话名是否算同一个（互相包含即可，容忍 OCR 漏字/多字/截断省略号）。
+
+    ⚠️ 单字/单字母名字要单独一条路（2026-09-13 实测 bug）：会话行文本是"名字＋预览＋时间"拼起来的
+    （E 那一行 OCR 出来是 `[草稿]EE` ＝ 草稿标记 ＋ 名字 E ＋ 草稿内容 E），而老实现要求 `len(name) >= 2`
+    才走包含判断 ⇒ **名字只有一个字母的会话永远定位不到**（E 明明在第一行，`find_row_info` 返回 None，
+    `switch_chat_posted` 于是报"没定位到 E"）。⇒ 单字名字：去掉草稿标记后**要求以它开头**；
+    敢这样放宽的底气是——点完之后的**内容级身份闸**才是发不发的最后一道闸（点错 ⇒ 不发送）。
+    """
     a, b = norm(text), norm(name)
     if not a or not b:
         return False
     if a == b:
         return True
+    if len(b) == 1:
+        t = a
+        for _p in ("草稿", "draft"):
+            if t.startswith(_p):
+                t = t[len(_p):]
+                break
+        return t.startswith(b)
     if len(b) >= 2 and (b in a or a in b) and min(len(a), len(b)) >= 2:
         return True
     return False
@@ -348,9 +362,21 @@ def find_row_info(img, name: str, zoom: int = 2):
         if not left:
             left = int(w * ch.PANE_LEFT_REL)
         for r in session_rows(img, zoom=zoom):
-            if matches(r.get("name") or "", name):
-                return {"pos": (max(0, left - 150), min(h - 2, int(r["y_abs"]) + 16)),
-                        "y_abs": int(r["y_abs"]), "name": r.get("name") or ""}
+            if not matches(r.get("name") or "", name):
+                continue
+            # ⚠️ 单字/单字母名字必须**复核这一行的名字行**（2026-09-13 实测假阳性：E 的目标行是第 2 行，
+            #    而第 3 行"宋孟"的预览里带着草稿内容 `[草稿]EE` ⇒ 放宽后的前缀匹配把**宋孟那一行**认成了 E，
+            #    点下去打开了别的会话）。复核用 `name_of_row()`（只 OCR 名字那一行、zoom=3），要求**全等**。
+            if len(norm(name)) <= 2:
+                got = ""
+                try:
+                    got = name_of_row(img, r["y_abs"], r.get("name") or "", zoom=3)
+                except Exception:
+                    got = ""
+                if norm(got) != norm(name):
+                    continue
+            return {"pos": (max(0, left - 150), min(h - 2, int(r["y_abs"]) + 16)),
+                    "y_abs": int(r["y_abs"]), "name": r.get("name") or ""}
         return None
     except Exception:
         return None
