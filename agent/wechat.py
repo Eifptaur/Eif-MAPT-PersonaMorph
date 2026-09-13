@@ -2290,17 +2290,27 @@ class WeChatAdapter:
         return False
 
     def _emoji_btn_pos(self, gui):
-        """笑脸按钮（输入框左下方工具栏第一个）。优先按输入框（get_input_box）动态定位——
-        左侧列表宽度变化时输入框位置跟着变，笑脸随输入框走（旧版固定渲染比例会偏）；
-        输入框拿不到时回退渲染比例。"""
-        box = gui.get_input_box()
-        render = gui.render_rect or gui._update_render_rect() or (0, 0, 0, 0)
-        if box:
-            # box=(x0,y0,x1,y1) 屏幕坐标 → 转渲染相对；笑脸在输入框左下角稍上（实测偏移）
-            rx, ry = int(render[0]), int(render[1])
-            return (int(box[0] - rx + (box[2] - box[0]) * 0.132),
-                    int(box[3] - ry + 63))
-        return (int(render[2] * 0.302), int(render[3] * 0.879 - 18))
+        """笑脸按钮（输入框左下方工具栏第一个）——**渲染相对坐标**（调用方 ui_adapt.click 会加原点）。
+
+        2026-09-13 修（用"投递鼠标消息打开表情面板"的 A/B 实验测出来的真缺陷）：
+        老实现拿 `get_input_box()` 的**渲染相对** box 又减了一次渲染原点（`box[0] - rx`），
+        等于双重换算 ⇒ 算出的点偏左约 100px、偏下约 40px，**点不开表情面板**。
+        实测（1160×900 窗口）：笑脸在渲染区 `(0.324·w, h-50)`（屏幕 (470,930)，渲染相对 (369,840)）；
+        box 可用时只用它做**细校正**（相差超过 8% 就不用，避免再次被错坐标带偏）。
+        """
+        try:
+            r = gui.render_rect or gui._update_render_rect() or (0, 0, 0, 0)
+            w = int(getattr(gui, "render_w", 0) or (int(r[2]) - int(r[0])))
+            h = int(getattr(gui, "render_h", 0) or (int(r[3]) - int(r[1])))
+            x, y = int(w * 0.324), int(h - 50)
+            box = gui.get_input_box()
+            if box:
+                bx = int(box[0] + (box[2] - box[0]) * 0.132)   # box 本身是渲染相对，直接用
+                if abs(bx - x) <= max(20, int(w * 0.08)):
+                    x = bx
+            return (x, y)
+        except Exception:
+            return None
 
     def _panel_rect(self, gui):
         """动态定位表情面板矩形（屏幕坐标）。
