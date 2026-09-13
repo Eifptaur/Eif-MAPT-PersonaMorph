@@ -136,12 +136,32 @@ try:
 finally:
     IB._post, IB.to_client = _real_post, _real_toclient
 
-print("── D. 接线：switch_chat_posted 用上了这两件 ──")
-src = open(os.path.join("agent", "wechat.py"), encoding="utf-8").read()
-ok("切会话走 find_row_scrolled（会滚）", "chat_ocr.find_row_scrolled" in src or "_co.find_row_scrolled" in src)
-ok("切完用 highlight 自洽复核", "_co.highlight(" in src)
-ok("滚轮走 backend.wheel（投递档）", "backend.wheel(main, wheel_pt" in src)
-ok("复核容差 28px 写死在代码里", "<= 28" in src)
+print("── D. 接线：switch_chat_posted 用上了这些 ──")
+_src = open(os.path.join("agent", "wechat.py"), encoding="utf-8").read()
+ok("切会话走 find_row_scrolled（会滚）", "_co.find_row_scrolled" in _src)
+ok("切完用 highlight 自洽复核", "_co.highlight(" in _src or "_co.highlight_relative(" in _src)
+ok("复核用相对判据（抗帧质量抖动）", "_co.highlight_relative(" in _src)
+ok("滚轮走 backend.wheel（投递档）", "backend.wheel(" in _src and "wheel_pt" in _src)
+ok("复核容差 28px 写死在代码里", "<= 28" in _src)
+ok("**会话行点击／滚轮投渲染子窗**（2026-09-13 实测：投主窗点不动）", "ib.find_render_child(main) or main" in _src)
+ok("聊天区内容变化也当切换证据", "_co.pane_text(" in _src and "聊天区内容已变化" in _src)
+
+print("── E. 相对高亮判据 + 聊天区摘要（脱机）──")
+ok("input_backend 有 find_render_child", hasattr(IB, "find_render_child"))
+ok("find_render_child(0) 安全返回 0", IB.find_render_child(0) == 0)
+_rs, _ga = CO.session_rows, CO._green_at
+try:
+    CO.session_rows = lambda im, zoom=2: [{"name": "别人", "y_abs": 100}, {"name": "E", "y_abs": 200}]
+    CO._green_at = lambda im, y, half=6: 0.69 if y == 200 else 0.01
+    hl_rel, why_rel = CO.highlight_relative("img")
+    ok("相对判据能挑出最高的那一行", bool(hl_rel) and hl_rel["y_abs"] == 200 and hl_rel["name"] == "E", why_rel)
+    CO._green_at = lambda im, y, half=6: 0.10          # 两行都差不多 ⇒ 不够突出，必须判 None
+    ok("区分度不够时返回 None（fail-closed）", CO.highlight_relative("img")[0] is None)
+    CO._green_at = lambda im, y, half=6: 0.0
+    ok("全都没有绿底 ⇒ None", CO.highlight_relative("img")[0] is None)
+finally:
+    CO.session_rows, CO._green_at = _rs, _ga
+ok("chat_ocr 有 pane_text", hasattr(CO, "pane_text"))
 
 print("\n%d/%d 通过" % (PASS, PASS + FAIL))
 sys.exit(1 if FAIL else 0)

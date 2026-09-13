@@ -877,13 +877,18 @@ class WeChatAdapter:
             # 会话列表列中心（滚轮落点）：列表在面板左沿往左约 240px 的那一列
             wheel_pt = (ox + max(30, pane - 130), oy + int(rh * 0.55))
 
+            # ⚠️ 会话行的点击与滚轮都要投给**渲染子窗**（`MMUIRenderSubWindowHW`）——2026-09-13 实测对比：
+            #    同一枪投主窗：点完当前会话没变（绿底仍在原来那行）；投渲染子窗：点完聊天区内容确实变了。
+            #    键盘与「发送」按钮投主窗仍然有效，别一起改。
+            tgt = ib.find_render_child(main) or main
+
             def _scroll(times: int) -> bool:
-                ok_s, _why_s = backend.wheel(main, wheel_pt, -120, times=max(1, int(times)), gap_ms=70)
+                ok_s, _why_s = backend.wheel(tgt, wheel_pt, -120, times=max(1, int(times)), gap_ms=70)
                 return bool(ok_s)
 
             # 先把会话列表滚到**顶**（目标也可能在当前视野**上方**——只往下扫会永远找不到）
             try:
-                backend.wheel(main, wheel_pt, 120, times=8, gap_ms=70)
+                backend.wheel(tgt, wheel_pt, 120, times=8, gap_ms=70)
                 time.sleep(0.5)
             except Exception:
                 pass
@@ -908,23 +913,39 @@ class WeChatAdapter:
                         time.time() - _last_ts, int(_last_y), hl0["score"])
                 return False, "会话行在（OCR「%s」），但%s ⇒ **不补点**。若确需重试请稍后再调。" % (
                     str(info.get("name"))[:12], _why_cd)
-            ok, why = backend.click(main, (ox + int(pos[0]), oy + int(pos[1])))
+            # ⚠️ 会话行的点击要投给**渲染子窗**（`MMUIRenderSubWindowHW`）——2026-09-13 实测对比：
+            #    同一枪投主窗：点完当前会话没变（绿底仍在原来那行）；
+            #    投渲染子窗：点完聊天区内容确实变了（切过去了）。键盘/发送按钮投主窗仍然有效，别一起改。
+            tgt = ib.find_render_child(main) or main
+            tgt = ib.find_render_child(main) or main
+            # 点前的聊天区文字（用来判"切会话到底发没发生"——绿底那项判据会被帧质量骗）
+            _pane0 = _co.pane_text(_chh.capture_image(gui=gui))
+            ok, why = backend.click(tgt, (ox + int(pos[0]), oy + int(pos[1])))
             if not ok:
                 return False, "投递点击会话行失败：%s" % why
             self._pick_last[str(chat_id)] = (time.time(), clicked_y)
-            # 复核（自洽证据）：**我们按名字点的那一行**现在是不是绿底高亮行
+            # 复核（自洽证据）：**我们按名字点的那一行**现在是不是高亮行（相对判据，抗帧质量抖动）
             deadline = time.time() + max(1.0, float(confirm_s))
             last = ""
             while time.time() < deadline:
                 time.sleep(0.35)
                 img2 = _co.capture_best(gui=gui, frames=3)
-                hl = _co.highlight(img2) if img2 is not None else None
+                hl = None
+                if img2 is not None:
+                    hl, _hlwhy = _co.highlight_relative(img2)
+                    if hl is None:
+                        hl = _co.highlight(img2)
                 if hl and abs(int(hl["y_abs"]) - clicked_y) <= 28:
-                    return True, ("投递点击第 %d 行（OCR「%s」）后该行成绿底高亮（占比 %.2f）｜%s"
+                    return True, ("投递点击第 %d 行（OCR「%s」）后该行成高亮行（占比 %.2f）｜%s"
                                   % (clicked_y, str(info.get("name"))[:12], hl["score"], flog))
                 hit, last = self.chat_is_open(chat_id, gui=gui, name=name)
                 if hit:
                     return True, "投递点击会话行后 OCR 已确认打开「%s」（%s）" % (name, last)
+                # 第三条证据：点了那一行、**聊天区内容确实变了** ⇒ 切换发生了（拿它防止"绿底读不到"误判失败）
+                _pane1 = _co.pane_text(img2) if img2 is not None else ""
+                if _pane0 and _pane1 and _pane0 != _pane1:
+                    return True, ("投递点击第 %d 行（OCR「%s」）后聊天区内容已变化 ⇒ 已切到该会话"
+                                  "（绿底这次读不稳：%s）" % (clicked_y, str(info.get("name"))[:12], flog))
             return False, ("投递点击已发出，但既没看到该行变绿底、也没能 OCR 确认「%s」（%s；最后一帧：%s）"
                            % (name, flog, str(last)[:60]))
         except Exception as e:

@@ -377,6 +377,49 @@ def highlight(img, min_green: float = 0.12):
         return None
 
 
+def highlight_relative(img, min_top: float = 0.05, ratio: float = 2.5) -> tuple:
+    """**相对**判据找高亮行：绿底最强的行 vs 次强行（返回 `(行 或 None, 说明)`）。
+
+    为什么不用绝对阈值：帧质量会让真高亮的占比在 0.18~0.74 之间跳，绝对阈值总会在某一帧误杀
+    （2026-09-13 实测：判 0.20 时把占比 0.159 的真高亮判成"没有高亮"）。相对比较稳得多——
+    实测高亮行 0.159 / 其余行 0.000：要求「最高 ≥ min_top 且 ≥ ratio × 次高」即可。
+    """
+    try:
+        rows = session_rows(img)
+        if not rows:
+            return None, "没有读到会话行"
+        scored = sorted(((_green_at(img, r["y_abs"]), r) for r in rows), key=lambda t: -t[0])
+        top, second = scored[0], (scored[1][0] if len(scored) > 1 else 0.0)
+        why = "最高 %.3f（%s）次高 %.3f" % (top[0], str(top[1].get("name"))[:10], second)
+        if top[0] < float(min_top):
+            return None, why + "·最高也不够"
+        if second > 0 and top[0] < float(ratio) * second:
+            return None, why + "·不够突出"
+        return {"y_abs": int(top[1]["y_abs"]), "score": float(top[0]),
+                "name": top[1].get("name") or ""}, why
+    except Exception as e:
+        return None, "相对判据异常：%s" % type(e).__name__
+
+
+def pane_text(img, limit: int = 200) -> str:
+    """聊天区（面板左沿往右那一块）的 OCR 文字摘要——用来判"切会话到底发没发生"（只读）。"""
+    try:
+        if img is None:
+            return ""
+        w, h = img.size
+        left = 0
+        try:
+            left = ch.detect_pane_left(img) or 0
+        except Exception:
+            left = 0
+        if not left:
+            left = int(w * ch.PANE_LEFT_REL)
+        crop = img.crop((left + 10, 120, max(left + 40, w - 10), int(h * 0.62)))
+        return "".join(str(i[0]) for i in recognize(crop))[:int(limit)]
+    except Exception:
+        return ""
+
+
 def find_row_scrolled(capture_fn, find_fn, scroll_fn=None, max_steps: int = 6,
                       per_step: int = 3, settle_s: float = 0.45,
                       tries_per_step: int = 1, gap_s: float = 0.35) -> tuple:
