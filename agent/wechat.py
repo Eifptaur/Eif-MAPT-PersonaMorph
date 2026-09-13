@@ -646,6 +646,64 @@ class WeChatAdapter:
         except Exception as e:
             return False, str(e)
 
+    def send_text_posted(self, text: str, chat_id: str = "filehelper", wait_s: float = 15.0):
+        """**投递发送**（L5，2026-09-13 实测过的那条链）：投递 WM_CHAR 打字 + 投递点「发送」按钮。
+
+        与 `send_text` 的区别（也是它的适用边界）：
+          · 全程**不动光标、不抢前台、不要求窗口可见**；`GetCursorPos` 前后不变；
+          · **前提＝目标会话已经打开** —— 投递不负责切会话（切会话的投递版仍未取证）。
+            调用方要么自己确认会话已打开，要么先用别的方式切过去。
+        成功判据：**只认 DB 回读**（轮询到新行且内容含本段文本），不信 GUI 返回值。
+
+        参考实测：`_scratch/send_postclick.py`（3/3、DB 回读命中）与 `_scratch/live_posted_send.py`。
+        """
+        from . import input_backend as ib
+        try:
+            gui = self._get_gui()
+            backend = ib.select_backend(gui=gui)
+            if not isinstance(backend, ib.MessageBackend):
+                return False, "当前输入后端不是投递档（config.input.backend=%s）" % backend.name
+            main = int(getattr(gui, "main_hwnd", 0) or 0) or ib.find_main_window()
+            if not main:
+                return False, "找不到微信主窗"
+            if not gui.render_rect:
+                gui._update_render_rect()
+            r = gui.render_rect or (0, 0, 0, 0)
+            rw, rh = int(r[2] - r[0]), int(r[3] - r[1])
+            if rw <= 0 or rh <= 0:
+                return False, "渲染区未知（窗口不可见？）"
+
+            def _rows():
+                try:
+                    return list(self._db.get_messages(chat_id, limit=12) or [])
+                except Exception:
+                    return []
+
+            base = _rows()
+            base_sig = str(base[0].get("local_id")) if base else ""
+            ok, why = backend.send_text(main, text)
+            if not ok:
+                return False, "投递打字失败：%s" % why
+            time.sleep(0.45)
+            # 「发送」按钮：渲染区比例 (0.932, 0.945)（1160×900 实测；按钮不用焦点，回车才要）
+            send_pt = (int(r[0]) + int(rw * 0.932), int(r[1]) + int(rh * 0.945))
+            ok2, why2 = backend.click(main, send_pt)
+            if not ok2:
+                return False, "投递点发送失败：%s" % why2
+            deadline = time.time() + max(3.0, float(wait_s))
+            while time.time() < deadline:
+                time.sleep(0.8)
+                rows = _rows()
+                if rows and str(rows[0].get("local_id")) != base_sig:
+                    head = rows[0]
+                    if str(text)[:20] in str(head.get("content") or ""):
+                        return True, "投递发送成功（DB 回读 local_id=%s type=%s）" % (
+                            head.get("local_id"), head.get("type"))
+                    return True, "DB 有新行但内容与本次不一致（local_id=%s，可能上一条刚写库）" % head.get("local_id")
+            return False, "已投递但 %ds 内 DB 没等到新行（发送未生效）" % int(wait_s)
+        except Exception as e:
+            return False, str(e)
+
     def send_image(self, chat_id: str, local_path: str):
         """发送本地图片。返回 (ok, message)。"""
         name = self.group_name(chat_id)

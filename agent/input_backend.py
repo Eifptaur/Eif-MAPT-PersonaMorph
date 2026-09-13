@@ -100,9 +100,54 @@ def _pid_of(hwnd: int) -> int:
     return int(p.value)
 
 
+def _child_classes(hwnd: int) -> set:
+    out = set()
+    CB = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+
+    def cb(h, _l):
+        out.add(_class_of(h))
+        return True
+
+    _user32.EnumChildWindows(int(hwnd), CB(cb), 0)
+    return out
+
+
+RENDER_CHILD = "MMUIRenderSubWindowHW"     # 主窗特有的渲染子窗
+
+
 def find_main_window() -> int:
-    """微信主窗（投递键盘消息、点笑脸都发它）。"""
-    return int(_user32.FindWindowW(MAIN_CLASS, None) or 0)
+    """微信**主窗**（投递键盘消息、点笑脸都发它）。
+
+    ⚠️ 不能用 `FindWindow(类名)`：表情面板之外的**朋友圈纯文字编辑窗也是
+    `Qt51514QWindowIcon`**，`FindWindow` 返回的是第一个命中的那个（2026-09-13 实测踩到——
+    投递全打到编辑窗上，发送自然失败）。判据：**带渲染子窗 `MMUIRenderSubWindowHW` 的那个**；
+    退而取同进程里面积最大的。
+    """
+    cands = []
+    CB = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+
+    def cb(h, _l):
+        if _user32.IsWindowVisible(h) and _class_of(h) == MAIN_CLASS:
+            cands.append(int(h))
+        return True
+
+    _user32.EnumWindows(CB(cb), 0)
+    if not cands:
+        return 0
+    best, best_area = 0, -1
+    for h in cands:
+        r = window_rect(h)
+        area = max(0, (r[2] - r[0])) * max(0, (r[3] - r[1]))
+        if RENDER_CHILD in _child_classes(h) and area > best_area:
+            best, best_area = h, area
+    if best:
+        return best
+    for h in cands:                          # 没有渲染子窗（异常形态）⇒ 取最大的
+        r = window_rect(h)
+        area = max(0, (r[2] - r[0])) * max(0, (r[3] - r[1]))
+        if area > best_area:
+            best, best_area = h, area
+    return best
 
 
 def find_panel_window(main_hwnd: int = 0) -> int:
