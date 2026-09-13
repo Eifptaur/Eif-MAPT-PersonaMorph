@@ -191,8 +191,10 @@ a:hover,a:focus,a:visited,a:active{text-decoration:none}   /* ⛔ 控制台所�
 .icon{width:18px;height:18px;vertical-align:-3px;margin-right:6px}
 
 /* ── 顶栏 ── */
-.topbar{position:sticky;top:0;z-index:50;display:flex;align-items:center;gap:12px;padding:10px 20px;
+.topbar{position:sticky;top:0;z-index:50;display:flex;align-items:center;gap:12px;padding:10px 20px;flex-wrap:wrap;row-gap:6px;
   background:var(--topbar);backdrop-filter:blur(8px);border-bottom:1px solid var(--bd)}
+#autoChip{cursor:pointer;user-select:none}
+#autoChip input{margin-right:2px}
 .topbar button{white-space:nowrap}
 .topbar .logo{display:flex;align-items:center;gap:12px;font-size:17px;font-weight:700;min-width:0}
 .topbar .logo span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
@@ -418,6 +420,8 @@ th{color:var(--tx2);font-weight:500}
   <span class="chip"><span class="dot" id="dot"></span><b id="runText">连接中…</b></span>
   <span class="chip">模型 <b id="model-badge">? </b></span>
   <span class="chip" id="balance-badge" title="点击刷新余额">余额：查询中…</span>
+  <label class="chip" id="autoChip" title="勾选＝改完立即写入 config.json（不用再点各分区的「保存设置」）；取消勾选＝回到手动保存模式。状态记在本机浏览器里。"><input type="checkbox" id="autoApplyChk" checked>改完即生效</label>
+  <button id="undoBtn" class="ghost" title="撤销上一步修改（自动生效与手动「保存设置」各记一步，最多 10 步）">撤销</button>
   <button id="pauseBtn" class="ghost">暂停</button>
   <button id="stopBtn" class="danger">停止</button>
   <button id="restartBtn" class="pri">重启</button>
@@ -1406,6 +1410,7 @@ function setPath(obj, path, v){ const ks=String(path).split('.'); let o=obj; for
 
 function syncToForm(){
   if(!cfg) return;
+  window._applying = true;   // 程序性填表期间不让「改完即生效」的监听器误判成用户改动
   document.querySelectorAll('[data-cfg]').forEach(el=>{
     const path = el.dataset.cfg;
     const isCheck = el.type==='checkbox';
@@ -1448,12 +1453,15 @@ function syncToForm(){
   /* 省 token 卡片视觉联动 */
   const tb = $('thinkOffChk');
   if(tb){
-    tb.addEventListener('change', ()=>{
-      const on = tb.checked;
-      $('thinkCard').classList.toggle('on', on);
-      $('thinkBadge').textContent = on ? '已开启省 token' : '已关闭（模型自由思考）';
-    });
-    const on0 = tb.checked;
+    if(!tb._wired){            // 监听器只接一次：syncToForm 会被反复调用，重复 addEventListener 会越积越多
+      tb._wired = true;
+      tb.addEventListener('change', ()=>{
+        const on = tb.checked;
+        $('thinkCard').classList.toggle('on', on);
+        $('thinkBadge').textContent = on ? '已开启省 token' : '已关闭（模型自由思考）';
+      });
+    }
+    const on0 = tb.checked;    // 视觉每次都按当前值同步（填表/撤销后也要跟着变）
     $('thinkCard').classList.toggle('on', on0);
     $('thinkBadge').textContent = on0 ? '已开启省 token' : '已关闭（模型自由思考）';
   }
@@ -1463,6 +1471,7 @@ function syncToForm(){
   if(typeof renderGroupTierBox === 'function') renderGroupTierBox();
   if(typeof wsSyncToForm === 'function') wsSyncToForm();
   if(typeof loadMemGroups === 'function') loadMemGroups();
+  window._applying = false;
 }
 
 /* 档位联动：关键词(2/3档)与随机(3档)只在对应档位选中时显示 */
@@ -2491,8 +2500,10 @@ async function saveAllBtn(btn){
     try{ raw = JSON.parse($('rawjson').value); }catch(e){}
     // 优先用「界面表单」的改动（syncFromForm），避免 rawjson 旧值覆盖界面修改（如 text_style 切换丢失）。
     // 仅当用户确实改了「原始JSON」且表单未改动时才用 rawjson——此处以界面为主。
+    const snapAll = cfg ? JSON.parse(JSON.stringify(cfg)) : null;   // 保存前的整份配置（供「撤销」写回）
     syncFromForm(); wsSyncFromForm(); if(typeof syncMemGroupsToCfg==='function') syncMemGroupsToCfg();
     await getJSON('/api/config', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(cfg)});
+    if(snapAll) pushUndo({kind:'all', snapshot:snapAll, label:(btn ? (cur || '保存设置') : '保存全部设置')});
     toast('✅ 已保存，刷新页面生效…');
     setTimeout(()=>{
       const u = new URL(location.href);
@@ -2508,6 +2519,98 @@ async function saveAllBtn(btn){
       location.replace(u.toString());
     }, 700);
   }catch(e){ toast('保存失败：'+e.message); if(btn){ btn.disabled = false; btn.textContent = cur; } }
+}
+
+/* ── 改完即生效 + 撤销修改（对账清单第 19 条）────────────────────────────
+   设计取舍（每条都有理由，不是随手加的）：
+   · **只 POST 改动的那一个键**——服务端 /api/config 是深合并（缺失键保留旧值），
+     所以自动保存不会把用户没碰过的字段冲掉（这也是它敢"每改一下就写盘"的前提）。
+   · **撤销栈在浏览器内存里，最多 10 步**：自动生效记 {kind:'key'}，手动「保存设置」记 {kind:'all'}（整份快照写回）。
+   · **打码值不进撤销栈**（api_key 之类含 ••••）——它本来就不是真值，写回去等于没改，会让用户以为撤销成功了。
+   · 默认开启；顶栏取消勾选即回到"手动保存"模式（状态存 localStorage，刷新、换页都保持）。
+   · 程序性填表（syncToForm）期间用 window._applying 挡住监听器，否则"撤销后填表"会被误判成又一次用户改动。 */
+const AUTOAPPLY_KEY = 'autoApplyOn';
+const UNDO_MAX = 10;
+let undoStack = [];
+let autoApplyOn = (localStorage.getItem(AUTOAPPLY_KEY) !== '0');
+function isMaskedVal(v){ return typeof v === 'string' && (v.includes('••••') || v.startsWith('sk-***')); }
+function fieldLabel(path){
+  const el = document.querySelector('[data-cfg="'+path+'"]');
+  if(el){
+    const row = el.closest('.row') || el.parentElement;
+    const lb = row && row.querySelector('label');
+    if(lb && lb.textContent.trim()) return lb.textContent.trim().slice(0, 18);
+  }
+  return path;
+}
+function oneKey(path, value){ const o = {}; setPath(o, path, value); return o; }
+function pushUndo(entry){
+  undoStack.push(entry);
+  if(undoStack.length > UNDO_MAX) undoStack.shift();
+  const b = $('undoBtn');
+  if(b) b.title = '撤销：' + entry.label + '（栈内 ' + undoStack.length + ' 步）';
+}
+async function postCfg(obj){
+  const r = await getJSON('/api/config', {method:'POST', headers:{'Content-Type':'application/json'},
+                                          body: JSON.stringify(obj)});
+  if(r && r.ok === false) throw new Error(r.error || '保存失败');
+  return r;
+}
+let autoTimer = null;
+function scheduleAutoApply(path, delay){
+  clearTimeout(autoTimer);
+  autoTimer = setTimeout(()=>doAutoApply(path), delay || 0);
+}
+async function doAutoApply(path){
+  if(!autoApplyOn || !cfg || window._applying) return;
+  const before = getPath(cfg, path);
+  try{ syncFromForm(); wsSyncFromForm(); if(typeof syncMemGroupsToCfg==='function') syncMemGroupsToCfg(); }
+  catch(e){ toast('这一项格式不对，没有自动生效：' + e.message); return; }
+  const after = getPath(cfg, path);
+  if(JSON.stringify(before === undefined ? null : before) === JSON.stringify(after === undefined ? null : after)) return;
+  if(isMaskedVal(before)){ toast('这一项显示的是打码值，自动保存会跳过（用旁边的「保存 Key」）'); return; }
+  try{
+    await postCfg(oneKey(path, after));
+    pushUndo({kind:'key', path:path, before:(before === undefined ? null : before), label:fieldLabel(path)});
+    toast('✅ 已生效：' + fieldLabel(path) + '（可用顶栏「撤销」回退）');
+  }catch(e){ toast('自动生效失败：' + e.message + '（可点该分区的「保存设置」重试）'); }
+}
+async function undoLast(){
+  const e = undoStack.pop();
+  if(!e){ toast('没有可撤销的修改（只记最近 ' + UNDO_MAX + ' 步，刷新页面会清空）'); return; }
+  try{
+    await postCfg(e.kind === 'all' ? e.snapshot : oneKey(e.path, e.before));
+    cfg = await getJSON('/api/config');
+    syncToForm();
+    toast('↩ 已撤销：' + e.label);
+  }catch(err){
+    undoStack.push(e);
+    toast('撤销失败：' + err.message);
+  }
+}
+{
+  const chk = $('autoApplyChk');
+  if(chk){
+    chk.checked = autoApplyOn;
+    chk.addEventListener('change', ()=>{
+      autoApplyOn = chk.checked;
+      localStorage.setItem(AUTOAPPLY_KEY, autoApplyOn ? '1' : '0');
+      toast(autoApplyOn ? '改完即生效：已开启（改动立即写入 config.json）'
+                        : '已关闭自动生效：改完请点各分区的「保存设置」');
+    });
+  }
+  const ub = $('undoBtn');
+  if(ub) ub.addEventListener('click', undoLast);
+  /* 一个委托监听器覆盖全部 data-cfg 字段（含动态生成的），比给每个元素挂 listener 稳 */
+  document.addEventListener('change', (ev)=>{
+    const el = ev.target;
+    if(!el || !el.dataset || !el.dataset.cfg) return;
+    if(!autoApplyOn || window._applying) return;
+    const path = el.dataset.cfg;
+    if(path === 'api.api_key') return;           // Key 有自己的「保存 Key」按钮（打码回显）
+    const isText = el.tagName === 'TEXTAREA' || el.type === 'text' || el.type === 'password';
+    scheduleAutoApply(path, isText ? 900 : 0);
+  });
 }
 
 /* ── 自绘下拉组件：替换所有原生 select（弹层样式可控，DeepSeek 风）；单元素可复用（弹窗内动态 select 也用）── */
@@ -2535,7 +2638,9 @@ function enhanceSelect(sel){
       if(i===sel2.selectedIndex) li.classList.add('on');
       li.addEventListener('click',()=>{
         sel2.selectedIndex=i;
-        sel2.dispatchEvent(new Event('change'));
+        // bubbles:true —— 原生 <select> 的 change 本来就会冒泡；自绘下拉若不带冒泡，
+        // 挂在 document 上的委托监听（如「改完即生效」）就收不到这一下。
+        sel2.dispatchEvent(new Event('change', {bubbles:true}));
         buildMenu(); refreshText(); menu.classList.add('dn');
       });
       menu.appendChild(li);
