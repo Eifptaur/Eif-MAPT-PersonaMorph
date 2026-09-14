@@ -459,6 +459,16 @@ class WeChatAdapter:
         content = raw.get("content") or ""
         if isinstance(content, bytes):
             content = content.decode("utf-8", "ignore")
+        # ⛔ 正文还原（2026-09-14，实测）：微信 4.x 把**长文本与文件卡**的 content **zstd 压缩**存库，
+        #   而库的友好化读法遇到压缩体只给**类型标签**（`[文本]` / `[文件/链接/卡片]`）⇒ 正文整条丢掉。
+        #   用户报障正是这个：「我每次都是把你的话复制到微信发过去，随后你就不太能正常识别了」——
+        #   他粘过来的是长段落 ⇒ 全部读成 `[文本]`、机器人根本没看见。这里在**最前面**解一次，
+        #   后面所有分支（撤回解析/引用解析/文本归一）都吃到真正文。解不出来就保持原样（绝不猜）。
+        try:
+            if isinstance(content, str) and re.match(r"^\[[^\[\]]{1,16}\]$", content.strip()):
+                content = replica_adapter.fill_text(self._db, chat_id or "", local_id, content) or content
+        except Exception:
+            pass
 
         # ── 撤回事件（第三方 v0.4 对账清单第 14 条）────────────────────────
         # 必须放在"自己发的消息跳过"**之前**：自己撤回时 sender_id 同样是 2/3，
@@ -1918,8 +1928,17 @@ class WeChatAdapter:
                 #   `[文件/链接/卡片]`、对文本回 `[文本]`（实测 E 的最近三条就是这两个）⇒ 老实现把它
                 #   当成了"针"（`文件链接卡片` 长度够），拿它去聊天区里找**永远找不到**，而真正的短 token
                 #   （`w0verify-75482` 这种）反被挤出 keep 名额 ⇒ 身份闸对**开着**的会话也判否、文件发不出去。
+                #   进一步（同日实测）：这类占位符背后**很可能有真正文**——长文本/文件卡在库里是 zstd
+                #   压缩存的 ⇒ 先试着从原始行解出来（解出来它反而是最好的针），解不出来才跳过。
                 if re.match(r"^\[[^\[\]]{1,16}\]$", c):
-                    continue
+                    try:
+                        c = (replica_adapter.fill_text(self._db, chat_id, r.get("local_id"), c) or "").strip()
+                    except Exception:
+                        c = ""
+                    if not c or re.match(r"^\[[^\[\]]{1,16}\]$", c):
+                        continue
+                if c.startswith("<msg") or c.startswith("<?xml") or "<msg" in c[:200]:
+                    continue          # 报文一律不当指纹（标题在不同会话里会重复）
                 alnum = "".join(ch for ch in c if ch.isalnum())
                 if len(alnum) < max(4, int(min_len)):
                     continue

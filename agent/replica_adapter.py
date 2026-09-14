@@ -237,3 +237,90 @@ def selfcheck() -> list:
     except Exception as e:  # pragma: no cover
         rows.append({"item": "驱动库可导入", "ok": False, "detail": str(e)})
     return rows
+
+
+# ── 正文还原：把"库里存着、读法只给类型标签"的消息正文解出来（2026-09-14）─────────────
+# 为什么必须有这一层（用户报障原话：「我每次都是把你的话复制到微信发过去了，但是随后你好像就
+# 不太能正常识别并操作了」）——**实测机制**：
+#   · 微信 4.x 把**长文本与文件卡**的 `content` **zstd 压缩**存库（实测 local_id=703 是 1791 字节的
+#     zstd 帧，magic `28 b5 2f fd`）；
+#   · 而库的友好化读法（`get_messages` / `get_new_messages`）遇到压缩体**只回类型标签**
+#     （`[文本]` / `[文件/链接/卡片]`）⇒ **正文直接消失**：短 token 读得到（没压缩），用户粘过来的
+#     长段落一律读成 `[文本]` ⇒ 机器人"看不见"他说的话，身份闸的"针"也全变成占位符。
+#   · `get_message_row(chat, local_id)` 是**库的公开方法**，能拿到原始行（content 就是那串 zstd 帧）。
+# 规矩：只读、不写库；解不开就返回空串（绝不抛、绝不猜内容）；调用点都包在 try 里。
+ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
+
+
+def zstd_module():
+    """运行时自带的 zstd 实现（实测 `zstandard 0.25.0` 随驱动库一起装进来了）。"""
+    try:
+        import zstandard  # type: ignore
+        return zstandard
+    except Exception:
+        return None
+
+
+def recover_text(raw) -> str:
+    """把原始 `content` 还原成正文（str）。
+
+    · 已经是 str ⇒ 原样返回；
+    · zstd 帧 ⇒ 解开并 utf-8 解码；
+    · 其它 bytes ⇒ utf-8 尽力解码；
+    · 拿不到/解不开 ⇒ `''`（**不抛异常、不返回占位符**）。
+    """
+    if raw is None:
+        return ""
+    if isinstance(raw, str):
+        return raw
+    try:
+        b = bytes(raw)
+    except Exception:
+        return ""
+    if not b:
+        return ""
+    if b[:4] == ZSTD_MAGIC:
+        z = zstd_module()
+        if z is None:
+            return ""
+        try:                                   # 一次性解（带输出上限，防解压炸弹）
+            return z.ZstdDecompressor().decompress(
+                b, max_output_size=8 * 1024 * 1024).decode("utf-8", "replace")
+        except Exception:
+            try:                               # 流式兜底（有些帧只能在流式 API 下解）
+                import io
+                with z.ZstdDecompressor().stream_reader(io.BytesIO(b)) as rd:
+                    return rd.read().decode("utf-8", "replace")
+            except Exception:
+                return ""
+    return b.decode("utf-8", "replace")
+
+
+def message_text(db, chat_id: str, local_id) -> str:
+    """取某条消息的**正文**（必要时解压）。任何异常 ⇒ `''`。"""
+    if db is None or not chat_id or local_id in (None, ""):
+        return ""
+    try:
+        row = db.get_message_row(str(chat_id), int(local_id))
+    except Exception:
+        return ""
+    if not isinstance(row, dict):
+        return ""
+    txt = recover_text(row.get("content"))
+    if not txt:
+        txt = recover_text(row.get("compress_content"))
+    return txt
+
+
+def fill_text(db, chat_id: str, local_id, friendly: str) -> str:
+    """友好化结果是个**类型标签**时，用它换回正文；否则原样返回 friendly。
+
+    识别"类型标签"的口径：整串就是一个方括号标签（`[文本]` / `[文件/链接/卡片]` / `[图片]`…，
+    长度 ≤ 16、内部无方括号）。
+    """
+    import re as _re
+    s = str(friendly or "")
+    if not _re.match(r"^\[[^\[\]]{1,16}\]$", s):
+        return s
+    got = message_text(db, chat_id, local_id)
+    return got or s
