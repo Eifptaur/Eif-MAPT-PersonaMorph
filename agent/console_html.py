@@ -441,6 +441,7 @@ th{color:var(--tx2);font-weight:500}
       <a href="#sec-vermat"><svg viewBox="0 0 16 16"><path d="M8 1.8l5.4 2.7v6.9L8 14.2 2.6 11.4V4.5z" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M2.8 4.6L8 7.3l5.2-2.7M8 7.3v6.8" fill="none" stroke="currentColor" stroke-width="1.2"/></svg><span class="lb">版本</span></a>
       <a href="#sec-media"><svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="5.6" cy="6.4" r="1.3" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M2.6 11.4l3.4-3 2.7 2.4 2.2-1.9 2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg><span class="lb">媒体</span></a>
       <a href="#sec-tts"><svg viewBox="0 0 16 16"><path d="M3 6.4v3.2M6 4.2v7.6M9 2.8v10.4M12 5.4v5.2" stroke="currentColor" stroke-width="1.4" fill="none"/></svg><span class="lb">语音</span></a>
+      <a href="#sec-imggen"><svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M4.4 10.8l2.6-2.4 2 1.8 1.6-1.4 2.4 2.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M11.2 4.4l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z" fill="none" stroke="currentColor" stroke-width="1.1"/></svg><span class="lb">要图</span></a>
       <a href="#sec-tools"><svg viewBox="0 0 16 16"><rect x="3" y="3" width="7" height="7" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10 6.4h1.6a1.6 1.6 0 010 3.2H10" fill="none" stroke="currentColor" stroke-width="1.4"/><rect x="6" y="10" width="7" height="3.4" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">插件</span></a>
       <a href="#sec-poke"><svg viewBox="0 0 16 16"><circle cx="8" cy="7" r="2.4" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M2.6 12.6c.7-2.4 2.9-3.6 5.4-3.6s4.7 1.2 5.4 3.6" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="12.6" cy="3.4" r="1.2" fill="currentColor"/></svg><span class="lb">拍拍</span></a>
       <a href="#sec-memory"><svg viewBox="0 0 16 16"><path d="M4 2.4h8v11.2L8 11.4l-4 2.2z" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">记忆</span></a>
@@ -1108,6 +1109,7 @@ th{color:var(--tx2);font-weight:500}
 
     <section id="sec-persona" class="card" data-sec>
       <h2>人设与响应</h2>
+      <div class="desc">机器人以谁的身份在群里说话、怎么参与：人设名、参与度、自我介绍与群名片。改完立刻生效。</div>
       <div class="row"><label>人设名</label><div class="grow"><input type="text" data-cfg="persona.bot_name"></div></div>
       <div class="row"><label>人设选单</label><div class="grow">
         <div id="personaCats" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;align-items:center">
@@ -1327,6 +1329,7 @@ th{color:var(--tx2);font-weight:500}
 
     <section id="sec-memory-set" class="card" data-sec>
       <h2>记忆（共享设置）</h2>
+      <div class="desc">记忆怎么存、怎么共享、什么时候整理；每个群的记忆默认互相隔离，只有你点头的群之间才共享。</div>
       <div class="row"><label>自动整理</label><input type="checkbox" data-cfg="memory.consolidate_enabled"></div>
       <div class="row"><label>共享记忆池</label><input type="checkbox" data-cfg="memory.share_across_groups" checked id="memShareChk">
         <span class="hint">勾选=所有群共享一个记忆池（群间互通）；不勾=每群独立（默认，群间互不串味）</span></div>
@@ -1365,6 +1368,7 @@ th{color:var(--tx2);font-weight:500}
 
     <section id="sec-server" class="card" data-sec>
       <h2>服务器</h2>
+      <div class="desc">控制台的监听地址与访问口令。默认只听本机；改完要重启控制台才生效。</div>
       <div class="row"><label>监听地址</label><div class="grow"><input type="text" data-cfg="server.host" title="默认只允许本机访问"></div></div>
       <div class="row"><label>端口</label><div class="grow"><input type="number" min="1" max="65535" data-cfg="server.port" style="max-width:140px"><button class="ghost" id="portRestore" type="button" title="恢复默认端口 3210" style="margin-left:8px">恢复原端口(3210)</button><span class="hint" style="margin-left:8px">修改后需重启机器人生效（一键关闭→一键启动）</span></div></div>
       <div class="row"><label>自动开浏览器</label><input type="checkbox" data-cfg="server.auto_open_browser"></div>
@@ -1379,6 +1383,7 @@ th{color:var(--tx2);font-weight:500}
 
     <section id="sec-ui" class="card" data-sec>
       <h2>界面适配（DPI / 遮挡 / 主题）</h2>
+      <div class="desc">这台机器的显示缩放、遮挡清理与主题。点击位置对不上时先来这里。</div>
       <div class="row"><label>显示缩放</label><div class="grow"><select data-cfg="ui.coord_scale">
         <option value="auto">按系统自动检测</option><option value="1.0">100%</option>
         <option value="1.25">125%</option><option value="1.5">150%</option>
@@ -1450,6 +1455,7 @@ th{color:var(--tx2);font-weight:500}
 
     <section id="sec-log" class="card" data-sec>
       <h2>运行日志</h2>
+      <div class="desc">机器人的动作与失败原因都在这里；出问题先看这一屏，再谈别的。</div>
       <div class="btns" style="margin-bottom:10px">
         <button id="refreshLog" class="ghost">刷新</button>
         <label class="hint" style="align-self:center"><input type="checkbox" id="autolog" checked> 自动刷新</label>
@@ -1459,6 +1465,7 @@ th{color:var(--tx2);font-weight:500}
 
     <section id="sec-json" class="card" data-sec>
       <h2>完整配置 JSON（高级）</h2>
+      <div class="desc">全部配置的原始 JSON。只在面板里找不到对应开关时才动它，保存前先备份。</div>
       <textarea id="rawjson" spellcheck="false" style="width:100%;min-height:260px;font-family:ui-monospace,Consolas,monospace;font-size:12.5px;background:var(--input-bg);border:1px solid var(--bd);border-radius:8px;padding:10px;color:var(--tx)"></textarea>
       <div class="btns">
         <button id="saveAll" class="pri">保存全部设置</button>
