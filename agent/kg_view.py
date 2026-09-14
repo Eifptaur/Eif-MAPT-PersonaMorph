@@ -3,7 +3,7 @@
 
 为什么要有它（用户 2026-09-14）：「知识图谱……它没有 UI 呀，所以重绘它的呀」——
 图谱插件只提供工具（`gm_*`）和一个 43 MB 的 SQLite，**没有任何界面**；
-这份模块把它读出来给自研控制台画（不写库、不锁库：一律 `mode=ro` URI 打开）。
+这份模块把它读出来给E 控制台画（不写库、不锁库：一律 `mode=ro` URI 打开）。
 
 表（实测 2026-09-15）：
   gm_nodes(id,type,name,description,content,status,validated_count,source_sessions,community_id,pagerank,…)

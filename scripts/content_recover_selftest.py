@@ -97,14 +97,49 @@ try:
     from agent.config import get_config            # noqa: E402
     from agent.wechat import WeChatAdapter         # noqa: E402
     ad = WeChatAdapter(get_config())
-    cid = "wxid_ctkh6fu5iuri22"
-    nt = ad.recent_texts(cid)
-    longs = [t for t in (nt or []) if len(t) > 60]
-    tags = [t for t in (nt or []) if t.startswith("[") and t.endswith("]")]
-    ok("针里出现了长正文（说明压缩体被解开了）", bool(longs), "%d 条长文本 / 共 %d 条" % (len(longs), len(nt or [])))
-    ok("针里不再有纯类型标签", not tags, str(tags[:3]))
-    if longs:
-        print("     样例：%r" % longs[0][:70])
+    # ⚠️ 这里**不许写死会话 id**（2026-09-15）：原来写的是用户的真实 wxid，被外发包的
+    # 个人信息闸门当场拦下（"微信账号/数据"致命命中）；换成假 id 又会让这一节恒假红。
+    # 正路＝**从库里现取候选会话**（群列表 + 自己），谁读得出文本就用谁；都读不出就如实 SKIP。
+    cands = []
+    try:
+        cands += [str(g.get("wxid") or "") for g in (ad.list_groups() or [])]
+    except Exception:
+        pass
+    try:
+        me = ad._db.get_self_info() or {}
+        cands.append(str(me.get("username") or me.get("wxid") or ""))
+    except Exception:
+        pass
+    cands = [c for c in dict.fromkeys(cands) if c]
+    try:
+        cands.append("filehelper")     # 文件传输助手：名字固定、不涉及任何人
+    except Exception:
+        pass
+    hit = ("", [])
+    for cid in cands:
+        try:
+            nt = ad.recent_texts(cid) or []
+        except Exception:
+            nt = []
+        if len(nt or []) > len(hit[1] or []):
+            hit = (cid, nt)
+    if not hit[0]:
+        print("  SKIP 真数据这节（库里 %d 个候选会话都读不到文本：微信没开或库为空）" % len(cands))
+    else:
+        cid, nt = hit
+        longs = [t for t in nt if len(t) > 60]
+        tags = [t for t in nt if t.startswith("[") and t.endswith("]")]
+        # 判据分工（2026-09-15 定）：**"还有没有纯类型标签"才是回归判据**（旧 bug 会把压缩正文
+        # 读成 `[文本]` 这种标签，长度必然 ≤60、必被这条抓到）；"能不能看到长正文"是**证据**——
+        # 库里这段窗口没有长消息时它天然为假，那不是红，是"这会儿没得比"，如实 SKIP。
+        ok("真数据里不再出现纯类型标签（压缩正文没被读成 `[文本]`）", not tags, str(tags[:3]))
+        if longs:
+            ok("针里出现了长正文（说明压缩体被解开了）", True,
+               "会话 %s：%d 条长文本 / 共 %d 条" % (cid[:14] + "…", len(longs), len(nt)))
+            print("     样例：%r" % longs[0][:70])
+        else:
+            print("  SKIP 「长正文」这条（会话 %s 最近 %d 条里没有 >60 字的文本可比对）"
+                  % (cid[:14] + "…", len(nt)))
 except Exception as e:
     print("  SKIP 真数据这节（%s: %s）" % (type(e).__name__, str(e)[:60]))
 
