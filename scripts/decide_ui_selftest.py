@@ -76,10 +76,16 @@ ok("每个选项一个按钮、文案与说明都来自数据",
 ok("「什么都不做」是可点的选项（data-opt 空值）", 'data-opt=""' in cb and "什么都不做" in cb)
 ok("点遮罩也等于什么都不做", "ev.target === m" in cb and "fire('')" in cb)
 ok("同一张单只回调一次（防连点）", "if(fired) return; fired = true" in cb)
-ok("选项 key 没有写死在页面里（按钮靠后端 options 数据驱动）", "upgrade_adapter" not in H)
-ok("四个选项名只出现在给用户看的提示里，没有第二份写死的选项表",
-   H.count("一键升级适配层") == 1 and H.count("微信本身要处理") == 1,
-   "一键升级适配层×%d / 微信本身要处理×%d" % (H.count("一键升级适配层"), H.count("微信本身要处理")))
+# [⑦d 口径变更] 页面里现在**允许**出现 choice key 与选项中文名 —— 它们要用于两处**显示/触发**：
+#   ①「最近表态」把 key 翻成中文（nm 映射表）②面板按钮唤起对应动作（actUp→upgrade_adapter）。
+#   这两处不是"第二份选项表"⇒ 判据改成守真正的红线：**选项三件套（key+label+detail）仍只由后端给**，
+#   页面里不许出现只有后端才有的 detail 文案。
+_detail_marks = ("把适配层升到与本机微信配套的版本", "跑一次依赖自愈与版本体检", "只给排查指引")
+ok("选项表仍由后端给（页面里没有第二份 key+label+detail 的选项对象）",
+   not any(d in H for d in _detail_marks) and "o.detail" in cb)
+ok("页面里的 key 只用于两处：表态历史的中文映射 + 面板按钮触发",
+   "nm = {upgrade_adapter:" in H and "actBtn('actUp', 'upgrade_adapter'" in H
+   and "actBtn('actHeal', 'update_host'" in H)
 ok("后端确实带着这四个选项", len(PD.VERSION_OPTIONS) == 4 and
    [o["key"] for o in PD.VERSION_OPTIONS] == ["upgrade_adapter", "update_host", "allow_once", "wechat_side"])
 
@@ -91,7 +97,10 @@ ok("自动弹延后一点（不抢正在输入的那一下）", "setTimeout(func
 ok("面板里有手动入口按钮", 'id="pdOpen"' in H and "版本不匹配怎么办" in H)
 ok("手动入口读 /api/status 拿当前这张单", "pdOpen" in H and "const pd = (s && s.pending_decisions) || {}" in H)
 ok("待拍板状态行在位", 'id="pdStat"' in H and "待拍板 " in H)
-ok("升级命令回显给人（可复制那条命令）", "act.cmd" in H and "confirmBox(" in H)
+# [⑦d 口径变更] 「升级命令」不再只回显给用户抄：选这两项会**真去跑**（后台作业，778 行那条）。
+#   判据改成守"命令仍然看得见 + 真的发出去了"两件事。
+ok("选了能修的两项真去跑（postVersionAction）", "postVersionAction(key, item.id)" in H)
+ok("升级命令仍然看得见（从动作结果里回显）", "a.result) || {}).cmd" in H or "result || {}).cmd" in H or "result.cmd" in H)
 
 print("── D. 文案口径（不写解释性括号；讲清 ✕ 的含义）──")
 hint = seg(H, 'id="pdOpen"', "</div></div>", "待拍板提示")
