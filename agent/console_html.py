@@ -3093,7 +3093,7 @@ function maskClose(el){
 /* ── 模型厂商预设：切换即换 BaseURL/模型，弹窗要 Key ── */
 const PROVIDERS = {
   deepseek:{label:'DeepSeek', base:'https://api.deepseek.com/v1', keyHint:'sk-',
-    models:['deepseek-v4-flash-vision-exp','deepseek-v4-pro-0813','deepseek-v4-flash-0731','deepseek-v4-flash','deepseek-v4-pro','deepseek-v3.2','deepseek-v3.1-terminus','deepseek-r1-0528','deepseek-chat','deepseek-reasoner']},
+    models:['deepseek-flash','deepseek-v4-pro','deepseek-v4-flash-vision-exp','deepseek-v4-pro-0813','deepseek-v4-flash-0731','deepseek-v4-flash','deepseek-v3.2','deepseek-v3.1-terminus','deepseek-r1-0528','deepseek-chat','deepseek-reasoner']},
   moonshot:{label:'Moonshot Kimi', base:'https://api.moonshot.cn/v1', keyHint:'sk-',
     models:['kimi-k3','kimi-k2.7-code','kimi-k2.6','kimi-k2','kimi-k2-0905-preview','kimi-k2-0711-preview','moonshot-v1-128k','moonshot-v1-32k','moonshot-v1-8k']},
   zhipu:{label:'智谱 GLM', base:'https://open.bigmodel.cn/api/paas/v4', keyHint:'',

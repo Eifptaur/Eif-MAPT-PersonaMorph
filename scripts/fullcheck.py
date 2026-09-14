@@ -22,9 +22,12 @@ import tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 fails = []
+TOTAL = [0]           # 实际执行的检查数（2026-09-14 改成计数器：原来那行是**写死的分组加总**，
+                      # 加了检查项却忘改数字 ⇒ 报告里的"112 项"和实际条数会悄悄对不上）
 
 
 def check(name, cond, detail=""):
+    TOTAL[0] += 1
     print(("PASS " if cond else "FAIL ") + name + ("  " + str(detail) if detail else ""))
     if not cond:
         fails.append(name)
@@ -100,16 +103,22 @@ finally:
 
 # ═══════════ C. 后端功能 ═══════════
 from agent.llm import match_official_price, _OFFICIAL_PRICES
-check("价目 171 条", len(_OFFICIAL_PRICES) == 171)
+check("价目 172 条", len(_OFFICIAL_PRICES) == 172)
 check("MiniMax-M3 命中", match_official_price("MiniMax-M3")["in"] == 2.1)
 # ⛔ 2026-09-14 改口径：原来写死 `out == 4.5`，而价目表已按官方 2026-09-10 **闲时价**更新为 4.0
 #   ⇒ 断言跟不上就假红。这里改成守"**有官方价映射且带出处**"这件事实，具体数字由价目表自己负责
 #   （数字一变就要改判据，是判据在制造维护负担）。
-_ds_price = match_official_price("deepseek-chat")
-check("deepseek-chat 有官方价映射（含出处）",
+_ds_price = match_official_price("deepseek-flash")
+check("deepseek-flash（现行正名）有官方价映射（含出处）",
       isinstance(_ds_price.get("out"), (int, float)) and _ds_price["out"] > 0
       and "官方" in str(_ds_price.get("note") or ""),
       "out=%s note=%s" % (_ds_price.get("out"), str(_ds_price.get("note"))[:40]))
+# 一改全改（用户最高准则）：官方现售的两个名字必须都在价目表里，且旧名要注明"已退役"
+for _cur in ("deepseek-flash", "deepseek-v4-pro"):
+    check("%s 在价目表里" % _cur, _cur in _OFFICIAL_PRICES)
+for _old in ("deepseek-v4-flash", "deepseek-v4-flash-vision-exp", "deepseek-chat"):
+    check("%s 标注为已退役旧名" % _old, "已退役" in str(_OFFICIAL_PRICES.get(_old, {}).get("note") or "")
+          or "老别名" in str(_OFFICIAL_PRICES.get(_old, {}).get("note") or ""))
 from agent.prompt import resolve_context_tier
 cfg2 = {"store": {"context_tier": 2, "unified_tier": True, "group_tier": {},
                   "group_blocklist": {}, "keywords": ["鲸鱼"], "random_percent": 60}}
@@ -269,5 +278,5 @@ try:
 except Exception as e:
     check("代码检测", False, str(e))
 
-print("\n==== %d 项检查，%d 项失败 ====" % (len(must_have) + len(special_ui) + 6 + 6 + 6 + 8 + 5 + 4 + 9 + 8 + 1 + 1 + 3 + 1, len(fails)))
+print("\n==== %d 项检查，%d 项失败 ====" % (TOTAL[0], len(fails)))
 sys.exit(1 if fails else 0)
