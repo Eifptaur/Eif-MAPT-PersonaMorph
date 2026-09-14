@@ -816,6 +816,11 @@ th{color:var(--tx2);font-weight:500}
         <div class="hint">只对本次运行有效（重启后重新拦），我们不会把"放行"写进配置。</div>
       </div></div>
       <div id="vmList" class="hint"></div>
+      <div class="row"><label>待拍板</label><div class="grow">
+        <b id="pdStat">检测中…</b>
+        <div class="btns" style="margin-top:6px"><button id="pdOpen" class="ghost">版本不匹配怎么办</button></div>
+        <div class="hint">不匹配时开一张单：一键升级适配层 · 更新本体 · 仅本次允许 · 微信本身要处理。✕ 等于什么都不做，单子留着、同一对版本不再追问。</div>
+      </div></div>
     </section>
     <section id="sec-media" class="card" data-sec>
       <h2>媒体与语音（随机图 / 语音转文字 / 视频·文件）</h2>
@@ -2039,6 +2044,19 @@ async function loadStatus(){
           });
           v3.textContent = (vm.summary || '') + ' ｜ ' + rows.join(' · ');
         }
+        /* ⑦ 待决单：没实测过的版本对 ⇒ 开单 + 自动弹一次四选一（同一张单本次运行只弹一次，
+           用户选了「什么都不做」也不会再弹——台账记着，下次开控制台也不追问） */
+        try{
+          const pd = s.pending_decisions || {};
+          const pe = $('pdStat');
+          if(pe) pe.textContent = pd.error ? ('读不到待决台账：' + pd.error)
+            : (pd.open ? ('待拍板 ' + pd.open + ' 件 · ' + (pd.summary||'')) : '没有待拍板的事');
+          window.__pdShown = window.__pdShown || {};
+          if(pd.item && pd.item.id && !window.__pdShown[pd.item.id]){
+            window.__pdShown[pd.item.id] = 1;
+            setTimeout(function(){ openDecision(pd.item); }, 300);
+          }
+        }catch(e){}
       }catch(e){}
       try{
         const cl = s.cloud || {};
@@ -3677,6 +3695,52 @@ function confirmBox(title, lines, okLabel, onOk, danger){
   return m;
 }
 
+/* ── 多选一弹窗（⑦ 版本不匹配四选一用）：mask + box + 果冻图标，每个选项一个按钮 ──
+   口径（用户 2026-09-14）：「弹窗按你推荐的做」+「✕＝什么都不做」⇒ 最后一个按钮就是「什么都不做」，
+   点遮罩也等于什么都不做；单子不会因此消失（落台账，同一对版本不再追问）。 */
+function choiceBox(title, lines, options, onPick, subtext){
+  const m = document.createElement('div'); m.className='mask';
+  const lh = (lines||[]).filter(Boolean).map(s=>'<p style="text-align:left;margin:4px 0">'+s+'</p>').join('');
+  const opts = (options||[]);
+  const btns = opts.map(function(o,i){
+    return '<button class="'+(i===0?'pri':'ghost')+'" data-opt="'+o.key+'" style="display:block;width:100%;text-align:left;margin:8px 0 0">'
+      + o.label + '<div style="opacity:.72;font-weight:400;font-size:12px;margin-top:2px">' + (o.detail||'') + '</div></button>';
+  }).join('');
+  m.innerHTML = '<div class="box">' + ICON
+    + '<h1>'+title+'</h1>' + lh
+    + '<div style="display:block;margin-top:12px">' + btns
+    + '<button class="ghost" data-opt="" style="display:block;width:100%;text-align:left;margin:8px 0 0">什么都不做 ✕</button></div>'
+    + (subtext ? '<div class="hint" style="margin-top:10px">'+subtext+'</div>' : '')
+    + '</div>';
+  document.body.appendChild(m); maskOpen(m);
+  let fired = false;
+  const fire = function(key){ if(fired) return; fired = true; maskClose(m); m.remove(); onPick && onPick(key); };
+  m.querySelectorAll('button[data-opt]').forEach(function(b){
+    b.onclick = function(){ fire(b.getAttribute('data-opt')||''); };
+  });
+  m.onclick = function(ev){ if(ev.target === m) fire(''); };   // 点遮罩＝什么都不做
+  return m;
+}
+
+/* 版本不匹配那张单：四选一 + 把结果落台账（服务端写回能力矩阵） */
+function openDecision(item){
+  if(!item || !item.id){ toast('没有待拍板的事'); return; }
+  const lines = [item.reason, '微信 ' + (item.wechat||'?') + ' × 适配层 ' + (item.adapter||'?')];
+  choiceBox(item.title || '这件事要你拍板', lines, item.options || [], async function(key){
+    try{
+      const r = await getJSON('/api/decide', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({id: item.id, choice: key || ''})});
+      toast((r && r.message) || (key ? '已记下你的选择' : '按「什么都不做」处理'));
+      const act = ((r && r.result) || {}).action || {};
+      if(act.cmd){
+        confirmBox('跑这一条就行', ['在项目根目录执行：<b>' + act.cmd + '</b>',
+          '跑完回控制台点「重新检测」，版本能力矩阵会更新。'], '知道了');
+      }
+      loadStatus();
+    }catch(e){ toast('没能记下你的选择：' + e.message); }
+  }, '✕ 什么都不做：单子留着，同一对版本不再追问');
+}
+
 $('stopBtn').onclick = ()=>{
   confirmBox('停止机器人？', [
     '将同时停止 <b>机器人 + 看门狗</b>（都不会再自动拉起，也不会再弹新控制台）。',
@@ -5115,6 +5179,15 @@ addEventListener('hashchange', ()=>{ if(location.hash==='#sec-sessions') loadSes
   if(allowBtn) allowBtn.onclick = async ()=>{
     try{ await getJSON('/api/version/allow'); toast('已放行（只对本次运行有效）：发送会按未验证版本对继续，出问题请到「检查微信版本」升级适配层'); loadStatus(); }
     catch(e){ toast('放行失败：' + e.message); }
+  };
+  const pdBtn = document.getElementById('pdOpen');
+  if(pdBtn) pdBtn.onclick = async ()=>{
+    try{
+      const s = await getJSON('/api/status');
+      const pd = (s && s.pending_decisions) || {};
+      if(pd.item) openDecision(pd.item);
+      else toast(pd.open ? '待拍板的事在别处，刷新看看' : '现在没有待拍板的事');
+    }catch(e){ toast('读取待决台账失败：' + e.message); }
   };
   if(recheckBtn) recheckBtn.onclick = async ()=>{
     try{

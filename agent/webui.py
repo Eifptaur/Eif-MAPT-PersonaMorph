@@ -581,6 +581,20 @@ class WebUI:
                             # 版本门（W7）：没实测过的版本对 ⇒ 默认暂停发送；本会话是否已放行也一并暴露
                             from . import version_gate as _vg2
                             st["version_gate"] = _vg2.status()
+                            # 待决单（⑦ 版本不匹配四选一）：门没过就把这件事开成一张单，控制台据此弹模态。
+                            # 开单是幂等的（同一对版本只开一次、问过就不再问），所以这里每次轮询调用是安全的。
+                            try:
+                                from . import pending_decisions as _pd
+                                _pnd = _vg2.pending()
+                                _pit = _pnd.get("item") or {}
+                                st["pending_decisions"] = {
+                                    "open": len(_pd.open_items()),
+                                    "summary": _pd.summary(),
+                                    "needed": bool(_pnd.get("needed")),
+                                    "item": _pit if str(_pit.get("status")) == "open" else None,
+                                }
+                            except Exception as _pe:
+                                st["pending_decisions"] = {"open": 0, "error": str(_pe)}
                             # 微信装没装（2026-09-13：没装就带用户去官网，不做静默安装）
                             try:
                                 from .wechat import wechat_version_info as _wvi
@@ -903,6 +917,19 @@ class WebUI:
                         elif act == "resume":
                             _risk.resume()
                         self._json({"ok": True, "risk": _risk.snapshot()})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)}, 500)
+                elif path == "/api/decide":
+                    # 待决单表态（⑦ 版本不匹配四选一）：落台账 + 写回能力矩阵。
+                    # 只有「仅本次允许」会立刻放行本会话；「升级适配层 / 更新本体」只回命令与说明；
+                    # 「微信本身要处理」只给指引——**任何一条都不会在这里装包或降级微信**。
+                    try:
+                        from . import version_gate as _vg5
+                        r = _vg5.decide(str((data or {}).get("id") or ""),
+                                        str((data or {}).get("choice") or ""),
+                                        note=str((data or {}).get("note") or ""))
+                        _msg5 = str((r.get("action") or {}).get("message") or "")
+                        self._json({"ok": True, "result": r, "message": _msg5})
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)}, 500)
                 elif path == "/api/config":
