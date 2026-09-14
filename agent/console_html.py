@@ -849,6 +849,15 @@ th{color:var(--tx2);font-weight:500}
       </div></div>
       <div class="row"><label>只走后台</label><input type="checkbox" data-cfg="wechat.background_only">
         <span class="hint">默认关。开了之后：拍一拍 / 引用 / 朋友圈点赞·评论·发表 / UI 标定 一律**跳过并说明原因**，绝不悄悄动你的鼠标（发送文字、图片、表情、切会话、刷朋友圈仍走后台投递，不受影响）。</span></div>
+      <div class="row"><label>图标指纹</label><div class="grow">
+        <b id="ufpHead">检测中…</b>
+        <div class="btns" style="margin-top:6px">
+          <button id="ufpTake" class="ghost">重新取指纹</button>
+          <button id="ufpForget" class="ghost">丢掉旧指纹</button>
+        </div>
+        <div id="ufpList" class="hint"></div>
+        <div class="hint">点任何图标之前，程序会先比一次<b>图标指纹</b>（目标点周围 48×48 的 dHash，按「微信版本 × 渲染区尺寸 × DPI」分开存）。指纹<b>明确对不上</b>就停手并告诉你原因——那说明这个位置现在不像原来那个图标（微信更新了 UI / 窗口改了尺寸），照着过期比例盲点只会点到别处。没有记录或窗口最小化抓不到图时放行但留痕（不把第一次用锁死）。</div>
+      </div></div>
       <div class="row"><label>待拍板</label><div class="grow">
         <b id="pdStat">检测中…</b>
         <div class="btns" style="margin-top:6px"><button id="pdOpen" class="ghost">版本不匹配怎么办</button></div>
@@ -2133,8 +2142,7 @@ async function loadStatus(){
           });
           v3.textContent = (vm.summary || '') + ' ｜ ' + rows.join(' · ');
         }
-        /* 后台能力矩阵（⑥ 全后台审计）：档位 + 每条路径后台到哪一步，都来自 /api/status 的 bg 段 */
-        try{
+        /* 后台能力矩阵（⑥ 全后台审计）：档位 + 每条路径后台到哪一步，都来自 /api/status 的 bg 段 */        try{
           const bh = $('bgHead'); const bl = $('bgList');
           const inp = s.input || {};
           if(bh){
@@ -2155,6 +2163,29 @@ async function loadStatus(){
                     return (mk[p.status] || p.status) + ' · <b>' + p.label + '</b>：' + (p.detail || '');
                   }).join('<br>');
             }
+          }
+        }catch(e){}
+        /* 图标指纹表（⑦ 点击正确性）：按 微信版本×渲染尺寸×DPI 存了几条、什么时候取的 */
+        try{
+          const fh = $('ufpHead'); const fl = $('ufpList');
+          const f = s.ui_fp || {};
+          if(fh){
+            const ks = Object.keys(f.keys || {});
+            const cur = f.current || '';
+            const hit = (f.keys || {})[cur];
+            fh.textContent = f.error ? ('读不到指纹表：' + f.error)
+              : (ks.length ? ('本环境指纹 ' + (hit ? hit.n : 0) + ' 条 · 共 ' + ks.length + ' 组环境 · 摘要 ' + (f.digest||'-'))
+                           : '还没有任何指纹（点右边「重新取指纹」）');
+            fh.style.color = (ks.length && hit) ? 'var(--ok-tx)' : 'var(--warn-tx)';
+          }
+          if(fl){
+            const ks = Object.keys(f.keys || {});
+            fl.textContent = ks.length
+              ? ks.map(function(k){
+                  const v = f.keys[k];
+                  return (k === f.current ? '▶ ' : '　') + k + '：' + v.n + ' 条（' + (v.last||'-') + '）';
+                }).join('<br>')
+              : '指纹表为空：这会**放行但留痕**（每次点击都会记一笔"没有指纹可比"）。想让"点错"这件事被提前拦住，就在微信窗口正常显示时点一次「重新取指纹」。';
           }
         }catch(e){}
         /* ⑦ 待决单：没实测过的版本对 ⇒ 开单 + 自动弹一次四选一（同一张单本次运行只弹一次，
@@ -5256,6 +5287,28 @@ addEventListener('hashchange', ()=>{ if(location.hash==='#sec-sessions') loadSes
     }catch(e){ toast('加入失败：' + e.message); }
   };
   const utBtn = document.getElementById('utReload');
+  /* 图标指纹（⑦ 点击正确性）：取指纹 / 丢旧指纹 */
+  const ufpTakeBtn = document.getElementById('ufpTake');
+  if(ufpTakeBtn) ufpTakeBtn.onclick = async ()=>{
+    try{
+      ufpTakeBtn.disabled = true; ufpTakeBtn.textContent = '取指纹中…';
+      const r = await getJSON('/api/ui_fingerprint/take', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+      const res = (r && r.result) || {};
+      toast((res.ok||[]).length ? ('取到 ' + res.ok.length + ' 条指纹' + ((res.failed||[]).length ? ('，' + res.failed.length + ' 条没取到') : ''))
+                                : ('一条也没取到：' + ((res.failed||[])[0] || '微信窗口可能被最小化/遮住')));
+      if((res.failed||[]).length) console.warn('没取到的目标：', res.failed);
+      loadStatus();
+    }catch(e){ toast('取指纹失败：' + e.message); }
+    finally{ ufpTakeBtn.disabled = false; ufpTakeBtn.textContent = '重新取指纹'; }
+  };
+  const ufpForgetBtn = document.getElementById('ufpForget');
+  if(ufpForgetBtn) ufpForgetBtn.onclick = async ()=>{
+    if(!confirm('丢掉全部旧指纹？丢完就只剩"放行但留痕"（不会再拦"点错"），要重新点一次「重新取指纹」才有新指纹。')) return;
+    try{
+      await getJSON('/api/ui_fingerprint/forget', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+      toast('旧指纹已丢掉'); loadStatus();
+    }catch(e){ toast('丢掉失败：' + e.message); }
+  };
   if(utBtn) utBtn.onclick = async ()=>{
     try{
       const r = await getJSON('/api/tools/reload');

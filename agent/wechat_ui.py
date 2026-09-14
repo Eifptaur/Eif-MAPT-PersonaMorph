@@ -196,7 +196,13 @@ def icon_pos(name: str, gui) -> tuple | None:
 
 
 def hit(name: str, gui, right: bool = False, retries: int = 3) -> tuple:
-    """瞬移点击图标库元素（闭环：命中窗口校验 + 重试）。返回 (ok, msg)。"""
+    """瞬移点击图标库元素（闭环：**指纹自校验** + 命中窗口校验 + 重试）。返回 (ok, msg)。
+
+    「点击正确性」的一环（W7c）：点之前先比一次**图标指纹**（`agent/ui_fingerprint.py`，
+    按 微信版本×渲染尺寸×DPI 存）。指纹**明确对不上**就停手——因为那意味着这个位置上现在
+    看着不像原来那个图标（微信更新了 UI / 窗口尺寸变了），照着过期比例盲点只会点到别处。
+    没有记录或判据不可用（窗口最小化抓不到图）时**放行但留痕**，不把第一次用锁死。
+    """
     from . import ui_adapt
     why2 = ""
     for i in range(retries):
@@ -209,6 +215,13 @@ def hit(name: str, gui, right: bool = False, retries: int = 3) -> tuple:
             pos = icon_pos(name, gui)
             if pos is None:
                 return False, "图标库无「%s」坐标（标定失败：微信窗口不可见？请先恢复微信窗口再试）" % name
+        try:
+            from . import ui_fingerprint as _ufp
+            verdict, info = _ufp.verify(gui, name)
+            if verdict is False:
+                return False, info.get("reason") or ("「%s」图标指纹对不上，已停止点击" % name)
+        except Exception:
+            pass
         ok2, why2 = ui_adapt.click(gui, pos[0] - gui.origin_x, pos[1] - gui.origin_y, right=right)
         if ok2:
             return True, "已点击 %s" % name

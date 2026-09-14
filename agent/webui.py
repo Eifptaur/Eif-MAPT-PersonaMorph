@@ -572,6 +572,13 @@ class WebUI:
                                 st["bg"] = _bg.status()
                             except Exception as _be:
                                 st["bg"] = {"paths": [], "error": str(_be)}
+                            # 图标指纹表（⑦ 点击正确性）：按 微信版本×尺寸×DPI 存了几条、什么时候取的
+                            try:
+                                from . import ui_fingerprint as _ufp
+                                st["ui_fp"] = _ufp.hits()
+                                st["ui_fp"]["digest"] = _ufp.digest()
+                            except Exception as _fe:
+                                st["ui_fp"] = {"keys": {}, "error": str(_fe)}
                             # 版本能力矩阵 + 版本门（W7：版本变了要出横幅、按未验证处理）
                             st["version"] = _vm.current()
                             # 版本门（W7）：没实测过的版本对 ⇒ 默认暂停发送；本会话是否已放行也一并暴露
@@ -739,6 +746,28 @@ class WebUI:
                         on = str((q.get("on") or ["1"])[0]) not in ("0", "false", "False", "")
                         ok_t, why_t = _ut4.set_enabled(nm, on)
                         self._json({"ok": bool(ok_t), "why": why_t, "tools": _ut4.snapshot()})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/ui_fingerprint/take":
+                    # 「重新取指纹」（⑦ 点击正确性）：给图标库里的命名目标各取一份 dHash 指纹。
+                    # 只**看**不点：抓渲染区画面裁小块，抓不到/全黑就如实报失败，绝不写假指纹。
+                    try:
+                        from . import ui_fingerprint as _ufp
+                        from . import wechat as _wx3
+                        q = parse_qs(urlparse(self.path).query)
+                        names = [s for s in str((q.get("names") or [""])[0]).split(",") if s.strip()]
+                        gui = _wx3.WeChatAdapter()._get_gui()
+                        r = _ufp.take(gui, names or None)
+                        self._json({"ok": True, "result": r, "status": _ufp.hits(),
+                                    "digest": _ufp.digest()})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/ui_fingerprint/forget":
+                    try:
+                        from . import ui_fingerprint as _ufp2
+                        q = parse_qs(urlparse(self.path).query)
+                        k = str((q.get("key") or [""])[0]) or None
+                        self._json({"ok": True, "result": _ufp2.forget(k), "status": _ufp2.hits()})
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)})
                 elif path == "/api/image_gen/test":
