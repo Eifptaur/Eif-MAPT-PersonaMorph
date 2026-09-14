@@ -1057,6 +1057,71 @@ def _wechat_watchdog(wechat):
             log.debug("微信守护异常：%s", e)
 
 
+#: 记账钩子：main() 启动时装上真实的 _tool_llm_count；模块级评分函数不依赖 main 的局部变量
+_LLM_COUNT_HOOK = [lambda usage, system="": None]
+
+
+def persona_llm_score(card, name=""):
+    """统一严格评分器（唯一权威细则 RULES_TEXT，含贴合度判定/网梗重罚/精度铁律/从严基线/缺陷压分）。
+    返回 {ok, score, dims, reason, content} 或 {ok:False, error}。"""
+    try:
+        from agent.persona_rating import WEIGHTS as _W2, RULES_TEXT, compute as _compute
+        from agent.llm import chat_completion
+        # 联网检索真实资料（评分参考：贴合度应以真实言论/事迹为准，严禁以编造内容评价为贴合）
+        _wn = ""
+        try:
+            from agent import web_search as _ws2
+            _its = []
+            try:
+                _r = _ws2.web_search(str(name) + " 经典语录 名言")
+                _its += (_r or {}).get("results") or (_r or {}).get("items") or []
+            except Exception:
+                pass
+            _ls = []
+            for _it in _its[:8]:
+                _seg = str(_it.get("snippet") or "").strip()
+                if _seg:
+                    _ls.append(_seg[:160])
+            if _ls:
+                _wn = "\n".join("· " + l for l in _ls[:8])
+        except Exception:
+            pass
+        prompt = (
+            "你是角色设定严格评审员。按细则给分（细则如下），每维 0~100.00（精确 0.01）。\n"
+            + RULES_TEXT +
+            "\n以下是从网络检索到的该角色真实资料（权威事实来源）：\n"
+            + (_wn or "（未检索到第一手资料——贴合度按卡片自洽与口吻判断，严禁把编造内容当贴合）")
+            + "\n「贴合度」评分必须以真实资料比对（卡里出现真实资料之外的编造台词/事迹 → 贴合度≤30）；真实资料里有的细节卡里缺失 → 按细则正常压分。\n"
+            "\n第一行输出：{\"dims\":{\"style\":<估>,\"fit\":<估>,\"coher\":<估>,\"natural\":<估>,\"usable\":<估>}}"
+            "（0.01 精度，如 84.37）\n"
+            "第二行输出：{\"reason\":\"一句话指出人设层面最大缺点（必须针对该卡）\"}\n"
+            "重要：数值必须根据卡片内容独立评估（0.01 精度），禁止整十/整五整分，禁止抄示例；"
+            "评语指出的缺陷必须如实压分。\n\n"
+            "角色名：%s\n角色设定卡(节选 2600 字)：\n%s" % (name or "（未署名）", str(card or "")[:2600])
+        )
+        r = chat_completion([{"role": "user", "content": prompt}])
+        _LLM_COUNT_HOOK[0](r.get("usage"))
+        content = (r.get("message") or {}).get("content") or ""
+        import json as _json
+        import re as _re
+        m = _re.search(r'"dims"\s*:\s*\{([^}]*)\}', content, _re.S)
+        rm = _re.search(r'"reason"\s*:\s*"([^"]*)"', content, _re.S)
+        if not m:
+            return {"ok": False, "error": "模型未输出维度分：" + content[:120]}
+        d = {}
+        for pair in _re.findall(r'"(\w+)"\s*:\s*([\d.]+)', m.group(1)):
+            d[pair[0]] = float(pair[1])
+        if not d:
+            return {"ok": False, "error": "模型未输出维度分：" + content[:120]}
+        score = round(_compute(d), 2)
+        return {"ok": True, "score": score,
+                "dims": {k: round(float(d.get(k, 0)), 2) for k in _W2},
+                "reason": (rm.group(1) if rm else "（模型未给出原因）")[:200],
+                "content": content}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:150]}
+
+
 def main():
     # 注意：不要在 pythonw 下调用 os.system("chcp")——会弹出控制台窗口（闪窗）。
     # 代码已用 UTF-8 模式运行（-X utf8 / 编码头），无需 chcp。
@@ -1344,64 +1409,8 @@ def main():
             return {"ok": False, "error": str(e)}
 
     def _persona_llm_score(card, name=""):
-        """统一严格评分器（唯一权威细则 RULES_TEXT，含贴合度判定/网梗重罚/精度铁律/从严基线/缺陷压分）。
-        返回 {ok, score, dims, reason, content} 或 {ok:False, error}。"""
-        try:
-            from agent.persona_rating import WEIGHTS as _W2, RULES_TEXT, compute as _compute
-            from agent.llm import chat_completion
-            # 联网检索真实资料（评分参考：贴合度应以真实言论/事迹为准，严禁以编造内容评价为贴合）
-            _wn = ""
-            try:
-                from agent import web_search as _ws2
-                _its = []
-                try:
-                    _r = _ws2.web_search(str(name) + " 经典语录 名言")
-                    _its += (_r or {}).get("results") or (_r or {}).get("items") or []
-                except Exception:
-                    pass
-                _ls = []
-                for _it in _its[:8]:
-                    _seg = str(_it.get("snippet") or "").strip()
-                    if _seg:
-                        _ls.append(_seg[:160])
-                if _ls:
-                    _wn = "\n".join("· " + l for l in _ls[:8])
-            except Exception:
-                pass
-            prompt = (
-                "你是角色设定严格评审员。按细则给分（细则如下），每维 0~100.00（精确 0.01）。\n"
-                + RULES_TEXT +
-                "\n以下是从网络检索到的该角色真实资料（权威事实来源）：\n"
-                + (_wn or "（未检索到第一手资料——贴合度按卡片自洽与口吻判断，严禁把编造内容当贴合）")
-                + "\n「贴合度」评分必须以真实资料比对（卡里出现真实资料之外的编造台词/事迹 → 贴合度≤30）；真实资料里有的细节卡里缺失 → 按细则正常压分。\n"
-                "\n第一行输出：{\"dims\":{\"style\":<估>,\"fit\":<估>,\"coher\":<估>,\"natural\":<估>,\"usable\":<估>}}"
-                "（0.01 精度，如 84.37）\n"
-                "第二行输出：{\"reason\":\"一句话指出人设层面最大缺点（必须针对该卡）\"}\n"
-                "重要：数值必须根据卡片内容独立评估（0.01 精度），禁止整十/整五整分，禁止抄示例；"
-                "评语指出的缺陷必须如实压分。\n\n"
-                "角色名：%s\n角色设定卡(节选 2600 字)：\n%s" % (name or "（未署名）", str(card or "")[:2600])
-            )
-            r = chat_completion([{"role": "user", "content": prompt}])
-            _tool_llm_count(r.get("usage"))
-            content = (r.get("message") or {}).get("content") or ""
-            import json as _json
-            import re as _re
-            m = _re.search(r'"dims"\s*:\s*\{([^}]*)\}', content, _re.S)
-            rm = _re.search(r'"reason"\s*:\s*"([^"]*)"', content, _re.S)
-            if not m:
-                return {"ok": False, "error": "模型未输出维度分：" + content[:120]}
-            d = {}
-            for pair in _re.findall(r'"(\w+)"\s*:\s*([\d.]+)', m.group(1)):
-                d[pair[0]] = float(pair[1])
-            if not d:
-                return {"ok": False, "error": "模型未输出维度分：" + content[:120]}
-            score = round(_compute(d), 2)
-            return {"ok": True, "score": score,
-                    "dims": {k: round(float(d.get(k, 0)), 2) for k in _W2},
-                    "reason": (rm.group(1) if rm else "（模型未给出原因）")[:200],
-                    "content": content}
-        except Exception as e:
-            return {"ok": False, "error": str(e)[:150]}
+        """与「模型评分」按钮同一把尺子——实现已提到模块级 persona_llm_score（判据直接调真身）。"""
+        return persona_llm_score(card, name)
 
     def persona_score_custom_fn(text, llm=False):
         """自定义角色卡评分：默认本地（零 token）；llm=True 时交给模型结合角色设定评分。
@@ -2064,6 +2073,10 @@ def main():
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
+    try:
+        _LLM_COUNT_HOOK[0] = _tool_llm_count
+    except Exception:
+        pass
     webui = WebUI(status_provider, log_buffer, test_api_fn=test_api_fn, balance_fn=balance_fn,
                   pause_fn=lambda: orch.set_paused(True), resume_fn=lambda: orch.set_paused(False),
                   shutdown_fn=shutdown_fn, whale=orch.whale,

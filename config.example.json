@@ -2,7 +2,7 @@
  "api": {
   "base_url": "https://api.deepseek.com/v1",
   "api_key": "",
-  "model": "deepseek-v4-flash-vision-exp",
+  "model": "deepseek-flash",
   "provider": "",
   "vision": true,
   "temperature": 0.8,

@@ -39,9 +39,10 @@ PEAK_HOURS = [(9, 12), (14, 18)]
 BASE_PRICE = {"hit": [0.05, 0.1], "miss": [1.5, 3.0], "out": [4.5, 9.0]}
 PRO_PRICE = {"hit": [0.15, 0.3], "miss": [4.5, 9.0], "out": [13.5, 27.0]}
 PRICING = {
-    "deepseek-v4-flash-vision-exp": BASE_PRICE,
-    "deepseek-v4-flash": BASE_PRICE,
+    "deepseek-flash": BASE_PRICE,          # 现行正名（V4.1-Flash，2026-09-14 官方页 + 本机 /models 实测）
     "deepseek-v4-pro": PRO_PRICE,
+    "deepseek-v4-flash-vision-exp": BASE_PRICE,   # 已退役旧名 ⇒ 由 V4.1-Flash 服务
+    "deepseek-v4-flash": BASE_PRICE,
     "deepseek-chat": BASE_PRICE,
     "deepseek-reasoner": PRO_PRICE,
     "_default": BASE_PRICE,
@@ -55,8 +56,9 @@ _BJ_OFFSET = 8 * 3600
 
 def price_for(model: str) -> dict:
     m = str(model or "").lower()
-    for key in ("deepseek-v4-pro", "deepseek-reasoner", "deepseek-v4-flash-vision-exp",
-                "deepseek-v4-flash", "deepseek-chat"):
+    # ⚠️ 顺序有讲究：先比对"更具体"的名字，别让 `deepseek-v4-pro` 被 `deepseek-flash` 之类前缀误判
+    for key in ("deepseek-v4-pro", "deepseek-reasoner", "deepseek-flash",
+                "deepseek-v4-flash-vision-exp", "deepseek-v4-flash", "deepseek-chat"):
         if key in m:
             return PRO_PRICE if key in ("deepseek-v4-pro", "deepseek-reasoner") else BASE_PRICE
     return BASE_PRICE

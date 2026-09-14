@@ -197,10 +197,13 @@ try:
     else:
         check("api.model 已配置", False, "请填模型 id")
     # 视觉模型提示（仅提示，不强制失败）
+    # 2026-09-14：官方正名 `deepseek-flash`（V4.1-Flash）**支持视觉**，但名字里没有 "vision" 字样
+    # ⇒ 只按关键字判断会误报"疑似非视觉模型"（牵一发动全身：改模型清单时这条判据要一起改）。
     model = str(api.get("model") or "").lower()
-    is_vision = "vision" in model or "vl" in model or "omni" in model or "4o" in model or "gemini" in model
+    _VISION_OK = ("vision", "vl", "omni", "4o", "gemini", "deepseek-flash", "v4.1-flash", "v41-flash")
+    is_vision = any(k in model for k in _VISION_OK)
     if api.get("vision", True) is not False and not is_vision:
-        check("api.model 疑似非视觉模型", True, "提示：当前模型名不含 vision，识图可能不可用，可换 deepseek-v4-flash-vision-exp")
+        check("api.model 疑似非视觉模型", True, "提示：当前模型名不含 vision，识图可能不可用，可换 deepseek-flash（V4.1-Flash，官方支持视觉）")
     else:
         check("api.model 视觉能力", True, api["model"])
 except Exception as e:

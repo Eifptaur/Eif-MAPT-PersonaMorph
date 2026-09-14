@@ -342,13 +342,19 @@ def add_usage(target: dict, usage) -> dict:
 # 内置官方/公开参考单价表（元 / 百万 token；cached 为缓存命中价，缺省按输入价近似）
 # 139 条来自 QQ-agent 同源价目（2026-09-03 采集），其余为控制台预设目录历史型号的补充行。
 _OFFICIAL_PRICES = {
-    'deepseek-v4-flash': { 'in': 1, 'out': 4, 'cached': 0.02, 'note': '官方2026-09-10闲时价；高峰×2（2/8/0.04）' },
-    'deepseek-v4-flash-0731': { 'in': 1, 'out': 4, 'cached': 0.02, 'note': '官方2026-09-10闲时价；高峰×2' },
-    'deepseek-v4-flash-vision-exp': { 'in': 1, 'out': 4, 'cached': 0.02, 'note': '视觉版，官方2026-09-10闲时价；高峰×2；图片另按384token/张上限' },
-    'deepseek-v4-pro': { 'in': 2, 'out': 8, 'cached': 0.04, 'note': '官方2026-09-10闲时价；高峰×2' },
-    'deepseek-v4-pro-0813': { 'in': 2, 'out': 8, 'cached': 0.04, 'note': '官方2026-09-10闲时价；高峰×2' },
-    'deepseek-chat': { 'in': 1, 'out': 4, 'cached': 0.02, 'note': '映射 V4-Flash：官方2026-09-10闲时价' },
-    'deepseek-reasoner': { 'in': 2, 'out': 8, 'cached': 0.04, 'note': '映射 V4-Pro：官方2026-09-10闲时价' },
+    # ── DeepSeek 当前在售（2026-09-14 联网核对官方 Models & Pricing 页 + 本机 API /models 实测）──
+    # 官方只有两个名字：`deepseek-flash`（DeepSeek-V4.1-Flash，**支持视觉**、1M 上下文、默认思考模式）
+    # 与 `deepseek-v4-pro`（DeepSeek-V4-Pro-0813，不支持视觉）。闲时价 = 高峰价 ÷ 2；
+    # 高峰＝北京时间工作日 09:00-12:00 与 14:00-18:00。美元价 ×7.2 折成元/百万。
+    'deepseek-flash': { 'in': 1, 'out': 4, 'cached': 0.02, 'note': 'V4.1-Flash 官方2026-09-14闲时价；高峰×2；支持视觉' },
+    'deepseek-v4-pro': { 'in': 2, 'out': 8, 'cached': 0.04, 'note': 'V4-Pro-0813 官方2026-09-14闲时价；高峰×2；不支持视觉' },
+    # ── 已退役的旧名：官方文档明确"仍接受，但由 V4.1-Flash 服务、按 Flash 价计费"（本机实测返回 model=deepseek-flash）──
+    'deepseek-v4-flash': { 'in': 1, 'out': 4, 'cached': 0.02, 'note': '已退役旧名 ⇒ 实际由 V4.1-Flash 服务，按 Flash 价' },
+    'deepseek-v4-flash-0731': { 'in': 1, 'out': 4, 'cached': 0.02, 'note': '已退役旧名 ⇒ 按 Flash 价' },
+    'deepseek-v4-flash-vision-exp': { 'in': 1, 'out': 4, 'cached': 0.02, 'note': '已退役旧名（视觉实验版）⇒ 由 V4.1-Flash 服务；图片另按384token/张上限' },
+    'deepseek-v4-pro-0813': { 'in': 2, 'out': 8, 'cached': 0.04, 'note': 'V4-Pro-0813 别名；官方2026-09-14闲时价' },
+    'deepseek-chat': { 'in': 1, 'out': 4, 'cached': 0.02, 'note': '老别名 ⇒ 实测由 V4.1-Flash 服务，按 Flash 价' },
+    'deepseek-reasoner': { 'in': 2, 'out': 8, 'cached': 0.04, 'note': '老别名 ⇒ 按 V4-Pro 价近似' },
     'deepseek-v3.1-terminus': { 'in': 1.5, 'out': 4.5, 'cached': 0.05, 'note': '旧代，按现价近似' },
     'deepseek-r1-0528': { 'in': 4.5, 'out': 13.5, 'cached': 0.15, 'note': '旧代，按现价近似' },
     'glm-5.3': { 'in': 8, 'out': 28, 'cached': 2, 'note': '1M 上下文；缓存存储限时免费' },

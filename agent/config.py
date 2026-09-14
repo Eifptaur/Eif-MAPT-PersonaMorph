@@ -20,7 +20,7 @@ DEFAULT_CONFIG = {
     "api": {
         "base_url": "https://api.deepseek.com/v1",
         "api_key": "",
-        "model": "deepseek-chat",
+        "model": "deepseek-flash",   # 2026-09-14 官方正名（V4.1-Flash，支持视觉）；旧名 deepseek-v4-flash-vision-exp 仍被接受但已退役
         "provider": "",              # 多提供商目录当前选中项（可选）
         "vision": True,              # 模型是否支持图片输入（关掉则移除看图工具）
         "temperature": 0.8,
@@ -71,7 +71,7 @@ DEFAULT_CONFIG = {
         "search_url": "https://cn.bing.com/search",
         "max_results": 6,
         "deepseek": {"api_key": "", "base_url": "https://api.deepseek.com/responses",
-                     "model": "deepseek-chat", "timeout_ms": 60000},
+                     "model": "deepseek-flash", "timeout_ms": 60000},
         "zhipu": {"api_key": "", "base_url": "https://open.bigmodel.cn/api/paas/v4/web_search",
                   "engine": "search_std", "count": 10, "timeout_ms": 20000},
         "bocha": {"api_key": "", "base_url": "https://api.bochaai.com/v1/web-search",
