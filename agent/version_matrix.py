@@ -207,6 +207,40 @@ def record(wechat: str, adapter: str, caps: dict, path: str | None = None) -> di
     return data
 
 
+# ── 用户表态（版本不匹配四选一）写回矩阵 ────────────────────────────────
+# 为什么写回矩阵（2026-09-14 用户口径）：控制台「版本能力矩阵」页要能回答"这一对当初是
+# 用户点了**仅本次允许**、还是去**升了适配层**、还是按**微信本身要处理**放着"——否则决策
+# 只活在弹窗里，重启后没人知道发生过什么。
+# ⚠️ 存成矩阵文件顶层的 `decisions` 列表，**不动 runs**：决策不是实测结论，混进 runs 会让
+#   `gate()` 把"有 run、但一项都没测"的版本对报成 partial（看着像测过一部分）。
+DECISION_KEEP = 20
+
+
+def note_decision(wechat: str, adapter: str, choice: str, note: str = "",
+                  when: str | None = None, path: str | None = None) -> dict:
+    """记一次用户表态。返回写回后的整份矩阵。"""
+    data = load(path)
+    ds = list(data.get("decisions") or [])
+    ds.append({"wechat": str(wechat or ""), "adapter": str(adapter or ""),
+               "when": when or time.strftime("%Y-%m-%d %H:%M:%S"),
+               "choice": str(choice or "") or "none", "note": str(note or "")})
+    data["decisions"] = ds[-DECISION_KEEP:]
+    save(data, path)
+    return data
+
+
+def decisions(data: dict, wechat: str = "", adapter: str = "") -> list:
+    """某个版本对（或全部，传空）的表态记录，旧的在前。"""
+    out = []
+    for d in (data or {}).get("decisions") or []:
+        if wechat and str(d.get("wechat")) != str(wechat):
+            continue
+        if adapter and str(d.get("adapter")) != str(adapter):
+            continue
+        out.append(d)
+    return out
+
+
 def adapter_version() -> str:
     """适配层（驱动库）版本：**只认运行时实测装的那一个**。
 
