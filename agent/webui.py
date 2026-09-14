@@ -565,6 +565,13 @@ class WebUI:
                             st["risk"] = _risk.snapshot()
                             # 当前输入后端档位（AGENTS §2.1 第 4 条：用了哪一档必须看得见）
                             st["input"] = _ib.status()
+                            # 后台能力矩阵（⑥ 全后台审计）：每条路径是"全程后台"还是"真鼠标"，
+                            # 单一事实源在 agent/bg_status.py —— 控制台照它显示，不另写一份。
+                            try:
+                                from . import bg_status as _bg
+                                st["bg"] = _bg.status()
+                            except Exception as _be:
+                                st["bg"] = {"paths": [], "error": str(_be)}
                             # 版本能力矩阵 + 版本门（W7：版本变了要出横幅、按未验证处理）
                             st["version"] = _vm.current()
                             # 版本门（W7）：没实测过的版本对 ⇒ 默认暂停发送；本会话是否已放行也一并暴露
