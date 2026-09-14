@@ -514,6 +514,16 @@ namespace WxLauncher
                 Console.WriteLine(Ui.UrlProbe());
                 return;
             }
+            if (args != null && args.Length > 1 && args[0] == "--cursorprobe")
+            {
+                // 光标点头取证：在**我们自己的 WebView2 窗口**里（屏外、不激活）真跑一遍
+                // 「鲸鱼光标 + 点击换歪头帧」这条链路，量出来给判据用（不靠肉眼、不截屏）。
+                try { Console.OutputEncoding = System.Text.Encoding.UTF8; } catch { }
+                Application.EnableVisualStyles();
+                Application.SetCompatibleTextRenderingDefault(false);
+                Console.WriteLine(Ui.CursorProbe(args[1]));
+                return;
+            }
             if (args != null && args.Length > 0 && args[0] == "--dlgprobe")
             {
                 try { Console.OutputEncoding = System.Text.Encoding.UTF8; } catch { }
@@ -661,7 +671,13 @@ namespace WxLauncher
         int _ring = 6;                 // 边缘缩放环宽（逻辑 px，OnLoad 里按窗口 DPI 换算）
         Button _btnMax;                // 最大化/还原按钮（图标随状态换）
         public bool ProbeOnly;         // 取证探针用：不初始化 WebView2（免得探针把浏览器弹出来）
+        /// 不激活显示：`Show()` 时用 SW_SHOWNOACTIVATE，**不抢用户前台**
+        /// （取值探针 --cursorprobe 用；实测：只加 WS_EX_NOACTIVATE 还不够，WinForms 的 Show() 仍会激活）
+        public bool NoActivate;
+        protected override bool ShowWithoutActivation { get { return NoActivate; } }
         public string MaxGlyph { get { return _btnMax == null ? "" : _btnMax.Text; } }
+        /// 取证探针（--cursorprobe）要直接在这个 WebView2 里跑 JS，故开放只读引用
+        public Microsoft.Web.WebView2.WinForms.WebView2 ProbeView { get { return _wv; } }
         Microsoft.Web.WebView2.WinForms.WebView2 _wv;
 
         /// 最大化 ↔ 还原（标题栏双击与「□」按钮走同一处）
@@ -748,6 +764,17 @@ namespace WxLauncher
 
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         static extern int GetSystemMetrics(int idx);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        internal static extern IntPtr GetForegroundWindow();
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        internal static extern bool SetForegroundWindow(IntPtr h);
+
+        internal const int GWL_EXSTYLE = -20;
+        internal const int WS_EX_NOACTIVATE = 0x08000000;
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        internal static extern int GetWindowLong(IntPtr h, int idx);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        internal static extern int SetWindowLong(IntPtr h, int idx, int val);
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         static extern bool IsZoomed(IntPtr h);
 
@@ -903,6 +930,129 @@ namespace WxLauncher
                 Application.Run(new ConsoleForm(url));
             }
             catch (Exception ex) { NoteFallback(dir, "自家窗口启动异常：" + ex.Message); FallbackBrowser(url); }
+        }
+
+        /// 取证探针：**我们自己的 WebView2 窗口**里的光标链路（鲸鱼光标 + 点击歪头帧）。
+        ///
+        /// 为什么必须在这扇窗里量：浏览器里好不代表自家窗里好——WebView2 的宿主是 WinForms 控件，
+        /// 光标由"网页请求 → WebView2 → 宿主"这条链传下去，任何一环没接上，用户看到的就只是普通箭头。
+        /// 做法：把控制台窗口开到**屏幕外**、`WS_EX_NOACTIVATE` 显示（不抢前台、不出现在屏幕上），
+        /// 等页面就绪后在页面里真跑一遍：读 cursor 计算值 → 派发 mousedown → 读歪头帧 → 等 400ms 读回默认帧
+        /// → 同步 XHR 确认两张图都能取到。全部结果打成 ASCII 标记给判据脚本解析。
+        public static string CursorProbe(string url)
+        {
+            var sb = new StringBuilder();
+            string dir = Path.GetDirectoryName(Application.ExecutablePath);
+            bool hasDll = File.Exists(Path.Combine(dir, "lib", "Microsoft.Web.WebView2.WinForms.dll"))
+                       || File.Exists(Path.Combine(dir, "Microsoft.Web.WebView2.WinForms.dll"));
+            sb.AppendLine("dll_present=" + hasDll);
+            if (!hasDll) { sb.AppendLine("cursorprobe=skip_no_dll"); return sb.ToString(); }
+            IntPtr fg0 = ConsoleForm.GetForegroundWindow();
+            ConsoleForm f = null;
+            try
+            {
+                f = new ConsoleForm(url);
+                f.ProbeOnly = false;
+                f.NoActivate = true;                       // Show() 不激活（否则会把用户前台抢走）
+                f.ShowInTaskbar = false;
+                f.StartPosition = FormStartPosition.Manual;
+                f.Location = new Point(-4000, -4000);      // 屏外：看得见才怪，但它照样渲染/执行
+                // 屏外 + WS_EX_NOACTIVATE：Show() **不激活**，用户的前台窗口不会被抢走
+                // （StyleKit.CaptureOffscreen 用的同一招，2026-09-13 实测「前台未变=True」）
+                try
+                {
+                    IntPtr h0 = f.Handle;
+                    ConsoleForm.SetWindowLong(h0, ConsoleForm.GWL_EXSTYLE, ConsoleForm.GetWindowLong(h0, ConsoleForm.GWL_EXSTYLE) | ConsoleForm.WS_EX_NOACTIVATE);
+                }
+                catch { }
+                var wv = f.ProbeView;
+                f.Show();
+                // 等 WebView2 就绪（ConsoleForm 的 Shown 里已经在 Initialize）
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                while (wv.CoreWebView2 == null && sw.ElapsedMilliseconds < 25000)
+                { Application.DoEvents(); System.Threading.Thread.Sleep(60); }
+                sb.AppendLine("webview_ready=" + (wv.CoreWebView2 != null));
+                if (wv.CoreWebView2 == null) { sb.AppendLine("cursorprobe=fail_no_webview"); return sb.ToString(); }
+                // 等页面就绪（readyState + 光标脚本已跑）
+                string ready = "";
+                sw.Restart();
+                while (sw.ElapsedMilliseconds < 25000)
+                {
+                    ready = RunJs(wv, "(function(){try{return document.readyState+'|'+(document.getElementById('whaleCursorStyle')?'style':'nostyle')}catch(e){return 'err'}})()");
+                    if (ready.IndexOf("complete|style") >= 0) break;
+                    Application.DoEvents(); System.Threading.Thread.Sleep(120);
+                }
+                sb.AppendLine("page=" + ready.Replace("\"", "").Replace("|", " "));
+                // 资源可达（同步 XHR，同源）
+                sb.AppendLine(Stat(wv, "/assets/cursor.png"));
+                sb.AppendLine(Stat(wv, "/assets/cursor-nod.png"));
+                // 光标样式现状
+                string s1 = Js(wv, "(function(){try{var st=document.getElementById('whaleCursorStyle');return (st?st.textContent:'')}catch(e){return 'err'}})()");
+                sb.AppendLine("style_default=" + Brief(s1));
+                sb.AppendLine("has_cursor_png=" + (s1.IndexOf("cursor.png") >= 0));
+                sb.AppendLine("has_whale_class=" + (Js(wv, "document.documentElement.className").IndexOf("whale-cursor") >= 0));
+                // 点一下：应换成歪头帧
+                string s2 = Js(wv, "(function(){try{document.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true}));var st=document.getElementById('whaleCursorStyle');return (st?st.textContent:'')}catch(e){return 'err'}})()");
+                sb.AppendLine("style_after_mousedown=" + Brief(s2));
+                sb.AppendLine("nod_applied=" + (s2.IndexOf("cursor-nod.png") >= 0));
+                // 180ms 后应换回默认帧
+                System.Threading.Thread.Sleep(500);
+                string s3 = Js(wv, "(function(){try{var st=document.getElementById('whaleCursorStyle');return (st?st.textContent:'')}catch(e){return 'err'}})()");
+                sb.AppendLine("style_after_400ms=" + Brief(s3));
+                sb.AppendLine("nod_reverted=" + (s3.IndexOf("cursor-nod.png") < 0 && s3.IndexOf("cursor.png") >= 0));
+                IntPtr fg1 = ConsoleForm.GetForegroundWindow();
+                sb.AppendLine("fg_before=" + fg0.ToInt64());
+                sb.AppendLine("fg_after=" + fg1.ToInt64());
+                sb.AppendLine("probe_hwnd=" + f.Handle.ToInt64());
+                sb.AppendLine("fg_is_probe=" + (fg1 == f.Handle ? "True" : "False"));
+                sb.AppendLine("foreground_unchanged=" + (fg1 == fg0 ? "True" : "False"));
+                // 实测：**WebView2 初始化那一瞬间会把激活抢过来**（WS_EX_NOACTIVATE + ShowWithoutActivation
+                // 都挡不住它内部的 SetFocus）⇒ 探针收尾**把前台还给原来的窗口**，不留给用户一个被换掉的前台。
+                // 这是"用完还回去"的老规矩（同光标还原），并且如实把"抢过"记进 fg_is_probe。
+                try { ConsoleForm.SetForegroundWindow(fg0); System.Threading.Thread.Sleep(120); } catch { }
+                IntPtr fg2 = ConsoleForm.GetForegroundWindow();
+                sb.AppendLine("fg_restored=" + (fg2 == fg0 ? "True" : "False"));
+                sb.AppendLine("cursorprobe=ok");
+            }
+            catch (Exception ex) { sb.AppendLine("cursorprobe=error:" + ex.Message); }
+            finally
+            {
+                try { if (f != null) { f.Close(); f.Dispose(); } } catch { }
+            }
+            return sb.ToString();
+        }
+
+        /// 跑一段 JS 并等结果（WebView2 的 ExecuteScriptAsync 是异步的，这里用消息泵同步等）
+        static string RunJs(Microsoft.Web.WebView2.WinForms.WebView2 wv, string js)
+        {
+            string res = null; bool done = false;
+            try
+            {
+                wv.CoreWebView2.ExecuteScriptAsync(js).ContinueWith(delegate(System.Threading.Tasks.Task<string> t)
+                {
+                    try { res = t.Result; } catch { res = null; }
+                    done = true;
+                });
+            }
+            catch { return ""; }
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            while (!done && sw.ElapsedMilliseconds < 12000) { Application.DoEvents(); System.Threading.Thread.Sleep(20); }
+            return res == null ? "" : res.Trim('"');
+        }
+
+        static string Js(Microsoft.Web.WebView2.WinForms.WebView2 wv, string body) { return RunJs(wv, body); }
+
+        static string Brief(string s)
+        {
+            s = (s ?? "").Replace("\r", " ").Replace("\n", " ");
+            return s.Length > 150 ? s.Substring(0, 150) + "…" : s;
+        }
+
+        /// 同步 XHR 取一个资源，输出 `asset:<path>=<status>`
+        static string Stat(Microsoft.Web.WebView2.WinForms.WebView2 wv, string path)
+        {
+            string r = RunJs(wv, "(function(){try{var x=new XMLHttpRequest();x.open('GET','" + path + "?probe=1',false);x.send();return 'asset:" + path + "='+x.status}catch(e){return 'asset:" + path + "=ERR'}})()");
+            return string.IsNullOrEmpty(r) ? ("asset:" + path + "=TIMEOUT") : r;
         }
 
         /// 取证探针：控制台窗口的几何/缩放命中码（**全程不 Show、不初始化 WebView2** ⇒ 屏幕上不出现任何窗口）
