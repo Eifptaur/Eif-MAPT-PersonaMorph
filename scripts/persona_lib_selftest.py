@@ -53,6 +53,9 @@ NEW_BATCHES = {
                        "layer_bd", "lock_bd", "masking_bd", "pareo_bd", "chu2_bd"],
     "🀄 东方Project": ["reimu_th", "marisa_th", "sakuya_th"],
     "⏳ 重返未来：1999": ["sonetto_r1999", "regulus_r1999", "sotheby_r1999", "vertin_r1999"],
+    "🏰 明日方舟": ["amiya_ak", "kaltsit_ak", "texas_ak", "silverash_ak", "eyja_ak", "surtr_ak",
+                    "saria_ak", "blaze_ak", "mudrock_ak", "w_ak", "mlynar_ak", "lappland_ak",
+                    "hoshiguma_ak", "flametail_ak"],
 }
 #: 本判据"严格口径"只约束这些新卡（老库历史卡有各自的格式，不在本轮返工范围）
 _ALL_NEW = [k for keys in NEW_BATCHES.values() for k in keys]
