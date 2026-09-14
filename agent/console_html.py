@@ -13,7 +13,7 @@ HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>群相灵 控制台</title>
+<title>群相 控制台</title>
 <link rel="icon" href="/assets/icon.png" type="image/png">
 <style>
 :root{
@@ -416,7 +416,7 @@ th{color:var(--tx2);font-weight:500}
 <div id="waveLens"></div>
 
 <div class="topbar">
-  <div class="logo"><div class="whale-badge" id="whaleBadge" title="小鲸鱼"><img src="/assets/icon-whale.png" alt=""></div><span>群相灵 控制台 <small style="font-weight:400;color:var(--tx2);font-size:12px" title="构建号（换新包后如果这里不变，说明连的是旧实例——先停止再启动）">vβ·Ⅱ（__VER__）</small></span></div>  <div class="sp"></div>
+  <div class="logo"><div class="whale-badge" id="whaleBadge" title="小鲸鱼"><img src="/assets/icon-whale.png" alt=""></div><span>群相 控制台 <small style="font-weight:400;color:var(--tx2);font-size:12px" title="构建号（换新包后如果这里不变，说明连的是旧实例——先停止再启动）">vβ·Ⅱ（__VER__）</small></span></div>  <div class="sp"></div>
   <span class="chip"><span class="dot" id="dot"></span><b id="runText">连接中…</b></span>
   <span class="chip">模型 <b id="model-badge">? </b></span>
   <span class="chip" id="balance-badge" title="点击刷新余额">余额：查询中…</span>
@@ -4687,7 +4687,7 @@ const _EASTER_TXT = [
 })();
 
 const WHALE_TXT = {
-  "群相灵 控制台": "🐋 鲸鲸号 · 深度摸鱼",
+  "群相 控制台": "🐋 鲸鲸号 · 深度摸鱼",
   "概览": "🐋 概览 · 我是AI，别催，CPU还在烧",
   "检测中心（代码检测 / 点击测试）": "检测中心（先体检，再摸鱼）",
   "体检与功能自检": "检测中心 · 出远门前先体检",
@@ -4752,7 +4752,7 @@ function applyWhale(){
     // 顶栏徽标
     const lg = document.querySelector('.logo span');
     if(lg && lg.textContent.indexOf('鲸鲸号') < 0){
-      lg.innerHTML = lg.innerHTML.replace('群相灵 控制台', '🐋 鲸鲸号 · 深度摸鱼');
+      lg.innerHTML = lg.innerHTML.replace('群相 控制台', '🐋 鲸鲸号 · 深度摸鱼');
     }
     document.title = '🐋 鲸鲸号 · 深度摸鱼';
   }catch(e){}

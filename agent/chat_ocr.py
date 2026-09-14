@@ -787,8 +787,15 @@ def content_match(pane: str, needle: str) -> bool:
     return difflib.SequenceMatcher(None, a, b).ratio() > 0.5
 
 
-def pane_text(img, limit: int = 200) -> str:
-    """聊天区（面板左沿往右那一块）的 OCR 文字摘要——用来判"切会话到底发没发生"（只读）。"""
+def pane_text(img, limit: int = 200, zoom: int = 2) -> str:
+    """聊天区（面板左沿往右那一块）的 OCR 文字摘要——判"当前打开的是谁 / 切会话发没发生"（只读）。
+
+    ⛔ 2026-09-14 修（⑤ 重发实测）：原来是**单帧 + 原尺寸**读一次，实测在"聊天区全是文件卡"的那一屏
+    读出**空串** ⇒ 内容级身份闸拿到空证据（于是有了 `chat_identity_ok` 里"读不到就返回 None"那条）。
+    现在两件事：①放大 `zoom` 倍再认（小字放大显著提识别率，与会话行同一套路）；
+    ②整块读不到就**分三段**各认一次（覆盖"中间被一张大图/文件卡隔开"的屏）。
+    ⚠️ 有判据断言过旧的单帧写法（`pane_text` 的调用点/切片），改这里要跟着看 `session_pick_selftest`。
+    """
     try:
         if img is None:
             return ""
@@ -800,8 +807,25 @@ def pane_text(img, limit: int = 200) -> str:
             left = 0
         if not left:
             left = int(w * ch.PANE_LEFT_REL)
-        crop = img.crop((left + 10, 120, max(left + 40, w - 10), int(h * 0.62)))
-        return "".join(str(i[0]) for i in recognize(crop))[:int(limit)]
+        box = (left + 10, 120, max(left + 40, w - 10), int(h * 0.62))
+
+        def _read(b):
+            crop = img.crop(b)
+            if zoom and int(zoom) > 1:
+                crop = crop.resize((crop.width * int(zoom), crop.height * int(zoom)))
+            return "".join(str(i[0]) for i in recognize(crop))
+
+        txt = _read(box)
+        if not txt.strip():
+            parts = []
+            y0, y1 = int(box[1]), int(box[3])
+            step = max(40, (y1 - y0) // 3)
+            for i in range(3):
+                b = (box[0], y0 + i * step, box[2], min(y1, y0 + (i + 1) * step + 20))
+                if b[3] - b[1] > 20:
+                    parts.append(_read(b))
+            txt = "".join(parts)
+        return txt[:int(limit)]
     except Exception:
         return ""
 

@@ -117,7 +117,7 @@ def _load_icon():
     return h
 
 
-def _data(hwnd, icon, tip="群相灵", info_title="", info_text="") -> NOTIFYICONDATAW:
+def _data(hwnd, icon, tip="群相", info_title="", info_text="") -> NOTIFYICONDATAW:
     d = NOTIFYICONDATAW()
     d.cbSize = ctypes.sizeof(NOTIFYICONDATAW)
     d.hWnd = hwnd
@@ -128,7 +128,7 @@ def _data(hwnd, icon, tip="群相灵", info_title="", info_text="") -> NOTIFYICO
     d.szTip = str(tip)[:127]
     if info_text:
         d.szInfo = str(info_text)[:255]
-        d.szInfoTitle = str(info_title or "群相灵")[:63]
+        d.szInfoTitle = str(info_title or "群相")[:63]
         d.dwInfoFlags = NIIF_INFO
     return d
 
@@ -218,7 +218,7 @@ def available() -> bool:
         return False
 
 
-def notify(title: str, text: str, tip: str = "群相灵", click=None) -> dict:
+def notify(title: str, text: str, tip: str = "群相", click=None) -> dict:
     """出一次托盘气泡（best-effort）。返回报告：{ok, why, clicked_opens}。
 
     `click` 是点气泡时的回调（默认去开控制台）。遵守 `WX_NO_UI_POP=1`：设了就不弹。

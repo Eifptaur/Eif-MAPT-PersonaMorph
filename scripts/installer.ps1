@@ -1,4 +1,4 @@
-﻿# 群相灵 一键启动启动器窗口：图标 + 步骤进度 + 进度条（无命令行黑窗）
+﻿# 群相 一键启动启动器窗口：图标 + 步骤进度 + 进度条（无命令行黑窗）
 # 由 一键启动.vbs 隐藏启动；依次：准备 Python → onestart(事件解析) → 快捷方式询问 → 完成。
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -21,7 +21,7 @@ try {
             Add-Type -AssemblyName System.Windows.Forms
             [System.Windows.Forms.MessageBox]::Show(
                 "启动器已在运行中。`r`n若看不到窗口，请稍候或用「一键关闭」结束后重试。",
-                '群相灵 一键启动', [System.Windows.Forms.MessageBoxButtons]::OK,
+                '群相 一键启动', [System.Windows.Forms.MessageBoxButtons]::OK,
                 [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
             exit 0
         }
@@ -34,7 +34,7 @@ try {
 
 # ── 窗口 ──
 $f = New-Object System.Windows.Forms.Form
-$f.Text = '群相灵 一键启动'
+$f.Text = '群相 一键启动'
 $f.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
 $f.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
 $f.MaximizeBox = $false; $f.MinimizeBox = $false
@@ -50,7 +50,7 @@ $pic.Size = New-Object System.Drawing.Size -ArgumentList 64, 64
 $f.Controls.Add($pic)
 
 $lTitle = New-Object System.Windows.Forms.Label
-$lTitle.Text = '群相灵 一键启动'
+$lTitle.Text = '群相 一键启动'
 $lTitle.Font = [System.Drawing.Font]::new('Microsoft YaHei UI', [single]15, [System.Drawing.FontStyle]::Bold)
 $lTitle.Location = New-Object System.Drawing.Point -ArgumentList 104, 22
 $lTitle.AutoSize = $true

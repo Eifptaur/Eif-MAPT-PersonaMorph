@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""在线包打包器（群相灵）—— 只打"版本库里跟踪的代码"，并做**个人信息/开发资料扫描闸门**。
+"""在线包打包器（群相）—— 只打"版本库里跟踪的代码"，并做**个人信息/开发资料扫描闸门**。
 
 用法：
   py -3 scripts/pack_online.py            # 打包 + 扫描（命中即拒绝出包 exit 3）
@@ -21,7 +21,7 @@ from datetime import datetime
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT_DIR = os.path.dirname(ROOT)                      # C:\Users\ptmou\Desktop\WX-chatbot
-PKG_PREFIX = "群相灵-在线包-"
+PKG_PREFIX = "群相-在线包-"
 
 # 不进包（相对仓库根的 posix 路径前缀 / 精确名）
 EXCLUDE = (
