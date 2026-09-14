@@ -52,7 +52,8 @@ NEW_BATCHES = {
                        "kokoro_bd", "kaoru_bd", "hagumi_bd", "kanon_bd", "michelle_bd",
                        "layer_bd", "lock_bd", "masking_bd", "pareo_bd", "chu2_bd"],
     "🀄 东方Project": ["reimu_th", "marisa_th", "sakuya_th"],
-    "⏳ 重返未来：1999": ["sonetto_r1999", "regulus_r1999", "sotheby_r1999", "vertin_r1999"],
+    "⏳ 重返未来：1999": ["sonetto_r1999", "regulus_r1999", "sotheby_r1999", "vertin_r1999",
+                             "druvis_r1999", "apple_r1999", "matilda_r1999"],
     "🏰 明日方舟": ["amiya_ak", "kaltsit_ak", "texas_ak", "silverash_ak", "eyja_ak", "surtr_ak",
                     "saria_ak", "blaze_ak", "mudrock_ak", "w_ak", "mlynar_ak", "lappland_ak",
                     "hoshiguma_ak", "flametail_ak"],
@@ -130,15 +131,14 @@ for k in _ALL_NEW:
                 _bad_ex.append("%s→%s" % (k, ans))
 ok("新卡的对话示例不是拼出来的占位符（拿名字/档案字段当回答）", not _bad_ex, str(_bad_ex[:4]))
 
-print("── D. 新卡不许塞当代网络梗 ──")# ⚠️ 判据也要防假阳：单字「典」会命中「祭典」、单字「6」会命中任何数字 ⇒ 只查**词**+孤立数字
-_BAD_WORDS = ("V我50", "yyds", "YYDS", "绝绝子", "退钱", "先吃饭", "典中典", "破防", "栓Q", "666")
-_BAD_RE = re.compile(r"(?<![0-9A-Za-z])6(?![0-9A-Za-z])")
+print("── D. 新卡不许塞当代网络梗 ──")
+# ⚠️ 判据防假阳（本轮实测两次）：单字「典」会命中「祭典」、「6」会命中生日「6 月 22 日」
+#    ⇒ 只查**多字网络梗**；单字/单数字那类交给人工审（宁可漏判，也不让判据打假红）
+_BAD_WORDS = ("V我50", "yyds", "YYDS", "绝绝子", "退钱", "先吃饭", "典中典", "破防", "栓Q", "666", "awsl", "笑不活了")
 for cat, keys in NEW_BATCHES.items():
     for k in keys:
         t = str((PERSONAS.get(k) or {}).get("text", ""))
         hit = [w for w in _BAD_WORDS if w in t]
-        if _BAD_RE.search(t):
-            hit.append("孤立数字 6")
         ok("%s 无网络梗" % k, not hit, str(hit))
 
 print("")
