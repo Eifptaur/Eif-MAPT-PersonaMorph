@@ -502,8 +502,28 @@ class Orchestrator:
         except Exception:
             wechat_nick = ""
 
+        # ⚠️ 2026-09-15 修真 bug：这里原来**没传 chat_key/group_name** ⇒ 每群独立档位、
+        #   群屏蔽名单、指令禁言在生产路径里从来没生效（判据自己在测试里传了 chat_key，所以一直全绿）。
+        try:
+            _group_name = self.wechat.group_name(chat_key)
+        except Exception:
+            _group_name = ""
         tier_result = resolve_context_tier(pending, self_nickname, bot_name, self_id,
-                                           wechat_nickname=wechat_nick)
+                                           wechat_nickname=wechat_nick, chat_key=chat_key,
+                                           group_name=_group_name, store=self.store)
+        # 内心判断留痕（低成本）：**没回也要留**——"看了但决定不回 + 为什么"正是海龟汤那类玩法最值钱的信息
+        try:
+            from agent import thought_trace as _tt
+            _snip = ""
+            try:
+                _snip = str((pending[-1] or {}).get("text") or "")[:80]
+            except Exception:
+                _snip = ""
+            _tt.note(chat_key, "tier", tier=tier_result.get("tier"),
+                     should=bool(tier_result.get("should_respond")),
+                     why=tier_result.get("reason"), src=tier_result.get("tier_source"), snippet=_snip)
+        except Exception:
+            pass
         if not tier_result["should_respond"]:
             marked = self.store.mark_all_read(chat_key)
             if marked:
@@ -628,6 +648,12 @@ class Orchestrator:
             _reason = (msg.get("reasoning_content") or msg.get("reasoning") or msg.get("thinking") or "")
             if _reason:
                 _entry["reasoning"] = (_entry["reasoning"] + "\n" + str(_reason))[:8000]
+                # 推理片段也进内心留痕（只在模型真给了推理时；默认省 token 关闭思考 ⇒ 平时没有这段）
+                try:
+                    from agent import thought_trace as _tt2
+                    _tt2.note(chat_key, "reasoning", think=str(_reason)[:400])
+                except Exception:
+                    pass
             assistant_entry = {"role": "assistant", "content": msg.get("content")}
             if msg.get("tool_calls"):
                 assistant_entry["tool_calls"] = msg["tool_calls"]
@@ -788,11 +814,19 @@ class Orchestrator:
         for uid in discovered:
             sample = [str(m["text"])[:200] for m in self.store.recent(chat_key, limit=2000)
                       if (not m["self"]) and str(m.get("sender_id")) == uid and m.get("text")][-40:]
+            _think = ""
+            try:
+                from agent import thought_trace as _tt3
+                _think = _tt3.format_for_memory(chat_key, 12)
+            except Exception:
+                _think = ""
             imp = self._extract_impressions(
                 "你是聊天机器人的记忆模块，负责从聊天记录里提炼对某一位群友的长期印象。"
                 "只提炼\"以后跟这个人打交道用得上\"的稳定特征，严格依据给定的发言，不要编造。"
                 "输出必须是严格的 JSON 对象，格式：{\"impressions\":[\"…\"]}。每条不超过 120 字，宁少勿错。",
-                "\n".join(sample) if sample else "（没有抓到该群友的发言）", max_keep)
+                ("\n".join(sample) if sample else "（没有抓到该群友的发言）")
+                + (("\n\n【机器人的内心判断（没发出去的也算，别当成群友发言）】\n" + _think) if _think else ""),
+                max_keep)
             if imp:
                 self.memory.replace_member(chat_key, uid, name_map.get(uid, ""), imp)
 

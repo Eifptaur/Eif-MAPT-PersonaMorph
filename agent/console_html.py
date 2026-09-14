@@ -477,7 +477,6 @@ th{color:var(--tx2);font-weight:500}
       <a href="#sec-poke"><svg viewBox="0 0 16 16"><circle cx="8" cy="7" r="2.4" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M2.6 12.6c.7-2.4 2.9-3.6 5.4-3.6s4.7 1.2 5.4 3.6" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="12.6" cy="3.4" r="1.2" fill="currentColor"/></svg><span class="lb">拍拍</span></a>
       <a href="#sec-memory"><svg viewBox="0 0 16 16"><path d="M4 2.4h8v11.2L8 11.4l-4 2.2z" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">记忆</span></a>
       <a href="#sec-memory-set"><svg viewBox="0 0 16 16"><circle cx="3.6" cy="8" r="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="12.4" cy="4" r="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="12.4" cy="12" r="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M5.2 7.2l5.6-2.4M5.2 8.8l5.6 2.4" stroke="currentColor" stroke-width="1.3" fill="none"/></svg><span class="lb">共享</span></a>
-      <a href="#sec-kg"><svg viewBox="0 0 16 16"><circle cx="4" cy="4.4" r="1.9" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="12" cy="6" r="1.9" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="6.4" cy="12" r="1.9" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M5.4 5.6l5.2-1M5.4 6.2l.8 4M11.2 7.6l-3.4 3.1" stroke="currentColor" stroke-width="1.3" fill="none"/></svg><span class="lb">图谱</span></a>
       <a href="#sec-persona"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="6" cy="7" r=".9" fill="currentColor"/><circle cx="10" cy="7" r=".9" fill="currentColor"/><path d="M5.6 10.2c1.4 1.1 3.4 1.1 4.8 0" fill="none" stroke="currentColor" stroke-width="1.3"/></svg><span class="lb">人设</span></a>
       <a href="#sec-community"><svg viewBox="0 0 16 16"><circle cx="5" cy="6" r="2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="11" cy="6" r="2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M1.6 12.4c.5-1.8 1.9-2.8 3.4-2.8s2.9 1 3.4 2.8M8.6 9.9c.6-.2 1.2-.3 1.8-.3 1.5 0 2.9 1 3.4 2.8" fill="none" stroke="currentColor" stroke-width="1.3"/></svg><span class="lb">社区</span></a>
       <a href="#sec-feedback"><svg viewBox="0 0 16 16"><path d="M2.4 3.6h11.2v7.2H7.2L4.2 13.4V10.8H2.4z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M5.2 6.2h5.6M5.2 8.4h3.6" stroke="currentColor" stroke-width="1.3" fill="none"/></svg><span class="lb">反馈</span></a>
@@ -1150,28 +1149,6 @@ th{color:var(--tx2);font-weight:500}
       <div class="hint" id="memEmpty">（无记忆数据）</div>
     </section>
 
-    <section id="sec-kg" class="card" data-sec>
-      <h2>知识图谱</h2>
-      <div class="desc">跨会话的长期图谱（本机 <b>只读</b>打开那张 43 MB 的 SQLite：不写、不锁、不改）。节点＝做成的事/用到的技能/记住的事实，边＝「用了哪个技能」「靠什么解决」「依赖什么」。下面这张图是我们自己画的——插件本身没有界面。</div>
-      <div class="row"><label>图谱概况</label><div class="grow"><b id="kgStat">读取中…</b>
-        <div id="kgTypes" class="hint"></div></div></div>
-      <div class="row"><label>图谱关键词</label><div class="grow">
-        <input type="text" id="kgQ" placeholder="例如 WebView2 / 输入后端 / 人设卡">
-        <div class="btns" style="margin-top:6px">
-          <button id="kgGo" class="ghost">查一查</button>
-          <button id="kgReload" class="ghost">重读图谱</button>
-        </div>
-        <div class="hint">搜索走图谱自带的全文索引（FTS），搜不到时退回模糊匹配。</div>
-      </div></div>
-      <div class="row"><label>图</label><div class="grow">
-        <svg id="kgSvg" viewBox="0 0 900 340" width="100%" height="340" style="background:var(--card,#fff);border:1px solid var(--bd);border-radius:10px"></svg>
-        <div class="hint" id="kgLegend">圆点＝节点（大小按连线数），连线＝边；点一个节点看它的邻域。</div>
-      </div></div>
-      <div class="row"><label>节点</label><div class="grow">
-        <div id="kgList" class="hint">（读取中…）</div></div></div>
-      <div class="row"><label>详情</label><div class="grow">
-        <div id="kgDetail" class="hint">点上面的节点或搜索结果，看它的描述、邻域与出处。</div></div></div>
-    </section>
 
     <section id="sec-persona" class="card" data-sec>
       <h2>人设与响应</h2>
@@ -2131,122 +2108,6 @@ async function loadBalance(){
     const cur = b.currency==='USD'?'$':'¥';
     el.textContent = '余额 '+cur+b.total_balance+'（充值 '+b.topped_up_balance+'）';
   }catch(e){ el.textContent='余额：查询失败'; }
-}
-
-/* ── 知识图谱（只读看板；图是自己画的 SVG，插件本身没有界面）── */
-const KG_TYPE_COLOR = {TASK:'#3b82f6', SKILL:'#10b981', EVENT:'#f59e0b', FACT:'#8b5cf6', DECISION:'#ef4444'};
-function kgColor(t){ return KG_TYPE_COLOR[t] || '#64748b'; }
-async function loadKg(){
-  const st = $('kgStat');
-  if(!st) return;
-  try{
-    const d = await getJSON('/api/kg/view');
-    if(!d || !d.ok){
-      st.textContent = '读不到图谱：' + ((d && d.reason) || '未知原因');
-      st.style.color = 'var(--err-tx)';
-      return;
-    }
-    const s = d.stats || {};
-    st.textContent = s.nodes + ' 个节点 · ' + s.edges + ' 条边 · 最近 7 天新增 ' + s.recent_nodes + ' 个 · ' +
-                     s.size_mb + ' MB · 最后写入 ' + (s.last_ts || '—');
-    st.style.color = '';
-    const tp = s.types || [];
-    const total = tp.reduce((a,b)=>a+(b.n||0),0) || 1;
-    const bars = tp.map(function(t){
-      const pct = ((t.n/total)*100).toFixed(1);
-      return '<div style="margin:2px 0"><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:'+kgColor(t.type)+';margin-right:6px"></span>'+
-             '<b>'+t.type+'</b> '+t.n+'（'+pct+'%）<div style="height:4px;border-radius:2px;background:var(--bd);margin-top:2px"><div style="height:4px;border-radius:2px;width:'+pct+'%;background:'+kgColor(t.type)+'"></div></div></div>';
-    }).join('');
-    // ⚠️ 别写成 bars + (…).length ? A : B —— JS 里 `+` 先算，字符串一非空就恒真（2026-09-15 踩过）
-    const er = (s.edge_types||[]);
-    $('kgTypes').innerHTML = bars + (er.length
-      ? ('<div style="margin-top:4px">边：' + er.map(function(e){ return e.type + ' ' + e.n; }).join(' · ') + '</div>')
-      : '');
-    kgDraw(d.graph || {nodes:[],edges:[]});
-    kgList((d.recent||[]).map(function(n){ return n; }), '最近写入的节点');
-  }catch(e){
-    st.textContent = '读取失败：' + e.message;
-    st.style.color = 'var(--err-tx)';
-  }
-}
-function kgList(nodes, title){
-  const box = $('kgList');
-  if(!box) return;
-  if(!(nodes||[]).length){ box.textContent = (title||'') + '：没有节点'; return; }
-  box.innerHTML = '<b>'+title+'</b>（'+nodes.length+'）<br>' + nodes.map(function(n){
-    return '<a href="javascript:void 0" data-kg="'+n.id+'" style="color:inherit;text-decoration:none">'+
-           '<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:'+kgColor(n.type)+';margin-right:5px"></span>'+
-           '<b>'+n.type+'</b> ' + (n.name||'') + ' <span style="opacity:.65">' + (n.updated||n.created||'') + '</span></a>';
-  }).join('<br>');
-  box.querySelectorAll('[data-kg]').forEach(function(a){ a.onclick = function(){ kgOpen(a.getAttribute('data-kg')); }; });
-}
-function kgDraw(g){
-  const svg = $('kgSvg');
-  if(!svg) return;
-  const W = 900, H = 340;
-  const nodes = (g.nodes||[]).slice(0, 90);
-  const edges = (g.edges||[]);
-  if(!nodes.length){ svg.innerHTML = '<text x="20" y="30" font-size="13" fill="#8899aa">图谱里还没有可画的节点</text>'; return; }
-  // 按类型分列、列内按连线数排序：确定性布局（不抖、可复现）
-  const byType = {};
-  nodes.forEach(function(n){ (byType[n.type] = byType[n.type]||[]).push(n); });
-  const types = Object.keys(byType).sort();
-  const pos = {};
-  types.forEach(function(t, ti){
-    const col = byType[t];
-    const x = 60 + (types.length<=1 ? (W-120)/2 : (W-120) * ti / (types.length-1));
-    col.forEach(function(n, i){
-      const y = 40 + ((H-80) * (i+0.5) / col.length);
-      pos[n.id] = [x, y];
-    });
-  });
-  let s = '';
-  edges.forEach(function(e){
-    const a = pos[e.from], b = pos[e.to];
-    if(!a || !b) return;
-    s += '<line x1="'+a[0]+'" y1="'+a[1]+'" x2="'+b[0]+'" y2="'+b[1]+'" stroke="#c9d3e0" stroke-width="0.8" stroke-opacity="0.45"/>';
-  });
-  const top = nodes.slice(0, 18).map(function(n){ return n.id; });
-  nodes.forEach(function(n, i){
-    const p = pos[n.id]; if(!p) return;
-    const deg = n.n_edges || n.degree || 0;
-    const r = Math.min(14, 4 + Math.sqrt(deg) * 1.6);
-    const jitter = ((i % 3) - 1) * 10;      // 列内轻微散开：不然同类型节点挤成一条直线
-    s += '<circle cx="'+(p[0]+jitter)+'" cy="'+p[1]+'" r="'+r.toFixed(1)+'" fill="'+kgColor(n.type)+'" fill-opacity="0.85" stroke="#fff" stroke-width="1"/>'+
-         '<title>'+n.type+' · '+(n.name||'')+'（连线 ' + deg + '）</title>';
-    if(top.indexOf(n.id) >= 0){
-      s += '<text x="'+(p[0]+jitter)+'" y="'+(p[1]+r+11)+'" font-size="9" fill="#6b7a90" text-anchor="middle">'+String(n.name||'').slice(0,16)+'</text>';
-    }
-  });
-  svg.innerHTML = s;
-  const legend = types.map(function(t){ return '<span style="display:inline-block;margin-right:10px"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:'+kgColor(t)+';margin-right:4px"></span>'+t+'</span>'; }).join('');
-  const lg = $('kgLegend');
-  if(lg) lg.innerHTML = legend + '<br>圆点大小＝连线数；图只画前 90 个节点（连线多的优先），完整列表看下面。';
-}
-async function kgOpen(id){
-  const box = $('kgDetail');
-  if(!box) return;
-  box.textContent = '读取节点…';
-  try{
-    const d = await getJSON('/api/kg/node?id=' + encodeURIComponent(id));
-    if(!d || !d.ok){ box.textContent = '读不到：' + ((d && d.reason) || '未知'); return; }
-    const n = d.node || {};
-    const nei = d.nodes || [];
-    box.innerHTML = '<b>' + n.type + ' · ' + (n.name||'') + '</b>（连线 ' + (n.degree||0) + ' · pagerank ' + (n.pagerank||0) + '）<br>' +
-      (n.description ? ('<i>' + n.description + '</i><br>') : '') +
-      (d.content ? ('<pre style="white-space:pre-wrap;max-height:180px;overflow:auto;font-size:12px">' + String(d.content).slice(0,1200) + '</pre>') : '') +
-      '<b>邻域</b>（' + nei.length + ' 个节点 / ' + (d.edges||[]).length + ' 条边）：' +
-      nei.filter(function(x){ return x.id !== n.id; }).map(function(x){ return x.type + '·' + (x.name||''); }).join(' / ') +
-      ((d.sources||[]).length ? ('<br><b>出处</b>：' + d.sources.map(function(s){ return (s.session_id||'').slice(0,28) + '×' + s.n; }).join('，')) : '');
-  }catch(e){ box.textContent = '读取失败：' + e.message; }
-}
-async function kgSearch(){
-  const q = ($('kgQ')||{}).value || '';
-  if(!q.trim()){ toast('先填个关键词'); return; }
-  try{
-    const d = await getJSON('/api/kg/search?q=' + encodeURIComponent(q));
-    kgList((d && d.nodes) || [], '搜索「' + q + '」');
-  }catch(e){ toast('搜索失败：' + e.message); }
 }
 
 async function loadStatus(){  try{
@@ -5397,7 +5258,7 @@ setInterval(loadBalance, 30000);
 setInterval(()=>{ if($('autolog').checked) loadLog(); }, 4000);
 setInterval(checkAlive, 6000);
 $('sessRefresh').onclick = ()=>loadSessions();
-addEventListener('hashchange', ()=>{ if(location.hash==='#sec-sessions') loadSessions(); if(location.hash==='#sec-kg') loadKg(); });
+addEventListener('hashchange', ()=>{ if(location.hash==='#sec-sessions') loadSessions(); });
 /* 微信装没装：两个动作（2026-09-13） */
 (function(){
   const openBtn = document.getElementById('wxOpenSite');
@@ -5426,11 +5287,6 @@ addEventListener('hashchange', ()=>{ if(location.hash==='#sec-sessions') loadSes
     }catch(e){ toast('加入失败：' + e.message); }
   };
   const utBtn = document.getElementById('utReload');
-  /* 知识图谱：读一次 / 搜索 / 重读 */
-  if($('kgGo')) $('kgGo').onclick = kgSearch;
-  if($('kgQ')) $('kgQ').onkeydown = function(ev){ if(ev.key === 'Enter') kgSearch(); };
-  if($('kgReload')) $('kgReload').onclick = ()=>{ loadKg(); toast('已重读图谱'); };
-  if(location.hash === '#sec-kg') loadKg();
   /* 图标指纹（⑦ 点击正确性）：取指纹 / 丢旧指纹 */
   const ufpTakeBtn = document.getElementById('ufpTake');
   if(ufpTakeBtn) ufpTakeBtn.onclick = async ()=>{

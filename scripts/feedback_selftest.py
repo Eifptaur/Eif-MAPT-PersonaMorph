@@ -107,8 +107,12 @@ try:
     r2 = FB.submit("问题", "判据用的假反馈：这样能发出去吗")
     ok("配了中转网址 ⇒ state=sent", r2.get("state") == "sent", str(r2.get("state")))
     ok("对方真的收到了（POST 命中）", "text" in (got.get("body") or ""), (got.get("body") or "")[:60])
-    ok("收到的正文是程序整理过的（含类型/版本/诉求）",
-       "【群相 · 用户反馈】" in (got.get("body") or "") and "判据用的假反馈" in (got.get("body") or ""))
+    # 2026-09-15 口径更新（用户原话：「没必要让程序帮我整理，反正他只要用邮箱发到我的邮箱就行」）：
+    #   正文＝**用户原话原样** + 一行元信息 ⇒ 断言"原话一字不差在正文里、有元信息行、没有那套改写"。
+    ok("正文＝用户原话原样（只加一行元信息：类型/时间/版本/联系方式）",
+       "判据用的假反馈：这样能发出去吗" in (got.get("body") or "")
+       and "群相反馈" in (got.get("body") or "")
+       and "诉求：" not in (got.get("body") or ""), (got.get("body") or "")[:80])
     ok("发送后不再算待发", len(FB.pending()) == 1, "剩 %d 条待发" % len(FB.pending()))
     _fl = FB.flush()
     ok("补发把排队的那条也发出去了（剩 0 条）", _fl.get("left") == 0, str(_fl))
@@ -171,9 +175,13 @@ ok("代码里没有真实邮箱（全仓源码）",
    not any(MAIL_A in src(p) for p in ("agent/config.py", "agent/webui.py", "config.example.json")))
 ok("示例配置里 feedback 段是空的（不给真实地址）",
    MAIL_A not in src("config.example.json") and MAIL_B not in src("config.example.json"))
-ok("程序把诉求整理成人类可读正文（含类型/时间/版本/联系方式）",
-   all(k in FB.compose({"kind": "建议", "text": "x", "at_h": "2026-09-14 10:00:00", "ver": "b.x",
-                        "contact": "c", "env": {}}) for k in ("类型：", "时间：", "版本：", "联系方式：")))
+_c = FB.compose({"kind": "建议", "text": "一句原话", "at_h": "2026-09-14 10:00:00", "ver": "b.x",
+                 "contact": "c", "env": {}})
+# 口径 2026-09-15：正文＝原话原样（只加一行元信息）⇒ 断言"元信息在头一行 + 原话原样在后"
+ok("正文＝用户原话原样（只加一行元信息：类型/时间/版本/联系方式）",
+   all(k in _c.splitlines()[0] for k in ("建议", "2026-09-14 10:00:00", "b.x", "c"))
+   and _c.splitlines()[-1].strip() == "一句原话"
+   and "诉求：" not in _c, _c.replace("\n", "⏎")[:100])
 
 print("")
 print("反馈栏判据：%d 通过 / %d 失败" % (PASS, FAIL))

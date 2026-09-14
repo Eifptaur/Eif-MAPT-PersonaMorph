@@ -294,8 +294,11 @@ def hit_keyword(text, keywords=None):
     return False
 
 
+CONTINUE_WINDOW_SEC = 180      # 「接着我的话往下说」的时间窗（秒）
+
+
 def resolve_context_tier(trigger_entries, self_nickname="", bot_name="", self_id="", roll=None,
-                         wechat_nickname="", chat_key="", group_name=""):
+                         wechat_nickname="", chat_key="", group_name="", store=None):
     """决定这批消息是否值得回应，以及回应时带多少条已读历史。
 
     返回 {tier, count, reason, should_respond}。
@@ -374,6 +377,44 @@ def resolve_context_tier(trigger_entries, self_nickname="", bot_name="", self_id
             at_me = True
             break
     keyword = hit_keyword("\n".join(texts), c.get("keywords") or [])
+    # ── 两条确定性触发（2026-09-15 新增，不吃随机数；用户口径：顺着我的话往下说却因随机数不回＝体验断裂）──
+    #   ① 引用/回复的是我：①优先看条目自带的 reply（有就信它）②否则拿这条的话头去比对我最近发过的话
+    #   ② 接着我的话往下说：历史里最后一条是我说的，且这条紧跟其后（默认 180s 内）
+    quote_me = False
+    continues_mine = False
+    try:
+        if store is not None and chat_key:
+            batch_ids = {m.get("id") for m in (trigger_entries or [])}
+            mine = [m for m in (store.recent(chat_key, limit=40) or []) if m.get("self")]
+            my_texts = [str(m.get("text") or "").strip() for m in mine if str(m.get("text") or "").strip()]
+            my_id = str(self_id or "").strip()
+            my_names = [str(x).strip() for x in (self_nickname, bot_name, wechat_nickname) if str(x or "").strip()]
+            for e in (trigger_entries or []):
+                rep = e.get("reply")
+                if rep:
+                    rtxt = " ".join(str(x) for x in (rep.values() if isinstance(rep, dict) else [rep]))
+                    if (my_id and my_id in rtxt) or any(nm and nm in rtxt for nm in my_names):
+                        quote_me = True
+                        break
+                tt = str(e.get("text") or "").strip()
+                if tt and my_texts:
+                    head = tt[:12]
+                    if head and any(mt.startswith(head) or head.startswith(mt[:12]) for mt in my_texts[-8:]):
+                        quote_me = True
+                        break
+            hist = [m for m in (store.recent(chat_key, limit=8) or []) if m.get("id") not in batch_ids]
+            if hist and hist[-1].get("self"):
+                # ⚠️ 用 __import__("time")：本文件顶层**没有** import time（既有代码一律这么写）。
+                #   2026-09-15 踩过：写成 time.time() ⇒ 这里 NameError 被 except 吞成 gap=0 ⇒
+                #   "只要我最后发过言就无条件触发"（judge C4 抓出来的）。判据不可用时**不触发**（fail-closed）。
+                try:
+                    gap = int((int(__import__("time").time() * 1000) - int(hist[-1].get("ts") or 0)) / 1000)
+                except Exception:
+                    gap = None
+                if gap is not None and 0 <= gap <= CONTINUE_WINDOW_SEC:
+                    continues_mine = True
+    except Exception:
+        quote_me = continues_mine = False
     roll_value = random.random() * 100 if roll is None else float(roll)
     random_hit = roll_value < max(0, min(100, float(c.get("random_percent") or 0)))
 
@@ -389,8 +430,14 @@ def resolve_context_tier(trigger_entries, self_nickname="", bot_name="", self_id
     if at_me:
         return {"tier": 1, "count": n0(c.get("at_count")), "reason": "被艾特",
                 "should_respond": True, "tier_source": tier_src}
+    if quote_me:
+        return {"tier": 1, "count": n0(c.get("at_count")), "reason": "引用/回复的是我",
+                "should_respond": True, "tier_source": tier_src}
     if tier >= 2 and keyword:
         return {"tier": 2, "count": n0(c.get("keyword_count")), "reason": "关键词命中",
+                "should_respond": True, "tier_source": tier_src}
+    if continues_mine:
+        return {"tier": 2, "count": n0(c.get("keyword_count")), "reason": "接着我的话往下说",
                 "should_respond": True, "tier_source": tier_src}
     if tier >= 3 and random_hit:
         return {"tier": 3, "count": n0(c.get("random_count")), "reason": "随机命中(%d%%)" % round(roll_value),
@@ -451,14 +498,33 @@ def build_past_state(store, chat_key, exclude_ids=None, limit=None):
     else:
         cutoff = 0
         in_win = list(all_msgs)
-    messages = in_win[-max_limit:]
+    # ⚠️ 取"最后 N 条"时**按整块丢老的**（2026-09-15 判据 A2 的真根因）：
+    #   原来直接切片 ⇒ 每来一条新消息就丢掉最老的一条 ⇒ 历史块从第一行就变，前缀缓存永远吃不到
+    #   （实测两轮公共前缀只有 88 字符）。改成 CHUNK 对齐丢弃：两次丢块之间历史块是**纯追加**，
+    #   token 上限＝max_limit + CHUNK - 1 条。
+    _CH = 8
+    if max_limit and len(in_win) > max_limit:
+        _start = ((len(in_win) - max_limit) // _CH) * _CH
+        messages = in_win[_start:]
+    else:
+        messages = list(in_win)
     width = min(floor, max_limit)
     widened = 0
     if width and len(messages) < width:
+        # ⚠️ 兜底也要**按 CHUNK 对齐**（2026-09-15 第二次踩到）：原来取"最后 need 条"是精确滑动
+        #   ⇒ 每来一条新消息就丢掉最老的一条，历史块从第一行就变（实测公共前缀 88 字符）。
+        #   现在只算"目标起点"并把它对齐到块边界，取 all_msgs[start:]（宁可多带几条，也不逐条滑）。
         have = {id(m) for m in messages}
-        older = [m for m in all_msgs if id(m) not in have][-(width - len(messages)):]
-        widened = len(older)
-        messages = older + messages
+        pool = [m for m in all_msgs if id(m) not in have]
+        if pool:
+            total_ = len(all_msgs)
+            start = max(0, total_ - width)
+            start = (start // _CH) * _CH
+            older = all_msgs[start:]
+            widened = len(older)
+            messages = older + messages
+        else:
+            widened = 0
     stale = bool(window_min) and any(int(m.get("ts") or 0) < cutoff for m in messages)
     gap_min = 0
     if messages:
@@ -467,9 +533,16 @@ def build_past_state(store, chat_key, exclude_ids=None, limit=None):
         except (TypeError, ValueError):
             gap_min = 0
     # ⑥ 上下文压缩（向 harness 看齐）：最近 8 条详细，更早的只保留「发送者+前40字」摘要——降 token 且不丢"谁说过"信息
-    NEAR = 8
-    near = messages[-NEAR:]
-    old = messages[:-NEAR]
+    # ⚠️ 分界**按整块推进**（2026-09-15 判据 A2 抓到的缓存问题）：原来每来一条新消息就把一条从
+    #   "详细"挪进"摘要" ⇒ 历史块开头每轮都变 ⇒ 跨轮公共前缀只剩 7%。改成每 CHUNK 条才推进一次，
+    #   两次推进之间历史块**逐字不变（纯追加）**，前缀缓存才吃得到。
+    NEAR, CHUNK = 8, 8
+    if len(messages) <= NEAR:
+        k = 0
+    else:
+        k = ((len(messages) - NEAR) // CHUNK) * CHUNK
+    near = messages[k:]
+    old = messages[:k]
     lines = [_format_entry(m, with_id=bool((m.get("media") or []))) for m in near]
     for m in old:
         t = str(m.get("text") or "").strip()[:40]
@@ -478,11 +551,11 @@ def build_past_state(store, chat_key, exclude_ids=None, limit=None):
     if stale and lines:
         # 把"这是旧历史"显式标出来：兜底把窗外消息带进来之后，必须让模型知道别把它当本轮问题
         if gap_min > 0:
-            lines.insert(0, "（提醒：这个会话最近一条消息已经是 %s 之前的事了；下面是更早的聊天记录，"
-                            "只用来帮你了解上下文，不是本轮要回答的内容）" % _gap_text(gap_min))
+            lines.append("（提醒：这个会话最近一条消息已经是 %s 之前的事了；下面是更早的聊天记录，"
+                         "只用来帮你了解上下文，不是本轮要回答的内容）" % _gap_text(gap_min))
         else:
-            lines.insert(0, "（提醒：时间窗之外的更早记录也一并带上了，只用来帮你了解上下文，"
-                            "不是本轮要回答的内容）")
+            lines.append("（提醒：时间窗之外的更早记录也一并带上了，只用来帮你了解上下文，"
+                         "不是本轮要回答的内容）")
     return {"text": "\n".join(lines), "count": len(lines), "messages": near,
             "gap_min": gap_min, "stale": stale, "widened": widened, "store_has": len(all_msgs)}
 
@@ -527,7 +600,20 @@ def build_user_prompt(ctx) -> str:
         ctx["session"]["past_state_count"] = past["count"]
     unread_note = "（注意：处理期间又来了新消息，会在你结束后作为下一次【本次唤醒】给你）" if ctx.get("more_unread_during_run") else ""
 
+    # ⚠️ 分段顺序＝缓存命中率（2026-09-15 对照审计后定）：**稳定前缀在前、易变内容在后**。
+    #   历史块按时间追加 ⇒ 上一轮的历史是本轮历史的前缀 ⇒ 这段能吃到前缀缓存；
+    #   把【当前时间】【第 N 次处理】排到历史前面，等于每轮从第几十个 token 就分叉，缓存只剩 system。
     parts = []
+
+    # ① 稳定前缀：过去状态（按时间追加，逐轮可复用）
+    # 过去状态
+    if past["text"]:
+        parts.append("【过去状态】以下是这个会话最近的聊天记录（按时间排序，你的发言标为\"我\"；这些都已经看过，不需要逐条回应；带图的消息前有 #消息id，看图工具要用它）：\n%s" % past["text"])
+    elif past.get("store_has"):
+        parts.append("【过去状态】（这个会话此前的记录都没能取到——不是\"第一次参与\"，别当成新会话处理）")
+    else:
+        parts.append("【过去状态】（暂无历史记录，这是你第一次参与这个会话）")
+    # ② 易变段（时间 / 第 N 次 / 此刻状态）——必须排在历史之后
     parts.append("【当前时间】%s" % format_full_time(now))
     parts.append("【会话标识】%s · 第 %d 次处理（所有发送工具自动限定在本会话，无法发到别处）" % (ctx["chat_key"], ctx.get("run_seq", 1)))
 
@@ -549,15 +635,6 @@ def build_user_prompt(ctx) -> str:
     else:
         state_lines.append("你最近没有发过言")
     parts.append("【此刻状态】\n%s" % "\n".join(state_lines))
-
-    # 过去状态
-    if past["text"]:
-        parts.append("【过去状态】以下是这个会话最近的聊天记录（按时间排序，你的发言标为\"我\"；这些都已经看过，不需要逐条回应；带图的消息前有 #消息id，看图工具要用它）：\n%s" % past["text"])
-    elif past.get("store_has"):
-        parts.append("【过去状态】（这个会话此前的记录都没能取到——不是\"第一次参与\"，别当成新会话处理）")
-    else:
-        parts.append("【过去状态】（暂无历史记录，这是你第一次参与这个会话）")
-
     # 本次唤醒（主动话题时无触发批，改用主动开话题引导）
     if ctx.get("proactive"):
         parts.append("【主动开话题】群里最近比较安静，没人 @ 你。想聊的话，自己找个自然的话题抛出一条（一句即可，别像开场白）；不想聊就直接结束。发送用 send_message。")
