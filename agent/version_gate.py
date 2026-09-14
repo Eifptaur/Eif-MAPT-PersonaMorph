@@ -62,3 +62,49 @@ def status() -> dict:
     st = check()
     st["allowed_session"] = is_allowed()
     return st
+
+
+# ── 版本不匹配：待决单（四选一）─────────────────────────────────────────────
+# 用户口径（2026-09-14）：「弹窗按你推荐的做」+「把弹窗切出来的那一秒，就应该立刻让它到后台」。
+# 落点：门判「未实测」时**开一张待决单**（`agent/pending_decisions.py`，落 data/pending_decisions.json）；
+#   控制台据此弹四选一模态（一键升级适配层/更新本体/仅本次允许/微信本身要处理，✕＝什么都不做），
+#   用户表态后由 `decide()` 落台账 + 写回能力矩阵 + 执行本进程内的副作用。
+# **同一对版本只问一次**：开单是幂等的（已开过/已表过态的版本对直接复用旧条目）。
+def pending(capability: str = "send", wechat: str = "", adapter: str = "") -> dict:
+    """返回 `{needed, item, created, status}`：门没过就保证有一张待决单（幂等）。"""
+    st = check(capability, wechat=wechat, adapter=adapter)
+    if st.get("level") == "ok" and st.get("allow"):
+        return {"needed": False, "item": None, "created": False, "status": st}
+    try:
+        from . import pending_decisions as pd
+        item, created = pd.ensure_version_decision(st.get("wechat"), st.get("adapter"),
+                                                   reason=str(st.get("reason") or ""))
+        return {"needed": True, "item": item, "created": created, "status": st}
+    except Exception as e:
+        return {"needed": True, "item": None, "created": False, "status": st, "error": str(e)}
+
+
+def decide(decision_id: str, choice: str, note: str = "",
+           wechat: str = "", adapter: str = "",
+           decisions_path: str = None, matrix_path: str = None) -> dict:
+    """用户对一张待决单表态：落台账 → 写回能力矩阵 → 执行本进程内允许的副作用。
+
+    返回 `{item, action, wechat, adapter}`；`action` 里带给人看的一句话（控制台拿去 toast）。
+    ⚠️ 只有「仅本次允许」是**真的立刻生效**的动作；「升级适配层 / 更新本体」只给命令与说明，
+    由控制台/脚本去跑；「微信本身要处理」**只给指引，不装也不降级微信**。
+    `decisions_path`/`matrix_path` 只给判据注入临时文件用（生产留空＝用默认位置）。
+    """
+    from . import pending_decisions as pd
+    from . import version_matrix as vm
+    item = pd.resolve(decision_id, choice, note=note, p=decisions_path)
+    act = pd.apply_choice(item)
+    w = str(item.get("wechat") or wechat or "unknown")
+    a = str(item.get("adapter") or adapter or vm.adapter_version())
+    try:
+        vm.note_decision(w, a, str(item.get("choice") or "none"),
+                         note=str(act.get("message") or note), path=matrix_path)
+    except Exception as e:                                     # noqa: BLE001
+        act["writeback_error"] = str(e)
+    if act.get("action") == "allow_session":
+        allow_session(str(act.get("message") or ""))
+    return {"item": item, "action": act, "wechat": w, "adapter": a}
