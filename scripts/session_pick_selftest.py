@@ -198,6 +198,16 @@ ok("单字母名字：不误配到别的会话（`群里的人`）", CO.matches(
 ok("单字母名字：`[草稿]` 之外的前缀也会被剥掉（Draft）", CO.matches("[Draft]EE", "E") is True)
 ok("多字名字不受影响（仍是包含判断）", CO.matches("海绵宝宝课堂19：29", "海绵宝宝") is True)
 
+# ⛔ 2026-09-14 修（⑤ 重发时实测出来）：`find_row_info` 对单字名字的**名字行复核**原来写的是
+#    `norm(got) == norm(name)` **裸全等**，而 E 那种行的名字行会被 OCR 成 `[草稿]EE`
+#    （草稿标记＋名字＋草稿内容）⇒ 裸全等永远不等 ⇒ 列表里明明有 `[草稿]EE`，
+#    `find_row_info` 却全否、`switch_chat_posted` 报"没定位到 E"（白滚 6 轮）。
+#    现在复核改用与 `matches()` 同一套口径；下面两条一正一反钉住"修好了"且"没放宽成误配"。
+_fr_src = open(os.path.join(ROOT, "agent", "chat_ocr.py"), encoding="utf-8").read()
+ok("单字复核走 matches（不再裸全等，草稿标记会剥掉）", "if not matches(got, name):" in _fr_src)
+ok("放宽的只是草稿标记形态（名字行是别的名字仍然否）",
+   CO.matches("[草稿]EE", "E") is True and CO.matches("宋孟", "E") is False)
+
 # ⛔ 按"最后一条消息的时间"定位行（2026-09-13 实测：E 的名字行 OCR 给空串 ⇒ 名字这条路根本走不通；
 #    而 21：41 这种时间戳 OCR 读得准，实测按时间一次命中 y=246 那一行）
 _co_src = open(os.path.join(ROOT, "agent", "chat_ocr.py"), encoding="utf-8").read()
