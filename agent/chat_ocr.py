@@ -652,14 +652,20 @@ def find_row_info(img, name: str, zoom: int = 2, want_time: str = ""):
                 continue
             # ⚠️ 单字/单字母名字必须**复核这一行的名字行**（2026-09-13 实测假阳性：目标行是第 2 行，
             #    而第 3 行"宋孟"的预览里带着草稿内容 `[草稿]EE` ⇒ 放宽后的前缀匹配把**宋孟那一行**认成了 E，
-            #    点下去打开了别的会话）。复核用 `name_of_row()`（只 OCR 名字那一行、zoom=3），要求**全等**。
+            #    点下去打开了别的会话）。复核用 `name_of_row()`（只 OCR 名字那一行、zoom=3）。
+            # ⛔ 2026-09-14 修：原来这里要 `norm(got) == norm(name)` **裸全等**，可 E 那种行的**名字行**
+            #    会被 OCR 成 `[草稿]EE`（草稿标记＋名字＋草稿内容）⇒ 裸全等永远不等 ⇒ 单字母会话
+            #    **根本切不过去**（⑤ 重发实测：列表里明明有 `[草稿]EE`，这里全否、`switch_chat_posted`
+            #    报"没定位到 E"，白滚了 6 轮）。改成跟 `matches()` 同一套口径（剥「草稿/draft」前缀，
+            #    单字只要求**以它开头**）。安全性不变：挡假阳性的仍然是**名字行** —— 那一次名字行读出来是
+            #    「宋孟」，`matches("宋孟", "E")` 照样为假；放宽的只是"名字行自己带草稿标记"这一种形态。
             if len(norm(name)) <= 2:
                 got = ""
                 try:
                     got = name_of_row(img, y, nm, zoom=3)
                 except Exception:
                     got = ""
-                if norm(got) != norm(name):
+                if not matches(got, name):
                     continue
             return {"pos": (max(0, left - 150), min(h - 2, y + 16)), "y_abs": y, "name": nm,
                     "why": "按名字匹配（%r）" % nm}

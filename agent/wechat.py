@@ -1120,9 +1120,23 @@ class WeChatAdapter:
                         _want_time = time.strftime("%H:%M", _lt)
             except Exception:
                 _want_time = ""
+            def _find(img):
+                """先按"最后一条消息时间"认（不依赖名字，E 这种单字母名字的兜底），
+                认不到再退回**按名字**认。
+
+                ⛔ 2026-09-14 修（⑤ 重发实测）：原来只走时间这一条 —— 而 E 那一行的 OCR 文本
+                只有 `[草稿]EE`（草稿行不显示时间戳）⇒ 时间永远配不上 ⇒ 列表里**明明有**这一行、
+                `find_row_info` 却返回 None，表现成"没定位到 E"（白滚 6 轮）。
+                补名字这条路的同时不动安全边界：点完之后的**内容级身份闸**仍是发不发的最后一道闸。
+                """
+                if img is None:
+                    return None
+                return (_co.find_row_info(img, name, want_time=_want_time)
+                        or _co.find_row_info(img, name))
+
             info, flog = _co.find_row_scrolled(
                 capture_fn=lambda: _chh.capture_image(gui=gui),
-                find_fn=lambda img: (_co.find_row_info(img, name, want_time=_want_time) if img is not None else None),
+                find_fn=_find,
                 scroll_fn=_scroll_fn, max_steps=6, per_step=3, settle_s=0.45,
                 tries_per_step=3, gap_s=0.35)      # 抓图偶发只读到 2~4 行 ⇒ 每一步多抓几帧再判
             if not info:
