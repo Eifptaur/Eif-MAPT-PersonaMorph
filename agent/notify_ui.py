@@ -31,7 +31,7 @@ from .config import ROOT
 
 log = logging.getLogger("persona-morph")
 
-TITLE_HINTS = ("群相灵", "控制台", "Persona Morph", "persona morph")
+TITLE_HINTS = ("群相", "控制台", "Persona Morph", "persona morph")
 EXE_HINTS = ("一键启动.exe", "Agent启动器.exe", "一键启动", "Agent启动器")
 FOREGROUND_HINT = ("控制台",)          # 兜底：前台不是控制台时才需要弹
 

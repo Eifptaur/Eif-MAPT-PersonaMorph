@@ -205,6 +205,20 @@ ok("多字名字不受影响（仍是包含判断）", CO.matches("海绵宝宝�
 #    现在复核改用与 `matches()` 同一套口径；下面两条一正一反钉住"修好了"且"没放宽成误配"。
 _fr_src = open(os.path.join(ROOT, "agent", "chat_ocr.py"), encoding="utf-8").read()
 ok("单字复核走 matches（不再裸全等，草稿标记会剥掉）", "if not matches(got, name):" in _fr_src)
+
+# ⛔ 2026-09-14 用户报"明明一直是 E 的会话，你却扫不到，这是不是个 bug" ⇒ 查实是**四个**真缺陷，逐条钉住：
+#   ① 身份闸的"针"里混进了**类型占位符**（`[文件/链接/卡片]`/`[文本]`）—— 拿它去聊天区找永远找不到，
+#      还会把真短 token 挤出名额 ⇒ 针必须是真内容；
+#   ② 聊天区**一个字都读不到**时老实现返回 False（"证据说不是"）—— 该说"判据不可用"（None）；
+#   ③ `pane_text` 单帧原尺寸读，文件卡多的那一屏读成空串 ⇒ 要放大 + 分段重读；
+#   ④ `send_file_posted` 对内容档的 False **无条件拒绝** ⇒ `confirm_open`（用户当面确认这条明路）形同虚设。
+ok("① 针里不再收方括号类型占位符", 're.match(r"^\\[[^\\[\\]]{1,16}\\]$", c)' in _src)
+ok("② 聊天区读不到 ⇒ 返回 None（判据不可用），不是 False",
+   "if not pane_n:" in _src and "判据不可用，不是「不是这个会话」" in _src)
+ok("③ pane_text 放大 + 分段重读", "def pane_text(img, limit: int = 200, zoom: int = 2)" in _fr_src
+   and "分三段" in _fr_src)
+ok("④ 用户当面确认能压过内容档的否定（默认仍 fail-closed）",
+   "if not confirm_open:" in _src and "按人工确认放行" in _src)
 ok("放宽的只是草稿标记形态（名字行是别的名字仍然否）",
    CO.matches("[草稿]EE", "E") is True and CO.matches("宋孟", "E") is False)
 

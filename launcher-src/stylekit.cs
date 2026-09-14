@@ -1,4 +1,4 @@
-// 群相灵 · 统一外观层（StyleKit）+ 自绘控件（RoundBar / RoundButton / StepList）
+// 群相 · 统一外观层（StyleKit）+ 自绘控件（RoundBar / RoundButton / StepList）
 // 一键启动.exe 与 一键关闭.exe 共用本文件 —— 外观只在这一处定义
 using System;
 using System.Drawing;

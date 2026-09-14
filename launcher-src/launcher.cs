@@ -1,4 +1,4 @@
-// 群相灵 一键启动.exe：图形安装器（C# WinForms，嵌入鲸鱼图标，无控制台）
+// 群相 一键启动.exe：图形安装器（C# WinForms，嵌入鲸鱼图标，无控制台）
 // 流程：准备 Python → onestart(事件) → 快捷方式询问 → 自动收尾
 using System;
 using System.Diagnostics;
@@ -35,7 +35,7 @@ namespace WxLauncher
         {
             Icon = null;
             try { if (File.Exists(Path.Combine(Root, "assets", "app.ico"))) { Icon = ExtractIcon(Path.Combine(Root, "assets", "app.ico")); } } catch { }
-            Text = "群相灵 一键启动";
+            Text = "群相 一键启动";
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false; MinimizeBox = false;
@@ -49,7 +49,7 @@ namespace WxLauncher
             Controls.Add(pic);
 
             lblTitle = new Label();
-            lblTitle.Text = "群相灵 一键启动";
+            lblTitle.Text = "群相 一键启动";
             lblTitle.Font = new Font("Microsoft YaHei UI", 15, FontStyle.Bold);
             lblTitle.Location = new Point(106, 22); lblTitle.AutoSize = true;
             Controls.Add(lblTitle);
@@ -94,7 +94,7 @@ namespace WxLauncher
             Controls.Add(btnClose);
 
             Shown += (s, e) => { if (ProbeMode) return; Thread t = new Thread(StartFlow); t.IsBackground = true; t.Start(); };
-            StyleKit.Apply(this, "群相灵 一键启动");
+            StyleKit.Apply(this, "群相 一键启动");
 
         }
 
@@ -169,7 +169,7 @@ namespace WxLauncher
             // 桌面已有快捷方式 → 不再弹询问
             try {
                 string desk = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-                if (File.Exists(Path.Combine(desk, "一键启动 群相灵.lnk")) || File.Exists(Path.Combine(desk, "一键启动 wx-agent.lnk"))) {   // 兼容旧名
+                if (File.Exists(Path.Combine(desk, "一键启动 群相.lnk")) || File.Exists(Path.Combine(desk, "一键启动 wx-agent.lnk"))) {   // 兼容旧名
                     Log("桌面快捷方式已存在，跳过询问");
                     return;
                 }
@@ -177,7 +177,7 @@ namespace WxLauncher
             _asking = true;
             Form q = new Form();
             _askHolder = q;
-            q.Text = "群相灵 启动完成";
+            q.Text = "群相 启动完成";
             q.StartPosition = FormStartPosition.CenterScreen;
             q.FormBorderStyle = FormBorderStyle.FixedDialog;
             q.MaximizeBox = false; q.MinimizeBox = false;
@@ -190,12 +190,12 @@ namespace WxLauncher
             qp.Location = new Point(24, 28); qp.Size = new Size(66, 66);
             q.Controls.Add(qp);
             Label qt = new Label();
-            qt.Text = "群相灵 启动完成";
+            qt.Text = "群相 启动完成";
             qt.Font = new Font("Microsoft YaHei UI", 14, FontStyle.Bold);
             qt.Location = new Point(108, 28); qt.AutoSize = true;
             q.Controls.Add(qt);
             Label qm = new Label();
-            qm.Text = "欢迎使用 群相灵！\r\n\r\n机器人已启动，建议在桌面创建「一键启动」快捷方式。\r\n是否现在创建？";
+            qm.Text = "欢迎使用 群相！\r\n\r\n机器人已启动，建议在桌面创建「一键启动」快捷方式。\r\n是否现在创建？";
             qm.Font = new Font("Microsoft YaHei UI", 9.5f);
             qm.ForeColor = Color.FromArgb(76, 92, 118);
             qm.Location = new Point(108, 66); qm.Size = new Size(330, 128);   // 高 92 放不下三行（实测 need=125）
@@ -225,12 +225,12 @@ namespace WxLauncher
                     Type t = Type.GetTypeFromProgID("WScript.Shell");
                     dynamic ws = Activator.CreateInstance(t);
                     string desk = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-                    dynamic sc = ws.CreateShortcut(Path.Combine(desk, "一键启动 群相灵.lnk"));
+                    dynamic sc = ws.CreateShortcut(Path.Combine(desk, "一键启动 群相.lnk"));
                     sc.TargetPath = Path.Combine(Root, "一键启动.exe");
                     sc.WorkingDirectory = Root;
                     sc.IconLocation = Path.Combine(Root, "assets", "app.ico");
                     sc.Save();
-                    Log("桌面快捷方式已创建（一键启动 群相灵）");
+                    Log("桌面快捷方式已创建（一键启动 群相）");
                 }
                 catch (Exception ex) { Log("快捷方式创建失败：" + ex.Message); }
                 q.Close();
@@ -240,7 +240,7 @@ namespace WxLauncher
             {
                 if (!Visible) Application.Exit();
             };
-            StyleKit.Apply(q, "群相灵 启动完成");   // 与 AskForm 同一套外观（此前这个内联窗还是系统标题栏）
+            StyleKit.Apply(q, "群相 启动完成");   // 与 AskForm 同一套外观（此前这个内联窗还是系统标题栏）
             q.Show();
             _asking = false;
         }
@@ -323,7 +323,7 @@ namespace WxLauncher
         public BusyForm()
         {
             string root = Path.GetDirectoryName(Application.ExecutablePath);
-            Text = "群相灵 一键启动";
+            Text = "群相 一键启动";
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false; MinimizeBox = false;
@@ -356,7 +356,7 @@ namespace WxLauncher
             ok.DialogResult = DialogResult.OK;
             Controls.Add(ok);
             AcceptButton = ok;
-            StyleKit.Apply(this, "群相灵 正在启动");   // ⚠️ 必须最后调：Apply 之前设 FixedDialog，之后不得再改边框（否则系统标题栏会回来，和自绘标题栏叠成两条）
+            StyleKit.Apply(this, "群相 正在启动");   // ⚠️ 必须最后调：Apply 之前设 FixedDialog，之后不得再改边框（否则系统标题栏会回来，和自绘标题栏叠成两条）
         }
     }
 
@@ -397,7 +397,7 @@ namespace WxLauncher
         public AskForm()
         {
             Root = Path.GetDirectoryName(Application.ExecutablePath);
-            Text = "群相灵 启动完成";
+            Text = "群相 启动完成";
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false; MinimizeBox = false;
@@ -410,12 +410,12 @@ namespace WxLauncher
             qp.Location = new Point(24, 28); qp.Size = new Size(66, 66);
             Controls.Add(qp);
             Label qt = new Label();
-            qt.Text = "群相灵 启动完成";
+            qt.Text = "群相 启动完成";
             qt.Font = new Font("Microsoft YaHei UI", 14, FontStyle.Bold);
             qt.Location = new Point(108, 28); qt.AutoSize = true;
             Controls.Add(qt);
             Label qm = new Label();
-            qm.Text = "欢迎使用 群相灵！\r\n\r\n机器人已启动，建议在桌面创建「一键启动」快捷方式。\r\n是否现在创建？";
+            qm.Text = "欢迎使用 群相！\r\n\r\n机器人已启动，建议在桌面创建「一键启动」快捷方式。\r\n是否现在创建？";
             qm.Font = new Font("Microsoft YaHei UI", 9.5f);
             qm.ForeColor = Color.FromArgb(76, 92, 118);
             qm.Location = new Point(108, 66); qm.Size = new Size(330, 128);   // 高 92 放不下三行（实测 need=125）
@@ -434,7 +434,7 @@ namespace WxLauncher
                     Type t = Type.GetTypeFromProgID("WScript.Shell");
                     dynamic ws = Activator.CreateInstance(t);
                     string desk = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-                    dynamic sc = ws.CreateShortcut(Path.Combine(desk, "一键启动 群相灵.lnk"));
+                    dynamic sc = ws.CreateShortcut(Path.Combine(desk, "一键启动 群相.lnk"));
                     sc.TargetPath = Path.Combine(Root, "一键启动.exe");
                     sc.WorkingDirectory = Root;
                     sc.IconLocation = Path.Combine(Root, "assets", "app.ico");
@@ -471,7 +471,7 @@ namespace WxLauncher
             };
             watch.Start();
             FormClosed += (s, e) => { try { watch.Stop(); } catch { } };
-            StyleKit.Apply(this, "群相灵 启动完成");   // 同 BusyForm：Apply 放最后，避免系统标题栏与自绘标题栏叠两条
+            StyleKit.Apply(this, "群相 启动完成");   // 同 BusyForm：Apply 放最后，避免系统标题栏与自绘标题栏叠两条
         }
     }
 
@@ -575,7 +575,7 @@ namespace WxLauncher
         public NoticeForm()
         {
             string root = Path.GetDirectoryName(Application.ExecutablePath);
-            Text = "群相灵 一键启动";
+            Text = "群相 一键启动";
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false; MinimizeBox = false;
@@ -610,7 +610,7 @@ namespace WxLauncher
             }
             catch { }
             Label m = new Label();
-            m.Text = "检测到 群相灵 控制台已在运行。" + Environment.NewLine + Environment.NewLine +
+            m.Text = "检测到 群相 控制台已在运行。" + Environment.NewLine + Environment.NewLine +
                 "为保持唯一，本次不再重复打开浏览器窗口。" + Environment.NewLine + "需要打开控制台请点下方按钮。";
             m.Font = new Font("Microsoft YaHei UI", 9.5f);
             m.ForeColor = Color.FromArgb(76, 92, 118);
@@ -642,7 +642,7 @@ namespace WxLauncher
             no.Click += (ss, ee) => Close();
             Controls.Add(no);
             AcceptButton = ok; CancelButton = no;
-            StyleKit.Apply(this, "群相灵 已就绪");
+            StyleKit.Apply(this, "群相 已就绪");
         }
     }
 
@@ -656,7 +656,7 @@ namespace WxLauncher
         public ConsoleForm(string url)
         {
             _url = url;
-            Text = "群相灵 控制台";
+            Text = "群相 控制台";
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.CenterScreen;
             ClientSize = new Size(1180, 780);
@@ -665,7 +665,7 @@ namespace WxLauncher
             bar.Height = 42; bar.Dock = DockStyle.Top; bar.BackColor = StyleKit.Bg;
             bar.MouseDown += delegate { StyleKit.Drag(Handle); };
             Label t = new Label();
-            t.Text = "群相灵 控制台";
+            t.Text = "群相 控制台";
             t.Font = StyleKit.Ui(10.5f, FontStyle.Bold);
             t.ForeColor = StyleKit.Ink;
             t.AutoSize = true; t.Location = new Point(14, 12);
@@ -707,7 +707,7 @@ namespace WxLauncher
                 try { _wv.EnsureCoreWebView2Async(null); }
                 catch { Ui.FallbackBrowser(_url); Close(); }
             };
-            StyleKit.Apply(this, "群相灵 控制台");
+            StyleKit.Apply(this, "群相 控制台");
         }
     }
 

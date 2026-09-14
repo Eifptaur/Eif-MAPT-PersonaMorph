@@ -1,12 +1,12 @@
-# AGENTS.md — 群相灵（Persona Morph）· 新会话进门第一条
+# AGENTS.md — 群相（Persona Morph）· 新会话进门第一条
 
-> **2026-09-13 更名**：产品定名 **群相灵（Persona Morph）**（此前沿用的临时名已全部替换；仓库名同步改为 `Eif-MAPT-PersonaMorph`）。
+> **改名记录**：2026-09-13 产品定名 **群相灵（Persona Morph）**；**2026-09-14 中文名再改为「群相」（英文名 Persona Morph 不变）**——本文与代码已同步换成「群相」；**历史归档保持当时的写法不改**（`docs\changelog-archive.md`、`报告\` 里的旧记录仍是「群相灵」）。仓库名 `Eif-MAPT-PersonaMorph` 不动。
 
 > 与 `dsh启动器/AGENTS.md` 同一套约定：读完能正确改，不必重新摸。改到"入口 / 自动化路线 / 打包方式"就回来更新本文件。
 
 ## 1. 这是什么
 
-群相灵（Persona Morph）后端（Python）。入口：`persona_morph.py`（主流程）、`wechat.py`（微信客户端操作）、`llm.py`（模型）、`memory.py`（记忆）、`console_html.py` / `webui.py`（浏览器控制台）。产物：`一键启动.exe` / `一键关闭.exe`。
+群相（Persona Morph）后端（Python）。入口：`persona_morph.py`（主流程）、`wechat.py`（微信客户端操作）、`llm.py`（模型）、`memory.py`（记忆）、`console_html.py` / `webui.py`（浏览器控制台）。产物：`一键启动.exe` / `一键关闭.exe`。
 既定方向（用户 2026-09-11）是**控制台不再依赖浏览器**；**2026-09-13 用户把口径讲细了**（原话："重绘一下 Persona Morph 的启动弹窗，太简陋了，其他弹窗也重绘一下，把弹窗清晰度提上来，然后要做和启动器一样的软件自己开弹窗显示控制台，不再依赖浏览器…你自己考虑分析清楚"）⇒ **不是把控制台重做成原生 GUI/exe**（PyInstaller / Nuitka / jpackage 那批**不在本轮范围**），而是**换承载窗口**：web 控制台原样保留，用我们自己的 **WebView2 内嵌窗口**显示（照 `dsh启动器` 已跑通的 `FrmDshWindow`：无边框 + DWM 圆角 + 自绘拖动条 + 边缘缩放子窗钩子 + `SetThreadDpiAwarenessContext(-4)` PerMonitorV2 + WebView2 数据目录固定）；只改"谁来开窗"这一跳（端口/token 定源、`/api/version` 同版本判定、token 打码、就绪轮询全部保留；WebView2 缺失时退回 `webbrowser.open`）。**弹窗族一并重绘、做到 0 系统 MessageBox**（清单与取证见交接件 §3-4 的 W6）。
 
 **最高目标（用户 2026-09-13 定，压过本项目其它目标）**：原话——「我们微信这个项目的最高目标就是全程后台，不抢鼠标，在 Windows 系统下兼容一切情况，让人能在上班的时候也运行」。⇒ 拆成三条**硬判据**（任何方案的准入，不只是记录项）：
@@ -30,7 +30,7 @@
 | **L0 真实输入注入** | `SendInput` / `mouse_event` / `SetCursorPos` | ❌ 会真的动鼠标、抢前台 | 前几层都走不通时的兜底 | 用户看得见、会和人的操作打架；必须"用完把光标还回去" |
 | （备选，暂不采用）**合成触点** | `InjectSyntheticPointerInput` → 目标收 `WM_POINTER`（MAA 叫 AnchoredTouch） | ✅ 不动光标、不改前台 | 触摸类应用 | 需 Win10 1809+、**只支持 click/swipe（滚轮无解）**、遮挡时要短暂置顶（约 70ms 闪烁、需 `WS_EX_LAYERED`）⇒ 微信是 Win32 应用，性价比低，记录在案即可 |
 
-**当前 群相灵 的实测状态**：`wechat.py` 里大量使用 `user32.mouse_event(...)`（如 L787/L1026/L1087/L1268/L1302）＝ **目前主要靠 L0 真实输入**；未见 `uiautomation` / `pywinauto` / `wxauto` 引用。⇒ 想做到"不动鼠标"，需要把 UI 动作**抽成一个后端接口**（`click/send_text/scroll/find` 四个原语），按 L5 → L4 → L2 → L0 顺序尝试，上层命中就绝不动光标。
+**当前 群相 的实测状态**：`wechat.py` 里大量使用 `user32.mouse_event(...)`（如 L787/L1026/L1087/L1268/L1302）＝ **目前主要靠 L0 真实输入**；未见 `uiautomation` / `pywinauto` / `wxauto` 引用。⇒ 想做到"不动鼠标"，需要把 UI 动作**抽成一个后端接口**（`click/send_text/scroll/find` 四个原语），按 L5 → L4 → L2 → L0 顺序尝试，上层命中就绝不动光标。
 
 **W0-1 只读发现（2026-09-13，微信 4.1.13.65，脚本 `_scratch\w0_discover.py` → `_scratch\w0-ui-discovery.{txt,json}`）**：主窗 `Qt51514QWindowIcon`（hwnd 24250632，1161×901）+ 渲染子窗 `MMUIRenderSubWindowHW`（1139×890）；**UIA 从主窗只拿到 2 个节点、输入框候选 0** ⇒ **L2（UI Automation）在微信 4.x 上基本不可依赖**（同一口径：别人能不代表这儿能，必须本机实测）；另：`data/ui_layout.json` 的标定尺寸（237）与当前窗口（1139）差一个量级，库自己打了"忽略本次校准" ⇒ **UI 校准/指纹已经过期**（W7c 要的就是"按版本+尺寸的指纹"）。L5/L4 两档能否成立，由 W0 的三档实测给出。
 
@@ -199,7 +199,7 @@
 | `assets/custom-cursor*.png` | 用户上传的自定义光标 | **运行时生成，不要手改** |
 | `assets/icon.png` | favicon（`console_html.py:17` + `webui.py:256/403`）。**2026-09-13 已换成新鲸鱼**（＝app-icon 同源：黑圆角方 + 白鲸） | ⚠️ `webui.py:254-258` 是**启动时读一次**存内存 ⇒ **换 favicon 后必须重启控制台**才生效（浏览器还要 Ctrl+F5）；`assets/` 里其它素材是每请求读盘，不用重启 |
 
-**🏷️ W6b 产品名统一（2026-09-13 完成一部分）**：启动器与关闭器里所有**用户可见**的 "wx-agent" 已改为「**群相灵**」——`launcher.cs` 24 处（窗口标题 / 自绘标题 / 步骤标题 / "启动完成" 弹窗 / "欢迎使用 群相灵！" / "检测到 群相灵 控制台已在运行。" / 桌面快捷方式名）+ `close.cs` 3 处；**进程名 `wx_agent.py` 原样保留**（close_all 靠它匹配进程），**旧快捷方式名做兼容检查**（`一键启动 群相灵.lnk` 或 `一键启动 wx-agent.lnk` 任一存在就不重复创建）。**验收（机械）**：csc 重编两个 exe exit 0（仍是那 3 个已知告警）· `一键启动.exe --dlgprobe` 读出 `text=群相灵 一键启动 / 群相灵 启动完成 / 欢迎使用 群相灵！/ 检测到 群相灵 控制台已在运行。`（**注意 dlgprobe 输出是系统 ANSI 代码页，读的时候要 `-Encoding Default`，否则中文看着像乱码**）· exe 图标与 `assets\app.ico` 的 32 帧**最大像素差 0**。**W6b 剩余**：步骤列表/按钮的深度视觉重绘、`close.cs` 也接入 StyleKit 主题。
+**🏷️ W6b 产品名统一（2026-09-13 完成一部分）**：启动器与关闭器里所有**用户可见**的 "wx-agent" 已改为「**群相**」——`launcher.cs` 24 处（窗口标题 / 自绘标题 / 步骤标题 / "启动完成" 弹窗 / "欢迎使用 群相！" / "检测到 群相 控制台已在运行。" / 桌面快捷方式名）+ `close.cs` 3 处；**进程名 `wx_agent.py` 原样保留**（close_all 靠它匹配进程），**旧快捷方式名做兼容检查**（`一键启动 群相.lnk` 或 `一键启动 wx-agent.lnk` 任一存在就不重复创建）。**验收（机械）**：csc 重编两个 exe exit 0（仍是那 3 个已知告警）· `一键启动.exe --dlgprobe` 读出 `text=群相 一键启动 / 群相 启动完成 / 欢迎使用 群相！/ 检测到 群相 控制台已在运行。`（**注意 dlgprobe 输出是系统 ANSI 代码页，读的时候要 `-Encoding Default`，否则中文看着像乱码**）· exe 图标与 `assets\app.ico` 的 32 帧**最大像素差 0**。**W6b 剩余**：步骤列表/按钮的深度视觉重绘、`close.cs` 也接入 StyleKit 主题。
 
 **🎨 W6b 弹窗族深度重绘（2026-09-13 完成，提交随本次）**：外观层从 `launcher.cs` 抽出成 **`launcher-src\stylekit.cs`**（`StyleKit` + `RoundBar` + 新增 **`RoundButton`**（圆角：主按钮强调色填充/悬停变亮、次按钮卡片底描边、标题栏按钮无边框悬停淡灰）+ **`StepList`**（编号徽章：完成绿勾／进行蓝点／待办灰号 + 连接线 + 当前行高亮底，`SetProgress(idx)` 语义不变）＋ `CaptureOffscreen`），**两个 exe 共用**同一次编译（`close.cs` 也终于套上了 StyleKit）。修掉三个 W6 遗留真缺陷：①`BusyForm`/`AskForm` 在 `StyleKit.Apply` **之后**又设 `FormBorderStyle=FixedDialog` ⇒ 系统标题栏 + 自绘标题栏叠成两条（现在 Apply 一律放构造函数最后）；②`StyleKit.Restyle` 的主按钮判定写在覆盖 `BackColor` 之后、条件是 Card 的 R/B ⇒ **恒为 false**，主按钮从没上过强调色；③`--shot` 出图全白（见下条）。**验收**：csc 两个 exe exit 0（仍是那 3 个已知告警）· `--dlgprobe` 里 5 个窗体 `border=None`、**`CLIP` 计数 0**（三个正文 Label 原来分别需要 100/125/125 却被设成 80/92/92 ⇒ 都截了最后一行，已按 need 值放大并把按钮下移、客户区加高）· `--shot` 6 张**像素色数=9**（`console.png` 是 1＝空，WebView2 内容在探针里本来就没有）且**前台未变=True** · 实拍拼图 `_scratch\w6b-shots\sheet.png` 六图一屏核对通过。
 

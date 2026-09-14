@@ -241,7 +241,7 @@ def popup_fail(reason, tail=""):
         return
     try:
         import ctypes
-        msg = ("群相灵 一键启动失败：%s\n\n" % reason)
+        msg = ("群相 一键启动失败：%s\n\n" % reason)
         if tail:
             msg += "—— 最近日志（看前几行即可定位）：\n" + tail[-1500:]
         ctypes.windll.user32.MessageBoxW(0, msg, "Persona Morph 启动失败", 0x10)
@@ -408,7 +408,7 @@ def main():
     check_only = (os.environ.get("WX_ONESTART_CHECK") == "1") or ("--check-only" in sys.argv[1:])
     log("")
     log("╔══════════════════════════════════════════════╗")
-    log("║        群相灵 一键启动（全程进度）         ║")
+    log("║        群相 一键启动（全程进度）         ║")
     log("╚══════════════════════════════════════════════╝")
 
     # 自动检测旧实例：同版本→直接开控制台；旧版本→踢掉再启动新版（杜绝 404/旧代码）

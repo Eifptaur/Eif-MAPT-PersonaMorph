@@ -1,4 +1,4 @@
-﻿# 群相灵 一键关闭：结束机器人/看门狗/安装器等全部相关进程（无窗口，完成后弹结果）
+﻿# 群相 一键关闭：结束机器人/看门狗/安装器等全部相关进程（无窗口，完成后弹结果）
 $delLock = Join-Path $PSScriptRoot '..\logs\installer.lock'
 try { Remove-Item $delLock -Force -ErrorAction SilentlyContinue } catch {}
 Add-Type -AssemblyName System.Windows.Forms
@@ -36,7 +36,7 @@ try {
     }
 } catch {}
 $done = New-Object System.Windows.Forms.Form
-$done.Text = '群相灵 一键关闭'
+$done.Text = '群相 一键关闭'
 $done.StartPosition = 'CenterScreen'
 $done.FormBorderStyle = 'FixedDialog'
 $done.MaximizeBox = $false; $done.MinimizeBox = $false
@@ -50,7 +50,7 @@ $dpic.Location = New-Object System.Drawing.Point -ArgumentList 22, 20
 $dpic.Size = New-Object System.Drawing.Size -ArgumentList 60, 60
 $done.Controls.Add($dpic)
 $dtitle = New-Object System.Windows.Forms.Label
-$dtitle.Text = '群相灵 一键关闭'
+$dtitle.Text = '群相 一键关闭'
 $dtitle.Font = [System.Drawing.Font]::new('Microsoft YaHei UI', 13, [System.Drawing.FontStyle]::Bold)
 $dtitle.Location = New-Object System.Drawing.Point -ArgumentList 100, 22
 $dtitle.AutoSize = $true

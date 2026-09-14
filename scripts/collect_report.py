@@ -315,7 +315,7 @@ def main():
                "sections": [{"title": t, "lines": ln, "raw": r} for t, ln, r in SECTIONS]}
     with open(base + ".json", "w", encoding="utf-8") as f:
         f.write(redact(json.dumps(raw_all, ensure_ascii=False, indent=1)))
-    txt = ["群相灵 · 环境检验报告",
+    txt = ["群相 · 环境检验报告",
            "生成时间: %s · 主机: %s · 耗时 %.1fs · 发送实测: %s" % (
                raw_all["when"], raw_all["host"], raw_all["elapsed_s"], "是" if args.send_test else "否"),
            "=" * 72]

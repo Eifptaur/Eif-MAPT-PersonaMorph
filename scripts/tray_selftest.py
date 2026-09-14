@@ -75,7 +75,7 @@ if REAL:
     os.environ.pop("WX_NO_UI_POP", None)
     t0 = time.time()
     ok("消息窗能建起来", T.available() is True, "%.1fs" % (time.time() - t0))
-    r = T.notify("群相灵 · 自检", "这条是托盘判据自己发的，几秒后自动消失")
+    r = T.notify("群相 · 自检", "这条是托盘判据自己发的，几秒后自动消失")
     ok("建档成功（图标进了任务栏）", r.get("icon_added") is True, str(r.get("why")))
     ok("气泡调用成功", r.get("balloon_shown") is True, str(r.get("why")))
     st = T.status()

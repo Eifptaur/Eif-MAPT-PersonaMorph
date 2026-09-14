@@ -1672,7 +1672,16 @@ class WeChatAdapter:
             #    群聊行的预览带发言人前缀（`E: 提交信息…`），会被当成"会话名＝E"从而点进那个群。
             idn, idn_why = self.chat_identity_ok(chat_id, gui=gui)
             if idn is False:
-                return False, "⛔ 内容核对不通过，拒绝发送（防发错会话）：%s" % idn_why
+                # ⛔ 默认 fail-closed；但 `confirm_open=True`（用户在当面确认"当前开着的就是目标会话"）
+                #   必须能压过**内容级**的否定 —— 这正是这个参数存在的理由（2026-09-14 实测：E 的会话
+                #   明明开着，可它最近几条都是文件卡、我们的针（短 token）不在视口里 ⇒ 内容档一路落空、
+                #   返回 False ⇒ 老写法**无条件拒绝**，人工确认通道根本走不到，等于形同虚设）。
+                #   放行时**留痕**：日志 + 返回值里带上判据原文，事后能问责。
+                if not confirm_open:
+                    return False, "⛔ 内容核对不通过，拒绝发送（防发错会话）：%s" % idn_why
+                log.warning("发文件：内容级核对判否，但用户当面确认当前会话＝目标会话 ⇒ 按人工确认放行"
+                            "（判据原文：%s）", idn_why)
+                idn_why = "%s（已按用户当面确认放行）" % idn_why
             if idn is None and not confirm_open:
                 return False, "拿不到内容级证据，拒绝发送：%s（确已人工确认可用 confirm_open）" % idn_why
             main_hwnd = int(getattr(gui, "main_hwnd", 0) or 0) or ib.find_main_window()
@@ -1905,6 +1914,12 @@ class WeChatAdapter:
                 #    被 6 条 XML 塞满、把「2qqwq」这类真文本挤出 keep 名额 ⇒ 身份闸对**正确**的会话也判否）。
                 if c.startswith("<msg") or c.startswith("<?xml") or "<msg" in c[:200]:
                     continue          # 报文一律不当指纹（标题在不同会话里会重复）
+                # ⛔ 2026-09-14 修：**方括号类型占位符不是内容**。库对"文件/链接/卡片"这类消息回的是
+                #   `[文件/链接/卡片]`、对文本回 `[文本]`（实测 E 的最近三条就是这两个）⇒ 老实现把它
+                #   当成了"针"（`文件链接卡片` 长度够），拿它去聊天区里找**永远找不到**，而真正的短 token
+                #   （`w0verify-75482` 这种）反被挤出 keep 名额 ⇒ 身份闸对**开着**的会话也判否、文件发不出去。
+                if re.match(r"^\[[^\[\]]{1,16}\]$", c):
+                    continue
                 alnum = "".join(ch for ch in c if ch.isalnum())
                 if len(alnum) < max(4, int(min_len)):
                     continue
@@ -1974,6 +1989,14 @@ class WeChatAdapter:
                 # OCR 预算用尽 ⇒ 这一条**判据不可用**：按"拿不到证据"返回（调用方 fail-closed，不发）
                 return None, "OCR 预算用尽（判据不可用）：内容级核对没跑完，按「拿不到证据」处理"
             pane_n = _co.norm_alnum(pane)
+            # ⛔ 2026-09-14 修（⑤ 重发实测）：**聊天区一个字都读不到**时，老实现一路走到最后返回 `False`
+            #   ＝"核对不通过：当前开着的很可能不是目标会话" —— 可我们**根本没拿到证据**，这是把
+            #   "判据不可用"说成了"证据说不是"（同 ④ 的教训）。后果很实在：`send_file_posted` 里
+            #   `idn is False` 是**无条件拒绝**的（连 `confirm_open` 人工确认通道都走不到）⇒ 屏幕一
+            #   读不出字，用户当面确认"就是 E 的会话"也发不出去。⇒ 读不到就如实返回 `None`（判据不可用）。
+            if not pane_n:
+                return None, ("聊天区一个字都没读到（判据不可用，不是「不是这个会话」）："
+                              "抓图可能有遮挡/在滚动中，或这一屏确实没有文字；用户当面确认可走 confirm_open")
             for nd in needles:
                 nn = _co.norm_alnum(nd)
                 if len(nn) >= 6:
