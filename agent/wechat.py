@@ -173,6 +173,28 @@ class WeChatError(Exception):
     pass
 
 
+class Verdict(str):
+    """发送类接口的**三态**判定结果：`ok` / `sent_unverified` / `not_sent`。
+
+    为什么是 str 子类（2026-09-14 定）：调用点多处按 `ok, why = f(...)` 解包并 `if ok:` 判断，
+    改成三元组会**破坏所有调用点**（测机上的跑器脚本就是这么被我坑过一次）。
+    这里让 `__bool__` 只在 `ok == "ok"` 时为真 ⇒
+      · `if ok:` 语义不变：**"未证实"绝不当成功**（fail-closed 照旧）
+      · 同时 `ok == "sent_unverified"` / `str(ok)` 可机器判读三态
+    背景：新机器 4.1.13.65 上投递其实发出去了，但 DB 回读通道失效（`master_key=None` ⇒ 静默返回旧数据），
+    "发送成功"被判成"发送失败"；把两者写成一个 False 会误导版本矩阵与用户。
+    """
+    __slots__ = ()
+
+    def __bool__(self) -> bool:
+        return str(self) == "ok"
+
+
+V_OK = Verdict("ok")
+V_UNVERIFIED = Verdict("sent_unverified")
+V_NOT_SENT = Verdict("not_sent")
+
+
 class WeChatAdapter:
     def __init__(self, cfg: dict | None = None):
         self.cfg = cfg or get_config()
@@ -193,6 +215,57 @@ class WeChatAdapter:
         self._init_db()
 
     # ── 初始化 ───────────────────────────────────────────────────────────
+
+    def _newest_wal_mtime(self) -> float:
+        """4.x 账号目录里最新的 `message_*.db-wal` 的 mtime（找不到返回 0）。
+
+        路径：`%USERPROFILE%\\xwechat_files\\<账号目录>\\db_storage\\message\\`（也兼容 `Documents\\xwechat_files\\`）。
+        """
+        best = 0.0
+        try:
+            bases = [os.path.join(os.path.expanduser("~"), "xwechat_files"),
+                     os.path.join(os.path.expanduser("~"), "Documents", "xwechat_files")]
+            for b in bases:
+                if not os.path.isdir(b):
+                    continue
+                for acc in os.listdir(b):
+                    d = os.path.join(b, acc, "db_storage", "message")
+                    if not os.path.isdir(d):
+                        continue
+                    for f in os.listdir(d):
+                        if f.startswith("message_") and f.endswith(".db-wal"):
+                            m = os.path.getmtime(os.path.join(d, f))
+                            if m > best:
+                                best = m
+        except Exception:
+            pass
+        return best
+
+    def db_alive(self, chat_id: str = "filehelper") -> tuple:
+        """**判据可用性自检**：这个 DB 回读通道现在还能不能信？返回 `(alive, why)`。
+
+        为什么必须（2026-09-14 由新机器 4.1.13.65 的测机报告推动）：`WeChatDB.master_key is None` 时
+        `get_messages()` **不报错**、**静默返回旧数据**（filehelper 反复给出同一条 09-13 的老消息，
+        轮询 63 秒不变），而同一分钟 **4.x 活库**的 `message_1.db-wal` 明明被写过 ⇒
+        "投递成功"被回读判成"没发出去"（假失败）；反过来还可能"误判成功"（旧库里恰好有相似行）。
+        ⇒ `alive=False` 时，调用方**必须把结论降级成「未证实」**（`V_UNVERIFIED`），不许写"发送失败"。
+        """
+        try:
+            mk = getattr(self._db, "master_key", "?")
+            if mk is None:
+                return False, "master_key=None（读不到 4.x 主密钥 ⇒ 回读拿到的是旧副本/旧数据）"
+            rows = self._db.get_messages(chat_id, limit=1) or []
+            if not rows:
+                return True, "能读该会话（当前无消息）"
+            newest = float(rows[0].get("create_time") or 0)
+            wal = self._newest_wal_mtime()
+            if wal and newest and (wal - newest) > 300:
+                return False, ("回读落后于活库：最新一行 %s / 活库 -wal %s（差 %d 秒 > 300）"
+                               % (time.strftime("%H:%M:%S", time.localtime(newest)),
+                                  time.strftime("%H:%M:%S", time.localtime(wal)), int(wal - newest)))
+            return True, "回读通道看起来是活的"
+        except Exception as e:
+            return False, "判据可用性自检异常：%s: %s" % (type(e).__name__, e)
 
     def _init_db(self):
         try:
@@ -1345,10 +1418,15 @@ class WeChatAdapter:
                         # DB 回读确认成功 ⇒ 自动补一条"当前窗口尺寸"下的会话头参照
                         # （尺寸变了以后不用人工重标；下次同尺寸就能真正校验）
                         self._learn_chat_header(chat_id, gui=gui)
-                        return True, "投递发送成功（DB 回读 local_id=%s type=%s）" % (
+                        return V_OK, "投递发送成功（DB 回读 local_id=%s type=%s）" % (
                             head.get("local_id"), head.get("type"))
-                    return True, "DB 有新行但内容与本次不一致（local_id=%s，可能上一条刚写库）" % head.get("local_id")
-            return False, "已投递但 %ds 内 DB 没等到新行（发送未生效）" % int(wait_s)
+                    return V_OK, "DB 有新行但内容与本次不一致（local_id=%s，可能上一条刚写库）" % head.get("local_id")
+            # ⚠️ 判据不可用 ≠ 发送失败（2026-09-14 测机报告：4.1.13.65 上投递其实发出去了，但回读通道失效）
+            _alive, _why_alive = self.db_alive(chat_id)
+            if not _alive:
+                return V_UNVERIFIED, ("已投递，但**判据不可用**、无法证实是否发出：%s（投递链路本身没报错）"
+                                      % _why_alive)
+            return V_NOT_SENT, "已投递但 %ds 内 DB 没等到新行（发送未生效）" % int(wait_s)
         except Exception as e:
             return False, str(e)
 
@@ -1421,9 +1499,12 @@ class WeChatAdapter:
                     except Exception:
                         new_id = 0
                     if new_id > base_id:
-                        return True, "投递发图成功（DB 回读 local_id=%s type=%s）" % (
+                        return V_OK, "投递发图成功（DB 回读 local_id=%s type=%s）" % (
                             top.get("local_id"), top.get("type_name") or top.get("type"))
-            return False, "已投递粘贴并点了发送，但 %ds 内 DB 没等到新行（发图未生效）" % int(wait_s)
+            _alive2, _why_alive2 = self.db_alive(chat_id)
+            if not _alive2:
+                return V_UNVERIFIED, ("已投递粘贴并点了发送，但**判据不可用**、无法证实：%s" % _why_alive2)
+            return V_NOT_SENT, "已投递粘贴并点了发送，但 %ds 内 DB 没等到新行（发图未生效）" % int(wait_s)
         except Exception as e:
             return False, "投递发图异常：%s" % e
 
@@ -1703,11 +1784,14 @@ class WeChatAdapter:
                                 self._repeat_guard(chat_id, local_path, note=True)
                             except Exception:
                                 pass
-                            return True, "投递发文件成功（DB 回读 local_id=%s type=%s）" % (
+                            return V_OK, "投递发文件成功（DB 回读 local_id=%s type=%s）" % (
                                 top.get("local_id"), top.get("type_name") or top.get("type"))
-                        return False, "发出了新消息但不是文件类（local_id=%s type=%s）" % (
+                        return V_NOT_SENT, "发出了新消息但不是文件类（local_id=%s type=%s）" % (
                             top.get("local_id"), top.get("type_name") or top.get("type"))
-            return False, "已走完对话框与发送，但 %ds 内 DB 没等到新行（发文件未生效）" % int(wait_s)
+            _alive3, _why_alive3 = self.db_alive(chat_id)
+            if not _alive3:
+                return V_UNVERIFIED, ("已走完对话框与发送，但**判据不可用**、无法证实：%s" % _why_alive3)
+            return V_NOT_SENT, "已走完对话框与发送，但 %ds 内 DB 没等到新行（发文件未生效）" % int(wait_s)
         except Exception as e:
             # ⚠️ 外层异常也会**留下「选择文件」模态框**（实测：UIA 抛 COM 错时不一定落在内层 try 里，
             #    2026-09-13 一次真实发送失败后框就留在屏幕上挡住了微信）⇒ 这里再兜一次。
