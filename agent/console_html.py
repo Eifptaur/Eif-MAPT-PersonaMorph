@@ -2105,8 +2105,13 @@ async function loadBalance(){
   try{
     const b = await getJSON('/api/balance');
     if(b.ok===false){ el.textContent='余额：'+b.error; return; }
+    // ⚠️ 未配置 / 拿不到数字时**如实说"未配置"**，不要拼出「余额 ¥undefined（充值 undefined）」
+    //   （2026-09-15 用户看到顶栏那两个 undefined 报的；口径：界面文案要通俗、不做假数）
+    const num = (v)=> (v===undefined || v===null || v==='' || isNaN(Number(v))) ? null : Number(v);
+    const total = num(b.total_balance), top = num(b.topped_up_balance);
+    if(total===null){ el.textContent = '余额：未配置（点这里配模型 Key）'; return; }
     const cur = b.currency==='USD'?'$':'¥';
-    el.textContent = '余额 '+cur+b.total_balance+'（充值 '+b.topped_up_balance+'）';
+    el.textContent = '余额 '+cur+total.toFixed(2) + (top===null ? '' : '（充值 '+cur+top.toFixed(2)+'）');
   }catch(e){ el.textContent='余额：查询失败'; }
 }
 

@@ -124,8 +124,57 @@ def main():
         for rel in files:
             z.write(os.path.join(ROOT, rel), "%s/%s" % (ZIP_TOP, rel))
     size = os.path.getsize(out) / 1024 / 1024
+
+    # ── ⑥ 出厂初始状态断言（2026-09-15 用户口径）────────────────────────
+    #   把包里**实际写进去的条目**读回来核对三件事：①没有运行期数据（会话/记忆/日志/配置）
+    #   ②没有个人痕迹（家目录、密钥、微信账号 —— 与 PII 扫描互为双保险）
+    #   ③必需文件都在、且全部在顶层目录下。任一不满足 ⇒ 拒绝出包（exit 4）。
+    import re as _re
+    with zipfile.ZipFile(out) as _z:
+        names = _z.namelist()
+    rel_names = [n[len(ZIP_TOP) + 1:] for n in names if n.startswith(ZIP_TOP + "/")]
+    BAD_STATE = _re.compile(r"(^|/)(data|logs|offline|runtime|_scratch|报告|wechatauto_logs)/"
+                            r"|(^|/)config\.json$|(^|/)config\.json\."
+                            r"|\.(db|sqlite3?|jsonl|log|zst|zstd)$", _re.I)
+    bad_state = sorted(n for n in rel_names if BAD_STATE.search(n))
+    # 只看**绝对**路径（带盘符）—— `collect_report.py` 里那个 `C:/Users/<名>` 是脱敏器自己的正则、
+    # 是它的工作内容，不该按"泄漏"算。
+    BAD_TRACE = _re.compile(r"ptmou|[A-Za-z]:[/\\]+Users[/\\][^/\\\s\"']+"
+                            r"|sk-[A-Za-z0-9_\-]{10,}|wxid_[A-Za-z0-9]{6,}", _re.I)
+    # 只查文本类文件（二进制素材里出现这几个字节串不说明问题）
+    bad_trace = []
+    with zipfile.ZipFile(out) as _z:
+        for n in rel_names:
+            if not _re.search(r"\.(py|js|json|md|txt|cmd|ps1|yml|yaml|ini|cfg)$", n, _re.I):
+                continue
+            try:
+                t = _z.read(ZIP_TOP + "/" + n).decode("utf-8", "replace")
+            except Exception:
+                continue
+            if BAD_TRACE.search(t):
+                # 与既有 PII 扫描同一套白名单：脱敏器的测试夹具（假 id/假号码）显式放行并写理由
+                # 凡是被 ALLOW 显式放行过的文件，这里不再重复拦截（同一个理由，别抄两遍）
+                if any(k[0] in (n, n.split("/")[-1]) for k in ALLOW):
+                    continue
+                bad_trace.append(n)
+    need = ["agent/__init__.py", "scripts/persona_morph.py", "config.example.json",
+            "README.md", "一键启动.exe", "requirements.txt"]
+    missing = [n for n in need if n not in rel_names]
+    outside = [n for n in names if not n.startswith(ZIP_TOP + "/")]
+    if bad_state or bad_trace or missing or outside:
+        print("❌ 出厂初始状态断言未过 ⇒ 拒绝出包（exit 4）：")
+        if bad_state:
+            print("   · 含运行期数据：%s" % bad_state[:8])
+        if bad_trace:
+            print("   · 含个人痕迹（家目录/密钥/微信账号）：%s" % bad_trace[:8])
+        if missing:
+            print("   · 缺必需文件：%s" % missing)
+        if outside:
+            print("   · 有文件不在顶层目录下：%s" % outside[:5])
+        return 4
     print(f"✅ 出包：{out}  {len(files)} 文件 / {size:.2f} MB  （注意项 {warn_total} 条，非致命）")
     print(f"   解压后顶层目录：{ZIP_TOP}/（用户看到的就是这个名字）")
+    print(f"   出厂初始状态断言：通过（{len(rel_names)} 个条目全在顶层下 · 无运行期数据 · 无个人痕迹 · 必需文件齐）")
     return 0
 
 
