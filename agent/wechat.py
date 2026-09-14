@@ -2390,6 +2390,171 @@ class WeChatAdapter:
         except Exception:
             return []
 
+    # ── 朋友圈：投递档基础设施（不动光标 / 不抢前台 / 不要求可见）────────────
+    def _bg_backend(self):
+        """取当前输入后端；**不是投递档就返回 (None, 原因)**。
+
+        为什么要单独一步：真鼠标档 `touches_cursor=True`、投递档 `False`。
+        任何"以为在投递、其实在动鼠标"的实现都会被这里挡住（最高目标里"不许悄悄降级"）。
+        """
+        from . import input_backend as _ib
+        try:
+            b = _ib.select_backend()
+        except Exception as e:
+            return None, "取输入后端失败：%s" % e
+        if getattr(b, "touches_cursor", True):
+            return None, "当前输入后端是真鼠标档（config.input.backend=%s）" % getattr(b, "name", "?")
+        return b, ""
+
+    def _posted_hwnd(self, gui) -> int:
+        """投递目标窗：优先 `find_main_window()`（带渲染子窗的那个主窗），否则用 gui 的主窗。
+
+        为什么不直接用 `gui.main_hwnd`：朋友圈纯文字编辑窗**同类名**，`FindWindow` 会抓到它
+        ⇒ 投递全打到编辑窗上（2026-09-13 实测踩过，且不报错）。
+        """
+        from . import input_backend as _ib
+        try:
+            h = int(_ib.find_main_window() or 0)
+        except Exception:
+            h = 0
+        return h or int(getattr(gui, "main_hwnd", 0) or 0)
+
+    def _background_only(self) -> bool:
+        """「只走后台」开关（config.wechat.background_only）：真鼠标路径一律跳过、如实说明。"""
+        try:
+            from .config import get_config as _gc
+            return bool((_gc().get("wechat") or {}).get("background_only", False))
+        except Exception:
+            return False
+
+    def _moments_gray_thumb(self, rect, scale=(64, 48)):
+        """主窗缩略灰度：**不依赖 OCR** 的第二判据（点前点后比"界面真变了"）。"""
+        try:
+            from PIL import ImageGrab
+            l, t, r, b = [int(v) for v in rect]
+            im = ImageGrab.grab((l, t, r, b)).convert("L").resize(scale)
+            return list(im.getdata())
+        except Exception:
+            return None
+
+    @staticmethod
+    def _gray_diff(before, now) -> float:
+        """两张缩略灰度的差异占比（0~1）。判据阈值沿用实验口径 0.15。"""
+        try:
+            if not before or not now or len(before) != len(now):
+                return 0.0
+            return sum(1 for a, b2 in zip(before, now) if abs(a - b2) > 28) / max(1, len(before))
+        except Exception:
+            return 0.0
+
+    def _moments_rect(self, hwnd):
+        """窗口屏幕矩形 (l, t, r, b)。"""
+        import ctypes
+        from ctypes import wintypes
+        r = wintypes.RECT()
+        ctypes.windll.user32.GetWindowRect(int(hwnd), ctypes.byref(r))
+        return (r.left, r.top, r.right, r.bottom)
+
+    def moments_open_posted(self) -> tuple:
+        """**投递档**打开朋友圈：侧栏「发现」→「朋友圈」两步都用 WM_* 投递。
+
+        判据与真鼠标路径同一套（发现页 OCR / 主窗缩略灰度差），所以"投递没生效"会被判成
+        "没点中"并**停手**，不会继续试、也不会假报成功。
+        """
+        try:
+            from . import ui_adapt
+            gui = self._get_gui()
+            b, why = self._bg_backend()
+            if not b:
+                return False, why
+            hwnd = self._posted_hwnd(gui)
+            if not hwnd:
+                return False, "找不到微信主窗句柄（投递档需要它）"
+            if not ui_adapt.prepare_screen(gui):
+                return False, "屏幕预检失败"
+            l, t, r, bt = self._moments_rect(hwnd)
+            W, H = r - l, bt - t
+            if W < 300 or H < 300:
+                return False, "微信主窗过小"
+
+            def _discover_visible():
+                try:
+                    for txt, _x, _y, _w, _h in self._moments_shot_ocr((l, t, r, bt)):
+                        if "搜一搜" in txt or "小程序" in txt or "游戏" in txt:
+                            return True
+                except Exception:
+                    pass
+                return False
+
+            pos = self._find_green_discover(gui)
+            if not pos:
+                return False, ("没有自证到的「发现」图标（投递档只点自证的：请手动点一下左侧"
+                               "「发现」，选中后图标变绿，程序就认得它）")
+            before = self._moments_gray_thumb((l, t, r, bt))
+            ok1, m1 = b.click(hwnd, (int(pos[0]), int(pos[1])))
+            if not ok1:
+                return False, "投递打开「发现」失败：%s" % m1
+            time.sleep(1.2)
+            if not _discover_visible() and self._gray_diff(before, self._moments_gray_thumb((l, t, r, bt))) <= 0.15:
+                return False, "投递点了「发现」但界面没变（投递档没生效，已停手、不再乱点）"
+            # 点「朋友圈」：OCR 定位左侧列表项，未识别按发现页首项相对位置兜底（与真鼠标路径同一处）
+            tgt = None
+            try:
+                for txt, x, y, w, h in self._moments_shot_ocr((l, t, r, bt)):
+                    if "朋友圈" in txt and x < W * 0.55:
+                        tgt = (x, y, w, h)
+                        break
+            except Exception:
+                tgt = None
+            if tgt is None:
+                tgt = (int(W * 0.22), int(H * 0.112), int(W * 0.10), int(H * 0.03))
+            pt = (l + tgt[0] + tgt[2] // 2, t + tgt[1] + tgt[3] // 2)
+            before2 = self._moments_gray_thumb((l, t, r, bt))
+            ok2, m2 = b.click(hwnd, pt)
+            if not ok2:
+                return False, "投递点「朋友圈」失败：%s" % m2
+            time.sleep(1.5)
+            if self._gray_diff(before2, self._moments_gray_thumb((l, t, r, bt))) <= 0.01:
+                return False, "投递点了「朋友圈」但界面没变（投递档没生效，已停手）"
+            return True, "朋友圈已打开（投递档：全程未动光标、未改前台）"
+        except Exception as e:
+            return False, str(e)
+
+    def moments_scroll_posted(self, direction: int = 1, times: int = 1) -> tuple:
+        """**投递档**刷朋友圈：投递 `WM_MOUSEWHEEL`（多格 + 间隔，像人滚）。
+
+        判据：滚完主窗缩略灰度必须变（实测下滚 6 格差值 0.389、反向精确回位 0.000）——
+        不变量就当"没生效"如实返回，而不是假报滚过了。
+        """
+        try:
+            from . import wechat_ui as _wu
+            gui = self._get_gui()
+            if _wu.stop_requested():
+                return False, "已停止"
+            b, why = self._bg_backend()
+            if not b:
+                return False, why
+            hwnd = self._posted_hwnd(gui)
+            if not hwnd:
+                return False, "找不到微信主窗句柄（投递档需要它）"
+            l, t, r, bt = self._moments_rect(hwnd)
+            # 落点：右缘内侧一条细带（避开头像/蓝点/输入框），与真鼠标路径取同一处
+            pt = (r - 60, (t + bt) // 2)
+            before = self._moments_gray_thumb((l, t, r, bt))
+            delta = -120 if direction > 0 else 120
+            n = max(1, int(times)) * 8
+            ok, msg = b.wheel(hwnd, pt, delta=delta, times=n, gap_ms=60)
+            if not ok:
+                return False, "投递滚轮失败：%s" % msg
+            time.sleep(0.5)
+            diff = self._gray_diff(before, self._moments_gray_thumb((l, t, r, bt)))
+            if diff <= 0.01:
+                return False, ("投递滚轮后朋友圈界面没有变化（投了 %d 格、差值 %.3f）⇒ 按没生效处理，"
+                               "不假报已滚动" % (n, diff))
+            return True, "已滚动朋友圈（投递档，%d 格，界面变化 %.3f，未动光标/未改前台）" % (n, diff)
+        except Exception as e:
+            return False, str(e)
+
     def _moments_open_discover(self, gui):
         """新 UI（4.1 发现页）路径：置顶微信 → 点「发现」：
         ① 绿圆颜色定位（已选中时）→ ② 侧栏图标列聚类（从后往前试，最后一枚=设置必跳过）
@@ -2421,12 +2586,7 @@ class WeChatAdapter:
 
             def _shot_small():
                 """主窗缩略灰度（64×48）——OCR 之外的第二判据用。"""
-                try:
-                    from PIL import ImageGrab
-                    im = ImageGrab.grab((l, t, rt, b)).convert("L").resize((64, 48))
-                    return list(im.getdata())
-                except Exception:
-                    return None
+                return self._moments_gray_thumb((l, t, rt, b))
 
             def _content_changed(before):
                 """点击前后主窗中部是否明显变了（发现页会整块替换掉聊天区）。
@@ -2434,14 +2594,7 @@ class WeChatAdapter:
                 点对了但 OCR 认不出来时会被判成"没点中" ⇒ 继续到处乱点（用户看到的就是
                 "它在乱点我的头像、联系人、收藏，唯独没点发现"）。多一条不依赖 OCR 的判据，
                 点对的那一下就认得出来，也就不会继续试。"""
-                try:
-                    now = _shot_small()
-                    if not before or not now or len(before) != len(now):
-                        return False
-                    d = sum(1 for a, b2 in zip(before, now) if abs(a - b2) > 28)
-                    return (d / max(1, len(before))) > 0.15
-                except Exception:
-                    return False
+                return self._gray_diff(before, _shot_small()) > 0.15
 
             def _try_click(px, py):
                 b0 = _shot_small()
@@ -2504,7 +2657,32 @@ class WeChatAdapter:
             return False, str(e)
 
     def moments_open(self) -> tuple:
-        """打开朋友圈（UI 自适应）：① 新 UI（发现→朋友圈，OCR 定位文字）
+        """打开朋友圈：**投递档优先**（不动光标、不抢前台、不要求可见）。
+
+        投递档失败才退回真鼠标路径，并在返回消息里写明"投递失败后走了真鼠标档"——
+        最高目标里那句"不许悄悄降级"，落点就是这里。
+        """
+        try:
+            from . import input_backend as _ib
+            if not _ib.select_backend().touches_cursor:
+                ok, msg = self.moments_open_posted()
+                if ok:
+                    return True, msg
+                log.warning("朋友圈投递打开失败（%s）；按口径改用真鼠标路径", msg)
+                if self._background_only():
+                    return False, "%s（「只走后台」已开启 ⇒ 不退回真鼠标档，本次跳过）" % msg
+                ok2, msg2 = self._moments_open_real()
+                if ok2:
+                    return True, "%s（投递档失败后退回**真鼠标档**：%s）" % (msg2, msg)
+                return False, "%s；退回真鼠标档也失败：%s" % (msg, msg2)
+        except Exception as e:
+            log.warning("朋友圈投递档入口异常（%s）；按口径改用真鼠标路径", e)
+        if self._background_only():
+            return False, "「只走后台」已开启：打开朋友圈目前需要真鼠标档，本次跳过"
+        return self._moments_open_real()
+
+    def _moments_open_real(self) -> tuple:
+        """（真鼠标档）打开朋友圈（UI 自适应）：① 新 UI（发现→朋友圈，OCR 定位文字）
         ② 旧 UI（侧栏相机图标）兜底。验证两种形态：独立「朋友圈」子窗口（弹窗）/
         微信主窗内嵌（右侧内容区 OCR 识别「朋友圈」标题，位置过滤防误判发现页）。"""
         try:
@@ -2574,7 +2752,28 @@ class WeChatAdapter:
         return None
 
     def moments_scroll(self, direction: int = 1, times: int = 1) -> tuple:
-        """滚动朋友圈：先置前台焦点 → 光标移到窗口内（避开图片/按钮，用右侧空白带）
+        """滚动朋友圈：**投递档优先**（不动光标、不抢前台）；失败才退回真鼠标档并写明。"""
+        try:
+            from . import input_backend as _ib
+            if not _ib.select_backend().touches_cursor:
+                ok, msg = self.moments_scroll_posted(direction=direction, times=times)
+                if ok:
+                    return True, msg
+                log.warning("朋友圈投递滚动失败（%s）；按口径改用真鼠标路径", msg)
+                if self._background_only():
+                    return False, "%s（「只走后台」已开启 ⇒ 不退回真鼠标档，本次跳过）" % msg
+                ok2, msg2 = self._moments_scroll_real(direction=direction, times=times)
+                if ok2:
+                    return True, "%s（投递档失败后退回**真鼠标档**：%s）" % (msg2, msg)
+                return False, "%s；退回真鼠标档也失败：%s" % (msg, msg2)
+        except Exception as e:
+            log.warning("朋友圈投递滚动入口异常（%s）；按口径改用真鼠标路径", e)
+        if self._background_only():
+            return False, "「只走后台」已开启：刷朋友圈目前需要真鼠标档，本次跳过"
+        return self._moments_scroll_real(direction=direction, times=times)
+
+    def _moments_scroll_real(self, direction: int = 1, times: int = 1) -> tuple:
+        """（真鼠标档）滚动朋友圈：先置前台焦点 → 光标移到窗口内（避开图片/按钮，用右侧空白带）
         → 每次 -120 步进（微信滚轮标准刻度）×N 次×times，滚后验证窗口仍在前台。"""
         try:
             import ctypes
@@ -2687,6 +2886,10 @@ class WeChatAdapter:
 
     def moments_like(self, index: int = 0) -> tuple:
         """点赞（检验版：蓝点悬停出「赞」菜单即视为可点赞，**不实际点击赞**；true 点赞走行为引擎）。"""
+        # 后台能力矩阵：点赞/评论走右键菜单＝真鼠标档。开了「只走后台」就跳过。
+        if self._background_only():
+            from . import bg_status as _bg
+            return False, _bg.background_only_reason("朋友圈点赞")
         try:
             from . import ui_adapt
             gui = self._get_gui()
@@ -2748,6 +2951,10 @@ class WeChatAdapter:
     def moments_comment(self, index: int = 0, text: str = "", dry: bool = False) -> tuple:
         """评论：蓝点 →「评论」→ 输入框（朋友圈窗口内）→ 粘贴 → 关窗。
         dry=True：只验证到「输入框可输入」即关窗，**不点发送**（用于检验，避免真发评论打扰）。"""
+        # 后台能力矩阵：评论走右键菜单＝真鼠标档。开了「只走后台」就跳过。
+        if self._background_only():
+            from . import bg_status as _bg
+            return False, _bg.background_only_reason("朋友圈评论")
         try:
             from . import ui_adapt
             gui = self._get_gui()
@@ -2806,6 +3013,11 @@ class WeChatAdapter:
         """长按左上角相机 ~2 秒 → 纯文字输入栏 → 输入 → 点「发表」（变绿后）→ 关窗。
         dry=True：验证到「输入栏可输入」即止（不点发表、不回车），用于检验避免真的发朋友圈。
         shots=True：dry 模式下每步截图到 logs/dry_shots/moments_*.png（逐屏存证，UI 检验用）。"""
+        # 后台能力矩阵：草稿能投递，但**「发表」那一下没有投递取证** ⇒ 不冒充后台：
+        # 「只走后台」时直接跳过（诚实说跳过，而不是悄悄用真鼠标替你发出去）。
+        if self._background_only():
+            from . import bg_status as _bg
+            return False, _bg.background_only_reason("发朋友圈（纯文字）")
         _shot = None
         if shots:
             import os as _os
@@ -3374,6 +3586,10 @@ class WeChatAdapter:
         验证失败会如实返回，不会假报成功。
         dbg 传入列表时，每一步的中间结果会追加进去（供控制台「拍一拍诊断」展示）。
         """
+        # 后台能力矩阵：拍一拍＝真鼠标档（要右键头像/气泡再点菜单）。开了「只走后台」就跳过。
+        if self._background_only():
+            from . import bg_status as _bg
+            return False, _bg.background_only_reason("拍一拍")
         def _d(msg):
             if dbg is not None:
                 dbg.append(msg)
@@ -3723,6 +3939,10 @@ class WeChatAdapter:
         命中测试；多个候选点逐一试右键，任一出菜单即点「引用」。
         target_text 空 = 引用「数据库最新一条群友消息」（近似）。
         """
+        # 后台能力矩阵：引用＝真鼠标档（右键气泡 → 菜单「引用」）。开了「只走后台」就跳过。
+        if self._background_only():
+            from . import bg_status as _bg
+            return False, _bg.background_only_reason("引用消息")
         try:
             gui = self._get_gui()
             group = self.group_name(chat_id)

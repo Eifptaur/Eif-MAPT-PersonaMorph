@@ -842,6 +842,13 @@ th{color:var(--tx2);font-weight:500}
         <div class="hint">只对本次运行有效（重启后重新拦），我们不会把"放行"写进配置。</div>
       </div></div>
       <div id="vmList" class="hint"></div>
+      <div class="row"><label>后台能力</label><div class="grow">
+        <b id="bgHead">检测中…</b>
+        <div id="bgList" class="hint"></div>
+        <div class="hint">这份表是<b>单一事实源</b>（agent/bg_status.py）：写"全程后台"的路径可以不动光标、不抢前台、不要求窗口可见；写"真鼠标"的会动你的光标，勾上下面这个开关就让它们直接跳过并如实告诉你。</div>
+      </div></div>
+      <div class="row"><label>只走后台</label><input type="checkbox" data-cfg="wechat.background_only">
+        <span class="hint">默认关。开了之后：拍一拍 / 引用 / 朋友圈点赞·评论·发表 / UI 标定 一律**跳过并说明原因**，绝不悄悄动你的鼠标（发送文字、图片、表情、切会话、刷朋友圈仍走后台投递，不受影响）。</span></div>
       <div class="row"><label>待拍板</label><div class="grow">
         <b id="pdStat">检测中…</b>
         <div class="btns" style="margin-top:6px"><button id="pdOpen" class="ghost">版本不匹配怎么办</button></div>
@@ -2126,6 +2133,30 @@ async function loadStatus(){
           });
           v3.textContent = (vm.summary || '') + ' ｜ ' + rows.join(' · ');
         }
+        /* 后台能力矩阵（⑥ 全后台审计）：档位 + 每条路径后台到哪一步，都来自 /api/status 的 bg 段 */
+        try{
+          const bh = $('bgHead'); const bl = $('bgList');
+          const inp = s.input || {};
+          if(bh){
+            const lv = inp.level ? ('（' + inp.level + '）') : '';
+            bh.textContent = inp.touches_cursor
+              ? ('当前：真鼠标档' + lv + ' · 会动光标、可能短暂置前')
+              : ('当前：投递档' + lv + ' · 不动光标、不抢前台、不要求可见');
+            bh.style.color = inp.touches_cursor ? 'var(--warn-tx)' : 'var(--ok-tx)';
+          }
+          const bg = s.bg || {};
+          if(bl){
+            const ps = bg.paths || [];
+            if(!ps.length){ bl.textContent = bg.error ? ('读不到后台能力表：' + bg.error) : '读不到后台能力表'; }
+            else{
+              const mk = {posted:'✅ 全程后台', posted_fallback:'🟡 后台优先（兜底会动鼠标）', real:'⛔ 真鼠标', skipped:'⏭ 跳过'};
+              bl.innerHTML = (bg.summary ? ('<b>' + bg.summary + '</b><br>') : '')
+                + ps.map(function(p){
+                    return (mk[p.status] || p.status) + ' · <b>' + p.label + '</b>：' + (p.detail || '');
+                  }).join('<br>');
+            }
+          }
+        }catch(e){}
         /* ⑦ 待决单：没实测过的版本对 ⇒ 开单 + 自动弹一次四选一（同一张单本次运行只弹一次，
            用户选了「什么都不做」也不会再弹——台账记着，下次开控制台也不追问） */
         try{
