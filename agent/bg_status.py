@@ -41,12 +41,16 @@ PATHS = [
     {
         "key": "moments_open", "label": "打开朋友圈", "status": "posted_fallback",
         "detail": "投递点「发现」→ 投递点「朋友圈」，判据＝发现页 OCR / 主窗灰度差 / 子窗枚举；"
-                  "投递失败才退回真鼠标档（会动光标、可能短暂置前），消息里写明",
-        "evidence": "_scratch/moments_*（发现页与信息流都能纯后台打开，光标与前台未变）",
+                  "投递失败才退回真鼠标档（会动光标、可能短暂置前），消息里写明。"
+                  "⚠️ 判据要抓画面 ⇒ **窗口须留在屏幕上**（被别的窗口盖住也行：优先 PrintWindow）；"
+                  "微信被最小化时如实拒绝（判不了就不动手）",
+        "evidence": "_scratch/moments_*（发现页与信息流都能纯后台打开，光标与前台未变）· "
+                    "_scratch/后台能力-真机记录.md（最小化时如实拒绝的真机读数）",
     },
     {
         "key": "moments_scroll", "label": "刷朋友圈", "status": "posted_fallback",
-        "detail": "投递 WM_MOUSEWHEEL（多格 + 间隔）；滚后以主窗灰度差判「内容真动了」",
+        "detail": "投递 WM_MOUSEWHEEL（多格 + 间隔）；滚后以主窗灰度差判「内容真动了」；"
+                  "同样要求窗口留在屏幕上（最小化 ⇒ 如实拒绝）",
         "evidence": "_scratch/moments_*（下滚 6 格差值 0.389、反向精确回位 0.000）",
     },
     {
