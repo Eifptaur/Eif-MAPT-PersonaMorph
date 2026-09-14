@@ -881,6 +881,12 @@ class WeChatAdapter:
         否则（`mismatch`/`no_ref`/抓不到）**退回真实路径**——真实路径会先按名字打开会话，
         顺便把这个尺寸下的会话头学到手，于是**下一次就能走投递**。
         """
+        # OCR 总时间窗（测机手册 ④）：这一笔发送链允许花在 OCR 上的总时间（超时按"判据不可用"处理）
+        try:
+            from . import chat_ocr as _co
+            _co.begin_window(_co.SEND_WINDOW_S)
+        except Exception:
+            pass
         # W7 版本门：没实测过的版本对默认暂停自动发送（控制台可临时放行）
         try:
             from . import version_gate as _vg
@@ -1356,6 +1362,9 @@ class WeChatAdapter:
 
         参考实测：投递打字 + 投递点「发送」（3/3、DB 回读命中）。
         """
+        # OCR 总时间窗（测机手册 ④）：这一笔发送链的 OCR 总预算（超时按"判据不可用"处理）
+        from . import chat_ocr as _co
+        _co.begin_window(_co.SEND_WINDOW_S)
         from . import input_backend as ib
         try:
             gui = self._get_gui()
@@ -1614,6 +1623,9 @@ class WeChatAdapter:
                 return False, _g["reason"]
         except Exception:
             pass
+        # OCR 总时间窗（测机手册 ④）：这一笔发送链的 OCR 总预算（超时按"判据不可用"处理）
+        from . import chat_ocr as _co
+        _co.begin_window(_co.SEND_WINDOW_S)
         from . import input_backend as ib
         try:
             import uiautomation as auto
@@ -1942,7 +1954,11 @@ class WeChatAdapter:
             return None, "目标会话最近几条里没有可用作文本的比对内容（都是图片/文件？）"
         try:
             from . import chat_ocr as _co
+            _tok = _co.begin_window(_co.SEND_WINDOW_S)     # 内容级核对整段共用 OCR 总预算（④）
             pane = _co.pane_text(_co.capture_best(gui=gui or self._get_gui(), frames=3), limit=400)
+            if _co.budget_out(_tok):
+                # OCR 预算用尽 ⇒ 这一条**判据不可用**：按"拿不到证据"返回（调用方 fail-closed，不发）
+                return None, "OCR 预算用尽（判据不可用）：内容级核对没跑完，按「拿不到证据」处理"
             pane_n = _co.norm_alnum(pane)
             for nd in needles:
                 nn = _co.norm_alnum(nd)
