@@ -48,8 +48,11 @@ NEW_BATCHES = {
                        "yukina_bd", "sayo_bd", "lisa_bd", "ako_bd", "rinko_bd",
                        "tomori_bd", "anon_bd", "rana_bd", "soyo_bd", "taki_bd",
                        "ran_bd", "moca_bd", "himari_bd", "tsugumi_bd", "tomoe_bd",
-                       "aya_bd", "hina_bd", "chisato_bd", "maya_bd", "eve_bd"],
+                       "aya_bd", "hina_bd", "chisato_bd", "maya_bd", "eve_bd",
+                       "kokoro_bd", "kaoru_bd", "hagumi_bd", "kanon_bd", "michelle_bd",
+                       "layer_bd", "lock_bd", "masking_bd", "pareo_bd", "chu2_bd"],
     "🀄 东方Project": ["reimu_th", "marisa_th", "sakuya_th"],
+    "⏳ 重返未来：1999": ["sonetto_r1999", "regulus_r1999", "sotheby_r1999", "vertin_r1999"],
 }
 #: 本判据"严格口径"只约束这些新卡（老库历史卡有各自的格式，不在本轮返工范围）
 _ALL_NEW = [k for keys in NEW_BATCHES.values() for k in keys]
