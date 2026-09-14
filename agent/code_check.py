@@ -246,8 +246,10 @@ def run(verbose_deps: bool = False) -> dict:
                 "停止写标志，看门狗见标志退出")
     _code_check("一键启动单实例检测", "already running" in _src("scripts/onestart.py").lower() or "bot.lock" in _src("scripts/onestart.py"),
                 "已有实例→直接打开控制台")
-    _code_check("浏览器单开(cmd start)", "cmd\", \"/c\", \"start\"" in _wx and "webbrowser.open(url)" not in _wx,
-                "只 cmd start 一次（无双开）")
+    _code_check("控制台单点开窗(不在机器人里自开浏览器)",
+                "from agent.notify_ui import open_console" in _wx and "webbrowser.open(url)" not in _wx
+                and "\"cmd\", \"/c\", \"start\"" not in _wx,
+                "开窗只走 notify_ui.open_console（共用一把锁 ⇒ 不会自家窗口+浏览器双开）")
     _code_check("微信接入主线程同步(不卡控制台)", "微信接入成功（主线程同步）" in _wx,
                 "微信接入 20s 限时+后台重试")
     _code_check("版本体检不弹窗(防卡死)", "_maybe_auto_fix" in _wx,

@@ -86,14 +86,25 @@ body.whale-anim::after{content:"";position:fixed;inset:0;z-index:-1;pointer-even
 .side .nav::-webkit-scrollbar{width:6px}
 .side .nav::-webkit-scrollbar-thumb{background:rgba(160,210,255,.35);border-radius:3px}
 .side .nav::-webkit-scrollbar-track{background:transparent}
-.side .nav a{display:flex;align-items:center;gap:9px}
-.side .nav a svg{width:16px;height:16px;flex:none;opacity:.92}
+.side .nav a{display:flex;align-items:center;gap:11px}
+.side .nav a svg{width:18px;height:18px;flex:none;opacity:.92}
 .side .nav a .lb{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.side.tight{width:64px}
-.side.tight .nav a{justify-content:center;gap:0}
+/* 收起态（只剩图标）：栏更宽、图标更大、间距更松——用户 2026-09-14 原话：
+   「你看这个收起之后，这些图标靠得这么紧合适吗？散开一点，而且把这个栏做大一点啊，
+   这样用户怎么看得清、点得到？」 */
+/* 长清单折叠的按钮条（默认收起＝只给这么多高度，其余滚动） */
+.fold-bar{display:flex;justify-content:center;margin:6px 0 2px}
+.fold-bar .fold-tg{font-size:12px;padding:3px 16px;border-radius:14px}
+.side.tight{width:88px}
+.side.tight .nav a{justify-content:center;gap:0;padding:14px 0}
+.side.tight .nav a svg{width:22px;height:22px}
 .side.tight .nav a .lb{display:none}
 .side.tight .status{display:none}
-.nav-tg{display:block;width:100%;margin:0 0 8px;font-size:11.5px}
+/* 收起/展开的把手：**贴在导航的右缘**（用户：「它居然是左收起，应该是右收起，靠近那个功能栏呢」） */
+.side .nav-tg{position:absolute;right:2px;top:10px;width:22px;height:58px;margin:0;padding:0;
+  display:flex;align-items:center;justify-content:center;font-size:13px;line-height:1;
+  border-radius:8px;z-index:31;opacity:.85}
+.side .nav-tg:hover{opacity:1}
 /* ── 海洋动态背景：三层大波浪 + 浪尖高光线（SVG 平移；无外部素材依赖）── */
 .ocean-wave{position:fixed;left:0;right:0;bottom:0;height:40vh;z-index:-1;pointer-events:none;opacity:.95}
 .ocean-wave svg{position:absolute;bottom:0;left:-50%;width:200%;height:100%;display:block}
@@ -180,6 +191,21 @@ body.custom-bg::before{opacity:1!important}
   backdrop-filter:url(#cardWave2) saturate(1.02);
   transform:translate3d(-9999px,-9999px,0)}
 input,select,textarea{backdrop-filter:blur(8px)}
+/* 表单控件统一底色（2026-09-14，用户："这些输入框怎么全是白的？和我们的 UI 太不搭了"）。
+   原先只有 `.row input[type=text]` 那一族被染色 ⇒ **没写 type 属性的输入框**、以及 `.row` 之外的
+   输入框全部落到浏览器默认的白底（深色主题下最刺眼）。
+   下面这条用 `:where()` 写成**零特异性**：任何既有 class/类型规则照样盖过它，
+   但兜住了所有遗漏项——作者样式天然优先于浏览器默认样式，所以白底不会再回来。 */
+:where(input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]):not([type=color]):not([type=submit]):not([type=button]):not([type=image]),
+       textarea,select){
+  background:var(--input-bg);color:var(--tx);border:1px solid var(--input-bd);border-radius:10px;
+  padding:8px 12px;font:inherit;outline:none}
+:where(input,textarea)::placeholder{color:var(--tx2);opacity:.75}
+:where(input[type=checkbox],input[type=radio]){accent-color:var(--blue)}
+:where(select option){background:var(--menu-bg);color:var(--tx)}
+:where(input[type=file]){color:var(--tx2);font:inherit}
+:where(input[type=file])::file-selector-button{background:var(--input-bg);color:var(--tx);
+  border:1px solid var(--input-bd);border-radius:8px;padding:6px 12px;font:inherit;cursor:pointer;margin-right:8px}
 .pri{background:linear-gradient(135deg,#39B6F0,#1E9BE8 55%,#6C8CFF);box-shadow:0 4px 16px rgba(30,155,232,.38),inset 0 1px 0 rgba(255,255,255,.55);border:1px solid rgba(255,255,255,.72);color:#fff}
 .pri:hover{filter:brightness(1.06)}
 .danger{color:#fff}
@@ -223,7 +249,7 @@ a:hover,a:focus,a:visited,a:active{text-decoration:none}   /* ⛔ 控制台所�
 .chip .dot.p{background:var(--warn)}
 
 /* ── 布局 ── */
-.shell{display:grid;grid-template-columns:216px 1fr;gap:16px;max-width:1280px;margin:16px auto;padding:0 16px}
+.shell{display:grid;grid-template-columns:252px 1fr;gap:16px;max-width:1280px;margin:16px auto;padding:0 16px}
 @media(max-width:900px){.shell{grid-template-columns:1fr}}
 /* 侧栏：完全不透明实色（滚动到底也无色差）+ sticky 让开顶栏 */
 .side{background:rgba(12,32,58,1);border:1px solid var(--bd);border-radius:12px;padding:10px;
@@ -235,7 +261,14 @@ a:hover,a:focus,a:visited,a:active{text-decoration:none}   /* ⛔ 控制台所�
 .side::-webkit-scrollbar-track{background:transparent}
 .side::-webkit-scrollbar-thumb{background:rgba(148,196,255,.18);border-radius:3px}
 .side::-webkit-scrollbar-thumb:hover{background:rgba(148,196,255,.32)}
-.side .nav a{color:var(--tx2);border-radius:9px;margin:1px 0;background:transparent}
+/* 左导航项：间距与字号在 2026-09-14 整体放大（用户原话：「左导航离得这么近合适吗？把左导航放大一点，
+   每个导航之间的距离拉开」）。
+   ⚠️ 历史坑：这两行原来是**未拼接进 CSS 的裸字符串字面量**（`.nav a{…padding:9px 12px…}` 那两行），
+   Python 里相邻字符串只是"算了一下就扔掉" ⇒ 浏览器**从来没收到过** padding/font-size，
+   所以导航一直是一行行贴着的纯文字。现在这些声明直接落在这条真规则里，不再有第二处。 */
+.side .nav a{color:var(--tx2);border-radius:10px;margin:4px 0;background:transparent;text-decoration:none;
+  display:flex;align-items:center;gap:11px;padding:12px 14px;font-size:14.5px;
+  transition:background .18s ease,color .18s ease}
 .side .nav a.on{background:rgba(63,168,240,.20);color:#fff;font-weight:600}
 .side::-webkit-scrollbar{width:8px}
 .side::-webkit-scrollbar-thumb{background:var(--input-bd);border-radius:4px}
@@ -247,11 +280,9 @@ a:hover,a:focus,a:visited,a:active{text-decoration:none}   /* ⛔ 控制台所�
 .nav-ind{position:absolute;left:0;width:3px;border-radius:2px;background:var(--blue);
   top:0;height:3px;opacity:0;transition:top .28s cubic-bezier(.34,1.4,.64,1),opacity .2s}
 .nav a{position:relative;z-index:1}
-".nav a{display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:11px;color:var(--tx2);"
-  "text-decoration:none;font-size:13.5px;margin:2px 0;transition:background .18s ease,color .18s ease}"   // 原第 2 行提前闭括号 ⇒ 这三项被浏览器整段丢弃（下划线就是这么露出来的）
 .nav a:hover{background:var(--bg-solid)}
 .nav a.on{background:var(--blue-soft);color:var(--blue);font-weight:600;position:relative}
-.nav a.on::before{content:"";position:absolute;left:0;top:9px;bottom:9px;width:3px;border-radius:2px;background:var(--blue)}
+.nav a.on::before{content:"";position:absolute;left:0;top:12px;bottom:12px;width:3px;border-radius:2px;background:var(--blue)}
 .card{transition:box-shadow .2s ease,transform .2s ease}
 .card:hover{box-shadow:0 2px 6px rgba(31,41,55,.07),0 16px 40px rgba(77,107,254,.10)}
 button:active{transform:scale(.97)}
@@ -430,7 +461,7 @@ th{color:var(--tx2);font-weight:500}
 <div class="shell">
   <aside class="side">
     <div class="status"><b>运行状态</b><p id="sideStatus">未连接</p></div>
-    <button id="navToggle" class="ghost nav-tg" title="收起 / 展开导航名字">收起</button>
+    <button id="navToggle" class="ghost nav-tg" title="收起 / 展开导航名字">‹</button>
     <nav class="nav" id="nav">
       <a href="#sec-overview" class="on"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 8l3.1-2.2" stroke="currentColor" stroke-width="1.4" fill="none"/></svg><span class="lb">概览</span></a>
       <a href="#sec-check"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M5 8.2l2.1 2.1L11 6" fill="none" stroke="currentColor" stroke-width="1.5"/></svg><span class="lb">体检</span></a>
@@ -524,7 +555,7 @@ th{color:var(--tx2);font-weight:500}
 
     <section id="sec-check" class="card" data-sec>
       <h2>检测中心（代码检测 / 点击测试）</h2>
-      <div class="desc">「代码检测」= 纯代码层检查（编译/依赖/角色卡评估/种子库/UI 标定/提示词静态/保护机制——不动鼠标、零风险，实测约 0.5~3 秒）；「点击测试」= 环境/配置/点击 + 程序鼠标操作检验（约 40~70 秒，期间接管鼠标请勿动；评论/收藏为真实操作）。想单独测某项用下方「🖱️ 程序鼠标检验」的独立按钮。</div>
+      <div class="desc">「代码检测」= 纯代码层检查（编译/依赖/角色卡评估/种子库/提示词静态/保护机制——零风险，实测约 0.5~3 秒）；「点击测试」= 环境/配置/界面自动化共 55 项（全程序内完成，不碰鼠标、不抢前台）。
       <div class="btns">
         <button id="codeCheck" class="pri">代码检测</button>
         <button id="codeCheckDeps" class="ghost" title="额外跑依赖版本详细核对（55 项，稍慢）">代码检测＋依赖核对</button>
@@ -551,13 +582,6 @@ th{color:var(--tx2);font-weight:500}
       </div>
       <div class="hint" style="color:var(--err-tx)">⚠️ 拍一拍是右键「对方头像」触发：头像由程序识别，若群内同名/头像辨识不清，理论上有拍到其他群友的风险——所以默认用「简易检测」，确认无误后再完整执行。</div>
       <div class="hint" id="uiTestDetail"></div>
-      <hr style="border:none;border-top:1px solid var(--bd);margin:14px 0">
-      <h2>🖱️ 程序鼠标检验（点按钮 → 程序直接操控微信鼠标执行；不耗 token、不靠模型）</h2>
-      <div class="desc">检验的是「程序能否正确执行鼠标操作」——每项点一下，程序自动开窗/定位/点击/关窗并回显结果；请确保微信窗口在前台。</div>
-      <input type="text" id="uiTestSearch" class="group-search" placeholder="🔍 搜索检验项…">
-      <div id="uiTestBox" style="max-height:300px;overflow-y:auto;border:1px solid var(--bd);border-radius:10px;padding:8px 10px;background:var(--input-bg)">
-        <!-- 检验项由 JS 渲染 -->
-      </div>
       <hr style="border:none;border-top:1px solid var(--bd);margin:14px 0">
       <h2>功能自检清单（按重要性排序）</h2>
       <table id="checkList">
@@ -1023,6 +1047,7 @@ th{color:var(--tx2);font-weight:500}
       <div class="row"><label>启动后暂停</label><input type="checkbox" data-cfg="wechat.start_paused"><span class="hint">勾选：机器人启动后不自动监听，需点「恢复」才工作（防开机刷群/回应积压旧消息）</span></div>
       <div class="row"><label>轮询间隔(秒)</label><div class="grow"><input type="number" step="0.5" min="0.5" data-cfg="wechat.poll_interval"></div></div>
       <div class="row"><label>每分钟限发</label><div class="grow"><input type="number" min="1" data-cfg="wechat.rate_limit_per_minute"></div></div>
+      <div class="row"><label>允许盲试点击</label><input type="checkbox" data-cfg="wechat.allow_click_hunting"><span class="hint">默认关：侧栏图标认不出来时绝不猜位置乱点（只在确认是「发现」时才点）。开了它才会按图标顺序/比例试点几下——试错会点到你其它图标上。</span></div>
       <div class="row"><label>最小化提醒</label><input type="checkbox" data-cfg="wechat.minimize_warning"><span class="hint">勾选=提示别最小化微信窗口（发送依赖模拟键鼠）</span></div>
       <div class="row"><label>群白名单</label>
         <div class="grow">
@@ -1407,6 +1432,10 @@ th{color:var(--tx2);font-weight:500}
         <option value="whale">🐋 鲸语</option>
       </select><span class="hint">切换后保存设置（自动刷新）即生效；功能完全一致。</span></div></div>
       <div class="row"><label>点击前清遮挡</label><input type="checkbox" data-cfg="ui.clean_overlays"></div>
+      <div class="row"><label>固定微信窗口位置</label><input type="checkbox" data-cfg="ui.lock_window_pos">
+        <span class="hint">默认关＝绝不移动、缩放、还原你的微信窗口；开着才会把它摆到标准位置。</span></div>
+      <div class="row"><label>允许把微信置前</label><input type="checkbox" data-cfg="ui.allow_foreground">
+        <span class="hint">默认关＝任何操作都不会抢你的前台，也不把微信钉在最上层；只有确实需要前台点击的老路子才用得上。</span></div>
       <div class="row"><label>地址栏乱码化</label><input type="checkbox" data-cfg="ui.obscure_url">
         <span class="hint">开启后：进入页面把地址栏路径替换成随机乱码（保护访问地址不被他人复制直接登入；刷新靠会话 Cookie）。端口号无法乱码（浏览器必须用真实端口连接）。默认关。</span></div>
       <div class="btns"><button class="pri" data-save>保存设置（界面适配）</button></div>
@@ -4693,58 +4722,8 @@ const _EASTER_TXT = [
   };
 })();
 
-const WHALE_TXT = {
-  "群相 控制台": "🐋 鲸鲸号 · 深度摸鱼",
-  "概览": "🐋 概览 · 我是AI，别催，CPU还在烧",
-  "检测中心（代码检测 / 点击测试）": "检测中心（先体检，再摸鱼）",
-  "体检与功能自检": "检测中心 · 出远门前先体检",
-  "功能自检清单（按重要性排序）": "功能自检清单（按重要性，一个一个过）",
-  "调试 · 高级功能": "调试 · 高级功能（一般人我不告诉他）",
-  "调试·高级功能": "调试·高级功能（一般人我不告诉他）",
-  "运行明细": "📋 运行明细 · 内心戏全程有记录",
-  "模型 API": "🧊 模型 API · 让我先推理一下，别插嘴",
-  "微信": "💬 微信 · 收到，正在假装思考",
-  "拍一拍（行为）": "👋 拍一拍 · 拍我干嘛，我只是个蓝鲸",
-  "拍一拍": "👋 拍一拍 · 拍我干嘛，我只是个蓝鲸",
-  "记忆（群友印象）": "🧠 记忆 · 好像记得…算了不装了",
-  "记忆（共享设置）": "🤝 记忆共享 · 它记得=我记得，别问",
-  "记忆": "🧠 记忆 · 好像记得…算了不装了",
-  "记忆共享": "🤝 记忆共享 · 它记得=我记得，别问",
-  "人设与响应": "🎭 人设 · 今天演谁？剧本拿来",
-  "社区与学习": "📚 社区 · 好东西先白嫖再说",
-  "发送限制": "🚦 发送限制 · 我不回你，就是我在偷懒",
-  "联网搜索": "🔎 联网搜索 · 我去搜搜，先不告诉你结果",
-  "服务器": "🖥️ 服务器 · 服务器繁忙，再试一次",
-  "界面适配（DPI / 遮挡 / 主题）": "🎨 界面 · AI也要体面",
-  "界面适配": "🎨 界面 · AI也要体面",
-  "🐋 光标设置": "🖱️ 光标设置 · 别看我，看我的鼠标",
-  "光标设置": "🖱️ 光标设置 · 别看我，看我的鼠标",
-  "🌊 水光波纹（鼠标投石入水）": "🌊 水光波纹 · 人家怕水，我就爱摸鱼",
-  "🌊 水光波纹": "🌊 水光波纹 · 人家怕水，我就爱摸鱼",
-  "水光波纹": "🌊 水光波纹 · 人家怕水，我就爱摸鱼",
-  "运行日志": "📜 运行日志 · 我的内心OS全在这",
-  "完整配置 JSON（高级）": "📄 原始 JSON · 底裤都给你看",
-  "原始 JSON": "📄 原始 JSON · 底裤都给你看",
-  "保存全部设置": "保存全部设置（存好了，我不会失忆的）",
-  "暂停": "⏸ 暂停（歇会儿）",
-  "恢复": "▶ 恢复（满血）",
-  "停止": "停止（打烊）",
-  "重启": "重启（我又行了）",
-  "测试 API 连通": "测试 API 连通（先冲个电，马上好）",
-  "代码检测＋依赖核对": "代码检测＋依赖核对（少了什么先补课）",
-  "代码检测": "代码检测（先查bug，再查心情）",
-  "查看进度条": "查看进度条（别催，在跑了）",
-  "点击测试": "点击测试（AI也要做视力检查）",
-  "一键体检": "点击测试（AI也要做视力检查）",
-  "停止检测": "停止检测（不测了，我摊牌）",
-  "拍一拍检测": "拍一拍检测（别真拍我）",
-  "模型评分": "模型评分（AI打分，绝不偏袒）",
-  "模型补足": "模型补足（拾掇拾掇，更像本人）",
-  "根据角色卡推荐行为档": "根据角色卡推荐行为档（我懂你）",
-  "保存 Key": "保存 Key（钥匙收好了）",
-  "重置 Key（重新填写）": "重置 Key（换把钥匙）",
-};
-function applyWhale(){
+/* 鲸语字典：由服务端从 agent/whale_text.py 注入（单一来源）——不再在这里手写一份，两份必然漂移。动态刷新出来的文案由下面的 applyWhale 用它换。 */
+const WHALE_TXT = __WHALE_TXT__;function applyWhale(){
   try{
     if(!cfg || (getPath(cfg,'ui.text_style')||'') !== 'whale') return;
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
@@ -4765,68 +4744,6 @@ function applyWhale(){
   }catch(e){}
 }
 document.addEventListener('DOMContentLoaded', applyWhale);
-
-/* ── 程序鼠标检验区（按钮直控鼠标；搜索框过滤 + 滚动槽）── */
-const UI_TESTS = [
-  {id:"moments_open",  name:"朋友圈：打开",        desc:"点侧栏朋友圈图标 → 验证「朋友圈」窗口出现"},
-  {id:"moments_close", name:"朋友圈：关闭",        desc:"点窗口右上角叉号 → 验证已关（可反复测）"},
-  {id:"moments_like",  name:"朋友圈：点赞第一条",  desc:"蓝点→「赞」→自动关窗（对第一条动态）"},
-  {id:"moments_comment", name:"朋友圈：评论第一条", desc:"蓝点→「评论」→输入测试评论→发送→关窗（会真评论）"},
-  {id:"moments_scroll", name:"朋友圈：滚动刷",     desc:"滚轮滚动信息流（幅度按窗口高）→ 关窗"},
-  {id:"moments_publish", name:"朋友圈：纯文字发布 dry", desc:"长按相机2秒→弹窗输入测试文字→到输入框即止（不点发表、不真发；dry 模式可逐屏截图留证）"},
-  {id:"emoji_collect", name:"表情：收藏（右键）",  desc:"右键最近一条 [表情]/[图片] →「添加到表情」（会真收藏）"},
-  {id:"emoji_panel",   name:"表情：面板发送",      desc:"点输入栏笑脸→面板→爱心→点表情→发送（未指定名字时）"},
-  {id:"message_collect", name:"消息：收藏",        desc:"右键最新消息→「收藏」（验证菜单通路）"},
-  {id:"message_recall", name:"消息：撤回",         desc:"右键自己最新消息→「撤回」（2分钟内有效）"},
-  {id:"windows_clean", name:"窗口：清理残留",      desc:"枚举并关闭所有微信残留子窗口（叉号→验证→兜底）"},
-  {id:"recalibrate",   name:"UI 图标库：重新标定", desc:"接管鼠标检测侧栏图标序列并写 ui_layout.json"},
-];
-async function runUiTest(id, btn){
-  const res = document.getElementById('uiTestRst_' + id);
-  const stop = document.getElementById('uiTestStop_' + id);
-  if(!btn) btn = document.getElementById('uiTestBtn_' + id);
-  if(!btn) return;
-  btn.disabled = true; btn.textContent = '执行中…';
-  if(stop) stop.disabled = false;
-  if(res) res.textContent = '';
-  try{
-    const r = await getJSON('/api/ui-test', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({kind:id})});
-    if(res){
-      const ok = r && r.ok;
-      res.textContent = ok ? ('✅ ' + (r.note || '成功')) : ('❌ ' + (r.error || '失败'));
-      res.style.color = ok ? 'var(--ok-tx)' : 'var(--err-tx)';
-    }
-  }catch(e){ if(res){ res.textContent = '❌ ' + e.message; res.style.color = 'var(--err-tx)'; } }
-  btn.disabled = false; btn.textContent = '执行';
-  if(stop) stop.disabled = true;
-}
-async function stopUiTest(id){
-  try{
-    await getJSON('/api/ui-test/stop', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
-    toast('已请求停止（当前动作完成即中止）');
-    setTimeout(()=>{ const b = document.getElementById('uiTestBtn_' + id); if(b){ b.disabled = false; b.textContent = '执行'; } }, 1500);
-  }catch(e){ toast('停止失败：'+e.message); }
-}
-function renderUiTests(){
-  const box = document.getElementById('uiTestBox'); if(!box) return;
-  const q = (document.getElementById('uiTestSearch') || {}).value || '';
-  box.innerHTML = '';
-  UI_TESTS.filter(t => !q || t.name.includes(q) || t.desc.includes(q)).forEach(t=>{
-    const row = document.createElement('div');
-    row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:7px 4px;border-bottom:1px solid var(--bd)';
-    row.innerHTML = '<div style="flex:1"><b>'+t.name+'</b><div class="hint">'+t.desc+'</div>'+
-      '<span id="uiTestRst_'+t.id+'" style="font-size:12.5px"></span></div>'+
-      '<button class="pri" id="uiTestBtn_'+t.id+'" style="white-space:nowrap">执行</button>'+
-      '<button class="ghost" id="uiTestStop_'+t.id+'" style="white-space:nowrap;color:var(--err-tx)" disabled>停止</button>';
-    box.appendChild(row);
-    row.querySelector('#uiTestBtn_'+t.id).onclick = ()=>runUiTest(t.id);
-    row.querySelector('#uiTestStop_'+t.id).onclick = ()=>stopUiTest(t.id);
-  });
-}
-if(document.getElementById('uiTestSearch')){
-  document.getElementById('uiTestSearch').addEventListener('input', renderUiTests);
-  renderUiTests();
-}
 
 /* 表情包收藏夹（搜索框 + 滚动槽 + 最多显示 60 个） */
 let _emojiAll = [];
@@ -5091,14 +5008,61 @@ $('memSearch').addEventListener('keydown', (e)=>{
     const tight = (function(){ try{ return localStorage.getItem('navTight')==='1'; }catch(e){ return false; } })();
     if(tight && sideEl) sideEl.classList.add('tight');
     if(tgEl){
-      tgEl.textContent = tight ? '展开' : '收起';
+      tgEl.textContent = tight ? '›' : '‹';
       tgEl.addEventListener('click', ()=>{
         const now = sideEl.classList.toggle('tight');
         try{ localStorage.setItem('navTight', now ? '1' : '0'); }catch(e){}
-        tgEl.textContent = now ? '展开' : '收起';
+        tgEl.textContent = now ? '›' : '‹';
         try{ sync(); }catch(e){}          // 收起后指示条位置要重算
       });
     }
+  }catch(e){}
+  /* ── 长清单折叠（2026-09-14 用户："这个地方如果用户群太多，会显示得特别多。把功能栏拉长，
+        增加「收起」和「展开」功能，默认折叠只显示两行…还有没有其他用户过多、会把功能栏拉长的，
+        全部加上这个功能"）────────────────────────────────────────────
+     做法：容器给定高度（默认约两行）＋ 内部滚动，紧跟着一个「展开全部 / 收起」按钮；
+     容器被重新渲染（innerHTML）不影响折叠状态，按钮被父级重渲染带走时会自动补回来。 */
+  const FOLD_TARGETS = [
+    ["#groupPick", 96],       // 选择监听的群（群多的时候几十个格子）
+    ["#memGroupsBox", 96],    // 记忆共享：按群独立
+    ["#memTable", 150],       // 群友印象表（成员多）
+    ["#personaList", 150],    // 人设库
+    ["#sessBox", 150],        // 运行明细
+    ["#arcList", 150],        // 存档会话
+    ["#emojiBox", 150],       // 表情包收藏夹
+    [".bill-list", 150],      // 计费日志
+  ];
+  window.__foldAll = function(){
+    FOLD_TARGETS.forEach(function(pair){
+      let nodes = [];
+      try{ nodes = Array.prototype.slice.call(document.querySelectorAll(pair[0])); }catch(e){ nodes = []; }
+      nodes.forEach(function(el){
+        const h = pair[1];
+        el.style.overflowY = 'auto';
+        let bar = el.nextElementSibling;
+        if(!bar || !bar.classList || !bar.classList.contains('fold-bar')){
+          bar = document.createElement('div'); bar.className = 'fold-bar';
+          const b = document.createElement('button');
+          b.type = 'button'; b.className = 'ghost fold-tg'; b.textContent = '展开全部';
+          b.onclick = function(){
+            const open = el.classList.toggle('fold-open');
+            el.style.maxHeight = open ? 'none' : (h + 'px');
+            b.textContent = open ? '收起' : '展开全部';
+          };
+          bar.appendChild(b);
+          el.parentNode.insertBefore(bar, el.nextSibling);
+        }
+        const open = el.classList.contains('fold-open');
+        el.style.maxHeight = open ? 'none' : (h + 'px');
+      });
+    });
+  };
+  try{ window.__foldAll(); }catch(e){}
+  document.addEventListener('DOMContentLoaded', function(){ try{ window.__foldAll(); }catch(e){} });
+  try{
+    let _ft = null;
+    new MutationObserver(function(){ clearTimeout(_ft); _ft = setTimeout(function(){ try{ window.__foldAll(); }catch(e){} }, 120); })
+      .observe(document.body, {childList:true, subtree:true});
   }catch(e){}
   links.forEach(a=>a.addEventListener('click', ()=>{
     links.forEach(x=>x.classList.remove('on'));

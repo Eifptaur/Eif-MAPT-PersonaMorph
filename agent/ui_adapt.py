@@ -254,7 +254,11 @@ def ensure_point(x: int, y: int, wechat_hwnds: tuple = (), retries: int = 3, gui
         if cover is None:
             return True, "点击点属于微信窗口"
         # 有遮挡才拯救：把【微信主窗】置前（不用 wechatauto bring_to_front——它可能顶起渲染子窗盖住面板）
+        # ⚠️ 抢前台＝打扰用户（最高目标禁止项）⇒ 只有显式打开 ui.allow_foreground 才做
         try:
+            if not _cfg_bool("allow_foreground", False):
+                return False, "点击点被「%s」窗口遮挡；「全程后台」档不抢前台（要用前台请在界面里打开 ui.allow_foreground）" % (
+                    (cover[1] or "?"))
             if gui is not None and hasattr(gui, "main_hwnd"):
                 _user32.SetForegroundWindow(int(gui.main_hwnd))
             elif wechat_hwnds:
@@ -270,7 +274,13 @@ def ensure_point(x: int, y: int, wechat_hwnds: tuple = (), retries: int = 3, gui
 
 
 def _restore_wechat_window(gui) -> bool:
-    """按进程枚举找「微信」主窗并恢复（窗口最小化/隐藏/移出屏时自愈）。"""
+    """按进程枚举找「微信」主窗并恢复（窗口最小化/隐藏/移出屏时自愈）。
+
+    ⚠️ 这一步会**把微信弹出来并抢前台**——按用户口径（2026-09-14「我一打开它就把我的微信窗口切出来」）
+    只有显式打开 `ui.allow_foreground` 才做；默认关时返回 False，让调用方如实报"需要前台的路径已跳过"。
+    """
+    if not _cfg_bool("allow_foreground", False):
+        return False
     try:
         pid = ctypes.c_ulong()
         _user32.GetWindowThreadProcessId(int(gui.main_hwnd), ctypes.byref(pid))
@@ -309,16 +319,37 @@ def _restore_wechat_window(gui) -> bool:
     return False
 
 
-def _force_geometry(gui) -> None:
-    """强制微信主窗恒定位+大小（用户方案：相对位置恒定，仅按 DPI 换算坐标）。
-    拖动窗口后下一次点击前自动拉回（ui.lock_window_pos 可关）。"""
+def _cfg_bool(key: str, default: bool = False) -> bool:
     try:
         _cfg = __import__("agent.config", fromlist=["get_config"]).get_config()
-        if (_cfg.get("ui") or {}).get("lock_window_pos", True) is False:
+        v = (_cfg.get("ui") or {}).get(key, default)
+        return bool(default if v is None else v)
+    except Exception:
+        return bool(default)
+
+
+def _force_geometry(gui) -> None:
+    """把微信主窗移到固定位置/大小（**默认关**：`ui.lock_window_pos`）。
+
+    2026-09-14 用户实测：「我一打开它，它会把我的微信窗口切出来」——真凶就是这里原来那句
+    `ShowWindow(hwnd, 9)`（SW_RESTORE：**把最小化的微信强行弹出来**）＋ 一对自相矛盾的
+    `SWP_SHOWWINDOW|SWP_HIDEWINDOW`。原实现的坐标其实被 `SWP_NOMOVE|SWP_NOSIZE` 抵消掉了，
+    所以它的实际效果只剩"把用户的微信窗口抬出来"——正是最高目标（不打扰）明令禁止的事。
+    现在：默认不调用；真要摆窗口时**只挪不动前台、不还原最小化、不激活**。
+    """
+    try:
+        _cfg = __import__("agent.config", fromlist=["get_config"]).get_config()
+        if (_cfg.get("ui") or {}).get("lock_window_pos", False) is not True:
             return
         hwnd = getattr(gui, "main_hwnd", 0)
         if not hwnd:
             return
+        # 最小化时**不动**（还原别人的窗口＝打扰）
+        try:
+            if _user32.IsIconic(int(hwnd)):
+                return
+        except Exception:
+            pass
         try:
             _scale = max(1.0, _user32.GetDpiForWindow(hwnd) / 96.0)
         except Exception:
@@ -333,8 +364,8 @@ def _force_geometry(gui) -> None:
         _h = min(int(1100 * _scale), int(_sh * 0.92))
         _x = min(int(120 * _scale), max(10, _sw - _w - 40))
         _y = min(int(80 * _scale), max(10, _sh - _h - 60))
-        _user32.ShowWindow(hwnd, 9)
-        _user32.SetWindowPos(hwnd, 0, _x, _y, _w, _h, 0x0001 | 0x0002 | 0x0020 | 0x0040)
+        # SWP_NOZORDER | SWP_NOACTIVATE：挪位置但**不抢前台、不改 Z 序**
+        _user32.SetWindowPos(hwnd, 0, _x, _y, _w, _h, 0x0004 | 0x0010)
         time.sleep(0.15)
         gui._update_render_rect()
     except Exception:
@@ -342,7 +373,22 @@ def _force_geometry(gui) -> None:
 
 
 def prepare_screen(gui) -> bool:
-    """点击操作前的整备：把微信置前 + 清理叠加层/遮挡窗口 + 窗口出屏自动还原。"""
+    """点击操作前的整备：把微信置前 + 清理叠加层/遮挡窗口 + 窗口出屏自动还原。
+
+    ⚠️ 2026-09-14 用户实测：「我一打开它，它会把我的微信窗口切出来」＋「它还会导致微信卡死，
+    我操作都操作不了」——本函数原来那几段 `ShowWindow(hwnd, 9)`（SW_RESTORE）＋
+    `gui.bring_to_front(keep_topmost=True)`（**把微信钉到最上层**）就是真凶：
+    最小化的微信被强行弹出来，而且置顶窗口会一直压在所有窗口之上（用户当然点不动自己其它窗口）。
+    ⇒ 现在只做"零打扰"的那一半（清遮挡、探活），**除非显式打开 `ui.allow_foreground`
+    否则绝不挪窗口/不还原最小化/不抢前台/不置顶**。
+    """
+    if not _cfg_bool("allow_foreground", False):
+        try:
+            dismiss_overlays((getattr(gui, "main_hwnd", 0), getattr(gui, "render_hwnd", 0)))
+            gui._update_render_rect()
+        except Exception:
+            pass
+        return bool(getattr(gui, "is_alive", lambda: True)())
     try:
         # ① 不再强制 SetWindowPos（每次动窗口会把表情弹出菜单"刷掉"——这是"点完笑脸菜单消失"的真凶）
         #   仅当窗口被移到极小/出屏时才自愈，正常流程绝不碰窗口几何。

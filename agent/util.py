@@ -48,6 +48,84 @@ def pick_browser(exe_path: str = "") -> str:
     return ""
 
 
+# ── 控制台地址与"谁去开窗"的唯一来源 ────────────────────────────────────
+# 2026-09-14 定：地址（含 token）只由**拥有 token 的那一方**写出来，别的人一律读文件。
+# 起因（另一台机器实测）：启动器用 IndexOf("\"token\"") 在 config.json 里瞎找口令，
+# 结果抓到的是**排在前面的 `cloud.token`（空串）**，于是打开 `/?token=` ⇒ 控制台回
+# `{"error":"unauthorized"}`。凡是"手写字符串找 JSON 字段"的路子都会这样踩序问题。
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CONSOLE_URL_FILE = os.path.join(ROOT, "logs", "console.url")
+CONSOLE_LOCK_FILE = os.path.join(ROOT, "logs", "browser_opened.lock")
+CONSOLE_LOCK_SECONDS = 90
+
+
+def console_url_path(root: str = "") -> str:
+    return os.path.join(root or ROOT, "logs", "console.url")
+
+
+def console_lock_path(root: str = "") -> str:
+    return os.path.join(root or ROOT, "logs", "browser_opened.lock")
+
+
+def write_console_url(url: str, root: str = "") -> bool:
+    """把"可直接使用的控制台地址"原子落盘（temp + os.replace）。"""
+    try:
+        p = console_url_path(root)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        tmp = p + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(str(url or ""))
+        os.replace(tmp, p)
+        return True
+    except Exception:
+        return False
+
+
+def read_console_url(root: str = "") -> str:
+    """读回控制台地址；没有/空就返回空串（调用方再走配置兜底）。"""
+    try:
+        with open(console_url_path(root), encoding="utf-8") as f:
+            return (f.read() or "").strip()
+    except Exception:
+        return ""
+
+
+def take_console_lock(seconds: float = CONSOLE_LOCK_SECONDS, root: str = "") -> bool:
+    """原子抢占"打开控制台"锁：并发下（启动器 / 机器人 / 托盘 / 面板按钮）只有一方成功。
+
+    这是"双窗口"那个 bug 的收口点——所有开窗入口都必须先拿这把锁。
+    """
+    mk = console_lock_path(root)
+    try:
+        os.makedirs(os.path.dirname(mk), exist_ok=True)
+        if os.path.exists(mk):
+            if console_lock_fresh(seconds, root):
+                return False                       # 别人刚开过
+            try:
+                os.remove(mk)                      # 过期锁：清掉再抢
+            except Exception:
+                pass
+        fd = os.open(mk, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.write(fd, str(time.time()).encode("ascii", "replace"))
+        os.close(fd)
+        return True
+    except FileExistsError:
+        return False
+    except Exception:
+        return True                                # 极端情况放开，避免"谁都不开"
+
+
+def console_lock_fresh(seconds: float = CONSOLE_LOCK_SECONDS, root: str = "") -> bool:
+    """锁是否存在且未过期（= 已经有人开过窗）。"""
+    try:
+        with open(console_lock_path(root), encoding="utf-8") as f:
+            t = float((f.read() or "0").strip() or 0)
+        return (time.time() - t) < float(seconds)
+    except Exception:
+        return False
+
+
 # ── 密钥脱敏（控制台/日志不暴露完整 API Key）─────────────────────────────
 
 _SECRET_RE = re.compile(r"(sk-[A-Za-z0-9_\-]{8,})")

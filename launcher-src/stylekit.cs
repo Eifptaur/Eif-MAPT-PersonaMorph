@@ -106,6 +106,7 @@ namespace WxLauncher
                 }
                 f.HandleCreated += delegate { Decorate(f); };
                 if (f.IsHandleCreated) Decorate(f);
+                f.Resize += delegate { Reclip(f); };   // 圆角裁剪随尺寸重算（可拉伸的窗口必须挂这一条）
                 Restyle(f);
                 // 有些窗体在构造函数里靠后还会再设一遍颜色/字体 ⇒ Load 时统一再落一次（幂等）
                 f.Load += delegate
@@ -131,13 +132,21 @@ namespace WxLauncher
             try { v = ColorTranslator.ToWin32(Ink); DwmSetWindowAttribute(f.Handle, 36, ref v, 4); } catch { }  // 标题文字色
             if (f.FormBorderStyle == FormBorderStyle.None)
             {
-                try
-                {
-                    using (var p = RoundBar.RoundRect(new Rectangle(0, 0, f.Width, f.Height), 12))
-                        f.Region = new Region(p);
-                }
-                catch { }
+                Reclip(f);
             }
+        }
+
+        /// 无边框窗的圆角裁剪：**必须随尺寸重算**——Region 只在构造时算一次的话，
+        /// 用户把窗口拉大之后，超出的那块既画不出来、鼠标也点不进去（实测：拉完按钮点不动）。
+        static void Reclip(Form f)
+        {
+            if (f.FormBorderStyle != FormBorderStyle.None) return;
+            try
+            {
+                using (var p = RoundBar.RoundRect(new Rectangle(0, 0, f.Width, f.Height), 12))
+                    f.Region = new Region(p);
+            }
+            catch { }
         }
 
         internal const int BarH = 38;
@@ -254,8 +263,10 @@ namespace WxLauncher
                         {
                             tb.BorderStyle = BorderStyle.FixedSingle;
                             tb.Font = Mono(9f);
-                            tb.BackColor = ConsoleBg;    // 深底浅字：日志区像控制台，字更清楚
-                            tb.ForeColor = ConsoleInk;
+                            // 2026-09-14 用户："这个日志栏怎么是黑的？好丑，你换成浅蓝的、白的都行"
+                            // ⇒ 启动器的日志区**跟窗体同色系**（浅底深字），深色控制台底色只留给真正的终端
+                            tb.BackColor = Color.FromArgb(244, 248, 254);
+                            tb.ForeColor = Ink;
                         }
                     }
                     else
