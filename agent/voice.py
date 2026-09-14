@@ -318,8 +318,13 @@ def status() -> dict:
 
 def transcribe_silk(silk_path: str, keep_wav: bool = False) -> tuple:
     """SILK → 文本。返回 (文本, 错误说明, 过程信息 dict)。"""
-    st = status()
     info = {"decoder": "", "engine": "", "wav": ""}
+    # 先看文件在不在（2026-09-14 修正顺序）：本机没有 SILK 解码器时，老顺序会先报「没有可用引擎」，
+    # 把「文件根本不存在」这个更具体、更可操作的原因盖掉 —— `voice_selftest` 的 C 段因此在缺引擎的
+    # 机器上长期假红（脚本 10/11、exit 1，看着像功能坏了，其实是判据被引擎前置条件挡了）。
+    if not silk_path or not os.path.exists(str(silk_path)):
+        return "", "语音文件不存在：%s" % silk_path, info
+    st = status()
     if not st["ok"]:
         return "", st["why"], info
     wav, err = decode_silk(silk_path)

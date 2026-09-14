@@ -13,7 +13,9 @@
 """
 from __future__ import annotations
 
+import os
 import re
+import threading
 import time
 
 from . import chat_header as ch
@@ -31,13 +33,258 @@ def available() -> bool:
         return False
 
 
-def recognize(img) -> list:
-    """对 PIL 图像跑 OCR，返回 [(text, x, y, w, h)]；不可用/失败返回 []。"""
+# ————————————————— OCR 硬超时 / 熔断 / 预算（2026-09-14，测机手册 ④） —————————————————
+# 为什么必须自己再加一层：驱动库的 `ScreenOCR.recognize` 写的是
+# `asyncio.run(asyncio.wait_for(_run(), timeout=8))`——**那个 8 秒是"软"的**：`wait_for` 取消的是
+# asyncio 任务，而里面 await 的是 WinRT 的 `IAsyncOperation`；原生操作不响应取消时，`asyncio.run`
+# 收尾（取消剩余任务 + 关事件循环）会**一直等下去**。实测本机某次 OCR 步骤卡了 **8 分 19 秒**
+# 而不是 8 秒。⇒ 定式：**绝不在调用方线程里直接跑它**，一律「daemon 线程 + 硬 join 超时」——
+# 到点就放弃、返回空、记成"判据不可用"。
+# 代价：超时那一次会**漏一个后台线程**（daemon，进程退出不受影响）⇒ 用熔断器限流：
+# 连续 `BREAK_AFTER` 次超时就**停止再试** `BREAK_COOLDOWN_S` 秒，直接返回空并给出原因。
+# ⚠️ 空返回只表示"**没拿到文字**"，不表示"画面上没有文字"：调用方必须按"判据不可用"处理
+#   （项目铁律：判据不可用 ⇒ 不发；绝不许当成"没证据也能发"）。
+DEFAULT_TIMEOUT_S = 25.0        # 单次 OCR 硬上限（秒）；环境变量 WXAGENT_OCR_TIMEOUT 可覆盖
+BREAK_AFTER = 2                 # 连续硬超时几次 ⇒ 熔断
+BREAK_COOLDOWN_S = 120.0        # 熔断时长（秒）；环境变量 WXAGENT_OCR_COOLDOWN 可覆盖
+SEND_WINDOW_S = 60.0            # **一笔发送链**允许花在 OCR 上的总时间（秒）；一次 OCR 正常 0.3~1s
+WINDOW_MIN_SLICE_S = 2.0        # 窗里只剩这么点时，不再开新的 OCR（那一次注定超时）
+
+_local = threading.local()
+_lock = threading.RLock()
+_health = {"calls": 0, "timeouts": 0, "budget_hits": 0, "breaks": 0, "consecutive": 0,
+           "last_why": "", "last_timeout_ts": 0.0, "open_until": 0.0}
+
+
+def timeout_s() -> float:
+    """单次 OCR 的硬上限（秒）。"""
+    try:
+        v = float(os.environ.get("WXAGENT_OCR_TIMEOUT", "") or DEFAULT_TIMEOUT_S)
+    except Exception:
+        v = DEFAULT_TIMEOUT_S
+    return max(1.0, min(600.0, v))
+
+
+def cooldown_s() -> float:
+    """熔断时长（秒）。"""
+    try:
+        v = float(os.environ.get("WXAGENT_OCR_COOLDOWN", "") or BREAK_COOLDOWN_S)
+    except Exception:
+        v = BREAK_COOLDOWN_S
+    return max(0.0, min(3600.0, v))
+
+
+def _wins() -> list:
+    st = getattr(_local, "wins", None)
+    if st is None:
+        st = _local.wins = []
+    return st
+
+
+def begin_window(seconds=None) -> float:
+    """给"**这一笔操作**"开一个 OCR 总时间窗（秒），窗内所有 OCR 只能花剩余时间。
+
+    用法：在发送链入口各加一行 `begin_window()`（不必配 `end_window`——窗口到点**自动失效**，
+    且会随下一次 OCR 调用被清理掉，**不会**拖累之后无关的调用）。
+    为什么要它：单次硬超时只保证"一次 OCR 不卡死"，一笔操作里若有 4~6 次 OCR，最坏仍会累加几分钟
+    ⇒ 用总窗把整笔卡住。开窗的人拿返回的 token 自己用 `budget_out(token)` 判"预算用完没"。
+    返回本次窗口的 token（`end_window(token)` 可提前关掉它）。
+    """
+    w = float(timeout_s() if seconds is None else seconds)
+    tok = time.monotonic() + max(0.0, w)
+    st = _wins()
+    st.append(tok)
+    if len(st) > 32:                     # 兜底：只留最近 8 个（正常每次 OCR 都会顺手清理过期项）
+        del st[:-8]
+    return tok
+
+
+def end_window(token=None) -> None:
+    """提前关掉时间窗（`token` 省略＝关最里面那个）。"""
+    st = _wins()
+    if not st:
+        return
+    if token is None:
+        st.pop()
+        return
+    try:
+        st.remove(token)
+    except ValueError:
+        pass
+
+
+def window_left():
+    """本线程当前窗口还剩多少秒；**没有活着的窗口返回 None**。
+
+    过期窗口在这里就地失效（只清掉、不当成 0）——这一点很重要：如果把它当 0，那么"很久以前某笔操作
+    留下的过期窗口"会让**紧接着的一次无关 OCR** 静默失败（假失败）。所以口径是：
+      · **活着**的窗口：参与限时（`_left` 取 min）；
+      · **过期**的窗口：清掉、不参与 ⇒ 后续调用照常；
+      · 想知道"我这笔的预算用完没有"，用 `budget_out(token)`（由开窗的人自己判）。
+    """
+    st = _wins()
+    if not st:
+        return None
+    now = time.monotonic()
+    for tok in list(st):
+        if float(tok) <= now:
+            st.remove(tok)
+    live = [float(tok) - now for tok in st]
+    return min(live) if live else None
+
+
+def budget_out(token=None) -> bool:
+    """开窗的人用它问"我这笔的 OCR 预算用完了吗"（`token` ＝ `begin_window()` 的返回值）。"""
+    if token is not None:
+        return time.monotonic() >= float(token)
+    rem = window_left()
+    return rem is not None and rem <= WINDOW_MIN_SLICE_S
+
+
+def _left(default: float) -> float:
+    """本次 OCR 最多还能花多少秒（单次硬上限 ∩ 活着的窗口）。
+
+    窗里只剩不到 `WINDOW_MIN_SLICE_S` 时直接给 0（不再开一次注定超时的 OCR）——注意这**只会**
+    发生在窗口还活着的时候，也就是这笔操作确实已经把 OCR 预算花光了，属于预期的 fail-closed。
+    """
+    best = float(default)
+    rem = window_left()
+    if rem is None:
+        return max(0.0, best)
+    if rem < WINDOW_MIN_SLICE_S:
+        return 0.0
+    return max(0.0, min(best, rem))
+
+
+def health() -> dict:
+    """OCR 健康度快照（控制台/日志/判据用）：超时次数、熔断状态、最后一次原因。"""
+    with _lock:
+        d = dict(_health)
+    d["open"] = d["open_until"] > time.monotonic()
+    d["open_left"] = max(0.0, d["open_until"] - time.monotonic())
+    d["timeout_s"] = timeout_s()
+    d["window_left"] = window_left()
+    return d
+
+
+def reset_health() -> None:
+    """清空计数与熔断/时间窗（判据与人工排障用）。"""
+    with _lock:
+        _health.update({"calls": 0, "timeouts": 0, "budget_hits": 0, "breaks": 0,
+                        "consecutive": 0, "last_why": "", "last_timeout_ts": 0.0,
+                        "open_until": 0.0})
+    _local.wins = []
+
+
+def recent_timeout(window_s: float = 60.0) -> bool:
+    """最近 window_s 秒内 OCR 是否硬超时过。
+
+    调用方据此把结论标成"**判据不可用**"（而不是"画面上没这个字"）——这两种情况对发送闸门的
+    含义不同：前者必须说清楚"是 OCR 卡住了"，后者才是"内容对不上"。
+    """
+    with _lock:
+        ts = float(_health["last_timeout_ts"] or 0.0)
+    return bool(ts) and (time.monotonic() - ts) <= max(0.0, float(window_s))
+
+
+def health_line() -> tuple:
+    """控制台「一键体检」用的那一行：返回 `(status, detail, hint)`，status ∈ ok/warn/info。
+
+    UI/文案只在这里写一次（控制台照抄），顺带让判据可以机械检查"熔断/超时两种状态都有可读文案"。
+    """
+    try:
+        h = health()
+    except Exception as e:                                   # noqa: BLE001
+        return "info", "读不到 OCR 健康度：%s" % e, ""
+    if h.get("open"):
+        return ("warn",
+                "正在熔断：连续卡住后暂停重试，%.0f 秒后自动恢复" % float(h.get("open_left") or 0.0),
+                "OCR 卡住时发送链会放弃本次发送而不是乱猜；等一下或重启机器人")
+    if h.get("timeouts"):
+        return ("warn",
+                "卡住过 %d 次，最近一次：%s" % (h["timeouts"], str(h["last_why"])[:60]),
+                "卡住的那一次按「判据不可用」处理：不发送；反复出现请重启机器人")
+    if h.get("calls"):
+        return "ok", "已调用 %d 次，单次最多 %.0f 秒，从没卡住" % (h["calls"], h["timeout_s"]), ""
+    return "ok", "还没用过，单次最多 %.0f 秒，从没卡住" % h["timeout_s"], ""
+
+
+def blocked() -> str:
+    """现在能不能做 OCR：能 ⇒ ""；不能 ⇒ 原因（熔断中 / 本笔预算用尽）。"""
+    with _lock:
+        until = float(_health["open_until"] or 0.0)
+    now = time.monotonic()
+    if until > now:
+        return "OCR 连续超时已熔断，%.0f 秒后自动恢复" % (until - now)
+    if window_left() is not None and _left(1.0) <= 0.0:
+        return "本笔操作的 OCR 时间预算已用尽"
+    return ""
+
+
+def _note(why: str, timeout: bool = False, budget_hit: bool = False) -> None:
+    now = time.monotonic()
+    with _lock:
+        _health["last_why"] = str(why)
+        if timeout:
+            _health["timeouts"] += 1
+            _health["last_timeout_ts"] = now
+            _health["consecutive"] += 1
+            if _health["consecutive"] >= BREAK_AFTER:
+                _health["breaks"] += 1
+                _health["consecutive"] = 0
+                _health["open_until"] = now + cooldown_s()
+                _health["last_why"] = "%s ⇒ 连续超时，已熔断 %.0f 秒" % (why, cooldown_s())
+        elif budget_hit:
+            _health["budget_hits"] += 1
+
+
+def _run_hard(fn, seconds: float, what: str):
+    """在 daemon 线程里跑 fn，最多等 seconds 秒 ⇒ (ok, 值, 原因)。**超时绝不阻塞调用方。**"""
+    box = {}
+
+    def _t():
+        try:
+            box["v"] = fn()
+        except Exception as e:                       # noqa: BLE001
+            box["e"] = "%s: %s" % (type(e).__name__, e)
+
+    th = threading.Thread(target=_t, daemon=True, name="ocr-%s" % (what or "hard"))
+    th.start()
+    th.join(max(0.1, float(seconds)))
+    if th.is_alive():
+        return False, None, "超时（%.0f 秒未返回，已放弃）" % float(seconds)
+    if "e" in box:
+        return False, None, "异常 %s" % box["e"]
+    return True, box.get("v"), ""
+
+
+def recognize(img, timeout=None) -> list:
+    """对 PIL 图像跑 OCR，返回 [(text, x, y, w, h)]；不可用/失败/超时返回 []。
+
+    **硬超时**（2026-09-14 加）：单次最多 `timeout_s()`（默认 25 秒，环境变量可调），到点返回 `[]`
+    并把原因记进 `health()`；连续超时达 `BREAK_AFTER` 次会熔断 `BREAK_COOLDOWN_S` 秒。
+    """
     try:
         from wechatauto.guia import ScreenOCR
-        return list(ScreenOCR.recognize(img) or [])
     except Exception:
         return []
+    why_blocked = blocked()
+    if why_blocked:
+        _note(why_blocked, budget_hit=("预算" in why_blocked))
+        return []
+    left = _left(timeout_s() if timeout is None else float(timeout))
+    if left <= 0.0:
+        _note("本笔操作的 OCR 时间预算已用尽", budget_hit=True)
+        return []
+    with _lock:
+        _health["calls"] += 1
+    ok, val, why = _run_hard(lambda: list(ScreenOCR.recognize(img) or []), left, "OCR")
+    if not ok:
+        _note("OCR %s" % why, timeout=("超时" in why))
+        return []
+    with _lock:
+        _health["consecutive"] = 0
+    return list(val or [])
 
 
 def header_box(img) -> tuple:
@@ -555,102 +802,139 @@ def pane_text(img, limit: int = 200) -> str:
 
 def find_row_scrolled(capture_fn, find_fn, scroll_fn=None, max_steps: int = 6,
                       per_step: int = 3, settle_s: float = 0.45,
-                      tries_per_step: int = 1, gap_s: float = 0.35) -> tuple:
+                      tries_per_step: int = 1, gap_s: float = 0.35,
+                      budget_s=None) -> tuple:
     """**先看当前视野，找不到就平滑下滚再找**（后台：`scroll_fn` 由调用方注入投递滚轮，不碰鼠标）。
 
     为什么要滚（用户 2026-09-13 原话：「你滚得太不顺滑了，**一下一下地滚，导致没有看到**」）：
     截图一次只覆盖会话列表露出来的那几行 ⇒ 目标在下面时**永远找不到**；要一格一格连滚、每轮重新读图。
     这里把「捕获 / 查找 / 滚动」三个动作都做成注入式，判据可以完全脱机自测（`chat_ocr_selftest`）。
+    **时间预算**（2026-09-14 加）：最坏情况本来是 7 轮 × 3 帧 ＝ 21 次 OCR，卡起来就是几分钟；
+    现在整段共用一个 `budget_s`（默认 `timeout_s()`），用完即停并在过程串里写明。
     返回 `(info 或 None, 过程说明)`。
     """
     logs = []
     steps = max(0, int(max_steps))
     tries = max(1, int(tries_per_step))
-    for step in range(steps + 1):
-        info = None
-        for _t in range(tries):
-            img = capture_fn()
-            info = find_fn(img) if img is not None else None
+    tok = begin_window(budget_s)
+    try:
+        for step in range(steps + 1):
+            info = None
+            for _t in range(tries):
+                if budget_out(tok):
+                    logs.append("OCR 时间预算用尽（%.0f 秒），停在第 %d 轮" % (
+                        float(timeout_s() if budget_s is None else budget_s), step + 1))
+                    return None, "；".join(logs)
+                img = capture_fn()
+                info = find_fn(img) if img is not None else None
+                if info:
+                    break
+                if _t + 1 < tries:
+                    time.sleep(max(0.0, float(gap_s)))
             if info:
+                logs.append("第 %d 轮第 %d 帧命中" % (step + 1, _t + 1))
+                return info, "；".join(logs)
+            if step >= steps or scroll_fn is None:
                 break
-            if _t + 1 < tries:
-                time.sleep(max(0.0, float(gap_s)))
-        if info:
-            logs.append("第 %d 轮第 %d 帧命中" % (step + 1, _t + 1))
-            return info, "；".join(logs)
-        if step >= steps or scroll_fn is None:
-            break
-        try:
-            ok = bool(scroll_fn(int(per_step)))
-        except Exception as e:
-            ok = False
-            logs.append("滚轮异常 %s" % type(e).__name__)
-        logs.append("第 %d 次未命中→下滚 %d 格%s" % (step + 1, per_step, "" if ok else "（失败）"))
-        time.sleep(max(0.0, float(settle_s)))
-    if not logs:
-        logs.append("一次都没捕获到画面")
-    return None, "；".join(logs)
+            try:
+                ok = bool(scroll_fn(int(per_step)))
+            except Exception as e:
+                ok = False
+                logs.append("滚轮异常 %s" % type(e).__name__)
+            logs.append("第 %d 次未命中→下滚 %d 格%s" % (step + 1, per_step, "" if ok else "（失败）"))
+            time.sleep(max(0.0, float(settle_s)))
+        if not logs:
+            logs.append("一次都没捕获到画面")
+        return None, "；".join(logs)
+    finally:
+        end_window(tok)
 
 
-def capture_best(gui=None, frames: int = 3, img=None, good_rows: int = 8) -> object:
+def capture_best(gui=None, frames: int = 3, img=None, good_rows: int = 8,
+                 budget_s=None) -> object:
     """多抓几帧，挑「会话列表读到行数最多」的那帧返回（只读，不碰鼠标）。
 
     为什么需要（2026-09-13 实测）：同一窗口连续抓图，OCR 行数会在 **2 行 ↔ 13 行**之间跳——
     抓到没渲染完/被遮挡的那一帧时，会话列表几乎读不出来 ⇒ 单帧判定会得出"找不到该会话"的**假结论**。
     宁可多抓两帧（每帧约 0.3s），也不要拿一帧坏图下结论。
+    **时间预算**（2026-09-14 加）：整段共用 `budget_s`（默认 `timeout_s()`），用完就拿已拿到的最好那帧走。
     """
     best, best_n = None, -1
-    for _i in range(max(1, int(frames))):
-        im = img if img is not None else ch.capture_image(gui=gui)
-        if im is None:
-            time.sleep(0.3)
-            continue
-        n = len(list_rows(im))
-        if n > best_n:
-            best, best_n = im, n
-        if n >= int(good_rows):
-            break
-        time.sleep(0.35)
-    return best
+    tok = begin_window(budget_s)
+    try:
+        for _i in range(max(1, int(frames))):
+            if _i and budget_out(tok):
+                log_why = "OCR 时间预算用尽，取已抓到的最好一帧（%d 行）" % max(0, best_n)
+                _note(log_why, budget_hit=True)
+                break
+            im = img if img is not None else ch.capture_image(gui=gui)
+            if im is None:
+                time.sleep(0.3)
+                continue
+            n = len(list_rows(im))
+            if n > best_n:
+                best, best_n = im, n
+            if n >= int(good_rows):
+                break
+            time.sleep(0.35)
+        return best
+    finally:
+        end_window(tok)
 
 
-def current_chat_name(img=None, gui=None, min_green: float = 0.12, retries: int = 3) -> tuple:
+def current_chat_name(img=None, gui=None, min_green: float = 0.12, retries: int = 3,
+                      budget_s=None) -> tuple:
     """只读：返回 (当前打开的会话名, 依据)。依据串里写明是靠哪一行的绿底判出来的。
 
     ⚠️ 不能让"标题"来当判据：实测微信 4.1.15.8 的会话标题是**浅灰细字**，WinRT OCR 读不出来
        （同一张图里会话列表的名字/预览/时间戳都读得出）⇒ 用**会话列表 + 绿底高亮行**这两个独立信号。
     ⚠️ 抓图会**偶发拿到没渲染完的一帧**（实测：同一次调用里 `detect_pane_left=0`、只识别到 2 行、
        找不到绿底；紧接着再抓就正常 331/13 行/0.96）⇒ 自己抓图时**重试几帧、取最好的一帧**。
+    ⛔ **硬超时**（2026-09-14 加，测机手册 ④）：整段共用 `budget_s`（默认 `timeout_s()`＝25 秒）。
+       实测本函数曾卡 **8 分 19 秒**（根因：库的 8 秒 asyncio 软超时取消不了 WinRT 原生操作）。
+       到点就停、返回 `("", 原因)`——调用方必须按"**判据不可用**"处理（不放行发送），
+       绝不许把它当成"画面上没有这个会话"。OCR 卡住的痕迹同时留在 `health()` / `recent_timeout()` 里。
     """
     tries = 1 if img is not None else max(1, int(retries))
+    total = float(timeout_s() if budget_s is None else budget_s)
     best = ("", "抓图失败")
     best_rows = -1
-    for _i in range(tries):
-        use = img if img is not None else ch.capture_image(gui=gui)
-        if use is None:
-            best = ("", "抓图失败")
-        else:
-            rows = session_rows(use)
-            if not rows:
-                if best_rows < 0:
-                    best = ("", "会话列表没读到文字")
+    tok = begin_window(total)
+    try:
+        for _i in range(tries):
+            if budget_out(tok):
+                best = (best[0], "OCR 卡住：本笔预算 %.0f 秒用完，只抓了 %d/%d 帧（%s）" % (
+                    total, _i, tries, best[1]))
+                return best
+            use = img if img is not None else ch.capture_image(gui=gui)
+            if use is None:
+                best = ("", "抓图失败")
             else:
-                pick, score = None, 0.0
-                for r in rows:
-                    sc = _green_at(use, r["y_abs"])
-                    if sc > score:
-                        pick, score = r, sc
-                if pick is not None and score >= min_green:
-                    name = name_of_row(use, pick["y_abs"], pick["name"])
-                    if name:
-                        return name, "绿底行「%s」占比 %.2f（整行 OCR：%s）" % (name[:16], score, pick["name"][:22])
-                if len(rows) > best_rows:
-                    best_rows = len(rows)
-                    best = ("", "没找到绿底高亮行（最高占比 %.2f，共 %d 行）" % (score, len(rows)))
-        if img is not None:
-            break
-        time.sleep(0.45)
-    return best
+                rows = session_rows(use)
+                if not rows:
+                    if best_rows < 0:
+                        best = ("", "会话列表没读到文字")
+                else:
+                    pick, score = None, 0.0
+                    for r in rows:
+                        sc = _green_at(use, r["y_abs"])
+                        if sc > score:
+                            pick, score = r, sc
+                    if pick is not None and score >= min_green:
+                        name = name_of_row(use, pick["y_abs"], pick["name"])
+                        if name:
+                            return name, "绿底行「%s」占比 %.2f（整行 OCR：%s）" % (name[:16], score, pick["name"][:22])
+                    if len(rows) > best_rows:
+                        best_rows = len(rows)
+                        best = ("", "没找到绿底高亮行（最高占比 %.2f，共 %d 行）" % (score, len(rows)))
+            if img is not None:
+                break
+            time.sleep(0.45)
+        if recent_timeout(total):
+            best = (best[0], "%s（⚠️ 期间 OCR 有硬超时，结论按「判据不可用」看）" % best[1])
+        return best
+    finally:
+        end_window(tok)
 
 
 # ————————————————— 「搜索」入口：**两套 UI 都要认** —————————————————

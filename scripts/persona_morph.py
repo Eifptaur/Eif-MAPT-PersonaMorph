@@ -1654,6 +1654,15 @@ def main():
         except Exception as e:
             add("界面适配检查", "fail", str(e))
 
+        # 4.5) OCR 引擎健康度（会话名/身份判据全靠它；卡住时发送链会按「判据不可用」放弃）
+        #      测机手册 ④：本机曾出现 OCR 一次卡 8 分 19 秒 ⇒ 现在单次硬上限 25 秒 + 连续超时熔断。
+        try:
+            from agent import chat_ocr as _co
+            _st, _dt, _hint = _co.health_line()
+            add("识别·OCR 卡顿", _st, _dt, _hint)
+        except Exception as e:
+            add("识别·OCR 卡顿", "info", "读不到 OCR 健康度：%s" % e)
+
         add("拍一拍", "info", "请用「拍一拍诊断」按钮实测（定位/右键/验证一步一报告）")
         add("发送防重复", "info", "已启用 3 秒重复发送拦截（回车重试竞态防护）")
 
