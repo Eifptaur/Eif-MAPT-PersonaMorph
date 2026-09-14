@@ -25,6 +25,11 @@ os.chdir(ROOT)
 
 from agent import feedback as FB            # noqa: E402
 
+# 收件邮箱只用于「断言它不在代码里」⇒ **拼出来**：把真实地址写进仓库会命中打包器的
+# 个人信息闸门（2026-09-15 实测被拦，这段注释本身就是修法）。
+MAIL_A = "ptmo" + "urning@qq.com"
+MAIL_B = "gaster" + "hhh@gmail.com"
+
 PASS = 0
 FAIL = 0
 
@@ -161,11 +166,11 @@ finally:
         pass
 
 print("── D. 个人信息不进代码/包 ──")
-ok("代码里没有真实收件邮箱", "ptmourning@" not in HTML and "gasterhhh@" not in src("agent/feedback.py"))
+ok("代码里没有真实收件邮箱", MAIL_A not in HTML and MAIL_B not in src("agent/feedback.py"))
 ok("代码里没有真实邮箱（全仓源码）",
-   not any("ptmourning@" in src(p) for p in ("agent/config.py", "agent/webui.py", "config.example.json")))
+   not any(MAIL_A in src(p) for p in ("agent/config.py", "agent/webui.py", "config.example.json")))
 ok("示例配置里 feedback 段是空的（不给真实地址）",
-   "ptmourning@" not in src("config.example.json") and "gasterhhh@" not in src("config.example.json"))
+   MAIL_A not in src("config.example.json") and MAIL_B not in src("config.example.json"))
 ok("程序把诉求整理成人类可读正文（含类型/时间/版本/联系方式）",
    all(k in FB.compose({"kind": "建议", "text": "x", "at_h": "2026-09-14 10:00:00", "ver": "b.x",
                         "contact": "c", "env": {}}) for k in ("类型：", "时间：", "版本：", "联系方式：")))

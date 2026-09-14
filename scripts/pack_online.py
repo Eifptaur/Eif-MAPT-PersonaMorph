@@ -22,6 +22,10 @@ from datetime import datetime
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT_DIR = os.path.dirname(ROOT)                      # C:\Users\ptmou\Desktop\WX-chatbot
 PKG_PREFIX = "群相-在线包-"
+# 解压出来的**顶层文件夹名**（用户 2026-09-15 定：他要用户在压缩包里看到的就是这个名字）
+# ⚠️ 只影响压缩包的目录布局，不动任何程序逻辑：程序内部一律用"自己所在目录"定位（ROOT=文件位置），
+#    仓库里也没有别处硬编码过仓库目录名（打包器自己那条注释除外）。
+ZIP_TOP = "persona morph"
 
 # 不进包（相对仓库根的 posix 路径前缀 / 精确名）
 EXCLUDE = (
@@ -118,9 +122,10 @@ def main():
         os.remove(out)
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
         for rel in files:
-            z.write(os.path.join(ROOT, rel), rel)
+            z.write(os.path.join(ROOT, rel), "%s/%s" % (ZIP_TOP, rel))
     size = os.path.getsize(out) / 1024 / 1024
     print(f"✅ 出包：{out}  {len(files)} 文件 / {size:.2f} MB  （注意项 {warn_total} 条，非致命）")
+    print(f"   解压后顶层目录：{ZIP_TOP}/（用户看到的就是这个名字）")
     return 0
 
 
