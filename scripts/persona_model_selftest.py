@@ -74,6 +74,10 @@ ok("禁止自编台词冒充原话（不确定要标注（拟））",
    "禁止自编台词冒充原话" in _enrich_blk and "（拟）" in _enrich_blk)
 ok("明确禁当代网络梗（V我50/6/草/yyds…）", "V我50" in _enrich_blk and "任何流行语都不行" in _enrich_blk)
 ok("目标是「就是本人！」而不是「分数好看」", "就是本人" in _enrich_blk and "不要围绕夸奖/评分" in _enrich_blk)
+# 用户 2026-09-14：「补正…除非你确定补正是完全按照贴合人设的方向去走的，而且你也要尽量把这个功能导向那个方向」
+ok("补足只许加固辨识度：已确认的真实台词/口癖必须保留（不许替换成自造内容）",
+   "已经确认的真实台词/口癖/称呼方式都必须保留原样" in _enrich_blk and "指纹" in _enrich_blk)
+ok("补足后有「盖住名字还认得出是谁吗」的自检", "把名字盖住" in _enrich_blk)
 ok("分升才继续下一轮（轮数 1~3 可调）", "分升" in SRC and "min(3, int(rounds" in _enrich_blk)
 ok("最终文本复评取中位（抑制忽高忽低）", "中位" in SRC)
 ok("补足后仍跑同一把严格尺子", "_persona_llm_score(card, name)" in _enrich_blk)
