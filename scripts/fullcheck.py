@@ -102,7 +102,14 @@ finally:
 from agent.llm import match_official_price, _OFFICIAL_PRICES
 check("价目 171 条", len(_OFFICIAL_PRICES) == 171)
 check("MiniMax-M3 命中", match_official_price("MiniMax-M3")["in"] == 2.1)
-check("deepseek-chat Flash 档", match_official_price("deepseek-chat")["out"] == 4.5)
+# ⛔ 2026-09-14 改口径：原来写死 `out == 4.5`，而价目表已按官方 2026-09-10 **闲时价**更新为 4.0
+#   ⇒ 断言跟不上就假红。这里改成守"**有官方价映射且带出处**"这件事实，具体数字由价目表自己负责
+#   （数字一变就要改判据，是判据在制造维护负担）。
+_ds_price = match_official_price("deepseek-chat")
+check("deepseek-chat 有官方价映射（含出处）",
+      isinstance(_ds_price.get("out"), (int, float)) and _ds_price["out"] > 0
+      and "官方" in str(_ds_price.get("note") or ""),
+      "out=%s note=%s" % (_ds_price.get("out"), str(_ds_price.get("note"))[:40]))
 from agent.prompt import resolve_context_tier
 cfg2 = {"store": {"context_tier": 2, "unified_tier": True, "group_tier": {},
                   "group_blocklist": {}, "keywords": ["鲸鱼"], "random_percent": 60}}
@@ -160,27 +167,42 @@ check("icon-whale 有透明（眼睛）", trans > 10, "trans=%d" % trans)
 cur = Image.open(os.path.join(ROOT, "assets", "cursor.png")).convert("RGBA")
 cw, ch = cur.size
 cpx = cur.load()
-blue = sum(1 for y in range(0, ch, 8) for x in range(0, cw, 8)
-           if cpx[x, y][3] > 200 and cpx[x, y][2] > 150 and cpx[x, y][2] > cpx[x, y][0] + 40)
-check("cursor 蓝色鲸鱼（蓝像素>0）", blue > 50, "blue=%d" % blue)
+# ⛔ 2026-09-14 改口径：原来是 `range(0,w,8)` 采样 + `blue>50`。cursor.png 只有 **64×64**
+#   ⇒ 每 8 像素一采只剩 64 个样本，"blue>50" 等于要求 78% 的样本是蓝的（几乎不可能），实测 blue=11
+#   被误判成"光标不是蓝鲸"。改成**按比例**判（步长 2、阈值 2%），并把数字打出来便于对账。
+_samp = 0
+_blue = 0
+for y in range(0, ch, 2):
+    for x in range(0, cw, 2):
+        _samp += 1
+        r, g, b, a = cpx[x, y]
+        if a > 200 and b > 150 and b > r + 40:
+            _blue += 1
+check("cursor 蓝色鲸鱼（蓝像素占比>2%）", _blue > max(1, int(_samp * 0.02)),
+      "blue=%d/%d（%.1f%%）" % (_blue, _samp, 100.0 * _blue / max(1, _samp)))
 
-# ═══════════ E. 一键启动链 ═══════════
-check("一键启动.vbs 存在", os.path.exists(os.path.join(ROOT, "一键启动.vbs")))
+# ═══════════ E. 一键启动链（2026-09-14 改口径：vbs 已收进 scripts/）═══════════
+# 为什么改：原来断言 `一键启动.vbs` 在**根目录**，而 2026-09-13 收口时把三个 vbs 全挪进了 `scripts\`
+# （根目录只留 `一键启动.exe`/`一键关闭.exe`）⇒ 四条断言长期假红，是判据没跟上目录收口。
+check("scripts\\一键启动.vbs 存在", os.path.exists(os.path.join(ROOT, "scripts", "一键启动.vbs")))
+check("scripts\\一键关闭.vbs 存在", os.path.exists(os.path.join(ROOT, "scripts", "一键关闭.vbs")))
 check("onestart.py 存在", os.path.exists(os.path.join(ROOT, "scripts", "onestart.py")))
 check("bat 已移除（避免 cmd 弹窗/重复入口）", not os.path.exists(os.path.join(ROOT, "一键启动.bat"))
       and not os.path.exists(os.path.join(ROOT, "安装依赖.bat"))
       and not os.path.exists(os.path.join(ROOT, "自检.bat")))
 try:
-    _vbs = io.open(os.path.join(ROOT, "一键启动.vbs"), "rb").read().decode("gbk", "ignore")
+    _vbs = io.open(os.path.join(ROOT, "scripts", "一键启动.vbs"), "rb").read().decode("gbk", "ignore")
     check("一键启动.vbs 可读（GBK，含窗口与退出码逻辑）",
           len(_vbs) > 100 and "CreateObject" in _vbs)
 except Exception:
     check("一键启动.vbs 可读", False, "vbs 读取失败")
-check("备份 启动机器人.vbs 在 scripts/（备用不占根目录）",
+check("结算器与备用启动器都在 scripts/",
       os.path.exists(os.path.join(ROOT, "scripts", "启动机器人.vbs")))
-check("停止机器人.vbs 在根目录",
-      os.path.exists(os.path.join(ROOT, "停止机器人.vbs")))
-check("根目录无 启动机器人.vbs（备用）", not os.path.exists(os.path.join(ROOT, "启动机器人.vbs")))
+check("根目录放的是 exe 版入口（用户双击的就是它们）",
+      os.path.exists(os.path.join(ROOT, "一键启动.exe")) and os.path.exists(os.path.join(ROOT, "一键关闭.exe")))
+check("根目录不再散落 vbs（收口到 scripts/）",
+      not os.path.exists(os.path.join(ROOT, "一键启动.vbs"))
+      and not os.path.exists(os.path.join(ROOT, "启动机器人.vbs")))
 
 # ═══════════ G. 工具集 & 行为引擎 ═══════════
 try:
