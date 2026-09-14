@@ -2427,13 +2427,28 @@ class WeChatAdapter:
         except Exception:
             return False
 
-    def _moments_gray_thumb(self, rect, scale=(64, 48)):
-        """主窗缩略灰度：**不依赖 OCR** 的第二判据（点前点后比"界面真变了"）。"""
+    def _moments_gray_thumb(self, rect, scale=(64, 48), gui=None):
+        """缩略灰度：**不依赖 OCR** 的第二判据（点前点后比"界面真变了"）。
+
+        取图优先走 `chat_header.grab_render(gui)`（`PrintWindow(PW_RENDERFULLCONTENT)`）——
+        微信被别的窗口**遮挡**时也拿得到它自己的画面；`PrintWindow` 拿不到（例如被最小化）
+        才退回抓屏，此时抓到的可能是别人的窗口 ⇒ 判据只能当"没变"，**如实报判不了**，
+        绝不因此假报"投递成功"。
+        """
         try:
-            from PIL import ImageGrab
-            l, t, r, b = [int(v) for v in rect]
-            im = ImageGrab.grab((l, t, r, b)).convert("L").resize(scale)
-            return list(im.getdata())
+            from PIL import Image
+            img = None
+            if gui is not None:
+                try:
+                    from . import chat_header as _ch
+                    img = _ch.grab_render(gui)
+                except Exception:
+                    img = None
+            if img is None:
+                from PIL import ImageGrab
+                l, t, r, b = [int(v) for v in rect]
+                img = ImageGrab.grab((l, t, r, b))
+            return list(img.convert("L").resize(scale).getdata())
         except Exception:
             return None
 
@@ -2446,6 +2461,23 @@ class WeChatAdapter:
             return sum(1 for a, b2 in zip(before, now) if abs(a - b2) > 28) / max(1, len(before))
         except Exception:
             return 0.0
+
+    _BLIND_JUDGE_MSG = ("微信当前被最小化：投递点击本身也许仍会生效，但**判据抓不到画面**"
+                        "（无法确认点没点中、内容有没有动）⇒ 按「判不了就不动手」处理。"
+                        "请把微信窗口留在屏幕上（不必在前台、被别的窗口盖住也行）再试。")
+
+    def _moments_judge_blind(self, hwnd) -> bool:
+        """判据是否"瞎"：窗口被最小化时抓不到画面 ⇒ 朋友圈这类"靠画面判成功"的路径只能如实拒绝。
+
+        为什么不硬点：点了也可能"其实成了"，而判据一律判失败——那会让用户看到"没点中"的假象，
+        更糟的是它可能真的动了界面而我们不知道。诚实报"判不了"是唯一站得住的做法。
+        （2026-09-14 实测：本机微信最小化时 `IsIconic=True`、rect=(-32000,-32000)。）
+        """
+        try:
+            import ctypes
+            return bool(ctypes.windll.user32.IsIconic(int(hwnd)))
+        except Exception:
+            return False
 
     def _moments_rect(self, hwnd):
         """窗口屏幕矩形 (l, t, r, b)。"""
@@ -2472,6 +2504,8 @@ class WeChatAdapter:
                 return False, "找不到微信主窗句柄（投递档需要它）"
             if not ui_adapt.prepare_screen(gui):
                 return False, "屏幕预检失败"
+            if self._moments_judge_blind(hwnd):
+                return False, self._BLIND_JUDGE_MSG
             l, t, r, bt = self._moments_rect(hwnd)
             W, H = r - l, bt - t
             if W < 300 or H < 300:
@@ -2490,12 +2524,12 @@ class WeChatAdapter:
             if not pos:
                 return False, ("没有自证到的「发现」图标（投递档只点自证的：请手动点一下左侧"
                                "「发现」，选中后图标变绿，程序就认得它）")
-            before = self._moments_gray_thumb((l, t, r, bt))
+            before = self._moments_gray_thumb((l, t, r, bt), gui=gui)
             ok1, m1 = b.click(hwnd, (int(pos[0]), int(pos[1])))
             if not ok1:
                 return False, "投递打开「发现」失败：%s" % m1
             time.sleep(1.2)
-            if not _discover_visible() and self._gray_diff(before, self._moments_gray_thumb((l, t, r, bt))) <= 0.15:
+            if not _discover_visible() and self._gray_diff(before, self._moments_gray_thumb((l, t, r, bt), gui=gui)) <= 0.15:
                 return False, "投递点了「发现」但界面没变（投递档没生效，已停手、不再乱点）"
             # 点「朋友圈」：OCR 定位左侧列表项，未识别按发现页首项相对位置兜底（与真鼠标路径同一处）
             tgt = None
@@ -2509,12 +2543,12 @@ class WeChatAdapter:
             if tgt is None:
                 tgt = (int(W * 0.22), int(H * 0.112), int(W * 0.10), int(H * 0.03))
             pt = (l + tgt[0] + tgt[2] // 2, t + tgt[1] + tgt[3] // 2)
-            before2 = self._moments_gray_thumb((l, t, r, bt))
+            before2 = self._moments_gray_thumb((l, t, r, bt), gui=gui)
             ok2, m2 = b.click(hwnd, pt)
             if not ok2:
                 return False, "投递点「朋友圈」失败：%s" % m2
             time.sleep(1.5)
-            if self._gray_diff(before2, self._moments_gray_thumb((l, t, r, bt))) <= 0.01:
+            if self._gray_diff(before2, self._moments_gray_thumb((l, t, r, bt), gui=gui)) <= 0.01:
                 return False, "投递点了「朋友圈」但界面没变（投递档没生效，已停手）"
             return True, "朋友圈已打开（投递档：全程未动光标、未改前台）"
         except Exception as e:
@@ -2537,17 +2571,19 @@ class WeChatAdapter:
             hwnd = self._posted_hwnd(gui)
             if not hwnd:
                 return False, "找不到微信主窗句柄（投递档需要它）"
+            if self._moments_judge_blind(hwnd):
+                return False, self._BLIND_JUDGE_MSG
             l, t, r, bt = self._moments_rect(hwnd)
             # 落点：右缘内侧一条细带（避开头像/蓝点/输入框），与真鼠标路径取同一处
             pt = (r - 60, (t + bt) // 2)
-            before = self._moments_gray_thumb((l, t, r, bt))
+            before = self._moments_gray_thumb((l, t, r, bt), gui=gui)
             delta = -120 if direction > 0 else 120
             n = max(1, int(times)) * 8
             ok, msg = b.wheel(hwnd, pt, delta=delta, times=n, gap_ms=60)
             if not ok:
                 return False, "投递滚轮失败：%s" % msg
             time.sleep(0.5)
-            diff = self._gray_diff(before, self._moments_gray_thumb((l, t, r, bt)))
+            diff = self._gray_diff(before, self._moments_gray_thumb((l, t, r, bt), gui=gui))
             if diff <= 0.01:
                 return False, ("投递滚轮后朋友圈界面没有变化（投了 %d 格、差值 %.3f）⇒ 按没生效处理，"
                                "不假报已滚动" % (n, diff))
@@ -2586,7 +2622,7 @@ class WeChatAdapter:
 
             def _shot_small():
                 """主窗缩略灰度（64×48）——OCR 之外的第二判据用。"""
-                return self._moments_gray_thumb((l, t, rt, b))
+                return self._moments_gray_thumb((l, t, rt, b), gui=gui)
 
             def _content_changed(before):
                 """点击前后主窗中部是否明显变了（发现页会整块替换掉聊天区）。

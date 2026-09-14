@@ -90,6 +90,14 @@ _real_tags = [p["key"] for p in PATHS if p["status"] == "real"]
 ck("B9 有一条以上真鼠标路径被如实标注", len(_real_tags) >= 3, "、".join(_real_tags))
 ck("B10 投递档判定不靠可见性（隐藏/最小化也算投递档）",
    "IsWindowVisible" not in SRC_WECHAT.split("def _bg_backend(")[1][:600])
+# B11 最小化守卫：判据抓不到画面时，如实拒绝而不是硬点（真机取证见 _scratch/后台能力-真机记录.md）
+_blind = SRC_WECHAT.split("def _moments_judge_blind(")[1][:900]
+ck("B11 判据瞎了（最小化）时如实拒绝：守卫读 IsIconic", "IsIconic" in _blind)
+ck("B12 拒绝话术说清「判不了就不动手」与「窗口留在屏幕上」",
+   "判不了就不动手" in SRC_WECHAT and "留在屏幕上" in SRC_WECHAT)
+ck("B13 两条靠画面判成功的投递路径都挂了这道守卫",
+   SRC_WECHAT.split("def moments_open_posted(")[1][:2500].count("_moments_judge_blind") >= 1
+   and SRC_WECHAT.split("def moments_scroll_posted(")[1][:2500].count("_moments_judge_blind") >= 1)
 
 # ── C 光标不变（运行时 tripwire）──────────────────────────────────────────
 print("[C] 光标不变：真鼠标原语换成会响的探针，投递路径不许碰它")
@@ -153,7 +161,7 @@ try:
     ad._moments_rect = lambda hwnd: (100, 100, 1300, 1000)
     _thumb_seq = []
 
-    def _fake_thumb(rect, scale=(64, 48)):
+    def _fake_thumb(rect, scale=(64, 48), gui=None):
         """奇偶交替返回两张不同的图 ⇒ "每次点击前后界面都变了"，用来验判据链路本身。"""
         _thumb_seq.append(1)
         return [10] * 64 if len(_thumb_seq) % 2 else [200] * 64
@@ -182,7 +190,7 @@ try:
     ck("C7 刷朋友圈也没碰真鼠标原语", not TRIPPED, str(TRIPPED[:4]))
 
     # 假判据：界面没变 ⇒ 必须如实报"没生效"，不许假报成功
-    ad._moments_gray_thumb = lambda rect, scale=(64, 48): [10] * 64
+    ad._moments_gray_thumb = lambda rect, scale=(64, 48), gui=None: [10] * 64
     ok3, m3 = ad.moments_scroll_posted(direction=1, times=1)
     ck("C8 界面没变时如实报「没生效」（不假报）", ok3 is False and "没" in m3, m3[:60])
     ad._find_green_discover = lambda gui: None
