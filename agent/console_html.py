@@ -821,6 +821,15 @@ th{color:var(--tx2);font-weight:500}
         <div class="btns" style="margin-top:6px"><button id="pdOpen" class="ghost">版本不匹配怎么办</button></div>
         <div class="hint">不匹配时开一张单：一键升级适配层 · 更新本体 · 仅本次允许 · 微信本身要处理。✕ 等于什么都不做，单子留着、同一对版本不再追问。</div>
       </div></div>
+      <div class="row"><label>最近表态</label><div class="grow"><b id="vmDec">暂无</b></div></div>
+      <div class="row"><label>一键修</label><div class="grow">
+        <b id="actStat">没有在跑的事</b>
+        <div class="btns" style="margin-top:6px">
+          <button id="actHeal" class="ghost">依赖自愈</button>
+          <button id="actUp" class="ghost">升级适配层</button>
+        </div>
+        <div class="hint">两条都在后台跑，跑完这一行显示结果 · 都不动微信本体。</div>
+      </div></div>
     </section>
     <section id="sec-media" class="card" data-sec>
       <h2>媒体与语音（随机图 / 语音转文字 / 视频·文件）</h2>
@@ -2055,6 +2064,30 @@ async function loadStatus(){
           if(pd.item && pd.item.id && !window.__pdShown[pd.item.id]){
             window.__pdShown[pd.item.id] = 1;
             setTimeout(function(){ openDecision(pd.item); }, 300);
+          }
+        }catch(e){}
+        /* ⑦ 表态历史 + 一键修的后台作业状态（都来自 /api/status，页面里不另拉一份数据） */
+        try{
+          const vd = $('vmDec');
+          if(vd){
+            const nm = {upgrade_adapter:'去升级适配层', update_host:'去更新本体',
+                        allow_once:'仅本次允许', wechat_side:'微信本身要处理', none:'什么都不做'};
+            const ds = vm.decisions || [];
+            vd.textContent = ds.length
+              ? ds.map(function(d){ return (nm[d.choice] || d.choice) + ' · ' + String(d.when||'').slice(5, 16); }).join(' ｜ ')
+              : '暂无';
+          }
+          const aj = $('actStat');
+          if(aj){
+            const jb = s.jobs || {};
+            const ks = Object.keys(jb).filter(function(k){ return k.charAt(0) !== '_'; });
+            aj.textContent = ks.length
+              ? ks.map(function(k){
+                  const j = jb[k] || {};
+                  const stt = j.running ? '正在跑' : (j.returncode === 0 ? '完成' : ('结束 rc=' + j.returncode));
+                  return k + '：' + stt;
+                }).join(' ｜ ')
+              : '没有在跑的事';
           }
         }catch(e){}
       }catch(e){}
@@ -3722,6 +3755,12 @@ function choiceBox(title, lines, options, onPick, subtext){
   return m;
 }
 
+/* ⑦ 一键动作（升级适配层 / 更新本体）：统一走 /api/version/action 起后台作业 */
+async function postVersionAction(choice, id){
+  return await getJSON('/api/version/action', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({choice: choice, id: id || ''})});
+}
+
 /* 版本不匹配那张单：四选一 + 把结果落台账（服务端写回能力矩阵） */
 function openDecision(item){
   if(!item || !item.id){ toast('没有待拍板的事'); return; }
@@ -3732,9 +3771,17 @@ function openDecision(item){
         body: JSON.stringify({id: item.id, choice: key || ''})});
       toast((r && r.message) || (key ? '已记下你的选择' : '按「什么都不做」处理'));
       const act = ((r && r.result) || {}).action || {};
-      if(act.cmd){
-        confirmBox('跑这一条就行', ['在项目根目录执行：<b>' + act.cmd + '</b>',
-          '跑完回控制台点「重新检测」，版本能力矩阵会更新。'], '知道了');
+      /* ⑦ 「一键升级适配层 / 更新本体」选了就**真去跑**（后台作业，分钟级，控制台不卡）；
+         「仅本次允许」由服务端放行；「微信本身要处理」只给指引，不装也不降级微信。 */
+      if(key === 'upgrade_adapter' || key === 'update_host'){
+        try{
+          const a = await postVersionAction(key, item.id);
+          const cmd = ((a && a.result) || {}).cmd || '';
+          confirmBox('已经在后台跑了', [
+            cmd ? ('命令：<b>' + cmd + '</b>') : '已发出',
+            '跑完到「版本能力矩阵」的「一键修」那一行看结果。',
+          ], '知道了');
+        }catch(e){ toast('没能跑起来：' + e.message); }
       }
       loadStatus();
     }catch(e){ toast('没能记下你的选择：' + e.message); }
@@ -5189,6 +5236,20 @@ addEventListener('hashchange', ()=>{ if(location.hash==='#sec-sessions') loadSes
       else toast(pd.open ? '待拍板的事在别处，刷新看看' : '现在没有待拍板的事');
     }catch(e){ toast('读取待决台账失败：' + e.message); }
   };
+  /* ⑦ 面板上的两个一键按钮（不经过四选一也能直接修） */
+  const actBtn = (id, choice, label)=>{
+    const b = document.getElementById(id);
+    if(!b) return;
+    b.onclick = async ()=>{
+      try{
+        const r = await postVersionAction(choice);
+        toast((r && r.message) || (label + '已发出'));
+        loadStatus();
+      }catch(e){ toast(label + '失败：' + e.message); }
+    };
+  };
+  actBtn('actHeal', 'update_host', '依赖自愈');
+  actBtn('actUp', 'upgrade_adapter', '升级适配层');
   if(recheckBtn) recheckBtn.onclick = async ()=>{
     try{
       const r = await getJSON('/api/wechat/recheck');

@@ -595,6 +595,13 @@ class WebUI:
                                 }
                             except Exception as _pe:
                                 st["pending_decisions"] = {"open": 0, "error": str(_pe)}
+                            # 一键动作的后台作业（⑦）：升级适配层 / 更新本体 都是分钟级，
+                            # 起在后台线程里（agent/jobs.py），这里把状态给控制台显示跑到哪、成没成。
+                            try:
+                                from . import jobs as _jobs
+                                st["jobs"] = _jobs.status().get("jobs") or {}
+                            except Exception as _je:
+                                st["jobs"] = {"_error": str(_je)}
                             # 微信装没装（2026-09-13：没装就带用户去官网，不做静默安装）
                             try:
                                 from .wechat import wechat_version_info as _wvi
@@ -917,6 +924,18 @@ class WebUI:
                         elif act == "resume":
                             _risk.resume()
                         self._json({"ok": True, "risk": _risk.snapshot()})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)}, 500)
+                elif path == "/api/version/action":
+                    # ⑦ 四选一里"真能一键做"的两件事：升级适配层 / 更新本体 —— 起后台作业（分钟级，
+                    # 不阻塞控制台）；「仅本次允许」只放行本会话；「微信本身要处理」只回指引，
+                    # **绝不装/降级微信本体**（口径写死在 version_gate.run_action 里）。
+                    try:
+                        from . import version_gate as _vg6
+                        r = _vg6.run_action(str((data or {}).get("choice") or ""),
+                                            str((data or {}).get("id") or ""))
+                        self._json({"ok": bool(r.get("ok")), "result": r,
+                                    "message": str(r.get("message") or "")})
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)}, 500)
                 elif path == "/api/decide":

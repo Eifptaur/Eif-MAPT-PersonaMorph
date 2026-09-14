@@ -68,6 +68,79 @@ def status() -> dict:
     return st
 
 
+# ── 四选一里"真能一键做"的两个动作（⑦ 的"接进依赖自愈 / 更新链"）────────────────
+# 口径：只有这两条会**真动手**，而且是后台作业（`agent/jobs.py`，分钟级、不阻塞控制台）：
+#   · upgrade_adapter → `scripts/wechat_check.py --update`（实测非交互：直接 pip install -U 适配层与关键依赖）
+#   · update_host     → `dep_heal.plan()` 给的第一条安装命令（离线优先 --no-index，其次镜像）
+# 「微信本身要处理」永远只给指引；「仅本次允许」只动本进程内存。**一律不装/不降级微信本体。**
+ACTION_JOBS = {"upgrade_adapter": "upgrade_adapter", "update_host": "dep_heal"}
+
+
+def action_cmd(choice: str) -> str:
+    """这条选择要跑什么命令（空串＝不用跑）。给控制台/日志/判据共用，避免各处各写一份。"""
+    ch = str(choice or "")
+    if ch == "upgrade_adapter":
+        try:
+            from . import dep_heal as _dh
+            py = _dh.runtime_python()
+        except Exception:
+            import sys
+            py = sys.executable
+        return '"%s" "%s" --update' % (py, os.path.join(ROOT_DIR(), "scripts", "wechat_check.py"))
+    if ch == "update_host":
+        try:
+            from . import dep_heal as _dh
+            p = _dh.plan()
+            # ⚠️ 只有在**真缺依赖**时才拿安装命令：`dep_heal.plan()` 无论缺不缺都会在 steps 末尾
+            #   塞一条"装完复查"（`scripts/selftest.py`）⇒ 直接取 steps[0] 会在依赖齐全的机器上
+            #   把整套自检当"自愈"跑起来（重、还碰微信）。所以先看 diagnose 有没有非 ok 的。
+            if not [d for d in (p.get("diagnose") or []) if str(d.get("status")) != "ok"]:
+                return ""
+            steps = p.get("steps") or []
+            return str(steps[0]["cmd"]) if steps else ""
+        except Exception as e:
+            log.warning("依赖自愈计划失败：%s", e)
+            return ""
+    return ""
+
+
+def ROOT_DIR() -> str:
+    try:
+        from .config import ROOT
+        return ROOT
+    except Exception:
+        return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def run_action(choice: str, decision_id: str = "") -> dict:
+    """把一条选择**执行**掉（不重复落台账）：返回 `{ok, ran, job, message}`。
+
+    · `allow_once` → 本进程放行（内存标记）
+    · `upgrade_adapter` / `update_host` → 起后台作业（同名只允许一个在跑）
+    · `wechat_side` / 空（✕）→ 什么都不做，如实回报
+    """
+    ch = str(choice or "")
+    if ch in ("", "none"):
+        return {"ok": True, "ran": False, "message": "按「什么都不做」处理：没有执行任何动作"}
+    if ch == "allow_once":
+        allow_session("console 四选一")
+        return {"ok": True, "ran": True, "message": "已放行本次运行（只对本进程有效，重启重新拦）"}
+    if ch == "wechat_side":
+        return {"ok": True, "ran": False,
+                "message": "这条要在微信那边处理：先确认适配层有没有对应版本，我们不装也不降级微信"}
+    if ch in ACTION_JOBS:
+        cmd = action_cmd(ch)
+        if not cmd:
+            # 依赖齐全时 update_host 没有可跑的命令 —— 如实说"不用动"，**不许**拿"复查自检"顶替
+            return {"ok": True, "ran": False, "cmd": "",
+                    "message": ("依赖都满足，不用动" if ch == "update_host" else "拿不到要跑的命令")}
+        from . import jobs as _jobs
+        r = _jobs.start(ACTION_JOBS[ch], cmd)
+        return {"ok": bool(r.get("ok")), "ran": bool(r.get("ok")), "job": r.get("job"),
+                "cmd": cmd, "message": ("已开始：%s" % ch) if r.get("ok") else str(r.get("why") or "起不来")}
+    return {"ok": False, "ran": False, "message": "不认识的选项：%s" % ch}
+
+
 # ── 版本不匹配：待决单（四选一）─────────────────────────────────────────────
 # 用户口径（2026-09-14）：「弹窗按你推荐的做」+「把弹窗切出来的那一秒，就应该立刻让它到后台」。
 # 落点：门判「未实测」时**开一张待决单**（`agent/pending_decisions.py`，落 data/pending_decisions.json）；

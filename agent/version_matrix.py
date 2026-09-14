@@ -271,4 +271,7 @@ def current() -> dict:
     data = load()
     caps = capabilities(data, ver, adp)
     g = gate(data, ver, adp)
-    return {"wechat": ver, "adapter": adp, "caps": caps, "gate": g, "summary": summarize(caps)}
+    return {"wechat": ver, "adapter": adp, "caps": caps, "gate": g, "summary": summarize(caps),
+            # ⑦ 这一对版本上用户表过态的历史（最近 5 条）：控制台"版本能力矩阵"面板据此显示
+            # "当初是点了仅本次允许、还是去升了适配层"——决策不只活在弹窗里。
+            "decisions": decisions(data, ver, adp)[-5:]}
