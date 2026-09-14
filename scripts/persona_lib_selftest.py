@@ -44,7 +44,11 @@ def src(rel):
 
 #: 新分区 → 该分区下已入库的卡（每批做完在这里登记，判据跟着涨）
 NEW_BATCHES = {
-    "🎸 BanG Dream!": ["kasumi_bd", "arisa_bd", "tae_bd", "rimi_bd", "saya_bd"],
+    "🎸 BanG Dream!": ["kasumi_bd", "arisa_bd", "tae_bd", "rimi_bd", "saya_bd",
+                       "yukina_bd", "sayo_bd", "lisa_bd", "ako_bd", "rinko_bd",
+                       "tomori_bd", "anon_bd", "rana_bd", "soyo_bd", "taki_bd",
+                       "ran_bd", "moca_bd", "himari_bd", "tsugumi_bd", "tomoe_bd",
+                       "aya_bd", "hina_bd", "chisato_bd", "maya_bd", "eve_bd"],
 }
 #: 本判据"严格口径"只约束这些新卡（老库历史卡有各自的格式，不在本轮返工范围）
 _ALL_NEW = [k for keys in NEW_BATCHES.values() for k in keys]
@@ -86,11 +90,15 @@ _rimi = str(PERSONAS.get("rimi_bd", {}).get("text", ""))
 ok("没有一手台词的卡标了「（按其口吻）」（rimi_bd）", "按其口吻" in _rimi)
 
 print("── D. 新卡不许塞当代网络梗 ──")
-_BAD_WORDS = ("V我50", "yyds", "绝绝子", "草", "6", "退钱", "先吃饭", "典", "破防")
+# ⚠️ 判据也要防假阳：单字「典」会命中「祭典」、单字「6」会命中任何数字 ⇒ 只查**词**+孤立数字
+_BAD_WORDS = ("V我50", "yyds", "YYDS", "绝绝子", "退钱", "先吃饭", "典中典", "破防", "栓Q", "666")
+_BAD_RE = re.compile(r"(?<![0-9A-Za-z])6(?![0-9A-Za-z])")
 for cat, keys in NEW_BATCHES.items():
     for k in keys:
         t = str((PERSONAS.get(k) or {}).get("text", ""))
         hit = [w for w in _BAD_WORDS if w in t]
+        if _BAD_RE.search(t):
+            hit.append("孤立数字 6")
         ok("%s 无网络梗" % k, not hit, str(hit))
 
 print("")
