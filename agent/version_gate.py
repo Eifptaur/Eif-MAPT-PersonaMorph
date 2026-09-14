@@ -159,6 +159,15 @@ def _pop_ui(item: dict) -> dict:
         try:
             from . import notify_ui as _nu
             rep = _nu.pop_decision_ui()
+            # 兜底（⑦d）：控制台**开不出来**时（WebView2 起不来、没桌面会话、被策略挡住），
+            # 至少让任务栏气泡说一句 —— 不抢前台、不弹窗，点气泡才去开控制台。
+            if not rep.get("ok"):
+                try:
+                    from . import tray as _tray
+                    rep["tray"] = _tray.notify(str(item.get("title") or "有件事要你拍板"),
+                                               str(item.get("reason") or "")[:180])
+                except Exception as _te:                           # noqa: BLE001
+                    rep["tray"] = {"ok": False, "why": str(_te)}
             log.info("待决单已弹窗：%s", _nu.brief(rep))
         except Exception as e:                                     # noqa: BLE001
             log.warning("待决单弹窗失败（不影响开单）：%s", e)
