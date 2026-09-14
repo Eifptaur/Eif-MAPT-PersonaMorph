@@ -11,7 +11,11 @@
 
 「临时放行」只作用于**本次进程**（内存里一个标记），重启后重新拦 —— 免得一次点头变成永久放行。
 """
+import logging
+import os
 import threading
+
+log = logging.getLogger("persona-morph")
 
 _allowed = set()
 _lock = threading.Lock()
@@ -70,8 +74,41 @@ def status() -> dict:
 #   控制台据此弹四选一模态（一键升级适配层/更新本体/仅本次允许/微信本身要处理，✕＝什么都不做），
 #   用户表态后由 `decide()` 落台账 + 写回能力矩阵 + 执行本进程内的副作用。
 # **同一对版本只问一次**：开单是幂等的（已开过/已表过态的版本对直接复用旧条目）。
+def _pop_ui(item: dict) -> dict:
+    """新开一张单子时，**Persona Morph 自己把弹窗切出来**（⑦ 用户口径）。
+
+    三条纪律：①只在"新开单"时弹（同一对版本只问一次，所以不会反复弹）；
+    ②**不抢前台**（`notify_ui` 抬起后立刻把前台还给原窗口）；
+    ③**绝不能挡住调用方** —— 这个函数会开子进程/等窗口，最坏几秒，所以在后台线程里做，
+    失败只写日志（弹不出来不影响开单、更不影响发送闸门）。
+    """
+    def _run():
+        try:
+            from . import notify_ui as _nu
+            rep = _nu.pop_decision_ui()
+            log.info("待决单已弹窗：%s", _nu.brief(rep))
+        except Exception as e:                                     # noqa: BLE001
+            log.warning("待决单弹窗失败（不影响开单）：%s", e)
+
+    # ⛔ 判据/无人值守必须能关掉弹窗（2026-09-14 教训）：我第一次跑 ⑦c 自检时，`pending()` 走了
+    #   created=True 分支，**真的把控制台往屏幕上弹了一次**（开子进程）。判据不许动用户的屏幕
+    #   ⇒ 环境变量一关，`pop` 只回报"被关掉"，其它行为不变。
+    if os.environ.get("WX_NO_UI_POP") == "1":
+        return {"ok": True, "skipped": "已按 WX_NO_UI_POP=1 关掉弹窗（判据/无人值守模式）"}
+    try:
+        t = threading.Thread(target=_run, daemon=True, name="decide-pop")
+        t.start()
+        return {"ok": True, "async": True}
+    except Exception as e:                                         # noqa: BLE001
+        log.warning("待决单弹窗线程起不来：%s", e)
+        return {"ok": False, "why": str(e)}
+
+
 def pending(capability: str = "send", wechat: str = "", adapter: str = "") -> dict:
-    """返回 `{needed, item, created, status}`：门没过就保证有一张待决单（幂等）。"""
+    """返回 `{needed, item, created, status}`：门没过就保证有一张待决单（幂等）。
+
+    **新开单**时顺手让 Persona Morph 自己把弹窗切出来（不抢前台，见 `_pop_ui`）。
+    """
     st = check(capability, wechat=wechat, adapter=adapter)
     if st.get("level") == "ok" and st.get("allow"):
         return {"needed": False, "item": None, "created": False, "status": st}
@@ -79,7 +116,8 @@ def pending(capability: str = "send", wechat: str = "", adapter: str = "") -> di
         from . import pending_decisions as pd
         item, created = pd.ensure_version_decision(st.get("wechat"), st.get("adapter"),
                                                    reason=str(st.get("reason") or ""))
-        return {"needed": True, "item": item, "created": created, "status": st}
+        pop = _pop_ui(item) if created else {"ok": True, "skipped": "已经问过这一对版本，不再弹"}
+        return {"needed": True, "item": item, "created": created, "status": st, "pop": pop}
     except Exception as e:
         return {"needed": True, "item": None, "created": False, "status": st, "error": str(e)}
 
