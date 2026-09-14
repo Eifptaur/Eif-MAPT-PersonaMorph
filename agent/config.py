@@ -354,6 +354,20 @@ DEFAULT_CONFIG = {
         "feedback_upload_url": "",    # 可选：意见反馈上传接收端 URL
         "upload_enabled": False,      # 总开关：关闭时一律只本地导出
     },
+    # ── 反馈（控制台左侧导航「反馈」一栏；用户填完自动提交，程序整理后发邮件）──────
+    # ⚠️ 收件人邮箱 / SMTP 授权码属**个人信息**：只写在本机 config.json（已 gitignore），
+    #    代码与 config.example.json 里一律留空——外发包的 PII 扫描闸门也会拦。
+    "feedback": {
+        "enabled": True,              # 是否在控制台显示「反馈」栏
+        "to": "",                     # 收件人（多个用逗号分隔）；留空＝不发邮件
+        "upload_url": "",             # 可选：你自己的中转网址（POST JSON，优先于邮件）
+        "smtp": {
+            "host": "smtp.qq.com",    # QQ 邮箱 465 SSL；163 用 smtp.163.com
+            "port": 465,              # 465=SSL（推荐）| 587=STARTTLS
+            "user": "",               # 发件邮箱（如 xxx@qq.com）
+            "password": "",           # **授权码**（不是登录密码）
+        },
+    },
     # ── 界面 ───────────────────────────────────────────────────────────
     "ui": {
         "coord_scale": "auto",        # 显示缩放 auto | 1.25 等
