@@ -70,16 +70,36 @@ SEED_RUNS = [{
 
 
 # ── 纯函数 ──────────────────────────────────────────────────────────────
+# ── 版本门的"必需能力集"（2026-09-14 由测机报告推动）──────────────────────
+# 为什么需要：原来 `gate()` 只要看到这个版本对**有 run** 就判 `measured=True` ⇒
+# 只实测了 1 项（而且那一项还是失败的）也会把**整对**点亮，安全门从此不再提示、不再等用户放行
+# ——这是"安全门失效"级的问题。口径：**必需能力集里每一项都要有非 unknown 的结论**，
+# 这一对才算"实测过、可自动发送"。
+REQUIRED_CAPS = ("send_text",)
+
+
 def _key(run: dict) -> tuple:
     return (str(run.get("wechat") or ""), str(run.get("adapter") or ""))
 
 
 def merge_runs(old: dict, new_run: dict) -> dict:
-    """把一次 run 并进矩阵（同版本对**覆盖**，不追加重复），返回新矩阵。"""
+    """把一次 run 并进矩阵（同版本对**按能力逐项合并**，不整对覆盖），返回新矩阵。
+
+    为什么按能力合并（2026-09-14 测机报告）：原来同版本对是**整体覆盖** —— 第二次只实测了
+    `send_image`，第一次 `send_text` 的结论就被**丢掉**了。现在只更新本次真测到的能力，
+    其余保留；`scope` 记"这一对到底测过哪些能力"，供 `gate()` 判断必需能力是否齐。
+    """
     data = {"schema": 1, "runs": list((old or {}).get("runs") or [])}
     new_run = dict(new_run or {})
     new_run.setdefault("when", time.strftime("%Y-%m-%d"))
     k = _key(new_run)
+    prev = find_run(data, k[0], k[1]) or {}
+    merged_caps = dict(prev.get("caps") or {})
+    merged_caps.update(new_run.get("caps") or {})            # 本次测到的覆盖，没测到的保留
+    scope = list(dict.fromkeys(list(prev.get("scope") or prev.get("caps") or {}) +
+                               list(new_run.get("caps") or {})))
+    new_run["caps"] = merged_caps
+    new_run["scope"] = scope
     kept = [r for r in data["runs"] if _key(r) != k]
     kept.append(new_run)
     data["runs"] = kept
@@ -110,16 +130,35 @@ def capabilities(data: dict, wechat: str, adapter: str) -> dict:
 
 
 def gate(data: dict, wechat: str, adapter: str) -> dict:
-    """版本门：当前这对版本**实测过没有**？没实测过就该降级/提示，不许假定一样。"""
+    """版本门：当前这对版本的**必需能力集**（`REQUIRED_CAPS`）都实测过没有？
+
+    三态（2026-09-14 由测机报告改）：
+      · `measured=True`  —— 必需能力都有非 unknown 的结论 ⇒ 可自动发送
+      · `partial=True`   —— 有 run，但必需能力还缺/还是 unknown ⇒ **仍按未实测处理**（安全门不许被"只测一项"点亮）
+      · 两者皆 False     —— 这对版本完全没有实测记录
+    """
     run = find_run(data, wechat, adapter)
-    if run:
-        return {"measured": True, "wechat": wechat, "adapter": adapter,
-                "advice": "", "when": str(run.get("when") or "")}
-    return {
-        "measured": False, "wechat": wechat, "adapter": adapter,
-        "advice": ("微信 %s × 适配层 %s **没有实测记录**：发送这类动窗口/动键盘的能力按未验证处理 —— "
-                   "控制台出横幅、默认降到真鼠标档或暂停自动发送，等跑一次实测再放开" % (wechat, adapter)),
-    }
+    if not run:
+        return {
+            "measured": False, "partial": False, "wechat": wechat, "adapter": adapter,
+            "scope": [], "missing": list(REQUIRED_CAPS), "when": "",
+            "advice": ("微信 %s × 适配层 %s **没有实测记录**：发送这类动窗口/动键盘的能力按未验证处理 —— "
+                       "控制台出横幅、默认降到真鼠标档或暂停自动发送，等跑一次实测再放开" % (wechat, adapter)),
+        }
+    caps = run.get("caps") or {}
+    missing = [c for c in REQUIRED_CAPS
+               if str((caps.get(c) or {}).get("status") or "unknown") == "unknown"]
+    scope = list(run.get("scope") or caps.keys())
+    if missing:
+        return {
+            "measured": False, "partial": True, "wechat": wechat, "adapter": adapter,
+            "scope": scope, "missing": missing, "when": str(run.get("when") or ""),
+            "advice": ("微信 %s × 适配层 %s **只实测了部分能力**（%s），必需能力「%s」还没有结论 ⇒ "
+                       "按**未实测**处理：发送前仍需用户放行" % (
+                           wechat, adapter, "、".join(scope) or "无", "、".join(missing))),
+        }
+    return {"measured": True, "partial": False, "wechat": wechat, "adapter": adapter,
+            "scope": scope, "missing": [], "advice": "", "when": str(run.get("when") or "")}
 
 
 def summarize(caps: dict) -> str:
