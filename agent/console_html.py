@@ -479,6 +479,7 @@ th{color:var(--tx2);font-weight:500}
       <a href="#sec-memory-set"><svg viewBox="0 0 16 16"><circle cx="3.6" cy="8" r="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="12.4" cy="4" r="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="12.4" cy="12" r="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M5.2 7.2l5.6-2.4M5.2 8.8l5.6 2.4" stroke="currentColor" stroke-width="1.3" fill="none"/></svg><span class="lb">共享</span></a>
       <a href="#sec-persona"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="6" cy="7" r=".9" fill="currentColor"/><circle cx="10" cy="7" r=".9" fill="currentColor"/><path d="M5.6 10.2c1.4 1.1 3.4 1.1 4.8 0" fill="none" stroke="currentColor" stroke-width="1.3"/></svg><span class="lb">人设</span></a>
       <a href="#sec-community"><svg viewBox="0 0 16 16"><circle cx="5" cy="6" r="2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="11" cy="6" r="2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M1.6 12.4c.5-1.8 1.9-2.8 3.4-2.8s2.9 1 3.4 2.8M8.6 9.9c.6-.2 1.2-.3 1.8-.3 1.5 0 2.9 1 3.4 2.8" fill="none" stroke="currentColor" stroke-width="1.3"/></svg><span class="lb">社区</span></a>
+      <a href="#sec-feedback"><svg viewBox="0 0 16 16"><path d="M2.4 3.6h11.2v7.2H7.2L4.2 13.4V10.8H2.4z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M5.2 6.2h5.6M5.2 8.4h3.6" stroke="currentColor" stroke-width="1.3" fill="none"/></svg><span class="lb">反馈</span></a>
       <a href="#sec-send"><svg viewBox="0 0 16 16"><path d="M14 2L2 7.4l4.2 1.6L13 4l-4.8 6.6.6 3.4z" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">发送</span></a>
       <a href="#sec-search"><svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10.4 10.4L14 14" stroke="currentColor" stroke-width="1.5" fill="none"/></svg><span class="lb">搜索</span></a>
       <a href="#sec-server"><svg viewBox="0 0 16 16"><rect x="2.4" y="3" width="11.2" height="4.2" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.4"/><rect x="2.4" y="8.8" width="11.2" height="4.2" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="4.8" cy="5.1" r=".8" fill="currentColor"/><circle cx="4.8" cy="10.9" r=".8" fill="currentColor"/></svg><span class="lb">服务</span></a>
@@ -1328,6 +1329,37 @@ th{color:var(--tx2);font-weight:500}
       </div>
     </section>
 
+    <section id="sec-feedback" class="card" data-sec>
+      <h2>反馈</h2>
+      <div class="desc">有什么想说的、想让它变成什么样的，写在这儿提交就行——程序会自动整理你的诉求发出去，不用自己去发邮件。</div>
+      <div class="row"><label>当前通道</label><div class="grow"><span id="fbState" class="hint">读取中…</span>
+        <div class="btns" style="margin-top:6px">
+          <button id="fbFlush" class="ghost">补发排队中的反馈</button>
+          <button id="fbReload" class="ghost">刷新</button>
+        </div></div></div>
+      <div class="row"><label>类型</label><div class="grow"><select id="fbKind">
+        <option value="问题">问题（有东西坏了 / 不对）</option>
+        <option value="建议">建议（希望它更好用）</option>
+        <option value="想法">想法（想要一个新功能）</option>
+        <option value="其他">其他</option>
+      </select></div></div>
+      <div class="row"><label>内容</label><div class="grow"><textarea id="fbText" rows="5" spellcheck="false" placeholder="尽量写清：你做了什么、看到什么、希望它变成什么样。"></textarea></div></div>
+      <div class="row"><label>联系方式</label><div class="grow"><input type="text" id="fbContact" placeholder="选填：想让我回你时留个联系方式"></div></div>
+      <div class="btns"><button id="fbSubmit" class="pri">提交</button><span class="hint" id="fbRst"></span></div>
+      <div class="hint" id="fbRecent"></div>
+
+      <hr style="border:none;border-top:1px solid var(--bd);margin:14px 0">
+      <div class="desc">发到哪里（一般不用改；留空＝只存在本机、不上传也不发邮件）：</div>
+      <div class="row"><label>收件人</label><div class="grow"><input type="text" data-cfg="feedback.to" placeholder="多个用逗号分隔"><div class="hint">反馈发到这个邮箱（可以填你自己的小号）。</div></div></div>
+      <div class="row"><label>中转网址</label><div class="grow"><input type="text" data-cfg="feedback.upload_url" placeholder="https://你的接收端/feedback"><div class="hint">填了它就先走网址（POST JSON），成功就不再发邮件。</div></div></div>
+      <div class="row"><label>发件邮箱</label><div class="grow"><input type="text" data-cfg="feedback.smtp.user" placeholder="xxx@qq.com"><div class="hint">用哪个邮箱把反馈发出去。</div></div></div>
+      <div class="row"><label>邮箱授权码</label><div class="grow"><input type="password" data-cfg="feedback.smtp.password" placeholder="QQ 邮箱的授权码，不是登录密码"><div class="hint">QQ 邮箱：设置 → 账号 → 开启 SMTP 服务，会给你一串授权码。</div></div></div>
+      <div class="row"><label>发信服务器</label><div class="grow"><input type="text" data-cfg="feedback.smtp.host" placeholder="smtp.qq.com">
+        <input type="number" data-cfg="feedback.smtp.port" placeholder="465" style="max-width:110px;margin-top:6px"><div class="hint">QQ 邮箱用 smtp.qq.com + 465；163 用 smtp.163.com。</div></div></div>
+      <div class="btns"><button class="pri" data-save>保存设置（反馈）</button></div>
+      <div class="row" style="margin-top:10px"><label>显示这一栏</label><input type="checkbox" data-cfg="feedback.enabled" checked><span class="hint">取消勾选＝隐藏左导航的「反馈」栏（保存后刷新页面生效）。</span></div>
+    </section>
+
     <section id="sec-send" class="card" data-sec>
       <h2>发送限制</h2>
       <div class="desc">真人化间隔与限频，防止刷屏/封号风险。</div>
@@ -1538,6 +1570,11 @@ document.addEventListener('DOMContentLoaded', ()=>{
   const st = document.createElement('style'); st.textContent = _iconCss; document.head.appendChild(st);
 });
 
+/* POST JSON 的小包装（反馈提交/补发用；与 getJSON 同一套 token 与超时保护） */
+async function postJSON(url, obj){
+  return await getJSON(url, {method:'POST', headers:{'Content-Type':'application/json'},
+                             body: JSON.stringify(obj || {})});
+}
 async function getJSON(url, opts){
   opts = opts || {};
   opts.headers = opts.headers || {};
@@ -5058,6 +5095,60 @@ $('memSearch').addEventListener('keydown', (e)=>{
     });
   };
   try{ window.__foldAll(); }catch(e){}
+  /* ── 反馈栏（2026-09-14 用户：左导航单开一栏、控制台里填完自动提交、程序整理后发邮件）── */
+  async function fbLoad(){
+    const st = document.getElementById('fbState'); if(!st) return;
+    try{
+      const r = await getJSON('/api/feedback');
+      if(!r || r.ok === false){ st.textContent = '读不到反馈状态：' + ((r&&r.error)||''); return; }
+      // 关掉这一栏（feedback.enabled=false）：连导航入口一起藏起来（省得点进来是空的）
+      if(r.enabled === false){
+        const _nv = document.querySelector('#nav a[href="#sec-feedback"]');
+        if(_nv) _nv.style.display = 'none';
+        const _sc = document.getElementById('sec-feedback');
+        if(_sc) _sc.style.display = 'none';
+        return;
+      }
+      st.textContent = '通道：' + (r.can_send ? r.channel : '未配置（提交后会存在本机，配好通道可一键补发）')
+        + ' · 待发 ' + r.pending + ' 条 · 已发 ' + r.sent + ' 条';
+      const rc = document.getElementById('fbRecent');
+      if(rc){
+        rc.textContent = (r.recent && r.recent.length)
+          ? ('最近提交：' + r.recent.map(x => x.at_h + ' ' + x.kind + (x.sent_h ? '（已发）' : '（待发）')).join(' ｜ '))
+          : '还没有提交过反馈。';
+      }
+    }catch(e){ st.textContent = '读不到反馈状态：' + e.message; }
+  }
+  (function(){
+    const btn = document.getElementById('fbSubmit'); if(!btn) return;
+    btn.onclick = async function(){
+      const t = (document.getElementById('fbText')||{}).value || '';
+      const k = (document.getElementById('fbKind')||{}).value || '其他';
+      const c = (document.getElementById('fbContact')||{}).value || '';
+      const rst = document.getElementById('fbRst');
+      if(!t.trim()){ if(rst){ rst.textContent = '先写点内容吧'; rst.style.color='var(--err-tx)'; } return; }
+      btn.disabled = true; if(rst){ rst.textContent = '提交中…'; rst.style.color=''; }
+      try{
+        const r = await postJSON('/api/feedback/submit', {kind:k, text:t, contact:c});
+        if(r && r.state === 'sent'){ rst.textContent = '✅ 已发出（' + (r.via==='smtp'?'邮件':'网址') + '）'; rst.style.color='var(--ok-tx)'; }
+        else if(r && r.state === 'queued'){ rst.textContent = '⚠️ 已存在本机，但还没发出去：' + (r.why||'') + '（待发 ' + (r.pending||0) + ' 条）'; rst.style.color='var(--warn)'; }
+        else { rst.textContent = '❌ ' + ((r&&r.why)||'提交失败'); rst.style.color='var(--err-tx)'; }
+        document.getElementById('fbText').value = '';
+        fbLoad();
+      }catch(e){ if(rst){ rst.textContent = '❌ ' + e.message; rst.style.color='var(--err-tx)'; } }
+      btn.disabled = false;
+    };
+    const fl = document.getElementById('fbFlush');
+    if(fl) fl.onclick = async function(){
+      fl.disabled = true;
+      try{ const r = await postJSON('/api/feedback/flush', {}); toast((r&&r.why)||'补发完成'); fbLoad(); }
+      catch(e){ toast('补发失败：' + e.message); }
+      fl.disabled = false;
+    };
+    const rl = document.getElementById('fbReload');
+    if(rl) rl.onclick = fbLoad;
+    fbLoad();
+  })();
   document.addEventListener('DOMContentLoaded', function(){ try{ window.__foldAll(); }catch(e){} });
   try{
     let _ft = null;

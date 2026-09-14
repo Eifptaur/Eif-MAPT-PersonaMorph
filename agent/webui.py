@@ -805,6 +805,19 @@ class WebUI:
                         self._json(parent.persona_scores_fn())
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)})
+                elif path == "/api/feedback":
+                    # 反馈队列状态（GET）：待发/已发/当前通道 —— 界面顶部那条状态行用它
+                    try:
+                        from . import feedback as FB
+                        st = FB.stats()
+                        st["ok"] = True
+                        st["recent"] = [{"id": it.get("id"), "kind": it.get("kind"),
+                                         "at_h": it.get("at_h"), "sent_h": it.get("sent_h", ""),
+                                         "text": str(it.get("text") or "")[:60]}
+                                        for it in sorted(FB._read_all(), key=lambda x: x.get("at") or 0)[-5:]]
+                        self._json(st)
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
                 elif path == "/api/personas":
                     # 热门人设选单（GET，带分区 cat）
                     try:
@@ -1542,6 +1555,24 @@ class WebUI:
                                     "progress": getattr(_code_run, "_prog", None),
                                     "items": list(getattr(_code_run, "_checks", None) or []) if not done else None,
                                     "result": getattr(_code_run, "_res", None) if done else None})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/feedback/submit":
+                    # 用户反馈提交（POST {kind,text,contact}）：落盘 → 立刻试投递 → 三态如实回报
+                    try:
+                        from . import feedback as FB
+                        env = {"wechat": str((data.get("env") or {}).get("wechat") or "")[:60],
+                               "ui": str((data.get("env") or {}).get("ui") or "")[:40]}
+                        self._json(FB.submit(str(data.get("kind") or "其他"),
+                                             str(data.get("text") or ""),
+                                             str(data.get("contact") or ""), env))
+                    except Exception as e:
+                        self._json({"ok": False, "state": "error", "why": str(e)})
+                elif path == "/api/feedback/flush":
+                    # 补发排队中的反馈（POST）
+                    try:
+                        from . import feedback as FB
+                        self._json(FB.flush())
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)})
                 elif path == "/api/persona/cats/save":
