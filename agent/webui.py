@@ -748,30 +748,6 @@ class WebUI:
                         self._json({"ok": bool(ok_t), "why": why_t, "tools": _ut4.snapshot()})
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)})
-                elif path == "/api/kg/view":
-                    # 知识图谱看板（只读）：总览 + 最近节点 + 鸟瞰图数据
-                    try:
-                        from . import kg_view as _kg
-                        self._json(_kg.view())
-                    except Exception as e:
-                        self._json({"ok": False, "reason": str(e)})
-                elif path == "/api/kg/search":
-                    try:
-                        from . import kg_view as _kg2
-                        q = parse_qs(urlparse(self.path).query)
-                        kw = str((q.get("q") or [""])[0])
-                        self._json({"ok": True, "q": kw, "nodes": _kg2.search(kw, 25)})
-                    except Exception as e:
-                        self._json({"ok": False, "reason": str(e), "nodes": []})
-                elif path == "/api/kg/node":
-                    try:
-                        from . import kg_view as _kg3
-                        q = parse_qs(urlparse(self.path).query)
-                        nid = str((q.get("id") or [""])[0])
-                        depth = int((q.get("depth") or ["1"])[0] or 1)
-                        self._json(_kg3.node(nid, depth))
-                    except Exception as e:
-                        self._json({"ok": False, "reason": str(e)})
                 elif path == "/api/ui_fingerprint/take":
                     # 「重新取指纹」（⑦ 点击正确性）：给图标库里的命名目标各取一份 dHash 指纹。
                     # 只**看**不点：抓渲染区画面裁小块，抓不到/全黑就如实报失败，绝不写假指纹。

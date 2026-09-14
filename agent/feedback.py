@@ -3,6 +3,7 @@
 
 用户原话：「反馈功能需要在左导航单开一栏…**让用户直接在控制台里面填，然后自动提交就好，
 没必要让用户去邮箱那儿填，程序自动整理并把用户的诉求发邮件**。所有添加上的功能，你要自己测一测」
+  ⚠️ 2026-09-15 口径更新：「没必要让程序帮我整理，反正他只要用邮箱发到我的邮箱就行」⇒ 正文＝用户原话原样，只留一行元信息（见 `compose()`）。
 
 设计三条硬口径：
   ① **三态如实**：`sent`（真的发出去了）/ `queued`（没配通道 ⇒ 落盘排队，明确告诉用户"还没发出去"）
@@ -99,21 +100,19 @@ def _append(item: dict) -> bool:
 
 
 def compose(item: dict) -> str:
-    """把一条反馈整理成人类可读的正文（用户要的是"程序自动整理并发出诉求"）。"""
-    lines = [
-        "【群相 · 用户反馈】",
-        "类型：%s" % item.get("kind", "其他"),
-        "时间：%s" % item.get("at_h", ""),
-        "版本：%s" % item.get("ver", "?"),
-        "",
-        "诉求：",
-        str(item.get("text") or "").strip(),
-    ]
+    """邮件正文＝**用户原话，一字不改**。
+
+    口径变化（用户 2026-09-15 原话）：「没必要让程序帮我整理，反正他只要用邮箱发到我的邮箱就行」
+    ⇒ 不再"把诉求改写成人类可读正文"，只在最上面留一行元信息（类型/时间/版本/联系方式）方便定位；
+    正文原样贴用户写的内容。末尾照旧附环境摘要——那是**排障用的机器信息**，不是替他改话。
+    """
+    head = "群相反馈 · %s · %s · v%s" % (item.get("kind") or "其他", item.get("at_h", ""), item.get("ver", "?"))
     if item.get("contact"):
-        lines += ["", "联系方式：%s" % item["contact"]]
+        head += " · 联系方式：%s" % item["contact"]
+    out = head + "\n\n" + str(item.get("text") or "").strip()
     if item.get("env"):
-        lines += ["", "环境（自动附带，便于定位）：", json.dumps(item["env"], ensure_ascii=False)]
-    return "\n".join(lines)
+        out += "\n\n--- 环境（自动附带，便于定位）\n" + json.dumps(item["env"], ensure_ascii=False)
+    return out
 
 
 def _post(url: str, payload: dict, timeout: int = 10) -> dict:

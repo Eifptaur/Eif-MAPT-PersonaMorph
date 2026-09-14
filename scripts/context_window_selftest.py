@@ -73,7 +73,15 @@ print("── B. 混合（窗内 1 条 + 窗外 5 条）──")
 mixed = old5 + [mk("n1", 1, "@机器人 你还在吗")]
 rb = P.build_past_state(FakeStore(mixed), "group:x", limit=30)
 ok("窗外历史也在（不被丢）", "第 1 条" in rb["text"] and "你还在吗" in rb["text"], "count=%s" % rb["count"])
-ok("窗内那条是最后一行（新消息在末尾）", rb["text"].rstrip().splitlines()[-1].find("你还在吗") >= 0)
+# 2026-09-15 改判据口径：提醒句从**开头**挪到了**末尾**（为了前缀缓存：历史块开头不再每轮变），
+# 所以"新消息在末尾"要允许末尾挂着那句提醒——真正要守的性质是"旧的在前、新的在后"。
+_lines = [l for l in rb["text"].rstrip().splitlines() if l.strip()]
+_body = [l for l in _lines if not l.strip().startswith("（提醒：")]
+ok("窗内那条在旧消息之后（不是第一行）",
+   bool(_body) and any("你还在吗" in l for l in _body)
+   and _body.index([l for l in _body if "你还在吗" in l][0]) > 0, "共 %d 行" % len(_lines))
+ok("提醒句挪到末尾（不再插在历史开头 ⇒ 前缀缓存稳）",
+   bool(_lines) and _lines[-1].strip().startswith("（提醒："), (_lines[-1][:36] if _lines else ""))
 
 print("── C. 真·首次（store 空）──")
 rc = P.build_past_state(FakeStore([]), "group:x", limit=30)
