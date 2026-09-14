@@ -70,7 +70,15 @@ ok("收起时隐藏名字（.side.tight .nav .lb{display:none}）",
    re.search(r"\.side\.tight \.nav a \.lb\{display:none\}", HTML) is not None)
 ok("收起时导航变窄（.side.tight{width:...}）", re.search(r"\.side\.tight\{width:", HTML) is not None)
 ok("状态持久化（localStorage）", "localStorage.setItem('navTight'" in HTML and "localStorage.getItem('navTight')" in HTML)
-ok("按钮文案会跟着切换（收起/展开）", "tgEl.textContent = now ? '展开' : '收起'" in HTML)
+# 2026-09-14 口径变更：按钮从「收起/展开」两个字改成贴右缘的箭头把手（‹ / ›）——
+# 用户要求「它居然是左收起，应该是右收起，靠近那个功能栏」＋收起态栏要更宽更松。
+ok("按钮图标会跟着切换（‹ 收起 / › 展开）", "tgEl.textContent = now ? '›' : '‹'" in HTML)
+ok("收起把手贴导航右缘（不是左侧、不是通栏按钮）",
+   re.search(r"\.side \.nav-tg\{position:absolute;right:2px", HTML) is not None)
+ok("收起态栏更宽（≥84px，图标 22px、行距 14px）",
+   re.search(r"\.side\.tight\{width:8[4-9]px\}", HTML) is not None
+   and ".side.tight .nav a svg{width:22px" in HTML
+   and ".side.tight .nav a{justify-content:center;gap:0;padding:14px 0}" in HTML)
 
 print("⑤ 前端 JS 语法（node --check）")
 node = shutil.which("node")

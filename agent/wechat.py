@@ -2419,33 +2419,79 @@ class WeChatAdapter:
             def _discover_visible():
                 return bool(_ocr_find("搜一搜") or _ocr_find("小程序") or _ocr_find("游戏"))
 
+            def _shot_small():
+                """主窗缩略灰度（64×48）——OCR 之外的第二判据用。"""
+                try:
+                    from PIL import ImageGrab
+                    im = ImageGrab.grab((l, t, rt, b)).convert("L").resize((64, 48))
+                    return list(im.getdata())
+                except Exception:
+                    return None
+
+            def _content_changed(before):
+                """点击前后主窗中部是否明显变了（发现页会整块替换掉聊天区）。
+                为什么要它（2026-09-14 用户实测反馈）：原来只认 OCR「搜一搜/小程序/游戏」，
+                点对了但 OCR 认不出来时会被判成"没点中" ⇒ 继续到处乱点（用户看到的就是
+                "它在乱点我的头像、联系人、收藏，唯独没点发现"）。多一条不依赖 OCR 的判据，
+                点对的那一下就认得出来，也就不会继续试。"""
+                try:
+                    now = _shot_small()
+                    if not before or not now or len(before) != len(now):
+                        return False
+                    d = sum(1 for a, b2 in zip(before, now) if abs(a - b2) > 28)
+                    return (d / max(1, len(before))) > 0.15
+                except Exception:
+                    return False
+
             def _try_click(px, py):
+                b0 = _shot_small()
                 self._click_screen(px, py)
                 time.sleep(1.2)
-                return _discover_visible()
+                if _discover_visible():
+                    return True
+                if _content_changed(b0):
+                    # 视图确实换了，但 OCR 没读出发现页文案 —— 按"点中了"收手，不再继续试
+                    return True
+                return False
 
             got_discover = False
-            # ① 绿圆（发现已选中/打开过）
+            # 「乱点」闸门（2026-09-14 用户实测反馈后立）：
+            #   用户原话：「我看我点了那个程序鼠标测试，我点了朋友圈，它在乱点我的头像、联系人、收藏，
+            #             但是唯独没有点朋友圈里的『发现』」
+            #   根因＝②③两段是**盲试**（按图标列/比例猜位置，猜一个就真点一下）。默认关掉盲试：
+            #   只走"自证得到的发现"（绿点＝已选中态）。盲试要用必须显式打开
+            #   `wechat.allow_click_hunting`（界面里也有开关），否则宁可不点也不乱点。
+            _hunt = False
+            try:
+                from .config import get_config as _gc
+                _hunt = bool((_gc().get("wechat") or {}).get("allow_click_hunting", False))
+            except Exception:
+                _hunt = False
+            # ① 绿圆（发现已选中/打开过）——自证，任何时候都允许
             pos = self._find_green_discover(gui)
             if pos and not _discover_visible():
                 got_discover = _try_click(pos[0], pos[1])
             elif pos and _discover_visible():
                 got_discover = True
-            # ② 图标列聚类：**排除最后一枚（设置）**，从倒数第二（发现）开始往前试
-            if not got_discover:
+            # ② 图标列聚类：**排除最后一枚（设置）**，从倒数第二（发现）开始往前试【盲试，默认关】
+            if not got_discover and _hunt:
                 ys = self._detect_sidebar_icons(gui)
                 cands = list(reversed(ys[-3:-1])) if len(ys) >= 2 else []
                 for yi in cands:
                     if got_discover:
                         break
                     got_discover = _try_click(l + int(W * 0.043), t + yi)
-            # ③ 相对多候选兜底（只在下半部中上区域，不接近设置/三条杠）
-            if not got_discover:
+            # ③ 相对多候选兜底（只在下半部中上区域，不接近设置/三条杠）【盲试，默认关】
+            if not got_discover and _hunt:
                 for y_ratio in (0.70, 0.76, 0.82):
                     if _try_click(l + int(W * 0.043), t + int(H * y_ratio)):
                         got_discover = True
                         break
             if not got_discover:
+                if not _hunt:
+                    return False, ("没有自证到的「发现」图标，已按「不乱点」设置停止盲试："
+                                   "请手动点一下左侧「发现」（选中后图标变绿，程序就能认得它），"
+                                   "或在控制台「微信」面板打开「允许盲试点击」")
                 return False, "发现页未出现（点侧栏「发现」图标失败）"
             # 点「朋友圈」：OCR 优先（左侧列表区），未识别按首项相对位置兜底
             tgt = _ocr_find("朋友圈", x_max=W * 0.55)

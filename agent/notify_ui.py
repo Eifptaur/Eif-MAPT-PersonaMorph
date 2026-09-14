@@ -194,39 +194,126 @@ def find_console_window() -> int:
 
 
 def console_url(anchor: str = "") -> str:
-    """控制台地址（带 token 与锚点）。token 从配置读，读不到就不带（与 onestart 同口径）。"""
-    port, tok = 3210, ""
+    """控制台地址（带 token 与锚点）。
+
+    地址来源**只有一个权威顺序**（2026-09-14 定，起因：另一台机器打开控制台报
+    `{"error":"unauthorized"}`——启动器自己用 `IndexOf("\\"token\\"")` 在 config.json 里找口令，
+    但 config.json 里**排在前面的 `cloud.token` 是空串**，于是拼出 `/?token=` ⇒ 401）：
+      ① `logs/console.url`（拥有 token 的进程写出来的**现成地址**，别人只读，不含解析）；
+      ② 兜底：配置里的 `server.port` + `server.token`（结构化读取，绝不手写字符串找字段）。
+    """
+    base = ""
     try:
-        from .config import get_config
-        sc = (get_config() or {}).get("server", {}) or {}
-        port = int(sc.get("port") or 3210)
-        tok = str(sc.get("token") or "")
+        from .util import read_console_url
+        base = read_console_url()
+    except Exception:
+        base = ""
+    if not base:
+        port, tok = 3210, ""
+        try:
+            from .config import get_config
+            sc = (get_config() or {}).get("server", {}) or {}
+            port = int(sc.get("port") or 3210)
+            tok = str(sc.get("token") or "")
+        except Exception:
+            pass
+        base = "http://127.0.0.1:%d/" % port
+        if tok:
+            base += "?token=" + tok
+    if anchor:
+        base += anchor if str(anchor).startswith("#") else ("#" + str(anchor))
+    return base
+
+
+# WebView2 运行时（常青版）注册表位置：任一命中且 pv 非空 ⇒ 系统装了运行时
+_WV2_GUID = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+_WV2_KEYS = (
+    (0x80000002, "SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\Clients\\" + _WV2_GUID),   # HKLM
+    (0x80000002, "SOFTWARE\\Microsoft\\EdgeUpdate\\Clients\\" + _WV2_GUID),
+    (0x80000001, "SOFTWARE\\Microsoft\\EdgeUpdate\\Clients\\" + _WV2_GUID),               # HKCU
+)
+
+
+def webview_ready() -> dict:
+    """我们自己的控制台窗口能不能开：exe 在 + WebView2 程序集在 + 运行时已装。
+
+    这是"点打开控制台却弹出浏览器"的第一判据——先查清楚再决定，而不是开了才发现。
+    """
+    exe = os.path.join(ROOT, "一键启动.exe")
+    dll = os.path.join(ROOT, "lib", "Microsoft.Web.WebView2.WinForms.dll")
+    rep = {"exe": os.path.exists(exe), "dll": os.path.exists(dll),
+           "runtime": False, "runtime_ver": "", "why": "", "ok": False}
+    try:
+        import winreg
+        for hive, key in _WV2_KEYS:
+            try:
+                with winreg.OpenKey(hive, key) as k:
+                    pv = str(winreg.QueryValueEx(k, "pv")[0] or "").strip()
+                if pv:
+                    rep["runtime"] = True
+                    rep["runtime_ver"] = pv
+                    break
+            except OSError:
+                continue
+        if not rep["runtime"]:
+            rep["why"] = "系统没装 WebView2 运行时"
+    except Exception:
+        rep["runtime"] = True          # 查不出来就按"可能就绪"（exe 自己还有一次回退），别把人挡在门外
+        rep["why"] = "运行时检测不可用（按就绪处理）"
+    if not rep["exe"]:
+        rep["why"] = "目录里没有 一键启动.exe"
+    elif not rep["dll"]:
+        rep["why"] = "缺 lib\\Microsoft.Web.WebView2.WinForms.dll"
+    rep["ok"] = bool(rep["exe"] and rep["dll"] and rep["runtime"])
+    return rep
+
+
+def open_console(url: str = "", browser_path: str = "", take_lock: bool = True) -> dict:
+    """自己开一个控制台窗口（**单点**：所有入口共用一把锁 + 一个优先级）。
+
+    优先级（2026-09-13 口径：控制台不再依赖浏览器）：
+      ① 我们自己的 WebView2 窗口（`一键启动.exe --console <url>`，前提 `webview_ready()`）；
+      ② 只有①确实不成立（exe 缺 / 缺 DLL / 没装 WebView2 运行时 / 启动抛异常）才回退浏览器。
+    返回报告里如实写 `how`（`webview` / `browser` / `skip`）与 `why`，绝不假报"已在我们窗口里打开"。
+    """
+    url = url or console_url()
+    if not url:
+        return {"ok": False, "how": "", "why": "拿不到控制台地址（config.json 里没有 server.port）"}
+    if take_lock:
+        try:
+            from .util import take_console_lock
+            if not take_console_lock():
+                return {"ok": True, "how": "skip", "why": "90 秒内刚有人开过，本次不重复打开（防双窗）"}
+        except Exception:
+            pass
+    ready = webview_ready()
+    try:
+        from .util import write_console_url
+        write_console_url(url)                 # 顺手把地址落盘：别的入口（启动器/托盘）直接读，别再自己拼
     except Exception:
         pass
-    url = "http://127.0.0.1:%d/" % port
-    if tok:
-        url += "?token=" + tok
-    if anchor:
-        url += anchor if anchor.startswith("#") else ("#" + str(anchor))
-    return url
-
-
-def open_console(url: str = "") -> dict:
-    """自己开一个控制台窗口（优先我们自己的 WebView2 窗口，其次浏览器）。"""
-    url = url or console_url()
+    if ready["ok"]:
+        try:
+            subprocess.Popen([os.path.join(ROOT, "一键启动.exe"), "--console", url],
+                             creationflags=0x08000000)
+            return {"ok": True, "how": "webview", "why": "", "ready": ready}
+        except Exception as e:
+            ready["why"] = "自家窗口启动异常：%s" % e
+    bp = ""
     try:
-        exe = os.path.join(ROOT, "一键启动.exe")
-        if os.path.exists(exe):
-            subprocess.Popen([exe, "--console", url], creationflags=0x08000000)
-            return {"ok": True, "how": "一键启动.exe --console"}
-    except Exception as e:
-        log.warning("自家窗口打开失败（回退浏览器）：%s", e)
+        from .util import pick_browser
+        bp = pick_browser(browser_path)
+    except Exception:
+        bp = ""
     try:
-        import webbrowser
-        webbrowser.open(url)
-        return {"ok": True, "how": "webbrowser"}
+        if bp:
+            subprocess.Popen([bp, url], creationflags=0x08000000)
+        else:
+            import webbrowser
+            webbrowser.open(url)
+        return {"ok": True, "how": "browser", "why": ready["why"], "ready": ready}
     except Exception as e:
-        return {"ok": False, "how": "", "why": "打开控制台失败：%s" % e}
+        return {"ok": False, "how": "", "why": "打开控制台失败：%s（请手动访问）" % e, "ready": ready}
 
 
 def raise_without_stealing(hwnd=None) -> dict:

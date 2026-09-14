@@ -35,12 +35,16 @@ namespace WxCloser
                 f.ShowDialog();
         }
 
-        /// 结束匹配 markers 的 python/powershell/wscript/一键启动/一键关闭 进程，并清掉启动锁
+        /// 结束匹配 markers 的 python/powershell/wscript/一键启动/一键关闭 进程，并清掉启动锁 + 释放端口
         static List<string> KillAll(string root)
         {
             var killed = new List<string>();
+            // ⛔ 入口脚本改名记录：老入口 `wx_agent.py` 已不存在（只剩 .pyc 残骸），
+            //    现行主流程是 `scripts\persona_morph.py`、由 `scripts\watchdog.py` 拉起。
+            //    2026-09-14 另一台机器实测：markers 里还写着 wx_agent.py ⇒ 看门狗被杀、**子进程 persona_morph 活着**
+            //    ⇒ 控制台（3210）照旧在跑，再点一键启动就弹「为保持唯一…本次不再重复打开」。
             string[] markers = { "onestart.py", "installer.ps1", "setup_python.ps1",
-                                 "wx_agent.py", "watchdog.py", "stop_bot.py", "close_all.ps1",
+                                 "persona_morph.py", "wx_agent.py", "watchdog.py", "stop_bot.py", "close_all.ps1",
                                  "一键关闭", "一键启动" };
             try
             {
@@ -77,7 +81,76 @@ namespace WxCloser
             }
             catch { }
             try { File.Delete(Path.Combine(root, "logs", "installer.lock")); } catch { }
+            // ── 兜底 + 复核（2026-09-14 加）：按控制台端口把"命令行看不出来"的占用者也收掉，
+            //    然后**回读端口**确认真关了——结果窗里如实写，不再只报"杀了几条"。
+            try
+            {
+                int port = 3210;
+                try
+                {
+                    string cf = Path.Combine(root, "config.json");
+                    if (File.Exists(cf))
+                    {
+                        string s = File.ReadAllText(cf);
+                        int i = s.IndexOf("\"port\"");
+                        if (i >= 0)
+                        {
+                            int k = s.IndexOf(':', i) + 1;
+                            while (k > 0 && k < s.Length && !char.IsDigit(s[k])) k++;
+                            int e = k;
+                            while (e < s.Length && char.IsDigit(s[e])) e++;
+                            if (e > k) port = int.Parse(s.Substring(k, e - k));
+                        }
+                    }
+                }
+                catch { }
+                int pidByPort = PortOwner(port);
+                if (pidByPort > 0 && pidByPort != Process.GetCurrentProcess().Id)
+                {
+                    try
+                    {
+                        Process p2 = Process.GetProcessById(pidByPort);
+                        string n2 = p2.ProcessName;
+                        p2.Kill();
+                        killed.Add(n2 + ".exe (pid " + pidByPort + " · 占用端口 " + port + ")");
+                    }
+                    catch { }
+                }
+                System.Threading.Thread.Sleep(700);
+                int left = PortOwner(port);
+                killed.Add(left > 0 ? ("端口 " + port + " 仍被 pid " + left + " 占用（未关干净）")
+                                    : ("端口 " + port + " 已释放"));
+            }
+            catch { }
             return killed;
+        }
+
+        /// 谁在监听这个端口（netstat -ano 的最后一段＝pid；查不到返回 0）
+        static int PortOwner(int port)
+        {
+            try
+            {
+                var psi = new ProcessStartInfo("netstat", "-ano -p tcp");
+                psi.UseShellExecute = false; psi.RedirectStandardOutput = true;
+                psi.CreateNoWindow = true;
+                using (var pr = Process.Start(psi))
+                {
+                    string outp = pr.StandardOutput.ReadToEnd();
+                    pr.WaitForExit(4000);
+                    string tag = ":" + port + " ";
+                    foreach (string line in outp.Split('\n'))
+                    {
+                        if (line.IndexOf("LISTENING", StringComparison.OrdinalIgnoreCase) < 0) continue;
+                        if (line.IndexOf(tag, StringComparison.Ordinal) < 0) continue;
+                        string[] parts = line.Trim().Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                        if (parts.Length == 0) continue;
+                        int pid;
+                        if (int.TryParse(parts[parts.Length - 1], out pid)) return pid;
+                    }
+                }
+            }
+            catch { }
+            return 0;
         }
 
         /// 结果窗：无边框 + 自绘标题栏 + 圆角主按钮（外观全在 StyleKit 一处定义）

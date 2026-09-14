@@ -1278,28 +1278,12 @@ def main():
     def balance_fn():
         return query_balance()
 
-    _UI_TEST_LIST = [
-        ("moments_open", "朋友圈打开"), ("moments_close", "朋友圈关闭"),
-        ("moments_like", "朋友圈点赞"), ("moments_comment", "朋友圈评论"),
-        ("moments_scroll", "朋友圈滚动"), ("emoji_collect", "表情收藏(右键)"),
-        ("emoji_panel", "表情面板发送"), ("message_collect", "消息收藏"),
-        ("message_recall", "消息撤回"), ("windows_clean", "窗口清理"),
-        ("recalibrate", "UI 标定"),
-    ]
     # 一键体检取消标志（前端「停止检测」设置；体检循环每步检查）
     _selfcheck_cancel = [False]
 
     def selfcheck_stop_fn():
         _selfcheck_cancel[0] = True
 
-    def ui_stop_fn():
-        """单项鼠标检验「停止」（POST；主要操作循环检查后立即中止）。"""
-        try:
-            from agent.wechat_ui import request_stop
-            request_stop()
-            return {"ok": True}
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
 
     def persona_scores_fn():
         """角色评分表：系统自动贴合分（scripts/persona_check 同算法）+ 用户已打分。"""
@@ -1666,42 +1650,6 @@ def main():
         add("拍一拍", "info", "请用「拍一拍诊断」按钮实测（定位/右键/验证一步一报告）")
         add("发送防重复", "info", "已启用 3 秒重复发送拦截（回车重试竞态防护）")
 
-        # 5) 程序鼠标操作检验（11 项；每项约 3~8 秒，合计约 60~100 秒；期间请勿动鼠标）
-        if mode == "code":
-            add("程序鼠标检验", "info",
-                "未执行（本次为代码级检查）：需要鼠标实测请在「检测中心」点「点击测试」")
-        else:
-            add("程序鼠标检验", "info",
-                "以下 11 项为「程序直接操控微信鼠标」实测：朋友圈打开/关闭/点赞/评论/滚动、表情收藏/面板发送、消息收藏/撤回、窗口清理、UI 标定（消息收藏/撤回/表情收藏3项体检中不自动执行，防误点，单项按钮可测）",
-                "全程接管鼠标约 40~70 秒，请勿动鼠标；评论为真实操作（会在你的朋友圈留下记录）")
-            for kind, label in _UI_TEST_LIST:
-                if _selfcheck_cancel[0]:
-                    add("程序鼠标检验", "warn", "检测已被手动停止",
-                        "可再点「一键体检」重新开始；停止不会影响机器人与微信")
-                    break
-                t0 = time.time()
-                try:
-                    # 高险/易误击三项：体检中不自动执行（避免点开别的会话/搜索框），改为指引手测
-                    if kind in ("emoji_collect", "message_collect", "message_recall"):
-                        add("鼠标·" + label, "info",
-                            "已跳过自动执行（防止误点其它会话/搜索框）——点下方对应单独按钮人工触发",
-                            "单独按钮执行时会显示详细结果")
-                        continue
-                    r = ui_test_fn(kind)
-                    ok = bool(r.get("ok"))
-                    add("鼠标·" + label,
-                        "ok" if ok else "fail",
-                        (r.get("note") or "成功") if ok else ("失败：" + str(r.get("error") or r.get("note") or ""))[:120],
-                        "" if ok else "可点下方单独按钮重测该单项（看具体原因）")
-                    if not ok:
-                        add("程序鼠标检验", "warn",
-                            "检测在「%s」失败，已终止后续项（修复问题后重测；也可用单独按钮逐项诊断）" % label,
-                            "常见原因：微信窗口被最小化/遮挡、版本 UI 变化、点击目标不存在")
-                        break
-                except Exception as e:
-                    add("鼠标·" + label, "fail", str(e)[:120], "可点对应单独按钮重测；单点失败已中止后续项")
-                    add("程序鼠标检验", "warn", "检测在「%s」异常，已终止后续项" % label)
-                    break
 
         ok_n = sum(1 for c in checks if c["status"] == "ok")
         warn_n = sum(1 for c in checks if c["status"] == "warn")
@@ -2116,203 +2064,6 @@ def main():
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
-    def ui_test_fn(kind, data=None):
-        """程序鼠标检验：直接操控微信鼠标执行，不耗 token、不靠模型。
-        单项执行中可用「停止检验」按钮中止（主要操作循环检查标志）。"""
-        data = data or {}
-        try:
-            from agent import wechat_ui as _wu
-            _wu.clear_stop()
-            wx = orch.wechat
-
-            # 检验默认在「文件传输助手」进行（不打扰真人；失败则空参由各流程兜底）
-            def _open_test_chat(_wx):
-                try:
-                    return bool(_wx._get_gui().open_chat("文件传输助手"))
-                except Exception:
-                    return False
-
-            if kind == "moments_open":
-                ok, msg = wx.moments_open()
-                return {"ok": ok, "note": msg}
-            if kind == "moments_close":
-                ok, msg = wx.moments_close()
-                return {"ok": ok, "note": msg}
-            if kind == "moments_like":
-                # 不执行「赞」最后一步：只打开朋友圈并弹出点赞菜单即视为通过（避免真点赞）
-                ok, msg = wx.moments_like()
-                return {"ok": ok if ok and "已" in msg else ok, "note": ("（仅验证到可点赞，未真赞）" if ok else msg)}
-            if kind == "moments_comment":
-                # 真发送：输入并发布评论（用户反馈此前 dry 只到输入框、未发送导致看似"失败"）
-                ok, msg = wx.moments_comment(0, "检验评论：程序鼠标没问题", dry=False)
-                return {"ok": ok, "note": msg}
-            if kind == "moments_scroll":
-                ok, msg = wx.moments_open()
-                if ok:
-                    wx.moments_scroll(1, 2)
-                    time.sleep(0.8)
-                    ok2, msg2 = wx.moments_close()
-                    return {"ok": True, "note": "已滚动 2 屏并关窗：" + msg2}
-                return {"ok": False, "error": msg}
-            if kind == "moments_publish":
-                # dry 实测：点侧栏图标→长按相机2秒→输入框输入；不点发表、不真发；逐屏截图
-                _txt = str(data.get("text") or "检验朋友圈：程序鼠标没问题")
-                ok, msg = wx.moments_publish_text(_txt, dry=True, shots=True)
-                note = msg + "（截图：logs/dry_shots/moments_*.png）" if ok else msg
-                return {"ok": ok, "note": note}
-            if kind == "emoji_collect":
-                # 最近一条 emoji/image 消息右键收藏（真操作；用任一有表情消息的群）
-                try:
-                    wxid = ""
-                    for g in (wx.list_groups() or []):
-                        wxid = g.get("wxid") or g.get("id") or ""
-                        if wxid and any((r.get("local_type") or 0) & 0xFF in (3, 47)
-                                        for r in wx._db.get_messages(wxid, limit=30)):
-                            break
-                    raws = wx._db.get_messages(wxid, limit=30) if wxid else []
-                except Exception:
-                    raws = []
-                for r in raws:
-                    n = wx.normalize(r, wxid)
-                    if n and any(m.get("kind") in ("emoji", "image") and m.get("local_id")
-                                 for m in (n.get("media") or [])):
-                        ok, msg = wx.collect_emoji_native(wxid, str(n.get("text") or ""),
-                                                          str(n.get("sender_name") or ""))
-                        return {"ok": ok, "note": msg or "已尝试右键添加到表情"}
-                return {"ok": False, "error": "最近 30 条里没有表情/图片消息可收藏"}
-            if kind == "emoji_panel":
-                from agent.emoji_pick import pick as _pick
-                _idx = 0
-                try:
-                    _idx = int(data.get("index", -1))
-                except Exception:
-                    _idx = -1
-                if _idx < 0:
-                    _idx = _pick(str(data.get("context") or ""))   # 模型判别点哪个
-                data["index"] = _idx
-                # ① 目标会话：优先 data.group（如「aa」）；否则默认「文件传输助手」（检验不打扰真人）
-                _grp = str(data.get("group") or "").strip()
-                if not _grp:
-                    if _open_test_chat(wx):
-                        _grp = "文件传输助手"
-                    else:
-                        return {"ok": False,
-                                "error": "无法打开「文件传输助手」；请在检验参数里指定 group，或确认微信会话列表含文件传输助手"}
-                if not _grp:
-                    return {"ok": False, "error": "没有可打开的会话（微信会话列表为空）"}
-                # ② 点笑脸 → ③ 点爱心 → ④ 点模型判别选中的表情（单击即发）
-                ok, msg = wx.emoji_panel_open(_grp)
-                if not ok:
-                    return {"ok": False, "error": msg}
-                ok2, msg2 = wx.emoji_panel_send(int(data.get("index") or 0))
-                return {"ok": ok2, "note": ok2 and ("已发第 %s 个收藏表情：%s" % (data.get("index"), msg2)) or msg2}
-            if kind == "emoji_roll_probe":
-                # 滚动校准探针：开面板→爱心→到顶(+wheel)→单次滚 delta→保留面板给用户观察。
-                from agent import ui_adapt as _ua
-                _grp = str(data.get("group") or "").strip()
-                _delta = int(data.get("delta") or -300)
-                ok, msg = wx.emoji_panel_open(_grp)
-                if not ok:
-                    return {"ok": False, "error": msg}
-                time.sleep(0.6)
-                _gui = wx._get_gui()
-                _gui._update_render_rect()
-                _sx, _sy, _sw, _sh = _gui.render_rect
-                _ua.click(_gui, int(_sw*0.171), int(_sh*0.804-13), heal=False)   # 爱心
-                time.sleep(1.0)
-                _gui._update_render_rect()
-                _sx, _sy, _sw, _sh = _gui.render_rect
-                _inp = _gui._input
-                _inp._user32.SetCursorPos(_sx + int(_sw*0.092), _sy + int(_sh*0.277))
-                time.sleep(0.4)
-                for _ in range(12):    # +wheel=向上滚到顶
-                    _inp.wheel(500); time.sleep(0.35)
-                time.sleep(1.0)
-                # 到顶基线截图
-                _sdir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs", "dry_shots")
-                os.makedirs(_sdir, exist_ok=True)
-                _dn = str(_delta).replace("-", "n")
-                def _snap(_n):
-                    try:
-                        _gui._update_render_rect()
-                        _sx, _sy, _sw, _sh = _gui.render_rect
-                        if _sw and _sh:
-                            from PIL import ImageGrab
-                            ImageGrab.grab((_sx, _sy, _sx+_sw, _sy+_sh)).save(os.path.join(_sdir, _n))
-                    except Exception:
-                        pass
-                _snap("cal_%s_top.png" % _dn)
-                _inp.wheel(_delta)     # 单次滚 delta
-                time.sleep(0.7)
-                _snap("cal_%s_after.png" % _dn)   # 保留面板，截图存证
-                return {"ok": True, "note": "已到顶并单次滚 delta=%d，请观察网格上移了几行（已存 cal_%s_top/after）" % (_delta, _dn)}
-            if kind == "message_collect":
-                # 自动找「最近有群友发言」的会话（不搜索其它会话）；无则明确提示
-                try:
-                    target = None
-                    for g in (wx.list_groups() or []):
-                        wxid = g.get("wxid") or g.get("id") or ""
-                        if not wxid:
-                            continue
-                        for raw in wx._db.get_messages(wxid, limit=30):
-                            n = wx.normalize(raw, wxid)
-                            if n and str(n.get("sender_id") or "").startswith("wxid_") and str(n.get("text") or "").strip():
-                                target = (wxid, str(n["text"]), str(n.get("sender_name") or ""))
-                                break
-                        if target:
-                            break
-                    if not target:
-                        return {"ok": False, "error": "没有可收藏的消息（请先让群友在群里说话）"}
-                    ok, msg = wx.collect_message(target[0], target[1], target[2])
-                    return {"ok": ok, "note": msg or ("已对【%s】执行收藏" % target[1][:12])}
-                except Exception as e:
-                    return {"ok": False, "error": str(e)}
-            if kind == "message_recall":
-                # 自动找「自己最近 2 分钟内发的消息」；无则明确提示。
-                # 注意：normalize 会跳过"自己/系统消息"(sender_id 2/3 → None)，所以这里直接读 DB 原始数据找自己。
-                try:
-                    import re as _re
-                    target = None
-                    _now_ms = int(time.time() * 1000)
-                    for g in (wx.list_groups() or []):
-                        wxid = g.get("wxid") or g.get("id") or ""
-                        if not wxid:
-                            continue
-                        for raw in wx._db.get_messages(wxid, limit=30):
-                            if str(raw.get("sender_id")) in ("2", "3"):   # 微信4.x：自己=2/3
-                                ct = int(raw.get("create_time") or 0)
-                                ts = ct * 1000 if ct and ct < 1e12 else ct
-                                if (_now_ms - ts) <= 120000:              # 2 分钟内
-                                    content = str(raw.get("content") or "")
-                                    m = _re.match(r"^(wxid_[0-9a-zA-Z_-]+|.*@chatroom):\s*(.*)$", content)
-                                    text = (m.group(2) if m else content).strip()
-                                    if text:
-                                        target = (wxid, text)
-                                        break
-                        if target:
-                            break
-                    if not target:
-                        return {"ok": False, "error": "没有自己 2 分钟内的消息可撤回（请先让机器人说一句话）"}
-                    ok, msg = wx.recall_message(target[0], target[1])
-                    return {"ok": ok, "note": msg or ("已尝试撤回【%s】" % target[1][:12])}
-                except Exception as e:
-                    return {"ok": False, "error": str(e)}
-            if kind == "windows_clean":
-                ok = True
-                note = ""
-                try:
-                    from agent import wechat_ui
-                    closed = wechat_ui.close_leftover_windows(wx._get_gui())
-                    note = "已清理 " + str(len(closed)) + " 个残留窗口"
-                except Exception as e:
-                    ok, note = False, str(e)
-                return {"ok": ok, "note": note}
-            if kind == "recalibrate":
-                return _recalibrate_ui(orch)
-            return {"ok": False, "error": "未知检验项：" + kind}
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
-
     webui = WebUI(status_provider, log_buffer, test_api_fn=test_api_fn, balance_fn=balance_fn,
                   pause_fn=lambda: orch.set_paused(True), resume_fn=lambda: orch.set_paused(False),
                   shutdown_fn=shutdown_fn, whale=orch.whale,
@@ -2326,9 +2077,7 @@ def main():
                   emojis_fn=lambda: (orch.wechat.list_emojis() if getattr(orch, "wechat", None) else []),
                   recalibrate_fn=lambda: _recalibrate_ui(orch),
                   open_path_fn=lambda path: _open_export_path(path),
-                  ui_test_fn=ui_test_fn,
                   selfcheck_stop_fn=lambda: selfcheck_stop_fn(),
-                  ui_stop_fn=lambda: ui_stop_fn(),
                   persona_scores_fn=persona_scores_fn,
                   persona_rate_fn=persona_rate_fn,
                   persona_score_custom_fn=persona_score_custom_fn,
@@ -2341,57 +2090,24 @@ def main():
             url = "http://127.0.0.1:%d" % port + (("/?token=" + token) if token else "")
             log.info("Web 控制台：%s", mask_url_token(url))
             if server_cfg.get("auto_open_browser", True) is not False:
-                _bp_skip = False
+                # 开窗只走一处（`agent/notify_ui.open_console`）：优先级＝自家 WebView2 窗口 → 浏览器，
+                # 并且**所有入口共用同一把锁**（logs/browser_opened.lock）。
+                # 2026-09-14 修"自家窗口 + 浏览器同时弹"：原先这里自己拿锁开浏览器、启动器那边另拿一次，
+                # 两个入口各开一个 ⇒ 双窗。
                 try:
-                    # 每次机器人进程启动打开一次控制台：配置/探测的浏览器优先
-                    # （Server/无默认浏览器环境 start 可能弹选择框或拉起 IE）
-                    import subprocess as _sp
-                    # 原子锁（O_EXCL）：并发下只有一方打开浏览器（防双开）
-                    try:
-                        _mk = os.path.join(ROOT, "logs", "browser_opened.lock")
-                        if os.path.exists(_mk):
-                            try:
-                                _t = float(open(_mk, encoding="utf-8").read().strip() or 0)
-                                log.info("[browser-lock] 锁存在 t=%.1f(%.1f)", _t, time.time() - _t)
-                                if time.time() - _t < 90:
-                                    log.info("浏览器已由一键启动打开，本次不再重复打开")
-                                    _bp_skip = True
-                            except Exception as e:
-                                log.info("[browser-lock] 读锁异常：%s", e)
-                            if not _bp_skip:
-                                try:
-                                    os.remove(_mk)
-                                    log.info("[browser-lock] 锁已过期，清除")
-                                except Exception:
-                                    pass
-                        if not _bp_skip:
-                            _fd = os.open(_mk, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-                            os.write(_fd, str(time.time()).encode("ascii", "replace"))
-                            os.close(_fd)
-                            log.info("[browser-lock] 本进程创建锁，将打开浏览器")
-                    except FileExistsError:
-                        log.info("[browser-lock] 创建失败(已被抢)，本次不打开")
-                        _bp_skip = True
-                    except Exception:
-                        pass
-                    if not _bp_skip:
-                        bp = pick_browser(str(server_cfg.get("browser_path") or ""))
-                        if bp:
-                            _sp.Popen([bp, url], creationflags=0x08000000,
-                                      stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
-                            log.info("已打开控制台浏览器：%s", bp)
-                        else:
-                            _sp.Popen(["cmd", "/c", "start", "", url],
-                                      creationflags=0x08000000,
-                                      stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
-                            log.info("已请求默认浏览器打开控制台：%s", url)
+                    from agent.notify_ui import open_console as _open_console
+                    _rep = _open_console(url, browser_path=str(server_cfg.get("browser_path") or ""))
+                    _how = str(_rep.get("how") or "")
+                    if _how == "webview":
+                        log.info("已在我们自己的窗口里打开控制台（不依赖浏览器）")
+                    elif _how == "browser":
+                        log.info("自家控制台窗口不可用（%s）⇒ 已回退浏览器", _rep.get("why") or "原因未知")
+                    elif _how == "skip":
+                        log.info("%s", _rep.get("why") or "本次不重复打开")
+                    else:
+                        log.warning("打开控制台失败：%s", _rep.get("why") or "")
                 except Exception as e:
-                    log.warning("打开浏览器失败（请手动访问 %s）：%s", mask_url_token(url), e)
-                    try:
-                        import webbrowser as _wb
-                        _wb.open(url)
-                    except Exception:
-                        pass
+                    log.warning("打开控制台异常（请手动访问 %s）：%s", mask_url_token(url), e)
     except Exception as e:
         log.warning("Web 控制台启动失败：%s", e)
 

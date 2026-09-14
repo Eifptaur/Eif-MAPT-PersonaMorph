@@ -15,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from .config import deep_merge, get_config, save_config, set_config
+from .whale_text import DICT as WHALE_DICT, SKIP as WHALE_SKIP
 from .console_html import HTML  # 界面模板（蓝白设计，设置项全量，独立文件便于改版）
 from .util import mask_secret, redact_secrets
 
@@ -135,66 +136,40 @@ class WebUI:
                 return html
         except Exception:
             return html
-        T = {
-            "群相 控制台": "🐋 鲸鲸号 · 深度摸鱼",
-            "概览": "🐋 概览 · 我是AI，别催，CPU还在烧",
-            "检测中心（代码检测 / 点击测试）": "检测中心（先体检，再摸鱼）",
-            "体检与功能自检": "检测中心 · 出远门前先体检",
-            "功能自检清单（按重要性排序）": "功能自检清单（按重要性，一个一个过）",
-            "调试 · 高级功能": "调试 · 高级功能（一般人我不告诉他）",
-            "调试·高级功能": "调试·高级功能（一般人我不告诉他）",
-            "运行明细": "📋 运行明细 · 内心戏全程有记录",
-            "模型 API": "🧊 模型 API · 让我先推理一下，别插嘴",
-            "微信": "💬 微信 · 收到，正在假装思考",
-            "拍一拍（行为）": "👋 拍一拍 · 拍我干嘛，我只是个蓝鲸",
-            "拍一拍": "👋 拍一拍 · 拍我干嘛，我只是个蓝鲸",
-            "记忆（群友印象）": "🧠 记忆 · 好像记得…算了不装了",
-            "记忆（共享设置）": "🤝 记忆共享 · 它记得=我记得，别问",
-            "记忆": "🧠 记忆 · 好像记得…算了不装了",
-            "记忆共享": "🤝 记忆共享 · 它记得=我记得，别问",
-            "人设与响应": "🎭 人设 · 今天演谁？剧本拿来",
-            "社区与学习": "📚 社区 · 好东西先白嫖再说",
-            "发送限制": "🚦 发送限制 · 我不回你，就是我在偷懒",
-            "联网搜索": "🔎 联网搜索 · 我去搜搜，先不告诉你结果",
-            "服务器": "🖥️ 服务器 · 服务器繁忙，再试一次",
-            "界面适配（DPI / 遮挡 / 主题）": "🎨 界面 · AI也要体面",
-            "界面适配": "🎨 界面 · AI也要体面",
-            "🐋 光标设置": "🖱️ 光标设置 · 别看我，看我的鼠标",
-            "光标设置": "🖱️ 光标设置 · 别看我，看我的鼠标",
-            "🌊 水光波纹（鼠标投石入水）": "🌊 水光波纹 · 人家怕水，我就爱摸鱼",
-            "🌊 水光波纹": "🌊 水光波纹 · 人家怕水，我就爱摸鱼",
-            "水光波纹": "🌊 水光波纹 · 人家怕水，我就爱摸鱼",
-            "运行日志": "📜 运行日志 · 我的内心OS全在这",
-            "完整配置 JSON（高级）": "📄 原始 JSON · 底裤都给你看",
-            "原始 JSON": "📄 原始 JSON · 底裤都给你看",
-            "保存全部设置": "保存全部设置（存好了，我不会失忆的）",
-            "暂停": "⏸ 暂停（歇会儿）",
-            "恢复": "▶ 恢复（满血）",
-            "停止": "停止（打烊）",
-            "重启": "重启（我又行了）",
-            "测试 API 连通": "测试 API 连通（先冲个电，马上好）",
-            "代码检测＋依赖核对": "代码检测＋依赖核对（少了什么先补课）",
-            "代码检测": "代码检测（先查bug，再查心情）",
-            "查看进度条": "查看进度条（别催，在跑了）",
-            "点击测试": "点击测试（AI也要做视力检查）",
-            "一键体检": "点击测试（AI也要做视力检查）",
-            "停止检测": "停止检测（不测了，我摊牌）",
-            "拍一拍检测": "拍一拍检测（别真拍我）",
-            "模型评分": "模型评分（AI打分，绝不偏袒）",
-            "模型补足": "模型补足（拾掇拾掇，更像本人）",
-            "根据角色卡推荐行为档": "根据角色卡推荐行为档（我懂你）",
-            "保存 Key": "保存 Key（钥匙收好了）",
-            "重置 Key（重新填写）": "重置 Key（换把钥匙）",
-        }
+        T = WHALE_DICT
         MARK = "鲸语版界面文案"
         idx = html.find(MARK)
         head, tail = (html[:idx], html[idx:]) if idx >= 0 else (html, "")
-        # 单趟正则替换（最长key优先）——替换值不再被扫描，杜绝"功能自检清单"二次污染
+        # ⛔ 只换"整个文本节点"（`>文案<`），**不做子串替换**（2026-09-14 重写）：
+        #    旧版是全局 replace —— 短键会吃掉长键（「停止」吞「停止检测」），还会改坏 JS 里的字符串；
+        #    整节点匹配后，字典可以放心扩到几百条（行标签/按钮/表头全覆盖）。
+        #    看起来不像文案的片段（含 {}()=; 或过长）一律跳过。
         import re as _re
-        keys = sorted(T.keys(), key=lambda k: -len(k))
-        pat = _re.compile("|".join(_re.escape(k) for k in keys))
-        head = pat.sub(lambda m: T[m.group(0)], head)
-        return head + tail
+        try:
+            from .whale_text import NAV as _NAV
+        except Exception:
+            _NAV = {}
+        # ① 左导航单独走短表（252px 窄列，长文案会被省略号吃掉）——必须在总替换之前做
+        def _nav(m):
+            v = _NAV.get(m.group(1).strip())
+            return '<span class="lb">' + v + '</span>' if v else m.group(0)
+        head = _re.sub(r'<span class="lb">([^<]*)</span>', _nav, head)
+        # ② 其余可见文案：只换"整个文本节点"
+        pat = _re.compile(r">([^<>]+)<")
+
+        def _swap(m):
+            raw = m.group(1)
+            key = raw.strip()
+            if not key or len(key) > 40 or any(c in key for c in "{}()=;<>\n"):
+                return m.group(0)
+            val = T.get(key)
+            if not val:
+                return m.group(0)
+            lead = raw[:len(raw) - len(raw.lstrip())]
+            trail = raw[len(raw.rstrip()):]
+            return ">" + lead + val + trail + "<"
+
+        return pat.sub(_swap, head) + tail
 
     def _build_tag(self):
         """构建号（方便辨别新旧实例：console_html.py 修改时间 + 启动概率）。"""
@@ -210,8 +185,8 @@ class WebUI:
                  pause_fn=None, resume_fn=None, balance_fn=None, shutdown_fn=None,
                  whale=None, poke_test_fn=None, selfcheck_fn=None, restart_fn=None,
                  groups_fn=None, memory_fn=None, sessions_fn=None, emojis_fn=None,
-                 recalibrate_fn=None, open_path_fn=None, ui_test_fn=None,
-                 selfcheck_stop_fn=None, ui_stop_fn=None,
+                 recalibrate_fn=None, open_path_fn=None,
+                 selfcheck_stop_fn=None,
                  persona_scores_fn=None, persona_rate_fn=None,
                  persona_score_custom_fn=None, persona_ai_enrich_fn=None,
                  community_export_fn=None, community_upload_fn=None, scoring_import_fn=None,
@@ -236,9 +211,7 @@ class WebUI:
         self.emojis_fn = emojis_fn or (lambda: [])            # () -> list（表情包收藏夹）
         self.recalibrate_fn = recalibrate_fn or (lambda: {"ok": False, "error": "未提供"})
         self.open_path_fn = open_path_fn or (lambda path: {"ok": False, "error": "未提供"})
-        self.ui_test_fn = ui_test_fn or (lambda kind: {"ok": False, "error": "未提供"})
         self.selfcheck_stop_fn = selfcheck_stop_fn or (lambda: None)
-        self.ui_stop_fn = ui_stop_fn or (lambda: {"ok": False, "error": "未提供"})
         self.persona_scores_fn = persona_scores_fn or (lambda: {"ok": False, "error": "未提供"})
         self.persona_rate_fn = persona_rate_fn or (lambda k, s, n: {"ok": False, "error": "未提供"})
         self.persona_score_custom_fn = persona_score_custom_fn or (lambda t, l: {"ok": False, "error": "未提供"})
@@ -435,6 +408,15 @@ class WebUI:
                     "server.host=%s 不是回环地址，已强制改回 127.0.0.1（确需远程访问请显式设 server.allow_remote=true）", host)
                 host = "127.0.0.1"
         port = int(cfg.get("port") or 3210)
+        # 控制台地址（含 token）落盘：**token 的拥有者写，别人只读**（2026-09-14）。
+        # 起因：启动器/托盘各自拼地址，启动器在 config.json 里抓到排在前面的 cloud.token（空）⇒ 401。
+        try:
+            from .util import write_console_url
+            _tok0 = str(cfg.get("token") or "").strip()
+            write_console_url("http://127.0.0.1:%d/" % port + (("?token=" + _tok0) if _tok0 else ""))
+        except Exception:
+            pass
+
 
         parent = self
 
@@ -535,6 +517,13 @@ class WebUI:
                     token = str(get_config().get("server", {}).get("token") or "").strip()
                     body = HTML.replace("__TKN__", token)
                     body = body.replace("__VER__", parent._build_tag())
+                    # 鲸语字典随页面下发（**一份来源**）：前端 applyWhale 用它处理"动态刷新出来的文案"
+                    # （暂停/恢复/状态行等），静态部分由 _apply_whale 在服务端就换好。两种模式都下发。
+                    try:
+                        import json as _json
+                        body = body.replace("__WHALE_TXT__", _json.dumps(WHALE_DICT, ensure_ascii=False))
+                    except Exception:
+                        body = body.replace("__WHALE_TXT__", "{}")
                     body = parent._apply_whale(body)
                     body = body.encode("utf-8")
                     self.send_response(200)
@@ -810,8 +799,6 @@ class WebUI:
                         self._json({"ok": True, "emojis": parent.emojis_fn()})
                     except Exception as e:
                         self._json({"ok": False, "error": str(e), "emojis": []})
-                elif path == "/api/ui-test/stop":
-                        self._json({"ok": False, "error": str(e)})
                 elif path == "/api/personas/scores":
                     # 角色评分表：系统自动贴合分 + 用户分（GET）
                     try:
@@ -877,12 +864,6 @@ class WebUI:
                     # 打开导出文件所在位置（POST {path}）
                     try:
                         self._json(parent.open_path_fn(str(data.get("path") or "")))
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e)})
-                elif path == "/api/ui-test":
-                    # 程序鼠标检验（POST {kind}：程序直接操控鼠标执行对应操作；data 透传给检验函数）
-                    try:
-                        self._json(parent.ui_test_fn(str(data.get("kind") or ""), data))
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)})
                 elif path == "/api/selfcheck-stop":
@@ -1314,18 +1295,6 @@ class WebUI:
                             except Exception:
                                 pass
                         self._json(res)
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e)})
-                elif path == "/api/ui-test":
-                    # 程序鼠标检验（POST {kind}：程序直接操控鼠标执行对应操作；data 透传给检验函数）
-                    try:
-                        self._json(parent.ui_test_fn(str(data.get("kind") or ""), data))
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e)})
-                elif path == "/api/ui-test/stop":
-                    # 单项鼠标检验「停止」（POST）
-                    try:
-                        self._json(parent.ui_stop_fn())
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)})
                 elif path == "/api/sessions/delete":
@@ -1912,3 +1881,5 @@ class WebUI:
             self._server.shutdown()
             self._server.server_close()
             self._server = None
+
+

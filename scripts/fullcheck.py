@@ -237,15 +237,22 @@ try:
 except Exception as e:
     check("行为引擎", False, str(e))
 
-# ═══════════ J. 程序鼠标检验并入一键自检 ═══════════
+# ═══════════ J. 「点击测试」必须全程后台（真鼠标一键检验已按用户要求删除）═══════════
+# 用户 2026-09-14 原话：「那个程序鼠标检验怎么还在那儿呢？而且它又抢我鼠标…我要的是点击测试，全程后台测」
+# ⇒ 判据改成"守删除"：面板/JS/后端入口/路由若任何一个回来，这里立刻变红。
 try:
     _wx_src = io.open(os.path.join(ROOT, "scripts", "persona_morph.py"), encoding="utf-8").read()
-    _ui_tests_n = _wx_src.count('"moments_' ) + _wx_src.count('"emoji_') + _wx_src.count('"message_') + _wx_src.count('"windows_') + _wx_src.count('"recalibrate')
-    check("一键自检含 11 项程序鼠标检验", "_UI_TEST_LIST" in _wx_src and "程序鼠标检验" in _wx_src
-          and "60~100" in _wx_src)
-    check("控制台保留单独检验按钮", "UI_TESTS" in _html_src2 and "/api/ui-test" in _html_src2) if False else None
+    _web_src = io.open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
+    _html_src = io.open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+    check("真鼠标一键检验已删除（后端入口）",
+          "ui_test_fn" not in _wx_src and "_UI_TEST_LIST" not in _wx_src and "ui_stop_fn" not in _wx_src)
+    check("真鼠标一键检验已删除（路由）", "/api/ui-test" not in _web_src)
+    check("真鼠标一键检验已删除（控制台面板与按钮）",
+          "UI_TESTS" not in _html_src and "uiTestBtn_" not in _html_src and "程序鼠标检验" not in _html_src)
+    check("点击测试文案声明全程后台（不写「接管鼠标」）",
+          "点击测试" in _html_src and "接管鼠标请勿动" not in _html_src)
 except Exception as e:
-    check("程序鼠标检验并入自检", False, str(e))
+    check("真鼠标一键检验已删除", False, str(e))
 
 # ═══════════ H. 文档中文 ═══════════
 for doc in ("README.md", "使用说明.md", "更新日志.md"):

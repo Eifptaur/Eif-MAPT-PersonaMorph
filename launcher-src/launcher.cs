@@ -500,6 +500,20 @@ namespace WxLauncher
                 Console.WriteLine(Ui.ShotProbe(args[1]));
                 return;
             }
+            if (args != null && args.Length > 0 && args[0] == "--winprobe")
+            {
+                try { Console.OutputEncoding = System.Text.Encoding.UTF8; } catch { }
+                Application.EnableVisualStyles();
+                Application.SetCompatibleTextRenderingDefault(false);
+                Console.WriteLine(Ui.WinProbe());
+                return;
+            }
+            if (args != null && args.Length > 0 && args[0] == "--urlprobe")
+            {
+                try { Console.OutputEncoding = System.Text.Encoding.UTF8; } catch { }
+                Console.WriteLine(Ui.UrlProbe());
+                return;
+            }
             if (args != null && args.Length > 0 && args[0] == "--dlgprobe")
             {
                 try { Console.OutputEncoding = System.Text.Encoding.UTF8; } catch { }
@@ -592,21 +606,11 @@ namespace WxLauncher
             t.Font = new Font("Microsoft YaHei UI", 14, FontStyle.Bold);
             t.Location = new Point(104, 26); t.AutoSize = true;
             Controls.Add(t);
-            string tok = "";
+            string _curl = "";     // 现成的控制台地址（含口令），只从权威来源取
             try
             {
-                string cf = Path.Combine(root, "config.json");
-                if (File.Exists(cf))
-                {
-                    string cfText = File.ReadAllText(cf);
-                    int ci = cfText.IndexOf("\"token\"");
-                    if (ci >= 0)
-                    {
-                        int cj = cfText.IndexOf("\"", ci + 8);
-                        int ck = cfText.IndexOf("\"", cj + 1);
-                        if (cj >= 0 && ck > cj) tok = cfText.Substring(cj + 1, ck - cj - 1);
-                    }
-                }
+                string _why = "";
+                _curl = Ui.ConsoleUrl(root, out _why);
             }
             catch { }
             Label m = new Label();
@@ -627,8 +631,10 @@ namespace WxLauncher
             {
                 try
                 {
-                    string url = "http://127.0.0.1:" + PortHelper.ReadPort() + "/?token=" + tok;
-                    Ui.OpenConsole(url);   // W6：改用自带标题栏的 WebView2 内嵌窗口（不可用时自动回退浏览器）
+                    string url = _curl;
+                    if (!url.StartsWith("http"))
+                        url = "http://127.0.0.1:" + PortHelper.ReadPort() + "/";
+                    Ui.OpenConsole(url);   // W6：自带标题栏的 WebView2 内嵌窗口（不可用时才回退浏览器，原因写 logs\console_open.log）
                 }
                 catch { }
                 Close();
@@ -648,18 +654,172 @@ namespace WxLauncher
 
     // ================= W6：统一外观（StyleKit）=================
 
-    /// WebView2 内嵌控制台：自带标题栏（无边框 + 圆角 + 可拖动），WebView2 不可用时回退到浏览器
+    /// WebView2 内嵌控制台：自带标题栏（无边框 + 圆角 + 可拖动 + **可拉伸**），WebView2 不可用时回退到浏览器
     public class ConsoleForm : Form
     {
         string _url;
+        int _ring = 6;                 // 边缘缩放环宽（逻辑 px，OnLoad 里按窗口 DPI 换算）
+        Button _btnMax;                // 最大化/还原按钮（图标随状态换）
+        public bool ProbeOnly;         // 取证探针用：不初始化 WebView2（免得探针把浏览器弹出来）
+        public string MaxGlyph { get { return _btnMax == null ? "" : _btnMax.Text; } }
         Microsoft.Web.WebView2.WinForms.WebView2 _wv;
+
+        /// 最大化 ↔ 还原（标题栏双击与「□」按钮走同一处）
+        public void ToggleMax()
+        {
+            try
+            {
+                WindowState = (WindowState == FormWindowState.Maximized)
+                    ? FormWindowState.Normal : FormWindowState.Maximized;
+                if (_btnMax != null) _btnMax.Text = (WindowState == FormWindowState.Maximized) ? "❐" : "□";
+            }
+            catch { }
+        }
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        static extern uint GetDpiForWindow(IntPtr h);
+
+        /// 无边框窗口的鼠标缩放：自绘 WM_NCHITTEST 回八向命中码（10..17），系统即给出缩放光标并接管拖拽。
+        /// 前提＝窗体**自己留一圈内边距**（环内像素归父窗）——否则整块客户区被 WebView2 子窗盖住，
+        /// 命中测试全被它吃掉，父窗的 WndProc 根本收不到 ⇒ 表现成"窗口拉伸不动"（另一台机器实测）。
+        /// 顶部不留环：标题带要能拖（与 dsh启动器 FrmDshWindow 同口径）。
+        int EdgeCode(int x, int y)
+        {
+            if (WindowState != FormWindowState.Normal) return 0;
+            int w = ClientSize.Width, h = ClientSize.Height;
+            bool L = x < _ring, R = x >= w - _ring, B = y >= h - _ring;
+            if (!(L || R || B)) return 0;
+            if (L && B) return 16;
+            if (R && B) return 17;
+            if (L) return 10;
+            if (R) return 11;
+            return 15;
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            // 最大化：无边框窗口必须自己处理这两条消息，否则最大化的窗会盖住任务栏
+            // （照抄 dsh启动器 主窗/DSH 窗已验证的做法）
+            if (m.Msg == 0x0024)   // WM_GETMINMAXINFO
+            {
+                try
+                {
+                    MINMAXINFO mmi = (MINMAXINFO)System.Runtime.InteropServices.Marshal.PtrToStructure(m.LParam, typeof(MINMAXINFO));
+                    Screen sc = Screen.FromHandle(Handle);
+                    Rectangle wa = sc.WorkingArea, mo = sc.Bounds;
+                    mmi.ptMaxPosition.x = wa.Left - mo.Left;
+                    mmi.ptMaxPosition.y = wa.Top - mo.Top;
+                    mmi.ptMaxSize.x = wa.Width;
+                    mmi.ptMaxSize.y = wa.Height;
+                    System.Runtime.InteropServices.Marshal.StructureToPtr(mmi, m.LParam, false);
+                }
+                catch { }
+                m.Result = IntPtr.Zero; return;
+            }
+            if (m.Msg == 0x0083)   // WM_NCCALCSIZE：最大化时把系统加的那圈边框收回去
+            {
+                if (WindowState == FormWindowState.Maximized)
+                {
+                    try
+                    {
+                        NCCALCSIZE_PARAMS nc = (NCCALCSIZE_PARAMS)System.Runtime.InteropServices.Marshal.PtrToStructure(m.LParam, typeof(NCCALCSIZE_PARAMS));
+                        int bx = FramePx(true), by = FramePx(false);
+                        nc.rgrc0.left += bx; nc.rgrc0.top += by;
+                        nc.rgrc0.right -= bx; nc.rgrc0.bottom -= by;
+                        System.Runtime.InteropServices.Marshal.StructureToPtr(nc, m.LParam, false);
+                    }
+                    catch { }
+                }
+                m.Result = IntPtr.Zero; return;
+            }
+            if (m.Msg == 0x00A3) { ToggleMax(); return; }        // 标题栏双击＝最大化/还原
+            if (m.Msg == 0x0084)   // WM_NCHITTEST
+            {
+                try
+                {
+                    int lp = m.LParam.ToInt32();
+                    Point cp = PointToClient(new Point((short)(lp & 0xFFFF), (short)((lp >> 16) & 0xFFFF)));
+                    int code = EdgeCode(cp.X, cp.Y);
+                    if (code != 0) { m.Result = (IntPtr)code; return; }
+                }
+                catch { }
+            }
+            base.WndProc(ref m);
+        }
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        static extern int GetSystemMetrics(int idx);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        static extern bool IsZoomed(IntPtr h);
+
+        /// 无边框窗最大化时系统补的那圈边框宽度（不补回来任务栏会被盖住）
+        static int FramePx(bool horiz)
+        {
+            try { return GetSystemMetrics(horiz ? 32 : 33) + GetSystemMetrics(92); } catch { return 0; }
+        }
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        struct POINT { public int x, y; }
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        struct RECTS { public int left, top, right, bottom; }
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        struct MINMAXINFO
+        {
+            public POINT ptReserved, ptMaxSize, ptMaxPosition, ptMinTrackSize, ptMaxTrackSize;
+        }
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        struct NCCALCSIZE_PARAMS
+        {
+            public RECTS rgrc0, rgrc1, rgrc2;
+            public IntPtr lppos;
+        }
+
+        protected override void OnLoad(EventArgs e)
+        {
+            base.OnLoad(e);
+            ApplyGeometry();
+        }
+
+        /// 纯函数：按工作区与缩放算客户区尺寸/最小尺寸/缩放环宽（无副作用 ⇒ 判据可以精确断言）
+        public static void ComputeGeometry(int waW, int waH, float k,
+                                           out int w, out int h, out int minW, out int minH, out int ring)
+        {
+            if (k < 0.5f || k > 4f) k = 1f;
+            ring = Math.Max(5, (int)Math.Round(6 * k));
+            w = (int)Math.Min(waW * 0.92, 1320 * k);
+            h = (int)Math.Min(waH * 0.92, 880 * k);
+            w = Math.Max(w, (int)(980 * k));
+            h = Math.Max(h, (int)(640 * k));
+            minW = (int)(880 * k);
+            minH = (int)(580 * k);
+        }
+
+        /// 初始尺寸按"工作区比例 + 窗口 DPI"现算（原来写死 1180×780 物理像素）：
+        /// 125% 缩放的机器上那是 944×624 逻辑像素，比设计意图小一圈、内容自然挤在一起。
+        public void ApplyGeometry()
+        {
+            try
+            {
+                float k = 1f;
+                try { uint dpi = GetDpiForWindow(Handle); if (dpi >= 96) k = dpi / 96f; } catch { }
+                if (k < 0.5f || k > 4f) k = 1f;
+                Rectangle wa = Screen.FromPoint(Cursor.Position).WorkingArea;
+                int w, h, mw, mh, r;
+                ComputeGeometry(wa.Width, wa.Height, k, out w, out h, out mw, out mh, out r);
+                _ring = r;
+                Padding = new Padding(_ring, 0, _ring, _ring);
+                ClientSize = new Size(w, h);
+                MinimumSize = new Size(mw, mh);
+            }
+            catch { }
+        }
+
         public ConsoleForm(string url)
         {
             _url = url;
             Text = "群相 控制台";
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.CenterScreen;
-            ClientSize = new Size(1180, 780);
+            ClientSize = new Size(1180, 780);   // OnLoad 里按 DPI/工作区重算
             BackColor = StyleKit.Bg;
             Panel bar = new Panel();
             bar.Height = 42; bar.Dock = DockStyle.Top; bar.BackColor = StyleKit.Bg;
@@ -675,9 +835,18 @@ namespace WxLauncher
             min.Text = "—"; min.Size = new Size(34, 26); min.FlatStyle = FlatStyle.Flat;
             min.FlatAppearance.BorderSize = 0; min.BackColor = StyleKit.Bg; min.ForeColor = StyleKit.Sub;
             min.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            min.Location = new Point(bar.Width - 82, 8);
+            min.Location = new Point(bar.Width - 122, 8);
             min.Click += delegate { WindowState = FormWindowState.Minimized; };
             bar.Controls.Add(min);
+            // 最大化 / 还原（2026-09-14 用户：「自创原生显示屏是没有全屏键的，顶栏上只有两个按钮。需要一个全屏键」）
+            Button maxb = new RoundButton();
+            maxb.Text = "□"; maxb.Size = new Size(34, 26); maxb.FlatStyle = FlatStyle.Flat;
+            maxb.FlatAppearance.BorderSize = 0; maxb.BackColor = StyleKit.Bg; maxb.ForeColor = StyleKit.Sub;
+            maxb.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            maxb.Location = new Point(bar.Width - 82, 8);
+            maxb.Click += delegate { ToggleMax(); };
+            _btnMax = maxb;
+            bar.Controls.Add(maxb);
             Button cls = new RoundButton();
             cls.Text = "✕"; cls.Size = new Size(34, 26); cls.FlatStyle = FlatStyle.Flat;
             cls.FlatAppearance.BorderSize = 0; cls.BackColor = StyleKit.Bg; cls.ForeColor = StyleKit.Sub;
@@ -685,6 +854,12 @@ namespace WxLauncher
             cls.Location = new Point(bar.Width - 42, 8);
             cls.Click += delegate { Close(); };
             bar.Controls.Add(cls);
+            // 图标随状态换（最大化时显示"还原"框）
+            Resize += delegate
+            {
+                try { if (_btnMax != null) _btnMax.Text = (WindowState == FormWindowState.Maximized) ? "❐" : "□"; }
+                catch { }
+            };
             _wv = new Microsoft.Web.WebView2.WinForms.WebView2();
             _wv.Dock = DockStyle.Fill;
             try
@@ -696,7 +871,7 @@ namespace WxLauncher
             catch { }
             _wv.CoreWebView2InitializationCompleted += delegate(object s, Microsoft.Web.WebView2.Core.CoreWebView2InitializationCompletedEventArgs e)
             {
-                if (!e.IsSuccess) { Ui.FallbackBrowser(_url); Close(); return; }
+                if (!e.IsSuccess) { Ui.NoteFallback(Path.GetDirectoryName(Application.ExecutablePath), "WebView2 初始化失败（多半是系统没装 WebView2 运行时）"); Ui.FallbackBrowser(_url); Close(); return; }
                 try { _wv.CoreWebView2.Navigate(_url); } catch { Ui.FallbackBrowser(_url); }
             };
             Controls.Add(bar);
@@ -704,8 +879,9 @@ namespace WxLauncher
             bar.BringToFront();
             Shown += delegate
             {
+                if (ProbeOnly) return;      // 探针模式：只量几何，不起 WebView2
                 try { _wv.EnsureCoreWebView2Async(null); }
-                catch { Ui.FallbackBrowser(_url); Close(); }
+                catch (Exception ex) { Ui.NoteFallback(Path.GetDirectoryName(Application.ExecutablePath), "EnsureCoreWebView2Async 抛异常：" + ex.Message); Ui.FallbackBrowser(_url); Close(); }
             };
             StyleKit.Apply(this, "群相 控制台");
         }
@@ -713,18 +889,206 @@ namespace WxLauncher
 
     internal static class Ui
     {
-        /// 打开控制台：优先用我们自己的 WebView2 内嵌窗口；DLL 缺失/初始化失败则回退系统浏览器
+        /// 打开控制台：优先用我们自己的 WebView2 内嵌窗口；DLL 缺失/初始化失败则回退系统浏览器。
+        /// 每次回退都往 `logs\console_open.log` 记一行**原因**——"点打开控制台却弹出浏览器"这类
+        /// 现场只有那台机器有，没这行日志就只能靠猜。
         public static void OpenConsole(string url)
+        {
+            string dir = Path.GetDirectoryName(Application.ExecutablePath);
+            try
+            {
+                bool has = File.Exists(Path.Combine(dir, "lib", "Microsoft.Web.WebView2.WinForms.dll"))
+                        || File.Exists(Path.Combine(dir, "Microsoft.Web.WebView2.WinForms.dll"));
+                if (!has) { NoteFallback(dir, "缺 lib\\Microsoft.Web.WebView2.WinForms.dll"); FallbackBrowser(url); return; }
+                Application.Run(new ConsoleForm(url));
+            }
+            catch (Exception ex) { NoteFallback(dir, "自家窗口启动异常：" + ex.Message); FallbackBrowser(url); }
+        }
+
+        /// 取证探针：控制台窗口的几何/缩放命中码（**全程不 Show、不初始化 WebView2** ⇒ 屏幕上不出现任何窗口）
+        public static string WinProbe()
+        {
+            var sb = new StringBuilder();
+            // ① 纯函数几何：不依赖本机工作区 ⇒ 判据可精确断言
+            sb.AppendLine("== 几何（工作区 1920×1040，按缩放算客户区）==");
+            foreach (float k in new float[] { 1f, 1.25f, 1.5f, 2f })
+            {
+                int w, h, mw, mh, r;
+                ConsoleForm.ComputeGeometry(1920, 1040, k, out w, out h, out mw, out mh, out r);
+                sb.AppendLine("geom k=" + k.ToString("0.##") + " client=" + w + "x" + h
+                              + " min=" + mw + "x" + mh + " ring=" + r);
+            }
+            // ② 活窗口（只 CreateControl + ApplyGeometry，不 Show）
+            try
+            {
+                ConsoleForm f = new ConsoleForm("about:blank");
+                f.StartPosition = FormStartPosition.Manual;
+                f.Location = new Point(240, 160);
+                f.CreateControl();
+                f.ApplyGeometry();
+                sb.AppendLine("== 活窗口（未 Show）==");
+                sb.AppendLine("live client=" + f.ClientSize.Width + "x" + f.ClientSize.Height
+                              + " pad=" + f.Padding.Left + "," + f.Padding.Top + "," + f.Padding.Right + "," + f.Padding.Bottom
+                              + " min=" + f.MinimumSize.Width + "x" + f.MinimumSize.Height
+                              + " border=" + f.FormBorderStyle);
+                foreach (Control c in f.Controls)
+                    sb.AppendLine("  ctrl " + c.GetType().Name + " bounds=" + c.Bounds + " dock=" + c.Dock);
+                int W = f.ClientSize.Width, H = f.ClientSize.Height;
+                int[][] pts = new int[][] {
+                    new int[] { 2, 2 }, new int[] { W - 2, 2 }, new int[] { 2, H - 2 }, new int[] { W - 2, H - 2 },
+                    new int[] { 2, H / 2 }, new int[] { W - 2, H / 2 }, new int[] { W / 2, H - 2 },
+                    new int[] { W / 2, 5 }, new int[] { W / 2, H / 2 }
+                };
+                foreach (int[] p in pts)
+                {
+                    Point sp = f.PointToScreen(new Point(p[0], p[1]));
+                    sb.AppendLine("  hit(" + p[0] + "," + p[1] + ")=" + HitTest(f.Handle, sp.X, sp.Y));
+                }
+                f.Dispose();
+            }
+            catch (Exception ex) { sb.AppendLine("live 探针失败：" + ex.Message); }
+            // ③ 最大化：真开一次窗（屏外 + 不激活，前台不变），量"最大化后是否正好等于工作区"——
+            //    无边框窗不做 WM_GETMINMAXINFO/WM_NCCALCSIZE 的话会连任务栏一起盖住。
+            try
+            {
+                ConsoleForm g = new ConsoleForm("about:blank");
+                g.ProbeOnly = true;
+                string shot = StyleKit.CaptureOffscreen(g, System.IO.Path.Combine(System.IO.Path.GetTempPath(), "qm-console-maxprobe.png"));
+                Rectangle wa2 = Screen.FromHandle(g.Handle).WorkingArea;
+                g.ToggleMax();
+                for (int i = 0; i < 10; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(30); }
+                sb.AppendLine("max state=" + g.WindowState + " bounds=" + g.Bounds + " workarea=" + wa2
+                              + " 正好等于工作区=" + (g.Bounds == wa2) + " 图标=" + g.MaxGlyph
+                              + " eq_workarea=" + (g.Bounds == wa2 ? "True" : "False"));
+                g.ToggleMax();
+                for (int i = 0; i < 8; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(20); }
+                sb.AppendLine("max 还原后 state=" + g.WindowState + " 图标=" + g.MaxGlyph
+                              + " restored_state=" + g.WindowState);
+                g.Close(); g.Dispose();
+                sb.AppendLine("maxprobe 截图=" + shot);
+            }
+            catch (Exception ex) { sb.AppendLine("maxprobe 失败：" + ex.Message); }
+            return sb.ToString();
+        }
+
+        /// 取证探针：控制台地址取法（口令只打印掩码与前 3 位 + 长度，判据拿长度与 config 对账）
+        public static string UrlProbe()
+        {
+            var sb = new StringBuilder();
+            string root = Path.GetDirectoryName(Application.ExecutablePath);
+            string why = "";
+            string u = ConsoleUrl(root, out why);
+            string tok = "";
+            int qi = u.IndexOf("token=");
+            if (qi >= 0) tok = u.Substring(qi + 6);
+            sb.AppendLine("console_url_file=" + (File.Exists(Path.Combine(root, "logs", "console.url")) ? "1" : "0"));
+            sb.AppendLine("url=" + (tok.Length > 0 ? (u.Replace(tok, tok.Substring(0, Math.Min(3, tok.Length)) + "***")) : u));
+            sb.AppendLine("token_len=" + tok.Length);
+            sb.AppendLine("token_head=" + (tok.Length > 0 ? tok.Substring(0, Math.Min(3, tok.Length)) : ""));
+            sb.AppendLine("fallback_reason=" + why);
+            return sb.ToString();
+        }
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        static extern IntPtr SendMessage(IntPtr h, int msg, IntPtr w, IntPtr l);
+
+        /// 向窗体真发一次 WM_NCHITTEST（lParam＝屏幕坐标），拿系统会用的命中码
+        static int HitTest(IntPtr h, int x, int y)
+        {
+            try { return (int)SendMessage(h, 0x0084, IntPtr.Zero, (IntPtr)((y << 16) | (x & 0xFFFF))); }
+            catch { return -999; }
+        }
+
+        /// 回退原因落盘（尽力而为，失败不影响开窗）
+        public static void NoteFallback(string root, string why)
         {
             try
             {
-                string dir = Path.GetDirectoryName(Application.ExecutablePath);
-                bool has = File.Exists(Path.Combine(dir, "lib", "Microsoft.Web.WebView2.WinForms.dll"))
-                        || File.Exists(Path.Combine(dir, "Microsoft.Web.WebView2.WinForms.dll"));
-                if (!has) { FallbackBrowser(url); return; }
-                Application.Run(new ConsoleForm(url));
+                string d = Path.Combine(root, "logs");
+                Directory.CreateDirectory(d);
+                File.AppendAllText(Path.Combine(d, "console_open.log"),
+                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  自家控制台窗口不可用 ⇒ 回退浏览器：" + why + Environment.NewLine);
             }
-            catch { FallbackBrowser(url); }
+            catch { }
+        }
+
+        /// 取"可直接使用的控制台地址"（含口令）。
+        /// ① 优先 `logs\console.url`——**token 的拥有者写出来的现成地址**（webui 启动时落盘），别人只读；
+        /// ② 兜底＝在 config.json 里**先定位 server 段**再取 token/port。
+        /// ⛔ 绝不再全文找第一个 "token"：config.json 里排在前面的 `cloud.token` 是空串，
+        ///    抓错就会打开一个 `/?token=` 的地址 ⇒ 控制台回 `{"error":"unauthorized"}`（另一台机器实测）。
+        public static string ConsoleUrl(string root, out string why)
+        {
+            why = "";
+            try
+            {
+                string uf = Path.Combine(root, "logs", "console.url");
+                if (File.Exists(uf))
+                {
+                    string u = (File.ReadAllText(uf) ?? "").Trim();
+                    if (u.StartsWith("http")) return u;
+                    why = "logs\\console.url 内容不是地址";
+                }
+                else why = "没有 logs\\console.url";
+            }
+            catch (Exception ex) { why = "读 console.url 失败：" + ex.Message; }
+            string port = "3210", tok = "";
+            try
+            {
+                string cf = Path.Combine(root, "config.json");
+                if (!File.Exists(cf)) why += "；没有 config.json";
+                else
+                {
+                    string s = File.ReadAllText(cf);
+                    int i = s.IndexOf("\"server\"");
+                    if (i < 0) why += "；config.json 里没有 server 段";
+                    else
+                    {
+                        int b = s.IndexOf('{', i);
+                        if (b < 0) why += "；server 段找不到左花括号";
+                        else
+                        {
+                            int depth = 0, j = b;
+                            for (; j < s.Length; j++)
+                            {
+                                if (s[j] == '{') depth++;
+                                else if (s[j] == '}') { depth--; if (depth == 0) break; }
+                            }
+                            string seg = s.Substring(b, Math.Min(s.Length, j + 1) - b);
+                            tok = JsonValue(seg, "token");
+                            string p = JsonValue(seg, "port");
+                            if (p != "") port = p;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex) { why += "；解析 config.json 失败：" + ex.Message; }
+            return "http://127.0.0.1:" + port + "/" + (tok != "" ? ("?token=" + tok) : "");
+        }
+
+        /// 极简取值：在 JSON 片段里取 `"key": 值`（字符串去引号、数字/布尔原样）。
+        /// 只用来读**我们自己的** config.json 片段，不做完整解析。
+        static string JsonValue(string seg, string key)
+        {
+            try
+            {
+                int i = seg.IndexOf("\"" + key + "\"");
+                if (i < 0) return "";
+                int c = seg.IndexOf(':', i);
+                if (c < 0) return "";
+                int k = c + 1;
+                while (k < seg.Length && char.IsWhiteSpace(seg[k])) k++;
+                if (k >= seg.Length) return "";
+                if (seg[k] == '"')
+                {
+                    int q2 = seg.IndexOf('"', k + 1);
+                    return (q2 > k) ? seg.Substring(k + 1, q2 - k - 1) : "";
+                }
+                int e = k;
+                while (e < seg.Length && ",}\r\n \t".IndexOf(seg[e]) < 0) e++;
+                return seg.Substring(k, e - k).Trim();
+            }
+            catch { return ""; }
         }
         public static void FallbackBrowser(string url)
         {

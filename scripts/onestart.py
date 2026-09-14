@@ -261,29 +261,12 @@ def _mark_browser_opened():
 
 
 def _try_browser_lock(seconds=90):
-    """原子抢占"打开浏览器"锁：并发下只有一个进程成功（O_CREAT|O_EXCL 不可重入）。"""
-    mk = os.path.join(LOG_DIR, "browser_opened.lock")
+    """原子抢占"打开控制台"锁（**与机器人侧同一把锁**：`agent/util.take_console_lock`）。"""
     try:
-        if os.path.exists(mk):
-            try:
-                with open(mk, encoding="utf-8") as f:
-                    t = float((f.read() or "0").strip() or 0)
-                if time.time() - t < seconds:
-                    return False      # 别人刚打开（锁未过期）
-            except Exception:
-                pass
-            try:
-                os.remove(mk)
-            except Exception:
-                pass
-        fd = os.open(mk, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        os.write(fd, str(time.time()).encode("ascii", "replace"))
-        os.close(fd)
-        return True                   # 拿到锁 → 我来打开
-    except FileExistsError:
-        return False
+        from agent.util import take_console_lock
+        return take_console_lock(seconds)
     except Exception:
-        return True                   # 极端情况：放开（避免全都不打开）
+        return True
 
 
 def _build_tag_local():
@@ -305,16 +288,12 @@ def _bot_opens_console():
 
 
 def _probe_browser_was_opened():
-    """浏览器是否已被打开（原子锁存在且 90 秒内 = 已执行过一次打开）。"""
+    """是否已经有人开过控制台（同一把锁 + 90 秒新鲜度）。"""
     try:
-        mk = os.path.join(LOG_DIR, "browser_opened.lock")
-        if os.path.exists(mk):
-            with open(mk, encoding="utf-8") as f:
-                t = float((f.read() or "0").strip() or 0)
-            return time.time() - t < 90
+        from agent.util import console_lock_fresh
+        return console_lock_fresh(90)
     except Exception:
-        pass
-    return False
+        return False
 
 
 def _probe_running_instance(timeout=2):
@@ -370,37 +349,25 @@ def _open_current_console():
 def _open_console(url, browser_path=""):
     """打开控制台。
 
-    W6（用户 2026-09-13 口径："做和启动器一样的软件自己开弹窗显示控制台，不再依赖浏览器"）：
-    **优先用我们自己的 WebView2 窗口** —— `一键启动.exe --console <url>`；
-    只有它不可用（exe 缺失 / WebView2 运行时装不上 / 启动异常）才回退浏览器。
+    唯一实现是 `agent/notify_ui.open_console`（优先级＝自家 WebView2 窗口 → 浏览器，
+    并且**所有入口共用一把锁**）。本函数只做进度日志，不再自己判断/自己开——
+    2026-09-14 修"自家窗口 + 浏览器同时弹"：原先启动器与机器人各开一处、各拿一把锁 ⇒ 双窗。
     """
     try:
-        exe = os.path.join(ROOT, "一键启动.exe")
-        if os.path.exists(exe):
-            subprocess.Popen([exe, "--console", url], creationflags=0x08000000)
+        from agent.notify_ui import open_console as _oc
+        rep = _oc(url, browser_path=browser_path)
+        how = str(rep.get("how") or "")
+        if how == "webview":
             log("已在我们自己的窗口里打开控制台（不依赖浏览器）")
-            _mark_browser_opened()
-            return True
+        elif how == "browser":
+            log("自家控制台窗口不可用（%s）⇒ 已回退浏览器" % (rep.get("why") or "原因未知"))
+        elif how == "skip":
+            log("%s" % (rep.get("why") or "本次不重复打开"))
+        else:
+            log("打开控制台失败：%s（请手动访问 %s）" % (rep.get("why") or "", mask_url_token(url)))
+        return bool(rep.get("ok"))
     except Exception as e:
-        log("内嵌控制台窗口启动失败（回退浏览器）：%s" % e)
-    try:
-        from agent.util import mask_url_token, pick_browser
-        bp = pick_browser(browser_path)
-        if bp:
-            subprocess.Popen([bp, url], creationflags=0x08000000)
-            log("已打开浏览器：%s" % bp)
-            _mark_browser_opened()
-            return True
-    except Exception:
-        pass
-    try:
-        import webbrowser
-        webbrowser.open(url)
-        log("已打开浏览器（系统默认）")
-        _mark_browser_opened()
-        return True
-    except Exception as e:
-        log("打开浏览器失败：%s（请手动访问 %s）" % (e, mask_url_token(url)))
+        log("打开控制台失败：%s" % e)
         return False
 
 
@@ -509,13 +476,8 @@ def main():
         log("检测到机器人已在运行（%s）→ 打开控制台，不再重复启动。%s" % (
             _who, "如想重启请先「停止机器人」."))
         try:
-            import json as _j
-            cfg = _j.load(open(os.path.join(ROOT, "config.json"), encoding="utf-8"))
-            token = str(cfg.get("server", {}).get("token") or "")
-            port = int(cfg.get("server", {}).get("port") or 3210)
-            url = "http://127.0.0.1:%d" % port + (("/?token=" + token) if token else "")
-            import webbrowser
-            webbrowser.open(url)
+            # 已有实例：走同一个开窗实现（自家 WebView2 窗口优先；地址从权威来源取，不再手拼 token）
+            _open_console("")
         except Exception:
             pass
         return 0
@@ -525,15 +487,13 @@ def main():
     except Exception as e:
         log("启动失败: %s" % e)
         return 1
-    log("机器人已启动 ✔（等待控制台就绪，随后自动打开浏览器；完成后本窗口自动关闭）")
-    # 轮询等控制台就绪再打开浏览器：webui 会因微信布局校准等延迟就绪，只试一次会漏掉
+    log("机器人已启动 ✔（等待控制台就绪，随后自动打开控制台窗口；完成后本窗口自动关闭）")
+    # 轮询等控制台就绪再开窗：webui 会因微信布局校准等延迟就绪，只试一次会漏掉
     try:
         import json as _j
         cfg = _j.load(open(os.path.join(ROOT, "config.json"), encoding="utf-8"))
-        _tok = str(cfg.get("server", {}).get("token") or "")
-        _port = int(cfg.get("server", {}).get("port") or 3210)
         _bpath = str((cfg.get("server", {}) or {}).get("browser_path") or "")
-        _url = "http://127.0.0.1:%d" % _port + (("/?token=" + _tok) if _tok else "")
+        _port = int((cfg.get("server", {}) or {}).get("port") or 3210)
         t0 = time.time()
         opened = False
         _nxt_hint = 15
@@ -553,11 +513,11 @@ def main():
                     _opened_by_bot = _probe_browser_was_opened()
                     if not _opened_by_bot:
                         try:
-                            _open_console(_url, _bpath)
+                            _open_console("", _bpath)     # 地址为空 ⇒ 由 open_console 取权威地址（此刻已落盘）
                         except Exception as e:
-                            log("控制台已就绪但打开浏览器失败（请手动访问 %s）：%s" % (mask_url_token(_url), e))
+                            log("控制台已就绪但打不开窗口：%s" % e)
                     else:
-                        log("浏览器已由机器人侧打开（单点执行），启动器不再打开。")
+                        log("控制台已由机器人侧打开（单点执行），启动器不再打开。")
                     opened = True
                     break
             except Exception:
@@ -570,7 +530,7 @@ def main():
         if not opened:
             log("120 秒内控制台仍未就绪 —— 请查看 logs\\persona_morph.log / data\\bot_crash.log")
             try:
-                _open_console(_url, _bpath)
+                _open_console("", _bpath)
             except Exception:
                 pass
     except Exception:
