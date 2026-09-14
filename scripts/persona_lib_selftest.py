@@ -93,8 +93,41 @@ for cat, keys in NEW_BATCHES.items():
 _rimi = str(PERSONAS.get("rimi_bd", {}).get("text", ""))
 ok("没有一手台词的卡标了「（按其口吻）」（rimi_bd）", "按其口吻" in _rimi)
 
-print("── D. 新卡不许塞当代网络梗 ──")
-# ⚠️ 判据也要防假阳：单字「典」会命中「祭典」、单字「6」会命中任何数字 ⇒ 只查**词**+孤立数字
+print("── C2. 每张卡都要有评分可显示（用户：「人设卡没有评分显示的，记得补上」）──")
+import json as _json                                  # noqa: E402
+_RATINGS = os.path.join(ROOT, "data", "persona_ratings.json")
+try:
+    with io.open(_RATINGS, encoding="utf-8") as f:
+        _R = _json.load(f)
+except Exception:
+    _R = {}
+_no_score = [k for k in PERSONAS if not isinstance((_R.get(k) or {}).get("model"), (int, float))]
+ok("全部卡都有模型评分（新卡不许再漏）", not _no_score, str(_no_score[:6]))
+_bad = [k for k, v in _R.items() if k in PERSONAS and isinstance(v.get("model"), (int, float))
+        and not (0 <= float(v["model"]) <= 100)]
+ok("评分都在 0~100 区间", not _bad, str(_bad[:5]))
+# 示例必须是"人话"：自动从引号里拼出来的崩坏示例（拿角色名/档案字段当回答）不许再出现
+# ⚠️ 判据别把"话少的角色"判成占位符：「嗯。在弹琴。」「肉。汉堡肉。」这类短答是**正确**的
+#    ⇒ 只认三种特征：等于角色名、带档案字段词、冒号后跟数字。
+_ARCH = ("生日", "介质", "香调", "灵感", "种族", "稀有度", "属性", "定位标签", "实装版本")
+_bad_ex = []
+for k in _ALL_NEW:
+    _nm = str((PERSONAS.get(k) or {}).get("name", ""))
+    _head = _nm.split("（")[0]
+    _head2 = _head.split("（")[0].strip()
+    t = str((PERSONAS.get(k) or {}).get("text", ""))
+    i = t.find("## 对话示例")
+    blk = t[i:i + 400] if i >= 0 else ""
+    for line in blk.split("\n"):
+        if line.strip().startswith("- 群友") and ("你：「" in line):
+            ans = line.split("你：「", 1)[1].split("」", 1)[0].strip()
+            # ⚠️ 只用"整条就是名字"判定（咪歇露自称ミッシェル 是角色设定，不是占位符）
+            if ans and ans in (_head, _head2, _head.replace(" ", "")) or any(w in ans for w in _ARCH) \
+                    or re.search(r"：\s*\d", ans):
+                _bad_ex.append("%s→%s" % (k, ans))
+ok("新卡的对话示例不是拼出来的占位符（拿名字/档案字段当回答）", not _bad_ex, str(_bad_ex[:4]))
+
+print("── D. 新卡不许塞当代网络梗 ──")# ⚠️ 判据也要防假阳：单字「典」会命中「祭典」、单字「6」会命中任何数字 ⇒ 只查**词**+孤立数字
 _BAD_WORDS = ("V我50", "yyds", "YYDS", "绝绝子", "退钱", "先吃饭", "典中典", "破防", "栓Q", "666")
 _BAD_RE = re.compile(r"(?<![0-9A-Za-z])6(?![0-9A-Za-z])")
 for cat, keys in NEW_BATCHES.items():
