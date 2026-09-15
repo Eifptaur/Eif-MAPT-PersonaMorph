@@ -435,5 +435,35 @@ try:
 except Exception as _eN:
     ok("_real_fallback_allowed 行为可测", False, str(_eN)[:80])
 
+print("── O. 内容像还不够：**活动行时间**要跟目标对得上（跨机 r14：两个会话内容逐字相同时会双放行）──")
+_segO = open(os.path.join(_ROOT, "agent", "wechat.py"), encoding="utf-8").read()
+ok("有 _row_time_conflict 实现（活动行时间 vs 目标最后一条消息时间）",
+   "def _row_time_conflict" in _segO and "活动行时间对不上" in _segO)
+ok("内容级闸放行前会先查它（源码顺序：content_match 之后立刻查）",
+   _segO.index("if _co.content_match(pane, nd):") < _segO.index("_cf, _cfwhy = self._row_time_conflict"))
+try:
+    from agent import chat_ocr as _coO
+    from agent import wechat as _WO
+    _adO = _WO.WeChatAdapter.__new__(_WO.WeChatAdapter)
+    _adO._last_time_hhmm = lambda cid: "02:11"
+    _cap_o, _hlt_o = _coO.capture_best, _coO.highlight_time
+    _coO.capture_best = lambda gui=None, frames=2: object()
+    _coO.highlight_time = lambda img: ("2:33", 168)
+    ok("活动行 2:33 ≠ 目标 02:11 ⇒ 判冲突（正是那台 filehelper 的情形）",
+       _adO._row_time_conflict("x", gui=object())[0] is True, str(_adO._row_time_conflict("x", gui=object())))
+    _coO.highlight_time = lambda img: ("2:33", 168)
+    _adO._last_time_hhmm = lambda cid: "02:33"
+    ok("活动行 2:33 ＝ 目标 02:33 ⇒ 不算冲突（余命十日那一侧）",
+       _adO._row_time_conflict("x", gui=object())[0] is False)
+    _coO.highlight_time = lambda img: ("", None)
+    ok("读不到活动行时间 ⇒ 不拦（交给其它档，fail-open 在这里是安全的）",
+       _adO._row_time_conflict("x", gui=object())[0] is False)
+    _adO._last_time_hhmm = lambda cid: ""
+    _coO.highlight_time = lambda img: ("2:33", 168)
+    ok("目标是昨天的消息（没有 HH:MM）⇒ 不拦", _adO._row_time_conflict("x", gui=object())[0] is False)
+    _coO.capture_best, _coO.highlight_time = _cap_o, _hlt_o
+except Exception as _eO:
+    ok("_row_time_conflict 行为可测", False, str(_eO)[:80])
+
 print("== [send-file-posted] 判据：{} 通过 / {} 失败 ==".format(PASS, FAIL))
 sys.exit(1 if FAIL else 0)

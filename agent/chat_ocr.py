@@ -751,7 +751,7 @@ def highlight_time(img):
     return row_time_at(img, y), y
 
 
-def green_bands(img, min_ratio: float = 0.45, min_h: int = 28,
+def green_bands(img, min_ratio: float = 0.30, min_h: int = 28,
                 x0: int = None, x1: int = None) -> list:
     """**纯像素**扫"绿底行"：返回 `[{'y0','y1','y_abs','score'}...]`（按 score 降序）。
 
@@ -821,8 +821,25 @@ def _green_x(img):
 
 
 def _is_green(r: int, g: int, b: int) -> bool:
-    return (abs(r - GREEN[0]) <= GREEN_TOL and abs(g - GREEN[1]) <= GREEN_TOL
-            and abs(b - GREEN[2]) <= GREEN_TOL)
+    """这一像素算不算"微信活动会话行的绿底"。
+
+    ⚠️ 2026-09-16 晚改（跨机 r14 的**最值钱一条**）：对面那台的活动行底色实测 **RGB(169,212,196)**
+    ——**浅绿**！而老实现只认本机实测的深绿 `(81,167,116) ± 34` ⇒ 三通道差 88/45/80 全部超差 ⇒
+    命中 0（`green_row_ratio=0.000`、`highlight()=None`）。**影响链**：绿底读不到 ⇒ `chat_is_open` /
+    `_active_row_time_ok` 永远 False ⇒ `switch_chat_posted` 的"确认变绿底"这一步**天生不可能成功**
+    ⇒ 投递前置掉到 `no_ref`（r12 那次 16 秒真鼠标事故的触发链里就有这一环）。
+    ⇒ 判据改成"**绿占优**"这条与具体色值无关的性质：`g` 明显大于 `r`（≥12）且大于 `b`（≥10）且不太暗。
+    两台实测都过：本机 (81,167,116) → 86/51 ✓；对面 (169,212,196) → 43/16 ✓。
+    反例（必须挡住）：面板灰底 (237,237,239) → 0/-2 ✗；浅蓝 (150,180,220) → g-b=-40 ✗；青色 (180,220,220) → 0 ✗。
+    """
+    try:
+        r, g, b = int(r), int(g), int(b)
+        if (abs(r - GREEN[0]) <= GREEN_TOL and abs(g - GREEN[1]) <= GREEN_TOL
+                and abs(b - GREEN[2]) <= GREEN_TOL):
+            return True                            # 本机那种深绿（老口径，保留）
+        return (g - r) >= 12 and (g - b) >= 10 and g >= 140
+    except Exception:
+        return False
 
 
 def green_row_ratio(img, y_abs: int, half: int = 6) -> float:
@@ -891,7 +908,7 @@ def highlight(img, min_green: float = 0.12):
     try:
         if img is None:
             return None
-        bands = green_bands(img, min_ratio=max(0.45, float(min_green)), min_h=28)
+        bands = green_bands(img, min_ratio=max(0.30, float(min_green)), min_h=28)
         if bands:
             b0 = bands[0]
             return {"y_abs": int(b0["y_abs"]), "score": float(b0["score"]),
@@ -920,7 +937,7 @@ def highlight_relative(img, min_top: float = 0.05, ratio: float = 2.5) -> tuple:
     （像素法下真高亮是 0.93、普通行 0.00，不存在 2.5 倍那条线卡住自己的情形）。
     """
     try:
-        bands = green_bands(img, min_ratio=max(0.45, float(min_top)), min_h=28)
+        bands = green_bands(img, min_ratio=max(0.30, float(min_top)), min_h=28)
         if bands:
             top = bands[0]
             second = float(bands[1]["score"]) if len(bands) > 1 else 0.0
@@ -1000,7 +1017,11 @@ def content_match(pane: str, needle: str) -> bool:
         # ⚠️ **没有** `n < need` 这道比例门（见上面那段：长针会被它误杀）
         if n > len(b):
             continue
-        step = max(1, n // 2)
+        # ⛔ 2026-09-16 晚再修（跨机 r14 报的边界）：短窗口原来用 `step = n//2`（n=8 ⇒ 步长 4）会**跳着扫**，
+        #    于是"针里第 3 个字开始的那 8 个字"永远扫不到 ⇒ 实测出现"8 字/相似度 1.00 却判 False"的怪相
+        #    （`best_partial` 是**逐个偏移**扫的，所以它报得出 8/1.00 —— 两条口径不一致本身就是线索）。
+        #    ⇒ 短窗口（≤12）一律**逐字扫**；长窗口保持步长以省时间。
+        step = 1 if n <= 12 else max(1, n // 2)
         for i in range(0, max(0, len(b) - n) + 1, step):
             frag = b[i:i + n]
             if low_entropy(frag):                  # 片段全是数字 ⇒ 跳过（巧合）
@@ -1199,7 +1220,7 @@ def current_chat_name(img=None, gui=None, min_green: float = 0.12, retries: int 
                 rows = session_rows(use)
                 # ⚠️ 2026-09-16：**先像素法**定高亮行——当前打开的那行是白字绿底、OCR 读不出它，
                 #    只按 OCR 行量绿会被**绿色头像**领跑（实测把「宋孟」认成「微信…」）。
-                bands = green_bands(use, min_ratio=max(0.45, float(min_green)), min_h=28)
+                bands = green_bands(use, min_ratio=max(0.30, float(min_green)), min_h=28)
                 if bands:
                     name = _band_name(use, bands[0]["y_abs"])
                     if name:
