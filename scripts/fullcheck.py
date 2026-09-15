@@ -278,5 +278,31 @@ try:
 except Exception as e:
     check("代码检测", False, str(e))
 
+# ── config.example.json 必须与 config.DEFAULT_CONFIG 同键（否则示例会静默漂） ──
+# 2026-09-15：示例文件曾经只覆盖 20 个顶层键（真实默认 35 个），缺 voice_reply / feedback.limit /
+# wechat.restore_minimized 等 ⇒ 拿示例当参照的人会以为这些功能不存在。现在由脚本生成 + 这条断言守着。
+def _kp(d, pre=""):
+    out = set()
+    if isinstance(d, dict):
+        for k, v in d.items():
+            p = (pre + "." + k) if pre else k
+            out.add(p)
+            out |= _kp(v, p)
+    return out
+
+
+try:
+    from agent.config import DEFAULT_CONFIG as _DEF
+    _ex = json.loads(io.open(os.path.join(ROOT, "config.example.json"), encoding="utf-8").read())
+    _dk, _ek = _kp(_DEF), _kp(_ex)
+    check("config.example.json 与默认配置同键", _dk == _ek,
+          "示例 %d 键 / 默认 %d 键；缺=%s 多=%s"
+          % (len(_ek), len(_dk), sorted(_dk - _ek)[:5], sorted(_ek - _dk)[:5]))
+    check("config.example.json 里没有任何真实凭据/邮箱",
+          not re.search(r"ptmou|gaster|@qq\.com|sk-[A-Za-z0-9]{8}", io.open(
+              os.path.join(ROOT, "config.example.json"), encoding="utf-8").read()))
+except Exception as e:
+    check("config.example.json 与默认配置同键", False, str(e)[:80])
+
 print("\n==== %d 项检查，%d 项失败 ====" % (TOTAL[0], len(fails)))
 sys.exit(1 if fails else 0)

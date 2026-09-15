@@ -1332,10 +1332,9 @@ class WebUI:
                         from agent.behavior_recommend import recommend as _br
                         _txt = str(data.get("text") or "")
                         if not _txt.strip():
-                            _txt = str(get_config().get("persona", {}).get("role_text") or "")
-                            if not _txt.strip():
-                                from agent.persona import PERSONAS
-                                _txt = str((PERSONAS.get(get_config().get("persona", {}).get("prefer_key", "xiaojingyu")) or {}).get("text") or "")
+                            # 唯一实现：与 build_system_prompt 同一套回落（不再各写一份、也不再读死键 prefer_key）
+                            from agent.prompt import role_text_of
+                            _txt = role_text_of()
                         local = _br(_txt)
                         res = dict(local)
                         res["via"] = "local"
