@@ -280,8 +280,7 @@ def sec_visual():
             raw["header_blank"] = True
             lines.append("  会话头指纹: **无效（空白图）** —— 抓到的整幅是纯色帧（样例 %s），不是真画面；"
                          "微信最小化 / 被隐藏时就是这样 ⇒ 这一项按「抓不到」算" % (list(fp)[:6],))
-            fp = []
-        if fp:
+        elif fp:
             lines.append("  会话头指纹: 可抓，%d 维，样例 %s" % (len(fp), fp[:6]))
             pane = None
             try:

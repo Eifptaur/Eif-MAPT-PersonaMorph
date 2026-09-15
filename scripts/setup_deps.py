@@ -43,7 +43,8 @@ def main():
         if offline:
             cmd = [py_exe, "-m", "pip", "install", "--no-index", "--find-links", wheels,
                    "-r", os.path.join(ROOT, "requirements.txt")]
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+            r = subprocess.run(cmd, capture_output=True, text=True,
+                               encoding="utf-8", errors="replace", timeout=900)
         else:
             # 联网：主源用国内镜像（快/稳），失败再回退官方 PyPI
             req = os.path.join(ROOT, "requirements.txt")
@@ -54,17 +55,30 @@ def main():
             for idx in indexes:
                 cmd = [py_exe, "-m", "pip", "install", "-U", "--progress-bar", "on",
                        "-i", idx, "--timeout", "60", "-r", req]
-                r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+                # ⚠️ 必须给 encoding + errors（2026-09-15 跨机实测）：只写 text=True 时 Python
+                #    按 locale（中文机＝GBK）解码 pip 的输出，遇非 GBK 字节会在**读线程**里抛
+                #    UnicodeDecodeError ⇒ `r.stdout` 变空 ⇒ 失败原因被吞、控制台看着像卡死。
+                r = subprocess.run(cmd, capture_output=True, text=True,
+                                   encoding="utf-8", errors="replace", timeout=900)
                 if r.returncode == 0:
                     break
-                print("  镜像 %s 失败，切换下一个源..." % idx)
+                print("  镜像 %s 失败（exit %s），切换下一个源..." % (idx, r.returncode))
+                tail = (r.stdout or "")[-500:] or (r.stderr or "")[-500:]
+                if tail.strip():
+                    print("    这个源失败原因末尾：")
+                    print(tail.rstrip())
         out = (r.stdout or "")[-1200:] or (r.stderr or "")[-600:]
         print(out)
         if r.returncode != 0:
-            print("[失败] 安装失败，见上方日志。")
-            if "Building wheel" in out or "failed" in out.lower():
-                print("提示：若失败于 winsdk 等本地编译，多为系统 Python 版本过新（需 3.10~3.12）；")
-                print("      删除 logs\\python_path.txt 后重新双击「一键启动.vbs」，会自动改用内置绿色版 3.10。")
+            print("[失败] 安装失败（exit %s），见上方日志。" % r.returncode)
+            tail20 = "\n".join(((r.stdout or "") + (r.stderr or "")).splitlines()[-20:])
+            if tail20.strip():
+                print("—— 末尾 20 行（失败原因通常就在这里）——")
+                print(tail20)
+            print("提示：若上面出现 cmake / ninja / Building wheel / pythoncore-3.1x，多半是**没在用本包自带的")
+            print("      运行时**（系统 Python 太新：本项目依赖只提供到 cp312 的预编译轮子）。正确做法：")
+            print("      ① 把包放在**纯英文路径**下，或 ② 删掉 logs\\python_path.txt 后重新双击「一键检验」，")
+            print("      让它把内置的绿色版 Python 3.10 装回 runtime\\ 再用。")
             return 1
     except Exception as e:
         print("[失败] 安装异常：%s" % e)
