@@ -181,5 +181,43 @@ ok("send_file_posted 用的是**实测点**（_file_panel_point_live），不是
 ok("点之前只抓一次画面（同一张图既判视图又定坐标）",
    seg.count("capture_image") <= 2 and "_gray" in seg)
 
+print("── G. r7 跨机实测的回归：第一枚图标紧贴 pane_left 时不许漏掉它 ──")
+# 对面那台的真实数字：整行 9 簇 / 工具栏 5 簇 312·357·402·446·509 / 间距 45 / 行在底往上 37px
+# 产品当时**把最左那簇筛掉了**（下界卡在 pane_left+10）⇒ 取"第 3 簇"落到 446＝✂️截图。
+try:
+    from agent import input_bar as _ib
+    from agent.wechat import WeChatAdapter as _WA3
+    _pane2 = 320                      # 检测到的面板左沿（第一枚图标 312 在它左边）
+    _im = _Im.new("L", (1139, 890), 250)
+    _d = _Dr.Draw(_im)
+    for x in (312, 357, 402, 446, 509):          # 工具栏 5 簇
+        _d.rectangle([x - 8, 843, x + 8, 863], fill=60)
+    for x in (700, 760, 820, 880):               # 同一行另外 4 个簇（"整行 9 簇"）
+        _d.rectangle([x - 8, 843, x + 8, 863], fill=60)
+    _g = _im.convert("L")
+    _y, _cl, _total = _ib.best_row(_g)
+    _run = _ib.toolbar_run(_cl, pane_left=_pane2)
+    ok("r7 回归：第一簇在 pane_left 左边时**不许**被筛掉（工具栏应认出 5 簇）",
+       len(_run) >= 5, "工具栏 %d 簇：%s" % (len(_run), "/".join(str(c[0]) for c in _run)))
+    (_pt2, _why2) = _ib.file_point(_g, (0, 0, 1139, 890), pane_left=_pane2)
+    ok("r7 回归：「文件」必须落在 402（第 3 个），不是 446（截图）", _pt2 and _pt2[0] == 402,
+       "实测 %s" % (_pt2,))
+    ok("落点自证：说明里把该行簇全列出来（对面点名的硬需求①）",
+       ("312/357/402/446/509" in _why2) and ("间距" in _why2), _why2)
+    _pt3, _why3 = _WA3._file_panel_point_live((0, 0, 1139, 890), _pane2, gray=_g)
+    ok("产品走的也是同一份实现（同样的 402）", _pt3 == _pt2, "%s vs %s" % (_pt3, _pt2))
+except Exception as _e3:
+    ok("r7 回归（合成图）能跑", False, str(_e3)[:100])
+
+print("── H. 两处测量必须共用一份实现（对面点名的硬需求：产品 4 簇 / 探针 5 簇）──")
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_probe = open(os.path.join(_ROOT, "scripts", "file_btn_probe.py"), encoding="utf-8").read()
+ok("探针 import 了共用实现（agent.input_bar）", "agent.input_bar" in _probe or "input_bar as _ib" in _probe)
+ok("探针不再自带行聚类扫描（自己那份一定漂）",
+   "px[x, y] < gray" not in _probe and "px[x, y] < gray_thr" not in _probe)
+_ibsrc = open(os.path.join(_ROOT, "agent", "input_bar.py"), encoding="utf-8").read()
+ok("共用实现里有用例数字对得上的常量（阈值/间距容差/左溢容差都在一处）",
+   all(k in _ibsrc for k in ("GRAY_THR", "RUN_TOL", "PANE_SLACK")))
+
 print("== [send-file-posted] 判据：{} 通过 / {} 失败 ==".format(PASS, FAIL))
 sys.exit(1 if FAIL else 0)

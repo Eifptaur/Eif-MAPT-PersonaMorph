@@ -51,21 +51,14 @@ def find_dialog(timeout=3.0):
 
 
 def row_clusters(img, y, gray=140, gap=24):
-    """扫**一行**，把有暗像素的列按 gap 分组 ⇒ [(中心x, 跨度, 暗像素数)]。"""
-    g = img.convert("L")
-    w = g.size[0]
-    px = g.load()
-    groups, cur, cnt = [], [], 0
-    for x in range(w):
-        if px[x, y] < gray:
-            if cur and x - cur[-1] > gap:
-                groups.append((cur, cnt))
-                cur, cnt = [], 0
-            cur.append(x)
-            cnt += 1
-    if cur:
-        groups.append((cur, cnt))
-    return [(int((c[0] + c[-1]) / 2), c[-1] - c[0] + 1, n) for c, n in groups]
+    """（薄壳）扫一行 ⇒ [(中心x, 宽度, 暗像素数)]。
+
+    ⚠️ **唯一实现在 `agent/input_bar.py`**：跨机 r7 实测，同一台机器同一屏，产品数出 4 簇、
+    探针数出 5 簇（漏了最左那个 😊）⇒ 产品按"第 3 簇"取就取到 ✂️截图（全档错位）。
+    两份实现必然各测各的 ⇒ 探针与产品都只许 import 那一份。
+    """
+    from agent import input_bar as _ib
+    return _ib.row_clusters(img.convert("L"), y, gray_thr=gray, gap=gap)
 
 
 def main():
@@ -112,17 +105,16 @@ def main():
         # ⚠️ 别拿"整行暗像素最多"当图标行（2026-09-15 首跑就踩了）：图像最底下常有一条窗口边线，
         #    整行全暗 ⇒ 一定赢。图标行的特征是「一行里有很多**小簇**」⇒ 用"宽度 4~60px 的簇个数"评分，
         #    并且跳过最底下 15 行。
-        scored = []
-        for y in range(band_top, h):
-            if y > h - 15:
-                continue
-            cl = row_clusters(img, y)
-            good = [c for c in cl if 4 <= c[1] <= 60]
-            scored.append((len(good), y, cl))
-        scored.sort(key=lambda t: (-t[0], -t[1]))
-        print("\n[底部 200px：按「小簇个数」排序的前 5 行]（换算成「渲染底往上多少 px」）")
-        for n, y, _cl in scored[:5]:
-            print("   渲染底往上 %3d px（y_abs=%4d）· 宽度 4~60px 的簇 %d 个" % (h - y, y, n))
+        from agent import input_bar as _ib
+        _y, _cl, _total = _ib.best_row(img.convert("L"))
+        _run = _ib.toolbar_run(_cl, pane_left=int(pane or 0))
+        _pt, _why = _ib.file_point(img.convert("L"), (0, 0) + (w, h), pane_left=int(pane or 0))
+        print("\n[共用实现算出来的（与产品同一份代码）]")
+        print("   该行簇数 %d · 工具栏那组 %d 簇：%s" % (
+            _total, len(_run), "/".join(str(c[0]) for c in _run)))
+        print("   「文件」落点（渲染区相对）= %s" % (_pt,))
+        print("   说明：%s" % _why)
+        scored = [(len(_run), _y, _cl)]
         if scored and scored[0][0] >= 3:
             n, best, cl = scored[0]
             good = [c for c in cl if 4 <= c[1] <= 60]
