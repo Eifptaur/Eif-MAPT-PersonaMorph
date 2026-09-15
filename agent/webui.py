@@ -543,6 +543,14 @@ class WebUI:
                         self._json(dict({"ok": True}, **_vmod.probe((_q2.get("url") or [""])[0])))
                     except Exception as _e2:
                         self._json({"ok": False, "error": str(_e2)}, 500)
+                elif path == "/api/voice/vc-probe":
+                    # 变声段（第二段）连通测试：造一段 440Hz 测试音送进去，**不改任何配置**
+                    try:
+                        from . import voice_models as _vmod
+                        _q3 = parse_qs(parsed.query)
+                        self._json(dict({"ok": True}, **_vmod.probe_vc((_q3.get("url") or [""])[0])))
+                    except Exception as _e3:
+                        self._json({"ok": False, "error": str(_e3)}, 500)
                 elif path == "/api/local-models":
                     # 本机模型端点探测（2026-09-15 任务书 ②）：只探测与展示，**绝不自动启用**——
                     # 切换 Base URL/模型必须由用户在面板上点（route 只读 discover/test_chat，不写配置）。
