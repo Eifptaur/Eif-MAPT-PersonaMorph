@@ -1607,7 +1607,7 @@ th{color:var(--tx2);font-weight:500}
           <button class="ghost" data-cloud-test="blocklist">测试连通</button>
         </div></div></div>
         <div class="row"><label>接收端口令</label><div class="grow"><input type="password" data-cfg="cloud.token" placeholder="对方要求鉴权时才填（Bearer）">
-          <div class="hint">探测连通<b>不带口令</b>；只有真上传时才带上。接收端要满足什么，见 <b>docs\上云接口契约.md</b>（方法/路径/请求体/响应约定都写在里面，可直接发给对方）</div>
+          <div class="hint">保存过即以掩码显示，要改就重新填。探测连通<b>不带口令</b>；只有真上传时才带上。接收端要满足什么，见 <b>docs\上云接口契约.md</b>（方法/路径/请求体/响应约定都写在里面，可直接发给对方）</div>
         </div></div>
         <div class="row"><label>鉴权方式</label><div class="grow"><select data-cfg="cloud.auth_style">
           <option value="bearer">放请求头</option>
@@ -1641,7 +1641,7 @@ th{color:var(--tx2);font-weight:500}
       <div class="row"><label>收件人</label><div class="grow"><input type="text" data-cfg="feedback.to" placeholder="多个用逗号分隔"><div class="hint">反馈发到这个邮箱（可以填你自己的小号）。</div></div></div>
       <div class="row"><label>中转网址</label><div class="grow"><input type="text" data-cfg="feedback.upload_url" placeholder="https://你的接收端/feedback"><div class="hint">填了它就先走网址（POST 配置格式），成功就不再发邮件。</div></div></div>
       <div class="row"><label>发件邮箱</label><div class="grow"><input type="text" data-cfg="feedback.smtp.user" placeholder="xxx@qq.com"><div class="hint">用哪个邮箱把反馈发出去。</div></div></div>
-      <div class="row"><label>邮箱授权码</label><div class="grow"><input type="password" data-cfg="feedback.smtp.password" placeholder="QQ 邮箱的授权码，不是登录密码"><div class="hint">QQ 邮箱：设置 → 账号 → 开启 SMTP 服务，会给你一串授权码。</div></div></div>
+      <div class="row"><label>邮箱授权码</label><div class="grow"><input type="password" data-cfg="feedback.smtp.password" placeholder="QQ 邮箱的授权码，不是登录密码"><div class="hint">保存过即以掩码显示，要改就重新填。QQ 邮箱：设置 → 账号 → 开启 SMTP 服务，会给你一串授权码。</div></div></div>
       <div class="row"><label>发信服务器</label><div class="grow"><input type="text" data-cfg="feedback.smtp.host" placeholder="smtp.qq.com">
         <input type="number" data-cfg="feedback.smtp.port" placeholder="465" style="max-width:110px;margin-top:6px"><div class="hint">QQ 邮箱用 smtp.qq.com + 465；163 用 smtp.163.com。</div></div></div>
       <div class="btns"><button class="pri" data-save>保存设置（反馈）</button></div>

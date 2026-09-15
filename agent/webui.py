@@ -110,6 +110,16 @@ def _protect_secrets(new_cfg: dict):
             for k, v in pk_new.items():
                 if _is_masked(v):
                     pk_new[k] = pk_old.get(k) or ""
+    # 2026-09-16：与 masked_config() 对称——凭据类字段也要"掩码值不覆盖真实值"。
+    # 否则用户在面板上一点保存，打码后的授权码/口令就被写回 config.json（原值当场丢）。
+    fb_new = new_cfg.get("feedback")
+    if isinstance(fb_new, dict):
+        smtp_new = fb_new.get("smtp")
+        if isinstance(smtp_new, dict) and _is_masked(smtp_new.get("password")):
+            smtp_new["password"] = (((old.get("feedback") or {}).get("smtp") or {}).get("password")) or ""
+    cl_new = new_cfg.get("cloud")
+    if isinstance(cl_new, dict) and _is_masked(cl_new.get("token")):
+        cl_new["token"] = (old.get("cloud") or {}).get("token") or ""
 
 
 class WebUI:
@@ -299,6 +309,22 @@ class WebUI:
         if isinstance(pk, dict):
             api["provider_keys"] = {k: mask_secret(v) for k, v in pk.items() if v}
         cfg["api"] = api
+        # 2026-09-16：原先只掩码 api.*，于是 feedback.smtp.password（邮箱授权码）与
+        # cloud.token（对端凭据）原样回到浏览器——input type=password 只遮眼睛，
+        # 「原始 JSON」按钮（打的正是 GET /api/config）更是把整个配置铺成明文网页，
+        # 录屏/截图即外泄。server.token 故意不掩码：它是用户自己的控制台钥匙，掩了
+        # 面板上就再也看不到它（且废掉「显示」按钮），而它本来就写在 logs/console.url
+        # 与启动日志里 ⇒ 掩它不改变任何实际暴露面。
+        fb = dict(cfg.get("feedback") or {})
+        smtp = dict(fb.get("smtp") or {})
+        if smtp.get("password"):
+            smtp["password"] = mask_secret(smtp["password"])
+        fb["smtp"] = smtp
+        cfg["feedback"] = fb
+        cl = dict(cfg.get("cloud") or {})
+        if cl.get("token"):
+            cl["token"] = mask_secret(cl["token"])
+        cfg["cloud"] = cl
         return cfg
 
     def _serve_wallpaper(self, path: str, handler, query):

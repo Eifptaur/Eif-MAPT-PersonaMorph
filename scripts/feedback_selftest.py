@@ -226,6 +226,42 @@ finally:
         except Exception:
             pass
 
+print("── F. 凭据不原样回到浏览器（2026-09-16 用户点名：「我邮箱的 SMTP 码加密了吗」）──")
+from agent import webui as WU            # noqa: E402
+
+_real_get_cfg = WU.get_config
+try:
+    _fake_cfg = {
+        "api": {"api_key": "sk-abcdefghijklmnop", "provider_keys": {"x": "sk-12345678"}},
+        "feedback": {"to": MAIL_A, "smtp": {"user": "me@qq.com", "password": "abcdefghijklmnop"}},
+        "cloud": {"token": "peer-token-123456"},
+        "server": {"token": "console-key-123456"},
+    }
+    WU.get_config = lambda: _fake_cfg
+    _m = WU.WebUI.masked_config(None)
+    ok("邮箱授权码打码回读（不原样给浏览器）",
+       _m["feedback"]["smtp"]["password"] == "abcde••••mnop")
+    ok("对端口令打码回读", _m["cloud"]["token"] == "peer-••••3456")
+    ok("原配置对象没被写脏（落盘仍是真值）",
+       _fake_cfg["feedback"]["smtp"]["password"] == "abcdefghijklmnop")
+    ok("api_key 打码行为不回归", "••••" in _m["api"]["api_key"])
+    ok("server.token 不掩码（用户得能在面板上看到自己的控制台钥匙）",
+       _m["server"]["token"] == "console-key-123456")
+
+    _cur_cfg = {"api": {}, "feedback": {"smtp": {"password": "abcdefghijklmnop"}},
+                "cloud": {"token": "peer-token-123456"}}
+    WU.get_config = lambda: _cur_cfg
+    _post = {"feedback": {"smtp": {"password": "abcde••••mnop"}}, "cloud": {"token": "peer-••••3456"}}
+    WU._protect_secrets(_post)
+    ok("掩码值保存回来不覆盖真实授权码（只掩码不加保护＝当场丢）",
+       _post["feedback"]["smtp"]["password"] == "abcdefghijklmnop")
+    ok("掩码值保存回来不覆盖真实对端口令", _post["cloud"]["token"] == "peer-token-123456")
+    _post2 = {"feedback": {"smtp": {"password": "newcode12345678"}}}
+    WU._protect_secrets(_post2)
+    ok("重新填的真值照常落盘", _post2["feedback"]["smtp"]["password"] == "newcode12345678")
+finally:
+    WU.get_config = _real_get_cfg
+
 print("")
 print("反馈栏判据：%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
