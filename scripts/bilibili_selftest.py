@@ -94,6 +94,26 @@ try:
     v3, why3 = B.view("BV1xx411c7mD")
     ok("data 缺 bvid ⇒ None + 原因", v3 is None and "bvid" in why3, why3[:40])
 
+    # AI 标识：只认后台字段 argue_info.argue_msg（2026-09-15 实测手机端不渲染这一行）
+    B._get_json = lambda url, timeout=12: ({
+        "code": 0, "data": {"bvid": "BV1xx411c7mD", "title": "T", "cid": 1,
+                            "argue_info": {"argue_msg": "含AI生成内容", "argue_type": 0}}}, "")
+    va, _ = B.view("BV1xx411c7mD")
+    ok("后台带 argue_msg ⇒ ai_label 取到", va and va["ai_label"] == "含AI生成内容" and va["ai_label_known"])
+    ok("给模型的文本里带 AI 标识行", "AI 标识：含AI生成内容" in B.to_text(va))
+
+    B._get_json = lambda url, timeout=12: ({
+        "code": 0, "data": {"bvid": "BV1xx411c7mD", "title": "T", "cid": 1,
+                            "argue_info": {"argue_msg": "", "argue_type": 0}}}, "")
+    vb, _ = B.view("BV1xx411c7mD")
+    ok("argue_msg 为空 ⇒ 如实说「这条没标」", "这条没标" in B.to_text(vb) and vb["ai_label"] == "")
+
+    B._get_json = lambda url, timeout=12: ({
+        "code": 0, "data": {"bvid": "BV1xx411c7mD", "title": "T", "cid": 1}}, "")
+    vc, _ = B.view("BV1xx411c7mD")
+    ok("反证：接口没给 argue_info 时不许假装「没标」",
+       vc["ai_label_known"] is False and "AI 标识" not in B.to_text(vc), B.to_text(vc)[:40])
+
     B._get_json = lambda url, timeout=12: (None, "连不上 B 站接口：超时")
     v4, why4 = B.view("BV1xx411c7mD")
     ok("网络异常 ⇒ None + 原始原因透传", v4 is None and "超时" in why4)
