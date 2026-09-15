@@ -793,6 +793,68 @@ th{color:var(--tx2);font-weight:500}
           <input type="text" id="modelCustom" class="dn" placeholder="自定义模型名（如 glm-4-plus）">
           <div class="hint">所选厂商的常用模型都在下拉里；不够用就选「自定义」手填，或改原始 JSON。</div>
         </div></div>
+      <div class="row"><label>本机模型</label>
+        <div class="grow">
+          <div class="btns" style="margin-bottom:6px">
+            <button id="localProbe" class="ghost">探测本机模型</button>
+            <span class="hint" id="localHint">只探回环地址：Ollama 11434 · LM Studio 1234 · vLLM 8000 · llama.cpp 8080 · text-gen-webui 5000</span>
+          </div>
+          <div id="localList"></div>
+          <div class="hint">探测只能证明<b>端点活着、有哪些模型、多快</b>；<b>工具与视觉是否支持一律「未声明」</b>——要判定请用上面的「测试 API」真跑一轮。点「用这个」只把地址与模型名填进上面的输入框，仍需你点保存；<b>探测本身不改任何配置</b>（本机模型零成本、不出网，适合当评审/红队那一档）。</div>
+        </div></div>
+      <script>
+      (function(){
+        var btn = document.getElementById('localProbe');
+        if (!btn) return;
+        var list = document.getElementById('localList'), hint = document.getElementById('localHint');
+        function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+        function headers(){ return (typeof URL_TOKEN !== 'undefined' && URL_TOKEN) ? {Authorization:'Bearer '+URL_TOKEN} : {}; }
+        function card(r){
+          var ok = !!r.reachable, ms = (r.models||[]);
+          var chips = ms.map(function(m){ return '<span class="chip">'+esc(m)+'</span>'; }).join(' ');
+          var btns = (ok && ms.length) ? ('<button class="ghost useLocal" data-url="'+esc(r.base_url)+'" data-model="'+esc(ms[0])+'">用这个</button>'
+                    + '<button class="ghost testLocal" data-url="'+esc(r.base_url)+'" data-model="'+esc(ms[0])+'">连通测试</button>') : '';
+          return '<div class="card" style="margin:6px 0;padding:8px 10px">'
+            + '<div><b>'+esc(r.name||r.id)+'</b> <span class="hint">'+esc(r.base_url)+'</span></div>'
+            + '<div class="hint" style="margin:4px 0">'+(ok ? ('可用 · '+r.ms+'ms · 模型 '+ms.length+' 个') : ('未发现 · '+esc(r.error)))+'</div>'
+            + (chips ? '<div style="margin:4px 0">'+chips+'</div>' : '')
+            + '<div class="btns">'+btns+'<span class="testOut hint"></span></div></div>';
+        }
+        btn.onclick = function(){
+          btn.disabled = true; hint.textContent = '探测中（每端点 1.2s 超时，并发）';
+          fetch('/api/local-models', {headers: headers()})
+            .then(function(r){ return r.json(); })
+            .then(function(d){
+              var all = ((d.meta||{}).all || []);
+              list.innerHTML = all.map(card).join('')
+                + '<div class="hint">共探 '+((d.meta||{}).checked||0)+' 个端点，用时 '+((d.meta||{}).elapsed_ms||0)+'ms。能力口径：'+esc(d.capability||'')+'</div>';
+              hint.textContent = (d.found||[]).length ? ('发现 '+d.found.length+' 个可用端点') : '没发现本机端点（没装或没启动都算正常）';
+            })
+            .catch(function(e){ hint.textContent = '探测失败：'+e; })
+            .then(function(){ btn.disabled = false; });
+        };
+        list.addEventListener('click', function(ev){
+          var t = ev.target;
+          if (t.classList && t.classList.contains('useLocal')) {
+            var bu = document.querySelector('input[data-cfg="api.base_url"]');
+            if (bu) { bu.value = t.getAttribute('data-url'); bu.dispatchEvent(new Event('input', {bubbles:true})); }
+            var mc = document.getElementById('modelCustom');
+            if (mc) { mc.value = t.getAttribute('data-model'); mc.classList.remove('dn'); }
+            hint.textContent = '已填入 Base URL 与模型名——记得点下面的「保存设置（模型 API）」';
+          } else if (t.classList && t.classList.contains('testLocal')) {
+            var out = t.parentNode.querySelector('.testOut');
+            out.textContent = ' 测试中……';
+            fetch('/api/local-models?test=1&base_url='+encodeURIComponent(t.getAttribute('data-url'))
+                  +'&model='+encodeURIComponent(t.getAttribute('data-model')), {headers: headers()})
+              .then(function(r){ return r.json(); })
+              .then(function(d){
+                out.textContent = d.ok ? (' 能对话 · '+d.ms+'ms · 回显「'+(d.reply||'')+'」 · '+(d.note||'')) : (' 失败：'+(d.error||'未知'));
+              })
+              .catch(function(e){ out.textContent = ' 失败：'+e; });
+          }
+        });
+      })();
+      </script>
       <div class="row"><label>备选模型</label><div class="grow">
         <textarea data-cfg="api.fallback_models" rows="2" spellcheck="false" placeholder="如：deepseek-chat, glm-4-flash（逗号或换行分隔；留空＝关闭）"></textarea>
         <div class="hint">主模型失败时<b>按顺序逐个改用下面的模型</b>（同一个 Base URL 与 Key）：
