@@ -308,5 +308,17 @@ try:
 except Exception as e:
     check("config.example.json 与默认配置同键", False, str(e)[:80])
 
+# ── 用量三分口径（2026-09-15）：只记"总 token"看不出钱花在哪，缓存/未命中/输出单价差 30~90 倍 ──
+try:
+    _st = io.open(os.path.join(ROOT, "agent", "stats.py"), encoding="utf-8").read()
+    _pm = io.open(os.path.join(ROOT, "scripts", "persona_morph.py"), encoding="utf-8").read()
+    check("用量账本记三分（fresh / cached / output）",
+          all(k in _st for k in ("fresh_tokens", "cached_tokens", "output_tokens"))
+          and "fresh=_fresh" in _pm and "cached=_cached" in _pm and "output=_output" in _pm)
+    check("三分口径有注释说明为什么要它（防后人删）",
+          "差 30~90 倍" in _st or "30~90 倍" in _pm)
+except Exception as e:
+    check("用量账本记三分（fresh / cached / output）", False, str(e)[:60])
+
 print("\n==== %d 项检查，%d 项失败 ====" % (TOTAL[0], len(fails)))
 sys.exit(1 if fails else 0)

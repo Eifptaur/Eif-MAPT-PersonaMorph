@@ -35,7 +35,10 @@ def _day_start() -> str:
 
 
 def _empty() -> dict:
-    return {"sessions": 0, "calls": 0, "tokens": 0, "sent": 0, "cost": 0.0}
+    # 三分口径（2026-09-15）：只记"总 token"看不出钱花在哪——缓存读/未命中/输出的单价差 30~90 倍
+    # （0.05 / 1.5 / 4.5 元每百万）。缺省为 0 ⇒ 老账本（没有这三个字段）读进来自动补 0，不会崩。
+    return {"sessions": 0, "calls": 0, "tokens": 0, "sent": 0, "cost": 0.0,
+            "fresh_tokens": 0, "cached_tokens": 0, "output_tokens": 0}
 
 
 class UsageStats:
@@ -83,14 +86,16 @@ class UsageStats:
                 self.data["history"].append({
                     "start": self.data.get("period_start"),
                     "end": _period_start(None, self.period),
-                    **{k: p.get(k, 0) for k in ("sessions", "calls", "tokens", "sent", "cost")},
+                    **{k: p.get(k, 0) for k in ("sessions", "calls", "tokens", "sent", "cost",
+                                               "fresh_tokens", "cached_tokens", "output_tokens")},
                 })
                 self.data["history"] = self.data["history"][-_HISTORY_MAX:]
         except Exception:
             pass
 
-    def record(self, sessions: int = 0, calls: int = 0, tokens: int = 0, sent: int = 0, cost: float = 0.0):
-        """追加一轮的增量统计（自动处理周期/当日切换）。"""
+    def record(self, sessions: int = 0, calls: int = 0, tokens: int = 0, sent: int = 0,
+               cost: float = 0.0, fresh: int = 0, cached: int = 0, output: int = 0):
+        """追加一轮的增量统计（自动处理周期/当日切换）。fresh/cached/output＝三分口径。"""
         with self._lock:
             try:
                 if self.data["period_start"] < _period_start(None, self.period):
@@ -102,7 +107,10 @@ class UsageStats:
                     self.data["day"] = _empty()
                 targets = (self.data["total"], self.data["period"], self.data["day"])
                 for key, val in (("sessions", sessions), ("calls", calls), ("tokens", tokens),
-                                 ("sent", sent), ("cost", float(cost or 0.0))):
+                                 ("sent", sent), ("cost", float(cost or 0.0)),
+                                 ("fresh_tokens", int(fresh or 0)),
+                                 ("cached_tokens", int(cached or 0)),
+                                 ("output_tokens", int(output or 0))):
                     for t in targets:
                         t[key] = t.get(key, 0) + val
                 self._save()
