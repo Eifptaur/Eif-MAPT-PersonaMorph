@@ -787,6 +787,29 @@ def content_match(pane: str, needle: str) -> bool:
     return difflib.SequenceMatcher(None, a, b).ratio() > 0.5
 
 
+def best_partial(pane: str, needle: str) -> tuple:
+    """针在聊天区文本里的**最好匹配情况** ⇒ `(最长命中片段长度, difflib 相似度, 命中片段)`。
+
+    为什么要有它（2026-09-16 跨机需求②「内容级闸的 OCR 口径」）：内容级身份闸判否时，我们只报
+    「聊天区里没有…」，可**"根本没有信号"与"信号被阈值判掉"是两种失败**——前者该判否，后者说明
+    阈值/归一化有问题。把它算出来打进失败信息，就能一眼分开（这条口径本项目已有同名教训）。
+    """
+    a, b = _nz(pane), _nz(needle)
+    if not a or not b:
+        return (0, 0.0, "")
+    if b[:16] and b[:16] in a:
+        return (16, 1.0, b[:16])
+    for n in (12, 10, 8, 6, 4):
+        for i in range(0, max(1, len(b) - n + 1)):
+            if b[i:i + n] in a:
+                return (n, 1.0, b[i:i + n])
+    import difflib
+    sm = difflib.SequenceMatcher(None, a, b)
+    ratio = sm.ratio()
+    m = sm.find_longest_match(0, len(a), 0, len(b))
+    return (int(m.size), round(float(ratio), 3), b[m.b:m.b + m.size])
+
+
 def pane_text(img, limit: int = 200, zoom: int = 2) -> str:
     """聊天区（面板左沿往右那一块）的 OCR 文字摘要——判"当前打开的是谁 / 切会话发没发生"（只读）。
 
