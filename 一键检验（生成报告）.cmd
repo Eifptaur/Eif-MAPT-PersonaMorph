@@ -49,10 +49,12 @@ if defined PYARG (
   "%PYCMD%" -X utf8 scripts\setup_deps.py
 )
 echo   [3/3] 正在收集环境信息… 
+rem [r13] 此处不再加 --open: 它会让资源管理器弹到前台 (跨机实测 t=27.4s 前台被切到「报告」窗口),
+rem        自检工具不许打扰用户. 报告路径下面会打印, 要自动打开请手动加 --open.
 if defined PYARG (
-  %PYCMD% %PYARG% scripts\collect_report.py --send-test --allow-send --open
+  %PYCMD% %PYARG% scripts\collect_report.py --send-test --allow-send
 ) else (
-  "%PYCMD%" scripts\collect_report.py --send-test --allow-send --open
+  "%PYCMD%" scripts\collect_report.py --send-test --allow-send
 )
 echo.
 echo ============================================================

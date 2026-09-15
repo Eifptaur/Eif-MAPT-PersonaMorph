@@ -100,6 +100,15 @@ for nm in (CHECK, ONLY):
 t_check, t_only = text(CHECK), text(ONLY)
 ok("只读版：**不带** --send-test", "--send-test" not in t_only)
 ok("只读版：**不带** --allow-send", "--allow-send" not in t_only)
+# ⛔ 跨机 r13 ①-1（r1 老账）：两个 .cmd 都硬编码了 `--open` ⇒ 跑完**资源管理器被弹到前台**
+#    （他们实测 t=27.4s 前台切到 CabinetWClass「报告」）——自检工具不许打扰用户（与 r12 的 16s 光标同一条红线）。
+# ⚠️ 按代码判必须**先剥 rem 注释**（我上面那两行注释里就写着 `--open`，不剥必然假红）。
+def _no_rem(_t):
+    return "\n".join(l for l in _t.split("\r\n") if not l.lstrip().lower().startswith("rem"))
+
+
+ok("只读版：**不带** --open（跑完不许把资源管理器弹到前台）", "--open" not in _no_rem(t_only))
+ok("检验版：**不带** --open（同上）", "--open" not in _no_rem(t_check))
 ok("检验版：带 --send-test（会真发一条给文件传输助手）", "--send-test" in t_check)
 ok("检验版：带 --allow-send（解「版本门拦住发送实测」的鸡生蛋）", "--allow-send" in t_check)
 ok("检验版：横幅里写明了会放行版本门（不许悄悄降级）",

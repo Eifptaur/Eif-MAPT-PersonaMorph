@@ -68,6 +68,9 @@ def main() -> int:
         print("   绿底高亮行 = %s" % (co.highlight(im),))
         print("   高亮行时间 = %s" % (co.highlight_time(im),))
         print("   current_chat_name = %s" % (co.current_chat_name(im),))
+        # ⚠️ 跨机 r13 §5 需要的证据：**当前这一屏的聊天区到底写了什么**（只读）。
+        #    那台机器上 filehelper 与「余命十日」的首条 DB 内容逐字相同 ⇒ 要看"屏幕能不能区分它们"。
+        print("   聊天区 OCR（前 160 字）= %r" % co.pane_text(im, limit=160)[:160])
         print("   会话行 OCR：")
         for row in co.session_rows(im):
             print("      y=%3s green=%.2f name=%-18r full=%r"
