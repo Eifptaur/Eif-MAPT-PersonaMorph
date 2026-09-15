@@ -766,22 +766,50 @@ def norm_alnum(s: str) -> str:
     return _nz(s)
 
 
+MIN_HIT = 8            # 放行的**最短命中片段**（归一化后字数）——低于它一律不算"认出内容"
+MIN_RATIO = 0.3        # 或者命中占针长的这个比例（长针允许按比例放宽）
+
+
+def low_entropy(s: str) -> bool:
+    """串是不是"低熵"（纯数字/日期/版本号这类）⇒ 它**不能当"认出内容"的证据**。
+
+    为什么（2026-09-16 跨机 r10 实测抓到的 fail-open）：目标会话**根本没开**，闸门却被一条
+    **6 字的日期串 `202609`（相似度 1.000）**满足、判了 True ⇒ 最后一道闸在最需要它的场景失效，
+    正是 2026-09-13「发错会话」事故要防的那类风险。日期/构建号在会话列表和聊天区里到处都有。
+    """
+    t = str(s or "")
+    d = "".join(ch for ch in t if ch.isdigit())
+    return bool(t) and len(d) >= max(3, int(len(t) * 0.7))
+
+
 def content_match(pane: str, needle: str) -> bool:
     """聊天区 OCR 文本里能不能认出「目标会话最近的内容」——**按内容认会话**，不靠名字。
 
     为什么需要（2026-09-13 发错会话事故）：名字判据会骗人——群聊行的预览里带着**发言人前缀**
     （`E: 提交信息…`），被当成"会话名 = E"后就点进了那个群。内容比对不依赖任何名字：
     把目标会话最近一条**文本**拿来，在当前聊天区里找它的显著片段即可。
+
+    ⚠️ 2026-09-16 加两道下界（跨机 r10 实测的 fail-open）：①**最短命中 `MIN_HIT=8` 字**（或占针长
+    `MIN_RATIO=30%`）——原来最小的窗口是 6 字，一条日期串就能巧合命中；②**低熵串不算命中**
+    （纯数字/日期/版本号，见 `low_entropy`）。判否是安全的（fail-closed），判错才是事故。
     """
     a, b = _nz(pane), _nz(needle)
-    if len(a) < 6 or len(b) < 6:
+    if len(a) < MIN_HIT or len(b) < MIN_HIT:
         return False
-    if b[:16] and b[:16] in a:
+    if low_entropy(b):                             # 纯数字的针本身不作为证据
+        return False
+    need = max(MIN_HIT, int(len(b) * MIN_RATIO))
+    if len(b) >= 16 and b[:16] in a:
         return True
-    for n in (12, 10, 8, 6):                       # OCR 常吞字 ⇒ 多尺度片段逐一找
+    for n in (16, 12, 10, MIN_HIT):
+        if n < need or n > len(b):
+            continue
         step = max(1, n // 2)
         for i in range(0, max(0, len(b) - n) + 1, step):
-            if b[i:i + n] in a:
+            frag = b[i:i + n]
+            if low_entropy(frag):                  # 片段全是数字 ⇒ 跳过（巧合）
+                continue
+            if frag in a:
                 return True
     import difflib
     return difflib.SequenceMatcher(None, a, b).ratio() > 0.5
