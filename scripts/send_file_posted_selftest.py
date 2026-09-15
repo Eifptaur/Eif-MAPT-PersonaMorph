@@ -393,5 +393,47 @@ try:
 except Exception as _e8:
     ok("_restore_fg 的 keep/clear 语义可测", False, str(_e8)[:80])
 
+print("── N. 发送/自检路径**不许悄悄退回真鼠标**（跨机 r12 事故：一动检工具动了 16 秒光标）──")
+# 对面 r12 原话："你自己那条 一键检验（生成报告） 在我这儿掉了真实路径、动过光标"（37.4s 一发、
+# 光标动了 16s，日志 '投递切会话：False → 改走真实路径'）。⇒ 真鼠标兜底改成**显式 opt-in**（默认关）。
+_segN = open(os.path.join(_ROOT, "agent", "wechat.py"), encoding="utf-8").read()
+ok("有开关实现：默认关 + 环境变量可强制关",
+   "def _real_fallback_allowed" in _segN and 'get("allow_real_fallback", False)' in _segN
+   and "WXAGENT_REAL_FALLBACK" in _segN)
+_cfgN = open(os.path.join(_ROOT, "agent", "config.py"), encoding="utf-8").read()
+ok("config 默认值＝False，并把事故写在注释里",
+   '"allow_real_fallback": False' in _cfgN and "动了 16 秒光标" in _cfgN)
+_segS = _segN[_segN.index("def send_text("):]
+_segS = _segS[:_segS.find("\n    def ", 10)]          # 只在 `send_text` 这一个函数体里比顺序
+ok("这道闸压在**真实路径之前**（同一函数内的顺序）",
+   "if not self._real_fallback_allowed():" in _segS
+   and _segS.index("if not self._real_fallback_allowed():") < _segS.index("_send_with_foreground"))
+ok("不退回时把原因说清（带会话头三态）", "不退回真鼠标" in _segN and "% _st_status" in _segN)
+ok("自检工具（collect_report）强制关掉真鼠标兜底",
+   'os.environ["WXAGENT_REAL_FALLBACK"] = "0"' in
+   open(os.path.join(_ROOT, "scripts", "collect_report.py"), encoding="utf-8").read())
+ok("搜索浮层失败要自己关掉（别留屏 + 别占前台）",
+   "def _close_search_popover" in _segN and _segN.count("_close_search_popover(") >= 3)
+try:
+    import os as _osN
+    from agent import wechat as _WN
+    _adN = _WN.WeChatAdapter.__new__(_WN.WeChatAdapter)
+    _env_old = _osN.environ.get("WXAGENT_REAL_FALLBACK")
+    _cfg_old = _WN.get_config
+    _osN.environ.pop("WXAGENT_REAL_FALLBACK", None)
+    _WN.get_config = lambda: {}
+    ok("默认（配置里没这个键）⇒ **不退回**", _adN._real_fallback_allowed() is False)
+    _WN.get_config = lambda: {"input": {"allow_real_fallback": True}}
+    ok("显式打开 ⇒ 允许", _adN._real_fallback_allowed() is True)
+    _osN.environ["WXAGENT_REAL_FALLBACK"] = "0"
+    ok("环境变量=0 ⇒ 强制关（自检路径用）", _adN._real_fallback_allowed() is False)
+    _WN.get_config = _cfg_old
+    if _env_old is None:
+        _osN.environ.pop("WXAGENT_REAL_FALLBACK", None)
+    else:
+        _osN.environ["WXAGENT_REAL_FALLBACK"] = _env_old
+except Exception as _eN:
+    ok("_real_fallback_allowed 行为可测", False, str(_eN)[:80])
+
 print("== [send-file-posted] 判据：{} 通过 / {} 失败 ==".format(PASS, FAIL))
 sys.exit(1 if FAIL else 0)

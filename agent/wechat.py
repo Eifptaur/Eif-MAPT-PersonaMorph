@@ -253,6 +253,23 @@ def _click_dialog_open(hwnd: int) -> tuple:
         return False, "BM_CLICK 点「打开」异常：%s" % e
 
 
+def _close_search_popover(hwnd: int) -> bool:
+    """投递 `WM_CLOSE` 关掉搜索浮层（对面 r12 实测：一枪就关，关掉后前台自动回微信主窗）。
+
+    ⚠️ 为什么必须自己关（2026-09-16 跨机 r12 报的）：搜索浮层**失败后留在屏幕上**——既挡屏又**占着前台**
+    （对面那次复现的起点就是这个残留浮层）。⇒ 失败分支自己收尾，别把浮层留给用户。
+    """
+    try:
+        u = ctypes.windll.user32
+        if not hwnd or not u.IsWindow(ctypes.c_void_p(int(hwnd))):
+            return False
+        u.PostMessageW.restype = ctypes.c_void_p
+        u.PostMessageW(ctypes.c_void_p(int(hwnd)), 0x0010, 0, 0)      # WM_CLOSE
+        return True
+    except Exception:
+        return False
+
+
 def _close_file_dialog(hwnd: int) -> None:
     """关掉系统「选择文件」对话框（`#32770`）——异常路径的兜底，**绝不留模态框在用户屏幕上**。"""
     try:
@@ -1117,6 +1134,28 @@ class WeChatAdapter:
         except Exception:
             return False
 
+    def _real_fallback_allowed(self) -> bool:
+        """投递档确认不了目标会话时，**允不允许退回真鼠标/真键盘（L0）**——默认 **False**。
+
+        ⚠️ 2026-09-16 跨机 r12 事故（对面那台）：跑我们自己的 `一键检验（生成报告）`——那是**自检/诊断**
+        工具——投递切会话失败后自动退回真实路径 ⇒ **动了 16 秒光标**（日志：`真实路径结束后已把光标还原到
+        (1763,586)`）。这与最高目标②（不抢鼠标）③（不抢前台）直接冲突，而且是在用户机器上由**只读体检**
+        触发的。⇒ 三条：
+          ① 默认 **False**（不退回），要真鼠标必须在 config 里显式打开 `input.allow_real_fallback=true`；
+          ② 环境变量 `WXAGENT_REAL_FALLBACK=0` 可以**强制关**（自检/诊断路径用它兜底，无视 config）；
+          ③ 不退回时**要说清为什么**（返回消息里带"投递档确认不了 + 没开真鼠标兜底"），不许静默失败。
+        """
+        try:
+            if str(os.environ.get("WXAGENT_REAL_FALLBACK", "")).strip() == "0":
+                return False
+        except Exception:
+            pass
+        try:
+            cfg = get_config() or {}
+            return bool((cfg.get("input") or {}).get("allow_real_fallback", False))
+        except Exception:
+            return False
+
     def send_text(self, chat_id: str, text: str):
         """发送文本到群。返回 (ok, message)。
 
@@ -1142,6 +1181,7 @@ class WeChatAdapter:
         if not self._dedup_send(chat_id, text):
             return True, "重复发送已拦截（3 秒内同一文本）"
         name = self.group_name(chat_id)
+        _st_status = "没走投递档"
         try:
             with self._send_lock:  # 所有碰微信窗口的操作统一串行（发消息/引用/拍一拍/回拍不打架）
                 gui = self._get_gui()
@@ -1149,6 +1189,7 @@ class WeChatAdapter:
                     try:
                         from . import chat_header as _ch
                         st = _ch.check(chat_id, gui=gui)
+                        _st_status = str(st.get("status"))
                         if st["status"] == "ok":
                             ok, msg = self.send_text_posted(text, chat_id)
                             if ok:
@@ -1171,9 +1212,15 @@ class WeChatAdapter:
                                     self._mark_sent(text)
                                     return True, "%s（投递档 L5 · 先投递切会话 + OCR 确认）" % msg
                                 log.info("投递切会话后发送失败：%s", msg)
-                            log.info("投递前置未满足（%s）且投递切会话未成功：改走真实路径", st["status"])
+                            log.info("投递前置未满足（%s）且投递切会话未成功", st["status"])
                     except Exception as e:
-                        log.info("投递优先判定异常，退回真实路径：%s", e)
+                        log.info("投递优先判定异常：%s", e)
+                        _st_status = "异常:%s" % type(e).__name__
+                # ⛔ 退回真鼠标/真键盘前必须过这道闸（默认关；见 `_real_fallback_allowed` 注释里的事故）
+                if not self._real_fallback_allowed():
+                    return False, ("投递档确认不了目标会话（会话头三态=%s，投递切会话也没成）⇒ 按最高目标"
+                                   "**不退回真鼠标**（`input.allow_real_fallback` 默认关，真鼠标会动你的光标）；"
+                                   "要允许请显式打开它，或先把目标会话在微信里点开" % _st_status)
                 # 真实路径要真点真敲 ⇒ 先做一次遮挡预检：被别的窗口挡住时，库会重试到 40~70 秒
                 # 才抛"点击被拦截"（2026-09-13 实测：被资源管理器挡住时 open_chat 花了 47.5s + UIA 探测 15.5s）。
                 # 这里提前把原因说清楚，用户不用白等（预检自己会尝试把微信置前一次）。
@@ -1726,8 +1773,10 @@ class WeChatAdapter:
                         "name": name, "popover_hwnd": int(pop_hwnd), "popover_rect": list(prect),
                         "shot_size": list(shot_size) if shot_size else None, "popover_why": pwhy,
                         "variant": variant, "entry": ent.get("why"), "cand_txt": ent.get("cand_txt")})
-                    return False, ("搜索浮层的画面里没认出「%s」那一行（浮层截图 %s%s）"
-                                   % (name, shot_size, ("｜现场已存 %s" % _d) if _d else ""))
+                    _closed = _close_search_popover(int(pop_hwnd))     # 别把浮层留在用户屏幕上（它还占前台）
+                    return False, ("搜索浮层的画面里没认出「%s」那一行（浮层截图 %s%s；浮层%s）"
+                                   % (name, shot_size, ("｜现场已存 %s" % _d) if _d else "",
+                                      "已关掉" if _closed else "**没关掉**"))
                 backend.click(int(pop_hwnd), (int(prect[0]) + int(row["x"]), int(prect[1]) + int(row["y"])))
                 time.sleep(1.0)
                 idn, idn_why = self.chat_identity_ok(chat_id, gui=gui)
@@ -1737,9 +1786,11 @@ class WeChatAdapter:
                 _d = self._dump_fail_shot("search_identity", _chh.capture_image(gui=gui), {
                     "name": name, "row_why": row.get("why"), "落点": [row["x"], row["y"]],
                     "idn": str(idn), "idn_why": str(idn_why)[:400]})
+                _closed = _close_search_popover(int(pop_hwnd))         # 复核没过也要关掉浮层
                 return False, ("点了搜索浮层的「%s」行（%s，落点 %s），但内容级复核没过：%s%s"
                                % (name, row.get("why"), (row["x"], row["y"]), idn_why,
-                                  ("｜现场已存 %s" % _d) if _d else ""))
+                                  ("｜现场已存 %s" % _d) if _d else "") +
+                               ("｜浮层已关掉" if _closed else "｜浮层**没关掉**"))
             # —— box 形态（另一台机 / 老 UI：搜索框直接摆着）：点它 → 主窗打字 → 结果行在主窗里找
             backend.click(main, (ox + int(ent["x"]), oy + int(ent["y"])))
             time.sleep(0.45)
