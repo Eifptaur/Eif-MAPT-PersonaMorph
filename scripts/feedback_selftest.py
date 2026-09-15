@@ -232,7 +232,8 @@ from agent import webui as WU            # noqa: E402
 _real_get_cfg = WU.get_config
 try:
     _fake_cfg = {
-        "api": {"api_key": "sk-abcdefghijklmnop", "provider_keys": {"x": "sk-12345678"}},
+        # 假凭据一律不带 sk- 前缀：带前缀会被打包器的 PII 闸门判成真密钥（FATAL，出不了包）
+        "api": {"api_key": "abcdefghijklmnop", "provider_keys": {"x": "12345678"}},
         "feedback": {"to": MAIL_A, "smtp": {"user": "me@qq.com", "password": "abcdefghijklmnop"}},
         "cloud": {"token": "peer-token-123456"},
         "server": {"token": "console-key-123456"},
@@ -245,6 +246,7 @@ try:
     ok("原配置对象没被写脏（落盘仍是真值）",
        _fake_cfg["feedback"]["smtp"]["password"] == "abcdefghijklmnop")
     ok("api_key 打码行为不回归", "••••" in _m["api"]["api_key"])
+    ok("短凭据（≤8 位）走全掩码分支", _m["api"]["provider_keys"]["x"] == "••••")
     ok("server.token 不掩码（用户得能在面板上看到自己的控制台钥匙）",
        _m["server"]["token"] == "console-key-123456")
 
