@@ -98,7 +98,7 @@ def main() -> int:
         ok2, why2 = ad.open_chat_by_search(a.chat_id, name=a.name)
         print("   open_chat_by_search -> %s ｜ %s" % (ok2, str(why2)[:300]))
         if not ok2:
-            print("   ⛔ 两条路都没切过去 ⇒ 不发（防误发）。失败现场见 wechatauto_logs\\fail\\")
+            print("   ⛔ 两条路都没切过去 ⇒ 不发（防误发）。失败现场（若本次真的点了）见 wechatauto_logs\\fail\\")
             return 2
     print("   切完复核：%s" % (ad.chat_is_open(a.chat_id, gui=gui, name=a.name),))
 
