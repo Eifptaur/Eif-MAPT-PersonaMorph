@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import atexit
 import ctypes
+import json
 import logging
+import os
 import threading
 import time
 
@@ -62,6 +64,76 @@ def enabled() -> bool:
         return True
 
 
+def _persist_path() -> str:
+    """借用记录的落盘位置（`data/window_borrow.json`）—— 给「被强杀/崩溃」兜底用。"""
+    try:
+        from .config import ROOT
+        d = os.path.join(ROOT, "data")
+        os.makedirs(d, exist_ok=True)
+        return os.path.join(d, "window_borrow.json")
+    except Exception:
+        return ""
+
+
+def _persist() -> None:
+    """把当前借用状态落盘（没借用 ⇒ 删掉记录）。**调用点必须在 `_lock` 之外**。"""
+    p = _persist_path()
+    if not p:
+        return
+    with _lock:
+        s = dict(_state)
+    try:
+        if not s["borrowed"]:
+            if os.path.exists(p):
+                os.remove(p)
+            return
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump({"hwnd": s["hwnd"], "rect": list(s["rect"] or []),
+                       "forced": list(s["forced"]) if s["forced"] else None,
+                       "at": s["at"]}, f)
+    except Exception:
+        pass
+
+
+def recover(reason: str = "上次进程留下的借用") -> bool:
+    """进程侧兜底：上次被**强杀/崩溃**留下的借用记录 ⇒ 现在还回去（只还我们自己那一版）。
+
+    为什么需要（2026-09-15 跨机 P16② 实测）：`一键关闭.exe` 强杀时 `atexit` 跑不到，
+    窗口就停在「钉住」状态 ⇒ 下次谁先碰到这个模块，就先还一次。
+    """
+    p = _persist_path()
+    if not p or not os.path.exists(p):
+        return False
+    with _lock:
+        if _state["borrowed"]:
+            # 本进程**正借着**呢（记录就是我们自己刚写的）⇒ 不是"陈旧记录"，别乱还。
+            return False
+    try:
+        with open(p, encoding="utf-8") as f:
+            d = json.load(f)
+    except Exception:
+        try:
+            os.remove(p)
+        except Exception:
+            pass
+        return False
+    hwnd = int(d.get("hwnd") or 0)
+    rect = list(d.get("rect") or [])
+    forced = d.get("forced")
+    if not hwnd or len(rect) != 4:
+        try:
+            os.remove(p)
+        except Exception:
+            pass
+        return False
+    with _lock:
+        _state.update({"borrowed": True, "hwnd": hwnd, "rect": tuple(rect),
+                       "forced": tuple(forced) if forced else None,
+                       "at": float(d.get("at") or 0), "last_touch": time.time()})
+    log.info("发现上次留下的窗口借用记录（hwnd=%s → %s），现在还原", hwnd, rect)
+    return restore(reason)
+
+
 def rect_of(hwnd: int):
     """窗口当前 rect（拿不到返回 None）。"""
     try:
@@ -78,7 +150,8 @@ def note_original(hwnd: int, rect=None) -> bool:
     """**改窗口之前**记下原始 rect（同一次借用期间不覆盖）。返回是否新借了一次。"""
     if not enabled():
         return False
-    rect = rect or rect_of(hwnd)
+    recover()                       # 先还掉上次进程留下的借用（强杀/崩溃的场景，见 P16②）
+    rect = rect_of(hwnd) or rect    # ⚠️ 以**当下**的 rect 为准：recover 之后窗口可能已经变了
     if not rect:
         return False
     with _lock:
@@ -87,6 +160,7 @@ def note_original(hwnd: int, rect=None) -> bool:
             return False
         _state.update({"borrowed": True, "hwnd": int(hwnd), "rect": tuple(rect),
                        "forced": None, "at": time.time(), "last_touch": time.time()})
+    _persist()
     _start_watcher()
     log.info("借用了微信窗口几何：hwnd=%s 原 rect=%s（用完会自动还原）", hwnd, tuple(rect))
     return True
@@ -98,6 +172,7 @@ def note_forced(rect) -> None:
         if _state["borrowed"]:
             _state["forced"] = tuple(rect) if rect else None
             _state["last_touch"] = time.time()
+    _persist()
 
 
 def touch() -> None:
@@ -142,6 +217,7 @@ def restore(reason: str = "idle") -> bool:
             log.info("不还原微信窗口几何：%s", skipped)
         else:
             _state["restored"] += 1
+    _persist()
     return True
 
 

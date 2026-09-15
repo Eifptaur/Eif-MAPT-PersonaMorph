@@ -172,6 +172,50 @@ _ex = open(os.path.join(ROOT, "config.example.json"), encoding="utf-8").read()
 ok("config.example.json 同步了这个键（示例与默认必须同键）",
    '"restore_window_after_use"' in _ex)
 
+print("\n[六] 更强兜底：落盘 + 下次进程 recover（P16②）· 工具边界（P16①）")
+import json as _json          # noqa: E402
+import tempfile as _tf        # noqa: E402
+_tmp = os.path.join(_tf.mkdtemp(prefix="pm-wb-"), "wb.json")
+_orig_pp = WB._persist_path
+WB._persist_path = lambda: _tmp
+
+f = fresh()
+WB.note_original(777)
+ok("借用时会落盘（供被强杀/崩溃后兜底）", os.path.exists(_tmp))
+with open(_tmp, encoding="utf-8") as _fh:
+    _rec = _json.load(_fh)
+ok("落盘内容＝hwnd ＋ 原 rect", _rec.get("hwnd") == 777 and _rec.get("rect") == [100, 50, 1260, 950], str(_rec))
+WB.note_forced((200, 60, 1360, 960))
+f.rect = (200, 60, 1360, 960)
+WB.restore("t6")
+ok("归还后落盘记录被删掉（不留悬挂）", not os.path.exists(_tmp))
+
+with open(_tmp, "w", encoding="utf-8") as _fh:      # 模拟"上次被强杀，记录留在盘上"
+    _json.dump({"hwnd": 777, "rect": [80, 50, 1500, 850],
+                "forced": [80, 50, 1240, 950], "at": 1.0}, _fh)
+f = fresh(rect=(80, 50, 1240, 950))                 # 窗口正好还停在我们钉的那版
+_ok_rec = WB.recover("判据")
+ok("recover() 把上次留下的借用还回去", _ok_rec is True and len(f.calls) == 1, "calls=%s" % f.calls)
+ok("还原目标＝记录里的原 rect", bool(f.calls) and f.calls[0][1:5] == (80, 50, 1420, 800), str(f.calls))
+ok("recover() 之后记录被删", not os.path.exists(_tmp))
+
+with open(_tmp, "w", encoding="utf-8") as _fh:      # 再放一份陈旧记录
+    _json.dump({"hwnd": 777, "rect": [80, 50, 1500, 850],
+                "forced": [80, 50, 1240, 950], "at": 1.0}, _fh)
+f = fresh(rect=(80, 50, 1240, 950))
+WB.note_original(777, (80, 50, 1240, 950))          # 传进来的 rect 是"被钉住的那版"
+ok("note_original 会先 recover，再以**当下**的 rect 记账（否则会把钉住那版当成原样）",
+   WB.snapshot()["rect"] == (80, 50, 1500, 850), str(WB.snapshot().get("rect")))
+
+with WB._lock:
+    WB._state.update({"borrowed": False, "hwnd": 0, "rect": None, "forced": None})
+WB._persist()                                        # 顺手把真目录里的记录也清掉（判据不留下影响）
+WB._persist_path = _orig_pp
+_tools = open(os.path.join(ROOT, "agent", "tools.py"), encoding="utf-8").read()
+_tseg = _tools[_tools.index("def execute_tool"):]
+ok("工具分发点（execute_tool）结尾会还窗口 —— 机器人持续活动也不会长期钉住",
+   "window_borrow" in _tseg and "restore(" in _tseg)
+
 WB._test_api = None
 print("\n%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

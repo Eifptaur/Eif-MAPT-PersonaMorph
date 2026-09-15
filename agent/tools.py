@@ -1479,4 +1479,12 @@ def execute_tool(defs: list, ctx, name: str, args_json: str):
         _ts.note(name, ok=not (isinstance(res, dict) and res.get("is_error")))
     except Exception:
         pass
+    # ⚠️ 「借来的窗口用完就还」的**操作边界**（2026-09-15 跨机 P16①）：这一层是**所有工具调用的
+    #    唯一分发点**，在这里还窗口 ⇒ 机器人持续活动时也不会把用户的窗口长期钉在 1160×900
+    #    （空闲看门线程仍作兜底）。失败一律吞掉：还窗口不该影响任何工具的结果。
+    try:
+        from . import window_borrow as _wb
+        _wb.restore("工具调用结束")
+    except Exception:
+        pass
     return res
