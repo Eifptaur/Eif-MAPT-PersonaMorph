@@ -649,7 +649,7 @@ th{color:var(--tx2);font-weight:500}
 
     <section id="sec-check" class="card" data-sec>
       <h2>检测中心（代码检测 / 点击测试）</h2>
-      <div class="desc">「代码检测」= 纯代码层检查（编译/依赖/角色卡评估/种子库/提示词静态/保护机制——零风险，实测约 0.5~3 秒）；「点击测试」= 环境/配置/界面自动化共 55 项（全程序内完成，不碰鼠标、不抢前台）。
+      <div class="desc">「代码检测」= 纯代码层检查（编译/依赖/角色卡评估/种子库/提示词静态/保护机制——零风险，实测约 0.5~3 秒）；「点击测试」= 环境/配置/界面自动化共 55 项（全程序内完成，不碰鼠标；只为让目标接受投递消息会短暂置前约 1~3 秒）。
       <div class="btns">
         <button id="codeCheck" class="pri">代码检测</button>
         <button id="codeCheckDeps" class="ghost" title="额外跑依赖版本详细核对（55 项，稍慢）">代码检测＋依赖核对</button>
@@ -1000,7 +1000,7 @@ th{color:var(--tx2);font-weight:500}
       <div class="row"><label>后台能力</label><div class="grow">
         <b id="bgHead">检测中…</b>
         <div id="bgList" class="hint"></div>
-        <div class="hint">这份表是<b>单一事实源</b>（agent/bg_status.py）：写"全程后台"的路径可以不动光标、不抢前台、不要求窗口可见；写"真鼠标"的会动你的光标，勾上下面这个开关就让它们直接跳过并如实告诉你。</div>
+        <div class="hint">这份表是<b>单一事实源</b>（agent/bg_status.py）：写"全程后台"的路径可以不动光标、不要求窗口可见（<b>可能短暂置前约 1~3 秒，然后自动还回</b>）；写"真鼠标"的会动你的光标，勾上下面这个开关就让它们直接跳过并如实告诉你。</div>
       </div></div>
       <div class="row"><label>只走后台</label><input type="checkbox" data-cfg="wechat.background_only">
         <span class="hint">默认关。开了之后：拍一拍 / 引用 / 朋友圈点赞·评论·发表 / UI 标定 一律**跳过并说明原因**，绝不悄悄动你的鼠标（发送文字、图片、表情、切会话、刷朋友圈仍走后台投递，不受影响）。</span></div>
@@ -1073,7 +1073,7 @@ th{color:var(--tx2);font-weight:500}
 
       <div class="sub">③ 视频 / 文件 / 链接</div>
       <div class="row"><label>链接</label><div class="grow"><b>不用下载，直接发</b>
-        <span class="hint">群友发的链接当文本发出去就行——全程后台（投递档，不动鼠标、不抢前台）。</span></div></div>
+        <span class="hint">群友发的链接当文本发出去就行——全程后台（投递档：不动鼠标；可能短暂置前约 1~3 秒后自动还回）。</span></div></div>
       <div class="row"><label>视频/文件下载</label><div class="grow"><b>可用</b>
         <span class="hint">下载到 media/video、media/file；**只下载不发送**（要发出去看下面这个开关）。</span></div></div>
       <div class="row"><label>转发视频/文件</label><input type="checkbox" data-cfg="send.file_forward_optin">
@@ -1331,7 +1331,7 @@ th{color:var(--tx2);font-weight:500}
       <div class="row"><label>每分钟限发</label><div class="grow"><input type="number" min="1" data-cfg="wechat.rate_limit_per_minute"></div></div>
       <div class="row"><label>允许盲试点击</label><input type="checkbox" data-cfg="wechat.allow_click_hunting"><span class="hint">默认关：侧栏图标认不出来时绝不猜位置乱点（只在确认是「发现」时才点）。开了它才会按图标顺序/比例试点几下——试错会点到你其它图标上。</span></div>
       <div class="row"><label>最小化提醒</label><input type="checkbox" data-cfg="wechat.minimize_warning"><span class="hint">勾选=当微信被最小化、而下面「最小化时自己还原」又是关的（那时我抓不到画面、切会话与发送都干不了），就把原因和两条出路说清楚；关掉＝这类情况只静默记一行。</span></div>
-      <div class="row"><label>最小化时自己还原</label><input type="checkbox" data-cfg="wechat.restore_minimized"><span class="hint">勾选=微信被最小化时，程序把它**不激活地**还原到屏幕上再继续（不动鼠标、不抢前台；只是窗口会重新出现）。取消勾选＝最小化时如实停下</span></div>
+      <div class="row"><label>最小化时自己还原</label><input type="checkbox" data-cfg="wechat.restore_minimized"><span class="hint">勾选=微信被最小化时，程序把它**不激活地**还原到屏幕上再继续（不激活、不动鼠标；只是窗口会重新出现）。取消勾选＝最小化时如实停下</span></div>
       <div class="row"><label>会不会跟你抢操作</label><span class="hint">全程只发投递消息：你在别处打字、别的窗口盖住微信，都不影响它干活。只有一种情况会撞车——**你正在同一个会话里切会话或打字**时，它可能和你抢同一步操作；撞了它会用聊天区内容复核，对不上就让步、不硬凑。</span></div>
       <div class="row"><label>群白名单</label>
         <div class="grow">
@@ -2451,7 +2451,7 @@ async function loadStatus(){  try{
             const lv = inp.level ? ('（' + inp.level + '）') : '';
             bh.textContent = inp.touches_cursor
               ? ('当前：真鼠标档' + lv + ' · 会动光标、可能短暂置前')
-              : ('当前：投递档' + lv + ' · 不动光标、不抢前台、不要求可见');
+              : ('当前：投递档' + lv + ' · 不动光标、不要求可见；可能短暂置前约 1~3 秒后自动还回');
             bh.style.color = inp.touches_cursor ? 'var(--warn-tx)' : 'var(--ok-tx)';
           }
           const bg = s.bg || {};
@@ -3971,7 +3971,7 @@ const GUIDES = {
   },
   forward: {
     title: '转发视频/文件：为什么默认关着',
-    intro: '这一步和我们的最高目标（**全程后台、不抢前台**）冲突，所以默认不开。',
+    intro: '这一步和我们的最高目标（**全程后台、不打扰你**）冲突，所以默认不开。',
     steps: [
       '转发文件必须过一次系统的「选择文件」对话框——那一下会**短暂抢一次前台**（你正在别的程序里打字时会被打断）',
       '**链接不受影响**：让机器人直接把链接发出去是纯后台的，不需要这个开关',

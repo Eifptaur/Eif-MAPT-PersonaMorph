@@ -335,6 +335,23 @@ ck("E4 提醒文案告诉用户两条出路（打开自动还原 / 关掉提醒�
 ck("E5 反证：这个键只在函数体里被读，不是散在别处又抄一份默认值",
    _WX_SRC.count('minimize_warning') <= 3, "出现 %d 次" % _WX_SRC.count("minimize_warning"))
 
+print("\n== F. 前台口径（跨机 r15 实测：伪激活会把微信短暂带到前台）==")
+# 对面 r15 实测：投递链的伪激活会让微信**短暂真占前台**（发文字 1.8s、切会话 2.9~3.2s）后自动还回。
+# ⇒ **对外文案不许写"不抢前台"**（那是过头话），必须写成"不动光标 + 可能短暂置前约 1~3 秒后自动还回"。
+#    这条同时满足用户的口径要求：能力边界必须写进**终端用户看得到的地方**。
+_CONSOLE = open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+_REPORT = open(os.path.join(ROOT, "scripts", "collect_report.py"), encoding="utf-8").read()
+_BG = open(os.path.join(ROOT, "agent", "bg_status.py"), encoding="utf-8").read()
+ck("F1 控制台不再写「不抢前台」，改成实测口径", "不抢前台" not in _CONSOLE and "短暂置前" in _CONSOLE)
+ck("F2 体检报告那行也改了（跨机 r15 引用的就是它）",
+   "不抢前台" not in _REPORT and "短暂把微信带到前台" in _REPORT)
+ck("F3 bg_status（单一事实源）写明伪激活代价", "不抢前台" not in _BG and "短暂置前" in _BG)
+_seg_sp = _WX_SRC[_WX_SRC.index("def send_text_posted"):]
+_seg_sp = _seg_sp[:_seg_sp.find("\n    def ", 10)]
+ck("F4 投递发送链进链就 stash 前台", "_stash_fg()" in _seg_sp)
+ck("F5 点完「发送」后立刻盯着还前台（把可见时长压到最短）",
+   '_restore_fg_until("投递发送后"' in _seg_sp)
+
 print("\n[结论] %d 通过 / %d 失败" % (len(OK), len(BAD)))
 if BAD:
     print("失败项：%s" % BAD)
