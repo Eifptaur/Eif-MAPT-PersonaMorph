@@ -231,7 +231,7 @@ class InputBackend:
 
 
 class MessageBackend(InputBackend):
-    """L5：投递消息。不动光标、不抢前台、不需要目标窗口在前台。"""
+    """L5：投递消息。不动光标、不打扰你（可能短暂置前约 1~3 秒后自动还回）、不需要目标窗口在前台。"""
 
     name = LEVEL_MESSAGE
     touches_cursor = False
@@ -313,7 +313,7 @@ class MessageBackend(InputBackend):
         """投递一组**组合键**（例：`[VK_CONTROL, VK_V]` ＝ Ctrl+V）。
 
         ⚠️ 实测（2026-09-13）：**发图要投给渲染子窗 `MMUIRenderSubWindowHW`** —— 投给主窗完全无效；
-        且正因如此，"剪贴板 + 投递 Ctrl+V" 成了**纯后台发图**的通路（不动光标、不抢前台）。
+        且正因如此，"剪贴板 + 投递 Ctrl+V" 成了**纯后台发图**的通路（不动光标、不打扰你（可能短暂置前约 1~3 秒后自动还回））。
         """
         if not hwnd:
             return False, "窗口句柄为空"
@@ -466,5 +466,5 @@ def status(gui=None) -> dict:
         "dpi_mode": DPI_MODE,
         "wechat_main_hwnd": main,
         "wechat_pid": _pid_of(main) if main else 0,
-        "note": "投递档不动光标、不抢前台；真实档用完由 ui_adapt.heal_input() 还原光标",
+        "note": "投递档不动光标、不打扰你（可能短暂置前约 1~3 秒后自动还回）；真实档用完由 ui_adapt.heal_input() 还原光标",
     }

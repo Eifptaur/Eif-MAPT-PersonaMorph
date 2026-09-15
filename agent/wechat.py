@@ -110,7 +110,7 @@ def _restore_fg(hwnd: int = 0, note: str = "", keep: bool = False) -> None:
     **为什么必须有这一步**：用户原话——「你老是把微信切到前台，然后发文件，这不能后台做吗…那个发
     文件框本身也可以被放在后台的，它不是锁定前台的」。第一次量下来（2026-09-16 探针）：
       ① 投递点 📁（档位 `message`，`touches_cursor=False`）→ 前台**没变** ✅；
-      ② 「选择文件」`#32770` 弹出时——**有时不抢前台**（前台仍是用户那个窗口，和他的观察一致），
+      ② 「选择文件」`#32770` 弹出时——**有时前台不变、有时它自己就跳到前台**（2026-09-16 跨机 r15/r16 实测：伪激活会让它短暂置前约 0.6~3 秒，之后由 `_restore_fg_until` 还回）（前台仍是用户那个窗口，和他的观察一致），
          **有时它自己就成前台**（两次实测各见一次，行为不稳定）；
       ③ **关掉对话框之后**前台会落到微信主窗 ✗ —— 当时以为"微信被切到前台"的主因是这一步。
 
@@ -879,7 +879,7 @@ class WeChatAdapter:
                     if found:
                         # ⛔ 2026-09-15 改：原来这里是 `ShowWindow(hwnd, 9)`（SW_RESTORE，**会激活窗口**）
                         #    + `SetForegroundWindow`（**抢前台**）——正是用户报障过的"一打开就把我的微信切出来"。
-                        #    改成**不激活地**还原（不动光标、不抢前台），与三条投递链同一套实现。
+                        #    改成**不激活地**还原（不动光标（伪激活可能短暂置前约 1~3 秒后自动还回）），与三条投递链同一套实现。
                         self._ensure_main_visible(None, int(found[0]))
                         time.sleep(0.3)
                     self._gui = WeChatGUI()
@@ -1139,7 +1139,7 @@ class WeChatAdapter:
 
         ⚠️ 2026-09-16 跨机 r12 事故（对面那台）：跑我们自己的 `一键检验（生成报告）`——那是**自检/诊断**
         工具——投递切会话失败后自动退回真实路径 ⇒ **动了 16 秒光标**（日志：`真实路径结束后已把光标还原到
-        (1763,586)`）。这与最高目标②（不抢鼠标）③（不抢前台）直接冲突，而且是在用户机器上由**只读体检**
+        (1763,586)`）。这与最高目标②（不抢鼠标）③（不打扰你（可能短暂置前约 1~3 秒后自动还回））直接冲突，而且是在用户机器上由**只读体检**
         触发的。⇒ 三条：
           ① 默认 **False**（不退回），要真鼠标必须在 config 里显式打开 `input.allow_real_fallback=true`；
           ② 环境变量 `WXAGENT_REAL_FALLBACK=0` 可以**强制关**（自检/诊断路径用它兜底，无视 config）；
@@ -1160,7 +1160,7 @@ class WeChatAdapter:
         """发送文本到群。返回 (ok, message)。
 
         **投递优先**（2026-09-13）：若会话头三态闸判 `ok`（确认目标会话就是当前打开的），
-        直接走 `send_text_posted`（不动光标、不抢前台、不要求窗口可见）；
+        直接走 `send_text_posted`（不动光标（伪激活可能短暂置前约 1~3 秒后自动还回）、不要求窗口可见）；
         否则（`mismatch`/`no_ref`/抓不到）**退回真实路径**——真实路径会先按名字打开会话，
         顺便把这个尺寸下的会话头学到手，于是**下一次就能走投递**。
         """
@@ -1331,7 +1331,7 @@ class WeChatAdapter:
         return False, "当前会话 OCR=%r（目标 %r）· %s" % (got, want, why)
 
     def _ensure_main_visible(self, gui, main: int) -> bool:
-        """主窗被最小化时**不激活地**还原（不动光标、不抢前台），让"抓图类判据"能工作。
+        """主窗被最小化时**不激活地**还原（不动光标（伪激活可能短暂置前约 1~3 秒后自动还回）），让"抓图类判据"能工作。
 
         2026-09-15 实测（`_scratch/restore_probe.py`）：`ShowWindow(SW_SHOWNOACTIVATE)`
         + `SetWindowPos(…SWP_NOMOVE|NOSIZE|NOZORDER|NOACTIVATE|SHOWWINDOW)` 能把最小化的微信
@@ -1369,7 +1369,7 @@ class WeChatAdapter:
                     gui._update_render_rect()
             except Exception:
                 pass
-            log.info("微信主窗原来是最小化：已**不激活**还原（不动光标、不抢前台）后继续")
+            log.info("微信主窗原来是最小化：已**不激活**还原（不动光标（伪激活可能短暂置前约 1~3 秒后自动还回））后继续")
             return True
         except Exception as e:
             log.warning("无激活还原最小化窗口失败：%s", e)
@@ -1379,7 +1379,7 @@ class WeChatAdapter:
         """**投递版切会话**：库的**只读** OCR 定位会话行 → **投递点击**那一行 → **OCR 按名字确认**已打开。
 
         为什么需要：投递（L5）不切会话；而真实路径（L0）会真点真敲、被别的窗口挡住就失败，实测 `open_chat`
-        三次重试全败、`send_text` 耗 140.7s 才返回失败（2026-09-13）。这条链**全程不碰真实鼠标、不抢前台**。
+        三次重试全败、`send_text` 耗 140.7s 才返回失败（2026-09-13）。这条链**全程不碰真实鼠标、不打扰你（可能短暂置前约 1~3 秒后自动还回）**。
 
         确认判据＝`self.chat_is_open()`（会话列表**绿底高亮行** + 该行名字 OCR，与目标名做容忍比对）。
         ⛔ **不用**库的 `_chat_is_open`：它实测**不稳定**（同一次调用里 True、紧接着外面查却是 False），
@@ -1833,7 +1833,7 @@ class WeChatAdapter:
         """**投递发送**（L5，2026-09-13 实测过的那条链）：投递 WM_CHAR 打字 + 投递点「发送」按钮。
 
         与 `send_text` 的区别（也是它的适用边界）：
-          · 全程**不动光标、不抢前台、不要求窗口可见**；`GetCursorPos` 前后不变；
+          · 全程**不动光标（伪激活可能短暂置前约 1~3 秒后自动还回）、不要求窗口可见**；`GetCursorPos` 前后不变；
           · **前提＝目标会话已经打开** —— 投递不负责切会话（切会话的投递版仍未取证）。
             调用方要么自己确认会话已打开，要么先用别的方式切过去。
         成功判据：**只认 DB 回读**（轮询到新行且内容含本段文本），不信 GUI 返回值。
@@ -1930,7 +1930,7 @@ class WeChatAdapter:
         实测（2026-09-13）：①**必须投给渲染子窗 `MMUIRenderSubWindowHW`**（投主窗完全无效）；
         ②图片消息的 **DB 落库延迟可达 30~60s**（文本只要 2~3s）⇒ 轮询窗口默认给到 60s，
         否则会把"其实发出去了"误判成"没生效"（本轮就因此把一次成功误判成失败）。
-        全程**不动光标、不抢前台**；成功判据**只认 DB 回读**。
+        全程**不动光标（伪激活可能短暂置前约 1~3 秒后自动还回）**；成功判据**只认 DB 回读**。
         """
         from . import input_backend as ib
         from . import clipboard as _cb
@@ -2563,28 +2563,33 @@ class WeChatAdapter:
         return None, "文件卡标题的显著片段没出现在聊天区（%r）" % title[:18]
 
     def _row_time_conflict(self, chat_id: str, gui=None):
-        """**活动行时间**与目标会话"最后一条消息时间"是否**对不上** ⇒ `(conflict, 说明)`。
+        """**活动行时间**与目标会话"最后一条消息时间"是否**对不上** ⇒ `(conflict, 说明, decided)`。
 
         ⚠️ 为什么必须有（跨机 r14 的硬证据）：那台机器上 filehelper 与「余命十日」的**首条内容逐字相同**
         （用户确实把同一批东西转进了两个会话）⇒ 内容级闸**同时放行两个目标**（r13 实测：同一屏
         `filehelper=True` 且 `余命十日=True`）✗。而**活动行（绿底行）只有一个**——用"活动行显示的时间
         是否等于目标最后一条消息时间"就能把两者分开（那台实测：活动行 02:33＝余命十日、filehelper 是 02:11）。
-        读不到时间/目标是昨天的消息 ⇒ 返回 `(False, "")`（不拦，交给其它档）。
+
+        ⚠️ **第三个返回值 `decided` 是 2026-09-16 r16 跨机报告逼出来的**：那台的活动行时间戳 OCR
+        **时好时坏**（同一行 y=141，r15 读到过 2:52、r16 的 B 批读不到）⇒ 读不到时这条判据**给不出结论**，
+        而如果此时还按"内容像就放行"，**双放行会原样复现**（他们实测 B 批：读不到 ⇒ filehelper=True 且
+        余命十日=True ✗）。⇒ `decided=False` 表示"没法判"，由调用方决定要不要 fail-closed
+        （正对"发错会话"的历史事故面，所以内容级那一条**必须**要求 decided）。
         """
         try:
             from . import chat_ocr as _co
             _lt = self._last_time_hhmm(chat_id)
             if not _lt:
-                return False, ""
+                return False, "目标最后一条消息不是今天的（列表那行不显示 HH:MM，无从比对）", False
             img = _co.capture_best(gui=gui or self._get_gui(), frames=2)
             _ht, _hy = _co.highlight_time(img) if img is not None else ("", None)
             if not _ht:
-                return False, ""
+                return False, "活动行时间戳 OCR 没读出来（判据不可用）", False
             if self._norm_hhmm(_ht) != self._norm_hhmm(_lt):
-                return True, "活动行（y=%s）时间 %s ≠ 目标最后一条消息时间 %s" % (_hy, _ht, _lt)
-            return False, ""
+                return True, "活动行（y=%s）时间 %s ≠ 目标最后一条消息时间 %s" % (_hy, _ht, _lt), True
+            return False, "", True
         except Exception:
-            return False, ""
+            return False, "判据异常", False
 
     def chat_identity_ok(self, chat_id: str, gui=None):
         """**内容级**身份核对：当前聊天区里应看得到目标会话最近若干条文本里的**任意一条**。
@@ -2619,10 +2624,21 @@ class WeChatAdapter:
                     if _co.content_match(pane, nd):
                         # ⚠️ 内容像还不够：**活动行时间必须与目标最后一条消息时间一致**（跨机 r14 的硬证据：
                         #    两个会话内容逐字相同时，内容闸会同时放行两个目标 ⇒ 用"只有一个活动行"把它分开）。
-                        _cf, _cfwhy = self._row_time_conflict(chat_id, gui=gui)
+                        _cf, _cfwhy, _cdec = self._row_time_conflict(chat_id, gui=gui)
                         if _cf:
                             return False, ("聊天区内容像目标（%r…），但**活动行时间对不上**（%s）⇒ 判否："
                                            "同屏两个会话内容雷同时，以活动行为准" % (nd[:16], _cfwhy))
+                        if not _cdec:
+                            # ⛔ 2026-09-16 r16：**判不了就不放行**——但只在"本该判得了"的时候。
+                            #    跨机实测：那台的活动行时间戳时好时坏，读不到时"内容像"对同屏两个会话
+                            #    同时成立 ⇒ 双放行复现（正对"发错会话"的事故面）⇒ **目标最后一条是今天的
+                            #    消息**（列表那行本该显示 HH:MM）时，读不出就等于判不了 ⇒ 判否。
+                            #    若目标最后一条**不是今天**（行上显示"昨天18:xx"），本来就没有 HH:MM 可对，
+                            #    这是**已知局限**（日期标签还没做比对），此时不因它拦，交给其它档。
+                            if self._last_time_hhmm(chat_id):
+                                return False, ("聊天区内容像目标（%r…），但**活动行时间戳读不出**（%s）⇒ 判否："
+                                               "同屏内容雷同时内容这一条没有区分力，必须由活动行时间定论"
+                                               % (nd[:16], _cfwhy))
                         return True, "聊天区里认出了目标会话最近的内容（%r…）" % nd[:16]
                 elif nn and nn in pane_n and not _co.low_entropy(nn) and len(nn) >= 4:
                     # ⚠️ 短指纹档也要两道下界（2026-09-16 跨机 r10 的 fail-open 教训）：
@@ -3026,7 +3042,7 @@ class WeChatAdapter:
         except Exception:
             return []
 
-    # ── 朋友圈：投递档基础设施（不动光标 / 不抢前台 / 不要求可见）────────────
+    # ── 朋友圈：投递档基础设施（不动光标 / 不打扰你（可能短暂置前约 1~3 秒后自动还回） / 不要求可见）────────────
     def _bg_backend(self):
         """取当前输入后端；**不是投递档就返回 (None, 原因)**。
 
@@ -3369,7 +3385,7 @@ class WeChatAdapter:
             return False, str(e)
 
     def moments_open(self) -> tuple:
-        """打开朋友圈：**投递档优先**（不动光标、不抢前台、不要求可见）。
+        """打开朋友圈：**投递档优先**（不动光标（伪激活可能短暂置前约 1~3 秒后自动还回）、不要求可见）。
 
         投递档失败才退回真鼠标路径，并在返回消息里写明"投递失败后走了真鼠标档"——
         最高目标里那句"不许悄悄降级"，落点就是这里。
@@ -3464,7 +3480,7 @@ class WeChatAdapter:
         return None
 
     def moments_scroll(self, direction: int = 1, times: int = 1) -> tuple:
-        """滚动朋友圈：**投递档优先**（不动光标、不抢前台）；失败才退回真鼠标档并写明。"""
+        """滚动朋友圈：**投递档优先**（不动光标（伪激活可能短暂置前约 1~3 秒后自动还回））；失败才退回真鼠标档并写明。"""
         try:
             from . import input_backend as _ib
             if not _ib.select_backend().touches_cursor:

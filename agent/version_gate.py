@@ -189,7 +189,7 @@ def _pop_ui(item: dict) -> dict:
     """新开一张单子时，**Persona Morph 自己把弹窗切出来**（⑦ 用户口径）。
 
     三条纪律：①只在"新开单"时弹（同一对版本只问一次，所以不会反复弹）；
-    ②**不抢前台**（`notify_ui` 抬起后立刻把前台还给原窗口）；
+    ②**不打扰你（可能短暂置前约 1~3 秒后自动还回）**（`notify_ui` 抬起后立刻把前台还给原窗口）；
     ③**绝不能挡住调用方** —— 这个函数会开子进程/等窗口，最坏几秒，所以在后台线程里做，
     失败只写日志（弹不出来不影响开单、更不影响发送闸门）。
     """
@@ -198,7 +198,7 @@ def _pop_ui(item: dict) -> dict:
             from . import notify_ui as _nu
             rep = _nu.pop_decision_ui()
             # 兜底（⑦d）：控制台**开不出来**时（WebView2 起不来、没桌面会话、被策略挡住），
-            # 至少让任务栏气泡说一句 —— 不抢前台、不弹窗，点气泡才去开控制台。
+            # 至少让任务栏气泡说一句 —— 不打扰你（可能短暂置前约 1~3 秒后自动还回）、不弹窗，点气泡才去开控制台。
             if not rep.get("ok"):
                 try:
                     from . import tray as _tray
@@ -227,7 +227,7 @@ def _pop_ui(item: dict) -> dict:
 def pending(capability: str = "send", wechat: str = "", adapter: str = "") -> dict:
     """返回 `{needed, item, created, status}`：门没过就保证有一张待决单（幂等）。
 
-    **新开单**时顺手让 Persona Morph 自己把弹窗切出来（不抢前台，见 `_pop_ui`）。
+    **新开单**时顺手让 Persona Morph 自己把弹窗切出来（不打扰你（可能短暂置前约 1~3 秒后自动还回），见 `_pop_ui`）。
     """
     st = check(capability, wechat=wechat, adapter=adapter)
     if st.get("level") == "ok" and st.get("allow"):
