@@ -638,9 +638,10 @@ class WeChatAdapter:
                     ref = CB(cb)
                     u.EnumWindows(ref, 0)
                     if found:
-                        u.ShowWindow(int(found[0]), 9)
-                        time.sleep(0.5)
-                        u.SetForegroundWindow(int(found[0]))
+                        # ⛔ 2026-09-15 改：原来这里是 `ShowWindow(hwnd, 9)`（SW_RESTORE，**会激活窗口**）
+                        #    + `SetForegroundWindow`（**抢前台**）——正是用户报障过的"一打开就把我的微信切出来"。
+                        #    改成**不激活地**还原（不动光标、不抢前台），与三条投递链同一套实现。
+                        self._ensure_main_visible(None, int(found[0]))
                         time.sleep(0.3)
                     self._gui = WeChatGUI()
                 except Exception:
@@ -1064,7 +1065,8 @@ class WeChatAdapter:
                            0x0002 | 0x0001 | 0x0004 | 0x0010 | 0x0040)   # NOMOVE|NOSIZE|NOZORDER|NOACTIVATE|SHOWWINDOW
             time.sleep(0.6)
             try:
-                gui._update_render_rect()
+                if gui is not None:
+                    gui._update_render_rect()
             except Exception:
                 pass
             log.info("微信主窗原来是最小化：已**不激活**还原（不动光标、不抢前台）后继续")

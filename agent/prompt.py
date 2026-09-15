@@ -210,12 +210,25 @@ def _mod_on(mid: str) -> bool:
         return True
 
 
+def role_text_of(cfg: dict | None = None) -> str:
+    """**取"当前生效的角色卡正文"的唯一实现**（留空＝内置小鲸鱼）。
+
+    2026-09-15 收口：这段回落原来在两处各写了一遍——`build_system_prompt()` 与 `webui` 的
+    「角色卡行为推荐」；后者还多读了一个**从来没被写入过**的 `persona.prefer_key`
+    （`config.py` 里连默认值都没有）⇒ 同一语义两份实现。今天两者都回落成小鲸鱼，所以看不出问题；
+    但只要将来有人写一次 `prefer_key`，**推荐结果就会与真正生效的卡静默不一致**。
+    """
+    c = cfg if cfg is not None else (get_config().get("persona", {}) or {})
+    t = str(c.get("role_text") or "").strip()
+    if not t:
+        t = str((PERSONAS.get("xiaojingyu") or {}).get("text") or "")
+    return t
+
+
 def build_system_prompt(persona: dict | None = None) -> str:
     cfg = persona or get_config().get("persona", {})
-    role_text = str(cfg.get("role_text") or "").strip()
-    # 留空 = 使用内置"小鲸鱼"角色卡（完整保留自 qq-agent 的默认人设）
-    if not role_text:
-        role_text = str(PERSONAS.get("xiaojingyu", {}).get("text", "") or "")
+    # 留空 = 使用内置"小鲸鱼"角色卡（完整保留自 qq-agent 的默认人设）——回落逻辑只有一处
+    role_text = role_text_of(cfg)
     parts = [
         "你是「%s」，一个混在微信群里的普通群友（不是助手、不是客服）。你的所有行为都通过工具完成，发言必须像真人。" % str(cfg.get("bot_name") or "小鲸鱼"),
         "",
