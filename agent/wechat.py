@@ -7,6 +7,11 @@
 from __future__ import annotations
 
 import base64
+import ctypes          # ⚠️ 必须是**模块级**：`_wait_dialog_gone` / `_restore_fg` / `_fg_now` / 对话框
+                       #    消息驱动（WM_SETTEXT/BM_CLICK）都在模块级函数里用它。原来只有函数内局部
+                       #    `import ctypes as _ct`，于是这些函数**每次都在 except 里静默失败**
+                       #    （2026-09-16 实测抓到：`name 'ctypes' is not defined`）——"还前台从来没生效过"
+                       #    的真因就是这一行缺失，与 Windows 的前台锁无关。
 import html
 import logging
 import os
@@ -80,34 +85,42 @@ def _fg_before_close() -> int:
     return _fg_now()
 
 
-def _wait_dialog_gone(hwnd: int, timeout: float = 1.5) -> None:
-    """等某个对话框**真的消失**（最多 `timeout` 秒）。
+def _wait_dialog_gone(hwnd: int, timeout: float = 1.5) -> bool:
+    """等某个对话框**真的消失**（最多 `timeout` 秒）；返回是否真的没了。
 
     ⚠️ 为什么（2026-09-16 实测）：`PostMessage(WM_CLOSE)` 是**异步**的。原来关完睡 0.25s 就还前台，
     可那时框往往还没死、Windows 随后又把它的 owner（微信）激活 ⇒ 我们那一枪白还（实测两次都这样）。
+    ⚠️ 返回值（2026-09-16 加）：调用方要靠它决定"框没了就立刻还前台"还是"先补一枪回车再还"。
     """
     try:
         u = ctypes.windll.user32
         dl = time.time() + max(0.1, float(timeout))
         while time.time() < dl:
             if not u.IsWindow(ctypes.c_void_p(int(hwnd))):
-                return
+                return True
             time.sleep(0.05)
+        return not bool(u.IsWindow(ctypes.c_void_p(int(hwnd))))
     except Exception:
-        pass
+        return False
 
 
-def _restore_fg(hwnd: int = 0, note: str = "") -> None:
+def _restore_fg(hwnd: int = 0, note: str = "", keep: bool = False) -> None:
     """把前台还回"**打开对话框之前**那一个"（优先级：传入的 hwnd → `_FG_STASH` → 当前前台）。
 
-    **为什么必须有这一步（2026-09-16 探针实测定位）**：用户原话——「你老是把微信切到前台，然后发
-    文件，这不能后台做吗…那个发文件框本身也可以被放在后台的，它不是锁定前台的」。量下来：
+    **为什么必须有这一步**：用户原话——「你老是把微信切到前台，然后发文件，这不能后台做吗…那个发
+    文件框本身也可以被放在后台的，它不是锁定前台的」。第一次量下来（2026-09-16 探针）：
       ① 投递点 📁（档位 `message`，`touches_cursor=False`）→ 前台**没变** ✅；
       ② 「选择文件」`#32770` 弹出时——**有时不抢前台**（前台仍是用户那个窗口，和他的观察一致），
          **有时它自己就成前台**（两次实测各见一次，行为不稳定）；
-      ③ **关掉对话框之后**前台会落到微信主窗 ✗ —— 「微信被切到前台」的观感主要来自这一步。
-    ⇒ 处置：**开对话框前 `_stash_fg()` 记一次**，关完 `_restore_fg()` 还回去；绝不还原到一个
-    `#32770`（对话框自身）或已死的窗口。光标本来没动（投递档），无需处理。
+      ③ **关掉对话框之后**前台会落到微信主窗 ✗ —— 当时以为"微信被切到前台"的主因是这一步。
+
+    ⚠️ **用户 2026-09-16 当面看屏幕定位到了真正抢前台的那一步**（原话：「点击『文件』按钮没有到前台，
+    打开文件窗口也没有到前台，但是**当你粘贴输入那一串字符的时候，它到前台了**。看来你只需要让它
+    粘贴完，**立马缩回后台**就行」）⇒ 处置从"关完再还"扩成"**写完文件名就立刻还一次**"（`keep=True`，
+    保留 stash 给后面几步用）＋ 关完再还一次（清 stash）。「打开」走 UIA `Invoke`，后台即可，不需要前台。
+
+    `keep=True`（2026-09-16 加）＝**不只还前台、还留着 stash**：一笔发文件要走"写名字 → 点打开 →
+    等框关"三段，每段都可能把前台抢走，所以这段流程里每一处都还得还一次；只有最后那一次清 stash。
     """
     try:
         u = ctypes.windll.user32
@@ -139,15 +152,105 @@ def _restore_fg(hwnd: int = 0, note: str = "") -> None:
                 u.AttachThreadInput(our_tid, cur_tid, False)
         except Exception:
             pass
-        log.info("关「选择文件」对话框会把微信顶到前台 ⇒ 尝试还给 %s（结果=%s，AttachThreadInput 绕法）%s",
-                 h, ok_ret, ("（" + note + "）") if note else "")
+        log.info("还前台（%s）：%s → %s（结果=%s，AttachThreadInput 绕法）",
+                 note or "未注明", cur, h, ok_ret)
     except Exception:
         pass
     finally:
-        try:
-            _FG_STASH.update({"hwnd": 0, "at": 0.0})
-        except Exception:
-            pass
+        if not keep:                      # ⚠️ keep=True ⇒ 留着 stash（这一笔还没走完，后面几步还要用）
+            try:
+                _FG_STASH.update({"hwnd": 0, "at": 0.0})
+            except Exception:
+                pass
+
+
+def _restore_fg_until(note: str = "", timeout: float = 2.5, keep: bool = True,
+                      gap: float = 0.18) -> bool:
+    """在 `timeout` 秒内**反复**把前台还回 stash 那一个，直到真的回到它为止。
+
+    ⚠️ 为什么不能只还一枪（2026-09-16 实测时间线）：对话框的激活是**异步**的——`SetValue` 写文件名的
+    那一刻前台还没变，**约 0.3~0.5 秒之后**那个 `#32770` 才跳到前台（我们那条 0.1s 采样的时间线
+    10.39s 才看到它）。⇒ "写完立刻还"那一枪必然打空（实测日志里连一条"还前台"都没有：函数的
+    `cur == h` 提前返回了）。用户口径是「**粘贴完，立马缩回后台**」⇒ 这里改成**盯着还**：
+    只要前台不是 stash 那一个就再还一次，回到它就停（最多 `timeout` 秒）。
+    """
+    h = int(_FG_STASH.get("hwnd") or 0)
+    if not h:
+        return False
+    deadline = time.time() + max(0.2, float(timeout))
+    tries = 0
+    while time.time() < deadline:
+        if int(_fg_now() or 0) == h:
+            break
+        tries += 1
+        _restore_fg(h, note, keep=keep)
+        time.sleep(gap)
+    ok = (int(_fg_now() or 0) == h)
+    log.info("还前台收尾（%s）：试了 %d 次，最终前台=%s %s",
+             note or "未注明", tries, _fg_now(), "✅ 已回到用户窗口" if ok else "✗ 没能回到")
+    return ok
+
+
+# —— 「选择文件」对话框：**不进前台**地写文件名 / 点打开（2026-09-16 用户当面定位后加）——
+# 用户原话：「点击『文件』按钮没有到前台，打开文件窗口也没有到前台，但是**当你粘贴输入那一串字符的
+# 时候，它到前台了**。看来你只需要让它**粘贴完，立马缩回后台**就行」。
+# ⚠️ 但"还回去"这条路**走不通**：后台进程调 `SetForegroundWindow` 会被系统直接拒（2026-09-16 实测
+#    连 AttachThreadInput 绕法也 False，3 秒盯着还也没用）⇒ 正解是**根本不让它到前台**：
+#    文件对话框的文件名框是标准 Edit（控件 id 1148）、「打开」是标准按钮（id 1=IDOK），
+#    `WM_SETTEXT` / `BM_CLICK` 都是**消息**，投递即可，不改变前台、不抢焦点。
+WM_SETTEXT = 0x000C
+WM_GETTEXT = 0x000D
+BM_CLICK = 0x00F5
+DLG_ID_FILENAME = 1148      # Vista+ 通用「打开/选择文件」对话框的文件名编辑框
+DLG_ID_OK = 1               # 「打开」按钮（IDOK）
+
+
+def _dlg_child(hwnd: int, cid: int) -> int:
+    """对话框里某个控件 id 的子窗口句柄（拿不到给 0）。"""
+    try:
+        u = ctypes.windll.user32
+        u.GetDlgItem.restype = ctypes.c_void_p
+        return int(u.GetDlgItem(ctypes.c_void_p(int(hwnd)), int(cid)) or 0)
+    except Exception:
+        return 0
+
+
+def _fill_dialog_name(hwnd: int, path: str) -> tuple:
+    """把路径**投递**进文件对话框的文件名框（`WM_SETTEXT`）并回读确认。返回 `(ok, 说明)`。
+
+    不做的事：不 `SetFocus`、不 `SetForegroundWindow`、不动光标、不发键击 —— 所以**前台不会变**。
+    控件 id 不是 1148（老版本 / 别的实现）或写不进去时返回 False，由调用方退回 UIA 老路。
+    """
+    try:
+        u = ctypes.windll.user32
+        e = _dlg_child(int(hwnd), DLG_ID_FILENAME)
+        if not e:
+            return False, "文件名框（id=%d）没找到" % DLG_ID_FILENAME
+        want = str(path)
+        u.SendMessageW.restype = ctypes.c_void_p
+        u.SendMessageW(ctypes.c_void_p(e), WM_SETTEXT, 0, ctypes.c_wchar_p(want))
+        buf = ctypes.create_unicode_buffer(len(want) + 8)
+        u.SendMessageW(ctypes.c_void_p(e), WM_GETTEXT, len(buf), buf)
+        got = str(buf.value or "")
+        if got.strip().lower() != want.strip().lower():
+            return False, "写进去回读不一致（读到 %r）" % got[:60]
+        return True, "WM_SETTEXT 写文件名（不进前台）"
+    except Exception as e:
+        return False, "WM_SETTEXT 写文件名异常：%s" % e
+
+
+def _click_dialog_open(hwnd: int) -> tuple:
+    """**投递**点文件对话框的「打开」（`BM_CLICK`，id=1）。返回 `(ok, 说明)`；同样不进前台。"""
+    try:
+        u = ctypes.windll.user32
+        b = _dlg_child(int(hwnd), DLG_ID_OK)
+        if not b:
+            return False, "「打开」按钮（id=%d）没找到" % DLG_ID_OK
+        u.SendMessageW.restype = ctypes.c_void_p
+        u.SendMessageW(ctypes.c_void_p(b), BM_CLICK, 0, 0)
+        return True, "BM_CLICK 点「打开」（不进前台）"
+    except Exception as e:
+        return False, "BM_CLICK 点「打开」异常：%s" % e
 
 
 def _close_file_dialog(hwnd: int) -> None:
@@ -2150,7 +2253,15 @@ class WeChatAdapter:
                     pass
                 return False, "文件对话框里找不到文件名输入框"
             try:
-                target.GetValuePattern().SetValue(os.path.abspath(local_path))
+                _okw, _whyw = _fill_dialog_name(int(hwnd), os.path.abspath(local_path))
+                if _okw:
+                    log.info("发文件：%s", _whyw)
+                    # 进了这条就不需要"还前台"——前台压根没变（下面那两枪留着兜底）
+                else:
+                    log.info("发文件：%s ⇒ 退回 UIA 写文件名（写完盯着还前台）", _whyw)
+                    target.GetValuePattern().SetValue(os.path.abspath(local_path))
+                    time.sleep(0.15)
+                    _restore_fg_until("写完文件名（粘贴那一步）", timeout=2.5, keep=True)
             except Exception as e:
                 return False, "写文件名失败：%s" % e
             btn = None
@@ -2159,7 +2270,10 @@ class WeChatAdapter:
                     btn = c
                     break
             try:
-                if btn is not None:
+                _oko, _whyo = _click_dialog_open(int(hwnd))
+                if _oko:
+                    log.info("发文件：%s", _whyo)
+                elif btn is not None:
                     btn.GetInvokePattern().Invoke()
                 else:
                     target.SendKeys("{Enter}")
@@ -2168,13 +2282,20 @@ class WeChatAdapter:
                     target.SendKeys("{Enter}")
                 except Exception as e2:
                     return False, "点「打开」失败：%s" % e2
-            time.sleep(2.0)
-            try:
-                if win32gui.IsWindow(hwnd) and win32gui.IsWindowVisible(hwnd):
+            # ⚠️ 顺序很重要（2026-09-16 时间线实测）：原来是"先 sleep 2.0 再看框关没关、最后才还前台"
+            #    ⇒ 用户的窗口要多丢**约 2 秒**前台。改成：**框一消失就立刻还**（`_wait_dialog_gone` 是
+            #    0.05s 轮询），实在没关（老版本要点一次回车）才走补回车那条路。
+            if _wait_dialog_gone(int(hwnd), 4.0):
+                _restore_fg_until("对话框关闭后", timeout=2.5, keep=False)
+                time.sleep(0.6)
+            else:
+                try:
                     target.SendKeys("{Enter}")      # 有些版本要点一次回车才关
-                    time.sleep(1.5)
-            except Exception:
-                pass
+                except Exception:
+                    pass
+                _wait_dialog_gone(int(hwnd), 2.0)
+                _restore_fg_until("补回车后", timeout=2.5, keep=False)
+                time.sleep(0.4)
 
             # ④ 补一次「发送」（文件此时挂在输入框里当草稿）
             send_pt = (int(r[0]) + int(rw * 0.932), int(r[1]) + int(rh * 0.945))
