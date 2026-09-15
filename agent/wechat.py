@@ -1626,6 +1626,12 @@ class WeChatAdapter:
         返回 `(ok, 说明)`；拿不到内容级正面证据就不算成功（fail-closed）。
         """
         from . import input_backend as ib
+        # ⚠️ 2026-09-16 晚（时间线实测）：**这条链会抢前台**——开搜索浮层、往浮层投字、点结果行，
+        #    实测把微信顶到前台**而且不还**（0.1s 采样：浮层 1.63s + 主窗 8.96s，全程没还过）。
+        #    ⇒ 进这条路先把用户当时的前台记下来，出去时（含异常路径，见函数末尾的 finally）一律还回去。
+        #    这也很关键：调用方（发文件）随后会自己 `_stash_fg()` 记"用户窗口"——这里先还回去，
+        #    它记到的才是**用户的窗口**，而不是被这条链顶到前面的微信。
+        _stash_fg()
         try:
             gui = gui or self._get_gui()
             name = name or self.display_name(chat_id) or chat_id
@@ -1763,6 +1769,13 @@ class WeChatAdapter:
             return bool(idn is None), "点过搜索结果了，但内容复核={} （{}）".format(idn, idn_why)
         except Exception as e:
             return False, "搜索框切会话异常：%s" % e
+        finally:
+            # ⚠️ 这条链会抢前台（开浮层/投字/点行，实测浮层 1.63s + 主窗 8.96s 且不还）⇒ 出去一律还回去。
+            #    成功路径也照还：切完会话不需要占着前台。
+            try:
+                _restore_fg_until("切会话·搜索路线", timeout=2.5, keep=False)
+            except Exception:
+                pass
 
     def send_text_posted(self, text: str, chat_id: str = "filehelper", wait_s: float = 15.0,
                          allow_no_ref: bool = False):
