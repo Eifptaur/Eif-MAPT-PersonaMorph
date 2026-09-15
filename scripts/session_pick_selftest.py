@@ -468,5 +468,32 @@ try:
 except Exception as _e4:
     ok("按坐标读时间戳判据可跑", False, str(_e4)[:80])
 
+print("── L5. 第四条独立证据：会话头标题带 OCR（跨机 r20：白字绿底行**持续**读不出 ⇒ 前三档全空）──")
+_w5 = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
+_seg5 = _w5[_w5.index("def chat_is_open"):]
+_seg5 = _seg5[:_seg5.find("\n    def ", 10)]
+ok("chat_is_open 接了标题带 OCR 这一档（源码）",
+   "header_text(" in _seg5 and "matches(_tt, want)" in _seg5)
+ok("给不出证据时不误判（读不到就往下走）", "if _tt and _co2.matches(_tt, want)" in _seg5)
+try:
+    from agent import chat_ocr as _co5
+    from agent import wechat as _W5b
+    _ad5 = _W5b.WeChatAdapter.__new__(_W5b.WeChatAdapter)
+    _ad5.current_chat_name = lambda gui=None: ("", "读不出")
+    _ad5.display_name = lambda cid: "余命十日"
+    _cap5, _ht5 = _co5.capture_best, _co5.header_text
+    _co5.capture_best = lambda gui=None, frames=2: object()
+    _co5.header_text = lambda img=None, gui=None, zoom=2: "O余命十日"
+    ok("标题带读到目标名 ⇒ 判 True（**这正是对面手工核的那条**）",
+       _ad5.chat_is_open("x", gui=object(), name="余命十日")[0] is True,
+       str(_ad5.chat_is_open("x", gui=object(), name="余命十日")))
+    _co5.header_text = lambda img=None, gui=None, zoom=2: ""
+    ok("标题带读不出 ⇒ 不误判（仍判否）", _ad5.chat_is_open("x", gui=object(), name="余命十日")[0] is False)
+    _co5.header_text = lambda img=None, gui=None, zoom=2: "O别人"
+    ok("标题带是别的会话 ⇒ 判否", _ad5.chat_is_open("x", gui=object(), name="余命十日")[0] is False)
+    _co5.capture_best, _co5.header_text = _cap5, _ht5
+except Exception as _e5c:
+    ok("标题带这一档可测", False, str(_e5c)[:80])
+
 print("\n%d/%d 通过" % (PASS, PASS + FAIL))
 sys.exit(1 if FAIL else 0)

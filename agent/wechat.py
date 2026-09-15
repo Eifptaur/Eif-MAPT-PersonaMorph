@@ -1328,6 +1328,20 @@ class WeChatAdapter:
                 return True, _why3
         except Exception:
             pass
+        # ④ 第四条独立证据：**会话头标题带的 OCR**（不依赖活动行时间戳、也不依赖指纹参照）。
+        #    ⚠️ 2026-09-16 r21（跨机 r20 的 live 现场）：那台"白字绿底的活动行"**持续多帧读不出**
+        #    （连试 5 帧 + 等 75s 都不行）⇒ ①②③全给不出证据 ⇒ 只能走人工确认通道。而他们自己是用
+        #    **会话头标题 OCR**（裁图读到 'O余命十日'）核的 ⇒ 这条本来就该在产品里当一档。
+        #    本机标题是浅灰细字、OCR 常给空串 ⇒ 给不出证据就往下走（不误判）。
+        try:
+            from . import chat_ocr as _co2
+            _im4 = _co2.capture_best(gui=gui or self._get_gui(), frames=2)
+            _tt = _co2.header_text(_im4) if _im4 is not None else ""
+            if _tt and _co2.matches(_tt, want):
+                return True, ("会话头标题带 OCR=%r 与目标 %r 匹配（不依赖活动行时间/指纹参照）"
+                              % (_tt[:16], want))
+        except Exception:
+            pass
         return False, "当前会话 OCR=%r（目标 %r）· %s" % (got, want, why)
 
     def _ensure_main_visible(self, gui, main: int) -> bool:
