@@ -660,10 +660,17 @@ class WeChatAdapter:
 
     def _limit_wechat_window(self, gui) -> None:
         """微信窗口强制限位：把主窗 MoveWindow 到目标尺寸（1160×780，小屏自适应），
-        避免 wechatauto 因"当前尺寸与校准差异过大(>15%)"而忽略布局（坐标漂移根源）。"""
+        避免 wechatauto 因"当前尺寸与校准差异过大(>15%)"而忽略布局（坐标漂移根源）。
+
+        ⚠️ **借来的窗口要用完还**（2026-09-15 用户拍板方案 A）：这里改的是**用户的窗口**，
+        以前改了就再也不还（他手动拉过的尺寸会被我们钉死，他问过"不是说要限位吗，为什么我的
+        窗口还是被改了"）⇒ 现在改之前把原 rect 交给 `window_borrow` 记账，空闲一会儿自动还原；
+        窗口如果被用户中途自己动过，以他为准、不还。可关：`ui.restore_window_after_use=False`。
+        """
         try:
             import ctypes
             from ctypes import wintypes
+            from . import window_borrow as _wb
             hwnd = int(gui.main_hwnd)
             u = ctypes.windll.user32
             r = wintypes.RECT()
@@ -674,8 +681,12 @@ class WeChatAdapter:
             # 导致"发现/朋友圈"等不可见——900 高保证全部侧栏图标常显；小屏按比例收缩但不低于 820）
             tw = 1160 if sw >= 1366 else int(sw * 0.82)
             th = min(900, max(820, sh - 100))
+            _wb.touch()
             if r.right - r.left != tw or r.bottom - r.top != th:
-                u.MoveWindow(hwnd, r.left, max(40, r.top), tw, th, True)
+                _wb.note_original(hwnd, (r.left, r.top, r.right, r.bottom))
+                _ny = max(40, r.top)
+                u.MoveWindow(hwnd, r.left, _ny, tw, th, True)
+                _wb.note_forced((r.left, _ny, r.left + tw, _ny + th))
                 time.sleep(0.4)
                 try:
                     gui.refresh()

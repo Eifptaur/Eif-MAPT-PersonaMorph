@@ -414,6 +414,11 @@ def select_backend(cfg: dict | None = None, gui=None) -> InputBackend:
     默认值仍是 60 / True（不改默认行为）。
     """
     c = cfg if cfg is not None else get_config()
+    try:                       # 活动信号：每次取后端＝马上要做一次输入动作（窗口借用会因此延后归还）
+        from . import window_borrow as _wb
+        _wb.touch()
+    except Exception:
+        pass
     icfg = c.get("input") or {}
     want = str(icfg.get("backend", "auto")).lower()
     try:
@@ -438,6 +443,11 @@ _BACKEND: InputBackend | None = None
 def active(gui=None, refresh: bool = False) -> InputBackend:
     """取当前生效的后端（进程内缓存；控制台改配置后传 refresh=True 重选）。"""
     global _BACKEND
+    try:                       # 活动信号（与 select_backend 同一目的：有输入动作就别急着还窗口）
+        from . import window_borrow as _wb
+        _wb.touch()
+    except Exception:
+        pass
     if _BACKEND is None or refresh or isinstance(_BACKEND, RealInputBackend):
         _BACKEND = select_backend(gui=gui)
         if isinstance(_BACKEND, RealInputBackend):
