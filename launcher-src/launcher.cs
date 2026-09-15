@@ -532,6 +532,13 @@ namespace WxLauncher
                 Console.WriteLine(Ui.DlgProbe());
                 return;
             }
+            //   --webview2probe  ⑤：打印运行库版本 / 引导器在不在 / 默认浏览器（机械判据只认这三行 ASCII）
+            if (args != null && args.Length > 0 && args[0] == "--webview2probe")
+            {
+                try { Console.OutputEncoding = System.Text.Encoding.UTF8; } catch { }
+                Console.WriteLine(WebView2Guide.Probe(Path.GetDirectoryName(Application.ExecutablePath)));
+                return;
+            }
             if (args != null && args.Length > 0 && args[0] == "--ask")
             {
                 // 快捷方式询问窗（独立进程）：监控 3210 控制台，控制台关闭时自动关闭
@@ -927,6 +934,38 @@ namespace WxLauncher
                 bool has = File.Exists(Path.Combine(dir, "lib", "Microsoft.Web.WebView2.WinForms.dll"))
                         || File.Exists(Path.Combine(dir, "Microsoft.Web.WebView2.WinForms.dll"));
                 if (!has) { NoteFallback(dir, "缺 lib\\Microsoft.Web.WebView2.WinForms.dll"); FallbackBrowser(url); return; }
+                // ⑤（2026-09-15）：**运行库**不在时不要硬起窗口（初始化必失败、再兜底浏览器，用户看不懂为什么）。
+                // 先给自绘面板：一键装（随机带的官方引导器）｜用浏览器打开（仅当本机真有浏览器）｜复制网址；
+                // 一个都做不了时**如实说清"这次看不了控制台，但机器人在后台照常跑"**，并写日志留现场。
+                if (!WebView2Guide.HasRuntime())
+                {
+                    using (WebView2MissingForm f = new WebView2MissingForm(dir, url))
+                    {
+                        f.ShowDialog();
+                        if (f.Action == "install")
+                        {
+                            string why;
+                            bool done = WebView2Guide.Install(dir, out why);
+                            NoteFallback(dir, "缺 WebView2 运行库 ⇒ 一键安装：" + why);
+                            if (done) { Application.Run(new ConsoleForm(url)); }
+                            return;
+                        }
+                        if (f.Action == "browser")
+                        {
+                            NoteFallback(dir, "缺 WebView2 运行库 ⇒ 用户选了用浏览器打开");
+                            FallbackBrowser(url);
+                            return;
+                        }
+                        if (f.Action == "copy")
+                        {
+                            try { Clipboard.SetText(url); } catch { }
+                            NoteFallback(dir, "缺 WebView2 运行库 ⇒ 用户复制了网址（本机看不了控制台）");
+                            return;
+                        }
+                        NoteFallback(dir, "缺 WebView2 运行库 ⇒ 用户点了知道了（未打开控制台）");
+                        return;
+                    }
+                }
                 Application.Run(new ConsoleForm(url));
             }
             catch (Exception ex) { NoteFallback(dir, "自家窗口启动异常：" + ex.Message); FallbackBrowser(url); }
