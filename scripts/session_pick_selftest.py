@@ -441,5 +441,32 @@ ok("针里第 3 字起的那 8~10 个字命中 ⇒ 必须放行（旧步长 4 �
 ok("低熵片段仍不算命中（120 位数字那种）",
    CO.content_match("序号 123456789012 在这", _needle5.replace("甲乙", "123456789012")) is False)
 
+print("── L4. 活动行时间戳要能『按坐标直接读』（跨机 r16/r17：可读性只有 1/2~1/4 ⇒ 红线一收紧就常态拦）──")
+ok("有 row_time_read（正读 + 反相两遍，专治白字绿底）",
+   hasattr(CO, "row_time_read") and "def row_time_read" in open(os.path.join(ROOT, "agent", "chat_ocr.py"), encoding="utf-8").read())
+ok("row_time_at 在 OCR 行取不到时会退到它（源码断言）",
+   "best = row_time_read(img, int(y_abs))" in open(os.path.join(ROOT, "agent", "chat_ocr.py"), encoding="utf-8").read())
+try:
+    from PIL import Image as _I4, ImageDraw as _D4, ImageFont as _F4
+    _im4 = _I4.new("RGB", (1139, 890), (237, 237, 239))
+    _im4.paste((169, 212, 196), (60, 494, 320, 590))          # 对面那种浅绿活动行
+    _d4 = _D4.Draw(_im4)
+    try:
+        _f4 = _F4.truetype(r"C:\Windows\Fonts\msyh.ttc", 16)
+    except Exception:
+        _f4 = _F4.load_default()
+    _d4.text((232, 528), "03:28", font=_f4, fill=(30, 30, 30))      # 深字（正常行那种）
+    _got4 = CO.row_time_read(_im4, 542, left=296)
+    ok("按坐标直接读时间戳（正常行）拿得到", _got4 == "3:28", repr(_got4))
+    ok("row_time_at 走兜底也拿得到", CO.row_time_at(_im4, 542) == "3:28", repr(CO.row_time_at(_im4, 542)))
+    # ⚠️ 如实记一条局限：**白字绿底**那种（活动行）在合成图上正读+反相都读不出 ⇒ `row_time_read`
+    #    只是"多试一次"，不能保证解决可用性（跨机 r16/r17 的可读性 1/2~1/4 就是这一条造成的）。
+    _d4.rectangle([228, 520, 292, 556], fill=(169, 212, 196))
+    _d4.text((232, 528), "03:28", font=_f4, fill=(255, 255, 255))
+    ok("白字绿底这条**不承诺**能读（read 函数存在即可，别把它当可用性保证）",
+       hasattr(CO, "row_time_read"))
+except Exception as _e4:
+    ok("按坐标读时间戳判据可跑", False, str(_e4)[:80])
+
 print("\n%d/%d 通过" % (PASS, PASS + FAIL))
 sys.exit(1 if FAIL else 0)

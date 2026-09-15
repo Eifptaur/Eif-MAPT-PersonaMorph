@@ -1547,8 +1547,21 @@ class WeChatAdapter:
                 if _pane0 and _pane1 and _pane0 != _pane1:
                     return True, ("投递点击第 %d 行（OCR「%s」）后聊天区内容已变化 ⇒ 已切到该会话"
                                   "（绿底这次读不稳：%s）" % (clicked_y, str(info.get("name"))[:12], flog))
-            return False, ("投递点击已发出，但既没看到该行变绿底、也没能 OCR 确认「%s」（%s；最后一帧：%s）"
-                           % (name, flog, str(last)[:60]))
+            # ⚠️ 失败留现场（2026-09-16 r17 跨机报"fail\ 0 条目"）：**"点了但复核没过"这条分支最容易发生**
+            #    （红线收紧之后尤其），原来这里没有 dump ⇒ 对面拿不到现场。补上。
+            _d = self._dump_fail_shot("switch_row_verify", _chh.capture_image(gui=gui),
+                                      {"name": name, "clicked_y": clicked_y,
+                                       "want_time": _want_time, "flog": str(flog),
+                                       "last": str(last)[:300]})
+            # ⚠️ 失败后**把会话列表滚回顶部**（2026-09-16 r17 跨机报的污染）：连续失败的切会话每次会把列表
+            #    滚走最多 18 格且不还原，用户的列表位置被弄乱（他们连试三次后偏离原位）。⇒ 失败路径自己收尾。
+            try:
+                if _scroll_fn is not None:
+                    backend.wheel(tgt, wheel_pt, 120, times=10, gap_ms=60)
+            except Exception:
+                pass
+            return False, ("投递点击已发出，但既没看到该行变绿底、也没能 OCR 确认「%s」（%s；最后一帧：%s%s）"
+                           % (name, flog, str(last)[:60], ("｜现场已存 %s" % _d) if _d else ""))
         except Exception as e:
             return False, "投递切会话异常：%s" % e
 
@@ -1817,7 +1830,15 @@ class WeChatAdapter:
             idn, idn_why = self.chat_identity_ok(chat_id, gui=gui)
             if idn is True:
                 return True, "搜索框路线成功（点的是 OCR「%s」那行）：%s" % (str(info.get("name"))[:10], idn_why)
-            return bool(idn is None), "点过搜索结果了，但内容复核={} （{}）".format(idn, idn_why)
+            # ⚠️ 口径（2026-09-16 r17 对面把这条抛回给我，我定）：`idn is None`＝**内容级判据不可用**，
+            #    但这一枪点的是**搜索结果里名字匹配目标的那一行**（`find_row_info` 已要求名字命中）⇒
+            #    "切换发生了"有**弱证据**，按切成功计（返回值里写明"弱证据"）；**发送闸不放宽**——
+            #    真正发消息仍要过"内容 × 活动行时间一致"，所以这里放宽不会造成误发。
+            if idn is None:
+                return True, ("搜索框路线：内容级判据这次不可用（%s），但点的是名字匹配「%s」的结果行 ⇒ "
+                              "按弱证据计切成功（发送闸仍要另过内容×活动行时间）"
+                              % (str(idn_why)[:80], str(info.get("name"))[:10]))
+            return False, "点过搜索结果了，但内容复核={} （{}）".format(idn, str(idn_why)[:120])
         except Exception as e:
             return False, "搜索框切会话异常：%s" % e
         finally:

@@ -716,6 +716,44 @@ def find_row_info(img, name: str, zoom: int = 2, want_time: str = ""):
         return None
 
 
+def row_time_read(img, y_abs: int, time_hr: int = 130, left=None) -> str:
+    """**按坐标**读某个活动行的右侧时间戳（正读不到就**反相**再读一次）。返回 `H:MM`，认不出给 ''。
+
+    ⚠️ 为什么必须补（2026-09-16 跨机 r16/r17）：活动行是**白字绿底**，`session_rows()` 经常整行读不出
+    ⇒ `row_time_at()` 走"最近的 OCR 行"就取不到 ⇒ `_row_time_conflict()` 判不了 ⇒ 收紧后的身份闸
+    **常态 fail-closed**（对面实测：r16 四次观测只有两次读得出、r17 四次只有一次）。用户可用性被吃掉一大块。
+    ⇒ 直接对那一行的**右侧时间栏**做两次 OCR（正常 + 反相，反相是为了白字绿底）。
+    """
+    try:
+        w, h = img.size
+        left = int(left or 0)
+        if not left:
+            try:
+                left = ch.detect_pane_left(img) or 0
+            except Exception:
+                left = 0
+        if not left:
+            left = int(w * ch.PANE_LEFT_REL)
+        box = (max(0, left - int(time_hr)), max(0, int(y_abs) - 18), max(0, left - 4), min(h, int(y_abs) + 18))
+        crop = img.crop(box)
+        if crop.width < 20 or crop.height < 10:
+            return ""
+        crop = crop.resize((crop.width * 3, crop.height * 3))
+        from PIL import ImageOps
+        for _inv in (False, True):
+            g = ImageOps.autocontrast(crop.convert("L"))
+            if _inv:
+                g = ImageOps.invert(g)
+            txt = "".join(str(i) for i, *_ in recognize(g.convert("RGB")))
+            for m in _time_re.finditer(txt):
+                t = hhmm(m.group(0))
+                if t:
+                    return t
+        return ""
+    except Exception:
+        return ""
+
+
 def row_time_at(img, y_abs: int, tol: int = 34) -> str:
     """离 `y_abs` 最近的那一行里出现的时间戳（归一化成 `H:MM`）；取不到返回 ''。"""
     best, best_d = "", 10 ** 9
@@ -731,6 +769,9 @@ def row_time_at(img, y_abs: int, tol: int = 34) -> str:
                     break
     except Exception:
         return ""
+    if not best:
+        # ⚠️ 活动行（白字绿底）常整行读不出 ⇒ 按坐标直接读一次（含反相），提高可读率（见 row_time_read）
+        best = row_time_read(img, int(y_abs))
     return best
 
 
