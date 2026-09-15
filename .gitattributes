@@ -1,0 +1,12 @@
+# 行尾口径（2026-09-15 跨机实测定）
+#
+# 为什么必须钉在仓库里：`.cmd` 一旦是 **纯 LF**，在 ANSI 代码页不是 UTF-8 的机器上
+# （实测那台 ACP=OEMCP=936）**双击一行都跑不动** —— cmd.exe 解析不了 LF 行尾的
+# `if ... goto` / `for /f` / 括号块；6 格对照：LF 三种编码全断、CRLF 三种全通。
+# 只靠本机 `core.autocrlf=true` 不够（用户的 git 配置各不相同）⇒ 写进 .gitattributes，
+# 让**任何人 clone 下来都是 CRLF**。
+#
+# 编码仍保持 UTF-8 **无 BOM**（BOM 会让第一行变成乱码命令），配合脚本第二行的 `chcp 65001`
+# 显示中文。出包闸门（scripts/pack_online.py）会独立再检一次。
+*.cmd text eol=crlf
+*.bat text eol=crlf

@@ -108,6 +108,24 @@ def main():
             fatal_total += 1 if fatal else 0
             warn_total += 0 if fatal else 1
 
+    # ── 入口脚本行尾闸（2026-09-15 跨机实测加的，**致命**）─────────────────
+    #   背景：两个 `.cmd` 曾经是 **UTF-8 无 BOM + 纯 LF**。跨机那台（ACP/OEMCP=936）上
+    #   双击**一行都跑不动** —— cmd.exe 解析不了 LF 行尾的 `if ... goto` / `for /f` /
+    #   括号块（对照实验：LF 三种编码全断、CRLF 三种全通），而包本身看着完全正常。
+    #   ⇒ 出包前必检：随包的 `.cmd` 一律 CRLF（`.gitattributes` 也钉了 `*.cmd eol=crlf`）。
+    crlf_bad = []
+    for rel in files:
+        if not rel.lower().endswith(".cmd"):
+            continue
+        with open(os.path.join(ROOT, rel), "rb") as _f:
+            _b = _f.read()
+        if _b.count(b"\n") != _b.count(b"\r\n"):
+            crlf_bad.append(rel)
+    if crlf_bad:
+        print("❌ 这些 .cmd 的行尾不是 CRLF（在 GBK 机器上双击会一行都跑不动）：%s" % crlf_bad)
+        print("   修法：把文件整体转成 CRLF（不要加 BOM，改完保持 `chcp 65001` 在第二行）")
+        return 5
+
     if check_only:
         print(f"扫描结束：致命 {fatal_total} · 注意 {warn_total}")
         return 0 if fatal_total == 0 else 3
