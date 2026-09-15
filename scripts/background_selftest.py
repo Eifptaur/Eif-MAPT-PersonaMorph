@@ -115,6 +115,18 @@ ck("B17 三条会抓图的投递链都在入口调了它（切会话 / 搜索框
    SRC_WECHAT.split("def switch_chat_posted(")[1][:4000].count("_ensure_main_visible") >= 1
    and SRC_WECHAT.split("def open_chat_by_search(")[1][:4000].count("_ensure_main_visible") >= 1
    and SRC_WECHAT.split("def send_text_posted(")[1][:4000].count("_ensure_main_visible") >= 1)
+# B17′~B17c 用完要把"为干活还原出来的"主窗**放回收起状态**（2026-09-16 对面 r22 验收 FAIL 项：
+#   不激活还原 ✓、还前台 ✓，但结束后 `IsIconic=False` ⇒ 用户的微信从"收在任务栏"变成"摊在桌面上"）
+ck("B17a 还原时登记了「这是为干活还原的」",
+   "_MINIMIZED_BY_US = int(main)" in SRC_WECHAT)
+_HELP_MIN = SRC_WECHAT.split("def _minimize_back_if_needed(")[1][:1400]
+ck("B17b 放回时三条安全线都在（没登记不动 / 已收起不动 / 用户正在用就不动）",
+   "if not hwnd:" in _HELP_MIN
+   and "u.IsIconic(hwnd)" in _HELP_MIN
+   and "int(u.GetForegroundWindow() or 0) == hwnd" in _HELP_MIN
+   and "u.ShowWindow(hwnd, 6)" in _HELP_MIN)
+ck("B17c 在「还前台」之后立刻放回（顺序不能反：先最小化会让还前台更难成立）",
+   "_minimize_back_if_needed(note)" in SRC_WECHAT)
 ck("B18 竞态如实写进控制台（用户 2026-09-15 要求「这个你要如实跟用户讲清楚」）",
    "会不会跟你抢操作" in SRC_CONSOLE and "撞了它会用聊天区内容复核" in SRC_CONSOLE)
 # B19~B21 零动作对照：阈值不许写死（2026-09-15；实测抓屏退回路径零动作差 0.142 > 老阈值 0.01）
