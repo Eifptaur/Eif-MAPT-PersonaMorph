@@ -499,6 +499,15 @@ class WebUI:
                     return
                 if not self._auth_ok():
                     return self._json({"error": "unauthorized"}, 401)
+                if path == "/api/update":
+                    # 更新检查（**只读**）：拉清单判五态。口径＝拉不到/没配 ⇒ off（界面什么都不显示）、
+                    # 清单坏了 ⇒ error 如实说、有新版 ⇒ newer + notes。**公告只在本机 UI，绝不往微信侧发**。
+                    try:
+                        from . import update_check as _uc
+                        self._json(_uc.state())
+                    except Exception as _e:
+                        self._json({"status": "error", "why": "更新检查不可用：%s" % str(_e)[:60]})
+                    return
                 # 防窥视：地址栏乱码路径（单段 /aB3$xy…，无 API/静态前缀）也返回控制台页面
                 if path == "/" or path == "/index.html":
                     pass  # 正常控制台页
@@ -809,9 +818,11 @@ class WebUI:
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)})
                 elif path == "/api/tts/test":
-                    # 「试听一句」：真跑一遍本机合成（不出网、不发送），把产物路径/格式/大小报出来
+                    # 「试听一句」：真跑一遍**当前选的那一档**的合成（不发送；系统档不出网，edge 档联网）。
+                    # 走 voice_models.make() 而不是 tts.make()——否则面板上写着「edge 神经语音」，
+                    # 试听放出来的却是系统机械音（2026-09-15 加第三档音源时一并收口）。
                     try:
-                        from . import tts as _tt
+                        from . import voice_models as _vm
                         txt = "这是一条语音回复的试听"
                         try:
                             q = parse_qs(urlparse(self.path).query)
@@ -819,10 +830,14 @@ class WebUI:
                                 txt = str((q.get("text") or [""])[0])[:120]
                         except Exception:
                             pass
-                        p, err, info = _tt.make(txt)
+                        p, err, info = _vm.make(txt)
+                        _inf = dict(info or {})
+                        _be = str(_inf.get("engine") or _vm.backend())
                         self._json({"ok": bool(p), "path": p or "", "err": err or "",
-                                    "info": info, "size": (os.path.getsize(p) if p and os.path.exists(p) else 0),
-                                    "note": "试听只做合成，不会发送；发出去的是音频文件，不是微信语音条"})
+                                    "info": _inf, "engine": _be,
+                                    "size": (os.path.getsize(p) if p and os.path.exists(p) else 0),
+                                    "note": "试听只做合成，不会发送；发出去的是音频文件，不是微信语音条。"
+                                            "当前这一档＝%s" % _be})
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)})
                 elif path == "/api/voice/test":
@@ -975,7 +990,14 @@ class WebUI:
                     data = json.loads(raw.decode("utf-8")) if raw else {}
                 except Exception:
                     data = {}
-                if path == "/api/risk":
+                if path == "/api/update_skip":
+                    # 「不再提醒这个版本」：只写本机 config.json（update.skip_version），不外发任何东西
+                    try:
+                        from . import update_check as _uc
+                        self._json(_uc.skip_version(str((data or {}).get("version") or "")))
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)[:80]}, 500)
+                elif path == "/api/risk":
                     # 风险闸门：暂停/恢复/查看（只影响本机行为，绝不往微信侧发任何提示）
                     try:
                         from . import risk as _risk

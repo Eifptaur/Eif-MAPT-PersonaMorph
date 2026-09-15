@@ -126,6 +126,14 @@ ok("tts.status 有 ok/why/voices/ffmpeg", all(k in (_snap2["tts"]["status"]) for
 ok("voice_reply 的配置键都在默认配置里",
    all(k in (__import__("agent.config", fromlist=["get_config"]).get_config().get("voice_reply") or {})
        for k in ("enabled", "voice", "rate", "format", "max_chars", "min_gap_seconds")))
+# 2026-09-15 新加第三档音源 edge-tts ⇒ 面板与快照都要跟着长出来（详见 scripts/edge_tts_selftest.py）
+ok("语音回复分区里有「声音来源」三档下拉", 'data-cfg="voice_reply.backend"' in _seg2)
+ok("语音回复分区里有 edge 音色下拉", 'data-cfg="voice_reply.edge_voice"' in _seg2)
+ok("edge 音色行有独立 id（便于按档互斥显示）", 'id="edgeVoiceRow"' in _seg2 and 'id="sapiVoiceRow"' in _seg2)
+ok("快照 tts 块里有 models 段（音源那一层的只读状态）", "models" in (_snap2.get("tts") or {}))
+ok("voice_reply 的 backend/edge_voice/edge_fallback 都在默认配置里",
+   all(k in (__import__("agent.config", fromlist=["get_config"]).get_config().get("voice_reply") or {})
+       for k in ("backend", "edge_voice", "edge_fallback")))
 
 print("\n%d/%d 通过" % (PASS, PASS + FAIL))
 sys.exit(1 if FAIL else 0)

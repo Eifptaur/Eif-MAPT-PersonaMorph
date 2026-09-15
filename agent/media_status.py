@@ -58,7 +58,10 @@ def snapshot() -> dict:
                     "note": "转发视频/文件要过一次系统「选择文件」对话框，会短暂抢前台 ⇒ 默认关"},
         # 语音回复（TTS）：合成是实测的；**发出去是音频文件不是语音条**（库里没有发语音条的接口）
         "tts": {"status": T.status(),
+                "models": _voice_models_snapshot(),
                 "cfg": {"enabled": bool(rcfg.get("enabled")), "voice": str(rcfg.get("voice") or ""),
+                        "backend": str(rcfg.get("backend") or "sapi"),
+                        "edge_voice": str(rcfg.get("edge_voice") or ""),
                         "rate": int(rcfg.get("rate") or 0), "format": str(rcfg.get("format") or "mp3"),
                         "max_chars": int(rcfg.get("max_chars") or 120),
                         "min_gap_seconds": int(rcfg.get("min_gap_seconds") or 30)},
@@ -69,6 +72,21 @@ def snapshot() -> dict:
         # 大图自动压缩（对账清单第 22 条）：只读快照，面板上的键是 send.image_compress.*
         "img_compress": _img_compress_snapshot(),
     }
+
+
+def _voice_models_snapshot() -> dict:
+    """`agent/voice_models.py` 的只读快照（语音回复真正的音源那一层：sapi / edge / http）。
+
+    为什么要它：面板上的「声音来源」现在有三档，而 `tts.status()` 只描述系统声音那一档——
+    只看它会显示成「引擎状态：<系统声音>」，跟用户选的那一档对不上。这个模块 import 失败
+    也不该把整个 status 拖挂，所以照样包一层。
+    """
+    try:
+        from . import voice_models as VM
+        return VM.status()
+    except Exception as e:
+        return {"ok": False, "backend": "", "why": "语音音源模块不可用：%s" % str(e)[:80],
+                "error": type(e).__name__, "voices": [], "engine": ""}
 
 
 def _img_compress_snapshot() -> dict:

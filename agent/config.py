@@ -168,9 +168,24 @@ DEFAULT_CONFIG = {
     # ── 语音回复（TTS；默认关）─────────────────────────────────────────────
     #   合成＝Windows 内置 SAPI（零下载，本机实测有中文女声）；**发出去的是「音频文件」不是微信语音条**
     #   （驱动库没有"把任意音频发成语音条"的接口）。真语音条＝虚拟麦克风 + 微信录音按钮，属待拍板项。
+    # ── 更新（本体 + DLC 的公告系统；2026-09-15 加）─────────────────────────────
+    #   url＝线上清单地址（留空＝不检查，界面**什么都不显示**）；muted＝不再提醒（总开关）；
+    #   skip_version＝"不再提醒这个版本"。口径：拉不到就静默跳过、清单坏了如实说、
+    #   **公告只在本机 UI 出现，绝不往微信侧发**（与风险闸门同一口径）。
+    "update": {
+        "url": "",               # 例如 https://raw.githubusercontent.com/<账号>/<仓库>/main/persona-morph-manifest.json
+        "muted": False,          # 不再提醒（总开关）
+        "skip_version": "",      # 不再提醒这个版本
+    },
     "voice_reply": {
         "enabled": False,        # 总开关（控制台可切）
-        "engine": "sapi",        # 目前只有 sapi（在线 TTS 预留位）
+        "engine": "sapi",        # 旧键（保留兼容）；真正的音源开关是下面的 backend
+        # 音源（2026-09-15 起默认 edge）：edge＝edge-tts 免费神经语音（需联网，音质接近真人）
+        #                                 sapi＝本机系统声音（离线兜底，机械音）
+        #                                 http＝用户自带的模型服务（见 http_url / vc_url）
+        "backend": "edge",
+        "edge_voice": "zh-CN-XiaoxiaoNeural",  # edge-tts 音色（8 个中文音色见 voice_models.EDGE_VOICES）
+        "edge_fallback": True,                 # edge 失败/没网 ⇒ 退回系统声音（关掉就如实报错、不发）
         "voice": "",             # 指定声音（子串匹配；留空＝优先中文声音）
         "rate": 0,               # 语速 -10~10（0＝默认）
         "format": "mp3",         # mp3（有 ffmpeg 时转）| wav（无 ffmpeg 自动回落 wav）
