@@ -734,9 +734,16 @@ class Orchestrator:
         except Exception:
             pass
         # 持久化用量（累计保留 + 按周期重置）与运行明细
-        self.stats_store.record(sessions=1, calls=int(session["usage"]["calls"]),
-                                tokens=int(session["usage"]["total_tokens"]),
-                                sent=len(session["sent"]), cost=_cost)
+        # 三分口径（2026-09-15）：`fresh`＝未命中（全价）、`cached`＝缓存读（1/30 价）、`output`＝输出。
+        # 只记总量会把"省 token"和"省钱"混为一谈（两者相差 30~90 倍），控制台要能分开看。
+        _u = session["usage"]
+        _cached = int(_u.get("cached_tokens") or 0)
+        _fresh = max(0, int(_u.get("prompt_tokens") or 0) - _cached)
+        _output = int(_u.get("completion_tokens") or 0) + int(_u.get("reasoning_tokens") or 0)
+        self.stats_store.record(sessions=1, calls=int(_u["calls"]),
+                                tokens=int(_u["total_tokens"]),
+                                sent=len(session["sent"]), cost=_cost,
+                                fresh=_fresh, cached=_cached, output=_output)
         _entry.update({
             "status": status, "ok": status == "done",
             "latency_ms": int((time.time() - _t0) * 1000),
