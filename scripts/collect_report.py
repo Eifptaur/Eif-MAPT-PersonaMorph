@@ -69,15 +69,59 @@ def safe(fn, title, fallback="这一节失败（不影响其它节）"):
 
 
 # ── 1 系统 / 显示 ──────────────────────────────────────────────────────
+def _os_registry():
+    """系统口径（注册表）。
+
+    为什么不能只信 `platform.version()`（2026-09-15 跨机报告实测）：它读的是**进程 manifest**，
+    Win10 上会报 `10.0.19041`，而那台机器真值是 **19045 / 22H2** ⇒ 报告报错了版本。
+    """
+    try:
+        import winreg
+        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                             r"SOFTWARE\Microsoft\Windows NT\CurrentVersion", 0,
+                             winreg.KEY_READ | getattr(winreg, "KEY_WOW64_64KEY", 0))
+        out = {}
+        for name, field in (("ProductName", "product"), ("DisplayVersion", "display"),
+                            ("CurrentBuildNumber", "build"), ("UBR", "ubr"),
+                            ("EditionID", "edition")):
+            try:
+                out[field] = str(winreg.QueryValueEx(key, name)[0])
+            except Exception:
+                pass
+        winreg.CloseKey(key)
+        # ⚠️ 注册表的 `ProductName` 在 **Windows 11** 上仍然写着 "Windows 10"（微软一直没改，
+        #    本机实测：ProductName=Windows 10 Home China，真身是 Win11 build 26200）⇒
+        #    **按 build 号判代际**（≥22000 即 Win11），别拿 ProductName 当文件名。
+        try:
+            out["family"] = "Windows 11" if int(out.get("build", "0")) >= 22000 else "Windows 10"
+        except Exception:
+            out["family"] = ""
+        return out
+    except Exception:
+        return {}
+
+
 def sec_system():
     lines, raw = [], {}
     lines.append("  操作系统: %s %s (build %s) · %s" % (
         platform.system(), platform.release(), platform.version(), platform.machine()))
+    reg = _os_registry()
+    if reg:
+        raw["os_registry"] = reg
+        lines.append("  系统口径（注册表，按 build 判代际）: %s · build %s.%s · 版本号 %s · EditionID=%s"
+                     % (reg.get("family", "?"), reg.get("build", "?"), reg.get("ubr", "?"),
+                        reg.get("display", "?"), reg.get("edition", "?")))
     lines.append("  Python: %s (%s)" % (platform.python_version(), sys.executable))
     lines.append("  是否 64 位解释器: %s" % (sys.maxsize > 2 ** 32))
     try:
         # 自包含的 DPI 自查（不依赖任何开发期模块）
         u32 = ctypes.windll.user32
+        # ⚠️ 缩放必须**按 DPI 算**，不能拿分辨率相除（2026-09-15 跨机报告抓到假值，本机复现过）：
+        #    · 锁了 PerMonitorV2 之后 `HORZRES` 与 `DESKTOPHORZRES` **都是物理值**
+        #      （本机实测 2560/2560）⇒ 两者相除必然得「1.0×」，而真值是 150%；
+        #    · 不锁（进程 DPI-unaware）时 `GetDpiForSystem()` 返回 **96**、`HORZRES` 给逻辑值
+        #      （本机 1707）⇒ 照样报错。
+        #    ⇒ 正确取法：**先锁 PerMonitorV2，再问屏幕 DC 的 LOGPIXELSX**（本机锁后实测 144 ⇒ 150%）。
         try:
             u32.SetProcessDpiAwarenessContext.argtypes = [ctypes.c_void_p]
             u32.SetProcessDpiAwarenessContext.restype = ctypes.c_bool
@@ -87,13 +131,22 @@ def sec_system():
         gdi = ctypes.windll.gdi32
         gdi.GetDeviceCaps.restype = ctypes.c_int
         hdc0 = u32.GetDC(0)
+        dpi = int(gdi.GetDeviceCaps(hdc0, 88))                                         # LOGPIXELSX
         phys_w, phys_h = gdi.GetDeviceCaps(hdc0, 118), gdi.GetDeviceCaps(hdc0, 117)   # DESKTOPHORZRES/VERTRES
         seen_w, seen_h = gdi.GetDeviceCaps(hdc0, 8), gdi.GetDeviceCaps(hdc0, 10)       # HORZRES/VERTRES
         u32.ReleaseDC(0, hdc0)
-        scale = round(phys_w / seen_w, 2) if seen_w else None
-        raw["dpi"] = {"permonitorv2": aware, "physical": (phys_w, phys_h), "seen": (seen_w, seen_h), "scale": scale}
-        lines.append("  DPI 上下文: %s（SetProcessDpiAwarenessContext(-4) 的返回值）" % ("PerMonitorV2" if aware else "未锁上/已是别的档"))
-        lines.append("  物理分辨率: %s×%s · 进程所见: %s×%s ⇒ 缩放 %s×" % (phys_w, phys_h, seen_w, seen_h, scale))
+        if not dpi:
+            dpi = 96
+        zoom = round(dpi / 96.0, 3)
+        raw["dpi"] = {"permonitorv2": aware, "dpi": dpi, "zoom": zoom,
+                      "physical": (phys_w, phys_h), "seen": (seen_w, seen_h),
+                      "ratio_is_meaningless": round(phys_w / seen_w, 2) if seen_w else None}
+        lines.append("  缩放: %d%%（屏幕 DC 的 LOGPIXELSX = %d；96=100%%）· 小数 %.3f×"
+                     % (round(zoom * 100), dpi, zoom))
+        lines.append("  物理分辨率: %s×%s · 进程所见: %s×%s（PerMonitorV2 下两者相同属正常，"
+                     "**不要**用它们相除来算缩放）" % (phys_w, phys_h, seen_w, seen_h))
+        lines.append("  DPI 上下文: %s（本报告是在锁定之后取的 DPI，顺序刻意如此）"
+                     % ("PerMonitorV2" if aware else "未锁上/已是别的档"))
     except Exception as e:
         lines.append("  DPI 自查失败: %s" % e)
     try:
@@ -221,6 +274,13 @@ def sec_visual():
         from agent import chat_header as ch
         fp = ch.capture()
         raw["header_len"] = len(fp)
+        if fp and ch.is_blank(fp):
+            # 2026-09-15 跨机实测抓到的误报：微信**最小化**时 PrintWindow 返回全白帧（64 维全 255），
+            # 而旧版报告照样写「可抓」⇒ 缺的正是这条"空白图不算抓到"的判据。
+            raw["header_blank"] = True
+            lines.append("  会话头指纹: **无效（空白图）** —— 抓到的整幅是纯色帧（样例 %s），不是真画面；"
+                         "微信最小化 / 被隐藏时就是这样 ⇒ 这一项按「抓不到」算" % (list(fp)[:6],))
+            fp = []
         if fp:
             lines.append("  会话头指纹: 可抓，%d 维，样例 %s" % (len(fp), fp[:6]))
             pane = None
@@ -251,6 +311,16 @@ def sec_send_test():
         from agent.chat_header import check, reference, ref_sizes
         from agent.wechat import WeChatAdapter
         wx = WeChatAdapter()
+        # 版本门状态（2026-09-15 跨机实测：这一环会把"发送实测"整条拦下 ⇒ 报告必须自己说清楚，
+        # 别让对面看着"False · 0.0s"猜；末尾还要给出放行的确切办法）。
+        try:
+            from agent import version_gate as _vg
+            gt = _vg.check("send")
+        except Exception as _e:                      # noqa: BLE001
+            gt = {"level": "?", "allow": True, "reason": "版本门查不了：%s" % _e}
+        raw["gate"] = gt
+        lines.append("  版本门: level=%s · 本次放行=%s · %s"
+                     % (gt.get("level"), gt.get("allow"), str(gt.get("reason"))[:120]))
         lines.append("  文件传输助手参照: %s · 已学尺寸 %s" % (bool(reference("filehelper")), ref_sizes("filehelper")))
         st = check("filehelper")
         lines.append("  发送前会话头三态: %s · %s" % (st.get("status"), st.get("note")))
@@ -278,9 +348,22 @@ def sec_send_test():
         else:
             ok, msg = _box.get("r", (False, "无返回"))
         lines.append("  发送结果: %s · %s · %.1fs · token=%s" % (ok, msg, time.time() - t0, token))
-        raw.update({"token": token, "ok": bool(ok), "msg": str(msg), "gate": st.get("status")})
-        if "投递档" not in str(msg):
-            lines.append("  说明: 本次没走投递（前置未满足）⇒ 用了真实路径兜底（会短暂动光标/切前台，属库的既有兜底）")
+        raw.update({"token": token, "ok": bool(ok), "msg": str(msg),
+                    "header_status": st.get("status"), "gate_allow": gt.get("allow")})
+        # ⚠️ 「走了哪条路」必须**据实**说（2026-09-15 跨机实测抓到的误报）：旧版只要消息里没出现
+        #    「投递档」就写「用了真实路径兜底」，可实际是**被版本门拦在发送之前**（0.0s、一条都
+        #    没发、光标没动）⇒ 那句话会让人以为"真鼠标兜底跑过了但失败了"。
+        if "投递档" in str(msg):
+            lines.append("  说明: 本次走的是**投递档（L5）**：全程不动光标、不抢前台")
+        elif not ok and not gt.get("allow", True):
+            lines.append("  说明: 本次在**发送之前**就被版本门拦下 —— 没进入发送流程、光标未动、"
+                         "**一条消息都没发出去**（不是「发失败了」）")
+            lines.append("  放行办法: 重跑本报告并加 `--allow-send`（只在本次进程内放行），"
+                         "或在控制台点「本次允许发送」")
+        elif ok:
+            lines.append("  说明: 本次走了**真实路径兜底**（会短暂动光标/切前台，属库的既有兜底），且发送成功")
+        else:
+            lines.append("  说明: 本次走了**真实路径兜底**（会短暂动光标/切前台），但没成功")
         if not ok:
             lines.append("  ⇒ 请把本报告发回；若希望用真鼠标兜底，可在控制台把 input.backend 设为 real 再试")
     except Exception as e:
@@ -387,8 +470,20 @@ def sec_delivery():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--send-test", action="store_true", help="额外做一次投递发送实测（会真发一条测试消息）")
+    ap.add_argument("--allow-send", action="store_true",
+                    help="本次进程内放行版本门（等价于控制台点「本次允许发送」）⇒ 让 --send-test 真跑一次")
     ap.add_argument("--open", action="store_true", help="跑完打开报告目录")
     args = ap.parse_args()
+
+    if args.allow_send:
+        # 解「鸡生蛋」（2026-09-15 跨机实测）：在没实测过的版本对上，发送会被版本门拦下，
+        # 而"报告想测的正是发送" ⇒ 报告工具必须自带一条显式放行路。**只在本次进程内有效**。
+        try:
+            from agent import version_gate as _vg
+            _vg.allow_session("collect_report --allow-send")
+            print("已临时放行版本门（仅本次运行，重启后重新拦）")
+        except Exception as _e:                      # noqa: BLE001
+            print("放行版本门失败：%s" % _e)
 
     t0 = time.time()
     for title, fn in (("一、系统与显示", sec_system),

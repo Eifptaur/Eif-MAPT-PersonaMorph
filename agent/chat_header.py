@@ -172,8 +172,12 @@ def size_key(img_or_size) -> str:
 
 
 def remember(chat_id: str, fp, note: str = "", path: str = None, size: str = "*") -> dict:
-    """记住某会话**某个窗口尺寸下**的会话头指纹（覆盖式）。"""
+    """记住某会话**某个窗口尺寸下**的会话头指纹（覆盖式）。**空白图一律不记**（见 `is_blank`）。"""
     data = load(path)
+    if is_blank(fp):
+        log.warning("拒绝记住空白会话头指纹：%s（尺寸 %s）——大概率是窗口最小化/抓不到画面",
+                    chat_id, size)
+        return data
     ent = data.get(str(chat_id)) or {}
     sizes = ent.get("sizes") or {}
     if ent.get("fp") and "*" not in sizes:          # 兼容旧格式（无尺寸键）
@@ -294,6 +298,38 @@ def _frame_ok(img) -> bool:
         return False
 
 
+def _mono(img, span: float = 8.0) -> bool:
+    """整幅近**纯色**（全白 / 全黑 / 没画完）⇒ True。
+
+    与 `_frame_ok` 的分工：`_frame_ok` 是"可用帧"的**严格**判据（还要求不太暗 + std>12）；
+    `_mono` 只判"有没有内容"，用在**兜底帧**的准入上（严格判据不过、但不许是纯色）。
+
+    为什么要补它（2026-09-15 跨机实测抓到的真缺陷）：微信**最小化**时 `PrintWindow` 会返回
+    **纯白帧**（实测 mean=255 / std=0，指纹 [255,255,255,…]），而 `grab_render` 原来把
+    "质量可疑但有内容"的帧无条件留作兜底 ⇒ 上层拿到全白图、报告还写"会话头指纹：可抓"。
+    """
+    try:
+        from PIL import ImageStat
+        st = ImageStat.Stat(img.convert("L"))
+        lo, hi = st.extrema[0]
+        return st.stddev[0] < 2.0 or (hi - lo) < span
+    except Exception:
+        return True
+
+
+def is_blank(fp) -> bool:
+    """指纹是不是"空白图"（最小化 / 拿不到画面时的全白帧归一化结果）。
+
+    实测（2026-09-15 跨机同一台机器两次跑的对照）：正常画面 = `[0, 14, 83, 185, 97, 153]`
+    （极差 191）；微信最小化时 = 64 维全 `255`（极差 0）⇒ 判据＝极差 < 8。
+    """
+    try:
+        v = [float(x) for x in fp]
+    except Exception:
+        return True
+    return (not v) or (max(v) - min(v) < 8)
+
+
 def _region_occluded(render, main_pid: int, samples: int = 3) -> bool:
     """渲染区是不是被**别的进程**盖着（盖着时不许退回抓屏——那读到的是别人家的像素）。
 
@@ -360,7 +396,9 @@ def grab_render(gui=None, render=None, tries: int = 12):
                 if img is None or _too_dark(img):
                     continue
                 if not _frame_ok(img):
-                    if best is None:
+                    # 兜底帧也必须是"有内容"的：纯色帧（最小化时的全白 / 没画完的黑）一律不留，
+                    # 否则上层会把它当"抓到了"（2026-09-15 跨机实测的真缺陷，见 _mono 注释）。
+                    if best is None and not _mono(img):
                         best = img            # 留一帧"质量可疑但有内容"的兜底
                     continue
                 if hwnd != main:
