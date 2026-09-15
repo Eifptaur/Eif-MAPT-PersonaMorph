@@ -2556,6 +2556,30 @@ class WeChatAdapter:
                           % title[:18])
         return None, "文件卡标题的显著片段没出现在聊天区（%r）" % title[:18]
 
+    def _row_time_conflict(self, chat_id: str, gui=None):
+        """**活动行时间**与目标会话"最后一条消息时间"是否**对不上** ⇒ `(conflict, 说明)`。
+
+        ⚠️ 为什么必须有（跨机 r14 的硬证据）：那台机器上 filehelper 与「余命十日」的**首条内容逐字相同**
+        （用户确实把同一批东西转进了两个会话）⇒ 内容级闸**同时放行两个目标**（r13 实测：同一屏
+        `filehelper=True` 且 `余命十日=True`）✗。而**活动行（绿底行）只有一个**——用"活动行显示的时间
+        是否等于目标最后一条消息时间"就能把两者分开（那台实测：活动行 02:33＝余命十日、filehelper 是 02:11）。
+        读不到时间/目标是昨天的消息 ⇒ 返回 `(False, "")`（不拦，交给其它档）。
+        """
+        try:
+            from . import chat_ocr as _co
+            _lt = self._last_time_hhmm(chat_id)
+            if not _lt:
+                return False, ""
+            img = _co.capture_best(gui=gui or self._get_gui(), frames=2)
+            _ht, _hy = _co.highlight_time(img) if img is not None else ("", None)
+            if not _ht:
+                return False, ""
+            if self._norm_hhmm(_ht) != self._norm_hhmm(_lt):
+                return True, "活动行（y=%s）时间 %s ≠ 目标最后一条消息时间 %s" % (_hy, _ht, _lt)
+            return False, ""
+        except Exception:
+            return False, ""
+
     def chat_identity_ok(self, chat_id: str, gui=None):
         """**内容级**身份核对：当前聊天区里应看得到目标会话最近若干条文本里的**任意一条**。
 
@@ -2587,6 +2611,12 @@ class WeChatAdapter:
                 nn = _co.norm_alnum(nd)
                 if len(nn) >= 6:
                     if _co.content_match(pane, nd):
+                        # ⚠️ 内容像还不够：**活动行时间必须与目标最后一条消息时间一致**（跨机 r14 的硬证据：
+                        #    两个会话内容逐字相同时，内容闸会同时放行两个目标 ⇒ 用"只有一个活动行"把它分开）。
+                        _cf, _cfwhy = self._row_time_conflict(chat_id, gui=gui)
+                        if _cf:
+                            return False, ("聊天区内容像目标（%r…），但**活动行时间对不上**（%s）⇒ 判否："
+                                           "同屏两个会话内容雷同时，以活动行为准" % (nd[:16], _cfwhy))
                         return True, "聊天区里认出了目标会话最近的内容（%r…）" % nd[:16]
                 elif nn and nn in pane_n and not _co.low_entropy(nn) and len(nn) >= 4:
                     # ⚠️ 短指纹档也要两道下界（2026-09-16 跨机 r10 的 fail-open 教训）：
