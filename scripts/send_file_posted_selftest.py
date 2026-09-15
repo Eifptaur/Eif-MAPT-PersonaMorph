@@ -53,7 +53,11 @@ print("── C. 源码层：三处关键动作都在（且没有退回剪贴板
 SRC = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "agent", "wechat.py"),
            "r", encoding="utf-8", errors="replace").read()
 i = SRC.find("def send_file_posted")
-seg = SRC[i:i + 11000] if i >= 0 else ""
+# ⚠️ 2026-09-16：原来是写死的 `SRC[i:i + 11000]` 切片——函数里多加十几行（本轮加"写完文件名立刻还前台"）
+#   就把后面的断言挪出窗外、变成**假红**。判据要守的性质是"这些步骤都在这个函数里"，不是"函数恰好
+#    不超过 11000 字符" ⇒ 改成**切到下一个同级 def 为止**。
+_j = SRC.find("\n    def ", i + 10)
+seg = SRC[i:(_j if _j > 0 else i + 11000)] if i >= 0 else ""
 ok("会话闸在先，拿不到证据就 return False", "发文件要求目标会话已打开且被确认" in seg)
 ok("用 UIA 的 SetValue 写文件名", "GetValuePattern().SetValue" in seg)
 ok("点「打开」（或回车兜底）", "打开" in seg and "SendKeys(\"{Enter}\")" in seg)
@@ -320,6 +324,51 @@ try:
     ok("_fg_before_close() 返回一个整数 hwnd（拿不到就 0，不抛）", isinstance(_fgb(), int))
 except Exception as _e7:
     ok("_fg_before_close() 可调用", False, str(_e7)[:80])
+
+print("── M. 抢前台那一步＝**写文件名**（用户 2026-09-16 当面看屏幕定位）⇒ 不进前台 + 盯着还 ──")
+# 用户原话：「点击『文件』按钮没有到前台，打开文件窗口也没有到前台，但是**当你粘贴输入那一串字符的
+# 时候，它到前台了**。看来你只需要让它**粘贴完，立马缩回后台**就行」。
+# 处置两条（第一条才是根治，第二条兜底）：
+#   ① **压根不进前台**：文件对话框的名字框是标准 Edit（id 1148）⇒ `WM_SETTEXT` 写、`BM_CLICK` 点「打开」，
+#      都是消息，不 SetFocus / 不 SetForegroundWindow ⇒ 前台不变；
+#   ② 退回 UIA 那条路时才需要"还"，而且是**盯着还**（对话框激活是异步的，单枪必打空）。
+ok("写文件名优先走 WM_SETTEXT（消息投递，不进前台）",
+   "_fill_dialog_name(" in _wxsrc5 and "WM_SETTEXT" in _wxsrc5 and "DLG_ID_FILENAME = 1148" in _wxsrc5)
+ok("点「打开」优先走 BM_CLICK（消息投递，不进前台）",
+   "_click_dialog_open(" in _wxsrc5 and "BM_CLICK" in _wxsrc5 and "DLG_ID_OK = 1" in _wxsrc5)
+ok("退回 UIA 时才『盯着还前台』（对话框激活是异步的，单枪会打空）",
+   'target.GetValuePattern().SetValue' in _wxsrc5
+   and '_restore_fg_until("写完文件名（粘贴那一步）"' in _wxsrc5)
+ok("框一消失就立刻还（不再先 sleep 2.0 —— 那会让用户多丢约 2 秒前台）",
+   "if _wait_dialog_gone(int(hwnd), 4.0):" in _wxsrc5
+   and '_restore_fg_until("对话框关闭后"' in _wxsrc5)
+ok("_wait_dialog_gone 返回「真的没了」（调用方靠它决定走哪条收尾路）",
+   "def _wait_dialog_gone(hwnd: int, timeout: float = 1.5) -> bool:" in _wxsrc5)
+# ⛔⛔ 本轮的**真根因**：`import ctypes` 原来只在函数里局部 import，模块级这些函数（_fg_now /
+#   _wait_dialog_gone / _restore_fg / 对话框消息驱动）一律 NameError，而外面包着 except ⇒ **静默失效**。
+#   实测证据：修复后 `还前台（对话框关闭后）：25692654 → 134730（结果=True）`，之前一条日志都没有。
+ok("模块级 import ctypes（缺了 ⇒ 还前台/等框消失全部静默失效）",
+   __import__("re").search(r"^import ctypes\b", _wxsrc5, __import__("re").M) is not None)
+ok("还前台的日志带 note 与前后 hwnd（跨机报告能核对到步）",
+   'log.info("还前台（%s）：%s → %s（结果=%s，AttachThreadInput 绕法）"' in _wxsrc5)
+try:
+    from agent import wechat as _W5
+    ok("_wait_dialog_gone(0, 0.1) 对不存在的窗口判『已消失』并返回 bool",
+       _W5._wait_dialog_gone(0, 0.1) is True)
+    _r = _W5._fill_dialog_name(0, "C:\\nope.txt")
+    ok("_fill_dialog_name 拿不到控件时给 (False, 说明)，不抛",
+       isinstance(_r, tuple) and _r[0] is False and bool(_r[1]))
+    _r2 = _W5._click_dialog_open(0)
+    ok("_click_dialog_open 拿不到按钮时给 (False, 说明)，不抛",
+       isinstance(_r2, tuple) and _r2[0] is False and bool(_r2[1]))
+    _W5._FG_STASH.update({"hwnd": 0, "at": 3.0})          # hwnd=0 ⇒ 函数会在"前台没变"处早退，不碰真窗口
+    _W5._restore_fg(0, "selftest-keep", keep=True)
+    ok("keep=True ⇒ 不动 stash（stash 还在，后面几步还能用）", float(_W5._FG_STASH.get("at") or 0) == 3.0)
+    _W5._restore_fg(0, "selftest-clear", keep=False)
+    ok("keep=False ⇒ 清 stash（这一笔走完了）", float(_W5._FG_STASH.get("at") or 0) == 0.0)
+    _W5._FG_STASH.update({"hwnd": 0, "at": 0.0})
+except Exception as _e8:
+    ok("_restore_fg 的 keep/clear 语义可测", False, str(_e8)[:80])
 
 print("== [send-file-posted] 判据：{} 通过 / {} 失败 ==".format(PASS, FAIL))
 sys.exit(1 if FAIL else 0)
