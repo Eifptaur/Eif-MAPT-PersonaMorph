@@ -119,11 +119,181 @@ def _extract(raw: bytes, ctype: str, cfg: dict):
     return b"", "字段 %s 既不是 base64 也不是可读路径" % field
 
 
+# ── 变声段（音频 → 音频）：兼容用户本地的 RVC / GPT-SoVITS 变声 / 任意同形态端点 ──────
+# 用户 2026-09-15 原话：「**最主要是要兼容那些用户本地的，比方说 GPT-SoVITS 的、RVC 的**」。
+# 这两家**形态不同**，所以必须两段串起来：
+#   · GPT-SoVITS 是「文本 → 音频」（上面已支持，`api_v2` 直回 wav）
+#   · **RVC 是「音频 → 音频」的变声** ⇒ 文本 →(TTS)→ 音频 →(**变声**)→ 音频
+# 口径：变声失败**默认不发**（`voice_reply.vc_fail_open=false`）——用户指定了音色却发出去另一个声音，
+#   就是"假装"，是本项目反复钉的红线；打开 fail_open 时才发未变声的原音，并在返回值里写明。
+VC_CAPABILITY_NOTE = ("变声通道只能证明端点可用与返回的是音频；**音色是否为目标角色未声明**"
+                      "（要自己听一遍）。微信 PC 发不出真语音条，发出去的仍是音频文件。")
+
+
+def vc_url(cfg: dict | None = None) -> str:
+    c = cfg if isinstance(cfg, dict) else _cfg()
+    return str(c.get("vc_url") or "").strip()
+
+
+def vc_boundary(cfg: dict | None = None) -> str:
+    b = str((cfg or {}).get("vc_mode") or "multipart").strip().lower()
+    return b if b in ("multipart", "base64") else "multipart"
+
+
+def _vc_params(cfg: dict) -> dict:
+    raw = (cfg or {}).get("vc_params")
+    if isinstance(raw, dict):
+        return dict(raw)
+    try:
+        obj = json.loads(str(raw or "{}"))
+        return dict(obj) if isinstance(obj, dict) else {}
+    except Exception:
+        return {}
+
+
+def _tone_wav(seconds: float = 0.4, sr: int = 16000, freq: float = 440.0) -> bytes:
+    """纯标准库造一段正弦 WAV —— 给变声端点做连通测试当输入（不引任何第三方依赖）。"""
+    import math
+    import struct
+    n = int(sr * seconds)
+    frames = b"".join(struct.pack("<h", int(9000 * math.sin(2 * math.pi * freq * i / sr)))
+                      for i in range(n))
+    return (b"RIFF" + struct.pack("<I", 36 + len(frames)) + b"WAVEfmt "
+            + struct.pack("<IHHIIHH", 16, 1, 1, sr, sr * 2, 2, 16)
+            + b"data" + struct.pack("<I", len(frames)) + frames)
+
+
+def _post_audio(url: str, audio: bytes, cfg: dict, timeout: int, filename: str = "in.wav"):
+    """把音频 POST 给变声端点 ⇒ `(raw, content_type, status)`。判据替身本函数，不联网。
+
+    multipart 用标准库手搓（不引第三方）；`base64` 形态拼 JSON。两种覆盖了 RVC 系常见实现。
+    """
+    params = _vc_params(cfg)
+    if vc_boundary(cfg) == "base64":
+        body = {"audio": base64.b64encode(audio).decode("ascii"), "filename": filename}
+        body.update(params)
+        data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        req = urllib.request.Request(url, data=data, method="POST",
+                                     headers={"Content-Type": "application/json", "Accept": "*/*"})
+    else:
+        bd = "----personamorph%s" % time.strftime("%H%M%S")
+        chunks = []
+        for k, v in params.items():
+            chunks.append(("--%s\r\nContent-Disposition: form-data; name=\"%s\"\r\n\r\n%s\r\n"
+                           % (bd, k, v)).encode("utf-8"))
+        chunks.append(("--%s\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"%s\"\r\n"
+                       "Content-Type: audio/wav\r\n\r\n" % (bd, filename)).encode("utf-8"))
+        chunks.append(audio)
+        chunks.append(("\r\n--%s--\r\n" % bd).encode("utf-8"))
+        req = urllib.request.Request(url, data=b"".join(chunks), method="POST",
+                                     headers={"Content-Type": "multipart/form-data; boundary=%s" % bd,
+                                              "Accept": "*/*"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read(), (r.headers.get("Content-Type") or ""), getattr(r, "status", 200)
+
+
+def vc_convert(path: str, cfg: dict | None = None, timeout: int = DEFAULT_TIMEOUT):
+    """把一个音频文件送去变声端点 ⇒ `(新路径|None, 错误说明, info)`。"""
+    c = cfg if isinstance(cfg, dict) else _cfg()
+    u = vc_url(c)
+    if not u:
+        return None, "没配变声服务地址（voice_reply.vc_url）", {}
+    try:
+        with open(path, "rb") as f:
+            audio = f.read()
+    except Exception as e:
+        return None, "读不了要变声的音频：%s" % str(e)[:60], {}
+    try:
+        raw, ctype, st = _post_audio(u, audio, c, timeout, os.path.basename(path or "in.wav"))
+    except urllib.error.HTTPError as e:
+        return None, "变声端点 HTTP %s（接口路径/参数可能不对）" % e.code, {}
+    except Exception as e:
+        return None, "变声端点连不上：%s" % (str(e)[:80] or type(e).__name__), {}
+    got, why = _extract(raw, ctype, _vc_field_cfg(c))
+    if not got:
+        return None, "变声端点没回音频：%s" % (why or "原因不明"), {}
+    ext = "wav" if got[:4] == b"RIFF" else ("mp3" if got[:3] == b"ID3" else "bin")
+    out = os.path.join(_out_dir(), "vc_%s.%s" % (time.strftime("%H%M%S"), ext))
+    try:
+        with open(out, "wb") as f:
+            f.write(got)
+    except Exception as e:
+        return None, "写变声结果失败：%s" % str(e)[:60], {}
+    return out, "", {"vc": "ok", "bytes": len(got), "http": st, "fmt": ext}
+
+
+def _vc_field_cfg(c: dict) -> dict:
+    cc = dict(c)
+    if c.get("vc_json_field"):
+        cc["http_json_field"] = c.get("vc_json_field")
+    return cc
+
+
+def probe_vc(url: str = "", timeout: int = DEFAULT_TIMEOUT, cfg: dict | None = None) -> dict:
+    """变声端点连通测试：造一段 440Hz 正弦 WAV 送进去，报**实测**结果。**永不抛异常**。"""
+    c = dict(cfg or _cfg())
+    u = (url or vc_url(c)).strip()
+    out = {"url": u, "ok": False, "ms": 0, "bytes": 0, "mode": vc_boundary(c),
+           "content_type": "", "why": "", "capability": VC_CAPABILITY_NOTE}
+    if not u:
+        out["why"] = "没填地址"
+        return out
+    t0 = time.time()
+    try:
+        raw, ctype, st = _post_audio(u, _tone_wav(), c, timeout, "probe.wav")
+        out["ms"] = int((time.time() - t0) * 1000)
+        out["content_type"] = ctype
+        got, why = _extract(raw, ctype, _vc_field_cfg(c))
+        out["bytes"] = len(got)
+        if not got:
+            out["why"] = why or "拿不到音频"
+            return out
+        out["ok"] = True
+        out["why"] = "通；返回 %d 字节音频（HTTP %s）" % (len(got), st)
+    except urllib.error.HTTPError as e:
+        out["ms"] = int((time.time() - t0) * 1000)
+        out["why"] = ("HTTP %s（端点有应答但拒绝了这次调用；RVC 系大多要 multipart 的 audio 字段）"
+                      % e.code)
+    except Exception as e:
+        out["ms"] = int((time.time() - t0) * 1000)
+        out["why"] = "连不上：%s" % (str(e)[:80] or type(e).__name__)
+    return out
+
+
+def make(text: str, cfg: dict | None = None, timeout: int = DEFAULT_TIMEOUT):
+    """`make` = TTS 合成（+ 可选的**变声段**）。返回契约与 `tts.make()` 完全相同。"""
+    c = cfg if isinstance(cfg, dict) else _cfg()
+    path, why, info = _make_raw(text, c, timeout)
+    if not path:
+        return path, why, info
+    if not vc_url(c):
+        return path, why, info
+    try:                                  # 变声（本地模型推理/检索）通常比合成慢 ⇒ 单独给时间
+        _vto = max(int(timeout), int(c.get("vc_timeout_ms") or 0) // 1000)
+    except Exception:
+        _vto = timeout
+    vpath, vwhy, vinfo = vc_convert(path, c, _vto)
+    if vpath:
+        n = dict(info or {})
+        n.update(vinfo)
+        n["pipeline"] = "tts→vc"
+        return vpath, "", n
+    if c.get("vc_fail_open"):
+        n = dict(info or {})
+        n["vc"] = "failed"
+        n["vc_why"] = vwhy
+        return path, "变声失败（已按 vc_fail_open 发未变声的原音）：%s" % vwhy, n
+    return None, ("变声失败、按「不假装」口径**没有发出去**（要发未变声的原音请打开 "
+                  "voice_reply.vc_fail_open）：%s" % vwhy), {"vc": "failed", "vc_why": vwhy}
+
+
 def status(cfg: dict | None = None) -> dict:
     """给控制台与工具用的**如实**状态（与 `tts.status()` 同形：ok / why / voices / engine）。"""
     c = cfg if isinstance(cfg, dict) else _cfg()
     out = {"ok": False, "backend": backend(c), "http_url": http_url(c),
-           "capability": CAPABILITY_NOTE, "voices": [], "engine": "sapi", "why": ""}
+           "capability": CAPABILITY_NOTE, "voices": [], "engine": "sapi", "why": "",
+           "vc_url": vc_url(c), "vc_mode": vc_boundary(c),
+           "vc_capability": VC_CAPABILITY_NOTE}
     if out["backend"] == "http":
         out["engine"] = "custom-http"
         if not out["http_url"]:
@@ -140,6 +310,12 @@ def status(cfg: dict | None = None) -> dict:
         out["voices"] = list(st.get("voices") or [])
     except Exception as e:
         out["why"] = "系统声音不可用：%s" % str(e)[:60]
+    # 真语音条要用它：本机有没有"虚拟麦克风"（只检测，绝不替用户装驱动/改系统设置）
+    try:
+        from . import audio_devices as _ad
+        out["mic"] = _ad.status()
+    except Exception as e:
+        out["mic"] = {"ok": False, "why": "音频设备检测失败：%s" % str(e)[:60]}
     return out
 
 
@@ -172,7 +348,7 @@ def probe(url: str = "", timeout: int = DEFAULT_TIMEOUT, cfg: dict | None = None
     return out
 
 
-def make(text: str, cfg: dict | None = None, timeout: int = DEFAULT_TIMEOUT):
+def _make_raw(text: str, cfg: dict | None = None, timeout: int = DEFAULT_TIMEOUT):
     """按当前后端合成，返回 `(路径 或 None, 错误说明, info)` —— **与 `tts.make()` 同契约**。
     走系统声音时原样转发 `tts.make()`；走自带模型时只接受"确实拿到了音频字节"这一种成功。"""
     c = cfg if isinstance(cfg, dict) else _cfg()

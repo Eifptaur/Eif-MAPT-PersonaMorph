@@ -1085,6 +1085,40 @@ th{color:var(--tx2);font-weight:500}
         };
       })();
       </script>
+      <div class="row"><label>变声服务</label><div class="grow"><input type="text" data-cfg="voice_reply.vc_url" placeholder="如 http://127.0.0.1:7897/infer（留空＝不变声）">
+        <div class="btns" style="margin-top:6px"><button id="vcProbe" class="ghost" type="button">变声连通测试</button><span class="hint" id="vcProbeOut"></span></div>
+        <span class="hint">这是**第二段**：先合成出人声，再送去<b>变声</b>成你要的音色。<b>GPT-SoVITS 是「文字→音频」</b>（填上面那个地址就够）；<b>RVC 是「音频→音频」</b>，所以要在这里再填一个地址——两段串起来才是 RVC 的效果。</span></div></div>
+      <div class="row"><label>变声方式</label><div class="grow"><select data-cfg="voice_reply.vc_mode">
+        <option value="multipart">表单上传音频文件（RVC 系常见）</option>
+        <option value="base64">配置格式里放内容编码</option></select>
+        <span class="hint">拿不准就先用表单上传；两种都试一次，哪个通就用哪个（测试按钮会如实报 HTTP 码）。</span></div></div>
+      <div class="row"><label>变声参数</label><div class="grow"><textarea data-cfg="voice_reply.vc_params" rows="2" placeholder='如 {"f0_up_key":0,"index_rate":0.7,"speaker":"你的音色名"}'></textarea>
+        <span class="hint">原样附在请求里（RVC 常见的是变调 / 检索率 / 音色名）。留空＝不附。</span></div></div>
+      <div class="row"><label>变声取哪个字段</label><div class="grow"><input type="text" data-cfg="voice_reply.vc_json_field" placeholder="如 data 或 audio；回音频字节就留空">
+        <span class="hint">只在「配置格式里放内容编码」时需要。</span></div></div>
+      <div class="row"><label>变声失败时</label><div class="grow"><label class="chip"><input type="checkbox" data-cfg="voice_reply.vc_fail_open">
+        照发未变声的原音</label>
+        <span class="hint">默认关＝<b>失败就不发</b>：你要的是那个音色，发出去另一个声音等于骗人。打开才会降级发原音，并且会明说变了声没成功。</span></div></div>
+      <script>
+      (function(){
+        var b = document.getElementById('vcProbe'); if(!b) return;
+        var out = document.getElementById('vcProbeOut');
+        function headers(){ return (typeof URL_TOKEN !== 'undefined' && URL_TOKEN) ? {Authorization:'Bearer '+URL_TOKEN} : {}; }
+        b.onclick = function(){
+          var u = document.querySelector('input[data-cfg="voice_reply.vc_url"]');
+          var url = u ? u.value.trim() : '';
+          b.disabled = true; out.textContent = ' 测试中…（会送一段 0.4 秒测试音进去）';
+          fetch('/api/voice/vc-probe?url=' + encodeURIComponent(url), {headers: headers()})
+            .then(function(r){ return r.json(); })
+            .then(function(d){
+              out.textContent = d.ok ? (' 通：' + (d.bytes||0) + ' 字节音频 · ' + (d.ms||0) + 'ms · ' + (d.mode||''))
+                                     : (' 不通：' + (d.why || '未知原因'));
+            })
+            .catch(function(e){ out.textContent = ' 失败：' + e; })
+            .then(function(){ b.disabled = false; });
+        };
+      })();
+      </script>
       <div class="row"><label>语速</label><input type="number" min="-10" max="10" data-cfg="voice_reply.rate">
         <span class="hint">-10 最慢 ~ 10 最快，0＝默认。</span></div>
       <div class="row"><label>格式</label><div class="grow"><select data-cfg="voice_reply.format">
@@ -2491,7 +2525,8 @@ async function loadStatus(){  try{
           t2.textContent = ['引擎：' + (ts.engine || '-'),
                             '可用声音：' + ((ts.voices || []).join(' / ') || '（没有）'),
                             '产物目录：' + (ts.dir || '-'),
-                            '形态：' + (tt.note || '')].join(' ｜ ');
+                            '形态：' + (tt.note || ''),
+                            '真语音条：' + (((ts.mic || {}).why) || '检测中')].join(' ｜ ');
         }
         const sel = $('ttsVoice');
         if(sel && ts.voices && sel.options.length <= 1){

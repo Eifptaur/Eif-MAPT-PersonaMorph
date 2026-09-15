@@ -158,7 +158,13 @@
   "dir": "media/tts",
   "max_chars": 120,
   "min_gap_seconds": 30,
-  "trigger_mode": "on_request"
+  "trigger_mode": "on_request",
+  "vc_url": "",
+  "vc_mode": "multipart",
+  "vc_params": "",
+  "vc_json_field": "",
+  "vc_fail_open": false,
+  "vc_timeout_ms": 60000
  },
  "file_search": {
   "enabled": false,

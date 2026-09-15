@@ -769,8 +769,18 @@ def _exec_send_voice_reply(ctx, args):
             ctx["session"]["sent"].append({"type": "voice_file", "text": text})
         except Exception:
             pass
-        return _ok({"sent": True, "voice": info.get("voice") or "", "fmt": info.get("fmt") or "",
-                    "note": "已发（形态：音频文件，不是语音条）。不要输出\"已发送\"类汇报。"})
+        out = {"sent": True, "voice": info.get("voice") or "", "fmt": info.get("fmt") or "",
+               "note": "已发（形态：音频文件，不是语音条）。不要输出\"已发送\"类汇报。"}
+        # 变声段（可选）：把实际走了没有、结果如何**如实**带回给模型
+        if info.get("pipeline"):
+            out["pipeline"] = info["pipeline"]
+        if info.get("vc"):
+            out["vc"] = info["vc"]
+        if err:
+            out["warn"] = err
+            out["note"] = ("已发（形态：音频文件，不是语音条）——但**变声这一段失败了**：%s。"
+                           "照实说明，别声称用的是目标音色。" % err)
+        return _ok(out)
     except Exception as e:
         return _err(str(e))
 
