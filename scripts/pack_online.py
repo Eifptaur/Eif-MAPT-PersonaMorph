@@ -20,7 +20,7 @@ import zipfile
 from datetime import datetime
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT_DIR = os.path.dirname(ROOT)                      # C:\Users\ptmou\Desktop\WX-chatbot
+OUT_DIR = os.path.dirname(ROOT)                      # 仓库的上一级目录（例：C:\Users\<你>\Desktop\WX-chatbot）
 PKG_PREFIX = "群相-在线包-"
 # 解压出来的**顶层文件夹名**（用户 2026-09-15 定：他要用户在压缩包里看到的就是这个名字）
 # ⚠️ 只影响压缩包的目录布局，不动任何程序逻辑：程序内部一律用"自己所在目录"定位（ROOT=文件位置），

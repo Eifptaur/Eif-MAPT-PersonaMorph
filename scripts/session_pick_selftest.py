@@ -482,17 +482,17 @@ try:
     from agent import wechat as _W5b
     _ad5 = _W5b.WeChatAdapter.__new__(_W5b.WeChatAdapter)
     _ad5.current_chat_name = lambda gui=None: ("", "读不出")
-    _ad5.display_name = lambda cid: "余命十日"
+    _ad5.display_name = lambda cid: "某会话"
     _cap5, _ht5 = _co5.capture_best, _co5.header_text
     _co5.capture_best = lambda gui=None, frames=2: object()
-    _co5.header_text = lambda img=None, gui=None, zoom=2: "O余命十日"
+    _co5.header_text = lambda img=None, gui=None, zoom=2: "O某会话"
     ok("标题带读到目标名 ⇒ 判 True（**这正是对面手工核的那条**）",
-       _ad5.chat_is_open("x", gui=object(), name="余命十日")[0] is True,
-       str(_ad5.chat_is_open("x", gui=object(), name="余命十日")))
+       _ad5.chat_is_open("x", gui=object(), name="某会话")[0] is True,
+       str(_ad5.chat_is_open("x", gui=object(), name="某会话")))
     _co5.header_text = lambda img=None, gui=None, zoom=2: ""
-    ok("标题带读不出 ⇒ 不误判（仍判否）", _ad5.chat_is_open("x", gui=object(), name="余命十日")[0] is False)
+    ok("标题带读不出 ⇒ 不误判（仍判否）", _ad5.chat_is_open("x", gui=object(), name="某会话")[0] is False)
     _co5.header_text = lambda img=None, gui=None, zoom=2: "O别人"
-    ok("标题带是别的会话 ⇒ 判否", _ad5.chat_is_open("x", gui=object(), name="余命十日")[0] is False)
+    ok("标题带是别的会话 ⇒ 判否", _ad5.chat_is_open("x", gui=object(), name="某会话")[0] is False)
     _co5.capture_best, _co5.header_text = _cap5, _ht5
 except Exception as _e5c:
     ok("标题带这一档可测", False, str(_e5c)[:80])

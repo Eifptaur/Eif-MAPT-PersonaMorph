@@ -1391,7 +1391,7 @@ class WeChatAdapter:
 
         ⚠️ 2026-09-16 r25（对面实测）：**档位分强弱，分界＝有没有区分力**。
           · **强档**（能回答"现在是谁"）：① 名字 OCR ② **会话头标题带 OCR** ③ 高亮行时间×DB；
-          · **弱档**：④ 会话头指纹 —— 对面**原样复现了它的假阳性**：当前明明开着「余命十日」，
+          · **弱档**：④ 会话头指纹 —— 对面**原样复现了它的假阳性**：当前明明开着「E」，
             `chat_is_open("filehelper")` 也返回 **True**（两个会话同时 True）。
           ⇒ **指纹档单独不成立**：只在 `allow_weak=True`（只读探针、辅助判断）时才采信；
             **授权写动作的最后一道闸绝不接它**（默认 `allow_weak=False`）。
@@ -1407,7 +1407,7 @@ class WeChatAdapter:
         except Exception:
             pass
         # ② **会话头标题带 OCR**（提到第二位）—— 对面 r25 实测它有区分力
-        #    （'O余命十日' vs 'O文亻牛传输助手'，一次就能判定当前是谁），可当首选档用；
+        #    （'OE' vs 'O文亻牛传输助手'，一次就能判定当前是谁），可当首选档用；
         #    r24 那次"四档兜底放行"命中的也正是这一档。
         try:
             from . import chat_ocr as _co2
@@ -2078,7 +2078,7 @@ class WeChatAdapter:
             base_sig = str(base[0].get("local_id")) if base else ""
             # ⛔ 2026-09-16 r24 对面现场：**最小化还原之后投递打字不生效**。
             #    他的对照很干净：同一会话、同一轮里，可见态两枪（A1/A2）回读都成功（local_id 27/28），
-            #    只有最小化那一枪读不到新行，而且那个 token 在「文件传输助手」与「余命十日」里
+            #    只有最小化那一枪读不到新行，而且那个 token 在「文件传输助手」与「E」里
             #    **两处都搜不到** ⇒ 没发错会话、也不是判据误判 ⇒ 就是"字没进输入框"。
             #    机制：这条链**从来不点输入框**（2026-09-13 实测"不点也能发 3/3"——那是**正常可见态**
             #    下靠默认焦点）；最小化被还原后焦点不在输入框上，`WM_CHAR` 被丢，随后点「发送」发了个空。
@@ -2788,15 +2788,15 @@ class WeChatAdapter:
     def _row_time_conflict(self, chat_id: str, gui=None):
         """**活动行时间**与目标会话"最后一条消息时间"是否**对不上** ⇒ `(conflict, 说明, decided)`。
 
-        ⚠️ 为什么必须有（跨机 r14 的硬证据）：那台机器上 filehelper 与「余命十日」的**首条内容逐字相同**
+        ⚠️ 为什么必须有（跨机 r14 的硬证据）：那台机器上 filehelper 与「E」的**首条内容逐字相同**
         （用户确实把同一批东西转进了两个会话）⇒ 内容级闸**同时放行两个目标**（r13 实测：同一屏
-        `filehelper=True` 且 `余命十日=True`）✗。而**活动行（绿底行）只有一个**——用"活动行显示的时间
-        是否等于目标最后一条消息时间"就能把两者分开（那台实测：活动行 02:33＝余命十日、filehelper 是 02:11）。
+        `filehelper=True` 且 `E=True`）✗。而**活动行（绿底行）只有一个**——用"活动行显示的时间
+        是否等于目标最后一条消息时间"就能把两者分开（那台实测：活动行 02:33＝E、filehelper 是 02:11）。
 
         ⚠️ **第三个返回值 `decided` 是 2026-09-16 r16 跨机报告逼出来的**：那台的活动行时间戳 OCR
         **时好时坏**（同一行 y=141，r15 读到过 2:52、r16 的 B 批读不到）⇒ 读不到时这条判据**给不出结论**，
         而如果此时还按"内容像就放行"，**双放行会原样复现**（他们实测 B 批：读不到 ⇒ filehelper=True 且
-        余命十日=True ✗）。⇒ `decided=False` 表示"没法判"，由调用方决定要不要 fail-closed
+        E=True ✗）。⇒ `decided=False` 表示"没法判"，由调用方决定要不要 fail-closed
         （正对"发错会话"的历史事故面，所以内容级那一条**必须**要求 decided）。
         """
         try:
@@ -5498,7 +5498,7 @@ def wechat_install_state(proc_found=False, proc_path=""):
             if base:
                 cands += [os.path.join(base, "Tencent", "WeChat", "WeChat.exe"),
                           os.path.join(base, "Tencent", "Weixin", "Weixin.exe")]
-        for drive in ("C:\\", "D:\\", "E:\\", "F:\\", "M:\\"):
+        for drive in tuple("%s:\\" % _c for _c in "CDEFGHIJKLMNOPQRSTUVWXYZ"):   # 全盘符枚举（不特指某一台机器）
             cands += [drive + "WX\\Weixin\\Weixin.exe", drive + "Tencent\\Weixin\\Weixin.exe",
                       drive + "Program Files\\Tencent\\Weixin\\Weixin.exe"]
         for c in cands:

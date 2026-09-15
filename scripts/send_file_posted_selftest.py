@@ -459,7 +459,7 @@ try:
        _adO._row_time_conflict("x", gui=object())[0] is True, str(_adO._row_time_conflict("x", gui=object())))
     _coO.highlight_time = lambda img: ("2:33", 168)
     _adO._last_time_hhmm = lambda cid: "02:33"
-    ok("活动行 2:33 ＝ 目标 02:33 ⇒ 不算冲突（余命十日那一侧）",
+    ok("活动行 2:33 ＝ 目标 02:33 ⇒ 不算冲突（E那一侧）",
        _adO._row_time_conflict("x", gui=object())[0] is False)
     _coO.highlight_time = lambda img: ("", None)
     ok("读不到活动行时间 ⇒ 返回 decided=False（判不了，交给调用方 fail-closed）",
