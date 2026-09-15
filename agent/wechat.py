@@ -164,6 +164,41 @@ def _restore_fg(hwnd: int = 0, note: str = "", keep: bool = False) -> None:
                 pass
 
 
+# —— 最小化状态还原（2026-09-16 r22 验收 FAIL 项）——
+# 现象（对面那台机器实测）：微信收在任务栏时，我们**不激活地**把它还原出来干活
+# （`_ensure_main_visible`），但干完只还了前台、**没把它放回收起状态** ⇒ 用户的微信
+# 从"收在任务栏"变成"摊在桌面上"，还得自己再收一次。用户口径是「不打扰用户」⇒
+# **谁动的谁收拾**：还原过就必须放回。
+_MINIMIZED_BY_US = 0        # 为了干活而还原出来的那个主窗（0 = 本轮没动过它的收起状态）
+
+
+def _minimize_back_if_needed(note: str = "") -> None:
+    """把我们为了干活而还原出来的主窗放回收起状态（三条安全线，一条都不许少）。
+
+    ①**没登记过就不动**（用户本来就没最小化，我们没资格改它的状态）；
+    ②**它已经是最小化了就不动**（用户自己收的，别再补一枪）；
+    ③**它现在是前台就不动**（用户正在用它干活 —— 这时候去最小化就是抢用户的窗口）。
+    """
+    global _MINIMIZED_BY_US
+    hwnd = int(_MINIMIZED_BY_US or 0)
+    if not hwnd:
+        return
+    _MINIMIZED_BY_US = 0
+    try:
+        import ctypes as _ct
+        u = _ct.windll.user32
+        if not u.IsWindow(hwnd):
+            return
+        if u.IsIconic(hwnd):
+            return
+        if int(u.GetForegroundWindow() or 0) == hwnd:
+            return
+        u.ShowWindow(hwnd, 6)      # SW_MINIMIZE
+        log.info("还最小化（%s）：微信主窗已放回收起状态（那是我们为干活还原出来的）", note or "未注明")
+    except Exception as e:
+        log.warning("放回最小化失败：%s", e)
+
+
 def _restore_fg_until(note: str = "", timeout: float = 2.5, keep: bool = True,
                       gap: float = 0.18) -> bool:
     """在 `timeout` 秒内**反复**把前台还回 stash 那一个，直到真的回到它为止。
@@ -188,6 +223,8 @@ def _restore_fg_until(note: str = "", timeout: float = 2.5, keep: bool = True,
     ok = (int(_fg_now() or 0) == h)
     log.info("还前台收尾（%s）：试了 %d 次，最终前台=%s %s",
              note or "未注明", tries, _fg_now(), "✅ 已回到用户窗口" if ok else "✗ 没能回到")
+    # 前台还回去之后再放回收起状态（顺序不能反：先最小化会让"还前台"更难成立）
+    _minimize_back_if_needed(note)
     return ok
 
 
@@ -1383,6 +1420,8 @@ class WeChatAdapter:
                     gui._update_render_rect()
             except Exception:
                 pass
+            global _MINIMIZED_BY_US
+            _MINIMIZED_BY_US = int(main)      # 登记：干完活由 `_restore_fg_until` 放回收起状态
             log.info("微信主窗原来是最小化：已**不激活**还原（不动光标（伪激活可能短暂置前约 1~3 秒后自动还回））后继续")
             return True
         except Exception as e:
