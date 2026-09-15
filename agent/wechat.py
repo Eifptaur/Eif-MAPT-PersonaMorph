@@ -1855,6 +1855,8 @@ class WeChatAdapter:
             self._ensure_main_visible(gui, main)   # 最小化 ⇒ 先不激活地还原（发送链的会话头判据要抓图）
             if not gui.render_rect:
                 gui._update_render_rect()
+            _stash_fg()      # ⚠️ 投递链的伪激活会让微信**短暂真占前台**（跨机 r15 实测 1.8s）⇒ 记下用户窗口，
+                             #    发完（下面点完「发送」）立刻还用 `_restore_fg_until`，把这段压到最短。
             # 会话头校验（防发错会话）：投递**不会切会话** ⇒ 必须有"当前会话＝目标会话"的**正面证据**才准发。
             # ⛔ 2026-09-13 实测事故（检验包自测暴露）：no_ref（当前尺寸没参照）时照发 ⇒ 文本被打进
             #    **当时打开的另一个会话**并真的发了出去（发给了联系人 E），而 DB 里查目标会话自然查不到，
@@ -1896,6 +1898,10 @@ class WeChatAdapter:
             ok2, why2 = backend.click(main, send_pt)
             if not ok2:
                 return False, "投递点发送失败：%s" % why2
+            # ⚠️ 2026-09-16 晚（跨机 r15 实测）：投递链的**伪激活**（`WM_ACTIVATE`）会让微信**短暂真占前台**
+            #    （他们那台实测 1.8s、切换会话那枪 2.9~3.2s，之后自动还回）。⇒ 发送这一枪之后立刻盯着还一次，
+            #    把"用户窗口丢前台"的时长压到最短；`_FG_STASH` 是进这条链时 `_stash_fg()` 记下的用户窗口。
+            _restore_fg_until("投递发送后", timeout=2.5, keep=False)
             deadline = time.time() + max(3.0, float(wait_s))
             while time.time() < deadline:
                 time.sleep(0.8)
