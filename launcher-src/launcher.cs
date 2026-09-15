@@ -675,8 +675,9 @@ namespace WxLauncher
     public class ConsoleForm : Form
     {
         string _url;
-        int _ring = 6;                 // 边缘缩放环宽（逻辑 px，OnLoad 里按窗口 DPI 换算）
-        Button _btnMax;                // 最大化/还原按钮（图标随状态换）
+        int _ring = 3;                 // 边缘缩放环宽（逻辑 px，OnLoad 里按窗口 DPI 换算）
+                                       // 2026-09-15 用户「这个边框太大了」⇒ 6 → 3；最大化时内边距直接归零
+        GlyphButton _btnMax;           // 最大化/还原按钮（自绘字形，随状态换 kind）
         public bool ProbeOnly;         // 取证探针用：不初始化 WebView2（免得探针把浏览器弹出来）
         /// 不激活显示：`Show()` 时用 SW_SHOWNOACTIVATE，**不抢用户前台**
         /// （取值探针 --cursorprobe 用；实测：只加 WS_EX_NOACTIVATE 还不够，WinForms 的 Show() 仍会激活）
@@ -694,9 +695,49 @@ namespace WxLauncher
             {
                 WindowState = (WindowState == FormWindowState.Maximized)
                     ? FormWindowState.Normal : FormWindowState.Maximized;
-                if (_btnMax != null) _btnMax.Text = (WindowState == FormWindowState.Maximized) ? "❐" : "□";
+                ApplyChrome();
+                GlyphButton gm = _btnMax as GlyphButton;
+                if (gm != null) gm.Kind = (WindowState == FormWindowState.Maximized) ? GlyphKind.Restore : GlyphKind.Max;
             }
             catch { }
+        }
+
+        /// 全屏/还原时同步窗口内边距（2026-09-15 用户：「全屏就应该是完全的全屏，这个边框也要消掉的」）：
+        /// 无边框窗体的 Maximized 本来就铺满整屏（含任务栏），把内边距归零画面就真顶到边。
+        public void ApplyChrome()
+        {
+            try { Padding = (WindowState == FormWindowState.Maximized) ? new Padding(0) : new Padding(_ring, 0, _ring, _ring); }
+            catch { }
+        }
+
+        /// 给 ESC 过滤器用（`_btnMax` 是私有字段）
+        public GlyphButton MaxButton { get { return _btnMax; } }
+
+        /// ESC 退出全屏（用户 2026-09-15：「退出全屏快捷键，你设置好，最好是ESC」）。
+        /// 为什么用 `IMessageFilter` 而不是 KeyPreview/ProcessCmdKey：WebView2 是**原生子窗口**，
+        /// 键盘消息直接投给它，WinForms 的 KeyPreview/ProcessCmdKey 收不到；消息过滤器挂在应用消息泵上，
+        /// 能看见发给子窗的 WM_KEYDOWN，所以这条路才有效。
+        internal class EscFilter : IMessageFilter
+        {
+            readonly ConsoleForm _f;
+            public EscFilter(ConsoleForm f) { _f = f; }
+            public bool PreFilterMessage(ref Message m)
+            {
+                try
+                {
+                    if (m.Msg == 0x0100 && (int)m.WParam == 0x1B && _f != null
+                        && _f.WindowState == FormWindowState.Maximized)
+                    {
+                        _f.WindowState = FormWindowState.Normal;
+                        _f.ApplyChrome();
+                        GlyphButton gm = _f.MaxButton as GlyphButton;
+                        if (gm != null) gm.Kind = GlyphKind.Max;
+                        return true;
+                    }
+                }
+                catch { }
+                return false;
+            }
         }
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         static extern uint GetDpiForWindow(IntPtr h);
@@ -840,7 +881,8 @@ namespace WxLauncher
                 int w, h, mw, mh, r;
                 ComputeGeometry(wa.Width, wa.Height, k, out w, out h, out mw, out mh, out r);
                 _ring = r;
-                Padding = new Padding(_ring, 0, _ring, _ring);
+                ApplyChrome();                                                    // 全屏态内边距为 0
+                try { Application.AddMessageFilter(new EscFilter(this)); } catch { }   // ESC 退出全屏
                 ClientSize = new Size(w, h);
                 MinimumSize = new Size(mw, mh);
             }
@@ -865,25 +907,24 @@ namespace WxLauncher
             t.AutoSize = true; t.Location = new Point(14, 12);
             t.MouseDown += delegate { StyleKit.Drag(Handle); };
             bar.Controls.Add(t);
-            Button min = new RoundButton();
-            min.Text = "—"; min.Size = new Size(34, 26); min.FlatStyle = FlatStyle.Flat;
-            min.FlatAppearance.BorderSize = 0; min.BackColor = StyleKit.Bg; min.ForeColor = StyleKit.Sub;
+            // 顶栏三个按钮**自绘**（2026-09-15 用户：「减号、全屏、叉号的样子很奇怪呀，不统一」）：
+            // 旧实现用 `—` / `□` / `✕` 三种字形，笔画与基线各不相同 ⇒ 一排看过去必然怪。见 wingliphs.cs。
+            GlyphButton min = new GlyphButton();
+            min.Kind = GlyphKind.Min; min.Size = new Size(34, 26);
             min.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             min.Location = new Point(bar.Width - 122, 8);
             min.Click += delegate { WindowState = FormWindowState.Minimized; };
             bar.Controls.Add(min);
             // 最大化 / 还原（2026-09-14 用户：「自创原生显示屏是没有全屏键的，顶栏上只有两个按钮。需要一个全屏键」）
-            Button maxb = new RoundButton();
-            maxb.Text = "□"; maxb.Size = new Size(34, 26); maxb.FlatStyle = FlatStyle.Flat;
-            maxb.FlatAppearance.BorderSize = 0; maxb.BackColor = StyleKit.Bg; maxb.ForeColor = StyleKit.Sub;
+            GlyphButton maxb = new GlyphButton();
+            maxb.Kind = GlyphKind.Max; maxb.Size = new Size(34, 26);
             maxb.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             maxb.Location = new Point(bar.Width - 82, 8);
             maxb.Click += delegate { ToggleMax(); };
             _btnMax = maxb;
             bar.Controls.Add(maxb);
-            Button cls = new RoundButton();
-            cls.Text = "✕"; cls.Size = new Size(34, 26); cls.FlatStyle = FlatStyle.Flat;
-            cls.FlatAppearance.BorderSize = 0; cls.BackColor = StyleKit.Bg; cls.ForeColor = StyleKit.Sub;
+            GlyphButton cls = new GlyphButton();
+            cls.Kind = GlyphKind.Close; cls.Size = new Size(34, 26);
             cls.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             cls.Location = new Point(bar.Width - 42, 8);
             cls.Click += delegate { Close(); };
@@ -891,7 +932,7 @@ namespace WxLauncher
             // 图标随状态换（最大化时显示"还原"框）
             Resize += delegate
             {
-                try { if (_btnMax != null) _btnMax.Text = (WindowState == FormWindowState.Maximized) ? "❐" : "□"; }
+                try { if (_btnMax != null) _btnMax.Kind = (WindowState == FormWindowState.Maximized) ? GlyphKind.Restore : GlyphKind.Max; }
                 catch { }
             };
             _wv = new Microsoft.Web.WebView2.WinForms.WebView2();

@@ -215,9 +215,9 @@
 - W6 起 一键启动.exe **必须引用 WebView2**：`lib\Microsoft.Web.WebView2.Core.dll` + `lib\Microsoft.Web.WebView2.WinForms.dll`，且 **`WebView2Loader.dll` 放在 exe 同目录（根目录）**（程序集解析在 `StyleKit.Prep()` 用 `AssemblyResolve` 挂到 `lib\`）
 - 自检入口（W6）：`一键启动.exe --console <url>`（自带 WebView2 窗口开控制台，Python 侧不再开浏览器）· `--shot <dir>`（全部弹窗离屏渲染 PNG 作视觉证据）· `--dlgprobe`（打印弹窗/控件清单，机械核对主题与边框）
 - **硬规矩：0 系统 MessageBox**（`grep "MessageBox\.Show" launcher-src\*.cs` 必须 0）；外观只在 `StyleKit` 一处定义，新窗体先 `StyleKit.Apply(this, "标题")`
-- 命令（换图标后重新编译，已在 2026-09-13 实测通过）：
+- 命令（换图标后重新编译；**源文件清单变了就要同步这里** —— 2026-09-15 已加 `wingliphs.cs`（顶栏自绘字形）与 `webview2guide.cs`（WebView2 引导器），两者都漏写过一次）：
   ```powershell
-  csc /nologo /target:winexe /optimize+ /win32icon:assets\exe.ico /r:lib\Microsoft.Web.WebView2.Core.dll /r:lib\Microsoft.Web.WebView2.WinForms.dll /out:一键启动.exe launcher-src\launcher.cs launcher-src\stylekit.cs
+  csc /nologo /target:winexe /optimize+ /win32icon:assets\exe.ico /r:lib\Microsoft.Web.WebView2.Core.dll /r:lib\Microsoft.Web.WebView2.WinForms.dll /out:一键启动.exe launcher-src\launcher.cs launcher-src\stylekit.cs launcher-src\wingliphs.cs launcher-src\webview2guide.cs
   csc /nologo /target:winexe /optimize+ /win32icon:assets\exe.ico /r:System.Management.dll /out:一键关闭.exe launcher-src\close.cs launcher-src\stylekit.cs
   ```
 - **验收（比肉眼硬，口径 2026-09-13 W6 修正）**：`[System.Drawing.Icon]::ExtractAssociatedIcon(新exe).ToBitmap()` 应与 **`assets\app.ico` / `assets\exe.ico` 的 32 帧**逐一比对，**最大像素差 = 0**（本轮实测两个 exe、两个 ico 全是 0 ✓）。
