@@ -327,6 +327,34 @@ def header_text(img=None, gui=None, zoom: int = 2) -> str:
 _time_re = re.compile(r"\d{1,2}\s*[:：]\s*\d{2}")
 _date_re = re.compile(r"\d{1,2}\s*[/月]\s*\d{1,2}\s*日?")
 _ellip_re = re.compile(r"[.．…]{2,}")
+_hhmm_re = re.compile(r"^\s*(\d{1,2})\s*[:：]\s*(\d{2})\s*$")
+
+
+def hhmm(t: str) -> str:
+    """把 `'01：03'` / `'1:03'` / `'01:03'` 一律归一成 `'1:03'`（**小时不补零**）；认不出给 `''`。
+
+    ⚠️ 2026-09-16 修（真缺陷·根因）：`find_row_info` 原来拿**目标时间**（`strftime('%H:%M')`＝`01:03`）
+    与**读到的**时间（归一成 `'%d:%02d'`＝`1:03`）**直接比字符串** ⇒ 上午 0~9 点这两个串永不相等 ⇒
+    **"按最后消息时间定位会话行"在 10 点以前永远失败**。而单字母名字的会话（E）名字读不出来，
+    时间档就是唯一信号 ⇒ 表现成"会话列表里明明有 E，滚了 6 轮也定位不到"（r11 实测两次）。
+    两侧必须走同一个归一口径，这条就是那个口径。
+    """
+    m = _hhmm_re.match(str(t or ""))
+    return "" if not m else "%d:%s" % (int(m.group(1)), m.group(2))
+
+
+def row_time_match(blob: str, want: str) -> bool:
+    """`blob`（一行/一屏的 OCR 文本）里是否有与目标时刻 `want` **同一个**时间戳。
+
+    两侧都过 `hhmm()`（`'01：03'` / `'1:03'` / `'01:03'` 视为同一时刻）。
+    """
+    w = hhmm(want)
+    if not w:
+        return False
+    for m in _time_re.finditer(str(blob or "")):
+        if hhmm(m.group(0)) == w:
+            return True
+    return False
 
 
 def clean(text: str) -> str:
@@ -512,18 +540,24 @@ def _green_at(img, y_abs: int, half: int = 6) -> float:
         return 0.0
 
 
+def _name_box(img, y_abs: int) -> tuple:
+    """会话行里"名字那一格"的裁剪框（左侧、上半天）——**只此一处**，`name_of_row` 与绿底行读名共用。"""
+    w, h = img.size
+    left = 0
+    try:
+        left = ch.detect_pane_left(img) or 0
+    except Exception:
+        left = 0
+    if not left:
+        left = int(w * ch.PANE_LEFT_REL)
+    return (max(0, left - 235), max(0, y_abs - 14), max(0, left - 95), min(h, y_abs + 16))
+
+
 def name_of_row(img, y_abs: int, text: str = "", zoom: int = 3) -> str:
     """只 OCR 该行的**名字区**（左侧、上半天），拿更干净的名字；失败退回整行文本。"""
     try:
         w, h = img.size
-        left = 0
-        try:
-            left = ch.detect_pane_left(img) or 0
-        except Exception:
-            left = 0
-        if not left:
-            left = int(w * ch.PANE_LEFT_REL)
-        box = (max(0, left - 235), max(0, y_abs - 14), max(0, left - 95), min(h, y_abs + 16))
+        box = _name_box(img, y_abs)
         crop = img.crop(box)
         if crop.width < 8 or crop.height < 6:
             return text
@@ -616,7 +650,7 @@ def find_row_info(img, name: str, zoom: int = 2, want_time: str = ""):
             left = 0
         if not left:
             left = int(w * ch.PANE_LEFT_REL)
-        want = (want_time or "").strip().replace("：", ":")
+        want = hhmm(want_time)
         rows = session_rows(img, zoom=zoom)
         for r in rows:
             nm = r.get("name") or ""
@@ -625,16 +659,10 @@ def find_row_info(img, name: str, zoom: int = 2, want_time: str = ""):
             if want:
                 # ⚠️ 时间戳在**整行拼起来**的文本里（`full`＝名字＋预览＋时间，实测 '文件传．“19：41'），
                 #    只看 `name` 永远找不到时间 ⇒ 一开始就是这么写错的（按时间定位一直返回 None）。
+                # ⚠️ 2026-09-16 修：比较必须走 `row_time_match`（两侧同口径归一化）——原来这里
+                #    目标是 `01:03`、读到的归一成 `1:03`，**10 点以前的时刻永远配不上**（见 `hhmm`）。
                 _blob = str(r.get("full") or "") + " " + nm
-                for m in _time_re.finditer(_blob):
-                    t = m.group(0).replace("：", ":").replace(" ", "")
-                    try:
-                        hh, mm = t.split(":")
-                        if "%d:%02d" % (int(hh), int(mm)) == want:
-                            hit_t = True
-                            break
-                    except Exception:
-                        pass
+                hit_t = row_time_match(_blob, want)
             if want and hit_t:
                 # 时间命中：再看名字那一行——读得出且明显不是它 ⇒ 不算（宁可找不到，不许点错）
                 got = ""
@@ -643,6 +671,20 @@ def find_row_info(img, name: str, zoom: int = 2, want_time: str = ""):
                 except Exception:
                     got = ""
                 if got and not matches(got, name):
+                    # ⛔ 2026-09-16 修（真缺陷）：**单字母名字会被 OCR 读成别的字**（实测 E → 「巷」），
+                    #    "名字明显不是它"这条防误配守卫于是把**唯一正确的那一行**否掉 ⇒ `switch_chat_posted`
+                    #    报"没定位到 E"，而 E 恰恰就是当前打开的那一行（真帧实测：该行 OCR『巷01：03』）。
+                    #    ⇒ 只有目标名**短到 OCR 认不准**（≤2 字）时，才允许在"时间精确命中 **且** 该时刻在
+                    #    整张列表里唯一"的前提下放行——两条独立证据 + 唯一性，点错会话的口子没有开。
+                    try:
+                        _blob = lambda r2: (str(r2.get("full") or "") + " " + str(r2.get("name") or ""))  # noqa: E731
+                        _same = [r2 for r2 in rows if row_time_match(_blob(r2), want)]
+                    except Exception:
+                        _same = []
+                    if len(norm(name)) <= 2 and len(_same) == 1:
+                        return {"pos": (max(0, left - 150), min(h - 2, y + 16)), "y_abs": y, "name": nm,
+                                "why": ("按最后消息时间 %s 命中，且该时刻在列表里唯一（该行名字 OCR=%r 与目标 %r "
+                                        "不像，按「短名单字母 OCR 认不准」放行）" % (want, got, name))}
                     continue
                 return {"pos": (max(0, left - 150), min(h - 2, y + 16)), "y_abs": y, "name": nm,
                         "why": "按最后消息时间 %s 命中（该行名字 OCR=%r）" % (want, got)}
@@ -683,13 +725,10 @@ def row_time_at(img, y_abs: int, tol: int = 34) -> str:
             if d > tol or d >= best_d:
                 continue
             for m in _time_re.finditer(str(r.get("full") or "")):
-                t = m.group(0).replace("：", ":").replace(" ", "")
-                try:
-                    hh, mm = t.split(":")
-                    best, best_d = "%d:%02d" % (int(hh), int(mm)), d
+                t = hhmm(m.group(0))
+                if t:
+                    best, best_d = t, d
                     break
-                except Exception:
-                    pass
     except Exception:
         return ""
     return best
@@ -712,22 +751,159 @@ def highlight_time(img):
     return row_time_at(img, y), y
 
 
+def green_bands(img, min_ratio: float = 0.45, min_h: int = 28,
+                x0: int = None, x1: int = None) -> list:
+    """**纯像素**扫"绿底行"：返回 `[{'y0','y1','y_abs','score'}...]`（按 score 降序）。
+
+    为什么必须按像素（2026-09-16 本机实测，真缺陷）：当前打开的那一行是**白字绿底**，
+    WinRT OCR 在整幅识别里**根本读不出这一行**（实测 1139×890 帧：列表 8 行里独缺高亮那行）⇒
+    `highlight()` / `highlight_relative()` 只能在"读得出的行"里挑绿最多的，而**绿色头像**
+    （微信/微信团队那种绿底图标）会贡献 0.14~0.22 的假绿 ⇒ 高亮行被判成头像绿的那一行。实测：
+    当前打开的是「宋孟」，`chat_is_open` 却报「微信…」——身份闸拿到了**错的行**。
+    按像素量就没有这个问题：在不含头像的右半段，绿底行占比实测 **0.93**，普通行 **0.00**（差两个量级）。
+    """
+    try:
+        if img is None:
+            return []
+        rgb = img.convert("RGB")
+        w, h = rgb.size
+        _x0d, _x1d = _green_x(rgb)
+        _x1 = int(x1 if x1 is not None else _x1d)
+        _x0 = int(x0 if x0 is not None else _x0d)
+        if _x1 - _x0 < 40 or h < 40:
+            return []
+        px = rgb.crop((_x0, 0, _x1, h)).load()
+        cw = _x1 - _x0
+        xs = list(range(0, cw, 2 if cw > 60 else 1))
+        bands, cur = [], None
+        for y in range(h):
+            hit = 0
+            for x in xs:
+                r, g, b = px[x, y][:3]
+                if _is_green(r, g, b):
+                    hit += 1
+            if hit / float(len(xs)) >= float(min_ratio):
+                if cur is None:
+                    cur = {"y0": y, "y1": y, "hits": 0, "n": 0}
+                cur["y1"] = y
+                cur["hits"] += hit
+                cur["n"] += len(xs)
+            elif cur is not None:
+                bands.append(cur)
+                cur = None
+        if cur is not None:
+            bands.append(cur)
+        out = []
+        for bd in bands:
+            if (bd["y1"] - bd["y0"]) < int(min_h):
+                continue
+            out.append({"y0": int(bd["y0"]), "y1": int(bd["y1"]),
+                        "y_abs": int((bd["y0"] + bd["y1"]) / 2),
+                        "score": round(bd["hits"] / float(bd["n"] or 1), 3)})
+        out.sort(key=lambda d: -d["score"])
+        return out
+    except Exception:
+        return []
+
+
+def _green_x(img):
+    """**不含头像**的那一段取样窗 `(x0, x1)`：面板左沿往左 144~14 px（列表右半段，纯背景）。"""
+    w = img.size[0]
+    left = 0
+    try:
+        left = ch.detect_pane_left(img) or 0
+    except Exception:
+        left = 0
+    if not left:
+        left = int(w * ch.PANE_LEFT_REL)
+    x1 = max(0, left - 14)
+    return max(0, x1 - 130), x1
+
+
+def _is_green(r: int, g: int, b: int) -> bool:
+    return (abs(r - GREEN[0]) <= GREEN_TOL and abs(g - GREEN[1]) <= GREEN_TOL
+            and abs(b - GREEN[2]) <= GREEN_TOL)
+
+
+def green_row_ratio(img, y_abs: int, half: int = 6) -> float:
+    """**不含头像**的那一段里，某一行 y 的绿底占比。
+
+    为什么要单列（2026-09-16 本机实测·真缺陷）：`_green_at` 的取样窗 `[pane_left-240, pane_left-10]`
+    **含头像列**，而微信/微信团队那种**绿色头像**会给出 0.14~0.22 的假绿 ⇒ 拿它挑"高亮行"会挑中
+    **头像绿**的那一行（实测：当前打开的是「宋孟」，`chat_is_open` 报的却是「微信…」）。右半段没有头像，
+    绿底行实测 0.93、普通行 0.00 —— 差两个量级，随便定阈值都分得开。
+    """
+    try:
+        if img is None:
+            return 0.0
+        rgb = img.convert("RGB")
+        x0, x1 = _green_x(rgb)
+        if x1 - x0 < 40:
+            return 0.0
+        px = rgb.load()
+        xs = list(range(x0, x1, 2))
+        y0 = max(0, int(y_abs) - int(half))
+        y1 = min(rgb.size[1], int(y_abs) + int(half))
+        tot = hit = 0
+        for yy in range(y0, y1):
+            for xx in xs:
+                r, g, b = px[xx, yy][:3]
+                tot += 1
+                if _is_green(r, g, b):
+                    hit += 1
+        return hit / float(tot or 1)
+    except Exception:
+        return 0.0
+
+
+def _band_name(img, y_abs: int) -> str:
+    """绿底行（白字）的名字——读得出来就用，读不出给 ''（**不许**因此否定这一行的存在）。
+
+    ⚠️ 高亮行是**白字绿底**，正读（深字浅底的那套）常常读不出（实测 E 那种单字母行给空串）⇒
+       正读拿不到就再来一次**反相**（浅字深底）——判据是"读得出来算赢"，读不出仍返回 ''，
+       上层（`chat_is_open`）还有会话头指纹那条独立证据。
+    """
+    try:
+        got = name_of_row(img, int(y_abs), "", zoom=3) or ""
+        if got:
+            return got
+        crop = img.crop(_name_box(img, int(y_abs)))
+        if crop.width < 8 or crop.height < 6:
+            return ""
+        crop = crop.resize((crop.width * 3, crop.height * 3))
+        from PIL import ImageOps
+        inv = ImageOps.invert(ImageOps.autocontrast(crop.convert("L"))).convert("RGB")
+        return clean("".join(str(i[0]) for i in recognize(inv))).strip()
+    except Exception:
+        return ""
+
+
 def highlight(img, min_green: float = 0.12):
     """当前**绿底高亮行**（＝打开的会话行）：返回 `{'y_abs','score','name'}`，没有则 None（只读）。
 
     ⚠️ 阈值为什么是 0.12：实测高亮行占比随帧质量在 **0.18~0.74** 之间跳（2026-09-13 同一窗口连续测），
        而普通行只有 **0.00~0.01** ⇒ 0.12 仍留十倍余量；用 0.20 会把"真高亮但帧偏糊"的那一帧判成没有。
+
+    ⚠️ 2026-09-16 改：**先用像素法**（`green_bands`）——高亮行是白字绿底、OCR 读不出，
+       老口径（按 OCR 行量绿）会把绿色头像那一行当高亮行（实测把「宋孟」认成「微信…」）。
+       OCR 行那条路留作**兜底**（换主题/毛玻璃时像素法可能量不到，此时老口径至少不至于全瞎）。
     """
     try:
         if img is None:
             return None
+        bands = green_bands(img, min_ratio=max(0.45, float(min_green)), min_h=28)
+        if bands:
+            b0 = bands[0]
+            return {"y_abs": int(b0["y_abs"]), "score": float(b0["score"]),
+                    "name": _band_name(img, b0["y_abs"]), "why": "像素法（绿底带 %d~%d）" % (b0["y0"], b0["y1"])}
         best, score = None, 0.0
         for r in session_rows(img):
-            sc = _green_at(img, r["y_abs"])
+            sc = green_row_ratio(img, r["y_abs"])          # ⚠️ 头像绿不算（见 green_row_ratio）
             if sc > score:
                 best, score = r, sc
-        if best is not None and score >= float(min_green):
-            return {"y_abs": int(best["y_abs"]), "score": float(score), "name": best.get("name") or ""}
+        if best is not None and score >= max(0.3, float(min_green)):
+            return {"y_abs": int(best["y_abs"]), "score": float(score), "name": best.get("name") or "",
+                    "why": "OCR 行兜底（右半段绿底 %.2f）" % score}
         return None
     except Exception:
         return None
@@ -739,12 +915,25 @@ def highlight_relative(img, min_top: float = 0.05, ratio: float = 2.5) -> tuple:
     为什么不用绝对阈值：帧质量会让真高亮的占比在 0.18~0.74 之间跳，绝对阈值总会在某一帧误杀
     （2026-09-13 实测：判 0.20 时把占比 0.159 的真高亮判成"没有高亮"）。相对比较稳得多——
     实测高亮行 0.159 / 其余行 0.000：要求「最高 ≥ min_top 且 ≥ ratio × 次高」即可。
+
+    ⚠️ 2026-09-16：主路改像素法（同 `highlight`）；**绿底行占比 ≥0.6 时按"足够强的绝对证据"直接认**
+    （像素法下真高亮是 0.93、普通行 0.00，不存在 2.5 倍那条线卡住自己的情形）。
     """
     try:
+        bands = green_bands(img, min_ratio=max(0.45, float(min_top)), min_h=28)
+        if bands:
+            top = bands[0]
+            second = float(bands[1]["score"]) if len(bands) > 1 else 0.0
+            why = ("像素法：绿底带 y=%d~%d 占比 %.2f，次强 %.2f"
+                   % (top["y0"], top["y1"], top["score"], second))
+            if top["score"] < 0.6 and second > 0 and top["score"] < float(ratio) * second:
+                return None, why + "·不够突出"
+            return ({"y_abs": int(top["y_abs"]), "score": float(top["score"]),
+                     "name": _band_name(img, top["y_abs"]), "why": why}, why)
         rows = session_rows(img)
         if not rows:
-            return None, "没有读到会话行"
-        scored = sorted(((_green_at(img, r["y_abs"]), r) for r in rows), key=lambda t: -t[0])
+            return None, "没有读到会话行，也没量到绿底带"
+        scored = sorted(((green_row_ratio(img, r["y_abs"]), r) for r in rows), key=lambda t: -t[0])
         top, second = scored[0], (scored[1][0] if len(scored) > 1 else 0.0)
         why = "最高 %.3f（%s）次高 %.3f" % (top[0], str(top[1].get("name"))[:10], second)
         if top[0] < float(min_top):
@@ -992,16 +1181,28 @@ def current_chat_name(img=None, gui=None, min_green: float = 0.12, retries: int 
                 best = ("", "抓图失败")
             else:
                 rows = session_rows(use)
-                if not rows:
+                # ⚠️ 2026-09-16：**先像素法**定高亮行——当前打开的那行是白字绿底、OCR 读不出它，
+                #    只按 OCR 行量绿会被**绿色头像**领跑（实测把「宋孟」认成「微信…」）。
+                bands = green_bands(use, min_ratio=max(0.45, float(min_green)), min_h=28)
+                if bands:
+                    name = _band_name(use, bands[0]["y_abs"])
+                    if name:
+                        return name, "绿底带 y=%d~%d 占比 %.2f（像素法）· 名字 OCR=%r" % (
+                            bands[0]["y0"], bands[0]["y1"], bands[0]["score"], name[:16])
+                    if len(rows) > best_rows:      # 高亮行认出来了但名字读不出 ⇒ 说清"认得出行、读不出名"
+                        best_rows = len(rows)
+                        best = ("", "绿底带在 y=%d~%d（占比 %.2f）但那一行名字 OCR 读不出（白字绿底）"
+                                % (bands[0]["y0"], bands[0]["y1"], bands[0]["score"]))
+                elif not rows:
                     if best_rows < 0:
-                        best = ("", "会话列表没读到文字")
+                        best = ("", "会话列表没读到文字，也没量到绿底带")
                 else:
                     pick, score = None, 0.0
                     for r in rows:
-                        sc = _green_at(use, r["y_abs"])
+                        sc = green_row_ratio(use, r["y_abs"])   # ⚠️ 头像绿不算（见 green_row_ratio）
                         if sc > score:
                             pick, score = r, sc
-                    if pick is not None and score >= min_green:
+                    if pick is not None and score >= max(0.3, float(min_green)):
                         name = name_of_row(use, pick["y_abs"], pick["name"])
                         if name:
                             return name, "绿底行「%s」占比 %.2f（整行 OCR：%s）" % (name[:16], score, pick["name"][:22])
@@ -1202,7 +1403,11 @@ def find_search_entry(img, left=None, zoom: int = 2):
             return {"variant": "icon", "x": cx, "y": cy,
                     "why": "最上一排最靠左的图标块 %dx%d（该排 %d 块 / 共 %d 块，导航栏右沿 %d）"
                            % (bw, bh, len(row), len(cands), rail),
-                    "cands": cands}
+                    "cands": cands,
+                    # 观测口径（2026-09-16 跨机需求⑤）：把**全部候选块**写成一行文字，失败时随结果返回——
+                    # 对面报"点到顶部「＋」"时，我这边能看到"候选里到底有几个块、选了第几个"。
+                    "cand_txt": " · ".join("#%d(%d,%d,%dx%d)" % (i, c[0], c[1], c[2], c[3])
+                                           for i, c in enumerate(cands))}
     except Exception:
         pass
     return None

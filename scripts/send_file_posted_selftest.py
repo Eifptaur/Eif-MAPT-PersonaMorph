@@ -75,10 +75,14 @@ ok("运行时：从真实文件名提出指纹 20260914383（含 2026914383 变�
 ok("运行时：没有版本号的文件名不硬凑指纹（返回空，交给别的档）", A._file_fingerprints("Eif-MAPT-console-0.1.4.zip") == [] or True,
    str(A._file_fingerprints("note.md")))
 # 2026-09-14 修的两个真缺陷（E 明明开着、闸门却判否）——判据钉住，别让它回来：
+# ⚠️ 2026-09-16：这两档**抽成了 `_active_row_time_ok()`**（`chat_identity_ok` 与 `chat_is_open`
+#    共用同一条证据链），所以断言改成钉"抽出来的那一处"，并要求两条闸都真的接上了它。
 ok("身份闸时间档做了时间归一化（列表读到的 1:35 与 DB 的 01:35 视为同一时刻）",
-   "_norm_hhmm(" in SRC and "self._norm_hhmm(_ht) == self._norm_hhmm(_lt)" in SRC)
+   "def _active_row_time_ok" in SRC and "self._norm_hhmm(_ht) != self._norm_hhmm(_lt)" in SRC
+   and "_ok_t, _why_t = self._active_row_time_ok(chat_id, pane=pane, gui=gui)" in SRC
+   and "_ok3, _why3 = self._active_row_time_ok(chat_id, gui=gui)" in SRC)
 ok("时间档第二道证据有「该时刻在会话列表里唯一」这一档（聊天区不渲染时间时也能认）",
-   "_uniq = (len(_hits) == 1)" in SRC and "_pane_hit or _uniq" in SRC)
+   "_uniq = (_n == 1)" in SRC and "if _pane_hit or _uniq:" in SRC)
 
 print("── D. 防重复发送闸（2026-09-13 用户当场发现『你发了两个文件给我，一模一样的』）──")
 import tempfile          # noqa: E402
@@ -293,6 +297,29 @@ try:
        "low_entropy(nn)" in _segid4 and "len(nn) >= 4" in _segid4)
 except Exception as _e6:
     ok("fail-open 回归（合成文本）能跑", False, str(_e6)[:100])
+
+print("── L. 关「选择文件」对话框不许把微信顶到前台（2026-09-16 实测定位到这一步）──")
+# 用户原话：「你老是把微信切到前台，然后发文件，这不能后台做吗…那个发文件框本身也可以被放在后台的，
+# 它不是锁定前台的」⇒ 探针实测：投递点 📁 不抢前台 ✅、对话框弹出时前台也没变 ✅、
+# **关掉对话框之后**前台变成微信主窗 ✗ ⇒ 处置＝关前后各记一次前台，关完还回去。
+_wxsrc5 = open(os.path.join(_ROOT, "agent", "wechat.py"), encoding="utf-8").read()
+ok("有『打开对话框之前记下前台』的实现（_stash_fg）",
+   "def _stash_fg" in _wxsrc5 and "_FG_STASH" in _wxsrc5)
+ok("有『还回前台』的实现（且拒绝还给对话框/死窗口）",
+   "def _restore_fg" in _wxsrc5 and "SetForegroundWindow" in _wxsrc5
+   and '#32770' in _wxsrc5 and "IsWindow" in _wxsrc5)
+_seg_send = _wxsrc5[_wxsrc5.index("def send_file_posted"):]
+ok("产品发文件路径：**点 📁 之前**就 stash 前台",
+   "_stash_fg()" in _seg_send and _seg_send.index("_stash_fg()") < _seg_send.index("backend.click(main_hwnd, pt)"))
+_seg_close = _wxsrc5[_wxsrc5.index("def _close_file_dialog"):_wxsrc5.index("def wx_version_for_gate")]
+ok("单框关闭路径：关完会还前台", "_restore_fg(" in _seg_close)
+ok("批量清理路径也还前台（残留框挡屏时同样会顶前台）",
+   _seg_close.count("_restore_fg(") >= 2, "命中 %d 处" % _seg_close.count("_restore_fg("))
+try:
+    from agent.wechat import _fg_before_close as _fgb
+    ok("_fg_before_close() 返回一个整数 hwnd（拿不到就 0，不抛）", isinstance(_fgb(), int))
+except Exception as _e7:
+    ok("_fg_before_close() 可调用", False, str(_e7)[:80])
 
 print("== [send-file-posted] 判据：{} 通过 / {} 失败 ==".format(PASS, FAIL))
 sys.exit(1 if FAIL else 0)

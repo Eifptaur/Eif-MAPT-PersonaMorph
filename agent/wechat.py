@@ -41,6 +41,115 @@ TYPE_LABEL = {    "文本": "text",
 }
 
 
+_FG_STASH = {"hwnd": 0, "at": 0.0}          # 打开对话框**之前**那一个前台窗口（见 `_stash_fg`）
+
+
+def _fg_now() -> int:
+    """当前前台窗口句柄（**优先 win32gui**）。
+
+    ⚠️ 2026-09-16 实测踩坑：`ctypes.windll.user32.GetForegroundWindow()` 在没声明 `restype` 时
+    返回的是被当成 32 位 int 处理的句柄，实测**同一进程同一瞬间**它给 0、而 win32gui 给 134730
+    ⇒ `_stash_fg()` 记了个 0，"还前台"自然无从谈起。⇒ 统一走 win32gui，ctypes 只当兜底。
+    """
+    try:
+        import win32gui
+        return int(win32gui.GetForegroundWindow() or 0)
+    except Exception:
+        try:
+            u = ctypes.windll.user32
+            u.GetForegroundWindow.restype = ctypes.c_void_p
+            return int(u.GetForegroundWindow() or 0)
+        except Exception:
+            return 0
+
+
+def _stash_fg() -> int:
+    """在**点 📁 打开对话框之前**记下当时的前台窗口。
+
+    ⚠️ 为什么不能在"关之前"才记（2026-09-16 第二次实测才看明白）：对话框有时**自己会抢前台**，
+    于是"关之前的前台"就是**那个对话框**本身 ⇒ 关掉之后那个 hwnd 已经死了，还原等于没还
+    （实测：还原后前台落在微信主窗上）。必须在**打开之前**把用户当时的前台记下来。
+    """
+    h = _fg_now()
+    _FG_STASH.update({"hwnd": h, "at": time.time()})
+    return h
+
+
+def _fg_before_close() -> int:
+    """（兜底用）当前前台窗口；`_stash_fg()` 没被调用过时的退路。"""
+    return _fg_now()
+
+
+def _wait_dialog_gone(hwnd: int, timeout: float = 1.5) -> None:
+    """等某个对话框**真的消失**（最多 `timeout` 秒）。
+
+    ⚠️ 为什么（2026-09-16 实测）：`PostMessage(WM_CLOSE)` 是**异步**的。原来关完睡 0.25s 就还前台，
+    可那时框往往还没死、Windows 随后又把它的 owner（微信）激活 ⇒ 我们那一枪白还（实测两次都这样）。
+    """
+    try:
+        u = ctypes.windll.user32
+        dl = time.time() + max(0.1, float(timeout))
+        while time.time() < dl:
+            if not u.IsWindow(ctypes.c_void_p(int(hwnd))):
+                return
+            time.sleep(0.05)
+    except Exception:
+        pass
+
+
+def _restore_fg(hwnd: int = 0, note: str = "") -> None:
+    """把前台还回"**打开对话框之前**那一个"（优先级：传入的 hwnd → `_FG_STASH` → 当前前台）。
+
+    **为什么必须有这一步（2026-09-16 探针实测定位）**：用户原话——「你老是把微信切到前台，然后发
+    文件，这不能后台做吗…那个发文件框本身也可以被放在后台的，它不是锁定前台的」。量下来：
+      ① 投递点 📁（档位 `message`，`touches_cursor=False`）→ 前台**没变** ✅；
+      ② 「选择文件」`#32770` 弹出时——**有时不抢前台**（前台仍是用户那个窗口，和他的观察一致），
+         **有时它自己就成前台**（两次实测各见一次，行为不稳定）；
+      ③ **关掉对话框之后**前台会落到微信主窗 ✗ —— 「微信被切到前台」的观感主要来自这一步。
+    ⇒ 处置：**开对话框前 `_stash_fg()` 记一次**，关完 `_restore_fg()` 还回去；绝不还原到一个
+    `#32770`（对话框自身）或已死的窗口。光标本来没动（投递档），无需处理。
+    """
+    try:
+        u = ctypes.windll.user32
+        h = int(hwnd or _FG_STASH.get("hwnd") or 0) or _fg_before_close()
+        if not h or not u.IsWindow(ctypes.c_void_p(h)):
+            return
+        try:
+            import win32gui
+            if win32gui.GetClassName(int(h)) == "#32770":       # 不把前台还给对话框
+                return
+        except Exception:
+            pass
+        cur = _fg_now()
+        if cur == h:
+            return
+        # ⚠️ **后台进程直接调 `SetForegroundWindow` 会被系统忽略**（实测：关掉对话框后前台落在
+        #    微信主窗上，还回去那一枪返回 False、前台没变）⇒ 正规绕法：先把本线程的输入队列
+        #    挂到"当前前台窗口所在线程"上，再 SetForegroundWindow，最后解挂。
+        ok_ret = False
+        try:
+            k32 = ctypes.windll.kernel32
+            cur_tid = int(u.GetWindowThreadProcessId(ctypes.c_void_p(cur), None) or 0)
+            our_tid = int(k32.GetCurrentThreadId())
+            attached = False
+            if cur_tid and our_tid and cur_tid != our_tid:
+                attached = bool(u.AttachThreadInput(our_tid, cur_tid, True))
+            ok_ret = bool(u.SetForegroundWindow(ctypes.c_void_p(h)))
+            if attached:
+                u.AttachThreadInput(our_tid, cur_tid, False)
+        except Exception:
+            pass
+        log.info("关「选择文件」对话框会把微信顶到前台 ⇒ 尝试还给 %s（结果=%s，AttachThreadInput 绕法）%s",
+                 h, ok_ret, ("（" + note + "）") if note else "")
+    except Exception:
+        pass
+    finally:
+        try:
+            _FG_STASH.update({"hwnd": 0, "at": 0.0})
+        except Exception:
+            pass
+
+
 def _close_file_dialog(hwnd: int) -> None:
     """关掉系统「选择文件」对话框（`#32770`）——异常路径的兜底，**绝不留模态框在用户屏幕上**。"""
     try:
@@ -48,6 +157,10 @@ def _close_file_dialog(hwnd: int) -> None:
         import win32gui
         if hwnd and win32gui.IsWindow(int(hwnd)):
             win32gui.PostMessage(int(hwnd), win32con.WM_CLOSE, 0, 0)
+            _wait_dialog_gone(int(hwnd))      # ⚠️ 必须等它**真消失**再还前台（见 _wait_dialog_gone）
+            _restore_fg(0, "单框")
+            time.sleep(0.35)
+            _restore_fg(0, "单框·二次")        # 兜第二枪：有时框死了还会再激活一次 owner
     except Exception:
         pass
 
@@ -77,6 +190,12 @@ def _close_stale_file_dialogs() -> int:
         for h in hits:
             win32gui.PostMessage(int(h), win32con.WM_CLOSE, 0, 0)
             n += 1
+        if n:
+            for _h in hits:
+                _wait_dialog_gone(_h)
+            _restore_fg(0, "批量 %d 个" % n)
+            time.sleep(0.35)
+            _restore_fg(0, "批量·二次")
     except Exception:
         pass
     return n
@@ -1049,6 +1168,16 @@ class WeChatAdapter:
                 return True, "会话头指纹判 ok（OCR 这次给的是 %r：%s）" % (got, str(why)[:40])
         except Exception as _e:
             pass
+        # ③ 第三条独立证据：**当前高亮行的时间**（屏幕 × DB）。
+        #    ⚠️ 2026-09-16 加：高亮行是**白字绿底**，名字 OCR 读不出（E 被读成「巷」）⇒ ①②都可能拿不到
+        #    正面证据，而会话**确实开着**（实测：搜索框路线把 E 切过来了、这一步却报 False，
+        #    `send_to_e.py` 的闸门就此判否）。这条与 `chat_identity_ok` 的那一档同源、同口径。
+        try:
+            _ok3, _why3 = self._active_row_time_ok(chat_id, gui=gui)
+            if _ok3:
+                return True, _why3
+        except Exception:
+            pass
         return False, "当前会话 OCR=%r（目标 %r）· %s" % (got, want, why)
 
     def _ensure_main_visible(self, gui, main: int) -> bool:
@@ -1208,9 +1337,13 @@ class WeChatAdapter:
                 scroll_fn=_scroll_fn, max_steps=6, per_step=3, settle_s=0.45,
                 tries_per_step=3, gap_s=0.35)      # 抓图偶发只读到 2~4 行 ⇒ 每一步多抓几帧再判
             if not info:
-                return False, "会话列表里（只读截图 + OCR%s）没定位到「%s」（%s%s）" % (
+                _d = self._dump_fail_shot("switch_row", _chh.capture_image(gui=gui),
+                                          {"name": name, "want_time": _want_time, "flog": str(flog),
+                                           "scroll_note": _scroll_note})
+                return False, "会话列表里（只读截图 + OCR%s）没定位到「%s」（%s%s）%s" % (
                     "，含平滑下滚 6 轮" if _scroll_fn is not None else "；**本轮没有滚动**",
-                    name, flog, ("；" + _scroll_note) if _scroll_note else "")
+                    name, flog, ("；" + _scroll_note) if _scroll_note else "",
+                    ("｜现场已存 %s" % _d) if _d else "")
             pos = info["pos"]
             clicked_y = int(info["y_abs"])
             # ⛔ 一次切会话**最多一枪**：冷却期内只复核、不补点（用户口径：连点两下会把聊天框关掉）
@@ -1230,6 +1363,10 @@ class WeChatAdapter:
             #    投渲染子窗：点完聊天区内容确实变了（切过去了）。键盘/发送按钮投主窗仍然有效，别一起改。
             tgt = ib.find_render_child(main) or main
             tgt = ib.find_render_child(main) or main
+            # ⚠️ 2026-09-16 修（真缺陷·r11 两次实测）：滚轮是**平滑滚动**，惯性没停行还在动 ⇒ 照算出来的
+            #    y 点下去就**点空**（"点击已发出但该行没变绿底"）。⇒ 点前等列表停住（纯像素判据、不调 OCR）。
+            _settled = self._list_settled(gui)
+            flog = str(flog) + ("｜点前列表已停稳" if _settled else "｜⚠️点前列表没等到停稳")
             # 点前的聊天区文字（用来判"切会话到底发没发生"——绿底那项判据会被帧质量骗）
             _pane0 = _co.pane_text(_chh.capture_image(gui=gui))
             # ⚠️ 会话行必须用**慢节奏**点击（2026-09-13 A/B：快节奏投渲染子窗高亮不动；
@@ -1264,6 +1401,76 @@ class WeChatAdapter:
                            % (name, flog, str(last)[:60]))
         except Exception as e:
             return False, "投递切会话异常：%s" % e
+
+    def _dump_fail_shot(self, tag: str, img, extra: dict = None, keep: int = 5) -> str:
+        """失败当时的**画面 + 判据中间量**落到 `wechatauto_logs/fail/<时间戳>_<tag>/`（尽力而为，绝不抛）。
+
+        口径照 AGENTS.md §2.2（MAA 的反面教材）：别人拿到这个目录，**不看日志**就能判断
+        "是没找到还是找错了" ⇒ 放 `shot.png`（原图）+ `probe.json`（尺寸/候选块/判据与结论）。
+        为什么加（2026-09-16 跨机需求⑤）：对面报的"点到「＋」/ 浮层 205×205 / 认不出绿底行"
+        我这边**看不到现场**、只能猜；从本轮起失败必有现场，对面把目录打包发回即可。
+        """
+        try:
+            import json as _json
+            base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                "wechatauto_logs", "fail")
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            d = os.path.join(base, "%s_%s" % (stamp, tag))
+            os.makedirs(d, exist_ok=True)
+            if img is not None:
+                try:
+                    img.save(os.path.join(d, "shot.png"))
+                except Exception:
+                    pass
+            with open(os.path.join(d, "probe.json"), "w", encoding="utf-8") as f:
+                _json.dump({"tag": tag, "when": stamp,
+                            "size": (list(img.size) if img is not None else None),
+                            "extra": extra or {}}, f, ensure_ascii=False, indent=1)
+            try:                                       # 只留最近 keep 份（同一 tag）
+                olds = sorted(n for n in os.listdir(base) if n.endswith("_" + tag))
+                for n in olds[:-int(keep)]:
+                    import shutil
+                    shutil.rmtree(os.path.join(base, n), ignore_errors=True)
+            except Exception:
+                pass
+            return d
+        except Exception:
+            return ""
+
+    def _list_settled(self, gui, tries: int = 8, gap: float = 0.2) -> bool:
+        """等会话列表**停止滚动**：连续两帧"列表区域"像素一致就返回 True（超时返回 False）。
+
+        为什么必须有（2026-09-16 实测·真缺陷）：投递滚轮触发的是**平滑滚动**，惯性期间行还在动——
+        `switch_chat_posted` 滚到顶后**立刻**算坐标点击，行已经移走 ⇒ 点空（表观症状是
+        "投递点击已发出，但该行没变绿底"，r11 两次都卡在这里）。判据只用像素差、不调 OCR（快）。
+        ⚠️ 返回 False **不阻塞流程**（照旧往下走），只是调用方要如实把它写进结果说明里。
+        """
+        try:
+            from . import chat_header as _chh
+            from . import chat_ocr as _co
+            from PIL import ImageChops
+            prev = None
+            for _i in range(max(2, int(tries))):
+                im = _chh.capture_image(gui=gui)
+                if im is None:
+                    time.sleep(gap)
+                    continue
+                x0, x1 = _co._green_x(im)
+                if x1 - x0 < 40:
+                    time.sleep(gap)
+                    continue
+                crop = im.crop((x0, 20, x1, im.size[1]))
+                if prev is not None and crop.size == prev.size:
+                    d = ImageChops.difference(prev, crop).getbbox()
+                    if d is None:
+                        return True
+                    if (d[3] - d[1]) <= 3 and (d[2] - d[0]) <= 6:      # 只剩零星抗锯齿差 ⇒ 当停稳
+                        return True
+                prev = crop
+                time.sleep(gap)
+            return False
+        except Exception:
+            return False
 
     def _find_search_popover(self, main: int = None):
         """找微信的**搜索浮层**并抓下它的画面：返回 `(hwnd, rect, img)` 或 None。
@@ -1368,8 +1575,15 @@ class WeChatAdapter:
                         if pop:
                             break
                 if not pop:
-                    return False, ("点了搜索图标（依据：%s）但没看到搜索浮层弹出来 ⇒ 不往下打字"
-                                   "（fail-closed）" % ent.get("why"))
+                    # 失败留全现场（2026-09-16）：把这一帧 + 候选块清单落盘，对面打包发回即可定位
+                    # "是没找到入口还是点错入口"（跨机需求⑤：对面报"点到顶部「＋」"就是这一类）。
+                    _d = self._dump_fail_shot("search_entry", img, {
+                        "variant": variant, "picked": (int(ent["x"]), int(ent["y"])),
+                        "why": ent.get("why"), "cands": ent.get("cands"), "pane_left": pane})
+                    return False, ("点了搜索图标（依据：%s；候选块 %s）但没看到搜索浮层弹出来 ⇒ 不往下打字"
+                                   "（fail-closed）%s"
+                                   % (ent.get("why"), ent.get("cand_txt") or ent.get("cands"),
+                                      ("｜现场已存 %s" % _d) if _d else ""))
                 pop_hwnd, prect, pimg, pwhy = pop
                 row, shot_size = None, None
                 # ⚠️ 浮层会**保留上次的查询词**（实测：再次打开时它还高着开、词还在）——这时再打字会变成
@@ -1877,6 +2091,7 @@ class WeChatAdapter:
             _bar_hint = "" if _bar is not False else "（可能因为当前不是聊天视图：%s）" % _bar_why
             pt, _pt_why = self._file_panel_point_live(r, pane, gray=_gray)
             log.info("发文件：点「文件」图标 %s（%s）", pt, _pt_why)
+            _stash_fg()   # ⚠️ 打开对话框**之前**记下用户当时的前台：关框后要还回去（见 _restore_fg）
             ok_c, why_c = backend.click(main_hwnd, pt)
             if not ok_c:
                 return False, "投递点「文件」图标失败：%s" % why_c
@@ -2230,31 +2445,9 @@ class WeChatAdapter:
             # 它的时间戳对上目标会话最后一条消息的时间，且聊天区里也出现同一时间 ⇒ 认它。
             # 实测依据（2026-09-13）：E 那一行名字 OCR=''，但高亮行时间 21:41 == 370 文件卡那一刻，
             # 聊天区 OCR 里也确实有 '21：41'。
-            _lt = self._last_time_hhmm(chat_id)
-            if _lt:
-                try:
-                    _himg = _co.capture_best(gui=gui or self._get_gui(), frames=2)
-                    _ht, _hy = _co.highlight_time(_himg) if _himg is not None else ("", None)
-                except Exception:
-                    _ht, _hy = "", None
-                if _ht and self._norm_hhmm(_ht) == self._norm_hhmm(_lt):
-                    # 第二道证据**二选一**：①聊天区里也出现同一时刻 ②该时刻在会话列表里只出现一次（＝就是高亮那一行）。
-                    #   原来是"必须①"——2026-09-14 实测：E 最近一条（01:35）的时刻在聊天区里没渲染出来
-                    #   （新消息不带时间分隔），于是明明开着的就是 E、闸门也判否 ⇒ 补②。
-                    #   两者强度同档（都是"时间对上且唯一"），只是不再依赖聊天区一定画出时间。
-                    _pane_hit = self._norm_hhmm(_lt) in self._norm_times(pane)
-                    _uniq = False
-                    try:
-                        _rows = _co.session_rows(_himg)
-                        _hits = [r for r in _rows
-                                 if self._norm_hhmm(_lt) in self._norm_times(str(r.get("full") or "") + " " + str(r.get("name") or ""))]
-                        _uniq = (len(_hits) == 1)
-                    except Exception:
-                        _uniq = False
-                    if _pane_hit or _uniq:
-                        return True, ("高亮行（y=%s）时间 %s ＝目标会话最后一条消息时间%s"
-                                      % (_hy, _ht, "，聊天区里也出现同一时间" if _pane_hit
-                                         else "，且该时刻在会话列表里唯一（只有一个会话是它）"))
+            _ok_t, _why_t = self._active_row_time_ok(chat_id, pane=pane, gui=gui)
+            if _ok_t:
+                return True, _why_t
             # ⚠️ 失败信息里**必须带观测量**（2026-09-16 跨机需求②「内容级闸的 OCR 口径」）：
             #    只报"没有目标会话的任何一条文本"分不清 **"根本没有信号"** 与 **"信号被阈值判掉"**
             #    （前者该判否，后者说明阈值/归一化有问题）⇒ 把聊天区读到多少字、每条针的最好匹配
@@ -2271,6 +2464,46 @@ class WeChatAdapter:
                            % (len(needles), needles[0][:16], f_why, len(pane), pane[:24], _obs))
         except Exception as e:
             return None, "内容核对异常：%s" % type(e).__name__
+
+    def _active_row_time_ok(self, chat_id: str, pane: str = "", gui=None):
+        """**当前高亮行的时间** ＝ 目标会话最后一条消息的时间（**屏幕 × DB 两个独立来源**）。
+
+        为什么单列成一条档（2026-09-16）：当前打开的那一行是**白字绿底**，名字 OCR 读不准
+        （实测 E 被读成「巷」）⇒ 名字档、会话头指纹档都可能给不出正面证据，而会话**确实开着**
+        （实测：搜索框路线已经切到 E，`chat_is_open` 却报 False ⇒ 后面每一步都在"没有正面证据"里打转）。
+        第二道证据**二选一**：①聊天区里也出现同一时刻 ②该时刻在会话列表里**唯一**（＝就是那一行）。
+        返回 `(True/False, 说明)`。
+        """
+        from . import chat_ocr as _co
+        _lt = self._last_time_hhmm(chat_id)
+        if not _lt:
+            return False, "目标会话最后一条消息不是今天的（会话列表那行不显示 HH:MM）"
+        try:
+            _himg = _co.capture_best(gui=gui or self._get_gui(), frames=2)
+            _ht, _hy = _co.highlight_time(_himg) if _himg is not None else ("", None)
+        except Exception:
+            _ht, _hy = "", None
+        if not _ht:
+            return False, "没读到高亮行的时间戳"
+        if self._norm_hhmm(_ht) != self._norm_hhmm(_lt):
+            return False, "高亮行时间是 %s ≠ 目标会话最后一条消息时间 %s" % (_ht, _lt)
+        _pane_hit = self._norm_hhmm(_lt) in self._norm_times(pane or "")
+        _uniq, _n = False, 0
+        try:
+            _rows = _co.session_rows(_himg)
+            _hits = [r for r in _rows
+                     if self._norm_hhmm(_lt) in self._norm_times(
+                         str(r.get("full") or "") + " " + str(r.get("name") or ""))]
+            _n = len(_hits)
+            _uniq = (_n == 1)
+        except Exception:
+            _uniq = False
+        if _pane_hit or _uniq:
+            return True, ("高亮行（y=%s）时间 %s ＝目标会话最后一条消息时间%s"
+                          % (_hy, _ht, "，聊天区里也出现同一时间" if _pane_hit
+                             else "，且该时刻在会话列表里唯一（只有一个会话是它）"))
+        return False, ("高亮行时间 %s 与目标一致，但聊天区里没有同一时刻、该时刻在列表里也不唯一（%d 行）"
+                       % (_ht, _n))
 
     def _last_time_hhmm(self, chat_id: str) -> str:
         """目标会话**最后一条消息**在会话列表里显示的时间（`H:MM`）；不是今天的消息就返回 ''。
@@ -2334,15 +2567,16 @@ class WeChatAdapter:
 
     @staticmethod
     def _norm_hhmm(s: str) -> str:
-        """把 `'01:35'` / `'1：35'` 统一成 `'1:35'`。
+        """把 `'01:35'` / `'1：35'` 统一成 `'1:35'`（**实现只有一处**：`chat_ocr.hhmm`）。
 
         为什么必须归一化（2026-09-14 实测）：`chat_ocr.highlight_time()` 读到的是 `1:35`（会话列表不补前导零），
         而 `_last_time_hhmm()` 是 `strftime('%H:%M')` ⇒ `01:35`；两个字符串**不相等**，
         于是"高亮行时间档"对 10 点以前的时刻**永远不成立**（单字母会话名读不出时，这是唯一还准的信号）。
+        ⚠️ 2026-09-16：同一个坑在 `chat_ocr.find_row_info` 的 `want_time` 比较里**又犯了一次**
+        （它自己写了一遍 `'%d:%02d'`）⇒ 现在两边都走 `chat_ocr.hhmm`，不许再各归一一次。
         """
-        t = str(s or "").replace("：", ":").strip()
-        m = re.match(r"^(\d{1,2}):(\d{2})$", t)
-        return "" if not m else "%d:%s" % (int(m.group(1)), m.group(2))
+        from . import chat_ocr as _co
+        return _co.hhmm(s)
 
     @staticmethod
     def _norm_times(text: str) -> str:
