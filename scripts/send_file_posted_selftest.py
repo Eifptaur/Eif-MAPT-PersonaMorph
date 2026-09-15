@@ -440,7 +440,7 @@ _segO = open(os.path.join(_ROOT, "agent", "wechat.py"), encoding="utf-8").read()
 ok("有 _row_time_conflict 实现（活动行时间 vs 目标最后一条消息时间）",
    "def _row_time_conflict" in _segO and "活动行时间对不上" in _segO)
 ok("内容级闸放行前会先查它（源码顺序：content_match 之后立刻查）",
-   _segO.index("if _co.content_match(pane, nd):") < _segO.index("_cf, _cfwhy = self._row_time_conflict"))
+   _segO.index("if _co.content_match(pane, nd):") < _segO.index("_cf, _cfwhy, _cdec = self._row_time_conflict"))
 try:
     from agent import chat_ocr as _coO
     from agent import wechat as _WO
@@ -456,12 +456,20 @@ try:
     ok("活动行 2:33 ＝ 目标 02:33 ⇒ 不算冲突（余命十日那一侧）",
        _adO._row_time_conflict("x", gui=object())[0] is False)
     _coO.highlight_time = lambda img: ("", None)
-    ok("读不到活动行时间 ⇒ 不拦（交给其它档，fail-open 在这里是安全的）",
-       _adO._row_time_conflict("x", gui=object())[0] is False)
+    ok("读不到活动行时间 ⇒ 返回 decided=False（判不了，交给调用方 fail-closed）",
+       _adO._row_time_conflict("x", gui=object())[2] is False)
     _adO._last_time_hhmm = lambda cid: ""
     _coO.highlight_time = lambda img: ("2:33", 168)
-    ok("目标是昨天的消息（没有 HH:MM）⇒ 不拦", _adO._row_time_conflict("x", gui=object())[0] is False)
+    ok("目标是昨天的消息（没有 HH:MM）⇒ decided=False（无从比对）",
+       _adO._row_time_conflict("x", gui=object())[2] is False)
     _coO.capture_best, _coO.highlight_time = _cap_o, _hlt_o
+    # ⛔ 跨机 r16 的红线发现：活动行时间戳**读不出**时，内容像对同屏两个会话同时成立 ⇒ 双放行复现。
+    #    内容级闸因此必须要求 decided（判得了）——"内容像"不再单独放行。
+    _segCI = open(os.path.join(_ROOT, "agent", "wechat.py"), encoding="utf-8").read()
+    _segCI = _segCI[_segCI.index("def chat_identity_ok"):]
+    _segCI = _segCI[:_segCI.find("\n    def ", 10)]
+    ok("内容级闸：活动行时间判不了就判否（源码里必须有 not _cdec 这条）",
+       "if not _cdec:" in _segCI and "活动行时间戳读不出" in _segCI)
 except Exception as _eO:
     ok("_row_time_conflict 行为可测", False, str(_eO)[:80])
 

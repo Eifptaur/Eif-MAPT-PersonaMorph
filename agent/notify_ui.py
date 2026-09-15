@@ -354,7 +354,7 @@ def raise_without_stealing(hwnd=None) -> dict:
 
 
 def pop_decision_ui(url: str = "", anchor: str = "#sec-vermat", wait_s: float = 8.0) -> dict:
-    """**Persona Morph 自己把弹窗切出来**：没窗口就开一个，然后不抢前台地抬起来。
+    """**Persona Morph 自己把弹窗切出来**：没窗口就开一个，然后不打扰你（可能短暂置前约 1~3 秒后自动还回）地抬起来。
 
     只在"控制台不是当前前台"时才动手——用户正看着控制台时不必再弹一次。
     返回报告：`{ok, action, hwnd, opened, why, …}`，`action ∈ skip-visible / raised / opened+raised / none`。

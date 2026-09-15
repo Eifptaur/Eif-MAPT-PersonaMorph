@@ -743,7 +743,7 @@ def _exec_forward_media(ctx, args):
     try:
         cfg = get_config()
         if not bool((cfg.get("send") or {}).get("file_forward_optin")):
-            return _ok("转发视频/文件默认关闭：它必须过一次系统「选择文件」对话框，会**短暂抢一次前台**（与「不抢前台」的最高目标冲突），"
+            return _ok("转发视频/文件默认关闭：它必须过一次系统「选择文件」对话框，会**短暂抢一次前台**（与「不打扰你（可能短暂置前约 1~3 秒后自动还回）」的最高目标冲突），"
                        "需要用户在控制台把 send.file_forward_optin 打开才允许。**链接不受影响**——用 send_message 直接发链接是纯后台的。")
         kind = str(args.get("kind") or "").strip().lower()
         if kind not in ("video", "file"):
@@ -1342,7 +1342,7 @@ def _exec_gen_video(ctx, args):
                 if j.get("state") == "done" and files and sender is not None:
                     for p in files:
                         try:
-                            sender.send_file_posted(chat_key, p)      # 投递档：不动鼠标、不抢前台
+                            sender.send_file_posted(chat_key, p)      # 投递档：不动鼠标、不打扰你（可能短暂置前约 1~3 秒后自动还回）
                             if isinstance(session, dict):
                                 session.setdefault("sent", []).append({"type": "video", "text": "[生成视频]"})
                         except Exception as e:

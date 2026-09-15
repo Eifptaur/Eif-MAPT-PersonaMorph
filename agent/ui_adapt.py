@@ -257,7 +257,7 @@ def ensure_point(x: int, y: int, wechat_hwnds: tuple = (), retries: int = 3, gui
         # ⚠️ 抢前台＝打扰用户（最高目标禁止项）⇒ 只有显式打开 ui.allow_foreground 才做
         try:
             if not _cfg_bool("allow_foreground", False):
-                return False, "点击点被「%s」窗口遮挡；「全程后台」档不抢前台（要用前台请在界面里打开 ui.allow_foreground）" % (
+                return False, "点击点被「%s」窗口遮挡；「全程后台」档不打扰你（可能短暂置前约 1~3 秒后自动还回）（要用前台请在界面里打开 ui.allow_foreground）" % (
                     (cover[1] or "?"))
             if gui is not None and hasattr(gui, "main_hwnd"):
                 _user32.SetForegroundWindow(int(gui.main_hwnd))
@@ -364,7 +364,7 @@ def _force_geometry(gui) -> None:
         _h = min(int(1100 * _scale), int(_sh * 0.92))
         _x = min(int(120 * _scale), max(10, _sw - _w - 40))
         _y = min(int(80 * _scale), max(10, _sh - _h - 60))
-        # SWP_NOZORDER | SWP_NOACTIVATE：挪位置但**不抢前台、不改 Z 序**
+        # SWP_NOZORDER | SWP_NOACTIVATE：挪位置但**不打扰你（可能短暂置前约 1~3 秒后自动还回）、不改 Z 序**
         _user32.SetWindowPos(hwnd, 0, _x, _y, _w, _h, 0x0004 | 0x0010)
         time.sleep(0.15)
         gui._update_render_rect()
@@ -380,7 +380,7 @@ def prepare_screen(gui) -> bool:
     `gui.bring_to_front(keep_topmost=True)`（**把微信钉到最上层**）就是真凶：
     最小化的微信被强行弹出来，而且置顶窗口会一直压在所有窗口之上（用户当然点不动自己其它窗口）。
     ⇒ 现在只做"零打扰"的那一半（清遮挡、探活），**除非显式打开 `ui.allow_foreground`
-    否则绝不挪窗口/不还原最小化/不抢前台/不置顶**。
+    否则绝不挪窗口/不还原最小化/不打扰你（可能短暂置前约 1~3 秒后自动还回）/不置顶**。
     """
     if not _cfg_bool("allow_foreground", False):
         try:

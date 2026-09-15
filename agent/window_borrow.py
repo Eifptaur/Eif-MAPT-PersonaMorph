@@ -8,7 +8,7 @@
 三条硬规矩（与最高目标「不打扰」一致）：
   · 归还只撤销**我们自己那一次**改动：当前 rect 已经不等于「我们钉的那一版」（用户中途又动过）⇒
     **不还**，把窗口交回用户，免得把他的动作也抹掉；
-  · 归还走 `SetWindowPos(..., SWP_NOZORDER|SWP_NOACTIVATE)`：不动光标、不抢前台、不改 Z 序；
+  · 归还走 `SetWindowPos(..., SWP_NOZORDER|SWP_NOACTIVATE)`：不动光标、不打扰你（可能短暂置前约 1~3 秒后自动还回）、不改 Z 序；
   · 窗口已经没了（`IsWindow` 假）⇒ 静默清状态，不报错、不重试。
 
 **活动信号** `touch()`：两个咽喉点会调它——`input_backend.select_backend()`（每次取后端＝一次输入

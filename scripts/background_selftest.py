@@ -346,6 +346,21 @@ ck("F1 控制台不再写「不抢前台」，改成实测口径", "不抢前台
 ck("F2 体检报告那行也改了（跨机 r15 引用的就是它）",
    "不抢前台" not in _REPORT and "短暂把微信带到前台" in _REPORT)
 ck("F3 bg_status（单一事实源）写明伪激活代价", "不抢前台" not in _BG and "短暂置前" in _BG)
+# ⚠️ 2026-09-16 r17（跨机 r16 报的"文案残余"）：F 段原来只守三个文件 ⇒ 判据绿了、别处的旧说法还在。
+#    ⇒ 扩到**所有对用户/工程可见的声明点**（历史更新日志与 _scratch 不算）。
+_BAN = "不抢" + "前台"          # 自己拼出来，免得判据文件本身命中
+_EXTRA = ["使用说明.md", "检验说明（另一台电脑用）.md", "AGENTS.md",
+          os.path.join("agent", "tools.py"), os.path.join("agent", "notify_ui.py"),
+          os.path.join("agent", "tray.py"), os.path.join("agent", "wechat.py")]
+_bad = []
+for _p in _EXTRA:
+    _fp = os.path.join(ROOT, _p)
+    if not os.path.isfile(_fp):
+        continue
+    if _BAN in open(_fp, encoding="utf-8", errors="ignore").read():
+        _bad.append(_p)
+ck("F6 其余声明点也不许再出现那句过头话（使用说明/检验说明/AGENTS/工具描述/托盘/wechat 注释）",
+   not _bad, "还有：%s" % _bad)
 _seg_sp = _WX_SRC[_WX_SRC.index("def send_text_posted"):]
 _seg_sp = _seg_sp[:_seg_sp.find("\n    def ", 10)]
 ck("F4 投递发送链进链就 stash 前台", "_stash_fg()" in _seg_sp)
