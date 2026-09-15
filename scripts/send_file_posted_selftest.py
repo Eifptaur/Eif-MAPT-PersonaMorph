@@ -105,5 +105,37 @@ ok3, _ = inst._repeat_guard("wxid_other", fake)
 ok("换个会话发同一文件：放行（按会话区分）", ok3 is True)
 ok("源码里 send_file_posted 有 allow_repeat 逃生门", "allow_repeat" in seg)
 
+print("── E. 输入栏在不在（P15：不在聊天视图时不许盲点一枪）──")
+# 合成图（白底 250）＋ 5 个窄簇 ⇒ 应判 True；纯色 ⇒ 应判 None（假帧护栏）；整行全暗 ⇒ 不许赢
+try:
+    from PIL import Image as _Im, ImageDraw as _Dr
+    from agent.wechat import WeChatAdapter as _WA
+
+    def _img_clusters(fill=250, rects=()):
+        im = _Im.new("L", (1139, 890), fill)
+        d = _Dr.Draw(im)
+        for x, y0, y1 in rects:
+            d.rectangle([x - 8, y0, x + 8, y1], fill=60)
+        return im
+
+    st1, n1, why1 = _WA._input_bar_state(img=_img_clusters(rects=[(374, 830, 850), (428, 830, 850),
+                                                                 (482, 830, 850), (536, 830, 850),
+                                                                 (611, 830, 850)]))
+    ok("5 个窄簇 ⇒ 判「输入栏在」（True）", st1 is True and n1 >= 5, "%s/%s %s" % (st1, n1, why1))
+    st2, n2, why2 = _WA._input_bar_state(img=_img_clusters())
+    ok("纯色画面 ⇒ 判「不可信」（None，不许据此拦人）", st2 is None, "%s %s" % (st2, why2))
+    st3, n3, why3 = _WA._input_bar_state(img=_img_clusters(rects=[(0, 884, 888)]))
+    ok("整行全暗的窗口边线**不许**被当成图标行", st3 is not True, "%s/%s %s" % (st3, n3, why3))
+    st4, n4, why4 = _WA._input_bar_state(img=_img_clusters(fill=250, rects=[(482, 830, 850)]))
+    ok("只有 1 个簇 ⇒ 判「输入栏不在」（False）", st4 is False, "%s/%s %s" % (st4, n4, why4))
+except Exception as _e:
+    ok("输入栏判据能跑（合成图）", False, str(_e)[:100])
+ok("send_file_posted 点之前会先探输入栏", "_input_bar_state" in seg)
+ok("探在点之前（先判视图、再算坐标）",
+   seg.find("_input_bar_state") < seg.find("_file_panel_point"),
+   "探在 %s、坐标在 %s" % (seg.find("_input_bar_state"), seg.find("_file_panel_point")))
+ok("判否时先试着切回目标会话（open_chat_by_search）", "open_chat_by_search" in seg)
+ok("失败信息里会带上「可能不是聊天视图」的提示（别再只说按钮位置变了）", "_bar_hint" in seg)
+
 print("== [send-file-posted] 判据：{} 通过 / {} 失败 ==".format(PASS, FAIL))
 sys.exit(1 if FAIL else 0)
