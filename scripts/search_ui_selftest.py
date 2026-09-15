@@ -159,5 +159,25 @@ ok("open_chat_by_search 用 find_search_entry（两套 UI 都走这条路）", "
 ok("图标形态下先确认搜索框展开再打字", "不往下打字" in w_src)
 ok("打字投主窗（键盘），点图标投渲染子窗（鼠标）", "backend.send_text(main, name)" in w_src)
 
+print("⑦ 图标候选块里挑搜索入口：**形状判据**（跨机 r11 实测：对面那台点到了导航栏那块）")
+# 对面 r11 的现场（原样搬来当回归）：
+#   cand_txt = "#0(47,76,24x45) · #1(242,71,21x21) · #2(242,71,11x11) · #3(48,136,25x28)"
+#   why      = "最上一排最靠左的图标块 24x45（该排 3 块 / 共 4 块，导航栏右沿 0）"
+# ⇒ 老口径"最靠左"选中的是**导航栏**那块（24×45 竖长条），真正的放大镜在 (242,71) 21×21。
+_their_cands = [(47, 76, 24, 45), (242, 71, 21, 21), (242, 71, 11, 11), (48, 136, 25, 28)]
+_our_cands = [(290, 83, 24, 24), (236, 84, 22, 21), (290, 83, 12, 12), (187, 136, 21, 20), (211, 138, 15, 19)]
+_p1 = CO.pick_search_icon(_their_cands)
+ok("对面那组：挑中 (242,71) 21×21 的放大镜，**不再**挑导航栏的 24×45",
+   bool(_p1) and (_p1[0], _p1[1], _p1[2], _p1[3]) == (242, 71, 21, 21), str(_p1))
+ok("对面那组：说明里写明「已排除竖长条」", bool(_p1) and "竖长条" in _p1[4], _p1[4] if _p1 else "")
+_p2 = CO.pick_search_icon(_our_cands)
+ok("本机组：仍是 (236,84) 22×21（我们这边本来就没挑错，别改坏）",
+   bool(_p2) and (_p2[0], _p2[1]) == (236, 84), str(_p2))
+ok("候选为空 ⇒ None（fail-closed，不瞎点）", CO.pick_search_icon([]) is None and CO.pick_search_icon(None) is None)
+_ps = CO.pick_search_icon([(47, 76, 24, 45)])          # 只剩竖长条 ⇒ 退回原口径，不许 None
+ok("只剩竖长条时退回原口径（不做成「永远找不到」）", bool(_ps) and _ps[0] == 47, str(_ps))
+ok("find_search_entry 用上了这个挑选函数",
+   "pick_search_icon(cands)" in open(os.path.join(ROOT, "agent", "chat_ocr.py"), encoding="utf-8").read())
+
 print("\n结果：%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
