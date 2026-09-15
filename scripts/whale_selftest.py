@@ -148,6 +148,28 @@ except Exception as e:
 finally:
     W.get_config = _orig
 
+print("── E. 用量计数单点来源（token 调研 C9：calls 曾长期虚高一倍）──")
+try:
+    from agent.llm import add_usage                        # noqa: E402
+    _t = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
+          "reasoning_tokens": 0, "cached_tokens": 0, "calls": 0}
+    add_usage(_t, {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120})
+    add_usage(_t, {"prompt_tokens": 200, "completion_tokens": 30, "total_tokens": 230})
+    ok("两次 API 调用 ⇒ calls == 2（计数只在 add_usage 里发生）", _t["calls"] == 2, _t["calls"])
+    ok("token 累加正确（prompt 300 / completion 50）",
+       _t["prompt_tokens"] == 300 and _t["completion_tokens"] == 50,
+       (_t["prompt_tokens"], _t["completion_tokens"]))
+    _pm_src = open(os.path.join(ROOT, "scripts", "persona_morph.py"), encoding="utf-8").read()
+    _double = re.findall(r'usage"\]\["calls"\]\s*\+=', _pm_src)
+    ok("persona_morph.py 不得再对 usage[\"calls\"] 自增（那是 C9 的双计来源）",
+       not _double, "命中 %d 处" % len(_double))
+    _llm_src = open(os.path.join(ROOT, "agent", "llm.py"), encoding="utf-8").read()
+    ok("llm.py 的 add_usage 里保留唯一那次 ++",
+       re.search(r'def add_usage\(', _llm_src) is not None and _llm_src.count('target["calls"] += 1') == 1,
+       "target[calls] += 1 出现 %d 次" % _llm_src.count('target["calls"] += 1'))
+except Exception as e:
+    skip("E. 用量计数单点来源", "导入失败：%s" % e)
+
 print("")
 print("鲸语判据：%d 通过 / %d 失败 / %d 跳过；字典 %d 条" % (PASS, FAIL, SKIP_N, len(DICT)))
 sys.exit(1 if FAIL else 0)
