@@ -105,6 +105,16 @@ body.whale-anim::after{content:"";position:fixed;inset:0;z-index:-1;pointer-even
   display:flex;align-items:center;justify-content:center;font-size:13px;line-height:1;
   border-radius:8px;z-index:31;opacity:.85}
 .side .nav-tg:hover{opacity:1}
+/* 顶部「机器人已停止」横幅（2026-09-15）：替掉原来那个"弹模态 + 自己关窗口"的做法。
+   用户报「屏幕上一直在闪弹窗」的根因就是旧做法里的 window.open('', '_self') → window.close()。
+   横幅本身可关（知道了），页面原地不动，状态灯置灰。 */
+.offline-bar{position:fixed;left:12px;right:12px;top:8px;z-index:60;display:flex;align-items:center;gap:10px;
+  padding:9px 12px;border-radius:10px;background:var(--warn-bg,#3a2f1b);border:1px solid var(--warn-bd,#8a6d2f);
+  color:var(--tx);font-size:12.5px;line-height:1.5;box-shadow:0 6px 18px rgba(0,0,0,.22)}
+.offline-bar b{color:var(--warn-tx,#ffd479);white-space:nowrap}
+.offline-bar span{flex:1;opacity:.92}
+.offline-bar button{flex:0 0 auto}
+.dot.off{background:#6b7280!important;box-shadow:none!important}
 /* ── 海洋动态背景：三层大波浪 + 浪尖高光线（SVG 平移；无外部素材依赖）── */
 .ocean-wave{position:fixed;left:0;right:0;bottom:0;height:40vh;z-index:-1;pointer-events:none;opacity:.95}
 .ocean-wave svg{position:absolute;bottom:0;left:-50%;width:200%;height:100%;display:block}
@@ -1629,12 +1639,12 @@ function toast(msg){const t=$('toast');t.textContent=msg;t.style.display='block'
 function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 
 const URL_TOKEN = new URLSearchParams(location.search).get('token') || '';
-/* 控制台窗口互斥：只允许一个入口窗口（关掉其他同名控制台窗口/标签） */
-try{
-  const other = window.open('', 'Persona Morph-console');
-  if(other && other !== window){ try{ other.close(); }catch(e){} }
-  window.name = 'Persona Morph-console';
-}catch(e){}
+/* 2026-09-15 删（用户报「屏幕上一直在闪弹窗」的真凶）：
+   旧写法用 `window.open('', 'Persona Morph-console')` 去抢"同名窗口"来互斥，
+   但在 WebView2 里**窗口名不存在时它会真的开一个新窗口**（随后又被 close）⇒ 每次加载页面闪一下。
+   而"唯一控制台"本来就由启动器负责（检测到已在运行就不再开第二个），网页这层既多余又有害
+   ⇒ 只保留 window.name 标记，不再 open。 */
+try{ window.name = 'Persona Morph-console'; }catch(e){}
 /* 内嵌原版 DeepSeek 蓝鲸 Logo（base64，服务挂了也能显示；渲染与粒子效果都在用） */
 const LOGO_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADoAAAA2CAYAAACWeYpTAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAATOSURBVGhD7ZhPUxpnHMe/xKXCgCPP2EedNIdCb8GT+wbc4itoFfoGTOw0uXXS9hAzxhwar3oweuilFwjTnjsD4gso9oI59EB6KDPClu466gRk0R5g191nd4FdcGoIn5mdWX6/h2W/z+/P8zx4ms3LK3wA3GENw8pI6LDhUUY1OlyMhA4bI6HDxkjobaBWv0StfsmaXfG/rKMVSUEuf9a+b0LgA5iL+Nhh2HpdReVfBRsPZ1iXY25EaEVSUCjWDLZpwuGoWEMuf46K1NDs0bDfVsgX3/8FAHj+YNZyIpwwMKGFYg1HxRqSGZl1dWTnu3uYJhxrBnRCp4kXAh9AYjHEDtGoSArWdsvY/vYuuDEP6x5MjT59Vcba7rFjkWhPkBUVSdHdN5DMyFh9WWLsrcxp+f42ZApLXxGtSAq2UlUcvX3HunqmU7Seviqbni3wExD4ANZ2jw12lV9+/JQ1Af1EdBAioYuWVTbMfTbOmnBUrNmKFPgJ1qThWuggROpJZmRsva4abAIfNHxGe2LsEPgAa9K4c3UFOL32fz8bqEiVXP4UD1+WtN+hIQ6Plj5mh1mSiIUQDftM76periKazJ6wpoEhSg2sbpa0zwIf7CiWEi/WV2YRt6hxPZ6G4rwZfflDq+3fJJR4sbEyA9peelY3SxB1aZuIhXA/4ut5fXUs9I8/3+HFT2VA92MAIEoKCm/rOMifMt9wDyVefD4fACUcttP/aPZo2I/nD6w3GXY4FvrrwQl+/k0CJV7sPPmEdUNsr3O5/Bn2D88NUbAjEQuBEg65/HlPtb/AT+Dx0hRr7oirGkW7llRReijhQAmH+GIIGyszWOjQ8vVQwuHx8hQSsc61BgBzYfOy0w3HQqWz69NE2UKoHko4fBWb7PryZbmJ7XRVm6Bu43utSz2OhZLg9Vfe2Gzf9Kgvv/PkHijxsm6gvQnQZ4jABxEN+9lhGmqDcoJjoaGJMe2+UKwbfJ2ghMPGinUDUetYzRBKONvFv9dSYHEsNHz3I+2+IpuPY52ghMP6yixr1thOV5HKyCi0j3NWCPPWE9ANx0Ing9cRFaUGcofWL2THXMRnW4Oi1EAyK+PZ3rFl942G/a7qE26EkokxQ/0cOYioSrcatCO+OMmaesaxUDCbZ1FqYCtt3Ix3Q11KnNBPNOFW6FzEZ+igB/lTpCyOWZ2gpPcNOwDHE8PiSiglHBIxYxrtH57bNqatdBWrmyWTX+CDtvWqR9059cOdKwBurgU+aGj1otTAdrqKZEY2jVX9z/Zaf7ewz+lUr9GwH8uLIdMznV6uIqqSiE0aUliUGkhlZVMa66Ofysr4erOkbQ4o4fBoecpWbDQybsoEN3guHG7qWURJwdpe2bR5p8QLYT6A+xEf3hRrSGWN4lW/eo4UJQXJ7Int6YcSL+KxSct/HXqhb6Fov2Quf2YS0wuUeBGN+BBtb9RT2RPTpKlEw36sOzyeqQxEqEoqI7sSq0KJF98sTWGGcFq66lPcbTQBwHPRaA5MKACIsoJc/tyx4HgshDjTyQfJwIWqiLKCQrHePpkoqEhNiHIrJWmo1cCikXFME+5GBapcC/W0+7Ad77nfc6HcTERvGzeWureNvjYM7xMjocPGSOiw8cEI9dRHy8twMRI6bPwHTfhdUJub1u0AAAAASUVORK5CYII=';
 /* 弹窗/向导用鲸鱼徽章（绿底 + 蓝鲸线稿）；自动「果冻弹跳」动画（大幅压扁回弹） */
@@ -3998,16 +4008,13 @@ $('stopBtn').onclick = ()=>{
   ], '确认停止', async ()=>{
     try{
       await getJSON('/api/shutdown',{method:'POST'});
-      toast('已发出停止指令，机器人即将退出…');
-      $('dot').className='dot';
-      // 展示停止详情弹窗
-      const m = confirmBox('机器人已停止', [
-        '已结束全部进程（机器人 + 看门狗）。',
-        '想再次运行：双击项目根目录 <b>启动机器人.vbs</b>，或点「重启」按钮。<br>',
-        '控制台将自动关闭；日志已保存在 logs\\persona_morph.log。',
-      ], '知道了');
-      /* 关闭自动 tag */
-      setTimeout(()=>{ try{ if(!window.closed) window.close(); }catch(_e){} }, 4000);
+      toast('已停止：机器人 + 看门狗都结束了；想再跑双击根目录「启动机器人.vbs」，或点上方「重启」');
+      $('dot').className='dot off';
+      // 2026-09-15 修（用户：「我点击那个停止按钮，为啥弹窗不自动关掉」）：
+      // 停止确认框内部本来就会自己关（confirmBox 里 maskClose + remove），这里**不再补第二个模态**，
+      // 也**不再定时 window.close()**（在 WebView2 里自动关窗会闪新窗，而且关不关窗口该由用户决定）。
+      // 兜底：万一还有别的遮罩挂着（例如「已经在后台跑了」那种），一并去掉，别把用户堵在弹窗里。
+      try{ document.querySelectorAll('.mask').forEach(function(x){ x.remove(); }); }catch(_e){}
     }catch(e){
       toast('停止指令未送达（机器人可能已经不在运行）——页面稍后会显示「机器人已停止」');
     }
@@ -5298,20 +5305,24 @@ async function checkAlive(){
   try{
     const r = await fetch('/api/status',{headers:URL_TOKEN?{Authorization:'Bearer '+URL_TOKEN}:{}});
     if(!r.ok) throw new Error(r.status);
+    if(window.__offlineBar){ try{ window.__offlineBar.remove(); }catch(_e){} window.__offlineBar=null; }
   }catch(e){
     offlineShown=true;
-    const ov=document.createElement('div'); ov.className='mask';
-    ov.innerHTML='<div class="box">'+ICON+'<h1>机器人已停止</h1>'+
-      '<p style="text-align:left;margin:4px 0">· 全部进程已结束（机器人 + 看门狗），不会再自动拉起。</p>'+
-      '<p style="text-align:left;margin:4px 0">· 想再次运行：双击根目录 <b>启动机器人.vbs</b>（完全无窗口），或 <b>一键启动.bat</b>（依赖检查+自检+启动）。</p>'+
-      '<p style="text-align:left;margin:4px 0">· 群聊与存档数据不会丢失，下次启动自动恢复。</p>'+
-      '<p style="text-align:left;margin:4px 0">· 日志已保存在 logs\\persona_morph.log，供排查。</p>'+
-      '<div class="hint">正在尝试自动关闭本标签页；约 3 秒后关不掉就请手动关闭（浏览器会拦截脚本关闭，属正常现象）。</div></div>';
-    document.body.appendChild(ov); maskOpen(ov);
-    // 稳定关闭：先 window.open 建立「脚本可关」的同源窗口再 close（绕过浏览器限制）
-    setTimeout(()=>{ try{ window.open('', '_self'); setTimeout(()=>{ try{window.close();}catch(_e){} }, 800); }catch(_e){} }, 3000);
-    // 兜底：仍未关闭（浏览器强拦 close）→ 替换为空白页，避免残留旧界面
-    setTimeout(()=>{ try{ if(!window.closed) location.replace('about:blank'); }catch(_e){} }, 6000);
+    // 2026-09-15 修（用户报「屏幕上一直在闪弹窗」「关掉这个应用才不闪」）：
+    // 旧实现分三步自己关窗口 —— window.open('', '_self') → window.close() → location.replace('about:blank')。
+    // 在 WebView2 里 window.open 会**真的开一个新窗口**再被关掉 ⇒ 用户看到窗口一闪一闪；
+    // 而且"关不关窗口"该由用户/宿主决定，网页替用户关窗口本身就是越界。
+    // 现在：只挂一条**顶部可关闭横幅** + 把状态灯置灰，页面原地不动。
+    const bar=document.createElement('div');
+    bar.className='offline-bar';
+    bar.innerHTML='<b>机器人已停止</b>'
+      + '<span>全部进程已结束（机器人 + 看门狗），不会再自动拉起。想再跑：双击根目录「启动机器人.vbs」，或点上方「重启」。'
+      + '群聊与存档数据不会丢失；日志在 logs\\persona_morph.log。</span>'
+      + '<button class="ghost tiny" id="offlineBarX">知道了</button>';
+    document.body.appendChild(bar); window.__offlineBar=bar;
+    const bx=document.getElementById('offlineBarX');
+    if(bx) bx.onclick=function(){ try{ bar.remove(); }catch(_e){} window.__offlineBar=null; };
+    try{ const d=$('dot'); if(d) d.className='dot off'; }catch(_e){}
   }
 }
 
