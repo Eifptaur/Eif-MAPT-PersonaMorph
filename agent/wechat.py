@@ -1603,45 +1603,27 @@ class WeChatAdapter:
 
     # ── 发文件（消息驱动；2026-09-13 实测打通）─────────────────────────────
     @staticmethod
-    def _input_bar_row(gray, band_px=140, gray_thr=140, gap=24, pane_left=0):
-        """在渲染区底部 `band_px` 里找**输入栏图标行** ⇒ `(y_abs, [簇中心x…])`；找不到 ⇒ `(0, [])`。
+    def _input_bar_row(gray, band_px=200, gray_thr=None, gap=None, pane_left=0):
+        """（薄壳）输入栏图标行 ⇒ `(y_abs, [工具栏那一组的中心x…])`；找不到 ⇒ `(0, [])`。
 
-        判据＝"一行里**多个窄簇**（宽 4~60px）"的个数最多那一行（**别用"整行暗像素最多"**：
-        最底下那条窗口边线整行全暗，必然盖过真图标行——2026-09-15 首跑就踩了）。
-        只认聊天面板内那一段（`pane_left+10 … pane_left+420`），免得把别处的字/线算成图标。
+        ⚠️ **唯一实现在 `agent/input_bar.py`**（2026-09-16 立的规矩）：跨机 r7 实测，
+        同一台机器同一屏，产品数出 4 簇、探针数出 5 簇（漏了最左那个 😊）⇒ 产品按"第 3 簇"取
+        就取到 ✂️截图（全档错位）。两份实现必然各测各的 ⇒ 产品与探针都只许 import 那一份。
         """
-        w, h = gray.size
-        px = gray.load()
-        best_n, best_y, best = 0, 0, []
-        for y in range(max(0, h - band_px), h):
-            groups, cur = [], []
-            for x in range(w):
-                if px[x, y] < gray_thr:
-                    if cur and x - cur[-1] > gap:
-                        groups.append(cur)
-                        cur = []
-                    cur.append(x)
-            if cur:
-                groups.append(cur)
-            centers = [int((g[0] + g[-1]) / 2) for g in groups if 4 <= (g[-1] - g[0] + 1) <= 60]
-            if pane_left:
-                centers = [c for c in centers if pane_left + 10 <= c <= pane_left + 420]
-            if len(centers) > best_n:
-                best_n, best_y, best = len(centers), y, centers
-        return (best_y, best) if best_n >= 3 else (0, [])
+        from . import input_bar as _ib
+        y, cl, _total = _ib.best_row(gray, band_px=band_px)
+        run = _ib.toolbar_run(cl, pane_left=pane_left)
+        return (y, [c[0] for c in run]) if run else (0, [])
 
     @staticmethod
     def _input_bar_state(gui=None, img=None):
         """当前视图里**输入栏工具栏在不在** ⇒ (状态, 簇个数, 说明)；状态 True/False/None。
 
-        为什么加（2026-09-15 跨机 P15「发文件点不到」）：我们自己的实验会把微信**留在非聊天视图**
-        （点过「发现」、进过朋友圈），而 `_file_panel_point()` 算的是"输入栏第 3 个图标"——
-        **那种视图下那个位置根本没有图标**，点多少枪都不会弹「选择文件」；旧代码只会报
-        「微信版本/主题不同可能按钮位置变了」（误导）。
-        画面不可信时（窗口最小化 / 抓到纯色假帧，std<3）返回 **None ⇒ 上层不判断、不拦**
-        （启发式必须 **fail-open**：宁可如实失败，也不拿它误拦正常发送）。
+        判据＝`agent/input_bar.py` 里那套"底部有小簇排"的检测；画面不可信（最小化/纯色假帧
+        std<3）⇒ 返回 **None ⇒ 上层不判断、不拦**（启发式必须 fail-open：宁可如实失败也不误拦）。
         """
         try:
+            from . import input_bar as _ib
             from PIL import ImageStat
             if img is None:
                 from . import chat_header as _ch
@@ -1649,38 +1631,37 @@ class WeChatAdapter:
             if img is None:
                 return None, 0, "抓不到渲染区画面"
             g = img.convert("L")
-            band = g.crop((0, max(0, g.size[1] - 140), g.size[0], g.size[1]))
+            band = g.crop((0, max(0, g.size[1] - _ib.BAND_PX), g.size[0], g.size[1]))
             st = ImageStat.Stat(band)
             if st.stddev[0] < 3:
                 return None, 0, "画面是纯色假帧（最小化/被遮挡？）std=%.1f" % st.stddev[0]
             _y, centers = WeChatAdapter._input_bar_row(g)
             if len(centers) >= 3:
                 return True, len(centers), "找到 %d 个图标簇" % len(centers)
-            return False, len(centers), "底部 140px 里只有 %d 个图标簇（聊天视图应约 5 个）" % len(centers)
+            return (False, len(centers),
+                    "工具栏那排只认出 %d 簇（聊天视图应约 5 个：表情·收藏·文件·截图·语音）" % len(centers))
         except Exception as e:
             return None, 0, "判不了：%s" % str(e)[:80]
 
     @classmethod
     def _file_panel_point_live(cls, render_rect, pane_left, gray=None):
-        """**优先用实测的图标行**定位「文件」图标（取第 3 个簇），拿不到才退回常量偏移。
+        """**优先用实测图标行**定位「文件」图标（工具栏第 3 个），拿不到才退回常量偏移。
 
         为什么要这样（用户 2026-09-15 原话：「实测投递是成功的，但是他老是点错位置，不是点到截图、
         就是点到收藏、还有点到语音，很难调」）：`_file_panel_point()` 用的是**固定物理像素偏移**
-        （pane+43/97/151/205/280，本机 150% 下标的，簇间距 ≈54px）。换台机器/换 DPI，间距就变
-        （125% 下 ≈45px）⇒ 固定偏移会**整档错位**，错一档正好落到「收藏」或「截图」上——这正是
-        "很难调"的根因。正解＝**按顺序取第 3 个簇**（表情·收藏·**文件**·截图·语音 的顺序是稳的），
-        与 DPI/窗口尺寸无关。
-        返回 `((x, y), 说明)`；说明写清用的是"实测簇"还是"退回常量"，好在日志/失败信息里追责。
+        （pane+43/97/151/205/280，本机 150% 下标的）。换台机器/换 DPI，间距就变（125% 下 ≈45px）
+        ⇒ 固定偏移会**整档错位**。正解＝按顺序取工具栏那一组的第 3 个（表情·收藏·**文件**·截图·语音），
+        并且**把该行的簇全列出来**（落点自证：漏了第 1 簇这种事不许再靠用户目击发现）。
+        返回 `((x, y), 说明)`；说明写清"实测第 3 簇（该行几簇→工具栏几簇、间距、底往上多少）"
+        还是"退回常量"，好在日志/失败信息里追责。
         """
-        r = render_rect or (0, 0, 0, 0)
         if gray is not None:
-            y_abs, centers = cls._input_bar_row(gray, pane_left=int(pane_left or 0))
-            if len(centers) >= 3:
-                gap = (centers[-1] - centers[0]) / float(len(centers) - 1) if len(centers) > 1 else 0
-                return ((int(r[0]) + int(centers[2]), int(r[1]) + int(y_abs)),
-                        "实测第 3 个图标簇（共 %d 簇 · 间距≈%.0fpx · 底往上 %dpx）"
-                        % (len(centers), gap, int(r[3] - r[1]) - int(y_abs)))
-        return (cls._file_panel_point(r, pane_left),
+            from . import input_bar as _ib
+            pt, why = _ib.file_point(gray, render_rect, pane_left=int(pane_left or 0))
+            if pt:
+                return pt, why
+            return (cls._file_panel_point(render_rect, pane_left), "退回常量偏移（%s）" % why)
+        return (cls._file_panel_point(render_rect, pane_left),
                 "退回常量偏移（没拿到图标行：pane+151 / 渲染底−50）")
 
     @staticmethod
