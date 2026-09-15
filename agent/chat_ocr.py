@@ -978,20 +978,27 @@ def content_match(pane: str, needle: str) -> bool:
     （`E: 提交信息…`），被当成"会话名 = E"后就点进了那个群。内容比对不依赖任何名字：
     把目标会话最近一条**文本**拿来，在当前聊天区里找它的显著片段即可。
 
-    ⚠️ 2026-09-16 加两道下界（跨机 r10 实测的 fail-open）：①**最短命中 `MIN_HIT=8` 字**（或占针长
-    `MIN_RATIO=30%`）——原来最小的窗口是 6 字，一条日期串就能巧合命中；②**低熵串不算命中**
-    （纯数字/日期/版本号，见 `low_entropy`）。判否是安全的（fail-closed），判错才是事故。
+    ⚠️ 2026-09-16 加两道下界（跨机 r10 实测的 fail-open）：①**最短命中 `MIN_HIT=8` 字**；②**低熵串不算
+    命中**（纯数字/日期/版本号，见 `low_entropy`）。判否是安全的（fail-closed），判错才是事故。
+
+    ⛔ 2026-09-16 晚**再修一次**（跨机 r11 报告：过修成反向问题·误杀真信号）：原来片段下界写的是
+    `need = max(MIN_HIT, 针长 × 30%)`，而**长针**（对面那台聊天区里是**上千字的报告**、屏幕只可见
+    142~334 字）**永远凑不出 300 字的命中** ⇒ 实测「12 字 / 相似度 1.000」的真信号被**误杀**（①③ 两组
+    都判 False）。⇒ **去掉比例门**：比例下界只对短针才有意义，而短针本来就被 `MIN_HIT` 兜住；
+    长针一律按"**固定长度的强片段**"判（16/12/10/8 字**非低熵**片段精确命中 ⇒ 放行）。
+    另加一条容 OCR 错字的兜底：**最长公共块 ≥ MIN_HIT 且非低熵**也算认出（对面上千字的针里，
+    屏幕可见的那一小段常常有一两个字读歪）。
     """
     a, b = _nz(pane), _nz(needle)
     if len(a) < MIN_HIT or len(b) < MIN_HIT:
         return False
     if low_entropy(b):                             # 纯数字的针本身不作为证据
         return False
-    need = max(MIN_HIT, int(len(b) * MIN_RATIO))
     if len(b) >= 16 and b[:16] in a:
         return True
     for n in (16, 12, 10, MIN_HIT):
-        if n < need or n > len(b):
+        # ⚠️ **没有** `n < need` 这道比例门（见上面那段：长针会被它误杀）
+        if n > len(b):
             continue
         step = max(1, n // 2)
         for i in range(0, max(0, len(b) - n) + 1, step):
@@ -1000,8 +1007,17 @@ def content_match(pane: str, needle: str) -> bool:
                 continue
             if frag in a:
                 return True
-    import difflib
-    return difflib.SequenceMatcher(None, a, b).ratio() > 0.5
+    try:
+        import difflib
+        sm = difflib.SequenceMatcher(None, a, b, autojunk=False)
+        blk = sm.find_longest_match(0, len(a), 0, len(b))
+        seg = a[blk.a:blk.a + blk.size]
+        if blk.size >= MIN_HIT and not low_entropy(seg):
+            return True
+        return sm.ratio() > 0.5
+    except TypeError:                              # 老版本 difflib 没有 autojunk 参数
+        import difflib
+        return difflib.SequenceMatcher(None, a, b).ratio() > 0.5
 
 
 def best_partial(pane: str, needle: str) -> tuple:
@@ -1361,6 +1377,32 @@ def _dark_blocks(img, x0, y0, x1, y1, thr: int = 150, min_px: int = 14):
     return out
 
 
+def pick_search_icon(cands):
+    """从"标题带里的深色块"里挑出**搜索入口**：返回 `(cx, cy, bw, bh, why)`，挑不出给 None。
+
+    ⚠️ 2026-09-16 晚加（跨机 r11 实测的误点）：对面那台 `_rail_right()` 返回 **0**（导航栏右沿没测出来），
+    于是"最上一排最靠左"选到的正是**导航栏那一块**——`#0(47,76) 24×45`，**竖长条**；真正的搜索入口在
+    `#1(242,71) 21×21`（旁还有 `#2(242,71) 11×11` 的「＋」）。⇒ 加一条**形状判据**（两台机器的实测都指向它）：
+    先把"竖长条"排掉（`h > 1.6·w`），再在剩下的**方块**里取"最上面那一排最靠左"。
+    实测形状：放大镜 21×21 / 22×21（长宽比 ≈1.0）、「＋」24×24 / 12×12、导航栏块 24×45（≈1.9）。
+    """
+    try:
+        if not cands:
+            return None
+        square = [b for b in cands if b[3] <= 1.6 * max(1, b[2])]
+        pool = square or list(cands)
+        top = min(b[1] for b in pool)
+        row = [b for b in pool if b[1] <= top + 14]      # 同一排（图标行）
+        row.sort(key=lambda b: b[0])
+        cx, cy, bw, bh = row[0]
+        why = ("最上一排最靠左的%s图标 %dx%d（该排 %d 块 / 方块候选 %d / 共 %d 块；%s）"
+               % ("方块" if square else "深色", bw, bh, len(row), len(square), len(cands),
+                  "已排除竖长条" if square and len(square) < len(cands) else "无竖长条可排除"))
+        return (int(cx), int(cy), int(bw), int(bh), why)
+    except Exception:
+        return None
+
+
 def find_search_entry(img, left=None, zoom: int = 2):
     """定位「搜索」入口，**兼容两套 UI**。返回 dict 或 None。
 
@@ -1396,18 +1438,16 @@ def find_search_entry(img, left=None, zoom: int = 2):
                 continue
             cands.append((cx, cy, bw, bh))
         if cands:
-            top = min(b[1] for b in cands)
-            row = [b for b in cands if b[1] <= top + 14]      # 同一排（图标行）
-            row.sort(key=lambda b: b[0])
-            cx, cy, bw, bh = row[0]
-            return {"variant": "icon", "x": cx, "y": cy,
-                    "why": "最上一排最靠左的图标块 %dx%d（该排 %d 块 / 共 %d 块，导航栏右沿 %d）"
-                           % (bw, bh, len(row), len(cands), rail),
-                    "cands": cands,
-                    # 观测口径（2026-09-16 跨机需求⑤）：把**全部候选块**写成一行文字，失败时随结果返回——
-                    # 对面报"点到顶部「＋」"时，我这边能看到"候选里到底有几个块、选了第几个"。
-                    "cand_txt": " · ".join("#%d(%d,%d,%dx%d)" % (i, c[0], c[1], c[2], c[3])
-                                           for i, c in enumerate(cands))}
+            _pick = pick_search_icon(cands)             # ⚠️ 形状判据（排掉导航栏那种竖长条）见函数注释
+            if _pick:
+                cx, cy, bw, bh, _whyp = _pick
+                return {"variant": "icon", "x": cx, "y": cy,
+                        "why": "%s，导航栏右沿 %d" % (_whyp, rail),
+                        "cands": cands,
+                        # 观测口径（2026-09-16 跨机需求⑤）：把**全部候选块**写成一行文字，失败时随结果返回——
+                        # 对面报"点到顶部「＋」"时，我这边能看到"候选里到底有几个块、选了第几个"。
+                        "cand_txt": " · ".join("#%d(%d,%d,%dx%d)" % (i, c[0], c[1], c[2], c[3])
+                                               for i, c in enumerate(cands))}
     except Exception:
         pass
     return None

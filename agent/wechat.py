@@ -1715,15 +1715,25 @@ class WeChatAdapter:
                         if row:
                             break
                 if not row:
-                    return False, "搜索浮层的画面里没认出「%s」那一行（浮层截图 %s）" % (name, shot_size)
+                    # 失败留全现场（2026-09-16 晚加：跨机 r11 报"fail 目录是空的"——这条分支原来没 dump）
+                    _d = self._dump_fail_shot("search_popover_row", pimg, {
+                        "name": name, "popover_hwnd": int(pop_hwnd), "popover_rect": list(prect),
+                        "shot_size": list(shot_size) if shot_size else None, "popover_why": pwhy,
+                        "variant": variant, "entry": ent.get("why"), "cand_txt": ent.get("cand_txt")})
+                    return False, ("搜索浮层的画面里没认出「%s」那一行（浮层截图 %s%s）"
+                                   % (name, shot_size, ("｜现场已存 %s" % _d) if _d else ""))
                 backend.click(int(pop_hwnd), (int(prect[0]) + int(row["x"]), int(prect[1]) + int(row["y"])))
                 time.sleep(1.0)
                 idn, idn_why = self.chat_identity_ok(chat_id, gui=gui)
                 if idn is True:
                     return True, ("搜索浮层路线成功（浮层 hwnd=%s，%s，%s，落点 %s）：%s"
                                   % (pop_hwnd, pwhy, row.get("why"), (row["x"], row["y"]), idn_why))
-                return False, ("点了搜索浮层的「%s」行（%s，落点 %s），但内容级复核没过：%s"
-                               % (name, row.get("why"), (row["x"], row["y"]), idn_why))
+                _d = self._dump_fail_shot("search_identity", _chh.capture_image(gui=gui), {
+                    "name": name, "row_why": row.get("why"), "落点": [row["x"], row["y"]],
+                    "idn": str(idn), "idn_why": str(idn_why)[:400]})
+                return False, ("点了搜索浮层的「%s」行（%s，落点 %s），但内容级复核没过：%s%s"
+                               % (name, row.get("why"), (row["x"], row["y"]), idn_why,
+                                  ("｜现场已存 %s" % _d) if _d else ""))
             # —— box 形态（另一台机 / 老 UI：搜索框直接摆着）：点它 → 主窗打字 → 结果行在主窗里找
             backend.click(main, (ox + int(ent["x"]), oy + int(ent["y"])))
             time.sleep(0.45)
@@ -1739,7 +1749,11 @@ class WeChatAdapter:
                 if info:
                     break
             if not info:
-                return False, "搜索结果里没认出「%s」（可能没有这条会话，或结果区 OCR 读不出）" % name
+                _d = self._dump_fail_shot("search_box_row", im2, {
+                    "name": name, "variant": variant, "entry": ent.get("why"),
+                    "cand_txt": ent.get("cand_txt")})
+                return False, ("搜索结果里没认出「%s」（可能没有这条会话，或结果区 OCR 读不出）%s"
+                               % (name, ("｜现场已存 %s" % _d) if _d else ""))
             backend.click(main, (ox + int(info["pos"][0]), oy + int(info["pos"][1])))
             time.sleep(0.9)
             # 内容级复核：认得出目标会话最近的内容才算成功
