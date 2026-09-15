@@ -1258,6 +1258,78 @@ def to_openai_tools(defs: list) -> list:
                                               "parameters": d["parameters"]}} for d in defs]
 
 
+# ── 按「能力是否存在」裁剪工具表（省 token，且不让模型白调一轮）──────────────
+# 用户 2026-09-15：「**省 token 不仅是你的事，也是群相的事。所有要用模型的地方都要省 token，
+#   尽量给用户省钱**（当然还是在不影响效果的前提下）」。
+# 实测体积（`_scratch/tools_size.py`）：37 个工具 = 11626 字符 ≈ **7324 token**，
+#   比整份系统提示（6256 字符 / 3941 token）还大 —— 是每次请求最大的单块。
+# 口径（关键）：**只裁"当前配置/场景下调用必然失败"的工具**。裁掉不损失任何可达效果——
+#   那工具本来只会回一句"功能没开"，现在只是不再占着 200~300 字的位置；
+#   顺带省掉模型"看到一个工具就去调它 → 拿回错误 → 再想一轮"的那次往返。
+#   **绝不裁"模型可能用不上"的**——那属于效果，不是省法。
+# 与工具的可用性判定同源：每条规则读的就是工具内部自己查的那个配置键。
+def _cfg_at(cfg, path, default=None):
+    cur = cfg if isinstance(cfg, dict) else {}
+    for k in str(path).split("."):
+        if not isinstance(cur, dict):
+            return default
+        cur = cur.get(k)
+        if cur is None:
+            return default
+    return cur
+
+
+def _prune_reason(name, cfg, kind=None) -> str:
+    """返回"该工具当前不可能生效"的原因；None＝保留。"""
+    n = str(name or "")
+    # ① 场景裁：私聊里没有群成员概念
+    if n == "get_active_members" and kind and kind != "group":
+        return "只有群聊才有成员列表（当前是私聊）"
+    # ② 开关裁：功能总开关关着 ⇒ 调了只会返回"没开"
+    if n == "get_message_images" and _cfg_at(cfg, "api.vision", True) is False:
+        return "api.vision 关着"
+    if n in ("web_search", "web_fetch") and _cfg_at(cfg, "web_search.enabled", True) is False:
+        return "web_search.enabled 关着"
+    if n in ("send_random_image", "send_image_search") and not _cfg_at(cfg, "image_reply.enabled", False):
+        return "image_reply.enabled 关着（随机图/找图没开）"
+    if n == "send_image_search" and _cfg_at(cfg, "image_reply.allow_search", True) is False:
+        return "image_reply.allow_search 关着（只允许本地图库）"
+    if n == "gen_image" and not _cfg_at(cfg, "image_gen.enabled", False):
+        return "image_gen.enabled 关着（没接生图后端）"
+    if n in ("find_local_file", "send_local_file"):
+        if not _cfg_at(cfg, "file_search.enabled", False):
+            return "file_search.enabled 关着"
+        if not (_cfg_at(cfg, "file_search.dirs", []) or []):
+            return "file_search.dirs 没配目录（搜不到任何文件）"
+    if n == "send_voice_reply" and not _cfg_at(cfg, "voice_reply.enabled", False):
+        return "voice_reply.enabled 关着"
+    if n == "moments_like" and not _cfg_at(cfg, "behavior.like_moments.enabled", False):
+        return "behavior.like_moments.enabled 关着"
+    if n == "moments_comment" and not _cfg_at(cfg, "behavior.moments_comment.enabled", False):
+        return "behavior.moments_comment.enabled 关着"
+    if n == "moments_publish" and not _cfg_at(cfg, "behavior.moments_publish.enabled", False):
+        return "behavior.moments_publish.enabled 关着"
+    if n == "moments_surf" and not _cfg_at(cfg, "behavior.moments_surf.enabled", False):
+        return "behavior.moments_surf.enabled 关着"
+    return None
+
+
+def visible_defs(defs: list, cfg=None, kind=None):
+    """按能力裁剪后的工具表 ⇒ `(留下, [{"name","why"}])`。
+
+    每次唤醒现算（控制台「改完即生效」⇒ 开关一开，下一次唤醒工具就回来），
+    不缓存、不落盘（避免"配置改了但表是旧的"这种静默失配）。
+    """
+    kept, dropped = [], []
+    for d in (defs or []):
+        why = _prune_reason(d.get("name"), cfg, kind)
+        if why:
+            dropped.append({"name": d.get("name"), "why": why})
+        else:
+            kept.append(d)
+    return kept, dropped
+
+
 def execute_tool(defs: list, ctx, name: str, args_json: str):
     """找到并执行一个工具。返回 {content, is_error}。"""
     name = str(name or "").strip()
