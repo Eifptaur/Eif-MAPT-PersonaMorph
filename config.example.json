@@ -152,9 +152,17 @@
   "max_seconds": 60,
   "keep_audio": false
  },
+ "update": {
+  "url": "",
+  "muted": false,
+  "skip_version": ""
+ },
  "voice_reply": {
   "enabled": false,
   "engine": "sapi",
+  "backend": "edge",
+  "edge_voice": "zh-CN-XiaoxiaoNeural",
+  "edge_fallback": true,
   "voice": "",
   "rate": 0,
   "format": "mp3",

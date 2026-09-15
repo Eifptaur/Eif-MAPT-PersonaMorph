@@ -504,6 +504,52 @@ th{color:var(--tx2);font-weight:500}
   <button id="restartBtn" class="pri">重启</button>
 </div>
 
+<div id="updBar" class="updbar" style="display:none">
+  <span id="updText"></span>
+  <span class="sp"></span>
+  <button id="updGo" class="pri">立即更新</button>
+  <button id="updLater" class="ghost">稍后</button>
+  <button id="updSkip" class="ghost">不再提醒这个版本</button>
+</div>
+<style>
+.updbar{display:flex;align-items:center;gap:10px;margin:0 18px 10px;padding:9px 14px;border-radius:10px;
+  background:var(--card,#1b1e24);border:1px solid var(--line,#2a2f37);color:var(--tx,#e6e8ec);font-size:13px}
+.updbar.warn{border-color:#8a7a3a}
+.updbar .sp{flex:1}
+</style>
+<script>
+(function () {
+  var bar = document.getElementById('updBar'), txt = document.getElementById('updText');
+  var cur = null;
+  function hide() { bar.style.display = 'none'; }
+  function show(t, cls) { txt.textContent = t; bar.className = 'updbar' + (cls ? ' ' + cls : ''); bar.style.display = 'flex'; }
+  try {
+    fetch('/api/update').then(function (r) { return r.json(); }).then(function (s) {
+      cur = s;
+      if (s.status === 'newer') {
+        var n = (s.notes && s.notes.length) ? (' · ' + s.notes.join(' · ')) : '';
+        show('有新版本 ' + s.theirs + '（当前 ' + (s.mine || '未记录') + '）' + n, '');
+      } else if (s.status === 'older') {
+        show('更新源里的版本（' + s.theirs + '）比本机旧，可能是源配错了', 'warn');
+      } else if (s.status === 'error') {
+        show('更新源异常：' + (s.why || ''), 'warn');
+      } else { hide(); }
+    }).catch(function () { hide(); });
+  } catch (e) { hide(); }
+  document.getElementById('updLater').onclick = hide;
+  document.getElementById('updSkip').onclick = function () {
+    if (!cur || !cur.theirs) { hide(); return; }
+    try {
+      fetch('/api/update_skip', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ version: cur.theirs }) })
+        .then(hide).catch(hide);
+    } catch (e) { hide(); }
+  };
+  document.getElementById('updGo').onclick = function () {
+    show('更新动作在启动器里：打开启动器 →「检查更新」；命令行方式见 docs\\设计-本体与DLC.md', 'warn');
+  };
+})();
+</script>
+
 <div class="shell">
   <aside class="side">
     <div class="status"><b>运行状态</b><p id="sideStatus">未连接</p></div>
@@ -1070,18 +1116,29 @@ th{color:var(--tx2);font-weight:500}
     </section>
     <section id="sec-tts" class="card" data-sec>
       <h2>语音回复（TTS）</h2>
-      <div class="desc">让机器人**用语音回一句**：文字在**本机**合成成音频再发出去。**当前形态＝音频文件，不是微信语音条**——微信 PC 没有"把任意音频发成语音条"的接口；真语音条要装虚拟声卡 + 用微信录音按钮（属待拍板项）。合成全程本机、内容不出网。</div>
+      <div class="desc">让机器人**用语音回一句**：文字合成为音频再发出去。**当前形态＝音频文件，不是微信语音条**——微信 PC 没有"把任意音频发成语音条"的接口；真语音条要装虚拟声卡 + 用微信录音按钮（属待拍板项）。**合成在哪做，取决于下面的「声音来源」那一档**：<b>系统声音</b>＝全程本机、内容不出网；<b>edge 神经语音</b>＝把<b>要念的那一句话</b>发到微软的在线语音服务（只发这一句，不发聊天记录、不发联系人；不上传音频，它只回音频）；<b>自带模型</b>＝发到你自己跑的那个本地服务。</div>
       <div class="row"><label>引擎状态</label><div class="grow"><b id="ttsWhy">检测中…</b>
         <div id="ttsList" class="hint"></div></div></div>
       <div class="row"><label>总开关</label><input type="checkbox" data-cfg="voice_reply.enabled">
         <span class="hint">默认关：开着模型才能在合适的时候用语音回一句。</span></div>
-      <div class="row"><label>声音</label><div class="grow"><select data-cfg="voice_reply.voice" id="ttsVoice">
-        <option value="">自动（优先中文声音）</option></select>
-        <span class="hint">选项来自本机**实测**可用的合成声音。</span></div></div>
       <div class="row"><label>声音来源</label><div class="grow"><select data-cfg="voice_reply.backend" id="ttsBackend">
+        <option value="edge">edge 神经语音（开箱可用：免费、无需 Key；需联网）</option>
         <option value="sapi">本机系统声音（开箱可用：零下载、离线）</option>
         <option value="http">自带模型（本地 HTTP 合成服务）</option></select>
-        <span class="hint">选「自带模型」再填下面的地址（GPT-SoVITS / RVC 之类自己跑的 HTTP 接口）。<b>不通会在发送时如实报错，不会假装发过。</b></span></div></div>
+        <span class="hint">默认「edge 神经语音」＝音质接近真人、不要凭据；<b>代价是要联网，且会把要念的那一句话发到微软的在线语音服务</b>（只发这一句）。想「内容完全不出网」就选「本机系统声音」。选「自带模型」再填下面的地址（GPT-SoVITS / RVC 之类自己跑的 HTTP 接口）。<b>不通会在发送时如实报错，不会假装发过。</b></span></div></div>
+      <div class="row" id="edgeVoiceRow"><label>音色（edge）</label><div class="grow"><select data-cfg="voice_reply.edge_voice" id="ttsEdgeVoice">
+        <option value="zh-CN-XiaoxiaoNeural">晓晓 · 女声 · 通用</option>
+        <option value="zh-CN-XiaoyiNeural">晓伊 · 女声 · 年轻</option>
+        <option value="zh-CN-YunxiNeural">云希 · 男声 · 阳光</option>
+        <option value="zh-CN-YunjianNeural">云健 · 男声 · 浑厚</option>
+        <option value="zh-CN-YunyangNeural">云扬 · 男声 · 播报</option>
+        <option value="zh-CN-YunxiaNeural">云夏 · 男声 · 少年</option>
+        <option value="zh-CN-liaoning-XiaobeiNeural">小北 · 女声 · 东北</option>
+        <option value="zh-CN-shaanxi-XiaoniNeural">小妮 · 女声 · 陕西</option></select>
+        <span class="hint">这 8 个是 edge-tts 的中文音色（与 <code>voice_models.EDGE_VOICES</code> 一一对应，判据 <code>edge_tts_selftest.py</code> 会盯住两边不许漂）。</span></div></div>
+      <div class="row" id="sapiVoiceRow"><label>音色（系统）</label><div class="grow"><select data-cfg="voice_reply.voice" id="ttsVoice">
+        <option value="">自动（优先中文声音）</option></select>
+        <span class="hint">选项来自本机**实测**可用的系统合成声音；只在「本机系统声音」这一档生效。</span></div></div>
       <div class="row"><label>模型地址</label><div class="grow"><input type="text" data-cfg="voice_reply.http_url" placeholder="如 http://127.0.0.1:9880/tts">
         <div class="btns" style="margin-top:6px"><button id="ttsProbe" class="ghost" type="button">连通测试</button><span class="hint" id="ttsProbeOut"></span></div>
         <span class="hint">回音频字节（audio/wav）直接用；回配置格式就在下面填字段名。</span></div></div>
@@ -1158,10 +1215,10 @@ th{color:var(--tx2);font-weight:500}
         <span class="hint">同一会话里同样的内容在这个时间内不重复发（防刷屏）。</span></div>
       <div class="btns">
         <button id="ttsGuide" class="ghost">为什么发出去是文件、不是语音条？</button>
-        <button id="ttsTest" class="ghost">试听一句（只在本机合成，不发送）</button>
+        <button id="ttsTest" class="ghost">试听一句（按当前音源合成，不发送）</button>
         <button class="pri" data-save>保存设置（语音回复）</button>
       </div>
-      <div id="ttsOut" class="hint">点「试听一句」会在本机合成一条示例音频并报出产物路径 / 格式 / 大小；**不会发到任何会话**。</div>
+      <div id="ttsOut" class="hint">点「试听一句」会**按当前选的那一档音源**合成一条示例音频并报出产物路径 / 档位 / 格式 / 大小；**不会发到任何会话**（系统声音档不出网，edge 档要联网）。</div>
     </section>
     <section id="sec-imggen" class="card" data-sec>
       <h2>群友要图（按需求生成）</h2>
@@ -1863,6 +1920,7 @@ function syncToForm(){
   /* 自绘下拉（厂商/模型/etc）：程序赋值后同步按钮文字（不触发业务 change） */
   document.querySelectorAll('select').forEach(s=>{ if(s._refresh) s._refresh(); });
   updateTierRows();
+  ttsSyncRows();
   if(typeof renderGroupTierBox === 'function') renderGroupTierBox();
   if(typeof wsSyncToForm === 'function') wsSyncToForm();
   if(typeof loadMemGroups === 'function') loadMemGroups();
@@ -1878,6 +1936,17 @@ function updateTierRows(){
     const show = String(el.dataset.tier).split(',').map(Number).includes(tier);
     el.style.display = show ? '' : 'none';
   });
+}
+
+/* 声音来源三档互斥：只显示当前这一档要填的音色行
+   （edge 档=8 个神经音色 / 系统档=本机实测声音 / 自带模型档=下面的地址与字段） */
+function ttsSyncRows(){
+  const sel = document.querySelector('[data-cfg="voice_reply.backend"]');
+  if(!sel) return;
+  const be = sel.value || 'sapi';
+  const er = $('edgeVoiceRow'), sr = $('sapiVoiceRow');
+  if(er) er.style.display = (be === 'edge') ? '' : 'none';
+  if(sr) sr.style.display = (be === 'sapi') ? '' : 'none';
 }
 
 function syncFromForm(){
@@ -2550,7 +2619,19 @@ async function loadStatus(){  try{
       }catch(e){}
       try{
         const tt = (s.media || {}).tts || {};
-        const ts = tt.status || {};
+        const ts0 = tt.status || {};
+        const vm = tt.models || {};
+        /* 引擎状态要跟着**用户当前选的那一档**走：edge 档看 voice_models 段，
+           其它档看系统声音段（tts.status）——两者形状一致，合并后共用下面这套渲染。 */
+        const _beEl = $('ttsBackend');
+        const _beNow = (_beEl && _beEl.value) || vm.backend || 'sapi';
+        const ts = (_beNow === 'edge')
+          ? Object.assign({}, ts0, {ok: vm.ok, why: vm.why, engine: vm.engine, voices: vm.voices})
+          : ts0;
+        const _vn = function(list){
+          return (list || []).map(function(v){ return (v && typeof v === 'object') ? (v.label || v.name || '') : v; })
+                             .filter(Boolean);
+        };
         const t1 = $('ttsWhy');
         if(t1 && !(s.media || {}).error){
           t1.textContent = ts.ok ? ('' + (ts.why || '可用')) : ('' + (ts.why || '不可用'));
@@ -2559,18 +2640,22 @@ async function loadStatus(){  try{
         const t2 = $('ttsList');
         if(t2 && ts.voices){
           t2.textContent = ['引擎：' + (ts.engine || '-'),
-                            '可用声音：' + ((ts.voices || []).join(' / ') || '（没有）'),
+                            '可用声音：' + (_vn(ts.voices).join(' / ') || '（没有）'),
                             '产物目录：' + (ts.dir || '-'),
                             '形态：' + (tt.note || ''),
                             '真语音条：' + (((ts.mic || {}).why) || '检测中')].join(' ｜ ');
         }
         const sel = $('ttsVoice');
-        if(sel && ts.voices && sel.options.length <= 1){
+        if(sel && ts.voices && String(ts.engine || 'sapi') !== 'edge-tts' && sel.options.length <= 1){
           (ts.voices || []).forEach(function(v){
+            const name = (v && typeof v === 'object') ? (v.name || '') : v;
+            const lab  = (v && typeof v === 'object') ? (v.label || name) : v;
+            if(!name) return;
             const o = document.createElement('option');
-            o.value = v; o.textContent = v; sel.appendChild(o);
+            o.value = name; o.textContent = lab; sel.appendChild(o);
           });
         }
+        ttsSyncRows();
         // 群友要图（生图链条）的状态：只读展示"有没有后端 / 过滤链哪几层没接"，
         // 权威结论永远来自 /api/status 的 image_gen 段（不看本地猜测）
         const ig = md.image_gen || {};
@@ -5537,13 +5622,14 @@ addEventListener('hashchange', ()=>{ if(location.hash==='#sec-sessions') loadSes
   const ttsBtn = document.getElementById('ttsTest');
   if(ttsBtn) ttsBtn.onclick = async ()=>{
     const out = document.getElementById('ttsOut');
-    if(out){ out.textContent = '合成中…（本机合成，约 1 秒；不会发送任何东西）'; out.style.color = ''; }
+    const _beNow2 = (function(){ const e = document.querySelector('[data-cfg="voice_reply.backend"]'); return e ? e.value : 'sapi'; })();
+    if(out){ out.textContent = '合成中…（按当前这一档合成，不会发送任何东西' + (_beNow2 === 'edge' ? '；edge 档要联网' : '') + '）'; out.style.color = ''; }
     try{
       const r = await getJSON('/api/tts/test');
       const info = (r && r.info) || {};
       if(out){
         out.textContent = (r && r.ok)
-          ? ('合成成功：' + r.path + '（' + (info.fmt || '-') + ' / ' + r.size + ' 字节 / 声音：' + (info.voice || '-') + '）' + (r.err ? (' 注意：' + r.err) : ''))
+          ? ('合成成功：' + r.path + '（' + (info.fmt || '-') + ' / ' + r.size + ' 字节 / 档位：' + (r.engine || info.engine || '-') + ' / 声音：' + (info.voice || '-') + '）' + (r.err ? (' 注意：' + r.err) : ''))
           : ('合成失败：' + ((r && (r.err || r.error)) || '未知原因'));
         out.style.color = (r && r.ok) ? 'var(--ok-tx)' : 'var(--err-tx)';
       }
@@ -5975,6 +6061,9 @@ $('exportFeedback').onclick = ()=>doExport('feedback','Feedback');
 $('exportMessages').onclick = ()=>doExport('messages','Messages');
 const _tierSel = document.querySelector('[data-cfg="store.context_tier"]');
 if(_tierSel) _tierSel.addEventListener('change', ()=>updateTierRows());
+const _ttsBeSel = document.querySelector('[data-cfg="voice_reply.backend"]');
+if(_ttsBeSel) _ttsBeSel.addEventListener('change', ()=>ttsSyncRows());
+ttsSyncRows();
 </script>
 <div style="position:fixed;left:4px;bottom:2px;font-size:10px;color:#8aa0c0;opacity:.55;z-index:9">Persona Morph build 2026-09-09</div></body>
 </html>

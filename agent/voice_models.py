@@ -48,7 +48,7 @@ def _cfg() -> dict:
 def backend(cfg: dict | None = None) -> str:
     c = cfg if isinstance(cfg, dict) else _cfg()
     b = str(c.get("backend") or "sapi").strip().lower()
-    return b if b in ("sapi", "http") else "sapi"
+    return b if b in ("sapi", "http", "edge") else "sapi"
 
 
 def http_url(cfg: dict | None = None) -> str:
@@ -294,6 +294,19 @@ def status(cfg: dict | None = None) -> dict:
            "capability": CAPABILITY_NOTE, "voices": [], "engine": "sapi", "why": "",
            "vc_url": vc_url(c), "vc_mode": vc_boundary(c),
            "vc_capability": VC_CAPABILITY_NOTE}
+    if out["backend"] == "edge":
+        out["engine"] = "edge-tts"
+        out["voice"] = edge_voice(c)
+        out["voices"] = [{"name": v, "label": lab} for v, lab in EDGE_VOICES]
+        try:
+            import edge_tts            # noqa: F401
+            out["ok"] = True
+            out["why"] = "edge-tts（免费神经语音，需要联网；失败会%s）" % (
+                "按 edge_fallback 退回系统声音" if c.get("edge_fallback", True) else "如实报错、不静默")
+        except Exception:
+            out["ok"] = False
+            out["why"] = "选了 edge-tts 但本机没装它（py -3 -m pip install edge-tts）"
+        return out
     if out["backend"] == "http":
         out["engine"] = "custom-http"
         if not out["http_url"]:
@@ -348,14 +361,106 @@ def probe(url: str = "", timeout: int = DEFAULT_TIMEOUT, cfg: dict | None = None
     return out
 
 
+# ── edge-tts 音源（2026-09-15 新增）：**免费、无需 key**的神经语音，中文 8 个音色 ─────────
+# 为什么加它：群相原来只有 SAPI（机械音）与"用户自带模型"（要自己跑服务）两档；
+# edge-tts 是中间那一档——开箱可用、音质接近真人、不要凭据，适合做**默认音源**。
+# 口径：失败**如实报错**，并按 voice_reply.edge_fallback（默认开）退回系统声音，绝不静默出空音频。
+EDGE_DEFAULT_VOICE = "zh-CN-XiaoxiaoNeural"
+EDGE_VOICES = [
+    ("zh-CN-XiaoxiaoNeural", "晓晓 · 女声 · 通用"),
+    ("zh-CN-XiaoyiNeural", "晓伊 · 女声 · 年轻"),
+    ("zh-CN-YunxiNeural", "云希 · 男声 · 阳光"),
+    ("zh-CN-YunjianNeural", "云健 · 男声 · 浑厚"),
+    ("zh-CN-YunyangNeural", "云扬 · 男声 · 播报"),
+    ("zh-CN-YunxiaNeural", "云夏 · 男声 · 少年"),
+    ("zh-CN-liaoning-XiaobeiNeural", "小北 · 女声 · 东北"),
+    ("zh-CN-shaanxi-XiaoniNeural", "小妮 · 女声 · 陕西"),
+]
+
+
+def edge_voice(cfg: dict | None = None) -> str:
+    c = cfg if isinstance(cfg, dict) else _cfg()
+    return str(c.get("edge_voice") or EDGE_DEFAULT_VOICE).strip() or EDGE_DEFAULT_VOICE
+
+
+def _ffmpeg_bin() -> str:
+    """ffmpeg 可执行名（本机在 PATH 里；找不到就返回空，由调用方如实报错）。"""
+    import shutil as _sh
+    return _sh.which("ffmpeg") or ""
+
+
+def _edge_make(text: str, cfg: dict, timeout: int):
+    """edge-tts 合成 ⇒ ffmpeg 转 wav。返回 (路径 或 None, 错误说明, info)。"""
+    try:
+        import edge_tts
+    except Exception:
+        return None, "没装 edge-tts（py -3 -m pip install edge-tts）", {}
+    import asyncio
+    import subprocess
+    voice = edge_voice(cfg)
+    d = _out_dir()
+    try:
+        os.makedirs(d, exist_ok=True)
+    except Exception as e:
+        return None, "输出目录建不出来：%s" % str(e)[:60], {}
+    stamp = time.strftime("%H%M%S") + ("%03d" % (int(time.time() * 1000) % 1000))
+    mp3 = os.path.join(d, "tts_edge_%s.mp3" % stamp)
+    wav = os.path.join(d, "tts_edge_%s.wav" % stamp)
+
+    async def _go():
+        await edge_tts.Communicate(text, voice).save(mp3)
+
+    try:
+        asyncio.run(_go())
+    except Exception as e:
+        return None, "edge-tts 合成失败（联网了没？音色名对不对？）：%s" % str(e)[:90], {}
+    try:
+        if not os.path.exists(mp3) or os.path.getsize(mp3) < 1000:
+            return None, "edge-tts 没产出有效音频（文件缺或过小）", {}
+    except OSError as e:
+        return None, "读不到 edge-tts 的产物：%s" % str(e)[:60], {}
+
+    ff = _ffmpeg_bin()
+    if not ff:
+        # 没有 ffmpeg：**如实报错**，但把 mp3 路径带回去（下游若支持 mp3 还能用）
+        return None, "要 wav 得先有 ffmpeg（PATH 里没找到）", {"edge_mp3": mp3, "voice": voice}
+    try:
+        r = subprocess.run([ff, "-y", "-loglevel", "error", "-i", mp3, "-ar", "22050", "-ac", "1", wav],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           timeout=max(30, int(timeout)))
+    except Exception as e:
+        return None, "ffmpeg 转换失败：%s" % str(e)[:70], {}
+    if r.returncode != 0 or not os.path.exists(wav) or os.path.getsize(wav) < 1000:
+        return None, "ffmpeg 转换失败（rc=%s）" % r.returncode, {}
+    return wav, "", {"voice": voice, "engine": "edge-tts", "fmt": "wav",
+                     "bytes": os.path.getsize(wav), "mp3": os.path.basename(mp3)}
+
+
 def _make_raw(text: str, cfg: dict | None = None, timeout: int = DEFAULT_TIMEOUT):
     """按当前后端合成，返回 `(路径 或 None, 错误说明, info)` —— **与 `tts.make()` 同契约**。
-    走系统声音时原样转发 `tts.make()`；走自带模型时只接受"确实拿到了音频字节"这一种成功。"""
+    走系统声音时原样转发 `tts.make()`；走自带模型时只接受"确实拿到了音频字节"这一种成功；
+    走 edge-tts 时失败会按 `voice_reply.edge_fallback`（默认开）退回系统声音，并**在说明里写明退回了**。"""
     c = cfg if isinstance(cfg, dict) else _cfg()
     text = (text or "").strip()
     if not text:
         return None, "文本为空（不合成）", {}
-    if backend(c) != "http":
+    b = backend(c)
+    if b == "edge":
+        p, why, info = _edge_make(text, c, timeout)
+        if p:
+            return p, "", info
+        if c.get("edge_fallback", True):
+            try:
+                from . import tts
+                p2, _w2, i2 = tts.make(text)
+                if p2:
+                    n = dict(i2 or {})
+                    n["edge_failed"] = why
+                    return p2, "edge-tts 没成功，已按 edge_fallback 退回系统声音：%s" % why, n
+            except Exception as e:
+                return None, "edge-tts 失败（%s），退回系统声音也失败：%s" % (why, str(e)[:50]), {}
+        return None, why, {}
+    if b != "http":
         try:
             from . import tts
             return tts.make(text)
