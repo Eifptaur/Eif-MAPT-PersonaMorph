@@ -237,5 +237,17 @@ try:
 except Exception as _e10:
     ok("「＋」菜单判据可测", False, str(_e10)[:80])
 
+print("⑪ 搜索框路线的结果也要走浮层（跨机 r18 最值钱发现：结果常常是独立浮层）")
+_w3 = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
+_seg_box = _w3[_w3.index("def open_chat_by_search"):]
+_seg_box = _seg_box[:_seg_box.find("\n    def ", 10)]
+ok("box 路线里也调 _find_search_popover（先按浮层试）", "_find_search_popover(main)" in _seg_box)
+ok("浮层里用 find_popover_row 找目标行", "find_popover_row(_pop[2], name)" in _seg_box)
+ok("浮层判否时要关掉它再退回主窗那条路", "_close_search_popover(int(_ph))" in _seg_box)
+ok("切会话失败要把列表滚回顶部（**两条**失败分支都调同一个实现）",
+   _w3.count("self._scroll_list_to_top(") >= 2 and "def _scroll_list_to_top" in _w3)
+ok("还原用的是产品已验证的滚轮形状（times=8, gap_ms=70，不自己换参数）",
+   "times=8, gap_ms=70" in _w3)
+
 print("\n结果：%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
