@@ -288,6 +288,102 @@ def sec_send_test():
     return lines, raw
 
 
+def sec_delivery():
+    """2026-09-15 新增：**交付面**自检——新加的那些功能在这台机器上到底能不能用。
+
+    为什么单独一节：原来的检验报告只覆盖"环境 + 微信窗口 + 依赖/UIA + 会话头 + 投递发送"，
+    而这一年新加的音源（edge 三档）、B 站解析、模型端点、更新链、磁盘占用**一条都没进**，
+    另一台电脑跑完也不知道这些能不能用。这一节全部只读、不打字不发消息。
+    """
+    lines, raw = [], {}
+
+    # ① 版本与更新链
+    try:
+        from agent.version import VERSION
+        lines.append("  本机版本: %s" % VERSION)
+        raw["version"] = VERSION
+    except Exception as e:
+        lines.append("  本机版本: 读不到（%s）" % type(e).__name__)
+    try:
+        from agent import update_check as UC
+        st = UC.state()
+        lines.append("  更新检查: status=%s · 本机=%s · 源上=%s · %s"
+                     % (st.get("status"), st.get("mine") or "未记录", st.get("theirs") or "-",
+                        str(st.get("why") or "")[:60]))
+        raw["update"] = {k: st.get(k) for k in ("status", "mine", "theirs", "why")}
+    except Exception as e:
+        lines.append("  更新检查: 跑不了（%s）" % type(e).__name__)
+
+    # ② 语音音源三档（edge 要联网、sapi 离线、http 是你自己的服务）
+    try:
+        from agent import voice_models as VM
+        s = VM.status()
+        lines.append("  语音音源: 档位=%s · 引擎=%s · 可用=%s · %s"
+                     % (s.get("backend"), s.get("engine"), s.get("ok"), str(s.get("why") or "")[:70]))
+        if s.get("backend") == "edge":
+            vs = [v.get("name") for v in (s.get("voices") or []) if isinstance(v, dict)]
+            lines.append("  可用音色: %d 个 %s" % (len(vs), ("（%s…）" % vs[0]) if vs else ""))
+        raw["voice_models"] = {"backend": s.get("backend"), "engine": s.get("engine"), "ok": s.get("ok")}
+    except Exception as e:
+        lines.append("  语音音源: 读不到（%s）" % type(e).__name__)
+    try:
+        import shutil as _sh
+        lines.append("  ffmpeg: %s" % (_sh.which("ffmpeg") or "**没找到**（合成要转 wav，必需）"))
+    except Exception:
+        pass
+
+    # ③ 模型端点：能不能拉这个地址上的模型列表（＝"自己读模型清单"的第一步）
+    try:
+        from agent.config import get_config
+        from agent.llm import join_url, _auth_headers
+        import urllib.request as _ur
+        api = (get_config() or {}).get("api") or {}
+        base = str(api.get("base_url") or "")
+        if not base:
+            lines.append("  模型端点: 没填地址")
+        else:
+            u = join_url(base, "/models")      # ⚠️ 必须带前导斜杠：join_url 只 rstrip("/") 再拼，不补斜杠
+            req = _ur.Request(u, headers=_auth_headers(str(api.get("api_key") or "")))
+            with _ur.urlopen(req, timeout=10) as r:
+                d = json.loads(r.read().decode("utf-8", "replace"))
+            ids = [str((x or {}).get("id") or "") for x in (d.get("data") or [])]
+            lines.append("  模型端点: 通 · 这个 key 能用 %d 个模型 %s"
+                         % (len(ids), ("（%s…）" % ", ".join(ids[:4])) if ids else ""))
+            cur = str(api.get("model") or "")
+            lines.append("  当前模型 %s：%s" % (cur or "(未填)",
+                                              "在列表里" if cur in ids else "**不在这个端点返回的列表里**"))
+            raw["models"] = {"base": base, "count": len(ids), "has_current": cur in ids}
+    except Exception as e:
+        lines.append("  模型端点: 拉不到列表（%s）——不影响聊天，但无法核对模型名" % str(e)[:60])
+
+    # ④ B 站（新功能：群友丢链接能不能看懂）
+    try:
+        from agent import bilibili as BL
+        d, why = BL._get_json(BL.API_VIEW % "BV1LLjH6hEio", timeout=8)
+        if d and d.get("code") == 0:
+            dd = d.get("data") or {}
+            lines.append("  B站连通: 通（示例稿件「%s」）" % str(dd.get("title") or "")[:26])
+            raw["bilibili"] = {"ok": True}
+        else:
+            lines.append("  B站连通: 不通（%s）" % (why or ("code=%s" % (d or {}).get("code"))))
+            raw["bilibili"] = {"ok": False, "why": why}
+    except Exception as e:
+        lines.append("  B站连通: 探不了（%s）" % type(e).__name__)
+
+    # ⑤ 磁盘占用与清理
+    try:
+        from agent import housekeeping as HK
+        f = HK.footprint()
+        lines.append("  磁盘: 临时残留 %d 项 / %.2f MB · 语音产物 %d 个 / %.2f MB"
+                     % (f["temp"]["entries"], f["temp"]["mb"],
+                        f["dirs"].get("media/tts", {}).get("files", 0),
+                        f["dirs"].get("media/tts", {}).get("mb", 0)))
+        raw["disk"] = {"temp": f["temp"], "tts": f["dirs"].get("media/tts")}
+    except Exception as e:
+        lines.append("  磁盘: 查不了（%s）" % type(e).__name__)
+    return lines, raw
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--send-test", action="store_true", help="额外做一次投递发送实测（会真发一条测试消息）")
@@ -298,14 +394,15 @@ def main():
     for title, fn in (("一、系统与显示", sec_system),
                       ("二、微信与窗口", sec_wechat),
                       ("三、依赖 / 版本能力矩阵 / UIA", sec_deps_and_caps),
-                      ("四、会话头可读性", sec_visual)):
+                      ("四、会话头可读性", sec_visual),
+                      ("五、交付面：音源 / 模型端点 / B站 / 更新 / 磁盘", sec_delivery)):
         lines, raw = safe(fn, title) or ([], {})
         add(title, lines, raw)
     if args.send_test:
-        lines, raw = safe(sec_send_test, "五、投递发送实测") or ([], {})
-        add("五、投递发送实测", lines, raw)
+        lines, raw = safe(sec_send_test, "六、投递发送实测") or ([], {})
+        add("六、投递发送实测", lines, raw)
     else:
-        add("五、投递发送实测", ["  未执行（加 --send-test 才会真发一条测试消息）"], {})
+        add("六、投递发送实测", ["  未执行（加 --send-test 才会真发一条测试消息）"], {})
 
     ts = time.strftime("%Y%m%d-%H%M%S")
     os.makedirs(OUT_DIR, exist_ok=True)
