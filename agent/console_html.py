@@ -1568,6 +1568,16 @@ th{color:var(--tx2);font-weight:500}
         <div class="row"><label>超长切分(字)</label><input type="number" min="0" step="100" data-cfg="send.hard_split_at"></div>
       </div>
       <div class="mid" style="margin-top:10px">
+        <div class="row"><label>兜底自动补发</label><div class="grow"><label class="chip"><input type="checkbox" data-cfg="send.fallback_autosend">
+          模型没调发送工具时，把最终文本当回复发出去</label>
+          <div class="hint">关掉＝宁可沉默也不自动发（想说话就得让模型调发送工具）。<b>开着时下面两道过滤会拦住"看着像内心戏"的文本</b>。</div></div></div>
+        <div class="row"><label>兜底字数上限</label><input type="number" min="0" step="10" data-cfg="send.fallback_max_chars">
+          <span class="hint">只补发这么短的句子（默认 60）：长文多半是分析，不是群聊发言；0＝不限。</span></div>
+        <div class="row"><label>拦自我指涉</label><div class="grow"><label class="chip"><input type="checkbox" data-cfg="send.fallback_block_selfref">
+          拦掉「我不打算回 / 没什么可说」这类</label>
+          <span class="hint">那是内心判断，发进群会显得莫名其妙。过滤本身出异常时**按不发处理**（宁可沉默，也不乱发）。</span></div></div>
+      </div>
+      <div class="mid" style="margin-top:10px">
         <div class="row"><label>新对话自动引用</label><input type="checkbox" data-cfg="send.quote_on_new_talk" title="新一轮对话开始时自动引用对方最近一句话"></div>
         <div class="row"><label>引用概率(0~1)</label><input type="number" min="0" max="1" step="0.05" data-cfg="send.quote_reply_probability"></div>
         <div class="row"><label>对话冷却(秒)</label><input type="number" min="0" step="30" data-cfg="send.quote_new_talk_gap_s" title="机器人上条消息超过该秒数才算「新一轮对话」"></div>

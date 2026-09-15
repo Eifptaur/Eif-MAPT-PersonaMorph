@@ -194,6 +194,39 @@ ck("E5 系统提示描述的兜底在代码里真的存在（文案不许描述�
    '_final and not session["sent"]' in _PM_SRC)
 ck("E6 兜底只在「本轮一条都没发」时才触发（有 sent 守卫）", 'not session["sent"]' in _PM_SRC)
 
+# 2026-09-15 追加：兜底**必须带过滤**（用户点头「对用户有好处就加」）。
+# 不过滤时，"内心分析"会被原样发进群；过滤还要 fail-closed（过滤器自己出问题 ⇒ 不发）。
+print("[E2] 兜底补发的过滤（把内心戏拦在门外）")
+ck("E7 过滤函数存在且在兜底**之前**被调用",
+   "def _fallback_send_ok(" in _PM_SRC
+   and _PM_SRC.index("_fallback_send_ok(_final") < _PM_SRC.index("send_text_batch(chat_key, _final)"))
+ck("E8 过滤是 **fail-closed**（异常 ⇒ 按不发处理）", "过滤器异常，按不发处理" in _PM_SRC)
+ck("E9 拦下时留痕（日志 + 会话/运行明细字段，可复盘）",
+   "兜底没发（" in _PM_SRC and 'session["fallback_blocked"]' in _PM_SRC and '["fallback_blocked"]' in _PM_SRC)
+ck("E10 提示词把过滤口径也说清了（60 字 / 内心判断被拦）",
+   "60 字以内的短话" in _SP and "拦下" in _SP)
+# 功能级：把过滤函数抽出来真跑（喂三种文本）
+try:
+    _i = _PM_SRC.index("_FALLBACK_SELF_REF = (")
+    _j = _PM_SRC.index("def _parse_inline_calls(")
+    _code = _PM_SRC[_i:_j]
+    _ns = {}
+    exec(_code, _ns)                                    # 只含一个常量与一个纯函数（不碰全局）
+    _fn = _ns["_fallback_send_ok"]
+    _c = {"send": {"fallback_autosend": True, "fallback_max_chars": 60, "fallback_block_selfref": True}}
+    _ok1, _ = _fn("好呀，那咱们周末去爬山", _c)
+    _ok2, _w2 = _fn("我不打算回复这条，看着就好", _c)
+    _ok3, _w3 = _fn("这段话很长" * 20, _c)
+    _ok4, _ = _fn("随你", {"send": {"fallback_autosend": False}})
+    _ok5, _ = _fn("好呀", {"send": {}})                  # 缺键 ⇒ 用默认（要发）
+    ck("E11 短话放行 / 自我指涉拦下 / 超长拦下 / 开关关掉不放 / 缺键走默认",
+       _ok1 and (not _ok2) and "自我指涉" in _w2 and (not _ok3) and "太长" in _w3 and (not _ok4) and _ok5,
+       "短话=%s 内心=%s 超长=%s 关掉=%s 缺键=%s" % (_ok1, _ok2, _ok3, _ok4, _ok5))
+    ck("E12 过滤不吃异常之外的东西（返回值恒为二元组）",
+       isinstance(_fn("x", _c), tuple) and len(_fn("x", _c)) == 2)
+except Exception as _e:
+    ck("E11/E12 过滤功能级", False, str(_e)[:80])
+
 print("\n[结论] %d 通过 / %d 失败" % (len(OK), len(BAD)))
 if BAD:
     print("失败项：%s" % BAD)
