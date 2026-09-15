@@ -21,10 +21,11 @@ GAP = 24                # 相邻暗列间隔超过它 ⇒ 算新的一簇
 W_MIN, W_MAX = 4, 60    # 簇宽度在这个区间才算"小图标"（整行全暗的窗口边线会被排除）
 BAND_PX = 200           # 只看渲染区底部这么多像素（图标行就在这一带）
 PANE_SLACK = 60         # 允许簇落在 pane_left 左边多少
-RUN_TOL = 0.5           # "等间距的一排"：相邻间距相对中位间距的偏差上限
-#   ⚠️ 为什么是 0.5 而不是 0.35（2026-09-16 r7 跨机实测的实数）：那台机器的间距是
-#   **45/45/44/63**——最后一枚（🎤语音）比前面宽 40%。按 0.35 会把语音切出去（工具栏只认出 4 簇）；
-#   虽然"取第 3 个"的答案不受影响，但**落点自证要能看到整排**，所以放宽到 0.5。
+RUN_TOL = 0.35          # "规整的一跳"：间距相对参考值的偏差上限
+#   ⚠️ 2026-09-16 r8 跨机实测后定在 0.35（不是 0.5）：那台机器的间距是 45/45/44/**63**（🎤语音比前面
+#   宽 40%），而**开头**那一跳异常（247→312＝65px）必须被排除 ⇒ 0.5 会把 247 也收进来、导致
+#   "取第 3 个"错到 📦收藏。现在的做法是：规整的一跳用 0.35 判，**最后一跳**允许异常（单独一条规则），
+#   既排除开头杂簇、又能让语音那一枚出现在"落点自证"的整排里。
 RUN_MIN = 3             # 一排至少这么多簇才算工具栏
 
 
@@ -67,31 +68,38 @@ def best_row(gray, band_px: int = BAND_PX, gray_thr: int = GRAY_THR, gap: int = 
 
 
 def toolbar_run(clusters, pane_left: int = 0, tol: float = RUN_TOL):
-    """从该行的簇里挑**工具栏那一组**：面板左沿（允许左溢 `PANE_SLACK`）右边，
-    相邻间距近等距的最长连续段（≥`RUN_MIN` 个）⇒ 返回该段 `[(中心x, 宽度)]`。
+    """从该行的簇里挑**工具栏那一组**：一排"开头每一跳都规整、只允许**最后一跳**异常"的簇。
 
-    为什么按"等间距"挑：整行可能有 9 个簇（工具栏 5 个 + 别的元素），中间的断口（实测最后一枚
-    与前面间距 63 vs 45）就是天然分界；按间距断，比按像素上界断稳。
+    ⚠️ 2026-09-16 r8 跨机实测后**重写**（对面报的第 1 条：产品 5 簇 / 探针 6 簇）：
+    · **不再拿 `pane_left` 当硬门槛**——产品和探针各自检测 pane_left，值不一样就各测各的
+      （探针多收了 pane 左侧的 247 那一簇 ⇒ 它取第 3 个变成 357＝📦收藏 ✗）。参数留着只为兼容，
+      **不再参与判定**。
+    · **允许"最后一跳"异常**：工具栏最后一枚是 🎤语音，实测比前面宽 40%（间距 45/45/44/**63**）。
+      但"**开头**就异常"说明那一簇不属于这排（247→312 那一跳 65px）⇒ 必须排除。
+    · 参考间距 `med` 取**该行间距的下半段中位数**（不被尾部异常和远处杂簇带偏）。
+    · 多个候选段等长时取**最靠左**的那段（工具栏是聊天面板里最左的一组）。
     """
-    cand = [c for c in clusters if c[0] >= int(pane_left or 0) - PANE_SLACK]
+    cand = sorted(clusters, key=lambda c: c[0])
     if len(cand) < RUN_MIN:
         return []
+    allgaps = [cand[k + 1][0] - cand[k][0] for k in range(len(cand) - 1)]
+    half = sorted(allgaps)[:max(1, len(allgaps) // 2)]
+    med = half[len(half) // 2] if half else 0
+    if not med:
+        return []
     best = []
-    i = 0
-    while i < len(cand):
+    for i in range(len(cand)):
         run = [cand[i]]
-        j = i + 1
-        while j < len(cand):
-            gaps = [run[k + 1][0] - run[k][0] for k in range(len(run) - 1)]
-            med = sorted(gaps)[len(gaps) // 2] if gaps else 0
+        for j in range(i + 1, len(cand)):
             g = cand[j][0] - run[-1][0]
-            if med and abs(g - med) > tol * med:
-                break
-            run.append(cand[j])
-            j += 1
-        if len(run) > len(best):
+            if abs(g - med) <= tol * med:
+                run.append(cand[j])                    # 规整的一跳：继续
+                continue
+            if len(run) >= RUN_MIN:
+                run.append(cand[j])                    # 异常但已成一排 ⇒ 只许它当"最后一跳"
+            break
+        if len(run) > len(best) or (len(run) == len(best) and best and run[0][0] < best[0][0]):
             best = run
-        i = j
     return best if len(best) >= RUN_MIN else []
 
 

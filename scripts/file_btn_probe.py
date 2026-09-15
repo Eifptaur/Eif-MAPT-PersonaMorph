@@ -23,9 +23,8 @@ os.chdir(ROOT)
 from agent import chat_header as ch                                     # noqa: E402
 from agent.input_backend import _lock_dpi, find_main_window, find_render_child, window_rect  # noqa: E402
 
-# 代码里的常量（agent/wechat.py::_file_panel_point）
-ICONS_X = {"表情": 43, "收藏": 97, "文件": 151, "截图": 205, "语音": 280}
-ICON_ROW_UP = 50          # y = 渲染底 − 50
+# ⛔ 2026-09-16 删掉常量表（`ICONS_X` / `ICON_ROW_UP`）：跨机 r8 实测点名它"方向反、误导人"。
+#    图标位置一律由共用实现 `agent/input_bar.py` 算（本探针只 import，不许自己再算一套）。
 
 
 def find_dialog(timeout=3.0):
@@ -121,15 +120,10 @@ def main():
             print("\n[该行按列聚类]（渲染区相对 x；间距>24px 算新簇）宽度 4~60px 的簇 %d 个" % len(good))
             for cx, span, ndark in good[:14]:
                 print("   x=%4d  跨度=%3d  含暗像素列=%d" % (cx, span, ndark))
-            if pane:
-                print("\n[我们代码算的坐标 vs 实测]（都以渲染区左上为原点）")
-                for name, off in ICONS_X.items():
-                    want = pane + off
-                    near = sorted(good, key=lambda c: abs(c[0] - want))[:1]
-                    got = near[0][0] if near else -1
-                    print("   %-4s 期望 x=%4d（pane %d + %d）｜最近实测簇 x=%4d ⇒ 偏差 %+d"
-                          % (name, want, pane, off, got, got - want))
-                print("   y：代码取 渲染底往上 %d px；上面那几行就是实测候选 ⇒ 偏差自己比一眼" % ICON_ROW_UP)
+            # ⛔ 2026-09-16 删掉旧的「常量偏移 vs 最近邻命名」那一段（跨机 r8 实测点名）：
+            #    它按 `pane + 固定的 43/97/151/…` 去比最近簇，输出形如「文件 期望 427｜最近簇 446
+            #    ⇒ +19」——**方向是反的、还误导人**（真值 402）。现在真值由共用实现
+            #    `agent/input_bar.py` 给出（上面那三行），不再自己算一套。
         else:
             print("   ⚠️ 这一带没找到「多个小簇」的行 ⇒ 输入栏图标行可能不在渲染区底部 200px 内，"
                   "或渲染区抓到的内容不是期望的那部分")
