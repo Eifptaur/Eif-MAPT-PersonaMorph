@@ -176,6 +176,24 @@ ck("D2 调用点传了 group_name", "group_name=_group_name" in SRC_PM)
 ck("D3 调用点传了 store", "store=self.store" in SRC_PM)
 ck("D4 注释里记了这次修的是什么（防后人再删）", "从来没生效" in SRC_PM)
 
+# ── E 左右脑互搏：系统提示里"文本会不会发出去"必须只有一个口径 ─────────────
+# 2026-09-15 抓到的一处真矛盾：【工作方式】2 断言"文本不会发送到微信"，而【发送与汇报禁令】4 说
+# "没调发送工具时系统会把最终文本自动发出去" —— 同一份提示里两句互相打脸，而 persona_morph.py:678-689
+# 的兜底**真的存在**。危害：模型若信前一句，会把"内心分析/我不打算说话"这类念头当思考写出来，
+# 结果被兜底原样发进群里。⇒ 两份提示必须同口径，且都要警告"别把内心戏写进最终文本"。
+print("[E] 发送口径互搏（文本会不会被自动发出去）")
+_SP = P.build_system_prompt()
+_PM_SRC = io.open("scripts/persona_morph.py", encoding="utf-8").read()
+ck("E1 系统提示里不再有无条件断言「不会发送到微信」", "不会发送到微信" not in _SP,
+   [l for l in _SP.splitlines() if "不会发送" in l][:1])
+ck("E2 【工作方式】写明了那个兜底例外（一条都没发 + 像是对群友说的话）",
+   "一条都没发" in _SP and "自动当作一条回复发出去" in _SP)
+ck("E3 【发送与汇报禁令】写明了「已经发过就不会再补发」", "最终文本就不会再被发出去" in _SP)
+ck("E4 警告了「内心分析别写进最终文本」", "内心分析" in _SP and "写进最终文本" in _SP)
+ck("E5 系统提示描述的兜底在代码里真的存在（文案不许描述不存在的机制）",
+   '_final and not session["sent"]' in _PM_SRC)
+ck("E6 兜底只在「本轮一条都没发」时才触发（有 sent 守卫）", 'not session["sent"]' in _PM_SRC)
+
 print("\n[结论] %d 通过 / %d 失败" % (len(OK), len(BAD)))
 if BAD:
     print("失败项：%s" % BAD)
