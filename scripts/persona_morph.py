@@ -1235,6 +1235,16 @@ def main():
         sys.exit(3)
     if _lock_res.note:
         log.warning("单实例锁：%s", _lock_res.note)
+
+    # ── 磁盘收尾：清系统临时目录里我们自己的残留 + 收 TTS 产物（用户 2026-09-15 问
+    #    「下载下来不占用户存储空间吗？有没有做好删除措施」后落地；只清 `pm-` 前缀，
+    #    十分钟内的文件一律不动，删了几个/回收多少 MB 都记日志）。失败不影响启动。──
+    try:
+        from agent import housekeeping as _hk
+        _rep = _hk.tick()
+        log.info(_hk.brief(_rep))
+    except Exception as _e:
+        log.warning("磁盘收尾跳过（不影响启动）：%s", str(_e)[:80])
     atexit.register(_bot_lock.release)
 
     # 启动自动体检：版本不匹配（微信/适配层/依赖）→ 弹窗询问是否立即修正

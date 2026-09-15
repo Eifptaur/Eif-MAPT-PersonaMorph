@@ -541,24 +541,29 @@ def _exec_read_video(ctx, args):
     secs = int(lim.get("max_seconds") or video_read.DEFAULT_MAX_SECONDS)
     res = video_read.read_message(ctx["wechat"], ctx["chat_id"], items[0]["local_id"],
                                   max_frames=n, max_seconds=secs)
-    if not res.get("ok"):
-        return _ok("这段视频我读不了：%s（别假装看过；可以如实告诉对方）" % (res.get("error") or "未知原因"))
-    data_urls = []
-    for p in res.get("frames") or []:
-        try:
-            with open(p, "rb") as f:
-                import base64
-                data_urls.append("data:image/png;base64," + base64.b64encode(f.read()).decode("ascii"))
-        except Exception:
-            continue
-    video_read.cleanup(res.get("dir") or "")
-    head = "视频内容（%s）：下面是按时间均匀抽出的 %d 帧画面，请直接看图描述你看到了什么）" % (
-        res.get("note") or "", len(data_urls))
-    if res.get("audio_ok") and res.get("audio_text"):
-        head += "\n视频里的说话内容（本机离线识别，可能有错）：%s" % res["audio_text"][:300]
-    elif res.get("audio_why"):
-        head += "\n这段视频的音频没识别出来：%s" % res["audio_why"]
-    head += "\n（抽帧是采样，不是完整视频；不确定的地方别猜。）"
+    # ⚠️ 临时目录（帧图 + 抽出来的音频）**必须在所有分支都删掉**。2026-09-15 审计发现：
+    # 原来只在"读成功"那条路上 `cleanup()`，**读失败就直接 return 走人** ⇒ 每个读不出来的
+    # 视频都在系统临时目录里留一个目录（实测积了 177 个 `pm-video-*`、4.46 MB）。用 finally 收口。
+    try:
+        if not res.get("ok"):
+            return _ok("这段视频我读不了：%s（别假装看过；可以如实告诉对方）" % (res.get("error") or "未知原因"))
+        data_urls = []
+        for p in res.get("frames") or []:
+            try:
+                with open(p, "rb") as f:
+                    import base64
+                    data_urls.append("data:image/png;base64," + base64.b64encode(f.read()).decode("ascii"))
+            except Exception:
+                continue
+        head = "视频内容（%s）：下面是按时间均匀抽出的 %d 帧画面，请直接看图描述你看到了什么）" % (
+            res.get("note") or "", len(data_urls))
+        if res.get("audio_ok") and res.get("audio_text"):
+            head += "\n视频里的说话内容（本机离线识别，可能有错）：%s" % res["audio_text"][:300]
+        elif res.get("audio_why"):
+            head += "\n这段视频的音频没识别出来：%s" % res["audio_why"]
+        head += "\n（抽帧是采样，不是完整视频；不确定的地方别猜。）"
+    finally:
+        video_read.cleanup(res.get("dir") or "")
     if not data_urls:
         return _ok(head)
     return {"content": _image_parts(head, data_urls)}
