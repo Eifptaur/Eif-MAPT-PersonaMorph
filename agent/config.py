@@ -237,6 +237,20 @@ DEFAULT_CONFIG = {
         "style_block": "",               # 风格黑名单（逗号分隔；命中即拒）
         "filter_chain": {"size": True, "dup": True, "blacklist": True, "text": True, "classifier": True},
     },
+    # ── AI 视频生成（2026-09-15 加；形制照 image_gen）────────────────────────────
+    #  口径（用户原话）："后端肯定是让用户自己选啊，我们给他提供最多的选项…不是非得二择一的"
+    #  ⇒ backends 支持**填多个、一行一个**，程序按顺序挨个试；本地与在线都留着。
+    #  写法：`http://127.0.0.1:8189/generate`（generic）· `comfyui:http://127.0.0.1:8188`（本机 ComfyUI）
+    "video_gen": {
+        "enabled": False,                # 总开关（默认关：没配后端时模型会如实说"还没配后端"）
+        "trigger_mode": "on_request",    # on_request＝被要求时 | sometimes＝偶尔主动 | off＝不主动
+        "backends": "",                  # 可填多个，逗号/换行分隔；`协议:地址` 或直接写地址
+        "comfy_workflow": "",            # 走 ComfyUI 时要指一个 API 格式工作流 JSON 的路径
+        "online_allowed": False,         # 允许出网到在线视频 API（默认关 ⇒ 在线后端不会被试）
+        "seconds_default": 5,            # 默认生成多少秒（硬上限见 agent/video_gen.py::MAX_SECONDS）
+        "timeout": 300,                  # 单次生成最长等多少秒（视频比图慢得多）
+        "filter_chain": {"size": True, "duration": True, "dup": True, "redline": True, "classifier": True},
+    },
     # ── 输入后端（最高目标「全程后台、不抢鼠标」的档位；实现与实测证据见 agent/input_backend.py）──
     #   auto＝有微信主窗就走投递（L5），找不到窗口退回真鼠标（L0）；message＝强制投递；real＝强制真鼠标
     "input": {

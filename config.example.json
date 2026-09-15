@@ -431,5 +431,21 @@
   "auto_open_browser": true,
   "browser_path": ""
  },
- "member_notes": {}
+ "member_notes": {},
+ "video_gen": {
+  "enabled": false,
+  "trigger_mode": "on_request",
+  "backends": "",
+  "comfy_workflow": "",
+  "online_allowed": false,
+  "seconds_default": 5,
+  "timeout": 300,
+  "filter_chain": {
+   "size": true,
+   "duration": true,
+   "dup": true,
+   "redline": true,
+   "classifier": true
+  }
+ }
 }

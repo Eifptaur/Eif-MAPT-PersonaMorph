@@ -565,6 +565,7 @@ th{color:var(--tx2);font-weight:500}
       <a href="#sec-media"><svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="5.6" cy="6.4" r="1.3" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M2.6 11.4l3.4-3 2.7 2.4 2.2-1.9 2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg><span class="lb">媒体</span></a>
       <a href="#sec-tts"><svg viewBox="0 0 16 16"><path d="M3 6.4v3.2M6 4.2v7.6M9 2.8v10.4M12 5.4v5.2" stroke="currentColor" stroke-width="1.4" fill="none"/></svg><span class="lb">语音</span></a>
       <a href="#sec-imggen"><svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M4.4 10.8l2.6-2.4 2 1.8 1.6-1.4 2.4 2.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M11.2 4.4l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z" fill="none" stroke="currentColor" stroke-width="1.1"/></svg><span class="lb">要图</span></a>
+      <a href="#sec-videogen"><svg viewBox="0 0 16 16"><rect x="2" y="3.4" width="9.2" height="9.2" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M11.2 7.2l2.8-1.8v5.2l-2.8-1.8z" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">视频</span></a>
       <a href="#sec-tools"><svg viewBox="0 0 16 16"><rect x="3" y="3" width="7" height="7" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10 6.4h1.6a1.6 1.6 0 010 3.2H10" fill="none" stroke="currentColor" stroke-width="1.4"/><rect x="6" y="10" width="7" height="3.4" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">插件</span></a>
       <a href="#sec-poke"><svg viewBox="0 0 16 16"><circle cx="8" cy="7" r="2.4" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M2.6 12.6c.7-2.4 2.9-3.6 5.4-3.6s4.7 1.2 5.4 3.6" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="12.6" cy="3.4" r="1.2" fill="currentColor"/></svg><span class="lb">拍拍</span></a>
       <a href="#sec-memory"><svg viewBox="0 0 16 16"><path d="M4 2.4h8v11.2L8 11.4l-4 2.2z" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">记忆</span></a>
@@ -1258,6 +1259,38 @@ th{color:var(--tx2);font-weight:500}
         <button id="igTest" class="ghost">试一次（只跑链条，不发到任何会话）</button>
       </div>
       <div id="igOut" class="hint">点「试一次」会拿一句话跑完整条链（解析 → 挑后端 → 生成 → 过滤），并把每一步的结论原样贴出来；**不会发到任何会话**。</div>
+    </section>
+    <section id="sec-videogen" class="card" data-sec>
+      <h2>AI 视频（几秒到几十秒的小视频）</h2>
+      <div class="desc">群友说「给我做一个…的视频」时，机器人可以去做一条短小视频，做好**自动发出去**。**视频比图慢得多**（几十秒到几分钟），所以是"先回一句正在做、做好再发"，不会卡着聊天。**没配后端就如实说没配**，绝不假装做过。</div>
+      <div class="row"><label>总开关</label><input type="checkbox" data-cfg="video_gen.enabled">
+        <span class="hint">默认关。开着并且配了后端，模型才拿得到这个工具。</span></div>
+      <div class="row"><label>触发条件</label><div class="grow"><select data-cfg="video_gen.trigger_mode">
+        <option value="on_request">按要求做（只有别人明确要才做）</option>
+        <option value="sometimes">有时主动做（闲聊里也可能主动做一条）</option>
+        <option value="off">关（不做）</option></select></div></div>
+      <div class="row"><label>后端（可填多个）</label><div class="grow"><textarea data-cfg="video_gen.backends" rows="3" spellcheck="false" placeholder="一行一个，程序按顺序挨个试，例：&#10;http://127.0.0.1:8189/generate&#10;comfyui:http://127.0.0.1:8188&#10;https://你的中转地址/v1/video"></textarea>
+        <span class="hint">**填几个都行，本地和在线可以一起填**——挨个试，哪个成了用哪个。写法：直接写地址＝通用口子（给它发一句话，它回视频文件、回一个下载地址、或回本地路径都认）；前面加 <b>comfyui:</b> ＝你的本机 ComfyUI。**拿不准怎么接？点下面的引导按钮。**</span></div></div>
+      <div class="row"><label>ComfyUI 工作流</label><div class="grow"><input type="text" data-cfg="video_gen.comfy_workflow" placeholder="走 ComfyUI 时填：你导出的 API 格式工作流 .json 的路径">
+        <span class="hint">ComfyUI 是节点图，没有通用参数；把你自己调好的工作流「导出（API）」成一个 json 指给它。里面写 <b>%PROMPT%</b> / <b>%SECONDS%</b> 的地方会被换成这次的要求。</span></div></div>
+      <div class="row"><label>允许出网</label><input type="checkbox" data-cfg="video_gen.online_allowed">
+        <span class="hint">默认关：关着时**只试本机后端**，在线地址不会被用（在线通常按次收费）。</span></div>
+      <div class="row"><label>默认时长(秒)</label><input type="number" min="1" max="30" data-cfg="video_gen.seconds_default">
+        <span class="hint">别人没说几秒时用这个（上限 30 秒）。</span></div>
+      <div class="row"><label>单次最长等待(秒)</label><input type="number" min="30" max="1800" data-cfg="video_gen.timeout">
+        <span class="hint">超过这个时间还没出来就如实说"超时了"，不会一直挂着。</span></div>
+      <div class="row"><label>过滤链</label><div class="grow">
+        <label class="hint" style="margin-right:10px"><input type="checkbox" data-cfg="video_gen.filter_chain.size"> 体积</label>
+        <label class="hint" style="margin-right:10px"><input type="checkbox" data-cfg="video_gen.filter_chain.duration"> 时长</label>
+        <label class="hint" style="margin-right:10px"><input type="checkbox" data-cfg="video_gen.filter_chain.dup"> 重复</label>
+        <label class="hint" style="margin-right:10px"><input type="checkbox" data-cfg="video_gen.filter_chain.redline"> 红线（真人换脸这类）</label>
+        <label class="hint"><input type="checkbox" data-cfg="video_gen.filter_chain.classifier"> 内容分类器</label>
+        <div class="hint">任一层判否 ⇒ 不发（fail-closed）；不过的产物当场删掉，不留在盘上。**内容分类器本机没装，开着只会记录、不拦**（不假装把关）。</div></div></div>
+      <div class="row"><label>当前状态</label><div class="grow"><span id="vgStat" class="hint">检测中…</span></div></div>
+      <div class="btns">
+        <button id="vgGuide" class="ghost">怎么接视频后端？红线是什么？</button>
+      </div>
+      <div id="vgOut" class="hint">**要真的能用，得你给一个后端**（本机 ComfyUI 或任意能出视频的 HTTP 服务）。没配之前，模型会说"还没配后端"，不会硬编。</div>
     </section>
     <section id="sec-tools" class="card" data-sec>
       <h2>工具与插件（自定义工具）</h2>
@@ -2682,6 +2715,18 @@ async function loadStatus(){  try{
                             '红线：真人换脸 ' + ((ig.red_line || {}).allow_real_face ? '允许' : '禁止') + ' · r18 开关 ' + ((ig.red_line || {}).r18_switch_exists ? '存在' : '不存在')]
             .join(' ｜ ');
         }
+        const vg = md.video_gen || {};
+        const v1 = $('vgStat');
+        if(v1 && !md.error){
+          const vn = (vg.backends || []).length;
+          const vr = vg.running || 0;
+          v1.textContent = vg.enabled
+            ? (vn ? ('已开 · ' + vn + ' 个后端（按顺序试）' + (vr ? (' · 正在做 ' + vr + ' 条') : '')
+                    + ' ｜ 上限 ' + (((vg.limits||{}).max_seconds)||30) + ' 秒 / ' + (((vg.limits||{}).max_mb)||30) + ' MB')
+                 : '已开，但还没配后端 ⇒ 模型会如实说「还没配后端」')
+            : '未开启（默认关）';
+          v1.style.color = (vg.enabled && vn) ? 'var(--ok-tx)' : (vg.enabled ? 'var(--warn-tx)' : '');
+        }
         const f = $('ttsFmt');
         if(f){
           f.textContent = ts.ffmpeg ? ('有 ffmpeg（可转 mp3）：' + (ts.ffmpeg_path || ''))
@@ -3930,6 +3975,19 @@ const GUIDES = {
     ],
     copy: [],
     actions: []
+  },
+  video: {
+    title: '怎么给机器人接一个视频后端',
+    intro: '视频这条链也是**本机发起**的：解析要求 → 红线 → **按你填的顺序挨个试后端** → 过过滤链 → 才发。它比图慢得多（几十秒到几分钟），所以是"先回一句正在做、做好自动发出去"。**没配后端时它会如实说"还没配后端"**，不会硬编。',
+    steps: [
+      '① 准备一个能出视频的后端——**本地或在线都行，填几个都行**：本机 ComfyUI（不出网、要显卡）、自己写的 HTTP 服务（给它一句话，它回视频文件 / 回一个下载地址 / 回本地路径都认）、在线的视频 API（要 key、按次收费）',
+      '② 在「后端（可填多个）」里一行一个填：直接写地址＝通用口子；写 <code>comfyui:http://127.0.0.1:8188</code>＝本机 ComfyUI。**程序按顺序挨个试**，哪个成了用哪个',
+      '③ 走 ComfyUI 的话，再填「ComfyUI 工作流」：在 ComfyUI 里把调好的工作流「导出（API）」成一个 json，把路径填这儿；里面写 <b>%PROMPT%</b> / <b>%SECONDS%</b> 的位置会被换成这次的要求',
+      '④ 在线后端要把「允许出网」打开（默认关：关着只试本机）；再打开总开关、选一档触发条件',
+      '⑤ 红线是硬的：**不做真人换脸 / 不涉及真实人物形象**。过滤链任一层判否就不发，不过的产物当场删掉'
+    ],
+    copy: [{label: '复制后端写法示例', text: 'http://127.0.0.1:8189/generate\ncomfyui:http://127.0.0.1:8188'}],
+    actions: [{label: '去看「视频」那一栏', kind: 'goto', arg: '#sec-videogen'}]
   },
   imggen: {
     title: '怎么让机器人"按群友要求把图生成出来"',
@@ -5560,7 +5618,7 @@ addEventListener('hashchange', ()=>{ if(location.hash==='#sec-sessions') loadSes
     toast('已尝试打开官网：' + u + '（打不开就手动复制到浏览器）');
   };
   /* 应用内引导按钮：所有"怎么办"都在弹窗里（不再叫用户去读文件） */
-  [['utGuide','tools'], ['ttsGuide','tts'], ['igGuide','imggen'], ['vsGuide','voice'], ['irGuide','image'], ['fwGuide','forward'], ['fsGuide','file']]
+  [['utGuide','tools'], ['ttsGuide','tts'], ['igGuide','imggen'], ['vgGuide','video'], ['vsGuide','voice'], ['irGuide','image'], ['fwGuide','forward'], ['fsGuide','file']]
     .forEach(function(pair){
       const b = document.getElementById(pair[0]);
       if(b) b.onclick = function(){ openGuide(pair[1]); };
