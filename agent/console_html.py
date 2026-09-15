@@ -84,7 +84,8 @@ body.whale-anim::after{content:"";position:fixed;inset:0;z-index:-1;pointer-even
 /* 100 左侧导航（用户 2026-09-13 定稿方向 B）：图标自绘 + 可滚动 + 名字可收起（像 DeepSeek 那样） */
 .side .nav{overflow-y:auto;overflow-x:hidden;max-height:calc(100vh - 210px);padding-right:2px;scrollbar-width:thin}
 .side .nav::-webkit-scrollbar{width:6px}
-.side .nav::-webkit-scrollbar-thumb{background:rgba(160,210,255,.35);border-radius:3px}
+.side .nav::-webkit-scrollbar-thumb{background:transparent;border-radius:3px}   /* 悬停才显形，与侧栏同口径 */
+.side .nav:hover::-webkit-scrollbar-thumb{background:rgba(160,210,255,.28)}
 .side .nav::-webkit-scrollbar-track{background:transparent}
 .side .nav a{display:flex;align-items:center;gap:11px}
 .side .nav a svg{width:18px;height:18px;flex:none;opacity:.92}
@@ -95,16 +96,17 @@ body.whale-anim::after{content:"";position:fixed;inset:0;z-index:-1;pointer-even
 /* 长清单折叠的按钮条（默认收起＝只给这么多高度，其余滚动） */
 .fold-bar{display:flex;justify-content:center;margin:6px 0 2px}
 .fold-bar .fold-tg{font-size:12px;padding:3px 16px;border-radius:14px}
-.side.tight{width:88px}
+.side.tight{width:100%}
 .side.tight .nav a{justify-content:center;gap:0;padding:14px 0}
 .side.tight .nav a svg{width:22px;height:22px}
 .side.tight .nav a .lb{display:none}
 .side.tight .status{display:none}
-/* 收起/展开的把手：**贴在导航的右缘**（用户：「它居然是左收起，应该是右收起，靠近那个功能栏呢」） */
-.side .nav-tg{position:absolute;right:2px;top:10px;width:22px;height:58px;margin:0;padding:0;
-  display:flex;align-items:center;justify-content:center;font-size:13px;line-height:1;
-  border-radius:8px;z-index:31;opacity:.85}
-.side .nav-tg:hover{opacity:1}
+/* 收起/展开：**在导航里单开一栏**（用户 2026-09-15：「这个收起按钮太小了，可以在功能栏单开一栏，
+   写的就是收起或者展开，就像之前那样」）——旧写法是绝对定位的 22×58 小把手。 */
+.side .nav-tg{position:static;width:100%;height:auto;margin:2px 0 8px;padding:9px 12px;
+  display:flex;align-items:center;justify-content:center;gap:8px;font-size:12.5px;line-height:1;
+  border-radius:8px;z-index:auto;opacity:.9}
+.side.tight .nav-tg{padding:9px 0}
 /* 顶部「机器人已停止」横幅（2026-09-15）：替掉原来那个"弹模态 + 自己关窗口"的做法。
    用户报「屏幕上一直在闪弹窗」的根因就是旧做法里的 window.open('', '_self') → window.close()。
    横幅本身可关（知道了），页面原地不动，状态灯置灰。 */
@@ -252,6 +254,11 @@ a:hover,a:focus,a:visited,a:active{text-decoration:none}   /* 控制台所有字
   pointer-events:none;opacity:.9;transition:opacity .55s, transform .55s ease-out}
 .topbar .sp{flex:1}
 .chip{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:16px;background:var(--bg-solid);
+  height:26px;box-sizing:border-box;line-height:1;color:var(--tx)}
+/* 三个状态胶囊统一（2026-09-15 用户：「右上角的三个标签没有统一化，长得都不一样」）：
+   旧情况＝「运行」有 dot、「模型」有 <b>、「余额」是纯文本、「改完即生效」里塞了个复选框（内边距被撑开）。
+   现在统一：同一高度/内边距/字号/边框，复选框尺寸固定，数值统一用 <b>。 */
+#autoChip input{width:14px;height:14px;margin:0;flex:0 0 auto;accent-color:var(--blue)}
   border:1px solid var(--bd);color:var(--tx2);font-size:12px;white-space:nowrap}
 .chip b{color:var(--tx)}
 .chip .dot{width:8px;height:8px;border-radius:50%;background:var(--err)}
@@ -260,6 +267,9 @@ a:hover,a:focus,a:visited,a:active{text-decoration:none}   /* 控制台所有字
 
 /* ── 布局 ── */
 .shell{display:grid;grid-template-columns:252px 1fr;gap:16px;max-width:1280px;margin:16px auto;padding:0 16px}
+/* 收起态：**栅格列也要跟着收**（2026-09-15 用户：「收起都收到哪里去了？正确的收起位置应该跟功能栏贴一起」）。
+   旧写法只把 .side 缩到 88px，列宽却写死 252px ⇒ 中间白留 164px 空档，看着像"没收到位"。 */
+.shell.tight{grid-template-columns:64px 1fr;gap:8px}
 @media(max-width:900px){.shell{grid-template-columns:1fr}}
 /* 侧栏：完全不透明实色（滚动到底也无色差）+ sticky 让开顶栏 */
 .side{background:rgba(12,32,58,1);border:1px solid var(--bd);border-radius:12px;padding:10px;
@@ -269,8 +279,10 @@ a:hover,a:focus,a:visited,a:active{text-decoration:none}   /* 控制台所有字
 .side::before,.side::after{content:none!important;display:none!important}
 .side::-webkit-scrollbar{width:6px}
 .side::-webkit-scrollbar-track{background:transparent}
-.side::-webkit-scrollbar-thumb{background:rgba(148,196,255,.18);border-radius:3px}
-.side::-webkit-scrollbar-thumb:hover{background:rgba(148,196,255,.32)}
+/* 滚动条口径（2026-09-15 用户：「这个滚动条太明显了，而且还丑」）：细、无底色、**悬停才显形** */
+.side::-webkit-scrollbar-thumb{background:transparent;border-radius:3px;transition:background .15s}
+.side:hover::-webkit-scrollbar-thumb{background:rgba(148,196,255,.22)}
+.side::-webkit-scrollbar-thumb:hover{background:rgba(148,196,255,.38)}
 /* 左导航项：间距与字号在 2026-09-14 整体放大（用户原话：「左导航离得这么近合适吗？把左导航放大一点，
    每个导航之间的距离拉开」）。
    注意：历史坑：这两行原来是**未拼接进 CSS 的裸字符串字面量**（`.nav a{…padding:9px 12px…}` 那两行），
@@ -280,9 +292,8 @@ a:hover,a:focus,a:visited,a:active{text-decoration:none}   /* 控制台所有字
   display:flex;align-items:center;gap:11px;padding:12px 14px;font-size:14.5px;
   transition:background .18s ease,color .18s ease}
 .side .nav a.on{background:rgba(63,168,240,.20);color:#fff;font-weight:600}
-.side::-webkit-scrollbar{width:8px}
-.side::-webkit-scrollbar-thumb{background:var(--input-bd);border-radius:4px}
-.side::-webkit-scrollbar-thumb:hover{background:var(--blue)}
+.side::-webkit-scrollbar{width:6px}
+.side:hover::-webkit-scrollbar-thumb{background:rgba(148,196,255,.22)}
 .side .status{background:var(--blue-soft);border:1px solid var(--blue-line);border-radius:10px;padding:10px 12px;margin-bottom:8px}
 .side .status b{font-size:13px;color:var(--blue)}
 .side .status p{font-size:12px;color:var(--tx2)}
@@ -459,8 +470,8 @@ th{color:var(--tx2);font-weight:500}
 <div class="topbar">
   <div class="logo"><div class="whale-badge" id="whaleBadge" title="小鲸鱼"><img src="/assets/icon-whale.png" alt=""></div><span>群相 控制台 <small style="font-weight:400;color:var(--tx2);font-size:12px" title="构建号（换新包后如果这里不变，说明连的是旧实例——先停止再启动）">vβ·Ⅱ（__VER__）</small></span></div>  <div class="sp"></div>
   <span class="chip"><span class="dot" id="dot"></span><b id="runText">连接中…</b></span>
-  <span class="chip">模型 <b id="model-badge">? </b></span>
-  <span class="chip" id="balance-badge" title="点击刷新余额">余额：查询中…</span>
+  <span class="chip">模型 <b id="model-badge">?</b></span>
+  <span class="chip">余额 <b id="balance-badge" title="点击刷新余额">查询中…</b></span>
   <label class="chip" id="autoChip" title="勾选＝改完立即写入 config.json（不用再点各分区的「保存设置」）；取消勾选＝回到手动保存模式。状态记在本机浏览器里。"><input type="checkbox" id="autoApplyChk" checked>改完即生效</label>
   <button id="undoBtn" class="ghost" title="撤销上一步修改（自动生效与手动「保存设置」各记一步，最多 10 步）">撤销</button>
   <button id="pauseBtn" class="ghost">暂停</button>
@@ -2176,15 +2187,15 @@ async function loadBalance(){
   const el = $('balance-badge');
   try{
     const b = await getJSON('/api/balance');
-    if(b.ok===false){ el.textContent='余额：'+b.error; return; }
+    if(b.ok===false){ el.textContent=b.error; return; }
     // 注意：未配置 / 拿不到数字时**如实说"未配置"**，不要拼出「余额 ¥undefined（充值 undefined）」
     //   （2026-09-15 用户看到顶栏那两个 undefined 报的；口径：界面文案要通俗、不做假数）
     const num = (v)=> (v===undefined || v===null || v==='' || isNaN(Number(v))) ? null : Number(v);
     const total = num(b.total_balance), top = num(b.topped_up_balance);
-    if(total===null){ el.textContent = '余额：未配置（点这里配模型 Key）'; return; }
+    if(total===null){ el.textContent = '未配置'; el.title='点这里配模型 Key（在「模型 API」区填）'; return; }
     const cur = b.currency==='USD'?'$':'¥';
-    el.textContent = '余额 '+cur+total.toFixed(2) + (top===null ? '' : '（充值 '+cur+top.toFixed(2)+'）');
-  }catch(e){ el.textContent='余额：查询失败'; }
+    el.textContent = cur+total.toFixed(2) + (top===null ? '' : '（充值 '+cur+top.toFixed(2)+'）');
+  }catch(e){ el.textContent='查询失败'; }
 }
 
 async function loadStatus(){  try{
@@ -5178,14 +5189,19 @@ $('memSearch').addEventListener('keydown', (e)=>{
   // 100 导航名字收起/展开（用户口径："像 DeepSeek 一样，可以展开看到全部名字，或者收起那些名字"）
   try{
     const sideEl = document.querySelector('.side'), tgEl = document.getElementById('navToggle');
+    const shellEl = document.querySelector('.shell');
     const tight = (function(){ try{ return localStorage.getItem('navTight')==='1'; }catch(e){ return false; } })();
-    if(tight && sideEl) sideEl.classList.add('tight');
+    function applyTight(on){
+      if(sideEl) sideEl.classList.toggle('tight', on);
+      if(shellEl) shellEl.classList.toggle('tight', on);   // 栅格列宽也要跟着收，否则收完中间白留一截
+      if(tgEl) tgEl.textContent = on ? '› 展开' : '‹ 收起';
+    }
+    applyTight(tight);
     if(tgEl){
-      tgEl.textContent = tight ? '›' : '‹';
       tgEl.addEventListener('click', ()=>{
-        const now = sideEl.classList.toggle('tight');
+        const now = !(sideEl && sideEl.classList.contains('tight'));
+        applyTight(now);
         try{ localStorage.setItem('navTight', now ? '1' : '0'); }catch(e){}
-        tgEl.textContent = now ? '›' : '‹';
         try{ sync(); }catch(e){}          // 收起后指示条位置要重算
       });
     }
