@@ -2174,7 +2174,9 @@ class WeChatAdapter:
                 if len(nn) >= 6:
                     if _co.content_match(pane, nd):
                         return True, "聊天区里认出了目标会话最近的内容（%r…）" % nd[:16]
-                elif nn and nn in pane_n:
+                elif nn and nn in pane_n and not _co.low_entropy(nn) and len(nn) >= 4:
+                    # ⚠️ 短指纹档也要两道下界（2026-09-16 跨机 r10 的 fail-open 教训）：
+                    #   低熵（纯数字）不算证据；太短（<4）也不算 —— 否则"1"这种字符都能放行。
                     return True, "聊天区里认出了目标会话的短指纹 %r（严格子串）" % nd[:12]
             # 最后一档：文件卡指纹（会话最近几条全是文件卡时，上面两档会全部落空）
             f_ok, f_why = self.pane_file_card_ok(chat_id, pane)

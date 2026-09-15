@@ -273,5 +273,26 @@ try:
 except Exception as _e5:
     ok("观测口径（合成文本）能跑", False, str(_e5)[:100])
 
+print("── K. 内容级闸的 fail-open 修复（跨机 r10 实测：目标没开却判 True）──")
+# 他们的现场：目标会话根本没开，闸门却被一条 **6 字日期串 `202609`（相似度 1.000）** 满足 ⇒ 判 True。
+# 放行必须要求**强信号**：最短命中 8 字（或占针长 30%）＋ 低熵串（纯数字/日期）不算命中。
+try:
+    from agent import chat_ocr as _co4
+    _pane4 = "那三条现复现（点到+/浮层205×205/认不出绿底行）：我可只读取证复现；版本 20260916 构建 379"
+    ok("纯数字针（20260916）不算证据", _co4.content_match(_pane4, "20260916") is False)
+    ok("含日期的文件名针：只有日期串巧合命中时**不许放行**",
+       _co4.content_match(_pane4, "群相-在线包-20260916-r10.zip") is False)
+    ok("真正的长中文内容在聊天区里 ⇒ 仍然放行",
+       _co4.content_match(_pane4, "那三条现复现点到浮层认不出绿底行") is True)
+    ok("low_entropy 判定：'202609' 低熵、'群相r10' 不是低熵",
+       _co4.low_entropy("202609") is True and _co4.low_entropy("群相r10") is False)
+    ok("太短的针（<8 字归一化）一律不放行", _co4.content_match(_pane4, "绿底行") is False)
+    _wxsrc4 = open(os.path.join(_ROOT, "agent", "wechat.py"), encoding="utf-8").read()
+    _segid4 = _wxsrc4[_wxsrc4.index("def chat_identity_ok"):_wxsrc4.index("def _last_time_hhmm")]
+    ok("短指纹档也加了两道下界（低熵不算 + <4 不算）",
+       "low_entropy(nn)" in _segid4 and "len(nn) >= 4" in _segid4)
+except Exception as _e6:
+    ok("fail-open 回归（合成文本）能跑", False, str(_e6)[:100])
+
 print("== [send-file-posted] 判据：{} 通过 / {} 失败 ==".format(PASS, FAIL))
 sys.exit(1 if FAIL else 0)
