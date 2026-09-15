@@ -117,6 +117,19 @@ ck("B17 三条会抓图的投递链都在入口调了它（切会话 / 搜索框
    and SRC_WECHAT.split("def send_text_posted(")[1][:4000].count("_ensure_main_visible") >= 1)
 ck("B18 竞态如实写进控制台（用户 2026-09-15 要求「这个你要如实跟用户讲清楚」）",
    "会不会跟你抢操作" in SRC_CONSOLE and "撞了它会用聊天区内容复核" in SRC_CONSOLE)
+# B19~B21 零动作对照：阈值不许写死（2026-09-15；实测抓屏退回路径零动作差 0.142 > 老阈值 0.01）
+_M_OPEN = SRC_WECHAT.split("def moments_open_posted(")[1][:3200]
+_M_SCROLL = SRC_WECHAT.split("def moments_scroll_posted(")[1][:2400]
+ck("B19 两条靠画面判成功的路径都先量了「零动作地板」（阈值跟着地板走）",
+   "_gray_thresholds" in _M_OPEN and "_gray_thresholds" in _M_SCROLL
+   and "def _gray_noise_floor(" in SRC_WECHAT)
+ck("B20 老写死的 0.15 / 0.01 绝对值判定已清除（改为 None ⇒ 不动手）",
+   "<= 0.15" not in _M_OPEN and "<= 0.01" not in _M_OPEN
+   and "<= 0.01" not in _M_SCROLL
+   and "_GRAY_NOISE_MAX" in SRC_WECHAT and "_UNSTABLE_MSG" in SRC_WECHAT)
+ck("B21 判据不可用时**一枪都不投**（拒绝早于任何 click/wheel）",
+   _M_OPEN.index("_gray_thresholds") < _M_OPEN.index("b.click(")
+   and _M_SCROLL.index("_gray_thresholds") < _M_SCROLL.index("b.wheel("))
 
 # ── C 光标不变（运行时 tripwire）──────────────────────────────────────────
 print("[C] 光标不变：真鼠标原语换成会响的探针，投递路径不许碰它")
@@ -154,8 +167,50 @@ def _no_real_click(self, x, y):
 WC.WeChatAdapter._click_screen = _no_real_click
 UA.prepare_screen = lambda gui: True
 ib.find_main_window = lambda: 7777
-ib._post = lambda h, m, w, l: POSTED.append((int(h), int(m), int(w), int(l))) or 1
+class _Screen:
+    """假主窗画面：**只有"被操作"才变**（真机口径），外加可配置的抓图噪声。
+
+    为什么必须这么建模：老的假图是"每抓一次翻转一次"，于是**零动作对照本身**就有 1.0 的差异
+    ——那正是真机上的假成功形态（实测退回抓屏时零动作连拍两张差 0.142，远超当时写死的 0.01）。
+    噪声按"奇偶抓图翻转前 k 个像素"生成 ⇒ 相邻两张的差异恰为 `noise`，与真机同形。
+    """
+
+    N = 64 * 48
+
+    def __init__(self, noise=0.0, dead=False):
+        self.state = 0
+        self.noise = float(noise)
+        self.dead = bool(dead)      # dead=True ⇒ 投递了画面也不变（模拟"投了没生效"）
+        self.shots = 0
+
+    def post(self, h, m, w, l):
+        if not self.dead:
+            self.state += 1         # 投递一枪 = 界面动一格
+        return 1
+
+    def thumb(self, rect, scale=(64, 48), gui=None):
+        self.shots += 1
+        # 内容只由"被操作过几次"决定：任何一次投递都让整幅图换一个灰度（相邻态差 ≥61 >28）
+        base = 10 + (self.state * 61) % 190
+        alt = 10 if base > 100 else 200
+        seq = [base] * self.N
+        for j in range(int(self.noise * self.N)):
+            seq[(j * 7) % self.N] = alt if self.shots % 2 else base
+        return seq
+
+
+SCREEN = _Screen()
+
+
+def _post(h, m, w, l):
+    POSTED.append((int(h), int(m), int(w), int(l)))
+    SCREEN.post(int(h), int(m), int(w), int(l))
+    return 1
+
+
+ib._post = _post
 ib.select_backend = lambda cfg=None: ib.MessageBackend(press_ms=1, activate=True)
+
 
 
 class _FakeGui:
@@ -178,16 +233,11 @@ try:
     ad._get_gui = lambda: _FakeGui()
     # 朋友圈矩形 + 缩略灰度 + OCR 全部换成假数据（判据需要"界面确实变了"）
     ad._moments_rect = lambda hwnd: (100, 100, 1300, 1000)
-    _thumb_seq = []
-
-    def _fake_thumb(rect, scale=(64, 48), gui=None):
-        """奇偶交替返回两张不同的图 ⇒ "每次点击前后界面都变了"，用来验判据链路本身。"""
-        _thumb_seq.append(1)
-        return [10] * 64 if len(_thumb_seq) % 2 else [200] * 64
-    ad._moments_gray_thumb = _fake_thumb
+    ad._moments_gray_thumb = SCREEN.thumb
     ad._find_green_discover = lambda gui: (144, 682)          # 自证到的「发现」图标
     ad._moments_shot_ocr = lambda rect: [("朋友圈", 190, 159, 60, 20)]
 
+    SCREEN.state = 0
     POSTED[:] = []
     ok1, m1 = ad.moments_open_posted()
     msgs1 = [m for _h, m, _w, _l in POSTED]
@@ -201,7 +251,7 @@ try:
            for _h, m, _w, _l in POSTED), str(sorted({m for _h, m, _w, _l in POSTED})))
 
     POSTED[:] = []
-    _thumb_seq[:] = []
+    SCREEN.state = 0
     ok2, m2 = ad.moments_scroll_posted(direction=1, times=1)
     wheels = [1 for _h, m, _w, _l in POSTED if m == ib.WM_MOUSEWHEEL]
     ck("C5 投递档刷朋友圈：成功且说明未动光标", ok2 is True and "未动光标" in m2, m2[:70])
@@ -209,12 +259,38 @@ try:
     ck("C7 刷朋友圈也没碰真鼠标原语", not TRIPPED, str(TRIPPED[:4]))
 
     # 假判据：界面没变 ⇒ 必须如实报"没生效"，不许假报成功
-    ad._moments_gray_thumb = lambda rect, scale=(64, 48), gui=None: [10] * 64
+    SCREEN.dead, SCREEN.noise = True, 0.0
+    POSTED[:] = []
     ok3, m3 = ad.moments_scroll_posted(direction=1, times=1)
     ck("C8 界面没变时如实报「没生效」（不假报）", ok3 is False and "没" in m3, m3[:60])
     ad._find_green_discover = lambda gui: None
     ok4, m4 = ad.moments_open_posted()
     ck("C9 没自证到图标时停手并说明（不盲点）", ok4 is False and "自证" in m4, m4[:60])
+    ad._find_green_discover = lambda gui: (144, 682)
+
+    # ── 零动作对照（2026-09-15 补）：阈值不许写死，先量"什么都不做时画面自己抖多少" ──
+    SCREEN.dead, SCREEN.noise = True, 0.05          # 抓图在抖、投递又没生效
+    POSTED[:] = []
+    base_a = SCREEN.thumb((100, 100, 1300, 1000))
+    base_b = SCREEN.thumb((100, 100, 1300, 1000))
+    _floor = ad._gray_diff(base_a, base_b)
+    ok7, m7 = ad.moments_scroll_posted(direction=1, times=1)
+    ck("C12 地板 %.3f > 老写死阈值 0.01（老代码会拿它当「界面变了」假报成功）" % _floor,
+       _floor > 0.01, "地板=%.3f" % _floor)
+    ck("C13 有噪声 + 没生效 ⇒ 仍如实报没生效（阈值跟着地板走）",
+       ok7 is False and "没" in m7, m7[:60])
+
+    SCREEN.dead, SCREEN.noise = True, 0.14          # 噪声大到判据不可用
+    ad._moments_gray_thumb = SCREEN.thumb
+    POSTED[:] = []
+    ok8, m8 = ad.moments_open_posted()
+    ck("C14 噪声超限 ⇒ 判据不可用时**一枪都不投**并说明（不拿噪声当变化）",
+       ok8 is False and "判据不稳" in m8 and not POSTED, m8[:60] + " / 投递=%d" % len(POSTED))
+    POSTED[:] = []
+    ok9, m9 = ad.moments_scroll_posted(direction=1, times=1)
+    ck("C15 同上（刷朋友圈这条也拒绝动手）",
+       ok9 is False and "判据不稳" in m9 and not POSTED, m9[:60] + " / 投递=%d" % len(POSTED))
+    SCREEN.dead, SCREEN.noise = False, 0.0
 
     # 非投递档 ⇒ 投递函数必须直接拒绝（不许在真鼠标档下假装投递）
     ib.select_backend = lambda cfg=None: ib.RealInputBackend()

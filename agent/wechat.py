@@ -2493,13 +2493,46 @@ class WeChatAdapter:
 
     @staticmethod
     def _gray_diff(before, now) -> float:
-        """两张缩略灰度的差异占比（0~1）。判据阈值沿用实验口径 0.15。"""
+        """两张缩略灰度的差异占比（0~1）。阈值**不再写死**——见 `_gray_thresholds`。"""
         try:
             if not before or not now or len(before) != len(now):
                 return 0.0
             return sum(1 for a, b2 in zip(before, now) if abs(a - b2) > 28) / max(1, len(before))
         except Exception:
             return 0.0
+
+    _GRAY_NOISE_MAX = 0.08
+
+    _UNSTABLE_MSG = ("判据不稳：**一枪都没投**的情况下连拍三张，画面自己就差了 %.3f"
+                     "（抓图本身在抖）⇒ 这时候「画面变了」证明不了点中了，按「判不了就不动手」处理。"
+                     "把微信窗口留在屏幕上（不必在前台，别被完全盖住）通常就好。")
+
+    def _gray_noise_floor(self, rect, gui=None, shots=3) -> float:
+        """**零动作对照**：不点任何东西，连拍 `shots` 张，取相邻两张最大差异 ⇒ 判据噪声地板。
+
+        为什么必须有它：老代码把阈值写死成 0.15 / 0.01，而**抓图本身会抖**——实测
+        `chat_header.capture_image()` 零动作连拍两张差 **0.142**，远超 0.01 ⇒ 那条"界面变了"
+        完全可能是噪声骗出来的（这条判据自己错过一次）。钉死 `grab_render`（PrintWindow）后
+        零动作差值是 0.000，但退回抓屏时又会抖 ⇒ 阈值只能现场量。
+        """
+        try:
+            n = max(2, int(shots))
+            seq = [self._moments_gray_thumb(rect, gui=gui) for _ in range(n)]
+            return max(self._gray_diff(seq[i], seq[i + 1]) for i in range(len(seq) - 1))
+        except Exception:
+            return 1.0     # 量不出来 ⇒ 按"判据不可用"处理（调用方会拒绝动手）
+
+    def _gray_thresholds(self, rect, gui=None):
+        """把绝对阈值换成本地化阈值 ⇒ `(强阈值, 弱阈值, 地板)`；地板太高时前两个为 None。
+
+        强阈值＝"发现页变了"（老 0.15，避免小抖动误判成切页），弱阈值＝"信息流动了"（老 0.01）。
+        地板过高 ⇒ 返回 None：**判据不可用时不动手**，而不是拿噪声当"界面变了"。
+        """
+        noise = self._gray_noise_floor(rect, gui=gui)
+        if noise >= self._GRAY_NOISE_MAX:
+            return None, None, noise
+        thr = max(0.01, noise * 3.0 + 0.01)
+        return max(0.15, thr), thr, noise
 
     _BLIND_JUDGE_MSG = ("微信当前被最小化：投递点击本身也许仍会生效，但**判据抓不到画面**"
                         "（无法确认点没点中、内容有没有动）⇒ 按「判不了就不动手」处理。"
@@ -2563,13 +2596,17 @@ class WeChatAdapter:
             if not pos:
                 return False, ("没有自证到的「发现」图标（投递档只点自证的：请手动点一下左侧"
                                "「发现」，选中后图标变绿，程序就认得它）")
+            thr_strong, thr_step, noise = self._gray_thresholds((l, t, r, bt), gui=gui)
+            if thr_strong is None:
+                return False, self._UNSTABLE_MSG % noise
             before = self._moments_gray_thumb((l, t, r, bt), gui=gui)
             ok1, m1 = b.click(hwnd, (int(pos[0]), int(pos[1])))
             if not ok1:
                 return False, "投递打开「发现」失败：%s" % m1
             time.sleep(1.2)
-            if not _discover_visible() and self._gray_diff(before, self._moments_gray_thumb((l, t, r, bt), gui=gui)) <= 0.15:
-                return False, "投递点了「发现」但界面没变（投递档没生效，已停手、不再乱点）"
+            if not _discover_visible() and self._gray_diff(before, self._moments_gray_thumb((l, t, r, bt), gui=gui)) <= thr_strong:
+                return False, ("投递点了「发现」但界面没变（投递档没生效，已停手、不再乱点；"
+                               "判据地板 %.3f）" % noise)
             # 点「朋友圈」：OCR 定位左侧列表项，未识别按发现页首项相对位置兜底（与真鼠标路径同一处）
             tgt = None
             try:
@@ -2587,8 +2624,8 @@ class WeChatAdapter:
             if not ok2:
                 return False, "投递点「朋友圈」失败：%s" % m2
             time.sleep(1.5)
-            if self._gray_diff(before2, self._moments_gray_thumb((l, t, r, bt), gui=gui)) <= 0.01:
-                return False, "投递点了「朋友圈」但界面没变（投递档没生效，已停手）"
+            if self._gray_diff(before2, self._moments_gray_thumb((l, t, r, bt), gui=gui)) <= thr_step:
+                return False, "投递点了「朋友圈」但界面没变（投递档没生效，已停手；判据地板 %.3f）" % noise
             return True, "朋友圈已打开（投递档：全程未动光标、未改前台）"
         except Exception as e:
             return False, str(e)
@@ -2615,6 +2652,9 @@ class WeChatAdapter:
             l, t, r, bt = self._moments_rect(hwnd)
             # 落点：右缘内侧一条细带（避开头像/蓝点/输入框），与真鼠标路径取同一处
             pt = (r - 60, (t + bt) // 2)
+            _thr_strong, thr_step, noise = self._gray_thresholds((l, t, r, bt), gui=gui)
+            if thr_step is None:
+                return False, self._UNSTABLE_MSG % noise
             before = self._moments_gray_thumb((l, t, r, bt), gui=gui)
             delta = -120 if direction > 0 else 120
             n = max(1, int(times)) * 8
@@ -2623,9 +2663,9 @@ class WeChatAdapter:
                 return False, "投递滚轮失败：%s" % msg
             time.sleep(0.5)
             diff = self._gray_diff(before, self._moments_gray_thumb((l, t, r, bt), gui=gui))
-            if diff <= 0.01:
-                return False, ("投递滚轮后朋友圈界面没有变化（投了 %d 格、差值 %.3f）⇒ 按没生效处理，"
-                               "不假报已滚动" % (n, diff))
+            if diff <= thr_step:
+                return False, ("投递滚轮后朋友圈界面没有变化（投了 %d 格、差值 %.3f、判据地板 %.3f）"
+                               "⇒ 按没生效处理，不假报已滚动" % (n, diff, noise))
             return True, "已滚动朋友圈（投递档，%d 格，界面变化 %.3f，未动光标/未改前台）" % (n, diff)
         except Exception as e:
             return False, str(e)

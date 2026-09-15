@@ -320,5 +320,31 @@ try:
 except Exception as e:
     check("用量账本记三分（fresh / cached / output）", False, str(e)[:60])
 
+# ── 判据自身的可执行性（2026-09-15）：判据崩掉和判据红掉是两件事 ──
+# 产品链走 `py -X utf8 onestart.py`（launcher.cs:285）所以产品侧没事；但判据脚本没这层——
+# 一旦输出被重定向（`> out.txt` / 管道），Python 退回 locale 编码（本机 GBK），
+# `print("  ✔ %s")` 直接 UnicodeEncodeError，**整条判据崩在第一个 PASS 上**（rc=1、只跑半截）。
+# 实测 5 条脚本（chat_ocr / clipboard / image_filter / image_lib / log_housekeeping）中招，
+# 80 条断言从来没被真正跑到过 ⇒ 这里钉住：凡打印 ✔/✘ 的 selftest 必须有 UTF-8 垫片。
+try:
+    _sdir = os.path.join(ROOT, "scripts")
+    _risky, _noshim = [], []
+    for _n in sorted(os.listdir(_sdir)):
+        if "selftest" not in _n or not _n.endswith(".py"):
+            continue
+        _t = io.open(os.path.join(_sdir, _n), encoding="utf-8").read()
+        if "\u2714" in _t or "\u2718" in _t:
+            _risky.append(_n)
+            if "sys.stdout.reconfigure" not in _t:
+                _noshim.append(_n)
+    check("打印 ✔/✘ 的判据都带 UTF-8 垫片（重定向下不崩）", not _noshim,
+          "缺垫片=%s（共 %d 条会打印 ✔/✘）" % (_noshim, len(_risky)))
+    _rn = os.path.join(_sdir, "run_all_selftests.py")
+    check("有「一把跑全部判据」的入口（71 条手工跑 = 数字没法复核）",
+          os.path.exists(_rn) and "run_all_selftests" in io.open(_rn, encoding="utf-8").read()
+          and "selftest" in io.open(_rn, encoding="utf-8").read())
+except Exception as e:
+    check("打印 ✔/✘ 的判据都带 UTF-8 垫片（重定向下不崩）", False, str(e)[:80])
+
 print("\n==== %d 项检查，%d 项失败 ====" % (TOTAL[0], len(fails)))
 sys.exit(1 if fails else 0)

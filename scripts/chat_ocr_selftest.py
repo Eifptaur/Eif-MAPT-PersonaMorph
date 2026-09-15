@@ -6,6 +6,12 @@
 import os
 import sys
 
+try:      # 控制台默认 GBK：判据里的 ✔/✘ 一旦被重定向就 UnicodeEncodeError 崩掉整条判据
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+except Exception:
+    pass
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from PIL import Image, ImageDraw, ImageFont      # noqa: E402
