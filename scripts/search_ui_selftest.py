@@ -179,5 +179,17 @@ ok("只剩竖长条时退回原口径（不做成「永远找不到」）", bool
 ok("find_search_entry 用上了这个挑选函数",
    "pick_search_icon(cands)" in open(os.path.join(ROOT, "agent", "chat_ocr.py"), encoding="utf-8").read())
 
+print("⑧ 切会话·搜索路线**不许把微信留在前台**（时间线实测它以前会）")
+# 0.1s 前台时间线实测：这条链开浮层 + 投字 + 点结果行 ⇒ 浮层 1.63s、主窗 8.96s，**全程没还过**；
+# 后果不止"打扰"：紧接着 `send_file_posted` 的 `_stash_fg()` 会把**被顶到前面的微信**当成"用户的窗口"，
+# 于是后面"还前台"还了个微信（本轮真出现：r12 投递完前台停在微信）。⇒ 进去 stash、出去一律还。
+_w_src2 = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
+_seg_s = _w_src2[_w_src2.index("def open_chat_by_search"):]
+_seg_s = _seg_s[:_seg_s.find("\n    def ", 10)]
+ok("进去先 stash 前台（在点搜索入口之前）",
+   "_stash_fg()" in _seg_s and _seg_s.index("_stash_fg()") < _seg_s.index("backend.click"))
+ok("出去一律还前台（finally，异常路径也走）",
+   "finally:" in _seg_s and '_restore_fg_until("切会话·搜索路线"' in _seg_s)
+
 print("\n结果：%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
