@@ -112,6 +112,17 @@ _bad_rows = [k for k, v in _OFFICIAL_PRICES.items()
              if not isinstance(v.get("in"), (int, float)) or not isinstance(v.get("out"), (int, float))]
 check("价目表每条都带 in/out 两个数字", not _bad_rows, "缺字段的：%s" % (_bad_rows[:5] or "无"))
 check("GPT-6 旗舰（gpt-6-astra）已进价目表", "gpt-6-astra" in _OFFICIAL_PRICES)
+# 2026-09-15 补：`join_url(base, path)` 只是 `base.rstrip("/") + path`，**不补斜杠** ⇒
+# path 必须自己带前导斜杠。我在交付面自检里写成 `join_url(base, "models")`，
+# 拼出 `https://api.deepseek.com/v1models` 直接 404（还差点当成"端点不支持 /models"报上去）。
+from agent.llm import join_url as _join_url
+check("join_url：path 带前导斜杠才拼得对（调用方必须带）",
+      _join_url("https://x/v1", "/models") == "https://x/v1/models"
+      and _join_url("https://x/v1", "models") == "https://x/v1models",
+      "%s | %s" % (_join_url("https://x/v1", "/models"), _join_url("https://x/v1", "models")))
+_cr = io.open(os.path.join(ROOT, "scripts", "collect_report.py"), encoding="utf-8").read()
+check("交付面自检拉模型列表时带了前导斜杠", 'join_url(base, "/models")' in _cr)
+check("交付面自检已经接进报告主流程（第六节）", "sec_delivery" in _cr and "六、投递发送实测" in _cr)
 check("MiniMax-M3 命中", match_official_price("MiniMax-M3")["in"] == 2.1)
 # ⛔ 2026-09-14 改口径：原来写死 `out == 4.5`，而价目表已按官方 2026-09-10 **闲时价**更新为 4.0
 #   ⇒ 断言跟不上就假红。这里改成守"**有官方价映射且带出处**"这件事实，具体数字由价目表自己负责
