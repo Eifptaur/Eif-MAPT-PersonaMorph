@@ -403,6 +403,20 @@ def _builtin_tool_defs() -> list:
             "execute": _exec_read_bilibili,
         },
         {
+            "name": "gen_video",
+            "description": ("给群友做一个短视频（几秒到几十秒）。**很慢**：提交后后台生成，做好会自动发出去——"
+                            "所以提交完只需如实说「正在做」，**绝不许说已经做好了**。"
+                            "没配后端、后端不通、内容碰红线时，会明确回原因，照实转达即可。"),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "request": {"type": "string", "description": "想要什么视频（写清画面/动作/风格；要几秒可以说「5秒」）"},
+                },
+                "required": ["request"],
+            },
+            "execute": _exec_gen_video,
+        },
+        {
             "name": "report_feedback",
             "description": "向管理员（控制台）反馈你遇到的问题、困惑或需要人工介入的情况。不要用于聊天。",
             "parameters": {
@@ -1293,6 +1307,58 @@ def _exec_read_bilibili(ctx, args):
                     "url": v.get("url"), "text": _bili.to_text(v)})
     except Exception as e:
         return _err("解析 B 站链接失败：%s" % e)
+
+
+def _exec_gen_video(ctx, args):
+    """群友要视频 → 视频生成链条（`agent/video_gen.py`）：意图 → 红线 → **按顺序试后端** →
+    过滤链 → 落盘 → 后台生成完**自动发过去**。
+
+    ⚠️ 视频比图慢得多（几十秒到几分钟）⇒ 这里**提交后台任务后立刻返回**，绝不能卡着对话等。
+    ⚠️ 没配后端 / 端点都不通 / 没过过滤链 ⇒ 一律如实说，**绝不许说"做好了"**。
+    """
+    import threading
+    import time as _t
+    import logging as _lg
+    try:
+        from . import video_gen as _vg
+        req = str((args or {}).get("request") or "").strip()
+        if not req:
+            return _err("request 不能为空（要说清想要什么视频）")
+        r = _vg.submit(req)
+        if not r.get("ok"):
+            return _ok("这次没做出视频：%s（照实说明，不要假装做过）" % r.get("why"))
+        jid = r["job_id"]
+        sender, chat_key = ctx.get("sender"), ctx.get("chat_key")
+        session = ctx.get("session")
+
+        def _watch():
+            t0 = _t.time()
+            while _t.time() - t0 < 900:
+                _t.sleep(2)
+                j = _vg.job(jid)
+                if j.get("state") == "running":
+                    continue
+                files = [p for p in (j.get("files") or []) if _os.path.isfile(p)]
+                if j.get("state") == "done" and files and sender is not None:
+                    for p in files:
+                        try:
+                            sender.send_file_posted(chat_key, p)      # 投递档：不动鼠标、不抢前台
+                            if isinstance(session, dict):
+                                session.setdefault("sent", []).append({"type": "video", "text": "[生成视频]"})
+                        except Exception as e:
+                            _lg.getLogger("persona_morph").warning(
+                                "生成视频发送失败：%s（%s）", _os.path.basename(p), type(e).__name__)
+                else:
+                    _lg.getLogger("persona_morph").warning(
+                        "生成视频没成：%s", str(j.get("why") or "未知原因")[:120])
+                return
+
+        threading.Thread(target=_watch, name="pm-genvideo-%s" % jid, daemon=True).start()
+        return _ok({"submitted": True, "job": jid,
+                    "note": "已在后台生成（要几十秒到几分钟）。**现在照实告诉对方正在做、别的一概不要编**；"
+                            "做好之后系统会自动把视频发出去，你不需要再发一次。"})
+    except Exception as e:
+        return _err("提交视频生成失败：%s" % e)
 
 
 def _exec_report(ctx, args):
