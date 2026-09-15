@@ -473,5 +473,19 @@ try:
 except Exception as _eO:
     ok("_row_time_conflict 行为可测", False, str(_eO)[:80])
 
+print("── P. 活动行时间戳是间歇可读的 ⇒ 判不了之前要**连试几帧**（跨机 r19 live：单帧读不出就把 zip 挡住了）──")
+_segP = open(os.path.join(_ROOT, "agent", "wechat.py"), encoding="utf-8").read()
+_segP = _segP[_segP.index("def _row_time_conflict"):]
+_segP = _segP[:_segP.find("\n    def ", 10)]
+ok("读不出时会**重试捕获**（不是单帧就下结论）",
+   "for _i in range(4):" in _segP and "time.sleep(0.35)" in _segP)
+ok("重试还是读不出才判『判据不可用』（判词写明试了几帧）",
+   "连试 5 帧都没读出来" in _segP)
+ok("重试用的是新捕获（`capture_best` 每次重抓，不吃旧帧）",
+   _segP.count("capture_best(") >= 2)
+ok("tools.py 那句生硬措辞已改顺（不许再出现嵌套引号那版）",
+   "那一下会让微信**短暂占前台约 0.5~3 秒**" in
+   open(os.path.join(_ROOT, "agent", "tools.py"), encoding="utf-8").read())
+
 print("== [send-file-posted] 判据：{} 通过 / {} 失败 ==".format(PASS, FAIL))
 sys.exit(1 if FAIL else 0)
