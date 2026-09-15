@@ -2072,6 +2072,21 @@ class WeChatAdapter:
 
             base = _rows()
             base_sig = str(base[0].get("local_id")) if base else ""
+            # ⛔ 2026-09-16 r24 对面现场：**最小化还原之后投递打字不生效**。
+            #    他的对照很干净：同一会话、同一轮里，可见态两枪（A1/A2）回读都成功（local_id 27/28），
+            #    只有最小化那一枪读不到新行，而且那个 token 在「文件传输助手」与「余命十日」里
+            #    **两处都搜不到** ⇒ 没发错会话、也不是判据误判 ⇒ 就是"字没进输入框"。
+            #    机制：这条链**从来不点输入框**（2026-09-13 实测"不点也能发 3/3"——那是**正常可见态**
+            #    下靠默认焦点）；最小化被还原后焦点不在输入框上，`WM_CHAR` 被丢，随后点「发送」发了个空。
+            #    （发文件那条链不受影响：走 `WM_SETTEXT` 直写对话框，不依赖输入框焦点。）
+            #    ⇒ 打字前先投递点一次输入栏把焦点给它。坐标与「发送」按钮**同源**（渲染区比例、同一行
+            #    靠左的输入区），正常态下这一步是幂等的；点不到也不拦（继续尝试打字，失败时行为同旧版）。
+            try:
+                focus_pt = (int(r[0]) + int(rw * 0.45), int(r[1]) + int(rh * 0.945))
+                backend.click(main, focus_pt)
+                time.sleep(0.3)
+            except Exception as _e:
+                log.info("投递聚焦输入栏失败（继续尝试打字）：%s", _e)
             ok, why = backend.send_text(main, text)
             if not ok:
                 return False, "投递打字失败：%s" % why
