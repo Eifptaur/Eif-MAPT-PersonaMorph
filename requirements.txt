@@ -35,6 +35,13 @@ pytweening>=1.2.0
 numpy>=2.2.6
 opencv-python>=5.0.0.93
 
+# ── 语音合成（默认音源，2026-09-15 跨机实测补）──────────────────────────────
+# 为什么必须进这里：`voice_reply.backend` 的**默认档是 edge**（免费神经语音、不用 key、
+# 音质接近真人），可它原来是「让用户自己 pip install」⇒ 干净机器上默认档直接不可用，
+# 只能退回系统机械音（跨机报告里那行「选了 edge-tts 但本机没装它」就是这么来的）。
+# 装不上时仍按 `voice_reply.edge_fallback`（默认开）退回系统声音并写明，不静默。
+edge-tts>=6.1.0
+
 # 说明：
 # 1. 完全离线部署时，把上面所有包（含 wechatauto）的 .whl 放进 offline/wheels/，
 #    然后 `pip install --no-index --find-links=offline/wheels -r requirements.txt`。
