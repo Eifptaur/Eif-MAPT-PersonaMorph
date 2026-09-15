@@ -113,18 +113,26 @@ def main():
            and bool(res2["audio_why"]), res2.get("audio_why"))
         vr.cleanup(res["dir"])
         ok("临时目录被清掉（不留垃圾）", not os.path.isdir(res["dir"]))
-        ok("抽帧数被夹到上限内（要 99 帧也最多 8）",
-           (lambda r: r["ok"] and len(r["frames"]) <= vr.MAX_FRAMES)(
-               vr.read(vid, max_frames=99, max_seconds=5)))
+        vr.cleanup(res2["dir"])          # 自测不留垃圾：每一个 read 的临时目录都要收掉
+
+        def _capped():
+            r = vr.read(vid, max_frames=99, max_seconds=5)
+            try:
+                return r["ok"] and len(r["frames"]) <= vr.MAX_FRAMES
+            finally:
+                vr.cleanup(r.get("dir") or "")
+        ok("抽帧数被夹到上限内（要 99 帧也最多 8）", _capped())
 
     print("== E. 诚实路径（做不到就说做不到）==")
     bad = vr.read(os.path.join(tmp, "根本没有这个文件.mp4"))
+    vr.cleanup(bad.get("dir") or "")     # 失败路径也照样收（真 bug 就出在这条路上）
     ok("文件不存在 ⇒ ok=False 且给出原因（不是空帧假成功）",
        (not bad["ok"]) and bad["error"] and not bad["frames"], bad["error"])
     junk = os.path.join(tmp, "notvideo.mp4")
     with open(junk, "wb") as f:
         f.write(b"this is definitely not a video")
     bad2 = vr.read(junk)
+    vr.cleanup(bad2.get("dir") or "")
     ok("不是视频 ⇒ ok=False 且说明读不出时长",
        (not bad2["ok"]) and bad2["error"] and not bad2["frames"], bad2["error"])
 
@@ -172,6 +180,7 @@ def main():
         vr.extract_audio = lambda p, w, max_seconds=60: True
         _voice.recognize_wav = lambda w, max_seconds=60: ("这是一条测试语音", "")
         r = vr.read("fake.mp4", max_frames=1, max_seconds=5)
+        vr.cleanup(r.get("dir") or "")        # 自测也不许往系统临时目录里留东西
         ok("替身：识别到文本时 audio_text 要真的带出来（顺序写反就带不出来）",
            r.get("audio_text") == "这是一条测试语音", repr(r.get("audio_text"))[:40])
         ok("替身：audio_ok 为真", r.get("audio_ok") is True)
@@ -179,11 +188,13 @@ def main():
            repr(r.get("audio_why"))[:40])
         _voice.recognize_wav = lambda w, max_seconds=60: ("", "本机没装识别引擎")
         r2 = vr.read("fake.mp4", max_frames=1, max_seconds=5)
+        vr.cleanup(r2.get("dir") or "")
         ok("替身：引擎报错时 audio_ok 为假、原因带出来",
            r2.get("audio_ok") is False and "识别引擎" in (r2.get("audio_why") or ""),
            repr(r2.get("audio_why"))[:40])
         _voice.recognize_wav = lambda w, max_seconds=60: ("   ", "")
         r3 = vr.read("fake.mp4", max_frames=1, max_seconds=5)
+        vr.cleanup(r3.get("dir") or "")
         ok("替身：跑通但没听出内容 ⇒ 如实说「没听出可辨认的说话内容」",
            r3.get("audio_ok") is False and "没听出可辨认" in (r3.get("audio_why") or ""),
            repr(r3.get("audio_why"))[:40])

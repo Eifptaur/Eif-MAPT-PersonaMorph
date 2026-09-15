@@ -265,16 +265,18 @@ def listen(text: str, max_seconds: int = 120, timeout: int = 180):
 
     链路：解析 → 取音频流 → 下音频 → ffmpeg 抽 16k 单声道 WAV → 本机 SAPI 听写。
     全程不出网（除了取音频那一次），不需要 yt-dlp。听不出内容就如实说，**绝不编**。
+    ⚠️ 用完**必删临时目录**（音频 + WAV 加起来几 MB；`finally` 里删，成功失败都删）。
     """
     import tempfile
+    from . import housekeeping as HK
     v, why = info(text, want_subtitle=False, timeout=TIMEOUT)
     if not v:
         return "", why
     tmp = tempfile.mkdtemp(prefix="pm-bili-listen-")
-    path, why2 = download_audio(v["bvid"], v.get("cid"), tmp, timeout)
-    if not path:
-        return "", why2
     try:
+        path, why2 = download_audio(v["bvid"], v.get("cid"), tmp, timeout)
+        if not path:
+            return "", why2
         from . import video_read as VR
         from . import voice
         wav = os.path.join(tmp, "audio.wav")
@@ -290,6 +292,8 @@ def listen(text: str, max_seconds: int = 120, timeout: int = 180):
         return txt, ""
     except Exception as e:
         return "", "本机识别异常：%s" % str(e)[:80]
+    finally:
+        HK.cleanup_dir(tmp)
 
 
 def download(url_or_bvid: str, out_dir: str, timeout: int = 300):

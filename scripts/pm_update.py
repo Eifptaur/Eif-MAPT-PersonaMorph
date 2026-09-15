@@ -120,12 +120,15 @@ def apply_update(manifest, patch, payload_zip, target, dry=False):
         return 2, "plan 里含本体不该动的文件：%s" % bad_scope[:4], {}
 
     # ---- 1) 载荷解压到暂存目录，逐件校验 sha256 ----
+    #   `stage`（解压载荷）与 `backup`（换入前的回滚快照）都是系统临时目录里的东西，
+    #   **两个都必须在 finally 里删掉**——2026-09-15 审计发现 backup 从来没删过，
+    #   临时目录里积了一批 `pm-backup-*`（每次都装着一整份被替换文件）。
     stage = tempfile.mkdtemp(prefix="pm-stage-")
+    backup = ""
     try:
         with zipfile.ZipFile(payload_zip) as z:
             names = [n for n in z.namelist() if not n.endswith("/")]
-            z.extractall(stage)
-        # 包内顶层目录 = "persona morph"
+            z.extractall(stage)        # 包内顶层目录 = "persona morph"
         top = sorted(set(n.split("/")[0] for n in names))
         if len(top) != 1:
             return 1, "载荷顶层目录不唯一：%s" % top, {}
@@ -217,6 +220,8 @@ def apply_update(manifest, patch, payload_zip, target, dry=False):
             cand.get("version") or "?", want_version, len(need), sum(1 for e in plan if e["op"] == "del")), {"state": st}
     finally:
         shutil.rmtree(stage, ignore_errors=True)
+        if backup:
+            shutil.rmtree(backup, ignore_errors=True)
 
 
 def main():
