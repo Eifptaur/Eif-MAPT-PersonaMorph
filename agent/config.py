@@ -107,6 +107,10 @@ DEFAULT_CONFIG = {
         "max_per_minute": 20,
         "max_per_hour": 500,
         "hard_split_at": 2000,     # 微信单条消息安全切分长度
+        # 兜底自动补发的过滤（2026-09-15 加；不过滤时模型把"内心分析"写进最终文本会被原样发进群）
+        "fallback_autosend": True,      # 兜底总开关：模型没调发送工具时，把最终文本当回复发出去
+        "fallback_max_chars": 60,       # 兜底只发短话（长文多半是分析）；0=不限
+        "fallback_block_selfref": True, # 拦掉"我不打算回 / 没什么可说"这类自我指涉（内心判断不该进群）
         "uia_setvalue": True,      # 输入用 UIA SetValue 后台直写（不点输入框/不粘贴），发送回车仍需瞬时置前
         # 大图自动压缩（对账清单第 22 条）：发送前按"最长边 / 文件大小"双阈值压一压，见 agent/img_compress.py。
         #   默认**开**：这是"省事"型能力（不改语义、压不动就原样发并说明），关掉也不会更安全。

@@ -110,6 +110,9 @@
   "max_per_minute": 20,
   "max_per_hour": 500,
   "hard_split_at": 2000,
+  "fallback_autosend": true,
+  "fallback_max_chars": 60,
+  "fallback_block_selfref": true,
   "uia_setvalue": true,
   "image_compress": {
    "enabled": true,

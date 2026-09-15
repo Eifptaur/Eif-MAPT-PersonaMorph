@@ -138,6 +138,35 @@ except Exception as _e:      # 治理失败绝不能挡住启动
     log.warning("日志治理跳过：%s", _e)
 
 
+# 兜底自动补发的过滤（2026-09-15 用户点头「对用户有好处就加」）：
+# 不加过滤时，模型把"内心分析"写进最终文本就会被**原样发进群**（提示词警告过，但不能只靠它自觉）。
+# 口径：默认只补发 ≤ `send.fallback_max_chars` 的短话，并拦掉自我指涉（那是内心判断，不是群发言）；
+#      过滤本身出异常 ⇒ **按不发处理**（fail-closed：宁可沉默，也不乱发）。
+_FALLBACK_SELF_REF = ("我不打算", "不打算回", "不回复", "不打算说", "没什么可说", "没什么好说",
+                      "保持沉默", "不发言", "就不说话", "不用回", "不必回", "无需回",
+                      "我在看", "我只是看", "内心", "分析一下", "从记录看", "从上下文看",
+                      "评估下来", "判断下来", "本轮不需要", "这轮不回", "沉默更好", "安静就好")
+
+
+def _fallback_send_ok(text: str, cfg=None):
+    """兜底补发要不要发 ⇒ `(能不能发, 原因)`。"""
+    try:
+        c = cfg if isinstance(cfg, dict) else (get_config() or {})
+        s = c.get("send") or {}
+        if s.get("fallback_autosend", True) is False:
+            return False, "兜底补发被关掉（send.fallback_autosend=false）"
+        mx = int(s.get("fallback_max_chars", 60) or 0)
+        if mx > 0 and len(text) > mx:
+            return False, "太长（%d 字 > 上限 %d）：长文多半是分析，不是群聊发言" % (len(text), mx)
+        if s.get("fallback_block_selfref", True) is not False:
+            for k in _FALLBACK_SELF_REF:
+                if k in text:
+                    return False, "含自我指涉（%s）：那是内心判断，不该发进群" % k
+        return True, ""
+    except Exception as e:
+        return False, "过滤器异常，按不发处理：%s" % str(e)[:40]
+
+
 def _parse_inline_calls(text: str) -> list:
     """兼容少数模型把工具调用写成文本而非原生 tool_calls 的情况。"""
     calls = []
@@ -683,14 +712,21 @@ class Orchestrator:
                 _final = str(content or "").strip()
                 if _final and not session["sent"]:
                     # 兜底：模型决定「说完就结束」但没调发送工具 → 把最终文本当作回复自动发出，
-                    # 避免「想好了却没发出去」的沉默（noreply；曾实测：模型写完回复就结束）
-                    try:
-                        res = self.sender.send_text_batch(chat_key, _final)
-                        session["sent"].extend(res.get("sent") or [])
-                        if res.get("sent"):
-                            log.info("[%s] 模型未调发送工具，按最终文本自动补发 %d 条", chat_key, len(res["sent"]))
-                    except Exception as e:
-                        log.warning("自动补发最终文本失败：%s", e)
+                    # 避免「想好了却没发出去」的沉默（noreply；曾实测：模型写完回复就结束）。
+                    # ⚠️ **必须过滤**：不过滤时"内心分析"会被原样发进群（2026-09-15 加，见 _fallback_send_ok）
+                    _ok_fb, _why_fb = _fallback_send_ok(_final, cfg)
+                    if not _ok_fb:
+                        log.info("[%s] 兜底没发（%s）：%s", chat_key, _why_fb, _final[:60])
+                        session["fallback_blocked"] = _why_fb
+                        _entry["fallback_blocked"] = _why_fb
+                    else:
+                        try:
+                            res = self.sender.send_text_batch(chat_key, _final)
+                            session["sent"].extend(res.get("sent") or [])
+                            if res.get("sent"):
+                                log.info("[%s] 模型未调发送工具，按最终文本自动补发 %d 条", chat_key, len(res["sent"]))
+                        except Exception as e:
+                            log.warning("自动补发最终文本失败：%s", e)
                 break  # 模型结束思考（不会再调工具）
 
             tool_results = []
