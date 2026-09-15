@@ -1053,6 +1053,35 @@ th{color:var(--tx2);font-weight:500}
       <div class="row"><label>声音</label><div class="grow"><select data-cfg="voice_reply.voice" id="ttsVoice">
         <option value="">自动（优先中文声音）</option></select>
         <span class="hint">选项来自本机**实测**可用的合成声音。</span></div></div>
+      <div class="row"><label>声音来源</label><div class="grow"><select data-cfg="voice_reply.backend" id="ttsBackend">
+        <option value="sapi">本机系统声音（开箱可用：零下载、离线）</option>
+        <option value="http">自带模型（本地 HTTP 合成服务）</option></select>
+        <span class="hint">选「自带模型」再填下面的地址（GPT-SoVITS / RVC 之类自己跑的 HTTP 接口）。<b>不通会在发送时如实报错，不会假装发过。</b></span></div></div>
+      <div class="row"><label>模型地址</label><div class="grow"><input type="text" data-cfg="voice_reply.http_url" placeholder="如 http://127.0.0.1:9880/tts">
+        <div class="btns" style="margin-top:6px"><button id="ttsProbe" class="ghost" type="button">连通测试</button><span class="hint" id="ttsProbeOut"></span></div>
+        <span class="hint">回音频字节（audio/wav）直接用；回 JSON 就在下面填字段名。</span></div></div>
+      <div class="row"><label>JSON 字段</label><div class="grow"><input type="text" data-cfg="voice_reply.http_json_field" placeholder="如 data（base64）或 audio（文件路径）；回音频字节就留空">
+        <span class="hint">这条通道只能证明<b>端点通不通、返回的是不是音频</b>；<b>音色是不是目标角色属「未声明」</b>，发出去的仍是音频文件。</span></div></div>
+      <script>
+      (function(){
+        var b = document.getElementById('ttsProbe'); if(!b) return;
+        var out = document.getElementById('ttsProbeOut');
+        function headers(){ return (typeof URL_TOKEN !== 'undefined' && URL_TOKEN) ? {Authorization:'Bearer '+URL_TOKEN} : {}; }
+        b.onclick = function(){
+          var u = document.querySelector('input[data-cfg="voice_reply.http_url"]');
+          var url = u ? u.value.trim() : '';
+          b.disabled = true; out.textContent = ' 测试中…';
+          fetch('/api/voice/probe?url=' + encodeURIComponent(url), {headers: headers()})
+            .then(function(r){ return r.json(); })
+            .then(function(d){
+              out.textContent = d.ok ? (' 通：' + (d.bytes||0) + ' 字节音频 · ' + (d.ms||0) + 'ms')
+                                     : (' 不通：' + (d.why || '未知原因'));
+            })
+            .catch(function(e){ out.textContent = ' 失败：' + e; })
+            .then(function(){ b.disabled = false; });
+        };
+      })();
+      </script>
       <div class="row"><label>语速</label><input type="number" min="-10" max="10" data-cfg="voice_reply.rate">
         <span class="hint">-10 最慢 ~ 10 最快，0＝默认。</span></div>
       <div class="row"><label>格式</label><div class="grow"><select data-cfg="voice_reply.format">
