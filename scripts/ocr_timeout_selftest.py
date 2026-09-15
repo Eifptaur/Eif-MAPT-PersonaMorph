@@ -106,7 +106,11 @@ _fresh()
 _hang["on"] = False
 _hang["sleep"] = 0.0
 tok = co.begin_window(0.4)
-ok("窗内 window_left 有值", co.window_left() is not None and co.window_left() <= 0.4,
+ok("窗内 window_left 有值", co.window_left() is not None and co.window_left() <= 0.4 + 1e-6,
+   # ⚠️ 2026-09-16：原来写死 `<= 0.4`，而 `window_left()` ＝ `tok - time.monotonic()`，两个量都在
+   #    1e6 量级（Windows 单调钟从开机算起）⇒ 浮点相减有 ~1e-10 误差，实测真报过
+   #    `0.40000000002328306 > 0.4` 的**假红**。判据守的是"窗内剩余不超过开窗时长"这个**性质**，
+   #    容差 1e-6 比浮点误差大 4 个量级、比真实的 0.1s 越界小 5 个量级。
    str(co.window_left()))
 ok("窗还没过期时 budget_out=False", co.budget_out(tok) is False)
 time.sleep(0.5)                                # 等窗过期

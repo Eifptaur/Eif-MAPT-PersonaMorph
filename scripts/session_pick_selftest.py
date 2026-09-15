@@ -150,18 +150,27 @@ ok("聊天区内容变化也当切换证据", "_co.pane_text(" in _src and "聊�
 print("── E. 相对高亮判据 + 聊天区摘要（脱机）──")
 ok("input_backend 有 find_render_child", hasattr(IB, "find_render_child"))
 ok("find_render_child(0) 安全返回 0", IB.find_render_child(0) == 0)
-_rs, _ga = CO.session_rows, CO._green_at
+_rs, _gr = CO.session_rows, CO.green_row_ratio
 try:
     CO.session_rows = lambda im, zoom=2: [{"name": "别人", "y_abs": 100}, {"name": "E", "y_abs": 200}]
-    CO._green_at = lambda im, y, half=6: 0.69 if y == 200 else 0.01
+    CO.green_row_ratio = lambda im, y, half=6: 0.69 if y == 200 else 0.01
     hl_rel, why_rel = CO.highlight_relative("img")
     ok("相对判据能挑出最高的那一行", bool(hl_rel) and hl_rel["y_abs"] == 200 and hl_rel["name"] == "E", why_rel)
-    CO._green_at = lambda im, y, half=6: 0.10          # 两行都差不多 ⇒ 不够突出，必须判 None
+    CO.green_row_ratio = lambda im, y, half=6: 0.10          # 两行都差不多 ⇒ 不够突出，必须判 None
     ok("区分度不够时返回 None（fail-closed）", CO.highlight_relative("img")[0] is None)
-    CO._green_at = lambda im, y, half=6: 0.0
+    CO.green_row_ratio = lambda im, y, half=6: 0.0
     ok("全都没有绿底 ⇒ None", CO.highlight_relative("img")[0] is None)
+    # ⛔ 2026-09-16 修（真缺陷）：`_green_at` 的取样窗**含头像列**，微信那种**绿色头像**给 0.18 的假绿 ⇒
+    #    高亮行被认成头像绿的那一行（实测当前开的是「宋孟」、`chat_is_open` 报「微信…」）。
+    #    现在两条路都改用"不含头像的右半段"（`green_row_ratio`）⇒ 头像绿必须不再被当成高亮行。
+    CO.session_rows = lambda im, zoom=2: [{"name": "微信团队", "y_abs": 100}]
+    _ga_keep = CO._green_at
+    CO._green_at = lambda im, y, half=6: 0.18               # 老口径（含头像列）会认这一行
+    ok("头像绿（老口径 0.18）不再被当成高亮行",
+       CO.highlight_relative("img")[0] is None and CO.highlight("img") is None)
+    CO._green_at = _ga_keep
 finally:
-    CO.session_rows, CO._green_at = _rs, _ga
+    CO.session_rows, CO.green_row_ratio = _rs, _gr
 ok("chat_ocr 有 pane_text", hasattr(CO, "pane_text"))
 
 print("── E2. 内容级身份核对（名字会骗人：群聊预览带「发言人:」前缀）──")
@@ -228,7 +237,7 @@ _co_src = open(os.path.join(ROOT, "agent", "chat_ocr.py"), encoding="utf-8").rea
 _w_src = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
 ok("find_row_info 支持 want_time（按时间定位）", "def find_row_info(img, name: str, zoom: int = 2, want_time: str = \"\")" in _co_src)
 ok("时间是从整行文本 full 里找的（只看 name 永远找不到时间）",
-   'r.get("full")' in _co_src and "_time_re.finditer(_blob)" in _co_src)
+   'r.get("full")' in _co_src and "row_time_match(_blob, want)" in _co_src)
 ok("时间命中但名字明显是别的会话 ⇒ 不算（宁可不点）",
    "if got and not matches(got, name):" in _co_src)
 ok("switch_chat_posted 会把目标会话的最后消息时间传进去",
@@ -246,9 +255,160 @@ ok("身份闸有「高亮行时间」这一档", "highlight_time" in _w_src and 
 #   两个独立来源＝**屏幕（高亮行时间 OCR）× DB（目标会话最后一条消息时间）**；第二道证据二选一——
 #   ①聊天区里也出现同一时刻 ②该时刻在会话列表里**唯一**（只有这一个会话是它）。
 ok("高亮行时间档：屏幕×DB 两个独立来源 + 时间格式归一化（列表的 1:35 与 DB 的 01:35 视为同一时刻）",
-   "self._norm_hhmm(_ht) == self._norm_hhmm(_lt)" in _w_src and "def _norm_hhmm" in _w_src)
+   "self._norm_hhmm(_ht) != self._norm_hhmm(_lt)" in _w_src and "def _norm_hhmm" in _w_src
+   and "return _co.hhmm(s)" in _w_src)
 ok("第二道证据二选一：聊天区出现同一时间 **或** 该时刻在会话列表里唯一（两者都不成立 ⇒ 照旧判否，fail-closed）",
-   "_pane_hit or _uniq" in _w_src and "_uniq = (len(_hits) == 1)" in _w_src)
+   "if _pane_hit or _uniq:" in _w_src and "_uniq = (_n == 1)" in _w_src
+   and "def _active_row_time_ok" in _w_src)
+
+print("\n── F. 时间口径：10 点以前的时刻也要能按时间定位（r11 实测根因）──")
+# ⛔ 2026-09-16 根因（r11 两次 ABORT 的直接原因）：`find_row_info` 把**目标时间**（`strftime('%H:%M')`
+#    ＝`01:03`）与**读到的**时间（归一成 `'%d:%02d'`＝`1:03`）**直接比字符串** ⇒ 上午 0~9 点永不相等。
+#    E 那种单字母会话名字读不出来、**时间档是唯一信号** ⇒ 表现成"列表里明明有 E，滚 6 轮也定位不到"。
+ok("hhmm：01:03 / 1：03 / 01：03 归一成同一个 1:03",
+   CO.hhmm("01:03") == CO.hhmm("1：03") == CO.hhmm("01：03") == "1:03",
+   repr([CO.hhmm("01:03"), CO.hhmm("1：03"), CO.hhmm("01：03")]))
+ok("hhmm：认不出的给空串（不拿脏串去比）",
+   CO.hhmm("昨天") == "" and CO.hhmm("") == "" and CO.hhmm("1:3") == "")
+ok("hhmm：跨小时不误配（1:03 ≠ 11:03 / 21:03）",
+   CO.hhmm("11:03") == "11:03" and CO.hhmm("21：03") == "21:03")
+ok("row_time_match：整行「文件传．“01：03」命中 want=01:03（**修复前这条是红的**）",
+   CO.row_time_match("文件传．“01：03", "01:03") is True)
+ok("row_time_match：别的时刻不命中", CO.row_time_match("文件传．“19：41", "01:03") is False)
+ok("row_time_match：want 认不出 ⇒ False（不放行）", CO.row_time_match("01：03", "昨天") is False)
+ok("find_row_info 的时间比较走同一个口径（源码断言）",
+   "want = hhmm(want_time)" in _co_src and "hit_t = row_time_match(_blob, want)" in _co_src)
+ok("wechat 侧的 _norm_hhmm 只有一处实现（委托 chat_ocr.hhmm）", "return _co.hhmm(s)" in _w_src)
+
+print("── G. 绿底行按像素找：高亮行是白字绿底、OCR 读不出它（r11 实测根因）──")
+# ⛔ 2026-09-16 根因：`highlight` / `highlight_relative` / `current_chat_name` 都在**OCR 行**里挑绿最多的，
+#    而当前打开的那一行是**白字绿底**——整幅 OCR 里根本没有这一行（实测 8 行独缺高亮行）⇒
+#    只能挑到"头像绿"的行（实测把「宋孟」认成「微信…」）。现在主路改成**纯像素扫绿底带**。
+try:
+    from PIL import Image as _I2
+
+    _W2, _H2 = 1139, 890
+    _im2 = _I2.new("RGB", (_W2, _H2), (237, 237, 239))
+    _im2.paste(CO.GREEN, (60, 494, 320, 590))       # 一整条绿底行（96px 高，横跨列表）
+    _im2.paste(CO.GREEN, (100, 180, 150, 230))      # 另一行上的**绿色头像**（50×50，老口径的假绿来源）
+    _bands = CO.green_bands(_im2)
+    ok("像素法找到绿底带（y≈494~590，占比高）",
+       len(_bands) == 1 and abs(_bands[0]["y_abs"] - 542) <= 4 and _bands[0]["score"] > 0.8, str(_bands))
+    ok("同帧里的绿色头像（50×50）不算绿底行", all(b["y0"] > 400 for b in _bands))
+    _hl2 = CO.highlight(_im2)
+    ok("highlight 走像素法给出高亮行 y", bool(_hl2) and abs(_hl2["y_abs"] - 542) <= 4, str(_hl2))
+    ok("没有绿底行时像素法给空（fail-closed）",
+       CO.green_bands(_I2.new("RGB", (_W2, _H2), (237, 237, 239))) == [])
+    ok("源码断言：三条路都改用了不含头像的取样口径",
+       "def green_row_ratio" in _co_src and "sc = green_row_ratio(img, r[\"y_abs\"])" in _co_src
+       and "green_row_ratio(use, r[\"y_abs\"])" in _co_src)
+except Exception as _e:
+    ok("绿底带判据可跑", False, "%s: %s" % (type(_e).__name__, _e))
+
+print("── H. 单字母名字被 OCR 读成别的字时，仍要能定位那一行（r11 实测根因③）──")
+# ⛔ 2026-09-16 真帧实测：E 是当前打开的那一行，整行 OCR＝『巷01：03』——名字被读成「巷」，
+#    "名字明显不是它 ⇒ 不算"这条防误配守卫于是把**唯一正确的行**否掉 ⇒ 报"没定位到 E"。
+#    修法：目标名 ≤2 字（短到 OCR 认不准）且**该时刻在整张列表里唯一**时放行。
+try:
+    from PIL import Image as _I3
+
+    _img3 = _I3.new("RGB", (400, 300), (237, 237, 239))
+    _rs2, _nor2 = CO.session_rows, CO.name_of_row
+    try:
+        CO.name_of_row = lambda im, y, text="", zoom=3: "巷"
+        CO.session_rows = lambda im, zoom=2: [{"name": "巷", "full": "巷01：03", "y_abs": 144, "preview": None},
+                                              {"name": "二海绵", "full": "二海绵昨天22．“", "y_abs": 241, "preview": None}]
+        _i1 = CO.find_row_info(_img3, "E", want_time="01:03")
+        ok("单字母目标 + 时间唯一 ⇒ 放行（**修复前这条是红的**）",
+           bool(_i1) and int(_i1["y_abs"]) == 144, str(_i1))
+        # 安全性：同一个时刻在列表里出现两次 ⇒ 唯一性不成立 ⇒ 照样不点（宁可找不到）
+        CO.session_rows = lambda im, zoom=2: [{"name": "巷", "full": "巷01：03", "y_abs": 144, "preview": None},
+                                              {"name": "别人", "full": "别人01：03", "y_abs": 241, "preview": None}]
+        ok("同一时刻出现两次（唯一性不成立）⇒ 仍然不认（fail-closed）",
+           CO.find_row_info(_img3, "E", want_time="01:03") is None)
+        # 安全性：**多字**目标名仍走原来的严格守卫（名字不像就是不像）
+        CO.session_rows = lambda im, zoom=2: [{"name": "宋孟", "full": "宋孟01：03", "y_abs": 144, "preview": None}]
+        ok("多字目标名（文件传输助手）不被这条放宽影响",
+           CO.find_row_info(_img3, "文件传输助手", want_time="01:03") is None)
+    finally:
+        CO.session_rows, CO.name_of_row = _rs2, _nor2
+except Exception as _e:
+    ok("短名 + 时间唯一 判据可跑", False, "%s: %s" % (type(_e).__name__, _e))
+
+print("── I. 「当前开着的会话就是目标」的第三条独立证据（高亮行时间 × DB）──")
+# ⛔ 2026-09-16 实测：搜索框路线已经把 E 切过来了，`chat_is_open` 仍报 False（名字读不出、指纹档也没参照）
+#    ⇒ 闸门判否、后面每一步都在"没有正面证据"里打转。补第三档＝高亮行时间（屏幕）× DB。
+_ok3_hit = {"v": True}
+_ad4 = W.WeChatAdapter.__new__(W.WeChatAdapter)
+_ad4.current_chat_name = lambda gui=None: ("", "绿底带在 y=120~217 但那一行名字 OCR 读不出")
+_ad4._active_row_time_ok = lambda chat_id, pane="", gui=None: (True, "高亮行（y=168）时间 1:03 ＝目标最后一条消息时间")
+ok("第三档能独立撑起「就是它」（修复前这条是红的）",
+   _ad4.chat_is_open("x", gui=None, name="E")[0] is True, str(_ad4.chat_is_open("x", gui=None, name="E")))
+_ad4._active_row_time_ok = lambda chat_id, pane="", gui=None: (False, "高亮行时间是 9:41 ≠ 1:03")
+ok("第三档给不出正面证据时仍判否（fail-closed）",
+   _ad4.chat_is_open("x", gui=None, name="E")[0] is False)
+ok("源码断言：chat_is_open 接了第三档、且与 chat_identity_ok 同源",
+   "_ok3, _why3 = self._active_row_time_ok(chat_id, gui=gui)" in _w_src
+   and "def _active_row_time_ok" in _w_src
+   and "_ok_t, _why_t = self._active_row_time_ok(chat_id, pane=pane, gui=gui)" in _w_src)
+
+print("── J. 点前等列表停稳（投递滚轮是平滑滚动，惯性期间点击会点空）──")
+from agent import chat_header as CH                              # noqa: E402
+try:
+    from PIL import Image as _I4
+
+    _cap_real = CH.capture_image
+    _q = {"q": []}
+
+    def _cap(gui=None, **_kw):
+        return _q["q"].pop(0) if _q["q"] else None
+
+    CH.capture_image = _cap
+    _ad5 = W.WeChatAdapter.__new__(W.WeChatAdapter)
+    _imA = _I4.new("RGB", (600, 400), (237, 237, 239))
+    _imB = _I4.new("RGB", (600, 400), (250, 250, 250))
+    _q["q"] = [_imA, _imA]
+    ok("连续两帧一致 ⇒ 判停稳", _ad5._list_settled(None, tries=4, gap=0) is True)
+    _q["q"] = [_imA, _imB, _imB]
+    ok("先动后停 ⇒ 也判停稳", _ad5._list_settled(None, tries=4, gap=0) is True)
+    _q["q"] = [_imA, _imB, _imA, _imB]
+    ok("一直在动 ⇒ 判没停稳（不阻塞流程，照旧往下走）", _ad5._list_settled(None, tries=4, gap=0) is False)
+    _q["q"] = []
+    ok("抓不到帧 ⇒ 不误判停稳", _ad5._list_settled(None, tries=3, gap=0) is False)
+    ok("源码断言：点击前调它、并把结论写进说明", "self._list_settled(gui)" in _w_src and "点前列表已停稳" in _w_src)
+finally:
+    CH.capture_image = _cap_real
+
+print("── K. 失败留全现场（跨机需求⑤：对面报的现象我这边要能看到现场）──")
+try:
+    import json as _json
+    import shutil as _sh
+
+    from PIL import Image as _I5
+    _ad6 = W.WeChatAdapter.__new__(W.WeChatAdapter)
+    _d6 = _ad6._dump_fail_shot("selftest_tmp", _I5.new("RGB", (64, 48), (200, 200, 200)),
+                               {"picked": (1, 2), "cands": [(1, 2, 3, 4)]})
+    _shot = os.path.join(_d6, "shot.png")
+    _pj = os.path.join(_d6, "probe.json")
+    ok("落盘目录里有 shot.png 与原图同尺寸", os.path.isfile(_shot) and _I5.open(_shot).size == (64, 48), _d6)
+    _dat = _json.load(open(_pj, encoding="utf-8")) if os.path.isfile(_pj) else {}
+    ok("probe.json 带尺寸与判据中间量", _dat.get("extra", {}).get("picked") == [1, 2]
+       and _dat.get("size") == [64, 48], str(_dat)[:120])
+    _before = set(os.listdir(os.path.dirname(_d6))) if os.path.isdir(os.path.dirname(_d6)) else set()
+    ok("坏输入不抛（尽力而为，不许影响主流程）",
+       isinstance(_ad6._dump_fail_shot("selftest_tmp", None, None), str))
+    # 只留最近 N 份（同名 tag 不会被无限堆积）
+    for _i in range(4):
+        _ad6._dump_fail_shot("rot_tmp", _I5.new("RGB", (8, 8), (0, 0, 0)), {"i": _i}, keep=2)
+    _rot = [n for n in os.listdir(os.path.dirname(_d6)) if n.endswith("_rot_tmp")]
+    ok("同名 tag 只留最近 keep 份", len(_rot) <= 2, "留了 %d 份" % len(_rot))
+    for _n in list(os.listdir(os.path.dirname(_d6))):
+        if _n.endswith("_selftest_tmp") or _n.endswith("_rot_tmp"):
+            _sh.rmtree(os.path.join(os.path.dirname(_d6), _n), ignore_errors=True)
+    ok("源码断言：两条切会话失败路径都会存现场",
+       'self._dump_fail_shot("search_entry"' in _w_src and 'self._dump_fail_shot("switch_row"' in _w_src)
+except Exception as _e:
+    ok("失败取证判据可跑", False, "%s: %s" % (type(_e).__name__, _e))
 
 print("\n%d/%d 通过" % (PASS, PASS + FAIL))
 sys.exit(1 if FAIL else 0)
