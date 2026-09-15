@@ -159,19 +159,15 @@ def main():
     if click_pt:
         sx, sy = click_pt
         print("\n=== 真鼠标阳性对照（会动光标！）点 (%d, %d) ===" % (sx, sy))
-        u = ctypes.windll.user32
-        class POINT(ctypes.Structure):
-            _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
-        old = POINT()
-        u.GetCursorPos(ctypes.byref(old))
         from agent.input_backend import select_backend
         be = select_backend({"input": {"backend": "real"}}, gui=gui)
         okc, why = be.click(hwnd, (sx, sy))
         print("真鼠标点击返回：", okc, why)
         dlg, title = find_dialog(3.0)
         print("3 秒内「选择文件」对话框：", ("出现了 hwnd=%s title=%s" % (dlg, title)) if dlg else "**没有出现**")
-        u.SetCursorPos(old.x, old.y)          # 用完还回去
-        print("光标已还原到 (%d, %d)" % (old.x, old.y))
+        print("光标：走的是产品自己的 L0 路径（`ui_adapt.click` 点击前后自己还光标）——探针**不碰**"
+              "SetCursorPos/mouse_event/SendInput：那三类 API 只许出现在 backend 文件里，"
+              "由 `scripts/input_backend_selftest.py` 的 R1 看守。")
 
     try:
         from agent import window_borrow as _wb

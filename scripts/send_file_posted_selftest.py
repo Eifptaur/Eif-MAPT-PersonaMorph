@@ -131,11 +131,55 @@ try:
 except Exception as _e:
     ok("输入栏判据能跑（合成图）", False, str(_e)[:100])
 ok("send_file_posted 点之前会先探输入栏", "_input_bar_state" in seg)
-ok("探在点之前（先判视图、再算坐标）",
-   seg.find("_input_bar_state") < seg.find("_file_panel_point"),
-   "探在 %s、坐标在 %s" % (seg.find("_input_bar_state"), seg.find("_file_panel_point")))
+ok("探在点之前（先判视图、再定坐标）",
+   seg.find("_input_bar_state(img=_img)") < seg.find("_file_panel_point_live("),
+   "探在 %s、定坐标在 %s" % (seg.find("_input_bar_state(img=_img)"),
+                        seg.find("_file_panel_point_live(")))
 ok("判否时先试着切回目标会话（open_chat_by_search）", "open_chat_by_search" in seg)
 ok("失败信息里会带上「可能不是聊天视图」的提示（别再只说按钮位置变了）", "_bar_hint" in seg)
+
+print("── F. 从实测图标行取坐标（换机器/换 DPI 不再整档错位）──")
+# 用户原话：「实测投递是成功的，但是他老是点错位置，不是点到截图，就是点到收藏，还有点到语音，很难调」
+# 根因＝固定偏移（pane+43/97/151/205/280）是按本机 150% 的簇间距 ≈54px 标的；125% 下间距≈45px，
+# 固定偏移会**错一档**（正好落到收藏/截图上）⇒ 正解＝按顺序取第 3 个簇。
+try:
+    from agent.wechat import WeChatAdapter as _WA2
+    _pane = 331
+
+    def _row_img(spacing, w=1139, h=890, y=840, n=5):
+        """合成"输入栏图标行"：**第一个图标照真实布局放在 pane+43**，之后按 spacing 排。"""
+        im = _Im.new("L", (w, h), 250)
+        d = _Dr.Draw(im)
+        for i in range(n):
+            d.rectangle([_pane + 43 + int(i * spacing) - 8, y - 10,
+                         _pane + 43 + int(i * spacing) + 8, y + 10], fill=60)
+        return im
+
+    # 本机 150%：间距 54 ⇒ 实测（第 3 簇 = pane+43+108 = pane+151）与常量**应当一致**（互证）
+    im54 = _row_img(54)
+    (x54, y54), why54 = _WA2._file_panel_point_live((0, 0, 1139, 890), _pane, gray=im54)
+    ok("150%（间距 54）：实测点与常量点一致（互证）", abs(x54 - (331 + 151)) <= 2,
+       "实测 x=%s 常量 x=%s · %s" % (x54, 331 + 151, why54))
+    # 125%：间距 45 ⇒ 常量会错一档（落到收藏/截图），实测必须仍取到第 3 个簇
+    im45 = _row_img(45)
+    (x45, _y45), why45 = _WA2._file_panel_point_live((0, 0, 1139, 890), _pane, gray=im45)
+    _third45 = _pane + 43 + 2 * 45
+    _const = 331 + 151
+    ok("125%（间距 45）：实测仍取到第 3 个簇", abs(x45 - _third45) <= 2, "x=%s 期望=%s" % (x45, _third45))
+    ok("125% 下常量偏移确实会错一档（这正是「很难调」的根因）", abs(_const - _third45) >= 15,
+       "常量 x=%s vs 第 3 簇 x=%s ⇒ 差 %+d" % (_const, _third45, _const - _third45))
+    ok("实测路径的说明里带簇数与间距（可追责）", ("簇" in why45) and ("间距" in why45), why45)
+    # 拿不到图标行 ⇒ 必须**退回常量**（不许抛、不许给个空点）
+    (xfb, yfb), whyfb = _WA2._file_panel_point_live((0, 0, 1139, 890), _pane,
+                                                    gray=_Im.new("L", (1139, 890), 250))
+    ok("拿不到图标行 ⇒ 退回常量坐标", (xfb, yfb) == (482, 840) and "退回常量" in whyfb,
+       "%s/%s %s" % (xfb, yfb, whyfb))
+except Exception as _e2:
+    ok("实测图标行取坐标能跑", False, str(_e2)[:100])
+ok("send_file_posted 用的是**实测点**（_file_panel_point_live），不是只用常量",
+   "_file_panel_point_live" in seg, "源码里命中 %d 处" % seg.count("_file_panel_point_live"))
+ok("点之前只抓一次画面（同一张图既判视图又定坐标）",
+   seg.count("capture_image") <= 2 and "_gray" in seg)
 
 print("== [send-file-posted] 判据：{} 通过 / {} 失败 ==".format(PASS, FAIL))
 sys.exit(1 if FAIL else 0)

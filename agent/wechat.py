@@ -1603,16 +1603,43 @@ class WeChatAdapter:
 
     # ── 发文件（消息驱动；2026-09-13 实测打通）─────────────────────────────
     @staticmethod
+    def _input_bar_row(gray, band_px=140, gray_thr=140, gap=24, pane_left=0):
+        """在渲染区底部 `band_px` 里找**输入栏图标行** ⇒ `(y_abs, [簇中心x…])`；找不到 ⇒ `(0, [])`。
+
+        判据＝"一行里**多个窄簇**（宽 4~60px）"的个数最多那一行（**别用"整行暗像素最多"**：
+        最底下那条窗口边线整行全暗，必然盖过真图标行——2026-09-15 首跑就踩了）。
+        只认聊天面板内那一段（`pane_left+10 … pane_left+420`），免得把别处的字/线算成图标。
+        """
+        w, h = gray.size
+        px = gray.load()
+        best_n, best_y, best = 0, 0, []
+        for y in range(max(0, h - band_px), h):
+            groups, cur = [], []
+            for x in range(w):
+                if px[x, y] < gray_thr:
+                    if cur and x - cur[-1] > gap:
+                        groups.append(cur)
+                        cur = []
+                    cur.append(x)
+            if cur:
+                groups.append(cur)
+            centers = [int((g[0] + g[-1]) / 2) for g in groups if 4 <= (g[-1] - g[0] + 1) <= 60]
+            if pane_left:
+                centers = [c for c in centers if pane_left + 10 <= c <= pane_left + 420]
+            if len(centers) > best_n:
+                best_n, best_y, best = len(centers), y, centers
+        return (best_y, best) if best_n >= 3 else (0, [])
+
+    @staticmethod
     def _input_bar_state(gui=None, img=None):
         """当前视图里**输入栏工具栏在不在** ⇒ (状态, 簇个数, 说明)；状态 True/False/None。
 
-        为什么加（2026-09-15 跨机 P15「发文件点不到」，用户问「会不会是屏幕的原因」）：
-        我们自己的实验会把微信**留在非聊天视图**（点过「发现」、进过朋友圈），而
-        `_file_panel_point()` 算的是"输入栏第 3 个图标"——**那种视图下那个位置根本没有图标**，
-        点多少枪都不会弹「选择文件」；旧代码只会报「微信版本/主题不同可能按钮位置变了」（误导）。
-        判据＝渲染区**底部 140px** 里"宽度 4~60px 的小簇"个数：聊天视图约 5 个（表情/收藏/文件/截图/语音），
-        非聊天视图 0~1 个（注意**别用"整行暗像素最多"**——最底下那条窗口边线整行全暗，必然盖过真图标行）。
-        画面不可信时（窗口最小化 / 抓到纯色假帧）返回 **None ⇒ 上层不判断、不拦**（宁可失败也不误拦）。
+        为什么加（2026-09-15 跨机 P15「发文件点不到」）：我们自己的实验会把微信**留在非聊天视图**
+        （点过「发现」、进过朋友圈），而 `_file_panel_point()` 算的是"输入栏第 3 个图标"——
+        **那种视图下那个位置根本没有图标**，点多少枪都不会弹「选择文件」；旧代码只会报
+        「微信版本/主题不同可能按钮位置变了」（误导）。
+        画面不可信时（窗口最小化 / 抓到纯色假帧，std<3）返回 **None ⇒ 上层不判断、不拦**
+        （启发式必须 **fail-open**：宁可如实失败，也不拿它误拦正常发送）。
         """
         try:
             from PIL import ImageStat
@@ -1622,32 +1649,39 @@ class WeChatAdapter:
             if img is None:
                 return None, 0, "抓不到渲染区画面"
             g = img.convert("L")
-            w, h = g.size
-            band = g.crop((0, max(0, h - 140), w, h))
+            band = g.crop((0, max(0, g.size[1] - 140), g.size[0], g.size[1]))
             st = ImageStat.Stat(band)
             if st.stddev[0] < 3:
                 return None, 0, "画面是纯色假帧（最小化/被遮挡？）std=%.1f" % st.stddev[0]
-            bh = band.size[1]
-            px = band.load()
-            best = 0
-            for y in range(bh):
-                groups, cur = [], []
-                for x in range(w):
-                    if px[x, y] < 140:
-                        if cur and x - cur[-1] > 24:
-                            groups.append(cur)
-                            cur = []
-                        cur.append(x)
-                if cur:
-                    groups.append(cur)
-                n = len([gg for gg in groups if 4 <= (gg[-1] - gg[0] + 1) <= 60])
-                if n > best:
-                    best = n
-            if best >= 3:
-                return True, best, "找到 %d 个图标簇" % best
-            return False, best, "底部 140px 里只有 %d 个图标簇（聊天视图应约 5 个）" % best
+            _y, centers = WeChatAdapter._input_bar_row(g)
+            if len(centers) >= 3:
+                return True, len(centers), "找到 %d 个图标簇" % len(centers)
+            return False, len(centers), "底部 140px 里只有 %d 个图标簇（聊天视图应约 5 个）" % len(centers)
         except Exception as e:
             return None, 0, "判不了：%s" % str(e)[:80]
+
+    @classmethod
+    def _file_panel_point_live(cls, render_rect, pane_left, gray=None):
+        """**优先用实测的图标行**定位「文件」图标（取第 3 个簇），拿不到才退回常量偏移。
+
+        为什么要这样（用户 2026-09-15 原话：「实测投递是成功的，但是他老是点错位置，不是点到截图、
+        就是点到收藏、还有点到语音，很难调」）：`_file_panel_point()` 用的是**固定物理像素偏移**
+        （pane+43/97/151/205/280，本机 150% 下标的，簇间距 ≈54px）。换台机器/换 DPI，间距就变
+        （125% 下 ≈45px）⇒ 固定偏移会**整档错位**，错一档正好落到「收藏」或「截图」上——这正是
+        "很难调"的根因。正解＝**按顺序取第 3 个簇**（表情·收藏·**文件**·截图·语音 的顺序是稳的），
+        与 DPI/窗口尺寸无关。
+        返回 `((x, y), 说明)`；说明写清用的是"实测簇"还是"退回常量"，好在日志/失败信息里追责。
+        """
+        r = render_rect or (0, 0, 0, 0)
+        if gray is not None:
+            y_abs, centers = cls._input_bar_row(gray, pane_left=int(pane_left or 0))
+            if len(centers) >= 3:
+                gap = (centers[-1] - centers[0]) / float(len(centers) - 1) if len(centers) > 1 else 0
+                return ((int(r[0]) + int(centers[2]), int(r[1]) + int(y_abs)),
+                        "实测第 3 个图标簇（共 %d 簇 · 间距≈%.0fpx · 底往上 %dpx）"
+                        % (len(centers), gap, int(r[3] - r[1]) - int(y_abs)))
+        return (cls._file_panel_point(r, pane_left),
+                "退回常量偏移（没拿到图标行：pane+151 / 渲染底−50）")
 
     @staticmethod
     def _file_panel_point(render_rect, pane_left: int):
@@ -1830,10 +1864,18 @@ class WeChatAdapter:
             _stale = _close_stale_file_dialogs()
             if _stale:
                 log.warning("发文件前清掉了 %d 个残留的「选择文件」对话框（上一次异常留下的）", _stale)
-            # ⚠️ 点之前先确认**输入栏在不在**（2026-09-15 P15）：不在聊天视图（例如停在「发现」页）时，
-            #    那一枪必然落空，而旧代码只会报"按钮位置变了"（误导）。判 False ⇒ 先试着切回目标会话；
-            #    仍判 False ⇒ **照常发**（这条只是启发式，宁可如实失败也别误拦），但把原因写进失败信息。
-            _bar, _bar_n, _bar_why = self._input_bar_state(gui)
+            # ⚠️ 点之前**先抓一次画面**，用它做两件事（2026-09-15）：
+            #    ①判「输入栏在不在」＝视图对不对（P15：不在聊天视图时那一枪必然落空）；
+            #    ②**从实测图标行取坐标**（用户报"投递是成功的，但老点错位置，不是收藏就是截图"
+            #      ——固定偏移换机器/换 DPI 会整档错位，见 `_file_panel_point_live`）。
+            _img, _gray = None, None
+            try:
+                from . import chat_header as _ch
+                _img = _ch.capture_image(gui=gui)
+                _gray = _img.convert("L") if _img is not None else None
+            except Exception as _e:                          # noqa: BLE001
+                log.warning("发文件：抓渲染区画面失败（忽略，退回常量坐标）：%s", str(_e)[:80])
+            _bar, _bar_n, _bar_why = self._input_bar_state(img=_img)
             if _bar is False:
                 log.warning("发文件：输入栏图标行没找到（%s）⇒ 当前可能不是聊天视图，先试着切回目标会话",
                             _bar_why)
@@ -1843,11 +1885,17 @@ class WeChatAdapter:
                         _sok, _swhy = self.open_chat_by_search(chat_id, name=_nm)
                         log.info("发文件：切回目标会话 -> %s（%s）", _sok, str(_swhy)[:80])
                         time.sleep(0.4)
-                        _bar, _bar_n, _bar_why = self._input_bar_state(gui)
+                        try:
+                            _img = _ch.capture_image(gui=gui)
+                            _gray = _img.convert("L") if _img is not None else None
+                        except Exception:
+                            _gray = None
+                        _bar, _bar_n, _bar_why = self._input_bar_state(img=_img)
                 except Exception as _e:                      # noqa: BLE001
                     log.warning("发文件：切回目标会话失败（忽略）：%s", str(_e)[:80])
             _bar_hint = "" if _bar is not False else "（可能因为当前不是聊天视图：%s）" % _bar_why
-            pt = self._file_panel_point(r, pane)
+            pt, _pt_why = self._file_panel_point_live(r, pane, gray=_gray)
+            log.info("发文件：点「文件」图标 %s（%s）", pt, _pt_why)
             ok_c, why_c = backend.click(main_hwnd, pt)
             if not ok_c:
                 return False, "投递点「文件」图标失败：%s" % why_c
