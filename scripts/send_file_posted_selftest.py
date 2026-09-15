@@ -440,7 +440,13 @@ _segO = open(os.path.join(_ROOT, "agent", "wechat.py"), encoding="utf-8").read()
 ok("有 _row_time_conflict 实现（活动行时间 vs 目标最后一条消息时间）",
    "def _row_time_conflict" in _segO and "活动行时间对不上" in _segO)
 ok("内容级闸放行前会先查它（源码顺序：content_match 之后立刻查）",
-   _segO.index("if _co.content_match(pane, nd):") < _segO.index("_cf, _cfwhy, _cdec = self._row_time_conflict"))
+   _segO.index("if _co.content_match(pane, nd):") < _segO.index("_cf, _cfwhy, _cdec, _ccmp = self._row_time_conflict"))
+ok("红线口径写进代码：**可比却判不了**才拦（`_ccmp and not _cdec`）",
+   "if _ccmp and not _cdec:" in _segO)
+ok("草稿行按『本来就没有可比时间』处理（不然那条会话永远发不出去）",
+   "活动行是**草稿行**" in _segO and "草稿行不显示时间戳" in _segO)
+ok("发文件成功后顺手学会话头参照（该尺寸没参照时，指纹是唯一还能用的独立证据）",
+   "_learn_chat_header(chat_id, gui=gui)" in open(os.path.join(_ROOT, "agent", "wechat.py"), encoding="utf-8").read())
 try:
     from agent import chat_ocr as _coO
     from agent import wechat as _WO
@@ -468,8 +474,8 @@ try:
     _segCI = open(os.path.join(_ROOT, "agent", "wechat.py"), encoding="utf-8").read()
     _segCI = _segCI[_segCI.index("def chat_identity_ok"):]
     _segCI = _segCI[:_segCI.find("\n    def ", 10)]
-    ok("内容级闸：活动行时间判不了就判否（源码里必须有 not _cdec 这条）",
-       "if not _cdec:" in _segCI and "活动行时间戳读不出" in _segCI)
+    ok("内容级闸：**可比却判不了**就判否（源码里必须有 `_ccmp and not _cdec` 这条）",
+       "if _ccmp and not _cdec:" in _segCI and "活动行时间戳读不出" in _segCI)
 except Exception as _eO:
     ok("_row_time_conflict 行为可测", False, str(_eO)[:80])
 

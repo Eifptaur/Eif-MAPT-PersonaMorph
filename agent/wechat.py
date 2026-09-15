@@ -2467,6 +2467,13 @@ class WeChatAdapter:
                                 self._repeat_guard(chat_id, local_path, note=True)
                             except Exception:
                                 pass
+                            # ⚠️ 2026-09-16 r20：**顺手把这个尺寸的会话头参照学到手**——活动行时间戳读不出时，
+                            #    会话头指纹（tier ②）是唯一还能用的独立证据；这条原来只在 send_text 那条链里学，
+                            #    结果我这次给 E 发文件时"该尺寸没参照 ⇒ 闸门判否 ⇒ 只能走人工确认通道"。
+                            try:
+                                self._learn_chat_header(chat_id, gui=gui)
+                            except Exception:
+                                pass
                             return V_OK, "投递发文件成功（DB 回读 local_id=%s type=%s）" % (
                                 top.get("local_id"), top.get("type_name") or top.get("type"))
                         return V_NOT_SENT, "发出了新消息但不是文件类（local_id=%s type=%s）" % (
@@ -2645,7 +2652,7 @@ class WeChatAdapter:
             from . import chat_ocr as _co
             _lt = self._last_time_hhmm(chat_id)
             if not _lt:
-                return False, "目标最后一条消息不是今天的（列表那行不显示 HH:MM，无从比对）", False
+                return False, "目标最后一条消息不是今天的（列表那行不显示 HH:MM，无从比对）", False, False
             img = _co.capture_best(gui=gui or self._get_gui(), frames=2)
             _ht, _hy = _co.highlight_time(img) if img is not None else ("", None)
             if not _ht:
@@ -2659,12 +2666,30 @@ class WeChatAdapter:
                     if _ht:
                         break
             if not _ht:
-                return False, "活动行时间戳 OCR 连试 5 帧都没读出来（判据不可用）", False
+                # ⚠️ 2026-09-16 r20：**草稿行不显示时间戳**（实测：`[草稿]…` 那一行没有时间）⇒ 这种情况下
+                #    时间"本来就没有可比的"（与"目标是昨天"同类），不能算"判据不可用 ⇒ 判否"，
+                #    否则那条会话**永远发不出去**（本轮我自己就卡在这儿：E 那行有草稿 ⇒ 连试 5 帧都读不出）。
+                _draft_row = False
+                try:
+                    _im = _co.capture_best(gui=gui or self._get_gui(), frames=2)
+                    if _im is not None:
+                        _hl = _co.highlight(_im)
+                        _hy = int((_hl or {}).get("y_abs") or 0)
+                        for _r in _co.session_rows(_im):
+                            if _hy and abs(int(_r.get("y_abs") or 0) - _hy) <= 40:
+                                if "草稿" in str(_r.get("full") or ""):
+                                    _draft_row = True
+                                break
+                except Exception:
+                    _draft_row = False
+                if _draft_row:
+                    return False, "活动行是**草稿行**（不显示时间戳）⇒ 无从比对（按「本来就没有可比时间」处理）", False, False
+                return False, "活动行时间戳 OCR 连试 5 帧都没读出来（判据不可用）", False, True
             if self._norm_hhmm(_ht) != self._norm_hhmm(_lt):
-                return True, "活动行（y=%s）时间 %s ≠ 目标最后一条消息时间 %s" % (_hy, _ht, _lt), True
-            return False, "", True
+                return True, "活动行（y=%s）时间 %s ≠ 目标最后一条消息时间 %s" % (_hy, _ht, _lt), True, True
+            return False, "", True, True
         except Exception:
-            return False, "判据异常", False
+            return False, "判据异常", False, False
 
     def chat_identity_ok(self, chat_id: str, gui=None):
         """**内容级**身份核对：当前聊天区里应看得到目标会话最近若干条文本里的**任意一条**。
@@ -2699,11 +2724,11 @@ class WeChatAdapter:
                     if _co.content_match(pane, nd):
                         # ⚠️ 内容像还不够：**活动行时间必须与目标最后一条消息时间一致**（跨机 r14 的硬证据：
                         #    两个会话内容逐字相同时，内容闸会同时放行两个目标 ⇒ 用"只有一个活动行"把它分开）。
-                        _cf, _cfwhy, _cdec = self._row_time_conflict(chat_id, gui=gui)
+                        _cf, _cfwhy, _cdec, _ccmp = self._row_time_conflict(chat_id, gui=gui)
                         if _cf:
                             return False, ("聊天区内容像目标（%r…），但**活动行时间对不上**（%s）⇒ 判否："
                                            "同屏两个会话内容雷同时，以活动行为准" % (nd[:16], _cfwhy))
-                        if not _cdec:
+                        if _ccmp and not _cdec:
                             # ⛔ 2026-09-16 r16：**判不了就不放行**——但只在"本该判得了"的时候。
                             #    跨机实测：那台的活动行时间戳时好时坏，读不到时"内容像"对同屏两个会话
                             #    同时成立 ⇒ 双放行复现（正对"发错会话"的事故面）⇒ **目标最后一条是今天的
