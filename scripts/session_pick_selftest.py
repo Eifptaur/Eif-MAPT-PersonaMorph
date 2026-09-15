@@ -220,14 +220,16 @@ ok("单字复核走 matches（不再裸全等，草稿标记会剥掉）", "if n
 #      还会把真短 token 挤出名额 ⇒ 针必须是真内容；
 #   ② 聊天区**一个字都读不到**时老实现返回 False（"证据说不是"）—— 该说"判据不可用"（None）；
 #   ③ `pane_text` 单帧原尺寸读，文件卡多的那一屏读成空串 ⇒ 要放大 + 分段重读；
-#   ④ `send_file_posted` 对内容档的 False **无条件拒绝** ⇒ `confirm_open`（用户当面确认这条明路）形同虚设。
+#   ④ `send_file_posted` 对内容档的 False **无条件拒绝** ⇒ `confirm_open`（"**调用方声明**"这条明路）形同虚设。
 ok("① 针里不再收方括号类型占位符", 're.match(r"^\\[[^\\[\\]]{1,16}\\]$", c)' in _src)
 ok("② 聊天区读不到 ⇒ 返回 None（判据不可用），不是 False",
    "if not pane_n:" in _src and "判据不可用，不是「不是这个会话」" in _src)
 ok("③ pane_text 放大 + 分段重读", "def pane_text(img, limit: int = 200, zoom: int = 2)" in _fr_src
    and "分三段" in _fr_src)
-ok("④ 用户当面确认能压过内容档的否定（默认仍 fail-closed）",
-   "if not confirm_open:" in _src and "按人工确认放行" in _src)
+# ⚠️ 2026-09-16 r26 对面指出：日志写"用户当面确认"会让读的人以为有真人点头 —— 实际来源只是
+#    调用方传了 confirm_open=True ⇒ 文案统一改成"调用方声明确认"，这条断言跟着改。
+ok("④ 调用方声明确认（confirm_open）能压过内容档的否定（默认仍 fail-closed）",
+   "if not confirm_open:" in _src and "按声明放行" in _src)
 ok("放宽的只是草稿标记形态（名字行是别的名字仍然否）",
    CO.matches("[草稿]EE", "E") is True and CO.matches("宋孟", "E") is False)
 

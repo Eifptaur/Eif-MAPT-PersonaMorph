@@ -2408,25 +2408,28 @@ class WeChatAdapter:
                     return False, "发文件要求目标会话已打开且被确认：%s" % why_open
                 ok_open, why_open = True, "内容级证据顶替名字闸：%s" % _why0
             if not ok_open:
-                # 人工确认通道：**只在用户当面确认「当前开着的就是目标会话」时用**
-                # （会话标题是浅灰细字、本机 OCR 读不出，E 这种会话自动闸门可能永远判不过）
-                log.warning("发文件：用户当面确认当前会话＝目标会话，跳过自动会话闸（自动判据：%s）", why_open)
+                # ⚠️ 措辞（2026-09-16 r26 对面指出）：**这是"调用方声明"，不是"真人当面确认"**——
+                #    写"用户当面确认"会让读日志的人以为有人点过头。下面所有文案统一改成
+                #    "调用方声明确认（confirm_open=True）"。
+                log.warning("发文件：**调用方声明确认**（confirm_open=True）当前会话＝目标会话，"
+                            "跳过自动会话闸（自动判据：%s）", why_open)
             # ⛔ 内容级身份闸（2026-09-13 发错会话事故后加）：**名字判据会骗人**——
             #    群聊行的预览带发言人前缀（`E: 提交信息…`），会被当成"会话名＝E"从而点进那个群。
             idn, idn_why = self.chat_identity_ok(chat_id, gui=gui)
             if idn is False:
-                # ⛔ 默认 fail-closed；但 `confirm_open=True`（用户在当面确认"当前开着的就是目标会话"）
+                # ⛔ 默认 fail-closed；但 `confirm_open=True`（**调用方声明**"当前开着的就是目标会话"）
                 #   必须能压过**内容级**的否定 —— 这正是这个参数存在的理由（2026-09-14 实测：E 的会话
                 #   明明开着，可它最近几条都是文件卡、我们的针（短 token）不在视口里 ⇒ 内容档一路落空、
-                #   返回 False ⇒ 老写法**无条件拒绝**，人工确认通道根本走不到，等于形同虚设）。
+                #   返回 False ⇒ 老写法**无条件拒绝**，这条通道根本走不到，等于形同虚设）。
                 #   放行时**留痕**：日志 + 返回值里带上判据原文，事后能问责。
                 if not confirm_open:
                     return False, "⛔ 内容核对不通过，拒绝发送（防发错会话）：%s" % idn_why
-                log.warning("发文件：内容级核对判否，但用户当面确认当前会话＝目标会话 ⇒ 按人工确认放行"
-                            "（判据原文：%s）", idn_why)
-                idn_why = "%s（已按用户当面确认放行）" % idn_why
+                log.warning("发文件：内容级核对判否，但**调用方声明确认**（confirm_open=True）"
+                            "⇒ 按声明放行（判据原文：%s）", idn_why)
+                idn_why = "%s（已按调用方声明确认放行）" % idn_why
             if idn is None and not confirm_open:
-                return False, "拿不到内容级证据，拒绝发送：%s（确已人工确认可用 confirm_open）" % idn_why
+                return False, ("拿不到内容级证据，拒绝发送：%s"
+                               "（若确已确认当前会话就是目标，可显式传 confirm_open=True）" % idn_why)
             main_hwnd = int(getattr(gui, "main_hwnd", 0) or 0) or ib.find_main_window()
             if not main_hwnd:
                 return False, "找不到微信主窗"
@@ -2861,11 +2864,12 @@ class WeChatAdapter:
             # ⛔ 2026-09-14 修（⑤ 重发实测）：**聊天区一个字都读不到**时，老实现一路走到最后返回 `False`
             #   ＝"核对不通过：当前开着的很可能不是目标会话" —— 可我们**根本没拿到证据**，这是把
             #   "判据不可用"说成了"证据说不是"（同 ④ 的教训）。后果很实在：`send_file_posted` 里
-            #   `idn is False` 是**无条件拒绝**的（连 `confirm_open` 人工确认通道都走不到）⇒ 屏幕一
-            #   读不出字，用户当面确认"就是 E 的会话"也发不出去。⇒ 读不到就如实返回 `None`（判据不可用）。
+            #   `idn is False` 是**无条件拒绝**的（连 `confirm_open` 这条声明通道都走不到）⇒ 屏幕一
+            #   读不出字，调用方声明"就是 E 的会话"也发不出去。⇒ 读不到就如实返回 `None`（判据不可用）。
             if not pane_n:
                 return None, ("聊天区一个字都没读到（判据不可用，不是「不是这个会话」）："
-                              "抓图可能有遮挡/在滚动中，或这一屏确实没有文字；用户当面确认可走 confirm_open")
+                              "抓图可能有遮挡/在滚动中，或这一屏确实没有文字；"
+                              "确已确认当前会话是目标时可显式传 confirm_open=True")
             for nd in needles:
                 nn = _co.norm_alnum(nd)
                 if len(nn) >= 6:
