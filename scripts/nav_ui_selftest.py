@@ -70,13 +70,15 @@ ok("收起时隐藏名字（.side.tight .nav .lb{display:none}）",
    re.search(r"\.side\.tight \.nav a \.lb\{display:none\}", HTML) is not None)
 ok("收起时导航变窄（.side.tight{width:...}）", re.search(r"\.side\.tight\{width:", HTML) is not None)
 ok("状态持久化（localStorage）", "localStorage.setItem('navTight'" in HTML and "localStorage.getItem('navTight')" in HTML)
-# 2026-09-14 口径变更：按钮从「收起/展开」两个字改成贴右缘的箭头把手（‹ / ›）——
-# 用户要求「它居然是左收起，应该是右收起，靠近那个功能栏」＋收起态栏要更宽更松。
-ok("按钮图标会跟着切换（‹ 收起 / › 展开）", "tgEl.textContent = now ? '›' : '‹'" in HTML)
-ok("收起把手贴导航右缘（不是左侧、不是通栏按钮）",
-   re.search(r"\.side \.nav-tg\{position:absolute;right:2px", HTML) is not None)
-ok("收起态栏更宽（≥84px，图标 22px、行距 14px）",
-   re.search(r"\.side\.tight\{width:8[4-9]px\}", HTML) is not None
+# 口径沿革（改这节前先看）：2026-09-14 要求「右收起、靠近功能栏」⇒ 贴右缘小把手（88px）；
+# **2026-09-15 用户当面又点了两条**（「收起位置错——收起后导航要贴住功能栏，不许留空档」＋
+# 「收起按钮太小，在导航里单开一栏写收起/展开、整行可点」）⇒ 小把手被换成**整行按钮**，
+# 栅格列宽也跟着收（.shell.tight 64px）。下面三条按**新口径**写，旧的 88px / absolute 断言已作废。
+ok("收起按钮是整行（不是贴右缘的小把手）", ".side .nav-tg{position:static;width:100%" in HTML)
+ok("收起/展开文案会跟着切换", "tgEl.textContent = on ? '› 展开' : '‹ 收起'" in HTML)
+ok("收起态：栅格列跟着收（否则中间白留一截）+ 图标与行距不变",
+   ".shell.tight{grid-template-columns:64px 1fr;gap:8px}" in HTML
+   and ".side.tight{width:100%}" in HTML
    and ".side.tight .nav a svg{width:22px" in HTML
    and ".side.tight .nav a{justify-content:center;gap:0;padding:14px 0}" in HTML)
 

@@ -254,12 +254,15 @@ a:hover,a:focus,a:visited,a:active{text-decoration:none}   /* 控制台所有字
   pointer-events:none;opacity:.9;transition:opacity .55s, transform .55s ease-out}
 .topbar .sp{flex:1}
 .chip{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:16px;background:var(--bg-solid);
-  height:26px;box-sizing:border-box;line-height:1;color:var(--tx)}
+  height:26px;box-sizing:border-box;line-height:1;font-size:12px;white-space:nowrap;
+  border:1px solid var(--bd);color:var(--tx2)}
 /* 三个状态胶囊统一（2026-09-15 用户：「右上角的三个标签没有统一化，长得都不一样」）：
    旧情况＝「运行」有 dot、「模型」有 <b>、「余额」是纯文本、「改完即生效」里塞了个复选框（内边距被撑开）。
-   现在统一：同一高度/内边距/字号/边框，复选框尺寸固定，数值统一用 <b>。 */
+   现在统一：同一高度/内边距/字号/边框，复选框尺寸固定，数值统一用 <b>。
+   ⚠️ 改这段别把声明拆到规则外面：`no_underline_selftest` 的「花括号配平」专抓孤儿声明行。
+   2026-09-15 实测踩过——上一轮 UI 批量改胶囊时，`#autoChip input{…}` 被插进了 `.chip{…}` 的声明中间，
+   尾部四行成了孤儿声明、被浏览器整段丢弃 ⇒ 胶囊其实一直没有边框与 12px 字号（肉眼不容易发现）。 */
 #autoChip input{width:14px;height:14px;margin:0;flex:0 0 auto;accent-color:var(--blue)}
-  border:1px solid var(--bd);color:var(--tx2);font-size:12px;white-space:nowrap}
 .chip b{color:var(--tx)}
 .chip .dot{width:8px;height:8px;border-radius:50%;background:var(--err)}
 .chip .dot.on{background:var(--ok)}
@@ -1059,8 +1062,8 @@ th{color:var(--tx2);font-weight:500}
         <span class="hint">选「自带模型」再填下面的地址（GPT-SoVITS / RVC 之类自己跑的 HTTP 接口）。<b>不通会在发送时如实报错，不会假装发过。</b></span></div></div>
       <div class="row"><label>模型地址</label><div class="grow"><input type="text" data-cfg="voice_reply.http_url" placeholder="如 http://127.0.0.1:9880/tts">
         <div class="btns" style="margin-top:6px"><button id="ttsProbe" class="ghost" type="button">连通测试</button><span class="hint" id="ttsProbeOut"></span></div>
-        <span class="hint">回音频字节（audio/wav）直接用；回 JSON 就在下面填字段名。</span></div></div>
-      <div class="row"><label>JSON 字段</label><div class="grow"><input type="text" data-cfg="voice_reply.http_json_field" placeholder="如 data（base64）或 audio（文件路径）；回音频字节就留空">
+        <span class="hint">回音频字节（audio/wav）直接用；回配置格式就在下面填字段名。</span></div></div>
+      <div class="row"><label>取哪个字段</label><div class="grow"><input type="text" data-cfg="voice_reply.http_json_field" placeholder="如 data（内容编码）或 audio（文件路径）；回音频字节就留空">
         <span class="hint">这条通道只能证明<b>端点通不通、返回的是不是音频</b>；<b>音色是不是目标角色属「未声明」</b>，发出去的仍是音频文件。</span></div></div>
       <script>
       (function(){
@@ -1177,7 +1180,7 @@ th{color:var(--tx2);font-weight:500}
       <div class="row"><label>轮询间隔(秒)</label><div class="grow"><input type="number" step="0.5" min="0.5" data-cfg="wechat.poll_interval"></div></div>
       <div class="row"><label>每分钟限发</label><div class="grow"><input type="number" min="1" data-cfg="wechat.rate_limit_per_minute"></div></div>
       <div class="row"><label>允许盲试点击</label><input type="checkbox" data-cfg="wechat.allow_click_hunting"><span class="hint">默认关：侧栏图标认不出来时绝不猜位置乱点（只在确认是「发现」时才点）。开了它才会按图标顺序/比例试点几下——试错会点到你其它图标上。</span></div>
-      <div class="row"><label>最小化提醒</label><input type="checkbox" data-cfg="wechat.minimize_warning"><span class="hint">勾选=提示别最小化微信窗口（发送依赖模拟键鼠）</span></div>
+      <div class="row"><label>最小化提醒</label><input type="checkbox" data-cfg="wechat.minimize_warning"><span class="hint">勾选=提醒你最好别最小化微信窗口（最小化时读不到画面，切会话与发送都会先停下）</span></div>
       <div class="row"><label>群白名单</label>
         <div class="grow">
           <div class="chips" id="wlChips"></div>
@@ -5313,8 +5316,10 @@ $('memSearch').addEventListener('keydown', (e)=>{
         const r = await postJSON('/api/feedback/submit', {kind:k, text:t, contact:c});
         if(r && r.state === 'sent'){ rst.textContent = '已发出（' + (r.via==='smtp'?'邮件':'网址') + '）'; rst.style.color='var(--ok-tx)'; }
         else if(r && r.state === 'queued'){ rst.textContent = '注意：已存在本机，但还没发出去：' + (r.why||'') + '（待发 ' + (r.pending||0) + ' 条）'; rst.style.color='var(--warn)'; }
+        else if(r && r.state === 'blocked'){ rst.textContent = (r.why||'发得太频繁了') + '——这条没有发出，也没保存，内容还在框里。'; rst.style.color='var(--warn)'; }
         else { rst.textContent = '' + ((r&&r.why)||'提交失败'); rst.style.color='var(--err-tx)'; }
-        document.getElementById('fbText').value = '';
+        // 被限流时**不清空输入框**：内容还给用户，改一改或等一会儿再发
+        if(!(r && r.state === 'blocked')) document.getElementById('fbText').value = '';
         fbLoad();
       }catch(e){ if(rst){ rst.textContent = '' + e.message; rst.style.color='var(--err-tx)'; } }
       btn.disabled = false;
