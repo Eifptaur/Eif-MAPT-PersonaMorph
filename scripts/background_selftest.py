@@ -319,6 +319,22 @@ ck("D5 档位随 /api/status 显示（touches_cursor ⇒ 会动光标）",
 ck("D6 矩阵只在 bg_status 一份（控制台不另写单子）",
    SRC_CONSOLE.count('"poke"') == 0 and SRC_CONSOLE.count('"calibrate"') == 0)
 
+print("\n[E] 死键收口：wechat.minimize_warning 必须真的有代码读它")
+# 2026-09-15：这个键原来只在 config.py 与控制台出现，业务代码一处都没读 ⇒ 勾了没用（死键）。
+# 现在它管 `_ensure_main_visible()` 里「最小化 + 未开自动还原」那一条的提醒。
+_WX_SRC = io.open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
+ck("E1 wechat.py 真的读了 minimize_warning", 'cfg.get("minimize_warning"' in _WX_SRC)
+_i_restore = _WX_SRC.find('cfg.get("restore_minimized"')
+_i_warn = _WX_SRC.find('cfg.get("minimize_warning"')
+ck("E2 提醒就在「最小化 + 未开自动还原」那条分支上（两处读配置挨着）",
+   _i_restore > 0 and _i_warn > _i_restore and (_i_warn - _i_restore) < 600,
+   "restore@%d warn@%d" % (_i_restore, _i_warn))
+ck("E3 关掉提醒时仍留一行说明（不是什么都不说）", "已按设置不提醒" in _WX_SRC)
+ck("E4 提醒文案告诉用户两条出路（打开自动还原 / 关掉提醒）",
+   "就把「最小化时自己还原」打开" in _WX_SRC and "就把「最小化提醒」关掉" in _WX_SRC)
+ck("E5 反证：这个键只在函数体里被读，不是散在别处又抄一份默认值",
+   _WX_SRC.count('minimize_warning') <= 3, "出现 %d 次" % _WX_SRC.count("minimize_warning"))
+
 print("\n[结论] %d 通过 / %d 失败" % (len(OK), len(BAD)))
 if BAD:
     print("失败项：%s" % BAD)

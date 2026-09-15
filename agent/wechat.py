@@ -1058,6 +1058,16 @@ class WeChatAdapter:
             from .config import get_config
             cfg = (get_config() or {}).get("wechat", {}) or {}
             if not bool(cfg.get("restore_minimized", True)):
+                # 2026-09-15 接线：`wechat.minimize_warning` 原来是**死键**（config 里有、控制台有、
+                # 没有任何业务代码读它，所以勾了没用）。现在它管的就是这一条：**因为你把「最小化时
+                # 自己还原」关了，微信最小化时我干不了活**。开着提醒就把话说清楚（日志/控制台可见），
+                # 关掉就只留一行说明——不假装做成、也不反复唠叨。
+                if bool(cfg.get("minimize_warning", True)):
+                    log.warning("微信主窗现在是最小化的，而「最小化时自己还原」是关的 ⇒ 这一次只能如实停下"
+                                "（不假装做成）。想让它自己接着干，就把「最小化时自己还原」打开；"
+                                "不想再看到这条提醒，就把「最小化提醒」关掉。")
+                else:
+                    log.info("微信主窗最小化且未开自动还原 ⇒ 如实停下（已按设置不提醒）")
                 return False
             u.ShowWindow(int(main), 4)                                   # SW_SHOWNOACTIVATE
             time.sleep(0.4)

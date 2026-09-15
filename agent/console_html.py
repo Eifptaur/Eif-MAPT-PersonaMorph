@@ -1293,7 +1293,7 @@ th{color:var(--tx2);font-weight:500}
       <div class="row"><label>轮询间隔(秒)</label><div class="grow"><input type="number" step="0.5" min="0.5" data-cfg="wechat.poll_interval"></div></div>
       <div class="row"><label>每分钟限发</label><div class="grow"><input type="number" min="1" data-cfg="wechat.rate_limit_per_minute"></div></div>
       <div class="row"><label>允许盲试点击</label><input type="checkbox" data-cfg="wechat.allow_click_hunting"><span class="hint">默认关：侧栏图标认不出来时绝不猜位置乱点（只在确认是「发现」时才点）。开了它才会按图标顺序/比例试点几下——试错会点到你其它图标上。</span></div>
-      <div class="row"><label>最小化提醒</label><input type="checkbox" data-cfg="wechat.minimize_warning"><span class="hint">勾选=提醒你最好别最小化微信窗口（最小化时读不到画面，切会话与发送都会先停下）</span></div>
+      <div class="row"><label>最小化提醒</label><input type="checkbox" data-cfg="wechat.minimize_warning"><span class="hint">勾选=当微信被最小化、而下面「最小化时自己还原」又是关的（那时我抓不到画面、切会话与发送都干不了），就把原因和两条出路说清楚；关掉＝这类情况只静默记一行。</span></div>
       <div class="row"><label>最小化时自己还原</label><input type="checkbox" data-cfg="wechat.restore_minimized"><span class="hint">勾选=微信被最小化时，程序把它**不激活地**还原到屏幕上再继续（不动鼠标、不抢前台；只是窗口会重新出现）。取消勾选＝最小化时如实停下</span></div>
       <div class="row"><label>会不会跟你抢操作</label><span class="hint">全程只发投递消息：你在别处打字、别的窗口盖住微信，都不影响它干活。只有一种情况会撞车——**你正在同一个会话里切会话或打字**时，它可能和你抢同一步操作；撞了它会用聊天区内容复核，对不上就让步、不硬凑。</span></div>
       <div class="row"><label>群白名单</label>
