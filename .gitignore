@@ -51,3 +51,4 @@ offline/
 
 # 不杀进程部署 exe 时留下的旧映像（运行中的实例还映射着，只能等它退出后才删得掉）
 _*.exe.old-*
+browser-screenshots/
