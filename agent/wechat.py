@@ -2253,8 +2253,20 @@ class WeChatAdapter:
                         return True, ("高亮行（y=%s）时间 %s ＝目标会话最后一条消息时间%s"
                                       % (_hy, _ht, "，聊天区里也出现同一时间" if _pane_hit
                                          else "，且该时刻在会话列表里唯一（只有一个会话是它）"))
+            # ⚠️ 失败信息里**必须带观测量**（2026-09-16 跨机需求②「内容级闸的 OCR 口径」）：
+            #    只报"没有目标会话的任何一条文本"分不清 **"根本没有信号"** 与 **"信号被阈值判掉"**
+            #    （前者该判否，后者说明阈值/归一化有问题）⇒ 把聊天区读到多少字、每条针的最好匹配
+            #    （最长命中片 + 相似度）全打出来，对面把那行发回来就能定位。
+            try:
+                from . import chat_ocr as _co2
+                _obs = "；".join(
+                    "%r→最长命中 %d 字/相似度 %.2f" % (str(_nd)[:10], *_co2.best_partial(pane, str(_nd))[:2])
+                    for _nd in needles[:3])
+            except Exception:
+                _obs = "（观测量算不出来）"
             return False, ("聊天区里**没有**目标会话最近的任何一条文本（试过 %d 条，如 %r…；文件卡档：%s）"
-                           "⇒ 当前开着的很可能不是目标会话" % (len(needles), needles[0][:16], f_why))
+                           "｜观测：聊天区读到 %d 字（前 24 字 %r）· %s ⇒ 当前开着的很可能不是目标会话"
+                           % (len(needles), needles[0][:16], f_why, len(pane), pane[:24], _obs))
         except Exception as e:
             return None, "内容核对异常：%s" % type(e).__name__
 

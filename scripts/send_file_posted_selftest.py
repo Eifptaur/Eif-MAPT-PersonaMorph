@@ -247,5 +247,31 @@ try:
 except Exception as _e4:
     ok("r8 回归（合成图）能跑", False, str(_e4)[:100])
 
+print("── J. 内容级闸的观测口径（跨机需求②：分清「没信号」与「信号被阈值判掉」）──")
+try:
+    from agent import chat_ocr as _co3
+    _pane = "落空，责任在我这一侧的落占，你手点就能弹系统「选择文件」，我们这轮把定位统一了"
+    _n_len, _ratio, _frag = _co3.best_partial(_pane, "你手点就能弹系统「选择文件」")
+    ok("整段就在聊天区里 ⇒ 命中 ≥8 字、相似度 1.0", _n_len >= 8 and _ratio >= 0.99,
+       "%d 字 / %.3f / %r" % (_n_len, _ratio, _frag))
+    _n_len2, _ratio2, _frag2 = _co3.best_partial(_pane, "你手点就能弹系统选择文件我们这轮把定位统一了")
+    ok("针更长但被 OCR 吞字 ⇒ 仍能给出『部分命中』（这就是「信号被阈值判掉」的样子）",
+       _n_len2 >= 6, "%d 字 / %.3f / %r" % (_n_len2, _ratio2, _frag2))
+    _n_len3, _ratio3, _ = _co3.best_partial(_pane, "完全不相干的另一句话在这里")
+    ok("不相干的针 ⇒ 命中很短、相似度低（这就是「根本没有信号」）",
+       _n_len3 <= 4 and _ratio3 < 0.5, "%d 字 / %.3f" % (_n_len3, _ratio3))
+    ok("空针 ⇒ (0, 0.0, '')，不抛异常", _co3.best_partial(_pane, "")[:2] == (0, 0.0))
+    _wxsrc = open(os.path.join(_ROOT, "agent", "wechat.py"), encoding="utf-8").read()
+    _segid = _wxsrc[_wxsrc.index("def chat_identity_ok"):_wxsrc.index("def _last_time_hhmm")]
+    ok("闸门失败信息里会带观测量（聊天区字数 + 每条针的最好匹配）",
+       "观测：聊天区读到" in _segid and "best_partial" in _segid)
+    _probe3 = open(os.path.join(_ROOT, "scripts", "identity_probe.py"), encoding="utf-8").read()
+    ok("随包发了只读诊断探针 identity_probe.py（只用抓图/读库/OCR）",
+       "chat_identity_ok" in _probe3 and "capture_best" in _probe3)
+    ok("诊断探针是只读的（不许出现 send_file / 真鼠标点击调用）",
+       ("send_file" not in _probe3) and ("be.click" not in _probe3))
+except Exception as _e5:
+    ok("观测口径（合成文本）能跑", False, str(_e5)[:100])
+
 print("== [send-file-posted] 判据：{} 通过 / {} 失败 ==".format(PASS, FAIL))
 sys.exit(1 if FAIL else 0)
