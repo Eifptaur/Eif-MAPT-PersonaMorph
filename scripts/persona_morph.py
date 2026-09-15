@@ -636,7 +636,11 @@ class Orchestrator:
             response = chat_completion_with_retry({"messages": messages, "tools": openai_tools})
             session["model"] = response.get("model") or session["model"]
             add_usage(session["usage"], response.get("usage"))
-            session["usage"]["calls"] += 1
+            # ⚠️ 不要在这里再 +1：add_usage() 内部已经 target["calls"] += 1（agent/llm.py:338）。
+            #    2026-09-15 修（token 调研第 1 轮 C9）：这一行让 calls 长期虚高一倍
+            #    ⇒ usage_stats.json 的 "calls": 248 实际只有 ≈124 步，控制台"调用次数"看着是双倍。
+            #    判据：scripts/whale_selftest.py 的「calls 单点来源」（连调两次 add_usage ⇒ calls==2，
+            #    且本文件里不得再出现 usage["calls"] += 1）。
             try:
                 self.whale.note_call(session["model"], response.get("usage"))
             except Exception:
