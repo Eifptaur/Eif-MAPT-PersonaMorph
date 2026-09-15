@@ -362,6 +362,11 @@ DEFAULT_CONFIG = {
         "max_frames": 4,              # 默认抽 4 帧（上限 8，见 agent/video_read.py::MAX_FRAMES）
         "max_seconds": 60,            # 音频最多识别这么多秒
     },
+    # ── B 站视频（2026-09-15）：群友丢链接时能去查标题/UP/简介/字幕；"听"那段会下音频轨 ──
+    "bilibili": {
+        "enabled": True,              # 关掉＝模型拿不到这个工具（它会如实说"这功能被关了"）
+        "listen_max_seconds": 120,    # "听一遍"最多听多少秒（只下声音那一轨）
+    },
     # ── 记忆 ───────────────────────────────────────────────────────────
     "memory": {
         "consolidate_enabled": True,

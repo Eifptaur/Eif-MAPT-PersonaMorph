@@ -352,6 +352,10 @@
   "max_frames": 4,
   "max_seconds": 60
  },
+ "bilibili": {
+  "enabled": true,
+  "listen_max_seconds": 120
+ },
  "memory": {
   "consolidate_enabled": true,
   "consolidate_min_interval_ms": 21600000,

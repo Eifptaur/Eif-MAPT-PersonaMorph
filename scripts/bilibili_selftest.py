@@ -192,6 +192,44 @@ ok("执行体走 bilibili.info（不是另写一套）", "_bili.info(" in _src a
 ok("执行体在拿不到时返回错误而不是空数据", 'return _err("解析不了这条 B 站链接' in _src)
 ok("反证：没有出现「解析失败就当成功」的兜底", "解析不了这条 B 站链接" in _src and "return _ok({" in _src)
 
+# ── J. 功能映射与连接（用户 2026-09-15：「在UI上做好功能映射和功能连接」）──────────
+sect("J. 功能映射：配置键 / 控制台开关 / 关掉真的拒绝 / 文案不说黑话")
+import json as _json                                     # noqa: E402
+from agent.config import DEFAULT_CONFIG as _DC            # noqa: E402
+
+_bc = (_DC.get("bilibili") or {})
+_H2 = __import__("agent.console_html", fromlist=["HTML"]).HTML
+H = _H2
+ok("config 里有 bilibili 段", bool(_bc), str(list(_bc.keys())))
+ok("默认开、且给了听的秒数上限", _bc.get("enabled") is True and int(_bc.get("listen_max_seconds") or 0) > 0,
+   "enabled=%s listen=%s" % (_bc.get("enabled"), _bc.get("listen_max_seconds")))
+_ex = _json.load(open("config.example.json", encoding="utf-8"))
+ok("config.example.json 同步有这一段（示例不带 = 用户看不到这个开关）",
+   _ex.get("bilibili") == _bc, str(_ex.get("bilibili")))
+ok("控制台有「看懂B站链接」开关", 'data-cfg="bilibili.enabled"' in H)
+ok("控制台有「听B站视频(秒)」上限", 'data-cfg="bilibili.listen_max_seconds"' in H)
+
+# 关掉时工具必须如实拒绝（不是静默、也不是照做）
+from agent import tools as _T2                            # noqa: E402
+from agent import config as _C2                           # noqa: E402
+_real_gc = _C2.get_config
+try:
+    _C2.get_config = lambda: {"bilibili": {"enabled": False}}
+    _r = _T2._exec_read_bilibili({"session": {}, "emit": lambda *a, **k: None}, {"url": "BV1xx411c7mD"})
+    _s = _json.dumps(_r, ensure_ascii=False)
+    ok("关掉后工具如实拒绝（不假装、不去联网）",
+       ("关闭" in _s) and ("bilibili.enabled" in _s), _s[:90])
+finally:
+    _C2.get_config = _real_gc
+
+# 文案不许对一般用户说黑话（这一条是被用户点名后加的）
+import re as _re2                                         # noqa: E402
+_bad_words = ["EDGE_VOICES", "edge_tts_selftest", "voice_models", "bilibili.enabled",
+              "判据", "_selftest", "config.json 里改"]
+_seg_bili = H[H.find('data-cfg="bilibili.enabled"'): H.find('data-cfg="bilibili.enabled"') + 700]
+ok("B 站那两个开关的说明里没有开发者黑话",
+   not any(w in _seg_bili for w in ["EDGE_VOICES", "判据", "_selftest", ".py"]), _seg_bili[:70])
+
 # ── I. 「自己听视频」：只下音频轨 + 本机识别（不走 yt-dlp）────────────────────
 sect("I. 听视频：音频流怎么取、失败怎么报")
 _sg, _sd = B._get_json, B._download

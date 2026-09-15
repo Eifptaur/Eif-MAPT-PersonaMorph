@@ -124,6 +124,23 @@ ok("可见文本里没有 undefined / NaN / null", not fake_hits,
 for w0, seg in fake_hits[:8]:
     print("      %s：…%s…" % (w0, seg))
 
+print("\n── D. 不许对一般用户说「开发黑话」（模块名 / 判据名 / 下划线键名）──")
+# 用户 2026-09-15 原话：「注意你新加的这些功能文案，尽量能让一般用户也能看懂啊」
+# 起因：我给 edge 音色写的说明里出现了 voice_models.EDGE_VOICES / edge_tts_selftest.py 这类
+# 只有开发者看得懂的东西（已改成「晓晓、云希…挑一个顺耳的」）。
+DEV_WORDS = ["voice_models", "EDGE_VOICES", "edge_tts_selftest", "_selftest", ".py 会",
+             "判据", "backends", "fallback", "webhook", "JSON", "API Key 的字段"]
+DEV_RE = [r"\b[a-z_]+\.(?:py|json|db)\b", r"\b[a-z]+_[a-z_]+\b(?=[^`]*?\b开关\b)"]
+dev_hits = []
+for w0 in DEV_WORDS:
+    for m in re.finditer(re.escape(w0), visible):
+        seg = visible[max(0, m.start() - 30):m.start() + 30].replace("\n", " ")
+        dev_hits.append((w0, seg.strip()))
+ok("可见文案里没有开发黑话（模块名/判据名/下划线键名）", not dev_hits,
+   "命中 %s（%d 处）" % (sorted({h[0] for h in dev_hits})[:6], len(dev_hits)) if dev_hits else "")
+for w0, seg in dev_hits[:8]:
+    print("      %s：…%s…" % (w0, seg))
+
 print("\n── C. 术语通俗化（不许裸英文术语）──")
 jar_hits = []
 for w0 in JARGON:
