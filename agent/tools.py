@@ -1273,6 +1273,13 @@ def _exec_read_bilibili(ctx, args):
     """
     try:
         from . import bilibili as _bili
+        from .config import get_config as _gc2
+        try:
+            _bcfg = (_gc2() or {}).get("bilibili") or {}
+        except Exception:
+            _bcfg = {}
+        if _bcfg.get("enabled") is False:
+            return _err("看懂 B 站链接这个功能已在控制台关闭（bilibili.enabled）")
         v, why = _bili.info(str(args.get("url") or args.get("text") or ""))
         if not v:
             return _err("解析不了这条 B 站链接：%s" % why)

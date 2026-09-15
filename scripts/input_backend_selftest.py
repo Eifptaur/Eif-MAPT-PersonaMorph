@@ -150,6 +150,28 @@ ck("R2 基线文件仍然存在（防止改名绕过）",
    all(os.path.exists(p) for p in BASELINE))
 ck("R3 总数在下降而不是上升", sum(hits.values()) <= 36, "当前 %d 处" % sum(hits.values()))
 
+print("\n[S] input.press_ms / input.activate 不再是死键（2026-09-15 接线）")
+# 改前：这两个键只在 config.py 定义，全仓没一处读 —— 用户改 config.json 完全没用
+# （MessageBackend 的默认值写死在构造函数签名里）。现在 select_backend 会读进去。
+from agent import input_backend as IB        # noqa: E402
+_b1 = IB.select_backend({"input": {"backend": "message"}})
+ck("S1 默认仍是 press_ms=60 / activate=True（没改默认行为）",
+   getattr(_b1, "press_ms", None) == 60 and getattr(_b1, "activate", None) is True,
+   "press=%s act=%s" % (getattr(_b1, "press_ms", None), getattr(_b1, "activate", None)))
+_b2 = IB.select_backend({"input": {"backend": "message", "press_ms": 123, "activate": False}})
+ck("S2 配置真的生效（123 / False）",
+   getattr(_b2, "press_ms", None) == 123 and getattr(_b2, "activate", None) is False,
+   "press=%s act=%s" % (getattr(_b2, "press_ms", None), getattr(_b2, "activate", None)))
+ck("S3 越界值被夹住（0 -> 1，99999 -> 2000）",
+   IB.select_backend({"input": {"backend": "message", "press_ms": 0}}).press_ms == 1
+   and IB.select_backend({"input": {"backend": "message", "press_ms": 99999}}).press_ms == 2000)
+ck("S4 脏值不炸（字符串/None 都能兜住）",
+   IB.select_backend({"input": {"backend": "message", "press_ms": "abc"}}).press_ms == 60
+   and IB.select_backend({"input": {"backend": "message", "press_ms": None}}).press_ms == 60)
+ck("S5 反证：real 档不受这两个键影响（真鼠标档没有这两个参数）",
+   not isinstance(IB.select_backend({"input": {"backend": "real", "press_ms": 123}}),
+                  IB.MessageBackend) if hasattr(IB, "MessageBackend") else True)
+
 print("\n[结论] %d 通过 / %d 失败" % (len(OK), len(BAD)))
 if BAD:
     print("失败项：%s" % BAD)

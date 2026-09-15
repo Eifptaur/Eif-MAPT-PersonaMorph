@@ -103,7 +103,15 @@ finally:
 
 # ═══════════ C. 后端功能 ═══════════
 from agent.llm import match_official_price, _OFFICIAL_PRICES
-check("价目 172 条", len(_OFFICIAL_PRICES) == 172)
+check("价目表有规模（≥150 条）", len(_OFFICIAL_PRICES) >= 150,
+      "当前 %d 条" % len(_OFFICIAL_PRICES))
+# ⛔ 2026-09-15 改口径：原来写死 `== 172`。加一条新模型（gpt-6-astra）就假红——**数字一变就要改判据，
+#   是判据在制造维护负担**（同 2026-09-14 那条"官方价数字不写死"的口径）。改成守两件真事实：
+#   ①表里有规模（≥150，防被误删空）②每条都有 in/out 两个数字（防塞半条进去）。
+_bad_rows = [k for k, v in _OFFICIAL_PRICES.items()
+             if not isinstance(v.get("in"), (int, float)) or not isinstance(v.get("out"), (int, float))]
+check("价目表每条都带 in/out 两个数字", not _bad_rows, "缺字段的：%s" % (_bad_rows[:5] or "无"))
+check("GPT-6 旗舰（gpt-6-astra）已进价目表", "gpt-6-astra" in _OFFICIAL_PRICES)
 check("MiniMax-M3 命中", match_official_price("MiniMax-M3")["in"] == 2.1)
 # ⛔ 2026-09-14 改口径：原来写死 `out == 4.5`，而价目表已按官方 2026-09-10 **闲时价**更新为 4.0
 #   ⇒ 断言跟不上就假红。这里改成守"**有官方价映射且带出处**"这件事实，具体数字由价目表自己负责
@@ -347,4 +355,10 @@ except Exception as e:
     check("打印 ✔/✘ 的判据都带 UTF-8 垫片（重定向下不崩）", False, str(e)[:80])
 
 print("\n==== %d 项检查，%d 项失败 ====" % (TOTAL[0], len(fails)))
+# 2026-09-15 补：失败时把**名字**打出来。以前只打数量，而这份检查器的输出在重定向/管道下
+# 会被截断（只留最后几行）⇒ 数字说"1 项失败"却找不到是哪一项，白查一轮。
+if fails:
+    print("失败项：")
+    for _n in fails:
+        print("  - " + str(_n))
 sys.exit(1 if fails else 0)

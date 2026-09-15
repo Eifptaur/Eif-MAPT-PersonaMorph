@@ -406,15 +406,30 @@ class RealInputBackend(InputBackend):
 
 
 def select_backend(cfg: dict | None = None, gui=None) -> InputBackend:
-    """按 `config.input.backend` 选档：auto（默认，有主窗就用投递）/ message / real。"""
-    want = str(((cfg if cfg is not None else get_config()).get("input") or {}).get("backend", "auto")).lower()
+    """按 `config.input.backend` 选档：auto（默认，有主窗就用投递）/ message / real。
+
+    `config.input.press_ms` 与 `config.input.activate` 也在这里生效（2026-09-15 接线）：
+    这两个键以前是**死键**——`MessageBackend(press_ms=60, activate=True)` 把默认值写死在
+    构造函数里，全仓没有一处读配置 ⇒ 用户在 config.json 里改它们完全没用。现在从这里读进去，
+    默认值仍是 60 / True（不改默认行为）。
+    """
+    c = cfg if cfg is not None else get_config()
+    icfg = c.get("input") or {}
+    want = str(icfg.get("backend", "auto")).lower()
+    try:
+        _press = int(icfg.get("press_ms", 60))
+    except Exception:
+        _press = 60
+    _press = max(1, min(2000, _press))                      # 夹在合理区间：1ms~2s
+    _activate = bool(icfg.get("activate", True))
     if want == LEVEL_REAL:
         return RealInputBackend(gui)
     if want == LEVEL_MESSAGE:
-        return MessageBackend()
+        return MessageBackend(press_ms=_press, activate=_activate)
     # auto：有微信主窗（**不论是否可见/最小化**）就走投递；一个窗口都找不到才退回真鼠标。
     # ⚠️ 绝不能因为"窗口不可见"就退回 L0 —— 那会在用户毫无察觉时动他的光标。
-    return MessageBackend() if find_main_window() else RealInputBackend(gui)
+    return (MessageBackend(press_ms=_press, activate=_activate)
+            if find_main_window() else RealInputBackend(gui))
 
 
 _BACKEND: InputBackend | None = None

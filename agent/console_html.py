@@ -1112,6 +1112,10 @@ th{color:var(--tx2);font-weight:500}
         <div class="row"><label>识别上限(秒)</label><input type="number" min="5" max="600" data-cfg="video_read.max_seconds"><span class="hint">视频音频最多识别多少秒（默认 60）</span></div>
         <div class="row"><label>视频链路现状</label><div class="grow"><span id="videoStat" class="hint">读取中…</span></div></div>
       </div>
+      <div class="row"><label>看懂B站链接</label><input type="checkbox" data-cfg="bilibili.enabled">
+        <span class="hint">群友发来 B 站链接（或 BV 号）时，机器人可以去查这条视频的标题、UP、时长、简介和字幕，再回答「这视频讲什么」——<b>不会瞎猜</b>，查不到就直说查不到。查的时候需要连一次 B 站（要用网），看不出来源时它不会假装看过。</span></div>
+      <div class="row"><label>听B站视频(秒)</label><input type="number" min="10" max="600" data-cfg="bilibili.listen_max_seconds">
+        <span class="hint">让它听一条 B 站视频最多听多少秒（默认 120）。只下载声音那一轨，比整段视频小很多。</span></div>
       <div class="btns"><button class="pri" data-save>保存设置（媒体与语音）</button></div>
     </section>
     <section id="sec-tts" class="card" data-sec>
@@ -1135,7 +1139,7 @@ th{color:var(--tx2);font-weight:500}
         <option value="zh-CN-YunxiaNeural">云夏 · 男声 · 少年</option>
         <option value="zh-CN-liaoning-XiaobeiNeural">小北 · 女声 · 东北</option>
         <option value="zh-CN-shaanxi-XiaoniNeural">小妮 · 女声 · 陕西</option></select>
-        <span class="hint">这 8 个是 edge-tts 的中文音色（与 <code>voice_models.EDGE_VOICES</code> 一一对应，判据 <code>edge_tts_selftest.py</code> 会盯住两边不许漂）。</span></div></div>
+        <span class="hint">这 8 个都是中文的在线音色：晓晓、晓伊（女声），云希、云健、云扬、云夏（男声），小北（东北）、小妮（陕西）。挑一个顺耳的就行，换一个听感就换一个人。</span></div></div>
       <div class="row" id="sapiVoiceRow"><label>音色（系统）</label><div class="grow"><select data-cfg="voice_reply.voice" id="ttsVoice">
         <option value="">自动（优先中文声音）</option></select>
         <span class="hint">选项来自本机**实测**可用的系统合成声音；只在「本机系统声音」这一档生效。</span></div></div>
