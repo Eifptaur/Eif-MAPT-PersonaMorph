@@ -391,6 +391,18 @@ def _builtin_tool_defs() -> list:
             "execute": _exec_web_fetch,
         },
         {
+            "name": "read_bilibili",
+            "description": ("解析 B 站视频（BV 号 / av 号 / b23.tv 短链 / 视频页地址）：给出标题、UP、时长、"
+                            "简介、分P 与字幕。群友丢 B 站链接问「这视频讲什么」时用它，**不要凭链接瞎猜内容**；"
+                            "拿不到（视频没了/没字幕/网络不通）会如实说原因。只读公开信息，不需要登录。"),
+            "parameters": {
+                "type": "object",
+                "properties": {"url": {"type": "string", "description": "B 站链接或 BV 号（整句话丢进来也行，会自动找）"}},
+                "required": ["url"],
+            },
+            "execute": _exec_read_bilibili,
+        },
+        {
             "name": "report_feedback",
             "description": "向管理员（控制台）反馈你遇到的问题、困惑或需要人工介入的情况。不要用于聊天。",
             "parameters": {
@@ -1246,6 +1258,27 @@ def _exec_web_fetch(ctx, args):
         })
     except Exception as e:
         return _err("抓取失败：%s" % e)
+
+
+def _exec_read_bilibili(ctx, args):
+    """解析 B 站视频（BV/av/b23 短链）⇒ 标题/UP/时长/简介/分P/字幕。
+
+    2026-09-15 用户重新点名「解析B站视频」这件丢掉的活。三条口径：只读公开接口、不带凭据；
+    拿不到就如实说原因（视频没了 / 没字幕 / 接口不通），**绝不编造标题或视频内容**。
+    """
+    try:
+        from . import bilibili as _bili
+        v, why = _bili.info(str(args.get("url") or args.get("text") or ""))
+        if not v:
+            return _err("解析不了这条 B 站链接：%s" % why)
+        return _ok({"bvid": v.get("bvid"), "title": v.get("title"), "up": v.get("up"),
+                    "duration": v.get("duration"), "desc": v.get("desc"),
+                    "parts": len(v.get("pages") or []),
+                    "has_subtitle": bool(v.get("subtitle")),
+                    "subtitle_why": v.get("subtitle_why") or "",
+                    "url": v.get("url"), "text": _bili.to_text(v)})
+    except Exception as e:
+        return _err("解析 B 站链接失败：%s" % e)
 
 
 def _exec_report(ctx, args):

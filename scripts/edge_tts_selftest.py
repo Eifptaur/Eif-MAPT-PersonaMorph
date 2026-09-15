@@ -214,6 +214,15 @@ ok("试听按钮文案已改成「按当前音源合成」", "按当前音源合
 ok("试听输出文案写明不发送", "不会发到任何会话" in H)
 ok("试听 JS 结果里会报档位", "档位：" in H and "r.engine || info.engine" in H)
 ok("试听 JS 提示 edge 档要联网", "edge 档要联网" in H)
+# 2026-09-15 用户改口径：「关于"全程不出网"的条款，你可以写成"绝大部分不出网"，就是出不出网是可选项」
+_AG = open(os.path.join("AGENTS.md"), encoding="utf-8").read()
+ok("AGENTS.md 记下「绝大部分不出网 + 出网是可选项」这条产品口径",
+   "绝大部分不出网" in _AG and "出网是可选项" in _AG)
+ok("AGENTS.md 写明每处出网都要配一条不出网的替代档", "不出网的替代档" in _AG)
+ok("语音引导文案告诉用户「想全程不出网就选系统声音那一档」",
+   "想全程不出网就选系统声音" in H)
+ok("反证：引导文案里不再有「合成全程在本机，内容不出网」这句一刀切的话",
+   "合成全程在本机，内容不出网" not in H)
 
 # ── H. 兜底分支（离线判据：替身掉网络那一段） ────────────────────────────────
 sect("H. edge 失败时的两条路（兜底 / 如实报错）")
@@ -242,5 +251,5 @@ try:
 finally:
     VM._edge_make, _T.make = _save_edge, _save_tts
 
-print("\n%d/%d 通过" % (PASS, PASS + FAIL))
+print("\n%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
