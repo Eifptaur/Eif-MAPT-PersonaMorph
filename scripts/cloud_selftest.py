@@ -135,6 +135,58 @@ def main():
         ok("真发：POST + 带 Token + 带 body", r["ok"] and sent and sent[0]["method"] == "POST"
            and sent[0]["headers"].get("authorization") == "Bearer T0KEN" and sent[0]["data"], r)
         ok("body 是 JSON（能解析回原对象）", json.loads(sent[0]["data"].decode("utf-8")) == {"a": 1})
+
+        print("== C2. body_key 形态（自建站那种：凭据放 body + 判回包 ok:true）==")
+        class FakeJsonResp:
+            def __init__(self, obj, status=200):
+                self._raw = json.dumps(obj).encode("utf-8")
+                self.status = status
+            def read(self):
+                return self._raw
+            def __enter__(self):
+                return self
+            def __exit__(self, *a):
+                return False
+
+        class FakeRawResp:
+            status = 200
+            def read(self):
+                return b"<html>hi</html>"
+            def __enter__(self):
+                return self
+            def __exit__(self, *a):
+                return False
+
+        use({"enabled": True, "persona_url": "https://example.com/hook", "token": "T0KEN",
+             "auth_style": "body_key"})
+        sent2 = []
+
+        def fake_post2(req, timeout=None):
+            sent2.append({"headers": {k.lower(): v for k, v in (req.headers or {}).items()},
+                          "data": req.data})
+            return FakeJsonResp({"ok": True})
+
+        cloud.urllib.request.urlopen = fake_post2
+        r = cloud.upload("persona", {"a": 1}, dry=False)
+        _b2 = json.loads(sent2[0]["data"].decode("utf-8"))
+        ok("body_key：凭据在请求体的 key 字段、原载荷不丢",
+           _b2.get("key") == "T0KEN" and _b2.get("a") == 1, str(_b2)[:44])
+        ok("body_key：**不发 Authorization 头**（否则与「放请求头」没区别）",
+           "authorization" not in sent2[0]["headers"] and "key" not in sent2[0]["headers"],
+           list(sent2[0]["headers"]))
+        ok("body_key：回包 ok:true ⇒ 成功且标 confirmed", r["ok"] and r.get("confirmed") is True, r)
+        cloud.urllib.request.urlopen = lambda req, timeout=None: FakeJsonResp({"ok": False, "error": "not found"})
+        r = cloud.upload("persona", {"a": 1}, dry=False)
+        ok("body_key：回包 ok:false ⇒ **判失败并说明**（这正是「路径写错也回 200」的场景）",
+           (not r["ok"]) and "ok=false" in str(r.get("why")), str(r.get("why"))[:52])
+        cloud.urllib.request.urlopen = lambda req, timeout=None: FakeRawResp()
+        r = cloud.upload("persona", {"a": 1}, dry=False)
+        ok("body_key：回包不是配置格式 ⇒ 不敢说成功", not r["ok"], str(r.get("why"))[:52])
+        cloud.urllib.request.urlopen = fake_post
+        use({"enabled": True, "persona_url": "https://example.com/hook", "token": "T0KEN"})
+        r = cloud.upload("persona", {"a": 1}, dry=False)
+        ok("默认仍是 bearer（不写 auth_style 时行为不变）",
+           sent[0]["headers"].get("authorization") == "Bearer T0KEN" and r["ok"], r.get("auth_style"))
         ok("未知 which ⇒ 拒绝", not cloud.upload("nope", {})["ok"] or True)
         cloud.urllib.request.urlopen = real_urlopen
 

@@ -318,6 +318,7 @@
   "persona_url": "",
   "blocklist_url": "",
   "token": "",
+  "auth_style": "bearer",
   "timeout_ms": 8000,
   "allow_private": false
  },

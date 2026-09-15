@@ -160,17 +160,42 @@ def upload(which: str, payload: dict, dry: bool = True) -> dict:
         return {"ok": True, "stage": "dry", "sent": False, "url": fixed,
                 "bytes": len(json.dumps(payload or {}, ensure_ascii=False).encode("utf-8")),
                 "why": "干跑：只算体积，没发出去"}
-    body = json.dumps(payload or {}, ensure_ascii=False).encode("utf-8")
+    # 凭据怎么带（`cloud.auth_style`）：
+    #   · `bearer`（默认）＝放 `Authorization: Bearer <token>` 头，**判 2xx 算成功**；
+    #   · `body_key`＝放**请求体的 `key` 字段**、不发 Authorization 头，**判回包 `ok:true` 才算成功**
+    #     （朋友的站 kondius.cn 那类：未知路径也回 200，但体里是 `{"ok":false,"error":"not found"}`，
+    #      只看 2xx 会把"没接住"当成"收到了"）。
+    style = str(c.get("auth_style") or "bearer").strip().lower()
+    tok = str(c.get("token") or "").strip()
+    out_obj = dict(payload or {})
     headers = {"content-type": "application/json; charset=utf-8", "user-agent": "PersonaMorph/1.0"}
-    if str(c.get("token") or "").strip():
-        headers["authorization"] = "Bearer " + str(c["token"]).strip()
+    if style == "body_key":
+        if tok:
+            out_obj["key"] = tok
+    elif tok:
+        headers["authorization"] = "Bearer " + tok
+    body = json.dumps(out_obj, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(fixed, data=body, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=max(2.0, c["timeout_ms"] / 1000.0)) as r:
-            return {"ok": True, "stage": "sent", "sent": True, "url": fixed,
-                    "status": int(getattr(r, "status", 0) or 0), "bytes": len(body)}
+            status = int(getattr(r, "status", 0) or 0)
+            base = {"stage": "sent", "sent": True, "url": fixed, "status": status,
+                    "bytes": len(body), "auth_style": style}
+            if style != "body_key":
+                return dict(base, ok=True)
+            # body_key 形态：必须**回包确认** ok:true，否则如实说"没接住"
+            raw = r.read() if hasattr(r, "read") else b""
+            try:
+                j = json.loads(raw.decode("utf-8", "replace"))
+            except Exception:
+                return dict(base, ok=False, why="该站要求回包 ok:true 才算收下，但回包不是配置格式（无法确认）")
+            if isinstance(j, dict) and j.get("ok") is True:
+                return dict(base, ok=True, confirmed=True)
+            return dict(base, ok=False,
+                        why="接收端回了 ok=false：%s" % str((j or {}).get("error") or (j if isinstance(j, dict) else ""))[:80])
     except Exception as e:
         return {"ok": False, "stage": "sent", "sent": True, "url": fixed, "bytes": len(body),
+                "auth_style": style,
                 "why": "发出去了但这个地址没接住：%s" % str(e)[:120]}
 
 
