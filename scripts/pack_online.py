@@ -158,7 +158,13 @@ def main():
                     continue
                 bad_trace.append(n)
     need = ["agent/__init__.py", "scripts/persona_morph.py", "config.example.json",
-            "README.md", "一键启动.exe", "requirements.txt"]
+            "README.md", "一键启动.exe", "requirements.txt",
+            # ⑤（2026-09-15）：控制台窗口靠 WebView2 显示。这四样缺任何一样，用户那台机器上
+            # 要么窗口起不来（缺 DLL），要么"缺运行库又没浏览器"时**没有引导器可装**——
+            # 只能看到"点了按钮没反应"。引导器是微软官方 Evergreen Bootstrapper（允许随应用分发）。
+            "WebView2Loader.dll", "lib/Microsoft.Web.WebView2.Core.dll",
+            "lib/Microsoft.Web.WebView2.WinForms.dll",
+            "assets/webview2/MicrosoftEdgeWebview2Setup.exe"]
     missing = [n for n in need if n not in rel_names]
     outside = [n for n in names if not n.startswith(ZIP_TOP + "/")]
     if bad_state or bad_trace or missing or outside:
