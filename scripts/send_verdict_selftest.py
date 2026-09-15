@@ -46,10 +46,16 @@ ok("三个常量互不相等", len({str(V_OK), str(V_UNVERIFIED), str(V_NOT_SENT
 
 
 class _FakeDB:
-    def __init__(self, rows=None, err=None, master_key="k"):
+    def __init__(self, rows=None, err=None, master_key="k", keys=None, bad_keys=()):
         self.master_key = master_key
         self._rows = rows or []
         self._err = err
+        # 缓存密钥（per-file）：库靠它们解密，**能过页1校验就说明密钥是对的**
+        self._keys = dict.fromkeys(keys if keys is not None else ["message_0.db"], 1)
+        self._bad = set(bad_keys)
+
+    def _key_works(self, rel):
+        return rel not in self._bad
 
     def get_messages(self, chat_id, limit=1):
         if self._err:
@@ -57,25 +63,39 @@ class _FakeDB:
         return self._rows[:limit]
 
 
-def _mk(rows=None, err=None, master_key="k", wal=None):
+def _mk(rows=None, err=None, master_key="k", wal=None, keys=None, bad_keys=()):
     ad = WeChatAdapter.__new__(WeChatAdapter)      # 不跑 __init__（那会连微信）
-    ad._db = _FakeDB(rows=rows, err=err, master_key=master_key)
+    ad._db = _FakeDB(rows=rows, err=err, master_key=master_key, keys=keys, bad_keys=bad_keys)
     ad._newest_wal_mtime = (lambda: wal) if wal is not None else (lambda: 0.0)
     return ad
 
 
 print("── B. db_alive：判据可用性自检 ──")
+# 2026-09-16 改口径：`master_key=None` **不再是**判不可用的理由——它是**常态**（库只在"内存扫描"
+# 那层成功时才给 master_key 赋值，走缓存密钥时一直是 None），只要缓存密钥能过页1 HMAC 校验，
+# 回读就是可信的（本机实测：None + 20 把密钥全过 + 真读到最新消息）。对面 r22 核心②的"未证实"
+# 正是老口径（`if mk is None: return False`）造成的。
 a = _mk(rows=[{"create_time": int(time.time())}], master_key=None)
 alive, why = a.db_alive("filehelper")
-ok("master_key=None ⇒ 判不可用（这就是测机那台的状态）", alive is False and "master_key" in why, why[:60])
+ok("master_key=None 但有可用缓存密钥 ⇒ 判可用（本机常态，不再误报）", alive is True, why[:70])
+
+a = _mk(rows=[{"create_time": int(time.time())}], master_key=None, keys=[], wal=None)
+alive, why = a.db_alive("filehelper")
+ok("既没主密钥、又没有可用缓存密钥 ⇒ 判不可用", alive is False and "缓存密钥" in why, why[:70])
+
+a = _mk(rows=[{"create_time": int(time.time())}], master_key=None, keys=["message_0.db"],
+        bad_keys=("message_0.db",))
+alive, why = a.db_alive("filehelper")
+ok("缓存密钥过不了页1校验 ⇒ 同样算不可信", alive is False, why[:70])
+
+a = _mk(rows=[{"create_time": int(time.time())}], master_key="k", wal=time.time() - 600)
+alive, why = a.db_alive("filehelper")
+ok("活库最近没在写 + 能读 ⇒ 判可用", alive is True, why[:70])
 
 a = _mk(rows=[{"create_time": int(time.time())}], master_key="k", wal=time.time())
 alive, why = a.db_alive("filehelper")
-ok("主密钥在 + 回读不落后 ⇒ 判可用", alive is True, why[:60])
-
-a = _mk(rows=[{"create_time": int(time.time()) - 3600}], master_key="k", wal=time.time())
-alive, why = a.db_alive("filehelper")
-ok("回读落后活库 -wal 超过 300 秒 ⇒ 判不可用", alive is False and "落后" in why, why[:70])
+ok("活库刚刚还在写、而该会话读不到新行 ⇒ 判不可信（未证实，不判真失败）",
+   alive is False and "刚刚还在写" in why, why[:80])
 
 a = _mk(err=RuntimeError("db boom"))
 alive, why = a.db_alive("filehelper")

@@ -493,29 +493,70 @@ class WeChatAdapter:
     # ── 初始化 ───────────────────────────────────────────────────────────
 
     def _newest_wal_mtime(self) -> float:
-        """4.x 账号目录里最新的 `message_*.db-wal` 的 mtime（找不到返回 0）。
+        """消息库最近的 `message_*.db-wal` 的 mtime（找不到返回 0）。
 
-        路径：`%USERPROFILE%\\xwechat_files\\<账号目录>\\db_storage\\message\\`（也兼容 `Documents\\xwechat_files\\`）。
+        ⚠️ 2026-09-16 修（P11 第二层）：原来只硬编码 `%USERPROFILE%\\xwechat_files`，
+        但**不同电脑的微信数据位置不同**——本机那个目录**根本不存在** ⇒ 永远返回 0
+        ⇒ `db_alive()` 第二道闸写作 `if wal and newest and ...`，0.0 是假值 ⇒ **静默跳过，
+        那道「回读落后活库」的闸从来没生效过**。
+        现在**优先问库自己**：`WeChatDB.account_dir` 是它已经定位好的账号目录
+        （`<账号>/db_storage/<库>`），`db_dir` 是账号目录的父目录；老路径只作兜底。
         """
-        best = 0.0
+        dirs = []
         try:
-            bases = [os.path.join(os.path.expanduser("~"), "xwechat_files"),
-                     os.path.join(os.path.expanduser("~"), "Documents", "xwechat_files")]
-            for b in bases:
-                if not os.path.isdir(b):
-                    continue
-                for acc in os.listdir(b):
-                    d = os.path.join(b, acc, "db_storage", "message")
-                    if not os.path.isdir(d):
-                        continue
-                    for f in os.listdir(d):
-                        if f.startswith("message_") and f.endswith(".db-wal"):
-                            m = os.path.getmtime(os.path.join(d, f))
-                            if m > best:
-                                best = m
+            adir = str(getattr(self._db, "account_dir", "") or "")
+            if adir:
+                dirs.append(os.path.join(adir, "db_storage", "message"))
         except Exception:
             pass
+        try:
+            ddir = str(getattr(self._db, "db_dir", "") or "")
+            if ddir and os.path.isdir(ddir):
+                for acc in os.listdir(ddir):
+                    dirs.append(os.path.join(ddir, acc, "db_storage", "message"))
+        except Exception:
+            pass
+        for base in (os.path.join(os.path.expanduser("~"), "xwechat_files"),
+                     os.path.join(os.path.expanduser("~"), "Documents", "xwechat_files")):
+            if not os.path.isdir(base):
+                continue
+            try:
+                for acc in os.listdir(base):
+                    dirs.append(os.path.join(base, acc, "db_storage", "message"))
+            except Exception:
+                pass
+        best = 0.0
+        for d in dirs:
+            if not os.path.isdir(d):
+                continue
+            try:
+                for f in os.listdir(d):
+                    if f.startswith("message_") and f.endswith(".db-wal"):
+                        m = os.path.getmtime(os.path.join(d, f))
+                        if m > best:
+                            best = m
+            except Exception:
+                continue
         return best
+
+    def _usable_key_count(self) -> int:
+        """有几把缓存密钥**能过页1 HMAC 校验**（过不了的不算）。
+
+        2026-09-16 立：`master_key=None` 是**常态**——库（`wechatauto/db.py::_load_or_extract_keys`）
+        是五层优先级（显式 key → 本地缓存 keys.json → Config.Cipher 内存扫描 → cfg 提取 → 最终回退），
+        **只有内存扫描那层成功才给 `self.master_key` 赋值**；走缓存密钥时它一直是 None，
+        而缓存密钥逐把过 SQLCipher4 页1 强校验 ⇒ 能解密就说明密钥是对的。
+        """
+        db = getattr(self, "_db", None)
+        keys = getattr(db, "_keys", None) or {}
+        n = 0
+        for rel in list(keys):
+            try:
+                if db._key_works(rel):
+                    n += 1
+            except Exception:
+                continue
+        return n
 
     def db_alive(self, chat_id: str = "filehelper") -> tuple:
         """**判据可用性自检**：这个 DB 回读通道现在还能不能信？返回 `(alive, why)`。
@@ -527,19 +568,31 @@ class WeChatAdapter:
         ⇒ `alive=False` 时，调用方**必须把结论降级成「未证实」**（`V_UNVERIFIED`），不许写"发送失败"。
         """
         try:
+            # 2026-09-16 改：原判据是 `if mk is None: return False`——把"没走主密钥那条路"当成
+            # "通道坏了"。但 `master_key=None` 是**常态**（见 `_usable_key_count` 的注释），
+            # 本机实测：master_key=None + 20 把缓存密钥全过页1校验 + 真读到最新消息 ⇒ 通道是好的。
+            # 老判据的后果是**每台机器都永远判"不可用"**，"没等到新行"一律被降级成"未证实"
+            # （对面 r22 核心②就是这么来的）。新判据：既没主密钥、又没有一把可用缓存密钥，才算不可信。
             mk = getattr(self._db, "master_key", "?")
-            if mk is None:
-                return False, "master_key=None（读不到 4.x 主密钥 ⇒ 回读拿到的是旧副本/旧数据）"
+            if mk is None and self._usable_key_count() <= 0:
+                return False, ("既没拿到主密钥、也没有任何能过页1校验的缓存密钥 ⇒ 回读通道不可信"
+                               "（拿到的可能是旧副本）")
             rows = self._db.get_messages(chat_id, limit=1) or []
+            wal = self._newest_wal_mtime()
+            # 第二道闸：**活库现在还在写吗**。这道闸只在"刚发完、没等到新行"的上下文里被问
+            # （三个调用点都是发送链），所以"库在动、而我们读不到这个会话的新行"才是可疑信号。
+            # ⚠️ 2026-09-16 修（P11 第三层）：老写法拿"该会话最新消息时间"跟 -wal 比
+            #    （`wal - newest > 300`），对**空闲会话**必然判落后——本机 filehelper 实测：
+            #    消息 03:07 / -wal 05:37 ⇒ 差 8958 秒，而那 8958 秒是别的会话在写库，语义是错的。
+            #    何况它依赖 `_newest_wal_mtime()`，那个函数以前永远返回 0 ⇒ 这道闸从来没生效过。
+            now = time.time()
+            if wal and (now - wal) < 60:
+                return False, ("活库刚刚还在写（-wal %s，%d 秒前），但这个会话读不到新行"
+                               "⇒ 可能消息进了库却读不到（未证实，不判真失败）"
+                               % (time.strftime("%H:%M:%S", time.localtime(wal)), int(now - wal)))
             if not rows:
                 return True, "能读该会话（当前无消息）"
-            newest = float(rows[0].get("create_time") or 0)
-            wal = self._newest_wal_mtime()
-            if wal and newest and (wal - newest) > 300:
-                return False, ("回读落后于活库：最新一行 %s / 活库 -wal %s（差 %d 秒 > 300）"
-                               % (time.strftime("%H:%M:%S", time.localtime(newest)),
-                                  time.strftime("%H:%M:%S", time.localtime(wal)), int(wal - newest)))
-            return True, "回读通道看起来是活的"
+            return True, "回读通道看起来是活的（活库最近没有新写入）"
         except Exception as e:
             return False, "判据可用性自检异常：%s: %s" % (type(e).__name__, e)
 
