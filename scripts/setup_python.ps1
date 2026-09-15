@@ -2,7 +2,12 @@
 #  1) 系统已有 Python 3.10+（py / python） → 直接用
 #  2) 否则用绿色版：解压 offline\python\python-3.10.11-embed-amd64.zip（或联网下载）
 #  3) 为绿色版引导 pip（优先离线 wheels 里的 pip 轮子，其次 get-pip.py）
-# 结果写入 logs\python_path.txt（ASCII）。退出码 0=成功。
+# 结果写入 logs\python_path.txt（ANSI，给 一键启动.exe 按 936 读）。退出码 0=成功。
+#   ⚠️ 为什么必须 UTF-8 无 BOM（2026-09-15 跨机实测）：`.cmd` 是在 `chcp 65001`（UTF-8）
+#   下用 `for /f` 读这个文件的。原来写 `-Encoding Default`（中文系统＝GBK），**安装路径含中文
+#   时读出来就是乱码** ⇒ `if exist "%PYCMD%"` 判否 ⇒ 静默掉到系统 Python 3.14 去跑 pip
+#   源码编译（卡几分钟、多半失败）。⇒ 定案：`.cmd` 入口**整段不再读这个文件**（先直接试 `runtime\python\python.exe`），
+#   而这个文件的写法保持原样（ANSI），免得改坏 `一键启动.exe` 那一侧的读取。
 $ErrorActionPreference = 'Continue'
 try { $Host.UI.RawUI.WindowTitle = 'Persona Morph 准备环境' } catch {}
 
@@ -17,6 +22,10 @@ function Log($m) {
 }
 
 function Set-PyPath($cmd) {
+    # 写成 **ANSI（Default）**：产物 `一键启动.exe` 里是 `File.ReadAllText(pth, Encoding.GetEncoding(936))`
+    # 读它的（launcher.cs:265）。⚠️ 谁也别再**跨编码**依赖这个文件：`.cmd` 入口那边已经改成
+    # 「先直接试 runtime\python\python.exe，试不到才退回系统 py」，整段不再读它（2026-09-15 跨机实测：
+    # chcp 65001 下读 GBK 写的路径 ⇒ 中文变乱码 ⇒ if exist 判否 ⇒ 静默掉到系统 Python 3.14）。
     try { Set-Content -Path $pathTxt -Value $cmd -Encoding Default } catch {}
 }
 
