@@ -312,7 +312,8 @@ DEFAULT_CONFIG = {
         "enabled": False,          # ⛔ 总开关：默认关 ⇒ upload() 直接拒绝、一个字节都不发
         "persona_url": "",         # 人设上云的接收端网址（留空＝未配置）
         "blocklist_url": "",       # 屏蔽名单上云的接收端网址（留空＝未配置）
-        "token": "",               # 接收端要求的 Bearer Token（打码回显；只存本机）
+        "token": "",               # 接收端要求的凭据（打码回显；只存本机）
+        "auth_style": "bearer",    # 凭据怎么带：bearer＝Authorization 头（判 2xx）｜body_key＝请求体 key 字段（判回包 ok:true）
         "timeout_ms": 8000,
         "allow_private": False,    # 允许环回/内网接收端（默认拒）
     },

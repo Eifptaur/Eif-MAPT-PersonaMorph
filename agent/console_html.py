@@ -1515,6 +1515,10 @@ th{color:var(--tx2);font-weight:500}
         <div class="row"><label>接收端口令</label><div class="grow"><input type="password" data-cfg="cloud.token" placeholder="对方要求鉴权时才填（Bearer）">
           <div class="hint">探测连通<b>不带口令</b>；只有真上传时才带上。接收端要满足什么，见 <b>docs\上云接口契约.md</b>（方法/路径/请求体/响应约定都写在里面，可直接发给对方）</div>
         </div></div>
+        <div class="row"><label>鉴权方式</label><div class="grow"><select data-cfg="cloud.auth_style">
+          <option value="bearer">放请求头</option>
+          <option value="body_key">放请求体</option></select>
+          <span class="hint">按接收端要求选。默认<b>放请求头</b>（<b>Bearer</b>，收到 2xx 就算成功）；<b>放请求体</b>＝凭据放在请求体的 <b>key</b> 字段里、<b>且要求回包 ok:true 才算成功</b>——自建站常常"路径写错也回 200"，这时只有第二种能分清"真收下了"和"没接住"。</span></div></div>
         <div class="row"><label>连通结果</label><div class="grow"><span id="cloudStat" class="hint">还没测过</span></div></div>
       </div>
     </section>
