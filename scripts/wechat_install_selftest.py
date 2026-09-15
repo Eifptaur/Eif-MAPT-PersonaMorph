@@ -44,7 +44,7 @@ print("── A. 函数与三态映射 ──")
 ok("wechat_install_state 在位", i >= 0 and len(seg) > 1500, "片段 %d 字符" % len(seg))
 from agent.wechat import wechat_install_state, wechat_version_info  # noqa: E402
 
-r = wechat_install_state(proc_found=True, proc_path=r"M:\WX\Weixin\Weixin.exe")
+r = wechat_install_state(proc_found=True, proc_path=r"C:\Program Files\Tencent\Weixin\Weixin.exe")
 ok("进程在跑 ⇒ running / action=none", r["state"] == "running" and r["action"] == "none" and r["installed"], str(r["state"]))
 ok("字段齐（state/installed/path/sources/official_url/detail/action）",
    all(k in r for k in ("state", "installed", "path", "sources", "official_url", "detail", "action")), ",".join(sorted(r.keys())))
