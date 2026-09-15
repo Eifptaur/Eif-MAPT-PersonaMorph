@@ -219,5 +219,33 @@ _ibsrc = open(os.path.join(_ROOT, "agent", "input_bar.py"), encoding="utf-8").re
 ok("共用实现里有用例数字对得上的常量（阈值/间距容差/左溢容差都在一处）",
    all(k in _ibsrc for k in ("GRAY_THR", "RUN_TOL", "PANE_SLACK")))
 
+print("── I. r8 跨机实测的回归：探针多收的那一簇（247）不许把工具栏整体右移 ──")
+# 对面 r8 报的：同一行，产品工具栏 5 簇（312/357/402/446/509）✅，探针却 6 簇（多了 247）⇒ 取第 3 个
+# 变成 357＝📦收藏 ✗。根因＝那时 `toolbar_run` 拿 pane_left 当门槛、容差又松。现在：不看 pane_left，
+# 规整的一跳用 0.35 判、**只允许最后一跳**异常（🎤语音 63px），参考间距取该行间距的**下半段中位数**。
+try:
+    from agent import input_bar as _ib2
+    _im2 = _Im.new("L", (1139, 890), 250)
+    _d2 = _Dr.Draw(_im2)
+    for x in (247, 312, 357, 402, 446, 509):      # 多了 247（探针当时多收的那一簇）
+        _d2.rectangle([x - 8, 843, x + 8, 863], fill=60)
+    _g2 = _im2.convert("L")
+    _y2, _cl2, _tot2 = _ib2.best_row(_g2)
+    _run2 = _ib2.toolbar_run(_cl2, pane_left=300)   # 故意给个"会把 247 放进门槛内"的 pane_left
+    _xs2 = [c[0] for c in _run2]
+    ok("r8 回归：多收的 247 不许进工具栏那组（必须只有 312..509 这 5 簇）",
+       _xs2[:1] == [312] and len(_run2) == 5, "工具栏 %s" % _xs2)
+    (_pt4, _why4) = _ib2.file_point(_g2, (0, 0, 1139, 890), pane_left=300)
+    ok("r8 回归：「文件」仍必须是 402（不是 357＝收藏）", _pt4 and _pt4[0] == 402, "实测 %s" % (_pt4,))
+    ok("r8 回归：pane_left 已经不参与判定（换一个 pane_left 结论不变）",
+       _ib2.file_point(_g2, (0, 0, 1139, 890), pane_left=0)[0][0] == 402)
+    _probe2 = open(os.path.join(_ROOT, "scripts", "file_btn_probe.py"), encoding="utf-8").read()
+    # ⚠️ 先剥注释再判：注释里会**提到**被删掉的名字（"删掉 ICONS_X 那段"），按全文 grep 会假红
+    _pcode2 = "\n".join(l for l in _probe2.split("\n") if not l.lstrip().startswith("#"))
+    ok("探针里那段会误导的「常量 vs 最近邻命名」已删（按代码判，不看注释）",
+       "ICONS_X" not in _pcode2 and "最近实测簇" not in _pcode2)
+except Exception as _e4:
+    ok("r8 回归（合成图）能跑", False, str(_e4)[:100])
+
 print("== [send-file-posted] 判据：{} 通过 / {} 失败 ==".format(PASS, FAIL))
 sys.exit(1 if FAIL else 0)
