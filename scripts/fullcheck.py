@@ -298,9 +298,13 @@ try:
     check("config.example.json 与默认配置同键", _dk == _ek,
           "示例 %d 键 / 默认 %d 键；缺=%s 多=%s"
           % (len(_ek), len(_dk), sorted(_dk - _ek)[:5], sorted(_ek - _dk)[:5]))
-    check("config.example.json 里没有任何真实凭据/邮箱",
-          not re.search(r"ptmou|gaster|@qq\.com|sk-[A-Za-z0-9]{8}", io.open(
-              os.path.join(ROOT, "config.example.json"), encoding="utf-8").read()))
+    # ⚠️ 断言里**不许写出真实的用户名/邮箱字面量**——否则判据自己就成了 PII 泄露源，
+    #    打包闸门当场 FATAL（2026-09-15 实测：我第一版把用户名写进这条正则，出包被拒）。
+    #    用"形状"判：任何 email 形状、任何 sk- 形状的密钥。
+    _ex_txt = io.open(os.path.join(ROOT, "config.example.json"), encoding="utf-8").read()
+    _hit = re.search(r"[\w.+-]+@[\w-]+\.[\w.]{2,}|sk-[A-Za-z0-9]{8,}", _ex_txt)
+    check("config.example.json 里没有任何真实凭据/邮箱", _hit is None,
+          (_hit.group(0)[:20] if _hit else ""))
 except Exception as e:
     check("config.example.json 与默认配置同键", False, str(e)[:80])
 
