@@ -35,20 +35,63 @@ def ok(name, cond, detail=""):
 
 from agent import version_gate as vg  # noqa: E402
 
-print("── A. 三级行为 ──")
+print("── A. 三级行为（先把版本强制成「读不到」，这样在哪台机器上结论都一样）──")
+_REAL_LOOKUP = vg.current_wechat_version
+vg.current_wechat_version = lambda *a, **k: ""
 vg.clear_allow()
 a = vg.check()
-ok("默认拦（allow=False）", a["allow"] is False, "level=%s" % a["level"])
+ok("读不到版本 ⇒ 默认拦（allow=False）", a["allow"] is False, "level=%s" % a["level"])
 ok("拦的时候 level=warn（不是 ok）", a["level"] == "warn", a["level"])
 ok("理由里说清「未实测/未验证」与怎么放行", (("实测" in a["reason"]) or ("未验证" in a["reason"])) and ("放行" in a["reason"]), a["reason"][:60])
+_r_real = vg.wechat_running
+vg.wechat_running = lambda: True
+_r_running = vg.check()["reason"]
+vg.wechat_running = lambda: False
+_r_absent = vg.check()["reason"]
+vg.wechat_running = _r_real
+ok("「微信在跑但读不到版本号」与「微信没在跑」给出**不同**的话（不许混成一句）",
+   _r_running != _r_absent and ("没在跑" in _r_absent) and ("没在跑" not in _r_running),
+   "在跑=>%s ｜ 没在跑=>%s" % (_r_running[:34], _r_absent[:34]))
 vg.allow_session("selftest")
 b = vg.check()
 ok("临时放行后 allow=True", b["allow"] is True)
 ok("放行后 level 仍是 warn（放行≠已验证）", b["level"] == "warn", b["level"])
 vg.clear_allow()
 ok("清掉后重新拦", vg.check()["allow"] is False)
+vg.current_wechat_version = _REAL_LOOKUP
 st = vg.status()
 ok("status() 带 allowed_session 字段", "allowed_session" in st, str(st.get("allowed_session")))
+
+print("── A2. 展示侧兜底：不带参数也要自己查到版本 ──")
+_ver = vg.current_wechat_version()
+if _ver:
+    vg._ver_cache.update({"at": 0, "wechat": ""})
+    c = vg.check()
+    ok("不带参数的 check() 自己查到了版本（不再是 unknown）", c["wechat"] == _ver, "wechat=%r" % c["wechat"])
+    e = vg.check("send", wechat=_ver)
+    ok("与显式传版本结论一致（allow/level 都一样）",
+       (c["allow"], c["level"]) == (e["allow"], e["level"]),
+       "no-arg=%s/%s explicit=%s/%s" % (c["allow"], c["level"], e["allow"], e["level"]))
+    ok("理由里不再出现「读不到微信版本」", "读不到" not in c["reason"], c["reason"][:60])
+else:
+    print("  · 本机读不到微信版本（机器相关）⇒ 跳过这一节")
+try:
+    from agent import wechat as _W
+    _n = {"c": 0}
+    _orig_gate_ver = _W.wx_version_for_gate
+
+    def _fake_ver():
+        _n["c"] += 1
+        return "4.1.15.8"
+
+    _W.wx_version_for_gate = _fake_ver
+    vg._ver_cache.update({"at": 0, "wechat": ""})
+    for _ in range(3):
+        vg.check()
+    ok("60 秒内只查一次版本（不每次轮询都枚举进程）", _n["c"] == 1, "查了 %d 次" % _n["c"])
+    _W.wx_version_for_gate = _orig_gate_ver
+except Exception as _e:
+    ok("60 秒内只查一次版本（不每次轮询都枚举进程）", False, str(_e)[:80])
 
 print("── B. 放行不许落盘（重启就失效）──")
 G = open(os.path.join(ROOT, "agent", "version_gate.py"), encoding="utf-8", errors="replace").read()
