@@ -158,6 +158,40 @@ def main():
     ok("阴性对照：没配分流时 image 也不会冒出分流模型",
        llm.candidates(dict(base), kind="image") == ["cheap-text", "fb1"])
 
+    # ── H. 音频识别的返回约定（2026-09-15 抓出的真 bug 的回归守卫）──────────────
+    # `voice.recognize_wav()` 的约定是 **(文本, 错误说明)**；`video_read.read()` 一度写成
+    # `ok_flag, text = ...`（顺序反了）⇒ 识别到的文本被当成功标志、错误说明被当文本，
+    # 结果 **微信视频的音频识别结果永远传不出来**（audio_text 恒为空）。这里用替身把它钉住。
+    print("== H. 音频识别返回约定（真 bug 的回归守卫）==")
+    from agent import voice as _voice
+    _real_rec = _voice.recognize_wav
+    _real_ex = vr.extract_audio
+    _real_fr = vr.extract_frames
+    try:
+        vr.extract_frames = lambda p, d, count=4: {"ok": True, "frames": ["f.jpg"], "duration": 3.0}
+        vr.extract_audio = lambda p, w, max_seconds=60: True
+        _voice.recognize_wav = lambda w, max_seconds=60: ("这是一条测试语音", "")
+        r = vr.read("fake.mp4", max_frames=1, max_seconds=5)
+        ok("替身：识别到文本时 audio_text 要真的带出来（顺序写反就带不出来）",
+           r.get("audio_text") == "这是一条测试语音", repr(r.get("audio_text"))[:40])
+        ok("替身：audio_ok 为真", r.get("audio_ok") is True)
+        ok("替身：有文本时不该写 audio_why", not (r.get("audio_why") or ""),
+           repr(r.get("audio_why"))[:40])
+        _voice.recognize_wav = lambda w, max_seconds=60: ("", "本机没装识别引擎")
+        r2 = vr.read("fake.mp4", max_frames=1, max_seconds=5)
+        ok("替身：引擎报错时 audio_ok 为假、原因带出来",
+           r2.get("audio_ok") is False and "识别引擎" in (r2.get("audio_why") or ""),
+           repr(r2.get("audio_why"))[:40])
+        _voice.recognize_wav = lambda w, max_seconds=60: ("   ", "")
+        r3 = vr.read("fake.mp4", max_frames=1, max_seconds=5)
+        ok("替身：跑通但没听出内容 ⇒ 如实说「没听出可辨认的说话内容」",
+           r3.get("audio_ok") is False and "没听出可辨认" in (r3.get("audio_why") or ""),
+           repr(r3.get("audio_why"))[:40])
+    finally:
+        _voice.recognize_wav = _real_rec
+        vr.extract_audio = _real_ex
+        vr.extract_frames = _real_fr
+
     mr.route = real_mr_route
     mr.routes = real_mr_routes
     shutil.rmtree(tmp, ignore_errors=True)

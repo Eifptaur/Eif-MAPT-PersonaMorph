@@ -140,11 +140,14 @@ def read(path: str, max_frames: int = DEFAULT_FRAMES, max_seconds: int = DEFAULT
     if extract_audio(path, wav, max_seconds=max_seconds):
         try:
             from . import voice
-            ok_flag, text = voice.recognize_wav(wav, max_seconds=max_seconds)
-            out["audio_ok"] = bool(ok_flag)
+            # ⚠️ 约定：`recognize_wav()` 返回 **(文本, 错误说明)**。2026-09-15 查出一个真 bug——
+            # 这里原来写成 `ok_flag, text = ...`（顺序反了）⇒ 识别到的文本被当成"成功标志"、
+            # 错误说明被当成"文本"，于是**音频识别结果永远传不出来**（`audio_text` 恒为空）。
+            text, aerr = voice.recognize_wav(wav, max_seconds=max_seconds)
             out["audio_text"] = str(text or "")
-            if not ok_flag:
-                out["audio_why"] = str(text or "识别引擎没给出结果")
+            out["audio_ok"] = bool(out["audio_text"].strip())
+            if aerr:
+                out["audio_why"] = str(aerr)
             elif not out["audio_text"].strip():
                 # 识别跑通了但一个字都没听出来（纯音乐/环境声很常见）⇒ 也要如实说，别让它看起来"没提音频"
                 out["audio_why"] = "音频识别跑通了但没听出可辨认的说话内容（可能只是音乐/环境声）"

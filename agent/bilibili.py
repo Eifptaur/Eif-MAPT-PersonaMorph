@@ -25,6 +25,8 @@ import urllib.request
 
 API_VIEW = "https://api.bilibili.com/x/web-interface/view?bvid=%s"
 API_PLAYER = "https://api.bilibili.com/x/player/v2?bvid=%s&cid=%s"
+#: 取播放地址（fnval=16 ⇒ DASH 分片；我们**只要音频轨**，比整段视频小一个数量级）
+API_PLAYURL = "https://api.bilibili.com/x/player/playurl?bvid=%s&cid=%s&fnval=16&qn=64"
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
 TIMEOUT = 12
@@ -120,8 +122,9 @@ def view(bvid: str, aid: str | None = None, timeout: int = TIMEOUT):
     owner = d.get("owner") or {}
     stat = d.get("stat") or {}
     # AI 标识：**唯一可信来源是后台字段**（`argue_info.argue_msg`）。
-    # 2026-09-15 实测：手机 App 的视频详情页**不渲染**这一行（肇岁初十 BV1nkYV6oEMZ 后台写着
-    # 「含AI生成内容」，手机端看不见、PC 网页端才看得见）⇒ 想判断有没有标识，只能读接口，别看界面。
+    # 2026-09-15 实测：**客户端显示不一致**——肇岁初十 BV1nkYV6oEMZ 后台写着「含AI生成内容」，
+    # 用户实测**手机端看得见、电脑端看不见**；而破米库 BV1vTYC6AEPi 后台是空的（真没标）。
+    # ⇒ 想判断有没有标识，只能读接口，别看界面（两个端会给出相反的印象）。
     _argue = d.get("argue_info")
     out = {
         "bvid": d.get("bvid"), "aid": d.get("aid"),
@@ -191,6 +194,102 @@ def ytdlp_bin() -> str:
         return _REAL_YTDLP
     import shutil
     return shutil.which("yt-dlp") or ""
+
+
+# ── 「自己听视频」：只下音频轨 + 本机识别（**不需要 yt-dlp**）─────────────────────
+# 2026-09-15 用户问「不能自己听视频，总结视频内容吗」。整段视频动辄几十 MB，而识别只需要一条
+# 几十 kbps 的音频轨（实测 1:19 的视频音频 659 KB）⇒ 走 playurl 的 DASH 音频流，比下整段视频
+# 便宜一个数量级，而且**不依赖 yt-dlp**。识别用项目既有的本机 SAPI 听写（离线、零下载）。
+
+
+def audio_url(bvid: str, cid, timeout: int = TIMEOUT):
+    """取音频流地址 ⇒ `(url|None, 原因)`。取最低码率那条（够识别用，省流量）。"""
+    if not bvid or not cid:
+        return None, "缺 bvid 或 cid，拿不到音频流"
+    data, why = _get_json(API_PLAYURL % (bvid, cid), timeout)
+    if data is None:
+        return None, why
+    if data.get("code") != 0:
+        return None, "取播放地址的接口回了 code=%s（%s）" % (data.get("code"), str(data.get("message") or "")[:30])
+    dash = ((data.get("data") or {}).get("dash") or {})
+    auds = [a for a in (dash.get("audio") or []) if isinstance(a, dict)]
+    if not auds:
+        return None, "这条视频没有可取的音频流（可能是直播回放 / 付费内容 / 需要登录）"
+    a = sorted(auds, key=lambda x: x.get("bandwidth") or 0)[0]
+    u = str(a.get("baseUrl") or a.get("base_url") or "")
+    return (u or None), ("" if u else "接口没给音频地址")
+
+
+def _download(url: str, dest: str, timeout: int = 180):
+    """把音频流落到文件 ⇒ `(字节数, 原因)`。B 站 CDN 要带 Referer，否则 403。"""
+    req = urllib.request.Request(url, headers={"User-Agent": UA, "Referer": "https://www.bilibili.com/"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r, open(dest, "wb") as f:
+            n = 0
+            while True:
+                chunk = r.read(65536)
+                if not chunk:
+                    break
+                f.write(chunk)
+                n += len(chunk)
+        return n, ""
+    except urllib.error.HTTPError as e:
+        return 0, "音频流 HTTP %s（B 站 CDN 拒绝，通常是防盗链）" % e.code
+    except Exception as e:
+        return 0, "音频流下载失败：%s" % (str(e)[:70] or type(e).__name__)
+
+
+def download_audio(bvid: str, cid, out_dir: str, timeout: int = 180):
+    """下音频轨 ⇒ `(m4a 路径|None, 原因)`。**失败不落半成品**（小文件一律删掉再报错）。"""
+    u, why = audio_url(bvid, cid, timeout)
+    if not u:
+        return None, why
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+    except Exception as e:
+        return None, "音频临时目录建不出来：%s" % str(e)[:60]
+    dest = os.path.join(out_dir, "%s.m4a" % (bvid or "audio"))
+    n, why2 = _download(u, dest, timeout)
+    if n < 10240:
+        try:
+            if os.path.exists(dest):
+                os.remove(dest)
+        except Exception:
+            pass
+        return None, (why2 or "下回来的音频太小（%d 字节），当失败处理" % n)
+    return dest, ""
+
+
+def listen(text: str, max_seconds: int = 120, timeout: int = 180):
+    """**自己听一遍这条 B 站视频** ⇒ `(听到的文字, 原因)`。
+
+    链路：解析 → 取音频流 → 下音频 → ffmpeg 抽 16k 单声道 WAV → 本机 SAPI 听写。
+    全程不出网（除了取音频那一次），不需要 yt-dlp。听不出内容就如实说，**绝不编**。
+    """
+    import tempfile
+    v, why = info(text, want_subtitle=False, timeout=TIMEOUT)
+    if not v:
+        return "", why
+    tmp = tempfile.mkdtemp(prefix="pm-bili-listen-")
+    path, why2 = download_audio(v["bvid"], v.get("cid"), tmp, timeout)
+    if not path:
+        return "", why2
+    try:
+        from . import video_read as VR
+        from . import voice
+        wav = os.path.join(tmp, "audio.wav")
+        if not VR.extract_audio(path, wav, max_seconds=max_seconds):
+            return "", "从音频轨里抽不出 WAV（这条视频可能没有声音）"
+        # 约定：`recognize_wav()` 返回 **(文本, 错误说明)**（别写反，video_read 就为此踩过一个真 bug）
+        txt, aerr = voice.recognize_wav(wav, max_seconds=max_seconds)
+        if aerr:
+            return "", str(aerr)
+        txt = str(txt or "").strip()
+        if not txt:
+            return "", "识别跑通了，但没听出可辨认的说话内容（可能只是音乐/环境声）"
+        return txt, ""
+    except Exception as e:
+        return "", "本机识别异常：%s" % str(e)[:80]
 
 
 def download(url_or_bvid: str, out_dir: str, timeout: int = 300):

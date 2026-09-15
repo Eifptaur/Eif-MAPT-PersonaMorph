@@ -192,5 +192,47 @@ ok("执行体走 bilibili.info（不是另写一套）", "_bili.info(" in _src a
 ok("执行体在拿不到时返回错误而不是空数据", 'return _err("解析不了这条 B 站链接' in _src)
 ok("反证：没有出现「解析失败就当成功」的兜底", "解析不了这条 B 站链接" in _src and "return _ok({" in _src)
 
+# ── I. 「自己听视频」：只下音频轨 + 本机识别（不走 yt-dlp）────────────────────
+sect("I. 听视频：音频流怎么取、失败怎么报")
+_sg, _sd = B._get_json, B._download
+try:
+    def _play(url, timeout=12):
+        if "playurl" in url:
+            return {"code": 0, "data": {"dash": {"audio": [
+                {"bandwidth": 132000, "baseUrl": "https://x/hi.m4s"},
+                {"bandwidth": 66000, "baseUrl": "https://x/lo.m4s"}]}}}, ""
+        return {"code": 0, "data": {"bvid": "BV1xx411c7mD", "cid": 999, "title": "T"}}, ""
+    B._get_json = _play
+    u, w = B.audio_url("BV1xx411c7mD", 999)
+    ok("从 dash 里取音频流（取最低码率那条，省流量）", u == "https://x/lo.m4s", repr(u))
+
+    B._get_json = lambda url, timeout=12: ({"code": 0, "data": {"dash": {"audio": []}}}, "")
+    u2, w2 = B.audio_url("BV1xx411c7mD", 999)
+    ok("没有音频轨 ⇒ None + 如实说为什么", u2 is None and "没有可取的音频流" in w2, w2[:44])
+
+    B._get_json = lambda url, timeout=12: ({"code": -404, "message": "稿件不可见"}, "")
+    u3, w3 = B.audio_url("BV1xx411c7mD", 999)
+    ok("接口报错 ⇒ None + 错误码", u3 is None and "-404" in w3, w3[:40])
+
+    ok("反证：缺 cid 时不去打接口", B.audio_url("BV1xx411c7mD", None)[0] is None)
+
+    B._get_json = _play
+    B._download = lambda url, dest, timeout=180: (0, "音频流 HTTP 403（防盗链）")
+    _d2 = tempfile.mkdtemp(prefix="pm_bili_a_")
+    pa, wa = B.download_audio("BV1xx411c7mD", 999, _d2)
+    ok("下载失败 ⇒ None + 原因", pa is None and "403" in wa, wa[:40])
+    ok("反证：下载失败不落文件", os.listdir(_d2) == [], str(os.listdir(_d2)))
+
+    B._download = lambda url, dest, timeout=180: (200, "")      # 小于 10KB 的门槛
+    open(os.path.join(_d2, "junk"), "w").close()
+    pb, wb = B.download_audio("BV1xx411c7mD", 999, _d2)
+    ok("反证：下回来的音频太小也当失败（200 字节不算下到）", pb is None and "太小" in wb, wb[:40])
+
+    B._get_json = lambda url, timeout=12: (None, "连不上 B 站接口：超时")
+    t1, wt = B.listen("BV1xx411c7mD")
+    ok("听视频时解析就失败 ⇒ 空文本 + 透传原因", t1 == "" and "超时" in wt, wt[:40])
+finally:
+    B._get_json, B._download = _sg, _sd
+
 print("\n%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
