@@ -1276,6 +1276,8 @@ def _exec_read_bilibili(ctx, args):
                     "parts": len(v.get("pages") or []),
                     "has_subtitle": bool(v.get("subtitle")),
                     "subtitle_why": v.get("subtitle_why") or "",
+                    "ai_label": v.get("ai_label") or "",
+                    "ai_label_known": bool(v.get("ai_label_known")),
                     "url": v.get("url"), "text": _bili.to_text(v)})
     except Exception as e:
         return _err("解析 B 站链接失败：%s" % e)

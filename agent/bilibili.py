@@ -119,6 +119,10 @@ def view(bvid: str, aid: str | None = None, timeout: int = TIMEOUT):
     pages = d.get("pages") or []
     owner = d.get("owner") or {}
     stat = d.get("stat") or {}
+    # AI 标识：**唯一可信来源是后台字段**（`argue_info.argue_msg`）。
+    # 2026-09-15 实测：手机 App 的视频详情页**不渲染**这一行（肇岁初十 BV1nkYV6oEMZ 后台写着
+    # 「含AI生成内容」，手机端看不见、PC 网页端才看得见）⇒ 想判断有没有标识，只能读接口，别看界面。
+    _argue = d.get("argue_info")
     out = {
         "bvid": d.get("bvid"), "aid": d.get("aid"),
         "title": str(d.get("title") or "").strip(),
@@ -135,6 +139,8 @@ def view(bvid: str, aid: str | None = None, timeout: int = TIMEOUT):
         "stat": {"view": stat.get("view"), "like": stat.get("like"), "coin": stat.get("coin"),
                  "favorite": stat.get("favorite"), "reply": stat.get("reply"), "danmaku": stat.get("danmaku")},
         "url": "https://www.bilibili.com/video/%s" % d.get("bvid"),
+        "ai_label": str((_argue or {}).get("argue_msg") or "").strip(),
+        "ai_label_known": isinstance(_argue, dict),
     }
     return out, ""
 
@@ -261,6 +267,10 @@ def to_text(v: dict) -> str:
     ]
     if v.get("desc"):
         lines.append("简介：" + v["desc"][:400])
+    # AI 标识只认后台字段；字段缺失时**什么都不说**（不假装"没有标识"）
+    if v.get("ai_label_known"):
+        lines.append("AI 标识：" + (v["ai_label"] if v.get("ai_label")
+                                 else "这条没标（后台字段为空）"))
     if len(v.get("pages") or []) > 1:
         lines.append("分P：" + " / ".join("%s.%s" % (p.get("page"), p.get("part")) for p in v["pages"][:10]))
     if v.get("subtitle"):
