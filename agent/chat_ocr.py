@@ -1406,6 +1406,70 @@ def pick_search_icon(cands):
         return None
 
 
+SEARCH_BOX_MIN_W = 90      # 搜索框最小宽度（125% 实测 ≈110px）
+SEARCH_BOX_MIN_H = 22      # 搜索框最小高度
+SEARCH_BOX_LIGHT = 243     # 搜索框填充的亮度下限（白框；面板底色只有 ~237）
+
+
+def search_box_rect(img, left=None):
+    """在会话列表**标题带**里找"搜索框"那个圆角矩形（**几何判据，不读字**）。返回 `(x0,y0,x1,y1)` 或 None。
+
+    ⚠️ 为什么必须有它（2026-09-16 跨机 r12/r13 的铁证）：对面那台（微信 4.1.13.65 / 125%）**本来就有搜索框**，
+    但 ①占位文本被 OCR 读成 `…` ⇒ "读到「搜索」字样才认 box"这条**永远不成立**；②框里那个放大镜字形是
+    **浅灰细线**，`_dark_blocks`（阈值 150、≥14 像素）也量不到 ⇒ 于是回落到"认图标"，选中的其实是**框右边的「＋」**
+    ——他们那份 205×205 的"搜索浮层"帧打开的是「发起群聊 / 添加朋友 / 写笔记」菜单，这就是铁证。
+    ⇒ 补一条**几何判据**：标题带里找"接近白色、横向连贯、高度 22~46px"的那一条 ⇒ 就是搜索框，点它中心
+    （点框内任意位置都会展开搜索）。本机是 icon 形态、根本没有框 ⇒ 这条不触发，照旧走图标那条路。
+    """
+    try:
+        g = img.convert("L")
+        px = g.load()
+        x0c, x1c, _lf = _list_span(img, left=left)
+        yb0, yb1 = _search_band(img, x0c, x1c)
+        if yb1 - yb0 < 18 or x1c - x0c < 120:
+            return None
+        # ⚠️ 判据＝"该列**白像素总数占比**"，阈值取**背景与峰值的中间值**（不是固定值、也不是中位数倍数）：
+        #    2026-09-16 在对面真实帧上实测两轮才定下来——①固定 0.55：他们那条带高 78px、框只占 ~30px
+        #    ⇒ 白占比只有 0.29~0.36，**永远认不出**；②"3×中位数"：他们的搜索框占了跨度的一半以上 ⇒
+        #    中位数本身就有 0.28 ⇒ 阈值 0.85，**一个列都不剩**。正解＝背景≈0.00、框≈0.36，取两者中间。
+        fracs = []
+        for x in range(x0c, x1c):
+            n = sum(1 for y in range(yb0, yb1) if px[x, y] >= SEARCH_BOX_LIGHT)
+            fracs.append(n / float(yb1 - yb0))
+        peak = max(fracs) if fracs else 0.0
+        srt = sorted(fracs)
+        bg = srt[max(0, int(len(srt) * 0.25) - 1)]
+        # ⚠️ 两条必要条件：①带里得有"够白"的列（峰值 ≥0.20）；②**背景列必须基本不白**（bg ≤0.10）
+        #    —— 否则整条带都是白的（例如合成图/白色面板误入跨度）会被当成"一个巨大的搜索框"✗。
+        if peak < 0.20 or bg > 0.10:
+            return None
+        thr = max(0.16, bg + (peak - bg) * 0.5)
+        box_like = [i for i, f in enumerate(fracs) if f >= thr]
+        best_span, i, n_all = None, 0, len(box_like)
+        while i < n_all:                              # 取最长的一段连续列
+            j = i
+            while j + 1 < n_all and box_like[j + 1] == box_like[j] + 1:
+                j += 1
+            if best_span is None or (box_like[j] - box_like[i]) > (best_span[1] - best_span[0]):
+                best_span = (box_like[i], box_like[j])
+            i = j + 1
+        if not best_span:
+            return None
+        bx0, bx1 = x0c + best_span[0], x0c + best_span[1]
+        if bx1 - bx0 < SEARCH_BOX_MIN_W:
+            return None
+        cx = (bx0 + bx1) // 2
+        ys = [y for y in range(yb0, yb1) if px[cx, y] >= SEARCH_BOX_LIGHT]
+        if not ys:
+            return None
+        by0, by1 = min(ys), max(ys)
+        if by1 - by0 < SEARCH_BOX_MIN_H:
+            return None
+        return (int(bx0), int(by0), int(bx1), int(by1))
+    except Exception:
+        return None
+
+
 def find_search_entry(img, left=None, zoom: int = 2):
     """定位「搜索」入口，**兼容两套 UI**。返回 dict 或 None。
 
@@ -1427,7 +1491,19 @@ def find_search_entry(img, left=None, zoom: int = 2):
                         "why": "读到搜索框占位文本 %r" % s[:12]}
     except Exception:
         pass
-    # ② 认图标：**整条上部区域**扫二维深色块（有的帧带标题栏、有的不带，不写死 y）。
+    # ② 几何判据：**认那个白底圆角矩形**（不依赖占位文本，也不依赖放大镜字形——
+    #    跨机 r12/r13 实测：对面那台占位文本读成 `…`、放大镜是浅灰细线，两条老路都认不出，
+    #    结果点到了框右边的「＋」）。两台 UI 都成立；本机 icon 形态没有框 ⇒ 直接跳过。
+    try:
+        _bx = search_box_rect(img, left=left)
+        if _bx and (_bx[2] - _bx[0]) >= 60 and (_bx[3] - _bx[1]) >= 16:
+            return {"variant": "box",
+                    "x": int((_bx[0] + _bx[2]) / 2), "y": int((_bx[1] + _bx[3]) / 2),
+                    "why": "几何判据认出搜索框 %dx%d（白底圆角矩形，不读占位文本）"
+                           % (_bx[2] - _bx[0], _bx[3] - _bx[1])}
+    except Exception:
+        pass
+    # ③ 认图标：**整条上部区域**扫二维深色块（有的帧带标题栏、有的不带，不写死 y）。
     #    三条规矩（都来自实测）：a) 大小要像图标 b) 要在导航栏右边（头像那张深色图大小也像图标）
     #    c) **取"最上面那一排"里最靠左的那个**——放大镜与「＋」同一排，会话行的头像/名字在更下面
     try:
@@ -1476,6 +1552,10 @@ def band_diff(a, b) -> float:
 
 
 POPOVER_MARKERS = ("最近在搜", "搜索网络结果", "搜索", "联系人", "群聊", "聊天记录", "公众号", "视频号")
+# ⛔ 「＋」菜单的条目（2026-09-16 跨机 r12 铁证）：他们那份 205×205 的"搜索浮层"帧，画面其实是
+#    「发起群聊 / 添加朋友 / 写笔记」——因为老判据只查 `群聊` 这一个词，而 `发起群聊` **包含**它 ⇒ 误判成
+#    搜索浮层。⇒ 命中这些菜单条目 ≥2 条就**直接判不是搜索浮层**（黑名单优先于白名单）。
+PLUS_MENU_ITEMS = ("发起群聊", "添加朋友", "写笔记", "扫一扫", "收付款", "拍一拍")
 
 
 def looks_like_search_popover(img) -> tuple:
@@ -1493,6 +1573,11 @@ def looks_like_search_popover(img) -> tuple:
         txt = " ".join(str(t) for t, *_ in recognize(img))
     except Exception as e:
         return False, "OCR 失败：%s" % e
+    # ⛔ 黑名单优先：「＋」菜单（发起群聊/添加朋友/写笔记…）**不是**搜索浮层——它含「群聊」二字，
+    #    会被下面的白名单误判（跨机 r12 的 205×205 帧就是这么被当成搜索浮层的）。
+    _hit_menu = [m for m in PLUS_MENU_ITEMS if m in txt]
+    if len(_hit_menu) >= 2:
+        return False, "这是「＋」菜单（%s），不是搜索浮层" % "、".join(_hit_menu[:3])
     for m in POPOVER_MARKERS:
         if m in txt:
             return True, "画面里有浮层标志「%s」" % m

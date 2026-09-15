@@ -196,5 +196,46 @@ ok("进去先 stash 前台（在点搜索入口之前）",
 ok("出去一律还前台（finally，异常路径也走）",
    "finally:" in _seg_s and '_restore_fg_until("切会话·搜索路线"' in _seg_s)
 
+print("⑨ 几何判据：搜索框要认得出（跨机 r12/r13：对面那台占位文本读成「…」、放大镜是浅灰细线）")
+try:
+    from PIL import Image as _I9, ImageDraw as _D9, ImageFont as _F9
+    im9 = _I9.new("RGB", (1143, 891), (237, 237, 239))
+    _d9 = _D9.Draw(im9)
+    _d9.rectangle([91, 55, 213, 82], fill=(255, 255, 255), outline=(200, 200, 200))   # 白底搜索框
+    _d9.ellipse([103, 62, 115, 74], outline=(150, 150, 150))                          # 浅灰放大镜
+    try:
+        _f9 = _F9.truetype(r"C:\Windows\Fonts\msyh.ttc", 12)
+    except Exception:
+        _f9 = _F9.load_default()
+    _d9.text((124, 64), "…", font=_f9, fill=(160, 160, 160))                          # 占位文本不是「搜索」
+    _d9.rectangle([278, 0, 1143, 891], fill=(255, 255, 255))                          # 右侧聊天区（白）
+    _r9 = CO.search_box_rect(im9)
+    ok("白底框能被量出来（x≈91~213）", bool(_r9) and 80 <= _r9[0] <= 100 and 205 <= _r9[2] <= 225, str(_r9))
+    _e9 = CO.find_search_entry(im9)
+    ok("入口判成 box 且落点在框内（不读占位文本）",
+       bool(_e9) and _e9.get("variant") == "box" and 100 <= _e9["x"] <= 200, str(_e9))
+    _im9b = _I9.new("RGB", (1139, 890), (237, 237, 239))
+    _D9.Draw(_im9b).rectangle([330, 0, 1139, 890], fill=(255, 255, 255))
+    ok("没有白框时不许判成 box（本机 icon 形态不受影响）", CO.search_box_rect(_im9b) is None)
+except Exception as _e9b:
+    ok("几何判据可测", False, str(_e9b)[:80])
+
+print("⑩ 「＋」菜单不许被当成搜索浮层（跨机 r12 的 205×205 帧就是它）")
+try:
+    from PIL import Image as _I10, ImageDraw as _D10, ImageFont as _F10
+    im10 = _I10.new("RGB", (205, 205), (255, 255, 255))
+    _d10 = _D10.Draw(im10)
+    try:
+        _f10 = _F10.truetype(r"C:\Windows\Fonts\msyh.ttc", 18)
+    except Exception:
+        _f10 = _F10.load_default()
+    _d10.text((60, 40), "发起群聊", font=_f10, fill=(20, 20, 20))
+    _d10.text((60, 90), "添加朋友", font=_f10, fill=(20, 20, 20))
+    _d10.text((60, 140), "写笔记", font=_f10, fill=(20, 20, 20))
+    _lis = CO.looks_like_search_popover(im10)
+    ok("「＋」菜单 ⇒ 判「不是搜索浮层」", _lis[0] is False and "＋" in _lis[1], str(_lis))
+except Exception as _e10:
+    ok("「＋」菜单判据可测", False, str(_e10)[:80])
+
 print("\n结果：%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
