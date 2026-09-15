@@ -439,6 +439,10 @@ DEFAULT_CONFIG = {
         # ① 绝不主动摆弄用户的微信窗口（不移动/不缩放/不还原最小化）——默认关；
         # ② 绝不为了点击把微信抢到前台——默认关（需要前台的旧路径会**如实报"跳过"**而不是硬来）。
         "lock_window_pos": False,     # 是否把微信主窗拉到固定位置/大小（默认关：不动用户的窗口）
+        # ③（2026-09-15 用户拍板方案 A）**借来的窗口用完要还**：`_limit_wechat_window()` 为了不让
+        #    驱动库的布局校准失效，每次取 GUI 会把主窗钉到 1160×900（把他手动拉过的尺寸改掉）⇒
+        #    现在改成「借 → 用完（空闲 IDLE_S 秒）自动还回原 rect」，详见 agent/window_borrow.py。
+        "restore_window_after_use": True,   # 默认开：动过的窗口几何，用完自动还原
         "allow_foreground": False,    # 是否允许把微信置前（默认关：抢前台＝打扰用户，属最高目标禁止项）
         "theme": "whale",             # 主题：whale（默认鲸落深海）| light | dark | system
         # ── 背景（默认＝海：实拍海浪 assets/wallpaper/ocean1.jpg + CSS 波浪；鲸鱼主题另有视频壁纸）──

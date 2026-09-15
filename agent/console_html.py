@@ -1764,6 +1764,8 @@ th{color:var(--tx2);font-weight:500}
       <div class="row"><label>点击前清遮挡</label><input type="checkbox" data-cfg="ui.clean_overlays"></div>
       <div class="row"><label>固定微信窗口位置</label><input type="checkbox" data-cfg="ui.lock_window_pos">
         <span class="hint">默认关＝绝不移动、缩放、还原你的微信窗口；开着才会把它摆到标准位置。</span></div>
+      <div class="row"><label>用完还原微信窗口</label><input type="checkbox" data-cfg="ui.restore_window_after_use">
+        <span class="hint">默认开：为了让点击不漂，我们偶尔要把微信主窗借到固定尺寸，用完（空闲一会儿）自动还回你原来的位置和大小；你在借用期间自己动过窗口的话以你为准，不还。</span></div>
       <div class="row"><label>允许把微信置前</label><input type="checkbox" data-cfg="ui.allow_foreground">
         <span class="hint">默认关＝任何操作都不会抢你的前台，也不把微信钉在最上层；只有确实需要前台点击的老路子才用得上。</span></div>
       <div class="row"><label>地址栏乱码化</label><input type="checkbox" data-cfg="ui.obscure_url">

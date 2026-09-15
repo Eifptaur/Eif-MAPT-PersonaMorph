@@ -399,6 +399,7 @@
   "coord_scale": "auto",
   "clean_overlays": true,
   "lock_window_pos": false,
+  "restore_window_after_use": true,
   "allow_foreground": false,
   "theme": "whale",
   "background": "",
