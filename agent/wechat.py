@@ -2649,7 +2649,17 @@ class WeChatAdapter:
             img = _co.capture_best(gui=gui or self._get_gui(), frames=2)
             _ht, _hy = _co.highlight_time(img) if img is not None else ("", None)
             if not _ht:
-                return False, "活动行时间戳 OCR 没读出来（判据不可用）", False
+                # ⚠️ 2026-09-16 r20（跨机 r19 的 live 现场）：活动行时间戳是**间歇**可读的（对面实测 1/2~1/4），
+                #    单帧读不出就判"判据不可用"⇒ fail-closed 常态化（他们那轮 zip 就是因为这一刻读不出而发不出去）。
+                #    ⇒ **连试几帧**再下结论：捕获是新的、帧质量会变，重试成本只在失败路径上（几次 OCR，约 1~2s）。
+                for _i in range(4):
+                    time.sleep(0.35)
+                    img = _co.capture_best(gui=gui or self._get_gui(), frames=2)
+                    _ht, _hy = _co.highlight_time(img) if img is not None else ("", None)
+                    if _ht:
+                        break
+            if not _ht:
+                return False, "活动行时间戳 OCR 连试 5 帧都没读出来（判据不可用）", False
             if self._norm_hhmm(_ht) != self._norm_hhmm(_lt):
                 return True, "活动行（y=%s）时间 %s ≠ 目标最后一条消息时间 %s" % (_hy, _ht, _lt), True
             return False, "", True
