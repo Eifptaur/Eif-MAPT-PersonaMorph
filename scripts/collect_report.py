@@ -306,6 +306,9 @@ def sec_visual():
 def sec_send_test():
     lines, raw = [], {}
     token = "检验%05d" % (int(time.time()) % 100000)
+    # ⛔ **自检工具绝不许动用户的鼠标**（2026-09-16 跨机 r12 事故：对面那台跑本工具时投递档切不过去 ⇒
+    #    自动退回真实路径 ⇒ 动了 16 秒光标）。⇒ 这里强制关掉真鼠标兜底（环境变量优先级最高，无视 config）。
+    os.environ["WXAGENT_REAL_FALLBACK"] = "0"
     try:
         from agent.chat_header import check, reference, ref_sizes
         from agent.wechat import WeChatAdapter

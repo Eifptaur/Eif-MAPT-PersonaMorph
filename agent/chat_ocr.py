@@ -1393,7 +1393,10 @@ def pick_search_icon(cands):
         pool = square or list(cands)
         top = min(b[1] for b in pool)
         row = [b for b in pool if b[1] <= top + 14]      # 同一排（图标行）
-        row.sort(key=lambda b: b[0])
+        # ⚠️ 同 x 的并列块**按面积从大到小**取（跨机 r12 报的潜在坑）：放大镜与「＋」常常**同 x**
+        #    （实测 242,71 上叠着 21×21 与 11×11 两个块），若 OCR/连通域给出的顺序颠倒，"最靠左"就会
+        #    选中那个 11×11 的碎片 ⇒ 点歪。⇒ 排序键＝(x 升序, 面积降序)。
+        row.sort(key=lambda b: (b[0], -(b[2] * b[3])))
         cx, cy, bw, bh = row[0]
         why = ("最上一排最靠左的%s图标 %dx%d（该排 %d 块 / 方块候选 %d / 共 %d 块；%s）"
                % ("方块" if square else "深色", bw, bh, len(row), len(square), len(cands),
