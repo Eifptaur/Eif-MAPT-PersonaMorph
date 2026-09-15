@@ -143,6 +143,17 @@ ck("B17g 两条投递链的收尾（含早退路径）都放回收起状态",
 #   ⇒ 打字前必须先投递点一次输入栏把焦点给它（旧版从不点输入框，靠"正常态默认有焦点"）
 ck("B17h 打字前先投递聚焦输入栏（最小化还原后 WM_CHAR 会被丢）",
    "backend.click(main, focus_pt)" in _ST and "投递聚焦输入栏失败" in _ST)
+# B20~B21 档位强弱（2026-09-16 r25 对面实测：会话头指纹档**会假阳性**——当前明明开着「余命十日」时
+#   `chat_is_open("filehelper")` 也返回 True；而 r24 我刚把这个函数接进身份闸的兜底 ⇒ 等于给"发错
+#   会话"开了一道缝。⇒ 指纹档降级为弱档、默认不采信；标题带档提为首选（对面实测它有区分力：
+#   'O余命十日' vs 'O文亻牛传输助手'，且 r24 那次 A1 命中的正是这一档）。
+_CIS = SRC_WECHAT.split("def chat_is_open(")[1][:4600]
+ck("B20 会话头指纹档降级为弱档、默认不采信（只有 allow_weak 时才认）",
+   "allow_weak" in _CIS and "弱档" in _CIS
+   and "不足以确认当前会话，按**未确认**处理" in _CIS)
+ck("B21 标题带档排在指纹档之前（对面实测才有区分力的是它）",
+   _CIS.find("header_text(_im4)") >= 0 and _CIS.find("chat_header as _ch") >= 0
+   and _CIS.find("header_text(_im4)") < _CIS.find("chat_header as _ch"))
 ck("B18 竞态如实写进控制台（用户 2026-09-15 要求「这个你要如实跟用户讲清楚」）",
    "会不会跟你抢操作" in SRC_CONSOLE and "撞了它会用聊天区内容复核" in SRC_CONSOLE)
 # B19~B21 零动作对照：阈值不许写死（2026-09-15；实测抓屏退回路径零动作差 0.142 > 老阈值 0.01）

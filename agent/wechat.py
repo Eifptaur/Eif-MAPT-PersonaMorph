@@ -1386,12 +1386,17 @@ class WeChatAdapter:
         except Exception as e:
             return "", "OCR 判当前会话异常：%s" % e
 
-    def chat_is_open(self, chat_id: str, gui=None, name: str = None):
+    def chat_is_open(self, chat_id: str, gui=None, name: str = None, allow_weak: bool = False):
         """只读：当前打开的会话是不是 chat_id。返回 (bool, 说明)。
 
-        两个独立信号取或：①**OCR 名字**（会话列表绿底行，能答"现在是谁"但抓图偶发拿不到帧）
-        ②**会话头指纹闸**（`chat_header.check`，快、稳，但需要该尺寸的参照）。
-        OCR 拿不到帧时**不要直接判否**（否则会把"其实开着"误判成"没开"⇒ 白白退回真鼠标路径）。
+        ⚠️ 2026-09-16 r25（对面实测）：**档位分强弱，分界＝有没有区分力**。
+          · **强档**（能回答"现在是谁"）：① 名字 OCR ② **会话头标题带 OCR** ③ 高亮行时间×DB；
+          · **弱档**：④ 会话头指纹 —— 对面**原样复现了它的假阳性**：当前明明开着「余命十日」，
+            `chat_is_open("filehelper")` 也返回 **True**（两个会话同时 True）。
+          ⇒ **指纹档单独不成立**：只在 `allow_weak=True`（只读探针、辅助判断）时才采信；
+            **授权写动作的最后一道闸绝不接它**（默认 `allow_weak=False`）。
+          ⇒ 顺序也据此改：先问有区分力的三档，指纹档放最后且默认不采信。
+        （原注保留）OCR 拿不到帧时**不要直接判否**（否则会把"其实开着"误判成"没开"⇒ 白白退回真鼠标路径）。
         """
         want = name or self.display_name(chat_id) or chat_id
         got, why = self.current_chat_name(gui=gui)
@@ -1401,28 +1406,9 @@ class WeChatAdapter:
                 return True, "当前会话 OCR=%r（目标 %r）· %s" % (got, want, why)
         except Exception:
             pass
-        try:                                   # OCR 不可用/没抓到帧时的第二信号
-            from . import chat_header as _ch
-            st = _ch.check(chat_id, gui=gui)
-            if st.get("status") == "ok":
-                return True, "会话头指纹判 ok（OCR 这次给的是 %r：%s）" % (got, str(why)[:40])
-        except Exception as _e:
-            pass
-        # ③ 第三条独立证据：**当前高亮行的时间**（屏幕 × DB）。
-        #    ⚠️ 2026-09-16 加：高亮行是**白字绿底**，名字 OCR 读不出（E 被读成「巷」）⇒ ①②都可能拿不到
-        #    正面证据，而会话**确实开着**（实测：搜索框路线把 E 切过来了、这一步却报 False，
-        #    `send_to_e.py` 的闸门就此判否）。这条与 `chat_identity_ok` 的那一档同源、同口径。
-        try:
-            _ok3, _why3 = self._active_row_time_ok(chat_id, gui=gui)
-            if _ok3:
-                return True, _why3
-        except Exception:
-            pass
-        # ④ 第四条独立证据：**会话头标题带的 OCR**（不依赖活动行时间戳、也不依赖指纹参照）。
-        #    ⚠️ 2026-09-16 r21（跨机 r20 的 live 现场）：那台"白字绿底的活动行"**持续多帧读不出**
-        #    （连试 5 帧 + 等 75s 都不行）⇒ ①②③全给不出证据 ⇒ 只能走人工确认通道。而他们自己是用
-        #    **会话头标题 OCR**（裁图读到 'O余命十日'）核的 ⇒ 这条本来就该在产品里当一档。
-        #    本机标题是浅灰细字、OCR 常给空串 ⇒ 给不出证据就往下走（不误判）。
+        # ② **会话头标题带 OCR**（提到第二位）—— 对面 r25 实测它有区分力
+        #    （'O余命十日' vs 'O文亻牛传输助手'，一次就能判定当前是谁），可当首选档用；
+        #    r24 那次"四档兜底放行"命中的也正是这一档。
         try:
             from . import chat_ocr as _co2
             _im4 = _co2.capture_best(gui=gui or self._get_gui(), frames=2)
@@ -1430,6 +1416,24 @@ class WeChatAdapter:
             if _tt and _co2.matches(_tt, want):
                 return True, ("会话头标题带 OCR=%r 与目标 %r 匹配（不依赖活动行时间/指纹参照）"
                               % (_tt[:16], want))
+        except Exception:
+            pass
+        # ③ 高亮行时间 × DB（有区分力：那个时刻在会话列表里必须唯一）
+        try:
+            _ok3, _why3 = self._active_row_time_ok(chat_id, gui=gui)
+            if _ok3:
+                return True, _why3
+        except Exception:
+            pass
+        # ④ **弱档：会话头指纹**（会假阳性 ⇒ 默认不采信）
+        try:
+            from . import chat_header as _ch
+            st = _ch.check(chat_id, gui=gui)
+            if st.get("status") == "ok":
+                if allow_weak:
+                    return True, "会话头指纹判 ok（**弱档**：对面 r25 实测它对不同会话也会判 True）"
+                return False, ("只有会话头指纹档成立（**弱档、会假阳性**：对面 r25 实测两个不同会话"
+                               "同时判 True）⇒ 不足以确认当前会话，按**未确认**处理")
         except Exception:
             pass
         return False, "当前会话 OCR=%r（目标 %r）· %s" % (got, want, why)
