@@ -213,7 +213,29 @@ input,select,textarea{backdrop-filter:blur(8px)}
   background:var(--input-bg);color:var(--tx);border:1px solid var(--input-bd);border-radius:10px;
   padding:8px 12px;font:inherit;outline:none}
 :where(input,textarea)::placeholder{color:var(--tx2);opacity:.75}
-:where(input[type=checkbox],input[type=radio]){accent-color:var(--blue)}
+:where(input[type=radio]){accent-color:var(--blue)}
+/* ── 自研勾选框（2026-09-15 用户："你可以做设计吗，现在还是那个白色的勾选框，我希望能好看一点"）──
+   显示层自研：**不用浏览器默认的白方块**，选中的勾是 CSS 画的两段折线（不用字体字形/图片/emoji）。
+   三态齐（悬停 / 选中 / 禁用）+ 键盘焦点环；勾与横杠用**百分比定位** ⇒ 控件被设成 16px 还是 20px
+   都在正中心；颜色全走主题变量 ⇒ 三套主题自动跟着变。 */
+:where(input[type=checkbox]){
+  -webkit-appearance:none;appearance:none;flex:none;position:relative;cursor:pointer;
+  width:17px;height:17px;border-radius:6px;vertical-align:-3px;
+  border:1.5px solid var(--input-bd);background:var(--input-bg);
+  transition:background .13s ease,border-color .13s ease,box-shadow .13s ease}
+:where(input[type=checkbox]:hover){border-color:var(--blue);box-shadow:0 0 0 3px var(--blue-soft)}
+:where(input[type=checkbox]:checked){border-color:transparent;
+  background:linear-gradient(160deg,var(--blue),var(--blue2));
+  box-shadow:0 2px 8px var(--blue-soft),inset 0 1px 0 rgba(255,255,255,.45)}
+:where(input[type=checkbox]:checked)::after{
+  content:"";position:absolute;left:50%;top:46%;width:28%;height:56%;
+  border:solid #fff;border-width:0 2px 2px 0;transform:translate(-50%,-58%) rotate(45deg)}
+:where(input[type=checkbox]:indeterminate){border-color:transparent;
+  background:linear-gradient(160deg,var(--blue),var(--blue2))}
+:where(input[type=checkbox]:indeterminate)::after{
+  content:"";position:absolute;left:22%;top:45%;width:56%;height:2px;background:#fff;border-radius:2px}
+:where(input[type=checkbox]:focus-visible){outline:2px solid var(--blue);outline-offset:2px}
+:where(input[type=checkbox]:disabled){opacity:.45;cursor:not-allowed;box-shadow:none}
 :where(select option){background:var(--menu-bg);color:var(--tx)}
 :where(input[type=file]){color:var(--tx2);font:inherit}
 :where(input[type=file])::file-selector-button{background:var(--input-bg);color:var(--tx);
