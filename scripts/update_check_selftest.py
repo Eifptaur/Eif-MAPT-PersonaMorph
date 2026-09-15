@@ -106,5 +106,25 @@ try:
 finally:
     shutil.rmtree(tmp, ignore_errors=True)
 
+print("\n[U9] 控制台「更新公告」条：分支齐、按钮各有各的行为、不弹窗")
+# 2026-09-15 补：以前这条公告**一条判据都没有**（后端五态有判据，前端公告条全靠肉眼）。
+_H = open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+_W = open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
+_i = _H.find('id="updBar"')
+_seg = _H[_i:_i + 2600] if _i > 0 else ""
+ok(_i > 0, "控制台有公告条 #updBar")
+ok('id="updText"' in _seg and 'id="updGo"' in _seg and 'id="updLater"' in _seg and 'id="updSkip"' in _seg,
+   "公告文案 + 三个按钮都在（立即更新 / 稍后 / 不再提醒这个版本）")
+for st in ("'newer'", "'older'", "'error'"):
+    ok(st in _seg, "有 %s 分支" % st)
+ok("有新版本" in _seg and "s.notes" in _seg, "newer 分支写「有新版本」并把公告要点拼上")
+ok(_seg.count("'warn'") >= 2, "older 与 error 都走 warn 样式（不是静默）")
+ok("hide()" in _seg and "else { hide(); }" in _seg, "其余状态（current / off）走隐藏")
+ok("getElementById('updLater').onclick = hide" in _seg, "「稍后」＝只隐藏，不发任何请求")
+ok("/api/update_skip" in _seg and "cur.theirs" in _seg, "「不再提醒」＝POST /api/update_skip 且带上版本号")
+ok("立即更新" in _H and "alert(" not in _seg, "「立即更新」＝就地给指引，**不弹窗**")
+ok("fetch('/api/update')" in _seg, "取数只打 /api/update")
+ok('"/api/update"' in _W and '"/api/update_skip"' in _W, "后端路由都在：GET /api/update + POST /api/update_skip")
+
 print("\n==== 更新检查判据：%d 通过 / %d 失败 ====" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
