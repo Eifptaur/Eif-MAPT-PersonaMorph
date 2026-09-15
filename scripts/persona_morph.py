@@ -611,13 +611,17 @@ class Orchestrator:
             {"role": "user", "content": user_prompt},
         ]
 
-        vision_enabled = cfg.get("api", {}).get("vision", True) is not False
-        search_enabled = cfg.get("web_search", {}).get("enabled", True) is not False
-        tool_defs = [d for d in self.tool_defs if not (
-            (not vision_enabled and d["name"] == "get_message_images")
-            or (not search_enabled and d["name"] in ("web_search", "web_fetch"))
-        )]
+        # 工具表按能力裁剪（2026-09-15 省 token：37 个工具 ≈ 7324 token/请求，是最大单块）——
+        # 只裁"当前配置/场景下调用必然失败"的，规则与工具内部的可用性判定同源（agent/tools.py）。
+        from agent.tools import visible_defs as _visible_defs
+        tool_defs, _dropped_tools = _visible_defs(self.tool_defs, cfg, kind=kind)
         openai_tools = to_openai_tools(tool_defs)
+        session["tools_dropped"] = _dropped_tools
+        if _dropped_tools:
+            _entry["tools_dropped"] = [x["name"] for x in _dropped_tools]
+            log.info("[%s] 工具表按能力省去 %d 个（给模型 %d 个）：%s", chat_key,
+                     len(_dropped_tools), len(tool_defs),
+                     "、".join("%s(%s)" % (x["name"], x["why"]) for x in _dropped_tools))
 
         ctx = {
             "chat_key": chat_key, "kind": kind, "chat_id": chat_id,
@@ -1375,8 +1379,24 @@ def main():
             "running_chats": sorted(orch.running_chats),
             "stats": st,
             "usage": orch.stats_store.snapshot(),
+            "tools": _tools_status(),
             "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         }
+
+    def _tools_status():
+        """当前会给模型的工具表 + 按能力省掉了哪几个（省 token 要看得见）。
+
+        用户口径（2026-09-15）：省 token 不只是我的事，也是群相的事 ⇒ 用户要能看见
+        "给了我几个工具、省了哪些、凭什么省"，才谈得上自己把控开销。
+        """
+        try:
+            from agent.tools import visible_defs as _vd, to_openai_tools as _oai
+            defs = list(getattr(orch, "tool_defs", None) or [])
+            kept, dropped = _vd(defs, get_config())
+            return {"total": len(defs), "given": len(kept), "dropped": dropped,
+                    "kept_chars": len(json.dumps(_oai(kept), ensure_ascii=False))}
+        except Exception as e:
+            return {"error": str(e)[:120]}
 
     def test_api_fn():
         start = time.time()
