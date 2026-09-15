@@ -1490,10 +1490,15 @@ class WeChatAdapter:
                 _d = self._dump_fail_shot("switch_row", _chh.capture_image(gui=gui),
                                           {"name": name, "want_time": _want_time, "flog": str(flog),
                                            "scroll_note": _scroll_note})
-                return False, "会话列表里（只读截图 + OCR%s）没定位到「%s」（%s%s）%s" % (
+                # ⚠️ 2026-09-16 r19（跨机 r18 实测）：**这条分支才是"把列表滚走"的主力**——它为找行
+                #    最多下滚 6 步 ×3 = 18 格，失败后原来完全不还原（对面 live：目标名不存在 ⇒
+                #    列表停在滚动后的位置）。上一轮我只在 verify 分支加了还原 ✗。⇒ 两条失败分支都还原。
+                _scrolled_back = self._scroll_list_to_top(backend, tgt, wheel_pt, _scroll_fn is not None)
+                return False, "会话列表里（只读截图 + OCR%s）没定位到「%s」（%s%s）%s%s" % (
                     "，含平滑下滚 6 轮" if _scroll_fn is not None else "；**本轮没有滚动**",
                     name, flog, ("；" + _scroll_note) if _scroll_note else "",
-                    ("｜现场已存 %s" % _d) if _d else "")
+                    ("｜现场已存 %s" % _d) if _d else "",
+                    "｜已把列表滚回顶部" if _scrolled_back else "")
             pos = info["pos"]
             clicked_y = int(info["y_abs"])
             # ⛔ 一次切会话**最多一枪**：冷却期内只复核、不补点（用户口径：连点两下会把聊天框关掉）
@@ -1553,17 +1558,30 @@ class WeChatAdapter:
                                       {"name": name, "clicked_y": clicked_y,
                                        "want_time": _want_time, "flog": str(flog),
                                        "last": str(last)[:300]})
-            # ⚠️ 失败后**把会话列表滚回顶部**（2026-09-16 r17 跨机报的污染）：连续失败的切会话每次会把列表
-            #    滚走最多 18 格且不还原，用户的列表位置被弄乱（他们连试三次后偏离原位）。⇒ 失败路径自己收尾。
-            try:
-                if _scroll_fn is not None:
-                    backend.wheel(tgt, wheel_pt, 120, times=10, gap_ms=60)
-            except Exception:
-                pass
+            # ⚠️ 失败后**把会话列表滚回顶部**（2026-09-16 r17/r18 跨机报的污染）：见 `_scroll_list_to_top`
+            self._scroll_list_to_top(backend, tgt, wheel_pt, _scroll_fn is not None)
             return False, ("投递点击已发出，但既没看到该行变绿底、也没能 OCR 确认「%s」（%s；最后一帧：%s%s）"
                            % (name, flog, str(last)[:60], ("｜现场已存 %s" % _d) if _d else ""))
         except Exception as e:
             return False, "投递切会话异常：%s" % e
+
+    def _scroll_list_to_top(self, backend, tgt, wheel_pt, can_scroll: bool = True) -> bool:
+        """把会话列表**滚回顶部**（失败路径的收尾）。返回是否真的滚了。
+
+        ⚠️ 为什么需要（2026-09-16 跨机 r17/r18）：切会话为了找行会下滚最多 18 格，**失败后如果不还原**，
+        用户的会话列表位置就被弄乱了（对面连续三次失败后偏离原位，最后靠搜索浮层才带回来）。
+        ⚠️ 用**产品自己那条已验证有效的滚轮形状**（`times=8, gap_ms=70`，和"先把列表滚到顶"那一步一致）：
+        对面手搓的"一枪 +120×40"对他们那台**无效**（可见行逐字不变），所以别自己换参数。
+        """
+        if not can_scroll:
+            return False
+        try:
+            for _ in range(3):                      # 多给两轮，防消息丢
+                backend.wheel(tgt, wheel_pt, 120, times=8, gap_ms=70)
+                time.sleep(0.2)
+            return True
+        except Exception:
+            return False
 
     def _dump_fail_shot(self, tag: str, img, extra: dict = None, keep: int = 5) -> str:
         """失败当时的**画面 + 判据中间量**落到 `wechatauto_logs/fail/<时间戳>_<tag>/`（尽力而为，绝不抛）。
@@ -1810,6 +1828,32 @@ class WeChatAdapter:
             ok_t, why_t = backend.send_text(main, name)
             if not ok_t:
                 return False, "搜索框打字失败：%s" % why_t
+            # ⚠️ 2026-09-16 r19（跨机 r18 的**最值钱发现**）：搜索框形态的**结果往往也是独立浮层**
+            #    （对面实测：`_find_search_popover` 命中 hwnd 1836290 / rect (154,98,614,921) / 460×823、
+            #    画面含「搜索网络结果」，`find_popover_row` 一次命中；而那台走"主窗里找结果行"**3 次全没认出**）。
+            #    ⇒ box 路线**先按浮层试一遍**（与 icon 路线同一套），不行再退回"主窗里找行"。
+            #    这条一通，切会话就不必再依赖"绿底 + 活动行时间"那一档 ⇒ 缓解可用性缺口。
+            _pop, _prow = None, None
+            for _i in range(6):
+                time.sleep(0.4)
+                _pop = self._find_search_popover(main)
+                if _pop:
+                    _prow = _co.find_popover_row(_pop[2], name)
+                    if _prow:
+                        break
+            if _pop and _prow:
+                _ph, _prect, _pimg, _pwhy = _pop
+                backend.click(int(_ph), (int(_prect[0]) + int(_prow["x"]), int(_prect[1]) + int(_prow["y"])))
+                time.sleep(1.0)
+                _idn2, _idn2_why = self.chat_identity_ok(chat_id, gui=gui)
+                if _idn2 is True:
+                    return True, ("搜索框路线（结果在独立浮层里）成功：浮层 hwnd=%s，%s，%s"
+                                  % (_ph, _pwhy, _idn2_why))
+                if _idn2 is None:
+                    return True, ("搜索框路线（浮层）：内容级判据这次不可用（%s），但点的是浮层里名字匹配「%s」"
+                                  "的结果行 ⇒ 按弱证据计切成功（发送闸仍要另过内容×活动行时间）"
+                                  % (str(_idn2_why)[:70], name[:10]))
+                _close_search_popover(int(_ph))     # 判否 ⇒ 关掉浮层，再退回"主窗里找行"
             # 结果里找名字匹配的行（多抓几帧）
             info = None
             for _i in range(4):
