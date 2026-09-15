@@ -337,10 +337,12 @@ ok("图标 ≥18px（原来 16）", "width:18px" in _seg_icon and "height:18px" 
 ok("侧栏列宽 ≥252px（原来 216）", "grid-template-columns:252px 1fr" in _html)
 
 print("── J. 收起态导航 + 长清单折叠 + 微信后台纪律（2026-09-14 用户三项反馈）──")
-ok("收起态：栏更宽（≥84px）", ".side.tight{width:88px}" in _html)
+# 2026-09-15 口径变更（用户当面点第 ⑤⑥ 条）：收起按钮从小把手改成**整行**「‹ 收起 / › 展开」、
+# 栅格列宽跟着收（.shell.tight 64px）⇒ 旧的 88px 与 absolute right:2px 断言已作废。
+ok("收起态：栅格列跟着收（.shell.tight 64px）", ".shell.tight{grid-template-columns:64px 1fr;gap:8px}" in _html)
 ok("收起态：图标更大（22px）", ".side.tight .nav a svg{width:22px" in _html)
 ok("收起态：行内边距更松（≥14px）", ".side.tight .nav a{justify-content:center;gap:0;padding:14px 0}" in _html)
-ok("收起把手贴右缘（不是左侧）", ".side .nav-tg{position:absolute;right:2px" in _html)
+ok("收起按钮是整行（不是贴右缘的小把手）", ".side .nav-tg{position:static;width:100%" in _html)
 ok("长清单折叠：有按钮条样式", ".fold-bar" in _html and ".fold-tg" in _html)
 ok("长清单折叠：目标覆盖 ≥8 类", _html.count('["#') + _html.count('[".') >= 8, str(_html.count('["#')))
 ok("长清单折叠：默认是收起态（按钮写着「展开全部」）", "b.textContent = '展开全部'" in _html)
@@ -366,8 +368,10 @@ ok("两个开关都映射到界面（有 data-cfg）",
 
 print("── K. 自家控制台窗口：全屏键（用户：「自创原生显示屏是没有全屏键的…需要一个全屏键」）──")
 _lc = src("launcher-src/launcher.cs")
-ok("顶栏有三个键（最小化 / 最大化还原 / 关闭）",
-   'min.Text = "—"' in _lc and '_btnMax = maxb' in _lc and 'cls.Text = "✕"' in _lc)
+# 2026-09-15 口径变更：顶栏三键从「— / □❐ / ✕ 三种异族字形」改成同一个自绘控件 GlyphButton
+# （launcher-src/wingliphs.cs 的 GlyphKind{Min,Max,Restore,Close}，同一支笔按高度等比）。
+ok("顶栏三个键是同一套自绘字形（GlyphButton + GlyphKind）",
+   "GlyphButton" in _lc and "GlyphKind" in _lc and "_btnMax = maxb" in _lc)
 ok("最大化走 ToggleMax（按钮与标题栏双击同一处）",
    "public void ToggleMax()" in _lc and "m.Msg == 0x00A3" in _lc)
 ok("无边框窗自己处理 WM_GETMINMAXINFO + WM_NCCALCSIZE（否则会盖住任务栏）",

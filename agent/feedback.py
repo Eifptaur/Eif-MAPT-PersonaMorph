@@ -36,6 +36,13 @@ FEEDBACK_FILE = os.path.join(ROOT, "data", "feedback.jsonl")
 #: 反馈类型（前端下拉与后端校验共用同一份，避免"界面能填、后端不认"）
 KINDS = ("问题", "建议", "想法", "其他")
 
+#: 防刷限流默认值（2026-09-15 用户要求：「要是有人一瞬间给我发 100 封怎么办」）。
+#: 数值依据：正常用户一天写 2~3 条反馈 ⇒ 留约 6 倍余量；真被刷时收件箱最多被灌 20 封/天。
+#: ⚠️ 这是**咽喉点**：控制台表单、HTTP 接口、机器人工具都走 `submit()`，改这里一处全生效。
+LIMIT = {"per_minute": 3, "per_hour": 10, "per_day": 20, "dup_window_s": 600}
+#: 被限流拦下的**不写进 feedback.jsonl**（否则刷子能把存档撑爆），只在这里留一行轻量痕迹。
+REJECT_FILE = os.path.join(ROOT, "data", "feedback_rejected.jsonl")
+
 
 def _cfg() -> dict:
     try:
@@ -97,6 +104,77 @@ def _append(item: dict) -> bool:
         return True
     except Exception:
         return False
+
+
+def _limit() -> dict:
+    """限流配置：config.json 的 `feedback.limit.*` 覆盖默认值（非法值一律忽略、回默认）。"""
+    lim = dict(LIMIT)
+    try:
+        cfg = _cfg().get("limit") or {}
+        for k in list(lim):
+            if cfg.get(k) is not None:
+                lim[k] = int(cfg.get(k))
+    except Exception:
+        pass
+    return lim
+
+
+def _norm(s) -> str:
+    """归一化：去掉所有空白 + 转小写（"同一句话换个空格/大小写"也算同一条）。"""
+    return "".join(str(s or "").split()).lower()
+
+
+def _reject(why: str, item: dict) -> None:
+    """被拒的一律**不落 `feedback.jsonl`**（防刷爆存档），只留一行轻量痕迹。"""
+    try:
+        os.makedirs(os.path.dirname(REJECT_FILE), exist_ok=True)
+        with open(REJECT_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"at": time.time(),
+                                "at_h": time.strftime("%Y-%m-%d %H:%M:%S"),
+                                "why": why, "kind": item.get("kind"),
+                                "len": len(str(item.get("text") or "")),
+                                "head": str(item.get("text") or "")[:120]}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+def rate_check(text: str, now: float = None) -> tuple:
+    """限流判定 → `(ok, why)`。**唯一的咽喉点**：控制台表单 / HTTP / 机器人工具都走 `submit()`。
+
+    三道闸：
+      ① **同内容去重**（默认 10 分钟内只算一条）—— 防"手滑连点"与"同一句话反复发"；
+      ② **分钟 / 小时 / 天三档条数**（默认 3 / 10 / 20）—— 防"一瞬间发 100 封"；
+      ③ 被拒的**不落盘**，只写 `data/feedback_rejected.jsonl` 留痕（谁在刷要看得见）。
+    """
+    now = float(now if now is not None else time.time())
+    lim = _limit()
+    items = _read_all()
+    win = int(lim.get("dup_window_s") or 0)
+    if win > 0:
+        n = _norm(text)
+        if n:
+            for it in reversed(items):
+                try:
+                    if now - float(it.get("at") or 0) > win:
+                        break
+                    if _norm(it.get("text")) == n:
+                        return False, "这条反馈 %d 分钟内已经发过一次了" % (win // 60)
+                except Exception:
+                    continue
+    for key, span, label in (("per_minute", 60, "分钟"), ("per_hour", 3600, "小时"), ("per_day", 86400, "天")):
+        cap = int(lim.get(key) or 0)
+        if cap <= 0:
+            continue
+        cnt = 0
+        for it in items:
+            try:
+                if now - float(it.get("at") or 0) <= span:
+                    cnt += 1
+            except Exception:
+                continue
+        if cnt >= cap:
+            return False, "发得太频繁了（每%s最多 %d 条，已经用满）——稍后再试" % (label, cap)
+    return True, ""
 
 
 def compose(item: dict) -> str:
@@ -202,6 +280,12 @@ def submit(kind: str, text: str, contact: str = "", env: dict | None = None) -> 
         "ver": _version(),
         "env": env or {},
     }
+    # ④ 防刷闸门（咽喉点）：超额/重复一律**不发、不落盘**，只留痕（见 rate_check 注释）
+    _ok_rl, _why_rl = rate_check(t)
+    if not _ok_rl:
+        _reject(_why_rl, item)
+        return {"ok": False, "state": "blocked", "why": _why_rl,
+                "note": "被限流的反馈不会发出去、也不会存本机；内容还在你手上，稍后再发即可"}
     if not _append(item):
         return {"ok": False, "state": "error", "why": "本地保存失败（data/ 可写？）"}
     rep = deliver(item)

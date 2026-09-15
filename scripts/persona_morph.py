@@ -1626,7 +1626,7 @@ def main():
                 vis = bool(ctypes.windll.user32.IsWindowVisible(gui.main_hwnd))
                 add("微信·窗口", "ok" if (alive and vis) else "fail",
                     "进程在，窗口可见" if (alive and vis) else ("窗口不可见（可能最小化/退出）" if alive else "未找到微信窗口"),
-                    "打开电脑微信并登录小号，别最小化")
+                    "打开电脑微信并登录小号，最好别最小化")
             else:
                 add("微信·窗口", "fail", "微信适配器未初始化（微信可能没开）", "打开电脑微信再重启机器人")
         except Exception as e:

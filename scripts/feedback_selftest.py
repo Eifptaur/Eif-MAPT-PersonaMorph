@@ -76,6 +76,8 @@ try:
     except Exception:
         pass
     _real_cfg = FB._cfg
+    _real_lim = dict(FB.LIMIT)
+    FB.LIMIT.update({"per_minute": 999, "per_hour": 999, "per_day": 999})   # 本节只验三态；限流见 E 节
     FB._cfg = lambda: {}                      # 模拟"什么都没配"
     r1 = FB.submit("建议", "判据用的假反馈：希望它更好用", "tester@example.com", {"wechat": "4.1.15.8"})
     ok("没配通道 ⇒ state=queued（不是假的 sent）", r1.get("state") == "queued", str(r1.get("state")))
@@ -164,6 +166,8 @@ try:
         FB._cfg = _real_cfg
 finally:
     FB.FEEDBACK_FILE = _saved
+    FB.LIMIT.clear()
+    FB.LIMIT.update(_real_lim)
     try:
         os.remove(_tmp)
     except Exception:
@@ -182,6 +186,45 @@ ok("正文＝用户原话原样（只加一行元信息：类型/时间/版本/�
    all(k in _c.splitlines()[0] for k in ("建议", "2026-09-14 10:00:00", "b.x", "c"))
    and _c.splitlines()[-1].strip() == "一句原话"
    and "诉求：" not in _c, _c.replace("\n", "⏎")[:100])
+
+print("── E. 防刷限流：咽喉点 + 被拒的不落盘 ──")
+_C_saved = (FB.FEEDBACK_FILE, FB.REJECT_FILE, dict(FB.LIMIT), FB._cfg)
+_tmp3 = os.path.join(ROOT, "data", "feedback_selftest3.jsonl")
+_rej3 = os.path.join(ROOT, "data", "feedback_rejected_selftest.jsonl")
+try:
+    for _p in (_tmp3, _rej3):
+        try:
+            os.remove(_p)
+        except Exception:
+            pass
+    FB.FEEDBACK_FILE = _tmp3
+    FB.REJECT_FILE = _rej3
+    FB.LIMIT.update({"per_minute": 2, "per_hour": 999, "per_day": 999, "dup_window_s": 600})
+    FB._cfg = lambda: {}
+    _a = FB.submit("建议", "限流判据 A")
+    _b = FB.submit("建议", "限流判据 B")
+    _c = FB.submit("建议", "限流判据 C")
+    ok("每分钟额度用满后拦下（配置 2 条，第 3 条 blocked）",
+       _a.get("state") == "queued" and _b.get("state") == "queued" and _c.get("state") == "blocked",
+       "%s/%s/%s" % (_a.get("state"), _b.get("state"), _c.get("state")))
+    ok("被拒的**不落盘**（存档里仍只有 2 条）", len(FB._read_all()) == 2, "存了 %d 条" % len(FB._read_all()))
+    ok("被拒的写了留痕（feedback_rejected.jsonl）",
+       os.path.exists(_rej3) and "太频繁" in io.open(_rej3, encoding="utf-8").read())
+    _d = FB.submit("建议", "限流判据 A")
+    ok("同内容 10 分钟内不重复发", _d.get("state") == "blocked" and "已经发过" in (_d.get("why") or ""),
+       str(_d.get("why"))[:40])
+    ok("限流文案对用户说得清（告诉他稍后再试）", "稍后再试" in (_c.get("why") or ""), str(_c.get("why"))[:50])
+    ok("限流挂在唯一咽喉点上（HTTP 与工具都走 submit）",
+       "FB.submit(" in src("agent/webui.py") and "FB.flush(" in src("agent/webui.py"))
+finally:
+    (FB.FEEDBACK_FILE, FB.REJECT_FILE, _lim0, FB._cfg) = _C_saved
+    FB.LIMIT.clear()
+    FB.LIMIT.update(_lim0)
+    for _p in (_tmp3, _rej3):
+        try:
+            os.remove(_p)
+        except Exception:
+            pass
 
 print("")
 print("反馈栏判据：%d 通过 / %d 失败" % (PASS, FAIL))
