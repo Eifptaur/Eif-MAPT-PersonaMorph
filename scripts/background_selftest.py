@@ -98,6 +98,25 @@ ck("B12 拒绝话术说清「判不了就不动手」与「窗口留在屏幕上
 ck("B13 两条靠画面判成功的投递路径都挂了这道守卫",
    SRC_WECHAT.split("def moments_open_posted(")[1][:2500].count("_moments_judge_blind") >= 1
    and SRC_WECHAT.split("def moments_scroll_posted(")[1][:2500].count("_moments_judge_blind") >= 1)
+# B14~B17 最小化 ⇒ **不激活地**还原再干活（2026-09-15 用户：「那个最小化，你应该可以自己在后台切出来吧」）
+_HELP = SRC_WECHAT.split("def _ensure_main_visible(")[1][:2200]
+# ⚠️ 只认**代码形态**的字面量（带 `u.` 前缀与参数），不搜裸 API 名——docstring 里为了说明历史坑
+#    **引用**了 `SetForegroundWindow`/`SW_RESTORE` 这些名字，搜整段会自命中（第三次踩同一个坑）。
+ck("B14 有「无激活还原最小化窗口」的实现（真的读 IsIconic 判断）",
+   "u.IsIconic(int(main))" in _HELP)
+ck("B15 用的是 SW_SHOWNOACTIVATE（4）而不是 SW_RESTORE，且代码里不抢前台",
+   "u.ShowWindow(int(main), 4)" in _HELP
+   and "u.SetWindowPos(int(main), 0, 0, 0, 0, 0," in _HELP
+   and "SetForegroundWindow(int(main))" not in _HELP
+   and "ShowWindow(int(main), 9)" not in _HELP)
+ck("B16 还原开关映射到 config + 界面（默认开）",
+   '"restore_minimized"' in SRC_CFG and 'data-cfg="wechat.restore_minimized"' in SRC_CONSOLE)
+ck("B17 三条会抓图的投递链都在入口调了它（切会话 / 搜索框切会话 / 投递发文字）",
+   SRC_WECHAT.split("def switch_chat_posted(")[1][:4000].count("_ensure_main_visible") >= 1
+   and SRC_WECHAT.split("def open_chat_by_search(")[1][:4000].count("_ensure_main_visible") >= 1
+   and SRC_WECHAT.split("def send_text_posted(")[1][:4000].count("_ensure_main_visible") >= 1)
+ck("B18 竞态如实写进控制台（用户 2026-09-15 要求「这个你要如实跟用户讲清楚」）",
+   "会不会跟你抢操作" in SRC_CONSOLE and "撞了它会用聊天区内容复核" in SRC_CONSOLE)
 
 # ── C 光标不变（运行时 tripwire）──────────────────────────────────────────
 print("[C] 光标不变：真鼠标原语换成会响的探针，投递路径不许碰它")

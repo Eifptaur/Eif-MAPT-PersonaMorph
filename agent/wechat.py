@@ -1039,6 +1039,40 @@ class WeChatAdapter:
             pass
         return False, "当前会话 OCR=%r（目标 %r）· %s" % (got, want, why)
 
+    def _ensure_main_visible(self, gui, main: int) -> bool:
+        """主窗被最小化时**不激活地**还原（不动光标、不抢前台），让"抓图类判据"能工作。
+
+        2026-09-15 实测（`_scratch/restore_probe.py`）：`ShowWindow(SW_SHOWNOACTIVATE)`
+        + `SetWindowPos(…SWP_NOMOVE|NOSIZE|NOZORDER|NOACTIVATE|SHOWWINDOW)` 能把最小化的微信
+        还原成可抓图状态（抓图立刻恢复 `ok (1139,890)`），且**前台 134730→134730、光标未动**。
+        ⛔ 不用 `SW_RESTORE`（会激活窗口）配 `SetForegroundWindow`（抢前台）——那是 `_get_gui()`
+        自愈分支的老毛病，正是用户报障过的"一打开就把我的微信切出来"。
+        关掉 `wechat.restore_minimized` 就退回"如实拒绝"。
+        """
+        try:
+            import ctypes as _ct
+            u = _ct.windll.user32
+            if not u.IsIconic(int(main)):
+                return False
+            from .config import get_config
+            cfg = (get_config() or {}).get("wechat", {}) or {}
+            if not bool(cfg.get("restore_minimized", True)):
+                return False
+            u.ShowWindow(int(main), 4)                                   # SW_SHOWNOACTIVATE
+            time.sleep(0.4)
+            u.SetWindowPos(int(main), 0, 0, 0, 0, 0,
+                           0x0002 | 0x0001 | 0x0004 | 0x0010 | 0x0040)   # NOMOVE|NOSIZE|NOZORDER|NOACTIVATE|SHOWWINDOW
+            time.sleep(0.6)
+            try:
+                gui._update_render_rect()
+            except Exception:
+                pass
+            log.info("微信主窗原来是最小化：已**不激活**还原（不动光标、不抢前台）后继续")
+            return True
+        except Exception as e:
+            log.warning("无激活还原最小化窗口失败：%s", e)
+            return False
+
     def switch_chat_posted(self, chat_id: str, gui=None, name: str = None, confirm_s: float = 8.0):
         """**投递版切会话**：库的**只读** OCR 定位会话行 → **投递点击**那一行 → **OCR 按名字确认**已打开。
 
@@ -1060,6 +1094,7 @@ class WeChatAdapter:
             main = int(getattr(gui, "main_hwnd", 0) or 0) or ib.find_main_window()
             if not main:
                 return False, "找不到微信主窗"
+            self._ensure_main_visible(gui, main)   # 最小化 ⇒ 先不激活地还原（否则下面抓图必失败）
             try:
                 gui._update_render_rect()          # 只读：重算渲染区原点（坐标全靠它）
             except Exception:
@@ -1268,6 +1303,7 @@ class WeChatAdapter:
             if not main:
                 return False, "找不到微信主窗"
             tgt = ib.find_render_child(main) or main
+            self._ensure_main_visible(gui, main)   # 最小化 ⇒ 先不激活地还原，否则抓不到搜索浮层
             try:
                 gui._update_render_rect()
             except Exception:
@@ -1398,6 +1434,7 @@ class WeChatAdapter:
             main = int(getattr(gui, "main_hwnd", 0) or 0) or ib.find_main_window()
             if not main:
                 return False, "找不到微信主窗"
+            self._ensure_main_visible(gui, main)   # 最小化 ⇒ 先不激活地还原（发送链的会话头判据要抓图）
             if not gui.render_rect:
                 gui._update_render_rect()
             # 会话头校验（防发错会话）：投递**不会切会话** ⇒ 必须有"当前会话＝目标会话"的**正面证据**才准发。
