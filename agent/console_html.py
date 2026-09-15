@@ -2427,7 +2427,9 @@ async function loadStatus(){  try{
         const vm = s.version || {};
         const vg = s.version_gate || {};
         const v1 = $('vmVer');
-        if(v1) v1.textContent = '微信 ' + (vm.wechat||'unknown') + ' × 适配层 ' + (vm.adapter||'-');
+        if(v1) v1.textContent = (vm.wechat && vm.wechat !== 'unknown')
+          ? ('微信 ' + vm.wechat + ' × 适配层 ' + (vm.adapter || '-'))
+          : ('微信版本：读不到' + (vm.adapter ? '（适配层 ' + vm.adapter + '，仍按未实测处理）' : ''));
         const v2 = $('vmGate');
         if(v2){
           v2.textContent = vg.allow ? '注意：未实测版本对：已临时放行（本会话有效）'

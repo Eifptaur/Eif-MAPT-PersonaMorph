@@ -14,11 +14,45 @@
 import logging
 import os
 import threading
+import time
 
 log = logging.getLogger("persona-morph")
 
 _allowed = set()
 _lock = threading.Lock()
+_ver_cache = {"at": 0.0, "wechat": ""}      # current_wechat_version() 的小缓存（见它的注释）
+
+
+def current_wechat_version(ttl: float = 60.0) -> str:
+    """当前微信版本号（读不到返回空串）。**给所有调用方兜底用**。
+
+    为什么要在这里自己查（2026-09-15 用户看到控制台写着「微信 unknown × 适配层 1.2.2.2」）。
+    三处**发送**入口都老老实实传了 `wechat=wx_version_for_gate()`，但**展示侧**——控制台
+    `status()`、随包 `collect_report.py`——调的是 `check()` **不带参数**，而 `check()` 内部原来
+    是 `w = wechat or "unknown"` ⇒ 面板/报告永远显示「微信 unknown × 适配层 x」并说
+    「读不到微信版本（微信没在跑？）」——微信明明在跑、版本对也明明是实测过的。
+    ⇒ 现在 `check()` 自己兜底查一次；带 60 秒缓存，免得每次轮询都去枚举进程。
+    """
+    now = time.time()
+    if _ver_cache["wechat"] and (now - float(_ver_cache["at"] or 0)) < ttl:
+        return str(_ver_cache["wechat"])
+    v = ""
+    try:
+        from .wechat import wx_version_for_gate
+        v = str(wx_version_for_gate() or "")
+    except Exception:
+        v = ""
+    _ver_cache.update({"at": now, "wechat": v})
+    return v
+
+
+def wechat_running() -> bool:
+    """微信主窗在不在——用来把「微信没在跑」和「跑着但读不到版本号」分开说。"""
+    try:
+        from .input_backend import find_main_window
+        return bool(find_main_window())
+    except Exception:
+        return False
 
 
 def allow_session(reason: str = "") -> None:
@@ -42,7 +76,7 @@ def check(capability: str = "send", wechat: str = "", adapter: str = "") -> dict
     try:
         from . import version_matrix as vm
         data = vm.load()
-        w = wechat or "unknown"
+        w = wechat or current_wechat_version() or "unknown"
         a = adapter or vm.adapter_version()
         g = vm.gate(data, w, a)
         if g.get("measured"):
@@ -52,8 +86,12 @@ def check(capability: str = "send", wechat: str = "", adapter: str = "") -> dict
             return {"level": "warn", "allow": True, "wechat": w, "adapter": a,
                     "reason": "版本对未实测（或读不到微信版本），但已在本次会话中放行"}
         if not w or w == "unknown":
-            return {"level": "warn", "allow": False, "wechat": w, "adapter": a,
-                    "reason": "读不到微信版本（微信没在跑？）：按未验证处理，已暂停自动发送；登录微信后可点重新检测复检，或在控制台点「本次允许发送」临时放行"}
+            # ⚠️ 别再把两种原因混成一句「微信没在跑？」（2026-09-15）：微信跑着但读不到版本号，
+            #    和微信根本没开，是完全不同的处置（前者点「重新检测」、后者去登录微信）。
+            return {"level": "warn", "allow": False, "wechat": "unknown", "adapter": a,
+                    "reason": "版本门拦下了：微信版本读不到（%s）⇒ 按未验证处理，已暂停自动发送；"
+                              "可在控制台点「本次允许发送」临时放行，或点「重新检测」再试"
+                              % ("微信没在跑" if not wechat_running() else "微信在跑但没读到版本号")}
         return {"level": "warn", "allow": False, "wechat": w, "adapter": a,
                 "reason": ("微信 %s × 适配层 %s 没有实测记录：发送这类动窗口/动键盘的能力按未验证处理，"
                            "已暂停自动发送；控制台点「本次允许发送」可临时放行（重启后重新拦）" % (w, a))}
