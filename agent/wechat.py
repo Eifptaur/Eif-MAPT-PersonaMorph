@@ -2040,10 +2040,22 @@ class WeChatAdapter:
                 if _st["status"] == "mismatch":
                     return False, "会话头不匹配，拒绝投递（防发错会话）：%s" % _st["note"]
                 if _st["status"] in ("no_ref", "no_capture") and not allow_no_ref:
-                    return False, ("当前尺寸没有目标会话的参照（%s）⇒ 无法确认打开的会话就是目标会话，"
-                                   "拒绝投递（先按名字打开一次该会话学会参照，或走 send_text 的真实路径兜底）"
-                                   % _st["status"])
-                if _st["status"] in ("no_ref", "no_capture"):
+                    # ⛔ 死锁修复（2026-09-16 对面 r23 现场）：老代码在这里**直接拒**，而参照只在
+                    #    "发送成功之后"才学 ⇒ `no_ref` 一旦成立就永远拒、永远学不到 —— 最小化与
+                    #    D 轴那两格就是这么被堵在门口的（对面实测：全日志里"自动补参照"一次都没
+                    #    执行过）。⇒ 指纹档给不出结论时**改问四档证据**（`chat_is_open`：OCR 名字 /
+                    #    指纹 / 活动行时间×DB / 会话头标题带 OCR，四者取或）；四档里任何一档给出
+                    #    独立屏幕证据就放行，全都给不出才拒。**红线没有放宽**：`mismatch` 仍直接拒。
+                    _ok_any, _why_any = self.chat_is_open(chat_id, gui=gui)
+                    if not _ok_any:
+                        return False, ("当前尺寸没有目标会话的参照（%s），四档证据也都给不出"
+                                       "⇒ 无法确认打开的会话就是目标会话，拒绝投递（%s）"
+                                       % (_st["status"], str(_why_any)[:120]))
+                    log.info("会话头未校验（%s），但四档证据成立 ⇒ 放行投递：%s",
+                             _st["status"], str(_why_any)[:140])
+                    # 顺手把该尺寸的参照学到手 —— 这一步就是破死锁的钥匙
+                    log.info("放行时补参照：%s", self._learn_chat_header(chat_id, gui=gui))
+                if _st["status"] in ("no_ref", "no_capture") and allow_no_ref:
                     log.info("会话头未校验（调用方显式允许，%s）：%s", _st["status"], _st["note"])
             except Exception as _e:
                 log.warning("会话头校验跳过：%s", _e)
@@ -2085,6 +2097,10 @@ class WeChatAdapter:
                         self._learn_chat_header(chat_id, gui=gui)
                         return V_OK, "投递发送成功（DB 回读 local_id=%s type=%s）" % (
                             head.get("local_id"), head.get("type"))
+                    # 2026-09-16：这条"宽松成功"以前**不学参照** ⇒ 对面 r23 实测：A 枪走这条分支
+                    # 返回 ok，紧接着同一尺寸再发**仍报 no_ref**（全日志里没有一次"学会参照"的执行
+                    # 记录）。能走到这里说明身份闸已经放行（当前会话＝目标会话有正面证据）⇒ 学参照安全。
+                    self._learn_chat_header(chat_id, gui=gui)
                     return V_OK, "DB 有新行但内容与本次不一致（local_id=%s，可能上一条刚写库）" % head.get("local_id")
             # ⚠️ 判据不可用 ≠ 发送失败（2026-09-14 测机报告：4.1.13.65 上投递其实发出去了，但回读通道失效）
             _alive, _why_alive = self.db_alive(chat_id)
@@ -2094,6 +2110,10 @@ class WeChatAdapter:
             return V_NOT_SENT, "已投递但 %ds 内 DB 没等到新行（发送未生效）" % int(wait_s)
         except Exception as e:
             return False, str(e)
+        finally:
+            # 早退路径也要放回收起状态（2026-09-16 对面 r23 反馈：被 no_ref 拒发时"1.5s 后查
+            # IsIconic=False"——拒发是早退，以前不走 `_restore_fg_until` ⇒ 放回被漏掉）
+            _minimize_back_if_needed("投递文本链收尾")
 
     def send_image_posted(self, chat_id: str, local_path: str, wait_s: float = 60.0):
         """**投递发图**（L5）：剪贴板放图（CF_DIB）→ 投递 **Ctrl+V 组合键给渲染子窗** → 投递点「发送」→ **DB 回读认图片**。
@@ -2593,6 +2613,9 @@ class WeChatAdapter:
             #    2026-09-13 一次真实发送失败后框就留在屏幕上挡住了微信）⇒ 这里再兜一次。
             _n = _close_stale_file_dialogs()
             return False, "投递发文件异常：%s%s" % (e, ("（已清掉 %d 个残留对话框）" % _n) if _n else "")
+        finally:
+            # 早退路径（no_ref 拒发、异常）也要放回收起状态（2026-09-16 对面 r23 反馈）
+            _minimize_back_if_needed("投递文件链收尾")
 
     def send_image(self, chat_id: str, local_path: str):
         """发送本地图片。返回 (ok, message)。

@@ -127,6 +127,18 @@ ck("B17b 放回时三条安全线都在（没登记不动 / 已收起不动 / �
    and "u.ShowWindow(hwnd, 6)" in _HELP_MIN)
 ck("B17c 在「还前台」之后立刻放回（顺序不能反：先最小化会让还前台更难成立）",
    "_minimize_back_if_needed(note)" in SRC_WECHAT)
+# B17d~B17g 破 `no_ref` 死锁（2026-09-16 对面 r23 现场：参照只在"发送成功之后"才学，而 `no_ref`
+#   直接拒发 ⇒ 永远拒、永远学不到；A 枪走"宽松成功"分支同样不学 ⇒ 全日志没有一次学会参照的记录）
+_ST = SRC_WECHAT.split("def send_text_posted(")[1][:9000]
+ck("B17d 指纹档给不出结论时改用四档证据兜底（否则 no_ref 死锁）",
+   "self.chat_is_open(chat_id, gui=gui)" in _ST)
+ck("B17e 四档放行后顺手补参照（破死锁的钥匙）",
+   "放行时补参照" in _ST)
+ck("B17f 宽松成功分支也学参照（对面 r23 的 A 枪走的就是这条）",
+   _ST.count("self._learn_chat_header(chat_id, gui=gui)") >= 2)
+ck("B17g 两条投递链的收尾（含早退路径）都放回收起状态",
+   '_minimize_back_if_needed("投递文本链收尾")' in SRC_WECHAT
+   and '_minimize_back_if_needed("投递文件链收尾")' in SRC_WECHAT)
 ck("B18 竞态如实写进控制台（用户 2026-09-15 要求「这个你要如实跟用户讲清楚」）",
    "会不会跟你抢操作" in SRC_CONSOLE and "撞了它会用聊天区内容复核" in SRC_CONSOLE)
 # B19~B21 零动作对照：阈值不许写死（2026-09-15；实测抓屏退回路径零动作差 0.142 > 老阈值 0.01）
