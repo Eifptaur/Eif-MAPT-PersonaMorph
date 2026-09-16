@@ -1350,6 +1350,24 @@ namespace WxLauncher
                 sb.AppendLine("wheel_3=" + Js(wv, "(function(){try{return PM_WHEEL.active()+'|'+PM_WHEEL.top()+'|'+PM_WHEEL.hasPuck()}catch(e){return 'err'}})()").Replace("\"", ""));
                 System.Threading.Thread.Sleep(350);
                 sb.AppendLine("wheel_4=" + Js(wv, "(function(){try{return PM_WHEEL.active()+'|'+PM_WHEEL.top()+'|'+PM_WHEEL.hasPuck()}catch(e){return 'err'}})()").Replace("\"", ""));
+                // ① 左导航跟着指示条走（用户 2026-09-17：「蓝色指示条看不见了…让左栏跟着它显露出来」）
+                //    注意：探针窗里整页常常不可滚（数据是空的、页面短），所以**不靠 window 滚动**来造场景：
+                //    直接把左栏滚到底（激活项被滚出去）+ 抛一个 scroll 事件触发 sync()，看左栏会不会自己跟回来。
+                Js(wv, "(function(){try{var n=document.getElementById('nav');n.scrollTop=n.scrollHeight;window.dispatchEvent(new Event('scroll'));return 'ok'}catch(e){return 'err'}})()");
+                System.Threading.Thread.Sleep(1000);
+                sb.AppendLine("nav_1=" + Js(wv, "(function(){try{var n=document.getElementById('nav');var a=n?n.querySelector('a.on'):null;if(!n||!a)return 'noactive';var t=a.offsetTop,h=a.offsetHeight,st=n.scrollTop,vh=n.clientHeight,mx=n.scrollHeight-vh;return (t>=st+1&&t+h<=st+vh-1?'visible':'hidden')+'|scrollTop='+Math.round(st)+'|item='+t+'|h='+h+'|vh='+vh+'|max='+Math.round(mx)}catch(e){return 'err'}})()").Replace("\"", ""));
+                // ② 鱼的转速跟着滚动速度（同一套锚点下：基础速度取样 → 鼠标挪到锚点下方很远（更快）再取样）
+                Js(wv, "(function(){try{document.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,button:1,clientX:520,clientY:300}));return 'ok'}catch(e){return 'err'}})()");
+                System.Threading.Thread.Sleep(250);
+                sb.AppendLine("spinp_a1=" + Js(wv, "(function(){try{var i=document.querySelector('#pmWheel img');return PM_WHEEL.active()+'|'+(i?i.style.transform:'noimg')+'|'+PM_WHEEL.spinDeg()}catch(e){return 'err'}})()").Replace("\"", ""));
+                System.Threading.Thread.Sleep(300);
+                sb.AppendLine("spinp_a2=" + Js(wv, "(function(){try{var i=document.querySelector('#pmWheel img');return PM_WHEEL.active()+'|'+(i?i.style.transform:'noimg')+'|'+PM_WHEEL.spinDeg()}catch(e){return 'err'}})()").Replace("\"", ""));
+                Js(wv, "(function(){try{document.dispatchEvent(new MouseEvent('mousemove',{bubbles:true,cancelable:true,clientX:520,clientY:950}));return 'ok'}catch(e){return 'err'}})()");
+                System.Threading.Thread.Sleep(250);
+                sb.AppendLine("spinp_b1=" + Js(wv, "(function(){try{var i=document.querySelector('#pmWheel img');return PM_WHEEL.active()+'|'+(i?i.style.transform:'noimg')+'|'+PM_WHEEL.spinDeg()}catch(e){return 'err'}})()").Replace("\"", ""));
+                System.Threading.Thread.Sleep(300);
+                sb.AppendLine("spinp_b2=" + Js(wv, "(function(){try{var i=document.querySelector('#pmWheel img');return PM_WHEEL.active()+'|'+(i?i.style.transform:'noimg')+'|'+PM_WHEEL.spinDeg()}catch(e){return 'err'}})()").Replace("\"", ""));
+                Js(wv, "(function(){try{document.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,button:0}));return 'ok'}catch(e){return 'err'}})()");
                 IntPtr fg1 = ConsoleForm.GetForegroundWindow();
                 sb.AppendLine("fg_before=" + fg0.ToInt64());
                 sb.AppendLine("fg_after=" + fg1.ToInt64());
