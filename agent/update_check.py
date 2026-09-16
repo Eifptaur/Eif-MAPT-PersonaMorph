@@ -75,8 +75,10 @@ def vtuple(v):
 
 DEFAULT_URL = "https://raw.githubusercontent.com/Eifptaur/Eif-MAPT-PersonaMorph/main/persona-morph-manifest.json"
 #: 备用源（2026-09-16 已知现象：「更新源异常：拉不到更新源：The read operation timed out」）：
-#: `raw.githubusercontent.com` 在国内经常超时 ⇒ **并行**试这几个，第一个拿到清单的赢。
-#: ⚠️ jsDelivr 有 CDN 缓存（可能比 raw 晚几分钟看到新版本）⇒ 只当兜底，raw 仍排第一。
+#: `raw.githubusercontent.com` 在国内经常超时 ⇒ **并行**试这几个。
+#: ⚠️ jsDelivr 有 CDN 缓存（本机实测：新版本已发布，它还给着上一版）⇒ **不能按"先到的赢"挑**
+#: （2026-09-17 实测：它 0.8s 就答、镜像 0.7~0.9s 也有货 ⇒ 先到的恰好是旧的那份，新版在控制台里"消失"）；
+#: 现在由 `_ranked()` 按**版本最高者胜**挑，缓存旧的那份抢不赢，但仍然是可用的兜底源。
 DEFAULT_URLS = (
     DEFAULT_URL,
     "https://cdn.jsdelivr.net/gh/Eifptaur/Eif-MAPT-PersonaMorph@main/persona-morph-manifest.json",
@@ -93,11 +95,37 @@ def _short_url(u: str) -> str:
         return str(u)[:24]
 
 
+#: 拿到第一份清单后**再等这么久**，让"版本更高"的源也说上话（防 CDN 旧缓存抢先）。
+#: 取值依据（2026-09-17 本机实测）：jsDelivr 0.8s、ghfast 0.9s、ghproxy 0.7s ⇒ 1.5s 足够把它们都收进来，
+#: 而控制台最坏等待仍是 `timeout + 1`（不变）。
+GRACE_S = 1.5
+
+
+def _ranked(got: dict, urls: list):
+    """从已拿到的清单里挑**版本最高**的一份；版本相同或不可解析时，按 `urls` 顺序取先者。
+
+    为什么不是"先到的赢"：四个源里 jsDelivr 是 CDN 缓存（可能是几小时前的旧清单），
+    它常常答得最快 ⇒ 按先到挑，用户会**看不到刚发布的版本**、点「立即更新」还会照旧清单装。
+    版本号是数值元组（`vtuple`），比较不会踩字符串比较的坑。
+    """
+    best_u, best_m, best_v = "", None, ()
+    for u in urls:
+        man = (got.get(u) or (None, ""))[0]
+        if not isinstance(man, dict):
+            continue
+        base = man.get("base")
+        v = vtuple((base or {}).get("version")) if isinstance(base, dict) else ()
+        if best_m is None or (v and v > best_v):
+            best_u, best_m, best_v = u, man, v or ()
+    return best_m, best_u
+
+
 def fetch_any(urls, timeout: float = 6.0):
-    """**并行**拉多个源，第一个成功的赢。返回 `(清单或 None, 说明, 用到的 url)`。
+    """**并行**拉多个源，**版本最高的赢**。返回 `(清单或 None, 说明, 用到的 url)`。
 
     为什么要并行（2026-09-16）：串行试 4 个源、每个超时 6 秒 = 最坏 24 秒，控制台一打开就卡住；
     并行 ⇒ 最坏 ≈ 一个超时。
+    为什么按版本挑（2026-09-17）：见 `_ranked()` 的注释——先到的可能是 CDN 的旧缓存。
     """
     urls = [u for u in (urls or []) if u]
     if not urls:
@@ -116,18 +144,23 @@ def fetch_any(urls, timeout: float = 6.0):
     for u in urls:
         threading.Thread(target=_one, args=(u,), daemon=True).start()
     t0 = time.time()
+    t_first = 0.0
     while time.time() - t0 < timeout + 1.0:
         with lock:
-            for u in urls:
-                if u in got and got[u][0] is not None:
-                    return got[u][0], "", u
-            if len(got) == len(urls):
+            done_all = len(got) == len(urls)
+            got_one = any((got.get(u) or (None, ""))[0] is not None for u in urls)
+        if got_one:
+            if not t_first:
+                t_first = time.time()
+            if done_all or time.time() - t_first >= GRACE_S:
                 break
+        elif done_all:
+            break
         time.sleep(0.05)
     with lock:
-        for u in urls:
-            if u in got and got[u][0] is not None:
-                return got[u][0], "", u
+        man, used = _ranked(got, urls)
+        if man is not None:
+            return man, "", used
         why = "；".join("%s→%s" % (_short_url(u), str((got.get(u) or ("", "超时"))[1])[:40])
                         for u in urls[:3])
     return None, "所有源都拉不到（%s）" % why, ""
