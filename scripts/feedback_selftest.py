@@ -264,6 +264,57 @@ try:
 finally:
     WU.get_config = _real_get_cfg
 
+print("\n── G. 在线提交通道（2026-09-16 用户：「应该只有一个小小的窗…点发送就行了呀，用户为什么还要在意那么多」）──")
+_ui = src("agent/console_html.py")
+ok("反馈面板把通道细节收进折叠区（简单区只剩 类型/内容/提交）",
+   'id="fbAdv"' in _ui and 'id="fbAdvBtn"' in _ui and 'id="fbContact"' in _ui, "")
+_i_adv = _ui.find('id="fbAdv"')
+ok("联系方式与全部通道配置都在折叠区**之后**（不再占用户视野）",
+   _ui.find('id="fbContact"') > _i_adv and _ui.find('data-cfg="feedback.smtp.password"') > _i_adv, "")
+ok("顶部提示默认隐藏（只在没通道/有积压时出现）",
+   'id="fbWarn"' in _ui and 'id="fbWarn" style="display:none' in _ui, "")
+ok("在线提交密钥默认留空（包里不带 key、不带邮箱 ⇒ PII 闸门）",
+   '"web3forms_key": ""' in src("agent/config.py"), "")
+
+_saved_cfg, _saved_post = FB._cfg, FB._post
+try:
+    _calls = []
+
+    def _fakepost(url, payload, timeout=10):
+        _calls.append((url, payload))
+        return {"ok": True, "status": 200, "why": '{"success":true}'}
+
+    FB._post = _fakepost
+    FB._cfg = lambda: {"web3forms_key": "PUBKEY", "to": "", "smtp": {}}
+    _r = FB.deliver({"kind": "问题", "text": "测试内容", "at_h": "2026-09-16 23:50",
+                     "ver": "1", "contact": "me@x.com", "env": {}})
+    _u, _p = _calls[0]
+    ok("走的是在线提交端点", _u == "https://api.web3forms.com/submit", _u)
+    ok("请求体形状正确（access_key/subject/from_name/message）",
+       {"access_key", "subject", "from_name", "message"} <= set(_p.keys())
+       and _p["access_key"] == "PUBKEY", str(sorted(_p.keys())))
+    ok("正文带用户原话、联系方式进 replyto",
+       "测试内容" in _p["message"] and _p.get("replyto") == "me@x.com", "")
+    ok("对方回 success ⇒ 判 sent（via=web3forms）",
+       bool(_r.get("ok")) and _r.get("via") == "web3forms", str(_r.get("via")))
+    _calls[:] = []
+
+    def _fakepost2(url, payload, timeout=10):
+        _calls.append(url)
+        return {"ok": False, "status": 0, "why": "boom"}
+
+    FB._post = _fakepost2
+    FB._cfg = lambda: {"upload_url": "https://mine/x", "web3forms_key": "PUBKEY", "to": "", "smtp": {}}
+    FB.deliver({"kind": "其他", "text": "t", "ver": "1"})
+    ok("顺序：自建中转优先，失败再走在线提交",
+       _calls[:2] == ["https://mine/x", "https://api.web3forms.com/submit"], str(_calls[:3]))
+    FB._cfg = lambda: {"web3forms_key": "PUBKEY"}
+    _st = FB.stats()
+    ok("状态里认得出这条通道、can_send=True", bool(_st["can_send"]) and "在线提交" in _st["channel"],
+       _st["channel"])
+finally:
+    FB._cfg, FB._post = _saved_cfg, _saved_post
+
 print("")
 print("反馈栏判据：%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

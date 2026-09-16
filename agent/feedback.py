@@ -238,10 +238,41 @@ def _mail(item: dict, to_list: list, smtp_cfg: dict) -> dict:
         return {"ok": False, "why": "%s: %s" % (type(e).__name__, str(e)[:140])}
 
 
+def _post_web3forms(key: str, item: dict, timeout: int = 15) -> dict:
+    """走 Web3Forms（或同类"公开可提交"服务）：**用户零配置**，邮件直达收件人邮箱。
+
+    为什么加它（2026-09-16 用户原话：「应该只有一个小小的窗，填什么类型的问题、具体内容是什么，
+    然后点发送就行了呀，用户为什么还要在意那么多」）：以前只有"自建中转"和"自己邮箱+授权码"两条路，
+    **两条都要用户自己配**，而收件凭据又不能进包（PII 闸门）⇒ 普通用户点了提交只能存在本机。
+    这类服务的 access key **天生就是公开给客户端用的**（可随时撤销、不暴露收件邮箱）。
+    """
+    if not key:
+        return {"ok": False, "why": "未配置在线提交密钥"}
+    payload = {
+        "access_key": str(key).strip(),
+        "subject": "[群相反馈] %s · v%s" % (item.get("kind") or "其他", item.get("ver") or "?"),
+        "from_name": "群相 · 用户反馈",
+        "message": compose(item),
+    }
+    if item.get("contact"):
+        payload["replyto"] = str(item["contact"])[:120]
+    r = _post("https://api.web3forms.com/submit", payload, timeout=timeout)
+    if not r.get("ok"):
+        return {"ok": False, "why": "在线提交失败：%s" % str(r.get("why"))[:80]}
+    _low = str(r.get("why") or "").replace(" ", "").lower()
+    if "success" in _low and "false" not in _low:
+        return {"ok": True, "why": "已通过在线提交发出"}
+    return {"ok": False, "why": "在线提交返回异常：%s" % _low[:80]}
+
+
 def deliver(item: dict) -> dict:
-    """按顺序试通道；返回 {ok, via, why}。都不成 ⇒ ok=False 且**不改** sent_at（等重发）。"""
+    """按顺序试通道；返回 {ok, via, why}。都不成 ⇒ ok=False 且**不改** sent_at（等重发）。
+
+    顺序（2026-09-16 起）：自建中转 → **在线提交（Web3Forms，用户零配置）** → SMTP。
+    """
     cfg = _cfg()
     url = str(cfg.get("upload_url") or "").strip()
+    w3 = str(cfg.get("web3forms_key") or "").strip()
     to_list = [x.strip() for x in str(cfg.get("to") or "").replace(";", ",").split(",") if x.strip()]
     smtp_cfg = cfg.get("smtp") or {}
     tried = []
@@ -250,13 +281,18 @@ def deliver(item: dict) -> dict:
         tried.append("网址中转：" + ("OK %s" % r.get("status") if r.get("ok") else str(r.get("why"))[:60]))
         if r.get("ok"):
             return {"ok": True, "via": "upload_url", "why": "已提交到 %s" % url, "tried": tried}
+    if w3:
+        r3 = _post_web3forms(w3, item)
+        tried.append("在线提交：" + ("OK" if r3.get("ok") else str(r3.get("why"))[:60]))
+        if r3.get("ok"):
+            return {"ok": True, "via": "web3forms", "why": r3.get("why"), "tried": tried}
     if to_list and (smtp_cfg.get("user") and smtp_cfg.get("password")):
         r = _mail(item, to_list, smtp_cfg)
         tried.append("邮件：" + ("OK" if r.get("ok") else str(r.get("why"))[:60]))
         if r.get("ok"):
             return {"ok": True, "via": "smtp", "why": r.get("why"), "tried": tried}
-    if not url and not (to_list and smtp_cfg.get("user") and smtp_cfg.get("password")):
-        tried.append("没有任何可用通道（未填上传网址，也未配发件邮箱+授权码）")
+    if not url and not w3 and not (to_list and smtp_cfg.get("user") and smtp_cfg.get("password")):
+        tried.append("没有任何可用通道（未填中转网址 / 在线提交密钥 / 发件邮箱+授权码）")
     return {"ok": False, "via": "", "why": "；".join(tried) or "没有可用通道", "tried": tried}
 
 
@@ -319,10 +355,18 @@ def stats() -> dict:
     has_mail = bool((cfg.get("smtp") or {}).get("user") and (cfg.get("smtp") or {}).get("password")
                     and str(cfg.get("to") or "").strip())
     has_url = bool(str(cfg.get("upload_url") or "").strip())
+    has_w3 = bool(str(cfg.get("web3forms_key") or "").strip())
+    _ch = []
+    if has_url:
+        _ch.append("上传网址")
+    if has_w3:
+        _ch.append("在线提交")
+    if has_mail:
+        _ch.append("邮件")
     return {"total": len(items), "pending": len(pend), "sent": len(sent),
             "enabled": bool(cfg.get("enabled", True)),
-            "channel": ("上传网址" if has_url else "") + ("+邮件" if has_mail else "") or "未配置",
-            "can_send": bool(has_url or has_mail),
+            "channel": "+".join(_ch) or "未配置",
+            "can_send": bool(has_url or has_w3 or has_mail),
             "last": (sorted(items, key=lambda x: x.get("at") or 0)[-1:] or [{}])[0].get("at_h", "")}
 
 
