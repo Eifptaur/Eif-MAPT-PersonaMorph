@@ -155,6 +155,57 @@ ck("B20 搜索路线：'时间戳读不出'按弱证据放行（不再整条回�
    '_why_s = str(idn_why)' in _SEG_SEARCH and '"读不出" in _why_s' in _SEG_SEARCH)
 ck("B20a 发送闸没跟着放宽（注释里写明「发送闸一个字不动」）",
    "发送闸一个字不动" in _SEG_SEARCH)
+# B21（2026-09-16 用户当面问：「他照理来说不是应该投递到微信的窗口上吗？为什么还会划我的控制台」）：
+#   · 投递档（PostMessageW 发进微信自己的消息队列）**永远不会**点到别的窗口 —— 他这句判断是对的；
+#   · 但真鼠标档是 `SetCursorPos` + `mouse_event`：`mouse_event` 是**全局输入**，系统把它派给
+#     "光标当前所在/最上面的那个窗口"，**它根本不知道微信窗口在哪**；而 `SetCursorPos` 会
+#     **静默失败**（返回 0、GetLastError=0，用户正在动鼠标时最容易失败）
+#     ⇒ 老代码两件事都不检查，光标没到位也照发 mouse_event ⇒ 点击/滚轮落到**用户的控制台**上。
+#   ⇒ 机械判据：全库扫，**凡含 mouse_event / SetCursorPos 的函数**，要么包含 `real_guard`，
+#     要么在白名单里（只有"还原光标/守卫自身/自检工具"三类可以不带守卫）。
+_ALLOW_NO_GUARD = {"heal_input", "real_guard", "self_test", "_send_with_foreground"}
+_bad_guard = []
+_n_guard = 0
+try:
+    import ast as _ast
+    import glob as _glob
+    for _p in sorted(_glob.glob(os.path.join(ROOT, "agent", "*.py"))):
+        _tree = _ast.parse(open(_p, encoding="utf-8").read())
+        for _node in _ast.walk(_tree):
+            if not isinstance(_node, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+                continue
+            _names = set()
+            for _sub in _ast.walk(_node):
+                if isinstance(_sub, _ast.Call):
+                    _nm = getattr(_sub.func, "attr", None) or getattr(_sub.func, "id", None)
+                    if _nm:
+                        _names.add(_nm)
+            if ("mouse_event" in _names or "SetCursorPos" in _names) and "real_guard" not in _names:
+                if _node.name not in _ALLOW_NO_GUARD:
+                    _bad_guard.append("%s:%s()" % (os.path.basename(_p), _node.name))
+            elif "real_guard" in _names:
+                _n_guard += 1
+except Exception as _e:
+    _bad_guard.append("扫描失败：%s" % _e)
+ck("B21 全库每处真鼠标调用都过了 real_guard（不然会点到你别的窗口）",
+   not _bad_guard, "漏网：%s" % _bad_guard)
+# 阳性对照：扫描不能空转 —— 必须真的数到 ≥5 个"带守卫"的函数（改前是 0 个）
+ck("B21c 扫描非空转：数到 ≥5 个带守卫的真鼠标函数（改前是 0）",
+   _n_guard >= 5, "带守卫 %d 个" % _n_guard)
+ck("B21a real_guard 会检查光标是否真的到位（SetCursorPos 可能静默返回 0）",
+   "返回 0，光标没到位" in open(
+       os.path.join(ROOT, "agent", "ui_adapt.py"), encoding="utf-8").read())
+ck("B21b 朋友圈那条链的 ESC 只在前台确实是微信时才发（否则会切走/关掉用户正用的窗口）",
+   "_fg in _ours" in SRC_WECHAT)
+# B22（2026-09-16 踩到的真坑）：把默认值改成安全的一侧，**对老用户完全无效**——
+#   `deep_merge(DEFAULT_CONFIG, config.json)` 是用户文件覆盖默认值，而在线包不带 config.json、
+#   更新也不覆盖用户那份 ⇒ 用户那份里早写着 `background_only: false`，升级后照旧动他的鼠标。
+#   ⇒ 必须有一次性的"安全默认值迁移"，且**只对真实那份 config.json** 跑（自检夹具的自定义 path 不许写回）。
+ck("B22 有一次性安全默认值迁移（老 config.json 也会被补上）",
+   "_migrate_once" in SRC_CFG and "config_migrations.json" in SRC_CFG
+   and "_SAFE_DEFAULTS_TAG" in SRC_CFG)
+ck("B22a 迁移只对真实 config.json 跑（自定义 path 不写回用户配置）",
+   "os.path.abspath(path) == os.path.abspath(CONFIG_FILE)" in SRC_CFG)
 # B17d~B17g 破 `no_ref` 死锁（2026-09-16 对面 r23 现场：参照只在"发送成功之后"才学，而 `no_ref`
 #   直接拒发 ⇒ 永远拒、永远学不到；A 枪走"宽松成功"分支同样不学 ⇒ 全日志没有一次学会参照的记录）
 _ST = SRC_WECHAT.split("def send_text_posted(")[1][:9000]

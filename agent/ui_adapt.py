@@ -273,6 +273,53 @@ def ensure_point(x: int, y: int, wechat_hwnds: tuple = (), retries: int = 3, gui
         cover[1] or "?", cover[2][:60] or "?", cover[3], cover[4])
 
 
+def real_guard(x: int, y: int, gui=None, extra_hwnds: tuple = ()) -> tuple:
+    """**真鼠标动作前的最后一道闸**：先确认 (x, y) 这点真属于微信，再把光标移过去。
+
+    为什么必须有它（2026-09-16 用户当面问：「照理来说，不是应该投递到微信的窗口上吗？
+    为什么还会划我的控制台」）：
+      · **投递档**（`PostMessageW` 把消息发进微信自己的消息队列）**永远不会**点到别的窗口
+        —— 他这句判断是对的，那 3 条全投递路径确实不碰光标；
+      · 但**真鼠标档**是 `SetCursorPos` + `mouse_event`：`mouse_event` 是**全局输入**，
+        系统把它派给「光标当前所在 / 最上面的那个窗口」，**它根本不知道微信窗口在哪**；
+      · 而 `SetCursorPos` 会**静默失败**（返回 0、`GetLastError()`＝0；本机实测，
+        `wechat.py:1334` 早有记录）—— **用户自己正在动鼠标时最容易失败**；
+      · 老代码（7 处裸调用）**两件事都不检查**：光标没到位也照发 `mouse_event`
+        ⇒ 点击/滚轮落到光标**真正**所在的地方 —— 也就是用户的控制台/正在用的窗口。
+    ⇒ 规定：真鼠标动作**一律先过这里**。`ensure_point` 用 `WindowFromPoint` 验归属，
+      失败就**不发那一枪**（宁可不做，也不打扰用户）。
+    返回 `(ok, 说明)`；`ok=True` 时**光标已经在 (x, y)**，调用方直接发 `mouse_event` 即可。
+    """
+    try:
+        hwnds = []
+        if gui is not None:
+            for attr in ("main_hwnd", "render_hwnd"):
+                h = int(getattr(gui, attr, 0) or 0)
+                if h:
+                    hwnds.append(h)
+        hwnds.extend(int(h) for h in tuple(extra_hwnds) if h)
+        if not hwnds:
+            try:
+                from . import input_backend as _ib
+                _m = int(_ib.find_main_window() or 0)
+                if _m:
+                    hwnds.append(_m)
+            except Exception:
+                pass
+        if not hwnds:
+            return False, "拿不到微信窗口句柄 ⇒ 没法确认这一枪会打到谁，按「不打」处理"
+        x, y = int(x), int(y)
+        ok, why = ensure_point(x, y, tuple(hwnds), gui=gui)
+        if not ok:
+            return False, why
+        if not _user32.SetCursorPos(x, y):
+            return False, ("SetCursorPos(%d,%d) 返回 0，光标没到位（多半是你正在用鼠标）"
+                           "⇒ 已放弃这一枪，不打扰你" % (x, y))
+        return True, ""
+    except Exception as e:
+        return False, "real_guard 异常（按「不打」处理）：%s" % str(e)[:80]
+
+
 def _restore_wechat_window(gui) -> bool:
     """按进程枚举找「微信」主窗并恢复（窗口最小化/隐藏/移出屏时自愈）。
 

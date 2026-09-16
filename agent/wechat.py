@@ -3378,11 +3378,23 @@ class WeChatAdapter:
             return []
 
     def _click_screen(self, x, y):
+        """真鼠标点击（屏幕坐标）。⛔ 必须先过 `ui_adapt.real_guard`：
+        `mouse_event` 是全局输入，系统把它给"光标所在/最上面的窗口"——**不校验就会点到用户的控制台**
+        （2026-09-16 用户报「为什么还会划我的控制台」的机制本身就是这条）。"""
         import ctypes
+        from . import ui_adapt
+        try:
+            gui = self._get_gui()
+        except Exception:
+            gui = None
+        ok, why = ui_adapt.real_guard(int(x), int(y), gui=gui)
+        if not ok:
+            log.warning("真鼠标点击已拦下（不打给别的窗口）：%s", why)
+            return False
         u = ctypes.windll.user32
-        u.SetCursorPos(int(x), int(y))
         u.mouse_event(0x0002, 0, 0, 0, 0)
         u.mouse_event(0x0004, 0, 0, 0, 0)
+        return True
 
     def _find_green_discover(self, gui):
         """运行时颜色定位（不依赖标定）：侧栏绿色圆＝「发现」图标（仅选中态变绿；
@@ -3933,7 +3945,11 @@ class WeChatAdapter:
             # 滚动带：窗口右缘内侧一条细带（避开头像/蓝点/输入框）
             cx = rect[2] - 30
             cy = (rect[1] + rect[3]) // 2
-            user32.SetCursorPos(cx, cy)
+            # ⛔ 滚轮也是全局输入：光标没到位就会滚到用户别的窗口（控制台）上 ⇒ 先过闸
+            from . import ui_adapt as _ua_g
+            _gok, _gwhy = _ua_g.real_guard(cx, cy, gui=gui, extra_hwnds=(h,))
+            if not _gok:
+                return False, "滚动朋友圈已拦下（不动鼠标、不打扰你）：%s" % _gwhy
             time.sleep(0.25)
             step = -120 if direction > 0 else 120
             total = 0
@@ -3998,9 +4014,15 @@ class WeChatAdapter:
         import ctypes
         from . import ui_adapt, wechat_ui as _wu
         # 滚回顶（朋友圈会记住上次视口；不滚回顶蓝点坐标错位）
+        # ⛔ 滚回顶与点蓝点都是**全局输入**（SetCursorPos + mouse_event）⇒ 一律先过 `real_guard`：
+        #    否则光标没到位时，滚轮/点击会落到用户当前真正指着的窗口（他的控制台）上。
+        _mh = int(self._moments_hwnd() or 0)
         try:
             cx, cy = (rect[0] + rect[2]) // 2, (rect[1] + rect[3]) // 2
-            ctypes.windll.user32.SetCursorPos(cx, cy)
+            _ok1, _why1 = ui_adapt.real_guard(cx, cy, gui=gui,
+                                              extra_hwnds=tuple(x for x in (_mh,) if x))
+            if not _ok1:
+                return False
             for _ in range(8):
                 ctypes.windll.user32.mouse_event(0x0800, 0, 0, 900, 0)
                 time.sleep(0.12)
@@ -4010,7 +4032,10 @@ class WeChatAdapter:
         bx, by = int(rect[0] + (rect[2] - rect[0]) * 0.89), int(rect[1] + (rect[3] - rect[1]) * 0.938)
         subs = tuple(int(h) for h, t, r in _wu._wechat_subwindows(gui.main_hwnd))
         # 单击蓝点（heal=False：不抖动；绝不再点第二下，否则菜单取消）
-        ctypes.windll.user32.SetCursorPos(bx, by)
+        _ok2, _why2 = ui_adapt.real_guard(bx, by, gui=gui,
+                                          extra_hwnds=tuple(subs) + tuple(x for x in (_mh,) if x))
+        if not _ok2:
+            return False
         time.sleep(0.25)
         ui_adapt.click(gui, bx - gui.origin_x, by - gui.origin_y, extra_hwnds=subs, heal=False)
         for _ in range(3):
@@ -4186,6 +4211,9 @@ class WeChatAdapter:
             if not rect:
                 self.moments_close()
                 return False, "朋友圈窗口未找到（未发布）"
+            # ⛔ 这条链全是真鼠标（长按相机 / 点输入区 / ESC）⇒ 每枪前都过 `real_guard`。
+            #    朋友圈可能是独立窗 ⇒ 把它一并算作"我们的窗口"，否则会被误判成遮挡。
+            _mhx = tuple(x for x in (int(self._moments_hwnd() or 0),) if x)
             # 相机位置：朋友圈窗口左上角图标排（🔔 铃铛 | 📷 相机 | 🔄 刷新）。
             # 实测弹窗(682×979)：铃铛≈(57,38)、相机≈(105,38)、刷新≈(153,38)。
             # 多形态自适应：弹窗=左上角；内嵌（主窗右侧内容区）=顶部右侧工具栏；多次位置候选 + OCR 确认输入区出现。
@@ -4195,7 +4223,10 @@ class WeChatAdapter:
             _cam_hit = False
             for _px, _py in _cam_candidates:
                 cam_x, cam_y = int(rect[0] + _w * _px), int(rect[1] + _h * _py)
-                user32.SetCursorPos(cam_x, cam_y)
+                _cok, _cwhy = ui_adapt.real_guard(cam_x, cam_y, gui=gui, extra_hwnds=_mhx)
+                if not _cok:
+                    log.warning("长按相机已拦下（不动鼠标）：%s", _cwhy)
+                    continue
                 user32.mouse_event(0x0002, 0, 0, 0, 0)
                 time.sleep(2.0)
                 user32.mouse_event(0x0004, 0, 0, 0, 0)
@@ -4212,9 +4243,14 @@ class WeChatAdapter:
                     pass
                 # 未命中：悬停校验无输入区 → 恢复指针到内容区中部并按 ESC 关闭误触弹层
                 try:
-                    user32.SetCursorPos(int(rect[0] + _w * 0.5), int(rect[1] + _h * 0.5))
-                    user32.keybd_event(0x1B, 0, 0, 0)  # ESC
-                    user32.keybd_event(0x1B, 0, 2, 0)
+                    _mok, _mwhy = ui_adapt.real_guard(int(rect[0] + _w * 0.5), int(rect[1] + _h * 0.5),
+                                                      gui=gui, extra_hwnds=_mhx)
+                    # ESC 发给"当前前台窗口"：前台不是微信就不发（否则会把用户正用着的窗口切走/关掉）
+                    _fg = int(user32.GetForegroundWindow() or 0)
+                    _ours = tuple(x for x in (int(gui.main_hwnd or 0), int(gui.render_hwnd or 0)) + _mhx if x)
+                    if _mok and _fg in _ours:
+                        user32.keybd_event(0x1B, 0, 0, 0)  # ESC
+                        user32.keybd_event(0x1B, 0, 2, 0)
                     time.sleep(0.8)
                 except Exception:
                     pass
@@ -4229,7 +4265,10 @@ class WeChatAdapter:
             ix0, iy0 = int(rect[0] + _iw * 0.147), int(rect[1] + _ih * 0.215)
             ix1, iy1 = int(rect[0] + _iw * 0.821), int(rect[1] + _ih * 0.337)
             _cx, _cy = (ix0 + ix1) // 2, iy0 + int((iy1 - iy0) * 0.30)
-            user32.SetCursorPos(_cx, _cy)
+            _iok, _iwhy = ui_adapt.real_guard(_cx, _cy, gui=gui, extra_hwnds=_mhx)
+            if not _iok:
+                self.moments_close()
+                return False, "点朋友圈输入区被拦下（不动鼠标、未发布）：%s" % _iwhy
             user32.mouse_event(0x0002, 0, 0, 0, 0)
             user32.mouse_event(0x0004, 0, 0, 0, 0)
             time.sleep(0.8)
