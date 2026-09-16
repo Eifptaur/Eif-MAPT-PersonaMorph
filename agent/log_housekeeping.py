@@ -2,7 +2,7 @@
 """日志体积治理（Persona Morph）：①主日志按体积轮转 ②启动时把"只追加"的日志裁到上限 ③清过期日志。
 
 为什么需要（2026-09-13 实测）：主日志 `logs/persona_morph.log` 用的是"每行 flush 的普通 FileHandler"，
-**没有任何轮转/上限**；`logs/onestart.log`（442KB）、`data/bot_crash.log`（360KB）、
+**没有任何轮转/上限**；`logs/onestart.log`（442KB）、`data/runtime.log`（当时叫 `bot_crash.log`，360KB）、
 `data/listener_failed.jsonl`、`wechatauto_logs/app_YYYYMMDD.log` 全是**只增不减**。
 长期挂着跑（本项目就是"上班时也挂着"的用法）会几十 MB~几百 MB 地涨。
 
@@ -20,6 +20,9 @@ LOG_LIMITS = [
     ("logs/persona_morph.log", 5 * 1024 * 1024, 1 * 1024 * 1024),
     ("logs/onestart.log", 2 * 1024 * 1024, 512 * 1024),
     ("logs/wx_agent.log", 2 * 1024 * 1024, 512 * 1024),
+    ("data/runtime.log", 1 * 1024 * 1024, 256 * 1024),
+    # 旧名：2026-09-16 把 `bot_crash.log` 改名成 `runtime.log`（它本来就是主运行日志，
+    # 名字让人找错文件）。这一条只为清用户机器上可能残留的旧文件。
     ("data/bot_crash.log", 1 * 1024 * 1024, 256 * 1024),
     ("data/listener_failed.jsonl", 2 * 1024 * 1024, 512 * 1024),
 ]

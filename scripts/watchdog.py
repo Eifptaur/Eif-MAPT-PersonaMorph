@@ -13,7 +13,33 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA = os.path.join(ROOT, "data")
 PID_FILE = os.path.join(DATA, "watchdog.pid")
-CRASH_LOG = os.path.join(DATA, "bot_crash.log")
+# ⛔ 2026-09-16 改名（名字误导排查）：这个文件**不是"崩溃日志"，它是主运行日志** ——
+#    机器人跑起来后绝大多数日志（带 `persona_morph.py:<行号>`）都写在这里，
+#    而 `logs/persona_morph.log` 反而只记启动与收尾。旧名 `bot_crash.log` 让人不止一次找错文件
+#    ⇒ 改成 `runtime.log`；启动时做一次性改名，老文件内容不丢。
+CRASH_LOG = os.path.join(DATA, "runtime.log")
+_OLD_CRASH_LOG = os.path.join(DATA, "bot_crash.log")
+
+
+def _migrate_crash_log_name() -> None:
+    """把旧名 `data/bot_crash.log` 一次性并到 `data/runtime.log`（失败就留着，不抛）。"""
+    try:
+        if not os.path.exists(_OLD_CRASH_LOG):
+            return
+        if not os.path.exists(CRASH_LOG):
+            os.replace(_OLD_CRASH_LOG, CRASH_LOG)
+        else:
+            with open(_OLD_CRASH_LOG, "r", encoding="utf-8", errors="replace") as f:
+                old = f.read()
+            with open(CRASH_LOG, "a", encoding="utf-8") as f:
+                f.write("\n===== 以下为旧名 bot_crash.log 并入的内容（2026-09-16 改名）=====\n")
+                f.write(old)
+            os.remove(_OLD_CRASH_LOG)
+    except Exception:
+        pass
+
+
+_migrate_crash_log_name()
 STOP_FLAG = os.path.join(DATA, "stopped.flag")
 # 看门狗逻辑版本：解释器选择等关键行为变更时自增，旧版看门狗会被新版自动接管
 WATCHDOG_VER = "2"
