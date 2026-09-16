@@ -899,6 +899,19 @@ class WeChatAdapter:
             # 自己发的消息：发送者 wxid 是机器人自己 → 跳过（群聊 sender_id 不可靠，用 wxid 兜底）
             if self._self_wxid and sender_wxid and sender_wxid == self._self_wxid:
                 return None
+            # ⛔ 2026-09-16 兜底（用户反馈「无法识别大号用户 / 无法识别我的账号」）：
+            #   认不出自己的 wxid 时，退一步用**昵称 + 我刚发过东西**双重条件来判断 ——
+            #   单看昵称会误伤同名群友（把别人的话丢掉＝漏回），所以再加一条"我确实在 30 秒内发过"。
+            #   宁可少数漏判（回声还有 `_is_self_echo` 的文本+时间窗兜着），也不要因为认不出自己而**回自己**。
+            if (not self._self_wxid) and self._self_nickname and sender_wxid:
+                try:
+                    _sn = str((self._nick_map or {}).get(sender_wxid) or "").strip()
+                    _now = time.time()
+                    _recent = any((_now - float(_ts)) < 30 for _t, _ts in (self._recent_sent or []))
+                    if _sn and _sn == self._self_nickname.strip() and _recent:
+                        return None
+                except Exception:
+                    pass
         elif mtype == "图片":
             sender_wxid = str(sender_id or "") if sender_id not in (0, 2, None) else ""
             text = "[图片]"
