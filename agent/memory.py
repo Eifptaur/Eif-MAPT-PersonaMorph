@@ -237,16 +237,24 @@ class MemoryStore:
         out.sort(key=lambda x: -(x["updatedAt"] or 0))
         return out
 
-    def remove(self, chat_key: str, category: str, user_id="", target="", content=""):
+    def remove(self, chat_key: str, category: str, user_id="", target="", content="", scope="all"):
+        """删成员印象。`scope`＝**删除范围**（用户口径：不替他二选一，做成界面可选档）：
+
+        · `all` （默认）＝按 `_chat_keys()` 把**互通范围内的每一份都删掉** —— 与 `members()`
+          的读取口径一致（2026-09-16 修「删了还能读到」时定的，界面列的是合并视图，就删合并的那些）；
+        · `this`＝**只删 `chat_key` 这一个群**里那一份（别的群还留着 ⇒ 合并视图里仍会显示，
+          所以调用方必须把这件事**如实告诉用户**，见 `elsewhere()`）。
+        """
         if category != "memberImpression":
             return False
+        keys = [chat_key] if str(scope) == "this" else list(self._chat_keys(chat_key))
         removed = False
         # ⛔ 2026-09-16 修（用户反馈：「记忆那里也是删除了还能读取」）：
         #   根因是**口径不对称** —— `members()`（列表）在"互通"时是 `for key in self._chat_keys(chat_key)`
         #   **把所有群合并**后展示的，而这里原来只删 `chat_key` **一个群**的那一份 ⇒ 同一个人在别的群
         #   （或共享池）还留着一份 ⇒ **界面上删了、一刷新又合并出来**。
-        #   ⇒ 删除必须与读取**同一口径**：按 `_chat_keys()` 把每一份都删掉。
-        for key in list(self._chat_keys(chat_key)):
+        #   ⇒ 默认档必须与读取**同一口径**：按 `_chat_keys()` 把每一份都删掉（`scope="all"`）。
+        for key in keys:
             m = self._ensure_chat(key)
             if not m:
                 continue
@@ -275,6 +283,34 @@ class MemoryStore:
                     mem["updatedAt"] = int(__import__("time").time() * 1000)
                     _write_json(_member_file(key, mem.get("userId"), mem.get("name")), mem)
         return removed
+
+    def elsewhere(self, chat_key: str, user_id="", target="") -> int:
+        """除 `chat_key` 之外，还有几个群留着这个人的印象（给「只删本群」档做**如实提示**用）。
+
+        为什么要它：`members()` 展示的是**互通范围内的合并视图**，所以用 `scope="this"` 只删本群时，
+        界面上**那条记忆还会在**（别的群那一份还在）—— 不说清楚，用户就会以为"删了没用"（他 2026-09-16
+        报的那条 bug 就是这个观感）。⇒ 只读计数，不做任何写入。
+        """
+        n = 0
+        try:
+            for key in self._chat_keys(chat_key):
+                if key == chat_key:
+                    continue
+                for _mk, mem in (self._ensure_chat(key) or {}).items():
+                    if not mem.get("impressions"):
+                        continue
+                    if user_id:
+                        hit = str(mem.get("userId")) == str(user_id)
+                    elif target:
+                        hit = str(mem.get("name") or mem.get("userId")) == str(target).strip()
+                    else:
+                        hit = False
+                    if hit:
+                        n += 1
+                        break
+        except Exception:
+            return 0
+        return n
 
     def replace_member(self, chat_key: str, user_id: str, name: str, contents):
         uid = str(user_id or "").strip()

@@ -30,6 +30,7 @@
   "db_dir": "",
   "minimize_warning": true,
   "restore_minimized": true,
+  "replay_on_resume": false,
   "start_paused": true,
   "allow_click_hunting": false,
   "background_only": true,

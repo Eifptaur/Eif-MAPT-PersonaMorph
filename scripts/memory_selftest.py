@@ -45,14 +45,18 @@ mem_src = io.open(os.path.join(ROOT, "agent", "memory.py"), encoding="utf-8").re
 page = io.open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
 
 seg_members = mem_src.split("def members(")[1].split("def remove(")[0]
-seg_remove = mem_src.split("def remove(")[1].split("def replace_member(")[0]
+seg_elsewhere = mem_src.split("def elsewhere(")[1].split("\n    def ")[0] if "def elsewhere(" in mem_src else ""
+seg_remove = mem_src.split("def remove(")[1].split("def elsewhere(")[0] \
+    if "def elsewhere(" in mem_src else mem_src.split("def remove(")[1].split("def replace_member(")[0]
 
 print("── A. 读取与删除必须同一口径 ──")
 ok("members 用 _chat_keys 展开（互通时合并所有群）", "_chat_keys(chat_key)" in seg_members)
 ok("remove 也用 _chat_keys 展开（2026-09-16 修复点）", "_chat_keys(chat_key)" in seg_remove)
 ok("remove 不再只对单一 chat_key 取档案（那正是「删了还能读到」的根因）",
    "_ensure_chat(chat_key)" not in seg_remove)
-ok("remove 里按 _chat_keys 逐个群处理", "for key in list(self._chat_keys(chat_key))" in seg_remove)
+ok("remove 的默认档＝对所有相关群逐个处理（与读取口径一致）",
+   'keys = [chat_key] if str(scope) == "this" else list(self._chat_keys(chat_key))' in seg_remove
+   and "for key in keys:" in seg_remove)
 
 print("\n── B. 删除的边界与收尾 ──")
 ok("只处理 memberImpression（别的 category 直接 False，不误删）",
@@ -65,6 +69,22 @@ ok("还有剩则写回", "_write_json(_member_file(" in seg_remove)
 print("\n── C. 用户看得懂（别让人以为只删本群那份）──")
 ok("UI 文案点明「全部印象」", "的全部印象" in page)
 ok("删除按钮在记忆面板里", "loadMemory(sel.value)" in page)
+
+print("\n── D. 删除范围做成可选档位（用户口径：不替他二选一，映射到 UI 上）──")
+pm = io.open(os.path.join(ROOT, "scripts", "persona_morph.py"), encoding="utf-8").read()
+wu = io.open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
+ok("remove 有 scope 参数且默认 all（默认＝与读取口径一致的安全侧）",
+   'scope="all"' in mem_src)
+ok("「只删本群」档真的只删本群（[chat_key] 分支）", "[chat_key] if str(scope)" in seg_remove)
+ok("elsewhere() 存在（给「只删本群」做如实提示）", "def elsewhere(" in mem_src)
+ok("elsewhere() 是只读的（不写文件、不删文件）",
+   "_write_json(" not in seg_elsewhere and "os.remove(" not in seg_elsewhere)
+ok("「只删本群」时如实回报还剩几个群", "还留着" in pm and "left_elsewhere" in pm)
+ok("memory_fn 接受 scope", 'scope="all"' in pm)
+ok("webui 透传 scope", 'scope=str(data.get("scope")' in wu)
+ok("控制台有「删除范围」两档且 POST 里带 scope",
+   'id="memScope"' in page and "scope:_sc" in page)
+ok("UI 说清合并视图的后果（列表里仍会看到）", "列表里仍会看到它" in page)
 
 print("")
 print("记忆删除判据：%d 通过 / %d 失败" % (PASS, FAIL))
