@@ -359,6 +359,170 @@ try:
 finally:
     FB._cfg, FB._post = _saved_cfg, _saved_post
 
+print("\n── I. 附件与联系邮箱（2026-09-17 用户：「我们的反馈提交能不能提交图片和文件」·「可以让用户选填一个联系邮箱」）──")
+import base64 as _b64                       # noqa: E402
+import shutil as _shutil                    # noqa: E402
+
+_ui2 = src("agent/console_html.py")
+ok("界面有「图片/文件」这一行与选择按钮",
+   'id="fbPick"' in _ui2 and 'id="fbFileInput"' in _ui2 and ">选择图片或文件<" in _ui2, "")
+ok("文件选择框允许多选（一次能带好几个）",
+   re.search(r'id="fbFileInput"[^>]*multiple', _ui2) is not None, "")
+ok("界面上写清了附件上限（最多 4 个 / 图片 2MB / 文件 20MB）",
+   all(k in _ui2 for k in ("最多 4 个", "2MB", "20MB")), "")
+ok("界面有「联系邮箱」这一行、且写明选填",
+   'id="fbContact"' in _ui2 and ">联系邮箱<" in _ui2 and "选填" in _ui2, "")
+ok("前端把附件一起 POST 上去、并且自己先拦一次上限（不等到提交完才失败）",
+   "files:_files" in _ui2 and "_fbImgMB" in _ui2 and "_fbFileMB" in _ui2, "")
+ok("前端也拦明显不对的联系邮箱（提示里给了例子）", "xxx@qq.com" in _ui2, "")
+_wu2 = src("agent/webui.py")
+ok("服务端把附件转交给反馈模块，并有一道请求总量闸",
+   "FB.submit(" in _wu2 and "_files" in _wu2 and "40 * 1024 * 1024" in _wu2, "")
+ok("会写盘就得有上限：附件目录的上限与清理都在（用户既有口径）",
+   int(FB.ATTACH.get("keep_files") or 0) > 0 and int(FB.ATTACH.get("keep_bytes") or 0) > 0, str(FB.ATTACH))
+
+_sv = (FB.MEDIA_DIR, FB.FEEDBACK_FILE, dict(FB.LIMIT), FB._cfg, dict(FB.ATTACH))
+_mdir = os.path.join(ROOT, "data", "feedback_selftest_media")
+_tmp4 = os.path.join(ROOT, "data", "feedback_selftest4.jsonl")
+try:
+    for _p in (_tmp4,):
+        try:
+            os.remove(_p)
+        except Exception:
+            pass
+    _shutil.rmtree(_mdir, ignore_errors=True)
+    FB.MEDIA_DIR = _mdir
+    FB.FEEDBACK_FILE = _tmp4
+    FB.LIMIT.update({"per_minute": 999, "per_hour": 999, "per_day": 999})
+    FB._cfg = lambda: {}
+    _png = b"\x89PNG\r\n\x1a\n" + b"\0" * 64
+
+    _s1, _n1 = FB.save_attachments("t1", [
+        {"name": "截图.png", "data": _b64.b64encode(_png).decode()},
+        {"name": "日志.txt", "data": _b64.b64encode(b"hello log").decode()}])
+    ok("图片与文件都存下来了（2 个、无抱怨）", len(_s1) == 2 and not _n1, "%d 个 / %s" % (len(_s1), _n1))
+    ok("认得出哪张是图片（决定走图片消息还是文件消息）",
+       _s1[0].get("image") is True and _s1[1].get("image") is False, str([f.get("image") for f in _s1]))
+    ok("附件只落在这棵树里（不乱写别处）",
+       all(os.path.abspath(f["path"]).startswith(os.path.abspath(_mdir)) for f in _s1), _s1[0]["path"])
+    ok("附件名里的路径被剥掉（不给跳出目录的机会）",
+       FB._safe_name("..\\..\\evil.png") == "evil.png", FB._safe_name("..\\..\\evil.png"))
+
+    _big = b"\0" * (int(FB.ATTACH["image_max"]) + 1)
+    _s2, _n2 = FB.save_attachments("t2", [{"name": "大图.png", "data": _b64.b64encode(_big).decode()}])
+    ok("图片超过 2MB ⇒ 拒收并说清原因（不静默截断）", not _s2 and any("上限" in x for x in _n2), str(_n2)[:60])
+    ok("这两条上限就是接收端的硬限制（企业微信 image ≤2MB、upload_media ≤20MB）",
+       int(FB.ATTACH["image_max"]) == 2 * 1024 * 1024 and int(FB.ATTACH["file_max"]) == 20 * 1024 * 1024,
+       "%s / %s" % (FB.ATTACH["image_max"], FB.ATTACH["file_max"]))
+    FB.ATTACH = dict(FB.ATTACH, file_max=1024)
+    _s3, _n3 = FB.save_attachments("t3", [{"name": "大文件.zip", "data": _b64.b64encode(b"\0" * 2048).decode()}])
+    ok("非图片走文件档的上限（超了同样拒收）", not _s3 and any("上限" in x for x in _n3), str(_n3)[:60])
+    FB.ATTACH = dict(_sv[4])
+    _s4, _n4 = FB.save_attachments("t4", [{"name": "f%d.png" % i, "data": _b64.b64encode(b"x").decode()}
+                                          for i in range(5)])
+    ok("一次最多 4 个（多的不收，并说明）", len(_s4) == 4 and any("最多" in x for x in _n4),
+       "%d 个 / %s" % (len(_s4), _n4))
+
+    _c2 = FB.compose({"kind": "问题", "text": "发不出去", "ver": "1", "at_h": "t", "files": _s1})
+    ok("正文里列了附件清单（没配推送通道时，也知道该找用户要哪几个文件）",
+       "附件" in _c2 and "截图.png" in _c2 and "日志.txt" in _c2, _c2.replace("\n", "⏎")[-56:])
+
+    # 企业微信这条：图片走 base64+md5、文件先 upload_media 换 media_id 再发（两种形态都不一样）
+    _posts = []
+    _ru, _rp = FB._wecom_upload, FB._post
+    FB._post = lambda url, payload, timeout=10: (_posts.append(payload) or
+                                                 {"ok": True, "status": 200, "why": '{"errcode":0}'})
+    FB._wecom_upload = lambda url, key, name, raw, timeout=30: {"ok": True, "media_id": "MID-1"}
+    try:
+        _mm = FB._wecom_media("https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=K", _s1)
+        ok("图片走 image 消息：base64 与 md5 都在（少一个对方就拒）",
+           _posts[0].get("msgtype") == "image" and bool(_posts[0]["image"].get("base64"))
+           and len(_posts[0]["image"].get("md5") or "") == 32, str(list(_posts[0].get("image", {}).keys())))
+        ok("文件先换 media_id、再用 file 消息发出去",
+           _posts[1].get("msgtype") == "file" and _posts[1]["file"].get("media_id") == "MID-1",
+           str(_posts[1]))
+        ok("两个附件都送到 ⇒ 报 2/2", _mm.get("sent") == 2 and _mm.get("ok") is True, str(_mm.get("why"))[:50])
+        _posts[:] = []
+        FB._wecom_upload = lambda url, key, name, raw, timeout=30: {"ok": False, "why": "太大"}
+        _mm2 = FB._wecom_media("https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=K", _s1)
+        ok("文件传不上去 ⇒ 如实记账 1/2（不假装送过）",
+           _mm2.get("ok") is False and "1/2" in str(_mm2.get("why")), str(_mm2.get("why"))[:70])
+    finally:
+        FB._wecom_upload, FB._post = _ru, _rp
+
+    _r_ok = FB.submit("建议", "判据用的假反馈：邮箱这条", "someone@example.com")
+    ok("合法邮箱 ⇒ 收下并写进记录",
+       _r_ok.get("state") == "queued" and FB._read_all()[-1].get("contact") == "someone@example.com",
+       str(_r_ok.get("state")))
+    _n_before = len(FB._read_all())
+    _r_bad = FB.submit("建议", "判据用的假反馈：邮箱写错了", "不是邮箱")
+    ok("邮箱写错 ⇒ 明确退回、且不落盘（选填不等于可以乱填）",
+       _r_bad.get("state") == "error" and "邮箱" in str(_r_bad.get("why"))
+       and len(FB._read_all()) == _n_before, str(_r_bad.get("why"))[:56])
+    _r_a = FB.submit("问题", "", "", None, [{"name": "只有图.png", "data": _b64.b64encode(_png).decode()}])
+    ok("只带附件、不写字也能提交（正文用占位句，东西别丢）",
+       _r_a.get("state") == "queued" and _r_a.get("files") == 1, str(_r_a.get("state")))
+    _last = FB._read_all()[-1]
+    ok("附件随记录一起存档（补发时还找得到文件）",
+       bool(_last.get("files")) and os.path.exists(_last["files"][0]["path"]), str(_last.get("files"))[:70])
+    _r_e2 = FB.submit("建议", "", "")
+    ok("既没字也没附件 ⇒ 明确拒绝（别收空条）",
+       _r_e2.get("state") == "error" and "内容" in str(_r_e2.get("why")), str(_r_e2.get("why"))[:40])
+
+    import smtplib as _sm2                # noqa: E402
+    _box2 = {}
+
+    class _FS:
+        def __init__(self, host, port, timeout=None, context=None):
+            _box2["h"] = host
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def login(self, u, p):
+            pass
+
+        def sendmail(self, frm, to, body):
+            _box2["body"] = body
+
+    _o2 = _sm2.SMTP_SSL
+    _sm2.SMTP_SSL = _FS
+    try:
+        FB._cfg = lambda: {"to": "a@example.com",
+                           "smtp": {"host": "h", "port": 465, "user": "me@qq.com", "password": "p"}}
+        _rm = FB.submit("想法", "判据用的假反馈：邮件带附件", "", None,
+                        [{"name": "附件A.png", "data": _b64.b64encode(_png).decode()}])
+        ok("邮件通道能带附件（真挂上去了，不是只在正文里提一句）",
+           _rm.get("state") == "sent" and "multipart/mixed" in (_box2.get("body") or "")
+           and "Content-Disposition: attachment" in (_box2.get("body") or ""), str(_rm.get("state")))
+    finally:
+        _sm2.SMTP_SSL = _o2
+        FB._cfg = lambda: {}
+
+    _kb = int(FB.ATTACH["keep_files"])
+    FB.ATTACH = dict(FB.ATTACH, keep_files=2)
+    _pr = FB.prune_media()
+    _left = sum(len(_fs) for _d, _s, _fs in os.walk(_mdir))
+    ok("附件目录超上限 ⇒ 从最旧的删起（只删自己造的这棵树）",
+       _pr.get("removed", 0) > 0 and _left <= 2 and os.path.isdir(_mdir),
+       "删了 %s 个 · 剩 %d" % (_pr.get("removed"), _left))
+    FB.ATTACH = dict(FB.ATTACH, keep_files=_kb)
+finally:
+    (FB.MEDIA_DIR, FB.FEEDBACK_FILE, _lim9, FB._cfg, _att9) = _sv
+    FB.LIMIT.clear()
+    FB.LIMIT.update(_lim9)
+    FB.ATTACH.clear()
+    FB.ATTACH.update(_att9)
+    for _p in (_tmp4,):
+        try:
+            os.remove(_p)
+        except Exception:
+            pass
+    _shutil.rmtree(_mdir, ignore_errors=True)
+
 print("")
 print("反馈栏判据：%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
