@@ -150,7 +150,7 @@ ck("B19b 真鼠标兜底也默认关（allow_real_fallback 默认 False）",
 #   搜索路线点了**名字匹配**的结果行、内容也像目标，却因为「活动行时间戳读不出」被判否
 #   ⇒ 整条搜索判失败 ⇒ **回退"找行 + 滚轮"** ⇒ 用户看到它在划会话列表。
 #   修法：在搜索路线这个上下文里把"读不出"按**弱证据**放行（发送闸不动）。
-_SEG_SEARCH = SRC_WECHAT.split("def open_chat_by_search(")[1][:6000]
+_SEG_SEARCH = SRC_WECHAT.split("def open_chat_by_search(")[1][:16000]
 ck("B20 搜索路线：'时间戳读不出'按弱证据放行（不再整条回退去滚列表）",
    '_why_s = str(idn_why)' in _SEG_SEARCH and '"读不出" in _why_s' in _SEG_SEARCH)
 ck("B20a 发送闸没跟着放宽（注释里写明「发送闸一个字不动」）",
