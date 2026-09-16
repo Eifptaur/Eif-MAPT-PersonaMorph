@@ -1342,9 +1342,9 @@ namespace WxLauncher
                 Js(wv, "(function(){try{document.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,button:1,clientX:520,clientY:420}));return 'ok'}catch(e){return 'err'}})()");
                 sb.AppendLine("wheel_t0=" + Js(wv, "(function(){try{return String(PM_WHEEL.top())}catch(e){return 'err'}})()").Replace("\"", ""));
                 System.Threading.Thread.Sleep(700);
-                sb.AppendLine("wheel_1=" + Js(wv, "(function(){try{var p=document.getElementById('pmWheel');var i=p?p.querySelector('img'):null;return PM_WHEEL.active()+'|'+PM_WHEEL.top()+'|'+PM_WHEEL.hasPuck()+'|'+(i?getComputedStyle(i).transform:'-')}catch(e){return 'err'}})()").Replace("\"", ""));
+                sb.AppendLine("wheel_1=" + Js(wv, "(function(){try{return PM_WHEEL.active()+'|'+PM_WHEEL.top()+'|'+PM_WHEEL.hasPuck()+'|'+WHALE_CURSOR.frameIdx()+'|'+(document.querySelector('#pmWheel img')?'yes':'no')}catch(e){return 'err'}})()").Replace("\"", ""));
                 System.Threading.Thread.Sleep(300);
-                sb.AppendLine("wheel_2=" + Js(wv, "(function(){try{var p=document.getElementById('pmWheel');var i=p?p.querySelector('img'):null;return PM_WHEEL.active()+'|'+PM_WHEEL.top()+'|'+PM_WHEEL.hasPuck()+'|'+(i?getComputedStyle(i).transform:'-')}catch(e){return 'err'}})()").Replace("\"", ""));
+                sb.AppendLine("wheel_2=" + Js(wv, "(function(){try{return PM_WHEEL.active()+'|'+PM_WHEEL.top()+'|'+PM_WHEEL.hasPuck()+'|'+WHALE_CURSOR.frameIdx()+'|'+(document.querySelector('#pmWheel img')?'yes':'no')}catch(e){return 'err'}})()").Replace("\"", ""));
                 Js(wv, "(function(){try{document.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,button:0,clientX:520,clientY:420}));return 'ok'}catch(e){return 'err'}})()");
                 System.Threading.Thread.Sleep(250);
                 sb.AppendLine("wheel_3=" + Js(wv, "(function(){try{return PM_WHEEL.active()+'|'+PM_WHEEL.top()+'|'+PM_WHEEL.hasPuck()}catch(e){return 'err'}})()").Replace("\"", ""));
@@ -1359,14 +1359,14 @@ namespace WxLauncher
                 // ② 鱼的转速跟着滚动速度（同一套锚点下：基础速度取样 → 鼠标挪到锚点下方很远（更快）再取样）
                 Js(wv, "(function(){try{document.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,button:1,clientX:520,clientY:300}));return 'ok'}catch(e){return 'err'}})()");
                 System.Threading.Thread.Sleep(250);
-                sb.AppendLine("spinp_a1=" + Js(wv, "(function(){try{var i=document.querySelector('#pmWheel img');return PM_WHEEL.active()+'|'+(i?i.style.transform:'noimg')+'|'+PM_WHEEL.spinDeg()}catch(e){return 'err'}})()").Replace("\"", ""));
+                sb.AppendLine("spinp_a1=" + Js(wv, "(function(){try{return PM_WHEEL.active()+'|'+WHALE_CURSOR.frameIdx()+'|'+PM_WHEEL.spinDeg()}catch(e){return 'err'}})()").Replace("\"", ""));
                 System.Threading.Thread.Sleep(300);
-                sb.AppendLine("spinp_a2=" + Js(wv, "(function(){try{var i=document.querySelector('#pmWheel img');return PM_WHEEL.active()+'|'+(i?i.style.transform:'noimg')+'|'+PM_WHEEL.spinDeg()}catch(e){return 'err'}})()").Replace("\"", ""));
+                sb.AppendLine("spinp_a2=" + Js(wv, "(function(){try{return PM_WHEEL.active()+'|'+WHALE_CURSOR.frameIdx()+'|'+PM_WHEEL.spinDeg()}catch(e){return 'err'}})()").Replace("\"", ""));
                 Js(wv, "(function(){try{document.dispatchEvent(new MouseEvent('mousemove',{bubbles:true,cancelable:true,clientX:520,clientY:950}));return 'ok'}catch(e){return 'err'}})()");
                 System.Threading.Thread.Sleep(250);
-                sb.AppendLine("spinp_b1=" + Js(wv, "(function(){try{var i=document.querySelector('#pmWheel img');return PM_WHEEL.active()+'|'+(i?i.style.transform:'noimg')+'|'+PM_WHEEL.spinDeg()}catch(e){return 'err'}})()").Replace("\"", ""));
+                sb.AppendLine("spinp_b1=" + Js(wv, "(function(){try{return PM_WHEEL.active()+'|'+WHALE_CURSOR.frameIdx()+'|'+PM_WHEEL.spinDeg()}catch(e){return 'err'}})()").Replace("\"", ""));
                 System.Threading.Thread.Sleep(300);
-                sb.AppendLine("spinp_b2=" + Js(wv, "(function(){try{var i=document.querySelector('#pmWheel img');return PM_WHEEL.active()+'|'+(i?i.style.transform:'noimg')+'|'+PM_WHEEL.spinDeg()}catch(e){return 'err'}})()").Replace("\"", ""));
+                sb.AppendLine("spinp_b2=" + Js(wv, "(function(){try{return PM_WHEEL.active()+'|'+WHALE_CURSOR.frameIdx()+'|'+PM_WHEEL.spinDeg()}catch(e){return 'err'}})()").Replace("\"", ""));
                 Js(wv, "(function(){try{document.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,button:0}));return 'ok'}catch(e){return 'err'}})()");
                 IntPtr fg1 = ConsoleForm.GetForegroundWindow();
                 sb.AppendLine("fg_before=" + fg0.ToInt64());
