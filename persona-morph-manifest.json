@@ -1,10 +1,10 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.16.18",
-    "sha256": "2dd322b36c400635c24109c7fe0b69669149afc0fbb9396835f52c5ff9f639f8",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.19/persona-morph-v2.1.19.zip",
-    "size": 8236434,
+    "version": "2026.9.16.18.1",
+    "sha256": "530b3a86d8cc92038bebf1c281181a685152f48aef5f712309faa54e8b7a213e",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.19.1/persona-morph-v2.1.19.1.zip",
+    "size": 8241626,
     "files": 249
   },
   "dlc": [
@@ -32,13 +32,13 @@
     }
   ],
   "announce": {
-    "version": "2026.9.16.18",
+    "version": "2026.9.16.18.1",
     "notes": [
-      "反馈可以直接带图片和文件（最多 4 个；图片 ≤2MB，其他 ≤20MB）；另可选填联系邮箱，写错会当场提醒。"
+      "「立即更新」第一下不再失败：更新与检查走同一套备用源，哪个通用哪个；下载优先走上次走通的镜像。"
     ],
     "forceBase": false,
-    "minBase": "2026.9.16.18"
+    "minBase": "2026.9.16.18.1"
   },
-  "builtAt": "2026-09-16T16:59:33Z",
-  "updatedAt": 1789577973705
+  "builtAt": "2026-09-16T17:11:06Z",
+  "updatedAt": 1789578666923
 }
