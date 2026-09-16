@@ -1,10 +1,10 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.16.5",
-    "sha256": "c54c12680573d10aefca4dfea282baadc89a142014ffa0b2cacd86a81546a9d1",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.6/persona-morph-v2.1.6.zip",
-    "size": 7971455,
+    "version": "2026.9.16.6",
+    "sha256": "66790ea4f84439b0659266c5a0b30aec58636a13382ca8412af88ff5620951cc",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.7/persona-morph-v2.1.7.zip",
+    "size": 7997650,
     "files": 237
   },
   "dlc": [
@@ -32,15 +32,16 @@
     }
   ],
   "announce": {
-    "version": "2026.9.16.5",
+    "version": "2026.9.16.6",
     "notes": [
-      "鼠标不会再划你的控制台了：老配置会被一次性搬到安全的一侧，每一处真鼠标动作前都先确认那点属于微信",
-      "少数功能（朋友圈/点赞评论/拍一拍/引用）默认跳过，要用请去控制台关掉「只走后台」",
-      "这一版没有新功能，上一版装的用户请务必更新"
+      "不再改你的微信窗口了（那个「固定微信窗口位置」开关原来根本没被读）",
+      "切会话没搜到就停手，不再退回滚你的会话列表（想回退可在控制台打开）",
+      "主人识别多一档「只在群里 @ 我或引用我时才回」",
+      "顶栏新增「监听 N 个 / 主人登记 N 项」；暂停期间的消息可自选恢复后补不补；删记忆可选范围（并告诉你别的群还剩几份）"
     ],
     "forceBase": false,
-    "minBase": "2026.9.16.5"
+    "minBase": "2026.9.16.6"
   },
-  "builtAt": "2026-09-16T03:18:15Z",
-  "updatedAt": 1789528695337
+  "builtAt": "2026-09-16T03:35:11Z",
+  "updatedAt": 1789529711836
 }
