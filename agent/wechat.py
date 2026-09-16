@@ -4471,6 +4471,29 @@ class WeChatAdapter:
             except Exception:
                 return False
 
+    def _prepare_for_capture(self, gui) -> bool:
+        """按当前档位准备画面（2026-09-16）：
+
+        · 要动真鼠标（`_real_mouse_allowed()`）⇒ `_ensure_foreground`：**置前 + 清遮挡**（真点击必须）；
+        · 只走投递 ⇒ 只做**不激活**的最小化还原（`_ensure_main_visible`）⇒ **全程只做无激活还原，不主动把微信拉到前台**。
+
+        为什么要分开：这些路（拍一拍/引用/点赞评论）以前一进门就 `_ensure_foreground`（＝把微信
+        怼到前台），在"全程后台"口径下是多余的打扰；而投递链只需要窗口**能抓画面**，不需要在前台。
+        """
+        if self._real_mouse_allowed():
+            return self._ensure_foreground(gui)
+        try:
+            main = int(getattr(gui, "main_hwnd", 0) or 0)
+            if main:
+                self._ensure_main_visible(gui, main)
+        except Exception:
+            pass
+        try:
+            gui._update_render_rect()
+        except Exception:
+            pass
+        return True
+
     def _click(self, gui, rel_x: int, rel_y: int, right: bool = False) -> tuple:
         """统一点击入口：换 DPI 空间 + 校验点击点属于微信 + wx_click。
 
@@ -4482,14 +4505,72 @@ class WeChatAdapter:
         except Exception as e:
             return False, str(e)
 
+    def _right_click_menu_posted(self, gui, rel_x: int, rel_y: int, label: str, delay: float = 0.7) -> bool:
+        """**投递版**右键菜单：投递右键（投主窗）→ 差分找菜单窗 → 投递点击含 label 的项。
+
+        2026-09-16 实测（`_scratch/rclick_avatar.py` + `_scratch/rck_menu.py`，两靶点各有真实右键阳性对照）：
+          · 投递右键**投渲染子窗不弹菜单**、**投主窗才弹**（`Qt51514QWindowToolSaveBits`）；
+          · 菜单弹出后，**投递左键点菜单项能命中** —— 判据＝剪贴板被写成那条消息的正文（点「复制」那一枪）。
+        ⇒ 这条路**全程不动光标（微信可能被短暂置前约 1~3 秒后自动还回）**，所以拍一拍/引用/点赞评论不再是"只能真鼠标"。
+
+        返回 True ＝**已经点到了那个菜单项**；False ＝这条链没成（调用方按两个开关决定是否回真鼠标）。
+        """
+        try:
+            from . import input_backend as ib
+            backend = ib.select_backend(gui=gui)
+            if not isinstance(backend, ib.MessageBackend):
+                return False                      # 当前不是投递档 ⇒ 交给原实现
+            main = int(getattr(gui, "main_hwnd", 0) or 0) or ib.find_main_window()
+            if not main:
+                return False
+            import win32process
+            pid = win32process.GetWindowThreadProcessId(int(main))[1]
+            before = ib.menu_new_windows(pid, ())          # 传空快照 ⇒ 得到"当前所有菜单类窗"当基线
+            screen_pt = (int(getattr(gui, "origin_x", 0)) + int(rel_x),
+                         int(getattr(gui, "origin_y", 0)) + int(rel_y))
+            ok, why = backend.click(main, screen_pt, right=True)
+            if not ok:
+                log.info("投递右键没发出去：%s", why)
+                return False
+            time.sleep(max(0.4, float(delay)))
+            menus = ib.menu_new_windows(pid, before)
+            if not menus:
+                log.info("投递右键之后没出现菜单窗（%s）", label)
+                return False
+            ok2, why2 = ib.menu_click(menus[0], label)
+            log.info("投递右键菜单：%s ｜ %s", why2, why)
+            return bool(ok2)
+        except Exception as e:
+            log.info("投递右键菜单异常（交给原实现）：%s", e)
+            return False
+
+    def _real_mouse_allowed(self) -> bool:
+        """现在允许回真鼠标吗？两开关都默认安全：`wechat.background_only` 或
+        `input.allow_real_fallback=False` 任一成立 ⇒ **不许**动光标（如实拒绝，不悄悄降级）。"""
+        try:
+            if self._background_only():
+                return False
+            from .config import get_config as _gc3
+            return bool(((_gc3().get("input") or {}).get("allow_real_fallback", False)))
+        except Exception:
+            return False
+
     def _right_click_menu(self, gui, rel_x: int, rel_y: int, label: str, delay: float = 0.7) -> bool:
         """在相对坐标 (rel_x, rel_y) 处右键，OCR 弹出菜单，点含 label 的项。
 
-        优先 UIA 菜单树（微信 4.x 右键菜单热激活后物化为 mmui::XMenuView，
-        用 Invoke 点击最可靠、无坐标漂移）；OCR 兜底并做「真菜单」过滤：
+        2026-09-16 起**先走投递**（`_right_click_menu_posted`：不动光标（可能短暂置前约 1~3 秒后自动还回）），
+        投递这条链不成立时才按两个开关决定是否回落到下面的真鼠标实现。
+
+        真鼠标实现的原档（保留）：优先 UIA 菜单树（微信 4.x 右键菜单热激活后物化为
+        mmui::XMenuView，用 Invoke 点击最可靠、无坐标漂移）；OCR 兜底并做「真菜单」过滤：
         菜单项是小字条（高 < 46）、位于光标右下方附近——防止把聊天文本里
         的「拍一拍」误当成菜单项。
         """
+        if self._right_click_menu_posted(gui, rel_x, rel_y, label, delay):
+            return True
+        if not self._real_mouse_allowed():
+            log.info("投递右键菜单不成立，且未允许真鼠标兜底 ⇒ 不动光标（%s）", label)
+            return False
         ok, why = self._click(gui, rel_x, rel_y, right=True)
         if not ok:
             return False
@@ -4840,10 +4921,9 @@ class WeChatAdapter:
         验证失败会如实返回，不会假报成功。
         dbg 传入列表时，每一步的中间结果会追加进去（供控制台「拍一拍诊断」展示）。
         """
-        # 后台能力矩阵：拍一拍＝真鼠标档（要右键头像/气泡再点菜单）。开了「只走后台」就跳过。
-        if self._background_only():
-            from . import bg_status as _bg
-            return False, _bg.background_only_reason("拍一拍")
+        # 2026-09-16 改口径（投递右键打通后）：这几条路**先试投递**（`_right_click_menu` 内部
+        # 投递优先、不动光标（可能短暂置前约 1~3 秒后自动还回）），投递不成才由 `_real_mouse_allowed()` 决定是否回真鼠标。
+        # 原来这里是「只走后台 ⇒ 直接跳过」——那是右键还没打通投递时的保守做法，现在属于**误拦**。
         def _d(msg):
             if dbg is not None:
                 dbg.append(msg)
@@ -4852,7 +4932,7 @@ class WeChatAdapter:
             rec = gui.render_rect
             _d("1) 微信窗口：%s 可见=%s" % (
                 rec, _user32_is_visible(gui.main_hwnd)))
-            if not self._ensure_foreground(gui):
+            if not self._prepare_for_capture(gui):
                 return False, "微信窗口未找到或已退出，无法操作"
             _d("2) 已清理遮挡层并把微信置前")
             if not gui.open_chat(group := self.group_name(chat_id)):
@@ -4990,7 +5070,7 @@ class WeChatAdapter:
                 dbg.append(msg)
         try:
             gui = self._get_gui()
-            if not self._ensure_foreground(gui):
+            if not self._prepare_for_capture(gui):
                 return False, "微信窗口未找到或已退出，无法操作"
             if not gui.open_chat(self.group_name(chat_id)):
                 return False, "打开会话失败"
@@ -5193,14 +5273,12 @@ class WeChatAdapter:
         命中测试；多个候选点逐一试右键，任一出菜单即点「引用」。
         target_text 空 = 引用「数据库最新一条群友消息」（近似）。
         """
-        # 后台能力矩阵：引用＝真鼠标档（右键气泡 → 菜单「引用」）。开了「只走后台」就跳过。
-        if self._background_only():
-            from . import bg_status as _bg
-            return False, _bg.background_only_reason("引用消息")
+        # 2026-09-16 改口径：引用也**先试投递**（菜单那一跳走投递：不动光标（可能短暂置前约 1~3 秒后自动还回））；
+        # 投递不成才由 `_real_mouse_allowed()` 决定是否回真鼠标。原来的"只走后台 ⇒ 跳过"已删。
         try:
             gui = self._get_gui()
             group = self.group_name(chat_id)
-            if not self._ensure_foreground(gui):
+            if not self._prepare_for_capture(gui):
                 return False, "微信窗口未找到或已退出，无法操作"
             if not gui.open_chat(group):
                 return False, "打开会话失败"
@@ -5298,7 +5376,7 @@ class WeChatAdapter:
                 if not chat_id:
                     return False, "未指定会话（chat_id 为空），不执行任何操作（防止误点搜索框/其它会话）"
                 group = self.group_name(chat_id) or chat_id
-                if not self._ensure_foreground(gui):
+                if not self._prepare_for_capture(gui):
                     return False, "微信窗口未找到或已退出，无法操作"
                 if not gui.open_chat(group):
                     return False, "打开会话失败"

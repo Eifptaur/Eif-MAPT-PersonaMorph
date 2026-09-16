@@ -74,11 +74,22 @@ for fn in ("moments_open", "moments_scroll"):
     ck("B3.%s 退回前写了日志（不留暗账）" % fn, "log.warning" in body)
     ck("B4.%s 「只走后台」时不再退回（跳过并说明）" % fn,
        "_background_only" in body and "跳过" in body)
-for fn, label in (("_send_poke_inner", "拍一拍"), ("_reply_quote_inner", "引用"),
-                  ("moments_like", "点赞"), ("moments_comment", "评论"),
-                  ("moments_publish_text", "发表")):
+for fn, label, need_gate in (("_send_poke_inner", "拍一拍", False), ("_reply_quote_inner", "引用", False),
+                             ("moments_like", "点赞", True), ("moments_comment", "评论", True),
+                             ("moments_publish_text", "发表", True)):
     body = SRC_WECHAT.split("def %s(" % fn)[1][:1500]
-    ck("B5.%s（%s）有「只走后台」闸" % (fn, label), "_background_only" in body)
+    if need_gate:
+        ck("B5.%s（%s）有「只走后台」闸" % (fn, label), "_background_only" in body)
+    else:
+        # 2026-09-16 改口径：投递右键打通后，**拍一拍/引用**改成"先试投递"（不动光标、不抢前台），
+        # 投递不成才由 `_real_mouse_allowed()` 决定是否回真鼠标 ⇒ 不许再"一进门就跳过"（那是误拦）。
+        # 点赞/评论/发表仍是真鼠标路线（悬停蓝点/真实滚轮回顶/点发表），所以它们的闸保留。
+        ck("B5.%s（%s）不再一进门就跳过（改走投递优先）" % (fn, label), "_background_only" not in body)
+ck("B5x 投递右键链与统一闸门都在（真鼠标许可只由 _real_mouse_allowed 判）",
+   "def _right_click_menu_posted(" in SRC_WECHAT and "def _real_mouse_allowed(" in SRC_WECHAT)
+ck("B5y 只投递时不抢前台（_prepare_for_capture 按档位分叉）",
+   "def _prepare_for_capture(" in SRC_WECHAT and "_ensure_main_visible(gui, main)" in
+   SRC_WECHAT.split("def _prepare_for_capture(")[1][:900])
 _gate = SRC_WECHAT.split("def _background_only(")[1][:800]
 ck("B6 闸读的是 config.wechat.background_only", "background_only" in _gate and "wechat" in _gate)
 ck("B7 config 默认值里有这个键", '"background_only"' in SRC_CFG)
