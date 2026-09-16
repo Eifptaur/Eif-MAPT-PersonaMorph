@@ -1,10 +1,10 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.16.10",
-    "sha256": "4a0167c9a8603dc2c3627e9953a781caabb36ec23dfb931f8d1c868981383439",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.11/persona-morph-v2.1.11.zip",
-    "size": 8082014,
+    "version": "2026.9.16.11",
+    "sha256": "090745ecf85680298a969f068e2987357698060a3676470e7c2254d9820f9b95",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.12/persona-morph-v2.1.12.zip",
+    "size": 8084728,
     "files": 242
   },
   "dlc": [
@@ -32,14 +32,14 @@
     }
   ],
   "announce": {
-    "version": "2026.9.16.10",
+    "version": "2026.9.16.11",
     "notes": [
-      "发送失败现在会说清是哪一条、为什么失败（原因逐条写进运行明细与日志），并提示\"先照原因处理别盲目重试\"",
-      "遇到发送失败请把那一行完整原因截图发我，或发 data/runtime.log 里含「发送失败」的那几行"
+      "控制台右侧面板顺序改成与左导航完全一致，不再「划着划着乱跳」；顺序现在有判据盯着",
+      "「机器人昵称」和「响应档位」合并成第 3 个面板「机器人」（导航也排第 3），原处已移走不重复"
     ],
     "forceBase": false,
-    "minBase": "2026.9.16.10"
+    "minBase": "2026.9.16.11"
   },
-  "builtAt": "2026-09-16T11:46:19Z",
-  "updatedAt": 1789559179396
+  "builtAt": "2026-09-16T12:22:34Z",
+  "updatedAt": 1789561354163
 }
