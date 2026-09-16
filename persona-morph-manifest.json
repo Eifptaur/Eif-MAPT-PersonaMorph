@@ -1,10 +1,10 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.16.16.7",
-    "sha256": "3a09b9d314e3f64b4a24817bdd5da450411c410090b6384dba50c89938d0d2f9",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.17.7/persona-morph-v2.1.17.7.zip",
-    "size": 8209049,
+    "version": "2026.9.16.17",
+    "sha256": "ae616594d34646f20de9ca1aaa57154350eaf6fedd694a8b081d50d9b29477c2",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.18/persona-morph-v2.1.18.zip",
+    "size": 8209422,
     "files": 249
   },
   "dlc": [
@@ -32,15 +32,15 @@
     }
   ],
   "announce": {
-    "version": "2026.9.16.16.7",
+    "version": "2026.9.16.17",
     "notes": [
-      "反馈栏更干净：去掉了那些与填写反馈无关的设置项，界面只留 类型 / 内容 / 提交",
-      "联系方式与提交记录收进「更多」；只有真发不出去或有积压时顶部才提示一行",
-      "几处本该我们自己操心的说明已从界面与文案里撤掉，界面按用户视角写"
+      "反馈现在「点一下就送到」：在反馈面板选类型、写内容、点提交即可，你不用做任何设置",
+      "界面更简单：反馈栏只留 类型 / 内容 / 提交，联系人与提交记录收在「更多」里",
+      "反馈只往开发者那边发，不会发到微信的任何人或群；提交记录可自查状态"
     ],
     "forceBase": false,
-    "minBase": "2026.9.16.16.7"
+    "minBase": "2026.9.16.17"
   },
-  "builtAt": "2026-09-16T16:34:33Z",
-  "updatedAt": 1789576473110
+  "builtAt": "2026-09-16T16:48:42Z",
+  "updatedAt": 1789577322374
 }
