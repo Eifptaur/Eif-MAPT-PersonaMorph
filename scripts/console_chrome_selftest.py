@@ -155,15 +155,39 @@ ok("启用时预加载两张光标图", "function preload()" in page and "preloa
 ok("mousedown 仍然切点头帧、180ms 后换回",
    "applyNod();" in page and "nodTimer = setTimeout(apply, 180)" in page)
 
-print("\n── ⑨ 暂停/恢复：不许靠按钮文字决定接口（2026-09-16 用户报「很不灵敏」）──")
+print("\n── ⑨ 暂停/恢复：不许靠按钮文字决定接口，且**方向不能反**（2026-09-16 用户报「很不灵敏」+「点暂停显示已恢复」）──")
 ok("不再用按钮文字判断该调哪个接口（文字是轮询刷新的，会调反）",
    "textContent.includes('暂停')?'/api/pause'" not in page)
 ok("有状态变量作唯一依据", "window.__pausedNow" in page)
+ok("**方向正确**：想要暂停 ⇒ 调 /api/pause（我第一版曾整个调反）",
+   "wantPaused ? '/api/pause' : '/api/resume'" in page)
+ok("**文字方向正确**：想要暂停 ⇒ 按钮/运行状态写「已暂停」、下一步写「恢复」",
+   "wantPaused ? '恢复' : '暂停'" in page
+   and "wantPaused ? '已暂停' : '运行中'" in page)
+ok("**提示方向正确**：想要暂停 ⇒ toast 说「已暂停」",
+   "wantPaused ? '已暂停：" in page)
 ok("点击后立刻进入处理中态（禁用 + 改字）",
    "btn.disabled = true" in page and "暂停中…" in page and "恢复中…" in page)
-ok("成功后就地翻转 + 给 toast（不等下一次轮询）",
-   "window.__pausedNow = !want" in page and "已恢复：它开始监听消息了" in page)
 ok("失败要恢复原状并如实报错", "btn.textContent = oldText" in page)
+
+# 真值表复算：把上面那段 JS 的判定用 Python 等价写一遍，断言"点一下"的结果符合直觉。
+# 上一版判据只查了「有状态变量」，**没查方向**，所以没拦住我把两个分支写反（点暂停发 resume）。
+def _pause_step(paused_now):
+    want_paused = not paused_now
+    return {"call": "/api/pause" if want_paused else "/api/resume",
+            "afterPaused": want_paused,
+            "btn": "恢复" if want_paused else "暂停",
+            "run": "已暂停" if want_paused else "运行中"}
+
+
+_t0 = _pause_step(False)
+ok("真值表：运行中点一下 ⇒ 暂停（调 pause、状态变已暂停、按钮变恢复）",
+   _t0["call"] == "/api/pause" and _t0["afterPaused"] is True
+   and _t0["btn"] == "恢复" and _t0["run"] == "已暂停", _t0)
+_t1 = _pause_step(True)
+ok("真值表：暂停中点一下 ⇒ 恢复（调 resume、状态变运行中、按钮变暂停）",
+   _t1["call"] == "/api/resume" and _t1["afterPaused"] is False
+   and _t1["btn"] == "暂停" and _t1["run"] == "运行中", _t1)
 
 print("")
 print("窗口/控制台外观判据：%d 通过 / %d 失败 / %d 跳过" % (PASS, FAIL, SKIP_N))

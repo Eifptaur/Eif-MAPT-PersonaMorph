@@ -4300,15 +4300,18 @@ $('pauseBtn').onclick = async ()=>{
   if(!btn || btn.dataset.busy === '1') return;
   btn.dataset.busy = '1';
   const oldText = btn.textContent;
-  const want = !window.__pausedNow;              // true = 想让它在跑
+  // ⚠️ 方向说明（2026-09-16 我自己踩过的坑）：`wantPaused` ＝ **用户这一下想要的结果状态**，
+  //    不是"当前状态"。我第一版把它当"想让它在跑"用，结果两个分支整个调反 ——
+  //    点「暂停」反而发 /api/resume、toast 还说"已恢复"。判据必须钉住这个方向。
+  const wantPaused = !window.__pausedNow;        // 当前在跑 ⇒ 这一下是想暂停
   btn.disabled = true;
-  btn.textContent = want ? '恢复中…' : '暂停中…';
+  btn.textContent = wantPaused ? '暂停中…' : '恢复中…';
   try{
-    await getJSON(want ? '/api/resume' : '/api/pause', {method:'POST'});
-    window.__pausedNow = !want;
-    btn.textContent = window.__pausedNow ? '恢复' : '暂停';
-    if($('runText')) $('runText').textContent = window.__pausedNow ? '已暂停' : '运行中';
-    toast(want ? '已恢复：它开始监听消息了' : '已暂停：它现在不会理任何消息');
+    await getJSON(wantPaused ? '/api/pause' : '/api/resume', {method:'POST'});
+    window.__pausedNow = wantPaused;
+    btn.textContent = wantPaused ? '恢复' : '暂停';      // 按钮上写"下一步能做什么"
+    if($('runText')) $('runText').textContent = wantPaused ? '已暂停' : '运行中';
+    toast(wantPaused ? '已暂停：它现在不会理任何消息' : '已恢复：它开始监听消息了');
     loadStatus();
   }catch(e){
     btn.textContent = oldText;
