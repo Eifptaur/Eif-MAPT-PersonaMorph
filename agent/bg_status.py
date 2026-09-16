@@ -36,8 +36,10 @@ PATHS = [
     },
     {
         "key": "switch_chat", "label": "切换会话", "status": "posted",
-        "detail": "投递点会话行（慢节奏）+ OCR 确认会话头；不负责改前台",
-        "evidence": "agent/wechat.py::switch_chat_posted",
+        "detail": "**搜索框优先**（投递点搜索入口 → 输入名字 → 点结果；两套 UI 都认、不依赖滚动，"
+                  "2026-09-16 按用户要求提为默认）；搜索没成才退回「投递点会话行（慢节奏）+ OCR 确认会话头」；"
+                  "不负责改前台",
+        "evidence": "agent/wechat.py::open_chat_by_search（已实测通路）· switch_chat_posted",
     },
     {
         "key": "moments_open", "label": "打开朋友圈", "status": "posted_fallback",
