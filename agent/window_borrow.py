@@ -126,6 +126,27 @@ def recover(reason: str = "上次进程留下的借用") -> bool:
         except Exception:
             pass
         return False
+    # ⛔ 2026-09-17 用户第二次投诉「**启动的时候就调，这么大**」⇒ 陈旧记录不许再往用户窗口上套。
+    #   这条记录只有在「窗口此刻仍停在我们钉的那一版」时才算"上次被强杀留下的借用"；
+    #   一旦用户/微信自己动过窗口（cur ≠ forced），或我们根本没钉过（forced 为空），
+    #   它就是陈旧记录 ⇒ 删掉、**一个字都不改用户的窗口**。
+    #   （改前行为：recover 直接把记录里的 rect 设回去，于是每次启动都把旧的大窗贴回来，
+    #     而 forced 为空时 restore() 还会无条件还原 —— 关掉 limit_window 反而打开了这条路。）
+    cur = rect_of(hwnd)
+    _stale = ""
+    if not forced:
+        _stale = "记录里没有『我们钉的那一版』（forced 为空）"
+    elif not cur:
+        _stale = "拿不到当前窗口 rect"
+    elif tuple(int(v) for v in cur) != tuple(int(v) for v in forced):
+        _stale = "窗口已被改过（cur=%s ≠ 我们钉的 %s）" % (cur, forced)
+    if _stale:
+        try:
+            os.remove(p)
+        except Exception:
+            pass
+        log.info("窗口借用记录已陈旧，不套回用户窗口：%s", _stale)
+        return False
     with _lock:
         _state.update({"borrowed": True, "hwnd": hwnd, "rect": tuple(rect),
                        "forced": tuple(forced) if forced else None,
@@ -201,7 +222,11 @@ def restore(reason: str = "idle") -> bool:
             cur = rect_of(hwnd)
             if not alive:
                 skipped = "窗口已经没了"
-            elif forced and cur and tuple(cur) != tuple(forced):
+            elif not forced:
+                # 我们**从来没钉过**这个窗口（只记了原样就退出/被强杀）⇒ 没有"归还"这回事，
+                # 强行 SetWindowPos 到记录里的 orig 会在用户已经把窗口挪走/改小之后把它拽回来。
+                skipped = "我们没有钉过窗口（forced 为空）⇒ 不还原"
+            elif cur and tuple(cur) != tuple(forced):
                 skipped = "窗口已被用户改过（cur=%s ≠ 我们钉的 %s）" % (cur, forced)
             else:
                 u.SetWindowPos(ctypes.c_void_p(hwnd), None, int(orig[0]), int(orig[1]),
