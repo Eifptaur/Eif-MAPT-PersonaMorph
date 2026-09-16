@@ -2507,6 +2507,31 @@ async function loadStatus(){  try{
                   }).join('<br>');
             }
           }
+        /* 「我自己是谁」——认不出来就如实说（2026-09-16 用户反馈「无法识别大号用户 / 无法识别我的账号」）：
+           程序只从驱动库拿自己的账号，拿不到时"这条是不是我发的"会静默失效（可能回你自己）。
+           这里把状态摆到「微信」面板上，认不出就用警示色写明后果与怎么办。 */
+        try{
+          const sf = s.self || {};
+          let box = $('selfIdentBox');
+          if(!box){
+            const host = document.querySelector('#sec-wechat .desc') || document.querySelector('#sec-wechat');
+            if(host && host.parentNode){
+              box = document.createElement('div');
+              box.id = 'selfIdentBox';
+              box.className = 'hint';
+              box.style.margin = '6px 0';
+              host.parentNode.insertBefore(box, host.nextSibling);
+            }
+          }
+          if(box){
+            box.innerHTML = sf.ok
+              ? ('当前识别到的<b>你自己</b>：' + (sf.nickname || '（无昵称）') + '　' + (sf.wxidMasked || ''))
+              : ('<b>没能识别出你自己的微信账号</b>'
+                 + (sf.why ? ('（' + sf.why + '）') : '')
+                 + '：机器人判断「这条是不是我发的」会不可靠，可能回你自己。请确认微信已登录、然后重启机器人再看看。');
+            box.style.color = sf.ok ? 'var(--tx2)' : 'var(--warn-tx)';
+          }
+        }catch(e){}
         }catch(e){}
         /* 图标指纹表（⑦ 点击正确性）：按 微信版本×渲染尺寸×缩放 存了几条、什么时候取的 */
         try{

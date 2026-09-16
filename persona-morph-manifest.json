@@ -1,0 +1,47 @@
+{
+  "schema": "persona-morph/1",
+  "base": {
+    "version": "2026.9.16.1",
+    "sha256": "fe6c6518be1d3a21733ba8adeeb9d7cc8a3ceb52cd5b246a7d610599830a8820",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.2/persona-morph-v2.1.2.zip",
+    "size": 7920003,
+    "files": 235
+  },
+  "dlc": [
+    {
+      "id": "skills.eif-mapt",
+      "name": "Eif-MAPT 技能包",
+      "version": "",
+      "requiresBase": ">=0.0.0",
+      "sha256": "",
+      "url": "",
+      "size": 0,
+      "enabledByDefault": true,
+      "note": "装在 ~/.dsh/skills 的知识包（含 E 控制台与 EMAP Memorize）；版本以插件包 tan 为准"
+    },
+    {
+      "id": "vcable.driver",
+      "name": "虚拟声卡（真语音条）",
+      "version": "Pack45",
+      "requiresBase": ">=0.0.0",
+      "sha256": "",
+      "url": "",
+      "size": 1318877,
+      "enabledByDefault": false,
+      "note": "VB-CABLE；真语音条需要它 + 把微信输入设备指到 CABLE Output。装驱动必须由用户点一次"
+    }
+  ],
+  "announce": {
+    "version": "2026.9.16.1",
+    "notes": [
+      "全屏是真全屏了：四周不再有边框，顶栏在全屏时收起、鼠标贴屏幕顶端会滑出来",
+      "点停止之后，控制台窗口会自己关掉",
+      "鲸鱼光标按住时会低头，不再闪回系统箭头",
+      "生图/生视频/语音的后端不用你选，程序会自己找本机在跑的那些"
+    ],
+    "forceBase": false,
+    "minBase": "2026.9.16.1"
+  },
+  "builtAt": "2026-09-16T02:03:04Z",
+  "updatedAt": 1789524184297
+}

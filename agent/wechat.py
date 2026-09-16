@@ -606,6 +606,21 @@ class WeChatAdapter:
         info = self._db.get_self_info() or {}
         self._self_wxid = str(info.get("username") or "")
         self._self_nickname = str(info.get("nick_name") or "")
+        # ⛔ 2026-09-16（用户反馈「一直有个问题 无法识别大号用户 就是无法识别我的账号」）：
+        #   "自己是谁"**只有这一个来源**——驱动库的 `get_self_info()`。它**在某些账号 / 微信版本下会返回空**
+        #   ⇒ `_self_wxid` 为空 ⇒ 下面所有"这条是不是我发的"判断（`:875`、`:4652`、`recall`）
+        #   **静默变假**：表现为机器人可能**回你自己**、@ 你自己不响应、撤回自己的消息失灵，
+        #   而且以前**既没有日志、也没有界面提示**，用户只能看到"怪怪的"。
+        #   ⇒ 现在：拿不到就明确记一行警告；控制台「微信」面板也会如实显示"没认出来"（`self_identity()`）。
+        self._self_ident_ok = bool(self._self_wxid)
+        if not self._self_wxid:
+            try:
+                import logging as _lg
+                _lg.getLogger("persona-morph").warning(
+                    "没能识别出你自己的微信账号（get_self_info 返回空）⇒ "
+                    "「这条是不是我发的」只剩文本回声兜底；请在控制台「微信」面板确认。")
+            except Exception:
+                pass
         self._nick_map = self._load_nicknames()
         self._groups = self._load_groups()
         self._group_by_wxid = {g["wxid"]: g for g in self._groups}
@@ -641,6 +656,16 @@ class WeChatAdapter:
     @property
     def self_nickname(self) -> str:
         return self._self_nickname
+
+    def self_identity(self) -> dict:
+        """给控制台用的「当前识别到的自己」（2026-09-16，用户反馈「无法识别我的账号」）。
+
+        `ok=False` ＝没能从驱动库拿到自己的账号 ⇒ 界面要**如实写"没认出来"**，不许装没事。
+        """
+        w = self._self_wxid or ""
+        return {"ok": bool(w),
+                "wxidMasked": (w[:3] + "***") if len(w) > 6 else "",
+                "nickname": self._self_nickname or ""}
 
     def list_groups(self) -> list:
         return list(self._groups)
