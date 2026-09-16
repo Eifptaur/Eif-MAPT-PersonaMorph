@@ -58,6 +58,18 @@ ck("A7 启动器有 --cursorprobe 入口", '"--cursorprobe"' in SRC_L and "publi
 ck("A8 探针窗口屏外 + 不激活（不抢前台、屏幕上看不见）",
    "-4000, -4000" in SRC_L and "WS_EX_NOACTIVATE" in SRC_L)
 ck("A9 探针读回「前台是否未变」当作判据", "foreground_unchanged=" in SRC_L)
+# ── 中键（滚轮键）特效：鲸鱼转一圈 360°（2026-09-17 用户点单）──
+_SPIN = SRC_C[SRC_C.find("function spin()"):SRC_C.find("function spin()") + 900] if "function spin()" in SRC_C else ""
+ck("A10 中键会转一圈：12 帧 canvas 预转（不新增素材文件）",
+   "ev.button === 1" in SRC_C and "i * 2 * Math.PI / SPIN_FRAMES" in SRC_C and "toDataURL('image/png')" in SRC_C)
+ck("A11 帧走 dataURL，**不拼 ?v=Date.now()**（每帧换 URL 会让光标闪回系统箭头）",
+   "setStyle(frames[" in _SPIN and "Date.now()" not in _SPIN, _SPIN[:0] or "spin() 内无 Date.now")
+ck("A12 转完一圈回到默认帧", "clearInterval(spinTimer); spinTimer = null; apply(); return;" in SRC_C)
+ck("A13 帧没备好时退回「点头」（不许按了没反应）", "if(spin()) return;" in SRC_C and "applyNod();" in SRC_C)
+ck("A14 中键**吃掉浏览器原生自动滚动**（否则光标被浏览器接管，只看得到「闪」）",
+   "ev.preventDefault()" in SRC_C and "原生自动滚动" in SRC_C)
+ck("A15 帧备好没有对外可读（判据/探针要能等到它，否则假红）",
+   "framesReady: ()=>frames.length > 0" in SRC_C and "spin, framesReady" in SRC_C)
 
 _EXE = os.path.join(ROOT, "一键启动.exe")
 if not os.path.exists(_EXE):
@@ -112,6 +124,11 @@ else:
                field("foreground_unchanged") == "True" or field("fg_restored") == "True",
                "unchanged=%s fg_is_probe=%s restored=%s" % (field("foreground_unchanged"),
                                                             field("fg_is_probe"), field("fg_restored")))
+            ck("B10 旋转帧已备好（异步造帧，探针要等到它）", field("spin_frames_ready") == "True")
+            ck("B11 **按中键换成旋转帧**（dataURL，不是原图）", field("spin_applied") == "True",
+               field("style_after_middle"))
+            ck("B12 约 0.9 秒后回到默认鲸鱼帧（转完一圈就收）", field("spin_reverted") == "True",
+               field("style_after_spin"))
     except Exception as e:
         skip("B 活体探针", "跑不起来：%s" % str(e)[:90])
     finally:
