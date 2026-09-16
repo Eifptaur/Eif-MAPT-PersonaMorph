@@ -1732,11 +1732,17 @@ th{color:var(--tx2);font-weight:500}
         <option value="其他">其他</option>
       </select></div></div>
       <div class="row"><label>内容</label><div class="grow"><textarea id="fbText" rows="5" spellcheck="false" placeholder="尽量写清：你做了什么、看到什么、希望它变成什么样。"></textarea></div></div>
+      <div class="row"><label>图片/文件</label><div class="grow">
+        <button id="fbPick" class="ghost">选择图片或文件</button>
+        <input type="file" id="fbFileInput" multiple style="display:none">
+        <span class="hint" id="fbFilesTip">选填：最多 4 个，图片 ≤ 2MB、其他文件 ≤ 20MB。出问题时的截图最有用。</span>
+        <div id="fbFileList" class="hint"></div>
+      </div></div>
       <div class="btns"><button id="fbSubmit" class="pri">提交</button><span class="hint" id="fbRst"></span></div>
 
-      <div style="margin-top:12px"><button id="fbAdvBtn" class="ghost">更多（联系方式 / 提交记录）</button></div>
+      <div style="margin-top:12px"><button id="fbAdvBtn" class="ghost">更多（联系邮箱 / 提交记录）</button></div>
       <div id="fbAdv" style="display:none">
-        <div class="row"><label>联系方式</label><div class="grow"><input type="text" id="fbContact" placeholder="选填：想让我回你时留个联系方式"></div></div>
+        <div class="row"><label>联系邮箱</label><div class="grow"><input type="text" id="fbContact" placeholder="选填：留个邮箱，我想回你的时候能找到你"></div></div>
         <div class="row"><label>提交记录</label><div class="grow"><span id="fbRecent" class="hint">读取中…</span></div></div>
       </div>
     </section>
@@ -5841,24 +5847,83 @@ $('memSearch').addEventListener('keydown', (e)=>{
     if(ab && adv) ab.onclick = function(){
       const sh = adv.style.display === 'none';
       adv.style.display = sh ? 'block' : 'none';
-      ab.textContent = sh ? '收起' : '更多（联系方式 / 提交记录）';
+      ab.textContent = sh ? '收起' : '更多（联系邮箱 / 提交记录）';
     };
+    /* ── 附件（2026-09-17 用户：「我们的反馈提交能不能提交图片和文件」+「可以让用户选填一个联系邮箱」）──
+       图片与文件都走同一条路：前端读成 base64 → POST 给 /api/feedback/submit → 后端落盘并投递。
+       上限与后端一致（图片 2MB / 文件 20MB / 最多 4 个）：**前端先拦一次，说得清楚**，别等提交完才失败。 */
+    const _fbMax = 4, _fbImgMB = 2, _fbFileMB = 20;
+    const _fbSel = [];
+    function fbFmt(n){ return n >= 1048576 ? ((n/1048576).toFixed(1)+' MB')
+                      : (n >= 1024 ? (Math.round(n/1024)+' KB') : (n+' B')); }
+    function fbIsImg(name){ return /\.(png|jpe?g|gif|bmp|webp)$/i.test(name||''); }
+    window.fbDel = function(i){ _fbSel.splice(i,1); fbRender(); };
+    function fbRender(){
+      const box = document.getElementById('fbFileList'); if(!box) return;
+      box.textContent = '';
+      _fbSel.forEach(function(f,i){
+        const chip = document.createElement('span');
+        chip.className = 'chip';
+        chip.style.marginRight = '6px';
+        chip.textContent = f.name + ' · ' + fbFmt(f.size) + ' ';
+        const x = document.createElement('span');
+        x.textContent = '移除'; x.style.cursor = 'pointer'; x.style.color = 'var(--warn)';
+        x.onclick = function(){ window.fbDel(i); };
+        chip.appendChild(x); box.appendChild(chip);
+      });
+    }
+    const fi = document.getElementById('fbFileInput'), fp = document.getElementById('fbPick');
+    if(fp && fi){
+      fp.onclick = function(){ fi.click(); };
+      fi.onchange = async function(){
+        const rst = document.getElementById('fbRst');
+        const picked = Array.prototype.slice.call(fi.files || []);
+        fi.value = '';
+        for(const f of picked){
+          if(_fbSel.length >= _fbMax){ if(rst){ rst.textContent = '一次最多带 ' + _fbMax + ' 个附件'; rst.style.color='var(--warn)'; } break; }
+          const img = fbIsImg(f.name), cap = (img ? _fbImgMB : _fbFileMB) * 1048576;
+          if(f.size > cap){
+            if(rst){ rst.textContent = f.name + ' 有 ' + fbFmt(f.size) + '，超过 ' + (img?_fbImgMB:_fbFileMB) + 'MB 了，换个小的'; rst.style.color='var(--warn)'; }
+            continue;
+          }
+          const data = await new Promise(function(res){
+            const r = new FileReader();
+            r.onload = function(){ res(String(r.result || '').split(',')[1] || ''); };
+            r.onerror = function(){ res(''); };
+            r.readAsDataURL(f);
+          });
+          if(!data){ if(rst){ rst.textContent = f.name + ' 读不出来，换一个试试'; rst.style.color='var(--err-tx)'; } continue; }
+          _fbSel.push({name: f.name, size: f.size, data: data});
+        }
+        fbRender();
+      };
+    }
     const btn = document.getElementById('fbSubmit'); if(!btn) return;
     btn.onclick = async function(){
       const t = (document.getElementById('fbText')||{}).value || '';
       const k = (document.getElementById('fbKind')||{}).value || '其他';
       const c = (document.getElementById('fbContact')||{}).value || '';
       const rst = document.getElementById('fbRst');
-      if(!t.trim()){ if(rst){ rst.textContent = '先写点内容吧'; rst.style.color='var(--err-tx)'; } return; }
+      if(!t.trim() && !_fbSel.length){ if(rst){ rst.textContent = '先写点内容吧'; rst.style.color='var(--err-tx)'; } return; }
+      if(c.trim() && !/^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/.test(c.trim())){
+        if(rst){ rst.textContent = '联系邮箱写得不太对（像这样：xxx@qq.com），不想留就清空它'; rst.style.color='var(--err-tx)'; }
+        return;
+      }
       btn.disabled = true; if(rst){ rst.textContent = '提交中…'; rst.style.color=''; }
       try{
-        const r = await postJSON('/api/feedback/submit', {kind:k, text:t, contact:c});
-        if(r && r.state === 'sent'){ rst.textContent = '已发出（' + (r.via==='smtp'?'邮件':'网址') + '）'; rst.style.color='var(--ok-tx)'; }
+        const _files = _fbSel.map(function(f){ return {name: f.name, data: f.data}; });
+        const r = await postJSON('/api/feedback/submit', {kind:k, text:t, contact:c, files:_files});
+        const _via = {smtp:'邮件', webhook:'推送到你的群/设备', upload_url:'网址'}[r && r.via] || '已送出';
+        const _n = (r && r.files) ? ('，带 ' + r.files + ' 个附件') : '';
+        if(r && r.state === 'sent'){ rst.textContent = '已发出（' + _via + _n + '）'; rst.style.color='var(--ok-tx)'; }
         else if(r && r.state === 'queued'){ rst.textContent = '注意：已存在本机，但还没发出去：' + (r.why||'') + '（待发 ' + (r.pending||0) + ' 条）'; rst.style.color='var(--warn)'; }
         else if(r && r.state === 'blocked'){ rst.textContent = (r.why||'发得太频繁了') + '——这条没有发出，也没保存，内容还在框里。'; rst.style.color='var(--warn)'; }
         else { rst.textContent = '' + ((r&&r.why)||'提交失败'); rst.style.color='var(--err-tx)'; }
         // 被限流时**不清空输入框**：内容还给用户，改一改或等一会儿再发
-        if(!(r && r.state === 'blocked')) document.getElementById('fbText').value = '';
+        if(!(r && r.state === 'blocked')){
+          document.getElementById('fbText').value = '';
+          _fbSel.length = 0; fbRender();
+        }
         fbLoad();
       }catch(e){ if(rst){ rst.textContent = '' + e.message; rst.style.color='var(--err-tx)'; } }
       btn.disabled = false;

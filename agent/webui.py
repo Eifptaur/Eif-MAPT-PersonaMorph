@@ -1732,9 +1732,20 @@ class WebUI:
                                           "tries": int(_att.get("tries") or 0),
                                           "detail": str(_att.get("reason") or "")[:400],
                                           "steps": list(_att.get("steps") or [])}}
-                        self._json(FB.submit(str(data.get("kind") or "其他"),
-                                             str(data.get("text") or ""),
-                                             str(data.get("contact") or ""), env))
+                        # 附件（2026-09-17 用户：「可以让用户选填一个联系邮箱」+ 图片/文件都要能提交）：
+                        # 前端把文件读成 base64 一起 POST 上来；这里只做**总量闸**，具体上限与落盘在 FB 里。
+                        _files = data.get("files")
+                        if not isinstance(_files, list):
+                            _files = []
+                        _b64 = sum(len(str((f or {}).get("data") or ""))
+                                   for f in _files if isinstance(f, dict))
+                        if _b64 > 40 * 1024 * 1024:
+                            self._json({"ok": False, "state": "error",
+                                        "why": "附件加起来太大了（合计不超过 20MB）"})
+                        else:
+                            self._json(FB.submit(str(data.get("kind") or "其他"),
+                                                 str(data.get("text") or ""),
+                                                 str(data.get("contact") or ""), env, _files))
                     except Exception as e:
                         self._json({"ok": False, "state": "error", "why": str(e)})
                 elif path == "/api/feedback/flush":
