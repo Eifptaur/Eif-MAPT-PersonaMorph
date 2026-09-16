@@ -1,11 +1,11 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.16.19",
-    "sha256": "157b4102da8ceb27ae03cbcacfd329d3db4c560ce2e96abc4934c7be571f5a36",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.20/persona-morph-v2.1.20.zip",
-    "size": 8243865,
-    "files": 249
+    "version": "2026.9.17.1",
+    "sha256": "72ba8a0902347077b9743382a49a80edbec9a3e9ff61c6fb7bae6c81f2777309",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.21/persona-morph-v2.1.21.zip",
+    "size": 8283236,
+    "files": 252
   },
   "dlc": [
     {
@@ -32,13 +32,19 @@
     }
   ],
   "announce": {
-    "version": "2026.9.16.19",
+    "version": "2026.9.17.1",
     "notes": [
-      "控制台顶部加了一条常驻提示：遇到问题点左边「反馈」提交，附上截图或「检验报告」最快定位。"
+      "修：机器人每半分钟左右自己退出重启（发文件那条链的参数错误会让进程崩掉），控制台窗口也因此越堆越多",
+      "修：发送消息时可能误触微信自带截图",
+      "修：控制台窗口现在会记住你调好的大小与位置，不再每次打开都重置",
+      "修：「存档屏蔽」面板现在能正常列出会话，不再一直提示读取会话列表失败",
+      "修：运行明细里勾选记录后「删除选中」现在能点、能删",
+      "修：偶尔回复发不出去（会话头指纹学歪会让同一条会话被永久拦下）",
+      "修：启动时不再改动你的微信窗口大小"
     ],
     "forceBase": false,
-    "minBase": "2026.9.16.19"
+    "minBase": "2026.9.17.1"
   },
-  "builtAt": "2026-09-16T17:22:01Z",
-  "updatedAt": 1789579321883
+  "builtAt": "2026-09-16T22:39:14Z",
+  "updatedAt": 1789598354742
 }
