@@ -335,6 +335,15 @@ def run_once(manifest=None, zip_path=None, target=ROOT, dry=False, progress=None
 
     _set(state="running", phase="verify", why="正在校验包内容")
     rc, msg, detail = apply_full(manifest, zip_path, target, dry=dry, progress=progress)
+    # 装完就把下载缓存删掉（用户红线：**凡往磁盘写东西的功能都要有清理措施**）——
+    # 暂存/备份目录在 apply_full 的 finally 里已经清了，这里只剩这个 zip（每版一个、4.5MB 量级）。
+    # 失败时**留着**，方便重试与排障；下次成功后再清。
+    if rc == 0 and zip_path and os.path.dirname(os.path.abspath(zip_path)) == \
+            os.path.abspath(os.path.join(target, CACHE_REL)):
+        try:
+            os.remove(zip_path)
+        except Exception:
+            pass
     if rc == 0:
         _set(state="done", phase="done", msg=msg, needRestart=(detail.get("status") != "current"),
              why="")
