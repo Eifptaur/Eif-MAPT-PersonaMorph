@@ -33,6 +33,7 @@
   "start_paused": true,
   "allow_click_hunting": false,
   "background_only": true,
+  "scroll_list_fallback": false,
   "owner_accounts": [],
   "owner_mode": "know",
   "private_chat": "owner_only"

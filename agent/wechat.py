@@ -1672,13 +1672,25 @@ class WeChatAdapter:
             #   搜索入口是**固定位置**（两套 UI 都认，`open_chat_by_search` 已是实测通路），
             #   不用在会滚动的会话列表里找那一行、也不用滚轮、更不怕列表被别的窗口盖住。
             #   搜索没成才退回下面的「找行 + 滚轮」老路（保留，不删）。
+            _sok, _swhy = False, ""
             try:
                 _sok, _swhy = self.open_chat_by_search(chat_id, name=name, gui=gui)
                 if _sok:
                     return True, "搜索框切会话成功（%s）" % str(_swhy)[:60]
-                log.info("切会话：搜索框路线没成（%s）⇒ 退回在会话列表里找行", str(_swhy)[:80])
+                log.info("切会话：搜索框路线没成（%s）", str(_swhy)[:80])
             except Exception as _e:                          # noqa: BLE001
-                log.warning("切会话：搜索框路线异常（%s）⇒ 退回找行", str(_e)[:80])
+                _swhy = "异常：%s" % str(_e)[:80]
+                log.warning("切会话：搜索框路线异常（%s）", str(_e)[:80])
+            # ⛔ 2026-09-16（用户报「他点了一下搜索框，又不点，又搁那划会话列表」）：
+            #   **搜索没成就停手，默认不再回退去滚会话列表**。为什么：
+            #   老路的滚轮虽然走投递（**不动光标**），但**会话列表会在用户眼前滚**——他看到的
+            #   "它在划列表"就是它；而搜索路线已经覆盖了绝大多数情况。
+            #   ⇒ 做成开关 `wechat.scroll_list_fallback`（默认 False＝不回退），要成功率优先可打开。
+            if not self._scroll_list_fallback():
+                return False, ("搜索框路线没成（%s）⇒ 按当前设置**不退回会滚你会话列表的老路**，本回合不切会话。"
+                               "（想允许它回退：控制台「微信」面板打开「搜索失败时扫会话列表」；"
+                               "或先把微信窗口露出来、或手动点到目标会话再让我发）" % str(_swhy)[:80])
+            log.info("切会话：按设置允许回退 ⇒ 去会话列表里找行（列表会在屏幕上滚动）")
             # ⚠️ 用我们自己的**读图**找行（chat_ocr.find_row），不用库的 find_session：
             #    后者找不到时会用**真实鼠标**悬停/滚动会话列表（实测光标会动），违反"不动鼠标"。
             from . import chat_ocr as _co
@@ -3511,6 +3523,20 @@ class WeChatAdapter:
         try:
             from .config import get_config as _gc
             return bool((_gc().get("wechat") or {}).get("background_only", False))
+        except Exception:
+            return False
+
+    def _scroll_list_fallback(self) -> bool:
+        """「搜索失败时扫会话列表」开关（config.wechat.scroll_list_fallback，**默认 False＝不回退**）。
+
+        为什么默认不回退（2026-09-16 用户报「他点了一下搜索框，又不点，又搁那划会话列表」）：
+        回退档虽然走投递滚轮（**不动光标**），但**会话列表会在用户眼前滚** —— 他看到的"它在划"
+        就是这个动作。⇒ 默认停手并如实说明；要"成功率优先、列表动几下无所谓"的用户可以打开。
+        开关缺省/读不到配置 ⇒ False（安全的一侧）。
+        """
+        try:
+            from .config import get_config as _gc
+            return bool((_gc().get("wechat") or {}).get("scroll_list_fallback", False))
         except Exception:
             return False
 
