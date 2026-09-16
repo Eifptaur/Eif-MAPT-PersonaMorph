@@ -302,48 +302,47 @@ def _wechat_subwindows(main_hwnd) -> list:
 
 
 def close_subwindow(gui, hwnd, retries: int = 3) -> bool:
-    """关闭一个微信子窗口：① 点右上角叉号 ② 验证 ③ Alt+F4 ④ WM_CLOSE。"""
+    """关闭一个微信子窗口：**只走投递，绝不真鼠标真键盘**。
+
+    ⛔ 2026-09-17 **用户实测报障的红线修复**（原话：「刚刚又截屏了，就在他发消息的那一刻，
+    而且是微信的那个截屏」）。录屏机械取证：每轮干完活那一刻**整屏被压暗 6.3 秒**
+    （亮度中位数 172.9 → 123.8），正是微信截图选区界面。真因就是本函数原来的两条兜底路径：
+
+      ① 第 319 行 `real_guard` 会把**真光标挪到子窗右上角**再 `mouse_event(LEFTDOWN/UP)` 真点一下 ——
+         窗口 rect 一旦取到陈旧值/整窗值，这一枪就落到微信自身界面上（输入栏那排
+         `😊 📁 ✂ 🎤`，其中 `✂` 就是**截图**）。
+      ② `real_guard` 拒绝时（`background_only=true` 下**必然拒绝**）这里 `raise` → 被 except 吞掉 →
+         **直接落到下面那句「兜底 Alt+F4」** ⇒ 真鼠标没按、**真 Alt 反而按下去了**。
+         全局热键（微信截图是 Alt 系）只要有一次 Alt 没抬起来或被后续代码接上，当场弹出。
+
+    ⇒ 改法：真输入整段删掉，只留 `WM_CLOSE` / `WM_SYSCOMMAND(SC_CLOSE)`（投递，零输入）；
+      关不掉就**如实返回 False**，不再升级成真键鼠 —— 与 `agent/input_backend.py` 的
+      「不退回真鼠标」同一条口径（宁可留着那个浮层，也不许动用户的键鼠）。
+    """
     import ctypes
     user32 = ctypes.windll.user32
-    for i in range(retries):
+    WM_CLOSE, WM_SYSCOMMAND, SC_CLOSE = 0x0010, 0x0112, 0xF060
+    for _ in range(max(1, int(retries))):
         try:
-            user32.ShowWindow(int(hwnd), 9)  # SW_RESTORE（可能最小化了）
-            user32.SetForegroundWindow(int(hwnd))
-            time.sleep(0.3)
-            r = wintypes.RECT()
-            user32.GetWindowRect(int(hwnd), ctypes.byref(r))
-            cx, cy = int(r.right - 14), int(r.top + 12)     # 右上角叉号
-            # ⛔ 真鼠标点击前过 `real_guard`（归属 + SetCursorPos 返回值双重校验）：
-            #    否则光标没到位时这一枪会落到用户当前真正指着的窗口上（2026-09-16 报障的机制本身）。
-            from . import ui_adapt as _ua_c
-            _ok, _why = _ua_c.real_guard(cx, cy, gui=gui, extra_hwnds=(int(hwnd),))
-            if not _ok:
-                log.warning("关子窗的点叉已拦下（不动鼠标）：%s", _why)
-                raise RuntimeError(_why)     # 落到下面的 except ⇒ 直接走兜底 Alt+F4
-            user32.mouse_event(0x0002, 0, 0, 0, 0)
-            user32.mouse_event(0x0004, 0, 0, 0, 0)
-            time.sleep(0.8)
-            if not user32.IsWindowVisible(int(hwnd)):
+            if not user32.IsWindow(int(hwnd)):
                 return True
         except Exception:
             pass
-        # 兜底 Alt+F4
-        try:
-            user32.SetForegroundWindow(int(hwnd))
-            time.sleep(0.2)
-            user32.keybd_event(0x12, 0, 0, 0)      # ALT down
-            user32.keybd_event(0x73, 0, 0, 0)      # F4
-            user32.keybd_event(0x73, 0, 0x0002, 0)
-            user32.keybd_event(0x12, 0, 0x0002, 0)  # ALT up
-            time.sleep(1.0)
-            if not user32.IsWindowVisible(int(hwnd)):
+        for _msg, _wp in ((WM_CLOSE, 0), (WM_SYSCOMMAND, SC_CLOSE)):
+            try:
+                user32.PostMessageW(int(hwnd), _msg, _wp, 0)
+            except Exception:
+                pass
+            time.sleep(0.4)
+            try:
+                if not user32.IsWindowVisible(int(hwnd)):
+                    return True
+            except Exception:
                 return True
-        except Exception:
-            pass
-    # 最终兜底 WM_CLOSE
+        time.sleep(0.3)
+    log.info("关子窗只走投递（WM_CLOSE/SC_CLOSE）：hwnd=%s 仍未关掉，按口径不动键鼠、如实返回",
+             hwnd)
     try:
-        user32.PostMessageW(int(hwnd), 0x0010, 0, 0)
-        time.sleep(0.8)
         return not bool(user32.IsWindowVisible(int(hwnd)))
     except Exception:
         return False
