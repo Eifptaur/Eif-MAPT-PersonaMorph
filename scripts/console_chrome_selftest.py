@@ -155,6 +155,16 @@ ok("启用时预加载两张光标图", "function preload()" in page and "preloa
 ok("mousedown 仍然切点头帧、180ms 后换回",
    "applyNod();" in page and "nodTimer = setTimeout(apply, 180)" in page)
 
+print("\n── ⑨ 暂停/恢复：不许靠按钮文字决定接口（2026-09-16 用户报「很不灵敏」）──")
+ok("不再用按钮文字判断该调哪个接口（文字是轮询刷新的，会调反）",
+   "textContent.includes('暂停')?'/api/pause'" not in page)
+ok("有状态变量作唯一依据", "window.__pausedNow" in page)
+ok("点击后立刻进入处理中态（禁用 + 改字）",
+   "btn.disabled = true" in page and "暂停中…" in page and "恢复中…" in page)
+ok("成功后就地翻转 + 给 toast（不等下一次轮询）",
+   "window.__pausedNow = !want" in page and "已恢复：它开始监听消息了" in page)
+ok("失败要恢复原状并如实报错", "btn.textContent = oldText" in page)
+
 print("")
 print("窗口/控制台外观判据：%d 通过 / %d 失败 / %d 跳过" % (PASS, FAIL, SKIP_N))
 sys.exit(1 if FAIL else 0)

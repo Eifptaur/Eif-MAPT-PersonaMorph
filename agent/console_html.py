@@ -3047,6 +3047,7 @@ async function loadStatus(){  try{
     $('st-ac').textContent = '¥' + (s.stats.avg_cost||0).toFixed(4);
     $('st-extra').textContent = '¥' + (s.stats.extra_now_cost||0).toFixed(4) + (s.stats.extra_now_tokens?(' · ' + s.stats.extra_now_tokens + ' tok'):'');
     $('st-extra2').textContent = '¥' + (s.stats.extra_total_cost||0).toFixed(4) + (s.stats.extra_total_tokens?(' · ' + s.stats.extra_total_tokens + ' tok'):'');
+    window.__pausedNow = !!s.paused;      // 暂停/恢复按钮的唯一依据（不许再读按钮文字，见下面的注释）
     $('pauseBtn').textContent = s.paused ? '恢复' : '暂停';
     const tb = $('group-table').querySelector('tbody'); tb.innerHTML='';
     for(const g of s.groups){
@@ -4287,8 +4288,35 @@ $('saveAll').onclick = ()=>saveAllBtn();
 $('refreshLog').onclick = loadLog;
 $('balance-badge').onclick = loadBalance;
 $('rawJsonBtn').onclick = ()=>{ window.open('/api/config'+(URL_TOKEN?('?token='+URL_TOKEN):''),'_blank'); };
+/* ── 暂停 / 恢复（2026-09-16 修：用户报「这个暂停和恢复运行很不灵敏」）──
+   原实现是 `getJSON($('pauseBtn').textContent.includes('暂停') ? '/api/pause' : '/api/resume')` ——
+   靠**读按钮自己的文字**决定调哪个接口，而文字是轮询刷新的 ⇒ 文字没跟上时：
+     · 想恢复、但按钮还写着「暂停」⇒ 又调一次 pause（**越点越糟**）；
+     · 而且点下去**不禁用、不提示、不立刻变字** ⇒ 用户看到的就是「点了没反应」。
+   现在四条：①唯一依据是 `window.__pausedNow`（由 loadStatus 同步）；②点下去立刻禁用 + 改成「暂停中…/恢复中…」；
+   ③成功后**就地翻转**（不等轮询）并给 toast；④失败恢复原状并如实报错。 */
 $('pauseBtn').onclick = async ()=>{
-  try{ await getJSON($('pauseBtn').textContent.includes('暂停')?'/api/pause':'/api/resume',{method:'POST'}); loadStatus(); }catch(e){toast(e.message)}
+  const btn = $('pauseBtn');
+  if(!btn || btn.dataset.busy === '1') return;
+  btn.dataset.busy = '1';
+  const oldText = btn.textContent;
+  const want = !window.__pausedNow;              // true = 想让它在跑
+  btn.disabled = true;
+  btn.textContent = want ? '恢复中…' : '暂停中…';
+  try{
+    await getJSON(want ? '/api/resume' : '/api/pause', {method:'POST'});
+    window.__pausedNow = !want;
+    btn.textContent = window.__pausedNow ? '恢复' : '暂停';
+    if($('runText')) $('runText').textContent = window.__pausedNow ? '已暂停' : '运行中';
+    toast(want ? '已恢复：它开始监听消息了' : '已暂停：它现在不会理任何消息');
+    loadStatus();
+  }catch(e){
+    btn.textContent = oldText;
+    toast('没切成：' + (e && e.message ? e.message : e));
+  }finally{
+    btn.disabled = false;
+    btn.dataset.busy = '0';
+  }
 };
 /* ── 通用确认弹窗（mask + box + 果冻图标），替代原生 confirm ── */
 function confirmBox(title, lines, okLabel, onOk, danger){
