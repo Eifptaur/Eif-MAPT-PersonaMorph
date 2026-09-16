@@ -8,12 +8,16 @@
 from __future__ import annotations
 
 import json
+import logging
 import os as _os
 import time
 
 from .config import get_config
 from .util import normalize_message_list, unquote_json_string
 from .web_search import web_search, web_fetch
+
+# 与 wechat.py 同一个 logger 名 ⇒ 发送失败的每一行都进主日志，排障时能在同一处看到
+log = logging.getLogger("persona-morph")
 
 
 def _ok(payload):
@@ -607,7 +611,21 @@ def _exec_send_message(ctx, args):
         ctx["session"]["sent"].extend([{"type": "text", "text": s["text"], "at": s.get("at")} for s in result["sent"]])
         note = "已发送。不要输出\"已发送\"类汇报，继续思考下一步或直接结束。"
         if result["failed"]:
-            note += "（另有 %d 条发送失败，成功的不需要重发，失败的请稍后再试或减少条数）" % len(result["failed"])
+            # ⛔ 2026-09-16（用户转述报障：「发送消息可能会失败…**看思维链说是工具没有发送成功**」）：
+            #   以前这里**只给条数**（"另有 N 条发送失败，请稍后再试"），把每条的真实原因**原样丢掉**
+            #   ⇒ 模型不知道为什么失败（只能瞎重试）、用户看运行明细也只看到一句"发送失败"，
+            #   报障连原因都带不出来。原因必须**一路透传**：进工具返回值（模型看得见）+ 进日志。
+            _why = [{"index": int(f.get("index") or 0) + 1,
+                     "text": str(f.get("text") or "")[:20],
+                     "error": str(f.get("error") or "未给原因")[:180]}
+                    for f in result["failed"]]
+            for _f in _why:
+                log.warning("发送失败（第 %d 条「%s」）：%s", _f["index"], _f["text"], _f["error"])
+            note += ("（另有 %d 条发送失败：%s。成功的不需要重发；"
+                     "**失败的先照原因处理**，别盲目重试）"
+                     % (len(_why), "；".join("第%d条「%s」＝%s" % (_f["index"], _f["text"], _f["error"])
+                                            for _f in _why)))
+            return _ok({"sent": len(result["sent"]), "failed": _why, "note": note})
         return _ok({"sent": len(result["sent"]), "note": note})
     except Exception as e:
         return _err(str(e))
