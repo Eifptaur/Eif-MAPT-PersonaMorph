@@ -455,6 +455,8 @@ DEFAULT_CONFIG = {
         # ⚠️ 这几个键**只存在于 config.json**（运维侧配置，不出现在界面上）：
         #   「推送到你」＝填任意一个 webhook 地址即可（钉钉/飞书/企业微信 群机器人、PushPlus 配口令、
         #   或你自己的中转），请求体会按域名自动选形态（见 `feedback._post_webhook`）。
+        # ⚠️ 2026-09-17：产品自带的反馈接收端**尚未填**——先拿到的那个企业微信 key 被服务端判为
+        # `93000 invalid webhook url`（不是群机器人那条），**不许把无效地址写进包里**（用户点了也发不出去）。
         "webhook_url": "",
         "webhook_token": "",
         "smtp": {
