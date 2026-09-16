@@ -1,0 +1,97 @@
+# -*- coding: utf-8 -*-
+r"""一键依赖安装（带已装检测与跳过）：运行 py -3 -X utf8 scripts\setup_deps.py
+（一键启动会自动调用本脚本）。
+
+行为：
+  · 依赖全部就绪且版本正确 → 打印"已满足，跳过安装"，直接建议下一步（运行自检）；
+  · 有缺失/版本不符 → 自动识别离线（offline\wheels 存在）或联网模式安装，装完复查；
+  · 微信安装包在 offline\wechat\（离线重装用），不随 pip 安装流程处理。
+"""
+import os
+import subprocess
+import sys
+
+sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from agent.wechat import dep_check
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def main():
+    print("=" * 52)
+    print(" Persona Morph 依赖检查 / 安装")
+    print("=" * 52)
+    rows, ok = dep_check()
+    for pkg, inst, req, good in rows:
+        print("  %s %-20s 已装 %-12s 需 >= %s" % (
+            "OK  " if good else "MISS", pkg, (inst or "-"), req))
+    if ok:
+        print("-" * 52)
+        print("全部依赖已就绪且版本正确，跳过安装 ✔")
+        print("下一步：双击 一键启动.vbs 即可（已装依赖会自动跳过）。")
+        return 0
+
+    py_exe = sys.executable or "py"
+    wheels = os.path.join(ROOT, "offline", "wheels")
+    offline = any(f.startswith("wechatauto_replica-") and f.endswith(".whl")
+                for f in os.listdir(wheels)) if os.path.isdir(wheels) else False
+    print("-" * 52)
+    print("[%s] 开始安装缺失/需升级的依赖 ..." % ("离线" if offline else "联网"))
+    try:
+        if offline:
+            cmd = [py_exe, "-m", "pip", "install", "--no-index", "--find-links", wheels,
+                   "-r", os.path.join(ROOT, "requirements.txt")]
+            r = subprocess.run(cmd, capture_output=True, text=True,
+                               encoding="utf-8", errors="replace", timeout=900,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        else:
+            # 联网：主源用国内镜像（快/稳），失败再回退官方 PyPI
+            req = os.path.join(ROOT, "requirements.txt")
+            indexes = ["https://pypi.tuna.tsinghua.edu.cn/simple",
+                       "https://mirrors.aliyun.com/pypi/simple/",
+                       "https://pypi.org/simple"]
+            r = None
+            for idx in indexes:
+                cmd = [py_exe, "-m", "pip", "install", "-U", "--progress-bar", "on",
+                       "-i", idx, "--timeout", "60", "-r", req]
+                # ⚠️ 必须给 encoding + errors（2026-09-15 跨机实测）：只写 text=True 时 Python
+                #    按 locale（中文机＝GBK）解码 pip 的输出，遇非 GBK 字节会在**读线程**里抛
+                #    UnicodeDecodeError ⇒ `r.stdout` 变空 ⇒ 失败原因被吞、控制台看着像卡死。
+                r = subprocess.run(cmd, capture_output=True, text=True,
+                                   encoding="utf-8", errors="replace", timeout=900,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                if r.returncode == 0:
+                    break
+                print("  镜像 %s 失败（exit %s），切换下一个源..." % (idx, r.returncode))
+                tail = (r.stdout or "")[-500:] or (r.stderr or "")[-500:]
+                if tail.strip():
+                    print("    这个源失败原因末尾：")
+                    print(tail.rstrip())
+        out = (r.stdout or "")[-1200:] or (r.stderr or "")[-600:]
+        print(out)
+        if r.returncode != 0:
+            print("[失败] 安装失败（exit %s），见上方日志。" % r.returncode)
+            tail20 = "\n".join(((r.stdout or "") + (r.stderr or "")).splitlines()[-20:])
+            if tail20.strip():
+                print("—— 末尾 20 行（失败原因通常就在这里）——")
+                print(tail20)
+            print("提示：若上面出现 cmake / ninja / Building wheel / pythoncore-3.1x，多半是**没在用本包自带的")
+            print("      运行时**（系统 Python 太新：本项目依赖只提供到 cp312 的预编译轮子）。正确做法：")
+            print("      ① 把包放在**纯英文路径**下，或 ② 删掉 logs\\python_path.txt 后重新双击「一键检验」，")
+            print("      让它把内置的绿色版 Python 3.10 装回 runtime\\ 再用。")
+            return 1
+    except Exception as e:
+        print("[失败] 安装异常：%s" % e)
+        return 1
+
+    rows2, ok2 = dep_check()
+    print("-" * 52)
+    print("复查：" + ("全部满足 ✔" if ok2 else "仍有缺失: " + ", ".join(r[0] for r in rows2 if not r[3])))
+    print("下一步：双击 一键启动.vbs 即可（已装依赖会自动跳过）。")
+    return 0 if ok2 else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

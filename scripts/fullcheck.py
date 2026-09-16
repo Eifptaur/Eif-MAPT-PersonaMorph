@@ -1,0 +1,376 @@
+# -*- coding: utf-8 -*-
+"""Persona Morph 全面检验清单（每次修改后必跑）
+
+覆盖：
+  A. 控制台可调项映射（每个 config 键在 console_html 有 data-cfg 或专用组件）
+  B. 配置真实落盘（深合并 + key 掩码保护）
+  C. 后端功能（价格/档位/评分/记忆隔离/黑名单）
+  D. JS 语法 + 素材完整性（图标白主体/光标蓝鲸）
+  E. 一键启动链（vbs/onestart.py/备份开关）
+  F. 文档中文覆盖
+
+用法：python scripts/fullcheck.py  （配合 scripts/selftest.py 一起跑）
+"""
+import io
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+fails = []
+TOTAL = [0]           # 实际执行的检查数（2026-09-14 改成计数器：原来那行是**写死的分组加总**，
+                      # 加了检查项却忘改数字 ⇒ 报告里的"112 项"和实际条数会悄悄对不上）
+
+
+def check(name, cond, detail=""):
+    TOTAL[0] += 1
+    print(("PASS " if cond else "FAIL ") + name + ("  " + str(detail) if detail else ""))
+    if not cond:
+        fails.append(name)
+
+
+# ═══════════ A. 控制台映射审计 ═══════════
+src = io.open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+mapped = set(re.findall(r'data-cfg="([^"]+)"', src))
+special_ui = {
+    "wechat.group_name_white_list": "群列表 chips",
+    "store.group_tier": "renderGroupTierBox 按群下拉",
+    "ui.cursor_image": "光标设置上传组件",
+    "community.export_dir": "导出目录输入",
+    "api.model_prices": "模型 API 卡 JSON textarea",
+    "poke.reply_probability": "拍一拍卡",
+    "poke.cooldown_seconds": "拍一拍卡",
+    "poke.active_probability": "拍一拍卡",
+    "poke.active_daily_limit": "拍一拍卡",
+    "stats.period": "服务器卡下拉",
+    "api.model": "厂商/模型下拉",
+    "api.base_url": "厂商预设自动带出",
+    "api.api_key": "API Key 输入",
+    "ui.whale_anim.worm": "光标设置 返回动画速度（蠕动）",
+    "ui.whale_anim.plane": "光标设置 返回动画速度（纸飞机）",
+    "ui.whale_anim.zap": "光标设置 返回动画速度（扎入）",
+    "behavior.collect_emoji.probability": "微信卡 人性化行为 收藏表情概率",
+    "behavior.send_emoji.probability": "微信卡 人性化行为 回发表情概率",
+    "behavior.at_member.probability": "微信卡 人性化行为 @群友概率",
+    "behavior.like_moments.enabled": "调试区 点赞开关（低频）",
+    "behavior.like_moments.probability": "调试区 点赞概率",
+    "behavior.moments_surf.enabled": "调试区 刷朋友圈开关",
+    "behavior.moments_surf.probability": "调试区 刷-概率",
+    "behavior.moments_comment.probability": "调试区 评-概率",
+    "behavior.moments_publish.probability": "调试区 发-概率",
+    "memory.shared_groups": "记忆共享卡 群多选框",
+}
+must_have = [
+    "ui.theme", "ui.whale_cursor", "store.unified_tier", "store.group_blocklist",
+    "store.sticker_level", "memory.share_across_groups", "scoring.enabled",
+    "scoring.seed_library", "scoring.online_scoring", "scoring.heat_decay",
+    "proactive.enabled", "community.holyshits_upload_url", "community.feedback_upload_url",
+    "community.upload_enabled", "api.use_official_price", "api.thinking",
+    "store.context_tier", "store.keywords", "store.random_percent", "wechat.start_paused",
+    "persona.self_nickname", "persona.participation", "send.max_per_minute",
+    "send.max_per_hour", "server.port", "server.token", "ui.coord_scale", "ui.clean_overlays",
+]
+for k in must_have:
+    check("映射 " + k, k in mapped, "" if k in mapped else "缺 data-cfg")
+for k, ui in special_ui.items():
+    present = k in mapped or k in src
+    check("专用UI " + k + " " + ui, present)
+check("主题默认 whale（选择器第一项）", 'value="whale"' in src and "鲸落（默认" in src)
+check("无「整活」标签", "整活" not in src)
+check("向导厂商联动", 'id="obProvider"' in src and 'id="obModel"' in src and 'obRenderModels' in src)
+check("拖拽扭动", "wiggle" in src)
+check("拖拽时长公式", "whale-return" in src and "flyD" in src and "zapD" in src)
+
+# ═══════════ B. 配置落盘 ═══════════
+import agent.config as config
+old_cfg = config._current_config
+try:
+    from agent.util import mask_secret
+    probe = json.loads(json.dumps(old_cfg if old_cfg else config.load_config()))
+    new_part = {"ui": {"theme": "whale"}, "poke": {"reply_probability": 0.42}}
+    merged = config.deep_merge(probe, new_part)
+    check("深合并不丢段（ui 含旧字段）", "coord_scale" in merged["ui"])
+    check("深合并新值写入", merged["ui"]["theme"] == "whale")
+    check("poke 节新增", merged["poke"]["reply_probability"] == 0.42)
+    masked = dict(probe["api"]); masked["api_key"] = mask_secret(probe["api"]["api_key"])
+    check("key 掩码格式", "••••" in masked["api_key"])
+finally:
+    config._current_config = old_cfg
+
+# ═══════════ C. 后端功能 ═══════════
+from agent.llm import match_official_price, _OFFICIAL_PRICES
+check("价目表有规模（≥150 条）", len(_OFFICIAL_PRICES) >= 150,
+      "当前 %d 条" % len(_OFFICIAL_PRICES))
+# ⛔ 2026-09-15 改口径：原来写死 `== 172`。加一条新模型（gpt-6-astra）就假红——**数字一变就要改判据，
+#   是判据在制造维护负担**（同 2026-09-14 那条"官方价数字不写死"的口径）。改成守两件真事实：
+#   ①表里有规模（≥150，防被误删空）②每条都有 in/out 两个数字（防塞半条进去）。
+_bad_rows = [k for k, v in _OFFICIAL_PRICES.items()
+             if not isinstance(v.get("in"), (int, float)) or not isinstance(v.get("out"), (int, float))]
+check("价目表每条都带 in/out 两个数字", not _bad_rows, "缺字段的：%s" % (_bad_rows[:5] or "无"))
+check("GPT-6 旗舰（gpt-6-astra）已进价目表", "gpt-6-astra" in _OFFICIAL_PRICES)
+# 2026-09-15 补：`join_url(base, path)` 只是 `base.rstrip("/") + path`，**不补斜杠** ⇒
+# path 必须自己带前导斜杠。我在交付面自检里写成 `join_url(base, "models")`，
+# 拼出 `https://api.deepseek.com/v1models` 直接 404（还差点当成"端点不支持 /models"报上去）。
+from agent.llm import join_url as _join_url
+check("join_url：path 带前导斜杠才拼得对（调用方必须带）",
+      _join_url("https://x/v1", "/models") == "https://x/v1/models"
+      and _join_url("https://x/v1", "models") == "https://x/v1models",
+      "%s | %s" % (_join_url("https://x/v1", "/models"), _join_url("https://x/v1", "models")))
+_cr = io.open(os.path.join(ROOT, "scripts", "collect_report.py"), encoding="utf-8").read()
+check("交付面自检拉模型列表时带了前导斜杠", 'join_url(base, "/models")' in _cr)
+check("交付面自检已经接进报告主流程（第六节）", "sec_delivery" in _cr and "六、投递发送实测" in _cr)
+check("MiniMax-M3 命中", match_official_price("MiniMax-M3")["in"] == 2.1)
+# ⛔ 2026-09-14 改口径：原来写死 `out == 4.5`，而价目表已按官方 2026-09-10 **闲时价**更新为 4.0
+#   ⇒ 断言跟不上就假红。这里改成守"**有官方价映射且带出处**"这件事实，具体数字由价目表自己负责
+#   （数字一变就要改判据，是判据在制造维护负担）。
+_ds_price = match_official_price("deepseek-flash")
+check("deepseek-flash（现行正名）有官方价映射（含出处）",
+      isinstance(_ds_price.get("out"), (int, float)) and _ds_price["out"] > 0
+      and "官方" in str(_ds_price.get("note") or ""),
+      "out=%s note=%s" % (_ds_price.get("out"), str(_ds_price.get("note"))[:40]))
+# 一改全改（用户最高准则）：官方现售的两个名字必须都在价目表里，且旧名要注明"已退役"
+for _cur in ("deepseek-flash", "deepseek-v4-pro"):
+    check("%s 在价目表里" % _cur, _cur in _OFFICIAL_PRICES)
+for _old in ("deepseek-v4-flash", "deepseek-v4-flash-vision-exp", "deepseek-chat"):
+    check("%s 标注为已退役旧名" % _old, "已退役" in str(_OFFICIAL_PRICES.get(_old, {}).get("note") or "")
+          or "老别名" in str(_OFFICIAL_PRICES.get(_old, {}).get("note") or ""))
+from agent.prompt import resolve_context_tier
+cfg2 = {"store": {"context_tier": 2, "unified_tier": True, "group_tier": {},
+                  "group_blocklist": {}, "keywords": ["鲸鱼"], "random_percent": 60}}
+config._current_config = cfg2
+r = resolve_context_tier([{"sender_name": "小明", "sender_id": "x", "text": "聊鲸鱼"}],
+                         wechat_nickname="小鲸鱼", chat_key="g", group_name="g")
+check("默认2档关键词触发", r["should_respond"] and r["tier"] == 2)
+config._current_config["store"]["group_blocklist"] = {"g": ["小明"]}
+r = resolve_context_tier([{"sender_name": "小明", "sender_id": "x", "text": "聊鲸鱼"}],
+                         wechat_nickname="小鲸鱼", chat_key="g", group_name="g")
+check("黑名单剔除", not r["should_respond"])
+from agent.scoring import DEFAULT_SEEDS, _decay, HEAT_HALF_LIFE_MS
+try:
+    from agent.persona import PERSONAS
+    from agent.persona_enrich import enrich_all
+    check("角色卡 >= 50 且唯一", len(PERSONAS) >= 50 and len(set(v.get("name") for v in PERSONAS.values())) == len(PERSONAS))
+    check("角色卡均含通用说话规则", all("说话规则（群聊通用）" in (v.get("text") or "") for v in PERSONAS.values()))
+    check("沉默类含必要对话扩展", "必要对话扩展" in PERSONAS["link_zelda"]["text"] and "必要对话扩展" in PERSONAS["kongqishi"]["text"])
+except Exception as e:
+    check("角色卡", False, str(e))
+
+try:
+    from agent.scoring import DEFAULT_SEEDS as _DS
+    check("种子库 >= 200", len(_DS) >= 200, "count=%d" % len(_DS))
+except Exception as e:
+    check("种子库", False, str(e))
+check("半衰期衰减正确", abs(_decay(2.0, 0, HEAT_HALF_LIFE_MS) - 1.0) < 1e-9)
+config._current_config = old_cfg
+
+# ═══════════ D. JS 语法 + 素材 ═══════════
+scripts = re.findall(r"<script>(.*?)</script>", src, re.S)
+ok = True
+for i, js in enumerate(scripts):
+    p = os.path.join(tempfile.gettempdir(), "_chk_%d.js" % i)
+    with io.open(p, "w", encoding="utf-8") as f:
+        f.write(js)
+    rr = subprocess.run(["node", "--check", p], capture_output=True, text=True,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    if rr.returncode != 0:
+        ok = False
+        print("  JS block %d: %s" % (i, rr.stderr[:200]))
+check("JS 语法", ok, "%d blocks" % len(scripts))
+for asset in ("icon-whale.png", "logo-bg.png", "cursor.png"):
+    p = os.path.join(ROOT, "assets", asset)
+    check("素材 " + asset, os.path.exists(p) and os.path.getsize(p) > 1000)
+from PIL import Image
+iw = Image.open(os.path.join(ROOT, "assets", "icon-whale.png")).convert("RGBA")
+w, h = iw.size
+px = iw.load()
+white = sum(1 for y in range(0, h, 8) for x in range(0, w, 8)
+            if px[x, y][3] > 200 and px[x, y][0] > 240)
+trans = sum(1 for y in range(0, h, 8) for x in range(0, w, 8)
+            if px[x, y][3] < 20)
+check("icon-whale 白主体（白像素样本>0）", white > 50, "white=%d" % white)
+check("icon-whale 有透明（眼睛）", trans > 10, "trans=%d" % trans)
+cur = Image.open(os.path.join(ROOT, "assets", "cursor.png")).convert("RGBA")
+cw, ch = cur.size
+cpx = cur.load()
+# ⛔ 2026-09-14 改口径：原来是 `range(0,w,8)` 采样 + `blue>50`。cursor.png 只有 **64×64**
+#   ⇒ 每 8 像素一采只剩 64 个样本，"blue>50" 等于要求 78% 的样本是蓝的（几乎不可能），实测 blue=11
+#   被误判成"光标不是蓝鲸"。改成**按比例**判（步长 2、阈值 2%），并把数字打出来便于对账。
+_samp = 0
+_blue = 0
+for y in range(0, ch, 2):
+    for x in range(0, cw, 2):
+        _samp += 1
+        r, g, b, a = cpx[x, y]
+        if a > 200 and b > 150 and b > r + 40:
+            _blue += 1
+check("cursor 蓝色鲸鱼（蓝像素占比>2%）", _blue > max(1, int(_samp * 0.02)),
+      "blue=%d/%d（%.1f%%）" % (_blue, _samp, 100.0 * _blue / max(1, _samp)))
+
+# ═══════════ E. 一键启动链（2026-09-14 改口径：vbs 已收进 scripts/）═══════════
+# 为什么改：原来断言 `一键启动.vbs` 在**根目录**，而 2026-09-13 收口时把三个 vbs 全挪进了 `scripts\`
+# （根目录只留 `一键启动.exe`/`一键关闭.exe`）⇒ 四条断言长期假红，是判据没跟上目录收口。
+check("scripts\\一键启动.vbs 存在", os.path.exists(os.path.join(ROOT, "scripts", "一键启动.vbs")))
+check("scripts\\一键关闭.vbs 存在", os.path.exists(os.path.join(ROOT, "scripts", "一键关闭.vbs")))
+check("onestart.py 存在", os.path.exists(os.path.join(ROOT, "scripts", "onestart.py")))
+check("bat 已移除（避免 cmd 弹窗/重复入口）", not os.path.exists(os.path.join(ROOT, "一键启动.bat"))
+      and not os.path.exists(os.path.join(ROOT, "安装依赖.bat"))
+      and not os.path.exists(os.path.join(ROOT, "自检.bat")))
+try:
+    _vbs = io.open(os.path.join(ROOT, "scripts", "一键启动.vbs"), "rb").read().decode("gbk", "ignore")
+    check("一键启动.vbs 可读（GBK，含窗口与退出码逻辑）",
+          len(_vbs) > 100 and "CreateObject" in _vbs)
+except Exception:
+    check("一键启动.vbs 可读", False, "vbs 读取失败")
+check("结算器与备用启动器都在 scripts/",
+      os.path.exists(os.path.join(ROOT, "scripts", "启动机器人.vbs")))
+check("根目录放的是 exe 版入口（用户双击的就是它们）",
+      os.path.exists(os.path.join(ROOT, "一键启动.exe")) and os.path.exists(os.path.join(ROOT, "一键关闭.exe")))
+check("根目录不再散落 vbs（收口到 scripts/）",
+      not os.path.exists(os.path.join(ROOT, "一键启动.vbs"))
+      and not os.path.exists(os.path.join(ROOT, "启动机器人.vbs")))
+
+# ═══════════ G. 工具集 & 行为引擎 ═══════════
+try:
+    from agent.tools import build_tool_defs as _btd
+    _tool_names = [d["name"] for d in _btd()]
+    check("工具注册 >= 22", len(_tool_names) >= 22, "count=%d" % len(_tool_names))
+    for _t in ("collect_emoji", "send_emoji", "view_merge_forward", "collect_message",
+               "recall_message", "moments_like", "moments_publish"):
+        check("工具 " + _t, _t in _tool_names)
+except Exception as e:
+    check("工具注册", False, str(e))
+
+# ═══════════ I. UI 图标库 & 行为引擎 ═══════════
+try:
+    from agent.wechat_ui import ICONS, calibrate_ui, hit, achieve, _load_layout
+    check("图标库元素 >= 11", len(ICONS) >= 11, "count=%d" % len(ICONS))
+    check("图标库含搜索/发送/收藏/朋友圈(实测确认入口)", {"search.box", "input.send", "sidebar.collection", "sidebar.moments"} <= set(ICONS))
+    check("图标库标定文件存在", bool(_load_layout().get("sidebar_items")))
+except Exception as e:
+    check("图标库", False, str(e))
+try:
+    from agent.persona_hint import suggest_from_role_text
+    check("角色卡行为推荐（高冷→low）",
+          suggest_from_role_text("高冷安静话少")["participation"] == "low")
+    check("角色卡行为推荐（卖萌→表情3）",
+          suggest_from_role_text("表情包爱好者每天斗图")["sticker_level"] == 3)
+except Exception as e:
+    check("角色卡行为推荐", False, str(e))
+try:
+    from agent.behavior import decider
+    check("行为引擎 multipliers", "activity" in decider.multipliers())
+except Exception as e:
+    check("行为引擎", False, str(e))
+
+# ═══════════ J. 「点击测试」必须全程后台（真鼠标一键检验已按用户要求删除）═══════════
+# 用户 2026-09-14 原话：「那个程序鼠标检验怎么还在那儿呢？而且它又抢我鼠标…我要的是点击测试，全程后台测」
+# ⇒ 判据改成"守删除"：面板/JS/后端入口/路由若任何一个回来，这里立刻变红。
+try:
+    _wx_src = io.open(os.path.join(ROOT, "scripts", "persona_morph.py"), encoding="utf-8").read()
+    _web_src = io.open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
+    _html_src = io.open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+    check("真鼠标一键检验已删除（后端入口）",
+          "ui_test_fn" not in _wx_src and "_UI_TEST_LIST" not in _wx_src and "ui_stop_fn" not in _wx_src)
+    check("真鼠标一键检验已删除（路由）", "/api/ui-test" not in _web_src)
+    check("真鼠标一键检验已删除（控制台面板与按钮）",
+          "UI_TESTS" not in _html_src and "uiTestBtn_" not in _html_src and "程序鼠标检验" not in _html_src)
+    check("点击测试文案声明全程后台（不写「接管鼠标」）",
+          "点击测试" in _html_src and "接管鼠标请勿动" not in _html_src)
+except Exception as e:
+    check("真鼠标一键检验已删除", False, str(e))
+
+# ═══════════ H. 文档中文 ═══════════
+for doc in ("README.md", "使用说明.md", "更新日志.md"):
+    t = io.open(os.path.join(ROOT, doc), encoding="utf-8").read()
+    cjk = len(re.findall(r"[\u4e00-\u9fff]", t))
+    check(doc + " 中文比例", cjk / max(1, len(t)) > 0.08, "%.1f%%" % (100 * cjk / len(t)))
+
+try:
+    from agent.code_check import run as _cc
+    _r = _cc()
+    _fails = [c for c in _r.get("checks", []) if c["status"] == "fail"]
+    check("代码检测（agent/code_check.py）", not _fails,
+          "0 失败（%s）" % _r.get("summary", ""))
+except Exception as e:
+    check("代码检测", False, str(e))
+
+# ── config.example.json 必须与 config.DEFAULT_CONFIG 同键（否则示例会静默漂） ──
+# 2026-09-15：示例文件曾经只覆盖 20 个顶层键（真实默认 35 个），缺 voice_reply / feedback.limit /
+# wechat.restore_minimized 等 ⇒ 拿示例当参照的人会以为这些功能不存在。现在由脚本生成 + 这条断言守着。
+def _kp(d, pre=""):
+    out = set()
+    if isinstance(d, dict):
+        for k, v in d.items():
+            p = (pre + "." + k) if pre else k
+            out.add(p)
+            out |= _kp(v, p)
+    return out
+
+
+try:
+    from agent.config import DEFAULT_CONFIG as _DEF
+    _ex = json.loads(io.open(os.path.join(ROOT, "config.example.json"), encoding="utf-8").read())
+    _dk, _ek = _kp(_DEF), _kp(_ex)
+    check("config.example.json 与默认配置同键", _dk == _ek,
+          "示例 %d 键 / 默认 %d 键；缺=%s 多=%s"
+          % (len(_ek), len(_dk), sorted(_dk - _ek)[:5], sorted(_ek - _dk)[:5]))
+    # ⚠️ 断言里**不许写出真实的用户名/邮箱字面量**——否则判据自己就成了 PII 泄露源，
+    #    打包闸门当场 FATAL（2026-09-15 实测：我第一版把用户名写进这条正则，出包被拒）。
+    #    用"形状"判：任何 email 形状、任何 sk- 形状的密钥。
+    _ex_txt = io.open(os.path.join(ROOT, "config.example.json"), encoding="utf-8").read()
+    _hit = re.search(r"[\w.+-]+@[\w-]+\.[\w.]{2,}|sk-[A-Za-z0-9]{8,}", _ex_txt)
+    check("config.example.json 里没有任何真实凭据/邮箱", _hit is None,
+          (_hit.group(0)[:20] if _hit else ""))
+except Exception as e:
+    check("config.example.json 与默认配置同键", False, str(e)[:80])
+
+# ── 用量三分口径（2026-09-15）：只记"总 token"看不出钱花在哪，缓存/未命中/输出单价差 30~90 倍 ──
+try:
+    _st = io.open(os.path.join(ROOT, "agent", "stats.py"), encoding="utf-8").read()
+    _pm = io.open(os.path.join(ROOT, "scripts", "persona_morph.py"), encoding="utf-8").read()
+    check("用量账本记三分（fresh / cached / output）",
+          all(k in _st for k in ("fresh_tokens", "cached_tokens", "output_tokens"))
+          and "fresh=_fresh" in _pm and "cached=_cached" in _pm and "output=_output" in _pm)
+    check("三分口径有注释说明为什么要它（防后人删）",
+          "差 30~90 倍" in _st or "30~90 倍" in _pm)
+except Exception as e:
+    check("用量账本记三分（fresh / cached / output）", False, str(e)[:60])
+
+# ── 判据自身的可执行性（2026-09-15）：判据崩掉和判据红掉是两件事 ──
+# 产品链走 `py -X utf8 onestart.py`（launcher.cs:285）所以产品侧没事；但判据脚本没这层——
+# 一旦输出被重定向（`> out.txt` / 管道），Python 退回 locale 编码（本机 GBK），
+# `print("  ✔ %s")` 直接 UnicodeEncodeError，**整条判据崩在第一个 PASS 上**（rc=1、只跑半截）。
+# 实测 5 条脚本（chat_ocr / clipboard / image_filter / image_lib / log_housekeeping）中招，
+# 80 条断言从来没被真正跑到过 ⇒ 这里钉住：凡打印 ✔/✘ 的 selftest 必须有 UTF-8 垫片。
+try:
+    _sdir = os.path.join(ROOT, "scripts")
+    _risky, _noshim = [], []
+    for _n in sorted(os.listdir(_sdir)):
+        if "selftest" not in _n or not _n.endswith(".py"):
+            continue
+        _t = io.open(os.path.join(_sdir, _n), encoding="utf-8").read()
+        if "\u2714" in _t or "\u2718" in _t:
+            _risky.append(_n)
+            if "sys.stdout.reconfigure" not in _t:
+                _noshim.append(_n)
+    check("打印 ✔/✘ 的判据都带 UTF-8 垫片（重定向下不崩）", not _noshim,
+          "缺垫片=%s（共 %d 条会打印 ✔/✘）" % (_noshim, len(_risky)))
+    _rn = os.path.join(_sdir, "run_all_selftests.py")
+    check("有「一把跑全部判据」的入口（71 条手工跑 = 数字没法复核）",
+          os.path.exists(_rn) and "run_all_selftests" in io.open(_rn, encoding="utf-8").read()
+          and "selftest" in io.open(_rn, encoding="utf-8").read())
+except Exception as e:
+    check("打印 ✔/✘ 的判据都带 UTF-8 垫片（重定向下不崩）", False, str(e)[:80])
+
+print("\n==== %d 项检查，%d 项失败 ====" % (TOTAL[0], len(fails)))
+# 2026-09-15 补：失败时把**名字**打出来。以前只打数量，而这份检查器的输出在重定向/管道下
+# 会被截断（只留最后几行）⇒ 数字说"1 项失败"却找不到是哪一项，白查一轮。
+if fails:
+    print("失败项：")
+    for _n in fails:
+        print("  - " + str(_n))
+sys.exit(1 if fails else 0)
