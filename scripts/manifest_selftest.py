@@ -69,8 +69,10 @@ try:
     b = man.get("base") or {}
     for k in ("version", "sha256", "url", "size", "files"):
         ok(k in b, "base 有字段 %s" % k)
-    ok(isinstance(b.get("version"), str) and re.match(r"^\d{4}\.\d{1,2}\.\d{1,2}\.\d+$", b.get("version") or ""),
-       "base.version 形如 YYYY.M.D.N（实为 %s）" % b.get("version"))
+    # 版本号两段式（2026-09-16 用户定）：`YYYY.M.D.N`＝功能版本 · `YYYY.M.D.N.M`＝该版本下的小更新
+    ok(isinstance(b.get("version"), str)
+       and re.match(r"^\d{4}\.\d{1,2}\.\d{1,2}\.\d+(\.\d+)?$", b.get("version") or ""),
+       "base.version 形如 YYYY.M.D.N[.M]（实为 %s）" % b.get("version"))
     ok(is_hex64(b.get("sha256")), "base.sha256 是 64 位十六进制")
     ok(isinstance(b.get("size"), int) and b["size"] > 0, "base.size 是正整数（%s）" % b.get("size"))
     ok(isinstance(b.get("files"), int) and b["files"] > 0, "base.files 是正整数（%s）" % b.get("files"))

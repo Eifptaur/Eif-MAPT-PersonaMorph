@@ -68,22 +68,31 @@ _VI_MISSING = {"found": False, "path": "", "version": "", "supported": True,
                "install": {"installed": False, "detail": "本机没检测到微信。"}}
 
 
-def _diag(vi, db=None, err="", adapter=None):
-    _saved = (W.wechat_version_info, W.wechat_install_state)
+def _diag(vi, db=None, err="", adapter=None, deps="ok"):
+    """跑一次诊断（把三个外部依赖钉住，判据只考"诊断逻辑"本身）。
+
+    `deps="ok"` ＝把依赖自检桩成"全达标"（否则判据会随**跑判据的解释器**有没有装齐而红，
+    那是环境差异、不是诊断逻辑错）；要考"缺依赖"就给 `deps=` 一个返回缺失行的函数。
+    """
+    _saved = (W.wechat_version_info, W.wechat_install_state, W.dep_check)
     W.wechat_version_info = lambda: dict(vi)
     W.wechat_install_state = lambda proc_found=False, proc_path="": dict(vi.get("install") or {})
+    W.dep_check = (lambda scope="key": ([("wechatauto-replica", "1.2.2.2", "1.1.5.1", True)], True)) \
+        if deps == "ok" else deps
     try:
         return W.attach_diagnosis(adapter=adapter, err=err, db=db)
     finally:
-        (W.wechat_version_info, W.wechat_install_state) = _saved
+        (W.wechat_version_info, W.wechat_install_state, W.dep_check) = _saved
 
 
 print("── A. 全过：微信在跑 / 库打得开 / 密钥可用 / 认得出你自己 ──")
 _d = _diag(_VI_RUN, db=_DB(self_info={"username": "wxid_me", "nick_name": "我"}))
 ok("ok=True 且没有卡点 step", _d["ok"] and _d["step"] == "", "ok=%s step=%r" % (_d["ok"], _d["step"]))
-ok("五步都给出来了（process/version/db_open/key/self）",
-   {s["key"] for s in _d["steps"]} == {"process", "version", "db_open", "key", "self"},
+ok("六步都给出来了（deps/process/version/db_open/key/self）",
+   {s["key"] for s in _d["steps"]} == {"deps", "process", "version", "db_open", "key", "self"},
    str([s["key"] for s in _d["steps"]]))
+ok("第一步就是「依赖装齐」（我们自己这半边先过，再谈微信）",
+   _d["steps"][0]["key"] == "deps" and _d["steps"][0]["ok"], str(_d["steps"][0]))
 ok("每步都带证据文字（不是光一个勾）", all(str(s.get("detail") or "").strip() for s in _d["steps"]))
 ok("认出了自己的账号 ⇒ 说明里带昵称/wxid", "我" in str(_d["steps"][-1]["detail"]), _d["steps"][-1]["detail"])
 ok("action=none（没什么要他做的）", _d["action"] == "none", _d["action"])
@@ -152,8 +161,9 @@ ok("err 进 reason", "KeyError" in _i["reason"], _i["reason"])
 ok("err 单独留字段（诊断包按字段读，不靠解析句子）", _i["err"] == "KeyError: 'username'【KeyError】", _i["err"])
 
 print("── I. 侧栏短原因：五个卡点各有短标签，未知情况有兜底 ──")
-short = {k: W.attach_short_reason({"step": k}) for k in ("process", "install", "db_open", "key", "self")}
-ok("五个卡点都有一行短标签且互不相同", len(set(short.values())) == 5, str(short))
+short = {k: W.attach_short_reason({"step": k})
+         for k in ("deps", "process", "install", "db_open", "key", "self")}
+ok("六个卡点都有一行短标签且互不相同", len(set(short.values())) == 6, str(short))
 ok("未知/空诊断 ⇒ 兜底「原因未知」", W.attach_short_reason(None) == "原因未知"
    and W.attach_short_reason({"step": ""}) == "原因未知", W.attach_short_reason(None))
 
@@ -186,14 +196,21 @@ import tempfile as _tempfile
 _root = _tempfile.mkdtemp(prefix="pm_dbprobe_")
 try:
     _p0 = W._probe_db_dirs(os.path.join(_root, "nope"))
-    ok("目录不存在 ⇒ found 空、dbs=0", (_p0["found"] == []) and (_p0["dbs"] == 0), str(_p0))
+    ok("用户给的目录确实被探过（但不会把它当成「找到了」）",
+       (os.path.join(_root, "nope") in _p0["tried"])
+       and (os.path.join(_root, "nope") not in _p0["found"]), str(_p0)[:140])
+    ok("候选目录含各固定盘根与系统真文档目录（文档被重定向到 OneDrive 也能找到）",
+       all(d + "xwechat_files" in _p0["tried"] for d in W._fixed_drives())
+       and ((not W._known_docs())
+            or (os.path.join(W._known_docs(), "xwechat_files") in _p0["tried"])),
+       str(_p0["tried"])[:160])
     ok("第一档（目录不在默认位置）⇒ 给出「填数据库目录」这条能照着做的动作",
        "数据库目录" in W._db_open_verdict(_p0), W._db_open_verdict(_p0)[:80])
     _acc = os.path.join(_root, "xwechat_files", "wxid_x", "db_storage", "message")
     os.makedirs(_acc)
     _p1 = W._probe_db_dirs(os.path.join(_root, "xwechat_files"))
-    ok("探盘数得住：认到账号目录、库文件数为 0",
-       (_p1["accounts"] >= 1) and (_p1["dbs"] == 0), str(_p1))
+    ok("探盘数得住：认到账号目录",
+       _p1["accounts"] >= 1, str(_p1)[:140])
     ok("第二档（有目录没 .db）⇒ 判「结构对不上」（不许一律赖权限）",
        "结构对不上" in W._db_open_verdict({"found": ["D:\\xwechat_files"], "tried": [],
                                             "accounts": 1, "dbs": 0}),
@@ -221,6 +238,42 @@ _seg_w = _ch2[_i_w:_i_n]
 ok("「接入诊断」那段铺在**微信面板**里（不能只在悬停提示里，否则用户报障带不出原因）",
    'id="wxAttachRow"' in _seg_w and 'id="wxAttachSteps"' in _seg_w)
 ok("前端真的会拿 wechat_attach.steps 去填它", "$('wxAttachRow')" in _ch2 and "s.wechat_attach" in _ch2)
+
+print("── J4. 「依赖没装齐」要自己说出来（2026-09-16 用户问「是不是有人微信连不上就是没装齐」后加）──")
+_rows_key, _ok_key = W.dep_check("key")
+_rows_all, _ok_all = W.dep_check("all")
+ok("默认口径仍是手写的那 14 项（机器级自检口径不变）", len(_rows_key) == 14, str(len(_rows_key)))
+ok("全量口径把 requirements 并进来了（比以前的手写表多）",
+   len(_rows_all) > len(_rows_key), "%d vs %d" % (len(_rows_all), len(_rows_key)))
+ok("以前没人查的那些包现在在表里（numpy/pypinyin/PyAutoGUI/opencv-python）",
+   {"numpy", "pypinyin", "PyAutoGUI", "opencv-python"} <= {r[0] for r in _rows_all},
+   str(sorted(r[0] for r in _rows_all))[:140])
+ok("驱动库仍按「≥ 最低版本」判（不许又钉死成严格等值）",
+   [r for r in _rows_all if r[0] == "wechatauto-replica"][0][2] == W.replica_adapter.MIN_VERSION,
+   str([r for r in _rows_all if r[0] == "wechatauto-replica"]))
+_dj = _diag(_VI_RUN, db=_DB(self_info={"username": "wxid_me"}),
+            deps=lambda scope="key": ([("fake-pkg", "", ">=1", False)], False))
+ok("缺依赖 ⇒ 卡点是 deps、action=install_deps",
+   _dj["step"] == "deps" and _dj["action"] == "install_deps",
+   "%s/%s" % (_dj["step"], _dj["action"]))
+ok("侧栏短原因点明「依赖没装齐」", "依赖没装齐" in W.attach_short_reason(_dj),
+   W.attach_short_reason(_dj))
+ok("原因里给出能照着做的动作（「一键启动」/「一键检验」）",
+   ("一键启动" in _dj["reason"]) or ("一键检验" in _dj["reason"]), _dj["reason"][:110])
+_saved_wa2 = sys.modules.get("wechatauto")
+sys.modules["wechatauto"] = None          # None 在 sys.modules 里 ⇒ `import wechatauto` 抛 ImportError
+try:
+    _di = _diag(_VI_RUN)
+finally:
+    if _saved_wa2 is not None:
+        sys.modules["wechatauto"] = _saved_wa2
+    else:
+        sys.modules.pop("wechatauto", None)
+ok("驱动库导不进来 ⇒ 卡点也落在 deps（不会被说成微信的问题）", _di["step"] == "deps", _di["step"])
+ok("db_open 那一行此时**不许**写成「打不开消息库」，要写「驱动库没装上」",
+   "驱动库没装上" in str([s for s in _di["steps"] if s["key"] == "db_open"][0]["detail"])
+   and "打不开消息库" not in str([s for s in _di["steps"] if s["key"] == "db_open"][0]["detail"]),
+   str([s for s in _di["steps"] if s["key"] == "db_open"][0]["detail"])[:110])
 
 print("── K. 接线：启动接入 / 10 秒重试 / 状态下发 / 反馈 env（源码级，防以后改回去）──")
 _pm = _src(os.path.join("scripts", "persona_morph.py"))

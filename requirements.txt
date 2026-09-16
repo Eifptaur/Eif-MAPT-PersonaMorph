@@ -45,4 +45,9 @@ edge-tts>=6.1.0
 # 说明：
 # 1. 完全离线部署时，把上面所有包（含 wechatauto）的 .whl 放进 offline/wheels/，
 #    然后 `pip install --no-index --find-links=offline/wheels -r requirements.txt`。
-# 2. wechatauto-replica 不是 PyPI 官方包，需从项目 B 的 offline/wheels/ 目录获取同名 wheel。
+# 2. ⚠️ 2026-09-16 更正：`wechatauto-replica` **就在 PyPI 上**（实测 1.2.2.2 在 pypi.org/清华/阿里
+#    都能下），本行旧注释说的"不是 PyPI 官方包、需从 offline/wheels 取"**已过时**——`offline/`
+#    早已不在在线包里。干净机器联网装即可，不必再找 wheel。
+# 3. 语音链路的 SILK 解码器 `pilk` 是**故意不列在这里**的（GPL-3.0、不随本项目分发）：
+#    需要在产品里用「语音转文字」时按控制台给的命令 `pip install pilk` 自行安装，
+#    没装时产品会如实说"没有可用的 SILK 解码器"，不会静默失败。
