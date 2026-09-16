@@ -511,6 +511,32 @@ class WebUI:
                 self.end_headers()
                 self.wfile.write(body)
 
+            def _archive_view(self):
+                """存档屏蔽：列消息（带 recalled/blocked 标记）/ 屏蔽名单 / 读数。
+
+                ⛔ 2026-09-17 修（用户报「每次我一打开，右下角都是读取会话失败 error，但是又能连上」）：
+                **真因＝这条路由原来只注册在 POST 分支里**（它和 `/api/config`（保存配置）同一条
+                `elif` 链），而控制台前端用的是 **GET**（`getJSON('/api/archive')`）⇒ **每次都 404**
+                ⇒ 前端 catch 到就弹"读会话列表失败"。**整个「屏蔽存档」面板因此一直是死的**
+                （列表那一步也走 GET）。⇒ 抽成这一个方法，**GET 与 POST 都接**（一个能力一处实现）。
+                """
+                from . import archive_filter as _af
+                st = getattr(parent, "store", None)
+                if st is None:
+                    # 还没就绪：屏蔽名单本身是**磁盘数据**，没有 store 也能给出名单 ⇒ 回 `ok:True` +
+                    # 空会话列表 + 一句"正在连接"，由前端静默重试；**不要回 `ok:False`**
+                    # （前端会当失败弹红字，用户看到的就是"error 但又能连上"）。
+                    self._json({"ok": True, "chats": [], "snapshot": _af.snapshot(None),
+                                "note": "正在连接微信（会话列表稍后自动刷新）"})
+                    return
+                q = parse_qs(urlparse(self.path).query)
+                ck = str((q.get("chat_key") or [""])[0]).strip()
+                lim = int((q.get("limit") or ["30"])[0] or 30)
+                out = {"ok": True, "snapshot": _af.snapshot(st), "chats": _af.chat_options(st)}
+                if ck:
+                    out.update(_af.list_chat(st, ck, limit=max(1, min(200, lim))))
+                self._json(out)
+
             def do_GET(self):
                 parsed = urlparse(self.path)
                 path = parsed.path
@@ -1020,6 +1046,13 @@ class WebUI:
                         self._json({"ok": True})
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)})
+                elif path == "/api/archive":
+                    # 存档屏蔽（第 10 条）：**GET 也接**（2026-09-17 修：原来只注册在 POST 分支，
+                    # 前端用 GET ⇒ 每次 404 ⇒ 弹"读会话列表失败"、整个面板是死的）
+                    try:
+                        self._archive_view()
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)}, 500)
                 else:
                     self._json({"error": "not found"}, 404)
 
@@ -1112,20 +1145,10 @@ class WebUI:
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)}, 500)
                 elif path == "/api/archive":
-                    # 存档屏蔽（第 10 条）：GET 列消息（带 recalled/blocked 标记）/ 屏蔽名单 / 读数
+                    # 存档屏蔽（第 10 条）：列消息 / 屏蔽名单 / 读数
+                    # 方法体在 `_archive_view()`，**GET 与 POST 共用一处实现**（2026-09-17 修 404）
                     try:
-                        from . import archive_filter as _af
-                        st = getattr(parent, "store", None)
-                        if st is None:
-                            self._json({"ok": False, "error": "机器人未启动：拿不到存档句柄"})
-                        else:
-                            q = parse_qs(urlparse(self.path).query)
-                            ck = str((q.get("chat_key") or [""])[0]).strip()
-                            lim = int((q.get("limit") or ["30"])[0] or 30)
-                            out = {"ok": True, "snapshot": _af.snapshot(st), "chats": _af.chat_options(st)}
-                            if ck:
-                                out.update(_af.list_chat(st, ck, limit=max(1, min(200, lim))))
-                            self._json(out)
+                        self._archive_view()
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)}, 500)
                 elif path in ("/api/archive/block", "/api/archive/unblock", "/api/archive/delete"):
