@@ -1,11 +1,11 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.16.16",
-    "sha256": "001d929baef2d84a81a68a289286102897aeb71bb642ffdd87a95b15ecd9277d",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.17/persona-morph-v2.1.17.zip",
-    "size": 8124047,
-    "files": 243
+    "version": "2026.9.16.16.1",
+    "sha256": "bdbf43b916e638347555e151c62fcc4a7a70beab0bdbf29be6b2a0e3d2a73f63",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.17.1/persona-morph-v2.1.17.1.zip",
+    "size": 8142556,
+    "files": 245
   },
   "dlc": [
     {
@@ -32,16 +32,17 @@
     }
   ],
   "announce": {
-    "version": "2026.9.16.16",
+    "version": "2026.9.16.16.1",
     "notes": [
-      "「@ 别人也被唤醒」修好了：只有真 @ 机器人才算，不再白花一次模型用量",
-      "已装 v2.1.16 的用户拿不到这条修复（同版本换包不触发更新提示），所以这一版把版本号前进一格",
-      "「打不开消息库」现在会说清是哪一种：数据目录不在默认位置 / 目录结构对不上 / 权限或占用，并给出各自的做法",
-      "这些结论同时出现在「微信」面板的逐步诊断里，报障时截那一段就够定位"
+      "「未找到微信数据库目录」现在会自己扫盘（含 OneDrive 重定向与各固定盘）并告诉你去微信「设置 → 文件管理」核对默认保存位置",
+      "依赖检查从 14 项扩到 requirements 全量 25 项，以前 numpy/opencv/PyAutoGUI/edge-tts/pypinyin 装了没装没人查",
+      "接入诊断新增第一步「依赖装齐」：驱动库或依赖缺失会直接说，不再误报成「打不开消息库」",
+      "ffmpeg 自动使用随包自带的那份（以前只查 PATH，干净机器上语音转 wav 与视频抽帧被卡住）",
+      "版本号新增第 5 段：以后每修一个 bug 都发新版本号，装了旧版的用户每次都能收到更新提示"
     ],
     "forceBase": false,
-    "minBase": "2026.9.16.16"
+    "minBase": "2026.9.16.16.1"
   },
-  "builtAt": "2026-09-16T14:05:55Z",
-  "updatedAt": 1789567555130
+  "builtAt": "2026-09-16T14:30:53Z",
+  "updatedAt": 1789569053346
 }
