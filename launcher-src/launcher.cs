@@ -896,14 +896,18 @@ namespace WxLauncher
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.CenterScreen;
             ClientSize = new Size(1180, 780);   // OnLoad 里按 DPI/工作区重算
-            BackColor = StyleKit.Bg;
+            // ⛔ 2026-09-16 修（用户截图原话：「全屏是要真的无边框吗。你这边框也太明显了」）：
+            //   这里原来用 `StyleKit.Bg`（**浅色** 247,249,252）⇒ 非全屏时那圈 `Padding(_ring)`
+            //   露出的就是浅色底，等于给深蓝控制台套了个白框；顶栏也是浅色，与页面割裂。
+            //   `StyleKit.ConsoleBg`（15,23,35）本来就是为控制台准备的深底 ⇒ 改用它，环就隐进页面里。
+            BackColor = StyleKit.ConsoleBg;
             Panel bar = new Panel();
-            bar.Height = 42; bar.Dock = DockStyle.Top; bar.BackColor = StyleKit.Bg;
+            bar.Height = 42; bar.Dock = DockStyle.Top; bar.BackColor = StyleKit.ConsoleBg;
             bar.MouseDown += delegate { StyleKit.Drag(Handle); };
             Label t = new Label();
             t.Text = "群相 控制台";
             t.Font = StyleKit.Ui(10.5f, FontStyle.Bold);
-            t.ForeColor = StyleKit.Ink;
+            t.ForeColor = StyleKit.ConsoleInk;   // 深底（ConsoleBg）上原来的 Ink/Sub 都太暗
             t.AutoSize = true; t.Location = new Point(14, 12);
             t.MouseDown += delegate { StyleKit.Drag(Handle); };
             bar.Controls.Add(t);

@@ -62,6 +62,15 @@ HTML = r"""<!DOCTYPE html>
     --err-soft:#3A1A1A; --err-tx:#FCA5A5; --menu-bg:#1B2438;
   }
 }
+/* 全局滚动条自绘（2026-09-16 用户：「又白又灰的，跟我们色调完全不搭」）——
+   原先只给侧栏做了自绘，页面主体那条一直是浏览器默认样式（白底灰滑块）。
+   这里统一成"细、透明底、蓝调半透明滑块"；侧栏原有的 6px 规则特异性更高，仍然生效。 */
+*{scrollbar-width:thin;scrollbar-color:rgba(148,196,255,.28) transparent}
+*::-webkit-scrollbar{width:8px;height:8px}
+*::-webkit-scrollbar-track{background:transparent}
+*::-webkit-scrollbar-thumb{background:rgba(148,196,255,.22);border-radius:4px}
+*::-webkit-scrollbar-thumb:hover{background:rgba(148,196,255,.38)}
+*::-webkit-scrollbar-corner{background:transparent}
 body.whale-anim{background:var(--bg) fixed}
 body.whale-anim::before{content:"";position:fixed;inset:-60px;z-index:-1;pointer-events:none;
   background-image:url(/assets/ocean1.jpg);
