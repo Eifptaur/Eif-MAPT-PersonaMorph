@@ -1,0 +1,263 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""`send_text_posted` **三枪发送循环**的离线行为测试（不需要微信、不碰鼠标、不弹任何窗）。
+
+为什么要有它：`background_selftest.py` 对这条链只做**源码结构**断言（"有没有那个 for / 那句字符串"），
+"第一枪就成了会不会还多打两枪""三枪都打出去了但都没生效，到底判 未证实 还是 失败""三枪一次都没
+打出去时说什么"这类**行为**它一句都看不见。这里用**假后端 + 假库 + 假时钟**把整段循环真跑一遍。
+
+纪律（沿袭本项目既有口径）：
+  · 成功判据**只有 DB 回读** —— 端点返回 True 不算数（S3 就是拿这个当反面证据的）；
+  · 判据不可用（`db_alive` 假）⇒ `sent_unverified`，**绝不当成功**；
+  · 全程零副作用：不 import 真窗口、不 sleep 真时间（假时钟）、不写盘、不碰用户的微信。
+"""
+import os
+import sys
+
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from agent import wechat as W                    # noqa: E402
+from agent import input_backend as ib            # noqa: E402
+from agent import chat_header as ch              # noqa: E402
+
+PASS = 0
+FAIL = 0
+
+
+def ok(name, cond, detail=""):
+    global PASS, FAIL
+    if cond:
+        PASS += 1
+    else:
+        FAIL += 1
+    print("  {} {}{}".format("OK  " if cond else "FAIL", name,
+                             "  [{}]".format(detail) if detail else ""))
+
+
+# ── 假时钟：`wechat.time` 换掉 ⇒ sleep 推进假时间，不真等 15 秒 ────────────────
+class _Clock(object):
+    def __init__(self):
+        self.t = 1_000_000.0
+
+    def time(self):
+        return self.t
+
+    def monotonic(self):
+        return self.t
+
+    def sleep(self, s):
+        self.t += float(s)
+
+
+# ── 剧本：一次"发送动作"取一条 (投递调用成功吗, 消息真的落库了吗) ──
+class _Scenario(object):
+    def __init__(self, script, alive=(True, "读得到（假库）")):
+        self.script = list(script)      # [("keys"|"sendbtn", post_ok, lands), ...]
+        self.i = 0
+        self.alive = alive
+        self.calls = []                 # 后端调用顺序（含聚焦点击与打字）
+        self.kinds = []                 # 只记发送动作的种类
+        self.rows = [{"local_id": 100, "content": "旧消息", "type": "文本"}]
+        self.text = "SELFTEST-TOKEN-三枪"
+        self.fg_restores = 0
+        self.learned = 0
+
+    def _mk_row(self):
+        self.rows = [{"local_id": 100 + len(self.rows) + 1, "content": self.text, "type": "文本"}] + self.rows
+
+    def send_attempt(self, kind, hwnd):
+        """返回 (post_ok, why)；`kind` = 'keys'（回车）| 'sendbtn'（点发送按钮）。"""
+        self.kinds.append(kind)
+        if self.i >= len(self.script):
+            # 剧本用完了还来第 4 枪 ⇒ 记下来（"最多少枪"本身就是要断言的事）
+            self.i += 1
+            return False, "剧本外"
+        _k, post_ok, lands = self.script[self.i]
+        self.i += 1
+        if post_ok and lands:
+            self._mk_row()
+        return (True, "") if post_ok else (False, "假后端：这一枪没打出去")
+
+
+class _FakeBackend(ib.MessageBackend):
+    """投递档的替身：只记录调用 + 走剧本，绝不碰 ctypes/窗口。"""
+
+    def __init__(self, scn):
+        super().__init__(press_ms=0, activate=False)
+        self.scn = scn
+
+    def _wake(self, hwnd):          # 真实现会发 WM_ACTIVATE（这步在本测试里没有意义）
+        return None
+
+    def click(self, hwnd, screen_pt, right=False, hover_ms=0, press_ms=None):
+        pt = tuple(int(v) for v in screen_pt)
+        self.scn.calls.append(("click", pt))
+        # 这一行（渲染区 0.945·h）上有两个点：靠左 0.45 是"聚焦输入栏"，靠右 0.932 是"发送按钮"
+        if pt[0] > self.scn.focus_pt[0] + 200:
+            return self.scn.send_attempt("sendbtn", hwnd)
+        return True, ""
+
+    def send_text(self, hwnd, text):
+        self.scn.calls.append(("send_text", text))
+        return True, ""
+
+    def keys(self, hwnd, vks, hold_ms=30):
+        self.scn.calls.append(("keys", tuple(int(v) for v in vks)))
+        return self.scn.send_attempt("keys", hwnd)
+
+
+class _FakeDB(object):
+    def __init__(self, scn):
+        self.scn = scn
+
+    def get_messages(self, chat_id, limit=12):
+        return list(self.scn.rows)
+
+
+class _FakeGui(object):
+    main_hwnd = 4242
+    render_rect = (101, 90, 1240, 980)     # 1139×890，本机 150% DPI 的实测值
+
+    def _update_render_rect(self):
+        return None
+
+
+class _Stub(object):
+    """`send_text_posted` 只需要这些 `self.` 成员 ⇒ 不构造真的 WeChatAdapter（那会去连微信）。"""
+
+    def __init__(self, scn):
+        self._scn = scn
+        self._db = _FakeDB(scn)
+        self._gui = _FakeGui()
+
+    def _get_gui(self):
+        return self._gui
+
+    def _ensure_main_visible(self, gui, main):
+        return None
+
+    def chat_is_open(self, chat_id, gui=None):
+        return True, "假证据：不需要（本测试的会话头校验已被打桩为 ok）"
+
+    def _learn_chat_header(self, chat_id, gui=None):
+        self._scn.learned += 1
+        return "假参照（本测试不写盘）"
+
+    def db_alive(self, chat_id):
+        return self._scn.alive
+
+
+def run(script, alive=(True, "读得到（假库）")):
+    """跑一遍真函数，返回 (result, why, scn)。"""
+    scn = _Scenario(script, alive=alive)
+    scn.focus_pt = (int(101 + 1139 * 0.45), int(90 + 890 * 0.945))     # (613, 931)
+    stub = _Stub(scn)
+    backend = _FakeBackend(scn)
+
+    saved = (W.time, ib.select_backend, ch.check, W._stash_fg,
+             W._restore_fg_until, W._minimize_back_if_needed)
+    W.time = _Clock()
+
+    def _restore(tag, timeout=2.5, keep=False):
+        scn.fg_restores += 1
+        return None
+
+    ib.select_backend = lambda cfg=None, gui=None: backend
+    ch.check = lambda chat_id: {"status": "ok", "note": "假参照（本测试打桩）"}
+    W._stash_fg = lambda: None
+    W._restore_fg_until = _restore
+    W._minimize_back_if_needed = lambda tag: None
+    try:
+        res, why = W.WeChatAdapter.send_text_posted(
+            stub, scn.text, chat_id="filehelper", wait_s=15.0)
+    finally:
+        (W.time, ib.select_backend, ch.check, W._stash_fg,
+         W._restore_fg_until, W._minimize_back_if_needed) = saved
+    return res, why, scn
+
+
+# ══════════════════════════════════════════════════════════════════════════
+print("── A. 前三步顺序：先投递点输入栏聚焦 → 投递打字 → 才谈提交 ──")
+_s1 = [("keys", True, True)]
+_r1, _w1, _c1 = run(_s1)
+_front = [c[0] for c in _c1.calls[:3]]
+ok("顺序＝click(聚焦) → send_text(打字) → keys(回车)",
+   _front == ["click", "send_text", "keys"], str(_front))
+ok("聚焦点落在渲染区 (0.45·w, 0.945·h) 那一行（与发送按钮同一行、靠左）",
+   _c1.calls[0][1] == _c1.focus_pt, "%s vs %s" % (_c1.calls[0][1], _c1.focus_pt))
+ok("打字用的就是本次文本", _c1.calls[1][1] == _c1.text, str(_c1.calls[1][1])[:24])
+
+print("── B. 第一枪（回车）就成功：判成功、且**不许**再多打枪 ──")
+ok("判 V_OK", _r1 == W.V_OK, "result=%r" % (str(_r1),))
+ok("说明里写清是第几枪、哪一枪打的", ("第 1 枪" in _w1) and ("投递回车" in _w1), _w1)
+ok("发送动作只发生 1 次（不多打）", len(_c1.kinds) == 1, str(_c1.kinds))
+ok("成功说明带 DB 回读证据（local_id / type）", ("local_id" in _w1) and ("type" in _w1), _w1)
+ok("成功后补学了该尺寸的会话头参照", _c1.learned >= 1, "learned=%d" % _c1.learned)
+ok("每枪之后都还了一次前台", _c1.fg_restores == 1, "fg_restores=%d" % _c1.fg_restores)
+
+print("── C. 前两枪不生效、第三枪（回车）成功：交替用回车/按钮，第 3 枪命中 ──")
+_s2 = [("keys", True, False), ("sendbtn", True, False), ("keys", True, True)]
+_r2, _w2, _c2 = run(_s2)
+ok("判 V_OK", _r2 == W.V_OK, "result=%r" % (str(_r2),))
+ok("命中在第 3 枪", "第 3 枪" in _w2, _w2)
+ok("枪序＝回车 → 点发送按钮 → 回车（奇数回车优先、偶数按钮兜底）",
+   _c2.kinds == ["keys", "sendbtn", "keys"], str(_c2.kinds))
+ok("每枪之后都还了一次前台（3 枪 ⇒ 3 次）", _c2.fg_restores == 3, "fg_restores=%d" % _c2.fg_restores)
+
+print("── D. 三枪都打出去了、但 DB 一直没有新行 ⇒ 判「未生效」并点名文字可能还在输入框里 ──")
+_s3 = [("keys", True, False), ("sendbtn", True, False), ("keys", True, False)]
+_r3, _w3, _c3 = run(_s3)
+ok("**端点都返回成功也不算成功**（唯一判据是 DB 回读）", str(_r3) == "not_sent", "result=%r" % (str(_r3),))
+ok("文案点名「文字可能还留在输入框里」并让人去看那个会话",
+   ("文字可能还留在输入框里" in _w3) and ("微信里看" in _w3), _w3)
+ok("说明里写了打了几枪", "3 枪" in _w3, _w3)
+ok("枪数不多不少正好 3 次", len(_c3.kinds) == 3, str(_c3.kinds))
+
+print("── E. 三枪都打出去了、但**判据不可用** ⇒ 判「未证实」，绝不判失败也绝不判成功 ──")
+_r4, _w4, _c4 = run(_s3, alive=(False, "既没拿到主密钥、也没有任何能过页1校验的缓存密钥"))
+ok("判 sent_unverified（不是 ok、也不是 not_sent）", str(_r4) == "sent_unverified", "result=%r" % (str(_r4),))
+ok("文案写明「判据不可用」+ 具体原因", ("判据不可用" in _w4) and ("主密钥" in _w4), _w4)
+ok("未证实**不是成功**（`bool()` 为假 ⇒ 调用方的 `if ok:` 不会误当成功）", not bool(_r4))
+
+print("── F. 三枪一次都没打出去（投递调用本身失败）⇒ 判失败并说清打不出去 ──")
+_s5 = [("keys", False, False), ("sendbtn", False, False), ("keys", False, False)]
+_r5, _w5, _c5 = run(_s5)
+ok("判失败（falsy）", not bool(_r5), "result=%r" % (str(_r5),))
+ok("文案＝三枪都没打出去（不是含糊的「未生效」）", "三枪都没打出去" in _w5, _w5)
+ok("失败的每枪原因不会被悄悄丢掉（返回里点到具体哪一枪）", "回车" in _w5, _w5)
+
+print("── G. 假库没被误用：DB 回读读的是**目标会话** ──")
+_seen = {}
+
+
+class _SpyDB(object):
+    def __init__(self, scn):
+        self.scn = scn
+
+    def get_messages(self, chat_id, limit=12):
+        _seen["chat_id"] = chat_id
+        return list(self.scn.rows)
+
+
+_scn7 = _Scenario([("keys", True, True)])
+_scn7.focus_pt = (613, 931)
+_stub7 = _Stub(_scn7)
+_stub7._db = _SpyDB(_scn7)
+_saved = (W.time, ib.select_backend, ch.check, W._stash_fg, W._restore_fg_until,
+          W._minimize_back_if_needed)
+W.time = _Clock()
+ib.select_backend = lambda cfg=None, gui=None: _FakeBackend(_scn7)
+ch.check = lambda chat_id: {"status": "ok", "note": "假"}
+W._stash_fg = lambda: None
+W._restore_fg_until = lambda tag, timeout=2.5, keep=False: None
+W._minimize_back_if_needed = lambda tag: None
+try:
+    W.WeChatAdapter.send_text_posted(_stub7, _scn7.text, chat_id="filehelper", wait_s=15.0)
+finally:
+    (W.time, ib.select_backend, ch.check, W._stash_fg, W._restore_fg_until,
+     W._minimize_back_if_needed) = _saved
+ok("回读打的就是传进来的 chat_id", _seen.get("chat_id") == "filehelper", str(_seen))
+
+print("\n结果：%d 通过 / %d 失败" % (PASS, FAIL))
+sys.exit(1 if FAIL else 0)

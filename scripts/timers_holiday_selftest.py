@@ -166,7 +166,11 @@ def main():
     wui = open(os.path.join(root, "agent", "webui.py"), encoding="utf-8").read()
     cfg_py = open(os.path.join(root, "agent", "config.py"), encoding="utf-8").read()
     cex = open(os.path.join(root, "config.example.json"), encoding="utf-8").read()
-    ok("巡检线程在（计时 + 节日一起跑）", "_start_timer_holiday_loop(orch, wechat)" in pm)
+    # ⚠️ 2026-09-16 改口径：句柄必须**每跳现取**（`lambda: wechat_box[0]`）——
+    #    启动那一刻微信没开时传进去的是 None，传死了就永远不会做节日问候。
+    #    断言跟着改成认这个"活句柄"形态（旧形态=把 None 传死，是缺陷不是特性）。
+    ok("巡检线程在（计时 + 节日一起跑，且句柄现取）",
+       "_start_timer_holiday_loop(orch, lambda: wechat_box[0])" in pm)
     ok("到点发送走 sender（风险闸门照过）", "orch.sender.send_text_batch(chat_key, text)" in pm)
     ok("暂停中不发、禁言中不发、都接上了",
        'paused = bool(getattr(orch, "paused", False) or getattr(orch, "stopped", False))' in pm

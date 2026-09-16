@@ -51,7 +51,8 @@ from agent.session_log import SessionLog
 from agent.stats import UsageStats
 from agent.store import ChatStore
 from agent.tools import build_tool_defs, execute_tool, to_openai_tools
-from agent.wechat import WeChatAdapter, WeChatError, wechat_version_info
+from agent.wechat import (WeChatAdapter, WeChatError, wechat_version_info,
+                          attach_diagnosis, attach_short_reason)
 from agent.whale import WhaleWidget
 from agent.webui import WebUI
 from agent.util import mask_url_token, pick_browser, redact_secrets
@@ -1087,12 +1088,58 @@ def _maybe_auto_fix():
         log.warning("自动版本体检失效（不影响启动）：%s", e)
 
 
-def _wechat_watchdog(wechat):
+# ── 「微信连不上」的原因要看得见（2026-09-16 用户反馈「微信连接不上」）───────────────
+#   老实现只有一个是/否（`wechat is not None`）：用户看到"微信未连接"却不知道**为什么**，
+#   我们也只能来回猜、来回问。⇒ 每次接入（成功或失败）都把**逐步诊断**记在这里，
+#   控制台侧栏显示一行短原因（悬停看全文），反馈诊断包带上完整 steps。
+_ATTACH = {"tries": 0, "at": 0.0, "err": "", "diag": None}
+
+
+def _attach_wechat(cfg):
+    """接入微信；失败**不抛**，把原因与逐步诊断记进 `_ATTACH` 并返回 None。
+
+    可重复调用（启动一次；监听循环里没接上时每 10 秒再试一次）——这就是老代码注释里
+    承诺、而实际**从未实现**的那句"监听循环内每 10 秒由主线程重试接入"。
+    """
+    _ATTACH["tries"] += 1
+    _ATTACH["at"] = time.time()
+    try:
+        if os.environ.get("WXAGENT_NO_WECHAT") == "1":
+            raise RuntimeError("WXAGENT_NO_WECHAT（测试开关）")
+        wc = WeChatAdapter(cfg)
+        _ATTACH["err"] = ""
+        _ATTACH["diag"] = None
+        return wc
+    except BaseException as e:
+        _ATTACH["err"] = "%s【%s】" % (str(e)[:120], type(e).__name__)
+        try:
+            _ATTACH["diag"] = attach_diagnosis(err=_ATTACH["err"])
+        except Exception as _e2:
+            _ATTACH["diag"] = {"ok": False, "step": "unknown",
+                               "reason": "诊断本身失败：%s" % _e2, "action": "retry", "steps": []}
+        return None
+
+
+def wechat_attach_status() -> dict:
+    """给控制台/诊断包用的接入状态（纯读内存里的 `_ATTACH`，不做任何探测）。"""
+    d = _ATTACH.get("diag") or {}
+    return {"tries": int(_ATTACH.get("tries") or 0),
+            "err": str(_ATTACH.get("err") or ""),
+            "reason": str(d.get("reason") or ""),
+            "short": attach_short_reason(d) if d else "",
+            "step": str(d.get("step") or ""),
+            "action": str(d.get("action") or ""),
+            "steps": list(d.get("steps") or [])}
+
+
+def _wechat_watchdog(get_wc):
     """微信守护线程：每 30 秒检测微信主窗口是否响应。
 
     连续 2 次检测无响应（SendMessageTimeout 超时）＝判定卡死：
       自动 taskkill 微信 → 2 秒后重新拉起微信程序 → 弹窗叫用户重新登录 → 写日志。
     微信恢复后机器人轮询自动继续（不重启机器人本体）。
+    ⚠️ 句柄**每跳现取**（`get_wc` 可以是 callable）：启动那一刻微信没开时这里是 None，
+    传死了 None 会让守护**永远空转**（老代码就是这么写的）。
     """
     import ctypes
     user32 = ctypes.windll.user32
@@ -1101,6 +1148,7 @@ def _wechat_watchdog(wechat):
     while True:
         time.sleep(30)
         try:
+            wechat = get_wc() if callable(get_wc) else get_wc
             if wechat is None:
                 continue
             gui = wechat._get_gui()
@@ -1272,13 +1320,12 @@ def main():
     # 微信接入：主线程同步构造（微信在线=0 秒；同线程使用保证 UIA/COM 不锁）。
     # 失败则仅警告继续（控制台先行）；监听循环内每 10 秒由主线程重试接入。
     wechat_box = [None]
-    try:
-        if os.environ.get("WXAGENT_NO_WECHAT") == "1":
-            raise RuntimeError("WXAGENT_NO_WECHAT（测试开关）")
-        wechat_box[0] = WeChatAdapter(cfg)
+    wechat_box[0] = _attach_wechat(cfg)
+    if wechat_box[0] is not None:
         log.info("微信接入成功（主线程同步）")
-    except BaseException as e:
-        log.warning("微信暂未接入（控制台仍打开；监听循环内持续重试）：%s【%s】", str(e)[:120], type(e).__name__)
+    else:
+        log.warning("微信暂未接入（控制台仍打开；监听循环内每 10 秒重试接入）：%s"
+                    "｜诊断：%s", _ATTACH["err"], wechat_attach_status()["reason"])
     wechat = wechat_box[0]
     log.info("[checkpoint] 微信段:结束(零等待) wechat=%s", bool(wechat))
 
@@ -1295,7 +1342,7 @@ def main():
         groups = []
     # 微信卡死守护：无响应自动关闭重启 + 弹窗叫用户重新登录
     try:
-        threading.Thread(target=_wechat_watchdog, args=(wechat,), daemon=True).start()
+        threading.Thread(target=_wechat_watchdog, args=(lambda: wechat_box[0],), daemon=True).start()
         log.info("微信守护已启动（30 秒心跳，卡死自动重启并提醒登录）")
     except Exception as e:
         log.warning("微信守护启动失败：%s", e)
@@ -1322,6 +1369,23 @@ def main():
     elif _pmode == "off":
         log.info("私聊档位=off ⇒ 不监听私聊")
     log.info("监听目标合计 %d 个（群 %d + 私聊 %d）", len(targets), len(targets) - len(_pt), len(_pt))
+
+    def _collect_targets(wc):
+        """按当前配置重算 (全部群, 监听目标)。启动与"晚接入"共用一份，避免两处漂移。"""
+        try:
+            _gs = wc.list_groups() or []
+        except Exception as _e:
+            log.warning("取群列表失败：%s", _e)
+            _gs = []
+        _t = [g for g in _gs if (not whitelist or g["name"] in whitelist) and g["name"] not in deny]
+        try:
+            _p2 = [] if _pmode == "off" else (wc.list_private_targets() or [])
+        except Exception as _e:
+            log.warning("私聊目标发现失败（不影响群）：%s", _e)
+            _p2 = []
+        if _p2:
+            _t += [{"name": c.get("name") or c.get("wxid"), "wxid": c.get("wxid")} for c in _p2]
+        return _gs, _t
 
     store = ChatStore(int(cfg.get("store", {}).get("max_messages_per_chat") or 0))
     memory = MemoryStore()
@@ -1437,6 +1501,9 @@ def main():
         return {
             "paused": orch.paused,
             "wechat_connected": wechat is not None,
+            # 「连不上」要说清卡在哪一步（用户反馈「微信连接不通」）：纯读内存里的诊断，
+            # 不做任何探测 ⇒ 可以每几秒跟着状态一起下发。
+            "wechat_attach": wechat_attach_status(),
             "wechat_version": wechat_version_info(),
             "dep_ok": len(_version_issues()) == 0,
             "model": _cfg_live.get("api", {}).get("model", ""),
@@ -2322,10 +2389,37 @@ def main():
     except Exception as e:
         log.warning("主动话题循环启动失败：%s", e)
     # 计时提醒 + 节假日问候巡检（第 12/13 条）：20 秒一跳；暂停中一条都不发（恢复后补发）
-    _sched = _start_timer_holiday_loop(orch, wechat)
+    _sched = _start_timer_holiday_loop(orch, lambda: wechat_box[0])
 
     while not orch.stopped:
         poll_interval = max(1.0, float(get_config().get("wechat", {}).get("poll_interval") or 3))
+        # ── 微信接入重试（2026-09-16：老代码注释里承诺过、实际**从未实现**的那一句）──────
+        #   症状（用户反馈「微信连接不上」）：启动那一刻微信没开（或还没登录）⇒ `wechat is None`
+        #   ⇒ 目标群为空 ⇒ 整个监听循环什么都不做，而且**没有任何重试** ⇒ 控制台永远显示
+        #   "微信未连接"，用户只能重启。这里：每 10 秒再试一次；接上以后把群/目标/发送队列/
+        #   orchestrator 的句柄都补上，并把新群的监听水位推到当前（不补历史积压）。
+        if wechat_box[0] is None and (time.time() - float(_ATTACH.get("at") or 0)) >= 10:
+            _wc_new = _attach_wechat(get_config())
+            if _wc_new is not None:
+                wechat_box[0] = _wc_new
+                wechat = _wc_new
+                sender.wechat = _wc_new
+                orch.wechat = _wc_new
+                groups, targets = _collect_targets(_wc_new)
+                target_wxids.clear()
+                target_wxids.update(g["wxid"] for g in targets)
+                for g in targets:
+                    _k = "group:" + g["wxid"]
+                    if wm.get(_k, 0) <= 0:
+                        try:
+                            wm.set(_k, _wc_new.latest_seq(g["wxid"]))
+                        except Exception:
+                            wm.set(_k, 0)
+                wm.flush()
+                log.info("微信已接入（第 %d 次尝试）：监听目标 %d 个", _ATTACH["tries"], len(targets))
+            else:
+                log.info("微信仍未接入（第 %d 次尝试）：%s", _ATTACH["tries"],
+                         wechat_attach_status()["reason"])
         try:
             for g in targets:
                 wxid = g["wxid"]
@@ -2447,7 +2541,7 @@ def main():
     log.info("机器人已退出")
 
 
-def _start_timer_holiday_loop(orch, wechat, interval_s: float = 20.0):
+def _start_timer_holiday_loop(orch, get_wc, interval_s: float = 20.0):
     """计时提醒 + 节假日问候的巡检（第 12/13 条）。
 
     为什么单独一个循环、而不是并进主动话题循环：两者的周期差两个数量级（提醒要准、话题是小时级），
@@ -2473,8 +2567,13 @@ def _start_timer_holiday_loop(orch, wechat, interval_s: float = 20.0):
                 if st.get("sent") or st.get("failed"):
                     log.info("定时巡检：到期 %s · 发出 %s · 失败 %s", st.get("due"), st.get("sent"), st.get("failed"))
             if not paused:
+                # ⚠️ 每次都**现取**句柄：启动那一刻微信没开时这里是 None（晚接入后要能自己接上），
+                #    传死了 None 就永远做不了节日问候（老代码就是这么写的）。
+                wc = get_wc() if callable(get_wc) else get_wc
+                if wc is None:
+                    return
                 try:
-                    for g in holidays.due_greetings(cfg, wechat.groups()):
+                    for g in holidays.due_greetings(cfg, wc.groups()):
                         try:
                             r = orch.sender.send_text_batch(g["chat_key"], g["text"])
                         except Exception as e:

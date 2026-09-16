@@ -2502,7 +2502,19 @@ async function loadStatus(){  try{
         }else{ ob.textContent = '?'; ob.title = '这一版后台没给主人登记数'; }
       }
     }catch(e){}
-    $('sideStatus').textContent = (s.wechat_connected?'微信已连接':'微信未连接') + ' · 启动于 '+s.started_at;
+    try{
+      // 「微信连不上」要说清卡在哪一步（用户反馈「微信连接不上」）：侧栏放一行短原因，
+      // 悬停给全文 + 逐步诊断；每 10 秒会自动重试接入，接上后这里自己会变成"已连接"。
+      const _wa = s.wechat_attach || {};
+      const _ss = $('sideStatus');
+      _ss.textContent = (s.wechat_connected ? '微信已连接'
+                        : ('微信未连接' + (_wa.short ? (' · 原因：' + _wa.short) : ''))) + ' · 启动于 '+s.started_at;
+      _ss.title = s.wechat_connected ? '已接上微信客户端'
+        : ((_wa.reason || '还没拿到失败原因（等一次接入尝试，或看日志）')
+           + '\n自动重试：已试 ' + (_wa.tries||0) + ' 次（每 10 秒一次，接上就自动开始工作）'
+           + ((_wa.steps||[]).length ? ('\n\n逐步诊断：\n' + _wa.steps.map(function(x){ return (x.ok?'[通过] ':'[卡住] ') + x.name + '：' + x.detail; }).join('\n')) : ''));
+    }catch(e){}
+    $('sideStatus').dataset.wechat = (s.wechat_connected?'1':'0');
     try{
       const wv = s.wechat_version || {};
       const el = $('wxver');

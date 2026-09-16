@@ -5881,6 +5881,150 @@ def wechat_version_info():
         out["detail"] = "检测到微信版本 %s（低于 4.0），本项目只支持微信 4.x，请升级微信" % v
     return out
 
+# ---- 「微信连不上」的逐步诊断（控制台 + 反馈诊断包共用）----
+
+def _db_dir_hint(db) -> str:
+    """库自己报的目录（账号目录优先）—— 给用户看"我在读哪个目录"。"""
+    for k in ("account_dir", "db_dir"):
+        try:
+            v = str(getattr(db, k, "") or "")
+        except Exception:
+            v = ""
+        if v:
+            return v
+    return ""
+
+
+def _db_key_state(db) -> tuple:
+    """返回 (能过页1校验的缓存密钥把数, 有主密钥吗)。
+
+    口径与 `WeChatAdapter._usable_key_count` 一致：`master_key=None` 是常态（走缓存密钥那条路），
+    真正的判据是"有没有密钥能过 SQLCipher4 页1 校验"。
+    """
+    n = 0
+    try:
+        keys = getattr(db, "_keys", None) or {}
+    except Exception:
+        keys = {}
+    for rel in list(keys):
+        try:
+            if db._key_works(rel):
+                n += 1
+        except Exception:
+            continue
+    try:
+        mk = bool(getattr(db, "master_key", None))
+    except Exception:
+        mk = False
+    return n, mk
+
+
+def attach_diagnosis(adapter=None, err="", db=None) -> dict:
+    """「微信连不上」到底卡在哪一步 —— **只读、不动鼠标、不弹窗、不写盘**。
+
+    为什么要有它（2026-09-16 用户反馈「微信连接不上」）：产品以前对"连不上"只有**一个是/否**
+    （`wechat is not None`）⇒ 用户看到"微信未连接"却不知道原因，我们也只能靠猜、来回问。
+    这里把接入拆成逐步的只读检查，每一步都给**证据**与**下一步动作**。
+
+    步骤（能过就往下走，第一个不过的就是卡点）：
+      process 微信进程在跑吗 → install 装了没（仅在进程不在时）→ db_open 消息库打得开吗
+      → key 数据库密钥可用吗 → self 认得出你自己的账号吗
+
+    参数：`adapter` 能传就传（复用它的 `_db`，不重复开库）；没有就自己开一次（只读）——
+    所以**只该在"接入失败/用户主动查"时调用，别放进每几秒一次的状态轮询里**。
+    返回：{ok, step, reason, action, steps[{key,name,ok,detail}], err}
+    """
+    steps = []
+    try:
+        vi = wechat_version_info() or {}
+    except Exception as e:
+        vi = {"found": False, "version": "", "path": "", "detail": "版本检测异常：%s" % e}
+    found = bool(vi.get("found"))
+    ver = str(vi.get("version") or "")
+    steps.append({"key": "process", "name": "微信进程", "ok": found,
+                  "detail": ("微信在运行：%s%s" % (vi.get("path") or "（路径读不到）",
+                                                  "（版本 %s）" % ver if ver else "")) if found
+                            else "没找到 Weixin.exe / WeChat.exe 进程 ⇒ 微信没开（或没登录）"})
+    if not found:
+        try:
+            _ins = vi.get("install") or wechat_install_state(False, "")
+        except Exception as e:
+            _ins = {"installed": False, "detail": "安装状态检测异常：%s" % e}
+        steps.append({"key": "install", "name": "微信装没装", "ok": bool(_ins.get("installed")),
+                      "detail": str(_ins.get("detail") or "本机没检测到微信")})
+    _db = db if db is not None else getattr(adapter, "_db", None)
+    if _db is None:
+        try:
+            from wechatauto import WeChatDB
+            _d = ""
+            try:
+                _d = str((get_config().get("wechat") or {}).get("db_dir") or "")
+            except Exception:
+                _d = ""
+            _db = WeChatDB(db_dir=_d) if _d else WeChatDB()
+            steps.append({"key": "db_open", "name": "打开消息库", "ok": True,
+                          "detail": "消息库已打开：" + (_db_dir_hint(_db) or "（库没报目录）")})
+        except Exception as e:
+            steps.append({"key": "db_open", "name": "打开消息库", "ok": False,
+                          "detail": "打不开消息库：%s【%s】" % (str(e)[:140], type(e).__name__)})
+            _db = None
+    else:
+        steps.append({"key": "db_open", "name": "打开消息库", "ok": True,
+                      "detail": "消息库已打开：" + (_db_dir_hint(_db) or "（库没报目录）")})
+    if _db is not None:
+        n, mk = _db_key_state(_db)
+        okk = bool(mk) or n > 0
+        steps.append({"key": "key", "name": "数据库密钥", "ok": okk,
+                      "detail": ("主密钥已取到" if mk else
+                                 "主密钥为空，但有 %d 把缓存密钥能过页1校验 ⇒ 可用" % n) if okk
+                                else "拿不到能用的数据库密钥（读不到微信进程里的密钥）⇒ 消息库读不出来"})
+    if _db is not None:
+        uid, nick = "", ""
+        try:
+            info = _db.get_self_info() or {}
+            uid = str(info.get("username") or "")
+            nick = str(info.get("nick_name") or "")
+        except Exception as e:
+            uid, nick = "", ""
+            log.debug("诊断读 self 信息失败：%s", e)
+        steps.append({"key": "self", "name": "认出你自己的账号", "ok": bool(uid),
+                      "detail": ("认出来了：%s%s" % (nick or uid, "（%s）" % uid if nick else "")) if uid
+                                else "读不出你自己的账号（库能读但 self 信息为空）⇒ 不影响读群消息，"
+                                     "但「这条是不是我发的」会退化"})
+    bad = [s for s in steps if not s["ok"]]
+    step_key = bad[0]["key"] if bad else ""
+    action = {"process": "start_wechat", "install": "install",
+              "db_open": "retry", "key": "relogin", "self": "retry"}.get(step_key, "none")
+    # 「微信没在跑」里还要分两种：装了的＝叫他开微信；没装的＝叫他去装（别让他白找一圈）
+    if step_key == "process" and any(s["key"] == "install" and not s["ok"] for s in steps):
+        action = "install"
+    reason = bad[0]["detail"] if bad else "四步都过：微信在跑、消息库打得开、密钥可用、也认出了你自己的账号"
+    if err:
+        reason = "%s（接入时抛的错：%s）" % (reason, str(err)[:140])
+    return {"ok": not bad, "step": step_key, "reason": reason, "action": action,
+            "steps": steps, "err": str(err or "")}
+
+
+# 卡点的**短标签**：控制台侧栏一行放得下（长句放 title 提示里）。
+ATTACH_STEP_LABEL = {
+    "process": "微信没在运行",
+    "install": "没检测到微信",
+    "db_open": "打不开消息库",
+    "key": "拿不到数据库密钥",
+    "self": "读不出你的账号",
+    "unknown": "原因未知",
+}
+
+
+def attach_short_reason(diag) -> str:
+    """把诊断压成一行短原因（给控制台侧栏用）；拿不到/认不出的卡点一律说「原因未知」。"""
+    try:
+        _k = str((diag or {}).get("step") or "")
+    except Exception:
+        _k = ""
+    return ATTACH_STEP_LABEL.get(_k) or "原因未知"
+
+
 # ---- 关键依赖最低版本校验（自检/检查脚本共用）----
 
 MIN_VER = {
