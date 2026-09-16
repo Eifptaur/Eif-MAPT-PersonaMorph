@@ -318,16 +318,26 @@ def _mono(img, span: float = 8.0) -> bool:
 
 
 def is_blank(fp) -> bool:
-    """指纹是不是"空白图"（最小化 / 拿不到画面时的全白帧归一化结果）。
+    """指纹是不是"空白图"、或者**里面其实没有字**的帧。
 
     实测（2026-09-15 跨机同一台机器两次跑的对照）：正常画面 = `[0, 14, 83, 185, 97, 153]`
-    （极差 191）；微信最小化时 = 64 维全 `255`（极差 0）⇒ 判据＝极差 < 8。
+    （极差 191）；微信最小化时 = 64 维全 `255`（极差 0）⇒ 判据一＝极差 < 8。
+
+    ⛔ 2026-09-17 **补判据二：一个暗列都没有 ＝ 那条带子里没有字**。起因＝用户报「机器人有时不回话」，
+    真因是**自动学习把一帧"标题带里一个字都没有"的画面学了进去**（实测那版指纹
+    `min=139 / max=255`，极差 116 ⇒ 老的"极差<8"判据照样放行），此后该尺寸档**永远判"不匹配"**
+    ⇒ **打好的回复被整条丢掉**。实测好帧 `min=0`（标题文字必然产生全暗列）。
+    ⇒ 判据二：**最暗列 > 110 就当作没字**（0 与 139 之间取的安全分界）。
     """
     try:
         v = [float(x) for x in fp]
     except Exception:
         return True
-    return (not v) or (max(v) - min(v) < 8)
+    if not v:
+        return True
+    if (max(v) - min(v)) < 8:          # 全平：最小化 / 抓不到画面
+        return True
+    return min(v) > 110                 # 有起伏，但整条带子里一个暗列都没有 ⇒ 没有字
 
 
 def _region_occluded(render, main_pid: int, samples: int = 3) -> bool:
@@ -485,6 +495,16 @@ def check(chat_id: str, gui=None, path: str = None,
     if not ref:
         return {"status": "no_ref", "sim": 0.0, "size": key,
                 "note": "该尺寸（%s）没有参照；本次不拦，成功发送后会自动补一条" % key}
+    if is_blank(ref):
+        # ⛔ 2026-09-17：**参照自身是学歪的**（那一帧的标题带里没有字）⇒ 按 `no_ref` 放行。
+        #   否则这个尺寸档会**永远**判 mismatch，把打好的每一条回复都丢掉
+        #   （用户报「机器人有时不回话」的真因；日志长相＝"投递切会话后发送失败：会话头不匹配…
+        #   相似度 0.530 < 0.90"）。这条只是"不拦"，不是"放行错会话"——发送前另有
+        #   切会话 / OCR 名字确认两道独立证据（见 `wechat.send_text`）。
+        log.warning("该尺寸（%s）的会话头参照本身学歪了（没有字）⇒ 按 no_ref 放行，不再拦发：%s",
+                    key, chat_id)
+        return {"status": "no_ref", "sim": 0.0, "size": key,
+                "note": "参照学歪了（那条带子里没有字）⇒ 本次不拦，成功发送后会重学"}
     sim = similarity(ref, fp)
     if sim >= threshold:
         return {"status": "ok", "sim": sim, "size": key, "note": "相似度 %.3f" % sim}
