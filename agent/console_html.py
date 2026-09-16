@@ -3305,6 +3305,16 @@ function openBillDlg(bills){
   sum();
 }
 
+/* 「删除选中」的点亮开关（⛔ 2026-09-17 修，用户原话：「我要勾选删除记录的时候，删除选中勾选的日志，
+   它是没有亮起来，又按不了，也删不掉」）。真因：这个按钮出生就带 `disabled`，而**全文件没有任何一行
+   设置过 `sessSelDel.disabled`** —— 勾选谁也不亮、永远按不了。修法：勾选框变化时重算一次。 */
+function syncSessSel(){
+  const b=$('sessSelDel'); if(!b) return;
+  const n=document.querySelectorAll('#sessList .sessSel:checked').length;
+  b.disabled = !n;
+  b.textContent = n ? ('删除选中（已勾 '+n+' 个日期）') : '删除选中（勾选日期删除）';
+}
+
 /* ── 运行明细：思考过程 / token / 工具调用 ── */
 async function loadSessions(){
   if($('sessSelDel')) $('sessSelDel').onclick = async ()=>{
@@ -3317,6 +3327,13 @@ async function loadSessions(){
     }catch(e){ toast('删除失败：'+e.message); }
   };
   const el = $('sessList');
+  // 勾选框变化 → 重算「删除选中」的可用性（事件委托：列表每次重绘都不用重新绑）
+  if(el && !el.__sessSelWired){
+    el.__sessSelWired = true;
+    el.addEventListener('change', (ev)=>{
+      if(ev.target && ev.target.classList && ev.target.classList.contains('sessSel')) syncSessSel();
+    });
+  }
   try{
     const r = await getJSON('/api/sessions?limit=30');
     const list = (r && r.sessions) || [];
@@ -3325,6 +3342,7 @@ async function loadSessions(){
       return;
     }
     el.innerHTML='';
+    syncSessSel();          // 重绘即复位（删完/刷新后不该还亮着）
     const showDetail = $('sessExpand') ? $('sessExpand').checked : false;
     for(const e of list){
       const card=document.createElement('div');
@@ -3504,8 +3522,8 @@ async function undoLast(){
   const ub = $('undoBtn');
   if(ub) ub.addEventListener('click', undoLast);
 /* ── 存档按条屏蔽 / 清除（第 10 条）── */
-async function arcLoadChats(){
-  const sel = $('arcChat'); if(!sel) return;
+async function arcLoadChats(silent){
+  const sel = $('arcChat'); if(!sel) return false;
   try{
     const r = await getJSON('/api/archive');
     const cur = sel.value;
@@ -3519,7 +3537,20 @@ async function arcLoadChats(){
     if(cur) sel.value = cur;
     const info = $('arcInfo'), s = r.snapshot || {};
     if(info) info.textContent = '屏蔽会话 ' + ((s.chats||[]).length) + ' 个 ｜ 已屏蔽条目 ' + (s.blocked_entries || 0) + ' 条';
-  }catch(e){ toast('读会话列表失败：' + e.message); }
+  }catch(e){ if(!silent) toast('读会话列表失败：' + e.message); return false; }
+}
+// ⛔ 2026-09-17 修（用户报「每次我一打开，右下角都是读取会话失败 error，但是又能连上」）：
+//   真因＝启动竞态：控制台窗口比后端就绪早（实测开窗 06:21:26、微信 GUI 06:21:29 才绑定），
+//   页面加载时这一枪可能落空。⇒ **首次加载静默重试**（1.2s × 4），仍然失败才给一句人话，
+//   不再用刺眼的 "error" 字样；手动点「刷新」时照旧会提示（那时用户就是要一个明确结果）。
+async function arcLoadChatsSoft(tries){
+  const n = tries || 4;
+  for(let i=0;i<n;i++){
+    if(await arcLoadChats(true)) return true;
+    await new Promise(r=>setTimeout(r,1200));
+  }
+  toast('会话列表暂时读不到（正在连接微信），稍后点「刷新」再试');
+  return false;
 }
 async function arcLoadList(){
   const sel = $('arcChat'), box = $('arcList');
@@ -3575,8 +3606,8 @@ async function arcLoadList(){
 {
   const b1 = $('arcLoad'), b2 = $('arcReload');
   if(b1) b1.addEventListener('click', arcLoadList);
-  if(b2) b2.addEventListener('click', ()=>{ arcLoadChats(); toast('会话列表已刷新'); });
-  if($('arcChat')) arcLoadChats();
+  if(b2) b2.addEventListener('click', ()=>{ arcLoadChats().then(ok=>{ if(ok) toast('会话列表已刷新'); }); });
+  if($('arcChat')) arcLoadChatsSoft();
 }
 
 /* ── 上云预留接口（2026-09-14）：只做"填网址 + 测连通"，上传默认关 ── */
@@ -5608,6 +5639,8 @@ async function loadMemory(chat_key){
     memMembers = r.members||[];
     const tb=$('memTable').querySelector('tbody'); tb.innerHTML='';
     $('memEmpty').style.display = memMembers.length?'none':'block';
+    // ⛔ 2026-09-17：重绘即复位 —— 否则上一轮勾选留下的"亮着"会被带进这一轮（点了却什么都没删）
+    { const _mb=$('memClearSel'); if(_mb){ _mb.disabled = true; _mb.textContent='清除勾选的印象'; } }
     for(const m of memMembers){
       const tr=document.createElement('tr');
       const name = m.name || m.userId || '某人';
