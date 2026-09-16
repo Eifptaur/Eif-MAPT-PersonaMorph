@@ -2,9 +2,9 @@
   "schema": "persona-morph/1",
   "base": {
     "version": "2026.9.16.15",
-    "sha256": "b5da300e84f4c08b9d60c5309f3a80776b4b5ffc4745fa050d756059f74cce9d",
+    "sha256": "e085f52742fd81c14fa8ae96296bca972c55ebb474c7b415ca241e4585a9492d",
     "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.16/persona-morph-v2.1.16.zip",
-    "size": 8116654,
+    "size": 8119231,
     "files": 243
   },
   "dlc": [
@@ -36,11 +36,12 @@
     "notes": [
       "「微信未连接 · 打不开消息库」现在会说清是不是微信版本太旧（3.x 的数据结构不同就是真因）",
       "「微信」面板里直接列出五行逐步诊断，报障时把这段截图就够定位",
-      "读不到群列表时会把原因写出来（以前只显示「检测到 0 个群」）"
+      "读不到群列表时会把原因写出来（以前只显示「检测到 0 个群」）",
+      "@ 识别更严（同版本换包）：别人名字以机器人昵称开头时不再误唤醒模型，省用量"
     ],
     "forceBase": false,
     "minBase": "2026.9.16.15"
   },
-  "builtAt": "2026-09-16T13:38:59Z",
-  "updatedAt": 1789565939797
+  "builtAt": "2026-09-16T13:50:01Z",
+  "updatedAt": 1789566601398
 }
