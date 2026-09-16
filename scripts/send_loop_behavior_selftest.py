@@ -151,7 +151,9 @@ class _Stub(object):
 def run(script, alive=(True, "读得到（假库）")):
     """跑一遍真函数，返回 (result, why, scn)。"""
     scn = _Scenario(script, alive=alive)
-    scn.focus_pt = (int(101 + 1139 * 0.45), int(90 + 890 * 0.945))     # (613, 931)
+    # ⛔ 2026-09-17：聚焦落点从 `0.945·h`（那是**输入框下沿再往下那排工具图标**，含 ✂ 截图）抬到
+    #   `0.87·h`（输入框正文区）—— 用户报「机器人发消息那一刻微信自己弹了截图」的真因就是它。
+    scn.focus_pt = (int(101 + 1139 * 0.45), int(90 + 890 * 0.87))      # (613, 864)
     stub = _Stub(scn)
     backend = _FakeBackend(scn)
 
@@ -184,8 +186,11 @@ _r1, _w1, _c1 = run(_s1)
 _front = [c[0] for c in _c1.calls[:3]]
 ok("顺序＝click(聚焦) → send_text(打字) → keys(回车)",
    _front == ["click", "send_text", "keys"], str(_front))
-ok("聚焦点落在渲染区 (0.45·w, 0.945·h) 那一行（与发送按钮同一行、靠左）",
+ok("聚焦点落在渲染区 (0.45·w, 0.87·h) —— 输入框正文区",
    _c1.calls[0][1] == _c1.focus_pt, "%s vs %s" % (_c1.calls[0][1], _c1.focus_pt))
+ok("聚焦落点**必须在工具栏带（0.92·h）之上**（那排图标里有 ✂ 截图，2026-09-17 的事故点）",
+   _c1.calls[0][1][1] < int(90 + 890 * 0.92),
+   "y=%d 上限=%d" % (_c1.calls[0][1][1], int(90 + 890 * 0.92)))
 ok("打字用的就是本次文本", _c1.calls[1][1] == _c1.text, str(_c1.calls[1][1])[:24])
 
 print("── B. 第一枪（回车）就成功：判成功、且**不许**再多打枪 ──")
@@ -196,17 +201,18 @@ ok("成功说明带 DB 回读证据（local_id / type）", ("local_id" in _w1) a
 ok("成功后补学了该尺寸的会话头参照", _c1.learned >= 1, "learned=%d" % _c1.learned)
 ok("每枪之后都还了一次前台", _c1.fg_restores == 1, "fg_restores=%d" % _c1.fg_restores)
 
-print("── C. 前两枪不生效、第三枪（回车）成功：交替用回车/按钮，第 3 枪命中 ──")
-_s2 = [("keys", True, False), ("sendbtn", True, False), ("keys", True, True)]
+print("── C. 前两枪不生效、第三枪（回车）成功：三枪都走投递回车（兜底不再点按钮） ──")
+# ⛔ 2026-09-17：兜底那枪**不再点「发送」按钮**（那一排里有 ✂ 截图，用户报过"微信自己弹截图"）
+_s2 = [("keys", True, False), ("keys", True, False), ("keys", True, True)]
 _r2, _w2, _c2 = run(_s2)
 ok("判 V_OK", _r2 == W.V_OK, "result=%r" % (str(_r2),))
 ok("命中在第 3 枪", "第 3 枪" in _w2, _w2)
-ok("枪序＝回车 → 点发送按钮 → 回车（奇数回车优先、偶数按钮兜底）",
-   _c2.kinds == ["keys", "sendbtn", "keys"], str(_c2.kinds))
+ok("枪序＝三枪都是投递回车（**兜底也绝不点发送按钮**）",
+   _c2.kinds == ["keys", "keys", "keys"], str(_c2.kinds))
 ok("每枪之后都还了一次前台（3 枪 ⇒ 3 次）", _c2.fg_restores == 3, "fg_restores=%d" % _c2.fg_restores)
 
 print("── D. 三枪都打出去了、但 DB 一直没有新行 ⇒ 判「未生效」并点名文字可能还在输入框里 ──")
-_s3 = [("keys", True, False), ("sendbtn", True, False), ("keys", True, False)]
+_s3 = [("keys", True, False), ("keys", True, False), ("keys", True, False)]
 _r3, _w3, _c3 = run(_s3)
 ok("**端点都返回成功也不算成功**（唯一判据是 DB 回读）", str(_r3) == "not_sent", "result=%r" % (str(_r3),))
 ok("文案点名「文字可能还留在输入框里」并让人去看那个会话",
