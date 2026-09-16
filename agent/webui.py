@@ -1681,7 +1681,13 @@ class WebUI:
                 elif path == "/api/code-check":
                     # 代码检测（POST；纯代码层检查，不接管鼠标）。改为后台线程跑，前端轮询进度。
                     try:
-                        import threading
+                        # ⛔ 2026-09-16 删掉这里的 `import threading`（用户报「我点了重启，咋没动静啊」）：
+                        #    Python 的规则是**函数体内只要有 import 该名字，整个函数里它就是局部变量**
+                        #    ⇒ 本函数早得多的分支（`/api/restart`，第 1420 行那句 `threading.Timer`）
+                        #    会在赋值前引用它，抛 `UnboundLocalError: local variable 'threading'
+                        #    referenced before assignment` ⇒ **「重启」按钮点了没反应**（HTTP 还回
+                        #    200「正在后台重启机器人…」，所以前端看不出错）。模块顶部第 12 行本来就有
+                        #    `import threading`，这里不需要再导一次。
                         from agent.code_check import run as _code_run
                         def _bg():
                             try:
