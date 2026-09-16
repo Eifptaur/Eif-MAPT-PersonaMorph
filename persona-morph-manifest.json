@@ -1,10 +1,10 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.16.12",
-    "sha256": "08020311fde50c2dc4dcdae4dcaad2d14839db3a94cb1408f2f31dcbe205507f",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.13/persona-morph-v2.1.13.zip",
-    "size": 8092542,
+    "version": "2026.9.16.13",
+    "sha256": "12b059f7922a090f0e9c818d20a40d40bdcc7c4f3bb93309ec3a57fe7d0b537d",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.14/persona-morph-v2.1.14.zip",
+    "size": 8096124,
     "files": 243
   },
   "dlc": [
@@ -32,14 +32,14 @@
     }
   ],
   "announce": {
-    "version": "2026.9.16.12",
+    "version": "2026.9.16.13",
     "notes": [
-      "修「点重启没动静」：控制台「重启」按钮真的会重启了（以前一按就静默抛错，界面却还回你一句「正在后台重启」）",
-      "按钮加了「真跑一次」的判据（真起控制台、真按一次，断言重启动作真的被触发）"
+      "「限位」（固定微信窗口位置）改成默认开：后台跑着的人本来也不看窗口，固定下来坐标更稳、少点错；老配置也会被一次性补上（自己关掉就不再动你）",
+      "需要时把窗口借到固定尺寸、空闲自动还回你原来的位置和大小；你在借用期间动过窗口就以你为准、不还"
     ],
     "forceBase": false,
-    "minBase": "2026.9.16.12"
+    "minBase": "2026.9.16.13"
   },
-  "builtAt": "2026-09-16T12:36:34Z",
-  "updatedAt": 1789562194623
+  "builtAt": "2026-09-16T12:58:05Z",
+  "updatedAt": 1789563485391
 }
