@@ -913,6 +913,77 @@ namespace WxLauncher
             public IntPtr lppos;
         }
 
+        // ── 控制台窗口几何持久化（⛔ 2026-09-17 修：用户「我打开它，又在调我窗口大小」）──
+        //    真因：`OnLoad → ApplyGeometry()` 每次都按"工作区 + DPI"**现算尺寸**并 `CenterScreen`，
+        //    没有任何持久化 ⇒ 用户调好的大小/位置，一「停止」一「打开」就被覆盖回默认。
+        //    修法：关窗时把「普通态的位置与大小 + 是否最大化」落盘，下次开窗优先恢复；
+        //    只有"没有存档 / 解析失败 / 那块矩形已不在任何屏幕工作区里（换显示器、改分辨率）"
+        //    才回落到原来的现算 + 居中。**探针模式（ProbeOnly）不读存档** —— 带 `--shot`／几何
+        //    探针的判据要的是"按工作区算出来的那个尺寸"，读了存档就不再确定。
+        static string GeoFile()
+        {
+            try { return Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "data", "console_window.txt"); }
+            catch { return null; }
+        }
+
+        /// 读存档；不可用（没有/坏了/已不在屏幕上）一律返回 false，由调用方回落现算值
+        static bool LoadGeo(out Rectangle rect, out bool maxed)
+        {
+            rect = Rectangle.Empty; maxed = false;
+            try
+            {
+                string p = GeoFile();
+                if (p == null || !File.Exists(p)) return false;
+                int x = 0, y = 0, w = 0, h = 0, mx = 0;
+                foreach (string ln in File.ReadAllLines(p))
+                {
+                    int i = ln.IndexOf('=');
+                    if (i <= 0) continue;
+                    string kk = ln.Substring(0, i).Trim();
+                    int vv;
+                    if (!int.TryParse(ln.Substring(i + 1).Trim(), out vv)) continue;
+                    if (kk == "x") x = vv; else if (kk == "y") y = vv;
+                    else if (kk == "w") w = vv; else if (kk == "h") h = vv;
+                    else if (kk == "max") mx = vv;
+                }
+                if (w < 200 || h < 150) return false;
+                Rectangle r = new Rectangle(x, y, w, h);
+                bool onScreen = false;
+                foreach (Screen s in Screen.AllScreens)
+                {
+                    Rectangle it = Rectangle.Intersect(r, s.WorkingArea);
+                    if (it.Width >= 200 && it.Height >= 150) { onScreen = true; break; }
+                }
+                if (!onScreen) return false;
+                rect = r; maxed = (mx != 0);
+                return true;
+            }
+            catch { return false; }
+        }
+
+        void SaveGeo()
+        {
+            try
+            {
+                string p = GeoFile();
+                if (p == null) return;
+                Directory.CreateDirectory(Path.GetDirectoryName(p));
+                // 最大化时记的是**还原后的**位置与大小，这样"取消最大化"回到用户喜欢的那一版
+                Rectangle b = (WindowState == FormWindowState.Normal) ? Bounds : RestoreBounds;
+                if (b.Width < 200 || b.Height < 150) return;
+                File.WriteAllText(p, string.Format("x={0}\ny={1}\nw={2}\nh={3}\nmax={4}\n",
+                    b.X, b.Y, b.Width, b.Height,
+                    WindowState == FormWindowState.Maximized ? 1 : 0));
+            }
+            catch { }
+        }
+
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            SaveGeo();
+            base.OnFormClosing(e);
+        }
+
         protected override void OnLoad(EventArgs e)
         {
             base.OnLoad(e);
@@ -950,6 +1021,17 @@ namespace WxLauncher
                 try { Application.AddMessageFilter(new EscFilter(this)); } catch { }   // ESC 退出全屏
                 ClientSize = new Size(w, h);
                 MinimumSize = new Size(mw, mh);
+                // 有存过的几何就优先用（探针模式跳过，保证几何判据的确定性）
+                if (!ProbeOnly)
+                {
+                    Rectangle g; bool maxed;
+                    if (LoadGeo(out g, out maxed))
+                    {
+                        StartPosition = FormStartPosition.Manual;
+                        Bounds = g;
+                        if (maxed) WindowState = FormWindowState.Maximized;
+                    }
+                }
             }
             catch { }
         }
