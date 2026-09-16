@@ -66,7 +66,7 @@ HTML = r"""<!DOCTYPE html>
    原先只给侧栏做了自绘，页面主体那条一直是浏览器默认样式（白底灰滑块）。
    这里统一成"细、透明底、蓝调半透明滑块"；侧栏原有的 6px 规则特异性更高，仍然生效。 */
 *{scrollbar-width:thin;scrollbar-color:rgba(148,196,255,.28) transparent}
-*::-webkit-scrollbar{width:8px;height:8px}
+*::-webkit-scrollbar{width:6px;height:6px}
 *::-webkit-scrollbar-track{background:transparent}
 *::-webkit-scrollbar-thumb{background:rgba(148,196,255,.22);border-radius:4px}
 *::-webkit-scrollbar-thumb:hover{background:rgba(148,196,255,.38)}

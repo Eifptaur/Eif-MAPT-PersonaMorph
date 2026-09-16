@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import locale
 import logging
 import subprocess
 import threading
@@ -22,6 +23,25 @@ log = logging.getLogger("persona-morph")
 TAIL_LINES = 40
 _jobs: dict = {}
 _lock = threading.Lock()
+
+
+def _decode(b) -> str:
+    """把子进程输出字节解成字符串（**不许硬编码 UTF-8**）。
+
+    ⛔ 2026-09-16 修：`start()` 起的是 `shell=True`（＝`cmd.exe`），它按**系统 ANSI 代码页**
+    （中文机器＝GBK/cp936）输出 ⇒ 原来那句 `encoding="utf-8"` 会让所有中文变成乱码
+    （`decide_link_selftest` 里"保留尾部输出"那条就是这么红的）。
+    ⇒ 先试 UTF-8，失败退回系统代码页，最后 replace 兜底（绝不抛）。
+    """
+    if isinstance(b, str):
+        return b
+    data = b or b""
+    for enc in ("utf-8", locale.getpreferredencoding(False) or "gbk"):
+        try:
+            return data.decode(enc)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return data.decode("utf-8", "replace")
 
 
 def _empty() -> dict:
@@ -59,9 +79,9 @@ def start(name: str, cmd: str, timeout: int = 900) -> dict:
     def _run():
         rc, out, err = None, "", ""
         try:
-            r = subprocess.run(cmd, shell=True, timeout=int(timeout), capture_output=True,
-                               text=True, encoding="utf-8", errors="replace")
-            rc, out, err = r.returncode, (r.stdout or ""), (r.stderr or "")
+            # 按字节读、再自适应解码（见 `_decode` 注释：`shell=True` 走 cmd.exe，输出是 ANSI）
+            r = subprocess.run(cmd, shell=True, timeout=int(timeout), capture_output=True)
+            rc, out, err = r.returncode, _decode(r.stdout), _decode(r.stderr)
         except Exception as e:                                     # noqa: BLE001
             rc, err = -1, "%s: %s" % (type(e).__name__, e)
         with _lock:
