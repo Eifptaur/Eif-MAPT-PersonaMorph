@@ -172,6 +172,23 @@ _ex = open(os.path.join(ROOT, "config.example.json"), encoding="utf-8").read()
 ok("config.example.json 同步了这个键（示例与默认必须同键）",
    '"restore_window_after_use"' in _ex)
 
+# ── [五之二] 2026-09-16 用户报「他都找不到微信，还得我切出来」挖出的真缺陷 ──────────
+#    `_limit_wechat_window` **从来不读 `ui.lock_window_pos`** —— 那开关的界面文案是
+#    「固定微信窗口位置」、注释写着「默认关：不动用户的窗口」，可代码**每次取 GUI 都把用户的
+#    微信钉到 1160×900 并下移到 y≥40**（他 config.json 里就是 `false`，窗口照样被改）。
+ok("_limit_wechat_window 会读 ui.lock_window_pos（开关名不副实＝缺陷）",
+   "lock_window_pos" in _seg)
+_lk = _seg.find("lock_window_pos")
+_mv = _seg.find("MoveWindow(")
+ok("开关检查出现在 MoveWindow 之前（默认必须一行都不碰用户的窗口）",
+   0 <= _lk < _mv, "lock@%d move@%d" % (_lk, _mv))
+ok("默认（键缺失/为 false）就走 return，不落到限位逻辑",
+   'get("lock_window_pos", False) is not True' in _seg)
+_ua = open(os.path.join(ROOT, "agent", "ui_adapt.py"), encoding="utf-8").read()
+ok("ui_adapt 里同一开关的默认值也是 False（两处默认不许打架）",
+   'get("lock_window_pos", False) is not False' in _ua
+   and 'get("lock_window_pos", True)' not in _ua)
+
 print("\n[六] 更强兜底：落盘 + 下次进程 recover（P16②）· 工具边界（P16①）")
 import json as _json          # noqa: E402
 import tempfile as _tf        # noqa: E402
