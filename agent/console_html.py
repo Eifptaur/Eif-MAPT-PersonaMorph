@@ -2307,7 +2307,7 @@ const WHALE_CURSOR = (function(){
       const b = new Image(); b.src = nodUrl + ver;
     }catch(e){}
   }
-  function apply(){ setStyle(url + ver); injectFrames(); if(!spinTimer) buildFrames(); }
+  function apply(){ setStyle(url + ver); injectFrames(); lastSpinIdx = -1; if(!spinTimer) buildFrames(); }
   function applyNod(){ setStyle(nodUrl + ver); }
   /* ── 中键特效：把**当前光标图**在 canvas 里预转成 12 帧（每帧 30°），按中键时逐帧播一遍 ──
      2026-09-17 用户点单：「给按鼠标中键出来的滚轮键加个特效，就是那只鱼 360° 旋转」。
@@ -2315,8 +2315,8 @@ const WHALE_CURSOR = (function(){
      · **绝不拼 `?v=Date.now()`** —— 上面 setStyle 的注释就是这条血泪（每次换 URL 浏览器要重下载，
        下载完之前 cursor 回退成系统箭头 ⇒ 每点一下闪一次白箭头），判据 console_chrome_selftest 钉着它；
      · 默认鲸鱼图与用户自定义图都适用：帧在 apply() 里按当前 url 重建（换图即重建）。 ── */
-  const SPIN_FRAMES = 12, SPIN_MS = 44;              // 12 × 44ms ≈ 530ms 转完一圈
-  let frames = [], spinTimer = null;
+  const SPIN_FRAMES = 24, SPIN_MS = 22;              // 24 × 22ms ≈ 530ms 转完一圈（帧多一倍 ⇒ 连续旋转更顺）
+  let frames = [], spinTimer = null, lastSpinIdx = -1;
   function buildFrames(){
     try{
       const img = new Image();
@@ -2349,6 +2349,18 @@ const WHALE_CURSOR = (function(){
     }, SPIN_MS);
     return true;
   }
+  /* 连续旋转（滚轮模式用）：按相位取帧，**只在帧号变化时才写 style**——省掉每帧重拼 ~10KB CSS 的开销。
+     用户口径（2026-09-17）：「为什么你是加个滚动的图标，而不是**我鼠标光标代表的那个鱼直接滚**」
+     ⇒ 滚的必须是**光标上这只鱼**，所以滚轮模式里驱动的是它，不是徽标里另外画一条。 */
+  function spinTo(deg){
+    if(!enabled || !frames.length) return;
+    const n = frames.length;
+    const idx = Math.floor((((deg % 360) + 360) % 360) / (360 / n)) % n;
+    if(idx === lastSpinIdx) return;
+    lastSpinIdx = idx;
+    setStyle(frames[idx]);
+  }
+  function restore(){ lastSpinIdx = -1; setStyle(url + ver); }
   // 点击时点头：mousedown 换成歪头帧，180ms 后换回；**按中键（滚轮键）则原地转一圈**
   document.addEventListener('mousedown', (ev)=>{
     if(!enabled) return;
@@ -2382,7 +2394,8 @@ const WHALE_CURSOR = (function(){
   }
   apply();
   setInterval(injectFrames, 2000);   // 挂件 iframe 动态出现后自动注入光标
-  return { set, setCustom, url: ()=>url, imgSrc: ()=>url + ver, spin, framesReady: ()=>frames.length > 0, enabled: ()=>enabled };
+  return { set, setCustom, url: ()=>url, imgSrc: ()=>url + ver, spin, spinTo, restore,
+           frameIdx: ()=>lastSpinIdx, framesReady: ()=>frames.length > 0, enabled: ()=>enabled };
 })();
 /* ── 自研「滚轮模式」（中键）：**均匀平滑往下滚** + 那只鱼转圈（2026-09-17 用户第二次澄清后重做）──
    用户原话：「**我要的是滚轮。滚轮顾名思义，就是我要用这个滚轮，让它以一个均匀平滑的速度往下滚动**，
@@ -2397,18 +2410,22 @@ const WHALE_CURSOR = (function(){
 const PM_WHEEL = (function(){
   const BASE = 3.4, GAIN = 0.26, MAXV = 44, DEAD = 10;   // 基础速度 px/帧（≈200px/s）· 增益 · 上限 · 死区
   const SPIN_K = 2.4, SPIN_CAP = 24;                     // 鱼的转速＝滚动速度 × K（度/帧），封顶防高速糊成一片
-  let on = false, ax = 0, ay = 0, my = 0, raf = 0, el = null, imgEl = null, target = null, phase = 0, lastSp = 0;
+  let on = false, ax = 0, ay = 0, my = 0, raf = 0, el = null, target = null, phase = 0, lastSp = 0;
   function injectCss(){
     if(document.getElementById('pmWheelCss')) return;
     const st = document.createElement('style'); st.id = 'pmWheelCss';
     st.textContent =
       '#pmWheel{position:fixed;width:58px;height:58px;margin:-29px 0 0 -29px;border-radius:50%;' +
       'border:1px solid rgba(148,196,255,.5);background:rgba(10,20,40,.34);z-index:2147483000;pointer-events:none}' +
-      '#pmWheel img{position:absolute;left:50%;top:50%;width:34px;height:34px;margin:-17px 0 0 -17px}' +
       '#pmWheel i{position:absolute;left:50%;width:0;height:0;margin-left:-5px;' +
       'border-left:5px solid transparent;border-right:5px solid transparent;opacity:.8}' +
       '#pmWheel i.u{top:5px;border-bottom:7px solid rgba(190,220,255,.9)}' +
-      '#pmWheel i.d{bottom:5px;border-top:7px solid rgba(190,220,255,.9)}';
+      '#pmWheel i.d{bottom:5px;border-top:7px solid rgba(190,220,255,.9)}' +
+      // 滚轮模式期间**暂停装饰性背景动画**：body.whale-anim 的水波/漂移是两层整屏动画，
+      // 滚动时每帧都要重绘整屏 ⇒ 用户实测「往下滚的时候有种稳定的卡卡感」。滚动这几秒让它们静止，
+      // 观感几乎无差（本来就在动），平滑度实打实。（不想要这一条就删掉这行。）
+      'html.pm-wheel-on body.whale-anim::before,html.pm-wheel-on body.whale-anim::after,' +
+      'html.pm-wheel-on body.custom-bg::before{animation-play-state:paused!important}';
     document.head.appendChild(st);
   }
   // 滚动目标：从落点往上找第一个"真的能滚"的祖先；找不到就当整页（文档）滚
@@ -2428,42 +2445,42 @@ const PM_WHEEL = (function(){
   function show(px, py){
     injectCss();
     el = document.createElement('div'); el.id = 'pmWheel';
-    el.innerHTML = '<img src="' + WHALE_CURSOR.imgSrc() + '" alt=""><i class="u"></i><i class="d"></i>';
+    // 徽标只标"锚点 + 上下方向"：**滚的是光标上那只鱼**，这里不再画第二条（用户 2026-09-17 点出来的）
+    el.innerHTML = '<i class="u"></i><i class="d"></i>';
     el.style.left = px + 'px'; el.style.top = py + 'px';
     document.body.appendChild(el);
-    imgEl = el.querySelector('img');
   }
-  function hide(){ if(el){ try{ el.remove(); }catch(e){} el = null; imgEl = null; } }
+  function hide(){ if(el){ try{ el.remove(); }catch(e){} el = null; } }
   function tick(){
     if(!on) return;
     let v = BASE;                                   // 基础：**一进入就往下匀速滚**
     const off = my - ay;
     if(off > DEAD) v = Math.min(MAXV, BASE + (off - DEAD) * GAIN);
     else if(off < -DEAD) v = Math.max(-MAXV, -BASE + (off + DEAD) * GAIN);
-    // 鱼的转速**跟着滚动速度走**（用户 2026-09-17 追加：「能不能让这个鱼随着滚动速度的加快，它的动画速度也加快」）。
+    // 鱼的转速**跟着滚动速度走**（用户 2026-09-17 追加：「能不能让这个鱼随着滚动速度的加快，它的动画速度也加快」），
+    // 而且滚的是**光标上那只鱼**（用户同日第二个追问）⇒ 驱动光标帧，不在徽标里另画一条。
     // 用 JS 累加相位、不用 CSS animation：改 animation-duration 会让相位跳一下，速度也不好跟。
     const sp = Math.min(SPIN_CAP, Math.abs(v) * SPIN_K);
     lastSp = sp;
     phase = (phase + sp) % 360;
-    if(imgEl){ try{ imgEl.style.transform = 'rotate(' + phase.toFixed(1) + 'deg)'; }catch(e){} }
+    WHALE_CURSOR.spinTo(phase);
     try{
-      if(target === document.scrollingElement || target === document.documentElement || target === document.body){
-        window.scrollTo({top: (window.scrollY || 0) + v, behavior: 'instant'});
-      } else {
-        target.scrollTop += v;
-      }
-    }catch(e){}
+      target.scrollTop += v;            // 直接赋值（整页时 target 就是 scrollingElement）——比每帧 new 一个
+    }catch(e){}                          // scrollTo({top,behavior:'instant'}) 的 options 对象轻
     raf = requestAnimationFrame(tick);
   }
   function stop(){
     on = false;
     if(raf){ cancelAnimationFrame(raf); raf = 0; }
     hide();
+    try{ document.documentElement.classList.remove('pm-wheel-on'); }catch(e){}
+    try{ WHALE_CURSOR.restore(); }catch(e){}          // 退出滚轮模式：光标回到默认帧（不然会停在某一帧上）
   }
   function start(px, py){
     stop();
     ax = px; ay = py; my = py; target = scrollerAt(px, py);
     on = true; show(px, py);
+    try{ document.documentElement.classList.add('pm-wheel-on'); }catch(e){}
     raf = requestAnimationFrame(tick);
   }
   document.addEventListener('mousemove', function(ev){ if(on) my = ev.clientY; }, true);
