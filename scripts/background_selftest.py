@@ -559,6 +559,38 @@ ck("F4 投递发送链进链就 stash 前台", "_stash_fg()" in _seg_sp)
 ck("F5 点完「发送」后立刻盯着还前台（把可见时长压到最短）",
    '_restore_fg_until("投递发送后"' in _seg_sp)
 
+# ── B25（2026-09-16 实测结论落地）：投递右键有效，但**必须投主窗** ────────────────
+#   八枪实测（两靶点各有真实右键阳性对照）：投渲染子窗 0 新窗/0.000 像素差；**投主窗弹出菜单窗**
+#   （Qt51514QWindowToolSaveBits，0.026~0.035）；WM_CONTEXTMENU 两种目标都 0（那条路排除）。
+#   再往下：投递左键点**菜单项**能命中（判据＝剪贴板被写成那条消息的正文）。
+#   ⇒ 这里守两件事：①右键自动换主窗、左键仍用调用方给的窗（行为级）；②三个可复用件都在。
+_IB_SRC = io.open(os.path.join(ROOT, "agent", "input_backend.py"), encoding="utf-8").read()
+ck("B25 右键不再直接拒绝（那条拒发的 return 已删，注释里提到旧写法不算）",
+   'return False, "投递右键尚未实测' not in _IB_SRC)
+ck("B25a 有菜单窗类名常量 + 差分找窗 + 投递点菜单项三个件",
+   "MENU_CLASS" in _IB_SRC and "def menu_new_windows(" in _IB_SRC and "def menu_click(" in _IB_SRC)
+ck("B25b 右键分支会换成主窗（注释写清「左键投子窗/右键投主窗」不可互推）",
+   "find_main_window()" in _IB_SRC and "右键投渲染子窗不弹菜单" in _IB_SRC)
+try:
+    import importlib as _il
+    _ib = _il.import_module("agent.input_backend")
+    _calls, _saved = [], (_ib._post, _ib.to_client, _ib.find_main_window)
+    _ib._post = lambda hwnd, msg, wp, lp=0: (_calls.append((int(hwnd), msg)) or True)
+    _ib.to_client = lambda hwnd, pt: (int(pt[0]), int(pt[1]))
+    _ib.find_main_window = lambda: 999
+    _b = _ib.MessageBackend(press_ms=0, activate=False)
+    _b._wake = lambda hwnd: _calls.append((int(hwnd), -1))
+    _calls.clear(); _b.click(111, (10, 20), right=True)
+    _right_main = bool(_calls) and all(h == 999 for h, _m in _calls)
+    _has_r = any(m == _ib.WM_RBUTTONDOWN for _h, m in _calls)
+    _calls.clear(); _b.click(111, (10, 20), right=False)
+    _left_same = bool(_calls) and all(h == 111 for h, _m in _calls)
+    _ib._post, _ib.to_client, _ib.find_main_window = _saved
+    ck("B25c 行为：右键全打到**主窗**且用的是 RBUTTON 消息", _right_main and _has_r, str(_calls))
+    ck("B25d 行为：左键仍打到调用方给的窗（没被顺手改坏）", _left_same, str(_calls))
+except Exception as _e:
+    ck("B25c 右键/左键目标窗行为能跑", False, str(_e)[:90])
+
 print("\n[结论] %d 通过 / %d 失败" % (len(OK), len(BAD)))
 if BAD:
     print("失败项：%s" % BAD)

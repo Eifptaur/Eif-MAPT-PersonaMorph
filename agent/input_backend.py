@@ -62,6 +62,10 @@ _user32.WindowFromPoint.restype = wintypes.HWND
 # ── 消息常量（投递序列用到的全部）────────────────────────────────────────
 WM_ACTIVATE, WM_NCACTIVATE, WM_MOUSEACTIVATE = 0x0006, 0x0086, 0x0021
 WM_MOUSEMOVE, WM_LBUTTONDOWN, WM_LBUTTONUP = 0x0200, 0x0201, 0x0202
+# 右键（2026-09-16 起可用：投递右键有效，但**必须投主窗**，见 `MessageBackend.click`）
+WM_RBUTTONDOWN, WM_RBUTTONUP = 0x0204, 0x0205
+# 微信的菜单/弹层顶层窗类名（投递右键弹出的菜单就是它；表情面板也用同一个类名 ⇒ 必须差分）
+MENU_CLASS = "Qt51514QWindowToolSaveBits"
 WM_CHAR, WM_KEYDOWN, WM_KEYUP = 0x0102, 0x0100, 0x0101
 WM_PASTE, WM_DROPFILES, WM_MOUSEWHEEL = 0x0302, 0x0233, 0x020A
 VK_CONTROL, VK_V, VK_RETURN = 0x11, 0x56, 0x0D
@@ -259,15 +263,28 @@ class MessageBackend(InputBackend):
         """
         if not hwnd:
             return False, "窗口句柄为空"
+        # ⚠️ 2026-09-16 实测（两靶点各有真实右键阳性对照，见 `_scratch/rclick_avatar.py`）：
+        #   **右键投渲染子窗不弹菜单（新顶层窗 0 / 像素差 0.000），投「主窗」才弹**
+        #   （弹出 `Qt51514QWindowToolSaveBits`，像素差 0.026~0.035）；
+        #   而**左键**点会话行恰恰相反、必须投渲染子窗。⇒ 右键一律**自动换成主窗**，
+        #   调用方不用关心这个差异（这里替换掉了原先"右键直接拒绝"的写法）。
+        tgt = int(hwnd)
         if right:
-            return False, "投递右键尚未实测（右键菜单类请先用真鼠标路径）"
-        cx, cy = to_client(hwnd, screen_pt)
-        self._wake(hwnd)
-        _post(int(hwnd), WM_MOUSEMOVE, 0, pack_lparam(cx, cy))
+            try:
+                m = find_main_window()
+                if m:
+                    tgt = int(m)
+            except Exception:
+                pass
+        cx, cy = to_client(tgt, screen_pt)
+        self._wake(tgt)
+        down, up = (WM_RBUTTONDOWN, WM_RBUTTONUP) if right else (WM_LBUTTONDOWN, WM_LBUTTONUP)
+        wdown, wup = (2, 0) if right else (1, 0)
+        _post(tgt, WM_MOUSEMOVE, 0, pack_lparam(cx, cy))
         time.sleep(0.05 if not hover_ms else max(0.05, int(hover_ms) / 1000.0))
-        _post(int(hwnd), WM_LBUTTONDOWN, 1, pack_lparam(cx, cy))
+        _post(tgt, down, wdown, pack_lparam(cx, cy))
         time.sleep((self.press_ms if press_ms is None else int(press_ms)) / 1000.0)
-        _post(int(hwnd), WM_LBUTTONUP, 0, pack_lparam(cx, cy))
+        _post(tgt, up, wup, pack_lparam(cx, cy))
         return True, ""
 
     def wheel(self, hwnd: int, screen_pt, delta: int = -120, times: int = 1, gap_ms: int = 60) -> tuple:
@@ -375,9 +392,89 @@ class MessageBackend(InputBackend):
             return False, "投递 WM_DROPFILES 失败：%s: %s" % (type(e).__name__, e)
 
 
+def menu_new_windows(pid: int, before_ids) -> list:
+    """返回微信进程里**新出现**的菜单/弹层顶层窗（类名 `Qt51514QWindowToolSaveBits`）。
+
+    投递右键弹出来的菜单是**独立顶层窗**（不在主窗客户区里）⇒ 要点它得先找到它自己。
+    调用方**先快照再差分**（这个类名也被表情面板用，不能只按类名认菜单）。
+    """
+    try:
+        import win32gui
+        import win32process
+    except Exception:
+        return []
+    before = set(int(x) for x in (before_ids or []))
+    out = []
+
+    def cb(h, _):
+        try:
+            if int(h) in before:
+                return
+            if win32process.GetWindowThreadProcessId(h)[1] != int(pid):
+                return
+            if not win32gui.IsWindowVisible(h):
+                return
+            if win32gui.GetClassName(h) != MENU_CLASS:
+                return
+            out.append(int(h))
+        except Exception:
+            pass
+
+    win32gui.EnumWindows(cb, None)
+    return out
+
+
+def menu_click(hwnd_menu: int, item_text: str, zoom: int = 2) -> tuple:
+    """在菜单窗里找含 `item_text` 的项，并**投递左键**点它。返回 `(ok, 说明)`。
+
+    ⚠️ 实测两处坑（2026-09-16）：
+      ① **OCR 会把「复制」读成「軀制」**（第一版按精确匹配 ⇒ 匹配不到、白跑一轮）⇒ 先用
+         `chat_ocr.matches` 模糊匹配，再兜底"取最上面那一项"（微信文本菜单首项就是复制），
+         并把用了哪条路径写进说明；
+      ② 菜单是**独立顶层窗**、客户区坐标＝窗口矩形坐标（实测投递 (102,68) 命中）⇒ 直接投。
+    """
+    if not hwnd_menu:
+        return False, "菜单窗为空"
+    try:
+        from PIL import ImageGrab
+        import win32gui
+        from . import chat_ocr as _co
+    except Exception as e:
+        return False, "缺依赖：%s" % e
+    try:
+        L, T, R, B = win32gui.GetWindowRect(int(hwnd_menu))
+        if R - L <= 0 or B - T <= 0:
+            return False, "菜单窗几何无效"
+        img = ImageGrab.grab(bbox=(int(L), int(T), int(R), int(B)), all_screens=True)
+    except Exception as e:
+        return False, "菜单截图失败：%s" % str(e)[:60]
+    items = []
+    try:
+        items = _co.recognize(img, timeout=4.0) or []
+    except Exception as e:
+        return False, "菜单 OCR 失败：%s" % str(e)[:60]
+    if not items:
+        return False, "菜单 OCR 读不到任何项（判据不可用，不点）"
+    hit, how = None, ""
+    for (t, x, y, w, h) in items:
+        try:
+            if _co.matches(str(t), str(item_text)) or str(item_text) in str(t):
+                hit, how = (int(x + w / 2), int(y + h / 2)), "模糊匹配「%s」" % t
+                break
+        except Exception:
+            continue
+    if hit is None:
+        _t, _x, _y, _w, _h = sorted(items, key=lambda it: it[2])[0]
+        hit, how = (int(_x + _w / 2), int(_y + _h / 2)), "兜底取最上面一项「%s」" % _t
+    mx, my = hit
+    for msg, wp in ((WM_MOUSEMOVE, 0), (WM_LBUTTONDOWN, 1), (WM_LBUTTONUP, 0)):
+        _post(int(hwnd_menu), msg, wp, pack_lparam(mx, my))
+        time.sleep(0.16)
+    return True, "已投递点击菜单项（%s，落点 %d,%d）" % (how, mx, my)
+
+
 class RealInputBackend(InputBackend):
     """L0：真鼠标路径（`ui_adapt.click`）。**用完必须还原光标**——`ui_adapt.heal_input()` 负责。"""
-
     name = LEVEL_REAL
     touches_cursor = True
     level = "L0"
