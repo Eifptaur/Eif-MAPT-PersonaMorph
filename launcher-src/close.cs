@@ -30,56 +30,43 @@ namespace WxCloser
                 return;
             }
 
+            // 只列不动手：排查"为什么关不掉"时用（`一键关闭.exe --probe "%TEMP%\closeprobe.txt"`）
+            if (args != null && args.Length > 1 && args[0] == "--probe")
+            {
+                try { Console.OutputEncoding = System.Text.Encoding.UTF8; } catch { }
+                string outp = Probe(root);
+                try { File.WriteAllText(args[1], outp, System.Text.Encoding.UTF8); } catch { }
+                Console.WriteLine(outp);
+                return;
+            }
+
             List<string> killed = KillAll(root);
             using (Form f = BuildForm(root, killed))
                 f.ShowDialog();
         }
 
-        /// 结束匹配 markers 的 python/powershell/wscript/一键启动/一键关闭 进程，并清掉启动锁 + 释放端口
+        /// 结束我们自己的全部进程，并清掉启动锁 + 释放端口。
+        /// **2026-09-16 重做（用户报「一键关闭又关不掉一键启动了」）**，三处关键改动：
+        /// ① **两轮收**：先收"会把别人拉起来的"（看门狗/入口/两个 exe），再收 python 本体 ——
+        ///    否则杀掉 `persona_morph.py` 后，`watchdog.py` 会在它自己被杀掉之前把机器人**重新拉起来**
+        ///    （用户看到的就是"关不掉"）；
+        /// ② **按安装目录收**（ExecutablePath 在本目录下的都算我们的）—— 只按命令行匹配会漏掉
+        ///    "命令行读不出来/不含脚本名"的进程；
+        /// ③ **失败如实报**（原来 `catch {}` 把 AccessDenied 吞了 ⇒ 界面上写着"没有残留进程"，
+        ///    可 `一键启动` 的窗口还在——假成功比报错更糟）。
         static List<string> KillAll(string root)
         {
             var killed = new List<string>();
-            // ⛔ 入口脚本改名记录：老入口 `wx_agent.py` 已不存在（只剩 .pyc 残骸），
-            //    现行主流程是 `scripts\persona_morph.py`、由 `scripts\watchdog.py` 拉起。
-            //    2026-09-14 另一台机器实测：markers 里还写着 wx_agent.py ⇒ 看门狗被杀、**子进程 persona_morph 活着**
-            //    ⇒ 控制台（3210）照旧在跑，再点一键启动就弹「为保持唯一…本次不再重复打开」。
-            string[] markers = { "onestart.py", "installer.ps1", "setup_python.ps1",
-                                 "persona_morph.py", "wx_agent.py", "watchdog.py", "stop_bot.py", "close_all.ps1",
-                                 "一键关闭", "一键启动" };
-            try
-            {
-                var searcher = new ManagementObjectSearcher(
-                    "SELECT ProcessId, Name, CommandLine FROM Win32_Process");
-                foreach (ManagementObject o in searcher.Get())
-                {
-                    try
-                    {
-                        uint pid = (uint)o["ProcessId"];
-                        if (pid == (uint)Process.GetCurrentProcess().Id) continue;
-                        string name = Convert.ToString(o["Name"]);
-                        string cl = Convert.ToString(o["CommandLine"]);
-                        if (string.IsNullOrEmpty(cl)) continue;
-                        if (name.IndexOf("python", StringComparison.OrdinalIgnoreCase) < 0 &&
-                            name.IndexOf("powershell", StringComparison.OrdinalIgnoreCase) < 0 &&
-                            name.IndexOf("wscript", StringComparison.OrdinalIgnoreCase) < 0 &&
-                            name.IndexOf("一键启动", StringComparison.OrdinalIgnoreCase) < 0 &&
-                            name.IndexOf("一键关闭", StringComparison.OrdinalIgnoreCase) < 0) continue;
-                        bool hit = false;
-                        foreach (string m in markers)
-                            if (cl.IndexOf(m, StringComparison.OrdinalIgnoreCase) >= 0) { hit = true; break; }
-                        if (!hit) continue;
-                        try
-                        {
-                            Process p = Process.GetProcessById((int)pid);
-                            p.Kill();
-                            killed.Add(name + " (pid " + pid + ")");
-                        }
-                        catch { }
-                    }
-                    catch { }
-                }
-            }
-            catch { }
+            var notes = new List<string>();
+            string rootLower = root.TrimEnd('\\').ToLowerInvariant();
+            // 第一轮：会把别人拉起来的那些（顺序有讲究，见上面的注释 ①）
+            string[] first = { "watchdog.py", "onestart.py", "installer.ps1", "setup_python.ps1",
+                               "close_all.ps1", "一键启动", "一键关闭" };
+            // 第二轮：本体与其余入口
+            string[] second = { "persona_morph.py", "wx_agent.py", "stop_bot.py" };
+            killed.AddRange(Sweep(rootLower, first, notes, false));
+            System.Threading.Thread.Sleep(300);
+            killed.AddRange(Sweep(rootLower, second, notes, false));
             try { File.Delete(Path.Combine(root, "logs", "installer.lock")); } catch { }
             // ── 兜底 + 复核（2026-09-14 加）：按控制台端口把"命令行看不出来"的占用者也收掉，
             //    然后**回读端口**确认真关了——结果窗里如实写，不再只报"杀了几条"。
@@ -122,7 +109,113 @@ namespace WxCloser
                                     : ("端口 " + port + " 已释放"));
             }
             catch { }
+            // ── 复核（2026-09-16 加）：两轮收完之后**再看一眼**还剩下什么，如实写进结果窗 ——
+            //    以前只报"成功杀掉的"，一个都杀不掉时界面写着"没有残留进程（早已关闭）"，
+            //    可 `一键启动` 的窗口还在（假成功比报错更糟）。
+            try
+            {
+                System.Threading.Thread.Sleep(700);
+                var left = Sweep(rootLower, first, notes, true);
+                left.AddRange(Sweep(rootLower, second, notes, true));
+                if (left.Count > 0)
+                {
+                    killed.Add("⚠ 还有 " + left.Count + " 个进程没关掉：");
+                    for (int i = 0; i < left.Count && i < 3; i++) killed.Add("   " + left[i]);
+                }
+            }
+            catch { }
+            killed.AddRange(notes);        // 失败/异常如实列在结果里（不许只报成功项）
             return killed;
+        }
+
+        /// 按"**装在我们安装目录里的** 或 **命令行里带着我们目录的**"筛一遍；
+        /// `dry=true` 只列不动手（`--probe` 用）。
+        /// ⛔ 铁律（2026-09-16 实测过的一版误杀）：**不是我们的目录，一律不碰** ——
+        /// 只按"名字/命令行里出现「一键启动」"匹配会连 WebView2 的公用子进程、甚至别人的 node
+        /// 一起收掉（那些进程的命令行里会带 `--webview-exe-name=一键启动.exe` 或我们的 user-data-dir）。
+        static List<string> Sweep(string rootLower, string[] markers, List<string> notes, bool dry)
+        {
+            var got = new List<string>();
+            // 我们发的脚本文件名（判定"宿主是系统进程、但跑的是我们的脚本"时必须出现其中之一）
+            string[] scriptFiles = { "一键启动.vbs", "一键关闭.vbs", "停止机器人.vbs",
+                                     "installer.ps1", "setup_python.ps1", "close_all.ps1" };
+            try
+            {
+                var searcher = new ManagementObjectSearcher(
+                    "SELECT ProcessId, Name, CommandLine, ExecutablePath FROM Win32_Process");
+                foreach (ManagementObject o in searcher.Get())
+                {
+                    try
+                    {
+                        uint pid = (uint)o["ProcessId"];
+                        if (pid == (uint)Process.GetCurrentProcess().Id) continue;
+                        string name = Convert.ToString(o["Name"]) ?? "";
+                        string cl = Convert.ToString(o["CommandLine"]) ?? "";
+                        string exe = Convert.ToString(o["ExecutablePath"]) ?? "";
+                        string nl = name.ToLowerInvariant();
+                        string clL = cl.ToLowerInvariant();
+                        string exeL = exe.ToLowerInvariant();
+                        // ① 装在我们目录里的可执行（runtime\python、两个 exe、我们拉的子进程）
+                        bool exeUnderRoot = (!exeL.Equals("") && exeL.StartsWith(rootLower));
+                        // ② 我们自己控制台窗口的 WebView2 子进程（宿主名＝一键启动.exe）
+                        bool wv2Ours = nl.IndexOf("msedgewebview2") >= 0
+                                       && clL.IndexOf("--webview-exe-name=一键启动") >= 0;
+                        // ③ 我们发的脚本（vbs/ps1/cmd）：这些宿主是系统进程，但命令行里同时带着
+                        //    **我们的目录**与**我们的脚本文件名** —— 两个条件都要，缺一个就可能误杀
+                        //    （2026-09-16 实测：只按"命令行里有我们目录"会把正在跑 probe 的 pwsh、
+                        //     甚至 DSH 的 node 一起列进来）。
+                        bool scriptOurs = (nl == "powershell.exe" || nl == "wscript.exe"
+                                           || nl == "cscript.exe" || nl == "cmd.exe")
+                                          && clL.IndexOf(rootLower) >= 0;
+                        if (scriptOurs)
+                        {
+                            bool named = false;
+                            foreach (string sf in scriptFiles)
+                                if (clL.IndexOf(sf.ToLowerInvariant()) >= 0) { named = true; break; }
+                            scriptOurs = named;
+                        }
+                        if (!exeUnderRoot && !wv2Ours && !scriptOurs) continue;   // ← 关键闸门
+                        bool hit = exeUnderRoot || wv2Ours || scriptOurs;
+                        if (!hit) continue;
+                        if (dry)
+                        {
+                            got.Add("[会结束] " + name + " (pid " + pid + ")");
+                            continue;
+                        }
+                        try
+                        {
+                            Process p = Process.GetProcessById((int)pid);
+                            p.Kill();
+                            got.Add(name + " (pid " + pid + ")");
+                        }
+                        catch (Exception e2)
+                        {
+                            notes.Add("⚠ 关不掉 " + name + " (pid " + pid + ")：" + e2.GetType().Name);
+                        }
+                    }
+                    catch { }
+                }
+            }
+            catch (Exception e) { notes.Add("⚠ 枚举进程失败：" + e.GetType().Name); }
+            return got;
+        }
+
+        /// `--probe`：只列会关掉哪些进程，**不动手**（用户/我们排查"为什么关不掉"时用）
+        static string Probe(string root)
+        {
+            var notes = new List<string>();
+            string rootLower = root.TrimEnd('\\').ToLowerInvariant();
+            string[] first = { "watchdog.py", "onestart.py", "installer.ps1", "setup_python.ps1",
+                               "close_all.ps1", "一键启动", "一键关闭" };
+            string[] second = { "persona_morph.py", "wx_agent.py", "stop_bot.py" };
+            var a = Sweep(rootLower, first, notes, true);
+            var b = Sweep(rootLower, second, notes, true);
+            var all = new List<string>();
+            all.AddRange(a);
+            all.AddRange(b);
+            all.Add("PROBE 合计 " + all.Count + " 个进程（未动手）");
+            all.AddRange(notes);
+            return string.Join(Environment.NewLine, all.ToArray());
         }
 
         /// 谁在监听这个端口（netstat -ano 的最后一段＝pid；查不到返回 0）

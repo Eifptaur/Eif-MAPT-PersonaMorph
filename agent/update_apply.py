@@ -93,10 +93,13 @@ def zip_tree(zip_path: str):
     return th.hexdigest(), files, top, len(files)
 
 
-def download(url: str, dest: str, timeout: float = 120.0, progress=None):
-    """下载在线包（流式写盘 + 进度回调）。**支持本地路径**（离线自测用，与 `update_check.fetch` 同口径）。"""
-    if not url:
-        return False, "清单里没给下载地址（base.url 为空）"
+#: 下载资产走不通时的镜像前缀（2026-09-16，与「更新源异常」同源的问题）：
+#: 国内直连 `github.com/.../releases/download/...` 经常超时 ⇒ 依次套前缀重试
+DL_MIRRORS = ("https://ghfast.top/", "https://ghproxy.net/", "https://gh-proxy.com/")
+
+
+def _dl_once(url: str, dest: str, timeout: float, progress=None):
+    """单次下载尝试；返回 `(ok, why)`。失败时清掉半截文件。"""
     try:
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         if not str(url).lower().startswith(("http://", "https://")):
@@ -125,7 +128,28 @@ def download(url: str, dest: str, timeout: float = 120.0, progress=None):
                 os.remove(dest + ".part")
         except Exception:
             pass
-        return False, "下载失败：%s" % (str(e)[:100] or type(e).__name__)
+        return False, "%s: %s" % (type(e).__name__, str(e)[:100])
+
+
+def download(url: str, dest: str, timeout: float = 120.0, progress=None):
+    """下载在线包（流式写盘 + 进度回调）。**支持本地路径**（离线自测用，与 `update_check.fetch` 同口径）。
+
+    2026-09-16：直连失败时**依次套国内镜像前缀重试**（只对 `github.com` 的地址套），
+    全部失败才如实报最后一条原因。
+    """
+    if not url:
+        return False, "清单里没给下载地址（base.url 为空）"
+    urls = [url]
+    if "github.com" in str(url).lower():
+        for m in DL_MIRRORS:
+            urls.append(m + str(url))
+    last = ""
+    for u in urls:
+        ok, why = _dl_once(u, dest, timeout, progress)
+        if ok:
+            return True, ""
+        last = why
+    return False, "下载失败（含镜像重试）：%s" % last
 
 
 def read_local_state(target: str) -> dict:

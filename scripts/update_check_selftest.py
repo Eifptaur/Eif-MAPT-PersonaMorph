@@ -21,8 +21,11 @@ from agent.version import VERSION         # noqa: E402
 PASS = FAIL = 0
 
 
-def ok(cond, msg):
+def ok(cond, msg, detail=""):
+    """`detail` 可选：给了就拼在消息后面（新增判据常用，别为它另写一个 helper）。"""
     global PASS, FAIL
+    if detail:
+        msg = "%s  [%s]" % (msg, detail)
     if cond:
         PASS += 1
         print("  ✔ " + msg)
@@ -136,6 +139,76 @@ ok("var(--bd" in _seg, "公告条描边跟主题走（`--bd`，不是硬编码 `
 ok("min-width:0" in _seg and "white-space:nowrap" in _seg,
    "公告条正文可换行、按钮不被压成竖排（flex:none + nowrap）")
 ok('"/api/update"' in _W and '"/api/update_skip"' in _W, "后端路由都在：GET /api/update + POST /api/update_skip")
+
+print("\n[U10] 更新源拉不到 ⇒ 并行试备用源（2026-09-16 用户报「更新源异常：拉不到更新源：The read operation timed out」）")
+ok(len(UC.DEFAULT_URLS) >= 3 and UC.DEFAULT_URLS[0] == UC.DEFAULT_URL, "内置多个源且 raw 排第一")
+ok(all(str(u).startswith("https://") for u in UC.DEFAULT_URLS), "备用源都是 https")
+ok(all("/Eifptaur/Eif-MAPT-PersonaMorph" in u and u.endswith("persona-morph-manifest.json")
+       for u in UC.DEFAULT_URLS),
+   "每个源都指向同一份清单路径（镜像只是加前缀）")
+_MAN = {"schema": "persona-morph/1",
+        "base": {"version": "2099.1.1.1", "sha256": "b" * 64, "url": "", "size": 1, "files": 1},
+        "dlc": [], "announce": {"version": "2099.1.1.1", "notes": ["备用源可用"],
+                                "forceBase": False, "minBase": "2099.1.1.1"}}
+_real_fetch = UC.fetch
+
+
+def _fake_first_dead(u, timeout=6.0):
+    """只让**备用源**通：raw 与「用户自填的源」都不通（这样两条路才验得准）。"""
+    if u == UC.DEFAULT_URLS[1]:
+        return dict(_MAN), ""
+    return None, "The read operation timed out"
+
+
+try:
+    UC.fetch = _fake_first_dead
+    _man, _why, _used = UC.fetch_any(list(UC.DEFAULT_URLS))
+finally:
+    UC.fetch = _real_fetch
+ok(_man is not None and _used == UC.DEFAULT_URLS[1],
+   "第一个源超时 ⇒ 仍然拿到清单（走备用源）", str(_used))
+
+
+def _fake_all_dead(u, timeout=6.0):
+    return None, "timeout"
+
+
+try:
+    UC.fetch = _fake_all_dead
+    _m2, _w2, _u2 = UC.fetch_any(list(UC.DEFAULT_URLS))
+finally:
+    UC.fetch = _real_fetch
+ok(_m2 is None and "所有源都拉不到" in _w2,
+   "所有源都不通 ⇒ 如实说「所有源都拉不到」", _w2[:60])
+
+_nowp = os.path.join(tmp, "u10state.json")
+UC._state_path = lambda: _nowp
+try:
+    if os.path.exists(_nowp):
+        os.remove(_nowp)
+except Exception:
+    pass
+try:
+    UC.fetch = _fake_first_dead
+    _r10 = UC.state({"url": ""})
+finally:
+    UC.fetch = _real_fetch
+ok(_r10["status"] != "error",
+   "默认源场景：raw 超时也能判出状态（不是 error）",
+   "%s / %s" % (_r10["status"], _r10["why"][:44]))
+_st10 = json.load(open(_nowp, encoding="utf-8")) if os.path.exists(_nowp) else {}
+ok(_st10.get("lastGoodUrl") == UC.DEFAULT_URLS[1],
+   "把能用的那个源记进状态（下次先试它）", str(_st10.get("lastGoodUrl")))
+try:
+    UC.fetch = _fake_first_dead
+    _r11 = UC.state({"url": "https://example.com/mine.json"})
+finally:
+    UC.fetch = _real_fetch
+ok(_r11["status"] == "error",
+   "用户自填的源失败 ⇒ 如实报 error（不去偷偷换别人的源）", _r11["status"])
+_UA = open(os.path.join(ROOT, "agent", "update_apply.py"), encoding="utf-8").read()
+ok("DL_MIRRORS" in _UA and 'if "github.com" in str(url).lower()' in _UA,
+   "下载资产也有镜像兜底（DL_MIRRORS，且只对 github.com 套前缀）")
 
 print("\n==== 更新检查判据：%d 通过 / %d 失败 ====" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

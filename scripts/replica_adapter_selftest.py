@@ -159,6 +159,52 @@ def main():
     rows = ra.selfcheck()
     ok("selfcheck 返回结论行且第一项是版本", rows and rows[0]["item"] == "适配层版本", (rows[0]["detail"][:44] if rows else ""))
 
+    print("— F. 懒创建的新分片没有密钥 ⇒ 补一次再读，仍不行就跳过（网友 A 的 KeyError 复现）—")
+
+    class _ShardDB(object):
+        """假 DB：分片表与密钥表**分离** —— 复现"新分片有文件、没密钥"。"""
+
+        def __init__(self, heal=True):
+            self._db_files = [("contact.db", "C:/x/contact.db", 10),
+                              ("message\\media 1.db", "C:/x/media 1.db", 20)]
+            self._keys = {"contact.db": b"k"}          # 故意缺 media 1.db
+            self.heal = heal
+            self.refreshed = 0
+            self.extracted = 0
+            self.opens = []
+
+        def _key_works(self, rel):
+            return rel in self._keys
+
+        def _refresh_db_files(self):
+            self.refreshed += 1
+
+        def _load_or_extract_keys(self):
+            self.extracted += 1
+            if self.heal:
+                self._keys["message\\media 1.db"] = b"k2"
+
+        def _open(self, rel):
+            if rel not in self._keys:
+                raise KeyError(rel)
+            self.opens.append(rel)
+            return "CONN:" + rel
+
+    _sd = _ShardDB()
+    ok("missing_key_shards 点出没密钥的那个分片",
+       ra.missing_key_shards(_sd) == ["message\\media 1.db"], str(ra.missing_key_shards(_sd)))
+    _c = ra.open_shard(_sd, "message\\media 1.db")
+    ok("撞上 KeyError ⇒ **先补一次密钥再试**，补到就正常返回",
+       _c == "CONN:message\\media 1.db" and _sd.extracted == 1, "%s / extracted=%s" % (_c, _sd.extracted))
+    ok("好分片照旧一次到位（不白刷）", ra.open_shard(_sd, "contact.db") == "CONN:contact.db" and _sd.extracted == 1,
+       "extracted=%s" % _sd.extracted)
+    _sd2 = _ShardDB(heal=False)
+    ok("补了也补不到 ⇒ 返回 None（**不抛**，让调用方跳过这个分片）",
+       ra.open_shard(_sd2, "message\\media 1.db") is None and _sd2.extracted == 1, "extracted=%s" % _sd2.extracted)
+    _rep = ra.refresh_shards(_ShardDB())
+    ok("refresh_shards 回报 missing（接入时据此记日志/显示）",
+       _rep.get("missing") == [] and _rep.get("refreshed") is True, str(_rep))
+
     print("\n== 适配层单测：%d 通过 / %d 失败 ==" % (len(PASS), len(FAIL)))
     return 1 if FAIL else 0
 
