@@ -2396,20 +2396,19 @@ const WHALE_CURSOR = (function(){
    边界：**只在"鲸鱼光标开着"时接管**；光标关掉时一概不拦，把原生行为原样留给用户。 ── */
 const PM_WHEEL = (function(){
   const BASE = 3.4, GAIN = 0.26, MAXV = 44, DEAD = 10;   // 基础速度 px/帧（≈200px/s）· 增益 · 上限 · 死区
-  let on = false, ax = 0, ay = 0, my = 0, raf = 0, el = null, target = null;
+  const SPIN_K = 2.4, SPIN_CAP = 24;                     // 鱼的转速＝滚动速度 × K（度/帧），封顶防高速糊成一片
+  let on = false, ax = 0, ay = 0, my = 0, raf = 0, el = null, imgEl = null, target = null, phase = 0, lastSp = 0;
   function injectCss(){
     if(document.getElementById('pmWheelCss')) return;
     const st = document.createElement('style'); st.id = 'pmWheelCss';
     st.textContent =
       '#pmWheel{position:fixed;width:58px;height:58px;margin:-29px 0 0 -29px;border-radius:50%;' +
       'border:1px solid rgba(148,196,255,.5);background:rgba(10,20,40,.34);z-index:2147483000;pointer-events:none}' +
-      '#pmWheel img{position:absolute;left:50%;top:50%;width:34px;height:34px;margin:-17px 0 0 -17px;' +
-      'animation:pmWheelSpin 1.05s linear infinite}' +
+      '#pmWheel img{position:absolute;left:50%;top:50%;width:34px;height:34px;margin:-17px 0 0 -17px}' +
       '#pmWheel i{position:absolute;left:50%;width:0;height:0;margin-left:-5px;' +
       'border-left:5px solid transparent;border-right:5px solid transparent;opacity:.8}' +
       '#pmWheel i.u{top:5px;border-bottom:7px solid rgba(190,220,255,.9)}' +
-      '#pmWheel i.d{bottom:5px;border-top:7px solid rgba(190,220,255,.9)}' +
-      '@keyframes pmWheelSpin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}';
+      '#pmWheel i.d{bottom:5px;border-top:7px solid rgba(190,220,255,.9)}';
     document.head.appendChild(st);
   }
   // 滚动目标：从落点往上找第一个"真的能滚"的祖先；找不到就当整页（文档）滚
@@ -2432,14 +2431,21 @@ const PM_WHEEL = (function(){
     el.innerHTML = '<img src="' + WHALE_CURSOR.imgSrc() + '" alt=""><i class="u"></i><i class="d"></i>';
     el.style.left = px + 'px'; el.style.top = py + 'px';
     document.body.appendChild(el);
+    imgEl = el.querySelector('img');
   }
-  function hide(){ if(el){ try{ el.remove(); }catch(e){} el = null; } }
+  function hide(){ if(el){ try{ el.remove(); }catch(e){} el = null; imgEl = null; } }
   function tick(){
     if(!on) return;
     let v = BASE;                                   // 基础：**一进入就往下匀速滚**
     const off = my - ay;
     if(off > DEAD) v = Math.min(MAXV, BASE + (off - DEAD) * GAIN);
     else if(off < -DEAD) v = Math.max(-MAXV, -BASE + (off + DEAD) * GAIN);
+    // 鱼的转速**跟着滚动速度走**（用户 2026-09-17 追加：「能不能让这个鱼随着滚动速度的加快，它的动画速度也加快」）。
+    // 用 JS 累加相位、不用 CSS animation：改 animation-duration 会让相位跳一下，速度也不好跟。
+    const sp = Math.min(SPIN_CAP, Math.abs(v) * SPIN_K);
+    lastSp = sp;
+    phase = (phase + sp) % 360;
+    if(imgEl){ try{ imgEl.style.transform = 'rotate(' + phase.toFixed(1) + 'deg)'; }catch(e){} }
     try{
       if(target === document.scrollingElement || target === document.documentElement || target === document.body){
         window.scrollTo({top: (window.scrollY || 0) + v, behavior: 'instant'});
@@ -2471,7 +2477,8 @@ const PM_WHEEL = (function(){
   document.addEventListener('wheel', function(){ if(on) stop(); }, {passive:true});
   document.addEventListener('keydown', function(ev){ if(on && (ev.key === 'Escape' || ev.keyCode === 27)) stop(); }, true);
   window.addEventListener('blur', function(){ if(on) stop(); });
-  return { start, stop, active: ()=>on, top: ()=>(on && target) ? target.scrollTop : -1, hasPuck: ()=>!!el };
+  return { start, stop, active: ()=>on, top: ()=>(on && target) ? target.scrollTop : -1, hasPuck: ()=>!!el,
+           spinDeg: ()=>lastSp };
 })();
 /* ── ESC 退出全屏（2026-09-16 加，用户实测「ESC退出不了全屏」）──
    宿主窗（WebView2）全屏时会收起自绘顶栏，而 WinForms 侧的 IMessageFilter（EscFilter）
@@ -5916,6 +5923,20 @@ $('memSearch').addEventListener('keydown', (e)=>{
   navEl.insertBefore(ind, navEl.firstChild);
   const links = Array.from(document.querySelectorAll('#nav a'));
   function moveInd(a){ ind.style.opacity=1; ind.style.top = Math.round(a.offsetTop + a.offsetHeight/2 - 1.5)+'px'; }
+  /* 左栏跟着指示条走（用户 2026-09-17：「如果右边功能栏已经滚到一个比较下面的位置，而左边的栏又显示不下的时候，
+     蓝色的指示条就看不见了。所以，能不能让左边的栏跟着蓝色的指示条显露出来？如果有没显示出来的部分，
+     就自动往下一格滚动」）⇒ 激活项被滚出左栏可视区就把它滚回来：在上面顶上对齐、在下面滚到刚露出来，
+     平滑滑过去；左栏没有溢出（不需要滚）时永远不动。 */
+  function revealInd(a){
+    try{
+      const top = navEl.scrollTop, vh = navEl.clientHeight, PAD = 8;
+      const it = a.offsetTop, ih = a.offsetHeight;
+      let want = top;
+      if(it + ih > top + vh - PAD) want = it + ih - vh + PAD;
+      else if(it < top + PAD) want = it - PAD;
+      if(want !== top) navEl.scrollTo({top: Math.max(0, want), behavior: 'smooth'});
+    }catch(e){}
+  }
   function currentSection(){
     const secs = Array.from(document.querySelectorAll('section[data-sec]'));
     const y = window.scrollY + 90;
@@ -5926,7 +5947,7 @@ $('memSearch').addEventListener('keydown', (e)=>{
   function sync(){
     const cur = currentSection();
     const a = links.find(x => x.getAttribute('href') === '#'+cur.id);
-    if(a){ links.forEach(x=>x.classList.toggle('on', x===a)); moveInd(a); }
+    if(a){ links.forEach(x=>x.classList.toggle('on', x===a)); moveInd(a); revealInd(a); }
   }
   window.addEventListener('scroll', ()=>requestAnimationFrame(sync), {passive:true});
   // 100 导航名字收起/展开（用户口径："像 DeepSeek 一样，可以展开看到全部名字，或者收起那些名字"）
