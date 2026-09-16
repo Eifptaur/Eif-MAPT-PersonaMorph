@@ -1,10 +1,10 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.16.18.1",
-    "sha256": "530b3a86d8cc92038bebf1c281181a685152f48aef5f712309faa54e8b7a213e",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.19.1/persona-morph-v2.1.19.1.zip",
-    "size": 8241626,
+    "version": "2026.9.16.19",
+    "sha256": "157b4102da8ceb27ae03cbcacfd329d3db4c560ce2e96abc4934c7be571f5a36",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.20/persona-morph-v2.1.20.zip",
+    "size": 8243865,
     "files": 249
   },
   "dlc": [
@@ -32,13 +32,13 @@
     }
   ],
   "announce": {
-    "version": "2026.9.16.18.1",
+    "version": "2026.9.16.19",
     "notes": [
-      "「立即更新」第一下不再失败：更新与检查走同一套备用源，哪个通用哪个；下载优先走上次走通的镜像。"
+      "控制台顶部加了一条常驻提示：遇到问题点左边「反馈」提交，附上截图或「检验报告」最快定位。"
     ],
     "forceBase": false,
-    "minBase": "2026.9.16.18.1"
+    "minBase": "2026.9.16.19"
   },
-  "builtAt": "2026-09-16T17:11:06Z",
-  "updatedAt": 1789578666923
+  "builtAt": "2026-09-16T17:22:01Z",
+  "updatedAt": 1789579321883
 }
