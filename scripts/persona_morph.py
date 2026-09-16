@@ -52,10 +52,18 @@ from agent.stats import UsageStats
 from agent.store import ChatStore
 from agent.tools import build_tool_defs, execute_tool, to_openai_tools
 from agent.wechat import (WeChatAdapter, WeChatError, wechat_version_info,
-                          attach_diagnosis, attach_short_reason)
+                          attach_diagnosis, attach_short_reason, _user32_is_visible)
 from agent.whale import WhaleWidget
 from agent.webui import WebUI
 from agent.util import mask_url_token, pick_browser, redact_secrets
+# 输入审计（**只记录、不改行为**，且只在 WXAGENT_INPUT_AUDIT=1 时安装；生产默认零开销）——
+# 2026-09-17 为定位「机器人发消息那一刻微信自己弹截图」而挂：它把 SendInput/keybd_event/mouse_event/
+# SetCursorPos/PostMessageW 的每次调用连同**发起方的文件:行号**写进 data/input_audit.log。
+try:
+    from agent import input_audit as _input_audit
+    _input_audit.install()
+except Exception:
+    pass
 
 # 内部自检开关：WX_IMPORT_CHECK=1 时仅验证模块导入后退出（绿色版/无微信场景验证用）
 if os.environ.get("WX_IMPORT_CHECK") == "1":
@@ -369,7 +377,7 @@ class Orchestrator:
         now = time.time()
         candidates = []
         try:
-            for g in self.wechat.groups():
+            for g in self.wechat.list_groups():
                 chat_key = "group:" + g["wxid"]
                 # 冷场判定：群最后一条消息距今超过阈值
                 recent = self.store.recent(chat_key, limit=5) or []
@@ -1144,6 +1152,7 @@ def _wechat_watchdog(get_wc):
     传死了 None 会让守护**永远空转**（老代码就是这么写的）。
     """
     import ctypes
+    from ctypes import wintypes
     user32 = ctypes.windll.user32
     SMTO_ABORTIFHUNG, WM_NULL = 0x0002, 0x0000
     hung = 0
@@ -1158,7 +1167,19 @@ def _wechat_watchdog(get_wc):
             if not hwnd or not _user32_is_visible(hwnd):
                 hung = 0  # 窗口不可见/未登录属于正常态，不判卡死
                 continue
-            res = user32.SendMessageTimeoutW(hwnd, WM_NULL, 0, 0, SMTO_ABORTIFHUNG, 500)
+            # ⛔ 2026-09-17 **红线修复**：必须声明 argtypes 并传第 7 个参数 `lpdwResult`。
+            #   原来只传 6 个参数（少一个出参指针），也没声明 argtypes ⇒ ctypes 把 HWND/LPARAM
+            #   当 32 位 int 传、把出参指针当 NULL 传。实测后果：机器人在**启动后第 31 秒**
+            #   （＝本守护第一跳）**原生崩溃退出**，退出码 **0xC0000409**
+            #   （STATUS_STACK_BUFFER_OVERRUN / __fastfail），日志里一句话都没有 ⇒ 看门狗
+            #   每 37 秒重拉一次、每拉一次多开一个「群相 控制台」窗口，控制台越堆越多。
+            user32.SendMessageTimeoutW.argtypes = [
+                wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM,
+                wintypes.UINT, wintypes.UINT, ctypes.POINTER(wintypes.DWORD)]
+            user32.SendMessageTimeoutW.restype = wintypes.LPARAM
+            _out = wintypes.DWORD(0)
+            res = user32.SendMessageTimeoutW(hwnd, WM_NULL, 0, 0, SMTO_ABORTIFHUNG, 500,
+                                             ctypes.byref(_out))
             if res != 0:
                 hung = 0
                 continue
@@ -2602,7 +2623,7 @@ def _start_timer_holiday_loop(orch, get_wc, interval_s: float = 20.0):
                 if wc is None:
                     return
                 try:
-                    for g in holidays.due_greetings(cfg, wc.groups()):
+                    for g in holidays.due_greetings(cfg, wc.list_groups()):
                         try:
                             r = orch.sender.send_text_batch(g["chat_key"], g["text"])
                         except Exception as e:
