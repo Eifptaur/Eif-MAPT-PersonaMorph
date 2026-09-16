@@ -84,8 +84,12 @@ ck("A18 退出路径齐：再按中键 / 按任意其它键 / 滚真实滚轮 / 
    and "window.addEventListener('blur'" in SRC_C and "if(on){ stop(); return; }" in SRC_C)
 ck("A19 滚动目标现算（从落点往上找真能滚的祖先；找不到就整页滚）",
    "scrollHeight - n.clientHeight > 8" in SRC_C and "document.scrollingElement" in SRC_C)
-ck("A20 自绘徽标＝那只鱼持续 360° 旋转（CSS 动画，不是一次性换帧）",
-   "animation:pmWheelSpin 1.05s linear infinite" in SRC_C and "@keyframes pmWheelSpin" in SRC_C)
+ck("A20 自绘徽标＝那只鱼**转速跟着滚动速度**（JS 累加相位 + 封顶，不是固定时长的 CSS 动画）",
+   "imgEl.style.transform = 'rotate('" in SRC_C and "Math.min(SPIN_CAP, Math.abs(v) * SPIN_K)" in SRC_C
+   and "animation:pmWheelSpin" not in SRC_C)
+ck("A21 左导航跟着指示条滚（激活项滚出可视区就滚回来：平滑、不越界）",
+   "function revealInd(a)" in SRC_C and "behavior: 'smooth'" in SRC_C and "revealInd(a);" in SRC_C
+   and "const top = navEl.scrollTop, vh = navEl.clientHeight, PAD = 8;" in SRC_C)
 
 _EXE = os.path.join(ROOT, "一键启动.exe")
 if not os.path.exists(_EXE):
@@ -164,6 +168,42 @@ else:
                "%s → %s" % (_w1[3:4], _w2[3:4]))
             ck("B18 左键退出：模式关、徽标撤、不再滚",
                _w3[:1] == ["false"] and _w3[2:3] == ["false"] and _d4 < 5, "Δ=%.0fpx · %s" % (_d4, field("wheel_3")))
+            # ── ① 左导航跟着指示条滚（用户 2026-09-17 追加：「……左栏又显示不下的时候，蓝色指示条就看不见了」）──
+            _nav = field("nav_1")
+            _nm = dict(re.findall(r"(\w+)=(-?\d+)", _nav))
+            ck("B19 左栏被滚到底之后**自己把激活项跟回来**（蓝色指示条不会再看不见）",
+               _nav.startswith("visible") and int(_nm.get("max", 0)) > 50
+               and float(_nm.get("scrollTop", 1e9)) < int(_nm.get("max", 0)) - 5, _nav)
+            # ── ② 鱼的转速跟着滚动速度（用户 2026-09-17 追加）──
+
+            def _spin_of(k):
+                p = (field(k) or "").split("|")
+                m = re.search(r"rotate\(([-0-9.]+)deg\)", p[1] if len(p) > 1 else "")
+                try:
+                    sp = float(p[2])
+                except Exception:
+                    sp = None
+                return (p[0].lower() if p else "", float(m.group(1)) if m else None, sp)
+
+            def _delta(x, y):
+                if x is None or y is None:
+                    return None
+                d = y - x
+                return d + 360 if d < 0 else d
+
+            _aa1, _aa2 = _spin_of("spinp_a1"), _spin_of("spinp_a2")
+            _bb1, _bb2 = _spin_of("spinp_b1"), _spin_of("spinp_b2")
+            _ds, _df = _delta(_aa1[1], _aa2[1]), _delta(_bb1[1], _bb2[1])
+            ck("B20 鱼在转（相位在推进，滚轮模式还开着）",
+               _aa1[0] == "true" and _aa2[0] == "true" and _ds is not None and _ds > 5,
+               "0.3s 转了 %.0f°" % (_ds if _ds is not None else -1))
+            # 比的是**每帧转速**（`PM_WHEEL.spinDeg()`）：屏外窗口在快滚时帧率会掉，
+            # 用墙钟转角比会被帧率稀释（实测每帧 8.2°→24°＝约 3 倍，墙钟却只显得 1.4 倍）。
+            ck("B21 **滚得越快、鱼转得越快**（每帧转速：快滚 ≈ 3 倍于基础）",
+               _aa1[2] is not None and _bb1[2] is not None and _aa1[2] > 0.5 and _bb1[2] >= _aa1[2] * 2,
+               "基础 %.1f°/帧 → 快滚 %.1f°/帧（墙钟 %.0f°→%.0f°/0.3s）"
+               % (_aa1[2] if _aa1[2] is not None else -1, _bb1[2] if _bb1[2] is not None else -1,
+                  _ds if _ds is not None else -1, _df if _df is not None else -1))
     except Exception as e:
         skip("B 活体探针", "跑不起来：%s" % str(e)[:90])
     finally:
