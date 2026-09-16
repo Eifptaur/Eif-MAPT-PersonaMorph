@@ -1,11 +1,11 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.16.11",
-    "sha256": "090745ecf85680298a969f068e2987357698060a3676470e7c2254d9820f9b95",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.12/persona-morph-v2.1.12.zip",
-    "size": 8084728,
-    "files": 242
+    "version": "2026.9.16.12",
+    "sha256": "08020311fde50c2dc4dcdae4dcaad2d14839db3a94cb1408f2f31dcbe205507f",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.13/persona-morph-v2.1.13.zip",
+    "size": 8092542,
+    "files": 243
   },
   "dlc": [
     {
@@ -32,14 +32,14 @@
     }
   ],
   "announce": {
-    "version": "2026.9.16.11",
+    "version": "2026.9.16.12",
     "notes": [
-      "控制台右侧面板顺序改成与左导航完全一致，不再「划着划着乱跳」；顺序现在有判据盯着",
-      "「机器人昵称」和「响应档位」合并成第 3 个面板「机器人」（导航也排第 3），原处已移走不重复"
+      "修「点重启没动静」：控制台「重启」按钮真的会重启了（以前一按就静默抛错，界面却还回你一句「正在后台重启」）",
+      "按钮加了「真跑一次」的判据（真起控制台、真按一次，断言重启动作真的被触发）"
     ],
     "forceBase": false,
-    "minBase": "2026.9.16.11"
+    "minBase": "2026.9.16.12"
   },
-  "builtAt": "2026-09-16T12:22:34Z",
-  "updatedAt": 1789561354163
+  "builtAt": "2026-09-16T12:36:34Z",
+  "updatedAt": 1789562194623
 }
