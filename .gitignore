@@ -1,0 +1,66 @@
+# ── 敏感文件（含 API Key、访问口令，绝不能上传）──
+config.json
+config/*.txt
+
+# ── 运行时生成（聊天存档/记忆/图片/日志/统计，均含隐私）──
+data/
+logs/
+media/
+backups/
+*.log
+
+# ── Python 缓存 ──
+__pycache__/
+*.pyc
+*.pyo
+
+# ── 离线部署包：wheels + 绿色版 Python 随仓库发布；微信安装包不入库（腾讯版权，请自行安装微信 4.x）──
+
+# ── 系统 / 编辑器 ──
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+
+# ── 其他压缩包（离线 Python zip 除外）──
+*.zip
+
+# ── 运行时产物（不入库）：自定义光标（上传生成）──
+assets/custom-cursor.png
+assets/custom-cursor-nod.png
+wechatauto_logs/
+
+# ── 大媒体素材（发布包内包含，源码 git 不放视频）──
+assets/wallpaper/*.mp4
+
+# ── 本地私有文档（交接/笔记，不随仓库分发）──
+接手说明.md
+开发守则.md
+# 含本机路径/设备信息（用户 2026-09-16 定：「关于我的都别发」）⇒ 不进库；需要时用文件直接发给对面
+docs/交接-另一台机器环境与插件清单.md
+
+# ── 开发期诊断/临时脚本与截图（含 API 口令，绝不提交）──
+_scratch/
+
+# ── 自动落盘的便携 Python 运行环境（一键启动自动生成）──
+runtime/
+报告/
+dist/
+dist2/
+# 离线包不随版本库分发（2026-09-13 用户定：模型与装依赖都要联网）
+offline/
+
+# 不杀进程部署 exe 时留下的旧映像（运行中的实例还映射着，只能等它退出后才删得掉）
+_*.exe.old-*
+browser-screenshots/
+
+# ── 内部协作/跨机资料（2026-09-16 用户定：不进开源仓库）──
+检验说明（另一台电脑用）.md
+更新日志.md
+docs/changelog-archive.md
+docs/跨机测试交接包.md
+docs/开发任务清单.md
+docs/上云-问他朋友的问题清单.md
+docs/对齐-第三方v0.4功能清单.md
+docs/人设来源台账.md

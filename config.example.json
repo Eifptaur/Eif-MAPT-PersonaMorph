@@ -1,0 +1,453 @@
+{
+ "api": {
+  "base_url": "https://api.deepseek.com/v1",
+  "api_key": "",
+  "model": "deepseek-flash",
+  "provider": "",
+  "vision": true,
+  "temperature": 0.8,
+  "max_rounds": 8,
+  "thinking": "off",
+  "timeout_ms": 180000,
+  "price_input_per_m": 0.0,
+  "price_output_per_m": 0.0,
+  "price_cached_per_m": 0.0,
+  "use_official_price": true,
+  "model_prices": {},
+  "fallback_models": [],
+  "model_routes": {
+   "text": "",
+   "image": "",
+   "video": ""
+  }
+ },
+ "wechat": {
+  "bot_nickname": "",
+  "group_name_white_list": [],
+  "poll_interval": 3,
+  "rate_limit_per_minute": 20,
+  "media_dir": "",
+  "db_dir": "",
+  "minimize_warning": true,
+  "restore_minimized": true,
+  "start_paused": true,
+  "allow_click_hunting": false,
+  "background_only": false
+ },
+ "persona": {
+  "bot_name": "小鲸鱼",
+  "self_nickname": "",
+  "role_text": "",
+  "participation": "medium",
+  "custom_rules": ""
+ },
+ "web_search": {
+  "enabled": true,
+  "provider": "bing",
+  "google_first": true,
+  "search_url": "https://cn.bing.com/search",
+  "max_results": 6,
+  "deepseek": {
+   "api_key": "",
+   "base_url": "https://api.deepseek.com/responses",
+   "model": "deepseek-flash",
+   "timeout_ms": 60000
+  },
+  "zhipu": {
+   "api_key": "",
+   "base_url": "https://open.bigmodel.cn/api/paas/v4/web_search",
+   "engine": "search_std",
+   "count": 10,
+   "timeout_ms": 20000
+  },
+  "bocha": {
+   "api_key": "",
+   "base_url": "https://api.bochaai.com/v1/web-search",
+   "count": 10,
+   "timeout_ms": 20000
+  },
+  "baidu": {
+   "api_key": "",
+   "base_url": "https://qianfan.baidubce.com/v2/ai_search/web_search",
+   "count": 6,
+   "timeout_ms": 20000
+  },
+  "metaso": {
+   "api_key": "",
+   "base_url": "https://metaso.cn/api/open/v1/search",
+   "count": 6,
+   "timeout_ms": 20000
+  },
+  "custom": {
+   "name": "",
+   "type": "openai",
+   "base_url": "",
+   "api_key": "",
+   "model": "",
+   "count": 6,
+   "timeout_ms": 20000
+  },
+  "providers": []
+ },
+ "security": {
+  "allow_private_image_hosts": false
+ },
+ "allow": {
+  "groups": [],
+  "private": []
+ },
+ "deny": {
+  "groups": [],
+  "private": []
+ },
+ "wake_delay_ms": 2000,
+ "drain_delay_ms": 1200,
+ "max_concurrent_runs": 2,
+ "send": {
+  "min_gap_ms": 1000,
+  "max_gap_ms": 3000,
+  "by_length_ms": 20,
+  "max_per_minute": 20,
+  "max_per_hour": 500,
+  "hard_split_at": 2000,
+  "fallback_autosend": true,
+  "fallback_max_chars": 60,
+  "fallback_block_selfref": true,
+  "uia_setvalue": true,
+  "image_compress": {
+   "enabled": true,
+   "max_mb": 8.0,
+   "max_px": 1600,
+   "quality": 82
+  },
+  "file_forward_optin": false
+ },
+ "image_reply": {
+  "enabled": false,
+  "mode": "local",
+  "dir": "assets/anime",
+  "api_url": "",
+  "api_timeout_ms": 8000,
+  "sources": [],
+  "sources_per_try": 4,
+  "tag": "",
+  "allow_search": true,
+  "trigger_mode": "on_request",
+  "safe_only": true,
+  "allow_questionable": false,
+  "tag_blacklist": [],
+  "skin_max_ratio": 0.45,
+  "min_side": 300,
+  "vision_filter": true,
+  "vision_fail_open": false,
+  "max_mb": 8,
+  "min_gap_seconds": 20,
+  "avoid_recent": 30,
+  "include_gif": true
+ },
+ "voice": {
+  "enabled": false,
+  "engine": "auto",
+  "dir": "media/voice",
+  "max_seconds": 60,
+  "keep_audio": false
+ },
+ "update": {
+  "url": "",
+  "muted": false,
+  "skip_version": ""
+ },
+ "voice_reply": {
+  "enabled": false,
+  "engine": "sapi",
+  "backend": "edge",
+  "edge_voice": "zh-CN-XiaoxiaoNeural",
+  "edge_fallback": true,
+  "voice": "",
+  "rate": 0,
+  "format": "mp3",
+  "dir": "media/tts",
+  "max_chars": 120,
+  "min_gap_seconds": 30,
+  "trigger_mode": "on_request",
+  "vc_url": "",
+  "vc_mode": "multipart",
+  "vc_params": "",
+  "vc_json_field": "",
+  "vc_fail_open": false,
+  "vc_timeout_ms": 60000
+ },
+ "file_search": {
+  "enabled": false,
+  "dirs": [],
+  "max_results": 20,
+  "max_mb": 100,
+  "trigger_mode": "on_request"
+ },
+ "user_tools": {
+  "enabled": false,
+  "dir": "tools.d",
+  "max_tools": 30,
+  "timeout_ms": 8000,
+  "max_chars": 4000
+ },
+ "image_gen": {
+  "enabled": false,
+  "trigger_mode": "on_request",
+  "max_count": 2,
+  "size_default": "square",
+  "online_allowed": false,
+  "backends": "",
+  "style_allow": "",
+  "style_block": "",
+  "filter_chain": {
+   "size": true,
+   "dup": true,
+   "blacklist": true,
+   "text": true,
+   "classifier": true
+  }
+ },
+ "input": {
+  "backend": "auto",
+  "press_ms": 60,
+  "activate": true,
+  "allow_real_fallback": false
+ },
+ "risk": {
+  "enabled": true,
+  "paused": false,
+  "per_minute": 0,
+  "per_hour": 0,
+  "per_day": 0,
+  "per_chat_per_hour": 0,
+  "min_gap_seconds": 0,
+  "quiet_hours": [],
+  "max_links": 3,
+  "watch_keywords": [],
+  "block_keywords": [],
+  "broadcast_chats": 3,
+  "broadcast_window_seconds": 300,
+  "escalate_after": 0,
+  "dup_window_seconds": 120,
+  "dup_min_len": 8
+ },
+ "poke": {
+  "reply_probability": 0.9,
+  "cooldown_seconds": 1800,
+  "delay_seconds": 18.0,
+  "active_probability": 0.1,
+  "active_daily_limit": 3
+ },
+ "behavior": {
+  "collect_emoji": {
+   "enabled": true,
+   "probability": 0.8,
+   "cooldown_s": 900,
+   "daily_limit": 6
+  },
+  "send_emoji": {
+   "enabled": true,
+   "probability": 0.35,
+   "cooldown_s": 600,
+   "daily_limit": 6
+  },
+  "like_moments": {
+   "enabled": false,
+   "probability": 0.4,
+   "cooldown_s": 3600,
+   "daily_limit": 5
+  },
+  "moments_comment": {
+   "enabled": false,
+   "probability": 0.3,
+   "cooldown_s": 7200,
+   "daily_limit": 3
+  },
+  "moments_publish": {
+   "enabled": false,
+   "probability": 0.15,
+   "cooldown_s": 21600,
+   "daily_limit": 1
+  },
+  "moments_surf": {
+   "enabled": false,
+   "probability": 0.2,
+   "cooldown_s": 10800,
+   "daily_limit": 3
+  },
+  "at_member": {
+   "enabled": true,
+   "probability": 0.18,
+   "cooldown_s": 1200,
+   "daily_limit": 10
+  },
+  "poke_active": {
+   "enabled": true,
+   "probability": 0.1,
+   "cooldown_s": 600,
+   "daily_limit": 3
+  }
+ },
+ "proactive": {
+  "enabled": false,
+  "check_interval_min_ms": 1800000,
+  "check_interval_max_ms": 5400000,
+  "idle_threshold_ms": 1800000,
+  "probability": 0.25
+ },
+ "store": {
+  "max_messages_per_chat": 0,
+  "context_tier": 2,
+  "context_slider_pos": null,
+  "tier_mode": "fixed",
+  "tier_schedule": {
+   "enabled": false,
+   "table": []
+  },
+  "tier_cmd_admins": [],
+  "at_count": 12,
+  "keyword_count": 10,
+  "keywords": [],
+  "random_percent": 60,
+  "random_count": 6,
+  "all_count": 30,
+  "past_window_min": 30,
+  "past_floor_count": 8,
+  "unified_tier": true,
+  "group_tier": {},
+  "group_blocklist": {},
+  "archive_block_chats": [],
+  "sticker_level": 0,
+  "recall": {
+   "enabled": true,
+   "window_sec": 180,
+   "heuristic": true
+  }
+ },
+ "cloud": {
+  "enabled": false,
+  "persona_url": "",
+  "blocklist_url": "",
+  "token": "",
+  "auth_style": "bearer",
+  "timeout_ms": 8000,
+  "allow_private": false
+ },
+ "system_prompt": {
+  "custom": "",
+  "enable_scene_rules": true,
+  "enable_memory_rules": true,
+  "enable_holiday_hint": true
+ },
+ "timers": {
+  "enabled": true
+ },
+ "holiday": {
+  "mode": "passive",
+  "greet_chats": [],
+  "greet_hour": 9
+ },
+ "video_read": {
+  "enabled": true,
+  "max_frames": 4,
+  "max_seconds": 60
+ },
+ "bilibili": {
+  "enabled": true,
+  "listen_max_seconds": 120
+ },
+ "memory": {
+  "consolidate_enabled": true,
+  "consolidate_min_interval_ms": 21600000,
+  "consolidate_min_impressions": 4,
+  "max_impressions_per_member": 5,
+  "discover_min_messages": 20,
+  "discover_max_members": 3,
+  "share_across_groups": false,
+  "shared_groups": []
+ },
+ "scoring": {
+  "enabled": true,
+  "seed_library": true,
+  "online_scoring": false,
+  "heat_decay": true
+ },
+ "community": {
+  "export_dir": "exports",
+  "holyshits_upload_url": "",
+  "feedback_upload_url": "",
+  "upload_enabled": false
+ },
+ "feedback": {
+  "enabled": true,
+  "to": "",
+  "upload_url": "",
+  "smtp": {
+   "host": "smtp.qq.com",
+   "port": 465,
+   "user": "",
+   "password": ""
+  },
+  "limit": {
+   "per_minute": 3,
+   "per_hour": 10,
+   "per_day": 20,
+   "dup_window_s": 600
+  }
+ },
+ "ui": {
+  "coord_scale": "auto",
+  "clean_overlays": true,
+  "lock_window_pos": false,
+  "restore_window_after_use": true,
+  "allow_foreground": false,
+  "theme": "whale",
+  "background": "",
+  "bg_type": "image",
+  "whale_cursor": true,
+  "cursor_image": "",
+  "whale_anim": {
+   "worm": 1.0,
+   "plane": 1.0,
+   "zap": 1.0
+  },
+  "obscure_url": false,
+  "wave_fx": {
+   "enabled": false,
+   "scale": 17,
+   "speed": 5.2,
+   "mouse_gain": 0.02,
+   "max_gain": 8.0,
+   "radius": 260,
+   "falloff": 4.0,
+   "rings": 1,
+   "ring_speed": 0.4
+  }
+ },
+ "server": {
+  "enabled": true,
+  "host": "127.0.0.1",
+  "port": 3210,
+  "token": "",
+  "auto_open_browser": true,
+  "browser_path": ""
+ },
+ "member_notes": {},
+ "video_gen": {
+  "enabled": false,
+  "trigger_mode": "on_request",
+  "backends": "",
+  "comfy_workflow": "",
+  "online_allowed": false,
+  "seconds_default": 5,
+  "timeout": 300,
+  "filter_chain": {
+   "size": true,
+   "duration": true,
+   "dup": true,
+   "redline": true,
+   "classifier": true
+  }
+ }
+}
