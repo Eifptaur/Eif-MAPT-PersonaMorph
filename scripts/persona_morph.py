@@ -1303,6 +1303,25 @@ def main():
     deny = set(cfg.get("deny", {}).get("groups") or [])
     targets = [g for g in groups if (not whitelist or g["name"] in whitelist) and g["name"] not in deny]
     log.info("目标群 %d 个：%s", len(targets), ", ".join(g["name"] for g in targets[:15]) if targets else "（白名单未匹配到任何群）")
+    # 私聊目标（2026-09-16 用户：「大号跟小号对谈，相当于借一个智能体进来跟自己聊天」）：
+    # 群那份逻辑一个字不动，这里是**追加**；档位见 config 的 wechat.private_chat。
+    _pt = []
+    try:
+        if wechat is not None:
+            _pt = wechat.list_private_targets()
+    except Exception as e:
+        log.warning("私聊目标发现失败（不影响群）：%s", e)
+    _pmode = str((cfg.get("wechat", {}) or {}).get("private_chat") or "owner_only")
+    if _pt:
+        targets += [{"name": c.get("name") or c.get("wxid"), "wxid": c.get("wxid")} for c in _pt]
+        log.info("私聊目标 %d 个（档位 %s）：%s", len(_pt), _pmode,
+                 ", ".join((c.get("name") or c.get("wxid") or "") for c in _pt[:10]))
+    elif _pmode == "owner_only":
+        log.info("私聊档位=owner_only，但没登记「我的其他账号」或没匹配到 ⇒ 不监听任何私聊"
+                 "（在控制台「微信」面板登记你的大号即可）")
+    elif _pmode == "off":
+        log.info("私聊档位=off ⇒ 不监听私聊")
+    log.info("监听目标合计 %d 个（群 %d + 私聊 %d）", len(targets), len(targets) - len(_pt), len(_pt))
 
     store = ChatStore(int(cfg.get("store", {}).get("max_messages_per_chat") or 0))
     memory = MemoryStore()

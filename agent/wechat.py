@@ -625,6 +625,7 @@ class WeChatAdapter:
                 pass
         self._nick_map = self._load_nicknames()
         self._groups = self._load_groups()
+        self._privates = self._load_privates()      # 2026-09-16：私聊目标（「大号跟小号对谈」）
         self._group_by_wxid = {g["wxid"]: g for g in self._groups}
         # 图片解密密钥（惰性）
         try:
@@ -646,6 +647,13 @@ class WeChatAdapter:
         # W1：优先用公开 get_groups()，拿不到才回退（回退路径也在适配层里，调用点不再碰私有接口）
         try:
             return replica_adapter.load_groups(self._db)
+        except Exception:
+            return []
+
+    def _load_privates(self) -> list:
+        """私聊联系人（非群、非系统号）。2026-09-16 加：支持「大号跟小号对谈」。"""
+        try:
+            return replica_adapter.load_privates(self._db)
         except Exception:
             return []
 
@@ -723,6 +731,37 @@ class WeChatAdapter:
 
     def list_groups(self) -> list:
         return list(self._groups)
+
+    def list_privates(self) -> list:
+        """私聊联系人列表（2026-09-16 加，供监听目标发现用）。"""
+        return list(getattr(self, "_privates", []) or [])
+
+    def list_private_targets(self) -> list:
+        """按 `wechat.private_chat` 档位给出**该监听的私聊**：
+
+        · `off`       ⇒ 空（不监听私聊）
+        · `owner_only`⇒ 只给「我的其他账号（大号）」命中的人（用户口径：「大号跟小号对谈」）
+        · `all`       ⇒ 全部私聊联系人
+
+        ⚠️ `owner_only` 下若**没登记任何账号** ⇒ 返回空并**如实写在返回里**（由调用方记日志），
+        不静默变成"监听所有人"。
+        """
+        mode = str((self.cfg.get("wechat", {}) or {}).get("private_chat") or "owner_only").strip().lower()
+        if mode not in ("off", "owner_only", "all"):
+            mode = "owner_only"
+        if mode == "off":
+            return []
+        priv = self.list_privates()
+        if mode == "all":
+            return priv
+        out = []
+        for c in priv:
+            try:
+                if self.is_owner(str(c.get("wxid") or ""), str(c.get("name") or "")):
+                    out.append(c)
+            except Exception:
+                continue
+        return out
 
     def group_name(self, wxid: str) -> str:
         g = self._group_by_wxid.get(wxid)

@@ -106,6 +106,41 @@ ex = io.open(os.path.join(ROOT, "config.example.json"), encoding="utf-8").read()
 ok("config.example.json 也带这两项（否则 fullcheck 的「同键」判据会红）",
    '"owner_accounts"' in ex and '"owner_mode"' in ex)
 
+print("\n── G. 私聊（大号跟小号对谈）──")
+p = fake({"owner_accounts": ["wxid_big", "大号"], "owner_mode": "know", "private_chat": "owner_only"})
+p._privates = [{"name": "大号", "wxid": "wxid_big"}, {"name": "路人", "wxid": "wxid_other"}]
+ok("owner_only ⇒ 只给主人的私聊",
+   [c["wxid"] for c in p.list_private_targets()] == ["wxid_big"],
+   [c["wxid"] for c in p.list_private_targets()])
+p2 = fake({"owner_accounts": ["wxid_big"], "owner_mode": "know", "private_chat": "all"})
+p2._privates = p._privates
+ok("all ⇒ 全部私聊都给", len(p2.list_private_targets()) == 2)
+p3 = fake({"owner_accounts": ["wxid_big"], "owner_mode": "know", "private_chat": "off"})
+p3._privates = p._privates
+ok("off ⇒ 空", p3.list_private_targets() == [])
+p4 = fake({"owner_mode": "know", "private_chat": "owner_only"})
+p4._privates = p._privates
+ok("owner_only 但没登记 ⇒ 空（不静默变成谁都理）", p4.list_private_targets() == [])
+p5 = fake({"owner_accounts": ["wxid_big"], "owner_mode": "know", "private_chat": "??"})
+p5._privates = p._privates
+ok("非法档位回落 owner_only", [c["wxid"] for c in p5.list_private_targets()] == ["wxid_big"])
+
+ra = io.open(os.path.join(ROOT, "agent", "replica_adapter.py"), encoding="utf-8").read()
+ok("有 load_privates（只读 contact）", "def load_privates" in ra)
+ok("排掉系统号与群", "_SYS_CONTACTS" in ra and "@chatroom" in ra)
+pm = io.open(os.path.join(ROOT, "scripts", "persona_morph.py"), encoding="utf-8").read()
+ok("监听目标里**追加**私聊（群那份逻辑没改）",
+   "list_private_targets()" in pm and "targets += [{" in pm)
+ok("UI 有私聊档位且三档齐", 'data-cfg="wechat.private_chat"' in page
+   and all(('value="%s"' % m) in page for m in ("owner_only", "off", "all")))
+ok("config.example.json 有该项", '"private_chat"' in ex)
+
+print("\n── H. 长清单折叠：群白名单那排也要折叠（用户：「这个更需要折叠了」）──")
+ok("#wlChips 在 FOLD_TARGETS 里", '["#wlChips"' in page)
+ok("折叠框架在（__foldAll + fold-bar）", "__foldAll" in page and "fold-bar" in page)
+wt = io.open(os.path.join(ROOT, "agent", "whale_text.py"), encoding="utf-8").read()
+ok("新文案进了鲸语字典（否则 whale 判据会红）", '"私聊"' in wt)
+
 print("")
 print("主人识别判据：%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
