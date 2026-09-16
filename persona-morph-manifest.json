@@ -1,10 +1,10 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.16.16.2",
-    "sha256": "3811d4b84b2fd1452aa7bb2fa479bff8c03bba8ca1544815c51f0a69218f5a6e",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.17.2/persona-morph-v2.1.17.2.zip",
-    "size": 8150985,
+    "version": "2026.9.16.16.3",
+    "sha256": "6c7b17431443e28c3fa501d9501c27e4aa9efed26e1ec8d7afba58765feb9e23",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.17.3/persona-morph-v2.1.17.3.zip",
+    "size": 8156148,
     "files": 246
   },
   "dlc": [
@@ -32,16 +32,16 @@
     }
   ],
   "announce": {
-    "version": "2026.9.16.16.2",
+    "version": "2026.9.16.16.3",
     "notes": [
-      "装依赖不再像卡死：pip 输出现在实时显示（以前要等装完才打印，界面十几分钟一片空白）",
-      "首次要下约 100~150MB，网速 1MB/s 时十几分钟正常——中途别关窗，装过的不会重下",
-      "去掉总时长上限，改成「连续十分钟无输出」才终止；三个镜像都失败会自动再重试一次",
-      "可选依赖（opencv/edge-tts 等）装不上不再阻断启动，只在控制台如实列出，下次一键启动自动补齐"
+      "扫盘扫到的微信数据库目录现在会直接拿来用——聊天文件不在默认位置时不用再手动填了",
+      "「打开消息库」这一步会把配置/扫盘给的目录与驱动库自探测两条路都试过再报错",
+      "诊断会写明「自动用了扫盘探到的目录」，建议把它填进「数据库目录」固定下来",
+      "目录结构对不上/权限或占用等分档结论照旧，各给能照着做的动作"
     ],
     "forceBase": false,
-    "minBase": "2026.9.16.16.2"
+    "minBase": "2026.9.16.16.3"
   },
-  "builtAt": "2026-09-16T14:52:31Z",
-  "updatedAt": 1789570351291
+  "builtAt": "2026-09-16T14:59:20Z",
+  "updatedAt": 1789570760352
 }
