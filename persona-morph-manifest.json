@@ -1,11 +1,11 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.16.7",
-    "sha256": "ee704cdf14a3e348ef8612d57652f211feb74c9e5a6533af53097504e631581f",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.8/persona-morph-v2.1.8.zip",
-    "size": 8002574,
-    "files": 237
+    "version": "2026.9.16.8",
+    "sha256": "a3fde08bd2b557e492a93debe36725ef2e3d4f8082a48bb9d23bb6603ed6b5d7",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.9/persona-morph-v2.1.9.zip",
+    "size": 8039604,
+    "files": 239
   },
   "dlc": [
     {
@@ -32,16 +32,14 @@
     }
   ],
   "announce": {
-    "version": "2026.9.16.7",
+    "version": "2026.9.16.8",
     "notes": [
-      "修「写了字却不发送」：改成先回车、最多补三枪，每枪之后都去数据库确认一次",
-      "判成功只认数据库里真的多出那条消息；三枪都没成会直说「文字可能还留在输入框里」",
-      "更新提示条在窄窗口下不再把按钮挤扁",
-      "改完设置要重启控制台才生效：一键关闭 → 一键启动（只关窗口不算）"
+      "修「微信连接不上」：接入失败原来没有任何重试，启动那一刻微信没开就会永远停在「微信未连接」",
+      "连不上时现在说得出卡在哪一步：控制台侧栏显示短原因，悬停展开逐步诊断，反馈自动带上这段"
     ],
     "forceBase": false,
-    "minBase": "2026.9.16.7"
+    "minBase": "2026.9.16.8"
   },
-  "builtAt": "2026-09-16T10:56:08Z",
-  "updatedAt": 1789556168086
+  "builtAt": "2026-09-16T11:12:47Z",
+  "updatedAt": 1789557167853
 }
