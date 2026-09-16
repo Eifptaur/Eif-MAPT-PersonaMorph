@@ -375,7 +375,7 @@ ok("长清单折叠：默认是收起态（按钮写着「展开全部」）", "
 ok("长清单折叠：列表重渲染后能自动补回按钮（MutationObserver）", "MutationObserver" in _html)
 
 _cfg_src = src("agent/config.py")
-# 2026-09-16 改口径（用户原话：「你把限位设成默认吧，因为用户在后台都不在意这个，而且也能防止点错」）：
+# 2026-09-16 改口径（已知现象：「你把限位设成默认吧，因为用户在后台都不在意这个，而且也能防止点错」）：
 # 「限位」默认**开**；关掉时才"绝不动窗口"——两处读取点的 fail-closed 语义必须还在。
 ok("默认开「限位」（ui.lock_window_pos=True）", '"lock_window_pos": True' in _cfg_src)
 ok("默认不抢前台（ui.allow_foreground=False）", '"allow_foreground": False' in _cfg_src)
@@ -411,7 +411,7 @@ if os.path.exists(_exe):
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout.decode("utf-8", "replace")
         _mx = [l.strip() for l in _wpo.splitlines() if l.strip().startswith("max ")]
         # 探针行同时带 ASCII 标记（`eq_workarea=True` / `restored_state=Normal`）：
-        # 被重定向时 .NET 可能按 OEM 代码页输出，判据锚 ASCII 才不会被编码坑到。
+        # 被重定向时 .NET 可能按 OEM 代码页输出，自检锚 ASCII 才不会被编码坑到。
         ok("实测：最大化后窗口正好等于工作区（不吃任务栏）",
            any("eq_workarea=True" in l for l in _mx), _mx[0] if _mx else "no max line")
         ok("实测：再点一次能还原回 Normal",
@@ -419,7 +419,7 @@ if os.path.exists(_exe):
     except Exception as e:
         skip("K. 全屏键实测", str(e)[:40])
 
-# 复原运行态（判据不该留下自己的痕迹）
+# 复原运行态（自检不该留下自己的痕迹）
 try:
     if _old_url is None:
         rm_url_file()

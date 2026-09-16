@@ -249,7 +249,7 @@ class MemoryStore:
             return False
         keys = [chat_key] if str(scope) == "this" else list(self._chat_keys(chat_key))
         removed = False
-        # ⛔ 2026-09-16 修（用户反馈：「记忆那里也是删除了还能读取」）：
+        # ⛔ 2026-09-16 修（已知现象：「记忆那里也是删除了还能读取」）：
         #   根因是**口径不对称** —— `members()`（列表）在"互通"时是 `for key in self._chat_keys(chat_key)`
         #   **把所有群合并**后展示的，而这里原来只删 `chat_key` **一个群**的那一份 ⇒ 同一个人在别的群
         #   （或共享池）还留着一份 ⇒ **界面上删了、一刷新又合并出来**。

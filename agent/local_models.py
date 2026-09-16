@@ -68,7 +68,7 @@ def _safe_cfg():
         return {}
 
 
-# ── 两个网络出口（判据里替身它们；不改这两处就没法离线测）────────────────────
+# ── 两个网络出口（自检里替身它们；不改这两处就没法离线测）────────────────────
 def _http_get_json(url, timeout):
     req = urllib.request.Request(url, headers={"Accept": "application/json"})
     with urllib.request.urlopen(req, timeout=timeout) as r:

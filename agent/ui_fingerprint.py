@@ -290,7 +290,7 @@ def verify(gui, name: str, max_dist: int = MAX_DIST) -> tuple:
                       "dist": None, "have": len(bucket), "key": k}
     cur = capture(gui, name)
     if not cur.get("ok"):
-        # 抓不到画面 ⇒ 判据不可用，**不冒充"对不上"**（也不当"对得上"）
+        # 抓不到画面 ⇒ 自检不可用，**不冒充"对不上"**（也不当"对得上"）
         return None, {"reason": "判据不可用：%s" % cur.get("why"), "dist": None,
                       "have": len(bucket), "key": k}
     d = dist(cur["hash"], rec["hash"])

@@ -20,7 +20,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
-os.environ["WX_NO_UI_POP"] = "1"          # 本判据全程不许弹任何窗口（后面还会单独验这条）
+os.environ["WX_NO_UI_POP"] = "1"          # 本自检全程不许弹任何窗口（后面还会单独验这条）
 
 from agent import notify_ui as NU         # noqa: E402
 from agent import version_gate as VG      # noqa: E402
@@ -73,7 +73,7 @@ ok("没有窗口时如实报失败（ok=False + 原因）",
    r0.get("ok") is False and bool(r0.get("why")), str(r0.get("why"))[:46])
 ok("失败路径也没有改前台", NU.foreground() == fg0)
 
-gw = int(ctypes.windll.kernel32.GetConsoleWindow() or 0)      # 判据进程自己的控制台窗（真窗口）
+gw = int(ctypes.windll.kernel32.GetConsoleWindow() or 0)      # 自检进程自己的控制台窗（真窗口）
 if gw:
     before = NU.foreground()
     r = NU.raise_without_stealing(gw)
@@ -88,7 +88,7 @@ else:
 
 print("── C. 弹窗流程：能弹/不重复弹/弹不出来也要如实报 ──")
 # ⚠️ 这一段的"抬起"分支**必须用真窗口**：`raise_without_stealing` 会用 `IsWindow` 验句柄，
-#    拿假句柄（4242）会被它挡回来（这正是它该做的事）⇒ 用判据进程自己的控制台窗当"控制台窗口"。
+#    拿假句柄（4242）会被它挡回来（这正是它该做的事）⇒ 用自检进程自己的控制台窗当"控制台窗口"。
 _real_find, _real_fg, _real_open = NU.find_console_window, NU.foreground, NU.open_console
 try:
     NU.find_console_window = lambda: 4242

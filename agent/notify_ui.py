@@ -339,7 +339,7 @@ def raise_without_stealing(hwnd=None) -> dict:
                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW)
         rep["raised"] = True
         # 闪烁"试过没有"是确定的；`FlashWindowEx` 的回值跟窗口状态有关（已经在闪、或由系统策略接管
-        # 时会回 FALSE）⇒ 报告里分开记，判据只锚"试过"这一条，不把 OS 的回值当功能断言。
+        # 时会回 FALSE）⇒ 报告里分开记，自检只锚"试过"这一条，不把 OS 的回值当功能断言。
         rep["flash_tried"] = True
         rep["flashed"] = flash(hwnd)
         if prev:

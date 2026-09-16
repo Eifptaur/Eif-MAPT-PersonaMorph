@@ -200,7 +200,7 @@ def run(execute: bool = False, timeout: int = 900, py_exe: str = None) -> dict:
     cmd = p["steps"][0]["cmd"]
     try:
         # `creationflags`：这条跑的是 pip 安装命令（分钟级、会输出一大堆），
-        # 不给"不要窗口"的话用户会看到控制台窗闪一下（2026-09-16 用户报的现象）。
+        # 不给"不要窗口"的话用户会看到控制台窗闪一下（2026-09-16 既有口径：的现象）。
         # ⚠️ 这里的 `encoding="utf-8"` 是**既有的编码坑**（`shell=True` 起的是 cmd.exe、
         #    输出是系统 ANSI 代码页）——与 `jobs.py` 同源，留待统一收，本轮不动它。
         r = subprocess.run(cmd, shell=True, timeout=timeout, capture_output=True,

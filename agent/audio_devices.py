@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import sys
 
-try:                                     # 控制台/判据在管道里跑时别被 GBK 编码崩掉
+try:                                     # 控制台/自检在管道里跑时别被 GBK 编码崩掉
     sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 except Exception:
     pass
@@ -33,7 +33,7 @@ VIRTUAL_HINTS = ("立体声混音", "stereo mix", "what u hear", "wave out mix",
 #: 其中"会串音"的那些：它们录的是扬声器正在放的一切，不是一条干净通道
 MIX_HINTS = ("立体声混音", "stereo mix", "what u hear", "wave out mix", "混音")
 
-#: 用户可见的口径（判据断言它必须含"不装驱动""你自己装"这类词）
+#: 用户可见的口径（自检断言它必须含"不装驱动""你自己装"这类词）
 GUIDE_NOTE = ("真语音条要一个「虚拟麦克风」让微信自己录。我们**不替你装驱动、也不改系统设置**："
               "检测到没有时给你怎么装的指引，装完点重检即可。推荐成对的虚拟声卡（如 Scream），"
               "比「立体声混音」干净——后者会把扬声器里正在放的声音一起录进去。")

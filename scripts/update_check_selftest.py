@@ -40,7 +40,7 @@ real_sha = hashlib.sha256(real_before).hexdigest() if real_before else None
 
 tmp = tempfile.mkdtemp(prefix="pm-updchk-")
 try:
-    # 把状态文件指到临时目录：判据**不许写用户的 data/**
+    # 把状态文件指到临时目录：自检**不许写用户的 data/**
     UC._state_path = lambda: os.path.join(tmp, "update_state.json")
 
     def mk_manifest(path, ver, notes=None):
@@ -114,7 +114,7 @@ finally:
     shutil.rmtree(tmp, ignore_errors=True)
 
 print("\n[U9] 控制台「更新公告」条：分支齐、按钮各有各的行为、不弹窗")
-# 2026-09-15 补：以前这条公告**一条判据都没有**（后端五态有判据，前端公告条全靠肉眼）。
+# 2026-09-15 补：以前这条公告**一条自检都没有**（后端五态有自检，前端公告条全靠肉眼）。
 _H = open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
 _W = open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
 _i = _H.find('id="updBar"')

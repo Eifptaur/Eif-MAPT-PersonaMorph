@@ -184,7 +184,7 @@ import http.server  # noqa: E402
 
 _buf = io.BytesIO()
 # ⚠️ 每次跑都用**不同**的像素值：假服务每次返回同一张图会让"去重层"在第二次跑时就把第一张也判成重复
-#    ⇒ 判据假红（第一版就是这么红的）。随机一下，去重判据才稳定（第一张放行、第二张挡）。
+#    ⇒ 自检假红（第一版就是这么红的）。随机一下，去重自检才稳定（第一张放行、第二张挡）。
 Image.new("RGB", (640, 640), (hash(os.getpid() + int(time.time())) % 200 + 30, 140, 200)).save(_buf, format="PNG")
 _PNG_B64 = base64.b64encode(_buf.getvalue()).decode("ascii")
 

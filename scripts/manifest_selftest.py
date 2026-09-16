@@ -119,7 +119,7 @@ try:
     ok(isinstance(an.get("forceBase"), bool), "forceBase 是布尔")
     bad_note = [x for x in (notes or []) if re.search(r"\.(exe|dll|bat|cmd|ps1|py)\b|[;&|`$]\s*\w", x)]
     ok(not bad_note, "notes 里没有可执行文件名/命令（公告只读）" + ("（可疑：%s）" % bad_note[:2] if bad_note else ""))
-    # 注意：minBase 是**裸版本号**、requiresBase 才是区间 —— 判据一开始把两者用同一个校验，自己抓出来了
+    # 注意：minBase 是**裸版本号**、requiresBase 才是区间 —— 自检一开始把两者用同一个校验，自己抓出来了
     ok(bool(re.match(r"^\d+(\.\d+)*$", str(an.get("minBase") or ""))), "minBase 是合法版本号（%s）" % an.get("minBase"))
 
     print("\n[M8] 清单里不许出现本机路径/用户名（PII 闸门）")

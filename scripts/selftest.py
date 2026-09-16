@@ -145,7 +145,7 @@ try:
     check("消息列表归一", normalize_message_list('["a","b"]') == ["a", "b"])
     check("@ 识别", is_at_me("@群deepseek 你好", self_nickname="群deepseek", bot_name="小鲸鱼"))
     check("@ 识别(负例)", not is_at_me("今天天气不错", self_nickname="群deepseek", bot_name="小鲸鱼"))
-    # ── @ 识别的边界（2026-09-16 用户反馈「对所有 @ 都唤醒模型，超级耗 token」后加的）──────
+    # ── @ 识别的边界（2026-09-16 已知现象：「对所有 @ 都唤醒模型，超级耗 token」后加的）──────
     #   老实现是纯子串：`@群deepseek小助手` 会被判成"@ 我" ⇒ 白唤醒一次模型。这几条钉住新口径。
     _N = {"self_nickname": "群deepseek", "bot_name": "小鲸鱼"}
     check("@ 识别：别人名字以我昵称开头 ⇒ **不算 @ 我**",
@@ -210,7 +210,7 @@ try:
         check("api.model 已配置", False, "请填模型 id")
     # 视觉模型提示（仅提示，不强制失败）
     # 2026-09-14：官方正名 `deepseek-flash`（V4.1-Flash）**支持视觉**，但名字里没有 "vision" 字样
-    # ⇒ 只按关键字判断会误报"疑似非视觉模型"（牵一发动全身：改模型清单时这条判据要一起改）。
+    # ⇒ 只按关键字判断会误报"疑似非视觉模型"（牵一发动全身：改模型清单时这条自检要一起改）。
     model = str(api.get("model") or "").lower()
     _VISION_OK = ("vision", "vl", "omni", "4o", "gemini", "deepseek-flash", "v4.1-flash", "v41-flash")
     is_vision = any(k in model for k in _VISION_OK)

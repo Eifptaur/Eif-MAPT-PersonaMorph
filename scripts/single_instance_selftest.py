@@ -119,7 +119,7 @@ try:
 except Exception as e:
     ok("C3 锁文件内容＝纯 pid 数字（兼容旧读取方）", False, str(e))
 
-# ── C4/C5：跨进程才是真判据 ───────────────────────────────────
+# ── C4/C5：跨进程才是真自检 ───────────────────────────────────
 name2, path2, out2 = uniq(), lockfile("c2"), os.path.join(TMP, "child2.json")
 child = spawn_holder(name2, path2, out2)
 info = wait_file(out2)
@@ -166,7 +166,7 @@ held4b, _ = SI.probe(name=name4, lock_path=path4)
 ok("C7 release 之后 probe＝没人持锁", not held4b)
 ok("C7 release 幂等（再调一次不抛）", (l4.release() is None) and (l4.release() is None))
 
-# ── C8：旧版实例仍被拦住（兜底判据＝那是个 Python 进程）────────
+# ── C8：旧版实例仍被拦住（兜底自检＝那是个 Python 进程）────────
 pysleep = spawn("import time\ntime.sleep(60)\n")
 path5 = lockfile("c5")
 with open(path5, "w", encoding="utf-8") as f:
@@ -181,7 +181,7 @@ rbad = bad.acquire()
 ok("C9 非法互斥体名 ⇒ 取锁失败（fail-closed，不静默裸奔）",
    (not rbad.ok) and bool(rbad.reason) and (not bad.acquired), repr(rbad))
 
-# ── C10：证据文件写不进去时，判据不受影响 ──────────────────────
+# ── C10：证据文件写不进去时，自检不受影响 ──────────────────────
 blocker = os.path.join(TMP, "not-a-dir")
 with open(blocker, "w", encoding="utf-8") as f:
     f.write("x")

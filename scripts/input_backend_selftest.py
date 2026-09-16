@@ -30,7 +30,7 @@ def ck(name, cond, extra=""):
     print("  %s %s%s" % ("PASS" if cond else "FAIL", name, (" · " + extra) if extra else ""))
 
 
-# ── A 单元判据 ──────────────────────────────────────────────────────────
+# ── A 单元自检 ──────────────────────────────────────────────────────────
 print("[A] 基础")
 ck("A1 DPI 已锁（非 none）", ib.DPI_MODE != "none", "DPI_MODE=%s" % ib.DPI_MODE)
 ck("A2 lParam 打包 (10,20)", ib.pack_lparam(10, 20) == ((20 << 16) | 10))
@@ -84,7 +84,7 @@ r = b.click(1234, (500, 600), right=True)
 ib.find_main_window = _saved_fm
 _tg = {c[0] for c in sent}
 # 2026-09-16 改口径：**投递右键已实测可用**（投渲染子窗不弹菜单、**投主窗才弹**；再投递点菜单项能命中，
-# 判据＝剪贴板被写成那条消息的正文）⇒ 不再"明确拒绝"，而是**明确改投主窗**并用 RBUTTON 消息。
+# 自检＝剪贴板被写成那条消息的正文）⇒ 不再"明确拒绝"，而是**明确改投主窗**并用 RBUTTON 消息。
 # 守的仍是"不许乱点"：目标窗必须只有主窗 4321，且必须发出 右键按下/抬起。
 ck("B6 投递右键＝改投主窗 + 发 RBUTTON 消息（不再拒绝）",
    r[0] is True and _tg == {4321} and any(c[1] == 0x0204 for c in sent) and any(c[1] == 0x0205 for c in sent),

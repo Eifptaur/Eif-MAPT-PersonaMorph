@@ -41,7 +41,7 @@ src = io.open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").
 # 只取勾选框那一族规则（从自研注释到 focus-visible 之后）
 _i = src.find("自研勾选框")
 # ⚠️ 取样窗口必须**收到本块结尾**：第一版写死 +2600 字符，把隔壁 `.pri` 的渐变色也吃进来了
-#    ⇒ E1 假红（判据自己错，不是样式错）。末尾锚点＝本块最后一条规则。
+#    ⇒ E1 假红（自检自己错，不是样式错）。末尾锚点＝本块最后一条规则。
 _end = src.find("input[type=checkbox]:disabled", _i)
 _end = (src.find("}", _end) + 1) if _end > 0 else (_i + 1200)
 _SEG = src[_i:_end] if _i > 0 else ""

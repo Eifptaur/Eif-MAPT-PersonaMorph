@@ -418,7 +418,7 @@ def resolve_context_tier(trigger_entries, self_nickname="", bot_name="", self_id
             at_me = True
             break
     keyword = hit_keyword("\n".join(texts), c.get("keywords") or [])
-    # ── 两条确定性触发（2026-09-15 新增，不吃随机数；用户口径：顺着我的话往下说却因随机数不回＝体验断裂）──
+    # ── 两条确定性触发（2026-09-15 新增，不吃随机数；既有口径：顺着我的话往下说却因随机数不回＝体验断裂）──
     #   ① 引用/回复的是我：①优先看条目自带的 reply（有就信它）②否则拿这条的话头去比对我最近发过的话
     #   ② 接着我的话往下说：历史里最后一条是我说的，且这条紧跟其后（默认 180s 内）
     quote_me = False
@@ -447,7 +447,7 @@ def resolve_context_tier(trigger_entries, self_nickname="", bot_name="", self_id
             if hist and hist[-1].get("self"):
                 # ⚠️ 用 __import__("time")：本文件顶层**没有** import time（既有代码一律这么写）。
                 #   2026-09-15 踩过：写成 time.time() ⇒ 这里 NameError 被 except 吞成 gap=0 ⇒
-                #   "只要我最后发过言就无条件触发"（judge C4 抓出来的）。判据不可用时**不触发**（fail-closed）。
+                #   "只要我最后发过言就无条件触发"（judge C4 抓出来的）。自检不可用时**不触发**（fail-closed）。
                 try:
                     gap = int((int(__import__("time").time() * 1000) - int(hist[-1].get("ts") or 0)) / 1000)
                 except Exception:
@@ -465,7 +465,7 @@ def resolve_context_tier(trigger_entries, self_nickname="", bot_name="", self_id
         except (TypeError, ValueError):
             return 0
 
-    # ⛔ 2026-09-16 新增第四档「只在群里 @ 我 / 引用我时才回」（用户口径：机制映射到 UI 让他自己选）：
+    # ⛔ 2026-09-16 新增第四档「只在群里 @ 我 / 引用我时才回」（既有口径：机制映射到 UI 让他自己选）：
     #   主人的号在群里说话时，默认会走下面的档位级联（tier>=4 就全回，等于"照常回你自己的话"）。
     #   这一档把范围收紧成：**整批触发消息都是主人发的、且没 @ 我、也没引用我 ⇒ 不回**。
     #   三条边界：①群里才算（`chat_key` 前缀 `group:`）—— 私聊是「借个智能体跟自己聊」的用法，不受这一档影响；
@@ -556,7 +556,7 @@ def build_past_state(store, chat_key, exclude_ids=None, limit=None):
     else:
         cutoff = 0
         in_win = list(all_msgs)
-    # ⚠️ 取"最后 N 条"时**按整块丢老的**（2026-09-15 判据 A2 的真根因）：
+    # ⚠️ 取"最后 N 条"时**按整块丢老的**（2026-09-15 自检 A2 的真根因）：
     #   原来直接切片 ⇒ 每来一条新消息就丢掉最老的一条 ⇒ 历史块从第一行就变，前缀缓存永远吃不到
     #   （实测两轮公共前缀只有 88 字符）。改成 CHUNK 对齐丢弃：两次丢块之间历史块是**纯追加**，
     #   token 上限＝max_limit + CHUNK - 1 条。
@@ -591,7 +591,7 @@ def build_past_state(store, chat_key, exclude_ids=None, limit=None):
         except (TypeError, ValueError):
             gap_min = 0
     # ⑥ 上下文压缩（向 harness 看齐）：最近 8 条详细，更早的只保留「发送者+前40字」摘要——降 token 且不丢"谁说过"信息
-    # ⚠️ 分界**按整块推进**（2026-09-15 判据 A2 抓到的缓存问题）：原来每来一条新消息就把一条从
+    # ⚠️ 分界**按整块推进**（2026-09-15 自检 A2 抓到的缓存问题）：原来每来一条新消息就把一条从
     #   "详细"挪进"摘要" ⇒ 历史块开头每轮都变 ⇒ 跨轮公共前缀只剩 7%。改成每 CHUNK 条才推进一次，
     #   两次推进之间历史块**逐字不变（纯追加）**，前缀缓存才吃得到。
     NEAR, CHUNK = 8, 8
@@ -740,7 +740,7 @@ def build_user_prompt(ctx) -> str:
     ]))
 
     # 语言风格参考（动态内容：放用户消息，保持系统提示静态 → 前缀缓存命中）
-    # ⛔ 2026-09-16 按用户口径加闸（原话：「我之前不是说过这个只给 DeepSeek 用吗，那个小鲸鱼用，
+    # ⛔ 2026-09-16 按既有口径：加闸（原话：「早先不是说过这个只给 DeepSeek 用吗，那个小鲸鱼用，
     #   因为其他人格学群友说话学多了，就变成玩梗弱智了，不是本人了」）：
     #   **风格学习只给内置的 DeepSeek 小鲸鱼用**。用户一旦动过角色设置（改了名字 / 填了自定义
     #   角色文本 / 从人设库里选了别的卡），就不再注入风格参考与"本地高分反应"——

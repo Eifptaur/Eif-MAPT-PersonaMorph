@@ -32,7 +32,7 @@ log = logging.getLogger("persona-morph")
 IDLE_S = 60.0        # 空闲多久算「用完了」（这期间没有任何输入动作就归还）
 _POLL_S = 1.0
 
-_test_api = None     # 判据用的替身（None ⇒ 用真 user32）
+_test_api = None     # 自检用的替身（None ⇒ 用真 user32）
 _lock = threading.Lock()
 _state = {"borrowed": False, "hwnd": 0, "rect": None, "forced": None,
           "at": 0.0, "last_touch": 0.0, "restored": 0, "skipped": 0,

@@ -78,7 +78,7 @@ ok('.nav a 规则里显式 none', any('text-decoration:none' in r.replace(' ', '
 print('── E. CSS 花括号配平（孤儿声明行＝声明被浏览器静默丢弃，本条专抓它）──')
 # 先生报的"下划线"根因就是这个：某次改 `.nav a{…}` 时 transition 那行提前写了 `}`，
 # 后面 `text-decoration:none;font-size;margin` 变成孤儿声明、被浏览器整段丢掉 ⇒ 导航链接露出默认下划线。
-# 花括号不配平能机械抓到这类错误，判据不需要真机渲染。
+# 花括号不配平能机械抓到这类错误，自检不需要真机渲染。
 css_blocks = re.findall(r'"""(.*?)"""', console, re.S)
 css = next((b for b in css_blocks if '.nav a{' in b), '')
 opens = css.count('{')

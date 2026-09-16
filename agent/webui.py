@@ -641,7 +641,7 @@ class WebUI:
                                 st["bg"] = _bg.status()
                             except Exception as _be:
                                 st["bg"] = {"paths": [], "error": str(_be)}
-                            # 「我自己是谁」（2026-09-16，用户反馈「无法识别大号用户 / 无法识别我的账号」）：
+                            # 「我自己是谁」（2026-09-16，已知现象：「无法识别大号用户 / 无法识别我的账号」）：
                             # `wechat.py` 只从驱动库的 `get_self_info()` 拿自己的账号，**拿不到时那一串
                             # "这条是不是我发的"判断会静默失效**（会回自己/@ 自己不理）。这里如实暴露：
                             # `ok=False` ⇒ 控制台**写"没认出来"**，不许装没事。
@@ -656,7 +656,7 @@ class WebUI:
                                               else {"ok": False, "why": "还拿不到微信实例（机器人未启动？）"})
                             except Exception as _se:
                                 st["self"] = {"ok": False, "why": str(_se)}
-                            # 「我的其他账号（大号）」（2026-09-16 用户反馈「无法识别我的大号」）：
+                            # 「我的其他账号（大号）」（2026-09-16 已知现象：「无法识别我的大号」）：
                             # 登记了几项、昵称有几项**真在群成员里匹配上了**、当前反应档位 —— 摆出来让用户核对。
                             try:
                                 st["owner"] = (_wx.owner_status() if _wx is not None
@@ -1681,7 +1681,7 @@ class WebUI:
                 elif path == "/api/code-check":
                     # 代码检测（POST；纯代码层检查，不接管鼠标）。改为后台线程跑，前端轮询进度。
                     try:
-                        # ⛔ 2026-09-16 删掉这里的 `import threading`（用户报「我点了重启，咋没动静啊」）：
+                        # ⛔ 2026-09-16 删掉这里的 `import threading`（已知现象：「我点了重启，咋没动静啊」）：
                         #    Python 的规则是**函数体内只要有 import 该名字，整个函数里它就是局部变量**
                         #    ⇒ 本函数早得多的分支（`/api/restart`，第 1420 行那句 `threading.Timer`）
                         #    会在赋值前引用它，抛 `UnboundLocalError: local variable 'threading'
@@ -1715,10 +1715,10 @@ class WebUI:
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)})
                 elif path == "/api/feedback/submit":
-                    # 用户反馈提交（POST {kind,text,contact}）：落盘 → 立刻试投递 → 三态如实回报
+                    # 既有口径：提交（POST {kind,text,contact}）：落盘 → 立刻试投递 → 三态如实回报
                     try:
                         from . import feedback as FB
-                        # 环境一律**服务端现取**（不信前端传上来的那点东西）：用户报「用不了」时，
+                        # 环境一律**服务端现取**（不信前端传上来的那点东西）：已知现象：「用不了」时，
                         # "微信到底连上没有、卡在哪一步"是最关键的定位信息 ⇒ 每条反馈都带上。
                         _att = {}
                         try:

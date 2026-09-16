@@ -105,8 +105,8 @@ finally:
 from agent.llm import match_official_price, _OFFICIAL_PRICES
 check("价目表有规模（≥150 条）", len(_OFFICIAL_PRICES) >= 150,
       "当前 %d 条" % len(_OFFICIAL_PRICES))
-# ⛔ 2026-09-15 改口径：原来写死 `== 172`。加一条新模型（gpt-6-astra）就假红——**数字一变就要改判据，
-#   是判据在制造维护负担**（同 2026-09-14 那条"官方价数字不写死"的口径）。改成守两件真事实：
+# ⛔ 2026-09-15 改口径：原来写死 `== 172`。加一条新模型（gpt-6-astra）就假红——**数字一变就要改自检，
+#   是自检在制造维护负担**（同 2026-09-14 那条"官方价数字不写死"的口径）。改成守两件真事实：
 #   ①表里有规模（≥150，防被误删空）②每条都有 in/out 两个数字（防塞半条进去）。
 _bad_rows = [k for k, v in _OFFICIAL_PRICES.items()
              if not isinstance(v.get("in"), (int, float)) or not isinstance(v.get("out"), (int, float))]
@@ -126,7 +126,7 @@ check("交付面自检已经接进报告主流程（第六节）", "sec_delivery
 check("MiniMax-M3 命中", match_official_price("MiniMax-M3")["in"] == 2.1)
 # ⛔ 2026-09-14 改口径：原来写死 `out == 4.5`，而价目表已按官方 2026-09-10 **闲时价**更新为 4.0
 #   ⇒ 断言跟不上就假红。这里改成守"**有官方价映射且带出处**"这件事实，具体数字由价目表自己负责
-#   （数字一变就要改判据，是判据在制造维护负担）。
+#   （数字一变就要改自检，是自检在制造维护负担）。
 _ds_price = match_official_price("deepseek-flash")
 check("deepseek-flash（现行正名）有官方价映射（含出处）",
       isinstance(_ds_price.get("out"), (int, float)) and _ds_price["out"] > 0
@@ -212,7 +212,7 @@ check("cursor 蓝色鲸鱼（蓝像素占比>2%）", _blue > max(1, int(_samp * 
 
 # ═══════════ E. 一键启动链（2026-09-14 改口径：vbs 已收进 scripts/）═══════════
 # 为什么改：原来断言 `一键启动.vbs` 在**根目录**，而 2026-09-13 收口时把三个 vbs 全挪进了 `scripts\`
-# （根目录只留 `一键启动.exe`/`一键关闭.exe`）⇒ 四条断言长期假红，是判据没跟上目录收口。
+# （根目录只留 `一键启动.exe`/`一键关闭.exe`）⇒ 四条断言长期假红，是自检没跟上目录收口。
 check("scripts\\一键启动.vbs 存在", os.path.exists(os.path.join(ROOT, "scripts", "一键启动.vbs")))
 check("scripts\\一键关闭.vbs 存在", os.path.exists(os.path.join(ROOT, "scripts", "一键关闭.vbs")))
 check("onestart.py 存在", os.path.exists(os.path.join(ROOT, "scripts", "onestart.py")))
@@ -268,7 +268,7 @@ except Exception as e:
 
 # ═══════════ J. 「点击测试」必须全程后台（真鼠标一键检验已按用户要求删除）═══════════
 # 用户 2026-09-14 原话：「那个程序鼠标检验怎么还在那儿呢？而且它又抢我鼠标…我要的是点击测试，全程后台测」
-# ⇒ 判据改成"守删除"：面板/JS/后端入口/路由若任何一个回来，这里立刻变红。
+# ⇒ 自检改成"守删除"：面板/JS/后端入口/路由若任何一个回来，这里立刻变红。
 try:
     _wx_src = io.open(os.path.join(ROOT, "scripts", "persona_morph.py"), encoding="utf-8").read()
     _web_src = io.open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
@@ -318,8 +318,8 @@ try:
     check("config.example.json 与默认配置同键", _dk == _ek,
           "示例 %d 键 / 默认 %d 键；缺=%s 多=%s"
           % (len(_ek), len(_dk), sorted(_dk - _ek)[:5], sorted(_ek - _dk)[:5]))
-    # ⚠️ 断言里**不许写出真实的用户名/邮箱字面量**——否则判据自己就成了 PII 泄露源，
-    #    打包闸门当场 FATAL（2026-09-15 实测：我第一版把用户名写进这条正则，出包被拒）。
+    # ⚠️ 断言里**不许写出真实的用户名/邮箱字面量**——否则自检自己就成了 PII 泄露源，
+    #    打包闸门当场 FATAL（2026-09-15 实测：早先把用户名写进这条正则，出包被拒）。
     #    用"形状"判：任何 email 形状、任何 sk- 形状的密钥。
     _ex_txt = io.open(os.path.join(ROOT, "config.example.json"), encoding="utf-8").read()
     _hit = re.search(r"[\w.+-]+@[\w-]+\.[\w.]{2,}|sk-[A-Za-z0-9]{8,}", _ex_txt)
@@ -340,10 +340,10 @@ try:
 except Exception as e:
     check("用量账本记三分（fresh / cached / output）", False, str(e)[:60])
 
-# ── 判据自身的可执行性（2026-09-15）：判据崩掉和判据红掉是两件事 ──
-# 产品链走 `py -X utf8 onestart.py`（launcher.cs:285）所以产品侧没事；但判据脚本没这层——
+# ── 自检自身的可执行性（2026-09-15）：自检崩掉和自检红掉是两件事 ──
+# 产品链走 `py -X utf8 onestart.py`（launcher.cs:285）所以产品侧没事；但自检脚本没这层——
 # 一旦输出被重定向（`> out.txt` / 管道），Python 退回 locale 编码（本机 GBK），
-# `print("  ✔ %s")` 直接 UnicodeEncodeError，**整条判据崩在第一个 PASS 上**（rc=1、只跑半截）。
+# `print("  ✔ %s")` 直接 UnicodeEncodeError，**整条自检崩在第一个 PASS 上**（rc=1、只跑半截）。
 # 实测 5 条脚本（chat_ocr / clipboard / image_filter / image_lib / log_housekeeping）中招，
 # 80 条断言从来没被真正跑到过 ⇒ 这里钉住：凡打印 ✔/✘ 的 selftest 必须有 UTF-8 垫片。
 try:

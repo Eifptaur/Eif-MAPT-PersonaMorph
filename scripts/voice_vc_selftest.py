@@ -109,7 +109,7 @@ finally:
 
 print("\n[C] vc_convert 四种结局都要如实")
 cfg1 = {"vc_url": "http://127.0.0.1:1/infer", "vc_mode": "multipart"}
-# ⚠️ 先真的造一个待变声文件（第一版忘了 ⇒ 三条断言全落在"读不了文件"上，是我判据自己的错）
+# ⚠️ 先真的造一个待变声文件（第一版忘了 ⇒ 三条断言全落在"读不了文件"上，是我自检自己的错）
 _IN = os.path.join(TMP, "a.wav")
 with open(_IN, "wb") as _f:
     _f.write(V._tone_wav(0.1))

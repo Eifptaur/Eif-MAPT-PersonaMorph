@@ -93,7 +93,7 @@ ok("余额 JS 不再往胶囊里写「余额：」前缀",
    "el.textContent=b.error;" in page and "el.textContent = '未配置'" in page and "'余额：'" not in page)
 
 print("\n── ⑤ 滚动条 ──")
-# 只看**滚动条规则**里的宽度（`width:8px` 也可能是状态圆点那种无关元素——第一版判据就在这里误红了）
+# 只看**滚动条规则**里的宽度（`width:8px` 也可能是状态圆点那种无关元素——第一版自检就在这里误红了）
 _bad_w = re.findall(r"scrollbar\{width:(\d+)px", page)
 ok("没有 ≥8px 的滚动条（旧那套 8px + input-bd 已去掉）",
    all(int(w) <= 6 for w in _bad_w) and "background:var(--input-bd);border-radius:4px" not in page, _bad_w)
@@ -171,7 +171,7 @@ ok("点击后立刻进入处理中态（禁用 + 改字）",
 ok("失败要恢复原状并如实报错", "btn.textContent = oldText" in page)
 
 # 真值表复算：把上面那段 JS 的判定用 Python 等价写一遍，断言"点一下"的结果符合直觉。
-# 上一版判据只查了「有状态变量」，**没查方向**，所以没拦住我把两个分支写反（点暂停发 resume）。
+# 上一版自检只查了「有状态变量」，**没查方向**，所以没拦住我把两个分支写反（点暂停发 resume）。
 def _pause_step(paused_now):
     want_paused = not paused_now
     return {"call": "/api/pause" if want_paused else "/api/resume",

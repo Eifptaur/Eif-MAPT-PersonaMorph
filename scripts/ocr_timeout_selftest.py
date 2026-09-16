@@ -27,7 +27,7 @@ sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
 os.environ["WXAGENT_OCR_TIMEOUT"] = "1"      # 单次硬上限 1 秒（clamp 下限就是 1s）
-os.environ["WXAGENT_OCR_COOLDOWN"] = "1"     # 熔断只持续 1 秒，判据不等待
+os.environ["WXAGENT_OCR_COOLDOWN"] = "1"     # 熔断只持续 1 秒，自检不等待
 
 # —— 假 OCR 引擎：必须在 import chat_ocr 之前塞进 sys.modules，让 recognize 的局部 import 拿到它 ——
 _hang = {"on": True, "sleep": 30.0, "calls": 0}
@@ -109,7 +109,7 @@ tok = co.begin_window(0.4)
 ok("窗内 window_left 有值", co.window_left() is not None and co.window_left() <= 0.4 + 1e-6,
    # ⚠️ 2026-09-16：原来写死 `<= 0.4`，而 `window_left()` ＝ `tok - time.monotonic()`，两个量都在
    #    1e6 量级（Windows 单调钟从开机算起）⇒ 浮点相减有 ~1e-10 误差，实测真报过
-   #    `0.40000000002328306 > 0.4` 的**假红**。判据守的是"窗内剩余不超过开窗时长"这个**性质**，
+   #    `0.40000000002328306 > 0.4` 的**假红**。自检守的是"窗内剩余不超过开窗时长"这个**性质**，
    #    容差 1e-6 比浮点误差大 4 个量级、比真实的 0.1s 越界小 5 个量级。
    str(co.window_left()))
 ok("窗还没过期时 budget_out=False", co.budget_out(tok) is False)
