@@ -275,6 +275,51 @@ ok("db_open 那一行此时**不许**写成「打不开消息库」，要写「�
    and "打不开消息库" not in str([s for s in _di["steps"] if s["key"] == "db_open"][0]["detail"]),
    str([s for s in _di["steps"] if s["key"] == "db_open"][0]["detail"])[:110])
 
+print("── J5. 扫盘探到的目录要**真的拿来用**（2026-09-16 网友 B 截图：扫到 E:\\xwechat_files 里 43 个 .db，却仍报「打不开消息库」）──")
+ok("配置里填了就用配置（来源=config）", W.resolve_db_dir("D:\\x") == ("D:\\x", "config"),
+   str(W.resolve_db_dir("D:\\x")))
+_root5 = _tempfile.mkdtemp(prefix="pm_dbuse_")
+try:
+    _acc5 = os.path.join(_root5, "xwechat_files", "wxid_x", "db_storage", "message")
+    os.makedirs(_acc5)
+    with open(os.path.join(_acc5, "message_0.db"), "wb"):
+        pass
+    _hit5 = os.path.join(_root5, "xwechat_files")
+    _saved_cands = W._db_dir_candidates
+    W._db_dir_candidates = lambda extra="": (([str(extra)] if str(extra or "").strip() else []) + [_hit5])
+    try:
+        _dir5, _src5 = W.resolve_db_dir("")
+        ok("配置没填、扫盘扫到 ⇒ 就用它（来源=scanned）",
+           _dir5 == _hit5 and _src5 == "scanned", "%s / %s" % (_dir5, _src5))
+        ok("探盘结果里带 hit（哪些候选真有 .db）",
+           W._probe_db_dirs("").get("hit") == [_hit5], str(W._probe_db_dirs("").get("hit")))
+        _mod5 = types.ModuleType("wechatauto")
+
+        def _WC5(db_dir=None):
+            if not db_dir:
+                raise RuntimeError("未找到微信数据库目录，请通过 db_dir 参数手动指定")
+            return _DB(self_info={"username": "wxid_me", "nick_name": "我"})
+
+        _mod5.WeChatDB = _WC5
+        _saved5 = sys.modules.get("wechatauto")
+        sys.modules["wechatauto"] = _mod5
+        try:
+            _d5 = _diag(_VI_RUN)
+        finally:
+            if _saved5 is not None:
+                sys.modules["wechatauto"] = _saved5
+            else:
+                sys.modules.pop("wechatauto", None)
+        _db5 = [s for s in _d5["steps"] if s["key"] == "db_open"][0]
+        ok("诊断**自动用扫到的目录**把消息库打开了（不再只让人手动填）", _db5["ok"] is True, _db5["detail"][:100])
+        ok("并写明「自动用了扫盘探到的目录」+ 建议填进配置",
+           "自动用了扫盘探到的目录" in _db5["detail"], _db5["detail"][:120])
+        ok("这一步过了以后整轮诊断不再有卡点", bool(_d5["ok"]), "%s / %s" % (_d5["ok"], _d5["step"]))
+    finally:
+        W._db_dir_candidates = _saved_cands
+finally:
+    _shutil.rmtree(_root5, ignore_errors=True)
+
 print("── K. 接线：启动接入 / 10 秒重试 / 状态下发 / 反馈 env（源码级，防以后改回去）──")
 _pm = _src(os.path.join("scripts", "persona_morph.py"))
 ok("启动接入走 _attach_wechat（失败不抛）",

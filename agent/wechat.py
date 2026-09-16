@@ -601,8 +601,23 @@ class WeChatAdapter:
             from wechatauto import WeChatDB, MediaDownloader
         except ImportError as e:
             raise WeChatError("未安装 wechatauto：请先安装依赖（pip install -r requirements.txt）。%s" % e)
-        db_dir = str(self.cfg.get("wechat", {}).get("db_dir") or "") or None
-        self._db = WeChatDB(db_dir=db_dir) if db_dir else WeChatDB()
+        _dd = str(self.cfg.get("wechat", {}).get("db_dir") or "").strip()
+        _picked, _src = resolve_db_dir(_dd)
+        try:
+            self._db = WeChatDB(db_dir=_picked) if _picked else WeChatDB()
+        except Exception:
+            if _src != "scanned":
+                raise
+            # 扫盘探到的那个也不成 ⇒ 退回驱动库自探测（保持原行为，别把新的失败点引进来）
+            self._db = WeChatDB()
+        if _src == "scanned":
+            # 2026-09-16（网友 B 的诊断截图）：**不写用户的 config，但必须留痕** ——
+            # 否则用户会以为"我什么都没配它就好了"，下次换台机器/换个目录又要重新踩一遍。
+            try:
+                log.warning("「数据库目录」没配 ⇒ 自动用了扫盘探到的 %s"
+                            "（建议在控制台「数据库目录」里保存它，免得下次又靠扫盘）", _picked)
+            except Exception:
+                pass
         info = self._db.get_self_info() or {}
         self._self_wxid = str(info.get("username") or "")
         self._self_nickname = str(info.get("nick_name") or "")
@@ -6040,11 +6055,12 @@ def _probe_db_dirs(extra: str = "") -> dict:
     （权限/占用）。⇒ 独立探一遍盘，把档分开，并把**探过哪些目录**如实报出来。
     """
     tried = _db_dir_candidates(extra)
-    found, accounts, dbs = [], 0, 0
+    found, hit, accounts, dbs = [], [], 0, 0
     for p in tried:
         if not os.path.isdir(p):
             continue
         found.append(p)
+        _here = 0
         try:
             for acc in sorted(os.listdir(p)):
                 ds = os.path.join(p, acc, "db_storage")
@@ -6052,10 +6068,32 @@ def _probe_db_dirs(extra: str = "") -> dict:
                     continue
                 accounts += 1
                 for _r, _d, _f in os.walk(ds):
-                    dbs += sum(1 for f in _f if f.lower().endswith(".db"))
+                    _here += sum(1 for f in _f if f.lower().endswith(".db"))
         except Exception:
-            continue
-    return {"tried": tried, "found": found, "accounts": accounts, "dbs": dbs}
+            pass
+        dbs += _here
+        if _here:
+            hit.append(p)
+    return {"tried": tried, "found": found, "hit": hit, "accounts": accounts, "dbs": dbs}
+
+
+def resolve_db_dir(explicit: str = "") -> tuple:
+    """**决定消息库用哪个目录**：配置里填的 → 扫盘探到的（含 .db 的第一个候选）→ 空。
+
+    为什么要有它（2026-09-16 网友 B 那份诊断截图）：他的微信把聊天文件放在 `E:\\xwechat_files`
+    （我们**扫到了 43 个 .db**），可驱动库的自探测只认默认位置 ⇒ 一直"未找到微信数据库目录"、
+    会话头与投递发送全不可用 —— **我们明明已经找到那个目录了，却没拿来用**。
+    返回 `(目录, 来源)`，来源 ∈ `"config"` / `"scanned"` / `""`。
+    """
+    if str(explicit or "").strip():
+        return str(explicit).strip(), "config"
+    try:
+        p = _probe_db_dirs("")
+        if p.get("hit"):
+            return str(p["hit"][0]), "scanned"
+    except Exception:
+        pass
+    return "", ""
 
 
 def _db_open_verdict(p: dict) -> str:
@@ -6176,19 +6214,37 @@ def attach_diagnosis(adapter=None, err="", db=None) -> dict:
             _d = str((get_config().get("wechat") or {}).get("db_dir") or "")
         except Exception:
             _d = ""
-        try:
-            from wechatauto import WeChatDB
-            _db = WeChatDB(db_dir=_d) if _d else WeChatDB()
-            steps.append({"key": "db_open", "name": "打开消息库", "ok": True,
-                          "detail": "消息库已打开：" + (_db_dir_hint(_db) or "（库没报目录）")})
-        except Exception as e:
-            if isinstance(e, ImportError):
-                # 依赖缺了 ⇒ 别把它说成"消息库打不开"（2026-09-16：这是"没装齐"最容易被误判的一条路）
+        # 2026-09-16（网友 B 截图）：配置没填时，**把扫盘扫到的那个目录拿来用**——试的次序是
+        # ①配置/扫盘给出的目录 ②驱动库自探测（最后兜一次，保持原行为）。
+        _picked, _psrc = resolve_db_dir(_d)
+        _tries = ([_picked] if _picked else []) + [""]
+        _errs = []
+        _ok_how = ""
+        for _cand in _tries:
+            try:
+                from wechatauto import WeChatDB
+                _db = WeChatDB(db_dir=_cand) if _cand else WeChatDB()
+                _ok_how = "消息库已打开：" + (_db_dir_hint(_db) or "（库没报目录）")
+                if _psrc == "scanned" and _cand:
+                    _ok_how += ("（**自动用了扫盘探到的目录** %s；建议把它填进下面「数据库目录」）" % _cand)
+                _errs = []
+                break
+            except Exception as e:
+                _errs.append(e)
+                _db = None
+        if _ok_how and not _errs:
+            steps.append({"key": "db_open", "name": "打开消息库", "ok": True, "detail": _ok_how})
+        else:
+            _e0 = _errs[0] if _errs else RuntimeError("未知原因")
+            _more = ("（试过 %d 个目录都不成）" % len(_errs)) if len(_errs) > 1 else ""
+            if isinstance(_e0, ImportError):
+                # 依赖缺了 ⇒ 别把它说成"消息库打不开"（这是"没装齐"最容易被误判的一条路）
                 _dd = ("驱动库没装上：%s ⇒ 这不是消息库的问题，双击「一键启动」把依赖装齐再试"
-                       % str(e)[:140])
+                       % str(_e0)[:140])
             else:
-                _dd = ("打不开消息库：%s【%s】%s"
-                       % (str(e)[:140], type(e).__name__, _db_open_verdict(_probe_db_dirs(_d))))
+                _dd = ("打不开消息库：%s【%s】%s%s"
+                       % (str(_e0)[:140], type(_e0).__name__, _more,
+                          _db_open_verdict(_probe_db_dirs(_d))))
             steps.append({"key": "db_open", "name": "打开消息库", "ok": False, "detail": _dd})
             _db = None
     else:
