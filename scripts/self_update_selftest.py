@@ -206,8 +206,12 @@ try:
     # ⚠️ `run_once` 会拿**真实的本机版本**比大小：这里必须给一个比它大的版本号，否则会走"已是最新"分支
     man_i = json.loads(json.dumps(man))
     man_i["base"]["version"] = "9999.1.1"
-    r = UA.run_once(manifest=man_i, zip_path=pkg, target=target)
+    # 走**下载**这条路（base.url 指向本地包），才能顺带验"装完清缓存"
+    man_i["base"]["url"] = pkg
+    r = UA.run_once(manifest=man_i, zip_path=None, target=target)
     ok(r["ok"] and r["version"] == "9999.1.1", "run_once 成功返回版本", str(r)[:110])
+    ok(not os.path.exists(os.path.join(target, UA.CACHE_REL, "persona-morph-9999.1.1.zip")),
+       "装完把下载缓存删掉了（下载类功能必须有清理措施）")
     ok(r.get("needRestart") is True, "成功 ⇒ needRestart=True（控制台据此调 /api/restart）")
     j = UA.job()
     ok(j["state"] == "done" and j["msg"], "作业状态可被控制台读到（state=%s）" % j["state"], str(j)[:110])
