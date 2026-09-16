@@ -110,6 +110,8 @@ _fmt = _SecretFormatter("%(asctime)s [%(levelname)s] %(message)s")
 for _h in logging.getLogger().handlers:
     _h.setFormatter(_fmt)
 log = logging.getLogger("persona-morph")
+# 进程真启动时刻（控制台「启动于」用这个；以前那里写的是"每次状态刷新的当前时间"，被误解成启动时间）
+_BOOT_AT = time.strftime("%Y-%m-%d %H:%M:%S")
 
 # Web 控制台的日志环形缓冲（近 500 条）
 log_buffer = deque(maxlen=500)
@@ -1516,7 +1518,9 @@ def main():
             "stats": st,
             "usage": orch.stats_store.snapshot(),
             "tools": _tools_status(),
-            "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            # 2026-09-16 修（用户看到「启动于 21:13」其实是**状态刷新时间**，被当成进程启动时间误解）：
+            # 用模块导入时记下的真启动时刻。
+            "started_at": _BOOT_AT,
         }
 
     def _tools_status():
@@ -1912,11 +1916,20 @@ def main():
 
     def groups_fn():
         # 群聊列表（控制台「检测群聊并勾选」用）
+        # 2026-09-16（用户报「选了群、点保存之后显示读取会话失败」）：以前**微信没接上也返回 ok:True +
+        # 空列表** ⇒ 控制台只会显示"检测到 0 个群"，真正的原因（微信未接入）被吞掉。
+        # 现在：接不上就把**原因**如实带回去（原因由 `wechat_attach_status()` 提供 = 卡在哪一步）。
+        if wechat is None:
+            try:
+                _why = wechat_attach_status().get("reason") or "微信未接入"
+            except Exception:
+                _why = "微信未接入"
+            return {"ok": False, "error": "微信还没接上 ⇒ 读不到群列表。原因：%s" % _why, "groups": []}
         try:
             gs = [{"name": g.get("name"), "wxid": g.get("wxid")}
-                  for g in (wechat.list_groups() if wechat is not None else [])]
+                  for g in (wechat.list_groups() or [])]
         except Exception as e:
-            gs = []
+            return {"ok": False, "error": "读群列表失败：%s" % str(e)[:120], "groups": []}
         return {"ok": True, "groups": gs}
 
     def memory_fn(action, chat_key="", user_id="", name="", contents=None, scope="all"):

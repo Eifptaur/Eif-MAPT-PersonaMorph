@@ -1192,7 +1192,7 @@ th{color:var(--tx2);font-weight:500}
         <div class="hint">这份表是<b>单一事实源</b>（agent/bg_status.py）：写"全程后台"的路径可以不动光标、不要求窗口可见（<b>可能短暂置前约 1~3 秒，然后自动还回</b>）；写"真鼠标"的会动你的光标，勾上下面这个开关就让它们直接跳过并如实告诉你。</div>
       </div></div>
       <div class="row"><label>只走后台</label><input type="checkbox" data-cfg="wechat.background_only">
-        <span class="hint">**默认开**（老版本留下的配置会被一次性迁移成开）。开了之后：拍一拍 / 引用 / 朋友圈点赞·评论·发表 / UI 标定 一律**跳过并说明原因**。关掉它这些功能才可用——但它们是**真实鼠标**（移动光标 + 发全局点击），点的是**光标所在的那个窗口**（可能是你正在用的程序，比如这个控制台），所以请在电脑前时再关。发送文字、图片、表情、切会话、刷朋友圈不受影响，一直走后台投递。</span></div>
+        <span class="hint"><b>默认开</b>（老版本留下的配置会被一次性迁移成开）。开了之后：<b>朋友圈点赞·评论 / 发朋友圈 / UI 标定</b> 一律<b>跳过并说明原因</b>（这几条确实只能用真鼠标）；而 <b>拍一拍 / 引用</b> 已经改成<b>走投递</b>（不动光标（可能短暂置前约 1~3 秒后自动还回）），<b>不再被这个开关拦住</b>。关掉它上面那三条才可用——但它们是<b>真实鼠标</b>（移动光标 + 发全局点击），点的是<b>光标所在的那个窗口</b>（可能是你正在用的程序，比如这个控制台），所以请在电脑前时再关。发送文字、图片、表情、切会话、刷朋友圈一直走后台投递。</span></div>
       <div class="row"><label>恢复后补处理</label><input type="checkbox" data-cfg="wechat.replay_on_resume">
         <span class="hint">机器人暂停时群里照常有人说话。<b>默认不补</b>：恢复后只从那一刻往后回，暂停期间那些当没看见。<b>勾上就补</b>：恢复后按消息顺序把暂停期间的积压一批批处理——<b>停得越久、恢复瞬间回复越密集</b>（可能连回几十条），想清楚再勾。</span></div>
       <div class="row"><label>搜索失败时扫会话列表</label><input type="checkbox" data-cfg="wechat.scroll_list_fallback">
@@ -2205,7 +2205,11 @@ function renderGroupList(box, groups, pick, onPick){
 $('pickGroups').onclick = async ()=>{
   try{
     const r = await getJSON('/api/wechat-groups');
+    // 2026-09-16（用户报「选了群、点保存之后显示读取会话失败」）：微信没接上时后端读不到群列表，
+    // 以前这里只按 groups 长度显示 0 个、原因被吞掉 ⇒ 现在**如实把原因显示出来**，不再让用户猜。
+    if(r && r.ok === false){ toast(r.error || '读不到群列表（微信可能还没接上）'); return; }
     const groups = r.groups||[];
+    if(!groups.length){ toast('没读到任何群聊：请先在「运行状态」确认微信已连接（右上角那行会写原因）'); return; }
     const m=document.createElement('div'); m.className='mask';
     m.innerHTML='<div class="box" style="text-align:left"><h1>选择监听的群</h1><p>检测到 '+groups.length+' 个群聊，勾选机器人需要监听的群（全不勾=监听所有群）。</p><div id="groupPick"></div><div class="btns" style="justify-content:flex-end;margin-top:10px"><button class="pri" id="gpOk">确定</button><button class="ghost" id="gpCancel">取消</button></div></div>';
     document.body.appendChild(m);

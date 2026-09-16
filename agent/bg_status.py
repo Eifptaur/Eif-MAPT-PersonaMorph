@@ -65,22 +65,27 @@ PATHS = [
     },
     {
         "key": "moments_like_comment", "label": "朋友圈点赞 / 评论", "status": "real",
-        "detail": "右键菜单类：**投递右键已实测可用**（2026-09-16 八枪：投渲染子窗不弹菜单、"
-                  "**投主窗才弹** `Qt51514QWindowToolSaveBits`；再投递左键点菜单项**能命中**——"
-                  "判据＝剪贴板被写成那条消息的正文）⇒ 但**本路径的实现还没切过去**，当前仍走真鼠标。",
-        "evidence": "_scratch/rclick_avatar.py（右键投主窗弹菜单，含真实右键阳性对照）· "
-                    "_scratch/rck_menu.py（投递点菜单项「复制」命中，剪贴板为证）· "
-                    "agent/input_backend.py::click(right=…) + menu_new_windows/menu_click",
+        "detail": "走的是**蓝点路线**（真实滚轮回顶 → 点蓝点 → 菜单出现 → 点菜单项），"
+                  "其中的滚回顶与点蓝点都是全局真实输入 ⇒ 仍是真鼠标档；开「只走后台」时跳过并如实说明。"
+                  "（2026-09-16 说明：右键菜单那条链本身已可投递，但**点赞/评论没有走右键**，"
+                  "所以不能跟着一起放开——要放开得先实测「投递滚轮 + 投递点蓝点」能不能让菜单出现。）",
+        "evidence": "agent/wechat.py::_moments_hover_menu（real_guard + mouse_event 滚轮 + 点蓝点）",
     },
     {
-        "key": "poke", "label": "拍一拍", "status": "real",
-        "detail": "要右键头像/气泡再点菜单项 ⇒ 真鼠标档；开「只走后台」时跳过并如实说明",
-        "evidence": "agent/wechat.py::_send_poke_inner",
+        "key": "poke", "label": "拍一拍", "status": "posted_fallback",
+        "detail": "右键**头像** → 菜单「拍一拍」：右键与点菜单项**都走投递**（投主窗弹菜单、"
+                  "再投递点菜单项；2026-09-16 实测，全程不动光标（微信可能被短暂置前约 1~3 秒后自动还回））。"
+                  "投递不成时才按 `input.allow_real_fallback` 决定是否回真鼠标（**默认关**＝不回落）。",
+        "evidence": "agent/wechat.py::_send_poke_inner → _right_click_menu（投递优先）· "
+                    "_scratch/rclick_avatar.py + rck_menu.py（含真实右键阳性对照）",
     },
     {
-        "key": "quote", "label": "引用消息", "status": "real",
-        "detail": "右键气泡 → 菜单「引用」⇒ 真鼠标档；开「只走后台」时跳过并如实说明",
-        "evidence": "agent/wechat.py::_reply_quote_inner",
+        "key": "quote", "label": "引用消息", "status": "posted_fallback",
+        "detail": "右键**气泡** → 菜单「引用」：同样**投递优先**（不动光标（可能短暂置前约 1~3 秒后自动还回）），"
+                  "投递不成按 `input.allow_real_fallback` 决定是否回真鼠标（默认关）。"
+                  "⚠️ 定位那一步仍要窗口**能抓画面**（最小化时先无激活还原；投递档不再要求前台）。",
+        "evidence": "agent/wechat.py::_reply_quote_inner → _right_click_menu · "
+                    "_scratch/rck_menu.py（投递点菜单项命中，剪贴板为证）",
     },
     {
         "key": "calibrate", "label": "UI 标定", "status": "real",
@@ -91,7 +96,7 @@ PATHS = [
 
 STATUS_LABEL = {
     "posted": "全程后台",
-    "posted_fallback": "后台优先（兜底会动鼠标）",
+    "posted_fallback": "后台优先（默认投递；不成立时默认**不**回落真鼠标）",
     "real": "真鼠标",
     "skipped": "已跳过",
 }
