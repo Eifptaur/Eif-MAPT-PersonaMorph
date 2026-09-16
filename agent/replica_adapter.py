@@ -186,6 +186,44 @@ def load_groups(db) -> list:
     return groups
 
 
+# 微信系统号 / 服务号（不是真人私聊）——私聊发现时要排掉
+_SYS_CONTACTS = {
+    "filehelper", "newsapp", "fmessage", "medianote", "floatbottle",
+    "notifymessage", "officialaccounts", "mphelper", "weixin", "qqmail",
+    "tmessage", "qmessage", "weibo", "facebook", "feedsapp", "blogapp",
+}
+
+
+def load_privates(db) -> list:
+    """列出**私聊联系人**（非群、非系统号）。
+
+    用途（2026-09-16 用户原话）：「他也许是那种私聊的想法，**大号跟小号对谈**，相当于借一个智能体
+    进来跟自己聊天，这个应该也可以做吧」—— 原来监听目标**只来自群列表**，私聊根本不在监听范围里。
+    只读 `contact` 表；**只排掉** `@chatroom` 与已知系统号 —— 不做"只留 wxid_ 开头"那种硬过滤，
+    因为自定义微信号不是 wxid_ 开头，滤掉会把真人漏掉。
+    """
+    out = []
+    rel = contact_db_rel(db)
+    if rel is None:
+        return out
+    conn = None
+    try:
+        conn = open_shard(db, rel)
+        rows = conn.execute("SELECT username, nick_name, remark FROM contact").fetchall()
+        for r in rows:
+            wxid = str(r["username"] or "")
+            if not wxid or wxid.endswith("@chatroom"):
+                continue
+            if wxid.lower() in _SYS_CONTACTS:
+                continue
+            out.append({"name": str(r["remark"] or r["nick_name"] or wxid), "wxid": wxid})
+    except Exception:
+        pass
+    finally:
+        close_all([conn])
+    return out
+
+
 def message_conns(db, user):
     """某会话**全部分片**的 [(conn, table)]（调用方负责 close_all）——跨分片必须读齐。
 

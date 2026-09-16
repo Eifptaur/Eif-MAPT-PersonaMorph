@@ -1343,6 +1343,11 @@ th{color:var(--tx2);font-weight:500}
         <option value="skip">完全不回复我自己的号</option>
         <option value="off">不启用这个识别</option></select>
         <span class="hint">上面登记的那些账号发消息时，程序按这一档反应。</span></div></div>
+      <div class="row"><label>私聊</label><div class="grow"><select data-cfg="wechat.private_chat">
+        <option value="owner_only">只理我自己那些号（推荐）</option>
+        <option value="off">不理私聊</option>
+        <option value="all">谁都理（慎用）</option></select>
+        <span class="hint">机器人跑在小号上、你用自己另一个号<b>私聊</b>它时，选这一档它才会应你——相当于借一个智能体进来跟自己聊天。<b>「谁都理」会给陌生人回消息</b>，不清楚后果就别选。</span></div></div>
       <div class="row"><label>启动后暂停</label><input type="checkbox" data-cfg="wechat.start_paused"><span class="hint">勾选：机器人启动后不自动监听，需点「恢复」才工作（防开机刷群/回应积压旧消息）</span></div>
       <div class="row"><label>轮询间隔(秒)</label><div class="grow"><input type="number" step="0.5" min="0.5" data-cfg="wechat.poll_interval"></div></div>
       <div class="row"><label>每分钟限发</label><div class="grow"><input type="number" min="1" data-cfg="wechat.rate_limit_per_minute"></div></div>
@@ -5584,6 +5589,7 @@ $('memSearch').addEventListener('keydown', (e)=>{
      做法：容器给定高度（默认约两行）＋ 内部滚动，紧跟着一个「展开全部 / 收起」按钮；
      容器被重新渲染（innerHTML）不影响折叠状态，按钮被父级重渲染带走时会自动补回来。 */
   const FOLD_TARGETS = [
+    ["#wlChips", 96],         // 群白名单那一排 chips（2026-09-16 用户：「注意显示问题，这个更需要折叠了」）
     ["#groupPick", 96],       // 选择监听的群（群多的时候几十个格子）
     ["#memGroupsBox", 96],    // 记忆共享：按群独立
     ["#memTable", 150],       // 群友印象表（成员多）
