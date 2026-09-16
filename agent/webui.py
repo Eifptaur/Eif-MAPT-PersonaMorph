@@ -1,0 +1,2030 @@
+# -*- coding: utf-8 -*-
+"""Web 控制台：在浏览器里改设置、看状态、看日志、测试 API（移植自 qq-agent 的控制台思路）。
+
+零第三方依赖，纯标准库 http.server，单文件 HTML（内联 CSS/JS，无框架）。
+只监听本机回环地址，含可选访问口令。
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlparse
+
+from .config import deep_merge, get_config, save_config, set_config
+from .whale_text import DICT as WHALE_DICT, SKIP as WHALE_SKIP
+from .console_html import HTML  # 界面模板（蓝白设计，设置项全量，独立文件便于改版）
+from .util import mask_secret, redact_secrets
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+# ── 数据迁移包（导出/导入：计费+对话记录 data/sessions/*.jsonl）────────────
+
+def _data_export(root: str) -> bytes:
+    """所有计费/对话记录导成一个 zip（sessions/YYYY-MM-DD.jsonl + manifest）。"""
+    import io
+    import zipfile
+    import json as _j
+    import glob
+    buf = io.BytesIO()
+    sdir = os.path.join(root, "data", "sessions")
+    files = []
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        if os.path.isdir(sdir):
+            for fp in sorted(glob.glob(os.path.join(sdir, "*.jsonl"))):
+                z.write(fp, "sessions/" + os.path.basename(fp))
+                files.append(os.path.basename(fp))
+        z.writestr("manifest.json", _j.dumps(
+            {"app": "Persona Morph", "v": 1, "files": files}, ensure_ascii=False))
+    return buf.getvalue()
+
+
+def _data_import(root: str, body: bytes) -> dict:
+    """导入迁移包：按日文件合并，行级内容 md5 去重（同一条记录不重复）。"""
+    import io
+    import zipfile
+    import os as _os
+    import hashlib
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(body))
+    except Exception:
+        return {"ok": False, "error": "不是有效的迁移包（应选择「导出记录」生成的文件）"}
+    sdir = _os.path.join(root, "data", "sessions")
+    _os.makedirs(sdir, exist_ok=True)
+    added = 0
+    days = []
+    for name in zf.namelist():
+        base = _os.path.basename(name)
+        if not (name.startswith("sessions/") and base.endswith(".jsonl")):
+            continue
+        data = zf.read(name)
+        lines = [l for l in data.decode("utf-8", "replace").splitlines() if l.strip()]
+        dst = _os.path.join(sdir, base)
+        exists = set()
+        if _os.path.exists(dst):
+            with open(dst, "r", encoding="utf-8", errors="replace") as f:
+                for l in f:
+                    exists.add(hashlib.md5(l.strip().encode("utf-8", "replace")).hexdigest())
+        new_lines = []
+        for l in lines:
+            l = l.strip()
+            h = hashlib.md5(l.encode("utf-8", "replace")).hexdigest()
+            if h in exists:
+                continue
+            exists.add(h)
+            new_lines.append(l)
+        if new_lines:
+            with open(dst, "a", encoding="utf-8", errors="replace") as f:
+                f.write("\n".join(new_lines) + "\n")
+            added += len(new_lines)
+            days.append(base)
+    return {"ok": True, "added": added, "days": days,
+            "note": "新导入 %d 条记录（覆盖 %d 个日期文件，同内容自动去重）" % (added, len(days))}
+
+# 给挂件脚本（whale-widget/client/widget.js）注入访问口令：把脚本里的 /dsh-whale/*
+# 绝对路径都补上 ?token=xxx，保证前端轮询/音频请求都带上口令
+_WHALE_URL_RE = re.compile(r"(/dsh-whale/[^'\"\s?]+)(\?[^'\"\s]*)?")
+
+_MASKED_MARK = "••••"
+
+
+def _is_masked(v) -> bool:
+    return isinstance(v, str) and (_MASKED_MARK in v or v.startswith("sk-***"))
+
+
+def _protect_secrets(new_cfg: dict):
+    """保存配置时：若密钥字段还是打码值，则不覆盖真实密钥。"""
+    old = get_config()
+    api_new = new_cfg.get("api")
+    if isinstance(api_new, dict):
+        api_old = old.get("api") or {}
+        if _is_masked(api_new.get("api_key")):
+            api_new["api_key"] = api_old.get("api_key") or ""
+        pk_new = api_new.get("provider_keys")
+        if isinstance(pk_new, dict):
+            pk_old = (api_old.get("provider_keys") or {}) if isinstance(api_old, dict) else {}
+            for k, v in pk_new.items():
+                if _is_masked(v):
+                    pk_new[k] = pk_old.get(k) or ""
+    # 2026-09-16：与 masked_config() 对称——凭据类字段也要"掩码值不覆盖真实值"。
+    # 否则用户在面板上一点保存，打码后的授权码/口令就被写回 config.json（原值当场丢）。
+    fb_new = new_cfg.get("feedback")
+    if isinstance(fb_new, dict):
+        smtp_new = fb_new.get("smtp")
+        if isinstance(smtp_new, dict) and _is_masked(smtp_new.get("password")):
+            smtp_new["password"] = (((old.get("feedback") or {}).get("smtp") or {}).get("password")) or ""
+    cl_new = new_cfg.get("cloud")
+    if isinstance(cl_new, dict) and _is_masked(cl_new.get("token")):
+        cl_new["token"] = (old.get("cloud") or {}).get("token") or ""
+
+
+class WebUI:
+    """启动一个仅监听本机的 HTTP 服务，提供设置/状态/日志/测试 API 接口。"""
+
+    def _data_path(self, name: str) -> str:
+        """data 目录文件（尊重 WX_AGENT_DATA_DIR 环境，兼容测试隔离）。"""
+        base = os.environ.get("WX_AGENT_DATA_DIR") or os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "..", "data")
+        return os.path.join(base, name)
+
+    def _apply_whale(self, html: str) -> str:
+        """鲸语文案服务端注入（保存后刷新必然正确；与前端 JS 时序无关）。
+
+        注意要点（修复"切不回正常/切了没生效"）：
+        1) 只替换「鲸语 JS 字典标记」之前的区域（head+可见UI）——字典本身绝不能替换，
+           否则 applyWhale 的前端映射键被改坏；JS 字典用 ── 🐋 鲸语版界面文案 注释标记。
+        2) 全部匹配（不再是 replace(...,1)——旧版只替换每键第一处，被 CSS 注释/标题吃掉，
+           导航/按钮全变不回鲸语）；按 key 长度倒序替换（长 key 先换，防"停止"吞"停止检测"）。
+        """
+        try:
+            cfg = get_config().get("ui", {}) or {}
+            if str(cfg.get("text_style") or "") != "whale":
+                return html
+        except Exception:
+            return html
+        T = WHALE_DICT
+        MARK = "鲸语版界面文案"
+        idx = html.find(MARK)
+        head, tail = (html[:idx], html[idx:]) if idx >= 0 else (html, "")
+        # ⛔ 只换"整个文本节点"（`>文案<`），**不做子串替换**（2026-09-14 重写）：
+        #    旧版是全局 replace —— 短键会吃掉长键（「停止」吞「停止检测」），还会改坏 JS 里的字符串；
+        #    整节点匹配后，字典可以放心扩到几百条（行标签/按钮/表头全覆盖）。
+        #    看起来不像文案的片段（含 {}()=; 或过长）一律跳过。
+        import re as _re
+        try:
+            from .whale_text import NAV as _NAV
+        except Exception:
+            _NAV = {}
+        # ① 左导航单独走短表（252px 窄列，长文案会被省略号吃掉）——必须在总替换之前做
+        def _nav(m):
+            v = _NAV.get(m.group(1).strip())
+            return '<span class="lb">' + v + '</span>' if v else m.group(0)
+        head = _re.sub(r'<span class="lb">([^<]*)</span>', _nav, head)
+        # ② 其余可见文案：只换"整个文本节点"
+        pat = _re.compile(r">([^<>]+)<")
+
+        def _swap(m):
+            raw = m.group(1)
+            key = raw.strip()
+            if not key or len(key) > 40 or any(c in key for c in "{}()=;<>\n"):
+                return m.group(0)
+            val = T.get(key)
+            if not val:
+                return m.group(0)
+            lead = raw[:len(raw) - len(raw.lstrip())]
+            trail = raw[len(raw.rstrip()):]
+            return ">" + lead + val + trail + "<"
+
+        return pat.sub(_swap, head) + tail
+
+    def _build_tag(self):
+        """构建号（方便辨别新旧实例：console_html.py 修改时间 + 启动概率）。"""
+        try:
+            mt = os.path.getmtime(_HTML_SRC if "_HTML_SRC" in globals() else os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), "console_html.py"))
+            import datetime
+            return "b." + datetime.datetime.fromtimestamp(mt).strftime("%m%d-%H%M")
+        except Exception:
+            return "b?"
+
+    def __init__(self, status_provider, log_buffer, test_api_fn=None, on_save=None,
+                 pause_fn=None, resume_fn=None, balance_fn=None, shutdown_fn=None,
+                 whale=None, poke_test_fn=None, selfcheck_fn=None, restart_fn=None,
+                 groups_fn=None, memory_fn=None, sessions_fn=None, emojis_fn=None,
+                 recalibrate_fn=None, open_path_fn=None,
+                 selfcheck_stop_fn=None,
+                 persona_scores_fn=None, persona_rate_fn=None,
+                 persona_score_custom_fn=None, persona_ai_enrich_fn=None,
+                 community_export_fn=None, community_upload_fn=None, scoring_import_fn=None,
+                 store=None):
+        self.status_provider = status_provider      # () -> dict
+        self.log_buffer = log_buffer                # collections.deque[str]
+        self.test_api_fn = test_api_fn              # () -> dict
+        self.on_save = on_save                      # (new_cfg) -> None（可选，用于通知运行中组件）
+        self.pause_fn = pause_fn or (lambda: None)  # () -> None
+        self.resume_fn = resume_fn or (lambda: None)  # () -> None
+        self.balance_fn = balance_fn or (lambda: {"error": "未提供 balance_fn"})  # () -> dict
+        self.shutdown_fn = shutdown_fn or (lambda: None)  # () -> None
+        self.restart_fn = restart_fn or (lambda: None)    # () -> None（后台无窗口重启）
+        self.whale = whale                          # agent.whale.WhaleWidget（小鲸鱼挂件，可选）
+        self.poke_test_fn = poke_test_fn or (lambda: {"error": "未提供 poke_test_fn"})  # () -> dict
+        self.selfcheck_fn = selfcheck_fn or (lambda: {"ok": False, "error": "未提供 selfcheck_fn"})  # () -> dict
+        self.groups_fn = groups_fn or (lambda: {"ok": True, "groups": []})  # () -> dict（群列表）
+        self.memory_fn = memory_fn or (lambda action, chat_key="", user_id="": {"ok": True,
+                                                                               "chats": [], "members": []})  # (action, chat_key, user_id) -> dict
+        self.sessions_fn = sessions_fn or (lambda limit: [])  # (limit) -> list（运行明细）
+        self.store = store                                   # ChatStore（第 10 条：按会话/按条屏蔽存档）
+        self.emojis_fn = emojis_fn or (lambda: [])            # () -> list（表情包收藏夹）
+        self.recalibrate_fn = recalibrate_fn or (lambda: {"ok": False, "error": "未提供"})
+        self.open_path_fn = open_path_fn or (lambda path: {"ok": False, "error": "未提供"})
+        self.selfcheck_stop_fn = selfcheck_stop_fn or (lambda: None)
+        self.persona_scores_fn = persona_scores_fn or (lambda: {"ok": False, "error": "未提供"})
+        self.persona_rate_fn = persona_rate_fn or (lambda k, s, n: {"ok": False, "error": "未提供"})
+        self.persona_score_custom_fn = persona_score_custom_fn or (lambda t, l: {"ok": False, "error": "未提供"})
+        self.persona_ai_enrich_fn = persona_ai_enrich_fn or (lambda n, t: {"ok": False, "error": "未提供"})
+        self.community_export_fn = community_export_fn    # (kind) -> dict 金句/意见/聊天记录导出
+        self.community_upload_fn = community_upload_fn    # (data) -> dict 上传到可配 URL
+        self.scoring_import_fn = scoring_import_fn        # (text) -> dict 导入种子库
+        self._server = None
+        self._thread = None
+        self.port = 0
+        self._whale_js_cache = {}  # token -> bytes（注入口令后的挂件脚本缓存）
+        # 静态素材根目录（assets\，含 logo-bg / icon-whale / cursor / custom-cursor）
+        self._asset_root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets")
+        # 加载图标（assets/icon.png），用于 favicon
+        self._icon_bytes = b""
+        try:
+            icon_path = os.path.join(self._asset_root, "icon.png")
+            with open(icon_path, "rb") as f:
+                self._icon_bytes = f.read()
+        except Exception:
+            self._icon_bytes = b""
+
+    # ── 小鲸鱼挂件路由（/dsh-whale/*，实现与原版插件一致的接口）───────────
+
+    def _whale_get(self, handler, path: str, query: str):
+        """GET /dsh-whale/* 分发。handler 是当前 HTTP Handler（带 _json/_bytes）。"""
+        whale = self.whale
+        if whale is None:
+            return handler._json({"error": "not found"}, 404)
+        if path == "/dsh-whale/balance.json":
+            try:
+                handler._json(whale.balance_payload())
+            except Exception as e:
+                handler._json({"ok": False, "error": str(e)[:200]})
+        elif path == "/dsh-whale/size.json":
+            handler._json(whale.size_payload())
+        elif path == "/dsh-whale/last-turn.json":
+            handler._json(whale.last_turn_payload())
+        elif path == "/dsh-whale/image.png":
+            handler._bytes(whale.asset_bytes("DSniang1.png") or b"", "image/png")
+        elif path == "/dsh-whale/rua.gif":
+            handler._bytes(whale.asset_bytes("rua.gif") or b"", "image/gif")
+        elif path in ("/dsh-whale/sound/press.mp3", "/dsh-whale/sound/release.mp3"):
+            kind = "press" if path.endswith("press.mp3") else "release"
+            sound_set = (parse_qs(query).get("set") or [""])[0]
+            data = whale.sound_bytes(kind, sound_set)
+            handler._bytes(data or b"", "audio/mpeg")
+        elif path == "/dsh-whale/widget.js":
+            handler._bytes(self._whale_js_injected(), "application/javascript; charset=utf-8")
+        else:
+            handler._json({"error": "not found"}, 404)
+
+    def _whale_js_injected(self) -> bytes:
+        """返回注入口令后的挂件脚本字节（带缓存）。"""
+        token = str(get_config().get("server", {}).get("token") or "").strip()
+        if token in self._whale_js_cache:
+            return self._whale_js_cache[token]
+        try:
+            js_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                   "whale-widget", "client", "widget.js")
+            with open(js_path, "r", encoding="utf-8") as f:
+                js = f.read()
+        except Exception:
+            return b""
+        if token:
+            def _inj(m):
+                base, q = m.group(1), (m.group(2) or "")[1:]
+                return base + "?token=" + token + ("&" + q if q else "")
+            js = _WHALE_URL_RE.sub(_inj, js)
+        body = js.encode("utf-8")
+        if len(self._whale_js_cache) > 4:
+            self._whale_js_cache.clear()
+        self._whale_js_cache[token] = body
+        return body
+
+    # ── 配置脱敏 ──────────────────────────────────────────────────────────
+
+    def masked_config(self) -> dict:
+        """返回配置副本：所有 API Key 打码（真实值只存服务器 config.json）。"""
+        cfg = dict(get_config())
+        api = dict(cfg.get("api") or {})
+        if api.get("api_key"):
+            api["api_key"] = mask_secret(api["api_key"])
+        pk = api.get("provider_keys")
+        if isinstance(pk, dict):
+            api["provider_keys"] = {k: mask_secret(v) for k, v in pk.items() if v}
+        cfg["api"] = api
+        # 2026-09-16：原先只掩码 api.*，于是 feedback.smtp.password（邮箱授权码）与
+        # cloud.token（对端凭据）原样回到浏览器——input type=password 只遮眼睛，
+        # 「原始 JSON」按钮（打的正是 GET /api/config）更是把整个配置铺成明文网页，
+        # 录屏/截图即外泄。server.token 故意不掩码：它是用户自己的控制台钥匙，掩了
+        # 面板上就再也看不到它（且废掉「显示」按钮），而它本来就写在 logs/console.url
+        # 与启动日志里 ⇒ 掩它不改变任何实际暴露面。
+        fb = dict(cfg.get("feedback") or {})
+        smtp = dict(fb.get("smtp") or {})
+        if smtp.get("password"):
+            smtp["password"] = mask_secret(smtp["password"])
+        fb["smtp"] = smtp
+        cfg["feedback"] = fb
+        cl = dict(cfg.get("cloud") or {})
+        if cl.get("token"):
+            cl["token"] = mask_secret(cl["token"])
+        cfg["cloud"] = cl
+        return cfg
+
+    def _serve_wallpaper(self, path: str, handler, query):
+        """视频壁纸（免认证，支持 Range 分段）：assets/wallpaper/<file>，供 <video> 背景流式播放。"""
+        try:
+            import urllib.parse as _up
+            name = _up.unquote(os.path.basename(path))
+            wdir = os.path.join(self._asset_root, "wallpaper")
+            fp = os.path.join(wdir, name)
+            if not os.path.exists(fp):
+                handler._bytes(b"", "video/mp4", 404)
+                return
+            size = os.path.getsize(fp)
+            ftype = "video/mp4"
+            rng = handler.headers.get("Range")
+            start, end = 0, size - 1
+            if rng and rng.startswith("bytes="):
+                try:
+                    part = rng[6:].split(",", 1)[0]
+                    s, _, e = part.partition("-")
+                    start = int(s) if s else 0
+                    end = int(e) if e else size - 1
+                except Exception:
+                    start, end = 0, size - 1
+            end = min(end, size - 1)
+            length = max(0, end - start + 1)
+            handler.send_response(206 if rng else 200)
+            handler.send_header("Content-Type", ftype)
+            handler.send_header("Accept-Ranges", "bytes")
+            handler.send_header("Content-Length", str(length))
+            if rng:
+                handler.send_header("Content-Range", "bytes %d-%d/%d" % (start, end, size))
+            handler.end_headers()
+            with open(fp, "rb") as f:
+                f.seek(start)
+                remaining = length
+                while remaining > 0:
+                    chunk = f.read(min(64 * 1024, remaining))
+                    if not chunk:
+                        break
+                    handler.wfile.write(chunk)
+                    remaining -= len(chunk)
+        except Exception:
+            try:
+                handler._bytes(b"", "video/mp4", 404)
+            except Exception:
+                pass
+
+    def _serve_asset(self, path: str, handler):
+        """静态素材服务（免认证）：favicon / 图标背景 / 鲸鱼主体 / 光标 / 表情收藏夹。"""
+        name = os.path.basename(path)
+        try:
+            if name == "ui-bg.jpg":
+                # 自定义背景图（用户上传）
+                fp = self._data_path("ui_bg.jpg")
+                if os.path.exists(fp):
+                    with open(fp, "rb") as f:
+                        handler._bytes(f.read(), "image/jpeg")
+                    return
+                handler._bytes(b"", "image/jpeg", 404)
+                return
+            if name.startswith("custom-cursor"):
+                # 自定义光标（用户上传到 assets/custom-cursor.png）；缺失=404（浏览器光标回退系统默认）
+                fp = os.path.join(self._asset_root, "custom-cursor.png")
+                if os.path.exists(fp):
+                    with open(fp, "rb") as f:
+                        handler._bytes(f.read(), "image/png")
+                    return
+                handler._bytes(b"", "image/png", 404)
+                return
+            if path.startswith("/assets/emoji/"):
+                import urllib.parse as _up
+                name = _up.unquote(name)
+                emoji_dir = self._data_path("emojis")
+                with open(os.path.join(emoji_dir, name), "rb") as f:
+                    body = f.read()
+            elif name == "icon.png":
+                body = self._icon_bytes
+            elif name == "DSniang1.png":
+                body = (self.whale.asset_bytes(name) if self.whale else None) or b""
+            else:
+                # 默认资源：assets/ 根，其次 assets/wallpaper/（ocean1.jpg 等）
+                for base in (self._asset_root, os.path.join(self._asset_root, "wallpaper")):
+                    fp = os.path.join(base, name)
+                    if os.path.exists(fp):
+                        with open(fp, "rb") as f:
+                            body = f.read()
+                        break
+                else:
+                    raise FileNotFoundError(name)
+        except FileNotFoundError:
+            handler._bytes(b"", "application/octet-stream", 404)
+            return
+        except Exception:
+            body = b""
+        handler._bytes(body, "image/png")
+
+    def start(self) -> int:
+        cfg = get_config().get("server", {})
+        if cfg.get("enabled") is False:
+            return 0
+        host = str(cfg.get("host") or "127.0.0.1")
+        # 回环收口：控制台里有个人聊天记录与访问口令，非回环地址一律拒（要远程先显式开开关）
+        if host not in ("127.0.0.1", "localhost", "::1", ""):
+            if not cfg.get("allow_remote"):
+                logging.getLogger("persona-morph").warning(
+                    "server.host=%s 不是回环地址，已强制改回 127.0.0.1（确需远程访问请显式设 server.allow_remote=true）", host)
+                host = "127.0.0.1"
+        port = int(cfg.get("port") or 3210)
+        # 控制台地址（含 token）落盘：**token 的拥有者写，别人只读**（2026-09-14）。
+        # 起因：启动器/托盘各自拼地址，启动器在 config.json 里抓到排在前面的 cloud.token（空）⇒ 401。
+        try:
+            from .util import write_console_url
+            _tok0 = str(cfg.get("token") or "").strip()
+            write_console_url("http://127.0.0.1:%d/" % port + (("?token=" + _tok0) if _tok0 else ""))
+        except Exception:
+            pass
+
+
+        parent = self
+
+        class Handler(BaseHTTPRequestHandler):
+            server_version = "Persona Morph/1.0"
+
+            def log_message(self, fmt, *args):
+                pass  # 静默，避免刷屏
+
+            def _bytes(self, body, ctype="application/octet-stream", code=200):
+                if not body:
+                    body = b""
+                self.send_response(code)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
+
+            def _auth_ok(self):
+                token = str(get_config().get("server", {}).get("token") or "").strip()
+                if not token:
+                    # 旧行为是「空口令 = 放行」，等于控制台裸奔（本机任何进程、任何网页都能进）。
+                    # 现在：拒绝 + 明确告诉怎么修（口令在启动时自动生成，见 scripts/persona_morph.py）。
+                    try:
+                        if not getattr(self.server, "_warned_no_token", False):
+                            self.server._warned_no_token = True
+                            logging.getLogger("persona-morph").warning(
+                                "控制台访问口令为空 ⇒ 已拒绝全部请求。请重启机器人（会自动生成口令），"
+                                "或在 config.json 的 server.token 里手填一个。")
+                    except Exception:
+                        pass
+                    return False
+                # ① 会话 Cookie（登录后 URL 不带 token，防他人复制地址登入）
+                try:
+                    import http.cookies as _hc
+                    for m in re.findall(r"(?:^|;\s*)wxauth=([^;]+)", str(self.headers.get("Cookie") or "")):
+                        if m.strip() == token:
+                            return True
+                except Exception:
+                    pass
+                # ② 支持 ?token= 或 Authorization: Bearer
+                q = urlparse(self.path).query
+                from urllib.parse import parse_qs
+                if token in parse_qs(q).get("token", []):
+                    return True
+                auth = self.headers.get("Authorization", "")
+                return auth == "Bearer " + token
+
+            def _set_session_cookie(self):
+                """登录成功时种会话 Cookie（HttpOnly，防 JS 读取）。
+                注意：必须在 send_response() 之后调用（先 send_header 会让 Set-Cookie 排到状态行前面，响应直接坏掉）。"""
+                try:
+                    token = str(get_config().get("server", {}).get("token") or "").strip()
+                    self.send_header("Set-Cookie", "wxauth=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000" % token)
+                except Exception:
+                    pass
+
+            def _json(self, obj, code=200):
+                body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                if code == 200:
+                    self._set_session_cookie()   # 成功响应才种 cookie（在状态行/Server/Date 之后）
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                parsed = urlparse(self.path)
+                path = parsed.path
+                # 静态素材（图标/光标图）免认证：<img> 不带 token，但素材不含隐私
+                if path.startswith("/assets/"):
+                    return parent._serve_asset(path, self)
+                if path.startswith("/wallpaper/"):
+                    return parent._serve_wallpaper(path, self, parsed.query)
+                if path == "/api/version":
+                    # 免认证版本指纹（启动器/新实例探测旧实例用；不含隐私）
+                    self._json({"ver": parent._build_tag()})
+                    return
+                if not self._auth_ok():
+                    return self._json({"error": "unauthorized"}, 401)
+                if path == "/api/update":
+                    # 更新检查（**只读**）：拉清单判五态。口径＝拉不到/没配 ⇒ off（界面什么都不显示）、
+                    # 清单坏了 ⇒ error 如实说、有新版 ⇒ newer + notes。**公告只在本机 UI，绝不往微信侧发**。
+                    try:
+                        from . import update_check as _uc
+                        self._json(_uc.state())
+                    except Exception as _e:
+                        self._json({"status": "error", "why": "更新检查不可用：%s" % str(_e)[:60]})
+                    return
+                # 防窥视：地址栏乱码路径（单段 /aB3$xy…，无 API/静态前缀）也返回控制台页面
+                if path == "/" or path == "/index.html":
+                    pass  # 正常控制台页
+                elif path.startswith("/api/") or path.startswith("/dsh-whale/") \
+                        or path.startswith("/assets/") or path.startswith("/wallpaper/"):
+                    pass  # 正常 API/静态路由（下方继续匹配）
+                elif "/" not in path[1:]:
+                    # 单段乱码路径 → 当控制台页
+                    import re as _repath
+                    if not _repath.fullmatch(r"/[A-Za-z0-9#$~_\-]{6,64}", path):
+                        return self._json({"error": "not found"}, 404)
+                    path = "/"
+                else:
+                    return self._json({"error": "not found"}, 404)
+                if path in ("/", "/index.html"):
+                    token = str(get_config().get("server", {}).get("token") or "").strip()
+                    body = HTML.replace("__TKN__", token)
+                    body = body.replace("__VER__", parent._build_tag())
+                    # 鲸语字典随页面下发（**一份来源**）：前端 applyWhale 用它处理"动态刷新出来的文案"
+                    # （暂停/恢复/状态行等），静态部分由 _apply_whale 在服务端就换好。两种模式都下发。
+                    try:
+                        import json as _json
+                        body = body.replace("__WHALE_TXT__", _json.dumps(WHALE_DICT, ensure_ascii=False))
+                    except Exception:
+                        body = body.replace("__WHALE_TXT__", "{}")
+                    body = parent._apply_whale(body)
+                    body = body.encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+                    self._set_session_cookie()   # 必须在 send_response 之后（Set-Cookie 排在状态行/Server/Date 后）
+                    self.end_headers()
+                    self.wfile.write(body)
+                elif path.startswith("/dsh-whale/"):
+                    parent._whale_get(self, path, parsed.query)
+                elif path == "/api/voice/probe":
+                    # ③ 自带模型：连通测试（只真发一次极短文本，**不改任何配置**）
+                    try:
+                        from . import voice_models as _vmod
+                        _q2 = parse_qs(parsed.query)
+                        self._json(dict({"ok": True}, **_vmod.probe((_q2.get("url") or [""])[0])))
+                    except Exception as _e2:
+                        self._json({"ok": False, "error": str(_e2)}, 500)
+                elif path == "/api/voice/vc-probe":
+                    # 变声段（第二段）连通测试：造一段 440Hz 测试音送进去，**不改任何配置**
+                    try:
+                        from . import voice_models as _vmod
+                        _q3 = parse_qs(parsed.query)
+                        self._json(dict({"ok": True}, **_vmod.probe_vc((_q3.get("url") or [""])[0])))
+                    except Exception as _e3:
+                        self._json({"ok": False, "error": str(_e3)}, 500)
+                elif path == "/api/local-models":
+                    # 本机模型端点探测（2026-09-15 任务书 ②）：只探测与展示，**绝不自动启用**——
+                    # 切换 Base URL/模型必须由用户在面板上点（route 只读 discover/test_chat，不写配置）。
+                    try:
+                        from . import local_models as _lm
+                        _q = parse_qs(parsed.query)
+                        if (_q.get("test") or [""])[0] == "1":
+                            self._json(dict({"ok": True}, **_lm.test_chat(
+                                (_q.get("base_url") or [""])[0], (_q.get("model") or [""])[0])))
+                        else:
+                            _found, _meta = _lm.discover()
+                            self._json({"ok": True, "found": _found, "meta": _meta,
+                                        "capability": _lm.CAPABILITY_NOTE})
+                    except Exception as _e:
+                        self._json({"ok": False, "error": str(_e)}, 500)
+                elif path == "/api/config":
+                    self._json(parent.masked_config())
+                elif path == "/api/memory":
+                    # 记忆页面：?chat_key= 传群则返回该群成员印象列表
+                    q = parse_qs(parsed.query)
+                    chat_key = (q.get("chat_key") or [""])[0]
+                    try:
+                        self._json(parent.memory_fn("list", chat_key))
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/sessions":
+                    # 运行明细（思考/token/工具）：?limit=30
+                    q = parse_qs(parsed.query)
+                    try:
+                        self._json({"ok": True, "sessions": parent.sessions_fn(
+                            int((q.get("limit") or ["30"])[0]))})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/status":
+                    st = parent.status_provider()
+                    try:
+                        from . import risk as _risk
+                        from . import input_backend as _ib
+                        from . import version_matrix as _vm
+                        from . import dep_heal as _dh
+                        if isinstance(st, dict):
+                            st = dict(st)
+                            st["risk"] = _risk.snapshot()
+                            # 当前输入后端档位（AGENTS §2.1 第 4 条：用了哪一档必须看得见）
+                            st["input"] = _ib.status()
+                            # 后台能力矩阵（⑥ 全后台审计）：每条路径是"全程后台"还是"真鼠标"，
+                            # 单一事实源在 agent/bg_status.py —— 控制台照它显示，不另写一份。
+                            try:
+                                from . import bg_status as _bg
+                                st["bg"] = _bg.status()
+                            except Exception as _be:
+                                st["bg"] = {"paths": [], "error": str(_be)}
+                            # 图标指纹表（⑦ 点击正确性）：按 微信版本×尺寸×DPI 存了几条、什么时候取的
+                            try:
+                                from . import ui_fingerprint as _ufp
+                                st["ui_fp"] = _ufp.hits()
+                                st["ui_fp"]["digest"] = _ufp.digest()
+                            except Exception as _fe:
+                                st["ui_fp"] = {"keys": {}, "error": str(_fe)}
+                            # 版本能力矩阵 + 版本门（W7：版本变了要出横幅、按未验证处理）
+                            st["version"] = _vm.current()
+                            # 版本门（W7）：没实测过的版本对 ⇒ 默认暂停发送；本会话是否已放行也一并暴露
+                            from . import version_gate as _vg2
+                            st["version_gate"] = _vg2.status()
+                            # 待决单（⑦ 版本不匹配四选一）：门没过就把这件事开成一张单，控制台据此弹模态。
+                            # 开单是幂等的（同一对版本只开一次、问过就不再问），所以这里每次轮询调用是安全的。
+                            try:
+                                from . import pending_decisions as _pd
+                                _pnd = _vg2.pending()
+                                _pit = _pnd.get("item") or {}
+                                st["pending_decisions"] = {
+                                    "open": len(_pd.open_items()),
+                                    "summary": _pd.summary(),
+                                    "needed": bool(_pnd.get("needed")),
+                                    "item": _pit if str(_pit.get("status")) == "open" else None,
+                                }
+                            except Exception as _pe:
+                                st["pending_decisions"] = {"open": 0, "error": str(_pe)}
+                            # 一键动作的后台作业（⑦）：升级适配层 / 更新本体 都是分钟级，
+                            # 起在后台线程里（agent/jobs.py），这里把状态给控制台显示跑到哪、成没成。
+                            try:
+                                from . import jobs as _jobs
+                                st["jobs"] = _jobs.status().get("jobs") or {}
+                            except Exception as _je:
+                                st["jobs"] = {"_error": str(_je)}
+                            # 微信装没装（2026-09-13：没装就带用户去官网，不做静默安装）
+                            try:
+                                from .wechat import wechat_version_info as _wvi
+                                _wi = _wvi() or {}
+                                st["wechat_install"] = _wi.get("install") or {
+                                    "state": _wi.get("state") or "unknown",
+                                    "installed": bool(_wi.get("installed")),
+                                    "detail": _wi.get("detail") or "",
+                                    "official_url": "https://weixin.qq.com/",
+                                    "action": "none"}
+                            except Exception as _e:
+                                st["wechat_install"] = {"state": "unknown", "installed": False,
+                                                        "detail": "检测异常：" + str(_e),
+                                                        "official_url": "https://weixin.qq.com/",
+                                                        "action": "none"}
+                            # 依赖体检（盯项目运行时的 site-packages，不是当前进程）
+                            st["deps"] = {"summary": _dh.summary_line(),
+                                          "offline_available": _dh.offline_available(),
+                                          "source": _dh.probe_source()}
+                            # 媒体与语音（能力 A/B/C）：引擎链实测状态 + 图库现状 + 转发开关
+                            try:
+                                from . import media_status as _ms
+                                st["media"] = _ms.snapshot()
+                            except Exception as _e2:
+                                st["media"] = {"error": str(_e2)}
+                            # 上云（预留接口）：端点三态 + 是否配了 Token
+                            try:
+                                from . import cloud as _cl2
+                                st["cloud"] = _cl2.snapshot()
+                            except Exception as _e11:
+                                st["cloud"] = {"error": str(_e11)}
+                            # 图/文/视频分流 + 视频读取（第 20 条）
+                            try:
+                                from . import model_routes as _mrt
+                                from . import video_read as _vrd
+                                st["model_routes"] = _mrt.snapshot()
+                                st["video_read"] = _vrd.snapshot()
+                            except Exception as _e10:
+                                st["model_routes"] = {"error": str(_e10)}
+                            # 存档屏蔽（第 10 条）：名单 + 存档里被屏蔽的条数
+                            try:
+                                from . import archive_filter as _af2
+                                st["archive"] = _af2.snapshot(getattr(parent, "store", None))
+                            except Exception as _e9:
+                                st["archive"] = {"error": str(_e9)}
+                            # 计时提醒 + 节假日问候（第 12/13 条）
+                            try:
+                                from . import timers as _tmr
+                                from . import holidays as _hol2
+                                st["timers"] = _tmr.snapshot()
+                                st["holiday"] = _hol2.snapshot()
+                            except Exception as _e8:
+                                st["timers"] = {"error": str(_e8)}
+                            # 响应等级三件（第 15/16/18 条）：档位模式 / 峰谷映射 / 指令禁言现状
+                            try:
+                                from . import tier_control as _tcl
+                                st["tier"] = _tcl.snapshot()
+                            except Exception as _e7:
+                                st["tier"] = {"error": str(_e7)}
+                            # 备选模型（第 3 条）：清单 + 最近一次"改用备选"的现场
+                            try:
+                                from .llm import fallback_status as _fbs
+                                st["fallback"] = _fbs()
+                            except Exception as _e6:
+                                st["fallback"] = {"error": str(_e6)}
+                            # 撤回剔除（第 14 条）：已剔除多少条 + 最近一条的现场
+                            try:
+                                from . import recall as _rcl
+                                st["recall"] = _rcl.summary()
+                            except Exception as _e5:
+                                st["recall"] = {"error": str(_e5)}
+                            # 本地文件搜索（找文件并发送）：现场读目录状态 + 台账
+                            try:
+                                from . import file_search as _fsx
+                                st["file_search"] = _fsx.snapshot()
+                            except Exception as _e4:
+                                st["file_search"] = {"error": str(_e4)}
+                            # 自定义工具（工具与插件面板）：清单现场扫 + 调用统计
+                            try:
+                                from . import user_tools as _ut2
+                                st["user_tools"] = _ut2.snapshot()
+                            except Exception as _e3:
+                                st["user_tools"] = {"error": str(_e3)}
+                    except Exception:
+                        pass
+                    self._json(st)
+                elif path in ("/api/file_search/add", "/api/file_search/del"):
+                    # 管理"可搜目录"（面板上加入/移除）
+                    try:
+                        from . import file_search as _fsd
+                        from .config import get_config as _gc4, save_config as _scv4, set_config as _sc4
+                        d = ""
+                        if isinstance(data, dict):
+                            d = str(data.get("dir") or "")
+                        if not d:
+                            _q4 = parse_qs(urlparse(self.path).query)
+                            d = str((_q4.get("dir") or [""])[0])
+                        d = d.strip()
+                        c4 = _gc4()
+                        c4.setdefault("file_search", {})
+                        cur = [str(x) for x in (c4["file_search"].get("dirs") or [])]
+                        if path.endswith("/add"):
+                            if d and d not in cur:
+                                cur.append(d)
+                            note = ("已加入：%s" % d) if d else "没给目录"
+                        else:
+                            cur = [x for x in cur if x != d]
+                            note = ("已移除：%s" % d) if d else "没给目录"
+                        c4["file_search"]["dirs"] = cur
+                        _sc4(c4)
+                        _scv4(c4)
+                        self._json({"ok": True, "note": note, "file_search": _fsd.snapshot()})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/tools/new_manifest":
+                    # 「怎么加工具」弹窗的一键动作：在 tools.d/ 里生成一份可编辑模板
+                    try:
+                        from . import user_tools as _ut5
+                        p, why = _ut5.write_template()
+                        self._json({"ok": bool(p), "path": p or "", "why": why,
+                                    "note": "改完点「重新加载清单」，再勾选即可；坏清单会在面板里逐条列出"})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/tools/reload":
+                    # 重新扫清单目录（快照本来就是现场算的；这个端点让"重新加载"有个明确的动作与回执）
+                    try:
+                        from . import user_tools as _ut3
+                        snap = _ut3.snapshot()
+                        self._json({"ok": True, "tools": snap,
+                                    "note": "清单已重扫；正在跑的会话在下一轮构建工具清单时生效"})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/tools/toggle":
+                    # 勾选启停：直接改清单文件里的 enabled
+                    try:
+                        from . import user_tools as _ut4
+                        q = parse_qs(urlparse(self.path).query)
+                        nm = str((q.get("name") or [""])[0])
+                        on = str((q.get("on") or ["1"])[0]) not in ("0", "false", "False", "")
+                        ok_t, why_t = _ut4.set_enabled(nm, on)
+                        self._json({"ok": bool(ok_t), "why": why_t, "tools": _ut4.snapshot()})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/ui_fingerprint/take":
+                    # 「重新取指纹」（⑦ 点击正确性）：给图标库里的命名目标各取一份 dHash 指纹。
+                    # 只**看**不点：抓渲染区画面裁小块，抓不到/全黑就如实报失败，绝不写假指纹。
+                    try:
+                        from . import ui_fingerprint as _ufp
+                        from . import wechat as _wx3
+                        q = parse_qs(urlparse(self.path).query)
+                        names = [s for s in str((q.get("names") or [""])[0]).split(",") if s.strip()]
+                        gui = _wx3.WeChatAdapter()._get_gui()
+                        r = _ufp.take(gui, names or None)
+                        self._json({"ok": True, "result": r, "status": _ufp.hits(),
+                                    "digest": _ufp.digest()})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/ui_fingerprint/forget":
+                    try:
+                        from . import ui_fingerprint as _ufp2
+                        q = parse_qs(urlparse(self.path).query)
+                        k = str((q.get("key") or [""])[0]) or None
+                        self._json({"ok": True, "result": _ufp2.forget(k), "status": _ufp2.hits()})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/image_gen/test":
+                    try:
+                        from . import image_gen as _ig
+                        _r = _ig.generate("", "帮我画一张两只猫的图")
+                        self._json({"ok": bool(_r.get("ok")), "result": _r})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/tts/test":
+                    # 「试听一句」：真跑一遍**当前选的那一档**的合成（不发送；系统档不出网，edge 档联网）。
+                    # 走 voice_models.make() 而不是 tts.make()——否则面板上写着「edge 神经语音」，
+                    # 试听放出来的却是系统机械音（2026-09-15 加第三档音源时一并收口）。
+                    try:
+                        from . import voice_models as _vm
+                        txt = "这是一条语音回复的试听"
+                        try:
+                            q = parse_qs(urlparse(self.path).query)
+                            if (q.get("text") or [""])[0]:
+                                txt = str((q.get("text") or [""])[0])[:120]
+                        except Exception:
+                            pass
+                        p, err, info = _vm.make(txt)
+                        _inf = dict(info or {})
+                        _be = str(_inf.get("engine") or _vm.backend())
+                        self._json({"ok": bool(p), "path": p or "", "err": err or "",
+                                    "info": _inf, "engine": _be,
+                                    "size": (os.path.getsize(p) if p and os.path.exists(p) else 0),
+                                    "note": "试听只做合成，不会发送；发出去的是音频文件，不是微信语音条。"
+                                            "当前这一档＝%s" % _be})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/voice/test":
+                    # 「测试引擎」：真跑一遍 TTS→WAV→SILK(微信帧)→解码→识别（不需要微信、不出网）
+                    try:
+                        from . import voice as _vt
+                        r = _vt.selftest_loop()
+                        self._json({"ok": bool(r.get("ok")), "result": r})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/wechat/recheck":
+                    try:
+                        from .wechat import wechat_version_info as _wvi2
+                        info = _wvi2() or {}
+                        self._json({"ok": True, "version": info, "install": info.get("install") or {}})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/version/allow":
+                    try:
+                        from . import version_gate as _vg3
+                        _vg3.allow_session("console")
+                        self._json({"ok": True, "gate": _vg3.status()})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/balance":
+                    try:
+                        self._json(parent.balance_fn())
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/logs":
+                    self._json({"lines": list(parent.log_buffer)})
+                elif path == "/api/wechat-groups":
+                    # 检测到的群聊列表（白名单勾选用，GET）
+                    try:
+                        self._json(parent.groups_fn())
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e), "groups": []})
+                elif path == "/api/emojis":
+                    # 表情包收藏夹列表（GET）
+                    try:
+                        self._json({"ok": True, "emojis": parent.emojis_fn()})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e), "emojis": []})
+                elif path == "/api/personas/scores":
+                    # 角色评分表：系统自动贴合分 + 用户分（GET）
+                    try:
+                        self._json(parent.persona_scores_fn())
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/feedback":
+                    # 反馈队列状态（GET）：待发/已发/当前通道 —— 界面顶部那条状态行用它
+                    try:
+                        from . import feedback as FB
+                        st = FB.stats()
+                        st["ok"] = True
+                        st["recent"] = [{"id": it.get("id"), "kind": it.get("kind"),
+                                         "at_h": it.get("at_h"), "sent_h": it.get("sent_h", ""),
+                                         "text": str(it.get("text") or "")[:60]}
+                                        for it in sorted(FB._read_all(), key=lambda x: x.get("at") or 0)[-5:]]
+                        self._json(st)
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/personas":
+                    # 热门人设选单（GET，带分区 cat）
+                    try:
+                        from agent.persona import PERSONAS, PERSONA_CATS
+                        self._json({"ok": True, "personas": [
+                            {"key": k, "name": v.get("name") or k, "text": v.get("text") or "",
+                             "cat": PERSONA_CATS.get(k, "🔥 网络热门")}
+                            for k, v in PERSONAS.items()]})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/persona/cats":
+                    # 分区列表（GET）：内置 + 用户新建分区
+                    try:
+                        import json as _json
+                        _p = os.path.join(parent._asset_root, "..", "data", "persona_cats.json")
+                        try:
+                            with open(_p, "r", encoding="utf-8") as f:
+                                user_cats = _json.load(f)
+                        except Exception:
+                            user_cats = {}
+                        from agent.persona import PERSONA_CATS
+                        built = sorted(set(PERSONA_CATS.values()))
+                        self._json({"ok": True, "built": built,
+                                    "user": [{"name": k, "desc": (v or {}).get("desc", "")} for k, v in user_cats.items()]})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/personas/custom":
+                    # 自定义角色卡列表（GET）
+                    try:
+                        import json as _json
+                        _p = os.path.join(parent._asset_root, "..", "data", "custom_personas.json")
+                        try:
+                            with open(_p, "r", encoding="utf-8") as f:
+                                items = _json.load(f)
+                        except Exception:
+                            items = {}
+                        self._json({"ok": True, "custom": [
+                            {"key": k, "name": (v or {}).get("name", k), "text": (v or {}).get("text", ""),
+                             "cat": (v or {}).get("cat") or "📝 自定义"}
+                            for k, v in items.items()]})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/ui-layout":
+                    # 微信 UI 图标库标定状态（GET）
+                    try:
+                        from agent.wechat_ui import _load_layout
+                        self._json({"ok": True, "layout": _load_layout()})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/ui/recalibrate":
+                    # 重新标定微信 UI 图标库（POST；接管鼠标瞬间，需微信在前台）
+                    try:
+                        self._json(parent.recalibrate_fn())
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/open-path":
+                    # 打开导出文件所在位置（POST {path}）
+                    try:
+                        self._json(parent.open_path_fn(str(data.get("path") or "")))
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/selfcheck-stop":
+                    # 停止当前一键体检（POST；设置取消标志，体检循环下一步即退出）
+                    try:
+                        parent.selfcheck_stop_fn()
+                        self._json({"ok": True})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                else:
+                    self._json({"error": "not found"}, 404)
+
+            def do_POST(self):
+                if not self._auth_ok():
+                    return self._json({"error": "unauthorized"}, 401)
+                self._handle_body_request()
+
+            def do_PUT(self):
+                # 小鲸鱼挂件前端用 PUT 保存配置（fetch SIZE_URL, {method:'PUT'}）
+                if not self._auth_ok():
+                    return self._json({"error": "unauthorized"}, 401)
+                self._handle_body_request()
+
+            def _handle_body_request(self):
+                path = urlparse(self.path).path
+                length = int(self.headers.get("Content-Length") or 0)
+                raw = self.rfile.read(length) if length else b"{}"
+                try:
+                    data = json.loads(raw.decode("utf-8")) if raw else {}
+                except Exception:
+                    data = {}
+                if path == "/api/update_skip":
+                    # 「不再提醒这个版本」：只写本机 config.json（update.skip_version），不外发任何东西
+                    try:
+                        from . import update_check as _uc
+                        self._json(_uc.skip_version(str((data or {}).get("version") or "")))
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)[:80]}, 500)
+                elif path == "/api/risk":
+                    # 风险闸门：暂停/恢复/查看（只影响本机行为，绝不往微信侧发任何提示）
+                    try:
+                        from . import risk as _risk
+                        act = str((data or {}).get("action") or "show")
+                        if act == "pause":
+                            _risk.pause(str((data or {}).get("reason") or "手动暂停"))
+                        elif act == "resume":
+                            _risk.resume()
+                        self._json({"ok": True, "risk": _risk.snapshot()})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)}, 500)
+                elif path == "/api/version/action":
+                    # ⑦ 四选一里"真能一键做"的两件事：升级适配层 / 更新本体 —— 起后台作业（分钟级，
+                    # 不阻塞控制台）；「仅本次允许」只放行本会话；「微信本身要处理」只回指引，
+                    # **绝不装/降级微信本体**（口径写死在 version_gate.run_action 里）。
+                    try:
+                        from . import version_gate as _vg6
+                        r = _vg6.run_action(str((data or {}).get("choice") or ""),
+                                            str((data or {}).get("id") or ""))
+                        self._json({"ok": bool(r.get("ok")), "result": r,
+                                    "message": str(r.get("message") or "")})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)}, 500)
+                elif path == "/api/decide":
+                    # 待决单表态（⑦ 版本不匹配四选一）：落台账 + 写回能力矩阵。
+                    # 只有「仅本次允许」会立刻放行本会话；「升级适配层 / 更新本体」只回命令与说明；
+                    # 「微信本身要处理」只给指引——**任何一条都不会在这里装包或降级微信**。
+                    try:
+                        from . import version_gate as _vg5
+                        r = _vg5.decide(str((data or {}).get("id") or ""),
+                                        str((data or {}).get("choice") or ""),
+                                        note=str((data or {}).get("note") or ""))
+                        _msg5 = str((r.get("action") or {}).get("message") or "")
+                        self._json({"ok": True, "result": r, "message": _msg5})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)}, 500)
+                elif path == "/api/config":
+                    try:
+                        new_cfg = data if isinstance(data, dict) and data else get_config()
+                        # 部分字段保存不丢段：与当前配置深合并（新值优先，缺失键保留旧值）
+                        # 注意：deep_merge 返回全新深拷贝，绝不能原地改 _current_config，
+                        # 否则 _protect_secrets 拿到的"旧值"已被掩码写脏，真实 key 会丢失。
+                        new_cfg = deep_merge(get_config(), new_cfg)
+                        _protect_secrets(new_cfg)  # 掩码值不覆盖真实密钥
+                        set_config(new_cfg)
+                        save_config(new_cfg)
+                        if parent.on_save:
+                            parent.on_save(new_cfg)
+                        self._json({"ok": True})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)}, 500)
+                elif path == "/api/archive":
+                    # 存档屏蔽（第 10 条）：GET 列消息（带 recalled/blocked 标记）/ 屏蔽名单 / 读数
+                    try:
+                        from . import archive_filter as _af
+                        st = getattr(parent, "store", None)
+                        if st is None:
+                            self._json({"ok": False, "error": "机器人未启动：拿不到存档句柄"})
+                        else:
+                            q = parse_qs(urlparse(self.path).query)
+                            ck = str((q.get("chat_key") or [""])[0]).strip()
+                            lim = int((q.get("limit") or ["30"])[0] or 30)
+                            out = {"ok": True, "snapshot": _af.snapshot(st), "chats": _af.chat_options(st)}
+                            if ck:
+                                out.update(_af.list_chat(st, ck, limit=max(1, min(200, lim))))
+                            self._json(out)
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)}, 500)
+                elif path in ("/api/archive/block", "/api/archive/unblock", "/api/archive/delete"):
+                    # 按条屏蔽 / 解除 / 清除（清除必须点名 id，绝不做"清空"）
+                    try:
+                        from . import archive_filter as _af
+                        st = getattr(parent, "store", None)
+                        if st is None:
+                            self._json({"ok": False, "error": "机器人未启动：拿不到存档句柄"})
+                        else:
+                            ck = str((data or {}).get("chat_key") or "").strip()
+                            ids = (data or {}).get("ids") or []
+                            if not ck:
+                                self._json({"ok": False, "error": "chat_key 不能为空"})
+                            elif path.endswith("block"):
+                                self._json(_af.block(st, ck, ids, reason=str((data or {}).get("reason") or "面板操作")))
+                            elif path.endswith("unblock"):
+                                self._json(_af.unblock(st, ck, ids))
+                            else:
+                                self._json(_af.delete(st, ck, ids))
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)}, 500)
+                elif path == "/api/cloud/test":
+                    # 上云预留接口：只探测连通性（DNS→TCP→TLS→HEAD），**不带凭据、不发任何用户数据**
+                    try:
+                        from . import cloud as _cl
+                        which = str((data or {}).get("which") or "")
+                        url = str((data or {}).get("url") or "")
+                        self._json(_cl.probe(which=which, url=url))
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)}, 500)
+                elif path == "/api/prompt/preview":
+                    # 系统提示词编辑（第 11 条）：让用户看见"此刻真正送出的系统提示词"
+                    try:
+                        from . import system_prompt as _spv
+                        self._json(_spv.preview())
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)}, 500)
+                elif path == "/api/cursor/upload":
+                    # 自定义光标：base64 PNG/JPEG → assets/custom-cursor.png
+                    # 浏览器 css cursor 硬限制：≤128×128、PNG/SVG/ICO、透明底最佳、加载失败静默回退（白箭头根因=404空图）
+                    try:
+                        import base64
+                        b64 = str(data.get("image") or "")
+                        if len(b64) > 12 * 1024 * 1024:
+                            return self._json({"ok": False, "error": "图片过大（≤8MB 源图）"}, 400)
+                        if b64.startswith("data:"):
+                            b64 = b64.split(",", 1)[1]
+                        img = base64.b64decode(b64)
+                        if not img.startswith(b"\x89PNG") and not img.startswith(b"\xff\xd8"):
+                            return self._json({"ok": False, "error": "仅支持 PNG/JPEG 图片"}, 400)
+                        # 强制 ≤64px（CSS 光标在部分 DPI 下 128 会变糊/超限兼容不佳；64 最稳）+ RGBA 透明保底
+                        from PIL import Image as _PILImg
+                        import io as _io
+                        try:
+                            _im = _PILImg.open(_io.BytesIO(img)).convert("RGBA")
+                            _im.thumbnail((64, 64), _PILImg.LANCZOS)
+                            _buf = _io.BytesIO()
+                            _im.save(_buf, "PNG", optimize=True)
+                            _img_out = _buf.getvalue()
+                        except Exception:
+                            return self._json({"ok": False, "error": "图片解析失败，请换 PNG/JPEG"}, 400)
+                        with open(os.path.join(parent._asset_root, "custom-cursor.png"), "wb") as f:
+                            f.write(_img_out)
+                        # 同步生成"点头帧"（点击时换帧，与默认光标同机制）
+                        try:
+                            _nod = _im.rotate(10, resample=_PILImg.BICUBIC, expand=False, fillcolor=(0, 0, 0, 0))
+                            _nod.thumbnail((60, 58), _PILImg.LANCZOS)
+                            _nc = _PILImg.new("RGBA", (64, 64), (0, 0, 0, 0))
+                            _nc.paste(_nod, (2, 6), _nod)
+                            _nb = _io.BytesIO()
+                            _nc.save(_nb, "PNG", optimize=True)
+                            with open(os.path.join(parent._asset_root, "custom-cursor-nod.png"), "wb") as f:
+                                f.write(_nb.getvalue())
+                        except Exception:
+                            pass
+                        self._json({"ok": True, "note": "自定义光标已保存（≤64px PNG，含点头帧）"})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)}, 500)
+                elif path == "/api/cursor/reset":
+                    # 重置为默认鲸鱼：删除自定义光标残留文件（否则页面刷新后预览仍探测到旧文件——030538）
+                    try:
+                        _p = os.path.join(parent._asset_root, "custom-cursor.png")
+                        if os.path.exists(_p):
+                            os.remove(_p)
+                        self._json({"ok": True})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)}, 500)
+                elif path == "/api/memory":
+                    # 记忆页：delete（删某成员印象） / update（编辑成员印象）
+                    try:
+                        action = str(data.get("action") or "delete")
+                        if action == "update":
+                            r = parent.memory_fn("update", str(data.get("chat_key") or ""),
+                                                 str(data.get("user_id") or ""),
+                                                 str(data.get("name") or ""),
+                                                 data.get("contents") or [])
+                        else:
+                            r = parent.memory_fn(action, str(data.get("chat_key") or ""),
+                                                 str(data.get("user_id") or ""))
+                        self._json(r)
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)}, 500)
+                elif path == "/api/sessions":
+                    # 运行明细：思考过程 / token / 工具调用
+                    try:
+                        self._json({"ok": True, "sessions": parent.sessions_fn(
+                            int(data.get("limit") or 30))})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)}, 500)
+                elif path == "/dsh-whale/size.json":
+                    # 小鲸鱼挂件配置保存（前端 PUT）
+                    if parent.whale is None:
+                        self._json({"error": "not found"}, 404)
+                    else:
+                        try:
+                            self._json(parent.whale.save_size(data))
+                        except Exception as e:
+                            self._json({"ok": False, "error": str(e)}, 500)
+                elif path == "/api/test-api":
+                    try:
+                        if parent.test_api_fn:
+                            self._json(parent.test_api_fn())
+                        else:
+                            self._json({"ok": False, "error": "未提供 test_api_fn"})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/poke-test":
+                    # 拍一拍诊断：完整跑一遍并返回分步结果
+                    # body: {group_wxid?, verify_only?}
+                    try:
+                        self._json(parent.poke_test_fn(str(data.get("group_wxid") or ""),
+                                                       bool(data.get("verify_only"))))
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/selfcheck":
+                    # 一键体检：配置/微信/数据/界面适配/命中测试 全套
+                    # body.mode="code" = 只做代码与依赖级检查（不动鼠标；首次向导用）
+                    try:
+                        _mode = "code" if str((data or {}).get("mode") or "") == "code" else "full"
+                        self._json(parent.selfcheck_fn(_mode))
+                    except Exception as e:
+                        self._json({"ok": False, "checks": [], "summary": str(e)})
+                elif path == "/api/prices":
+                    # 内置官方价目（llm._OFFICIAL_PRICES，费用计算器用）
+                    try:
+                        from . import llm as _llm_mod
+                        self._json(getattr(_llm_mod, "_OFFICIAL_PRICES", {}) or {})
+                    except Exception as _e:
+                        self._json({"__err": str(_e)})
+                elif path == "/api/data/export":
+                    # 导出全部计费+对话记录为一个迁移包（zip）
+                    try:
+                        self._bytes(_data_export(ROOT), "application/zip")
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/data/import":
+                    # 导入迁移包（body=zip 原始字节；合并、按内容去重）
+                    try:
+                        self._json(_data_import(ROOT, raw if isinstance(raw, (bytes, bytearray)) else b""))
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/wechat-groups":
+                    # 检测到的群聊列表（白名单勾选用）
+                    try:
+                        self._json(parent.groups_fn())
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e), "groups": []})
+                elif path == "/api/community/export":
+                    # 导出：金句/意见/聊天记录/角色评分 → 本地文件
+                    try:
+                        if not parent.community_export_fn:
+                            self._json({"ok": False, "error": "未提供导出功能"})
+                        else:
+                            self._json(parent.community_export_fn(str(data.get("kind") or "holyshits")))
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)}, 500)
+                elif path == "/api/community/upload":
+                    # 提交到可配置上传 URL（holyshits/feedback，默认关）——社区分享
+                    try:
+                        if not parent.community_upload_fn:
+                            self._json({"ok": False, "error": "未提供上传功能"})
+                        else:
+                            self._json(parent.community_upload_fn(data))
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)}, 500)
+                elif path == "/api/scoring/import":
+                    # 从金句墙导出数据导入评分种子库
+                    try:
+                        if not parent.scoring_import_fn:
+                            self._json({"ok": False, "error": "未提供评分导入"})
+                        else:
+                            self._json(parent.scoring_import_fn(str(data.get("text") or "")))
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)}, 500)
+                elif path == "/api/scoring/stats":
+                    try:
+                        from agent.scoring import stats as _s
+                        self._json({"ok": True, "data": _s()})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)}, 500)
+                elif path == "/api/learning/start":
+                    # 确定学习：仅默认角色卡（小鲸鱼）可用（AI 本体学完不 OOC；其他角色卡不应用机器学习）
+                    try:
+                        from agent.config import get_config as _gc, save_config as _sc
+                        _c = _gc()
+                        # 默认卡判定：未自定义角色文本 / 名称是内置小鲸鱼
+                        _role = str(_c.get("persona", {}).get("role_text") or "").strip()
+                        _name = str(_c.get("persona", {}).get("bot_name") or "").strip()
+                        if _role or (_name and "小鲸鱼" not in _name and "小鲷鱼" not in _name):
+                            self._json({"ok": False,
+                                        "error": "机器学习（金句素材库训练/学习评估）仅默认角色卡（小鲸鱼）可用——其他角色卡不应用机器学习，防止 OOC；联网收集/模型补足不受限"})
+                            return
+                        _c.setdefault("scoring", {})["enabled"] = True; _sc(_c)
+                        self._json({"ok": True, "note": "✅ 机器学习已开启：之后每条发言，群友24h内热烈回应(接话/追问/@)会为该话术加分，冷场降权；会话越久越贴合。评分引擎已在工作。（默认角色卡·小鲸鱼）"})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/learning/evaluate":
+                    # 学习评估：按评分细则让模型评「学习到的反响话术」的质量（五维+相对未学习的提升幅度）
+                    try:
+                        from agent import llm
+                        from agent.scoring import top_reactions
+                        rxns = top_reactions(14)
+                        # 只取"机器人自己发的、群友反响好"的话术；剔除系统/平台侧文本（如"撤回/一拍/xx加入了"这类非机器人发言）
+                        import re as _re
+                        _JUNK = ("撤回", "拍一拍", "拍拍", "加入了", "邀请", "退出了", "对方撤回", "你撤回", "以上是", "语音", "图片", "[表情]")
+                        rxns = [r for r in rxns if str(r.get("text") or "").strip() and not any(j in str(r.get("text") or "") for j in _JUNK)]
+                        if rxns:
+                            lines = ["下面是我【机器人自己发的】、且群友反响好的话术（含热度分，供评估学习效果）："]
+                            for r in rxns:
+                                lines.append("- “%s”（热度 %.2f)" % (str(r.get("text") or "")[:60], float(r.get("score") or 0)))
+                            sample = "\n".join(lines)
+                        else:
+                            sample = "（当前没有可评估的机器人高反应发言——请让机器人多聊、等群友有热烈回应后评分引擎再积累。）"
+                        RULES = """【机器学习效果评分细则】（每维 0~100.00 精确到百分位，总分=8 维加权均值，保留 2 位小数）
+务必只针对上面【机器人自己发的】话术评分，绝不把系统提示/用户消息当机器人发言。
+维度：
+1 自然度(12%)：像真人口吻，无AI腔/总结腔；
+2 有趣度(16%)：有梗、机灵、让人想接；
+3 人设贴合(20%)：是不是该角色会说的话（绝不换魂）；
+4 机敏度(12%)：接话时机、回球、处理冷场/被调侃；
+5 生活气息(12%)：是不是有"真人日常"的味道，而非机械应答；
+6 观察力(10%)：有没有抓住群里细节/梗/前后文；
+7 节奏感(10%)：长短句、停顿、分条像不像真人打字；
+8 口语真实(8%)：用词口语化、不书面、不列点。
+【禁止】不许给整分/整五/整十（如 80.00/85.00/90.00 一律不得出现）——每个维度必须按真实感受给出带小数的分数（如 84.37、79.15、91.03），百分位不得为 0。
+输出格式（务必）：
+各维分：自然=X.XX 有趣=X.XX 人设=X.XX 机敏=X.XX 生活=X.XX 观察=X.XX 节奏=X.XX 口语=X.XX
+总分：XX.XX
+相比未学习前的对话质量提升幅度：XX.X%
+一句话点评：……（并指出哪一维进步最明显）
+"""
+                        sys = [{"role": "system", "content": RULES}, {"role": "user", "content": sample}]
+                        r = llm.chat_completion(sys, temperature=0.2)
+                        out = (r.get("message") or {}).get("content", "")
+                        # 校验：若所有分都是整分（百分位全 0），强制重试一次并警告
+                        import re as _re2
+                        nums = _re2.findall(r"=(\d+\.\d{2})", out)
+                        if nums and all(n.endswith(".00") or n.endswith(".50") for n in nums):
+                            sys2 = sys + [{"role": "assistant", "content": out},
+                                          {"role": "user", "content": "你上面的分数全是整分/半整分，违反细则。请重新按真实细微差异打分，每维必须带非零百分位（如 84.37），禁止 80.00/85.00 之类的整分。"}]
+                            r2 = llm.chat_completion(sys2, temperature=0.3)
+                            out = (r2.get("message") or {}).get("content", "") or out
+                        self._json({"ok": True, "eval": out,
+                                    "note": "已按8维细则(model评分)评估，分数精确到百分位（禁止整分）；仅评机器人发言"})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/pause":
+                    parent.pause_fn()
+                    self._json({"ok": True})
+                elif path == "/api/resume":
+                    parent.resume_fn()
+                    self._json({"ok": True})
+                elif path == "/api/shutdown":
+                    self._json({"ok": True, "note": "正在停止机器人…"})
+                    # 立即强退（handler 线程里 os._exit 杀全进程 + taskkill 自己兜底）——不依赖 Timer/shutdown_fn 线程，
+                    # 之前 os._exit 放 Timer 线程里偶尔没杀干净，导致"停止关不掉"。
+                    try:
+                        parent.shutdown_fn()   # 写 stopped.flag + 杀看门狗 + os._exit(0)
+                    except Exception:
+                        pass
+                    try:
+                        import os as _o, subprocess
+                        subprocess.run(["taskkill", "/F", "/PID", str(_o.getpid())],
+                                       capture_output=True, creationflags=0x08000000)
+                    except Exception:
+                        pass
+                elif path == "/api/restart":
+                    # 重启：后台无窗口拉起新实例（释放端口后接替），当前实例退出
+                    self._json({"ok": True, "note": "正在后台重启机器人…"})
+                    threading.Timer(0.5, parent.restart_fn).start()
+                elif path == "/api/persona/behavior-recommend":
+                    # 角色卡行为推荐（POST {text?，默认当前 persona.role_text 或内置卡}）：
+                    # ① 本地启发式先给一版；② 模型按多维度严肃规则复核（消费少量 token，可传 llm=false 关闭）
+                    try:
+                        from agent.behavior_recommend import recommend as _br
+                        _txt = str(data.get("text") or "")
+                        if not _txt.strip():
+                            # 唯一实现：与 build_system_prompt 同一套回落（不再各写一份、也不再读死键 prefer_key）
+                            from agent.prompt import role_text_of
+                            _txt = role_text_of()
+                        local = _br(_txt)
+                        res = dict(local)
+                        res["via"] = "local"
+                        if data.get("llm", True) and _txt.strip():
+                            try:
+                                from agent import llm
+                                _rules = (
+                                    "你是行为风格评估员。根据角色卡文本，评出机器人作为群友的行为档（只依据角色本体，禁止编造）。\n"
+                                    "输出严格 JSON：{\"participation\":\"low|medium|high\",\"sticker\":0-3,\"reason\":\"一句话说明\"}\n"
+                                    "维度：participation=参与度（low 安静旁观/medium 普通群友/high 话多活跃）；"
+                                    "sticker=表情包接受度（0 不爱发/1 偶尔/2 较多/3 爱好者）；"
+                                    "规则：说话极简/高冷/庄重类必为 low~medium 且 sticker≤1；话痨/气氛组/爱玩梗类为 high 且 sticker≥2；"
+                                    "每维必须给出确定值，不得写不确定。只输出 JSON。\n\n角色卡：\n" + _txt[:2400]
+                                )
+                                _r = llm.chat_completion([{"role": "user", "content": _rules}], temperature=0.1)
+                                _c = str((_r.get("message") or {}).get("content", ""))
+                                import re as _re3, json as _json3
+                                _m = _re3.search(r"\{.*\}", _c, _re3.S)
+                                if _m:
+                                    _d = _json3.loads(_m.group(0))
+                                    _p = str(_d.get("participation") or "")
+                                    if _p in ("low", "medium", "high"):
+                                        res["participation"] = _p
+                                        res["via"] = "llm"
+                                    _sv = str(_d.get("sticker"))
+                                    if _sv.strip() in ("0", "1", "2", "3"):
+                                        res["sticker"] = int(_sv)
+                                    res["reason"] = str(_d.get("reason") or "")
+                            except Exception:
+                                pass
+                        self._json(res)
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/sessions/delete":
+                    # ⑨ 勾选删除运行明细：按日期删除 data/sessions/YYYY-MM-DD.jsonl（POST {dates:[...]}）
+                    try:
+                        import re as _re2
+                        _dates = [str(d) for d in (data.get("dates") or []) if _re2.match(r"^\d{4}-\d{2}-\d{2}$", str(d))]
+                        if not _dates:
+                            return self._json({"ok": False, "error": "没有有效的日期"})
+                        _sd = os.path.join(parent._data_path("sessions"))
+                        _deleted = []
+                        for _d in _dates:
+                            _f = os.path.join(_sd, _d + ".jsonl")
+                            if os.path.exists(_f):
+                                os.remove(_f); _deleted.append(_d)
+                        self._json({"ok": True, "note": "已删除 %d 个日期的运行明细" % len(_deleted), "deleted": _deleted})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/stats/cal_clear":
+                    # ⑨ 一键清空全部计费历史（按天文件真实删除 + 清零累计/周期/今日）
+                    try:
+                        import glob as _gl
+                        _sd = parent._data_path("sessions")
+                        _n = 0
+                        for _f in _gl.glob(os.path.join(_sd, "????-??-??.jsonl")):
+                            try:
+                                os.remove(_f); _n += 1
+                            except Exception:
+                                pass
+                        _p = parent._data_path("usage_stats.json")
+                        if os.path.exists(_p):
+                            import json as _j2
+                            with open(_p, "r", encoding="utf-8") as f:
+                                _us = _j2.load(f)
+                            _us["history"] = []
+                            _us["day"] = {"sessions": 0, "calls": 0, "tokens": 0, "sent": 0, "cost": 0.0}
+                            _us["period"] = {"sessions": 0, "calls": 0, "tokens": 0, "sent": 0, "cost": 0.0}
+                            _us["total"] = {"sessions": 0, "calls": 0, "tokens": 0, "sent": 0, "cost": 0.0}
+                            with open(_p, "w", encoding="utf-8") as f:
+                                _j2.dump(_us, f, ensure_ascii=False, indent=1)
+                        self._json({"ok": True, "note": "已清空计费历史（%d 天记录全部删除，累计归零）" % _n})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/stats/cal_list":
+                    # 勾选删除弹窗：列出全部计费日志——按天聚合自 data/sessions/YYYY-MM-DD.jsonl（精确到年月日）
+                    try:
+                        import json as _j2, glob as _gl
+                        _sd = parent._data_path("sessions")
+                        _days = {}
+                        for _f in _gl.glob(os.path.join(_sd, "????-??-??.jsonl")):
+                            _day = os.path.basename(_f)[:10]
+                            if not re.match(r"^\d{4}-\d{2}-\d{2}$", _day):
+                                continue
+                            _d = _days.setdefault(_day, {"tokens": 0, "cost": 0.0, "calls": 0,
+                                                         "sessions": 0, "sent": 0})
+                            try:
+                                with open(_f, encoding="utf-8") as fh:
+                                    for _ln in fh:
+                                        _ln = _ln.strip()
+                                        if not _ln:
+                                            continue
+                                        try:
+                                            _o = _j2.loads(_ln)
+                                            _d["tokens"] += int(_o.get("tokens") or 0)
+                                            _d["cost"] += float(_o.get("cost") or 0)
+                                            _d["calls"] += int(_o.get("calls") or 0)
+                                            _d["sessions"] += 1
+                                            if _o.get("reply"):
+                                                _d["sent"] += 1
+                                        except Exception:
+                                            pass
+                            except Exception:
+                                pass
+                        # 同日期内多文件合并（罕见）
+                        _out = []
+                        for _day, _d in sorted(_days.items(), reverse=True):
+                            for k in ("tokens", "calls", "sessions", "sent"):
+                                _d[k] = int(_d[k])
+                            _d["cost"] = round(float(_d["cost"]), 4)
+                            _out.append({"day": _day, **_d})
+                        # 旧版 period 归档（history 的 start/end 字段）也并入
+                        _p = parent._data_path("usage_stats.json")
+                        if os.path.exists(_p):
+                            with open(_p, "r", encoding="utf-8") as f:
+                                _us = _j2.load(f)
+                            for h in _us.get("history") or []:
+                                if not isinstance(h, dict):
+                                    continue
+                                day = str(h.get("day") or h.get("start") or "")[:10]
+                                if not re.match(r"^\d{4}-\d{2}-\d{2}$", day):
+                                    continue
+                                if any(x["day"] == day for x in _out):
+                                    continue   # 已有按天记录
+                                _out.append({"day": day, "tokens": int(h.get("tokens") or 0),
+                                             "cost": round(float(h.get("cost") or 0), 4),
+                                             "calls": int(h.get("calls") or 0),
+                                             "sessions": int(h.get("sessions") or 0),
+                                             "sent": int(h.get("sent") or 0)})
+                        _out.sort(key=lambda x: x["day"], reverse=True)
+                        self._json({"ok": True, "bills": _out})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/stats/cal_delete":
+                    # 勾选删除：按天删除计费日志（POST {days:[...]}）——真实删除当天文件 + 同步回调累计/周期/今日
+                    try:
+                        import json as _j2, glob as _gl
+                        _days = set(str(d) for d in (data.get("days") or [])
+                                    if re.match(r"^\d{4}-\d{2}-\d{2}$", str(d)))
+                        if not _days:
+                            return self._json({"ok": False, "error": "没有有效的日期"})
+                        _sd = parent._data_path("sessions")
+                        _gone = []
+                        _del_days = {}     # day -> sums（删除前算好，用于回补累计）
+                        for _f in _gl.glob(os.path.join(_sd, "????-??-??.jsonl")):
+                            _day = os.path.basename(_f)[:10]
+                            if _day not in _days:
+                                continue
+                            agg = {"tokens": 0, "cost": 0.0, "calls": 0, "sessions": 0, "sent": 0}
+                            try:
+                                with open(_f, encoding="utf-8") as fh:
+                                    for _ln in fh:
+                                        _ln = _ln.strip()
+                                        if not _ln:
+                                            continue
+                                        try:
+                                            _o = _j2.loads(_ln)
+                                            agg["tokens"] += int(_o.get("tokens") or 0)
+                                            agg["cost"] += float(_o.get("cost") or 0)
+                                            agg["calls"] += int(_o.get("calls") or 0)
+                                            agg["sessions"] += 1
+                                            if _o.get("reply"):
+                                                agg["sent"] += 1
+                                        except Exception:
+                                            pass
+                            except Exception:
+                                pass
+                            _del_days[_day] = agg
+                            try:
+                                os.remove(_f)
+                                _gone.append(_day)
+                            except Exception:
+                                pass
+                        if not _gone:
+                            # 没有对应文件：尝试只清历史归档
+                            _gone = list(_days)
+                        # 回补 usage_stats：删除天对应的 累计/周期/今日
+                        _p = parent._data_path("usage_stats.json")
+                        if os.path.exists(_p):
+                            with open(_p, "r", encoding="utf-8") as f:
+                                _us = _j2.load(f)
+                            _us["history"] = [h for h in (_us.get("history") or [])
+                                              if not isinstance(h, dict)
+                                              or str(h.get("day") or h.get("start") or "")[:10] not in _days]
+                            _today = time.strftime("%Y-%m-%d")
+                            for _k in ("total", "period"):
+                                _t = _us.get(_k) or {}
+                                for _day, agg in _del_days.items():
+                                    _t["tokens"] = max(0, int(_t.get("tokens") or 0) - int(agg["tokens"]))
+                                    _t["cost"] = max(0.0, float(_t.get("cost") or 0) - float(agg["cost"]))
+                                    _t["calls"] = max(0, int(_t.get("calls") or 0) - int(agg["calls"]))
+                                    _t["sessions"] = max(0, int(_t.get("sessions") or 0) - int(agg["sessions"]))
+                                    _t["sent"] = max(0, int(_t.get("sent") or 0) - int(agg["sent"]))
+                                _us[_k] = _t
+                            if _today in _del_days:
+                                _t = _us.get("day") or {}
+                                agg = _del_days[_today]
+                                _t["tokens"] = max(0, int(_t.get("tokens") or 0) - int(agg["tokens"]))
+                                _t["cost"] = max(0.0, float(_t.get("cost") or 0) - float(agg["cost"]))
+                                _t["calls"] = max(0, int(_t.get("calls") or 0) - int(agg["calls"]))
+                                _t["sessions"] = max(0, int(_t.get("sessions") or 0) - int(agg["sessions"]))
+                                _t["sent"] = max(0, int(_t.get("sent") or 0) - int(agg["sent"]))
+                                _us["day"] = _t
+                            with open(_p, "w", encoding="utf-8") as f:
+                                _j2.dump(_us, f, ensure_ascii=False, indent=1)
+                        self._json({"ok": True,
+                                    "note": "已删除 %d 天的计费日志（%s）" % (len(_gone), ", ".join(sorted(_gone)[:12])),
+                                    "removed": sorted(_gone)})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/stats/cal":
+                    # 日历：读取某日会话明细（data/sessions/YYYY-MM-DD.jsonl 汇总）
+                    try:
+                        import json as _j
+                        d = str(data.get("d") or "")
+                        _sf = os.path.join(parent._data_path("sessions"), (d + ".jsonl"))
+                        agg = {"date": d, "sessions": 0, "tokens": 0, "cost": 0.0, "calls": 0, "sent": 0}
+                        if d and os.path.exists(_sf):
+                            with open(_sf, encoding="utf-8") as fh:
+                                for line in fh:
+                                    line = line.strip()
+                                    if not line:
+                                        continue
+                                    try:
+                                        o = _j.loads(line)
+                                        agg["sessions"] += 1
+                                        agg["tokens"] += int(o.get("tokens") or 0)
+                                        agg["cost"] += float(o.get("cost") or 0)
+                                        agg["calls"] += int(o.get("calls") or 0)
+                                        if o.get("reply"):
+                                            agg["sent"] += 1
+                                    except Exception:
+                                        pass
+                        self._json({"ok": True, **agg})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/emojis/delete":
+                    # 删除一个收藏的表情文件（POST {name}）
+                    try:
+                        import urllib.parse as _up
+                        name = _up.unquote(str(data.get("name") or ""))
+                        emoji_dir = parent._data_path("emojis")
+                        fp = os.path.join(emoji_dir, os.path.basename(name))
+                        if os.path.exists(fp):
+                            os.remove(fp)
+                            self._json({"ok": True})
+                        else:
+                            self._json({"ok": False, "error": "文件不存在：" + name})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/code-check":
+                    # 代码检测（POST；纯代码层检查，不接管鼠标）。改为后台线程跑，前端轮询进度。
+                    try:
+                        import threading
+                        from agent.code_check import run as _code_run
+                        def _bg():
+                            try:
+                                _code_run._res = _code_run(bool(data.get("deps")))
+                            except Exception as e:
+                                _code_run._res = {"ok": False, "checks": [], "summary": "代码检测失败：%s" % e}
+                            _code_run._done = True
+                        # 若上一次已彻底完成，则清掉旧结果以便重跑
+                        if getattr(_code_run, "_done", False) or getattr(_code_run, "_res", None):
+                            _code_run._done = False
+                            _code_run._res = None
+                        threading.Thread(target=_bg, daemon=True).start()
+                        self._json({"ok": True, "started": True})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/code-check/progress":
+                    # 代码检测进度（GET/POST）：{done, progress:{done,total,current}, items?, result?}
+                    try:
+                        from agent.code_check import run as _code_run
+                        done = bool(getattr(_code_run, "_done", False))
+                        self._json({"ok": True, "done": done,
+                                    "progress": getattr(_code_run, "_prog", None),
+                                    "items": list(getattr(_code_run, "_checks", None) or []) if not done else None,
+                                    "result": getattr(_code_run, "_res", None) if done else None})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/feedback/submit":
+                    # 用户反馈提交（POST {kind,text,contact}）：落盘 → 立刻试投递 → 三态如实回报
+                    try:
+                        from . import feedback as FB
+                        env = {"wechat": str((data.get("env") or {}).get("wechat") or "")[:60],
+                               "ui": str((data.get("env") or {}).get("ui") or "")[:40]}
+                        self._json(FB.submit(str(data.get("kind") or "其他"),
+                                             str(data.get("text") or ""),
+                                             str(data.get("contact") or ""), env))
+                    except Exception as e:
+                        self._json({"ok": False, "state": "error", "why": str(e)})
+                elif path == "/api/feedback/flush":
+                    # 补发排队中的反馈（POST）
+                    try:
+                        from . import feedback as FB
+                        self._json(FB.flush())
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/persona/cats/save":
+                    # 新建/更新分区（POST {name, desc?}）
+                    try:
+                        import json as _json
+                        _p = os.path.join(parent._asset_root, "..", "data", "persona_cats.json")
+                        try:
+                            with open(_p, "r", encoding="utf-8") as f:
+                                user_cats = _json.load(f)
+                        except Exception:
+                            user_cats = {}
+                        name = str(data.get("name") or "").strip()
+                        if not name:
+                            self._json({"ok": False, "error": "分区名不能为空"})
+                        else:
+                            cur = user_cats.get(name, {}) or {}
+                            cur["desc"] = str(data.get("desc") or cur.get("desc") or "")
+                            user_cats[name] = cur
+                            with open(_p, "w", encoding="utf-8") as f:
+                                _json.dump(user_cats, f, ensure_ascii=False, indent=1)
+                            self._json({"ok": True})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/persona/cats/del":
+                    # 删除用户分区（POST {name}）：分区下自定义卡"移回 📝 自定义"，分区移除
+                    try:
+                        import json as _json
+                        cats_p = os.path.join(parent._asset_root, "..", "data", "persona_cats.json")
+                        pers_p = os.path.join(parent._asset_root, "..", "data", "custom_personas.json")
+                        name = str(data.get("name") or "").strip()
+                        try:
+                            with open(cats_p, "r", encoding="utf-8") as f:
+                                user_cats = _json.load(f)
+                        except Exception:
+                            user_cats = {}
+                        user_cats.pop(name, None)
+                        with open(cats_p, "w", encoding="utf-8") as f:
+                            _json.dump(user_cats, f, ensure_ascii=False, indent=1)
+                        # 该分区下的卡移到默认
+                        try:
+                            with open(pers_p, "r", encoding="utf-8") as f:
+                                items = _json.load(f)
+                        except Exception:
+                            items = {}
+                        for k, v in items.items():
+                            if (v or {}).get("cat") == name:
+                                v["cat"] = "📝 自定义"
+                        with open(pers_p, "w", encoding="utf-8") as f:
+                            _json.dump(items, f, ensure_ascii=False, indent=1)
+                        self._json({"ok": True})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/persona/score":
+                    # 自定义角色卡评分（POST {text, llm?}）：默认本地；llm=true 时交模型
+                    try:
+                        self._json(parent.persona_score_custom_fn(str(data.get("text") or ""),
+                                                                  bool(data.get("llm"))))
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/personas/custom":
+                    # 自定义角色卡保存（POST {name, text, key?, cat?}；无 key=新建；cat=分区名）
+                    try:
+                        import json as _json
+                        _p = os.path.join(parent._asset_root, "..", "data", "custom_personas.json")
+                        items = {}
+                        try:
+                            with open(_p, "r", encoding="utf-8") as f:
+                                items = _json.load(f)
+                        except Exception:
+                            pass
+                        key = str(data.get("key") or "")
+                        name = str(data.get("name") or "").strip()
+                        text = str(data.get("text") or "").strip()
+                        cat = str(data.get("cat") or "").strip() or "📝 自定义"
+                        if not text:
+                            self._json({"ok": False, "error": "角色文本不能为空"})
+                        else:
+                            if not key:
+                                key = "custom_" + str(int(time.time()))
+                            cur = items.get(key, {}) or {}
+                            cur["name"] = name or cur.get("name") or "自定义"
+                            if text:
+                                cur["text"] = text
+                            cur["cat"] = cat
+                            items[key] = cur
+                            with open(_p, "w", encoding="utf-8") as f:
+                                _json.dump(items, f, ensure_ascii=False, indent=1)
+                            self._json({"ok": True, "key": key})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/personas/custom/del":
+                    # 删除自定义角色卡（POST {key}）
+                    try:
+                        import json as _json
+                        _p = os.path.join(parent._asset_root, "..", "data", "custom_personas.json")
+                        try:
+                            with open(_p, "r", encoding="utf-8") as f:
+                                items = _json.load(f)
+                        except Exception:
+                            items = {}
+                        items.pop(str(data.get("key") or ""), None)
+                        with open(_p, "w", encoding="utf-8") as f:
+                            _json.dump(items, f, ensure_ascii=False, indent=1)
+                        self._json({"ok": True})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/memory/deep-profile":
+                    # 群友深度印象：采集该成员全部历史真实记录 → 本地统计提炼（口癖/语气/行为），附真实原话
+                    try:
+                        from agent import memory as _mem
+                        wxid = str((data or {}).get("user_id") or "").strip()
+                        name = str((data or {}).get("name") or "").strip()
+                        if not wxid and not name:
+                            raise ValueError("缺少成员标识")
+                        mm = _mem.MemoryStore()
+                        texts = mm.collect_member_texts(wxid, name)
+                        if not texts:
+                            self._json({"ok": False, "note": "该成员暂无印象记录（机器人还没留意过 TA）；先让机器人在群里互动积累"})
+                        else:
+                            # 提炼（全部基于真实记录，不做虚构）
+                            import collections as _co
+                            import re as _re
+                            emojis = _co.Counter()
+                            for t in texts:
+                                for ch in t:
+                                    if ord(ch) > 0x2600:
+                                        emojis[ch] += 1
+                            top_emoji = [("%s×%d" % (e, c)) for e, c in emojis.most_common(5)]
+                            lens = [len(t) for t in texts]
+                            avg_len = int(sum(lens) / max(1, len(lens)))
+                            ends = _co.Counter()
+                            for t in texts:
+                                tail = t.strip()[-2:] if len(t.strip()) >= 2 else t.strip()
+                                if tail:
+                                    ends[tail] += 1
+                            top_ends = ["%s×%d" % (e, c) for e, c in ends.most_common(5)]
+                            profile = ("【群友深度印象 · 由 %d 条真实记录自动整理（未做虚构）】\n"
+                                        "高频符号/表情：%s\n平均句长：%d 字；常用结尾语气：%s\n"
+                                        "真实原话示例（逐字保留）：\n%s" %
+                                        (len(texts), "、".join(top_emoji) or "无", avg_len,
+                                         "、".join(top_ends) or "—",
+                                         "\n".join("· %s" % t[:80] for t in texts[:6])))
+                            self._json({"ok": True, "count": len(texts), "text": profile, "note": "已整理；可点「追加为印象」写入记忆"})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/persona/ai-enrich":
+                    try:
+                        self._json(parent.persona_ai_enrich_fn(str(data.get("name") or ""),
+                                                               str(data.get("text") or ""),
+                                                               int(data.get("rounds") or 1)))
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/persona/web-fetch":
+                    # 联网收集角色真实资料（搜索其说过的话/做过的事；只返回搜索摘要，绝不编造）
+                    try:
+                        from . import web_search as _ws
+                        name = str((data or {}).get("name") or "").strip()
+                        if not name:
+                            raise ValueError("请填写角色名")
+                        results, notes = [], []
+                        for q in (name + " 经典语录", name + " 访谈 原话", name + " 名言 金句"):
+                            try:
+                                r = _ws.web_search(q)
+                                items = (r or {}).get("results") or (r or {}).get("items") or []
+                                ans = (r or {}).get("answer")
+                                if ans:
+                                    notes.append(str(ans)[:300])
+                                for it in items[:6]:
+                                    results.append({
+                                        "title": str(it.get("title") or "")[:120],
+                                        "url": str(it.get("url") or ""),
+                                        "snippet": str(it.get("snippet") or "")[:300]})
+                            except Exception as e:
+                                notes.append("查询「%s」失败：%s" % (q[:16], str(e)[:80]))
+                        quotes = []
+                        seen = set()
+                        for it in results:
+                            for seg in (it["snippet"] + " " + it["title"]).split("。"):
+                                seg = seg.strip(" \n\t·")
+                                if not seg or len(seg) < 4 or len(seg) > 200:
+                                    continue
+                                if any(c in seg for c in ("“", "”", "「", "」", "\"", "\u201c", "\u201d")) and seg not in seen:
+                                    seen.add(seg)
+                                    quotes.append(seg)
+                        if not results:
+                            self._json({"ok": False, "name": name,
+                                        "note": "未检索到第一手资料（搜索引擎无相关真实资料）；请人工核实后再填入，切勿编造"})
+                        else:
+                            self._json({"ok": True, "name": name, "results": results[:20],
+                                        "quotes": quotes[:10], "notes": notes[:5],
+                                        "note": "以上均为搜索引擎返回的真实资料摘要（含来源链接，未做任何编造）；请人工核对后提取进角色卡。"})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/ui/background":
+                    # 自定义背景图（POST {data: base64(dataURL)}, 或 {clear:true}）
+                    try:
+                        import base64 as _b64
+                        _p = parent._data_path("ui_bg.jpg")
+                        if data.get("clear"):
+                            if os.path.exists(_p):
+                                os.remove(_p)
+                            try:
+                                from agent.config import get_config as _gc, save_config as _sc
+                                _c = _gc(); _c.setdefault("ui", {})["background"] = ""; _sc(_c)
+                            except Exception:
+                                pass
+                            self._json({"ok": True, "note": "已恢复默认背景"})
+                        else:
+                            raw = str(data.get("data") or "")
+                            if "base64," in raw[:60]:
+                                raw = raw.split("base64,", 1)[1]
+                            raw = re.sub(r"[\s\r\n]", "", raw)       # 清洗空白
+                            raw += "=" * (-len(raw) % 4)             # padding 补全
+                            try:
+                                img_bytes = _b64.b64decode(raw, validate=False)
+                            except Exception:
+                                raise ValueError("base64 解码失败（文件数据损坏？请重试）")
+                            # 格式探测（图片 + 视频全兼容：png/jpg/jpeg/webp/gif/mp4/webm/ogg）
+                            import io as _io2
+                            head = img_bytes[:64]
+                            mime = ""
+                            if head[:8] == b"\x89PNG\r\n\x1a\n":
+                                mime, ext, is_video = "image/png", "png", False
+                            elif head[:3] == b"\xff\xd8\xff":
+                                mime, ext, is_video = "image/jpeg", "jpg", False
+                            elif head[:12] == b"RIFF" and head[8:12] == b"WEBP":
+                                mime, ext, is_video = "image/webp", "webp", False
+                            elif head[:6] in (b"GIF87a", b"GIF89a"):
+                                mime, ext, is_video = "image/gif", "gif", False
+                            elif head[4:12] == b"ftypmp4" or head[4:12] == b"ftypisom" or b"ftyp" in head[4:12]:
+                                mime, ext, is_video = "video/mp4", "mp4", True
+                            elif head[:4] == b"\x1aE\xdf\xa3":
+                                mime, ext, is_video = "video/webm", "webm", True
+                            elif head[:4] == b"OggS":
+                                mime, ext, is_video = "video/ogg", "ogg", True
+                            else:
+                                raise ValueError("格式无法识别：图片支持 PNG/JPEG/WEBP/GIF；视频支持 MP4/WEBM/OGG")
+                            _p2 = parent._data_path("ui_bg." + ext)
+                            with open(_p2, "wb") as _fw:
+                                _fw.write(img_bytes)
+                            # 清掉旧的其他扩展（避免残留）
+                            for _old in ("jpg", "png", "webp", "gif", "mp4", "webm", "ogg"):
+                                if _old != ext:
+                                    try:
+                                        _oo = parent._data_path("ui_bg." + _old)
+                                        if os.path.exists(_oo):
+                                            os.remove(_oo)
+                                    except Exception:
+                                        pass
+                            try:
+                                from agent.config import get_config as _gc, save_config as _sc
+                                _c = _gc(); _c.setdefault("ui", {})["background"] = "custom"; _c.setdefault("ui", {})["bg_type"] = "video" if is_video else "image"; _sc(_c)
+                            except Exception:
+                                pass
+                            self._json({"ok": True, "note": "背景已保存并应用"})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e).split("\n")[0][:140] or "图片处理失败"})
+                elif path == "/api/personas/favs":
+                    # 人设星标集合（GET）
+                    try:
+                        import json as _json
+                        try:
+                            with open(parent._data_path("persona_favs.json"), "r", encoding="utf-8") as f:
+                                favs = _json.load(f)
+                        except Exception:
+                            favs = {}
+                        self._json({"ok": True, "favs": favs})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/personas/fav":
+                    # 设/取消星标（POST {key, fav}）
+                    try:
+                        import json as _json
+                        try:
+                            with open(parent._data_path("persona_favs.json"), "r", encoding="utf-8") as f:
+                                favs = _json.load(f)
+                        except Exception:
+                            favs = {}
+                        k = str(data.get("key") or "")
+                        if data.get("fav"):
+                            favs[k] = 1
+                        else:
+                            favs.pop(k, None)
+                        with open(parent._data_path("persona_favs.json"), "w", encoding="utf-8") as f:
+                            _json.dump(favs, f, ensure_ascii=False, indent=1)
+                        self._json({"ok": True})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/personas/rate":
+                    # 用户为角色打分（POST {key, score, note?}，落盘）
+                    try:
+                        self._json(parent.persona_rate_fn(str(data.get("key") or ""),
+                                                          data.get("score"),
+                                                          str(data.get("note") or "")))
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/selfcheck-stop":
+                    # 停止当前一键体检（POST；设置取消标志，体检循环下一步即退出）
+                    try:
+                        parent.selfcheck_stop_fn()
+                        self._json({"ok": True})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/ui/recalibrate":
+                    # 重新标定微信 UI 图标库（POST；接管鼠标瞬间，需微信在前台）
+                    try:
+                        self._json(parent.recalibrate_fn())
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/open-path":
+                    # 打开导出文件所在位置（POST {path}）
+                    try:
+                        self._json(parent.open_path_fn(str(data.get("path") or "")))
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                else:
+                    self._json({"error": "not found"}, 404)
+
+        # 端口自适应：被占用则顺延
+        for offset in range(20):
+            try:
+                self._server = ThreadingHTTPServer((host, port + offset), Handler)
+                self.port = port + offset
+                break
+            except OSError:
+                continue
+        if self._server is None:
+            raise RuntimeError("无法启动 Web 控制台：端口 %d-%d 均被占用" % (port, port + 19))
+
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._thread.start()
+        return self.port
+
+    def stop(self):
+        if self._server:
+            self._server.shutdown()
+            self._server.server_close()
+            self._server = None
+
+
