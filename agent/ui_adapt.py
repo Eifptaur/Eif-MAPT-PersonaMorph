@@ -444,7 +444,10 @@ def prepare_screen(gui) -> bool:
             hwnd = getattr(gui, "main_hwnd", 0)
             if hwnd:
                 cfg = __import__("agent.config", fromlist=["get_config"]).get_config()
-                if (cfg.get("ui") or {}).get("lock_window_pos", True) is not False:
+                # ⚠️ 2026-09-16 修：这里的默认值原来写成 `True`（＝键缺失时按"要限位"办），
+                #    与 `ui.lock_window_pos` 的配置默认值 `False`（＝不动用户的窗口）**打架**——
+                #    同一个开关两处默认相反，读代码的人会得到完全不同的结论。统一成 False。
+                if (cfg.get("ui") or {}).get("lock_window_pos", False) is not False:
                     try:
                         _scale = max(1.0, _user32.GetDpiForWindow(hwnd) / 96.0)
                     except Exception:

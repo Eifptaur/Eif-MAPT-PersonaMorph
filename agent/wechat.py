@@ -1132,14 +1132,23 @@ class WeChatAdapter:
         return self._gui
 
     def _limit_wechat_window(self, gui) -> None:
-        """微信窗口强制限位：把主窗 MoveWindow 到目标尺寸（1160×780，小屏自适应），
+        """微信窗口限位（**默认不做**）：把主窗 MoveWindow 到 1160×900，
         避免 wechatauto 因"当前尺寸与校准差异过大(>15%)"而忽略布局（坐标漂移根源）。
 
-        ⚠️ **借来的窗口要用完还**（2026-09-15 用户拍板方案 A）：这里改的是**用户的窗口**，
-        以前改了就再也不还（他手动拉过的尺寸会被我们钉死，他问过"不是说要限位吗，为什么我的
-        窗口还是被改了"）⇒ 现在改之前把原 rect 交给 `window_borrow` 记账，空闲一会儿自动还原；
-        窗口如果被用户中途自己动过，以他为准、不还。可关：`ui.restore_window_after_use=False`。
+        ⛔ 2026-09-16 修（用户报「他都找不到微信，还得我切出来」）：**这个函数从来不看
+        `ui.lock_window_pos`** —— 那个开关的界面文案是「固定微信窗口位置」、注释写着
+        「默认关：不动用户的窗口」，可代码**每次取 GUI 都把用户的微信钉到 1160×900、
+        还把窗口下移到 y≥40**，等于开关名不副实（他 config.json 里就是 `false`，窗口照样被改）。
+        ⇒ 现在按开关走：**只有用户显式打开 `ui.lock_window_pos=True` 才限位**；默认
+        **一行都不碰用户的窗口**（尺寸不合就靠紧跟其后的 `calibrate_layout(save=True)`
+        按当前尺寸重新校准）。限位时仍是"借 → 空闲自动还"（见 `agent/window_borrow.py`）。
         """
+        try:
+            from .config import get_config as _gc
+            if (_gc().get("ui") or {}).get("lock_window_pos", False) is not True:
+                return                  # 默认：不动用户的窗口（读不到配置也按"不动"处理）
+        except Exception:
+            return
         try:
             import ctypes
             from ctypes import wintypes
