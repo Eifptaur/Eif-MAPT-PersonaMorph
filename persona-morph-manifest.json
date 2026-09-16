@@ -1,10 +1,10 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.16.15",
-    "sha256": "e085f52742fd81c14fa8ae96296bca972c55ebb474c7b415ca241e4585a9492d",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.16/persona-morph-v2.1.16.zip",
-    "size": 8119231,
+    "version": "2026.9.16.16",
+    "sha256": "001d929baef2d84a81a68a289286102897aeb71bb642ffdd87a95b15ecd9277d",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.17/persona-morph-v2.1.17.zip",
+    "size": 8124047,
     "files": 243
   },
   "dlc": [
@@ -32,16 +32,16 @@
     }
   ],
   "announce": {
-    "version": "2026.9.16.15",
+    "version": "2026.9.16.16",
     "notes": [
-      "「微信未连接 · 打不开消息库」现在会说清是不是微信版本太旧（3.x 的数据结构不同就是真因）",
-      "「微信」面板里直接列出五行逐步诊断，报障时把这段截图就够定位",
-      "读不到群列表时会把原因写出来（以前只显示「检测到 0 个群」）",
-      "@ 识别更严（同版本换包）：别人名字以机器人昵称开头时不再误唤醒模型，省用量"
+      "「@ 别人也被唤醒」修好了：只有真 @ 机器人才算，不再白花一次模型用量",
+      "已装 v2.1.16 的用户拿不到这条修复（同版本换包不触发更新提示），所以这一版把版本号前进一格",
+      "「打不开消息库」现在会说清是哪一种：数据目录不在默认位置 / 目录结构对不上 / 权限或占用，并给出各自的做法",
+      "这些结论同时出现在「微信」面板的逐步诊断里，报障时截那一段就够定位"
     ],
     "forceBase": false,
-    "minBase": "2026.9.16.15"
+    "minBase": "2026.9.16.16"
   },
-  "builtAt": "2026-09-16T13:50:01Z",
-  "updatedAt": 1789566601398
+  "builtAt": "2026-09-16T14:05:55Z",
+  "updatedAt": 1789567555130
 }
