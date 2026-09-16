@@ -477,7 +477,8 @@ DEFAULT_CONFIG = {
         # 用户原话：「我一打开它，它会把我的微信窗口切出来，还会乱动我的鼠标…还会导致微信卡死」
         # ① 绝不主动摆弄用户的微信窗口（不移动/不缩放/不还原最小化）——默认关；
         # ② 绝不为了点击把微信抢到前台——默认关（需要前台的旧路径会**如实报"跳过"**而不是硬来）。
-        "lock_window_pos": False,     # 是否把微信主窗拉到固定位置/大小（默认关：不动用户的窗口）
+        "lock_window_pos": True,     # 「限位」：把微信主窗摆到固定尺寸/位置（默认**开**——用户 2026-09-16
+                                 # 口径：「用户在后台都不在意这个，而且也能防止点错」；关掉＝绝不移动你的窗口）
         # ③（2026-09-15 用户拍板方案 A）**借来的窗口用完要还**：`_limit_wechat_window()` 为了不让
         #    驱动库的布局校准失效，每次取 GUI 会把主窗钉到 1160×900（把他手动拉过的尺寸改掉）⇒
         #    现在改成「借 → 用完（空闲 IDLE_S 秒）自动还回原 rect」，详见 agent/window_borrow.py。
@@ -591,6 +592,7 @@ def save_config(cfg: dict | None = None) -> None:
 #     ②**只往安全的一侧搬**，并在日志里说清搬了什么；③标记落 `data/`（运行期数据，不进包）。
 MIGRATIONS_MARK = os.path.join(DATA_DIR, "config_migrations.json")
 _SAFE_DEFAULTS_TAG = "safe_defaults_2026_09_16"
+_WINDOW_POS_TAG = "lock_window_pos_2026_09_16"     # 「限位」默认开（2026-09-16 用户口径）
 
 
 def _safe_defaults(cfg: dict) -> list:
@@ -607,26 +609,53 @@ def _safe_defaults(cfg: dict) -> list:
     return changed
 
 
+def _window_pos_once(cfg: dict) -> list:
+    """把「限位」（固定微信窗口位置/尺寸）搬到**默认开**（2026-09-16 用户口径）。
+
+    用户原话：「你把限位设成默认吧，因为用户在后台都不在意这个，而且也能防止点错」
+    ⇒ 把主窗摆成固定尺寸/位置 ⇒ 坐标标定不随窗口漂、少点错；后台跑的人本来也不看窗口。
+    只做一次（标记记在 `data/`），之后用户在控制台「界面」面板自己关掉就不再动他。
+    """
+    changed = []
+    u = cfg.setdefault("ui", {})
+    if u.get("lock_window_pos") is not True:
+        u["lock_window_pos"] = True
+        changed.append("ui.lock_window_pos = true（微信窗口固定尺寸/位置：坐标更稳、少点错）")
+    return changed
+
+
+_MIGRATIONS = (
+    (_SAFE_DEFAULTS_TAG, _safe_defaults, "控制台「微信」面板勾「只走后台」"),
+    (_WINDOW_POS_TAG, _window_pos_once, "控制台「界面」面板取消勾「固定微信窗口位置」"),
+)
+
+
 def _migrate_once(cfg: dict) -> dict:
-    """只跑一次；跑完把标记写进 `data/config_migrations.json`，之后用户的改动不再被覆盖。"""
+    """跑**还没做过**的一次性迁移（各自记标记）；跑完把标记写进 `data/config_migrations.json`，
+    之后用户的改动不再被覆盖。"""
     try:
         with open(MIGRATIONS_MARK, "r", encoding="utf-8") as f:
             done = set(json.load(f) or [])
     except Exception:
         done = set()
-    if _SAFE_DEFAULTS_TAG in done:
+    todo = [(t, fn, how) for (t, fn, how) in _MIGRATIONS if t not in done]
+    if not todo:
         return cfg
-    changed = _safe_defaults(cfg)
-    done.add(_SAFE_DEFAULTS_TAG)
+    all_changed, undoes = [], []
+    for tag, fn, how in todo:
+        changed = fn(cfg)
+        done.add(tag)
+        if changed:
+            all_changed += changed
+            undoes.append(how)
     try:
         os.makedirs(DATA_DIR, exist_ok=True)
         with open(MIGRATIONS_MARK, "w", encoding="utf-8") as f:
             json.dump(sorted(done), f, ensure_ascii=False, indent=2)
     except Exception:
         pass
-    if changed:
-        print("[config] 一次性迁移到安全默认值（要改回来：控制台「微信」面板勾「只走后台」）：%s"
-              % "；".join(changed))
+    if all_changed:
+        print("[config] 一次性迁移（要改回来：%s）：%s" % ("；".join(undoes), "；".join(all_changed)))
         try:
             save_config(cfg)
         except Exception:

@@ -375,7 +375,9 @@ ok("长清单折叠：默认是收起态（按钮写着「展开全部」）", "
 ok("长清单折叠：列表重渲染后能自动补回按钮（MutationObserver）", "MutationObserver" in _html)
 
 _cfg_src = src("agent/config.py")
-ok("默认不摆弄微信窗口（ui.lock_window_pos=False）", '"lock_window_pos": False' in _cfg_src)
+# 2026-09-16 改口径（用户原话：「你把限位设成默认吧，因为用户在后台都不在意这个，而且也能防止点错」）：
+# 「限位」默认**开**；关掉时才"绝不动窗口"——两处读取点的 fail-closed 语义必须还在。
+ok("默认开「限位」（ui.lock_window_pos=True）", '"lock_window_pos": True' in _cfg_src)
 ok("默认不抢前台（ui.allow_foreground=False）", '"allow_foreground": False' in _cfg_src)
 _ua = src("agent/ui_adapt.py")
 _fg_body = _ua[_ua.index("def _force_geometry"):]
@@ -386,7 +388,8 @@ _dq2 = _fg_body.find('"""', _dq + 3)
 if _dq >= 0 and _dq2 > _dq:
     _fg_body = _fg_body[:_dq] + _fg_body[_dq2 + 3:]
 ok("_force_geometry 里不再强行 SW_RESTORE（把最小化的微信弹出来）", "ShowWindow" not in _fg_body)
-ok("_force_geometry 默认关 + 最小化时不动", 'lock_window_pos", False' in _ua and "IsIconic" in _fg_body)
+ok("_force_geometry 只在开关为真时才动（缺省按「不动」办）+ 最小化时不动",
+   'lock_window_pos", False' in _ua and "IsIconic" in _fg_body)
 ok("抢前台的三处都有 allow_foreground 门", _ua.count("_cfg_bool(\"allow_foreground\", False)") >= 3,
    str(_ua.count("_cfg_bool(\"allow_foreground\", False)")))
 ok("两个开关都映射到界面（有 data-cfg）",
