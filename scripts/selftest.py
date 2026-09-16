@@ -145,6 +145,18 @@ try:
     check("消息列表归一", normalize_message_list('["a","b"]') == ["a", "b"])
     check("@ 识别", is_at_me("@群deepseek 你好", self_nickname="群deepseek", bot_name="小鲸鱼"))
     check("@ 识别(负例)", not is_at_me("今天天气不错", self_nickname="群deepseek", bot_name="小鲸鱼"))
+    # ── @ 识别的边界（2026-09-16 用户反馈「对所有 @ 都唤醒模型，超级耗 token」后加的）──────
+    #   老实现是纯子串：`@群deepseek小助手` 会被判成"@ 我" ⇒ 白唤醒一次模型。这几条钉住新口径。
+    _N = {"self_nickname": "群deepseek", "bot_name": "小鲸鱼"}
+    check("@ 识别：别人名字以我昵称开头 ⇒ **不算 @ 我**",
+          not is_at_me("@群deepseek小助手 帮我看下", **_N))
+    check("@ 识别：微信的真分隔符 U+2005 ⇒ 算 @ 我",
+          is_at_me("@群deepseek\u2005你好", **_N))
+    check("@ 识别：标点分隔也算", is_at_me("@群deepseek,你好", **_N))
+    check("@ 识别：大小写不敏感", is_at_me("@DEEPSEEK 你好", self_nickname="DeepSeek", bot_name="小鲸鱼"))
+    check("@ 识别：@ 与昵称之间有空格 ⇒ 不算（微信不会这么写）",
+          not is_at_me("@ 群deepseek 你好", **_N))
+    check("@ 识别：@ 全部人 不算 @ 我", not is_at_me("@所有人 开会了", **_N))
 
     cfg = get_config()
     cfg["store"]["context_tier"] = 1

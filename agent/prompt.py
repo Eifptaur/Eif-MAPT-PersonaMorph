@@ -286,17 +286,42 @@ def _format_entry(m, with_id: bool = True) -> str:
     return "[%s] %s%s：%s%s" % (format_short_time(m.get("ts")), id_prefix, who, reply_prefix, m.get("text") or "")
 
 
-def is_at_me(text, self_nickname="", bot_name="", self_id=""):
-    t = str(text or "")
-    if not t:
+AT_SEPS = " \t\r\n\u2005\u00a0\u3000:：,，.。!！?？;；、/\\|()（）[]【】<>《》\"'“”‘’—-_~～+*"
+
+
+def _at_hit(text, name) -> bool:
+    """文本里有没有「@<name>」且**名字后面是边界**（分隔符/结束）。"""
+    n = str(name or "").strip()
+    if not n:
         return False
-    nick = str(self_nickname or "").strip()
-    name = str(bot_name or "").strip()
-    if nick and "@" + nick in t:
-        return True
-    if name and "@" + name in t:
-        return True
-    return False
+    t = str(text or "").casefold()
+    low = n.casefold()
+    i = 0
+    while True:
+        i = t.find("@" + low, i)
+        if i < 0:
+            return False
+        j = i + 1 + len(low)
+        if j >= len(t) or t[j] in AT_SEPS:      # 后面还有字 ⇒ 是别人的名字恰好以我的昵称开头
+            return True
+        i += 1
+
+
+def is_at_me(text, self_nickname="", bot_name="", self_id=""):
+    """这条消息是不是 @ 我。
+
+    ⛔ 2026-09-16 修（用户反馈：「大模型会对**所有 @** 做出反应然后自己判断不是自己就不回答，
+    超级无敌耗 token」）：老实现是 `"@" + 昵称 in text` 的**纯子串**判断 ⇒
+      ① `@群deepseek小助手` 会被判成"@ 我"（**误唤醒**，白花一次模型调用）；
+      ② 大小写不一致（`@DEEPSEEK`）判不出来；
+      ③ 微信 @ 用的分隔符是 **U+2005**（全角四分之一空格）等特殊字符，分隔符表不含它就认得别扭。
+    ⇒ 现在：`@昵称` 后面必须是**分隔符或结束**（`AT_SEPS`）、比较**大小写不敏感**。
+
+    为什么不用"结构化名单"：实测（`_scratch/at_msg_shape2.py`，本机 4.1.15.8）群文本消息在库里就是
+    `wxid_xxx: @昵称 正文`——**没有 atuserlist / at 字段**，拿不到"被 @ 的 wxid 名单" ⇒ 只能文本判，
+    所以**边界必须严**：宁可少唤醒（省 token、也不乱插话），也不要为别人的 @ 把模型叫起来。
+    """
+    return _at_hit(text, self_nickname) or _at_hit(text, bot_name)
 
 
 def hit_keyword(text, keywords=None):
