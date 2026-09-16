@@ -560,7 +560,55 @@ th{color:var(--tx2);font-weight:500}
     } catch (e) { hide(); }
   };
   document.getElementById('updGo').onclick = function () {
-    show('更新动作在启动器里：打开启动器 →「检查更新」；命令行方式见 docs\\设计-本体与DLC.md', 'warn');
+    // 「立即更新」真干活（2026-09-16 用户：「做出来居然不给用户用」）：
+    // 二次确认 → POST /api/update_apply（后端下载+校验+换入）→ 轮询 /api/update 的 job 显示进度
+    // → 成功后调 /api/restart 让新代码生效。失败如实说原因，不假装成功。
+    (async function () {
+      var ver = (cur && cur.theirs) || '新版本';
+      // 用 confirmBox 的多行形态：`uiConfirm` 只有一行，换行会被 HTML 折成空格（实测踩过）
+      var okGo = await new Promise(function (res) {
+        var m = confirmBox('确认更新', ['现在就更新到 ' + ver + '？',
+          '会从更新源下载整包、校验文件树哈希后替换本体文件；',
+          'data/、config.json、日志和你的聊天记录一概不碰。装好后自动重启。'], '确定', function () { res(true); });
+        var no = m.querySelector('#cboxNo');
+        if (no) no.onclick = function () { maskClose(m); m.remove(); res(false); };
+      });
+      if (!okGo) return;
+      try {
+        var r = await postJSON('/api/update_apply', {});
+        if (!r || r.ok === false) { show('更新启动失败：' + ((r && r.why) || '未知原因'), 'warn'); return; }
+      } catch (e) { show('更新启动失败：' + e, 'warn'); return; }
+      show('正在更新到 ' + ver + '：准备中…', '');
+      var _iv = setInterval(pollJob, 900);
+      function _mb(n) { return (n / 1048576).toFixed(1) + ' MB'; }
+      async function pollJob() {
+        var s;
+        try { s = await getJSON('/api/update'); } catch (e) { return; }
+        var j = (s && s.job) || {};
+        if (j.state === 'running') {
+          if (j.phase === 'download') {
+            show('正在下载 ' + (j.version || ver) + '：'
+              + (j.total ? (Math.floor(j.got * 100 / j.total) + '%（' + _mb(j.got) + ' / ' + _mb(j.total) + '）')
+                         : _mb(j.got || 0)), '');
+          } else if (j.phase === 'verify') {
+            show('正在校验下载内容（文件树哈希）…', '');
+          } else {
+            show('正在更新到 ' + ver + '：' + (j.why || '检查更新源…'), '');
+          }
+          return;
+        }
+        clearInterval(_iv);
+        if (j.state === 'done') {
+          show((j.msg || '更新完成') + ' · 正在重启，页面稍后会自己连回来', '');
+          try { await postJSON('/api/restart', {}); } catch (e) { }
+        } else if (j.state === 'error') {
+          show('更新失败：' + (j.why || '未知原因') + '（可以再点一次「立即更新」重试）', 'warn');
+        } else {
+          // 后端没给作业状态（例如页面是旧的、后端还没重启）⇒ 如实说，不许停在"准备中"骗人
+          show('更新失败：后端没给作业状态' + (j.why ? ('（' + j.why + '）') : '') + '，请重启控制台后重试', 'warn');
+        }
+      }
+    })();
   };
 })();
 </script>

@@ -530,7 +530,10 @@ class WebUI:
                     # 清单坏了 ⇒ error 如实说、有新版 ⇒ newer + notes。**公告只在本机 UI，绝不往微信侧发**。
                     try:
                         from . import update_check as _uc
-                        self._json(_uc.state())
+                        from . import update_apply as _ua
+                        _st = _uc.state()
+                        _st["job"] = _ua.job()      # 自更新作业的实时进度（控制台按钮轮询这里）
+                        self._json(_st)
                     except Exception as _e:
                         self._json({"status": "error", "why": "更新检查不可用：%s" % str(_e)[:60]})
                     return
@@ -1046,6 +1049,16 @@ class WebUI:
                         self._json(_uc.skip_version(str((data or {}).get("version") or "")))
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)[:80]}, 500)
+                elif path == "/api/update_apply":
+                    # 「立即更新」真干活（2026-09-16 用户：「做出来居然不给用户用，你是什么意思」）：
+                    # 下载在线包 → **文件树组合哈希校验**（与 make_manifest 同一算法）→ 换入本体
+                    # → 逐件组合校验 → 失败回滚；data/、config.json、日志一概不碰。
+                    # 起后台线程、立刻返回；进度由 `GET /api/update` 的 `job` 字段带出去。
+                    try:
+                        from . import update_apply as _ua
+                        self._json(_ua.start_async())
+                    except Exception as e:
+                        self._json({"ok": False, "why": "起不动更新作业：%s" % str(e)[:80]}, 500)
                 elif path == "/api/risk":
                     # 风险闸门：暂停/恢复/查看（只影响本机行为，绝不往微信侧发任何提示）
                     try:

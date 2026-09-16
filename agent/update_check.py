@@ -140,6 +140,9 @@ def state(cfg: dict | None = None, timeout: float = 6.0) -> dict:
     theirs = str(base.get("version") or an.get("version") or "")
     out["theirs"] = theirs
     out["notes"] = [str(x) for x in (an.get("notes") or [])][:8]
+    # 自更新要用它俩（2026-09-16：控制台「立即更新」真正开始下载+换入，不再只打印指路文案）
+    out["baseUrl"] = str(base.get("url") or "")
+    out["baseSha256"] = str(base.get("sha256") or "")
     out["forceBase"] = bool(an.get("forceBase"))
     out["minBase"] = str(an.get("minBase") or "")
     out["checkedAt"] = int(time.time())
