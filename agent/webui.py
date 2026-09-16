@@ -653,6 +653,14 @@ class WebUI:
                                               else {"ok": False, "why": "还拿不到微信实例（机器人未启动？）"})
                             except Exception as _se:
                                 st["self"] = {"ok": False, "why": str(_se)}
+                            # 「我的其他账号（大号）」（2026-09-16 用户反馈「无法识别我的大号」）：
+                            # 登记了几项、昵称有几项**真在群成员里匹配上了**、当前反应档位 —— 摆出来让用户核对。
+                            try:
+                                st["owner"] = (_wx.owner_status() if _wx is not None
+                                               and hasattr(_wx, "owner_status")
+                                               else {"count": 0, "mode": "know", "why": "还拿不到微信实例（机器人未启动？）"})
+                            except Exception as _oe:
+                                st["owner"] = {"count": 0, "mode": "know", "why": str(_oe)}
                             # 图标指纹表（⑦ 点击正确性）：按 微信版本×尺寸×DPI 存了几条、什么时候取的
                             try:
                                 from . import ui_fingerprint as _ufp

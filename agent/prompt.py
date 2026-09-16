@@ -276,7 +276,7 @@ def _participation_text(level) -> str:
 def _format_entry(m, with_id: bool = True) -> str:
     notes = get_config().get("member_notes") or {}
     sender_id = str(m.get("sender_id") or "")
-    who = "我" if m.get("self") else (notes.get(sender_id) or m.get("sender_name") or sender_id or "未知")
+    who = "我" if m.get("self") else ("主人" if m.get("owner") else (notes.get(sender_id) or m.get("sender_name") or sender_id or "未知"))
     reply = m.get("reply") or {}
     reply_prefix = ""
     if reply.get("text") or reply.get("sender"):

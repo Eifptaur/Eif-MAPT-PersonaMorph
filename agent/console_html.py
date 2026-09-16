@@ -1335,6 +1335,14 @@ th{color:var(--tx2);font-weight:500}
       <div class="desc">机器人微信身份与轮询 / 白名单。改完保存后需要重启才能完全生效。</div>
       <div class="row"><label>机器人昵称</label><div class="grow"><input type="text" data-cfg="wechat.bot_nickname"></div></div>
       <div class="row"><label>自我称呼</label><div class="grow"><input type="text" data-cfg="persona.self_nickname" placeholder="留空=机器人昵称，用于识别「我」"></div></div>
+      <div class="row"><label>我的其他账号</label><div class="grow"><input type="text" data-cfg="wechat.owner_accounts" placeholder="你的大号，多个用逗号分隔；填 wxid 最准，填昵称也行">
+        <span class="hint">机器人跑在小号上时，<b>你自己另外的号（大号）</b>在群里说话，程序默认会把大号当成普通群友。登记在这里它就认得出来。填 <b>wxid</b> 最准，填昵称也能用——下面会列出它匹配到哪些账号，方便你核对有没有认错。</span>
+        <div class="hint" id="ownerHit"></div></div></div>
+      <div class="row"><label>认出我之后</label><div class="grow"><select data-cfg="wechat.owner_mode">
+        <option value="know">照常回复，但知道这是我（推荐）</option>
+        <option value="skip">完全不回复我自己的号</option>
+        <option value="off">不启用这个识别</option></select>
+        <span class="hint">上面登记的那些账号发消息时，程序按这一档反应。</span></div></div>
       <div class="row"><label>启动后暂停</label><input type="checkbox" data-cfg="wechat.start_paused"><span class="hint">勾选：机器人启动后不自动监听，需点「恢复」才工作（防开机刷群/回应积压旧消息）</span></div>
       <div class="row"><label>轮询间隔(秒)</label><div class="grow"><input type="number" step="0.5" min="0.5" data-cfg="wechat.poll_interval"></div></div>
       <div class="row"><label>每分钟限发</label><div class="grow"><input type="number" min="1" data-cfg="wechat.rate_limit_per_minute"></div></div>
@@ -2532,6 +2540,25 @@ async function loadStatus(){  try{
             box.style.color = sf.ok ? 'var(--tx2)' : 'var(--warn-tx)';
           }
         }catch(e){}
+        }catch(e){}
+        /* 「我的其他账号（大号）」匹配结果 —— 让用户能核对有没有认错人（2026-09-16 用户反馈加） */
+        try{
+          const ow = s.owner || {};
+          const oh = $('ownerHit');
+          if(oh){
+            const mk = {know:'照常回复，但知道这是我', skip:'完全不回复我自己的号', off:'不启用这个识别'};
+            if(!ow.count){
+              oh.innerHTML = '还没有登记「我的其他账号」';
+              oh.style.color = 'var(--tx2)';
+            }else{
+              const nm = (ow.nameMatched||[]).length, un = (ow.nameUnmatched||[]).length;
+              oh.innerHTML = '已登记 ' + ow.count + ' 项（wxid ' + (ow.byId||0) + ' · 昵称 ' + (ow.byName||0) + '）'
+                + '　当前：' + (mk[ow.mode] || ow.mode)
+                + (ow.byName ? ('　昵称匹配上 ' + nm + ' 个' + (un ? ('，<b>有 ' + un + ' 个在群成员里没找到</b>（可能写错了）') : '')) : '')
+                + (ow.why ? ('　' + ow.why) : '');
+              oh.style.color = (ow.byName && un) ? 'var(--warn-tx)' : 'var(--tx2)';
+            }
+          }
         }catch(e){}
         /* 图标指纹表（⑦ 点击正确性）：按 微信版本×渲染尺寸×缩放 存了几条、什么时候取的 */
         try{

@@ -613,6 +613,8 @@ class WeChatAdapter:
         #   而且以前**既没有日志、也没有界面提示**，用户只能看到"怪怪的"。
         #   ⇒ 现在：拿不到就明确记一行警告；控制台「微信」面板也会如实显示"没认出来"（`self_identity()`）。
         self._self_ident_ok = bool(self._self_wxid)
+        # 「我的其他账号（大号）」登记表（2026-09-16 用户反馈）—— 见 _load_owner_accounts 的注释
+        self._load_owner_accounts()
         if not self._self_wxid:
             try:
                 import logging as _lg
@@ -666,6 +668,58 @@ class WeChatAdapter:
         return {"ok": bool(w),
                 "wxidMasked": (w[:3] + "***") if len(w) > 6 else "",
                 "nickname": self._self_nickname or ""}
+
+    def _load_owner_accounts(self):
+        """加载「我的其他账号（大号）」登记表与反应档位。
+
+        用户 2026-09-16 反馈：「这个是用的我的小号 他无法识别我的大号 之前版本也有这个问题」。
+        登记项可以是 **wxid**（最准、优先）或 **昵称**（兜底，控制台会把匹配结果列出来让你核对）。
+        反应档位（映射到控制台 UI 让用户自己选）：off / skip / know。
+        """
+        w = (self.cfg.get("wechat", {}) or {})
+        raw = w.get("owner_accounts") or []
+        if isinstance(raw, str):
+            raw = [x for x in raw.replace("，", ",").replace("\n", ",").split(",")]
+        elif isinstance(raw, (list, tuple)):
+            pass
+        else:
+            raw = []
+        self._owner_ids = {str(x).strip().lower() for x in raw if str(x).strip()}
+        self._owner_mode = str(w.get("owner_mode") or "know").strip().lower()
+        if self._owner_mode not in ("off", "skip", "know"):
+            self._owner_mode = "know"
+
+    def is_owner(self, sender_id: str = "", sender_name: str = "") -> bool:
+        """这条消息是不是**主人自己另一个号**发的（wxid 精确优先，昵称兜底 —— 用户口径「哪个准就用哪个」）。"""
+        if str(getattr(self, "_owner_mode", "know")) == "off":
+            return False
+        ids = getattr(self, "_owner_ids", None) or set()
+        if not ids:
+            return False
+        sid = str(sender_id or "").strip().lower()
+        snm = str(sender_name or "").strip().lower()
+        return bool((sid and sid in ids) or (snm and snm in ids))
+
+    def owner_status(self) -> dict:
+        """给控制台：登记了几项、其中 wxid 几项、昵称几项、昵称**真在群成员里匹配上**的有哪些。
+
+        为什么要把匹配结果摆出来：昵称可能撞名（认错人），用户一眼能发现并改成 wxid。
+        """
+        ids = sorted(getattr(self, "_owner_ids", None) or [])
+        mode = str(getattr(self, "_owner_mode", "know"))
+        nick = set()
+        try:
+            nick = {str(v).strip().lower() for v in (self._nick_map or {}).values() if str(v).strip()}
+        except Exception:
+            pass
+        by_id = [x for x in ids if x.startswith("wxid_")]
+        by_name = [x for x in ids if not x.startswith("wxid_")]
+        return {"mode": mode,
+                "count": len(ids),
+                "byId": len(by_id),
+                "byName": len(by_name),
+                "nameMatched": sorted([x for x in by_name if x in nick]),
+                "nameUnmatched": sorted([x for x in by_name if x not in nick])}
 
     def list_groups(self) -> list:
         return list(self._groups)
@@ -965,6 +1019,18 @@ class WeChatAdapter:
         sender_name = self._nick_map.get(sender_wxid, sender_wxid) if sender_wxid else (
             self._nick_map.get(str(sender_id), str(sender_id)) if sender_id else "群成员")
 
+        # ⛔ 2026-09-16（用户反馈：「这个是用的我的小号 他无法识别我的大号 之前版本也有这个问题」）：
+        #   机器人跑在**小号**上，而主人的**大号**在群里说话 ⇒ 程序原先把大号当**普通群友**
+        #   （于是会去回你自己的话）。这里按登记表认一次（wxid 优先、昵称兜底）：
+        #     mode=skip ⇒ 直接跳过（完全不回复）；mode=know ⇒ 照常回，但打 owner 标记让模型知道"这是主人"。
+        _is_owner = False
+        try:
+            _is_owner = bool(self.is_owner(sender_wxid or str(sender_id or ""), sender_name))
+        except Exception:
+            _is_owner = False
+        if _is_owner and str(getattr(self, "_owner_mode", "know")) == "skip":
+            return None
+
         return {
             "mid": local_id,
             "ts": ts or int(__import__("time").time() * 1000),
@@ -975,6 +1041,7 @@ class WeChatAdapter:
             "media": media,
             "mtype": mtype,
             "poker_wxid": (parsed.get("poker_wxid") if parsed else ""),
+            "owner": _is_owner,
         }
 
     # ── 发送 ─────────────────────────────────────────────────────────────

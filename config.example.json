@@ -32,7 +32,9 @@
   "restore_minimized": true,
   "start_paused": true,
   "allow_click_hunting": false,
-  "background_only": false
+  "background_only": false,
+  "owner_accounts": [],
+  "owner_mode": "know"
  },
  "persona": {
   "bot_name": "小鲸鱼",
