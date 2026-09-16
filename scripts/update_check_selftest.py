@@ -56,9 +56,13 @@ try:
     badp = os.path.join(tmp, "bad.json")
     open(badp, "w", encoding="utf-8").write("{ 这不是 JSON ")
 
-    print("[U1] 没配更新源 ⇒ off（界面什么都不显示）")
-    r = UC.state({"url": ""})
-    ok(r["status"] == "off" and "没配" in r["why"], "空 url ⇒ off（%s）" % r["why"])
+    print("[U1] 更新源：显式填了用填的；**空值回落到内置默认**（老 config 里那个空 url 不许盖掉新默认值）")
+    # 2026-09-16 口径更新：原来"空 url ⇒ off"。但老用户的 config.json 是"默认值为空"那阵子存的，
+    # 里面那个空 update.url 会把新默认值盖掉 ⇒ 他们永远接不到更新通知。现在空＝没配过 ⇒ 用默认。
+    ok(UC.manifest_url({"url": ""}) == UC.DEFAULT_URL, "空 url 回落内置默认")
+    ok(UC.manifest_url({}) == UC.DEFAULT_URL, "连这个键都没有也回落默认")
+    ok(UC.manifest_url({"url": "https://example.com/x.json"}) == "https://example.com/x.json",
+       "显式填了就用填的（回落只对空生效）")
 
     print("\n[U2] 用户开了不再提醒 / 不再提醒这个版本 ⇒ off")
     ok(UC.state({"url": newp, "muted": True})["status"] == "off", "muted ⇒ off")
