@@ -77,17 +77,19 @@ def _read_watchdog_pid():
 
 
 def main():
-    try:
-        with open(PID_FILE, "w", encoding="utf-8") as f:
-            f.write("%s\n%s" % (os.getpid(), WATCHDOG_VER))
-    except Exception:
-        pass
+    # ⛔ 2026-09-17 修：**先读旧 pid、再写自己的**。原来这里一进来就把自己的 pid 写进 PID_FILE，
+    #   紧接着下面那句 `old == os.getpid()` 立刻成立 ⇒ **单实例检查从来没生效过**（死代码）。
+    #   实测后果：每跑一次 onestart 就多一个看门狗，多个看门狗各自拉一个机器人 ⇒
+    #   抢窗口 + 每 37 秒冒一个新控制台（用户 2026-09-17 连报三次「又起 N 个控制台」）。
+    _pre = _read_watchdog_pid()
+    #   自己的 pid **等赢下单实例检查之后再写**（见下面赢家分支里的那次写）——否则重复实例
+    #   退出时会把 watchpid 指向一个马上要死的进程，「停止机器人」就找不到真看门狗了。
     # 单实例看门狗：已有旧版看门狗 → 结束并接管（旧版可能用错误解释器循环拉起机器人）；
     # 已有同版本 → 本实例退出（多 watchdog 会互相拉起→窗口反复跳出）。
     try:
         import ctypes
-        for _ in range(3):
-            old, ver = _read_watchdog_pid()
+        for _i in range(3):
+            old, ver = _pre if _i == 0 else _read_watchdog_pid()
             if not old or old == os.getpid():
                 break
             alive = False
@@ -148,6 +150,15 @@ def main():
                                  stdin=subprocess.DEVNULL, stdout=crash, stderr=crash)
             crash.close()
             p.wait()
+            # ⛔ 2026-09-17 加：机器人 **静默死掉**（runtime.log 里一句遗言都没有）时必须能分清
+            #   它是"自己干净退出"（0）还是"被系统/别人杀掉 / 原生崩溃"（0xC0000005、0xC0000409…）。
+            #   之前这里丢掉退出码，导致只能靠猜（当晚为此白烧了半轮）。
+            try:
+                with open(CRASH_LOG, "a", encoding="utf-8") as _c:
+                    _c.write("[watchdog] persona_morph 退出：code=%s (0x%08X)\n"
+                             % (p.returncode, (p.returncode or 0) & 0xFFFFFFFF))
+            except Exception:
+                pass
         except Exception as e:
             try:
                 with open(CRASH_LOG, "a", encoding="utf-8") as crash:
