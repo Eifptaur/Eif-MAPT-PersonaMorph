@@ -1205,16 +1205,32 @@ class WeChatAdapter:
             tw = 1160 if sw >= 1366 else int(sw * 0.82)
             th = min(900, max(820, sh - 100))
             _wb.touch()
-            if r.right - r.left != tw or r.bottom - r.top != th:
+            # 2026-09-17 用户投诉「为什么老是把我的窗口改得那么大」⇒ 加档位：默认**只缩不放**。
+            #   off         ＝完全不碰
+            #   shrink_only ＝只在当前窗口**大于**标定尺寸时缩到标定；用户调小的窗口**不动**
+            #   force       ＝双向强制拉到标定（老行为）
+            _mode = str((self.cfg.get("wechat", {}) or {}).get("limit_window") or "shrink_only").strip().lower()
+            if _mode not in ("off", "shrink_only", "force"):
+                _mode = "shrink_only"
+            _cw, _ch = int(r.right - r.left), int(r.bottom - r.top)
+            _need = (_cw != tw or _ch != th) if _mode == "force" else (_cw > tw or _ch > th)
+            if _mode == "off":
+                _need = False
+            if _need:
                 _wb.note_original(hwnd, (r.left, r.top, r.right, r.bottom))
                 _ny = max(40, r.top)
-                u.MoveWindow(hwnd, r.left, _ny, tw, th, True)
-                _wb.note_forced((r.left, _ny, r.left + tw, _ny + th))
+                _nw = tw if _mode == "force" else min(_cw, tw)
+                _nh = th if _mode == "force" else min(_ch, th)
+                u.MoveWindow(hwnd, r.left, _ny, _nw, _nh, True)
+                _wb.note_forced((r.left, _ny, r.left + _nw, _ny + _nh))
                 time.sleep(0.4)
                 try:
                     gui.refresh()
                 except Exception:
                     pass
+            elif _mode == "shrink_only" and (_cw < tw or _ch < th):
+                log.info("窗口规整：只缩不放 —— 你的窗口 %dx%d 比标定 %dx%d 小，保持你的尺寸不动它",
+                         _cw, _ch, tw, th)
         except Exception:
             pass
 
@@ -1359,6 +1375,27 @@ class WeChatAdapter:
             if int(user32.GetForegroundWindow() or 0) in (gui.main_hwnd, gui.render_hwnd):
                 user32.ShowWindow(gui.main_hwnd, 6)  # SW_MINIMIZE
 
+    def _open_chat_guarded(self, name: str) -> bool:
+        """切会话的**真鼠标闸门**（2026-09-17 红线收口）。
+
+        为什么要有它：驱动库的 `open_chat()` 是**真鼠标实现**（点搜索框 → 打字 → 点结果行），
+        而全仓有 **7 处**直接调它、**都没过 `_real_fallback_allowed()`** ⇒ 在
+        `input.allow_real_fallback=false`（"不动你光标"的承诺）下照样会把光标拉走。
+        用户实测报障（原话）：「他发信息那时候…**他把鼠标挪到那儿去了**…就单纯挪到发送框」
+        —— 那条回复的第一步是「新对话开始，自动引用对方最近一句」，而引用那条链
+        （`_reply_quote_inner`）正是直接调 `open_chat` 的地方。
+
+        未允许时**直接拒绝并留一行日志**（不静默、也不硬凑）。
+        """
+        if not self._real_fallback_allowed():
+            log.info("不切会话：open_chat 是真鼠标路径（会动你的光标）⇒ 按最高目标拒绝（目标=%s）", name)
+            return False
+        try:
+            return bool(self._get_gui().open_chat(name))
+        except Exception as e:
+            log.info("open_chat 失败：%s", e)
+            return False
+
     def _send_with_foreground(self, fn, *args, **kwargs):
         """发送包装：输入全程后台（UIA SetValue 直写），需要点击/回车的
         阶段才瞬时置前，发送完成后立即把微信窗口放回后台。
@@ -1367,6 +1404,17 @@ class WeChatAdapter:
         单条发送则每条发完立即恢复。恢复失败有三级兜底：
         取消置顶 → 恢复原前台窗口（AttachThreadInput 提权）→ 放底/最小化。
         """
+        # ⛔ 2026-09-17 红线收口（用户实测报障：「他输入文字的时候，直接把我光标拉到那儿去了」）：
+        #    **真鼠标闸放到唯一咽喉点**。以前只有 `send_text` 自己过闸，而
+        #    `send_text_at`（@某人）与 `send_image`（发图）**直接落到这里** ⇒ 在
+        #    `background_only=true` 的承诺下**照样动用户光标**（库的 `send_msg/at_member/send_image`
+        #    本来就是 SetCursorPos + mouse_event 的真鼠标实现）。
+        #    闸门语义见 `_real_fallback_allowed()`：默认关，要真鼠标必须显式打开配置。
+        if not self._real_fallback_allowed():
+            return {"status": "blocked",
+                    "message": ("按最高目标**不退回真鼠标**（这条发送路径会动你的光标）；"
+                                "要允许请打开 input.allow_real_fallback，或先让投递档确认目标会话"),
+                    "data": {}}
         self._fg_enter()
         cur0 = _cursor_pos()      # 最高目标硬自检②：L0 真实路径"用完必须把光标还回去"
         try:
@@ -2310,9 +2358,28 @@ class WeChatAdapter:
             #    ⇒ 打字前先投递点一次输入栏把焦点给它。坐标与「发送」按钮**同源**（渲染区比例、同一行
             #    靠左的输入区），正常态下这一步是幂等的；点不到也不拦（继续尝试打字，失败时行为同旧版）。
             try:
-                focus_pt = (int(r[0]) + int(rw * 0.45), int(r[1]) + int(rh * 0.945))
-                backend.click(main, focus_pt)
-                time.sleep(0.3)
+                # ⛔ 2026-09-17 **红线修复（微信截图被按开的真因就是这一行）**：
+                #    原来写的是 `rh * 0.945` —— 那**不是输入框**，而是输入框下沿**再往下那排工具图标
+                #    （😊 表情 / 📁 文件 / ✂ **截图** / 🎤 语音）所在的高度。投递这一枪落到 `✂` 上，
+                #    微信截图工具当场开起来：**整屏压暗 5~6 秒**，用户连报四次「机器人发消息那一刻
+                #    微信自己弹了截图」。
+                #    取证（三条互相咬合）：①进程内输入审计 `data/input_audit.log` 记到该次
+                #    `PostMessageW(client 163,1023) ← wechat.py:2362`，而 **1023 = 0.945 × 1083**；
+                #    ②录屏逐帧亮度扫描（`signalstats YAVG`）在每次发送的同一秒测到整屏压暗
+                #    （172.8 → 120.3）；③从帧上量：输入框白色区底边在相对高度 **0.938**，
+                #    0.945 恰好落在它下面 ⇒ 那一枪**本来就没点到输入框**。
+                #    ⚠️ 真正提交发送走的是投递 **Enter**（审计里 `WM_KEYDOWN VK=13`），所以这个
+                #    "聚焦"click 是**可以少打一枪**的；它唯一的作用是「最小化还原后焦点不在输入框」
+                #    那个已知场景（2026-09-16 r24）⇒ 保留动作、**只把落点抬进正文区**。
+                _FOCUS_Y, _TOOLBAR_Y = 0.87, 0.92     # 正文区 vs 工具栏带的分界（工具栏带里全是按钮）
+                if not (0.0 < _FOCUS_Y < _TOOLBAR_Y):
+                    log.info("跳过聚焦点击（_FOCUS_Y=%s 不在正文区、或越过工具栏带 %s，按红线不点）",
+                             _FOCUS_Y, _TOOLBAR_Y)
+                else:
+                    focus_pt = (int(r[0]) + int(rw * 0.45), int(r[1]) + int(rh * _FOCUS_Y))
+                    log.info("投递聚焦输入栏：点 %s（渲染区 %s，正文区比例 %.2f）", focus_pt, r, _FOCUS_Y)
+                    backend.click(main, focus_pt)
+                    time.sleep(0.3)
             except Exception as _e:
                 log.info("投递聚焦输入栏失败（继续尝试打字）：%s", _e)
             ok, why = backend.send_text(main, text)
@@ -2343,8 +2410,16 @@ class WeChatAdapter:
                 if idx % 2 == 1:
                     ok_k, why_k = backend.keys(main, [ib.VK_RETURN])
                     return bool(ok_k), "投递回车", why_k
-                ok_c, why_c = backend.click(main, send_pt)
-                return bool(ok_c), "投递点发送按钮", why_c
+                # ⛔ 2026-09-17 **不再点「发送」按钮**（用户连报四次"微信截图被按开"之后的口径）：
+                #   审计（`data/input_audit.log`）证明这条链里那次点击落在 `rh*0.945` 的**工具栏带**上，
+                #   而 `send_pt` 用的是**同一个渲染区 r** —— 实测 `0.45×rw = 163` ⇒ `rw ≈ 362`
+                #   （只有侧栏那么宽，明显不对）⇒ 它算出的 `0.932×rw` 同样会落回**左边那排图标
+                #   （😊 📁 ✂ 🎤）**，也就是同一发事故。上游 `guia.py::click_send()` 自己说「回车最可靠」，
+                #   我们这条链打字前已经点过输入栏（见上）⇒ 回车可行。
+                #   **取舍是刻意的**：宁可字留在输入框里（用户看得见、无害、下一轮会重发），
+                #   也绝不再往那排按钮上打枪。
+                ok_k2, why_k2 = backend.keys(main, [ib.VK_RETURN])
+                return bool(ok_k2), "投递回车（兜底也走回车，不再点按钮）", why_k2
 
             _fired, _tried = 0, []
             for _i in range(1, 4):                      # 最多 3 枪（与上游 click_send 的重试次数同口径）
@@ -4971,7 +5046,7 @@ class WeChatAdapter:
             if not self._prepare_for_capture(gui):
                 return False, "微信窗口未找到或已退出，无法操作"
             _d("2) 已清理遮挡层并把微信置前")
-            if not gui.open_chat(group := self.group_name(chat_id)):
+            if not self._open_chat_guarded(group := self.group_name(chat_id)):
                 return False, "打开会话失败"
             _d("3) 已打开会话「%s」" % group)
             time.sleep(0.9)
@@ -5108,7 +5183,7 @@ class WeChatAdapter:
             gui = self._get_gui()
             if not self._prepare_for_capture(gui):
                 return False, "微信窗口未找到或已退出，无法操作"
-            if not gui.open_chat(self.group_name(chat_id)):
+            if not self._open_chat_guarded(self.group_name(chat_id)):
                 return False, "打开会话失败"
             time.sleep(0.9)
             db_text = self._last_target_text(chat_id, target_id) if target_id else ""
@@ -5316,7 +5391,7 @@ class WeChatAdapter:
             group = self.group_name(chat_id)
             if not self._prepare_for_capture(gui):
                 return False, "微信窗口未找到或已退出，无法操作"
-            if not gui.open_chat(group):
+            if not self._open_chat_guarded(group):
                 return False, "打开会话失败"
             time.sleep(0.8)
 
@@ -5414,7 +5489,7 @@ class WeChatAdapter:
                 group = self.group_name(chat_id) or chat_id
                 if not self._prepare_for_capture(gui):
                     return False, "微信窗口未找到或已退出，无法操作"
-                if not gui.open_chat(group):
+                if not self._open_chat_guarded(group):
                     return False, "打开会话失败"
                 time.sleep(0.8)
                 if not text.strip():
@@ -5473,7 +5548,7 @@ class WeChatAdapter:
         _st0 = time.time()
         for i in range(1):                     # 只试 1 次进群（之前重试 2 次，open_chat 每次可能 5~15s，重试白白翻倍）
             try:
-                if gui.open_chat(name):
+                if self._open_chat_guarded(name):
                     if _DEBUG: print("[emoji-search] open_chat 成功 用时 %.2f s" % (time.time() - _st0), flush=True)
                     return True
             except Exception as e:
@@ -5581,7 +5656,7 @@ class WeChatAdapter:
                 # 进群=手写搜索（点搜索框→粘贴群名→点弹出的群聊）；失败才兜底 wechatauto open_chat
                 if not self._search_group(gui, group_name):
                     try:
-                        gui.open_chat(group_name)
+                        self._open_chat_guarded(group_name)
                     except Exception:
                         pass
                 time.sleep(0.25)   # 进群后立刻移向笑脸（原 0.40 压缩；仍够会话切稳）
@@ -5590,7 +5665,7 @@ class WeChatAdapter:
                 try:
                     for g in self.list_groups():
                         if g.get("name"):
-                            gui.open_chat(g["name"])
+                            self._open_chat_guarded(g["name"])
                             time.sleep(1.0)
                             break
                 except Exception:
