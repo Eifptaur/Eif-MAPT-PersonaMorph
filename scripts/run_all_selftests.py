@@ -67,7 +67,15 @@ def main() -> int:
         p = os.path.join(HERE, n)
         t = time.time()
         try:
+            # ⛔ 2026-09-16 修（用户报「运行的时候极短时间内闪一个弹窗，而且经常闪」）：
+            #   这里原来没给子进程加"不要窗口"。全套要拉 84 个 `python.exe`（控制台程序），
+            #   父进程一旦没有可见控制台（GUI / 隐藏控制台拉起时就是这样），**每个子进程都会新建
+            #   一个黑窗、跑完即关** ⇒ 就是"连续闪 84 次"。项目里早有这条约定
+            #   （`agent/video_read.py:12` 原话"Windows 下 CREATE_NO_WINDOW，不许弹黑框"），
+            #   生产代码也一直在用（`persona_morph.py` 的 `0x08000000`），判据脚本这一片漏了。
+            _flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
             r = subprocess.run([sys.executable, p], cwd=ROOT, capture_output=True,
+                               creationflags=_flags,
                                timeout=a.timeout)
             out = (r.stdout or b"").decode("utf-8", "replace") + \
                   (r.stderr or b"").decode("utf-8", "replace")
