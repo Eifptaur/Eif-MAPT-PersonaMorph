@@ -42,9 +42,12 @@ print("── A. 导航与分区 ──")
 ok("导航有 #sec-media 链接", 'href="#sec-media"' in HTML and "媒体与语音" in HTML)
 ok("有 sec-media 分区且带 data-sec", 'id="sec-media" class="card" data-sec' in HTML)
 i_media = HTML.find('id="sec-media"')
-i_wechat = HTML.find('id="sec-wechat"')
-seg = HTML[i_media:i_wechat] if (i_media > 0 and i_wechat > i_media) else ""
-ok("分区在 sec-wechat 之前且已闭合", bool(seg) and "</section>" in seg)
+# ⚠️ 2026-09-16 改口径：以前拿 `sec-wechat` 当"下一个分区"的哨兵，而用户要求分区顺序改成
+#    与左导航完全一致（微信挪到第 7 位）⇒ 哨兵失效。改成"切到**本分区自己的** </section> 为止"
+#    （分区不嵌套）——判据从此与分区顺序无关，只守"这一块存在且闭合"。
+_i_media_end = HTML.find("</section>", i_media)
+seg = HTML[i_media:_i_media_end] if (i_media > 0 and _i_media_end > i_media) else ""
+ok("分区 sec-media 存在且已闭合", bool(seg))
 
 print("── B. 三块能力的设置项 ──")
 for key in ("voice.enabled", "voice.engine", "voice.dir", "voice.max_seconds",
@@ -105,9 +108,10 @@ print("── H. 语音回复（TTS）面板 ──")
 _HTML = CH.HTML
 ok("导航有 #sec-tts 链接", 'href="#sec-tts"' in _HTML and "语音回复" in _HTML)
 ok("有 sec-tts 分区且带 data-sec", 'id="sec-tts" class="card" data-sec' in _HTML)
-_i2, _i3 = _HTML.find('id="sec-tts"'), _HTML.find('id="sec-wechat"')
+_i2 = _HTML.find('id="sec-tts"')          # 同样改口径：切到本分区自己的 </section>（不再拿 sec-wechat 当哨兵）
+_i3 = _HTML.find("</section>", _i2)
 _seg2 = _HTML[_i2:_i3] if (_i2 > 0 and _i3 > _i2) else ""
-ok("分区在 sec-wechat 之前且已闭合", bool(_seg2) and "</section>" in _seg2)
+ok("分区 sec-tts 存在且已闭合", bool(_seg2))
 for key in ("voice_reply.enabled", "voice_reply.voice", "voice_reply.rate",
             "voice_reply.format", "voice_reply.max_chars", "voice_reply.min_gap_seconds"):
     ok("设置项 %s 在语音回复分区里" % key, ('data-cfg="%s"' % key) in _seg2)

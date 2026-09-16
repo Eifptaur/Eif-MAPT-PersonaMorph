@@ -620,6 +620,7 @@ th{color:var(--tx2);font-weight:500}
     <nav class="nav" id="nav">
       <a href="#sec-overview" class="on"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 8l3.1-2.2" stroke="currentColor" stroke-width="1.4" fill="none"/></svg><span class="lb">概览</span></a>
       <a href="#sec-check"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M5 8.2l2.1 2.1L11 6" fill="none" stroke="currentColor" stroke-width="1.5"/></svg><span class="lb">体检</span></a>
+      <a href="#sec-bot"><svg viewBox="0 0 16 16"><rect x="3.2" y="5" width="9.6" height="7.4" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 3v2" stroke="currentColor" stroke-width="1.4"/><circle cx="6.2" cy="8.6" r=".9" fill="currentColor"/><circle cx="9.8" cy="8.6" r=".9" fill="currentColor"/></svg><span class="lb">机器人</span></a>
       <a href="#sec-advanced"><svg viewBox="0 0 16 16"><path d="M2 5h12M2 11h12" stroke="currentColor" stroke-width="1.4" fill="none"/><circle cx="6" cy="5" r="1.9" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="11" cy="11" r="1.9" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">高级</span></a>
       <a href="#sec-sessions"><svg viewBox="0 0 16 16"><path d="M3 4.5h10M3 8h10M3 11.5h10" stroke="currentColor" stroke-width="1.4" fill="none"/><circle cx="1.5" cy="4.5" r=".9" fill="currentColor"/><circle cx="1.5" cy="8" r=".9" fill="currentColor"/><circle cx="1.5" cy="11.5" r=".9" fill="currentColor"/></svg><span class="lb">明细</span></a>
       <a href="#sec-model"><svg viewBox="0 0 16 16"><rect x="4" y="4" width="8" height="8" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M6.5 1.6v2.4M9.5 1.6v2.4M6.5 12v2.4M9.5 12v2.4M1.6 6.5h2.4M1.6 9.5h2.4M12 6.5h2.4M12 9.5h2.4" stroke="currentColor" stroke-width="1.3" fill="none"/></svg><span class="lb">模型</span></a>
@@ -709,7 +710,6 @@ th{color:var(--tx2);font-weight:500}
         <span class="hint" id="testResult" style="align-self:center"></span>
       </div>
     </section>
-
     <section id="sec-check" class="card" data-sec>
       <h2>检测中心（代码检测 / 点击测试）</h2>
       <div class="desc">「代码检测」= 纯代码层检查（编译/依赖/角色卡评估/种子库/提示词静态/保护机制——零风险，实测约 0.5~3 秒）；「点击测试」= 环境/配置/界面自动化共 55 项（全程序内完成，不碰鼠标；只为让目标接受投递消息会短暂置前约 1~3 秒）。
@@ -759,7 +759,64 @@ th{color:var(--tx2);font-weight:500}
       </table>
       <div class="btns" style="margin-top:8px"><button id="ckReset" class="ghost">重置勾选</button><span class="hint" id="ckCount" style="align-self:center"></span></div>
     </section>
-
+    <section id="sec-bot" class="card" data-sec>
+      <h2>机器人与响应档位</h2>
+      <div class="desc">机器人怎么称呼自己、响应到什么程度、给模型多少上下文。改完保存即生效。（档位/档位模式改完即生效；涉及轮询与身份项的改完建议重启一次）</div>
+      <div class="row"><label>机器人昵称</label><div class="grow"><input type="text" data-cfg="wechat.bot_nickname"></div></div>
+      <div class="row"><label>自我称呼</label><div class="grow"><input type="text" data-cfg="persona.self_nickname" placeholder="留空=机器人昵称，用于识别「我」"></div></div>
+      <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
+      <div class="row"><label>响应档位</label><div class="grow"><select data-cfg="store.context_tier" id="ctxTier">
+        <option value="1">1 档：仅艾特</option><option value="2">2 档：+关键词</option>
+        <option value="3">3 档：+随机</option><option value="4">4 档：全响应</option></select>
+        <div class="hint">1 档只回艾特；2 档加关键词；3 档再加随机；4 档全回。关键词在 2/3 档生效，随机只在 3 档生效。</div>
+      </div></div>
+      <div class="row"><label>档位模式</label><div class="grow"><select data-cfg="store.tier_mode">
+        <option value="fixed">固定 4 档（推荐：1/2/3/4 四个离散值，滑条不参与）</option>
+        <option value="slider">滑条微调（旧行为：随机比例由滑条位置决定）</option></select>
+        <div class="hint">「固定 4 档」＝档位只有 1/2/3/4；想用老版本的滑条连续微调就切到第二项。</div>
+      </div></div>
+      <div class="row"><label>峰谷映射</label><input type="checkbox" data-cfg="store.tier_schedule.enabled">
+        <span class="hint">按「时段 → 档位」自动切换：命中哪个时段就用哪个档（表格见下方）</span></div>
+      <div class="mid" id="schedRows">
+        <div class="row"><label>时段表(配置格式)</label><div class="grow">
+          <textarea data-cfg="store.tier_schedule.table" rows="3" spellcheck="false" placeholder='[{"from":"09:00","to":"12:00","tier":2,"note":"工作时间"},{"from":"00:00","to":"08:00","tier":0,"note":"夜间静默"}]'></textarea>
+          <div class="hint">数组，<b>按顺序取第一个命中的窗口</b>；支持跨午夜（22:00 → 02:00）；<b>tier 只能 0~4</b>，其中 <b>0＝该时段完全不回应（静默）</b>。没命中任何窗口就用上面的全局档位。</div>
+        </div></div>
+      </div>
+      <div class="row"><label>指令白名单</label><div class="grow">
+        <textarea data-cfg="store.tier_cmd_admins" rows="2" spellcheck="false" placeholder="如：群主昵称, wxid_xxx（逗号或换行分隔）"></textarea>
+        <div class="hint">在群里 <b>@机器人 +「禁言」/「禁言 15」/「解除禁言」</b> ⇒ 本群档位临时固定到 <b>1 档（只回艾特）</b>，到期自动恢复（默认 30 分钟，最长 24 小时）。<b>留空＝谁都不能下这个指令</b>（否则群里任何人喊一句就能把机器人按住）。指令不会在群里回话，只在日志与控制台可见。</div>
+      </div></div>
+      <div class="row"><label>响应等级现状</label><div class="grow"><span id="tierStat" class="hint">读取中…</span></div></div>
+      <div class="row" data-tier="2,3"><label>关键词(逗号)</label><div class="grow"><input type="text" data-cfg="store.keywords" placeholder="2/3档命中即响应"></div></div>
+      <div class="row" data-tier="3"><label>随机概率%</label><div class="grow"><input type="number" min="0" max="100" data-cfg="store.random_percent"></div></div>
+      <div class="mid">
+        <div class="row"><label>艾特上下文条数</label><input type="number" min="1" data-cfg="store.at_count"></div>
+        <div class="row" data-tier="2,3"><label>关键词上下文</label><input type="number" min="1" data-cfg="store.keyword_count"></div>
+        <div class="row" data-tier="3"><label>随机上下文</label><input type="number" min="1" data-cfg="store.random_count"></div>
+      </div>
+      <div class="row"><label>单档上下文上限</label><div class="grow"><input type="number" min="1" data-cfg="store.all_count"></div></div>
+      <div class="row"><label>历史窗口(分钟)</label><div class="grow"><input type="number" min="0" data-cfg="store.past_window_min" title="0=不限"> <span class="hint">只把最近 N 分钟内的消息给模型当历史，防它回应很久之前的艾特/旧话题</span></div></div>
+      <div class="row"><label>历史兜底条数</label><div class="grow"><input type="number" min="0" data-cfg="store.past_floor_count" title="时间窗外至少保留最近 N 条；0=关闭"> <span class="hint">长时间静默后仍能看到上文</span></div></div>
+      <div class="row"><label>每群消息上限</label><div class="grow"><input type="number" min="0" data-cfg="store.max_messages_per_chat" title="0=不限制"></div></div>
+      <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
+      <div class="row"><label>每群独立档位</label><input type="checkbox" data-cfg="store.unified_tier" id="unifiedTierChk" checked><span class="hint">取消勾选后，可在下方按群单独设置响应档位（未设置的群跟随全局）</span></div>
+      <div id="groupTierBox"><div class="hint">勾选"每群独立档位"后，这里按群显示档位下拉并保存到 store.group_tier。</div></div>
+      <div class="row"><label>屏蔽名单(按群)</label><div class="grow">
+        <textarea id="blocklistBox" data-cfg="store.group_blocklist" rows="3" placeholder='{"群名": ["昵称或wxid", ...]}'></textarea>
+        <div class="hint">配置格式：{群名: [要屏蔽的昵称/wxid…]}。被屏蔽者消息不存档、不触发、不进提示词。</div>
+      </div></div>
+      <div class="row"><label>屏蔽存档的会话</label><div class="grow">
+        <textarea data-cfg="store.archive_block_chats" rows="2" spellcheck="false" placeholder="如：某广告群, group:wxid_xxx（逗号或换行分隔）"></textarea>
+        <div class="hint">名单里的<b>整个会话</b>：消息<b>不写进存档</b> ⇒ 也就不回、不进记忆、不进未读触发（监听水位照常推进、日志会写明原因）。与上面的「按群按人屏蔽」不是一件事：那个只管某个群友，这个管整个会话。</div>
+      </div></div>
+      <div class="row"><label>表情包积极度</label><div class="grow"><select data-cfg="store.sticker_level">
+        <option value="0">0：不鼓励</option><option value="1">1：偶尔</option>
+        <option value="2">2：较积极</option><option value="3">3：表情包爱好者</option></select>
+        <div class="hint">提示词层面引导，不强制。</div>
+      </div></div>
+      <div class="btns"><button class="pri" data-save>保存设置（身份与响应）</button></div>
+    </section>
     <section id="sec-advanced" class="card" data-sec>
       <h2>调试 · 高级功能</h2>
       <div class="desc">一般用户不用、其他分区没覆盖的可调项（行为引擎完整参数 / UI 图标库 / 学习机制）。</div>
@@ -878,7 +935,6 @@ th{color:var(--tx2);font-weight:500}
       </div>
       <div class="row"><label>提醒/节日现状</label><div class="grow"><span id="timerStat" class="hint">读取中…</span></div></div>
     </section>
-
     <section id="sec-sessions" class="card" data-sec>
       <h2>运行明细</h2>
       <div class="desc">简明日志：发了什么、多少用量、耗时（服务端按天落盘，最近 30 轮）。每个日期记录可勾选删除（按日期删，不可恢复）。</div>
@@ -911,7 +967,6 @@ th{color:var(--tx2);font-weight:500}
         <div class="hint" style="padding:10px;text-align:center">点「读取该会话存档」后，这里按条显示（#编号 发送者：内容），每行可单独屏蔽 / 解除 / 清除。</div>
       </div>
     </section>
-
     <section id="sec-model" class="card" data-sec>
       <h2>模型 API</h2>
       <div class="desc">密钥在控制台首次引导填入后自动保存，无需再改 config.json。</div>
@@ -1049,7 +1104,78 @@ th{color:var(--tx2);font-weight:500}
       </div></div>
       <div class="btns"><button class="pri" data-save>保存设置（模型 API）</button></div>
     </section>
-
+    <section id="sec-wechat" class="card" data-sec>      <div class="row"><label>微信版本</label><div class="grow"><b id="wxver">检测中…</b></div></div>
+      <div id="wxInstall" class="row" style="display:none"><label>微信装没装</label><div class="grow">
+        <div id="wxInstallText" class="hint"></div>
+        <div class="btns" style="margin-top:6px">
+          <button id="wxOpenSite" class="ghost">打开官网下载</button>
+          <button id="wxRecheck" class="ghost">我装好了，重新检测</button>
+        </div>
+        <div class="hint">我们不会替你静默安装（要下安装包 + 管理员权限）——只带你去官网，装好登录后点右边那颗重新检测。</div>
+      </div></div>
+      <h2>微信</h2>
+      <div class="desc">机器人微信身份与轮询 / 白名单。改完保存后需要重启才能完全生效。</div>
+      <div class="row"><label>我的其他账号</label><div class="grow"><input type="text" data-cfg="wechat.owner_accounts" placeholder="你的大号，多个用逗号分隔；填 wxid 最准，填昵称也行">
+        <span class="hint">机器人跑在小号上时，<b>你自己另外的号（大号）</b>在群里说话，程序默认会把大号当成普通群友。登记在这里它就认得出来。填 <b>wxid</b> 最准，填昵称也能用——下面会列出它匹配到哪些账号，方便你核对有没有认错。</span>
+        <div class="hint" id="ownerHit"></div></div></div>
+      <div class="row"><label>认出我之后</label><div class="grow"><select data-cfg="wechat.owner_mode">
+        <option value="know">照常回复，但知道这是我（推荐）</option>
+        <option value="owner_at_only">只在群里 @ 我或引用我时才回</option>
+        <option value="skip">完全不回复我自己的号</option>
+        <option value="off">不启用这个识别</option></select>
+        <span class="hint">上面登记的那些账号发消息时，程序按这一档反应。「只在群里 @ 我或引用我时才回」这一档只作用于<b>群聊</b>——私聊照「私聊」那一档走，不受影响。</span></div></div>
+      <div class="row"><label>私聊</label><div class="grow"><select data-cfg="wechat.private_chat">
+        <option value="owner_only">只理我自己那些号（推荐）</option>
+        <option value="off">不理私聊</option>
+        <option value="all">谁都理（慎用）</option></select>
+        <span class="hint">机器人跑在小号上、你用自己另一个号<b>私聊</b>它时，选这一档它才会应你——相当于借一个智能体进来跟自己聊天。<b>「谁都理」会给陌生人回消息</b>，不清楚后果就别选。</span></div></div>
+      <div class="row"><label>启动后暂停</label><input type="checkbox" data-cfg="wechat.start_paused"><span class="hint">勾选：机器人启动后不自动监听，需点「恢复」才工作（防开机刷群/回应积压旧消息）</span></div>
+      <div class="row"><label>轮询间隔(秒)</label><div class="grow"><input type="number" step="0.5" min="0.5" data-cfg="wechat.poll_interval"></div></div>
+      <div class="row"><label>每分钟限发</label><div class="grow"><input type="number" min="1" data-cfg="wechat.rate_limit_per_minute"></div></div>
+      <div class="row"><label>允许盲试点击</label><input type="checkbox" data-cfg="wechat.allow_click_hunting"><span class="hint">默认关：侧栏图标认不出来时绝不猜位置乱点（只在确认是「发现」时才点）。开了它才会按图标顺序/比例试点几下——试错会点到你其它图标上。</span></div>
+      <div class="row"><label>最小化提醒</label><input type="checkbox" data-cfg="wechat.minimize_warning"><span class="hint">勾选=当微信被最小化、而下面「最小化时自己还原」又是关的（那时我抓不到画面、切会话与发送都干不了），就把原因和两条出路说清楚；关掉＝这类情况只静默记一行。</span></div>
+      <div class="row"><label>最小化时自己还原</label><input type="checkbox" data-cfg="wechat.restore_minimized"><span class="hint">勾选=微信被最小化时，程序把它**不激活地**还原到屏幕上再继续（不激活、不动鼠标；只是窗口会重新出现）。取消勾选＝最小化时如实停下</span></div>
+      <div class="row"><label>会不会跟你抢操作</label><span class="hint">全程只发投递消息：你在别处打字、别的窗口盖住微信，都不影响它干活。只有一种情况会撞车——**你正在同一个会话里切会话或打字**时，它可能和你抢同一步操作；撞了它会用聊天区内容复核，对不上就让步、不硬凑。</span></div>
+      <div class="row"><label>群白名单</label>
+        <div class="grow">
+          <div class="chips" id="wlChips"></div>
+          <div class="btns" style="margin-top:0">
+            <button id="pickGroups" class="ghost">检测群聊并勾选</button>
+            <input id="customGroup" type="text" placeholder="自定义群名，回车添加" style="flex:1;background:var(--input-bg);border:1px solid var(--bd);border-radius:8px;padding:7px 10px;color:var(--tx)">
+          </div>
+          <div class="hint">留空=所有群都监听；勾选的群才响应（也可配合「暂停」）。</div>
+        </div>
+      </div>
+      <div class="row"><label>媒体目录</label><div class="grow"><input type="text" data-cfg="wechat.media_dir"></div></div>
+      <div class="row"><label>数据库目录</label><div class="grow"><input type="text" data-cfg="wechat.db_dir" placeholder="留空=自动探测微信数据目录"></div></div>
+      <div class="btns"><button class="pri" data-save>保存设置（微信）</button></div>
+      <hr style="border:none;border-top:1px solid var(--bd);margin:14px 0">
+      <div class="desc">表情包（模型-程序协作）：群里收到有趣的表情，机器人用 <code>collect_emoji</code> 收藏（生成极简概述入库，模型-程序协作），需要时 <code>send_emoji</code> 按概述/语境选一个再发出；也可在下面手动管理。</div>
+      <div class="row"><label>收藏夹表情</label><div class="grow">
+        <input type="text" id="emojiSearch" placeholder="搜索表情（按文件名）" style="margin-bottom:8px">
+        <div id="emojiBox" style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-start;min-height:60px;max-height:240px;overflow-y:auto;border:1px dashed var(--bd);border-radius:10px;padding:10px">
+          <span class="hint">加载中…</span>
+        </div>
+        <button id="emojiRefresh" class="ghost" style="margin-top:6px">刷新</button>
+        <span class="hint" id="emojiCount"></span>
+        <!-- 数据源：搜索只过滤显示，收藏夹太大时自动分页预览（最多显示 60 个 + 滚动） -->
+      </div></div>
+      <div class="row"><label>说明</label><div class="grow">
+        <span class="hint">合并转发消息在聊天记录里显示为「[合并转发] …」，机器人可用 <code>view_merge_forward</code> 查看具体内容。</span>
+      </div></div>
+      <hr style="border:none;border-top:1px solid var(--bd);margin:14px 0">
+      <div class="desc">人性化自主行为（省用量规则引擎：纯本地概率+冷却+每日上限，不调模型；人设参与度/表情包等级会调节频率系数，自定义角色卡不影响——角色卡管"怎么说"，引擎管"做不做"）：</div>
+      <div class="mid">
+        <div class="row"><label>收藏表情概率</label><input type="number" min="0" max="1" step="0.05" data-cfg="behavior.collect_emoji.probability"></div>
+        <div class="row"><label>回发表情概率</label><input type="number" min="0" max="1" step="0.05" data-cfg="behavior.send_emoji.probability"></div>
+        <div class="row"><label>@群友概率</label><input type="number" min="0" max="1" step="0.05" data-cfg="behavior.at_member.probability"></div>
+      </div>
+      <div class="mid">
+        <div class="row"><label>点赞朋友圈</label><input type="checkbox" data-cfg="behavior.like_moments.enabled">
+          <span class="hint">实验性（需入口坐标校准 + 朋友圈窗口可见）</span></div>
+        <div class="row"><label>点赞概率</label><input type="number" min="0" max="1" step="0.05" data-cfg="behavior.like_moments.probability"></div>
+      </div>
+    </section>
     <section id="sec-vermat" class="card" data-sec>
       <h2>版本能力矩阵</h2>
       <div class="desc">当前「微信版本 × 适配层版本」下每个能力的实测状态。没有实测记录的版本对一律按未知处理：发送会先被版本门拦下，等你点「本次允许发送」才临时放行。</div>
@@ -1380,81 +1506,6 @@ th{color:var(--tx2);font-weight:500}
       </div>
       <div class="hint">调用次数来自唯一分发点的统计（内置与自定义工具都算）——一眼能看出哪些工具只是摆设。</div>
     </section>
-    <section id="sec-wechat" class="card" data-sec>      <div class="row"><label>微信版本</label><div class="grow"><b id="wxver">检测中…</b></div></div>
-      <div id="wxInstall" class="row" style="display:none"><label>微信装没装</label><div class="grow">
-        <div id="wxInstallText" class="hint"></div>
-        <div class="btns" style="margin-top:6px">
-          <button id="wxOpenSite" class="ghost">打开官网下载</button>
-          <button id="wxRecheck" class="ghost">我装好了，重新检测</button>
-        </div>
-        <div class="hint">我们不会替你静默安装（要下安装包 + 管理员权限）——只带你去官网，装好登录后点右边那颗重新检测。</div>
-      </div></div>
-      <h2>微信</h2>
-      <div class="desc">机器人微信身份与轮询 / 白名单。改完保存后需要重启才能完全生效。</div>
-      <div class="row"><label>机器人昵称</label><div class="grow"><input type="text" data-cfg="wechat.bot_nickname"></div></div>
-      <div class="row"><label>自我称呼</label><div class="grow"><input type="text" data-cfg="persona.self_nickname" placeholder="留空=机器人昵称，用于识别「我」"></div></div>
-      <div class="row"><label>我的其他账号</label><div class="grow"><input type="text" data-cfg="wechat.owner_accounts" placeholder="你的大号，多个用逗号分隔；填 wxid 最准，填昵称也行">
-        <span class="hint">机器人跑在小号上时，<b>你自己另外的号（大号）</b>在群里说话，程序默认会把大号当成普通群友。登记在这里它就认得出来。填 <b>wxid</b> 最准，填昵称也能用——下面会列出它匹配到哪些账号，方便你核对有没有认错。</span>
-        <div class="hint" id="ownerHit"></div></div></div>
-      <div class="row"><label>认出我之后</label><div class="grow"><select data-cfg="wechat.owner_mode">
-        <option value="know">照常回复，但知道这是我（推荐）</option>
-        <option value="owner_at_only">只在群里 @ 我或引用我时才回</option>
-        <option value="skip">完全不回复我自己的号</option>
-        <option value="off">不启用这个识别</option></select>
-        <span class="hint">上面登记的那些账号发消息时，程序按这一档反应。「只在群里 @ 我或引用我时才回」这一档只作用于<b>群聊</b>——私聊照「私聊」那一档走，不受影响。</span></div></div>
-      <div class="row"><label>私聊</label><div class="grow"><select data-cfg="wechat.private_chat">
-        <option value="owner_only">只理我自己那些号（推荐）</option>
-        <option value="off">不理私聊</option>
-        <option value="all">谁都理（慎用）</option></select>
-        <span class="hint">机器人跑在小号上、你用自己另一个号<b>私聊</b>它时，选这一档它才会应你——相当于借一个智能体进来跟自己聊天。<b>「谁都理」会给陌生人回消息</b>，不清楚后果就别选。</span></div></div>
-      <div class="row"><label>启动后暂停</label><input type="checkbox" data-cfg="wechat.start_paused"><span class="hint">勾选：机器人启动后不自动监听，需点「恢复」才工作（防开机刷群/回应积压旧消息）</span></div>
-      <div class="row"><label>轮询间隔(秒)</label><div class="grow"><input type="number" step="0.5" min="0.5" data-cfg="wechat.poll_interval"></div></div>
-      <div class="row"><label>每分钟限发</label><div class="grow"><input type="number" min="1" data-cfg="wechat.rate_limit_per_minute"></div></div>
-      <div class="row"><label>允许盲试点击</label><input type="checkbox" data-cfg="wechat.allow_click_hunting"><span class="hint">默认关：侧栏图标认不出来时绝不猜位置乱点（只在确认是「发现」时才点）。开了它才会按图标顺序/比例试点几下——试错会点到你其它图标上。</span></div>
-      <div class="row"><label>最小化提醒</label><input type="checkbox" data-cfg="wechat.minimize_warning"><span class="hint">勾选=当微信被最小化、而下面「最小化时自己还原」又是关的（那时我抓不到画面、切会话与发送都干不了），就把原因和两条出路说清楚；关掉＝这类情况只静默记一行。</span></div>
-      <div class="row"><label>最小化时自己还原</label><input type="checkbox" data-cfg="wechat.restore_minimized"><span class="hint">勾选=微信被最小化时，程序把它**不激活地**还原到屏幕上再继续（不激活、不动鼠标；只是窗口会重新出现）。取消勾选＝最小化时如实停下</span></div>
-      <div class="row"><label>会不会跟你抢操作</label><span class="hint">全程只发投递消息：你在别处打字、别的窗口盖住微信，都不影响它干活。只有一种情况会撞车——**你正在同一个会话里切会话或打字**时，它可能和你抢同一步操作；撞了它会用聊天区内容复核，对不上就让步、不硬凑。</span></div>
-      <div class="row"><label>群白名单</label>
-        <div class="grow">
-          <div class="chips" id="wlChips"></div>
-          <div class="btns" style="margin-top:0">
-            <button id="pickGroups" class="ghost">检测群聊并勾选</button>
-            <input id="customGroup" type="text" placeholder="自定义群名，回车添加" style="flex:1;background:var(--input-bg);border:1px solid var(--bd);border-radius:8px;padding:7px 10px;color:var(--tx)">
-          </div>
-          <div class="hint">留空=所有群都监听；勾选的群才响应（也可配合「暂停」）。</div>
-        </div>
-      </div>
-      <div class="row"><label>媒体目录</label><div class="grow"><input type="text" data-cfg="wechat.media_dir"></div></div>
-      <div class="row"><label>数据库目录</label><div class="grow"><input type="text" data-cfg="wechat.db_dir" placeholder="留空=自动探测微信数据目录"></div></div>
-      <div class="btns"><button class="pri" data-save>保存设置（微信）</button></div>
-      <hr style="border:none;border-top:1px solid var(--bd);margin:14px 0">
-      <div class="desc">表情包（模型-程序协作）：群里收到有趣的表情，机器人用 <code>collect_emoji</code> 收藏（生成极简概述入库，模型-程序协作），需要时 <code>send_emoji</code> 按概述/语境选一个再发出；也可在下面手动管理。</div>
-      <div class="row"><label>收藏夹表情</label><div class="grow">
-        <input type="text" id="emojiSearch" placeholder="搜索表情（按文件名）" style="margin-bottom:8px">
-        <div id="emojiBox" style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-start;min-height:60px;max-height:240px;overflow-y:auto;border:1px dashed var(--bd);border-radius:10px;padding:10px">
-          <span class="hint">加载中…</span>
-        </div>
-        <button id="emojiRefresh" class="ghost" style="margin-top:6px">刷新</button>
-        <span class="hint" id="emojiCount"></span>
-        <!-- 数据源：搜索只过滤显示，收藏夹太大时自动分页预览（最多显示 60 个 + 滚动） -->
-      </div></div>
-      <div class="row"><label>说明</label><div class="grow">
-        <span class="hint">合并转发消息在聊天记录里显示为「[合并转发] …」，机器人可用 <code>view_merge_forward</code> 查看具体内容。</span>
-      </div></div>
-      <hr style="border:none;border-top:1px solid var(--bd);margin:14px 0">
-      <div class="desc">人性化自主行为（省用量规则引擎：纯本地概率+冷却+每日上限，不调模型；人设参与度/表情包等级会调节频率系数，自定义角色卡不影响——角色卡管"怎么说"，引擎管"做不做"）：</div>
-      <div class="mid">
-        <div class="row"><label>收藏表情概率</label><input type="number" min="0" max="1" step="0.05" data-cfg="behavior.collect_emoji.probability"></div>
-        <div class="row"><label>回发表情概率</label><input type="number" min="0" max="1" step="0.05" data-cfg="behavior.send_emoji.probability"></div>
-        <div class="row"><label>@群友概率</label><input type="number" min="0" max="1" step="0.05" data-cfg="behavior.at_member.probability"></div>
-      </div>
-      <div class="mid">
-        <div class="row"><label>点赞朋友圈</label><input type="checkbox" data-cfg="behavior.like_moments.enabled">
-          <span class="hint">实验性（需入口坐标校准 + 朋友圈窗口可见）</span></div>
-        <div class="row"><label>点赞概率</label><input type="number" min="0" max="1" step="0.05" data-cfg="behavior.like_moments.probability"></div>
-      </div>
-    </section>
-
     <section id="sec-poke" class="card" data-sec>
       <h2>拍一拍（行为）</h2>
       <div class="desc">自动回拍 / 主动皮一下的频率与冷却。注意：拍一拍有误拍风险（同名/头像辨识不清），建议保持「简易检测」优先。</div>
@@ -1468,7 +1519,6 @@ th{color:var(--tx2);font-weight:500}
       </div>
       <div class="btns"><button class="pri" data-save>保存设置（拍一拍）</button></div>
     </section>
-
     <section id="sec-memory" class="card" data-sec>
       <h2>记忆（群友印象）</h2>
       <div class="desc">每个群友的长期印象，机器人回复时会参考。点「保存设置」不影响此处；删除即从记忆中移除。</div>
@@ -1500,8 +1550,25 @@ th{color:var(--tx2);font-weight:500}
       </div>
       <div class="hint" id="memEmpty">（无记忆数据）</div>
     </section>
-
-
+    <section id="sec-memory-set" class="card" data-sec>
+      <h2>记忆（共享设置）</h2>
+      <div class="desc">记忆怎么存、怎么共享、什么时候整理；每个群的记忆默认互相隔离，只有你点头的群之间才共享。</div>
+      <div class="row"><label>自动整理</label><input type="checkbox" data-cfg="memory.consolidate_enabled"></div>
+      <div class="row"><label>共享记忆池</label><input type="checkbox" data-cfg="memory.share_across_groups" checked id="memShareChk">
+        <span class="hint">勾选=所有群共享一个记忆池（群间互通）；不勾=每群独立（默认，群间互不串味）</span></div>
+      <div class="row" id="memGroupsRow"><label>共享群（可选）</label><div class="grow">
+        <div id="memGroupsBox" style="display:flex;flex-wrap:wrap;gap:6px"><span class="hint">加载中…</span></div>
+        <div class="hint">勾选几个群 → 只有这些群间共享记忆（比全共享更精准；不勾=用上方总开关）</div>
+      </div></div>
+      <div class="row"><label>整理间隔(小时)</label><div class="grow"><input type="number" min="1" data-cfg="memory.consolidate_min_interval_ms"></div></div>
+      <div class="mid">
+        <div class="row"><label>最少印象数</label><input type="number" min="1" data-cfg="memory.consolidate_min_impressions"></div>
+        <div class="row"><label>每成员印象上限</label><input type="number" min="1" data-cfg="memory.max_impressions_per_member"></div>
+        <div class="row"><label>发现最少消息</label><input type="number" min="1" data-cfg="memory.discover_min_messages"></div>
+        <div class="row"><label>发现最多成员</label><input type="number" min="1" data-cfg="memory.discover_max_members"></div>
+      </div>
+      <div class="btns"><button class="pri" data-save>保存设置（记忆共享）</button></div>
+    </section>
     <section id="sec-persona" class="card" data-sec>
       <h2>人设与响应</h2>
       <div class="desc">机器人以谁的身份在群里说话、怎么参与：人设名、参与度、自我介绍与群名片。改完立刻生效。</div>
@@ -1572,57 +1639,6 @@ th{color:var(--tx2);font-weight:500}
         <div class="hint">关掉哪一块，系统提示词里就少哪一段（安全规则、工具协议不在可关之列）；改组队或老手才需要动。</div>
       </div></div>
       <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
-      <div class="row"><label>响应档位</label><div class="grow"><select data-cfg="store.context_tier" id="ctxTier">
-        <option value="1">1 档：仅艾特</option><option value="2">2 档：+关键词</option>
-        <option value="3">3 档：+随机</option><option value="4">4 档：全响应</option></select>
-        <div class="hint">1 档只回艾特；2 档加关键词；3 档再加随机；4 档全回。关键词在 2/3 档生效，随机只在 3 档生效。</div>
-      </div></div>
-      <div class="row"><label>档位模式</label><div class="grow"><select data-cfg="store.tier_mode">
-        <option value="fixed">固定 4 档（推荐：1/2/3/4 四个离散值，滑条不参与）</option>
-        <option value="slider">滑条微调（旧行为：随机比例由滑条位置决定）</option></select>
-        <div class="hint">「固定 4 档」＝档位只有 1/2/3/4；想用老版本的滑条连续微调就切到第二项。</div>
-      </div></div>
-      <div class="row"><label>峰谷映射</label><input type="checkbox" data-cfg="store.tier_schedule.enabled">
-        <span class="hint">按「时段 → 档位」自动切换：命中哪个时段就用哪个档（表格见下方）</span></div>
-      <div class="mid" id="schedRows">
-        <div class="row"><label>时段表(配置格式)</label><div class="grow">
-          <textarea data-cfg="store.tier_schedule.table" rows="3" spellcheck="false" placeholder='[{"from":"09:00","to":"12:00","tier":2,"note":"工作时间"},{"from":"00:00","to":"08:00","tier":0,"note":"夜间静默"}]'></textarea>
-          <div class="hint">数组，<b>按顺序取第一个命中的窗口</b>；支持跨午夜（22:00 → 02:00）；<b>tier 只能 0~4</b>，其中 <b>0＝该时段完全不回应（静默）</b>。没命中任何窗口就用上面的全局档位。</div>
-        </div></div>
-      </div>
-      <div class="row"><label>指令白名单</label><div class="grow">
-        <textarea data-cfg="store.tier_cmd_admins" rows="2" spellcheck="false" placeholder="如：群主昵称, wxid_xxx（逗号或换行分隔）"></textarea>
-        <div class="hint">在群里 <b>@机器人 +「禁言」/「禁言 15」/「解除禁言」</b> ⇒ 本群档位临时固定到 <b>1 档（只回艾特）</b>，到期自动恢复（默认 30 分钟，最长 24 小时）。<b>留空＝谁都不能下这个指令</b>（否则群里任何人喊一句就能把机器人按住）。指令不会在群里回话，只在日志与控制台可见。</div>
-      </div></div>
-      <div class="row"><label>响应等级现状</label><div class="grow"><span id="tierStat" class="hint">读取中…</span></div></div>
-      <div class="row" data-tier="2,3"><label>关键词(逗号)</label><div class="grow"><input type="text" data-cfg="store.keywords" placeholder="2/3档命中即响应"></div></div>
-      <div class="row" data-tier="3"><label>随机概率%</label><div class="grow"><input type="number" min="0" max="100" data-cfg="store.random_percent"></div></div>
-      <div class="mid">
-        <div class="row"><label>艾特上下文条数</label><input type="number" min="1" data-cfg="store.at_count"></div>
-        <div class="row" data-tier="2,3"><label>关键词上下文</label><input type="number" min="1" data-cfg="store.keyword_count"></div>
-        <div class="row" data-tier="3"><label>随机上下文</label><input type="number" min="1" data-cfg="store.random_count"></div>
-      </div>
-      <div class="row"><label>单档上下文上限</label><div class="grow"><input type="number" min="1" data-cfg="store.all_count"></div></div>
-      <div class="row"><label>历史窗口(分钟)</label><div class="grow"><input type="number" min="0" data-cfg="store.past_window_min" title="0=不限"> <span class="hint">只把最近 N 分钟内的消息给模型当历史，防它回应很久之前的艾特/旧话题</span></div></div>
-      <div class="row"><label>历史兜底条数</label><div class="grow"><input type="number" min="0" data-cfg="store.past_floor_count" title="时间窗外至少保留最近 N 条；0=关闭"> <span class="hint">长时间静默后仍能看到上文</span></div></div>
-      <div class="row"><label>每群消息上限</label><div class="grow"><input type="number" min="0" data-cfg="store.max_messages_per_chat" title="0=不限制"></div></div>
-      <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
-      <div class="row"><label>每群独立档位</label><input type="checkbox" data-cfg="store.unified_tier" id="unifiedTierChk" checked><span class="hint">取消勾选后，可在下方按群单独设置响应档位（未设置的群跟随全局）</span></div>
-      <div id="groupTierBox"><div class="hint">勾选"每群独立档位"后，这里按群显示档位下拉并保存到 store.group_tier。</div></div>
-      <div class="row"><label>屏蔽名单(按群)</label><div class="grow">
-        <textarea id="blocklistBox" data-cfg="store.group_blocklist" rows="3" placeholder='{"群名": ["昵称或wxid", ...]}'></textarea>
-        <div class="hint">配置格式：{群名: [要屏蔽的昵称/wxid…]}。被屏蔽者消息不存档、不触发、不进提示词。</div>
-      </div></div>
-      <div class="row"><label>屏蔽存档的会话</label><div class="grow">
-        <textarea data-cfg="store.archive_block_chats" rows="2" spellcheck="false" placeholder="如：某广告群, group:wxid_xxx（逗号或换行分隔）"></textarea>
-        <div class="hint">名单里的<b>整个会话</b>：消息<b>不写进存档</b> ⇒ 也就不回、不进记忆、不进未读触发（监听水位照常推进、日志会写明原因）。与上面的「按群按人屏蔽」不是一件事：那个只管某个群友，这个管整个会话。</div>
-      </div></div>
-      <div class="row"><label>表情包积极度</label><div class="grow"><select data-cfg="store.sticker_level">
-        <option value="0">0：不鼓励</option><option value="1">1：偶尔</option>
-        <option value="2">2：较积极</option><option value="3">3：表情包爱好者</option></select>
-        <div class="hint">提示词层面引导，不强制。</div>
-      </div></div>
-      <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
       <div class="row"><label>撤回后剔除</label><input type="checkbox" data-cfg="store.recall.enabled">
         <span class="hint">群友撤回消息后，把已经进过上下文的那条从存档里剔除：模型不再引用、记忆不再提炼它（存档条目会保留为「已撤回」标记，便于追溯）</span></div>
       <div class="mid" id="recallRows">
@@ -1643,7 +1659,6 @@ th{color:var(--tx2);font-weight:500}
       </div>
       <div class="btns"><button class="pri" data-save>保存设置（人设与响应）</button></div>
     </section>
-
     <section id="sec-community" class="card" data-sec>
       <h2>社区与学习</h2>
       <div class="desc">金句/意见/聊天记录本地导出；可选上传到自配服务器；反应评分引擎让机器人越聊越有趣（防饱和）。</div>
@@ -1701,7 +1716,6 @@ th{color:var(--tx2);font-weight:500}
         <div class="row"><label>连通结果</label><div class="grow"><span id="cloudStat" class="hint">还没测过</span></div></div>
       </div>
     </section>
-
     <section id="sec-feedback" class="card" data-sec>
       <h2>反馈</h2>
       <div class="desc">有什么想说的、想让它变成什么样的，写在这儿提交就行——程序会自动整理你的诉求发出去，不用自己去发邮件。</div>
@@ -1732,7 +1746,6 @@ th{color:var(--tx2);font-weight:500}
       <div class="btns"><button class="pri" data-save>保存设置（反馈）</button></div>
       <div class="row" style="margin-top:10px"><label>显示这一栏</label><input type="checkbox" data-cfg="feedback.enabled" checked><span class="hint">取消勾选＝隐藏左导航的「反馈」栏（保存后刷新页面生效）。</span></div>
     </section>
-
     <section id="sec-send" class="card" data-sec>
       <h2>发送限制</h2>
       <div class="desc">真人化间隔与限频，防止刷屏/封号风险。</div>
@@ -1766,27 +1779,6 @@ th{color:var(--tx2);font-weight:500}
         <span class="hint">勾选=用 系统无障碍接口 SetValue 后台直写输入框（不点输入框/不粘贴）；不勾=点输入框+粘贴（兼容部分微信版本）</span></div>
       <div class="btns"><button class="pri" data-save>保存设置（发送限制）</button></div>
     </section>
-
-    <section id="sec-memory-set" class="card" data-sec>
-      <h2>记忆（共享设置）</h2>
-      <div class="desc">记忆怎么存、怎么共享、什么时候整理；每个群的记忆默认互相隔离，只有你点头的群之间才共享。</div>
-      <div class="row"><label>自动整理</label><input type="checkbox" data-cfg="memory.consolidate_enabled"></div>
-      <div class="row"><label>共享记忆池</label><input type="checkbox" data-cfg="memory.share_across_groups" checked id="memShareChk">
-        <span class="hint">勾选=所有群共享一个记忆池（群间互通）；不勾=每群独立（默认，群间互不串味）</span></div>
-      <div class="row" id="memGroupsRow"><label>共享群（可选）</label><div class="grow">
-        <div id="memGroupsBox" style="display:flex;flex-wrap:wrap;gap:6px"><span class="hint">加载中…</span></div>
-        <div class="hint">勾选几个群 → 只有这些群间共享记忆（比全共享更精准；不勾=用上方总开关）</div>
-      </div></div>
-      <div class="row"><label>整理间隔(小时)</label><div class="grow"><input type="number" min="1" data-cfg="memory.consolidate_min_interval_ms"></div></div>
-      <div class="mid">
-        <div class="row"><label>最少印象数</label><input type="number" min="1" data-cfg="memory.consolidate_min_impressions"></div>
-        <div class="row"><label>每成员印象上限</label><input type="number" min="1" data-cfg="memory.max_impressions_per_member"></div>
-        <div class="row"><label>发现最少消息</label><input type="number" min="1" data-cfg="memory.discover_min_messages"></div>
-        <div class="row"><label>发现最多成员</label><input type="number" min="1" data-cfg="memory.discover_max_members"></div>
-      </div>
-      <div class="btns"><button class="pri" data-save>保存设置（记忆共享）</button></div>
-    </section>
-
     <section id="sec-search" class="card" data-sec>
       <h2>联网搜索</h2>
       <div class="row"><label>启用</label><input type="checkbox" data-cfg="web_search.enabled"></div>
@@ -1805,7 +1797,6 @@ th{color:var(--tx2);font-weight:500}
       <div class="row"><label>请求数</label><div class="grow"><input type="number" id="wsCount" min="1" max="50"></div></div>
       <div class="btns"><button class="pri" data-save>保存设置（联网搜索）</button></div>
     </section>
-
     <section id="sec-server" class="card" data-sec>
       <h2>服务器</h2>
       <div class="desc">控制台的监听地址与访问口令。默认只听本机；改完要重启控制台才生效。</div>
@@ -1820,7 +1811,6 @@ th{color:var(--tx2);font-weight:500}
         <div class="hint">概览卡的「今日/本周/本月」用量卡按此周期归零重计（历史保留 24 期）。</div></div></div>
       <div class="btns"><button class="pri" data-save>保存设置（服务器）</button></div>
     </section>
-
     <section id="sec-ui" class="card" data-sec>
       <h2>界面适配（缩放 / 遮挡 / 主题）</h2>
       <div class="desc">这台机器的显示缩放、遮挡清理与主题。点击位置对不上时先来这里。</div>
@@ -1857,7 +1847,6 @@ th{color:var(--tx2);font-weight:500}
         <span class="hint">开启后：进入页面把地址栏路径替换成随机乱码（保护访问地址不被他人复制直接登入；刷新靠会话 Cookie）。端口号无法乱码（浏览器必须用真实端口连接）。默认关。</span></div>
       <div class="btns"><button class="pri" data-save>保存设置（界面适配）</button></div>
     </section>
-
     <section id="sec-cursor" class="card" data-sec>
       <h2>光标设置</h2>
       <div class="desc">把鼠标指针换成鲸鱼（或你自己的图片），点击时向下点头；默认鲸鱼小蓝鲸（22）。</div>
@@ -1883,7 +1872,6 @@ th{color:var(--tx2);font-weight:500}
       <div class="hint">时长公式（dist=拖拽距离 px）：蠕动 260×dist/100×系数④（600~2400ms）；纸飞机 170×dist/100×系数+0.58s（变形/翻回）；扎入 90×dist/100×系数+0.78s（含 0.5s 消失+冒出）。可在控制台 Console 看每次返回的日志（如 [whale-return]）。</div>
       <div class="btns"><button class="pri" id="cursorSaveBtn">保存光标设置</button></div>
     </section>
-
     <section id="sec-wavefx" class="card" data-sec>
       <h2>水光波纹（鼠标投石入水）</h2>
       <div class="desc">鼠标像石子投入湖面：一道波纹从鼠标处肉眼可见地一波波荡开，扩散范围=光标所在的整个模块（顶栏/导航栏/功能卡），到模块边缘极强衰减、绝不越界；拖动越快荡得越快。所有参数即时生效。</div>
@@ -1898,7 +1886,6 @@ th{color:var(--tx2);font-weight:500}
       <div class="row"><label>波纹荡开速度</label><input type="number" min="0.1" max="1.5" step="0.05" data-cfg="ui.wave_fx.ring_speed"><span class="hint">一圈≈1/速度 秒（0.4≈2.5s 一波，肉眼可见）</span></div>
       <div class="btns"><button class="pri" id="wavefxApply" style="background:linear-gradient(135deg,#30B0C8,#0E8FB0)">应用水光波纹设置</button></div>
     </section>
-
     <section id="sec-log" class="card" data-sec>
       <h2>运行日志</h2>
       <div class="desc">机器人的动作与失败原因都在这里；出问题先看这一屏，再谈别的。</div>
@@ -1908,7 +1895,6 @@ th{color:var(--tx2);font-weight:500}
       </div>
       <pre class="out" id="log" style="height:380px">加载中…</pre>
     </section>
-
     <section id="sec-json" class="card" data-sec>
       <h2>完整配置文件（高级）</h2>
       <div class="desc">全部配置的配置文件。只在面板里找不到对应开关时才动它，保存前先备份。</div>

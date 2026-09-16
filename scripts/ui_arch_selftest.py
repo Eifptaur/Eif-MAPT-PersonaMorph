@@ -49,7 +49,10 @@ def scan(src: str) -> dict:
     """把一份 console HTML 的信息架构量出来（判据与阴性对照共用同一套口径）。"""
     body = re.sub(r"<script[\s\S]*?</script>", "", src)          # 脚本段不是真实绑定
     secs = re.findall(r'<section id="(sec-[a-z0-9\-]+)"', body)
-    navs = set(re.findall(r'href="#(sec-[a-z0-9\-]+)"', body))
+    # ⚠️ 2026-09-16：`navs` 以前是 **set**（顺序丢了）⇒ 没法判"分区顺序 == 导航顺序"。
+    #    现在 list 保序（判顺序用），另存 `navs_set` 给"有没有/死链"用。两个都留着，别只留一个。
+    navs = re.findall(r'href="#(sec-[a-z0-9\-]+)"', body)
+    navs_set = set(navs)
     keys = re.findall(r'data-cfg="([^"]+)"', body)
     miss_h2, miss_desc, sizes = [], [], []
     for sid in secs:
@@ -70,10 +73,11 @@ def scan(src: str) -> dict:
             depth = max(0, depth - 1)
         elif depth <= 0:
             outside.append(t.group(1))
-    return {"secs": secs, "navs": navs, "keys": keys, "miss_h2": miss_h2, "miss_desc": miss_desc,
+    return {"secs": secs, "navs": navs, "navs_set": navs_set, "keys": keys,
+            "miss_h2": miss_h2, "miss_desc": miss_desc,
             "sizes": sizes, "outside": outside,
-            "no_nav": [s for s in secs if s not in navs],
-            "dead_nav": sorted(n for n in navs if n not in secs)}
+            "no_nav": [s for s in secs if s not in navs_set],
+            "dead_nav": sorted(n for n in navs_set if n not in secs)}
 
 
 m = scan(SRC)
@@ -111,6 +115,14 @@ ok("人造缺导航被抓出", sm["no_nav"] == ["sec-a", "sec-b"], str(sm["no_na
 ok("人造死链被抓出", sm["dead_nav"] == ["sec-gone"], str(sm["dead_nav"]))
 ok("人造缺 desc 被抓出", sm["miss_desc"] == ["sec-b"], str(sm["miss_desc"]))
 ok("脚本段里的假 data-cfg 被忽略（不误报）", "c.d" not in sm["outside"][1:], str(sm["outside"]))
+
+print("── 丁. 分区顺序必须与左导航顺序**完全一致**（用户 2026-09-16 报：「卡片功能栏顺序不是严格按照左边导航栏的顺序来的，所以有时候划着划着，卡片导航栏会乱跳」）──")
+_bad = next((("导航 %s ↔ 面板 %s" % (a, b)) for a, b in zip(m["navs"], m["secs"]) if a != b), "")
+ok("导航顺序 == 面板顺序", m["navs"] == m["secs"],
+   _bad or ("长度不同：导航 %d / 面板 %d" % (len(m["navs"]), len(m["secs"]))))
+ok("两边数量一致（没有面板没入口 / 有入口没面板）", len(m["navs"]) == len(m["secs"]))
+_bot = m["secs"].index("sec-bot") + 1 if "sec-bot" in m["secs"] else 0
+ok("「机器人昵称 + 响应档位」这一块排在第 3 位（用户点名要放前面）", _bot == 3, "实际第 %d 位" % _bot)
 
 print("\n通过 %d / 失败 %d（面板 %d · 导航 %d · 可调项 %d）"
       % (PASS, FAIL, len(m["secs"]), len(m["navs"]), len(set(m["keys"]))))
