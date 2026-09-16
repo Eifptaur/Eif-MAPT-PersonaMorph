@@ -144,6 +144,23 @@ def manifest_url(cfg: dict | None = None) -> str:
     return str(c.get("url") or "").strip() or DEFAULT_URL
 
 
+def candidate_urls(cfg: dict | None = None) -> list:
+    """**该试哪几个清单源**——"检查更新"与"立即更新"必须用同一份（2026-09-17 修）。
+
+    为什么单独立一个函数：以前"检查"走 `fetch_any`（并行多源 + 记住上次能用的源），
+    而"立即更新"只试 `manifest_url()` **一个**地址（默认＝国内常年超时的
+    `raw.githubusercontent.com`）⇒ 用户遇到「第一次一定拉不到更新源，第二次才成功」。
+    两条路共用这里，就不会再各写一套。
+    """
+    c = cfg if isinstance(cfg, dict) else _cfg()
+    cfg_url = str(c.get("url") or "").strip()
+    if cfg_url:
+        # 用户自己填的源：失败就**如实报**，不去偷偷换别人的源（换了他会更懵）
+        return [cfg_url]
+    _last = str((_read_state() or {}).get("lastGoodUrl") or "")
+    return ([_last] if _last else []) + [u for u in DEFAULT_URLS if u != _last]
+
+
 def fetch(url: str, timeout: float = 6.0):
     """支持 http(s) 与**本地路径**（本地路径便于离线自测）。返回 (dict 或 None, 说明)。"""
     if not url:
@@ -177,17 +194,10 @@ def state(cfg: dict | None = None, timeout: float = 6.0) -> dict:
     mine = current_version()
     out = {"status": "off", "mine": mine, "theirs": "", "notes": [], "url": manifest_url(c),
            "why": "", "forceBase": False, "minBase": "", "checkedAt": 0}
-    cfg_url = str(c.get("url") or "").strip()
     if c.get("muted"):
         out["why"] = "用户开了「不再提醒」"
         return out
-    if cfg_url:
-        # 用户自己填的源：失败就**如实报**，不去偷偷换别人的源（换了他会更懵）
-        urls = [cfg_url]
-    else:
-        # 默认源：上次成功的那个排最前，再并行试全部内置源（含镜像，见 DEFAULT_URLS）
-        _last = str((_read_state() or {}).get("lastGoodUrl") or "")
-        urls = ([_last] if _last else []) + [u for u in DEFAULT_URLS if u != _last]
+    urls = candidate_urls(c)
     man, why, used = fetch_any(urls, timeout)
     if man is None:
         out["status"] = "error"

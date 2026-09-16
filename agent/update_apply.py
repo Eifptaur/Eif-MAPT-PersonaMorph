@@ -131,17 +131,35 @@ def _dl_once(url: str, dest: str, timeout: float, progress=None):
         return False, "%s: %s" % (type(e).__name__, str(e)[:100])
 
 
+def _mirror_prefixes():
+    """下载时套的镜像前缀：**上次能用的那个源所用的镜像排最前**（第一下就尽量走通的那条）。"""
+    order = list(DL_MIRRORS)
+    try:
+        from . import update_check as uc
+        used = str((uc._read_state() or {}).get("lastGoodUrl") or "")
+        for m in DL_MIRRORS:
+            if used.startswith(m):
+                if order[0] != m:
+                    order.remove(m)
+                    order.insert(0, m)
+                break
+    except Exception:
+        pass
+    return order
+
+
 def download(url: str, dest: str, timeout: float = 120.0, progress=None):
     """下载在线包（流式写盘 + 进度回调）。**支持本地路径**（离线自测用，与 `update_check.fetch` 同口径）。
 
     2026-09-16：直连失败时**依次套国内镜像前缀重试**（只对 `github.com` 的地址套），
     全部失败才如实报最后一条原因。
+    2026-09-17：镜像顺序不再是死的 `DL_MIRRORS`——**上次清单能用的那个镜像排第一**。
     """
     if not url:
         return False, "清单里没给下载地址（base.url 为空）"
     urls = [url]
     if "github.com" in str(url).lower():
-        for m in DL_MIRRORS:
+        for m in _mirror_prefixes():
             urls.append(m + str(url))
     last = ""
     for u in urls:
@@ -328,10 +346,20 @@ def run_once(manifest=None, zip_path=None, target=ROOT, dry=False, progress=None
         progress = lambda got, total: _set(got=int(got), total=int(total))   # noqa: E731
     if manifest is None:
         _set(state="running", phase="probe", why="", msg="", got=0, total=0)
-        url = uc.manifest_url()
-        man, why = uc.fetch(url, 8.0)
+        # ⚠️ 2026-09-17 修（用户报：「立刻更新第一次一定拉不到更新源，第二次才能成功」）：
+        # 这里过去只试 `manifest_url()` **一个**地址——默认是 `raw.githubusercontent.com`，
+        # 国内常年超时；而"检查更新"那条路早就是**并行多源 + 记住上次能用的源**。
+        # 两条路不一致 ⇒ 第一下必失败、第二下（换个源/重连）才成。现在与检查共用同一份候选表。
+        man, why, used = uc.fetch_any(uc.candidate_urls(), 8.0)
         if man is None:
             return {"ok": False, "rc": 2, "why": why, "phase": "probe"}
+        if used:
+            try:                                     # 记住这个源：下载镜像的顺序也用它（见 _mirror_prefixes）
+                _st = uc._read_state()
+                _st["lastGoodUrl"] = used
+                uc._write_state(_st)
+            except Exception:
+                pass
         manifest = man
     base = (manifest or {}).get("base") or {}
     theirs = str(base.get("version") or "")

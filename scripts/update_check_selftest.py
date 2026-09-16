@@ -210,5 +210,59 @@ _UA = open(os.path.join(ROOT, "agent", "update_apply.py"), encoding="utf-8").rea
 ok("DL_MIRRORS" in _UA and 'if "github.com" in str(url).lower()' in _UA,
    "下载资产也有镜像兜底（DL_MIRRORS，且只对 github.com 套前缀）")
 
+print("\n[U12] 「立即更新」第一下就要走得通（2026-09-17 用户报：「第一次一定拉不到更新源，第二次才能成功」）")
+# 假网络＝**只有备用源（镜像）通**，raw 与自填源一律超时 —— 这正是他那边的网络情况。
+from agent import update_apply as UA                    # noqa: E402
+_UC_SRC = open(os.path.join(ROOT, "agent", "update_check.py"), encoding="utf-8").read()
+ok("def candidate_urls" in _UC_SRC and "candidate_urls" in _UA,
+   "两条路共用同一份候选源（检查与更新不再各写一套）")
+_nowp2 = os.path.join(tmp, "u12state.json")
+try:
+    os.remove(_nowp2)
+except Exception:
+    pass
+_real_state_path = UC._state_path
+UC._state_path = lambda: _nowp2
+try:
+    UC.fetch = _fake_first_dead
+    # ① 复现机制：只试"一个"默认源（raw）——旧写法就是这么干的 ⇒ 必然拉不到
+    _old_way = UC.fetch(UC.manifest_url(), 1.0)[0]
+    # ② 新写法：同一份候选表（并行多源）⇒ 镜像那一路能成
+    _new_man, _new_why, _new_used = UC.fetch_any(UC.candidate_urls(), 1.0)
+    _r12 = UA.run_once(manifest=None, zip_path=os.path.join(tmp, "不存在.zip"), target=ROOT)
+finally:
+    UC.fetch = _real_fetch
+    UC._state_path = _real_state_path
+ok(_old_way is None,
+   "旧写法（只试一个默认源）在同样的假网络下必然失败 —— 这就是那次报障的机制", str(_old_way)[:40])
+ok(_new_man is not None and _new_used == UC.DEFAULT_URLS[1],
+   "新写法拿到清单（走备用源）", str(_new_used)[:60])
+ok(_r12.get("phase") != "probe" and "拉不到更新源" not in str(_r12.get("why")),
+   "「立即更新」不再卡在 probe（走完清单这一步）",
+   "%s / %s" % (_r12.get("phase"), str(_r12.get("why"))[:40]))
+_st12 = json.load(open(_nowp2, encoding="utf-8")) if os.path.exists(_nowp2) else {}
+ok(_st12.get("lastGoodUrl") == UC.DEFAULT_URLS[1],
+   "拿到清单后记住这个源（下载也优先走它）", str(_st12.get("lastGoodUrl")))
+
+_dl_urls = []
+_real_dl = UA._dl_once
+UA._dl_once = lambda u, dest, timeout, progress=None: (_dl_urls.append(u) or (False, "boom"))
+try:
+    UC._write_state({"lastGoodUrl": UC.DEFAULT_URLS[2]})            # 上次清单走的是 ghfast.top
+    UA.download("https://github.com/x/y/releases/download/v1/a.zip", os.path.join(tmp, "a.zip"))
+    _first_with_memo = list(_dl_urls)
+    _dl_urls[:] = []
+    UC._write_state({"lastGoodUrl": UC.DEFAULT_URLS[1]})            # jsDelivr：不是下载镜像 ⇒ 回默认顺序
+    UA.download("https://github.com/x/y/releases/download/v1/a.zip", os.path.join(tmp, "a.zip"))
+    _first_default = list(_dl_urls)
+finally:
+    UA._dl_once = _real_dl
+ok(len(_first_with_memo) >= 2 and _first_with_memo[1].startswith("https://ghfast.top/"),
+   "下载镜像顺序＝**上次清单能用的那个镜像排第一**（第一下就走通的那条）",
+   str(_first_with_memo[1])[:56] if len(_first_with_memo) > 1 else str(_first_with_memo))
+ok(len(_first_default) >= 2 and _first_default[1].startswith(UA.DL_MIRRORS[0]),
+   "上次用的是非镜像源 ⇒ 回默认镜像顺序（不乱改）",
+   str(_first_default[1])[:56] if len(_first_default) > 1 else str(_first_default))
+
 print("\n==== 更新检查判据：%d 通过 / %d 失败 ====" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
