@@ -350,6 +350,15 @@ try:
     FB._post = _mk("ok")
     _r5 = FB._post_webhook("https://mydomain.example/feedback", {"kind": "其他", "text": "x", "ver": "1"}, "")
     ok("任意自定义中转 ⇒ 只要 2xx 就算送到", bool(_r5.get("ok")) and "title" in _sent[0][1], str(list(_sent[0][1].keys())))
+    _sent[:] = []
+    FB._post = _mk('{"errcode":0,"errmsg":"ok"}')
+    FB._post_webhook("https://oapi.dingtalk.com/robot/send?access_token=x",
+                     {"kind": "其他", "text": "x", "ver": "1"}, "SEC")
+    _u2 = _sent[0][0]
+    ok("钉钉给了密钥 ⇒ 自动加签（timestamp & sign 都在地址上）",
+       "timestamp=" in _u2 and "sign=" in _u2, _u2[-60:])
+    ok("消息里固定带「群相反馈」⇒ 安全设置选「自定义关键词」填它即可",
+       "群相反馈" in _sent[0][1]["text"]["content"], _sent[0][1]["text"]["content"][:24])
     FB._cfg = lambda: {"webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=x"}
     _st2 = FB.stats()
     ok("状态里认得出推送通道", bool(_st2["can_send"]) and "推送到你" in _st2["channel"], _st2["channel"])

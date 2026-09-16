@@ -265,6 +265,24 @@ def _post_web3forms(key: str, item: dict, timeout: int = 15) -> dict:
     return {"ok": False, "why": "在线提交返回异常：%s" % _low[:80]}
 
 
+def _dingtalk_sign(url: str, secret: str) -> str:
+    """钉钉「加签」：`timestamp` + `HMAC-SHA256(secret)` 拼回地址（2026-09-16 补）。
+
+    钉钉群机器人的安全设置里若选的是**加签**，请求必须带这两个参数；选**自定义关键词**则不用
+    （我们的标题里固定带「群相反馈」四个字，所以关键词填它即可 —— 更省事，不用给密钥）。
+    """
+    import base64
+    import hashlib
+    import hmac
+    from urllib.parse import quote_plus
+    ts = str(int(time.time() * 1000))
+    s = "%s\n%s" % (ts, secret)
+    sign = quote_plus(base64.b64encode(
+        hmac.new(str(secret).encode("utf-8"), s.encode("utf-8"), hashlib.sha256).digest()))
+    sep = "&" if "?" in str(url) else "?"
+    return "%s%stimestamp=%s&sign=%s" % (url, sep, ts, sign)
+
+
 def _post_webhook(url: str, item: dict, token: str = "", timeout: int = 15) -> dict:
     """按 URL 自动选请求体，把反馈**推到作者自己的设备/群里**。
 
@@ -285,6 +303,8 @@ def _post_webhook(url: str, item: dict, token: str = "", timeout: int = 15) -> d
         body = {"token": str(token).strip(), "title": title, "content": txt, "template": "txt"}
     elif "dingtalk" in u:
         body = {"msgtype": "text", "text": {"content": title + "\n" + txt}}
+        if token:
+            url = _dingtalk_sign(url, token)      # 安全设置选了「加签」时才需要
     elif "feishu" in u or "larksuite" in u:
         body = {"msg_type": "text", "content": {"text": title + "\n" + txt}}
     elif "qyapi.weixin" in u or "wecom" in u:
