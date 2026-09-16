@@ -216,6 +216,34 @@ ok("recover() 把上次留下的借用还回去", _ok_rec is True and len(f.call
 ok("还原目标＝记录里的原 rect", bool(f.calls) and f.calls[0][1:5] == (80, 50, 1420, 800), str(f.calls))
 ok("recover() 之后记录被删", not os.path.exists(_tmp))
 
+# ⛔ 2026-09-17「启动的时候就调，这么大」的判据：陈旧记录一个像素都不许动用户窗口
+with open(_tmp, "w", encoding="utf-8") as _fh:      # 陈旧记录：窗口早被用户改过
+    _json.dump({"hwnd": 777, "rect": [80, 50, 1500, 850],
+                "forced": [80, 50, 1240, 950], "at": 1.0}, _fh)
+f = fresh(rect=(300, 200, 900, 700))                 # 用户自己把窗口改成了别的样子
+_ok_stale = WB.recover("判据-陈旧")
+ok("陈旧记录（cur≠forced）不套回用户窗口：不还原、不落任何一次 SetWindowPos",
+   _ok_stale is False and len(f.calls) == 0 and not os.path.exists(_tmp),
+   "ok=%s calls=%s exists=%s" % (_ok_stale, f.calls, os.path.exists(_tmp)))
+
+with open(_tmp, "w", encoding="utf-8") as _fh:      # 只记了原样、从没钉过
+    _json.dump({"hwnd": 777, "rect": [80, 50, 1500, 850], "at": 1.0}, _fh)
+f = fresh(rect=(80, 50, 1240, 950))
+_ok_nof = WB.recover("判据-无forced")
+ok("记录里没有 forced（我们没钉过）⇒ 也不动用户窗口",
+   _ok_nof is False and len(f.calls) == 0 and not os.path.exists(_tmp),
+   "ok=%s calls=%s" % (_ok_nof, f.calls))
+
+with open(_tmp, "w", encoding="utf-8") as _fh:      # 直接测 restore：forced 为空不许还原
+    _json.dump({"hwnd": 777, "rect": [80, 50, 1500, 850], "at": 1.0}, _fh)
+f = fresh(rect=(80, 50, 1240, 950))
+with WB._lock:
+    WB._state.update({"borrowed": True, "hwnd": 777, "rect": (80, 50, 1500, 850),
+                      "forced": None, "at": 1.0, "last_touch": 1.0})
+_ok_r = WB.restore("判据-restore无forced")
+ok("restore() 在 forced 为空时也不许 SetWindowPos（关掉窗口限位反而打开了这条路）",
+   _ok_r is True and len(f.calls) == 0, "calls=%s" % (f.calls,))
+
 with open(_tmp, "w", encoding="utf-8") as _fh:      # 再放一份陈旧记录
     _json.dump({"hwnd": 777, "rect": [80, 50, 1500, 850],
                 "forced": [80, 50, 1240, 950], "at": 1.0}, _fh)
