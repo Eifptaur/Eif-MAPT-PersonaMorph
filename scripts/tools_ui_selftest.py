@@ -44,9 +44,12 @@ HTML = CH.HTML
 print("── A. 分区与导航 ──")
 ok("导航有 #sec-tools 链接", 'href="#sec-tools"' in HTML and "工具与插件" in HTML)
 ok("有 sec-tools 分区且带 data-sec", 'id="sec-tools" class="card" data-sec' in HTML)
-_i, _j = HTML.find('id="sec-tools"'), HTML.find('id="sec-wechat"')
+_i = HTML.find('id="sec-tools"')
+# ⚠️ 2026-09-16 改口径：不再拿 `sec-wechat` 当"下一个分区"的哨兵（分区顺序已按左导航重排），
+#    改成切到**本分区自己的** </section> 为止 —— 判据与顺序解耦。
+_j = HTML.find("</section>", _i)
 _seg = HTML[_i:_j] if (_i > 0 and _j > _i) else ""
-ok("分区在 sec-wechat 之前且已闭合", bool(_seg) and "</section>" in _seg)
+ok("分区 sec-tools 存在且已闭合", bool(_seg))
 
 print("── B. 设置项 ──")
 for key in ("user_tools.enabled", "user_tools.dir", "user_tools.max_tools",
