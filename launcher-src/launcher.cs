@@ -1037,6 +1037,10 @@ namespace WxLauncher
                         try
                         {
                             string msg = e2.TryGetWebMessageAsString();
+                            // 页面请求关窗（用户点「确认停止」之后）——2026-09-16 加：
+                            // 用户实测「其他都行了，只有点停止关窗不行」⇒ 单靠页面 `window.close()`
+                            // 在这台机器上没触发宿主关窗，而这条 postMessage 通道已被 ESC 验证可用。
+                            if (msg == "pm-close-window") { try { Close(); } catch { } return; }
                             if (msg == "pm-esc-exit-fullscreen" && WindowState == FormWindowState.Maximized)
                             {
                                 WindowState = FormWindowState.Normal;
