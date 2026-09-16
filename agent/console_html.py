@@ -522,6 +522,13 @@ th{color:var(--tx2);font-weight:500}
   <button id="updLater" class="ghost">稍后</button>
   <button id="updSkip" class="ghost">不再提醒这个版本</button>
 </div>
+<!-- 常驻公告（2026-09-17 用户：「可以挂个常驻公告，说明有问题就点击导航栏的『反馈』，把问题进行反馈，最好是附上报告或者截图」）
+     ⇒ 不做弹窗、不自动消失：它就一直在那儿；点「去反馈」直接切到反馈栏。 -->
+<div id="noticeBar" class="updbar notice">
+  <span id="noticeText">遇到问题就点左边导航的「反馈」提交一下——能附上截图或「检验报告」的话，我定位得快得多。</span>
+  <span class="sp"></span>
+  <button id="noticeGo" class="ghost">去反馈</button>
+</div>
 <style>
 .updbar{display:flex;align-items:center;gap:10px;margin:0 18px 10px;padding:9px 14px;border-radius:10px;
   background:var(--card,#1b1e24);border:1px solid var(--bd,var(--line,#2a2f37));color:var(--tx,#e6e8ec);font-size:13px}
@@ -531,6 +538,9 @@ th{color:var(--tx2);font-weight:500}
    正文可换行、按钮不缩不长。 */
 .updbar #updText{flex:1 1 auto;min-width:0;line-height:1.5}
 .updbar button{flex:none;white-space:nowrap}
+/* 常驻公告：只用虚线描边跟更新条区分，不上色、不抢眼（它天天都在） */
+.updbar.notice{border-style:dashed}
+.updbar.notice #noticeText{flex:1 1 auto;min-width:0;line-height:1.5}
 </style>
 <script>
 (function () {
@@ -609,6 +619,13 @@ th{color:var(--tx2);font-weight:500}
         }
       }
     })();
+  };
+  // 常驻公告的「去反馈」：直接点导航那一项（复用既有的切面板逻辑，别自己另写一套）
+  var _ng = document.getElementById('noticeGo');
+  if (_ng) _ng.onclick = function () {
+    var a = document.querySelector('#nav a[href="#sec-feedback"]');
+    if (a) { a.click(); } else { location.hash = '#sec-feedback'; }
+    try { window.scrollTo(0, 0); } catch (e) { }
   };
 })();
 </script>

@@ -360,6 +360,7 @@ finally:
     FB._cfg, FB._post = _saved_cfg, _saved_post
 
 print("\n── I. 附件与联系邮箱（2026-09-17 用户：「我们的反馈提交能不能提交图片和文件」·「可以让用户选填一个联系邮箱」）──")
+
 import base64 as _b64                       # noqa: E402
 import shutil as _shutil                    # noqa: E402
 
@@ -522,6 +523,18 @@ finally:
         except Exception:
             pass
     _shutil.rmtree(_mdir, ignore_errors=True)
+
+print("\n── J. 常驻公告：有问题就去反馈（2026-09-17 用户：「可以挂个常驻公告，说明有问题就点击导航栏的『反馈』，把问题进行反馈，最好是附上报告或者截图」）──")
+_ji = _ui2.find('id="noticeBar"')
+ok("界面上有常驻公告条 #noticeBar", _ji > 0, "")
+_jseg = _ui2[_ji:_ji + 520] if _ji > 0 else ""
+ok("公告是**常驻**的（不带 display:none，跟「只在有事时出现」的更新条区分开）",
+   bool(_jseg) and "display:none" not in _jseg, _jseg[:56].replace("\n", " "))
+ok("公告点名要附截图或检验报告（用户原话里的两个词都在）",
+   "截图" in _jseg and "检验报告" in _jseg, _jseg[:56].replace("\n", " "))
+ok("公告里就有一个「去反馈」按钮（不用用户自己找入口）", "去反馈" in _jseg, "")
+ok("「去反馈」复用导航那一项切面板（不另写一套切面板逻辑）",
+   "querySelector('#nav a[href=\"#sec-feedback\"]')" in _ui2, "")
 
 print("")
 print("反馈栏判据：%d 通过 / %d 失败" % (PASS, FAIL))
