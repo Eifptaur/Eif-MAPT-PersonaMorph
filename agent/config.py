@@ -173,7 +173,7 @@ DEFAULT_CONFIG = {
     #   skip_version＝"不再提醒这个版本"。口径：拉不到就静默跳过、清单坏了如实说、
     #   **公告只在本机 UI 出现，绝不往微信侧发**（与风险闸门同一口径）。
     "update": {
-        "url": "",               # 例如 https://raw.githubusercontent.com/<账号>/<仓库>/main/persona-morph-manifest.json
+        "url": "https://raw.githubusercontent.com/Eifptaur/Eif-MAPT-PersonaMorph/main/persona-morph-manifest.json",  # 默认指向本项目的线上清单（留空＝关闭更新检查）
         "muted": False,          # 不再提醒（总开关）
         "skip_version": "",      # 不再提醒这个版本
     },

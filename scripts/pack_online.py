@@ -33,6 +33,7 @@ EXCLUDE = (
     "docs/",              # 开发资料：任务清单 / changelog 归档
     "whale-widget/",      # 另一个项目（鲸鱼挂件）的素材，与本包无关
     "scripts/pack_online.py",   # 打包器自身：里面有扫描规则字面量（含用户名样本），不进包
+    "persona-morph-manifest.json",  # 更新清单：它给的是"包内文件的哈希"，自己进包会**哈希自指**死循环
     "offline/",           # 离线运行时与 wheel（在线包不需要）
     "_scratch/", "报告/", "wechatauto_logs/", "data/", "runtime/", "logs/",
 )

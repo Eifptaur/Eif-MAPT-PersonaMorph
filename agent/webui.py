@@ -638,6 +638,21 @@ class WebUI:
                                 st["bg"] = _bg.status()
                             except Exception as _be:
                                 st["bg"] = {"paths": [], "error": str(_be)}
+                            # 「我自己是谁」（2026-09-16，用户反馈「无法识别大号用户 / 无法识别我的账号」）：
+                            # `wechat.py` 只从驱动库的 `get_self_info()` 拿自己的账号，**拿不到时那一串
+                            # "这条是不是我发的"判断会静默失效**（会回自己/@ 自己不理）。这里如实暴露：
+                            # `ok=False` ⇒ 控制台**写"没认出来"**，不许装没事。
+                            try:
+                                _wx = None
+                                for _n in ("wechat", "adapter", "wx", "wxadapter", "bot", "worker"):
+                                    _o = getattr(parent, _n, None)
+                                    if _o is not None and hasattr(_o, "self_identity"):
+                                        _wx = _o
+                                        break
+                                st["self"] = (_wx.self_identity() if _wx is not None
+                                              else {"ok": False, "why": "还拿不到微信实例（机器人未启动？）"})
+                            except Exception as _se:
+                                st["self"] = {"ok": False, "why": str(_se)}
                             # 图标指纹表（⑦ 点击正确性）：按 微信版本×尺寸×DPI 存了几条、什么时候取的
                             try:
                                 from . import ui_fingerprint as _ufp
