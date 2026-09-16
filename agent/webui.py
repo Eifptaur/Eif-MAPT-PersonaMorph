@@ -1699,8 +1699,20 @@ class WebUI:
                     # 用户反馈提交（POST {kind,text,contact}）：落盘 → 立刻试投递 → 三态如实回报
                     try:
                         from . import feedback as FB
+                        # 环境一律**服务端现取**（不信前端传上来的那点东西）：用户报「用不了」时，
+                        # "微信到底连上没有、卡在哪一步"是最关键的定位信息 ⇒ 每条反馈都带上。
+                        _att = {}
+                        try:
+                            _att = (self.status_provider() or {}).get("wechat_attach") or {}
+                        except Exception:
+                            _att = {}
                         env = {"wechat": str((data.get("env") or {}).get("wechat") or "")[:60],
-                               "ui": str((data.get("env") or {}).get("ui") or "")[:40]}
+                               "ui": str((data.get("env") or {}).get("ui") or "")[:40],
+                               "attach": {"short": str(_att.get("short") or ""),
+                                          "step": str(_att.get("step") or ""),
+                                          "tries": int(_att.get("tries") or 0),
+                                          "detail": str(_att.get("reason") or "")[:400],
+                                          "steps": list(_att.get("steps") or [])}}
                         self._json(FB.submit(str(data.get("kind") or "其他"),
                                              str(data.get("text") or ""),
                                              str(data.get("contact") or ""), env))
