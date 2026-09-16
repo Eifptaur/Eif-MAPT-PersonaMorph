@@ -230,7 +230,7 @@ ck("B23e bg_status（单一事实源）的说明与新默认一致",
        os.path.join(ROOT, "agent", "bg_status.py"), encoding="utf-8").read())
 # B17d~B17g 破 `no_ref` 死锁（2026-09-16 对面 r23 现场：参照只在"发送成功之后"才学，而 `no_ref`
 #   直接拒发 ⇒ 永远拒、永远学不到；A 枪走"宽松成功"分支同样不学 ⇒ 全日志没有一次学会参照的记录）
-_ST = SRC_WECHAT.split("def send_text_posted(")[1][:9000]
+_ST = SRC_WECHAT.split("def send_text_posted(")[1][:16000]
 ck("B17d 指纹档给不出结论时改用四档证据兜底（否则 no_ref 死锁）",
    "self.chat_is_open(chat_id, gui=gui)" in _ST)
 ck("B17e 四档放行后顺手补参照（破死锁的钥匙）",
@@ -244,6 +244,25 @@ ck("B17g 两条投递链的收尾（含早退路径）都放回收起状态",
 #   ⇒ 打字前必须先投递点一次输入栏把焦点给它（旧版从不点输入框，靠"正常态默认有焦点"）
 ck("B17h 打字前先投递聚焦输入栏（最小化还原后 WM_CHAR 会被丢）",
    "backend.click(main, focus_pt)" in _ST and "投递聚焦输入栏失败" in _ST)
+# B24（2026-09-16 用户转述的用户反馈「不会发消息了：**写在文本框，但是不发送**」）：
+#   老实现**只点一枪「发送」按钮**、然后干等 DB —— 那一枪没生效就没人补第二枪，字留在输入框里。
+#   口径照抄上游 `wechatauto/guia.py::click_send()`：**回车优先 + 最多 3 枪**（上游原话
+#   「输入框刚粘贴完必已聚焦，回车最可靠」，点按钮只是回退）。
+ck("B24 发送是**多枪重试**（最多 3 枪，不是点一枪就等）",
+   "for _i in range(1, 4)" in _ST and "_fired" in _ST and "_one_shot(" in _ST)
+ck("B24a **回车优先**：投递回车那一枪必须排在点「发送」按钮之前",
+   _ST.find("backend.keys(main, [ib.VK_RETURN])") >= 0
+   and _ST.find("backend.keys(main, [ib.VK_RETURN])") < _ST.find("backend.click(main, send_pt)"))
+ck("B24b 成功判据**仍然只认 DB 回读**（不因为「点过了」就算成功）",
+   "str(rows[0].get(\"local_id\")) != base_sig" in _ST and "_new_row()" in _ST
+   and "DB 回读 local_id=" in _ST)
+ck("B24c 每一枪之后都还前台（伪激活会让微信短暂置前）",
+   _ST.count('_restore_fg_until("投递发送后"') >= 1
+   and _ST.find('_restore_fg_until("投递发送后"') > _ST.find("for _i in range(1, 4)"))
+ck("B24d 失败时如实说清「文字可能还留在输入框里」（别只说「未生效」）",
+   "文字可能还留在输入框里" in _ST)
+ck("B24e 三枪都没打出去 ⇒ 如实报「三枪都没打出去」，不冒充「已投递」",
+   "三枪都没打出去" in _ST and "if not _fired:" in _ST)
 # B20~B21 档位强弱（2026-09-16 r25 对面实测：会话头指纹档**会假阳性**——当前明明开着「E」时
 #   `chat_is_open("filehelper")` 也返回 True；而 r24 我刚把这个函数接进身份闸的兜底 ⇒ 等于给"发错
 #   会话"开了一道缝。⇒ 指纹档降级为弱档、默认不采信；标题带档提为首选（对面实测它有区分力：
