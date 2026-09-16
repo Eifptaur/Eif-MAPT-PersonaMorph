@@ -60,11 +60,15 @@ ok("分区在「发送限制」之前且已闭合", "</section>" in _seg)
 ok("表单四件齐全（类型/内容/联系方式/提交）",
    all(k in _seg for k in ('id="fbKind"', 'id="fbText"', 'id="fbContact"', 'id="fbSubmit"')))
 
-print("── B. 配置项全部映射到界面（用户：所有功能都要能映射）──")
+print("── B. 通道配置**不进用户界面**（2026-09-17 口径：那些是运维侧的事，只留在 config.json）──")
 for key in ("feedback.to", "feedback.upload_url", "feedback.smtp.user",
-            "feedback.smtp.password", "feedback.smtp.host", "feedback.smtp.port"):
-    ok("界面有 %s" % key, ('data-cfg="%s"' % key) in _seg)
-ok("有保存按钮", "保存设置（反馈）" in _seg)
+            "feedback.smtp.password", "feedback.smtp.host", "feedback.smtp.port",
+            "feedback.webhook_url", "feedback.webhook_token"):
+    ok("界面里没有 %s（不把配置摆给用户）" % key, ('data-cfg="%s"' % key) not in _seg)
+ok("也没有「保存设置（反馈）」这种把配置摆给用户的按钮", "保存设置（反馈）" not in _seg)
+ok("这些键在 config.json 里仍然存在（运维/作者可配）",
+   all(('"%s"' % k) in src("agent/config.py")
+       for k in ("upload_url", "webhook_url", "webhook_token")), "")
 
 print("── C. 三态如实：没通道就必须说「没发出去」──")
 _saved = FB.FEEDBACK_FILE
@@ -264,56 +268,46 @@ try:
 finally:
     WU.get_config = _real_get_cfg
 
-print("\n── G. 在线提交通道（2026-09-16 用户：「应该只有一个小小的窗…点发送就行了呀，用户为什么还要在意那么多」）──")
+print("\n── G. 反馈栏只给用户看该看的（2026-09-17 用户：「你把 GitHub 当成我了，还是把用户当成我了」）──")
 _ui = src("agent/console_html.py")
-ok("反馈面板把通道细节收进折叠区（简单区只剩 类型/内容/提交）",
-   'id="fbAdv"' in _ui and 'id="fbAdvBtn"' in _ui and 'id="fbContact"' in _ui, "")
+ok("简单区只有 类型 / 内容 / 提交",
+   'id="fbKind"' in _ui and 'id="fbText"' in _ui and 'id="fbSubmit"' in _ui, "")
 _i_adv = _ui.find('id="fbAdv"')
-ok("联系方式与全部通道配置都在折叠区**之后**（不再占用户视野）",
-   _ui.find('id="fbContact"') > _i_adv and _ui.find('data-cfg="feedback.smtp.password"') > _i_adv, "")
-ok("顶部提示默认隐藏（只在没通道/有积压时出现）",
+ok("联系方式与提交记录在「更多」折叠区之后",
+   _ui.find('id="fbContact"') > _i_adv and _ui.find('id="fbRecent"') > _i_adv, "")
+ok("顶部提示默认隐藏（只在发不出去 / 有积压时出现）",
    'id="fbWarn"' in _ui and 'id="fbWarn" style="display:none' in _ui, "")
-ok("在线提交密钥默认留空（包里不带 key、不带邮箱 ⇒ PII 闸门）",
-   '"web3forms_key": ""' in src("agent/config.py"), "")
+ok("**用户界面里没有任何通道配置**（那些是作者侧的事，只留在 config.json）",
+   'data-cfg="feedback.' not in _ui, "")
+for _k in ("在线提交密钥", "推送地址", "推送口令", "发信服务器", "邮箱授权码", "中转网址", "Web3Forms"):
+    ok("界面文案里不该出现作者侧词汇「%s」" % _k, _k not in _ui, "")
+_cfg_src = src("agent/config.py")
+ok("通道键仍在配置里（作者可配）：webhook_url / webhook_token",
+   '"webhook_url"' in _cfg_src and '"webhook_token"' in _cfg_src, "")
+ok("Web3Forms 那条已整条删掉（配置、实现、界面文案都不再有）",
+   "web3forms" not in _cfg_src.lower() and "web3forms" not in src("agent/feedback.py").lower()
+   and "web3forms" not in _ui.lower(), "")
 
 _saved_cfg, _saved_post = FB._cfg, FB._post
 try:
     _calls = []
-
-    def _fakepost(url, payload, timeout=10):
-        _calls.append((url, payload))
-        return {"ok": True, "status": 200, "why": '{"success":true}'}
-
-    FB._post = _fakepost
-    FB._cfg = lambda: {"web3forms_key": "PUBKEY", "to": "", "smtp": {}}
-    _r = FB.deliver({"kind": "问题", "text": "测试内容", "at_h": "2026-09-16 23:50",
-                     "ver": "1", "contact": "me@x.com", "env": {}})
-    _u, _p = _calls[0]
-    ok("走的是在线提交端点", _u == "https://api.web3forms.com/submit", _u)
-    ok("请求体形状正确（access_key/subject/from_name/message）",
-       {"access_key", "subject", "from_name", "message"} <= set(_p.keys())
-       and _p["access_key"] == "PUBKEY", str(sorted(_p.keys())))
-    ok("正文带用户原话、联系方式进 replyto",
-       "测试内容" in _p["message"] and _p.get("replyto") == "me@x.com", "")
-    ok("对方回 success ⇒ 判 sent（via=web3forms）",
-       bool(_r.get("ok")) and _r.get("via") == "web3forms", str(_r.get("via")))
-    _calls[:] = []
 
     def _fakepost2(url, payload, timeout=10):
         _calls.append(url)
         return {"ok": False, "status": 0, "why": "boom"}
 
     FB._post = _fakepost2
-    FB._cfg = lambda: {"upload_url": "https://mine/x", "web3forms_key": "PUBKEY", "to": "", "smtp": {}}
+    FB._cfg = lambda: {"upload_url": "https://mine/x",
+                       "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=x"}
     FB.deliver({"kind": "其他", "text": "t", "ver": "1"})
-    ok("顺序：自建中转优先，失败再走在线提交",
-       _calls[:2] == ["https://mine/x", "https://api.web3forms.com/submit"], str(_calls[:3]))
-    FB._cfg = lambda: {"web3forms_key": "PUBKEY"}
+    ok("顺序：自建中转优先，失败再走「推送到你」",
+       _calls[:2] == ["https://mine/x", "https://oapi.dingtalk.com/robot/send?access_token=x"],
+       str(_calls[:3]))
+    FB._cfg = lambda: {"webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=x"}
     _st = FB.stats()
-    ok("状态里认得出这条通道、can_send=True", bool(_st["can_send"]) and "在线提交" in _st["channel"],
-       _st["channel"])
-
-    # ── H. 国内可达的"推送到你自己"（用户回：web3forms.com 进不去咋办）──
+    ok("状态里认得出推送通道、can_send=True",
+       bool(_st["can_send"]) and "推送到你" in _st["channel"], _st["channel"])
+    # ── H. 国内可达的"推送到你自己"（钉钉/飞书/企业微信 群机器人、PushPlus）──
     print("\n── H. 推送通道：钉钉/飞书/企业微信/PushPlus 按域名自动适配 ──")
     _sent = []
 

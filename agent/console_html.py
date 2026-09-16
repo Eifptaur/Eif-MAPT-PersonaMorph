@@ -1734,29 +1734,10 @@ th{color:var(--tx2);font-weight:500}
       <div class="row"><label>内容</label><div class="grow"><textarea id="fbText" rows="5" spellcheck="false" placeholder="尽量写清：你做了什么、看到什么、希望它变成什么样。"></textarea></div></div>
       <div class="btns"><button id="fbSubmit" class="pri">提交</button><span class="hint" id="fbRst"></span></div>
 
-      <div style="margin-top:12px"><button id="fbAdvBtn" class="ghost">更多（联系方式 / 发送通道 / 提交记录）</button></div>
+      <div style="margin-top:12px"><button id="fbAdvBtn" class="ghost">更多（联系方式 / 提交记录）</button></div>
       <div id="fbAdv" style="display:none">
         <div class="row"><label>联系方式</label><div class="grow"><input type="text" id="fbContact" placeholder="选填：想让我回你时留个联系方式"></div></div>
-        <div class="row"><label>发送通道</label><div class="grow"><span id="fbState" class="hint">读取中…</span>
-          <div class="btns" style="margin-top:6px">
-            <button id="fbFlush" class="ghost">补发排队中的反馈</button>
-            <button id="fbReload" class="ghost">刷新</button>
-          </div>
-          <div class="hint" id="fbRecent"></div>
-        </div></div>
-        <hr style="border:none;border-top:1px solid var(--bd);margin:14px 0">
-        <div class="desc">发到哪里（一般不用改；留空＝只存在本机，不上传也不发邮件）：</div>
-        <input type="hidden" data-cfg="feedback.to">
-        <div class="row"><label>中转网址</label><div class="grow"><input type="text" data-cfg="feedback.upload_url" placeholder="https://你的接收端/feedback"><div class="hint">填了它就先走网址（POST 配置格式），成功就不再发邮件。</div></div></div>
-        <div class="row"><label>在线提交密钥</label><div class="grow"><input type="text" data-cfg="feedback.web3forms_key" placeholder="Web3Forms 的 access key"><div class="hint">填了它就走在线提交（不用邮箱、不用授权码）；这个 key 是公开给客户端用的，可随时撤销。</div></div></div>
-        <div class="row"><label>推送地址</label><div class="grow"><input type="text" data-cfg="feedback.webhook_url" placeholder="钉钉/飞书/企业微信 群机器人 或 PushPlus 的地址"><div class="hint">国内可达：填了它，用户的反馈会**直接推到你的手机/群里**（钉钉·飞书·企业微信群机器人、PushPlus 都认，按域名自动适配）。</div></div></div>
-        <div class="row"><label>推送口令</label><div class="grow"><input type="password" data-cfg="feedback.webhook_token" placeholder="只有 PushPlus 需要"><div class="hint">PushPlus 的推送口令（钉钉/飞书/企业微信不用填）。</div></div></div>
-        <div class="row"><label>发件邮箱</label><div class="grow"><input type="text" data-cfg="feedback.smtp.user" placeholder="xxx@qq.com"><div class="hint">用哪个邮箱把反馈发出去。</div></div></div>
-        <div class="row"><label>邮箱授权码</label><div class="grow"><input type="password" data-cfg="feedback.smtp.password" placeholder="QQ 邮箱的授权码，不是登录密码"><div class="hint">保存过即以掩码显示，要改就重新填。QQ 邮箱：设置 → 账号 → 开启 SMTP 服务，会给你一串授权码。</div></div></div>
-        <div class="row"><label>发信服务器</label><div class="grow"><input type="text" data-cfg="feedback.smtp.host" placeholder="smtp.qq.com">
-          <input type="number" data-cfg="feedback.smtp.port" placeholder="465" style="max-width:110px;margin-top:6px"><div class="hint">QQ 邮箱用 smtp.qq.com + 465；163 用 smtp.163.com。</div></div></div>
-        <div class="btns"><button class="pri" data-save>保存设置（反馈）</button></div>
-        <div class="row" style="margin-top:10px"><label>显示这一栏</label><input type="checkbox" data-cfg="feedback.enabled" checked><span class="hint">取消勾选＝隐藏左导航的「反馈」栏（保存后刷新页面生效）。</span></div>
+        <div class="row"><label>提交记录</label><div class="grow"><span id="fbRecent" class="hint">读取中…</span></div></div>
       </div>
     </section>
     <section id="sec-send" class="card" data-sec>
@@ -5824,10 +5805,10 @@ $('memSearch').addEventListener('keydown', (e)=>{
   try{ window.__foldAll(); }catch(e){}
   /* ── 反馈栏（2026-09-14 用户：左导航单开一栏、控制台里填完自动提交、程序整理后发邮件）── */
   async function fbLoad(){
-    const st = document.getElementById('fbState'); if(!st) return;
+    const _warn = document.getElementById('fbWarn');
     try{
       const r = await getJSON('/api/feedback');
-      if(!r || r.ok === false){ st.textContent = '读不到反馈状态：' + ((r&&r.error)||''); return; }
+      if(!r || r.ok === false){ if(_warn){ _warn.style.display='block'; _warn.textContent = '读不到反馈状态：' + ((r&&r.error)||''); } return; }
       // 关掉这一栏（feedback.enabled=false）：连导航入口一起藏起来（省得点进来是空的）
       if(r.enabled === false){
         const _nv = document.querySelector('#nav a[href="#sec-feedback"]');
@@ -5836,16 +5817,13 @@ $('memSearch').addEventListener('keydown', (e)=>{
         if(_sc) _sc.style.display = 'none';
         return;
       }
-      st.textContent = '通道：' + (r.can_send ? r.channel : '未配置（提交后会存在本机，配好通道可一键补发）')
-        + ' · 待发 ' + r.pending + ' 条 · 已发 ' + r.sent + ' 条';
-      // 2026-09-16 用户口径：「应该只有一个小小的窗，填什么类型、具体内容，然后点发送就行了呀，
-      //   用户为什么还要在意那么多」⇒ 通道细节收进「更多」折叠区，**只有真需要用户知道时才在顶部提示**
-      const _warn = document.getElementById('fbWarn');
+      // 反馈栏只留"类型 / 内容 / 提交"，其余收进「更多」；
+      // 只有确实发不出去或有积压时，顶部才提示一行。
       if(_warn){
-        const _need = (!r.can_send) || (r.pending > 0);
-        _warn.style.display = _need ? 'block' : 'none';
-        _warn.textContent = _need
-          ? ((r.can_send ? '' : '还没有可用的发送通道（这条提交只会存在本机）')
+        const _bad = (!r.can_send) || (r.pending > 0);
+        _warn.style.display = _bad ? 'block' : 'none';
+        _warn.textContent = _bad
+          ? ((r.can_send ? '' : '这条只会存在本机，暂时发不出去。')
              + (r.pending > 0 ? ((r.can_send ? '' : '；') + '有 ' + r.pending + ' 条还没发出去') : ''))
           : '';
       }
@@ -5855,7 +5833,7 @@ $('memSearch').addEventListener('keydown', (e)=>{
           ? ('最近提交：' + r.recent.map(x => x.at_h + ' ' + x.kind + (x.sent_h ? '（已发）' : '（待发）')).join(' ｜ '))
           : '还没有提交过反馈。';
       }
-    }catch(e){ st.textContent = '读不到反馈状态：' + e.message; }
+    }catch(e){ if(_warn){ _warn.style.display='block'; _warn.textContent = '读不到反馈状态：' + e.message; } }
   }
   (function(){
     // 「更多」折叠（2026-09-16：用户只该看到 类型 + 内容 + 提交，其余收起来）
@@ -5863,7 +5841,7 @@ $('memSearch').addEventListener('keydown', (e)=>{
     if(ab && adv) ab.onclick = function(){
       const sh = adv.style.display === 'none';
       adv.style.display = sh ? 'block' : 'none';
-      ab.textContent = sh ? '收起' : '更多（联系方式 / 发送通道 / 提交记录）';
+      ab.textContent = sh ? '收起' : '更多（联系方式 / 提交记录）';
     };
     const btn = document.getElementById('fbSubmit'); if(!btn) return;
     btn.onclick = async function(){
