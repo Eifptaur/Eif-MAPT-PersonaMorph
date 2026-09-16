@@ -1318,6 +1318,23 @@ namespace WxLauncher
                 string s3 = Js(wv, "(function(){try{var st=document.getElementById('whaleCursorStyle');return (st?st.textContent:'')}catch(e){return 'err'}})()");
                 sb.AppendLine("style_after_400ms=" + Brief(s3));
                 sb.AppendLine("nod_reverted=" + (s3.IndexOf("cursor-nod.png") < 0 && s3.IndexOf("cursor.png") >= 0));
+                // 中键（滚轮键）特效：鲸鱼原地转一圈 360°（12 帧 canvas 预转的 dataURL 光标）
+                // 先等帧备好（帧是 img.onload 里异步造的：图没 load 完就按会退回"点头"，判据会假红）
+                sw.Restart();
+                while (sw.ElapsedMilliseconds < 6000)
+                {
+                    string rdy = Js(wv, "(function(){try{return String(WHALE_CURSOR.framesReady())}catch(e){return 'err'}})()");
+                    if (rdy.IndexOf("true") >= 0) break;
+                    Application.DoEvents(); System.Threading.Thread.Sleep(100);
+                }
+                sb.AppendLine("spin_frames_ready=" + (Js(wv, "(function(){try{return String(WHALE_CURSOR.framesReady())}catch(e){return 'err'}})()").IndexOf("true") >= 0));
+                string s4 = Js(wv, "(function(){try{document.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,button:1}));var st=document.getElementById('whaleCursorStyle');return (st?st.textContent:'')}catch(e){return 'err'}})()");
+                sb.AppendLine("style_after_middle=" + Brief(s4));
+                sb.AppendLine("spin_applied=" + (s4.IndexOf("data:image/png") >= 0));
+                System.Threading.Thread.Sleep(900);          // 12 × 44ms ≈ 530ms ⇒ 900ms 后必须回到默认帧
+                string s5 = Js(wv, "(function(){try{var st=document.getElementById('whaleCursorStyle');return (st?st.textContent:'')}catch(e){return 'err'}})()");
+                sb.AppendLine("style_after_spin=" + Brief(s5));
+                sb.AppendLine("spin_reverted=" + (s5.IndexOf("data:image/png") < 0 && s5.IndexOf("cursor.png") >= 0));
                 IntPtr fg1 = ConsoleForm.GetForegroundWindow();
                 sb.AppendLine("fg_before=" + fg0.ToInt64());
                 sb.AppendLine("fg_after=" + fg1.ToInt64());
