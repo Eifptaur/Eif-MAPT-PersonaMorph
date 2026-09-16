@@ -1,11 +1,11 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.16.8",
-    "sha256": "a3fde08bd2b557e492a93debe36725ef2e3d4f8082a48bb9d23bb6603ed6b5d7",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.9/persona-morph-v2.1.9.zip",
-    "size": 8039604,
-    "files": 239
+    "version": "2026.9.16.9",
+    "sha256": "e12774471e9165787cf22e1e35194d0a43b26fb853873db3908c45908c023f18",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.10/persona-morph-v2.1.10.zip",
+    "size": 8073239,
+    "files": 241
   },
   "dlc": [
     {
@@ -32,14 +32,14 @@
     }
   ],
   "announce": {
-    "version": "2026.9.16.8",
+    "version": "2026.9.16.9",
     "notes": [
-      "修「微信连接不上」：接入失败原来没有任何重试，启动那一刻微信没开就会永远停在「微信未连接」",
-      "连不上时现在说得出卡在哪一步：控制台侧栏显示短原因，悬停展开逐步诊断，反馈自动带上这段"
+      "控制台「立即更新」从此真的能更新：下载整包 → 文件树哈希校验 → 换入 → 自动重启",
+      "只换程序本体：data/、config.json、日志与聊天记录一概不碰；校验不过一个文件都不动，中途出错自动回滚"
     ],
     "forceBase": false,
-    "minBase": "2026.9.16.8"
+    "minBase": "2026.9.16.9"
   },
-  "builtAt": "2026-09-16T11:12:47Z",
-  "updatedAt": 1789557167853
+  "builtAt": "2026-09-16T11:26:49Z",
+  "updatedAt": 1789558009816
 }
