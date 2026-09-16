@@ -101,6 +101,19 @@ ck("生成了 .1 备份", os.path.exists(rot + ".1"))
 ck("备份数不超过 backupCount", not os.path.exists(rot + ".3"))
 h.close()
 
+print("⑥ 主运行日志改名（2026-09-16：bot_crash.log → runtime.log，名字误导排查）")
+_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_wd = open(os.path.join(_root, "scripts", "watchdog.py"), encoding="utf-8").read()
+_lim = open(os.path.join(_root, "agent", "log_housekeeping.py"), encoding="utf-8").read()
+_os_ = open(os.path.join(_root, "scripts", "onestart.py"), encoding="utf-8").read()
+ck("watchdog 的主日志指向 data/runtime.log",
+   'os.path.join(DATA, "runtime.log")' in _wd)
+ck("watchdog 有一次性改名（老内容不丢）",
+   "_migrate_crash_log_name" in _wd and "os.replace(_OLD_CRASH_LOG, CRASH_LOG)" in _wd)
+ck("日志治理的新名在册", '("data/runtime.log"' in _lim)
+ck("旧名仍在册（清用户机器上的残留）", '("data/bot_crash.log"' in _lim)
+ck("启动提示不再把人指向旧名", "runtime.log" in _os_ and "bot_crash.log" not in _os_)
+
 shutil.rmtree(tmp, ignore_errors=True)
 print("\n== 结论：%d 通过 / %d 失败 ==" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

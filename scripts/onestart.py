@@ -533,7 +533,7 @@ def main():
                 _nxt_hint += 15
             time.sleep(2)
         if not opened:
-            log("120 秒内控制台仍未就绪 —— 请查看 logs\\persona_morph.log / data\\bot_crash.log")
+            log("120 秒内控制台仍未就绪 —— 请查看 主运行日志 data\\runtime.log（启动与收尾在 logs\\persona_morph.log）")
             try:
                 _open_console("", _bpath)
             except Exception:
