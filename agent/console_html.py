@@ -2307,11 +2307,57 @@ const WHALE_CURSOR = (function(){
       const b = new Image(); b.src = nodUrl + ver;
     }catch(e){}
   }
-  function apply(){ setStyle(url + ver); injectFrames(); }
+  function apply(){ setStyle(url + ver); injectFrames(); if(!spinTimer) buildFrames(); }
   function applyNod(){ setStyle(nodUrl + ver); }
-  // 点击时点头：mousedown 换成歪头帧，180ms 后换回
-  document.addEventListener('mousedown', ()=>{
+  /* ── 中键特效：把**当前光标图**在 canvas 里预转成 12 帧（每帧 30°），按中键时逐帧播一遍 ──
+     2026-09-17 用户点单：「给按鼠标中键出来的滚轮键加个特效，就是那只鱼 360° 旋转」。
+     · 帧走 **dataURL** 当 cursor（同源图在 canvas 里转，不新增任何素材文件）；
+     · **绝不拼 `?v=Date.now()`** —— 上面 setStyle 的注释就是这条血泪（每次换 URL 浏览器要重下载，
+       下载完之前 cursor 回退成系统箭头 ⇒ 每点一下闪一次白箭头），判据 console_chrome_selftest 钉着它；
+     · 默认鲸鱼图与用户自定义图都适用：帧在 apply() 里按当前 url 重建（换图即重建）。 ── */
+  const SPIN_FRAMES = 12, SPIN_MS = 44;              // 12 × 44ms ≈ 530ms 转完一圈
+  let frames = [], spinTimer = null;
+  function buildFrames(){
+    try{
+      const img = new Image();
+      img.onload = function(){
+        try{
+          const w = img.width, h = img.height;
+          const c = document.createElement('canvas'); c.width = w; c.height = h;
+          const g = c.getContext('2d'), out = [];
+          for(let i = 0; i < SPIN_FRAMES; i++){
+            g.clearRect(0, 0, w, h);
+            g.save(); g.translate(w/2, h/2); g.rotate(i * 2 * Math.PI / SPIN_FRAMES);
+            g.drawImage(img, -w/2, -h/2); g.restore();
+            out.push(c.toDataURL('image/png'));
+          }
+          frames = out;
+        }catch(e){ frames = []; }
+      };
+      img.src = url + ver;
+    }catch(e){ frames = []; }
+  }
+  function spin(){
+    if(!frames.length) return false;                 // 帧还没备好 ⇒ 退回点头，不许"按了没反应"
+    clearTimeout(nodTimer); clearInterval(spinTimer);
+    let i = 0;
+    setStyle(frames[0]);
+    spinTimer = setInterval(function(){
+      i++;
+      if(i >= frames.length){ clearInterval(spinTimer); spinTimer = null; apply(); return; }
+      setStyle(frames[i]);
+    }, SPIN_MS);
+    return true;
+  }
+  // 点击时点头：mousedown 换成歪头帧，180ms 后换回；**按中键（滚轮键）则原地转一圈**
+  document.addEventListener('mousedown', (ev)=>{
     if(!enabled) return;
+    if(ev && ev.button === 1){
+      // 中键：**先吃掉浏览器的原生自动滚动**（用户说的"那个滚轮键"＝Chrome 自己的自动滚动圆盘）。
+      // 不挡掉它，光标会被浏览器接管成它自己的样式 ⇒ 我们的"转一圈"根本看不见，看着就是"一直在闪"。
+      try{ ev.preventDefault(); }catch(e){}
+      if(spin()) return;
+    }
     applyNod();
     clearTimeout(nodTimer);
     nodTimer = setTimeout(apply, 180);
@@ -2339,7 +2385,7 @@ const WHALE_CURSOR = (function(){
   }
   apply();
   setInterval(injectFrames, 2000);   // 挂件 iframe 动态出现后自动注入光标
-  return { set, setCustom, url: ()=>url };
+  return { set, setCustom, url: ()=>url, spin, framesReady: ()=>frames.length > 0 };
 })();
 /* ── ESC 退出全屏（2026-09-16 加，用户实测「ESC退出不了全屏」）──
    宿主窗（WebView2）全屏时会收起自绘顶栏，而 WinForms 侧的 IMessageFilter（EscFilter）
