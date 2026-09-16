@@ -265,6 +265,46 @@ def _post_web3forms(key: str, item: dict, timeout: int = 15) -> dict:
     return {"ok": False, "why": "在线提交返回异常：%s" % _low[:80]}
 
 
+def _post_webhook(url: str, item: dict, token: str = "", timeout: int = 15) -> dict:
+    """按 URL 自动选请求体，把反馈**推到作者自己的设备/群里**。
+
+    为什么加它（2026-09-16 用户回：「web3forms.com 进不去咋办」）：Web3Forms / Formspree 那类
+    国外站，用户的网络**根本打不开**（更拿不到 key）⇒ 换成**国内可达**的几条：
+      · 钉钉/飞书/企业微信 **群机器人 webhook**（不需要任何第三方账号，建个群加个机器人即可）
+      · **PushPlus**（pushplus.plus，微信扫码登录拿 token，消息直接进微信）
+      · 以及"我们自己的中转"（任意 URL，POST 一段 JSON 就算成功）
+    """
+    u = str(url or "").lower()
+    if not u:
+        return {"ok": False, "why": "未配置推送地址"}
+    txt = compose(item)
+    title = "[群相反馈] %s · v%s" % (item.get("kind") or "其他", item.get("ver") or "?")
+    if "pushplus" in u:
+        if not token:
+            return {"ok": False, "why": "PushPlus 需要 token（填 feedback.webhook_token）"}
+        body = {"token": str(token).strip(), "title": title, "content": txt, "template": "txt"}
+    elif "dingtalk" in u:
+        body = {"msgtype": "text", "text": {"content": title + "\n" + txt}}
+    elif "feishu" in u or "larksuite" in u:
+        body = {"msg_type": "text", "content": {"text": title + "\n" + txt}}
+    elif "qyapi.weixin" in u or "wecom" in u:
+        body = {"msgtype": "text", "text": {"content": title + "\n" + txt}}
+    else:
+        body = {"title": title, "text": txt, "kind": item.get("kind"), "ver": item.get("ver")}
+    r = _post(str(url), body, timeout=timeout)
+    if not r.get("ok"):
+        return {"ok": False, "why": "推送失败：%s" % str(r.get("why"))[:80]}
+    low = str(r.get("why") or "").replace(" ", "").lower()
+    _known = ("dingtalk" in u or "qyapi" in u or "feishu" in u or "larksuite" in u or "pushplus" in u)
+    if _known:
+        # 这几家失败时也是 HTTP 200 ⇒ 必须看它们自己的返回码，别把"被拒"当成功
+        _good = ('"errcode":0' in low) or ('"code":200' in low) or ('"code":0' in low) \
+            or ('"success":true' in low)
+        if not _good:
+            return {"ok": False, "why": "推送被对方拒了：%s" % low[:80]}
+    return {"ok": True, "why": "已推送到你的设备/群"}
+
+
 def deliver(item: dict) -> dict:
     """按顺序试通道；返回 {ok, via, why}。都不成 ⇒ ok=False 且**不改** sent_at（等重发）。
 
@@ -272,6 +312,8 @@ def deliver(item: dict) -> dict:
     """
     cfg = _cfg()
     url = str(cfg.get("upload_url") or "").strip()
+    hook = str(cfg.get("webhook_url") or "").strip()
+    hook_token = str(cfg.get("webhook_token") or "").strip()
     w3 = str(cfg.get("web3forms_key") or "").strip()
     to_list = [x.strip() for x in str(cfg.get("to") or "").replace(";", ",").split(",") if x.strip()]
     smtp_cfg = cfg.get("smtp") or {}
@@ -281,6 +323,11 @@ def deliver(item: dict) -> dict:
         tried.append("网址中转：" + ("OK %s" % r.get("status") if r.get("ok") else str(r.get("why"))[:60]))
         if r.get("ok"):
             return {"ok": True, "via": "upload_url", "why": "已提交到 %s" % url, "tried": tried}
+    if hook:
+        rh = _post_webhook(hook, item, hook_token)
+        tried.append("推送到你：" + ("OK" if rh.get("ok") else str(rh.get("why"))[:60]))
+        if rh.get("ok"):
+            return {"ok": True, "via": "webhook", "why": rh.get("why"), "tried": tried}
     if w3:
         r3 = _post_web3forms(w3, item)
         tried.append("在线提交：" + ("OK" if r3.get("ok") else str(r3.get("why"))[:60]))
@@ -291,8 +338,8 @@ def deliver(item: dict) -> dict:
         tried.append("邮件：" + ("OK" if r.get("ok") else str(r.get("why"))[:60]))
         if r.get("ok"):
             return {"ok": True, "via": "smtp", "why": r.get("why"), "tried": tried}
-    if not url and not w3 and not (to_list and smtp_cfg.get("user") and smtp_cfg.get("password")):
-        tried.append("没有任何可用通道（未填中转网址 / 在线提交密钥 / 发件邮箱+授权码）")
+    if not url and not hook and not w3 and not (to_list and smtp_cfg.get("user") and smtp_cfg.get("password")):
+        tried.append("没有任何可用通道（未填中转网址 / 推送地址 / 在线提交密钥 / 发件邮箱+授权码）")
     return {"ok": False, "via": "", "why": "；".join(tried) or "没有可用通道", "tried": tried}
 
 
@@ -356,9 +403,12 @@ def stats() -> dict:
                     and str(cfg.get("to") or "").strip())
     has_url = bool(str(cfg.get("upload_url") or "").strip())
     has_w3 = bool(str(cfg.get("web3forms_key") or "").strip())
+    has_hook = bool(str(cfg.get("webhook_url") or "").strip())
     _ch = []
     if has_url:
         _ch.append("上传网址")
+    if has_hook:
+        _ch.append("推送到你")
     if has_w3:
         _ch.append("在线提交")
     if has_mail:
@@ -366,7 +416,7 @@ def stats() -> dict:
     return {"total": len(items), "pending": len(pend), "sent": len(sent),
             "enabled": bool(cfg.get("enabled", True)),
             "channel": "+".join(_ch) or "未配置",
-            "can_send": bool(has_url or has_w3 or has_mail),
+            "can_send": bool(has_url or has_hook or has_w3 or has_mail),
             "last": (sorted(items, key=lambda x: x.get("at") or 0)[-1:] or [{}])[0].get("at_h", "")}
 
 
