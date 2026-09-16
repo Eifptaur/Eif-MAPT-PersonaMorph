@@ -1013,6 +1013,8 @@ th{color:var(--tx2);font-weight:500}
       </div></div>
       <div class="row"><label>只走后台</label><input type="checkbox" data-cfg="wechat.background_only">
         <span class="hint">**默认开**（老版本留下的配置会被一次性迁移成开）。开了之后：拍一拍 / 引用 / 朋友圈点赞·评论·发表 / UI 标定 一律**跳过并说明原因**。关掉它这些功能才可用——但它们是**真实鼠标**（移动光标 + 发全局点击），点的是**光标所在的那个窗口**（可能是你正在用的程序，比如这个控制台），所以请在电脑前时再关。发送文字、图片、表情、切会话、刷朋友圈不受影响，一直走后台投递。</span></div>
+      <div class="row"><label>搜索失败时扫会话列表</label><input type="checkbox" data-cfg="wechat.scroll_list_fallback">
+        <span class="hint">**默认关**。切会话现在是「在搜索框里打名字 → 点结果行」；搜索没成时默认**停手并说明原因**。打开这个开关，它才会退回老路——在会话列表里找行、必要时滚轮往下翻（**滚轮不动你的光标，但会话列表会在你眼前滚动**，看着就像它在划你的列表）。想成功率优先、不介意列表动几下，就打开它。</span></div>
       <div class="row"><label>图标指纹</label><div class="grow">
         <b id="ufpHead">检测中…</b>
         <div class="btns" style="margin-top:6px">

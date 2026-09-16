@@ -206,6 +206,28 @@ ck("B22 有一次性安全默认值迁移（老 config.json 也会被补上）",
    and "_SAFE_DEFAULTS_TAG" in SRC_CFG)
 ck("B22a 迁移只对真实 config.json 跑（自定义 path 不写回用户配置）",
    "os.path.abspath(path) == os.path.abspath(CONFIG_FILE)" in SRC_CFG)
+# B23（2026-09-16 用户报「他点了一下搜索框，又不点，又搁那划会话列表」）：
+#   搜索框路线没成时，**默认不许退回「在会话列表里找行 + 滚轮」那条老路** ——
+#   那条路虽然走投递（不动光标），但**会话列表会在用户眼前滚**，他看到的"它在划"就是这个动作。
+#   ⇒ 做成开关 `wechat.scroll_list_fallback`（默认 False＝不回退），要成功率优先的用户自己去开。
+_SEG_SW2 = SRC_WECHAT.split("def switch_chat_posted(")[1][:6000]
+_HIT_GATE = _SEG_SW2.find("self._scroll_list_fallback()")
+_HIT_ROW2 = _SEG_SW2.find("find_row")
+ck("B23 搜索失败后默认不回退（开关检查必须出现在'找会话行'之前）",
+   0 <= _HIT_GATE and 0 <= _HIT_ROW2 and _HIT_GATE < _HIT_ROW2,
+   "gate@%d row@%d" % (_HIT_GATE, _HIT_ROW2))
+ck("B23a 开关默认 False（安全的一侧：不滚用户的列表）",
+   '"scroll_list_fallback": False' in SRC_CFG)
+ck("B23b 控制台有这个可选档位（不替用户拍板）",
+   'data-cfg="wechat.scroll_list_fallback"' in SRC_CONSOLE)
+ck("B23c 不回退时如实说明原因（不静默失败）",
+   "不退回会滚你会话列表的老路" in _SEG_SW2)
+ck("B23d config.example.json 同步了这个键",
+   '"scroll_list_fallback"' in io.open(
+       os.path.join(ROOT, "config.example.json"), encoding="utf-8").read())
+ck("B23e bg_status（单一事实源）的说明与新默认一致",
+   "scroll_list_fallback" in BG.__doc__ or "scroll_list_fallback" in io.open(
+       os.path.join(ROOT, "agent", "bg_status.py"), encoding="utf-8").read())
 # B17d~B17g 破 `no_ref` 死锁（2026-09-16 对面 r23 现场：参照只在"发送成功之后"才学，而 `no_ref`
 #   直接拒发 ⇒ 永远拒、永远学不到；A 枪走"宽松成功"分支同样不学 ⇒ 全日志没有一次学会参照的记录）
 _ST = SRC_WECHAT.split("def send_text_posted(")[1][:9000]
