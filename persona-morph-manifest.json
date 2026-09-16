@@ -1,11 +1,11 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.16.3",
-    "sha256": "15220d551bb96e5166a8edbb2844ad3938dacc3f8c032d22f616f8668b87dba5",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.4/persona-morph-v2.1.4.zip",
-    "size": 7944759,
-    "files": 236
+    "version": "2026.9.16.4",
+    "sha256": "6dc72164e6a0477f584c14e0711e414e18b9abf4dc173311da4ac51cc2fc7dc3",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.5/persona-morph-v2.1.5.zip",
+    "size": 7958456,
+    "files": 237
   },
   "dlc": [
     {
@@ -32,15 +32,15 @@
     }
   ],
   "announce": {
-    "version": "2026.9.16.3",
+    "version": "2026.9.16.4",
     "notes": [
-      "可以私聊了：用你自己另一个号私聊机器人，它会应你（相当于借个智能体跟自己聊）",
-      "私聊档位可选：只理我自己那些号 / 不理 / 谁都理（慎用）",
-      "群白名单那一排现在默认只显示两行，点展开全部看全部"
+      "切会话改成直接在搜索框里打名字：不再在你的会话列表里翻行、滚轮",
+      "记忆删除彻底了（以前删过的换个入口还能读到）",
+      "「暂停/恢复」修好了；「只走后台」现在是默认，不再动你的鼠标"
     ],
     "forceBase": false,
-    "minBase": "2026.9.16.3"
+    "minBase": "2026.9.16.4"
   },
-  "builtAt": "2026-09-16T02:29:34Z",
-  "updatedAt": 1789525774911
+  "builtAt": "2026-09-16T03:07:15Z",
+  "updatedAt": 1789528035137
 }
