@@ -84,9 +84,14 @@ ck("A18 退出路径齐：再按中键 / 按任意其它键 / 滚真实滚轮 / 
    and "window.addEventListener('blur'" in SRC_C and "if(on){ stop(); return; }" in SRC_C)
 ck("A19 滚动目标现算（从落点往上找真能滚的祖先；找不到就整页滚）",
    "scrollHeight - n.clientHeight > 8" in SRC_C and "document.scrollingElement" in SRC_C)
-ck("A20 自绘徽标＝那只鱼**转速跟着滚动速度**（JS 累加相位 + 封顶，不是固定时长的 CSS 动画）",
-   "imgEl.style.transform = 'rotate('" in SRC_C and "Math.min(SPIN_CAP, Math.abs(v) * SPIN_K)" in SRC_C
-   and "animation:pmWheelSpin" not in SRC_C)
+ck("A20 滚的是**光标上那只鱼**（滚轮模式驱动 WHALE_CURSOR.spinTo；徽标里不再画第二条鱼）",
+   "WHALE_CURSOR.spinTo(phase)" in SRC_C and "function spinTo(deg)" in SRC_C and "#pmWheel img" not in SRC_C
+   and "'<i class=\"u\"></i><i class=\"d\"></i>'" in SRC_C)
+ck("A22 转速跟着滚动速度（JS 累加相位 + 封顶）· 帧只在变化时才写 style · 退出回默认帧",
+   "Math.min(SPIN_CAP, Math.abs(v) * SPIN_K)" in SRC_C and "if(idx === lastSpinIdx) return;" in SRC_C
+   and "WHALE_CURSOR.restore()" in SRC_C)
+ck("A23 滚轮模式期间暂停装饰性背景动画（整屏动画会让滚动每帧重绘 ⇒ 卡卡感）",
+   "animation-play-state:paused" in SRC_C and "pm-wheel-on" in SRC_C)
 ck("A21 左导航跟着指示条滚（激活项滚出可视区就滚回来：平滑、不越界）",
    "function revealInd(a)" in SRC_C and "behavior: 'smooth'" in SRC_C and "revealInd(a);" in SRC_C
    and "const top = navEl.scrollTop, vh = navEl.clientHeight, PAD = 8;" in SRC_C)
@@ -164,8 +169,10 @@ else:
             ck("B14 **它真的在滚**（0.7 秒内往下滚 >20px）", _d1 > 20, "滚了 %.0fpx" % _d1)
             ck("B15 滚是**持续的**（再来 0.3 秒又在滚）", _d2 > 8, "又滚 %.0fpx" % _d2)
             ck("B16 自绘滚轮徽标在（那只鱼）", _w1[2:3] == ["true"], str(_w1))
-            ck("B17 那只鱼**在转**（两次取样的 transform 不同）", bool(_w1[3:4]) and _w1[3:4] != _w2[3:4],
-               "%s → %s" % (_w1[3:4], _w2[3:4]))
+            ck("B17 那只鱼**在转**（滚轮模式里推进的是**光标帧号**）",
+               bool(_w1[3:4]) and _w1[3:4] != [""] and _w1[3:4] != _w2[3:4],
+               "光标帧 %s → %s" % (_w1[3:4], _w2[3:4]))
+            ck("B18b 徽标里**没有第二条鱼**（鱼在光标上，用户点出来的）", _w1[4:5] == ["no"], str(_w1))
             ck("B18 左键退出：模式关、徽标撤、不再滚",
                _w3[:1] == ["false"] and _w3[2:3] == ["false"] and _d4 < 5, "Δ=%.0fpx · %s" % (_d4, field("wheel_3")))
             # ── ① 左导航跟着指示条滚（用户 2026-09-17 追加：「……左栏又显示不下的时候，蓝色指示条就看不见了」）──
@@ -174,36 +181,31 @@ else:
             ck("B19 左栏被滚到底之后**自己把激活项跟回来**（蓝色指示条不会再看不见）",
                _nav.startswith("visible") and int(_nm.get("max", 0)) > 50
                and float(_nm.get("scrollTop", 1e9)) < int(_nm.get("max", 0)) - 5, _nav)
-            # ── ② 鱼的转速跟着滚动速度（用户 2026-09-17 追加）──
+            # ── ② 鱼的转速跟着滚动速度（用户 2026-09-17 追加）· 且滚的是**光标上那只鱼** ──
 
             def _spin_of(k):
                 p = (field(k) or "").split("|")
-                m = re.search(r"rotate\(([-0-9.]+)deg\)", p[1] if len(p) > 1 else "")
+                try:
+                    fi = int(p[1])
+                except Exception:
+                    fi = None
                 try:
                     sp = float(p[2])
                 except Exception:
                     sp = None
-                return (p[0].lower() if p else "", float(m.group(1)) if m else None, sp)
-
-            def _delta(x, y):
-                if x is None or y is None:
-                    return None
-                d = y - x
-                return d + 360 if d < 0 else d
+                return (p[0].lower() if p else "", fi, sp)
 
             _aa1, _aa2 = _spin_of("spinp_a1"), _spin_of("spinp_a2")
             _bb1, _bb2 = _spin_of("spinp_b1"), _spin_of("spinp_b2")
-            _ds, _df = _delta(_aa1[1], _aa2[1]), _delta(_bb1[1], _bb2[1])
-            ck("B20 鱼在转（相位在推进，滚轮模式还开着）",
-               _aa1[0] == "true" and _aa2[0] == "true" and _ds is not None and _ds > 5,
-               "0.3s 转了 %.0f°" % (_ds if _ds is not None else -1))
+            ck("B20 鱼在转（滚轮模式里**光标帧号在推进**，模式还开着）",
+               _aa1[0] == "true" and _aa2[0] == "true" and _aa1[1] is not None and _aa2[1] is not None
+               and _aa1[1] != _aa2[1], "0.3s 光标帧 %s → %s" % (_aa1[1], _aa2[1]))
             # 比的是**每帧转速**（`PM_WHEEL.spinDeg()`）：屏外窗口在快滚时帧率会掉，
             # 用墙钟转角比会被帧率稀释（实测每帧 8.2°→24°＝约 3 倍，墙钟却只显得 1.4 倍）。
             ck("B21 **滚得越快、鱼转得越快**（每帧转速：快滚 ≈ 3 倍于基础）",
                _aa1[2] is not None and _bb1[2] is not None and _aa1[2] > 0.5 and _bb1[2] >= _aa1[2] * 2,
-               "基础 %.1f°/帧 → 快滚 %.1f°/帧（墙钟 %.0f°→%.0f°/0.3s）"
-               % (_aa1[2] if _aa1[2] is not None else -1, _bb1[2] if _bb1[2] is not None else -1,
-                  _ds if _ds is not None else -1, _df if _df is not None else -1))
+               "基础 %.1f°/帧 → 快滚 %.1f°/帧" % (_aa1[2] if _aa1[2] is not None else -1,
+                                                 _bb1[2] if _bb1[2] is not None else -1))
     except Exception as e:
         skip("B 活体探针", "跑不起来：%s" % str(e)[:90])
     finally:
