@@ -205,6 +205,20 @@ def main():
     ok("refresh_shards 回报 missing（接入时据此记日志/显示）",
        _rep.get("missing") == [] and _rep.get("refreshed") is True, str(_rep))
 
+    print("— G. 二级兜底：补不到密钥的分片**从分片表摘掉**（换整条链可用，但要留痕）—")
+    _sd3 = _ShardDB(heal=False)
+    _r3 = ra.refresh_shards(_sd3)
+    ok("摘掉的是补不到密钥的那个分片", _r3.get("dropped") == ["message\\media 1.db"], str(_r3.get("dropped")))
+    ok("摘完之后它能用的分片都不缺密钥", _r3.get("missing") == [] and ra.missing_key_shards(_sd3) == [],
+       str(_r3.get("missing")))
+    ok("分片表里只剩拿得到密钥的那个（驱动库内部遍历不再撞 KeyError）",
+       [r for r, _p in ra.iter_shards(_sd3)] == ["contact.db"], str(ra.iter_shards(_sd3)))
+    _sd4 = _ShardDB(heal=False)
+    _sd4._keys = {}                       # 全部都没密钥 ⇒ **不许把分片表清空**
+    _r4 = ra.refresh_shards(_sd4)
+    ok("一个都补不到时**不清空**分片表（安全线）",
+       _r4.get("dropped") == [] and len(ra.iter_shards(_sd4)) == 2, "%s / %d" % (_r4.get("dropped"), len(ra.iter_shards(_sd4))))
+
     print("\n== 适配层单测：%d 通过 / %d 失败 ==" % (len(PASS), len(FAIL)))
     return 1 if FAIL else 0
 

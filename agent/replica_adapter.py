@@ -125,10 +125,16 @@ def missing_key_shards(db) -> list:
 
 
 def refresh_shards(db) -> dict:
-    """刷新分片表并**补齐新分片的密钥**。返回 `{added, missing, refreshed}`。
+    """刷新分片表并**补齐新分片的密钥**。返回 `{added, missing, dropped, refreshed}`。
 
     调用时机：①接入时（一次，见 `WeChatAdapter._init_db`）②`open_shard` 撞上 KeyError 时
     ③以后若加「重新校准密钥」按钮也走这里。
+
+    ⚠️ **二级兜底（2026-09-16 网友 A 的 `KeyError: message\\media 1.db`）**：补不回来的分片
+    **从分片表里摘掉**（只影响那个分片的内容），换整条链可用 —— 因为驱动库**内部**遍历
+    `_db_files` 时会挨个 `_open()`，一个没密钥的分片就能把「读消息 / 会话头 / 投递发送 / 群列表」
+    一起打死，而它自己不兜。摘掉是**有代价的补救**，所以必须留痕（`dropped` 由调用方记日志/显示）。
+    安全线：**只在还剩至少一个分片时摘**，绝不把分片表清空。
     """
     before = set(rel for rel, _ in iter_shards(db))
     try:
@@ -141,8 +147,20 @@ def refresh_shards(db) -> dict:
             db._load_or_extract_keys()
         except Exception:
             pass
+    dropped = []
+    miss2 = missing_key_shards(db)
+    if miss2:
+        try:
+            _all = list(getattr(db, "_db_files", None) or [])
+            _keep = [t for t in _all if t[0] not in set(miss2)]
+            if _keep and len(_keep) != len(_all):
+                dropped = list(miss2)
+                db._db_files = _keep
+                miss2 = missing_key_shards(db)
+        except Exception:
+            dropped = []
     after = set(rel for rel, _ in iter_shards(db))
-    return {"added": sorted(after - before), "missing": missing_key_shards(db),
+    return {"added": sorted(after - before), "missing": miss2, "dropped": dropped,
             "refreshed": bool(miss)}
 
 
