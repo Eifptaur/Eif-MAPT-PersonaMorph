@@ -97,6 +97,7 @@ def run_stream(cmd, timeout=900, on_line=None):
         return False, str(e)
     parts = []
     done = threading.Event()
+    last_out = [time.time()]        # 读者线程负责刷新 ⇒ 主循环按"空闲"判超时
 
     def _reader():
         try:
@@ -104,6 +105,7 @@ def run_stream(cmd, timeout=900, on_line=None):
                 chunk = proc.stdout.read(4096)
                 if not chunk:
                     break
+                last_out[0] = time.time()
                 txt = chunk.decode("utf-8", "replace")
                 parts.append(txt)
                 if on_line:
@@ -124,21 +126,23 @@ def run_stream(cmd, timeout=900, on_line=None):
 
     threading.Thread(target=_reader, daemon=True).start()
     t0 = time.time()
-    last_out = t0
+    last_hb = t0
     rc = None
     while rc is None:
         if proc.poll() is not None and done.is_set():
             rc = proc.poll()
             break
-        if time.time() - t0 > timeout:
+        # 2026-09-16 改：**按"空闲"判超时，不设总时长上限**。慢网装依赖十几分钟是正常的，
+        # 原来按起始时刻算总时长（默认 900 秒）会把正常等待直接杀成"一键启动失败"。
+        if time.time() - last_out[0] > timeout:
             proc.kill()
             rc = proc.wait()
-            log("[超时] 命令超过 %d 秒未完成，已终止。" % timeout)
+            log("[超时] 连续 %d 秒没有任何输出，已终止（再点一次会接着装，已下完的不会重下）。" % timeout)
             break
-        if time.time() - last_out > 30:
+        if time.time() - last_hb > 30:
             log("  ...仍在运行（已 %d 秒，通常为下载/安装中，请耐心等待）"
                 % int(time.time() - t0))
-            last_out = time.time()
+            last_hb = time.time()
         time.sleep(1)
     done.wait(5)
     tail = "".join(parts)
@@ -403,6 +407,7 @@ def main():
     # 1. 依赖（检查表 14 项逐项百分比；安装阶段由 pip 自带百分比条显示）
     deps_done = [0]
     evt("PHASE", "deps")
+    log("      首次安装要下载约 100~150MB（慢网十几分钟正常，中途别关窗；装过的不会重下）")
 
     # 依赖安装实时进度：统计 requirements 包数作为总量，逐包 +1（pip Collecting/Downloading/安装缺失 均计）
     try:
@@ -413,11 +418,12 @@ def main():
     deps_install = [0]
 
     def _deps_progress(ln):
-        if ln.startswith("OK"):
+        _s = str(ln or "").strip()          # pip 的行是缩进的（"  Downloading …"）⇒ 必须先 strip
+        if _s.startswith("OK"):
             deps_done[0] += 1
             _prog("依赖检查", min(deps_done[0], 14), 14)
-        elif ("安装缺失" in ln or "正在安装" in ln or ln.startswith("Collecting")
-                or ln.startswith("Downloading")):
+        elif ("安装缺失" in _s or "正在安装" in _s or _s.startswith("Collecting")
+                or _s.startswith("Downloading") or _s.startswith("Installing collected")):
             deps_install[0] += 1
             _prog("安装依赖", min(deps_install[0], _req_n), _req_n)
 
