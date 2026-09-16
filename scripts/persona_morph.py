@@ -1546,7 +1546,23 @@ def main():
                 "reply": str(resp.get("message", {}).get("content", ""))[:200]}
 
     def balance_fn():
-        return query_balance()
+        """余额查询（叠一层**显示伪装**）。
+
+        2026-09-16 用户要求：「有没有一键隐藏剩余金额功能或者一键修改剩余金额功能…可以在界面显示上
+        把金额改掉，但是实际上还是那么多」⇒ 只改返回给界面的数字（`ui.balance_display`：
+        real / hide / fake），**真实余额与账目一律不动**。逻辑在 `agent/balance_view.py`（可单测）。
+        """
+        try:
+            _b = query_balance()
+        except Exception as _e:
+            return {"error": str(_e)[:120]}
+        try:
+            from agent.balance_view import mask as _mask
+            _ui = (get_config() or {}).get("ui") or {}
+            return _mask(_b, _ui.get("balance_display") or "real", _ui.get("balance_fake") or "")
+        except Exception as _e2:
+            log.debug("余额显示伪装失败（照实返回）：%s", _e2)
+            return _b
 
     # 一键体检取消标志（前端「停止检测」设置；体检循环每步检查）
     _selfcheck_cancel = [False]
