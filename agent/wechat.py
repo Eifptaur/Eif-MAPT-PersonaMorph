@@ -622,15 +622,21 @@ class WeChatAdapter:
         # 而驱动库的密钥表是它 init 时的快照 ⇒ 新分片没密钥 ⇒ 读消息/会话头/投递回读全断。
         # 接入时补一次（刷新分片表 + 补齐密钥），并把"仍缺密钥的分片"记下来给诊断/控制台看。
         self._db_missing_shards = []
+        self._db_dropped_shards = []
         try:
             from . import replica_adapter as _ra
             _rep = _ra.refresh_shards(self._db)
             self._db_missing_shards = list(_rep.get("missing") or [])
+            self._db_dropped_shards = list(_rep.get("dropped") or [])
             if self._db_missing_shards:
                 log.warning("有 %d 个库分片拿不到密钥（例：%s）⇒ 这些库读不了",
                             len(self._db_missing_shards), self._db_missing_shards[0])
             elif _rep.get("added"):
                 log.info("补到 %d 个新分片的密钥：%s", len(_rep["added"]), _rep["added"][:3])
+            if self._db_dropped_shards:
+                # 摘掉是**有代价的补救**（那几个分片的内容读不到），必须留痕、不许静默
+                log.warning("已跳过 %d 个补不到密钥的分片（例：%s）⇒ 那几个库的内容读不到，其余照常",
+                            len(self._db_dropped_shards), self._db_dropped_shards[0])
         except Exception as _e:
             log.debug("刷新分片密钥失败（继续）：%s", _e)
         info = self._db.get_self_info() or {}
@@ -6274,13 +6280,21 @@ def attach_diagnosis(adapter=None, err="", db=None) -> dict:
             _miss_sh = _ra2.missing_key_shards(_db)
         except Exception:
             _miss_sh = []
+        _dropped_sh = []
+        try:
+            # 只**读**适配层已经记下的"已跳过分片"，不在这里动分片表（诊断必须只读）
+            _dropped_sh = list(getattr(adapter, "_db_dropped_shards", None) or []) if adapter is not None else []
+        except Exception:
+            _dropped_sh = []
         _sh_note = ("；另有 %d 个分片拿不到密钥（例：%s）⇒ 这些库读不了，会拖累读消息/会话头"
                     % (len(_miss_sh), _miss_sh[0])) if _miss_sh else ""
+        _drop_note = ("；已跳过 %d 个补不到密钥的分片（例：%s）⇒ 那几个库的内容读不到，其余照常"
+                      % (len(_dropped_sh), _dropped_sh[0])) if _dropped_sh else ""
         steps.append({"key": "key", "name": "数据库密钥", "ok": okk,
                       "detail": (("主密钥已取到" if mk else
                                   "主密钥为空，但有 %d 把缓存密钥能过页1校验 ⇒ 可用" % n) if okk
                                  else "拿不到能用的数据库密钥（读不到微信进程里的密钥）⇒ 消息库读不出来")
-                                + _sh_note})
+                                + _sh_note + _drop_note})
     if _db is not None:
         uid, nick = "", ""
         try:
