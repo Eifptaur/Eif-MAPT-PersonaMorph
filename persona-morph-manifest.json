@@ -1,10 +1,10 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.16.13",
-    "sha256": "12b059f7922a090f0e9c818d20a40d40bdcc7c4f3bb93309ec3a57fe7d0b537d",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.14/persona-morph-v2.1.14.zip",
-    "size": 8096124,
+    "version": "2026.9.16.14",
+    "sha256": "70157284c4f7f973207cc6732ae674fb7dc9ec2c9e08ffadd6c1b14749494b55",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.15/persona-morph-v2.1.15.zip",
+    "size": 8112495,
     "files": 243
   },
   "dlc": [
@@ -32,14 +32,15 @@
     }
   ],
   "announce": {
-    "version": "2026.9.16.13",
+    "version": "2026.9.16.14",
     "notes": [
-      "「限位」（固定微信窗口位置）改成默认开：后台跑着的人本来也不看窗口，固定下来坐标更稳、少点错；老配置也会被一次性补上（自己关掉就不再动你）",
-      "需要时把窗口借到固定尺寸、空闲自动还回你原来的位置和大小；你在借用期间动过窗口就以你为准、不还"
+      "拍一拍 / 引用 不再需要真鼠标：改成投递右键（不动光标、开着「只走后台」也能用）；投递不成时按你的开关决定是否回真鼠标（默认不回落）",
+      "读不到群列表时会把原因写出来（以前只显示「检测到 0 个群」）；「启动于」改成真的启动时刻",
+      "朋友圈点赞·评论仍是真鼠标（走的是真实滚轮回顶 + 点蓝点），继续被「只走后台」跳过并说明原因"
     ],
     "forceBase": false,
-    "minBase": "2026.9.16.13"
+    "minBase": "2026.9.16.14"
   },
-  "builtAt": "2026-09-16T12:58:05Z",
-  "updatedAt": 1789563485391
+  "builtAt": "2026-09-16T13:29:09Z",
+  "updatedAt": 1789565349269
 }
