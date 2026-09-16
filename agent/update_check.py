@@ -73,9 +73,18 @@ def vtuple(v):
     return tuple(out)
 
 
+DEFAULT_URL = "https://raw.githubusercontent.com/Eifptaur/Eif-MAPT-PersonaMorph/main/persona-morph-manifest.json"
+
+
 def manifest_url(cfg: dict | None = None) -> str:
+    """更新源地址；**空值一律回落到内置默认**（2026-09-16）。
+
+    为什么：老用户的 `config.json` 是"默认值为空"那阵子存下来的，里面很可能留着一个空的
+    `update.url` ⇒ 它会**盖住新默认值**，让这些用户永远接不到更新通知。
+    空 ＝ 没配过 ⇒ 用默认（真想关掉更新检查，用「不再提醒」或把 url 填成别的）。
+    """
     c = cfg if isinstance(cfg, dict) else _cfg()
-    return str(c.get("url") or "").strip()
+    return str(c.get("url") or "").strip() or DEFAULT_URL
 
 
 def fetch(url: str, timeout: float = 6.0):

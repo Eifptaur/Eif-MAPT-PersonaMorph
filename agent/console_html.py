@@ -4362,7 +4362,17 @@ $('stopBtn').onclick = ()=>{
       //   `/api/shutdown` 一执行，**后端自己就关了** ⇒ 响应很可能还没读完连接就断 ⇒
       //   `getJSON` 抛错 ⇒ 流程走 catch ⇒ **关窗那句在 try 里、永远执行不到** ✗。
       //   用户既然点了「确认停止」，就一定要关窗 ⇒ 挪到 `finally`：成功失败都关。
-      setTimeout(function(){ try{ window.close(); }catch(_e){} }, 900);
+      //   ⚠️ 二次修（用户实测「其他都行了，只有点停止关窗不行」）：光靠页面 `window.close()`
+      //   在这台机器上**没有触发宿主关窗**；而 `postMessage` 这条通道已被「ESC 退出全屏」验证可用
+      //   ⇒ 先走宿主通道（`pm-close-window`），再补一发 `window.close()`（浏览器里被忽略、无害）。
+      setTimeout(function(){
+        try{
+          if(window.chrome && window.chrome.webview && window.chrome.webview.postMessage){
+            window.chrome.webview.postMessage('pm-close-window');
+          }
+        }catch(_e){}
+        try{ window.close(); }catch(_e){}
+      }, 900);
     }
   });
 };
