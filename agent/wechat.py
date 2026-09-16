@@ -6030,6 +6030,18 @@ def attach_diagnosis(adapter=None, err="", db=None) -> dict:
             _ins = {"installed": False, "detail": "安装状态检测异常：%s" % e}
         steps.append({"key": "install", "name": "微信装没装", "ok": bool(_ins.get("installed")),
                       "detail": str(_ins.get("detail") or "本机没检测到微信")})
+    # ── 版本步（2026-09-16 用户反馈后加）：老版本微信的**数据目录结构与 4.x 完全不同**，
+    #    驱动库找不到库 ⇒ 症状恰好是"打不开消息库"，但用户看到的短原因**不会提"你的微信太老"**，
+    #    于是报障只能来一句"打不开消息库"，我们这边也猜。⇒ 单独列一步，给**可执行**的结论。
+    #    位置在 db_open **之前**：第一个不过的步就是卡点，版本不对时应当先说版本。
+    if found:
+        _sup = bool(vi.get("supported", True))
+        steps.append({"key": "version", "name": "微信版本", "ok": _sup,
+                      "detail": ("微信 %s，主版本 ≥4，按 4.x 的库结构找消息库" % (ver or "未知"))
+                                if _sup else
+                                ("检测到微信 %s（低于 4.0）：本项目只按**微信 4.x** 的数据库结构找消息库，"
+                                 "3.x 的目录/库结构不同 ⇒ **这就是「打不开消息库」的原因**。"
+                                 "请把微信升级到 4.x 再来（升级不影响聊天记录）。" % (ver or "未知"))})
     _db = db if db is not None else getattr(adapter, "_db", None)
     if _db is None:
         try:
@@ -6071,7 +6083,7 @@ def attach_diagnosis(adapter=None, err="", db=None) -> dict:
                                      "但「这条是不是我发的」会退化"})
     bad = [s for s in steps if not s["ok"]]
     step_key = bad[0]["key"] if bad else ""
-    action = {"process": "start_wechat", "install": "install",
+    action = {"process": "start_wechat", "install": "install", "version": "upgrade_wechat",
               "db_open": "retry", "key": "relogin", "self": "retry"}.get(step_key, "none")
     # 「微信没在跑」里还要分两种：装了的＝叫他开微信；没装的＝叫他去装（别让他白找一圈）
     if step_key == "process" and any(s["key"] == "install" and not s["ok"] for s in steps):
@@ -6087,6 +6099,7 @@ def attach_diagnosis(adapter=None, err="", db=None) -> dict:
 ATTACH_STEP_LABEL = {
     "process": "微信没在运行",
     "install": "没检测到微信",
+    "version": "微信版本太旧（要 4.x）",
     "db_open": "打不开消息库",
     "key": "拿不到数据库密钥",
     "self": "读不出你的账号",
