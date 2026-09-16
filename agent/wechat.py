@@ -694,7 +694,12 @@ class WeChatAdapter:
             raw = []
         self._owner_ids = {str(x).strip().lower() for x in raw if str(x).strip()}
         self._owner_mode = str(w.get("owner_mode") or "know").strip().lower()
-        if self._owner_mode not in ("off", "skip", "know"):
+        # 四档（用户口径：机制要映射到 UI 上让他自己选）：
+        #   off            = 不做这个识别（登记了也不认）
+        #   skip           = 完全不回复我自己的号
+        #   owner_at_only  = **只在群里 @ 我或引用我的时候才回**（其余不回；私聊不受影响）—— 2026-09-16 新增
+        #   know           = 照常回，但打 owner 标记让模型知道"这是主人"
+        if self._owner_mode not in ("off", "skip", "owner_at_only", "know"):
             self._owner_mode = "know"
 
     def is_owner(self, sender_id: str = "", sender_name: str = "") -> bool:

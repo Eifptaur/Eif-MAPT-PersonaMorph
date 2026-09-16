@@ -141,6 +141,52 @@ ok("折叠框架在（__foldAll + fold-bar）", "__foldAll" in page and "fold-ba
 wt = io.open(os.path.join(ROOT, "agent", "whale_text.py"), encoding="utf-8").read()
 ok("新文案进了鲸语字典（否则 whale 判据会红）", '"私聊"' in wt)
 
+print("\n── I. 第四档「只在群里 @ 我 / 引用我时才回」（2026-09-16 新增，做成可选档位）──")
+ok("第四档合法、不被回落成 know",
+   fake({"owner_accounts": ["wxid_big"], "owner_mode": "owner_at_only"})._owner_mode == "owner_at_only")
+ok("UI 有第四档", ('value="owner_at_only"') in page)
+ok("config.py 注释里写了这一档", "owner_at_only" in cfg)
+try:
+    from agent import prompt as _P
+
+    _real_gc = _P.get_config
+
+    def _cfg_with(mode):
+        def _f():
+            return {"wechat": {"owner_mode": mode},
+                    "store": {"context_tier": 4, "all_count": 60, "at_count": 20,
+                              "keyword_count": 30, "random_count": 40, "random_percent": 0,
+                              "group_blocklist": {}, "unified_tier": True}}
+        return _f
+
+    def _ent(text, owner=True, sender="wxid_big"):
+        return {"id": 1, "mid": 1, "ts": 9999999999999, "sender_id": sender,
+                "sender_name": "张大号", "text": text, "self": False, "media": [],
+                "reply": None, "owner": owner}
+
+    _P.get_config = _cfg_with("owner_at_only")
+    _g = _P.resolve_context_tier([_ent("在吗")], "群deepseek", "", "", roll=0,
+                                 chat_key="group:gA", group_name="甲群")
+    ok("群里主人的话、没 @ 我 ⇒ 不回", _g.get("should_respond") is False, _g.get("reason"))
+    _g2 = _P.resolve_context_tier([_ent("@群deepseek 在吗")], "群deepseek", "", "", roll=0,
+                                  chat_key="group:gA", group_name="甲群")
+    ok("群里 @ 了我 ⇒ 回", _g2.get("should_respond") is True, _g2.get("reason"))
+    _g3 = _P.resolve_context_tier([_ent("在吗"), _ent("我也在", owner=False, sender="wxid_other")],
+                                  "群deepseek", "", "", roll=0, chat_key="group:gA", group_name="甲群")
+    ok("批里混进别人的话 ⇒ 不按本档拦（照常按档位走）",
+       _g3.get("should_respond") is True, _g3.get("reason"))
+    _g4 = _P.resolve_context_tier([_ent("在吗")], "群deepseek", "", "", roll=0,
+                                  chat_key="private:wxid_big", group_name="")
+    ok("私聊不受这一档影响（「借个智能体跟自己聊」那条用法）",
+       _g4.get("should_respond") is True, _g4.get("reason"))
+    _P.get_config = _cfg_with("know")
+    _g5 = _P.resolve_context_tier([_ent("在吗")], "群deepseek", "", "", roll=0,
+                                  chat_key="group:gA", group_name="甲群")
+    ok("know 档下照常回（没把老行为改坏）", _g5.get("should_respond") is True, _g5.get("reason"))
+    _P.get_config = _real_gc
+except Exception as e:      # noqa: BLE001
+    ok("第四档运行时行为", False, e)
+
 print("")
 print("主人识别判据：%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

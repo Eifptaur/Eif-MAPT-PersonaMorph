@@ -440,6 +440,23 @@ def resolve_context_tier(trigger_entries, self_nickname="", bot_name="", self_id
         except (TypeError, ValueError):
             return 0
 
+    # ⛔ 2026-09-16 新增第四档「只在群里 @ 我 / 引用我时才回」（用户口径：机制映射到 UI 让他自己选）：
+    #   主人的号在群里说话时，默认会走下面的档位级联（tier>=4 就全回，等于"照常回你自己的话"）。
+    #   这一档把范围收紧成：**整批触发消息都是主人发的、且没 @ 我、也没引用我 ⇒ 不回**。
+    #   三条边界：①群里才算（`chat_key` 前缀 `group:`）—— 私聊是「借个智能体跟自己聊」的用法，不受这一档影响；
+    #   ②只要这批里混进了**别人**的消息，就说明是别人的话触发的，本档不拦；
+    #   ③放在级联之前，所以它优先于"随机命中/关键词"这些概率档（这一档的语义就是"别回你自己的话"）。
+    try:
+        _omode = str((get_config().get("wechat") or {}).get("owner_mode") or "").strip().lower()
+    except Exception:
+        _omode = ""
+    if _omode == "owner_at_only" and str(chat_key or "").startswith("group:"):
+        _trig = list(trigger_entries or [])
+        _all_owner = bool(_trig) and all(bool(e.get("owner")) for e in _trig)
+        if _all_owner and not (at_me or quote_me):
+            return {"tier": 0, "count": 0,
+                    "reason": "主人发言但没 @ 我、也没引用我（「只 @ 我才回」这一档）",
+                    "should_respond": False, "tier_source": tier_src}
     if tier >= 4:
         return {"tier": 4, "count": n0(c.get("all_count")), "reason": "全部响应",
                 "should_respond": True, "tier_source": tier_src}

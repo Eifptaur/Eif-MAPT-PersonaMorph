@@ -1342,9 +1342,10 @@ th{color:var(--tx2);font-weight:500}
         <div class="hint" id="ownerHit"></div></div></div>
       <div class="row"><label>认出我之后</label><div class="grow"><select data-cfg="wechat.owner_mode">
         <option value="know">照常回复，但知道这是我（推荐）</option>
+        <option value="owner_at_only">只在群里 @ 我或引用我时才回</option>
         <option value="skip">完全不回复我自己的号</option>
         <option value="off">不启用这个识别</option></select>
-        <span class="hint">上面登记的那些账号发消息时，程序按这一档反应。</span></div></div>
+        <span class="hint">上面登记的那些账号发消息时，程序按这一档反应。「只在群里 @ 我或引用我时才回」这一档只作用于<b>群聊</b>——私聊照「私聊」那一档走，不受影响。</span></div></div>
       <div class="row"><label>私聊</label><div class="grow"><select data-cfg="wechat.private_chat">
         <option value="owner_only">只理我自己那些号（推荐）</option>
         <option value="off">不理私聊</option>
