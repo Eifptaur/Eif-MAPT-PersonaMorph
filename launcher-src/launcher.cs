@@ -1335,6 +1335,21 @@ namespace WxLauncher
                 string s5 = Js(wv, "(function(){try{var st=document.getElementById('whaleCursorStyle');return (st?st.textContent:'')}catch(e){return 'err'}})()");
                 sb.AppendLine("style_after_spin=" + Brief(s5));
                 sb.AppendLine("spin_reverted=" + (s5.IndexOf("data:image/png") < 0 && s5.IndexOf("cursor.png") >= 0));
+                // 自研「滚轮模式」：中键按下后必须**真的在滚**（均匀往下）+ 那只鱼的徽标在转 + 左键退出。
+                // 先把上一步 spin 那次 button:1 可能带起的滚轮模式按掉（否则这里的第一次中键会变成"退出"）
+                Js(wv, "(function(){try{document.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,button:0}));return 'ok'}catch(e){return 'err'}})()");
+                System.Threading.Thread.Sleep(200);
+                Js(wv, "(function(){try{document.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,button:1,clientX:520,clientY:420}));return 'ok'}catch(e){return 'err'}})()");
+                sb.AppendLine("wheel_t0=" + Js(wv, "(function(){try{return String(PM_WHEEL.top())}catch(e){return 'err'}})()").Replace("\"", ""));
+                System.Threading.Thread.Sleep(700);
+                sb.AppendLine("wheel_1=" + Js(wv, "(function(){try{var p=document.getElementById('pmWheel');var i=p?p.querySelector('img'):null;return PM_WHEEL.active()+'|'+PM_WHEEL.top()+'|'+PM_WHEEL.hasPuck()+'|'+(i?getComputedStyle(i).transform:'-')}catch(e){return 'err'}})()").Replace("\"", ""));
+                System.Threading.Thread.Sleep(300);
+                sb.AppendLine("wheel_2=" + Js(wv, "(function(){try{var p=document.getElementById('pmWheel');var i=p?p.querySelector('img'):null;return PM_WHEEL.active()+'|'+PM_WHEEL.top()+'|'+PM_WHEEL.hasPuck()+'|'+(i?getComputedStyle(i).transform:'-')}catch(e){return 'err'}})()").Replace("\"", ""));
+                Js(wv, "(function(){try{document.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,button:0,clientX:520,clientY:420}));return 'ok'}catch(e){return 'err'}})()");
+                System.Threading.Thread.Sleep(250);
+                sb.AppendLine("wheel_3=" + Js(wv, "(function(){try{return PM_WHEEL.active()+'|'+PM_WHEEL.top()+'|'+PM_WHEEL.hasPuck()}catch(e){return 'err'}})()").Replace("\"", ""));
+                System.Threading.Thread.Sleep(350);
+                sb.AppendLine("wheel_4=" + Js(wv, "(function(){try{return PM_WHEEL.active()+'|'+PM_WHEEL.top()+'|'+PM_WHEEL.hasPuck()}catch(e){return 'err'}})()").Replace("\"", ""));
                 IntPtr fg1 = ConsoleForm.GetForegroundWindow();
                 sb.AppendLine("fg_before=" + fg0.ToInt64());
                 sb.AppendLine("fg_after=" + fg1.ToInt64());
