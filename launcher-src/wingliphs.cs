@@ -58,7 +58,7 @@ namespace WxLauncher
             }
             // 同一支笔：粗细按控件高矮等比（DPI 无关），颜色取同一档
             float pen = Math.Max(1.2f, Height / 18f);
-            Color ink = _kind == GlyphKind.Close ? Color.FromArgb(232, 120, 120) : StyleKit.Sub;
+            Color ink = _kind == GlyphKind.Close ? Color.FromArgb(232, 120, 120) : StyleKit.ConsoleInk;   // 控制台顶栏是深底 ⇒ 用深底专用字形色（原来的 Sub 太暗）
             using (Pen p = new Pen(ink, pen))
             {
                 p.StartCap = LineCap.Round; p.EndCap = LineCap.Round;
