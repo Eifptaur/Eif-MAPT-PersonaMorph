@@ -1,10 +1,10 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.16.2",
-    "sha256": "b767a9c57162af70c69ce152b8a024f4f08137d04d7df66dbd852f59ae9a7277",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.3/persona-morph-v2.1.3.zip",
-    "size": 7936748,
+    "version": "2026.9.16.3",
+    "sha256": "15220d551bb96e5166a8edbb2844ad3938dacc3f8c032d22f616f8668b87dba5",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.4/persona-morph-v2.1.4.zip",
+    "size": 7944759,
     "files": 236
   },
   "dlc": [
@@ -32,16 +32,15 @@
     }
   ],
   "announce": {
-    "version": "2026.9.16.2",
+    "version": "2026.9.16.3",
     "notes": [
-      "点停止之后，控制台窗口会自己关掉（上一版没修好）",
-      "机器人认得你了：在控制台登记你的大号，认出来就知道这是我，反应有三档可选",
-      "更新通知开始工作了，以后有新版会在这里看到公告",
-      "「微信」面板新增一行，显示当前识别到的你自己"
+      "可以私聊了：用你自己另一个号私聊机器人，它会应你（相当于借个智能体跟自己聊）",
+      "私聊档位可选：只理我自己那些号 / 不理 / 谁都理（慎用）",
+      "群白名单那一排现在默认只显示两行，点展开全部看全部"
     ],
     "forceBase": false,
-    "minBase": "2026.9.16.2"
+    "minBase": "2026.9.16.3"
   },
-  "builtAt": "2026-09-16T02:23:13Z",
-  "updatedAt": 1789525393624
+  "builtAt": "2026-09-16T02:29:34Z",
+  "updatedAt": 1789525774911
 }
