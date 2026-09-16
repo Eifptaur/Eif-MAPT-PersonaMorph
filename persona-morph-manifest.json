@@ -1,11 +1,11 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.16.16.5",
-    "sha256": "8eaee16ef11afda25f03dd64a7c2dd8aa457e18bba8ffcaddfc99cfa41de3580",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.17.5/persona-morph-v2.1.17.5.zip",
-    "size": 8184015,
-    "files": 247
+    "version": "2026.9.16.16.6",
+    "sha256": "b765178f009326e0fc40a71bb78e321676c4892cda40d886dd255872971d17d5",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.17.6/persona-morph-v2.1.17.6.zip",
+    "size": 8202552,
+    "files": 249
   },
   "dlc": [
     {
@@ -32,16 +32,16 @@
     }
   ],
   "announce": {
-    "version": "2026.9.16.16.5",
+    "version": "2026.9.16.16.6",
     "notes": [
-      "给「媒体库分片拿不到密钥」加了二级兜底：真补不回来就把那个分片跳过，读消息/会话头/发送/群列表照常，不再被一个库文件把整条链打死",
-      "被跳过分片里的内容读不到（如实写在诊断里，不静默）；只在还剩别的可用分片时才跳过，绝不清空分片表",
-      "诊断的「数据库密钥」行会写明「已跳过 N 个补不到密钥的分片（例：…）」",
-      "测试时请别把微信最小化——最小化时会话头识别拿不到画面"
+      "新增余额显示伪装：余额旁「显示」按钮可一键隐藏或改成你填的数字，真实余额一点都不动",
+      "反馈栏变简单：第一屏只剩 类型 + 内容 + 提交，联系方式/发送通道/提交记录收进「更多」",
+      "反馈的「在线提交」通道已接好（填一个密钥即可让所有用户零配置提交，不用邮箱与授权码）",
+      "只在真需要时（没配通道或有积压）顶部才提示一行"
     ],
     "forceBase": false,
-    "minBase": "2026.9.16.16.5"
+    "minBase": "2026.9.16.16.6"
   },
-  "builtAt": "2026-09-16T15:39:44Z",
-  "updatedAt": 1789573184285
+  "builtAt": "2026-09-16T15:52:28Z",
+  "updatedAt": 1789573948774
 }
