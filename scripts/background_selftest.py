@@ -153,7 +153,7 @@ ck("B19b 真鼠标兜底也默认关（allow_real_fallback 默认 False）",
 _SEG_SEARCH = SRC_WECHAT.split("def open_chat_by_search(")[1][:6000]
 ck("B20 搜索路线：'时间戳读不出'按弱证据放行（不再整条回退去滚列表）",
    '_why_s = str(idn_why)' in _SEG_SEARCH and '"读不出" in _why_s' in _SEG_SEARCH)
-ck("B20a 发送闸没跟着放宽（注释里写明"发送闸一个字不动"）",
+ck("B20a 发送闸没跟着放宽（注释里写明「发送闸一个字不动」）",
    "发送闸一个字不动" in _SEG_SEARCH)
 # B17d~B17g 破 `no_ref` 死锁（2026-09-16 对面 r23 现场：参照只在"发送成功之后"才学，而 `no_ref`
 #   直接拒发 ⇒ 永远拒、永远学不到；A 枪走"宽松成功"分支同样不学 ⇒ 全日志没有一次学会参照的记录）
