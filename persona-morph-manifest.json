@@ -1,10 +1,10 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.16.17",
-    "sha256": "ae616594d34646f20de9ca1aaa57154350eaf6fedd694a8b081d50d9b29477c2",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.18/persona-morph-v2.1.18.zip",
-    "size": 8209422,
+    "version": "2026.9.16.18",
+    "sha256": "2dd322b36c400635c24109c7fe0b69669149afc0fbb9396835f52c5ff9f639f8",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.19/persona-morph-v2.1.19.zip",
+    "size": 8236434,
     "files": 249
   },
   "dlc": [
@@ -32,15 +32,13 @@
     }
   ],
   "announce": {
-    "version": "2026.9.16.17",
+    "version": "2026.9.16.18",
     "notes": [
-      "反馈现在「点一下就送到」：在反馈面板选类型、写内容、点提交即可，你不用做任何设置",
-      "界面更简单：反馈栏只留 类型 / 内容 / 提交，联系人与提交记录收在「更多」里",
-      "反馈只往开发者那边发，不会发到微信的任何人或群；提交记录可自查状态"
+      "反馈可以直接带图片和文件（最多 4 个；图片 ≤2MB，其他 ≤20MB）；另可选填联系邮箱，写错会当场提醒。"
     ],
     "forceBase": false,
-    "minBase": "2026.9.16.17"
+    "minBase": "2026.9.16.18"
   },
-  "builtAt": "2026-09-16T16:48:42Z",
-  "updatedAt": 1789577322374
+  "builtAt": "2026-09-16T16:59:33Z",
+  "updatedAt": 1789577973705
 }
