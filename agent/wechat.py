@@ -2283,38 +2283,71 @@ class WeChatAdapter:
             if not ok:
                 return False, "投递打字失败：%s" % why
             time.sleep(0.45)
-            # 「发送」按钮：渲染区比例 (0.932, 0.945)（1160×900 实测；按钮不用焦点，回车才要）
+            # 「发送」按钮：渲染区比例 (0.932, 0.945)（1160×900 实测）。
             send_pt = (int(r[0]) + int(rw * 0.932), int(r[1]) + int(rh * 0.945))
-            ok2, why2 = backend.click(main, send_pt)
-            if not ok2:
-                return False, "投递点发送失败：%s" % why2
-            # ⚠️ 2026-09-16 晚（跨机 r15 实测）：投递链的**伪激活**（`WM_ACTIVATE`）会让微信**短暂真占前台**
-            #    （他们那台实测 1.8s、切换会话那枪 2.9~3.2s，之后自动还回）。⇒ 发送这一枪之后立刻盯着还一次，
-            #    把"用户窗口丢前台"的时长压到最短；`_FG_STASH` 是进这条链时 `_stash_fg()` 记下的用户窗口。
-            _restore_fg_until("投递发送后", timeout=2.5, keep=False)
-            deadline = time.time() + max(3.0, float(wait_s))
-            while time.time() < deadline:
-                time.sleep(0.8)
+
+            def _new_row():
+                """DB 回读：出现新行就返回它 —— ⚠️ 这仍然是我们**唯一的成功判据**。"""
                 rows = _rows()
                 if rows and str(rows[0].get("local_id")) != base_sig:
-                    head = rows[0]
+                    return rows[0]
+                return None
+
+            def _one_shot(idx: int):
+                """第 idx 枪：**奇数枪＝投递回车（首选），偶数枪＝投递点「发送」按钮（兜底）**。
+
+                ⛔ 2026-09-16 修（用户反馈「不会发消息了：**写在文本框，但是不发送**」）：
+                  老实现**只点一枪按钮**、然后干等 DB —— 那一枪只要没生效，**就没人补第二枪**，
+                  字就一直留在输入框里（而且下一轮可能把残留连新字一起发出去）。
+                  口径照抄上游 `wechatauto/guia.py::click_send()`（它有三条防护：发送前确认框里有字 /
+                  发送后确认框已清空 / 最多 3 枪），本轮先抄"**多枪 + 回车优先**"这一条：
+                  上游原话「输入框刚粘贴完必已聚焦，**回车最可靠**」，点按钮只在回车之后仍没发出去时用。
+                  我们这条链**打字前已经投递点过输入栏**（见上）⇒ 打完字输入框必然聚焦 ⇒ 回车可行。
+                """
+                if idx % 2 == 1:
+                    ok_k, why_k = backend.keys(main, [ib.VK_RETURN])
+                    return bool(ok_k), "投递回车", why_k
+                ok_c, why_c = backend.click(main, send_pt)
+                return bool(ok_c), "投递点发送按钮", why_c
+
+            _fired, _tried = 0, []
+            for _i in range(1, 4):                      # 最多 3 枪（与上游 click_send 的重试次数同口径）
+                _ok_s, _how, _why_s = _one_shot(_i)
+                _tried.append(_how if _ok_s else "%s(没打出去)" % _how)
+                if _ok_s:
+                    _fired += 1
+                else:
+                    log.warning("投递发送第 %d 枪没打出去（%s）：%s", _i, _how, str(_why_s)[:80])
+                # ⚠️ 2026-09-16 晚（跨机 r15 实测）：投递链的**伪激活**（`WM_ACTIVATE`）会让微信**短暂真占前台**
+                #    ⇒ 每一枪之后都立刻盯一次还前台，把"用户窗口丢前台"的时长压到最短。
+                _restore_fg_until("投递发送后", timeout=2.5, keep=False)
+                _deadline = time.time() + max(1.5, max(3.0, float(wait_s)) / 3.0)
+                while time.time() < _deadline:
+                    time.sleep(0.8)
+                    head = _new_row()
+                    if not head:
+                        continue
                     if str(text)[:20] in str(head.get("content") or ""):
                         # DB 回读确认成功 ⇒ 自动补一条"当前窗口尺寸"下的会话头参照
                         # （尺寸变了以后不用人工重标；下次同尺寸就能真正校验）
                         self._learn_chat_header(chat_id, gui=gui)
-                        return V_OK, "投递发送成功（DB 回读 local_id=%s type=%s）" % (
-                            head.get("local_id"), head.get("type"))
+                        return V_OK, "投递发送成功（第 %d 枪：%s；DB 回读 local_id=%s type=%s）" % (
+                            _i, _how, head.get("local_id"), head.get("type"))
                     # 2026-09-16：这条"宽松成功"以前**不学参照** ⇒ 对面 r23 实测：A 枪走这条分支
-                    # 返回 ok，紧接着同一尺寸再发**仍报 no_ref**（全日志里没有一次"学会参照"的执行
-                    # 记录）。能走到这里说明身份闸已经放行（当前会话＝目标会话有正面证据）⇒ 学参照安全。
+                    # 返回 ok，紧接着同一尺寸再发**仍报 no_ref**。能走到这里说明身份闸已放行 ⇒ 学参照安全。
                     self._learn_chat_header(chat_id, gui=gui)
-                    return V_OK, "DB 有新行但内容与本次不一致（local_id=%s，可能上一条刚写库）" % head.get("local_id")
+                    return V_OK, "DB 有新行但内容与本次不一致（第 %d 枪：%s；local_id=%s，可能上一条刚写库）" % (
+                        _i, _how, head.get("local_id"))
+            if not _fired:
+                return False, "投递发送失败：三枪都没打出去（%s）" % "→".join(_tried)
             # ⚠️ 判据不可用 ≠ 发送失败（2026-09-14 测机报告：4.1.13.65 上投递其实发出去了，但回读通道失效）
             _alive, _why_alive = self.db_alive(chat_id)
             if not _alive:
-                return V_UNVERIFIED, ("已投递，但**判据不可用**、无法证实是否发出：%s（投递链路本身没报错）"
-                                      % _why_alive)
-            return V_NOT_SENT, "已投递但 %ds 内 DB 没等到新行（发送未生效）" % int(wait_s)
+                return V_UNVERIFIED, ("已投递 %d 枪（%s），但**判据不可用**、无法证实是否发出：%s"
+                                      "（投递链路本身没报错）" % (_fired, "→".join(_tried), _why_alive))
+            return V_NOT_SENT, ("已投递 %d 枪（%s）但 %ds 内 DB 没等到新行（发送未生效）；"
+                                "**文字可能还留在输入框里**——请到微信里看一眼那个会话"
+                                % (_fired, "→".join(_tried), int(wait_s)))
         except Exception as e:
             return False, str(e)
         finally:

@@ -524,9 +524,13 @@ th{color:var(--tx2);font-weight:500}
 </div>
 <style>
 .updbar{display:flex;align-items:center;gap:10px;margin:0 18px 10px;padding:9px 14px;border-radius:10px;
-  background:var(--card,#1b1e24);border:1px solid var(--line,#2a2f37);color:var(--tx,#e6e8ec);font-size:13px}
+  background:var(--card,#1b1e24);border:1px solid var(--bd,var(--line,#2a2f37));color:var(--tx,#e6e8ec);font-size:13px}
 .updbar.warn{border-color:#8a7a3a}
 .updbar .sp{flex:1}
+/* 2026-09-16 修：消息要点一长，按钮会被压到"一个字一行"（直播实拍过的丑样子）。
+   正文可换行、按钮不缩不长。 */
+.updbar #updText{flex:1 1 auto;min-width:0;line-height:1.5}
+.updbar button{flex:none;white-space:nowrap}
 </style>
 <script>
 (function () {

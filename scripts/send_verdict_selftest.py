@@ -108,8 +108,14 @@ ok("能读但当前无消息 ⇒ 判可用（不误报）", alive is True, why[:
 print("── C. 源码层：三个发送入口都必须先问 db_alive ──")
 SRC = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
 ok("存在 V_UNVERIFIED 分支（文本）", SRC.count("return V_UNVERIFIED") >= 3, "共 %d 处" % SRC.count("return V_UNVERIFIED"))
+_SV = SRC[SRC.index("def send_text_posted("):]
+_SV = _SV[:_SV.index("def send_image_posted(")]
+_ALIVE = _SV.find("_alive, _why_alive = self.db_alive(chat_id)")
+_u = _SV.find("return V_UNVERIFIED")
+_n = _SV.find("return V_NOT_SENT")
 ok("文本链路：回读失败时先 db_alive，再决定 未证实/失败",
-   "已投递，但**判据不可用**" in SRC and "return V_NOT_SENT, \"已投递但 %ds 内 DB 没等到新行" in SRC)
+   0 <= _ALIVE < _u and 0 <= _ALIVE < _n,
+   "db_alive@%d 未证实@%d 失败@%d" % (_ALIVE, _u, _n))
 ok("发图链路同上", "已投递粘贴并点了发送，但**判据不可用**" in SRC)
 ok("发文件链路同上", "已走完对话框与发送，但**判据不可用**" in SRC)
 ok("成功分支已改回 V_OK（机器可判读）", "return V_OK, \"投递发送成功" in SRC and "return V_OK, \"投递发文件成功" in SRC)

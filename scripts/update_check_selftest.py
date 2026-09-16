@@ -128,6 +128,13 @@ ok("getElementById('updLater').onclick = hide" in _seg, "「稍后」＝只隐�
 ok("/api/update_skip" in _seg and "cur.theirs" in _seg, "「不再提醒」＝POST /api/update_skip 且带上版本号")
 ok("立即更新" in _H and "alert(" not in _seg, "「立即更新」＝就地给指引，**不弹窗**")
 ok("fetch('/api/update')" in _seg, "取数只打 /api/update")
+# 2026-09-16 补（给用户看公告条时当场发现的真缺陷）：条子的描边原来写 `var(--line,…)`，
+#   而四套主题里**只有 `--bd` 没有 `--line`** ⇒ 描边永远落到硬编码的深灰 `#2a2f37`，
+#   浅色主题下就是"白卡配深灰边"、不跟主题走。断言：描边必须优先取主题变量。
+ok("var(--bd" in _seg, "公告条描边跟主题走（`--bd`，不是硬编码 `--line`）")
+# 同一轮实拍发现的第二个外观缺陷：要点一长，三个按钮被压成"一个字一行"。
+ok("min-width:0" in _seg and "white-space:nowrap" in _seg,
+   "公告条正文可换行、按钮不被压成竖排（flex:none + nowrap）")
 ok('"/api/update"' in _W and '"/api/update_skip"' in _W, "后端路由都在：GET /api/update + POST /api/update_skip")
 
 print("\n==== 更新检查判据：%d 通过 / %d 失败 ====" % (PASS, FAIL))
