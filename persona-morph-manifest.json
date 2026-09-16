@@ -1,11 +1,11 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.16.16.1",
-    "sha256": "bdbf43b916e638347555e151c62fcc4a7a70beab0bdbf29be6b2a0e3d2a73f63",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.17.1/persona-morph-v2.1.17.1.zip",
-    "size": 8142556,
-    "files": 245
+    "version": "2026.9.16.16.2",
+    "sha256": "945ec8a7158d57679a8c3d5dccede27d8038f39b8f2569baf2025bf682cff4af",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.17.2/persona-morph-v2.1.17.2.zip",
+    "size": 8150985,
+    "files": 246
   },
   "dlc": [
     {
@@ -32,17 +32,16 @@
     }
   ],
   "announce": {
-    "version": "2026.9.16.16.1",
+    "version": "2026.9.16.16.2",
     "notes": [
-      "「未找到微信数据库目录」现在会自己扫盘（含 OneDrive 重定向与各固定盘）并告诉你去微信「设置 → 文件管理」核对默认保存位置",
-      "依赖检查从 14 项扩到 requirements 全量 25 项，以前 numpy/opencv/PyAutoGUI/edge-tts/pypinyin 装了没装没人查",
-      "接入诊断新增第一步「依赖装齐」：驱动库或依赖缺失会直接说，不再误报成「打不开消息库」",
-      "ffmpeg 自动使用随包自带的那份（以前只查 PATH，干净机器上语音转 wav 与视频抽帧被卡住）",
-      "版本号新增第 5 段：以后每修一个 bug 都发新版本号，装了旧版的用户每次都能收到更新提示"
+      "装依赖不再像卡死：pip 输出现在实时显示（以前要等装完才打印，界面十几分钟一片空白）",
+      "首次要下约 100~150MB，网速 1MB/s 时十几分钟正常——中途别关窗，装过的不会重下",
+      "去掉总时长上限，改成「连续十分钟无输出」才终止；三个镜像都失败会自动再重试一次",
+      "可选依赖（opencv/edge-tts 等）装不上不再阻断启动，只在控制台如实列出，下次一键启动自动补齐"
     ],
     "forceBase": false,
-    "minBase": "2026.9.16.16.1"
+    "minBase": "2026.9.16.16.2"
   },
-  "builtAt": "2026-09-16T14:30:53Z",
-  "updatedAt": 1789569053346
+  "builtAt": "2026-09-16T14:51:49Z",
+  "updatedAt": 1789570309635
 }
