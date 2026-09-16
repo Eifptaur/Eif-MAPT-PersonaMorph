@@ -78,8 +78,17 @@ sent[:] = []
 r = b.click(0, (500, 600))
 ck("B5 空句柄拒绝且不发消息", r[0] is False and not sent)
 sent[:] = []
+_saved_fm = ib.find_main_window
+ib.find_main_window = lambda: 4321          # 主窗桩：右键必须**改投它**
 r = b.click(1234, (500, 600), right=True)
-ck("B6 投递右键未实测 ⇒ 明确拒绝而不是乱点", r[0] is False and not sent, r[1])
+ib.find_main_window = _saved_fm
+_tg = {c[0] for c in sent}
+# 2026-09-16 改口径：**投递右键已实测可用**（投渲染子窗不弹菜单、**投主窗才弹**；再投递点菜单项能命中，
+# 判据＝剪贴板被写成那条消息的正文）⇒ 不再"明确拒绝"，而是**明确改投主窗**并用 RBUTTON 消息。
+# 守的仍是"不许乱点"：目标窗必须只有主窗 4321，且必须发出 右键按下/抬起。
+ck("B6 投递右键＝改投主窗 + 发 RBUTTON 消息（不再拒绝）",
+   r[0] is True and _tg == {4321} and any(c[1] == 0x0204 for c in sent) and any(c[1] == 0x0205 for c in sent),
+   "%s / %s" % (r[1], sent))
 
 sent[:] = []
 ok, why = b.send_text(1234, "ab中")

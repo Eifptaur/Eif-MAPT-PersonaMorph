@@ -65,8 +65,12 @@ PATHS = [
     },
     {
         "key": "moments_like_comment", "label": "朋友圈点赞 / 评论", "status": "real",
-        "detail": "右键菜单类：投递右键尚未实测（MessageBackend 对 right=True 直接拒绝）⇒ 真鼠标档",
-        "evidence": "agent/input_backend.py::click（right=True 直接返回「尚未实测」）",
+        "detail": "右键菜单类：**投递右键已实测可用**（2026-09-16 八枪：投渲染子窗不弹菜单、"
+                  "**投主窗才弹** `Qt51514QWindowToolSaveBits`；再投递左键点菜单项**能命中**——"
+                  "判据＝剪贴板被写成那条消息的正文）⇒ 但**本路径的实现还没切过去**，当前仍走真鼠标。",
+        "evidence": "_scratch/rclick_avatar.py（右键投主窗弹菜单，含真实右键阳性对照）· "
+                    "_scratch/rck_menu.py（投递点菜单项「复制」命中，剪贴板为证）· "
+                    "agent/input_backend.py::click(right=…) + menu_new_windows/menu_click",
     },
     {
         "key": "poke", "label": "拍一拍", "status": "real",
