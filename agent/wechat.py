@@ -1144,9 +1144,9 @@ class WeChatAdapter:
         `ui.lock_window_pos`** —— 那个开关的界面文案是「固定微信窗口位置」、注释写着
         「默认关：不动用户的窗口」，可代码**每次取 GUI 都把用户的微信钉到 1160×900、
         还把窗口下移到 y≥40**，等于开关名不副实（他 config.json 里就是 `false`，窗口照样被改）。
-        ⇒ 现在按开关走：**只有用户显式打开 `ui.lock_window_pos=True` 才限位**；默认
-        **一行都不碰用户的窗口**（尺寸不合就靠紧跟其后的 `calibrate_layout(save=True)`
-        按当前尺寸重新校准）。限位时仍是"借 → 空闲自动还"（见 `agent/window_borrow.py`）。
+        ⇒ 现在按开关走：**只有 `ui.lock_window_pos=True` 才限位**（**2026-09-16 用户把它改成默认开**：
+        「你在后台都不在意这个，而且也能防止点错」；关掉＝一行都不碰用户的窗口，尺寸不合就靠紧跟其后的
+        `calibrate_layout(save=True)` 按当前尺寸重新校准）。限位时仍是"借 → 空闲自动还"（见 `agent/window_borrow.py`）。
         """
         try:
             from .config import get_config as _gc

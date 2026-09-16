@@ -376,7 +376,8 @@ def _cfg_bool(key: str, default: bool = False) -> bool:
 
 
 def _force_geometry(gui) -> None:
-    """把微信主窗移到固定位置/大小（**默认关**：`ui.lock_window_pos`）。
+    """把微信主窗移到固定位置/大小（**默认开**：`ui.lock_window_pos`，2026-09-16 用户口径
+    「你把限位设成默认吧…也能防止点错」；**关掉就一行都不碰用户的窗口**）。
 
     2026-09-14 用户实测：「我一打开它，它会把我的微信窗口切出来」——真凶就是这里原来那句
     `ShowWindow(hwnd, 9)`（SW_RESTORE：**把最小化的微信强行弹出来**）＋ 一对自相矛盾的

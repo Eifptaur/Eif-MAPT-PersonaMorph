@@ -206,6 +206,25 @@ ck("B22 有一次性安全默认值迁移（老 config.json 也会被补上）",
    and "_SAFE_DEFAULTS_TAG" in SRC_CFG)
 ck("B22a 迁移只对真实 config.json 跑（自定义 path 不写回用户配置）",
    "os.path.abspath(path) == os.path.abspath(CONFIG_FILE)" in SRC_CFG)
+# B22b（2026-09-16 用户：「你把限位设成默认吧，因为用户在后台都不在意这个，而且也能防止点错」）：
+#   「限位」`ui.lock_window_pos` 改成默认开 ⇒ 老用户那份 config.json 里写着 false 的也必须搬到 true，
+#   否则"改默认值"对他们无效（与 B22 同一个坑）。这里守三件事：新默认 + 迁移项在表里 + 只做一次。
+ck("B22b 限位默认开（ui.lock_window_pos=True）", '"lock_window_pos": True' in SRC_CFG)
+ck("B22b2 「限位」也有一次性迁移（老 config.json 里 false 会被搬到 true）",
+   "_WINDOW_POS_TAG" in SRC_CFG and "_window_pos_once" in SRC_CFG
+   and "_MIGRATIONS = (" in SRC_CFG)
+try:
+    from agent import config as _C                                        # noqa: E402
+    _t = {"ui": {"lock_window_pos": False}, "wechat": {"background_only": True},
+          "input": {"allow_real_fallback": False}}
+    _c1 = _C._window_pos_once(_t)
+    _c2 = _C._window_pos_once(_t)          # 再跑一次：已经 true 了 ⇒ 不该再改、也不该报
+    ck("B22b3 迁移是幂等的（第二次跑什么都不改）",
+       bool(_c1) and _t["ui"]["lock_window_pos"] is True and _c2 == [], str((_c1, _c2)))
+    _t2 = {"ui": {"lock_window_pos": True}}
+    ck("B22b4 已经是 true 的用户不会被反复写（返回空表）", _C._window_pos_once(_t2) == [])
+except Exception as _e:
+    ck("B22b3 迁移幂等能跑", False, str(_e)[:80])
 # B23（2026-09-16 用户报「他点了一下搜索框，又不点，又搁那划会话列表」）：
 #   搜索框路线没成时，**默认不许退回「在会话列表里找行 + 滚轮」那条老路** ——
 #   那条路虽然走投递（不动光标），但**会话列表会在用户眼前滚**，他看到的"它在划"就是这个动作。
