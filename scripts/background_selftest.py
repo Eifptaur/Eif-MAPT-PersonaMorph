@@ -200,9 +200,12 @@ except Exception as _e:
     _bad_guard.append("扫描失败：%s" % _e)
 ck("B21 全库每处真鼠标调用都过了 real_guard（不然会点到你别的窗口）",
    not _bad_guard, "漏网：%s" % _bad_guard)
-# 阳性对照：扫描不能空转 —— 必须真的数到 ≥5 个"带守卫"的函数（改前是 0 个）
-ck("B21c 扫描非空转：数到 ≥5 个带守卫的真鼠标函数（改前是 0）",
-   _n_guard >= 5, "带守卫 %d 个" % _n_guard)
+# 阳性对照：扫描不能空转 —— 必须真的数到若干个"带守卫"的函数（改前是 0 个）
+# ⚠️ 2026-09-17 阈值 5 → 4：`agent/wechat_ui.py` 里那 6 处**没带守卫的真鼠标/真键盘**被整段删掉
+#   （`close_subwindow` 改成只走投递 WM_CLOSE/SC_CLOSE）⇒ 带守卫的函数总数自然从 5 掉到 4。
+#   这条断言的**本意是"扫描别空转"**（改前数到 0 个）⇒ 跟着实际数量走，但仍要求 ≥4。
+ck("B21c 扫描非空转：数到 ≥4 个带守卫的真鼠标函数（改前是 0；2026-09-17 由 5 降为 4）",
+   _n_guard >= 4, "带守卫 %d 个" % _n_guard)
 ck("B21a real_guard 会检查光标是否真的到位（SetCursorPos 可能静默返回 0）",
    "返回 0，光标没到位" in open(
        os.path.join(ROOT, "agent", "ui_adapt.py"), encoding="utf-8").read())
