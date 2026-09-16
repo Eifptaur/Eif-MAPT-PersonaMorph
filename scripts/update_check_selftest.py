@@ -9,6 +9,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -263,6 +264,95 @@ ok(len(_first_with_memo) >= 2 and _first_with_memo[1].startswith("https://ghfast
 ok(len(_first_default) >= 2 and _first_default[1].startswith(UA.DL_MIRRORS[0]),
    "上次用的是非镜像源 ⇒ 回默认镜像顺序（不乱改）",
    str(_first_default[1])[:56] if len(_first_default) > 1 else str(_first_default))
+
+print("\n[U13] 过期缓存**不许**抢赢新鲜镜像（2026-09-17 实测：jsDelivr 的 @main 缓存比新版本慢几小时，"
+      "而它 0.8s 就答、镜像 0.9s 也有货 ⇒ 按「先到的赢」挑，新版会在控制台里「消失」）")
+
+
+def _mk13(ver, note):
+    return {"schema": "persona-morph/1",
+            "base": {"version": ver, "sha256": "c" * 64, "url": "", "size": 1, "files": 1},
+            "dlc": [], "announce": {"version": ver, "notes": [note], "forceBase": False, "minBase": ver}}
+
+
+_stale13 = _mk13("2000.1.1.1", "CDN 旧缓存")
+_fresh13 = _mk13("2099.1.1.1", "镜像新清单")
+_arrive13 = []
+
+
+def _short13(u):
+    for _i, _x in enumerate(UC.DEFAULT_URLS):
+        if _x == u:
+            return "源%d" % _i
+    return "?"
+
+
+def _fake_cdn_stale(u, timeout=6.0):
+    """jsDelivr＝**先答但是旧的**；ghfast＝**后答但是新的**；其余不通。"""
+    if u == UC.DEFAULT_URLS[1]:
+        _arrive13.append(u)
+        return dict(_stale13), ""
+    if u == UC.DEFAULT_URLS[2]:
+        time.sleep(0.3)
+        _arrive13.append(u)
+        return dict(_fresh13), ""
+    return None, "The read operation timed out"
+
+
+_t13 = time.time()
+try:
+    UC.fetch = _fake_cdn_stale
+    _m13, _w13, _u13 = UC.fetch_any(list(UC.DEFAULT_URLS), 1.0)
+finally:
+    UC.fetch = _real_fetch
+_el13 = time.time() - _t13
+ok(_m13 is not None and _u13 == UC.DEFAULT_URLS[2] and _m13["base"]["version"] == "2099.1.1.1",
+   "版本高的赢（挑的是后到的镜像，不是先到的 CDN）", "%s → %s" % (_u13 == UC.DEFAULT_URLS[2], _m13 and _m13["base"]["version"]))
+# 反对照：确认这判据**不是恒真**——先到的确实是那份旧缓存
+ok(bool(_arrive13) and _arrive13[0] == UC.DEFAULT_URLS[1] and UC.DEFAULT_URLS[2] in _arrive13,
+   "反对照：旧缓存确实是先到的（所以「先到的赢」一定挑错）", str([_short13(u) for u in _arrive13]))
+
+
+def _hold13():
+    pass
+
+
+def _fake_only_cdn(u, timeout=6.0):
+    """只有旧缓存的 CDN 能通；**其余源是慢源**（睡 5 秒）——宽限窗必须替我们踩刹车。"""
+    if u == UC.DEFAULT_URLS[1]:
+        return dict(_stale13), ""
+    time.sleep(5.0)
+    return None, "timeout"
+
+
+_t13b = time.time()
+try:
+    UC.fetch = _fake_only_cdn
+    _m13b, _w13b, _u13b = UC.fetch_any(list(UC.DEFAULT_URLS), 6.0)
+finally:
+    UC.fetch = _real_fetch
+_el13b = time.time() - _t13b
+ok(_m13b is not None and _u13b == UC.DEFAULT_URLS[1],
+   "只有缓存源能通 ⇒ 照用（兜底不丢）", str(_u13b)[:48])
+ok(_el13b < UC.GRACE_S + 1.2,
+   "宽限窗有界：不等慢源、也不等超时（%.1fs < %.1fs + 1.2s）" % (_el13b, UC.GRACE_S))
+ok(_el13b >= UC.GRACE_S - 0.3,
+   "反对照：确实等满了宽限窗才定（%.1fs ≈ %.1fs）——不是碰巧提前返回" % (_el13b, UC.GRACE_S))
+
+
+def _fake_same13(u, timeout=6.0):
+    if u in (UC.DEFAULT_URLS[1], UC.DEFAULT_URLS[2]):
+        return dict(_MAN), ""
+    return None, "timeout"
+
+
+try:
+    UC.fetch = _fake_same13
+    _m13c, _w13c, _u13c = UC.fetch_any(list(UC.DEFAULT_URLS), 1.0)
+finally:
+    UC.fetch = _real_fetch
+ok(_u13c == UC.DEFAULT_URLS[1],
+   "版本相同 ⇒ 按候选顺序取先者（不因改动乱跳源）", str(_u13c)[:48])
 
 print("\n==== 更新检查判据：%d 通过 / %d 失败 ====" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
