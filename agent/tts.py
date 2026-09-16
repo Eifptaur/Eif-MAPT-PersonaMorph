@@ -33,7 +33,12 @@ def out_dir() -> str:
 
 
 def ffmpeg_path() -> str:
-    return shutil.which("ffmpeg") or ""
+    """ffmpeg 在哪（唯一解析入口：配置 → PATH → imageio-ffmpeg 自带的那份）。"""
+    try:
+        from .ffmpeg_bin import path as _p
+        return _p()
+    except Exception:
+        return shutil.which("ffmpeg") or ""
 
 
 def voices() -> list:

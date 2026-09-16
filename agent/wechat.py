@@ -5973,21 +5973,73 @@ def _db_dir_hint(db) -> str:
     return ""
 
 
+def _known_docs() -> str:
+    """系统**真正的**「文档」目录 —— 不能假设是 `~\\Documents`。
+
+    为什么（2026-09-16 用户朋友那份环境检验报告）：很多机器把「文档」重定向到 OneDrive
+    （`~\\OneDrive\\Documents`）或改到别的盘，而微信默认就把聊天文件放在文档下 ⇒ 只知道
+    `~\\Documents\\xwechat_files` 的人（我们）永远找不到。
+    """
+    try:
+        import ctypes
+        buf = ctypes.create_unicode_buffer(260)
+        # CSIDL_PERSONAL=0x0005 · SHGFP_TYPE_CURRENT=0
+        if ctypes.windll.shell32.SHGetFolderPathW(None, 0x0005, None, 0, buf) == 0:
+            return str(buf.value or "")
+    except Exception:
+        pass
+    return ""
+
+
+def _fixed_drives() -> list:
+    """本机**固定盘**（跳过网络盘/光驱/软驱）—— 扫盘只扫这些，免得诊断被网络盘拖死。"""
+    out = []
+    try:
+        import ctypes
+        for c in "CDEFGHIJKLMNOPQRSTUVWXYZ":
+            root = c + ":\\"
+            try:
+                if int(ctypes.windll.kernel32.GetDriveTypeW(root)) == 3:   # DRIVE_FIXED
+                    out.append(root)
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return out
+
+
+def _db_dir_candidates(extra: str = "") -> list:
+    """要找的候选目录（顺序＝优先级）：用户填的 → 家目录几处 → 系统真文档目录 → 各固定盘根。"""
+    home = os.path.expanduser("~")
+    cands = []
+    if str(extra or "").strip():
+        cands.append(str(extra).strip())
+    cands += [os.path.join(home, "xwechat_files"),
+              os.path.join(home, "Documents", "xwechat_files"),
+              os.path.join(home, "OneDrive", "Documents", "xwechat_files")]
+    _docs = _known_docs()
+    if _docs:
+        cands.append(os.path.join(_docs, "xwechat_files"))
+    for d in _fixed_drives():
+        cands.append(os.path.join(d, "xwechat_files"))
+        cands.append(os.path.join(d, "WeChat", "xwechat_files"))
+    out = []
+    for p in cands:
+        if p and p not in out:
+            out.append(p)
+    return out
+
+
 def _probe_db_dirs(extra: str = "") -> dict:
     """**只读**在磁盘上找微信 4.x 的数据目录（不碰驱动库、不碰窗口）。
 
-    为什么要有它（2026-09-16 用户追问「白名单那个问题，真的只是微信版本没匹配上吗」）：
-    驱动库打不开消息库时，我们只能报一句「打不开消息库」——**这句话分辨不出下面三种情况**，
-    而三种的解法完全不同：①目录不在默认位置（用户把聊天记录挪到别的盘）②目录在、但结构与
-    驱动库对不上（版本差）③目录与库文件都在（权限/占用）。⇒ 独立探一遍盘，把档分开。
+    为什么要有它（2026-09-16 用户追问「白名单那个问题，真的只是微信版本没匹配上吗」+ 他朋友那份
+    「未找到微信数据库目录」的环境检验报告）：驱动库打不开消息库时，我们只能报一句「打不开消息库」
+    ——**这句话分辨不出解法完全不同的三种情况**：①目录不在默认位置（用户改了微信文件保存位置、
+    或文档被重定向到 OneDrive）②目录在、但结构与驱动库对不上（版本差）③目录与库文件都在
+    （权限/占用）。⇒ 独立探一遍盘，把档分开，并把**探过哪些目录**如实报出来。
     """
-    home = os.path.expanduser("~")
-    tried = []
-    for p in ([str(extra)] if str(extra or "").strip() else []) + [
-            os.path.join(home, "xwechat_files"),
-            os.path.join(home, "Documents", "xwechat_files")]:
-        if p and p not in tried:
-            tried.append(p)
+    tried = _db_dir_candidates(extra)
     found, accounts, dbs = [], 0, 0
     for p in tried:
         if not os.path.isdir(p):
@@ -6009,12 +6061,14 @@ def _probe_db_dirs(extra: str = "") -> dict:
 def _db_open_verdict(p: dict) -> str:
     """把「打不开消息库」分成三档，每档给一句**能照着做**的结论。"""
     tried = "、".join(p.get("tried") or []) or "（没探任何目录）"
+    how = "在微信里看「设置 → 文件管理 → 微信文件默认保存位置」，把那个目录填进下面「数据库目录」"
     if not p.get("found"):
-        return ("；磁盘上也没找到微信的数据目录（试过 %s）⇒ 聊天记录多半存在**别的盘/自定义目录**，"
-                "把那个目录填进下面「数据库目录」再试" % tried)
+        return ("；磁盘上也没找到微信的数据目录（探过 %s）⇒ %s；若那儿也是空的，多半是这台微信"
+                "还没登录过 / 还没收到过消息（目录还没生成）" % (tried, how))
     if not p.get("dbs"):
         return ("；磁盘上找到了数据目录（%s），但**一个 .db 都没有** ⇒ 目录结构对不上"
-                "（驱动库不认识这个微信版本的数据结构），不是权限问题" % "、".join(p["found"]))
+                "（驱动库不认识这个微信版本的数据结构），不是权限问题；也可以 %s"
+                % ("、".join(p["found"]), how))
     return ("；磁盘上 %d 个 .db 都在（%s）⇒ 目录和文件都没问题，那是**权限或占用**："
             "微信若以管理员运行，本程序也要同样权限；也可先点重试"
             % (p.get("dbs") or 0, "、".join(p["found"])))
@@ -6052,14 +6106,40 @@ def attach_diagnosis(adapter=None, err="", db=None) -> dict:
     这里把接入拆成逐步的只读检查，每一步都给**证据**与**下一步动作**。
 
     步骤（能过就往下走，第一个不过的就是卡点）：
-      process 微信进程在跑吗 → install 装了没（仅在进程不在时）→ db_open 消息库打得开吗
-      → key 数据库密钥可用吗 → self 认得出你自己的账号吗
+      deps 依赖装齐了吗（我们自己这半边）→ process 微信进程在跑吗 → install 装了没（仅在进程不在时）
+      → version 微信版本够 4.x 吗 → db_open 消息库打得开吗 → key 数据库密钥可用吗 → self 认得出你自己的账号吗
 
     参数：`adapter` 能传就传（复用它的 `_db`，不重复开库）；没有就自己开一次（只读）——
     所以**只该在"接入失败/用户主动查"时调用，别放进每几秒一次的状态轮询里**。
     返回：{ok, step, reason, action, steps[{key,name,ok,detail}], err}
     """
     steps = []
+    # ── 第 0 步：依赖装齐没（2026-09-16 用户问「是不是有人的微信连不上就是因为没装齐」后加）──
+    #    为什么放最前：驱动库/依赖缺了，后面几步的报错会被**误读成"打不开消息库"**（异常文本里其实
+    #    写着 No module named 'wechatauto'，而侧栏短原因只显示"打不开消息库"）⇒ 用户照着目录/权限
+    #    查一圈白折腾。依赖是"我们自己这半边齐不齐"，先过这关再谈微信。
+    _miss, _imp_err, _dep_n = [], "", 0
+    try:
+        import wechatauto  # noqa: F401
+    except Exception as e:
+        _imp_err = "%s: %s" % (type(e).__name__, str(e)[:100])
+    try:
+        _drows, _dok = dep_check("all")
+        _dep_n = len(_drows)
+        _miss = [r[0] for r in _drows if not r[3]]
+    except Exception as e:
+        _dok = True
+        log.debug("依赖自检异常：%s", e)
+    if _imp_err:
+        _ddetail = ("驱动库**没装上**（%s）⇒ 这不是微信的问题：双击「一键启动」（或「一键检验」）"
+                    "把依赖装齐再试" % _imp_err)
+    elif _miss:
+        _ddetail = ("缺 %d/%d 项依赖：%s ⇒ 双击「一键启动」（或「一键检验」）自动安装，已装的会跳过"
+                    % (len(_miss), _dep_n, "、".join(_miss[:6])))
+    else:
+        _ddetail = "依赖齐：驱动库可导入，%d 项版本全部达标" % _dep_n
+    steps.append({"key": "deps", "name": "依赖装齐",
+                  "ok": bool(_dok) and not _imp_err, "detail": _ddetail})
     try:
         vi = wechat_version_info() or {}
     except Exception as e:
@@ -6102,10 +6182,14 @@ def attach_diagnosis(adapter=None, err="", db=None) -> dict:
             steps.append({"key": "db_open", "name": "打开消息库", "ok": True,
                           "detail": "消息库已打开：" + (_db_dir_hint(_db) or "（库没报目录）")})
         except Exception as e:
-            steps.append({"key": "db_open", "name": "打开消息库", "ok": False,
-                          "detail": "打不开消息库：%s【%s】%s"
-                                    % (str(e)[:140], type(e).__name__,
-                                       _db_open_verdict(_probe_db_dirs(_d)))})
+            if isinstance(e, ImportError):
+                # 依赖缺了 ⇒ 别把它说成"消息库打不开"（2026-09-16：这是"没装齐"最容易被误判的一条路）
+                _dd = ("驱动库没装上：%s ⇒ 这不是消息库的问题，双击「一键启动」把依赖装齐再试"
+                       % str(e)[:140])
+            else:
+                _dd = ("打不开消息库：%s【%s】%s"
+                       % (str(e)[:140], type(e).__name__, _db_open_verdict(_probe_db_dirs(_d))))
+            steps.append({"key": "db_open", "name": "打开消息库", "ok": False, "detail": _dd})
             _db = None
     else:
         steps.append({"key": "db_open", "name": "打开消息库", "ok": True,
@@ -6132,7 +6216,8 @@ def attach_diagnosis(adapter=None, err="", db=None) -> dict:
                                      "但「这条是不是我发的」会退化"})
     bad = [s for s in steps if not s["ok"]]
     step_key = bad[0]["key"] if bad else ""
-    action = {"process": "start_wechat", "install": "install", "version": "upgrade_wechat",
+    action = {"deps": "install_deps", "process": "start_wechat", "install": "install",
+              "version": "upgrade_wechat",
               "db_open": "retry", "key": "relogin", "self": "retry"}.get(step_key, "none")
     # 「微信没在跑」里还要分两种：装了的＝叫他开微信；没装的＝叫他去装（别让他白找一圈）
     if step_key == "process" and any(s["key"] == "install" and not s["ok"] for s in steps):
@@ -6146,6 +6231,7 @@ def attach_diagnosis(adapter=None, err="", db=None) -> dict:
 
 # 卡点的**短标签**：控制台侧栏一行放得下（长句放 title 提示里）。
 ATTACH_STEP_LABEL = {
+    "deps": "依赖没装齐",
     "process": "微信没在运行",
     "install": "没检测到微信",
     "version": "微信版本太旧（要 4.x）",
@@ -6190,8 +6276,65 @@ def _ver_tuple(v):
     return tuple(int(x) for x in _re.findall(r"\d+", str(v or ""))[:4]) or (0,)
 
 
-def dep_check():
-    """关键依赖版本检查。返回 (rows, all_ok)。rows: [(pkg, installed, required, ok)]"""
+def _cmp_ver(inst, op, want) -> bool:
+    """版本比较（只支持 requirements 里会出现的几种写法；认不出的一律按 '装了就算过'）。"""
+    if not inst:
+        return False
+    if not want:
+        return True
+    a, b = _ver_tuple(inst), _ver_tuple(want)
+    if not a or not b:
+        return True
+    if op == "==":
+        return a == b
+    if op == ">":
+        return a > b
+    if op == "~=":                 # 兼容版本：按 >= 处理（够用，且不会误拦）
+        return a >= b
+    return a >= b
+
+
+def _req_rows():
+    """把 `requirements.txt` 变成检查项 —— **单一事实源，别再手抄两份**（2026-09-16）。
+
+    为什么：以前检查表是手写在 `MIN_VER` 里的 **14 项**，而 requirements.txt 有 **25 条**
+    ⇒ numpy / opencv / PyAutoGUI / edge-tts / pypinyin 这些**装了没装没人管**（用户问
+    「一键启动是不是真把所有要用的都装齐了」时暴露的）。现在：**MIN_VER 里的照旧**（那些是
+    刻意放宽的规则，例如驱动库故意不做严格等值），**其余一律由 requirements.txt 驱动**。
+    解析不出的行（注释、`-r`、环境标记）一律跳过，不猜。
+    """
+    out = []
+    p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "requirements.txt")
+    try:
+        with open(p, encoding="utf-8", errors="replace") as fh:
+            lines = fh.readlines()
+    except Exception:
+        return out
+    import re as _re
+    skip = set(k.lower().replace("_", "-") for k in MIN_VER)
+    for ln in lines:
+        s = ln.split("#")[0].strip()
+        if not s or s.startswith("-"):
+            continue
+        m = _re.match(r"^([A-Za-z0-9_.\-]+)\s*(==|>=|~=|>)?\s*([0-9][0-9A-Za-z.\-]*)?$", s)
+        if not m:
+            continue
+        name = m.group(1)
+        if name.lower().replace("_", "-") in skip:
+            continue
+        out.append((name, m.group(2) or ">=", m.group(3) or ""))
+    return out
+
+
+def dep_check(scope="key"):
+    """关键依赖版本检查。返回 (rows, all_ok)。rows: [(pkg, installed, required, ok)]
+
+    `scope`：
+      · `"key"`（**默认，原行为不变**）＝只查 `MIN_VER` 手写的那 14 项（机器级自检用）；
+      · `"all"` ＝再并上 `requirements.txt` 里其余每一条 ⇒ **"东西到底装齐了没"的全量口径**
+        （`setup_deps` 与接入诊断用；2026-09-16 之前这里只有 14 项、而 requirements 有 25 条
+        ⇒ numpy/opencv/PyAutoGUI/edge-tts/pypinyin 装了没装没人管）。
+    """
     import importlib.metadata as md
     rows = []
     for pkg, req in MIN_VER.items():
@@ -6203,4 +6346,12 @@ def dep_check():
         # 统一按"≥ 最低要求"判定；高于适配层实测版本时只由适配层给"未实测"提示，不阻断。
         ok = bool(inst) and _ver_tuple(inst) >= _ver_tuple(req)
         rows.append((pkg, inst or "", req, ok))
+    if scope == "all":
+        for name, op, ver in _req_rows():
+            try:
+                inst = md.version(name)
+            except Exception:
+                inst = ""
+            rows.append((name, inst or "", ("%s%s" % (op, ver)) if ver else op,
+                         _cmp_ver(inst, op, ver)))
     return rows, all(r[3] for r in rows)

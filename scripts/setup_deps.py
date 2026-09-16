@@ -23,7 +23,7 @@ def main():
     print("=" * 52)
     print(" Persona Morph 依赖检查 / 安装")
     print("=" * 52)
-    rows, ok = dep_check()
+    rows, ok = dep_check("all")
     for pkg, inst, req, good in rows:
         print("  %s %-20s 已装 %-12s 需 >= %s" % (
             "OK  " if good else "MISS", pkg, (inst or "-"), req))
@@ -86,7 +86,7 @@ def main():
         print("[失败] 安装异常：%s" % e)
         return 1
 
-    rows2, ok2 = dep_check()
+    rows2, ok2 = dep_check("all")
     print("-" * 52)
     print("复查：" + ("全部满足 ✔" if ok2 else "仍有缺失: " + ", ".join(r[0] for r in rows2 if not r[3])))
     print("下一步：双击 一键启动.vbs 即可（已装依赖会自动跳过）。")

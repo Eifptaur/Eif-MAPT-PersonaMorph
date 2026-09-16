@@ -31,6 +31,12 @@ _NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 
 def ffmpeg_path() -> str:
+    """ffmpeg 在哪（唯一解析入口：配置 → PATH → imageio-ffmpeg 自带的那份）。"""
+    try:
+        from .ffmpeg_bin import path as _p
+        return _p()
+    except Exception:
+        pass
     try:
         from .voice import _which
         p = _which("ffmpeg")

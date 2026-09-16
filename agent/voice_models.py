@@ -384,7 +384,12 @@ def edge_voice(cfg: dict | None = None) -> str:
 
 
 def _ffmpeg_bin() -> str:
-    """ffmpeg 可执行名（本机在 PATH 里；找不到就返回空，由调用方如实报错）。"""
+    """ffmpeg 可执行文件（唯一解析入口：配置 → PATH → imageio-ffmpeg 自带的那份）。"""
+    try:
+        from .ffmpeg_bin import path as _p
+        return _p()
+    except Exception:
+        pass
     import shutil as _sh
     return _sh.which("ffmpeg") or ""
 
