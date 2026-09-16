@@ -1749,6 +1749,8 @@ th{color:var(--tx2);font-weight:500}
         <input type="hidden" data-cfg="feedback.to">
         <div class="row"><label>中转网址</label><div class="grow"><input type="text" data-cfg="feedback.upload_url" placeholder="https://你的接收端/feedback"><div class="hint">填了它就先走网址（POST 配置格式），成功就不再发邮件。</div></div></div>
         <div class="row"><label>在线提交密钥</label><div class="grow"><input type="text" data-cfg="feedback.web3forms_key" placeholder="Web3Forms 的 access key"><div class="hint">填了它就走在线提交（不用邮箱、不用授权码）；这个 key 是公开给客户端用的，可随时撤销。</div></div></div>
+        <div class="row"><label>推送地址</label><div class="grow"><input type="text" data-cfg="feedback.webhook_url" placeholder="钉钉/飞书/企业微信 群机器人 或 PushPlus 的地址"><div class="hint">国内可达：填了它，用户的反馈会**直接推到你的手机/群里**（钉钉·飞书·企业微信群机器人、PushPlus 都认，按域名自动适配）。</div></div></div>
+        <div class="row"><label>推送口令</label><div class="grow"><input type="password" data-cfg="feedback.webhook_token" placeholder="只有 PushPlus 需要"><div class="hint">PushPlus 的推送口令（钉钉/飞书/企业微信不用填）。</div></div></div>
         <div class="row"><label>发件邮箱</label><div class="grow"><input type="text" data-cfg="feedback.smtp.user" placeholder="xxx@qq.com"><div class="hint">用哪个邮箱把反馈发出去。</div></div></div>
         <div class="row"><label>邮箱授权码</label><div class="grow"><input type="password" data-cfg="feedback.smtp.password" placeholder="QQ 邮箱的授权码，不是登录密码"><div class="hint">保存过即以掩码显示，要改就重新填。QQ 邮箱：设置 → 账号 → 开启 SMTP 服务，会给你一串授权码。</div></div></div>
         <div class="row"><label>发信服务器</label><div class="grow"><input type="text" data-cfg="feedback.smtp.host" placeholder="smtp.qq.com">

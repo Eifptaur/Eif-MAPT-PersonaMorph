@@ -312,6 +312,47 @@ try:
     _st = FB.stats()
     ok("状态里认得出这条通道、can_send=True", bool(_st["can_send"]) and "在线提交" in _st["channel"],
        _st["channel"])
+
+    # ── H. 国内可达的"推送到你自己"（用户回：web3forms.com 进不去咋办）──
+    print("\n── H. 推送通道：钉钉/飞书/企业微信/PushPlus 按域名自动适配 ──")
+    _sent = []
+
+    def _mk(ok_body):
+        def _f(url, payload, timeout=10):
+            _sent.append((url, payload))
+            return {"ok": True, "status": 200, "why": ok_body}
+        return _f
+
+    for _host, _body_ok, _body_bad, _where in (
+            ("https://oapi.dingtalk.com/robot/send?access_token=x", '{"errcode":0,"errmsg":"ok"}',
+             '{"errcode":310000,"errmsg":"keywords not in content"}', "text"),
+            ("https://open.feishu.cn/open-apis/bot/v2/hook/abc", '{"code":0,"msg":"success"}',
+             '{"code":9499,"msg":"Bad Request"}', "content"),
+            ("https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=k", '{"errcode":0,"errmsg":"ok"}',
+             '{"errcode":93000,"errmsg":"invalid webhook url"}', "text")):
+        _sent[:] = []
+        FB._post = _mk(_body_ok)
+        _r = FB._post_webhook(_host, {"kind": "问题", "text": "hi", "ver": "1"}, "")
+        ok("%s ⇒ 认成功" % _host.split("/")[2], bool(_r.get("ok")), str(_r.get("why"))[:50])
+        _p = _sent[0][1]
+        ok("  请求体用的是 text 形态", _where in _p and isinstance(_p[_where], dict), str(list(_p.keys())))
+        FB._post = _mk(_body_bad)
+        _r2 = FB._post_webhook(_host, {"kind": "问题", "text": "hi", "ver": "1"}, "")
+        ok("  返回码非 0 ⇒ **判失败**（别把被拒当成功）", not _r2.get("ok"), str(_r2.get("why"))[:60])
+    _sent[:] = []
+    FB._post = _mk('{"code":200,"msg":"请求成功"}')
+    _r3 = FB._post_webhook("https://www.pushplus.plus/send", {"kind": "其他", "text": "x", "ver": "1"}, "")
+    ok("PushPlus 没有 token ⇒ 明确说缺什么", not _r3.get("ok") and "token" in str(_r3.get("why")), str(_r3.get("why"))[:50])
+    _r4 = FB._post_webhook("https://www.pushplus.plus/send", {"kind": "其他", "text": "x", "ver": "1"}, "TK")
+    ok("PushPlus 带 token ⇒ 走 token 形态并判成功",
+       bool(_r4.get("ok")) and _sent[0][1].get("token") == "TK", str(_sent[0][1].keys()))
+    _sent[:] = []
+    FB._post = _mk("ok")
+    _r5 = FB._post_webhook("https://mydomain.example/feedback", {"kind": "其他", "text": "x", "ver": "1"}, "")
+    ok("任意自定义中转 ⇒ 只要 2xx 就算送到", bool(_r5.get("ok")) and "title" in _sent[0][1], str(list(_sent[0][1].keys())))
+    FB._cfg = lambda: {"webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=x"}
+    _st2 = FB.stats()
+    ok("状态里认得出推送通道", bool(_st2["can_send"]) and "推送到你" in _st2["channel"], _st2["channel"])
 finally:
     FB._cfg, FB._post = _saved_cfg, _saved_post
 

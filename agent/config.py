@@ -458,6 +458,11 @@ DEFAULT_CONFIG = {
         # 又不能进包（PII 闸门）⇒ 普通用户点了发送只能存在本机。这类服务的 key **天生就是公开给
         # 客户端用的**（可随时撤销、不暴露收件邮箱）⇒ 填一次，所有用户开箱即用。
         "web3forms_key": "",
+        # 国内可达的"推送到你自己"（2026-09-16 用户回：「web3forms.com 进不去咋办」）：
+        # 填**任意**一个 webhook 地址即可 —— 钉钉/飞书/企业微信 群机器人、PushPlus（配 token）、
+        # 或你自己的中转。请求体会按域名自动选形态（见 `feedback._post_webhook`）。
+        "webhook_url": "",
+        "webhook_token": "",
         "smtp": {
             "host": "smtp.qq.com",    # QQ 邮箱 465 SSL；163 用 smtp.163.com
             "port": 465,              # 465=SSL（推荐）| 587=STARTTLS
