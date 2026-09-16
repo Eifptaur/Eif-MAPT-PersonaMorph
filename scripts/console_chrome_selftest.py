@@ -189,6 +189,23 @@ ok("真值表：暂停中点一下 ⇒ 恢复（调 resume、状态变运行中�
    _t1["call"] == "/api/resume" and _t1["afterPaused"] is False
    and _t1["btn"] == "暂停" and _t1["run"] == "运行中", _t1)
 
+print("\n── 顶栏状态行（2026-09-16 待拍板三件之一：暂停态 / 监听 N 个会话 / 主人登记 N 项）──")
+_page = open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+_pm = open(os.path.join(ROOT, "scripts", "persona_morph.py"), encoding="utf-8").read()
+ok("后台真的给了监听数（listen.groups / listen.privates）",
+   '"listen": {"groups"' in _pm and '"privates"' in _pm)
+ok("私聊数取自 list_private_targets（与监听目标同一来源，不另算一份）",
+   "len(wechat.list_private_targets())" in _pm)
+ok("顶栏有两个状态位（监听 / 主人登记）",
+   'id="listen-badge"' in _page and 'id="owner-badge"' in _page)
+ok("拿不到数据时显示 ? 而不是猜 0（猜 0 会让人以为没在监听）",
+   "lb.textContent = '?'" in _page and "ob.textContent = '?'" in _page)
+ok("暂停态复用既有 runText chip（不另起一个说法）",
+   "$('runText').textContent = s.paused ? '已暂停' : '运行中'" in _page)
+ok("主人数取自 /api/status 的 owner.count（与「微信」面板同一份登记）",
+   "s.owner.count" in _page and 'st["owner"]' in open(
+       os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read())
+
 print("")
 print("窗口/控制台外观判据：%d 通过 / %d 失败 / %d 跳过" % (PASS, FAIL, SKIP_N))
 sys.exit(1 if FAIL else 0)

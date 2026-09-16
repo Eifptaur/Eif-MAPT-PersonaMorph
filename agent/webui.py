@@ -1212,7 +1212,8 @@ class WebUI:
                                                  data.get("contents") or [])
                         else:
                             r = parent.memory_fn(action, str(data.get("chat_key") or ""),
-                                                 str(data.get("user_id") or ""))
+                                                 str(data.get("user_id") or ""),
+                                                 scope=str(data.get("scope") or "all"))
                         self._json(r)
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)}, 500)

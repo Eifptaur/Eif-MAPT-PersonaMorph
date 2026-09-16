@@ -1441,6 +1441,10 @@ def main():
             "dep_ok": len(_version_issues()) == 0,
             "model": _cfg_live.get("api", {}).get("model", ""),
             "groups": gs,
+            # ── 顶栏状态行要的三样（2026-09-16 待拍板三件之一：做成"看得见"，不替他拍板）──
+            #   用户口径：机制/状态要映射到界面。只读统计，不产生任何动作。
+            "listen": {"groups": sum(1 for _g in gs if _g.get("target")),
+                       "privates": (len(wechat.list_private_targets()) if wechat is not None else 0)},
             "running_chats": sorted(orch.running_chats),
             "stats": st,
             "usage": orch.stats_store.snapshot(),
@@ -1848,8 +1852,10 @@ def main():
             gs = []
         return {"ok": True, "groups": gs}
 
-    def memory_fn(action, chat_key="", user_id="", name="", contents=None):
+    def memory_fn(action, chat_key="", user_id="", name="", contents=None, scope="all"):
         # 记忆页面：list（各群成员印象） / delete（删某成员印象） / update（编辑成员印象）
+        # scope＝删除范围（用户口径：不替他二选一）：「all」＝互通范围内的每一份都删（与列表口径一致，
+        #   默认）；「this」＝只删本群那一份，此时必须**如实说明**别的群还剩几份（否则用户以为没删掉）。
         try:
             if action == "list":
                 chats = []
@@ -1920,8 +1926,21 @@ def main():
                     pass
                 return {"ok": True, "note": "已清除 %d 个会话日志文件" % removed}
             if action == "delete":
-                ok = orch.memory.remove(chat_key, "memberImpression", user_id=user_id)
-                return {"ok": bool(ok)}
+                ok = orch.memory.remove(chat_key, "memberImpression", user_id=user_id, scope=scope)
+                out = {"ok": bool(ok), "scope": str(scope)}
+                if str(scope) == "this":
+                    # 「只删本群」必须说清后果：列表是合并视图，别的群那份还在 ⇒ 界面上仍看得到
+                    try:
+                        left = int(orch.memory.elsewhere(chat_key, user_id=user_id))
+                    except Exception:
+                        left = 0
+                    out["left_elsewhere"] = left
+                    if left:
+                        out["note"] = ("已删本群那一份；这条资料在另外 %d 个群还留着，"
+                                       "所以列表里仍会看到它（要一起删就选「所有群一起删」）" % left)
+                    else:
+                        out["note"] = "已删本群那一份（其它群没有它的资料）"
+                return out
             if action == "update":
                 # 手动编辑成员印象（replace_member）
                 try:
@@ -2312,13 +2331,20 @@ def main():
                 wxid = g["wxid"]
                 chat_key = "group:" + wxid
                 if orch.paused:
-                    # 暂停期间不响应，但水位仍推进到最新**并落盘**：恢复时不会重放暂停期间的积压消息
-                    # （否则恢复瞬间会把暂停期间几十条旧消息逐批触发，表现为"每条都回"）
+                    # 暂停期间不响应。水位怎么处理**做成开关**（`wechat.replay_on_resume`）：
+                    #   默认（False）＝把水位推到最新**并落盘** ⇒ 恢复时**不重放**暂停期间的积压
+                    #     （否则恢复瞬间会把暂停期间几十条旧消息逐批触发，表现为"每条都回"）；
+                    #   打开（True）＝**不推进水位** ⇒ 恢复后按水位把积压补上（长暂停会集中回一阵）。
                     try:
-                        wm.set(chat_key, wechat.latest_seq(wxid))
-                        wm.flush()
+                        _replay = bool((get_config().get("wechat") or {}).get("replay_on_resume", False))
                     except Exception:
-                        pass
+                        _replay = False
+                    if not _replay:
+                        try:
+                            wm.set(chat_key, wechat.latest_seq(wxid))
+                            wm.flush()
+                        except Exception:
+                            pass
                     continue
                 try:
                     new = wechat.poll_new_messages(wxid, wm.get(chat_key, 0), limit=50)

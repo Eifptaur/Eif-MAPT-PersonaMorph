@@ -474,6 +474,20 @@ ck("E4 提醒文案告诉用户两条出路（打开自动还原 / 关掉提醒�
    "就把「最小化时自己还原」打开" in _WX_SRC and "就把「最小化提醒」关掉" in _WX_SRC)
 ck("E5 反证：这个键只在函数体里被读，不是散在别处又抄一份默认值",
    _WX_SRC.count('minimize_warning') <= 3, "出现 %d 次" % _WX_SRC.count("minimize_warning"))
+# E6~E8（2026-09-16 待拍板三件之一：**暂停期间的消息恢复后要不要补处理**，做成界面可选档）：
+#   默认（不补）＝暂停期间把水位推到最新并落盘 ⇒ 恢复时不重放积压（否则恢复瞬间"每条都回"）；
+#   打开 ⇒ 不推进水位 ⇒ 恢复后补上（长暂停会集中回一阵）。用户口径：不替他二选一。
+_PM_SRC = open(os.path.join(ROOT, "scripts", "persona_morph.py"), encoding="utf-8").read()
+_SEG_PAUSE = _PM_SRC.split("if orch.paused:")[1][:900]
+ck("E6 wechat.replay_on_resume 真的有代码读它（不是死键）",
+   'get("wechat") or {}).get("replay_on_resume", False)' in _PM_SRC)
+ck("E7 默认不补（安全侧：不许一恢复就连回几十条）",
+   '"replay_on_resume": False' in SRC_CFG)
+ck("E8 默认档仍然推进水位并落盘（关掉补处理时行为与原来一致）",
+   "wm.set(chat_key, wechat.latest_seq(wxid))" in _SEG_PAUSE and "wm.flush()" in _SEG_PAUSE)
+ck("E9 控制台有这个开关 + 示例配置同步",
+   'data-cfg="wechat.replay_on_resume"' in SRC_CONSOLE
+   and '"replay_on_resume"' in open(os.path.join(ROOT, "config.example.json"), encoding="utf-8").read())
 
 print("\n== F. 前台口径（跨机 r15 实测：伪激活会把微信短暂带到前台）==")
 # 对面 r15 实测：投递链的伪激活会让微信**短暂真占前台**（发文字 1.8s、切会话 2.9~3.2s）后自动还回。

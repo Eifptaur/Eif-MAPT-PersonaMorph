@@ -504,6 +504,8 @@ th{color:var(--tx2);font-weight:500}
 <div class="topbar">
   <div class="logo"><div class="whale-badge" id="whaleBadge" title="小鲸鱼"><img src="/assets/icon-whale.png" alt=""></div><span>群相 控制台 <small style="font-weight:400;color:var(--tx2);font-size:12px" title="构建号（换新包后如果这里不变，说明连的是旧实例——先停止再启动）">vβ·Ⅱ（__VER__）</small></span></div>  <div class="sp"></div>
   <span class="chip"><span class="dot" id="dot"></span><b id="runText">连接中…</b></span>
+  <span class="chip">监听 <b id="listen-badge" title="正在监听的会话数（群 + 私聊）。白名单与私聊档位在「微信」面板。">?</b></span>
+  <span class="chip">主人登记 <b id="owner-badge" title="控制台「微信」面板登记的「我的其他账号」条数；0 项＝认不出你自己的号。">?</b></span>
   <span class="chip">模型 <b id="model-badge">?</b></span>
   <span class="chip">余额 <b id="balance-badge" title="点击刷新余额">查询中…</b></span>
   <label class="chip" id="autoChip" title="勾选＝改完立即写入 config.json（不用再点各分区的「保存设置」）；取消勾选＝回到手动保存模式。状态记在本机浏览器里。"><input type="checkbox" id="autoApplyChk" checked>改完即生效</label>
@@ -1013,6 +1015,8 @@ th{color:var(--tx2);font-weight:500}
       </div></div>
       <div class="row"><label>只走后台</label><input type="checkbox" data-cfg="wechat.background_only">
         <span class="hint">**默认开**（老版本留下的配置会被一次性迁移成开）。开了之后：拍一拍 / 引用 / 朋友圈点赞·评论·发表 / UI 标定 一律**跳过并说明原因**。关掉它这些功能才可用——但它们是**真实鼠标**（移动光标 + 发全局点击），点的是**光标所在的那个窗口**（可能是你正在用的程序，比如这个控制台），所以请在电脑前时再关。发送文字、图片、表情、切会话、刷朋友圈不受影响，一直走后台投递。</span></div>
+      <div class="row"><label>恢复后补处理</label><input type="checkbox" data-cfg="wechat.replay_on_resume">
+        <span class="hint">机器人暂停时群里照常有人说话。<b>默认不补</b>：恢复后只从那一刻往后回，暂停期间那些当没看见。<b>勾上就补</b>：恢复后按消息顺序把暂停期间的积压一批批处理——<b>停得越久、恢复瞬间回复越密集</b>（可能连回几十条），想清楚再勾。</span></div>
       <div class="row"><label>搜索失败时扫会话列表</label><input type="checkbox" data-cfg="wechat.scroll_list_fallback">
         <span class="hint">**默认关**。切会话现在是「在搜索框里打名字 → 点结果行」；搜索没成时默认**停手并说明原因**。打开这个开关，它才会退回老路——在会话列表里找行、必要时滚轮往下翻（**滚轮不动你的光标，但会话列表会在你眼前滚动**，看着就像它在划你的列表）。想成功率优先、不介意列表动几下，就打开它。</span></div>
       <div class="row"><label>图标指纹</label><div class="grow">
@@ -1435,6 +1439,10 @@ th{color:var(--tx2);font-weight:500}
         </div>
         <div class="hint">① 成员印象=记忆页勾选清除/本按钮清除全部；②「清除全部」=印象+共享记忆全清；③ 会话日志/运行明细的删除在「运行明细」页。</div>
       </div></div>
+      <div class="row"><label>删除范围</label><div class="grow"><select id="memScope">
+        <option value="all">所有群一起删（推荐）</option>
+        <option value="this">只删当前选中的这个群</option></select>
+        <span class="hint">记忆在开了「跨群互通」时是<b>合并展示</b>的：选「只删当前选中的这个群」时，同一个人在别的群那份还在，<b>列表里仍会看到它</b>——所以程序会在结果里告诉你还剩几个群留着（要删干净就选上面那一档）。</span></div></div>
       <div style="max-height:340px;overflow-y:auto;border:1px solid var(--bd);border-radius:10px">
         <table id="memTable" style="width:100%"><thead><tr><th style="width:26px"><input type="checkbox" id="memCheckAll" title="全选"></th><th>成员</th><th>印象数</th><th>更新时间</th><th></th></tr></thead><tbody></tbody></table>
       </div>
@@ -2471,6 +2479,25 @@ async function loadStatus(){  try{
     const s = await getJSON('/api/status');
     $('dot').className = 'dot ' + (s.wechat_connected ? 'on':'');
     $('runText').textContent = s.paused ? '已暂停' : '运行中';
+    /* 顶栏状态行（2026-09-16 待拍板三件之一）：暂停态 already 在上面那个 chip；这里补"监听几个会话"与"主人登记几项"。
+       ⚠️ 拿不到就显示 '?'——**不许猜**（猜成 0 会让人以为"没在监听"，那是误导）。 */
+    try{
+      const lb = $('listen-badge');
+      if(lb){
+        if(s.listen && typeof s.listen.groups === 'number'){
+          const n = (s.listen.groups||0) + (s.listen.privates||0);
+          lb.textContent = n + ' 个';
+          lb.title = '正在监听的会话：群 ' + (s.listen.groups||0) + ' 个 · 私聊 ' + (s.listen.privates||0) + ' 个';
+        }else{ lb.textContent = '?'; lb.title = '这一版后台没给监听数'; }
+      }
+      const ob = $('owner-badge');
+      if(ob){
+        if(s.owner && typeof s.owner.count === 'number'){
+          ob.textContent = s.owner.count + ' 项';
+          ob.title = '控制台「微信」面板登记的「我的其他账号」：' + s.owner.count + ' 项（wxid ' + (s.owner.byId||0) + ' / 昵称 ' + (s.owner.byName||0) + '）；0 项＝认不出你自己的号';
+        }else{ ob.textContent = '?'; ob.title = '这一版后台没给主人登记数'; }
+      }
+    }catch(e){}
     $('sideStatus').textContent = (s.wechat_connected?'微信已连接':'微信未连接') + ' · 启动于 '+s.started_at;
     try{
       const wv = s.wechat_version || {};
@@ -5523,13 +5550,17 @@ let memMembers = [];
   selB.onclick = async ()=>{
     const picked = Array.from(document.querySelectorAll('.memPick:checked'));
     if(!picked.length){ toast('请先勾选要清除的成员'); return; }
-    if(!await uiConfirm('清除勾选的 '+picked.length+' 位成员全部印象？')) return;
+    const _sc = (document.getElementById('memScope')||{value:'all'}).value;
+    if(!await uiConfirm('清除勾选的 '+picked.length+' 位成员全部印象？'+
+      (_sc==='this' ? '（只删当前这个群，别的群那份会留着）' : '（所有群一起删）'))) return;
+    let note = '';
     try{
       for(const p of picked){
-        await getJSON('/api/memory',{method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({chat_key:(sel?sel.value:''),user_id:p.dataset.uid})});
+        const r = await getJSON('/api/memory',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({chat_key:(sel?sel.value:''),user_id:p.dataset.uid,scope:_sc})});
+        if(r && r.note) note = r.note;
       }
-      if(rst) rst.textContent = '已清除 '+picked.length+' 位';
+      if(rst) rst.textContent = '已清除 '+picked.length+' 位'+(note?('；'+note):'');
       toast('已清除 '+picked.length+' 位成员印象');
       if(typeof loadMemory === 'function') loadMemory(sel ? sel.value : '');
     }catch(e){ toast('清除失败：'+e.message); }
