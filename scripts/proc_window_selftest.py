@@ -38,7 +38,7 @@ def ok(name, cond, detail=""):
 
 
 # 确实不需要"不要窗口"的调用：{(相对路径, 行号): 理由}
-# 例：判据脚本里"故意要看到 cmd 行为"的那种才写进来；产品路径一律不许。
+# 例：自检脚本里"故意要看到 cmd 行为"的那种才写进来；产品路径一律不许。
 ALLOW = {}
 
 CALLS = ("run", "Popen", "call", "check_output", "check_call")

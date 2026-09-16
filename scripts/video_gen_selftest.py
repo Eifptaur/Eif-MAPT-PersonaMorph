@@ -113,7 +113,7 @@ threading.Thread(target=_srv.serve_forever, daemon=True).start()
 
 _real_cfg = VG.cfg
 _real_seen = VG._seen_path
-# 判据不污染真数据：去重用的"见过指纹"文件指到临时目录（否则跑一次判据就把真库塞满测试指纹）
+# 自检不污染真数据：去重用的"见过指纹"文件指到临时目录（否则跑一次自检就把真库塞满测试指纹）
 VG._seen_path = lambda: os.path.join(TMP, "seen.json")
 
 

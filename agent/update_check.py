@@ -74,7 +74,7 @@ def vtuple(v):
 
 
 DEFAULT_URL = "https://raw.githubusercontent.com/Eifptaur/Eif-MAPT-PersonaMorph/main/persona-morph-manifest.json"
-#: 备用源（2026-09-16 用户报「更新源异常：拉不到更新源：The read operation timed out」）：
+#: 备用源（2026-09-16 已知现象：「更新源异常：拉不到更新源：The read operation timed out」）：
 #: `raw.githubusercontent.com` 在国内经常超时 ⇒ **并行**试这几个，第一个拿到清单的赢。
 #: ⚠️ jsDelivr 有 CDN 缓存（可能比 raw 晚几分钟看到新版本）⇒ 只当兜底，raw 仍排第一。
 DEFAULT_URLS = (

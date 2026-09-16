@@ -8,7 +8,7 @@ import os
 import shutil
 import sys
 
-try:      # 控制台默认 GBK：判据里的 ✔/✘ 一旦被重定向就 UnicodeEncodeError 崩掉整条判据
+try:      # 控制台默认 GBK：自检里的 ✔/✘ 一旦被重定向就 UnicodeEncodeError 崩掉整条自检
     sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
     sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 except Exception:

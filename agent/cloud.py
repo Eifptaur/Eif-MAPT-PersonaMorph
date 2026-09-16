@@ -25,7 +25,7 @@ import urllib.parse
 import urllib.request
 
 DEFAULTS = {
-    "enabled": False,          # ⛔ 总开关：默认关＝永不真上传（用户口径"先不做"）
+    "enabled": False,          # ⛔ 总开关：默认关＝永不真上传（既有口径："先不做"）
     "persona_url": "",         # 人设上云的接收端（留空＝未配置）
     "blocklist_url": "",       # 屏蔽名单上云的接收端（留空＝未配置）
     "token": "",               # 接收端要求时的 Bearer Token（打码回显、只存本机）

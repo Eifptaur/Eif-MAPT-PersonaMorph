@@ -75,7 +75,7 @@ def _ffmpeg_silk_ok() -> tuple:
     if not p:
         return False, "没找到 ffmpeg"
     try:
-        # ⛔ 2026-09-16（用户报「运行的时候极短时间内闪一个透明小窗」；探针抓到 4 个
+        # ⛔ 2026-09-16（已知现象：「运行的时候极短时间内闪一个透明小窗」；探针抓到 4 个
         #   `PseudoConsoleWindow`、其中两个明确是 ffmpeg）：ffmpeg 是**控制台程序**，
         #   父进程不给 `CREATE_NO_WINDOW` 的话，每次调用都会新建一个控制台窗一闪而过。
         out = subprocess.run([p, "-hide_banner", "-decoders"], capture_output=True, timeout=20,
@@ -326,7 +326,7 @@ def transcribe_silk(silk_path: str, keep_wav: bool = False) -> tuple:
     info = {"decoder": "", "engine": "", "wav": ""}
     # 先看文件在不在（2026-09-14 修正顺序）：本机没有 SILK 解码器时，老顺序会先报「没有可用引擎」，
     # 把「文件根本不存在」这个更具体、更可操作的原因盖掉 —— `voice_selftest` 的 C 段因此在缺引擎的
-    # 机器上长期假红（脚本 10/11、exit 1，看着像功能坏了，其实是判据被引擎前置条件挡了）。
+    # 机器上长期假红（脚本 10/11、exit 1，看着像功能坏了，其实是自检被引擎前置条件挡了）。
     if not silk_path or not os.path.exists(str(silk_path)):
         return "", "语音文件不存在：%s" % silk_path, info
     st = status()

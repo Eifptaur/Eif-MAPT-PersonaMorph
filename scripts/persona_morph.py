@@ -535,7 +535,7 @@ class Orchestrator:
             wechat_nick = ""
 
         # ⚠️ 2026-09-15 修真 bug：这里原来**没传 chat_key/group_name** ⇒ 每群独立档位、
-        #   群屏蔽名单、指令禁言在生产路径里从来没生效（判据自己在测试里传了 chat_key，所以一直全绿）。
+        #   群屏蔽名单、指令禁言在生产路径里从来没生效（自检自己在测试里传了 chat_key，所以一直全绿）。
         try:
             _group_name = self.wechat.group_name(chat_key)
         except Exception:
@@ -675,7 +675,7 @@ class Orchestrator:
             # ⚠️ 不要在这里再 +1：add_usage() 内部已经 target["calls"] += 1（agent/llm.py:338）。
             #    2026-09-15 修（token 调研第 1 轮 C9）：这一行让 calls 长期虚高一倍
             #    ⇒ usage_stats.json 的 "calls": 248 实际只有 ≈124 步，控制台"调用次数"看着是双倍。
-            #    判据：scripts/whale_selftest.py 的「calls 单点来源」（连调两次 add_usage ⇒ calls==2，
+            #    自检：scripts/whale_selftest.py 的「calls 单点来源」（连调两次 add_usage ⇒ calls==2，
             #    且本文件里不得再出现 usage["calls"] += 1）。
             try:
                 self.whale.note_call(session["model"], response.get("usage"))
@@ -1090,7 +1090,7 @@ def _maybe_auto_fix():
         log.warning("自动版本体检失效（不影响启动）：%s", e)
 
 
-# ── 「微信连不上」的原因要看得见（2026-09-16 用户反馈「微信连接不上」）───────────────
+# ── 「微信连不上」的原因要看得见（2026-09-16 已知现象：「微信连接不上」）───────────────
 #   老实现只有一个是/否（`wechat is not None`）：用户看到"微信未连接"却不知道**为什么**，
 #   我们也只能来回猜、来回问。⇒ 每次接入（成功或失败）都把**逐步诊断**记在这里，
 #   控制台侧栏显示一行短原因（悬停看全文），反馈诊断包带上完整 steps。
@@ -1262,7 +1262,7 @@ def main():
     # 代码已用 UTF-8 模式运行（-X utf8 / 编码头），无需 chcp。
 
     # ── 单实例锁：防止旧进程/多实例并存（根治「旧版本界面/接口 not found」）──
-    #    判据＝命名互斥体（进程一死由内核释放 ⇒ 不怕 pid 复用、不怕残留文件、不怕同时启动）；
+    #    自检＝命名互斥体（进程一死由内核释放 ⇒ 不怕 pid 复用、不怕残留文件、不怕同时启动）；
     #    data\bot.lock 降级为「给人看 + 旧读取方兼容」的证据，内容仍是纯 pid。
     #    拿不到锁就**拒启动**（旧实现整段 try/except pass ⇒ 出错时静默没有锁）。
     import atexit
@@ -1503,7 +1503,7 @@ def main():
         return {
             "paused": orch.paused,
             "wechat_connected": wechat is not None,
-            # 「连不上」要说清卡在哪一步（用户反馈「微信连接不通」）：纯读内存里的诊断，
+            # 「连不上」要说清卡在哪一步（已知现象：「微信连接不通」）：纯读内存里的诊断，
             # 不做任何探测 ⇒ 可以每几秒跟着状态一起下发。
             "wechat_attach": wechat_attach_status(),
             "wechat_version": wechat_version_info(),
@@ -1511,7 +1511,7 @@ def main():
             "model": _cfg_live.get("api", {}).get("model", ""),
             "groups": gs,
             # ── 顶栏状态行要的三样（2026-09-16 待拍板三件之一：做成"看得见"，不替他拍板）──
-            #   用户口径：机制/状态要映射到界面。只读统计，不产生任何动作。
+            #   既有口径：机制/状态要映射到界面。只读统计，不产生任何动作。
             "listen": {"groups": sum(1 for _g in gs if _g.get("target")),
                        "privates": (len(wechat.list_private_targets()) if wechat is not None else 0)},
             "running_chats": sorted(orch.running_chats),
@@ -1719,7 +1719,7 @@ def main():
                     "① 口头禅/台词改用【第一步的原话】为骨架（能精确引用就精确引用，含翻译+原语）；\n"
                     "② 按该角色的说话习惯重写「说话规则」（短句/分条/被@必回/不用Markdown）；\n"
                     "③ 重写 3 个对话示例（群友在吗/今天好累/再来一句），每句像本人原话口吻。\n"
-                    # 2026-09-14 用户口径：「补正…除非你确定补正是完全按照贴合人设的方向去走的，
+                    # 2026-09-14 已知现象：「补正…除非你确定补正是完全按照贴合人设的方向去走的，
                     # 而且你也要尽量把这个功能导向那个方向」⇒ 补足只许"加固辨识度"，不许把角色改成通用人格。
                     "【第三步·守住原卡的辨识度（硬要求）】当前卡里**任何已经确认的真实台词/口癖/称呼方式都必须保留原样**"
                     "（那是这个角色的指纹）；补充可以，替换成自造内容不行。改完之后逐条自检："
@@ -1873,7 +1873,7 @@ def main():
         except Exception as e:
             add("界面适配检查", "fail", str(e))
 
-        # 4.5) OCR 引擎健康度（会话名/身份判据全靠它；卡住时发送链会按「判据不可用」放弃）
+        # 4.5) OCR 引擎健康度（会话名/身份自检全靠它；卡住时发送链会按「自检不可用」放弃）
         #      测机手册 ④：本机曾出现 OCR 一次卡 8 分 19 秒 ⇒ 现在单次硬上限 25 秒 + 连续超时熔断。
         try:
             from agent import chat_ocr as _co
@@ -1932,7 +1932,7 @@ def main():
 
     def groups_fn():
         # 群聊列表（控制台「检测群聊并勾选」用）
-        # 2026-09-16（用户报「选了群、点保存之后显示读取会话失败」）：以前**微信没接上也返回 ok:True +
+        # 2026-09-16（已知现象：「选了群、点保存之后显示读取会话失败」）：以前**微信没接上也返回 ok:True +
         # 空列表** ⇒ 控制台只会显示"检测到 0 个群"，真正的原因（微信未接入）被吞掉。
         # 现在：接不上就把**原因**如实带回去（原因由 `wechat_attach_status()` 提供 = 卡在哪一步）。
         if wechat is None:
@@ -1950,7 +1950,7 @@ def main():
 
     def memory_fn(action, chat_key="", user_id="", name="", contents=None, scope="all"):
         # 记忆页面：list（各群成员印象） / delete（删某成员印象） / update（编辑成员印象）
-        # scope＝删除范围（用户口径：不替他二选一）：「all」＝互通范围内的每一份都删（与列表口径一致，
+        # scope＝删除范围（既有口径：不替他二选一）：「all」＝互通范围内的每一份都删（与列表口径一致，
         #   默认）；「this」＝只删本群那一份，此时必须**如实说明**别的群还剩几份（否则用户以为没删掉）。
         try:
             if action == "list":
@@ -2423,7 +2423,7 @@ def main():
     while not orch.stopped:
         poll_interval = max(1.0, float(get_config().get("wechat", {}).get("poll_interval") or 3))
         # ── 微信接入重试（2026-09-16：老代码注释里承诺过、实际**从未实现**的那一句）──────
-        #   症状（用户反馈「微信连接不上」）：启动那一刻微信没开（或还没登录）⇒ `wechat is None`
+        #   症状（已知现象：「微信连接不上」）：启动那一刻微信没开（或还没登录）⇒ `wechat is None`
         #   ⇒ 目标群为空 ⇒ 整个监听循环什么都不做，而且**没有任何重试** ⇒ 控制台永远显示
         #   "微信未连接"，用户只能重启。这里：每 10 秒再试一次；接上以后把群/目标/发送队列/
         #   orchestrator 的句柄都补上，并把新群的监听水位推到当前（不补历史积压）。

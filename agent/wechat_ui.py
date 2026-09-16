@@ -189,7 +189,7 @@ def icon_pos(name: str, gui) -> tuple | None:
         _lw = int(layout.get("render_w") or sw)
         if order < len(items):
             # items[order] 是“标定时窗口下的绝对 y”，当前窗口高度可能不同（挪窗/DPI/分辨率），
-            # 必须按 当前sh/标定sh 缩放，否则朋友圈等图标点偏（用户反馈点不到相机图标）。
+            # 必须按 当前sh/标定sh 缩放，否则朋友圈等图标点偏（既有口径：点不到相机图标）。
             return sx + int(50 * (sw / 1278)), sy + int(items[order] * sh / _lh)
         top = layout.get("sidebar_top_ratio", _SIDEBAR["top_ratio"]) * sh
         step = layout.get("sidebar_step_ratio", _SIDEBAR["step_ratio"]) * sh

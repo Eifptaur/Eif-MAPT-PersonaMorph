@@ -101,7 +101,7 @@ _real_tags = [p["key"] for p in PATHS if p["status"] == "real"]
 ck("B9 有一条以上真鼠标路径被如实标注", len(_real_tags) >= 3, "、".join(_real_tags))
 ck("B10 投递档判定不靠可见性（隐藏/最小化也算投递档）",
    "IsWindowVisible" not in SRC_WECHAT.split("def _bg_backend(")[1][:600])
-# B11 最小化守卫：判据抓不到画面时，如实拒绝而不是硬点（真机取证见 _scratch/后台能力-真机记录.md）
+# B11 最小化守卫：自检抓不到画面时，如实拒绝而不是硬点（真机取证见 _scratch/后台能力-真机记录.md）
 _blind = SRC_WECHAT.split("def _moments_judge_blind(")[1][:900]
 ck("B11 判据瞎了（最小化）时如实拒绝：守卫读 IsIconic", "IsIconic" in _blind)
 ck("B12 拒绝话术说清「判不了就不动手」与「窗口留在屏幕上」",
@@ -146,10 +146,10 @@ _HIT_SEARCH = _SEG_SW.find("open_chat_by_search(chat_id, name=name, gui=gui)")
 _HIT_ROW = _SEG_SW.find("find_row")
 ck("B18 切会话是搜索框优先（搜索调用必须出现在找行之前）",
    _HIT_SEARCH >= 0 and _HIT_ROW >= 0 and _HIT_SEARCH < _HIT_ROW)
-# B19（2026-09-16 用户报「那为啥鼠标会滑我的控制台」）：
+# B19（2026-09-16 已知现象：「那为啥鼠标会滑我的控制台」）：
 #   真鼠标档必须**默认不执行** —— `wechat.background_only` 默认必须是 True（安全的一侧），
 #   要用那 5 条真鼠标路径（拍一拍 / 引用 / 朋友圈点赞评论 / 发朋友圈纯文字 / UI 标定）必须显式打开。
-#   ⚠️ 与 `input.allow_real_fallback` 的区别：那个管"投递判据不过时退不退回真鼠标"，
+#   ⚠️ 与 `input.allow_real_fallback` 的区别：那个管"投递自检不过时退不退回真鼠标"，
 #      本开关管"这条路径本来就走真鼠标时要不要执行"。两个都默认关掉才叫安全。
 ck("B19 「只走后台」默认是 True（安全侧，改之前是 False）",
    '"background_only": True' in SRC_CFG)
@@ -157,7 +157,7 @@ ck("B19a 每条真鼠标路径都被 background_only 闸挡住（闸出现 ≥ 8
    SRC_WECHAT.count("self._background_only()") >= 8)
 ck("B19b 真鼠标兜底也默认关（allow_real_fallback 默认 False）",
    '"allow_real_fallback": False' in SRC_CFG)
-# B20（2026-09-16 用户报「他点了一下搜索框，又不点，又搁那划会话列表」）：
+# B20（2026-09-16 已知现象：「他点了一下搜索框，又不点，又搁那划会话列表」）：
 #   搜索路线点了**名字匹配**的结果行、内容也像目标，却因为「活动行时间戳读不出」被判否
 #   ⇒ 整条搜索判失败 ⇒ **回退"找行 + 滚轮"** ⇒ 用户看到它在划会话列表。
 #   修法：在搜索路线这个上下文里把"读不出"按**弱证据**放行（发送闸不动）。
@@ -172,7 +172,7 @@ ck("B20a 发送闸没跟着放宽（注释里写明「发送闸一个字不动�
 #     "光标当前所在/最上面的那个窗口"，**它根本不知道微信窗口在哪**；而 `SetCursorPos` 会
 #     **静默失败**（返回 0、GetLastError=0，用户正在动鼠标时最容易失败）
 #     ⇒ 老代码两件事都不检查，光标没到位也照发 mouse_event ⇒ 点击/滚轮落到**用户的控制台**上。
-#   ⇒ 机械判据：全库扫，**凡含 mouse_event / SetCursorPos 的函数**，要么包含 `real_guard`，
+#   ⇒ 机械自检：全库扫，**凡含 mouse_event / SetCursorPos 的函数**，要么包含 `real_guard`，
 #     要么在白名单里（只有"还原光标/守卫自身/自检工具"三类可以不带守卫）。
 _ALLOW_NO_GUARD = {"heal_input", "real_guard", "self_test", "_send_with_foreground"}
 _bad_guard = []
@@ -236,7 +236,7 @@ try:
     ck("B22b4 已经是 true 的用户不会被反复写（返回空表）", _C._window_pos_once(_t2) == [])
 except Exception as _e:
     ck("B22b3 迁移幂等能跑", False, str(_e)[:80])
-# B23（2026-09-16 用户报「他点了一下搜索框，又不点，又搁那划会话列表」）：
+# B23（2026-09-16 已知现象：「他点了一下搜索框，又不点，又搁那划会话列表」）：
 #   搜索框路线没成时，**默认不许退回「在会话列表里找行 + 滚轮」那条老路** ——
 #   那条路虽然走投递（不动光标），但**会话列表会在用户眼前滚**，他看到的"它在划"就是这个动作。
 #   ⇒ 做成开关 `wechat.scroll_list_fallback`（默认 False＝不回退），要成功率优先的用户自己去开。
@@ -274,7 +274,7 @@ ck("B17g 两条投递链的收尾（含早退路径）都放回收起状态",
 #   ⇒ 打字前必须先投递点一次输入栏把焦点给它（旧版从不点输入框，靠"正常态默认有焦点"）
 ck("B17h 打字前先投递聚焦输入栏（最小化还原后 WM_CHAR 会被丢）",
    "backend.click(main, focus_pt)" in _ST and "投递聚焦输入栏失败" in _ST)
-# B24（2026-09-16 用户转述的用户反馈「不会发消息了：**写在文本框，但是不发送**」）：
+# B24（2026-09-16 用户转述的已知现象：「不会发消息了：**写在文本框，但是不发送**」）：
 #   老实现**只点一枪「发送」按钮**、然后干等 DB —— 那一枪没生效就没人补第二枪，字留在输入框里。
 #   口径照抄上游 `wechatauto/guia.py::click_send()`：**回车优先 + 最多 3 枪**（上游原话
 #   「输入框刚粘贴完必已聚焦，回车最可靠」，点按钮只是回退）。
@@ -420,7 +420,7 @@ class _FakeAdapter:
 try:
     ad = object.__new__(WC.WeChatAdapter)
     ad._get_gui = lambda: _FakeGui()
-    # 朋友圈矩形 + 缩略灰度 + OCR 全部换成假数据（判据需要"界面确实变了"）
+    # 朋友圈矩形 + 缩略灰度 + OCR 全部换成假数据（自检需要"界面确实变了"）
     ad._moments_rect = lambda hwnd: (100, 100, 1300, 1000)
     ad._moments_gray_thumb = SCREEN.thumb
     ad._find_green_discover = lambda gui: (144, 682)          # 自证到的「发现」图标
@@ -447,7 +447,7 @@ try:
     ck("C6 滚轮是投递出去的（WM_MOUSEWHEEL ≥ 8 格）", len(wheels) >= 8, "%d 格" % len(wheels))
     ck("C7 刷朋友圈也没碰真鼠标原语", not TRIPPED, str(TRIPPED[:4]))
 
-    # 假判据：界面没变 ⇒ 必须如实报"没生效"，不许假报成功
+    # 假自检：界面没变 ⇒ 必须如实报"没生效"，不许假报成功
     SCREEN.dead, SCREEN.noise = True, 0.0
     POSTED[:] = []
     ok3, m3 = ad.moments_scroll_posted(direction=1, times=1)
@@ -469,7 +469,7 @@ try:
     ck("C13 有噪声 + 没生效 ⇒ 仍如实报没生效（阈值跟着地板走）",
        ok7 is False and "没" in m7, m7[:60])
 
-    SCREEN.dead, SCREEN.noise = True, 0.14          # 噪声大到判据不可用
+    SCREEN.dead, SCREEN.noise = True, 0.14          # 噪声大到自检不可用
     ad._moments_gray_thumb = SCREEN.thumb
     POSTED[:] = []
     ok8, m8 = ad.moments_open_posted()
@@ -525,7 +525,7 @@ ck("E5 反证：这个键只在函数体里被读，不是散在别处又抄一�
    _WX_SRC.count('minimize_warning') <= 3, "出现 %d 次" % _WX_SRC.count("minimize_warning"))
 # E6~E8（2026-09-16 待拍板三件之一：**暂停期间的消息恢复后要不要补处理**，做成界面可选档）：
 #   默认（不补）＝暂停期间把水位推到最新并落盘 ⇒ 恢复时不重放积压（否则恢复瞬间"每条都回"）；
-#   打开 ⇒ 不推进水位 ⇒ 恢复后补上（长暂停会集中回一阵）。用户口径：不替他二选一。
+#   打开 ⇒ 不推进水位 ⇒ 恢复后补上（长暂停会集中回一阵）。既有口径：不替他二选一。
 _PM_SRC = open(os.path.join(ROOT, "scripts", "persona_morph.py"), encoding="utf-8").read()
 _SEG_PAUSE = _PM_SRC.split("if orch.paused:")[1][:900]
 ck("E6 wechat.replay_on_resume 真的有代码读它（不是死键）",
@@ -549,9 +549,9 @@ ck("F1 控制台不再写「不抢前台」，改成实测口径", "不抢前台
 ck("F2 体检报告那行也改了（跨机 r15 引用的就是它）",
    "不抢前台" not in _REPORT and "短暂把微信带到前台" in _REPORT)
 ck("F3 bg_status（单一事实源）写明伪激活代价", "不抢前台" not in _BG and "短暂置前" in _BG)
-# ⚠️ 2026-09-16 r17（跨机 r16 报的"文案残余"）：F 段原来只守三个文件 ⇒ 判据绿了、别处的旧说法还在。
+# ⚠️ 2026-09-16 r17（跨机 r16 报的"文案残余"）：F 段原来只守三个文件 ⇒ 自检绿了、别处的旧说法还在。
 #    ⇒ 扩到**所有对用户/工程可见的声明点**（历史更新日志与 _scratch 不算）。
-_BAN = "不抢" + "前台"          # 自己拼出来，免得判据文件本身命中
+_BAN = "不抢" + "前台"          # 自己拼出来，免得自检文件本身命中
 _EXTRA = ["使用说明.md", "检验说明（另一台电脑用）.md", "AGENTS.md",
           os.path.join("agent", "tools.py"), os.path.join("agent", "notify_ui.py"),
           os.path.join("agent", "tray.py"), os.path.join("agent", "wechat.py")]
@@ -573,7 +573,7 @@ ck("F5 点完「发送」后立刻盯着还前台（把可见时长压到最短�
 # ── B25（2026-09-16 实测结论落地）：投递右键有效，但**必须投主窗** ────────────────
 #   八枪实测（两靶点各有真实右键阳性对照）：投渲染子窗 0 新窗/0.000 像素差；**投主窗弹出菜单窗**
 #   （Qt51514QWindowToolSaveBits，0.026~0.035）；WM_CONTEXTMENU 两种目标都 0（那条路排除）。
-#   再往下：投递左键点**菜单项**能命中（判据＝剪贴板被写成那条消息的正文）。
+#   再往下：投递左键点**菜单项**能命中（自检＝剪贴板被写成那条消息的正文）。
 #   ⇒ 这里守两件事：①右键自动换主窗、左键仍用调用方给的窗（行为级）；②三个可复用件都在。
 _IB_SRC = io.open(os.path.join(ROOT, "agent", "input_backend.py"), encoding="utf-8").read()
 ck("B25 右键不再直接拒绝（那条拒发的 return 已删，注释里提到旧写法不算）",

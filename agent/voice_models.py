@@ -32,7 +32,7 @@ import urllib.request
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_TIMEOUT = 30
 PROBE_TEXT = "你好"
-#: 能力口径（判据断言它必须含"未声明/证明不了"这类词，不许出现"已支持某音色"）
+#: 能力口径（自检断言它必须含"未声明/证明不了"这类词，不许出现"已支持某音色"）
 CAPABILITY_NOTE = ("本通道只能证明端点可用与返回的是音频；音色是否为目标角色未声明。"
                    "微信 PC 发不出真语音条，发出去的仍是音频文件。")
 

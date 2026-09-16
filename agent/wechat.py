@@ -167,7 +167,7 @@ def _restore_fg(hwnd: int = 0, note: str = "", keep: bool = False) -> None:
 # —— 最小化状态还原（2026-09-16 r22 验收 FAIL 项）——
 # 现象（对面那台机器实测）：微信收在任务栏时，我们**不激活地**把它还原出来干活
 # （`_ensure_main_visible`），但干完只还了前台、**没把它放回收起状态** ⇒ 用户的微信
-# 从"收在任务栏"变成"摊在桌面上"，还得自己再收一次。用户口径是「不打扰用户」⇒
+# 从"收在任务栏"变成"摊在桌面上"，还得自己再收一次。既有口径：是「不打扰用户」⇒
 # **谁动的谁收拾**：还原过就必须放回。
 _MINIMIZED_BY_US = 0        # 为了干活而还原出来的那个主窗（0 = 本轮没动过它的收起状态）
 
@@ -229,7 +229,7 @@ def _restore_fg_until(note: str = "", timeout: float = 2.5, keep: bool = True,
 
 
 # —— 「选择文件」对话框：**不进前台**地写文件名 / 点打开（2026-09-16 用户当面定位后加）——
-# 用户原话：「点击『文件』按钮没有到前台，打开文件窗口也没有到前台，但是**当你粘贴输入那一串字符的
+# 已知现象：「点击『文件』按钮没有到前台，打开文件窗口也没有到前台，但是**当你粘贴输入那一串字符的
 # 时候，它到前台了**。看来你只需要让它**粘贴完，立马缩回后台**就行」。
 # ⚠️ 但"还回去"这条路**走不通**：后台进程调 `SetForegroundWindow` 会被系统直接拒（2026-09-16 实测
 #    连 AttachThreadInput 绕法也 False，3 秒盯着还也没用）⇒ 正解是**根本不让它到前台**：
@@ -568,11 +568,11 @@ class WeChatAdapter:
         ⇒ `alive=False` 时，调用方**必须把结论降级成「未证实」**（`V_UNVERIFIED`），不许写"发送失败"。
         """
         try:
-            # 2026-09-16 改：原判据是 `if mk is None: return False`——把"没走主密钥那条路"当成
+            # 2026-09-16 改：原自检是 `if mk is None: return False`——把"没走主密钥那条路"当成
             # "通道坏了"。但 `master_key=None` 是**常态**（见 `_usable_key_count` 的注释），
             # 本机实测：master_key=None + 20 把缓存密钥全过页1校验 + 真读到最新消息 ⇒ 通道是好的。
-            # 老判据的后果是**每台机器都永远判"不可用"**，"没等到新行"一律被降级成"未证实"
-            # （对面 r22 核心②就是这么来的）。新判据：既没主密钥、又没有一把可用缓存密钥，才算不可信。
+            # 老自检的后果是**每台机器都永远判"不可用"**，"没等到新行"一律被降级成"未证实"
+            # （对面 r22 核心②就是这么来的）。新自检：既没主密钥、又没有一把可用缓存密钥，才算不可信。
             mk = getattr(self._db, "master_key", "?")
             if mk is None and self._usable_key_count() <= 0:
                 return False, ("既没拿到主密钥、也没有任何能过页1校验的缓存密钥 ⇒ 回读通道不可信"
@@ -642,14 +642,14 @@ class WeChatAdapter:
         info = self._db.get_self_info() or {}
         self._self_wxid = str(info.get("username") or "")
         self._self_nickname = str(info.get("nick_name") or "")
-        # ⛔ 2026-09-16（用户反馈「一直有个问题 无法识别大号用户 就是无法识别我的账号」）：
+        # ⛔ 2026-09-16（已知现象：「一直有个问题 无法识别大号用户 就是无法识别我的账号」）：
         #   "自己是谁"**只有这一个来源**——驱动库的 `get_self_info()`。它**在某些账号 / 微信版本下会返回空**
         #   ⇒ `_self_wxid` 为空 ⇒ 下面所有"这条是不是我发的"判断（`:875`、`:4652`、`recall`）
         #   **静默变假**：表现为机器人可能**回你自己**、@ 你自己不响应、撤回自己的消息失灵，
         #   而且以前**既没有日志、也没有界面提示**，用户只能看到"怪怪的"。
         #   ⇒ 现在：拿不到就明确记一行警告；控制台「微信」面板也会如实显示"没认出来"（`self_identity()`）。
         self._self_ident_ok = bool(self._self_wxid)
-        # 「我的其他账号（大号）」登记表（2026-09-16 用户反馈）—— 见 _load_owner_accounts 的注释
+        # 「我的其他账号（大号）」登记表（2026-09-16 既有口径：）—— 见 _load_owner_accounts 的注释
         self._load_owner_accounts()
         if not self._self_wxid:
             try:
@@ -730,7 +730,7 @@ class WeChatAdapter:
             raw = []
         self._owner_ids = {str(x).strip().lower() for x in raw if str(x).strip()}
         self._owner_mode = str(w.get("owner_mode") or "know").strip().lower()
-        # 四档（用户口径：机制要映射到 UI 上让他自己选）：
+        # 四档（既有口径：机制要映射到 UI 上让他自己选）：
         #   off            = 不做这个识别（登记了也不认）
         #   skip           = 完全不回复我自己的号
         #   owner_at_only  = **只在群里 @ 我或引用我的时候才回**（其余不回；私聊不受影响）—— 2026-09-16 新增
@@ -949,7 +949,7 @@ class WeChatAdapter:
             content = content.decode("utf-8", "ignore")
         # ⛔ 正文还原（2026-09-14，实测）：微信 4.x 把**长文本与文件卡**的 content **zstd 压缩**存库，
         #   而库的友好化读法遇到压缩体只给**类型标签**（`[文本]` / `[文件/链接/卡片]`）⇒ 正文整条丢掉。
-        #   用户报障正是这个：「我每次都是把你的话复制到微信发过去，随后你就不太能正常识别了」——
+        #   既有口径：障正是这个：「我每次都是把你的话复制到微信发过去，随后你就不太能正常识别了」——
         #   他粘过来的是长段落 ⇒ 全部读成 `[文本]`、机器人根本没看见。这里在**最前面**解一次，
         #   后面所有分支（撤回解析/引用解析/文本归一）都吃到真正文。解不出来就保持原样（绝不猜）。
         try:
@@ -1033,7 +1033,7 @@ class WeChatAdapter:
             # 自己发的消息：发送者 wxid 是机器人自己 → 跳过（群聊 sender_id 不可靠，用 wxid 兜底）
             if self._self_wxid and sender_wxid and sender_wxid == self._self_wxid:
                 return None
-            # ⛔ 2026-09-16 兜底（用户反馈「无法识别大号用户 / 无法识别我的账号」）：
+            # ⛔ 2026-09-16 兜底（已知现象：「无法识别大号用户 / 无法识别我的账号」）：
             #   认不出自己的 wxid 时，退一步用**昵称 + 我刚发过东西**双重条件来判断 ——
             #   单看昵称会误伤同名群友（把别人的话丢掉＝漏回），所以再加一条"我确实在 30 秒内发过"。
             #   宁可少数漏判（回声还有 `_is_self_echo` 的文本+时间窗兜着），也不要因为认不出自己而**回自己**。
@@ -1099,7 +1099,7 @@ class WeChatAdapter:
         sender_name = self._nick_map.get(sender_wxid, sender_wxid) if sender_wxid else (
             self._nick_map.get(str(sender_id), str(sender_id)) if sender_id else "群成员")
 
-        # ⛔ 2026-09-16（用户反馈：「这个是用的我的小号 他无法识别我的大号 之前版本也有这个问题」）：
+        # ⛔ 2026-09-16（已知现象：「这个是用的我的小号 他无法识别我的大号 之前版本也有这个问题」）：
         #   机器人跑在**小号**上，而主人的**大号**在群里说话 ⇒ 程序原先把大号当**普通群友**
         #   （于是会去回你自己的话）。这里按登记表认一次（wxid 优先、昵称兜底）：
         #     mode=skip ⇒ 直接跳过（完全不回复）；mode=know ⇒ 照常回，但打 owner 标记让模型知道"这是主人"。
@@ -1153,7 +1153,7 @@ class WeChatAdapter:
                     u.EnumWindows(ref, 0)
                     if found:
                         # ⛔ 2026-09-15 改：原来这里是 `ShowWindow(hwnd, 9)`（SW_RESTORE，**会激活窗口**）
-                        #    + `SetForegroundWindow`（**抢前台**）——正是用户报障过的"一打开就把我的微信切出来"。
+                        #    + `SetForegroundWindow`（**抢前台**）——正是既有口径：障过的"一打开就把我的微信切出来"。
                         #    改成**不激活地**还原（不动光标（伪激活可能短暂置前约 1~3 秒后自动还回）），与三条投递链同一套实现。
                         self._ensure_main_visible(None, int(found[0]))
                         time.sleep(0.3)
@@ -1368,7 +1368,7 @@ class WeChatAdapter:
         取消置顶 → 恢复原前台窗口（AttachThreadInput 提权）→ 放底/最小化。
         """
         self._fg_enter()
-        cur0 = _cursor_pos()      # 最高目标硬判据②：L0 真实路径"用完必须把光标还回去"
+        cur0 = _cursor_pos()      # 最高目标硬自检②：L0 真实路径"用完必须把光标还回去"
         try:
             result = fn(*args, **kwargs)
             return result
@@ -1448,7 +1448,7 @@ class WeChatAdapter:
         否则（`mismatch`/`no_ref`/抓不到）**退回真实路径**——真实路径会先按名字打开会话，
         顺便把这个尺寸下的会话头学到手，于是**下一次就能走投递**。
         """
-        # OCR 总时间窗（测机手册 ④）：这一笔发送链允许花在 OCR 上的总时间（超时按"判据不可用"处理）
+        # OCR 总时间窗（测机手册 ④）：这一笔发送链允许花在 OCR 上的总时间（超时按"自检不可用"处理）
         try:
             from . import chat_ocr as _co
             _co.begin_window(_co.SEND_WINDOW_S)
@@ -1722,7 +1722,7 @@ class WeChatAdapter:
             except Exception as _e:                          # noqa: BLE001
                 _swhy = "异常：%s" % str(_e)[:80]
                 log.warning("切会话：搜索框路线异常（%s）", str(_e)[:80])
-            # ⛔ 2026-09-16（用户报「他点了一下搜索框，又不点，又搁那划会话列表」）：
+            # ⛔ 2026-09-16（已知现象：「他点了一下搜索框，又不点，又搁那划会话列表」）：
             #   **搜索没成就停手，默认不再回退去滚会话列表**。为什么：
             #   老路的滚轮虽然走投递（**不动光标**），但**会话列表会在用户眼前滚**——他看到的
             #   "它在划列表"就是它；而搜索路线已经覆盖了绝大多数情况。
@@ -1829,7 +1829,7 @@ class WeChatAdapter:
                     "｜已把列表滚回顶部" if _scrolled_back else "")
             pos = info["pos"]
             clicked_y = int(info["y_abs"])
-            # ⛔ 一次切会话**最多一枪**：冷却期内只复核、不补点（用户口径：连点两下会把聊天框关掉）
+            # ⛔ 一次切会话**最多一枪**：冷却期内只复核、不补点（既有口径：连点两下会把聊天框关掉）
             self._pick_last = getattr(self, "_pick_last", {})
             _last_ts, _last_y = self._pick_last.get(str(chat_id), (0.0, -1))
             _allow, _why_cd = _co.click_allowed(_last_ts, time.time())
@@ -1847,10 +1847,10 @@ class WeChatAdapter:
             tgt = ib.find_render_child(main) or main
             tgt = ib.find_render_child(main) or main
             # ⚠️ 2026-09-16 修（真缺陷·r11 两次实测）：滚轮是**平滑滚动**，惯性没停行还在动 ⇒ 照算出来的
-            #    y 点下去就**点空**（"点击已发出但该行没变绿底"）。⇒ 点前等列表停住（纯像素判据、不调 OCR）。
+            #    y 点下去就**点空**（"点击已发出但该行没变绿底"）。⇒ 点前等列表停住（纯像素自检、不调 OCR）。
             _settled = self._list_settled(gui)
             flog = str(flog) + ("｜点前列表已停稳" if _settled else "｜⚠️点前列表没等到停稳")
-            # 点前的聊天区文字（用来判"切会话到底发没发生"——绿底那项判据会被帧质量骗）
+            # 点前的聊天区文字（用来判"切会话到底发没发生"——绿底那项自检会被帧质量骗）
             _pane0 = _co.pane_text(_chh.capture_image(gui=gui))
             # ⚠️ 会话行必须用**慢节奏**点击（2026-09-13 A/B：快节奏投渲染子窗高亮不动；
             #   悬停 300ms + 按住 150ms 高亮立刻跳到目标行）——见 input_backend.click 的注释
@@ -1858,7 +1858,7 @@ class WeChatAdapter:
             if not ok:
                 return False, "投递点击会话行失败：%s" % why
             self._pick_last[str(chat_id)] = (time.time(), clicked_y)
-            # 复核（自洽证据）：**我们按名字点的那一行**现在是不是高亮行（相对判据，抗帧质量抖动）
+            # 复核（自洽证据）：**我们按名字点的那一行**现在是不是高亮行（相对自检，抗帧质量抖动）
             deadline = time.time() + max(1.0, float(confirm_s))
             last = ""
             while time.time() < deadline:
@@ -2079,7 +2079,7 @@ class WeChatAdapter:
             if variant == "icon":
                 # —— 图标形态（本机 4.1.15.8）：点开后**搜索框是一个独立顶层窗（浮层）**，
                 #    主窗渲染区里**看不到它**（实测：主窗像素只多了图标 hover 态，band_diff≈0.05）
-                #    ⇒ 必须找到那个窗口、抓它自己的画面、往它投字与点击。判据不许再用"主窗像素变了"。
+                #    ⇒ 必须找到那个窗口、抓它自己的画面、往它投字与点击。自检不许再用"主窗像素变了"。
                 #    点之前先看有没有已经开着的浮层（有就直接用，避免把自己点关）。
                 pop = self._find_search_popover(main)
                 if not pop:
@@ -2202,11 +2202,11 @@ class WeChatAdapter:
             idn, idn_why = self.chat_identity_ok(chat_id, gui=gui)
             if idn is True:
                 return True, "搜索框路线成功（点的是 OCR「%s」那行）：%s" % (str(info.get("name"))[:10], idn_why)
-            # ⛔ 2026-09-16 加（用户报「他点了一下搜索框，又不点，又搁那划会话列表」）：
+            # ⛔ 2026-09-16 加（已知现象：「他点了一下搜索框，又不点，又搁那划会话列表」）：
             #   实测日志：点了搜索结果里**名字匹配**的目标行，但 `chat_identity_ok` 因为
             #   **「活动行时间戳读不出」** 判否（wechat.py:3047）⇒ 这里 `idn is False` ⇒ 整条搜索路线判失败
             #   ⇒ 回退到「找会话行 + 滚轮」老路 ⇒ 用户看到的就是"它在划会话列表"。
-            #   ⇒ 但「读不出」按同文件 :3022-3024 的既有口径本该是**判据不可用**（None），不是「证据说不是」。
+            #   ⇒ 但「读不出」按同文件 :3022-3024 的既有口径本该是**自检不可用**（None），不是「证据说不是」。
             #     在**搜索路线**这个上下文里（点的行是名字匹配出来的、不是猜位置）按**弱证据**计切成功。
             #   ⚠️ 只放宽"切换"这一步，**发送闸一个字不动** —— 真正发消息仍要另过「内容 × 活动行时间」。
             #   ⚠️ 这里靠文案判断（"读不出"）是有意留的窄口子；改 3047 的文案必须同步这里。
@@ -2239,7 +2239,7 @@ class WeChatAdapter:
 
         参考实测：投递打字 + 投递点「发送」（3/3、DB 回读命中）。
         """
-        # OCR 总时间窗（测机手册 ④）：这一笔发送链的 OCR 总预算（超时按"判据不可用"处理）
+        # OCR 总时间窗（测机手册 ④）：这一笔发送链的 OCR 总预算（超时按"自检不可用"处理）
         from . import chat_ocr as _co
         _co.begin_window(_co.SEND_WINDOW_S)
         from . import input_backend as ib
@@ -2251,7 +2251,7 @@ class WeChatAdapter:
             main = int(getattr(gui, "main_hwnd", 0) or 0) or ib.find_main_window()
             if not main:
                 return False, "找不到微信主窗"
-            self._ensure_main_visible(gui, main)   # 最小化 ⇒ 先不激活地还原（发送链的会话头判据要抓图）
+            self._ensure_main_visible(gui, main)   # 最小化 ⇒ 先不激活地还原（发送链的会话头自检要抓图）
             if not gui.render_rect:
                 gui._update_render_rect()
             _stash_fg()      # ⚠️ 投递链的伪激活会让微信**短暂真占前台**（跨机 r15 实测 1.8s）⇒ 记下用户窗口，
@@ -2303,7 +2303,7 @@ class WeChatAdapter:
             # ⛔ 2026-09-16 r24 对面现场：**最小化还原之后投递打字不生效**。
             #    他的对照很干净：同一会话、同一轮里，可见态两枪（A1/A2）回读都成功（local_id 27/28），
             #    只有最小化那一枪读不到新行，而且那个 token 在「文件传输助手」与「E」里
-            #    **两处都搜不到** ⇒ 没发错会话、也不是判据误判 ⇒ 就是"字没进输入框"。
+            #    **两处都搜不到** ⇒ 没发错会话、也不是自检误判 ⇒ 就是"字没进输入框"。
             #    机制：这条链**从来不点输入框**（2026-09-13 实测"不点也能发 3/3"——那是**正常可见态**
             #    下靠默认焦点）；最小化被还原后焦点不在输入框上，`WM_CHAR` 被丢，随后点「发送」发了个空。
             #    （发文件那条链不受影响：走 `WM_SETTEXT` 直写对话框，不依赖输入框焦点。）
@@ -2376,7 +2376,7 @@ class WeChatAdapter:
                         _i, _how, head.get("local_id"))
             if not _fired:
                 return False, "投递发送失败：三枪都没打出去（%s）" % "→".join(_tried)
-            # ⚠️ 判据不可用 ≠ 发送失败（2026-09-14 测机报告：4.1.13.65 上投递其实发出去了，但回读通道失效）
+            # ⚠️ 自检不可用 ≠ 发送失败（2026-09-14 测机报告：4.1.13.65 上投递其实发出去了，但回读通道失效）
             _alive, _why_alive = self.db_alive(chat_id)
             if not _alive:
                 return V_UNVERIFIED, ("已投递 %d 枪（%s），但**判据不可用**、无法证实是否发出：%s"
@@ -2637,7 +2637,7 @@ class WeChatAdapter:
                 return False, _g["reason"]
         except Exception:
             pass
-        # OCR 总时间窗（测机手册 ④）：这一笔发送链的 OCR 总预算（超时按"判据不可用"处理）
+        # OCR 总时间窗（测机手册 ④）：这一笔发送链的 OCR 总预算（超时按"自检不可用"处理）
         from . import chat_ocr as _co
         _co.begin_window(_co.SEND_WINDOW_S)
         from . import input_backend as ib
@@ -2670,7 +2670,7 @@ class WeChatAdapter:
                 #    "调用方声明确认（confirm_open=True）"。
                 log.warning("发文件：**调用方声明确认**（confirm_open=True）当前会话＝目标会话，"
                             "跳过自动会话闸（自动判据：%s）", why_open)
-            # ⛔ 内容级身份闸（2026-09-13 发错会话事故后加）：**名字判据会骗人**——
+            # ⛔ 内容级身份闸（2026-09-13 发错会话事故后加）：**名字自检会骗人**——
             #    群聊行的预览带发言人前缀（`E: 提交信息…`），会被当成"会话名＝E"从而点进那个群。
             idn, idn_why = self.chat_identity_ok(chat_id, gui=gui)
             if idn is False:
@@ -2678,7 +2678,7 @@ class WeChatAdapter:
                 #   必须能压过**内容级**的否定 —— 这正是这个参数存在的理由（2026-09-14 实测：E 的会话
                 #   明明开着，可它最近几条都是文件卡、我们的针（短 token）不在视口里 ⇒ 内容档一路落空、
                 #   返回 False ⇒ 老写法**无条件拒绝**，这条通道根本走不到，等于形同虚设）。
-                #   放行时**留痕**：日志 + 返回值里带上判据原文，事后能问责。
+                #   放行时**留痕**：日志 + 返回值里带上自检原文，事后能问责。
                 if not confirm_open:
                     return False, "⛔ 内容核对不通过，拒绝发送（防发错会话）：%s" % idn_why
                 log.warning("发文件：内容级核对判否，但**调用方声明确认**（confirm_open=True）"
@@ -2718,7 +2718,7 @@ class WeChatAdapter:
                 log.warning("发文件前清掉了 %d 个残留的「选择文件」对话框（上一次异常留下的）", _stale)
             # ⚠️ 点之前**先抓一次画面**，用它做两件事（2026-09-15）：
             #    ①判「输入栏在不在」＝视图对不对（P15：不在聊天视图时那一枪必然落空）；
-            #    ②**从实测图标行取坐标**（用户报"投递是成功的，但老点错位置，不是收藏就是截图"
+            #    ②**从实测图标行取坐标**（既有口径："投递是成功的，但老点错位置，不是收藏就是截图"
             #      ——固定偏移换机器/换 DPI 会整档错位，见 `_file_panel_point_live`）。
             _img, _gray = None, None
             try:
@@ -3065,7 +3065,7 @@ class WeChatAdapter:
             _ht, _hy = _co.highlight_time(img) if img is not None else ("", None)
             if not _ht:
                 # ⚠️ 2026-09-16 r20（跨机 r19 的 live 现场）：活动行时间戳是**间歇**可读的（对面实测 1/2~1/4），
-                #    单帧读不出就判"判据不可用"⇒ fail-closed 常态化（他们那轮 zip 就是因为这一刻读不出而发不出去）。
+                #    单帧读不出就判"自检不可用"⇒ fail-closed 常态化（他们那轮 zip 就是因为这一刻读不出而发不出去）。
                 #    ⇒ **连试几帧**再下结论：捕获是新的、帧质量会变，重试成本只在失败路径上（几次 OCR，约 1~2s）。
                 for _i in range(4):
                     time.sleep(0.35)
@@ -3075,7 +3075,7 @@ class WeChatAdapter:
                         break
             if not _ht:
                 # ⚠️ 2026-09-16 r20：**草稿行不显示时间戳**（实测：`[草稿]…` 那一行没有时间）⇒ 这种情况下
-                #    时间"本来就没有可比的"（与"目标是昨天"同类），不能算"判据不可用 ⇒ 判否"，
+                #    时间"本来就没有可比的"（与"目标是昨天"同类），不能算"自检不可用 ⇒ 判否"，
                 #    否则那条会话**永远发不出去**（本轮我自己就卡在这儿：E 那行有草稿 ⇒ 连试 5 帧都读不出）。
                 _draft_row = False
                 try:
@@ -3115,14 +3115,14 @@ class WeChatAdapter:
             _tok = _co.begin_window(_co.SEND_WINDOW_S)     # 内容级核对整段共用 OCR 总预算（④）
             pane = _co.pane_text(_co.capture_best(gui=gui or self._get_gui(), frames=3), limit=400)
             if _co.budget_out(_tok):
-                # OCR 预算用尽 ⇒ 这一条**判据不可用**：按"拿不到证据"返回（调用方 fail-closed，不发）
+                # OCR 预算用尽 ⇒ 这一条**自检不可用**：按"拿不到证据"返回（调用方 fail-closed，不发）
                 return None, "OCR 预算用尽（判据不可用）：内容级核对没跑完，按「拿不到证据」处理"
             pane_n = _co.norm_alnum(pane)
             # ⛔ 2026-09-14 修（⑤ 重发实测）：**聊天区一个字都读不到**时，老实现一路走到最后返回 `False`
             #   ＝"核对不通过：当前开着的很可能不是目标会话" —— 可我们**根本没拿到证据**，这是把
-            #   "判据不可用"说成了"证据说不是"（同 ④ 的教训）。后果很实在：`send_file_posted` 里
+            #   "自检不可用"说成了"证据说不是"（同 ④ 的教训）。后果很实在：`send_file_posted` 里
             #   `idn is False` 是**无条件拒绝**的（连 `confirm_open` 这条声明通道都走不到）⇒ 屏幕一
-            #   读不出字，调用方声明"就是 E 的会话"也发不出去。⇒ 读不到就如实返回 `None`（判据不可用）。
+            #   读不出字，调用方声明"就是 E 的会话"也发不出去。⇒ 读不到就如实返回 `None`（自检不可用）。
             if not pane_n:
                 return None, ("聊天区一个字都没读到（判据不可用，不是「不是这个会话」）："
                               "抓图可能有遮挡/在滚动中，或这一屏确实没有文字；"
@@ -3668,7 +3668,7 @@ class WeChatAdapter:
             seq = [self._moments_gray_thumb(rect, gui=gui) for _ in range(n)]
             return max(self._gray_diff(seq[i], seq[i + 1]) for i in range(len(seq) - 1))
         except Exception:
-            return 1.0     # 量不出来 ⇒ 按"判据不可用"处理（调用方会拒绝动手）
+            return 1.0     # 量不出来 ⇒ 按"自检不可用"处理（调用方会拒绝动手）
 
     def _gray_thresholds(self, rect, gui=None):
         """把绝对阈值换成本地化阈值 ⇒ `(强阈值, 弱阈值, 地板)`；地板太高时前两个为 None。
@@ -3872,7 +3872,7 @@ class WeChatAdapter:
 
             got_discover = False
             # 「乱点」闸门（2026-09-14 用户实测反馈后立）：
-            #   用户原话：「我看我点了那个程序鼠标测试，我点了朋友圈，它在乱点我的头像、联系人、收藏，
+            #   已知现象：「我看我点了那个程序鼠标测试，我点了朋友圈，它在乱点我的头像、联系人、收藏，
             #             但是唯独没有点朋友圈里的『发现』」
             #   根因＝②③两段是**盲试**（按图标列/比例猜位置，猜一个就真点一下）。默认关掉盲试：
             #   只走"自证得到的发现"（绿点＝已选中态）。盲试要用必须显式打开
@@ -6216,7 +6216,7 @@ def attach_diagnosis(adapter=None, err="", db=None) -> dict:
             _ins = {"installed": False, "detail": "安装状态检测异常：%s" % e}
         steps.append({"key": "install", "name": "微信装没装", "ok": bool(_ins.get("installed")),
                       "detail": str(_ins.get("detail") or "本机没检测到微信")})
-    # ── 版本步（2026-09-16 用户反馈后加）：老版本微信的**数据目录结构与 4.x 完全不同**，
+    # ── 版本步（2026-09-16 既有口径：后加）：老版本微信的**数据目录结构与 4.x 完全不同**，
     #    驱动库找不到库 ⇒ 症状恰好是"打不开消息库"，但用户看到的短原因**不会提"你的微信太老"**，
     #    于是报障只能来一句"打不开消息库"，我们这边也猜。⇒ 单独列一步，给**可执行**的结论。
     #    位置在 db_open **之前**：第一个不过的步就是卡点，版本不对时应当先说版本。

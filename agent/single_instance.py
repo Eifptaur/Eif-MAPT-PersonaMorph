@@ -198,7 +198,7 @@ class InstanceLock:
         self.acquired = False
         self.note = ""
 
-    # ---- 证据文件（写失败不致命：判据在互斥体上）----
+    # ---- 证据文件（写失败不致命：自检在互斥体上）----
     def _write_pid_file(self) -> str:
         if not self.lock_path:
             return ""

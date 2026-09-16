@@ -471,7 +471,7 @@ def main():
     watchdog = os.path.join(ROOT, "scripts", "watchdog.py")
     existing = None
     try:
-        # 单实例判据＝命名互斥体（probe 只查不占；旧版实例只写 pid 文件、没有互斥体，用 legacy_holder 兜住）
+        # 单实例自检＝命名互斥体（probe 只查不占；旧版实例只写 pid 文件、没有互斥体，用 legacy_holder 兜住）
         from agent.single_instance import probe as _si_probe, legacy_holder as _si_legacy
         _lk = os.path.join(ROOT, "data", "bot.lock")
         _held, _hpid = _si_probe(lock_path=_lk)

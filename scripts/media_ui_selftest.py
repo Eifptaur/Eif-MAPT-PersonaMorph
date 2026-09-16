@@ -44,7 +44,7 @@ ok("有 sec-media 分区且带 data-sec", 'id="sec-media" class="card" data-sec'
 i_media = HTML.find('id="sec-media"')
 # ⚠️ 2026-09-16 改口径：以前拿 `sec-wechat` 当"下一个分区"的哨兵，而用户要求分区顺序改成
 #    与左导航完全一致（微信挪到第 7 位）⇒ 哨兵失效。改成"切到**本分区自己的** </section> 为止"
-#    （分区不嵌套）——判据从此与分区顺序无关，只守"这一块存在且闭合"。
+#    （分区不嵌套）——自检从此与分区顺序无关，只守"这一块存在且闭合"。
 _i_media_end = HTML.find("</section>", i_media)
 seg = HTML[i_media:_i_media_end] if (i_media > 0 and _i_media_end > i_media) else ""
 ok("分区 sec-media 存在且已闭合", bool(seg))

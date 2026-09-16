@@ -136,7 +136,7 @@ ok("能力文案含「未声明」", "未声明" in VM.CAPABILITY_NOTE)
 ok("能力文案点明「发出去是音频文件、不是真语音条」",
    "真语音条" in VM.CAPABILITY_NOTE and "音频文件" in VM.CAPABILITY_NOTE)
 src = io.open(os.path.join(ROOT, "agent", "voice_models.py"), encoding="utf-8").read()
-# 只查**代码与字符串**，不查注释：模块里那句"不许出现已支持某音色"本身就是注释（第一版判据在这里误红了）
+# 只查**代码与字符串**，不查注释：模块里那句"不许出现已支持某音色"本身就是注释（第一版自检在这里误红了）
 _code_only = "\n".join(l for l in src.splitlines() if not l.strip().startswith("#"))
 ok("代码里没有「已支持音色/支持音色克隆」这类无据断言",
    "已支持音色" not in _code_only and "支持音色克隆" not in _code_only)

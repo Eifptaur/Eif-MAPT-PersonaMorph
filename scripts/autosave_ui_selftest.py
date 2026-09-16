@@ -115,7 +115,7 @@ def main():
     except Exception as e:
         ok("console_html 的 JS 过语法检查", False, "%s: %s" % (type(e).__name__, e))
 
-    # 阴性对照：把关键接线从源码里抹掉，判据必须能变红（证明这些断言不是恒真）
+    # 阴性对照：把关键接线从源码里抹掉，自检必须能变红（证明这些断言不是恒真）
     broken = SRC.replace("id=\"autoApplyChk\"", "id=\"autoApplyChkX\"").replace("postCfg(oneKey(path, after))", "postCfg(cfg)")
     ok("阴性对照：抹掉开关与单键 POST 后，对应断言确实会失败",
        not has('id="autoApplyChk"', broken) and not has("await postCfg(oneKey(path, after))", broken)

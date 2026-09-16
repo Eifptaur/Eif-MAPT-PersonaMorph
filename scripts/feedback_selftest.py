@@ -113,8 +113,8 @@ try:
     r2 = FB.submit("问题", "判据用的假反馈：这样能发出去吗")
     ok("配了中转网址 ⇒ state=sent", r2.get("state") == "sent", str(r2.get("state")))
     ok("对方真的收到了（POST 命中）", "text" in (got.get("body") or ""), (got.get("body") or "")[:60])
-    # 2026-09-15 口径更新（用户原话：「没必要让程序帮我整理，反正他只要用邮箱发到我的邮箱就行」）：
-    #   正文＝**用户原话原样** + 一行元信息 ⇒ 断言"原话一字不差在正文里、有元信息行、没有那套改写"。
+    # 2026-09-15 口径更新（已知现象：「没必要让程序帮我整理，反正他只要用邮箱发到我的邮箱就行」）：
+    #   正文＝**既有口径：原样** + 一行元信息 ⇒ 断言"原话一字不差在正文里、有元信息行、没有那套改写"。
     ok("正文＝用户原话原样（只加一行元信息：类型/时间/版本/联系方式）",
        "判据用的假反馈：这样能发出去吗" in (got.get("body") or "")
        and "群相反馈" in (got.get("body") or "")
@@ -157,7 +157,7 @@ try:
         ok("登录用的是配置里的账号", box.get("login") == ("me@qq.com", "授权码"), str(box.get("login")))
         ok("收件人是配置里那两个（逗号分隔被拆开）", box.get("send", ("", [], ""))[1] == ["a@example.com", "b@example.com"],
            str(box.get("send", ("", [], ""))[1]))
-        # 主题用 Header 编码（中文必须编码）⇒ 判据要按 MIME 解码后再看，不能直接找字面量
+        # 主题用 Header 编码（中文必须编码）⇒ 自检要按 MIME 解码后再看，不能直接找字面量
         from email import message_from_string
         from email.header import decode_header
         _raw = box.get("send", ("", [], ""))[2]

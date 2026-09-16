@@ -42,7 +42,7 @@ def sha(p):
 
 def write(p, s):
     # ⚠️ newline="" 必须写：Windows 文本模式会把 \n 变成 \r\n，那样"未变的文件"哈希也会对不上
-    #    （判据第一版就栽在这儿：换入成功却组合校验失败，根因是造数据时引入了 CRLF）
+    #    （自检第一版就栽在这儿：换入成功却组合校验失败，根因是造数据时引入了 CRLF）
     os.makedirs(os.path.dirname(p), exist_ok=True)
     with open(p, "w", encoding="utf-8", newline="") as fh:
         fh.write(s)

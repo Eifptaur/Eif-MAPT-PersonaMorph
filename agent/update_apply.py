@@ -276,7 +276,7 @@ def apply_full(manifest: dict, zip_path: str, target: str = ROOT, dry: bool = Fa
             except Exception as e:
                 # ⚠️ 2026-09-16：第一版把**任何** OSError 都当"文件被占用"跳过 ⇒ 磁盘满/权限不对
                 #    这类真故障会被降级成"部分成功"，用户以为更新好了、其实没换。
-                #    判据 self_update_selftest 的 F 段就是拿这个当反面证据（模拟磁盘错误必须回滚）。
+                #    自检 self_update_selftest 的 F 段就是拿这个当反面证据（模拟磁盘错误必须回滚）。
                 if _is_locked(e):
                     locked.append("%s（%s）" % (rel, str(e)[:60]))
                     continue

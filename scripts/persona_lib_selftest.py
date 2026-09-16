@@ -42,7 +42,7 @@ def src(rel):
     return io.open(os.path.join(ROOT, rel), encoding="utf-8").read()
 
 
-#: 新分区 → 该分区下已入库的卡（每批做完在这里登记，判据跟着涨）
+#: 新分区 → 该分区下已入库的卡（每批做完在这里登记，自检跟着涨）
 NEW_BATCHES = {
     "🎸 BanG Dream!": ["kasumi_bd", "arisa_bd", "tae_bd", "rimi_bd", "saya_bd",
                        "yukina_bd", "sayo_bd", "lisa_bd", "ako_bd", "rinko_bd",
@@ -60,7 +60,7 @@ NEW_BATCHES = {
                     "saria_ak", "blaze_ak", "mudrock_ak", "w_ak", "mlynar_ak", "lappland_ak",
                     "hoshiguma_ak", "flametail_ak"],
 }
-#: 本判据"严格口径"只约束这些新卡（老库历史卡有各自的格式，不在本轮返工范围）
+#: 本自检"严格口径"只约束这些新卡（老库历史卡有各自的格式，不在本轮返工范围）
 _ALL_NEW = [k for keys in NEW_BATCHES.values() for k in keys]
 
 print("── A. 库级结构 ──")
@@ -113,7 +113,7 @@ _bad = [k for k, v in _R.items() if k in PERSONAS and isinstance(v.get("model"),
         and not (0 <= float(v["model"]) <= 100)]
 ok("评分都在 0~100 区间", not _bad, str(_bad[:5]))
 # 示例必须是"人话"：自动从引号里拼出来的崩坏示例（拿角色名/档案字段当回答）不许再出现
-# ⚠️ 判据别把"话少的角色"判成占位符：「嗯。在弹琴。」「肉。汉堡肉。」这类短答是**正确**的
+# ⚠️ 自检别把"话少的角色"判成占位符：「嗯。在弹琴。」「肉。汉堡肉。」这类短答是**正确**的
 #    ⇒ 只认三种特征：等于角色名、带档案字段词、冒号后跟数字。
 _ARCH = ("生日", "介质", "香调", "灵感", "种族", "稀有度", "属性", "定位标签", "实装版本")
 _bad_ex = []
@@ -134,8 +134,8 @@ for k in _ALL_NEW:
 ok("新卡的对话示例不是拼出来的占位符（拿名字/档案字段当回答）", not _bad_ex, str(_bad_ex[:4]))
 
 print("── D. 新卡不许塞当代网络梗 ──")
-# ⚠️ 判据防假阳（本轮实测两次）：单字「典」会命中「祭典」、「6」会命中生日「6 月 22 日」
-#    ⇒ 只查**多字网络梗**；单字/单数字那类交给人工审（宁可漏判，也不让判据打假红）
+# ⚠️ 自检防假阳（本轮实测两次）：单字「典」会命中「祭典」、「6」会命中生日「6 月 22 日」
+#    ⇒ 只查**多字网络梗**；单字/单数字那类交给人工审（宁可漏判，也不让自检打假红）
 _BAD_WORDS = ("V我50", "yyds", "YYDS", "绝绝子", "退钱", "先吃饭", "典中典", "破防", "栓Q", "666", "awsl", "笑不活了")
 for cat, keys in NEW_BATCHES.items():
     for k in keys:

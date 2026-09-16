@@ -172,7 +172,7 @@ _ex = open(os.path.join(ROOT, "config.example.json"), encoding="utf-8").read()
 ok("config.example.json 同步了这个键（示例与默认必须同键）",
    '"restore_window_after_use"' in _ex)
 
-# ── [五之二] 2026-09-16 用户报「他都找不到微信，还得我切出来」挖出的真缺陷 ──────────
+# ── [五之二] 2026-09-16 已知现象：「他都找不到微信，还得我切出来」挖出的真缺陷 ──────────
 #    `_limit_wechat_window` **从来不读 `ui.lock_window_pos`** —— 那开关的界面文案是
 #    「固定微信窗口位置」、注释写着「默认关：不动用户的窗口」，可代码**每次取 GUI 都把用户的
 #    微信钉到 1160×900 并下移到 y≥40**（他 config.json 里就是 `false`，窗口照样被改）。
@@ -226,7 +226,7 @@ ok("note_original 会先 recover，再以**当下**的 rect 记账（否则会�
 
 with WB._lock:
     WB._state.update({"borrowed": False, "hwnd": 0, "rect": None, "forced": None})
-WB._persist()                                        # 顺手把真目录里的记录也清掉（判据不留下影响）
+WB._persist()                                        # 顺手把真目录里的记录也清掉（自检不留下影响）
 WB._persist_path = _orig_pp
 _tools = open(os.path.join(ROOT, "agent", "tools.py"), encoding="utf-8").read()
 _tseg = _tools[_tools.index("def execute_tool"):]
