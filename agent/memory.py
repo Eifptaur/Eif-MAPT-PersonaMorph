@@ -240,32 +240,40 @@ class MemoryStore:
     def remove(self, chat_key: str, category: str, user_id="", target="", content=""):
         if category != "memberImpression":
             return False
-        m = self._ensure_chat(chat_key)
         removed = False
-        for key, mem in list(m.items()):
-            hit = False
-            if user_id:
-                hit = str(mem.get("userId")) == str(user_id)
-            elif target:
-                hit = str(mem.get("name") or mem.get("userId")) == str(target).strip()
-            if not hit:
+        # ⛔ 2026-09-16 修（用户反馈：「记忆那里也是删除了还能读取」）：
+        #   根因是**口径不对称** —— `members()`（列表）在"互通"时是 `for key in self._chat_keys(chat_key)`
+        #   **把所有群合并**后展示的，而这里原来只删 `chat_key` **一个群**的那一份 ⇒ 同一个人在别的群
+        #   （或共享池）还留着一份 ⇒ **界面上删了、一刷新又合并出来**。
+        #   ⇒ 删除必须与读取**同一口径**：按 `_chat_keys()` 把每一份都删掉。
+        for key in list(self._chat_keys(chat_key)):
+            m = self._ensure_chat(key)
+            if not m:
                 continue
-            if content:
-                before = len(mem["impressions"])
-                mem["impressions"] = [e for e in mem["impressions"] if e["content"] != content]
-                removed = removed or len(mem["impressions"]) != before
-            else:
-                removed = True
-                mem["impressions"] = []
-            if not mem["impressions"]:
-                m.pop(key, None)
-                try:
-                    os.remove(_member_file(chat_key, mem.get("userId"), mem.get("name")))
-                except Exception:
-                    pass
-            else:
-                mem["updatedAt"] = int(__import__("time").time() * 1000)
-                _write_json(_member_file(chat_key, mem.get("userId"), mem.get("name")), mem)
+            for mk, mem in list(m.items()):
+                hit = False
+                if user_id:
+                    hit = str(mem.get("userId")) == str(user_id)
+                elif target:
+                    hit = str(mem.get("name") or mem.get("userId")) == str(target).strip()
+                if not hit:
+                    continue
+                if content:
+                    before = len(mem["impressions"])
+                    mem["impressions"] = [e for e in mem["impressions"] if e["content"] != content]
+                    removed = removed or len(mem["impressions"]) != before
+                else:
+                    removed = True
+                    mem["impressions"] = []
+                if not mem["impressions"]:
+                    m.pop(mk, None)
+                    try:
+                        os.remove(_member_file(key, mem.get("userId"), mem.get("name")))
+                    except Exception:
+                        pass
+                else:
+                    mem["updatedAt"] = int(__import__("time").time() * 1000)
+                    _write_json(_member_file(key, mem.get("userId"), mem.get("name")), mem)
         return removed
 
     def replace_member(self, chat_key: str, user_id: str, name: str, contents):
