@@ -19,6 +19,15 @@ import os
 import sys
 import tempfile
 
+# ⛔ 判据必须能在"控制台代码页是 GBK"的子进程里跑（`run_all_selftests.py` 就是这么起的）：
+#   我原来直接 print `✔/✘/⇒`，GBK 编不出来 ⇒ UnicodeEncodeError ⇒ 整个脚本红。
+#   ⇒ 统一把 stdout 切到 UTF-8（reconfigure 失败也不致命，退化成 errors=replace）。
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
