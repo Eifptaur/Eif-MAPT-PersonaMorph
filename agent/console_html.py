@@ -1012,7 +1012,7 @@ th{color:var(--tx2);font-weight:500}
         <div class="hint">这份表是<b>单一事实源</b>（agent/bg_status.py）：写"全程后台"的路径可以不动光标、不要求窗口可见（<b>可能短暂置前约 1~3 秒，然后自动还回</b>）；写"真鼠标"的会动你的光标，勾上下面这个开关就让它们直接跳过并如实告诉你。</div>
       </div></div>
       <div class="row"><label>只走后台</label><input type="checkbox" data-cfg="wechat.background_only">
-        <span class="hint">默认关。开了之后：拍一拍 / 引用 / 朋友圈点赞·评论·发表 / UI 标定 一律**跳过并说明原因**，绝不悄悄动你的鼠标（发送文字、图片、表情、切会话、刷朋友圈仍走后台投递，不受影响）。</span></div>
+        <span class="hint">**默认开**（老版本留下的配置会被一次性迁移成开）。开了之后：拍一拍 / 引用 / 朋友圈点赞·评论·发表 / UI 标定 一律**跳过并说明原因**。关掉它这些功能才可用——但它们是**真实鼠标**（移动光标 + 发全局点击），点的是**光标所在的那个窗口**（可能是你正在用的程序，比如这个控制台），所以请在电脑前时再关。发送文字、图片、表情、切会话、刷朋友圈不受影响，一直走后台投递。</span></div>
       <div class="row"><label>图标指纹</label><div class="grow">
         <b id="ufpHead">检测中…</b>
         <div class="btns" style="margin-top:6px">

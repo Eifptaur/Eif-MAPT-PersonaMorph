@@ -1,10 +1,10 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.16.4",
-    "sha256": "6dc72164e6a0477f584c14e0711e414e18b9abf4dc173311da4ac51cc2fc7dc3",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.5/persona-morph-v2.1.5.zip",
-    "size": 7958456,
+    "version": "2026.9.16.5",
+    "sha256": "c54c12680573d10aefca4dfea282baadc89a142014ffa0b2cacd86a81546a9d1",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.6/persona-morph-v2.1.6.zip",
+    "size": 7971455,
     "files": 237
   },
   "dlc": [
@@ -32,15 +32,15 @@
     }
   ],
   "announce": {
-    "version": "2026.9.16.4",
+    "version": "2026.9.16.5",
     "notes": [
-      "切会话改成直接在搜索框里打名字：不再在你的会话列表里翻行、滚轮",
-      "记忆删除彻底了（以前删过的换个入口还能读到）",
-      "「暂停/恢复」修好了；「只走后台」现在是默认，不再动你的鼠标"
+      "鼠标不会再划你的控制台了：老配置会被一次性搬到安全的一侧，每一处真鼠标动作前都先确认那点属于微信",
+      "少数功能（朋友圈/点赞评论/拍一拍/引用）默认跳过，要用请去控制台关掉「只走后台」",
+      "这一版没有新功能，上一版装的用户请务必更新"
     ],
     "forceBase": false,
-    "minBase": "2026.9.16.4"
+    "minBase": "2026.9.16.5"
   },
-  "builtAt": "2026-09-16T03:07:15Z",
-  "updatedAt": 1789528035137
+  "builtAt": "2026-09-16T03:18:15Z",
+  "updatedAt": 1789528695337
 }

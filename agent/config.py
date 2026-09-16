@@ -536,6 +536,13 @@ def load_config(path: str | None = None) -> dict:
         pass
     except Exception as e:
         print("[config] 读取配置失败，使用默认值：%s" % e)
+    # 只对**真正那份** config.json 做一次性迁移（带自定义 path 的调用多半是自检/夹具，
+    # 绝不能把关卡写回用户真实的那份）
+    try:
+        if os.path.abspath(path) == os.path.abspath(CONFIG_FILE):
+            cfg = _migrate_once(cfg)
+    except Exception as e:
+        print("[config] 一次性迁移跳过：%s" % e)
     return cfg
 
 
@@ -561,6 +568,59 @@ def save_config(cfg: dict | None = None) -> None:
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=2)
     os.replace(tmp, CONFIG_FILE)
+
+
+# ── 一次性迁移：把「安全默认值」补到**已存在**的 config.json 上（2026-09-16 立）─────────
+#   为什么必须单做一件事：`deep_merge(DEFAULT_CONFIG, config.json)` 是**用户文件覆盖默认值**，
+#   而在线包**不带 config.json、更新也不覆盖用户那份** ⇒ 把某个默认值改成"安全的一侧"
+#   对老用户**完全无效**。2026-09-16 实测踩到：v2.1.5 把 `wechat.background_only` 默认改成
+#   True（"不再动你的鼠标"就是这条），可用户那份 config.json 里早写着 `false`
+#   ⇒ 他升级后那几条真鼠标路径照旧执行、鼠标照旧会滑到他的控制台上。
+#   ⇒ 规则三条：①**只做一次**（标记记在 data/ 里，用户之后怎么改都不再动他）；
+#     ②**只往安全的一侧搬**，并在日志里说清搬了什么；③标记落 `data/`（运行期数据，不进包）。
+MIGRATIONS_MARK = os.path.join(DATA_DIR, "config_migrations.json")
+_SAFE_DEFAULTS_TAG = "safe_defaults_2026_09_16"
+
+
+def _safe_defaults(cfg: dict) -> list:
+    """把安全默认值补上；返回「改了哪些」的人类可读列表（没改就是空表）。"""
+    changed = []
+    w = cfg.setdefault("wechat", {})
+    if w.get("background_only") is not True:
+        w["background_only"] = True
+        changed.append("wechat.background_only = true（真鼠标档默认不执行：不动你的鼠标）")
+    i = cfg.setdefault("input", {})
+    if i.get("allow_real_fallback") is not False:
+        i["allow_real_fallback"] = False
+        changed.append("input.allow_real_fallback = false（投递判据不过时不退回真鼠标）")
+    return changed
+
+
+def _migrate_once(cfg: dict) -> dict:
+    """只跑一次；跑完把标记写进 `data/config_migrations.json`，之后用户的改动不再被覆盖。"""
+    try:
+        with open(MIGRATIONS_MARK, "r", encoding="utf-8") as f:
+            done = set(json.load(f) or [])
+    except Exception:
+        done = set()
+    if _SAFE_DEFAULTS_TAG in done:
+        return cfg
+    changed = _safe_defaults(cfg)
+    done.add(_SAFE_DEFAULTS_TAG)
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(MIGRATIONS_MARK, "w", encoding="utf-8") as f:
+            json.dump(sorted(done), f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+    if changed:
+        print("[config] 一次性迁移到安全默认值（要改回来：控制台「微信」面板勾「只走后台」）：%s"
+              % "；".join(changed))
+        try:
+            save_config(cfg)
+        except Exception:
+            pass
+    return cfg
 
 
 def resolve_api_key(cfg: dict) -> str:

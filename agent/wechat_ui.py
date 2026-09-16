@@ -19,11 +19,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from typing import Callable
 
 from .config import get_config, DATA_DIR
+
+log = logging.getLogger("persona-morph")
 
 _LAYOUT_FILE = os.path.join(DATA_DIR, "ui_layout.json")
 
@@ -310,7 +313,13 @@ def close_subwindow(gui, hwnd, retries: int = 3) -> bool:
             r = wintypes.RECT()
             user32.GetWindowRect(int(hwnd), ctypes.byref(r))
             cx, cy = int(r.right - 14), int(r.top + 12)     # 右上角叉号
-            user32.SetCursorPos(cx, cy)
+            # ⛔ 真鼠标点击前过 `real_guard`（归属 + SetCursorPos 返回值双重校验）：
+            #    否则光标没到位时这一枪会落到用户当前真正指着的窗口上（2026-09-16 报障的机制本身）。
+            from . import ui_adapt as _ua_c
+            _ok, _why = _ua_c.real_guard(cx, cy, gui=gui, extra_hwnds=(int(hwnd),))
+            if not _ok:
+                log.warning("关子窗的点叉已拦下（不动鼠标）：%s", _why)
+                raise RuntimeError(_why)     # 落到下面的 except ⇒ 直接走兜底 Alt+F4
             user32.mouse_event(0x0002, 0, 0, 0, 0)
             user32.mouse_event(0x0004, 0, 0, 0, 0)
             time.sleep(0.8)
