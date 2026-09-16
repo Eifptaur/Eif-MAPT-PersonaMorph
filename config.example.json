@@ -32,7 +32,7 @@
   "restore_minimized": true,
   "start_paused": true,
   "allow_click_hunting": false,
-  "background_only": false,
+  "background_only": true,
   "owner_accounts": [],
   "owner_mode": "know",
   "private_chat": "owner_only"

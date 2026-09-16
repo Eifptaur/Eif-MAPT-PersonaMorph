@@ -135,6 +135,17 @@ _HIT_SEARCH = _SEG_SW.find("open_chat_by_search(chat_id, name=name, gui=gui)")
 _HIT_ROW = _SEG_SW.find("find_row")
 ck("B18 切会话是搜索框优先（搜索调用必须出现在找行之前）",
    _HIT_SEARCH >= 0 and _HIT_ROW >= 0 and _HIT_SEARCH < _HIT_ROW)
+# B19（2026-09-16 用户报「那为啥鼠标会滑我的控制台」）：
+#   真鼠标档必须**默认不执行** —— `wechat.background_only` 默认必须是 True（安全的一侧），
+#   要用那 5 条真鼠标路径（拍一拍 / 引用 / 朋友圈点赞评论 / 发朋友圈纯文字 / UI 标定）必须显式打开。
+#   ⚠️ 与 `input.allow_real_fallback` 的区别：那个管"投递判据不过时退不退回真鼠标"，
+#      本开关管"这条路径本来就走真鼠标时要不要执行"。两个都默认关掉才叫安全。
+ck("B19 「只走后台」默认是 True（安全侧，改之前是 False）",
+   '"background_only": True' in SRC_CFG)
+ck("B19a 每条真鼠标路径都被 background_only 闸挡住（闸出现 ≥ 8 处）",
+   SRC_WECHAT.count("self._background_only()") >= 8)
+ck("B19b 真鼠标兜底也默认关（allow_real_fallback 默认 False）",
+   '"allow_real_fallback": False' in SRC_CFG)
 # B17d~B17g 破 `no_ref` 死锁（2026-09-16 对面 r23 现场：参照只在"发送成功之后"才学，而 `no_ref`
 #   直接拒发 ⇒ 永远拒、永远学不到；A 枪走"宽松成功"分支同样不学 ⇒ 全日志没有一次学会参照的记录）
 _ST = SRC_WECHAT.split("def send_text_posted(")[1][:9000]
