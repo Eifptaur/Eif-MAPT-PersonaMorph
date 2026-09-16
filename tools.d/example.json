@@ -1,0 +1,17 @@
+{
+  "name": "get_time",
+  "description": "示例：查某个时区的当前时间（第三方接口，默认关）",
+  "enabled": false,
+  "method": "GET",
+  "url": "https://worldtimeapi.org/api/timezone/Etc/UTC",
+  "allow_hosts": [
+    "worldtimeapi.org"
+  ],
+  "params": {
+    "type": "object",
+    "properties": {},
+    "required": []
+  },
+  "timeout_ms": 8000,
+  "max_chars": 2000
+}

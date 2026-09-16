@@ -1,0 +1,18 @@
+{
+  "name": "ask_kb",
+  "description": "到自己的知识库接口问一句话并返回答案；有人问「我们知识库里有没有提到…」时用",
+  "enabled": false,
+  "method": "POST",
+  "url": "https://kb.example.com/api/query",
+  "allow_hosts": ["kb.example.com"],
+  "headers": {"Authorization": "Bearer 把这里换成你的Key"},
+  "body": {"question": "{question}", "top_k": 3},
+  "params": {
+    "type": "object",
+    "properties": {"question": {"description": "要问的问题（自然语言）"}},
+    "required": ["question"]
+  },
+  "response_path": "data.answer",
+  "timeout_ms": 10000,
+  "max_chars": 2000
+}
