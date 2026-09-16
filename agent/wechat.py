@@ -1658,6 +1658,18 @@ class WeChatAdapter:
             already, why0 = self.chat_is_open(chat_id, gui=gui, name=name)
             if already:
                 return True, "目标会话已经是当前打开的会话（%s）" % why0
+            # ⛔ 2026-09-16 用户明确要求（原话：「他老是想找会话列表那一条究竟在哪儿，
+            #   **他不能直接点击输搜索框输入吗**」）⇒ **搜索框优先**：
+            #   搜索入口是**固定位置**（两套 UI 都认，`open_chat_by_search` 已是实测通路），
+            #   不用在会滚动的会话列表里找那一行、也不用滚轮、更不怕列表被别的窗口盖住。
+            #   搜索没成才退回下面的「找行 + 滚轮」老路（保留，不删）。
+            try:
+                _sok, _swhy = self.open_chat_by_search(chat_id, name=name, gui=gui)
+                if _sok:
+                    return True, "搜索框切会话成功（%s）" % str(_swhy)[:60]
+                log.info("切会话：搜索框路线没成（%s）⇒ 退回在会话列表里找行", str(_swhy)[:80])
+            except Exception as _e:                          # noqa: BLE001
+                log.warning("切会话：搜索框路线异常（%s）⇒ 退回找行", str(_e)[:80])
             # ⚠️ 用我们自己的**读图**找行（chat_ocr.find_row），不用库的 find_session：
             #    后者找不到时会用**真实鼠标**悬停/滚动会话列表（实测光标会动），违反"不动鼠标"。
             from . import chat_ocr as _co

@@ -127,6 +127,14 @@ ck("B17b 放回时三条安全线都在（没登记不动 / 已收起不动 / �
    and "u.ShowWindow(hwnd, 6)" in _HELP_MIN)
 ck("B17c 在「还前台」之后立刻放回（顺序不能反：先最小化会让还前台更难成立）",
    "_minimize_back_if_needed(note)" in SRC_WECHAT)
+# B18（2026-09-16 用户要求：「他老是想找会话列表那一条究竟在哪儿，**他不能直接点击输搜索框输入吗**」）：
+#   切会话必须**搜索框优先** —— 搜索入口位置固定、不依赖滚动、也不怕列表被别的窗口盖住；
+#   老的「找行 + 滚轮」只作兜底（保留，不删）。
+_SEG_SW = SRC_WECHAT.split("def switch_chat_posted(")[1][:6000]
+_HIT_SEARCH = _SEG_SW.find("open_chat_by_search(chat_id, name=name, gui=gui)")
+_HIT_ROW = _SEG_SW.find("find_row")
+ck("B18 切会话是搜索框优先（搜索调用必须出现在找行之前）",
+   _HIT_SEARCH >= 0 and _HIT_ROW >= 0 and _HIT_SEARCH < _HIT_ROW)
 # B17d~B17g 破 `no_ref` 死锁（2026-09-16 对面 r23 现场：参照只在"发送成功之后"才学，而 `no_ref`
 #   直接拒发 ⇒ 永远拒、永远学不到；A 枪走"宽松成功"分支同样不学 ⇒ 全日志没有一次学会参照的记录）
 _ST = SRC_WECHAT.split("def send_text_posted(")[1][:9000]
