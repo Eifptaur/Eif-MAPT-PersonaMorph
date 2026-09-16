@@ -1105,6 +1105,11 @@ th{color:var(--tx2);font-weight:500}
       <div class="btns"><button class="pri" data-save>保存设置（模型 API）</button></div>
     </section>
     <section id="sec-wechat" class="card" data-sec>      <div class="row"><label>微信版本</label><div class="grow"><b id="wxver">检测中…</b></div></div>
+      <div class="row" id="wxAttachRow" style="display:none"><label>接入诊断</label><div class="grow">
+        <div id="wxAttachSteps" class="hint" style="line-height:1.8"></div>
+        <div class="hint">上面是「接微信」的逐步检查（进程 / 版本 / 打开消息库 / 密钥 / 认出你的账号）。
+        卡在哪一步、为什么卡，都写在这一段里——<b>报障时把这一段截图发我，就能直接定位</b>。</div>
+      </div></div>
       <div id="wxInstall" class="row" style="display:none"><label>微信装没装</label><div class="grow">
         <div id="wxInstallText" class="hint"></div>
         <div class="btns" style="margin-top:6px">
@@ -2553,6 +2558,19 @@ async function loadStatus(){  try{
            + ((_wa.steps||[]).length ? ('\n\n逐步诊断：\n' + _wa.steps.map(function(x){ return (x.ok?'[通过] ':'[卡住] ') + x.name + '：' + x.detail; }).join('\n')) : ''));
     }catch(e){}
     $('sideStatus').dataset.wechat = (s.wechat_connected?'1':'0');
+    try{
+      // 逐步诊断**也铺在「微信」面板里**（2026-09-16 用户反馈：他只看到短原因"打不开消息库"，
+      // 悬停才有的全文没注意到 ⇒ 报障时带不出原因）。面板里直接列出来，截图一张就够。
+      const _row = $('wxAttachRow'), _box = $('wxAttachSteps'), _st = ((s.wechat_attach||{}).steps)||[];
+      if(_row && _box){
+        if(!s.wechat_connected && _st.length){
+          _row.style.display = '';
+          _box.innerHTML = _st.map(function(x){
+            return '<div>' + (x.ok ? '[通过] ' : '<b>[卡住]</b> ') + x.name + '：' + x.detail + '</div>';
+          }).join('');
+        } else { _row.style.display = 'none'; _box.innerHTML = ''; }
+      }
+    }catch(e){}
     try{
       const wv = s.wechat_version || {};
       const el = $('wxver');

@@ -81,8 +81,8 @@ def _diag(vi, db=None, err="", adapter=None):
 print("── A. 全过：微信在跑 / 库打得开 / 密钥可用 / 认得出你自己 ──")
 _d = _diag(_VI_RUN, db=_DB(self_info={"username": "wxid_me", "nick_name": "我"}))
 ok("ok=True 且没有卡点 step", _d["ok"] and _d["step"] == "", "ok=%s step=%r" % (_d["ok"], _d["step"]))
-ok("四步都给出来了（process/db_open/key/self）",
-   {s["key"] for s in _d["steps"]} == {"process", "db_open", "key", "self"},
+ok("五步都给出来了（process/version/db_open/key/self）",
+   {s["key"] for s in _d["steps"]} == {"process", "version", "db_open", "key", "self"},
    str([s["key"] for s in _d["steps"]]))
 ok("每步都带证据文字（不是光一个勾）", all(str(s.get("detail") or "").strip() for s in _d["steps"]))
 ok("认出了自己的账号 ⇒ 说明里带昵称/wxid", "我" in str(_d["steps"][-1]["detail"]), _d["steps"][-1]["detail"])
@@ -111,8 +111,9 @@ ok("self 那一步仍在列表里（诊断走到底，不提前掐）", any(s["k
 print("── E. 只有缓存密钥、主密钥为空 ⇒ **照样算可用**（本机常态，别误报）──")
 _f = _diag(_VI_RUN, db=_DB(keys_ok=2, master=False, self_info={"username": "wxid_me"}))
 ok("ok=True（主密钥为空不算卡点）", _f["ok"] is True, _f["reason"])
+_key_step = next(s for s in _f["steps"] if s["key"] == "key")      # 按 key 找，别按序号（加了 version 步会错位）
 ok("说明里交代了「主密钥为空但有 N 把缓存密钥可用」这回事",
-   "缓存密钥" in str(_f["steps"][2]["detail"]), _f["steps"][2]["detail"])
+   "缓存密钥" in str(_key_step["detail"]), _key_step["detail"])
 
 print("── F. 消息库打不开 ⇒ 卡在 db_open，action=retry，且不再假装往下走 ──")
 _saved_mod = sys.modules.get("wechatauto")
@@ -166,6 +167,24 @@ _banned = [n for n in ("mouse_event", "SetCursorPos", "SendInput", "MoveWindow",
 ok("attach_diagnosis 里没有任何输入/改动窗口的调用", not _banned, str(_banned))
 ok("诊断不写盘（没有 open(...'w')/json.dump 之类）",
    ("json.dump" not in _seg) and ("os.remove" not in _seg))
+
+print("── J2. 老版本微信＝「打不开消息库」的真因（2026-09-16 用户反馈「他说他是新版本」后补的一步）──")
+_v3 = _diag({"found": True, "path": "C:\\x\\Weixin.exe", "version": "3.9.5.81", "supported": False}, db=_DB())
+ok("老版本 ⇒ 卡点是 version（不再含糊地只说 db_open）", _v3["step"] == "version", _v3["step"])
+ok("action=upgrade_wechat（给他一个能做的动作）", _v3["action"] == "upgrade_wechat", _v3["action"])
+ok("侧栏短原因点明「版本太旧」", "版本太旧" in W.attach_short_reason(_v3), W.attach_short_reason(_v3))
+ok("原因里解释清楚「这就是打不开消息库的原因」", "打不开消息库" in _v3["reason"], _v3["reason"][:90])
+_v4 = _diag(_VI_RUN, db=_DB(self_info={"username": "wxid_me"}))
+ok("4.x ⇒ 有 version 步且通过",
+   any(s["key"] == "version" and s["ok"] for s in _v4["steps"]), str([s["key"] for s in _v4["steps"]]))
+ok("4.x ⇒ 仍然全过、无卡点", bool(_v4["ok"]) and _v4["step"] == "", "%s/%r" % (_v4["ok"], _v4["step"]))
+_ch2 = _src(os.path.join("agent", "console_html.py"))
+_i_w = _ch2.index('id="sec-wechat"')
+_i_n = _ch2.index('<section id="sec-', _i_w + 10)
+_seg_w = _ch2[_i_w:_i_n]
+ok("「接入诊断」那段铺在**微信面板**里（不能只在悬停提示里，否则用户报障带不出原因）",
+   'id="wxAttachRow"' in _seg_w and 'id="wxAttachSteps"' in _seg_w)
+ok("前端真的会拿 wechat_attach.steps 去填它", "$('wxAttachRow')" in _ch2 and "s.wechat_attach" in _ch2)
 
 print("── K. 接线：启动接入 / 10 秒重试 / 状态下发 / 反馈 env（源码级，防以后改回去）──")
 _pm = _src(os.path.join("scripts", "persona_morph.py"))
