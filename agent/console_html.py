@@ -2353,9 +2353,6 @@ const WHALE_CURSOR = (function(){
   document.addEventListener('mousedown', (ev)=>{
     if(!enabled) return;
     if(ev && ev.button === 1){
-      // 中键：**先吃掉浏览器的原生自动滚动**（用户说的"那个滚轮键"＝Chrome 自己的自动滚动圆盘）。
-      // 不挡掉它，光标会被浏览器接管成它自己的样式 ⇒ 我们的"转一圈"根本看不见，看着就是"一直在闪"。
-      try{ ev.preventDefault(); }catch(e){}
       if(spin()) return;
     }
     applyNod();
@@ -2385,7 +2382,96 @@ const WHALE_CURSOR = (function(){
   }
   apply();
   setInterval(injectFrames, 2000);   // 挂件 iframe 动态出现后自动注入光标
-  return { set, setCustom, url: ()=>url, spin, framesReady: ()=>frames.length > 0 };
+  return { set, setCustom, url: ()=>url, imgSrc: ()=>url + ver, spin, framesReady: ()=>frames.length > 0, enabled: ()=>enabled };
+})();
+/* ── 自研「滚轮模式」（中键）：**均匀平滑往下滚** + 那只鱼转圈（2026-09-17 用户第二次澄清后重做）──
+   用户原话：「**我要的是滚轮。滚轮顾名思义，就是我要用这个滚轮，让它以一个均匀平滑的速度往下滚动**，
+   它现在既不滚也不动」⇒ 鱼转圈是**加在滚轮上的特效**，不是替代滚轮。
+   ⛔ 上一版直接 `preventDefault` 把浏览器原生自动滚动整个吃掉 ⇒ 转是转了、**滚不动**（用户实测打脸）。
+   ⇒ 现在：原生那个（系统 UI，我们也改不了它的样子）让位给**自己实现的一套**：
+      · 中键按下＝进入滚轮模式（锚点＝按下那一点），**一按下就按基础速度往下滚**（不是"等你挪鼠标才动"）；
+      · 鼠标相对锚点的上下偏移 ⇒ 调速 / 反向（死区内保持基础速度，保证"一按就滚"）；
+      · 自绘滚轮徽标跟着锚点走：**那只鱼持续 360° 旋转** + 上下方向提示（显示层自研，不用系统圆盘）；
+      · 退出：再按一次中键 / 按任意其它键 / 滚真实滚轮 / Esc / 窗口失焦。
+   边界：**只在"鲸鱼光标开着"时接管**；光标关掉时一概不拦，把原生行为原样留给用户。 ── */
+const PM_WHEEL = (function(){
+  const BASE = 3.4, GAIN = 0.26, MAXV = 44, DEAD = 10;   // 基础速度 px/帧（≈200px/s）· 增益 · 上限 · 死区
+  let on = false, ax = 0, ay = 0, my = 0, raf = 0, el = null, target = null;
+  function injectCss(){
+    if(document.getElementById('pmWheelCss')) return;
+    const st = document.createElement('style'); st.id = 'pmWheelCss';
+    st.textContent =
+      '#pmWheel{position:fixed;width:58px;height:58px;margin:-29px 0 0 -29px;border-radius:50%;' +
+      'border:1px solid rgba(148,196,255,.5);background:rgba(10,20,40,.34);z-index:2147483000;pointer-events:none}' +
+      '#pmWheel img{position:absolute;left:50%;top:50%;width:34px;height:34px;margin:-17px 0 0 -17px;' +
+      'animation:pmWheelSpin 1.05s linear infinite}' +
+      '#pmWheel i{position:absolute;left:50%;width:0;height:0;margin-left:-5px;' +
+      'border-left:5px solid transparent;border-right:5px solid transparent;opacity:.8}' +
+      '#pmWheel i.u{top:5px;border-bottom:7px solid rgba(190,220,255,.9)}' +
+      '#pmWheel i.d{bottom:5px;border-top:7px solid rgba(190,220,255,.9)}' +
+      '@keyframes pmWheelSpin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}';
+    document.head.appendChild(st);
+  }
+  // 滚动目标：从落点往上找第一个"真的能滚"的祖先；找不到就当整页（文档）滚
+  function scrollerAt(px, py){
+    try{
+      let n = document.elementFromPoint(px, py);
+      while(n && n !== document.body && n !== document.documentElement){
+        if(n.scrollHeight - n.clientHeight > 8){
+          const ov = getComputedStyle(n).overflowY;
+          if(ov === 'auto' || ov === 'scroll') return n;
+        }
+        n = n.parentElement;
+      }
+    }catch(e){}
+    return document.scrollingElement || document.documentElement;
+  }
+  function show(px, py){
+    injectCss();
+    el = document.createElement('div'); el.id = 'pmWheel';
+    el.innerHTML = '<img src="' + WHALE_CURSOR.imgSrc() + '" alt=""><i class="u"></i><i class="d"></i>';
+    el.style.left = px + 'px'; el.style.top = py + 'px';
+    document.body.appendChild(el);
+  }
+  function hide(){ if(el){ try{ el.remove(); }catch(e){} el = null; } }
+  function tick(){
+    if(!on) return;
+    let v = BASE;                                   // 基础：**一进入就往下匀速滚**
+    const off = my - ay;
+    if(off > DEAD) v = Math.min(MAXV, BASE + (off - DEAD) * GAIN);
+    else if(off < -DEAD) v = Math.max(-MAXV, -BASE + (off + DEAD) * GAIN);
+    try{
+      if(target === document.scrollingElement || target === document.documentElement || target === document.body){
+        window.scrollTo({top: (window.scrollY || 0) + v, behavior: 'instant'});
+      } else {
+        target.scrollTop += v;
+      }
+    }catch(e){}
+    raf = requestAnimationFrame(tick);
+  }
+  function stop(){
+    on = false;
+    if(raf){ cancelAnimationFrame(raf); raf = 0; }
+    hide();
+  }
+  function start(px, py){
+    stop();
+    ax = px; ay = py; my = py; target = scrollerAt(px, py);
+    on = true; show(px, py);
+    raf = requestAnimationFrame(tick);
+  }
+  document.addEventListener('mousemove', function(ev){ if(on) my = ev.clientY; }, true);
+  document.addEventListener('mousedown', function(ev){
+    if(ev.button !== 1){ if(on) stop(); return; }        // 其它键＝退出
+    if(!WHALE_CURSOR.enabled()) return;                  // 光标关着 ⇒ 不接管，原生行为留给用户
+    try{ ev.preventDefault(); }catch(e){}                // 吃掉系统那个圆盘（我们自己的更听话、也更像我们的东西）
+    if(on){ stop(); return; }                            // 再按一次＝退出
+    start(ev.clientX, ev.clientY);
+  }, true);
+  document.addEventListener('wheel', function(){ if(on) stop(); }, {passive:true});
+  document.addEventListener('keydown', function(ev){ if(on && (ev.key === 'Escape' || ev.keyCode === 27)) stop(); }, true);
+  window.addEventListener('blur', function(){ if(on) stop(); });
+  return { start, stop, active: ()=>on, top: ()=>(on && target) ? target.scrollTop : -1, hasPuck: ()=>!!el };
 })();
 /* ── ESC 退出全屏（2026-09-16 加，用户实测「ESC退出不了全屏」）──
    宿主窗（WebView2）全屏时会收起自绘顶栏，而 WinForms 侧的 IMessageFilter（EscFilter）
