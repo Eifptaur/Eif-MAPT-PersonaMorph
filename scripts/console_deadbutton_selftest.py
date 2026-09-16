@@ -15,6 +15,13 @@ import os
 import re
 import sys
 
+# ⛔ 同上：判据里印 `✔/✘/⇒`，在 GBK 代码页的子进程里会 UnicodeEncodeError ⇒ 整个脚本红。
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "agent", "console_html.py")
 
