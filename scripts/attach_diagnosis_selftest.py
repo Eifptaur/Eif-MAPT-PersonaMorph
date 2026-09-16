@@ -178,7 +178,43 @@ _v4 = _diag(_VI_RUN, db=_DB(self_info={"username": "wxid_me"}))
 ok("4.x ⇒ 有 version 步且通过",
    any(s["key"] == "version" and s["ok"] for s in _v4["steps"]), str([s["key"] for s in _v4["steps"]]))
 ok("4.x ⇒ 仍然全过、无卡点", bool(_v4["ok"]) and _v4["step"] == "", "%s/%r" % (_v4["ok"], _v4["step"]))
+
+print("── J3. 「打不开消息库」必须分档（2026-09-16 用户追问「真的只是微信版本没匹配上吗」后加）──")
+import shutil as _shutil
+import tempfile as _tempfile
+
+_root = _tempfile.mkdtemp(prefix="pm_dbprobe_")
+try:
+    _p0 = W._probe_db_dirs(os.path.join(_root, "nope"))
+    ok("目录不存在 ⇒ found 空、dbs=0", (_p0["found"] == []) and (_p0["dbs"] == 0), str(_p0))
+    ok("第一档（目录不在默认位置）⇒ 给出「填数据库目录」这条能照着做的动作",
+       "数据库目录" in W._db_open_verdict(_p0), W._db_open_verdict(_p0)[:80])
+    _acc = os.path.join(_root, "xwechat_files", "wxid_x", "db_storage", "message")
+    os.makedirs(_acc)
+    _p1 = W._probe_db_dirs(os.path.join(_root, "xwechat_files"))
+    ok("探盘数得住：认到账号目录、库文件数为 0",
+       (_p1["accounts"] >= 1) and (_p1["dbs"] == 0), str(_p1))
+    ok("第二档（有目录没 .db）⇒ 判「结构对不上」（不许一律赖权限）",
+       "结构对不上" in W._db_open_verdict({"found": ["D:\\xwechat_files"], "tried": [],
+                                            "accounts": 1, "dbs": 0}),
+       W._db_open_verdict({"found": ["D:\\xwechat_files"], "tried": [], "accounts": 1, "dbs": 0})[:80])
+    with open(os.path.join(_acc, "message_0.db"), "wb"):
+        pass
+    _p2 = W._probe_db_dirs(os.path.join(_root, "xwechat_files"))
+    ok("库文件在 ⇒ 探盘数到 1 个 .db", _p2["dbs"] >= 1, str(_p2))
+    ok("第三档（目录与库都在）⇒ 判「权限或占用」并给出同权限提示",
+       "权限" in W._db_open_verdict({"found": ["D:\\xwechat_files"], "tried": [],
+                                     "accounts": 1, "dbs": 12}),
+       W._db_open_verdict({"found": ["D:\\xwechat_files"], "tried": [], "accounts": 1, "dbs": 12})[:80])
+
+finally:
+    _shutil.rmtree(_root, ignore_errors=True)
+ok("db_open 失败时，那句诊断**后面附了分档结论**（不再只有一句「打不开消息库」）",
+   "磁盘上" in str([s for s in _g["steps"] if s["key"] == "db_open"][0]["detail"]),
+   str([s for s in _g["steps"] if s["key"] == "db_open"][0]["detail"])[:120])
+
 _ch2 = _src(os.path.join("agent", "console_html.py"))
+
 _i_w = _ch2.index('id="sec-wechat"')
 _i_n = _ch2.index('<section id="sec-', _i_w + 10)
 _seg_w = _ch2[_i_w:_i_n]

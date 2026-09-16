@@ -5973,6 +5973,53 @@ def _db_dir_hint(db) -> str:
     return ""
 
 
+def _probe_db_dirs(extra: str = "") -> dict:
+    """**只读**在磁盘上找微信 4.x 的数据目录（不碰驱动库、不碰窗口）。
+
+    为什么要有它（2026-09-16 用户追问「白名单那个问题，真的只是微信版本没匹配上吗」）：
+    驱动库打不开消息库时，我们只能报一句「打不开消息库」——**这句话分辨不出下面三种情况**，
+    而三种的解法完全不同：①目录不在默认位置（用户把聊天记录挪到别的盘）②目录在、但结构与
+    驱动库对不上（版本差）③目录与库文件都在（权限/占用）。⇒ 独立探一遍盘，把档分开。
+    """
+    home = os.path.expanduser("~")
+    tried = []
+    for p in ([str(extra)] if str(extra or "").strip() else []) + [
+            os.path.join(home, "xwechat_files"),
+            os.path.join(home, "Documents", "xwechat_files")]:
+        if p and p not in tried:
+            tried.append(p)
+    found, accounts, dbs = [], 0, 0
+    for p in tried:
+        if not os.path.isdir(p):
+            continue
+        found.append(p)
+        try:
+            for acc in sorted(os.listdir(p)):
+                ds = os.path.join(p, acc, "db_storage")
+                if not os.path.isdir(ds):
+                    continue
+                accounts += 1
+                for _r, _d, _f in os.walk(ds):
+                    dbs += sum(1 for f in _f if f.lower().endswith(".db"))
+        except Exception:
+            continue
+    return {"tried": tried, "found": found, "accounts": accounts, "dbs": dbs}
+
+
+def _db_open_verdict(p: dict) -> str:
+    """把「打不开消息库」分成三档，每档给一句**能照着做**的结论。"""
+    tried = "、".join(p.get("tried") or []) or "（没探任何目录）"
+    if not p.get("found"):
+        return ("；磁盘上也没找到微信的数据目录（试过 %s）⇒ 聊天记录多半存在**别的盘/自定义目录**，"
+                "把那个目录填进下面「数据库目录」再试" % tried)
+    if not p.get("dbs"):
+        return ("；磁盘上找到了数据目录（%s），但**一个 .db 都没有** ⇒ 目录结构对不上"
+                "（驱动库不认识这个微信版本的数据结构），不是权限问题" % "、".join(p["found"]))
+    return ("；磁盘上 %d 个 .db 都在（%s）⇒ 目录和文件都没问题，那是**权限或占用**："
+            "微信若以管理员运行，本程序也要同样权限；也可先点重试"
+            % (p.get("dbs") or 0, "、".join(p["found"])))
+
+
 def _db_key_state(db) -> tuple:
     """返回 (能过页1校验的缓存密钥把数, 有主密钥吗)。
 
@@ -6044,19 +6091,21 @@ def attach_diagnosis(adapter=None, err="", db=None) -> dict:
                                  "请把微信升级到 4.x 再来（升级不影响聊天记录）。" % (ver or "未知"))})
     _db = db if db is not None else getattr(adapter, "_db", None)
     if _db is None:
+        _d = ""
+        try:
+            _d = str((get_config().get("wechat") or {}).get("db_dir") or "")
+        except Exception:
+            _d = ""
         try:
             from wechatauto import WeChatDB
-            _d = ""
-            try:
-                _d = str((get_config().get("wechat") or {}).get("db_dir") or "")
-            except Exception:
-                _d = ""
             _db = WeChatDB(db_dir=_d) if _d else WeChatDB()
             steps.append({"key": "db_open", "name": "打开消息库", "ok": True,
                           "detail": "消息库已打开：" + (_db_dir_hint(_db) or "（库没报目录）")})
         except Exception as e:
             steps.append({"key": "db_open", "name": "打开消息库", "ok": False,
-                          "detail": "打不开消息库：%s【%s】" % (str(e)[:140], type(e).__name__)})
+                          "detail": "打不开消息库：%s【%s】%s"
+                                    % (str(e)[:140], type(e).__name__,
+                                       _db_open_verdict(_probe_db_dirs(_d)))})
             _db = None
     else:
         steps.append({"key": "db_open", "name": "打开消息库", "ok": True,
