@@ -618,6 +618,21 @@ class WeChatAdapter:
                             "（建议在控制台「数据库目录」里保存它，免得下次又靠扫盘）", _picked)
             except Exception:
                 pass
+        # 2026-09-16（网友 A 的报告：`KeyError: 'message\media 1.db'`）：微信会**懒创建**新分片，
+        # 而驱动库的密钥表是它 init 时的快照 ⇒ 新分片没密钥 ⇒ 读消息/会话头/投递回读全断。
+        # 接入时补一次（刷新分片表 + 补齐密钥），并把"仍缺密钥的分片"记下来给诊断/控制台看。
+        self._db_missing_shards = []
+        try:
+            from . import replica_adapter as _ra
+            _rep = _ra.refresh_shards(self._db)
+            self._db_missing_shards = list(_rep.get("missing") or [])
+            if self._db_missing_shards:
+                log.warning("有 %d 个库分片拿不到密钥（例：%s）⇒ 这些库读不了",
+                            len(self._db_missing_shards), self._db_missing_shards[0])
+            elif _rep.get("added"):
+                log.info("补到 %d 个新分片的密钥：%s", len(_rep["added"]), _rep["added"][:3])
+        except Exception as _e:
+            log.debug("刷新分片密钥失败（继续）：%s", _e)
         info = self._db.get_self_info() or {}
         self._self_wxid = str(info.get("username") or "")
         self._self_nickname = str(info.get("nick_name") or "")
@@ -6253,10 +6268,19 @@ def attach_diagnosis(adapter=None, err="", db=None) -> dict:
     if _db is not None:
         n, mk = _db_key_state(_db)
         okk = bool(mk) or n > 0
+        _miss_sh = []
+        try:
+            from . import replica_adapter as _ra2
+            _miss_sh = _ra2.missing_key_shards(_db)
+        except Exception:
+            _miss_sh = []
+        _sh_note = ("；另有 %d 个分片拿不到密钥（例：%s）⇒ 这些库读不了，会拖累读消息/会话头"
+                    % (len(_miss_sh), _miss_sh[0])) if _miss_sh else ""
         steps.append({"key": "key", "name": "数据库密钥", "ok": okk,
-                      "detail": ("主密钥已取到" if mk else
-                                 "主密钥为空，但有 %d 把缓存密钥能过页1校验 ⇒ 可用" % n) if okk
-                                else "拿不到能用的数据库密钥（读不到微信进程里的密钥）⇒ 消息库读不出来"})
+                      "detail": (("主密钥已取到" if mk else
+                                  "主密钥为空，但有 %d 把缓存密钥能过页1校验 ⇒ 可用" % n) if okk
+                                 else "拿不到能用的数据库密钥（读不到微信进程里的密钥）⇒ 消息库读不出来")
+                                + _sh_note})
     if _db is not None:
         uid, nick = "", ""
         try:

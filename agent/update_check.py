@@ -74,6 +74,63 @@ def vtuple(v):
 
 
 DEFAULT_URL = "https://raw.githubusercontent.com/Eifptaur/Eif-MAPT-PersonaMorph/main/persona-morph-manifest.json"
+#: 备用源（2026-09-16 用户报「更新源异常：拉不到更新源：The read operation timed out」）：
+#: `raw.githubusercontent.com` 在国内经常超时 ⇒ **并行**试这几个，第一个拿到清单的赢。
+#: ⚠️ jsDelivr 有 CDN 缓存（可能比 raw 晚几分钟看到新版本）⇒ 只当兜底，raw 仍排第一。
+DEFAULT_URLS = (
+    DEFAULT_URL,
+    "https://cdn.jsdelivr.net/gh/Eifptaur/Eif-MAPT-PersonaMorph@main/persona-morph-manifest.json",
+    "https://ghfast.top/" + DEFAULT_URL,
+    "https://ghproxy.net/" + DEFAULT_URL,
+)
+
+
+def _short_url(u: str) -> str:
+    try:
+        from urllib.parse import urlparse
+        return urlparse(str(u)).hostname or str(u)[:24]
+    except Exception:
+        return str(u)[:24]
+
+
+def fetch_any(urls, timeout: float = 6.0):
+    """**并行**拉多个源，第一个成功的赢。返回 `(清单或 None, 说明, 用到的 url)`。
+
+    为什么要并行（2026-09-16）：串行试 4 个源、每个超时 6 秒 = 最坏 24 秒，控制台一打开就卡住；
+    并行 ⇒ 最坏 ≈ 一个超时。
+    """
+    urls = [u for u in (urls or []) if u]
+    if not urls:
+        return None, "未配置更新源", ""
+    if len(urls) == 1:
+        man, why = fetch(urls[0], timeout)
+        return man, ("" if man is not None else why), (urls[0] if man is not None else "")
+    import threading
+    got, lock = {}, threading.Lock()
+
+    def _one(u):
+        man, why = fetch(u, timeout)
+        with lock:
+            got[u] = (man, why)
+
+    for u in urls:
+        threading.Thread(target=_one, args=(u,), daemon=True).start()
+    t0 = time.time()
+    while time.time() - t0 < timeout + 1.0:
+        with lock:
+            for u in urls:
+                if u in got and got[u][0] is not None:
+                    return got[u][0], "", u
+            if len(got) == len(urls):
+                break
+        time.sleep(0.05)
+    with lock:
+        for u in urls:
+            if u in got and got[u][0] is not None:
+                return got[u][0], "", u
+        why = "；".join("%s→%s" % (_short_url(u), str((got.get(u) or ("", "超时"))[1])[:40])
+                        for u in urls[:3])
+    return None, "所有源都拉不到（%s）" % why, ""
 
 
 def manifest_url(cfg: dict | None = None) -> str:
@@ -120,13 +177,18 @@ def state(cfg: dict | None = None, timeout: float = 6.0) -> dict:
     mine = current_version()
     out = {"status": "off", "mine": mine, "theirs": "", "notes": [], "url": manifest_url(c),
            "why": "", "forceBase": False, "minBase": "", "checkedAt": 0}
-    if not out["url"]:
-        out["why"] = "没配更新源（update.url）"
-        return out
+    cfg_url = str(c.get("url") or "").strip()
     if c.get("muted"):
         out["why"] = "用户开了「不再提醒」"
         return out
-    man, why = fetch(out["url"], timeout)
+    if cfg_url:
+        # 用户自己填的源：失败就**如实报**，不去偷偷换别人的源（换了他会更懵）
+        urls = [cfg_url]
+    else:
+        # 默认源：上次成功的那个排最前，再并行试全部内置源（含镜像，见 DEFAULT_URLS）
+        _last = str((_read_state() or {}).get("lastGoodUrl") or "")
+        urls = ([_last] if _last else []) + [u for u in DEFAULT_URLS if u != _last]
+    man, why, used = fetch_any(urls, timeout)
     if man is None:
         out["status"] = "error"
         out["why"] = why
@@ -135,6 +197,8 @@ def state(cfg: dict | None = None, timeout: float = 6.0) -> dict:
         st.update({"lastCheck": out["checkedAt"], "lastError": why, "lastStatus": "error"})
         _write_state(st)
         return out
+    if used:
+        out["url"] = used
     base = man.get("base") or {}
     an = man.get("announce") or {}
     theirs = str(base.get("version") or an.get("version") or "")
@@ -162,7 +226,8 @@ def state(cfg: dict | None = None, timeout: float = 6.0) -> dict:
         out["status"] = "newer"
         out["why"] = "有新版本 %s（当前 %s）" % (theirs, mine or "未记录")
     st = _read_state()
-    st.update({"lastCheck": out["checkedAt"], "lastStatus": out["status"], "lastError": ""})
+    st.update({"lastCheck": out["checkedAt"], "lastStatus": out["status"], "lastError": "",
+               "lastGoodUrl": out["url"]})          # 记住"哪个源能用"，下次先试它
     _write_state(st)
     return out
 

@@ -106,9 +106,61 @@ def iter_shards(db):
     return out
 
 
+def missing_key_shards(db) -> list:
+    """列出**当前没有可用密钥**的分片 rel。
+
+    为什么要它（2026-09-16 网友 A 的报告：`KeyError: 'message\\media 1.db'`）：微信会**懒创建**
+    新分片（收到媒体就多一个 `media N.db`），而驱动库的密钥表是它 `__init__` 时的快照
+    ⇒ 新分片没密钥 ⇒ 库自己的 `_open()`（`db.py:1311` 直接 `self._keys[rel]`）**抛 KeyError 且它不兜**
+    ⇒ 读消息 / 会话头 / 投递回读整条链全断（他报的"白名单设置不了、读取会话失败"就是这个）。
+    """
+    out = []
+    for rel, _path in iter_shards(db):
+        try:
+            if not db._key_works(rel):
+                out.append(rel)
+        except Exception:
+            out.append(rel)
+    return out
+
+
+def refresh_shards(db) -> dict:
+    """刷新分片表并**补齐新分片的密钥**。返回 `{added, missing, refreshed}`。
+
+    调用时机：①接入时（一次，见 `WeChatAdapter._init_db`）②`open_shard` 撞上 KeyError 时
+    ③以后若加「重新校准密钥」按钮也走这里。
+    """
+    before = set(rel for rel, _ in iter_shards(db))
+    try:
+        db._refresh_db_files()
+    except Exception:
+        pass
+    miss = missing_key_shards(db)
+    if miss:
+        try:
+            db._load_or_extract_keys()
+        except Exception:
+            pass
+    after = set(rel for rel, _ in iter_shards(db))
+    return {"added": sorted(after - before), "missing": missing_key_shards(db),
+            "refreshed": bool(miss)}
+
+
 def open_shard(db, rel):
-    """打开某个分片（收口 `_open`）；调用方负责 close。"""
-    return db._open(rel)
+    """打开某个分片（收口 `_open`）；调用方负责 close。**拿不到就返回 None**（跳过这个分片）。
+
+    ⚠️ 2026-09-16（网友 A 的 `KeyError: 'message\\media 1.db'`）：驱动库对"没有密钥的分片"不兜。
+    这里先补一次密钥再试；仍不行就如实返回 None —— 一个懒创建的媒体分片不该把整条链打死
+    （调用方都已在 try 里用连接，None 会被它们当成"这个分片读不了"跳过）。
+    """
+    try:
+        return db._open(rel)
+    except KeyError:
+        refresh_shards(db)
+        try:
+            return db._open(rel)
+        except Exception:
+            return None
 
 
 def close_all(conns):

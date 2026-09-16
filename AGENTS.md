@@ -222,7 +222,7 @@
 - 命令（换图标后重新编译；**源文件清单变了就要同步这里** —— 2026-09-15 已加 `wingliphs.cs`（顶栏自绘字形）与 `webview2guide.cs`（WebView2 引导器），两者都漏写过一次）：
   ```powershell
   csc /nologo /target:winexe /optimize+ /win32icon:assets\exe.ico /r:lib\Microsoft.Web.WebView2.Core.dll /r:lib\Microsoft.Web.WebView2.WinForms.dll /out:一键启动.exe launcher-src\launcher.cs launcher-src\stylekit.cs launcher-src\wingliphs.cs launcher-src\webview2guide.cs
-  csc /nologo /target:winexe /optimize+ /win32icon:assets\exe.ico /r:System.Management.dll /out:一键关闭.exe launcher-src\close.cs launcher-src\stylekit.cs
+  csc /nologo /target:winexe /optimize+ /win32icon:assets\exe.ico /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Management.dll /out:一键关闭.exe launcher-src\close.cs launcher-src\stylekit.cs
   ```
 - **验收（比肉眼硬，口径 2026-09-13 W6 修正）**：`[System.Drawing.Icon]::ExtractAssociatedIcon(新exe).ToBitmap()` 应与 **`assets\app.ico` / `assets\exe.ico` 的 32 帧**逐一比对，**最大像素差 = 0**（本轮实测两个 exe、两个 ico 全是 0 ✓）。
   ⚠️ **别拿 `app-icon.png` 缩到 32 来当基准**：PNG→Bitmap 的默认重采样与 ico 内嵌帧不一致，会得到"最大差 580"的**假红**（本轮踩过；两者本就不是同一条渲染路径）。
