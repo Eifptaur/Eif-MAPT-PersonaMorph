@@ -136,6 +136,11 @@ BASELINE = {
     ROOT + os.sep + "agent" + os.sep + "wechat.py",        # 待收口（21 处）
     ROOT + os.sep + "agent" + os.sep + "wechat_ui.py",     # 待收口（7 处）
     ROOT + os.sep + "scripts" + os.sep + "persona_morph.py",  # 待收口（1 处）
+    # 2026-09-17 登记：真语音条那条链**必须**用 SendInput 注入「真·右 Alt」——
+    #   实测投递键盘消息（PostMessage WM_KEY*）微信不认（绿簇毫无反应），只有 SendInput 才行；
+    #   而它注入的是**键盘**、全程不动鼠标，这正是"不动鼠标发语音条"的实现方式本身。
+    #   ⚠️ 该文件里**不许**出现 mouse_event / SetCursorPos；要真点必须走 ui_adapt.click_real_hold。
+    ROOT + os.sep + "agent" + os.sep + "voice_strip.py",
 }
 hits, new = {}, []
 for sub in ("agent", "scripts"):
