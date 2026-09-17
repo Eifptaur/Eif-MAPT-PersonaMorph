@@ -39,6 +39,8 @@ from agent import input_backend as ib      # noqa: E402
 from agent import wechat as WC             # noqa: E402
 
 SRC_WECHAT = io.open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
+SRC_IB = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                   "agent", "input_backend.py"), encoding="utf-8").read()
 SRC_CONSOLE = io.open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
 SRC_WEBUI = io.open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
 SRC_CFG = io.open(os.path.join(ROOT, "agent", "config.py"), encoding="utf-8").read()
@@ -63,6 +65,22 @@ _sw_row = [p for p in PATHS if p.get("key") == "switch_chat"][0]
 ck("A4b 切换会话如实写明「会短暂置前 + 自动还回」（不许再写「不负责改前台」）",
    ("短暂把微信置前" in str(_sw_row.get("detail") or "")) and ("自动还回" in str(_sw_row.get("detail") or ""))
    and ("不负责改前台" not in str(_sw_row.get("detail") or "")))
+# A4h（2026-09-18 用户现场后加）：**拍一拍的落点必须在聊天面板内**，越界不许右键
+#   用户原话：「他好像是点了会话列表，但不是点的我的头像，因为我看到他右键出来什么"置顶"之类的东西」
+#   ⇒ 会话列表那边的右键菜单是会话行菜单（置顶/标为未读），等于对"会话"动手而不是拍人。
+ck("A4h 拍一拍/气泡落点都在聊天面板内（x >= right_pane_left），越界直接失败不右键",
+   "落点越界：头像点" in SRC_WECHAT and "气泡落点越界" in SRC_WECHAT
+   and "防对会话列表动手" in SRC_WECHAT)
+# A4f/A4g（2026-09-18 现场后加）：**菜单不许兜底点第一项** + **回拍验证必须认方向**
+#   现场：日志 `投递右键菜单：已投递点击菜单项（兜底取最上面一项「ek.」，落点 299,47）`
+#   + `已拍一拍「E」（已验证：数据库中新增拍一拍事件）`，而用户说「**他拍不到我**」——
+#   兜底那一枪点了不知道是什么的项，验证又把"对方拍我"的行当成"我拍成功"。
+ck("A4f 菜单点击匹配不到就**不点**（兜底改成显式 opt-in，默认关）",
+   "allow_top_fallback: bool = False" in SRC_IB and "if not allow_top_fallback" in SRC_IB
+   and "防点到不知道是什么的项" in SRC_IB)
+ck("A4g 回拍验证认方向（只认「我发起」的拍拍；旧判据的返回语句已删）",
+   "_poke_is_mine" in SRC_WECHAT and "你拍了拍" in SRC_WECHAT
+   and '（已验证：数据库中新增拍一拍事件）" % target_name' not in SRC_WECHAT)
 # A4e（2026-09-18 事故后加）：**主窗兜底不许按标题找**
 #   老代码在 _get_gui 的兜底里匹配 `窗口标题 == "微信"`，而本机微信窗口标题是「群deepseek」
 #   （机器人在微信里的昵称）⇒ 永远找不到主窗、永远救不回来。改成"窗口类 + 渲染子窗 + 宽度"。
