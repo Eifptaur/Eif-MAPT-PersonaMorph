@@ -179,6 +179,14 @@ DEFAULT_CONFIG = {
         #   safebooru/nekos＝全年龄站 · waifu＝只走 waifu.pics 的 /sfw/ 端点
         "sources": ["pixiv", "safebooru", "nekos", "konachan", "waifu", "yande"],
         "sources_per_try": 4,        # 一次最多试几个图源（每张都要过过滤链）
+        # ── 速度（2026-09-17 加；起因＝用户实测"发张图一分多钟"）────────────────
+        "meta_timeout_ms": 6000,     # 向单个图源要"图片地址"的超时（并行问，实际耗时≈最慢那个）
+        "download_timeout_ms": 6000, # **整张图**的总时长上限（原来 socket 超时只管单次 recv，
+                                     #   慢速代理能涓流几分钟 —— 实测一张 4.26MB 拖了 160 秒）
+        "download_race": 4,          # 候选图**并发赛跑**几个（谁先下完并通过过滤链就用谁）
+        "total_budget_ms": 12000,    # 这一次"要图"总共允许多久，用完就用本地已有的图兜底/如实说没找到
+        "source_cooldown_s": 600,    # 图源失败后冷却多久不再试（四个死源曾每次白等 27 秒）
+        "slow_cooldown_s": 120,      # 下载超时的图源冷却多久（慢，但没死）
         "tag": "",                   # 可选：给 pixiv 图源加个偏好标签（如 "风景"）
         "allow_search": True,        # 允许模型**按请求里的关键词**去找图（send_image_search）；false 就只能用本地图库
         "trigger_mode": "on_request",  # 触发条件（交给用户自定义）：on_request＝只被点名要图时才发 | sometimes＝偶尔主动发 | off＝不主动
@@ -229,7 +237,12 @@ DEFAULT_CONFIG = {
         "send_btn": [0.932, 0.945],   # 录音态里那个绿簇"发送"（渲染区比例，正常走绿簇检测）
         "out_device": "cable",   # 播到哪块输出设备（名字子串，默认抓 CABLE；Scream 用户可改成 scream）
         "meter_guard": True,     # 播的时候录音音量点一直不亮 ⇒ 取消（不发静音语音条）
-        "real_click": True,      # 这俩控件只认真实点击（投递只出悬停）⇒ 会动两下光标，用完立刻还原
+        "real_click": True,      # 真点路（进录音态/点发送）会动光标，用完立刻还原
+        # 进录音态走哪条路（2026-09-17 实测后定）：
+        #   alt   ＝**按住右 Alt**（SendInput 注入）：**不动鼠标、不依赖任何坐标**，代价＝那几秒微信要在前台
+        #   click ＝真鼠标点那个圆圈（老路，会动两下光标，用完还原）
+        "enter_via": "alt",
+        "fallback_click": True,  # Alt 路不成时自动退回真点（个别微信版本不认右 Alt 时不至于发不出去）
     },
     "voice_reply": {
         "enabled": False,        # 总开关（控制台可切）
@@ -303,6 +316,21 @@ DEFAULT_CONFIG = {
         "style_allow": "",               # 风格白名单（逗号分隔；非空＝只放行这些）
         "style_block": "",               # 风格黑名单（逗号分隔；命中即拒）
         "filter_chain": {"size": True, "dup": True, "blacklist": True, "text": True, "classifier": True},
+        # ── 本地轻量生图后端（2026-09-17 用户口径：「你帮用户装，做成一个可选项；用户选了就弹安装提示；
+        #    在线安装看用户开不开；**不要让用户搞这搞那**；要**实时看到进度**（一共多少/下了多少/百分比）；
+        #    还要**后台进行**——别让用户盯着弹窗等，可以去办别的事」）──
+        #   装什么＝SDXL-Turbo 模型 6.46 GB + torch/diffusers 运行库 ≈4.35 GB，**合计 ≈10.8 GB**；
+        #   本机实测：走国内源整条链约 **20 分钟**（模型 25 MB/s、依赖 4.5 MB/s）；
+        #   **走被限速的源只有 0.02~0.06 MB/s ⇒ 会变成几十小时** ⇒ 安装前**当场测速**，把预计时间写在弹窗里。
+        #   装完自动：写 `backends` + 打开总开关 + 起服务（首次加载模型约 15 秒），用户不用填任何地址。
+        "local_sd": {
+            "enabled": True,                # 允许走"安装/使用本地轻量后端"这条路（不装也无副作用）
+            "port": 7860,                   # 本地服务端口（默认 A1111 的口，产品能自动探到）
+            "model_dir": "data/sd_model",   # 模型放哪（相对仓库根；也可写绝对路径）
+            "allow_online_install": False,  # **默认关**：不开就不联网下载（要下 10.8 GB，必须用户明确同意）
+            "auto_start": True,             # 装了之后：生成前若服务没跑就顺手拉起来（用户零操作）
+            "steps": 4,                     # SDXL-Turbo 用 1~4 步
+        },
     },
     # ── AI 视频生成（2026-09-15 加；形制照 image_gen）────────────────────────────
     #  口径（既有口径：）："后端肯定是让用户自己选啊，我们给他提供最多的选项…不是非得二择一的"

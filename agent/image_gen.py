@@ -63,10 +63,14 @@ def _as_list(v):
 
 
 def _as_backends(v):
-    """后端列表：list[dict] 直接用；字符串按 `id|local|url; id|online|url` 解析（格式不对的条目丢弃）。
+    """后端列表：list[dict] 直接用；字符串按 `id|local|url[|proto]` 解析（格式不对的条目丢弃）。
 
     为什么不给控制台单独做增删端点：照用户"低成本优先"的原则，一个输入框 + 一种人话格式就够用；
     解析不出来 ⇒ 后端列表为空 ⇒ `generate()` 会明确说"还没配生图后端"（不会静默当成功）。
+
+    ⚠️ 2026-09-17 加第 4 段 `proto`：不带它的条目会落到 `generic` 协议（POST 根路径）——
+    本机实测就是这么踩的：本地轻量后端写的是 `local-sd | local | http://127.0.0.1:7860`，
+    结果按 generic 去 POST 根路径 ⇒ 404 ⇒ 生图直接失败。⇒ 支持显式写 `| a1111`。
     """
     if isinstance(v, (list, tuple)):
         return [x for x in v if isinstance(x, dict)]
@@ -75,7 +79,10 @@ def _as_backends(v):
         for chunk in re.split(r"[;；\n]", v):
             f = [x.strip() for x in chunk.split("|")]
             if len(f) >= 3 and f[0] and f[2]:
-                out.append({"id": f[0], "kind": (f[1] or "local"), "url": f[2]})
+                it = {"id": f[0], "kind": (f[1] or "local"), "url": f[2]}
+                if len(f) >= 4 and f[3]:
+                    it["proto"] = f[3]
+                out.append(it)
     return out
 
 
@@ -193,14 +200,28 @@ def backends() -> list:
 
 
 def pick_backend():
-    """挑一个后端；没有 ⇒ (None, 人话原因)。"""
+    """挑一个后端；没有 ⇒ (None, 人话原因)。
+
+    ⚠️ 2026-09-17 加：**装了「群相本地轻量后端」但服务没在跑时，顺手拉起来再探一次**——
+    用户口径是「不要让用户搞这搞那的操作」：装好了就该直接用，不该还要求他记得去启动服务。
+    """
     bs = backends()
+    if not bs:
+        try:
+            from . import sd_local as _sd
+            st = _sd.status()
+            if st.get("installed") and not st.get("server_alive"):
+                _sd.ensure_running()
+                bs = backends()
+        except Exception:
+            pass
     if not bs:
         online = [b for b in (cfg().get("backends") or []) if isinstance(b, dict) and str(b.get("kind")) == "online"]
         if online and not cfg().get("online_allowed"):
             return None, "只配了在线生图后端，但 image_gen.online_allowed=False（出网未允许）"
         return None, ("本机没探到常见生图服务（A1111/Fooocus :7860/:7865 · ComfyUI :8188 · InvokeAI :9090），"
-                      "也没有在控制台填后端 ⇒ 把其中一个跑起来，或打开「允许出网」用免密钥在线生图")
+                      "也没有在控制台填后端 ⇒ 把其中一个跑起来，或在控制台「要图」面板点"
+                      "「安装本地生图后端」（装完自动配好），或者打开「允许出网」用免密钥在线生图")
     return bs[0], ""
 
 

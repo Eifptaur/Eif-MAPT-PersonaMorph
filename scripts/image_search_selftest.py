@@ -90,7 +90,9 @@ try:
         return {"url": "https://x/y.jpg", "page": "p", "tags": []}, ""
 
     IS.fetch_meta = _fake_meta
-    IS.download = lambda url, dest, max_mb=8, timeout_ms=9000: (fake_img, "")
+    # ⚠️ 假图源的签名要跟着真实现走（2026-09-17：真实现多了 `soft_max_mb`，这里的假函数没跟上
+    #    ⇒ 线程里抛 TypeError ⇒ 判据变成假红。用 **kw 兜住，别再被签名变化绊倒）
+    IS.download = lambda url, dest, max_mb=8, timeout_ms=9000, **kw: (fake_img, "")
     IL._filter_or_reject = lambda path, meta, cfg, root, why: (path, "过了过滤链")
     p, why = IL.search_image({"image_reply": {"enabled": True, "sources": ["pixiv"], "allow_search": True,
                                               "tag": "", "max_mb": 8}}, "赛博朋克")
