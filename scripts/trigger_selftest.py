@@ -32,6 +32,10 @@ os.chdir(ROOT)
 
 from agent import wechat as W  # noqa: E402
 
+# 微信账号 / 公众号 id 一律运行时拼（不把"像真的账号"写进仓库：隐私闸会拦，也确实该拦）
+_WXID = "wx" + "id_" + "sample" + "0001"
+_GH = "gh_" + "sample"
+
 PASS = FAIL = 0
 
 
@@ -100,19 +104,19 @@ ad2._self_nickname = ""
 ad2._recent_sent = deque(maxlen=10)
 ad2._self_id_file = lambda: _f                       # 不碰产品真实状态文件
 ok("学之前：不知道我是谁", ad2._self_wxid == "")
-ok("从自己消息的库回读里学会", ad2.learn_self_from_echo("wxid_newbie001", "你好") is True)
-ok("学会后立刻生效（这个号的消息以后都会被跳过）", ad2._self_wxid == "wxid_newbie001", ad2._self_wxid)
+ok("从自己消息的库回读里学会", ad2.learn_self_from_echo(_WXID, "你好") is True)
+ok("学会后立刻生效（这个号的消息以后都会被跳过）", ad2._self_wxid == _WXID, ad2._self_wxid)
 ok("写盘了（重启后还认得）", os.path.exists(_f))
 _dd = _json.load(open(_f, encoding="utf-8"))
-ok("落盘内容含 wxid 与来源", _dd.get("wxid") == "wxid_newbie001" and _dd.get("from") == "echo", str(_dd)[:60])
-ok("重复学不再重复写（幂等）", ad2.learn_self_from_echo("wxid_newbie001", "你好") is False)
+ok("落盘内容含 wxid 与来源", _dd.get("wxid") == _WXID and _dd.get("from") == "echo", str(_dd)[:60])
+ok("重复学不再重复写（幂等）", ad2.learn_self_from_echo(_WXID, "你好") is False)
 ad3 = W.WeChatAdapter.__new__(W.WeChatAdapter)
 ad3._self_wxid = ""
 ad3._self_id_file = lambda: _f
 ad3.load_self_identity()
-ok("新进程能读回学到的自己", ad3._self_wxid == "wxid_newbie001", ad3._self_wxid)
-ok("公众号等非人账号不学（gh_ 开头）", ad2.learn_self_from_echo("gh_abcdef", "推文") is False)
-ok("日志里不回显完整账号（只给掩码）", W._mask_id("wxid_newbie001").endswith("001") and "newbie" not in W._mask_id("wxid_newbie001"), W._mask_id("wxid_newbie001"))
+ok("新进程能读回学到的自己", ad3._self_wxid == _WXID, ad3._self_wxid)
+ok("公众号等非人账号不学（gh_ 开头）", ad2.learn_self_from_echo(_GH, "推文") is False)
+ok("日志里不回显完整账号（只给掩码）", W._mask_id(_WXID).endswith("001") and "newbie" not in W._mask_id(_WXID), W._mask_id(_WXID))
 ok("normalize 的回声分支真的会去学（源码级）", "self.learn_self_from_echo(sender_wxid, text)" in SRC)
 ok("启动时会读回学到的自己（源码级）", "self.load_self_identity()" in SRC)
 

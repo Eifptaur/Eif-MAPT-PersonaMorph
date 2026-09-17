@@ -6419,7 +6419,7 @@ def _db_dir_variants(p: str) -> list:
     """把一个路径**规范化成驱动库能认的几种形态**（按优先级）。
 
     起因（2026-09-17 用户「佬」的报告，两个失败模式里的第一个）：
-      他在控制台填的是 `…\\wxid_yu586z7rt3ad22_482e\\db_storage` ⇒ 驱动库 `_pick_account()`
+      他在控制台填的是 `…\<账号目录>\db_storage` ⇒ 驱动库 `_pick_account()`
       只在 `db_dir` 底下找"带 db_storage 子目录的账号目录"，填到 db_storage 这一层就**一个都找不到**
       ⇒ `RuntimeError: 未找到任何已登录账号的数据库`（磁盘上 73 个 .db 明明都在）。
     ⇒ 用户填哪一层都算对：`db_storage` ⇒ 退回它的**账号目录**，再退回**账号目录的上一级**
@@ -6466,22 +6466,29 @@ def db_open_tries(explicit: str = "") -> list:
     return out
 
 
-_SAFE_DB_CLS = []
+_SAFE_DB_CACHE = {}
 
 
 def _db_class():
     """拿"抗缺密钥"的 `WeChatDB` 子类（**唯一实现**，别在别处又 new 一遍原类）。
 
-    起因（2026-09-17 用户「佬」的报告，两个失败模式里的第二个）：磁盘上 73 个 .db 都在、账号目录也认了，
-    可第一次开库就 `KeyError: 'message\\message_1.db'` —— 微信**懒创建**的分片（或版本升级后新增的分片）
-    不在驱动库 `init` 时那份密钥快照里，而 `_open()` 是直接 `self._keys[rel]`，一格缺失就把整条链弄死。
-    行为（三档，全部留痕）：撞到没密钥的分片 ⇒ ①先补一次密钥（可能刚好补得上）；
-    ②补不上就把该分片从 `_db_files` **摘掉**并**如实报出分片名**（其余分片照常读）；
-    ③绝不静默——摘掉要能出现在诊断与控制台里。
+    ⚠️ 缓存**按基类**存（不是"只造一次"）：判据/诊断会把 `wechatauto.WeChatDB` 换成桩件，
+    如果只记第一个结果，换过桩之后拿到的还是旧类（2026-09-18 全套判据里 attach_diagnosis
+    那 8 条红就是这么来的）。
     """
-    if _SAFE_DB_CLS:
-        return _SAFE_DB_CLS[0]
     from wechatauto import WeChatDB as _Base
+    if not isinstance(_Base, type):
+        # 驱动库给出来的不是类（旧版本、或被判据/探针打桩成函数）⇒ **不做包装**，直接用它。
+        # 包装是**增强**不是必需品；拿不到类就退让，别让增强把主路弄坏。
+        try:
+            log.warning("WeChatDB 不是类（%s）⇒ 跳过「抗缺密钥」包装，按原样使用",
+                        type(_Base).__name__)
+        except Exception:
+            pass
+        return _Base
+    got = _SAFE_DB_CACHE.get(_Base)
+    if got is not None:
+        return got
 
     class _SafeDB(_Base):
         def _open(self, rel):
@@ -6506,8 +6513,8 @@ def _db_class():
                     raise RuntimeError("这个库分片没有密钥，已跳过：%s" % rel)
             return _Base._open(self, rel)
 
-    _SAFE_DB_CLS.append(_SafeDB)
-    return _SAFE_DB_CLS[0]
+    _SAFE_DB_CACHE[_Base] = _SafeDB
+    return _SafeDB
 
 
 def open_db(explicit: str = ""):
