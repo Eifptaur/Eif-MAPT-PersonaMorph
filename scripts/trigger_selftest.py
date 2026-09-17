@@ -129,5 +129,33 @@ ok("只关微信自己的 Qt 窗（不误关别人的窗口）", 'cls.startswith
 ok("切换流程里真的调了它", "_rt = self._reattach_if_floating(name)" in SRC)
 ok("收回这件事**留日志**（不许静默）", "已收回（双击会话行的后果" in SRC)
 
+print("\n── H. 时间档证据：可视区只有时间戳时也要能认会话（2026-09-18 现场实测后加）──")
+
+
+class _FakeDB(object):
+    """假库：只回一条「昨天 20:17」的消息（形状照驱动库：`create_time` 是秒）。"""
+
+    def __init__(self, ts):
+        self._ts = ts
+
+    def get_messages(self, chat_id, limit=20):
+        return [{"local_id": 1, "content": "晚安", "create_time": self._ts}]
+
+
+import datetime as _dtm      # noqa: E402
+
+_y = _dtm.datetime.now() - _dtm.timedelta(days=1)
+_ts = int(_y.replace(hour=20, minute=17, second=0, microsecond=0).timestamp())
+ad4 = W.WeChatAdapter.__new__(W.WeChatAdapter)
+ad4._db = _FakeDB(_ts)
+_ok1, _why1, _hits1 = ad4._pane_time_hits("filehelper", "昨天20：17昨天20：36")
+ok("屏幕上的「昨天20：17」对得上库里那条 ⇒ 判是这个会话", _ok1 and len(_hits1) >= 1, str(_why1)[:70])
+_ok2, _why2, _hits2 = ad4._pane_time_hits("filehelper", "今天09：05")
+ok("对不上时**不许**放行（今天09:05 ≠ 昨天20:17）", (not _ok2) and not _hits2, str(_why2)[:70])
+_ok3, _why3, _ = ad4._pane_time_hits("filehelper", "")
+ok("聊天区一个字都没读到 ⇒ 给不出证据（不是判否、也不是放行）", not _ok3, str(_why3)[:50])
+ok("内容级复核里真的接了这条证据（源码级）", "_pane_time_hits(chat_id, pane)" in SRC and "_ok_pt" in SRC)
+ok("只认相对日与裸 HH:MM，显式日期不猜（源码级）", '{"昨天": 1, "前天": 2}' in SRC)
+
 print("\n触发判定判据：%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
