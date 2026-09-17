@@ -326,6 +326,38 @@ def main():
                _cls.bring_to_front(object.__new__(_cls)) is False)
         except Exception as _e:
             ok("⑩b 真实类的闸装上（import 失败则这条算失败）", False, str(_e)[:60])
+
+        # ⑪ ⭐⭐ **逐步前台追踪**抓到的真凶：`_get_uia()` 会 `SetForegroundWindow`
+        #    （`_get_uia → WeChatUIA() → ensure_window() → _activate() → uia_driver.py:651-670`），
+        #    由 `_uia_target_row_rect` 触发（拍一拍/引用定位都调）——上完类闸后"还有一次置前"就是它。
+        class _UiaGUI:
+            calls = []
+
+            def _get_uia(self, refresh=False):
+                _UiaGUI.calls.append("_get_uia")
+                return "ENGINE"
+
+        cfg_mod.get_config = lambda: _cfg(True, False)
+        _UiaGUI.calls = []
+        _pre = _UiaGUI()
+        _r0 = _pre._get_uia()
+        ok("⑪ 前置对照：未上闸时 `_get_uia()` 返回引擎且被调到",
+           _r0 == "ENGINE" and _UiaGUI.calls == ["_get_uia"], (_r0, _UiaGUI.calls))
+        ua.harden_gui_class(_UiaGUI)
+        _g = _UiaGUI()
+        _UiaGUI.calls = []
+        _r = _g._get_uia()
+        ok("⑪ 上闸后 `_get_uia()` 直接返回 **None**（不物化 UIA、不 SetForegroundWindow），原方法一次没调",
+           _r is None and _UiaGUI.calls == [], (_r, _UiaGUI.calls))
+        cfg_mod.get_config = lambda: _cfg(False, True)
+        _g2 = _UiaGUI()
+        _UiaGUI.calls = []
+        _r2 = _g2._get_uia()
+        ok("⑪ 真鼠标档下照常可用（不误杀）", _r2 == "ENGINE" and _UiaGUI.calls == ["_get_uia"],
+           (_r2, _UiaGUI.calls))
+        ok("⑪ 静态：闸表里有 `_get_uia`", '("_get_uia", None)' in usrc)
+        ok("⑪ 静态：我们自己不直接构造 `WeChatUIA(`（只走 gui._get_uia，已上闸）",
+           "WeChatUIA(" not in wsrc)
     finally:
         cfg_mod.get_config = real_get
 

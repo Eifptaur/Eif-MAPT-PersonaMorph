@@ -545,7 +545,14 @@ def _guarded(name: str, fail_value):
 
 _HARDEN_TARGETS = (("bring_to_front", False), ("calibrate_layout", False),
                    ("ensure_visible", False), ("_minimize_blockers", None),
-                   ("restore_zorder", None))
+                   ("restore_zorder", None),
+                   # ⭐ 2026-09-18 **逐步前台追踪抓到的真凶**：`_get_uia()` 一旦被调，就会
+                   #   `WeChatUIA() → ensure_window() → _activate(w)` ⇒ `ShowWindow(SW_RESTORE/SW_SHOW)`
+                   #   + **`SetForegroundWindow`**（`wechatauto/uia_driver.py:651-670`）——**把微信顶到最前**。
+                   #   它由 `_uia_target_row_rect` 触发（拍一拍/引用定位都会调）⇒ 这就是"上完类闸后
+                   #   还有一次置前"的那一跳。而且物化 UIA 要**往 Weixin.dll 写 gate 字节**（红线项，
+                   #   AGENTS §3.1 写着"拍板前默认关"）⇒ 后台档直接返回 None，让调用方降级 OCR（本机本来也物化不了）。
+                   ("_get_uia", None))
 
 
 def harden_gui_class(cls=None) -> bool:
