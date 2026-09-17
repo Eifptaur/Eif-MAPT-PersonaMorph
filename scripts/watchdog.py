@@ -125,6 +125,23 @@ def main():
         pass
     exe = find_pythonw()
     flags = 0x08000000 | 0x00000008 if os.name == "nt" else 0
+    # ── `--delay=<秒>`：**晚一点再开机器人**（2026-09-17 加，给"重启"那一跳用）──
+    #    重启时本进程还要 2 秒才退，新机器人要是立刻起来就会撞**单实例锁**当场 exit 3
+    #    ⇒ 用户看到的就是"启了但又没有新的"。看门狗自己先到、等几秒再开，最稳。
+    _delay = 0
+    try:
+        for _a in sys.argv[1:]:
+            if str(_a).startswith("--delay="):
+                _delay = max(_delay, int(str(_a).split("=", 1)[1] or 0))
+        _env = os.environ.get("WXAGENT_WATCHDOG_DELAY")
+        if _env:
+            _delay = max(_delay, int(_env))
+    except Exception:
+        _delay = 0
+    _delay = max(0, min(600, _delay))
+    if _delay and not os.path.exists(STOP_FLAG):
+        print("看门狗：等 %d 秒再接管机器人（重启交接用）" % _delay)
+        time.sleep(_delay)
     # 启动了就是"要跑"：清掉手动停止标记（除非刚被停止——一键启动/启动机器人.vbs 先删 flag）
     try:
         if os.path.exists(STOP_FLAG):
