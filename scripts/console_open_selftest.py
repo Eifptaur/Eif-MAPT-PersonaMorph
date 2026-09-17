@@ -465,5 +465,20 @@ except Exception:
     pass
 
 print("")
+print("── L. 「重启后页面自己连回来」（2026-09-18 用户实测后加）──")
+# 用户原话：「每次都是这样，现在这个窗口就是显示被停止了，但是既没有关掉，也不弹出一个新的」
+# 真因：控制台**没有任何周期性状态轮询**，也没有"重启后重连"的判断 —— 而页面文案早就写着
+#      「正在重启，页面稍后会自己连回来」⇒ **承诺没有实现**。这三条钉住它别再退化。
+_ch = src("agent/console_html.py")
+ok("L1 有周期性状态轮询（外部重启/改状态后页面会自己更新）",
+   "__statusPoll = setInterval" in _ch, "")
+ok("L2 服务器换进程（started_at 变）⇒ 页面自己重载",
+   "window.__srvStartedAt !== s.started_at" in _ch and "location.reload()" in _ch)
+ok("L3 连续取不到状态 ⇒ 也重载一次（带次数上限，防风暴）",
+   "window.__pollFails >= 3" in _ch and "__reloads" in _ch)
+ok("L4 文案与机制一致（页面确实写着「稍后会自己连回来」，而机制真的存在）",
+   "页面稍后会自己连回来" in _ch and "location.reload()" in _ch)
+ok("L5 轮询只启动一次（不重复叠加）", "if(!window.__statusPoll)" in _ch)
+
 print("控制台开窗/窗口/导航判据：%d 通过 / %d 失败 / %d 跳过" % (PASS, FAIL, SKIP))
 sys.exit(1 if FAIL else 0)

@@ -1429,6 +1429,14 @@ class WeChatAdapter:
 
     def _get_gui(self):
         if self._gui is None:
+            # ⚠️ 2026-09-18：先把驱动库的已知缺名字补上（`guia.py` 漏 import threading ⇒
+            #   一旦触发"输入框探测连续失败 → 自动重新校准布局"就必然崩在那行、校准永远不生效）。
+            #   必须在建 WeChatGUI 之前打（校准发生在 GUI 内部）。幂等，重复调用无害。
+            try:
+                from . import replica_adapter as _ra
+                _ra.patch_driver_quirks()
+            except Exception:
+                pass
             from wechatauto.guia import WeChatGUI
             try:
                 self._gui = WeChatGUI()
@@ -6479,27 +6487,42 @@ class WeChatAdapter:
                     _base = self.latest_seq(chat_id)
                 except Exception:
                     _base = None
-            # ① 旧 UI 才点爱心；新 UI（底部有工具栏图标）默认即收藏视图
-            if not self._emoji_bottom_bar(px0, py0, pw, ph):
-                old_x = px0 + int(pw * 0.171)
-                old_y = py0 + int(ph * 0.804 - 13)
-                ui_adapt.click(gui, old_x - rx, old_y - ry, heal=False)
-                time.sleep(0.6)
+            # ① ♡「收藏的表情」标签：**一律先点**（2026-09-18 修）。
+            #   ⛔ 老代码靠 `_emoji_bottom_bar()` 猜"新 UI 默认就是收藏视图"⇒ 直接跳过这一步；
+            #   用户现场看到的正是"**他压根没点爱心，只把面板点开了**"。我们**没有**任何可靠的
+            #   "现在已经在收藏视图"判据，所以一律点一下（点错顶多是把视图切回收藏，代价一次点击）。
+            #   坐标＝我们自己实测的值（`_scratch/sticker_g_ab.py::HEART_REL`：面板相对 (0.314, 0.918)）。
+            _heart = (px0 + int(pw * 0.314), py0 + int(ph * 0.918))
+            _old_heart = (px0 + int(pw * 0.171), py0 + int(ph * 0.804 - 13))
+            ui_adapt.click(gui, _heart[0] - rx, _heart[1] - ry, heal=False)
+            log.info("表情链：点 ♡ 收藏标签（面板相对 0.314/0.918 → 屏幕 %s）", _heart)
+            time.sleep(0.7)
+            # 兜底：老 UI 的爱心在另一处 —— 只有在新坐标这一下之后库里仍无动静时才补一次（见下面重试）
             cols = 5
             ROWS = 5   # 一屏完整行（面板约 6~7 行，预留）
-            grid_y_cache = {}
 
-            def _click_cell(i: int):
+            def _cell_pos(i: int, variant: str = "measured"):
+                """格子中心。**主用实测常量**（`sticker_h_send.py`：第 3 行第 3 列 = 0.5227/0.4903，
+                反推第一格 0.183/0.166、步长 0.170/0.162 —— 与 memory 里 0.182/0.167/0.170/0.162 互证）。
+                ⛔ 老代码用的是 `0.10+0.19c / 0.085+0.14r`：按它算第 3 行第 3 列是 (0.48, 0.365)，
+                **纵向偏上约 96px** ⇒ 点在格子缝里，这就是"面板开了、表情没发出去"的直接原因之一。"""
                 _col = i % cols
+                _row = i // cols
+                if variant == "measured":
+                    return (px0 + int(pw * (0.183 + _col * 0.170)),
+                            py0 + int(ph * (0.166 + _row * 0.162)))
+                return (px0 + int(pw * (0.10 + _col * 0.19)),
+                        py0 + int(ph * (0.085 + _row * 0.14)))
+
+            def _click_cell(i: int, variant: str = "measured"):
                 _row = i // cols
                 if _row >= ROWS:
                     return False, "收藏较多（%d 个）超出面板首屏，请先发送靠前的收藏" % (i + 1)
-                gx = px0 + int(pw * (0.10 + _col * 0.19))
-                gy = py0 + int(ph * (0.085 + _row * 0.14))
-                grid_y_cache[i] = (gx, gy)
+                gx, gy = _cell_pos(i, variant)
                 ok, why = ui_adapt.click(gui, gx - rx, gy - ry, heal=False)
                 if not ok:
                     return False, "点表情失败：%s" % why
+                log.info("表情链：点第 %d 格（%s 常量 → 屏幕 (%d,%d)）", i + 1, variant, gx, gy)
                 return True, ""
 
             def _confirmed() -> bool:
@@ -6516,15 +6539,27 @@ class WeChatAdapter:
                 return False
 
             _last = ""
-            for _try_i in (index, index + 1):
-                ok, why = _click_cell(int(_try_i))
+            # 候选顺序（每一发都**以库里出现新行为准**，不是"我点过了"）：
+            #   ① 实测常量 × 要求的格 → ② 实测常量 × 下一格 → ③ 老常量 × 要求的格（防这版 UI 是老的）
+            #      → ④ 老 UI 爱心位置 + 老常量 × 要求的格（把"点错视图/点错位置"两种可能都覆盖掉）
+            _plan = ((int(index), "measured"), (int(index) + 1, "measured"),
+                     (int(index), "legacy"), (int(index), "legacy_after_old_heart"))
+            for _i, _variant in _plan:
+                if _variant == "legacy_after_old_heart":
+                    ui_adapt.click(gui, _old_heart[0] - rx, _old_heart[1] - ry, heal=False)
+                    log.info("表情链：改用老 UI 爱心位置再试一次（屏幕 %s）", _old_heart)
+                    time.sleep(0.6)
+                    ok, why = _click_cell(_i, "legacy")
+                else:
+                    ok, why = _click_cell(_i, _variant)
                 if not ok:
                     _last = why
                     continue
                 time.sleep(1.0)
                 if _confirmed():
-                    return True, "已发送第 %d 个收藏表情（已回读确认新行）" % (int(_try_i) + 1)
-                _last = "点了第 %d 格但**库里没出现新行**（面板可能还没稳/这格是空的）" % (int(_try_i) + 1)
+                    return True, ("已发送第 %d 个收藏表情（%s，已回读确认新行）"
+                                  % (_i + 1, "实测坐标" if _variant == "measured" else "老坐标"))
+                _last = ("点了第 %d 格（%s）但**库里没出现新行**" % (_i + 1, _variant))
             return False, ("点了表情格但都没能确认发出（%s）——**如实说没发出去**，稍后可重试" % _last)
         except Exception as e:
             return False, str(e)

@@ -2767,6 +2767,12 @@ function applyCustomBg(){
 })();
   syncThemeFromCfg(); syncCursorFromCfg(); applyWhale(); applyCustomBg();   // 关键：主加载后也套用文案/背景
   loadStatus(); loadLog(); loadBalance();
+  /* 🔴 2026-09-18 加：**状态周期轮询**（以前完全没有 ⇒ 外部重启/外部改状态后，页面永远停在旧状态：
+     用户报「窗口显示已停止，既不关掉也不弹出一个新的」）。4 秒一跳；`loadStatus` 自带 try/catch
+     与"重启后自己连回来"的自愈，所以这一跳永不会把页面打死。只启动一次。 */
+  if(!window.__statusPoll){
+    window.__statusPoll = setInterval(function(){ try{ loadStatus(); }catch(e){} }, 4000);
+  }
 }
 
 async function loadBalance(){
@@ -2786,6 +2792,19 @@ async function loadBalance(){
 
 async function loadStatus(){  try{
     const s = await getJSON('/api/status');
+    /* 🔴 2026-09-18 加：**服务器重启后页面自己连回来**。
+       控制台文案一直写着"正在重启，页面稍后会自己连回来"，但以前**没有任何实现**（没有周期轮询、
+       也没有重载判断）⇒ 用户实测原话：「**每次都是这样，现在这个窗口就是显示被停止了，但是既没有
+       关掉，也不弹出一个新的**」。两条自愈：
+         ① `started_at` 变了 ＝ 换了个新进程 ⇒ 立刻重载页面（重新挂上、状态回到实时）；
+         ② 连续 3 次取不到状态（服务正在重启/短暂不可用）⇒ 也重载一次（有次数上限，防风暴）。 */
+    try{
+      if(s && s.started_at){
+        if(window.__srvStartedAt && window.__srvStartedAt !== s.started_at){ location.reload(); return; }
+        window.__srvStartedAt = s.started_at;
+      }
+    }catch(e){}
+    window.__pollFails = 0; window.__hadOk = true;
     $('dot').className = 'dot ' + (s.wechat_connected ? 'on':'');
     $('runText').textContent = s.paused ? '已暂停' : '运行中';
     /* 顶栏状态行（2026-09-16 待拍板三件之一）：暂停态 already 在上面那个 chip；这里补"监听几个会话"与"主人登记几项"。
@@ -3437,7 +3456,15 @@ async function loadStatus(){  try{
     }
     // 鲸语模式：动态刷新的文本（暂停/恢复等）重新套上鲸语文案
     if(typeof applyWhale==='function' && getPath(cfg,'ui.text_style')==='whale') applyWhale();
-  }catch(e){}
+  }catch(e){
+    /* 取不到状态（服务正在重启 / 短暂不可用）⇒ 记数，连续 3 次且以前成功过就重载一次（带上限）。
+       ⚠️ 以前这里只是 `catch(e){}`：状态取不到就永远停在旧画面，用户看到的就是"窗口一直显示已停止"。 */
+    window.__pollFails = (window.__pollFails||0) + 1;
+    if(window.__hadOk && window.__pollFails >= 3 && (window.__reloads||0) < 40){
+      window.__reloads = (window.__reloads||0) + 1;
+      location.reload();
+    }
+  }
 }
 
 async function loadLog(){

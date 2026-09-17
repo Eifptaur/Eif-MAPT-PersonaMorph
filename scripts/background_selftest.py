@@ -112,9 +112,18 @@ ck("B5z5 该传 chat_id 的调用点都传了（拍一拍/自检/引用/消息�
 _epo = SRC_WECHAT.split("def emoji_panel_open(")[1][:1600]
 ck("B5z6 emoji_panel_open 不再无视切会话结果（确认不了就失败返回）",
    "不在未知会话上开表情面板" in _epo and "def emoji_panel_open(self, group_name: str = \"\", chat_id: str = \"\")" in SRC_WECHAT)
-_eps = SRC_WECHAT.split("def emoji_panel_send(")[1][:3000]
+_eps = SRC_WECHAT.split("def emoji_panel_send(")[1][:7000]
 ck("B5z7 emoji_panel_send **点完回读确认**（latest_seq 前后比对，确认不到就重试/如实失败）",
    "latest_seq(chat_id)" in _eps and "库里没出现新行" in _eps)
+# B5z9（2026-09-18 二次修）：**一律先点 ♡ 收藏标签**（不许再靠 `_emoji_bottom_bar` 猜"面板默认是收藏视图"），
+# 且网格必须用**我们自己实测的常量**（老常量纵向偏上约 96px ⇒ 点在格子缝里、什么也发不出去）。
+ck("B5z9 表情链一律先点 ♡ 收藏标签（面板相对 0.314/0.918，实测值；不再被 `_emoji_bottom_bar` 猜着跳过）",
+   "0.314" in _eps and "0.918" in _eps and "if not self._emoji_bottom_bar" not in _eps)
+ck("B5z10 网格用实测锚点（第一格 0.183/0.166、步长 0.170/0.162），老常量只作候选兜底",
+   "0.183 + _col * 0.170" in _eps and "0.166 + _row * 0.162" in _eps
+   and "legacy" in _eps and "0.10 + _col * 0.19" in _eps)
+ck("B5z11 表情链每一步都留日志（现场运维看得到它到底点了哪里）",
+   _eps.count("表情链") >= 3, "日志点 %d 处" % _eps.count("表情链"))
 ck("B5z8 表情工具把 chat_id 传进这两条（开面板 + 送格）",
    "emoji_panel_open(group_name=_gname, chat_id=_cid)" in
    open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
