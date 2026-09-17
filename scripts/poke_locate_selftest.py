@@ -225,6 +225,45 @@ def main():
         _ch_mod.grab_render, _co_mod.recognize, _co_mod.blocked = _old_grab, _old_rec, _old_blk
     _ = _wx_mod
 
+    # ⑨ ⭐ "拍不上"的**最后一环**：微信自绘菜单**原尺寸 OCR 读不出任何项**，放大后才读得出。
+    #    夹具＝真机抓的那张菜单图（脚本 _scratch/menu_capture.py 存下来的 ImageGrab 图）。
+    MENU_FIX = os.path.join(ROOT, "scripts", "fixtures", "menu_poke_imagegrab.png")
+    if not os.path.exists(MENU_FIX):
+        ok("⑨ 菜单夹具存在（缺夹具＝没验证）", False, MENU_FIX)
+    else:
+        from agent import chat_ocr as _co3
+        _im = Image.open(MENU_FIX).convert("RGB")
+        _raw = []
+        try:
+            _raw = _co3.recognize(_im, timeout=6.0) or []
+        except Exception:
+            _raw = []
+        _z = 3
+        _big = _im.resize((_im.width * _z, _im.height * _z), Image.LANCZOS)
+        try:
+            _zoom = _co3.recognize(_big, timeout=8.0) or []
+        except Exception:
+            _zoom = []
+        _ztxt = [str(t) for t, *_ in _zoom]
+        print("  夹具菜单 %s：原尺寸 OCR %d 项；放大 %dx 后 %s"
+              % (_im.size, len(_raw), _z, _ztxt))
+        ok("⑨ 夹具：**原尺寸读不出**（这就是原来 '拍不上' 的现场）", not _raw, _raw[:3])
+        ok("⑨ 夹具：**放大 3x 后读出「拍一拍」**（＝修法成立）",
+           any("拍一拍" in x for x in _ztxt), _ztxt)
+        ok("⑨ 静态：`menu_click` 里有「原尺寸读不出就放大重读」的兜底",
+           "放大 %dx 后读出" in open(os.path.join(ROOT, "agent", "input_backend.py"),
+                                  encoding="utf-8").read())
+        # ⭐ 2026-09-18 真拍成功后补的三条（都是"真机才发现"的雷）
+        _ibsrc = open(os.path.join(ROOT, "agent", "input_backend.py"), encoding="utf-8").read()
+        _wsrc2 = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
+        ok("⑨ `input_backend` 定义了 `log`（原来一直在用却没定义；放大修复第一次执行到那行就 NameError）",
+           "log = logging.getLogger" in _ibsrc)
+        ok("⑨ 放大重读用懒加载的 `_PILImage`（本模块 PIL 不是模块级导入）",
+           "_PILImage" in _ibsrc)
+        ok("⑨ 验证判据认「我拍拍」（真机 DB 原文 `我拍拍「E」`，**没有「了」**；原来只认"
+           "「你拍了拍」/「拍了拍」⇒ 真拍上了也报失败）",
+           '"我拍拍" in t' in _wsrc2)
+
     print("\n== 汇总：%d 通过 / %d 失败 ==" % (len(PASS), len(FAIL)))
     if FAIL:
         print("失败项：")

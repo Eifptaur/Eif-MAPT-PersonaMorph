@@ -27,6 +27,16 @@ from ctypes import wintypes
 
 from .config import get_config
 
+# ⚠️ 2026-09-18 补：**这个模块一直在用 `log` 却从没定义过它**。
+#   为什么以前没炸：唯一的调用位于 `menu_click` 的"items 非空"分支（"菜单 OCR 明细…"），
+#   而修复前菜单 OCR **永远读不出 items**（原尺寸读不出的那个真因）⇒ 那行**从没被执行到**。
+#   我的"原尺寸读不出就放大重读"修复让它第一次执行 ⇒ `NameError: name 'log' is not defined`
+#   ⇒ 整条投递右键链抛异常（现象＝**菜单明明弹了、就是拍不上**）。日志原文：
+#   `投递右键菜单异常（交给原实现）：name 'log' is not defined`。
+import logging
+
+log = logging.getLogger("persona-morph")
+
 # ── ① DPI：import 即锁，任何坐标运算之前 ──────────────────────────────────
 _user32 = ctypes.windll.user32
 
@@ -458,8 +468,26 @@ def menu_click(hwnd_menu: int, item_text: str, zoom: int = 2, allow_top_fallback
         items = _co.recognize(img, timeout=4.0) or []
     except Exception as e:
         return False, "菜单 OCR 失败：%s" % str(e)[:60]
+    # ⭐ 2026-09-18 **"拍不上"的最后一环**：微信这个自绘菜单**原尺寸 OCR 读不出任何项**
+    #   （离线实测同一张图：`ScreenOCR.recognize(原图)=[]`，**放大 2x/3x 后 = `[('拍一拍',...)]`**）。
+    #   原代码只读原尺寸 ⇒ 永远 `items=[]` ⇒ 永远"判据不可用，不点" ⇒ 表现为"菜单弹了但拍不上"。
+    #   ⇒ 原尺寸读不出就**放大再读一次**，坐标按比例还原（与项目里 `ocr_zoomed` 同一套经验：
+    #     微信 4.x 的小字号/自绘文字，放大后才识别得出来）。
     if not items:
-        return False, "菜单 OCR 读不到任何项（判据不可用，不点）"
+        _z = max(3, int(zoom or 2))
+        try:
+            from PIL import Image as _PILImage          # ⚠️ 本模块 PIL 是懒加载的，别用裸 `Image`
+            _big = img.resize((img.width * _z, img.height * _z), _PILImage.LANCZOS)
+            _it2 = _co.recognize(_big, timeout=6.0) or []
+            items = [(t, int(x) // _z, int(y) // _z, int(w) // _z, int(h) // _z)
+                     for t, x, y, w, h in _it2]
+            if items:
+                log.info("菜单 OCR：原尺寸读不出 ⇒ **放大 %dx 后读出 %d 项**（这就是「拍不上」的真因）",
+                         _z, len(items))
+        except Exception as e:
+            log.info("菜单 OCR 放大重读失败：%s", e)
+    if not items:
+        return False, "菜单 OCR 读不到任何项（原尺寸与放大后都读不出，判据不可用，不点）"
     # 🔴 2026-09-18 加（作者当场问「他的鼠标似乎够不上，悬停在"引用"那一栏了。你是不是只把工具栏往上调了
     #   一点点？」）：**把菜单里读到的每一项都写进日志**（文本 + 中心 y），这样"菜单里到底有什么、我们点的是
     #   哪一项、纵向差多少"一眼可见，不用再靠猜。自绘菜单的项是等高的，y 就是判"点没点偏"的唯一依据。
