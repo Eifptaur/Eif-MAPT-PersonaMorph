@@ -791,8 +791,10 @@ try:
     finally:
         _chm.capture_image = _saved_cap
     _ok_box = bool(_box) and abs(_box[1] - 692) <= 2
-    _ok_top = bool(_band) and (_band[3] - _band[1]) <= 24 and (_pt[1] - 156) < 692 + 60
-    ck("B26e 行为：合成帧上量出框顶（≈692）且落点贴在**上沿**（不是中心/下部）",
+    _half = max(1, (_box[3] - _box[1]) // 2) if _box else 1
+    _rel_y = (_pt[1] - 156) if _pt else -1
+    _ok_top = bool(_band) and _band[3] <= _box[1] + _half + 2 and _box[1] <= _rel_y <= _box[1] + _half
+    ck("B26e 行为：合成帧上量出框顶（≈692）且落点在**上半部分**（作者澄清：不是贴边一条线）",
        _ok_box and _ok_top, "box=%s band=%s pt=%s" % (_box, _band, _pt))
     ck("B26f 行为：拿不到窗口自身画面时**返回 None（不猜）**",
        _band_none is None and _pt_none is None)

@@ -210,14 +210,22 @@ def _probe_input_box_frame(gui):
 
 
 def _input_top_band(gui, band_px: int = 20):
-    """返回 `(上沿带矩形(渲染相对), 落点(屏幕))`；量不到 ⇒ `(None, None)`，调用方**不许猜点**。"""
+    """返回 `(上半部分矩形(渲染相对), 落点(屏幕))`；量不到 ⇒ `(None, None)`，调用方**不许猜点**。
+
+    ⚠️ 作者 2026-09-18 澄清：「**我的意思是上半部分**」——不是贴着上边的一条线。所以：
+      · 落点 = 框顶往下 **1/4 高度**处（＝上半部分的中线偏上，离上面的分界线和下面的引用条都远）；
+      · 带 = 框的**上半部分**（给阳性对照取样用，条带高一些才能稳定吃到第一行文字）。
+    """
     box = _probe_input_box_frame(gui)
     if not box:
         return None, None
     x0, top, x1, bot = box
-    band = (x0, top, x1, min(bot, top + max(8, min(int(band_px), max(8, (bot - top) // 4)))))
+    h = max(1, bot - top)
+    half = max(8, h // 2)
+    band = (x0, top, x1, top + half)
+    dy = max(8, min(int(h * 0.25), max(8, half - 4)))     # 上半部分的中线偏上
     pt = (int(getattr(gui, "origin_x", 0) or 0) + (band[0] + band[2]) // 2,
-          int(getattr(gui, "origin_y", 0) or 0) + band[1] + max(4, (band[3] - band[1]) // 3))
+          int(getattr(gui, "origin_y", 0) or 0) + top + dy)
     return band, pt
 
 
