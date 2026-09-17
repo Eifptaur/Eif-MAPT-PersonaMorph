@@ -1,10 +1,10 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.17.10",
-    "sha256": "f176b1365e687148f3da01c060964ea290b68013da1419335eb9b6e511854407",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.30/persona-morph-v2.1.30.zip",
-    "size": 8610129,
+    "version": "2026.9.17.11",
+    "sha256": "ebe8d395ecc26c4c6b72f615cb40a161e66a40bfe3e3fbb9d912e9498cd5b0b3",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.31/persona-morph-v2.1.31.zip",
+    "size": 8617733,
     "files": 265
   },
   "dlc": [
@@ -32,19 +32,15 @@
     }
   ],
   "announce": {
-    "version": "2026.9.17.10",
+    "version": "2026.9.17.11",
     "notes": [
-      "真语音条：用右 Alt 进录音态，全程不动你的鼠标（需要微信在前台那几秒）",
-      "运行明细可以按条删，删错一键撤销",
-      "本地生图可选安装：新增画质档，速度与画质一起要，与速度档一键切换",
-      "要图更快：同样网络下从一分多钟缩到几秒",
-      "修：桌面已有快捷方式时不再反复问；控制台不再越重启越多窗口、也不再被钉在最上层",
-      "修：不再把发送失败这类内部提示发到群里；也不再回自己说的话",
+      "修：图片和表情多的群，现在也能正常发出消息（以前会因为看不到可比对的文字而卡住不发）",
+      "机器人自己在后台开控制台时只闪任务栏，不再把窗口顶到你面前",
       "必须知道：更新后若顶部出现「发送已被暂停」横幅，点一下「本次允许发送」即可继续"
     ],
     "forceBase": false,
-    "minBase": "2026.9.17.10"
+    "minBase": "2026.9.17.11"
   },
-  "builtAt": "2026-09-17T15:53:37Z",
-  "updatedAt": 1789660417761
+  "builtAt": "2026-09-17T16:19:23Z",
+  "updatedAt": 1789661963139
 }
