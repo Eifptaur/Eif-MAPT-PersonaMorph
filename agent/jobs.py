@@ -31,12 +31,15 @@ def _decode(b) -> str:
     ⛔ 2026-09-16 修：`start()` 起的是 `shell=True`（＝`cmd.exe`），它按**系统 ANSI 代码页**
     （中文机器＝GBK/cp936）输出 ⇒ 原来那句 `encoding="utf-8"` 会让所有中文变成乱码
     （`decide_link_selftest` 里"保留尾部输出"那条就是这么红的）。
-    ⇒ 先试 UTF-8，失败退回系统代码页，最后 replace 兜底（绝不抛）。
+    🔴 2026-09-18 再修：兜底编码**不许用 `locale.getpreferredencoding()`** —— Python 开了 UTF-8 模式
+    （`PYTHONUTF8=1` / `-X utf8`）时它返回的就是 utf-8，于是"utf-8 解不出来 ⇒ 再拿 utf-8 解一遍"，
+    中文照样乱码。⇒ 兜底改成 Windows 的 **`mbcs`（真 ANSI 代码页，与 Python 模式无关）**。
+    ⇒ 先试 UTF-8，失败退回系统 ANSI 代码页，最后 replace 兜底（绝不抛）。
     """
     if isinstance(b, str):
         return b
     data = b or b""
-    for enc in ("utf-8", locale.getpreferredencoding(False) or "gbk"):
+    for enc in ("utf-8", "mbcs", locale.getpreferredencoding(False) or "gbk", "gbk"):
         try:
             return data.decode(enc)
         except (UnicodeDecodeError, LookupError):

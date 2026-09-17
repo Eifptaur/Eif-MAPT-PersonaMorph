@@ -156,9 +156,11 @@ ck("C5 发图：DB 回读看不见时用**屏幕兜底确认**（输入框清空
 print("[D] 发图链：右键「粘贴」进框（不用投递组合键）、进框才打枪、提交三枪")
 _SI = SRC.split("def send_image_posted(")[1]
 _SI = _SI[:_SI.index("def _file_panel_point_live(")]
-ck("D1 粘贴前先投递聚焦输入栏（老教训保留：焦点不在框里时任何粘贴都不成立）",
-   "focus_pt" in _SI and "backend.click(main, focus_pt)" in _SI
-   and _SI.find("backend.click(main, focus_pt)") < _SI.find("_cb.set_image("))
+ck("D1 粘贴前先投递聚焦输入栏 —— 落点是**现算**的输入框上半部分（`_input_top_band`），"
+   "量不到 / 掉进工具栏带就不开枪（2026-09-18 改口径：按比例猜点会落到引用条甚至 ✕ 上）",
+   "_input_top_band(gui)" in _SI and "backend.click(main, _img_pt)" in _SI
+   and "_img_pt[1] > int(r[1] + rh * 0.92)" in _SI
+   and _SI.find("backend.click(main, _img_pt)") < _SI.find("_cb.set_image("))
 ck("D2 粘贴改走**右键 → 「粘贴」菜单项**（投递组合键在微信上不成立：退化成字面字母 v）",
    '_right_click_menu_posted(gui, _RX, _RY, "粘贴"' in _SI)
 ck("D3 发图链里**再也不许出现投递 Ctrl+V**（它只会把字母 v 敲进输入框）",
