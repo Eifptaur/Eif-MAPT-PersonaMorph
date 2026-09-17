@@ -2,7 +2,7 @@
 """「打不开消息库」两个失败模式的判据（2026-09-17 立，用户「佬」的报告）。
 
 现场原话（两个失败模式都在他那一行报错里）：
-  `RuntimeError: 未找到任何已登录账号的数据库（试过 3 条路：「…\\wxid_yu586z7rt3ad22_482e\\db_storage」
+  `RuntimeError: 未找到任何已登录账号的数据库（试过 3 条路：「…\\_ACCT\\db_storage」
    RuntimeError: 未找到任何已登录账号的数据库；「…\\xwechat_files」KeyError: 'message\\message_1.db'；…）`
   ⇒ ①**填到 db_storage 那一层**：驱动库只在 db_dir 底下找"带 db_storage 的账号目录"，一个都找不到；
     ②**认了账号目录之后**又 `KeyError: 'message\\message_1.db'`（密钥表里没有这个分片）。
@@ -25,6 +25,13 @@ os.chdir(ROOT)
 
 from agent import wechat as W  # noqa: E402
 
+# 判据里要用「像数据库目录那样」的路径，但**不许把真实机器路径或真实账号写进仓库**（隐私闸会拦，也确实该拦）
+# ⇒ 一律运行时拼出来：既练到「填到 db_storage 那一层也要能退回账号目录/上一级」这条逻辑，又不留任何真数据。
+_SEP = os.sep
+_FAKE_ROOT = "D:" + _SEP + "wxdata"
+_ACCT = "acct" + "_0001"
+_FAKE_DB = _SEP.join([_FAKE_ROOT, _ACCT, "db_storage"])
+
 PASS = FAIL = 0
 
 
@@ -38,20 +45,20 @@ def ok(name, cond, detail=""):
 
 
 print("── A. 路径规范化（填哪一层都算对）──")
-variants = W._db_dir_variants(r"C:\Users\lenovo\Documents\xwechat_files\wxid_yu586z7rt3ad22_482e\db_storage")
-ok("db_storage ⇒ 退回账号目录、再退回 xwechat_files",
+variants = W._db_dir_variants(_FAKE_DB)
+ok("db_storage ⇒ 退回账号目录、再退回上一级",
    len(variants) == 3 and variants[0].endswith("db_storage")
-   and variants[1].endswith("wxid_yu586z7rt3ad22_482e") and variants[2].endswith("xwechat_files"),
+   and variants[1].endswith(_ACCT) and variants[2].endswith(os.path.basename(_FAKE_ROOT)),
    " → ".join(os.path.basename(v) for v in variants))
-tries = W.db_open_tries(r"C:\Users\lenovo\Documents\xwechat_files\wxid_yu586z7rt3ad22_482e\db_storage")
+tries = W.db_open_tries(_FAKE_DB)
 srcs = [s for _d, s in tries]
 ok("三档依次试，且出处标得出来（config → config↑ → …）",
    srcs[0] == "config" and "config↑" in srcs and srcs[-1] == "auto", str(srcs))
 ok("规范化后的路径都真的进了候选表",
-   any(d.endswith("wxid_yu586z7rt3ad22_482e") for d, _s in tries) and any(d.endswith("xwechat_files") for d, _s in tries),
+   any(d.endswith(_ACCT) for d, _s in tries) and any(d.endswith(os.path.basename(_FAKE_ROOT)) for d, _s in tries),
    str(len(tries)) + " 条")
 ok("普通路径不会被乱改（原样在第一位）",
-   W._db_dir_variants(r"D:\xwechat_files")[0] == r"D:\xwechat_files")
+   W._db_dir_variants("E:" + os.sep + "wxdata")[0] == "E:" + os.sep + "wxdata")
 
 print("── B/C. 缺密钥的分片：补一次 → 摘掉 → 如实报 ──")
 cls = W._db_class()
@@ -81,7 +88,7 @@ ok("补不到的坏分片已从 _db_files 摘掉", "message/message_1.db" not in
 ok("**好分片一个都没动**", "message/message_2.db" in db._db_files, str(list(db._db_files)))
 
 print("── D. 话术：密钥缺口 ≠ 权限问题 ──")
-probe = {"found": ["C:\\Users\\lenovo\\Documents\\xwechat_files"], "dbs": 73, "tried": "x"}
+probe = {"found": [_FAKE_DB], "dbs": 73, "tried": "x"}
 v_key = W._db_open_verdict(probe, [("d", "auto", "RuntimeError: 这个库分片没有密钥，已跳过：message/message_1.db")])
 ok("密钥缺口那条：说密钥、给可照做的动作（微信要运行 + 同权限）",
    "密钥" in v_key and ("正在运行" in v_key or "登录" in v_key) and "权限或占用" not in v_key, v_key[-46:])

@@ -117,6 +117,14 @@ else:
     try:
         w3 = W.WebUI(lambda: {}, [])
         port = w3.start()
+        # ⚠️ 2026-09-18：探针进程（一键启动.exe --cursorprobe）抓完就退出，会让 WebUI 那条连接被 Reset
+        #   ⇒ socketserver 默认把 traceback 打到 stderr；全套跑下来它看起来像"红"，可这条判据 rc=0、断言全过。
+        #   判据要的是断言结果，不是服务器的异常栈 ⇒ 把这个已知无害的噪音静音掉。
+        try:
+            import socketserver as _ss
+            _ss.BaseServer.handle_error = lambda *a, **k: None
+        except Exception:
+            pass
         url = "http://127.0.0.1:%d/?token=cursor-judge" % port
         try:
             out = subprocess.run([_EXE, "--cursorprobe", url], capture_output=True, timeout=180,
