@@ -95,7 +95,13 @@ def zip_tree(zip_path: str):
 
 #: 下载资产走不通时的镜像前缀（2026-09-16，与「更新源异常」同源的问题）：
 #: 国内直连 `github.com/.../releases/download/...` 经常超时 ⇒ 依次套前缀重试
-DL_MIRRORS = ("https://ghfast.top/", "https://ghproxy.net/", "https://gh-proxy.com/")
+DL_MIRRORS = ("https://ghfast.top/", "https://ghproxy.net/", "https://gh-proxy.com/", "https://gh.llkk.cc/")
+
+#: 单个源的**卡死**判据（秒）——**不是总时长上限**：urllib 的 timeout 是"两次数据之间的间隔"，
+#: 只要还有数据就一直下；**20 秒一个字节都没来**就判这个源不行、换下一个。
+#: 为什么（2026-09-17 用户转述：「控制台上面的更新用不了，卡在 0% 不动，我都是直接去原地址下载覆盖的」）：
+#: 老值是 120 秒 × 4 个源 ⇒ 最坏 8 分钟界面钉在 0%，任何人都会以为它死了。
+STALL_S = 20.0
 
 
 def _dl_once(url: str, dest: str, timeout: float, progress=None):
@@ -148,12 +154,24 @@ def _mirror_prefixes():
     return order
 
 
-def download(url: str, dest: str, timeout: float = 120.0, progress=None):
+def _src_name(u: str) -> str:
+    """给用户看的"这个源是谁"：官方直连 / 镜像域名（界面要能显示它在换源重试）。"""
+    s = str(u)
+    for m in DL_MIRRORS:
+        if m in s:
+            return m.rstrip("/").replace("https://", "")
+    return "官方直连"
+
+
+def download(url: str, dest: str, timeout: float = STALL_S, progress=None, on_try=None):
     """下载在线包（流式写盘 + 进度回调）。**支持本地路径**（离线自测用，与 `update_check.fetch` 同口径）。
 
-    2026-09-16：直连失败时**依次套国内镜像前缀重试**（只对 `github.com` 的地址套），
-    全部失败才如实报最后一条原因。
+    2026-09-16：直连失败时**依次套国内镜像前缀重试**（只对 `github.com` 的地址套），全部失败才如实报原因。
     2026-09-17：镜像顺序不再是死的 `DL_MIRRORS`——**上次清单能用的那个镜像排第一**。
+    2026-09-17（用户报「更新卡在 0% 不动、只能自己去原地址下载覆盖」）三处改：
+      ① `timeout` 改成**卡死判据**（默认 `STALL_S`＝20 秒没数据就换源；老值 120 秒 × 4 源＝最坏 8 分钟不动）；
+      ② 每换一个源**先把进度归零**并回调 `on_try(i, n, url)` ⇒ 界面看得见"在换源重试"，不是一个僵住的百分比；
+      ③ 全失败时把**官方地址**带回去，用户至少能手上下载覆盖。
     """
     if not url:
         return False, "清单里没给下载地址（base.url 为空）"
@@ -162,12 +180,28 @@ def download(url: str, dest: str, timeout: float = 120.0, progress=None):
         for m in _mirror_prefixes():
             urls.append(m + str(url))
     last = ""
-    for u in urls:
+    for i, u in enumerate(urls, 1):
+        if progress:                       # 换源要归零，否则界面还挂着上一个源的百分比 ⇒ 看着像卡死
+            try:
+                progress(0, 0)
+            except Exception:
+                pass
+        if on_try:
+            try:
+                on_try(i, len(urls), u, "")
+            except Exception:
+                pass
         ok, why = _dl_once(u, dest, timeout, progress)
         if ok:
             return True, ""
         last = why
-    return False, "下载失败（含镜像重试）：%s" % last
+        if on_try:
+            try:
+                on_try(0, len(urls), u, why)          # i=0 ⇒ "这个源不通，要换下一个了"
+            except Exception:
+                pass
+    return False, ("下载失败（含 %d 个源的重试）：%s ⇒ 也可以直接到发布页手动下载覆盖：%s"
+                   % (len(urls), last, url))
 
 
 def read_local_state(target: str) -> dict:
@@ -380,7 +414,22 @@ def run_once(manifest=None, zip_path=None, target=ROOT, dry=False, progress=None
             return {"ok": False, "rc": 2, "why": "清单里没给下载地址（base.url 为空）", "phase": "probe"}
         zip_path = os.path.join(target, CACHE_REL, "persona-morph-%s.zip" % (theirs or "new"))
         _set(state="running", phase="download", why="正在下载 %s" % theirs, got=0, total=0)
-        ok_dl, why_dl = download(durl, zip_path, progress=lambda g, t: _set(got=int(g), total=int(t)))
+        # 2026-09-17（用户报「卡在 0% 不动」）：把**换源重试**暴露到作业状态里 —— 老实现只在换源时
+        #   静默重试，界面于是只有"0%"这一个信息，用户只能判断"它死了"。
+        _try_no = [0]
+
+        def _on_try(i, n, u, why=""):
+            if i:
+                _try_no[0] = i
+                _set(phase="download", got=0, total=0,
+                     why="源 %d/%d（%s）" % (i, n, _src_name(u)))
+            else:
+                _set(phase="download",
+                     why="源 %d/%d 不通（%s），换下一个源…" % (_try_no[0], n, why))
+
+        ok_dl, why_dl = download(durl, zip_path,
+                                 progress=lambda g, t: _set(got=int(g), total=int(t)),
+                                 on_try=_on_try)
         if not ok_dl:
             _set(state="error", phase="download", why=why_dl)
             return {"ok": False, "rc": 1, "why": why_dl, "phase": "download"}
