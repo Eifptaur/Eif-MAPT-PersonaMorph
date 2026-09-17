@@ -83,8 +83,12 @@ def status() -> dict:
             "note": "本模块只做**合成**；发送见 send_voice_reply（当前形态＝发音频文件，不是语音条）"}
 
 
-def synthesize(text: str, out_wav: str = "") -> tuple:
-    """文字 → WAV（SAPI）。返回 `(wav 路径 或 None, 错误说明)`。空文本直接拒。"""
+def synthesize(text: str, out_wav: str = "", rate: int = None) -> tuple:
+    """文字 → WAV（SAPI）。返回 `(wav 路径 或 None, 错误说明)`。空文本直接拒。
+
+    `rate`＝**本次**语速（-10~10，SAPI 刻度）；不传就用配置 `voice_reply.rate`。
+    为什么要能逐段给（2026-09-17）：语气段（「行行行」这种快连读）要单独加速合成再拼回去。
+    """
     t = str(text or "").strip()
     if not t:
         return None, "文本为空，没什么可合成的"
@@ -100,9 +104,10 @@ def synthesize(text: str, out_wav: str = "") -> tuple:
         if obj is not None:
             v.Voice = obj
         try:
-            rate = int(cfg.get("rate") or 0)
-            if rate:
-                v.Rate = max(-10, min(10, rate))
+            r0 = cfg.get("rate") if rate is None else rate
+            rate_v = int(r0 or 0)
+            if rate_v:
+                v.Rate = max(-10, min(10, rate_v))
         except Exception:
             pass
         st = win32com.client.Dispatch("SAPI.SpFileStream")
@@ -140,12 +145,15 @@ def to_playable(wav_path: str, fmt: str = "") -> tuple:
         return wav_path, "ffmpeg 调不动（%s），改用 wav" % type(e).__name__, "wav"
 
 
-def make(text: str) -> tuple:
-    """一步到位：文字 → 可发送的音频。返回 `(路径 或 None, 错误说明, 信息 dict)`。"""
+def make(text: str, rate: int = None) -> tuple:
+    """一步到位：文字 → 可发送的音频。返回 `(路径 或 None, 错误说明, 信息 dict)`。
+
+    `rate`＝本次语速（None＝用配置）；分段合成语气段时会逐段给。
+    """
     info = {"engine": "sapi", "voice": "", "fmt": "", "wav": ""}
     obj, desc = pick_voice(str(_cfg().get("voice") or "")) if voices() else (None, "")
     info["voice"] = desc
-    wav, err = synthesize(text)
+    wav, err = synthesize(text, rate=rate)
     if not wav:
         return None, err, info
     info["wav"] = wav

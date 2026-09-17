@@ -241,7 +241,11 @@ DEFAULT_CONFIG = {
         "edge_voice": "zh-CN-XiaoxiaoNeural",  # edge-tts 音色（8 个中文音色见 voice_models.EDGE_VOICES）
         "edge_fallback": True,                 # edge 失败/没网 ⇒ 退回系统声音（关掉就如实报错、不发）
         "voice": "",             # 指定声音（子串匹配；留空＝优先中文声音）
-        "rate": 0,               # 语速 -10~10（0＝默认）
+        "rate": 0,               # 语速 -10~10（0＝默认；edge 档按 ×5 换算成百分比，2026-09-17 接通）
+        # 语气段加速（2026-09-17 加，用户原话：连续同字是「语气偏快的连读」）：句子里有连续同一个字
+        # ≥3（行行行/好好好）时，那几段**单独合成并加速这么多 %**，其余照常，再拼回一句（段间不加停顿）。
+        # 0＝关掉这条（就按普通语速一口气念完）。
+        "run_boost": 25,
         "format": "mp3",         # mp3（有 ffmpeg 时转）| wav（无 ffmpeg 自动回落 wav）
         "dir": "media/tts",      # 合成产物目录
         "max_chars": 120,        # 单条合成上限（太长又慢又不合适）
