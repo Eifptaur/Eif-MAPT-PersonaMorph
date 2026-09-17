@@ -155,15 +155,18 @@ def main():
        "bbox[0] + 4 <= x <= bbox[2] - 4" in (b_send or ""))
 
     # ⑦ 端到端离线回归：桩掉"抓帧"与"OCR"，跑**真的** `_send_poke_locate`
-    #    桩数据＝本机真帧上实测到的 OCR 结果（见下），坐标系＝crop 相对
+    #    桩数据＝本机真帧上实测到的 OCR 结果；坐标按**代码实际用的 crop** 反算（crop 一变也不会假红）
     from agent import chat_header as _ch_mod
     from agent import chat_ocr as _co_mod
     from agent import wechat as _wx_mod
 
-    CROP = (262, 80, 1193, 701)
-    STUB = [("@#deepseek说讠舌！", 455 - 262, 243 - 80, 137, 22),   # E 的消息（真帧实测）
-            ("「E」拍拍*deepseek」", 656 - 262, 517 - 80, 6, 17),    # 居中拍拍提示（无头像）
-            ("05：05", 274 - 262, 149 - 80, 16, 11)]                 # 会话列表时间（该被 x 过滤掉）
+    # 代码里的 crop 现在是 `top = max(80, (render_h-6) - 720)`（**不再调 get_input_box**）
+    _IH = img.size[1]
+    _TOP = max(80, (_IH - 6) - 720)
+    _PL = 262
+    STUB = [("@#deepseek说讠舌！", 455 - _PL, 243 - _TOP, 137, 22),   # E 的消息（真帧实测）
+            ("「E」拍拍*deepseek」", 656 - _PL, 517 - _TOP, 6, 17),   # 居中拍拍提示（无头像）
+            ("05：05", 274 - _PL, 149 - _TOP, 16, 11)]                # 会话列表时间（该被 x 过滤掉）
     _old_grab, _old_rec, _old_blk = _ch_mod.grab_render, _co_mod.recognize, _co_mod.blocked
     _ch_mod.grab_render = lambda gui=None, render=None, tries=12: img
     _co_mod.recognize = lambda image, timeout=None: list(STUB)
