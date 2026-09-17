@@ -214,6 +214,16 @@ ok("「检测群聊并勾选」的确定按钮**当场落盘**（POST /api/confi
    and _page.count("wechat.group_name_white_list") >= 4)
 ok("群白名单保存失败会如实报（不许静默丢）", "群白名单保存失败" in _page)
 
+# ── 2026-09-17（用户要求把新手引导从三步扩成五步：①昵称＝你自己微信原名 ②点「恢复」才开始工作）──
+ok("向导标题与总步数已是五步", "五步上手" in _page and "第 1 步/共 5 步" in _page and "第 5 步/共 5 步" in _page)
+ok("第 2 步是「机器人昵称＝你自己微信的原名」（有输入框、并写明默认值只是占位）",
+   'id="obNick"' in _page and "你自己微信的原名" in _page and "群deepseek" in _page
+   and "setPath(cfg,'wechat.bot_nickname', nick)" in _page)
+ok("第 4 步有真的「恢复」按钮（打 /api/resume，并如实报成功/失败）",
+   'id="obResume"' in _page and "await getJSON('/api/resume'" in _page and "恢复失败" in _page)
+ok("第 5 步才是检测与完成（顺序没被改乱）",
+   _page.index("第 3 步/共 5 步") < _page.index("第 4 步/共 5 步") < _page.index("第 5 步/共 5 步"))
+
 print("")
 print("窗口/控制台外观判据：%d 通过 / %d 失败 / %d 跳过" % (PASS, FAIL, SKIP_N))
 sys.exit(1 if FAIL else 0)
