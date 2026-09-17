@@ -2519,7 +2519,8 @@ def main():
                 # 两个入口各开一个 ⇒ 双窗。
                 try:
                     from agent.notify_ui import open_console as _open_console
-                    _rep = _open_console(url, browser_path=str(server_cfg.get("browser_path") or ""))
+                    _rep = _open_console(url, browser_path=str(server_cfg.get("browser_path") or ""),
+                                         mode="quiet")   # 机器人自己开窗 ⇒ 后台开（只闪任务栏，绝不抬到前台顶掉用户）
                     _how = str(_rep.get("how") or "")
                     if _how == "webview":
                         log.info("已在我们自己的窗口里打开控制台（不依赖浏览器）")

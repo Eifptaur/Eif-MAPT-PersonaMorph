@@ -1710,13 +1710,25 @@ class WeChatAdapter:
                                 #    同样可能成立）⇒ 发送前**必须再要一次内容级正面证据**。
                                 #    拿不到就不发：宁可漏发一条，**绝不发错人**（发错会话是对外可见的事故）。
                                 _idn, _idwhy = self.chat_identity_ok(chat_id, gui=gui)
-                                if _idn is not True:
-                                    log.warning("切会话后内容级复核未通过（%s / %s）⇒ 这条不发（防发错人）",
-                                                _idn, _idwhy)
-                                    return False, ("切完会话后**内容级复核没过**（%s：%s）⇒ 这条不发 —— "
-                                                   "宁可漏发，绝不发错人。把目标会话在微信里点开、或"
-                                                   "让该会话里有一条能比对的文字，再重试。"
-                                                   % ("拿不到证据" if _idn is None else "证据说不是", str(_idwhy)[:60]))
+                                if _idn is not True and _idn is not None:
+                                    # 证据**说不是** ⇒ 坚决不发（防发错人）
+                                    log.warning("切会话后内容级复核判否（%s）⇒ 这条不发（防发错人）", _idwhy)
+                                    return False, ("切完会话后**内容级复核说不是这个会话**（%s）⇒ 这条不发 —— "
+                                                   "宁可漏发，绝不发错人。" % str(_idwhy)[:60])
+                                if _idn is None:
+                                    # ⚠️ 2026-09-18 修（拍摄现场实测：「他点对了会话，然后待在那啥也不干、不发图」）：
+                                    #   原来这里把"拿不到证据"也当成拒发 ⇒ **最近消息全是图/表情/语音的群永远发不出去**
+                                    #   （演示群实测：可比对文本 0 条）。⇒ 拿不到文本证据时**退回名字这一档**：
+                                    #   要求"绿底高亮行 + 名字与目标名精确命中"（这已是名字类里最强的一档），
+                                    #   过了就放行并**记账留痕**；不过仍然拒发。
+                                    _nm_ok, _nm_why = self.chat_is_open(chat_id, gui=gui, name=name)
+                                    if not _nm_ok:
+                                        log.warning("无可比对文本，且名字档也没确认（%s）⇒ 这条不发", _nm_why)
+                                        return False, ("这个会话里没有能比对的文字（%s），名字档也没确认（%s）⇒ "
+                                                       "这条不发。把目标会话在微信里点开、或让它有一条文字消息，再重试。"
+                                                       % (str(_idwhy)[:50], str(_nm_why)[:50]))
+                                    log.info("该会话没有可比对文本（%s）⇒ 按**名字精确命中**放行（记账）：%s",
+                                             str(_idwhy)[:40], str(_nm_why)[:40])
                                 # 授权依据＝上面的 OCR 名字确认（绿底高亮行 + 名字比对，独立于指纹闸）
                                 #   ＋ 这里刚补的**内容级复核**（两道独立证据）
                                 ok, msg = self.send_text_posted(text, chat_id, allow_no_ref=True)
@@ -3484,6 +3496,14 @@ class WeChatAdapter:
             _ok_t, _why_t = self._active_row_time_ok(chat_id, pane=pane, gui=gui)
             if _ok_t:
                 return True, _why_t
+            # 再一档：**聊天区里的消息时间 × DB 里那条消息的时间**（2026-09-18 拍摄现场实测后加）
+            #   现场：对方会话最近全是图片/表情 ⇒ 可视区里**只有时间戳、没有文字**（实测只读到
+            #   `昨天20：17昨天20：36`），文字早滚出视口 ⇒ 上面所有"文字类"证据全部落空 ⇒
+            #   明明点对了会话却 fail-closed **拒发**（用户看到的就是"点对了却不发图"）。
+            #   而**时间戳读得到** ⇒ 拿它做"屏幕 × DB"两个独立来源的比对，只支持相对日与今天的裸 HH:MM。
+            _ok_pt, _why_pt, _pt_hits = self._pane_time_hits(chat_id, pane)
+            if _ok_pt:
+                return True, _why_pt
             # ⚠️ 失败信息里**必须带观测量**（2026-09-16 跨机需求②「内容级闸的 OCR 口径」）：
             #    只报"没有目标会话的任何一条文本"分不清 **"根本没有信号"** 与 **"信号被阈值判掉"**
             #    （前者该判否，后者说明阈值/归一化有问题）⇒ 把聊天区读到多少字、每条针的最好匹配
@@ -3540,6 +3560,57 @@ class WeChatAdapter:
                              else "，且该时刻在会话列表里唯一（只有一个会话是它）"))
         return False, ("高亮行时间 %s 与目标一致，但聊天区里没有同一时刻、该时刻在列表里也不唯一（%d 行）"
                        % (_ht, _n))
+
+    def _pane_time_hits(self, chat_id: str, pane: str, limit: int = 20) -> tuple:
+        """聊天区里的**消息时间**对得上目标会话最近 N 条吗？→ `(ok, 说明, 命中列表)`。
+
+        为什么单列一档（2026-09-18 拍摄现场实测）：内容级复核要求"聊天区里出现目标会话最近的**文本**"，
+        可那个会话最近全是图片/表情 —— 可视区里**只有时间戳**（实测只读到 `昨天20：17昨天20：36`），
+        文字早滚出视口 ⇒ 文字类证据全落空 ⇒ 明明点对了会话却 fail-closed 拒发。
+        ⇒ 用**时间**当独立证据：屏幕上的时间戳 × 库里那条消息的时间，两个来源对得上就算。
+        只认相对日（今天/昨天/前天）与今天的裸 `HH:MM`；显式日期（9月17日）**不猜** —— 宁可给不出证据。
+        """
+        import datetime as _dt
+        import re as _re
+        _pane = str(pane or "")
+        if not _pane:
+            return False, "聊天区没读到任何文字", []
+        try:
+            rows = self._db.get_messages(chat_id, limit=max(int(limit), 1)) or []
+        except Exception as e:
+            return False, "读不到目标会话的消息（%s）" % str(e)[:40], []
+        want = set()
+        for r in rows:
+            try:
+                t = float(r.get("create_time") or 0)
+                if t > 1e12:
+                    t = t / 1000.0
+                lt = time.localtime(t)
+            except Exception:
+                continue
+            want.add((lt.tm_year, lt.tm_mon, lt.tm_mday, lt.tm_hour, lt.tm_min))
+        if not want:
+            return False, "目标会话最近 %d 条没有可用时间" % len(rows), []
+        now = time.localtime()
+        today = _dt.date(now.tm_year, now.tm_mon, now.tm_mday)
+        hits, seen = [], set()
+        for m in _re.finditer(r"(昨天|今天|前天)?\s*(\d{1,2})\s*[:：]\s*(\d{2})", _pane):
+            word = m.group(1) or "今天"
+            hh, mm = int(m.group(2)), int(m.group(3))
+            if hh > 23 or mm > 59:
+                continue
+            d = today - _dt.timedelta(days={"昨天": 1, "前天": 2}.get(word, 0))
+            key = (d.year, d.month, d.day, hh, mm)
+            if key in want and key not in seen:
+                seen.add(key)
+                hits.append((key, m.group(0)))
+        if not hits:
+            _n_ts = len(_re.findall(r"\d{1,2}\s*[:：]\s*\d{2}", _pane))
+            return False, ("聊天区里的时间戳（%d 个）都对不上目标会话最近 %d 条的时间"
+                           % (_n_ts, len(want))), []
+        sample = "、".join(str(h[1]).strip() for h in hits[:3])
+        return True, ("聊天区里的消息时间与目标会话最近的消息一致（%s）⇒ 判是这个会话"
+                      "（时间档证据：屏幕时间戳 × DB 时间，两个独立来源）" % sample), hits
 
     def _last_time_hhmm(self, chat_id: str) -> str:
         """目标会话**最后一条消息**在会话列表里显示的时间（`H:MM`）；不是今天的消息就返回 ''。

@@ -272,7 +272,7 @@ def webview_ready() -> dict:
     return rep
 
 
-def open_console(url: str = "", browser_path: str = "", take_lock: bool = True) -> dict:
+def open_console(url: str = "", browser_path: str = "", take_lock: bool = True, mode: str = "") -> dict:
     """自己开一个控制台窗口（**单点**：所有入口共用一把锁 + 一个优先级）。
 
     优先级（2026-09-13 口径：控制台不再依赖浏览器；2026-09-17 加"复用"）：
@@ -309,6 +309,14 @@ def open_console(url: str = "", browser_path: str = "", take_lock: bool = True) 
         _ex = 0
     if _ex and _u().IsWindow(_ex):
         try:
+            if str(mode or "") == "quiet":
+                # 🔴 2026-09-18（用户实测反馈：「我在打游戏，这玩意还是会跳出来」）：
+                #   机器人**自己**在后台开的窗（启动时那一次、以及任何自动调用）**不许把控制台抬到前台** ——
+                #   只闪任务栏就够了：用户想看的自然会点任务栏，不想看的不该被顶出游戏。
+                #   要抬起来只有一种情况：**用户自己点了**「打开控制台」（调用方显式要求 attention）。
+                flash(_ex)
+                return {"ok": True, "how": "reuse", "why": "已复用在后台开着的控制台窗口（只闪任务栏，不抬前台）",
+                        "hwnd": _ex, "ready": ready, "raised": False}
             _rp = raise_without_stealing(_ex)
             return {"ok": True, "how": "reuse", "why": "已复用开着的控制台窗口（不新开）",
                     "hwnd": _ex, "ready": ready, "raise": _rp}
