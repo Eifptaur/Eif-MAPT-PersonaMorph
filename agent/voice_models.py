@@ -24,10 +24,13 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 import time
 import urllib.error
 import urllib.request
+
+log = logging.getLogger("persona-morph")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_TIMEOUT = 30
@@ -263,7 +266,22 @@ def probe_vc(url: str = "", timeout: int = DEFAULT_TIMEOUT, cfg: dict | None = N
 def make(text: str, cfg: dict | None = None, timeout: int = DEFAULT_TIMEOUT):
     """`make` = TTS 合成（+ 可选的**变声段**）。返回契约与 `tts.make()` 完全相同。"""
     c = cfg if isinstance(cfg, dict) else _cfg()
+    # 念之前先**整形**（断句 + 多音字，2026-09-17 用户：「行行行」被念成「行行hang行」）。
+    # 放在这里＝所有后端（edge/sapi/http）与所有调用方（含控制台「试听」）都吃到同一条规则。
+    _notes = []
+    try:
+        from . import tts_text as _tt
+        _t, _notes = _tt.prep(text, c)
+        if _t:
+            text = _t
+            if _notes:
+                log.info("TTS 文本整形：%s ｜ %s", "；".join(_notes), text[:80])
+    except Exception as _e:                                             # noqa: BLE001
+        log.warning("TTS 文本整形失败（按原文念）：%s", str(_e)[:80])
     path, why, info = _make_raw(text, c, timeout)
+    if isinstance(info, dict) and _notes:
+        info["tts_text_notes"] = list(_notes)
+        info["tts_text"] = text
     if not path:
         return path, why, info
     if not vc_url(c):

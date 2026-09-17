@@ -132,7 +132,7 @@ ib._post, ib.to_client, ib.time.sleep = orig_post, orig_to_client, _real_sleep
 print("[R] 棘轮（真实输入 API 的下沉点）")
 PAT = re.compile(r"\.\s*(mouse_event|SetCursorPos|SendInput|keybd_event)\s*\(")
 BASELINE = {
-    ROOT + os.sep + "agent" + os.sep + "ui_adapt.py",      # L0 唯一下沉点（heal_input / 真鼠标 click）
+    ROOT + os.sep + "agent" + os.sep + "ui_adapt.py",      # L0 唯一下沉点（heal_input / real_guard / click_real_hold）
     ROOT + os.sep + "agent" + os.sep + "wechat.py",        # 待收口（21 处）
     ROOT + os.sep + "agent" + os.sep + "wechat_ui.py",     # 待收口（7 处）
     ROOT + os.sep + "scripts" + os.sep + "persona_morph.py",  # 待收口（1 处）

@@ -320,6 +320,47 @@ def real_guard(x: int, y: int, gui=None, extra_hwnds: tuple = ()) -> tuple:
         return False, "real_guard 异常（按「不打」处理）：%s" % str(e)[:80]
 
 
+def click_real_hold(gui, x: int, y: int, right: bool = False, settle_ms: int = 180,
+                    hold_ms: int = 120, extra_hwnds: tuple = ()) -> tuple:
+    """真鼠标**按住一会儿再松开**（给"只认真点"的自绘控件用），且**点完把光标放回原处**。
+
+    为什么单独一个（2026-09-17 真语音条实机取证）：微信输入区那两个控件——"进录音态的圆圈"和
+    "录音态里的绿色发送"——**对投递点击只出悬停高亮**（四种投递变体实测都不进录音态），
+    只能真点；而"不动用户鼠标"是硬口径 ⇒ 这一枪必须：①先过 `real_guard`（确认这点真属于微信；
+    用户正在动鼠标导致 `SetCursorPos` 失败就**不打**）；②自己控节奏（移到位→等 `settle_ms`→按下→
+    按住 `hold_ms`→松开），实测 180ms/120ms 才被这两个控件吃下；③**前后 `GetCursorPos` 一致**。
+
+    与 `click()` 的分工：`click()` 走 `gui.wx_click`（库自己的节奏，够用于绝大多数控件）；
+    本函数用于"按住时长/落点稳定性会影响成败"的那几个。x/y 同 `click()`＝**渲染区相对**坐标。
+    """
+    old = None
+    try:
+        pt = wintypes.POINT()
+        if _user32.GetCursorPos(ctypes.byref(pt)):
+            old = (int(pt.x), int(pt.y))
+    except Exception:
+        old = None
+    try:
+        sx, sy = to_click(int(x) + int(gui.origin_x), int(y) + int(gui.origin_y))
+        ok, why = real_guard(sx, sy, gui=gui, extra_hwnds=tuple(extra_hwnds))
+        if not ok:
+            return False, why
+        time.sleep(max(0, int(settle_ms)) / 1000.0)
+        down, up = (0x0008, 0x0010) if right else (0x0002, 0x0004)
+        _user32.mouse_event(down, 0, 0, 0, 0)
+        time.sleep(max(1, int(hold_ms)) / 1000.0)
+        _user32.mouse_event(up, 0, 0, 0, 0)
+        return True, "真点 (%d,%d)（按住 %dms）" % (sx, sy, int(hold_ms))
+    except Exception as e:
+        return False, "click_real_hold 异常：%s" % str(e)[:80]
+    finally:
+        if old:
+            try:
+                _user32.SetCursorPos(int(old[0]), int(old[1]))
+            except Exception:
+                pass
+
+
 def _restore_wechat_window(gui) -> bool:
     """按进程枚举找「微信」主窗并恢复（窗口最小化/隐藏/移出屏时自愈）。
 

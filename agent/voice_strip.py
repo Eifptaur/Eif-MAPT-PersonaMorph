@@ -26,6 +26,105 @@ DEFAULT_SEND = (0.932, 0.945)
 #: 试标定时沿这一行扫的候选 x 比例（y 取 DEFAULT_SEND 同一带）
 CALIB_XS = (0.86, 0.89, 0.92, 0.95)
 
+#: 输入条图标行的机械定位（2026-09-17 实机取证）：右侧那个圆圈＝"按住说话"入口。
+#: ⚠️ 它的比例**会漂**——右侧栏（聊天信息）开着时实测 0.745，关着时 0.878
+#: （同一台机器、同一个窗口尺寸，差 0.13＝155px，足够点到空白处）⇒ **不许硬编码**：
+#: 每次发送前扫一遍图标行现算（扫不到才退回配置值/兜底候选）。
+RECORD_X_MIN = 0.60     # 圆圈一定在输入条右半（左半是表情/盒子/文件夹/剪刀/麦克风）
+RECORD_X_MAX = 0.92     # 别撞上最右边那个「发送」按钮
+RECORD_FALLBACKS = (0.878, 0.90, 0.86)   # 兜底候选：全 ≥0.8，绝不会点到文件夹/表情那些"会弹窗"的图标
+METER_X = (0.56, 0.82)  # 录音态里那串绿色**音量点**的横带（用来判"音频有没有真进微信的麦克风"）
+METER_Y = (0.86, 0.98)
+GREEN_X_MIN = 0.78      # 「绿色发送 ↑」一定在这一带右侧（音量点在它左边，别把均值带偏）
+CANCEL_X = 0.588        # 录音态里那个 ✕（实测 1400/2382；只在前一轮没退干净时用来救场）
+
+
+def pick_record_x(cols, width, x_min=RECORD_X_MIN, x_max=RECORD_X_MAX):
+    """从**暗点列剖面**里挑「进录音态那个圆圈」的 x 比例（纯函数，便于离线自检）。
+
+    ① 列计数聚簇（空 1 列以上即断开）；② 只留中心比例落在 [x_min, x_max] 的簇；
+    ③ 取**最左**那个 —— 输入框里打了字时「发送」也会变深成簇，而它在圆圈右边，
+    所以"右区最左的簇"才是圆圈（实测：圆圈 0.878、发送 0.93）。
+    找不到 ⇒ None（调用方退回配置值 / 兜底候选）。
+    """
+    try:
+        w = float(width or 0)
+        if w <= 0 or not cols:
+            return None
+        thr = max(2, int(max(cols) * 0.12))
+        cl, s = [], None
+        for x, v in enumerate(cols):
+            on = int(v) >= thr
+            if on and s is None:
+                s = x
+            elif not on and s is not None:
+                if x - s >= 3:
+                    cl.append((s, x - 1))
+                s = None
+        if s is not None:
+            cl.append((s, len(cols) - 1))
+        m = []
+        for c in cl:
+            if m and c[0] - m[-1][1] <= 14:
+                m[-1] = (m[-1][0], c[1])
+            else:
+                m.append((c[0], c[1]))
+        good = [c for c in m if x_min <= ((c[0] + c[1]) / 2.0 / w) <= x_max]
+        if not good:
+            return None
+        a, b = good[0]
+        return (a + b) / 2.0 / w
+    except Exception:
+        return None
+
+
+def _icon_cols(gui):
+    """抓一帧渲染图 → 找输入条图标行 → (列剖面, 图宽, 行 y) 或 None。"""
+    try:
+        from . import chat_header as ch
+        img = ch.grab_render(gui)
+        if img is None:
+            return None
+        g = img.convert("L")
+        w, h = g.size
+        band = g.crop((0, int(h * 0.86), w, h))
+        px = band.load()
+        bw, bh = band.size
+        rows = []
+        for y in range(0, bh, 2):
+            n = 0
+            for x in range(0, bw, 2):
+                if px[x, y] < 128:
+                    n += 1
+            rows.append((n, y))
+        rows.sort(reverse=True)
+        y0 = rows[0][1] if rows else 0
+        cols = [0] * bw
+        for y in range(max(0, y0 - 12), min(bh, y0 + 13)):
+            for x in range(bw):
+                if px[x, y] < 128:
+                    cols[x] += 1
+        return cols, bw, int(h * 0.86) + y0, h
+    except Exception:
+        return None
+
+
+def locate_record(gui, cfg=None) -> tuple:
+    """现算「按住说话」圆圈的 x 比例 ⇒ (x, 来源说明)。"""
+    c = _cfg(cfg)
+    got = _icon_cols(gui)
+    if got:
+        x = pick_record_x(got[0], got[1])
+        if x:
+            return x, "扫图标行现算"
+    rb = c.get("record_btn") or []
+    try:
+        if rb and float(rb[0]) >= 0.80:
+            return float(rb[0]), "配置 voice_strip.record_btn"
+    except Exception:
+        pass
+    return RECORD_FALLBACKS[0], "兜底候选"
+
 
 def _cfg(cfg=None) -> dict:
     try:
@@ -93,10 +192,11 @@ def status(cfg=None) -> dict:
         why = why_out
     elif not eng.get("ok"):
         why = "没有可用的合成引擎：%s" % (eng.get("why") or "未知")
-    elif not calibrated:
-        why = "还没标定微信那个「进录音态」的圆圈位置（跑一次 voice_strip.calibrate 即可；标定按钮下版补到控制台）"
+    # ⚠️ 位置**不再是前置条件**（2026-09-17）：`_enter_record` 每次发送前都会扫输入条图标行现算，
+    #   配置里的 record_btn 只当兜底 ⇒ 这里不再因为"没标定"而拒发（那条老提示会把能用的人挡在门外）。
     return {"ok": not why, "why": why, "mic": mic, "out_dev": name, "out_idx": idx,
             "engine": (eng.get("engine") or eng.get("backend") or ""), "calibrated": calibrated,
+            "auto_locate": True,
             "switch": bool(c.get("enabled"))}
 
 
@@ -163,29 +263,15 @@ def _real_click(wechat, gui, rel_x: int, rel_y: int) -> tuple:
     ⇒ 真语音条这条路**必然要动两下光标**，所以它：
       ① 必须显式开启（`voice_strip.real_click`，默认 true 但控制台写明"会动两下光标"）；
       ② 用完**立刻把光标放回原位**并在日志/返回里说明（不许悄悄动）。
+
+    实现落在 `ui_adapt.click_real_hold`（L0 唯一下沉点）：那边动手前会过 `real_guard`
+    （确认这点真属于微信，用户正在用鼠标导致光标没到位就**不打这一枪**），并负责把光标放回去。
     """
-    import ctypes
-    import ctypes.wintypes as wt
-    u = ctypes.windll.user32
-    r = gui.render_rect or (0, 0, 0, 0)
-    sx, sy = int(r[0]) + int(rel_x), int(r[1]) + int(rel_y)
-    p = wt.POINT()
-    u.GetCursorPos(ctypes.byref(p))
-    old = (p.x, p.y)
     try:
-        u.SetCursorPos(sx, sy)
-        time.sleep(0.18)
-        u.mouse_event(0x0002, 0, 0, 0, 0)     # LEFTDOWN
-        time.sleep(0.12)
-        u.mouse_event(0x0004, 0, 0, 0, 0)     # LEFTUP
-        return True, "真点 (%d,%d)（光标已还原到 %s）" % (sx, sy, old)
-    except Exception as e:
-        return False, "真点失败：%s" % e
-    finally:
-        try:
-            u.SetCursorPos(int(old[0]), int(old[1]))
-        except Exception:
-            pass
+        from . import ui_adapt
+    except Exception as e:                                    # pragma: no cover
+        return False, "拿不到 ui_adapt：%s" % e
+    return ui_adapt.click_real_hold(gui, int(rel_x), int(rel_y))
 
 
 def _green_center(gui):
@@ -244,6 +330,117 @@ def _green_cluster(gui) -> bool:
         return hits >= 12
     except Exception:
         return False
+
+
+def _meter_level(gui) -> int:
+    """录音态里那串**绿色音量点**亮了多少像素 ⇒ 判"音频到底有没有进微信的麦克风"。
+
+    为什么要有它（2026-09-17）：整条链能"发出一个语音条"，但**没人能保证条里有声音**——
+    虚拟声卡没被微信选成麦克风时，发出去的就是一条静音语音条（比文件更糟：对方点开什么都听不到，
+    而我们自己还报"成功"）。这条读数让产品能**在发之前**发现并如实拒发。
+    """
+    try:
+        from . import chat_header as ch
+        img = ch.grab_render(gui)
+        if img is None:
+            return 0
+        w, h = img.size
+        box = (int(w * METER_X[0]), int(h * METER_Y[0]), int(w * METER_X[1]), int(h * METER_Y[1]))
+        band = img.crop(box).convert("RGB")
+        px = band.load()
+        bw, bh = band.size
+        n = 0
+        for y in range(0, bh, 2):
+            for x in range(0, bw, 2):
+                r, g, b = px[x, y]
+                if g > r + 25 and g > b + 25 and g > 90:
+                    n += 1
+        return n
+    except Exception:
+        return 0
+
+
+def _green_send(gui):
+    """录音态里那个**绿色发送 ↑**的坐标（渲染相对像素）。
+
+    取**最右**的绿簇，不用全部绿像素的均值——左边那串音量点也是绿的，均值会被它带偏
+    （实测均值落在 (1112,831)＝比例 0.934，而 ↑ 与音量点混在一张图里时这个均值不稳）。
+    """
+    try:
+        from . import chat_header as ch
+        img = ch.grab_render(gui)
+        if img is None:
+            return None
+        w, h = img.size
+        band = img.crop((int(w * GREEN_X_MIN), int(h * 0.84), w, h)).convert("RGB")
+        px = band.load()
+        bw, bh = band.size
+        xs, ys = [], []
+        for y in range(0, bh, 2):
+            for x in range(0, bw, 2):
+                r, g, b = px[x, y]
+                if g > r + 25 and g > b + 25 and g > 90:
+                    xs.append(x)
+                    ys.append(y)
+        if len(xs) < 8:
+            return None
+        return (int(w * GREEN_X_MIN) + sum(xs) // len(xs), int(h * 0.84) + sum(ys) // len(ys))
+    except Exception:
+        return None
+
+
+def _play_with_meter(gui, wav: str, out_name: str = "") -> tuple:
+    """**边播边量**音量点 ⇒ (播放结果, 播放前底色, 播放中峰值)。"""
+    import threading
+    res = {}
+
+    def _run():
+        try:
+            res["r"] = play_to_cable(wav, out_name)
+        except Exception as e:
+            res["r"] = (False, "播放异常：%s" % e)
+
+    base = _meter_level(gui)
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    peak = 0
+    while t.is_alive():
+        peak = max(peak, _meter_level(gui))
+        time.sleep(0.15)
+    t.join(timeout=8.0)
+    return res.get("r", (False, "播放线程没有返回")), base, peak
+
+
+def _enter_record(wechat, gui, cfg=None, rw: int = 0, rh: int = 0) -> tuple:
+    """进录音态：**逐个候选位置真点**，谁点出绿簇就是它 ⇒ (ok, 说明, x比例)。
+
+    候选顺序＝扫图标行现算 → 兜底表（全 ≥0.8，点空/点发送都无害）；
+    每个位置允许多点一次（自绘控件偶发丢第一下）。一个都不成 ⇒ 如实返回失败。
+    """
+    c = _cfg(cfg)
+    rb = c.get("record_btn") or [0.878, 0.943]
+    try:
+        ry = int(rh * float(rb[1]))
+    except Exception:
+        ry = int(rh * 0.943)
+    x_scan, src = locate_record(gui, cfg)
+    cands = [x_scan] + [x for x in RECORD_FALLBACKS if abs(x - x_scan) > 0.01]
+    why = []
+    for x in cands:
+        for attempt in (1, 2):
+            try:
+                _click(wechat, gui, int(rw * x), ry, c)
+            except Exception as e:
+                why.append("x=%.3f 点击异常：%s" % (x, str(e)[:40]))
+                break
+            time.sleep(1.0)
+            if _green_cluster(gui):
+                tag = src if abs(x - x_scan) < 1e-9 else "兜底候选"
+                if attempt == 2:
+                    tag += "·第二下才中"
+                return True, "在 x=%.3f 进录音态（%s）" % (x, tag), x
+        why.append("x=%.3f 没反应" % x)
+    return False, "候选位置都点了却没进录音态（%s）" % "；".join(why), x_scan
 
 
 def calibrate(wechat, save: bool = True, log=None) -> dict:
@@ -343,40 +540,81 @@ def send(wechat, chat_id: str, text: str, cfg=None, timeout: float = 60.0) -> tu
     wav, why2 = _ensure_wav(path)
     if not wav:
         return False, why2, info or {}
-    gui = wechat._get_gui()
-    gui._update_render_rect()
+    try:
+        gui = wechat._get_gui()
+        gui._update_render_rect()
+    except Exception as e:
+        # 拿不到窗口（微信没开 / 适配器不可用）⇒ 如实失败，绝不抛出去（抛出去连"回退成文件"都没机会）
+        return False, "拿不到微信窗口（%s）⇒ 真语音条发不了" % str(e)[:60], info or {}
     r = gui.render_rect or (0, 0, 0, 0)
     rw, rh = int(r[2] - r[0]), int(r[3] - r[1])
-    rb = c.get("record_btn") or [0.92, 0.95]
-    sb = c.get("send_btn") or list(DEFAULT_SEND)
-    before = _latest_voice_seq(wechat, chat_id)
+    rb = c.get("record_btn") or [0.878, 0.943]
+    # ⓿ 会话闸（2026-09-17 补）：录音只会进**当前打开**的会话 ⇒ 目标不对就先投递切过去，
+    #   切不过去就**不发**。为什么要这道闸：把语音发到错的人那里是不可逆的社交事故，
+    #   而投递切会话本来就有 OCR 确认（`switch_chat_posted`），成本很低。
     try:
-        # ⓿ 开录前先确保**不在**录音态：上一轮若没退干净，再点那个按钮就变成"结束/取消"（实测踩过）
+        name = ""
+        try:
+            name = wechat.display_name(chat_id) or chat_id
+        except Exception:
+            name = chat_id
+        okc, whyc = wechat.chat_is_open(chat_id, gui=gui, name=name)
+    except Exception as e:
+        okc, whyc = False, "会话检查不可用：%s" % str(e)[:50]
+    if not okc:
+        try:
+            oks, whys = wechat.switch_chat_posted(chat_id, gui=gui, name=name)
+        except Exception as e:
+            oks, whys = False, "切会话异常：%s" % str(e)[:60]
+        if not oks:
+            return False, ("当前打开的会话不是目标会话，切不过去 ⇒ **不发语音条**"
+                           "（发错人不可逆；%s）" % str(whys)[:80]), info or {}
+    before = _latest_voice_seq(wechat, chat_id)
+    base = peak = 0
+    x_used = None
+    try:
+        # ⓵ 开录前先确保**不在**录音态：上一轮若没退干净，再点那个圆圈就变成"结束/取消"（实测踩过）
         try:
             if _green_cluster(gui):
-                _click(wechat, gui, int(rw * 0.30), int(rh * rb[1]), c)   # 点 ✕ 退出来
+                _click(wechat, gui, int(rw * CANCEL_X), int(rh * rb[1]), c)   # 点 ✕ 退出来
                 time.sleep(0.8)
         except Exception:
             pass
-        _click(wechat, gui, int(rw * rb[0]), int(rh * rb[1]), c)   # ① 进录音态（真点，见 _real_click）
-        time.sleep(1.0)
-        if not _green_cluster(gui):
-            return False, ("点了录音按钮但**没进录音态**（微信这个控件只认真实点击；"
-                           "若 voice_strip.real_click 关着就打开它，或者先跑一次 calibrate）"), info or {}
-        okp, whyp = play_to_cable(wav)                             # ② 边录边播
+        ok_in, why_in, x_used = _enter_record(wechat, gui, cfg, rw, rh)      # ⓶ 进录音态
+        if not ok_in:
+            return False, ("点了录音按钮但**没进录音态**（%s）（真语音条只认真实点击；"
+                           "若 voice_strip.real_click 关着就打开它）" % why_in), info or {}
+        (okp, whyp), base, peak = _play_with_meter(gui, wav)                 # ⓷ 边录边播
         if not okp:
             try:
-                _click(wechat, gui, int(rw * 0.30), int(rh * rb[1]), c)   # 失败：取消，别留残余
+                _click(wechat, gui, int(rw * CANCEL_X), int(rh * rb[1]), c)   # 失败：取消，别留残余
             except Exception:
                 pass
             return False, whyp, info or {}
+        if bool(c.get("meter_guard", True)) and peak <= base:
+            try:
+                _click(wechat, gui, int(rw * CANCEL_X), int(rh * rb[1]), c)
+            except Exception:
+                pass
+            return False, ("音频**没进到微信的麦克风**（录音那条音量点一直没亮：底色 %d、播放峰值 %d）"
+                           "⇒ 已取消，不给你发一条静音语音条。查一下微信的麦克风是不是选成了"
+                           "「CABLE Output」（关掉这道校验：voice_strip.meter_guard）" % (base, peak)), info or {}
         time.sleep(0.5)
-        g = _green_center(gui)                                      # ③ 那个绿色发送（找位置比写比例稳）
-        sx, sy = (g if g else (int(rw * sb[0]), int(rh * sb[1])))
-        _click(wechat, gui, sx, sy, c)
+        g = _green_send(gui) or _green_center(gui)                           # ⓸ 绿色发送 ↑
+        if not g:
+            try:
+                _click(wechat, gui, int(rw * CANCEL_X), int(rh * rb[1]), c)
+            except Exception:
+                pass
+            return False, "录音态里找不到绿色发送按钮（已取消，没发出去）", info or {}
+        _click(wechat, gui, g[0], g[1], c)
     except Exception as e:
         return False, "微信侧操作失败：%s" % e, info or {}
     ok, msg = _wait_voice(wechat, chat_id, before, timeout=12.0)
+    if isinstance(info, dict):
+        info = dict(info)
+        info["meter"] = {"base": base, "peak": peak}
+        info["record_x"] = x_used
     return ok, (msg if ok else ("语音条没发出去：%s" % msg)), info or {}
 
 

@@ -80,7 +80,9 @@ def mkctx(wechat=None):
 
 d = {x["name"]: x for x in TL.build_tool_defs()}
 ok("注册了 send_voice_reply", "send_voice_reply" in d)
-ok("描述里写明是音频文件不是语音条", "不是微信语音条" in str(d.get("send_voice_reply", {}).get("description")))
+ok("描述里写明默认是真语音条、前提不齐才回退成文件",
+   "真语音条" in str(d.get("send_voice_reply", {}).get("description"))
+   and "音频文件" in str(d.get("send_voice_reply", {}).get("description")))
 ok("描述里提到功能没开会返回原因", "返回原因" in str(d.get("send_voice_reply", {}).get("description")))
 
 # 功能默认关 ⇒ 一次都不许发送
