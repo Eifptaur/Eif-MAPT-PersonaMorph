@@ -358,6 +358,30 @@ def main():
         ok("⑪ 静态：闸表里有 `_get_uia`", '("_get_uia", None)' in usrc)
         ok("⑪ 静态：我们自己不直接构造 `WeChatUIA(`（只走 gui._get_uia，已上闸）",
            "WeChatUIA(" not in wsrc)
+
+        # ⑫ ⭐⭐ `WM_CLOSE` 的**唯一咽喉点**：绝不关微信主窗 / 渲染子窗
+        #     事故（作者原话：「应该算是那种直接点击"叉号"级别的收回…就在你右键点击到我头像的
+        #     那一刻的下一刻」）：`_reattach_if_floating()` 只跳过**当时记下的** main 句柄，
+        #     Qt 一重建主窗，新 hwnd 就不在白名单里 ⇒ **主窗被当浮动窗 WM_CLOSE 掉**
+        #     （2026-09-16 同型事故第二次）。
+        import win32gui as _w32
+        import agent.input_backend as _ib2
+        from agent import wechat as _wx2
+        _o_find, _o_rc = _ib2.find_main_window, _ib2.find_render_child
+        _ib2.find_main_window = lambda: 11111
+        _ib2.find_render_child = lambda m: 22222
+        try:
+            _real_other = int(_w32.FindWindow("Shell_TrayWnd", None) or 0)
+            ok("⑫ 拒绝把 `WM_CLOSE` 投给**主窗**", _wx2._wm_close_safe(11111, "自检") is False)
+            ok("⑫ 拒绝把 `WM_CLOSE` 投给**渲染子窗**", _wx2._wm_close_safe(22222, "自检") is False)
+            ok("⑫ hwnd=0 直接拒绝", _wx2._wm_close_safe(0, "自检") is False)
+            ok("⑫ 普通窗**放行**（拿任务栏真窗口做正例，防误杀）",
+               bool(_real_other) and _wx2._wm_close_safe(_real_other, "自检") is True, _real_other)
+        finally:
+            _ib2.find_main_window, _ib2.find_render_child = _o_find, _o_rc
+        ok("⑫ 静态：所有 `WM_CLOSE` 投递点都过咽喉点（≥5 处调用 + 1 处定义）",
+           wsrc.count("_wm_close_safe(") >= 6, wsrc.count("_wm_close_safe("))
+        ok("⑫ 静态：咽喉点注释里写明了「同型事故第二次」", "同型事故第二次" in wsrc)
     finally:
         cfg_mod.get_config = real_get
 

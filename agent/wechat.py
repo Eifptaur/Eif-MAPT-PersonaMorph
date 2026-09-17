@@ -476,6 +476,50 @@ def _click_dialog_open(hwnd: int) -> tuple:
         return False, "BM_CLICK 点「打开」异常：%s" % e
 
 
+def _wm_close_safe(hwnd: int, why: str = "") -> bool:
+    """投递 `WM_CLOSE` 前的**唯一咽喉点**：**绝不关微信主窗 / 渲染子窗**。
+
+    ⛔ 为什么必须有它（**同型事故第二次**，2026-09-18 作者原话：
+      「直接把它收回任务栏了…应该算是那种直接点击『叉号』级别的收回…就在你右键点击到我头像的那一刻的下一刻」）：
+      · 2026-09-16 已经出过一次：「主窗被 Qt 重建、hwnd 变了 ⇒ 被当成菜单窗 WM_CLOSE 掉
+        ⇒ 用户的微信主窗口整个消失」；
+      · 本轮嫌疑最大的是 `_reattach_if_floating()`：它靠"标题含会话名 + 类名 Qt 开头"挑窗、
+        只跳过**当时记下的** `main` 句柄 ⇒ **主窗一被 Qt 重建，新 hwnd 就不在白名单里**，
+        于是主窗被当"浮动聊天窗"关掉（正是"叉号级别收进任务栏"）。
+    ⇒ 规矩：任何 `WM_CLOSE` 之前**当场重新取一次主窗与渲染子窗**（`find_main_window()` 不看可见性），
+      命中就**拒绝并留日志**——宁可留一个浮层在屏幕上，也绝不许关用户的窗。
+    """
+    try:
+        h = int(hwnd or 0)
+        if not h:
+            return False
+        try:
+            import win32gui
+            if not win32gui.IsWindow(h):
+                return False
+        except Exception:
+            pass
+        main = 0
+        render = 0
+        try:
+            from . import input_backend as _ib
+            main = int(_ib.find_main_window() or 0)
+            if main:
+                try:
+                    render = int(_ib.find_render_child(main) or 0)
+                except Exception:
+                    render = 0
+        except Exception:
+            pass
+        if h in (main, render):
+            log.warning("⛔ 拒绝 WM_CLOSE：目标是**微信主窗/渲染子窗**（%s，hwnd=%d，main=%d）"
+                        "—— 宁可留浮层，绝不关用户的窗", why or "未注明", h, main)
+            return False
+        return True
+    except Exception:
+        return False
+
+
 def _close_search_popover(hwnd: int) -> bool:
     """投递 `WM_CLOSE` 关掉搜索浮层（对面 r12 实测：一枪就关，关掉后前台自动回微信主窗）。
 
@@ -487,6 +531,8 @@ def _close_search_popover(hwnd: int) -> bool:
         if not hwnd or not u.IsWindow(ctypes.c_void_p(int(hwnd))):
             return False
         u.PostMessageW.restype = ctypes.c_void_p
+        if not _wm_close_safe(hwnd, "关搜索浮层"):
+            return False
         u.PostMessageW(ctypes.c_void_p(int(hwnd)), 0x0010, 0, 0)      # WM_CLOSE
         return True
     except Exception:
@@ -498,7 +544,7 @@ def _close_file_dialog(hwnd: int) -> None:
     try:
         import win32con
         import win32gui
-        if hwnd and win32gui.IsWindow(int(hwnd)):
+        if hwnd and win32gui.IsWindow(int(hwnd)) and _wm_close_safe(hwnd, "关文件对话框"):
             win32gui.PostMessage(int(hwnd), win32con.WM_CLOSE, 0, 0)
             _wait_dialog_gone(int(hwnd))      # ⚠️ 必须等它**真消失**再还前台（见 _wait_dialog_gone）
             _restore_fg(0, "单框")
@@ -531,6 +577,8 @@ def _close_stale_file_dialogs() -> int:
 
         win32gui.EnumWindows(_cb, None)
         for h in hits:
+            if not _wm_close_safe(h, "清残留文件对话框"):
+                continue
             win32gui.PostMessage(int(h), win32con.WM_CLOSE, 0, 0)
             n += 1
         if n:
@@ -1257,6 +1305,10 @@ class WeChatAdapter:
         done = 0
         for h, t in hits[:2]:
             try:
+                # ⛔ 咽喉点：**决不许把关掉主窗**（Qt 重建过 hwnd 时，老 main 就不在白名单里了
+                #   ——2026-09-16 就是这么把用户的微信主窗 WM_CLOSE 掉的）
+                if not _wm_close_safe(h, "收回浮动聊天窗「%s」" % str(t)[:16]):
+                    continue
                 win32gui.PostMessage(h, 0x0010, 0, 0)   # WM_CLOSE ⇒ 独立窗关掉、聊天回主窗
                 done += 1
                 log.warning("发现聊天被独立成了浮动窗口「%s」⇒ 已收回（双击会话行的后果，已加防双击闸）",
@@ -3246,6 +3298,8 @@ class WeChatAdapter:
                     for _mh in (ib.menu_new_windows(_pid, ()) or []):
                         try:
                             import ctypes as _ct
+                            if not _wm_close_safe(_mh, "关发图残留菜单"):
+                                continue
                             _ct.windll.user32.PostMessageW(_ct.c_void_p(int(_mh)), 0x0010, 0, 0)
                         except Exception:
                             pass
