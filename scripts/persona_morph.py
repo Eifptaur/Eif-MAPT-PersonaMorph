@@ -2523,6 +2523,8 @@ def main():
                     _how = str(_rep.get("how") or "")
                     if _how == "webview":
                         log.info("已在我们自己的窗口里打开控制台（不依赖浏览器）")
+                    elif _how == "reuse":
+                        log.info("控制台已经开着 ⇒ 复用那个窗口（不再新开）")
                     elif _how == "browser":
                         log.info("自家控制台窗口不可用（%s）⇒ 已回退浏览器", _rep.get("why") or "原因未知")
                     elif _how == "skip":

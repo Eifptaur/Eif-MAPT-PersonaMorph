@@ -364,6 +364,8 @@ def _open_console(url, browser_path=""):
         how = str(rep.get("how") or "")
         if how == "webview":
             log("已在我们自己的窗口里打开控制台（不依赖浏览器）")
+        elif how == "reuse":
+            log("控制台已经开着 ⇒ 直接把那个窗口抬起来（不再新开，免得攒一堆窗口）")
         elif how == "browser":
             log("自家控制台窗口不可用（%s）⇒ 已回退浏览器" % (rep.get("why") or "原因未知"))
         elif how == "skip":

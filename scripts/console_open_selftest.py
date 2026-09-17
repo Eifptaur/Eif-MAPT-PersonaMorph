@@ -21,6 +21,7 @@
 
 用法：py -3 scripts/console_open_selftest.py
 """
+import ctypes
 import json
 import os
 import subprocess
@@ -126,8 +127,12 @@ else:
     ok("运行时缺失 ⇒ why 说清楚 + ok=False", (not _rd["ok"]) and bool(_rd["why"]), _rd["why"])
 
 print("── D. open_console：单点开窗（一把锁 + 一个优先级）──")
+# ⚠️ 2026-09-17 补：本段原来**没 mock `find_console_window`**，而它当时因为一个拼错的全局名
+#   （`_WNDUMPROC`）永远返回 0 ⇒ 复用分支从没被执行过，本段照样全绿（假绿）。现在显式钉住它。
 _real_popen, _real_ready, _real_url = NU.subprocess.Popen, NU.webview_ready, NU.console_url
 _real_lock = U.take_console_lock
+_real_findc, _real_raise = NU.find_console_window, NU.raise_without_stealing
+_GW = int(ctypes.windll.kernel32.GetConsoleWindow() or 0)     # 自检进程自己的控制台窗（真窗口）
 
 
 class _FakePopen(object):
@@ -140,6 +145,7 @@ try:
     NU.subprocess.Popen = _FakePopen
     NU.console_url = lambda anchor="": "http://127.0.0.1:39998/?token=ZZZ"
     U.take_console_lock = lambda *a, **k: True
+    NU.find_console_window = lambda: 0            # 本机没有开着的控制台 ⇒ 走"新开"分支
 
     NU.webview_ready = lambda: {"exe": True, "dll": True, "runtime": True, "runtime_ver": "1.0",
                                 "why": "", "ok": True}
@@ -168,10 +174,40 @@ try:
     _r4 = NU.open_console()
     ok("④ 拿不到地址 ⇒ ok=False + 原因（不瞎开一个 401 的页）",
        _r4.get("ok") is False and bool(_r4.get("why")), str(_r4.get("why"))[:40])
+
+    # ⑤ 已经有开着的控制台窗口 ⇒ **复用那个窗口**，一次都不新开
+    #    （用户 2026-09-17 原话：重启几次就攒出 4 个控制台，互相抢）
+    NU.console_url = lambda anchor="": "http://127.0.0.1:39998/?token=ZZZ"
+    NU.webview_ready = lambda: {"exe": True, "dll": True, "runtime": True, "runtime_ver": "1.0",
+                                "why": "", "ok": True}
+    _raised = []
+    NU.raise_without_stealing = lambda h=0: (_raised.append(int(h or 0)) or
+                                             {"ok": True, "hwnd": int(h or 0), "why": "假抬起"})
+    if _GW:
+        NU.find_console_window = lambda: _GW
+        calls[:] = []
+        _r5 = NU.open_console(take_lock=False)
+        ok("⑤ 已有开着的控制台 ⇒ how=reuse 且**一次都不新开**",
+           _r5.get("how") == "reuse" and len(calls) == 0, "%s / 新开=%d" % (_r5.get("how"), len(calls)))
+        ok("⑤ 复用报的是**那个**窗口句柄（不许抬错窗）", _raised == [_GW], str(_raised))
+    else:
+        skip("⑤ 复用已开的控制台", "本会话没有真窗口可用")
+
+    # ⑥ 复用失败（抬起抛异常）⇒ 必须**退回新开**，不许"什么都没发生"
+    def _boom(h=0):
+        raise RuntimeError("假失败：抬不起来")
+
+    NU.raise_without_stealing = _boom
+    NU.find_console_window = lambda: (_GW or 4242)
+    calls[:] = []
+    _r6 = NU.open_console(take_lock=False)
+    ok("⑥ 复用失败 ⇒ 退回新开窗口（不放空炮）",
+       _r6.get("how") == "webview" and len(calls) == 1, "%s / 新开=%d" % (_r6.get("how"), len(calls)))
 finally:
     NU.subprocess.Popen, NU.webview_ready = _real_popen, _real_ready
     NU.console_url = _real_url
     U.take_console_lock = _real_lock
+    NU.find_console_window, NU.raise_without_stealing = _real_findc, _real_raise
     rm_url_file()
 
 print("── D2. 真锁的行为（不 mock）：一次成功、期内再抢失败、过期可再抢 ──")
