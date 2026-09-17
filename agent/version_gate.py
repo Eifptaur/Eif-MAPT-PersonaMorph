@@ -71,6 +71,41 @@ def clear_allow() -> None:
         _allowed.clear()
 
 
+# ── 「发送被门拦下」的记账（2026-09-17 加）───────────────────────────────────────
+#   起因（用户「佬」报「能识别群，但发不了消息；概览多了 3 条累计会话，两个群都没收到」）：
+#   他的微信是 **4.1.15.9**（我们只实测到 4.1.15.8）⇒ 版本门按"未实测"**暂停了每一次自动发送**。
+#   门的行为本身是对的（fail-closed 是红线），错在**用户看不见**：他只看到"机器人不回话"。
+#   ⇒ 每一次被拦都要记账 + 给一句能照做的话，并让控制台能一眼看到（横幅 + 一键放行）。
+_blocked = {"count": 0, "last_reason": "", "last_at": 0.0, "capability": ""}
+
+
+def note_blocked(capability: str, reason: str) -> None:
+    """记一笔"因为版本门没发出去"（控制台横幅与报告都读它）。"""
+    try:
+        with _lock:
+            _blocked["count"] = int(_blocked.get("count") or 0) + 1
+            _blocked["last_reason"] = str(reason or "")[:200]
+            _blocked["last_at"] = time.time()
+            _blocked["capability"] = str(capability or "")
+    except Exception:
+        pass
+    try:                                            # 日志里也要有一行（用户报障时我们就看它）
+        from .util import get_logger
+        get_logger().warning("版本门拦下一次「%s」：%s", capability, reason)
+    except Exception:
+        pass
+
+
+def blocked_stat() -> dict:
+    with _lock:
+        return dict(_blocked)
+
+
+def blocked_reset() -> None:
+    with _lock:
+        _blocked.update({"count": 0, "last_reason": "", "last_at": 0.0, "capability": ""})
+
+
 def check(capability: str = "send", wechat: str = "", adapter: str = "") -> dict:
     """发送前查一次。返回 {level, allow, reason, wechat, adapter}。"""
     try:
@@ -103,6 +138,7 @@ def check(capability: str = "send", wechat: str = "", adapter: str = "") -> dict
 def status() -> dict:
     st = check()
     st["allowed_session"] = is_allowed()
+    st["blocked"] = blocked_stat()          # 被拦了几次 + 最后一次为什么（控制台横幅读它）
     return st
 
 

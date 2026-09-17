@@ -522,6 +522,15 @@ th{color:var(--tx2);font-weight:500}
   <button id="updLater" class="ghost">稍后</button>
   <button id="updSkip" class="ghost">不再提醒这个版本</button>
 </div>
+<!-- 「发送已被暂停」横幅（2026-09-17 加）：用户「佬」报「能识别群，但发不了消息，试什么都不发」
+     —— 真因是**版本门**（微信版本 × 适配层没实测 ⇒ 每次发送被拦），而提示藏在「版本能力矩阵」里，
+     他没找到 ⇒ 现象看起来就是"机器人坏了"。横幅放在最上面，写明"拦了几次 + 为什么 + 一键放行"。 -->
+<div id="vgBar" class="updbar warn" style="display:none">
+  <span id="vgText"></span>
+  <span class="sp"></span>
+  <button id="vgAllow" class="pri">本次允许发送</button>
+  <button id="vgGo" class="ghost">看版本矩阵</button>
+</div>
 <!-- 常驻公告（2026-09-17 用户：「可以挂个常驻公告，说明有问题就点击导航栏的『反馈』，把问题进行反馈，最好是附上报告或者截图」）
      ⇒ 不做弹窗、不自动消失：它就一直在那儿；点「去反馈」直接切到反馈栏。 -->
 <div id="noticeBar" class="updbar notice">
@@ -963,8 +972,9 @@ th{color:var(--tx2);font-weight:500}
       </div>
       <div class="btns">
         <button id="sessSelDel" class="danger" disabled>删除选中（勾选日期删除）</button>
+        <button id="sessUndo" class="ghost" style="display:none" disabled title="把上一次删除的记录原样放回来">撤销上次删除</button>
         <button id="sessClear" class="danger" title="清空全部运行明细（会话日志/对话历史）——模型将不再记得这些对话">一键清全部</button>
-        <span class="hint" style="align-self:center">勾选每条记录左侧「删」→「删除选中」；或直接「一键清全部」。</span>
+        <span class="hint" style="align-self:center">勾选每条记录左侧「删」→「删除选中」＝**只删这几条**（同一天其他记录不动）；删错了点「撤销上次删除」。</span>
       </div>
       <div id="sessBox" style="max-height:360px;overflow-y:auto;border:1px solid var(--bd);border-radius:10px;padding:10px 12px;margin-top:10px;background:var(--input-bg)">
         <div id="sessList" style="display:flex;flex-direction:column;gap:8px">
@@ -1430,7 +1440,7 @@ th{color:var(--tx2);font-weight:500}
         <option value="file">音频文件（点开才能听的那种）</option></select>
         <div id="voiceFormHint" class="hint">真语音条要让微信"自己录"一段：需要一块成对的虚拟声卡（VB-CABLE 之类），位置每次发送前**自动扫输入条图标行现算**，不用你标定。</div></div></div>
       <div class="row"><label>真语音条机制</label><input type="checkbox" data-cfg="voice_strip.enabled">
-        <span class="hint">默认开。发真语音条要**动两下光标**（点一下录音圆圈、点一下绿色发送），**每次用完立刻把光标放回原处**；这是这两个控件唯一认的点击方式（后台投递只出悬停高亮，实测点不进录音态）。</span></div>
+        <span class="hint">默认开。发真语音条走**右 Alt 键**（按住录音、松开发送）：**不会动你的鼠标**；但它需要**把微信切到前台的那几秒**——那几秒别切窗口、别最小化微信。万一某个微信版本不认右 Alt，会自动退回「真点两下」（那时会短暂借一下光标，用完立刻放回原处）。</span></div>
       <div class="row"><label>前提不齐时回退成文件</label><input type="checkbox" data-cfg="voice_reply.fallback_file">
         <span class="hint">勾选（默认）：选了真语音条但前提不齐（没虚拟声卡 / 没合成引擎）时，**如实回退成音频文件并说明原因**；取消勾选＝干脆不发，只告诉你缺什么。</span></div>
       <div class="row"><label>念法纠正</label><div class="grow"><textarea data-cfg="voice_reply.pronounce" rows="3" spellcheck="false" placeholder="行行行=形形形&#10;银行=银 行"></textarea>
@@ -1469,6 +1479,27 @@ th{color:var(--tx2);font-weight:500}
         <option value="sometimes">可以偶尔主动</option>
         <option value="off">不主动</option></select>
         <span class="hint">这一档**真的改变给模型的指令**。</span></div></div>
+      <div class="row"><label>本地生图后端</label><div class="grow"><b id="sdLocalState">检测中…</b>
+        <div id="sdLocalBar" style="display:none;margin-top:8px">
+          <div style="height:10px;border-radius:6px;background:var(--input-bg);border:1px solid var(--input-bd);overflow:hidden">
+            <div id="sdLocalFill" style="height:100%;width:0%;background:var(--blue)"></div></div>
+          <div id="sdLocalText" class="hint" style="margin-top:4px">—</div></div>
+        <div class="hint" id="sdLocalWhy"></div>
+        <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
+          <span class="hint" style="flex:none">生成档位</span>
+          <select id="sdPreset" style="flex:1 1 auto"></select>
+        </div>
+        <div class="hint" id="sdPresetNote" style="margin-top:4px"></div>
+        <div style="margin-top:6px;display:flex;gap:8px">
+          <button id="sdLocalInstall" class="pri" type="button">安装本地生图后端（可选）</button>
+          <button id="sdLocalStart" class="ghost" type="button">启动服务</button>
+          <button id="sdLocalStop" class="ghost" type="button">停止服务</button>
+        </div>
+        <div class="hint">装完**自动配好并启动**，地址不用你填。要下 ≈10.8 GB（模型 6.46 GB + 运行库 4.35 GB）——
+          本机实测走国内源**约 20 分钟**；点「安装」后会先**当场测速**把预计时间告诉你，并支持「**后台进行**」：
+          关掉弹窗、去办别的事，它在后台接着下。</div></div></div>
+      <div class="row"><label>允许联网下载</label><input type="checkbox" data-cfg="image_gen.local_sd.allow_online_install">
+        <span class="hint">默认关：不开我就**不联网下载**任何东西。装好本地后端之后，生图**全在本机跑、不出网**。</span></div>
       <div class="row"><label>生图后端</label><div class="grow"><input type="text" data-cfg="image_gen.backends" placeholder="本地示例： comfy | local | http://127.0.0.1:8188/prompt">
         <div class="hint">格式：<code>id | local/online | 接口地址</code>，多个用分号分隔。填 <code>online</code> 的还要打开下面的「允许出网」。</div></div></div>
       <div class="row"><label>允许出网</label><input type="checkbox" data-cfg="image_gen.online_allowed">
@@ -2798,8 +2829,24 @@ async function loadStatus(){  try{
             : (vg.level === 'ok' ? '版本对已实测：放行' : '未实测版本对：已暂停自动发送');
           v2.style.color = vg.allow ? 'var(--warn-tx)' : (vg.level === 'ok' ? 'var(--ok-tx)' : 'var(--err-tx)');
         }
-        const v3 = $('vmList');
-        if(v3 && vm.caps){
+        // 「发送已暂停」横幅：只有真的会拦住发送时才显示（allow=false），并把"拦了几次"摆出来
+        try{
+          const vb = document.getElementById('vgBar'), vt = document.getElementById('vgText');
+          if(vb && vt){
+            const blk = vg.blocked || {};
+            const n = Number(blk.count || 0);
+            if(vg.allow === false && vg.level !== 'ok'){
+              const ver = (vm.wechat && vm.wechat !== 'unknown') ? ('微信 ' + vm.wechat + ' × 适配层 ' + (vm.adapter || '-')) : '微信版本读不到';
+              vt.textContent = '发送已被暂停（' + ver + '：没有实测记录）'
+                + (n > 0 ? '，已经拦下 ' + n + ' 条没发出去' : '')
+                + '。点右边「本次允许发送」即可继续（只对本次运行有效）。';
+              vb.style.display = 'flex';
+            } else {
+              vb.style.display = 'none';
+            }
+          }
+        }catch(e){}
+        const v3 = $('vmList');        if(v3 && vm.caps){
           const rows = Object.keys(vm.caps).map(function(k){
             const c = vm.caps[k]; const mark = c.status==='ok'?'通过':(c.status==='no'?'未通过':(c.status==='user_gated'?'受限':'未知'));
             return mark + ' ' + c.label + '（' + c.status + '）';
@@ -3512,13 +3559,27 @@ function syncSessSel(){
 /* ── 运行明细：思考过程 / token / 工具调用 ── */
 async function loadSessions(){
   if($('sessSelDel')) $('sessSelDel').onclick = async ()=>{
-    const sel=[...document.querySelectorAll('#sessList .sessSel:checked')].map(x=>x.dataset.date).filter(Boolean);
+    const sel=[...document.querySelectorAll('#sessList .sessSel:checked')].map(x=>({date:x.dataset.date, ts:x.dataset.ts})).filter(x=>x.date&&x.ts);
     if(!sel.length){ return; }
-    if(!await uiConfirm('确认删除所选 '+sel.length+' 个日期的运行明细与对话历史？')) return;
+    // 2026-09-17 用户口径：「就不能改成删单条吗？用户本来就不希望全删，然后你还让他去回收站找」
+    // ⇒ 粒度＝**条**（勾哪条删哪条），删完面板上直接给「撤销」，不让他去翻 _trash。
+    if(!await uiConfirm('删除选中的 '+sel.length+' 条运行记录？\n\n只删这 '+sel.length+' 条，同一天的其他记录不受影响；删错了点旁边的「撤销」就能还原。')) return;
     try{
-      const r=await getJSON('/api/sessions/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dates:sel})});
-      if(r.ok) loadSessions(); else toast(r.error||'删除失败');
+      const r=await getJSON('/api/sessions/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:sel})});
+      if(r.ok){
+        toast(r.note||('已删除 '+sel.length+' 条'));
+        if(r.undo){ window.__sessUndo = r.undo; const u=$('sessUndo'); if(u){ u.disabled=false; u.style.display=''; } }
+        loadSessions();
+      } else toast(r.error||'删除失败');
     }catch(e){ toast('删除失败：'+e.message); }
+  };
+  if($('sessUndo')) $('sessUndo').onclick = async ()=>{
+    const u = window.__sessUndo; if(!u){ toast('没有可撤销的删除'); return; }
+    try{
+      const r=await getJSON('/api/sessions/restore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({undo:u})});
+      if(r.ok){ toast(r.note||'已撤销'); window.__sessUndo=''; const b=$('sessUndo'); if(b){ b.disabled=true; b.style.display='none'; } loadSessions(); }
+      else toast(r.error||'撤销失败');
+    }catch(e){ toast('撤销失败：'+e.message); }
   };
   const el = $('sessList');
   // 勾选框变化 → 重算「删除选中」的可用性（事件委托：列表每次重绘都不用重新绑）
@@ -3531,6 +3592,7 @@ async function loadSessions(){
   try{
     const r = await getJSON('/api/sessions?limit=30');
     const list = (r && r.sessions) || [];
+    window.__sessLast = list;      // 给「删除选中」的确认框算"每天几条"用
     if(!list.length){
       el.innerHTML = '<div class="hint" style="padding:14px;text-align:center;color:var(--tx2)">还没有运行记录——群里 @ 机器人说句话后，这里会出现每一轮的思考过程 / token / 工具调用。</div>';
       return;
@@ -3547,7 +3609,7 @@ async function loadSessions(){
       const tt = parseInt(e.tokens||0);
       const rpct = (tt>0 && rt>0) ? (' · 推理 '+rt+' tok（'+Math.round(rt/tt*100)+'%）') : '';
       let html='<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
-        +'<label style="display:flex;align-items:center;gap:4px;cursor:pointer" title="勾选删除"><input type="checkbox" class="sessSel" data-date="'+esc(String(e.ts||'').slice(0,10))+'">删</label>'
+        +'<label style="display:flex;align-items:center;gap:4px;cursor:pointer" title="勾选＝删除**这一条**记录（同一天其他记录不受影响）"><input type="checkbox" class="sessSel" data-date="'+esc(String(e.ts||'').slice(0,10))+'" data-ts="'+esc(String(e.ts||''))+'">删</label>'
         +'<b>'+esc(e.chat_name||e.chat_key)+'</b>'
         +'<span class="pill '+(e.ok?'ok':'off')+'">'+esc(e.status||'')+'</span>'
         +'<span class="hint" style="font-size:11px">'+esc((e.ts||'').replace('T',' '))+' · '+esc(e.latency_ms||0)+'ms</span>'
@@ -4387,7 +4449,7 @@ const GUIDES = {
     intro: '合成一段话再发出去。**默认形态是"真语音条"**（微信语音气泡，对方点开就听）；前提不齐时会**如实回退成音频文件**并说明缺什么。',
     steps: [
       '**真语音条怎么做到的**：装一块成对的虚拟声卡（VB-CABLE 之类），把合成好的音频播到它上面，再让微信**自己录一遍**（进录音态 → 绿点跳 → 点发送）⇒ 对方收到的就是普通语音条。',
-      '**代价先说清楚**：那个"进录音态的圆圈"和"绿色发送"**只认真实点击**——后台投递点击只出悬停高亮（四种投递变体实测都不进录音态）。所以发一条真语音条会**动两下光标**，每次用完**立刻放回原处**；不想让它动光标，就把「真语音条机制」取消勾选。',
+      '**代价先说清楚**：发真语音条走**右 Alt 键**（按住录音、松开发送）——**不会动你的鼠标**，但它**需要把微信切到前台的那几秒**：那几秒别切窗口、别最小化微信。',
       '**发之前自检两件**：① 当前打开的会话是不是目标会话（不是就先投递切过去；切不过去**不发**，绝不冒险发错人）；② 录音时那串**音量点**有没有亮——一直不亮＝音频没进微信的麦克风 ⇒ **当场取消**，不给你发一条静音语音条。',
       '**念错字怎么改**：用「念法纠正」表的**同音字替换**——`行行行=形形形`（它读 xíng，写成「形」就不会被念成 háng）。我们**不会**自动往你的话里插标点：连续同字常常是**语气偏快的连读**（像「拿你没办法」那样），插逗号会读成一字一顿、把语气读没（2026-09-17 你纠正后改回来的）。',
       '**音源与出网**：系统声音档全程本机、不出网（机械音）——**想全程不出网就选系统声音那一档**；edge 档会把**要念的这句话**发到微软在线语音服务（只为换音质，不发音频、不回传数据）；http 档发到你自己填的本地服务。',
@@ -6396,10 +6458,15 @@ addEventListener('hashchange', ()=>{ if(location.hash==='#sec-sessions') loadSes
     }
   };
   const allowBtn = document.getElementById('vmAllow');
-  if(allowBtn) allowBtn.onclick = async ()=>{
+  const _allowSend = async ()=>{
     try{ await getJSON('/api/version/allow'); toast('已放行（只对本次运行有效）：发送会按未验证版本对继续，出问题请到「检查微信版本」升级适配层'); loadStatus(); }
     catch(e){ toast('放行失败：' + e.message); }
   };
+  if(allowBtn) allowBtn.onclick = _allowSend;
+  const vgAllow = document.getElementById('vgAllow');
+  if(vgAllow) vgAllow.onclick = _allowSend;
+  const vgGo = document.getElementById('vgGo');
+  if(vgGo) vgGo.onclick = ()=>{ try{ location.hash = '#sec-version'; }catch(e){} };
   const pdBtn = document.getElementById('pdOpen');
   if(pdBtn) pdBtn.onclick = async ()=>{
     try{
@@ -6804,6 +6871,98 @@ if(_tierSel) _tierSel.addEventListener('change', ()=>updateTierRows());
 const _ttsBeSel = document.querySelector('[data-cfg="voice_reply.backend"]');
 if(_ttsBeSel) _ttsBeSel.addEventListener('change', ()=>ttsSyncRows());
 ttsSyncRows();
+
+/* ── 本地生图后端：状态 / 安装（带实时进度 + 后台进行）/ 起停 ───────────────
+   用户口径（2026-09-17）：「你帮用户装，做成一个可选项…用户选了就弹安装提示，帮他安装；
+   在线安装看用户开不开」「要能让用户实时看到下载进度（一共多少/下了多少/百分比）」
+   「还要加那个按键，也就是后台加载，让用户可以不看着弹窗等它加载，去办点别的事」。 */
+(function(){
+  const S = id => document.getElementById(id);
+  let poll = null;
+  function fmtGB(b){ return (b/1073741824).toFixed(2) + ' GB'; }
+  function paint(p){
+    const bar=S('sdLocalBar'), fill=S('sdLocalFill'), txt=S('sdLocalText');
+    if(!bar) return;
+    if(!p || (!p.running && !p.total_bytes)){ bar.style.display='none'; return; }
+    bar.style.display='';
+    const pct = p.total_bytes ? Math.min(100, (p.done_bytes/p.total_bytes)*100) : 0;
+    fill.style.width = pct.toFixed(1) + '%';
+    const eta = p.eta_seconds ? ('，预计还需 ' + (p.eta_seconds>3600 ? (p.eta_seconds/3600).toFixed(1)+' 小时' : Math.ceil(p.eta_seconds/60)+' 分钟')) : '';
+    txt.textContent = (p.message||'') + ' ｜ 已下 ' + fmtGB(p.done_bytes) + ' / 共 ' + fmtGB(p.total_bytes)
+      + ' ｜ ' + pct.toFixed(1) + '%' + (p.mbps? (' ｜ ' + p.mbps.toFixed(1) + ' MB/s') : '') + eta
+      + (p.running ? '' : (p.ok ? ' ｜ ✅ 完成' : ' ｜ ❌ 失败'));
+  }
+  async function tick(){
+    try{
+      const r = await getJSON('/api/image_gen/local/progress');
+      paint((r && r.progress) || null);
+      if(r && r.progress && !r.progress.running && poll){ clearInterval(poll); poll=null; refresh(); }
+    }catch(e){}
+  }
+  async function refresh(){
+    try{
+      const r = await getJSON('/api/image_gen/local');
+      const st = (r && r.status) || {};
+      const el = S('sdLocalState');
+      if(el) el.textContent = st.ok ? '已就绪（本地跑，不出网）'
+        : (st.installed ? ('已安装，服务未启动（' + (st.why||'') + '）') : '未安装');
+      const why = S('sdLocalWhy');
+      if(why) why.textContent = st.why || '';
+      // 档位选择器（用户口径「不二选一」）：速度档 / 画质档都能装、能切，装哪个用哪个由用户挑
+      try{
+        const sel = S('sdPreset');
+        if(sel && Array.isArray(st.presets)){
+          const want = st.presets.map(p=>p.id).join(',');
+          if(sel.dataset.ids !== want){
+            sel.innerHTML = st.presets.map(p=>'<option value="'+p.id+'">'+p.label+(p.installed?'（已装）':'（要下 '+p.gb+' GB）')+'</option>').join('');
+            sel.dataset.ids = want;
+          }
+          if(document.activeElement !== sel) sel.value = st.preset || '';
+          const note = S('sdPresetNote');
+          const cur = st.presets.find(p=>p.id===st.preset) || {};
+          if(note) note.textContent = (cur.note || '') + (cur.license ? ('｜许可：' + cur.license) : '');
+          const bInst = S('sdLocalInstall');
+          if(bInst) bInst.textContent = (cur.installed ? '重新下载当前档' : ('下载当前档（' + (cur.gb||'?') + ' GB）'));
+        }
+      }catch(e){}
+      if(st.ok) paint(null);
+    }catch(e){ const el=S('sdLocalState'); if(el) el.textContent='查询失败：'+e.message; }
+  }
+  const bi = S('sdLocalInstall');
+  if(bi) bi.onclick = async ()=>{
+    let est = null;
+    try{ const r = await getJSON('/api/image_gen/local?estimate=1'); est = r && r.estimate; }catch(e){}
+    if(!est){ toast('拿不到安装信息，稍后再试'); return; }
+    const msg = '安装本地生图后端？（可选，装完生图全在本机跑、不出网）\n\n'
+      + '· 要下载：约 ' + est.gb + ' GB（模型 ' + est.model_gb + ' GB + 运行库 ' + est.deps_gb + ' GB）\n'
+      + '· 现在实测速度：' + est.mbps + ' MB/s（源：' + est.source + '）\n'
+      + '· 预计耗时：**' + est.human + '**' + (est.warn ? ('\n· ' + est.warn) : '')
+      + '\n\n点「确定」就开始下（**在后台进行**，你可以关掉弹窗去办别的事，进度在这里能看到）。';
+    if(!await uiConfirm(msg)) return;
+    try{
+      const r = await getJSON('/api/image_gen/local/install', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+      toast((r && r.note) || '已开始安装');
+      if(r && r.ok){ S('sdLocalBar').style.display=''; if(!poll) poll = setInterval(tick, 1000); }
+      else { paint(null); }
+    }catch(e){ toast('安装没起来：'+e.message); }
+  };
+  const bs = S('sdLocalStart');
+  if(bs) bs.onclick = async ()=>{ try{ const r = await getJSON('/api/image_gen/local/start',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); toast(r.note||'已启动'); refresh(); }catch(e){ toast('启动失败：'+e.message); } };
+  // 切换档位：写配置 + 按新档重启本地服务
+  const selP = S('sdPreset');
+  if(selP) selP.onchange = async ()=>{
+    const id = selP.value;
+    try{
+      const r = await getJSON('/api/image_gen/local/preset', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({preset:id})});
+      toast((r && r.note) || '已切换');
+      refresh();
+    }catch(e){ toast('切换失败：'+e.message); }
+  };
+  const bp = S('sdLocalStop');
+  if(bp) bp.onclick = async ()=>{ try{ const r = await getJSON('/api/image_gen/local/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); toast(r.note||'已停止'); refresh(); }catch(e){ toast('停止失败：'+e.message); } };
+  refresh();
+  setInterval(()=>{ if(S('sdLocalState') && !poll) refresh(); }, 8000);
+})();
 </script>
 <div style="position:fixed;left:4px;bottom:2px;font-size:10px;color:#8aa0c0;opacity:.55;z-index:9">Persona Morph build 2026-09-09</div></body>
 </html>

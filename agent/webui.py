@@ -890,6 +890,49 @@ class WebUI:
                         self._json({"ok": True, "result": _ufp2.forget(k), "status": _ufp2.hits()})
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)})
+                elif path == "/api/image_gen/local":
+                    # 本地轻量生图后端：状态 + 「要装的话，要下多少 / 大概多久」（估时**当场测速**）
+                    #   ⚠️ 这是 GET 分支：**没有 `data`**（那是 POST 的解析体）——要从查询串取 `estimate`。
+                    try:
+                        from urllib.parse import parse_qs as _pq, urlparse as _up
+                        from . import sd_local as _sd
+                        _qs = _pq(_up(self.path).query)
+                        _out = {"ok": True, "status": _sd.status()}
+                        if str((_qs.get("estimate") or ["0"])[0]).lower() not in ("", "0", "false"):
+                            _out["estimate"] = _sd.estimate(do_probe=True)
+                        self._json(_out)
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/image_gen/local/progress":
+                    # 安装进度（控制台每秒轮询它画进度条：已下/总量/百分比/速度/预计剩余）
+                    try:
+                        from . import sd_local as _sd
+                        self._json({"ok": True, "progress": _sd.progress(), "status": _sd.status()})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/image_gen/local/install":
+                    # **后台安装**（立刻返回；关掉弹窗也会继续下）
+                    try:
+                        from . import sd_local as _sd
+                        _ao = data.get("allow_online")
+                        _ok, _why, _info = _sd.install_async(allow_online=(None if _ao is None else bool(_ao)))
+                        self._json({"ok": bool(_ok), "note": _why, "info": _info, "progress": _sd.progress()})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/image_gen/local/start":
+                    try:
+                        from . import sd_local as _sd
+                        _ok, _why = _sd.start_server()
+                        self._json({"ok": bool(_ok), "note": _why})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/image_gen/local/stop":
+                    try:
+                        from . import sd_local as _sd
+                        _ok, _why = _sd.stop_server()
+                        self._json({"ok": bool(_ok), "note": _why})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
                 elif path == "/api/image_gen/test":
                     try:
                         from . import image_gen as _ig
@@ -1422,6 +1465,38 @@ class WebUI:
                 elif path == "/api/pause":
                     parent.pause_fn()
                     self._json({"ok": True})
+                elif path == "/api/image_gen/local/install":
+                    # **后台安装**（POST；立刻返回，进度去 /api/image_gen/local/progress 轮询）
+                    try:
+                        from . import sd_local as _sd
+                        _ao = data.get("allow_online")
+                        _ok, _why, _info = _sd.install_async(allow_online=(None if _ao is None else bool(_ao)),
+                                                             pid=str(data.get("preset") or ""))
+                        self._json({"ok": bool(_ok), "note": _why, "info": _info, "progress": _sd.progress()})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/image_gen/local/preset":
+                    # 切档（速度档 / 画质档）：写配置并按新档重启本地服务。用户口径「不二选一」⇒ 两档都能装、能切。
+                    try:
+                        from . import sd_local as _sd
+                        _ok, _why = _sd.set_preset(str(data.get("preset") or ""))
+                        self._json({"ok": bool(_ok), "note": _why, "status": _sd.status()})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/image_gen/local/start":
+                    try:
+                        from . import sd_local as _sd
+                        _ok, _why = _sd.start_server()
+                        self._json({"ok": bool(_ok), "note": _why})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/image_gen/local/stop":
+                    try:
+                        from . import sd_local as _sd
+                        _ok, _why = _sd.stop_server()
+                        self._json({"ok": bool(_ok), "note": _why})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
                 elif path == "/api/resume":
                     parent.resume_fn()
                     self._json({"ok": True})
@@ -1495,19 +1570,120 @@ class WebUI:
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)})
                 elif path == "/api/sessions/delete":
-                    # ⑨ 勾选删除运行明细：按日期删除 data/sessions/YYYY-MM-DD.jsonl（POST {dates:[...]}）
+                    # ⑨ 勾选删除运行明细 —— **按条删**（POST {items:[{date,ts},…]}；兼容老参数 {dates:[…]}＝按天删）
+                    #    用户 2026-09-17 原话：「而且就不能改成删单条吗？用户本来就不希望全删，然后你还让他去回收站找」
+                    #    ⇒ 粒度＝条；删前把**整份原文件**备到 `data/_trash/sessions/`（内部安全网，**不需要用户去翻**），
+                    #      并返回 `undo` token 给面板上的「撤销」用；兼容老 dates 参数（仍按天整文件搬走）。
                     try:
                         import re as _re2
-                        _dates = [str(d) for d in (data.get("dates") or []) if _re2.match(r"^\d{4}-\d{2}-\d{2}$", str(d))]
-                        if not _dates:
-                            return self._json({"ok": False, "error": "没有有效的日期"})
+                        import time as _t9
                         _sd = os.path.join(parent._data_path("sessions"))
-                        _deleted = []
-                        for _d in _dates:
+                        _troot = os.path.join(parent._data_path("_trash"), "sessions")
+                        _stamp = _t9.strftime("%Y%m%d-%H%M%S")
+                        _items = []
+                        for _it in (data.get("items") or []):
+                            _d = str((_it or {}).get("date") or "")
+                            _ts = str((_it or {}).get("ts") or "")
+                            if _re2.match(r"^\d{4}-\d{2}-\d{2}$", _d) and _ts:
+                                _items.append((_d, _ts))
+                        _dates = [str(d) for d in (data.get("dates") or [])
+                                  if _re2.match(r"^\d{4}-\d{2}-\d{2}$", str(d))]
+                        if not _items and not _dates:
+                            return self._json({"ok": False, "error": "没有有效的记录"})
+                        _backup = {}
+                        _removed, _kept_days, _whole = 0, [], []
+                        # ① 先整体备份要动的那些天（原文件照抄一份，供「撤销」）
+                        _touch = sorted({d for d, _ in _items} | set(_dates))
+                        for _d in _touch:
+                            _f = os.path.join(_sd, _d + ".jsonl")
+                            if not os.path.exists(_f):
+                                continue
+                            try:
+                                os.makedirs(_troot, exist_ok=True)
+                                _b = os.path.join(_troot, "%s.jsonl.%s" % (_d, _stamp))
+                                with open(_f, "rb") as _src, open(_b, "wb") as _dst:
+                                    _dst.write(_src.read())
+                                _backup[_d] = _b
+                            except Exception:
+                                pass
+                        # ② 按天处理：整文件搬（老 dates 参数）或**剔掉指定 ts**（新 items 参数）
+                        for _d in set(_dates):
                             _f = os.path.join(_sd, _d + ".jsonl")
                             if os.path.exists(_f):
-                                os.remove(_f); _deleted.append(_d)
-                        self._json({"ok": True, "note": "已删除 %d 个日期的运行明细" % len(_deleted), "deleted": _deleted})
+                                try:
+                                    os.remove(_f)
+                                    _whole.append(_d)
+                                except Exception:
+                                    pass
+                        _per_day = {}
+                        for _d, _ts in _items:
+                            _per_day.setdefault(_d, set()).add(_ts)
+                        for _d, _tss in _per_day.items():
+                            _f = os.path.join(_sd, _d + ".jsonl")
+                            if not os.path.exists(_f):
+                                continue
+                            try:
+                                with open(_f, "r", encoding="utf-8") as fh:
+                                    _lines = fh.readlines()
+                                _keep, _hit = [], 0
+                                for _ln in _lines:
+                                    _s = _ln.strip()
+                                    if not _s:
+                                        continue
+                                    try:
+                                        _e = json.loads(_s)
+                                    except Exception:
+                                        _keep.append(_ln)
+                                        continue
+                                    if str(_e.get("ts") or "") in _tss:
+                                        _hit += 1
+                                        continue
+                                    _keep.append(_ln if _ln.endswith("\n") else _ln + "\n")
+                                if _hit:
+                                    _tmp = _f + ".tmp"
+                                    with open(_tmp, "w", encoding="utf-8", newline="\n") as fh:
+                                        fh.writelines(_keep)
+                                    os.replace(_tmp, _f)
+                                    _removed += _hit
+                                    _kept_days.append(_d)
+                            except Exception:
+                                pass
+                        if not _removed and not _whole:
+                            return self._json({"ok": False, "error": "没有匹配到要删的记录（可能刚被删过或文件已不存在）"})
+                        _note = ("已删除 %d 条记录" % _removed) if _removed else ("已删除 %d 天的记录" % len(_whole))
+                        self._json({"ok": True, "note": _note, "removed": _removed,
+                                    "whole_days": _whole, "days": sorted(set(_kept_days) | set(_whole)),
+                                    "undo": _stamp if _backup else "",
+                                    "backed": sorted(_backup)})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/sessions/restore":
+                    # 撤销上一次删除：把 `_trash/sessions/<日期>.jsonl.<stamp>` 原样放回（POST {undo:"<stamp>"}）
+                    try:
+                        import glob as _gl
+                        import re as _re3
+                        _u = str(data.get("undo") or "")
+                        if not _re3.match(r"^\d{8}-\d{6}$", _u):
+                            return self._json({"ok": False, "error": "撤销凭据无效"})
+                        _sd = os.path.join(parent._data_path("sessions"))
+                        _troot = os.path.join(parent._data_path("_trash"), "sessions")
+                        _n = 0
+                        for _b in _gl.glob(os.path.join(_troot, "*.jsonl." + _u)):
+                            _name = os.path.basename(_b)
+                            _day = _name.split(".jsonl.")[0]
+                            if not _re3.match(r"^\d{4}-\d{2}-\d{2}$", _day):
+                                continue
+                            try:
+                                os.makedirs(_sd, exist_ok=True)
+                                with open(_b, "rb") as _src, open(os.path.join(_sd, _day + ".jsonl"), "wb") as _dst:
+                                    _dst.write(_src.read())
+                                os.remove(_b)
+                                _n += 1
+                            except Exception:
+                                pass
+                        if not _n:
+                            return self._json({"ok": False, "error": "找不到可撤销的备份（可能已撤销过）"})
+                        self._json({"ok": True, "note": "已撤销，恢复了 %d 天的记录" % _n, "restored": _n})
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)})
                 elif path == "/api/stats/cal_clear":
