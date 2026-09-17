@@ -320,6 +320,73 @@ try:
 finally:
     _shutil.rmtree(_root5, ignore_errors=True)
 
+print("── J6. 配置里那个「数据库目录」填错时**不许把产品按死**（2026-09-17 网友那份报告："
+      "侧栏写「微信未连接·原因未知」、报告写「未找到任何已登录账号的数据库」，可诊断六步全过）──")
+_root6 = _tempfile.mkdtemp(prefix="pm_dbbadcfg_")
+try:
+    _acc6 = os.path.join(_root6, "xwechat_files", "wxid_y", "db_storage", "message")
+    os.makedirs(_acc6)
+    with open(os.path.join(_acc6, "message_0.db"), "wb"):
+        pass
+    _hit6 = os.path.join(_root6, "xwechat_files")
+    _saved_c6 = W._db_dir_candidates
+    W._db_dir_candidates = lambda extra="": (([str(extra)] if str(extra or "").strip() else []) + [_hit6])
+    _mod6 = types.ModuleType("wechatauto")
+
+    def _WC6(db_dir=None):
+        # 只认扫盘探到的那个 —— 模拟"用户填的那个目录里没有账号库（老产品会直接抛）"
+        if db_dir != _hit6:
+            raise RuntimeError("未找到任何已登录账号的数据库")
+        return _DB(self_info={"username": "wxid_me", "nick_name": "我"})
+
+    _mod6.WeChatDB = _WC6
+    _saved6m = sys.modules.get("wechatauto")
+    sys.modules["wechatauto"] = _mod6
+    try:
+        _db6, _how6, _errs6 = W.open_db("D:\\填错的目录")
+        ok("配置填错 ⇒ 仍能退到扫盘那条把库打开（不再直接抛）",
+           _db6 is not None and _how6.get("src") == "scanned", str(_how6))
+        ok("试过的路按「配置 → 扫盘」顺序，且失败那条的原因留着",
+           bool(_errs6) and _errs6[0][0] == "D:\\填错的目录"
+           and _errs6[0][1] == "config" and "未找到任何已登录账号" in _errs6[0][2],
+           str(_errs6)[:130])
+        _saved_g6 = W.get_config
+        W.get_config = lambda: {"wechat": {"db_dir": "D:\\填错的目录"}}
+        try:
+            _d6 = _diag(_VI_RUN)
+        finally:
+            W.get_config = _saved_g6
+        _row6 = [s for s in _d6["steps"] if s["key"] == "db_open"][0]
+        ok("诊断这一步照样过，并**明说「你填的目录用不了」+ 已改用哪个**",
+           _row6["ok"] is True and "你填的目录" in _row6["detail"] and "已自动改用" in _row6["detail"],
+           _row6["detail"][:130])
+        ok("整轮诊断不再报卡点（产品接入与诊断口径一致，不再一个过一个不过）",
+           bool(_d6["ok"]), "%s / %s" % (_d6["ok"], _d6["step"]))
+
+        def _WC6x(db_dir=None):
+            raise RuntimeError("库里没有已登录账号")
+
+        _mod6.WeChatDB = _WC6x
+        _db6b, _how6b, _errs6b = W.open_db("D:\\填错的目录")
+        ok("三档全失败 ⇒ 返回 None，且**每条路的原因都记下来**（只报第一条会让人照错的去查）",
+           _db6b is None and len(_errs6b) >= 2 and all(e[2] for e in _errs6b), str(_errs6b)[:140])
+        _d6b = _diag(_VI_RUN)
+        _row6b = [s for s in _d6b["steps"] if s["key"] == "db_open"][0]
+        ok("全失败时那句诊断里带上了**各条路各自的原因**",
+           "试过" in _row6b["detail"] and "驱动库自探测" in _row6b["detail"], _row6b["detail"][:130])
+    finally:
+        if _saved6m is not None:
+            sys.modules["wechatauto"] = _saved6m
+        else:
+            sys.modules.pop("wechatauto", None)
+        W._db_dir_candidates = _saved_c6
+finally:
+    _shutil.rmtree(_root6, ignore_errors=True)
+
+_w6 = _src(os.path.join("agent", "wechat.py"))
+ok("产品接入（`_init_db`）也走同一条三档链（源码级，防以后只修诊断、不改产品）",
+   "self._db, _how, _errs = open_db(_dd)" in _w6 and "if _src != \"scanned\":" not in _w6)
+
 print("── K. 接线：启动接入 / 10 秒重试 / 状态下发 / 反馈 env（源码级，防以后改回去）──")
 _pm = _src(os.path.join("scripts", "persona_morph.py"))
 ok("启动接入走 _attach_wechat（失败不抛）",
