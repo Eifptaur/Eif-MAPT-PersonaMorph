@@ -786,19 +786,47 @@ _VOICE_LAST = {}          # chat_key -> (ts, text)：同会话同内容的最小
 
 
 def _exec_send_voice_reply(ctx, args):
-    """文字 → 本机合成音频 → 发到当前会话（**形态是音频文件，不是微信语音条**）。"""
+    """文字 → 本机合成 → 发到当前会话。**形态由用户在控制台选**（2026-09-17 用户原话：
+    「最好就是给个选项，让用户选是发音频文件还是真发一个语音条，**默认就是发语音条**」）：
+      · `voice_reply.form == "strip"`（默认）：走真语音条（虚拟声卡 + 微信自己录）；
+        三闸不齐时——**默认如实回退成音频文件并说明**（`fallback_file=false` 就拒发）。
+      · `voice_reply.form == "file"`：发音频文件（老形态，谁都能用）。
+    """
     try:
         from . import voice_models as _vm      # ③：合成通道统一走这层（默认系统声音，可选自带模型）
         vcfg = get_config().get("voice_reply") or {}
         if not vcfg.get("enabled"):
-            return _ok("语音回复默认关闭：本机能把文字合成音频，但**发出去是音频文件（不是微信语音条）**，"
-                       "所以要先在控制台「语音回复」里打开才允许发。")
+            return _ok("语音回复默认关闭（控制台「语音回复」里打开才允许发）。")
         text = str(args.get("text") or "").strip()
         if not text:
             return _err("text 不能为空")
         mx = int(vcfg.get("max_chars") or 120)
         if len(text) > mx:
             return _ok("这条太长（%d 字，上限 %d）：语音回复请压到 %d 字以内。" % (len(text), mx, mx))
+        # ── 形态：真语音条（默认）走 voice_strip；不齐就按 fallback_file 如实回退 ──
+        _form = str(vcfg.get("form") or "strip").strip().lower()
+        _strip_note = ""
+        if _form == "strip":
+            try:
+                from . import voice_strip as _vs
+                _st = _vs.status()
+            except Exception as _e:
+                _st = {"ok": False, "why": "真语音条模块不可用：%s" % _e}
+            if _st.get("ok"):
+                _okv, _msgv, _infov = _vs.send(ctx.get("wechat"), str(ctx.get("chat_id") or ""), text)
+                if _okv:
+                    try:
+                        ctx["session"]["sent"].append({"type": "voice_strip", "text": text})
+                    except Exception:
+                        pass
+                    return _ok({"sent": True, "form": "strip",
+                                "note": "已发出**真语音条**（微信语音气泡）。不要输出\"已发送\"类汇报。",
+                                "detail": _msgv})
+                _strip_note = "真语音条这次没发成（%s）" % _msgv
+            else:
+                _strip_note = "真语音条前提不齐：%s" % (_st.get("why") or "未知")
+            if not bool(vcfg.get("fallback_file", True)):
+                return _ok("%s ⇒ 按你的设置**没有发**（要允许回退就把 voice_reply.fallback_file 打开）。" % _strip_note)
         st = _vm.status()
         if not st.get("ok"):
             return _ok("本机没有可用的语音合成引擎：%s（照实说明，别假装发过语音）" % st.get("why"))
@@ -820,6 +848,10 @@ def _exec_send_voice_reply(ctx, args):
             pass
         out = {"sent": True, "voice": info.get("voice") or "", "fmt": info.get("fmt") or "",
                "note": "已发（形态：音频文件，不是语音条）。不要输出\"已发送\"类汇报。"}
+        if _strip_note:
+            # 用户选了真语音条、但前提不齐 ⇒ **必须把"为什么变成了文件"说清楚**（不许静默降级）
+            out["note"] = ("已发（形态：**音频文件**，不是语音条）——%s。"
+                           "照实告诉用户「为什么这次是文件」，别只说「发好了」。" % _strip_note)
         # 变声段（可选）：把实际走了没有、结果如何**如实**带回给模型
         if info.get("pipeline"):
             out["pipeline"] = info["pipeline"]

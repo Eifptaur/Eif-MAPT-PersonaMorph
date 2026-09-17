@@ -1425,6 +1425,10 @@ th{color:var(--tx2);font-weight:500}
         };
       })();
       </script>
+      <div class="row"><label>回复形态</label><div class="grow"><select data-cfg="voice_reply.form" id="voiceForm">
+        <option value="strip">真语音条（微信语音气泡，推荐）</option>
+        <option value="file">音频文件（点开才能听的那种）</option></select>
+        <div id="voiceFormHint" class="hint">真语音条要让微信"自己录"一段：需要一块成对的虚拟声卡（VB-CABLE 之类）+ 标定一次那个"进录音态"的圆圈位置（标定由我这边跑一次，按钮下版补到面板上）。前提不齐时会**如实回退成音频文件**并说明原因（把 voice_reply.fallback_file 关掉就变成"干脆不发"）。</div></div></div>
       <div class="row"><label>语速</label><input type="number" min="-10" max="10" data-cfg="voice_reply.rate">
         <span class="hint">-10 最慢 ~ 10 最快，0＝默认。</span></div>
       <div class="row"><label>格式</label><div class="grow"><select data-cfg="voice_reply.format">

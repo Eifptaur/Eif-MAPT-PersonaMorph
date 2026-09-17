@@ -21,6 +21,9 @@ psutil>=5.9.0
 colorama>=0.4.6
 winsdk>=1.0.0b10
 imageio-ffmpeg>=0.4.9
+
+# —— 真语音条：把合成好的 PCM 播进虚拟声卡（VB-CABLE 之类），让微信自己录成语音条 ——
+sounddevice>=0.4.6
 pypinyin>=0.48.0
 
 # ── 微信 4.x 驱动库 1.2.2.2 带来的新依赖（W1 实测：库内部 moment.py / uia_driver.py 直接 import cv2/numpy，

@@ -94,7 +94,7 @@ try:
     body = r.get("content") or ""
 finally:
     TL.get_config = _saved_get_gate
-ok("默认关时拒绝并说明原因", "默认关闭" in body and "音频文件" in body, body[:54])
+ok("默认关时拒绝并说明原因", "默认关闭" in body and "语音回复" in body, body[:54])
 ok("默认关时一次都没碰发送", fw.calls == [], str(fw.calls))
 
 # 打开开关后：空文本/超长要拒
