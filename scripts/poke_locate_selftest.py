@@ -307,6 +307,29 @@ def main():
        "poke_event_is_ours" in open(os.path.join(ROOT, "scripts", "persona_morph.py"),
                                    encoding="utf-8").read())
 
+    # ⑫ ⭐ 菜单项匹配要**容忍 OCR 噪声**（现场：引用链在本机一直失灵 ⇒ 反复弹菜单 + 退回普通发送）
+    #    真机读到的原串见 `data/.../app_20260918.log` 的"菜单 OCR 明细"。
+    from agent.input_backend import menu_item_score as _mis
+    _mcases = [
+        ("@引", "引用", 0.8, "真机：引用被读成 @引"),
+        ("转发．．．", "转发", 1.0, "真机：转发带省略号（剥噪后正好相等 ⇒ 1.0）"),
+        ("U删除", "删除", 0.8, "真机：删除带前缀 U"),
+        ("拍一拍", "拍一拍", 1.0, "拍一拍（正常）"),
+        ("放大阅读", "引用", 0.0, "反例：不许误命中"),
+        ("收藏", "引用", 0.0, "反例：不许误命中"),
+        ("軀制", "撤销", 0.0, "真机：撤销糊成軀制（本规则救不了 ⇒ 如实不点）"),
+        ("", "引用", 0.0, "空串"),
+    ]
+    _mbad = []
+    for _r, _w, _want, _why in _mcases:
+        _got = _mis(_r, _w)
+        if abs(_got - _want) > 1e-9:
+            _mbad.append("%s→%s want=%s got=%s（%s）" % (_r, _w, _want, _got, _why))
+    ok("⑫ 菜单项匹配容忍 OCR 噪声（`@引`→「引用」等 3 例命中，2 例反例不误命中）", not _mbad, _mbad)
+    ok("⑫ 静态：`menu_click` 走 `menu_item_score`（不是只靠精确/包含）",
+       "menu_item_score" in open(os.path.join(ROOT, "agent", "input_backend.py"),
+                                 encoding="utf-8").read())
+
     print("\n== 汇总：%d 通过 / %d 失败 ==" % (len(PASS), len(FAIL)))
     if FAIL:
         print("失败项：")
