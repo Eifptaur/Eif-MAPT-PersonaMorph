@@ -270,6 +270,26 @@ def sec_deps_and_caps():
 # ── 4 会话头可读性 / 面板探测 ──────────────────────────────────────────
 def sec_visual():
     lines, raw = [], {}
+    # ⚠️ 2026-09-17（网友那份检验报告）：**先把"消息库用的哪个目录"写进报告**——这行原来缺着，
+    #    于是"配置里填的目录用不了、产品死在那条路上"谁也看不出来（同一份报告里诊断却说六步全过）。
+    _conf_db = ""
+    try:
+        from agent.config import get_config
+        _conf_db = str((get_config().get("wechat") or {}).get("db_dir") or "").strip()
+    except Exception:
+        _conf_db = ""
+    try:
+        from agent.wechat import WeChatAdapter as _WCA
+        _how = dict(getattr(_WCA(), "_db_how", None) or {})
+        raw["db_how"] = _how
+        lines.append("  消息库: %s（来源=%s）" % (
+            _how.get("account_dir") or _how.get("dir") or "取不到", _how.get("src") or "?"))
+        if _conf_db and _how.get("src") != "config":
+            lines.append("  ⚠️ 配置「数据库目录」里填的 %s **用不了**，已自动改用 %s ⇒ "
+                         "建议把那框改成它，或清空让它自动探测"
+                         % (_conf_db, _how.get("dir") or "驱动库自探测"))
+    except Exception as e:
+        lines.append("  消息库: 取不到（%s: %s）" % (type(e).__name__, str(e)[:120]))
     try:
         from agent import chat_header as ch
         fp = ch.capture()
@@ -413,10 +433,17 @@ def sec_delivery():
     except Exception as e:
         lines.append("  语音音源: 读不到（%s）" % type(e).__name__)
     try:
+        # ⚠️ 2026-09-17：这里原来只 `which("ffmpeg")`（只查 PATH）⇒ 干净机器上报告写着"没找到"，
+        #    而 `requirements.txt` 里的 imageio-ffmpeg **本来就自带一份**（`agent/ffmpeg_bin.py`
+        #    是唯一解析入口：配置 → PATH → 自带）⇒ 那条结论是假的，会把人指向"去装 ffmpeg"。
+        from agent import ffmpeg_bin as _FB
+        _fp = _FB.path()
+        lines.append("  ffmpeg: %s" % (("%s（来源=%s）" % (_fp, _FB.source() or "?")) if _fp else
+                                       "**没找到**（配置 / PATH / imageio-ffmpeg 自带那份都没有；"
+                                       "合成要转 wav，必需）"))
+    except Exception:
         import shutil as _sh
         lines.append("  ffmpeg: %s" % (_sh.which("ffmpeg") or "**没找到**（合成要转 wav，必需）"))
-    except Exception:
-        pass
 
     # ③ 模型端点：能不能拉这个地址上的模型列表（＝"自己读模型清单"的第一步）
     try:
