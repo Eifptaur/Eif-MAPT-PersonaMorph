@@ -5796,6 +5796,20 @@ class WeChatAdapter:
             db_text = self._last_target_text(chat_id, target_id) if target_id else ""
             _d("4) 目标最近消息（数据库后 60 条内匹配）：%r" % (db_text[:40] or "(未找到，用空文本)"))
             located = self._send_poke_locate(gui, target_name, db_text)
+            # 🔴 2026-09-18 加（现场两次回拍失败后）：**先滚到最新再找一遍**。
+            #   `_send_poke_locate` 的 OCR 路径**只在当前视口里找、且只保留左侧（对方）的行**，
+            #   `items` 一空就直接 `return None`；而 `scroll` 参数只喂给 UIA 那一支（我们环境 UIA 本就不通）
+            #   ⇒ 对方消息只要不在视口里（或记录被清空），就永远判"未定位到"。
+            #   ⇒ 失败时**滚到最新**再找一次（最新一条通常正是刚才那条拍拍前后的消息）。
+            if not located:
+                try:
+                    self._scroll_to_bottom(gui)
+                    time.sleep(0.8)
+                except Exception:
+                    pass
+                located = self._send_poke_locate(gui, target_name, db_text)
+                if located:
+                    _d("5) 第一次定位失败，**滚到最新后**再找成功")
             if not located:
                 _d("5) ✘ 定位失败：未找到「%s」的头像位置（UIA 行匹配/OCR 相似度/左侧消息兜底都失败）" % target_name)
                 return False, ("未在可见消息里定位到「%s」的头像；让对方先发条消息再试" % target_name)
