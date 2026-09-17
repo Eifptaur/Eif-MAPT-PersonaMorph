@@ -613,7 +613,7 @@ class WeChatAdapter:
             _why = "；".join("「%s」%s" % (d or "驱动库自探测", e) for d, _s, e in _errs)
             _e0 = _errs[0][2] if _errs else "未知原因"
             raise WeChatError("打不开消息库：%s（试过 %d 条路：%s）%s"
-                              % (_e0, len(_errs), _why, _db_open_verdict(_probe_db_dirs(_dd))))
+                              % (_e0, len(_errs), _why, _db_open_verdict(_probe_db_dirs(_dd), _errs)))
         _picked = str(_how.get("dir") or "")
         _src = str(_how.get("src") or "")
         if _src == "scanned":
@@ -1004,9 +1004,26 @@ class WeChatAdapter:
             }
 
         # 自己发的消息跳过（避免自问自答）
-        # 微信 4.x 群聊里 real_sender_id 不可靠：实测"自己"是 3，别人是 7 等（真实 wxid 在内容前缀里）
-        if str(sender_id) in ("2", "3"):
-            return None
+        # 🔴 2026-09-17 修（用户「佬」实测反馈：「**别人说话它没反应；机器人自己发一句它就有反应，
+        #    还回了自己一句** 好这玩意差点酿成大祸」）：这里原来写死
+        #       `if str(sender_id) in ("2", "3"): return None`
+        #    注释自己就写着"微信 4.x 群聊里 real_sender_id 不可靠" —— 它是**每个会话内部的本地序号**
+        #    （不同机器/不同会话都可能不同）。在那台机器上**别人的 sender_id 正好是 2/3** ⇒
+        #    别人的消息被整片丢光、只剩机器人自己的消息能进来 ⇒ 表现就是"只认自己说的话 + 回自己"。
+        #    ⇒ 现在**只按证据判自己**（下面三档），绝不按写死的 id 判：
+        #      ① `self_wxid` 命中（最强证据）② 昵称一致 + 我 30 秒内确实发过 ③ 文本回声窗口。
+        #    宁可漏判一次回声（③ 还兜着），也不能把**别人的话**丢掉。
+        _eid = str(sender_id or "").strip()
+        _drop_by_id = False                        # 保留这个变量只为把老行为"记下来"，不再据此跳过
+        if _eid in ("2", "3"):
+            try:
+                _drop_by_id = True
+                if not getattr(self, "_id_note_done", False):
+                    self._id_note_done = True
+                    log.warning("注：这条消息的 sender_id=%s（老版本会据此当成「自己」直接丢掉）——"
+                                "现在只按 self_wxid/昵称/回声判自己，不再按这个号丢消息", _eid)
+            except Exception:
+                pass
         # 系统消息：只保留「拍一拍」事件，其余（撤回/进群/邀请等）跳过
         if mtype in ("系统消息",):
             raw_text = str(content or "")
@@ -1522,6 +1539,7 @@ class WeChatAdapter:
             from . import version_gate as _vg
             _g = _vg.check("send", wechat=wx_version_for_gate())
             if not _g["allow"]:
+                _vg.note_blocked("send", _g["reason"])      # 记账：控制台横幅与日志都要看得见
                 return False, _g["reason"]
         except Exception:
             pass
@@ -1553,7 +1571,21 @@ class WeChatAdapter:
                                     self._learn_chat_header(chat_id, gui=gui)   # 顺手把该尺寸的会话头参照学到手
                                 except Exception as _e:
                                     log.info("学会话头参照失败（不影响发送）：%s", _e)
+                                # 🔴 2026-09-17 修（用户「佬」实测：「**点到了下面一个联系人，然后回复了在
+                                #    群里的那条消息，发给了别人**」）：`switch_chat_posted` 说"切成功"**不等于**
+                                #    此刻开着的就是目标会话（它自己的证据是"绿底高亮行 + 名字 OCR"，点错行时
+                                #    同样可能成立）⇒ 发送前**必须再要一次内容级正面证据**。
+                                #    拿不到就不发：宁可漏发一条，**绝不发错人**（发错会话是对外可见的事故）。
+                                _idn, _idwhy = self.chat_identity_ok(chat_id, gui=gui)
+                                if _idn is not True:
+                                    log.warning("切会话后内容级复核未通过（%s / %s）⇒ 这条不发（防发错人）",
+                                                _idn, _idwhy)
+                                    return False, ("切完会话后**内容级复核没过**（%s：%s）⇒ 这条不发 —— "
+                                                   "宁可漏发，绝不发错人。把目标会话在微信里点开、或"
+                                                   "让该会话里有一条能比对的文字，再重试。"
+                                                   % ("拿不到证据" if _idn is None else "证据说不是", str(_idwhy)[:60]))
                                 # 授权依据＝上面的 OCR 名字确认（绿底高亮行 + 名字比对，独立于指纹闸）
+                                #   ＋ 这里刚补的**内容级复核**（两道独立证据）
                                 ok, msg = self.send_text_posted(text, chat_id, allow_no_ref=True)
                                 if ok:
                                     self._mark_sent(text)
@@ -2724,6 +2756,7 @@ class WeChatAdapter:
             from . import version_gate as _vg
             _g = _vg.check("send", wechat=wx_version_for_gate())
             if not _g["allow"]:
+                _vg.note_blocked("send", _g["reason"])      # 记账：控制台横幅与日志都要看得见
                 return False, _g["reason"]
         except Exception:
             pass
@@ -2999,6 +3032,7 @@ class WeChatAdapter:
             from . import version_gate as _vg
             _g = _vg.check("send", wechat=wx_version_for_gate())
             if not _g["allow"]:
+                _vg.note_blocked("send", _g["reason"])      # 记账：控制台横幅与日志都要看得见
                 return False, _g["reason"]
         except Exception:
             pass
@@ -6229,6 +6263,34 @@ def _expand_path(p: str) -> str:
     return s
 
 
+def _db_dir_variants(p: str) -> list:
+    """把一个路径**规范化成驱动库能认的几种形态**（按优先级）。
+
+    起因（2026-09-17 用户「佬」的报告，两个失败模式里的第一个）：
+      他在控制台填的是 `…\\wxid_yu586z7rt3ad22_482e\\db_storage` ⇒ 驱动库 `_pick_account()`
+      只在 `db_dir` 底下找"带 db_storage 子目录的账号目录"，填到 db_storage 这一层就**一个都找不到**
+      ⇒ `RuntimeError: 未找到任何已登录账号的数据库`（磁盘上 73 个 .db 明明都在）。
+    ⇒ 用户填哪一层都算对：`db_storage` ⇒ 退回它的**账号目录**，再退回**账号目录的上一级**
+      （`xwechat_files`，驱动库从那儿能扫到账号）。**配置只是"我建议你用哪个"，不是"只许用哪个"**。
+    """
+    s = _expand_path(p)
+    if not s:
+        return []
+    out = [s]
+    try:
+        base = os.path.basename(os.path.normpath(s)).lower()
+        if base == "db_storage":
+            acct = os.path.dirname(os.path.normpath(s))          # …\wxid_xxx_482e
+            for c in (acct, os.path.dirname(acct)):              # 账号目录 → xwechat_files
+                if c and c not in out:
+                    out.append(c)
+        elif os.path.isdir(os.path.join(s, "db_storage")):
+            out.append(os.path.dirname(os.path.normpath(s)))     # 账号目录 ⇒ 再给一级上级
+    except Exception:
+        pass
+    return [x for x in out if x]
+
+
 def db_open_tries(explicit: str = "") -> list:
     """开消息库要**依次试**的 `(目录, 来源)`：配置填的 → 扫盘探到的 → 驱动库自探测（`""`）。
 
@@ -6240,9 +6302,8 @@ def db_open_tries(explicit: str = "") -> list:
     且每条路各自的原因都要能报出来（只报第一条会让人照着错的去查）。
     """
     out = []
-    _e = _expand_path(explicit)
-    if _e:
-        out.append((_e, "config"))
+    for _v in _db_dir_variants(explicit):
+        out.append((_v, "config" if not out else "config↑"))
     try:
         _p, _s = resolve_db_dir("")            # 只走"扫盘"那条（不看配置）
         if _p and _p not in [d for d, _ in out]:
@@ -6251,6 +6312,50 @@ def db_open_tries(explicit: str = "") -> list:
         pass
     out.append(("", "auto"))
     return out
+
+
+_SAFE_DB_CLS = []
+
+
+def _db_class():
+    """拿"抗缺密钥"的 `WeChatDB` 子类（**唯一实现**，别在别处又 new 一遍原类）。
+
+    起因（2026-09-17 用户「佬」的报告，两个失败模式里的第二个）：磁盘上 73 个 .db 都在、账号目录也认了，
+    可第一次开库就 `KeyError: 'message\\message_1.db'` —— 微信**懒创建**的分片（或版本升级后新增的分片）
+    不在驱动库 `init` 时那份密钥快照里，而 `_open()` 是直接 `self._keys[rel]`，一格缺失就把整条链弄死。
+    行为（三档，全部留痕）：撞到没密钥的分片 ⇒ ①先补一次密钥（可能刚好补得上）；
+    ②补不上就把该分片从 `_db_files` **摘掉**并**如实报出分片名**（其余分片照常读）；
+    ③绝不静默——摘掉要能出现在诊断与控制台里。
+    """
+    if _SAFE_DB_CLS:
+        return _SAFE_DB_CLS[0]
+    from wechatauto import WeChatDB as _Base
+
+    class _SafeDB(_Base):
+        def _open(self, rel):
+            keys = getattr(self, "_keys", None) or {}
+            if rel not in keys:
+                if not getattr(self, "_pm_refreshing", False):
+                    self._pm_refreshing = True
+                    try:
+                        self._load_or_extract_keys()
+                    except Exception:
+                        pass
+                    finally:
+                        self._pm_refreshing = False
+                    keys = getattr(self, "_keys", None) or {}
+                if rel not in keys:
+                    try:
+                        f = getattr(self, "_db_files", None)
+                        if isinstance(f, dict) and rel in f:
+                            del f[rel]
+                    except Exception:
+                        pass
+                    raise RuntimeError("这个库分片没有密钥，已跳过：%s" % rel)
+            return _Base._open(self, rel)
+
+    _SAFE_DB_CLS.append(_SafeDB)
+    return _SAFE_DB_CLS[0]
 
 
 def open_db(explicit: str = ""):
@@ -6263,8 +6368,9 @@ def open_db(explicit: str = ""):
     errors = []
     for _d, _src in db_open_tries(explicit):
         try:
-            from wechatauto import WeChatDB        # 放在 try 里：驱动库没装也要**照实记成一条原因**
-            db = WeChatDB(db_dir=_d) if _d else WeChatDB()
+            # 放在 try 里：驱动库没装也要**照实记成一条原因**
+            cls = _db_class()                       # 抗缺密钥的子类（唯一实现）
+            db = cls(db_dir=_d) if _d else cls()
             return db, {"dir": _d, "src": _src,
                         "account_dir": str(getattr(db, "account_dir", "") or "")}, errors
         except Exception as e:                  # ImportError 也走这里（诊断要照实说"驱动库没装上"）
@@ -6272,8 +6378,12 @@ def open_db(explicit: str = ""):
     return None, {}, errors
 
 
-def _db_open_verdict(p: dict) -> str:
-    """把「打不开消息库」分成三档，每档给一句**能照着做**的结论。"""
+def _db_open_verdict(p: dict, errors=None) -> str:
+    """把「打不开消息库」分成三档，每档给一句**能照着做**的结论。
+
+    ⚠️ 2026-09-17 加 `errors`：原来第三档**一律**说"那是权限或占用"。可用户「佬」那次报的是
+    `KeyError: 'message\\message_1.db'`（**密钥缺口**），照着"权限"去查是白费功夫 —— 原因必须分得清。
+    """
     tried = "、".join(p.get("tried") or []) or "（没探任何目录）"
     how = "在微信里看「设置 → 文件管理 → 微信文件默认保存位置」，把那个目录填进下面「数据库目录」"
     if not p.get("found"):
@@ -6283,6 +6393,13 @@ def _db_open_verdict(p: dict) -> str:
         return ("；磁盘上找到了数据目录（%s），但**一个 .db 都没有** ⇒ 目录结构对不上"
                 "（驱动库不认识这个微信版本的数据结构），不是权限问题；也可以 %s"
                 % ("、".join(p["found"]), how))
+    _et = " ".join(str(e[2]) for e in (errors or []))
+    if "没有密钥" in _et or "KeyError" in _et:
+        return ("；磁盘上 %d 个 .db 都在（%s）⇒ 文件没问题，卡在**密钥**：微信懒创建/升级后新增的"
+                "分片不在密钥表里（本程序会跳掉那些分片、其余照常读）。若整片都读不了："
+                "微信必须**正在运行且已登录**（密钥从它进程内存里读），再点重试；"
+                "也确认本程序与微信**同一权限级别**（微信是管理员，本程序也要是）"
+                % (p.get("dbs") or 0, "、".join(p["found"])))
     return ("；磁盘上 %d 个 .db 都在（%s）⇒ 目录和文件都没问题，那是**权限或占用**："
             "微信若以管理员运行，本程序也要同样权限；也可先点重试"
             % (p.get("dbs") or 0, "、".join(p["found"])))
