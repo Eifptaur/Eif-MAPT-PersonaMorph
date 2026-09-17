@@ -599,7 +599,8 @@ th{color:var(--tx2);font-weight:500}
           if (j.phase === 'download') {
             show('正在下载 ' + (j.version || ver) + '：'
               + (j.total ? (Math.floor(j.got * 100 / j.total) + '%（' + _mb(j.got) + ' / ' + _mb(j.total) + '）')
-                         : _mb(j.got || 0)), '');
+                         : _mb(j.got || 0))
+              + (j.why ? (' · ' + j.why) : ''), '');
           } else if (j.phase === 'verify') {
             show('正在校验下载内容（文件树哈希）…', '');
           } else {
