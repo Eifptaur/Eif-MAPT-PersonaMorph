@@ -2964,6 +2964,18 @@ class WeChatAdapter:
                                              top.get("type_name") or top.get("type")))
                 if time.time() >= _deadline:
                     break
+            # 🔴 2026-09-18 加：**屏幕兜底确认**（DB 回读看不见时别急着判失败）。
+            #   现场（01:59）：图明明发出去了（群里看得见），可 DB 回读**看不到新行**（用户清空过聊天记录，
+            #   这个会话的消息表被重建/还没落位）⇒ 判「判据不可用、无法证实」⇒ 退回真鼠标路径被拒
+            #   ⇒ 调用方拿到 False，接着又重试，行为很乱。
+            #   判据：**发送按钮从绿变灰＝输入框已清空＝内容确实离手**（与进框自检同一把尺子，
+            #   都走屏幕实拍）。它不依赖数据库，正好补上"清空过聊天记录的会话读不到新行"这个洞。
+            #   ⚠️ 口径：这是**屏幕证据**，不是 DB 回读 —— 回执里必须把两种判据分别写清，不许混为一谈。
+            _still, _still_why = self._input_has_content(gui, r)
+            if not _still:
+                return V_OK, ("投递发图：**输入框已清空**（%s）⇒ 按屏幕证据判已发出"
+                              "（DB 回读没等到新行；打了 %d 枪 %s）"
+                              % (_still_why, len(_fired), "→".join(_fired) if _fired else "0"))
             _alive2, _why_alive2 = self.db_alive(chat_id)
             if not _alive2:
                 return V_UNVERIFIED, ("已投递粘贴并打了 %d 枪%s，但**判据不可用**、无法证实：%s"
