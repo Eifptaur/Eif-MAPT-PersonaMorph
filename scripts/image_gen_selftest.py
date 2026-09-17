@@ -67,10 +67,19 @@ ok("默认一张、默认方形", i5["count"] == 1 and i5["size"] == "square", s
 
 print("③ 后端选择（没配后端 ⇒ 明确失败，不假装）")
 set_cfg(enabled=True)
-ok("没配后端 ⇒ 拒绝并给出人话原因", IG.pick_backend()[0] is None and ("没探到" in IG.pick_backend()[1] or "没配" in IG.pick_backend()[1]), IG.pick_backend()[1])
-set_cfg(enabled=True, backends=[{"id": "online-x", "kind": "online", "url": "http://127.0.0.1:9/x"}])
-ok("只配在线后端但没允许出网 ⇒ 拒绝", IG.pick_backend()[0] is None and "online_allowed" in IG.pick_backend()[1],
-   IG.pick_backend()[1])
+# ⚠️ 2026-09-18：这一段判的是**"用户一个后端都没配"**时的行为，可 `pick_backend()` 还会
+#   **自动探测本机跑着的本地服务**（那是产品特性）。本机恰好开着自带的 7860 ⇒ 探到了就不算"没配"，
+#   于是这三条假红。⇒ 判据必须自己控制环境：这一节先把探测关掉，测的是"配置为空"这条路径。
+_orig_detect = IG.detect_local
+IG.detect_local = lambda *a, **k: []
+try:
+    ok("没配后端 ⇒ 拒绝并给出人话原因", IG.pick_backend()[0] is None and ("没探到" in IG.pick_backend()[1] or "没配" in IG.pick_backend()[1]), IG.pick_backend()[1])
+    set_cfg(enabled=True, backends=[{"id": "online-x", "kind": "online", "url": "http://127.0.0.1:9/x"}])
+    ok("只配在线后端但没允许出网 ⇒ 拒绝", IG.pick_backend()[0] is None and "online_allowed" in IG.pick_backend()[1],
+       IG.pick_backend()[1])
+finally:
+    IG.detect_local = _orig_detect
+
 set_cfg(enabled=True, online_allowed=True, backends=[{"id": "online-x", "kind": "online", "url": "http://127.0.0.1:9/x"}])
 ok("允许出网后才可选到在线后端", IG.pick_backend()[0]["id"] == "online-x")
 
@@ -109,6 +118,12 @@ ok("真人换脸 ⇒ 拒（红线，无开关）", r["ok"] is False and "红线"
 r2 = IG.generate("x", "来张 r18 的图")
 ok("成人内容 ⇒ 拒", r2["ok"] is False, r2["why"])
 r3 = IG.generate("x", "画只猫")
+# 同 ③：这条测的是"配为空且本机没有可探测的服务"⇒ 先把自动探测关掉（本机真的开着 7860）
+IG.detect_local = lambda *a, **k: []
+try:
+    r3 = IG.generate("x", "画只猫")
+finally:
+    IG.detect_local = _orig_detect
 ok("没后端 ⇒ 拒且不产生任何文件", r3["ok"] is False and ("没探到" in r3["why"] or "没配" in r3["why"]), r3["why"])
 snap = IG.snapshot()
 ok("快照里写明红线状态", snap["red_line"]["allow_real_face"] is False and snap["red_line"]["r18_switch_exists"] is False,
