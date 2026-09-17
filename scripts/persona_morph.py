@@ -2787,7 +2787,17 @@ def main():
                     if not entry:
                         return None                     # 没落库 ⇒ 判失败，交给 process_batch 重试
                     # ── 系统自动回拍：别人拍一拍机器人 → 延迟 ~18 秒后按概率回拍（90%）──
+                    # ⛔ 2026-09-18 修（作者抓到的真缺陷：机器人回了一句**「谁拍我」**）：
+                    #   **"我们自己拍出去"的拍一拍回执也是 `[拍一拍]`**（解析侧抠不出名字），
+                    #   原来这里不分方向、一律 `orch.on_incoming` ⇒ **回执被当成"别人拍我"喂给模型**
+                    #   ⇒ 模型看不到主语，只能反问「谁拍我」（session 里实锤：
+                    #   `trigger="[拍一拍]"` → `send_message("谁拍我")`）。⇒ 自己的回执只落库，不喂模型、不回拍。
                     if str(nm.get("text") or "").startswith("[拍一拍]"):
+                        from agent.wechat import poke_event_is_ours as _is_ours
+                        if _is_ours(nm, str(getattr(wechat, "_self_wxid", "") or "")):
+                            log.info("群[%s] 收到**我们自己拍出去的拍一拍回执** ⇒ 只落库，"
+                                     "不喂模型、不排回拍（否则模型会反问「谁拍我」）", _g["name"])
+                            return entry
                         _schedule_poke_back(wechat, store, _chat_key, _wxid, _g["name"], nm)
                     orch.on_incoming(_chat_key)
                     return entry
