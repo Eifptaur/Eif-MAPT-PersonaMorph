@@ -5646,6 +5646,21 @@ class WeChatAdapter:
             backend = ib.select_backend(gui=gui)
             if not isinstance(backend, ib.MessageBackend):
                 return False                      # 当前不是投递档 ⇒ 交给原实现
+            # ⭐ 2026-09-18 实测（作者口径「右键不行，就是没点准」之后我做的对照实验）：
+            #   **伪激活会让这条链不弹菜单**——同一落点（头像方块中心）、同一帧：
+            #     `activate=True`  ⇒ 新菜单窗 **0 个**
+            #     `activate=False` ⇒ 菜单窗出现，且截出来就是「拍一拍」（`_scratch/menu-shot/`）
+            #   而伪激活（`WM_ACTIVATE/WM_NCACTIVATE`）的用处只是"让目标自认为被激活"，
+            #   投递根本不需要它，它反而**会把微信拉前台**（跨机 r15 实测 0.6~1.8s）。
+            #   ⇒ 后台档一律关掉伪激活；真鼠标档保持原样。
+            try:
+                from . import ui_adapt as _ua_fg
+                _fg_ok = bool(_ua_fg.fg_allowed()[0])
+            except Exception:
+                _fg_ok = False
+            if not _fg_ok and getattr(backend, "activate", False):
+                backend.activate = False
+                log.info("投递右键：后台档**关掉伪激活**（实测带伪激活反而不弹菜单，且它是置前的来源）")
             main = int(getattr(gui, "main_hwnd", 0) or 0) or ib.find_main_window()
             if not main:
                 return False
@@ -6612,7 +6627,12 @@ class WeChatAdapter:
             t = str(txt or "")
             if not t:
                 return False
-            if "你拍了拍" in t:
+            # ⭐ 2026-09-18 实测补：**我发起**的拍拍在 DB 里的原文是 `我拍拍「E」`（**没有"了"**），
+            #   而"别人拍我"是 `「E」拍拍「群deepseek」` ⇒ 原来只认 `你拍了拍`/`拍了拍`，
+            #   于是**真拍上了也报"未验证到"**（现场：DB 里 local_id=7 title=`我拍拍「E」`，
+            #   验证却说"数据库与界面都未验证到我发起的拍拍"）。
+            #   ⇒ 方向判据补上 `我拍拍` / `我拍了拍`。
+            if "你拍了拍" in t or "我拍拍" in t or "我拍了拍" in t:
                 return True
             if "拍了拍" in t and target and (target in t):
                 head = t[:max(24, len(t) // 2)]
