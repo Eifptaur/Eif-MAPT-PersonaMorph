@@ -1415,21 +1415,52 @@ def main():
     log.info("监听目标合计 %d 个（群 %d + 私聊 %d）", len(targets), len(targets) - len(_pt), len(_pt))
 
     def _collect_targets(wc):
-        """按当前配置重算 (全部群, 监听目标)。启动与"晚接入"共用一份，避免两处漂移。"""
+        """按**当前配置**重算 (全部群, 监听目标)。启动、晚接入、配置保存后共用一份，避免三处漂移。
+
+        ⚠️ 2026-09-17 修（网友报「我把群勾选了…概览的状态改变不了」）：这里原来读的是**启动时**的
+        闭包变量 `whitelist` / `deny` / `_pmode` ⇒ 保存配置后即使重算也还是老口径（等于白算）。
+        现在一律现读配置 —— 改了勾选就能立刻生效，不用重启。
+        """
+        try:
+            _cfg_now = get_config() or {}
+        except Exception:
+            _cfg_now = {}
+        _wl = (_cfg_now.get("wechat") or {}).get("group_name_white_list") or []
+        _deny = set((_cfg_now.get("deny") or {}).get("groups") or [])
+        _mode = str((_cfg_now.get("wechat") or {}).get("private_chat") or "owner_only")
         try:
             _gs = wc.list_groups() or []
         except Exception as _e:
             log.warning("取群列表失败：%s", _e)
             _gs = []
-        _t = [g for g in _gs if (not whitelist or g["name"] in whitelist) and g["name"] not in deny]
+        _t = [g for g in _gs if (not _wl or g["name"] in _wl) and g["name"] not in _deny]
         try:
-            _p2 = [] if _pmode == "off" else (wc.list_private_targets() or [])
+            _p2 = [] if _mode == "off" else (wc.list_private_targets() or [])
         except Exception as _e:
             log.warning("私聊目标发现失败（不影响群）：%s", _e)
             _p2 = []
         if _p2:
             _t += [{"name": c.get("name") or c.get("wxid"), "wxid": c.get("wxid")} for c in _p2]
         return _gs, _t
+
+    def _refresh_targets(why=""):
+        """按当前配置**就地刷新**监听目标（配置保存后也走这里）。
+
+        为什么（2026-09-17 网友报「改了群勾选，概览那个状态改变不了」）：`status_provider` 是按
+        `groups` + `target_wxids` 算「这个群是不是监听目标」的，而这两样原来只在启动/晚接入时算过
+        ⇒ 保存新白名单后，概览与推送目标都还是老的（看着像"锁在那个状态"）。
+        """
+        nonlocal groups, targets
+        _wc = wechat_box[0] if wechat_box else None
+        if _wc is None:
+            return
+        try:
+            groups, targets = _collect_targets(_wc)
+            target_wxids.clear()
+            target_wxids.update(g["wxid"] for g in targets if g.get("wxid"))
+            log.info("监听目标已按新配置重算（%s）：群 %d · 合计 %d", why or "配置变更", len(groups), len(targets))
+        except Exception as e:
+            log.warning("重算监听目标失败（%s）：%s", why, e)
 
     store = ChatStore(int(cfg.get("store", {}).get("max_messages_per_chat") or 0))
     memory = MemoryStore()
@@ -2390,6 +2421,8 @@ def main():
     except Exception:
         pass
     webui = WebUI(status_provider, log_buffer, test_api_fn=test_api_fn, balance_fn=balance_fn,
+                  # 保存配置后就地重算监听目标（否则改了群勾选只有重启才生效，概览也一直是老的）
+                  on_save=lambda _new_cfg: _refresh_targets("配置已保存"),
                   pause_fn=lambda: orch.set_paused(True), resume_fn=lambda: orch.set_paused(False),
                   shutdown_fn=shutdown_fn, whale=orch.whale,
                   poke_test_fn=poke_test_fn, selfcheck_fn=selfcheck_fn, restart_fn=restart_fn,
