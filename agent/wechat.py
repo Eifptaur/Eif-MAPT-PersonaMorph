@@ -5660,6 +5660,29 @@ class WeChatAdapter:
             pass
         return ""
 
+    def _target_recent_texts(self, chat_id: str, wxid: str, n: int = 8) -> list:
+        """目标**最近 n 条**消息文本（最新在前）——认人用的锚点。
+
+        为什么不能只认"最后一条"（2026-09-18 实测）：作者拍机器人那轮，E 的最后一条是
+        `。。。`（纯标点，OCR 根本读不出），于是按单条锚点永远对不上、明明人在视口里也拍不上。
+        而 E 上一条 `@群deepseek 说话！` 就在视口里、OCR 读得出 ⇒ 拿**一组**锚点去配，
+        命中任意一条即可锁定"这是 TA 的消息行"（仍然是"文本真的对上"，不是猜）。
+        """
+        out = []
+        try:
+            for raw in self._db.get_messages(chat_id, limit=60):
+                norm = self.normalize(raw, chat_id)
+                if not norm or str(norm.get("sender_id") or "") != str(wxid):
+                    continue
+                txt = str(norm.get("text") or "").strip()
+                if txt and not txt.startswith("[") and txt not in out:
+                    out.append(txt)
+                if len(out) >= max(1, int(n)):
+                    break
+        except Exception:
+            pass
+        return out
+
     @staticmethod
     def _norm_ocr(s: str) -> str:
         """OCR 行 vs 数据库文本的归一化：去空白，@/# 与"群"互换等 OCR 常见误读。"""
@@ -5780,107 +5803,227 @@ class WeChatAdapter:
         except Exception:
             pass
 
-    def _find_avatar_center(self, box):
-        """运行时定位头像：在给定屏幕像素矩形内找「彩色饱和像素斑块」中心。
+    @staticmethod
+    def _avatar_blocks(img, pane_left: int, diff: int = 45):
+        """在**渲染帧**里找头像方块，返回渲染相对 bbox 列表 [(x0,y0,x1,y1), ...]。
 
-        真人头像是有颜色的图片，气泡/名字/背景都是灰白/黑（低饱和度），
-        用 max(R,G,B)-min(R,G,B) > 28 筛彩色像素完全能区分（深浅色主题通用）。
-        返回屏幕坐标 (x, y) 或 None。
+        为什么换掉老判据 `_find_avatar_center`（2026-09-18 现场 + 作者口径，记忆 0mu60w7k）：
+          · 老判据用「彩色饱和像素中位数」（`max-min>28` 的像素取中位）。对方头像常是
+            **深色低饱和**照片 —— 本机实拍 E 的头像每行只有 6~11 个饱和点，判不出来；
+            代码于是回落到公式 `right_pane_left + 0.185×pane`，实测算出 **434**，
+            而真头像方块是 x 360..413 ⇒ **落进气泡** ⇒ 右键弹的是消息菜单
+            （实测读到 撤销/放大阅读/翻译/转发/收藏，**没有「拍一拍」**）⇒ 表现为"一直拍不上"。
+          · 新判据＝**与聊天底色的差异**（整幅里出现次数最多的颜色＝聊天背景）：
+            逐行取最左连续段，竖着聚成 30~76px 高、26~80px 宽的方块。
+            实测：头像行 44~62 点/行、非头像行 0~9 点/行；diff 取 30/45/60/80
+            **四个值结果完全一致**（54×54，中心 (386,220)/(386,419)），且不依赖明暗主题。
+          · ⛔ 作者口径：**不许把任何一张图量出的坐标写死成常量**（窗口/DPI/分辨率各机不同）
+            ⇒ 每次都从当前帧现量；量不到由上层如实失败（不猜、不落公式）。
         """
         try:
-            from PIL import ImageGrab
-            img = ImageGrab.grab(bbox=box)
-            px = img.convert("RGB").load()
-            w, h = img.size
-            xs, ys = [], []
-            step_y = max(1, h // 120)
-            for y in range(0, h, step_y):
-                for x in range(w):
+            from collections import Counter
+            rgb = img.convert("RGB")
+            px = rgb.load()
+            W, H = rgb.size
+            lo = max(0, min(int(pane_left or 0), max(0, W - 10)))
+            cnt = Counter()
+            for y in range(0, H, 4):
+                for x in range(lo, W, 4):
+                    cnt[px[x, y]] += 1
+            if not cnt:
+                return []
+            bg = cnt.most_common(1)[0][0]
+            # 逐行取候选段（宽度 26~80 粗筛：气泡太宽、昵称太窄，都会被滤掉）
+            rows_runs = []
+            for y in range(H):
+                runs, cur = [], None
+                for x in range(lo, W):
                     r, g, b = px[x, y]
-                    if max(r, g, b) - min(r, g, b) > 28:  # 彩色饱和像素
-                        xs.append(x)
-                        ys.append(y)
-            if len(xs) < 40:  # 太少视为误检（如气泡彩字/残影）
-                return None
-            xs.sort()
-            ys.sort()
-            return box[0] + int(xs[len(xs) // 2]), box[1] + int(ys[len(ys) // 2])
+                    if abs(r - bg[0]) + abs(g - bg[1]) + abs(b - bg[2]) > diff:
+                        if cur is None:
+                            cur = [x, x]
+                        cur[1] = x
+                    elif cur is not None:
+                        runs.append(tuple(cur))
+                        cur = None
+                if cur is not None:
+                    runs.append(tuple(cur))
+                rows_runs.append([r for r in runs if 26 <= (r[1] - r[0] + 1) <= 80])
+            # ⚠️ 竖着聚类时**不能只跟"最左那一段"**：`pane_left` 万一给的是过期值（本机实测
+            #   库值 262 vs 真值 331），会话列表那条绿行会成为某些行的最左段、把头像方块**顶部切掉**
+            #   （实测中心从 (386,220) 变成 (386,232)）。⇒ 改成"每行的每一段都去认领自己的簇"：
+            #   x 起点相差 ≤8px 且与上一行相邻（间隔 ≤3 行）才并入同一簇。
+            clusters = []                      # [x0, y0, y1, last_y, [runs]]
+            for y, runs in enumerate(rows_runs):
+                for r in runs:
+                    hit = None
+                    for c in clusters:
+                        if abs(r[0] - c[0]) <= 8 and (y - c[3]) <= 3:
+                            hit = c
+                            break
+                    if hit is None:
+                        clusters.append([r[0], y, y, y, [r]])
+                    else:
+                        hit[2] = y
+                        hit[3] = y
+                        hit[4].append(r)
+            out = []
+            for _x0, y0, y1, _last, rs in clusters:
+                if not (30 <= (y1 - y0 + 1) <= 76):
+                    continue
+                x0 = min(r[0] for r in rs)
+                x1 = max(r[1] for r in rs)
+                if not (26 <= (x1 - x0 + 1) <= 80):
+                    continue
+                out.append((int(x0), int(y0), int(x1), int(y1)))
+            return out
         except Exception:
-            return None
+            return []
 
     def _send_poke_locate(self, gui, target_name: str, db_text: str, scroll: bool = True, self_side: bool = False):
         """定位目标头像（渲染相对坐标），返回 (ax, ay, score) 或 None。
-        self_side=True：要找的是"自己发的消息"（撤回/删自己），它在**右侧**，不剔除右侧项。
 
-        路径优先级：① UIA 行匹配（精确/模糊）→ 彩色头像检测；② UIA 行固定偏移；
-        ③ OCR 相似度匹配 → 彩色头像检测；④ 左侧消息块兜底。
-        返回第三位 score 供日志说明路径（1.0=UIA 精确行 / 0.8=彩色检测 / 0.0=兜底）。
-        scroll=False 只在当前视口找（先滚到最新再调用，用于引用定位避免翻页漂移）。
+        失败原因一律写进 `self._poke_locate_why`（上层要如实告诉用户，不许含糊）。
+
+        2026-09-18 重做（现场：回拍连失败，落点 (434,423) 落进气泡弹了消息菜单）：
+          ① **落点的唯一来源＝运行时检测到的头像方块**（`_avatar_blocks`；帧走
+             `chat_header.grab_render`＝PrintWindow，微信被遮挡也拿得到）。取方块中心，
+             返回前还要过**归属校验**（落点在方块内缩 4px 内）——算出来的点不等于点在控件上；
+          ② **行号在"已经抓到的那一帧"上用 `chat_ocr.recognize` 读**（不能用 `gui.ocr`：
+             它是抓屏，微信被遮挡时读到别人的像素、直接返回空 —— 现场那 3 次"定位不到"就是它）；
+          ③ 再在方块里挑离该行最近的那个；最近距离 >90px 就放弃（怕拍到别人）；
+          ④ 全不成立 ⇒ **None**。**绝不退回公式猜点**——作者口径：「量不到就如实失败，不猜点」。
         """
-        # 1) UIA 行匹配（可向上翻页查找）+ 彩色头像检测
-        row = self._uia_target_row_rect(gui, db_text, scroll=scroll)
-        if row:
-            av = self._find_avatar_center((row[0], row[1], row[0] + 130, row[3]))
-            if av:
-                return av[0] - gui.origin_x, av[1] - gui.origin_y, 0.8
-            return row[0] + 54 - gui.origin_x, row[1] + 48 - gui.origin_y, 1.0
-        # 2) OCR 相似度匹配
-        items = []
-        try:
-            box = gui.get_input_box()
-            top = max(80, box[1] - 620) if box else 80
-            items = gui.ocr((gui.right_pane_left, top, gui.render_w, box[1]))
-        except Exception:
+        def _fail(why):
+            self._poke_locate_why = why
             return None
-        mid_x = (gui.right_pane_left + gui.render_w) // 2
-        pane_w = max(1, gui.render_w - gui.right_pane_left)
-        # 头像列中心 ≈ 会话区左缘 + 18.5% 会话区宽（实测：深色 197px、浅色 201px，取 0.185；头像 45~50px，容差 ±10px）
-        ax = gui.right_pane_left + int(pane_w * 0.185)
 
-        # 剔除垃圾项（侧栏碎片/小残片）；普通定位找左侧（对方），self_side 撤回自己在右侧
-        if self_side:
-            items = [it for it in items if it[3] > 30 and mid_x < it[1] < gui.render_w]
-        else:
-            items = [it for it in items if it[3] > 30 and (gui.right_pane_left + 60) < it[1] < mid_x]
-
-        db_norm = self._norm_ocr(db_text)
-        best = None
-        best_score = 0.0
-        for t, x, y, w, h in items:
-            tn = self._norm_ocr(t)
-            if not tn:
-                continue
-            score = _seq_ratio(tn, db_norm[:120] if db_norm else "")
-            if score > 0.5 and score > best_score:
-                best_score = score
-                best = (x, y, w, h)
-        if best and db_norm:
-            # 彩色头像检测：在行带上找（行带取气泡左缘向左 130px、首行上下 60px）
-            bx, by, bw, bh = best
-            av = self._find_avatar_center((gui.origin_x + max(gui.right_pane_left + 40, bx - 140),
-                                           gui.origin_y + by - 55,
-                                           gui.origin_x + bx, gui.origin_y + by + 75))
-            if av:
-                return av[0] - gui.origin_x, av[1] - gui.origin_y, 0.6
-            return ax, best[1] - 32, best_score
-
-        # 3) 兜底：左侧可见消息的最后一条（文本块第一行）
-        if items:
-            items.sort(key=lambda b: b[1])
-            last = items[-1]
-            first_y = last[1]
-            for i in range(len(items) - 1, 0, -1):
-                if last[1] - items[i - 1][1] > 36:
-                    first_y = items[i][1]
-                    break
+        self._poke_locate_why = ""
+        try:
+            from . import chat_header as _ch
+            rw = int(getattr(gui, "render_w", 0) or 0)
+            pane_left = 0
+            try:
+                pane_left = int(gui.detect_pane_left()) or 0     # 实测聊天面板左沿（本机 331）
+            except Exception:
+                pane_left = 0
+            if not pane_left:
+                pane_left = int(getattr(gui, "right_pane_left", 0) or 0)
+            img = _ch.grab_render(gui)
+            if img is None:
+                return _fail("抓不到微信画面（PrintWindow 失败）⇒ 量不到头像，不猜点")
+            iw, ih = img.size
+            rw = rw or iw
+            mid = rw // 2
+            blocks = self._avatar_blocks(img, pane_left)
+            if self_side:
+                side = [b for b in blocks if (b[0] + b[2]) // 2 > mid]
             else:
-                first_y = items[0][1]
-            return ax, first_y - 32, 0.0
-        return None
+                side = [b for b in blocks if (b[0] + b[2]) // 2 <= mid]
+            if not side:
+                return _fail("这一帧没检测到%s的头像方块（整帧共 %d 个）⇒ 不猜点"
+                             % ("右侧（自己）" if self_side else "左侧（对方）", len(blocks)))
+
+            got = None
+            # ② **帧内 OCR**：在"已经抓到的那一帧"上找目标的消息行。
+            #
+            # ⛔ 2026-09-18 这里修的是**现场那 3 次「未在可见消息里定位到头像」的真凶**：
+            #   老代码用 `gui.ocr`（它内部是 `self._grab_screen(...)`＝**抓屏**，见
+            #   `wechatauto/guia.py:967`）——微信被别的窗口盖住时读到的是**别人的像素**，
+            #   OCR 直接返回 `[]`（本机实测：同一窗口，抓屏读昵称带 4 种区域全 `[]`，
+            #   而 PrintWindow 那一帧读同一行能读出 `@#deepseek说话！`）。
+            #   ⇒ 一律改成 OCR `chat_header.grab_render` 拿到的那一帧（遮挡也能拿），
+            #     并走项目自己的加固层 `chat_ocr.recognize`（硬超时/预算/健康，`gui.ocr` 是绕开的）。
+            # 另：**昵称配对这条路不做**——本机实测单字昵称（「E」）WinRT OCR 读不出来
+            #   （40px 高的昵称带 4 种取法全空），留着只会拿别的文本乱配、增加拍错人的风险。
+            row_y = row_h = None
+            try:
+                row = self._uia_target_row_rect(
+                    gui, (db_text[0] if isinstance(db_text, (list, tuple)) and db_text
+                          else (db_text or "")), scroll=scroll)
+            except Exception:
+                row = None
+            if row:
+                _oy = int(getattr(gui, "origin_y", 0) or 0)       # UIA 行是**屏幕**坐标
+                row_y = int(row[1]) - _oy
+                row_h = max(8, int(row[3]) - int(row[1]))
+            else:
+                items = []
+                try:
+                    box = gui.get_input_box()
+                    bottom = box[1] if box else max(240, ih - 190)
+                    top = max(80, bottom - 640)
+                    crop = (int(pane_left), int(top), int(rw), int(bottom))
+                    from . import chat_ocr as _co
+                    if _co.blocked():
+                        return _fail("OCR 暂时不可用（%s）⇒ 量不到，不猜点" % _co.blocked())
+                    for t, x, y, w, h in _co.recognize(img.crop(crop)):
+                        items.append((t, crop[0] + x, crop[1] + y, w, h))
+                except Exception as e:
+                    return _fail("读取可见消息行失败：%s" % e)
+                # ⚠️ 过筛阈值为什么是 w≥6 / h≥8（2026-09-18 实测修正）：
+                #   库的 `ScreenOCR.recognize` 返回的 (w,h) 是 **`line.words[0]`（第一个词）**
+                #   的框（`wechatauto/guia.py`：`r = line.words[0].bounding_rect`），**不是整行**。
+                #   老代码那句 `it[3] > 30` 因此把绝大多数正常行都滤掉了
+                #   （本机实测：同一帧里 5 条合法左侧行只剩 1 条）⇒ 阈值按"首个词的框"来定。
+                if self_side:
+                    items = [it for it in items if it[3] >= 6 and it[4] >= 8 and mid < it[1] < rw]
+                else:
+                    items = [it for it in items
+                             if it[3] >= 6 and it[4] >= 8 and (pane_left + 60) < it[1] < mid]
+                # 锚点可以是**一组**文本（`_target_recent_texts`）：命中任意一条即可
+                # （只认最后一条时，最后一条若是 `。。。` 这种 OCR 读不出的，就永远配不上）。
+                _raw = list(db_text) if isinstance(db_text, (list, tuple)) else (
+                    [db_text] if db_text else [])
+                _needles = [n for n in (self._norm_ocr(x)[:120] for x in _raw) if n]
+                _bb, _bsc = None, 0.0
+                for t, x, y, w, h in items:
+                    tn = self._norm_ocr(t)
+                    if not tn or not _needles:
+                        continue
+                    sc = max(_seq_ratio(tn, nd) for nd in _needles)
+                    if sc > 0.5 and sc > _bsc:
+                        _bsc, _bb = sc, (x, y, w, h)
+                # ⛔ 2026-09-18 删掉"没对上就取最下面那条左侧文本"的兜底：
+                #   那是**在猜"这条消息是谁发的"**——实测给个不存在的名字 + 对不上的文本，
+                #   它照样返回一个点（会拍到别人）。作者口径：「识别器认不出的东西必须显式报
+                #   认不出，不许悄悄退回猜」。⇒ 认人**只认"文本真的对上"**；对不上就如实失败。
+                if _bb is None:
+                    _tip = " / ".join(_raw[:3])[:36] if _raw else "(库里没取到 TA 的文本)"
+                    return _fail("可见范围里没找到「%s」的消息行（TA 最近几条: %r）⇒ "
+                                 "不敢猜是谁，这次不拍" % (target_name, _tip))
+                row_y, row_h = int(_bb[1]), max(8, int(_bb[3]))
+            # ③ 行已定 ⇒ 在头像方块里挑离该行最近的那个（必须够近，否则不敢点）
+            _cy = row_y + row_h // 2
+            _pick, _dist = None, 10 ** 9
+            for b in side:
+                d = abs((b[1] + b[3]) // 2 - _cy)
+                if d < _dist:
+                    _pick, _dist = b, d
+            if _pick is None:
+                return _fail("没有可用的头像方块")
+            if _dist > 90:
+                return _fail("离「%s」的消息行最近的头像方块也在 %dpx 外（>90）⇒ "
+                             "不敢点（怕拍到别人）" % (target_name, _dist))
+            got = ((_pick[0] + _pick[2]) // 2, (_pick[1] + _pick[3]) // 2, 0.8)
+
+            if got is None:
+                return _fail("定位不到「%s」的头像" % target_name)
+            ax, ay, score = got
+            # ④ 归属校验：落点必须在某个检测到的方块内缩 4px 内
+            _hit = next((b for b in side
+                         if b[0] + 4 <= ax <= b[2] - 4 and b[1] + 4 <= ay <= b[3] - 4), None)
+            if _hit is None:
+                return _fail("落点 (%d,%d) 不在任何头像方块内 ⇒ 不点" % (ax, ay))
+            self._poke_block = _hit          # 供右键重试用：候选点必须仍落在这个方块内
+            return int(ax), int(ay), float(score)
+        except Exception as e:
+            return _fail("定位异常：%s" % e)
 
     def send_poke(self, chat_id: str, target_name: str, target_id: str = "", dbg: list | None = None):
-        """拍一拍某位成员（串行锁内执行）：右键头像 → 菜单选「拍一拍」；头像未显示时改走气泡菜单。
-        返回 (ok, message)；验证失败如实返回，不假报。"""
+        """拍一拍某位成员（串行锁内执行）：右键**头像方块**（运行时检测）→ 菜单选「拍一拍」。
+        返回 (ok, message)；验证失败如实返回，不假报。
+        （2026-09-18：删掉"改右键气泡"那条路——微信 4.1.15.8 的**消息菜单里没有「拍一拍」**。）"""
         with self._send_lock:
             return self._send_poke_inner(chat_id, target_name, target_id, dbg)
 
@@ -5954,7 +6097,7 @@ class WeChatAdapter:
             _d("3) 已打开会话「%s」" % group)
             time.sleep(0.9)
             base_seq = self.latest_seq(chat_id)
-            db_text = self._last_target_text(chat_id, target_id) if target_id else ""
+            db_text = self._target_recent_texts(chat_id, target_id) if target_id else []
             _d("4) 目标最近消息（数据库后 60 条内匹配）：%r" % (db_text[:40] or "(未找到，用空文本)"))
             located = self._send_poke_locate(gui, target_name, db_text)
             # 🔴 2026-09-18 加（现场两次回拍失败后）：**先滚到最新再找一遍**。
@@ -5972,8 +6115,9 @@ class WeChatAdapter:
                 if located:
                     _d("5) 第一次定位失败，**滚到最新后**再找成功")
             if not located:
-                _d("5) ✘ 定位失败：未找到「%s」的头像位置（UIA 行匹配/OCR 相似度/左侧消息兜底都失败）" % target_name)
-                return False, ("未在可见消息里定位到「%s」的头像；让对方先发条消息再试" % target_name)
+                _why = getattr(self, "_poke_locate_why", "") or "未找到「%s」的头像位置" % target_name
+                _d("5) ✘ 定位失败：%s" % _why)
+                return False, "定位不到「%s」的头像：%s" % (target_name, _why)
             ax, ay, score = located
             # 🔴 2026-09-18 加闸（用户现场原话：「**他好像是点了会话列表，但不是点的我的头像，因为我看到他
             #   右键出来什么"置顶"之类的东西**」）：**落点必须落在聊天面板里**。
@@ -5986,31 +6130,24 @@ class WeChatAdapter:
                    % (ax, ay, _rpl, _rw))
                 return False, ("定位到的落点 (%d,%d) 在聊天面板之外（很可能是会话列表）⇒ **不右键**、"
                                "这次不拍（防对会话列表动手）" % (ax, ay))
-            if score >= 1.0:
-                path = "UIA 行 + 固定偏移"
-            elif score >= 0.8:
-                path = "UIA 行 + 彩色头像检测"
-            elif score >= 0.6:
-                path = "OCR 匹配 + 彩色头像检测"
-            elif score > 0.0:
-                path = "OCR 相似度匹配"
-            else:
-                path = "左侧消息兜底"
+            # 定位方式只用来说明"这个点是怎么来的"（落点本身已被 `_send_poke_locate` 的归属校验锁死）
+            path = {0.9: "昵称配头像方块", 0.8: "消息行配最近的头像方块"}.get(
+                round(float(score), 1), "头像方块")
             _d("5) 头像位置：渲染坐标 (%d,%d)，定位方式：%s" % (ax, ay, path))
-            # 头像未显示（连续消息折叠 / 无彩色斑块）→ 改走「气泡」路径：
-            # 消息右键菜单同样含「拍一拍」，拍的是该消息的发送者（安全）
+            _bbox = getattr(self, "_poke_block", None)
             # 🔴 2026-09-18 加（现场：`投递右键之后没出现菜单窗（拍一拍）` ⇒ 一次落空就放弃）
-            #   **在候选点上重试**：自绘头像/气泡的中心容易差十几个像素（作者也问过"是不是只把工具栏往上调了
-            #   一点点"）。候选顺序＝主点 → 行内上下微移 → 头像列中心（`right_pane_left + 18.5%` 宽）。
+            #   **在候选点上重试**：自绘头像中心可能差十几个像素。候选点＝主点 → 方块内上下微移；
+            #   ⛔ 候选点**必须仍落在同一个头像方块内**（以前这里有一条 `right_pane_left+0.185×pane`
+            #   的公式候选，实测就是那个 (434,423)：点在气泡上、弹消息菜单，必然失败 ⇒ 已删）。
             #   每一枪都要求"菜单窗真的出现且含目标项"，任何一枪成立即停（`_right_click_menu` 内部已校验）。
-            def _poke_menu_with_retry(primary):
-                _cands = [primary]
+            def _poke_menu_with_retry(primary, bbox=None):
                 _px, _py = int(primary[0]), int(primary[1])
-                _cands.append((_px, _py - 14))
-                _cands.append((_px, _py + 14))
-                if _rpl:
-                    _ax2 = _rpl + int(max(1, _rw - _rpl) * 0.185)
-                    _cands.append((_ax2, _py))
+                _cands = [(_px, _py), (_px, _py - 12), (_px, _py + 12)]
+                if bbox:
+                    _cands = [(x, y) for (x, y) in _cands
+                              if bbox[0] + 4 <= x <= bbox[2] - 4 and bbox[1] + 4 <= y <= bbox[3] - 4]
+                    if not _cands:                       # 方块太小 ⇒ 只用中心，绝不外扩
+                        _cands = [((bbox[0] + bbox[2]) // 2, (bbox[1] + bbox[3]) // 2)]
                 _seen = []
                 for _c in _cands:
                     if _rpl and (_c[0] < _rpl + 4 or (_rw and _c[0] > _rw - 4)):
@@ -6024,18 +6161,12 @@ class WeChatAdapter:
                 _d("6c) 候选点都试过了（%s），右键菜单始终没出现 ⇒ 如实说没拍上" % (_seen,))
                 return False
 
-            if score < 0.6:
-                px, py = self._bubble_point(gui, ax, ay, db_text if db_text else target_name)
-                # 同一道区域闸：气泡点也必须落在聊天面板内（会话列表那边是会话行菜单）
-                if _rpl and (px < _rpl + 4 or (_rw and px > _rw - 4)):
-                    _d("   ✘ 气泡落点越界 (%d,%d)（right_pane_left=%d）⇒ 不右键" % (px, py, _rpl))
-                    return False, ("气泡落点 (%d,%d) 也在聊天面板之外 ⇒ **不右键**、这次不拍" % (px, py))
-                _d("   → 未检测到彩色头像（可能是连续消息未显示头像），改为右键气泡 (%d,%d) 里的「拍一拍」" % (px, py))
-                menu_hit = _poke_menu_with_retry((px, py))
-            else:
-                _d("6) 移动到 (%d,%d) 并右键…（光标位置与命中窗口将在成功/失败时回读）" % (
-                    gui.origin_x + ax, gui.origin_y + ay))
-                menu_hit = _poke_menu_with_retry((ax, ay))
+            # ⛔ 2026-09-18 删掉"改右键气泡"这条路：本机实测（微信 4.1.15.8，`data/runtime.log`）
+            #   消息右键菜单＝撤销/放大阅读/翻译/转发/收藏，**没有「拍一拍」**（只有**头像菜单**里有）
+            #   ⇒ 那条路是**死的**：只会在屏幕上多点一次右键、留下一个菜单，不可能拍上。
+            _d("6) 移动到 (%d,%d) 并右键…（头像方块 %s 内；光标位置与命中窗口将在成功/失败时回读）"
+               % (gui.origin_x + ax, gui.origin_y + ay, _bbox or "?"))
+            menu_hit = _poke_menu_with_retry((ax, ay), _bbox)
             _d("   光标最终位置：%s（右键后）" % (_cursor_pos(),))
             self._scroll_to_bottom(gui)  # 翻过页的话把聊天滚回最新，不影响用户
             if menu_hit:
@@ -6143,18 +6274,16 @@ class WeChatAdapter:
             if not self._open_chat_guarded(self.group_name(chat_id), chat_id):
                 return False, "打开会话失败"
             time.sleep(0.9)
-            db_text = self._last_target_text(chat_id, target_id) if target_id else ""
+            db_text = self._target_recent_texts(chat_id, target_id) if target_id else []
             located = self._send_poke_locate(gui, target_name, db_text)
             if not located:
-                _d("✘ 定位失败：未找到「%s」的头像位置" % target_name)
-                return False, "未定位到头像，请让对方先发条消息"
-            ax, ay, score = located
-            _d("头像位置：渲染坐标 (%d,%d)" % (ax, ay))
-            # 头像未显示（连续消息折叠）→ 改右键气泡（消息菜单同样含「拍一拍」）
-            if score < 0.6:
-                px, py = self._bubble_point(gui, ax, ay, db_text if db_text else target_name)
-                _d("   → 未检测到彩色头像（连续消息折叠），改右键气泡 (%d,%d)" % (px, py))
-                ax, ay = px, py
+                _why = getattr(self, "_poke_locate_why", "") or "未找到「%s」的头像位置" % target_name
+                _d("✘ 定位失败：%s" % _why)
+                return False, "定位不到「%s」的头像：%s" % (target_name, _why)
+            ax, ay, _score = located
+            _d("头像位置：渲染坐标 (%d,%d)（已过归属校验：落在检测到的头像方块内）" % (ax, ay))
+            # ⛔ 2026-09-18 删掉"改右键气泡"这条路：微信 4.1.15.8 的**消息菜单里没有「拍一拍」**
+            #   （只有**头像菜单**里有），实测日志读到的是 撤销/放大阅读/翻译/转发/收藏 ⇒ 那条路是死的。
             ok, why = self._click(gui, ax, ay, right=True)
             if not ok:
                 _d("✘ 右键被拦截：%s" % why)
@@ -6342,10 +6471,20 @@ class WeChatAdapter:
             for _ in range(4):
                 time.sleep(0.8)
                 region = (gui.right_pane_left, max(80, bottom - 185), gui.render_w, bottom + 10)
+                # ⚠️ 2026-09-18：这里也不能用抓屏 OCR（`gui.ocr_zoomed`/`gui.ocr` 都是抓屏，
+                #   微信被别的窗口盖住时读到的是**别人的像素** ⇒ 明明拍上了却报"没拍上"）。
+                #   改成 OCR 我们自己抓的那一帧（PrintWindow），并走加固层 `chat_ocr`。
+                items = []
                 try:
-                    items = gui.ocr_zoomed(region, scale=2)
+                    from . import chat_header as _ch2
+                    from . import chat_ocr as _co2
+                    _im = _ch2.grab_render(gui)
+                    if _im is not None and not _co2.blocked():
+                        _c = (int(region[0]), int(region[1]), int(region[2]), int(region[3]))
+                        items = [(t, _c[0] + x, _c[1] + y, w, h)
+                                 for t, x, y, w, h in _co2.recognize(_im.crop(_c))]
                 except Exception:
-                    items = gui.ocr(region)
+                    items = []
                 for text, *_ in items:
                     tn = self._norm_ocr(text)
                     if "你拍了拍" in tn:      # ⛔ 只认"我发起"的文案；不再接受泛泛的「拍了拍」
