@@ -1289,7 +1289,16 @@ def main():
     import atexit
     from agent.single_instance import InstanceLock, legacy_holder
     _bot_lock_path = os.path.join(ROOT, "data", "bot.lock")
+    # ⛔ 2026-09-17（用户报「更新后的重启，从来没见过它再起一个新的」）：给"接手"留一点时间 ——
+    #   更新/重启那一跳里旧实例可能**正在退出**（单实例锁与 bot.lock 都还没放开），老实现一撞上就
+    #   `sys.exit(3)`，于是看门狗每 5 秒起一次、次次报"已有实例在运行"，永远换不上新的那一版。
+    #   现在最多等 12 秒：真有人正经在跑，也只是多等这一下再报冲突（照旧拒启动，不会双开）。
+    _gate_t0 = time.time()
     _legacy_pid = legacy_holder(_bot_lock_path)
+    while _legacy_pid and (time.time() - _gate_t0) < 12.0:
+        log.warning("旧实例（pid=%s）像是正在退出，等它放开锁再接手…", _legacy_pid)
+        time.sleep(1.5)
+        _legacy_pid = legacy_holder(_bot_lock_path)
     if _legacy_pid:
         log.error("已有 Persona Morph 实例在运行（pid=%s；旧版实例只写 pid 文件、没有互斥体）。"
                   "为避免旧版本/接口冲突，本实例退出；请先「停止机器人」再启动。"
@@ -1298,6 +1307,10 @@ def main():
         sys.exit(3)
     _bot_lock = InstanceLock(lock_path=_bot_lock_path)
     _lock_res = _bot_lock.acquire()
+    while (not _lock_res.ok) and (time.time() - _gate_t0) < 12.0:
+        log.warning("单实例锁还被占着（%s），等它放开再接手…", _lock_res.reason)
+        time.sleep(1.5)
+        _lock_res = _bot_lock.acquire()
     if not _lock_res.ok:
         _who = ("pid=%s" % _lock_res.holder_pid) if _lock_res.holder_pid else "pid 未知"
         log.error("已有 Persona Morph 实例在运行（%s）。为避免旧版本/接口冲突，本实例退出；请先「停止机器人」再启动。（%s）",
@@ -2172,17 +2185,18 @@ def main():
         os._exit(0)
 
     def restart_fn():
-        # 后台无窗口重启：先杀旧看门狗（防复活/双实例），再用 pythonw 拉起新看门狗接管，本进程退出
+        # 后台无窗口重启：**先把强退装上**，再杀旧看门狗、再拉新的，本进程退出。
+        # ⛔ 2026-09-17 修（用户报「你更新后的重启又关不掉自己了；不是说会再起一个新的吗，我从来没见过
+        #   这个再起一个；之前杀掉就没了，现在更是杀都杀不掉」）——老顺序是：
+        #     先 `_spawn_watchdog()`（新看门狗**立刻** Popen 新 bot）→ 再**同步** `orch.shutdown()`
+        #     （下面那句注释自己写着"微信登出可能一直阻塞"）→ 最后才装 1.5 秒强退 Timer。两个后果：
+        #     ① `orch.shutdown()` 一阻塞，**那行 Timer 永远执行不到** ⇒ 本进程永不退出（"关不掉自己"）；
+        #        再从任务管理器杀掉，5 秒内被旧看门狗拉起来 ⇒ 看着就是"杀都杀不掉"。
+        #     ② 新 bot 起来时旧实例还活着、端口与**单实例锁**都没放开 ⇒ 新实例在启动闸门处 `sys.exit(3)`，
+        #        看门狗每 5 秒重试一次、次次撞锁 ⇒ 永远看不到"新的那个"。
+        #   与 `shutdown_fn` 同一口径（那条 2026-09-16 已经这么修过）：**先保命退出，再做慢活**。
         log.info("收到重启指令，正在后台拉起新实例…")
-        _kill_watchdog()
-        try:
-            _spawn_watchdog()
-        except Exception as e:
-            log.error("重启拉起看门狗失败：%s", e)
-        try:
-            orch.shutdown()
-        except Exception:
-            pass
+
         def _exit_now():
             try:
                 _p = os.path.join(ROOT, "data", "bot.pid")
@@ -2191,7 +2205,28 @@ def main():
             except Exception:
                 pass
             os._exit(0)
-        threading.Timer(1.5, _exit_now).start()
+
+        # ① 先装强退：2 秒后无论如何都退（后面几件慢活挡不住它）
+        threading.Timer(2.0, _exit_now).start()
+        try:
+            _kill_watchdog()                      # ② 先杀旧看门狗，免得它把本进程复活/双开
+        except Exception:
+            pass
+        try:
+            # ③ 尽力登出，但**放进守护线程**：它再慢也不再挡住退出
+            threading.Thread(target=lambda: (orch.shutdown() if orch else None), daemon=True).start()
+        except Exception:
+            pass
+
+        def _respawn():
+            try:
+                # ④ **等本进程真的退了**（端口与单实例锁已放开）再拉新看门狗 —— 距① 6 秒，留足余量
+                _spawn_watchdog()
+                log.info("已拉起新看门狗（旧实例应已退出）")
+            except Exception as e:
+                log.error("重启拉起看门狗失败：%s", e)
+
+        threading.Timer(6.0, _respawn).start()
 
     # ── 控制台访问口令：空/过短（<16 位易被猜）→ 启动时自动生成强随机口令 ──
     server_cfg = cfg.get("server", {})
