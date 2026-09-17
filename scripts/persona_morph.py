@@ -241,7 +241,16 @@ class Orchestrator:
         self.sender = sender
         self.wechat = wechat
         self.tool_defs = build_tool_defs()
-        self.paused = False
+        # 🔴 2026-09-18：**启动时把「暂停」状态从文件读回来**（原来只看内存 `False`）。
+        #   为什么：暂停标记是文件级的（`agent/control.py` 读它，长链每步都查），若进程在暂停状态下
+        #   被看门狗拉起，旧写法内存是 `False` ⇒ **控制台显示"在跑"但一条都不发**，排查起来像"机器人哑了"。
+        #   现在读回来：状态一致，且**预先放好 `data/paused.flag` 就能让它"起来即暂停"**（安全重启用）。
+        try:
+            self.paused = os.path.exists(os.path.join(ROOT, "data", "paused.flag"))
+        except Exception:
+            self.paused = False
+        if self.paused:
+            log.info("启动即处于「暂停」状态（data/paused.flag 存在）——需要收信息请在控制台点「恢复」")
         self.stopped = False
         self._lock = threading.Lock()
         self.wake_timers: dict = {}      # chatKey -> threading.Timer
@@ -945,6 +954,21 @@ class Orchestrator:
     def set_paused(self, paused: bool):
         self.paused = bool(paused)
         log.info("机器人已%s", "暂停" if self.paused else "恢复")
+        # 🔴 2026-09-18 修（作者现场：「说机器已暂停的那一刻，后面一秒他又引用了一下我的消息」+日志实证
+        #   暂停后 54 秒它仍跑完了一整轮）：**暂停原来只存在内存里**（`orch.paused`），而 `wechat`/`sender`
+        #   这些模块**看不到它** ⇒ 已经开工的链（引用/拍一拍/发送）中途没法检查暂停，延迟排队的回拍定时器
+        #   更是不看 ⇒ "暂停了它还在动"。⇒ 落一个**文件标记**（与 `stopped.flag` 同一套做法），
+        #   任何模块都能用 `agent.control.is_paused()` 读到，并在链的每一步前查。
+        try:
+            _pf = os.path.join(ROOT, "data", "paused.flag")
+            if self.paused:
+                os.makedirs(os.path.dirname(_pf), exist_ok=True)
+                with open(_pf, "w", encoding="utf-8") as f:
+                    f.write(time.strftime("%Y-%m-%d %H:%M:%S"))
+            elif os.path.exists(_pf):
+                os.remove(_pf)
+        except Exception as e:
+            log.warning("写/清暂停标记失败（不影响暂停本身）：%s", e)
 
     def shutdown(self):
         self.stopped = True
@@ -1072,6 +1096,16 @@ def _schedule_poke_back(wechat, store, chat_key: str, chat_id: str, group_name: 
             return
 
         def _do():
+            # 🔴 2026-09-18：**回拍是延迟 18 秒排的定时器，原来不看暂停** ⇒ 作者按下暂停后它照样开跑
+            #   （日志：`机器人已暂停` 之后 54 秒仍跑完一整轮）。⇒ 回调一进门先查暂停/停止。
+            try:
+                from agent import control as _ctl
+                _hr = _ctl.halt_reason()
+            except Exception:
+                _hr = ""
+            if _hr:
+                log.info("回拍丢弃（%s）——排队的动作不许越过暂停/停止", _hr)
+                return
             try:
                 ok, msg = wechat.try_send_poke_back(chat_id, poker_name, poker_wxid)
                 log.info("%s → 回拍「%s」：%s", group_name, poker_name, msg)
