@@ -297,6 +297,11 @@ def main():
         ({"text": "[拍一拍]", "poker_wxid": ""}, True, "我拍别人（名字与 wxid 都抠不出）"),
         ({"text": "[拍一拍]（E）", "poker_wxid": ""}, False, "别人拍我但没带 patinfo（有名字）"),
         ({"text": "[拍一拍]（E）", "poker_wxid": _SELF}, True, "带名字但 patinfo 是自己（以 wxid 为准）"),
+        # 🔴 2026-09-18 二修的真机形态：我们自己那条回执带的是**数字槽位号**（现场＝"3"），
+        #    旧条件 `(not name) and (not wid)` 当场失效 ⇒ 回执被当成"成员 3 拍了我"喂给模型。
+        ({"text": "[拍一拍]", "poker_wxid": "3"}, True, "真机：自家回执带数字槽位号 3"),
+        ({"text": "[拍一拍]", "poker_wxid": "wxid_ctkh6fu5iuri22"}, False,
+         "抠不出名字但 patinfo 是真账号 ⇒ 保守当别人拍我（宁可少回拍）"),
     ]
     _obad = []
     for _nm, _want, _why in _ocases:

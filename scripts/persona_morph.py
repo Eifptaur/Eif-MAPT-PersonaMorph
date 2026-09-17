@@ -2795,8 +2795,10 @@ def main():
                     if str(nm.get("text") or "").startswith("[拍一拍]"):
                         from agent.wechat import poke_event_is_ours as _is_ours
                         if _is_ours(nm, str(getattr(wechat, "_self_wxid", "") or "")):
-                            log.info("群[%s] 收到**我们自己拍出去的拍一拍回执** ⇒ 只落库，"
-                                     "不喂模型、不排回拍（否则模型会反问「谁拍我」）", _g["name"])
+                            log.info("群[%s] 收到**我们自己拍出去的拍一拍回执**（sender_id=%s / poker_wxid=%s）"
+                                     " ⇒ 只落库，不喂模型、不排回拍（否则模型会反问「谁拍我」，"
+                                     "或把自己的回执当成另一个人）",
+                                     _g["name"], nm.get("sender_id"), nm.get("poker_wxid"))
                             return entry
                         _schedule_poke_back(wechat, store, _chat_key, _wxid, _g["name"], nm)
                     orch.on_incoming(_chat_key)
