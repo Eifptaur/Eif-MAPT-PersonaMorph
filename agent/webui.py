@@ -1618,6 +1618,13 @@ class WebUI:
                         _per_day = {}
                         for _d, _ts in _items:
                             _per_day.setdefault(_d, set()).add(_ts)
+                        # ⭐ 2026-09-18 修（作者原话：「我删明细就等于我想删历史，就等于我想删掉
+                        #   『我说什么而他回什么』的这一段…从根上就是错的」）：
+                        #   在这上面删的是**这一轮对话**，所以**同时把对应的会话历史删掉**
+                        #   （模型的上下文来自 `data/messages/<会话>.json`，只删 sessions 等于没删）。
+                        from . import history_prune as _hp
+                        _all_entries = _hp.load_recent_entries(_sd, 100)
+                        _deleted_entries = []
                         for _d, _tss in _per_day.items():
                             _f = os.path.join(_sd, _d + ".jsonl")
                             if not os.path.exists(_f):
@@ -1637,6 +1644,7 @@ class WebUI:
                                         continue
                                     if str(_e.get("ts") or "") in _tss:
                                         _hit += 1
+                                        _deleted_entries.append(_e)
                                         continue
                                     _keep.append(_ln if _ln.endswith("\n") else _ln + "\n")
                                 if _hit:
@@ -1650,9 +1658,22 @@ class WebUI:
                                 pass
                         if not _removed and not _whole:
                             return self._json({"ok": False, "error": "没有匹配到要删的记录（可能刚被删过或文件已不存在）"})
+                        # ③ 把这些轮次覆盖的**会话历史**也删掉（并把整份存档备份进 _trash/messages）
+                        _hres = {"removed": 0, "chats": {}, "backed": []}
+                        try:
+                            _hres = _hp.prune_for_deleted_runs(
+                                getattr(parent, "store", None), _all_entries, _deleted_entries,
+                                trash_root=os.path.join(parent._data_path("_trash"), "messages"),
+                                stamp=_stamp)
+                        except Exception as _e10:
+                            _hres = {"removed": 0, "chats": {}, "backed": [], "error": str(_e10)[:80]}
                         _note = ("已删除 %d 条记录" % _removed) if _removed else ("已删除 %d 天的记录" % len(_whole))
+                        if _hres.get("removed"):
+                            _note += "，并清掉对应的对话历史 %d 条（它之后不会再拿这些旧话当真）" % _hres["removed"]
                         self._json({"ok": True, "note": _note, "removed": _removed,
                                     "whole_days": _whole, "days": sorted(set(_kept_days) | set(_whole)),
+                                    "history_removed": _hres.get("removed", 0),
+                                    "history_chats": _hres.get("chats", {}),
                                     "undo": _stamp if _backup else "",
                                     "backed": sorted(_backup)})
                     except Exception as e:
@@ -1683,7 +1704,20 @@ class WebUI:
                                 pass
                         if not _n:
                             return self._json({"ok": False, "error": "找不到可撤销的备份（可能已撤销过）"})
-                        self._json({"ok": True, "note": "已撤销，恢复了 %d 天的记录" % _n, "restored": _n})
+                        # ⭐ 2026-09-18：撤销时**连对话历史一起还原**（同一次删除在 `_trash/messages/`
+                        #   里也备了整份存档；两份用一个 stamp 绑定）
+                        _hn = 0
+                        try:
+                            from . import history_prune as _hp2
+                            _hn = _hp2.restore_history(
+                                os.path.join(parent._data_path("_trash"), "messages"), _u)
+                        except Exception:
+                            _hn = 0
+                        _note2 = "已撤销，恢复了 %d 天的记录" % _n
+                        if _hn:
+                            _note2 += " + %d 个会话的对话历史" % _hn
+                        self._json({"ok": True, "note": _note2, "restored": _n,
+                                    "history_restored": _hn})
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)})
                 elif path == "/api/stats/cal_clear":
