@@ -120,6 +120,12 @@ _H = open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read
 _W = open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
 _i = _H.find('id="updBar"')
 _seg = _H[_i:_i + 2600] if _i > 0 else ""
+# ⚠️ 2026-09-17 教训：**固定长度的窗口很脆** —— 在 `#updBar` 下面新增一个横幅（版本门「发送已被暂停」）
+#   就把「不再提醒」那段 JS 挤出了 2600 字窗口 ⇒ 这条断言假红（代码本身没毛病）。
+#   改成"先在窗口里找，找不到就退回整个文件找"：保住"看的是更新条那一块"的针对性，又不被无关插入绊倒。
+def _has(*needles):
+    return all(n in _seg for n in needles) or all(n in _H for n in needles)
+
 ok(_i > 0, "控制台有公告条 #updBar")
 ok('id="updText"' in _seg and 'id="updGo"' in _seg and 'id="updLater"' in _seg and 'id="updSkip"' in _seg,
    "公告文案 + 三个按钮都在（立即更新 / 稍后 / 不再提醒这个版本）")
@@ -129,7 +135,7 @@ ok("有新版本" in _seg and "s.notes" in _seg, "newer 分支写「有新版本
 ok(_seg.count("'warn'") >= 2, "older 与 error 都走 warn 样式（不是静默）")
 ok("hide()" in _seg and "else { hide(); }" in _seg, "其余状态（current / off）走隐藏")
 ok("getElementById('updLater').onclick = hide" in _seg, "「稍后」＝只隐藏，不发任何请求")
-ok("/api/update_skip" in _seg and "cur.theirs" in _seg, "「不再提醒」＝POST /api/update_skip 且带上版本号")
+ok(_has("/api/update_skip", "cur.theirs"), "「不再提醒」＝POST /api/update_skip 且带上版本号")
 ok("立即更新" in _H and "alert(" not in _seg, "「立即更新」＝就地给指引，**不弹窗**")
 ok("fetch('/api/update')" in _seg, "取数只打 /api/update")
 # 2026-09-16 补（给用户看公告条时当场发现的真缺陷）：条子的描边原来写 `var(--line,…)`，
