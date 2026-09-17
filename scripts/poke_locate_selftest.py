@@ -228,8 +228,7 @@ def main():
     # ⑨ ⭐ "拍不上"的**最后一环**：微信自绘菜单**原尺寸 OCR 读不出任何项**，放大后才读得出。
     #    夹具＝真机抓的那张菜单图（脚本 _scratch/menu_capture.py 存下来的 ImageGrab 图）。
     MENU_FIX = os.path.join(ROOT, "scripts", "fixtures", "menu_poke_imagegrab.png")
-    if not os.path.exists(MENU_FIX):
-        ok("⑨ 菜单夹具存在（缺夹具＝没验证）", False, MENU_FIX)
+    if not os.path.exists(MENU_FIX):        ok("⑨ 菜单夹具存在（缺夹具＝没验证）", False, MENU_FIX)
     else:
         from agent import chat_ocr as _co3
         _im = Image.open(MENU_FIX).convert("RGB")
@@ -263,6 +262,28 @@ def main():
         ok("⑨ 验证判据认「我拍拍」（真机 DB 原文 `我拍拍「E」`，**没有「了」**；原来只认"
            "「你拍了拍」/「拍了拍」⇒ 真拍上了也报失败）",
            '"我拍拍" in t' in _wsrc2)
+
+    # ⑩ 方向判据：**真机原文 + 自定义后缀**都要判对
+    #    作者口径（原话）：「可以写，如果有"我拍拍"这个部分的，就可以算是自己拍的，
+    #    **因为有些人可能自定义拍一拍信息**」⇒ 认**方向词**，不认"拍了拍"这个固定串。
+    from agent.wechat import poke_text_is_mine as _ptm
+    _N = "群deepseek"
+    _cases = [
+        ("我拍拍「E」", "E", True, "真机 DB 原文（我发起）"),
+        ("「E」拍拍「群deepseek」", "E", False, "真机 DB 原文（别人拍我）"),
+        ('你拍了拍"E"', "E", True, "界面文案"),
+        ("我拍了拍「E」的肩膀", "E", True, "自定义后缀（我发起）"),
+        ("「E」拍了拍「群deepseek」的肩膀", "E", False, "自定义后缀（别人拍我）"),
+        ('"群deepseek" 拍了拍 "E"', "E", True, "主语是我"),
+        ('"E" 拍了拍 "群deepseek"', "E", False, "主语是对方"),
+        ("", "E", False, "空串"),
+    ]
+    _bad = []
+    for _t, _tgt, _want, _why in _cases:
+        if _ptm(_t, _tgt, [_N]) != _want:
+            _bad.append((_t, _why))
+    print("  方向判据 %d 个用例" % len(_cases))
+    ok("⑩ 方向判据：真机原文与自定义后缀全判对（认方向词，不认固定串）", not _bad, _bad)
 
     print("\n== 汇总：%d 通过 / %d 失败 ==" % (len(PASS), len(FAIL)))
     if FAIL:
