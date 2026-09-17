@@ -62,6 +62,7 @@ class _Scenario(object):
         self.text = "SELFTEST-TOKEN-三枪"
         self.fg_restores = 0
         self.learned = 0
+        self.ibox = (101, 690, 1240, 900)      # 假"实测输入框"（渲染相对），上半部分够放落点
 
     def _mk_row(self):
         self.rows = [{"local_id": 100 + len(self.rows) + 1, "content": self.text, "type": "文本"}] + self.rows
@@ -148,17 +149,27 @@ class _Stub(object):
         return self._scn.alive
 
 
-def run(script, alive=(True, "读得到（假库）")):
-    """跑一遍真函数，返回 (result, why, scn)。"""
+def run(script, alive=(True, "读得到（假库）"), mode="measured", ink=None):
+    """跑一遍真函数，返回 (result, why, scn)。
+
+    `mode`（2026-09-18 起聚焦落点改为**运行时现算**，见 `_input_top_band`）：
+      · `measured`＝量得到输入框（正常）；· `nobody`＝量不到（拿不到窗口自身画面）；
+      · `toolbar`＝量出来的落点掉进工具栏带（0.92·h 那排图标，含 ✂ 截图）。
+    `ink`＝阳性对照读到的深色点数（None ⇒ 用 12＝正常；给 0 ⇒ 演"字没进框"）。
+    """
     scn = _Scenario(script, alive=alive)
-    # ⛔ 2026-09-17：聚焦落点从 `0.945·h`（那是**输入框下沿再往下那排工具图标**，含 ✂ 截图）抬到
-    #   `0.87·h`（输入框正文区）—— 用户报「机器人发消息那一刻微信自己弹了截图」的真因就是它。
-    scn.focus_pt = (int(101 + 1139 * 0.45), int(90 + 890 * 0.87))      # (613, 864)
+    # ⛔ 2026-09-17：聚焦落点从 `0.945·h`（输入框下沿再往下那排工具图标，含 ✂ 截图）抬进正文区；
+    # 🔴 2026-09-18：再改成**现算输入框上半部分**（`_input_top_band`）—— 按比例猜点在"引用长消息"
+    #   时正好落到引用条/✕ 上。⇒ 本测试改成**打桩那个现算函数**，judge 只钉"顺序 + 不许猜"。
+    scn.focus_pt = (int(101 + 1139 * 0.45), 780)                       # (613, 780) 上半部分
+    if mode == "toolbar":
+        scn.focus_pt = (int(101 + 1139 * 0.45), int(90 + 890 * 0.95))  # 掉进工具栏带
     stub = _Stub(scn)
     backend = _FakeBackend(scn)
 
     saved = (W.time, ib.select_backend, ch.check, W._stash_fg,
-             W._restore_fg_until, W._minimize_back_if_needed)
+             W._restore_fg_until, W._minimize_back_if_needed,
+             W._input_top_band, W._probe_input_box_frame, W._input_ink)
     W.time = _Clock()
 
     def _restore(tag, timeout=2.5, keep=False):
@@ -170,12 +181,17 @@ def run(script, alive=(True, "读得到（假库）")):
     W._stash_fg = lambda: None
     W._restore_fg_until = _restore
     W._minimize_back_if_needed = lambda tag: None
+    W._input_top_band = ((lambda gui, band_px=20: (None, None)) if mode == "nobody"
+                         else (lambda gui, band_px=20: (scn.ibox, scn.focus_pt)))
+    W._probe_input_box_frame = lambda gui: scn.ibox
+    W._input_ink = (lambda gui, box, strip=80: ink) if ink is not None else (lambda gui, box, strip=80: 12)
     try:
         res, why = W.WeChatAdapter.send_text_posted(
             stub, scn.text, chat_id="filehelper", wait_s=15.0)
     finally:
         (W.time, ib.select_backend, ch.check, W._stash_fg,
-         W._restore_fg_until, W._minimize_back_if_needed) = saved
+         W._restore_fg_until, W._minimize_back_if_needed,
+         W._input_top_band, W._probe_input_box_frame, W._input_ink) = saved
     return res, why, scn
 
 
@@ -186,12 +202,31 @@ _r1, _w1, _c1 = run(_s1)
 _front = [c[0] for c in _c1.calls[:3]]
 ok("顺序＝click(聚焦) → send_text(打字) → keys(回车)",
    _front == ["click", "send_text", "keys"], str(_front))
-ok("聚焦点落在渲染区 (0.45·w, 0.87·h) —— 输入框正文区",
+ok("聚焦点＝**现算出来的**输入框上半部分（不是按比例猜）",
    _c1.calls[0][1] == _c1.focus_pt, "%s vs %s" % (_c1.calls[0][1], _c1.focus_pt))
 ok("聚焦落点**必须在工具栏带（0.92·h）之上**（那排图标里有 ✂ 截图，2026-09-17 的事故点）",
    _c1.calls[0][1][1] < int(90 + 890 * 0.92),
-   "y=%d 上限=%d" % (_c1.calls[0][1][1], int(90 + 890 * 0.92)))
+   "y=%s 上限=%d" % (_c1.calls[0][1][1], int(90 + 890 * 0.92)))
 ok("打字用的就是本次文本", _c1.calls[1][1] == _c1.text, str(_c1.calls[1][1])[:24])
+
+print("── A2. 量不到输入框 ⇒ **一枪都不下**（作者口径：不许按比例猜点），发送照走 ──")
+_rA, _wA, _cA = run(_s1, mode="nobody")
+ok("量不到 ⇒ 直接打字，没有那一次 click",
+   [c[0] for c in _cA.calls[:2]] == ["send_text", "keys"], str([c[0] for c in _cA.calls[:2]]))
+ok("仍然判成功（靠打字 + 回车，DB 回读照跑）", _rA == W.V_OK, "%r" % (str(_rA),))
+
+print("── A3. 现算落点掉进工具栏带（✂ 那一排）⇒ 按红线跳过这一枪 ──")
+_rB, _wB, _cB = run(_s1, mode="toolbar")
+ok("落点在工具栏带 ⇒ 同样不下这一枪",
+   [c[0] for c in _cB.calls[:2]] == ["send_text", "keys"], str([c[0] for c in _cB.calls[:2]]))
+
+print("── A4. 阳性对照：打完字输入框上沿带深色点 = 0 ⇒ 如实判失败，不许再猜点补一枪 ──")
+_rC, _wC, _cC = run(_s1, ink=0)
+ok("判失败（不是「未生效」也不是成功）", not bool(_rC), "%r" % (str(_rC),))
+ok("文案点明「输入框没吃到字」+「不许按比例猜点」",
+   ("没吃到字" in _wC) and ("猜点" in _wC), _wC)
+ok("失败后**没有**再补一枪（枪序只有 click + send_text）",
+   [c[0] for c in _cC.calls] == ["click", "send_text"], str([c[0] for c in _cC.calls]))
 
 print("── B. 第一枪（回车）就成功：判成功、且**不许**再多打枪 ──")
 ok("判 V_OK", _r1 == W.V_OK, "result=%r" % (str(_r1),))
