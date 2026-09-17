@@ -285,6 +285,28 @@ def main():
     print("  方向判据 %d 个用例" % len(_cases))
     ok("⑩ 方向判据：真机原文与自定义后缀全判对（认方向词，不认固定串）", not _bad, _bad)
 
+    # ⑪ ⭐ "这条 [拍一拍] 是不是我们自己拍出去的回执"——作者抓到的真缺陷现场是**机器人回了「谁拍我」**
+    #    （session 实锤：`trigger="[拍一拍]"`（**没有名字**）→ `send_message("谁拍我")`）。
+    #    根因：解析侧"我拍别人"的 title 是 `我拍拍「E」`，抠不出名字 ⇒ 文本就是光秃秃 `[拍一拍]`；
+    #    而监听分支原来**不分方向**，一律 `orch.on_incoming` ⇒ 回执被当成"别人拍我"喂给模型。
+    from agent.wechat import poke_event_is_ours as _ours
+    _SELF = "wxid_ukl2ti5eyhu029"
+    _ocases = [
+        ({"text": "[拍一拍]（E）", "poker_wxid": "wxid_ctkh6fu5iuri22"}, False, "别人拍我（有名字有 wxid）"),
+        ({"text": "[拍一拍]", "poker_wxid": _SELF}, True, "我拍别人（patinfo=自己）"),
+        ({"text": "[拍一拍]", "poker_wxid": ""}, True, "我拍别人（名字与 wxid 都抠不出）"),
+        ({"text": "[拍一拍]（E）", "poker_wxid": ""}, False, "别人拍我但没带 patinfo（有名字）"),
+        ({"text": "[拍一拍]（E）", "poker_wxid": _SELF}, True, "带名字但 patinfo 是自己（以 wxid 为准）"),
+    ]
+    _obad = []
+    for _nm, _want, _why in _ocases:
+        if _ours(_nm, _SELF) != _want:
+            _obad.append(_why)
+    ok("⑪ 「是不是我们自己拍的」判对（名字 + patinfo 两条证据）", not _obad, _obad)
+    ok("⑪ 静态：监听分支对「自己的回拍回执」不再喂模型",
+       "poke_event_is_ours" in open(os.path.join(ROOT, "scripts", "persona_morph.py"),
+                                   encoding="utf-8").read())
+
     print("\n== 汇总：%d 通过 / %d 失败 ==" % (len(PASS), len(FAIL)))
     if FAIL:
         print("失败项：")

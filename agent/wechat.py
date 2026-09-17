@@ -683,6 +683,40 @@ def poke_text_is_mine(txt: str, target: str = "", my_names=None) -> bool:
     return False
 
 
+def poke_event_is_ours(nm: dict, self_wxid: str) -> bool:
+    """这条归一化后的 `[拍一拍]` 事件，是不是**我们自己拍出去**的回执（回声）？
+
+    ⛔ 为什么要有它（2026-09-18 现场，作者抓的：「他回了一句『谁拍我』，这证明你"拍一拍"那一段
+      判断自己的逻辑写的有问题」）：
+      · 解析侧（`wechat.py` 的 appmsg type=62）：
+          别人拍我：title=`「E」拍拍「群deepseek」` ⇒ 正则 `「([^」]+)」拍拍` 抠出 poker ⇒ 文本 `[拍一拍]（E）`
+          **我拍别人**：title=`我拍拍「E」`        ⇒ **抠不出名字** ⇒ 文本光秃秃 `[拍一拍]`
+      · 而监听分支里**任何 `[拍一拍]` 都会 `orch.on_incoming()`** ⇒ **我们自己的回拍回执被当成
+        "别人拍我"喂给了模型** ⇒ 模型看不到主语，只能反问「谁拍我」。
+      · 原来那道"自己拍的"判断只写在 `_schedule_poke_back` 里（只防回拍），**没拦"喂模型"**。
+    ⇒ 判据（两条，任一成立即"是我们的"）：① `poker_wxid` 就是自己；② **名字与 wxid 都抠不出**
+      （＝"我拍别人"的形态；而"别人拍我"即使文案被自定义过，`patinfo.fromusername` 仍有值）。
+    """
+    try:
+        wid = str((nm or {}).get("poker_wxid") or "")
+        if wid and self_wxid and wid == str(self_wxid):
+            return True
+        name = ""
+        try:
+            name = _poke_name_of_text(str((nm or {}).get("text") or ""))
+        except Exception:
+            name = ""
+        return (not name) and (not wid)
+    except Exception:
+        return False
+
+
+def _poke_name_of_text(t: str) -> str:
+    """从 `[拍一拍]（名字）` 里取名字（空串＝没有名字）。"""
+    m = re.search(r"（([^）]+)）", str(t or ""))
+    return m.group(1).strip() if m else ""
+
+
 def _seq_ratio(a: str, b: str) -> float:
     """文本相似度 0~1（difflib，OCR 与数据库文本比对用）。"""
     try:
