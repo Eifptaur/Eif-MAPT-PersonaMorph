@@ -87,6 +87,11 @@ ok("C7 绿色发送取**最右**绿簇（左边那串音量点同样是绿的，
    "def _green_send" in _vs and "GREEN_X_MIN" in _vs)
 ok("C8 没进录音态时逐个候选位置重试，失败要如实说" ,
    "def _enter_record" in _vs and "没进录音态" in _vs)
+ok("C9 被防打扰闸拦下时**等一等再试**（用户手一离开鼠标，下一枪就能中）",
+   "手一离开鼠标我就重试" in _vs and "wait_s" in _vs)
+_ua = src(os.path.join("agent", "ui_adapt.py"))
+ok("C10 真点**开枪前再确认一次落点**（防「检查完→开枪」之间被控制台/浏览器抢走）",
+   _ua.count("real_guard(sx, sy, gui=gui") >= 2 and "开枪前落点已经变了" in _ua)
 
 print("── D. 形态选项（默认真语音条）＋ 接线 ──")
 _cfg = src(os.path.join("agent", "config.py"))
@@ -104,8 +109,16 @@ _ch = src(os.path.join("agent", "console_html.py"))
 ok("D6 控制台给出形态选项（真语音条 / 音频文件）",
    'data-cfg="voice_reply.form"' in _ch and "真语音条（微信语音气泡，推荐）" in _ch
    and "音频文件（点开才能听的那种）" in _ch)
-ok("D7 控制台**能开关真语音条机制**并写明「会动两下光标」（做好了必须接线）",
-   'data-cfg="voice_strip.enabled"' in _ch and "动两下光标" in _ch)
+ok("D7 控制台**能开关真语音条机制**并写明代价（右 Alt：不动鼠标、要微信在前台）",
+   'data-cfg="voice_strip.enabled"' in _ch and "不会动你的鼠标" in _ch and "前台" in _ch)
+ok("D9 默认走**右 Alt 路**（不动鼠标），真点只当兜底",
+   '"enter_via": "alt"' in _cfg and '"fallback_click": True' in _cfg
+   and "_enter_record_alt" in _vs and "_cancel_alt" in _vs)
+ok("C10 Alt 路的前置检查：注入用 SendInput + 扩展位，且**先确认抓得到帧**（防假阴性）",
+   "SendInput" in _vs and "KEYEVENTF_EXTENDEDKEY" in _vs and "抓不到微信画面" in _vs)
+_wv = _vs.split("def _wait_voice")[1][:1400]
+ok("C11 回读要**轮询等待**（微信写库有延迟；第一眼看到旧行就判失败＝假阴性，会害得又发一个文件）",
+   "继续等" in _wv and "time.sleep(1.0)" in _wv and "还是那条旧语音" not in _wv)
 ok("D8 控制台有「念法纠正」入口（多音字例外表）",
    'data-cfg="voice_reply.pronounce"' in _ch and "念法纠正" in _ch)
 

@@ -15,6 +15,7 @@
 
 产物与判据：人看的是"语音条"，机器只认 **DB 回读 `type=语音`**（不信 GUI 返回值）。
 """
+import ctypes
 import os
 import time
 import wave
@@ -37,6 +38,96 @@ METER_X = (0.56, 0.82)  # 录音态里那串绿色**音量点**的横带（用�
 METER_Y = (0.86, 0.98)
 GREEN_X_MIN = 0.78      # 「绿色发送 ↑」一定在这一带右侧（音量点在它左边，别把均值带偏）
 CANCEL_X = 0.588        # 录音态里那个 ✕（实测 1400/2382；只在前一轮没退干净时用来救场）
+#: 右 Alt（VK_RMENU）＝微信 PC 发语音的键盘入口（用户 2026-09-17 亲口确认，实测成立）：
+#: **按住录音、松开发送**，走 `SendInput` 注入（不动鼠标）；投递键盘消息**不认**（实测 A 段失败）。
+VK_RMENU = 0xA5
+KEYEVENTF_KEYUP = 0x0002
+KEYEVENTF_EXTENDEDKEY = 0x0001
+
+
+class _KEYBDINPUT(ctypes.Structure):
+    _fields_ = [("wVk", ctypes.c_ushort), ("wScan", ctypes.c_ushort), ("dwFlags", ctypes.c_ulong),
+                ("time", ctypes.c_ulong), ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong))]
+
+
+class _MOUSEINPUT(ctypes.Structure):
+    _fields_ = [("dx", ctypes.c_long), ("dy", ctypes.c_long), ("mouseData", ctypes.c_ulong),
+                ("dwFlags", ctypes.c_ulong), ("time", ctypes.c_ulong),
+                ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong))]
+
+
+class _HARDWAREINPUT(ctypes.Structure):
+    _fields_ = [("uMsg", ctypes.c_ulong), ("wParamL", ctypes.c_ushort), ("wParamH", ctypes.c_ushort)]
+
+
+class _INPUTUNION(ctypes.Union):
+    _fields_ = [("ki", _KEYBDINPUT), ("mi", _MOUSEINPUT), ("hi", _HARDWAREINPUT)]
+
+
+class _INPUT(ctypes.Structure):
+    """⚠️ x64 下这个结构必须是 **40 字节**（type 4 + 填充 + 联合体 32）；写小了 SendInput 直接失败。"""
+    _fields_ = [("type", ctypes.c_ulong), ("u", _INPUTUNION)]
+
+
+def _send_alt(down: bool) -> bool:
+    """注入**真·右 Alt**（SendInput + 扩展位）：**不动鼠标**，消息发给当前焦点窗口。
+
+    为什么不用投递（实测 A 段失败）：键盘这类"按住才有效"的消息要求**真实按键队列**，
+    `PostMessage` 投给微信主窗时绿簇毫无反应；`SendInput` 才行。
+    """
+    try:
+        flags = (0 if down else KEYEVENTF_KEYUP) | KEYEVENTF_EXTENDEDKEY
+        inp = _INPUT(1, _INPUTUNION(ki=_KEYBDINPUT(VK_RMENU, 0, flags, 0, None)))
+        return bool(ctypes.windll.user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(_INPUT)))
+    except Exception:
+        return False
+
+
+def _enter_record_alt(wechat, gui, cfg=None, wait_s: float = 4.0) -> tuple:
+    """**按住右 Alt 进录音态** ⇒ (ok, 说明)。判据＝绿簇；**先确认抓得到帧**，否则是假阴性。
+
+    这条路的好处：**不碰光标、不依赖任何坐标**（DPI/窗口尺寸/右侧栏怎么变都不影响）。
+    前置＝微信在前台（`SendInput` 发给焦点窗口；提权窗口在最前时同样被 UIPI 挡 ⇒ 由 `_borrow_foreground` 覆盖）。
+    """
+    try:
+        from . import chat_header as ch
+    except Exception:
+        ch = None
+    if ch is not None:
+        try:
+            if ch.grab_render(gui) is None:
+                return False, ("抓不到微信画面（窗口被遮挡/最小化）⇒ 没法确认有没有进录音态，"
+                               "这一枪不发（先让微信可见）")
+        except Exception:
+            pass
+    t0 = time.time()
+    shot = 0
+    while time.time() - t0 < float(wait_s):
+        shot += 1
+        if not _send_alt(True):
+            return False, "SendInput 注入右 Alt 失败（被系统挡了？）"
+        time.sleep(1.0)
+        if _green_cluster(gui):
+            return True, "按住右 Alt 进录音态（第 %d 次）" % shot, "alt"
+        _send_alt(False)                      # 没进态：先松开，免得误触发
+        time.sleep(0.5)
+    return False, "按住右 Alt 也没进录音态（试了 %d 次）" % shot, "alt"
+
+
+def _cancel_alt(gui) -> None:
+    """Alt 路中途要放弃：**先发 Esc 取消**再松开 Alt（直接松开会把这段录进去发出去）。"""
+    try:
+        pw = ctypes.windll.user32
+        for vk in (0x1B,):                    # VK_ESCAPE
+            inp = _INPUT(1, _INPUTUNION(ki=_KEYBDINPUT(vk, 0, 0, 0, None)))
+            pw.SendInput(1, ctypes.byref(inp), ctypes.sizeof(_INPUT))
+            inp = _INPUT(1, _INPUTUNION(ki=_KEYBDINPUT(vk, 0, KEYEVENTF_KEYUP, 0, None)))
+            pw.SendInput(1, ctypes.byref(inp), ctypes.sizeof(_INPUT))
+        time.sleep(0.3)
+    except Exception:
+        pass
+    _send_alt(False)
+    time.sleep(0.4)
 
 
 def pick_record_x(cols, width, x_min=RECORD_X_MIN, x_max=RECORD_X_MAX):
@@ -411,11 +502,17 @@ def _play_with_meter(gui, wav: str, out_name: str = "") -> tuple:
     return res.get("r", (False, "播放线程没有返回")), base, peak
 
 
-def _enter_record(wechat, gui, cfg=None, rw: int = 0, rh: int = 0) -> tuple:
+def _enter_record(wechat, gui, cfg=None, rw: int = 0, rh: int = 0, wait_s: float = 8.0) -> tuple:
     """进录音态：**逐个候选位置真点**，谁点出绿簇就是它 ⇒ (ok, 说明, x比例)。
 
-    候选顺序＝扫图标行现算 → 兜底表（全 ≥0.8，点空/点发送都无害）；
-    每个位置允许多点一次（自绘控件偶发丢第一下）。一个都不成 ⇒ 如实返回失败。
+    候选顺序＝扫图标行现算 → 兜底表（全 ≥0.8，点空/点发送都无害）。
+
+    ⚠️ 2026-09-17 实测的关键一环（用户问「怎么又在发音频文件，是不是没改代码」时钉死）：
+    `ui_adapt.click_real_hold` 动手前要过 `real_guard`，而**用户正在用鼠标时 `SetCursorPos`
+    会返回 0**（Windows 层面拒绝）⇒ guard 按红线**不打这一枪**（原话：「已放弃这一枪，不打扰你」）。
+    于是"点了却没反应"的真实原因往往是"**那一枪压根没打出去**"。⇒ 这里**等一等再试**：
+    被 guard 拦下时每隔 0.6s 重试一次，最多等 `wait_s` 秒（用户手一离开鼠标，下一枪就能中）；
+    只有"打出去了但没进态"才换下一个候选位置。
     """
     c = _cfg(cfg)
     rb = c.get("record_btn") or [0.878, 0.943]
@@ -425,22 +522,36 @@ def _enter_record(wechat, gui, cfg=None, rw: int = 0, rh: int = 0) -> tuple:
         ry = int(rh * 0.943)
     x_scan, src = locate_record(gui, cfg)
     cands = [x_scan] + [x for x in RECORD_FALLBACKS if abs(x - x_scan) > 0.01]
-    why = []
+    why, fired_never = [], True
     for x in cands:
-        for attempt in (1, 2):
+        t0 = time.time()
+        shot = 0
+        while True:
+            shot += 1
             try:
-                _click(wechat, gui, int(rw * x), ry, c)
+                ok, why1 = _click(wechat, gui, int(rw * x), ry, c)
             except Exception as e:
-                why.append("x=%.3f 点击异常：%s" % (x, str(e)[:40]))
-                break
+                ok, why1 = False, "点击异常：%s" % str(e)[:40]
             time.sleep(1.0)
             if _green_cluster(gui):
                 tag = src if abs(x - x_scan) < 1e-9 else "兜底候选"
-                if attempt == 2:
-                    tag += "·第二下才中"
+                if shot > 1:
+                    tag += "·第%d枪才中" % shot
                 return True, "在 x=%.3f 进录音态（%s）" % (x, tag), x
-        why.append("x=%.3f 没反应" % x)
-    return False, "候选位置都点了却没进录音态（%s）" % "；".join(why), x_scan
+            if ok:
+                fired_never = False
+                # 打出去了但没进态：同一位置再补一枪（自绘控件偶发丢第一下），仍不进就换候选
+                if shot >= 2:
+                    why.append("x=%.3f 打了两枪没反应" % x)
+                    break
+                continue
+            # 没打出去（多半是 real_guard：你正在用鼠标）⇒ 等一等再试同一个位置
+            if time.time() - t0 >= float(wait_s):
+                why.append("x=%.3f 一直没能打出去（%s）" % (x, str(why1)[:70]))
+                break
+            time.sleep(0.6)
+    tail = "（这几枪都被防打扰闸拦下了：你正在用鼠标 ⇒ 按红线不打；手一离开鼠标我就重试）" if fired_never else ""
+    return False, "候选位置都没进录音态：%s%s" % ("；".join(why), tail), x_scan
 
 
 def calibrate(wechat, save: bool = True, log=None) -> dict:
@@ -517,6 +628,27 @@ def _give_back(stashed_fg: int):
         pass
 
 
+def _borrow_foreground(gui) -> int:
+    """**借一下前台**（把微信主窗置前），返回原来那个前台窗口句柄（给 `_give_back` 还回去）。
+
+    为什么非借不可（2026-09-17 A/B 实测，`_scratch/uipi_probe.py`）：真点要 `SetCursorPos`，而
+    **最前面的窗口是提权进程时 Windows 直接拒绝**（`GetLastError=5` ACCESS_DENIED）——本机最常见的就是
+    **我们自己的控制台**（`一键启动.exe` 带提权 manifest 起的 WebView2 窗）。实测：控制台在前 ⇒ 三处候选
+    连 30 秒全失败；把微信置前 ⇒ 立刻成功。⇒ 发之前借、发完还（与 `calibrate()` 同一套借还机制）。
+    """
+    try:
+        import ctypes
+        from . import wechat as _w
+        stashed = int(_w._fg_now() or 0)
+        hwnd = int(getattr(gui, "main_hwnd", 0) or 0)
+        if hwnd and stashed != hwnd:
+            _w._force_foreground(ctypes.windll.user32, hwnd)
+            time.sleep(0.6)
+        return stashed
+    except Exception:
+        return 0
+
+
 def send(wechat, chat_id: str, text: str, cfg=None, timeout: float = 60.0) -> tuple:
     """发一条**真语音条**。⇒ (ok, 说明, info)
 
@@ -572,6 +704,10 @@ def send(wechat, chat_id: str, text: str, cfg=None, timeout: float = 60.0) -> tu
     before = _latest_voice_seq(wechat, chat_id)
     base = peak = 0
     x_used = None
+    via = "alt"
+    # ⭐ 借前台：①Alt 路要微信在前台（SendInput 发给焦点窗口）②真点路要 SetCursorPos
+    #    （最前面是提权窗口时系统直接拒绝，见 `_borrow_foreground`）
+    stashed_fg = _borrow_foreground(gui)
     try:
         # ⓵ 开录前先确保**不在**录音态：上一轮若没退干净，再点那个圆圈就变成"结束/取消"（实测踩过）
         try:
@@ -580,41 +716,73 @@ def send(wechat, chat_id: str, text: str, cfg=None, timeout: float = 60.0) -> tu
                 time.sleep(0.8)
         except Exception:
             pass
-        ok_in, why_in, x_used = _enter_record(wechat, gui, cfg, rw, rh)      # ⓶ 进录音态
+        # ⓶ 进录音态：**默认走右 Alt（不动鼠标）**；不认右 Alt 的版本才退回真点
+        want = str(c.get("enter_via") or "alt").lower()
+        ok_in, why_in, x_used = False, "", None
+        if want in ("alt", "auto"):
+            ok_in, why_in, x_used = _enter_record_alt(wechat, gui, cfg)
+            if ok_in:
+                via = "alt"
         if not ok_in:
-            return False, ("点了录音按钮但**没进录音态**（%s）（真语音条只认真实点击；"
-                           "若 voice_strip.real_click 关着就打开它）" % why_in), info or {}
+            if want == "alt" and bool(c.get("fallback_click", True)):
+                ok2, why2, x2 = _enter_record(wechat, gui, cfg, rw, rh)
+                if ok2:
+                    ok_in, why_in, x_used, via = ok2, why2, x2, "click"
+                else:
+                    why_in = "%s；退回首击也不成：%s" % (why_in, why2)
+            elif want not in ("alt", "auto"):
+                ok_in, why_in, x_used = _enter_record(wechat, gui, cfg, rw, rh)
+                via = "click" if ok_in else "click"
+        if not ok_in:
+            return False, ("没能进录音态（%s）——按住右 Alt 与真点两条路都试过了。"
+                           "Alt 路的前提：**微信在前台的那几秒别切窗口**。" % why_in), info or {}
         (okp, whyp), base, peak = _play_with_meter(gui, wav)                 # ⓷ 边录边播
         if not okp:
-            try:
-                _click(wechat, gui, int(rw * CANCEL_X), int(rh * rb[1]), c)   # 失败：取消，别留残余
-            except Exception:
-                pass
+            if via == "alt":
+                _cancel_alt(gui)
+            else:
+                try:
+                    _click(wechat, gui, int(rw * CANCEL_X), int(rh * rb[1]), c)
+                except Exception:
+                    pass
             return False, whyp, info or {}
         if bool(c.get("meter_guard", True)) and peak <= base:
-            try:
-                _click(wechat, gui, int(rw * CANCEL_X), int(rh * rb[1]), c)
-            except Exception:
-                pass
+            if via == "alt":
+                _cancel_alt(gui)
+            else:
+                try:
+                    _click(wechat, gui, int(rw * CANCEL_X), int(rh * rb[1]), c)
+                except Exception:
+                    pass
             return False, ("音频**没进到微信的麦克风**（录音那条音量点一直没亮：底色 %d、播放峰值 %d）"
                            "⇒ 已取消，不给你发一条静音语音条。查一下微信的麦克风是不是选成了"
                            "「CABLE Output」（关掉这道校验：voice_strip.meter_guard）" % (base, peak)), info or {}
         time.sleep(0.5)
-        g = _green_send(gui) or _green_center(gui)                           # ⓸ 绿色发送 ↑
-        if not g:
-            try:
-                _click(wechat, gui, int(rw * CANCEL_X), int(rh * rb[1]), c)
-            except Exception:
-                pass
-            return False, "录音态里找不到绿色发送按钮（已取消，没发出去）", info or {}
-        _click(wechat, gui, g[0], g[1], c)
+        if via == "alt":
+            _send_alt(False)                                                # ⓸ 松开右 Alt＝发送
+        else:
+            g = _green_send(gui) or _green_center(gui)                      # ⓸ 点绿色发送 ↑
+            if not g:
+                try:
+                    _click(wechat, gui, int(rw * CANCEL_X), int(rh * rb[1]), c)
+                except Exception:
+                    pass
+                return False, "录音态里找不到绿色发送按钮（已取消，没发出去）", info or {}
+            _click(wechat, gui, g[0], g[1], c)
     except Exception as e:
         return False, "微信侧操作失败：%s" % e, info or {}
+    finally:
+        # 借走的前台**无论成败都还回去**（用户原来的窗口不能被我们占着）
+        try:
+            _give_back(stashed_fg)
+        except Exception:
+            pass
     ok, msg = _wait_voice(wechat, chat_id, before, timeout=12.0)
     if isinstance(info, dict):
         info = dict(info)
         info["meter"] = {"base": base, "peak": peak}
         info["record_x"] = x_used
+        info["enter_via"] = via
     return ok, (msg if ok else ("语音条没发出去：%s" % msg)), info or {}
 
 
@@ -631,18 +799,25 @@ def _latest_voice_seq(wechat, chat_id: str):
 
 
 def _wait_voice(wechat, chat_id: str, before, timeout: float = 12.0) -> tuple:
-    """等 DB 里出现**新的**语音行（只认回读，不信 GUI）。"""
+    """等 DB 里出现**新的**语音行（只认回读，不信 GUI）。
+
+    ⚠️ 2026-09-17 修（差点造成"明明发出去了却报失败，然后按回退设置又发一个文件"）：
+    旧写法在第一次查库时**只要第一条语音行还是旧的就直接 return False** —— 而微信**写库有延迟**，
+    松手那一刻库里通常还是上一条 ⇒ 假阴性。现在改成：看到旧的就**继续轮询**，直到超时。
+    """
     t0 = time.time()
+    last = None
     while time.time() - t0 < timeout:
         try:
             rows = wechat._db.get_messages(chat_id, limit=20) or []
             for row in rows:
                 if str(row.get("type") or "") == "语音":
                     cur = row.get("local_id") or row.get("id")
-                    if before in (None, 0) or (cur and cur != before):
+                    last = cur
+                    if before in (None, 0) or (cur and str(cur) != str(before)):
                         return True, "DB 回读确认：新语音条 local_id=%s" % cur
-                    return False, "DB 里还是那条旧语音（local_id=%s）——这一次没发出去" % cur
+                    break            # 最新那条还是旧的 ⇒ 继续等（微信写库要几秒）
         except Exception:
             pass
         time.sleep(1.0)
-    return False, "等了 %.0f 秒，DB 里没出现新语音条" % timeout
+    return False, "等了 %.0f 秒，DB 里没出现新语音条（最新还是 %s）" % (timeout, last)
