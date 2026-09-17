@@ -307,6 +307,25 @@ def main():
         _ra = open(os.path.join(ROOT, "agent", "replica_adapter.py"), encoding="utf-8").read()
         ok("⑩ `patch_driver_quirks()` 也顺手把类闸装上（它总在构造之前被调）",
            "harden_gui_class" in _ra)
+
+        # ⑩b **真实那个类**确实被换掉了（只 import 类、**不构造实例** ⇒ 离线零打扰）
+        #     ⚠️ 判据必须在**产品自己的解释器**上跑一遍：本机 `py -3` 用的是
+        #     `M:\py\Lib\site-packages\wechatauto`（2048 行），产品用的是
+        #     `runtime\python\...\wechatauto`（2178 行）——**两份不同的库副本**（日志行号 403/696 vs 418/726 为证）。
+        try:
+            import wechatauto.guia as _g
+            _cls = _g.WeChatGUI
+            _orig_btf = _cls.bring_to_front
+            _orig_cal = _cls.calibrate_layout
+            if getattr(_cls, "_pm_fg_hardened_class", False):
+                delattr(_cls, "_pm_fg_hardened_class")          # 允许本判据重跑
+            ua.harden_gui_class(_cls)
+            ok("⑩b 真实 WeChatGUI 的 bring_to_front / calibrate_layout 已被换成带闸门的版本",
+               _cls.bring_to_front is not _orig_btf and _cls.calibrate_layout is not _orig_cal)
+            ok("⑩b 被换掉之后**默认档下**调用它不置前（返回 False）",
+               _cls.bring_to_front(object.__new__(_cls)) is False)
+        except Exception as _e:
+            ok("⑩b 真实类的闸装上（import 失败则这条算失败）", False, str(_e)[:60])
     finally:
         cfg_mod.get_config = real_get
 

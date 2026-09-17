@@ -600,6 +600,14 @@ def _force_foreground(user32, hwnd: int) -> bool:
 _SENDER_RE = re.compile(r"^(wxid_[0-9a-zA-Z_-]+|.*@chatroom):\s*")
 
 
+# 认人（拍一拍/引用定位）时**绝不许拿来当锚点**的"系统提示"行——它们**居中、没有头像**，
+# 拿它们配头像方块必然配错（2026-09-18 现场实测：`「E」拍拍「群deepseek」` 与锚点
+# `群deepseek说话！` 的模糊相似度 0.593 > 0.5 阈值 ⇒ 被当成"E 的消息行"，
+# 结果离最近的头像方块 105px、被 90px 闸拦下 ⇒ 定位失败。闸救了一次，但根因要在这儿堵）。
+_SYS_NOTICE_JUNK = ("拍拍", "拍一拍", "撤回了一条消息", "撤回", "加入了", "邀请",
+                    "退出了", "以上是", "开启了朋友验证", "你已添加", "领取了", "修改群名")
+
+
 def _seq_ratio(a: str, b: str) -> float:
     """文本相似度 0~1（difflib，OCR 与数据库文本比对用）。"""
     try:
@@ -5839,6 +5847,33 @@ class WeChatAdapter:
             return None
 
     @staticmethod
+    def _scroll_chat(gui, up: bool = True, ticks: int = 6) -> bool:
+        """**投递**滚轮翻聊天记录（不动光标、不置前）：`up=True` 往上翻（看更早的消息）。
+
+        为什么必须有它（2026-09-18 现场）：老代码那句 `_scroll_to_bottom(gui)` 走的是 **UIA**
+        （`gui._get_uia()`），而本机微信 4.x 的 UIA 不物化 ⇒ 它**一直是空操作**，
+        "定位失败先滚到最新再找一遍"这句注释描述的兜底其实从没生效过。
+        而拍一拍要在**对方的消息行**上找头像，对方的消息很容易被后来的消息顶出视口
+        （实测：满屏都是机器人自己的回复 ⇒「可见范围里没找到 TA 的消息行」）。
+        """
+        try:
+            from . import input_backend as _ib
+            backend = _ib.select_backend(gui=gui)
+            main = int(getattr(gui, "main_hwnd", 0) or 0) or _ib.find_main_window()
+            if not main:
+                return False
+            rw = int(getattr(gui, "render_w", 0) or 0)
+            rh = int(getattr(gui, "render_h", 0) or 0)
+            ox, oy = int(getattr(gui, "origin_x", 0) or 0), int(getattr(gui, "origin_y", 0) or 0)
+            pl = int(getattr(gui, "right_pane_left", 0) or 0)
+            pt = (ox + (pl + rw) // 2, oy + int(rh * 0.45))       # 落点在会话区中部
+            ok, _why = backend.wheel(main, pt, 120 if up else -120,
+                                     times=max(1, int(ticks)), gap_ms=70)
+            return bool(ok)
+        except Exception:
+            return False
+
+    @staticmethod
     def _scroll_to_bottom(gui):
         """把消息列表滚回最新（底部）。"""
         try:
@@ -6047,6 +6082,8 @@ class WeChatAdapter:
                     tn = self._norm_ocr(t)
                     if not tn or not _needles:
                         continue
+                    if any(j in tn for j in _SYS_NOTICE_JUNK):
+                        continue          # 系统提示居中、**没有头像** ⇒ 绝不拿来认人
                     sc = max(_seq_ratio(tn, nd) for nd in _needles)
                     if sc > 0.5 and sc > _bsc:
                         _bsc, _bb = sc, (x, y, w, h)
@@ -6174,12 +6211,25 @@ class WeChatAdapter:
             if not located:
                 try:
                     self._scroll_to_bottom(gui)
-                    time.sleep(0.8)
                 except Exception:
                     pass
+                self._scroll_chat(gui, up=False, ticks=9)     # 投递版回到底（UIA 那版是空操作）
+                time.sleep(0.8)
                 located = self._send_poke_locate(gui, target_name, db_text)
                 if located:
                     _d("5) 第一次定位失败，**滚到最新后**再找成功")
+            # 🔴 2026-09-18 加：视口里没有对方的消息行 ⇒ **往上翻页找**（别人的消息会被顶出视口）
+            _turn = 0
+            while not located and _turn < 2:
+                _turn += 1
+                _d("5c) 视口里没有「%s」的消息行 ⇒ **往上翻一页**再找（第 %d 次）" % (target_name, _turn))
+                self._scroll_chat(gui, up=True, ticks=6)
+                time.sleep(0.9)
+                located = self._send_poke_locate(gui, target_name, db_text)
+                if located:
+                    _d("5d) 上翻第 %d 页后找到" % _turn)
+            # ⛔ **不能**在这里滚回最新：滚回去之后上面那个落点就过期了（右键会点到别的行）。
+            #   收尾统一在下面 `self._scroll_to_bottom(gui)` 那一步做（右键完再滚）。
             if not located:
                 _why = getattr(self, "_poke_locate_why", "") or "未找到「%s」的头像位置" % target_name
                 _d("5) ✘ 定位失败：%s" % _why)
@@ -6234,7 +6284,9 @@ class WeChatAdapter:
                % (gui.origin_x + ax, gui.origin_y + ay, _bbox or "?"))
             menu_hit = _poke_menu_with_retry((ax, ay), _bbox)
             _d("   光标最终位置：%s（右键后）" % (_cursor_pos(),))
-            self._scroll_to_bottom(gui)  # 翻过页的话把聊天滚回最新，不影响用户
+            # 翻过页的话把聊天滚回最新（不影响用户看到的位置）；UIA 那版是空操作，所以用投递版
+            self._scroll_to_bottom(gui)
+            self._scroll_chat(gui, up=False, ticks=9)
             if menu_hit:
                 _d("7) ✔ 右键菜单里找到了「拍一拍」并已点击")
                 ok, msg = self._verify_poke(chat_id, target_name, base_seq)

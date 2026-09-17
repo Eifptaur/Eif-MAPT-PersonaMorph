@@ -208,6 +208,19 @@ def main():
         # 负例：没有任何锚点（库里取不到 TA 的文本）⇒ 同样不许猜
         loc3 = fake._send_poke_locate(_FakeGUI(), "E", [], scroll=False)
         ok("⑦ 负例：没有锚点 ⇒ 不返回任何点", loc3 is None, loc3)
+        # 负例：**只有系统提示**（居中、无头像）⇒ 不许拿它认人
+        #   现场：`「E」拍拍「群deepseek」` 与锚点模糊相似度 0.593 > 0.5 ⇒ 曾被当成 E 的消息行
+        _old_rec2 = _co_mod.recognize
+        _co_mod.recognize = lambda image, timeout=None: [
+            ("「E」拍拍「群deepseek」", 656 - _PL, 517 - _TOP, 6, 17)]
+        try:
+            loc4 = fake._send_poke_locate(_FakeGUI(), "E", ["群deepseek 说话！"], scroll=False)
+            why4 = getattr(fake, "_poke_locate_why", "")
+        finally:
+            _co_mod.recognize = _old_rec2
+        ok("⑦ 负例：只有居中的系统提示（拍一拍）⇒ 不认人、不返回点", loc4 is None, loc4)
+        ok("⑦ 负例：系统提示被当垃圾滤掉（不是靠 90px 闸兜的）",
+           "不敢猜是谁" in (why4 or ""), why4[:60])
     finally:
         _ch_mod.grab_render, _co_mod.recognize, _co_mod.blocked = _old_grab, _old_rec, _old_blk
     _ = _wx_mod
