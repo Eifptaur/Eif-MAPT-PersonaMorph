@@ -72,7 +72,7 @@ ck("A13 帧没备好时退回「点头」（不许按了没反应）", "if(spin(
 ck("A14 中键**吃掉浏览器原生自动滚动**（否则光标被浏览器接管，只看得到「闪」）",
    "ev.preventDefault()" in SRC_C and "原生自动滚动" in SRC_C)
 ck("A15 帧备好没有对外可读（判据/探针要能等到它，否则假红）",
-   "framesReady: ()=>frames.length > 0" in SRC_C and "spin, framesReady" in SRC_C)
+   "framesReady: ()=>frames.length > 0" in SRC_C and "frameIdx: ()=>lastSpinIdx" in SRC_C)
 # ── 自研「滚轮模式」：中键要**真的滚**（用户 2026-09-17 第二次澄清：「我要的是滚轮…均匀平滑的速度往下滚动」；
 #    上一版只做了"转"、把原生滚动 preventDefault 掉了 ⇒ 用户实测「它是旋转了，但是也滚不动啊」）──
 ck("A16 中键＝**自研滚轮**（基础匀速 + rAF 持续滚 + 自绘徽标），不是只转一下",
@@ -152,8 +152,12 @@ else:
             ck("B10 旋转帧已备好（异步造帧，探针要等到它）", field("spin_frames_ready") == "True")
             ck("B11 **按中键换成旋转帧**（dataURL，不是原图）", field("spin_applied") == "True",
                field("style_after_middle"))
-            ck("B12 约 0.9 秒后回到默认鲸鱼帧（转完一圈就收）", field("spin_reverted") == "True",
-               field("style_after_spin"))
+            # ⚠️ 2026-09-17 改口径：中键**不再是"转一圈就收"**（老版 0.9 秒自动回默认帧），而是
+            #   进入滚轮模式、**光标就停在旋转帧上**（退出时才回默认——那条由 B18 的 `cursorFrameIdx == -1` 守）
+            #   ⇒ 老断言「约 0.9 秒后回到默认鲸鱼帧」已成假红，这里改成守"它确实停在旋转帧"。
+            ck("B12 中键后光标**停在旋转帧**（不是转一圈就收；回默认帧由退出路径守，见 B18）",
+               field("spin_applied") == "True" and field("spin_reverted") != "True",
+               "applied=%s reverted=%s" % (field("spin_applied"), field("spin_reverted") or "（未报）"))
             # ── 自研滚轮模式（活体）：真的在滚 + 徽标在转 + 左键退出 ──
             def _w(k):
                 return [p.strip().lower() for p in (field(k) or "").split("|")]
