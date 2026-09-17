@@ -282,7 +282,11 @@ ck("B23e bg_status（单一事实源）的说明与新默认一致",
        os.path.join(ROOT, "agent", "bg_status.py"), encoding="utf-8").read())
 # B17d~B17g 破 `no_ref` 死锁（2026-09-16 对面 r23 现场：参照只在"发送成功之后"才学，而 `no_ref`
 #   直接拒发 ⇒ 永远拒、永远学不到；A 枪走"宽松成功"分支同样不学 ⇒ 全日志没有一次学会参照的记录）
-_ST = SRC_WECHAT.split("def send_text_posted(")[1][:16000]
+_ST = SRC_WECHAT.split("def send_text_posted(")[1]
+# ⚠️ 2026-09-18 修判据：原来这里是 `[:16000]` 硬切 —— 发文字这个函数太长，16000 字会**切进
+#   发图函数**，于是 B24a 的"回车排在点按钮之前"实际匹配的是**发图函数里的那次点击**（假绿）。
+#   改成按函数边界切：只取"发文字"这一段。
+_ST = _ST[:_ST.index("def send_image_posted(")]
 ck("B17d 指纹档给不出结论时改用四档证据兜底（否则 no_ref 死锁）",
    "self.chat_is_open(chat_id, gui=gui)" in _ST)
 ck("B17e 四档放行后顺手补参照（破死锁的钥匙）",
@@ -302,9 +306,10 @@ ck("B17h 打字前先投递聚焦输入栏（最小化还原后 WM_CHAR 会被�
 #   「输入框刚粘贴完必已聚焦，回车最可靠」，点按钮只是回退）。
 ck("B24 发送是**多枪重试**（最多 3 枪，不是点一枪就等）",
    "for _i in range(1, 4)" in _ST and "_fired" in _ST and "_one_shot(" in _ST)
-ck("B24a **回车优先**：投递回车那一枪必须排在点「发送」按钮之前",
-   _ST.find("backend.keys(main, [ib.VK_RETURN])") >= 0
-   and _ST.find("backend.keys(main, [ib.VK_RETURN])") < _ST.find("backend.click(main, send_pt)"))
+ck("B24a **回车优先**，且**不再点「发送」按钮**（那条枪落在工具栏带上，实测把微信截图按开四次）",
+   "backend.keys(main, [ib.VK_RETURN])" in _ST
+   and "backend.click(main, send_pt)" not in _ST
+   and "不再点按钮" in _ST)
 ck("B24b 成功判据**仍然只认 DB 回读**（不因为「点过了」就算成功）",
    "str(rows[0].get(\"local_id\")) != base_sig" in _ST and "_new_row()" in _ST
    and "DB 回读 local_id=" in _ST)

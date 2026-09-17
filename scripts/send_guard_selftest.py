@@ -150,22 +150,92 @@ ck("C3 台账记的是 `_is_self_echo` 的真结果（可复盘「为什么判�
 ck("C4 发文件链：拿不到内容证据但名字档已过 ⇒ 放行并记账",
    "按名字档放行（记账）" in SRC)
 
-# ── D 发图链：粘贴前聚焦 + 三枪提交（2026-09-18 现场「图片他拿到了，却没有发给我」）────
-print("[D] 发图链：粘贴前先聚焦输入栏、提交打三枪（不再只点一枪干等 DB）")
+# ── D 发图链：右键「粘贴」+ 进框自检 + 三枪提交（2026-09-18 现场两轮取证后定型）────
+print("[D] 发图链：右键「粘贴」进框（不用投递组合键）、进框才打枪、提交三枪")
 _SI = SRC.split("def send_image_posted(")[1]
 _SI = _SI[:_SI.index("def _file_panel_point_live(")]
-ck("D1 粘贴前先投递聚焦输入栏（焦点不在输入框时 Ctrl+V 静默无效）",
+ck("D1 粘贴前先投递聚焦输入栏（老教训保留：焦点不在框里时任何粘贴都不成立）",
    "focus_pt" in _SI and "backend.click(main, focus_pt)" in _SI
    and _SI.find("backend.click(main, focus_pt)") < _SI.find("_cb.set_image("))
-ck("D2 提交是**三枪**且**回车优先**（回车那枪排在点「发送」之前）",
+ck("D2 粘贴改走**右键 → 「粘贴」菜单项**（投递组合键在微信上不成立：退化成字面字母 v）",
+   '_right_click_menu_posted(gui, _RX, _RY, "粘贴"' in _SI)
+ck("D3 发图链里**再也不许出现投递 Ctrl+V**（它只会把字母 v 敲进输入框）",
+   "VK_CONTROL" not in _SI and "keys(child" not in _SI)
+ck("D4 粘贴后先做**发送按钮颜色自检**，没进框就一枪都不打",
+   "_input_has_content(gui, r)" in _SI
+   and _SI.find("_input_has_content(gui, r)") < _SI.find("_shots = ("))
+ck("D5 图片**只粘贴一次**（内容留在输入框，多打几枪不会重复发送）",
+   _SI.count("_cb.set_image(") == 1 and _SI.count('"粘贴"') == 1)
+ck("D6 提交是**三枪**且**回车优先**（回车那枪排在点「发送」之前）",
    "_shots = (" in _SI and "_deadline" in _SI
    and _SI.find("backend.keys(main, [ib.VK_RETURN])") < _SI.find("backend.click(main, send_pt)"))
-ck("D3 图片**只粘贴一次**（内容留在输入框，多打几枪不会重复发送）",
-   _SI.count("_cb.set_image(") == 1 and _SI.count("ib.VK_CONTROL, ib.VK_V") == 1)
-ck("D4 成功回执写明「第几枪打出去的」（可复盘是哪一枪生效）",
+ck("D7 成功回执写明「第几枪打出去的」（可复盘是哪一枪生效）",
    "第 %d 枪 %s · DB 回读" in _SI)
-ck("D5 未生效时如实说「文字可能还留在输入框里」（与发文字同口径）",
+ck("D8 未生效时如实说「文字可能还留在输入框里」（与发文字同口径）",
    "文字可能还留在输入框里" in _SI)
+# D9~D11 颜色自检本身（`_input_has_content` 必须存在、必须用屏幕实拍、量不出时按有内容放行）
+_HC = SRC.split("def _input_has_content(")[1][:2200]
+# 只查**代码**，不查文档字符串（注释里提 `capture_image` 是解释"为什么不用它"，不算违规）
+_HC_CODE = _HC.split('"""', 2)[2] if _HC.count('"""') >= 2 else _HC
+ck("D9 进框自检用**屏幕实拍**（ImageGrab），不用会返回缓存帧的 capture_image",
+   "ImageGrab.grab" in _HC_CODE and "capture_image" not in _HC_CODE and "capture_best" not in _HC_CODE)
+ck("D10 判据＝「发送」按钮的颜色（空框灰 / 有内容绿），且落点与点「发送」用同一个比例",
+   "0.932" in _HC and "0.945" in _HC and "green" in _HC)
+ck("D11 自检量不出来时按「有内容」放行（前置自检不许把发送链一刀切死；最终仍认 DB 回读）",
+   "颜色自检不可用" in _HC and "按有内容继续" in _HC)
+
+# ── E 身份复核：双档互证不许被"活动行时间读不出"翻案（2026-09-18 现场：文字回复连拒三次）──
+print("[E] 身份复核：内容 × 会话头标题带 双档命中 ⇒ 直接放行")
+_IDN = SRC.split("def chat_identity_ok(")[1][:16000]
+_PM_SRC = io.open(os.path.join(ROOT, "scripts", "persona_morph.py"), encoding="utf-8").read()
+ck("E1 内容命中后先问会话头标题带，命中就放行",
+   "self._screen_only_identity(chat_id, gui=gui, name=name)" in _IDN
+   and "双档互证，放行" in _IDN)
+ck("E2 这一问排在「活动行时间冲突」那套严格逻辑**之前**（否则时间戳读不出就会被翻成否）",
+   _IDN.find("双档互证，放行") < _IDN.find("_row_time_conflict(chat_id, gui=gui)"))
+_bad_rel = [l.strip()[:40] for l in _PM_SRC.splitlines() if l.strip().startswith("from .")]
+ck("E3 相对导入修掉：人性化行为决策改走绝对导入（脚本跑时 `from .` 必抛、功能静默失效）",
+   not _bad_rel and "from agent import behavior as bh" in _PM_SRC, str(_bad_rel[:2]))
+
+# ── F 回声表要在**开枪那一刻**就写（2026-09-18 现场：机器人回了自己刚发的图与话）──────────
+print("[F] 回声表：开枪前就记（否则回读那几秒会被监听器读成「别人的话」⇒ 回自己）")
+_SI2 = SRC.split("def send_text_posted(")[1]
+_SI2 = _SI2[:_SI2.index("def send_image_posted(")]
+ck("F1 发文字：`_mark_sent(text)` 排在**第一枪之前**（不是等 DB 回读成功之后才记）",
+   "_mark_sent(text)" in _SI2
+   and _SI2.find("self._mark_sent(text)") < _SI2.find("for _i in range(1, 4)"))
+_SI3 = SRC.split("def send_image_posted(")[1]
+_SI3 = _SI3[:_SI3.index("def _file_panel_point_live(")]
+ck("F2 发图：`_mark_sent(\"[图片]\")` 排在**枪之前**",
+   'self._mark_sent("[图片]")' in _SI3
+   and _SI3.find('self._mark_sent("[图片]")') < _SI3.find("for _i, (_lbl, _act) in enumerate(_shots, 1)"))
+# 行为级：真跑一遍 —— 记过回声的"自己发的"必须被 normalize 丢掉，别人的必须留下
+try:
+    _ad = WC.WeChatAdapter.__new__(WC.WeChatAdapter)
+    _ad.cfg = {"wechat": {}}
+    _ad._group_by_wxid = {}
+    _ad._nick_map = {}
+    _ad._self_wxid = ""
+    _ad._self_nickname = ""
+    _ad._recent_sent = WC.deque(maxlen=200)
+    _ad._LEDGER = WC.deque(maxlen=10)
+    _IMG_ROW = {"local_id": 9, "type": "图片", "sender_id": 3, "create_time": int(time.time()),
+                "content": '<?xml version="1.0"?><msg><img hdlength="28592"/></msg>'}
+    _TXT_ROW = {"local_id": 10, "type": "文本", "sender_id": 3, "create_time": int(time.time()),
+                "content": "这图我看不了"}
+    _FOREIGN = {"local_id": 11, "type": "文本", "sender_id": 7, "create_time": int(time.time()),
+                "content": "wxid_someoneelse:\n在吗"}
+    _ad._mark_sent("[图片]")
+    _ad._mark_sent("这图我看不了")
+    _img_out = _ad.normalize(dict(_IMG_ROW), "g1")
+    _txt_out = _ad.normalize(dict(_TXT_ROW), "g1")
+    _f_out = _ad.normalize(dict(_FOREIGN), "g1")
+    ck("F3 行为：记过回声的**图片**与自己刚说的话都被丢掉（不再回自己）",
+       _img_out is None and _txt_out is None, "图片=%s 文本=%s" % (_img_out, _txt_out))
+    ck("F4 行为：别人的话照旧保留（回声窗没误伤群友）",
+       bool(_f_out) and str(_f_out.get("text")) == "在吗", str(_f_out)[:60])
+except Exception as e:
+    ck("F3/F4 回声行为级", False, repr(e)[:90])
 
 print("\n[结论] %d 通过 / %d 失败" % (len(OK), len(BAD)))
 if BAD:

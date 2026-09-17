@@ -451,7 +451,12 @@ class Orchestrator:
         自定义角色卡不额外改频率（角色卡管"怎么说"，这里管"做不做"）。"""
         try:
             import random
-            from . import behavior as bh
+            # ⛔ 2026-09-18 修：这里原来是 `from . import behavior as bh`（**相对导入**）——
+            #   本文件是被当**顶层脚本**跑起来的（`__package__ == ''`）⇒ 相对导入必然抛
+            #   `attempted relative import with no known parent package` ⇒ 整段"人性化行为决策"
+            #   被下面的兜底 `except` 静默吞掉（日志只有一行 debug），**功能一直没生效过**。
+            #   修法＝改成绝对导入（与文件里其它 `from agent import ...` 一致）。
+            from agent import behavior as bh
             kind, chat_id = chat_key.split(":", 1)
             # 0) 用户明确指令关键词（艾特文本里出现 → 本次强制执行该行为）
             force_collect = force_send = False
