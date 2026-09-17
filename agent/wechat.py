@@ -1738,7 +1738,26 @@ class WeChatAdapter:
                 _ny = max(40, r.top)
                 _nw = tw if _mode == "force" else min(_cw, tw)
                 _nh = th if _mode == "force" else min(_ch, th)
-                u.MoveWindow(hwnd, r.left, _ny, _nw, _nh, True)
+                # ⛔ 2026-09-18 修（**作者原话：「我一直在把浏览器往上放」**——他往上放、我往上顶）：
+                #   原来是 `u.MoveWindow(hwnd, ..., True)`。**`MoveWindow` 对顶层窗会"激活"它**
+                #   （等价于不带 `SWP_NOACTIVATE` 的 `SetWindowPos`）⇒ 每次取 GUI 限位都**把微信顶到
+                #   浏览器前面**。而本函数在**每次 `_get_gui()`** 都会跑（`ui.lock_window_pos=True` 时），
+                #   于是"每起一个探针/每个会话"都顶一次。他看见的就是"窗口一直在到前台"。
+                #   ⇒ 改成 `SetWindowPos(...SWP_NOZORDER|SWP_NOACTIVATE)`：**只改几何，绝不置前、不改 Z 序**。
+                try:
+                    _sp = u.SetWindowPos
+                    try:
+                        _sp.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+                                        ctypes.c_int, ctypes.c_int, ctypes.c_uint]
+                        _sp.restype = wintypes.BOOL
+                    except Exception:
+                        pass          # 挂 argtypes 失败也必须照发，别把限位整个吞掉
+                    _ok = bool(_sp(int(hwnd), 0, int(r.left), int(_ny), int(_nw), int(_nh),
+                                   0x0004 | 0x0010))     # SWP_NOZORDER | SWP_NOACTIVATE
+                    if not _ok:
+                        log.info("限位：SetWindowPos 没成功（不重试、不置前）")
+                except Exception as e:
+                    log.info("限位：SetWindowPos 异常（按不动处理）：%s", e)
                 _wb.note_forced((r.left, _ny, r.left + _nw, _ny + _nh))
                 time.sleep(0.4)
                 try:
