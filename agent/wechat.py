@@ -21,9 +21,17 @@ import threading
 import time
 from collections import deque
 
-from .config import get_config
+from .config import ROOT, get_config
 from . import replica_adapter  # W1：驱动库（wechatauto-replica）私有 API 的唯一收口点 + 版本守卫
 from . import recall as recall_mod  # 第 14 条：撤回事件识别（用于把已进上下文的消息剔除）
+
+
+def _mask_id(s: str) -> str:
+    """掩码显示 wxid（日志与控制台都不回显完整账号）。"""
+    t = str(s or "")
+    if len(t) <= 8:
+        return t[:2] + "***"
+    return t[:4] + "***" + t[-3:]
 
 # 模块级 logger（2026-09-13 修）：本文件里多处 `log.info(...)` 一直没定义 `log` ⇒
 # 只要走到"投递前置不满足 / 学会话头"这些分支就抛 NameError，被外层 except 吞掉后表现为
@@ -664,14 +672,23 @@ class WeChatAdapter:
         #   而且以前**既没有日志、也没有界面提示**，用户只能看到"怪怪的"。
         #   ⇒ 现在：拿不到就明确记一行警告；控制台「微信」面板也会如实显示"没认出来"（`self_identity()`）。
         self._self_ident_ok = bool(self._self_wxid)
+        # ⭐ 2026-09-18：先读回**以前从回声里学到的**自己（它比猜的可靠）——
+        #   `get_self_info()` 返回空时，这一条就是唯一能把"我"认出来的东西（详见 learn_self_from_echo）。
+        self._self_wxid_src = "api" if self._self_wxid else ""
+        try:
+            self.load_self_identity()
+        except Exception:
+            pass
+        self._self_ident_ok = bool(self._self_wxid)
         # 「我的其他账号（大号）」登记表（2026-09-16 既有口径：）—— 见 _load_owner_accounts 的注释
         self._load_owner_accounts()
         if not self._self_wxid:
             try:
                 import logging as _lg
                 _lg.getLogger("persona-morph").warning(
-                    "没能识别出你自己的微信账号（get_self_info 返回空）⇒ "
-                    "「这条是不是我发的」只剩文本回声兜底；请在控制台「微信」面板确认。")
+                    "没能识别出你自己的微信账号（get_self_info 返回空，也还没学到）⇒ "
+                    "先靠文本回声兜底：**你拿机器人号手打的字会被当成陌生人的话**（它会回你）。"
+                    "机器人每成功发一次消息都会写回库，下一次就能从回声里学会「我是谁」并落盘。")
             except Exception:
                 pass
         self._nick_map = self._load_nicknames()
@@ -937,6 +954,63 @@ class WeChatAdapter:
         if t:
             self._recent_sent.append((t, time.time()))
 
+    def _self_id_file(self) -> str:
+        return os.path.join(ROOT, "data", "self_identity.json")
+
+    def load_self_identity(self) -> dict:
+        """启动时读回"自己是谁"（学到的优先于猜的）。返回 `{wxid, nickname, from}`。"""
+        try:
+            import json as _json
+            with open(self._self_id_file(), encoding="utf-8") as fh:
+                d = _json.load(fh) or {}
+        except Exception:
+            d = {}
+        if not isinstance(d, dict):
+            d = {}
+        w = str(d.get("wxid") or "").strip()
+        if w and not self._self_wxid:
+            self._self_wxid = w
+            self._self_wxid_src = str(d.get("from") or "saved")
+            try:
+                log.info("已读回「自己是谁」：%s（来源 %s）", _mask_id(w), self._self_wxid_src)
+            except Exception:
+                pass
+        return d
+
+    def learn_self_from_echo(self, sender_wxid: str, sample: str = "") -> bool:
+        """**从自己消息的库回读里学会"我"是谁**（2026-09-18）。
+
+        为什么需要它：原来"自己是谁"只有 `get_self_info()` 一个来源，而它在某些账号/微信版本上
+        **返回空** ⇒ 下面那串"这条是不是我发的"判断全部失效 ⇒ 表现就是**机器人回自己**（尤其当
+        用户拿机器人号手打一句话时：那句不在我们的发送台账里，回声窗认不出）。
+        现在把"我们刚发出去、又读回来的那条"当成最可靠样本：它的 sender_wxid 必然是我。
+        """
+        w = str(sender_wxid or "").strip()
+        if not w or w.startswith("gh_"):                 # 公众号等不是人，别学
+            return False
+        if w == self._self_wxid:
+            return False
+        self._self_wxid = w
+        self._self_wxid_src = "echo"
+        try:
+            import json as _json
+            p = self._self_id_file()
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            tmp = p + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                _json.dump({"wxid": w, "nickname": self._self_nickname or "",
+                            "from": "echo", "sample": str(sample or "")[:40],
+                            "at": int(time.time() * 1000)}, fh, ensure_ascii=False, indent=1)
+            os.replace(tmp, p)
+        except Exception as e:
+            log.warning("自我识别落盘失败（本次进程内仍然生效）：%s", e)
+        try:
+            log.info("学会了「自己是谁」：%s（从自己发出消息的库回读里认出，样本 %r）",
+                     _mask_id(w), str(sample or "")[:20])
+        except Exception:
+            pass
+        return True
+
     def _is_self_echo(self, text: str) -> bool:
         """判断一条消息是不是自己刚发的（数据库回读回声）。
 
@@ -1126,6 +1200,13 @@ class WeChatAdapter:
 
         # 回声过滤：这条消息是自己刚发出去的（文本完全一致）→ 跳过，避免自问自答死循环
         if text and self._is_self_echo(text):
+            # ⭐ 2026-09-18 加：**从回声里学会"我"是谁**。
+            #   起因（用户「佬」追问：「我们都有@自己的方法了，为什么他还回自己的话？」）：
+            #   我们发出去的消息会写回数据库，**那条记录里的 sender_wxid 就是机器人自己** ⇒
+            #   这里正好是"最可靠的自我识别样本"。学会之后，任何人（包括用户**手打**用机器人号
+            #   发的消息——它不在我们的发送台账里、回声窗认不出）用那个号发言都会被正确跳过，
+            #   而不再依赖有时拿不到的 `get_self_info()`。
+            self.learn_self_from_echo(sender_wxid, text)
             return None
 
         sender_name = self._nick_map.get(sender_wxid, sender_wxid) if sender_wxid else (
