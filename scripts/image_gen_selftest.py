@@ -17,6 +17,15 @@ os.chdir(ROOT)
 
 from PIL import Image  # noqa: E402
 from agent import image_gen as IG  # noqa: E402
+from agent import config as CFG  # noqa: E402
+from agent.config import DEFAULT_CONFIG  # noqa: E402
+
+# ⛔ 本判据**全程不出网**（文件头写明"不需要真实生图后端、不出网"）。2026-09-18 产品改成"默认出网 +
+#   在线优先"之后，只要哪一节忘了把出网关掉，`pick_backend()` 就会选到 pollinations ⇒ `generate()`
+#   真去联网出图（实测把判据从 1 秒拖到 121 秒，还让判据结果依赖外网）。⇒ 这里**统一把在线后端封掉**，
+#   各节要测"在线路径"时自己用假后端（`backends=[{...online...}]`）或断言预设表本身。
+_orig_online_backend = IG.online_backend
+IG.online_backend = lambda: {}
 
 PASS = 0
 FAIL = 0
@@ -80,8 +89,13 @@ try:
 finally:
     IG.detect_local = _orig_detect
 
-set_cfg(enabled=True, online_allowed=True, backends=[{"id": "online-x", "kind": "online", "url": "http://127.0.0.1:9/x"}])
-ok("允许出网后才可选到在线后端", IG.pick_backend()[0]["id"] == "online-x")
+set_cfg(enabled=True, online_allowed=True, online_preset="custom",
+        online_api={"url": "", "key": "", "model": ""},
+        backends=[{"id": "online-x", "kind": "online", "url": "http://127.0.0.1:9/x"}])
+# ⚠️ 2026-09-18 口径：**预设优先于手填的 backends**（预设就是用户在面板上选的那一家）。
+#    所以这一条要先把预设设成 custom 且不填地址（=没选预设），才轮到 backends 里的在线后端。
+ok("允许出网后，配置里的在线后端能被选到（预设未选时才轮到它）",
+   (IG.pick_backend()[0] or {}).get("id") == "online-x", str(IG.pick_backend()[0]))
 
 print("④ 过滤链：任一层判不出/判否 ⇒ 不发（fail-closed）")
 tmp = tempfile.mkdtemp(prefix="imggen_")
@@ -112,7 +126,10 @@ ok("白名单非空且不在白名单 ⇒ 判否", okal is False)
 print("⑤ 入口：红线与状态")
 set_cfg(enabled=False)
 ok("总开关关 ⇒ 直接拒绝", IG.generate("x", "画只猫")["ok"] is False)
-set_cfg(enabled=True)
+# ⚠️ 2026-09-18：本判据**必须不出网**（文件头就写着"不需要真实后端、不出网"）。默认出网之后，
+#   `set_cfg(enabled=True)` 会让 pick_backend() 选到 pollinations ⇒ `generate()` **真的去联网出图**
+#   （实测把这条判据从 1 秒拖到 121 秒）。⇒ 这一节一律把出网关掉（专测红线与"没后端"两条路径）。
+set_cfg(enabled=True, online_allowed=False)
 r = IG.generate("x", "把照片换成真人脸")
 ok("真人换脸 ⇒ 拒（红线，无开关）", r["ok"] is False and "红线" in r["why"], r["why"])
 r2 = IG.generate("x", "来张 r18 的图")
@@ -183,6 +200,63 @@ ok("有应用内引导按钮 + GUIDES 条目（不叫用户去读文件）",
    'id="igGuide"' in _html and "imggen:" in _html and "['igGuide','imggen']" in _html)
 ok("有「试一次」按钮 + 端点（只跑链条、不发消息）",
    'id="igTest"' in _html and '/api/image_gen/test' in _web and '/api/image_gen/test' in _html)
+
+print("⑨ 在线后端扩展 + 去水印 + 提示词整理（2026-09-18 用户口径：默认出网、多找几家让用户自己切、去水印、加说明文本）")
+ok("默认**出网**（用户拍板：在线出图明显更好）",
+   DEFAULT_CONFIG["image_gen"]["online_allowed"] is True)
+ok("默认**在线优先**", DEFAULT_CONFIG["image_gen"]["online_first"] is True)
+_pres = IG.online_presets()
+ok("在线预设 ≥4 家（免密钥 + 要 key 的几家 + 自定义）", len(_pres) >= 4, str([p["id"] for p in _pres]))
+ok("预设字段齐全（id/label/proto/url/model/need_key/note）",
+   all(all(k in p for k in ("id", "label", "proto", "url", "model", "need_key", "note")) for p in _pres))
+ok("每家的说明文本都讲了「要不要 key / 有没有水印」（说明文本要在控制台给用户看）",
+   all((("key" in p["note"].lower() or "密钥" in p["note"]) and "水印" in p["note"]) for p in _pres),
+   str([p["id"] for p in _pres
+        if not (("key" in p["note"].lower() or "密钥" in p["note"]) and "水印" in p["note"])]))
+ok("要 key 的三家（硅基流动/智谱/火山）都在表里且走 openai_image 协议",
+   {"siliconflow", "zhipu", "volc"} <= {p["id"] for p in _pres}
+   and all(p["proto"] == "openai_image" for p in _pres if p["id"] in ("siliconflow", "zhipu", "volc")))
+ok("免密钥那家标注 need_key=False（零配置可用）",
+   [p for p in _pres if p["id"] == "pollinations"][0]["need_key"] is False)
+ok("call_backend 支持 openai_image 协议（一个协议覆盖三家兼容接口）+ 取 b64_json 或 url",
+   'proto == "openai_image"' in open(os.path.join(ROOT, "agent", "image_gen.py"), encoding="utf-8").read()
+   and "images/generations" in open(os.path.join(ROOT, "agent", "image_gen.py"), encoding="utf-8").read())
+ok("pollinations 协议会带 token（官方：nologo 要有账号 ⇒ 带 Bearer 才免水印）",
+   "Authorization" in open(os.path.join(ROOT, "agent", "image_gen.py"), encoding="utf-8").read())
+
+# 去水印：功能性（真裁一张图）+ 口径（带 token/要 key 的后端不动它）
+_wt = tempfile.mkdtemp(prefix="imggen_wm_")
+_wi = os.path.join(_wt, "wm.jpg")
+Image.new("RGB", (300, 300), (10, 20, 30)).save(_wi)
+_wk = os.path.join(_wt, "keyed.jpg")
+Image.new("RGB", (300, 300), (10, 20, 30)).save(_wk)
+_p1, _n1 = IG.strip_watermark(_wi, "pollinations", has_token=False)
+ok("免密钥那条：裁掉底部水印带（尺寸真的变小）",
+   bool(_n1) and Image.open(_p1).size[1] < 300, "%s / %s" % (_p1, _n1))
+# ⚠️ 第二个用例**必须另用一份图**：`strip_watermark` 是就地裁切，共用一份会读到已裁过的图（假红）
+_p2, _n2 = IG.strip_watermark(_wk, "zhipu", has_token=True)
+ok("要 key / 带 token 的后端本来没水印 ⇒ 一个像素都不动", _n2 == "" and Image.open(_p2).size[1] == 300)
+ok("去水印默认开、比例可配", DEFAULT_CONFIG["image_gen"]["strip_watermark"] is True
+   and float(DEFAULT_CONFIG["image_gen"]["watermark_crop"]) > 0)
+ok("提示词整理：主体 + 中性质量后缀（不加会和动漫风打架的'照片级'）",
+   IG.build_prompt("a cat").startswith("a cat, highly detailed")
+   and "photorealistic" not in IG.build_prompt("a cat"))
+ok("提示词整理：画里已写画质词就不重复堆（避免提示词越滚越长）",
+   IG.build_prompt("a cat, highly detailed") == "a cat, highly detailed")
+ok("提示词整理：带风格时插在主体之后",
+   IG.build_prompt("a cat", "watercolor").startswith("a cat, watercolor"))
+ok("generate() 走的是整理后的提示词（不是把中文碎片原样丢给模型）",
+   "build_prompt(intent.get(" in open(os.path.join(ROOT, "agent", "image_gen.py"), encoding="utf-8").read())
+# UI：新增的在线后端/密钥/去水印都要有可点的面 + 说明文本
+for _k in ("online_preset", "online_first", "strip_watermark", "online_api.url",
+           "online_api.key", "online_api.model"):
+    ok("面板绑定了 image_gen.%s" % _k, ('data-cfg="image_gen.%s"' % _k) in _html)
+ok("面板写清了「哪家要 key / 有没有水印 / 花多少时间」（说明文本，不是只给字段）",
+   "无水印" in _html and "水印" in _html and "免密钥" in _html and "要 key" in _html)
+ok("面板给出各家的推荐模型名与接口地址（用户不用去别处查）",
+   "FLUX.1-schnell" in _html and "cogview-3-flash" in _html
+   and "api.siliconflow.cn/v1" in _html and "open.bigmodel.cn" in _html
+   and "ark.cn-beijing.volces.com" in _html)
 ok("面板会显示后端/过滤链/红线状态（只读，来自 /api/status）",
    'igWhy' in _html and 'igList' in _html and 'ig.red_line' in _html)
 _cfg_src = open(os.path.join(ROOT, "agent", "config.py"), encoding="utf-8").read()

@@ -191,7 +191,10 @@ def _builtin_tool_defs() -> list:
         },
         {
             "name": "gen_image",
-            "description": "**按群友的要求把图生成出来**（走生图链条：意图解析 → 挑后端 → 生成 → 过滤链）。群友说「画一张/生成一张/来张 xx 的图」且现有图源里没有合适的时候用。**没配生图后端、没过过滤链、或请求碰红线（真人换脸/成人内容）时它会返回原因**，照原因如实说即可，**绝不许假装生成过**。",
+            "description": "**按群友的要求把图生成出来**（走生图链条：意图解析 → 挑后端 → 生成 → 过滤链）。群友说「画一张/生成一张/来张 xx 的图」且现有图源里没有合适的时候用。**没配生图后端、没过过滤链、或请求碰红线（真人换脸/成人内容）时它会返回原因**，照原因如实说即可，**绝不许假装生成过**。"
+                           "⚠️ **request 要写成一句像样的画面描述**（英文最好，生图模型的语料以英文为主）：主体 + 场景 + 风格 + 光线/构图，例如 "
+                           "`a gray tabby cat sitting on a wooden windowsill, watching heavy rain outside, cozy room, soft window light, photorealistic`；"
+                           "只写「猫」这种一个词、或把中文原话原样丢过去，出来的图会又糊又抽象。",
             "parameters": {
                 "type": "object",
                 "properties": {"request": {"description": "群友的原话要求（主体/风格/张数/尺寸），别自己加戏"}},

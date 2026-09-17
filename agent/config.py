@@ -323,7 +323,27 @@ DEFAULT_CONFIG = {
         "trigger_mode": "on_request",    # on_request＝被要求时 | sometimes＝偶尔主动 | off＝不主动
         "max_count": 2,                  # 单次最多生成几张
         "size_default": "square",        # square | portrait | landscape
-        "online_allowed": False,         # 允许出网到在线生图 API（默认关 ⇒ 在线后端根本不会被选中）
+        # 🔴 2026-09-18 用户拍板：**默认出网**。原话：「不妨这样吧，默认出网，反正用户出的网也够多了，
+        #   也不在生图这一个。我觉得在线生成的图片有没有可能会比这个更好一点？如果用户本地有更好的
+        #   模型，再让他自己调」。
+        #   实测依据（同一天、同一条提示词）：本地＝**动漫模型 Animagine XL 3.1 + 8 步蒸馏** ⇒ 出写意
+        #   动漫图（用户原话「你觉得这是一个猫吗？…写实是完全不行的」）；在线免密钥那条 **3.6 秒**出
+        #   **照片级**图。⇒ 默认在线优先、本地当兜底；用户想用本地或另接服务，在控制台自己切。
+        "online_allowed": True,
+        # 在线后端预设（控制台下拉选；表＝ agent/image_gen.py::ONLINE_PRESETS）：
+        #   pollinations＝免密钥零配置（**右下角有水印**，nologo 现在要 token）
+        #   siliconflow / zhipu / volc＝OpenAI 兼容、**无水印**，填各自 key 即可（都有免费额度）
+        #   custom＝任何 OpenAI 兼容出图接口
+        "online_preset": "pollinations",
+        "online_api": {"url": "", "key": "", "model": "", "timeout": 120},   # 自定义/填 key 那家
+        "online_first": True,            # 在线优先（本地兜底）；关掉＝只走本地
+        # 去水印（2026-09-18 用户要求「找找有没有去水印的，把它加到这条链里面」）：
+        #   ①带 token / 要 key 的后端**本来就没水印**（智谱 cogview-3-flash 免费、硅基流动有免费额度）；
+        #   ②免密钥那条（pollinations）的水印**只有注册免费账号拿 token 才去得掉**（官方 APIDOCS 原话：
+        #     `nologo` = Remove the Pollinations watermark **(needs account)**）⇒ 把 token 填进「出图密钥」；
+        #   ③两者都没有时，按下面这个开关**裁掉底部水印带**（诚实的修剪，不做局部涂改）。
+        "strip_watermark": True,
+        "watermark_crop": 0.06,          # 裁掉底部比例（pollinations 水印实测在 y≈0.94~0.99）
         "backends": "",                  # `id | local/online | url`，分号分隔
         "style_allow": "",               # 风格白名单（逗号分隔；非空＝只放行这些）
         "style_block": "",               # 风格黑名单（逗号分隔；命中即拒）
