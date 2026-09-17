@@ -139,6 +139,107 @@ def _control_halt() -> str:
         return ""
 
 
+# ── 输入框几何：**一律现算 + 只取上沿**（2026-09-18 作者现场口径）──────────────────
+# 作者原话：「**输入栏不是固定大小的。当你引用一条比较长的信息时，输入栏会变高**。那么此刻，
+# 如果你还是按原来输入栏的位置去点的话，中间点有可能正好就是引用的那条消息的尾部。这样就导致
+# 你输入不了，就一直在点那条引用，或者你偶然间点到了那个叉号，就把引用点掉」「引用条事实上正处于
+# **工具栏的上面，而不是输入栏的上面**……最好是点**输入孔上沿**，这样会比较保险，**因为上面没有
+# 什么东西**」。
+#
+# 实测（本机 1193×891，`_scratch/probe_rows.py` 在**窗口自身画面**上逐行量）：
+#   消息区…y 400..690 ｜ y 691＝1px 浅灰分界线 ｜ **输入框 y 692..827（高 136）** ｜ 工具栏灰带 828..851
+#   ⇒ 输入框**下部**（比例 ≈0.87，屏幕 y≈931）正是引用条所在的那一带 —— 老实现那一枪就点在那里。
+#
+# ⚠️ 不用驱动库那两件的原因（都实测过）：
+#   · `gui._probe_input_box()`（诚实版）要求框高 **≥150px**（`guia.py:1444`），本机只有 136px
+#     ⇒ **在这台机器上永远探不到**（探不到时 `get_input_box()` 会**静默返回按比例猜的矩形**
+#     `guia.py:1396-1399`，调用方分不出"量的"还是"猜的"）。
+#   ⇒ 本实现只认画面证据，量不到就返回 None，调用方**不许猜**。
+
+
+def _probe_input_box_frame(gui):
+    """从**窗口自身画面**（PrintWindow 优先，被别的窗口盖住也能量）量输入框矩形（渲染相对）。
+
+    做法与库里同款（底部找"全宽近白"行 → 沿中心列上下扩到边界 → 顶上 1~4px 浅灰分界线佐证），
+    只去掉那条把本机排除掉的门槛（≥150px）。量不到返回 None。
+    """
+    try:
+        from . import chat_header as _ch
+        img = _ch.capture_image(gui=gui)
+    except Exception:
+        img = None
+    if img is None:
+        return None
+    try:
+        px = img.load()
+        W, H = img.size
+        x0 = int(getattr(gui, "right_pane_left", 0) or 0)
+        if x0 <= 0 or x0 > W * 0.6:
+            x0 = int(W * 0.22)
+        cx = min(W - 1, (x0 + W) // 2)
+        for off in (150, 120, 200, 100, 250, 90, 300):
+            y = int(H) - off
+            if y <= H * 0.45 or y >= H - 2:
+                continue
+            tot = white = 0
+            for x in range(x0, W, 2):
+                r, g, b = px[x, y][:3]
+                tot += 1
+                if min(r, g, b) >= 241:
+                    white += 1
+            if tot <= 0 or white / tot < 0.8:
+                continue                      # 这一行不在输入框里（消息区/工具栏/状态条）
+            top = y
+            while top > 1 and min(px[cx, top - 1][:3]) >= 241:
+                top -= 1
+            bot = y
+            while bot < H - 2 and min(px[cx, bot + 1][:3]) >= 241:
+                bot += 1
+            if bot - top < 60:                # 太薄：不像输入框
+                continue
+            d, g2 = 0, top - 1                # 顶上应是 1~4px 的浅灰分界线（佐证）
+            while g2 >= 0 and min(px[cx, g2][:3]) < 241:
+                d += 1
+                g2 -= 1
+            if not (1 <= d <= 6):
+                continue
+            return (x0, top, W, bot)
+    except Exception:
+        return None
+    return None
+
+
+def _input_top_band(gui, band_px: int = 20):
+    """返回 `(上沿带矩形(渲染相对), 落点(屏幕))`；量不到 ⇒ `(None, None)`，调用方**不许猜点**。"""
+    box = _probe_input_box_frame(gui)
+    if not box:
+        return None, None
+    x0, top, x1, bot = box
+    band = (x0, top, x1, min(bot, top + max(8, min(int(band_px), max(8, (bot - top) // 4)))))
+    pt = (int(getattr(gui, "origin_x", 0) or 0) + (band[0] + band[2]) // 2,
+          int(getattr(gui, "origin_y", 0) or 0) + band[1] + max(4, (band[3] - band[1]) // 3))
+    return band, pt
+
+
+def _input_ink(gui, box, strip: int = 80) -> int:
+    """输入框**上沿条带**里的深色点数 —— 阳性对照用（字到底进没进框）。拿不到帧返回 -1。
+
+    空输入框只有浅灰占位符（min(RGB)≈200），所以阈值取 <150 不会把占位符算进去。
+    """
+    try:
+        from . import chat_header as _ch
+        img = _ch.capture_image(gui=gui)
+        if img is None:
+            return -1
+        x0, top, x1, bot = box
+        sub = img.crop((x0 + 12, top + 2, max(x0 + 14, x1 - 12), min(bot, top + strip)))
+        px = sub.load()
+        return sum(1 for y in range(0, sub.size[1], 2) for x in range(0, sub.size[0], 2)
+                   if min(px[x, y][:3]) < 150)
+    except Exception:
+        return -1
+
+
 def _restore_fg(hwnd: int = 0, note: str = "", keep: bool = False) -> None:
     """把前台还回"**打开对话框之前**那一个"（优先级：传入的 hwnd → `_FG_STASH` → 当前前台）。
 
@@ -2860,13 +2961,19 @@ class WeChatAdapter:
                 #    ⚠️ 真正提交发送走的是投递 **Enter**（审计里 `WM_KEYDOWN VK=13`），所以这个
                 #    "聚焦"click 是**可以少打一枪**的；它唯一的作用是「最小化还原后焦点不在输入框」
                 #    那个已知场景（2026-09-16 r24）⇒ 保留动作、**只把落点抬进正文区**。
-                _FOCUS_Y, _TOOLBAR_Y = 0.87, 0.92     # 正文区 vs 工具栏带的分界（工具栏带里全是按钮）
-                if not (0.0 < _FOCUS_Y < _TOOLBAR_Y):
-                    log.info("跳过聚焦点击（_FOCUS_Y=%s 不在正文区、或越过工具栏带 %s，按红线不点）",
-                             _FOCUS_Y, _TOOLBAR_Y)
+                # 🔴 2026-09-18 重写（作者现场口径，见 `_input_top_band` 上方的注释）：
+                #    老实现按**渲染区比例 0.87** 点 —— 那不是输入框上沿，而是输入框**下部**；
+                #    引用一条长消息后输入栏变高，这一枪正好落在**引用条**上（点不动/一直点引用），
+                #    甚至点到 ✕ 把引用取消。⇒ 改成"现算 + 只取上沿带"；量不到就**不下这一枪**。
+                _ibox, focus_pt = None, None
+                _ibox, focus_pt = _input_top_band(gui)
+                if not _ibox:
+                    log.info("投递聚焦输入栏：**量不到输入框（拿不到窗口自身画面）⇒ 不下这一枪**"
+                             "（按作者口径不许按比例猜点；下面靠打字后的阳性对照兜）")
+                elif focus_pt[1] > int(r[1] + rh * 0.92):
+                    log.info("跳过聚焦点击（上沿带落点 %s 已进工具栏带，按红线不点）", focus_pt)
                 else:
-                    focus_pt = (int(r[0]) + int(rw * 0.45), int(r[1]) + int(rh * _FOCUS_Y))
-                    log.info("投递聚焦输入栏：点 %s（渲染区 %s，正文区比例 %.2f）", focus_pt, r, _FOCUS_Y)
+                    log.info("投递聚焦输入栏：点 %s（实测输入框 %s，只取上沿带）", focus_pt, _ibox)
                     backend.click(main, focus_pt)
                     time.sleep(0.3)
             except Exception as _e:
@@ -2875,6 +2982,16 @@ class WeChatAdapter:
             if not ok:
                 return False, "投递打字失败：%s" % why
             time.sleep(0.45)
+            # 阳性对照（2026-09-18 加，作者口径"点完必须证明字真进框了"）：空输入框只有浅灰占位符，
+            # 打完字上沿条带必须出现深色点。拿不到帧（-1）不算失败，只留痕；**判定为 0 就如实报失败**，
+            # 不许再退回"按比例猜个位置再点一次"那条老路。
+            _box2 = _probe_input_box_frame(gui)
+            if _box2:
+                _ink = _input_ink(gui, _box2)
+                if _ink == 0:
+                    return False, ("输入框没吃到字（上沿条带深色点实测 0）——聚焦那枪落空；"
+                                   "按作者口径不许按比例猜点，这一条如实失败")
+                log.info("输入框阳性对照：上沿条带深色点 %d（≥1 ⇒ 字确实进框了）", _ink)
             # 「发送」按钮：渲染区比例 (0.932, 0.945)（1160×900 实测）。
             send_pt = (int(r[0]) + int(rw * 0.932), int(r[1]) + int(rh * 0.945))
 
@@ -3023,11 +3140,22 @@ class WeChatAdapter:
             #   刚被还原出来）**静默无效**，后面那一枪「发送」自然什么都发不出去 ——
             #   现场现象正是「**图片他拿到了，但是又没有发给我**」。发文字那条链早就补了这一枪（r24），
             #   发图这条一直没有。落点用**正文区比例 0.87**（0.92 是工具栏带，会点到按钮上）。
+            # 🔴 2026-09-18 重写：老实现与发文字那条链同一个毛病 —— 按**渲染区比例 0.87** 点，
+            #    那是输入框**下部**（引用一条长消息时，引用条正好在那儿 ⇒ 一直点引用/点到 ✕）。
+            #    改成实测上沿带；量不到就不点（见 `_input_top_band` 的注释），并且**不猜落点**。
+            _img_box = None
+            _img_pt = None
             try:
-                focus_pt = (int(r[0]) + int(rw * 0.45), int(r[1]) + int(rh * 0.87))
-                log.info("发图·投递聚焦输入栏：点 %s（渲染区 %s）", focus_pt, r)
-                backend.click(main, focus_pt)
-                time.sleep(0.3)
+                _img_box, _img_pt = _input_top_band(gui)
+                if _img_box is None:
+                    log.info("发图·投递聚焦输入栏：**量不到输入框 ⇒ 不下这一枪**（按作者口径不许按比例猜点）")
+                elif _img_pt[1] > int(r[1] + rh * 0.92):
+                    log.info("发图·跳过聚焦点击（上沿带落点 %s 已进工具栏带，按红线不点）", _img_pt)
+                    _img_pt = None
+                else:
+                    log.info("发图·投递聚焦输入栏：点 %s（实测输入框 %s，只取上沿带）", _img_pt, _img_box)
+                    backend.click(main, _img_pt)
+                    time.sleep(0.3)
             except Exception as _e:
                 log.info("发图·投递聚焦输入栏失败（继续尝试粘贴）：%s", _e)
 
@@ -3040,7 +3168,10 @@ class WeChatAdapter:
             #   冒出 `vvaavv`；五种变体都试过：主窗/渲染子窗/带扫描码/同步 SendMessage/左 Ctrl）。
             #   ⇒ 改走**微信自己的动作路径**：输入框右键 → 「粘贴」菜单项（全程投递，不需要修饰键）。
             #   实测（2026-09-18）：这条**真能把图放进输入框**（屏幕实拍：缩略图出现、发送按钮变绿）。
-            _RX, _RY = int(rw * 0.45), int(rh * 0.87)
+            if _img_pt is None:
+                return False, ("量不到输入框（拿不到窗口自身画面）⇒ **不猜落点、不右键粘贴**"
+                               "（老实现按比例 0.87 点，引用长消息时会落到引用条甚至 ✕ 上）")
+            _RX, _RY = _img_pt[0] - int(r[0]), _img_pt[1] - int(r[1])
             _paste_ok = False
             try:
                 _paste_ok = bool(self._right_click_menu_posted(gui, _RX, _RY, "粘贴", delay=1.0))
@@ -6303,12 +6434,30 @@ class WeChatAdapter:
                 self._mark_sent(text)
                 self._scroll_to_bottom(gui)
                 return True, "已引用并发送"
-            # 回退 1：固定矩形 fast 路径
-            box = (gui.right_pane_left + 4, max(60, gui.render_h - 250),
-                   gui.render_w - 4, gui.render_h - 60)
-            ok_in = gui.input_text(text, box=box, fast=True)
-            if not ok_in:
-                ok_in = gui.input_text(text)  # 回退完整探测路径
+            # 🔴 2026-09-18 换掉这条回退（两个毛病，作者现场都撞上了）：
+            #   ①它是**真鼠标**通路（`gui.input_text → focus_input → wx_click → real_click`），
+            #      违反"任何路径不许动真鼠标"；②它的落点来自 `get_input_box()`，探不到时是**按比例
+            #      猜的矩形**（`guia.py:1396-1399`），引用长消息时会落到引用条甚至 ✕ 上（作者口径见
+            #      `_input_top_band` 上方注释）。⇒ 先走我们自己的**投递发送**（现算上沿带 + WM_CHAR +
+            #      回车/发送按钮 + DB 回读，全程不动光标）；只有 `_real_mouse_allowed()` 为真才回退库那条。
+            #      `allow_no_ref=True` 的依据：**本函数进门刚用 `_open_chat_guarded` 验过身份**
+            #      （强档证据），这里不该再被弱档指纹挡一次。
+            _p_ok, _p_why = self.send_text_posted(text, chat_id, allow_no_ref=True)
+            if _p_ok:
+                self._mark_sent(text)
+                self._scroll_to_bottom(gui)
+                return True, "已引用并发送"
+            log.info("引用·投递发送未成（%s）", str(_p_why)[:110])
+            if not self._real_mouse_allowed():
+                self._scroll_to_bottom(gui)
+                return False, ("引用已插入，但投递发送没成（%s）⇒ 按最高目标不退回真鼠标"
+                               "（库那条会动光标，落点也是猜的）" % str(_p_why)[:90])
+            # 回退（仅真鼠标档）：把**实测上沿带**交给驱动库 fast 路径（它内部点上沿，不点中心）
+            _band, _ = _input_top_band(gui)
+            if _band is None:
+                self._scroll_to_bottom(gui)
+                return False, "引用已插入，但输入框量不到 ⇒ 不猜落点（真鼠标档也不猜）"
+            ok_in = gui.input_text(text, box=tuple(_band), fast=True)
             if not ok_in:
                 self._scroll_to_bottom(gui)
                 return False, "输入文字失败"
