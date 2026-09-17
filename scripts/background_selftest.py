@@ -63,6 +63,12 @@ _sw_row = [p for p in PATHS if p.get("key") == "switch_chat"][0]
 ck("A4b 切换会话如实写明「会短暂置前 + 自动还回」（不许再写「不负责改前台」）",
    ("短暂把微信置前" in str(_sw_row.get("detail") or "")) and ("自动还回" in str(_sw_row.get("detail") or ""))
    and ("不负责改前台" not in str(_sw_row.get("detail") or "")))
+# A4e（2026-09-18 事故后加）：**主窗兜底不许按标题找**
+#   老代码在 _get_gui 的兜底里匹配 `窗口标题 == "微信"`，而本机微信窗口标题是「群deepseek」
+#   （机器人在微信里的昵称）⇒ 永远找不到主窗、永远救不回来。改成"窗口类 + 渲染子窗 + 宽度"。
+ck("A4e 主窗兜底按「窗口类 + MMUIRenderSubWindowHW 子窗」找（与标题无关）",
+   't.value == "微信"' not in SRC_WECHAT and "MMUIRenderSubWindowHW" in SRC_WECHAT
+   and 'Qt51514QWindowIcon' in SRC_WECHAT)
 # A4d（2026-09-18 用户当场纠正后加）：**还前台之前先看用户是否在操作**
 #   用户原话：「不是你刚刚把窗口收起了，我把窗口点出来了」——_restore_fg_until 会主动
 #   SetForegroundWindow 抢回"进入时记下的窗口"；用户中途自己点了微信出来，我们这一枪会把他刚点出来的
