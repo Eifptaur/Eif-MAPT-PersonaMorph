@@ -44,6 +44,7 @@ SRC_IB = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 SRC_CONSOLE = io.open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
 SRC_WEBUI = io.open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
 SRC_CFG = io.open(os.path.join(ROOT, "agent", "config.py"), encoding="utf-8").read()
+SRC_UIADAPT = io.open(os.path.join(ROOT, "agent", "ui_adapt.py"), encoding="utf-8").read()
 
 # ── A 矩阵自洽 ───────────────────────────────────────────────────────────
 print("[A] 后台能力矩阵（单一事实源）")
@@ -282,8 +283,18 @@ ck("B18 切会话是搜索框优先（搜索调用必须出现在找行之前）
 #      本开关管"这条路径本来就走真鼠标时要不要执行"。两个都默认关掉才叫安全。
 ck("B19 「只走后台」默认是 True（安全侧，改之前是 False）",
    '"background_only": True' in SRC_CFG)
-ck("B19a 每条真鼠标路径都被 background_only 闸挡住（闸出现 ≥ 8 处）",
-   SRC_WECHAT.count("self._background_only()") >= 8)
+ck("B19a 每条真鼠标路径都被闸挡住（background_only 直检 ≥7 处 + 真鼠标判据统一走 ui_adapt.fg_allowed）",
+   SRC_WECHAT.count("self._background_only()") >= 7
+   and SRC_WECHAT.count("self._real_mouse_allowed()") >= 3
+   and "def fg_allowed(" in SRC_UIADAPT
+   and "return bool(_ua.fg_allowed()[0])" in SRC_WECHAT)
+# B19c（2026-09-18 作者发火后加）：**置前/置顶**也必须走同一道闸，而且闸要**上在 GUI 对象上**
+#   （只改自己的调用点挡不住库里自动重校准触发的那一类：get_input_box → calibrate_layout → bring_to_front）
+ck("B19c 置前/置顶统一走 fg_allowed，且 GUI 一建好就上闸（含库内自动触发那类）",
+   "def harden_gui(" in SRC_UIADAPT and "_ua2.harden_gui(self._gui)" in SRC_WECHAT
+   and "_wrap(\"bring_to_front\"" in SRC_UIADAPT
+   and "_wrap(\"calibrate_layout\"" in SRC_UIADAPT
+   and "_wrap(\"ensure_visible\"" in SRC_UIADAPT)
 ck("B19b 真鼠标兜底也默认关（allow_real_fallback 默认 False）",
    '"allow_real_fallback": False' in SRC_CFG)
 # B20（2026-09-16 已知现象：「他点了一下搜索框，又不点，又搁那划会话列表」）：

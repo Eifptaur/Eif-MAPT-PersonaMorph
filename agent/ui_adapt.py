@@ -480,6 +480,97 @@ def _force_geometry(gui) -> None:
         pass
 
 
+# ══ 置前/置顶的**唯一闸门**（2026-09-18 作者发火后立，importance 最高）══════════════
+#
+# 事故经过：作者用浏览器把微信盖住，明确要求"不要让窗口到前台"，结果我开的探针
+# 把微信**顶到了所有窗口之上**——链路是
+#   `_send_poke_locate` → `gui.get_input_box()`（库 guia.py:1367）
+#   → 探针连失 6 次 → `calibrate_layout()`（:1388→617）→ **`bring_to_front()`（:641）**
+#   → `SetWindowPos(HWND_TOPMOST)`（:807）+ SetForegroundWindow/SetActiveWindow/SetFocus，
+#     还先把系统前台锁 `SPI_SETFOREGROUNDLOCKTIMEOUT` 清成 0。
+# 走的是**置顶**，所以用户拿浏览器"盖住"根本盖不住；而他做这个产品的最高目标就是
+# 「全程后台、不抢鼠标、不打扰用户」——**投递链一处都不需要前台**。
+# ⇒ 从此：凡"置前/置顶/最小化别人的窗"的调用，全部走这道闸；投递档（默认）一律拒绝。
+_FG_REFUSED = {"n": 0, "why": "", "who": ""}
+
+
+def fg_allowed() -> tuple:
+    """现在允许把窗口**置前/置顶**吗？返回 `(ok, 原因)`。
+
+    只有"明确要走真鼠标"的档位才允许（`wechat.background_only=False` **且**
+    `input.allow_real_fallback=True`）；缺键、读配置失败一律按**拒绝**处理（fail-closed）。
+    两个键的默认值就是安全的一侧（config.py：`background_only=True` / `allow_real_fallback=False`）。
+    """
+    try:
+        from .config import get_config
+        cfg = get_config() or {}
+        if bool((cfg.get("wechat") or {}).get("background_only", True)):
+            return False, "wechat.background_only=开（默认：全程后台）"
+        if not bool((cfg.get("input") or {}).get("allow_real_fallback", False)):
+            return False, "input.allow_real_fallback=关（默认：不许真鼠标兜底）"
+        return True, ""
+    except Exception as e:
+        return False, "读配置失败（按拒绝处理）：%s" % str(e)[:40]
+
+
+def fg_refused() -> dict:
+    """被闸门拒掉的置前调用次数/最后一条原因（供自检与汇报用）。"""
+    return dict(_FG_REFUSED)
+
+
+def harden_gui(gui):
+    """把驱动库里**会置前/置顶/最小化别人窗口**的方法换成带闸门的版本——**唯一咽喉点**。
+
+    为什么要包在 GUI 上（而不是只改我们的调用点）：这三个入口**都是"看起来无害"的函数**
+    内部触发的，只改自己的调用点挡不住下一个人（也挡不住库内部的自动重校准）：
+      · `calibrate_layout()`（guia.py:641 → `bring_to_front()`）—— 我们 `_get_gui()` 每次都会调；
+      · `get_input_box()` 探针连失后**自动重校准**（guia.py:1388）—— 拍一拍定位那条链踩到过；
+      · `ensure_visible()`（guia.py:894）会先 `_minimize_blockers()` **把用户的窗最小化**再置顶。
+    被拒时**返回假值并留一条日志**，不抛异常（调用方按"没做到"处理即可）。
+    """
+    if gui is None or getattr(gui, "_pm_fg_hardened", False):
+        return gui
+    import functools
+
+    def _wrap(name, fail_value):
+        fn = getattr(gui, name, None)
+        if not callable(fn):
+            return
+
+        @functools.wraps(fn)
+        def _guarded(*a, **k):
+            ok, why = fg_allowed()
+            if not ok:
+                _FG_REFUSED["n"] += 1
+                _FG_REFUSED["why"] = why
+                _FG_REFUSED["who"] = name
+                if _FG_REFUSED["n"] <= 5:          # 只打前几条，避免刷屏
+                    try:
+                        from .wechat import log as _log
+                    except Exception:
+                        import logging as _log
+                    _log.warning("⛔ 拒绝置前/置顶：%s() 被调用（%s）—— 投递链不需要前台，"
+                                 "而置顶会压过用户用来遮挡的窗口", name, why)
+                return fail_value
+            return fn(*a, **k)
+
+        try:
+            setattr(gui, name, _guarded)
+        except Exception:
+            pass
+
+    _wrap("bring_to_front", False)
+    _wrap("calibrate_layout", False)
+    _wrap("ensure_visible", False)
+    _wrap("_minimize_blockers", None)
+    _wrap("restore_zorder", None)
+    try:
+        gui._pm_fg_hardened = True
+    except Exception:
+        pass
+    return gui
+
+
 def prepare_screen(gui) -> bool:
     """点击操作前的整备：把微信置前 + 清理叠加层/遮挡窗口 + 窗口出屏自动还原。
 
