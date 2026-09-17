@@ -92,9 +92,20 @@ ok("切会话成功后、放行发送前，**中间夹了一次内容级复核**
 ok("复核不过时**拒绝发送**并说清原因（宁可漏发不发错人）",
    "内容级复核没过" in SRC and "绝不发错人" in SRC)
 _calls = [m.start() for m in re.finditer(r"self\.send_text_posted\(\s*text,\s*chat_id,\s*allow_no_ref=True\)", SRC)]
-ok("`allow_no_ref=True` 的**调用**只有一处，且就在那道复核之后",
-   len(_calls) == 1 and _calls[0] > _guard, "调用 %d 处（首个位置 %s / 复核 %s）"
-   % (len(_calls), _calls[0] if _calls else "-", _guard))
+# ⚠️ 2026-09-18 更新：原断言写"只许**一处**"，但源里其实有**两处**（`2155` 与 `6710`）——
+#    这不是回归，是断言过期（HEAD 上就已经是 2 处；第二处的注释写着"本函数进门刚用
+#    `_open_chat_guarded` 验过身份"）。⇒ 改成**按"每处都得在同一个函数里先验过身份"来判**，
+#    比数数更贴原意（数数会逼着人删掉一处合法调用）。
+_bad_sites = []
+for _p in _calls:
+    _head = SRC.rfind("\n    def ", 0, _p)              # 本调用所在函数的起点
+    _body = SRC[_head:_p]
+    if ("_open_chat_guarded(" not in _body) and ("chat_identity_ok(" not in _body):
+        _bad_sites.append(_p)
+ok("每一处 `allow_no_ref=True` 调用，都在**同一个函数里先做过身份核验**"
+   "（`_open_chat_guarded` / `chat_identity_ok`）",
+   bool(_calls) and not _bad_sites,
+   "调用 %d 处，缺前置核验的 %s" % (len(_calls), _bad_sites or "无"))
 
 print("\n── F. 从回声里学会「我是谁」（2026-09-18 加：手打的自己也要能认出来）──")
 import json as _json          # noqa: E402
