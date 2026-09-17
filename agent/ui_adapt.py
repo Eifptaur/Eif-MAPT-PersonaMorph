@@ -232,7 +232,12 @@ def dismiss_overlays(wechat_hwnds: tuple = ()) -> list:
             if overlap:
                 try:
                     # 置于下层（HWND_BOTTOM）而不是最小化：最小化会把用户窗口"收起"（体验突兀）
-                    _user32.SetWindowPos(h, -1, 0, 0, 0, 0, 0x0001 | 0x0002)
+                    # 🔴 2026-09-17 修（用户「佬」报「那个控制台有时候会强制锁定在最上面，点其他
+                    #    窗口也不会显示其他的」）：这里的第二实参原来写的是 **-1**，
+                    #    而 -1 是 **HWND_TOPMOST**（HWND_BOTTOM 才是 1）⇒ 注释说"置于下层"，
+                    #    实际把这个"挡路的窗口"**永久钉在了最上层**；挡路的那个又常常就是我们的
+                    #    控制台窗口（它跟微信重叠时）⇒ 用户怎么点别的窗口都压不下去。
+                    _user32.SetWindowPos(h, 1, 0, 0, 0, 0, 0x0001 | 0x0002)   # 1 = HWND_BOTTOM
                     handled.append(("window", cls, title[:50], pid))
                 except Exception:
                     pass
@@ -313,8 +318,14 @@ def real_guard(x: int, y: int, gui=None, extra_hwnds: tuple = ()) -> tuple:
         if not ok:
             return False, why
         if not _user32.SetCursorPos(x, y):
-            return False, ("SetCursorPos(%d,%d) 返回 0，光标没到位（多半是你正在用鼠标）"
-                           "⇒ 已放弃这一枪，不打扰你" % (x, y))
+            _e = ctypes.windll.kernel32.GetLastError()
+            if int(_e) == 5:
+                # ERROR_ACCESS_DENIED：**UIPI** —— 最前面的窗口属于更高完整性级别（提权）进程时，
+                # 系统不允许我们挪光标（2026-09-17 A/B 实测：控制台在最前 ⇒ 连续失败；微信置前 ⇒ 成功）。
+                return False, ("系统不让挪光标（ACCESS_DENIED，最前面的窗口是管理员权限的——"
+                               "多半是我们的控制台或任务管理器）⇒ 已放弃这一枪")
+            return False, ("SetCursorPos(%d,%d) 返回 0，光标没到位（多半是你正在用鼠标，err=%s）"
+                           "⇒ 已放弃这一枪，不打扰你" % (x, y, _e))
         return True, ""
     except Exception as e:
         return False, "real_guard 异常（按「不打」处理）：%s" % str(e)[:80]
@@ -346,6 +357,14 @@ def click_real_hold(gui, x: int, y: int, right: bool = False, settle_ms: int = 1
         if not ok:
             return False, why
         time.sleep(max(0, int(settle_ms)) / 1000.0)
+        # ★ 开枪前**再确认一次**（2026-09-17 用户实测「我之前在操作控制台，他好像点在控制台上了」后加）：
+        #   `real_guard` 检查落点 → 真正 `mouse_event` 之间隔着 settle_ms，这几百毫秒里用户点到别的窗口
+        #   （控制台/浏览器）就会把落点抢走 —— 而 `mouse_event` 是**全局输入**，打给"开枪那一刻最上面那个窗口"，
+        #   它根本不知道微信在哪 ⇒ 必须重确一次：落点或光标变了，这一枪就**不打**。
+        ok2, why2 = real_guard(sx, sy, gui=gui, extra_hwnds=tuple(extra_hwnds))
+        if not ok2:
+            return False, ("开枪前落点已经变了（%s）⇒ 这一枪没打（多半是你这几百毫秒里点/切到了别的窗口）"
+                           % str(why2)[:70])
         down, up = (0x0008, 0x0010) if right else (0x0002, 0x0004)
         _user32.mouse_event(down, 0, 0, 0, 0)
         time.sleep(max(1, int(hold_ms)) / 1000.0)
