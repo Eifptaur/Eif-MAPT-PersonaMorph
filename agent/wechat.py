@@ -1662,13 +1662,28 @@ class WeChatAdapter:
                     self._gui = WeChatGUI()
                 except Exception:
                     raise WeChatError("不可用：微信主窗口不可见（恢复失败）。请打开电脑微信后重试。")
+            # 🔴 2026-09-18（作者发火后立）：**GUI 一建好立刻上闸**——因为下面那次校准、
+            #   以及库里 `get_input_box()` 探针失败后的自动重校准，都会走
+            #   `bring_to_front()`（`SetWindowPos(HWND_TOPMOST)` + SetForegroundWindow）
+            #   **把微信顶到所有窗口之上**（连用户用来遮挡的浏览器都压得住）。
+            try:
+                from . import ui_adapt as _ua2
+                _ua2.harden_gui(self._gui)
+            except Exception:
+                pass
             try:
                 self._limit_wechat_window(self._gui)
             except Exception:
                 pass
             try:
                 if self._gui.desktop_available():
-                    self._gui.calibrate_layout(save=True)
+                    from . import ui_adapt as _ua3
+                    _fg_ok, _fg_why = _ua3.fg_allowed()
+                    if _fg_ok:
+                        self._gui.calibrate_layout(save=True)
+                    else:
+                        log.info("跳过启动布局校准（%s）—— 它内部 bring_to_front 会置顶，"
+                                 "投递档不需要前台", _fg_why)
             except Exception:
                 pass
             self._install_ui_patches(self._gui)
@@ -5433,13 +5448,21 @@ class WeChatAdapter:
     def _ensure_foreground(self, gui) -> bool:
         """把微信窗口带到前台并清理一切挡点击的东西（系统叠加层/遮挡窗口）。
 
+        ⛔ 2026-09-18 加闸（fail-closed）：**这是"会置顶"的路，只允许真鼠标档走**。
+        投递链一处都不需要前台，而置顶会压过用户用来遮挡的窗口（作者当场发火那次就是这个）。
+        闸不放行 ⇒ 直接返回 False（调用方按"做不到"处理），**绝不悄悄置顶**。
+
         不用 gui.ensure_visible()：它的"桌面可用"检测数白色像素占比，
         深色主题下永远返回 False（实测误报"锁屏/不可见"）。
         用 agent.ui_adapt：DPI 感知、TabTip 手写画布等系统叠加层、普通遮挡窗，
         各种电脑（不同缩放/多显示器）都能保持一致。
         """
+        from . import ui_adapt
+        _fg_ok, _fg_why = ui_adapt.fg_allowed()
+        if not _fg_ok:
+            log.info("拒绝置前（%s）—— 只有真鼠标档才需要前台，投递档不动窗口", _fg_why)
+            return False
         try:
-            from . import ui_adapt
             return ui_adapt.prepare_screen(gui)
         except Exception:
             try:
@@ -5556,13 +5579,15 @@ class WeChatAdapter:
             return False
 
     def _real_mouse_allowed(self) -> bool:
-        """现在允许回真鼠标吗？两开关都默认安全：`wechat.background_only` 或
-        `input.allow_real_fallback=False` 任一成立 ⇒ **不许**动光标（如实拒绝，不悄悄降级）。"""
+        """现在允许回真鼠标吗？（**口径唯一事实源＝`ui_adapt.fg_allowed()`**）
+
+        2026-09-18 改：原来这里自己读一遍配置、`ui_adapt` 那边再读一遍，两处口径可能分叉
+        （置前/置顶就吃了这个亏）⇒ 统一问 `fg_allowed()`：两开关都默认安全，任一不满足
+        或读配置失败 ⇒ 一律 False（如实拒绝，不悄悄降级）。
+        """
         try:
-            if self._background_only():
-                return False
-            from .config import get_config as _gc3
-            return bool(((_gc3().get("input") or {}).get("allow_real_fallback", False)))
+            from . import ui_adapt as _ua
+            return bool(_ua.fg_allowed()[0])
         except Exception:
             return False
 
@@ -5950,9 +5975,15 @@ class WeChatAdapter:
             else:
                 items = []
                 try:
-                    box = gui.get_input_box()
-                    bottom = box[1] if box else max(240, ih - 190)
-                    top = max(80, bottom - 640)
+                    # ⛔ 2026-09-18 拆掉 `gui.get_input_box()`（**作者当场发火的那一跳**）：
+                    #   它探针连失 6 次后会走 `calibrate_layout() → bring_to_front()`
+                    #   ＝`SetWindowPos(HWND_TOPMOST)` + `SetForegroundWindow` + `SetFocus`，
+                    #   把微信**顶到所有窗口之上**（用户拿浏览器盖都盖不住）。
+                    #   这条链只该"读画面"——消息区下边界**直接用已抓到的那一帧算**：
+                    #   多框一点输入框区域只是多几条待过滤的文本，命中判据（相似度>0.5）不受影响；
+                    #   而少框会切掉消息行。⇒ 取下沿，宁多勿少。
+                    bottom = max(240, ih - 6)
+                    top = max(80, bottom - 720)
                     crop = (int(pane_left), int(top), int(rw), int(bottom))
                     from . import chat_ocr as _co
                     if _co.blocked():
