@@ -999,8 +999,14 @@ def _kill_watchdog():
         pass
 
 
-def _spawn_watchdog():
-    """隐藏拉起新看门狗（pythonw 运行 scripts/watchdog.py，等价 启动机器人.vbs）。"""
+def _spawn_watchdog(delay: int = 0):
+    """隐藏拉起新看门狗（pythonw 运行 scripts/watchdog.py，等价 启动机器人.vbs）。
+
+    `delay`（秒）＝**让新看门狗晚一点再开机器人**。重启那一跳必须给（用 6 秒）：本进程还要 2 秒
+    才退，新机器人要是立刻起来就会撞**单实例锁**当场 `exit 3`（用户报「从来没见过它再起一个」）。
+    ⚠️ 别想着"用 Timer 等 6 秒再拉看门狗"——本进程 2 秒后就 `os._exit` 了，**那个 Timer 永远不会触发**
+    （2026-09-17 我第一版就是这么错的，活体自检当场抓到"旧退了、新没接上"）。
+    """
     exe = sys.executable
     if exe.lower().endswith("python.exe"):
         pyw = exe[:-10] + "pythonw.exe"
@@ -1009,8 +1015,10 @@ def _spawn_watchdog():
     flags = 0
     if os.name == "nt":
         flags = 0x00000008 | 0x00000200 | 0x08000000  # DETACHED|CREATE_NEW_PROCESS_GROUP|CREATE_NO_WINDOW
-    subprocess.Popen([exe, os.path.join(ROOT, "scripts", "watchdog.py")],
-                     cwd=ROOT, creationflags=flags,
+    cmd = [exe, os.path.join(ROOT, "scripts", "watchdog.py")]
+    if int(delay or 0) > 0:
+        cmd.append("--delay=%d" % int(delay))
+    subprocess.Popen(cmd, cwd=ROOT, creationflags=flags,
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
@@ -2213,20 +2221,17 @@ def main():
         except Exception:
             pass
         try:
-            # ③ 尽力登出，但**放进守护线程**：它再慢也不再挡住退出
+            # ③ **立刻**拉起新看门狗（它自己等 6 秒再开机器人）——必须在 `os._exit` 之前拉，
+            #    否则进程一退就没人接替了（第一版"用 Timer 等 6 秒再拉"永远等不到：进程 2 秒就退了）
+            _spawn_watchdog(delay=6)
+            log.info("已拉起新看门狗（它会在 6 秒后接管机器人）")
+        except Exception as e:
+            log.error("重启拉起看门狗失败：%s", e)
+        try:
+            # ④ 尽力登出，但**放进守护线程**：它再慢也不再挡住退出
             threading.Thread(target=lambda: (orch.shutdown() if orch else None), daemon=True).start()
         except Exception:
             pass
-
-        def _respawn():
-            try:
-                # ④ **等本进程真的退了**（端口与单实例锁已放开）再拉新看门狗 —— 距① 6 秒，留足余量
-                _spawn_watchdog()
-                log.info("已拉起新看门狗（旧实例应已退出）")
-            except Exception as e:
-                log.error("重启拉起看门狗失败：%s", e)
-
-        threading.Timer(6.0, _respawn).start()
 
     # ── 控制台访问口令：空/过短（<16 位易被猜）→ 启动时自动生成强随机口令 ──
     server_cfg = cfg.get("server", {})

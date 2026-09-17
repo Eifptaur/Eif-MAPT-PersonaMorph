@@ -168,12 +168,21 @@ ok("restart_fn 里**先装强退**再做慢活（老顺序把它排在同步 orc
    _i_exit < _rf_code.index("_kill_watchdog()") and _i_exit < _rf_code.index("orch.shutdown()"))
 ok("orch.shutdown() 不再同步挡路（挪进守护线程）",
    "threading.Thread(target=lambda: (orch.shutdown()" in _rf_code and "daemon=True" in _rf_code)
-ok("新看门狗**等旧实例退干净**再拉（6 秒 > 强退 2 秒，否则新实例撞单实例锁⇒当场 exit 3）",
-   "def _respawn():" in _rf_code and "threading.Timer(6.0, _respawn)" in _rf_code
-   and _rf_code.index("threading.Timer(6.0, _respawn)") > _rf_code.index("orch.shutdown()")
-   and _rf_code.index("threading.Timer(6.0, _respawn)") > _i_exit)
-ok("`_spawn_watchdog()` 只在 `_respawn` 里出现一次（不许杀完旧看门狗就立刻拉新的）",
-   _rf_code.count("_spawn_watchdog()") == 1)
+ok("新看门狗**等旧实例退干净**再开机器人（`_spawn_watchdog(delay=6)`，6 秒 > 强退 2 秒）",
+   "_spawn_watchdog(delay=6)" in _rf_code)
+ok("⚠️ 不许回到「用 Timer 等 6 秒再拉看门狗」那版 —— 本进程 2 秒后就 os._exit，Timer 永远不会触发"
+   "（2026-09-17 第一版就是这么错的，活体自检抓到「旧退了、新没接上」）",
+   "_respawn" not in _rf_code and "threading.Timer(6.0" not in _rf_code)
+ok("`_spawn_watchdog` 只在 restart_fn 里出现一次、且带 delay",
+   _rf_code.count("_spawn_watchdog(") == 1 and "_spawn_watchdog(delay=6)" in _rf_code)
+_wd_src = io.open(os.path.join(ROOT, "scripts", "watchdog.py"), encoding="utf-8").read()
+_wd_code = "\n".join(l for l in _wd_src.splitlines() if not l.strip().startswith("#"))
+ok("看门狗认 `--delay=<秒>`（并支持环境变量），且**在拉起机器人之前**睡",
+   '--delay=' in _wd_code and "time.sleep(_delay)" in _wd_code
+   and _wd_code.index("time.sleep(_delay)") < _wd_code.index("p = subprocess.Popen"))
+ok("delay 有上限（不放任意大的值进来）", "min(600, _delay)" in _wd_code)
+ok("有停止标记时不白等（先看 stopped.flag 再睡）",
+   "if _delay and not os.path.exists(STOP_FLAG)" in _wd_code)
 ok("启动闸门会**等旧实例放开锁**（最多 12 秒）才报冲突",
    "while _legacy_pid and (time.time() - _gate_t0) < 12.0" in _pm
    and "while (not _lock_res.ok) and (time.time() - _gate_t0) < 12.0" in _pm)
