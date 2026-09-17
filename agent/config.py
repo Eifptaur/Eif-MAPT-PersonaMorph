@@ -181,7 +181,15 @@ DEFAULT_CONFIG = {
         # ── 在线图源（mode=online）：按顺序尝试，取不到就换下一个 ──────────────────
         #   pixiv＝经公开代理接口取 Pixiv 作品（**强制 r18=0**）· konachan/yande＝强制 rating:safe
         #   safebooru/nekos＝全年龄站 · waifu＝只走 waifu.pics 的 /sfw/ 端点
-        "sources": ["pixiv", "safebooru", "nekos", "konachan", "waifu", "yande"],
+        # 图源顺序＝"先试谁"（2026-09-18 改：**国内源排最前** —— 用户口径「国内的相对来说通路会比较
+        # 好的吧，也不容易被 ban」；实测必应 0.5~2.7 秒出图、360 0.8 秒，而国际站夜里常 403/超时）。
+        # ⚠️ 百度/搜狗图片**实测会被判爬虫**（要 Cookie）⇒ 没放进来；要接得自己做 Cookie 池。
+        "sources": ["so360", "bing", "wallhaven", "danbooru",
+                    "pixiv", "safebooru", "nekos", "konachan", "waifu", "yande"],
+        # 有人**按关键词**要图时，在线没取到要不要拿"以前下载过的旧图"顶？默认**否**（如实说没找到）。
+        # 2026-09-18 定：以前默认兜底，还谎称"已找到并发出一张「鲸鱼」的图" ⇒ 用户收到一张毫不相干的
+        # 动漫图（对外可见的错，比"没找到"更糟）。要旧行为就把它设 true（那也只适合"随机图"场景）。
+        "cache_fallback": False,
         "sources_per_try": 4,        # 一次最多试几个图源（每张都要过过滤链）
         # ── 速度（2026-09-17 加；起因＝用户实测"发张图一分多钟"）────────────────
         "meta_timeout_ms": 6000,     # 向单个图源要"图片地址"的超时（并行问，实际耗时≈最慢那个）

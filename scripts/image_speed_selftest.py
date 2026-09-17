@@ -144,7 +144,7 @@ IL.fetch_filtered(cfg3, root=tmp)
 ok("**超时不算真错误**（不冤慢源，只记原因）", not IL.source_health().get("slowone"), str(IL.source_health()))
 IS.fetch_meta = _real_meta
 
-print("── F. 在线取不到时用本地已有的图兜底 ──")
+print("── F. 在线取不到时的兜底口径（2026-09-18 改：默认不拿旧图冒充）──")
 cache = os.path.join(tmp, "media", "images")
 os.makedirs(cache, exist_ok=True)
 old_img = os.path.join(cache, "src_000000_abc.jpg")
@@ -152,9 +152,16 @@ open(old_img, "wb").write(b"\xff\xd8\xff" + b"y" * 500)
 _real_ff = IL.fetch_filtered
 IL.fetch_filtered = lambda *a, **k: (None, "试了 4 个图源都没通过过滤")
 try:
+    # ⚠️ 旧口径是"在线全失败就从旧图里挑一张、不空手" —— 2026-09-18 拍摄现场推翻它：
+    #   用户要「鲸鱼」，在线没取到，程序拿旧缓存里一张动漫图冒充，工具回执还写「已找到并发出一张
+    #   「鲸鱼」的图」⇒ **对外可见的错**（比"如实说没找到"更糟）。⇒ 默认**不兜底**。
     p4, why4 = IL.search_image({"image_reply": {"enabled": True, "allow_search": True}}, "猫", root=tmp)
-    ok("在线全失败 ⇒ 从以前要到的图里挑一张（不空手）",
-       bool(p4) and "以前" in str(why4), "%s / %s" % (p4, str(why4)[:50]))
+    ok("默认：在线全失败 ⇒ 如实说没找到（**不拿旧图冒充**）",
+       p4 is None and "没通过过滤" in str(why4), "%s / %s" % (p4, str(why4)[:50]))
+    p5, why5 = IL.search_image({"image_reply": {"enabled": True, "allow_search": True,
+                                                "cache_fallback": True}}, "猫", root=tmp)
+    ok("显式开 cache_fallback 才兜底，且**明说与关键词无关**",
+       bool(p5) and "与关键词无关" in str(why5), "%s / %s" % (p5, str(why5)[:60]))
 finally:
     IL.fetch_filtered = _real_ff
 

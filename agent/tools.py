@@ -962,8 +962,16 @@ def _exec_send_image_search(ctx, args):
             ctx["session"]["sent"].append({"type": "image", "text": "[图片]"})
         except Exception:
             pass
+        # 🔴 2026-09-18：回执**不许再撒谎**。老实现不管取到的是什么，都回「已找到并发出一张「鲸鱼」的图」
+        #   —— 而当时其实走了"旧图缓存兜底"，发出去的是一张毫不相干的图，用户当场发现「跟我要的
+        #   完全不一样」。⇒ 兜底来的图必须明说"与关键词无关"，让模型别把它当命中关键词的图去说嘴。
+        if "与关键词无关" in str(why):
+            return _ok({"sent": True, "keyword": kw, "file": _os.path.basename(path),
+                        "note": ("**在线没取到「%s」的图**，发出去的这张是从旧图缓存里挑的、"
+                                 "**内容与「%s」无关**（%s）。别再声称它是「%s」的图。" % (kw, kw, why, kw))})
         return _ok({"sent": True, "keyword": kw, "file": _os.path.basename(path),
-                    "note": "已找到并发出一张「%s」的图（过滤链全程生效）。不要输出『已发送』类汇报。" % kw})
+                    "note": "已按「%s」找到并发出一张图（%s）。过滤链全程生效；不要输出『已发送』类汇报。"
+                            % (kw, str(why)[:80])})
     except Exception as e:
         return _err(str(e))
 
