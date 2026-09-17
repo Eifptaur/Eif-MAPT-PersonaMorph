@@ -146,12 +146,11 @@ def main():
         b_loc = code_of(wsrc, "_send_poke_locate")
         ok("⑧ `_send_poke_locate` 不再调 `gui.get_input_box()`（拆掉肇事那一跳）",
            "_send_poke_locate" in wsrc and "get_input_box" not in (b_loc or ""))
-        b_get = func_body(wsrc, "_get_gui")
-        ok("⑧ `_get_gui` 里先上闸再校准（harden_gui 出现在 calibrate_layout 之前）",
-           bool(b_get) and "harden_gui" in b_get
-           and b_get.find("harden_gui") < b_get.find("calibrate_layout"))
-        ok("⑧ `_get_gui` 的校准被 `fg_allowed()` 分支包住",
-           bool(b_get) and "fg_allowed()" in b_get and "跳过启动布局校准" in b_get)
+        b_get = code_of(wsrc, "_get_gui")
+        ok("⑧ `_get_gui` 里**先上类闸再校准**，且校准被 `fg_allowed()` 分支包住",
+           "harden_gui_class()" in b_get
+           and 0 <= b_get.find("harden_gui_class()") < b_get.find("self._gui.calibrate_layout")
+           and "fg_allowed()" in b_get and "跳过启动布局校准" in b_get)
         b_ef = code_of(wsrc, "_ensure_foreground")
         ok("⑧ `_ensure_foreground` 有 fail-closed 闸（闸不过直接 False，不悄悄置顶）",
            "fg_allowed()" in (b_ef or "") and "拒绝置前" in (b_ef or ""))
@@ -162,7 +161,7 @@ def main():
            usrc.count("def fg_allowed(") == 1 and wsrc.count("def fg_allowed(") == 0)
         _wrapped, _missing = True, []
         for _n in ("bring_to_front", "calibrate_layout", "ensure_visible", "_minimize_blockers"):
-            if ('_wrap("%s"' % _n) not in usrc:
+            if ('("%s"' % _n) not in usrc:
                 _wrapped, _ = False, _missing.append(_n)
         ok("⑧ 闸门覆盖库的四个入口（bring_to_front / calibrate_layout / ensure_visible / _minimize_blockers）",
            _wrapped)
@@ -263,6 +262,51 @@ def main():
                 if "MoveWindow(" in _ln and not _ln.strip().startswith("#"):
                     _mw.append("%s:%d" % (_f, _i))
         ok("⑨ 全仓 agent/ 不许再出现 `MoveWindow(`（会激活窗口）", not _mw, _mw)
+
+        # ⑩ ⭐⭐ 回归：**构造期**那条路 —— 只包实例挡不住它（这就是"又"的原因）
+        #    `WeChatGUI.__init__` 里就 `if calibrate: self.calibrate_layout()`，
+        #    而 `_load_layout()` 在窗口尺寸与上次校准差 >15% 时拒绝采用 ⇒ 每次新进程构造都可能走到
+        #    `calibrate_layout → bring_to_front`（HWND_TOPMOST）。必须在**类上、构造之前**上闸。
+        class _InitGUI:
+            calls = []
+
+            def __init__(self):
+                self.calibrate_layout()               # 复现库里 __init__ 的行为
+
+            def bring_to_front(self, **k):
+                _InitGUI.calls.append("bring_to_front")
+                return True
+
+            def calibrate_layout(self, **k):
+                _InitGUI.calls.append("calibrate_layout")
+                return True
+
+            def ensure_visible(self):
+                _InitGUI.calls.append("ensure_visible")
+                return True
+
+            def _minimize_blockers(self):
+                _InitGUI.calls.append("_minimize_blockers")
+
+        cfg_mod.get_config = lambda: _cfg(True, False)
+        _InitGUI.calls = []
+        _InitGUI()                                    # 上闸前：应当记到一次 calibrate_layout
+        ok("⑩ 前置对照：未上闸时构造期确实会调 calibrate_layout",
+           _InitGUI.calls == ["calibrate_layout"], _InitGUI.calls)
+        ua.harden_gui_class(_InitGUI)                 # 类级上闸
+        _InitGUI.calls = []
+        _InitGUI()                                    # 上闸后：一次都不许调到原方法
+        ok("⑩ **构造期**的校准被挡住（类级闸：`__init__` 里那条路）",
+           _InitGUI.calls == [], _InitGUI.calls)
+
+        # ⑩ 静态：类闸必须**在构造之前**装上
+        b_get = func_body(wsrc, "_get_gui")
+        ok("⑩ `_get_gui()` 里 `harden_gui_class()` 出现在 `WeChatGUI(` **之前**",
+           bool(b_get) and "harden_gui_class" in b_get
+           and 0 <= b_get.find("harden_gui_class") < b_get.find("WeChatGUI("))
+        _ra = open(os.path.join(ROOT, "agent", "replica_adapter.py"), encoding="utf-8").read()
+        ok("⑩ `patch_driver_quirks()` 也顺手把类闸装上（它总在构造之前被调）",
+           "harden_gui_class" in _ra)
     finally:
         cfg_mod.get_config = real_get
 

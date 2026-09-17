@@ -360,6 +360,15 @@ def patch_driver_quirks() -> list:
                     pass
     except Exception:
         pass
+    # 🔴 2026-09-18：**顺手把"置前/置顶"的闸上到库的类上**（在造 WeChatGUI 之前调用本函数）。
+    #   为什么放在这里：`WeChatGUI.__init__` 里就会 `calibrate_layout() → bring_to_front()`
+    #   （窗口尺寸与上次校准差 >15% 时），实例级上闸来不及 ⇒ 必须**类级**、且在构造之前。
+    try:
+        from . import ui_adapt as _ua
+        if _ua.harden_gui_class():
+            out.append("WeChatGUI.bring_to_front/calibrate_layout/ensure_visible(闸)")
+    except Exception:
+        pass
     return out
 
 
