@@ -155,5 +155,29 @@ ok("webui.py 顶部保留 `import threading`（模块级一处就够）", "\nimp
 ok("`/api/restart` 仍走 restart_fn（没被顺手改成别的）",
    "threading.Timer(0.5, parent.restart_fn).start()" in _src)
 
+print("── D. 重启那一跳的**顺序**（2026-09-17 用户报「你更新后的重启又关不掉自己了；不是说会再起一个新的"
+      "吗，我从来没见过这个再起一个；之前杀掉就没了，现在更是杀都杀不掉」）──")
+_pm = io.open(os.path.join(ROOT, "scripts", "persona_morph.py"), encoding="utf-8").read()
+_i_rf = _pm.index("def restart_fn():")
+_rf = _pm[_i_rf:_pm.index("def community_export_fn", _i_rf)]
+# ⚠️ 必须**先把注释行去掉**再数/找名字：这段的注释里就写着 `_spawn_watchdog()` / `orch.shutdown()`
+#    （解释老顺序错在哪）⇒ 直接 `index/count` 会命中注释，判据假红（本文件第 150 行的同款坑）。
+_rf_code = "\n".join(l for l in _rf.splitlines() if not l.strip().startswith("#"))
+_i_exit = _rf_code.index("threading.Timer(2.0, _exit_now)")
+ok("restart_fn 里**先装强退**再做慢活（老顺序把它排在同步 orch.shutdown() 之后 ⇒ 一阻塞就永不退出）",
+   _i_exit < _rf_code.index("_kill_watchdog()") and _i_exit < _rf_code.index("orch.shutdown()"))
+ok("orch.shutdown() 不再同步挡路（挪进守护线程）",
+   "threading.Thread(target=lambda: (orch.shutdown()" in _rf_code and "daemon=True" in _rf_code)
+ok("新看门狗**等旧实例退干净**再拉（6 秒 > 强退 2 秒，否则新实例撞单实例锁⇒当场 exit 3）",
+   "def _respawn():" in _rf_code and "threading.Timer(6.0, _respawn)" in _rf_code
+   and _rf_code.index("threading.Timer(6.0, _respawn)") > _rf_code.index("orch.shutdown()")
+   and _rf_code.index("threading.Timer(6.0, _respawn)") > _i_exit)
+ok("`_spawn_watchdog()` 只在 `_respawn` 里出现一次（不许杀完旧看门狗就立刻拉新的）",
+   _rf_code.count("_spawn_watchdog()") == 1)
+ok("启动闸门会**等旧实例放开锁**（最多 12 秒）才报冲突",
+   "while _legacy_pid and (time.time() - _gate_t0) < 12.0" in _pm
+   and "while (not _lock_res.ok) and (time.time() - _gate_t0) < 12.0" in _pm)
+ok("等锁期间有日志（不是静默重试，用户/我们事后能查到）", "等它放开锁再接手" in _pm)
+
 print("\n==== 重启按钮判据：%d 通过 / %d 失败 ====" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
