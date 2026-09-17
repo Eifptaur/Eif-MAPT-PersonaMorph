@@ -2656,7 +2656,23 @@ class WeChatAdapter:
                 from . import chat_header as _ch
                 _st = _ch.check(chat_id)
                 if _st["status"] == "mismatch":
-                    return False, "会话头不匹配，拒绝投递（防发错会话）：%s" % _st["note"]
+                    # 🔴 2026-09-18 修（拍摄现场 02:09：三句文字回复全被拒发、群里只有图没有话）：
+                    #   日志原文「投递切会话后发送失败：会话头不匹配，拒绝投递（防发错会话）：相似度 0.530 < 0.90」。
+                    #   **指纹是弱档**（对面 r25 实测它对不同会话也判 True＝会假阳性；同理参照过期/空白帧会
+                    #   假阴性），它不该有单独否决**强档**证据的权力 —— 而同一刻 `chat_is_open` 的强档里
+                    #   「会话头标题带 OCR='演示（3）'」明明是命中的。⇒ 判 mismatch 时**先问强档**
+                    #   （名字 OCR / 会话头标题带 / 高亮行时间×DB，都是能回答"现在是谁"的证据）：
+                    #   强档成立 ⇒ 放行并**把这个尺寸的参照重学一遍**（旧参照已经不可信）；强档也给不出才拒。
+                    #   ⚠️ 红线没有放宽：强档给不出证据时，这里仍然拒发。
+                    _ok_strong, _why_strong = self.chat_is_open(chat_id, gui=gui)
+                    if not _ok_strong:
+                        return False, "会话头不匹配，拒绝投递（防发错会话）：%s" % _st["note"]
+                    log.warning("会话头指纹判 mismatch（%s），但**强档证据成立** ⇒ 放行并重学参照：%s",
+                                str(_st["note"])[:70], str(_why_strong)[:130])
+                    try:
+                        log.info("重学参照（旧参照已不可信）：%s", self._learn_chat_header(chat_id, gui=gui))
+                    except Exception as _e:
+                        log.debug("重学参照失败（不影响本次放行）：%s", _e)
                 if _st["status"] in ("no_ref", "no_capture") and not allow_no_ref:
                     # ⛔ 死锁修复（2026-09-16 对面 r23 现场）：老代码在这里**直接拒**，而参照只在
                     #    "发送成功之后"才学 ⇒ `no_ref` 一旦成立就永远拒、永远学不到 —— 最小化与

@@ -284,7 +284,16 @@ def fetch_filtered(cfg: dict, root: str = None, chat_id: str = "", tag: str = ""
         from . import image_sources as _src
     except Exception as e:
         return None, "图源模块不可用：%s" % e
+    # 🔴 2026-09-18：**关键词要翻成图源认的标签再查**（中文直接丢进去多半无匹配 ⇒ 以前就退化成随机图）
+    if use_tag:
+        _cands = _src.tag_candidates(use_tag)
+        if _cands:
+            use_tag = _cands[0]
     sources = [str(s).strip().lower() for s in (conf.get("sources") or _src.available()) if str(s).strip()]
+    # 🔴 有人点名要图时**不许用"只按类目出图"的源**（waifu/nekos）——它们给不出这个词的图，
+    #    只会塞一张不相干的可爱图进来（就是今晚那幕）。没点名（随机图模式）时照旧可用。
+    if use_tag and str(tag or "").strip():
+        sources = [s for s in sources if s not in _src.TAGLESS_SOURCES] or sources
     per_try = max(1, int(conf.get("sources_per_try", 4) or 4))
     meta_ms = int(conf.get("meta_timeout_ms") or conf.get("api_timeout_ms") or 6000)
     dl_ms = int(conf.get("download_timeout_ms") or conf.get("api_timeout_ms") or 8000)
@@ -460,12 +469,17 @@ def search_image(cfg: dict, keyword: str, root: str = None, chat_id: str = "") -
     got, why = fetch_filtered(cfg, root=root, chat_id=chat_id, tag=kw)
     if got:
         return got, why
-    # 兜底：在线图源整体不可用时（外网图站夜里经常抽风），从"以前要到的图"里挑一张 —— 秒回，
-    # 总比让用户在群里干等十几秒最后什么都没收到好（口径：宁可给一张旧的，也不空手）。
+    # 兜底：在线图源整体不可用时（外网图站夜里经常抽风），从"以前要到的图"里挑一张。
+    # 🔴 2026-09-18 改口径（现场翻车）：**"有人点名要图"时默认不走这条兜底** ——
+    #   以前它不仅兜底，工具回执照样写「已找到并发出一张「鲸鱼」的图」⇒ 实际发出去的是旧缓存里
+    #   一张毫不相干的动漫图，用户和模型都被骗了（"拿旧图冒充"比"如实说没找到"更糟，因为对外可见）。
+    #   要恢复旧行为：配置 `image_reply.cache_fallback: true`（那也只用于"随机图"场景）。
+    if conf.get("cache_fallback", False) is not True:
+        return None, why
     cache = os.path.join(root or _root(), "media", "images")
     fb = _cache_pick(cache, chat_id)
     if fb:
-        return fb, "在线图源这次没取到（%s）⇒ 从以前要到的图里挑了一张" % str(why)[:80]
+        return fb, ("在线图源这次没取到（%s）⇒ **从旧图缓存里挑了一张，内容与关键词无关**" % str(why)[:80])
     return None, why
 
 

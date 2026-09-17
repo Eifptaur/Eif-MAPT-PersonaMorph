@@ -96,7 +96,9 @@ try:
     IL._filter_or_reject = lambda path, meta, cfg, root, why: (path, "过了过滤链")
     p, why = IL.search_image({"image_reply": {"enabled": True, "sources": ["pixiv"], "allow_search": True,
                                               "tag": "", "max_mb": 8}}, "赛博朋克")
-    ok("关键词作为 tag 传到图源", seen.get("tag") == "赛博朋克", str(seen.get("tag")))
+    # ⚠️ 2026-09-18 口径变更：关键词会**先翻成图源标签**再查（中文直接丢进去图源多半不认）
+    ok("关键词翻译后作为 tag 传到图源（赛博朋克→cyberpunk）", seen.get("tag") == "cyberpunk",
+       str(seen.get("tag")))
     ok("过滤链通过后返回路径", bool(p) and "过滤链" in why, str(why)[:30])
     p2, why2 = IL.search_image({"image_reply": {"enabled": True, "sources": ["pixiv"], "allow_search": False}}, "猫")
     ok("allow_search=false ⇒ 直接拒（不去图源）", p2 is None and "关掉" in why2, why2[:30])
@@ -163,6 +165,96 @@ _dflt = CFG.DEFAULT_CONFIG
 ok("image_reply.allow_search 存在", "allow_search" in (_dflt.get("image_reply") or {}))
 ok("image_reply.trigger_mode 存在", "trigger_mode" in (_dflt.get("image_reply") or {}))
 ok("voice_reply.trigger_mode 存在", "trigger_mode" in (_dflt.get("voice_reply") or {}))
+
+print("── G. 关键词真的进查询 + 标签校验 + 不许拿旧图冒充（2026-09-18 拍摄现场翻车后加）──")
+# 现场：用户要「鲸鱼」，机器人调 `send_image_search(keyword="鲸鱼")` 参数没错，可发出去的是一张
+# 动漫角色图（用户当场发现「跟我要的完全不一样」）。两个真根因：
+#   ① 图源查询**根本没带关键词**（safebooru 写死 `tags=rating:safe`、booru 只用配置里的固定 tag）
+#      ⇒ "要图"实际是"从图源随便抓一张"；② 在线没取到时**拿旧缓存图冒充**，工具回执照样写
+#      「已找到并发出一张「鲸鱼」的图」。
+ok("中文关键词会翻成图源标签（鲸鱼→whale）", IS.tag_candidates("鲸鱼")[:1] == ["whale"],
+   str(IS.tag_candidates("鲸鱼")))
+_mc = IS.tag_candidates("猫 咖啡")
+ok("多词关键词逐个翻（猫→cat、咖啡→coffee，原词留在候选里兜底）",
+   "cat" in _mc and "coffee" in _mc and _mc[0] == "cat", str(_mc))
+
+
+def _url_of(name, tag):
+    try:
+        return str(IS._BUILDERS[name]({"tag": tag})[0])
+    except Exception as e:
+        return "构造失败：%s" % e
+
+
+for _n in ("safebooru", "konachan", "yande", "wallhaven", "danbooru", "bing", "so360"):
+    ok("图源 %s 把关键词带进了查询" % _n, "whale" in _url_of(_n, "whale"), _url_of(_n, "whale")[:90])
+ok("360 图源带的是原样中文（它认中文）",
+   "%E9%B2%B8%E9%B1%BC" in _url_of("so360", "鲸鱼"), _url_of("so360", "鲸鱼")[:80])
+ok("国内源排在默认列表最前（国内通路好、不易被 ban）",
+   IS.available()[:2] == ["so360", "bing"], str(IS.available()[:3]))
+ok("默认配置里国内源也在最前",
+   (CFG.DEFAULT_CONFIG.get("image_reply") or {}).get("sources", [])[:2] == ["so360", "bing"],
+   str((CFG.DEFAULT_CONFIG.get("image_reply") or {}).get("sources", [])[:3]))
+ok("只按类目出图的源被标出来（点名要图时不许用它们）",
+   set(IS.TAGLESS_SOURCES) == {"waifu", "nekos"}, str(IS.TAGLESS_SOURCES))
+
+# G2 标签校验：图源返回的图**不含该标签** ⇒ 判为这次没取到（别把不相干的图当命中）
+_j_real, _b_real = IS._json, dict(IS._BUILDERS)
+try:
+    IS._BUILDERS["__fake__"] = lambda cfg: ("https://x/y.json", lambda js: {
+        "url": "https://x/y.jpg", "tags": ["landscape", "sky"], "rating": "safe", "page": "p"})
+    IS._json = lambda url, timeout_ms=9000, headers=None: {}
+    _m, _e = IS.fetch_meta("__fake__", {"tag": "whale"})
+    ok("返回的图不带关键词标签 ⇒ 判「这次没取到」（不再把不相干图当命中）",
+       _m is None and "不含标签" in str(_e), str(_e)[:80])
+    IS._BUILDERS["__fake__"] = lambda cfg: ("https://x/y.json", lambda js: {
+        "url": "https://x/y.jpg", "tags": ["whale", "ocean"], "rating": "safe", "page": "p"})
+    _m2, _e2 = IS.fetch_meta("__fake__", {"tag": "whale"})
+    ok("带对了标签 ⇒ 放行", bool(_m2) and _m2.get("source") == "__fake__", str(_e2)[:60])
+finally:
+    IS._json = _j_real
+    IS._BUILDERS.clear()
+    IS._BUILDERS.update(_b_real)
+
+# G3 不许拿旧图冒充：默认**不**走缓存兜底；打开也要如实标注"与关键词无关"
+_f_real = IL.fetch_filtered
+_cache_dir = os.path.join(ROOT, "media", "images")
+os.makedirs(_cache_dir, exist_ok=True)
+_old_img = os.path.join(_cache_dir, "old-cached.jpg")
+open(_old_img, "wb").write(b"\xff\xd8\xff" + b"x" * 500)
+try:
+    IL.fetch_filtered = lambda cfg, root=None, chat_id="", tag="": (None, "四个源全挂了")
+    _p3, _w3 = IL.search_image({"image_reply": {"enabled": True, "allow_search": True}}, "鲸鱼")
+    ok("默认**不**拿旧图冒充（如实说没找到）", _p3 is None and "全挂了" in str(_w3), str(_w3)[:60])
+    _p4, _w4 = IL.search_image({"image_reply": {"enabled": True, "allow_search": True,
+                                                "cache_fallback": True}}, "鲸鱼")
+    ok("显式打开 cache_fallback 时才兜底，且**明说与关键词无关**",
+       bool(_p4) and "与关键词无关" in str(_w4), str(_w4)[:80])
+    # 工具回执也要如实（不许再写「已找到并发出一张「鲸鱼」的图」）
+    _real_cfg3, _real_search2 = TL.get_config, IL.search_image
+    try:
+        TL.get_config = lambda: {"image_reply": {"enabled": True, "min_gap_seconds": 0,
+                                                 "cache_fallback": True}}
+        IL.search_image = lambda cfg, kw, root=None, chat_id="": (_old_img, "兜底：从旧图缓存挑了一张，内容与关键词无关")
+        TL._IMG_SEARCH_LAST.clear()
+        _r6 = TL._exec_send_image_search(mkctx(FakeSender()), {"keyword": "鲸鱼"})
+        _c6 = str(_r6.get("content"))
+        ok("兜底发出去时，工具回执**明说与关键词无关**（不再谎称命中）",
+           "无关" in _c6 and "已按" not in _c6, _c6[:110])
+    finally:
+        TL.get_config, IL.search_image = _real_cfg3, _real_search2
+        TL._IMG_SEARCH_LAST.clear()
+finally:
+    IL.fetch_filtered = _f_real
+    try:
+        os.remove(_old_img)
+    except Exception:
+        pass
+
+# G4 一批里随机挑（`limit=1` 时同一标签永远同一张，那张被过滤链拦掉就永远过不去）
+ok("booru 系与 safebooru 都取了**一批**再随机挑（limit=20 + random.choice）",
+   "limit=20" in _url_of("safebooru", "whale") and "random.choice(js)" in
+   open(os.path.join(ROOT, "agent", "image_sources.py"), encoding="utf-8").read())
 
 print("\n%d/%d 通过" % (PASS, PASS + FAIL))
 sys.exit(1 if FAIL else 0)
