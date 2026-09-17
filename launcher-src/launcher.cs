@@ -166,10 +166,9 @@ namespace WxLauncher
         void AskShortcut()
         {
             if (InvokeRequired) { BeginInvoke((Action)AskShortcut); return; }
-            // 桌面已有快捷方式 → 不再弹询问
+            // 桌面已有快捷方式 → 不再弹询问（按**目标 exe** 判，不按名字）
             try {
-                string desk = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-                if (File.Exists(Path.Combine(desk, "一键启动 群相.lnk")) || File.Exists(Path.Combine(desk, "一键启动 wx-agent.lnk"))) {   // 兼容旧名
+                if (Ui.ShortcutOnDesktop()) {
                     Log("桌面快捷方式已存在，跳过询问");
                     return;
                 }
@@ -539,9 +538,25 @@ namespace WxLauncher
                 Console.WriteLine(WebView2Guide.Probe(Path.GetDirectoryName(Application.ExecutablePath)));
                 return;
             }
+            if (args != null && args.Length > 0 && args[0] == "--shortcutprobe")
+            {
+                // 机械判据用：`--shortcutprobe [目录]` ⇒ 打印 shortcut=yes/no（不碰用户桌面）
+                string sdir = args.Length > 1 ? args[1] : "";
+                bool yes = sdir.Length > 0 ? Ui.ShortcutInDir(sdir) : Ui.ShortcutOnDesktop();
+                Console.WriteLine("shortcut=" + (yes ? "yes" : "no"));
+                return;
+            }
             if (args != null && args.Length > 0 && args[0] == "--ask")
             {
                 // 快捷方式询问窗（独立进程）：监控 3210 控制台，控制台关闭时自动关闭
+                // ⚠️ 2026-09-17 修（用户报「桌面有了一键启动的快捷方式，之后还会再显示添加桌面快捷方式」）：
+                //   这个分支原来**无条件弹询问窗**，而 AskShortcut 那边的"已存在就跳过"只认两个写死的名字
+                //   （安装器建的「一键启动 Persona Morph.lnk」它不认）⇒ 每次启动都再问一遍。
+                //   现在统一按「桌面上有没有指向本 exe 的 .lnk」判断，有就一句话都不问。
+                if (Ui.ShortcutOnDesktop())
+                {
+                    return;                       // 桌面已有指向本 exe 的快捷方式 ⇒ 一个字都不问
+                }
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
                 Application.Run(new AskForm());
@@ -1187,6 +1202,43 @@ namespace WxLauncher
 
     internal static class Ui
     {
+        /// 指定目录里有没有指向本 exe 的快捷方式（判据可指向临时目录，不碰用户桌面）。
+        public static bool ShortcutInDir(string dir)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return false;
+                string exe = Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "一键启动.exe");
+                foreach (string f in Directory.GetFiles(dir, "*.lnk"))
+                {
+                    try
+                    {
+                        Type t = Type.GetTypeFromProgID("WScript.Shell");
+                        dynamic ws = Activator.CreateInstance(t);
+                        dynamic sc = ws.CreateShortcut(f);
+                        string tp = (string)sc.TargetPath;
+                        if (!string.IsNullOrEmpty(tp) && string.Equals(tp, exe, StringComparison.OrdinalIgnoreCase))
+                            return true;
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+            return false;
+        }
+
+        /// 桌面上（含公共桌面）是否已经有指向本 exe 的快捷方式 —— 判定按**目标路径**，不按名字。
+        public static bool ShortcutOnDesktop()
+        {
+            try
+            {
+                if (ShortcutInDir(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory))) return true;
+                if (ShortcutInDir(Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory))) return true;
+            }
+            catch { }
+            return false;
+        }
+
         /// 是否**已经开着一个**「群相 控制台」窗口（按主窗口标题判，零依赖、零打扰）。
         /// 用途：3210 有服务时决定"由启动器开窗"还是"只提示不重复开"。
         public static bool ConsoleWindowAlive()
