@@ -1118,10 +1118,18 @@ def _exec_send_emoji(ctx, args):
         return _ok({"sent": True, "note": "已发送收藏表情（本地直发，不受微信面板布局/预收藏影响）。"})
     # 本地收藏夹无匹配 → 微信真实表情面板兜底（面板格序号仅对纯本地收藏序列有效）
     try:
-        ok, msg = ctx["wechat"].emoji_panel_open()
+        # 🔴 2026-09-18：两条都要带 chat_id —— 开面板前先确认"当前会话＝目标会话"（投递优先），
+        #   点完必须回读确认（现场事故：面板开了、表情没发出去、还报成功、日志一字不留）
+        _cid = str(ctx.get("chat_id") or "")
+        _gname = ""
+        try:
+            _gname = ctx["wechat"].group_name(_cid) if _cid else ""
+        except Exception:
+            _gname = ""
+        ok, msg = ctx["wechat"].emoji_panel_open(group_name=_gname, chat_id=_cid)
         if not ok:
             return _err("没有匹配的收藏表情，面板打开也失败：%s（可先 collect_emoji 收藏后重试）" % msg)
-        ok2, msg2 = ctx["wechat"].emoji_panel_send(idx if idx is not None and idx >= 0 else 0)
+        ok2, msg2 = ctx["wechat"].emoji_panel_send(idx if idx is not None and idx >= 0 else 0, chat_id=_cid)
         if not ok2:
             return _err("表情面板发送失败：%s（已取消，未发送）" % msg2)
         ctx["session"]["sent"].append({"type": "image", "text": "[表情]"})
