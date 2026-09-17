@@ -136,8 +136,27 @@ ck("B17b 放回时三条安全线都在（没登记不动 / 已收起不动 / �
    and "u.IsIconic(hwnd)" in _HELP_MIN
    and "int(u.GetForegroundWindow() or 0) == hwnd" in _HELP_MIN
    and "u.ShowWindow(hwnd, 6)" in _HELP_MIN)
-ck("B17c 在「还前台」之后立刻放回（顺序不能反：先最小化会让还前台更难成立）",
-   "_minimize_back_if_needed(note)" in SRC_WECHAT)
+ck("B17c 放回收起状态**只在链收尾**做（`_restore_fg_until` 里不再顺手放回）",
+   # 2026-09-18 改口径（现场现象：「他还在不停地缩小，就是把微信最小化，然后又把微信切出来」）：
+   #   `_restore_fg_until` 在一条发送链里会被调很多次（切会话·搜索路线 / 投递发送后 / 写完文件名 /
+   #   对话框关闭后 / 补回车后）⇒ 每次都放回＝链中间就把微信收进任务栏，下一个动作又得还原出来，
+   #   一收一放就是用户看到的抽风。放回动作只在两处链收尾（B17g 看守）。
+   "_minimize_back_if_needed(note)" not in SRC_WECHAT
+   and "只该在整条链收尾时做一次" in SRC_WECHAT)
+# B17c′ 兜底还原**不许再裸最小化用户的微信**（那条 `ShowWindow(main_hwnd, 6)` 没有安全线，
+#   会把用户自己正在用的微信收进任务栏）；要收回归位统一走 `_minimize_back_if_needed`（三条安全线）
+ck("B17c′ `_restore_after_send` 不再裸 SW_MINIMIZE 主窗，改走带安全线的放回",
+   "def _restore_after_send(" in SRC_WECHAT
+   and "ShowWindow(gui.main_hwnd, 6)" not in SRC_WECHAT
+   and "_minimize_back_if_needed(\"发送后收尾（_restore_after_send）\")" in SRC_WECHAT)
+ck("B17c‴ 会还原主窗的其它链也各自补了收尾放回（语音条标定/试发那条）",
+   '_minimize_back_if_needed("语音条标定/试发收尾")' in io.open(
+       os.path.join(ROOT, "agent", "voice_strip.py"), encoding="utf-8").read())
+# B17c″ 回声窗放宽到 120 秒（可配 `wechat.echo_window_s`）：30 秒太短，发出→回读之间夹着
+#   发图/切会话/OCR 就会判成"别人的话" ⇒ 回自己（现场：机器人跟自己吵了 8 条）
+ck("B17c″ 回声窗走 `_echo_window()`（默认 120 秒、可配）+ 文本归一化比对",
+   "def _echo_window(" in SRC_WECHAT and "echo_window_s" in SRC_CFG
+   and "def _echo_norm(" in SRC_WECHAT and "self._echo_norm(sent_text)" in SRC_WECHAT)
 # B18（2026-09-16 用户要求：「他老是想找会话列表那一条究竟在哪儿，**他不能直接点击输搜索框输入吗**」）：
 #   切会话必须**搜索框优先** —— 搜索入口位置固定、不依赖滚动、也不怕列表被别的窗口盖住；
 #   老的「找行 + 滚轮」只作兜底（保留，不删）。
@@ -307,6 +326,22 @@ ck("B20 会话头指纹档降级为弱档、默认不采信（只有 allow_weak 
 ck("B21 标题带档排在指纹档之前（对面实测才有区分力的是它）",
    _CIS.find("header_text(_im4)") >= 0 and _CIS.find("chat_header as _ch") >= 0
    and _CIS.find("header_text(_im4)") < _CIS.find("chat_header as _ch"))
+# B21a~B21c 纯屏幕兜底（2026-09-18 加）：用户**每次拍完都用微信「清空聊天记录」**
+#   ⇒ 该会话的 `Msg_<md5>` 表**整张消失** ⇒ 身份闸里所有"要库里有行"的证据全部失效
+#   ⇒ 明明点对了会话却 fail-closed 拒发（现场："点对了会话却不发图"、"认不出自己"）。
+#   会话头标题带 OCR 不依赖数据库 ⇒ 作为最后一档放行。
+_IDN = SRC_WECHAT.split("def chat_identity_ok(")[1][:12000]
+_SO = SRC_WECHAT.split("def _screen_only_identity(")[1][:3000]
+ck("B21a 纯屏幕身份档存在：会话头标题带 OCR（不依赖数据库）",
+   "纯屏幕证据" in _SO and "header_text" in _SO and "def _screen_only_identity(" in SRC_WECHAT)
+ck("B21b 「目标会话库里没有可比对内容」这一档先试纯屏幕证据再返回 None"
+   "（清空过聊天记录 ⇒ Msg_<md5> 整张没了 ⇒ 老写法一进门就 None ⇒ 发文件链无条件拒发）",
+   "self._screen_only_identity(chat_id, gui=gui, name=name)" in _IDN
+   and _IDN.find("self._screen_only_identity(") < _IDN.find("纯屏幕兜底也没过"))
+ck("B21c 单字/单字母名字在这一档必须完全相等（`E班群` 不算 `E`）",
+   "len(_b) <= 1 else _co.matches(hdr, nm)" in _SO and "完全相等" in _SO)
+ck("B21d 发文件链：拿不到内容级证据但**名字档已过**时按名字档放行（与发文字链同一口径）",
+   "但**名字档已确认**" in SRC_WECHAT and "按名字档放行（记账）" in SRC_WECHAT)
 ck("B18 竞态如实写进控制台（用户 2026-09-15 要求「这个你要如实跟用户讲清楚」）",
    "会不会跟你抢操作" in SRC_CONSOLE and "撞了它会用聊天区内容复核" in SRC_CONSOLE)
 # B19~B21 零动作对照：阈值不许写死（2026-09-15；实测抓屏退回路径零动作差 0.142 > 老阈值 0.01）

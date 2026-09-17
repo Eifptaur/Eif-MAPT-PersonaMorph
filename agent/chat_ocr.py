@@ -305,8 +305,37 @@ def header_box(img) -> tuple:
     return (x0, y0, x1, y1)
 
 
+def _band_ink(im, dark: int = 190) -> float:
+    """文字带里"有字"的粗略占比（暗于 `dark` 的像素比例）。**只用来省 OCR**，不用来判定身份。"""
+    try:
+        g = im.convert("L")
+        px = g.load()
+        w, h = g.size
+        xs = range(0, w, 2)
+        ys = range(0, h, 2)
+        n = hit = 0
+        for y in ys:
+            for x in xs:
+                n += 1
+                if px[x, y] < dark:
+                    hit += 1
+        return (hit / float(n or 1))
+    except Exception:
+        return 1.0        # 量不出来就当有字（宁可多花一次 OCR，也别把"有字"当"空白"漏掉）
+
+
 def header_text(img=None, gui=None, zoom: int = 2) -> str:
-    """OCR 会话头，返回识别到的文字（读不到返回 ""）。zoom＝放大倍数（小字放大后识别率更高）。"""
+    """OCR 会话头，返回识别到的文字（读不到返回 ""）。zoom＝放大倍数（小字放大后识别率更高）。
+
+    ⛔ **2026-09-18 实测的真缺陷（拍摄现场「点对了会话却不发图」的根因）**：放大倍数决定成败——
+       同一张截图（本机 4.1.15.8，渲染区 1191×890，会话头 `演示(3)`）：
+         `zoom=2`（老默认）⇒ **`''`（一个字都读不出）**；`zoom=3` ⇒ `'演示（3）'` 稳定命中；`zoom=4` ⇒ `''`。
+       于是「会话头标题带」这条**强档证据**长期是哑的 ⇒ `chat_is_open` 判否 ⇒
+       `send_image` 退回真鼠标路径（"只走后台"下被拒）⇒ **图片下载好了却发不出去**；
+       清空过聊天记录的会话连内容档也一起瞎（库里没有行）⇒ 全链只差这一档。
+       ⇒ 改成**多档试**：先试调用方给的 zoom，空了再依次试 3 / 4 / 2 / 5，读到就返回。
+       为了不白烧 OCR 预算：带子里几乎没墨（`_band_ink` 很低）时**直接返回 ''**，不做任何识别。
+    """
     try:
         if img is None:
             img = ch.capture_image(gui=gui)
@@ -316,10 +345,18 @@ def header_text(img=None, gui=None, zoom: int = 2) -> str:
         if box[2] - box[0] < 8 or box[3] - box[1] < 6:
             return ""
         crop = img.crop(box)
-        if zoom and zoom > 1:
-            crop = crop.resize((crop.width * zoom, crop.height * zoom))
-        items = recognize(crop)
-        return "".join(str(i[0]) for i in items).strip()
+        if _band_ink(crop) <= 0.004:            # 空白带（没有会话/标题没画出来）⇒ 别烧 OCR
+            return ""
+        zooms = []
+        for z in (int(zoom or 0), 3, 4, 2, 5):
+            if z and z > 1 and z not in zooms:
+                zooms.append(z)
+        for z in zooms:
+            c = crop.resize((crop.width * z, crop.height * z))
+            got = "".join(str(i[0]) for i in recognize(c)).strip()
+            if got:
+                return got
+        return ""
     except Exception:
         return ""
 

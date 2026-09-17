@@ -116,7 +116,12 @@ _n = _SV.find("return V_NOT_SENT")
 ok("文本链路：回读失败时先 db_alive，再决定 未证实/失败",
    0 <= _ALIVE < _u and 0 <= _ALIVE < _n,
    "db_alive@%d 未证实@%d 失败@%d" % (_ALIVE, _u, _n))
-ok("发图链路同上", "已投递粘贴并点了发送，但**判据不可用**" in SRC)
+_SV2 = SRC[SRC.index("def send_image_posted("):]
+_SV2 = _SV2[:_SV2.index("def _file_panel_point_live(")]
+ok("发图链路同上（回读失败时先 db_alive）",
+   "_alive2, _why_alive2 = self.db_alive(chat_id)" in _SV2
+   and _SV2.find("self.db_alive(chat_id)") < _SV2.rfind("return V_UNVERIFIED")
+   and "判据不可用**、无法证实" in _SV2)
 ok("发文件链路同上", "已走完对话框与发送，但**判据不可用**" in SRC)
 ok("成功分支已改回 V_OK（机器可判读）", "return V_OK, \"投递发送成功" in SRC and "return V_OK, \"投递发文件成功" in SRC)
 

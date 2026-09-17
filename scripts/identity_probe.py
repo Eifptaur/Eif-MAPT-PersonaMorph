@@ -73,6 +73,54 @@ def main():
         print("   说明：%s" % str(why)[:300])
     except Exception as e:
         print("\n[闸门结论] 异常：", type(e).__name__, str(e)[:120])
+
+    # ── 「现在开着的到底是谁」三条只读证据（2026-09-18 加）────────────────────────────
+    # 为什么加：拍摄现场的真实报障都落在这里 ——「图片他拿到了，但是又没有发给我」的日志原文是
+    # 「当前会话 OCR=''（目标 '演示'）· **绿底带在 y=120~217（占比 0.99）但那一行名字 OCR 读不出**
+    #  （白字绿底）」⇒ 名字档 ① 假阴性；而**清空过聊天记录**的会话连内容档也一起瞎（库里没行）。
+    # ⇒ 一次跑完把三条证据的**原始读数**摊开：绿底行名字 / 会话头标题带 / 纯屏幕兜底档。
+    print("\n[现在开着的到底是谁] 三条只读证据（要判「为什么拒发」就看这里）")
+    want = ad.display_name(chat_id) or chat_id
+    print("   目标显示名 want = %r" % want)
+    try:
+        got, why_got = ad.current_chat_name(gui=gui)
+        print("   ① 绿底高亮行名字 OCR = %r   · 依据：%s" % (got, str(why_got)[:120]))
+    except Exception as e:
+        print("   ① 绿底高亮行名字 OCR 异常：%s" % str(e)[:100])
+    try:
+        _tt = co.header_text(gui=gui)
+        print("   ② 会话头标题带 OCR   = %r   · 与目标匹配 = %s"
+              % (_tt, (co.matches(_tt, want) if _tt else False)))
+        try:
+            _hb = co.header_box(co.capture_best(gui=gui, frames=1) or img)
+            print("      标题带像素矩形 = %s（左沿靠 detect_pane_left 现算）" % (_hb,))
+        except Exception:
+            pass
+    except Exception as e:
+        print("   ② 会话头标题带 OCR 异常：%s" % str(e)[:100])
+    try:
+        _so, _so_why = ad._screen_only_identity(chat_id, gui=gui, name=want)
+        print("   ③ 纯屏幕兜底档（本机新增）= %s · %s" % (_so, str(_so_why)[:140]))
+    except Exception as e:
+        print("   ③ 纯屏幕兜底档异常：%s" % str(e)[:100])
+    try:
+        _ok_open, _why_open = ad.chat_is_open(chat_id, gui=gui)
+        print("   [名字档合成结论] chat_is_open = %s · %s" % (_ok_open, str(_why_open)[:140]))
+    except Exception as e:
+        print("   [名字档合成结论] 异常：%s" % str(e)[:100])
+    # 消息表在不在（**清空聊天记录会把整张 `Msg_<md5>` 表删掉** ⇒ 回读/回声/内容档全瞎）
+    try:
+        _conns = ad._msg_conns(chat_id)
+        print("\n[消息表] `Msg_<md5>` 命中 %d 个分片连接 ⇒ %s"
+              % (len(_conns), "在（有库可比对）" if _conns else
+                 "**不在**（用户清空过聊天记录 ⇒ 内容级证据拿不到，只能靠纯屏幕证据）"))
+    except Exception as e:
+        print("\n[消息表] 查询异常：%s" % str(e)[:100])
+    try:
+        _alive, _why_alive = ad.db_alive(chat_id)
+        print("[DB 探活] db_alive = %s · %s" % (_alive, str(_why_alive)[:120]))
+    except Exception as e:
+        print("[DB 探活] 异常：%s" % str(e)[:100])
     try:
         from agent import window_borrow as wb
         wb.restore("探针结束")
