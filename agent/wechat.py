@@ -1477,31 +1477,63 @@ class WeChatAdapter:
             try:
                 self._gui = WeChatGUI()
             except Exception:
-                # 主窗不可见（最小化/隐藏）→ 按进程枚举恢复「微信」主窗后重试一次
+                # 主窗不可见（最小化/隐藏/被收进托盘）→ **按进程 + 窗口类**把它不激活地找回来，再重试一次。
+                # ⛔ 2026-09-18 修（真 bug，现场踩到）：老代码这里匹配的是 **窗口标题 == "微信"**，
+                #   而微信 4.x 的窗口标题显示的是**当前会话/昵称**（本机实测是「群deepseek」= 机器人在
+                #   微信里的昵称）⇒ 这个兜底**永远找不到主窗**、永远救不回来（现象：`未找到微信主窗口` →
+                #   `WeChatError: 微信主窗口不可见（恢复失败）`）。改成按 **Weixin.exe/WeChat.exe 进程下的
+                #   `Qt51514QWindowIcon` 大类窗口**（宽度 > 600）来认定主窗——判据与标题无关。
                 try:
                     import ctypes
                     from ctypes import wintypes
                     u = ctypes.windll.user32
-                    pid = ctypes.c_ulong()
                     CB = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
                     found = []
 
-                    def cb(h, l):
-                        t = ctypes.create_unicode_buffer(256)
-                        u.GetWindowTextW(h, t, 256)
-                        if t.value == "微信":
-                            found.append(h)
+                    def _has_render_child(h) -> bool:
+                        """主窗的判定特征：带一个 `MMUIRenderSubWindowHW` 子窗（微信专属，见 AGENTS §2 的
+                        "不能用 FindWindow(类名) 找主窗"那条坑——同名类还有朋友圈编辑窗）。"""
+                        hit = []
+
+                        def _cc(ch, _l):
+                            cn2 = ctypes.create_unicode_buffer(256)
+                            u.GetClassNameW(ch, cn2, 256)
+                            if str(cn2.value) == "MMUIRenderSubWindowHW":
+                                hit.append(1)
+                                return False
+                            return True
+
+                        try:
+                            u.EnumChildWindows(int(h), CB(_cc), 0)
+                        except Exception:
                             return False
+                        return bool(hit)
+
+                    def cb(h, l):
+                        try:
+                            cn = ctypes.create_unicode_buffer(256)
+                            u.GetClassNameW(h, cn, 256)
+                            if not str(cn.value).startswith("Qt51514QWindowIcon"):
+                                return True
+                            r = wintypes.RECT()
+                            u.GetWindowRect(h, ctypes.byref(r))
+                            if (int(r.right) - int(r.left)) > 600 and _has_render_child(h):
+                                found.append(h)
+                        except Exception:
+                            pass
                         return True
 
-                    ref = CB(cb)
-                    u.EnumWindows(ref, 0)
+                    _ref = CB(cb)
+                    u.EnumWindows(_ref, 0)
                     if found:
                         # ⛔ 2026-09-15 改：原来这里是 `ShowWindow(hwnd, 9)`（SW_RESTORE，**会激活窗口**）
                         #    + `SetForegroundWindow`（**抢前台**）——正是既有口径：障过的"一打开就把我的微信切出来"。
-                        #    改成**不激活地**还原（不动光标（伪激活可能短暂置前约 1~3 秒后自动还回）），与三条投递链同一套实现。
+                        #    改成**不激活地**还原（不动光标），与三条投递链同一套实现。
+                        log.info("微信主窗被隐藏/最小化 ⇒ 按进程+窗口类找回并**不激活地**还原：hwnd=%s", found[0])
                         self._ensure_main_visible(None, int(found[0]))
                         time.sleep(0.3)
+                    else:
+                        log.info("主窗兜底枚举没找到候选（微信进程/窗口类都没命中）")
                     self._gui = WeChatGUI()
                 except Exception:
                     raise WeChatError("不可用：微信主窗口不可见（恢复失败）。请打开电脑微信后重试。")
