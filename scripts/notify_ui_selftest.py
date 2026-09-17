@@ -60,6 +60,32 @@ ok("不弹系统 MessageBox、不动鼠标键盘",
    all(k not in SRC for k in ("MessageBox", "mouse_event", "SetCursorPos", "SendInput")))
 ok("不装包/不改配置", all(k not in SRC for k in ("pip install", "SaveKey", "uninstall")))
 
+print("── A2. 静态：不留 NameError 类暗雷（每个 LOAD_GLOBAL 都能解析）──")
+# ⚠️ 2026-09-17 立这条判据的起因（真事故，用户报「每重启一次就多一个控制台」）：
+#   `find_console_window()` 里把回调类型写成了 `_WNDUMPROC`，而本模块只定义了 `_WNDENUMPROC`
+#   ⇒ `NameError` 被紧邻的 `except Exception` 吃掉 ⇒ **函数永远返回 0**，
+#   `open_console()` 的"复用已开的窗口"分支从没生效过。**拼写错误的全局名必须能被静态抓到**。
+import builtins                                             # noqa: E402
+import dis                                                  # noqa: E402
+
+
+def _code_objs(code):
+    yield code
+    for c in code.co_consts:
+        if hasattr(c, "co_code"):
+            for x in _code_objs(c):
+                yield x
+
+
+_bad = []
+for _c in _code_objs(compile(SRC, "notify_ui.py", "exec")):
+    for _ins in dis.get_instructions(_c):
+        if _ins.opname in ("LOAD_GLOBAL", "LOAD_NAME", "STORE_GLOBAL"):
+            _n = _ins.argval
+            if not hasattr(NU, _n) and not hasattr(builtins, _n):
+                _bad.append("%s:%s" % (_c.co_name, _n))
+ok("所有全局名都可解析（拼错名字会在这里变红）", not _bad, "、".join(sorted(set(_bad)))[:120] or "全部可解析")
+
 print("── B. 真跑：抬起一个真窗口，前台必须原样还回去 ──")
 fg0 = NU.foreground()
 ok("拿得到前台窗口（有桌面会话）", fg0 > 0, "hwnd=%s" % fg0)
@@ -68,10 +94,54 @@ try:
     ok("找控制台窗口不抛异常", isinstance(hw, int), "hwnd=%s" % hw)
 except Exception as e:
     ok("找控制台窗口不抛异常", False, "%s: %s" % (type(e).__name__, e))
-r0 = NU.raise_without_stealing(0)
+
+# B2. **真的找得到**：用一手 ctypes 枚举独立数一遍「群相 控制台」窗口，
+#     函数的返回值必须落在这一堆里（否则就是"永远返回 0"那类静默失效）。
+_live = []
+_cb_t = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+
+def _enum_cb(h, _l):
+    try:
+        if ctypes.windll.user32.IsWindowVisible(h):
+            _n = int(ctypes.windll.user32.GetWindowTextLengthW(h))
+            if _n:
+                _b = ctypes.create_unicode_buffer(_n + 2)
+                ctypes.windll.user32.GetWindowTextW(h, _b, _n + 2)
+                if "控制台" in _b.value and "群相" in _b.value:
+                    _live.append(int(h))
+    except Exception:
+        pass
+    return True
+
+
+ctypes.windll.user32.EnumWindows(_cb_t(_enum_cb), 0)
+if _live:
+    ok("开着的控制台窗口能被找到（不是永远返回 0）", int(hw) in _live,
+       "找到=%s 在开着的=%s" % (hw, _live))
+else:
+    skip("开着的控制台窗口能被找到", "本机当前没有开着的控制台窗口")
+
+# ⚠️ 2026-09-17 更正：`raise_without_stealing(0)` 的语义是「**自己去找**控制台窗口」（`hwnd or find(...)`），
+#   不是"没有窗口"。这条判据原先是**靠 bug 才绿的**（当时 find 永远返回 0）。要测"没有窗口"必须显式钉住它。
+gw = int(ctypes.windll.kernel32.GetConsoleWindow() or 0)      # 自检进程自己的控制台窗（真窗口）
+_keep_find = NU.find_console_window
+try:
+    NU.find_console_window = lambda: 0
+    r0 = NU.raise_without_stealing(0)
+finally:
+    NU.find_console_window = _keep_find
 ok("没有窗口时如实报失败（ok=False + 原因）",
    r0.get("ok") is False and bool(r0.get("why")), str(r0.get("why"))[:46])
 ok("失败路径也没有改前台", NU.foreground() == fg0)
+if gw:
+    # `hwnd=0` ＝「自己去找控制台窗口」，找得到就必须用找到的那个（不许当成"没窗口"）
+    try:
+        NU.find_console_window = lambda: gw
+        r_auto = NU.raise_without_stealing(0)
+    finally:
+        NU.find_console_window = _keep_find
+    ok("传 0 的语义＝自己去找控制台窗口（找到就用它）", r_auto.get("hwnd") == gw, "hwnd=%s" % r_auto.get("hwnd"))
 
 gw = int(ctypes.windll.kernel32.GetConsoleWindow() or 0)      # 自检进程自己的控制台窗（真窗口）
 if gw:

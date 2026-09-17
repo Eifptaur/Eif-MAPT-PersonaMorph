@@ -184,9 +184,13 @@ def find_console_window() -> int:
         return True
 
     try:
-        _u().EnumWindows(_WNDUMPROC(_cb), 0)
+        _u().EnumWindows(_WNDENUMPROC(_cb), 0)
     except Exception as e:
-        log.debug("枚举窗口失败：%s", e)
+        # ⚠️ 2026-09-17 实测踩坑：这里原来写的是 `_WNDUMPROC`（本模块里根本不存在），
+        #   `NameError` 被这句 `except` 吃掉 ⇒ **函数永远返回 0**（"找不到控制台窗口"），
+        #   于是 `open_console()` 的复用分支从没生效过、每重启一次就多开一个窗口。
+        #   教训：吞异常的兜底必须**至少留一条 warning 级痕迹**，否则一个拼写错误能静默半年。
+        log.warning("枚举窗口失败（找不到控制台窗口）：%s: %s", type(e).__name__, e)
     if not found:
         return 0
     found.sort(key=lambda x: -x[0])
@@ -271,10 +275,13 @@ def webview_ready() -> dict:
 def open_console(url: str = "", browser_path: str = "", take_lock: bool = True) -> dict:
     """自己开一个控制台窗口（**单点**：所有入口共用一把锁 + 一个优先级）。
 
-    优先级（2026-09-13 口径：控制台不再依赖浏览器）：
+    优先级（2026-09-13 口径：控制台不再依赖浏览器；2026-09-17 加"复用"）：
+      ⓪ **已经开着控制台窗口 ⇒ 复用那个窗口**（抬起来 + 闪任务栏，不新开）——
+         起因：用户报「重启几次就攒出 4 个控制台，互相抢」；原先这里是无条件新开，唯一的防双窗手段
+         只是"90 秒内刚有人开过就跳过"，间隔一超就失效 ⇒ 越重启越多窗口。
       ① 我们自己的 WebView2 窗口（`一键启动.exe --console <url>`，前提 `webview_ready()`）；
       ② 只有①确实不成立（exe 缺 / 缺 DLL / 没装 WebView2 运行时 / 启动抛异常）才回退浏览器。
-    返回报告里如实写 `how`（`webview` / `browser` / `skip`）与 `why`，绝不假报"已在我们窗口里打开"。
+    返回报告里如实写 `how`（`reuse` / `webview` / `browser` / `skip`）与 `why`，绝不假报"已在我们窗口里打开"。
     """
     url = url or console_url()
     if not url:
@@ -292,6 +299,21 @@ def open_console(url: str = "", browser_path: str = "", take_lock: bool = True) 
         write_console_url(url)                 # 顺手把地址落盘：别的入口（启动器/托盘）直接读，别再自己拼
     except Exception:
         pass
+    # ⚠️ 2026-09-17 修（用户报「现在这里有 4 个控制台，它们可能相互抢」）：
+    #   实测：4 个「群相 控制台」窗口**各由一个 `一键启动.exe` 托管**，来自 4 次**间隔 >90 秒**的重启——
+    #   而这里原来是**无条件新开**（唯一防双窗手段是"90 秒内刚有人开过就跳过"，间隔一超就失效）⇒ 越重启越多窗。
+    #   正解＝**先复用已经开着的那个窗口**（抬起来但不抢前台），找不到才新开。
+    try:
+        _ex = int(find_console_window() or 0)
+    except Exception:
+        _ex = 0
+    if _ex and _u().IsWindow(_ex):
+        try:
+            _rp = raise_without_stealing(_ex)
+            return {"ok": True, "how": "reuse", "why": "已复用开着的控制台窗口（不新开）",
+                    "hwnd": _ex, "ready": ready, "raise": _rp}
+        except Exception as e:
+            log.debug("复用控制台窗口失败，改为新开：%s", e)
     if ready["ok"]:
         try:
             subprocess.Popen([os.path.join(ROOT, "一键启动.exe"), "--console", url],
