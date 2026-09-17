@@ -4515,8 +4515,8 @@ async function onboarding(){
   if(key && !key.includes('在这里填') && key !== '******' && !key.includes('••••')) return;  // 真实=已配置
   _onboardOnce = true;
   const m = document.createElement('div'); m.className='mask'; m.id='onboard';
-  m.innerHTML='<div class="box" style="max-width:620px">'+ICON+'<h1>欢迎使用 Persona Morph · 三步上手</h1>'+
-    '<p id="obDesc">第 1 步/共 3 步：选择模型厂商 → 选择模型 → 填入该厂商的 密钥。</p>'+
+  m.innerHTML='<div class="box" style="max-width:620px">'+ICON+'<h1>欢迎使用 Persona Morph · 五步上手</h1>'+
+    '<p id="obDesc">第 1 步/共 5 步：选择模型厂商 → 选择模型 → 填入该厂商的 密钥。</p>'+
     '<div class="mid" style="text-align:left">'+
       '<div class="row"><label>模型厂商</label><div class="grow"><select id="obProvider">'+
         Object.keys(PROVIDERS).filter(k=>k!=='custom').map(k=>'<option value="'+k+'">'+PROVIDERS[k].label+'</option>').join('')+
@@ -4557,23 +4557,58 @@ async function onboarding(){
         if(cfg.api.provider) cfg.api.provider = '';   // 走顶层 base_url/api_key（向导场景）
         await getJSON('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});
         toast('已保存 '+p.label+' 配置（'+model+'）');
+        // ── 第 2 步（2026-09-17 用户要求把三步扩成五步）：机器人昵称＝你自己微信的原名 ──
+        $('obDesc').textContent='第 2 步/共 5 步：把「机器人昵称」改成**你自己微信的原名**——就是你那个号在微信里显示的名字。群里 @ 到这个名字，它才知道是在叫它。';
+        $('obProvider').closest('.mid').style.display='none';
+        const body=$('obBody');
+        const _curNick = getPath(cfg,'wechat.bot_nickname')||'';
+        body.innerHTML='<div class="row" style="align-items:flex-start"><label>机器人昵称</label><div class="grow">'+
+          '<input type="text" id="obNick" placeholder="填你自己微信的原名" value="'+esc(_curNick==='群deepseek'?'':_curNick)+'">'+
+          '<div class="hint">默认的「群deepseek」只是个占位，不是你的名字。填成<b>你自己微信的原名</b>（你那个号在微信里叫什么，就填什么）。</div>'+
+          '</div></div>';
+        $('obNext').textContent='保存并继续'; step=2; return;
+      }
+      if(step===2){
+        const nick = (($('obNick')||{}).value||'').trim();
+        if(nick){
+          setPath(cfg,'wechat.bot_nickname', nick);
+          await getJSON('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});
+          toast('机器人昵称已保存：'+nick);
+        }else{
+          toast('昵称没填，先按默认的来——之后可在「微信」面板里改');
+        }
         const r = await getJSON('/api/wechat-groups');
         const groups = r.groups||[];
-        $('obDesc').textContent = '第 2 步/共 3 步：勾选需要机器人监听的群（全不勾=监听所有群）。检测到 '+groups.length+' 个群聊。';
-        $('obProvider').closest('.mid').style.display='none';
+        $('obDesc').textContent = '第 3 步/共 5 步：勾选需要机器人监听的群（全不勾=监听所有群）。检测到 '+groups.length+' 个群聊。';
         const body=$('obBody'); body.innerHTML='';
         picked = [];  // 重新开始（防重复调用残留）
         const pickSet = new Set((wlList||[]));
         renderGroupList(body, groups, pickSet, (s)=>{ picked = [...s]; });
         picked = [...pickSet];
         if(groups.length){ body.querySelector('.group-search').focus(); }
-        $('obNext').textContent='下一步'; step=2; return;
+        $('obNext').textContent='下一步'; step=3; return;
       }
-      if(step===2){
+      if(step===3){
         if(picked.length){ wlList = picked.slice(); setPath(cfg,'wechat.group_name_white_list', wlList.slice()); await getJSON('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)}); renderChips(); }
-        $('obDesc').textContent = '第 3 步/共 3 步：代码与依赖检测（不动鼠标，几秒完成：环境/依赖/微信接入/配置逐项检查）。需要更多「点击测试」可在检测中心用单独按钮。';
+        // ── 第 4 步（2026-09-17 新增）：点「恢复」它才开始工作（默认是暂停的）──
+        $('obDesc').textContent='第 4 步/共 5 步：点下面的「恢复」——程序默认是**暂停**的，点了它才开始监听群消息。';
+        $('obBody').innerHTML='<div class="btns" style="justify-content:flex-start;margin-top:6px">'+
+          '<button class="pri" id="obResume">恢复（开始工作）</button>'+
+          '<span class="hint" id="obResumeHint" style="align-self:center">点一下就开始了；之后想停，顶部有「暂停」。</span></div>';
+        $('obResume').onclick = async ()=>{
+          try{
+            await getJSON('/api/resume',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+            $('obResumeHint').textContent='已开始工作 ✓（要停就在顶部点「暂停」）';
+            $('obResume').textContent='已恢复';
+            loadStatus();
+          }catch(e){ $('obResumeHint').textContent='恢复失败：'+e.message+'（也可以稍后在控制台顶部点「恢复」）'; }
+        };
+        $('obNext').textContent='下一步'; step=4; return;
+      }
+      if(step===4){
+        $('obDesc').textContent = '第 5 步/共 5 步：代码与依赖检测（不动鼠标，几秒完成：环境/依赖/微信接入/配置逐项检查）。需要更多「点击测试」可在检测中心用单独按钮。';
         $('obBody').innerHTML='<pre class="out" id="obCheck" style="height:190px">体检中…</pre>';
-        $('obNext').textContent='完成'; step=3;
+        $('obNext').textContent='完成'; step=5;
         const r = await getJSON('/api/selfcheck',{method:'POST',headers:{'Content-Type':'application/json'},body:'{"mode":"code"}',timeoutMs:60000});
         let lines=[r.summary||'',''];
         for(const c of (r.checks||[])){
@@ -4583,7 +4618,7 @@ async function onboarding(){
         $('obCheck').textContent = lines.join('\n');
         return;
       }
-      if(step===3){
+      if(step===5){
         maskClose(m); m.remove();
         _onboardOnce = true;  // 完成：不再弹（即便 Key 仍空也不再打扰）
         loadStatus();
