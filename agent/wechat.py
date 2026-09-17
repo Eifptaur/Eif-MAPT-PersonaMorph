@@ -871,7 +871,16 @@ class WeChatAdapter:
             return 0
 
     def poll_new_messages(self, wxid: str, since_seq: int, limit: int = 50) -> list:
-        """返回 sort_seq > since_seq 的新消息（升序），归一化后。"""
+        """返回 sort_seq > since_seq 的新消息（升序），归一化后。
+
+        🔴 2026-09-18 修（**"机器人每两分钟自己念一句"的根因**）：归一化阶段被丢掉的行
+        （自己发的 / 系统消息 / 空内容）**原来直接不进批次** ⇒ 监听那边"成功才推进水位"就永远
+        推不过这条 ⇒ **同一行每 1.5 秒被重读一次**（现场台账：同一条连着 24 行 `echo=True keep=False`，
+        水位停在机器人自己那条消息的时间上）；而它一旦**超过回声窗（120 秒）**，就不再被判成"自己"
+        ⇒ 当成别人的话 ⇒ **机器人回自己**（现场：02:27:10 发出的话，02:29:12 被当别人回了个「？」）。
+        ⇒ 现在丢掉的行也**带一个只含 seq 的"跳过标记"**出来，让水位能推过去（调用方照旧拿 `mid` 用，
+        只是遇到 `skip` 标记时直接算"已处理"）。
+        """
         try:
             raws = self._db.get_new_messages(wxid, since_seq, limit)
         except Exception:
@@ -881,6 +890,15 @@ class WeChatAdapter:
             norm = self.normalize(raw, wxid)
             if norm:
                 out.append(norm)
+                continue
+            try:
+                _sq = int(raw.get("sort_seq") or 0)
+            except Exception:
+                _sq = 0
+            if _sq:
+                out.append({"mid": None, "sort_seq": _sq, "ts": 0, "sender_id": "",
+                            "sender_name": "", "text": "", "media": [],
+                            "self": True, "skip": "归一化阶段丢弃（自己发的/系统/空内容）"})
         return out
 
     def local_id_by_server_id(self, chat_id: str, server_id: int):

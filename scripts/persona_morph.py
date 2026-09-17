@@ -2694,6 +2694,11 @@ def main():
 
                 def _handle_one(nm, _chat_key=chat_key, _g=g, _wxid=wxid, _blocked=blocked):
                     """W2：返回真值＝这条已被下游接受（append_incoming 落盘成功后返回 entry）。"""
+                    # 🔴 2026-09-18：**归一化阶段被丢掉的行**（自己发的/系统/空内容）只带个 seq 进来 ——
+                    #   必须在这里**算"已处理"**，否则水位推不过它 ⇒ 同一行被反复重读，
+                    #   等它超过回声窗就被当成"别人的话"⇒ 机器人回自己（现场就是这么吵起来的）。
+                    if nm.get("skip"):
+                        return {"dropped": nm.get("skip")}
                     # ── 屏蔽存档的会话（第 10 条）：不落库、不触发、不进记忆；水位照推 ──
                     if archive_filter.is_blocked(chat_key=_chat_key, group_name=_g["name"]):
                         return {"dropped": "archive-block"}

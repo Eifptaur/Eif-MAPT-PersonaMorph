@@ -1498,12 +1498,37 @@ th{color:var(--tx2);font-weight:500}
         <div class="hint">装完**自动配好并启动**，地址不用你填。要下 ≈10.8 GB（模型 6.46 GB + 运行库 4.35 GB）——
           本机实测走国内源**约 20 分钟**；点「安装」后会先**当场测速**把预计时间告诉你，并支持「**后台进行**」：
           关掉弹窗、去办别的事，它在后台接着下。</div></div></div>
+      <div class="row"><label>在线出图后端</label><div class="grow"><select data-cfg="image_gen.online_preset" id="igOnlinePreset">
+        <option value="pollinations">Pollinations（免密钥·零配置，**右下角有水印**，3~4 秒）</option>
+        <option value="siliconflow">硅基流动 SiliconFlow（要 key·无水印·有免费额度）</option>
+        <option value="zhipu">智谱 BigModel（要 key·无水印·cogview-3-flash 免费）</option>
+        <option value="volc">火山方舟 即梦 Seedream（要 key·无水印·质量最好档之一）</option>
+        <option value="custom">自定义（任何 OpenAI 兼容出图接口）</option>
+      </select></div></div>
+      <div class="row"><label>出图接口地址</label><div class="grow"><input type="text" data-cfg="image_gen.online_api.url" placeholder="填 key 那家的地址，例如 https://api.siliconflow.cn/v1"></div></div>
+      <div class="row"><label>出图密钥</label><div class="grow"><input type="password" data-cfg="image_gen.online_api.key" placeholder="注册对应服务商后拿到的 key（只存本机）">
+        <span class="hint">留空＝用免密钥那条（有水印）。填了就走这家：**无水印**、通常更快。</span></div></div>
+      <div class="row"><label>出图模型</label><div class="grow"><input type="text" data-cfg="image_gen.online_api.model" placeholder="留空＝用该服务商的默认推荐（面板下方有各自的推荐模型名）">
+        <span class="hint">不同服务商的模型名不一样，填错会报「模型不存在」。</span></div></div>
+      <div class="row"><label>在线优先</label><input type="checkbox" data-cfg="image_gen.online_first">
+        <span class="hint">默认开：**先走在线**（质量更好），在线取不到才回落本地模型。关掉＝只走本地/自配后端。</span></div>
       <div class="row"><label>允许联网下载</label><input type="checkbox" data-cfg="image_gen.local_sd.allow_online_install">
-        <span class="hint">默认关：不开我就**不联网下载**任何东西。装好本地后端之后，生图**全在本机跑、不出网**。</span></div>
+        <span class="hint">默认关：不开我就**不联网下载**任何东西。装好本地后端之后，本地那条生图**全在本机跑、不出网**。</span></div>
       <div class="row"><label>生图后端</label><div class="grow"><input type="text" data-cfg="image_gen.backends" placeholder="本地示例： comfy | local | http://127.0.0.1:8188/prompt">
         <div class="hint">格式：<code>id | local/online | 接口地址</code>，多个用分号分隔。填 <code>online</code> 的还要打开下面的「允许出网」。</div></div></div>
       <div class="row"><label>允许出网</label><input type="checkbox" data-cfg="image_gen.online_allowed">
-        <span class="hint">默认关：不打开时**在线后端根本不会被选中**（图不出网）。</span></div>
+        <span class="hint">**默认开**（2026-09-18 用户拍板）：在线出的图明显更好（本机实测同一句提示词：本地动漫模型+8 步＝写意动漫图，在线 3~4 秒＝照片级）。不打开时**在线后端根本不会被选中**（图不出网、只用本地）。</span></div>
+      <div class="row"><label>去水印</label><input type="checkbox" data-cfg="image_gen.strip_watermark">
+        <span class="hint">默认开。**优先级**：①要 key 的那三家（硅基流动/智谱/火山）本来就没水印 ⇒ 不需要它；
+          ②免密钥那条 pollinations 的水印**只有账号才去得掉**（官方原话 `nologo` needs account）⇒ 在
+          pollinations.ai **免费注册**拿个 token 填进上面「出图密钥」，水印就没了；③没 token 时按这个开关
+          **裁掉底部 6% 的水印带**（诚实的修剪，不做局部涂改；不想让画面被裁就把它关掉，接受水印）。</span></div>
+      <div class="hint" style="margin:2px 0 6px">各家在线后端怎么选（**要 key 的那三家都无水印**，免密钥的 pollinations **右下角有水印**且目前只有 sana 一个模型）：
+        <b>硅基流动</b> 推荐 <code>black-forest-labs/FLUX.1-schnell</code>（快、有免费额度），另有 <code>Kwai-Kolors/Kolors</code>、<code>Qwen/Qwen-Image</code>；
+        <b>智谱</b> 推荐 <code>cogview-3-flash</code>（官方标注免费），更好可换 <code>cogview-4</code>/<code>glm-image</code>；
+        <b>火山方舟</b> 用你在方舟创建的模型接入点 ID（Seedream 系，质量第一梯队）。
+        三家地址分别填 <code>https://api.siliconflow.cn/v1</code> · <code>https://open.bigmodel.cn/api/paas/v4</code> · <code>https://ark.cn-beijing.volces.com/api/v3</code>（写到 <code>/v1</code> 这一层即可）。
+        本地模型想自己调：面板下方「本地轻量后端」可换模型/步数，或在「生图后端」里填你自己的 ComfyUI/A1111 地址。</div>
       <div class="row"><label>单次上限(张)</label><input type="number" min="1" max="8" data-cfg="image_gen.max_count">
         <span class="hint">群友一次要更多也只按这个数生成。</span></div>
       <div class="row"><label>风格白名单</label><div class="grow"><input type="text" data-cfg="image_gen.style_allow" placeholder="例如： 动漫, 水彩 （留空＝不限）">

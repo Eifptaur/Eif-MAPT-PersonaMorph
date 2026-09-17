@@ -124,6 +124,34 @@ def main():
     ok("同一会话同一时刻只有一个处理者（peak=1）", peak["n"] == 1, "peak=%d" % peak["n"])
     ok("并发下水位仍单调到最后", wm5.get("group:f") == 3, wm5.get("group:f"))
 
+    # == G. 「自己发的/系统消息」这类被丢弃的行必须能推过水位（2026-09-18 现场：机器人每两分钟自己念一句）==
+    #    根因：`poll_new_messages` 把归一化阶段被丢掉的行**直接排除在批次外** ⇒ 水位推不过它
+    #    ⇒ 同一行每 1.5 秒被重读（台账实测同一条连着 24 行 echo=True keep=False），
+    #    等它超过 120 秒回声窗就被当成"别人的话"⇒ 机器人回自己。
+    print("== G. 被丢弃的行（skip 标记）也要能推过水位 ==")
+    _pm = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "scripts", "persona_morph.py"), encoding="utf-8").read()
+    _wx = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "agent", "wechat.py"), encoding="utf-8").read()
+    ok("poll_new_messages 会给被丢弃的行带一个只含 seq 的 skip 标记（否则水位推不过去）",
+       '{"mid": None, "sort_seq": _sq' in _wx and '"skip": "归一化阶段丢弃' in _wx)
+    ok("监听侧把 skip 标记算「已处理」（返回真值 ⇒ 水位前进）",
+       'if nm.get("skip"):' in _pm and 'return {"dropped": nm.get("skip")}' in _pm)
+    wm6 = lw.Watermark(wm_path)
+    wm6.set("group:g", 0, forward_only=False)
+    _seen = []
+
+    def _skip_aware(it):
+        # 照 `persona_morph._handle_one` 的口径：skip 标记也返回真值（＝已处理）
+        _seen.append(it.get("sort_seq"))
+        return {"dropped": it.get("skip")} if it.get("skip") else {"ok": True}
+
+    _batch = [{"mid": "m1", "sort_seq": 1, "text": "别人的话"},
+              {"mid": None, "sort_seq": 2, "skip": "归一化阶段丢弃（自己发的/系统/空内容）"}]
+    st_g = lw.process_batch("group:g", _batch, _skip_aware, wm6, log=log, sleep=lambda s: None)
+    ok("末尾那条是被丢弃的行 ⇒ 水位仍推到 2（不再卡住重读）",
+       wm6.get("group:g") == 2 and st_g.get("processed") == 2, (wm6.get("group:g"), st_g))
+
     # ── 2026-09-17（用户问「我把聊天记录清空了，它会不会学不会、从而不发」）──
     #    水位只前进不回退是对的（防重复处理），但**微信清空记录后序号可能回落/换库** ⇒ 新消息会被
     #    判成"处理过"而永远跳过，而且**重启也救不回**（水位是从文件读回来的）⇒ 监听循环里必须有自愈。
