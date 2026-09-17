@@ -116,5 +116,14 @@ ok("日志里不回显完整账号（只给掩码）", W._mask_id("wxid_newbie00
 ok("normalize 的回声分支真的会去学（源码级）", "self.learn_self_from_echo(sender_wxid, text)" in SRC)
 ok("启动时会读回学到的自己（源码级）", "self.load_self_identity()" in SRC)
 
+print("\n── G. 会话行点击纪律：不许把聊天点成独立窗口（用户 2026-09-18 新反馈）──")
+ok("有**全局**最小间隔闸（不看 chat_id，避免相邻行被点成双击）",
+   "_row_click_last" in SRC and "不补第二枪" in SRC)
+ok("闸是**位置感知**的（间隔 + 40px 内才拦）", "_dx <= 40 and _dy <= 40" in SRC)
+ok("有「把独立出去的聊天窗收回来」的处置", "def _reattach_if_floating" in SRC and "WM_CLOSE" in SRC)
+ok("只关微信自己的 Qt 窗（不误关别人的窗口）", 'cls.startswith("Qt")' in SRC)
+ok("切换流程里真的调了它", "_rt = self._reattach_if_floating(name)" in SRC)
+ok("收回这件事**留日志**（不许静默）", "已收回（双击会话行的后果" in SRC)
+
 print("\n触发判定判据：%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

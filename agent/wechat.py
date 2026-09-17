@@ -1011,6 +1011,58 @@ class WeChatAdapter:
             pass
         return True
 
+    def _reattach_if_floating(self, name: str) -> str:
+        """把被"双击"独立出去的那个聊天窗**收回来**（独立窗口就是这个群/人）。
+
+        为什么会独立：微信 4.x 双击会话列表的一行 ⇒ 把该聊天拖成独立浮动窗（用户 2026-09-18 截图反馈
+        「他会把那个群给拖出窗口化」）。我们的切会话若因复核不过而重复点同一位置，就会被 Qt 判成双击。
+        两步处置：①**预防**＝会话行点击加全局最小间隔（见 `switch_chat_posted` 里的 `_row_click_last`）；
+        ②**收尾**＝万一已经独立出去了，把那个浮动窗关掉（微信会把它放回主窗），并留一行日志。
+        返回说明串（空串＝没发现浮动窗）。**只关"标题含目标名 + 类名是微信 Qt 窗"的窗**，避免误关别的。
+        """
+        try:
+            import win32gui
+        except Exception:
+            return ""
+        main = int(getattr(self._get_gui(), "main_hwnd", 0) or 0)
+        hits = []
+
+        def _cb(h, _l):
+            try:
+                if not win32gui.IsWindowVisible(h):
+                    return True
+                if main and int(h) == main:
+                    return True
+                t = str(win32gui.GetWindowText(h) or "")
+                if not t or not name or str(name) not in t:
+                    return True
+                cls = str(win32gui.GetClassName(h) or "")
+                if not cls.startswith("Qt"):            # 只认微信自己的 Qt 窗（别关别人的窗）
+                    return True
+                hits.append((int(h), t))
+            except Exception:
+                pass
+            return True
+
+        try:
+            win32gui.EnumWindows(_cb, None)
+        except Exception:
+            return ""
+        if not hits:
+            return ""
+        done = 0
+        for h, t in hits[:2]:
+            try:
+                win32gui.PostMessage(h, 0x0010, 0, 0)   # WM_CLOSE ⇒ 独立窗关掉、聊天回主窗
+                done += 1
+                log.warning("发现聊天被独立成了浮动窗口「%s」⇒ 已收回（双击会话行的后果，已加防双击闸）",
+                            t[:24])
+            except Exception as e:
+                log.warning("收回浮动聊天窗失败（%s）：%s", t[:20], e)
+        if done:
+            time.sleep(0.4)
+        return "已收回被独立出去的聊天窗 %d 个" % done if done else ""
+
     def _is_self_echo(self, text: str) -> bool:
         """判断一条消息是不是自己刚发的（数据库回读回声）。
 
@@ -2028,12 +2080,31 @@ class WeChatAdapter:
             flog = str(flog) + ("｜点前列表已停稳" if _settled else "｜⚠️点前列表没等到停稳")
             # 点前的聊天区文字（用来判"切会话到底发没发生"——绿底那项自检会被帧质量骗）
             _pane0 = _co.pane_text(_chh.capture_image(gui=gui))
-            # ⚠️ 会话行必须用**慢节奏**点击（2026-09-13 A/B：快节奏投渲染子窗高亮不动；
+            # ⛔ 2026-09-18 加（用户新反馈：「他会把那个群给拖出窗口化」）：
+            #   微信 4.x 是 **Qt 自绘**，双击判定由 Qt 按"两次点击的间隔 + 位置"自己算 —— 我们
+            #   **没发** `WM_LBUTTONDBLCLK` 也没用。切会话第一枪点偏、复核不过、再点相邻那一行时，
+            #   两次点击间隔短、位置又近（<40px）⇒ 微信把这次聊天**独立成一个浮动窗口**（截图里那个）。
+            #   ⇒ 会话行点击再加一条**全局**最小间隔（不看 chat_id），并记下落点做位置判。
+            _pl = getattr(self, "_row_click_last", None)
+            _cx, _cy = ox + int(pos[0]), oy + int(pos[1])
+            if _pl:
+                _dt = time.time() - float(_pl[0])
+                _dx, _dy = abs(int(_pl[1]) - _cx), abs(int(_pl[2]) - _cy)
+                if _dt < 1.2 and _dx <= 40 and _dy <= 40:
+                    return False, ("距上一次会话行点击只有 %.2fs（位置相差 %d,%d px）⇒ **不补第二枪**："
+                                   "微信按这个间隔会判成双击、把聊天独立成一个窗口。稍等一两秒再试，"
+                                   "或先在微信里点开目标会话。" % (_dt, _dx, _dy))
+            # 会话行必须用**慢节奏**点击（2026-09-13 A/B：快节奏投渲染子窗高亮不动；
             #   悬停 300ms + 按住 150ms 高亮立刻跳到目标行）——见 input_backend.click 的注释
-            ok, why = backend.click(tgt, (ox + int(pos[0]), oy + int(pos[1])), hover_ms=300, press_ms=150)
+            ok, why = backend.click(tgt, (_cx, _cy), hover_ms=300, press_ms=150)
             if not ok:
                 return False, "投递点击会话行失败：%s" % why
+            self._row_click_last = (time.time(), _cx, _cy)
             self._pick_last[str(chat_id)] = (time.time(), clicked_y)
+            # 点完顺手把"可能被独立出去的聊天窗"收回来（见 _reattach_if_floating 的注释）
+            _rt = self._reattach_if_floating(name)
+            if _rt:
+                flog = str(flog) + "｜" + _rt
             # 复核（自洽证据）：**我们按名字点的那一行**现在是不是高亮行（相对自检，抗帧质量抖动）
             deadline = time.time() + max(1.0, float(confirm_s))
             last = ""
