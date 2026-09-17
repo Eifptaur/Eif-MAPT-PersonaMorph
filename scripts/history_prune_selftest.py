@@ -9,7 +9,11 @@
 · 事实：模型的上下文来自 `data/messages/<会话>.json`（`store.recent()`），而控制台原来删的
   `data/sessions/*.jsonl` **只是运行日志** ⇒ 只删它等于没删（现场：作者把运行明细删光，
   机器人照样叫他"复读机"）。
-本判据钉三件：①窗口算得对 ②按窗口点名删存档条（且**不做清空**）③撤销能把存档还原。
+本判据钉四件：①窗口算得对（老口径，保留）②**归属法**：只删"归属于被删轮次"的存档条（且**不做清空**）
+③撤销能把存档还原 ④控制台两条路都接了它。
+⭐ 第二版关键回归（2026-09-18 真机场景）：**留下来的那一轮的回复不许被删**——
+   轮 07:00:00 留下 · 轮 07:00:38 被删，而"轮 07:00:00 的回复"落在 07:00:36（在两轮之间）⇒
+   老窗口法会把它一起删掉（出现"只有我问、没有他答"），归属法按"谁发的"判，正确留下。
 """
 from __future__ import annotations
 
@@ -68,24 +72,47 @@ def main():
     ok("① 没有前驱 ⇒ 只回看 30 分钟（不把开天辟地以来的历史全清）",
        lo2 == hp.iso_to_ms("2026-09-18T07:00:00") - 30 * 60 * 1000 + 1, lo2)
 
-    # ② 按窗口点名删（只删窗口内的，窗口外一条都不许动；空 ids 不做清空）
-    base = hp.iso_to_ms("2026-09-18T07:05:00")
+    # ② 归属法：只删"归属于被删轮次"的存档条（窗口外一条都不许动；空 ids 不做清空）
+    base = hp.iso_to_ms("2026-09-18T07:10:00")
     store = _FakeStore({"g1": [
-        {"id": "in-old", "ts": str(base - 10_000)},          # 窗口外（更早）
-        {"id": "in-a", "ts": str(base + 1_000)},             # 窗口内（这轮的触发语）
-        {"id": "in-b", "ts": str(base + 60_000)},            # 窗口内（它的回复）
-        {"id": "out-new", "ts": str(base + 10 * 60_000)},    # 窗口外（更晚）
+        {"id": "kept-reply", "ts": str(base - 40_000), "self": True},    # 07:09:20 上一轮（留下）的回复
+        {"id": "trig", "ts": str(base - 10_000), "self": False},         # 07:09:50 这一轮的触发语
+        {"id": "reply", "ts": str(base + 20_000), "self": True},         # 07:10:20 这一轮的回复
+        {"id": "later", "ts": str(base + 600_000), "self": False},       # 07:20:00 这一轮之后
     ]})
     res = hp.prune_for_deleted_runs(store, all_e, [all_e[2]], trash_root="")
-    ok("② 只删窗口内的 2 条（窗口外一条不动）",
-       sorted(store.deleted) == ["in-a", "in-b"], store.deleted)
-    ok("② 回显统计对得上", res.get("removed") == 2 and res.get("chats", {}).get("g1") == 2, res)
+    ok("② 只删归属于被删那轮的 3 条，上一轮（留下）的回复一条不动",
+       sorted(store.deleted) == ["later", "reply", "trig"], store.deleted)
+    ok("② 回显统计对得上", res.get("removed") == 3 and res.get("chats", {}).get("g1") == 3, res)
 
-    # ②b 窗口内没有条目 ⇒ 不调删除（更不许"清空"）
+    # ②b 没有归属条目 ⇒ 不调删除（更不许"清空"）
     store2 = _FakeStore({"g1": [{"id": "x", "ts": "1"}]})
     res2 = hp.prune_for_deleted_runs(store2, all_e, [all_e[2]], trash_root="")
-    ok("②b 窗口内没条目 ⇒ 一条都不删（绝不做清空）",
+    ok("②b 没有归属条目 ⇒ 一条都不删（绝不做清空）",
        not store2.deleted and res2.get("removed") == 0, store2.deleted)
+
+    # ②c ⭐ 第二版关键回归：留下的那轮的回复不许被删（老窗口法在这里是错的）
+    runs = [{"chat_key": "g1", "ts": "2026-09-18T07:00:00"},
+            {"chat_key": "g1", "ts": "2026-09-18T07:00:38"},     # 被删
+            {"chat_key": "g1", "ts": "2026-09-18T07:01:30"},     # 被删
+            {"chat_key": "g1", "ts": "2026-09-18T07:15:00"}]
+    _b = hp.iso_to_ms("2026-09-18T07:00:00")
+    store3 = _FakeStore({"g1": [
+        {"id": "t0", "ts": str(_b - 1_000), "self": False},          # 06:59:59 留下的那轮触发语
+        {"id": "r0", "ts": str(_b + 36_000), "self": True},          # 07:00:36 留下的那轮回复 ⭐
+        {"id": "pat", "ts": str(_b + 74_000), "self": False},        # 07:01:14 拍一拍（近下一轮）
+        {"id": "r1", "ts": str(_b + 111_000), "self": True},         # 07:01:51 被删轮的回复
+        {"id": "old", "ts": "2026-09-18T05:00:00", "self": False},   # 两小时前、离第一轮太远 ⇒ 不归任何轮
+    ]})
+    hp.prune_for_deleted_runs(store3, runs, [runs[1], runs[2]], trash_root="")
+    ok("②c 留下的那轮的回复（07:00:36）不许被删", "r0" not in store3.deleted, store3.deleted)
+    ok("②c 留下的那轮的触发语（06:59:59）也要留下", "t0" not in store3.deleted, store3.deleted)
+    ok("②c 被删那两轮的消息（拍一拍 / 它的回复）要删掉",
+       sorted(store3.deleted) == ["pat", "r1"], store3.deleted)
+    ok("②c 离得太远的孤儿条（05:00:00）不归任何轮 ⇒ 不动它", "old" not in store3.deleted)
+    _w = hp.run_history_windows(runs, [runs[1]])["g1"][0]
+    ok("②c 对照：老窗口法确实会覆盖 07:00:36（＝这次改口径的原因）",
+       _w[0] <= _b + 36_000 <= _w[1], _w)
 
     # ③ 撤销：把 `_trash/messages/<name>.<stamp>` 放回 `MESSAGES_DIR`
     tmp = tempfile.mkdtemp(prefix="hp-judge-")
