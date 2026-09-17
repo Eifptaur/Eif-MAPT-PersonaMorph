@@ -746,6 +746,59 @@ try:
 except Exception as _e:
     ck("B25c 右键/左键目标窗行为能跑", False, str(_e)[:90])
 
+# ── B26（2026-09-18 作者现场口径）：**输入栏不是固定大小 ⇒ 落点一律现算、只取上沿** ──────
+#   作者原话：「当你引用一条比较长的信息时，输入栏会变高…如果你还是按原来输入栏的位置去点的话，
+#   中间点有可能正好就是引用的那条消息的尾部…或者你偶然间点到了那个叉号，就把引用点掉」
+#   「最好是点**输入孔上沿**…因为上面没有什么东西」。
+#   本机实测（1193×891，`_scratch/probe_rows.py` 逐行量）：输入框 y 692..827、工具栏灰带 828..851
+#   ⇒ 老实现的 `rh*0.87`（屏幕 y≈931）正好落在**输入框下部＝引用条那一带**，这就是那次的真凶。
+#   这里守四件：①三个件都在；②三处落点里不再有按比例算的输入框点位；③行为级：合成帧上量出的
+#   上沿带必须贴在框顶；④量不到 ⇒ **返回 None 而不是猜一个矩形**。
+_W_SRC = io.open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
+ck("B26a 有三个件：窗口自身画面量框 / 上沿带 / 墨点阳性对照",
+   "def _probe_input_box_frame(" in _W_SRC and "def _input_top_band(" in _W_SRC
+   and "def _input_ink(" in _W_SRC)
+ck("B26b 三处落点里不再有按比例算的输入框点位（0.87 只许留在注释里）",
+   "rh * 0.87" not in _W_SRC and "rh * _FOCUS_Y" not in _W_SRC and "render_h - 250" not in _W_SRC)
+ck("B26c 发文字/发图两条链都改成实测上沿带，且打字后有阳性对照",
+   _W_SRC.count("_input_top_band(gui)") >= 3 and "_input_ink(gui, _box2)" in _W_SRC)
+ck("B26d 引用链回退不再直接走驱动库真鼠标通路（先投递、真鼠标档才回退）",
+   "self.send_text_posted(text, chat_id, allow_no_ref=True)" in _W_SRC
+   and "_real_mouse_allowed()" in _W_SRC)
+try:
+    from PIL import Image as _Im
+    import agent.chat_header as _chm
+    import agent.wechat as _wk
+
+    class _FakeGui:
+        right_pane_left = 262
+        origin_x, origin_y = 1263, 156
+        render_w, render_h = 1193, 891
+
+    _img = _Im.new("RGB", (1193, 891), (255, 255, 255))
+    for _x in range(0, 1193):                      # 输入框顶上那条 1px 浅灰分界线
+        _img.putpixel((_x, 691), (200, 200, 200))
+    for _y in range(828, 891):                     # 工具栏/底部带（非白）
+        for _x in range(0, 1193, 3):
+            _img.putpixel((_x, _y), (170, 170, 170))
+    _saved_cap = _chm.capture_image
+    try:
+        _chm.capture_image = lambda gui=None, render=None: _img
+        _band, _pt = _wk._input_top_band(_FakeGui())
+        _box = _wk._probe_input_box_frame(_FakeGui())
+        _chm.capture_image = lambda gui=None, render=None: None
+        _band_none, _pt_none = _wk._input_top_band(_FakeGui())
+    finally:
+        _chm.capture_image = _saved_cap
+    _ok_box = bool(_box) and abs(_box[1] - 692) <= 2
+    _ok_top = bool(_band) and (_band[3] - _band[1]) <= 24 and (_pt[1] - 156) < 692 + 60
+    ck("B26e 行为：合成帧上量出框顶（≈692）且落点贴在**上沿**（不是中心/下部）",
+       _ok_box and _ok_top, "box=%s band=%s pt=%s" % (_box, _band, _pt))
+    ck("B26f 行为：拿不到窗口自身画面时**返回 None（不猜）**",
+       _band_none is None and _pt_none is None)
+except Exception as _e:
+    ck("B26e/f 行为级检查跑不起来", False, str(_e)[:120])
+
 print("\n[结论] %d 通过 / %d 失败" % (len(OK), len(BAD)))
 if BAD:
     print("失败项：%s" % BAD)
