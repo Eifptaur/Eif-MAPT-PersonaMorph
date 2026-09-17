@@ -1,11 +1,11 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.17.11",
-    "sha256": "ebe8d395ecc26c4c6b72f615cb40a161e66a40bfe3e3fbb9d912e9498cd5b0b3",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.31/persona-morph-v2.1.31.zip",
-    "size": 8617733,
-    "files": 265
+    "version": "2026.9.17.11.1",
+    "sha256": "b5e088fbdd34166a84512f328e0446e6969294743a46dc14d03b3ac78a71ab36",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.31.1/persona-morph-v2.1.31.1.zip",
+    "size": 8657879,
+    "files": 266
   },
   "dlc": [
     {
@@ -32,15 +32,13 @@
     }
   ],
   "announce": {
-    "version": "2026.9.17.11",
+    "version": "2026.9.17.11.1",
     "notes": [
-      "修：图片和表情多的群，现在也能正常发出消息（以前会因为看不到可比对的文字而卡住不发）",
-      "机器人自己在后台开控制台时只闪任务栏，不再把窗口顶到你面前",
-      "必须知道：更新后若顶部出现「发送已被暂停」横幅，点一下「本次允许发送」即可继续"
+      "修拍摄现场三个真根因：会话头 OCR 的放大倍数（同图 zoom=2 读不出、zoom=3 稳定读出）——这正是「点对了会话却不发图」的元凶；每次拍完清空聊天记录会让整个消息表消失，补一档不依赖数据库的纯屏幕身份证据；机器人跟自己吵 8 条（回声窗 30 秒太短且要求逐字相等）与「微信不停缩小又切出来」（一条链里收→放→收→放）一并修掉"
     ],
     "forceBase": false,
-    "minBase": "2026.9.17.11"
+    "minBase": "2026.9.17.11.1"
   },
-  "builtAt": "2026-09-17T16:19:23Z",
-  "updatedAt": 1789661963139
+  "builtAt": "2026-09-17T16:58:44Z",
+  "updatedAt": 1789664324735
 }
