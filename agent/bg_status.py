@@ -39,8 +39,11 @@ PATHS = [
         "detail": "**搜索框优先**（投递点搜索入口 → 输入名字 → 点结果；两套 UI 都认、不依赖滚动，"
                   "2026-09-16 按用户要求提为默认）；搜索没成时**默认停手**（不退回滚列表——滚轮虽不动光标，"
                   "但会话列表会在你眼前滚；要回退得打开 `wechat.scroll_list_fallback`）；"
-                  "不负责改前台",
-        "evidence": "agent/wechat.py::open_chat_by_search（已实测通路）· switch_chat_posted",
+                  "⚠️ **会短暂把微信置前（约 1~10 秒）再自动还回你原来的前台窗口**——搜索浮层必须处在最前"
+                  "才能被投递点击与 OCR 看见（2026-09-18 实测：浏览器盖着微信时仍能切成功，中途微信确被"
+                  "顶到前台、随后还回用户窗口）。**全程不动光标**。若当前会话已经是目标，**直接跳过、"
+                  "什么都不做**（不搜索、不置前）",
+        "evidence": "agent/wechat.py::open_chat_by_search（已实测通路·内含还前台 finally）· switch_chat_posted",
     },
     {
         "key": "moments_open", "label": "打开朋友圈", "status": "posted_fallback",
