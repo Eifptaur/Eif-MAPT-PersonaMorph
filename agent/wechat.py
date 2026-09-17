@@ -6139,7 +6139,7 @@ def _db_dir_candidates(extra: str = "") -> list:
     home = os.path.expanduser("~")
     cands = []
     if str(extra or "").strip():
-        cands.append(str(extra).strip())
+        cands.append(_expand_path(extra))
     cands += [os.path.join(home, "xwechat_files"),
               os.path.join(home, "Documents", "xwechat_files"),
               os.path.join(home, "OneDrive", "Documents", "xwechat_files")]
@@ -6207,6 +6207,28 @@ def resolve_db_dir(explicit: str = "") -> tuple:
     return "", ""
 
 
+def _expand_path(p: str) -> str:
+    """把"人填进来的路径"**展开**再用：支持 `%USERPROFILE%` 这类环境变量与 `~`，并去掉成对引号。
+
+    为什么（2026-09-17 网友那份报告）：他在控制台「数据库目录」里填的是
+    `%USERPROFILE%\\.wechatauto\\xwechat_files` —— 很多人是从文档/别的窗口里**连变量一起复制**的，
+    而 Python 的 `os.path` 系列**不会**展开 `%VAR%`（那是 cmd 的语法）⇒ 这条路永远失败、只能靠
+    自探测兜住，报告里就写成「来源=auto」，用户看着像"我明明填了却不生效"。展开这一步不花什么，
+    却让"照着提示填进去"真的管用。只对**路径**做，不动别的配置。
+    """
+    s = str(p or "").strip()
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in ("'", '"'):
+        s = s[1:-1].strip()
+    if not s:
+        return ""
+    for _f in (os.path.expandvars, os.path.expanduser):
+        try:
+            s = _f(s)
+        except Exception:
+            pass
+    return s
+
+
 def db_open_tries(explicit: str = "") -> list:
     """开消息库要**依次试**的 `(目录, 来源)`：配置填的 → 扫盘探到的 → 驱动库自探测（`""`）。
 
@@ -6218,7 +6240,7 @@ def db_open_tries(explicit: str = "") -> list:
     且每条路各自的原因都要能报出来（只报第一条会让人照着错的去查）。
     """
     out = []
-    _e = str(explicit or "").strip()
+    _e = _expand_path(explicit)
     if _e:
         out.append((_e, "config"))
     try:
