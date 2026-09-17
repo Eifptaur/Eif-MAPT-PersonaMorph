@@ -5800,6 +5800,17 @@ class WeChatAdapter:
                 _d("5) ✘ 定位失败：未找到「%s」的头像位置（UIA 行匹配/OCR 相似度/左侧消息兜底都失败）" % target_name)
                 return False, ("未在可见消息里定位到「%s」的头像；让对方先发条消息再试" % target_name)
             ax, ay, score = located
+            # 🔴 2026-09-18 加闸（用户现场原话：「**他好像是点了会话列表，但不是点的我的头像，因为我看到他
+            #   右键出来什么"置顶"之类的东西**」）：**落点必须落在聊天面板里**。
+            #   左边那条（`x < right_pane_left`）是**会话列表**——在那个区域右键弹出的是会话行菜单
+            #   （置顶 / 标为未读 / 删除），等于对"会话"动手，而不是拍人。⇒ 越界就**直接失败、绝不右键**。
+            _rpl = int(getattr(gui, "right_pane_left", 0) or 0)
+            _rw = int(getattr(gui, "render_w", 0) or 0)
+            if _rpl and (ax < _rpl + 4 or (_rw and ax > _rw - 4)):
+                _d("5b) ✘ 落点越界：头像点 (%d,%d) 不在聊天面板内（right_pane_left=%d, render_w=%d）⇒ 不右键"
+                   % (ax, ay, _rpl, _rw))
+                return False, ("定位到的落点 (%d,%d) 在聊天面板之外（很可能是会话列表）⇒ **不右键**、"
+                               "这次不拍（防对会话列表动手）" % (ax, ay))
             if score >= 1.0:
                 path = "UIA 行 + 固定偏移"
             elif score >= 0.8:
@@ -5815,6 +5826,10 @@ class WeChatAdapter:
             # 消息右键菜单同样含「拍一拍」，拍的是该消息的发送者（安全）
             if score < 0.6:
                 px, py = self._bubble_point(gui, ax, ay, db_text if db_text else target_name)
+                # 同一道区域闸：气泡点也必须落在聊天面板内（会话列表那边是会话行菜单）
+                if _rpl and (px < _rpl + 4 or (_rw and px > _rw - 4)):
+                    _d("   ✘ 气泡落点越界 (%d,%d)（right_pane_left=%d）⇒ 不右键" % (px, py, _rpl))
+                    return False, ("气泡落点 (%d,%d) 也在聊天面板之外 ⇒ **不右键**、这次不拍" % (px, py))
                 _d("   → 未检测到彩色头像（可能是连续消息未显示头像），改为右键气泡 (%d,%d) 里的「拍一拍」" % (px, py))
                 menu_hit = self._right_click_menu(gui, px, py, "拍一拍")
             else:
@@ -6075,6 +6090,34 @@ class WeChatAdapter:
              截图聊天区底部 180px（新提示总在最下面）找「拍了拍」——只认它，
              预防旧提示误报。
         """
+        def _my_names() -> list:
+            try:
+                _cfg = get_config() or {}
+                _ns = [str((_cfg.get("wechat") or {}).get("bot_nickname") or ""),
+                       str((_cfg.get("persona") or {}).get("self_nickname") or ""),
+                       str(getattr(self, "self_nickname", "") or "")]
+            except Exception:
+                _ns = []
+            return [n.strip() for n in _ns if n and n.strip()]
+
+        def _poke_is_mine(txt: str, target: str) -> bool:
+            """这段文本是不是"**我**拍了 TA"？——`_verify_poke` 的唯一判据。
+
+            ⛔ 2026-09-18 修（真缺陷，现场抓到）：老判据是"含「拍拍」就行"，而**对方拍我的那条
+            同样含「拍拍」** ⇒ 现场日志报 `已拍一拍「E」（已验证：数据库中新增拍一拍事件）`，
+            用户的原话却是「**他拍不到我**」。⇒ 必须认方向：要么是微信自己的"我发起"文案
+            「你拍了拍」，要么是「<我的名字> 拍了拍 <TA>」（我的名字要出现在开头部分）。
+            """
+            t = str(txt or "")
+            if not t:
+                return False
+            if "你拍了拍" in t:
+                return True
+            if "拍了拍" in t and target and (target in t):
+                head = t[:max(24, len(t) // 2)]
+                return any(nm in head for nm in _my_names())
+            return False
+
         try:
             for _ in range(5):
                 time.sleep(1.0)
@@ -6087,8 +6130,8 @@ class WeChatAdapter:
                     except Exception:
                         raw_row = None
                     txt = self._row_inner_text(raw_row or row)
-                    if "拍拍" in txt:
-                        return True, "已拍一拍「%s」（已验证：数据库中新增拍一拍事件）" % target_name
+                    if _poke_is_mine(txt, target_name):
+                        return True, "已拍一拍「%s」（已验证：数据库里是**我发起**的拍拍）" % target_name
         except Exception as e:
             pass
         # 界面 OCR 验证（自己拍的提示不落库时用）
@@ -6105,11 +6148,12 @@ class WeChatAdapter:
                     items = gui.ocr(region)
                 for text, *_ in items:
                     tn = self._norm_ocr(text)
-                    if "拍了拍" in tn or ("拍拍" in tn and ("你" in tn or "我" in tn[:4])):
-                        return True, "已拍一拍「%s」（已验证：界面出现「你拍了拍…」提示）" % target_name
+                    if "你拍了拍" in tn:      # ⛔ 只认"我发起"的文案；不再接受泛泛的「拍了拍」
+                        return True, "已拍一拍「%s」（已验证：界面出现「你拍了拍…」）" % target_name
         except Exception:
             pass
-        return False, "已点「拍一拍」但数据库与界面都未验证到（可能没点中/没拍到，如实告诉对方这次没拍上，稍后再试）"
+        return False, ("已点「拍一拍」但数据库与界面都未验证到**我发起**的拍拍"
+                       "（可能没点中/没拍到，如实告诉对方这次没拍上）")
 
     def reply_quote(self, chat_id: str, text: str, target_text: str = "", target_sender_name: str = ""):
         """引用一条消息并发送文字（串行锁内执行）。"""

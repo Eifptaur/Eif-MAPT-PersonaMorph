@@ -424,14 +424,19 @@ def menu_new_windows(pid: int, before_ids) -> list:
     return out
 
 
-def menu_click(hwnd_menu: int, item_text: str, zoom: int = 2) -> tuple:
+def menu_click(hwnd_menu: int, item_text: str, zoom: int = 2, allow_top_fallback: bool = False) -> tuple:
     """在菜单窗里找含 `item_text` 的项，并**投递左键**点它。返回 `(ok, 说明)`。
 
     ⚠️ 实测两处坑（2026-09-16）：
       ① **OCR 会把「复制」读成「軀制」**（第一版按精确匹配 ⇒ 匹配不到、白跑一轮）⇒ 先用
-         `chat_ocr.matches` 模糊匹配，再兜底"取最上面那一项"（微信文本菜单首项就是复制），
-         并把用了哪条路径写进说明；
+         `chat_ocr.matches` 模糊匹配；
       ② 菜单是**独立顶层窗**、客户区坐标＝窗口矩形坐标（实测投递 (102,68) 命中）⇒ 直接投。
+
+    ⛔ 2026-09-18 改（真缺陷，现场抓到）：原来"匹配不到就**点最上面那一项**"（给「复制」兜底用的），
+    但对「拍一拍」「引用」这类**必须精确命中**的菜单项，这一动作会**去点一个我们根本不知道是什么的项**
+    —— 现场日志原文：`投递右键菜单：已投递点击菜单项（兜底取最上面一项「ek.」，落点 299,47）`，
+    而且随后还被 `_verify_poke` 的假验证判成"已拍成功"。⇒ **兜底改成显式 opt-in（默认关）**：
+    默认匹配不到就**不点**、如实返回失败；确实需要"复制"那种兜底的老调用点自己传 `allow_top_fallback=True`。
     """
     if not hwnd_menu:
         return False, "菜单窗为空"
@@ -464,6 +469,9 @@ def menu_click(hwnd_menu: int, item_text: str, zoom: int = 2) -> tuple:
         except Exception:
             continue
     if hit is None:
+        if not allow_top_fallback:
+            return False, ("菜单里没找到「%s」（读到的是：%s）——**不点**（防点到不知道是什么的项）"
+                           % (item_text, "、".join(str(it[0])[:8] for it in items[:5])))
         _t, _x, _y, _w, _h = sorted(items, key=lambda it: it[2])[0]
         hit, how = (int(_x + _w / 2), int(_y + _h / 2)), "兜底取最上面一项「%s」" % _t
     mx, my = hit
