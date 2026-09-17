@@ -2514,6 +2514,8 @@ def main():
     # 计时提醒 + 节假日问候巡检（第 12/13 条）：20 秒一跳；暂停中一条都不发（恢复后补发）
     _sched = _start_timer_holiday_loop(orch, lambda: wechat_box[0])
 
+    # 水位自愈的限频表（每个群最多 10 秒查一次"最新序号"，别每跳都多打一次库）
+    _wm_heal = {}
     while not orch.stopped:
         poll_interval = max(1.0, float(get_config().get("wechat", {}).get("poll_interval") or 3))
         # ── 微信接入重试（2026-09-16：老代码注释里承诺过、实际**从未实现**的那一句）──────
@@ -2563,6 +2565,25 @@ def main():
                         except Exception:
                             pass
                     continue
+                # ⛔ 2026-09-17（用户问「我把聊天记录清空了，它会不会学不会、从而不发」）：
+                #   水位**只前进不回退**（防重复处理），而**微信清空聊天记录后序号可能回落 / 换库**
+                #   ⇒ 新消息的 sort_seq 小于旧水位 ⇒ 全被判成"处理过了" ⇒ **它真的不回**（而且重启
+                #   也救不回来：水位是从文件读回来的）。这里自愈：库里的**最新序号低于水位** ⇒ 这个
+                #   会话的记录被清过，把水位对齐到当前最新（正常运行时 latest 只会 ≥ 水位，不误触发）。
+                try:
+                    _now2 = time.time()
+                    if (_now2 - float(_wm_heal.get(wxid, 0) or 0)) >= 10.0:
+                        _wm_heal[wxid] = _now2
+                        _latest = int(wechat.latest_seq(wxid) or 0)
+                        _cur = int(wm.get(chat_key, 0) or 0)
+                        if _latest and _cur and _latest < _cur:
+                            log.warning("群[%s] 的消息序号回落到 %d（原水位 %d）⇒ 记录像是被清过，"
+                                        "把水位对齐到最新；否则新消息会被当成旧消息跳过、它就不回了",
+                                        g["name"], _latest, _cur)
+                            wm.set(chat_key, _latest, forward_only=False)
+                            wm.flush()
+                except Exception as e:
+                    log.debug("水位自愈检查失败（不影响监听）：%s", e)
                 try:
                     new = wechat.poll_new_messages(wxid, wm.get(chat_key, 0), limit=50)
                 except Exception as e:
