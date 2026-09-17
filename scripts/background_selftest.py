@@ -65,6 +65,11 @@ _sw_row = [p for p in PATHS if p.get("key") == "switch_chat"][0]
 ck("A4b 切换会话如实写明「会短暂置前 + 自动还回」（不许再写「不负责改前台」）",
    ("短暂把微信置前" in str(_sw_row.get("detail") or "")) and ("自动还回" in str(_sw_row.get("detail") or ""))
    and ("不负责改前台" not in str(_sw_row.get("detail") or "")))
+# A4i（2026-09-18 现场两次回拍失败后加）：**定位失败时先滚到最新再找一遍**
+#   真因：`_send_poke_locate` 的 OCR 路径只在当前视口找、且只保留左侧（对方）的行，items 一空直接
+#   return None；`scroll` 参数只喂给 UIA（我们环境 UIA 不通）⇒ 对方消息不在视口/记录被清空就永远失败。
+ck("A4i 定位失败先滚到最新再找一遍（OCR 路径原来完全不滚）",
+   "_scroll_to_bottom(gui)" in SRC_WECHAT and "滚到最新后" in SRC_WECHAT)
 # A4h（2026-09-18 用户现场后加）：**拍一拍的落点必须在聊天面板内**，越界不许右键
 #   用户原话：「他好像是点了会话列表，但不是点的我的头像，因为我看到他右键出来什么"置顶"之类的东西」
 #   ⇒ 会话列表那边的右键菜单是会话行菜单（置顶/标为未读），等于对"会话"动手而不是拍人。
