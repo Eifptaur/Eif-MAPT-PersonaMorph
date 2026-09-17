@@ -56,6 +56,23 @@ ck("A3 status 取值合法且都有中文标签", not _bad_st, str(_bad_st))
 _named = ["send_text", "moments_open", "moments_scroll", "poke", "quote", "calibrate"]
 _gone = [k for k in _named if k not in {p["key"] for p in PATHS}]
 ck("A4 用户点名的 5 条路径都在表里（含朋友圈打开/刷两段）", not _gone, str(_gone))
+# ── A4b（2026-09-18 实测后加）：**声明与实测一致** ──────────────────────────────
+#   用户当场指出「**前台，他切了前台**」——实测确认：搜索浮层路线会把微信顶到前台（约 1~10s）后自动还回，
+#   而表里原先写的是「**不负责改前台**」＝一句与事实不符的话。这类"对用户承诺过的话"必须有判据钉住。
+_sw_row = [p for p in PATHS if p.get("key") == "switch_chat"][0]
+ck("A4b 切换会话如实写明「会短暂置前 + 自动还回」（不许再写「不负责改前台」）",
+   ("短暂把微信置前" in str(_sw_row.get("detail") or "")) and ("自动还回" in str(_sw_row.get("detail") or ""))
+   and ("不负责改前台" not in str(_sw_row.get("detail") or "")))
+# A4d（2026-09-18 用户当场纠正后加）：**还前台之前先看用户是否在操作**
+#   用户原话：「不是你刚刚把窗口收起了，我把窗口点出来了」——_restore_fg_until 会主动
+#   SetForegroundWindow 抢回"进入时记下的窗口"；用户中途自己点了微信出来，我们这一枪会把他刚点出来的
+#   窗口压回去 ⇒ 违反"不打扰用户"。⇒ 现在抢之前先查 GetLastInputInfo：最近 1.2s 有输入就不抢。
+ck("A4d 还前台前先看用户是否在操作（最近 1.2s 有输入 ⇒ 不抢前台）",
+   "def _user_idle_seconds(" in SRC_WECHAT and "_user_idle_seconds() < 1.2" in SRC_WECHAT
+   and "不抢用户刚切过去的窗口" in SRC_WECHAT)
+ck("A4c 全表不许再出现「不负责改前台」这类与实测不符的表述",
+   "不负责改前台" not in open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                           "agent", "bg_status.py"), encoding="utf-8").read())
 # 表里写"后台"的，代码里必须真有投递实现（防止表上漂亮、代码里没写）
 _claim = {"send_text": "send_text_posted", "moments_open": "moments_open_posted",
           "moments_scroll": "moments_scroll_posted", "switch_chat": "switch_chat_posted",
@@ -109,7 +126,7 @@ ck("B5z5 该传 chat_id 的调用点都传了（拍一拍/自检/引用/消息�
    "传了 %d 处 / 共 %d 处调用（故意留 2 处老行为：朋友圈链 + 自动开第一个群的探测分支）"
    % (len(_guard_calls_cid), len(_guard_calls)))
 # B5z6/B5z7 表情链：**开面板前要确认会话、点完必须回读确认**（现场：面板开了、表情没发出去、还报成功）
-_epo = SRC_WECHAT.split("def emoji_panel_open(")[1][:1600]
+_epo = SRC_WECHAT.split("def emoji_panel_open(")[1][:3000]
 ck("B5z6 emoji_panel_open 不再无视切会话结果（确认不了就失败返回）",
    "不在未知会话上开表情面板" in _epo and "def emoji_panel_open(self, group_name: str = \"\", chat_id: str = \"\")" in SRC_WECHAT)
 _eps = SRC_WECHAT.split("def emoji_panel_send(")[1][:7000]
@@ -124,6 +141,13 @@ ck("B5z10 网格用实测锚点（第一格 0.183/0.166、步长 0.170/0.162）�
    and "legacy" in _eps and "0.10 + _col * 0.19" in _eps)
 ck("B5z11 表情链每一步都留日志（现场运维看得到它到底点了哪里）",
    _eps.count("表情链") >= 3, "日志点 %d 处" % _eps.count("表情链"))
+# B5z12（2026-09-18 现场）：开表情面板**不许无条件先搜索**（用户：「它似乎想要搜索的时候，把微信窗口置顶了」）
+_epo2 = SRC_WECHAT.split("def emoji_panel_open(")[1][:2600]
+ck("B5z12 开面板前先用强档确认当前会话（是则**不搜索、不切会话**）",
+   "self.chat_is_open(chat_id, gui=gui)" in _epo2 and "不搜索、不切会话" in _epo2)
+ck("B5z13 搜索只在「确认不了当前会话」时才发生（不再无条件 _search_group）",
+   "if not _already and not self._search_group(" in _epo2,
+   "（老写法是无条件 `if not self._search_group(...)`）")
 ck("B5z8 表情工具把 chat_id 传进这两条（开面板 + 送格）",
    "emoji_panel_open(group_name=_gname, chat_id=_cid)" in
    open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),

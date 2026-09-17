@@ -218,6 +218,30 @@ def _minimize_back_if_needed(note: str = "") -> None:
         log.warning("放回最小化失败：%s", e)
 
 
+def _user_idle_seconds() -> float:
+    """**距用户最后一次真实输入（键盘/鼠标）过了多少秒**（用 `GetLastInputInfo`）。
+
+    用途（2026-09-18）：`_restore_fg_until` 抢回前台之前先问一句——最近有输入就说明**用户自己在
+    操作**（他点了微信/别的窗口出来），此时我们**不抢**，让用户做主；否则才按原口径把前台还回去。
+    拿不到时返回一个很大的值（＝"当成用户没在动"，行为退回原口径，不会因此少还）。
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class LASTINPUTINFO(ctypes.Structure):
+            _fields_ = [("cbSize", wintypes.UINT), ("dwTime", wintypes.DWORD)]
+
+        lii = LASTINPUTINFO()
+        lii.cbSize = ctypes.sizeof(LASTINPUTINFO)
+        if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(lii)):
+            return 1e9
+        tick = ctypes.windll.kernel32.GetTickCount()
+        return max(0.0, (tick - int(lii.dwTime)) / 1000.0)
+    except Exception:
+        return 1e9
+
+
 def _restore_fg_until(note: str = "", timeout: float = 2.5, keep: bool = True,
                       gap: float = 0.18) -> bool:
     """在 `timeout` 秒内**反复**把前台还回 stash 那一个，直到真的回到它为止。
@@ -231,6 +255,18 @@ def _restore_fg_until(note: str = "", timeout: float = 2.5, keep: bool = True,
     h = int(_FG_STASH.get("hwnd") or 0)
     if not h:
         return False
+    # 🔴 2026-09-18 加闸（用户现场：「**不是你刚刚把窗口收起了，我把窗口点出来了**」）：
+    #   这条链会 **主动 `SetForegroundWindow` 去抢回**"进入时记下的那个窗口"。如果**用户在中途自己
+    #   点了微信（或别的窗口）出来**，我们这一枪就会把他刚点出来的窗口压回去 —— 那是"不打扰用户"的红线。
+    #   ⇒ 还之前先问一句：**最近 1.2 秒内有真实键盘/鼠标输入吗？**（`GetLastInputInfo`）
+    #      有 ⇒ 是用户自己在操作，**这一轮不抢**（让人做主）；没有 ⇒ 才按原口径还。
+    try:
+        if _user_idle_seconds() < 1.2:
+            log.info("还前台跳过（%s）：最近 %.2fs 内有用户输入 ⇒ 不抢用户刚切过去的窗口",
+                     note or "未注明", _user_idle_seconds())
+            return False
+    except Exception:
+        pass
     deadline = time.time() + max(0.2, float(timeout))
     tries = 0
     while time.time() < deadline:
@@ -6332,10 +6368,24 @@ class WeChatAdapter:
             from . import ui_adapt
             if not ui_adapt.prepare_screen(gui):
                 return False, "屏幕预检失败"
-            # ① 恒用「搜索群名进入」（wechatauto open_chat 内部即搜索点击；画面空/非空都走）
+            # ① 先看"当前会话是不是就是目标"——**是就绝不搜索**。
+            #   ⛔ 2026-09-18 现场（用户原话）：「我刚刚 Ctrl 踩在顶层的时候，**它似乎想要搜索的时候，把微信
+            #   窗口置顶了**，因为我看到微信窗口从控制台的后面跳到前面」。老代码这里**无条件先
+            #   `_search_group()`**（点搜索框→粘群名→点结果行），哪怕当前已经就在目标会话里 ⇒ 白搜一趟，
+            #   而搜索路线会碰微信搜索框、把微信带到前台（日志同族的账：「还前台收尾（投递发送后）：
+            #   试了 14 次，最终前台=133638 ✗ 没能回到」）。⇒ 先用强档证据确认，确认到了就**什么都不做**。
             if group_name:
-                # 进群=手写搜索（点搜索框→粘贴群名→点弹出的群聊）；失败才兜底（现在兜底也是投递优先）
-                if not self._search_group(gui, group_name):
+                _already = False
+                if chat_id:
+                    try:
+                        _already, _why_already = self.chat_is_open(chat_id, gui=gui)
+                        if _already:
+                            log.info("表情面板：当前会话已是目标（%s）⇒ **不搜索、不切会话**",
+                                     str(_why_already)[:80])
+                    except Exception:
+                        _already = False
+                # 只有"确认不了当前会话"时才去搜索进群；搜索路线失败再兜底（兜底也是投递优先）
+                if not _already and not self._search_group(gui, group_name):
                     if not self._open_chat_guarded(group_name, chat_id):
                         return False, ("确保目标会话失败（投递切会话与真鼠标都没成）⇒ "
                                        "**不在未知会话上开表情面板**（防把表情发到别的群）")
