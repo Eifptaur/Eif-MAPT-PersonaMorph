@@ -694,8 +694,16 @@ def poke_event_is_ours(nm: dict, self_wxid: str) -> bool:
       · 而监听分支里**任何 `[拍一拍]` 都会 `orch.on_incoming()`** ⇒ **我们自己的回拍回执被当成
         "别人拍我"喂给了模型** ⇒ 模型看不到主语，只能反问「谁拍我」。
       · 原来那道"自己拍的"判断只写在 `_schedule_poke_back` 里（只防回拍），**没拦"喂模型"**。
-    ⇒ 判据（两条，任一成立即"是我们的"）：① `poker_wxid` 就是自己；② **名字与 wxid 都抠不出**
-      （＝"我拍别人"的形态；而"别人拍我"即使文案被自定义过，`patinfo.fromusername` 仍有值）。
+    ⇒ 判据（两条，任一成立即"是我们的"）：① `poker_wxid` 就是自己；② **名字抠不出**（＝"我拍别人"的形态；
+      而"别人拍我"即使文案被自定义过，`patinfo.fromusername` 仍有值）。
+    🔴 2026-09-18 二修（录制现场第二次漏，作者当场问"那个 3 不会是人吧"）：**②不能再要求 wxid 也抠不出** ——
+      4.x 群聊里 `real_sender_id` 是**会话内本地槽位号、不可靠**（本文件 :1553 早就写着），
+      我们自己那条回执在 DB 里带的是 **`sender_id=3`（数字槽位）**而不是空 ⇒ 旧条件 `(not name) and (not wid)`
+      当场失效 ⇒ 回执被当成"成员 3 拍了我"喂给模型 ⇒ 它答「3你也拍，今天集体失眠是吧」（"3"其实是它自己）。
+      现场证据（`data/message_ledger.jsonl` 07:43:27）：`sid=3 / echo=False / keep=True / text=[拍一拍]`，
+      而同槽位的**文本**回复全部 `echo_hit=True`（文本回声窗管用，拍一拍这条没有文本可比对 ⇒ 漏）。
+    ⇒ 新形态：**名字抠不出 + wxid 是空或纯数字槽位** ⇒ 判自家；wxid 形如真账号 ⇒ 保守当"别人拍我"
+      （宁可少回拍一次，也不许把别人当成自己 —— 反过来正是 09-17 那个"把别人拍我判成我拍的"假成功的镜像）。
     """
     try:
         wid = str((nm or {}).get("poker_wxid") or "")
@@ -706,7 +714,9 @@ def poke_event_is_ours(nm: dict, self_wxid: str) -> bool:
             name = _poke_name_of_text(str((nm or {}).get("text") or ""))
         except Exception:
             name = ""
-        return (not name) and (not wid)
+        if name:
+            return False                      # 有名字 ⇒ "别人拍我"的形态
+        return not (wid and not wid.isdigit())     # 空/数字槽位 ⇒ 自家回执；真账号 ⇒ 当别人
     except Exception:
         return False
 
