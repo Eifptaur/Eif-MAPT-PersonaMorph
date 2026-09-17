@@ -460,6 +460,15 @@ def menu_click(hwnd_menu: int, item_text: str, zoom: int = 2, allow_top_fallback
         return False, "菜单 OCR 失败：%s" % str(e)[:60]
     if not items:
         return False, "菜单 OCR 读不到任何项（判据不可用，不点）"
+    # 🔴 2026-09-18 加（作者当场问「他的鼠标似乎够不上，悬停在"引用"那一栏了。你是不是只把工具栏往上调了
+    #   一点点？」）：**把菜单里读到的每一项都写进日志**（文本 + 中心 y），这样"菜单里到底有什么、我们点的是
+    #   哪一项、纵向差多少"一眼可见，不用再靠猜。自绘菜单的项是等高的，y 就是判"点没点偏"的唯一依据。
+    try:
+        _listed = sorted(items, key=lambda it: it[2])
+        log.info("菜单 OCR 明细（%d 项）：%s", len(_listed),
+                 " ｜ ".join("%s@y=%d" % (str(it[0])[:8], int(it[2] + it[4] / 2)) for it in _listed[:10]))
+    except Exception:
+        pass
     hit, how = None, ""
     for (t, x, y, w, h) in items:
         try:
