@@ -26,6 +26,7 @@ import base64
 import json
 import logging
 import os
+import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -420,7 +421,129 @@ def _ffmpeg_bin() -> str:
     return _sh.which("ffmpeg") or ""
 
 
-def _edge_make(text: str, cfg: dict, timeout: int):
+def _rate_pct(cfg: dict, extra: int = 0) -> int:
+    """`voice_reply.rate`（-10~10，SAPI 刻度）⇒ edge 的百分比语速（每档 5%）。"""
+    try:
+        r = int(cfg.get("rate") or 0)
+    except Exception:
+        r = 0
+    return max(-100, min(200, r * 5 + int(extra or 0)))
+
+
+def _concat_wavs(paths, timeout: int, fast_flags=None):
+    """把多段 wav **按顺序拼成一个**（ffmpeg concat，段间不加任何静音）。"""
+    ff = _ffmpeg_bin()
+    if not ff or len(paths) < 2:
+        return None, "缺 ffmpeg 或片段不足"
+    d = _out_dir()
+    try:
+        os.makedirs(d, exist_ok=True)
+    except Exception:
+        pass
+    stamp = time.strftime("%H%M%S") + ("%03d" % (int(time.time() * 1000) % 1000))
+    #: **只给"快段"剪掉两端静音**：edge 每段自带约 0.3s 留白，快段两头留着就成了"顿一下再快念"；
+    #: 其余段**原样保留**——它们的留白正好是「，」该有的那口气，不能一起剪掉（否则整句变成一口气冲完）。
+    _trim = ("silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0,"
+             "areverse,silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0,areverse")
+    flags = list(fast_flags or [False] * len(paths))
+    while len(flags) < len(paths):
+        flags.append(False)
+    norm = []
+    for i, p in enumerate(paths):
+        n = os.path.join(d, "seg_%s_%d.wav" % (stamp, i))
+        cmd = [ff, "-y", "-loglevel", "error", "-i", p]
+        if flags[i]:
+            cmd += ["-af", _trim]
+        cmd += ["-ar", "22050", "-ac", "1", n]
+        try:
+            r = subprocess.run(cmd,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               timeout=max(30, int(timeout)),
+                               creationflags=0x08000000 if os.name == "nt" else 0)
+        except Exception as e:
+            return None, "片段统一格式失败：%s" % str(e)[:60]
+        if r.returncode != 0 or not os.path.exists(n):
+            return None, "片段统一格式失败（rc=%s）" % r.returncode
+        norm.append(n)
+    lst = os.path.join(d, "seg_%s.txt" % stamp)
+    try:
+        with open(lst, "w", encoding="utf-8") as f:
+            for n in norm:
+                f.write("file '%s'\n" % n.replace("\\", "/").replace("'", "'\\''"))
+    except Exception as e:
+        return None, "写拼接清单失败：%s" % str(e)[:60]
+    out = os.path.join(d, "tts_seg_%s.wav" % stamp)
+    try:
+        r = subprocess.run([ff, "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", lst,
+                            "-c", "copy", out],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           timeout=max(30, int(timeout)),
+                           creationflags=0x08000000 if os.name == "nt" else 0)
+    except Exception as e:
+        return None, "拼接失败：%s" % str(e)[:60]
+    if r.returncode != 0 or not os.path.exists(out) or os.path.getsize(out) < 1000:
+        return None, "拼接失败（rc=%s）" % r.returncode
+    for n in norm + [lst]:
+        try:
+            os.remove(n)
+        except Exception:
+            pass
+    return out, ""
+
+
+def _make_segmented(text: str, c: dict, timeout: int):
+    """**语气段处理**：句子里有"连续同字"（语气偏快的连读）时，分段合成 + **快段加速** + 无停顿拼接。
+
+    为什么这么做（用户 2026-09-17 纠正）：他说的「行行行」是**一口气快连读**，不是三个字一顿。
+    插标点＝一字一顿（我上一版的错法）；而 edge 档**没有音素/停顿入口**（官方定论）⇒ 我们唯一能控的
+    就是**语速**：把快段单独合成、语速加 `voice_reply.run_boost`（默认 +25%），其余照常，再拼回一句。
+    返回 `(路径 或 None, 说明, info)`；`None` 表示"这条路没走成，交给原来的单段路径"（绝不半途而废）。
+    """
+    try:
+        from . import tts_text as _tt
+    except Exception:
+        return None, "", {}
+    segs = _tt.segments(text)
+    fast = [s for s in segs if s[1]]
+    if not fast or len(segs) < 2:
+        return None, "", {}
+    if not _ffmpeg_bin():
+        return None, "要拼接多段得有 ffmpeg", {}
+    b = backend(c)
+    try:
+        boost = int(c.get("run_boost", 25) or 0)
+    except Exception:
+        boost = 25
+    paths, engines, flags = [], [], []
+    for sub, is_fast in segs:
+        if not sub.strip():
+            continue
+        if b == "edge":
+            p, why, info = _edge_make(sub, c, timeout, rate_pct=_rate_pct(c, boost if is_fast else 0))
+        elif b != "http":
+            try:
+                from . import tts
+                p, why, info = tts.make(sub, rate=_rate_pct(c, boost if is_fast else 0) // 5)
+            except Exception as e:
+                p, why, info = None, "系统声音分段合成失败：%s" % str(e)[:60], {}
+        else:
+            return None, "", {}          # 自带模型：整句交给用户的服务，不擅自切
+        if not p:
+            return None, why or "分段合成失败", {}
+        paths.append(p)
+        engines.append((info or {}).get("engine") or b)
+        flags.append(bool(is_fast))
+    if len(paths) < 2:
+        return None, "", {}
+    merged, why = _concat_wavs(paths, timeout, flags)
+    if not merged:
+        return None, why, {}
+    return merged, "", {"engine": engines[0], "voice": "", "fmt": "wav",
+                        "bytes": os.path.getsize(merged), "prosody":
+                        "快段加速 +%d%%（%d 段，段间无停顿）" % (boost, len(paths))}
+
+
+def _edge_make(text: str, cfg: dict, timeout: int, rate_pct: int = None):
     """edge-tts 合成 ⇒ ffmpeg 转 wav。返回 (路径 或 None, 错误说明, info)。"""
     try:
         import edge_tts
@@ -439,7 +562,13 @@ def _edge_make(text: str, cfg: dict, timeout: int):
     wav = os.path.join(d, "tts_edge_%s.wav" % stamp)
 
     async def _go():
-        await edge_tts.Communicate(text, voice).save(mp3)
+        # ⚠️ 2026-09-17 修：原来这里没传 rate ⇒ `voice_reply.rate`（语速）**在默认的 edge 档是死键**
+        #    （只有 SAPI 档读它）。现在接上：rate(-10~10) × 5 = 百分比。
+        rp = _rate_pct(cfg) if rate_pct is None else int(rate_pct)
+        if rp:
+            await edge_tts.Communicate(text, voice, rate="%+d%%" % rp).save(mp3)
+        else:
+            await edge_tts.Communicate(text, voice).save(mp3)
 
     try:
         asyncio.run(_go())
@@ -477,6 +606,13 @@ def _make_raw(text: str, cfg: dict | None = None, timeout: int = DEFAULT_TIMEOUT
     if not text:
         return None, "文本为空（不合成）", {}
     b = backend(c)
+    # 语气段优先：句子里有"连续同字"（快连读）时走分段合成 + 快段加速；不成则落回单段老路
+    try:
+        _sp, _swhy, _sinfo = _make_segmented(text, c, timeout)
+    except Exception as _e:                                             # noqa: BLE001
+        _sp, _swhy, _sinfo = None, "分段合成异常：%s" % str(_e)[:60], {}
+    if _sp:
+        return _sp, "", _sinfo
     if b == "edge":
         p, why, info = _edge_make(text, c, timeout)
         if p:

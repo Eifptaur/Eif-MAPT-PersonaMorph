@@ -31,6 +31,79 @@ GLUE = "的了是在和就都也很我你他她它吧啊嘛呀呢把被给对从
 PUNCT = "，。！？、；：,.;!?:~…—-（）()《》〈〉【】「」『』\"'“”‘’【】 \t\n\r"
 
 
+#: 连续同字时的「**同音字替换**」表：键＝多音字，值＝**只读一种音**且读音＝该字首选读音的常用字。
+#: 用途＝修「行行**hang**行」这类**多音字切词**错误；只在**连续同一个字 ≥3** 时生效（不改正常句子）。
+#: 表由 pypinyin 的数据机械复核（`scripts/tts_text_selftest.py` F 段：原字多音 / 替换字单调 / 读音相等），
+#: 生成与筛选过程见 `_scratch/build_homophone.py`、`_scratch/verify_homophone.py`。
+HOMOPHONE = {
+    "行": "形", "中": "钟", "种": "肿", "都": "兜", "觉": "绝", "还": "孩", "数": "树", "相": "香", "兴": "星",
+    "会": "汇", "见": "建", "家": "加", "强": "墙", "任": "认", "提": "题", "分": "纷", "和": "河", "间": "尖",
+    "将": "江", "供": "工", "扫": "嫂", "传": "船", "处": "触", "单": "丹", "得": "德", "读": "独", "度": "渡",
+    "难": "男", "宁": "凝", "倒": "到", "差": "岔",
+}
+#: 连续同一个字多少个算"连读段"（≥3 才动；两个字（好好、看看）语速本来就正常）
+RUN_LEAST = 3
+
+
+def fix_runs(s: str) -> tuple:
+    """连续同一个字 ≥`RUN_LEAST` 且该字是多音字 ⇒ 整段换成**单音同音字** ⇒ (新文本, 说明)。
+
+    为什么（用户 2026-09-17 纠正 + 途径调研）：引擎的多音字前端会把「行行行」中间的「行」判成 háng
+    （`行` 的异读＝xíng/háng/héng/xìng/hàng），而**插标点会把连读读成一字一顿、语气全丢**。
+    社区通用解法（GPT-SoVITS #209 下的原话：「你先写成**换航**」）＝**同音字替换**——对任何引擎都有效。
+    """
+    out, notes, i, n = [], [], 0, len(s)
+    while i < n:
+        ch = s[i]
+        j = i
+        while j < n and s[j] == ch:
+            j += 1
+        run = j - i
+        rep = HOMOPHONE.get(ch) if (run >= RUN_LEAST and ch not in PUNCT) else None
+        if rep:
+            out.append(rep * run)
+            notes.append("同音字替换 %s→%s（连说 %d 遍，避免多音字读错）" % (ch * run, rep * run, run))
+        else:
+            out.append(s[i:j])
+        i = j
+    return "".join(out), notes
+
+
+def fast_spans(s: str, least: int = RUN_LEAST) -> list:
+    """「语气偏快的连读段」在文本里的位置 ⇒ [(start, end)]（连续同一个字 ≥`least`）。
+
+    给合成层用：这些段**单独合成、语速快一点**，其余照常 —— 这样「行行行」读出来是快连读，
+    既不是一字一顿（插逗号的错法），也不是慢吞吞三个字。纯函数，好测。
+    """
+    spans, i, n = [], 0, len(str(s or ""))
+    t = str(s or "")
+    while i < n:
+        ch = t[i]
+        j = i
+        while j < n and t[j] == ch:
+            j += 1
+        if (j - i) >= least and ch not in PUNCT:
+            spans.append((i, j))
+        i = j
+    return spans
+
+
+def segments(s: str) -> list:
+    """把整句切成 [(片段, 是否快段)] —— 快段＝连续同字，其余＝普通片段。给分段合成用。"""
+    t = str(s or "")
+    if not t:
+        return []
+    out, last = [], 0
+    for a, b in fast_spans(t):
+        if a > last:
+            out.append((t[last:a], False))
+        out.append((t[a:b], True))
+        last = b
+    if last < len(t):
+        out.append((t[last:], False))
+    return out
+
+
 def _clean(s: str) -> str:
     """去表情/换行/重复标点（引擎对这些要么乱念、要么噎住）。**不动正常文字**。"""
     keep = []
@@ -170,6 +243,11 @@ def prep(text, cfg=None) -> tuple:
         if a in s:
             s = s.replace(a, b)
             notes.append("念法表 %s→%s" % (a, b))
+    # 用户表之后：连续同字的多音字修正（行行行 → 形形形；**不插标点**）
+    s_run, run_notes = fix_runs(s)
+    if run_notes:
+        s = s_run
+        notes.extend(run_notes)
     s2 = split_long(s)
     if s2 != s:
         notes.append("长句补呼吸")

@@ -37,12 +37,15 @@ def src(rel):
     return io.open(os.path.join(ROOT, rel), encoding="utf-8").read()
 
 
-print("── A. 连续同字：**不许自动插标点**（用户 2026-09-17 纠正）──")
+print("── A. 连续同字：**不插标点**，改用同音字锁定读音（用户 2026-09-17 纠正）──")
 t, n, p = TT.prep("行行行")
-ok("A1 「行行行」原样保留（插逗号＝一字一顿，把连读的语气读没）", t == "行行行", t)
-ok("A2 说明里也不该出现「同字断句」（那条行为已废）", not any("同字" in x for x in n), str(n))
-ok("A3 「哈哈哈」「好好好」同样不动", TT.prep("哈哈哈")[0] == "哈哈哈" and TT.prep("好好好")[0] == "好好好")
-ok("A4 逐字念的函数还在（留给显式要求，如念验证码），只是默认不调用",
+ok("A1 「行行行」绝不被逗号切开（一字一顿＝语气全丢）", "行，行，行" not in t and "，" not in t, t)
+ok("A2 读音靠同音字锁定：行行行 ⇒ 形形形（多音字表内）", t == "形形形", t)
+ok("A3 说明里写明是同音字替换", any("同音字替换" in x for x in n), str(n))
+ok("A4 表外的字一个字都不动（哈哈哈 / 好好好 / 对对对）",
+   TT.prep("哈哈哈")[0] == "哈哈哈" and TT.prep("好好好")[0] == "好好好" and TT.prep("对对对")[0] == "对对对")
+ok("A5 只连说两遍不动（行行 = 语气词，读音本来就对）", TT.prep("行行")[0] == "行行", TT.prep("行行")[0])
+ok("A6 逐字念的函数还在（留给显式要求，如念验证码），只是默认不调用",
    TT.split_same_char("行行行") == "行，行，行" and "split_same_char(s)" not in
    io.open(os.path.join(ROOT, "agent", "tts_text.py"), encoding="utf-8").read().split("def prep")[1])
 
@@ -92,8 +95,9 @@ ok("D5 空文本 ⇒ 空（不炸）", TT.prep("") == ("", [], []) and TT.prep(N
 ok("D6 纯表情 ⇒ 空（调用方会当「没内容」处理）", TT.prep("😀😀")[0] == "", TT.prep("😀😀")[0])
 ok("D7 正常句子里的话一个字都不改（只加停顿）",
    "晚安，早点休息" in TT.prep("晚安，早点休息")[0], TT.prep("晚安，早点休息")[0])
-ok("D8 「拿你没办法」这类语气不被改写（一个字都不动）",
-   TT.prep("行行行，你说了算")[0] == "行行行，你说了算", TT.prep("行行行，你说了算")[0])
+ok("D8 语气不被加标点（节奏不动；只允许同音字修正读音）",
+   TT.prep("行行行，你说了算")[0] == "形形形，你说了算"
+   and TT.prep("行行行，你说了算")[0].count("，") == 1, TT.prep("行行行，你说了算")[0])
 
 print("── E. 接线（规则必须挂在合成入口上，不然只有「我调过」才生效）──")
 _vm = src(os.path.join("agent", "voice_models.py"))
@@ -104,6 +108,50 @@ ok("E3 整形失败不连坐（按原文念，不因为整形挂掉就不发声�
    "按原文念" in _vm)
 _cfg = src(os.path.join("agent", "config.py"))
 ok("E4 配置里有 voice_reply.pronounce（用户能填例外）", '"pronounce"' in _cfg)
+
+print("── F. 快段（连读的语气）：切段与加速接线 ──")
+ok("F1 快段识别：连续同字 ≥3 ⇒ [(起点, 终点)]",
+   TT.fast_spans("行行行") == [(0, 3)] and TT.fast_spans("哈哈") == [], str(TT.fast_spans("行行行")))
+ok("F2 句首/句中/句尾都能切出来",
+   TT.fast_spans("行行行你好") == [(0, 3)] and TT.fast_spans("你行行行好") == [(1, 4)]
+   and TT.fast_spans("你好行行行") == [(2, 5)], str(TT.fast_spans("你行行行好")))
+ok("F3 分段形状：[(普通段, False), (快段, True), …]",
+   TT.segments("你好行行行吗") == [("你好", False), ("行行行", True), ("吗", False)],
+   str(TT.segments("你好行行行吗")))
+ok("F4 没有快段就一段（不无谓地走拼接）", TT.segments("你好呀") == [("你好呀", False)])
+_vm = io.open(os.path.join(ROOT, "agent", "voice_models.py"), encoding="utf-8").read()
+ok("F5 合成层接了分段合成（快段单独合成再拼）", "_make_segmented" in _vm and "def _concat_wavs" in _vm)
+ok("F6 快段加速有配置键 run_boost，且只在快段上加",
+   '"run_boost": 25' in src(os.path.join("agent", "config.py")) and "boost if is_fast else 0" in _vm)
+ok("F7 只给**快段**剪两端静音（其余段的留白＝「，」那口气，不能一起剪）",
+   "fast_flags" in _vm and "if flags[i]:" in _vm)
+ok("F8 edge 档的语速接通了（rate 不再是死键）",
+   'Communicate(text, voice, rate=' in _vm and "_rate_pct" in _vm)
+ok("F9 分段不成要**落回单段**（绝不半途而废）",
+   "交给原来的单段路径" in _vm and "_make_segmented(text, c, timeout)" in _vm)
+
+print("── G. 同音字表：按 pypinyin 数据机械复核（真实数据，不靠我记忆）──")
+try:
+    from pypinyin import Style, pinyin as _py            # noqa: E402
+
+    def _rd(ch):
+        return _py(ch, heteronym=True, style=Style.TONE3)[0]
+
+    bad = []
+    for k, v in TT.HOMOPHONE.items():
+        rk, rv = _rd(k), _rd(v)
+        if len(rk) < 2:
+            bad.append("%s 不是多音字" % k)
+        elif len(rv) != 1:
+            bad.append("%s→%s 替换字不单调(%s)" % (k, v, rv))
+        elif rv[0] != rk[0]:
+            bad.append("%s→%s 读音不等(%s vs %s)" % (k, v, rv[0], rk[0]))
+    ok("G1 表里每一对都成立（原字多音 / 替换字单调 / 读音＝原字首选）", not bad, "；".join(bad[:4]))
+    ok("G2 表里至少有 25 对（覆盖常见口语连读字）", len(TT.HOMOPHONE) >= 25, str(len(TT.HOMOPHONE)))
+    ok("G3 「行→形」在表里且读音正确（那条 bug 的正主）",
+       TT.HOMOPHONE.get("行") == "形" and _rd("形") == ["xing2"] == _rd("行")[:1])
+except Exception as e:                                    # noqa: BLE001
+    ok("G1 pypinyin 可用（装依赖时就在 requirements 里）", False, str(e)[:60])
 
 print("\n== 语音文本整形判据：%d 通过 / %d 失败 ==" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
