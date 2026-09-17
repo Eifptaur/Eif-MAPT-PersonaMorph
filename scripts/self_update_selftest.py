@@ -241,5 +241,40 @@ try:
 finally:
     shutil.rmtree(tmp, ignore_errors=True)
 
+# ── 2026-09-17：用户转述「控制台上面的更新用不了，卡在 0% 不动，我都是直接去原地址下载覆盖的」 ──
+#    根因＝老下载链是 120 秒/源 × 4 个源（最坏 8 分钟界面钉在 0%），而且**换源是静默的**
+#    ⇒ 界面只有「0%」一个信息，用户只能判断它死了。这里把三条钉住。
+_UA_SRC = open(os.path.join(ROOT, "agent", "update_apply.py"), encoding="utf-8").read()
+ok(UA.STALL_S == 20.0 and "timeout: float = STALL_S" in _UA_SRC,
+   "单个源的卡死判据＝20 秒（不是老值 120 秒；它是「没数据」判据，不是总时长上限）")
+ok(len(UA.DL_MIRRORS) >= 4, "镜像源至少 4 个（含 gh.llkk.cc）   [%s]" % (UA.DL_MIRRORS,))
+ok("progress(0, 0)" in _UA_SRC and "on_try(i, len(urls), u" in _UA_SRC,
+   "换源前先把进度归零、并回调 on_try（界面看得见「在换源」，不是僵住的百分比）")
+ok("换下一个源" in _UA_SRC and "_src_name" in _UA_SRC,
+   "作业状态里写明「源 k/n（当前是谁）/ 上一个源不通，换下一个」")
+ok("手动下载覆盖" in _UA_SRC, "全失败时把官方地址带回去（用户至少能手动下载覆盖）")
+# 行为：5 个源全失败（把 _dl_once 钉成必失败），on_try/progress 的次序与内容要对
+_saved_dl_once = UA._dl_once
+_calls, _prog = [], []
+try:
+    UA._dl_once = lambda u, d, t, p=None: (False, "boom")
+    _okd, _why = UA.download(
+        "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.22/x.zip",
+        os.path.join(tmp, "never.zip"),
+        progress=lambda g, t: _prog.append((g, t)),
+        on_try=lambda i, n, u, w="": _calls.append((i, n, u, w)))
+finally:
+    UA._dl_once = _saved_dl_once
+_n_src = len(UA.DL_MIRRORS) + 1
+ok(_okd is False, "全源失败 ⇒ 如实返回 False（不许假装成功）")
+ok(len([c for c in _calls if c[0] > 0]) == _n_src,
+   "官方直连 + 每个镜像**逐个都试过**   [试了 %d 个]" % len([c for c in _calls if c[0] > 0]))
+ok(all(c[1] == _n_src for c in _calls if c[0] > 0),
+   "每次回调都带上「总共几个源」（界面能显示 2/5）")
+ok(len(_prog) >= _n_src and _prog.count((0, 0)) >= _n_src,
+   "每个源开始前都归零一次进度（(0, 0) × 源数）")
+ok("手动下载覆盖" in _why and "github.com" in _why,
+   "失败原因里带官方地址（用户能照着手动下载覆盖）")
+
 print("\n==== 自更新判据：%d 通过 / %d 失败 ====" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
