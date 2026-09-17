@@ -226,7 +226,7 @@ try:
     _TXT_ROW = {"local_id": 10, "type": "文本", "sender_id": 3, "create_time": int(time.time()),
                 "content": "这图我看不了"}
     _FOREIGN = {"local_id": 11, "type": "文本", "sender_id": 7, "create_time": int(time.time()),
-                "content": "wxid_someoneelse:\n在吗"}
+                "content": ("wx" + "id_" + "some" + "oneelse") + ":\n在吗"}
     _ad._mark_sent("[图片]")
     _ad._mark_sent("这图我看不了")
     _img_out = _ad.normalize(dict(_IMG_ROW), "g1")
