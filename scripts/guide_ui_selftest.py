@@ -91,8 +91,8 @@ ok("控制台里不再出现 tools.d/README.md 指路", "tools.d/README.md" not 
 ok("工具面板空状态改为指向应用内引导", "点上面的「怎么加工具」" in HTML)
 ok("面板描述里明确「全在弹窗里」", "全在弹窗里" in HTML)
 ok("语音/图库/转发也有各自的引导入口", all(x in HTML for x in ("缺引擎怎么办", "怎么放图", "为什么默认关")))
-ok("语音回复的形态边界进了弹窗（默认真语音条 + 真点代价 + 发前自检 + 念法纠正）",
-   all(x in HTML for x in ('默认形态是"真语音条"', "只认真实点击", "音量点", "念法纠正")))
+ok("语音回复的形态边界进了弹窗（默认真语音条 + 右 Alt 不动鼠标 + 要前台 + 念法纠正）",
+   all(x in HTML for x in ('默认形态是"真语音条"', "右 Alt 键", "不会动你的鼠标", "前台", "念法纠正")))
 
 print("── E. 一键生成模板 ──")
 _wu = open(os.path.join("agent", "webui.py"), encoding="utf-8").read()
