@@ -602,20 +602,35 @@ class WeChatAdapter:
         except ImportError as e:
             raise WeChatError("未安装 wechatauto：请先安装依赖（pip install -r requirements.txt）。%s" % e)
         _dd = str(self.cfg.get("wechat", {}).get("db_dir") or "").strip()
-        _picked, _src = resolve_db_dir(_dd)
-        try:
-            self._db = WeChatDB(db_dir=_picked) if _picked else WeChatDB()
-        except Exception:
-            if _src != "scanned":
-                raise
-            # 扫盘探到的那个也不成 ⇒ 退回驱动库自探测（保持原行为，别把新的失败点引进来）
-            self._db = WeChatDB()
+        # ⛔ 2026-09-17（网友那份检验报告：侧栏「微信未连接·原因未知」+ 报告里「会话头检查失败:
+        #    未找到任何已登录账号的数据库」，而**同一进程的逐步诊断六步全过**）：
+        #    两条路只差**回退链**——老写法只在"扫盘那条"失败时才退，配置里填错一条就直接抛
+        #    （`_src == "config"` ⇒ re-raise）⇒ 用户明明有能用的库，却被控制台那个输入框按死。
+        #    ⇒ 三档依次试（配置 → 扫盘 → 驱动库自探测），全失败才真失败。
+        self._db, _how, _errs = open_db(_dd)
+        self._db_how = dict(_how or {})
+        if self._db is None:
+            _why = "；".join("「%s」%s" % (d or "驱动库自探测", e) for d, _s, e in _errs)
+            _e0 = _errs[0][2] if _errs else "未知原因"
+            raise WeChatError("打不开消息库：%s（试过 %d 条路：%s）%s"
+                              % (_e0, len(_errs), _why, _db_open_verdict(_probe_db_dirs(_dd))))
+        _picked = str(_how.get("dir") or "")
+        _src = str(_how.get("src") or "")
         if _src == "scanned":
             # 2026-09-16（网友 B 的诊断截图）：**不写用户的 config，但必须留痕** ——
             # 否则用户会以为"我什么都没配它就好了"，下次换台机器/换个目录又要重新踩一遍。
             try:
                 log.warning("「数据库目录」没配 ⇒ 自动用了扫盘探到的 %s"
                             "（建议在控制台「数据库目录」里保存它，免得下次又靠扫盘）", _picked)
+            except Exception:
+                pass
+        elif _dd and _src != "config":
+            # 配置里填了、但那条路用不了 ⇒ **必须说出来**（静默改用别的目录会让用户
+            # 以为"我填的那个生效了"，下次换机器又踩）。不替他改配置，只给能照着做的动作。
+            try:
+                log.warning("「数据库目录」里填的 %s 用不了（%s）⇒ 已自动改用 %s；"
+                            "建议把那个框改成这个目录，或在控制台清空它让它自动探测",
+                            _dd, (_errs[0][2] if _errs else "开不了"), _picked or "驱动库自探测到的目录")
             except Exception:
                 pass
         # 2026-09-16（网友 A 的报告：`KeyError: 'message\media 1.db'`）：微信会**懒创建**新分片，
@@ -6192,6 +6207,49 @@ def resolve_db_dir(explicit: str = "") -> tuple:
     return "", ""
 
 
+def db_open_tries(explicit: str = "") -> list:
+    """开消息库要**依次试**的 `(目录, 来源)`：配置填的 → 扫盘探到的 → 驱动库自探测（`""`）。
+
+    为什么要有它（2026-09-17 网友那份环境检验报告）：现场是「侧栏写『微信未连接·原因未知』、
+    报告里写『会话头检查失败: 未找到任何已登录账号的数据库』，可**同一个进程的逐步诊断六步全过**」。
+    两条路只差**回退链**：老 `_init_db` 只在"扫盘那条"失败时才退，配置里填错一条就直接抛
+    （`_src == "config"` ⇒ re-raise）⇒ 用户明明有能用的库，却被那个输入框按死。
+    ⇒ 口径定死：**配置只是"我建议你用哪个"，不是"只许用哪个"**；三条路全失败才真失败，
+    且每条路各自的原因都要能报出来（只报第一条会让人照着错的去查）。
+    """
+    out = []
+    _e = str(explicit or "").strip()
+    if _e:
+        out.append((_e, "config"))
+    try:
+        _p, _s = resolve_db_dir("")            # 只走"扫盘"那条（不看配置）
+        if _p and _p not in [d for d, _ in out]:
+            out.append((_p, "scanned"))
+    except Exception:
+        pass
+    out.append(("", "auto"))
+    return out
+
+
+def open_db(explicit: str = ""):
+    """按 `db_open_tries` 依次开消息库。返回 `(db, how, errors)`。
+
+    `db is None` ＝ 三条路全失败；`how = {"dir","src","account_dir"}`（成功那条的信息）；
+    `errors = [(目录, 来源, "异常名: 信息")]`（**按试的先后**，含失败的那些）。
+    唯一实现：`_init_db`（产品接入）与 `attach_diagnosis`（诊断）都走这里，别再各写一套。
+    """
+    errors = []
+    for _d, _src in db_open_tries(explicit):
+        try:
+            from wechatauto import WeChatDB        # 放在 try 里：驱动库没装也要**照实记成一条原因**
+            db = WeChatDB(db_dir=_d) if _d else WeChatDB()
+            return db, {"dir": _d, "src": _src,
+                        "account_dir": str(getattr(db, "account_dir", "") or "")}, errors
+        except Exception as e:                  # ImportError 也走这里（诊断要照实说"驱动库没装上"）
+            errors.append((_d, _src, "%s: %s" % (type(e).__name__, str(e)[:140])))
+    return None, {}, errors
+
+
 def _db_open_verdict(p: dict) -> str:
     """把「打不开消息库」分成三档，每档给一句**能照着做**的结论。"""
     tried = "、".join(p.get("tried") or []) or "（没探任何目录）"
@@ -6310,37 +6368,36 @@ def attach_diagnosis(adapter=None, err="", db=None) -> dict:
             _d = str((get_config().get("wechat") or {}).get("db_dir") or "")
         except Exception:
             _d = ""
-        # 2026-09-16（网友 B 截图）：配置没填时，**把扫盘扫到的那个目录拿来用**——试的次序是
-        # ①配置/扫盘给出的目录 ②驱动库自探测（最后兜一次，保持原行为）。
-        _picked, _psrc = resolve_db_dir(_d)
-        _tries = ([_picked] if _picked else []) + [""]
-        _errs = []
-        _ok_how = ""
-        for _cand in _tries:
-            try:
-                from wechatauto import WeChatDB
-                _db = WeChatDB(db_dir=_cand) if _cand else WeChatDB()
-                _ok_how = "消息库已打开：" + (_db_dir_hint(_db) or "（库没报目录）")
-                if _psrc == "scanned" and _cand:
-                    _ok_how += ("（**自动用了扫盘探到的目录** %s；建议把它填进下面「数据库目录」）" % _cand)
-                _errs = []
-                break
-            except Exception as e:
-                _errs.append(e)
-                _db = None
-        if _ok_how and not _errs:
+        # 2026-09-16（网友 B 截图）：配置没填时，**把扫盘扫到的那个目录拿来用**。
+        # 2026-09-17（网友那份检验报告）改成**三档统一走 `open_db`**：配置填错时也照样往下退
+        #   ——老写法里诊断会退到自探测、产品 `_init_db` 不会 ⇒ 现场「诊断六步全过、产品连不上」。
+        _db, _how, _errs = open_db(_d)
+        if _db is not None:
+            _src = str(_how.get("src") or "")
+            _ok_how = "消息库已打开：" + (_db_dir_hint(_db) or "（库没报目录）")
+            # 两句都**要能同时出现**：配置填错（改用别的）与"用的是扫盘探到的"是两件事，
+            # 之前写成 if/elif ⇒ 配置填错时那句"你填的用不了"会被吞掉（自测当场抓到）。
+            _bits = []
+            if _d and _src != "config":
+                _bits.append("**你填的目录 %s 用不了**：%s ⇒ 已自动改用 %s（来源=%s）"
+                             % (_d, (_errs[0][2] if _errs else "开不了"),
+                                _how.get("dir") or "驱动库自探测", _src))
+            if _src == "scanned":
+                _bits.append("**自动用了扫盘探到的目录** %s；建议把它填进下面「数据库目录」"
+                             % _how.get("dir"))
+            if _bits:
+                _ok_how += "（" + "；".join(_bits) + "）"
             steps.append({"key": "db_open", "name": "打开消息库", "ok": True, "detail": _ok_how})
         else:
-            _e0 = _errs[0] if _errs else RuntimeError("未知原因")
-            _more = ("（试过 %d 个目录都不成）" % len(_errs)) if len(_errs) > 1 else ""
-            if isinstance(_e0, ImportError):
+            _e0 = _errs[0][2] if _errs else "未知原因"
+            _all = "；".join("「%s」%s" % (dd or "驱动库自探测", ee) for dd, _s, ee in _errs)
+            if ("ImportError" in _e0) or ("ModuleNotFoundError" in _e0):
                 # 依赖缺了 ⇒ 别把它说成"消息库打不开"（这是"没装齐"最容易被误判的一条路）
                 _dd = ("驱动库没装上：%s ⇒ 这不是消息库的问题，双击「一键启动」把依赖装齐再试"
-                       % str(_e0)[:140])
+                       % _e0[:140])
             else:
-                _dd = ("打不开消息库：%s【%s】%s%s"
-                       % (str(_e0)[:140], type(_e0).__name__, _more,
-                          _db_open_verdict(_probe_db_dirs(_d))))
+                _dd = ("打不开消息库：%s（试过 %d 条路：%s）%s"
+                       % (_e0[:140], len(_errs), _all, _db_open_verdict(_probe_db_dirs(_d))))
             steps.append({"key": "db_open", "name": "打开消息库", "ok": False, "detail": _dd})
             _db = None
     else:
