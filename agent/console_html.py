@@ -1521,7 +1521,7 @@ th{color:var(--tx2);font-weight:500}
       <div class="row"><label>去水印</label><input type="checkbox" data-cfg="image_gen.strip_watermark">
         <span class="hint">默认开。**优先级**：①要 key 的那三家（硅基流动/智谱/火山）本来就没水印 ⇒ 不需要它；
           ②免密钥那条 pollinations 的水印**只有账号才去得掉**（官方原话 `nologo` needs account）⇒ 在
-          pollinations.ai **免费注册**拿个 token 填进上面「出图密钥」，水印就没了；③没 token 时按这个开关
+          pollinations.ai **免费注册**拿个**令牌**填进上面「出图密钥」，水印就没了；③没令牌时按这个开关
           **裁掉底部 6% 的水印带**（诚实的修剪，不做局部涂改；不想让画面被裁就把它关掉，接受水印）。</span></div>
       <div class="hint" style="margin:2px 0 6px">各家在线后端怎么选（**要 key 的那三家都无水印**，免密钥的 pollinations **右下角有水印**且目前只有 sana 一个模型）：
         <b>硅基流动</b> 推荐 <code>black-forest-labs/FLUX.1-schnell</code>（快、有免费额度），另有 <code>Kwai-Kolors/Kolors</code>、<code>Qwen/Qwen-Image</code>；
