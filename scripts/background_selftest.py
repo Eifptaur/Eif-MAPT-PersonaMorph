@@ -65,6 +65,13 @@ _sw_row = [p for p in PATHS if p.get("key") == "switch_chat"][0]
 ck("A4b 切换会话如实写明「会短暂置前 + 自动还回」（不许再写「不负责改前台」）",
    ("短暂把微信置前" in str(_sw_row.get("detail") or "")) and ("自动还回" in str(_sw_row.get("detail") or ""))
    and ("不负责改前台" not in str(_sw_row.get("detail") or "")))
+# A4j（2026-09-18 现场后加）：**拍一拍右键没弹菜单 ⇒ 候选点重试**；菜单点之前先打 OCR 明细
+#   现场：`投递右键之后没出现菜单窗（拍一拍）`（一次落空就放弃）；作者还问过"是不是只把工具栏往上调了一点点"
+#   ⇒ 自绘菜单/头像的十几像素偏差必须有候选点，且"菜单里到底有哪些项"要留日志。
+ck("A4j 拍一拍候选点重试（主点 → 上下微移 → 头像列中心），每枪都校验菜单窗",
+   "_poke_menu_with_retry" in SRC_WECHAT and "候选点都试过了" in SRC_WECHAT)
+ck("A4k 菜单点击前把 OCR 明细（文本@y）打进日志（便于判「点偏了没有」）",
+   "菜单 OCR 明细" in SRC_IB)
 # A4i（2026-09-18 现场两次回拍失败后加）：**定位失败时先滚到最新再找一遍**
 #   真因：`_send_poke_locate` 的 OCR 路径只在当前视口找、且只保留左侧（对方）的行，items 一空直接
 #   return None；`scroll` 参数只喂给 UIA（我们环境 UIA 不通）⇒ 对方消息不在视口/记录被清空就永远失败。

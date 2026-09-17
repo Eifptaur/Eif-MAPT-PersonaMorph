@@ -5838,6 +5838,31 @@ class WeChatAdapter:
             _d("5) 头像位置：渲染坐标 (%d,%d)，定位方式：%s" % (ax, ay, path))
             # 头像未显示（连续消息折叠 / 无彩色斑块）→ 改走「气泡」路径：
             # 消息右键菜单同样含「拍一拍」，拍的是该消息的发送者（安全）
+            # 🔴 2026-09-18 加（现场：`投递右键之后没出现菜单窗（拍一拍）` ⇒ 一次落空就放弃）
+            #   **在候选点上重试**：自绘头像/气泡的中心容易差十几个像素（作者也问过"是不是只把工具栏往上调了
+            #   一点点"）。候选顺序＝主点 → 行内上下微移 → 头像列中心（`right_pane_left + 18.5%` 宽）。
+            #   每一枪都要求"菜单窗真的出现且含目标项"，任何一枪成立即停（`_right_click_menu` 内部已校验）。
+            def _poke_menu_with_retry(primary):
+                _cands = [primary]
+                _px, _py = int(primary[0]), int(primary[1])
+                _cands.append((_px, _py - 14))
+                _cands.append((_px, _py + 14))
+                if _rpl:
+                    _ax2 = _rpl + int(max(1, _rw - _rpl) * 0.185)
+                    _cands.append((_ax2, _py))
+                _seen = []
+                for _c in _cands:
+                    if _rpl and (_c[0] < _rpl + 4 or (_rw and _c[0] > _rw - 4)):
+                        continue
+                    _seen.append(_c)
+                    _hit = self._right_click_menu(gui, int(_c[0]), int(_c[1]), "拍一拍")
+                    if _hit:
+                        if _c != primary:
+                            _d("6b) 主落点没弹出菜单 ⇒ 候选点 %s 命中" % (_c,))
+                        return True
+                _d("6c) 候选点都试过了（%s），右键菜单始终没出现 ⇒ 如实说没拍上" % (_seen,))
+                return False
+
             if score < 0.6:
                 px, py = self._bubble_point(gui, ax, ay, db_text if db_text else target_name)
                 # 同一道区域闸：气泡点也必须落在聊天面板内（会话列表那边是会话行菜单）
@@ -5845,11 +5870,11 @@ class WeChatAdapter:
                     _d("   ✘ 气泡落点越界 (%d,%d)（right_pane_left=%d）⇒ 不右键" % (px, py, _rpl))
                     return False, ("气泡落点 (%d,%d) 也在聊天面板之外 ⇒ **不右键**、这次不拍" % (px, py))
                 _d("   → 未检测到彩色头像（可能是连续消息未显示头像），改为右键气泡 (%d,%d) 里的「拍一拍」" % (px, py))
-                menu_hit = self._right_click_menu(gui, px, py, "拍一拍")
+                menu_hit = _poke_menu_with_retry((px, py))
             else:
                 _d("6) 移动到 (%d,%d) 并右键…（光标位置与命中窗口将在成功/失败时回读）" % (
                     gui.origin_x + ax, gui.origin_y + ay))
-                menu_hit = self._right_click_menu(gui, ax, ay, "拍一拍")
+                menu_hit = _poke_menu_with_retry((ax, ay))
             _d("   光标最终位置：%s（右键后）" % (_cursor_pos(),))
             self._scroll_to_bottom(gui)  # 翻过页的话把聊天滚回最新，不影响用户
             if menu_hit:
