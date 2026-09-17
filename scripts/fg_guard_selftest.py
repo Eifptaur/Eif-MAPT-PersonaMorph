@@ -166,6 +166,103 @@ def main():
                 _wrapped, _ = False, _missing.append(_n)
         ok("⑧ 闸门覆盖库的四个入口（bring_to_front / calibrate_layout / ensure_visible / _minimize_blockers）",
            _wrapped)
+
+        # ⑨ ⭐ 行为回归：走一遍 `_limit_wechat_window`（**每次取 GUI 都会跑**的那条）
+        #    事故：`u.MoveWindow(hwnd, ..., True)` **会激活顶层窗** ⇒ 每次取 GUI 都把微信顶到浏览器前面
+        #    （作者原话：「我一直在把浏览器往上放」）。修后＝只改几何、绝不激活。
+        import ctypes as _ct
+        from agent.wechat import WeChatAdapter
+
+        calls = []
+
+        def _make_rect():
+            """预填好窗口矩形的**真 ctypes Structure**（`byref()` 只认真 ctypes 对象）。"""
+            class _R(_ct.Structure):
+                _fields_ = [("left", _ct.c_long), ("top", _ct.c_long),
+                            ("right", _ct.c_long), ("bottom", _ct.c_long)]
+
+            r = _R()
+            r.left, r.top, r.right, r.bottom = 100, 100, 1460, 1100        # 1360x1000 > 1160x900
+            return r
+
+        class _FakeU32:
+            def __init__(self):
+                # ⚠️ 必须是**普通函数**（不是 bound method）：生产里 `u.SetWindowPos` 是 ctypes 的
+                #    `_FuncPtr`，能挂 `argtypes`；bound method 挂不上会抛异常⇒被吞⇒假"没调"。
+                self.SetWindowPos = _fake_set_window_pos
+                self.MoveWindow = _fake_move
+                self.ShowWindow = _fake_show
+                self.SetForegroundWindow = _fake_fg
+                self.SetActiveWindow = _fake_act
+
+            def GetWindowRect(self, hwnd, pref):
+                return 1
+
+            def GetSystemMetrics(self, i):
+                return 2560 if i == 0 else 1600
+
+        def _fake_set_window_pos(hwnd, after, x, y, w, h, flags):
+            calls.append(("SetWindowPos", int(flags), int(x), int(y), int(w), int(h)))
+            return 1
+
+        def _fake_move(*a):
+            calls.append(("MoveWindow",))
+            return 1
+
+        def _fake_show(hwnd, cmd):
+            calls.append(("ShowWindow", int(cmd)))
+            return 1
+
+        def _fake_fg(hwnd):
+            calls.append(("SetForegroundWindow",))
+            return 1
+
+        def _fake_act(hwnd):
+            calls.append(("SetActiveWindow",))
+            return 1
+
+        class _FakeWinDll:
+            user32 = _FakeU32()
+
+        class _G:
+            main_hwnd = 1234567
+
+            def refresh(self):
+                pass
+
+        _old_windll, _old_rect = _ct.windll, _ct.wintypes.RECT
+        cfg_mod.get_config = lambda: {"ui": {"lock_window_pos": True},
+                                      "wechat": {"limit_window": "shrink_only"}}
+        ad = WeChatAdapter.__new__(WeChatAdapter)          # 不跑 __init__（它会连微信库）
+        ad.cfg = cfg_mod.get_config()
+        _ct.windll = _FakeWinDll()
+        _ct.wintypes.RECT = _make_rect
+        try:
+            ad._limit_wechat_window(_G())
+        finally:
+            _ct.windll, _ct.wintypes.RECT = _old_windll, _old_rect
+
+        kinds = [c[0] for c in calls]
+        ok("⑨ 限位不再调 `MoveWindow`（它会激活顶层窗）", "MoveWindow" not in kinds, calls)
+        ok("⑨ 限位不出现任何置前/激活调用（SetForegroundWindow/SetActiveWindow/ShowWindow 9）",
+           "SetForegroundWindow" not in kinds and "SetActiveWindow" not in kinds
+           and ("ShowWindow", 9) not in calls, calls)
+        _sp = [c for c in calls if c[0] == "SetWindowPos"]
+        ok("⑨ 限位只走一次 SetWindowPos，且带 SWP_NOACTIVATE(0x10)",
+           len(_sp) == 1 and (_sp[0][1] & 0x0010) != 0, _sp)
+        ok("⑨ 限位**几何真的被改了**（没被 try 吞掉）",
+           bool(_sp) and _sp[0][2:] == (100, 100, 1160, 900), _sp[0][2:] if _sp else None)
+
+        # ⑨ 静态：全仓 agent/ 不许再出现 `MoveWindow(`
+        _mw = []
+        for _f in sorted(os.listdir(os.path.join(ROOT, "agent"))):
+            if not _f.endswith(".py"):
+                continue
+            for _i, _ln in enumerate(open(os.path.join(ROOT, "agent", _f), encoding="utf-8")
+                                     .read().splitlines(), 1):
+                if "MoveWindow(" in _ln and not _ln.strip().startswith("#"):
+                    _mw.append("%s:%d" % (_f, _i))
+        ok("⑨ 全仓 agent/ 不许再出现 `MoveWindow(`（会激活窗口）", not _mw, _mw)
     finally:
         cfg_mod.get_config = real_get
 
