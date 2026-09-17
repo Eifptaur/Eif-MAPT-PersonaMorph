@@ -1319,6 +1319,43 @@ def main():
         log.warning("单实例锁还被占着（%s），等它放开再接手…", _lock_res.reason)
         time.sleep(1.5)
         _lock_res = _bot_lock.acquire()
+
+    # ⛔ 2026-09-17（用户拍板：「**不要让用户担风险啊，还要删这删那的、还要试这试那的，不行**」）：
+    #   旧版本"更新完卡住 / 起不来"那种局面**不许留给用户收尾**。他唯一会做的自然动作是"再双击
+    #   一次一键启动" ⇒ 就把那一下做成自愈：占着锁的那个**还是活的、但控制台端口一直没人应答、
+    #   而且它已经跑了一段时间（锁文件的 mtime > 90 秒）** ⇒ 判定卡死，替它收尾（连看门狗一起）再接手。
+    #   ⚠️ 三个条件都要满足才动手：①正在启动中的实例端口也还没起（但它"年轻"，<90 秒 ⇒ 不动它）；
+    #   ②只对**锁文件里那个 pid** 动手（它在退出时会被清掉，指向别人的概率极低）；③端口能应答就绝不动。
+    if _legacy_pid or (not _lock_res.ok):
+        _stuck = getattr(_lock_res, "holder_pid", None) or _legacy_pid
+        _old = 0.0
+        try:
+            _old = time.time() - os.path.getmtime(_bot_lock_path)
+        except Exception:
+            _old = 0.0
+        _alive_port = False
+        try:
+            import socket as _sk
+            _pnum = int((get_config().get("server") or {}).get("port") or 3210)
+            with _sk.create_connection(("127.0.0.1", _pnum), timeout=3):
+                _alive_port = True
+        except Exception:
+            _alive_port = False
+        if _stuck and (_old > 90.0) and (not _alive_port):
+            log.warning("上一个实例（pid=%s，已运行 %.0f 秒，控制台无应答）判定卡死 ⇒ **自动替用户收尾**"
+                        "（结束它和看门狗），然后由本实例接手；用户不需要做任何事", _stuck, _old)
+            try:
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(_stuck)],
+                               capture_output=True, timeout=20, creationflags=0x08000000)
+            except Exception as _e:
+                log.warning("结束卡死实例失败（继续尝试接手）：%s", _e)
+            try:
+                _kill_watchdog()
+            except Exception:
+                pass
+            time.sleep(1.5)
+            _legacy_pid = legacy_holder(_bot_lock_path)
+            _lock_res = _bot_lock.acquire()
     if not _lock_res.ok:
         _who = ("pid=%s" % _lock_res.holder_pid) if _lock_res.holder_pid else "pid 未知"
         log.error("已有 Persona Morph 实例在运行（%s）。为避免旧版本/接口冲突，本实例退出；请先「停止机器人」再启动。（%s）",
@@ -1442,6 +1479,33 @@ def main():
         if _p2:
             _t += [{"name": c.get("name") or c.get("wxid"), "wxid": c.get("wxid")} for c in _p2]
         return _gs, _t
+
+    def _reset_watermark():
+        """把每个监听群的「已处理水位」对齐到当前最新（**用户零操作版**：不删文件、不用重启）。
+
+        为什么（用户 2026-09-17 拍板：「**不要让用户担风险啊，还要删这删那的、还要试这试那的，不行**」）：
+        清空微信聊天记录后序号可能回落，而水位只前进不回退 ⇒ 新消息被判成"处理过了" ⇒ 它不回。
+        老办法是"停机器人 → 删 `data\\listener_watermark.json` → 启动"（**要用户动手删文件**）——
+        这条现在给成控制台上的一个按钮：一键对齐、当场生效。
+        """
+        n, errs = 0, []
+        _wc = wechat_box[0] if wechat_box else None
+        for g in (targets or []):
+            wxid = g.get("wxid")
+            if not wxid:
+                continue
+            try:
+                seq = int((_wc.latest_seq(wxid) if _wc else 0) or 0)
+                wm.set("group:" + wxid, seq, forward_only=False)
+                n += 1
+            except Exception as e:
+                errs.append("%s：%s" % (g.get("name") or wxid, e))
+        try:
+            wm.flush()
+        except Exception:
+            pass
+        log.info("监听水位已重新对齐（%d 个群）%s", n, ("；失败：%s" % errs[:2]) if errs else "")
+        return {"ok": True, "n": n, "errs": errs}
 
     def _refresh_targets(why=""):
         """按当前配置**就地刷新**监听目标（配置保存后也走这里）。
@@ -2423,6 +2487,7 @@ def main():
     webui = WebUI(status_provider, log_buffer, test_api_fn=test_api_fn, balance_fn=balance_fn,
                   # 保存配置后就地重算监听目标（否则改了群勾选只有重启才生效，概览也一直是老的）
                   on_save=lambda _new_cfg: _refresh_targets("配置已保存"),
+                  watermark_reset_fn=_reset_watermark,
                   pause_fn=lambda: orch.set_paused(True), resume_fn=lambda: orch.set_paused(False),
                   shutdown_fn=shutdown_fn, whale=orch.whale,
                   poke_test_fn=poke_test_fn, selfcheck_fn=selfcheck_fn, restart_fn=restart_fn,
