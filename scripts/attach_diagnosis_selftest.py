@@ -413,6 +413,19 @@ ok("看门狗与定时巡检不再被传死 None（每跳现取句柄）",
    "args=(lambda: wechat_box[0],)" in _pm and "_start_timer_holiday_loop(orch, lambda: wechat_box[0])" in _pm)
 ok("状态里下发 wechat_attach（控制台才看得到原因）",
    '"wechat_attach": wechat_attach_status(),' in _pm and "def wechat_attach_status()" in _pm)
+# ── 2026-09-17：改了群勾选要**立刻生效**（网友报「我勾选了一个群…概览的状态改变不了」）──
+ok("配置保存后会**就地重算监听目标**（on_save 接线，不再只有重启才生效）",
+   "on_save=lambda _new_cfg: _refresh_targets(" in _pm and "def _refresh_targets(why=" in _pm)
+ok("重算会**就地更新** target_wxids（status_provider 按它算「这个群是不是监听目标」）",
+   "target_wxids.clear()" in _pm and 'target_wxids.update(g["wxid"] for g in targets' in _pm)
+_ct_seg = _pm[_pm.index("def _collect_targets(wc):"):_pm.index("def _refresh_targets(why=")]
+# ⚠️ 先切掉文档字符串再看：那段 docstring 里**正好写着**旧的闭包变量名（解释改了什么）
+#    ⇒ 直接 `"whitelist" not in seg` 会假红（本文件第 150 行记过同款坑）
+_ct_parts = _ct_seg.split('"""')
+_ct_code = _ct_parts[0] + "".join(_ct_parts[2:])
+ok("重算读的是**当前配置**，不是启动时的闭包快照（否则重算也还是老口径）",
+   '_wl = (_cfg_now.get("wechat") or {}).get("group_name_white_list")' in _ct_code
+   and 'g["name"] in _wl' in _ct_code and "whitelist" not in _ct_code)
 _ch = _src(os.path.join("agent", "console_html.py"))
 ok("控制台侧栏显示短原因 + 悬停看逐步诊断",
    "_wa.short" in _ch and "_wa.steps.map(" in _ch)
