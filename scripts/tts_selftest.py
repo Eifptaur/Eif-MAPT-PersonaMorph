@@ -84,9 +84,16 @@ ok("描述里写明是音频文件不是语音条", "不是微信语音条" in s
 ok("描述里提到功能没开会返回原因", "返回原因" in str(d.get("send_voice_reply", {}).get("description")))
 
 # 功能默认关 ⇒ 一次都不许发送
-fw = FakeWeChat()
-r = TL._exec_send_voice_reply(mkctx(fw), {"text": "你好呀"})
-body = r.get("content") or ""
+# ⚠️ 判据必须**自带夹具**：这两条原来直接吃真实 `config.json` ⇒ 一旦把语音回复打开（演示/自用都要开），
+#    判据就假红（2026-09-17 实际踩到，出包前全场判据当场红）。这里显式钉住"关着"。
+_saved_get_gate = TL.get_config
+TL.get_config = lambda: {"voice_reply": {"enabled": False}}
+try:
+    fw = FakeWeChat()
+    r = TL._exec_send_voice_reply(mkctx(fw), {"text": "你好呀"})
+    body = r.get("content") or ""
+finally:
+    TL.get_config = _saved_get_gate
 ok("默认关时拒绝并说明原因", "默认关闭" in body and "音频文件" in body, body[:54])
 ok("默认关时一次都没碰发送", fw.calls == [], str(fw.calls))
 
