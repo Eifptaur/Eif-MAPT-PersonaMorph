@@ -335,6 +335,34 @@ def find_server_id_local_id(db, user, server_id):
     return None
 
 
+def patch_driver_quirks() -> list:
+    """给驱动库打"我们这侧的补丁"（**不改 site-packages 文件**，所以随包在别的机器上也生效）。
+
+    ⚠️ 2026-09-18 实测踩到的第三方真 bug：`wechatauto/guia.py` 全文**没有 `import threading`**，
+    却在布局校准里用了 `threading` ⇒ 一旦触发「输入框探测连续失败 → 自动重新校准布局」，
+    校准必然抛 `name 'threading' is not defined` 被吞成一行 debug 日志 ⇒ **校准永远不生效**。
+    现场日志（2026-09-18 03:43:22）：
+        `未检测到输入框` → `输入框探测连续失败，自动重新校准布局…` → `布局校准失败：name 'threading' is not defined`
+
+    ⇒ 做法：**在导入后把缺的名字注入该模块**（幂等，重复调用无害）。返回 (模块名, 注入的名字) 列表。
+    """
+    import threading as _threading
+    import time as _time
+    out = []
+    try:
+        import wechatauto.guia as _g
+        for _name, _val in (("threading", _threading), ("time", _time)):
+            if not hasattr(_g, _name):
+                try:
+                    setattr(_g, _name, _val)
+                    out.append("wechatauto.guia.%s" % _name)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    return out
+
+
 def selfcheck() -> list:
     """给自检脚本/控制台用的一行行结论（不碰微信、不碰数据库）。"""
     rep = version_report()
@@ -344,6 +372,12 @@ def selfcheck() -> list:
         rows.append({"item": "驱动库可导入", "ok": True, "detail": "from wechatauto import WeChatDB"})
     except Exception as e:  # pragma: no cover
         rows.append({"item": "驱动库可导入", "ok": False, "detail": str(e)})
+    try:
+        _patched = patch_driver_quirks()
+        rows.append({"item": "驱动库补丁（缺名字注入）", "ok": True,
+                     "detail": ("已注入 " + "、".join(_patched)) if _patched else "无需注入（该库已自带）"})
+    except Exception as e:  # pragma: no cover
+        rows.append({"item": "驱动库补丁（缺名字注入）", "ok": False, "detail": str(e)})
     return rows
 
 
