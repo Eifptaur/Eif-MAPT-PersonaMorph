@@ -1161,7 +1161,7 @@ th{color:var(--tx2);font-weight:500}
       <div class="row"><label>会不会跟你抢操作</label><span class="hint">全程只发投递消息：你在别处打字、别的窗口盖住微信，都不影响它干活。只有一种情况会撞车——**你正在同一个会话里切会话或打字**时，它可能和你抢同一步操作；撞了它会用聊天区内容复核，对不上就让步、不硬凑。</span></div>
       <div class="row"><label>群白名单</label>
         <div class="grow">
-          <div class="chips" id="wlChips"></div>
+          <div class="chips" id="wlChips" data-cfg="wechat.group_name_white_list"></div>
           <div class="btns" style="margin-top:0">
             <button id="pickGroups" class="ghost">检测群聊并勾选</button>
             <input id="customGroup" type="text" placeholder="自定义群名，回车添加" style="flex:1;background:var(--input-bg);border:1px solid var(--bd);border-radius:8px;padding:7px 10px;color:var(--tx)">
@@ -2234,7 +2234,19 @@ $('pickGroups').onclick = async ()=>{
     const box=$('groupPick');
     const pick = new Set(wlList);
     renderGroupList(box, groups, pick, ()=>{});
-    $('gpOk').onclick=()=>{ wlList=[...pick]; renderChips(); maskClose(m); m.remove(); };
+    $('gpOk').onclick=async ()=>{
+      wlList=[...pick]; renderChips(); maskClose(m); m.remove();
+      // ⛔ 2026-09-17（网友报「我把群勾选了，然后保存设置刷新之后又没了」）：这个「确定」原来只改
+      //   页面变量 `wlList`，**一个字节都不落盘**；而 `#wlChips` 又没有 `data-cfg` ⇒ 各分区的
+      //   「保存设置」也收集不到这一项 ⇒ 勾完刷新就没了（两处都得补）。现在「确定」＝当场保存
+      //   （与首次向导那条路同一口径），成功/失败都如实说。
+      try{
+        if(!cfg) cfg = await getJSON('/api/config');
+        setPath(cfg,'wechat.group_name_white_list', wlList.slice());
+        await getJSON('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});
+        toast(wlList.length ? ('已保存群白名单（'+wlList.length+' 个群）') : '已保存：留空＝监听所有群');
+      }catch(e){ toast('群白名单保存失败：'+e.message); }
+    };
     $('gpCancel').onclick=()=>{ maskClose(m); m.remove(); };
   }catch(e){ toast('检测失败：'+e.message); }
 };
