@@ -124,6 +124,20 @@ def main():
     ok("同一会话同一时刻只有一个处理者（peak=1）", peak["n"] == 1, "peak=%d" % peak["n"])
     ok("并发下水位仍单调到最后", wm5.get("group:f") == 3, wm5.get("group:f"))
 
+    # ── 2026-09-17（用户问「我把聊天记录清空了，它会不会学不会、从而不发」）──
+    #    水位只前进不回退是对的（防重复处理），但**微信清空记录后序号可能回落/换库** ⇒ 新消息会被
+    #    判成"处理过"而永远跳过，而且**重启也救不回**（水位是从文件读回来的）⇒ 监听循环里必须有自愈。
+    print("\n-- G. 记录被清空后的水位自愈（源码级，防以后被顺手删掉） --")
+    _pm = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "persona_morph.py"),
+               encoding="utf-8").read()
+    ok("监听循环里有自愈限频表 `_wm_heal`", "_wm_heal = {}" in _pm and "_wm_heal.get(wxid" in _pm)
+    ok("判据是「最新序号**低于**水位」（正常运行时不会成立 ⇒ 不误触发）",
+       "_latest < _cur" in _pm and "latest_seq(wxid)" in _pm)
+    ok("回退走显式 `forward_only=False`（默认只前进，不许悄悄退）",
+       "wm.set(chat_key, _latest, forward_only=False)" in _pm)
+    ok("自愈要落盘 + 留日志（否则用户永远不知道为什么它不回）",
+       "wm.flush()" in _pm and "记录像是被清过" in _pm)
+
     shutil.rmtree(tmp, ignore_errors=True)
     print("\n== W2 水位判据：%d 通过 / %d 失败 ==" % (len(PASS), len(FAIL)))
     return 1 if FAIL else 0
