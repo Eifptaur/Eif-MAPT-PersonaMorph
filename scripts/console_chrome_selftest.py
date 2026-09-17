@@ -206,6 +206,14 @@ ok("主人数取自 /api/status 的 owner.count（与「微信」面板同一份
    "s.owner.count" in _page and 'st["owner"]' in open(
        os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read())
 
+# ── 2026-09-17（网友报「我把群勾选了，然后保存设置刷新之后又没了」）──
+ok("群白名单 chips 容器带 `data-cfg`（否则各分区「保存设置」收集不到它、刷新就丢）",
+   'id="wlChips" data-cfg="wechat.group_name_white_list"' in _page)
+ok("「检测群聊并勾选」的确定按钮**当场落盘**（POST /api/config），不再只改页面变量",
+   "setPath(cfg,'wechat.group_name_white_list', wlList.slice());" in _page
+   and _page.count("wechat.group_name_white_list") >= 4)
+ok("群白名单保存失败会如实报（不许静默丢）", "群白名单保存失败" in _page)
+
 print("")
 print("窗口/控制台外观判据：%d 通过 / %d 失败 / %d 跳过" % (PASS, FAIL, SKIP_N))
 sys.exit(1 if FAIL else 0)
