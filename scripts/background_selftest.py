@@ -290,11 +290,10 @@ ck("B19a 每条真鼠标路径都被闸挡住（background_only 直检 ≥7 处 
    and "return bool(_ua.fg_allowed()[0])" in SRC_WECHAT)
 # B19c（2026-09-18 作者发火后加）：**置前/置顶**也必须走同一道闸，而且闸要**上在 GUI 对象上**
 #   （只改自己的调用点挡不住库里自动重校准触发的那一类：get_input_box → calibrate_layout → bring_to_front）
-ck("B19c 置前/置顶统一走 fg_allowed，且 GUI 一建好就上闸（含库内自动触发那类）",
-   "def harden_gui(" in SRC_UIADAPT and "_ua2.harden_gui(self._gui)" in SRC_WECHAT
-   and "_wrap(\"bring_to_front\"" in SRC_UIADAPT
-   and "_wrap(\"calibrate_layout\"" in SRC_UIADAPT
-   and "_wrap(\"ensure_visible\"" in SRC_UIADAPT)
+ck("B19c 置前/置顶统一走 fg_allowed，且**类级闸在构造之前**就装上（含库内自动触发那类）",
+   "def harden_gui_class(" in SRC_UIADAPT and "def harden_gui(" in SRC_UIADAPT
+   and "_HARDEN_TARGETS" in SRC_UIADAPT
+   and "_ua.harden_gui_class()" in SRC_WECHAT and "_ua2.harden_gui(self._gui)" in SRC_WECHAT)
 ck("B19b 真鼠标兜底也默认关（allow_real_fallback 默认 False）",
    '"allow_real_fallback": False' in SRC_CFG)
 # B20（2026-09-16 已知现象：「他点了一下搜索框，又不点，又搁那划会话列表」）：

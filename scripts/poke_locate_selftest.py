@@ -153,6 +153,10 @@ def main():
        "不敢猜是谁" in (b_loc or ""))
     ok("⑥ 右键重试候选点被夹在方块内（旧公式候选已删）",
        "bbox[0] + 4 <= x <= bbox[2] - 4" in (b_send or ""))
+    ok("⑥ 会话区左沿是**帧内现量**（库的 right_pane_left 会过期：本机 262 vs 真值 331）",
+       "detect_pane_left(img)" in (b_loc or ""))
+    ok("⑥ 左右分界＝**会话区中点**（用整幅中点会把别人的行判成自己的 ⇒ 定位失败）",
+       "(int(pane_left) + int(rw)) // 2" in (b_loc or ""))
 
     # ⑦ 端到端离线回归：桩掉"抓帧"与"OCR"，跑**真的** `_send_poke_locate`
     #    桩数据＝本机真帧上实测到的 OCR 结果；坐标按**代码实际用的 crop** 反算（crop 一变也不会假红）

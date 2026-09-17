@@ -518,27 +518,13 @@ def fg_refused() -> dict:
     return dict(_FG_REFUSED)
 
 
-def harden_gui(gui):
-    """把驱动库里**会置前/置顶/最小化别人窗口**的方法换成带闸门的版本——**唯一咽喉点**。
-
-    为什么要包在 GUI 上（而不是只改我们的调用点）：这三个入口**都是"看起来无害"的函数**
-    内部触发的，只改自己的调用点挡不住下一个人（也挡不住库内部的自动重校准）：
-      · `calibrate_layout()`（guia.py:641 → `bring_to_front()`）—— 我们 `_get_gui()` 每次都会调；
-      · `get_input_box()` 探针连失后**自动重校准**（guia.py:1388）—— 拍一拍定位那条链踩到过；
-      · `ensure_visible()`（guia.py:894）会先 `_minimize_blockers()` **把用户的窗最小化**再置顶。
-    被拒时**返回假值并留一条日志**，不抛异常（调用方按"没做到"处理即可）。
-    """
-    if gui is None or getattr(gui, "_pm_fg_hardened", False):
-        return gui
-    import functools
-
-    def _wrap(name, fail_value):
-        fn = getattr(gui, name, None)
-        if not callable(fn):
-            return
+def _guarded(name: str, fail_value):
+    """造一个"带闸门的替身"：闸不过就留日志并返回 `fail_value`（**不抛异常**）。"""
+    def _make(fn):
+        import functools
 
         @functools.wraps(fn)
-        def _guarded(*a, **k):
+        def _w(*a, **k):
             ok, why = fg_allowed()
             if not ok:
                 _FG_REFUSED["n"] += 1
@@ -553,17 +539,63 @@ def harden_gui(gui):
                                  "而置顶会压过用户用来遮挡的窗口", name, why)
                 return fail_value
             return fn(*a, **k)
+        return _w
+    return _make
 
+
+_HARDEN_TARGETS = (("bring_to_front", False), ("calibrate_layout", False),
+                   ("ensure_visible", False), ("_minimize_blockers", None),
+                   ("restore_zorder", None))
+
+
+def harden_gui_class(cls=None) -> bool:
+    """把库里那几个"会置前/置顶/最小化别人窗口"的方法**在类上**换成带闸门的版本。
+
+    ⛔ 为什么必须上在**类**上（2026-09-18 第二次被作者骂「你又在那儿把窗口往前放」后才想明白）：
+      `WeChatGUI.__init__` 里就有 `if calibrate: self.calibrate_layout()`（guia.py:417），
+      而 `_load_layout()` 在**窗口尺寸与上次校准差 >15% 时拒绝采用**（guia.py:705）——
+      限位一改尺寸就会触发 ⇒ **每次新进程构造 GUI 都可能直接在 `__init__` 里走到
+      `calibrate_layout() → bring_to_front()`（HWND_TOPMOST + SetForegroundWindow）**。
+      那一刻**实例级 `harden_gui` 还没装上** ⇒ 只包实例挡不住它（这就是"又"的原因）。
+      ⇒ 必须在**构造之前**把类方法换掉：`_get_gui()` 里 `patch_driver_quirks()` 之后、`WeChatGUI()` 之前。
+    """
+    if cls is None:
         try:
-            setattr(gui, name, _guarded)
+            from wechatauto.guia import WeChatGUI as cls
+        except Exception:
+            return False
+    if getattr(cls, "_pm_fg_hardened_class", False):
+        return True
+    for name, fail_value in _HARDEN_TARGETS:
+        fn = getattr(cls, name, None)
+        if not callable(fn):
+            continue
+        try:
+            setattr(cls, name, _guarded(name, fail_value)(fn))
         except Exception:
             pass
+    try:
+        cls._pm_fg_hardened_class = True
+    except Exception:
+        pass
+    return True
 
-    _wrap("bring_to_front", False)
-    _wrap("calibrate_layout", False)
-    _wrap("ensure_visible", False)
-    _wrap("_minimize_blockers", None)
-    _wrap("restore_zorder", None)
+
+def harden_gui(gui):
+    """在**实例上**再兜一层（万一有实例在 `harden_gui_class` 之前就建出来了）。
+
+    被拒时**返回假值并留一条日志**，不抛异常（调用方按"没做到"处理即可）。
+    """
+    if gui is None or getattr(gui, "_pm_fg_hardened", False):
+        return gui
+    for name, fail_value in _HARDEN_TARGETS:
+        fn = getattr(gui, name, None)
+        if not callable(fn):
+            continue
+        try:
+            setattr(gui, name, _guarded(name, fail_value)(fn))
+        except Exception:
+            pass
     try:
         gui._pm_fg_hardened = True
     except Exception:

@@ -1598,6 +1598,17 @@ class WeChatAdapter:
                 _ra.patch_driver_quirks()
             except Exception:
                 pass
+            # 🔴 2026-09-18（第二次被骂「你又在那儿把窗口往前放」后补的**真闸**）：
+            #   **必须在构造之前把闸上到类上**——`WeChatGUI.__init__` 里就有
+            #   `if calibrate: self.calibrate_layout()`，而 `_load_layout()` 在"窗口尺寸与上次校准
+            #   差 >15%"时**拒绝采用**（限位改过尺寸就会触发）⇒ 每次新进程构造 GUI 都可能直接在
+            #   `__init__` 里走到 `calibrate_layout() → bring_to_front()`（HWND_TOPMOST + 抢前台）。
+            #   那时**实例级 `harden_gui` 还没装上** ⇒ 只包实例挡不住它。⇒ 先上类闸，再造实例。
+            try:
+                from . import ui_adapt as _ua
+                _ua.harden_gui_class()
+            except Exception:
+                pass
             from wechatauto.guia import WeChatGUI
             try:
                 self._gui = WeChatGUI()
@@ -5945,20 +5956,25 @@ class WeChatAdapter:
         self._poke_locate_why = ""
         try:
             from . import chat_header as _ch
-            rw = int(getattr(gui, "render_w", 0) or 0)
-            pane_left = 0
-            try:
-                pane_left = int(gui.detect_pane_left()) or 0     # 实测聊天面板左沿（本机 331）
-            except Exception:
-                pane_left = 0
-            if not pane_left:
-                pane_left = int(getattr(gui, "right_pane_left", 0) or 0)
             img = _ch.grab_render(gui)
             if img is None:
                 return _fail("抓不到微信画面（PrintWindow 失败）⇒ 量不到头像，不猜点")
             iw, ih = img.size
-            rw = rw or iw
-            mid = rw // 2
+            rw = int(getattr(gui, "render_w", 0) or 0) or iw
+            # 🔴 2026-09-18（现场：连续两枪"找不到 TA 的消息行"，一查发现整屏 OCR 行的 x 全在 600+）：
+            #   **pane_left 必须现量**——库值 `right_pane_left` 会过期（本机实测 262 vs 真值 331），
+            #   而 `gui.detect_pane_left()` 在 WeChatGUI 上**根本不存在**（AttributeError，一直静默走库值）。
+            #   ⇒ 改用**我们自己**的帧内检测 `chat_header.detect_pane_left(img)`；量不到才退回库值。
+            pane_left = 0
+            try:
+                pane_left = int(_ch.detect_pane_left(img)) or 0
+            except Exception:
+                pane_left = 0
+            if not pane_left:
+                pane_left = int(getattr(gui, "right_pane_left", 0) or 0)
+            # 左右分界＝**会话区中点**（不是整幅中点）：别人的消息在会话区左半、自己的在右半。
+            #   用整幅中点（rw//2）在"会话区很宽"时会把**别人的行**判成自己的 ⇒ 过滤带空 ⇒ 定位失败。
+            mid = (int(pane_left) + int(rw)) // 2 if pane_left else int(rw) // 2
             blocks = self._avatar_blocks(img, pane_left)
             if self_side:
                 side = [b for b in blocks if (b[0] + b[2]) // 2 > mid]
