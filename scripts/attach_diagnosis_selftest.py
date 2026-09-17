@@ -387,6 +387,18 @@ _w6 = _src(os.path.join("agent", "wechat.py"))
 ok("产品接入（`_init_db`）也走同一条三档链（源码级，防以后只修诊断、不改产品）",
    "self._db, _how, _errs = open_db(_dd)" in _w6 and "if _src != \"scanned\":" not in _w6)
 
+print("── J7. 配置里填的路径要**展开环境变量**（2026-09-17 网友报告：他在「数据库目录」里填的是 "
+      "%USERPROFILE%\\.wechatauto\\xwechat_files，Python 不展开 %VAR% ⇒ 那条路永远失败、只能靠自探测）──")
+_ex = W._expand_path(r"%USERPROFILE%\.wechatauto\xwechat_files")
+ok("`%USERPROFILE%` 被展开成真实家目录",
+   "%USERPROFILE%" not in _ex and os.path.expanduser("~").lower() in _ex.lower(), _ex)
+ok("`~` 也会展开", "~" not in W._expand_path(r"~\xwechat_files"), W._expand_path(r"~\xwechat_files"))
+ok("成对引号会被剥掉（从别处复制粘贴常见的尾巴）",
+   W._expand_path('"D:\\a\\b"') == "D:\\a\\b", W._expand_path('"D:\\a\\b"'))
+_t7 = W.db_open_tries(r"%USERPROFILE%\.wechatauto\xwechat_files")
+ok("开库的第一档就是**展开后**的路径（不是原样那个带 %% 的串）",
+   bool(_t7) and _t7[0][1] == "config" and "%USERPROFILE%" not in _t7[0][0], str(_t7[0]))
+
 print("── K. 接线：启动接入 / 10 秒重试 / 状态下发 / 反馈 env（源码级，防以后改回去）──")
 _pm = _src(os.path.join("scripts", "persona_morph.py"))
 ok("启动接入走 _attach_wechat（失败不抛）",
