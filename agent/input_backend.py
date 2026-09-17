@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import ctypes
+import re
 import time
 from ctypes import wintypes
 
@@ -434,6 +435,31 @@ def menu_new_windows(pid: int, before_ids) -> list:
     return out
 
 
+def menu_item_score(read: str, want: str) -> float:
+    """菜单项匹配打分（0 / 0.8 / 1.0）——**容忍 OCR 噪声**。
+
+    为什么要有它（2026-09-18 现场：**引用链在本机一直失灵**，作者看到的"反复点气泡、也不引用"就是它）：
+      微信自绘菜单项的 OCR 常被噪声字符污染，实测：
+        「引用」→ **`@引`** · 「转发」→ `转发．．．` · 「删除」→ `U删除` · 「撤销」→ `軀制` · 「拍一拍」→ `拍一拍`
+      原来的判据只做 `chat_ocr.matches()` 与"原文包含"，遇到 `@引` 就判不中 ⇒ **不点** ⇒ 换候选点重试
+      （屏幕上就是**反复弹菜单**）⇒ `sender.py` 最后只能退回普通发送（"他也不引用"）。
+    ⇒ 先把**非汉字/字母/数字**的噪声剥掉再比；再允许**前缀/后缀包含**（`@引`→`引` 是「引用」的前缀）。
+    返回：1.0＝剥噪后完全相等；0.8＝前缀/后缀包含；0.0＝不匹配（调用方拿 0.8 当阈值）。
+    """
+    try:
+        a = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]", "", str(read or ""))
+        b = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]", "", str(want or ""))
+    except Exception:
+        return 0.0
+    if not a or not b:
+        return 0.0
+    if a == b:
+        return 1.0
+    if a.startswith(b) or a.endswith(b) or b.startswith(a) or b.endswith(a):
+        return 0.8
+    return 0.0
+
+
 def menu_click(hwnd_menu: int, item_text: str, zoom: int = 2, allow_top_fallback: bool = False) -> tuple:
     """在菜单窗里找含 `item_text` 的项，并**投递左键**点它。返回 `(ok, 说明)`。
 
@@ -498,13 +524,21 @@ def menu_click(hwnd_menu: int, item_text: str, zoom: int = 2, allow_top_fallback
     except Exception:
         pass
     hit, how = None, ""
+    _best, _best_sc, _best_how = None, 0.0, ""
     for (t, x, y, w, h) in items:
         try:
-            if _co.matches(str(t), str(item_text)) or str(item_text) in str(t):
-                hit, how = (int(x + w / 2), int(y + h / 2)), "模糊匹配「%s」" % t
-                break
+            sc = menu_item_score(t, item_text)
+            if sc <= 0:
+                try:
+                    sc = 0.8 if _co.matches(str(t), str(item_text)) else 0.0
+                except Exception:
+                    sc = 0.0
+            if sc > _best_sc:
+                _best_sc, _best, _best_how = sc, (int(x + w / 2), int(y + h / 2)), "匹配「%s」" % t
         except Exception:
             continue
+    if _best is not None and _best_sc >= 0.8:
+        hit, how = _best, _best_how
     if hit is None:
         if not allow_top_fallback:
             return False, ("菜单里没找到「%s」（读到的是：%s）——**不点**（防点到不知道是什么的项）"
