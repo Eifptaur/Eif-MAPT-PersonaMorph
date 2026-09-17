@@ -200,11 +200,13 @@ class WebUI:
                  persona_scores_fn=None, persona_rate_fn=None,
                  persona_score_custom_fn=None, persona_ai_enrich_fn=None,
                  community_export_fn=None, community_upload_fn=None, scoring_import_fn=None,
+                 watermark_reset_fn=None,
                  store=None):
         self.status_provider = status_provider      # () -> dict
         self.log_buffer = log_buffer                # collections.deque[str]
         self.test_api_fn = test_api_fn              # () -> dict
         self.on_save = on_save                      # (new_cfg) -> None（可选，用于通知运行中组件）
+        self.watermark_reset_fn = watermark_reset_fn or (lambda: {"ok": False, "error": "未提供"})
         self.pause_fn = pause_fn or (lambda: None)  # () -> None
         self.resume_fn = resume_fn or (lambda: None)  # () -> None
         self.balance_fn = balance_fn or (lambda: {"error": "未提供 balance_fn"})  # () -> dict
@@ -1423,6 +1425,14 @@ class WebUI:
                 elif path == "/api/resume":
                     parent.resume_fn()
                     self._json({"ok": True})
+                elif path == "/api/watermark/reset":
+                    # 重新对齐监听水位（用户零操作版：不删文件、不重启）——
+                    # 清空微信聊天记录后序号回落会让新消息被判成"处理过"，这里一键对齐。
+                    try:
+                        r = parent.watermark_reset_fn() or {"ok": True}
+                        self._json(r if isinstance(r, dict) else {"ok": True})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)}, 500)
                 elif path == "/api/shutdown":
                     self._json({"ok": True, "note": "正在停止机器人…"})
                     # 立即强退（handler 线程里 os._exit 杀全进程 + taskkill 自己兜底）——不依赖 Timer/shutdown_fn 线程，
