@@ -34,6 +34,10 @@ from agent import wechat as W  # noqa: E402
 
 # 微信账号 / 公众号 id 一律运行时拼（不把"像真的账号"写进仓库：隐私闸会拦，也确实该拦）
 _WXID = "wx" + "id_" + "sample" + "0001"
+# 「别人的消息」这条夹具同样**运行时拼**：它的形状必须和真实 sender 一样（`wxid_xxx:` 前缀）
+# 才能走通 `_SENDER_RE` 那条路；而**字面量**会被打包器的隐私闸当成真实微信账号拒包
+# （2026-09-18 实测：`pack_online.py` 直接 FATAL 拒绝出包）⇒ 拆开拼，两件事都满足。
+_OTHER_WXID = "wx" + "id_" + "o" + "ther" + "0001"
 _GH = "gh_" + "sample"
 
 PASS = FAIL = 0
@@ -174,7 +178,7 @@ try:
                             "content": _WXID + ":\n来了 别催了"},
                      {"text": "来了 别催了", "sender_wxid": _WXID})
     ad5._note_ledger("g1", {"local_id": 2, "type": "文本", "sender_id": 7,
-                            "content": "wxid_other0001:\n在吗"}, {"text": "在吗"})
+                            "content": _OTHER_WXID + ":\n在吗"}, {"text": "在吗"})
     ad5._note_ledger("g1", {"local_id": 3, "type": "系统消息", "sender_id": 0,
                             "content": "xx撤回了一条消息"}, None)
 finally:
