@@ -137,6 +137,21 @@ def main():
        "wm.set(chat_key, _latest, forward_only=False)" in _pm)
     ok("自愈要落盘 + 留日志（否则用户永远不知道为什么它不回）",
        "wm.flush()" in _pm and "记录像是被清过" in _pm)
+    # ── 用户拍板（2026-09-17）：「不要让用户担风险啊，还要删这删那的、还要试这试那的，不行」 ──
+    #    ⇒ 老办法"删 data\listener_watermark.json"不许留给用户，必须变成控制台上的一个按钮。
+    print("\n-- H. 用户零操作：控制台一键「重新对齐监听水位」（不删文件、不重启） --")
+    ok("主程序里有 _reset_watermark（按当前最新对齐、显式 forward_only=False）",
+       "def _reset_watermark()" in _pm and 'wm.set("group:" + wxid, seq, forward_only=False)' in _pm)
+    ok("它接进了 WebUI（watermark_reset_fn=_reset_watermark）",
+       "watermark_reset_fn=_reset_watermark" in _pm)
+    _ui = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "agent", "webui.py"),
+               encoding="utf-8").read()
+    ok("WebUI 有 POST /api/watermark/reset 这条路",
+       'elif path == "/api/watermark/reset":' in _ui and "parent.watermark_reset_fn()" in _ui)
+    _ch = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "agent", "console_html.py"),
+               encoding="utf-8").read()
+    ok("控制台有按钮并打这个接口（含二次确认）",
+       'id="wmReset"' in _ch and "getJSON('/api/watermark/reset'" in _ch and "uiConfirm('重新对齐监听水位？" in _ch)
 
     shutil.rmtree(tmp, ignore_errors=True)
     print("\n== W2 水位判据：%d 通过 / %d 失败 ==" % (len(PASS), len(FAIL)))

@@ -223,5 +223,19 @@ ok("C12 停止脚本仍按 bot.pid 收口（没被这次改动带偏）",
 ok("C12 互斥体名与证据文件名是模块常量（两处共用同一份）",
    (SI.MUTEX_NAME == r"Local\PersonaMorphBot.singleinstance") and (SI.LOCK_FILE == os.path.join("data", "bot.lock")))
 
+print("\n── D. 卡死旧实例的**自动收尾**（用户只做「再双击一次一键启动」这个自然动作）──")
+# ── 2026-09-17 用户拍板：「不要让用户担风险啊，还要删这删那的、还要试这试那的，不行」 ──
+#    旧版「更新完卡住」那种局面不许留给用户收尾 ⇒ 新实例自己接管：
+#    占用者还在 + 控制台端口没人应答 + 它已经跑了一会儿（锁文件 mtime > 90 秒）⇒ 判卡死、替它收尾。
+ok("D1 有接管分支（判卡死 → 结束它 + 结束看门狗 → 重新取锁）",
+   "判定卡死" in _wx and "_kill_watchdog()" in _wx and "taskkill" in _wx
+   and "_lock_res = _bot_lock.acquire()" in _wx)
+ok("D2 三个条件都要求：占用者还在、端口无应答、且「已经跑了一会儿」",
+   "_old > 90.0" in _wx and "create_connection" in _wx and "not _alive_port" in _wx)
+ok("D3 端口有人应答就绝不动它（不许误杀正在跑的实例）",
+   "if _stuck and (_old > 90.0) and (not _alive_port):" in _wx)
+ok("D4 拿不到锁仍然如实退出（保留兜底，不许裸奔成双实例）",
+   "if not _lock_res.ok:" in _wx and "sys.exit(3)" in _wx)
+
 print("\n单实例锁判据：通过 %d / 失败 %d" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
