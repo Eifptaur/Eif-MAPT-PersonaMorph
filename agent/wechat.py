@@ -1689,18 +1689,36 @@ class WeChatAdapter:
         except Exception as _e:
             log.debug("放回收起状态失败（忽略）：%s", _e)
 
-    def _open_chat_guarded(self, name: str) -> bool:
-        """切会话的**真鼠标闸门**（2026-09-17 红线收口）。
+    def _open_chat_guarded(self, name: str, chat_id: str = "") -> bool:
+        """把「确保目标会话就是当前会话」做成**投递优先**（2026-09-18 修；这是拍一拍/引用/表情的**唯一咽喉点**）。
 
-        为什么要有它：驱动库的 `open_chat()` 是**真鼠标实现**（点搜索框 → 打字 → 点结果行），
-        而全仓有 **7 处**直接调它、**都没过 `_real_fallback_allowed()`** ⇒ 在
-        `input.allow_real_fallback=false`（"不动你光标"的承诺）下照样会把光标拉走。
-        用户实测报障（原话）：「他发信息那时候…**他把鼠标挪到那儿去了**…就单纯挪到发送框」
-        —— 那条回复的第一步是「新对话开始，自动引用对方最近一句」，而引用那条链
-        （`_reply_quote_inner`）正是直接调 `open_chat` 的地方。
+        ⛔ 原实现**只做真鼠标闸**：真鼠标兜底关着（默认）时直接 `return False` ⇒ 这一个点上的
+        7 处调用**全部失败**，而它们里面就有拍一拍（`_send_poke_inner`）、拍一拍自检、引用
+        （`_reply_quote_inner`）、消息菜单（`message_menu`）、表情面板（`emoji_panel_open`）。
+        现场症状（2026-09-18 拍摄）：`演示 → 回拍「E」：打开会话失败`，而**同一刻**日志明明写着
+        「投递切会话：True —— 会话头标题带 OCR='演示（3）' 与目标 '演示' 匹配」。
+        用户原话：「**拍一拍等等这些本身就可以右键投递吧**」。
 
-        未允许时**直接拒绝并留一行日志**（不静默、也不硬凑）。
+        现在三级（能不动真鼠标就不动）：
+          ① 传了 `chat_id` 且**强档证据**说"当前开着的就是目标会话" ⇒ 什么都不用做，直接 True；
+          ② 否则走**投递切会话** `switch_chat_posted`（投递点击会话行 + 库只读确认）；
+          ③ 两者都不成、且真鼠标**被显式允许** ⇒ 才退回真鼠标 `open_chat`；否则留日志拒绝（原口径）。
+
+        不传 `chat_id` 的老调用点行为不变（仍只走真鼠标闸）——但**新代码一律传**。
         """
+        if chat_id:
+            try:
+                gui = self._get_gui()
+                _ok, _why = self.chat_is_open(chat_id, gui=gui)
+                if _ok:
+                    log.info("切会话不需要：强档证据说当前就是目标会话（%s）", str(_why)[:90])
+                    return True
+                _sw_ok, _sw_msg = self.switch_chat_posted(chat_id, gui=gui)
+                log.info("投递切会话（拍一拍/引用/表情链）：%s —— %s", _sw_ok, str(_sw_msg)[:130])
+                if _sw_ok:
+                    return True
+            except Exception as _e:
+                log.info("投递切会话不可用（按原口径回退）：%s", _e)
         if not self._real_fallback_allowed():
             log.info("不切会话：open_chat 是真鼠标路径（会动你的光标）⇒ 按最高目标拒绝（目标=%s）", name)
             return False
@@ -5694,7 +5712,7 @@ class WeChatAdapter:
             if not self._prepare_for_capture(gui):
                 return False, "微信窗口未找到或已退出，无法操作"
             _d("2) 已清理遮挡层并把微信置前")
-            if not self._open_chat_guarded(group := self.group_name(chat_id)):
+            if not self._open_chat_guarded(group := self.group_name(chat_id), chat_id):
                 return False, "打开会话失败"
             _d("3) 已打开会话「%s」" % group)
             time.sleep(0.9)
@@ -5831,7 +5849,7 @@ class WeChatAdapter:
             gui = self._get_gui()
             if not self._prepare_for_capture(gui):
                 return False, "微信窗口未找到或已退出，无法操作"
-            if not self._open_chat_guarded(self.group_name(chat_id)):
+            if not self._open_chat_guarded(self.group_name(chat_id), chat_id):
                 return False, "打开会话失败"
             time.sleep(0.9)
             db_text = self._last_target_text(chat_id, target_id) if target_id else ""
@@ -6039,7 +6057,7 @@ class WeChatAdapter:
             group = self.group_name(chat_id)
             if not self._prepare_for_capture(gui):
                 return False, "微信窗口未找到或已退出，无法操作"
-            if not self._open_chat_guarded(group):
+            if not self._open_chat_guarded(group, chat_id):
                 return False, "打开会话失败"
             time.sleep(0.8)
 
@@ -6137,7 +6155,7 @@ class WeChatAdapter:
                 group = self.group_name(chat_id) or chat_id
                 if not self._prepare_for_capture(gui):
                     return False, "微信窗口未找到或已退出，无法操作"
-                if not self._open_chat_guarded(group):
+                if not self._open_chat_guarded(group, chat_id):
                     return False, "打开会话失败"
                 time.sleep(0.8)
                 if not text.strip():
@@ -6292,8 +6310,15 @@ class WeChatAdapter:
         except Exception:
             return False
 
-    def emoji_panel_open(self, group_name: str = "") -> tuple:
-        """点笑脸打开表情面板（恒定方案：先搜索群名进入会话——不管画面空不空）。返回 (ok, msg)。"""
+    def emoji_panel_open(self, group_name: str = "", chat_id: str = "") -> tuple:
+        """点笑脸打开表情面板（恒定方案：先搜索群名进入会话——不管画面空不空）。返回 (ok, msg)。
+
+        🔴 2026-09-18 修（拍摄现场：**面板开了、表情一个没发出去、日志一个字都没有**）：
+          ① 原来这里调 `_open_chat_guarded(group_name)` **连返回值都不看** ⇒ 切会话失败也照样
+             往下点笑脸，面板就开在"当前碰巧打开的那个会话"上（等于在未知会话上开面板）；
+          ② 现在：先要一次"当前会话＝目标会话"的确认（传了 `chat_id` 时走投递优先的
+             `_open_chat_guarded`），**确认不了就直接失败返回**，并说明原因（绝不静默）。
+        """
         try:
             gui = self._get_gui()
             from . import ui_adapt
@@ -6301,12 +6326,11 @@ class WeChatAdapter:
                 return False, "屏幕预检失败"
             # ① 恒用「搜索群名进入」（wechatauto open_chat 内部即搜索点击；画面空/非空都走）
             if group_name:
-                # 进群=手写搜索（点搜索框→粘贴群名→点弹出的群聊）；失败才兜底 wechatauto open_chat
+                # 进群=手写搜索（点搜索框→粘贴群名→点弹出的群聊）；失败才兜底（现在兜底也是投递优先）
                 if not self._search_group(gui, group_name):
-                    try:
-                        self._open_chat_guarded(group_name)
-                    except Exception:
-                        pass
+                    if not self._open_chat_guarded(group_name, chat_id):
+                        return False, ("确保目标会话失败（投递切会话与真鼠标都没成）⇒ "
+                                       "**不在未知会话上开表情面板**（防把表情发到别的群）")
                 time.sleep(0.25)   # 进群后立刻移向笑脸（原 0.40 压缩；仍够会话切稳）
             else:
                 # 无会话名：自动开第一个群（只探测一次，避免 UIA 连续失败重试）
@@ -6427,10 +6451,17 @@ class WeChatAdapter:
         except Exception:
             return False
 
-    def emoji_panel_send(self, index: int = 0) -> tuple:
+    def emoji_panel_send(self, index: int = 0, chat_id: str = "") -> tuple:
         """发送收藏表情：布局自适应 —— 旧 UI：点爱心（面板标签行）→ 点第 index 格；
         新 UI：面板默认即收藏视图（底栏工具栏），直接点第 index 格。
-        网格几何按面板自身矩形推算（5 列），随 DPI/分辨率/面板尺寸自适应。"""
+        网格几何按面板自身矩形推算（5 列），随 DPI/分辨率/面板尺寸自适应。
+
+        🔴 2026-09-18 修：**点完必须回读确认**。原来点一下 `ui_adapt.click` 就返回
+        "已点击第 N 个收藏表情（点击即发送）"——而我们自己早测出的教训是**"面板刚弹出就立刻点会丢"**，
+        现场后果是：面板开了、用户看到面板、**表情一个没发出去、代码却报成功、日志一字不留**。
+        现在：点完轮询数据库（`latest_seq` 前后比对）确认真出了新行（表情/图片类），
+        确认不到就**换下一格重试一次**，仍确认不到 ⇒ **如实返回失败**（绝不假报已发）。
+        """
         import ctypes
         try:
             gui = self._get_gui()
@@ -6442,26 +6473,59 @@ class WeChatAdapter:
             pw, ph = px1 - px0, py1 - py0
             render = gui.render_rect or gui._update_render_rect() or (0, 0, 0, 0)
             rx, ry = int(render[0]), int(render[1])
+            _base = None
+            if chat_id:
+                try:
+                    _base = self.latest_seq(chat_id)
+                except Exception:
+                    _base = None
             # ① 旧 UI 才点爱心；新 UI（底部有工具栏图标）默认即收藏视图
             if not self._emoji_bottom_bar(px0, py0, pw, ph):
                 old_x = px0 + int(pw * 0.171)
                 old_y = py0 + int(ph * 0.804 - 13)
                 ui_adapt.click(gui, old_x - rx, old_y - ry, heal=False)
                 time.sleep(0.6)
-            # ② 网格（5 列，相对面板）：第一列中心 0.10W，列距 0.19W；行距 0.14H
             cols = 5
-            col = index % cols
-            row = index // cols
             ROWS = 5   # 一屏完整行（面板约 6~7 行，预留）
-            if row >= ROWS:
-                return False, "收藏较多（%d 个）超出面板首屏，请先发送靠前的收藏" % (index + 1)
-            grid_x = px0 + int(pw * (0.10 + col * 0.19))
-            grid_y = py0 + int(ph * (0.085 + row * 0.14))
-            ok, why = ui_adapt.click(gui, grid_x - rx, grid_y - ry, heal=False)
-            if not ok:
-                return False, "点表情失败：%s" % why
-            time.sleep(1.0)
-            return True, "已点击第 %d 个收藏表情（点击即发送）" % (index + 1)
+            grid_y_cache = {}
+
+            def _click_cell(i: int):
+                _col = i % cols
+                _row = i // cols
+                if _row >= ROWS:
+                    return False, "收藏较多（%d 个）超出面板首屏，请先发送靠前的收藏" % (i + 1)
+                gx = px0 + int(pw * (0.10 + _col * 0.19))
+                gy = py0 + int(ph * (0.085 + _row * 0.14))
+                grid_y_cache[i] = (gx, gy)
+                ok, why = ui_adapt.click(gui, gx - rx, gy - ry, heal=False)
+                if not ok:
+                    return False, "点表情失败：%s" % why
+                return True, ""
+
+            def _confirmed() -> bool:
+                """点完看库里有没有新行（确认不到就返回 False，由调用方决定重试）。"""
+                if _base is None:
+                    return True          # 没给 chat_id ⇒ 无法回读，按老口径（调用方自己交代）
+                for _ in range(6):       # 最多约 3 秒
+                    time.sleep(0.5)
+                    try:
+                        if self.latest_seq(chat_id) != _base:
+                            return True
+                    except Exception:
+                        pass
+                return False
+
+            _last = ""
+            for _try_i in (index, index + 1):
+                ok, why = _click_cell(int(_try_i))
+                if not ok:
+                    _last = why
+                    continue
+                time.sleep(1.0)
+                if _confirmed():
+                    return True, "已发送第 %d 个收藏表情（已回读确认新行）" % (int(_try_i) + 1)
+                _last = "点了第 %d 格但**库里没出现新行**（面板可能还没稳/这格是空的）" % (int(_try_i) + 1)
+            return False, ("点了表情格但都没能确认发出（%s）——**如实说没发出去**，稍后可重试" % _last)
         except Exception as e:
             return False, str(e)
 

@@ -87,6 +87,38 @@ for fn, label, need_gate in (("_send_poke_inner", "拍一拍", False), ("_reply_
         ck("B5.%s（%s）不再一进门就跳过（改走投递优先）" % (fn, label), "_background_only" not in body)
 ck("B5x 投递右键链与统一闸门都在（真鼠标许可只由 _real_mouse_allowed 判）",
    "def _right_click_menu_posted(" in SRC_WECHAT and "def _real_mouse_allowed(" in SRC_WECHAT)
+# ── B5z（2026-09-18 拍摄现场后加）：拍一拍/引用/表情的**唯一咽喉点**必须先走投递 ──────────────
+#   现场：`演示 → 回拍「E」：打开会话失败`，而同一刻日志明明写着「投递切会话：True」——
+#   根因是 `_open_chat_guarded` **只做真鼠标闸**，真鼠标兜底关着（默认）就一律 False，
+#   于是拍一拍/引用/表情面板这 7 处调用全废。用户原话：「拍一拍等等这些本身就可以右键投递吧」。
+_guard = SRC_WECHAT.split("def _open_chat_guarded(")[1][:2600]
+ck("B5z1 _open_chat_guarded 接受 chat_id（否则没法做投递判定）",
+   "def _open_chat_guarded(self, name: str, chat_id: str = \"\")" in SRC_WECHAT)
+ck("B5z2 它**先问强档**（当前会话就是目标 ⇒ 什么都不用做）",
+   "self.chat_is_open(chat_id, gui=gui)" in _guard)
+ck("B5z3 再走**投递切会话**（switch_chat_posted）", "switch_chat_posted(chat_id, gui=gui)" in _guard)
+ck("B5z4 真鼠标闸排在投递之后（投递能成就不动光标）",
+   _guard.find("switch_chat_posted(chat_id, gui=gui)") < _guard.find("_real_fallback_allowed()") >= 0
+   if "_real_fallback_allowed()" in _guard else False)
+_guard_calls = [ln for ln in SRC_WECHAT.splitlines()
+                if "_open_chat_guarded(" in ln and "def _open_chat_guarded" not in ln
+                and not ln.strip().startswith("#")]
+_guard_calls_cid = [ln for ln in _guard_calls if ", chat_id)" in ln]
+ck("B5z5 该传 chat_id 的调用点都传了（拍一拍/自检/引用/消息菜单/表情 ≥5 处）",
+   len(_guard_calls_cid) >= 5,
+   "传了 %d 处 / 共 %d 处调用（故意留 2 处老行为：朋友圈链 + 自动开第一个群的探测分支）"
+   % (len(_guard_calls_cid), len(_guard_calls)))
+# B5z6/B5z7 表情链：**开面板前要确认会话、点完必须回读确认**（现场：面板开了、表情没发出去、还报成功）
+_epo = SRC_WECHAT.split("def emoji_panel_open(")[1][:1600]
+ck("B5z6 emoji_panel_open 不再无视切会话结果（确认不了就失败返回）",
+   "不在未知会话上开表情面板" in _epo and "def emoji_panel_open(self, group_name: str = \"\", chat_id: str = \"\")" in SRC_WECHAT)
+_eps = SRC_WECHAT.split("def emoji_panel_send(")[1][:3000]
+ck("B5z7 emoji_panel_send **点完回读确认**（latest_seq 前后比对，确认不到就重试/如实失败）",
+   "latest_seq(chat_id)" in _eps and "库里没出现新行" in _eps)
+ck("B5z8 表情工具把 chat_id 传进这两条（开面板 + 送格）",
+   "emoji_panel_open(group_name=_gname, chat_id=_cid)" in
+   open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                     "agent", "tools.py"), encoding="utf-8").read())
 ck("B5y 只投递时不抢前台（_prepare_for_capture 按档位分叉）",
    "def _prepare_for_capture(" in SRC_WECHAT and "_ensure_main_visible(gui, main)" in
    SRC_WECHAT.split("def _prepare_for_capture(")[1][:900])
