@@ -656,6 +656,33 @@ _SYS_NOTICE_JUNK = ("拍拍", "拍一拍", "撤回了一条消息", "撤回", "�
                     "退出了", "以上是", "开启了朋友验证", "你已添加", "领取了", "修改群名")
 
 
+def poke_text_is_mine(txt: str, target: str = "", my_names=None) -> bool:
+    """这条"拍拍"文案是不是**我发起**的？（方向判据，`_verify_poke` 用）
+
+    2026-09-18 真机取证 + 作者口径（原话：「可以写，如果有"我拍拍"这个部分的，就可以算是自己拍的，
+    **因为有些人可能自定义拍一拍信息**」）：
+      · 我发起（DB 原文）：`我拍拍「E」`（**没有「了」**）· 界面文案：`你拍了拍…`
+      · 别人拍我（DB 原文）：`「E」拍拍「群deepseek」`
+    ⇒ **方向词优先**：`我拍拍` / `我拍了拍` / `你拍了拍` ⇒ 是我。
+    ⇒ 拿不准时才退回"**主语是我**"这一条（我的名字出现在**前半段**）——因为拍一拍文案
+      **可被用户自定义**（"拍了拍我的腹肌"之类），不能靠"拍了拍"这个固定串去认。
+    """
+    t = str(txt or "")
+    if not t:
+        return False
+    if "我拍拍" in t or "我拍了拍" in t or "你拍了拍" in t:
+        return True
+    # 拿不准时**认主语**：文案结构是「<主语> 拍了拍 <对象>[自定义后缀]」
+    # ⇒ 取**第一个「拍」字之前**那一段当主语区，只有主语是"我"才算我拍的。
+    #   ⛔ 别用"我的名字出现在前半段"这种松判据——实测（本文件自带的 8 个用例）它会把
+    #     `「E」拍拍「群deepseek」`（**别人拍我**）判成"我拍的" ⇒ **假成功**。
+    _i = t.find("拍")
+    _subj = t[:_i] if _i > 0 else t
+    if my_names and any(nm and (nm in _subj) for nm in my_names):
+        return True
+    return False
+
+
 def _seq_ratio(a: str, b: str) -> float:
     """文本相似度 0~1（difflib，OCR 与数据库文本比对用）。"""
     try:
@@ -6617,27 +6644,8 @@ class WeChatAdapter:
             return [n.strip() for n in _ns if n and n.strip()]
 
         def _poke_is_mine(txt: str, target: str) -> bool:
-            """这段文本是不是"**我**拍了 TA"？——`_verify_poke` 的唯一判据。
-
-            ⛔ 2026-09-18 修（真缺陷，现场抓到）：老判据是"含「拍拍」就行"，而**对方拍我的那条
-            同样含「拍拍」** ⇒ 现场日志报 `已拍一拍「E」（已验证：数据库中新增拍一拍事件）`，
-            用户的原话却是「**他拍不到我**」。⇒ 必须认方向：要么是微信自己的"我发起"文案
-            「你拍了拍」，要么是「<我的名字> 拍了拍 <TA>」（我的名字要出现在开头部分）。
-            """
-            t = str(txt or "")
-            if not t:
-                return False
-            # ⭐ 2026-09-18 实测补：**我发起**的拍拍在 DB 里的原文是 `我拍拍「E」`（**没有"了"**），
-            #   而"别人拍我"是 `「E」拍拍「群deepseek」` ⇒ 原来只认 `你拍了拍`/`拍了拍`，
-            #   于是**真拍上了也报"未验证到"**（现场：DB 里 local_id=7 title=`我拍拍「E」`，
-            #   验证却说"数据库与界面都未验证到我发起的拍拍"）。
-            #   ⇒ 方向判据补上 `我拍拍` / `我拍了拍`。
-            if "你拍了拍" in t or "我拍拍" in t or "我拍了拍" in t:
-                return True
-            if "拍了拍" in t and target and (target in t):
-                head = t[:max(24, len(t) // 2)]
-                return any(nm in head for nm in _my_names())
-            return False
+            """这段文本是不是"**我**拍了 TA"？——`_verify_poke` 的唯一判据（逻辑在模块级，可单测）。"""
+            return poke_text_is_mine(txt, target, _my_names())
 
         try:
             for _ in range(5):
