@@ -1169,6 +1169,12 @@ th{color:var(--tx2);font-weight:500}
           <div class="hint">留空=所有群都监听；勾选的群才响应（也可配合「暂停」）。</div>
         </div>
       </div>
+      <div class="row"><label>监听水位</label>
+        <div class="grow">
+          <button id="wmReset" class="ghost" type="button">重新对齐监听水位</button>
+          <div class="hint">清空过微信聊天记录、或它突然不回话时点这个：把「已处理到哪一条」对齐到当前最新（<b>不会重发旧消息</b>），不用删文件、也不用重启。</div>
+        </div>
+      </div>
       <div class="row"><label>媒体目录</label><div class="grow"><input type="text" data-cfg="wechat.media_dir"></div></div>
       <div class="row"><label>数据库目录</label><div class="grow"><input type="text" data-cfg="wechat.db_dir" placeholder="留空=自动探测微信数据目录"></div></div>
       <div class="btns"><button class="pri" data-save>保存设置（微信）</button></div>
@@ -2153,6 +2159,15 @@ function renderChips(){
     s.appendChild(x); box.appendChild(s);
   });
 }
+/* ── 重新对齐监听水位（2026-09-17 用户拍板：不许让用户删文件/试来试去 ⇒ 做成一个按钮）── */
+$('wmReset').onclick = async ()=>{
+  if(!await uiConfirm('重新对齐监听水位？把「已处理到哪一条」对齐到当前最新——不会重发旧消息，只是让它重新看见新消息。')) return;
+  try{
+    const r = await getJSON('/api/watermark/reset',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    toast(r && r.ok ? ('已对齐 '+((r.n)||0)+' 个群的监听水位') : ('对齐失败：'+((r&&r.error)||'未知')));
+    loadStatus();
+  }catch(e){ toast('对齐失败：'+e.message); }
+};
 $('customGroup').addEventListener('keydown',e=>{
   if(e.key==='Enter'){
     const v=$('customGroup').value.trim();
