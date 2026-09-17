@@ -123,6 +123,22 @@ def _wait_dialog_gone(hwnd: int, timeout: float = 1.5) -> bool:
         return False
 
 
+
+def _control_halt() -> str:
+    """机器人被**暂停/停止**时，长链的每一步都该**立刻停手**（2026-09-18 加）。
+
+    为什么需要它：作者现场「**说机器已暂停的那一刻，后面一秒他又引用了一下我的消息**」——
+    日志实证 `机器人已暂停` 之后 **54 秒**它仍跑完一整轮（引用→菜单→回车→退普通发送）。真因＝
+    暂停原来只在内存里（`orch.paused`），`wechat` 侧读不到 ⇒ 已开工的链中途不检查。现在读文件标记
+    （`agent/control.py`，由 `orch.set_paused()` 与脚本接口共同维护）。返回空串＝可以继续。
+    """
+    try:
+        from . import control as _ctl
+        return _ctl.halt_reason()
+    except Exception:
+        return ""
+
+
 def _restore_fg(hwnd: int = 0, note: str = "", keep: bool = False) -> None:
     """把前台还回"**打开对话框之前**那一个"（优先级：传入的 hwnd → `_FG_STASH` → 当前前台）。
 
@@ -2741,6 +2757,9 @@ class WeChatAdapter:
 
         参考实测：投递打字 + 投递点「发送」（3/3、DB 回读命中）。
         """
+        _halt = _control_halt()      # 暂停/停止闸：**已开工的链也要停**（2026-09-18）
+        if _halt:
+            return False, _halt
         # OCR 总时间窗（测机手册 ④）：这一笔发送链的 OCR 总预算（超时按"自检不可用"处理）
         from . import chat_ocr as _co
         _co.begin_window(_co.SEND_WINDOW_S)
@@ -5774,6 +5793,9 @@ class WeChatAdapter:
         验证失败会如实返回，不会假报成功。
         dbg 传入列表时，每一步的中间结果会追加进去（供控制台「拍一拍诊断」展示）。
         """
+        _halt = _control_halt()      # 暂停/停止闸：**已开工的链也要停**（2026-09-18）
+        if _halt:
+            return False, _halt
         # 2026-09-16 改口径（投递右键打通后）：这几条路**先试投递**（`_right_click_menu` 内部
         # 投递优先、不动光标（可能短暂置前约 1~3 秒后自动还回）），投递不成才由 `_real_mouse_allowed()` 决定是否回真鼠标。
         # 原来这里是「只走后台 ⇒ 直接跳过」——那是右键还没打通投递时的保守做法，现在属于**误拦**。
@@ -6209,6 +6231,9 @@ class WeChatAdapter:
         命中测试；多个候选点逐一试右键，任一出菜单即点「引用」。
         target_text 空 = 引用「数据库最新一条群友消息」（近似）。
         """
+        _halt = _control_halt()      # 暂停/停止闸：**已开工的链也要停**（2026-09-18）
+        if _halt:
+            return False, _halt
         # 2026-09-16 改口径：引用也**先试投递**（菜单那一跳走投递：不动光标（可能短暂置前约 1~3 秒后自动还回））；
         # 投递不成才由 `_real_mouse_allowed()` 决定是否回真鼠标。原来的"只走后台 ⇒ 跳过"已删。
         try:
