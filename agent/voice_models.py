@@ -271,11 +271,19 @@ def make(text: str, cfg: dict | None = None, timeout: int = DEFAULT_TIMEOUT):
     _notes = []
     try:
         from . import tts_text as _tt
-        _t, _notes = _tt.prep(text, c)
+        _t, _notes, _phones = _tt.prep(text, c)
         if _t:
             text = _t
-            if _notes:
-                log.info("TTS 文本整形：%s ｜ %s", "；".join(_notes), text[:80])
+        if _phones:
+            # 拼音标注（如 行=拼音:xing2）：现在**没有任何一档能吃到**——
+            # edge 档官方没有音素入口（维护者原话：自定义 XML 已移除且不会恢复）；
+            # 本机 sapi 档走的是 SAPI.SpVoice + SVSFIsXML，实测**静默忽略** <phoneme>
+            # （两份 WAV 逐字节相同），只有 .NET SpeakSsml 才认 ⇒ 没接线之前如实说，不许假装生效。
+            _notes = list(_notes) + [
+                "拼音标注 %d 条本次没用上（当前音源没有音素级入口，要改读音请写成同音字，例如 行行行=形形形）"
+                % len(_phones)]
+        if _notes:
+            log.info("TTS 文本整形：%s ｜ %s", "；".join(_notes), text[:80])
     except Exception as _e:                                             # noqa: BLE001
         log.warning("TTS 文本整形失败（按原文念）：%s", str(_e)[:80])
     path, why, info = _make_raw(text, c, timeout)
