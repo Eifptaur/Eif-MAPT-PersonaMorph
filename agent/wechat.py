@@ -2764,6 +2764,15 @@ class WeChatAdapter:
                 return bool(ok_k2), "投递回车（兜底也走回车，不再点按钮）", why_k2
 
             _fired, _tried = 0, []
+            # 🔴 2026-09-18 修（现场：机器人**回了自己刚发的两条**——「这图我看不了」→「你学我干嘛」）：
+            #   回声表原来是在**DB 回读成功之后**才记（`send_text` 的成功分支里）——可微信是**先落库**、
+            #   我们才回读到，中间那几秒（回读轮询 1.2s 一跳）正好落进监听器的下一次轮询窗口 ⇒
+            #   监听器把"我们刚发的话"读成"别人的话"⇒ 唤醒机器人 ⇒ 回自己。
+            #   ⇒ 口径改成：**开枪那一刻就记进回声表**（不等回读）；回读成功后再记一次也无害（幂等）。
+            try:
+                self._mark_sent(text)
+            except Exception as _e:
+                log.debug("开枪前记回声失败（继续）：%s", _e)
             for _i in range(1, 4):                      # 最多 3 枪（与上游 click_send 的重试次数同口径）
                 _ok_s, _how, _why_s = _one_shot(_i)
                 _tried.append(_how if _ok_s else "%s(没打出去)" % _how)
@@ -2814,9 +2823,12 @@ class WeChatAdapter:
         实测（2026-09-13）：①**必须投给渲染子窗 `MMUIRenderSubWindowHW`**（投主窗完全无效）；
         ②图片消息的 **DB 落库延迟可达 30~60s**（文本只要 2~3s）⇒ 轮询窗口默认给到 60s，
         否则会把"其实发出去了"误判成"没生效"（本轮就因此把一次成功误判成失败）。
-        2026-09-18 修两处（现场「图片他拿到了，但是又没有发给我」）：③粘贴前**先投递聚焦输入栏**
-        （焦点不在输入框时 Ctrl+V 静默无效）；④提交改**三枪**（回车优先 → 点「发送」→ 回车兜底），
-        不再"只点一枪然后干等 DB"。
+        2026-09-18 换了两处（现场「图片他拿到了，但是又没有发给我」）：
+          ③ **粘贴改走"输入框右键 → 「粘贴」菜单项"** —— 老的"投递 Ctrl+V"在微信上不成立
+             （投递消息不带修饰键状态，退化成字面字母 v，实拍见输入框冒出 `vvaavv`）；
+          ④ 粘贴后加**发送按钮颜色自检**（空框=灰/有内容=绿，屏幕实拍判定），
+             没进框就**一枪都不打**（避免把空消息或框里原有文字发出去）。
+        提交仍是**三枪**（回车 → 点「发送」→ 回车兜底，图片只粘贴一次）。
         全程**不动光标（伪激活可能短暂置前约 1~3 秒后自动还回）**；成功判据**只认 DB 回读**。
         """
         from . import input_backend as ib
@@ -2829,7 +2841,8 @@ class WeChatAdapter:
             main = int(getattr(gui, "main_hwnd", 0) or 0) or ib.find_main_window()
             if not main:
                 return False, "找不到微信主窗"
-            child = int(getattr(gui, "render_hwnd", 0) or 0) or main      # 粘贴/按键要打渲染子窗
+            # 2026-09-18：原 `child = render_hwnd`（"粘贴/按键要打渲染子窗"）随 Ctrl+V 一起作废 ——
+            #   现在粘贴走"输入框右键 → 粘贴菜单项"，不再需要这个句柄（留着就是死代码）。
             # ⛔99 发送前**大图自动压缩**（对账清单第 22 条）：压不动/不必压 ⇒ 原样发，说明进回执。
             _cnote = ""
             try:
@@ -2874,10 +2887,42 @@ class WeChatAdapter:
             ok_cb, why_cb = _cb.set_image(local_path)
             if not ok_cb:
                 return False, "放剪贴板失败：%s" % why_cb
-            ok_p, why_p = backend.keys(child, [ib.VK_CONTROL, ib.VK_V])
-            if not ok_p:
-                return False, "投递 Ctrl+V 失败：%s" % why_p
+            # 🔴 2026-09-18 换通路（现场实测把老路判死）：**不再用投递 Ctrl+V** ——
+            #   投递的消息**不携带修饰键状态**（真键盘走硬件输入队列才会设置它），微信收到键时
+            #   回头问系统"Ctrl 按住没"⇒ 永远答"没按" ⇒ 组合键**退化成字面字母 v**（实测输入框里
+            #   冒出 `vvaavv`；五种变体都试过：主窗/渲染子窗/带扫描码/同步 SendMessage/左 Ctrl）。
+            #   ⇒ 改走**微信自己的动作路径**：输入框右键 → 「粘贴」菜单项（全程投递，不需要修饰键）。
+            #   实测（2026-09-18）：这条**真能把图放进输入框**（屏幕实拍：缩略图出现、发送按钮变绿）。
+            _RX, _RY = int(rw * 0.45), int(rh * 0.87)
+            _paste_ok = False
+            try:
+                _paste_ok = bool(self._right_click_menu_posted(gui, _RX, _RY, "粘贴", delay=1.0))
+            except Exception as _e:
+                log.info("发图·右键「粘贴」异常：%s", _e)
+            if not _paste_ok:
+                # 菜单可能还开着 ⇒ 关掉它（别在用户屏幕上留一个浮层）
+                try:
+                    import win32process as _wp
+                    _pid = _wp.GetWindowThreadProcessId(int(main))[1]
+                    for _mh in (ib.menu_new_windows(_pid, ()) or []):
+                        try:
+                            import ctypes as _ct
+                            _ct.windll.user32.PostMessageW(_ct.c_void_p(int(_mh)), 0x0010, 0, 0)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                return False, ("发图失败：右键菜单里没点到「粘贴」（投递组合键在微信上不成立，"
+                               "只剩这条后台通路；本次**没有打任何发送枪**）")
             time.sleep(1.4)                       # 等缩略图渲染进输入框
+            # 自检：图真的进输入框了吗？判据＝「发送」按钮的颜色（空框＝灰、有内容＝绿）。
+            # 为什么要它：只有"图确实进了框"才该打发送枪 —— 否则那几枪会把**空消息**或
+            # 框里原有的文字发出去（比"没发出去"更糟）。
+            _has, _has_why = self._input_has_content(gui, r)
+            if not _has:
+                return V_NOT_SENT, ("右键「粘贴」之后输入框里没看到内容（%s）⇒ 不发，"
+                                    "也没打任何发送枪" % _has_why)
+            log.info("发图·粘贴自检通过：%s", _has_why)
             send_pt = (int(r[0]) + int(rw * 0.932), int(r[1]) + int(rh * 0.945))
             # ⛔ 2026-09-18 改：**三枪**（与发文字同一口径，见 :2733 `_one_shot`）——
             #   老实现只点**一枪**「发送」然后干等 DB；那一枪没生效（伪激活后焦点/命中点有偏差）
@@ -2890,6 +2935,13 @@ class WeChatAdapter:
                       ("点「发送」", lambda: backend.click(main, send_pt)),
                       ("回车（兜底）", lambda: backend.keys(main, [ib.VK_RETURN])))
             _fired = []
+            # 🔴 2026-09-18 同一条修（发图版）：**开枪前就把「[图片]」记进回声表** —— 否则我们发出去的图
+            #   会在监听器眼里是"别人发的图"，机器人就会去"看"自己发的图（现场实录：机器人回了
+            #   自己刚发的图「这图我看不了」，接着又回自己那句话「你学我干嘛」）。
+            try:
+                self._mark_sent("[图片]")
+            except Exception as _e:
+                log.debug("发图·开枪前记回声失败（继续）：%s", _e)
             for _i, (_lbl, _act) in enumerate(_shots, 1):
                 try:
                     _act()
@@ -3648,6 +3700,18 @@ class WeChatAdapter:
                 nn = _co.norm_alnum(nd)
                 if len(nn) >= 6:
                     if _co.content_match(pane, nd):
+                        # 🔴 2026-09-18 加：**双档互证 ⇒ 直接放行，不让"活动行时间"翻案**
+                        #   现场（拍摄 01:32）：会话头标题带 OCR='演示（3）'明明命中了（切会话那一步
+                        #   就是靠它判成功的），可紧接着这里因为"活动行时间戳读不出"把**正确的会话**
+                        #   判成 False ⇒ 文字回复连着三次全被拒发、机器人一条都没发出去。
+                        #   根因：当前打开的那一行是**白字绿底**（高亮行），它的时间戳跟名字一样
+                        #   读不出来 ⇒ 那条"判不了就不放行"的规则每次都误伤当前会话。
+                        #   口径（写死）：**两个互不依赖的强档同时命中**时，第三档"读不出"只能算
+                        #   "判据不可用"，不许翻成"不是这个会话"。会话头标题带就是那第二个档。
+                        _so_ok, _so_why = self._screen_only_identity(chat_id, gui=gui, name=name)
+                        if _so_ok:
+                            return True, ("聊天区内容像目标（%r…）＋ %s ⇒ 双档互证，放行"
+                                          % (nd[:16], str(_so_why)[:80]))
                         # ⚠️ 内容像还不够：**活动行时间必须与目标最后一条消息时间一致**（跨机 r14 的硬证据：
                         #    两个会话内容逐字相同时，内容闸会同时放行两个目标 ⇒ 用"只有一个活动行"把它分开）。
                         _cf, _cfwhy, _cdec, _ccmp = self._row_time_conflict(chat_id, gui=gui)
@@ -5123,6 +5187,36 @@ class WeChatAdapter:
             return ui_adapt.click(gui, int(rel_x), int(rel_y), right=right)
         except Exception as e:
             return False, str(e)
+
+    def _input_has_content(self, gui, render_rect) -> tuple:
+        """输入框里有没有内容：判据＝「发送」按钮的颜色（**空框＝灰、有内容＝绿**）。
+
+        为什么要它（2026-09-18）：发图链在"粘贴"之后要打几枪提交 —— 只有**图确实进了输入框**
+        才该打；否则那几枪会把空消息、或者把框里原有的文字发出去（比"没发出去"更糟）。
+        为什么用颜色而不是 OCR：按钮位置固定（渲染区比例 0.932, 0.945，就是我们要点的那个点），
+        颜色判据零依赖、零误读；而且**必须用屏幕实拍**（`ImageGrab`）——`capture_image()` 在微信
+        不重绘时返回的是**缓存帧**（实测连续多次截图 sha256 完全相同），拿它当判据会一直看到旧画面。
+
+        返回 `(True/False, 说明)`；**量不出来时按 True 放行**（这只是个前置自检，最终仍以 DB 回读为准）。
+        """
+        try:
+            from PIL import ImageGrab
+            r = render_rect or (0, 0, 0, 0)
+            rw, rh = int(r[2] - r[0]), int(r[3] - r[1])
+            if rw <= 0 or rh <= 0:
+                return True, "渲染区未知 ⇒ 跳过颜色自检"
+            cx = int(r[0] + rw * 0.932)
+            cy = int(r[1] + rh * 0.945)
+            img = ImageGrab.grab(bbox=(cx - 7, cy - 5, cx + 7, cy + 5), all_screens=True).convert("RGB")
+            px = list(img.getdata())
+            n = float(len(px) or 1)
+            green = sum(1 for (rr, gg, bb) in px if gg > rr + 25 and gg > bb + 25) / n
+            mean = tuple(int(sum(p[i] for p in px) / n) for i in range(3))
+            if green >= 0.35:
+                return True, "发送按钮=绿色（输入框有内容）绿色占比=%.2f" % green
+            return False, "发送按钮=灰色（输入框看着是空的）绿色占比=%.2f 均值=%s" % (green, mean)
+        except Exception as e:
+            return True, "颜色自检不可用（%s）⇒ 按有内容继续" % str(e)[:40]
 
     def _right_click_menu_posted(self, gui, rel_x: int, rel_y: int, label: str, delay: float = 0.7) -> bool:
         """**投递版**右键菜单：投递右键（投主窗）→ 差分找菜单窗 → 投递点击含 label 的项。
