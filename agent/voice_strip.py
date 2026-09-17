@@ -617,13 +617,20 @@ def calibrate(wechat, save: bool = True, log=None) -> dict:
 
 
 def _give_back(stashed_fg: int):
-    """把借走的前台还给用户原来的那个窗口（盯着还，最多 2.5 秒）——标定/试发之后必调。"""
+    """把借走的前台还给用户原来的那个窗口（盯着还，最多 2.5 秒）——标定/试发之后必调。
+
+    ⚠️ 2026-09-18：`_restore_fg_until` **不再顺手**把"为干活还原出来的主窗"放回收起状态
+    （那会在一条链里被调很多次 ⇒ 收→放→收→放，用户看到微信在抽风）。⇒ 收尾动作**必须由调用方
+    自己补一句**（文本链/文件链就是这么做的：`_minimize_back_if_needed("投递文本链收尾")`）。
+    这条链（语音条标定/试发）也是一条会 `_ensure_main_visible` 还原主窗的链，所以同样要补。
+    """
     if not stashed_fg:
         return
     try:
         from . import wechat as _w
         _w._FG_STASH["hwnd"] = int(stashed_fg)
         _w._restore_fg_until("语音条标定/试发回还", timeout=2.5, keep=False)
+        _w._minimize_back_if_needed("语音条标定/试发收尾")
     except Exception:
         pass
 

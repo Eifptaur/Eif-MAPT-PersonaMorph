@@ -157,5 +157,35 @@ ok("聊天区一个字都没读到 ⇒ 给不出证据（不是判否、也不�
 ok("内容级复核里真的接了这条证据（源码级）", "_pane_time_hits(chat_id, pane)" in SRC and "_ok_pt" in SRC)
 ok("只认相对日与裸 HH:MM，显式日期不猜（源码级）", '{"昨天": 1, "前天": 2}' in SRC)
 
+print("\n── I. 消息判定台账：每条进来的消息都要记「判为谁 + 为什么」（2026-09-18 现场事故后加）──")
+import tempfile as _tmp2      # noqa: E402
+
+_ld = _tmp2.mkdtemp(prefix="pm_ledger_")
+_old_root = W.ROOT
+ad5 = W.WeChatAdapter.__new__(W.WeChatAdapter)
+ad5._self_wxid = _WXID
+ad5._self_nickname = "群deepseek"
+ad5._recent_sent = deque(maxlen=10)
+ad5._recent_sent.append(("来了 别催了", time.time()))
+try:
+    W.ROOT = _ld                                     # 台账文件落到临时目录，不碰产品状态
+    W._LEDGER.clear()
+    ad5._note_ledger("g1", {"local_id": 1, "type": "文本", "sender_id": 3,
+                            "content": _WXID + ":\n来了 别催了"},
+                     {"text": "来了 别催了", "sender_wxid": _WXID})
+    ad5._note_ledger("g1", {"local_id": 2, "type": "文本", "sender_id": 7,
+                            "content": "wxid_other0001:\n在吗"}, {"text": "在吗"})
+    ad5._note_ledger("g1", {"local_id": 3, "type": "系统消息", "sender_id": 0,
+                            "content": "xx撤回了一条消息"}, None)
+finally:
+    W.ROOT = _old_root
+_rows = W.message_ledger(5)
+ok("台账记满了三条", len(_rows) == 3, str(len(_rows)))
+ok("① 自己发的：标成「self_wxid 命中」", "self_wxid 命中" in _rows[0]["why"], _rows[0]["why"])
+ok("② 别人的：标成「保留」且 keep=True", _rows[1]["keep"] is True and "保留" in _rows[1]["why"], _rows[1]["why"])
+ok("③ 系统消息：keep=False 且写明跳过", _rows[2]["keep"] is False and "跳过" in _rows[2]["why"], _rows[2]["why"])
+ok("台账落盘（data/message_ledger.jsonl）", os.path.exists(os.path.join(_ld, "data", "message_ledger.jsonl")))
+ok("normalize 外面真的包了这一层（源码级）", "def normalize" in SRC and "_note_ledger(chat_id, raw, out)" in SRC)
+
 print("\n触发判定判据：%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

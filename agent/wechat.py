@@ -26,6 +26,17 @@ from . import replica_adapter  # W1：驱动库（wechatauto-replica）私有 AP
 from . import recall as recall_mod  # 第 14 条：撤回事件识别（用于把已进上下文的消息剔除）
 
 
+_LEDGER = deque(maxlen=200)
+
+
+def message_ledger(n: int = 30) -> list:
+    """最近 n 条"消息判定台账"（每条：会话/发送者/判为谁/为什么/原文片段）。"""
+    try:
+        return list(_LEDGER)[-max(1, int(n)):]
+    except Exception:
+        return []
+
+
 def _mask_id(s: str) -> str:
     """掩码显示 wxid（日志与控制台都不回显完整账号）。"""
     t = str(s or "")
@@ -231,8 +242,14 @@ def _restore_fg_until(note: str = "", timeout: float = 2.5, keep: bool = True,
     ok = (int(_fg_now() or 0) == h)
     log.info("还前台收尾（%s）：试了 %d 次，最终前台=%s %s",
              note or "未注明", tries, _fg_now(), "✅ 已回到用户窗口" if ok else "✗ 没能回到")
-    # 前台还回去之后再放回收起状态（顺序不能反：先最小化会让"还前台"更难成立）
-    _minimize_back_if_needed(note)
+    # ⛔ 这里**不再**顺手 `_minimize_back_if_needed`（2026-09-18 挪走）：
+    #   现场现象「他还在不停地缩小，就是把微信最小化，然后又把微信切出来」。
+    #   根因：`_restore_fg_until` 在**一条发送链里会被调很多次**（切会话·搜索路线 / 投递发送后 /
+    #   写完文件名 / 对话框关闭后 / 补回车后 …），而放回收起状态**只该在整条链收尾时做一次**。
+    #   以前每次都放回 ⇒ 链中间那一次就把微信收进任务栏，下一个动作又要 `_ensure_main_visible`
+    #   把它还原出来 ⇒ 一收一放，用户看到的就是"微信在抽风"。
+    #   ⇒ 放回动作**只在链收尾**两处调用：`_minimize_back_if_needed("投递文本链收尾")`
+    #     与 `_minimize_back_if_needed("投递文件链收尾")`（`scripts/background_selftest.py` F 段看守）。
     return ok
 
 
@@ -1063,22 +1080,122 @@ class WeChatAdapter:
             time.sleep(0.4)
         return "已收回被独立出去的聊天窗 %d 个" % done if done else ""
 
+    def _echo_window(self) -> float:
+        """回声判定时间窗（秒）。默认 **120 秒**（2026-09-18 由 30s 放宽）。
+
+        为什么放宽（现场事故）：机器人**跟自己吵了 8 条**（"来了 别催了"/"？发图干嘛"/
+        "图呢 我没看到"…）。根因链是"user 每次拍完清空聊天记录 ⇒ 消息表整张没了 ⇒ 自认回读失效"，
+        而 30 秒的窗**太短**——一条消息从"发出"到"监听器从库里回读出来"中间可能夹着
+        发图/切会话/OCR，实测窗口一过就判成别人的话 ⇒ 回自己。
+        可配：`config.json → wechat.echo_window_s`。
+        """
+        try:
+            v = float((self.cfg.get("wechat", {}) or {}).get("echo_window_s") or 0) or 0.0
+        except Exception:
+            v = 0.0
+        return v if v > 0 else 120.0
+
+    @staticmethod
+    def _echo_norm(s: str) -> str:
+        """回声比对用的归一化：去空白/零宽字符、统一全角括号引号。
+
+        为什么需要（同一事故）：发出的是 `来了 别催了`，回读到的可能因为富文本包装
+        变成 `来了  别催了`（多一个空格）或带上零宽字符 ⇒ 严格 `==` 就漏判。
+        """
+        t = str(s or "")
+        for ch in ("\u200b", "\u200c", "\u200d", "\ufeff", "\u00a0"):
+            t = t.replace(ch, "")
+        t = "".join(t.split())
+        for a, b in (("（", "("), ("）", ")"), ("，", ","), ("。", "."), ("！", "!"),
+                     ("？", "?"), ("：", ":"), ("；", ";"), ("“", '"'), ("”", '"'),
+                     ("‘", "'"), ("’", "'")):
+            t = t.replace(a, b)
+        return t
+
     def _is_self_echo(self, text: str) -> bool:
         """判断一条消息是不是自己刚发的（数据库回读回声）。
 
-        微信 UIA 发出的消息会写回本地库，且群聊里 sender_id 不可靠，
-        所以用"文本完全一致 + 时间窗口 30 秒"来兜底过滤，避免自问自答死循环。
+        微信发出的消息会写回本地库，且群聊里 sender_id 不可靠，所以用"文本对得上 + 时间窗"
+        兜底过滤，避免自问自答死循环。三档判据（宽→严）：
+        ① **归一化后完全一致**（去空白/零宽/统一标点）；
+        ② **包含关系**：一方完整包含另一方，且短的那条 ≥4 字（治"我发整段、库里回来的是半句"）；
+        ③ 老口径的严格 `==` 仍在（①的退化情形）。
         """
         t = str(text or "").strip()
         if not t:
             return False
         now = time.time()
-        for sent_text, sent_ts in self._recent_sent:
-            if sent_text == t and (now - sent_ts) < 30:
+        win = self._echo_window()
+        nt = self._echo_norm(t)
+        for sent_text, sent_ts in list(self._recent_sent or []):
+            if (now - float(sent_ts)) >= win:
+                continue
+            if sent_text == t:
+                return True
+            ns = self._echo_norm(sent_text)
+            if not ns:
+                continue
+            if ns == nt:
+                return True
+            short, long_ = (ns, nt) if len(ns) <= len(nt) else (nt, ns)
+            if len(short) >= 4 and short in long_:
                 return True
         return False
 
+    def _note_ledger(self, chat_id, raw: dict, out) -> None:
+        """**消息判定台账**（2026-09-18 加）：每条进来的消息都记一笔"判为谁 + 为什么"。
+
+        为什么需要（现场事故）：机器人**跟自己吵了 8 条**（把自己发的话当成别人的话），
+        而光看现象无法定位是哪一步错了 —— 可能是 `self_wxid` 没命中、可能是回声窗没过、
+        也可能那条是"系统/空内容"。⇒ 每次判定都落一条（内存 + `data/message_ledger.jsonl`），
+        下次再出现就能一眼看出是哪一步，不用再猜。
+        """
+        try:
+            import json as _json
+            content = raw.get("content") or ""
+            if isinstance(content, bytes):
+                content = content.decode("utf-8", "ignore")
+            content = str(content)
+            m = _SENDER_RE.match(content)
+            sender_wxid = (m.group(1) if m else "") or ""
+            text = str((out or {}).get("text") or (content[m.end():].strip() if m else content)).strip()
+            self_hit = bool(self._self_wxid and sender_wxid and sender_wxid == self._self_wxid)
+            echo_hit = bool(text) and self._is_self_echo(text)
+            if self_hit:
+                why = "判为自己：self_wxid 命中"
+            elif echo_hit:
+                why = "判为自己：文本回声窗命中"
+            elif out:
+                why = "保留（当别人的消息处理）"
+            else:
+                why = "跳过（系统/空内容/其它过滤）"
+            _LEDGER.append({
+                "ts": int(time.time() * 1000), "chat": str(chat_id or ""),
+                "local_id": raw.get("local_id"), "mtype": str(raw.get("type") or ""),
+                "sender_id": raw.get("sender_id"), "sender_wxid": _mask_id(sender_wxid),
+                "self_wxid_hit": self_hit, "echo_hit": echo_hit,
+                "keep": bool(out), "why": why, "text": text[:60],
+            })
+            try:
+                p = os.path.join(ROOT, "data", "message_ledger.jsonl")
+                os.makedirs(os.path.dirname(p), exist_ok=True)
+                with open(p, "a", encoding="utf-8") as fh:
+                    fh.write(_json.dumps(_LEDGER[-1], ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+        except Exception:
+            pass
+
     def normalize(self, raw: dict, chat_id: str | None = None):
+        """把 wechatauto 原始消息归一化（外面包一层台账，见 `_note_ledger`）。返回 None＝应跳过。"""
+        out = self._normalize_impl(raw, chat_id)
+        try:
+            self._note_ledger(chat_id, raw, out)
+        except Exception:
+            pass
+        return out
+
+    def _normalize_impl(self, raw: dict, chat_id: str | None = None):
         """把 wechatauto 原始消息归一化。返回 None 表示应跳过（自己/系统）。"""
         mtype = str(raw.get("type") or "")
         local_id = raw.get("local_id")
@@ -1199,7 +1316,8 @@ class WeChatAdapter:
                 try:
                     _sn = str((self._nick_map or {}).get(sender_wxid) or "").strip()
                     _now = time.time()
-                    _recent = any((_now - float(_ts)) < 30 for _t, _ts in (self._recent_sent or []))
+                    _recent = any((_now - float(_ts)) < self._echo_window()
+                                  for _t, _ts in (self._recent_sent or []))
                     if _sn and _sn == self._self_nickname.strip() and _recent:
                         return None
                 except Exception:
@@ -1532,13 +1650,26 @@ class WeChatAdapter:
         if fg in (gui.main_hwnd, gui.render_hwnd) and before_fg:
             _force_foreground(user32, before_fg)
             time.sleep(0.25)
-        # 3) 兜底：恢复失败（受前台锁/窗口已关）→ 微信放到 Z 序底层，再不行最小化
+        # 3) 兜底：恢复失败（受前台锁/窗口已关）→ 微信放到 Z 序底层即可。
+        #    ⛔ 这里**不许再裸 `SW_MINIMIZE`**（2026-09-18 删）：现场现象「他还在不停地缩小，
+        #       就是把微信最小化，然后又把微信切出来」——那一枪**没有安全线**（不像
+        #       `_minimize_back_if_needed`：没登记过不动 / 已最小化不动 / 是前台就不动），
+        #       它会把**用户自己正在用的微信**直接收进任务栏，下一次投递又得还原 ⇒ 一来一回就是"抽风"。
+        #       Z 序放底已经足够（"不挡着用户"这个目的达到），且完全可逆、用户看不见。
         fg = int(user32.GetForegroundWindow() or 0)
         if fg in (gui.main_hwnd, gui.render_hwnd):
             user32.SetWindowPos(gui.main_hwnd, 1, 0, 0, 0, 0, 0x0002 | 0x0001)  # HWND_BOTTOM
             time.sleep(0.2)
             if int(user32.GetForegroundWindow() or 0) in (gui.main_hwnd, gui.render_hwnd):
-                user32.ShowWindow(gui.main_hwnd, 6)  # SW_MINIMIZE
+                log.info("还后台：微信仍在最前且用户窗口没能抢回 ⇒ 先放到 Z 序底层")
+        # 4) **带安全线的**"谁动的谁收拾"：只有"确实是为干活被我们还原出来的"（`_MINIMIZED_BY_US`
+        #    登记过）才会被收回归位，且它已经最小化 / 正在被用户使用时都不动（三条安全线见
+        #    `_minimize_back_if_needed`）。这一步替代了上面那条裸最小化，供 `_fg_enter/_fg_exit`
+        #    这类"借了前台/还原了窗口"的链收尾（拍一拍 / 引用 / 朋友圈 / 发图…）。
+        try:
+            _minimize_back_if_needed("发送后收尾（_restore_after_send）")
+        except Exception as _e:
+            log.debug("放回收起状态失败（忽略）：%s", _e)
 
     def _open_chat_guarded(self, name: str) -> bool:
         """切会话的**真鼠标闸门**（2026-09-17 红线收口）。
@@ -2683,6 +2814,9 @@ class WeChatAdapter:
         实测（2026-09-13）：①**必须投给渲染子窗 `MMUIRenderSubWindowHW`**（投主窗完全无效）；
         ②图片消息的 **DB 落库延迟可达 30~60s**（文本只要 2~3s）⇒ 轮询窗口默认给到 60s，
         否则会把"其实发出去了"误判成"没生效"（本轮就因此把一次成功误判成失败）。
+        2026-09-18 修两处（现场「图片他拿到了，但是又没有发给我」）：③粘贴前**先投递聚焦输入栏**
+        （焦点不在输入框时 Ctrl+V 静默无效）；④提交改**三枪**（回车优先 → 点「发送」→ 回车兜底），
+        不再"只点一枪然后干等 DB"。
         全程**不动光标（伪激活可能短暂置前约 1~3 秒后自动还回）**；成功判据**只认 DB 回读**。
         """
         from . import input_backend as ib
@@ -2724,6 +2858,19 @@ class WeChatAdapter:
             base = _rows()
             base_id = int(base[0].get("local_id") or 0) if base else 0
 
+            # ⛔ 2026-09-18 加：**粘贴前先投递聚焦输入栏**（与发文字同一条教训，见 :2708 的 `_FOCUS_Y` 注释）。
+            #   粘贴 = "给**当前焦点**发 Ctrl+V"，焦点不在输入框时（刚切完会话 / 刚清空聊天记录 /
+            #   刚被还原出来）**静默无效**，后面那一枪「发送」自然什么都发不出去 ——
+            #   现场现象正是「**图片他拿到了，但是又没有发给我**」。发文字那条链早就补了这一枪（r24），
+            #   发图这条一直没有。落点用**正文区比例 0.87**（0.92 是工具栏带，会点到按钮上）。
+            try:
+                focus_pt = (int(r[0]) + int(rw * 0.45), int(r[1]) + int(rh * 0.87))
+                log.info("发图·投递聚焦输入栏：点 %s（渲染区 %s）", focus_pt, r)
+                backend.click(main, focus_pt)
+                time.sleep(0.3)
+            except Exception as _e:
+                log.info("发图·投递聚焦输入栏失败（继续尝试粘贴）：%s", _e)
+
             ok_cb, why_cb = _cb.set_image(local_path)
             if not ok_cb:
                 return False, "放剪贴板失败：%s" % why_cb
@@ -2732,26 +2879,47 @@ class WeChatAdapter:
                 return False, "投递 Ctrl+V 失败：%s" % why_p
             time.sleep(1.4)                       # 等缩略图渲染进输入框
             send_pt = (int(r[0]) + int(rw * 0.932), int(r[1]) + int(rh * 0.945))
-            ok_c, why_c = backend.click(main, send_pt)
-            if not ok_c:
-                return False, "投递点发送失败：%s" % why_c
-            deadline = time.time() + max(10.0, float(wait_s))
-            while time.time() < deadline:
-                time.sleep(1.2)
-                rows = _rows()
-                if rows:
-                    top = rows[0]
-                    try:
-                        new_id = int(top.get("local_id") or 0)
-                    except Exception:
-                        new_id = 0
-                    if new_id > base_id:
-                        return V_OK, "投递发图成功（DB 回读 local_id=%s type=%s）" % (
-                            top.get("local_id"), top.get("type_name") or top.get("type"))
+            # ⛔ 2026-09-18 改：**三枪**（与发文字同一口径，见 :2733 `_one_shot`）——
+            #   老实现只点**一枪**「发送」然后干等 DB；那一枪没生效（伪激活后焦点/命中点有偏差）
+            #   就整条判"没发出去"，日志里留下的正是「已投递粘贴并点了发送，但 60s 内 DB 没等到新行」。
+            #   ⇒ 1＝**回车优先**（上游口径：输入框刚粘贴完必已聚焦，回车最可靠）、2＝点「发送」按钮、
+            #     3＝回车兜底。图片**只粘贴一次**：内容在输入框里，多打几枪不会重复发送
+            #     （真发出去之后输入框就空了，后续枪等于空放）。
+            _deadline = time.time() + max(10.0, float(wait_s))
+            _shots = (("回车", lambda: backend.keys(main, [ib.VK_RETURN])),
+                      ("点「发送」", lambda: backend.click(main, send_pt)),
+                      ("回车（兜底）", lambda: backend.keys(main, [ib.VK_RETURN])))
+            _fired = []
+            for _i, (_lbl, _act) in enumerate(_shots, 1):
+                try:
+                    _act()
+                    _fired.append(_lbl)
+                except Exception as _e:
+                    log.info("发图·第 %d 枪（%s）异常：%s", _i, _lbl, _e)
+                _due = min(_deadline, time.time() + max(6.0, float(wait_s) / 3.0))
+                while time.time() < _due:
+                    time.sleep(1.2)
+                    rows = _rows()
+                    if rows:
+                        top = rows[0]
+                        try:
+                            new_id = int(top.get("local_id") or 0)
+                        except Exception:
+                            new_id = 0
+                        if new_id > base_id:
+                            return V_OK, ("投递发图成功（第 %d 枪 %s · DB 回读 local_id=%s type=%s）"
+                                          % (_i, _lbl, top.get("local_id"),
+                                             top.get("type_name") or top.get("type")))
+                if time.time() >= _deadline:
+                    break
             _alive2, _why_alive2 = self.db_alive(chat_id)
             if not _alive2:
-                return V_UNVERIFIED, ("已投递粘贴并点了发送，但**判据不可用**、无法证实：%s" % _why_alive2)
-            return V_NOT_SENT, "已投递粘贴并点了发送，但 %ds 内 DB 没等到新行（发图未生效）" % int(wait_s)
+                return V_UNVERIFIED, ("已投递粘贴并打了 %d 枪%s，但**判据不可用**、无法证实：%s"
+                                      % (len(_fired), ("（%s）" % "→".join(_fired)) if _fired else "", _why_alive2))
+            return V_NOT_SENT, ("已投递粘贴并打了 %d 枪%s，但 %ds 内 DB 没等到新行（发图未生效；"
+                                "文字可能还留在输入框里）"
+                                % (len(_fired), ("（%s）" % "→".join(_fired)) if _fired else "",
+                                   int(wait_s)))
         except Exception as e:
             return False, "投递发图异常：%s" % e
 
@@ -2972,8 +3140,20 @@ class WeChatAdapter:
                             "⇒ 按声明放行（判据原文：%s）", idn_why)
                 idn_why = "%s（已按调用方声明确认放行）" % idn_why
             if idn is None and not confirm_open:
-                return False, ("拿不到内容级证据，拒绝发送：%s"
-                               "（若确已确认当前会话就是目标，可显式传 confirm_open=True）" % idn_why)
+                # ⛔ 2026-09-18 改（拍摄现场：「**图片他拿到了，但是又没有发给我**」）：
+                #   清空过聊天记录的会话 ⇒ 内容级证据永远拿不到（`None`）⇒ 老写法**无条件拒绝发文件**
+                #   ⇒ 用户看着机器人把图下载好了却不发。而**名字档上面已经在 :3068 过了一遍**
+                #   （`ok_open`，含"绿底高亮行 + 名字"与"会话头标题带"两档强证据）——
+                #   名字档说"是它"、内容档说"没证据"，再拒发就是自相矛盾。
+                #   ⇒ 与**发文字**那条链的既有口径对齐（那边正是这么做的，见 :1841-1854）：名字档过了就放行，
+                #     但**必须记账留痕**（日志 + 返回值里带上判据原文），事后能问责。
+                if ok_open:
+                    log.warning("发文件：拿不到内容级证据（%s），但**名字档已确认**（%s）⇒ 按名字档放行（记账）",
+                                str(idn_why)[:60], str(why_open)[:60])
+                    idn_why = "%s（已按名字档放行：%s）" % (str(idn_why)[:60], str(why_open)[:60])
+                else:
+                    return False, ("拿不到内容级证据，拒绝发送：%s"
+                                   "（若确已确认当前会话就是目标，可显式传 confirm_open=True）" % idn_why)
             main_hwnd = int(getattr(gui, "main_hwnd", 0) or 0) or ib.find_main_window()
             if not main_hwnd:
                 return False, "找不到微信主窗"
@@ -3387,7 +3567,41 @@ class WeChatAdapter:
         except Exception:
             return False, "判据异常", False, False
 
-    def chat_identity_ok(self, chat_id: str, gui=None):
+    def _screen_only_identity(self, chat_id: str, gui=None, name: str = ""):
+        """**纯屏幕证据**：会话头标题带 OCR 与目标会话名对得上 ⇒ 认"当前开着的就是它"。
+
+        为什么必须单开这一档（2026-09-18 拍摄现场）：用户**每次拍完都用微信「清空聊天记录」**
+        ⇒ 该会话的 `Msg_<md5>` 表**整张消失** ⇒ `recent_texts()` 返回空 ⇒ `chat_identity_ok`
+        在**最前面**那条守卫就 `return None`（"拿不到可比对内容"）⇒ 而发文件那条链把
+        `idn is None` 当**无条件拒绝** ⇒ 用户看到的现象就是「**图片他拿到了，但是又没有发给我**」。
+        这一档**不依赖数据库**，只依赖"打开着的这个会话脑门上写的名字"（OCR 会话头标题带）。
+        ⚠️ 强度口径：这是**强档**（能回答"现在是谁"），且是"打开着的会话的头部"——
+        与会话列表那一行不是一回事（2026-09-13 误发事故的元凶是**列表预览**被当成会话名）。
+        ⚠️ 单字/单字母名字必须**完全相等**：`matches()` 对单字是"以它开头"，会把 `E班群` 当成 `E`。
+        顺序上它排在所有"要库里有行"的证据之后，只在那类证据全部落空时才用。
+        """
+        try:
+            from . import chat_ocr as _co
+            nm = str(name or self.display_name(chat_id) or "").strip()
+            if not nm:
+                # `display_name` 只认群/昵称映射，读不出时退一步用当前会话名（绿底高亮行 OCR）
+                try:
+                    nm = str((self.current_chat_name(gui=gui) or ("", ""))[0] or "").strip()
+                except Exception:
+                    nm = ""
+            hdr = _co.header_text(gui=gui or self._get_gui())
+            if not (nm and hdr):
+                return False, "会话头标题带读不到（OCR 拿不到名字：nm=%r hdr=%r）" % (nm[:12], str(hdr)[:12])
+            _a, _b = _co.norm(hdr), _co.norm(nm)
+            _hit = (_a == _b) if len(_b) <= 1 else _co.matches(hdr, nm)
+            if _hit:
+                return True, ("会话头标题带 OCR=%r 与目标 %r 匹配（纯屏幕证据，不依赖消息行；"
+                              "常见于用户清空过该会话的聊天记录）" % (str(hdr)[:20], nm[:16]))
+            return False, "会话头标题带 OCR=%r 与目标 %r 不匹配" % (str(hdr)[:20], nm[:16])
+        except Exception as e:
+            return False, "会话头标题带比对异常：%s" % str(e)[:40]
+
+    def chat_identity_ok(self, chat_id: str, gui=None, name: str = ""):
         """**内容级**身份核对：当前聊天区里应看得到目标会话最近若干条文本里的**任意一条**。
 
         返回 `(True/False/None, 说明)`；`None`＝拿不到可比对的内容（调用方按"没有正面证据"处理）。
@@ -3397,7 +3611,15 @@ class WeChatAdapter:
         """
         needles = self.recent_texts(chat_id)
         if not needles:
-            return None, "目标会话最近几条里没有可用作文本的比对内容（都是图片/文件？）"
+            # 🔴 2026-09-18：**清空过聊天记录**的会话会走到这里（`Msg_<md5>` 表整张没了）
+            #   ⇒ 老实现直接 `return None` ⇒ 发文件链 `idn is None`＝无条件拒绝
+            #   ⇒ 现场现象「图片他拿到了，但是又没有发给我」。⇒ 先试**纯屏幕证据**（不依赖数据库）。
+            _ok_so, _why_so = self._screen_only_identity(chat_id, gui=gui, name=name)
+            if _ok_so:
+                log.info("目标会话库里没有可比对内容（清空过聊天记录？）⇒ 按纯屏幕证据放行：%s", _why_so)
+                return True, _why_so
+            return None, ("目标会话最近几条里没有可用作文本的比对内容（都是图片/文件，或"
+                          "用户清空过聊天记录）；纯屏幕兜底也没过：%s" % _why_so)
         try:
             from . import chat_ocr as _co
             _tok = _co.begin_window(_co.SEND_WINDOW_S)     # 内容级核对整段共用 OCR 总预算（④）
@@ -3412,9 +3634,16 @@ class WeChatAdapter:
             #   `idn is False` 是**无条件拒绝**的（连 `confirm_open` 这条声明通道都走不到）⇒ 屏幕一
             #   读不出字，调用方声明"就是 E 的会话"也发不出去。⇒ 读不到就如实返回 `None`（自检不可用）。
             if not pane_n:
+                # 同一条思路：**聊天区一个字都读不到**（清空过、或这一屏全图）时也先用纯屏幕证据，
+                # 过了就放行；没过仍如实返回 None（＝自检不可用），不把"没证据"说成"证据说不是"。
+                _ok_so2, _why_so2 = self._screen_only_identity(chat_id, gui=gui, name=name)
+                if _ok_so2:
+                    log.info("聊天区读不到字（清空过聊天记录/这一屏全图）⇒ 按纯屏幕证据放行：%s", _why_so2)
+                    return True, _why_so2
                 return None, ("聊天区一个字都没读到（判据不可用，不是「不是这个会话」）："
                               "抓图可能有遮挡/在滚动中，或这一屏确实没有文字；"
-                              "确已确认当前会话是目标时可显式传 confirm_open=True")
+                              "纯屏幕兜底也没过：%s；"
+                              "确已确认当前会话是目标时可显式传 confirm_open=True" % _why_so2)
             for nd in needles:
                 nn = _co.norm_alnum(nd)
                 if len(nn) >= 6:
@@ -3504,6 +3733,13 @@ class WeChatAdapter:
             _ok_pt, _why_pt, _pt_hits = self._pane_time_hits(chat_id, pane)
             if _ok_pt:
                 return True, _why_pt
+            # 🔴 最后一档＝**纯屏幕证据**（2026-09-18 加，治"用户清空过聊天记录"这个现实）：
+            #   上面所有"要库里有行"的证据（文本针 / 文件卡 / 时间档）全部落空时，用会话头标题带兜底
+            #   （它是"这个会话自己脑门上写的名字"，不依赖数据库）。
+            _ok_so3, _why_so3 = self._screen_only_identity(chat_id, gui=gui, name=name)
+            if _ok_so3:
+                log.info("会话里没有可比对的消息行 ⇒ 按纯屏幕证据放行：%s", _why_so3)
+                return True, _why_so3
             # ⚠️ 失败信息里**必须带观测量**（2026-09-16 跨机需求②「内容级闸的 OCR 口径」）：
             #    只报"没有目标会话的任何一条文本"分不清 **"根本没有信号"** 与 **"信号被阈值判掉"**
             #    （前者该判否，后者说明阈值/归一化有问题）⇒ 把聊天区读到多少字、每条针的最好匹配
