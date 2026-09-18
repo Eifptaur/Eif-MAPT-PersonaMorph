@@ -327,5 +327,21 @@ _rH, _wH, _cH = run(_s1, halted=True)
 ok("停止中 ⇒ 一枪都不下", _cH.calls == [], str(_cH.calls))
 ok("判失败且说明写清是「已停止」", (not bool(_rH)) and ("已停止" in _wH), "%r %s" % (str(_rH), str(_wH)[:90]))
 
+print("── I. 快路径：输入那一跳压到最短、输完立刻回后台（作者 2026-09-19 口径）──")
+_src_w = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                           "agent", "wechat.py"), encoding="utf-8").read()
+ok("`_send_text_fast` 存在", "def _send_text_fast(" in _src_w)
+ok("它排在「聚焦输入栏」那一枪**之前**（能省掉点框）",
+   _src_w.index("self._send_text_fast(") < _src_w.index("投递聚焦输入栏"))
+_seg_f = _src_w.split("def _send_text_fast(")[1]
+_seg_f = _seg_f[:_seg_f.find("\n    def ", 10)]
+ok("**全程不点任何东西**（不点输入框、不点发送按钮）",
+   "backend.click(" not in _seg_f and "_click_posted(" not in _seg_f)
+ok("顺序＝投字 → 80ms → 投回车 → **立刻还前台**",
+   "time.sleep(0.08)" in _seg_f and "VK_RETURN" in _seg_f and "快路径（打完立刻还）" in _seg_f)
+ok("成功**只认 DB 回读**，没等到就 `return None`（回退老链，不谎报）",
+   "get_messages(chat_id, limit=3)" in _seg_f and "return None" in _seg_f)
+ok("快路径失败后**原样回退老链**（多枪兜底还在）", "回退老链" in _src_w)
+
 print("\n结果：%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

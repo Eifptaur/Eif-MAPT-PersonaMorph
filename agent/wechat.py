@@ -244,6 +244,119 @@ def _wait_fullscreen_clear(max_s: float = 20.0) -> str:
     return why
 
 
+# ── 「把微信摁在后台」──────────────────────────────────────────────────────────
+# ⚡ 2026-09-19 凌晨（作者原话：「**你就把它摁在后台，写个脚本，把它摁在后台，其他操作照常进行，
+#    看看能不能把它切到演示那儿，他想不想无所谓，就摁住他**」）。实测（`_scratch/hold_down_switch.py`）：
+#    同一条"按键走格 ↑11 格"——不摁时微信占前台 1.0~7.5s；**摁住时只占 0.15s**，而切会话照样成功、
+#    结束时前台仍是你原来的窗口。⇒ 这是"不给用户添堵"里性价比最高的一招：**不拦它想上来，就在它上来
+#    的瞬间把它按回去**（还前台用 AttachThreadInput 绕法，压底层用 HWND_BOTTOM + NOACTIVATE，不动几何、
+#    不改可见性）。用引用计数：同一条链里嵌套进块只起一个线程。
+_HOLD_LOCK = threading.Lock()
+_HOLD_N = 0
+_HOLD_STOP = None
+_HOLD_TH = None
+_HOLD_STAT = {"restore": 0, "bottom": 0}
+
+
+def _hold_loop(stop, main: int, wxpid: int, user: int, gap: float) -> None:
+    u = ctypes.windll.user32
+    import win32process as _wp
+    while not stop.is_set():
+        try:
+            if time.time() - float(_HOLD_LAST[0] or 0) > 45.0:
+                # ⛔ 兜底 TTL：链异常早退没走到链尾时，线程自己退出（绝不留下常驻线程）
+                log.debug("摁住微信：超过 45s 没有心跳 ⇒ 自动停")
+                return
+            cur = int(u.GetForegroundWindow() or 0)
+            if cur and int(_wp.GetWindowThreadProcessId(cur)[1]) == int(wxpid):
+                _restore_fg(int(user), "摁住微信（还前台）", keep=False)
+                _HOLD_STAT["restore"] += 1
+            u.SetWindowPos(ctypes.c_void_p(int(main)), ctypes.c_void_p(1), 0, 0, 0, 0,
+                           0x0002 | 0x0001 | 0x0010)          # HWND_BOTTOM · NOMOVE|NOSIZE|NOACTIVATE
+            _HOLD_STAT["bottom"] += 1
+        except Exception:
+            pass
+        time.sleep(max(0.01, float(gap)))
+
+
+_HOLD_LAST = [0.0]
+_HOLD_STACK = []
+
+
+def _hold_begin(note: str = "") -> None:
+    """**开始摁住微信**（幂等：已在摁就只刷新心跳）。链尾用 `_hold_end()` 停。
+
+    2026-09-19 凌晨（作者：「就把它摁在后台，其他操作照常进行…他想不想无所谓，就摁住他」）：
+    实测同一条"按键走格 ↑11 格"——不摁 1.0~7.5s、**摁住 0.15s**，切会话照样成功。
+    """
+    try:
+        _HOLD_LAST[0] = time.time()
+        if _HOLD_STACK:
+            return
+        h = _HoldDown(note)
+        h.__enter__()
+        _HOLD_STACK.append(h)
+    except Exception as e:                                        # noqa: BLE001
+        log.debug("摁住微信·开始失败（跳过）：%s", e)
+
+
+def _hold_end() -> None:
+    """**停止摁住**（链尾调用；幂等）。"""
+    try:
+        while _HOLD_STACK:
+            _HOLD_STACK.pop().__exit__()
+    except Exception:
+        pass
+
+
+class _HoldDown(object):
+    """上下文管理器：**进块开始摁住微信，出块停**（想不想上来无所谓，上来的瞬间按回去）。"""
+
+    def __init__(self, note: str = "", gap: float = 0.03):
+        self.note = note
+        self.gap = gap
+
+    def __enter__(self):
+        global _HOLD_N, _HOLD_STOP, _HOLD_TH
+        try:
+            from . import input_backend as _ib
+            import win32process as _wp
+            with _HOLD_LOCK:
+                _HOLD_N += 1
+                if _HOLD_TH is not None and _HOLD_TH.is_alive():
+                    return self
+                main = int(_ib.find_main_window() or 0)
+                user = int(_fg_now() or 0)
+                if not main or not user or int(user) == main:
+                    # 拿不到"用户的窗口"（或前台本来就是微信）⇒ 不摁（免得把微信还成用户窗口）
+                    _HOLD_N -= 1
+                    return self
+                _HOLD_STOP = threading.Event()
+                _HOLD_TH = threading.Thread(
+                    target=_hold_loop,
+                    args=(_HOLD_STOP, main, int(_wp.GetWindowThreadProcessId(main)[1]), user, self.gap),
+                    daemon=True)
+                _HOLD_TH.start()
+                log.debug("摁住微信：开始（%s，用户窗口=%s）", self.note or "未注明", user)
+        except Exception as e:                                     # noqa: BLE001
+            log.debug("摁住微信失败（跳过）：%s", e)
+        return self
+
+    def __exit__(self, *_exc):
+        global _HOLD_N, _HOLD_STOP, _HOLD_TH
+        try:
+            with _HOLD_LOCK:
+                _HOLD_N = max(0, _HOLD_N - 1)
+                if _HOLD_N == 0 and _HOLD_STOP is not None:
+                    _HOLD_STOP.set()
+                    _HOLD_TH = None
+                    log.debug("摁住微信：结束（还前台 %d 次 · 压底层 %d 次）",
+                              _HOLD_STAT["restore"], _HOLD_STAT["bottom"])
+        except Exception:
+            pass
+        return False
+
+
 def _wait_dialog_gone(hwnd: int, timeout: float = 1.5) -> bool:
     """等某个对话框**真的消失**（最多 `timeout` 秒）；返回是否真的没了。
 
@@ -467,7 +580,11 @@ def _minimize_back_if_needed(note: str = "") -> None:
     ①**没登记过就不动**（用户本来就没最小化，我们没资格改它的状态）；
     ②**它已经是最小化了就不动**（用户自己收的，别再补一枪）；
     ③**它现在是前台就不动**（用户正在用它干活 —— 这时候去最小化就是抢用户的窗口）。
+
+    ⚡ 2026-09-19 凌晨：这里同时是**链尾**（"投递文本链收尾"/"投递文件链收尾"都调它）⇒ 顺手
+    `_hold_end()` **停止"摁住微信"**（早退路径由 90s 心跳 TTL 兜底，不留常驻线程）。
     """
+    _hold_end()
     global _MINIMIZED_BY_US
     hwnd = int(_MINIMIZED_BY_US or 0)
     if not hwnd:
@@ -485,8 +602,7 @@ def _minimize_back_if_needed(note: str = "") -> None:
         if int(u.GetForegroundWindow() or 0) == hwnd:
             return
         if _was_iconic:
-            # ⚡ 2026-09-18 晚：**它是用户自己收起来的** ⇒ 链尾还他收着（非前台窗口最小化不会激活别人）。
-            #   为什么必须还（网友反馈原文）：「游戏无论全不全屏，只要把它最小化后，它要发消息时都会被
+            # ⚡ 2026-09-18 晚：**它是用户自己收起来的** ⇒ 链尾还他收着（非前台窗口最小化不会激活别人）。            #   为什么必须还（网友反馈原文）：「游戏无论全不全屏，只要把它最小化后，它要发消息时都会被
             #   激活到最上面」——我们为抓图还原出来，干完却不收回去，用户屏幕上就多出一个微信窗。
             u.ShowWindow(_ct.c_void_p(hwnd), 6)               # SW_MINIMIZE（它本来就不是前台，不会激活谁）
             time.sleep(0.15)
@@ -2864,6 +2980,66 @@ class WeChatAdapter:
         return False, ("❗点击「%s」（落点 %s）之后屏幕上多出了新窗口：%s —— 这一枪**点偏了**，"
                        "已把冒出来的窗关掉并停手（不在多了个面板的状态下继续投）" % (tag, tuple(pt), info))
 
+    def _send_text_fast(self, text: str, chat_id: str, backend, main: int, gui, base_rows=None):
+        """**快路径投递发送**（作者口径：输入那一跳压到最短、输完立刻回后台）→ `(Verdict, why)` 或 None。
+
+        链路：投字（**不点输入框**）→ 80ms → 投回车 → **立刻还前台** → 只用 DB 回读判成功。
+        实测（2026-09-19 凌晨，受控基线，文件传输助手）：落库 ✓、回读 0.4s、**微信在前台 0.65s**。
+        ⛔ 返回 None＝"没等到新行 / 判据不可用" ⇒ 调用方**原样回退老链**，不牺牲可靠性。
+        """
+        from . import chat_ocr as _co2
+        from . import input_backend as _ib2
+        try:
+            _co2.begin_window(_co2.SEND_WINDOW_S)
+        except Exception:
+            pass
+        base = base_rows
+        if base is None:
+            try:
+                base = list(self._db.get_messages(chat_id, limit=3) or [])
+            except Exception:
+                base = []
+        base_ids = {str(r.get("local_id")) for r in base}
+        try:
+            self._mark_sent(text)            # 开枪那一刻就记回声（与老链同口径，防"回自己"）
+        except Exception:
+            pass
+        _hold_begin("快路径发送")            # 摁住微信：让"输入那一跳"只占 0.15s 而不是 0.65s+
+        ok_t, why_t = backend.send_text(int(main), text)
+        if not ok_t:
+            log.info("快路径投字没打出去（%s）⇒ 回退老链", str(why_t)[:60])
+            return None
+        time.sleep(0.08)                     # 只等 80ms：让字吃完，紧接着回车（此刻它还是激活态）
+        try:
+            backend.keys(int(main), [_ib2.VK_RETURN])
+        except Exception as _e:
+            log.info("快路径回车异常（%s）⇒ 回退老链", str(_e)[:60])
+            return None
+        _restore_fg_until("投递发送·快路径（打完立刻还）", timeout=0.4, keep=False)
+        _hold_end()          # 发送动作已完成 ⇒ 停摁（后面只读 DB，不再碰窗口）
+        deadline = time.time() + 2.6
+        while time.time() < deadline:
+            time.sleep(0.3)
+            try:
+                rows = list(self._db.get_messages(chat_id, limit=3) or [])
+            except Exception:
+                rows = []
+            for r in rows:
+                if str(r.get("local_id")) in base_ids:
+                    continue
+                if str(text)[:20] in str(r.get("content") or ""):
+                    try:
+                        _self_local_note(self, chat_id, r.get("local_id"), r.get("create_time"))
+                    except Exception:
+                        pass
+                    try:
+                        self._learn_chat_header(chat_id, gui=gui)
+                    except Exception:
+                        pass
+                    return V_OK, ("投递发送成功（快路径：投字→80ms→回车→立刻还前台；"
+                                  "DB 回读 local_id=%s type=%s）" % (r.get("local_id"), r.get("type")))
+        return None
+
     def chat_is_open(self, chat_id: str, gui=None, name: str = None, allow_weak: bool = False):
         """只读：当前打开的会话是不是 chat_id。返回 (bool, 说明)。
 
@@ -3126,6 +3302,7 @@ class WeChatAdapter:
             _busy1 = self._busy_reason("按键走格", wait_s=10.0)
             if _busy1:
                 return False, "你在忙（%s）⇒ 不按键、不动窗" % _busy1
+            _hold_begin("按键走格")          # 摁住微信（实测：占前台 1.0~7.5s → 0.15s）
             _wait_user_pause(max_s=1.6, idle=0.9)
             _hdr0 = self._header_now(gui)
             if not _hdr0:
@@ -3297,7 +3474,9 @@ class WeChatAdapter:
             except Exception as _e_k:                                  # noqa: BLE001
                 _kok, _kwhy = False, "按键走格异常：%s" % str(_e_k)[:70]
             if _kok:
+                _hold_end()
                 return True, "切会话成功（%s）" % str(_kwhy)[:90]
+            _hold_end()          # 这条路由结束了 ⇒ 停摁（下一条路由会自己再起）
             log.info("切会话：按键走格没成（%s）⇒ 试点列表", str(_kwhy)[:100])
             # ③ 再试**列表里直接点**（不开搜索窗；作者口径：切会话分"搜索"和"点击"两种，别一上来就搜索）
             try:
@@ -3305,7 +3484,9 @@ class WeChatAdapter:
             except Exception as _e_v:                                  # noqa: BLE001
                 _vok, _vwhy = False, "列表点击异常：%s" % str(_e_v)[:70]
             if _vok:
+                _hold_end()
                 return True, "切会话成功（%s）" % str(_vwhy)[:80]
+            _hold_end()          # 同上：这条路由结束就停摁
             log.info("切会话：直接点列表没成（%s）⇒ 走搜索路线", str(_vwhy)[:100])
             try:
                 _sok, _swhy = self.open_chat_by_search(chat_id, name=name, gui=gui)
@@ -4044,6 +4225,20 @@ class WeChatAdapter:
 
             base = _rows()
             base_sig = str(base[0].get("local_id")) if base else ""
+            # ⚡ 2026-09-19 凌晨（作者口径：「**输入跳那么 0.1 秒，输入完立马就回后台，然后点击也在后台完成**」）：
+            #   **快路径** —— 不点输入框、不点「发送」按钮：投字 → 80ms → 投回车 → **立刻还前台**。
+            #   本机实测（文件传输助手，受控基线）：落库 ✓、库回读 0.4s、**微信在前台仅 0.65s**；
+            #   而老链（点框 + 阳性对照 + 多枪）同场景 12s 没落库、前台时长为 0（它压根没走到）。
+            #   安全前提与老链**完全相同**（会话头闸已过、暂停/停止闸已过、用户在忙闸已过）；
+            #   快路径没等到新行 ⇒ 返回 None **原样回退老链**（多枪兜底与完整说明都还在，不牺牲可靠性）。
+            try:
+                _fast = self._send_text_fast(text, chat_id, backend, main, gui, base)
+            except Exception as _e_fast:                                # noqa: BLE001
+                _fast = None
+                log.info("快路径异常（回退老链）：%s", str(_e_fast)[:90])
+            if _fast is not None:
+                return _fast
+            log.info("快路径没等到新行 ⇒ 回退老链（点框 + 阳性对照 + 多枪）")
             # ⛔ 2026-09-16 r24 对面现场：**最小化还原之后投递打字不生效**。
             #    他的对照很干净：同一会话、同一轮里，可见态两枪（A1/A2）回读都成功（local_id 27/28），
             #    只有最小化那一枪读不到新行，而且那个 token 在「文件传输助手」与「E」里

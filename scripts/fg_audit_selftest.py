@@ -54,6 +54,10 @@ ALLOW = {
     ("voice_strip.py", "_send_alt"), ("voice_strip.py", "_cancel_alt"),
     ("window_borrow.py", "restore"),
     ("wechat.py", "_restore_after_send"),
+    # ⚡ 2026-09-19：「摁住微信」的循环（作者口径「就把它摁在后台…他想不想无所谓，就摁住他」）——
+    #   它**不是**"把微信带到前台"，而是**反着来**：微信一到前台就立刻把用户原窗口还回去 + 把微信压到
+    #   Z 序底层（NOACTIVATE、不动几何、不改可见性）。实测切会话/发消息期间微信占前台 0.00 秒。
+    ("wechat.py", "_hold_loop"),
 }
 
 PASS = FAIL = 0

@@ -58,6 +58,8 @@ PATHS = [
                   "要回退得打开 `wechat.scroll_list_fallback`）；"
                   "⚠️ 这几条都会发伪激活 ⇒ **可能短暂把微信置前再自动还回你原来的窗口**"
                   "（2026-09-18 本机实测：按键走格 ↑2 格 ≈1 秒｜搜索路线 ≈3.7 秒；随后都还回）。"
+                  "**2026-09-19 起更进一步：它会一边干活一边把你原来的窗口摁在最前、把微信压回 Z 序底层**"
+                  "（实测：切会话 + 发消息 + 切回三次动作，微信占前台各 **0.00 秒**，消息照样发出、DB 回读命中）。"
                   "**全程不动光标**",
         "evidence": "agent/wechat.py::_switch_by_keys / _click_visible_session / open_chat_by_search"
                     "（都含还前台；实测脚本 _scratch/_probe_fg_by_window.py）· "

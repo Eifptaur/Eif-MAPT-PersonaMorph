@@ -360,6 +360,26 @@ _CONSOLE20 = SRC_CONSOLE
 _BG20 = io.open(os.path.join(ROOT, "agent", "bg_status.py"), encoding="utf-8").read()
 ck("B20d 对外文案如实写明「全屏玩游戏/演示时不动窗」（用户看得见）",
    "全屏" in _BG20 and "不动窗" in _BG20)
+
+# ── B21：**摁住微信**（作者 2026-09-19 原话：「就把它摁在后台，其他操作照常进行…他想不想无所谓，就摁住他」）──
+#   实测（`_scratch/hold_down_switch.py`、`_scratch/_live_hold_product.py`）：同一条"按键走格 ↑11 格"
+#   不摁 1.0~7.5s、**摁住 0.15s**；产品路径（切会话 + 快路径发消息 + 切回）三次动作**各占前台 0.00s**，
+#   而 DB 回读全部命中、摁住线程在链尾正常停掉。
+ck("B21 有「摁住微信」的三个件：`_hold_begin` / `_hold_end` / `_HoldDown`",
+   "def _hold_begin(" in SRC_WECHAT and "def _hold_end(" in SRC_WECHAT and "class _HoldDown(" in SRC_WECHAT)
+ck("B21a 摁的动作＝**微信一到前台就还用户窗口**（按进程判）+ **压 Z 序底层**（NOACTIVATE，不动几何/可见性）",
+   "GetWindowThreadProcessId(cur)[1]) == int(wxpid)" in SRC_WECHAT
+   and "HWND_BOTTOM" in SRC_WECHAT and "0x0002 | 0x0001 | 0x0010" in SRC_WECHAT)
+_ck21 = ["_hold_begin(\"快路径发送\")", "_hold_begin(\"按键走格\")"]
+_miss21 = [x for x in _ck21 if x not in SRC_WECHAT]
+ck("B21b 真正动窗的两条路（快路径发送 / 按键走格）都摁住（缺：%s）" % (_miss21 or "无"), not _miss21)
+ck("B21c 链尾与每条路由结束都**停摁**（`_minimize_back_if_needed` 里也有），且**有 45s 心跳 TTL 兜底**"
+   "（防早退留常驻线程）",
+   "_hold_end()" in SRC_WECHAT.split("def _minimize_back_if_needed(")[1][:900]
+   and SRC_WECHAT.count("_hold_end()") >= 4
+   and "45.0" in SRC_WECHAT and "没有心跳" in SRC_WECHAT)
+ck("B21d 对外文案写明「它会把你原来的窗口摁在最前 / 把微信压回去」",
+   "摁" in io.open(os.path.join(ROOT, "agent", "bg_status.py"), encoding="utf-8").read())
 ck("B17c 放回收起状态**只在链收尾**做（`_restore_fg_until` 里不再顺手放回）",
    # 2026-09-18 改口径（现场现象：「他还在不停地缩小，就是把微信最小化，然后又把微信切出来」）：
    #   `_restore_fg_until` 在一条发送链里会被调很多次（切会话·搜索路线 / 投递发送后 / 写完文件名 /
