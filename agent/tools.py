@@ -1183,10 +1183,22 @@ def _exec_send_emoji(ctx, args):
             return _err("本地收藏夹里这张是**图片**（截图收藏），发它要走真鼠标（会动你的光标、还要开"
                         "「选择文件」对话框）；「只走后台」开着 ⇒ 这条不发。建议先用 collect_emoji 把它"
                         "收进**微信表情库**，再从面板发（那条路全程后台）。")
-        ctx["sender"].send_image(ctx["chat_key"], target["path"])
+        # ⚡ 2026-09-19 凌晨（作者选"第②条" + 本机实测通过）：**优先走投递「粘贴图片」通道** ——
+        #   剪贴板放图（CF_DIB）→ 输入框右键「粘贴」→ 回车，**不需要表情面板**，所以能和"摁住微信"共存。
+        #   实测（演示群，离线解密出的表情图）：7.2s、**微信占前台 0.05s**、DB 回读 local_id=18 type=图片。
+        _ok_img, _why_img = False, "未尝试"
+        try:
+            _ok_img, _why_img = ctx["wechat"].send_image_posted(str(ctx.get("chat_id") or ""), target["path"])
+        except Exception as _e_img:                                     # noqa: BLE001
+            _why_img = "投递粘贴异常：%s" % str(_e_img)[:60]
+        if not _ok_img:
+            log.info("投递粘贴发图没成（%s）⇒ 退回原来的真鼠标发图", str(_why_img)[:70])
+            ctx["sender"].send_image(ctx["chat_key"], target["path"])
         ctx["session"]["sent"].append({"type": "image", "text": "[表情]"})
-        return _ok({"sent": True, "via": "local_image",
-                    "note": "已发送本地收藏夹里的图片（它是图片不是微信表情；要发真表情请先收进微信表情库）。"})
+        return _ok({"sent": True, "via": ("posted_paste" if _ok_img else "local_image"),
+                    "note": ("面板这条路走不通，已用**投递粘贴图片**发出（对方看到的是图片）；"
+                             "要发真表情请先把表情收进微信表情库。" if _ok_img else
+                             "已发送本地收藏夹里的图片（它是图片不是微信表情）。")})
     # 本地收藏夹无匹配 → 微信真实表情面板兜底（面板格序号仅对纯本地收藏序列有效）
     try:
         # 🔴 2026-09-18：两条都要带 chat_id —— 开面板前先确认"当前会话＝目标会话"（投递优先），
