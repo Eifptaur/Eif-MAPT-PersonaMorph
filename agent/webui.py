@@ -327,6 +327,15 @@ class WebUI:
             handler._bytes(data or b"", "audio/mpeg")
         elif path == "/dsh-whale/widget.js":
             handler._bytes(self._whale_js_injected(), "application/javascript; charset=utf-8")
+        elif path in ("/dsh-whale/bubble.json", "/dsh-whale/audio.json"):
+            # 上游 0.3.x 新增：泡泡 / 音频配置（纯配置，本移植版能落地 ⇒ 真存真读）
+            try:
+                handler._json(whale.cfg_payload(os.path.basename(path)))
+            except Exception as e:
+                handler._json({"ok": False, "error": str(e)[:200]})
+        elif path in tuple("/dsh-whale/" + n for n in whale._UNSUPPORTED):
+            # 上游 0.3.x 有、本移植版没有的：**如实说不支持**（客户端会保留默认值 ⇒ 干净降级）
+            handler._json(whale.unsupported(path.rsplit("/", 1)[-1]))
         else:
             handler._json({"error": "not found"}, 404)
 
@@ -1441,6 +1450,15 @@ class WebUI:
                     else:
                         try:
                             self._json(parent.whale.save_size(data))
+                        except Exception as e:
+                            self._json({"ok": False, "error": str(e)}, 500)
+                elif path in ("/dsh-whale/bubble.json", "/dsh-whale/audio.json"):
+                    # 上游 0.3.x 新增：泡泡 / 音频配置保存（纯配置 ⇒ 本移植版真存）
+                    if parent.whale is None:
+                        self._json({"error": "not found"}, 404)
+                    else:
+                        try:
+                            self._json(parent.whale.save_cfg(os.path.basename(path), data))
                         except Exception as e:
                             self._json({"ok": False, "error": str(e)}, 500)
                 elif path == "/api/test-api":
