@@ -1123,6 +1123,16 @@ def _exec_send_emoji(ctx, args):
        面板走不通才退回本地收藏夹发图，且**后台档下不许退回真鼠标**（如实拒绝并说明）。"""
     import os as _os
     from agent import emoji_lib as _el
+    # ⚡ 2026-09-19：**发表情方式**可选项（作者要求"让他自己收藏表情还是发图片，把代价也写清楚"）：
+    #   auto=先真表情面板、不通就发图片 · real=只用真表情（不走图片兜底）· image=只用图片（压根不开面板）
+    _mode = "auto"
+    try:
+        from .config import get_config
+        _mode = str(((get_config() or {}).get("wechat") or {}).get("emoji_send_mode") or "auto").lower()
+    except Exception:
+        _mode = "auto"
+    if _mode not in ("auto", "real", "image"):
+        _mode = "auto"
     name = str(args.get("name_or_id") or "").strip()
     emojis = ctx["wechat"].list_emojis()
     target = None
@@ -1146,9 +1156,10 @@ def _exec_send_emoji(ctx, args):
         if target is None and idx is not None and idx >= 0 and idx < len(emojis):
             target = emojis[idx]
     # ── ① 面板优先：微信表情库里真有货时就该从面板发（这才是"发表情包"的正路）──────────
+    _panel_why = ""
     try:
         _cid0 = str(ctx.get("chat_id") or "")
-        if _cid0:
+        if _cid0 and _mode != "image":          # 「只用图片」⇒ 压根不开面板（它要激活、会闪前台）
             _gname0 = ""
             try:
                 _gname0 = ctx["wechat"].group_name(_cid0) or ""
@@ -1161,12 +1172,22 @@ def _exec_send_emoji(ctx, args):
                 if _oki:
                     ctx["session"]["sent"].append({"type": "emoji", "text": "[表情]"})
                     return _ok({"sent": True, "via": "emoji_panel", "index": idx, "note": _msi})
-                log.info("表情面板发送失败（%s）⇒ 才考虑退回本地发图", str(_msi)[:70])
+                _panel_why = str(_msi)[:80]
+                log.info("表情面板发送失败（%s）⇒ 才考虑退回本地发图", _panel_why)
             else:
-                log.info("表情面板打不开（%s）⇒ 才考虑退回本地发图", str(_msp)[:70])
+                _panel_why = str(_msp)[:80]
+                log.info("表情面板打不开（%s）⇒ 才考虑退回本地发图", _panel_why)
+        elif _mode == "image":
+            _panel_why = "发表情方式选了「只用图片」⇒ 本就没开面板"
     except Exception as _e:
-        log.info("表情面板这条路异常（%s）⇒ 才考虑退回本地发图", str(_e)[:70])
+        _panel_why = str(_e)[:80]
+        log.info("表情面板这条路异常（%s）⇒ 才考虑退回本地发图", _panel_why)
     # ── ② 退回：本地收藏夹发图（**后台档下不许动真鼠标**）──────────────────────────
+    if target is not None and _mode == "real":
+        # 「只用真表情」：作者口径是"他自己选"——那就不改发图片，如实说明并让他改设置
+        return _err("发表情方式选了「只用真表情」，而表情面板这次没发出去（%s）。"
+                    "想让它在这个群里也能发出去：把控制台「微信 → 发表情方式」改成"
+                    "「自动」或「只用图片」（后者发出去是图片、但全程不打扰你）。" % (_panel_why or "面板没成"))
     if target is not None:
         try:
             from . import input_backend as _ib
