@@ -340,11 +340,52 @@ def is_blank(fp) -> bool:
     return min(v) > 110                 # 有起伏，但整条带子里一个暗列都没有 ⇒ 没有字
 
 
+def _window_belongs_to(hwnd, allow) -> bool:
+    """hwnd 是不是 allow 集合里的窗口**或它的子窗**（`WindowFromPoint` 常命中深层子窗）。"""
+    try:
+        import win32gui
+        h = int(hwnd)
+        for _ in range(12):
+            if h in allow:
+                return True
+            p = int(win32gui.GetParent(h) or 0)
+            if not p or p == h:
+                break
+            h = p
+    except Exception:
+        return False
+    return False
+
+
+def _occlusion_verdict(seen, main_pid: int) -> bool:
+    """纯函数：`seen` = [(命中窗口的 pid, 这个窗口是不是"我们允许的")] ⇒ 渲染区算不算被遮挡。
+
+    口径（2026-09-18 改）：**不是我们允许的窗口**都算遮挡——既含别的进程，也含**同进程的兄弟窗**
+    （搜索窗 / 表情面板 / 朋友圈编辑窗）。旧口径只看 pid，兄弟窗盖上来会被判"没遮挡"。
+    """
+    hits = [s for s in seen if int(s[0])]
+    if not hits:
+        return False
+    bad = sum(1 for _pid, ours in hits if not ours)
+    return bad >= max(1, len(hits) // 4)
+
+
+# ⚡ 2026-09-18 晚（**真缺陷，有现场图**）：本次抓图"允许盖在渲染区上"的自家窗口集合
+#   （＝主窗 + 渲染子窗；由 `grab_render` 每次填）。
+#   取证：`wechatauto_logs\fail\20260918-220433_search_entry\shot.png` —— 这张号称"主窗渲染区"的帧，
+#   画面其实是**微信自己的「搜索聊天记录」独立窗**（带标题栏，搜索框里还留着上次查询「E」）。
+#   成因：PrintWindow 连失 12 枪 ⇒ 退回 `ImageGrab`；而旧 `_region_occluded` 只把**别的进程**算遮挡，
+#   同进程的兄弟窗（搜索窗 / 表情面板）盖上来时判"没被遮挡" ⇒ 抓了兄弟窗的像素，下游全用错画面
+#   （找不到搜索入口 → 从**文字碎片**里挑到 9×10 → 一枪点到会话行）。
+_OCCLUDE_ALLOW = set()
+
+
 def _region_occluded(render, main_pid: int, samples: int = 3) -> bool:
-    """渲染区是不是被**别的进程**盖着（盖着时不许退回抓屏——那读到的是别人家的像素）。
+    """渲染区是不是被**别的窗口**盖着（盖着时不许退回抓屏——那读到的是别人家的像素）。
 
     实测（2026-09-13）：用户的浏览器盖在微信上时，退回 `ImageGrab` 会拿到 Chrome 的画面，
     下游 OCR 于是"读到"浏览器内容（会话列表 0~1 行、搜索框区域被污染），**全程不报错**。
+    2026-09-18 扩到**同进程兄弟窗**（见 `_OCCLUDE_ALLOW` 的现场取证）：没设允许集时退回旧口径（只比 pid）。
     """
     try:
         import ctypes
@@ -353,7 +394,7 @@ def _region_occluded(render, main_pid: int, samples: int = 3) -> bool:
         x0, y0, x1, y1 = [int(v) for v in render]
         if x1 - x0 < 8 or y1 - y0 < 8:
             return False
-        hits = other = 0
+        seen = []
         for i in range(samples):
             for j in range(samples):
                 x = x0 + (x1 - x0) * (2 * i + 1) // (2 * samples)
@@ -363,10 +404,12 @@ def _region_occluded(render, main_pid: int, samples: int = 3) -> bool:
                 u32.GetWindowThreadProcessId(h, ctypes.byref(pid))
                 if not pid.value:
                     continue
-                hits += 1
-                if int(pid.value) != int(main_pid):
-                    other += 1
-        return hits > 0 and other >= max(1, hits // 4)
+                if _OCCLUDE_ALLOW:
+                    ours = _window_belongs_to(h, _OCCLUDE_ALLOW)
+                else:
+                    ours = int(pid.value) == int(main_pid)
+                seen.append((int(pid.value), bool(ours)))
+        return _occlusion_verdict(seen, main_pid)
     except Exception:
         return False
 
@@ -417,6 +460,10 @@ def grab_render(gui=None, render=None, tries: int = 12):
                 if sub is not None and _frame_ok(sub):
                     return sub
             time.sleep(0.08)
+        # ⚡ 2026-09-18 晚：把"允许盖在渲染区上的自家窗口"告诉遮挡校验（否则同进程的搜索窗/表情面板
+        #    盖上来会被判"没遮挡" ⇒ 退回抓屏抓到的是**它们**的画面，见 `_OCCLUDE_ALLOW` 的现场取证）。
+        _OCCLUDE_ALLOW.clear()
+        _OCCLUDE_ALLOW.update(int(c) for c in cands)
     if best is not None:
         return _crop_render(best, main, render) if (render and main) else best
     try:

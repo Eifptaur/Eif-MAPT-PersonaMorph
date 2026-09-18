@@ -249,5 +249,84 @@ ok("切会话失败要把列表滚回顶部（**两条**失败分支都调同一
 ok("还原用的是产品已验证的滚轮形状（times=8, gap_ms=70，不自己换参数）",
    "times=8, gap_ms=70" in _w3)
 
+print("⑫ 现场取证（2026-09-18 晚）：抓到兄弟窗画面 / 文字碎片当图标 / 独立「搜索聊天记录」窗")
+# 现场：`wechatauto_logs\fail\20260918-220433_search_entry\`（probe.json + shot.png）
+#   shot.png 这张号称"主窗渲染区"的帧，画面其实是**微信自己的「搜索聊天记录」独立窗**
+#   （带标题栏、搜索框里还留着上次查询「E」）⇒ 成因＝PrintWindow 连失 12 枪后退回 ImageGrab，
+#   而旧 `_region_occluded` 只把**别的进程**算遮挡、同进程兄弟窗判"没遮挡"。
+#   后果链：候选块全是文字碎片（9×10 那批）→ "最上一排最靠左"挑中 (65,97) → 一枪点到会话行。
+_face_cands = [(65, 97, 9, 10), (76, 97, 10, 10), (103, 105, 21, 19), (120, 104, 11, 17),
+               (204, 104, 10, 17), (267, 103, 9, 16), (133, 107, 10, 11), (145, 107, 10, 11),
+               (158, 109, 11, 16), (180, 107, 10, 11), (192, 107, 10, 11), (65, 109, 9, 9),
+               (76, 109, 10, 9), (58, 163, 20, 12), (81, 163, 14, 12), (185, 163, 10, 12),
+               (169, 164, 15, 11)]
+_pf = CO.pick_search_icon([b for b in _face_cands if b[2] < 14 or b[3] < 14])
+ok("本机那一帧的候选**只剩文字碎片时** ⇒ 不挑（不再点到 (65,97) 会话行）", _pf is None, str(_pf))
+ok("最小边长常量与判据在同处定义（9~11px 的块一律不是图标）",
+   CO.SEARCH_ICON_MIN == 14 and CO.pick_search_icon([(65, 97, 9, 10), (76, 97, 10, 10)]) is None)
+
+
+def _searchwin_frame():
+    """合成"帧本身是搜索窗画面"：顶部标题条写着「搜索聊天记录」，列表列里放一个 21×19 的假块。"""
+    im = Image.new("RGB", (1080, 400), (255, 255, 255))
+    d = ImageDraw.Draw(im)
+    f = font(26)
+    if f:
+        d.text((420, 8), "搜索聊天记录", fill=(60, 60, 60), font=f)
+    d.rectangle((100, 60, 120, 78), fill=(60, 60, 60))          # 诱惑：21×19 的深块（像图标）
+    return im
+
+
+_swf = _searchwin_frame()
+_r_sw = CO.looks_like_search_window_frame(_swf)
+ok("帧顶部写着「搜索聊天记录」⇒ 判「这是搜索窗画面」（第二道闸）", _r_sw[0] is True, str(_r_sw))
+ok("正常主窗帧不会被误判成搜索窗画面", CO.looks_like_search_window_frame(base_img())[0] is False)
+ok("**在这张帧里不许找搜索入口**（原来会挑到文字碎片 ⇒ 点到会话行）",
+   CO.find_search_entry(_swf, left=310) is None,
+   str(CO.find_search_entry(_swf, left=310)))
+
+_h_src = open(os.path.join(ROOT, "agent", "chat_header.py"), encoding="utf-8").read()
+ok("遮挡判据含**同进程兄弟窗**（_OCCLUDE_ALLOW + 纯函数 _occlusion_verdict）",
+   "_OCCLUDE_ALLOW" in _h_src and "def _occlusion_verdict" in _h_src)
+ok("grab_render 抓图前把「允许的自家窗口」告知遮挡校验",
+   "_OCCLUDE_ALLOW.update" in _h_src and _h_src.index("_OCCLUDE_ALLOW.update") < _h_src.index("ImageGrab.grab"))
+_ov = CH._occlusion_verdict
+ok("同进程**兄弟窗**盖住 ⇒ 判遮挡（这是那条缺陷的根因）",
+   _ov([(100, False), (100, False), (100, False), (100, False)], 100) is True)
+ok("全是自家允许窗口（主窗/渲染子窗）⇒ 不算遮挡",
+   _ov([(100, True)] * 4, 100) is False)
+ok("别的进程盖住 ⇒ 判遮挡（旧口径不许丢）",
+   _ov([(200, False)] * 4, 100) is True)
+ok("采样点全落空（pid=0）⇒ 不判遮挡", _ov([(0, False)] * 4, 100) is False)
+ok("只有零星盖住（<1/4，9 个采样点里 1 个）⇒ 不判遮挡",
+   _ov([(200, False)] + [(100, True)] * 8, 100) is False)
+ok("4 个采样点里 1 个被盖住 ⇒ 判遮挡（旧口径如此，不许悄悄改松）",
+   _ov([(200, False)] + [(100, True)] * 3, 100) is True)
+
+_w_src2 = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
+ok("搜索窗判据是纯函数（含独立「搜索聊天记录」窗）",
+   "def is_search_window(" in _w_src2 and "搜索聊天记录" in _w_src2)
+ok("独立搜索窗**能被找到**（_find_search_popover 走 _search_window_hwnds）",
+   "_search_window_hwnds(main=main)" in _w_src2)
+ok("独立搜索窗**能被关掉**（close_search_popovers 也走同一枚举）",
+   "for h, _rect, _cls, _ttl in self._search_window_hwnds(gui=gui):" in _w_src2)
+ok("收尾只关**本次新开的**（only_new＝动手前的 hwnd 集合，不碰用户自己开的窗）",
+   "only_new" in _w_src2 and "_pre_sw" in _w_src2 and "close_search_popovers(gui=gui, only_new=_pre_sw)" in _w_src2)
+ok("「找不到搜索入口」也要留现场（原来是裸返回）", "search_entry_missing" in _w_src2)
+try:
+    sys.path.insert(0, os.path.join(ROOT, "agent"))
+    from agent import wechat as W12
+    ok("is_search_window：独立搜索窗 ⇒ True",
+       W12.is_search_window("Qt51514QWindowIcon", "搜索聊天记录") is True)
+    ok("is_search_window：无边框浮层 ⇒ True",
+       W12.is_search_window("Qt51514QWindowToolSaveBits", "Weixin") is True)
+    ok("is_search_window：微信主窗 ⇒ False（不许把主窗当搜索窗关掉）",
+       W12.is_search_window("Qt51514QWindowIcon", "微信") is False
+       and W12.is_search_window("Qt51514QWindowIcon", "") is False)
+    ok("is_search_window：朋友圈编辑窗 ⇒ False（同类的坑，别误伤）",
+       W12.is_search_window("Qt51514QWindowIcon", "朋友圈") is False)
+except Exception as _e12:
+    ok("is_search_window 可单测", False, str(_e12)[:80])
+
 print("\n结果：%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

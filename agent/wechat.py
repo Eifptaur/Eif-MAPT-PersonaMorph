@@ -542,6 +542,25 @@ def _wm_close_safe(hwnd: int, why: str = "") -> bool:
         return False
 
 
+# ⚡ 2026-09-18 晚（现场图取证，作者原话「你怎么点出来个搜索聊天记录啊」）：微信 4.x 的
+#   「搜索聊天记录」是**独立顶层窗**（带标题栏、标题就是「搜索聊天记录」），**不是**
+#   `Qt51514QWindowToolSaveBits` 那种无边框浮层 ⇒ 旧口径（只认类名）既**找不到它**（于是又去点
+#   搜索入口、还把浮层留在屏幕上），也**关不掉它**。⇒ 判据补一条**按窗口标题**（最稳，主窗标题里
+#   没有「搜索」二字，不会误伤）。
+SEARCH_WINDOW_TITLE_KEYS = ("搜索聊天记录", "搜索", "Search")
+
+
+def is_search_window(cls: str, title: str) -> bool:
+    """窗口是不是「搜索类窗口」（纯函数，可单测）：无边框浮层（ToolSave）或独立搜索窗（按标题）。"""
+    cls = str(cls or "")
+    title = str(title or "")
+    if "ToolSave" in cls:                       # 微信自己的无边框浮层：搜索浮层 / 表情面板
+        return True
+    if cls.startswith("Qt") and any(k in title for k in SEARCH_WINDOW_TITLE_KEYS):
+        return True
+    return False
+
+
 def _close_search_popover(hwnd: int) -> bool:
     """投递 `WM_CLOSE` 关掉搜索浮层（对面 r12 实测：一枪就关，关掉后前台自动回微信主窗）。
 
@@ -2732,50 +2751,71 @@ class WeChatAdapter:
             log.warning("无激活还原最小化窗口失败：%s", e)
             return False
 
-    def close_search_popovers(self, gui=None) -> int:
-        """把屏幕上残留的**搜索浮层**关掉（返回关掉几个）。失败静默、**绝不关微信主窗**。
+    def close_search_popovers(self, gui=None, only_new=None) -> int:
+        """把屏幕上残留的**搜索窗口**关掉（返回关掉几个）。失败静默、**绝不关微信主窗**。
 
         为什么要它（作者 2026-09-18 现场：「你怎么点出来个搜索聊天记录啊」）：切会话的搜索路线会
         打开搜索浮层并打字；一旦它失败（搜索入口识别到假图标 / 内容级复核没过），浮层就**留在屏幕上**
         —— 用户看到的就是微信弹着"搜索聊天记录"。⇒ 任何失败路径都要收尾：关掉浮层，不留残余。
+
+        `only_new`＝本次动作**开始前**就已存在的 hwnd 集合（这些**不动**：可能是用户自己开的搜索窗）。
         """
         try:
-            import win32gui
-            main = int(getattr(self._get_gui(), "main_hwnd", 0) or 0)
-            hits = []
-
-            def _cb(h, _l):
-                try:
-                    if not win32gui.IsWindowVisible(h):
-                        return True
-                    if main and int(h) == main:
-                        return True
-                    cls = str(win32gui.GetClassName(h) or "")
-                    if not cls.startswith("Qt"):
-                        return True
-                    x0, y0, x1, y1 = win32gui.GetWindowRect(h)
-                    w, hh = int(x1) - int(x0), int(y1) - int(y0)
-                    ttl = str(win32gui.GetWindowText(h) or "")
-                    if ("ToolSave" in cls) or (ttl == "Weixin" and 280 < w < 1000 and 180 < hh < 1100):
-                        hits.append(int(h))
-                except Exception:
-                    pass
-                return True
-
-            win32gui.EnumWindows(_cb, None)
+            only_new = set(int(h) for h in (only_new or ()))
             n = 0
-            for h in hits:
+            for h, _rect, _cls, _ttl in self._search_window_hwnds(gui=gui):
+                if h in only_new:
+                    continue
                 try:
                     if _close_search_popover(h):
                         n += 1
                 except Exception:
                     pass
             if n:
-                log.info("收尾：关掉残留的搜索浮层 %d 个", n)
+                log.info("收尾：关掉残留的搜索窗口 %d 个", n)
             return n
         except Exception as e:                                     # noqa: BLE001
-            log.debug("关搜索浮层收尾异常：%s", e)
+            log.debug("关搜索窗口收尾异常：%s", e)
             return 0
+
+    def _search_window_hwnds(self, main: int = None, gui=None):
+        """屏幕上**可见的搜索类窗口**清单 → `[(hwnd, rect, cls, title)]`（独立搜索窗 + 无边框浮层）。
+
+        ⚡ 2026-09-18 晚加：旧口径只认类名 `Qt51514QWindowToolSaveBits` ⇒ 微信的**独立「搜索聊天记录」
+        窗**（带标题栏、标题就是它）既**用不上**（于是又去点搜索入口、还把窗留在屏幕上）、也**关不掉**
+        ——作者看到的那句「你怎么点出来个搜索聊天记录啊」就是它。
+        """
+        out = []
+        try:
+            import win32gui
+            import win32process
+            gui = gui or self._get_gui()
+            main = int(main or getattr(gui, "main_hwnd", 0) or 0)
+            pid = win32process.GetWindowThreadProcessId(main)[1] if main else 0
+
+            def _cb(h, _l):
+                try:
+                    if not win32gui.IsWindowVisible(h):
+                        return True
+                    if main and int(h) == int(main):
+                        return True
+                    cls = str(win32gui.GetClassName(h) or "")
+                    ttl = str(win32gui.GetWindowText(h) or "")
+                    if not is_search_window(cls, ttl):
+                        return True
+                    if pid and win32process.GetWindowThreadProcessId(h)[1] != pid:
+                        return True
+                    x0, y0, x1, y1 = win32gui.GetWindowRect(h)
+                    if x1 - x0 > 4 and y1 - y0 > 4:
+                        out.append((int(h), (int(x0), int(y0), int(x1), int(y1)), cls, ttl))
+                except Exception:
+                    pass
+                return True
+
+            win32gui.EnumWindows(_cb, None)
+        except Exception as e:                                     # noqa: BLE001
+            log.debug("枚举搜索窗口失败：%s", e)
+        return out
 
     def switch_chat_posted(self, chat_id: str, gui=None, name: str = None, confirm_s: float = 8.0):
         """**投递版切会话**：库的**只读** OCR 定位会话行 → **投递点击**那一行 → **OCR 按名字确认**已打开。
@@ -2812,6 +2852,11 @@ class WeChatAdapter:
             #   不用在会滚动的会话列表里找那一行、也不用滚轮、更不怕列表被别的窗口盖住。
             #   搜索没成才退回下面的「找行 + 滚轮」老路（保留，不删）。
             _sok, _swhy = False, ""
+            _pre_sw = set()                      # 动手前已有的搜索窗口（收尾时不动它们）
+            try:
+                _pre_sw = set(h for h, *_r in self._search_window_hwnds(main=main, gui=gui))
+            except Exception:
+                pass
             try:
                 _sok, _swhy = self.open_chat_by_search(chat_id, name=name, gui=gui)
                 if _sok:
@@ -2829,7 +2874,7 @@ class WeChatAdapter:
             #   （作者现场：「你怎么点出来个搜索聊天记录啊」；失败留浮层＝把用户界面弄乱）
             try:
                 if not _sok:
-                    self.close_search_popovers(gui=gui)
+                    self.close_search_popovers(gui=gui, only_new=_pre_sw)
                     # 2026-09-18 作者问「你搜索的时候怎么跳前台呀」——查证：我们没主动置前（闸门还挡掉一次
                     # calibrate_layout）；前台是微信自己在搜索浮层弹出时抢的（实测投递点击入口后 +0.26s）。
                     # 真正的毛病：成功路径已点完即还，失败路径原来只等整链末尾才还 ⇒ 失败也立刻还。
@@ -3125,29 +3170,13 @@ class WeChatAdapter:
             from . import chat_ocr as _co
             from . import chat_header as _chh
             pid = win32process.GetWindowThreadProcessId(int(main))[1]
-            cands = []
-
-            def _cb(h, _):
-                try:
-                    if win32process.GetWindowThreadProcessId(h)[1] != pid or int(h) == int(main):
-                        return
-                    if not win32gui.IsWindowVisible(h):
-                        return
-                    if win32gui.GetClassName(h) != 'Qt51514QWindowToolSaveBits':
-                        return
-                    x0, y0, x1, y1 = win32gui.GetWindowRect(h)
-                    if x1 - x0 > 4 and y1 - y0 > 4:
-                        cands.append((int(h), (int(x0), int(y0), int(x1), int(y1))))
-                except Exception:
-                    pass
-
-            win32gui.EnumWindows(_cb, None)
-            for h, rect in cands:
+            for h, rect, _cls, _ttl in self._search_window_hwnds(main=main):
                 im = _chh.shot_window(h)
                 hit, why = _co.looks_like_search_popover(im)
                 if hit:
                     return h, rect, im, why
-                log.info("浮层候选 hwnd=%s %s 不像搜索浮层：%s", h, rect, why)
+                log.info("浮层候选 hwnd=%s %s（%s，pid=%s）不像搜索浮层：%s",
+                         h, rect, _cls or _ttl, pid, why)
             return None
         except Exception as e:
             log.warning("找搜索浮层失败：%s", e)
@@ -3167,6 +3196,13 @@ class WeChatAdapter:
         #    这也很关键：调用方（发文件）随后会自己 `_stash_fg()` 记"用户窗口"——这里先还回去，
         #    它记到的才是**用户的窗口**，而不是被这条链顶到前面的微信。
         _stash_fg()
+        # ⚡ 2026-09-18 晚：记下**动手前**屏幕上已有的搜索窗口（收尾时不动它们——可能是用户自己开的）；
+        #    本次新出现的（我们点开的浮层 / 独立搜索窗）一律在 finally 里关掉。
+        _pre_sw = set()
+        try:
+            _pre_sw = set(h for h, *_r in self._search_window_hwnds(gui=gui))
+        except Exception:
+            pass
         try:
             gui = gui or self._get_gui()
             name = name or self.display_name(chat_id) or chat_id
@@ -3202,8 +3238,13 @@ class WeChatAdapter:
                 return False, "抓不到画面（窗口不可见？）"
             ent = _co.find_search_entry(img, left=pane or None)
             if not ent:
+                # ⚡ 2026-09-18 晚：这条分支原来是**裸返回**（现场什么都不留）。加最小边长判据后，本机
+                #    在"抓到的是兄弟窗画面"那类情况下就会走到这里 ⇒ 必须留现场（"没找到入口"也要能复盘）。
+                _d = self._dump_fail_shot("search_entry_missing", img, {
+                    "variant": "none", "pane_left": pane, "img_size": list(img.size)})
                 return False, ("找不到搜索入口：标题带里既没读到「搜索」字样，也没识别出放大镜图标"
-                               "（窗口尺寸/主题/微信版本不同？⇒ 把当前微信窗口截图发我，或改用会话列表点击）")
+                               "（窗口尺寸/主题/微信版本不同？⇒ 把当前微信窗口截图发我，或改用会话列表点击）"
+                               "%s" % (("｜现场已存 %s" % _d) if _d else ""))
             variant = ent.get("variant")
             if variant == "icon":
                 # —— 图标形态（本机 4.1.15.8）：点开后**搜索框是一个独立顶层窗（浮层）**，
@@ -3373,6 +3414,14 @@ class WeChatAdapter:
         finally:
             # ⚠️ 这条链会抢前台（开浮层/投字/点行，实测浮层 1.63s + 主窗 8.96s 且不还）⇒ 出去一律还回去。
             #    成功路径也照还：切完会话不需要占着前台。
+            try:
+                # ⚡ 2026-09-18 晚：**本次新开的**搜索窗口一律关掉（含独立「搜索聊天记录」窗）——
+                #    作者现场「你怎么点出来个搜索聊天记录啊」就是失败路径把窗留在屏幕上造成的。
+                _closed = self.close_search_popovers(gui=gui, only_new=_pre_sw)
+                if _closed:
+                    log.info("切会话·搜索路线收尾：关掉本次打开的搜索窗口 %d 个", _closed)
+            except Exception:
+                pass
             try:
                 _restore_fg_until("切会话·搜索路线", timeout=2.5, keep=False)
             except Exception:
