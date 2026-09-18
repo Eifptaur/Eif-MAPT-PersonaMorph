@@ -2,9 +2,9 @@
   "schema": "persona-morph/1",
   "base": {
     "version": "2026.9.18.13",
-    "sha256": "242c136015819d7804b0b3709144ba77f6251f7aec409f56b24ad8abb919863f",
+    "sha256": "bc60c363fee2273bb332f22d13d58a90fba1e0edf1cd23241ec96a99bfca968b",
     "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.32.3/persona-morph-v2.1.32.3.zip",
-    "size": 9170035,
+    "size": 9171326,
     "files": 282
   },
   "dlc": [
@@ -39,6 +39,6 @@
     "forceBase": false,
     "minBase": "2026.9.18.13"
   },
-  "builtAt": "2026-09-18T12:42:20Z",
-  "updatedAt": 1789735340147
+  "builtAt": "2026-09-18T12:52:00Z",
+  "updatedAt": 1789735920323
 }
