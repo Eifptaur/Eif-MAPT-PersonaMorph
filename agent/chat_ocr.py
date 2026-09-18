@@ -1345,6 +1345,11 @@ SEARCH_BAND = (30, 135)              # 兜底用的标题带（正常走 `_searc
 PANEL_TOP_MAX = 170                  # 会话列表面板上沿的搜索上限（超过就认为没找到）
 SEARCH_ICON_W = (9, 46)              # 图标横向宽度合理区间
 SEARCH_ICON_H = (9, 46)              # 图标纵向高度合理区间
+# ⚡ 2026-09-18 晚加（现场 `wechatauto_logs\fail\20260918-220433_search_entry\probe.json`）：
+#   那一帧的候选块全是 **9×10 / 10×10 / 11×17 / 9×9** —— 那是**文字碎片的连通域**（会话行的字），
+#   而"最上一排最靠左"正好挑中 (65,97) 9×10 ⇒ 一枪点到会话列表上（点到哪行就切到哪个会话）。
+#   实测真图标：放大镜 21×21 / 22×21、「＋」24×24 / 12×12 ⇒ 加**最小边长**判据（小于 14px 一律不是图标）。
+SEARCH_ICON_MIN = 14
 
 
 def _panel_top(img, x0, x1, light: int = 205, need: float = 0.8):
@@ -1484,12 +1489,17 @@ def pick_search_icon(cands):
     `#1(242,71) 21×21`（旁还有 `#2(242,71) 11×11` 的「＋」）。⇒ 加一条**形状判据**（两台机器的实测都指向它）：
     先把"竖长条"排掉（`h > 1.6·w`），再在剩下的**方块**里取"最上面那一排最靠左"。
     实测形状：放大镜 21×21 / 22×21（长宽比 ≈1.0）、「＋」24×24 / 12×12、导航栏块 24×45（≈1.9）。
+    ⚡ 2026-09-18 晚再加**最小边长**（`SEARCH_ICON_MIN`）：9~11px 那批是**文字碎片**，见常量处的现场取证。
     """
     try:
         if not cands:
             return None
-        square = [b for b in cands if b[3] <= 1.6 * max(1, b[2])]
-        pool = square or list(cands)
+        big = [b for b in cands if b[2] >= SEARCH_ICON_MIN and b[3] >= SEARCH_ICON_MIN]
+        if not big:
+            # 全是文字碎片 ⇒ **不挑**（fail-closed）：宁可上层报"找不到搜索入口"，也不许点进会话列表。
+            return None
+        square = [b for b in big if b[3] <= 1.6 * max(1, b[2])]
+        pool = square or list(big)
         top = min(b[1] for b in pool)
         row = [b for b in pool if b[1] <= top + 14]      # 同一排（图标行）
         # ⚠️ 同 x 的并列块**按面积从大到小**取（跨机 r12 报的潜在坑）：放大镜与「＋」常常**同 x**
@@ -1499,7 +1509,9 @@ def pick_search_icon(cands):
         cx, cy, bw, bh = row[0]
         why = ("最上一排最靠左的%s图标 %dx%d（该排 %d 块 / 方块候选 %d / 共 %d 块；%s）"
                % ("方块" if square else "深色", bw, bh, len(row), len(square), len(cands),
-                  "已排除竖长条" if square and len(square) < len(cands) else "无竖长条可排除"))
+                  ("已排除竖长条" if square and len(square) < len(big) else "无竖长条可排除")
+                  + ("，已滤掉 <%dpx 的碎片 %d 块" % (SEARCH_ICON_MIN, len(cands) - len(big))
+                     if len(big) < len(cands) else "")))
         return (int(cx), int(cy), int(bw), int(bh), why)
     except Exception:
         return None
@@ -1602,6 +1614,15 @@ def find_search_entry(img, left=None, zoom: int = 2):
                            % (_bx[2] - _bx[0], _bx[3] - _bx[1])}
     except Exception:
         pass
+    # ⓪ 第二道闸（2026-09-18 晚，现场 20260918-220433）：帧**本身就是搜索窗画面**时，
+    #    绝不许在它里面挑"搜索入口"（那帧里没有图标，只有搜索结果的文字碎片）。
+    #    放在 box 两条之后：box 形态的帧里正常会读到「搜索」二字，不能被这条误杀。
+    try:
+        _is_sw, _sw_why = looks_like_search_window_frame(img)
+        if _is_sw:
+            return None
+    except Exception:
+        pass
     # ③ 认图标：**整条上部区域**扫二维深色块（有的帧带标题栏、有的不带，不写死 y）。
     #    三条规矩（都来自实测）：a) 大小要像图标 b) 要在导航栏右边（头像那张深色图大小也像图标）
     #    c) **取"最上面那一排"里最靠左的那个**——放大镜与「＋」同一排，会话行的头像/名字在更下面
@@ -1684,6 +1705,27 @@ def looks_like_search_popover(img) -> tuple:
 
 
 POPOVER_SECTIONS = ("联系", "群聊", "最常", "聊天记录", "Contacts", "Group", "Recent", "Chat")
+
+
+def looks_like_search_window_frame(img, strip_h: int = 56) -> tuple:
+    """这张"渲染区"帧是不是**搜索窗自己的画面**（查顶部标题条）→ `(bool, 依据)`。
+
+    ⚡ 2026-09-18 晚加（现场 `wechatauto_logs\\fail\\20260918-220433_search_entry\\shot.png`）：
+    那张号称"主窗渲染区"的帧，画面其实是微信的**独立「搜索聊天记录」窗**（标题条就在顶部）。
+    ⇒ 在这种帧里**根本不该找搜索入口**：里面全是搜索结果的文字碎片，"最上一排最靠左"会挑到
+    9~21px 的字块 ⇒ 一枪点到会话行/搜索输入区。根因已在 `chat_header._OCCLUDE_ALLOW` 修（同进程
+    兄弟窗不再算"没遮挡"），这里是**第二道闸**（只查顶部窄条，便宜）。
+    """
+    if img is None:
+        return False, "没有图"
+    try:
+        w = int(img.size[0])
+        h = min(int(strip_h), int(img.size[1]))
+        if w < 40 or h < 12:
+            return False, "图太小"
+        return looks_like_search_popover(img.crop((0, 0, w, h)))
+    except Exception as e:
+        return False, "判据异常：%s" % e
 
 
 def find_popover_row(img, name: str, zoom: int = 2):
