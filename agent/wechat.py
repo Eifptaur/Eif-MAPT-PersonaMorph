@@ -5472,13 +5472,30 @@ class WeChatAdapter:
     # ── 朋友圈完整鼠标操作（UI 实测：相机长按发表纯文字 / 蓝点赞评论 / 滚动刷）──
 
     def _moments_focus(self):
-        """确保朋友圈窗口在前台（枚举到即激活）。"""
+        """确保朋友圈窗口在前台（枚举到即激活）—— **激活要过闸**（2026-09-18 加）。
+
+        ⛔ 为什么补这道闸（作者口径：「会不会有本来可以全后台的代码，结果由于某些疏忽，
+          在某一环把窗口带到前台」）：这个函数原来**无条件** `SetForegroundWindow`。它的调用方里，
+          点赞/评论/发表/滚动都在前面过了"只走后台"的闸，但 **`moments_screenshot` 与 `moments_ocr`
+          没有** ⇒ 全程后台模式下，模型想看一眼朋友圈就会把微信顶到最前。
+        ⇒ 闸收到**唯一真源** `ui_adapt.fg_allowed()`：不允许时**只枚举、不激活**
+          （截图/OCR 拿窗口自身画面就够，本来也不需要前台）。
+        """
+        allow, why = False, "闸门不可用"
+        try:
+            from . import ui_adapt
+            allow, why = ui_adapt.fg_allowed()
+        except Exception as e:                                   # noqa: BLE001
+            allow, why = False, "读闸门失败（按拒绝）：%s" % str(e)[:40]
         from . import wechat_ui
         gui = self._get_gui()
         for hwnd, title, rect in wechat_ui._wechat_subwindows(gui.main_hwnd):
             if "朋友圈" in title or title == "Weixin":
-                import ctypes
-                ctypes.windll.user32.SetForegroundWindow(int(hwnd))
+                if allow:
+                    import ctypes
+                    ctypes.windll.user32.SetForegroundWindow(int(hwnd))
+                else:
+                    log.info("朋友圈窗口找到了但**不激活**（%s）—— 截图/OCR 不需要前台", str(why)[:60])
                 return rect
         return None
 

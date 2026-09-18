@@ -664,6 +664,22 @@ def send(wechat, chat_id: str, text: str, cfg=None, timeout: float = 60.0) -> tu
     c = _cfg(cfg)
     if not c.get("enabled"):
         return False, "真语音条默认关（控制台「语音回复」里打开「发真语音条」）——关了就不发，不假装。", {}
+    # ⛔ 2026-09-18 加闸（发布前静态审计发现）：真语音条＝**真鼠标（`ui_adapt.click_real_hold`）
+    #   + 真键盘（`SendInput` 右 Alt）**，天然需要"微信在前台"且会动用户光标；而它原来只查
+    #   `voice_strip.enabled`，**不查"只走后台"** ⇒ 默认配置下用户要一条语音，我们会动他的光标。
+    #   ⇒ 与朋友圈那条同口径：`background_only=开`（默认）时**如实拒绝**，并把替代路写清楚。
+    try:
+        _cfg_all = (cfg if isinstance(cfg, dict) else None)
+        if _cfg_all is None:
+            from .config import get_config
+            _cfg_all = get_config() or {}
+        if bool((_cfg_all.get("wechat") or {}).get("background_only", True)):
+            from . import bg_status as _bg
+            return False, (_bg.background_only_reason("发真语音条") +
+                           "（真语音条是真鼠标+真键盘的路：会点到录音按钮、还要靠右 Alt 注入。）"
+                           "替代：关掉「只走后台」再发语音条，或改发文字/文件。"), {}
+    except Exception as _e:                                      # noqa: BLE001
+        return False, "读「只走后台」开关失败（按拒绝处理）：%s" % str(_e)[:60], {}
     st = status(cfg)
     if not st["ok"]:
         return False, st["why"], st
