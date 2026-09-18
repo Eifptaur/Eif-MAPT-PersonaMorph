@@ -3158,8 +3158,8 @@ class WeChatAdapter:
                 if not pop:
                     self._click_posted(backend, main, (ox + int(ent["x"]), oy + int(ent["y"])),
                                  "搜索入口", allow_new=True)[0]
-                    for _i in range(12):
-                        time.sleep(0.25)
+                    for _i in range(30):          # 总预算仍是 ~3.0s，粒度 0.1s：命中立刻 break
+                        time.sleep(0.1)
                         pop = self._find_search_popover(main)
                         if pop:
                             break
@@ -3191,8 +3191,8 @@ class WeChatAdapter:
                     ok_t, why_t = backend.send_text(int(pop_hwnd), name)
                     if not ok_t:
                         return False, "往搜索浮层投字失败：%s" % why_t
-                    for _i in range(5):
-                        time.sleep(0.6)
+                    for _i in range(15):          # 总预算仍是 ~3.0s（原来 5×0.6）
+                        time.sleep(0.2)
                         im3 = _chh.shot_window(int(pop_hwnd))
                         if im3 is None:
                             continue
@@ -3231,7 +3231,7 @@ class WeChatAdapter:
             # —— box 形态（另一台机 / 老 UI：搜索框直接摆着）：点它 → 主窗打字 → 结果行在主窗里找
             self._click_posted(backend, main, (ox + int(ent["x"]), oy + int(ent["y"])),
                                  "搜索入口", allow_new=True)[0]
-            time.sleep(0.45)
+            time.sleep(0.25)                   # 2026-09-18：0.45 → 0.25
             ok_t, why_t = backend.send_text(main, name)
             if not ok_t:
                 return False, "搜索框打字失败：%s" % why_t
@@ -3241,8 +3241,8 @@ class WeChatAdapter:
             #    ⇒ box 路线**先按浮层试一遍**（与 icon 路线同一套），不行再退回"主窗里找行"。
             #    这条一通，切会话就不必再依赖"绿底 + 活动行时间"那一档 ⇒ 缓解可用性缺口。
             _pop, _prow = None, None
-            for _i in range(6):
-                time.sleep(0.4)
+            for _i in range(16):              # 总预算仍是 ~2.4s（原来 6×0.4）
+                time.sleep(0.15)
                 _pop = self._find_search_popover(main)
                 if _pop:
                     _prow = _co.find_popover_row(_pop[2], name)
@@ -3255,7 +3255,7 @@ class WeChatAdapter:
                                                    "搜索浮层结果行（box 路线）")
                 if not _cok2:
                     return False, _cwhy2
-                time.sleep(1.0)
+                time.sleep(0.5)                # 2026-09-18：1.0 → 0.5（后面紧接内容级复核，测得早没关系）
                 _idn2, _idn2_why = self.chat_identity_ok(chat_id, gui=gui)
                 if _idn2 is True:
                     return True, ("搜索框路线（结果在独立浮层里）成功：浮层 hwnd=%s，%s，%s"
@@ -3267,8 +3267,8 @@ class WeChatAdapter:
                 _close_search_popover(int(_ph))     # 判否 ⇒ 关掉浮层，再退回"主窗里找行"
             # 结果里找名字匹配的行（多抓几帧）
             info = None
-            for _i in range(4):
-                time.sleep(0.5)
+            for _i in range(10):              # 总预算仍是 ~2.0s（原来 4×0.5）
+                time.sleep(0.2)
                 im2 = _chh.capture_image(gui=gui)
                 info = _co.find_row_info(im2, name) if im2 is not None else None
                 if info:
@@ -3284,7 +3284,7 @@ class WeChatAdapter:
                                                "主窗搜索结果行")
             if not _cok3:
                 return False, _cwhy3
-            time.sleep(0.9)
+            time.sleep(0.5)                    # 2026-09-18：0.9 → 0.5
             # 内容级复核：认得出目标会话最近的内容才算成功
             idn, idn_why = self.chat_identity_ok(chat_id, gui=gui)
             if idn is True:
@@ -3539,9 +3539,12 @@ class WeChatAdapter:
                 # ⚠️ 2026-09-16 晚（跨机 r15 实测）：投递链的**伪激活**（`WM_ACTIVATE`）会让微信**短暂真占前台**
                 #    ⇒ 每一枪之后都立刻盯一次还前台，把"用户窗口丢前台"的时长压到最短。
                 _restore_fg_until("投递发送后", timeout=2.5, keep=False)
-                _deadline = time.time() + max(1.5, max(3.0, float(wait_s)) / 3.0)
+                # 2026-09-18 提速（实测：微信写库 ~1.6s，第一枪窗口开 5s 纯属干等）：
+                #   第一枪给 2.6s，之后每枪给 3.5s——**只影响"等多久补下一枪"，不影响成功判据**
+                #   （成功判据仍是"在目标会话里回读到本次内容"）。
+                _deadline = time.time() + (2.6 if _i == 1 else 3.5)
                 while time.time() < _deadline:
-                    time.sleep(0.8)
+                    time.sleep(0.35)               # 2026-09-18：0.8 → 0.35（写库 ~1.6s，早发现早收工）
                     head = _new_row()
                     if not head:
                         continue
