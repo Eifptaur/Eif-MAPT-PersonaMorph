@@ -329,6 +329,11 @@ def _restore_fg(hwnd: int = 0, note: str = "", keep: bool = False) -> None:
 # 从"收在任务栏"变成"摊在桌面上"，还得自己再收一次。既有口径：是「不打扰用户」⇒
 # **谁动的谁收拾**：还原过就必须放回。
 _MINIMIZED_BY_US = 0        # 为了干活而还原出来的那个主窗（0 = 本轮没动过它的收起状态）
+# ⚡ 2026-09-18 晚（网友反馈：「游戏无论全不全屏，只要把它最小化后，它要发消息时都会被激活到最上面」）：
+#   **用户自己收起过的窗，链尾要收回原位**。与作者 2026-09-18「不要最小化，就置于底层」不冲突——
+#   那条说的是**链中间不许一收一放**（现场「他还在不停地缩小…又把微信切出来」）；这里是**链尾一次**
+#   把"我们为了抓图而还原出来"的窗恢复成它原来的状态（用户收着的，就还他收着）。
+_WAS_ICONIC_BY_US = 0
 
 
 def _minimize_back_if_needed(note: str = "") -> None:
@@ -343,6 +348,8 @@ def _minimize_back_if_needed(note: str = "") -> None:
     if not hwnd:
         return
     _MINIMIZED_BY_US = 0
+    _was_iconic = int(_WAS_ICONIC_BY_US or 0) == hwnd
+    globals()["_WAS_ICONIC_BY_US"] = 0
     try:
         import ctypes as _ct
         u = _ct.windll.user32
@@ -351,6 +358,14 @@ def _minimize_back_if_needed(note: str = "") -> None:
         if u.IsIconic(hwnd):
             return
         if int(u.GetForegroundWindow() or 0) == hwnd:
+            return
+        if _was_iconic:
+            # ⚡ 2026-09-18 晚：**它是用户自己收起来的** ⇒ 链尾还他收着（非前台窗口最小化不会激活别人）。
+            #   为什么必须还（网友反馈原文）：「游戏无论全不全屏，只要把它最小化后，它要发消息时都会被
+            #   激活到最上面」——我们为抓图还原出来，干完却不收回去，用户屏幕上就多出一个微信窗。
+            u.ShowWindow(_ct.c_void_p(hwnd), 6)               # SW_MINIMIZE（它本来就不是前台，不会激活谁）
+            time.sleep(0.15)
+            log.info("收回原位（%s）：微信主窗是**用户自己收起来的** ⇒ 恢复成最小化", note or "未注明")
             return
         # 🔴 2026-09-18 改（作者原话：「**为什么非要最小化呢？不要最小化呀，就置于底层**」）：
         #   以前这里 `ShowWindow(hwnd, 6)` ＝ SW_MINIMIZE，把"为干活还原出来的"主窗**重新最小化**。
@@ -2641,8 +2656,16 @@ class WeChatAdapter:
                   tag, tuple(pt), info)
         try:
             from . import chat_header as _ch
+            # ⚠️ 2026-09-18 晚：取图**单独 try**——原来取图一失败（微信没在跑/窗口不见了）整条留证
+            #    都被跳过，判据 `click_guard_selftest` 的"留了现场"当场假红（现场：微信关着跑全套）。
+            #    现场的价值主要在 `probe.json`（tag/落点/新窗清单），没有帧也要留。
+            _img = None
+            try:
+                _img = _ch.capture_image(gui=self._get_gui())
+            except Exception as _e_cap:
+                log.debug("点偏现场取图失败（probe.json 照留）：%s", _e_cap)
             self._dump_fail_shot("stray_%s" % (re.sub(r"[^0-9A-Za-z_]+", "_", tag) or "click"),
-                                 _ch.capture_image(gui=self._get_gui()),
+                                 _img,
                                  {"tag": tag, "落点": list(pt), "新的窗": info,
                                   "expect": "这一枪点完不该出现新窗口"})
         except Exception as _e:
@@ -2743,8 +2766,9 @@ class WeChatAdapter:
                     gui._update_render_rect()
             except Exception:
                 pass
-            global _MINIMIZED_BY_US
+            global _MINIMIZED_BY_US, _WAS_ICONIC_BY_US
             _MINIMIZED_BY_US = int(main)      # 登记：干完活由 `_restore_fg_until` 放回收起状态
+            _WAS_ICONIC_BY_US = int(main)     # 记下"是用户自己收起来的" ⇒ 链尾要还他收着（见 _minimize_back_if_needed）
             log.info("微信主窗原来是最小化：已**不激活**还原（不动光标（伪激活可能短暂置前约 1~3 秒后自动还回））后继续")
             return True
         except Exception as e:
@@ -2817,6 +2841,53 @@ class WeChatAdapter:
             log.debug("枚举搜索窗口失败：%s", e)
         return out
 
+    def _click_visible_session(self, chat_id: str, name: str, gui, main: int):
+        """在**当前可见的会话列表**里找目标行并投递点击（**不滚列表、不开搜索窗**）→ `(ok, why)`。
+
+        ⚡ 2026-09-18 晚加（作者口径：「只要点到对的会话就行…**已经在的群聊不要切，不在群聊才需要切，
+        切又可以分为搜索还有点击两种**」＋网友反馈「它要发消息时都会被激活到最上面…总感觉它的窗口
+        跳出来，原因就是这个搜索框」）：
+        搜索路线必然**开一个独立的搜索窗**（微信自己会把它摆到屏幕上，实测整条链 3.25s 窗口都是
+        还原状态），而"点列表里那一行"只是往列表投一枪 —— **不开窗、不换前台**。
+        ⇒ 切会话的顺序改成：①已在目标会话 ⇒ 什么都不做（`switch_chat_posted` 开头那条）；
+        ②列表里**直接看得见**目标行 ⇒ 投递点它（本方法）；③看不见才走搜索路线。
+        **不滚列表**：滚动会让用户眼前的列表动（他早就说过"它在划列表"），比开搜索窗更打扰。
+        """
+        try:
+            from . import input_backend as ib
+            from . import chat_ocr as _co
+            from . import chat_header as _chh
+            backend = ib.select_backend(gui=gui)
+            if not isinstance(backend, ib.MessageBackend):
+                return False, "当前输入后端不是投递档（config.input.backend=%s）" % backend.name
+            img = _chh.capture_image(gui=gui)
+            if img is None:
+                return False, "抓不到画面（窗口不可见？）"
+            try:
+                row = _co.find_row_info(img, name)
+            except Exception:
+                row = None
+            if not row:
+                return False, "列表里没看到「%s」那一行（不滚列表——滚你屏幕比开搜索窗更打扰）" % name
+            ox, oy = int(getattr(gui, "origin_x", 0)), int(getattr(gui, "origin_y", 0))
+            tgt = ib.find_render_child(main) or main
+            _ok, _why = self._click_posted(backend, tgt,
+                                           (ox + int(row["pos"][0]), oy + int(row["pos"][1])),
+                                           "会话行（列表·免搜索）")
+            if not _ok:
+                return False, _why
+            time.sleep(0.6)
+            _op, _opwhy = self.chat_is_open(chat_id, gui=gui, name=name)
+            if _op:
+                return True, "投递点会话行（列表·免搜索，强档证据：%s）" % str(_opwhy)[:80]
+            _idn, _idnwhy = self.chat_identity_ok(chat_id, gui=gui)
+            if _idn is True:
+                return True, "投递点会话行（列表·免搜索，内容级复核过）"
+            return False, ("点了列表里「%s」那一行，但没拿到『当前就是它』的正面证据：%s"
+                           % (name, str(_opwhy)[:70]))
+        except Exception as e:                                     # noqa: BLE001
+            return False, "列表点击切会话异常：%s" % str(e)[:90]
+
     def switch_chat_posted(self, chat_id: str, gui=None, name: str = None, confirm_s: float = 8.0):
         """**投递版切会话**：库的**只读** OCR 定位会话行 → **投递点击**那一行 → **OCR 按名字确认**已打开。
 
@@ -2857,6 +2928,14 @@ class WeChatAdapter:
                 _pre_sw = set(h for h, *_r in self._search_window_hwnds(main=main, gui=gui))
             except Exception:
                 pass
+            # ② 先试**列表里直接点**（不开搜索窗；作者口径：切会话分"搜索"和"点击"两种，别一上来就搜索）
+            try:
+                _vok, _vwhy = self._click_visible_session(chat_id, name=name, gui=gui, main=main)
+            except Exception as _e_v:                                  # noqa: BLE001
+                _vok, _vwhy = False, "列表点击异常：%s" % str(_e_v)[:70]
+            if _vok:
+                return True, "切会话成功（%s）" % str(_vwhy)[:80]
+            log.info("切会话：直接点列表没成（%s）⇒ 走搜索路线", str(_vwhy)[:100])
             try:
                 _sok, _swhy = self.open_chat_by_search(chat_id, name=name, gui=gui)
                 if _sok:

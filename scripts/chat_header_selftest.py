@@ -104,7 +104,11 @@ with tempfile.TemporaryDirectory() as td:
        and ch.reference("filehelper", p, size="1139x890", strict=True) == fa)
 
 print("[L] 实机（抓不到不算失败）")
-fp1 = ch.capture()
+try:
+    fp1 = ch.capture()
+except Exception as _e_l:               # ⚠️ 微信没在运行时 `capture()` 是**抛异常**，不是"抓不到"
+    print("  INFO 微信此刻没在运行 / 主窗不可见（%s）—— 这一段只是 INFO，不算失败" % str(_e_l)[:60])
+    fp1 = []
 if fp1:
     time.sleep(1.5)
     fp2 = ch.capture()

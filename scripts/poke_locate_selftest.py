@@ -239,16 +239,32 @@ def main():
             _raw = []
         _z = 3
         _big = _im.resize((_im.width * _z, _im.height * _z), Image.LANCZOS)
-        try:
-            _zoom = _co3.recognize(_big, timeout=8.0) or []
-        except Exception:
-            _zoom = []
-        _ztxt = [str(t) for t, *_ in _zoom]
+        # ⚠️ 2026-09-18 晚：这条是**OCR 依赖**的判据 —— 跑全套时（别的脚本也在打 OCR）实测偶发读不出
+        #    ⇒ 判据自己会假红（同一条断言单独跑 50/0、套跑里 49/1）。⇒ 重试 3 次（产品侧本来就是
+        #    "读不出就重读"），并把"OCR 整段时间不可用"如实标成跳过而不是失败。
+        _zoom, _ztxt = [], []
+        for _try in range(3):
+            try:
+                _zoom = _co3.recognize(_big, timeout=10.0) or []
+            except Exception:
+                _zoom = []
+            _ztxt = [str(t) for t, *_ in _zoom]
+            if any("拍一拍" in x for x in _ztxt):
+                break
+            time.sleep(0.4)
         print("  夹具菜单 %s：原尺寸 OCR %d 项；放大 %dx 后 %s"
               % (_im.size, len(_raw), _z, _ztxt))
         ok("⑨ 夹具：**原尺寸读不出**（这就是原来 '拍不上' 的现场）", not _raw, _raw[:3])
-        ok("⑨ 夹具：**放大 3x 后读出「拍一拍」**（＝修法成立）",
-           any("拍一拍" in x for x in _ztxt), _ztxt)
+        _blk = ""
+        try:
+            _blk = str(_co3.blocked() or "")
+        except Exception:
+            _blk = ""
+        if (not _ztxt) and _blk:
+            print("  跳过 ⑨ 夹具：放大 3x 后读出「拍一拍」（OCR 此刻不可用：%s）" % _blk[:60])
+        else:
+            ok("⑨ 夹具：**放大 3x 后读出「拍一拍」**（＝修法成立）",
+               any("拍一拍" in x for x in _ztxt), _ztxt)
         ok("⑨ 静态：`menu_click` 里有「原尺寸读不出就放大重读」的兜底",
            "放大 %dx 后读出" in open(os.path.join(ROOT, "agent", "input_backend.py"),
                                   encoding="utf-8").read())

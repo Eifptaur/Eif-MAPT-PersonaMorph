@@ -241,17 +241,46 @@ ck("B17 三条会抓图的投递链都在入口调了它（切会话 / 搜索框
 #   不激活还原 ✓、还前台 ✓，但结束后 `IsIconic=False` ⇒ 用户的微信从"收在任务栏"变成"摊在桌面上"）
 ck("B17a 还原时登记了「这是为干活还原的」",
    "_MINIMIZED_BY_US = int(main)" in SRC_WECHAT)
-_HELP_MIN = SRC_WECHAT.split("def _minimize_back_if_needed(")[1][:1400]
-# ⚠️ 断言要**先去注释**：函数里那段解释"以前是 ShowWindow(hwnd, 6)"的注释会让 `not in` 假红
-#    （同型坑见 lesson 0mu61n2m：静态判据扫到注释里的旧写法）
+_HELP_MIN = SRC_WECHAT.split("def _minimize_back_if_needed(")[1][:2600]
+# ⚠️ 断言要**去注释**（整行注释 + **行尾注释**都要去）：函数里那段解释"以前是 ShowWindow(hwnd, 6)"
+#    的注释会让 `not in` 假红（同型坑见 lesson 0mu61n2m：静态判据扫到注释里的旧写法）。
 _HELP_MIN_NC = "\n".join(l for l in _HELP_MIN.splitlines() if not l.strip().startswith("#"))
+_HELP_MIN_CODE = "\n".join(l.split("#")[0] for l in _HELP_MIN.splitlines())
 ck("B17b 收尾时三条安全线都在（没登记不动 / 已收起不动 / 用户正在用就不动），"
-   "且**不再最小化**（改成压 Z 序底层 —— 作者原话「不要最小化呀，就置于底层」）",
+   "且**用户自己收起的要还他收着**、不是用户收起的只压 Z 序底层",
    "if not hwnd:" in _HELP_MIN_NC
    and "u.IsIconic(hwnd)" in _HELP_MIN_NC
    and "int(u.GetForegroundWindow() or 0) == hwnd" in _HELP_MIN_NC
    and "SetWindowPos" in _HELP_MIN_NC
-   and "ShowWindow(hwnd, 6)" not in _HELP_MIN_NC)
+   and "_WAS_ICONIC_BY_US" in _HELP_MIN_NC
+   # ⚡ 2026-09-18 晚改口径（网友反馈：「游戏无论全不全屏，只要把它最小化后，它要发消息时都会被
+   #   激活到最上面」）：作者那句「不要最小化呀，就置于底层」管的是**链中间不许一收一放**；
+   #   而"**用户自己收起过的**窗，我们为了抓图还原出来"必须在链尾还他收着 —— 否则用户屏幕上
+   #   平白多一个微信窗。⇒ 两种情况分开断言（这段是去注释后的代码，别拿注释当证据）。
+   and "收回原位" in _HELP_MIN_CODE)
+# 反向对照：**不是**用户收起的（我们没登记 iconic）时，只压底层、**绝不**最小化
+_HELP_MIN_TAIL = _HELP_MIN_CODE.split("if _was_iconic:")[-1]
+_HELP_MIN_TAIL = _HELP_MIN_TAIL.split("return", 1)[-1]      # 跳过"收回原位"那一段，只看 else 路
+ck("B17b′ 没登记过「用户自己收起」时，只压 Z 序底层、不最小化",
+   "SetWindowPos" in _HELP_MIN_TAIL and "SW_MINIMIZE" not in _HELP_MIN_TAIL
+   and "ShowWindow" not in _HELP_MIN_TAIL)
+# ── B18：切会话"能点列表就不开搜索窗"（作者 2026-09-18 口径 + 网友反馈「窗口跳出来…原因就是这个
+#    搜索框」）：顺序必须是 ①已在目标会话 ⇒ 什么都不做 ②列表里看得见 ⇒ 投递点那一行（不开窗）
+#    ③看不见才走搜索路线。且"点列表"这条路**不许滚列表**（滚动在他眼前动屏幕）。
+ck("B18 切会话：点列表（免搜索）**排在**搜索路线之前，且列表点击不滚列表",
+   "_click_visible_session(" in SRC_WECHAT
+   and SRC_WECHAT.index("self._click_visible_session(") < SRC_WECHAT.index("self.open_chat_by_search("))
+_HELP_CVS = SRC_WECHAT.split("def _click_visible_session(")[1][:2600]
+ck("B18a 「点列表」那条路**不开搜索窗、不滚列表**（只有抓图 + 投递点行 + 复核）",
+   "open_chat_by_search" not in _HELP_CVS
+   and ".wheel(" not in _HELP_CVS
+   and "find_row_info(" in _HELP_CVS
+   and "_click_posted(" in _HELP_CVS)
+ck("B18b 找不到那一行就**如实退让**（交给搜索路线），不当成切成功",
+   "列表里没看到" in _HELP_CVS)
+ck("B18c 「已经在目标会话 ⇒ 什么都不做」那条仍在最前面（不许先去点列表）",
+   SRC_WECHAT.index("目标会话已经是当前打开的会话")
+   < SRC_WECHAT.index("self._click_visible_session("))
 ck("B17c 放回收起状态**只在链收尾**做（`_restore_fg_until` 里不再顺手放回）",
    # 2026-09-18 改口径（现场现象：「他还在不停地缩小，就是把微信最小化，然后又把微信切出来」）：
    #   `_restore_fg_until` 在一条发送链里会被调很多次（切会话·搜索路线 / 投递发送后 / 写完文件名 /
