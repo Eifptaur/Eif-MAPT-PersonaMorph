@@ -1,10 +1,10 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.18.12.1",
-    "sha256": "09505e14f1f3b55611ac50acba0a2086a27ea86276de247582e03d5f013726f4",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.32.1/persona-morph-v2.1.32.1.zip",
-    "size": 9009598,
+    "version": "2026.9.18.12.2",
+    "sha256": "e06e4201abb0ef73c0a61738034b2053bf3ff5448761bf7ff5d16ce643eed1ab",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.32.2/persona-morph-v2.1.32.2.zip",
+    "size": 9017875,
     "files": 273
   },
   "dlc": [
@@ -32,13 +32,13 @@
     }
   ],
   "announce": {
-    "version": "2026.9.18.12.1",
+    "version": "2026.9.18.12.2",
     "notes": [
-      "更新之后「一键启动」不用再点第二次了（以前它以为窗口已经开着、其实没有，点第一下什么都不弹）；「重启」不再失灵——以前点重启有可能机器人直接不见了，现在会真的换一个新实例起来（实测约 8 秒）；手动「停止」过之后再点「重启」也能正常起来（以前会被那个停止标记挡住）"
+      "更新现在会自动完成，不用再去下新包：装完自己换新实例起来（以前更新完可能直接起不来、控制台一屏「无法访问」，还得手动覆盖解压）；顺手修掉「一键关闭关不掉」：以前关的时候看门狗没被真正结束，导致接下来点「一键启动」不弹窗口"
     ],
     "forceBase": false,
-    "minBase": "2026.9.18.12.1"
+    "minBase": "2026.9.18.12.2"
   },
-  "builtAt": "2026-09-18T01:05:57Z",
-  "updatedAt": 1789693557696
+  "builtAt": "2026-09-18T01:18:03Z",
+  "updatedAt": 1789694283001
 }

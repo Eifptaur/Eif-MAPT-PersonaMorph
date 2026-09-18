@@ -5,6 +5,7 @@
 启动时把自己的 PID 写到 data/watchdog.pid，供 停止机器人 读取。
 """
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -111,7 +112,10 @@ def main():
                 return 0
             print("检测到旧版看门狗（pid=%d），结束并由新版接管" % old)
             try:
-                subprocess.run(["taskkill", "/F", "/T", "/PID", str(old)],
+                # ⛔ 不用 `/T`（2026-09-18 修，同一条红线）：看门狗是**机器人的父进程**，
+                #    连树一起杀会把**正在干活的机器人本体**也杀掉（旧版看门狗被杀时，
+                #    它刚拉起的机器人会一起没）⇒ 只杀看门狗自己。
+                subprocess.run(["taskkill", "/F", "/PID", str(old)],
                                creationflags=0x08000000, timeout=10,
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except Exception:
@@ -139,6 +143,48 @@ def main():
     except Exception:
         _delay = 0
     _delay = max(0, min(600, _delay))
+    # ── `--takeover`（2026-09-18 加，**更新/重启交接专用**）──────────────────────────────
+    #    我是"新的那一个看门狗"：先把**残留的旧看门狗**收掉、清掉会挡住接管的实例证据，
+    #    然后再按 `--delay` 开机器人。
+    #    为什么要它：作者实测「更新完控制台变『无法访问』、窗口不关、再点一键启动也不弹窗」——
+    #    旧版本的进程内 `_kill_watchdog()` 因为 `watchdog.pid` 变两行而**静默失效**（ValueError 被吞），
+    #    更新装上了却没人接替。⇒ **更新这条链不再依赖旧的进程内重启**：磁盘上的新看门狗自己做交接。
+    if any(str(_a) == "--takeover" for _a in sys.argv[1:]):
+        _others = []
+        try:
+            with open(PID_FILE, "r", encoding="utf-8") as _f:
+                _m = re.search(r"\d+", _f.read() or "")
+            if _m and int(_m.group(0)) != os.getpid():
+                _others.append(int(_m.group(0)))
+        except Exception:
+            pass
+        try:
+            _ps = ("Get-CimInstance Win32_Process -Filter \"Name='pythonw.exe' or Name='python.exe'\" | "
+                   "Where-Object { $_.CommandLine -like '*watchdog.py*' } | ForEach-Object { $_.ProcessId }")
+            _r = subprocess.run(["powershell", "-NoProfile", "-Command", _ps], capture_output=True,
+                                creationflags=0x08000000, timeout=25)
+            for _t in (_r.stdout or b"").decode("utf-8", "ignore").split():
+                if _t.isdigit() and int(_t) != os.getpid():
+                    _others.append(int(_t))
+        except Exception:
+            pass
+        for _p in sorted(set(_others)):
+            if _p == os.getpid():
+                continue
+            try:                                   # ⛔ 不用 /T：看门狗是机器人的父进程，连树杀会把机器人一起杀掉
+                subprocess.run(["taskkill", "/F", "/PID", str(_p)],
+                               capture_output=True, creationflags=0x08000000, timeout=10)
+            except Exception:
+                pass
+        for _f2 in ("bot.lock", "bot.pid"):
+            try:
+                _p3 = os.path.join(DATA, _f2)
+                if os.path.exists(_p3):
+                    os.remove(_p3)
+            except Exception:
+                pass
+        print("看门狗：takeover —— 收掉残留看门狗 %s，并清掉实例证据（bot.lock/bot.pid）"
+              % (sorted(set(_others)) or "无"))
     if _delay and not os.path.exists(STOP_FLAG):
         print("看门狗：等 %d 秒再接管机器人（重启交接用）" % _delay)
         time.sleep(_delay)

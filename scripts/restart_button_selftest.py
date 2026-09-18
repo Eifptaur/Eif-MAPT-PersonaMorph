@@ -203,5 +203,16 @@ ok("自证不过 ⇒ **直接拉起机器人本体兜底**（不再出现「旧�
 ok("兜底拉起的是机器人本体（pythonw scripts/persona_morph.py），不是再来一个看门狗",
    "_spawn_bot_direct" in _pm and '"persona_morph.py"' in _pm.split("def _spawn_bot_direct")[1][:900])
 
+
+# ── 2026-09-18 加（作者：「更新就做到更新成功，不能让用户还得去下新包」）──
+_ua = io.open(os.path.join(ROOT, "agent", "update_apply.py"), encoding="utf-8").read()
+_wd2 = io.open(os.path.join(ROOT, "scripts", "watchdog.py"), encoding="utf-8").read()
+ok("更新成功后**由自己完成交接**：spawn 新看门狗（--takeover）再 os._exit",
+   "_relaunch_after_update" in _ua and "--takeover" in _ua and "os._exit(0)" in _ua)
+ok("看门狗支持 --takeover（收掉残留看门狗 + 清 bot.lock/bot.pid）",
+   "--takeover" in _wd2 and "bot.lock" in _wd2 and "bot.pid" in _wd2)
+ok("看门狗 takeover **不许用 /T**（看门狗是机器人父进程，连树杀会把机器人一起杀掉）",
+   chr(34) + "/F" + chr(34) in _wd2 and chr(34) + "/PID" + chr(34) in _wd2 and chr(34) + "/T" + chr(34) + ", " not in _wd2)
+
 print("\n==== 重启按钮判据：%d 通过 / %d 失败 ====" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
