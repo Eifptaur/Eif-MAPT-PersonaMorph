@@ -67,6 +67,8 @@ try:
                       "auto_open_browser": False}
     W.get_config = lambda: base
     w = W.WebUI(lambda: {}, [], restart_fn=_stub_restart)
+    import tempfile as _tf
+    w.console_url_root = _tf.mkdtemp(prefix="cuj-")   # ⚠️ 判据不写产品那份 logs/console.url（2026-09-18）
     port = w.start()
     req = urllib.request.Request("http://127.0.0.1:%d/api/restart?token=%s" % (port, TOK),
                                  data=b"{}", headers={"Content-Type": "application/json"},

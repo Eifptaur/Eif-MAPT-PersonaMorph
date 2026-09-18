@@ -68,6 +68,18 @@ def rm_url_file():
         pass
 
 
+def _live_ok(url):
+    """这个地址的端口有人在听吗？（判据自己判，不借产品代码，免得把被测对象当尺子）"""
+    try:
+        from urllib.parse import urlparse
+        import socket as _s
+        p = urlparse(str(url or ""))
+        with _s.create_connection((p.hostname or "127.0.0.1", int(p.port or 80)), 0.4):
+            return True
+    except Exception:
+        return False
+
+
 _urlf = U.console_url_path()
 _old_url = None
 try:
@@ -78,17 +90,47 @@ except Exception:
     _old_url = None
 
 print("── A. 控制台地址：现成文件优先（token 由拥有者落盘）──")
+# ⚠️ 2026-09-18：**判据不许碰产品的 `logs/console.url`** —— 老版本这一节直接写真实文件、
+#    末尾只把"进来时读到的值"写回去（若那次读到的已经是脏值 ⇒ 脏值就此固化）；E 段还真起了一个
+#    WebUI 在**随机空闲端口**上 ⇒ `start()` 把产品地址覆写成 `…:14675`（端口随判据结束就没了）
+#    ⇒ 启动器照着它开窗就是 `ERR_CONNECTION_REFUSED`（作者现场撞上的就是这个）。
+#    ⇒ 现在全程在**临时根目录**里读写，真实文件只读不写。
+import shutil                                                        # noqa: E402
+import tempfile                                                      # noqa: E402
+
+_judge_tmp = tempfile.mkdtemp(prefix="console-url-judge-")
+_real_read_url = U.read_console_url
+_real_url_before = _real_read_url()                                   # 真实文件（只做"没被动过"的对照）
 try:
-    ok("原子落盘成功", U.write_console_url("http://127.0.0.1:39999/?token=AAA") is True)
-    ok("读回＝写入值（没有多余空白）", U.read_console_url() == "http://127.0.0.1:39999/?token=AAA",
-       U.read_console_url())
-    ok("没有 .tmp 残留（os.replace 是原子的）", not os.path.exists(_urlf + ".tmp"))
-    ok("地址优先取自 console.url（配置里有别的 token 也不影响）",
-       NU.console_url() == "http://127.0.0.1:39999/?token=AAA", NU.console_url())
-    ok("锚点仍走 #（不改成 query，控制台按 #sec-xxx 跳节）",
-       NU.console_url("sec-model").endswith("#sec-model"))
+    ok("隔离落盘成功", U.write_console_url("http://127.0.0.1:39999/?token=AAA", root=_judge_tmp) is True)
+    ok("读回＝写入值（没有多余空白）",
+       U.read_console_url(root=_judge_tmp) == "http://127.0.0.1:39999/?token=AAA",
+       U.read_console_url(root=_judge_tmp))
+    ok("没有 .tmp 残留（os.replace 是原子的）",
+       not os.path.exists(U.console_url_path(root=_judge_tmp) + ".tmp"))
+    # 让 `NU.console_url()` 读隔离文件（它内部 `from .util import read_console_url` 是调用时取属性）
+    U.read_console_url = lambda root="": _real_read_url(root or _judge_tmp)
+    try:
+        # 新契约（2026-09-18 加）：文件里的**端口连不上** ⇒ 弃用、回落配置地址。
+        # 旧行为会把这个死链原样交给启动器 ⇒ 开出一个 `ERR_CONNECTION_REFUSED` 的窗（实测 14675）。
+        _u_dead = NU.console_url()
+        ok("文件里的端口连不上 ⇒ 弃用死链、回落配置地址（不再拿它开窗）",
+           "39999" not in _u_dead and "127.0.0.1" in _u_dead, _u_dead.split("?")[0])
+        ok("锚点仍走 #（不改成 query，控制台按 #sec-xxx 跳节）",
+           NU.console_url("sec-model").endswith("#sec-model"))
+        # 反正：把隔离文件写成一个**活着**的地址 ⇒ 仍以文件优先
+        if _real_url_before and _live_ok(_real_url_before):
+            U.write_console_url(_real_url_before, root=_judge_tmp)
+            ok("文件里的端口活着 ⇒ 仍以文件为准（不被配置覆盖）",
+               NU.console_url() == _real_url_before, NU.console_url().split("?")[0])
+        else:
+            skip("A. 文件优先（活端口）", "本机此刻没有在听的控制台端口")
+    finally:
+        U.read_console_url = _real_read_url
 finally:
-    rm_url_file()
+    shutil.rmtree(_judge_tmp, ignore_errors=True)
+    ok("判据没动过产品那份 logs/console.url", _real_read_url() == _real_url_before,
+       _real_url_before.split("?")[0] if _real_url_before else "(本来就没有)")
 
 print("── B. 阴性对照：旧写法（IndexOf 第一个 \"token\"）确实会抓错 ──")
 _cf = os.path.join(ROOT, "config.json")
@@ -208,11 +250,12 @@ finally:
     NU.console_url = _real_url
     U.take_console_lock = _real_lock
     NU.find_console_window, NU.raise_without_stealing = _real_findc, _real_raise
-    rm_url_file()
+    # 2026-09-18：这里原来 `rm_url_file()`（删产品那份地址文件）——删它对本节断言毫无用处，
+    #   只会让后面的 E 段读不到文件、并把产品推到"只能靠配置兜底"的路上。改为不动它。
 
 print("── D2. 真锁的行为（不 mock）：一次成功、期内再抢失败、过期可再抢 ──")
 try:
-    rm_url_file()
+    # 同上：本节只需一把干净的**锁**文件（下一行已显式删锁），不需要动地址文件。
     try:
         os.remove(U.console_lock_path())
     except Exception:
@@ -273,13 +316,17 @@ try:
                        "token": "judge-token-1234567890", "auto_open_browser": False}
     W.get_config = lambda: _base
     _w = None
+    _e_tmp = tempfile.mkdtemp(prefix="console-url-judge-e-")
     try:
         _w = W.WebUI(lambda: {"state": "judge"}, [])
+        _w.console_url_root = _e_tmp          # ⭐ 地址落到隔离目录，**绝不碰产品那份**
         _port = _w.start()
-        _file_url = U.read_console_url()
-        ok("webui.start() 之后 logs/console.url 已落盘（谁拥有 token 谁写）",
+        _file_url = U.read_console_url(root=_e_tmp)
+        ok("webui.start() 之后地址已落盘（谁拥有 token 谁写）—— 落到隔离目录，不污染产品",
            _file_url.startswith("http://127.0.0.1:") and _file_url.endswith("token=judge-token-1234567890"),
            _file_url.replace("judge-token-1234567890", "***"))
+        ok("E 段跑完产品那份 logs/console.url 一字未变", U.read_console_url() == _real_url_before,
+           (U.read_console_url() or "(空)").split("?")[0])
 
         def _code(u):
             try:
@@ -304,7 +351,9 @@ try:
 except Exception as e:
     skip("E. 端到端", "起不了控制台：%s" % e)
 finally:
-    rm_url_file()
+    # ⛔ 老版本这里是 `rm_url_file()` —— 判据跑完**把产品的 logs/console.url 删了**
+    #    （下一次启动器只能靠配置兜底；万一配置里没口令就又回到 401 那条老路）。现在只清隔离目录。
+    shutil.rmtree(_e_tmp, ignore_errors=True)
 
 print("── F. 接线：onestart / persona_morph 不再各开一处 ──")
 _on = src("scripts/onestart.py")
@@ -456,13 +505,14 @@ if os.path.exists(_exe):
         skip("K. 全屏键实测", str(e)[:40])
 
 # 复原运行态（自检不该留下自己的痕迹）
+# 2026-09-18：本判据现在**全程在隔离目录里读写地址文件**，产品那份从头到尾没碰过
+#   ⇒ 这里不再"写回 _old_url"（老写法若进来时读到的已经是脏值，就等于把脏值钉死）。
 try:
-    if _old_url is None:
-        rm_url_file()
-    else:
-        U.write_console_url(_old_url)
-except Exception:
-    pass
+    _now_url = U.read_console_url()
+    ok("收尾：产品那份 logs/console.url 与判据启动时一致（全程零污染）",
+       _now_url == _real_url_before, (_now_url or "(空)").split("?")[0])
+except Exception as e:
+    skip("收尾零污染检查", str(e)[:40])
 
 print("")
 print("── L. 「重启后页面自己连回来」（2026-09-18 用户实测后加）──")

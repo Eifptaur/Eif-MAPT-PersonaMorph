@@ -166,6 +166,8 @@ try:
                       "token": "vm-judge", "auto_open_browser": False}
     W.get_config = lambda: base
     w = W.WebUI(lambda: {}, [])
+    import tempfile as _tf
+    w.console_url_root = _tf.mkdtemp(prefix="cuj-")   # ⚠️ 判据不写产品那份 logs/console.url（2026-09-18）
     port = w.start()
     try:
         with urllib.request.urlopen("http://127.0.0.1:%d/?token=vm-judge" % port, timeout=8) as r:

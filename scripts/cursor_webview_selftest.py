@@ -116,6 +116,8 @@ else:
     w3 = None
     try:
         w3 = W.WebUI(lambda: {}, [])
+        import tempfile as _tf
+        w3.console_url_root = _tf.mkdtemp(prefix="cuj-")   # ⚠️ 判据不写产品那份 logs/console.url（2026-09-18）
         port = w3.start()
         # ⚠️ 2026-09-18：探针进程（一键启动.exe --cursorprobe）抓完就退出，会让 WebUI 那条连接被 Reset
         #   ⇒ socketserver 默认把 traceback 打到 stderr；全套跑下来它看起来像"红"，可这条判据 rc=0、断言全过。
