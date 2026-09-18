@@ -490,7 +490,28 @@ def main():
         existing = ((_hpid or -1) if _held else (_si_legacy(_lk) or None))
     except Exception:
         existing = None
-    if existing is not None:
+    # ⛔ 2026-09-18（作者：「不许覆盖解压，一定要直接更新」）：**残留的旧包实例不算"已在运行"**。
+    #    旧包更新完可能没人接替（旧看门狗还在、机器人已死），这时如果这里直接 return 0，
+    #    用户看到的就是"点了一键启动没反应"，于是只能手工覆盖解压 —— 那条路被作者否掉了。
+    #    ⇒ 先比 `watchdog.pid` 第二行记的**包版本**：一致才是真在跑；不一致（含旧包写的 "2" 这种）
+    #      就照常拉起 watchdog，让新看门狗按"整包版本不一致"接管（杀旧 + 清证据 + 拉起新机器人）。
+    _stale = False
+    try:
+        with open(os.path.join(ROOT, "data", "watchdog.pid"), encoding="utf-8", errors="replace") as _f:
+            _lines = [x.strip() for x in (_f.read() or "").splitlines()]
+        _rec = _lines[1] if len(_lines) > 1 else ""
+        _cur = ""
+        with open(os.path.join(ROOT, "agent", "version.py"), encoding="utf-8") as _f2:
+            import re as _re
+            _m = _re.search(r"VERSION\s*=\s*['\"]([^'\"]+)['\"]", _f2.read())
+            _cur = _m.group(1) if _m else ""
+        if _cur and _rec != _cur:
+            _stale = True
+            log("发现**旧包残留实例**（watchdog.pid 记的版本=%r ≠ 本包 %r）⇒ 不跳过，拉起新看门狗接管"
+                % (_rec or "(读不出，多半是旧版格式)", _cur))
+    except Exception:
+        _stale = False
+    if existing is not None and not _stale:
         _who = ("pid=%s" % existing) if (existing and existing > 0) else "pid 未知"
         log("检测到机器人已在运行（%s）→ 打开控制台，不再重复启动。%s" % (
             _who, "如想重启请先「停止机器人」."))

@@ -44,6 +44,22 @@ _migrate_crash_log_name()
 STOP_FLAG = os.path.join(DATA, "stopped.flag")
 # 看门狗逻辑版本：解释器选择等关键行为变更时自增，旧版看门狗会被新版自动接管
 WATCHDOG_VER = "2"
+
+
+def pkg_version() -> str:
+    """整包版本号（`agent/version.py` 里的 VERSION）——**接管判据用它，不再只看看门狗版本**。
+
+    为什么（作者 2026-09-18：「不许覆盖解压，一定要直接更新」）：旧包里的更新链可能换完文件却交接失败，
+    用户点「一键启动」时新看门狗读到**还活着的旧看门狗**，而两者 `WATCHDOG_VER` 都是 "2" ⇒
+    误判成"同版本、自己退出" ⇒ 什么都没发生。改成比**包版本**后：只要包变了就接管，
+    旧包写的 `"2"` 这种也天然算"不一致" ⇒ 一定会继续把更新做完。
+    """
+    try:
+        with open(os.path.join(ROOT, "agent", "version.py"), encoding="utf-8") as f:
+            m = re.search(r"VERSION\s*=\s*['\"]([^'\"]+)['\"]", f.read())
+        return m.group(1) if m else ""
+    except Exception:
+        return ""
 os.makedirs(DATA, exist_ok=True)
 
 
@@ -107,10 +123,14 @@ def main():
                     pass
             if not alive:
                 break
-            if ver == WATCHDOG_VER:
-                print("已有看门狗在运行（pid=%d），本实例退出" % old)
+            _mine = pkg_version() or WATCHDOG_VER
+            if ver and ver == _mine:
+                print("已有看门狗在运行（pid=%d，包版本 %s），本实例退出" % (old, ver))
                 return 0
-            print("检测到旧版看门狗（pid=%d），结束并由新版接管" % old)
+            # ⛔ 只要**包版本对不上**（含旧包写的 "2"）就接管：更新装完没人接替时，
+            #    用户"点一下一键启动"就能把这次更新接着做完（不再需要覆盖解压）。
+            print("检测到旧实例（pid=%d，记录版本=%r ≠ 本包 %r），结束并由新版接管"
+                  % (old, ver, _mine))
             try:
                 # ⛔ 不用 `/T`（2026-09-18 修，同一条红线）：看门狗是**机器人的父进程**，
                 #    连树一起杀会把**正在干活的机器人本体**也杀掉（旧版看门狗被杀时，
@@ -122,7 +142,8 @@ def main():
                 pass
             time.sleep(1)
         with open(PID_FILE, "w", encoding="utf-8") as f:
-            f.write("%s\n%s" % (os.getpid(), WATCHDOG_VER))
+            # 第二行写**整包版本**（读的人按"格式不认识就当旧版"处理也会接管，见 `_verify_own_pid`）
+            f.write("%s\n%s" % (os.getpid(), pkg_version() or WATCHDOG_VER))
     except Exception:
         pass
     except Exception:

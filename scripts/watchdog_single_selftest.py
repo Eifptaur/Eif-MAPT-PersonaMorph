@@ -78,7 +78,9 @@ def main():
     print("\n[一] 已有同版本看门狗活着 ⇒ 本实例退出，一个子进程都不拉")
     try:
         with open(WD.PID_FILE, "w", encoding="utf-8") as f:
-            f.write("%d\n%s" % (sleeper.pid, WD.WATCHDOG_VER))
+            # 2026-09-18：`watchdog.pid` 第二行改记**整包版本**（接管判据从"看门狗版本"
+            # 升级成"包版本"）⇒ 判据这里也必须写包版本，否则会被判成"旧实例"而走接管分支（判据会挂住）。
+            f.write("%d\n%s" % (sleeper.pid, WD.pkg_version()))
         WD.subprocess, WD.time.sleep = _Rec, (lambda s: None)
         try:
             rc = WD.main()
