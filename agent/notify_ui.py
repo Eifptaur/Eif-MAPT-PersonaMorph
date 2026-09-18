@@ -197,6 +197,18 @@ def find_console_window() -> int:
     return found[0][1]
 
 
+def _url_live(u: str) -> bool:
+    """这个地址的端口有人在听吗？（0.4 秒超时，连不上就 False —— 用来挡"死链被落盘/被拿去开窗"）"""
+    try:
+        from urllib.parse import urlparse
+        import socket as _s
+        p = urlparse(str(u or ""))
+        with _s.create_connection((p.hostname or "127.0.0.1", int(p.port or 80)), 0.4):
+            return True
+    except Exception:
+        return False
+
+
 def console_url(anchor: str = "") -> str:
     """控制台地址（带 token 与锚点）。
 
@@ -205,6 +217,9 @@ def console_url(anchor: str = "") -> str:
     但 config.json 里**排在前面的 `cloud.token` 是空串**，于是拼出 `/?token=` ⇒ 401）：
       ① `logs/console.url`（拥有 token 的进程写出来的**现成地址**，别人只读，不含解析）；
       ② 兜底：配置里的 `server.port` + `server.token`（结构化读取，绝不手写字符串找字段）。
+    🔴 2026-09-18 加**活性检查**：①那份文件可能被"起在随机端口上的实例/判据"写脏（实测被写成
+      `…:14675` 而没人听）⇒ 直接拿它开窗就是 `ERR_CONNECTION_REFUSED`（作者现场就撞上了）。
+      ⇒ 文件里的端口**连不上就弃用**，回落配置地址并留 warning；两边都连不上才返回文件值。
     """
     base = ""
     try:
@@ -212,18 +227,25 @@ def console_url(anchor: str = "") -> str:
         base = read_console_url()
     except Exception:
         base = ""
+
+    def _live(u: str) -> bool:
+        return _url_live(u)
+
+    _fallback = ""
+    try:
+        from .config import get_config
+        sc = (get_config() or {}).get("server", {}) or {}
+        _port = int(sc.get("port") or 3210)
+        _tok = str(sc.get("token") or "")
+        _fallback = "http://127.0.0.1:%d/" % _port + (("?token=" + _tok) if _tok else "")
+    except Exception:
+        _fallback = ""
+    if base and not _live(base) and _fallback and _live(_fallback):
+        log.warning("logs/console.url 指向的端口连不上（多半是被随机端口实例写脏了）⇒ 改用配置地址 %s",
+                    _fallback.split("?")[0])
+        base = _fallback
     if not base:
-        port, tok = 3210, ""
-        try:
-            from .config import get_config
-            sc = (get_config() or {}).get("server", {}) or {}
-            port = int(sc.get("port") or 3210)
-            tok = str(sc.get("token") or "")
-        except Exception:
-            pass
-        base = "http://127.0.0.1:%d/" % port
-        if tok:
-            base += "?token=" + tok
+        base = _fallback or "http://127.0.0.1:3210/"
     if anchor:
         base += anchor if str(anchor).startswith("#") else ("#" + str(anchor))
     return base
@@ -296,7 +318,12 @@ def open_console(url: str = "", browser_path: str = "", take_lock: bool = True, 
     ready = webview_ready()
     try:
         from .util import write_console_url
-        write_console_url(url)                 # 顺手把地址落盘：别的入口（启动器/托盘）直接读，别再自己拼
+        # 只把**活着的**地址落盘（2026-09-18）：判据/试验里传进来的死链（例：随机空闲端口
+        # `…:39998`）一旦被记下，启动器下次就照它开窗 ⇒ 一屏 `ERR_CONNECTION_REFUSED`（实测踩过）。
+        if url and _url_live(url):
+            write_console_url(url)             # 顺手把地址落盘：别的入口（启动器/托盘）直接读，别再自己拼
+        elif url:
+            log.warning("不落盘控制台地址（端口连不上，留着会害下次开窗）：%s", url.split("?")[0])
     except Exception:
         pass
     # ⚠️ 2026-09-17 修（用户报「现在这里有 4 个控制台，它们可能相互抢」）：

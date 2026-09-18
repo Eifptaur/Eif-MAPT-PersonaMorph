@@ -194,6 +194,8 @@ try:
     _keep_base_url = ((base.get("api") or {}).get("base_url"))
     W.get_config = lambda: base
     w = W.WebUI(lambda: {}, [])
+    import tempfile as _tf
+    w.console_url_root = _tf.mkdtemp(prefix="cuj-")   # ⚠️ 判据不写产品那份 logs/console.url（2026-09-18）
     port = w.start()
     try:
         with urllib.request.urlopen("http://127.0.0.1:%d/?token=local-judge" % port, timeout=8) as r:

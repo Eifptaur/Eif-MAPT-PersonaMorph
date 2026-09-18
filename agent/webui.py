@@ -441,7 +441,12 @@ class WebUI:
         try:
             from .util import write_console_url
             _tok0 = str(cfg.get("token") or "").strip()
-            write_console_url("http://127.0.0.1:%d/" % port + (("?token=" + _tok0) if _tok0 else ""))
+            # ⚠️ `console_url_root` 只给**判据/隔离实例**用：非空时地址落到那个根目录，绝不碰产品的
+            #   `logs/console.url`（2026-09-18 事故：console_open_selftest 的 E 段真起了一个 WebUI 在
+            #   **随机空闲端口**上，`start()` 把产品那份地址文件覆写成 `…:14675/?token=…`，而那个端口
+            #   随判据结束就没了 ⇒ 之后启动器照着它开窗 ⇒ 控制台一屏 `ERR_CONNECTION_REFUSED`）。
+            write_console_url("http://127.0.0.1:%d/" % port + (("?token=" + _tok0) if _tok0 else ""),
+                              root=str(getattr(self, "console_url_root", "") or ""))
         except Exception:
             pass
 
