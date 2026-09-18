@@ -64,8 +64,15 @@ ok("有流式执行器 _run_stream", "def _run_stream(" in _sd)
 ok("不再整段缓存 pip 输出（没有 capture_output=True）", "capture_output=True" not in _sd)
 ok("有「连续无输出」的空闲上限 IDLE_LIMIT", "IDLE_LIMIT" in _sd)
 ok("没有 pip 的总时长上限（timeout=900 已去掉）", "timeout=900" not in _sd)
-ok("三个源都失败后有再试一次的兜底", "再试一次第一个源" in _sd)
-ok("安装前先说清体积与「十几分钟正常」", "十几分钟是正常的" in _sd)
+ok("所有源都失败后有再试一次的兜底（用最快的那个源）", "再试一次最快的那个源" in _sd)
+ok("先并行测速挑最快的镜像（慢在往返次数，不是字节数）",
+   "def pick_fastest_mirror(" in _sd and "镜像测速：" in _sd)
+ok("两趟装：先 --no-deps 装主包，再补齐传递依赖",
+   '"--no-deps",' in _sd and "补齐传递依赖" in _sd)
+ok("镜像扩到 6 条（含腾讯/华为/中科大）",
+   all(h in _sd for h in ("cloud.tencent.com", "huaweicloud.com", "ustc.edu.cn")))
+ok("安装前如实说清体积与『不会重下/已提速』",
+   "装过的包不会重下" in _sd and "先测速挑最快的源" in _sd)
 _os_ = src("scripts/onestart.py")
 ok("onestart 的等待按空闲判超时（读 last_out[0]）", "last_out[0] > timeout" in _os_)
 ok("onestart 里不再用总时长判死", "time.time() - t0 > timeout" not in _os_)

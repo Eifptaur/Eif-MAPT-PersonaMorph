@@ -354,7 +354,13 @@ button:active{transform:scale(.97)}
 .pick .opt .hint{margin:0;white-space:nowrap;font-size:11px;color:var(--tx2)}
 .pick .opt input{width:16px;height:16px;accent-color:var(--blue)}
 /* 群列表容器：固定高度滚动槽 + 顶部搜索框 */
-.group-box{max-height:340px;overflow-y:auto;border:1px solid var(--bd);border-radius:10px;padding:6px;margin-top:6px}
+.group-box{max-height:340px;overflow-y:auto;overflow-x:hidden;max-width:100%;box-sizing:border-box;
+  border:1px solid var(--bd);border-radius:10px;padding:6px;margin-top:6px}
+/* ⛔ 2026-09-18（作者：「展开的时候会直接把条拖出两边框，导致点不到取消」）：
+   长群名 / 长 wxid 不许把行撑宽 —— 行用 flex + min-width:0，群名与 wxid 都走省略号。 */
+.pick .opt{display:flex;align-items:center;gap:6px;min-width:0;max-width:100%}
+.pick .opt b{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pick .opt .hint{flex:0 1 auto;min-width:0;max-width:42%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .group-box .opt{margin-bottom:4px}
 .group-search{width:100%;padding:9px 12px;border:1px solid var(--bd);border-radius:10px;font:inherit;margin-top:6px;box-sizing:border-box;
   background:var(--input-bg);color:var(--tx)}
@@ -368,7 +374,9 @@ button:active{transform:scale(.97)}
 .card,button.pri,button.ghost,.nav a,.chips .c,.row input,.row select,.row textarea,.dsel-btn,.pick .opt{transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease,background .18s ease,color .18s ease}
 @keyframes wxpage{from{opacity:.4;transform:translateY(5px)}to{opacity:1;transform:none}}
 .card{animation:wxpage .3s ease}
-.mask .box{animation:wxpage .22s ease}
+.mask .box{animation:wxpage .22s ease;max-height:86vh;overflow:auto}
+/* 弹层里的按钮行固定贴着底边 ⇒ 列表再长也点得到「取消/确定」 */
+.mask .box .btns{position:sticky;bottom:0;background:var(--card);padding-top:8px;z-index:2}
 /* 首页右上角工具按钮（计费删除）——绝对定位到卡片右上角，与标题分离，保证可点层级 */
 .ov-tools{position:absolute;top:14px;right:16px;display:flex;gap:6px;font-weight:400;z-index:80;pointer-events:auto}
 #sec-overview h2{padding-right:240px}
@@ -2880,9 +2888,14 @@ async function loadStatus(){  try{
           : ('微信版本：读不到' + (vm.adapter ? '（适配层 ' + vm.adapter + '，仍按未实测处理）' : ''));
         const v2 = $('vmGate');
         if(v2){
-          v2.textContent = vg.allow ? '注意：未实测版本对：已临时放行（本会话有效）'
-            : (vg.level === 'ok' ? '版本对已实测：放行' : '未实测版本对：已暂停自动发送');
-          v2.style.color = vg.allow ? 'var(--warn-tx)' : (vg.level === 'ok' ? 'var(--ok-tx)' : 'var(--err-tx)');
+          // 2026-09-18（作者：「版本能用就行…默认放行，没必要弹那个弹窗，有问题再说」）：
+          // 允许发送时就用**中性**说法与普通字色 —— 不再用"注意/临时放行"这种看着像故障的措辞。
+          v2.textContent = vg.allow
+            ? (vg.level === 'ok' ? '版本可用：已实测，照常发送'
+                                 : '版本可用：照常发送（这一版没实测记录，不影响使用）')
+            : '版本未实测：按严格档暂停发送（可在配置里关掉 version_gate.strict）';
+          v2.style.color = vg.allow ? 'var(--tx2)'
+            : (vg.level === 'ok' ? 'var(--ok-tx)' : 'var(--err-tx)');
         }
         // 「发送已暂停」横幅：只有真的会拦住发送时才显示（allow=false），并把"拦了几次"摆出来
         try{
