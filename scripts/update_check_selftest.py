@@ -44,10 +44,13 @@ try:
     # 把状态文件指到临时目录：自检**不许写用户的 data/**
     UC._state_path = lambda: os.path.join(tmp, "update_state.json")
 
-    def mk_manifest(path, ver, notes=None):
+    def mk_manifest(path, ver, notes=None, build=None):
         with open(path, "w", encoding="utf-8") as fh:
+            _b = {"version": ver, "sha256": "a" * 64, "url": "", "size": 1, "files": 1}
+            if build is not None:
+                _b["build"] = build
             json.dump({"schema": "persona-morph/1",
-                       "base": {"version": ver, "sha256": "a" * 64, "url": "", "size": 1, "files": 1},
+                       "base": _b,
                        "dlc": [], "announce": {"version": ver, "notes": notes or [], "forceBase": False,
                                                "minBase": ver}}, fh, ensure_ascii=False)
         return path
@@ -84,6 +87,39 @@ try:
     ok(UC.state({"url": samep})["status"] == "current", "同版本 ⇒ current")
     r = UC.state({"url": oldp})
     ok(r["status"] == "older" and "旧" in r["why"], "远端更旧 ⇒ older（%s）" % r["why"][:26])
+
+    print("\n[U4b] 同名版本换包：**内容指纹不同也要能看出来**（2026-09-16 用户一问逼出来：「那就没有办法"
+          "让他们也接到更新提示吗」；只比版本号字符串的话，同版本换包对已装用户永远静默）")
+    import agent.version as VER
+    _mine = str(getattr(VER, "BUILD", "") or "")
+    if not _mine:
+        # 开发树里 BUILD 是空串（只有出包时才写）⇒ 打桩一个本机指纹，才验得动这条逻辑
+        VER.BUILD = "deadbeef0000"
+        _mine = "deadbeef0000"
+    same_b = mk_manifest(os.path.join(tmp, "same_build.json"), VERSION, build=_mine)
+    diff_b = mk_manifest(os.path.join(tmp, "diff_build.json"), VERSION, build="0123456789ab")
+    no_b = mk_manifest(os.path.join(tmp, "nobuild.json"), VERSION)
+    ok(UC.state({"url": same_b})["status"] == "current", "同版本 + 指纹相同 ⇒ current")
+    _r = UC.state({"url": diff_b})
+    ok(_r["status"] == "newer" and "内容指纹" in _r["why"],
+       "同版本 + **指纹不同** ⇒ newer（%s）" % str(_r["why"])[:60])
+    ok(_r["build"] == "0123456789ab" and _r["mineBuild"] == _mine, "两侧指纹都透传出来")
+    ok(UC.state({"url": no_b})["status"] == "current", "远端没有指纹 ⇒ 按原口径 current（**不误报**）")
+
+    print("\n[U4c] 内容指纹本身：稳定、随内容变、且**不许自指**（改 BUILD 行不影响指纹）")
+    _f1 = VER.build_fingerprint(["agent/version.py", "agent/update_check.py"], root=ROOT)
+    _f2 = VER.build_fingerprint(["agent/version.py", "agent/update_check.py"], root=ROOT)
+    ok(_f1 == _f2 and len(_f1) == 12, "同输入两次算出来一样（%s）" % _f1)
+    _old_build = VER.BUILD
+    _vpath = os.path.join(ROOT, "agent", "version.py")
+    _src = open(_vpath, encoding="utf-8").read()
+    try:
+        VER.write_build("ffffffffffff")
+        _f3 = VER.build_fingerprint(["agent/version.py", "agent/update_check.py"], root=ROOT)
+    finally:
+        open(_vpath, "w", encoding="utf-8", newline="").write(_src)
+        VER.BUILD = _old_build
+    ok(_f3 == _f1, "改了 `agent/version.py` 里的 BUILD 行 ⇒ 指纹**不变**（防自指死循环）")
 
     print("\n[U5] 坏清单**不许**被当成「已是最新」（负向，关键）")
     r = UC.state({"url": badp})

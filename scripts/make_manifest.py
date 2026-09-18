@@ -87,9 +87,14 @@ def main():
     tree_sha = h.hexdigest()
 
     notes = [s.strip() for s in a.notes.split(";") if s.strip()]
+    try:
+        from agent.version import BUILD as _BUILD          # 打包时写进去的内容指纹（开发树里是空串）
+    except Exception:
+        _BUILD = ""
     manifest = {
         "schema": SCHEMA,
         "base": {"version": a.version, "sha256": tree_sha, "url": a.url,
+                 "build": str(_BUILD or ""),
                  "size": total, "files": len(files)},
         "dlc": DLC,
         "announce": {"version": a.version, "notes": notes,

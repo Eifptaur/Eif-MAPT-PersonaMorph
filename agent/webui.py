@@ -122,6 +122,60 @@ def _protect_secrets(new_cfg: dict):
         cl_new["token"] = (old.get("cloud") or {}).get("token") or ""
 
 
+def _current_wx(parent):
+    """运行中的微信实例（按既有口径找：谁有 `self_identity` 就是它）；找不到返回 None。"""
+    try:
+        for _n in ("wechat", "adapter", "wx", "wxadapter", "bot", "worker"):
+            _o = getattr(parent, _n, None)
+            if _o is not None and hasattr(_o, "self_identity"):
+                return _o
+    except Exception:
+        return None
+    return None
+
+
+def _current_dir_how(parent) -> dict:
+    """运行中的微信实例手里的 `_db_how` —— **"实际在用哪个目录"的铁证**（不是配置值）。"""
+    try:
+        _o = _current_wx(parent)
+        if _o is not None:
+            return dict(getattr(_o, "_db_how", None) or {})
+    except Exception:
+        return {}
+    return {}
+
+
+def _wechat_dir_conflict(new_cfg: dict) -> dict:
+    """POST `/api/config` 里改动了「微信数据目录」时的**校验闸**：不过关就不写盘。
+
+    只在**这一项真的变了**的时候拦 —— 改别的设置时，那条旧值不该把人挡在门外（旧值不可用
+    由运行期回落 + 报告/控制台如实报出来兜）。不过关时把"原因 + 现在实际会回落到哪"一起给出。
+
+    用户反馈（2026-09-18 22:23）：「自己自定义的地址他检测不到」⇒ 手动指定必须**校验**
+    （存在 + 里面有 db_storage 或消息库文件），否则明确报错并回落自动检测，绝不静默写进去。
+    """
+    try:
+        old = str(((get_config() or {}).get("wechat") or {}).get("db_dir") or "")
+        new = str(((new_cfg or {}).get("wechat") or {}).get("db_dir") or "")
+    except Exception:
+        return {}
+    if new.strip() == old.strip():
+        return {}
+    from . import wechat_dir as _wdir
+    p = _wdir.expand(new)
+    if not p:
+        return {}                       # 清空＝回到自动检测，永远合法
+    c = _wdir.check(p)
+    if c.get("ok"):
+        return {}
+    d = _wdir.decide(p)
+    return {"ok": False, "saved": False,
+            "error": "这个目录用不了：%s" % (c.get("why") or "用不了"),
+            "reason": c.get("why") or "",
+            "fallback": d.get("effective") or "",
+            "wechat_dir": _wdir.status(explicit=old)}
+
+
 class WebUI:
     """启动一个仅监听本机的 HTTP 服务，提供设置/状态/日志/测试 API 接口。"""
 
@@ -766,6 +820,20 @@ class WebUI:
                                                         "detail": "检测异常：" + str(_e),
                                                         "official_url": "https://weixin.qq.com/",
                                                         "action": "none"}
+                            # 微信数据目录（2026-09-18 用户反馈：「他回我之前自定义的地址里去看文件了」）：
+                            # 这一项报的是**当前实际在读的目录**（不是配置值），还带上"你填的那个为什么
+                            # 没用、现在回落到哪"。控制台「微信数据目录」那一行直接显示它。
+                            try:
+                                from . import wechat_dir as _wdir_s
+                                _wxo = _current_wx(parent)
+                                st["wechat_dir"] = _wdir_s.status(
+                                    how=getattr(_wxo, "_db_how", None) if _wxo is not None else None,
+                                    dir_info=getattr(_wxo, "_db_dir_info", None) if _wxo is not None else None)
+                            except Exception as _wde:
+                                st["wechat_dir"] = {"ok": False, "effective": "", "src": "?",
+                                                    "now": "取不到", "candidates": [],
+                                                    "text": "取不到微信数据目录状态",
+                                                    "note": "取不到微信数据目录状态：%s" % _wde}
                             # 依赖体检（盯项目运行时的 site-packages，不是当前进程）
                             st["deps"] = {"summary": _dh.summary_line(),
                                           "offline_available": _dh.offline_available(),
@@ -1004,6 +1072,21 @@ class WebUI:
                         self._json({"ok": True, "version": info, "install": info.get("install") or {}})
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)})
+                elif path == "/api/wechat/dir":
+                    # 微信数据目录（2026-09-18 用户反馈：「能不能让我自己选微信的地址」）：
+                    # GET＝**只探测**：候选目录逐个给出"能不能用 + 为什么"，外加**当前实际在读哪个**
+                    # （不是配置值）。写配置走 POST 那条（那里先过校验）。
+                    try:
+                        from . import wechat_dir as _wdir2
+                        _q4 = parse_qs(parsed.query)
+                        _extra = (_q4.get("path") or [""])[0]
+                        _r4 = _wdir2.status(_current_dir_how(parent),
+                                            explicit=(_extra or None))
+                        _r4["candidates"] = _wdir2.probe(_extra or "").get("candidates") or []
+                        _r4["ok"] = True
+                        self._json(_r4)
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)}, 500)
                 elif path == "/api/version/allow":
                     try:
                         from . import version_gate as _vg3
@@ -1208,11 +1291,31 @@ class WebUI:
                         # 否则 _protect_secrets 拿到的"旧值"已被掩码写脏，真实 key 会丢失。
                         new_cfg = deep_merge(get_config(), new_cfg)
                         _protect_secrets(new_cfg)  # 掩码值不覆盖真实密钥
-                        set_config(new_cfg)
-                        save_config(new_cfg)
-                        if parent.on_save:
-                            parent.on_save(new_cfg)
-                        self._json({"ok": True})
+                        # 「微信数据目录」**手动指定必须过校验**（2026-09-18 用户反馈）：
+                        # 不过关就不写盘，把原因与回落目标返回给控制台显示。
+                        _bad_dir = _wechat_dir_conflict(new_cfg)
+                        if _bad_dir:
+                            self._json(_bad_dir)
+                        else:
+                            set_config(new_cfg)
+                            save_config(new_cfg)
+                            if parent.on_save:
+                                parent.on_save(new_cfg)
+                            self._json({"ok": True})
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)}, 500)
+                elif path == "/api/wechat/dir":
+                    # 手动指定微信数据目录（POST）：**先校验再写**；不通过就把原因与回落目标返回，
+                    # 一个字都不写进配置（绝不静默用旧值）。
+                    try:
+                        from . import wechat_dir as _wdir3
+                        _p3 = str((data or {}).get("path") or "")
+                        _r3 = _wdir3.save(_p3, on_save=parent.on_save)
+                        # 保存后**立即重探一遍**并把候选回显（用户口径：保存后要看到结果，不靠刷新）
+                        _st3 = _wdir3.status(_current_dir_how(parent))
+                        _st3["candidates"] = _wdir3.probe(_p3).get("candidates") or []
+                        _r3["wechat_dir"] = _st3
+                        self._json(_r3)
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)}, 500)
                 elif path == "/api/archive":

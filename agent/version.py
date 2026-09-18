@@ -16,4 +16,52 @@
 ⇒ **Release tag ＝ `v2.1.<N+1>`，有第 5 段时追加同一个 M**（`2026.9.16.16.1` ↔ `v2.1.17.1`）。
 """
 
-VERSION = '2026.9.18.13'
+VERSION = '2026.9.18.13.1'
+# ⚡ 2026-09-18 晚加：**内容指纹**（打包时由 `scripts/pack_online.py` 写进来；开发树里留空）。
+#
+# 为什么需要（2026-09-16 用户一问逼出来：「那就没有办法让他们也接到更新提示吗」）：
+#   更新检查**只比版本号字符串** ⇒ **同一个版本号换包，对已装用户永远静默**（他那边
+#   `theirs == mine` ⇒ 直接判"已是最新"）。有了指纹：清单里带 `base.build`，用户侧一比就能看出
+#   "版本号没变、但包的内容变了" ⇒ 照常提示更新。
+# ⚠️ **它对已经在跑的老版无效**（老版没有这段代码，只认版本号）⇒ 老用户只能靠**版本号前进**触达；
+#   这正是"修一个 bug 就发一个版本号"那条口径的由来（见上面 docstring）。
+BUILD = ''
+
+import hashlib as _hashlib          # noqa: E402
+import os as _os                    # noqa: E402
+import re as _re                    # noqa: E402
+
+
+def build_fingerprint(files, root: str = "") -> str:
+    """对"会随包发出去的文件"算一个内容指纹（12 位十六进制），**打包前**调用。
+
+    `files`＝相对仓库根的 posix 路径列表（`pack_online.tracked()` 过滤后的那一份）。
+    规矩：算 `agent/version.py` 时**先把 BUILD 行抹掉**再哈希 —— 否则"改 BUILD ⇒ 指纹变 ⇒ BUILD 又变"
+    自指死循环（判据里钉着这一条）。
+    """
+    h = _hashlib.sha256()
+    base = root or _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    for rel in sorted(str(x).replace("\\", "/") for x in (files or ())):
+        p = _os.path.join(base, rel.replace("/", _os.sep))
+        try:
+            with open(p, "rb") as fh:
+                data = fh.read()
+        except OSError:
+            continue
+        if rel.endswith("agent/version.py"):
+            data = _re.sub(rb"(?m)^BUILD\s*=.*$", b"BUILD = ''", data)
+        h.update(rel.encode("utf-8"))
+        h.update(b"\0")
+        h.update(_hashlib.sha256(data).digest())
+    return h.hexdigest()[:12]
+
+
+def write_build(value: str, path: str = "") -> str:
+    """把 BUILD 写回 `agent/version.py`（打包前调用，返回写入后的值）。"""
+    p = path or _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "version.py")
+    with open(p, "r", encoding="utf-8") as fh:
+        s = fh.read()
+    s2 = _re.sub(r"(?m)^BUILD\s*=.*$", "BUILD = '%s'" % str(value), s, count=1)
+    with open(p, "w", encoding="utf-8", newline="") as fh:
+        fh.write(s2)
+    return str(value)
