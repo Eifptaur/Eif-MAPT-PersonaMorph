@@ -739,7 +739,7 @@ th{color:var(--tx2);font-weight:500}
     </section>
     <section id="sec-check" class="card" data-sec>
       <h2>检测中心（代码检测 / 点击测试）</h2>
-      <div class="desc">「代码检测」= 纯代码层检查（编译/依赖/角色卡评估/种子库/提示词静态/保护机制——零风险，实测约 0.5~3 秒）；「点击测试」= 环境/配置/界面自动化共 55 项（全程序内完成，不碰鼠标；只为让目标接受投递消息会短暂置前约 1~3 秒）。
+      <div class="desc">「代码检测」= 纯代码层检查（编译/依赖/角色卡评估/种子库/提示词静态/保护机制——零风险，实测约 0.5~3 秒）；「点击测试」= 环境/配置/界面自动化共 55 项（全程序内完成，不碰鼠标；只为让目标接受投递消息会短暂置前——实测发文字约 1 秒、切会话 3~7 秒、切会话失败重试可达约 15 秒）。
       <div class="btns">
         <button id="codeCheck" class="pri">代码检测</button>
         <button id="codeCheckDeps" class="ghost" title="额外跑依赖版本详细核对（55 项，稍慢）">代码检测＋依赖核对</button>
@@ -1228,10 +1228,10 @@ th{color:var(--tx2);font-weight:500}
       <div class="row"><label>后台能力</label><div class="grow">
         <b id="bgHead">检测中…</b>
         <div id="bgList" class="hint"></div>
-        <div class="hint">这份表是<b>单一事实源</b>（agent/bg_status.py）：写"全程后台"的路径可以不动光标、不要求窗口可见（<b>可能短暂置前约 1~3 秒，然后自动还回</b>）；写"真鼠标"的会动你的光标，勾上下面这个开关就让它们直接跳过并如实告诉你。</div>
+        <div class="hint">这份表是<b>单一事实源</b>（agent/bg_status.py）：写"全程后台"的路径可以不动光标、不要求窗口可见（<b>可能短暂置前，随后自动还回</b>——实测：取 GUI / 朋友圈滚动 / 表情面板 <b>0 秒</b>、发文字约 1 秒、切会话 3~7 秒、<b>切会话失败重试可达约 15 秒</b>。<b>一定非得走前台</b>的只有三项：朋友圈点赞/评论/发朋友圈 · 转发视频文件那一下（系统选择文件框）· UI 标定与真鼠标兜底档（默认关））；写"真鼠标"的会动你的光标，勾上下面这个开关就让它们直接跳过并如实告诉你。</div>
       </div></div>
       <div class="row"><label>只走后台</label><input type="checkbox" data-cfg="wechat.background_only">
-        <span class="hint"><b>默认开</b>（老版本留下的配置会被一次性迁移成开）。开了之后：<b>朋友圈点赞·评论 / 发朋友圈 / UI 标定</b> 一律<b>跳过并说明原因</b>（这几条确实只能用真鼠标）；而 <b>拍一拍 / 引用</b> 已经改成<b>走投递</b>（不动光标（可能短暂置前约 1~3 秒后自动还回）），<b>不再被这个开关拦住</b>。关掉它上面那三条才可用——但它们是<b>真实鼠标</b>（移动光标 + 发全局点击），点的是<b>光标所在的那个窗口</b>（可能是你正在用的程序，比如这个控制台），所以请在电脑前时再关。发送文字、图片、表情、切会话、刷朋友圈一直走后台投递。</span></div>
+        <span class="hint"><b>默认开</b>（老版本留下的配置会被一次性迁移成开）。开了之后：<b>朋友圈点赞·评论 / 发朋友圈 / UI 标定</b> 一律<b>跳过并说明原因</b>（这几条确实只能用真鼠标）；而 <b>拍一拍 / 引用</b> 已经改成<b>走投递</b>（不动光标（可能短暂置前（2026-09-18 本机实测：发文字约 1 秒｜切会话 3~7 秒｜切会话失败重试可达约 15 秒），随后自动还回）），<b>不再被这个开关拦住</b>。关掉它上面那三条才可用——但它们是<b>真实鼠标</b>（移动光标 + 发全局点击），点的是<b>光标所在的那个窗口</b>（可能是你正在用的程序，比如这个控制台），所以请在电脑前时再关。发送文字、图片、表情、切会话、刷朋友圈一直走后台投递。</span></div>
       <div class="row"><label>恢复后补处理</label><input type="checkbox" data-cfg="wechat.replay_on_resume">
         <span class="hint">机器人暂停时群里照常有人说话。<b>默认不补</b>：恢复后只从那一刻往后回，暂停期间那些当没看见。<b>勾上就补</b>：恢复后按消息顺序把暂停期间的积压一批批处理——<b>停得越久、恢复瞬间回复越密集</b>（可能连回几十条），想清楚再勾。</span></div>
       <div class="row"><label>搜索失败时扫会话列表</label><input type="checkbox" data-cfg="wechat.scroll_list_fallback">
@@ -1305,7 +1305,7 @@ th{color:var(--tx2);font-weight:500}
 
       <div class="sub">③ 视频 / 文件 / 链接</div>
       <div class="row"><label>链接</label><div class="grow"><b>不用下载，直接发</b>
-        <span class="hint">群友发的链接当文本发出去就行——全程后台（投递档：不动鼠标；可能短暂置前约 1~3 秒后自动还回）。</span></div></div>
+        <span class="hint">群友发的链接当文本发出去就行——全程后台（投递档：不动鼠标；可能短暂置前（2026-09-18 本机实测：发文字约 1 秒｜切会话 3~7 秒｜切会话失败重试可达约 15 秒），随后自动还回）。</span></div></div>
       <div class="row"><label>视频/文件下载</label><div class="grow"><b>可用</b>
         <span class="hint">下载到 media/video、media/file；**只下载不发送**（要发出去看下面这个开关）。</span></div></div>
       <div class="row"><label>转发视频/文件</label><input type="checkbox" data-cfg="send.file_forward_optin">
@@ -2904,7 +2904,7 @@ async function loadStatus(){  try{
             const lv = inp.level ? ('（' + inp.level + '）') : '';
             bh.textContent = inp.touches_cursor
               ? ('当前：真鼠标档' + lv + ' · 会动光标、可能短暂置前')
-              : ('当前：投递档' + lv + ' · 不动光标、不要求可见；可能短暂置前约 1~3 秒后自动还回');
+              : ('当前：投递档' + lv + ' · 不动光标、不要求可见；可能短暂置前（2026-09-18 本机实测：发文字约 1 秒｜切会话 3~7 秒｜切会话失败重试可达约 15 秒），随后自动还回');
             bh.style.color = inp.touches_cursor ? 'var(--warn-tx)' : 'var(--ok-tx)';
           }
           const bg = s.bg || {};
