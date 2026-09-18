@@ -31,7 +31,14 @@ from .config import ROOT
 
 log = logging.getLogger("persona-morph")
 
-TITLE_HINTS = ("群相", "控制台", "Persona Morph", "persona morph")
+# ── 「哪个窗口是我们的控制台」的唯一判据（2026-09-19 收紧，起因见 classify_console_window）──
+# 唯一权威口径＝控制台窗口标题「群相 控制台」。这个串在三处同源：`agent/console_html.py` 的
+# `<title>群相 控制台</title>`、`launcher-src/launcher.cs:1165` 的 `StyleKit.Apply(this, "群相 控制台")`、
+# 以及 `launcher.cs:1250` 的 `Ui.ConsoleWindowAlive()`（它本来就按这个串判，exe 那边口径是对的）。
+CONSOLE_CAPTION = "群相 控制台"
+# 启动器自家的窗体标题也带「群相」⇒ **必须先排除**，否则被认成控制台（launcher.cs 里的窗体标题）：
+# 「群相 一键启动」/「群相 正在启动」/「群相 启动完成」/「群相 已就绪」。
+LAUNCHER_CAPTIONS = ("一键启动", "正在启动", "启动完成", "已就绪", "已在运行", "正在关闭")
 EXE_HINTS = ("一键启动.exe", "Agent启动器.exe", "一键启动", "Agent启动器")
 FOREGROUND_HINT = ("控制台",)          # 兜底：前台不是控制台时才需要弹
 
@@ -161,6 +168,38 @@ def flash(hwnd, count: int = 6) -> bool:
         return False
 
 
+def classify_console_window(title: str, exe: str) -> int:
+    """给一个顶层窗口打「是不是我们的控制台」的分（0＝不是）。**纯函数，判据可单测**。
+
+    ⛔ 2026-09-19 修（作者报「刚刚点了一下『一键启动』，怎么没有打开控制台呀？还得我再点一下」）：
+      旧判据是**标题子串** `TITLE_HINTS=("群相","控制台","Persona Morph",…)` + `EXE_HINTS`（含裸 "一键启动"）。
+      但启动器自己的窗口就叫**「群相 一键启动」**、完成时叫**「群相 启动完成」**，而**控制台窗口与启动器窗口
+      是同一个 exe**（一键启动.exe）⇒ 启动器窗口拿 3+2 分，被当成"控制台已经开着"。
+      现场的连锁（05:09 实测日志）：机器人侧 `open_console` 判成 `reuse`（"控制台已经开着 ⇒ 复用那个窗口"）
+      ⇒ 它不开；2 秒后 `onestart._probe_browser_was_opened()` 也看到那个窗口 ⇒ 判"机器人侧已打开"，启动器
+      也不开 ⇒ **两边都不开、屏幕上一片空白**；他再点一次时启动器窗口已经关掉，这才开出来。
+      顺带：标题里带「群相」的浏览器标签页（包括我们自己的 DSH 会话标签）同样会撞上这条判据。
+      ⇒ 现在只认 `CONSOLE_CAPTION`（浏览器标签页会带 " - Google Chrome" 后缀，故用**包含**），
+        并先排除 `LAUNCHER_CAPTIONS`；`EXE_HINTS` 降级为**排序加分**（自家窗口优先于浏览器页），不再能单独成立。
+    """
+    t = (title or "").strip()
+    if not t:
+        return 0
+    if any(x in t for x in LAUNCHER_CAPTIONS):
+        return 0
+    if CONSOLE_CAPTION not in t:
+        return 0
+    return 4 + (3 if any(h in (exe or "") for h in EXE_HINTS) else 0)
+
+
+def window_title(hwnd) -> str:
+    """给一个窗口句柄取标题（**诊断用**：把"我当时认的是哪个窗口"写进日志，取不到返回空串）。"""
+    try:
+        return _title(int(hwnd))
+    except Exception:
+        return ""
+
+
 def find_console_window() -> int:
     """找控制台窗口（我们自己的 WebView2 窗口优先，浏览器页次之）。找不到返回 0。"""
     found = []
@@ -172,11 +211,7 @@ def find_console_window() -> int:
                 return True
             t = _title(hwnd)
             exe = _exe_of(hwnd)
-            score = 0
-            if any(h in t for h in TITLE_HINTS):
-                score += 3
-            if any(h in exe for h in EXE_HINTS):
-                score += 2
+            score = classify_console_window(t, exe)
             if score:
                 found.append((score, int(hwnd), t, exe))
         except Exception:
