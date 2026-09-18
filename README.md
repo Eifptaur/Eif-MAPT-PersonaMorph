@@ -189,4 +189,12 @@ Windows 微信群聊机器人：监听微信群消息，按设定人设回复；
 
 ## 致谢
 
-本作品基于社区开源项目二次开发（详见 `更新日志.md` 致谢段与包内 LICENSE）。
+本作品基于社区开源项目二次开发（二次开发整合，仅供学习交流；上游版权归原作者，许可证随包附送）。特别感谢下面两位作者：
+
+- **小鲸鱼余额挂件**（控制台右下角那只鲸鱼，原项目 `dsh-whale-widget`）：
+  [github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget](https://github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget)
+  —— 已获原作者同意随本项目分发（素材来源与许可范围见包内 `whale-widget/PORT-NOTES.md`）。
+- **QQ Agent**（"机器人怎么想、怎么接话"这条路子的参考）：
+  B 站网友 **Kondius** 的 [kondius.cn/qq-agent](https://kondius.cn/qq-agent)。
+
+其余整合的开源项目（微信接入层等）见包内 `LICENSE`；上游要求的署名与许可原文都随包保留。
