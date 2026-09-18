@@ -1262,6 +1262,15 @@ th{color:var(--tx2);font-weight:500}
         <span class="hint">机器人暂停时群里照常有人说话。<b>默认不补</b>：恢复后只从那一刻往后回，暂停期间那些当没看见。<b>勾上就补</b>：恢复后按消息顺序把暂停期间的积压一批批处理——<b>停得越久、恢复瞬间回复越密集</b>（可能连回几十条），想清楚再勾。</span></div>
       <div class="row"><label>搜索失败时扫会话列表</label><input type="checkbox" data-cfg="wechat.scroll_list_fallback">
         <span class="hint">**默认关**。切会话现在是「在搜索框里打名字 → 点结果行」；搜索没成时默认**停手并说明原因**。打开这个开关，它才会退回老路——在会话列表里找行、必要时滚轮往下翻（**滚轮不动你的光标，但会话列表会在你眼前滚动**，看着就像它在划你的列表）。想成功率优先、不介意列表动几下，就打开它。</span></div>
+      <div class="row"><label>发表情方式</label><select data-cfg="wechat.emoji_send_mode">
+        <option value="auto">自动：先真表情，面板不通就发图片</option>
+        <option value="real">只用真表情：走微信表情面板</option>
+        <option value="image">只用图片：对方看到的是图片</option>
+      </select>
+        <span class="hint">两条路的<b>代价写清楚</b>，你按自己的取舍选。<b>真表情</b>走微信表情面板——它是"浮层"，
+        <b>必须被激活才能渲染</b>，所以那一下<b>前台会闪</b>（实测约 2~7 秒；而且和"摁住微信"冲突，得临时松手）。
+        <b>发图片</b>走"剪贴板 + 输入框右键粘贴"——<b>不需要浮层、全程能摁住</b>（实测 7.2 秒发出、
+        微信占前台 0.05 秒），代价是<b>对方收到的是图片</b>（动态表情会变成静态首帧）。默认"自动"。</span></div>
       <div class="row"><label>图标指纹</label><div class="grow">
         <b id="ufpHead">检测中…</b>
         <div class="btns" style="margin-top:6px">

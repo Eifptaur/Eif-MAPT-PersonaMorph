@@ -3005,6 +3005,8 @@ class WeChatAdapter:
         except Exception:
             pass
         _hold_begin("快路径发送")            # 摁住微信：让"输入那一跳"只占 0.15s 而不是 0.65s+
+        # ⚡ 2026-09-19：作者口径「用户有键盘操作的时候，就专门挑他没有的那一下」⇒ 发送前也等一个输入空档
+        _wait_user_pause(max_s=6.0, idle=0.9)
         ok_t, why_t = backend.send_text(int(main), text)
         if not ok_t:
             log.info("快路径投字没打出去（%s）⇒ 回退老链", str(why_t)[:60])
@@ -3303,7 +3305,9 @@ class WeChatAdapter:
             if _busy1:
                 return False, "你在忙（%s）⇒ 不按键、不动窗" % _busy1
             _hold_begin("按键走格")          # 摁住微信（实测：占前台 1.0~7.5s → 0.15s）
-            _wait_user_pause(max_s=1.6, idle=0.9)
+            # ⚡ 2026-09-19：作者口径「用户有键盘操作的时候，就专门挑他没有的那一下，就闪那么一下」⇒
+            #   空档等待从 1.6s 放宽到 8s（他在连按键盘时就等一个缝；等不到也照做，且全程摁住微信）。
+            _wait_user_pause(max_s=8.0, idle=0.9)
             _hdr0 = self._header_now(gui)
             if not _hdr0:
                 # ⛔ fail-closed（2026-09-18 深夜）：读不到会话头就**不许按键**——否则等于"闭着眼往下走"，

@@ -380,6 +380,27 @@ ck("B21c 链尾与每条路由结束都**停摁**（`_minimize_back_if_needed` �
    and "45.0" in SRC_WECHAT and "没有心跳" in SRC_WECHAT)
 ck("B21d 对外文案写明「它会把你原来的窗口摁在最前 / 把微信压回去」",
    "摁" in io.open(os.path.join(ROOT, "agent", "bg_status.py"), encoding="utf-8").read())
+
+# ── B22：**等一个"他没在打字"的空档**（作者 2026-09-19：「用户有键盘操作的时候，就专门挑他没有的那一下，
+#   就闪那么一下」）＋ 发表情方式做成可选项（他自己选真表情还是发图片，代价写进控制台）──
+ck("B22 空档等待放宽到秒级（切会话 8s / 发送 6s），不再是 1.6s 就硬上",
+   "_wait_user_pause(max_s=8.0, idle=0.9)" in SRC_WECHAT
+   and "_wait_user_pause(max_s=6.0, idle=0.9)" in SRC_WECHAT)
+_SRC_TOOLS = io.open(os.path.join(ROOT, "agent", "tools.py"), encoding="utf-8").read()
+_SRC_CFG = io.open(os.path.join(ROOT, "agent", "config.py"), encoding="utf-8").read()
+_SRC_CONSOLE2 = io.open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+_EX = io.open(os.path.join(ROOT, "config.example.json"), encoding="utf-8").read()
+ck("B22a 发表情方式＝可选项（config 默认 auto + 默认档说明三种取值）",
+   '"emoji_send_mode": "auto"' in _SRC_CFG and '"emoji_send_mode": "auto"' in _EX)
+ck("B22b 控制台有对应的下拉（三档：自动 / 只用真表情 / 只用图片）",
+   'data-cfg="wechat.emoji_send_mode"' in _SRC_CONSOLE2
+   and _SRC_CONSOLE2.count('value="auto"') >= 1 and 'value="real"' in _SRC_CONSOLE2
+   and 'value="image"' in _SRC_CONSOLE2)
+ck("B22c 代价写在界面里（真表情＝浮层要激活、前台会闪；图片＝对方看到的是图片）",
+   "必须被激活才能渲染" in _SRC_CONSOLE2 and "对方收到的是图片" in _SRC_CONSOLE2)
+ck("B22d 产品按这个选项分流（只图 imag不面板 / 只真表情 real 不许改发图片 / auto 兜底）",
+   '_mode != "image"' in _SRC_TOOLS and '_mode == "real"' in _SRC_TOOLS
+   and "emoji_panel_open" in _SRC_TOOLS and "posted_paste" in _SRC_TOOLS)
 ck("B17c 放回收起状态**只在链收尾**做（`_restore_fg_until` 里不再顺手放回）",
    # 2026-09-18 改口径（现场现象：「他还在不停地缩小，就是把微信最小化，然后又把微信切出来」）：
    #   `_restore_fg_until` 在一条发送链里会被调很多次（切会话·搜索路线 / 投递发送后 / 写完文件名 /
