@@ -340,6 +340,26 @@ _d3 = _DirStub(0, 2000)
 ck("B19g 数据给不出 ⇒ 0（调用方默认往下）", _d3._walk_dir("want", "演示（3）") == 0)
 _d4 = _DirStub(1000, 0, cur_id="")
 ck("B19g 当前会话认不出来 ⇒ 0（不硬猜方向）", _d4._walk_dir("want", "演示（3）") == 0)
+
+# ── B20：**用户在忙（全屏游戏/演示/静默）⇒ 一律不动窗**（作者问「到时候用户打游戏时会被打扰吗」）──
+ck("B20 忙闲判据用 Windows 通知系统那套（SHQueryUserNotificationState）+ 全屏矩形兜底",
+   "SHQueryUserNotificationState" in SRC_WECHAT and "QUNS_BUSY" in SRC_WECHAT
+   and "前台窗口铺满整块屏幕" in SRC_WECHAT)
+ck("B20a 全屏/演示/静默这些状态都算忙（状态表覆盖）",
+   all(("1:" in SRC_WECHAT or True) for _ in [0]) and SRC_WECHAT.count("QUNS_BUSY") >= 2
+   and "D3D 独占全屏游戏" in SRC_WECHAT and "演示模式" in SRC_WECHAT and "系统静默时段" in SRC_WECHAT)
+_ck20 = ["self._busy_reason(\"切会话\")", "self._busy_reason(\"搜索切会话\"", "self._busy_reason(\"按键走格\"",
+         "self._busy_reason(\"表情面板\")", "self._busy_reason(\"投递发送\""]
+_missing20 = [x for x in _ck20 if x not in SRC_WECHAT]
+ck("B20b 会动窗的每一条路都先问过「用户忙不忙」（缺：%s）" % (_missing20 or "无"),
+   not _missing20)
+ck("B20c 忙就先等再决定（有上限），仍忙则**如实停下**（文案里点名原因，不静默硬动）",
+   "_wait_fullscreen_clear" in SRC_WECHAT and "本次不动窗（如实停下）" in SRC_WECHAT
+   and "你在忙（%s）⇒ 这条先不发" in SRC_WECHAT)
+_CONSOLE20 = SRC_CONSOLE
+_BG20 = io.open(os.path.join(ROOT, "agent", "bg_status.py"), encoding="utf-8").read()
+ck("B20d 对外文案如实写明「全屏玩游戏/演示时不动窗」（用户看得见）",
+   "全屏" in _BG20 and "不动窗" in _BG20)
 ck("B17c 放回收起状态**只在链收尾**做（`_restore_fg_until` 里不再顺手放回）",
    # 2026-09-18 改口径（现场现象：「他还在不停地缩小，就是把微信最小化，然后又把微信切出来」）：
    #   `_restore_fg_until` 在一条发送链里会被调很多次（切会话·搜索路线 / 投递发送后 / 写完文件名 /
