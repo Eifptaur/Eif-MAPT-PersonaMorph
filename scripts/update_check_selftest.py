@@ -150,9 +150,13 @@ ok('"/api/update"' in _W and '"/api/update_skip"' in _W, "后端路由都在：G
 print("\n[U10] 更新源拉不到 ⇒ 并行试备用源（2026-09-16 用户报「更新源异常：拉不到更新源：The read operation timed out」）")
 ok(len(UC.DEFAULT_URLS) >= 3 and UC.DEFAULT_URLS[0] == UC.DEFAULT_URL, "内置多个源且 raw 排第一")
 ok(all(str(u).startswith("https://") for u in UC.DEFAULT_URLS), "备用源都是 https")
-ok(all("/Eifptaur/Eif-MAPT-PersonaMorph" in u and u.endswith("persona-morph-manifest.json")
+ok(all("/Eifptaur/Eif-MAPT-PersonaMorph" in u and "persona-morph-manifest.json" in u
        for u in UC.DEFAULT_URLS),
-   "每个源都指向同一份清单路径（镜像只是加前缀）")
+   "每个源都指向同一份清单（同一仓库 + 同一文件名；镜像加前缀、api 走 contents 路径都算）")
+ok(len(UC.DEFAULT_URLS) >= 8, "源足够多（2026-09-18 那台机器「一直 timeout」后扩容到 9 条）",
+   str(len(UC.DEFAULT_URLS)))
+ok(any("api.github.com" in u for u in UC.DEFAULT_URLS),
+   "有一条**完全不同网络路径**的兜底源（api.github.com contents 接口）")
 _MAN = {"schema": "persona-morph/1",
         "base": {"version": "2099.1.1.1", "sha256": "b" * 64, "url": "", "size": 1, "files": 1},
         "dlc": [], "announce": {"version": "2099.1.1.1", "notes": ["备用源可用"],
