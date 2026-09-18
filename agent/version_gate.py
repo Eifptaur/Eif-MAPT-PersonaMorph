@@ -106,8 +106,30 @@ def blocked_reset() -> None:
         _blocked.update({"count": 0, "last_reason": "", "last_at": 0.0, "capability": ""})
 
 
+def _strict() -> bool:
+    """是否要"未实测版本就暂停发送"。**默认 False**。
+
+    🔴 2026-09-18 改（两位网友的报障 + 作者口径「**有可能你保险加多了，最后能发出去的消息也变成发不出去**」）：
+      现场①「一直卡在【未通过 会话投递失败】，聊天记录生成了就是发不出去」（截图里那行就是版本门：
+      `微信版本读不到（微信没在跑）⇒ 按未验证处理，已暂停自动发送`）；现场②「昨天把微信删了重下，
+      它找到消息库了，但是一直不回复」——**重装后版本号/矩阵对不上 ⇒ 版本门把每一次发送都拦掉**。
+      版本门的本意是"版本变了要出横幅、别静默降级"，但它把**产品的核心功能（能发出去）**给掐死了，
+      代价明显大于收益。⇒ 新口径：**读不到版本＝环境态，不拦**；**未实测版本＝告警但照发**
+      （控制台出横幅 + 记台账），要严格拦的用户自己开 `config.version_gate.strict=true`。
+    """
+    try:
+        from .config import get_config
+        return bool(((get_config() or {}).get("version_gate") or {}).get("strict"))
+    except Exception:
+        return False
+
+
 def check(capability: str = "send", wechat: str = "", adapter: str = "") -> dict:
-    """发送前查一次。返回 {level, allow, reason, wechat, adapter}。"""
+    """发送前查一次。返回 {level, allow, reason, wechat, adapter}。
+
+    ⚠️ 2026-09-18 起**默认不拦发送**（见 `_strict()` 的说明）：只有用户显式开了 `version_gate.strict`
+    才会因为"未实测版本/读不到版本"暂停自动发送。
+    """
     try:
         from . import version_matrix as vm
         data = vm.load()
@@ -117,6 +139,15 @@ def check(capability: str = "send", wechat: str = "", adapter: str = "") -> dict
         if g.get("measured"):
             return {"level": "ok", "allow": True, "wechat": w, "adapter": a,
                     "reason": "版本对已实测（%s × %s）" % (w, a)}
+        if not _strict():
+            if not w or w == "unknown":
+                return {"level": "warn", "allow": True, "wechat": "unknown", "adapter": a,
+                        "reason": "读不到微信版本（%s）⇒ **不拦发送**，照常发（读不到版本是环境态，"
+                                  "不等于版本不兼容）；发不出去请把日志尾部反馈给我们"
+                                  % ("微信没在跑" if not wechat_running() else "微信在跑但没读到版本号")}
+            return {"level": "warn", "allow": True, "wechat": w, "adapter": a,
+                    "reason": "微信 %s × 适配层 %s 没有实测记录 ⇒ **照常发送**（按未知版本处理），"
+                              "若某条能力不好用请反馈；想改成「没实测就停手」可在配置里开 version_gate.strict" % (w, a)}
         if is_allowed():
             return {"level": "warn", "allow": True, "wechat": w, "adapter": a,
                     "reason": "版本对未实测（或读不到微信版本），但已在本次会话中放行"}
@@ -124,15 +155,16 @@ def check(capability: str = "send", wechat: str = "", adapter: str = "") -> dict
             # ⚠️ 别再把两种原因混成一句「微信没在跑？」（2026-09-15）：微信跑着但读不到版本号，
             #    和微信根本没开，是完全不同的处置（前者点「重新检测」、后者去登录微信）。
             return {"level": "warn", "allow": False, "wechat": "unknown", "adapter": a,
-                    "reason": "版本门拦下了：微信版本读不到（%s）⇒ 按未验证处理，已暂停自动发送；"
+                    "reason": "版本门拦下了（version_gate.strict 开着）：微信版本读不到（%s）⇒ 已暂停自动发送；"
                               "可在控制台点「本次允许发送」临时放行，或点「重新检测」再试"
                               % ("微信没在跑" if not wechat_running() else "微信在跑但没读到版本号")}
         return {"level": "warn", "allow": False, "wechat": w, "adapter": a,
-                "reason": ("微信 %s × 适配层 %s 没有实测记录：发送这类动窗口/动键盘的能力按未验证处理，"
-                           "已暂停自动发送；控制台点「本次允许发送」可临时放行（重启后重新拦）" % (w, a))}
+                "reason": ("微信 %s × 适配层 %s 没有实测记录（version_gate.strict 开着）：已暂停自动发送；"
+                           "控制台点「本次允许发送」可临时放行（重启后重新拦）" % (w, a))}
     except Exception as e:
-        return {"level": "warn", "allow": False, "wechat": wechat, "adapter": adapter,
-                "reason": "版本门检查异常（按未验证处理）：%s" % e}
+        # 版本门自己出错时**不许拦发送**（fail-open）：它是提示性的，不该成为新的故障点
+        return {"level": "warn", "allow": True, "wechat": wechat, "adapter": adapter,
+                "reason": "版本门检查异常 ⇒ 不拦发送（版本门只是提示）：%s" % e}
 
 
 def status() -> dict:
