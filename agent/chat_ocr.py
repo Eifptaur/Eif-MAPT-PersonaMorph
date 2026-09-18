@@ -1723,6 +1723,28 @@ def toolbar_first_icon(img, pane_left: int = 0, band_h: int = 96,
         return None
 
 
+def loose_matches(a: str, b: str, thresh: float = 0.7, need: int = 3) -> bool:
+    """**宽容**判"这两个名字是不是同一个"（用于 OCR 会吃掉 emoji/符号的场合）。
+
+    ⚡ 2026-09-18 深夜现场：群名 `海绵宝宝の吸🈲课堂` 被 OCR 读成 `海绵宝宝吸课堂`（丢了 🈲 与 の）
+    ⇒ 严格匹配判否 ⇒ 按键走格一路走过头（24 格都没认出来）。⇒ 补一条按**字符集合**算的 Jaccard
+    （只保留 CJK 与字母数字；共同字符 ≥ need 且相似度 ≥ thresh）。
+    ⛔ 它只用于"走格/找行时确认"，**发送闸一律不接它**（发送仍要强档证据 / 内容级复核）。
+    """
+    try:
+        def _set(s):
+            return {c for c in str(s or "") if ("\u4e00" <= c <= "\u9fff") or c.isalnum()}
+
+        A, B = _set(a), _set(b)
+        if not A or not B:
+            return False
+        inter = len(A & B)
+        union = len(A | B)
+        return inter >= max(1, int(need)) and (inter / float(union)) >= float(thresh)
+    except Exception:
+        return False
+
+
 def band_signature(img, left=None, size=(72, 18)):
     """会话列表**标题带**的低分辨率灰度指纹（只看"这一带变没变"，不判内容）。"""
     if img is None:

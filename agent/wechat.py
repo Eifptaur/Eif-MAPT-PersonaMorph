@@ -119,6 +119,23 @@ def _fg_before_close() -> int:
     return _fg_now()
 
 
+def _fg_stash_ok() -> bool:
+    """stash 里记的那个"用户窗口"是不是**真用户窗口**（不是微信自己）——只有它才值得还回去。
+
+    ⚠️ 2026-09-18 深夜：条链会发伪激活（`WM_ACTIVATE`），**微信收到后会短暂真占前台**（实测按键走格
+    24 格 = 前台 2.95s）。还之前必须先确认 stash 不是"微信自己的窗口"，否则就是"把微信还到前台"。
+    """
+    h = int(_FG_STASH.get("hwnd") or 0)
+    if not h:
+        return False
+    try:
+        from . import input_backend as _ib
+        main = int(_ib.find_main_window() or 0)
+        return not (main and int(main) == h)
+    except Exception:
+        return True
+
+
 def _wait_dialog_gone(hwnd: int, timeout: float = 1.5) -> bool:
     """等某个对话框**真的消失**（最多 `timeout` 秒）；返回是否真的没了。
 
@@ -422,8 +439,21 @@ def _restore_fg_until(note: str = "", timeout: float = 2.5, keep: bool = True,
     #   点了微信（或别的窗口）出来**，我们这一枪就会把他刚点出来的窗口压回去 —— 那是"不打扰用户"的红线。
     #   ⇒ 还之前先问一句：**最近 1.2 秒内有真实键盘/鼠标输入吗？**（`GetLastInputInfo`）
     #      有 ⇒ 是用户自己在操作，**这一轮不抢**（让人做主）；没有 ⇒ 才按原口径还。
+    #   ⚡ 2026-09-18 深夜修正（作者问「你确定这个方向键走路是不跳前台的」＋实测）：**当前台正落在
+    #      微信主窗上时，这条"最近有输入 ⇒ 不抢"must 让路** —— 微信之所以在前面多半是**我们的伪激活**
+    #      招来的（我们自己发的 `WM_ACTIVATE`），不是用户自己点过去的。实测现场：作者正在打字，
+    #      于是每一次都跳过还原，整条搜索链 4.6s **全程把微信留在前台**（96/101 颗采样）。
+    #      真正要保护的是"用户自己切到了别的窗口"——那种情况下前台**不是微信主窗**，本条不触发。
     try:
-        if _user_idle_seconds() < 1.2:
+        _cur_fg = int(_fg_now() or 0)
+        _we_caused = False
+        try:
+            from . import input_backend as _ib
+            _main_hwnd = int(_ib.find_main_window() or 0)
+            _we_caused = bool(_main_hwnd and _cur_fg and _main_hwnd == _cur_fg)
+        except Exception:
+            _we_caused = False
+        if (not _we_caused) and _user_idle_seconds() < 1.2:
             log.info("还前台跳过（%s）：最近 %.2fs 内有用户输入 ⇒ 不抢用户刚切过去的窗口",
                      note or "未注明", _user_idle_seconds())
             return False
@@ -2901,7 +2931,8 @@ class WeChatAdapter:
     # ⚡ 2026-09-18 深夜：**按键走格切会话**（作者问「有没有啥办法是不跳前台就可以选对的」，
     #   实测发现的零坐标路子，见 `_switch_by_keys` 的说明）
     _VK_UP, _VK_DOWN = 0x26, 0x28
-    _KEYS_WALK_BUDGET = 12        # 单向最多按几格（每格都读会话头确认；两向合计 ≤24 格）
+    _KEYS_WALK_BUDGET = 4         # 单向最多按几格（实测：24 格 10.6s / 占前台 7.45s ⇒ 必须收紧；
+    #                              1~3 格时整条才 0.9~1.2s，与搜索路线（3.45s）相当或更省）
 
     def _header_now(self, gui) -> str:
         """当前会话头文本（**自己抓帧 + 自己 OCR**）。
@@ -3007,8 +3038,13 @@ class WeChatAdapter:
                         return False, "投递方向键失败：%s" % str(_why_k)[:60]
                     steps += 1
                     time.sleep(0.22)
+                    # ⚡ 2026-09-18 深夜（作者问「你确定这个方向键走路是不跳前台的，对吗」：
+                    #   实测**会**短暂置前——伪激活是必须的，而微信收到后会自己占前台；24 格实测
+                    #   累计 2.95s）⇒ **每按一格就把前台还回去**，把一次 3 秒的打扰切成 N 段 ~0.3 秒。
+                    if _fg_stash_ok():
+                        _restore_fg_until("按键走格（每格还）", timeout=0.25, keep=False)
                     hdr = self._header_now(gui)
-                    if hdr and _co.matches(hdr, name):
+                    if hdr and self._header_match(name, hdr):
                         return True, ("按键走格成功：%s %d 格（会话头读到 %r）；零坐标、没开搜索窗"
                                       % ("↓" if vk == self._VK_DOWN else "↑", steps, hdr[:22]))
                     if _i == 0:
@@ -3019,6 +3055,21 @@ class WeChatAdapter:
             return False, "按键走格 %d 格都没走到「%s」（每格都读过会话头确认）" % (steps, name)
         except Exception as e:                                         # noqa: BLE001
             return False, "按键走格异常：%s" % str(e)[:90]
+
+    def _header_match(self, name: str, hdr: str) -> bool:
+        """会话头文本是不是目标会话（**严格优先，宽容兜底**）。
+
+        ⚡ 2026-09-18 深夜：群名 `海绵宝宝の吸🈲课堂` 被 OCR 读成 `海绵宝宝吸课堂`（丢了 🈲 与 の）
+        ⇒ 严格匹配判否 ⇒ 按键走格一路走过头（实测 24 格没走到）。⇒ 兜底用 `chat_ocr.loose_matches`
+        （字符集合 Jaccard）。⛔ 它只用于"走格/找行确认"，**发送闸不接它**。
+        """
+        try:
+            from . import chat_ocr as _co
+            if _co.matches(hdr, name):
+                return True
+            return bool(_co.loose_matches(hdr, name))
+        except Exception:
+            return False
 
     def _click_visible_session(self, chat_id: str, name: str, gui, main: int):
         """在**当前可见的会话列表**里找目标行并投递点击（**不滚列表、不开搜索窗**）→ `(ok, why)`。
