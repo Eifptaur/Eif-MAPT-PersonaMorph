@@ -450,8 +450,52 @@ def run_once(manifest=None, zip_path=None, target=ROOT, dry=False, progress=None
              why="")
     else:
         _set(state="error", phase="apply", why=msg)
+    if rc == 0 and detail.get("status") != "current":
+        _relaunch_after_update(theirs)
     return {"ok": rc == 0, "rc": rc, "msg": msg, "detail": detail, "version": theirs,
             "needRestart": rc == 0 and detail.get("status") != "current", "phase": "done" if rc == 0 else "apply"}
+
+
+def _relaunch_after_update(version: str = "") -> None:
+    """更新成功后**由我们自己做交接**：拉起"新代码的看门狗"（`--takeover --delay=3`）再立刻退出。
+
+    ⛔ 为什么不能让"更新装完 + 等用户点重启"（2026-09-18 作者实测：「点完更新之后…变『无法访问』、
+    窗口也不关掉；我手动叉掉、点了一键关闭、再点一键启动，它仍然不起窗口」）：
+      · 旧版本的进程内重启链是坏的（`watchdog.pid` 变两行 ⇒ `_kill_watchdog()` 静默失效 ⇒
+        新旧看门狗互抢实例锁）⇒ **更新装上了、却没人接替** ⇒ 用户被迫自己下新包；
+      · 而"已经装上坏代码"的机器，**没法靠进程内代码自救** —— 唯一可靠的是**用磁盘上的新代码**接手。
+    ⇒ 所以更新这条链**不依赖旧的进程内重启**：直接 spawn 新看门狗（新文件、带 `--takeover`，
+      它自己收旧看门狗 + 清实例证据 + 开机器人），然后本进程 `os._exit(0)`。
+    """
+    try:
+        import json as _json
+        import time as _time
+        flag = os.path.join(ROOT, "data", "update_done.flag")
+        os.makedirs(os.path.dirname(flag), exist_ok=True)
+        with open(flag, "w", encoding="utf-8") as f:
+            f.write(_json.dumps({"version": version, "at": _time.time()}, ensure_ascii=False))
+    except Exception:
+        pass
+    try:
+        exe = sys.executable
+        if exe.lower().endswith("python.exe"):
+            pyw = exe[:-10] + "pythonw.exe"
+            if os.path.exists(pyw):
+                exe = pyw
+        flags = 0
+        if os.name == "nt":
+            flags = 0x00000008 | 0x00000200 | 0x08000000
+        subprocess.Popen([exe, os.path.join(ROOT, "scripts", "watchdog.py"), "--takeover", "--delay=3"],
+                         cwd=ROOT, creationflags=flags, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+    try:
+        import time as _t2
+        _t2.sleep(0.4)                        # 让 spawn 落地（Popen 已返回，这里只是给文件系统一点时间）
+    except Exception:
+        pass
+    os._exit(0)                               # 更新＝换新代码跑，本进程必须让位
 
 
 def start_async(target=ROOT):
