@@ -2527,6 +2527,112 @@ class WeChatAdapter:
         except Exception as e:
             return "", "OCR 判当前会话异常：%s" % e
 
+    def _wx_toplevel_windows(self) -> dict:
+        """微信进程当前**可见的顶层窗** `{hwnd: 标题}`（只读，用于"点完有没有冒出不该出现的窗"）。
+
+        ⚠️ **小块窗口（悬停提示气泡 / tooltip）一律不算**：Qt 的 tooltip 也是顶层窗，鼠标一停就可能冒出来，
+        把它当成"点偏了"会让正常发送被误拦。判据＝窗口**两条边都 < 200px** 就不算"面板级窗口"
+        （表情面板 771×771、群信息栏、被拖出去的独立聊天窗都是几百 px 起步；tooltip 一般 100×30 上下）。
+        """
+        out = {}
+        try:
+            import win32gui
+            import win32process
+            main = int(getattr(self._get_gui(), "main_hwnd", 0) or 0)
+            pid = 0
+            if main:
+                try:
+                    pid = int(win32process.GetWindowThreadProcessId(main)[1])
+                except Exception:
+                    pid = 0
+
+            def _cb(h, _l):
+                try:
+                    if not win32gui.IsWindowVisible(h):
+                        return True
+                    if not str(win32gui.GetClassName(h) or "").startswith("Qt"):
+                        return True
+                    if pid:
+                        try:
+                            if int(win32process.GetWindowThreadProcessId(h)[1]) != pid:
+                                return True
+                        except Exception:
+                            return True
+                    try:
+                        x0, y0, x1, y1 = win32gui.GetWindowRect(h)
+                        if (int(x1) - int(x0)) < 200 and (int(y1) - int(y0)) < 200:
+                            return True          # tooltip 级的小窗：不算"面板"
+                    except Exception:
+                        pass
+                    out[int(h)] = str(win32gui.GetWindowText(h) or "")[:24]
+                except Exception:
+                    pass
+                return True
+
+            win32gui.EnumWindows(_cb, None)
+        except Exception:
+            pass
+        return out
+
+    def _close_stray_window(self, hwnd: int, why: str = "") -> bool:
+        """把"点偏之后冒出来的窗"安全关掉（走 `_wm_close_safe` 咽喉点：**绝不关微信主窗**）。"""
+        try:
+            import win32gui
+            if not _wm_close_safe(int(hwnd), why):
+                return False
+            win32gui.PostMessage(int(hwnd), 0x0010, 0, 0)      # WM_CLOSE
+            log.warning("已关掉点偏后冒出的窗口 hwnd=%s（%s）", hwnd, why)
+            time.sleep(0.4)
+            return True
+        except Exception as e:
+            log.warning("关掉冒出的窗口失败（hwnd=%s）：%s", hwnd, e)
+            return False
+
+    def _click_posted(self, backend, hwnd, pt, tag: str = "", right: bool = False,
+                      allow_new: bool = False, **kw):
+        """**投递点击的统一咽喉点**（会话链 / 发送链专用）。返回 `(ok, 说明)`。
+
+        两条职责（2026-09-18 加）：
+          ① **点后自检：有没有冒出不该出现的窗** —— 用户反馈「**发消息的时候总是莫名其妙打开群成员栏**」，
+             最可能就是某一枪落点偏了、点到了会话头（那一下就会弹出群信息/群成员栏），而旧代码**照旧往下走**
+             （于是越走越乱、还卡）。现在点完立刻比一次微信顶层窗：多出新的（本次没预期的）窗
+             ⇒ 记下**是哪一枪（tag + 落点）**、存现场照片、用安全关窗关掉它、返回失败让整条链**立刻停手**；
+          ② 点击收敛到一处 ⇒ 落点与结果可留痕，下次现场能直接对账。
+        ⚠️ 预期会出现新窗的那几枪必须显式写 `allow_new=True`（搜索浮层 / 表情面板 / 会话行双击独立窗）。
+        """
+        before = None if allow_new else self._wx_toplevel_windows()
+        try:
+            if right:
+                ok, why = backend.click(hwnd, pt, right=True, **kw)
+            else:
+                ok, why = backend.click(hwnd, pt, **kw)
+        except Exception as e:
+            return False, "%s 点击异常：%s" % (tag, e)
+        if allow_new or before is None:
+            return bool(ok), why
+        try:
+            after = self._wx_toplevel_windows()
+            new = [h for h in after if h not in before]
+        except Exception:
+            return bool(ok), why
+        if not new:
+            return bool(ok), why
+        info = "、".join("%s（hwnd=%s）" % (str(after.get(h))[:14] or "(无标题)", h) for h in new[:3])
+        log.error("❗点击「%s」（落点 %s）之后冒出了新窗口：%s —— 疑似点偏（点到会话头/别的面板）⇒ 停手",
+                  tag, tuple(pt), info)
+        try:
+            from . import chat_header as _ch
+            self._dump_fail_shot("stray_%s" % (re.sub(r"[^0-9A-Za-z_]+", "_", tag) or "click"),
+                                 _ch.capture_image(gui=self._get_gui()),
+                                 {"tag": tag, "落点": list(pt), "新的窗": info,
+                                  "expect": "这一枪点完不该出现新窗口"})
+        except Exception as _e:
+            log.debug("点偏现场留证失败：%s", _e)
+        for h in new[:2]:
+            self._close_stray_window(int(h), "点击「%s」后冒出的窗口" % tag)
+        return False, ("❗点击「%s」（落点 %s）之后屏幕上多出了新窗口：%s —— 这一枪**点偏了**，"
+                       "已把冒出来的窗关掉并停手（不在多了个面板的状态下继续投）" % (tag, tuple(pt), info))
+
     def chat_is_open(self, chat_id: str, gui=None, name: str = None, allow_weak: bool = False):
         """只读：当前打开的会话是不是 chat_id。返回 (bool, 说明)。
 
@@ -2815,7 +2921,8 @@ class WeChatAdapter:
                                    "或先在微信里点开目标会话。" % (_dt, _dx, _dy))
             # 会话行必须用**慢节奏**点击（2026-09-13 A/B：快节奏投渲染子窗高亮不动；
             #   悬停 300ms + 按住 150ms 高亮立刻跳到目标行）——见 input_backend.click 的注释
-            ok, why = backend.click(tgt, (_cx, _cy), hover_ms=300, press_ms=150)
+            ok, why = self._click_posted(backend, tgt, (_cx, _cy), "会话行（切会话）",
+                                         allow_new=True, hover_ms=300, press_ms=150)
             if not ok:
                 return False, "投递点击会话行失败：%s" % why
             self._row_click_last = (time.time(), _cx, _cy)
@@ -3049,7 +3156,8 @@ class WeChatAdapter:
                 #    点之前先看有没有已经开着的浮层（有就直接用，避免把自己点关）。
                 pop = self._find_search_popover(main)
                 if not pop:
-                    backend.click(main, (ox + int(ent["x"]), oy + int(ent["y"])))
+                    self._click_posted(backend, main, (ox + int(ent["x"]), oy + int(ent["y"])),
+                                 "搜索入口", allow_new=True)[0]
                     for _i in range(12):
                         time.sleep(0.25)
                         pop = self._find_search_popover(main)
@@ -3102,7 +3210,11 @@ class WeChatAdapter:
                     return False, ("搜索浮层的画面里没认出「%s」那一行（浮层截图 %s%s；浮层%s）"
                                    % (name, shot_size, ("｜现场已存 %s" % _d) if _d else "",
                                       "已关掉" if _closed else "**没关掉**"))
-                backend.click(int(pop_hwnd), (int(prect[0]) + int(row["x"]), int(prect[1]) + int(row["y"])))
+                _cok, _cwhy = self._click_posted(backend, int(pop_hwnd),
+                                                 (int(prect[0]) + int(row["x"]), int(prect[1]) + int(row["y"])),
+                                                 "搜索浮层结果行")
+                if not _cok:
+                    return False, _cwhy
                 time.sleep(1.0)
                 idn, idn_why = self.chat_identity_ok(chat_id, gui=gui)
                 if idn is True:
@@ -3117,7 +3229,8 @@ class WeChatAdapter:
                                   ("｜现场已存 %s" % _d) if _d else "") +
                                ("｜浮层已关掉" if _closed else "｜浮层**没关掉**"))
             # —— box 形态（另一台机 / 老 UI：搜索框直接摆着）：点它 → 主窗打字 → 结果行在主窗里找
-            backend.click(main, (ox + int(ent["x"]), oy + int(ent["y"])))
+            self._click_posted(backend, main, (ox + int(ent["x"]), oy + int(ent["y"])),
+                                 "搜索入口", allow_new=True)[0]
             time.sleep(0.45)
             ok_t, why_t = backend.send_text(main, name)
             if not ok_t:
@@ -3137,7 +3250,11 @@ class WeChatAdapter:
                         break
             if _pop and _prow:
                 _ph, _prect, _pimg, _pwhy = _pop
-                backend.click(int(_ph), (int(_prect[0]) + int(_prow["x"]), int(_prect[1]) + int(_prow["y"])))
+                _cok2, _cwhy2 = self._click_posted(backend, int(_ph),
+                                                   (int(_prect[0]) + int(_prow["x"]), int(_prect[1]) + int(_prow["y"])),
+                                                   "搜索浮层结果行（box 路线）")
+                if not _cok2:
+                    return False, _cwhy2
                 time.sleep(1.0)
                 _idn2, _idn2_why = self.chat_identity_ok(chat_id, gui=gui)
                 if _idn2 is True:
@@ -3162,7 +3279,11 @@ class WeChatAdapter:
                     "cand_txt": ent.get("cand_txt")})
                 return False, ("搜索结果里没认出「%s」（可能没有这条会话，或结果区 OCR 读不出）%s"
                                % (name, ("｜现场已存 %s" % _d) if _d else ""))
-            backend.click(main, (ox + int(info["pos"][0]), oy + int(info["pos"][1])))
+            _cok3, _cwhy3 = self._click_posted(backend, main,
+                                               (ox + int(info["pos"][0]), oy + int(info["pos"][1])),
+                                               "主窗搜索结果行")
+            if not _cok3:
+                return False, _cwhy3
             time.sleep(0.9)
             # 内容级复核：认得出目标会话最近的内容才算成功
             idn, idn_why = self.chat_identity_ok(chat_id, gui=gui)
@@ -3321,7 +3442,9 @@ class WeChatAdapter:
                     log.info("跳过聚焦点击（上沿带落点 %s 已进工具栏带，按红线不点）", focus_pt)
                 else:
                     log.info("投递聚焦输入栏：点 %s（实测输入框 %s，只取上沿带）", focus_pt, _ibox)
-                    backend.click(main, focus_pt)
+                    _fok, _fwhy = self._click_posted(backend, main, focus_pt, "聚焦输入栏")
+                    if not _fok:
+                        return False, _fwhy
                     time.sleep(0.3)
             except Exception as _e:
                 log.info("投递聚焦输入栏失败（继续尝试打字）：%s", _e)
@@ -3520,7 +3643,9 @@ class WeChatAdapter:
                     _img_pt = None
                 else:
                     log.info("发图·投递聚焦输入栏：点 %s（实测输入框 %s，只取上沿带）", _img_pt, _img_box)
-                    backend.click(main, _img_pt)
+                    _iok, _iwhy = self._click_posted(backend, main, _img_pt, "发图聚焦输入栏")
+                    if not _iok:
+                        return False, _iwhy
                     time.sleep(0.3)
             except Exception as _e:
                 log.info("发图·投递聚焦输入栏失败（继续尝试粘贴）：%s", _e)
@@ -3578,7 +3703,7 @@ class WeChatAdapter:
             #     （真发出去之后输入框就空了，后续枪等于空放）。
             _deadline = time.time() + max(10.0, float(wait_s))
             _shots = (("回车", lambda: backend.keys(main, [ib.VK_RETURN])),
-                      ("点「发送」", lambda: backend.click(main, send_pt)),
+                      ("点「发送」", lambda: self._click_posted(backend, main, send_pt, "点「发送」")[0]),
                       ("回车（兜底）", lambda: backend.keys(main, [ib.VK_RETURN])))
             _fired = []
             # 🔴 2026-09-18 同一条修（发图版）：**开枪前就把「[图片]」记进回声表** —— 否则我们发出去的图

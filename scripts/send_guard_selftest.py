@@ -158,9 +158,9 @@ _SI = SRC.split("def send_image_posted(")[1]
 _SI = _SI[:_SI.index("def _file_panel_point_live(")]
 ck("D1 粘贴前先投递聚焦输入栏 —— 落点是**现算**的输入框上半部分（`_input_top_band`），"
    "量不到 / 掉进工具栏带就不开枪（2026-09-18 改口径：按比例猜点会落到引用条甚至 ✕ 上）",
-   "_input_top_band(gui)" in _SI and "backend.click(main, _img_pt)" in _SI
+   "_input_top_band(gui)" in _SI and "_click_posted(backend, main, _img_pt" in _SI
    and "_img_pt[1] > int(r[1] + rh * 0.92)" in _SI
-   and _SI.find("backend.click(main, _img_pt)") < _SI.find("_cb.set_image("))
+   and _SI.find("_click_posted(backend, main, _img_pt") < _SI.find("_cb.set_image("))
 ck("D2 粘贴改走**右键 → 「粘贴」菜单项**（投递组合键在微信上不成立：退化成字面字母 v）",
    '_right_click_menu_posted(gui, _RX, _RY, "粘贴"' in _SI)
 ck("D3 发图链里**再也不许出现投递 Ctrl+V**（它只会把字母 v 敲进输入框）",
@@ -172,7 +172,7 @@ ck("D5 图片**只粘贴一次**（内容留在输入框，多打几枪不会重
    _SI.count("_cb.set_image(") == 1 and _SI.count('"粘贴"') == 1)
 ck("D6 提交是**三枪**且**回车优先**（回车那枪排在点「发送」之前）",
    "_shots = (" in _SI and "_deadline" in _SI
-   and _SI.find("backend.keys(main, [ib.VK_RETURN])") < _SI.find("backend.click(main, send_pt)"))
+   and _SI.find("backend.keys(main, [ib.VK_RETURN])") < _SI.find('_click_posted(backend, main, send_pt'))
 ck("D7 成功回执写明「第几枪打出去的」（可复盘是哪一枪生效）",
    "第 %d 枪 %s · DB 回读" in _SI)
 ck("D8 未生效时如实说「文字可能还留在输入框里」（与发文字同口径）",

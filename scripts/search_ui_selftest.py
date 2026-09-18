@@ -192,7 +192,7 @@ _w_src2 = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read(
 _seg_s = _w_src2[_w_src2.index("def open_chat_by_search"):]
 _seg_s = _seg_s[:_seg_s.find("\n    def ", 10)]
 ok("进去先 stash 前台（在点搜索入口之前）",
-   "_stash_fg()" in _seg_s and _seg_s.index("_stash_fg()") < _seg_s.index("backend.click"))
+   "_stash_fg()" in _seg_s and _seg_s.index("_stash_fg()") < _seg_s.index("_click_posted("))
 ok("出去一律还前台（finally，异常路径也走）",
    "finally:" in _seg_s and '_restore_fg_until("切会话·搜索路线"' in _seg_s)
 
