@@ -1,11 +1,11 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.18.12.2",
-    "sha256": "e06e4201abb0ef73c0a61738034b2053bf3ff5448761bf7ff5d16ce643eed1ab",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.32.2/persona-morph-v2.1.32.2.zip",
-    "size": 9017875,
-    "files": 273
+    "version": "2026.9.18.13",
+    "sha256": "fbdfa84f9de18dc2aa6026fb1878b3b913dbc0e3f8056d78eccd9a1f74d9c7ac",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.32.3/persona-morph-v2.1.32.3.zip",
+    "size": 9156427,
+    "files": 281
   },
   "dlc": [
     {
@@ -32,13 +32,13 @@
     }
   ],
   "announce": {
-    "version": "2026.9.18.12.2",
+    "version": "2026.9.18.13",
     "notes": [
-      "更新现在会自动完成，不用再去下新包：装完自己换新实例起来（以前更新完可能直接起不来、控制台一屏「无法访问」，还得手动覆盖解压）；顺手修掉「一键关闭关不掉」：以前关的时候看门狗没被真正结束，导致接下来点「一键启动」不弹窗口"
+      "新增「症状检验器」：哪方面有问题就点哪一个（发不出去 / 它回自己 / 不回复 / 看不到表情 / 抢窗口 / 更新不动 / 控制台打不开），只读检查并给一段能直接粘贴反馈的报告；表情包现在会离线解出原图再给模型看（不再只靠截图）；投递链提速：一条消息从切会话到发出最坏约 10 秒"
     ],
     "forceBase": false,
-    "minBase": "2026.9.18.12.2"
+    "minBase": "2026.9.18.13"
   },
-  "builtAt": "2026-09-18T01:18:03Z",
-  "updatedAt": 1789694283001
+  "builtAt": "2026-09-18T12:16:37Z",
+  "updatedAt": 1789733797278
 }
