@@ -2898,6 +2898,128 @@ class WeChatAdapter:
             log.debug("枚举搜索窗口失败：%s", e)
         return out
 
+    # ⚡ 2026-09-18 深夜：**按键走格切会话**（作者问「有没有啥办法是不跳前台就可以选对的」，
+    #   实测发现的零坐标路子，见 `_switch_by_keys` 的说明）
+    _VK_UP, _VK_DOWN = 0x26, 0x28
+    _KEYS_WALK_BUDGET = 12        # 单向最多按几格（每格都读会话头确认；两向合计 ≤24 格）
+
+    def _header_now(self, gui) -> str:
+        """当前会话头文本（**自己抓帧 + 自己 OCR**）。
+
+        ⛔ 不借 `chat_is_open` 的说明文本：它只在**命中**时才把 OCR 结果写进 why，失败时写的是空串
+        （2026-09-18 实测踩到：拿它当"当前是谁"的读数，读出来全是 `''`，把方向判断带偏）。
+        """
+        try:
+            from . import chat_header as _ch
+            from . import chat_ocr as _co
+            im = _ch.capture_image(gui=gui)
+            if im is None:
+                return ""
+            w, h = im.size
+            crop = im.crop((int(w * 0.26), int(h * 0.03), int(w * 0.66), int(h * 0.14)))
+            txt = [str(t) for t, *_ in _co.recognize(crop)]
+            return "|".join(txt[:3])
+        except Exception:
+            return ""
+
+    def _last_msg_ts(self, chat_id: str) -> int:
+        """某会话**最后一条消息的时间戳**（读不到给 0）。列表按这个倒序排 ⇒ 用它定"往上还是往下"。"""
+        if not chat_id:
+            return 0
+        try:
+            rows = self._db.get_messages(chat_id, limit=1) or []
+            return int(rows[0].get("create_time") or 0)
+        except Exception:
+            return 0
+
+    def _chat_id_by_header(self, hdr: str) -> str:
+        """把会话头 OCR 到的名字映射回 chat_id（尽力而为；认不出给空串）。"""
+        h = str(hdr or "").split("|")
+        cands = [x for x in h if x]
+        if not cands:
+            return ""
+        try:
+            from . import chat_ocr as _co
+            pairs = []
+            try:
+                for g in (self.list_groups() or []):
+                    if g.get("name") and g.get("wxid"):
+                        pairs.append((str(g["name"]), str(g["wxid"])))
+                    elif g.get("name") and g.get("id"):
+                        pairs.append((str(g["name"]), str(g["id"])))
+            except Exception:
+                pass
+            pairs.append(("文件传输助手", "filehelper"))
+            for nm, cid in pairs:
+                for c in cands:
+                    try:
+                        if _co.matches(c, nm):
+                            return cid
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+        return ""
+
+    def _walk_dir(self, chat_id: str, header: str) -> int:
+        """按键走格的**方向**（数据给的）：+1 往下 / -1 往上 / 0 数据给不出（调用方默认往下）。"""
+        t_want = self._last_msg_ts(chat_id)
+        cid = self._chat_id_by_header(header)
+        t_cur = self._last_msg_ts(cid) if cid else 0
+        if t_want and t_cur and t_want != t_cur:
+            return 1 if t_want < t_cur else -1      # 目标更旧 ⇒ 在列表更下面
+        return 0
+
+    def _switch_by_keys(self, chat_id: str, name: str, gui, main: int, budget: int = None):
+        """**按键走格**切会话：零坐标、零滚动、零搜索窗、零像素匹配 → `(ok, why)`。
+
+        ⚡ 2026-09-18 深夜实测（作者：「有没有啥办法是不跳前台就可以选对的」）：
+          · 投递 `Ctrl+F` ⇒ 微信**不理**（浮层没出来）；`session/session.db` 在驱动库里**没有密钥**
+            （拿不到列表顺序）；⇒ 试到 **投递方向键** 才成立：
+            `MessageBackend(activate=True).keys(main, [VK_DOWN])` **真的换了会话**（现场：`演示（3）` →
+            `海绵宝宝吸课堂（13）`），**没动光标、没开任何窗、没点鼠标**。
+          · ⛔ **必须带伪激活**（`activate=True`）：不带时同一枪毫无反应（实测三变体对照）。
+          · 方向由**数据**定（各会话最后消息时间倒序；目标更旧 ⇒ 往下），**每按一格都读会话头确认**，
+            走过头就换方向再走 —— 所以"点不准"这件事在这条路上根本不存在（没有任何坐标）。
+        """
+        try:
+            from . import input_backend as ib
+            from . import chat_ocr as _co
+            main = int(main or 0)
+            if not main:
+                return False, "找不到微信主窗"
+            _hdr0 = self._header_now(gui)
+            if not _hdr0:
+                # ⛔ fail-closed（2026-09-18 深夜）：读不到会话头就**不许按键**——否则等于"闭着眼往下走"，
+                #   走过头了也不知道（微信最小化/被挡住时就会这样）。交给后面的点列表/搜索路线。
+                return False, "读不到会话头（窗口最小化/被遮挡？）⇒ 不按键（免得闭眼乱走）"
+            d = self._walk_dir(chat_id, _hdr0) or 1
+            be = ib.MessageBackend(activate=True)          # ⛔ 必须带伪激活（不带时微信不理投递的方向键）
+            budget = int(budget or self._KEYS_WALK_BUDGET)
+            steps = 0
+            for _phase in (0, 1):
+                if _phase == 1:
+                    d = -d                                 # 反向再找一遍（自纠偏；数据定得准时一相就中）
+                vk = self._VK_DOWN if d > 0 else self._VK_UP
+                for _i in range(budget):
+                    ok_k, _why_k = be.keys(main, [vk])
+                    if not ok_k:
+                        return False, "投递方向键失败：%s" % str(_why_k)[:60]
+                    steps += 1
+                    time.sleep(0.22)
+                    hdr = self._header_now(gui)
+                    if hdr and _co.matches(hdr, name):
+                        return True, ("按键走格成功：%s %d 格（会话头读到 %r）；零坐标、没开搜索窗"
+                                      % ("↓" if vk == self._VK_DOWN else "↑", steps, hdr[:22]))
+                    if _i == 0:
+                        _d2 = self._walk_dir(chat_id, hdr)
+                        if _d2 and _d2 != d:           # 第一格就发现方向反了 ⇒ 立刻翻向
+                            d = _d2
+                            vk = self._VK_DOWN if d > 0 else self._VK_UP
+            return False, "按键走格 %d 格都没走到「%s」（每格都读过会话头确认）" % (steps, name)
+        except Exception as e:                                         # noqa: BLE001
+            return False, "按键走格异常：%s" % str(e)[:90]
+
     def _click_visible_session(self, chat_id: str, name: str, gui, main: int):
         """在**当前可见的会话列表**里找目标行并投递点击（**不滚列表、不开搜索窗**）→ `(ok, why)`。
 
@@ -2985,7 +3107,15 @@ class WeChatAdapter:
                 _pre_sw = set(h for h, *_r in self._search_window_hwnds(main=main, gui=gui))
             except Exception:
                 pass
-            # ② 先试**列表里直接点**（不开搜索窗；作者口径：切会话分"搜索"和"点击"两种，别一上来就搜索）
+            # ② 先试**按键走格**（零坐标、零滚动、零搜索窗；作者问「有没有啥办法是不跳前台就可以选对的」）
+            try:
+                _kok, _kwhy = self._switch_by_keys(chat_id, name=name, gui=gui, main=main)
+            except Exception as _e_k:                                  # noqa: BLE001
+                _kok, _kwhy = False, "按键走格异常：%s" % str(_e_k)[:70]
+            if _kok:
+                return True, "切会话成功（%s）" % str(_kwhy)[:90]
+            log.info("切会话：按键走格没成（%s）⇒ 试点列表", str(_kwhy)[:100])
+            # ③ 再试**列表里直接点**（不开搜索窗；作者口径：切会话分"搜索"和"点击"两种，别一上来就搜索）
             try:
                 _vok, _vwhy = self._click_visible_session(chat_id, name=name, gui=gui, main=main)
             except Exception as _e_v:                                  # noqa: BLE001
