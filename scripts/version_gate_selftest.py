@@ -36,13 +36,16 @@ def ok(name, cond, detail=""):
 from agent import version_gate as vg  # noqa: E402
 
 print("── A. 三级行为（先把版本强制成「读不到」，这样在哪台机器上结论都一样）──")
+# 🔴 2026-09-18 改口径（两位网友报障 + 作者「保险加多了，能发出去的也变成发不出去」）：
+#   **默认不拦发送** —— 读不到版本＝环境态；未实测版本＝告警但照发。只有用户显式开
+#   `version_gate.strict=true` 时，原来的"暂停自动发送 + 点本次允许发送"才生效。
 _REAL_LOOKUP = vg.current_wechat_version
 vg.current_wechat_version = lambda *a, **k: ""
 vg.clear_allow()
 a = vg.check()
-ok("读不到版本 ⇒ 默认拦（allow=False）", a["allow"] is False, "level=%s" % a["level"])
-ok("拦的时候 level=warn（不是 ok）", a["level"] == "warn", a["level"])
-ok("理由里说清「未实测/未验证」与怎么放行", (("实测" in a["reason"]) or ("未验证" in a["reason"])) and ("放行" in a["reason"]), a["reason"][:60])
+ok("默认（非 strict）：读不到版本 ⇒ **不拦**（allow=True）", a["allow"] is True, "level=%s allow=%s" % (a["level"], a["allow"]))
+ok("告警的 level=warn（不是 ok）", a["level"] == "warn", a["level"])
+ok("理由里写明「不拦发送/照常发」+ 让用户反馈", ("不拦发送" in a["reason"]) or ("照常发" in a["reason"]), a["reason"][:60])
 _r_real = vg.wechat_running
 vg.wechat_running = lambda: True
 _r_running = vg.check()["reason"]
@@ -52,12 +55,24 @@ vg.wechat_running = _r_real
 ok("「微信在跑但读不到版本号」与「微信没在跑」给出**不同**的话（不许混成一句）",
    _r_running != _r_absent and ("没在跑" in _r_absent) and ("没在跑" not in _r_running),
    "在跑=>%s ｜ 没在跑=>%s" % (_r_running[:34], _r_absent[:34]))
+# 严格档：用户显式开了 strict 才恢复"暂停发送 + 本次允许发送"
+_strict_real = vg._strict
+vg._strict = lambda: True
+c = vg.check()
+ok("strict 档：读不到版本 ⇒ 拦（allow=False）", c["allow"] is False, "level=%s" % c["level"])
+ok("strict 档：理由里说清怎么放行", ("放行" in c["reason"]) and ("strict" in c["reason"]), c["reason"][:70])
 vg.allow_session("selftest")
 b = vg.check()
-ok("临时放行后 allow=True", b["allow"] is True)
+ok("strict 档下临时放行后 allow=True", b["allow"] is True)
 ok("放行后 level 仍是 warn（放行≠已验证）", b["level"] == "warn", b["level"])
 vg.clear_allow()
-ok("清掉后重新拦", vg.check()["allow"] is False)
+ok("清掉后重新拦（strict 档）", vg.check()["allow"] is False)
+vg._strict = _strict_real
+# 版本门自己出错时**不许**成为新的故障点（fail-open）
+_exc_real = vg.current_wechat_version
+vg.current_wechat_version = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+ok("版本门异常 ⇒ fail-open（不拦发送）", vg.check()["allow"] is True)
+vg.current_wechat_version = _exc_real
 vg.current_wechat_version = _REAL_LOOKUP
 st = vg.status()
 ok("status() 带 allowed_session 字段", "allowed_session" in st, str(st.get("allowed_session")))

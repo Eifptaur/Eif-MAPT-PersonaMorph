@@ -524,7 +524,10 @@ th{color:var(--tx2);font-weight:500}
 </div>
 <!-- 「发送已被暂停」横幅（2026-09-17 加）：用户「佬」报「能识别群，但发不了消息，试什么都不发」
      —— 真因是**版本门**（微信版本 × 适配层没实测 ⇒ 每次发送被拦），而提示藏在「版本能力矩阵」里，
-     他没找到 ⇒ 现象看起来就是"机器人坏了"。横幅放在最上面，写明"拦了几次 + 为什么 + 一键放行"。 -->
+     他没找到 ⇒ 现象看起来就是"机器人坏了"。横幅放在最上面。
+🔴 2026-09-18 改口径（两位网友报障「聊天记录生成了就是发不出去」「重装微信后一直不回复」＋作者
+"保险加多了，最后能发出去的消息也变成发不出去"）：**版本门默认不再拦发送** —— 读不到版本＝环境态、
+未实测版本＝告警但照发；横幅只做「告知」。要严格拦的用户自己开 `version_gate.strict=true`。 -->
 <div id="vgBar" class="updbar warn" style="display:none">
   <span id="vgText"></span>
   <span class="sp"></span>
@@ -1217,7 +1220,7 @@ th{color:var(--tx2);font-weight:500}
     </section>
     <section id="sec-vermat" class="card" data-sec>
       <h2>版本能力矩阵</h2>
-      <div class="desc">当前「微信版本 × 适配层版本」下每个能力的实测状态。没有实测记录的版本对一律按未知处理：发送会先被版本门拦下，等你点「本次允许发送」才临时放行。</div>
+      <div class="desc">当前「微信版本 × 适配层版本」下每个能力的实测状态。**没有实测记录的版本对按未知处理，但默认照常发送**（只在这里标出来提醒你）；想改成「没实测就停手」可在配置里开 <code>version_gate.strict</code>，开了之后才需要点「本次允许发送」临时放行。</div>
       <div class="row"><label>当前版本对</label><div class="grow"><b id="vmVer">检测中…</b></div></div>
       <div class="row"><label>版本门</label><div class="grow">
         <b id="vmGate">检测中…</b>
@@ -2881,9 +2884,9 @@ async function loadStatus(){  try{
             const n = Number(blk.count || 0);
             if(vg.allow === false && vg.level !== 'ok'){
               const ver = (vm.wechat && vm.wechat !== 'unknown') ? ('微信 ' + vm.wechat + ' × 适配层 ' + (vm.adapter || '-')) : '微信版本读不到';
-              vt.textContent = '发送已被暂停（' + ver + '：没有实测记录）'
+              vt.textContent = '这一版微信（' + ver + '）没有实测记录 —— 照常发送中（不影响使用）'
                 + (n > 0 ? '，已经拦下 ' + n + ' 条没发出去' : '')
-                + '。点右边「本次允许发送」即可继续（只对本次运行有效）。';
+                + '。某条能力不好用请点「反馈」，把日志一并带上。';
               vb.style.display = 'flex';
             } else {
               vb.style.display = 'none';
@@ -4577,7 +4580,8 @@ const GUIDES = {
     steps: [
       '① 点下面的「打开官网下载」，装好微信并**登录**（机器人用的是你本机的微信客户端）',
       '② 回来点「重新检测」——检测到在运行就会变绿',
-      '③ 装好后还建议看一眼「版本能力矩阵」：没实测过的微信版本会让发送先停一下，等你点「本次允许发送」。'
+      '③ 装好后还建议看一眼「版本能力矩阵」：没实测过的微信版本这里会标出来提醒你，**但发送照常**；'
+      + '想改成「没实测就停手」再开 version_gate.strict。'
     ],
     copy: [],
     actions: [{label: '打开官网下载', kind: 'openUrl'}, {label: '重新检测', kind: 'test', arg: 'wechat'}]
