@@ -134,10 +134,10 @@ for st in ("'newer'", "'older'", "'error'"):
 ok("有新版本" in _seg and "s.notes" in _seg, "newer 分支写「有新版本」并把公告要点拼上")
 ok(_seg.count("'warn'") >= 2, "older 与 error 都走 warn 样式（不是静默）")
 ok("hide()" in _seg and "else { hide(); }" in _seg, "其余状态（current / off）走隐藏")
-ok("getElementById('updLater').onclick = hide" in _seg, "「稍后」＝只隐藏，不发任何请求")
+ok(_has("getElementById('updLater').onclick = hide"), "「稍后」＝只隐藏，不发任何请求")
+ok(_has("fetch('/api/update')"), "取数只打 /api/update")
 ok(_has("/api/update_skip", "cur.theirs"), "「不再提醒」＝POST /api/update_skip 且带上版本号")
 ok("立即更新" in _H and "alert(" not in _seg, "「立即更新」＝就地给指引，**不弹窗**")
-ok("fetch('/api/update')" in _seg, "取数只打 /api/update")
 # 2026-09-16 补（给用户看公告条时当场发现的真缺陷）：条子的描边原来写 `var(--line,…)`，
 #   而四套主题里**只有 `--bd` 没有 `--line`** ⇒ 描边永远落到硬编码的深灰 `#2a2f37`，
 #   浅色主题下就是"白卡配深灰边"、不跟主题走。断言：描边必须优先取主题变量。
