@@ -62,6 +62,7 @@ def main():
     ap.add_argument("--notes", default="", help="公告要点，分号分隔")
     ap.add_argument("--url", default="", help="下载地址（未发布时留空）")
     ap.add_argument("--version", default=CODE_VERSION)
+    ap.add_argument("--build", default="", help="内容指纹（发布链从**包内**读出来传进来；留空则读源文件）")
     ap.add_argument("--built-at", default="")
     a = ap.parse_args()
 
@@ -87,10 +88,16 @@ def main():
     tree_sha = h.hexdigest()
 
     notes = [s.strip() for s in a.notes.split(";") if s.strip()]
-    try:
-        from agent.version import BUILD as _BUILD          # 打包时写进去的内容指纹（开发树里是空串）
-    except Exception:
-        _BUILD = ""
+    # ⚠️ 内容指纹**直接读文件**（不走 import：BUILD 改写前后同尺寸，字节码缓存会给出旧值 —— 2026-09-18 实测
+    #    造成"清单里的 build 与包里实际 BUILD 不一致"，用户侧会一直提示有新包）。发布链更该用 `--build`
+    #    把**包内**那个值传进来（唯一事实来源＝即将发出去的那个包）。
+    _BUILD = str(a.build or "")
+    if not _BUILD:
+        try:
+            from agent.version import read_build_from as _rbf
+            _BUILD = _rbf()
+        except Exception:
+            _BUILD = ""
     manifest = {
         "schema": SCHEMA,
         "base": {"version": a.version, "sha256": tree_sha, "url": a.url,

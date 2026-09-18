@@ -25,7 +25,7 @@ VERSION = '2026.9.18.13.2'
 #   "版本号没变、但包的内容变了" ⇒ 照常提示更新。
 # ⚠️ **它对已经在跑的老版无效**（老版没有这段代码，只认版本号）⇒ 老用户只能靠**版本号前进**触达；
 #   这正是"修一个 bug 就发一个版本号"那条口径的由来（见上面 docstring）。
-BUILD = '7d2819122f21'
+BUILD = '5b4d5f1973ef'
 
 import hashlib as _hashlib          # noqa: E402
 import os as _os                    # noqa: E402
@@ -57,11 +57,41 @@ def build_fingerprint(files, root: str = "") -> str:
 
 
 def write_build(value: str, path: str = "") -> str:
-    """把 BUILD 写回 `agent/version.py`（打包前调用，返回写入后的值）。"""
+    """把 BUILD 写回 `agent/version.py`（打包前调用，返回写入后的值）。
+
+    ⚠️ 写完必须**清掉字节码缓存**（2026-09-18 深夜踩到真坑）：BUILD 前后都是 12 位十六进制
+    ⇒ **文件大小一模一样**，若同一秒内改写，`__pycache__/version.*.pyc` 的 (mtime,size) 校验会
+    认为缓存仍有效 ⇒ 后续 `from agent.version import BUILD` 读到**旧值**，于是清单里的
+    `base.build` 与包里的实际 BUILD 不一致（用户侧会一直提示"有新包"）。⇒ 这里清缓存。
+    """
     p = path or _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "version.py")
     with open(p, "r", encoding="utf-8") as fh:
         s = fh.read()
     s2 = _re.sub(r"(?m)^BUILD\s*=.*$", "BUILD = '%s'" % str(value), s, count=1)
     with open(p, "w", encoding="utf-8", newline="") as fh:
         fh.write(s2)
+    try:
+        import importlib as _il
+        _il.invalidate_caches()
+        _d = _os.path.join(_os.path.dirname(_os.path.abspath(p)), "__pycache__")
+        if _os.path.isdir(_d):
+            for _n in _os.listdir(_d):
+                if _n.startswith("version.") and _n.endswith(".pyc"):
+                    try:
+                        _os.remove(_os.path.join(_d, _n))
+                    except OSError:
+                        pass
+    except Exception:
+        pass
     return str(value)
+
+
+def read_build_from(path: str = "") -> str:
+    """**直接读文件**解析 BUILD（不走 import ⇒ 不受字节码缓存影响；打包/发布链一律用这个）。"""
+    p = path or _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "version.py")
+    try:
+        with open(p, "r", encoding="utf-8") as fh:
+            m = _re.search(r"(?m)^BUILD\s*=\s*['\"]([^'\"]*)['\"]", fh.read())
+        return str(m.group(1)) if m else ""
+    except OSError:
+        return ""
