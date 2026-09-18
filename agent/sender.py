@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import random
+import re
 import threading
 import time
 
@@ -26,22 +27,45 @@ _DEDUP_WINDOW_S = 20.0
 # 词表取自真机现场（用户截图里机器人真发进群的句子）与既有红线（prompt.py 第 7 条）。
 _INTERNAL_FAIL_PHRASES = (
     "会话投递失败", "投递失败", "本轮未发言", "未能发言", "没能发言",
-    "发送失败了", "发送失败", "发不出去", "发不出来", "会话没对上", "没对上会话",
+    "发送失败了", "发送失败", "发送没成功", "没发成功", "没发出去", "未发出",
+    "发不出去", "发不出来", "会话没对上", "没对上会话",
+    "这轮先不说", "本轮先不说", "这轮不说了", "本轮不说了",
     "工具报错", "工具调用失败", "接口报错", "系统错误", "内部错误",
     "没有拿到会话", "抓不到会话", "获取会话失败",
 )
+# 结构性判据（2026-09-18 加，现场新变体「（发送没成功，这轮先不说了）」靠词表漏了）：
+#   一句**被括号整体包起来**（或很短）的话，同时带 A 组（动作/系统词）和 B 组（失败态词）
+#   ⇒ 判为内部故障话术。词表只能覆盖见过的写法，这条兜"没见过的写法"。
+_FAIL_A = ("发送", "发出", "投递", "回复", "发言", "会话", "本机", "系统", "工具", "接口", "链路")
+_FAIL_B = ("失败", "没成功", "不成功", "没发", "未发", "发不出", "报错", "异常", "超时",
+           "拦下", "拦截", "卡住", "先不说", "不说了", "没能")
+_FAIL_WRAP_RE = re.compile(r"^[\s（(【\[]+.*[\s）)】\]]+$")
 _blocked_internal: list = []          # 最近被拦下的内部故障话术（诊断用，控制台可读）
 
 
 def _is_internal_failure(text: str) -> str:
-    """这句是不是"内部故障话术"？命中返回命中的词，否则空串。"""
-    t = str(text or "")
+    """这句是不是"内部故障话术"？命中返回原因（词或 "结构性"），否则空串。
+
+    ⚠️ 只筛**我们自己要发出去的内容**（出站），不筛收到的群消息。
+    """
+    t = str(text or "").strip()
     if not t:
         return ""
     for p in _INTERNAL_FAIL_PHRASES:
         if p in t:
             return p
+    core = t.strip("（）()【】[]“”\"\' \n\t")
+    if len(core) <= 24 and _FAIL_WRAP_RE.match(t):
+        if any(a in core for a in _FAIL_A) and any(b in core for b in _FAIL_B):
+            return "结构性（括号内的状态汇报句）"
     return ""
+
+
+def outbound_gate_status() -> dict:
+    """给控制台读的出站闸门读数（**前端后端一体**：闸门拦了什么，用户要看得见）。"""
+    return {"blocked_internal": len(_blocked_internal),
+            "last": (_blocked_internal[-1] if _blocked_internal else None),
+            "dedup_window_s": _DEDUP_WINDOW_S}
 
 
 class SendQueue:

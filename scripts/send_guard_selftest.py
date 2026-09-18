@@ -248,10 +248,13 @@ print("[G] 出站闸门：内部故障话术 + 同会话短窗去重")
 try:
     from agent import sender as _sd
     _hit = [_sd._is_internal_failure(x) for x in
-            ("（会话投递失败，本轮未发言。）", "发送失败了，没能发出去。", "会话没对上。")]
-    ck("G1 现场那三类内部故障话术都会被拦下", all(_hit), str(_hit))
+            ("（会话投递失败，本轮未发言。）", "发送失败了，没能发出去。", "会话没对上。",
+             "（发送没成功，这轮先不说了）", "(发送没成功，这轮先不说了)", "这轮先不说了")]
+    ck("G1 现场那几类内部故障话术都会被拦下（含新变体「发送没成功，这轮先不说了」）", all(_hit), str(_hit))
     ck("G2 正常的群聊话不会被误拦",
-       not any(_sd._is_internal_failure(x) for x in ("早上好呀！", "才不叫！", "哈哈哈这表情包太可爱了")),
+       not any(_sd._is_internal_failure(x) for x in
+               ("早上好呀！", "才不叫！", "哈哈哈这表情包太可爱了", "（笑）你这也太可爱了",
+                "知唔知钓鱼凳好舒服啊", "老大几时回广州肘人", "在呢，怎么了？")),
        "")
     _ssrc = io.open(os.path.join(ROOT, "agent", "sender.py"), encoding="utf-8").read()
     ck("G3 拦网接在 send_text_batch 的**发之前**（不是只写在提示词里）",
@@ -259,6 +262,15 @@ try:
        and _ssrc.index("_is_internal_failure(_t)") < _ssrc.index("for _t in parts:\n            _v = _risk.check"))
     ck("G4 同会话短窗去重在位（_DEDUP_WINDOW_S + 与最近自己发过的文本比对）",
        "_DEDUP_WINDOW_S" in _ssrc and "跳过重复发送" in _ssrc and "include_self=True" in _ssrc)
+    # G5 前后端一体（作者 2026-09-18 原则）：闸门拦了什么，用户要在控制台看得见
+    _wsrc = io.open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
+    _csrc = io.open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+    ck("G5 后端把闸门读数暴露给前端（/api/status 的 outbound_gate）",
+       "outbound_gate" in _wsrc and "outbound_gate_status" in _ssrc)
+    ck("G5b 前端横幅会显示「拦下了几条内部故障话术」",
+       "outbound_gate" in _csrc and "内部故障话术" in _csrc)
+    ck("G5c 提示词同批补了新措辞（牵一发动全身：四个下游一起改）",
+       "发送没成功" in io.open(os.path.join(ROOT, "agent", "prompt.py"), encoding="utf-8").read())
 except Exception as e:
     ck("G 出站闸门", False, repr(e)[:90])
 

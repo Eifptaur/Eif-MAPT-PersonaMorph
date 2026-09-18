@@ -709,6 +709,12 @@ class WebUI:
                             # 版本门（W7）：没实测过的版本对 ⇒ 默认暂停发送；本会话是否已放行也一并暴露
                             from . import version_gate as _vg2
                             st["version_gate"] = _vg2.status()
+                            # 出站闸门读数（内部故障话术拦截 / 去重窗）——前端横幅要显示，见 console_html
+                            try:
+                                from . import sender as _sd3
+                                st["outbound_gate"] = _sd3.outbound_gate_status()
+                            except Exception as _oe:
+                                st["outbound_gate"] = {"blocked_internal": 0, "error": str(_oe)[:60]}
                             # 待决单（⑦ 版本不匹配四选一）：门没过就把这件事开成一张单，控制台据此弹模态。
                             # 开单是幂等的（同一对版本只开一次、问过就不再问），所以这里每次轮询调用是安全的。
                             try:
