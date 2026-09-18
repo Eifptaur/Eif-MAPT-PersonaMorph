@@ -57,6 +57,9 @@ ALLOW = (
     # 这条是**脱敏自检的输入夹具**：那一行故意塞满假 PII（假手机号/假邮箱/假姓名/假身份证/`wxid_abc123`），
     # 用来断言 scrub_prompt 会把它们都抹掉。它是合成的样本，不是真实账号数据 ⇒ 显式放行并写明理由。
     ("scripts/image_gen_selftest.py", "微信账号/数据"),
+    # 同上：`wechat_dir_selftest` 用 `wxid_judge0001` 造**假账号目录**（`tmp/.../db_storage/...`）来验
+    # "微信数据目录"的校验与回落，是合成夹具，不含任何真实账号 ⇒ 显式放行并写明理由。
+    ("scripts/wechat_dir_selftest.py", "微信账号/数据"),
 )
 
 SKIP_BIN = re.compile(r"\.(png|jpe?g|gif|ico|woff2?|ttf|mp4|zip|db|sqlite3?)$", re.I)
