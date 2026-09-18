@@ -1,11 +1,11 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.18.13.6",
-    "sha256": "cea973b834202b51af034773b503768800612d465bc1e90a38187352259bf7a1",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.32.9/persona-morph-v2.1.32.9.zip",
-    "build": "51328d95c070",
-    "size": 9330948,
+    "version": "2026.9.18.13.7",
+    "sha256": "d8d68470bb85cca99ded18aef86503842a60331a8a5b95245ac20d553aacb5a5",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.33/persona-morph-v2.1.33.zip",
+    "build": "86f7a68acc90",
+    "size": 9336503,
     "files": 284
   },
   "dlc": [
@@ -33,13 +33,13 @@
     }
   ],
   "announce": {
-    "version": "2026.9.18.13.6",
+    "version": "2026.9.18.13.7",
     "notes": [
-      "发表情面板走不通时，改用**投递粘贴图片**通道把它发出去（不需要表情面板 ⇒ 和「摁住微信」能共存）：实测演示群 7.2 秒发出、**微信占前台 0.05 秒**、DB 回读 type=图片；另外修掉判据里一个偶发红（cursor_webview 那条是开窗时序抖动，复跑 46/0）"
+      "发表情做成**可选项**了：控制台「微信 → 发表情方式」三档——自动（默认，先真表情、面板不通就发图片）／只用真表情（走微信表情面板，那一下**前台会闪**约 2~7 秒）／只用图片（**全程不打扰**，代价＝对方收到的是图片）；另外它动手前会**等你一个没在打字的空档**（切会话等 8 秒、发送等 6 秒），你连着按键盘时它就等那个缝，抢不到也只在最后一刻闪一下"
     ],
     "forceBase": false,
-    "minBase": "2026.9.18.13.6"
+    "minBase": "2026.9.18.13.7"
   },
-  "builtAt": "2026-09-18T16:31:16Z",
-  "updatedAt": 1789749076721
+  "builtAt": "2026-09-18T16:37:21Z",
+  "updatedAt": 1789749441958
 }
