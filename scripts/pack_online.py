@@ -8,9 +8,16 @@
 口径（用户 2026-09-13 定）：
   ① 只有"在线包"：不含 `offline/`（运行时 + wheel），第一次运行由 `scripts/setup_python.ps1` 联网准备；
   ② 包里**不许有他的个人信息与开发资料**——家目录路径 / 密钥 / token / 聊天数据 /
-     开发文档（AGENTS.md、docs/ 下的任务清单与 changelog 归档）/ 其它项目素材（whale-widget）；
+     开发文档（AGENTS.md、docs/ 下的任务清单与 changelog 归档）；
   ③ 打包源＝`git ls-files`（未跟踪的草稿、报告、日志一律进不来）；
   ④ 扫描命中一律拒绝出包（要放行必须显式加进 ALLOW 并写明理由）。
+
+⚠️ 2026-09-19 改（小鲸鱼挂件）：`whale-widget/` 原先**整目录排除**，理由是"另一个项目的素材"。
+  但控制台右下角那个挂件**就是靠这个目录跑的**（`webui._whale_js_injected()` 读
+  `whale-widget/client/widget.js`，`image.png`/`rua.gif`/音效走 `assets/`）⇒ 整目录排除等于
+  **装上以后挂件是死的**（脚本 0 字节、图片取不到，界面上什么都没有 —— 只有侧栏那个徽章还在）。
+  现在按"只发程序真正要用的那几样"收窄排除，并且**已获原作者同意**随包分发（上游 `PROVENANCE.md`：
+  代码 MIT，`assets/**` 不在 MIT 范围内、原文是"不授予再许可"；同意记录见 `whale-widget/PORT-NOTES.md`）。
 """
 import os
 import re
@@ -31,7 +38,9 @@ ZIP_TOP = "persona morph"
 EXCLUDE = (
     "AGENTS.md",          # 开发守则：含红线自述与既有口径：，不随包发
     "docs/",              # 开发资料：任务清单 / changelog 归档
-    "whale-widget/",      # 另一个项目（鲸鱼挂件）的素材，与本包无关
+    "whale-widget/upstream-0.3.5/",       # 上游原文留档（README/PROVENANCE/package.json）＝开发资料，不随包发
+    "whale-widget/assets/DSniang02.png",  # 备用整图：我们的路由用不到（image.png 走 DSniang1.png）
+    "whale-widget/assets/DSH2.png",       # 上游 README 展示图：程序不用（1.1MB，别白占包体积）
     "scripts/pack_online.py",   # 打包器自身：里面有扫描规则字面量（含用户名样本），不进包
     "persona-morph-manifest.json",  # 更新清单：它给的是"包内文件的哈希"，自己进包会**哈希自指**死循环
     "offline/",           # 离线运行时与 wheel（在线包不需要）
@@ -199,7 +208,13 @@ def main():
             # 只能看到"点了按钮没反应"。引导器是微软官方 Evergreen Bootstrapper（允许随应用分发）。
             "WebView2Loader.dll", "lib/Microsoft.Web.WebView2.Core.dll",
             "lib/Microsoft.Web.WebView2.WinForms.dll",
-            "assets/webview2/MicrosoftEdgeWebview2Setup.exe"]
+            "assets/webview2/MicrosoftEdgeWebview2Setup.exe",
+            # 小鲸鱼挂件（控制台右下角那个）：宿主代码 `agent/whale.py` 一直在包里，但**前端脚本与
+            # 素材**原先被整目录排除 ⇒ 装上以后挂件是死的（脚本 0 字节、图片取不到）。
+            # 2026-09-19 起按"只发程序真正要用的那几样"收窄排除；这五样缺任何一样，挂件就起不来。
+            "whale-widget/client/widget.js", "whale-widget/assets/DSniang1.png",
+            "whale-widget/assets/rua.gif", "whale-widget/assets/Ya1.mp3",
+            "whale-widget/LICENSE-原版.txt"]
     missing = [n for n in need if n not in rel_names]
     outside = [n for n in names if not n.startswith(ZIP_TOP + "/")]
     if bad_state or bad_trace or missing or outside:
