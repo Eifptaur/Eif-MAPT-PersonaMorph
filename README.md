@@ -9,6 +9,18 @@ Windows 微信群聊机器人：监听微信群消息，按设定人设回复；
 - 发布包：`群相-在线包-<日期>.zip`（源码包，联网安装）
 - 仅供学习交流，请阅读文末「风险提示」
 
+## 致谢
+
+本作品基于社区开源项目二次开发（二次开发整合，仅供学习交流；上游版权归原作者，许可证随包附送）。特别感谢下面两位作者：
+
+- **小鲸鱼余额挂件**（控制台右下角那只鲸鱼，原项目 `dsh-whale-widget`）：
+  [github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget](https://github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget)
+  —— 已获原作者同意随本项目分发（素材来源与许可范围见包内 `whale-widget/PORT-NOTES.md`）。
+- **QQ Agent**（"机器人怎么想、怎么接话"这条路子的参考）：
+  B 站网友 **Kondius** 的 [kondius.cn/qq-agent](https://kondius.cn/qq-agent)。
+
+其余整合的开源项目（微信接入层等）见包内 `LICENSE`；上游要求的署名与许可原文都随包保留。
+
 ## 怎么用（一步步照做就行）
 
 > 这一节是**操作说明书**：每个功能都写清「在哪儿点、填什么、会看到什么」。所有设置都在本机控制台里（端口 3210，双击「一键启动.exe」会自己打开）。
@@ -186,15 +198,3 @@ Windows 微信群聊机器人：监听微信群消息，按设定人设回复；
 ## 风险提示
 
 微信官方协议禁止非官方客户端/自动化程序。本项目以后台消息注入为主（不注入、不改微信文件、目前主要不动鼠标），风险较低但非零；频率与静默**默认不设限、由你自己把控**（控制台「风险闸门」）。建议：使用小号、控制频率、不群发不刷数据。**是否使用、以及账号风险，请自行评估与承担**（详见上一节「权限与红线」）。
-
-## 致谢
-
-本作品基于社区开源项目二次开发（二次开发整合，仅供学习交流；上游版权归原作者，许可证随包附送）。特别感谢下面两位作者：
-
-- **小鲸鱼余额挂件**（控制台右下角那只鲸鱼，原项目 `dsh-whale-widget`）：
-  [github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget](https://github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget)
-  —— 已获原作者同意随本项目分发（素材来源与许可范围见包内 `whale-widget/PORT-NOTES.md`）。
-- **QQ Agent**（"机器人怎么想、怎么接话"这条路子的参考）：
-  B 站网友 **Kondius** 的 [kondius.cn/qq-agent](https://kondius.cn/qq-agent)。
-
-其余整合的开源项目（微信接入层等）见包内 `LICENSE`；上游要求的署名与许可原文都随包保留。
