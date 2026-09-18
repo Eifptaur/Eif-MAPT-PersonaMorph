@@ -2729,6 +2729,38 @@ def main():
 
     # 水位自愈的限频表（每个群最多 10 秒查一次"最新序号"，别每跳都多打一次库）
     _wm_heal = {}
+    # 切号跟随的限频表（2026-09-19）：每 15 秒只 stat 一下 -wal，别每跳都走盘
+    _ACCT_CHK = {"at": 0.0}
+
+    def _adopt_wc(_wc_new, _why=""):
+        """把新接入的 adapter 换到**所有**持有者手里（切号跟随与"启动时微信没开"共用一处）。
+
+        为什么必须换全：`sender` / `orch` / `target_wxids` 各自抱着一份引用，只换
+        `wechat_box[0]` 的话发送链还拿着旧账号那个对象 ⇒ 表面"接上了"，其实一条都发不出去
+        （旧号的库/窗口句柄都过期了）。
+        """
+        nonlocal wechat, groups, targets
+        wechat_box[0] = _wc_new
+        wechat = _wc_new
+        sender.wechat = _wc_new
+        orch.wechat = _wc_new
+        groups, targets = _collect_targets(_wc_new)
+        target_wxids.clear()
+        target_wxids.update(g["wxid"] for g in targets)
+        for _g in targets:
+            _k = "group:" + _g["wxid"]
+            if wm.get(_k, 0) <= 0:
+                try:
+                    wm.set(_k, _wc_new.latest_seq(_g["wxid"]))
+                except Exception:
+                    wm.set(_k, 0)
+        wm.flush()
+        if _why:
+            try:
+                _acct = _wc_new.db_account() or "?"
+            except Exception:
+                _acct = "?"
+            log.warning("%s：现在读的是账号 %s，监听目标 %d 个", _why, _acct, len(targets))
     while not orch.stopped:
         poll_interval = max(1.0, float(get_config().get("wechat", {}).get("poll_interval") or 3))
         # ── 微信接入重试（2026-09-16：老代码注释里承诺过、实际**从未实现**的那一句）──────
@@ -2739,25 +2771,34 @@ def main():
         if wechat_box[0] is None and (time.time() - float(_ATTACH.get("at") or 0)) >= 10:
             _wc_new = _attach_wechat(get_config())
             if _wc_new is not None:
-                wechat_box[0] = _wc_new
-                wechat = _wc_new
-                sender.wechat = _wc_new
-                orch.wechat = _wc_new
-                groups, targets = _collect_targets(_wc_new)
-                target_wxids.clear()
-                target_wxids.update(g["wxid"] for g in targets)
-                for g in targets:
-                    _k = "group:" + g["wxid"]
-                    if wm.get(_k, 0) <= 0:
-                        try:
-                            wm.set(_k, _wc_new.latest_seq(g["wxid"]))
-                        except Exception:
-                            wm.set(_k, 0)
-                wm.flush()
+                _adopt_wc(_wc_new)
                 log.info("微信已接入（第 %d 次尝试）：监听目标 %d 个", _ATTACH["tries"], len(targets))
             else:
                 log.info("微信仍未接入（第 %d 次尝试）：%s", _ATTACH["tries"],
                          wechat_attach_status()["reason"])
+        # ── 切号跟随（2026-09-19，网友反馈：「切换微信号使用后…只有前几句话会正常回复，
+        #    后面不再回复」）────────────────────────────────────────────────────────
+        #    微信切号后我们如果继续读**旧号**的库：新消息全在新号里，而界面上**没有任何异常**
+        #    （机器人就像死了）——用户只能报"后面不回复"。这里每 15 秒只 stat 一遍 `-wal`
+        #    （只读、不动窗口、不动库），确认"我读的这个号已经静默 + 另一个号在写"才重连；
+        #    多开（两个号同时活着）时我自己还在写 ⇒ 永不来回抖（规矩见 `wechat_dir.switched`）。
+        if wechat_box[0] is not None and (time.time() - float(_ACCT_CHK.get("at") or 0)) >= 15:
+            _ACCT_CHK["at"] = time.time()
+            try:
+                _st = wechat.db_account_stale()
+            except Exception as _e_acct:
+                _st = {"stale": False, "why": "切号检查异常：%s" % _e_acct}
+            if _st.get("stale"):
+                log.warning("检测到微信切号（%s）⇒ 正在跟着切…", _st.get("why") or "")
+                _wc_sw = _attach_wechat(get_config())
+                if _wc_sw is not None:
+                    _adopt_wc(_wc_sw, "切号跟随")
+                else:
+                    # 失败要**退避**：一次全量接入会跑一遍密钥内存扫描（秒级），不许每 15 秒来一次
+                    _ACCT_CHK["at"] = time.time() + 45.0
+                    log.warning("切号后重连失败：%s（旧账号的库已经不写了，"
+                                "多半是还在登录/密钥没就绪，60 秒后再试）",
+                                wechat_attach_status()["reason"])
         try:
             for g in targets:
                 wxid = g["wxid"]

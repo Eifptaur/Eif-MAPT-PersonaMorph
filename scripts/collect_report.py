@@ -305,8 +305,21 @@ def sec_visual():
         elif _info.get("note"):
             lines.append("  ⚠️ %s" % _info.get("note"))
         if _how:
-            lines.append("  消息库账号目录: %s（来源=%s）"
-                         % (_how.get("account_dir") or _how.get("dir") or "取不到", _how.get("src") or "?"))
+            # 账号这一维（2026-09-19 加，网友反馈：「切换微信号使用后提示寻找不到库、还要求相同的权限」
+            # 「只有前几句话会正常回复，后面不再回复」）：多账号机器上**读的是哪个号**是看不见的第一杀手
+            # ——读到旧号时新消息一条都进不来，而暂停/水位/key 全是好的 ⇒ 报告里必须留下这个证据。
+            _alv = _info.get("account_live")
+            _anames = list(_info.get("account_names") or [])
+            lines.append("  消息库账号: %s%s（来源=%s）"
+                         % (_how.get("account") or _how.get("account_dir") or _how.get("dir") or "取不到",
+                            "" if _alv is None else ("（库正在被写）" if _alv
+                                                     else "（**没在动**：微信可能已经切号了）"),
+                            _how.get("src") or "?"))
+            if _how.get("account_why"):
+                lines.append("  为什么读这个账号: %s" % _how.get("account_why"))
+            if len(_anames) > 1:
+                lines.append("  这台机器上的微信账号目录: %s（**只有「正在被写」的那个该读**；"
+                             "切号没跟上的话，新消息一条都看不到）" % "、".join(_anames))
     except Exception as e:
         lines.append("  微信数据目录: 取不到（%s: %s）" % (type(e).__name__, str(e)[:120]))
     if _how_err:

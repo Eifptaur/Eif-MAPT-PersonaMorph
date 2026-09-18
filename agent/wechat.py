@@ -1120,6 +1120,40 @@ class WeChatAdapter:
 
     # ── 初始化 ───────────────────────────────────────────────────────────
 
+    # ── 账号这一维（2026-09-19，网友反馈「切换微信号后找不到库 / 后面不回复」）──────────
+    def db_account(self) -> str:
+        """**正在读哪个账号目录**（多账号机器上决定"消息看不看得到"；不知道返回空）。"""
+        try:
+            return str(getattr(self._db, "account", "") or "")
+        except Exception:
+            return ""
+
+    def db_account_stale(self) -> dict:
+        """**微信是不是切号了**（监听循环每 15 秒问一次；只读、只 stat，不动窗口/不动库）。
+
+        返回 `{"stale","mine","live","why","accounts"}`；三条保守规矩见 `wechat_dir.switched`
+        （单账号永不切 · 我自己还在写就不切 · 只有"别的号在写、我这个静默"才切）。
+        为什么要有它：切号后我们如果继续读旧号的库，**新消息一条都看不到**，而界面/日志上
+        **没有任何异常**（就像机器人死了），用户只能报"后面不回复"。
+        """
+        out = {"stale": False, "mine": _db_account_of(self), "live": "", "why": "", "accounts": []}
+        if not out["mine"]:
+            return out
+        try:
+            _parent = str(getattr(self._db, "db_dir", "") or "")
+        except Exception:
+            _parent = ""
+        if not _parent:
+            return out
+        try:
+            from . import wechat_dir as _wd
+            _r = _wd.switched(out["mine"], _parent)
+            for _k in ("stale", "live", "why", "accounts"):
+                out[_k] = _r.get(_k, out[_k])
+        except Exception as e:
+            out["why"] = "切号检查异常：%s: %s" % (type(e).__name__, e)
+        return out
+
     def _newest_wal_mtime(self) -> float:
         """消息库最近的 `message_*.db-wal` 的 mtime（找不到返回 0）。
 
@@ -1274,11 +1308,39 @@ class WeChatAdapter:
         #    ⇒ 三档依次试（配置 → 扫盘 → 驱动库自探测），全失败才真失败。
         self._db, _how, _errs = open_db(_dd)
         self._db_how = dict(_how or {})
+        # 候选账号目录（2026-09-19）：多账号机器上"还有哪几个号"必须能印进检验报告/控制台，
+        # 否则切号这类事只能靠远程猜。**只在接入这一跳走一次盘**（不在 /api/status 轮询里）。
+        try:
+            from . import wechat_dir as _wd_a
+            _accs_a = _wd_a.accounts(str(self._db_how.get("dir") or ""))
+            if len(_accs_a) > 1:
+                self._db_how["account_names"] = [a["name"] for a in _accs_a]
+        except Exception:
+            pass
         if self._db is None:
             _why = "；".join("「%s」%s" % (d or "驱动库自探测", e) for d, _s, e in _errs)
             _e0 = _errs[0][2] if _errs else "未知原因"
-            raise WeChatError("打不开消息库：%s（试过 %d 条路：%s）%s"
-                              % (_e0, len(_errs), _why, _db_open_verdict(_probe_db_dirs(_dd), _errs)))
+            # ⛔ 2026-09-19（网友 02:39 那份报告：「切换到另外一个账号就提示打不开消息库，
+            #    微信和软件全部管理员启动仍然没办法解决」）：多账号机器上**选错账号**会表现成
+            #    「打不开消息库 / 无可用密钥」（驱动库那句提示里还带着"权限"字样，害人去查管理员）。
+            #    这里把"这台机器上有几个号"直接写进失败原因里，别再让用户照着权限猜。
+            _acc_hint = ""
+            try:
+                from . import wechat_dir as _wd_f
+                _names = []
+                for _d0, _s0 in db_open_tries(_dd):
+                    for _a0 in _wd_f.accounts(_d0):
+                        if _a0.get("name") and _a0["name"] not in _names:
+                            _names.append(_a0["name"])
+                if len(_names) > 1:
+                    _acc_hint = ("；这台机器上有 %d 个微信账号目录（%s）⇒ 多账号/切号时**选错账号**"
+                                 "也会表现成这句「打不开消息库」——本版会按「-wal 正在被写」自动挑账号，"
+                                 "重开一次（或重启机器人）就会跟着切" % (len(_names), "、".join(_names)))
+            except Exception:
+                pass
+            raise WeChatError("打不开消息库：%s（试过 %d 条路：%s）%s%s"
+                              % (_e0, len(_errs), _why,
+                                 _db_open_verdict(_probe_db_dirs(_dd), _errs), _acc_hint))
         _picked = str(_how.get("dir") or "")
         _src = str(_how.get("src") or "")
         if _src == "scanned":
@@ -1685,6 +1747,23 @@ class WeChatAdapter:
             return
         if not isinstance(d, dict):
             return
+        # ⛔ 2026-09-19（网友反馈：「切换微信号使用后…只有前几句话会正常回复，后面不再回复」）：
+        #   行号（local_id）**只在同一个账号的同一个库里**才有意义 —— 切号后旧号记下的行号会正好
+        #   撞上新号里某条**别人的**消息（+ 时间窗内）⇒ 那条被静默判成"自己发的"丢掉 ⇒ 它不回。
+        #   两条收口：①台账里带账号（`acct`），不一致整份不用；②老格式（没有账号信息）也整份不用
+        #   —— 按项目既定红线「宁可漏判一次回声，也绝不许把别人的话丢掉」。
+        _me = _db_account_of(self)
+        _rows = d.get("rows") if isinstance(d.get("rows"), dict) else None
+        if _rows is None:
+            log.info("自我行号台账是老格式（没有账号信息）⇒ 本次不采用（宁可漏判一次回声）：%s",
+                     self._self_local_file())
+            return
+        _acct0 = str(d.get("acct") or "")
+        if _acct0 and _me and _acct0 != _me:
+            log.warning("自我行号台账属于账号 %s，现在读的是 %s ⇒ 不采用"
+                        "（跨账号比行号会把别人的消息当成自己的）", _acct0, _me)
+            return
+        d = _rows
         now = time.time()
         for k, v in d.items():
             rows = []
@@ -1705,7 +1784,10 @@ class WeChatAdapter:
             os.makedirs(os.path.dirname(p), exist_ok=True)
             tmp = p + ".tmp"
             with open(tmp, "w", encoding="utf-8") as fh:
-                _json.dump({k: [[i, c, int(t)] for i, c, t in v] for k, v in self._self_local.items()},
+                # 带上**账号**（2026-09-19）：切号后台账不能跨账号复用（见 `_load_self_local`）
+                _json.dump({"acct": _db_account_of(self),
+                            "rows": {k: [[i, c, int(t)] for i, c, t in v]
+                                     for k, v in self._self_local.items()}},
                            fh, ensure_ascii=False)
             os.replace(tmp, p)
         except Exception as e:
@@ -1763,8 +1845,28 @@ class WeChatAdapter:
     def _self_id_file(self) -> str:
         return os.path.join(ROOT, "data", "self_identity.json")
 
+    def db_account_wxid(self) -> str:
+        """**正在读的账号的 wxid**（从账号目录名去掉末尾 4 位哈希；拿不到返回空）。
+
+        为什么需要（2026-09-19 切号那件事）：`self_identity.json` 落盘的是**上一个账号**的
+        "我是谁"，切号后它就是错的（表现：机器人回自己 / @ 不到我）。这里给出"这个库属于谁"，
+        用来判断那份落盘身份还配不配当前账号。
+        """
+        try:
+            w = str(getattr(self._db, "wxid", "") or "").strip()
+        except Exception:
+            w = ""
+        if w:
+            return w
+        a = _db_account_of(self)
+        return re.sub(r"_\w{4}$", "", a) if a else ""
+
     def load_self_identity(self) -> dict:
-        """启动时读回"自己是谁"（学到的优先于猜的）。返回 `{wxid, nickname, from}`。"""
+        """启动时读回"自己是谁"（学到的优先于猜的）。返回 `{wxid, nickname, from}`。
+
+        ⛔ 2026-09-19 加**账号闸**：那份落盘身份属于哪个账号要能对上，否则不用它
+        （切号后拿旧号的 wxid 当"我"，会把新号自己的消息当成别人的 ⇒ 回自己）。
+        """
         try:
             import json as _json
             with open(self._self_id_file(), encoding="utf-8") as fh:
@@ -1774,6 +1876,17 @@ class WeChatAdapter:
         if not isinstance(d, dict):
             d = {}
         w = str(d.get("wxid") or "").strip()
+        _acct = str(d.get("acct") or "").strip()
+        _me = _db_account_of(self)
+        _me_w = self.db_account_wxid()
+        _stale = bool(w) and ((_acct and _me and _acct != _me) or (_me_w and w != _me_w))
+        if _stale:
+            try:
+                log.warning("落盘的「自己是谁」属于另一个账号（存的是 %s / 现在读的是 %s）⇒ 不采用，"
+                            "等这一轮从自己消息的回读里重新学", _mask_id(w), _me or _me_w or "?")
+            except Exception:
+                pass
+            return d
         if w and not self._self_wxid:
             self._self_wxid = w
             self._self_wxid_src = str(d.get("from") or "saved")
@@ -1804,7 +1917,8 @@ class WeChatAdapter:
             os.makedirs(os.path.dirname(p), exist_ok=True)
             tmp = p + ".tmp"
             with open(tmp, "w", encoding="utf-8") as fh:
-                _json.dump({"wxid": w, "nickname": self._self_nickname or "",
+                _json.dump({"wxid": w, "acct": _db_account_of(self),
+                            "nickname": self._self_nickname or "",
                             "from": "echo", "sample": str(sample or "")[:40],
                             "at": int(time.time() * 1000)}, fh, ensure_ascii=False, indent=1)
             os.replace(tmp, p)
@@ -9218,6 +9332,165 @@ def db_open_tries(explicit: str = "") -> list:
 _SAFE_DB_CACHE = {}
 
 
+def _db_account_of(obj) -> str:
+    """这个对象**正在读哪个账号目录**（安全入口：没有这能力的假对象返回空串，绝不抛）。
+
+    为什么要有它（2026-09-19 踩到）：`_save_self_local` / `_load_self_local` 里直接写
+    `self.db_account()` 时，**只借几个方法的夹具对象**（`self_local_selftest` 的 `_Shim`、
+    判据里的桩件）没有这个方法 ⇒ 落盘**静默失败**（`except` 只记 debug），表现为"重启后
+    认不出自己发过的行"。项目里同型的坑已经有过（新增方法 ⇒ 复制方法的夹具少一个）。
+    """
+    try:
+        f = getattr(obj, "db_account", None)
+        if callable(f):
+            return str(f() or "")
+    except Exception:
+        pass
+    try:
+        return str(getattr(getattr(obj, "_db", None), "account", "") or "")
+    except Exception:
+        return ""
+
+
+def _pm_prune_dead_key_entries(db_dir: str, account: str, log_it: bool = True) -> int:
+    """**开库之前**先把密钥缓存里"文件已经不在盘上"的条目摘掉（定点、幂等、判据只是文件存不存在）。
+
+    为什么要抢先摘（2026-09-19 网友那份 02:39 报告：切号后 `KeyError: 'message\\message_2.db'`
+    ⇒「微信未连接·打不开消息库」，**管理员启动也没用**）：驱动库 `_load_or_extract_keys` 会拿缓存里
+    **每个** `rel` 去 `_key_works(rel)`，而 `_key_works → _db_path` 在当前账号的文件表里找不到那条
+    分片时 `raise KeyError(rel)` ⇒ 换号/换布局后**必然**踩到。这里在构造之前就清掉"盘上已经没有的
+    条目"，第一枪就能成（不必先抛一次再修，也就少跑一次内存扫描）。
+    判据只有一条：`<db_dir>/<account>/db_storage/<rel>` 这个文件还在不在 —— **不重复驱动库的文件
+    收集规则**（migrate 之类的过滤交给它自己），所以**不会误删**任何还有文件的密钥。返回摘掉条数。
+    """
+    try:
+        adir = os.path.join(db_dir or "", account or "")
+        if not account or not os.path.isdir(os.path.join(adir, "db_storage")):
+            return 0
+    except Exception:
+        return 0
+
+    class _Shim(object):                      # 只为复用"缓存文件都在哪"这条口径
+        def __init__(self, kf):
+            self.keys_file = kf
+            self.account = account
+
+        def _stable_key_file(self):
+            try:
+                base = os.environ.get("LOCALAPPDATA") or os.environ.get("USERPROFILE") or ""
+                return os.path.join(base, "wechatauto_keys", account + ".json") if base else None
+            except Exception:
+                return None
+
+    n = 0
+    for p in _key_cache_paths(_Shim("")):
+        try:
+            if not os.path.isfile(p):
+                continue
+            import json as _json
+            with open(p, encoding="utf-8") as fh:
+                d = _json.load(fh) or {}
+            if not isinstance(d, dict) or not d:
+                continue
+            dead = [rel for rel in d
+                    if not os.path.isfile(os.path.join(adir, "db_storage",
+                                                       *str(rel).replace("/", os.sep).split(os.sep)))]
+            if not dead:
+                continue
+            for rel in dead:
+                d.pop(rel, None)
+            try:
+                with open(p, "rb") as src, open(p + ".bak", "wb") as dst:
+                    dst.write(src.read())
+            except OSError:
+                pass
+            tmp = p + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                _json.dump(d, fh, indent=2)
+            os.replace(tmp, p)
+            n += len(dead)
+            if log_it:
+                try:
+                    log.info("密钥缓存里 %d 条分片在账号 %s 里已经不存在（例：%s）⇒ 已提前摘掉，"
+                             "免得开库时抛 KeyError（其余密钥一个不动）", len(dead), account, dead[0])
+                except Exception:
+                    pass
+        except Exception:
+            continue
+    return n
+
+
+def _key_cache_paths(db) -> list:
+    """这个库对象会用到的**全部**密钥缓存文件（换号/清理 TEMP 后还在的那份也算）。"""
+    out = []
+
+    def _add(p):
+        try:
+            p = str(p or "")
+        except Exception:
+            return
+        if p and p not in out:
+            out.append(p)
+
+    for attr in ("keys_file",):
+        try:
+            _add(getattr(db, attr, ""))
+        except Exception:
+            pass
+    try:
+        _add(db._stable_key_file())
+    except Exception:
+        pass
+    try:
+        import glob as _g
+        import tempfile as _tf
+        _wd = os.path.join(_tf.gettempdir(), "wechatauto_db")
+        for _d in _g.glob(os.path.join(_wd, "*")):
+            _add(os.path.join(_d, "keys.json"))
+    except Exception:
+        pass
+    return out
+
+
+def _pm_drop_stale_key_entry(db, rel) -> int:
+    """把密钥缓存里**那条已经不在当前账号文件表里的分片**摘掉（定点修，其余密钥一个不动）。
+
+    为什么要修（2026-09-19 网友那份 02:39 报告）：驱动库 `_load_or_extract_keys` 会拿缓存里的每个
+    `rel` 去 `_key_works(rel)`，而它内部 `_db_path(rel)` 找不到就 `KeyError` ⇒ **构造函数直接抛**，
+    产品只能显示一句「打不开消息库」，用户照着"管理员权限/目录"查（他那句"全部管理员启动仍解决不了"
+    就是这么来的）。驱动库自己的建议是"删除密钥缓存强制重新提取"，但**整份删掉有代价**：内存提取被
+    权限或版本挡住时，缓存是唯一能解密的东西。⇒ 只摘那一条。
+    返回摘掉的条数（0 ＝ 没动过，调用方据此决定要不要重试/照原样抛）。
+    """
+    rel = str(rel or "")
+    if not rel or len(rel) > 200 or not rel.lower().endswith(".db"):
+        return 0
+    n = 0
+    for p in _key_cache_paths(db):
+        try:
+            if not os.path.isfile(p):
+                continue
+            import json as _json
+            with open(p, encoding="utf-8") as fh:
+                d = _json.load(fh) or {}
+            if not isinstance(d, dict) or rel not in d:
+                continue
+            d.pop(rel, None)
+            try:                                  # 留一份 .bak（用户/我们要能回看原样）
+                with open(p, "rb") as src, open(p + ".bak", "wb") as dst:
+                    dst.write(src.read())
+            except OSError:
+                pass
+            tmp = p + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                _json.dump(d, fh, indent=2)
+            os.replace(tmp, p)
+            n += 1
+        except Exception:
+            continue
+    return n
+
+
 def _db_class():
     """拿"抗缺密钥"的 `WeChatDB` 子类（**唯一实现**，别在别处又 new 一遍原类）。
 
@@ -9240,6 +9513,34 @@ def _db_class():
         return got
 
     class _SafeDB(_Base):
+        # ⛔ 2026-09-19（网友那份 02:39 的检验报告：切到另一个微信号后
+        #    「微信未连接：打不开消息库：KeyError: 'message\\message_2.db'」，
+        #    而且**把微信和本程序都用管理员启动也没用** ⇒ 不是权限）：
+        #    驱动库 `_load_or_extract_keys` 里有一句
+        #      `self._keys = {rel: k for rel, k in self._keys.items() if self._key_works(rel)}`
+        #    而 `_key_works(rel)` → `_db_path(rel)`：**密钥缓存里那条分片在当前账号目录里已经不存在**
+        #    （多账号/换号后分片布局不同、旧缓存还留着 message_2.db 这种条目）⇒ `raise KeyError(rel)`
+        #    ⇒ 构造函数当场抛，产品只看到一句「打不开消息库」，用户照着"权限/目录"查是白费功夫。
+        #    修法＝驱动库自己给的那句「删除密钥缓存强制重新提取」的**定点版**：只把**那一条已经不存在
+        #    的分片**从缓存里摘掉（其余密钥一个不动，并留 .bak），然后重来一次。绝不整份删缓存
+        #    （内存提取被权限挡住时，缓存是唯一能解密的东西）。
+        def __init__(self, *a, **kw):
+            try:
+                _Base.__init__(self, *a, **kw)
+                return
+            except KeyError as _e:
+                _rel = str(_e.args[0]) if getattr(_e, "args", None) else ""
+                _n = _pm_drop_stale_key_entry(self, _rel)
+                if not _n:
+                    raise
+                try:
+                    log.warning("密钥缓存里有 %d 条**当前账号里已经不存在**的分片（例：%s）⇒ 已从缓存定点摘除"
+                                "并重开一次（驱动库那句『删缓存强制重提取』的定点版，其余密钥不动）",
+                                _n, _rel)
+                except Exception:
+                    pass
+                _Base.__init__(self, *a, **kw)
+
         def _open(self, rel):
             keys = getattr(self, "_keys", None) or {}
             if rel not in keys:
@@ -9247,8 +9548,13 @@ def _db_class():
                     self._pm_refreshing = True
                     try:
                         self._load_or_extract_keys()
-                    except Exception:
-                        pass
+                    except Exception as _e:
+                        # 同一个坑在"运行期新增/换号"时也会出现（缓存里那条分片已经不在文件表里）
+                        if isinstance(_e, KeyError) and _pm_drop_stale_key_entry(self, str(_e.args[0])):
+                            try:
+                                self._load_or_extract_keys()
+                            except Exception:
+                                pass
                     finally:
                         self._pm_refreshing = False
                     keys = getattr(self, "_keys", None) or {}
@@ -9260,27 +9566,89 @@ def _db_class():
                     except Exception:
                         pass
                     raise RuntimeError("这个库分片没有密钥，已跳过：%s" % rel)
-            return _Base._open(self, rel)
+            try:
+                return _Base._open(self, rel)
+            except KeyError as _e:
+                # 文件表里没有这条分片（换号/懒创建新分片）⇒ 刷新一次再试；仍没有就如实说明
+                if str(_e.args[0]) == str(rel):
+                    try:
+                        self._load_or_extract_keys()
+                    except Exception:
+                        pass
+                    if rel in (getattr(self, "_keys", None) or {}):
+                        return _Base._open(self, rel)
+                raise
 
     _SAFE_DB_CACHE[_Base] = _SafeDB
     return _SafeDB
 
 
-def open_db(explicit: str = ""):
-    """按 `db_open_tries` 依次开消息库。返回 `(db, how, errors)`。
+def _db_open_plan(explicit: str = "") -> list:
+    """开消息库的**每一跳**：`(目录, 来源, 账号, 为什么用这个账号, 正在写的账号, 这一跳是什么)`。
 
-    `db is None` ＝ 三条路全失败；`how = {"dir","src","account_dir"}`（成功那条的信息）；
+    为什么账号要单独成一维（2026-09-19 网友反馈：「切换微信号后提示找不到库、还要求相同的权限」
+    「只有前几句话正常回复，后面不回复」）：
+      驱动库自己按**账号目录里最新 `.db` 的 mtime** 挑账号，而**切号那一刻旧账号会被 checkpoint**
+      ⇒ 它挑中**已经不在用的旧号**。旧号的缓存密钥还能过页1校验时，它那条"按密钥校验选账号"的
+      自愈（`_select_account_by_keys`，只在有库解不开时才跑）**根本不会触发** ⇒ 我们**静默**读旧库：
+      新消息全在新号里 ⇒ 监听像死了一样。若旧号密钥对不上，它报的那句里带着
+      「②本程序权限低于微信（微信以管理员运行时…）」⇒ 用户看到的就是「找不到库 + 要权限」。
+    ⇒ 我们自己把账号定死（判据＝`-wal` 是不是刚被写，见 `wechat_dir.pick_account`）再显式传
+      `account=`；**单账号机器一跳都不多加**（绝大多数用户走的就是这一跳，行为与以前完全一致）。
+    兜底顺序：自动挑的账号 → 驱动库自选（保留它自己的账号自愈）→ 其余账号各一跳。
+    """
+    out = []
+    for _d, _src in db_open_tries(explicit):
+        _pk = {}
+        if _d:
+            try:
+                from . import wechat_dir as _wd
+                _pk = _wd.pick_account(_d, explicit) or {}
+            except Exception:
+                _pk = {}
+        _accs = list(_pk.get("accounts") or [])
+        _acct = str(_pk.get("name") or "") if len(_accs) > 1 else ""
+        if _acct:
+            out.append((_d, _src, _acct, str(_pk.get("why") or ""),
+                        [a["name"] for a in _accs if a.get("wal") and
+                         (time.time() - float(a["wal"])) <= 180.0],
+                        "自动挑账号" + ("（你钉死的）" if _pk.get("pinned") else "")))
+            out.append((_d, _src, "", "上一跳那个账号解不开 ⇒ 让驱动库自己挑（它带按密钥选账号的自愈）",
+                        [], "驱动库自选"))
+            for _a in _accs:
+                if _a.get("name") and _a["name"] != _acct:
+                    out.append((_d, _src, _a["name"], "上一跳解不开 ⇒ 换这个账号试", [],
+                                "换账号"))
+            continue
+        out.append((_d, _src, "", "", [], "驱动库自选"))
+    return out
+
+
+def open_db(explicit: str = ""):
+    """按 `db_open_plan` 依次开消息库。返回 `(db, how, errors)`。
+
+    `db is None` ＝ 所有路全失败；`how = {"dir","src","account","account_dir","account_why",
+    "accounts_live","hop"}`（成功那条的信息）；
     `errors = [(目录, 来源, "异常名: 信息")]`（**按试的先后**，含失败的那些）。
     唯一实现：`_init_db`（产品接入）与 `attach_diagnosis`（诊断）都走这里，别再各写一套。
     """
     errors = []
-    for _d, _src in db_open_tries(explicit):
+    for _d, _src, _acct, _why, _live, _hop in _db_open_plan(explicit):
         try:
             # 放在 try 里：驱动库没装也要**照实记成一条原因**
             cls = _db_class()                       # 抗缺密钥的子类（唯一实现）
-            db = cls(db_dir=_d) if _d else cls()
-            return db, {"dir": _d, "src": _src,
-                        "account_dir": str(getattr(db, "account_dir", "") or "")}, errors
+            if _acct:
+                # 开库前先把"盘上已经没有的缓存条目"摘掉（切号/换布局后必然踩到的 KeyError，见该函数注释）
+                _pm_prune_dead_key_entries(_d, _acct)
+                db = cls(db_dir=_d, account=_acct)
+            elif _d:
+                db = cls(db_dir=_d)
+            else:
+                db = cls()
+            return db, {"dir": _d, "src": _src, "hop": _hop,
+                        "account": str(getattr(db, "account", "") or ""),
+                        "account_dir": str(getattr(db, "account_dir", "") or ""),
+                        "account_why": _why, "accounts_live": _live}, errors
         except Exception as e:                  # ImportError 也走这里（诊断要照实说"驱动库没装上"）
             errors.append((_d, _src, "%s: %s" % (type(e).__name__, str(e)[:140])))
     return None, {}, errors

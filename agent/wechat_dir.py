@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import os
+import time
 
 from . import wechat as _W
 
@@ -167,6 +168,215 @@ def probe(extra: str = "") -> dict:
     return {"configured": ex, "candidates": out, "usable": usable}
 
 
+# ── 多账号（切换微信号 / 多开）：**哪个账号目录正在被用** ─────────────────────────────
+# 网友反馈（2026-09-19，附检验报告）：「切换微信号使用后，提示寻找不到库，还要求给予相同的权限」
+#   「只有前几句话会正常回复，后面不再回复」。
+# 现场（`wechatauto/db.py::_pick_account`）：驱动库按**账号目录里最新 `.db` 的 mtime** 挑账号，
+#   而**切走的那一刻微信会把旧账号的库 checkpoint 一遍** ⇒ 旧账号的 `.db` 反而最新
+#   ⇒ 挑中**已经不在用的那个账号**，我们跟着读它的库。后果正好两条：
+#     ① 旧账号的缓存密钥还能过页1校验 ⇒ 驱动库的账号自愈（`if still:` 那条）**根本不触发**
+#        ⇒ **静默**读旧库：新消息全在新账号的库里 ⇒ 监听像死了一样（「后面不回复」）；
+#     ② 旧账号的密钥对不上时 ⇒ 它报「数据库无可用密钥…②本程序权限低于微信（微信以管理员运行时…）」
+#        ⇒ 用户在控制台看到的就是「找不到库 + 要权限」（那句"权限"是**提示语里的一种可能**，
+#        不是真相 —— 真相是选错了账号）。
+# ⇒ 我们**自己挑账号**再显式传 `account=`：判据换成 **-wal（库正在被写）**。
+#   `.db` 主库可能几小时不 checkpoint（微信平时只写 -wal），所以 mtime 会骗人；
+#   `-wal/-shm` 的写入时间才是"这个账号现在被用着"的直接证据。
+# ⚠️ 只读：这里**不碰**驱动库、不写配置（配置那条仍由 `check`/`save` 把关）。
+_LIVE_WINDOW_S = 180.0     # -wal 在这个窗口内被写过 ⇒ 判"这个账号正在被用"
+_ACCT_WALK_BUDGET = 20000  # 防网络盘/超大目录把控制台轮询拖住
+
+
+def accounts(parent: str) -> list:
+    """列出 `parent` 底下的**账号目录**（含 `db_storage`），每个带写入证据。只读。
+
+    证据口径（`wal` 优先，`db` 只当兜底）：
+      `wal` ＝ 该账号库里所有 `-wal/-shm` 的**最新 mtime** ⇒ "库正在被写"；
+      `db`  ＝ 各 `.db` 主库的最新 mtime ⇒ **切号时旧账号会被 checkpoint**，这一项会骗人。
+    `parent` 本身就是一个账号目录（用户直接填到账号那一层）时，只返回它自己。
+
+    返回 `[{"name","dir","wal","db","live"}]`，`live = wal or db`；目录不可读时返回 `[]`。
+    """
+    p = expand(parent)
+    out = []
+    if not p:
+        return out
+    try:
+        if not os.path.isdir(p):
+            return out
+    except Exception:
+        return out
+    dirs = []
+    try:
+        if os.path.isdir(os.path.join(p, "db_storage")):
+            dirs = [p]
+        else:
+            for name in sorted(os.listdir(p)):
+                d = os.path.join(p, name)
+                try:
+                    if os.path.isdir(os.path.join(d, "db_storage")):
+                        dirs.append(d)
+                except OSError:
+                    continue
+    except OSError:
+        return out
+    for d in dirs:
+        wal = db = 0.0
+        seen = 0
+        try:
+            for root, _dirs, files in os.walk(os.path.join(d, "db_storage")):
+                for f in files:
+                    seen += 1
+                    if seen > _ACCT_WALK_BUDGET:
+                        break
+                    low = f.lower()
+                    if not (low.endswith(".db") or low.endswith("-wal") or low.endswith("-shm")):
+                        continue
+                    try:
+                        m = os.path.getmtime(os.path.join(root, f))
+                    except OSError:
+                        continue
+                    if low.endswith("-wal") or low.endswith("-shm"):
+                        if m > wal:
+                            wal = m
+                    elif m > db:
+                        db = m
+                if seen > _ACCT_WALK_BUDGET:
+                    break
+        except OSError:
+            pass
+        out.append({"name": os.path.basename(d), "dir": d, "wal": wal, "db": db,
+                    "live": wal or db})
+    return out
+
+
+def pick_account(parent: str, prefer: str = "") -> dict:
+    """挑**该用哪个账号**：正在被写的那个 > 你填的那个（填到账号层＝钉死）> 写入最新。
+
+    返回 `{"name","dir","why","note","accounts":[…],"fresh":[…],"pinned":bool}`；
+    `parent` 底下一个账号目录都没有时返回 `{}`（调用方照旧让驱动库自探测）。
+    为什么这么排：**用户的真实目标是"读我正在用的那个号的群"**，而 `.db` 的 mtime 在
+    切号那一刻会指向已经不在用的旧号（见本段顶部注释）—— 这条优先于"我填的哪个"，
+    但**填到账号目录这一层**（`…\\wxid_xxx_482e`）＝ 明确钉死一个号，这时照填的来，只留一句 note。
+    """
+    accs = accounts(parent)
+    if not accs:
+        return {}
+    now = time.time()
+    fresh = [a for a in accs if a["wal"] and (now - a["wal"]) <= _LIVE_WINDOW_S]
+    fresh.sort(key=lambda a: a["wal"], reverse=True)
+    pref_dir = expand(prefer)
+    pinned = {}
+    for a in accs:
+        if pref_dir and _same(a["dir"], pref_dir):
+            pinned = a
+            break
+    if pinned:
+        _warn = ("你钉死了账号 %s，但**正在写的是 %s**（-wal %s）⇒ 若它不回复，把「数据库目录」"
+                 "填成上一级目录让它自动跟随"
+                 % (pinned["name"], fresh[0]["name"], _fmt_ts(fresh[0]["wal"]))
+                 if (fresh and fresh[0]["name"] != pinned["name"]) else "")
+        return {"name": pinned["name"], "dir": pinned["dir"],
+                "why": "你填的账号目录", "note": _warn, "pinned": True,
+                "accounts": accs, "fresh": [a["name"] for a in fresh]}
+    if fresh:
+        a = fresh[0]
+        why = ("这个账号的库刚刚还在写（-wal %s）" % _fmt_ts(a["wal"]))
+        if len(fresh) > 1:
+            why += "；另有 %d 个账号也在写，取写得最新那个" % (len(fresh) - 1)
+        return {"name": a["name"], "dir": a["dir"], "why": why, "note": "",
+                "pinned": False, "accounts": accs, "fresh": [x["name"] for x in fresh]}
+    # ⚠️ 都不"新鲜"时**照样按 -wal 比**，不许退回 `.db`（本机实测踩到：微信闲置 6 分钟，正在用的那个号
+    #    的 -wal 就超出 180 秒窗口了；此时如果退回 `.db`，就正好落进"切号时旧号被 checkpoint、`.db` 最新"
+    #    那个陷阱）。两个号都没在写时，**谁的 -wal 更晚**才是"最近还在被用"的证据。
+    a = max(accs, key=lambda x: (float(x.get("wal") or 0.0), float(x.get("db") or 0.0), x["name"]))
+    _others = [x for x in accs if x["name"] != a["name"]]
+    if a.get("wal"):
+        why = ("两个号现在都没在写（-wal 都超过 %d 秒没动）⇒ 按**最近写过 -wal 的那个**挑：%s；"
+               "另一个号最后一次写 -wal 是 %s（`.db` 主库时间会被「切走时 checkpoint」骗，所以不看它）"
+               % (int(_LIVE_WINDOW_S), _fmt_ts(a["wal"]),
+                  _fmt_ts(_others[0]["wal"]) if _others else "-"))
+    else:
+        why = ("这台机器上任何账号都没有 -wal ⇒ 退回按最新 .db 挑：%s" % _fmt_ts(a["db"]))
+    return {"name": a["name"], "dir": a["dir"], "pinned": False, "accounts": accs,
+            "fresh": [], "why": why, "note": ""}
+
+
+def _fmt_ts(ts) -> str:
+    """时间戳 → `HH:MM:SS（N 分钟前）`；非法值给 `-`。"""
+    try:
+        t = float(ts)
+    except Exception:
+        return "-"
+    if t <= 0:
+        return "-"
+    try:
+        ago = max(0, int(time.time() - t))
+        human = ("%d 秒前" % ago) if ago < 90 else ("%d 分钟前" % (ago // 60)) \
+            if ago < 5400 else ("%d 小时前" % (ago // 3600))
+        return "%s（%s）" % (time.strftime("%H:%M:%S", time.localtime(t)), human)
+    except Exception:
+        return "-"
+
+
+def configured_path() -> str:
+    """配置里那条「数据库目录」（**现读、不缓存** —— 2026-09-18 用户那句「他回我之前自定义的地址里去看
+    文件了」要的就是"旧值立刻失效"）。拿不到配置就返回空串。"""
+    try:
+        from .config import get_config
+        return str(((get_config() or {}).get("wechat") or {}).get("db_dir") or "")
+    except Exception:
+        return ""
+
+
+def switched(mine: str, parent: str, window_s: float = _LIVE_WINDOW_S, pin=None) -> dict:
+    """**要不要跟着切号**（监听循环每 15 秒问一次；只读、便宜）。
+
+    保守四条（宁可不切，也不许来回抖 —— 多开时两个号同时活着很常见）：
+      ① 只有一个账号目录 ⇒ 永不切；
+      ② 我正在读的那个号**自己的 -wal 还新鲜** ⇒ 不切；
+      ③ **你把某个账号目录钉死了** ⇒ 不切（切了还是它 ⇒ 会变成每 15 秒重连一次的循环）；
+      ④ 只有"别的号明显在写、我这个已经静默"才切（这就是"切换微信号"的现场）。
+    返回 `{"stale":bool, "mine","live","why","accounts"}`；`mine` 为空（不知道在读哪个）时不切。
+    `pin`：显式配置那条路径（不传就现读配置）。
+    """
+    out = {"stale": False, "mine": str(mine or ""), "live": "", "why": "", "accounts": []}
+    accs = accounts(parent)
+    if len(accs) < 2 or not out["mine"]:
+        return out
+    out["accounts"] = [a["name"] for a in accs]
+    if pin is None:
+        pin = configured_path()
+    try:
+        _pk = pick_account(parent, pin)
+    except Exception:
+        _pk = {}
+    if _pk.get("pinned") and _pk.get("name") == out["mine"]:
+        out["why"] = ("你把账号目录钉死了（%s）⇒ 不跟着切；想跟随就把「数据库目录」填成上一级目录"
+                      % out["mine"])
+        return out
+    me = [a for a in accs if a["name"] == out["mine"]]
+    if not me:
+        # 我读的那个账号目录已经不在了（被删/改名）⇒ 换到正在写的那个
+        a = sorted(accs, key=lambda x: x["live"], reverse=True)[0]
+        out.update(stale=True, live=a["name"],
+                   why="原来在读的账号目录 %s 不见了" % out["mine"])
+        return out
+    now = time.time()
+    if me[0]["wal"] and (now - me[0]["wal"]) <= window_s:
+        return out                      # ② 我自己还活着 ⇒ 不动
+    others = [a for a in accs
+              if a["name"] != out["mine"] and a["wal"] and (now - a["wal"]) <= window_s]
+    if not others:
+        return out
+    a = sorted(others, key=lambda x: x["wal"], reverse=True)[0]
+    out.update(stale=True, live=a["name"],
+               why=("在读的账号 %s 已经 %s 没往库里写了，而账号 %s 的 -wal 是 %s"
+                    "⇒ 微信像是切到了 %s"
+                    % (out["mine"], _fmt_ts(me[0]["wal"]), a["name"], _fmt_ts(a["wal"]), a["name"])))
+    return out
+
+
 def pick_latest(cands: list) -> dict:
     """在可用候选里挑**最新的那个**（按库里最新 `.db` 的写入时间；并列时按候选顺序）。"""
     best = None
@@ -253,6 +463,37 @@ def status(how: dict = None, explicit=None, dir_info: dict = None) -> dict:
                          % (d["configured"], d["configured_why"] or "用不了", d["effective"] or "驱动库自探测"))
     d["now"] = d["effective"] or "驱动库自探测到的目录"
     d["ok"] = bool(d["effective"]) and (d["configured_ok"] or not d["configured"])
+    # ── 账号这一维（2026-09-19 加，网友反馈「切换微信号后找不到库 / 后面不回复」）──────────
+    # 只在"运行中的 adapter 告诉了我们它在读哪个账号"或"本次真的去盘上算了"时才给；
+    # /api/status 每 4 秒轮询，**绝不能在这里走盘**（那是把控制台拖住的写法）。
+    _acct = str((how or {}).get("account") or "") if _has_how else ""
+    if _acct:
+        d["account"] = _acct
+        d["account_from"] = "running"
+        _als = (how or {}).get("accounts_live") or []
+        d["account_live"] = _acct in _als if _als else None
+        d["account_why"] = str((how or {}).get("account_why") or "")
+        if (how or {}).get("account_names"):
+            d["account_names"] = list(how["account_names"])
+        if (how or {}).get("account_note") and not d.get("note"):
+            d["note"] = str(how.get("account_note"))
+        if d["account_live"] is False and _als:
+            _t = "；".join(_als)
+            d["account_note"] = ("正在读的账号 %s 的库没在动，而 %s 在写 ⇒ 微信可能已经切号："
+                                 "新版会在 15 秒内自动跟着切过去；旧版本请重启一次机器人"
+                                 % (_acct, _t))
+            d["note"] = d["note"] or d["account_note"]
+    elif d.get("effective") and not _has_how:
+        _pk = pick_account(d["effective"], d.get("configured") or "")
+        if _pk:
+            d["account"] = _pk["name"]
+            d["account_from"] = "disk"
+            d["account_why"] = _pk["why"]
+            d["account_live"] = bool(_pk["fresh"]) and _pk["name"] in (_pk["fresh"] or [])
+            d["account_names"] = [a["name"] for a in _pk["accounts"]]
+            if _pk.get("note"):
+                d["account_note"] = _pk["note"]
+                d["note"] = d["note"] or _pk["note"]
     # ⚠️ 候选清单**不随 status 下发**：控制台每 4 秒轮询一次 /api/status，若这里带一个空清单，
     #    会把用户刚点「自动检测」探出来的那张列表**清空**（实测踩到）。要清单就调 `probe()`。
     d.pop("candidates", None)
@@ -266,6 +507,13 @@ def line(info: dict) -> str:
     src = str((info or {}).get("source_text") or "未知来源")
     note = str((info or {}).get("note") or "")
     base = "当前在读 %s，来源：%s" % (eff, src)
+    # 账号这一维（2026-09-19）：多账号机器上"读的是哪个号"和"读的是哪个目录"一样要命
+    # —— 切号后读旧号＝新消息一条都看不到（网友反馈「后面不回复」就是这么来的）。
+    _a = str((info or {}).get("account") or "")
+    if _a:
+        _lv = (info or {}).get("account_live")
+        # ⚠️ 这一行**不写括号式解释**（`wechat_dir_selftest` E 段钉着这条）⇒ 用中点接
+        base += "，账号：%s%s" % (_a, " · 正在被写" if _lv else (" · 已静默" if _lv is False else ""))
     return (base + "；" + note) if note else base
 
 
