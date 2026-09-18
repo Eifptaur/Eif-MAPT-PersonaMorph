@@ -31,54 +31,16 @@ import threading
 import time
 
 from .llm import query_balance
+from .model_prices import (          # noqa: F401  （价目表唯一来源，见该模块抬头）
+    BASE_PRICE, PRO_PRICE, PRICING, PEAK_HOURS,
+    price_for, is_peak_time, cost_of, usage_parts, billable_output,
+)
 
-# ── 峰谷定价表（与原版 lib/index.js 顶端一致；DeepSeek 调价时改这里）────────
-# 单位：元 / 百万 token。格式 [空闲时段价, 高峰时段价]。
-# 高峰时段：北京时间工作日 9:00–12:00 与 14:00–18:00；2026-08-23 起周末全天谷价。
-PEAK_HOURS = [(9, 12), (14, 18)]
-BASE_PRICE = {"hit": [0.05, 0.1], "miss": [1.5, 3.0], "out": [4.5, 9.0]}
-PRO_PRICE = {"hit": [0.15, 0.3], "miss": [4.5, 9.0], "out": [13.5, 27.0]}
-PRICING = {
-    "deepseek-flash": BASE_PRICE,          # 现行正名（V4.1-Flash，2026-09-14 官方页 + 本机 /models 实测）
-    "deepseek-v4-pro": PRO_PRICE,
-    "deepseek-v4-flash-vision-exp": BASE_PRICE,   # 已退役旧名 ⇒ 由 V4.1-Flash 服务
-    "deepseek-v4-flash": BASE_PRICE,
-    "deepseek-chat": BASE_PRICE,
-    "deepseek-reasoner": PRO_PRICE,
-    "_default": BASE_PRICE,
-}
-# 北京时间 2026-08-23 00:00 的 epoch 秒（周末谷价生效分界）
-import datetime as _dt
-_WEEKEND_VALLEY_FROM_SEC = _dt.datetime(2026, 8, 23, tzinfo=_dt.timezone(_dt.timedelta(hours=8))).timestamp()
-# 本项目与 DSH 环境的时区不同，直接用本地时间 +8 换算北京日历日
-_BJ_OFFSET = 8 * 3600
-
-
-def price_for(model: str) -> dict:
-    m = str(model or "").lower()
-    # ⚠️ 顺序有讲究：先比对"更具体"的名字，别让 `deepseek-v4-pro` 被 `deepseek-flash` 之类前缀误判
-    for key in ("deepseek-v4-pro", "deepseek-reasoner", "deepseek-flash",
-                "deepseek-v4-flash-vision-exp", "deepseek-v4-flash", "deepseek-chat"):
-        if key in m:
-            return PRO_PRICE if key in ("deepseek-v4-pro", "deepseek-reasoner") else BASE_PRICE
-    return BASE_PRICE
-
-
-def is_peak_time(time_sec: float) -> bool:
-    """按北京时间判断是否高峰时段。"""
-    try:
-        n = float(time_sec)
-    except (TypeError, ValueError):
-        return False
-    bj = time.gmtime(n + _BJ_OFFSET)  # gmtime+偏移 = 北京时间日历（UTC 读法）
-    if n >= _WEEKEND_VALLEY_FROM_SEC:
-        if bj.tm_wday in (5, 6):  # 周六/周日（gmtime 的 tm_wday: 5=六 6=日）
-            return False
-    hour = bj.tm_hour
-    for start, end in PEAK_HOURS:
-        if start <= hour < end:
-            return True
-    return False
+# ── 峰谷定价 / 计费口径 ─────────────────────────────────────────────────────
+# ⛔ 2026-09-19：价目表**不再写在本文件**，全部来自 `agent/model_prices.py`（照抄上游
+#    dsh-whale-widget@0.3.5）。本文件只保留导入，避免"三份表互相打架"（同一个 usage 在控制台
+#    的「今日已用」与统计里算出两个数）。上游 0.3.5 的两处变更都在那个模块的抬头里写明了：
+#      ①Flash 系列 2026-09-10 降价（0.05/1.5/4.5 → 0.02/1/4）；②reasoning ⊆ output ⇒ 输出只算一次。
 
 
 def _today_key() -> str:
@@ -126,22 +88,13 @@ class WhaleWidget:
             pass
 
     def _usage_cost(self, usage: dict, model: str, ts: float) -> tuple:
-        """按峰谷定价折算一次调用的 (成本, token 数)。usage 形如 chat_completions 返回。"""
-        try:
-            prompt = int(usage.get("prompt_tokens") or 0)
-            completion = int(usage.get("completion_tokens") or 0)
-            details = usage.get("prompt_tokens_details") or {}
-            cached = int(details.get("cached_tokens") or usage.get("prompt_cache_hit_tokens")
-                         or usage.get("cached_tokens") or 0)
-            reasoning = int(usage.get("reasoning_tokens") or 0)
-        except Exception:
-            return 0.0, 0
-        cached = min(cached, prompt)
-        fresh = max(0, prompt - cached)
-        p = price_for(model)
-        pi = 1 if is_peak_time(ts) else 0
-        cost = (fresh / 1e6) * p["miss"][pi] + (cached / 1e6) * p["hit"][pi] + ((completion + reasoning) / 1e6) * p["out"][pi]
-        return cost, prompt + completion + reasoning
+        """按峰谷定价折算一次调用的 (成本, token 数)。
+
+        ⛔ 2026-09-19：公式搬到 `agent/model_prices.py::cost_of`（**唯一实现**，与上游 0.3.5 一致）：
+        输出侧只按 completion 计费 —— `reasoningTokens ⊆ outputTokens`，旧写法
+        `(completion + reasoning)` 会把思考**重复计费**（上游 issue #89 / PR #83 实测偏高约一倍）。
+        """
+        return cost_of(usage or {}, model, ts)
 
     # ── 记账 API（由 persona_morph 调用）─────────────────────────────────────
 
@@ -210,6 +163,51 @@ class WhaleWidget:
         """GET /dsh-whale/size.json（返回 {} 时前端用默认值）"""
         with self._lock:
             return dict(self._state.get("size") or {})
+
+    # ── 上游 0.3.x 新增接口（移植范围见 whale-widget/PORT-NOTES.md）──────────
+    # 分工：**能落地的落地**（泡泡配置 / 音频设置＝纯配置，写我们自己的 state 就行），
+    # 其余（角色库 / 泡泡图片上传 / 录音包 / 多厂商余额 / 账本校正 / Codex 模式）
+    # 上游是宿主侧（Node/DSH 事件系统）才有的能力，本移植版**如实回"不支持"** ——
+    # 不回假 `ok:true`（那会让界面显示假数据），客户端对 `ok:false` 一律保留默认值（实测代码：
+    # `if (d && d.ok && d.config)` / `if (!d || !d.ok …) return`），所以界面是**干净降级**。
+    _UNSUPPORTED = ("api-models.json", "usage-records.json", "usage-settings.json",
+                    "balance-adjustments.json", "roles.json", "role-image.png",
+                    "role-pin.json", "role-delete.json", "bubble-imgs.json",
+                    "bubble-img.png", "bubble-img-upload.json", "audio-fragment.wav",
+                    "sound/")
+    _CFG_KEYS = {"bubble.json": ("bubble", "config"), "audio.json": ("audio", "settings")}
+    _CFG_MAX = 256 * 1024          # 配置上限（防一个前端 bug 把 state 撑爆）
+
+    def unsupported(self, name: str) -> dict:
+        """上游 0.3.x 有、本移植版没有的那批接口 —— 如实说不支持（客户端会保留默认值）。"""
+        return {"ok": False, "why": "本移植版（群相控制台）暂无此能力：%s。"
+                                    "该功能依赖上游 DSH 宿主侧，等移植进度见 whale-widget/PORT-NOTES.md"
+                                    % name, "unsupported": True}
+
+    def cfg_payload(self, name: str) -> dict:
+        """GET 泡泡 / 音频配置：没存过就回 `{"ok": false}`（前端用内置默认值）。"""
+        key, field = self._CFG_KEYS[name]
+        with self._lock:
+            cfg = (self._state.get(key) or {}).get("config")
+        if not isinstance(cfg, dict) or not cfg:
+            return {"ok": False}
+        return {"ok": True, field: cfg}
+
+    def save_cfg(self, name: str, obj) -> dict:
+        """POST 泡泡 / 音频配置：原样存（有上限），存完回显一份（前端要拿它刷界面）。"""
+        key, field = self._CFG_KEYS[name]
+        if not isinstance(obj, dict):
+            return {"ok": False, "error": "missing body"}
+        try:
+            import json as _json
+            if len(_json.dumps(obj, ensure_ascii=False)) > self._CFG_MAX:
+                return {"ok": False, "error": "配置过大"}
+        except Exception:
+            return {"ok": False, "error": "配置无法序列化"}
+        with self._lock:
+            self._state[key] = {"config": obj, "at": int(time.time() * 1000)}
+            self._save_state()
+        return {"ok": True, field: obj}
 
     def save_size(self, obj: dict) -> dict:
         """PUT /dsh-whale/size.json"""

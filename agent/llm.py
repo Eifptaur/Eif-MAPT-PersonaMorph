@@ -17,6 +17,10 @@ import time
 import requests
 
 from .config import DATA_DIR, get_config, resolve_api_key
+# 价目表唯一来源（2026-09-19）：见 `agent/model_prices.py` —— 本文件的 DeepSeek 段与挂件同源，
+# 「按输出价计费的输出 token」也统一走它（reasoning ⊆ completion，不许重复计费）。
+from .model_prices import (BASE_PRICE as _DS_FLASH, PRO_PRICE as _DS_PRO,
+                           usage_parts as _usage_parts)
 
 # 复用的 HTTP 会话（长连接复用，省去每次请求的 TCP/TLS 握手，实测延迟可降 100~300ms）
 _session = requests.Session()
@@ -346,15 +350,30 @@ _OFFICIAL_PRICES = {
     # 官方只有两个名字：`deepseek-flash`（DeepSeek-V4.1-Flash，**支持视觉**、1M 上下文、默认思考模式）
     # 与 `deepseek-v4-pro`（DeepSeek-V4-Pro-0813，不支持视觉）。闲时价 = 高峰价 ÷ 2；
     # 高峰＝北京时间工作日 09:00-12:00 与 14:00-18:00。美元价 ×7.2 折成元/百万。
-    'deepseek-flash': { 'in': 1, 'out': 4, 'cached': 0.02, 'note': 'V4.1-Flash 官方2026-09-14闲时价；高峰×2；支持视觉' },
-    'deepseek-v4-pro': { 'in': 2, 'out': 8, 'cached': 0.04, 'note': 'V4-Pro-0813 官方2026-09-14闲时价；高峰×2；不支持视觉' },
+    # ⛔ 2026-09-19：**下面这些行不许再手写数字** —— 一律从 `agent/model_prices.py` 取
+    #    （价目表唯一来源，照抄上游 dsh-whale-widget@0.3.5）。起因：把挂件升到 0.3.5 时对账发现
+    #    本表 pro 那行写的是 2/8/0.04，而挂件（＝我们认定的权威口径）是 4.5/13.5/0.15
+    #    （Pro 保持 Flash 的 3 倍价；官方 2026-09-14 公告"计费方式不变"）⇒ 同一个 usage 在控制台
+    #    的「今日已用」与统计里会算出两个数。
+    'deepseek-flash': { 'in': _DS_FLASH["miss"][0], 'out': _DS_FLASH["out"][0],
+                        'cached': _DS_FLASH["hit"][0],
+                        'note': 'V4.1-Flash 官方 2026-09-10 调价后的闲时价（挂件同源）；高峰×2；支持视觉' },
+    'deepseek-v4-pro': { 'in': _DS_PRO["miss"][0], 'out': _DS_PRO["out"][0],
+                         'cached': _DS_PRO["hit"][0],
+                         'note': 'V4-Pro-0813 闲时价（挂件同源；Pro 未跟随 Flash 2026-09-10 降价、官方 2026-09-14 公告计费不变）；高峰×2；不支持视觉' },
     # ── 已退役的旧名：官方文档明确"仍接受，但由 V4.1-Flash 服务、按 Flash 价计费"（本机实测返回 model=deepseek-flash）──
-    'deepseek-v4-flash': { 'in': 1, 'out': 4, 'cached': 0.02, 'note': '已退役旧名 ⇒ 实际由 V4.1-Flash 服务，按 Flash 价' },
-    'deepseek-v4-flash-0731': { 'in': 1, 'out': 4, 'cached': 0.02, 'note': '已退役旧名 ⇒ 按 Flash 价' },
-    'deepseek-v4-flash-vision-exp': { 'in': 1, 'out': 4, 'cached': 0.02, 'note': '已退役旧名（视觉实验版）⇒ 由 V4.1-Flash 服务；图片另按384token/张上限' },
-    'deepseek-v4-pro-0813': { 'in': 2, 'out': 8, 'cached': 0.04, 'note': 'V4-Pro-0813 别名；官方2026-09-14闲时价' },
-    'deepseek-chat': { 'in': 1, 'out': 4, 'cached': 0.02, 'note': '老别名 ⇒ 实测由 V4.1-Flash 服务，按 Flash 价' },
-    'deepseek-reasoner': { 'in': 2, 'out': 8, 'cached': 0.04, 'note': '老别名 ⇒ 按 V4-Pro 价近似' },
+    'deepseek-v4-flash': { 'in': _DS_FLASH["miss"][0], 'out': _DS_FLASH["out"][0],
+                           'cached': _DS_FLASH["hit"][0], 'note': '已退役旧名 ⇒ 实际由 V4.1-Flash 服务，按 Flash 价' },
+    'deepseek-v4-flash-0731': { 'in': _DS_FLASH["miss"][0], 'out': _DS_FLASH["out"][0],
+                                'cached': _DS_FLASH["hit"][0], 'note': '已退役旧名 ⇒ 按 Flash 价' },
+    'deepseek-v4-flash-vision-exp': { 'in': _DS_FLASH["miss"][0], 'out': _DS_FLASH["out"][0],
+                                      'cached': _DS_FLASH["hit"][0], 'note': '已退役旧名（视觉实验版）⇒ 由 V4.1-Flash 服务；图片另按384token/张上限' },
+    'deepseek-v4-pro-0813': { 'in': _DS_PRO["miss"][0], 'out': _DS_PRO["out"][0],
+                              'cached': _DS_PRO["hit"][0], 'note': 'V4-Pro-0813 别名（挂件同源）' },
+    'deepseek-chat': { 'in': _DS_FLASH["miss"][0], 'out': _DS_FLASH["out"][0],
+                       'cached': _DS_FLASH["hit"][0], 'note': '老别名 ⇒ 实测由 V4.1-Flash 服务，按 Flash 价' },
+    'deepseek-reasoner': { 'in': _DS_PRO["miss"][0], 'out': _DS_PRO["out"][0],
+                           'cached': _DS_PRO["hit"][0], 'note': '老别名 ⇒ 按 V4-Pro 价近似（挂件同源）' },
     'deepseek-v3.1-terminus': { 'in': 1.5, 'out': 4.5, 'cached': 0.05, 'note': '旧代，按现价近似' },
     'deepseek-r1-0528': { 'in': 4.5, 'out': 13.5, 'cached': 0.15, 'note': '旧代，按现价近似' },
     'glm-5.3': { 'in': 8, 'out': 28, 'cached': 2, 'note': '1M 上下文；缓存存储限时免费' },
@@ -554,9 +573,13 @@ def estimate_cost(usage: dict, model: str | None = None) -> dict:
     model = model or str(api.get("model") or "")
 
     prompt = int(usage.get("prompt_tokens") or 0)
-    completion = int(usage.get("completion_tokens") or 0)
-    cached = min(int(usage.get("cached_tokens") or 0), prompt)
-    fresh = max(0, prompt - cached)
+    # ⛔ 2026-09-19：**拆数与"按输出价计费的输出"都走唯一口径** `model_prices.usage_parts` ——
+    #    原来这里只读**顶层** `cached_tokens`，喂进来的若是**原始 API usage**（缓存命中在
+    #    `prompt_tokens_details.cached_tokens` 里）就会把缓存命中当成未命中算 ⇒ 成本虚高
+    #    （我们这边缓存读占总 token 九成以上，差得不是一点点）。现在两种写法都认。
+    _parts = _usage_parts(usage)
+    cached, fresh = _parts["cached"], _parts["fresh"]
+    completion = _parts["billable_out"]     # reasoning ⊆ completion（唯一口径，不许重复计费）
 
     # 单价来源优先级：按模型自定义价 > 内置官方表 > 全局兜底
     in_price = float(api.get("price_input_per_m") or 0)
