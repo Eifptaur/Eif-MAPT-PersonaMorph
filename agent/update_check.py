@@ -79,11 +79,26 @@ DEFAULT_URL = "https://raw.githubusercontent.com/Eifptaur/Eif-MAPT-PersonaMorph/
 #: ⚠️ jsDelivr 有 CDN 缓存（本机实测：新版本已发布，它还给着上一版）⇒ **不能按"先到的赢"挑**
 #: （2026-09-17 实测：它 0.8s 就答、镜像 0.7~0.9s 也有货 ⇒ 先到的恰好是旧的那份，新版在控制台里"消失"）；
 #: 现在由 `_ranked()` 按**版本最高者胜**挑，缓存旧的那份抢不赢，但仍然是可用的兜底源。
+API_URL = ("https://api.github.com/repos/Eifptaur/Eif-MAPT-PersonaMorph"
+           "/contents/persona-morph-manifest.json?ref=main")
+#: ⚠️ 2026-09-18 作者另一台机器现场：「一直 timeout，拉取不到更新源，试几次都不行」
+#:   ⇒ 原来只有 4 条源（raw / jsDelivr / ghfast / ghproxy），那台机器上**全都不通**。
+#:   这里按"**换网络路径**"而不是"多堆同域名"来扩容：
+#:     · `api.github.com` 的 contents 接口 —— 域名解析与路由跟 raw 完全不同（本机实测 api 一直通、
+#:       raw/uploads 会挂）⇒ 真正的兜底；返回体是 base64 JSON，由 `fetch()` 特判解码；
+#:     · `cdn.statically.io` —— 另一家静态 CDN（跟 jsDelivr 不同网络）；
+#:     · `raw.gitmirror.com` —— raw 的镜像（同样内容、不同出口）；
+#:     · `gh-proxy.com` / `gh.llkk.cc` —— 另外两个 GitHub 反代。
 DEFAULT_URLS = (
     DEFAULT_URL,
     "https://cdn.jsdelivr.net/gh/Eifptaur/Eif-MAPT-PersonaMorph@main/persona-morph-manifest.json",
     "https://ghfast.top/" + DEFAULT_URL,
     "https://ghproxy.net/" + DEFAULT_URL,
+    "https://gh-proxy.com/" + DEFAULT_URL,
+    "https://gh.llkk.cc/" + DEFAULT_URL,
+    "https://raw.gitmirror.com/Eifptaur/Eif-MAPT-PersonaMorph/main/persona-morph-manifest.json",
+    "https://cdn.statically.io/gh/Eifptaur/Eif-MAPT-PersonaMorph/main/persona-morph-manifest.json",
+    API_URL,
 )
 
 
@@ -98,7 +113,7 @@ def _short_url(u: str) -> str:
 #: 拿到第一份清单后**再等这么久**，让"版本更高"的源也说上话（防 CDN 旧缓存抢先）。
 #: 取值依据（2026-09-17 本机实测）：jsDelivr 0.8s、ghfast 0.9s、ghproxy 0.7s ⇒ 1.5s 足够把它们都收进来，
 #: 而控制台最坏等待仍是 `timeout + 1`（不变）。
-GRACE_S = 1.5
+GRACE_S = 2.0
 
 
 def _ranked(got: dict, urls: list):
@@ -120,7 +135,7 @@ def _ranked(got: dict, urls: list):
     return best_m, best_u
 
 
-def fetch_any(urls, timeout: float = 6.0):
+def fetch_any(urls, timeout: float = 8.0):
     """**并行**拉多个源，**版本最高的赢**。返回 `(清单或 None, 说明, 用到的 url)`。
 
     为什么要并行（2026-09-16）：串行试 4 个源、每个超时 6 秒 = 最坏 24 秒，控制台一打开就卡住；
@@ -163,6 +178,23 @@ def fetch_any(urls, timeout: float = 6.0):
             return man, "", used
         why = "；".join("%s→%s" % (_short_url(u), str((got.get(u) or ("", "超时"))[1])[:40])
                         for u in urls[:3])
+    # ⛔ 2026-09-18（那台机器"一直 timeout"的现场）：全失败时要**逐源列出**哪条挂了、错什么 ——
+    #    用户把这段粘给我，我一眼就知道"他那台机器哪几条路能通"，不用再来回问。
+    try:
+        import threading as _th
+        errs = {}
+
+        def _one(u):
+            _m, _w = fetch(u, timeout)
+            errs[_short_url(u)] = "ok" if _m else str(_w)[:70]
+
+        _ts = [_th.Thread(target=_one, args=(u,), daemon=True) for u in list(urls)[:9]]
+        [_t.start() for _t in _ts]
+        [_t.join(timeout + 1.0) for _t in _ts]
+        if errs:
+            why = "；".join("%s → %s" % (k, v) for k, v in errs.items())
+    except Exception:
+        pass
     return None, "所有源都拉不到（%s）" % why, ""
 
 
@@ -194,7 +226,7 @@ def candidate_urls(cfg: dict | None = None) -> list:
     return ([_last] if _last else []) + [u for u in DEFAULT_URLS if u != _last]
 
 
-def fetch(url: str, timeout: float = 6.0):
+def fetch(url: str, timeout: float = 8.0):
     """支持 http(s) 与**本地路径**（本地路径便于离线自测）。返回 (dict 或 None, 说明)。"""
     if not url:
         return None, "未配置更新源"
@@ -203,6 +235,18 @@ def fetch(url: str, timeout: float = 6.0):
             req = urllib.request.Request(url, headers={"User-Agent": "persona-morph-update/1"})
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 raw = r.read(512 * 1024)
+            # `api.github.com/.../contents/...` 返回 `{"content": "<base64>", ...}` ⇒ 特判解回来。
+            # 加它的理由：它的**域名解析与路由跟 raw.githubusercontent 完全不同**——
+            # 2026-09-18 作者另一台机器"一直 timeout、拉不到更新源"，正是 raw/反代那条路全不通；
+            # 换一条完全不同的网络路径才可能通。
+            if "api.github.com" in str(url):
+                try:
+                    _d = json.loads(raw.decode("utf-8", "replace"))
+                    if isinstance(_d, dict) and _d.get("encoding") == "base64" and _d.get("content"):
+                        import base64 as _b64
+                        raw = _b64.b64decode(_d["content"])
+                except Exception:
+                    pass
         else:
             with open(url, "rb") as fh:
                 raw = fh.read(512 * 1024)
@@ -214,7 +258,7 @@ def fetch(url: str, timeout: float = 6.0):
         return None, "更新源不是合法 JSON：%s" % str(e)[:60]
 
 
-def state(cfg: dict | None = None, timeout: float = 6.0) -> dict:
+def state(cfg: dict | None = None, timeout: float = 8.0) -> dict:
     """给控制台的**如实**三态。`status ∈ off | error | current | newer | older`。
 
     · `off`     ＝没配更新源（或开了"不再提醒"）⇒ 界面**什么都不显示**

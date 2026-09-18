@@ -384,6 +384,56 @@ def v_console_dead() -> dict:
                    ok, verdict, action, checks)
 
 
+# ── ⑧ 更新拉取不到（源探测）──────────────────────────────────────────────
+def v_update_source() -> dict:
+    """把每个更新源挨个探一遍，出"哪条通 / 延迟 / 哪条不通 / 错什么"的表。
+
+    为什么单列（2026-09-18 作者另一台机器：「一直显示 timeout，拉取不到更新源，试几次都不行」）：
+    这条链是**网络**问题，只有"在那台机器上实际探一遍"才能定性；用户点一下、把表粘给我，
+    就不用再来回问"你那边能上网吗"。
+    """
+    checks = []
+    urls = []
+    try:
+        from . import update_check as U
+        urls = list(getattr(U, "DEFAULT_URLS", ()) or ())
+    except Exception as e:                                     # noqa: BLE001
+        checks.append(_check("能读到更新源清单", False, "读不到 update_check：%s" % str(e)[:50]))
+    okn, bad = 0, []
+    for u in urls:
+        try:
+            t0 = time.time()
+            man, why = U.fetch(u, 8.0)
+            dt = time.time() - t0
+            if man:
+                okn += 1
+                checks.append(_check("源 %s" % U._short_url(u), True,
+                                     "通（%.1fs，远端版本 %s）"
+                                     % (dt, (man.get("base") or {}).get("version") or "?")))
+            else:
+                bad.append(U._short_url(u))
+                checks.append(_check("源 %s" % U._short_url(u), False,
+                                     "不通（%.1fs）：%s" % (dt, str(why)[:70])))
+        except Exception as e:                                 # noqa: BLE001
+            bad.append(U._short_url(u))
+            checks.append(_check("源 %s" % U._short_url(u), False, "异常：%s" % str(e)[:60]))
+    try:
+        st = U.state(_cfg(), timeout=8.0) or {}
+        checks.append(_check("「检查更新」现在的结论", str(st.get("status")) in ("current", "newer"),
+                             "status=%s · %s" % (st.get("status"),
+                                                 str(st.get("why") or st.get("url") or "")[:70])))
+    except Exception as e:                                     # noqa: BLE001
+        checks.append(_check("「检查更新」现在的结论", False, "跑不动：%s" % str(e)[:60]))
+    ok = okn > 0
+    verdict = (("有 %d 条源能通（不通的：%s）⇒ 点「立即更新」就行"
+                % (okn, "、".join(bad) if bad else "无")) if ok else
+               "**所有源都拉不到** ⇒ 是那台机器的网络到不了这些地址（不是你的操作问题）")
+    action = ("" if ok else "把上面这张表发我（我按你那边的实际情况加/换源）；"
+                            "临时办法：换一个网络（比如手机热点）再点一次「立即更新」")
+    return _finish("update_source", "更新拉取不到 / 一直 timeout",
+                   "点更新一直转圈、提示拉取不到更新源、试几次都不行", ok, verdict, action, checks)
+
+
 # ── 注册与渲染 ─────────────────────────────────────────────────────────────
 VERIFIERS = {
     "send_blocked": ("消息发不出去", v_send_blocked),
@@ -392,6 +442,7 @@ VERIFIERS = {
     "emoji_blank": ("表情包看不到", v_emoji_blank),
     "fg_disturb": ("抢窗口 / 动我鼠标", v_fg_disturb),
     "update_stuck": ("更新不动 / 打不开", v_update_stuck),
+    "update_source": ("更新拉取不到 / timeout", v_update_source),
     "console_dead": ("控制台打不开", v_console_dead),
 }
 
