@@ -19,6 +19,30 @@ from .util import format_clock_time, md_to_plain, rand_int, sleep, split_for_wx
 
 log = logging.getLogger("persona-morph")
 
+# 同会话"短窗去重"窗口（秒）：这段时间内已经发过的同一句话，不再重复发（防"连发两次"）。
+_DEDUP_WINDOW_S = 20.0
+
+# 内部故障话术（**只许留在本机控制台与日志**）。命中即拦下、不发群。
+# 词表取自真机现场（用户截图里机器人真发进群的句子）与既有红线（prompt.py 第 7 条）。
+_INTERNAL_FAIL_PHRASES = (
+    "会话投递失败", "投递失败", "本轮未发言", "未能发言", "没能发言",
+    "发送失败了", "发送失败", "发不出去", "发不出来", "会话没对上", "没对上会话",
+    "工具报错", "工具调用失败", "接口报错", "系统错误", "内部错误",
+    "没有拿到会话", "抓不到会话", "获取会话失败",
+)
+_blocked_internal: list = []          # 最近被拦下的内部故障话术（诊断用，控制台可读）
+
+
+def _is_internal_failure(text: str) -> str:
+    """这句是不是"内部故障话术"？命中返回命中的词，否则空串。"""
+    t = str(text or "")
+    if not t:
+        return ""
+    for p in _INTERNAL_FAIL_PHRASES:
+        if p in t:
+            return p
+    return ""
+
 
 class SendQueue:
     def __init__(self, wechat, store, on_sent=None):
@@ -112,6 +136,42 @@ class SendQueue:
                 parts.append(plain)
         if not parts:
             raise RuntimeError("消息内容为空")
+
+        # 🔴 2026-09-18 加（用户现场截图：群里出现了「（会话投递失败，本轮未发言。）」「发送失败了，没能发出去。」）：
+        #   **内部故障话术的机械拦网** —— 以前只写在提示词里（`prompt.py` 第 7 条），模型不听话时照样发进群。
+        #   这是项目红线（故障只许出现在本机控制台与日志），所以在这里**发之前**逐条筛掉。
+        _kept = []
+        for _t in parts:
+            _why = _is_internal_failure(_t)
+            if _why:
+                log.warning("拦下内部故障话术（%s）：%s", _why, _t[:60])
+                _blocked_internal.append({"why": _why, "text": _t[:120]})
+                continue
+            _kept.append(_t)
+        parts = _kept
+        if not parts:
+            raise RuntimeError("这一批全被内部故障话术闸拦下（故障只留本机日志，不发群）")
+
+        # 🔴 2026-09-18 加（用户现场截图：同一条消息「早上好呀！」连发两次）：
+        #   **同会话短窗去重** —— 同一段文本在过去 `_DEDUP_WINDOW_S` 秒内已经给自己发过，就不再发一遍。
+        #   兜的是"同一轮被重跑/重试后重复发送"这类路径（模型自己的 send 与兜底补发都走这里）。
+        _dedup_since = time.time() - _DEDUP_WINDOW_S
+        try:
+            _recent_self = [str((m or {}).get("text") or "") for m in
+                            (self.store.recent(chat_key, limit=12, include_self=True) or [])
+                            if (m or {}).get("self") and int(str((m or {}).get("ts") or "0")) / 1000.0 >= _dedup_since]
+        except Exception:
+            _recent_self = []
+        if _recent_self:
+            _kept2 = []
+            for _t in parts:
+                if _t in _recent_self:
+                    log.warning("跳过重复发送（%.0fs 内已发过同一句）：%s", _DEDUP_WINDOW_S, _t[:60])
+                    continue
+                _kept2.append(_t)
+            parts = _kept2
+            if not parts:
+                raise RuntimeError("这一批与最近刚发过的内容重复，已跳过（防连发两次）")
 
         # 风险闸门：**发之前**判（拦下的提示只在本机/控制台出现，绝不往微信侧发）
         from . import risk as _risk
