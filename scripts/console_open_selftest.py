@@ -206,10 +206,28 @@ try:
        _r2.get("how") == "browser" and bool(_r2.get("why")) and len(calls) == 1, str(_r2.get("why"))[:30])
 
     U.take_console_lock = lambda *a, **k: False
+    NU._WAIT_WINDOW_TRIES = 1            # 判据里别真等 6 秒
     calls[:] = []
     _r3 = NU.open_console()
-    ok("③ 锁被占 ⇒ how=skip 且**一次都不开**（防双窗的硬判据）",
-       _r3.get("how") == "skip" and len(calls) == 0, str(_r3.get("why"))[:30])
+    ok("③ 锁被占**但一个窗口都没有** ⇒ 照开（锁不许吞掉「根本没有窗口」）",
+       _r3.get("how") == "browser" and len(calls) == 1,
+       "%s / 开窗 %d 次" % (_r3.get("how"), len(calls)))
+    # ③b 锁被占 + **窗口真的在** ⇒ 复用、不新开（防双窗的硬判据仍然守住）
+    class _U32(object):
+        @staticmethod
+        def IsWindow(h):
+            return True
+    _real_u, _real_find = NU._u, NU.find_console_window
+    NU._u = lambda: _U32()
+    NU.find_console_window = lambda: 4242
+    calls[:] = []
+    try:
+        _r3b = NU.open_console()
+    finally:
+        NU._u, NU.find_console_window = _real_u, _real_find
+    ok("③b 锁被占 + 窗口真在 ⇒ 复用那个窗口，一次都不新开",
+       _r3b.get("how") == "reuse" and len(calls) == 0,
+       "%s / 新开 %d 次" % (_r3b.get("how"), len(calls)))
 
     U.take_console_lock = lambda *a, **k: True
     NU.console_url = lambda anchor="": ""

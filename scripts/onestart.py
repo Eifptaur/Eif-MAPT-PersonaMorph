@@ -292,10 +292,20 @@ def _bot_opens_console():
 
 
 def _probe_browser_was_opened():
-    """是否已经有人开过控制台（同一把锁 + 90 秒新鲜度）。"""
+    """**屏幕上真的已经有一个控制台窗口了吗**（2026-09-18 改口径：不再只信锁）。
+
+    ⛔ 原实现读 `console_lock_fresh(90)` —— 那是"90 秒内有人开过"，**不代表窗口还在**。
+    作者在另一台机器实测：「更新之后，一键启动不弹窗口，还得再点一次」：更新完新机器人起来时开过一次窗
+    并落锁，紧接着点一键启动 ⇒ 这里判"机器人侧已打开" ⇒ 启动器不开、而窗口其实没影 ⇒ 一屏空白；
+    等 90 秒锁过期再点才出来。⇒ 现在**以真窗口为准**（`find_console_window()` + `IsWindow`）。
+    """
     try:
-        from agent.util import console_lock_fresh
-        return console_lock_fresh(90)
+        from agent.notify_ui import find_console_window
+        h = int(find_console_window() or 0)
+        if not h:
+            return False
+        import ctypes
+        return bool(ctypes.windll.user32.IsWindow(ctypes.c_void_p(h)))
     except Exception:
         return False
 

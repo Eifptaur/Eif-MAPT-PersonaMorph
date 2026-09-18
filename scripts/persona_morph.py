@@ -998,26 +998,40 @@ def _check_prerequisites(cfg) -> list:
     return problems
 
 
-def _kill_watchdog():
-    """结束看门狗（data 目录下 watchdog.pid 优先，wmic 按命令行回退）。
+def _kill_watchdog(fast: bool = False):
+    """结束看门狗（data 目录下 watchdog.pid 优先，wmic/ PowerShell 按命令行回退）。
 
     控制台「停止/重启」必须连看门狗一起处理：否则机器人退出 5 秒后会被看门狗重新拉起，
     表现为「点了停止却又弹出一个新控制台」。
+
+    ⚠️ `fast=True`（2026-09-18 加，**重启路径专用**）：**只做"按 pid 文件 taskkill"这一件快事**，
+    跳过 wmic / PowerShell 两条慢枚举 —— 重启路径上本进程 2 秒后就要强退，慢枚举会把
+    `_spawn_watchdog()` 挤到强退之后 ⇒ **没人接替、机器人彻底没了**（我这次实测踩出来的回归）。
     """
     wp = os.path.join(ROOT, "data", "watchdog.pid")
     try:
         if os.path.exists(wp):
             with open(wp, "r", encoding="utf-8") as f:
-                pid = int(f.read().strip())
-            subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
-                           creationflags=0x08000000, timeout=10,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                # 🔴 2026-09-18 修（作者报「现在重启不了」的**真因**）：`watchdog.py` 现在把 pid 文件写成
+                #   **两行**（`<pid>\n<看门狗版本号>`，见 watchdog.py:120），而这里原来是
+                #   `int(f.read().strip())` ⇒ **ValueError** ⇒ 被下面的 `except: pass` 吞掉 ⇒
+                #   **旧看门狗根本没被杀掉**！接着重启又拉起一个新看门狗 ⇒ 两个看门狗各拉一个机器人
+                #   抢单实例锁 ⇒ 日志刷"旧实例像是正在退出，等它放开锁再接手…" ⇒ 用户看到的就是
+                #   「重启不了 / 杀都杀不掉」。⇒ 只取**第一个整数**。
+                m = re.search(r"\d+", f.read() or "")
+            pid = int(m.group(0)) if m else 0
+            if pid:
+                subprocess.run(["taskkill", "/F", "/PID", str(pid)],
+                               creationflags=0x08000000, timeout=10,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             try:
                 os.remove(wp)
             except Exception:
                 pass
     except Exception:
         pass
+    if fast:
+        return                                   # 重启路径：慢枚举留给下一次启动/新看门狗，别挡住 spawn
     try:
         r = subprocess.run(
             ["wmic", "process", "where",
@@ -1030,13 +1044,53 @@ def _kill_watchdog():
                 v = line.split("=", 1)[1].strip()
                 if v.isdigit() and int(v) > 0:
                     try:
-                        subprocess.run(["taskkill", "/F", "/T", "/PID", v],
+                        subprocess.run(["taskkill", "/F", "/PID", v],
                                        creationflags=0x08000000, timeout=10,
                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     except Exception:
                         pass
     except Exception:
         pass
+    # wmic 在新版 Windows（11 24H2 起）**已被移除**，上面那条会静默失败 ⇒ 再补一条 PowerShell 兜底
+    # （同样按"命令行里有 watchdog.py"筛；2026-09-18 加，配合"重启不了"那个真因一起修）
+    try:
+        _ps = ("Get-CimInstance Win32_Process -Filter \"Name='pythonw.exe' or Name='python.exe'\" | "
+               "Where-Object { $_.CommandLine -like '*watchdog.py*' } | "
+               "ForEach-Object { $_.ProcessId }")
+        r = subprocess.run(["powershell", "-NoProfile", "-Command", _ps],
+                           capture_output=True, creationflags=0x08000000, timeout=25)
+        for tok in (r.stdout or b"").decode("utf-8", "ignore").split():
+            if tok.isdigit() and int(tok) > 0:
+                try:
+                    subprocess.run(["taskkill", "/F", "/PID", tok],
+                                   creationflags=0x08000000, timeout=10,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
+def _spawn_bot_direct():
+    """**直接**隐藏拉起一个机器人（不走看门狗）——重启路径的兜底。
+
+    为什么要它（2026-09-18 作者在另一台机器实测「现在重启不了」）：`restart_fn` 只做
+    「杀旧看门狗 → 拉新看门狗 → 2 秒后本进程强退」；一旦 `_spawn_watchdog` 抛异常、或新看门狗
+    自己起不来（例如它读到的 `data/stopped.flag` 还没被清），**就再没有人接替** ⇒ 机器人彻底消失，
+    表现就是"重启不了"。⇒ 现在拉起看门狗后会**自证**（看门狗 pid 文件 + 进程存在），
+    不成立就直接用这一手把机器人本体拉起来。
+    """
+    exe = sys.executable
+    if exe.lower().endswith("python.exe"):
+        pyw = exe[:-10] + "pythonw.exe"
+        if os.path.exists(pyw):
+            exe = pyw
+    flags = 0
+    if os.name == "nt":
+        flags = 0x00000008 | 0x00000200 | 0x08000000  # DETACHED|CREATE_NEW_PROCESS_GROUP|CREATE_NO_WINDOW
+    return subprocess.Popen([exe, os.path.join(ROOT, "scripts", "persona_morph.py")], cwd=ROOT,
+                            creationflags=flags, stdin=subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def _spawn_watchdog(delay: int = 0):
@@ -1395,7 +1449,7 @@ def main():
             log.warning("上一个实例（pid=%s，已运行 %.0f 秒，控制台无应答）判定卡死 ⇒ **自动替用户收尾**"
                         "（结束它和看门狗），然后由本实例接手；用户不需要做任何事", _stuck, _old)
             try:
-                subprocess.run(["taskkill", "/F", "/T", "/PID", str(_stuck)],
+                subprocess.run(["taskkill", "/F", "/PID", str(_stuck)],
                                capture_output=True, timeout=20, creationflags=0x08000000)
             except Exception as _e:
                 log.warning("结束卡死实例失败（继续尝试接手）：%s", _e)
@@ -2351,27 +2405,68 @@ def main():
         log.info("收到重启指令，正在后台拉起新实例…")
 
         def _exit_now():
-            try:
-                _p = os.path.join(ROOT, "data", "bot.pid")
-                if os.path.exists(_p):
-                    os.remove(_p)
-            except Exception:
-                pass
+            # 退出前把"我是谁"的证据文件一起收掉：`bot.lock`（pid 证据）留着会让**下一个实例**
+            # 在启动闸门处把死掉的 pid 当成"旧实例还在"（pid 复用时会一直等，日志刷
+            # "旧实例像是正在退出，等它放开锁再接手…"，最后报"已有实例在运行"退出）——
+            # 2026-09-18 实测就是这么卡住的。互斥体本身随进程退出自动释放，这两个文件只是证据。
+            for _f in ("bot.pid", "bot.lock"):
+                try:
+                    _p = os.path.join(ROOT, "data", _f)
+                    if os.path.exists(_p):
+                        os.remove(_p)
+                except Exception:
+                    pass
             os._exit(0)
 
-        # ① 先装强退：2 秒后无论如何都退（后面几件慢活挡不住它）
-        threading.Timer(2.0, _exit_now).start()
+        # ① 先装强退：**6 秒**后无论如何都退（后面几件慢活挡不住它）。
+        #    ⚠️ 原来是 2 秒 —— 实测会被"慢活"顶掉：`_kill_watchdog()` 里那条 PowerShell 兜底最慢 25 秒，
+        #    2 秒强退会在 `_spawn_watchdog()` **之前**发生 ⇒ 没人接替（2026-09-18 我实测踩出来的回归）。
+        #    现在：快杀（`fast=True`）+ 先 spawn + 自证都在 6 秒内跑完，慢活一律不进这条路。
+        threading.Timer(6.0, _exit_now).start()
         try:
-            _kill_watchdog()                      # ② 先杀旧看门狗，免得它把本进程复活/双开
+            _sf = os.path.join(ROOT, "data", "stopped.flag")
+            if os.path.exists(_sf):
+                os.remove(_sf)
+                log.info("重启：已清掉 data/stopped.flag（重启＝要它跑）")
         except Exception:
             pass
         try:
-            # ③ **立刻**拉起新看门狗（它自己等 6 秒再开机器人）——必须在 `os._exit` 之前拉，
+            _kill_watchdog(fast=True)             # ② 只做快杀：按 pid 文件结束旧看门狗
+        except Exception:
+            pass
+        try:
+            # ③ **立刻**拉起新看门狗（它自己等 8 秒再开机器人）——必须在 `os._exit` 之前拉，
             #    否则进程一退就没人接替了（第一版"用 Timer 等 6 秒再拉"永远等不到：进程 2 秒就退了）
-            _spawn_watchdog(delay=6)
-            log.info("已拉起新看门狗（它会在 6 秒后接管机器人）")
+            _spawn_watchdog(delay=8)
+            log.info("已拉起新看门狗（它会在 8 秒后接管机器人）")
         except Exception as e:
             log.error("重启拉起看门狗失败：%s", e)
+        # ③b 2026-09-18 加（作者报「现在重启不了」）：**自证 + 兜底**。
+        #    光"发出去了"不算接替成功：看门狗可能起不来（阻断在单实例锁 / 读到的 stopped.flag 没清），
+        #    而本进程 2 秒后就强退 ⇒ 没人接替 ⇒ 用户看到的就是"重启不了、机器人没了"。
+        #    ⚠️ 判据要保守：**只在"看门狗 pid 文件根本没写出来"时才兜底直起**。第一版拿
+        #    psutil/os.kill 判"pid 还活着"，结果 ①`data/watchdog.pid` 里有两行（pid + 计数）⇒ int() 抛异常
+        #    ⇒ 误判"没接上" ②权限问题也会误判 ⇒ **多起了一个机器人**，和看门狗自己拉的那个抢单实例锁
+        #    （日志里刷 "旧实例像是正在退出，等它放开锁再接手…"）。宁可少兜底一次，也不要双开。
+        try:
+            import re as _re
+            import time as _t
+            _t.sleep(1.2)
+            _wp = os.path.join(ROOT, "data", "watchdog.pid")
+            _wpid = 0
+            try:
+                with open(_wp, "r", encoding="utf-8") as _f:
+                    _m = _re.search(r"\d+", _f.read() or "")
+                    _wpid = int(_m.group(0)) if _m else 0
+            except Exception:
+                _wpid = 0
+            if not _wpid:
+                log.error("新看门狗没接上（data/watchdog.pid 没有 pid）⇒ 直接拉起机器人本体兜底")
+                _spawn_bot_direct()
+            else:
+                log.info("新看门狗已就位（pid=%s，它会接管机器人）", _wpid)
+        except Exception as e:
+            log.error("重启自证失败（不影响退出）：%s", e)
         try:
             # ④ 尽力登出，但**放进守护线程**：它再慢也不再挡住退出
             threading.Thread(target=lambda: (orch.shutdown() if orch else None), daemon=True).start()
