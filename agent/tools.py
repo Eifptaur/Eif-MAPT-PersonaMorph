@@ -1111,9 +1111,14 @@ def _exec_list_emojis(ctx, args):
 
 
 def _exec_send_emoji(ctx, args):
-    """发送收藏的表情：优先本地收藏夹直接发送（不受微信面板布局/用户预收藏顺序影响——
-    面板格序号以微信收藏顺序计，用户先前收藏的表情会造成本地序号错位，故不再按格子序号点面板）。
-    本地收藏夹没有匹配时，才用真实微信表情面板作兜底。"""
+    """发一张收藏表情。**面板优先**（2026-09-18 按作者口径改）。
+
+    为什么倒过来（作者现场：「那个用户的AI收藏了这些，但是完全发不出去，是不是把他们当图片来发了？
+    压根不是走发表情包那个路径的」）：老实现是"**优先本地收藏夹发图**"，而本地收藏夹里是早期
+    `collect_emoji` 用截图存下来的气泡图 ⇒ 发出去是**图片**、还可能被内容闸拦；`send_image` 投递
+    不成时还会**退回真鼠标**（动光标 + 选择文件对话框）⇒ 用户看到的"抢鼠标 + 卡很久"。
+    ⇒ 现在：**先走微信表情面板**（投递开面板 → 投递点收藏格 → 库回读 `type=动画表情` 为唯一判据）；
+       面板走不通才退回本地收藏夹发图，且**后台档下不许退回真鼠标**（如实拒绝并说明）。"""
     import os as _os
     from agent import emoji_lib as _el
     name = str(args.get("name_or_id") or "").strip()
@@ -1138,10 +1143,48 @@ def _exec_send_emoji(ctx, args):
                     break
         if target is None and idx is not None and idx >= 0 and idx < len(emojis):
             target = emojis[idx]
+    # ── ① 面板优先：微信表情库里真有货时就该从面板发（这才是"发表情包"的正路）──────────
+    try:
+        _cid0 = str(ctx.get("chat_id") or "")
+        if _cid0:
+            _gname0 = ""
+            try:
+                _gname0 = ctx["wechat"].group_name(_cid0) or ""
+            except Exception:
+                _gname0 = ""
+            _okp, _msp = ctx["wechat"].emoji_panel_open(group_name=_gname0, chat_id=_cid0)
+            if _okp:
+                _oki, _msi = ctx["wechat"].emoji_panel_send(
+                    idx if idx is not None and idx >= 0 else 0, chat_id=_cid0)
+                if _oki:
+                    ctx["session"]["sent"].append({"type": "emoji", "text": "[表情]"})
+                    return _ok({"sent": True, "via": "emoji_panel", "index": idx, "note": _msi})
+                log.info("表情面板发送失败（%s）⇒ 才考虑退回本地发图", str(_msi)[:70])
+            else:
+                log.info("表情面板打不开（%s）⇒ 才考虑退回本地发图", str(_msp)[:70])
+    except Exception as _e:
+        log.info("表情面板这条路异常（%s）⇒ 才考虑退回本地发图", str(_e)[:70])
+    # ── ② 退回：本地收藏夹发图（**后台档下不许动真鼠标**）──────────────────────────
     if target is not None:
+        try:
+            from . import input_backend as _ib
+            _cursor = bool(_ib.select_backend().touches_cursor)
+        except Exception:
+            _cursor = False
+        _bg = False
+        try:
+            from .config import get_config
+            _bg = bool(((get_config() or {}).get("wechat") or {}).get("background_only", True))
+        except Exception:
+            _bg = True
+        if _cursor and _bg:
+            return _err("本地收藏夹里这张是**图片**（截图收藏），发它要走真鼠标（会动你的光标、还要开"
+                        "「选择文件」对话框）；「只走后台」开着 ⇒ 这条不发。建议先用 collect_emoji 把它"
+                        "收进**微信表情库**，再从面板发（那条路全程后台）。")
         ctx["sender"].send_image(ctx["chat_key"], target["path"])
         ctx["session"]["sent"].append({"type": "image", "text": "[表情]"})
-        return _ok({"sent": True, "note": "已发送收藏表情（本地直发，不受微信面板布局/预收藏影响）。"})
+        return _ok({"sent": True, "via": "local_image",
+                    "note": "已发送本地收藏夹里的图片（它是图片不是微信表情；要发真表情请先收进微信表情库）。"})
     # 本地收藏夹无匹配 → 微信真实表情面板兜底（面板格序号仅对纯本地收藏序列有效）
     try:
         # 🔴 2026-09-18：两条都要带 chat_id —— 开面板前先确认"当前会话＝目标会话"（投递优先），

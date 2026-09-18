@@ -637,6 +637,21 @@ class WebUI:
                                         "capability": _lm.CAPABILITY_NOTE})
                     except Exception as _e:
                         self._json({"ok": False, "error": str(_e)}, 500)
+                elif path == "/api/verifiers":
+                    # 症状检验器（2026-09-18）：控制台用 GET 取清单（POST 那条链里也留了同样的入口，两条路都能用）
+                    try:
+                        from . import verifiers as _vf
+                        self._json({"ok": True, "verifiers": _vf.catalog()})
+                    except Exception as e:                                   # noqa: BLE001
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/verify":
+                    try:
+                        from urllib.parse import urlparse as _up, parse_qs as _pq
+                        from . import verifiers as _vf
+                        _q = _pq(_up(self.path).query)
+                        self._json(_vf.run(str((_q.get("id") or [""])[0] or "")))
+                    except Exception as e:                                   # noqa: BLE001
+                        self._json({"ok": False, "error": str(e)})
                 elif path == "/api/config":
                     self._json(parent.masked_config())
                 elif path == "/api/memory":

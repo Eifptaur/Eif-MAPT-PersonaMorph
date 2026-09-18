@@ -2732,6 +2732,51 @@ class WeChatAdapter:
             log.warning("无激活还原最小化窗口失败：%s", e)
             return False
 
+    def close_search_popovers(self, gui=None) -> int:
+        """把屏幕上残留的**搜索浮层**关掉（返回关掉几个）。失败静默、**绝不关微信主窗**。
+
+        为什么要它（作者 2026-09-18 现场：「你怎么点出来个搜索聊天记录啊」）：切会话的搜索路线会
+        打开搜索浮层并打字；一旦它失败（搜索入口识别到假图标 / 内容级复核没过），浮层就**留在屏幕上**
+        —— 用户看到的就是微信弹着"搜索聊天记录"。⇒ 任何失败路径都要收尾：关掉浮层，不留残余。
+        """
+        try:
+            import win32gui
+            main = int(getattr(self._get_gui(), "main_hwnd", 0) or 0)
+            hits = []
+
+            def _cb(h, _l):
+                try:
+                    if not win32gui.IsWindowVisible(h):
+                        return True
+                    if main and int(h) == main:
+                        return True
+                    cls = str(win32gui.GetClassName(h) or "")
+                    if not cls.startswith("Qt"):
+                        return True
+                    x0, y0, x1, y1 = win32gui.GetWindowRect(h)
+                    w, hh = int(x1) - int(x0), int(y1) - int(y0)
+                    ttl = str(win32gui.GetWindowText(h) or "")
+                    if ("ToolSave" in cls) or (ttl == "Weixin" and 280 < w < 1000 and 180 < hh < 1100):
+                        hits.append(int(h))
+                except Exception:
+                    pass
+                return True
+
+            win32gui.EnumWindows(_cb, None)
+            n = 0
+            for h in hits:
+                try:
+                    if _close_search_popover(h):
+                        n += 1
+                except Exception:
+                    pass
+            if n:
+                log.info("收尾：关掉残留的搜索浮层 %d 个", n)
+            return n
+        except Exception as e:                                     # noqa: BLE001
+            log.debug("关搜索浮层收尾异常：%s", e)
+            return 0
+
     def switch_chat_posted(self, chat_id: str, gui=None, name: str = None, confirm_s: float = 8.0):
         """**投递版切会话**：库的**只读** OCR 定位会话行 → **投递点击**那一行 → **OCR 按名字确认**已打开。
 
@@ -2780,6 +2825,13 @@ class WeChatAdapter:
             #   老路的滚轮虽然走投递（**不动光标**），但**会话列表会在用户眼前滚**——他看到的
             #   "它在划列表"就是它；而搜索路线已经覆盖了绝大多数情况。
             #   ⇒ 做成开关 `wechat.scroll_list_fallback`（默认 False＝不回退），要成功率优先可打开。
+            # ⛔ 2026-09-18：搜索路线**失败也要收尾** —— 关掉留在屏幕上的搜索浮层
+            #   （作者现场：「你怎么点出来个搜索聊天记录啊」；失败留浮层＝把用户界面弄乱）
+            try:
+                if not _sok:
+                    self.close_search_popovers(gui=gui)
+            except Exception as _e2:
+                log.debug("关搜索浮层失败（不影响流程）：%s", _e2)
             if not self._scroll_list_fallback():
                 return False, ("搜索框路线没成（%s）⇒ 按当前设置**不退回会滚你会话列表的老路**，本回合不切会话。"
                                "（想允许它回退：控制台「微信」面板打开「搜索失败时扫会话列表」；"
@@ -4886,6 +4938,18 @@ class WeChatAdapter:
                 return None
             lt = (row.get("local_type") or 0) & 0xFF
             os.makedirs(self.EMOJI_DIR, exist_ok=True)
+            # ⭐ 2026-09-18：动画表情**优先离线解出原图**（`agent/emoticon.py`，AES-128-CBC 解本机
+            #   表情文件）——老实现只会 UIA 截图（存下来是"聊天区截图"，发出去是图片还会抢鼠标）。
+            #   拿不到 key / 文件不在本地才回退截图（诚实降级，不静默）。
+            if lt == 47:
+                try:
+                    from . import emoticon as _emo
+                    _p = _emo.sticker_image(self._db, chat_id, int(local_id))
+                    if _p and os.path.exists(_p):
+                        log.info("收藏表情：离线解出原图 %s", os.path.basename(_p))
+                        return _p
+                except Exception as _e:
+                    log.info("收藏表情：离线解密不可用（%s）⇒ 回退截图", str(_e)[:60])
             if lt == 3:
                 # 图片：原图下载
                 if self._md is None:
