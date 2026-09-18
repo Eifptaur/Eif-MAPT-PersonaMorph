@@ -2888,6 +2888,11 @@ async function loadStatus(){  try{
                 + (n > 0 ? '，已经拦下 ' + n + ' 条没发出去' : '')
                 + '。某条能力不好用请点「反馈」，把日志一并带上。';
               vb.style.display = 'flex';
+            } else if(Number((( s.outbound_gate || {}).blocked_internal) || 0) > 0){
+              const on = Number(s.outbound_gate.blocked_internal || 0);
+              vt.textContent = '有 ' + on + ' 条「内部故障话术」被拦下（只留在本机日志，没发进群）'
+                + '；若群里该有回复却没出现，请点「反馈」带上日志。';
+              vb.style.display = 'flex';
             } else {
               vb.style.display = 'none';
             }
