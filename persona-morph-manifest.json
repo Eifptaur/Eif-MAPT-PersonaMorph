@@ -1,11 +1,11 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.18.13.5",
-    "sha256": "66d796f03968f959cbad8db3a75ea4d4d3a89c3532f7e31abf157b5ee3b4b8d8",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.32.8/persona-morph-v2.1.32.8.zip",
-    "build": "0d258c1376b8",
-    "size": 9329848,
+    "version": "2026.9.18.13.6",
+    "sha256": "cea973b834202b51af034773b503768800612d465bc1e90a38187352259bf7a1",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.32.9/persona-morph-v2.1.32.9.zip",
+    "build": "51328d95c070",
+    "size": 9330948,
     "files": 284
   },
   "dlc": [
@@ -33,13 +33,13 @@
     }
   ],
   "announce": {
-    "version": "2026.9.18.13.5",
+    "version": "2026.9.18.13.6",
     "notes": [
-      "**边干活边把微信摁在后台**：它每 30ms 检查一次，微信一冒头就立刻把你原来的窗口还到最前、把微信压回 Z 序底层——实测「切会话 + 发消息 + 切回」三次动作，**微信占前台各 0.00 秒**，消息照样发出（DB 回读命中）；发消息还改成了快路径（不再点输入框那一枪，投字→80ms→回车→立刻还）"
+      "发表情面板走不通时，改用**投递粘贴图片**通道把它发出去（不需要表情面板 ⇒ 和「摁住微信」能共存）：实测演示群 7.2 秒发出、**微信占前台 0.05 秒**、DB 回读 type=图片；另外修掉判据里一个偶发红（cursor_webview 那条是开窗时序抖动，复跑 46/0）"
     ],
     "forceBase": false,
-    "minBase": "2026.9.18.13.5"
+    "minBase": "2026.9.18.13.6"
   },
-  "builtAt": "2026-09-18T16:23:08Z",
-  "updatedAt": 1789748588209
+  "builtAt": "2026-09-18T16:31:16Z",
+  "updatedAt": 1789749076721
 }
