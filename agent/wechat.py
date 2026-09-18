@@ -37,6 +37,21 @@ def message_ledger(n: int = 30) -> list:
         return []
 
 
+def _self_local_note(obj, chat_id, local_id, create_time=None) -> None:
+    """登记「这条库行是我发的」——**模块级安全入口**：对象没这能力/记账出错都不影响发送。
+
+    为什么要这层：登记只是记账（监听侧判自己用），而三个调用点都在**发送成功链**里 ——
+    记账出意外（假适配器没有这个方法、盘满、权限）绝不能把一次已经发成功的消息判成失败
+    （`send_loop_behavior_selftest` 的假适配器当场暴露过这一点）。
+    """
+    try:
+        fn = getattr(obj, "remember_self_local", None)
+        if callable(fn):
+            fn(chat_id, local_id, create_time)
+    except Exception:
+        pass
+
+
 def _mask_id(s: str) -> str:
     """掩码显示 wxid（日志与控制台都不回显完整账号）。"""
     t = str(s or "")
@@ -805,6 +820,10 @@ class WeChatAdapter:
         self._img_key_ready = False
         self._send_lock = threading.Lock()
         self._recent_sent = deque(maxlen=200)   # 最近自己发过的消息文本 (text, ts)，用于过滤回声
+        # 「哪条库行是我自己发的」：chat_id -> [(local_id, 库行 create_time(秒), 记录时刻), …]
+        # 见 `remember_self_local` / `is_self_local` 的注释（用户反馈「他有时候还是会把自己识别成别人」）
+        self._self_local: dict = {}
+        self._self_local_loaded = False
         self._send_recent = deque(maxlen=50)    # 发送去重 (chat_id, text, ts)，防回车重试发两遍
         self._poke_back_cd: dict = {}           # wxid -> 上次「系统回拍」时间戳（30 分钟冷却，防连环拍）
         self._poke_playful: dict = {}           # 日期(yyyy-mm-dd) -> [ts...] 主动皮一下记录（按天限频）
@@ -1284,6 +1303,124 @@ class WeChatAdapter:
         if t:
             self._recent_sent.append((t, time.time()))
 
+    # ── 「这条库行是不是我自己发的」：按 **行号** 判自己（2026-09-18 加）────────────
+    # 为什么需要（用户两次反馈：「他有时候还是会把自己识别成别人」）：判自己原来只有三档证据 ——
+    #   ① `self_wxid` 命中 ② 昵称一致 + 我刚发过 ③ 文本回声窗（120 秒）。三条**都不认库行号**，于是
+    #   两处必然漏判：ⓐ 发图/发表情/发文件回读出来的 text 是 `[图片]`/`[表情]`/`[文件/链接/卡片]`
+    #   —— 这类"无语义文本"在回声窗里对不上任何东西，**永远判不出自己**；ⓑ 手打一句（用户拿机器人号
+    #   自己打的话不在我们的发送台账里）或任何超出回声窗的回读 ⇒ 被当成别人的话 ⇒ 机器人回自己。
+    # 现在补**最强的一档**：我们自己发出的消息，**发送成功的那一刻就已经从 DB 回读到了它的 local_id**
+    #   （send_text_posted / send_image_posted / send_file_posted 的那几个回读点）⇒ 把 (会话, 行号) 记下来，
+    #   监听侧只要行号命中就判自己 —— 不依赖文本、不依赖回声时间窗。
+    # ⚠️ 两条防误判（红线：宁可漏判一次回声，也**绝不许把别人的话**丢掉）：
+    #   ① **行号 + 时间一起比**：用户「清空聊天记录」会把该会话的消息表整张删掉、`local_id` 从 1 重新开始
+    #      （现场事故"机器人跟自己吵 8 条"的根因链之一）⇒ 只比行号时，将来某条**别人的**新消息会撞上
+    #      我们记下的老行号。所以记录里带上那条库行的 `create_time`，命中时**还要求时间接近**（±600 秒）。
+    #   ② **只留 24 小时**：过期行号定期清掉，缩小撞号面。
+    _SELF_LOCAL_WIN_S = 600.0            # 行号命中时，允许的 create_time 偏差
+    _SELF_LOCAL_KEEP_S = 24 * 3600.0     # 记录保留时长
+
+    def _self_local_file(self) -> str:
+        return os.path.join(ROOT, "data", "self_local_ids.json")
+
+    @staticmethod
+    def _ct_s(create_time) -> int:
+        """库里的 create_time 统一成**秒**（微信 4.x 存秒，别的地方出现过毫秒）。"""
+        try:
+            v = int(create_time or 0)
+        except Exception:
+            return 0
+        return int(v / 1000) if v >= 1_000_000_000_000 else v
+
+    def _load_self_local(self) -> None:
+        if getattr(self, "_self_local_loaded", False):
+            return
+        self._self_local_loaded = True
+        if not isinstance(getattr(self, "_self_local", None), dict):
+            self._self_local = {}
+        try:
+            import json as _json
+            with open(self._self_local_file(), encoding="utf-8") as fh:
+                d = _json.load(fh) or {}
+        except Exception:
+            return
+        if not isinstance(d, dict):
+            return
+        now = time.time()
+        for k, v in d.items():
+            rows = []
+            for it in (v or []):
+                try:
+                    lid, ct, ts = int(it[0]), int(it[1]), float(it[2])
+                except Exception:
+                    continue
+                if lid and now - ts <= self._SELF_LOCAL_KEEP_S:
+                    rows.append((lid, ct, ts))
+            if rows:
+                self._self_local[str(k)] = rows[-200:]
+
+    def _save_self_local(self) -> None:
+        try:
+            import json as _json
+            p = self._self_local_file()
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            tmp = p + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                _json.dump({k: [[i, c, int(t)] for i, c, t in v] for k, v in self._self_local.items()},
+                           fh, ensure_ascii=False)
+            os.replace(tmp, p)
+        except Exception as e:
+            log.debug("自我行号落盘失败（本次进程内仍然生效）：%s", e)
+
+    def remember_self_local(self, chat_id, local_id, create_time=None) -> None:
+        """记下「这条库行是我自己刚发出去的」。
+
+        ⛔ 调用时机**只允许在 DB 回读确认成功之后** —— 没确认就记账＝把别人的消息登记成自己的，
+        后果是那条消息被静默丢掉（漏回），比漏判回声更糟。
+        """
+        try:
+            lid = int(local_id or 0)
+        except Exception:
+            return
+        if not lid:
+            return
+        self._load_self_local()
+        key = str(chat_id or "")
+        ct = self._ct_s(create_time)
+        if not isinstance(getattr(self, "_self_local", None), dict):
+            self._self_local = {}
+        lst = [r for r in self._self_local.get(key, []) if r[0] != lid]
+        lst.append((lid, ct, time.time()))
+        self._self_local[key] = lst[-200:]
+        self._save_self_local()
+
+    def is_self_local(self, chat_id, local_id, create_time=None) -> bool:
+        """这条库行是不是我们自己发的？**没有记录就是不判自己**（绝不影响别人）。"""
+        try:
+            lid = int(local_id or 0)
+        except Exception:
+            return False
+        if not lid:
+            return False
+        self._load_self_local()
+        now = time.time()
+        ct = self._ct_s(create_time)
+        for r_lid, r_ct, r_ts in (getattr(self, "_self_local", {}) or {}).get(str(chat_id or ""), []):
+            if r_lid != lid:
+                continue
+            if now - r_ts > self._SELF_LOCAL_KEEP_S:
+                continue
+            if r_ct and ct and abs(r_ct - ct) > self._SELF_LOCAL_WIN_S:
+                # 行号撞上了、时间对不上 ⇒ 多半是「清空聊天记录」后行号重排 ⇒ 按**别人**处理并留痕
+                try:
+                    log.warning("自我行号撞号但时间不符（local_id=%s：记录 %s / 实到 %s）"
+                                "⇒ 不判自己，按别人的消息处理", lid, r_ct, ct)
+                except Exception:
+                    pass
+                continue
+            return True
+        return False
+
     def _self_id_file(self) -> str:
         return os.path.join(ROOT, "data", "self_identity.json")
 
@@ -1478,8 +1615,16 @@ class WeChatAdapter:
             text = str((out or {}).get("text") or (content[m.end():].strip() if m else content)).strip()
             self_hit = bool(self._self_wxid and sender_wxid and sender_wxid == self._self_wxid)
             echo_hit = bool(text) and self._is_self_echo(text)
+            # 自家行号命中（2026-09-18 加）：判自己的**最强**一档，不依赖文本（发图/表情/文件的回读
+            # 文本是 `[图片]`/`[表情]`，靠文本判永远认不出自己）。台账里单列一项，方便下次一眼定位。
+            try:
+                sl_hit = self.is_self_local(chat_id, raw.get("local_id"), raw.get("create_time"))
+            except Exception:
+                sl_hit = False
             if self_hit:
                 why = "判为自己：self_wxid 命中"
+            elif sl_hit:
+                why = "判为自己：自家行号命中（我们自己发出去并回读确认过的库行）"
             elif echo_hit:
                 why = "判为自己：文本回声窗命中"
             elif out:
@@ -1490,7 +1635,7 @@ class WeChatAdapter:
                 "ts": int(time.time() * 1000), "chat": str(chat_id or ""),
                 "local_id": raw.get("local_id"), "mtype": str(raw.get("type") or ""),
                 "sender_id": raw.get("sender_id"), "sender_wxid": _mask_id(sender_wxid),
-                "self_wxid_hit": self_hit, "echo_hit": echo_hit,
+                "self_wxid_hit": self_hit, "echo_hit": echo_hit, "self_local_hit": bool(sl_hit),
                 "keep": bool(out), "why": why, "text": text[:60],
             })
             try:
@@ -1562,6 +1707,17 @@ class WeChatAdapter:
                 "mtype": "系统消息",
                 "recall": _rec,
             }
+
+        # ── 🔴 2026-09-18 加：**自家行号判自己**（最强的一档证据，见 `is_self_local`）──────────
+        #    位置有讲究：**必须放在撤回分支之后**（自己撤回的事件要照旧处理），而在下面所有文本类判据
+        #    之前 —— 行号是唯一**不依赖文本**的证据：发图/发表情/发文件回读出来的 text 是
+        #    `[图片]`/`[表情]`，文本类判据永远认不出自己（用户反馈「他有时候还是会把自己识别成别人」）。
+        #    不命中就照旧往下走（没有记录＝不判自己），所以这条**只会减少"回自己"，不会丢别人的话**。
+        try:
+            if self.is_self_local(chat_id, local_id, create_time):
+                return None
+        except Exception as e:
+            log.debug("自我行号判定异常（按未命中继续）：%s", e)
 
         # 自己发的消息跳过（避免自问自答）
         # 🔴 2026-09-17 修（用户「佬」实测反馈：「**别人说话它没反应；机器人自己发一句它就有反应，
@@ -3245,6 +3401,9 @@ class WeChatAdapter:
                     if not head:
                         continue
                     if str(text)[:20] in str(head.get("content") or ""):
+                        # 记下「这条库行是我发的」：监听侧以后按**行号**判自己，不再只靠文本回声窗
+                        # （见 `is_self_local` 的注释；必须在这一刻记 —— 这是**唯一**能确定行号归属的地方）
+                        _self_local_note(self, chat_id, head.get("local_id"), head.get("create_time"))
                         # DB 回读确认成功 ⇒ 自动补一条"当前窗口尺寸"下的会话头参照
                         # （尺寸变了以后不用人工重标；下次同尺寸就能真正校验）
                         self._learn_chat_header(chat_id, gui=gui)
@@ -3255,6 +3414,22 @@ class WeChatAdapter:
                     self._learn_chat_header(chat_id, gui=gui)
                     return V_OK, "DB 有新行但内容与本次不一致（第 %d 枪：%s；local_id=%s，可能上一条刚写库）" % (
                         _i, _how, head.get("local_id"))
+                # ── 🔴 发错会话的**当场自检**（2026-09-18 加，用户反馈「他把我在实验群发的消息回到大群了」）──
+                #    目标会话回读不到 ⇒ 在下一次开枪**之前**先问一句："这句是不是落到别的会话里了？"
+                #    命中就**立刻停手**：① 把"发错会话"这件事从"被完全掩盖"变成当场可见；
+                #    ② 免得后面两枪再往那个错会话**重复发**同一句话（那是对外可见的事故）。
+                if _fired:
+                    try:
+                        _mis = self._text_landed_in_other_chat(text, chat_id)
+                    except Exception as _e:
+                        _mis = None
+                        log.debug("发错会话自检异常（按未命中继续）：%s", _e)
+                    if _mis:
+                        log.error("❗发错会话：这条文字出现在了「%s」（目标会话不是它）—— 已立刻停止重试",
+                                  _mis[1])
+                        return False, ("❗**发错会话**：这条文字出现在「%s」里，不是目标会话 —— "
+                                       "已立刻停止重试（免得往错的会话连发多次）。根因＝投递不切会话，"
+                                       "而当时打开的那个会话被误判成了目标会话。" % _mis[1])
             if not _fired:
                 return False, "投递发送失败：三枪都没打出去（%s）" % "→".join(_tried)
             # ⚠️ 自检不可用 ≠ 发送失败（2026-09-14 测机报告：4.1.13.65 上投递其实发出去了，但回读通道失效）
@@ -3430,6 +3605,11 @@ class WeChatAdapter:
                         except Exception:
                             new_id = 0
                         if new_id > base_id:
+                            # 只有在"回读到的这行确实是图片"时才登记成自己发的 —— 登记错了会把
+                            # **别人的话**丢掉（漏回），比漏判回声更糟。不是图片类 ⇒ 照旧报成功、不登记。
+                            if self._looks_like_img_msg(top):
+                                _self_local_note(self, chat_id, top.get("local_id"),
+                                                     top.get("create_time"))
                             return V_OK, ("投递发图成功（第 %d 枪 %s · DB 回读 local_id=%s type=%s）"
                                           % (_i, _lbl, top.get("local_id"),
                                              top.get("type_name") or top.get("type")))
@@ -3541,6 +3721,14 @@ class WeChatAdapter:
             return False
         t = str(row.get("type_name") or row.get("type") or "")
         return ("文件" in t) or ("链接" in t) or ("卡片" in t)
+
+    @staticmethod
+    def _looks_like_img_msg(row) -> bool:
+        """DB 回读的行是不是"图片类"消息（本机实测图片消息 type='图片'）。"""
+        if not row:
+            return False
+        t = str(row.get("type_name") or row.get("type") or "")
+        return ("图片" in t) or ("image" in t.lower())
 
     @staticmethod
     def _sent_file_log_path() -> str:
@@ -3870,6 +4058,9 @@ class WeChatAdapter:
                     if nid > base_id:
                         top = rows[0]
                         if self._looks_like_file_msg(top):
+                            # 登记「这条库行是我发的」（发文件回读的 text 是 `[文件/链接/卡片]`，
+                            # 文本回声窗对它永远无效 ⇒ 只能靠行号，见 `is_self_local`）
+                            _self_local_note(self, chat_id, top.get("local_id"), top.get("create_time"))
                             try:                      # 记账只在**DB 回读确认**之后
                                 self._repeat_guard(chat_id, local_path, note=True)
                             except Exception:
@@ -7329,6 +7520,112 @@ class WeChatAdapter:
             return self._md.download_image(chat_id, int(local_id), save_dir=media_dir)
         except Exception:
             return None
+
+    def capture_newest_message_image(self, chat_id: str, tag: str = "") -> str | None:
+        """把「最新一条消息那一带」截下来落盘，返回 PNG 路径（失败 None）。
+
+        **为什么需要它**（用户反馈「识别不了表情包」「原本有的功能没了」）：微信 4.x 的表情消息
+        content 在库里是**加密数据**（驱动库作者原话，见 `wechatauto/demo_emoji_capture.py`；
+        本机实测：表情缓存在 `cache\\<月>\\Emoticon\\<md5[:2]>\\<md5>`，文件头无任何已知魔数、
+        也不是图片那套 AES-ECB——用图片密钥解不出来），驱动库 `MediaDownloader` 又只认
+        `local_type ∈ {3,34,43,49}` ⇒ **47 号"动画表情"一个都下不来** ⇒ 机器人只看到 `[表情]`
+        两个字，只能如实说"看不到图"。唯一可行的取图方式＝**截图**（库作者就是这么建议的）。
+
+        **怎么截**：不碰前台、不点鼠标 —— `chat_header.capture_image()` 走
+        `PrintWindow(PW_RENDERFULLCONTENT)`，拿的是**窗口自己的画面**（被遮挡也拿得到），
+        再按聊天面板几何裁出最新消息所在的一带。
+
+        ⛔ 两道闸（防"把别的会话的图当成本会话的消息喂给模型"）：
+          ① **会话头指纹必须 ok**（证明当前打开的**就是**这个会话；`no_ref`/`mismatch` 一律不截）；
+          ② 抓不到画面（微信最小化/收进托盘）⇒ 不截。
+        两条都是"宁可不给图，也不给错图"——看不到就如实说看不到（这是本项目的既有口径）。
+        """
+        try:
+            from . import chat_header as _ch
+            gui = self._get_gui()
+            st = {}
+            try:
+                st = _ch.check(chat_id, gui=gui)
+            except Exception as e:
+                log.debug("表情截图：会话头校验异常：%s", e)
+            if str((st or {}).get("status")) != "ok":
+                log.info("表情/图片截图跳过：会话头未确认（%s）—— 绝不猜画面归属",
+                         (st or {}).get("status"))
+                return None
+            img = _ch.capture_image(gui=gui)
+            if img is None:
+                log.info("表情/图片截图跳过：抓不到窗口画面（微信最小化/收进托盘时 PrintWindow 取不到）")
+                return None
+            w, h = img.size
+            top, bot = int(h * 0.50), int(h * 0.88)
+            if bot - top < 40 or w < 64:
+                log.info("表情/图片截图跳过：渲染区太小（%sx%s）", w, h)
+                return None
+            crop = img.crop((int(w * 0.26), top, w, bot))
+            d = getattr(self, "EMOJI_SHOT_DIR", None) or os.path.join(ROOT, "media", "emoji")
+            os.makedirs(d, exist_ok=True)
+            safe_tag = re.sub(r"[^0-9A-Za-z_\-]+", "_", str(tag or ""))[:16] or str(int(time.time()))
+            safe_chat = abs(hash(str(chat_id))) % (10 ** 8)
+            out = os.path.join(d, "shot_%s_%s.png" % (safe_chat, safe_tag))
+            crop.save(out, "PNG")
+            log.info("表情/图片截图已存：%s（会话头 ok sim=%.3f，%dx%d）",
+                     os.path.basename(out), float((st or {}).get("sim") or 0.0), crop.size[0], crop.size[1])
+            return out
+        except Exception as e:
+            log.warning("表情/图片截图失败（如实说看不到就好）：%s", e)
+            return None
+
+    def _text_landed_in_other_chat(self, text: str, chat_id: str, window_s: float = 120.0):
+        """这条文字是不是**落到别的会话里**了？返回 `(chat_id, 名字)`；没有 ⇒ `None`。
+
+        **为什么需要**（用户反馈里最严重的一条：「**他把我在实验群发的消息回到大群了**」）：
+          `send_text_posted` **不会切会话** —— 它靠会话头指纹/四档屏幕证据证明"当前打开的就是目标"。
+          证据一旦误判（指纹假阳性、OCR 读错名字、活动行时间恰好撞上），文字就会被打进**当时打开的
+          另一个会话**并且真的发出去；而我们的成功判据是"在**目标会话**里回读到新行"，查不到 ⇒
+          表观症状只是"发送未生效"，**发错会话这件事被完全掩盖**（这条风险 2026-09-13 就写在
+          `send_text_posted` 的注释里，但一直没有第二道网兜它）。更糟的是**重试**：每多打一枪，
+          就往那个错会话**再发一遍**同一句话。
+        做法（全离线、只读库、不碰窗口/光标）：把已知会话（群 + 私聊）最近几行扫一遍，归一化后
+          对上这条文字、时间在 `window_s` 内、且**不是**目标会话 ⇒ 返回那个会话。
+        ⚠️ 只在**目标会话回读失败**时才调用它（正常发送根本不走这条）——所以它不会给正常路径加开销。
+        """
+        t = self._echo_norm(str(text or ""))
+        if len(t) < 2:
+            return None
+        cands = []
+        for src in (getattr(self, "_groups", None) or [], getattr(self, "_privates", None) or []):
+            for it in (src or []):
+                if isinstance(it, dict):
+                    cid = str(it.get("wxid") or it.get("chat_id") or it.get("username")
+                              or it.get("user") or "")
+                    nm = str(it.get("nickname") or it.get("name") or it.get("remark") or "")
+                else:
+                    cid, nm = str(it or ""), ""
+                if cid and cid != str(chat_id):
+                    cands.append((cid, nm))
+        now = int(time.time())
+        for cid, nm in cands:
+            try:
+                rows = list(self._db.get_messages(cid, limit=4) or [])
+            except Exception:
+                continue
+            for row in rows:
+                try:
+                    ct = int(row.get("create_time") or 0)
+                except Exception:
+                    continue
+                if ct and ct < 1e12:
+                    ct = ct
+                if ct and abs(now - ct) > float(window_s):
+                    continue
+                got = self._echo_norm(str(row.get("content") or ""))
+                if not got:
+                    continue
+                short, long_ = (t, got) if len(t) <= len(got) else (got, t)
+                if t == got or (len(short) >= 2 and short in long_):
+                    name = nm or (self.group_name(cid) if hasattr(self, "group_name") else "") or cid
+                    return (cid, str(name))
+        return None
 
     def download_media(self, chat_id: str, local_id, kind: str) -> str | None:
         """下载语音 / 视频 / 文件到 `media/<kind>/`，返回本地路径；失败返回 None。

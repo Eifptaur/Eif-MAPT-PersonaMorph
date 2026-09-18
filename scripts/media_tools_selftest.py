@@ -127,5 +127,27 @@ fw2 = FakeWeChat()
 r5 = T._exec_download_media(mkctx(ENTRY_VIDEO, fw2), {"message_id": 4321, "kind": "video"})
 ok("正常下载：只调 download_media，不发送", fw2.calls == [("download_media", "video", 777)], str(fw2.calls))
 
+print("── F. 表情包看图：[表情] 也要能看（用户反馈「识别不了表情包」）──")
+_SRC_W = open(os.path.join("agent", "wechat.py"), encoding="utf-8").read()
+_SRC_T = open(os.path.join("agent", "tools.py"), encoding="utf-8").read()
+_SRC_P = open(os.path.join("agent", "prompt.py"), encoding="utf-8").read()
+ok("消息管线给表情带 media kind=emoji（源码断言）",
+   '{"kind": "emoji", "local_id": local_id}' in _SRC_W)
+ok("_exec_get_images 收 emoji（不再只认 image）",
+   'm.get("kind") in ("image", "emoji")' in _SRC_T)
+ok("表情走截图取图（库里是加密数据，驱动库下不来）",
+   'capture_newest_message_image' in _SRC_T
+   and "def capture_newest_message_image" in _SRC_W)
+ok("截图用 PrintWindow 那条链（chat_header.capture_image，不碰前台）",
+   "_ch.capture_image(gui=gui)" in _SRC_W.split("def capture_newest_message_image")[1][:2600])
+ok("⛔ 会话头不 ok 就不截（防把别的会话的画面喂给模型）",
+   'if str((st or {}).get("status")) != "ok":' in _SRC_W)
+ok("截不到时如实说看不到、不许编内容",
+   "如实告诉对方看不到，绝不要编造表情内容" in _SRC_T)
+ok("提示词里也把 [表情] 讲清楚（带图模型那条）",
+   "[表情]）也能用 get_message_images 看" in _SRC_P)
+ok("关掉看图时，[表情] 与 [图片] 一视同仁（如实说看不到）",
+   '消息里的 [图片]/[表情] 只是占位提示' in _SRC_P)
+
 print("\n%d/%d 通过" % (PASS, PASS + FAIL))
 sys.exit(1 if FAIL else 0)

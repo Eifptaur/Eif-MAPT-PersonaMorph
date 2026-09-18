@@ -109,7 +109,7 @@ def _builtin_tool_defs() -> list:
         },
         {
             "name": "get_message_images",
-            "description": "查看某条消息里的图片（能看懂图）。消息文本出现 [图片] 时用。message_idx=聊天记录里的 #数字。",
+            "description": "查看某条消息里的图片/表情包（能看懂图）。消息文本出现 [图片] 或 [表情] 时用。message_idx=聊天记录里的 #数字。表情包走屏幕截图（库里是加密数据下不下来）⇒ 只有它还是会话里最新一条时截得到。",
             "parameters": {
                 "type": "object",
                 "properties": {"message_id": {"description": "消息 id（聊天记录里的 #数字）"}},
@@ -684,25 +684,42 @@ def _exec_get_images(ctx, args):
         entry = ctx["store"].find_by_mid(ctx["chat_key"], args.get("message_id"))
         if not entry:
             return _err("当前会话找不到消息 %s。%s" % (args.get("message_id"), _mid_hint(ctx)))
-        images = [m for m in (entry.get("media") or []) if m.get("kind") == "image" and m.get("local_id")]
+        images = [m for m in (entry.get("media") or [])
+                  if m.get("kind") in ("image", "emoji") and m.get("local_id")]
         if not images:
-            return _ok("消息 %s 没有可查看的图片" % args.get("message_id"))
+            return _ok("消息 %s 没有可查看的图片/表情" % args.get("message_id"))
         data_urls = []
         failed = []
         for img in images:
-            path = ctx["wechat"].download_image(ctx["chat_id"], img["local_id"])
-            if not path:
-                failed.append("下载失败")
-                continue
+            if img.get("kind") == "emoji":
+                # 表情包（动画表情）：库里 content 是**加密数据**、驱动库只认图片/语音/视频/文件
+                # ⇒ 只能**截图**（`wechat.capture_newest_message_image`，走 PrintWindow，不碰前台）。
+                # 已截过的（消息入库时存了 path）直接用缓存，省一次抓屏。
+                cached = str(img.get("path") or "")
+                path = cached if (cached and _os.path.exists(cached)) else \
+                    ctx["wechat"].capture_newest_message_image(ctx["chat_id"], tag=str(img.get("local_id")))
+                if path:
+                    img["path"] = path
+                else:
+                    failed.append("表情截图没取到（这条已经不是会话里最新一条，或微信窗口不可见/收进了托盘）")
+                    continue
+            else:
+                path = ctx["wechat"].download_image(ctx["chat_id"], img["local_id"])
+                if not path:
+                    failed.append("下载失败")
+                    continue
             b64 = ctx["wechat"].image_to_base64(path)
             if b64:
                 data_urls.append(b64)
             else:
                 failed.append("编码失败")
         if not data_urls:
-            return _err("图片获取失败：%s" % "；".join(failed))
-        note = ("（另有 %d 张获取失败）" % len(failed)) if failed else ""
-        return {"content": _image_parts("消息 %s 的图片内容%s：" % (args.get("message_id"), note), data_urls)}
+            why = "；".join(failed)
+            if all((m.get("kind") == "emoji") for m in images):
+                return _ok("这张表情看不到：%s。**如实告诉对方看不到，绝不要编造表情内容**。" % why)
+            return _err("图片获取失败：%s" % why)
+        note = ("（另有 %d 项获取失败）" % len(failed)) if failed else ""
+        return {"content": _image_parts("消息 %s 的图片/表情内容%s：" % (args.get("message_id"), note), data_urls)}
     except Exception as e:
         return _err(str(e))
 
