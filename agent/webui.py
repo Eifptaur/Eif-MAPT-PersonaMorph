@@ -1341,6 +1341,22 @@ class WebUI:
                                                        bool(data.get("verify_only"))))
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)})
+                elif path == "/api/verifiers":
+                    # 症状检验器（2026-09-18）：给控制台列清单
+                    try:
+                        from . import verifiers as _vf
+                        self._json({"ok": True, "verifiers": _vf.catalog()})
+                    except Exception as e:                                   # noqa: BLE001
+                        self._json({"ok": False, "error": str(e)})
+                elif path == "/api/verify":
+                    # 跑一个检验器：**只读**（不动窗口/不发消息/不改配置），返回里带可复制的报告
+                    try:
+                        from urllib.parse import urlparse as _up, parse_qs as _pq
+                        from . import verifiers as _vf
+                        _q = _pq(_up(self.path).query)
+                        self._json(_vf.run(str((_q.get("id") or [""])[0] or "")))
+                    except Exception as e:                                   # noqa: BLE001
+                        self._json({"ok": False, "error": str(e)})
                 elif path == "/api/selfcheck":
                     # 一键体检：配置/微信/数据/界面适配/命中测试 全套
                     # body.mode="code" = 只做代码与依赖级检查（不动鼠标；首次向导用）

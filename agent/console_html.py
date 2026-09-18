@@ -748,6 +748,13 @@ th{color:var(--tx2);font-weight:500}
         <button id="codeCheckDeps" class="ghost" title="额外跑依赖版本详细核对（55 项，稍慢）">代码检测＋依赖核对</button>
         <button class="ghost" id="codeCheckTip2" title="点击切换到概览查看常驻状态条" onclick="document.getElementById('sec-overview').scrollIntoView({behavior:'smooth'})">查看进度条</button>
       </div>
+      <div class="desc" style="margin-top:12px"><b>症状检验器</b>：哪方面有问题就点哪一个，
+      <b>只读检查</b>（不动窗口、不发消息、不改配置），下面出一段能直接粘进「反馈」的报告。</div>
+      <div class="btns" id="vfBtns"></div>
+      <pre class="out dn" id="vfResult"></pre>
+      <div class="btns"><button class="ghost" id="vfCopy" disabled>复制报告</button>
+        <span class="hint" id="vfTip" style="align-self:center">每个 1~3 秒</span></div>
+      <hr style="border:none;border-top:1px solid var(--bd);margin:14px 0">
       <div class="btns">
         <button id="selfCheck" class="pri">点击测试</button>
         <button id="selfCheckStop" class="ghost" disabled>停止检测</button>
@@ -5066,6 +5073,36 @@ async function runCodeCheck(deps){
 $('codeCheck').onclick = ()=>runCodeCheck(false);
 if($('codeCheckDeps')) $('codeCheckDeps').onclick = ()=>runCodeCheck(true);
 
+// ── 症状检验器（2026-09-18）：按钮按症状排，结果可一键复制 ──
+(async()=>{
+  const box=$('vfBtns'), pre=$('vfResult'), cp=$('vfCopy');
+  if(!box||!pre) return;
+  let list=[];
+  try{ const r=await getJSON('/api/verifiers'); list=(r&&r.verifiers)||[]; }catch(e){}
+  if(!list.length){ box.innerHTML='<span class="hint">检验器清单读不到</span>'; return; }
+  list.forEach(v=>{
+    const b=document.createElement('button');
+    b.className='ghost'; b.textContent=v.name; b.dataset.vid=v.id;
+    b.onclick=async()=>{
+      pre.classList.remove('dn'); pre.textContent='正在检查：'+v.name+'…';
+      if(cp) cp.disabled=true;
+      try{
+        const r=await getJSON('/api/verify?id='+encodeURIComponent(v.id));
+        pre.textContent=(r&&r.report)||JSON.stringify(r,null,1);
+        if(cp) cp.disabled=!(r&&r.report);
+      }catch(e){ pre.textContent='检验器跑不起来：'+e; }
+    };
+    box.appendChild(b);
+  });
+  if(cp) cp.onclick=()=>{
+    const t=pre.textContent||'';
+    if(!t) return;
+    const done=()=>{ cp.textContent='已复制'; setTimeout(()=>cp.textContent='复制报告',1200); };
+    try{ navigator.clipboard.writeText(t).then(done, done); }
+    catch(e){ const ta=document.createElement('textarea'); ta.value=t; document.body.appendChild(ta);
+              ta.select(); document.execCommand('copy'); ta.remove(); done(); }
+  };
+})();
 $('selfCheck').onclick = async ()=>{
   const btn=$('selfCheck'); btn.disabled=true;
   if($('selfCheckStop')) $('selfCheckStop').disabled=false;
