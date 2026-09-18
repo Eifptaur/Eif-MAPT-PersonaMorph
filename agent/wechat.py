@@ -3355,6 +3355,28 @@ class WeChatAdapter:
             try:
                 from . import chat_header as _ch
                 _st = _ch.check(chat_id)
+                # ⛔ 2026-09-18 加（用户追问：「用 OCR 这种，它有时候读一读就不匹配，导致本来能发对的发错，
+                #   不发错的会发错，对的会发错」）：**指纹是弱档，不许单独授权发消息**。
+                #   `chat_is_open` 里早就写明"对面 r25 实测两个不同会话同时判 True，授权写动作的最后一道闸
+                #   绝不接它"—— 但这条发送链一直拿 `_ch.check`（纯指纹）的 ok 当放行依据 ⇒ 自相矛盾，
+                #   一假阳性就把消息发进另一个会话（＝"对的会发错"）。
+                #   ⇒ 指纹 ok 时**再要一档有区分力的证据**（名字 OCR / 会话头标题带 OCR / 活动行时间×DB）；
+                #   拿不到就**先按名字切一次会话**（按名字选行，比"当前开着的恰好是它"可靠得多），
+                #   切成了照样发；两条都不成才拒（并在说明里点明缺哪一档，不静默）。
+                if _st["status"] == "ok":
+                    _strong, _strong_why = self.chat_is_open(chat_id, gui=gui, name=name)
+                    if not _strong:
+                        log.warning("指纹档 ok 但**强档给不出**（%s）⇒ 不直接发，先按名字切会话再试",
+                                    str(_strong_why)[:90])
+                        _sw2_ok, _sw2_why = self.switch_chat_posted(chat_id, gui=gui, name=name)
+                        if not _sw2_ok:
+                            return False, ("只有会话头指纹这一档成立（**弱档、会假阳性**），"
+                                           "按名字切会话也没成（%s）⇒ 这条不发：宁可漏发，绝不发错会话。"
+                                           "（想让它发：把目标会话在微信里点开，或让它在会话列表里能被认出来）"
+                                           % str(_sw2_why)[:70])
+                        log.info("按名字切会话成功 ⇒ 继续发（%s）", str(_sw2_why)[:70])
+                        _st = {"status": "ok", "sim": 1.0,
+                               "note": "按名字切会话后重来（%s）" % str(_sw2_why)[:50]}
                 if _st["status"] == "mismatch":
                     # 🔴 2026-09-18 修（拍摄现场 02:09：三句文字回复全被拒发、群里只有图没有话）：
                     #   日志原文「投递切会话后发送失败：会话头不匹配，拒绝投递（防发错会话）：相似度 0.530 < 0.90」。

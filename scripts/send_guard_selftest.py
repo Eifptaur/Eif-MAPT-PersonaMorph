@@ -274,6 +274,26 @@ try:
 except Exception as e:
     ck("G 出站闸门", False, repr(e)[:90])
 
+print("\n[H] 弱档指纹不许单独授权发送（用户 2026-09-18：用 OCR 这种，读一读就不匹配，对的会发错）")
+try:
+    _SEG = SRC.split("def send_text_posted(")[1]
+    _SEG = _SEG[: _SEG.index("def send_image_posted(")]
+    ck("H1 指纹（`_ch.check`）ok 时，还要再要一档**有区分力**的证据（`chat_is_open`）",
+       'if _st["status"] == "ok":' in _SEG
+       and "self.chat_is_open(chat_id, gui=gui, name=name)" in _SEG)
+    ck("H2 这一关排在 mismatch 那一关**之前**（先补强证据，再谈指纹判否）",
+       _SEG.index('if _st["status"] == "ok":') < _SEG.index('if _st["status"] == "mismatch":'))
+    ck("H3 强档给不出时**先按名字切会话**再发（按名字选行，比『当前开着的恰好是它』可靠）",
+       "_sw2_ok, _sw2_why = self.switch_chat_posted(chat_id, gui=gui, name=name)" in _SEG)
+    ck("H4 两条都不成才拒，且说明里点明『弱档会假阳性』＋『宁可漏发，绝不发错会话』",
+       "弱档、会假阳性" in _SEG and "宁可漏发，绝不发错会话" in _SEG)
+    ck("H5 不静默：拒发时同时落一条 warning 日志（现场可查）",
+       "不直接发，先按名字切会话再试" in _SEG)
+    ck("H6 与 `chat_is_open` 既有口径一致（那里早就写明授权闸默认不接指纹）",
+       "allow_weak" in SRC and "授权写动作的最后一道闸绝不接它" in SRC)
+except Exception as e:
+    ck("H 弱档指纹不授权", False, repr(e)[:90])
+
 print("\n[结论] %d 通过 / %d 失败" % (len(OK), len(BAD)))
 if BAD:
     print("失败项：%s" % BAD)
