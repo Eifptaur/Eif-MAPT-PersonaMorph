@@ -120,6 +120,22 @@ try:
         open(_vpath, "w", encoding="utf-8", newline="").write(_src)
         VER.BUILD = _old_build
     ok(_f3 == _f1, "改了 `agent/version.py` 里的 BUILD 行 ⇒ 指纹**不变**（防自指死循环）")
+    # ⚠️ 2026-09-18 深夜真坑：BUILD 改写前后**同尺寸**，同一秒改写时 `__pycache__` 的 (mtime,size)
+    #   校验认为缓存有效 ⇒ `from agent.version import BUILD` 读到**旧值**，把清单写成了上一版的指纹
+    #   （用户侧会一直提示"有新包"）。⇒ 打包/发布链一律用**读文件**的 `read_build_from()`。
+    _rb = getattr(VER, "read_build_from", None)
+    ok(callable(_rb), "有**读文件**的指纹读取口（发布链不许 import 取 BUILD）")
+    if callable(_rb):
+        ok(str(_rb()) == str(_old_build or ""), "read_build_from() 与文件里的 BUILD 一致",
+           "%r vs %r" % (str(_rb()), str(_old_build or "")))
+    _mm = open(os.path.join(ROOT, "scripts", "make_manifest.py"), encoding="utf-8").read()
+    ok('"--build"' in _mm and "read_build_from" in _mm,
+       "清单生成器接受 `--build`（发布链把**包内**那个指纹传进来，唯一事实来源＝包）")
+    _rel = open(os.path.join(ROOT, "_scratch", "_release_1331.py"), encoding="utf-8").read() \
+        if os.path.exists(os.path.join(ROOT, "_scratch", "_release_1331.py")) else ""
+    if _rel:
+        ok("zipfile.ZipFile(ZIP)" in _rel and "from agent.version import BUILD" not in _rel,
+           "发布脚本从**包内**读指纹（zipfile 读 agent/version.py），不再 import agent.version")
 
     print("\n[U5] 坏清单**不许**被当成「已是最新」（负向，关键）")
     r = UC.state({"url": badp})
