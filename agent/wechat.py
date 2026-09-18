@@ -136,6 +136,46 @@ def _fg_stash_ok() -> bool:
         return True
 
 
+def _fg_is_wechat() -> bool:
+    """当前前台窗口**是不是微信的**（主窗 / 搜索浮层 / 表情面板都算）。
+
+    ⚡ 2026-09-18 深夜（作者现场：「**我是输入的那一下，它跳到前台了**」＋「用户在玩游戏正在操作键盘，
+    你把会话切出来，此时用户的键盘操作就自动跳到输入框了」）：只判"前台 == 微信**主窗**"不够 ——
+    抢前台的是**搜索浮层那个独立小窗**（同进程、不同 hwnd）⇒ 那条"最近有输入就不抢"的保护会误判成
+    "用户自己切过去的"，于是**不收回**，玩家的键盘就一路打进微信输入框。⇒ 改**按进程判**：前台属于
+    微信进程 ⇒ 必是**我们的动作**招来的（我们从不要求用户去点微信）。
+    """
+    try:
+        import win32process
+        from . import input_backend as _ib
+        h = int(_fg_now() or 0)
+        main = int(_ib.find_main_window() or 0)
+        if not h or not main:
+            return False
+        return int(win32process.GetWindowThreadProcessId(h)[1]) == \
+            int(win32process.GetWindowThreadProcessId(main)[1])
+    except Exception:
+        return False
+
+
+def _wait_user_pause(max_s: float = 2.0, idle: float = 0.9) -> bool:
+    """**等用户停一下手**再动窗：最多等 `max_s` 秒，等到"最近 `idle` 秒没输入"就返回 True。
+
+    ⚡ 2026-09-18 深夜（作者场景）：「**用户在玩游戏、正在操作键盘**，你把会话切出来，用户的键盘操作
+    就自动跳到输入框了」。伪激活必然让微信短暂占前台，**前台一变，用户正在按的键就落进微信**。
+    ⇒ 动手前先等一个**输入空档**（等不到也照做，但后面每一步都立刻把前台还回去，把代价压到最短）。
+    """
+    try:
+        t0 = time.time()
+        while time.time() - t0 < max(0.0, float(max_s)):
+            if _user_idle_seconds() >= float(idle):
+                return True
+            time.sleep(0.1)
+        return False
+    except Exception:
+        return False
+
+
 def _wait_dialog_gone(hwnd: int, timeout: float = 1.5) -> bool:
     """等某个对话框**真的消失**（最多 `timeout` 秒）；返回是否真的没了。
 
@@ -446,13 +486,7 @@ def _restore_fg_until(note: str = "", timeout: float = 2.5, keep: bool = True,
     #      真正要保护的是"用户自己切到了别的窗口"——那种情况下前台**不是微信主窗**，本条不触发。
     try:
         _cur_fg = int(_fg_now() or 0)
-        _we_caused = False
-        try:
-            from . import input_backend as _ib
-            _main_hwnd = int(_ib.find_main_window() or 0)
-            _we_caused = bool(_main_hwnd and _cur_fg and _main_hwnd == _cur_fg)
-        except Exception:
-            _we_caused = False
+        _we_caused = _fg_is_wechat()
         if (not _we_caused) and _user_idle_seconds() < 1.2:
             log.info("还前台跳过（%s）：最近 %.2fs 内有用户输入 ⇒ 不抢用户刚切过去的窗口",
                      note or "未注明", _user_idle_seconds())
@@ -3019,6 +3053,9 @@ class WeChatAdapter:
             main = int(main or 0)
             if not main:
                 return False, "找不到微信主窗"
+            # ⚡ 2026-09-18 深夜（作者场景）：用户正在玩游戏按键时**先等一个输入空档**再动（等不到也照做，
+            #   每格都会立刻还前台）。这条与"不打扰用户"是一条线：把"打断正在输入的键"降到最低。
+            _wait_user_pause(max_s=1.6, idle=0.9)
             _hdr0 = self._header_now(gui)
             if not _hdr0:
                 # ⛔ fail-closed（2026-09-18 深夜）：读不到会话头就**不许按键**——否则等于"闭着眼往下走"，
@@ -3588,6 +3625,9 @@ class WeChatAdapter:
                                    % (ent.get("why"), ent.get("cand_txt") or ent.get("cands"),
                                       ("｜现场已存 %s" % _d) if _d else ""))
                 pop_hwnd, prect, pimg, pwhy = pop
+                # ⛔ 2026-09-18 深夜实测**不许**在这里就还前台：搜索浮层**必须处于激活状态**才会渲染结果
+                #   与接收投递的字（现场：开完立刻还 ⇒ 浮层停在 552×338 空画面、投字也不生效，
+                #   整条链 19.3s 后失败）。⇒ 收尾统一还（函数末尾 finally 里那次），进链前先等用户空档。
                 row, shot_size = None, None
                 # ⚠️ 浮层会**保留上次的查询词**（实测：再次打开时它还高着开、词还在）——这时再打字会变成
                 #    「E」+「E」⇒ 查不到任何联系人、浮层里也就没有「联系人」段（本轮就是这么失败的：
@@ -3605,6 +3645,7 @@ class WeChatAdapter:
                     ok_t, why_t = backend.send_text(int(pop_hwnd), name)
                     if not ok_t:
                         return False, "往搜索浮层投字失败：%s" % why_t
+                    # ⛔ 打完字**也不许**立刻还前台（同上：浮层失去激活就不出结果）——收尾统一还。
                     for _i in range(15):          # 总预算仍是 ~3.0s（原来 5×0.6）
                         time.sleep(0.2)
                         im3 = _chh.shot_window(int(pop_hwnd))
@@ -3624,8 +3665,24 @@ class WeChatAdapter:
                     return False, ("搜索浮层的画面里没认出「%s」那一行（浮层截图 %s%s；浮层%s）"
                                    % (name, shot_size, ("｜现场已存 %s" % _d) if _d else "",
                                       "已关掉" if _closed else "**没关掉**"))
+                # ⚡ 2026-09-18 深夜修（**"点结果行点偏"** 实测：同一个浮层，第一次点到「演示」✓，
+                #   第二次却打开了「腾新闻」✗）：`prect` 是**几秒前**快照的浮层矩形，而搜索浮层会
+                #   **随结果变高**（实测「输入前 552×338、出结果后 552×891」）⇒ 拿旧矩形去加行坐标，
+                #   y 会整体偏（表现就是"差一行"）。⇒ 点之前**重取一次浮层矩形**（同一个 hwnd），
+                #   拿不到就用旧的（不因此失败）。
+                _fresh = None
+                try:
+                    for _h, _r, _c, _t in self._search_window_hwnds(main=main):
+                        if int(_h) == int(pop_hwnd):
+                            _fresh = _r
+                            break
+                except Exception:
+                    _fresh = None
+                _pr = _fresh or prect
+                if _fresh and tuple(_fresh) != tuple(prect):
+                    log.info("搜索浮层矩形已变（快照 %s → 现取 %s）⇒ 用现取的算落点", tuple(prect), tuple(_fresh))
                 _cok, _cwhy = self._click_posted(backend, int(pop_hwnd),
-                                                 (int(prect[0]) + int(row["x"]), int(prect[1]) + int(row["y"])),
+                                                 (int(_pr[0]) + int(row["x"]), int(_pr[1]) + int(row["y"])),
                                                  "搜索浮层结果行")
                 if not _cok:
                     return False, _cwhy
