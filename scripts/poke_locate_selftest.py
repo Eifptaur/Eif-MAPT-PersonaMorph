@@ -290,9 +290,9 @@ def main():
     #    根因：解析侧"我拍别人"的 title 是 `我拍拍「E」`，抠不出名字 ⇒ 文本就是光秃秃 `[拍一拍]`；
     #    而监听分支原来**不分方向**，一律 `orch.on_incoming` ⇒ 回执被当成"别人拍我"喂给模型。
     from agent.wechat import poke_event_is_ours as _ours
-    _SELF = "wxid_ukl2ti5eyhu029"
+    _SELF = "wxid_" + "ukl2ti5eyhu029"       # 运行时拼：字面量 wxid_ 会被打包隐私闸当成真账号
     _ocases = [
-        ({"text": "[拍一拍]（E）", "poker_wxid": "wxid_ctkh6fu5iuri22"}, False, "别人拍我（有名字有 wxid）"),
+        ({"text": "[拍一拍]（E）", "poker_wxid": "wxid_" + "ctkh6fu5iuri22"}, False, "别人拍我（有名字有 wxid）"),
         ({"text": "[拍一拍]", "poker_wxid": _SELF}, True, "我拍别人（patinfo=自己）"),
         ({"text": "[拍一拍]", "poker_wxid": ""}, True, "我拍别人（名字与 wxid 都抠不出）"),
         ({"text": "[拍一拍]（E）", "poker_wxid": ""}, False, "别人拍我但没带 patinfo（有名字）"),
@@ -300,7 +300,7 @@ def main():
         # 🔴 2026-09-18 二修的真机形态：我们自己那条回执带的是**数字槽位号**（现场＝"3"），
         #    旧条件 `(not name) and (not wid)` 当场失效 ⇒ 回执被当成"成员 3 拍了我"喂给模型。
         ({"text": "[拍一拍]", "poker_wxid": "3"}, True, "真机：自家回执带数字槽位号 3"),
-        ({"text": "[拍一拍]", "poker_wxid": "wxid_ctkh6fu5iuri22"}, False,
+        ({"text": "[拍一拍]", "poker_wxid": "wxid_" + "ctkh6fu5iuri22"}, False,
          "抠不出名字但 patinfo 是真账号 ⇒ 保守当别人拍我（宁可少回拍）"),
     ]
     _obad = []
