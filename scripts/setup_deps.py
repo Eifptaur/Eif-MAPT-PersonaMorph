@@ -31,7 +31,48 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 IDLE_LIMIT = 600
 MIRRORS = ["https://pypi.tuna.tsinghua.edu.cn/simple",
            "https://mirrors.aliyun.com/pypi/simple/",
+           "https://mirrors.cloud.tencent.com/pypi/simple/",
+           "https://repo.huaweicloud.com/repository/pypi/simple/",
+           "https://mirrors.ustc.edu.cn/pypi/simple/",
            "https://pypi.org/simple"]
+
+
+def pick_fastest_mirror(timeout: float = 3.5):
+    """并行探每个镜像的 `/simple/`，挑**响应最快**的那个（探不到就按原顺序兜底）。
+
+    为什么（2026-09-18 作者那台机器延迟 ~1900ms）：「下载依赖十几分钟」**慢在往返次数**，
+    不是字节数 —— 先花 3 秒把最快的源量出来，后面每一轮往返都省。
+    """
+    import threading
+    res = {}
+
+    def _one(u):
+        t0 = time.time()
+        try:
+            import urllib.request
+            req = urllib.request.Request(u, headers={"User-Agent": "persona-morph-setup/1"})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                r.read(256)
+            res[u] = time.time() - t0
+        except Exception:
+            res[u] = 999.0
+
+    ts = [threading.Thread(target=_one, args=(u,), daemon=True) for u in MIRRORS]
+    [t.start() for t in ts]
+    [t.join(timeout + 1.5) for t in ts]
+    best = sorted(MIRRORS, key=lambda u: res.get(u, 999.0))[0]
+    ok = [u for u, v in res.items() if v < 900]
+    print("  镜像测速：%s" % ("、".join("%s %.1fs" % (_short(u), v) for u, v in
+                                      sorted(res.items(), key=lambda kv: kv[1])) or "都没探到"))
+    return best, bool(ok)
+
+
+def _short(u: str) -> str:
+    try:
+        from urllib.parse import urlparse
+        return urlparse(u).hostname or u[:20]
+    except Exception:
+        return u[:20]
 
 
 def _run_stream(cmd, idle_limit=IDLE_LIMIT):
@@ -131,7 +172,7 @@ def main():
                   for f in os.listdir(wheels)) if os.path.isdir(wheels) else False
     print("-" * 52)
     print("首次安装需要下载约 100~150MB（opencv-python 约 42MB、imageio-ffmpeg 约 30MB 占大头）。")
-    print("网速 1MB/s 上下时**十几分钟是正常的**，中途请不要关窗；装过的包不会重下。")
+    print("装过的包不会重下；本版会**先测速挑最快的源、再跳过依赖解析**，往返次数大幅减少。")
     print("[%s] 开始安装缺失/需升级的依赖 ..." % ("离线" if offline else "联网"))
     req = os.path.join(ROOT, "requirements.txt")
     last = (1, "")
@@ -139,23 +180,36 @@ def main():
         last = _run_stream([py_exe, "-m", "pip", "install", "--no-index",
                             "--find-links", wheels, "-r", req])
     else:
-        for idx in MIRRORS:
+        # ── 2026-09-18 提速（作者：「下载依赖十几分钟，也就 1 点多 MB」）──────────────
+        #    慢在**往返次数**：默认会对着二十多个包做依赖解析，每个包好几轮；1.9s 延迟下就是十几分钟。
+        #    ⇒ ① 先并行测速挑最快的源；② 先 `--no-deps` 把**钉死版本的主包**快速拉下来（省掉绝大部分往返）；
+        #      ③ 再用一次普通安装补齐传递依赖（此时大部分已装好，很快）；④ 还不行就逐个源兜底。
+        best, _any = pick_fastest_mirror()
+        order = [best] + [u for u in MIRRORS if u != best]
+        print("  本轮用最快的源：%s" % _short(best))
+        print("  第 1 趟：先装主包（跳过依赖解析，省往返）…")
+        rc, tail = _run_stream([py_exe, "-m", "pip", "install", "-U", "--no-deps",
+                                "--progress-bar", "off", "--timeout", "60", "--retries", "5",
+                                "-i", best, "-r", req])
+        last = (rc, tail)
+        print("  第 2 趟：补齐传递依赖（大部分已就位，很快）…")
+        for idx in order:
             rc, tail = _run_stream([py_exe, "-m", "pip", "install", "-U",
                                     "--progress-bar", "off", "--timeout", "60",
                                     "--retries", "5", "-i", idx, "-r", req])
             last = (rc, tail)
             if rc == 0:
                 break
-            print("  镜像 %s 失败（exit %s），切换下一个源..." % (idx, rc))
+            print("  镜像 %s 失败（exit %s），切换下一个源..." % (_short(idx), rc))
             tail20 = "\n".join(tail.splitlines()[-20:])
             if tail20.strip():
                 print("    这个源失败原因末尾：")
                 print(tail20)
         else:
-            print("  三个源都失败了 —— 再试一次第一个源（已下完的包不会重下）…")
+            print("  所有源都失败了 —— 再试一次最快的那个源（已下完的包不会重下）…")
             last = _run_stream([py_exe, "-m", "pip", "install", "-U",
                                 "--progress-bar", "off", "--timeout", "60",
-                                "--retries", "5", "-i", MIRRORS[0], "-r", req])
+                                "--retries", "5", "-i", best, "-r", req])
 
     rows2_all, _ok_all = dep_check("all")
     rows2_key, _ok_key = dep_check("key")
