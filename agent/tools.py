@@ -1069,9 +1069,11 @@ def _exec_collect_emoji(ctx, args):
                  if m.get("local_id") and m.get("kind") in ("emoji", "image")]
         if not media:
             return _err("消息 %s 不是表情/图片（无法收藏）" % args.get("message_id"))
-        # ① 鼠标真操作：右键气泡→添加到表情
+        # ① 鼠标真操作：右键气泡→添加到表情（**媒体消息必须带 local_id**：气泡没有可读文本，
+        #    几何定位要靠它核对"目标就是最新那一条"，见 wechat._media_bubble_locate）
         ok, msg = ctx["wechat"].collect_emoji_native(ctx["chat_id"], str(entry.get("text") or ""),
-                                                      str(entry.get("sender_name") or ""))
+                                                      str(entry.get("sender_name") or ""),
+                                                      local_id=media[0]["local_id"])
         _text = str(entry.get("text") or "")
         _sender = str(entry.get("sender_name") or "")
         if ok:

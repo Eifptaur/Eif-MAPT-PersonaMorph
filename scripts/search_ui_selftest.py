@@ -328,5 +328,61 @@ try:
 except Exception as _e12:
     ok("is_search_window 可单测", False, str(_e12)[:80])
 
+print("⑬ 「搜了两遍」的根因不许回归（2026-09-18 现场：第一次其实**切成功了**，却被判否 ⇒ 又搜一遍）")
+# 日志原文（22:06:57 → 22:07:02 → 22:07:05）：
+#   ①「点了搜索浮层的『演示』行…但内容级复核没过：聊天区里没有目标会话最近的任何一条文本（试过 6 条）」
+#   ②5 秒后又走一遍搜索路线（用户看到的就是「搜了两遍」）
+#   ③再 3 秒：「切会话不需要：强档证据说当前就是目标会话（会话头标题带 OCR='演示（3）'）」
+#   ⇒ 根因＝**只认内容级复核**（浮层还盖着聊天区，读不到内容），强档证据（会话头）就在旁边却没用。
+_w13 = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
+_icon_seg = _w13[_w13.index('if variant == "icon":'):]
+_icon_seg = _icon_seg[:_icon_seg.index("# —— box 形态")]
+ok("图标路线：**先看强档证据**（chat_is_open），再谈内容级复核",
+   "chat_is_open(chat_id, gui=gui, name=name)" in _icon_seg
+   and _icon_seg.index("chat_is_open(chat_id, gui=gui, name=name)") < _icon_seg.index("chat_identity_ok(chat_id, gui=gui)"))
+ok("图标路线：强档证据是**轮询**等出来的（不是打一枪就判否）", "for _i in range(4)" in _icon_seg)
+ok("图标路线：做内容级复核**之前先关掉浮层**（浮层盖着聊天区 ⇒ 读不到内容）",
+   _icon_seg.index("_close_search_popover(int(pop_hwnd))") < _icon_seg.index("chat_identity_ok(chat_id, gui=gui)"))
+ok("图标路线：判据**不可用**（读不出）时按弱证据计切成功（原来这里直接判否 ⇒ 又搜一遍）",
+   '读不出" in _why_s2' in _icon_seg or "'读不出' in _why_s2" in _icon_seg or '读不出' in _icon_seg)
+ok("两条路线（图标/box）都接受「读不出 ⇒ 弱证据」，口径一致",
+   _w13.count('"读不出" in') >= 2)
+ok("弱证据只放宽**切会话**这一步（发送闸另有内容×活动行时间 ⇒ 文字仍在）",
+   "发送闸仍要另过内容×活动行时间" in _w13)
+
+print("⑭ 笑脸落点必须**帧内现量**（现场：窗口改成 947×972 后面板一次都没开出来）")
+# 现场：比例法 `0.324×947 = 306` 落在输入框**左边**的空白处（点了等于没点，面板窗从头到尾没出现），
+# 而笑脸实际在 374；笑脸与输入框左沿的距离基本恒定（331→374 ≈ 43px），"占整幅的比例"却随窗口变。
+_tb = Image.new("RGB", (947, 972), (255, 255, 255))
+_dtb = ImageDraw.Draw(_tb)
+_dtb.line((341, 890, 341, 950), fill=(150, 150, 150), width=2)          # 输入框左边框（2px 细线）
+_dtb.ellipse((362, 906, 387, 930), outline=(60, 60, 60), width=3)       # 笑脸字形
+_dtb.rounded_rectangle((841, 896, 909, 936), radius=6, fill=(200, 200, 200))   # 「发送」大块
+_h = CO.toolbar_first_icon(_tb, pane_left=331)
+ok("帧内量到的笑脸落点 ≈ (374,918)，且**没被输入框边框线带偏**",
+   bool(_h) and abs(_h[0] - 374) <= 6 and abs(_h[1] - 918) <= 8, str(_h))
+ok("空帧 ⇒ None（fail-closed，不猜点）", CO.toolbar_first_icon(Image.new("RGB", (947, 972), (255, 255, 255)),
+                                                              pane_left=331) is None)
+_w14 = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
+_seg_btn = _w14[_w14.index("def _emoji_btn_pos"):]
+_seg_btn = _seg_btn[:_seg_btn.find("\n    def ", 10)]
+ok("_emoji_btn_pos **先现量**、比例法只当兜底",
+   "toolbar_first_icon" in _seg_btn
+   and _seg_btn.index("grab_render") < _seg_btn.index("int(w * 0.324)"))
+
+print("⑮ 收藏表情：媒体消息（气泡没有可读文本）必须走几何定位，且**不许猜点**")
+ok("message_menu 有 media/want_lid 形参", "media: bool = False, want_lid=None" in _w14)
+ok("collect_emoji_native 透传 media=True/want_lid", "media=True, want_lid=local_id" in _w14)
+ok("媒体占位文本表存在（[表情]/[动画表情]/[图片]…）", "_MEDIA_PLACEHOLDERS" in _w14)
+_seg_ml = _w14[_w14.index("def _media_bubble_locate"):]
+_seg_ml = _seg_ml[:_seg_ml.find("\n    def ", 10)]
+ok("① 先核 DB：目标必须**就是最新那一条**（否则拒）", "目标不是最新一条" in _seg_ml)
+ok("② 只认**尺寸一致**的头像方块（实测表情图内部会被报成 36×35 的假方块）",
+   "0.8 * _mw" in _seg_ml and "_real" in _seg_ml)
+ok("③ 落点自检：算出来的点必须不是背景色", "与背景同色" in _seg_ml)
+ok("④ 失败时如实说「没点右键」，不许假装点过", "没点右键，绝不乱点" in _w14)
+_t15 = open(os.path.join(ROOT, "agent", "tools.py"), encoding="utf-8").read()
+ok("工具侧把 local_id 传下去（媒体消息必须给）", 'local_id=media[0]["local_id"]' in _t15)
+
 print("\n结果：%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

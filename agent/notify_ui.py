@@ -244,10 +244,16 @@ def console_url(anchor: str = "") -> str:
         _fallback = "http://127.0.0.1:%d/" % _port + (("?token=" + _tok) if _tok else "")
     except Exception:
         _fallback = ""
-    if base and not _live(base) and _fallback and _live(_fallback):
-        log.warning("logs/console.url 指向的端口连不上（多半是被随机端口实例写脏了）⇒ 改用配置地址 %s",
-                    _fallback.split("?")[0])
-        base = _fallback
+    if base and not _live(base) and _fallback:
+        # ⚠️ 2026-09-18 晚修（判据 `console_open_selftest` 那条"死链回落"一直红）：
+        #   老写法要求 **文件死 且 配置地址活** 才回落 ⇒ 控制台恰好没在跑时（配置地址也连不上）
+        #   就把死链原样交出去，正是要防的那件事；而且判据结果取决于"本机此刻有没有在听的控制台"
+        #   ⇒ **不可复跑**。改成：文件值连不上（复查一次，0.4s 在忙机器上会误判）⇒ 一律以**配置地址**
+        #   为准（配置是文档化的唯一权威来源）；文件值活着则照旧以它为准（随机端口实例仍优先）。
+        if not _live(base):
+            log.warning("logs/console.url 指向的端口连不上（多半是被随机端口实例写脏了）⇒ 改用配置地址 %s",
+                        _fallback.split("?")[0])
+            base = _fallback
     if not base:
         base = _fallback or "http://127.0.0.1:3210/"
     if anchor:

@@ -3313,14 +3313,39 @@ class WeChatAdapter:
                 if not _cok:
                     return False, _cwhy
                 time.sleep(1.0)
+                # ⚡ 2026-09-18 晚（作者现场：「**你发消息搜索的时候就搜了两遍**」的根因）：
+                #   这一格原来只认**内容级复核**（`chat_identity_ok` 读聊天区最近几条）——
+                #   而点完结果行之后**搜索浮层还盖着聊天区**（实测日志：22:06:57「点了『演示』行…
+                #   聊天区里没有目标会话最近的任何一条文本（试过 6 条）」），于是 5 秒后又搜了一遍
+                #   （22:07:02），第二次才由**会话头标题带 OCR='演示（3）'** 认出"其实已经切过去了"。
+                #   ⇒ 口径改成**分档**（与 box 路线一致）：①先看强档证据（会话头/活动行，不依赖聊天区
+                #   内容、浮层盖着也读得到）②再关掉浮层做内容级复核 ③判据**不可用**（读不出）时按弱证据
+                #   计切成功——真正发消息仍要另过发送闸（内容 × 活动行时间），这里放宽的只是"切"这一步。
+                _op, _opwhy, idn, idn_why = False, "", None, ""
+                for _i in range(4):            # 总预算 ~1.8s：**先等强档证据出现**（原来 1.0s 打一枪就判否）
+                    time.sleep(0.35)
+                    _op, _opwhy = self.chat_is_open(chat_id, gui=gui, name=name)
+                    if _op:
+                        break
+                if _op:
+                    _closed = _close_search_popover(int(pop_hwnd))     # 切成了就把浮层收掉（别留屏幕上）
+                    return True, ("搜索浮层路线成功（强档证据：%s；%s；浮层%s）"
+                                  % (str(_opwhy)[:80], row.get("why"),
+                                     "已关掉" if _closed else "**没关掉**"))
+                _closed = _close_search_popover(int(pop_hwnd))         # 先关浮层：它盖着聊天区，不关读不到内容
+                time.sleep(0.4)
                 idn, idn_why = self.chat_identity_ok(chat_id, gui=gui)
                 if idn is True:
                     return True, ("搜索浮层路线成功（浮层 hwnd=%s，%s，%s，落点 %s）：%s"
                                   % (pop_hwnd, pwhy, row.get("why"), (row["x"], row["y"]), idn_why))
+                _why_s2 = str(idn_why)
+                if idn is None or ("读不出" in _why_s2):
+                    return True, ("搜索浮层路线：内容级判据这次不可用（%s），但点的是浮层里名字匹配「%s」的"
+                                  "结果行 ⇒ 按弱证据计切成功（发送闸仍要另过内容×活动行时间）"
+                                  % (_why_s2[:70], name[:10]))
                 _d = self._dump_fail_shot("search_identity", _chh.capture_image(gui=gui), {
                     "name": name, "row_why": row.get("why"), "落点": [row["x"], row["y"]],
-                    "idn": str(idn), "idn_why": str(idn_why)[:400]})
-                _closed = _close_search_popover(int(pop_hwnd))         # 复核没过也要关掉浮层
+                    "idn": str(idn), "idn_why": str(idn_why)[:400], "strong": str(_opwhy)[:200]})
                 return False, ("点了搜索浮层的「%s」行（%s，落点 %s），但内容级复核没过：%s%s"
                                % (name, row.get("why"), (row["x"], row["y"]), idn_why,
                                   ("｜现场已存 %s" % _d) if _d else "") +
@@ -3361,7 +3386,7 @@ class WeChatAdapter:
                 if _idn2 is True:
                     return True, ("搜索框路线（结果在独立浮层里）成功：浮层 hwnd=%s，%s，%s"
                                   % (_ph, _pwhy, _idn2_why))
-                if _idn2 is None:
+                if _idn2 is None or ("读不出" in str(_idn2_why)):
                     return True, ("搜索框路线（浮层）：内容级判据这次不可用（%s），但点的是浮层里名字匹配「%s」"
                                   "的结果行 ⇒ 按弱证据计切成功（发送闸仍要另过内容×活动行时间）"
                                   % (str(_idn2_why)[:70], name[:10]))
@@ -6600,6 +6625,118 @@ class WeChatAdapter:
         except Exception:
             return []
 
+    # 媒体消息（气泡里没有可读文本）的**归一化占位文本**：库里这类消息的 text 就是这几个字，
+    # 用它们判"要不要走几何定位"（见 `_media_bubble_locate`）。
+    _MEDIA_PLACEHOLDERS = ("[表情]", "[动画表情]", "[图片]", "[视频]", "[文件]", "[链接]", "[语音]")
+
+    def _media_bubble_locate(self, gui, chat_id: str = "", want_lid=None):
+        """**几何定位**媒体消息（动画表情/图片：气泡里没有可读文本）的气泡点 → `(x, y, why)`；失败 `(None, None, 原因)`。
+
+        为什么需要（2026-09-18 晚，收藏表情连着失败 · 作者：「看看能不能收藏成功来」）：
+        `message_menu` 定位消息行靠 **OCR 文本匹配**（`_send_poke_locate(db_text=…)`），而动画表情气泡
+        **根本没有文本**（库里归一化成 `[表情]`）⇒ 永远匹配不上 ⇒ 最后落到
+        「右键菜单里没找到『添加到表情』」这条**假失败**（实测：`GetCursorPos` 前后一模一样 ＝ **一枪都没点**）。
+        ⇒ 补一条只看几何的定位：**最下面那个头像方块**（＝最新那条消息的发送者）右边、头像那条 y 带里的
+        **最宽连续块**就是媒体气泡。三条硬规矩：
+        ① **先核 DB**——目标必须就是**最新那一条**且类型是媒体（想定别的消息 ⇒ 拒，避免点在别的消息上）；
+        ② 量不到就如实失败（**不猜点、不落公式**）；
+        ③ 只用**头像那条 y 带**，不往输入框方向延伸（那里会被当成一块"宽块"⇒ 落点掉进输入框）。
+        """
+        try:
+            from collections import Counter
+            from . import chat_header as _ch
+            rows = self._db.get_messages(chat_id, limit=3) if chat_id else []
+            if not rows:
+                return None, None, "读不到会话消息 ⇒ 不猜点"
+            newest = rows[0]
+            ntype = str(newest.get("type") or "")
+            nlid = str(newest.get("local_id"))
+            if want_lid not in (None, "") and str(want_lid) != nlid:
+                return None, None, ("目标不是最新一条（最新 local_id=%s，目标=%s）⇒ 几何定位不敢用"
+                                    "（会点在别的消息上）" % (nlid, want_lid))
+            if ntype not in ("动画表情", "图片"):
+                return None, None, "最新一条是「%s」不是表情/图片 ⇒ 不猜点" % (ntype or "?")
+            img = _ch.grab_render(gui)
+            if img is None:
+                return None, None, "抓不到微信画面（PrintWindow 失败）⇒ 量不到"
+            rgb = img.convert("RGB")
+            px = rgb.load()
+            W, H = rgb.size
+            pane_left = 0
+            try:
+                pane_left = int(_ch.detect_pane_left(img)) or 0
+            except Exception:
+                pane_left = 0
+            if not pane_left:
+                pane_left = int(getattr(gui, "right_pane_left", 0) or 0)
+            blocks = self._avatar_blocks(img, pane_left)
+            if not blocks:
+                return None, None, "这一帧没检测到头像方块 ⇒ 量不到，不猜点"
+            # ⚠️ 2026-09-18 晚（实测：`_avatar_blocks` 会**在表情图里面**也报一个 36×35 的方块，
+            #   于是"最下面那个"选中的是表情内部的碎片、它右边根本没有气泡 ⇒ 判"没量到宽块"）。
+            #   真头像**尺寸一致**（本机实测全是 54×54），碎片明显小 ⇒ 只保留"≥ 最大方块 0.8 倍"的那些。
+            _mw = max(b[2] - b[0] + 1 for b in blocks)
+            _mh = max(b[3] - b[1] + 1 for b in blocks)
+            _real = [b for b in blocks
+                     if (b[2] - b[0] + 1) >= 0.8 * _mw and (b[3] - b[1] + 1) >= 0.8 * _mh
+                     and 0.7 <= (b[2] - b[0] + 1) / float(max(1, b[3] - b[1] + 1)) <= 1.4]
+            if not _real:
+                return None, None, "这一帧的头像方块尺寸不齐（最大 %dx%d）⇒ 认不出真头像，不猜点" % (_mw, _mh)
+            b = max(_real, key=lambda t: t[3])                   # 最下面那个＝最新那条消息的发送者
+            x_lo = max(int(pane_left), int(b[2]) + 4)
+            x_hi = min(W - 6, int(getattr(gui, "render_w", 0) or W) - 6)
+            y_lo, y_hi = max(0, int(b[1]) - 2), min(H - 4, int(b[3]) + 26)
+            if x_hi - x_lo < 30 or y_hi - y_lo < 8:
+                return None, None, "头像右边的可用区域太小（%s）⇒ 不猜点" % ((x_lo, y_lo, x_hi, y_hi),)
+            cnt = Counter()
+            for y in range(y_lo, y_hi, 2):
+                for x in range(x_lo, x_hi, 3):
+                    cnt[px[x, y]] += 1
+            bg = cnt.most_common(1)[0][0] if cnt else (255, 255, 255)
+            bbox = None
+            for y in range(y_lo, y_hi):
+                best, cur = None, None
+                for x in range(x_lo, x_hi):
+                    r, g, bl = px[x, y]
+                    if abs(r - bg[0]) + abs(g - bg[1]) + abs(bl - bg[2]) > 45:
+                        if cur is None:
+                            cur = [x, x]
+                        cur[1] = x
+                    elif cur is not None:
+                        if cur[1] - cur[0] + 1 >= 40 and (best is None or (cur[1] - cur[0]) > (best[1] - best[0])):
+                            best = cur
+                        cur = None
+                if cur is not None and cur[1] - cur[0] + 1 >= 40 \
+                        and (best is None or (cur[1] - cur[0]) > (best[1] - best[0])):
+                    best = cur
+                if best is None:
+                    continue
+                if bbox is None:
+                    bbox = [best[0], y, best[1], y]
+                else:
+                    bbox[0] = min(bbox[0], best[0])
+                    bbox[2] = max(bbox[2], best[1])
+                    bbox[3] = y
+            if bbox is None:
+                return None, None, "头像那条 y 带里没量到 ≥40px 的宽块 ⇒ 不猜点"
+            w, hh = bbox[2] - bbox[0] + 1, bbox[3] - bbox[1] + 1
+            if w < 40:
+                return None, None, "量到的媒体块太窄 %dx%d ⇒ 不猜点" % (w, hh)
+            cx = (bbox[0] + bbox[2]) // 2
+            cy = (bbox[1] + bbox[3]) // 2
+            # 落点自检：这一点必须**确实不是背景**（在气泡里），否则宁可失败（防点在空白处/输入框）
+            try:
+                _c = px[cx, cy]
+                if abs(_c[0] - bg[0]) + abs(_c[1] - bg[1]) + abs(_c[2] - bg[2]) <= 25:
+                    return None, None, ("算出的落点 (%d,%d) 与背景同色（不是气泡）⇒ 不猜点" % (cx, cy))
+            except Exception:
+                return None, None, "落点取色失败 ⇒ 不猜点"
+            return (int(cx), int(cy),
+                    "几何定位：最新是「%s」(local_id=%s)，最下面真头像 %s ⇒ 媒体块 %dx%d，落点 (%d,%d)"
+                    % (ntype, nlid, tuple(int(v) for v in b), w, hh, cx, cy))
+        except Exception as e:                                     # noqa: BLE001
+            return None, None, "媒体气泡定位异常：%s" % e
+
     def _send_poke_locate(self, gui, target_name: str, db_text: str, scroll: bool = True, self_side: bool = False):
         """定位目标头像（渲染相对坐标），返回 (ax, ay, score) 或 None。
 
@@ -7358,9 +7495,12 @@ class WeChatAdapter:
     # 复用引用链路的「头像定位 + 气泡起点右键」：对指定消息弹右键菜单点菜单项。
     # 微信 4.x 菜单项：复制 / 收藏 / 转发 / 引用(对方) / 撤回 / 删除 / 置顶 / 多选…
 
-    def message_menu(self, chat_id: str, text: str, sender_name: str = "", label: str = "收藏") -> tuple:
+    def message_menu(self, chat_id: str, text: str, sender_name: str = "", label: str = "收藏",
+                     media: bool = False, want_lid=None) -> tuple:
         """对一条消息执行右键菜单操作。text/sender_name 用于定位（数据库归一化消息）。
-        label: 收藏 / 撤回 / 删除 / 置顶 / 转发 / 多选…（失败返回 (False, 原因)，绝不乱点）。"""
+        label: 收藏 / 撤回 / 删除 / 置顶 / 转发 / 多选…（失败返回 (False, 原因)，绝不乱点）。
+        media: 目标是**媒体消息**（动画表情/图片，气泡没有可读文本）⇒ OCR 文本定位必然失败，
+               改用几何定位 `_media_bubble_locate`（见那里的取证）。"""
         with self._send_lock:
             try:
                 gui = self._get_gui()
@@ -7394,6 +7534,16 @@ class WeChatAdapter:
                         if self._right_click_menu(gui, cx, cy, label):
                             self._scroll_to_bottom(gui)
                             return True, "已%s" % label
+                # ⚡ 2026-09-18 晚：**媒体消息**（动画表情/图片）没有可读文本 ⇒ 上面的 OCR 文本定位必然
+                #   匹配不上（实测：4.0s 后报"右键菜单里没找到"，而光标一动不动＝**一枪都没点**）。
+                #   ⇒ 改走几何定位（只在"目标就是最新那条"时可用，判据在 `_media_bubble_locate` 里）。
+                _mw = ""
+                if media or str(text).strip() in self._MEDIA_PLACEHOLDERS:
+                    mx, my, _mwhy = self._media_bubble_locate(gui, chat_id=chat_id, want_lid=want_lid)
+                    _mw = str(_mwhy)
+                    if mx is not None and self._right_click_menu(gui, mx, my, label):
+                        self._scroll_to_bottom(gui)
+                        return True, "已%s（%s）" % (label, _mwhy)
                 # 安全关闭未选中的菜单
                 try:
                     uia = gui._get_uia()
@@ -7402,7 +7552,9 @@ class WeChatAdapter:
                 except Exception:
                     pass
                 self._scroll_to_bottom(gui)
-                return False, "右键菜单里没找到「%s」（目标消息可能不在可见区或已是自己刚发的）" % label
+                _extra = ("；媒体几何定位也没成：%s" % _mw) if _mw else ""
+                return False, ("没定位到目标消息（OCR 文本匹配%s都没成）⇒ 没点右键，绝不乱点"
+                               % ("与媒体几何定位" if _mw else "及占位文本都") + _extra)
             except Exception as e:
                 return False, str(e)
 
@@ -7414,10 +7566,13 @@ class WeChatAdapter:
         """撤回自己最近发的一条消息（需 2 分钟内）。"""
         return self.message_menu(chat_id, text, sender_name, "撤回")
 
-    def collect_emoji_native(self, chat_id: str, text: str = "", sender_name: str = "") -> tuple:
+    def collect_emoji_native(self, chat_id: str, text: str = "", sender_name: str = "",
+                             local_id=None) -> tuple:
         """真实路径收藏：右键表情气泡 → 菜单「添加到表情」→ 存入微信表情库。
-        与 collect_emoji（本地截图收藏夹）并存：本方法走真微信操作。"""
-        return self.message_menu(chat_id, text, sender_name, "添加到表情")
+        与 collect_emoji（本地截图收藏夹）并存：本方法走真微信操作。
+        `local_id`：目标消息的库内 id（媒体消息**必须给**——几何定位要靠它核对"目标就是最新那一条"）。"""
+        return self.message_menu(chat_id, text, sender_name, "添加到表情",
+                                 media=True, want_lid=local_id)
 
     # ── 微信表情面板（真实路径发收藏表情）────────────────────────────
     # 路径：点输入栏左下角「笑脸」→ 弹出面板 → 底部右侧「爱心」（收藏的表情）
@@ -7444,7 +7599,31 @@ class WeChatAdapter:
         等于双重换算 ⇒ 算出的点偏左约 100px、偏下约 40px，**点不开表情面板**。
         实测（1160×900 窗口）：笑脸在渲染区 `(0.324·w, h-50)`（屏幕 (470,930)，渲染相对 (369,840)）；
         box 可用时只用它做**细校正**（相差超过 8% 就不用，避免再次被错坐标带偏）。
+
+        ⚡ 2026-09-18 晚再修（**现场：窗口改成 947×972 之后，表情面板一次都开不出来**）：
+        比例法算出 `0.324×947 = 306`，而笑脸实际在 379 —— 306 落在输入框**左边**的空白处，
+        点了等于没点（日志那轮：面板窗从头到尾没出现过）。根因＝**笑脸与输入框左沿的距离基本恒定
+        （本机 331→379 ≈ 48px），而"占整幅的比例"会随窗口宽高比变**。⇒ 改成**先在帧里现量**
+        （`chat_ocr.toolbar_first_icon`：工具栏行最左边那个字形），量不到才退回比例法。
         """
+        try:
+            from . import chat_header as _ch
+            from . import chat_ocr as _co
+            img = _ch.grab_render(gui)
+            pane = 0
+            try:
+                pane = int(_ch.detect_pane_left(img)) or 0 if img is not None else 0
+            except Exception:
+                pane = 0
+            if not pane:
+                pane = int(getattr(gui, "right_pane_left", 0) or 0)
+            hit = _co.toolbar_first_icon(img, pane_left=pane)
+            if hit:
+                log.info("笑脸落点：帧内现量 (w=%s, pane_left=%s) → (%d,%d)",
+                         None if img is None else img.size[0], pane, hit[0], hit[1])
+                return (int(hit[0]), int(hit[1]))
+        except Exception as e:                                     # noqa: BLE001
+            log.debug("笑脸帧内现量失败（退回比例法）：%s", e)
         try:
             r = gui.render_rect or gui._update_render_rect() or (0, 0, 0, 0)
             w = int(getattr(gui, "render_w", 0) or (int(r[2]) - int(r[0])))

@@ -1652,6 +1652,77 @@ def find_search_entry(img, left=None, zoom: int = 2):
     return None
 
 
+def toolbar_first_icon(img, pane_left: int = 0, band_h: int = 96,
+                       thr: int = 40, wmax: int = 70) -> tuple:
+    """输入栏**工具栏那一行**里最左边那个字形（笑脸）的中心 → `(cx, cy)` 或 None。
+
+    ⚡ 2026-09-18 晚加（现场：窗口被改成 947×972 后，老的比例法 `0.324·w = 306` 落在输入框**左边**的
+    空白处 ⇒ 点了没反应、表情面板从此**一次都没开出来**；而笑脸实际在 379）。
+    实测口径：笑脸与输入框左沿的距离基本恒定（本机 331→379 ≈ 48px），而"占整幅的比例"会随窗口宽高比
+    变化 ⇒ **一律在帧里现量**：工具栏行里最左边那个深色连通块就是笑脸（它右边依次是方块/文件夹/剪刀/语音）。
+    """
+    if img is None:
+        return None
+    try:
+        rgb = img.convert("RGB")
+        px = rgb.load()
+        W, H = rgb.size
+        y1 = max(0, H - 6)
+        y0 = max(0, H - int(band_h))
+        x0 = max(0, int(pane_left))
+        if (W - x0) < 60 or (y1 - y0) < 20:
+            return None
+        cnt = {}
+        for y in range(y0, y1, 2):
+            for x in range(x0, W, 2):
+                c = px[x, y]
+                cnt[c] = cnt.get(c, 0) + 1
+        bg = max(cnt.items(), key=lambda kv: kv[1])[0] if cnt else (255, 255, 255)
+        runs = []
+        for y in range(y0, y1):
+            cur = None
+            for x in range(x0, W):
+                r, g_, b = px[x, y]
+                if abs(r - bg[0]) + abs(g_ - bg[1]) + abs(b - bg[2]) > thr:
+                    if cur is None:
+                        cur = [x, x]
+                    cur[1] = x
+                elif cur is not None:
+                    runs.append((cur[0], cur[1], y))
+                    cur = None
+            if cur is not None:
+                runs.append((cur[0], cur[1], y))
+        if not runs:
+            return None
+        # 逐行的 run 聚成**块**（x 重叠 + y 相邻）：细线（输入框边框 2px）会被最小尺寸滤掉，
+        # ⚠️ 实测踩过：不聚块时"最左边那个 run"是输入框的左边框线（x=341-342）⇒ 落点偏到 361。
+        blocks = []
+        for a, bx, yy in runs:
+            hit = None
+            for blk in blocks:
+                if a <= blk[2] + 2 and bx >= blk[0] - 2 and (yy - blk[3]) <= 3:
+                    hit = blk
+                    break
+            if hit is None:
+                blocks.append([a, yy, bx, yy])
+            else:
+                hit[0] = min(hit[0], a)
+                hit[2] = max(hit[2], bx)
+                hit[3] = yy
+        good = [b for b in blocks
+                if (b[2] - b[0] + 1) >= 10 and (b[3] - b[1] + 1) >= 8 and (b[2] - b[0] + 1) <= wmax]
+        if not good:
+            return None
+        b = min(good, key=lambda t: t[0])                 # 最左边那一块（＝笑脸）
+        cx = (b[0] + b[2]) // 2
+        cy = (b[1] + b[3]) // 2
+        if abs(cy - (H - 50)) > 60:                       # 不在"输入栏下沿"那一条上 ⇒ 认错东西了
+            return None
+        return (int(cx), int(cy))
+    except Exception:
+        return None
+
+
 def band_signature(img, left=None, size=(72, 18)):
     """会话列表**标题带**的低分辨率灰度指纹（只看"这一带变没变"，不判内容）。"""
     if img is None:
