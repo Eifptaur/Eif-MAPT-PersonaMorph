@@ -3255,6 +3255,10 @@ class WeChatAdapter:
                                                    "搜索浮层结果行（box 路线）")
                 if not _cok2:
                     return False, _cwhy2
+# ⚡ 2026-09-18 实测：点搜索入口后**微信自己**会把搜索浮层激活到前台（+2.77s），
+                #   而我们原来只等到整条链结束才还（+5.44s）⇒ 白占 ~2.7s。点完结果行立刻还
+                #   （后面的内容级复核走 PrintWindow 取窗口自身画面，不需要前台）。
+                _restore_fg_until("切会话·搜索路线（点完即还）", timeout=1.2, keep=False)
                 time.sleep(0.5)                # 2026-09-18：1.0 → 0.5（后面紧接内容级复核，测得早没关系）
                 _idn2, _idn2_why = self.chat_identity_ok(chat_id, gui=gui)
                 if _idn2 is True:
@@ -3284,6 +3288,10 @@ class WeChatAdapter:
                                                "主窗搜索结果行")
             if not _cok3:
                 return False, _cwhy3
+# ⚡ 2026-09-18 实测：点搜索入口后**微信自己**会把搜索浮层激活到前台（+2.77s），
+            #   而我们原来只等到整条链结束才还（+5.44s）⇒ 白占 ~2.7s。点完结果行立刻还
+            #   （后面的内容级复核走 PrintWindow 取窗口自身画面，不需要前台）。
+            _restore_fg_until("切会话·搜索路线（点完即还）", timeout=1.2, keep=False)
             time.sleep(0.5)                    # 2026-09-18：0.9 → 0.5
             # 内容级复核：认得出目标会话最近的内容才算成功
             idn, idn_why = self.chat_identity_ok(chat_id, gui=gui)
@@ -7674,6 +7682,24 @@ class WeChatAdapter:
         except Exception:
             pass
         return self._img_key_ready
+
+    def decode_emoji(self, chat_id: str, local_id, out_dir: str = "", allow_scan: bool = True) -> str:
+        """把一条「动画表情」消息**离线解成视觉能看的图**（拿不到就返回 `""`）。
+
+        为什么要它（2026-09-18 落地，算法来自开源项目 CN-Grace/Wechat-Emoticon-Parser）：
+        微信 4.x 的表情在库里是加密数据、驱动库只认 3/34/43/49 ⇒ 47 号动画表情一直下不来，
+        之前只能"截最新一条消息的图"兜（还必须是最新那条）。现在按 md5 找到**原文件**、
+        用 `AES-128-CBC(key=IV=md5(f"{seed}{wxid}EMOTICON")[:16])` 解开 ⇒ **原图直出**，
+        不再受"是不是最新一条"和"窗口可不可见"的限制。
+        ⚠️ 拿不到 key / 找不到文件 / 解出来不是图 ⇒ 返回空串，调用方**退回截图路线**（绝不猜）。
+        """
+        try:
+            from . import emoticon as _em
+            return _em.sticker_image(self._db, chat_id, local_id, out_dir=out_dir,
+                                     allow_scan=allow_scan)
+        except Exception as e:                                   # noqa: BLE001
+            log.debug("表情离线解密不可用（退回截图）：%s", e)
+            return ""
 
     def download_image(self, chat_id: str, local_id) -> str | None:
         """下载并解密群内图片，返回本地路径；失败返回 None。"""

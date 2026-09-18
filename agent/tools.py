@@ -109,7 +109,7 @@ def _builtin_tool_defs() -> list:
         },
         {
             "name": "get_message_images",
-            "description": "查看某条消息里的图片/表情包（能看懂图）。消息文本出现 [图片] 或 [表情] 时用。message_idx=聊天记录里的 #数字。表情包走屏幕截图（库里是加密数据下不下来）⇒ 只有它还是会话里最新一条时截得到。",
+            "description": "查看某条消息里的图片/表情包（能看懂图）。消息文本出现 [图片] 或 [表情] 时用。message_idx=聊天记录里的 #数字。表情包默认**离线解原图**（按 md5 找到本机表情文件解密），解不出才退回截图。",
             "parameters": {
                 "type": "object",
                 "properties": {"message_id": {"description": "消息 id（聊天记录里的 #数字）"}},
@@ -696,12 +696,21 @@ def _exec_get_images(ctx, args):
                 # ⇒ 只能**截图**（`wechat.capture_newest_message_image`，走 PrintWindow，不碰前台）。
                 # 已截过的（消息入库时存了 path）直接用缓存，省一次抓屏。
                 cached = str(img.get("path") or "")
-                path = cached if (cached and _os.path.exists(cached)) else \
-                    ctx["wechat"].capture_newest_message_image(ctx["chat_id"], tag=str(img.get("local_id")))
+                if cached and _os.path.exists(cached):
+                    path = cached
+                else:
+                    # ① **离线解原图**（2026-09-18 落地）：按 md5 找文件 + AES-128-CBC(key=IV) 解密 ⇒
+                    #    原图直出，不受"必须是最新一条""窗口可不可见"限制，也不碰前台。
+                    path = ctx["wechat"].decode_emoji(ctx["chat_id"], img["local_id"])
+                    if not path:
+                        # ② 兜底：截图（拿不到 key / 文件不在本地时还留着这条路）
+                        path = ctx["wechat"].capture_newest_message_image(
+                            ctx["chat_id"], tag=str(img.get("local_id")))
                 if path:
                     img["path"] = path
                 else:
-                    failed.append("表情截图没取到（这条已经不是会话里最新一条，或微信窗口不可见/收进了托盘）")
+                    failed.append("表情既没解出原图（key/文件不可用）也截不到图"
+                                  "（这条已经不是会话里最新一条，或微信窗口不可见）")
                     continue
             else:
                 path = ctx["wechat"].download_image(ctx["chat_id"], img["local_id"])
