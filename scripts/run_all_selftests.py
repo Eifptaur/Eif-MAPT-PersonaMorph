@@ -15,10 +15,12 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures as _cf
 import os
 import re
 import subprocess
 import sys
+import threading
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -48,11 +50,52 @@ def _parse(out: str):
     return None, None
 
 
+_HEAVY = re.compile(r"(console_|cursor_|whale|voice_models|local_models|restart_button|decide_link|_ui_selftest)")
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+_BELOW_NORMAL = 0x00004000 if os.name == "nt" else 0     # 别跟用户抢 CPU：全套默认低优先级
+
+
+def _run_one(name: str, timeout: int, gate: threading.Semaphore) -> dict:
+    """跑一条判据。**会开窗/开服务的那些先过 `gate`（同时只允许一条）**，其余并发跑。"""
+    p = os.path.join(HERE, name)
+    heavy = bool(_HEAVY.search(name))
+    _hold = gate if heavy else None
+    if _hold:
+        _hold.acquire()
+    t = time.time()                                   # 计时**从真正开跑算起**（不含等闸，读数才诚实）
+    try:
+        try:
+            r = subprocess.run([sys.executable, p], cwd=ROOT, capture_output=True,
+                               creationflags=_NO_WINDOW | _BELOW_NORMAL, timeout=timeout)
+            out = (r.stdout or b"").decode("utf-8", "replace") + \
+                  (r.stderr or b"").decode("utf-8", "replace")
+            rc = r.returncode
+        except subprocess.TimeoutExpired:
+            out, rc = "TIMEOUT", -9
+    finally:
+        if _hold:
+            _hold.release()
+    sec = time.time() - t
+    ps, fs = _parse(out)
+    ok = ((rc == 0) and not fs and not _FAIL_LINE.search(out) and not _TRACE.search(out))
+    return {"name": name, "out": out, "rc": rc, "sec": sec, "ps": ps, "fs": fs, "ok": ok,
+            "heavy": heavy}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("-k", default="", help="只跑文件名含该子串的")
     ap.add_argument("-v", action="store_true", help="打印每个脚本的最后一行")
     ap.add_argument("--timeout", type=int, default=300, help="单个脚本超时秒数（默认 300）")
+    # ⚠️ 2026-09-18 加（作者原话：「你跑检验为什么还能把我这么一台电脑给跑卡了？…天天空耗我十几分钟」）：
+    #   原来 110 条**串行**跑 ⇒ 每条都要重新起一个 Python 进程 + 重新 import（PIL/opencv/win32/wechatato），
+    #   单条自测本身只要 0.1~4 秒，实测总时长却被启动开销推到 ~280 秒。现在：
+    #     ① 默认 `-j`（核数/4，封顶 6）并发；② **全部低优先级**（BELOW_NORMAL，不与作者抢 CPU）；
+    #     ③ 会**真开窗/起服务**的判据（console_*/cursor_*/whale/_ui_selftest 等）过一把"同时只跑一条"的闸
+    #        —— 它们是"屏幕闪窗 + 卡机"的来源（每条都真起 WebView2/HTTP 服务）。
+    _cores = os.cpu_count() or 4
+    ap.add_argument("-j", "--jobs", type=int, default=min(6, max(2, _cores // 4)),
+                    help="并发数（默认 核数/4，封顶 6；开窗类判据始终串行）")
     a = ap.parse_args()
 
     names = sorted(n for n in os.listdir(HERE)
@@ -63,41 +106,27 @@ def main() -> int:
 
     bad, total_p, total_f = [], 0, 0
     t0 = time.time()
-    for n in names:
-        p = os.path.join(HERE, n)
-        t = time.time()
-        try:
-            # ⛔ 2026-09-16 修（已知现象：「运行的时候极短时间内闪一个弹窗，而且经常闪」）：
-            #   这里原来没给子进程加"不要窗口"。全套要拉 84 个 `python.exe`（控制台程序），
-            #   父进程一旦没有可见控制台（GUI / 隐藏控制台拉起时就是这样），**每个子进程都会新建
-            #   一个黑窗、跑完即关** ⇒ 就是"连续闪 84 次"。项目里早有这条约定
-            #   （`agent/video_read.py:12` 原话"Windows 下 CREATE_NO_WINDOW，不许弹黑框"），
-            #   生产代码也一直在用（`persona_morph.py` 的 `0x08000000`），自检脚本这一片漏了。
-            _flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
-            r = subprocess.run([sys.executable, p], cwd=ROOT, capture_output=True,
-                               creationflags=_flags,
-                               timeout=a.timeout)
-            out = (r.stdout or b"").decode("utf-8", "replace") + \
-                  (r.stderr or b"").decode("utf-8", "replace")
-            rc = r.returncode
-        except subprocess.TimeoutExpired:
-            out, rc = "TIMEOUT", -9
-        sec = time.time() - t
-        ps, fs = _parse(out)
-        ok = ((rc == 0) and not fs
-              and not _FAIL_LINE.search(out) and not _TRACE.search(out))
-        if ps:
-            total_p += ps
-        total_f += (fs or 0)
-        if not ok:
-            bad.append((n, rc, ps, fs, out))
-        line = "%-34s %-4s %s" % (n, "OK" if ok else "RED",
-                                  ("%s/%s" % (ps, fs)) if ps is not None else "rc=%d" % rc)
-        if a.v or not ok:
-            tail = [l for l in out.strip().splitlines() if l.strip()]
+    gate = threading.Semaphore(2)                    # 开窗/开服务类：最多两条同时（既快又不刷屏）
+    results = {}
+    with _cf.ThreadPoolExecutor(max_workers=max(1, int(a.jobs))) as ex:
+        futs = {ex.submit(_run_one, n, a.timeout, gate): n for n in names}
+        for fu in _cf.as_completed(futs):
+            r = fu.result()
+            results[r["name"]] = r
+    for n in names:                                   # 按文件名顺序输出（稳定、好对照）
+        r = results[n]
+        if r["ps"]:
+            total_p += r["ps"]
+        total_f += (r["fs"] or 0)
+        if not r["ok"]:
+            bad.append((n, r["rc"], r["ps"], r["fs"], r["out"]))
+        line = "%-34s %-4s %s" % (n, "OK" if r["ok"] else "RED",
+                                  ("%s/%s" % (r["ps"], r["fs"])) if r["ps"] is not None else "rc=%d" % r["rc"])
+        if a.v or not r["ok"]:
+            tail = [l for l in r["out"].strip().splitlines() if l.strip()]
             if a.v and tail:
                 line += "  | " + tail[-1].strip()[:90]
-        print("%s  (%4.1fs)" % (line, sec))
+        print("%s  (%4.1fs%s)" % (line, r["sec"], "·开窗" if r["heavy"] else ""))
 
     print("\n" + "=" * 72)
     print("脚本 %d 个 · 用时 %.0fs · 断言合计 %d 通过 / %d 失败 · %s"
