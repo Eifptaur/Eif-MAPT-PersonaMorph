@@ -293,14 +293,21 @@ _KEYS_SEG = _KEYS_SEG[:_KEYS_SEG.find("\n    def ", 10)]
 ck("B19a 按键必须**带伪激活**（实测：不带时微信不理投递的方向键）",
    "ib.MessageBackend(activate=True)" in _KEYS_SEG and "_VK_DOWN" in _KEYS_SEG and "_VK_UP" in _KEYS_SEG)
 ck("B19b **每按一格都读会话头确认**（走过头能立刻发现；不是「按完再猜」）",
-   "_header_now(gui)" in _KEYS_SEG and "_co.matches(hdr, name)" in _KEYS_SEG)
+   "_header_now(gui)" in _KEYS_SEG and "_header_match(name, hdr)" in _KEYS_SEG)
 ck("B19c 这条路上**不许有坐标点击、不许滚动、不许开搜索窗**",
    "_click_posted(" not in _KEYS_SEG and ".wheel(" not in _KEYS_SEG
    and "open_chat_by_search" not in _KEYS_SEG and "SetCursorPos" not in _KEYS_SEG)
 ck("B19d 读不到会话头就**不按键**（fail-closed：不许闭着眼往下走）",
    "读不到会话头" in _KEYS_SEG and "不按键" in _KEYS_SEG)
-ck("B19e 走法有界（budget）+ 反向自纠偏（两相）",
-   "_KEYS_WALK_BUDGET" in SRC_WECHAT and "for _phase in (0, 1)" in _KEYS_SEG)
+ck("B19e 走法有界（budget ≤6，实测 24 格＝占前台 7.45s ⇒ 不许放长）+ 反向自纠偏（两相）",
+   "_KEYS_WALK_BUDGET" in SRC_WECHAT and "for _phase in (0, 1)" in _KEYS_SEG
+   and "budget = int" in _KEYS_SEG)
+ck("B19h **每按一格就把前台还回去**（伪激活必然招来微信占前台；实测 24 格累计 7.45s）",
+   "_restore_fg_until(\"按键走格（每格还）\"" in _KEYS_SEG and "_fg_stash_ok()" in _KEYS_SEG)
+ck("B19i 名字匹配**严格优先、宽容兜底**（实测 OCR 会吃掉 emoji：`海绵宝宝の吸🈲课堂` 读成 `海绵宝宝吸课堂`）",
+   "def _header_match(" in SRC_WECHAT and "loose_matches(hdr, name)" in SRC_WECHAT)
+ck("B19j 还前台时：**前台落在微信主窗上**不受「最近有输入就不抢」那条拦（那是我们的伪激活招来的）",
+   "_we_caused" in SRC_WECHAT and "not _we_caused" in SRC_WECHAT)
 ck("B19f 方向由**数据**定（各会话最后消息时间倒序），不是靠猜",
    "int(rows[0].get(\"create_time\") or 0)" in SRC_WECHAT and "def _walk_dir(" in SRC_WECHAT
    and "目标更旧" in SRC_WECHAT)
