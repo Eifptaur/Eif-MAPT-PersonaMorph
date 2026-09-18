@@ -138,8 +138,15 @@ class _Stub(object):
     def _ensure_main_visible(self, gui, main):
         return None
 
-    def chat_is_open(self, chat_id, gui=None):
+    def chat_is_open(self, chat_id, gui=None, name=None, allow_weak=False):
         return True, "假证据：不需要（本测试的会话头校验已被打桩为 ok）"
+
+    def chat_identity_ok(self, chat_id, gui=None, name=""):
+        return True, "假证据：内容级判据（本测试打桩）"
+
+    # ── 2026-09-18 新增契约：点击咽喉点（真方法借过来用，判据要能过）──
+    _wx_toplevel_windows = lambda self, *a, **k: {}
+    _click_posted = W.WeChatAdapter._click_posted
 
     def _learn_chat_header(self, chat_id, gui=None):
         self._scn.learned += 1
