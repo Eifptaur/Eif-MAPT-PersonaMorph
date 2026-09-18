@@ -317,7 +317,7 @@ _MINIMIZED_BY_US = 0        # 为了干活而还原出来的那个主窗（0 = �
 
 
 def _minimize_back_if_needed(note: str = "") -> None:
-    """把我们为了干活而还原出来的主窗放回收起状态（三条安全线，一条都不许少）。
+    """把"为干活还原出来的"主窗**压回 Z 序底层**（⚠️ 不再最小化，作者 2026-09-18 定；三条安全线都不许少）。
 
     ①**没登记过就不动**（用户本来就没最小化，我们没资格改它的状态）；
     ②**它已经是最小化了就不动**（用户自己收的，别再补一枪）；
@@ -337,8 +337,15 @@ def _minimize_back_if_needed(note: str = "") -> None:
             return
         if int(u.GetForegroundWindow() or 0) == hwnd:
             return
-        u.ShowWindow(hwnd, 6)      # SW_MINIMIZE
-        log.info("还最小化（%s）：微信主窗已放回收起状态（那是我们为干活还原出来的）", note or "未注明")
+        # 🔴 2026-09-18 改（作者原话：「**为什么非要最小化呢？不要最小化呀，就置于底层**」）：
+        #   以前这里 `ShowWindow(hwnd, 6)` ＝ SW_MINIMIZE，把"为干活还原出来的"主窗**重新最小化**。
+        #   现场后果：用户没开「最小化时自己还原」时，窗口被收进任务栏、后续整条链没反应；
+        #   而且"缩下去又弹出来"本身就是打扰。⇒ 现在只把它**压到 Z 序底层**：
+        #   `HWND_BOTTOM` + `SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE` —— 不改可见性、不激活、不动几何。
+        _ct.windll.user32.SetWindowPos(_ct.c_void_p(hwnd), _ct.c_void_p(1), 0, 0, 0, 0,
+                                       0x0002 | 0x0001 | 0x0010)
+        log.info("置于底层（%s）：微信主窗压回 Z 序底层（不最小化；那是我们为干活还原出来的）",
+                 note or "未注明")
     except Exception as e:
         log.warning("放回最小化失败：%s", e)
 

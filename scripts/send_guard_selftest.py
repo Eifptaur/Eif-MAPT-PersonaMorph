@@ -241,6 +241,27 @@ try:
 except Exception as e:
     ck("F3/F4 回声行为级", False, repr(e)[:90])
 
+# ── G. 2026-09-18 加：两条"现场截图"级别的出站闸门 ────────────────────────────
+#   ①群里出现了内部故障话术（「（会话投递失败，本轮未发言。）」「发送失败了，没能发出去。」）；
+#   ②同一条消息连发两次（「早上好呀！」×2）。
+print("[G] 出站闸门：内部故障话术 + 同会话短窗去重")
+try:
+    from agent import sender as _sd
+    _hit = [_sd._is_internal_failure(x) for x in
+            ("（会话投递失败，本轮未发言。）", "发送失败了，没能发出去。", "会话没对上。")]
+    ck("G1 现场那三类内部故障话术都会被拦下", all(_hit), str(_hit))
+    ck("G2 正常的群聊话不会被误拦",
+       not any(_sd._is_internal_failure(x) for x in ("早上好呀！", "才不叫！", "哈哈哈这表情包太可爱了")),
+       "")
+    _ssrc = io.open(os.path.join(ROOT, "agent", "sender.py"), encoding="utf-8").read()
+    ck("G3 拦网接在 send_text_batch 的**发之前**（不是只写在提示词里）",
+       "_is_internal_failure(_t)" in _ssrc and "_blocked_internal.append" in _ssrc
+       and _ssrc.index("_is_internal_failure(_t)") < _ssrc.index("for _t in parts:\n            _v = _risk.check"))
+    ck("G4 同会话短窗去重在位（_DEDUP_WINDOW_S + 与最近自己发过的文本比对）",
+       "_DEDUP_WINDOW_S" in _ssrc and "跳过重复发送" in _ssrc and "include_self=True" in _ssrc)
+except Exception as e:
+    ck("G 出站闸门", False, repr(e)[:90])
+
 print("\n[结论] %d 通过 / %d 失败" % (len(OK), len(BAD)))
 if BAD:
     print("失败项：%s" % BAD)

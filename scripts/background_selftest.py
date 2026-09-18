@@ -242,11 +242,16 @@ ck("B17 三条会抓图的投递链都在入口调了它（切会话 / 搜索框
 ck("B17a 还原时登记了「这是为干活还原的」",
    "_MINIMIZED_BY_US = int(main)" in SRC_WECHAT)
 _HELP_MIN = SRC_WECHAT.split("def _minimize_back_if_needed(")[1][:1400]
-ck("B17b 放回时三条安全线都在（没登记不动 / 已收起不动 / 用户正在用就不动）",
-   "if not hwnd:" in _HELP_MIN
-   and "u.IsIconic(hwnd)" in _HELP_MIN
-   and "int(u.GetForegroundWindow() or 0) == hwnd" in _HELP_MIN
-   and "u.ShowWindow(hwnd, 6)" in _HELP_MIN)
+# ⚠️ 断言要**先去注释**：函数里那段解释"以前是 ShowWindow(hwnd, 6)"的注释会让 `not in` 假红
+#    （同型坑见 lesson 0mu61n2m：静态判据扫到注释里的旧写法）
+_HELP_MIN_NC = "\n".join(l for l in _HELP_MIN.splitlines() if not l.strip().startswith("#"))
+ck("B17b 收尾时三条安全线都在（没登记不动 / 已收起不动 / 用户正在用就不动），"
+   "且**不再最小化**（改成压 Z 序底层 —— 作者原话「不要最小化呀，就置于底层」）",
+   "if not hwnd:" in _HELP_MIN_NC
+   and "u.IsIconic(hwnd)" in _HELP_MIN_NC
+   and "int(u.GetForegroundWindow() or 0) == hwnd" in _HELP_MIN_NC
+   and "SetWindowPos" in _HELP_MIN_NC
+   and "ShowWindow(hwnd, 6)" not in _HELP_MIN_NC)
 ck("B17c 放回收起状态**只在链收尾**做（`_restore_fg_until` 里不再顺手放回）",
    # 2026-09-18 改口径（现场现象：「他还在不停地缩小，就是把微信最小化，然后又把微信切出来」）：
    #   `_restore_fg_until` 在一条发送链里会被调很多次（切会话·搜索路线 / 投递发送后 / 写完文件名 /
