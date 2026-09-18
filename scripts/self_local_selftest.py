@@ -56,11 +56,14 @@ class _Shim(object):
     _save_self_local = W.WeChatAdapter._save_self_local
     remember_self_local = W.WeChatAdapter.remember_self_local
     is_self_local = W.WeChatAdapter.is_self_local
+    db_account = W.WeChatAdapter.db_account
 
-    def __init__(self, path):
+    def __init__(self, path, acct="wxid_self_0001"):
         self._path = path
         self._self_local = {}
         self._self_local_loaded = False
+        # 账号（2026-09-19）：台账按账号隔离，夹具要像真 adapter 一样报得出"在读哪个号"
+        self._db = type("D", (), {"account": acct})()
 
     def _self_local_file(self):           # 覆盖掉类方法（它指向产品 data/ 目录）
         return self._path
@@ -120,9 +123,25 @@ ok("落盘是原子写（temp + os.replace）", not os.path.exists(DBF + ".tmp")
 with open(DBF, encoding="utf-8") as fh:
     import json as _json
     _d = _json.load(fh)
-ok("落盘结构 = {会话: [[行号, create_time, 记录时刻]]}",
-   isinstance(_d, dict) and isinstance(_d.get("群D"), list)
-   and len(_d["群D"][0]) == 3, str(_d)[:80])
+ok("落盘结构 = {账号, 会话: [[行号, create_time, 记录时刻]]}",
+   isinstance(_d, dict) and isinstance(_d.get("rows"), dict)
+   and isinstance(_d["rows"].get("群D"), list)
+   and len(_d["rows"]["群D"][0]) == 3, str(_d)[:110])
+ok("落盘带**账号**（2026-09-19 起：切号后台账不能跨账号复用）",
+   _d.get("acct") == "wxid_self_0001", str(_d.get("acct")))
+
+print("── F2. 账号闸：换到另一个微信号后，旧号的行号一律不认（否则会静默漏回）──")
+_sB = _Shim(DBF, acct="wxid_other_0002")
+ok("另一个账号读同一份台账 ⇒ 不判自己",
+   _sB.is_self_local("群D", 300, 1758400000) is False)
+ok("同账号照样认（闸门没把正常路堵死）",
+   _Shim(DBF, acct="wxid_self_0001").is_self_local("群D", 300, 1758400000) is True)
+_LEGACY = os.path.join(TMP, "legacy.json")
+with open(_LEGACY, "w", encoding="utf-8") as _fh:
+    import json as _j2
+    _j2.dump({"群D": [[300, 1758400000, int(time.time())]]}, _fh)
+ok("老格式台账（没账号信息）整份不用 —— 宁可漏判一次回声，也绝不丢掉别人的话",
+   _Shim(_LEGACY).is_self_local("群D", 300, 1758400000) is False)
 
 print("── G. 同一行重复登记只留一条（多枪发送会重复确认）──")
 s4.remember_self_local("群D", 300, 1758400000)

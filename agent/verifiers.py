@@ -186,9 +186,14 @@ def v_self_echo() -> dict:
                          True, ("已认识：来源=%s" % ident.get("from")) if sid else
                          "**没认出自己**——不影响：判自己还靠下面三档"))
     local = _read_json(_p("data", "self_local_ids.json"), {})
-    n_local = sum(len(v or []) for v in (local or {}).values())
+    # 台账格式（2026-09-19 起带账号）：{"acct": "wxid_…", "rows": {chat: [[lid,ct,ts],…]}}；
+    # 老格式就是 {chat: […] }。两种都读得出来，别让检验器因为格式升级而误报"台账是空的"。
+    _rows = local.get("rows") if isinstance(local.get("rows"), dict) else (local or {})
+    n_local = sum(len(v or []) for v in _rows.values() if isinstance(v, list))
+    _acct0 = str((local or {}).get("acct") or "") if isinstance(local, dict) else ""
     checks.append(_check("自家消息行号表在工作", n_local > 0,
-                         "已登记 %d 条（发送成功回读时记的，判自己最硬的一档）" % n_local))
+                         "已登记 %d 条（发送成功回读时记的，判自己最硬的一档）%s"
+                         % (n_local, ("，账号 %s" % _acct0) if _acct0 else "")))
     try:
         ew = int((c.get("wechat") or {}).get("echo_window_s") or 0) or 120
     except Exception:
@@ -217,6 +222,28 @@ def v_no_reply() -> dict:
     checks = []
     paused = os.path.exists(_p("data", "paused.flag"))
     checks.append(_check("没有处于暂停", not paused, "暂停标志：%s" % ("有" if paused else "没有")))
+    # ── 账号这一维（2026-09-19 加，网友反馈：「切换微信号使用后…只有前几句话会正常回复，
+    #    后面不再回复」）：多账号机器上"我们在读哪个号"是**看不见的第一杀手**——读到旧号时
+    #    新消息一条都进不来，而暂停/水位/key 全都是好的，用户只能报"它不回了"。
+    try:
+        from . import wechat_dir as _wd_v
+        _wv = _wd_v.status()
+        _acc = str(_wv.get("account") or "")
+        _ns = list(_wv.get("account_names") or [])
+        _live = _wv.get("account_live")
+        _acc_ok = (not _ns) or (len(_ns) < 2) or (_live is not False)
+        _acc_note = ("在读账号 %s（%s）" % (_acc or "没认出来",
+                                          "库正在被写" if _live else
+                                          ("**没在动**" if _live is False else "拿不到写入证据")))
+        if len(_ns) > 1:
+            _acc_note += "；这台机器上有 %d 个账号：%s" % (len(_ns), "、".join(_ns))
+        if not _acc_ok:
+            _acc_note += " ⇒ **微信像是切号了，而我们还读着旧号**：新版 15 秒内会自动跟着切，" \
+                         "旧版本重启一次机器人即可"
+        checks.append(_check("读的是**正在用的那个微信号**", _acc_ok, _acc_note))
+    except Exception as e:
+        checks.append(_check("读的是**正在用的那个微信号**", True,
+                             "读不到账号信息（不影响其它判断）：%s" % str(e)[:40]))
     key = str(((c.get("api") or {}).get("key") or "")).strip()
     checks.append(_check("模型 key 已填", bool(key), "api.key %s" % ("已填" if key else "**没填**")))
     wm = _read_json(_p("data", "listener_watermark.json"), {})
@@ -249,6 +276,8 @@ def v_no_reply() -> dict:
     ok, verdict, action = _verdict(checks, "监听在跑、key 已填、最近有响应记录 ⇒ 不回复多半是**档位/触发条件**"
                                            "（档位 1 只回艾特、档位 2 要关键词）",
                                    {"没有处于暂停": "点「继续」", "模型 key 已填": "控制台「模型」面板填 key",
+                                    "读的是**正在用的那个微信号**":
+                                        "重启一次机器人（旧版本）；新版会在 15 秒内自动跟着切过去",
                                     "监听水位有记录（说明监听在跑）": "点「一键启动」并看「微信」面板的逐步检查"})
     return _finish("no_reply", "它不回复", "群里说话它不理、只有艾特才有反应、整天没动静",
                    ok, verdict, action, checks)

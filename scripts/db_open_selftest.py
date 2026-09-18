@@ -13,10 +13,22 @@
   C. 摘掉的是坏分片，好分片一个都不动；
   D. 结论话术分得清 —— 密钥缺口不能说成"权限或占用"。
 
+2026-09-19 追加 E 段（第二位网友的 02:39 报告，**切到另一个微信号**之后）：
+  原话：「切换到另外一个账号他就会提示微信未连接原因是打不开消息库，**将微信和软件全部管理员启动
+  仍然是没有办法解决**」；报告里那行是 `打不开消息库：KeyError: 'message\\message_2.db'`。
+  ⇒ 由头**不是权限**（管理员也不行就是反证）：驱动库 `_load_or_extract_keys` 会拿**密钥缓存里**
+  每个 `rel` 去 `_key_works(rel)`，而 `_key_works → _db_path` 在当前账号文件表里找不到那条分片时
+  `raise KeyError(rel)` ⇒ 构造函数当场抛。多账号/换号后分片布局一变就会踩到。
+  E 段守：**只摘那一条陈旧分片**（其余密钥一个不动、留 .bak）、**构造与运行期两条路都自愈**、
+  **摘不了就照原样抛**（不许吞掉）。
+
 用法：runtime\\python\\python.exe scripts\\db_open_selftest.py
 """
+import json
 import os
+import shutil
 import sys
+import tempfile
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -96,6 +108,135 @@ v_perm = W._db_open_verdict(probe, [("d", "auto", "PermissionError: [WinError 5]
 ok("真权限问题那条：仍然说权限/占用",
    "权限或占用" in v_perm, v_perm[-30:])
 ok("两种结论**不一样**（不能一句糊过去）", v_key != v_perm)
+
+print("── E. 切号后 `KeyError: 'message\\message_2.db'`（陈旧密钥缓存条目）要能定点自愈 ──")
+TMP = tempfile.mkdtemp(prefix="pm_dbopen_")
+try:
+    _cache = os.path.join(TMP, "keys.json")
+    _stable = os.path.join(TMP, "stable", "acct_0001.json")
+
+    def _write_cache(more=None):
+        d = {"message/message_1.db": "aa", "message/message_2.db": "bb"}
+        d.update(more or {})
+        with open(_cache, "w", encoding="utf-8") as f:
+            json.dump(d, f)
+
+    class _StubDB:
+        """假驱动库：模拟"构造时拿缓存里每个 rel 去 _key_works ⇒ 撞上陈旧条目就 KeyError"。"""
+
+        def __init__(self, *a, **kw):
+            self.keys_file = kw.pop("keys_file", _cache)
+            self.account = "acct_0001"
+            self._files = {"message/message_1.db"}
+            for rel in list(json.load(open(self.keys_file, encoding="utf-8"))):
+                self._key_works(rel)
+            self._keys = {}
+
+        def _key_works(self, rel):
+            if rel not in self._files:
+                raise KeyError(rel)                 # 与驱动库 `_db_path(rel)` 同型
+            return True
+
+        def _open(self, rel):
+            return "conn:" + rel
+
+        def _stable_key_file(self):
+            return _stable
+
+    _real_base = W.__dict__.get("_SAFE_DB_CACHE")
+    import wechatauto as _wa
+    _saved_wc = getattr(_wa, "WeChatDB", None)
+    _saved_cache = dict(W._SAFE_DB_CACHE)
+    try:
+        _wa.WeChatDB = _StubDB
+        W._SAFE_DB_CACHE.clear()
+        _cls = W._db_class()
+        _write_cache()
+        os.makedirs(os.path.dirname(_stable), exist_ok=True)
+        with open(_stable, "w", encoding="utf-8") as f:
+            json.dump({"message/message_2.db": "bb", "contact/contact.db": "cc"}, f)
+        _db = _cls(keys_file=_cache)               # 第一枪：缓存里有陈旧条目 ⇒ 自愈后应当成功
+        ok("陈旧条目 ⇒ 构造**自愈**（不再当场抛 KeyError）", _db is not None)
+        _after = json.load(open(_cache, encoding="utf-8"))
+        ok("只摘掉那条**当前账号里不存在**的分片",
+           "message/message_2.db" not in _after and "message/message_1.db" in _after, str(_after))
+        _after_st = json.load(open(_stable, encoding="utf-8"))
+        ok("稳定目录那份缓存也一起修（跨 TEMP 清理）",
+           "message/message_2.db" not in _after_st and "contact/contact.db" in _after_st, str(_after_st))
+        ok("留了 .bak（原样可回看）", os.path.isfile(_cache + ".bak"))
+        ok("好密钥一条都没动（摘的是那一条，不是整份删缓存）",
+           json.load(open(_cache + ".bak", encoding="utf-8")) ==
+           {"message/message_1.db": "aa", "message/message_2.db": "bb"})
+        # 摘不动就照原样抛（不许吞）
+        _write_cache({"message/message_2.db": "bb"})
+        _StubDB._files = {"message/message_1.db", "message/message_2.db"}   # 全都存在 ⇒ 没有陈旧条目
+        _cls2 = W._db_class()
+        W._SAFE_DB_CACHE.clear()
+        W._SAFE_DB_CACHE[_StubDB] = _cls2
+        _bad = _cls2.__new__(_cls2)
+        _bad.keys_file = _cache
+        _bad.account = "acct_0001"
+        _bad._files = {"message/message_1.db"}
+        ok("摘不了（不是 .db / 缓存里没有）时 helper 返回 0（不乱删东西）",
+           W._pm_drop_stale_key_entry(_bad, "没有这种 rel") == 0
+           and W._pm_drop_stale_key_entry(_bad, "") == 0)
+        # 运行期这条路（_open 里 _load_or_extract_keys 抛 KeyError）也要自愈
+        _cls3 = W._db_class()
+        _db3 = _cls3.__new__(_cls3)
+        _db3._keys = {}
+        _db3._db_files = {"message/message_1.db": "x", "message/message_2.db": "y"}
+        _db3.keys_file = _cache
+        _db3.account = "acct_0001"
+        _db3._stable_key_file = lambda: _stable
+        _c3 = {"n": 0}
+
+        def _load3(master_key=None):
+            _c3["n"] += 1
+            if _c3["n"] == 1:
+                raise KeyError("message/message_2.db")     # 运行期撞上同一条陈旧缓存
+            _db3._keys["message/message_1.db"] = b"k"
+
+        _db3._load_or_extract_keys = _load3
+        _conn = _db3._open("message/message_1.db")
+        ok("运行期那条路也自愈（刷新 → 摘陈旧 → 再刷新 → 开库）",
+           _conn == "conn:message/message_1.db" and _c3["n"] >= 2, "第 %d 次刷新" % _c3["n"])
+
+        print("── E2. 开库**之前**就摘掉「盘上已经没有的条目」（第一枪就不抛）──")
+        _base2 = os.path.join(TMP, "xwechat_files", "acct_0001")
+        os.makedirs(os.path.join(_base2, "db_storage", "message"), exist_ok=True)
+        with open(os.path.join(_base2, "db_storage", "message", "message_0.db"), "wb") as _f2:
+            _f2.write(b"x")
+        with open(os.path.join(_base2, "db_storage", "contact.db"), "wb") as _f2:
+            _f2.write(b"x")
+        _cache2 = os.path.join(TMP, "keys2.json")
+        with open(_cache2, "w", encoding="utf-8") as _f2:
+            json.dump({"message\\message_0.db": "aa", "message\\message_9.db": "bb",
+                       "contact.db": "cc"}, _f2)
+        _real_paths = W._key_cache_paths
+        W._key_cache_paths = lambda _db: [_cache2]      # 只认这份（不碰机器上真实的密钥缓存）
+        try:
+            _n_dropped = W._pm_prune_dead_key_entries(
+                os.path.join(TMP, "xwechat_files"), "acct_0001", log_it=False)
+            ok("盘上不存在的条目被摘掉（例：message_9.db）", _n_dropped >= 1, "摘了 %d 条" % _n_dropped)
+            _after2 = json.load(open(_cache2, encoding="utf-8"))
+            ok("**还存在的条目一条都没动**（不许误删密钥）",
+               "message\\message_0.db" in _after2 and "contact.db" in _after2
+               and "message\\message_9.db" not in _after2, str(_after2))
+            ok("幂等：再跑一次没有可摘的（返回 0）",
+               W._pm_prune_dead_key_entries(os.path.join(TMP, "xwechat_files"), "acct_0001",
+                                            log_it=False) == 0)
+            ok("账号目录不存在时不动任何缓存（返回 0）",
+               W._pm_prune_dead_key_entries(os.path.join(TMP, "xwechat_files"), "不存在的账号",
+                                            log_it=False) == 0)
+        finally:
+            W._key_cache_paths = _real_paths
+    finally:
+        if _saved_wc is not None:
+            _wa.WeChatDB = _saved_wc
+        W._SAFE_DB_CACHE.clear()
+        W._SAFE_DB_CACHE.update(_saved_cache)
+finally:
+    shutil.rmtree(TMP, ignore_errors=True)
 
 print("\n打不开消息库判据：%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
