@@ -1,11 +1,11 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.18.13.3",
-    "sha256": "6c581c45769956e87c165432f69e6d0dc3c29a27a58e09cd20fa5b6f029769fa",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.32.6/persona-morph-v2.1.32.6.zip",
-    "build": "3f2042bbe807",
-    "size": 9304678,
+    "version": "2026.9.18.13.4",
+    "sha256": "02da3413526400f5563d3a869c25b51ef7a77d31e4c8360d9b7dec56150ef642",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.32.7/persona-morph-v2.1.32.7.zip",
+    "build": "8d38ee8448fd",
+    "size": 9315973,
     "files": 284
   },
   "dlc": [
@@ -33,13 +33,13 @@
     }
   ],
   "announce": {
-    "version": "2026.9.18.13.3",
+    "version": "2026.9.18.13.4",
     "notes": [
-      "切会话改成「按键走格」优先：直接在会话列表上按方向键走过去（不开搜索窗、不点鼠标、不动光标），每按一格读会话头确认、走过头自动回头；**只走短距（单向 ≤4 格）**，走不到就退回点列表、再不行才用搜索；另外修好了「该还前台时没还」——以前你在打字的时候它会把微信一直留在前台，现在只要前台是被它自己顶上来的就会立刻还回你的窗口"
+      "**你全屏玩游戏/放演示时，它不动你的窗**：判据用 Windows 通知系统那套（全屏/D3D 独占/演示模式/静默时段），先等你、等不到就跳过并如实记日志；此外它动手前还会等你 1.6 秒的输入空档，做完立刻把前台还给你（只要前台是微信的——主窗/搜索框/面板都算）"
     ],
     "forceBase": false,
-    "minBase": "2026.9.18.13.3"
+    "minBase": "2026.9.18.13.4"
   },
-  "builtAt": "2026-09-18T15:24:22Z",
-  "updatedAt": 1789745062460
+  "builtAt": "2026-09-18T15:43:59Z",
+  "updatedAt": 1789746239421
 }
