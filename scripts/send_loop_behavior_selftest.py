@@ -156,13 +156,15 @@ class _Stub(object):
         return self._scn.alive
 
 
-def run(script, alive=(True, "读得到（假库）"), mode="measured", ink=None):
+def run(script, alive=(True, "读得到（假库）"), mode="measured", ink=None, halted=False):
     """跑一遍真函数，返回 (result, why, scn)。
 
     `mode`（2026-09-18 起聚焦落点改为**运行时现算**，见 `_input_top_band`）：
       · `measured`＝量得到输入框（正常）；· `nobody`＝量不到（拿不到窗口自身画面）；
       · `toolbar`＝量出来的落点掉进工具栏带（0.92·h 那排图标，含 ✂ 截图）。
     `ink`＝阳性对照读到的深色点数（None ⇒ 用 12＝正常；给 0 ⇒ 演"字没进框"）。
+    `halted`＝盘上有 `data/stopped.flag` 时的行为（**必须打桩**：这条判据原来会读**真机器**上的
+      停止标记 ⇒ 只要机器人是停着的，本判据就整段假红，2026-09-18 实测就是它把发布门卡住的）。
     """
     scn = _Scenario(script, alive=alive)
     # ⛔ 2026-09-17：聚焦落点从 `0.945·h`（输入框下沿再往下那排工具图标，含 ✂ 截图）抬进正文区；
@@ -176,8 +178,12 @@ def run(script, alive=(True, "读得到（假库）"), mode="measured", ink=None
 
     saved = (W.time, ib.select_backend, ch.check, W._stash_fg,
              W._restore_fg_until, W._minimize_back_if_needed,
-             W._input_top_band, W._probe_input_box_frame, W._input_ink)
+             W._input_top_band, W._probe_input_box_frame, W._input_ink,
+             W._control_halt)
     W.time = _Clock()
+    # ⛔ 暂停/停止标记**必须打桩**：真跑时它读的是盘上的 `data/stopped.flag`（本机确实存在）⇒
+    #    不打桩的话，只要机器人是停着的，本判据整段假红（2026-09-18 实测：它把发布门卡住了）。
+    W._control_halt = (lambda: "机器人已停止 ⇒ 这条不发") if halted else (lambda: "")
 
     def _restore(tag, timeout=2.5, keep=False):
         scn.fg_restores += 1
@@ -198,7 +204,8 @@ def run(script, alive=(True, "读得到（假库）"), mode="measured", ink=None
     finally:
         (W.time, ib.select_backend, ch.check, W._stash_fg,
          W._restore_fg_until, W._minimize_back_if_needed,
-         W._input_top_band, W._probe_input_box_frame, W._input_ink) = saved
+         W._input_top_band, W._probe_input_box_frame, W._input_ink,
+         W._control_halt) = saved
     return res, why, scn
 
 
@@ -293,19 +300,28 @@ _scn7.focus_pt = (613, 931)
 _stub7 = _Stub(_scn7)
 _stub7._db = _SpyDB(_scn7)
 _saved = (W.time, ib.select_backend, ch.check, W._stash_fg, W._restore_fg_until,
-          W._minimize_back_if_needed)
+          W._minimize_back_if_needed, W._control_halt)
 W.time = _Clock()
 ib.select_backend = lambda cfg=None, gui=None: _FakeBackend(_scn7)
 ch.check = lambda chat_id: {"status": "ok", "note": "假"}
 W._stash_fg = lambda: None
 W._restore_fg_until = lambda tag, timeout=2.5, keep=False: None
 W._minimize_back_if_needed = lambda tag: None
+W._control_halt = lambda: ""
 try:
     W.WeChatAdapter.send_text_posted(_stub7, _scn7.text, chat_id="filehelper", wait_s=15.0)
 finally:
     (W.time, ib.select_backend, ch.check, W._stash_fg, W._restore_fg_until,
-     W._minimize_back_if_needed) = _saved
+     W._minimize_back_if_needed, W._control_halt) = _saved
 ok("回读打的就是传进来的 chat_id", _seen.get("chat_id") == "filehelper", str(_seen))
+
+print("── H. 盘上有停止标记（真跑时的 `data/stopped.flag`）⇒ **一枪都不下**、如实说已停止 ──")
+# 这条是 2026-09-18 补的：本判据原来会读**真机器**上的停止标记（本机确实有 `data/stopped.flag`）
+# ⇒ 只要机器人是停着的，A 段整段假红（calls=[]），把"发布前全绿"这道门卡死。现在标记一律打桩，
+# 并**把这条行为本身写成断言**（作者口径：暂停/停止必须是硬冻结，任何路径都不许再动手）。
+_rH, _wH, _cH = run(_s1, halted=True)
+ok("停止中 ⇒ 一枪都不下", _cH.calls == [], str(_cH.calls))
+ok("判失败且说明写清是「已停止」", (not bool(_rH)) and ("已停止" in _wH), "%r %s" % (str(_rH), str(_wH)[:90]))
 
 print("\n结果：%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
