@@ -281,6 +281,58 @@ ck("B18b 找不到那一行就**如实退让**（交给搜索路线），不当�
 ck("B18c 「已经在目标会话 ⇒ 什么都不做」那条仍在最前面（不许先去点列表）",
    SRC_WECHAT.index("目标会话已经是当前打开的会话")
    < SRC_WECHAT.index("self._click_visible_session("))
+
+# ── B19：**按键走格**切会话（作者问「有没有啥办法是不跳前台就可以选对的」；2026-09-18 深夜实测成立：
+#    `MessageBackend(activate=True).keys(main,[VK_DOWN])` 真的换了会话，零坐标、不开窗、不动光标）
+ck("B19 切会话顺序＝按键走格 → 点列表 → 搜索（零坐标那条排最前）",
+   "_switch_by_keys(" in SRC_WECHAT
+   and SRC_WECHAT.index("self._switch_by_keys(") < SRC_WECHAT.index("self._click_visible_session(")
+   and SRC_WECHAT.index("self._click_visible_session(") < SRC_WECHAT.index("self.open_chat_by_search("))
+_KEYS_SEG = SRC_WECHAT.split("def _switch_by_keys(")[1]
+_KEYS_SEG = _KEYS_SEG[:_KEYS_SEG.find("\n    def ", 10)]
+ck("B19a 按键必须**带伪激活**（实测：不带时微信不理投递的方向键）",
+   "ib.MessageBackend(activate=True)" in _KEYS_SEG and "_VK_DOWN" in _KEYS_SEG and "_VK_UP" in _KEYS_SEG)
+ck("B19b **每按一格都读会话头确认**（走过头能立刻发现；不是「按完再猜」）",
+   "_header_now(gui)" in _KEYS_SEG and "_co.matches(hdr, name)" in _KEYS_SEG)
+ck("B19c 这条路上**不许有坐标点击、不许滚动、不许开搜索窗**",
+   "_click_posted(" not in _KEYS_SEG and ".wheel(" not in _KEYS_SEG
+   and "open_chat_by_search" not in _KEYS_SEG and "SetCursorPos" not in _KEYS_SEG)
+ck("B19d 读不到会话头就**不按键**（fail-closed：不许闭着眼往下走）",
+   "读不到会话头" in _KEYS_SEG and "不按键" in _KEYS_SEG)
+ck("B19e 走法有界（budget）+ 反向自纠偏（两相）",
+   "_KEYS_WALK_BUDGET" in SRC_WECHAT and "for _phase in (0, 1)" in _KEYS_SEG)
+ck("B19f 方向由**数据**定（各会话最后消息时间倒序），不是靠猜",
+   "int(rows[0].get(\"create_time\") or 0)" in SRC_WECHAT and "def _walk_dir(" in SRC_WECHAT
+   and "目标更旧" in SRC_WECHAT)
+
+print("── B19g 方向函数是纯逻辑：目标更旧 ⇒ 往下；更新 ⇒ 往上；数据不全 ⇒ 0（默认往下）──")
+
+
+class _DirStub(object):
+    """只借 `_walk_dir`（纯逻辑），把两个数据源打桩。"""
+    _walk_dir = WC.WeChatAdapter._walk_dir
+    _last_msg_ts = WC.WeChatAdapter._last_msg_ts
+    _chat_id_by_header = WC.WeChatAdapter._chat_id_by_header
+
+    def __init__(self, want_ts, cur_ts, cur_id="c1"):
+        self._w, self._c, self._cid = want_ts, cur_ts, cur_id
+        self._db = None
+
+    def _last_msg_ts(self, cid):
+        return self._w if cid == "want" else (self._c if cid == self._cid else 0)
+
+    def _chat_id_by_header(self, hdr):
+        return self._cid if hdr else ""
+
+
+_d1 = _DirStub(1000, 2000)
+ck("B19g 目标更旧（1000 < 2000）⇒ 往下（+1）", _d1._walk_dir("want", "演示（3）") == 1)
+_d2 = _DirStub(3000, 2000)
+ck("B19g 目标更新（3000 > 2000）⇒ 往上（-1）", _d2._walk_dir("want", "演示（3）") == -1)
+_d3 = _DirStub(0, 2000)
+ck("B19g 数据给不出 ⇒ 0（调用方默认往下）", _d3._walk_dir("want", "演示（3）") == 0)
+_d4 = _DirStub(1000, 0, cur_id="")
+ck("B19g 当前会话认不出来 ⇒ 0（不硬猜方向）", _d4._walk_dir("want", "演示（3）") == 0)
 ck("B17c 放回收起状态**只在链收尾**做（`_restore_fg_until` 里不再顺手放回）",
    # 2026-09-18 改口径（现场现象：「他还在不停地缩小，就是把微信最小化，然后又把微信切出来」）：
    #   `_restore_fg_until` 在一条发送链里会被调很多次（切会话·搜索路线 / 投递发送后 / 写完文件名 /
