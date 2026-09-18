@@ -2830,6 +2830,10 @@ class WeChatAdapter:
             try:
                 if not _sok:
                     self.close_search_popovers(gui=gui)
+                    # 2026-09-18 作者问「你搜索的时候怎么跳前台呀」——查证：我们没主动置前（闸门还挡掉一次
+                    # calibrate_layout）；前台是微信自己在搜索浮层弹出时抢的（实测投递点击入口后 +0.26s）。
+                    # 真正的毛病：成功路径已点完即还，失败路径原来只等整链末尾才还 ⇒ 失败也立刻还。
+                    _restore_fg_until("切会话·搜索路线（失败即还）", timeout=1.2, keep=False)
             except Exception as _e2:
                 log.debug("关搜索浮层失败（不影响流程）：%s", _e2)
             if not self._scroll_list_fallback():
