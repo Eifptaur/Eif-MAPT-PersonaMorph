@@ -1817,6 +1817,7 @@ th{color:var(--tx2);font-weight:500}
     <section id="sec-feedback" class="card" data-sec>
       <h2>反馈</h2>
       <div class="desc">有什么想说的、想让它变成什么样的，写在这儿点提交就行。</div>
+      <div class="desc" style="margin-top:-2px"><b>有问题一定要反馈 —— 每一次反馈都会让体验变得更好。</b>你遇到的那一下，往往就是它最该改的地方；顺手带上截图或「检验报告」，我定位得快得多。</div>
       <div class="hint" id="fbWarn" style="display:none;color:var(--warn)"></div>
       <div class="row"><label>类型</label><div class="grow"><select id="fbKind">
         <option value="问题">问题（有东西坏了 / 不对）</option>
