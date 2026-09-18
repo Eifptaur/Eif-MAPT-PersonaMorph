@@ -309,6 +309,13 @@ def state(cfg: dict | None = None, timeout: float = 12.0) -> dict:
     # 自更新要用它俩（2026-09-16：控制台「立即更新」真正开始下载+换入，不再只打印指路文案）
     out["baseUrl"] = str(base.get("url") or "")
     out["baseSha256"] = str(base.get("sha256") or "")
+    # ⚡ 2026-09-18 晚：**内容指纹**（见 `agent/version.py::BUILD` 的说明）——同名版本换包也能看出来
+    try:
+        from .version import BUILD as _MINE_BUILD
+    except Exception:
+        _MINE_BUILD = ""
+    out["build"] = str(base.get("build") or "")
+    out["mineBuild"] = str(_MINE_BUILD or "")
     out["forceBase"] = bool(an.get("forceBase"))
     out["minBase"] = str(an.get("minBase") or "")
     out["checkedAt"] = int(time.time())
@@ -316,8 +323,17 @@ def state(cfg: dict | None = None, timeout: float = 12.0) -> dict:
         out["status"] = "error"
         out["why"] = "清单里没有版本号（清单坏了）"
     elif theirs == mine:
-        out["status"] = "current"
-        out["why"] = "已是最新（%s）" % mine
+        # ⚡ 2026-09-18 晚：**同名版本换包也要能看出来**（作者 2026-09-16 一问：「那就没有办法让他们
+        #   也接到更新提示吗」）。两边都有指纹且不同 ⇒ 判"有新包"；任一侧缺指纹（老包/老清单）⇒ 按原口径
+        #   判 current（**不误报**：没有指纹时我们无法区分"同一个包"和"换了包"）。
+        _tb, _mb = str(out.get("build") or ""), str(out.get("mineBuild") or "")
+        if _tb and _mb and _tb != _mb:
+            out["status"] = "newer"
+            out["why"] = ("同一个版本号（%s）但**包的内容变了**（内容指纹 %s ≠ %s）⇒ 有可更新的包"
+                          % (theirs, _tb, _mb))
+        else:
+            out["status"] = "current"
+            out["why"] = "已是最新（%s）" % mine
     elif c.get("skip_version") and str(c["skip_version"]) == theirs:
         out["status"] = "off"
         out["why"] = "用户选了「不再提醒 %s」" % theirs

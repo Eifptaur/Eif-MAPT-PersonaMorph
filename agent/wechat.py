@@ -843,6 +843,13 @@ V_NOT_SENT = Verdict("not_sent")
 class WeChatAdapter:
     def __init__(self, cfg: dict | None = None):
         self.cfg = cfg or get_config()
+        # ⛔ 2026-09-18（用户反馈原文：「他回我之前自定义的地址里去看文件了」）：
+        #   控制台保存配置走的是 `config.set_config(新对象)`，**换的是新对象**；把这个 adapter
+        #   启动时拿到的那份抱在怀里 ⇒ 它手里的 `wechat.db_dir` 永远是旧值，改配置对它无效。
+        #   ⇒ 分两种情况：调用方**显式传进来**的那份归调用方管（自检/夹具要能钉住输入）；
+        #     我们自己从 `get_config()` 拿的那份是**共享对象**，每次接入前重取一次（`refresh_cfg`）。
+        self._cfg_local = cfg is not None
+        self._db_dir_info: dict = {}
         self._db = None
         self._gui = None
         self._md = None
@@ -969,12 +976,49 @@ class WeChatAdapter:
         except Exception as e:
             return False, "判据可用性自检异常：%s: %s" % (type(e).__name__, e)
 
+    def refresh_cfg(self) -> dict:
+        """接入/重连前**重取当前配置**：别再拿启动那一刻的旧快照。
+
+        2026-09-18 用户反馈原文：「他回我之前自定义的地址里去看文件了」——"旧值继续生效"的一处
+        就在这里：控制台保存配置走 `config.set_config(新对象)`（换的是新对象），而 adapter 抱着
+        启动时那份不放 ⇒ 它眼里的 `wechat.db_dir` 永远是旧的自定义路径。
+        调用方**显式传进来**的那份 cfg 归调用方管（自检/夹具要能钉住输入），不动它。
+        """
+        if self._cfg_local:
+            return self.cfg
+        try:
+            _c = get_config()
+            if _c:
+                self.cfg = _c
+        except Exception:
+            pass
+        return self.cfg
+
     def _init_db(self):
         try:
             from wechatauto import WeChatDB, MediaDownloader
         except ImportError as e:
             raise WeChatError("未安装 wechatauto：请先安装依赖（pip install -r requirements.txt）。%s" % e)
+        self.refresh_cfg()                      # 现取当前配置（不拿启动时的旧快照）
         _dd = str(self.cfg.get("wechat", {}).get("db_dir") or "").strip()
+        # ⛔ 2026-09-18（用户反馈：「自己自定义的地址他检测不到」「他回我之前自定义的地址里去看文件了」）：
+        #    填进来的目录**先过一遍校验**（存在 + 有 db_storage 或库文件），不过就立刻说出来。
+        #    为什么不能只靠"开库失败"来兜：旧目录留在盘上、里面有旧副本时，驱动库会**成功地**
+        #    打开它 ⇒ 用户看到的是"监听后没反应"，而日志里一个字都没有（静默用旧值）。
+        _dchk = {}
+        if _dd:
+            try:
+                from . import wechat_dir as _wd0
+                _dchk = _wd0.check(_dd)
+            except Exception:
+                _dchk = {}
+        if _dd and _dchk and not _dchk.get("ok"):
+            try:
+                log.warning("「数据库目录」里填的 %s 不可用（%s）⇒ 按「配置 → 扫盘 → 驱动库自探测」"
+                            "回落到能用的那个；控制台「微信数据目录」那一行显示的是**实际在读**的目录",
+                            _dd, _dchk.get("why") or "用不了")
+            except Exception:
+                pass
         # ⛔ 2026-09-17（网友那份检验报告：侧栏「微信未连接·原因未知」+ 报告里「会话头检查失败:
         #    未找到任何已登录账号的数据库」，而**同一进程的逐步诊断六步全过**）：
         #    两条路只差**回退链**——老写法只在"扫盘那条"失败时才退，配置里填错一条就直接抛
@@ -1006,6 +1050,19 @@ class WeChatAdapter:
                             _dd, (_errs[0][2] if _errs else "开不了"), _picked or "驱动库自探测到的目录")
             except Exception:
                 pass
+        # 「当前**实际**在读哪个目录」的唯一落点 —— 检验报告 / 控制台 / `/api/status` 都读它，
+        # 而不是去读配置值（用户那句"报告显示他回我之前自定义的地址里去看文件了"就是从这儿丢的）。
+        self._db_dir_info = {}
+        try:
+            from . import wechat_dir as _wd1
+            self._db_dir_info = _wd1.status(how=self._db_how, explicit=_dd)
+            if self._db_dir_info.get("note"):
+                log.warning("消息库目录：%s", self._db_dir_info["note"])
+            else:
+                log.info("消息库目录：%s（来源=%s）",
+                         self._db_dir_info.get("now"), self._db_dir_info.get("src"))
+        except Exception as _e:
+            log.debug("算「当前实际在读哪个目录」失败（继续）：%s", _e)
         # 2026-09-16（网友 A 的报告：`KeyError: 'message\media 1.db'`）：微信会**懒创建**新分片，
         # 而驱动库的密钥表是它 init 时的快照 ⇒ 新分片没密钥 ⇒ 读消息/会话头/投递回读全断。
         # 接入时补一次（刷新分片表 + 补齐密钥），并把"仍缺密钥的分片"记下来给诊断/控制台看。

@@ -272,24 +272,46 @@ def sec_visual():
     lines, raw = [], {}
     # ⚠️ 2026-09-17（网友那份检验报告）：**先把"消息库用的哪个目录"写进报告**——这行原来缺着，
     #    于是"配置里填的目录用不了、产品死在那条路上"谁也看不出来（同一份报告里诊断却说六步全过）。
+    # ⛔ 2026-09-18（用户反馈原文：「通过文件夹中的脚本检查出来的报告显示，他回我之前自定义的地址里
+    #    去看文件了」）：这里原来为了拿 `_db_how` 去 **new 一个 WeChatAdapter**，库打不开时构造函数
+    #    直接抛 ⇒ 整段退化成"消息库: 取不到"，那句"你填的用不了、实际回落到了 X"根本印不出来。
+    #    现在分两步：① 运行中的那条路（`account_dir`）**试探、抛了也继续**；
+    #              ② 结论一律由 `wechat_dir.status` 给（配置是否可用 + 实际在读哪个 + 回落原因）。
     _conf_db = ""
     try:
         from agent.config import get_config
         _conf_db = str((get_config().get("wechat") or {}).get("db_dir") or "").strip()
     except Exception:
         _conf_db = ""
+    _how, _how_err = {}, ""
+    raw["db_dir_config"] = _conf_db
     try:
         from agent.wechat import WeChatAdapter as _WCA
         _how = dict(getattr(_WCA(), "_db_how", None) or {})
         raw["db_how"] = _how
-        lines.append("  消息库: %s（来源=%s）" % (
-            _how.get("account_dir") or _how.get("dir") or "取不到", _how.get("src") or "?"))
-        if _conf_db and _how.get("src") != "config":
-            lines.append("  ⚠️ 配置「数据库目录」里填的 %s **用不了**，已自动改用 %s ⇒ "
-                         "建议把那框改成它，或清空让它自动探测"
-                         % (_conf_db, _how.get("dir") or "驱动库自探测"))
     except Exception as e:
-        lines.append("  消息库: 取不到（%s: %s）" % (type(e).__name__, str(e)[:120]))
+        _how_err = "%s: %s" % (type(e).__name__, str(e)[:140])
+    try:
+        from agent import wechat_dir as _wd
+        _info = _wd.status(_how)
+        raw["wechat_dir"] = _info
+        lines.append("  微信数据目录: 实际在读 %s（来源=%s）"
+                     % (_info.get("now") or "取不到", _info.get("src") or "?"))
+        if _info.get("configured") and not _info.get("configured_ok"):
+            lines.append("  ⚠️ 配置「数据库目录」里填的 %s **不可用**：%s ⇒ 已回落到 %s"
+                         "（控制台「微信」面板那一行可改）"
+                         % (_info.get("configured"), _info.get("configured_why") or "用不了",
+                            _info.get("now")))
+        elif _info.get("note"):
+            lines.append("  ⚠️ %s" % _info.get("note"))
+        if _how:
+            lines.append("  消息库账号目录: %s（来源=%s）"
+                         % (_how.get("account_dir") or _how.get("dir") or "取不到", _how.get("src") or "?"))
+    except Exception as e:
+        lines.append("  微信数据目录: 取不到（%s: %s）" % (type(e).__name__, str(e)[:120]))
+    if _how_err:
+        # 库打不开**不等于**"这条结论取不到"：可用性/回落由上面那两行如实给出
+        lines.append("  消息库: 打不开或取不到（%s）" % _how_err)
     try:
         from agent import chat_header as ch
         fp = ch.capture()

@@ -665,18 +665,49 @@ def load_config(path: str | None = None) -> dict:
 
 
 _current_config: dict | None = None
+_config_stamp: tuple | None = None       # 内存里这份配置对上的**磁盘指纹**（mtime_ns, size）
+
+
+def _stamp(path: str):
+    """磁盘上那份配置的指纹；读不到（还没写过/无权限）返回 None。"""
+    try:
+        st = os.stat(path)
+        return (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
 
 
 def get_config() -> dict:
-    global _current_config
+    """当前配置。**配置一变就作废**：盘上那份的指纹跟内存里这份对不上 ⇒ 直接重读。
+
+    为什么要有这一步（2026-09-18 用户反馈：「他回我之前自定义的地址里去看文件了」）：
+    原来只有 `set_config()`（控制台 `/api/config` 保存）这一条路会换掉内存里那份；
+    **手工改 `config.json`、或另一个进程写的值，跑着的这个进程永远看不到** —— 旧值就一直生效。
+    指纹比对只是一次 `os.stat`，比"整个进程重启一次"便宜得多。
+    """
+    global _current_config, _config_stamp
     if _current_config is None:
-        _current_config = load_config()
+        return reload_config()
+    if _stamp(CONFIG_FILE) != _config_stamp:
+        return reload_config()
+    return _current_config
+
+
+def reload_config(path: str | None = None) -> dict:
+    """**显式的失效入口**：丢掉内存里那份，从磁盘重读一遍，并记下新的指纹。"""
+    global _current_config, _config_stamp
+    p = path or CONFIG_FILE
+    _current_config = load_config(p)
+    _config_stamp = _stamp(p)
     return _current_config
 
 
 def set_config(cfg: dict) -> None:
-    global _current_config
+    global _current_config, _config_stamp
     _current_config = cfg
+    # 记下此刻盘上的指纹：紧接着的 `save_config()` 会把它改掉，下次 get_config 比一次
+    # （比中就重读同一份内容，不会把刚设进去的值冲掉）。
+    _config_stamp = _stamp(CONFIG_FILE)
 
 
 def save_config(cfg: dict | None = None) -> None:

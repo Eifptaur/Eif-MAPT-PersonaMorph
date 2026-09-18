@@ -1204,7 +1204,15 @@ th{color:var(--tx2);font-weight:500}
         </div>
       </div>
       <div class="row"><label>媒体目录</label><div class="grow"><input type="text" data-cfg="wechat.media_dir"></div></div>
-      <div class="row"><label>数据库目录</label><div class="grow"><input type="text" data-cfg="wechat.db_dir" placeholder="留空=自动探测微信数据目录"></div></div>
+      <div class="row"><label>微信数据目录</label><div class="grow">
+        <div class="hint" id="wxDirNow">读取中…</div>
+        <div class="btns" style="margin-top:6px">
+          <input type="text" id="wxDirInput" data-cfg="wechat.db_dir" placeholder="填微信的 xwechat_files 目录，留空=自动检测" style="flex:1;background:var(--input-bg);border:1px solid var(--bd);border-radius:8px;padding:7px 10px;color:var(--tx)">
+          <button id="wxDirProbe" class="ghost" type="button">自动检测</button>
+          <button id="wxDirSave" class="ghost" type="button">保存并重探</button>
+        </div>
+        <div class="hint" id="wxDirCands"></div>
+      </div></div>
       <div class="btns"><button class="pri" data-save>保存设置（微信）</button></div>
       <hr style="border:none;border-top:1px solid var(--bd);margin:14px 0">
       <div class="desc">表情包（模型-程序协作）：群里收到有趣的表情，机器人用 <code>collect_emoji</code> 收藏（生成极简概述入库，模型-程序协作），需要时 <code>send_emoji</code> 按概述/语境选一个再发出；也可在下面手动管理。</div>
@@ -3365,6 +3373,9 @@ async function loadStatus(){  try{
           }
         }
       }
+      // 微信数据目录：显示**当前实际在读的目录**（不是配置值）；配置那个用不了就把原因与回落目标写出来
+      const wd = s.wechat_dir || null;
+      if(wd){ renderWechatDir(wd); }
       const dh = $('depHint');
       if(dh){
         dh.textContent = s.dep_ok ? '版本体检：匹配（微信/适配层/依赖均符合要求）' : '注意：版本体检：存在不匹配（重启时自动弹窗询问修正，或运行 检查微信版本.bat --update）';
@@ -3759,7 +3770,12 @@ async function saveAllBtn(btn){
     // 仅当用户确实改了「原始JSON」且表单未改动时才用 rawjson——此处以界面为主。
     const snapAll = cfg ? JSON.parse(JSON.stringify(cfg)) : null;   // 保存前的整份配置（供「撤销」写回）
     syncFromForm(); wsSyncFromForm(); if(typeof syncMemGroupsToCfg==='function') syncMemGroupsToCfg();
-    await getJSON('/api/config', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(cfg)});
+    const rs = await getJSON('/api/config', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(cfg)});
+    // 「微信数据目录」这类**要过校验**的项被服务端拒了 ⇒ 不许说"已保存"（用户反馈的起点之一）
+    if(rs && rs.ok === false){
+      if(rs.wechat_dir) renderWechatDir(rs.wechat_dir);
+      throw new Error(rs.error || '有一项没通过校验');
+    }
     if(snapAll) pushUndo({kind:'all', snapshot:snapAll, label:(btn ? (cur || '保存设置') : '保存全部设置')});
     toast('已保存，刷新页面生效…');
     setTimeout(()=>{
@@ -6459,6 +6475,61 @@ setInterval(()=>{ if($('autolog').checked) loadLog(); }, 4000);
 setInterval(checkAlive, 6000);
 $('sessRefresh').onclick = ()=>loadSessions();
 addEventListener('hashchange', ()=>{ if(location.hash==='#sec-sessions') loadSessions(); });
+/* 微信数据目录（2026-09-18 用户反馈：「能不能让我自己选微信的地址」）：
+   一行显示**当前实际在读的目录**（不是配置值），一颗「自动检测」探候选，一颗「保存并重探」写盘。
+   保存那条**先过服务端校验**（存在 + 有 db_storage 或库文件），不过关就不写、只把原因显示出来。 */
+function renderWechatDir(wd){
+  const now = $('wxDirNow');
+  if(now && wd){
+    const okMark = (wd.ok === false) ? '✘ ' : '✔ ';
+    now.textContent = okMark + (wd.text || ('当前在读 ' + (wd.now || '')));
+    now.style.color = (wd.note || wd.ok === false) ? 'var(--warn-tx)' : 'var(--ok-tx)';
+  }
+  const box = $('wxDirCands');
+  const cs = (wd && wd.candidates) || null;
+  if(box && Array.isArray(cs)){
+    // 只有**真带了清单**才动这张列表（/api/status 每 4 秒轮询一次，它不带清单；
+    // 若无条件清空，用户刚点「自动检测」探出来的结果会被下一次轮询擦掉）
+    if(!cs.length){ box.textContent = ''; return; }
+    box.innerHTML = '';
+    cs.forEach(function(c){
+      const line = document.createElement('div');
+      const usable = (c.usable !== undefined) ? c.usable : c.ok;
+      line.textContent = (usable ? '✔ ' : '✘ ') + (c.path || '') + '，' + (usable ? ('可用，' + (c.dbs || 0) + ' 个库文件') : (c.why || '不可用'));
+      line.style.color = usable ? 'var(--ok-tx)' : 'var(--err-tx)';
+      box.appendChild(line);
+    });
+  }
+}
+async function probeWechatDir(){
+  const i = $('wxDirInput');
+  const p = i ? i.value.trim() : '';
+  const r = await getJSON('/api/wechat/dir' + (p ? ('?path=' + encodeURIComponent(p)) : ''));
+  renderWechatDir(r);
+  return r;
+}
+(function(){
+  const probeBtn = document.getElementById('wxDirProbe');
+  const saveBtn = document.getElementById('wxDirSave');
+  if(probeBtn) probeBtn.onclick = async ()=>{
+    try{ await probeWechatDir(); toast('已探完，下面列出候选目录'); }
+    catch(e){ toast('探测失败：' + e.message); }
+  };
+  if(saveBtn) saveBtn.onclick = async ()=>{
+    const i = document.getElementById('wxDirInput');
+    const p = i ? i.value.trim() : '';
+    try{
+      const r = await getJSON('/api/wechat/dir', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({path:p})});
+      if(r && r.wechat_dir) renderWechatDir(r.wechat_dir);
+      if(r && r.ok === false){
+        toast('保存失败：' + (r.error || '这个目录用不了') + (r.fallback ? ('，当前会回落到 ' + r.fallback) : ''));
+      }else{
+        toast('已保存，现在读的是：' + ((r && r.wechat_dir && r.wechat_dir.now) || '自动检测到的目录'));
+      }
+      loadStatus();
+    }catch(e){ toast('保存失败：' + e.message); }
+  };
+})();
 /* 微信装没装：两个动作（2026-09-13） */
 (function(){
   const openBtn = document.getElementById('wxOpenSite');

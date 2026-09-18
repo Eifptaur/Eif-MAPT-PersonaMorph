@@ -138,6 +138,18 @@ def main():
 
     stamp = datetime.now().strftime("%Y%m%d")
     out = os.path.join(OUT_DIR, f"{PKG_PREFIX}{stamp}.zip")
+    # ⚡ 2026-09-18 晚：**打包前把内容指纹写进 `agent/version.py`**（清单里带 `base.build`，
+    #   用户侧才能在"同一个版本号换了包"时看出来）。指纹只跟"进包的那些文件"有关，且算
+    #   `agent/version.py` 时会先抹掉 BUILD 行 ⇒ 不会自指。开发树里 BUILD 留空，只有出包才写。
+    try:
+        sys.path.insert(0, ROOT)
+        from agent import version as _ver
+        _fp = _ver.build_fingerprint(files, root=ROOT)
+        _ver.write_build(_fp)
+        print(f"内容指纹（build）：{_fp} —— 已写入 agent/version.py（同名版本换包时用户侧靠它看出来）")
+    except Exception as _e:
+        print(f"❌ 内容指纹计算失败 ⇒ 拒绝出包：{_e}")
+        return 6
     if os.path.exists(out):
         os.remove(out)
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
