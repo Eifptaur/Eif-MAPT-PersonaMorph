@@ -1,11 +1,11 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.18.13.2",
-    "sha256": "60c8bdc348eda43510255af95963e87b2eb2092f4c4c935e6eae1a77c2e9c80d",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.32.5/persona-morph-v2.1.32.5.zip",
-    "build": "5b4d5f1973ef",
-    "size": 9297798,
+    "version": "2026.9.18.13.3",
+    "sha256": "6c581c45769956e87c165432f69e6d0dc3c29a27a58e09cd20fa5b6f029769fa",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.32.6/persona-morph-v2.1.32.6.zip",
+    "build": "3f2042bbe807",
+    "size": 9304678,
     "files": 284
   },
   "dlc": [
@@ -33,13 +33,13 @@
     }
   ],
   "announce": {
-    "version": "2026.9.18.13.2",
+    "version": "2026.9.18.13.3",
     "notes": [
-      "切会话新增「按键走格」：直接在会话列表上按方向键走过去——**不开搜索窗、不点鼠标、不动光标**，每按一格都读会话头确认（走过头会自动回头）；顺序变成 按键走格 → 点列表 → 搜索兜底；已经在目标会话时什么都不做"
+      "切会话改成「按键走格」优先：直接在会话列表上按方向键走过去（不开搜索窗、不点鼠标、不动光标），每按一格读会话头确认、走过头自动回头；**只走短距（单向 ≤4 格）**，走不到就退回点列表、再不行才用搜索；另外修好了「该还前台时没还」——以前你在打字的时候它会把微信一直留在前台，现在只要前台是被它自己顶上来的就会立刻还回你的窗口"
     ],
     "forceBase": false,
-    "minBase": "2026.9.18.13.2"
+    "minBase": "2026.9.18.13.3"
   },
-  "builtAt": "2026-09-18T15:08:45Z",
-  "updatedAt": 1789744125625
+  "builtAt": "2026-09-18T15:24:22Z",
+  "updatedAt": 1789745062460
 }
