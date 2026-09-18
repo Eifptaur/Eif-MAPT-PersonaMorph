@@ -135,12 +135,17 @@ def _ranked(got: dict, urls: list):
     return best_m, best_u
 
 
-def fetch_any(urls, timeout: float = 8.0):
+def fetch_any(urls, timeout: float = 12.0, patient: float = None):
     """**并行**拉多个源，**版本最高的赢**。返回 `(清单或 None, 说明, 用到的 url)`。
 
     为什么要并行（2026-09-16）：串行试 4 个源、每个超时 6 秒 = 最坏 24 秒，控制台一打开就卡住；
     并行 ⇒ 最坏 ≈ 一个超时。
     为什么按版本挑（2026-09-17）：见 `_ranked()` 的注释——先到的可能是 CDN 的旧缓存。
+    为什么有"耐心阶段"（2026-09-18 作者另一台机器实测**延迟 ~1900ms**）：
+      老实现 `while time.time() - t0 < timeout + 1.0` 到点就收摊 —— 2 秒 RTT 的链路上，
+      TCP+TLS 握手（好几轮）加首个响应字节很容易超过 9 秒 ⇒ **明明能通的源被我们自己掐掉**，
+      报出来还是"所有源都拉不到"。⇒ 先按老窗口等（有货立刻返回、平时不卡），
+      一条都没成时再进**耐心阶段**继续等（默认 30 秒），慢网也能成。
     """
     urls = [u for u in (urls or []) if u]
     if not urls:
@@ -160,7 +165,17 @@ def fetch_any(urls, timeout: float = 8.0):
         threading.Thread(target=_one, args=(u,), daemon=True).start()
     t0 = time.time()
     t_first = 0.0
-    while time.time() - t0 < timeout + 1.0:
+    _patient = float(patient if patient is not None else 30.0)
+    _waited_patient = False
+    while True:
+        _el = time.time() - t0
+        if _el >= timeout + 1.0:
+            # 老窗口过了、一条都没成 ⇒ 进耐心阶段（**慢网**：2s RTT 也够握手 + 取回）
+            if _waited_patient or _el >= _patient:
+                break
+            if not _waited_patient:
+                _waited_patient = True
+                print("[update] 更新源很慢，继续等（最多 %.0f 秒）…" % _patient)
         with lock:
             done_all = len(got) == len(urls)
             got_one = any((got.get(u) or (None, ""))[0] is not None for u in urls)
@@ -258,7 +273,7 @@ def fetch(url: str, timeout: float = 8.0):
         return None, "更新源不是合法 JSON：%s" % str(e)[:60]
 
 
-def state(cfg: dict | None = None, timeout: float = 8.0) -> dict:
+def state(cfg: dict | None = None, timeout: float = 12.0) -> dict:
     """给控制台的**如实**三态。`status ∈ off | error | current | newer | older`。
 
     · `off`     ＝没配更新源（或开了"不再提醒"）⇒ 界面**什么都不显示**
@@ -275,7 +290,7 @@ def state(cfg: dict | None = None, timeout: float = 8.0) -> dict:
         out["why"] = "用户开了「不再提醒」"
         return out
     urls = candidate_urls(c)
-    man, why, used = fetch_any(urls, timeout)
+    man, why, used = fetch_any(urls, timeout, patient=10.0)
     if man is None:
         out["status"] = "error"
         out["why"] = why
