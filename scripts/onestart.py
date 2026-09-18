@@ -291,23 +291,31 @@ def _bot_opens_console():
         return True
 
 
-def _probe_browser_was_opened():
-    """**屏幕上真的已经有一个控制台窗口了吗**（2026-09-18 改口径：不再只信锁）。
+def _probe_console_window():
+    """**屏幕上真的已经有一个控制台窗口了吗**——是则返回句柄，否则 0（2026-09-18 改口径：不再只信锁）。
 
     ⛔ 原实现读 `console_lock_fresh(90)` —— 那是"90 秒内有人开过"，**不代表窗口还在**。
     作者在另一台机器实测：「更新之后，一键启动不弹窗口，还得再点一次」：更新完新机器人起来时开过一次窗
     并落锁，紧接着点一键启动 ⇒ 这里判"机器人侧已打开" ⇒ 启动器不开、而窗口其实没影 ⇒ 一屏空白；
     等 90 秒锁过期再点才出来。⇒ 现在**以真窗口为准**（`find_console_window()` + `IsWindow`）。
+    ⛔ 2026-09-19 再修：判据本身（`notify_ui.classify_console_window`）原来按标题子串认窗，
+    会把启动器自己的窗「群相 一键启动」当成控制台 ⇒ 同一个症状复发。现已收紧到唯一标题「群相 控制台」，
+    并在这里**把看到的窗口标题一起带出去**，写在日志里当证据（函数返回句柄，标题由调用方取）。
     """
     try:
         from agent.notify_ui import find_console_window
         h = int(find_console_window() or 0)
         if not h:
-            return False
+            return 0
         import ctypes
-        return bool(ctypes.windll.user32.IsWindow(ctypes.c_void_p(h)))
+        return h if ctypes.windll.user32.IsWindow(ctypes.c_void_p(h)) else 0
     except Exception:
-        return False
+        return 0
+
+
+def _probe_browser_was_opened():
+    """兼容旧调用点：只问"有没有"。"""
+    return bool(_probe_console_window())
 
 
 def _probe_running_instance(timeout=2):
@@ -554,14 +562,25 @@ def main():
                     #   "机器人侧已打开" ⇒ 启动器不开、新机器人又抢不到锁 ⇒ **两边都不开**。
                     #   修法在 `agent/util.py`：锁文件带 pid，**写锁进程已死即视为过期**，
                     #   于是这里会正确地走到下面的兜底 `_open_console()`。
-                    _opened_by_bot = _probe_browser_was_opened()
+                    _w_hwnd = int(_probe_console_window() or 0)
+                    _opened_by_bot = bool(_w_hwnd)
                     if not _opened_by_bot:
                         try:
                             _open_console("", _bpath)     # 地址为空 ⇒ 由 open_console 取权威地址（此刻已落盘）
                         except Exception as e:
                             log("控制台已就绪但打不开窗口：%s" % e)
                     else:
-                        log("控制台已由机器人侧打开（单点执行），启动器不再打开。")
+                        # ⛔ 2026-09-19：这句"机器人侧已打开"必须**带证据**。上一版就是这样一句
+                        #   无凭据的结论酿成事故——窗口判据把启动器自己的窗（「群相 一键启动」）
+                        #   当成了控制台 ⇒ 两边都不开、屏幕上什么都没有、用户得再点一次。
+                        #   现在把"我到底看到了哪个窗口"写进日志（判据唯一源＝notify_ui.classify_console_window）。
+                        _seen = ""
+                        try:
+                            from agent.notify_ui import window_title as _wt
+                            _seen = "［看到窗口 hwnd=%s 标题=「%s」］" % (_w_hwnd, _wt(_w_hwnd))
+                        except Exception:
+                            _seen = ""
+                        log("控制台已由机器人侧打开（单点执行），启动器不再打开。%s" % _seen)
                     opened = True
                     break
             except Exception:

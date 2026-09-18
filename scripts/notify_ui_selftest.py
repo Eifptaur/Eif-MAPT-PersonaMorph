@@ -156,6 +156,68 @@ if gw:
 else:
     skip("抬起真窗口", "本会话没有控制台窗口（无桌面/无控制台）")
 
+print("── B3. 窗口判据：只有「群相 控制台」才算控制台（2026-09-19 钉住那次事故）──")
+# ⛔ 起因（作者当场报）：点一下「一键启动」没打开控制台、**还得再点一下**。
+#   根因＝旧判据按**标题子串**认窗（"群相" / "控制台" / 裸 "一键启动"），而启动器自己的窗口就叫
+#   「群相 一键启动」「群相 启动完成」，且**控制台窗与启动器窗是同一个 exe**（一键启动.exe）
+#   ⇒ 机器人侧判"已经开着 ⇒ 复用"（不开）、2 秒后启动器侧判"机器人侧已打开"（也不开）⇒ **两边都不开**。
+#   下面这几条样本＋两扇真窗，就是钉住这个回归的判据。窗一律建在**屏幕外**（不打扰用户）。
+_CASES = [
+    ("群相 控制台", "一键启动.exe", True),
+    ("群相 控制台 - Google Chrome", "chrome.exe", True),        # 回退浏览器打开时是标签页
+    ("群相 一键启动", "一键启动.exe", False),                    # ← 事故主犯
+    ("群相 启动完成", "一键启动.exe", False),
+    ("群相 正在启动", "一键启动.exe", False),
+    ("群相 已就绪", "一键启动.exe", False),
+    ("接手群相拍一拍落点修复 — DeepSeek Harness - Google Chrome", "chrome.exe", False),   # 只是标题里有"群相"
+    ("命令提示符", "cmd.exe", False),
+    ("", "一键启动.exe", False),
+]
+_bad = [("%s/%s→%s(期望%s)" % (_t[:14], _e, _g, "算" if _w else "不算"))
+        for _t, _e, _w in _CASES for _g in [NU.classify_console_window(_t, _e)] if bool(_g) != _w]
+ok("9 个标题样本判对（含事故主犯「群相 一键启动」）", not _bad, "；".join(_bad) if _bad else "全对")
+ok("自家 exe 的控制台窗排在同名浏览器页之前（EXE_HINTS 只做排序加分、不再能单独成立）",
+   NU.classify_console_window("群相 控制台", "一键启动.exe") > NU.classify_console_window("群相 控制台", "chrome.exe"))
+ok("裸「群相」不再能单独认成控制台（浏览器标签页/文档窗会撞）",
+   NU.classify_console_window("群相 — 开发笔记", "notepad.exe") == 0)
+
+_u2 = ctypes.windll.user32
+_u2.CreateWindowExW.restype = ctypes.c_void_p
+_u2.CreateWindowExW.argtypes = [ctypes.c_uint, ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint,
+                                ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                                ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+_u2.DestroyWindow.argtypes = [ctypes.c_void_p]
+_WS_VISIBLE = 0x10000000
+
+
+def _fake_window(title):
+    """屏幕外建一扇真窗（WS_VISIBLE ⇒ IsWindowVisible 为真、EnumWindows 能枚举，但看不见）。"""
+    return int(_u2.CreateWindowExW(0, "STATIC", title, _WS_VISIBLE, -4000, -4000, 320, 140, 0, 0, 0, 0) or 0)
+
+
+_h_lau = _fake_window("群相 一键启动")
+try:
+    _g1 = int(NU.find_console_window() or 0)
+    ok("真建出来的「群相 一键启动」窗不会被认成控制台", _g1 != _h_lau,
+       "find=%s 假启动器窗=%s" % (_g1, _h_lau))
+finally:
+    if _h_lau:
+        _u2.DestroyWindow(ctypes.c_void_p(_h_lau))
+
+_h_con = _fake_window("群相 控制台")
+try:
+    if _live:
+        # 屏幕上本来就有真控制台（自家 exe，分更高）⇒ 不跟它抢，只钉判据本身
+        ok("离屏的「群相 控制台」窗被判成控制台（判据本身没被收得过紧）",
+           NU.classify_console_window("群相 控制台", "python.exe") >= 4)
+    else:
+        _g2 = int(NU.find_console_window() or 0)
+        ok("离屏建出的「群相 控制台」窗能被 find 认出来（正向）", _g2 == _h_con,
+           "find=%s 假控制台窗=%s" % (_g2, _h_con))
+finally:
+    if _h_con:
+        _u2.DestroyWindow(ctypes.c_void_p(_h_con))
+
 print("── C. 弹窗流程：能弹/不重复弹/弹不出来也要如实报 ──")
 # ⚠️ 这一段的"抬起"分支**必须用真窗口**：`raise_without_stealing` 会用 `IsWindow` 验句柄，
 #    拿假句柄（4242）会被它挡回来（这正是它该做的事）⇒ 用自检进程自己的控制台窗当"控制台窗口"。
