@@ -60,7 +60,8 @@ PATHS = [
                   "（2026-09-18 本机实测：按键走格 ↑2 格 ≈1 秒｜搜索路线 ≈3.7 秒；随后都还回）。"
                   "**全程不动光标**",
         "evidence": "agent/wechat.py::_switch_by_keys / _click_visible_session / open_chat_by_search"
-                    "（都含还前台；实测脚本 _scratch/_probe_fg_by_window.py）",
+                    "（都含还前台；实测脚本 _scratch/_probe_fg_by_window.py）· "
+                    "**你在全屏玩游戏/放演示时它不动窗**（判据同 Windows 通知系统；会等你，等不到就跳过并记日志）",
     },
     {
         "key": "moments_open", "label": "打开朋友圈", "status": "posted_fallback",

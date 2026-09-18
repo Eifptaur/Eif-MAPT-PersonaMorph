@@ -176,6 +176,74 @@ def _wait_user_pause(max_s: float = 2.0, idle: float = 0.9) -> bool:
         return False
 
 
+# ── 「用户在忙」判据：全屏游戏 / 演示 / 静默时段 ⇒ **一律不动窗** ──────────────────
+QUNS_BUSY = {
+    1: "有全屏程序在前台（用户不在看桌面）",
+    2: "全屏演示/游戏（系统标记为勿打扰）",
+    3: "D3D 独占全屏游戏",
+    4: "演示模式",
+    6: "系统静默时段",
+    7: "Windows 应用全屏",
+}
+
+
+def _fullscreen_busy() -> str:
+    """用户正处在"别打扰"状态吗？返回原因（空串＝可以动手）。
+
+    ⚡ 2026-09-18 深夜（作者问「到时候用户打游戏时会被打扰吗」）：用 Windows **给通知系统用的同一个
+    判据** `SHQueryUserNotificationState`（shell32）—— 它正是"要不要弹东西"的官方语义。我们动窗
+    （伪激活）在独占全屏下最轻也会把游戏踢出全屏，所以这些状态里**一律不动窗**。
+    拿不到这个 API 时退回第二判据"前台窗口是否铺满它所在显示器"；两个都取不到 ⇒ 判不忙（不误拦）。
+    """
+    try:
+        q = ctypes.c_int(0)
+        hr = ctypes.windll.shell32.SHQueryUserNotificationState(ctypes.byref(q))
+        if hr == 0 and int(q.value) in QUNS_BUSY:
+            return QUNS_BUSY[int(q.value)]
+    except Exception:
+        pass
+    try:
+        import win32gui
+        from ctypes import wintypes
+
+        class _R(ctypes.Structure):
+            _fields_ = [("l", ctypes.c_long), ("t", ctypes.c_long),
+                        ("r", ctypes.c_long), ("b", ctypes.c_long)]
+
+        class _MI(ctypes.Structure):
+            _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", _R),
+                        ("rcWork", _R), ("dwFlags", wintypes.DWORD)]
+
+        u = ctypes.windll.user32
+        h = int(u.GetForegroundWindow() or 0)
+        if not h:
+            return ""
+        rr, mi = _R(), _MI()
+        mi.cbSize = ctypes.sizeof(_MI)
+        u.GetWindowRect(ctypes.c_void_p(h), ctypes.byref(rr))
+        u.GetMonitorInfoW(ctypes.c_void_p(u.MonitorFromWindow(ctypes.c_void_p(h), 2)), ctypes.byref(mi))
+        if (rr.l <= mi.rcMonitor.l and rr.t <= mi.rcMonitor.t
+                and rr.r >= mi.rcMonitor.r and rr.b >= mi.rcMonitor.b):
+            return "前台窗口铺满整块屏幕（多半是全屏游戏/视频）"
+    except Exception:
+        pass
+    return ""
+
+
+def _wait_fullscreen_clear(max_s: float = 20.0) -> str:
+    """用户在忙就一直等（最多 `max_s` 秒）；返回**最后**的忙碌原因（空串＝已经不忙）。"""
+    why = _fullscreen_busy()
+    if not why:
+        return ""
+    t0 = time.time()
+    while time.time() - t0 < max(0.0, float(max_s)):
+        time.sleep(0.5)
+        why = _fullscreen_busy()
+        if not why:
+            return ""
+    return why
+
+
 def _wait_dialog_gone(hwnd: int, timeout: float = 1.5) -> bool:
     """等某个对话框**真的消失**（最多 `timeout` 秒）；返回是否真的没了。
 
@@ -3055,6 +3123,9 @@ class WeChatAdapter:
                 return False, "找不到微信主窗"
             # ⚡ 2026-09-18 深夜（作者场景）：用户正在玩游戏按键时**先等一个输入空档**再动（等不到也照做，
             #   每格都会立刻还前台）。这条与"不打扰用户"是一条线：把"打断正在输入的键"降到最低。
+            _busy1 = self._busy_reason("按键走格", wait_s=10.0)
+            if _busy1:
+                return False, "你在忙（%s）⇒ 不按键、不动窗" % _busy1
             _wait_user_pause(max_s=1.6, idle=0.9)
             _hdr0 = self._header_now(gui)
             if not _hdr0:
@@ -3092,6 +3163,26 @@ class WeChatAdapter:
             return False, "按键走格 %d 格都没走到「%s」（每格都读过会话头确认）" % (steps, name)
         except Exception as e:                                         # noqa: BLE001
             return False, "按键走格异常：%s" % str(e)[:90]
+
+    def _busy_reason(self, tag: str, wait_s: float = 20.0) -> str:
+        """**动窗前的一句问话**：用户正忙着吗（全屏游戏 / 演示 / 静默时段）？忙就先等（最多 `wait_s`），
+        仍忙就返回原因，调用方**如实停下**（把原因写进返回文案），绝不硬动窗。
+
+        ⚡ 2026-09-18 深夜（作者问「到时候用户打游戏时会被打扰吗」）：我们动窗（伪激活）在独占全屏下
+        最轻也会把游戏踢出全屏。⇒ 判据用 `_fullscreen_busy()`（Windows 通知系统那套语义）。
+        """
+        try:
+            why = _fullscreen_busy()
+            if not why:
+                return ""
+            log.info("%s：用户正忙（%s）⇒ 先等最多 %.0fs 再动窗", tag, why, wait_s)
+            why2 = _wait_fullscreen_clear(wait_s)
+            if not why2:
+                return ""
+            log.warning("%s：等了 %.0fs 用户仍在忙（%s）⇒ 本次不动窗（如实停下）", tag, wait_s, why2)
+            return why2
+        except Exception:
+            return ""
 
     def _header_match(self, name: str, hdr: str) -> bool:
         """会话头文本是不是目标会话（**严格优先，宽容兜底**）。
@@ -3184,6 +3275,11 @@ class WeChatAdapter:
             already, why0 = self.chat_is_open(chat_id, gui=gui, name=name)
             if already:
                 return True, "目标会话已经是当前打开的会话（%s）" % why0
+            # ⚡ 2026-09-18 深夜：用户在忙（全屏游戏/演示/静默）⇒ **不动窗**（作者问「打游戏时会被打扰吗」）
+            _busy = self._busy_reason("切会话")
+            if _busy:
+                return False, ("你在忙（%s）⇒ 本回合不切会话、不弹窗（不想在你全屏游戏/演示的时候打扰你）；"
+                               "等你不忙了它会照常切" % _busy)
             # ⛔ 2026-09-16 用户明确要求（原话：「他老是想找会话列表那一条究竟在哪儿，
             #   **他不能直接点击输搜索框输入吗**」）⇒ **搜索框优先**：
             #   搜索入口是**固定位置**（两套 UI 都认，`open_chat_by_search` 已是实测通路），
@@ -3549,6 +3645,9 @@ class WeChatAdapter:
         #    ⇒ 进这条路先把用户当时的前台记下来，出去时（含异常路径，见函数末尾的 finally）一律还回去。
         #    这也很关键：调用方（发文件）随后会自己 `_stash_fg()` 记"用户窗口"——这里先还回去，
         #    它记到的才是**用户的窗口**，而不是被这条链顶到前面的微信。
+        _busy0 = self._busy_reason("搜索切会话", wait_s=20.0)
+        if _busy0:
+            return False, "你在忙（%s）⇒ 不开搜索窗、不打扰你" % _busy0
         _stash_fg()
         # ⚡ 2026-09-18 晚：记下**动手前**屏幕上已有的搜索窗口（收尾时不动它们——可能是用户自己开的）；
         #    本次新出现的（我们点开的浮层 / 独立搜索窗）一律在 finally 里关掉。
@@ -3841,6 +3940,11 @@ class WeChatAdapter:
         _halt = _control_halt()      # 暂停/停止闸：**已开工的链也要停**（2026-09-18）
         if _halt:
             return False, _halt
+        # ⚡ 2026-09-18 深夜：用户在全屏游戏/演示/静默时段 ⇒ **这一次不发**（投递打字会伪激活、把游戏踢出全屏）。
+        #   等他最多 8s（快速 Alt-Tab 不丢消息），仍忙就如实返回原因（日志与控制台可见，不静默吞掉）。
+        _busy_s = self._busy_reason("投递发送", wait_s=8.0)
+        if _busy_s:
+            return False, "你在忙（%s）⇒ 这条先不发（不想在你全屏游戏/演示时弹窗）" % _busy_s
         # OCR 总时间窗（测机手册 ④）：这一笔发送链的 OCR 总预算（超时按"自检不可用"处理）
         from . import chat_ocr as _co
         _co.begin_window(_co.SEND_WINDOW_S)
@@ -8087,6 +8191,9 @@ class WeChatAdapter:
              `_open_chat_guarded`），**确认不了就直接失败返回**，并说明原因（绝不静默）。
         """
         try:
+            _busy2 = self._busy_reason("表情面板")
+            if _busy2:
+                return False, "你在忙（%s）⇒ 本回合不开表情面板" % _busy2
             gui = self._get_gui()
             from . import ui_adapt
             if not ui_adapt.prepare_screen(gui):

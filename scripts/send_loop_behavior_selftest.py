@@ -147,6 +147,10 @@ class _Stub(object):
     # ── 2026-09-18 新增契约：点击咽喉点（真方法借过来用，判据要能过）──
     _wx_toplevel_windows = lambda self, *a, **k: {}
     _click_posted = W.WeChatAdapter._click_posted
+    # ⚡ 2026-09-18 深夜："用户在忙（全屏游戏/演示）⇒ 不动窗"这条闸也要打桩：
+    #   桩对象永远比产品少方法（本判据因此整段崩过一次：rc=1 / None/None），
+    #   主路径新增调用一律先探测再调用，判据这边同步补桩。
+    _busy_reason = lambda self, *a, **k: ""
 
     def _learn_chat_header(self, chat_id, gui=None):
         self._scn.learned += 1
