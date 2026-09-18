@@ -8507,10 +8507,34 @@ def attach_diagnosis(adapter=None, err="", db=None) -> dict:
         except Exception as e:
             uid, nick = "", ""
             log.debug("诊断读 self 信息失败：%s", e)
-        steps.append({"key": "self", "name": "认出你自己的账号", "ok": bool(uid),
-                      "detail": ("认出来了：%s%s" % (nick or uid, "（%s）" % uid if nick else "")) if uid
-                                else "读不出你自己的账号（库能读但 self 信息为空）⇒ 不影响读群消息，"
-                                     "但「这条是不是我发的」会退化"})
+        # 🔴 2026-09-18 改（网友报障截图：这一步显示「[卡住] 读不出你自己的账号」而其实能用）：
+        #   判自己早就不止"认识自己"这一档了 —— **自家消息行号**（发送回读时登记，跟 self 信息无关）、
+        #   文本回声窗、昵称+刚发过，三档都能用；而且我们发过一条之后
+        #   `learn_self_from_echo()` 会从库回读里把"自己是谁"学回来。
+        #   ⇒ self 读不出**不算阻塞**（否则用户只看到"卡住"就来报障），改成如实说清"现在靠什么判自己"。
+        _n_local, _learned, _echo_win = 0, "", 120
+        try:
+            _n_local = sum(len(v or []) for v in
+                           (getattr(adapter, "_self_local", None) or {}).values())
+        except Exception:
+            _n_local = 0
+        _learned = str(getattr(adapter, "_self_wxid_src", "") or "")
+        try:
+            _ew = getattr(adapter, "_echo_window", None)
+            _echo_win = int(_ew()) if callable(_ew) else 120
+        except Exception:
+            _echo_win = 120
+        if uid:
+            _self_detail = "认出来了：%s%s" % (nick or uid, "（%s）" % uid if nick else "")
+        else:
+            _self_detail = ("读不出你自己的账号（库能读但 self 信息为空）—— **不影响使用**：判自己现在走"
+                            "「自家消息行号」（已记 %d 条）+「文本回声窗」（%d 秒）+「昵称 + 我刚发过」三档，"
+                            "都不依赖这条 self 信息；我们自己发过一条之后还会自动从库回读里把"
+                            "「自己是谁」学回来（当前来源=%s）。"
+                            % (_n_local, _echo_win, _learned or "还没学到"))
+        steps.append({"key": "self", "name": "认出你自己的账号",
+                      "ok": True,                                    # 两态都算通过：不再阻塞
+                      "detail": _self_detail})
     bad = [s for s in steps if not s["ok"]]
     step_key = bad[0]["key"] if bad else ""
     action = {"deps": "install_deps", "process": "start_wechat", "install": "install",
@@ -8519,7 +8543,7 @@ def attach_diagnosis(adapter=None, err="", db=None) -> dict:
     # 「微信没在跑」里还要分两种：装了的＝叫他开微信；没装的＝叫他去装（别让他白找一圈）
     if step_key == "process" and any(s["key"] == "install" and not s["ok"] for s in steps):
         action = "install"
-    reason = bad[0]["detail"] if bad else "四步都过：微信在跑、消息库打得开、密钥可用、也认出了你自己的账号"
+    reason = bad[0]["detail"] if bad else ("这几步都过：微信在跑、消息库打得开、密钥可用；判自己用「行号 + 回声 + 昵称」三档，不依赖 get_self_info")
     if err:
         reason = "%s（接入时抛的错：%s）" % (reason, str(err)[:140])
     return {"ok": not bad, "step": step_key, "reason": reason, "action": action,

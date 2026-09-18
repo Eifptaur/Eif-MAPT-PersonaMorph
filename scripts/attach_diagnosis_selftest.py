@@ -148,12 +148,20 @@ ok("原因里带上了异常名/信息", "RuntimeError" in _g["reason"], _g["rea
 ok("库都打不开时不再报 key/self（不许拿空气当证据）",
    not any(s["key"] in ("key", "self") for s in _g["steps"]), str([s["key"] for s in _g["steps"]]))
 
-print("── G. 库能读、但读不出你自己的账号 ⇒ 卡在 self，action=retry，并说明它不挡读群消息 ──")
+print("── G. 库能读、但读不出你自己的账号 ⇒ **不算卡住**（2026-09-18 改口径），且说清靠什么判自己 ──")
+# 起因＝网友报障截图：这一步显示「[卡住] 读不出你自己的账号」，而其实判自己早就改走
+# 「自家消息行号 + 文本回声窗 + 昵称+刚发过」三档（都不依赖 get_self_info）⇒ 不再阻塞。
 _h = _diag(_VI_RUN, db=_DB(keys_ok=1, self_info=None))
-ok("step=self", _h["step"] == "self", _h["step"])
-ok("action=retry", _h["action"] == "retry", _h["action"])
-ok("说明里写明「不影响读群消息、但回声判据会退化」",
-   ("不影响读群消息" in _h["reason"]) and ("退化" in _h["reason"]), _h["reason"])
+ok("整体判通过（不再因为读不出 self 就报卡住）", _h["ok"] is True, str(_h))
+ok("没有卡点（step 为空）", _h["step"] == "", _h["step"])
+ok("action 不再要求 retry", _h["action"] == "none", _h["action"])
+_self_step = [st for st in _h["steps"] if st["key"] == "self"]
+ok("self 这一步仍在清单里（要如实展示，不许藏）", bool(_self_step))
+_sd = _self_step[0]["detail"] if _self_step else ""
+ok("文案点名三档判自己的手段（行号 / 回声窗 / 昵称）",
+   ("自家消息行号" in _sd) and ("回声窗" in _sd) and ("昵称" in _sd), _sd[:120])
+ok("文案写明不影响使用 + 会自动学会自己是谁",
+   ("不影响使用" in _sd) and ("学回来" in _sd), _sd[:120])
 
 print("── H. 接入时抛的错要拼进原因（用户回报时一条就够）──")
 _i = _diag(_VI_RUN, db=_DB(self_info={"username": "wxid_me"}), err="KeyError: 'username'【KeyError】")
