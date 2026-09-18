@@ -131,27 +131,44 @@ ok("F9 分段不成要**落回单段**（绝不半途而废）",
    "交给原来的单段路径" in _vm and "_make_segmented(text, c, timeout)" in _vm)
 
 print("── G. 同音字表：按 pypinyin 数据机械复核（真实数据，不靠我记忆）──")
+# ⚠️ 2026-09-18 晚：`py -3`（开发解释器）没装 pypinyin，而**产品跑在 `runtime\python`**（requirements
+#   里有、那边确实装好了）⇒ 这条判据按"产品那个解释器"取模块：把运行时 site-packages 挂进 sys.path；
+#   两边都没有就**如实跳过**（不假红 —— 判据读不到真数据时，宁可标明没验，也不许签名说验过）。
+_pyy = None
 try:
-    from pypinyin import Style, pinyin as _py            # noqa: E402
+    from pypinyin import Style as _Style, pinyin as _pyy          # noqa: E402
+except Exception:
+    import glob as _glob
+    for _sp in _glob.glob(os.path.join(ROOT, "runtime", "python", "Lib", "site-packages")):
+        if _sp not in sys.path:
+            sys.path.insert(0, _sp)
+    try:
+        from pypinyin import Style as _Style, pinyin as _pyy      # noqa: E402
+    except Exception:
+        _pyy = None
+if _pyy is None:
+    print("  跳过 G：本解释器与产品运行时里都没有 pypinyin（requirements 里有，装依赖后自动生效）")
+else:
+    try:
 
-    def _rd(ch):
-        return _py(ch, heteronym=True, style=Style.TONE3)[0]
+        def _rd(ch):
+            return _pyy(ch, heteronym=True, style=_Style.TONE3)[0]
 
-    bad = []
-    for k, v in TT.HOMOPHONE.items():
-        rk, rv = _rd(k), _rd(v)
-        if len(rk) < 2:
-            bad.append("%s 不是多音字" % k)
-        elif len(rv) != 1:
-            bad.append("%s→%s 替换字不单调(%s)" % (k, v, rv))
-        elif rv[0] != rk[0]:
-            bad.append("%s→%s 读音不等(%s vs %s)" % (k, v, rv[0], rk[0]))
-    ok("G1 表里每一对都成立（原字多音 / 替换字单调 / 读音＝原字首选）", not bad, "；".join(bad[:4]))
-    ok("G2 表里至少有 25 对（覆盖常见口语连读字）", len(TT.HOMOPHONE) >= 25, str(len(TT.HOMOPHONE)))
-    ok("G3 「行→形」在表里且读音正确（那条 bug 的正主）",
-       TT.HOMOPHONE.get("行") == "形" and _rd("形") == ["xing2"] == _rd("行")[:1])
-except Exception as e:                                    # noqa: BLE001
-    ok("G1 pypinyin 可用（装依赖时就在 requirements 里）", False, str(e)[:60])
+        bad = []
+        for k, v in TT.HOMOPHONE.items():
+            rk, rv = _rd(k), _rd(v)
+            if len(rk) < 2:
+                bad.append("%s 不是多音字" % k)
+            elif len(rv) != 1:
+                bad.append("%s→%s 替换字不单调(%s)" % (k, v, rv))
+            elif rv[0] != rk[0]:
+                bad.append("%s→%s 读音不等(%s vs %s)" % (k, v, rv[0], rk[0]))
+        ok("G1 表里每一对都成立（原字多音 / 替换字单调 / 读音＝原字首选）", not bad, "；".join(bad[:4]))
+        ok("G2 表里至少有 25 对（覆盖常见口语连读字）", len(TT.HOMOPHONE) >= 25, str(len(TT.HOMOPHONE)))
+        ok("G3 「行→形」在表里且读音正确（那条 bug 的正主）",
+           TT.HOMOPHONE.get("行") == "形" and _rd("形") == ["xing2"] == _rd("行")[:1])
+    except Exception as e:                                    # noqa: BLE001
+        ok("G1 pypinyin 可用且数据读得出", False, str(e)[:70])
 
 print("\n== 语音文本整形判据：%d 通过 / %d 失败 ==" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
