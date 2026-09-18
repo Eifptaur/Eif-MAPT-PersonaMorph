@@ -16,6 +16,7 @@
 """
 import ast
 import io
+import re
 import json
 import os
 import socket
@@ -165,18 +166,20 @@ _rf = _pm[_i_rf:_pm.index("def community_export_fn", _i_rf)]
 # ⚠️ 必须**先把注释行去掉**再数/找名字：这段的注释里就写着 `_spawn_watchdog()` / `orch.shutdown()`
 #    （解释老顺序错在哪）⇒ 直接 `index/count` 会命中注释，判据假红（本文件第 150 行的同款坑）。
 _rf_code = "\n".join(l for l in _rf.splitlines() if not l.strip().startswith("#"))
-_i_exit = _rf_code.index("threading.Timer(2.0, _exit_now)")
+_m_t = re.search(r"threading\.Timer\((\d+(?:\.\d+)?), _exit_now\)", _rf_code)
+_i_exit = _m_t.start() if _m_t else -1
+_hard_s = float(_m_t.group(1)) if _m_t else 0
 ok("restart_fn 里**先装强退**再做慢活（老顺序把它排在同步 orch.shutdown() 之后 ⇒ 一阻塞就永不退出）",
-   _i_exit < _rf_code.index("_kill_watchdog()") and _i_exit < _rf_code.index("orch.shutdown()"))
+   _i_exit < _rf_code.index("_spawn_watchdog(") and _i_exit < _rf_code.index("orch.shutdown()"))
 ok("orch.shutdown() 不再同步挡路（挪进守护线程）",
    "threading.Thread(target=lambda: (orch.shutdown()" in _rf_code and "daemon=True" in _rf_code)
 ok("新看门狗**等旧实例退干净**再开机器人（`_spawn_watchdog(delay=6)`，6 秒 > 强退 2 秒）",
-   "_spawn_watchdog(delay=6)" in _rf_code)
+   "_spawn_watchdog(delay=" in _rf_code and (_m_t is not None) and float(re.search(r"delay=(\d+)", _rf_code).group(1)) > _hard_s)
 ok("⚠️ 不许回到「用 Timer 等 6 秒再拉看门狗」那版 —— 本进程 2 秒后就 os._exit，Timer 永远不会触发"
    "（2026-09-17 第一版就是这么错的，活体自检抓到「旧退了、新没接上」）",
-   "_respawn" not in _rf_code and "threading.Timer(6.0" not in _rf_code)
+   "_respawn" not in _rf_code and not re.search(r"Timer\([0-9.]+,\s*[^)]*(respawn|_spawn_watchdog)", _rf_code))
 ok("`_spawn_watchdog` 只在 restart_fn 里出现一次、且带 delay",
-   _rf_code.count("_spawn_watchdog(") == 1 and "_spawn_watchdog(delay=6)" in _rf_code)
+   _rf_code.count("_spawn_watchdog(") == 1 and "_spawn_watchdog(delay=" in _rf_code and (_m_t is not None) and float(re.search(r"delay=(\d+)", _rf_code).group(1)) > _hard_s)
 _wd_src = io.open(os.path.join(ROOT, "scripts", "watchdog.py"), encoding="utf-8").read()
 _wd_code = "\n".join(l for l in _wd_src.splitlines() if not l.strip().startswith("#"))
 ok("看门狗认 `--delay=<秒>`（并支持环境变量），且**在拉起机器人之前**睡",
@@ -189,6 +192,16 @@ ok("启动闸门会**等旧实例放开锁**（最多 12 秒）才报冲突",
    "while _legacy_pid and (time.time() - _gate_t0) < 12.0" in _pm
    and "while (not _lock_res.ok) and (time.time() - _gate_t0) < 12.0" in _pm)
 ok("等锁期间有日志（不是静默重试，用户/我们事后能查到）", "等它放开锁再接手" in _pm)
+# ── 2026-09-18 加（作者在另一台机器实测「现在重启不了」）──────────────────────
+ok("重启会**清掉手动停止标记**（重启＝用户要它跑；留着 stopped.flag 会让新看门狗/启动器判「停着」）",
+   "stopped.flag" in _rf_code and "_sf" in _rf_code
+   and _rf_code.index("stopped.flag") < _rf_code.index("_spawn_watchdog("))
+ok("拉起看门狗后**自证**（读 data/watchdog.pid + 判 pid 还活着）",
+   "watchdog.pid" in _rf_code and "_wpid" in _rf_code)
+ok("自证不过 ⇒ **直接拉起机器人本体兜底**（不再出现「旧退了、新没接上 ⇒ 机器人没了」）",
+   "_spawn_bot_direct()" in _rf_code and "def _spawn_bot_direct" in _pm)
+ok("兜底拉起的是机器人本体（pythonw scripts/persona_morph.py），不是再来一个看门狗",
+   "_spawn_bot_direct" in _pm and '"persona_morph.py"' in _pm.split("def _spawn_bot_direct")[1][:900])
 
 print("\n==== 重启按钮判据：%d 通过 / %d 失败 ====" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

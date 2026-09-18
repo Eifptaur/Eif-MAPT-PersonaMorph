@@ -197,6 +197,10 @@ def find_console_window() -> int:
     return found[0][1]
 
 
+# 开窗前的"等窗口出现"次数（每次 0.5 秒）——判据里会调小，产品用默认 12（＝6 秒）
+_WAIT_WINDOW_TRIES = 12
+
+
 def _url_live(u: str) -> bool:
     """这个地址的端口有人在听吗？（0.4 秒超时，连不上就 False —— 用来挡"死链被落盘/被拿去开窗"）"""
     try:
@@ -308,13 +312,37 @@ def open_console(url: str = "", browser_path: str = "", take_lock: bool = True, 
     url = url or console_url()
     if not url:
         return {"ok": False, "how": "", "why": "拿不到控制台地址（config.json 里没有 server.port）"}
-    if take_lock:
+    # 🔴 2026-09-18 修（作者在另一台机器实测：「更新之后，一键启动不弹窗口，还得再点一次」）：
+    #   原来这里是**先抢锁、抢不到就 `skip` 返回**，而"锁新鲜"只证明"90 秒内有人开过"，
+    #   **不证明屏幕上真的有一个控制台窗口**——更新完新机器人起来时会开一次窗并落锁；用户紧接着点
+    #   「一键启动」，这一跳判"锁新鲜 ⇒ 机器人侧已打开" ⇒ **直接 skip、什么都不弹**；等 90 秒锁过期
+    #   再点才出来（＝"还得再点一次"）。⇒ 顺序反过来：**先看真窗口**（在就复用，不占锁）；不在才谈锁，
+    #   而且锁抢不到也要**等窗口出现**，等不到就照开 —— 锁只用来防"同时开两个"，不许吞掉"根本没有窗口"。
+    try:
+        _ex0 = int(find_console_window() or 0)
+        _ex0 = _ex0 if (_ex0 and _u().IsWindow(_ex0)) else 0
+    except Exception:
+        _ex0 = 0
+    if not _ex0 and take_lock:
+        _got = False
         try:
             from .util import take_console_lock
-            if not take_console_lock():
-                return {"ok": True, "how": "skip", "why": "90 秒内刚有人开过，本次不重复打开（防双窗）"}
+            _got = bool(take_console_lock())
         except Exception:
-            pass
+            _got = False
+        if not _got:
+            for _ in range(int(_WAIT_WINDOW_TRIES)):     # 最多等 6 秒（可能别人正在开）
+                time.sleep(0.5)
+                try:
+                    _w = int(find_console_window() or 0)
+                except Exception:
+                    _w = 0
+                if _w and _u().IsWindow(_w):
+                    _ex0 = _w
+                    break
+            if not _ex0:
+                log.warning("开窗锁被别人拿着、但 6 秒内一个控制台窗口都没有 ⇒ 照开"
+                            "（锁不阻止「根本没有窗口」的情况）")
     ready = webview_ready()
     try:
         from .util import write_console_url
