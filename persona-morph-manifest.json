@@ -1,12 +1,12 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.20.2",
-    "sha256": "0b7e9fe6a5a3268be49876c51db8dc393ecfbc6043ef2ad634fe25c78f30b7aa",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.40/persona-morph-v2.1.40.zip",
-    "build": "9e7b22849b76",
-    "size": 10868141,
-    "files": 303
+    "version": "2026.9.20.3",
+    "sha256": "ce035dba90382785878fdb9a3b997ea11e761b9998184c12c9e364e6bdcaec1f",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.41/persona-morph-v2.1.41.zip",
+    "build": "fefb6193de23",
+    "size": 10905639,
+    "files": 306
   },
   "dlc": [
     {
@@ -35,13 +35,13 @@
     }
   ],
   "announce": {
-    "version": "2026.9.20.2",
+    "version": "2026.9.20.3",
     "notes": [
       "修复了一些 bug"
     ],
     "forceBase": false,
-    "minBase": "2026.9.20.2"
+    "minBase": "2026.9.20.3"
   },
-  "builtAt": "2026-09-19T22:41:38Z",
-  "updatedAt": 1789857698349
+  "builtAt": "2026-09-19T23:16:56Z",
+  "updatedAt": 1789859816270
 }
