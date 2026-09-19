@@ -1,10 +1,10 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.19.3",
-    "sha256": "d64da5e51b3cc5234f04a3d0bf5abad5af00c90f987998c6e3494d093180c5e9",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.37/persona-morph-v2.1.37.zip",
-    "build": "b6e0247f1f25",
+    "version": "2026.9.19.4",
+    "sha256": "f9b166a384ed4be5d055d3a2f05060d5b708e5dccf2271698a8c60d5d06a8aef",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.38/persona-morph-v2.1.38.zip",
+    "build": "810041cc08bb",
     "size": 10734421,
     "files": 298
   },
@@ -33,13 +33,13 @@
     }
   ],
   "announce": {
-    "version": "2026.9.19.3",
+    "version": "2026.9.19.4",
     "notes": [
-      "修两处网友报的：①「一键启动」报「Python 环境异常 · runtime\\python\\python.exe 不存在」——真根因是那行路径其实是**命令**（py -3），一直被当成文件判；现在命令与路径都认、真跑一次验版本（3.10~3.12），版本不对会自动强制绿色版重跑；②「打不开消息库 · 未找到微信数据库目录」——以前只找默认位置和各盘根，位置改到嵌套目录（如 E:\\wutong\\wxhf\\xwechat_files）就一个都探不到，现在会自己深扫找到并使用，不用你手填"
+      "重出一版把包补全：v2.1.37 的**包比清单少一个文件**（打包在提交之前，新增文件没进包，清单却按提交后的文件数算）—— 现在改成**打包前先登记**，包内容与更新清单完全一致。功能与上一版相同：①「一键启动」不再把 `py -3` 这种**命令**当文件路径判（那正是它报「Python 环境异常」的真根因，命令与路径现在都认 + 真跑一次验版本）；②微信数据目录位置改到嵌套目录时**会自己深扫找到**，不用手填"
     ],
     "forceBase": false,
-    "minBase": "2026.9.19.3"
+    "minBase": "2026.9.19.4"
   },
-  "builtAt": "2026-09-19T21:18:22Z",
-  "updatedAt": 1789852702019
+  "builtAt": "2026-09-19T21:23:15Z",
+  "updatedAt": 1789852995043
 }
