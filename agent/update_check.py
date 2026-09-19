@@ -169,13 +169,17 @@ def fetch_any(urls, timeout: float = 12.0, patient: float = None):
     _waited_patient = False
     while True:
         _el = time.time() - t0
-        if _el >= timeout + 1.0:
-            # 老窗口过了、一条都没成 ⇒ 进耐心阶段（**慢网**：2s RTT 也够握手 + 取回）
-            if _waited_patient or _el >= _patient:
-                break
-            if not _waited_patient:
-                _waited_patient = True
-                print("[update] 更新源很慢，继续等（最多 %.0f 秒）…" % _patient)
+        if not _waited_patient and _el >= timeout + 1.0:
+            # 老窗口过了、一条都没成 ⇒ **进**耐心阶段（**慢网**：2s RTT 也够握手 + 取回）
+            # ⛔ 2026-09-20 修 **V5**：原来这里写成 `if _waited_patient or _el >= _patient: break`，
+            #    而 `_waited_patient` 刚被置 True ⇒ **下一轮立刻 break** ⇒ 实际只多等了 50 毫秒
+            #    （注释承诺 10~30 秒，差三个数量级）。实测：源在 t=5.0s 交回合法清单，
+            #    函数 t≈3.0s 就放弃，还报"所有源都拉不到"。
+            #    现在把"进入条件"与"退出条件"分开：
+            _waited_patient = True
+            print("[update] 更新源很慢，继续等（最多 %.0f 秒）…" % _patient)
+        elif _waited_patient and _el >= _patient:
+            break                      # 耐心也用完了 ⇒ 收摊（下面的逐源复核会把原因列出来）
         with lock:
             done_all = len(got) == len(urls)
             got_one = any((got.get(u) or (None, ""))[0] is not None for u in urls)
@@ -202,12 +206,19 @@ def fetch_any(urls, timeout: float = 12.0, patient: float = None):
         def _one(u):
             _m, _w = fetch(u, timeout)
             errs[_short_url(u)] = "ok" if _m else str(_w)[:70]
+            if _m is not None:
+                retry_hit.append((u, _m))
 
+        retry_hit = []
         _ts = [_th.Thread(target=_one, args=(u,), daemon=True) for u in list(urls)[:9]]
         [_t.start() for _t in _ts]
         [_t.join(timeout + 1.0) for _t in _ts]
         if errs:
             why = "；".join("%s → %s" % (k, v) for k, v in errs.items())
+        # ⭐ V5 的第二半：复核里**真的拿到清单**的源，就直接用它 —— 上一版只把 `ok` 写进错误原因，
+        #   于是出现"复核说 b.invalid → ok、函数却仍返回『所有源都拉不到』"这种自相矛盾的结论。
+        if retry_hit:
+            return retry_hit[0][1], "", retry_hit[0][0]
     except Exception:
         pass
     return None, "所有源都拉不到（%s）" % why, ""

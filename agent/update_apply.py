@@ -235,9 +235,12 @@ def _is_locked(e) -> bool:
     """这个异常是不是"文件正被别的进程使用"（Windows 共享冲突）。
 
     只有这一种才允许"跳过并继续"——磁盘满、权限不对、路径错都必须回滚。
+
+    ⛔ 2026-09-20 修 **V3**：以前是 `isinstance(e, PermissionError) → True`，把"拒绝访问 / 只读
+    文件（WinError 5）"也当成"被占用" ⇒ 一个只读文件就能让整包"跳过"、还被记成"更新已装好"
+    （实测：换入 0 件仍回 rc=0）。Windows 上"正被占用"报的就是 **WinError 32/33**，
+    所以判据只看它；拿不到 winerror 的（非 Windows / 异常被包装过）一律按**真故障**处理（回滚）。
     """
-    if isinstance(e, PermissionError):
-        return True
     return getattr(e, "winerror", None) in (32, 33)
 
 
@@ -258,7 +261,17 @@ def apply_full(manifest: dict, zip_path: str, target: str = ROOT, dry: bool = Fa
 
     cur = read_local_state(target)
     if str(cur.get("version") or "") == want_ver:
-        return 0, "已是最新（%s），什么都没做" % want_ver, {"status": "current"}
+        # ⛔ 2026-09-20 修 **V2/V3**：以前这里只比版本号 ⇒ ①"同版本号换包"（只修 bug 不改版本，
+        #    内容指纹/树哈希不同）会被短路成"已是最新"，控制台一直提示有新包、点更新却什么都不做；
+        #    ②上次"有文件被占用没换"留下的待办也一并被吞掉，**被跳过的文件永远不会补换**。
+        #    现在：版本相同还要**树哈希相同**、且**没有待补文件**，才算真"已是最新"。
+        _same_tree = str(cur.get("sha256") or "") == want_tree
+        _pending = list(cur.get("pendingFiles") or [])
+        if _same_tree and not _pending:
+            return 0, "已是最新（%s），什么都没做" % want_ver, {"status": "current"}
+        if _pending:
+            print("[update] 上次有 %d 件没换成功（%s…）⇒ 本次接着补换"
+                  % (len(_pending), "、".join(_pending[:3])))
 
     # ---- ① 只读校验：包内文件树哈希必须等于清单声称的那一个 ----
     try:
@@ -344,13 +357,19 @@ def apply_full(manifest: dict, zip_path: str, target: str = ROOT, dry: bool = Fa
 
         extra = {"from": cur.get("version") or "", "files": len(placed)}
         if locked:
+            # ⛔ 2026-09-20 修 **V3**：**不许**把 installed.json 的 version 推到位 —— 否则"再点一次更新"
+            #    会被上面的短路判据吞成"已是最新、什么都没做"，被跳过的文件永远补不回来（实测过）。
+            #    改成：版本留在旧的、把没换成的记进 `pendingFiles`（下次一进来就接着补换）。
             extra["locked"] = locked[:20]
-        write_local_state(target, want_ver, want_tree, extra)
-        if locked:
-            return 0, ("更新已装好：%s → %s（换入 %d 件）；有 %d 件正被使用、本次没换：%s。"
-                       "它们在重启后重跑一次更新即可换掉（不影响本体代码生效）"
+            extra["pendingFiles"] = [x.split("（")[0] for x in locked][:50]
+            extra["pendingVersion"] = want_ver
+            write_local_state(target, cur.get("version") or "", cur.get("sha256") or "", extra)
+            return 0, ("更新只装了一半：%s → %s（换入 %d 件）；有 %d 件正被使用、本次没换：%s。"
+                       "**再点一次「立即更新」即可补换**（版本号没被推上去，所以不会被\"已是最新\"跳过）"
                        % (cur.get("version") or "?", want_ver, len(placed), len(locked),
-                          "、".join(locked[:4]))), {"locked": locked, "placed": len(placed)}
+                          "、".join(locked[:4]))), {"locked": locked, "placed": len(placed),
+                                                    "status": "partial", "pending": extra["pendingFiles"]}
+        write_local_state(target, want_ver, want_tree, extra)
         return 0, ("更新成功：%s → %s（换入 %d 件，组合校验通过）"
                    % (cur.get("version") or "?", want_ver, len(placed))), {"placed": len(placed)}
     finally:
@@ -404,11 +423,26 @@ def run_once(manifest=None, zip_path=None, target=ROOT, dry=False, progress=None
          why="本机 %s / 远端 %s" % (mine or "未记录", theirs or "?"))
     if not theirs:
         return {"ok": False, "rc": 2, "why": "清单里没有版本号", "phase": "probe"}
-    if uc.vtuple(theirs) and uc.vtuple(mine) and uc.vtuple(theirs) <= uc.vtuple(mine):
+    # ⛔ 2026-09-20 修 **V2**：同版本号换包（"只修 bug 不改版本"这条路，`make_manifest --build` 就是
+    #   为它准备的）以前**只比版本号** ⇒ 控制台侧比了内容指纹判 `newer`、这里却回"已是最新"，
+    #   于是横幅永远消不掉、点「立即更新」静默什么都不做。现在两边都比：版本 ≤ 我的 **且** 指纹相同
+    #   （任一侧没有指纹时按"没有更新"处理，避免老清单误报）。
+    _b_mine = ""
+    try:
+        from .version import read_build_from as _rbf
+        _b_mine = str(_rbf() or "")
+    except Exception:
+        _b_mine = ""
+    _b_theirs = str(base.get("build") or "")
+    _same_build = (not _b_theirs) or (not _b_mine) or (_b_theirs == _b_mine)
+    if uc.vtuple(theirs) and uc.vtuple(mine) and uc.vtuple(theirs) <= uc.vtuple(mine) and _same_build:
         _set(state="done", phase="current", needRestart=False,
              msg="已是最新（%s），不需要更新" % (mine or theirs))
         return {"ok": True, "rc": 0, "phase": "current", "version": theirs, "needRestart": False,
                 "msg": "已是最新"}
+    if not _same_build:
+        print("[update] 版本号相同（%s）但内容指纹不同（本机 %s / 远端 %s）⇒ 按「同版本换包」继续装"
+              % (theirs or "?", _b_mine[:12], _b_theirs[:12]))
 
     if not zip_path:
         durl = str(base.get("url") or "")
@@ -447,15 +481,20 @@ def run_once(manifest=None, zip_path=None, target=ROOT, dry=False, progress=None
             os.remove(zip_path)
         except Exception:
             pass
+    # ⛔ 2026-09-20 修 **V4**：`apply_full(dry=True)` 返回的 detail 是 `{"dry": True}`（**没有** status
+    #   键），而下面原来只判 `detail.get("status") != "current"` ⇒ `None != "current"` 成立 ⇒
+    #   **干跑也被当成"真装成功"** ⇒ 拉起新看门狗 + `os._exit(0)` **把正在跑的机器人杀掉**
+    #   （而模块 docstring 给的示例用法正是 `run_once(dry=True)`）。干跑必须"只说不做"。
+    _real = bool(rc == 0) and (not dry) and (not detail.get("dry")) \
+        and (detail.get("status") != "current")
     if rc == 0:
-        _set(state="done", phase="done", msg=msg, needRestart=(detail.get("status") != "current"),
-             why="")
+        _set(state="done", phase="done", msg=msg, needRestart=_real, why="")
     else:
         _set(state="error", phase="apply", why=msg)
-    if rc == 0 and detail.get("status") != "current":
+    if _real:
         _relaunch_after_update(theirs)
     return {"ok": rc == 0, "rc": rc, "msg": msg, "detail": detail, "version": theirs,
-            "needRestart": rc == 0 and detail.get("status") != "current", "phase": "done" if rc == 0 else "apply"}
+            "needRestart": _real, "phase": "done" if rc == 0 else "apply"}
 
 
 def _relaunch_after_update(version: str = "") -> None:

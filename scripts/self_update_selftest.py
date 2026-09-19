@@ -167,10 +167,18 @@ try:
     ok(open(os.path.join(target, "agent", "a.py"), encoding="utf-8").read() == old["agent/a.py"], "覆盖的已还原")
     ok(not os.path.exists(os.path.join(target, "agent", "c.py")), "新增的已撤掉")
 
-    print("── G. 文件被占用 ⇒ 跳过并如实报告（不许假装成功）──")
+    print("── G. 文件被占用 ⇒ 跳过并如实报告（不许假装成功）——含 V3 回归 ──")
     def locked(src, dst, *a, **k):
         if _into_target(dst) and str(dst).replace("\\", "/").endswith("agent/c.py"):
-            raise PermissionError("[WinError 32] 另一个程序正在使用此文件")
+            # ⚠️ 2026-09-20 修 V3 之后，判据只看 **winerror ∈ (32,33)**（真·共享冲突）；
+            #    原来这里只构造了文本 + errno，没有 winerror ⇒ 会被正确地当成"真故障"回滚。
+            #    桩要跟真实 Windows 一样把 winerror 带上（这才是"文件正被占用"的真形态）。
+            e = PermissionError(13, "另一个程序正在使用此文件")
+            try:
+                e.winerror = 32
+            except Exception:
+                pass
+            raise e
         return real_copy2(src, dst, *a, **k)
 
     shutil.copy2 = locked
@@ -180,8 +188,18 @@ try:
         shutil.copy2 = real_copy2
     ok(rc == 0 and det.get("locked"), "占用件 ⇒ 仍算成功但带 locked 清单", str(det.get("locked"))[:80])
     ok("正被使用" in msg and "agent/c.py" in msg, "消息里点名了没换成的那几件", msg[:100])
+    ok(det.get("status") == "partial", "状态标成 partial（不许说成「已装好」）", str(det.get("status")))
+    ok("再点一次" in msg, "消息给出可照着做的下一步（再点一次更新即可补换）", msg[:120])
     st = json.load(open(os.path.join(target, "data", "installed.json"), encoding="utf-8"))
     ok(st.get("locked"), "记录里留了 locked（下次重跑能接着换）")
+    # ⭐ V3 的核心回归：版本**不许**被推上去（否则"再点一次"会被短路成"已是最新"）
+    ok(str(st.get("version") or "") != str((man.get("base") or {}).get("version") or "?"),
+       "版本没有推到位（V3：推了位就再也补不回来了）", str(st.get("version")))
+    ok(det.get("pending") == ["agent/c.py"], "待补清单记下了那一件", str(det.get("pending")))
+    # ⭐ 解锁后重跑必须真的补换（这才是"以后还能补"的证明，不只是记了一笔）
+    rc2, msg2, det2 = UA.apply_full(man, pkg, target)
+    ok(open(os.path.join(target, "agent", "c.py"), encoding="utf-8").read() == new["agent/c.py"],
+       "解锁后重跑 ⇒ 真的补换（V3 回归）", "rc=%s msg=%s" % (rc2, str(msg2)[:60]))
     ok(open(os.path.join(target, "agent", "a.py"), encoding="utf-8").read() == new["agent/a.py"],
        "没被占用的那几件照样换新了")
 

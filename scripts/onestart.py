@@ -336,22 +336,87 @@ def _probe_running_instance(timeout=2):
         return "none"
 
 
+def _enum_old_procs_ps():
+    """主路：PowerShell `Get-CimInstance Win32_Process` 枚举 python/cscript 进程 → [(pid, 命令行)]。
+
+    ⛔ 2026-09-20 修 V7：`wmic` 在 Win11 24H2 起**已被系统移除**（本机就没有），原先只靠 wmic +
+    `except Exception: pass` ⇒ 在这台机器上"踢旧实例"等于没做、连一行日志都没有。写法照
+    `scripts/watchdog.py:183-189` 那份已跑通的。
+    """
+    _ps = ("Get-CimInstance Win32_Process -Filter \"Name='pythonw.exe' or Name='python.exe' or Name='cscript.exe'\" | "
+           "Where-Object { $_.CommandLine } | ForEach-Object { [string]$_.ProcessId + \"`t\" + $_.CommandLine }")
+    r = subprocess.run(["powershell", "-NoProfile", "-Command", _ps], capture_output=True,
+                       creationflags=0x08000000, timeout=25)
+    rc = int(getattr(r, "returncode", 1) or 0)
+    if rc != 0:
+        raise RuntimeError("powershell 退出码 %s" % rc)
+    raw = getattr(r, "stdout", b"") or b""
+    if isinstance(raw, (bytes, bytearray)):
+        raw = bytes(raw).decode("utf-8", "ignore")
+    out = []
+    for line in str(raw).splitlines():
+        pid, _sep, cmd = line.strip().partition("\t")
+        if pid.isdigit() and cmd.strip():
+            out.append((int(pid), cmd.strip()))
+    return out
+
+
+def _enum_old_procs_wmic():
+    """次选：老的 wmic（新版 Windows 已移除，能走到这里说明这台机器还留着它）。"""
+    txt = subprocess.check_output(
+        'wmic process where "name like \'python%\' or name like \'cscript%\'" get processid,commandline '
+        '/format:csv', shell=True, text=True, errors="replace",
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    out = []
+    for line in str(txt or "").splitlines():
+        parts = line.rsplit(",", 1)
+        if len(parts) > 1 and parts[-1].strip().isdigit():
+            out.append((int(parts[-1].strip()), line))
+    return out
+
+
+def _enum_old_procs():
+    """枚举候选旧实例进程 → (procs, 用了哪条路, 失败原因)。
+
+    `procs is None` ＝**两条路都失败**；这时原因必须由调用方留痕（不许静默降级成"没有旧实例"）。
+    """
+    errs = []
+    for how, fn in (("PowerShell Get-CimInstance", _enum_old_procs_ps), ("wmic", _enum_old_procs_wmic)):
+        try:
+            return fn(), how, ""
+        except Exception as e:
+            errs.append("%s 失败：%s" % (how, e))
+    return None, "", "；".join(errs)
+
+
 def _kick_old_instance():
-    """踢掉旧版本实例（3210 的 persona_morph/watchdog + 启动器/关闭器进程）。"""
-    try:
-        out = subprocess.check_output(
-            'wmic process where "name like \'python%\' or name like \'cscript%\'" get processid,commandline '
-            '/format:csv', shell=True, text=True, errors="replace",
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        for line in out.splitlines():
-            if any(k in line for k in ("persona_morph.py", "watchdog.py", "onestart.py")) and "plugin" not in line:
-                parts = line.rsplit(",", 1)
-                if parts and parts[-1].strip().isdigit():
-                    subprocess.run(["taskkill", "/F", "/PID", parts[-1].strip()],
-                                   capture_output=True, creationflags=0x08000000)
-    except Exception:
-        pass
+    """踢掉旧版本实例（3210 的 persona_morph/watchdog + 启动器/关闭器进程）。
+
+    返回 {"killed": [pid…], "how": 枚举方式, "error": 原因}：**枚举失败时 error 非空且必写日志**——
+    "这台机器没有这个能力"不许再被吞成"没有旧实例要踢"（V7 的根因就是这个 `except Exception: pass`）。
+    """
+    procs, how, err = _enum_old_procs()
+    if procs is None:
+        log("⚠ 没能枚举进程 ⇒ 本次**没有踢任何旧实例**（旧版可能还在跑，症状＝点了没反应/还是老界面）。"
+            "原因：%s" % err)
+        time.sleep(1.5)
+        return {"killed": [], "how": "", "error": err}
+    killed = []
+    for pid, cmd in procs:
+        if not any(k in cmd for k in ("persona_morph.py", "watchdog.py", "onestart.py")) or "plugin" in cmd:
+            continue
+        if pid == os.getpid():
+            continue            # ⛔ 自己的命令行里也有 onestart.py ⇒ 不加这条会把启动器自己踢掉
+        try:
+            subprocess.run(["taskkill", "/F", "/PID", str(pid)],
+                           capture_output=True, creationflags=0x08000000)
+            killed.append(pid)
+        except Exception as e:
+            log("踢旧实例 PID=%s 失败：%s" % (pid, e))
+    log("旧实例清理：枚举方式=%s · 候选 %d 个 · 已踢 %d 个%s"
+        % (how, len(procs), len(killed), ("（PID=%s）" % ",".join(str(x) for x in killed)) if killed else ""))
     time.sleep(1.5)
+    return {"killed": killed, "how": how, "error": ""}
 
 
 def _open_current_console():
@@ -416,8 +481,14 @@ def main():
             if _st == "old":
                 log("检测到旧版本实例（/api/version 指纹不同），自动踢出旧进程后启动新版…")
                 evt("PHASE", "boot")
-                _kick_old_instance()
-                log("旧实例已清理，继续一键启动。")
+                _rep_kick = _kick_old_instance()
+                if _rep_kick.get("error"):
+                    # ⛔ 不许再无条件说"旧实例已清理"：枚举失败时那句话是假的（V7）
+                    log("⚠ 旧实例**没能清理**（%s）⇒ 仍然继续启动；若出现「点了没反应/还是老界面」，"
+                        "请看 data\\runtime.log 与 logs\\console.log" % _rep_kick["error"])
+                else:
+                    log("旧实例已清理（踢掉 PID=%s），继续一键启动。"
+                        % (",".join(str(x) for x in (_rep_kick.get("killed") or [])) or "0 个"))
         except Exception:
             pass
 

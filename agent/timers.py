@@ -8,7 +8,8 @@
 3. **数量封顶**：每会话最多 `MAX_PENDING_PER_CHAT` 条、全局最多 `MAX_PENDING_TOTAL` 条 ⇒ 批量定时＝直接被拒；
 4. **时长封顶**：30 秒 ~ 7 天，越界夹断并如实说明。
 
-状态落 `data/timers.json`（原子写）；到点发送**最多重试 MAX_ATTEMPTS 次**，仍失败就留痕放弃（不静默、也不无限重试）。
+状态落 `data/timers.json`（原子写，**写失败会如实回 ok:False**）；到点发送**最多重试 MAX_ATTEMPTS 次**，
+每次失败按 `RETRY_BACKOFF_SECONDS × 次数` 秒退避，仍失败就留痕放弃（不静默、也不无限重试）。
 """
 from __future__ import annotations
 
@@ -26,6 +27,7 @@ MAX_SECONDS = 7 * 24 * 3600
 MAX_PENDING_PER_CHAT = 3
 MAX_PENDING_TOTAL = 20
 MAX_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 60        # 第 N 次重试的等待＝该秒数 × N（V10：以前一失败就立刻重排，1 分钟用光 3 次）
 HISTORY_KEEP = 20
 
 
@@ -52,7 +54,8 @@ def load() -> dict:
     return {"items": [], "history": [], "next_id": 1, "updatedAt": 0}
 
 
-def _save(st: dict) -> None:
+def _save(st: dict) -> bool:
+    """原子写。**返回是否真的落盘成功**（V10：写失败不许吞成 `pass`——调用方要据它如实回报）。"""
     with _lock:
         try:
             os.makedirs(os.path.dirname(path()), exist_ok=True)
@@ -61,8 +64,9 @@ def _save(st: dict) -> None:
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(st, f, ensure_ascii=False, indent=1)
             os.replace(tmp, path())
+            return True
         except Exception:
-            pass
+            return False
 
 
 def _pending(st: dict) -> list:
@@ -98,9 +102,13 @@ def add(chat_key: str, note: str, seconds=None, minutes=None, by: str = "", now=
         st["next_id"] = tid + 1
         item = {"id": tid, "chat": str(chat_key), "note": text, "by": str(by or ""),
                 "fire_at": _now_ms(now) + secs * 1000, "seconds": secs, "status": "pending",
-                "attempts": 0, "created": _now_ms(now), "clamped": clamped, "error": ""}
+                "attempts": 0, "created": _now_ms(now), "clamped": clamped, "error": "",
+                "next_try_at": 0}      # 0＝未设退避（只看 fire_at）；失败重试后写 fire_at + 退避秒数
         st.setdefault("items", []).append(item)
-        _save(st)
+        saved = _save(st)
+    if not saved:
+        # V10：写不进去就**不许**回 ok:True——模型会拿它当依据对用户说"已定好"，而它永远不会响
+        return {"ok": False, "error": "登记没能落盘（data/ 可写？）"}
     return {"ok": True, "id": tid, "fire_at": item["fire_at"], "seconds": secs,
             "note": text, "clamped": clamped, "max_per_chat": MAX_PENDING_PER_CHAT}
 
@@ -112,7 +120,9 @@ def list_all(chat_key: str | None = None) -> list:
     for it in _pending(st):
         if chat_key and it.get("chat") != str(chat_key):
             continue
-        out.append(dict(it, left_seconds=max(0, int((int(it.get("fire_at") or 0) - now_ms) / 1000))))
+        # 剩余秒数要按"还要等到什么时候"算：退避期间只看 fire_at 会显示「0 秒后」，看着像卡住了
+        _eff = max(int(it.get("fire_at") or 0), int(it.get("next_try_at") or 0))
+        out.append(dict(it, left_seconds=max(0, int((_eff - now_ms) / 1000))))
     return sorted(out, key=lambda x: x.get("fire_at") or 0)
 
 
@@ -134,11 +144,18 @@ def cancel(chat_key: str, tid=None) -> bool:
 
 
 def due(now=None) -> list:
+    """到点、且**过了退避时刻**的待触发条目。
+
+    V10：失败重试不再"一失败就立刻重排"——`next_try_at = fire_at + RETRY_BACKOFF_SECONDS × 已试次数`。
+    20 秒一次的巡检原先会把 3 次机会在 1 分钟内用光并**永久放弃**，一次临时故障（微信正忙/闸门限流）就白定了。
+    """
     now_ms = _now_ms(now)
-    return [it for it in _pending(load()) if int(it.get("fire_at") or 0) <= now_ms]
+    return [it for it in _pending(load())
+            if int(it.get("fire_at") or 0) <= now_ms and int(it.get("next_try_at") or 0) <= now_ms]
 
 
-def _finish(item: dict, status: str, error: str = "") -> None:
+def _finish(item: dict, status: str, error: str = "") -> bool:
+    """把条目推进到终态并落盘，**返回是否落盘成功**（失败时调用方要留痕：状态写不下去⇒可能重复发）。"""
     with _lock:
         st = load()
         for it in st.get("items") or []:
@@ -150,7 +167,7 @@ def _finish(item: dict, status: str, error: str = "") -> None:
                                              "note": item.get("note"), "status": status,
                                              "error": str(error or "")[:200], "at": _now_ms()})
         st["history"] = st["history"][-HISTORY_KEEP:]
-        _save(st)
+        return _save(st)
 
 
 def run_once(send, now=None, paused: bool = False, log=None, muted=None) -> dict:
@@ -179,7 +196,9 @@ def run_once(send, now=None, paused: bool = False, log=None, muted=None) -> dict
                 ok_flag = False
                 _log(log, "warning", "定时提醒发送异常：%s", e)
             if ok_flag:
-                _finish(it, "fired")
+                if not _finish(it, "fired"):
+                    # 状态写不下去 ⇒ 下轮/重启后会**再发一次**；宁可多一条日志，也不静默（V10 同一族）
+                    _log(log, "warning", "定时提醒已发出、但状态没能落盘 ⇒ 可能重复发一次：会话=%s", it.get("chat"))
                 out["sent"] += 1
                 _log(log, "info", "定时提醒已发出：会话=%s 内容=「%s」", it.get("chat"), str(it.get("note"))[:40])
             else:
@@ -189,13 +208,18 @@ def run_once(send, now=None, paused: bool = False, log=None, muted=None) -> dict
                     out["failed"] += 1
                     _log(log, "warning", "定时提醒连续失败，已放弃：会话=%s", it.get("chat"))
                 else:
+                    _nxt = int(it.get("fire_at") or 0) + RETRY_BACKOFF_SECONDS * attempts * 1000
                     with _lock:
                         st = load()
                         for x in st.get("items") or []:
                             if str(x.get("id")) == str(it.get("id")):
                                 x["attempts"] = attempts
-                        _save(st)
+                                x["next_try_at"] = _nxt
+                        if not _save(st):
+                            _log(log, "warning", "定时提醒重试计数没能落盘（data/ 可写？）：会话=%s", it.get("chat"))
                     out["failed"] += 1
+                    _log(log, "info", "定时提醒发送失败，第 %d 次重试推迟到约 %d 秒后",
+                         attempts, RETRY_BACKOFF_SECONDS * attempts)
         except Exception as e:
             _log(log, "warning", "定时提醒处理异常：%s", e)
     return out
