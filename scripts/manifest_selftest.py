@@ -56,7 +56,7 @@ tmp = tempfile.mkdtemp(prefix="pm-manifest-")
 try:
     print("[M1] 生成器能跑通")
     r = subprocess.run([sys.executable, os.path.join(HERE, "make_manifest.py"),
-                        "--out", tmp, "--notes", "判据自测;第二条要点"],
+                        "--out", tmp, "--notes", "新增：判据自测;第二条要点"],
                        capture_output=True, text=True, encoding="utf-8", errors="replace",
                        timeout=600,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))

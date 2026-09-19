@@ -24,6 +24,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pack_online as po          # noqa: E402  复用它的 tracked()/excluded()/ROOT/OUT_DIR，不重造排除规则
+import release_notes as rn        # noqa: E402  发布说明写法（作者 2026-09-20 定的规矩，唯一实现）
 
 sys.path.insert(0, po.ROOT)
 from agent.version import VERSION as CODE_VERSION   # noqa: E402
@@ -126,6 +127,15 @@ def main():
     tree_sha = h.hexdigest()
 
     notes = [s.strip() for s in a.notes.split(";") if s.strip()]
+    # ⛔ 说明写法闸门（作者 2026-09-20 定）：纯修 bug 只许一句「修复了一些 bug」，
+    #    有「新增」字样才允许详细写。判据实现见 scripts/release_notes.py（与发版脚本共用同一份）。
+    _notes_bad = rn.note_problems(notes)
+    if _notes_bad:
+        print("✘ 公告要点没通过「说明写法」闸门（修 bug 只写一句，新增功能才详细写）：")
+        for _b in _notes_bad:
+            print("   · " + _b)
+        print("   ⇒ 纯修 bug 就写：--notes \"%s\"" % rn.FIX_ONLY_LINE)
+        return 4
     # ⚠️ 内容指纹**直接读文件**（不走 import：BUILD 改写前后同尺寸，字节码缓存会给出旧值 —— 2026-09-18 实测
     #    造成"清单里的 build 与包里实际 BUILD 不一致"，用户侧会一直提示有新包）。发布链更该用 `--build`
     #    把**包内**那个值传进来（唯一事实来源＝即将发出去的那个包）。
