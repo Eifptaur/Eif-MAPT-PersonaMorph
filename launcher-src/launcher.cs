@@ -578,7 +578,131 @@ namespace WxLauncher
         }
     }
 
-    static class Program
+    /// 全屏时顶栏「贴顶滑出」的**纯决策**（可离线验：`一键启动.exe --peekprobe`，不起任何窗口）。
+///
+/// ⛔ 2026-09-20 修（作者报：「**最大化后，上边栏碰触之后维持的时间太短，导致点不到最小化**」）：
+///   原来只有"光标贴屏幕顶端 4px 内"**一个**判据 —— 鼠标一往下挪（去点最小化/还原/关闭）就离开那 4px，
+///   200ms 后顶栏立刻收起 ⇒ **按钮永远点不到**（三个按钮都在顶栏 y=8~34 那一带里）。
+///   ⇒ 拆成三条：①**进入**＝贴到顶端 4px 内（要有意去碰，不能靠"页面顶部路过"就弹出来）；
+///   ②**保持**＝光标还在**顶栏自己那块区域**内（顶端 + 顶栏高 + 一点余量）⇒ 从顶端挪到按钮上不会中途收起；
+///   ③**离开**后再给 0.7 秒宽限（手抖/斜着挪出去又回来，不会闪掉）。
+///   判据（`--peekprobe` 里的四条仿真路径，含"不上顶端就绝不弹出"的反面控制）：
+///     A 贴顶→挪到按钮 → 按钮可见；B 贴顶→挪走并等过宽限 → 收起；C 中途抖出去又回来 → 仍可见；D 不碰顶端 → 从不出现。
+internal static class BarPeek
+{
+    public const int EdgeBand = 4;      // 贴到屏幕顶端 4px 内＝"我要顶栏"
+    public const int KeepSlack = 6;     // 顶栏区域再放宽 6px（鼠标斜着挪出去一点不算离开）
+    public const int GraceMs = 700;     // 离开顶栏区域后再留 0.7 秒
+    public const int TickMs = 120;      // 定时器间隔（比原来的 200ms 更跟手）
+
+    /// 推进一帧。返回新的"是否显示"，并把"离开起始时刻"写回 `leaveAtMs`（0＝没在倒计时）。
+    /// `nowMs` 用 `Environment.TickCount`；用无符号差值比较，**跨 0 溢出也不会误判**。
+    public static bool Next(bool peeked, bool hitEdge, bool overBar, int nowMs, ref int leaveAtMs)
+    {
+        if (hitEdge) { leaveAtMs = 0; return true; }
+        if (!peeked) { return false; }
+        if (overBar) { leaveAtMs = 0; return true; }
+        if (leaveAtMs == 0) { leaveAtMs = nowMs; return true; }
+        if (unchecked(nowMs - leaveAtMs) >= GraceMs) { leaveAtMs = 0; return false; }
+        return true;
+    }
+
+    /// 离线仿真（纯计算、不打屏、不起窗）：把上面四条路径跑一遍，打印 ASCII 标记给判据解析。
+    public static string Probe()
+    {
+        const int Top = 0;              // 屏顶
+        const int BarH = 42;            // 顶栏高（与 ConsoleForm 里的 42 一致）
+        var sb = new StringBuilder();
+        int fail = 0;
+
+        // A：作者报的那条 —— 贴顶端两帧 → 往下挪到最小化按钮（y=20）并停住
+        bool aOver = true;
+        {
+            int leave = 0; bool peeked = false;
+            int[] path = { 1, 1, 8, 14, 20, 20, 20, 20 };
+            for (int i = 0; i < path.Length; i++)
+            {
+                int y = path[i];
+                bool hit = y <= Top + EdgeBand;
+                bool over = y <= Top + BarH + KeepSlack;
+                peeked = Next(peeked, hit, over, i * TickMs, ref leave);
+                if (y >= 8 && y <= 34 && !peeked) aOver = false;      // 按钮那一带只要有一帧收起就算失败
+            }
+            if (!peeked) aOver = false;
+        }
+        sb.AppendLine("PEEK A over_button_visible=" + (aOver ? 1 : 0));
+        if (!aOver) fail++;
+
+        // A_OLD：**同一条路径换成老判据**（只有"贴顶 4px"才算显示）跑一遍 —— 必须看到它一挪到按钮就收起。
+        //   这是判据的**灵敏度证明**：修好后 A=1 且 A_OLD=0，说明"保持区 + 宽限"正是起作用的那一环；
+        //   哪天有人把保持区删回去，A_OLD 会变成 1 ⇒ 这条判据立刻报红。
+        bool aOldOver = true;
+        {
+            int[] path = { 1, 1, 8, 14, 20, 20, 20, 20 };
+            for (int i = 0; i < path.Length; i++)
+            {
+                bool peeked = path[i] <= Top + EdgeBand;      // 老判据：只看那 4px，没有保持区、没有宽限
+                if (path[i] >= 8 && path[i] <= 34 && !peeked) aOldOver = false;
+            }
+        }
+        sb.AppendLine("PEEK A_OLD over_button_visible=" + (aOldOver ? 1 : 0));
+        if (aOldOver) fail++;      // 老判据要是也"过"，说明这条判据根本没在测东西
+
+        // B：贴顶端 → 挪走 → 等过宽限 ⇒ 必须收起
+        bool bHide;
+        {
+            int leave = 0; bool peeked = false;
+            int[] path = { 1, 1, 300, 300, 300, 300, 300, 300, 300 };
+            for (int i = 0; i < path.Length; i++)
+            {
+                int y = path[i];
+                peeked = Next(peeked, y <= Top + EdgeBand, y <= Top + BarH + KeepSlack, i * TickMs, ref leave);
+            }
+            bHide = !peeked;
+        }
+        sb.AppendLine("PEEK B leaves_hides=" + (bHide ? 1 : 0));
+        if (!bHide) fail++;
+
+        // C：中途抖出去（还没过宽限）又回来 ⇒ 全程可见
+        bool cKeep;
+        {
+            int leave = 0; bool peeked = false;
+            int[] path = { 1, 20, 200, 20, 20, 20 };     // 200 那一帧离开，但累计未过 700ms
+            bool ever = false;
+            for (int i = 0; i < path.Length; i++)
+            {
+                int y = path[i];
+                peeked = Next(peeked, y <= Top + EdgeBand, y <= Top + BarH + KeepSlack, i * TickMs, ref leave);
+                if (!peeked) ever = true;
+            }
+            cKeep = !ever && peeked;
+        }
+        sb.AppendLine("PEEK C jitter_keeps=" + (cKeep ? 1 : 0));
+        if (!cKeep) fail++;
+
+        // D：**反面控制** —— 从不碰顶端，只在页面顶部那 40px 里晃 ⇒ 绝不许弹出（否则正常用页面就被挡）
+        bool dNoShow = true;
+        {
+            int leave = 0; bool peeked = false;
+            for (int i = 0; i < 12; i++)
+            {
+                int y = 20 + (i % 3) * 8;
+                peeked = Next(peeked, y <= Top + EdgeBand, y <= Top + BarH + KeepSlack, i * TickMs, ref leave);
+                if (peeked) dNoShow = false;
+            }
+        }
+        sb.AppendLine("PEEK D no_edge_no_show=" + (dNoShow ? 1 : 0));
+        if (!dNoShow) fail++;
+
+        sb.AppendLine("PEEK GRACE_MS=" + GraceMs);
+        sb.AppendLine("PEEK TICK_MS=" + TickMs);
+        sb.AppendLine("PEEK BAR_H=" + BarH);
+        sb.AppendLine("PEEK RESULT=" + (fail == 0 ? "ok" : ("fail:" + fail)));
+        return sb.ToString().TrimEnd();
+    }
+}
+
+static class Program
     {
         [STAThread]
         static void Main(string[] args)
@@ -615,6 +739,14 @@ namespace WxLauncher
             {
                 try { Console.OutputEncoding = System.Text.Encoding.UTF8; } catch { }
                 Console.WriteLine(Ui.UrlProbe());
+                return;
+            }
+            if (args != null && args.Length > 0 && args[0] == "--peekprobe")
+            {
+                // 全屏顶栏"贴顶滑出"的**离线仿真**：纯计算、不打屏、不起任何窗口（不进 Application.Run）。
+                // 作者报的「最大化后上边栏维持时间太短、点不到最小化」由这里的 A 条守着。
+                try { Console.OutputEncoding = System.Text.Encoding.UTF8; } catch { }
+                Console.WriteLine(BarPeek.Probe());
                 return;
             }
             if (args != null && args.Length > 1 && args[0] == "--cursorprobe")
@@ -816,6 +948,7 @@ namespace WxLauncher
         GlyphButton _btnMax;           // 最大化/还原按钮（自绘字形，随状态换 kind）
         Panel _bar;                    // 自绘顶栏（真全屏时要收起来，见 SyncBarVisible）
         bool _barPeek;                 // 全屏时鼠标是否贴在屏幕顶端（贴顶才把顶栏滑出来）
+        int _barLeaveAt;               // 光标离开"顶栏区域"的时刻（Environment.TickCount；0＝没在倒计时）
         public bool ProbeOnly;         // 取证探针用：不初始化 WebView2（免得探针把浏览器弹出来）
         /// 不激活显示：`Show()` 时用 SW_SHOWNOACTIVATE，**不抢用户前台**
         /// （取值探针 --cursorprobe 用；实测：只加 WS_EX_NOACTIVATE 还不够，WinForms 的 Show() 仍会激活）
@@ -1269,23 +1402,30 @@ namespace WxLauncher
             StyleKit.Apply(this, "群相 控制台");
             // 全屏时"鼠标贴顶端才滑出顶栏"：WebView2 是**原生子窗口**、会吃掉鼠标消息，
             // 父窗收不到 MouseMove ⇒ 只能用定时器读全局光标位置（**只读，不动鼠标**）。
+            // ⛔ 2026-09-20：判据从"只有顶端 4px"改成 `BarPeek`（进入/保持/宽限三段，见那个类的注释）
+            //   —— 作者报「最大化后，上边栏碰触之后维持的时间太短，导致点不到最小化」就是原来那一条判据
+            //   造成的：鼠标一往按钮上挪就离开 4px ⇒ 顶栏立刻收起。离线仿真见 `--peekprobe`。
             try
             {
                 System.Windows.Forms.Timer peek = new System.Windows.Forms.Timer();
-                peek.Interval = 200;
+                peek.Interval = BarPeek.TickMs;
                 peek.Tick += delegate
                 {
                     try
                     {
                         if (WindowState != FormWindowState.Maximized)
                         {
-                            if (_barPeek) { _barPeek = false; SyncBarVisible(); }
+                            if (_barPeek) { _barPeek = false; _barLeaveAt = 0; SyncBarVisible(); }
                             return;
                         }
                         Rectangle mo = Screen.FromHandle(Handle).Bounds;
                         Point c = Cursor.Position;
-                        bool atTop = (c.Y <= mo.Top + 4) && (c.X >= mo.Left) && (c.X < mo.Right);
-                        if (atTop != _barPeek) { _barPeek = atTop; SyncBarVisible(); }
+                        bool inX = (c.X >= mo.Left) && (c.X < mo.Right);
+                        bool hitEdge = inX && (c.Y <= mo.Top + BarPeek.EdgeBand);
+                        // "还在顶栏那块区域内"＝顶端 + 顶栏高 + 余量（这样从顶端往下挪到按钮上不会中途收起）
+                        bool overBar = inX && (c.Y <= mo.Top + (_bar != null ? _bar.Height : 42) + BarPeek.KeepSlack);
+                        bool want = BarPeek.Next(_barPeek, hitEdge, overBar, Environment.TickCount, ref _barLeaveAt);
+                        if (want != _barPeek) { _barPeek = want; SyncBarVisible(); }
                     }
                     catch { }
                 };

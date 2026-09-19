@@ -80,8 +80,16 @@ print("── D. 真全屏：自绘顶栏收起来，鼠标贴屏幕顶端再滑
 ok("有 SyncBarVisible（全屏时收起顶栏）", "void SyncBarVisible()" in src)
 ok("顶栏显隐由 SyncBarVisible 决定", "_bar.Visible = show" in src)
 ok("有贴顶检测（只读光标位置，不动鼠标）",
-   "Cursor.Position" in src and "atTop" in src,
+   "Cursor.Position" in src and "hitEdge" in src and "BarPeek.Next" in src,
    "WebView2 会吃掉 MouseMove，只能用定时器读全局光标")
+# ⛔ 2026-09-20 修（作者报「最大化后上边栏维持时间太短、点不到最小化」）：显隐判据从"只有贴顶 4px"
+#   升级成 `BarPeek`（进入 / 保持 / 宽限三段）。**行为**由 `scripts/peek_probe_selftest.py` 守着
+#   （跑 `一键启动.exe --peekprobe` 的四条仿真路径 + 老判据灵敏度对照）；这里只钉住"接线对不对"。
+ok("顶栏显隐走 BarPeek 三段判据（进入 / 保持 / 宽限），不是只看顶端那几个像素",
+   "BarPeek.Next(_barPeek" in src and "_bar.Height" in src and "BarPeek.EdgeBand" in src,
+   "见 launcher-src/launcher.cs 的 BarPeek")
+ok("老那一条「只看顶端 4px」的写法已经清掉（它正是「点不到最小化」的成因）",
+   "bool atTop = (c.Y <= mo.Top + 4)" not in src)
 
 print("")
 print("全屏判据：%d 通过 / %d 失败" % (passed, failed))
