@@ -96,33 +96,91 @@ def _is_masked(v) -> bool:
     return isinstance(v, str) and (_MASKED_MARK in v or v.startswith("sk-***"))
 
 
+# ── 凭据字段表（**掩码侧与恢复侧共用同一份**）─────────────────────────────────────────
+# 为什么抽成表而不是逐字段手写（V-R3-3，2026-09-20）：脱敏原来是**手写枚举**——V8 修完
+# `webhook_token` 就收工，紧接着 `feedback.webhook_url` 又漏了（同一个函数、同一条威胁模型，
+# 只是它"看起来只是个网址"）。⇒ 现在 `masked_config()`（打码）与 `_protect_secrets()`（恢复）
+# **都遍历这张表**：加一个字段只加一处，两个方向一起生效，**不存在"只改了一侧"**。
+#   kind: "secret" = 纯密钥（`mask_secret` 首尾截断）/ "url" = URL 本体即凭据（掩掉里面的凭据参数）
+# ⚠️ 故意不在表里的：`server.token`（用户自己的控制台钥匙：掩了面板上就再也看不到它，且废掉
+#   「显示」按钮；而它本来就写在 logs/console.url 与启动日志里 ⇒ 掩它不改变任何实际暴露面）。
+CRED_FIELDS = (
+    (("api", "api_key"), "secret"),
+    (("cloud", "token"), "secret"),
+    (("feedback", "webhook_token"), "secret"),
+    # ⭐ V-R3-3 本体：`agent/feedback.py:498-502` 原话「群机器人这条国内可达、**URL 即凭据**」
+    #   ⇒ 它比 webhook_token 更隐蔽（看着只是个"网址"，其实 `?key=xxx` 就是那把钥匙）。
+    (("feedback", "webhook_url"), "url"),
+    (("feedback", "smtp", "password"), "secret"),
+)
+# 只看"像凭据"的参数名：颜色/尺寸之类无害参数不该被一起掩掉（否则用户认不出是哪条通道）
+_CRED_Q_RE = re.compile(
+    r"(?i)([a-z0-9_]*?(?:key|token|secret|passwo?r?d|signature|sign|webhook)[a-z0-9_]*)=([^&#\s]+)")
+
+
+def mask_url_credential(url: str) -> str:
+    """URL 本体的脱敏：**凭据参数的值**打码（保留参数名，便于认出是哪条通道）。
+
+    ⛔ 关键约定：**绝不原样返回**（URL 即凭据）。一个凭据参数都没识别出来时退回"整体首尾截断"
+    —— 打码串里一定含 `••••`，于是恢复侧 `_is_masked()` 认得它、用户保存时真值不会被覆盖。
+    """
+    s = str(url or "")
+    if not s:
+        return s
+    out = _CRED_Q_RE.sub(lambda m: m.group(1) + "=" + mask_secret(m.group(2)), s)
+    if out != s:
+        return out
+    _head, _sep, _tail = s.partition("://")
+    return (_head + _sep + mask_secret(_tail)) if _sep else mask_secret(s)
+
+
+def _mask_path(cfg: dict, path: tuple, kind: str) -> None:
+    """按路径把配置里某个字段打码；路径中间不存在就跳过，**顺路把容器复制出来**（不动真配置）。"""
+    cur = cfg
+    for k in path[:-1]:
+        nxt = cur.get(k)
+        if not isinstance(nxt, dict):
+            return
+        nxt = dict(nxt)
+        cur[k] = nxt
+        cur = nxt
+    leaf = path[-1]
+    if cur.get(leaf):
+        cur[leaf] = mask_url_credential(cur[leaf]) if kind == "url" else mask_secret(cur[leaf])
+
+
+def _restore_path(new_cfg: dict, old: dict, path: tuple) -> None:
+    """`new_cfg` 里 path 处的值若是打码串 ⇒ 换回 `old` 里的真值（路径中间不存在就跳过，不建结构）。"""
+    ncur, ocur = new_cfg, old
+    for k in path[:-1]:
+        ncur = ncur.get(k) if isinstance(ncur, dict) else None
+        ocur = ocur.get(k) if isinstance(ocur, dict) else None
+        if not isinstance(ncur, dict):
+            return
+    leaf = path[-1]
+    if isinstance(ncur, dict) and _is_masked(ncur.get(leaf)):
+        ncur[leaf] = (ocur.get(leaf) if isinstance(ocur, dict) else None) or ""
+
+
 def _protect_secrets(new_cfg: dict):
-    """保存配置时：若密钥字段还是打码值，则不覆盖真实密钥。"""
+    """保存配置时：**表里任何"还是打码值"的字段都不覆盖真实值**（与 `masked_config` 同一张表）。
+
+    为什么要同一张表（V-R3-3）：脱敏侧补了字段而恢复侧忘了补，用户一点保存就把真值写成 `••••`
+    串（原值当场丢）。两侧遍历同一份 `CRED_FIELDS` ⇒ "只改一侧"这类错**不可能**再发生。
+    """
     old = get_config()
     api_new = new_cfg.get("api")
     if isinstance(api_new, dict):
-        api_old = old.get("api") or {}
-        if _is_masked(api_new.get("api_key")):
-            api_new["api_key"] = api_old.get("api_key") or ""
+        # `provider_keys` 是"名字→密钥"的字典，进不了路径表 ⇒ 单独按同一口径处理（secret）
         pk_new = api_new.get("provider_keys")
         if isinstance(pk_new, dict):
+            api_old = old.get("api") or {}
             pk_old = (api_old.get("provider_keys") or {}) if isinstance(api_old, dict) else {}
             for k, v in pk_new.items():
                 if _is_masked(v):
                     pk_new[k] = pk_old.get(k) or ""
-    # 2026-09-16：与 masked_config() 对称——凭据类字段也要"掩码值不覆盖真实值"。
-    # 否则用户在面板上一点保存，打码后的授权码/口令就被写回 config.json（原值当场丢）。
-    fb_new = new_cfg.get("feedback")
-    if isinstance(fb_new, dict):
-        smtp_new = fb_new.get("smtp")
-        if isinstance(smtp_new, dict) and _is_masked(smtp_new.get("password")):
-            smtp_new["password"] = (((old.get("feedback") or {}).get("smtp") or {}).get("password")) or ""
-        # V8 的第二半：webhook_token 也要"掩码值不覆盖真实值"（与 masked_config 对称，别只改一侧）
-        if _is_masked(fb_new.get("webhook_token")):
-            fb_new["webhook_token"] = (old.get("feedback") or {}).get("webhook_token") or ""
-    cl_new = new_cfg.get("cloud")
-    if isinstance(cl_new, dict) and _is_masked(cl_new.get("token")):
-        cl_new["token"] = (old.get("cloud") or {}).get("token") or ""
+    for path, _kind in CRED_FIELDS:
+        _restore_path(new_cfg, old, path)
 
 
 def _current_wx(parent):
@@ -368,37 +426,23 @@ class WebUI:
     # ── 配置脱敏 ──────────────────────────────────────────────────────────
 
     def masked_config(self) -> dict:
-        """返回配置副本：所有 API Key 打码（真实值只存服务器 config.json）。"""
+        """返回配置副本：**凭据字段表 `CRED_FIELDS` 里的每一项都打码**（真实值只存服务器 config.json）。
+
+        ⭐ 2026-09-20 改成**表驱动**（V-R3-3）：原先逐字段手写 —— 2026-09-16 掩了
+        `feedback.smtp.password` 与 `cloud.token`、2026-09-20 掩了 `feedback.webhook_token`，
+        可「原始 JSON」按钮（打的正是 `GET /api/config`）仍然把 `feedback.webhook_url`
+        （`feedback.py` 自己写着"URL 即凭据"）明文铺在网页上，录屏/截图即外泄。
+        ⇒ 掩码侧与恢复侧现在遍历**同一份表**，加字段只加一处。
+        """
         cfg = dict(get_config())
         api = dict(cfg.get("api") or {})
-        if api.get("api_key"):
-            api["api_key"] = mask_secret(api["api_key"])
+        # provider_keys 是"名字→密钥"的字典，进不了路径表 ⇒ 单独处理（口径同表里的 "secret"）
         pk = api.get("provider_keys")
         if isinstance(pk, dict):
             api["provider_keys"] = {k: mask_secret(v) for k, v in pk.items() if v}
         cfg["api"] = api
-        # 2026-09-16：原先只掩码 api.*，于是 feedback.smtp.password（邮箱授权码）与
-        # cloud.token（对端凭据）原样回到浏览器——input type=password 只遮眼睛，
-        # 「原始 JSON」按钮（打的正是 GET /api/config）更是把整个配置铺成明文网页，
-        # 录屏/截图即外泄。server.token 故意不掩码：它是用户自己的控制台钥匙，掩了
-        # 面板上就再也看不到它（且废掉「显示」按钮），而它本来就写在 logs/console.url
-        # 与启动日志里 ⇒ 掩它不改变任何实际暴露面。
-        fb = dict(cfg.get("feedback") or {})
-        smtp = dict(fb.get("smtp") or {})
-        if smtp.get("password"):
-            smtp["password"] = mask_secret(smtp["password"])
-        fb["smtp"] = smtp
-        # ⚠️ 2026-09-20 修 **V8**：`feedback.webhook_token`（PushPlus/钉钉加签的推送凭据）漏在这份
-        #   名单外 ⇒ 控制台「原始 JSON」（打的正是 GET /api/config）把它明文铺在页面上。
-        #   与 smtp.password 同源、同修法（**掩码侧与恢复侧两处都要**）。
-        if fb.get("webhook_token"):
-            fb["webhook_token"] = mask_secret(fb["webhook_token"])
-        cfg["feedback"] = fb
-        cfg["feedback"] = fb
-        cl = dict(cfg.get("cloud") or {})
-        if cl.get("token"):
-            cl["token"] = mask_secret(cl["token"])
-        cfg["cloud"] = cl
+        for path, kind in CRED_FIELDS:
+            _mask_path(cfg, path, kind)
         return cfg
 
     def _safe_join(self, base: str, raw: str) -> str:

@@ -15,6 +15,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+# ⚠️ 2026-09-20（V-R1-2）：更新源现在**只认 http(s) + 官方域**；本地清单文件必须显式开这个
+#   **测试专用**开关（生产路径不设它 —— 见 `update_check.allow_local_update()`）。
+#   本判据的 U 段全部用 `tempfile` 造的**本地清单**，所以在这里显式打开。
+os.environ.setdefault("PM_ALLOW_LOCAL_UPDATE", "1")
 
 from agent import update_check as UC      # noqa: E402
 from agent.version import VERSION         # noqa: E402

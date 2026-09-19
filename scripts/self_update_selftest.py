@@ -170,15 +170,11 @@ try:
     print("── G. 文件被占用 ⇒ 跳过并如实报告（不许假装成功）——含 V3 回归 ──")
     def locked(src, dst, *a, **k):
         if _into_target(dst) and str(dst).replace("\\", "/").endswith("agent/c.py"):
-            # ⚠️ 2026-09-20 修 V3 之后，判据只看 **winerror ∈ (32,33)**（真·共享冲突）；
-            #    原来这里只构造了文本 + errno，没有 winerror ⇒ 会被正确地当成"真故障"回滚。
-            #    桩要跟真实 Windows 一样把 winerror 带上（这才是"文件正被占用"的真形态）。
-            e = PermissionError(13, "另一个程序正在使用此文件")
-            try:
-                e.winerror = 32
-            except Exception:
-                pass
-            raise e
+            # ⚠️ 2026-09-20 二次修（V-R3-1）：**不许手工给异常贴 `winerror`** —— 那是假绿
+            #   （测的是"我自己伪造的占用"）。真实共享冲突走 CRT `open()` 报的就是这个形状：
+            #   `PermissionError: [Errno 13] …`（errno=13、**winerror 被丢掉**）；而目标文件
+            #   本身**可写**（不是只读）⇒ `_is_locked` 必须判"被占用"。
+            raise PermissionError(13, "另一个程序正在使用此文件")
         return real_copy2(src, dst, *a, **k)
 
     shutil.copy2 = locked
@@ -226,7 +222,14 @@ try:
     man_i["base"]["version"] = "9999.1.1"
     # 走**下载**这条路（base.url 指向本地包），才能顺带验"装完清缓存"
     man_i["base"]["url"] = pkg
-    r = UA.run_once(manifest=man_i, zip_path=None, target=target)
+    # ⚠️ 2026-09-20（V-R1-2）：更新链现在**只认官方域的下载地址**（非官方要显式开关）——
+    #   这条判据是"离线一条龙"，用本地包当下载地址 ⇒ 显式开这个**测试专用**开关
+    #   （生产路径不设它：`allow_local_update()` 只认环境变量或配置里的显式开关）。
+    os.environ["PM_ALLOW_LOCAL_UPDATE"] = "1"
+    try:
+        r = UA.run_once(manifest=man_i, zip_path=None, target=target)
+    finally:
+        os.environ.pop("PM_ALLOW_LOCAL_UPDATE", None)
     ok(r["ok"] and r["version"] == "9999.1.1", "run_once 成功返回版本", str(r)[:110])
     ok(not os.path.exists(os.path.join(target, UA.CACHE_REL, "persona-morph-9999.1.1.zip")),
        "装完把下载缓存删掉了（下载类功能必须有清理措施）")

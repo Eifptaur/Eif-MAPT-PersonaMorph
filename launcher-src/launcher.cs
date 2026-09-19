@@ -274,6 +274,18 @@ namespace WxLauncher
             exe = ""; pre = ""; ver = ""; why = "";
             string cmd = (raw ?? "").Trim().TrimStart('\uFEFF').Trim();
             if (cmd.Length == 0) { why = "那一行是空的"; return false; }
+            // ⛔ 2026-09-20 修 **V-R1-1（P0）**：**先判"整串是不是一个存在的文件"** ——
+            //   安装路径含空格时（默认包顶层就叫 `persona morph`！），按"首个空格切分"会把路径切成
+            //   `...\persona` ⇒ 报"路径不存在" ⇒ **全新机器（没装过 Python 的那种）完全起不来**。
+            //   先当路径试，能命中就直接用；命不中再走"命令 + 参数"的切分（`py -3` 那种）。
+            if (File.Exists(cmd))
+            {
+                ver = RunPy(cmd, "", "-c \"import sys;print(str(sys.version_info[0])+'.'+str(sys.version_info[1]))\"");
+                if (ver.Length == 0) { why = "跑不起来：" + cmd; return false; }
+                exe = cmd; pre = "";
+                why = "Python " + ver + "（" + cmd + "）";
+                return true;
+            }
             string first, rest;
             if (cmd[0] == '"')
             {

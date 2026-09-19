@@ -42,42 +42,73 @@ def read_pid(name):
 
 
 def kill_by_cmdline(marker):
-    """回退：按命令行特征找 PID —— wmic 优先，**再补一条 PowerShell**（新版 Windows 已移除 wmic）。"""
-    pids = _kill_by_wmic(marker)
-    if not pids:
-        pids = _kill_by_ps(marker)
-    return pids
+    """回退：按命令行特征找 PID —— wmic 优先，**再补一条 PowerShell**（新版 Windows 已移除 wmic）。
+
+    ⛔ 2026-09-20 补 **V-R1-3 的另一半**：这里原来和 `onestart` 一样是"命令行含子串就杀"，
+    于是"一键关闭"会把**别人项目**的 `watchdog.py`、另一份解压目录里的群相副本一起 `taskkill /F`
+    （而同一天刚把 onestart 那一侧改成"必须落在本安装目录下"）⇒ 现在**共用同一份判据**
+    `agent.proc_match.is_our_install`，不是本安装的进程一律**跳过并留痕**（fail-loud）。
+    """
+    pairs = _kill_by_wmic2(marker) or _kill_by_ps2(marker)
+    ours, skipped = [], []
+    for pid, cmd in pairs:
+        try:
+            from agent.proc_match import is_our_install
+            _ok = is_our_install(cmd)
+        except Exception as e:                                   # noqa: BLE001
+            _ok = False
+            print("[stop] 判据不可用（%s）⇒ 不杀任何进程（宁可不关，也不误杀）" % str(e)[:60])
+        (ours if _ok else skipped).append(pid)
+    if skipped:
+        print("[stop] 跳过 %d 个**不属于本安装**的同名进程：%s" % (len(skipped), skipped))
+    return ours
 
 
 def _kill_by_ps(marker):
+    return [p for p, _c in _kill_by_ps2(marker)]
+
+
+def _kill_by_wmic(marker):
+    return [p for p, _c in _kill_by_wmic2(marker)]
+
+
+def _kill_by_ps2(marker):
+    """返回 `[(pid, cmdline)]`（要拿命令行过"属于本安装"的判据，所以不能只回 pid）。"""
     try:
-        ps = ('Get-CimInstance Win32_Process -Filter "Name=\'pythonw.exe\' or Name=\'python.exe\'" | '
-              "Where-Object { $_.CommandLine -like '*%s*' } | ForEach-Object { $_.ProcessId }" % marker)
+        ps = ("Get-CimInstance Win32_Process -Filter \"Name='pythonw.exe' or Name='python.exe'\" | "
+              "Where-Object { $_.CommandLine -like '*%s*' } | "
+              "ForEach-Object { \"$($_.ProcessId)`t$($_.CommandLine)\" }" % marker)
         r = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
                            capture_output=True, creationflags=0x08000000, timeout=25)
         out = (r.stdout or b"").decode("utf-8", "ignore")
-        return [int(t) for t in out.split() if t.isdigit() and int(t) > 0]
+        res = []
+        for line in out.splitlines():
+            pid, _, cmd = line.strip().partition("\t")
+            if pid.isdigit() and int(pid) > 0:
+                res.append((int(pid), cmd))
+        return res
     except Exception:
         return []
 
 
-def _kill_by_wmic(marker):
-    pids = []
+def _kill_by_wmic2(marker):
+    """wmic 的 `/format:csv` 会把 pid 与命令行放在同一行 ⇒ 能一次拿到两者。"""
+    res = []
     try:
         r = subprocess.run(
             ["wmic", "process", "where",
              "name like '%python%.exe' and commandline like '%{0}%'".format(marker),
-             "get", "processid", "/value"],
+             "get", "processid,commandline", "/format:csv"],
             capture_output=True, creationflags=0x08000000, timeout=15)
         for line in r.stdout.decode("utf-8", "ignore").splitlines():
-            line = line.strip()
-            if line.startswith("ProcessId="):
-                v = line.split("=", 1)[1].strip()
-                if v.isdigit() and int(v) > 0:
-                    pids.append(int(v))
+            cells = [c.strip() for c in line.split(",") if c.strip()]
+            pids = [c for c in cells if c.isdigit()]
+            if not pids:
+                continue
+            res.append((int(pids[-1]), line))
     except Exception:
         pass
-    return pids
+    return res
 
 
 def main():
