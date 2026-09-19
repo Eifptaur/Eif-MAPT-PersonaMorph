@@ -466,60 +466,78 @@ ok("…两件都真还原（判据对「能不能还原」是敏感的）",
    _gotn["a.py"] == "A_OLD" and _gotn["b.py"] == "B_OLD", str(_gotn))
 
 print("── V-R3-8（P2）第二个监听面：Host 校验 + 口令（与控制台共用一份实现）──")
-import http.client                                                             # noqa: E402
-import threading                                                               # noqa: E402
-
-from agent import local_guard as lg                                            # noqa: E402
-from agent import sd_local_server as SDS                                       # noqa: E402
-
-_tok8 = lg.token()
-ok("本机口令已建立（logs/sd_local.token，随机 url-safe）", bool(_tok8) and len(_tok8) >= 16,
-   "len=%d" % len(_tok8))
-ok("Host 判据：回环三种写法放行、外域拒",
-   lg.host_ok("127.0.0.1:7860") and lg.host_ok("localhost:7860") and lg.host_ok("[::1]:7860")
-   and not lg.host_ok("evil.example:7860") and not lg.host_ok(""))
-ok("口令只发给本机：回环 URL 带 X-PM-Token、外域 URL 不带",
-   "X-PM-Token" in lg.client_headers("http://127.0.0.1:7860/x")
-   and "X-PM-Token" not in lg.client_headers("https://api.example.com/x"))
-
-_httpd = SDS.ThreadingHTTPServer(("127.0.0.1", 0), SDS.H)      # 随机空闲口，不碰用户在跑的 7860
-_p8 = _httpd.server_address[1]
-_thr8 = threading.Thread(target=_httpd.serve_forever, kwargs={"poll_interval": 0.1})
-_thr8.daemon = True
-_thr8.start()
-
-
-def _req8(method, path, tok=None, host=None):
-    c = http.client.HTTPConnection("127.0.0.1", _p8, timeout=5)
-    h = {}
-    if host:
-        h["Host"] = host
-    if tok:
-        h["X-PM-Token"] = tok
-    try:
-        c.request(method, path, headers=h)
-        r = c.getresponse()
-        code = r.status
-        r.read()
-        return code
-    finally:
-        c.close()
-
-
+_imports_ok = True
 try:
-    _c_no = _req8("GET", "/")
-    ok("不带口令的真 GET / ⇒ 401（上一版 200 + 191 字节）", _c_no == 401, "code=%s" % _c_no)
-    _c_ok = _req8("GET", "/", tok=_tok8)
-    ok("口令对了 ⇒ 200（正常路径没被门挡住）", _c_ok == 200, "code=%s" % _c_ok)
-    _c_q = _req8("GET", "/?token=" + _tok8)
-    ok("?token= 也认（A1111 兼容客户端只有 URL 可用）", _c_q == 200, "code=%s" % _c_q)
-    _c_h = _req8("GET", "/", tok=_tok8, host="evil.example")
-    ok("外域 Host（DNS rebinding 形状）⇒ 403", _c_h == 403, "code=%s" % _c_h)
-    _c_p = _req8("POST", "/sdapi/v1/txt2img")
-    ok("不带口令的真 POST /sdapi/v1/txt2img ⇒ 401（连模型都不会碰）", _c_p == 401, "code=%s" % _c_p)
-finally:
-    _httpd.shutdown()
-    _httpd.server_close()
+    import http.client                                                         # noqa: E402
+    import threading                                                           # noqa: E402
+
+    from agent import local_guard as lg                                        # noqa: E402
+    from agent import sd_local_server as SDS                                   # noqa: E402
+except Exception as _e:                                                        # noqa: BLE001
+    _imports_ok = False
+    ok("能 import local_guard / sd_local_server", False, str(_e)[:90])
+else:
+    _tok8 = lg.token()
+    ok("本机口令已建立（logs/sd_local.token，随机 url-safe）", bool(_tok8) and len(_tok8) >= 16,
+       "len=%d" % len(_tok8))
+    ok("Host 判据：回环三种写法放行、外域拒",
+       lg.host_ok("127.0.0.1:7860") and lg.host_ok("localhost:7860") and lg.host_ok("[::1]:7860")
+       and not lg.host_ok("evil.example:7860") and not lg.host_ok(""))
+    ok("口令只发给本机：回环 URL 带 X-PM-Token、外域 URL 不带",
+       "X-PM-Token" in lg.client_headers("http://127.0.0.1:7860/x")
+       and "X-PM-Token" not in lg.client_headers("https://api.example.com/x"))
+
+    # ⚠️ 2026-09-20：**handler 出错不许往 stderr 打 traceback** —— `run_all_selftests` 把输出里出现
+    #   `Traceback (most recent call last)` 判成本脚本红（哪怕 78/0、rc=0）。实测这条在**并发套跑**
+    #   时偶发（单跑 10 次都是 OK），所以这里把 handle_error 收成一张表：既不让它污染 stderr，
+    #   又把它变成一条**显式断言**（真出错反而更看得见，而不是被判据框架当噪声吃掉）。
+    _hdl_err = []
+
+    class _QuietHTTP(SDS.ThreadingHTTPServer):
+        daemon_threads = True
+
+        def handle_error(self, request, client_address):
+            _hdl_err.append(repr(client_address))
+
+    _httpd = _QuietHTTP(("127.0.0.1", 0), SDS.H)      # 随机空闲口，不碰用户在跑的 7860
+    _p8 = _httpd.server_address[1]
+    _thr8 = threading.Thread(target=_httpd.serve_forever, kwargs={"poll_interval": 0.05})
+    _thr8.daemon = True
+    _thr8.start()
+
+    def _req8(method, path, tok=None, host=None):
+        c = http.client.HTTPConnection("127.0.0.1", _p8, timeout=5)
+        h = {"Connection": "close"}                   # 别让 handler 线程挂着等下一个请求
+        if host:
+            h["Host"] = host
+        if tok:
+            h["X-PM-Token"] = tok
+        try:
+            c.request(method, path, headers=h)
+            r = c.getresponse()
+            code = r.status
+            r.read()
+            return code
+        finally:
+            c.close()
+
+    try:
+        _c_no = _req8("GET", "/")
+        ok("不带口令的真 GET / ⇒ 401（上一版 200 + 191 字节）", _c_no == 401, "code=%s" % _c_no)
+        _c_ok = _req8("GET", "/", tok=_tok8)
+        ok("口令对了 ⇒ 200（正常路径没被门挡住）", _c_ok == 200, "code=%s" % _c_ok)
+        _c_q = _req8("GET", "/?token=" + _tok8)
+        ok("?token= 也认（A1111 兼容客户端只有 URL 可用）", _c_q == 200, "code=%s" % _c_q)
+        _c_h = _req8("GET", "/", tok=_tok8, host="evil.example")
+        ok("外域 Host（DNS rebinding 形状）⇒ 403", _c_h == 403, "code=%s" % _c_h)
+        _c_p = _req8("POST", "/sdapi/v1/txt2img")
+        ok("不带口令的真 POST /sdapi/v1/txt2img ⇒ 401（连模型都不会碰）", _c_p == 401, "code=%s" % _c_p)
+    finally:
+        _httpd.shutdown()
+        _httpd.server_close()
+        time.sleep(0.2)                               # 给 handler 线程收尾（别在 shutdown 后留半截连接）
+    ok("服务端一个 handler 异常都没有（真出错要看得见，不是被框架当 traceback 吃掉）",
+       not _hdl_err, str(_hdl_err[:3]))
 
 _sds_src = io.open(os.path.join(ROOT, "agent", "sd_local_server.py"), encoding="utf-8").read()
 ok("do_GET / do_POST **两条路都**过同一道门（不是只挡了一半）",
