@@ -244,10 +244,9 @@ namespace WxLauncher
             _asking = false;
         }
 
-        /// 读 logs\python_path.txt 里那条 python 命令：**936 与 UTF-8 都试、去 BOM**，
-        /// 返回**第一个真的存在**的那个路径；一条都不可用返回空串。
-        /// 口径与 scripts\installer.ps1 那条**必须一致**（同一个文件、同一个坑，别各写一套）。
-        static string ReadPyPath(string pth)
+        /// 读 logs\python_path.txt 那一行（**936 与 UTF-8 都试、去 BOM、去成对引号**）并**原样返回**。
+        /// ⚠️ 返回的可能是**命令**（`py -3`）而不是路径 —— 见 TryPy 的说明。
+        static string ReadPyRaw(string pth)
         {
             try { if (!File.Exists(pth)) return ""; }
             catch { return ""; }
@@ -255,12 +254,84 @@ namespace WxLauncher
             {
                 try
                 {
-                    string t = File.ReadAllText(pth, enc).Trim().TrimStart('\uFEFF').Trim();
-                    if (t.Length > 0 && File.Exists(t)) return t;
+                    string t = File.ReadAllText(pth, enc).Trim().TrimStart('\uFEFF').Trim().Trim('"').Trim();
+                    if (t.Length > 0) return t;
                 }
                 catch { }
             }
             return "";
+        }
+
+        /// 命令 →（可执行文件 + 前置参数），并要求**真跑一次**能报出版本号才算数。
+        /// ⚠️ 2026-09-19 修**真根因**（作者截图：全新机器上一键启动报「Python 环境异常」，可 Python 明明有）：
+        ///   `setup_python.ps1` 在**有系统 Python 3.10~3.12** 时写进 python_path.txt 的是
+        ///   **命令**（`py -3` / `python`），不是路径；而这里原来一律拿 `File.Exists` 判它
+        ///   ⇒「py -3」永远不是文件 ⇒ 判否 ⇒ 报"找不到 Python"（而 `.cmd` 入口早就按
+        ///   「命令 + 参数」处理了，**两侧必须同源**）。这条与包体无关：`pack_online.py` 的 EXCLUDE
+        ///   里有 `runtime/`（绿色 Python 不进包），所以"没有 runtime\python 但有系统 Python"是常态。
+        static bool TryPy(string raw, out string exe, out string pre, out string ver, out string why)
+        {
+            exe = ""; pre = ""; ver = ""; why = "";
+            string cmd = (raw ?? "").Trim().TrimStart('\uFEFF').Trim();
+            if (cmd.Length == 0) { why = "那一行是空的"; return false; }
+            string first, rest;
+            if (cmd[0] == '"')
+            {
+                int q = cmd.IndexOf('"', 1);
+                first = q > 0 ? cmd.Substring(1, q - 1) : cmd.Trim('"');
+                rest = q > 0 ? cmd.Substring(q + 1).Trim() : "";
+            }
+            else
+            {
+                int sp = cmd.IndexOf(' ');
+                first = sp > 0 ? cmd.Substring(0, sp) : cmd;
+                rest = sp > 0 ? cmd.Substring(sp + 1).Trim() : "";
+            }
+            bool looksPath = first.IndexOf('\\') >= 0 || first.IndexOf('/') >= 0 || first.IndexOf(':') >= 0;
+            if (looksPath && !File.Exists(first)) { why = "路径不存在：" + first; return false; }
+            ver = RunPy(first, rest, "-c \"import sys;print(str(sys.version_info[0])+'.'+str(sys.version_info[1]))\"");
+            if (ver.Length == 0) { why = "跑不起来：" + cmd; return false; }
+            exe = first; pre = rest;
+            why = "Python " + ver + "（" + cmd + "）";
+            return true;
+        }
+
+        /// 试跑一次 Python（拿版本号用）；跑不起来 / 超时都返回空串，绝不抛。
+        static string RunPy(string exe, string preArgs, string tailArgs)
+        {
+            try
+            {
+                var psi = new ProcessStartInfo(exe, ((preArgs ?? "") + " " + (tailArgs ?? "")).Trim());
+                psi.UseShellExecute = false; psi.CreateNoWindow = true;
+                psi.RedirectStandardOutput = true; psi.RedirectStandardError = true;
+                using (var p = Process.Start(psi))
+                {
+                    if (!p.WaitForExit(20000)) { try { p.Kill(); } catch { } return ""; }
+                    string o = p.StandardOutput.ReadToEnd();
+                    return (o ?? "").Trim();
+                }
+            }
+            catch { return ""; }
+        }
+
+        /// 跑一次准备脚本，**返回退出码**（-1＝没跑起来）。原来只 `WaitForExit()` 就写"准备 Python 完成"
+        /// —— 那句是假的：脚本失败了我们也照样打"完成"（作者截图里就是这么被打出来的 ✗）。
+        int RunSetupPy(string ps1, bool forcePortable)
+        {
+            try
+            {
+                var pi = new ProcessStartInfo("powershell.exe",
+                    "-NoProfile -ExecutionPolicy Bypass -File \"" + ps1 + "\"");
+                pi.UseShellExecute = false; pi.CreateNoWindow = true;
+                if (forcePortable) { pi.EnvironmentVariables["WX_FORCE_PORTABLE"] = "1"; }
+                using (var p = Process.Start(pi)) { p.WaitForExit(); return p.ExitCode; }
+            }
+            catch { return -1; }
+        }
+
+        static bool VerOk(string ver)
+        {
+            return ver == "3.10" || ver == "3.11" || ver == "3.12";
         }
 
         void StartFlow()
@@ -270,39 +341,39 @@ namespace WxLauncher
                 SetState("准备 Python 环境…", 5, 0, "检测系统/绿色版 Python（无需手动安装）");
                 string ps1 = Path.Combine(Root, "scripts", "setup_python.ps1");
                 if (!File.Exists(ps1)) { Fail("缺少 scripts\\setup_python.ps1"); return; }
-                var pi = new ProcessStartInfo("powershell.exe",
-                    "-NoProfile -ExecutionPolicy Bypass -File \"" + ps1 + "\"");
-                pi.UseShellExecute = false; pi.CreateNoWindow = true;
-                using (var p = Process.Start(pi)) { p.WaitForExit(); }
-                Log("准备 Python 完成");
+                int rc = RunSetupPy(ps1, false);
+                Log("准备 Python 完成（退出码 " + rc + "）");
 
-                // 2026-09-19 修（与 scripts\installer.ps1 同源的那一类假报：窗口写「Python 环境异常 ·
-                //   runtime\python\python.exe 不存在」，可那个文件明明在）：以前**只按 936 解码**
-                //   logs\python_path.txt，而它是上一次安装留下的 ⇒ 换过目录 / 移动过文件夹之后它指向旧位置，
-                //   File.Exists 必然失败 ⇒ 报「不存在」。现在：①先按约定找 runtime\python\python.exe
-                //   （免编码、免陈旧路径）②再读文件，936/UTF-8 都试、去 BOM，取第一个真的存在的。
+                // 2026-09-19 修（真根因见 TryPy 的注释）：先按约定找 runtime\python\python.exe，
+                //   再读 logs\python_path.txt —— **两者都可能是"命令 + 参数"**，一律走 TryPy 解析并试跑。
                 string pth = Path.Combine(Root, "logs", "python_path.txt");
                 string convPy = Path.Combine(Root, "runtime", "python", "python.exe");
-                string pyCmd = File.Exists(convPy) ? convPy : ReadPyPath(pth);
-                if (string.IsNullOrEmpty(pyCmd) || !File.Exists(pyCmd))
+                string exe = "", pre = "", ver = "", why = "";
+                bool got = TryPy(convPy, out exe, out pre, out ver, out why);
+                if (!got) got = TryPy(ReadPyRaw(pth), out exe, out pre, out ver, out why);
+                if (!got || !VerOk(ver))
                 {
-                    // 重跑一次准备再读
-                    var pi2 = new ProcessStartInfo("powershell.exe",
-                        "-NoProfile -ExecutionPolicy Bypass -File \"" + ps1 + "\"");
-                    pi2.UseShellExecute = false; pi2.CreateNoWindow = true;
-                    using (var p2 = Process.Start(pi2)) { p2.WaitForExit(); }
-                    pyCmd = File.Exists(convPy) ? convPy : ReadPyPath(pth);
+                    // 没找到 / 版本不在支持范围（3.10~3.12）⇒ 重跑一次准备脚本；版本不对就强制用绿色版
+                    bool force = got && !VerOk(ver);
+                    int rc2 = RunSetupPy(ps1, force);
+                    Log("重跑准备 Python（退出码 " + rc2 + (force ? " · 强制绿色版" : "") + "）");
+                    got = TryPy(convPy, out exe, out pre, out ver, out why);
+                    if (!got) got = TryPy(ReadPyRaw(pth), out exe, out pre, out ver, out why);
                 }
-                if (string.IsNullOrEmpty(pyCmd) || !File.Exists(pyCmd))
+                if (!got || !VerOk(ver))
                 {
                     // 不许出现「请重新解压完整包」这类话（作者口径：不许覆盖解压、一定要直接更新）——
-                    // 如实说找过哪两处 + 一个不需要手动解压的下一步（与 installer.ps1 的文案同源）
-                    Fail("Python 环境异常（找过 runtime\\python\\python.exe 与 logs\\python_path.txt）——点「关闭」后重开一次；仍不行就在控制台点「检查更新」更新一版（不用自己解压）"); return;
+                    // 如实说**读到的是什么、为什么不行** + 一个不需要手动解压的下一步。
+                    string detail = got ? ("Python 版本 " + ver + " 不在支持范围，需要 3.10~3.12") : why;
+                    Fail("Python 环境异常（" + detail + "）——点「关闭」后重开一次；仍不行就在控制台点「检查更新」更新一版（不用自己解压）");
+                    return;
                 }
+                Log("Python 就绪：" + exe + (pre.Length > 0 ? (" " + pre) : "") + "（" + why + "）");
+
 
                 SetState("检查 / 安装依赖…", 12, 1, "Python 就绪");
                 string onestart = Path.Combine(Root, "scripts", "onestart.py");
-                var po = new ProcessStartInfo(pyCmd, "-X utf8 \"" + onestart + "\"");
+                var po = new ProcessStartInfo(exe, ((pre.Length > 0 ? (pre + " ") : "") + "-X utf8 \"" + onestart + "\"").Trim());
                 po.UseShellExecute = false;
                 po.CreateNoWindow = true;
                 po.RedirectStandardOutput = true;

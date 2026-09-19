@@ -331,55 +331,78 @@ if ($r.code -ne 0) {
 # 2026-09-19 修（作者截图：窗口写「Python 环境异常 · runtime\python\python.exe 不存在，请重新解压完整包」，
 #   可那个文件明明在）：以前只按 936(GBK) 解码 logs\python_path.txt，而这个文件是上一次安装留下的
 #   ⇒ 换过目录/移动过文件夹后它指向旧位置，Test-Path 必然失败 ⇒ 报“不存在”。
-#   现在：①先按约定找 runtime\python\python.exe（免编码、免陈旧路径）②再读文件，936/UTF-8 都试、去 BOM。
-$pyCmd = ''
-$pth = Join-Path $root 'logs\python_path.txt'
-$convPy = Join-Path $root 'runtime\python\python.exe'
-if (Test-Path $convPy) {
-    $pyCmd = $convPy
-} elseif (Test-Path $pth) {
-    foreach ($enc in @([Text.Encoding]::GetEncoding(936), [Text.Encoding]::UTF8)) {
-        try {
-            $t = ([IO.File]::ReadAllText($pth, $enc)).Trim().TrimStart([char]0xFEFF)
-            if ($t -and (Test-Path $t)) { $pyCmd = $t; break }
-        } catch { }
+#   现在：①先按约定找 runtime\python\python.exe（免编码、免陈旧路径）②再读文件，936/UTF-8 都试、去 BOM。# ── 解析「Python 命令」（2026-09-19 修**真根因**：那一行可能是**命令**而不是路径）────────
+#   作者截图：全新机器上「一键启动」报「Python 环境异常」，可 Python 明明有。
+#   真因＝`setup_python.ps1` 在有系统 Python 3.10~3.12 时写进 `logs\python_path.txt` 的是
+#   `py -3` / `python` 这样的**命令**，而两侧都拿 Test-Path / File.Exists 判它 ⇒「py -3」
+#   永远不是文件 ⇒ 判否 ⇒ 报"找不到 Python"。与包体无关：`pack_online.py` 的 EXCLUDE 含
+#   `runtime/`（绿色 Python 不进包）⇒ "没有 runtime\python 但有系统 Python"是**常态**。
+#   ⇒ 命令与路径都认，并且**必须真跑一次报出版本号**才算数（版本要 3.10~3.12）。
+function Resolve-PyCmd([string]$raw) {
+    $t = ([string]$raw).Trim().TrimStart([char]0xFEFF).Trim().Trim('"').Trim()
+    if (-not $t) { return $null }
+    $exe = $t; $pre = ''
+    if ($t.StartsWith('"')) {
+        $q = $t.IndexOf('"', 1)
+        if ($q -gt 0) { $exe = $t.Substring(1, $q - 1); $pre = $t.Substring($q + 1).Trim() } else { $exe = $t.Trim('"') }
+    } else {
+        $sp = $t.IndexOf(' ')
+        if ($sp -gt 0) { $exe = $t.Substring(0, $sp); $pre = $t.Substring($sp + 1).Trim() }
     }
+    if (($exe -match '[\\/:]') -and -not (Test-Path $exe)) { Diag ('py 路径不存在：' + $exe); return $null }
+    $ver = ''
+    try {
+        $a = @($pre.Split(' ', [System.StringSplitOptions]::RemoveEmptyEntries))
+        $a += @('-c', 'import sys;print(str(sys.version_info[0])+"."+str(sys.version_info[1]))')
+        $ver = (& $exe $a 2>$null | Select-Object -First 1)
+    } catch { Diag ('py 跑不起来：' + $t + ' / ' + $_.Exception.Message); return $null }
+    $ver = ([string]$ver).Trim()
+    if ($ver -notmatch '^\d+\.\d+$') { Diag ('py 没报出版本号：' + $t); return $null }
+    return @{ exe = $exe; pre = $pre; ver = $ver; raw = $t }
 }
-if (-not $pyCmd) {
-    Set-State '未找到可用的 Python' 0 0 '点击「关闭」后重试或检查网络'
+
+function Find-Py([string]$convPy, [string]$pth) {
+    # ①先按约定找 runtime\python\python.exe ②再读那个文件（936/UTF-8 都试、去 BOM）
+    $cands = @($convPy)
+    foreach ($enc in @([Text.Encoding]::GetEncoding(936), [Text.Encoding]::UTF8)) {
+        try { $raw = [IO.File]::ReadAllText($pth, $enc); if (([string]$raw).Trim()) { $cands += $raw } } catch { }
+    }
+    foreach ($c in $cands) {
+        $r = Resolve-PyCmd $c
+        if ($r) { return $r }
+    }
+    return $null
+}
+
+$convPy = Join-Path $root 'runtime\python\python.exe'
+$pth = Join-Path $root 'logs\python_path.txt'
+$pyCmd = ''; $pyPre = ''
+$py = Find-Py $convPy $pth
+if ($py -and ($py.ver -notmatch '^3\.(10|11|12)$')) {
+    Diag ('Python ' + $py.ver + ' 不在支持范围（需 3.10~3.12）⇒ 重跑并强制绿色版')
+    $py = $null
+    $env:WX_FORCE_PORTABLE = '1'
+}
+if (-not $py) {
+    Diag ('重跑 setup_python 再解析（ps1=[' + $ps1 + ']）')
+    $r3 = Run-HiddenLogWatch 'powershell.exe' ('-NoProfile -ExecutionPolicy Bypass -File "' + $ps1 + '"') '' ''
+    $env:WX_FORCE_PORTABLE = ''
+    $py = Find-Py $convPy $pth
+}
+if (-not $py) {
+    # 不许出现「请重新解压完整包」这类话（作者口径：不许覆盖解压、一定要直接更新）
+    Set-State 'Python 环境异常' 0 0 ('没找到可用的 Python（找过 runtime\python\python.exe 与 logs\python_path.txt）——点「关闭」后重开一次；仍不行就在控制台点「检查更新」更新一版（不用自己解压）')
     Wait-Close
     return
 }
-if (-not (Test-Path $pyCmd)) {
-    # Python 路径失效（runtime 被删/换目录）：重跑准备脚本再读一次
-    Diag ('pyCmd 无效，重跑 setup_python: [' + $pyCmd + ']')
-    $r3 = Run-HiddenLogWatch 'powershell.exe' ('-NoProfile -ExecutionPolicy Bypass -File "' + $ps1 + '"') '' ''
-    $pyCmd = ''
-    if (Test-Path $convPy) {
-        $pyCmd = $convPy
-    } elseif (Test-Path $pth) {
-        foreach ($enc2 in @([Text.Encoding]::GetEncoding(936), [Text.Encoding]::UTF8)) {
-            try {
-                $t2 = ([IO.File]::ReadAllText($pth, $enc2)).Trim().TrimStart([char]0xFEFF)
-                if ($t2 -and (Test-Path $t2)) { $pyCmd = $t2; break }
-            } catch { }
-        }
-    }
-    Diag ('重读 pyCmd=[' + $pyCmd + ']')
-    if (-not $pyCmd) {
-        # 不许出现「请重新解压完整包」这类话（作者口径：不许覆盖解压、一定要直接更新）——
-        # 改成如实说找过哪两处 + 一个不需要手动解压的下一步。
-        Set-State 'Python 环境异常' 0 0 ('没找到可用的 Python（找过 runtime\python\python.exe 与 logs\python_path.txt）——点「关闭」后重开一次；仍不行就在控制台点「检查更新」更新一版（不用自己解压）')
-        Wait-Close
-        return
-    }
-}
+$pyCmd = $py.exe; $pyPre = $py.pre
+Diag ('pyCmd=[' + $pyCmd + '] pre=[' + $pyPre + '] ver=' + $py.ver)
 Set-State '检查 / 安装依赖…' 12 1 'Python 就绪'
 Diag ('step: pyCmd=[' + $pyCmd + ']')
 
 # 2) onestart（GUI 事件驱动进度）
 $onestart = Join-Path $root 'scripts\onestart.py'
-$r2 = Run-HiddenLogWatch $pyCmd ('-X utf8 "' + $onestart + '"') 'WX_GUI' '1'
+    $r2 = Run-HiddenLogWatch $pyCmd ((($pyPre) + ' -X utf8 "' + $onestart + '"').Trim()) 'WX_GUI' '1'
 Diag ('step: onestart done rc=' + $r2.code)
 if ($r2.code -ne 0) {
     Set-State '启动失败（依赖/自检/机器人）' 0 0 '详见 logs\onestart.log'

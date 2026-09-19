@@ -249,14 +249,30 @@ ok("setup_python.ps1 仍按 ANSI 写 python_path.txt（一键启动.exe 那一�
 
 # ③ `一键启动.exe` 这一侧与 `installer.ps1` **同源**（同一个文件、同一个坑，两边别各写一套）：
 #    先按约定找 runtime\python\python.exe；读 txt 时 936/UTF-8 都试；找不到就说人话（不教用户解压）。
+#    ⭐ 2026-09-19 修**真根因**：那一行可能是**命令**（`py -3` / `python`）而不是路径
+#    —— 两侧都必须"命令与路径都认"，并且**真跑一次报出版本号**才算数（`pack_online.py` 的 EXCLUDE
+#    含 `runtime/`，绿色 Python 不进包 ⇒ "没有 runtime\python 但有系统 Python"是常态）。
 _lc = text(os.path.join("launcher-src", "launcher.cs"))
 ok("一键启动.exe 先按约定找 runtime\\python\\python.exe（不靠那个 txt）",
    'Path.Combine(Root, "runtime", "python", "python.exe")' in _lc)
-ok("读 logs\\python_path.txt 时 936 与 UTF-8 都试、去 BOM（取真存在的那个）",
-   "static string ReadPyPath" in _lc and "Encoding.GetEncoding(936), new UTF8Encoding(false)" in _lc
+ok("读 logs\\python_path.txt 时 936 与 UTF-8 都试、去 BOM",
+   "static string ReadPyRaw" in _lc and "Encoding.GetEncoding(936), new UTF8Encoding(false)" in _lc
    and "TrimStart('\\uFEFF')" in _lc)
+ok("exe 认「命令 + 参数」（`py -3` 不当文件路径判）",
+   "static bool TryPy" in _lc and "looksPath" in _lc and "RunPy(" in _lc
+   and "File.Exists(t)" not in _lc)
+ok("exe 用解析出来的 exe + 前置参数起 onestart（不再直接把那行当文件名）",
+   'new ProcessStartInfo(exe,' in _lc and "pre.Length > 0" in _lc)
+ok("exe 会看 setup_python 的退出码（不再无脑打「准备 Python 完成」）",
+   "int rc = RunSetupPy(ps1, false)" in _lc and "退出码 " in _lc and "VerOk(" in _lc)
 ok("找不到 Python 时给的是**不用解压**的下一步（与 installer.ps1 文案同源）",
    "不用自己解压" in _lc and "检查更新" in _lc)
+_ps = text(os.path.join("scripts", "installer.ps1"))
+ok("installer.ps1 同样「命令与路径都认」+ 真跑一次验版本",
+   "function Resolve-PyCmd" in _ps and "function Find-Py" in _ps
+   and "3\\.(10|11|12)" in _ps and "sys.version_info" in _ps)
+ok("installer.ps1 把解析出的 exe 与参数分开传给子进程",
+   "Run-HiddenLogWatch $pyCmd ((($pyPre)" in _ps)
 
 # ③ `.cmd` 代码里不许再读那个 txt（读就有跨编码风险，见 P8），且要有 nopy 守卫
 for nm in (CHECK, ONLY):
