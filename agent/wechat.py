@@ -1394,7 +1394,23 @@ class WeChatAdapter:
                             len(self._db_dropped_shards), self._db_dropped_shards[0])
         except Exception as _e:
             log.debug("刷新分片密钥失败（继续）：%s", _e)
-        info = self._db.get_self_info() or {}
+        # ⛔ 2026-09-19（网友报障：控制台写「微信还没接上 ⇒ 读不到群列表」，而那台机器微信在跑、
+        #   消息库能开、密钥可用）：真凶就是下面这一行 —— `get_self_info()` 会读 **contact.db**，
+        #   微信正在 checkpoint 时驱动库抛 `数据库合并失败(文件被微信并发改写)`，而旧代码**没有 try**
+        #   ⇒ 异常一路穿透 `_init_db` → `WeChatAdapter.__init__` ⇒ 被上层当成"适配器根本不存在" ⇒
+        #   整机判"没接上" ✗。诊断那一侧同一次调用**本来就有 try**（见 attach_diagnosis 的 self 步）
+        #   ⇒ 两条路策略相反，这就是"诊断六步全过、产品连不上"的逻辑必然。
+        #   现在对称：读不到只降级"自己是谁"与"依赖联系人库的那几个能力"，**不改变接入状态**。
+        self._cap = {}
+        self._db_self_err = ""
+        try:
+            info = self._db_retry(lambda: self._db.get_self_info() or {}, tag="self_info") or {}
+            self._cap["contacts"] = "ok"
+        except Exception as _e:
+            info = {}
+            self._db_self_err = "%s【%s】" % (str(_e)[:140], type(_e).__name__)
+            self._cap["contacts"] = "fail:%s" % self._db_self_err
+            log.warning("读自己的账号信息失败（不影响接入，只影响判自己/群列表/昵称）：%s", self._db_self_err)
         self._self_wxid = str(info.get("username") or "")
         self._self_nickname = str(info.get("nick_name") or "")
         # ⛔ 2026-09-16（已知现象：「一直有个问题 无法识别大号用户 就是无法识别我的账号」）：
@@ -1436,25 +1452,56 @@ class WeChatAdapter:
             self._md = None
             self._img_key_ready = False
 
+    def _db_retry(self, fn, tag="", tries=3, delay=0.2):
+        """读微信库时的**外层退避重试**。
+
+        为什么要外层重试：驱动库内部那三次重试**只在进循环前采样一次 mtime/size**（`db.py:1312-1316`），
+        循环体内不重新采样 ⇒ 三次都落在**同一个撕裂窗口**里，接连失败是结构性的、不是偶发
+        （它读的是加密原库，先逐页解密再做 `PRAGMA quick_check`，所以「加 busy_timeout」在这一跳毫无作用）。
+        隔一会儿再打一次，才真的换一个窗口 ⇒ 这是能把"必败"抬成"大概率成"的最小改动，
+        而且放在我们这侧 ⇒ 不受驱动库版本影响、也不改第三方文件。
+        """
+        last = None
+        _tries = max(1, int(tries))
+        for _i in range(_tries):
+            try:
+                return fn()
+            except Exception as _e:
+                last = _e
+                if _i < _tries - 1:
+                    try:
+                        log.debug("[%s] 读库失败（第 %d/%d 次）：%s；%.0fms 后重试",
+                                  tag or "db", _i + 1, _tries, str(_e)[:80], delay * 1000)
+                    except Exception:
+                        pass
+                    try:
+                        time.sleep(delay)
+                    except Exception:
+                        pass
+        raise last
+
     def _load_nicknames(self) -> dict:
         # W1：contact 整表映射走适配层（原来直接摸 _db_files/_open 两个私有接口）
         try:
-            return replica_adapter.load_nickname_map(self._db)
-        except Exception:
+            return self._db_retry(lambda: replica_adapter.load_nickname_map(self._db), tag="nicknames")
+        except Exception as _e:
+            self._cap["contacts"] = "fail:%s【%s】" % (str(_e)[:100], type(_e).__name__)
             return {}
 
     def _load_groups(self) -> list:
         # W1：优先用公开 get_groups()，拿不到才回退（回退路径也在适配层里，调用点不再碰私有接口）
         try:
-            return replica_adapter.load_groups(self._db)
-        except Exception:
+            return self._db_retry(lambda: replica_adapter.load_groups(self._db), tag="groups")
+        except Exception as _e:
+            self._cap["groups"] = "fail:%s【%s】" % (str(_e)[:100], type(_e).__name__)
             return []
 
     def _load_privates(self) -> list:
         """私聊联系人（非群、非系统号）。2026-09-16 加：支持「大号跟小号对谈」。"""
         try:
-            return replica_adapter.load_privates(self._db)
-        except Exception:
+            return self._db_retry(lambda: replica_adapter.load_privates(self._db), tag="privates")
+        except Exception as _e:
+            self._cap["privates"] = "fail:%s【%s】" % (str(_e)[:100], type(_e).__name__)
             return []
 
     # ── 读取 ─────────────────────────────────────────────────────────────
@@ -9842,6 +9889,20 @@ def attach_diagnosis(adapter=None, err="", db=None) -> dict:
                                   "主密钥为空，但有 %d 把缓存密钥能过页1校验 ⇒ 可用" % n) if okk
                                  else "拿不到能用的数据库密钥（读不到微信进程里的密钥）⇒ 消息库读不出来")
                                 + _sh_note + _drop_note})
+    # ⭐ 2026-09-19 加一格：**联系人库（contact.db）能不能读**。
+    #   以前七步里没有这一格 ⇒ "某一路读不了"在诊断上表现为"这几步都过"（`bad` 为空），
+    #   而产品侧 `groups_fn` 只认 `wechat is None` ⇒ 被升级成"微信还没接上"，用户只能看到后者 ✗。
+    #   **放在 `key` 之后、`self` 之前**（`self` 必须留在最后一格：判据与侧栏都按"最后一步＝认自己"读）。
+    if _db is not None:
+        try:
+            _db.get_self_info()
+            _c_ok, _c_detail = True, "联系人库可读（群列表 / 昵称 / 私聊都靠它）"
+        except Exception as _ce:
+            _c_ok = False
+            _c_detail = ("联系人库读不了（微信正在并发写 contact.db：%s）⇒ 群列表/昵称/私聊读不到，"
+                         "**消息收发与监听不受影响**；监听循环每 10 秒会重连，稍等几秒再点一次即可"
+                         % str(_ce)[:80])
+        steps.append({"key": "contacts", "name": "联系人库（群列表/昵称）", "ok": _c_ok, "detail": _c_detail})
     if _db is not None:
         uid, nick = "", ""
         try:
@@ -9883,7 +9944,7 @@ def attach_diagnosis(adapter=None, err="", db=None) -> dict:
     step_key = bad[0]["key"] if bad else ""
     action = {"deps": "install_deps", "process": "start_wechat", "install": "install",
               "version": "upgrade_wechat",
-              "db_open": "retry", "key": "relogin", "self": "retry"}.get(step_key, "none")
+              "db_open": "retry", "key": "relogin", "contacts": "retry", "self": "retry"}.get(step_key, "none")
     # 「微信没在跑」里还要分两种：装了的＝叫他开微信；没装的＝叫他去装（别让他白找一圈）
     if step_key == "process" and any(s["key"] == "install" and not s["ok"] for s in steps):
         action = "install"
@@ -9902,6 +9963,7 @@ ATTACH_STEP_LABEL = {
     "version": "微信版本太旧（要 4.x）",
     "db_open": "打不开消息库",
     "key": "拿不到数据库密钥",
+    "contacts": "联系人库读不了（群列表降级）",
     "self": "读不出你的账号",
     "unknown": "原因未知",
 }
