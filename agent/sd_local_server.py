@@ -105,7 +105,26 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _deny(self):
+        """统一门禁（V-R3-8）：`Host` 必须是回环 + 必须带本机口令。**每条路由都过这一关**。
+
+        口径与实现见 `agent/local_guard.py`（与控制台共用同一份，别再各写一套）。
+        客户端（`agent/image_gen.py` / `agent/sd_local.py`）对回环地址会自动带 `X-PM-Token`。
+        """
+        try:
+            import local_guard as lg
+        except Exception:                                   # 直接以脚本方式跑（cwd=ROOT）
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            import local_guard as lg
+        _ok, code, why = lg.check(self, PORT)
+        if not _ok:
+            self._send({"detail": why}, code)
+            return False
+        return True
+
     def do_GET(self):
+        if not self._deny():
+            return
         p = self.path.split("?")[0]
         if p.startswith("/sdapi/v1/sd-models"):
             return self._send([{"title": "sdxl-turbo (群相 本地轻量后端)", "model_name": os.path.basename(MODEL)}])
@@ -117,6 +136,8 @@ class H(BaseHTTPRequestHandler):
         return self._send({"detail": "not found"}, 404)
 
     def do_POST(self):
+        if not self._deny():
+            return
         if not self.path.split("?")[0].startswith("/sdapi/v1/txt2img"):
             return self._send({"detail": "not found"}, 404)
         try:
@@ -163,7 +184,17 @@ if __name__ == "__main__":
     if not os.path.exists(MODEL):
         print("模型文件不存在：%s" % MODEL, flush=True)
         sys.exit(2)
-    print("群相本地生图服务：http://127.0.0.1:%d（模型 %s）" % (PORT, os.path.basename(MODEL)), flush=True)
+    try:
+        import local_guard as _lg
+    except Exception:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import local_guard as _lg
+    _tok = _lg.token()
+    if not _tok:
+        print("本机口令建立失败（logs 目录写不了）—— 拒绝起一个没有门禁的监听面", flush=True)
+        sys.exit(3)
+    print("群相本地生图服务：http://127.0.0.1:%d（模型 %s；本机口令见 %s）"
+          % (PORT, os.path.basename(MODEL), _lg.token_path()), flush=True)
     if os.environ.get("SD_PRELOAD", "1") == "1":
         try:
             get_pipe()

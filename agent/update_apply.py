@@ -231,6 +231,34 @@ def write_local_state(target: str, version: str, tree: str, extra=None) -> dict:
     return d
 
 
+def _dir_writable(p: str) -> bool:
+    """目标所在目录**真的能写吗**（真建一个临时文件再删掉）。
+
+    为什么不用 `os.access`：Windows 上它基本只看"只读属性"，对 ACL 拒写不可靠 ——
+    实测（`icacls <dir> /deny <user>:(W)`）时 `os.access` 仍返回 True。
+    只在**已经失败**的那条路上调用（把"权限类故障"说清楚，别把用户引向"去找占用者"）。
+    """
+    d = os.path.dirname(os.path.abspath(p)) or "."
+    t = os.path.join(d, ".pm_write_test_%d" % os.getpid())
+    try:
+        os.makedirs(d, exist_ok=True)
+        with open(t, "wb") as fh:
+            fh.write(b"1")
+        os.remove(t)
+        return True
+    except Exception:
+        return False
+
+
+def _perm_hint(e, tp: str) -> str:
+    """权限类错误 ⇒ 给一句**指对方向**的话（V-R3-9：老文案把用户引去"找占用者"）。"""
+    if getattr(e, "errno", None) == 13 or getattr(e, "winerror", None) == 5:
+        if not _dir_writable(tp):
+            return ("；而且这个目录**写不进去**（%s）⇒ 请把程序装到你有写权限的目录，"
+                    "或给这个目录写权限" % (os.path.dirname(tp) or "."))
+    return ""
+
+
 def _is_locked(e, path: str = "") -> bool:
     """这个异常是不是"文件正被别的进程使用"（共享冲突）。只有这一种才允许"跳过并继续"。
 
@@ -243,17 +271,28 @@ def _is_locked(e, path: str = "") -> bool:
     用户点「立即更新」几乎必然失败（包里必然含正在运行的 `一键启动.exe`）。
     现在按"**错误码 + 文件本身可不可写**"组合判：winerror ∈ (32,33) ⇒ 占用；
     errno==13 或 winerror==5 ⇒ 再看文件是不是**只读属性**（只读＝真故障 ⇒ 回滚，否则＝被持有 ⇒ 跳过）。
+
+    ⛔ 2026-09-20 **三次修（V-R3-9，第三轮审计）**：上面那条还漏了一支 —— **目标文件还不存在**时
+    （＝本次是"新建文件"），`os.path.exists(path)` 为假 ⇒ 老实现直接 `return True` 当成"被占用"。
+    可"拒绝访问 + 目标不存在"的常态恰恰是**目录 ACL 拒写 / 只读介质 / 路径非法**，那是**真故障**：
+    实测（真 `icacls /deny` ）老行为给出 `rc=0 status=partial pending=['agent/c.py']`、文件没落地、
+    版本不推进 ⇒ 受保护目录里的用户**永久停在"只装了一半"**，而文案还把他引去"找占用者"。
+    ⇒ 现在：**目标不存在 ⇒ 一律判真故障**（回滚）；`stat` 失败也判真故障。
     """
     we = getattr(e, "winerror", None)
     err = getattr(e, "errno", None)
     if we in (32, 33):
         return True
     if we == 5 or err == 13:
+        if not path:
+            return True                      # 没给路径 ⇒ 无从判断，保持旧行为（调用点都给了）
         try:
-            if path and os.path.exists(path) and not (os.stat(path).st_mode & 0o200):   # 0o200 = S_IWRITE
+            if not os.path.exists(path):
+                return False        # 新建文件却写不进去 ⇒ 目录权限/路径问题，真故障
+            if not (os.stat(path).st_mode & 0o200):   # 0o200 = S_IWRITE
                 return False        # 只读文件 ⇒ 真故障，必须回滚（不许降级成"部分成功"）
         except Exception:
-            pass
+            return False            # 连 stat 都失败 ⇒ 更可能是权限/路径问题 ⇒ 真故障
         return True
     return False
 
@@ -339,21 +378,34 @@ def apply_full(manifest: dict, zip_path: str, target: str = ROOT, dry: bool = Fa
                 str(e)[:80] or type(e).__name__, rel), {"phase": "snapshot"}
 
         def rollback(why):
+            """把已换入的件还原回去，**并按"实际还原成功了几件"报数**。
+
+            ⛔ 2026-09-20 修 **V-R3-6（P1，第三轮审计）**：老实现 `for rel in placed: … except: pass`
+            然后 `"（已回滚 %d 件）" % len(placed)` —— 报的是**尝试数**。实测（用真进程持有 b.py）：
+            文案写"已回滚 2 件"，实际只还原 1 件、`b.py` 停在新内容 ⇒ **半新半旧 + 谎报已回滚**：
+            用户以为还在旧版（下次排障会以"已经回滚了"为前提），而且 Python 侧可能直接 ImportError。
+            ⇒ 现在：逐个记成败，**文案写成功数/总数**，失败项进 `detail["rollbackFailed"]` 并在文案里
+            点名"没能还原谁 + 该怎么办"（先关掉占用它的程序再点一次更新）。
+            """
+            okr, bad = [], []
             for rel in placed:
                 tp = os.path.join(target, rel.replace("/", os.sep))
-                if rel in snaps:
-                    bp = os.path.join(backup, rel.replace("/", os.sep))
-                    try:
+                try:
+                    if rel in snaps:
+                        bp = os.path.join(backup, rel.replace("/", os.sep))
                         os.makedirs(os.path.dirname(tp), exist_ok=True)
                         shutil.copy2(bp, tp)
-                    except Exception:
-                        pass
-                else:                      # 原来是新增的 ⇒ 撤掉
-                    try:
+                    elif os.path.exists(tp):          # 原来是"新增"的 ⇒ 撤掉（本来就不存在＝无需撤）
                         os.remove(tp)
-                    except Exception:
-                        pass
-            return 1, why + "（已回滚 %d 件）" % len(placed), {"rolledBack": list(placed)}
+                    okr.append(rel)
+                except Exception as e:                # noqa: BLE001
+                    bad.append("%s（%s）" % (rel, str(e)[:50] or type(e).__name__))
+            tail = "（已回滚 %d/%d 件）" % (len(okr), len(placed))
+            if bad:
+                tail += ("；⚠️ 有 %d 件**没能还原**（可能正被别的程序占用）：%s —— "
+                         "请先关掉占用它的程序，再点一次「立即更新」"
+                         % (len(bad), "、".join(bad[:3])))
+            return 1, why + tail, {"rolledBack": okr, "rollbackFailed": bad}
 
         # ---- ④ 换入（**只有"被占用"才跳过**；其它错误一律回滚，不许降级成"部分成功"）----
         for rel in rels:
@@ -370,7 +422,8 @@ def apply_full(manifest: dict, zip_path: str, target: str = ROOT, dry: bool = Fa
                 if _is_locked(e, tp):
                     locked.append("%s（%s）" % (rel, str(e)[:60]))
                     continue
-                return rollback("换入失败：%s（%s）" % (rel, str(e)[:80]))
+                # V-R3-9：权限类真故障要**指对方向**（别让用户去找一个不存在的"占用者"）
+                return rollback("换入失败：%s（%s）%s" % (rel, str(e)[:80], _perm_hint(e, tp)))
 
         # ---- ⑤ 组合校验：逐件重算（换入件必须与清单哈希逐一对上）----
         # ⛔ V-R3-4：这一步抛异常（文件被占用/被删/读不了）**必须回滚**，不许"报失败但已经全换完"。

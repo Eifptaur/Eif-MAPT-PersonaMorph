@@ -221,8 +221,12 @@ def _deps_ok() -> tuple:
 
 
 def server_alive(port: int = None) -> bool:
+    """探活：本机服务现在**要口令**（V-R3-8），所以这里也得带上它（与客户端同一份实现）。"""
+    from . import local_guard as lg
+    u = server_url(port) + "/internal/ping"
     try:
-        with urllib.request.urlopen(server_url(port) + "/internal/ping", timeout=1.2) as r:
+        req = urllib.request.Request(u, headers=lg.client_headers(u, {"User-Agent": "PersonaMorph/probe"}))
+        with urllib.request.urlopen(req, timeout=1.2) as r:
             return int(getattr(r, "status", 200) or 200) < 500
     except Exception:
         return False
@@ -509,6 +513,9 @@ def start_server(on_log=None) -> tuple:
         exe = sys.executable
     srv = os.path.join(ROOT, "agent", "sd_local_server.py")
     env = dict(os.environ)
+    # V-R3-8：父进程先把口令定下来，**同一个值**通过环境变量交给子进程（两边读的也是同一个文件）
+    from . import local_guard as _lg
+    env[_lg.ENV_KEY] = _lg.token()
     env["SD_MODEL"] = model_path()
     env["SD_STEPS"] = str(int(c.get("steps") or p.get("steps") or 4))
     env["SD_GUIDANCE"] = str(float(p.get("guidance") or 0.0))

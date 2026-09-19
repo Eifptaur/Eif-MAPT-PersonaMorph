@@ -168,6 +168,14 @@ try:
     ok(not os.path.exists(os.path.join(target, "agent", "c.py")), "新增的已撤掉")
 
     print("── G. 文件被占用 ⇒ 跳过并如实报告（不许假装成功）——含 V3 回归 ──")
+    # ⛔ 2026-09-20 修 **V-R3-9（第三轮）**：这条夹具原来拿一个**目标里还不存在**的文件当"被占用"样本
+    #   —— 可"拒绝访问 + 目标不存在"恰恰是**目录权限/路径问题**（真故障回滚），不是被占用。
+    #   ⇒ 先把 c.py 造成"已存在"的文件，这条夹具才真正在测"占用"（新判据会正确区分两者）。
+    write(os.path.join(target, "agent", "c.py"), "C=1\n")
+    write(os.path.join(target, "data", "installed.json"),
+          json.dumps({"version": "1.0.0", "sha256": "x" * 64}))
+
+
     def locked(src, dst, *a, **k):
         if _into_target(dst) and str(dst).replace("\\", "/").endswith("agent/c.py"):
             # ⚠️ 2026-09-20 二次修（V-R3-1）：**不许手工给异常贴 `winerror`** —— 那是假绿
