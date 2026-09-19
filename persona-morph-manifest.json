@@ -1,11 +1,11 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.19.1",
-    "sha256": "20e1f5610bd172f775b65f520caa8ab7db2d5e6dad797213a67dcc766853c89e",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.35/persona-morph-v2.1.35.zip",
-    "build": "53623a675b58",
-    "size": 10699856,
+    "version": "2026.9.19.2",
+    "sha256": "b72b3f1494d64331021e2420616989c0d61c9d9ff2937f57e36341283045f493",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.36/persona-morph-v2.1.36.zip",
+    "build": "22900cc4fc87",
+    "size": 10715904,
     "files": 297
   },
   "dlc": [
@@ -33,13 +33,13 @@
     }
   ],
   "announce": {
-    "version": "2026.9.19.1",
+    "version": "2026.9.19.2",
     "notes": [
-      "修三条网友报的：①控制台「群列表读不到」不再误报成「微信还没接上」——联系人库被微信占用时会如实写「群列表降级 · 消息收发不受影响」，并且自己退避重试（诊断里也多了一格「联系人库」）；②回复不再白等：模型说「本轮结束」就真的结束、发送被判否不会反复重试（实测那种 76~152 秒、几万 token 却一条都没发的轮次就是这么烧的），并加了一轮 45 秒的时间预算；③症状检验器不再假报「模型 key 没填」，档位那栏会显示**真正生效的档位**以及是谁在覆盖它"
+      "修两处网友报的：①「大号能连、小号连不上」——控制台会直接告诉你「数据库目录」是不是填到了某个账号那一层（填到账号层＝把那个号钉死，微信切号后它照样读它），并把每个账号是不是正在被写、现在读的是哪一个一并列出来；②「一键启动」假报「Python 环境异常 · runtime\\python\\python.exe 不存在」——真凶是那行路径只按 GBK 解码、又是上一次安装留下的旧位置，现在先按约定找 runtime\\python\\python.exe，读文件时 936 与 UTF-8 都试，找不到也给的是不用解压的下一步"
     ],
     "forceBase": false,
-    "minBase": "2026.9.19.1"
+    "minBase": "2026.9.19.2"
   },
-  "builtAt": "2026-09-19T11:25:00Z",
-  "updatedAt": 1789817100024
+  "builtAt": "2026-09-19T11:50:27Z",
+  "updatedAt": 1789818627470
 }
