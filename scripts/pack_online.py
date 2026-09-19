@@ -69,6 +69,10 @@ ALLOW = (
     # 同上：`wechat_dir_selftest` 用 `wxid_judge0001` 造**假账号目录**（`tmp/.../db_storage/...`）来验
     # "微信数据目录"的校验与回落，是合成夹具，不含任何真实账号 ⇒ 显式放行并写明理由。
     ("scripts/wechat_dir_selftest.py", "微信账号/数据"),
+    # 同上：`db_discovery_selftest`（2026-09-19 加）用**同一套合成夹具**（`wxid_judge0001` +
+    # 临时目录里的假 `xwechat_files/db_storage`）验"有界深扫能不能找到嵌套的自定义数据目录"
+    # ⇒ 合成夹具、不含任何真实账号 ⇒ 显式放行并写明理由。
+    ("scripts/db_discovery_selftest.py", "微信账号/数据"),
 )
 
 SKIP_BIN = re.compile(r"\.(png|jpe?g|gif|ico|woff2?|ttf|mp4|zip|db|sqlite3?)$", re.I)
