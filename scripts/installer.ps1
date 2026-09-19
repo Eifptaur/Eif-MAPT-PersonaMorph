@@ -328,10 +328,22 @@ if ($r.code -ne 0) {
 }
 
 # 读取 python 命令
+# 2026-09-19 修（作者截图：窗口写「Python 环境异常 · runtime\python\python.exe 不存在，请重新解压完整包」，
+#   可那个文件明明在）：以前只按 936(GBK) 解码 logs\python_path.txt，而这个文件是上一次安装留下的
+#   ⇒ 换过目录/移动过文件夹后它指向旧位置，Test-Path 必然失败 ⇒ 报“不存在”。
+#   现在：①先按约定找 runtime\python\python.exe（免编码、免陈旧路径）②再读文件，936/UTF-8 都试、去 BOM。
 $pyCmd = ''
 $pth = Join-Path $root 'logs\python_path.txt'
-if (Test-Path $pth) {
-    $pyCmd = ([IO.File]::ReadAllText($pth, [Text.Encoding]::GetEncoding(936))).Trim()
+$convPy = Join-Path $root 'runtime\python\python.exe'
+if (Test-Path $convPy) {
+    $pyCmd = $convPy
+} elseif (Test-Path $pth) {
+    foreach ($enc in @([Text.Encoding]::GetEncoding(936), [Text.Encoding]::UTF8)) {
+        try {
+            $t = ([IO.File]::ReadAllText($pth, $enc)).Trim().TrimStart([char]0xFEFF)
+            if ($t -and (Test-Path $t)) { $pyCmd = $t; break }
+        } catch { }
+    }
 }
 if (-not $pyCmd) {
     Set-State '未找到可用的 Python' 0 0 '点击「关闭」后重试或检查网络'
@@ -343,10 +355,21 @@ if (-not (Test-Path $pyCmd)) {
     Diag ('pyCmd 无效，重跑 setup_python: [' + $pyCmd + ']')
     $r3 = Run-HiddenLogWatch 'powershell.exe' ('-NoProfile -ExecutionPolicy Bypass -File "' + $ps1 + '"') '' ''
     $pyCmd = ''
-    if (Test-Path $pth) { $pyCmd = ([IO.File]::ReadAllText($pth, [Text.Encoding]::GetEncoding(936))).Trim() }
+    if (Test-Path $convPy) {
+        $pyCmd = $convPy
+    } elseif (Test-Path $pth) {
+        foreach ($enc2 in @([Text.Encoding]::GetEncoding(936), [Text.Encoding]::UTF8)) {
+            try {
+                $t2 = ([IO.File]::ReadAllText($pth, $enc2)).Trim().TrimStart([char]0xFEFF)
+                if ($t2 -and (Test-Path $t2)) { $pyCmd = $t2; break }
+            } catch { }
+        }
+    }
     Diag ('重读 pyCmd=[' + $pyCmd + ']')
-    if (-not $pyCmd -or -not (Test-Path $pyCmd)) {
-        Set-State 'Python 环境异常' 0 0 'runtime\python\python.exe 不存在，请重新解压完整包'
+    if (-not $pyCmd) {
+        # 不许出现「请重新解压完整包」这类话（作者口径：不许覆盖解压、一定要直接更新）——
+        # 改成如实说找过哪两处 + 一个不需要手动解压的下一步。
+        Set-State 'Python 环境异常' 0 0 ('没找到可用的 Python（找过 runtime\python\python.exe 与 logs\python_path.txt）——点「关闭」后重开一次；仍不行就在控制台点「检查更新」更新一版（不用自己解压）')
         Wait-Close
         return
     }

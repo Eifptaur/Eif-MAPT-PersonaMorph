@@ -119,11 +119,88 @@ def scan(p: str) -> dict:
     return out
 
 
+def _acct_layer(p: str) -> dict:
+    """`p` 是不是**账号层**（填到了一个具体的微信号那一层）+ 该建议改填的**上一级**。
+
+    为什么单独做这一件事（2026-09-19，网友反馈「大号能连、小号连不上」的行业口径）：填到账号层
+    ＝**把某个号钉死**（`pick_account` 里 `pinned` 那条），微信切号之后它还照着这个号读 ⇒ 新消息
+    一条都进不来。系统不报错、其它检查全绿，用户只能看到"连不上/不回复"。
+    只读，代价＝一次 `isdir`；真判成账号层时才多一次 `listdir` 数同级账号。
+
+    返回 `{"is_account","name","up","siblings"}`（判不出来时 `is_account=False`）。
+    """
+    out = {"is_account": False, "name": "", "up": "", "siblings": 0}
+    try:
+        base = os.path.normpath(str(p or ""))
+        if not base or not os.path.isdir(base):
+            return out
+        tail = os.path.basename(base).lower()
+        if tail in _ACCEPT_NAMES:
+            # 直接填到了 `db_storage` 这一层 ⇒ 账号目录是它的上一层，「上一级」要再往上走一层
+            out["is_account"] = True
+            out["name"] = "db_storage"
+            out["up"] = os.path.dirname(os.path.dirname(base))
+        elif os.path.isdir(os.path.join(base, "db_storage")):
+            out["is_account"] = True
+            out["name"] = os.path.basename(base)
+            out["up"] = os.path.dirname(base)
+        else:
+            return out
+        up = str(out["up"] or "")
+        if up and os.path.isdir(up):
+            n = 0
+            try:
+                for name in os.listdir(up):
+                    if len(name) > 200:
+                        break
+                    if name.lower() in _ACCEPT_NAMES:
+                        continue
+                    if _same(os.path.join(up, name), base):
+                        continue
+                    try:
+                        if os.path.isdir(os.path.join(up, name, "db_storage")):
+                            n += 1
+                    except OSError:
+                        continue
+            except OSError:
+                n = 0
+            out["siblings"] = n
+    except Exception:
+        return {"is_account": False, "name": "", "up": "", "siblings": 0}
+    return out
+
+
+def account_hint(p: str, al: dict = None) -> str:
+    """「你填到账号层了，改填上一级」那句提示（**一处实现**：面板、保存回执、检验器共用）。
+
+    ⚠️ 话术里**不写括号式解释**（`wechat_dir_selftest` E 段钉着这条）。
+    """
+    try:
+        al = al if isinstance(al, dict) and al else _acct_layer(expand(p))
+    except Exception:
+        return ""
+    if not al.get("is_account"):
+        return ""
+    up = str(al.get("up") or "")
+    if not up:
+        return ""
+    n = int(al.get("siblings") or 0)
+    if n >= 1:
+        return ("这个目录是账号层，同级还有 %d 个账号目录；微信切号后它不会跟着走。"
+                "建议「数据库目录」改填上一级 %s 让它自动跟随正在用的号" % (n, up))
+    return ("这个目录是账号层；建议「数据库目录」填上一级 %s，"
+            "以后切号或再登一个号时能自动跟随，填这一个号会一直读它" % up)
+
+
 def check(p: str) -> dict:
     """**手动指定必须过这一关**：存在 + 里面有 `db_storage` 或消息库文件。
 
-    返回 `{"path","ok","why","dbs","has_db_storage","newest"}`；`ok=False` 时 `why` **必有话**
-    （防静默：调用方不许在 `why` 为空时判失败）。
+    返回 `{"path","ok","why","dbs","has_db_storage","newest","account_layer","account_up",
+    "account_siblings","hint"}`；`ok=False` 时 `why` **必有话**（防静默：调用方不许在 `why`
+    为空时判失败）。
+
+    ⚠️「账号层」**不改判 `ok`**（填到账号层今天也能跑，只是切号后不跟随）⇒ 只给 `hint`，
+    由控制台/报告如实说出来，不拦用户保存（口径见 `account_hint`）。
     """
     path = expand(p)
     c = scan(path)
@@ -139,6 +216,11 @@ def check(p: str) -> dict:
     out = dict(c)
     out["ok"] = (why == "")
     out["why"] = why
+    _al = _acct_layer(path) if (path and c["is_dir"]) else {"is_account": False, "up": "", "siblings": 0}
+    out["account_layer"] = bool(_al.get("is_account"))
+    out["account_up"] = str(_al.get("up") or "")
+    out["account_siblings"] = int(_al.get("siblings") or 0)
+    out["hint"] = account_hint(path, _al) if out["ok"] else ""
     return out
 
 
@@ -406,7 +488,7 @@ def decide(explicit=None, probe_all: bool = True) -> dict:
     ex = expand(explicit)
     c_ex = check(ex) if ex else {"path": "", "ok": False, "why": "还没填", "dbs": 0, "newest": 0.0}
     out = {"configured": ex, "configured_ok": bool(c_ex["ok"]), "configured_why": str(c_ex["why"]),
-           "configured_dbs": int(c_ex.get("dbs") or 0),
+           "configured_dbs": int(c_ex.get("dbs") or 0), "hint": "",
            "candidates": [], "effective": "", "src": "", "note": "",
            "source_text": "驱动库自探测"}
     if ex and c_ex["ok"]:
@@ -414,6 +496,9 @@ def decide(explicit=None, probe_all: bool = True) -> dict:
         out["effective"] = ex
         out["src"] = "config"
         out["source_text"] = "你填的目录"
+        # ⚠️ 配置可用但**填到了账号层**：不拦，但必须当场说出来（切号后不跟随的真凶，网友 2026-09-19）
+        out["hint"] = str(c_ex.get("hint") or "")
+        out["note"] = out["hint"]
         return out
     if not probe_all:
         return out
@@ -430,6 +515,12 @@ def decide(explicit=None, probe_all: bool = True) -> dict:
         # **不许静默**：填了却用不了，必须说清"你的目录为什么不行 + 现在实际用哪个"
         out["note"] = ("配置的目录 %s 不可用：%s ⇒ 已回落到 %s"
                        % (ex, c_ex["why"], out["effective"] or "驱动库自探测"))
+    if not out["note"] and out["effective"]:
+        # 实际在用的那个也可能是账号层（没填配置、或回落到了别处）⇒ 同一句话术，一处实现
+        _h = str((latest or {}).get("hint") or "") or account_hint(out["effective"])
+        if _h:
+            out["hint"] = _h
+            out["note"] = _h
     return out
 
 

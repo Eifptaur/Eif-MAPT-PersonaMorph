@@ -6533,7 +6533,8 @@ async function probeWechatDir(){
       if(r && r.ok === false){
         toast('保存失败：' + (r.error || '这个目录用不了') + (r.fallback ? ('，当前会回落到 ' + r.fallback) : ''));
       }else{
-        toast('已保存，现在读的是：' + ((r && r.wechat_dir && r.wechat_dir.now) || '自动检测到的目录'));
+        const h = (r && r.wechat_dir && r.wechat_dir.hint) || '';
+        toast('已保存，现在读的是：' + ((r && r.wechat_dir && r.wechat_dir.now) || '自动检测到的目录') + (h ? ('。' + h) : ''));
       }
       loadStatus();
     }catch(e){ toast('保存失败：' + e.message); }

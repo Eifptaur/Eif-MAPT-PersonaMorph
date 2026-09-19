@@ -250,7 +250,42 @@ def v_no_reply() -> dict:
                                           "库正在被写" if _live else
                                           ("**没在动**" if _live is False else "拿不到写入证据")))
         if len(_ns) > 1:
-            _acc_note += "；这台机器上有 %d 个账号：%s" % (len(_ns), "、".join(_ns))
+            _acc_note += "；这台机器上有 %d 个账号" % len(_ns)
+            # ⭐ 2026-09-19 加（网友反馈：「**大号能连、小号连接不上**」）：把**每个号的活跃证据
+            #   并排印出来**，并直接判"我在读的那个号是不是正在被写的那个"——多账号机器上
+            #   这是最难自查的一条（读到不在写的号时，新消息一条都进不来，而其它检查全绿）。
+            try:
+                _par = str(_wv.get("dir") or _wv.get("parent") or _wv.get("account_dir") or "")
+                _alist = _wd_v.accounts(_par) if _par else []
+            except Exception:
+                _alist = []
+            _now = time.time()
+            _rows, _live_names = [], []
+            for _a in (_alist or [])[:6]:
+                _nm = str(_a.get("name") or "?")
+                _age = None
+                try:
+                    if _a.get("live"):
+                        _age = int(_now - float(_a["live"]))
+                except Exception:
+                    _age = None
+                if _age is not None and _age <= 300:
+                    _live_names.append(_nm)
+                    _st = "库正在被写（%ds 前）" % _age
+                elif _age is not None:
+                    _st = "**没在动**（%s 前写过）" % (("%d 分钟" % (_age // 60)) if _age >= 90 else ("%ds" % _age))
+                else:
+                    _st = "拿不到写入证据"
+                _rows.append("%s（%s）%s" % (_nm, _st, "←**我现在读的是它**" if _nm == _acc else ""))
+            if _rows:
+                _acc_note += "：" + "；".join(_rows)
+            if _live_names and _acc and (_acc not in _live_names):
+                _acc_ok = False
+                _acc_note += (" ⇒ **现在在写的是 %s，而我在读 %s**：这正是「大号能连、小号连不上」的错法（"
+                              "读不在写的那个号 ⇒ 新消息一条都进不来）。新版会在 15 秒内自己跟着切过去；"
+                              "若一直不切，检查控制台「微信」面板的**数据库目录**是不是填到了某个账号那一层"
+                              "（那样等于钉死那个号，请填它的**上一级**）"
+                              % ("、".join(_live_names), _acc))
         if not _acc_ok:
             _acc_note += " ⇒ **微信像是切号了，而我们还读着旧号**：新版 15 秒内会自动跟着切，" \
                          "旧版本重启一次机器人即可"
@@ -258,6 +293,20 @@ def v_no_reply() -> dict:
     except Exception as e:
         checks.append(_check("读的是**正在用的那个微信号**", True,
                              "读不到账号信息（不影响其它判断）：%s" % str(e)[:40]))
+    # ⭐ 2026-09-19 加（网友反馈「**大号能连、小号连接不上**」的行业口径：库目录 vs 选中的账号）：
+    #    「数据库目录」填到**账号层**＝把某个号钉死（`wechat_dir.pick_account` 的 pinned 那条），
+    #    切号之后它照样读那一个号 ⇒ 症状正是"另一个号连不上"。**与"现在读的是哪个号"分开判**：
+    #    哪怕此刻读的号很新鲜，只要目录填到了账号层，下一个号一定会出问题。
+    try:
+        from . import wechat_dir as _wd_h
+        _cfgd = str(_wd_h.configured_path() or "")
+        _hint = _wd_h.account_hint(_cfgd) if _cfgd else ""
+        checks.append(_check("「数据库目录」没有填到账号层", not _hint,
+                             _hint or ("填的是账号目录的上一级，切号会自动跟随" if _cfgd
+                                       else "没填自定义目录，按自动检测走")))
+    except Exception as _e2:
+        checks.append(_check("「数据库目录」没有填到账号层", True,
+                             "判不了（不影响其它判断）：%s" % str(_e2)[:40]))
     # ⚠️ 2026-09-19 修：原来读 `api.key`——**配置里根本没有这个字段**（真字段是 `api.api_key`，
     # 且运行时会先看 `providers[].api_key`）⇒ 所有用户的检验器都恒报「api.key 没填」的假卡点。
     # 现在与运行时同源：走 `config.resolve_api_key()`（它在 llm.py 里就是发请求前的那一步）。
