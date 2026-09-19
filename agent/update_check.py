@@ -130,6 +130,22 @@ def _embedded_url(u: str) -> str:
     return ""
 
 
+def _path_has_repo(u: str) -> bool:
+    """这个 URL 的**路径里有没有本仓库**（`REPO_SLUG`）。
+
+    ⛔ 2026-09-20 修 **V-R3-5（P0，第三轮审计）**：上一版只把"已知镜像"分支要求了本仓库路径，
+    **官方域分支只看 host** —— 可 `raw.githubusercontent.com` / `github.com` 上有**无数别人的仓库**：
+        https://raw.githubusercontent.com/attacker/anything/main/persona-morph-manifest.json
+    会被判"官方域 ⇒ 可信"，投毒任一镜像即可让客户端从**攻击者自己的仓库**装包。
+    ⇒ 现在**域与路径两头都要对**：官方域 + 路径必须是本仓库（同一条判据给清单源与下载地址共用）。
+    """
+    try:
+        from urllib.parse import urlparse
+        return REPO_SLUG in (urlparse(str(u)).path or "").lower()
+    except Exception:
+        return False
+
+
 def manifest_origin_ok(u: str, cfg: dict = None) -> tuple:
     """这个源**能不能决定"版本与下载地址"**。返回 `(ok, why)`。
 
@@ -138,7 +154,10 @@ def manifest_origin_ok(u: str, cfg: dict = None) -> tuple:
     官方源，用户点「立即更新」就会装上任意代码（而"哈希校验"只保证包与清单自洽，自洽即通过）。
     现在：①**只有官方域**（或内嵌官方地址的已知镜像）的清单才有资格参与"选版本"；
     ②用户自己填的 `update.url` 若不在官方/已知镜像里，需要显式 `update.trust_custom_url=true`
-    才放行（否则拒绝并告诉他开关在哪）；③第三方镜像从此只作传输通道，不作权威。
+    才放行（否则拒绝并**告诉他开关名在哪**）；③第三方镜像从此只作传输通道，不作权威。
+
+    ⛔ 2026-09-20 再修 **V-R3-5（P0）**：**"域可信"不等于"内容可信"** —— 上面那条只到"域"，
+    官方域上同样有别人的仓库 ⇒ 域与路径（本仓库）**两头都要对**。
     """
     s = str(u or "").strip()
     if not s:
@@ -154,28 +173,32 @@ def manifest_origin_ok(u: str, cfg: dict = None) -> tuple:
     except Exception:
         return False, "地址解析不了"
     if host in OFFICIAL_HOSTS or host.endswith(".githubusercontent.com"):
-        if outer in PROXY_HOSTS or outer == host or inner == "":
-            return True, ("官方域" if inner == "" else "镜像内嵌官方地址（%s）" % host)
-        return False, "外层不是已知镜像：%s" % outer
+        if not (outer in PROXY_HOSTS or outer == host or inner == ""):
+            return False, "外层不是已知镜像：%s" % outer
+        # ⛔ V-R3-5：域对了还要**路径是本仓库**（否则任何人的仓库都能冒充我们的清单）
+        if not _path_has_repo(target):
+            return False, "官方域但不是本仓库的路径：%s" % host
+        return True, ("官方域" if inner == "" else "镜像内嵌官方地址（%s）" % host)
     # 已知 CDN/镜像：**必须承载本仓库的路径**才算可信（它们没有内嵌完整 URL，只能这样认）
     if host in PROXY_HOSTS:
-        try:
-            from urllib.parse import urlparse as _up2
-            _path = (_up2(target).path or "").lower()
-        except Exception:
-            _path = ""
-        if REPO_SLUG in _path:
+        if _path_has_repo(target):
             return True, "已知镜像承载本仓库路径（%s）" % host
         return False, "已知镜像但路径不是本仓库：%s" % host
     c = cfg if isinstance(cfg, dict) else _cfg()
     _cfg_url = str((c or {}).get("url") or "").strip()
     if _cfg_url and s == _cfg_url and bool((c or {}).get("trust_custom_url")):
         return True, "用户显式信任的自定义源（update.trust_custom_url=true）"
-    return False, "非官方域：%s" % (host or "?")
+    # ⛔ V-R3-7：拒绝时必须**指路**（说清开关叫什么、写在哪），否则用户只看到"非官方域"却查不到开关
+    return False, ("非官方域：%s（要用自建源/自选镜像，请在 config.json 里设 "
+                   "update.trust_custom_url=true）" % (host or "?"))
 
 
 def _base_url_ok(u: str) -> tuple:
-    """清单里给的**下载地址**也必须落在官方域内（跨域即拒）。"""
+    """清单里给的**下载地址**也必须落在官方域内，且**路径是本仓库**（跨域/跨仓库即拒）。
+
+    ⛔ V-R3-5：这里原来**只看 host** ⇒ 一份投毒清单可以把 `base.url` 指到
+    `https://github.com/attacker/anything/releases/download/...`，客户端照装。
+    """
     s = str(u or "").strip()
     if not s:
         return True, ""                      # 没给地址 ⇒ 由调用方按"缺 base.url"处理
@@ -185,7 +208,9 @@ def _base_url_ok(u: str) -> tuple:
     except Exception:
         return False, "下载地址解析不了"
     if host in OFFICIAL_HOSTS or host.endswith(".githubusercontent.com"):
-        return True, ""
+        if _path_has_repo(s):
+            return True, ""
+        return False, "清单给的下载地址不是本仓库：%s" % (host or "?")
     return False, "清单给的下载地址不在官方域：%s" % (host or "?")
 
 
@@ -406,7 +431,9 @@ def fetch(url: str, timeout: float = 8.0):
     if not url:
         return None, "未配置更新源"
     if not str(url).lower().startswith(("http://", "https://")) and not allow_local_update():
-        return None, "这个更新源不是 http(s) 地址（本地文件当更新源需要显式开启，已拒绝）"
+        return None, ("这个更新源不是 http(s) 地址（本地文件当更新源需要显式开启，已拒绝）"
+                      "——要用它请在 config.json 里设 update.allow_local=true"
+                      "（或设环境变量 PM_ALLOW_LOCAL_UPDATE=1）")
     try:
         if url.lower().startswith(("http://", "https://")):
             req = urllib.request.Request(url, headers={"User-Agent": "persona-morph-update/1"})

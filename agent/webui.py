@@ -15,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from .config import deep_merge, get_config, save_config, set_config
+from . import local_guard                # V-R3-8：回环 Host 校验（与本地生图服务共用同一份实现）
 from .whale_text import DICT as WHALE_DICT, SKIP as WHALE_SKIP
 from .console_html import HTML  # 界面模板（蓝白设计，设置项全量，独立文件便于改版）
 from .util import mask_secret, redact_secrets
@@ -614,6 +615,12 @@ class WebUI:
                 self.wfile.write(body)
 
             def _auth_ok(self):
+                # ⛔ V-R3-8（2026-09-20 第三轮审计，两侧同源）：**光有口令还不够** ——
+                #    浏览器里的任何页面都能向本机端口"发"请求（CORS 只挡读不挡发），DNS rebinding
+                #    还能让外域解析到 127.0.0.1 后带着**外域 Host** 打进来 ⇒ Host 必须是回环。
+                #    判据实现见 agent/local_guard.py（本地生图服务用同一份，别再各写一套）。
+                if not local_guard.host_ok(self.headers.get("Host")):
+                    return False
                 token = str(get_config().get("server", {}).get("token") or "").strip()
                 if not token:
                     # 旧行为是「空口令 = 放行」，等于控制台裸奔（本机任何进程、任何网页都能进）。

@@ -242,9 +242,14 @@ DEFAULT_CONFIG = {
     #   skip_version＝"不再提醒这个版本"。口径：拉不到就静默跳过、清单坏了如实说、
     #   **公告只在本机 UI 出现，绝不往微信侧发**（与风险闸门同一口径）。
     "update": {
-        "url": "https://raw.githubusercontent.com/Eifptaur/Eif-MAPT-PersonaMorph/main/persona-morph-manifest.json",  # 默认指向本项目的线上清单（留空＝关闭更新检查）
+        "url": "https://raw.githubusercontent.com/Eifptaur/Eif-MAPT-PersonaMorph/main/persona-morph-manifest.json",  # 默认指向本项目的线上清单（留空＝用内置默认；真要关掉更新检查用 muted）
         "muted": False,          # 不再提醒（总开关）
         "skip_version": "",      # 不再提醒这个版本
+        # ⛔ 2026-09-20 修 **V-R3-7（第三轮审计）**：这两个开关是"只信官方域 + 本仓库"那套机制的
+        #   一部分，**必须跟机制一起交付**（有默认值、有注释、拒绝文案里点名）——否则在旧版填过
+        #   自定义源的用户升级后，会看到"更新源异常"却查不到怎么放行（等于把老路径悄悄切断）。
+        "trust_custom_url": False,   # true＝显式信任你自己填的 update.url（自建中转/自选镜像）
+        "allow_local": False,        # true＝允许把本地文件当更新源（只建议离线自测用；也可用环境变量 PM_ALLOW_LOCAL_UPDATE=1）
     },
     # ── 真语音条（2026-09-17 用户：「我让他发语音条，**不是发音频文件**」）──
     #   形态区别：`voice_reply` 发出去的是**音频文件**；这一块走"虚拟声卡 + 微信自己录"那条路，

@@ -334,6 +334,229 @@ _os_src = io.open(os.path.join(ROOT, "scripts", "onestart.py"), encoding="utf-8"
 ok("onestart 的实现已下沉到 agent.proc_match（一处实现、两处调用）",
    "from agent.proc_match import" in _os_src)
 
+print("── V-R3-5（P0）来源信任：域对了还要**是本仓库** ──")
+# 第三轮审计：投毒任一第三方镜像 ⇒ 回一份版本更高的清单，把 base.url 指到**攻击者自己的仓库**。
+# 上一版只把"已知镜像的裸路径"分支要求了本仓库，**官方域分支只看 host** ⇒ 上面那条链全部放行。
+_att_man = "https://raw.githubusercontent.com/attacker/anything/main/persona-morph-manifest.json"
+ok("攻击者仓库的清单（官方域）⇒ 拒（上一版放行）", uc.manifest_origin_ok(_att_man)[0] is False)
+ok("攻击者仓库（镜像内嵌官方地址）⇒ 拒（上一版放行）",
+   uc.manifest_origin_ok("https://ghfast.top/" + _att_man)[0] is False)
+ok("攻击者 release 当下载地址 ⇒ 拒（上一版放行）",
+   uc._base_url_ok("https://github.com/attacker/anything/releases/download/v1/x.zip")[0] is False)
+ok("本仓库的官方源 / 镜像内嵌 / CDN / api 四条正面样本 ⇒ 全放行",
+   all(uc.manifest_origin_ok(u)[0] for u in (
+       uc.DEFAULT_URL, "https://ghfast.top/" + uc.DEFAULT_URL,
+       "https://cdn.jsdelivr.net/gh/Eifptaur/Eif-MAPT-PersonaMorph@main/persona-morph-manifest.json",
+       uc.API_URL)))
+ok("9 条内置源全部仍然可信（回归：不许把自家源也拒了）",
+   all(uc.manifest_origin_ok(u)[0] for u in uc.DEFAULT_URLS),
+   str([u[:42] for u in uc.DEFAULT_URLS if not uc.manifest_origin_ok(u)[0]]))
+# 换入口复核：走**真正"选版本"的那一步**（`_ranked`）——投毒源版本号更高也不许赢
+_man_ours = {"base": {"version": "2026.9.20.2", "sha256": "a" * 64,
+                      "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.40/x.zip"}}
+_man_evil = {"base": {"version": "2099.9.9", "sha256": "b" * 64,
+                      "url": "https://github.com/attacker/anything/releases/download/v9/x.zip"}}
+_got35 = {_att_man: (_man_evil, ""), uc.DEFAULT_URL: (_man_ours, "")}
+_man35, _used35 = uc._ranked(_got35, list(_got35))
+ok("_ranked：投毒源版本更高也**不许赢**（选中的仍是本仓库那份）",
+   _used35 == uc.DEFAULT_URL and (_man35 or {}).get("base", {}).get("version") == "2026.9.20.2",
+   "used=%s ver=%s" % (str(_used35)[:44], (_man35 or {}).get("base", {}).get("version")))
+_uc_src = io.open(os.path.join(ROOT, "agent", "update_check.py"), encoding="utf-8").read()
+ok("「必须是本仓库」只有一份实现（清单源与下载地址共用 _path_has_repo）",
+   _uc_src.count("_path_has_repo(") >= 3, "_path_has_repo 出现 %d 次" % _uc_src.count("_path_has_repo("))
+
+print("── V-R3-9（P1）目标不存在 ⇒ 真故障回滚（不许「永久只装一半」）──")
+# 真 icacls 拒写目标目录（测完立刻移除）——**不手工造异常**。
+import subprocess                                                              # noqa: E402
+
+d9 = tempfile.mkdtemp(prefix="pm_vf_v39_")
+a9 = os.path.join(d9, "agent")
+os.makedirs(a9)
+_u9 = os.environ.get("USERNAME") or os.environ.get("USER") or ""
+z9 = os.path.join(d9, "p.zip")
+with zipfile.ZipFile(z9, "w") as _zz9:
+    _zz9.writestr("persona morph/agent/c.py", "NEW")
+_t9 = U.zip_tree(z9)[0]
+_NO_WIN = getattr(subprocess, "CREATE_NO_WINDOW", 0)          # 不许闪控制台窗（proc_window_selftest 看着她）
+subprocess.run(["icacls", a9, "/deny", _u9 + ":(W)"], capture_output=True, text=True,
+               creationflags=_NO_WIN)
+try:
+    rc9, msg9, det9 = U.apply_full({"base": {"version": "9999.9.9", "sha256": _t9, "url": ""}}, z9, d9)
+    st9 = U.read_local_state(d9)
+finally:
+    subprocess.run(["icacls", a9, "/remove:d", _u9], capture_output=True, text=True,
+                   creationflags=_NO_WIN)
+ok("目录拒写 + 新建文件 ⇒ rc=1 **回滚**（上一版是 rc=0 + status=partial）", rc9 == 1,
+   "rc=%s status=%s pending=%s" % (rc9, det9.get("status"), det9.get("pending")))
+ok("…不许报「只装了一半」、不许记 pendingFiles（否则用户每次点都补不上）",
+   det9.get("status") != "partial" and not det9.get("pending"),
+   "%s%s" % (det9.get("status"), det9.get("pending")))
+ok("…版本号不许推进", str(st9.get("version") or "") != "9999.9.9", str(st9.get("version")))
+ok("…文案把方向指对（目录写不进去），不是让用户去找一个不存在的占用者",
+   ("写不进去" in str(msg9)) or ("权限" in str(msg9)), str(msg9)[:90])
+ok("阴性对照：真句柄占用**已存在**的文件 ⇒ 仍然是 partial（V-R3-9 没把 V3 修坏）",
+   rc3 == 0 and det3.get("status") == "partial" and det3.get("pending") == ["agent/c.py"])
+
+print("── V-R3-6（P1）回滚按「实际还原成功数」报数，不再谎报 ──")
+_k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+_k32.CreateFileW.restype = ctypes.c_void_p
+_k32.CreateFileW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p,
+                             ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p]
+_k32.CloseHandle.argtypes = [ctypes.c_void_p]
+
+
+def _hold_no_write(path):
+    """真句柄：**只许别人读、不许写/删**（share=FILE_SHARE_READ）⇒ 回滚时"拷回去"真的会失败。"""
+    return _k32.CreateFileW(path, 0x80000000, 1, None, 3, 0, None)
+
+
+def _run36(hold_b):
+    d = tempfile.mkdtemp(prefix="pm_vf_v36%s_" % ("h" if hold_b else "n"))
+    os.makedirs(os.path.join(d, "agent"))
+    for _n in ("a.py", "b.py"):
+        io.open(os.path.join(d, "agent", _n), "w").write(_n[0].upper() + "_OLD")
+    z = os.path.join(d, "p.zip")
+    with zipfile.ZipFile(z, "w") as zz:
+        zz.writestr("persona morph/agent/a.py", "A_NEW")
+        zz.writestr("persona morph/agent/b.py", "B_NEW")
+    man = {"base": {"version": "9999.9.9", "sha256": U.zip_tree(z)[0], "url": ""}}
+    seen = {"b": 0}
+    state = {"h": None}
+
+    def _sha(p, *a, **k):
+        # 拆开两件事：①**触发回滚**用本文件已有的手法（把组合校验弄红）；
+        #              ②**被测的那件事（还原失败）是真句柄** —— 被测条件不伪造。
+        if os.path.basename(str(p)) == "b.py":
+            seen["b"] += 1
+            if seen["b"] >= 2:                     # 第 2 次＝组合校验那一次（第 1 次是快照）
+                if hold_b and not state["h"]:
+                    state["h"] = _hold_no_write(p)
+                raise OSError(13, "Permission denied (trigger)")
+        return _real_sha36(p, *a, **k)
+
+    _real_sha36 = U.sha256_file
+    U.sha256_file = _sha
+    try:
+        rc, msg, det = U.apply_full(man, z, d)
+    finally:
+        U.sha256_file = _real_sha36
+        if state["h"]:
+            try:
+                _k32.CloseHandle(state["h"])
+            except Exception:
+                pass
+    got = {}
+    for _n in ("a.py", "b.py"):
+        got[_n] = io.open(os.path.join(d, "agent", _n), encoding="utf-8").read()
+    return rc, str(msg), det, got
+
+
+_rch, _msgh, _deth, _goth = _run36(True)
+ok("还原被真句柄挡住 ⇒ 报「已回滚 1/2 件」（上一版按尝试数报 2/2）",
+   "已回滚 1/2 件" in _msgh, _msgh[-70:])
+ok("…失败项写进 detail.rollbackFailed（排障看得见）",
+   any("b.py" in str(x) for x in (_deth.get("rollbackFailed") or [])), str(_deth.get("rollbackFailed"))[:70])
+ok("…**数字是真的**：a.py 真还原成 A_OLD、b.py 真的是 B_NEW（半新半旧如实说）",
+   _goth["a.py"] == "A_OLD" and _goth["b.py"] == "B_NEW", str(_goth))
+ok("…失败文案告诉用户下一步（先关掉占用它的程序再点一次）", "再点一次" in _msgh, _msgh[-60:])
+_rcn, _msgn, _detn, _gotn = _run36(False)
+ok("阳性对照：没被占用 ⇒ 报「已回滚 2/2 件」且 rollbackFailed 为空",
+   "已回滚 2/2 件" in _msgn and not (_detn.get("rollbackFailed") or []), _msgn[-70:])
+ok("…两件都真还原（判据对「能不能还原」是敏感的）",
+   _gotn["a.py"] == "A_OLD" and _gotn["b.py"] == "B_OLD", str(_gotn))
+
+print("── V-R3-8（P2）第二个监听面：Host 校验 + 口令（与控制台共用一份实现）──")
+import http.client                                                             # noqa: E402
+import threading                                                               # noqa: E402
+
+from agent import local_guard as lg                                            # noqa: E402
+from agent import sd_local_server as SDS                                       # noqa: E402
+
+_tok8 = lg.token()
+ok("本机口令已建立（logs/sd_local.token，随机 url-safe）", bool(_tok8) and len(_tok8) >= 16,
+   "len=%d" % len(_tok8))
+ok("Host 判据：回环三种写法放行、外域拒",
+   lg.host_ok("127.0.0.1:7860") and lg.host_ok("localhost:7860") and lg.host_ok("[::1]:7860")
+   and not lg.host_ok("evil.example:7860") and not lg.host_ok(""))
+ok("口令只发给本机：回环 URL 带 X-PM-Token、外域 URL 不带",
+   "X-PM-Token" in lg.client_headers("http://127.0.0.1:7860/x")
+   and "X-PM-Token" not in lg.client_headers("https://api.example.com/x"))
+
+_httpd = SDS.ThreadingHTTPServer(("127.0.0.1", 0), SDS.H)      # 随机空闲口，不碰用户在跑的 7860
+_p8 = _httpd.server_address[1]
+_thr8 = threading.Thread(target=_httpd.serve_forever, kwargs={"poll_interval": 0.1})
+_thr8.daemon = True
+_thr8.start()
+
+
+def _req8(method, path, tok=None, host=None):
+    c = http.client.HTTPConnection("127.0.0.1", _p8, timeout=5)
+    h = {}
+    if host:
+        h["Host"] = host
+    if tok:
+        h["X-PM-Token"] = tok
+    try:
+        c.request(method, path, headers=h)
+        r = c.getresponse()
+        code = r.status
+        r.read()
+        return code
+    finally:
+        c.close()
+
+
+try:
+    _c_no = _req8("GET", "/")
+    ok("不带口令的真 GET / ⇒ 401（上一版 200 + 191 字节）", _c_no == 401, "code=%s" % _c_no)
+    _c_ok = _req8("GET", "/", tok=_tok8)
+    ok("口令对了 ⇒ 200（正常路径没被门挡住）", _c_ok == 200, "code=%s" % _c_ok)
+    _c_q = _req8("GET", "/?token=" + _tok8)
+    ok("?token= 也认（A1111 兼容客户端只有 URL 可用）", _c_q == 200, "code=%s" % _c_q)
+    _c_h = _req8("GET", "/", tok=_tok8, host="evil.example")
+    ok("外域 Host（DNS rebinding 形状）⇒ 403", _c_h == 403, "code=%s" % _c_h)
+    _c_p = _req8("POST", "/sdapi/v1/txt2img")
+    ok("不带口令的真 POST /sdapi/v1/txt2img ⇒ 401（连模型都不会碰）", _c_p == 401, "code=%s" % _c_p)
+finally:
+    _httpd.shutdown()
+    _httpd.server_close()
+
+_sds_src = io.open(os.path.join(ROOT, "agent", "sd_local_server.py"), encoding="utf-8").read()
+ok("do_GET / do_POST **两条路都**过同一道门（不是只挡了一半）",
+   _sds_src.count("self._deny()") >= 2 and "local_guard" in _sds_src,
+   "_deny 调用 %d 次" % _sds_src.count("self._deny()"))
+_ig_src = io.open(os.path.join(ROOT, "agent", "image_gen.py"), encoding="utf-8").read()
+ok("客户端侧也带口令（探测 / a1111 / generic 三处）",
+   _ig_src.count("local_guard.client_headers(") >= 3,
+   "出现 %d 次" % _ig_src.count("local_guard.client_headers("))
+_web_src = io.open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
+ok("控制台（webui）也过同一条 Host 判据（两侧同源、一处实现）",
+   "local_guard.host_ok(" in _web_src and "from . import local_guard" in _web_src)
+_sdl_src = io.open(os.path.join(ROOT, "agent", "sd_local.py"), encoding="utf-8").read()
+ok("探活（server_alive）与起服务（把口令传给子进程）两侧都改了",
+   "client_headers(" in _sdl_src and "ENV_KEY" in _sdl_src)
+
+print("── V-R3-7（P2）新开关：有默认值、有文档、拒绝时**指路** ──")
+import json                                                                    # noqa: E402
+
+_why7 = uc.manifest_origin_ok("https://my-mirror.example/x.json")[1]
+ok("自定义源被拒时 why 里点名开关（上一版只写「非官方域」）", "trust_custom_url" in _why7, _why7[:76])
+ok("自定义源 + 显式信任 ⇒ 放行（开关真的有效，不是摆设）",
+   uc.manifest_origin_ok("https://my-mirror.example/x.json",
+                         {"url": "https://my-mirror.example/x.json",
+                          "trust_custom_url": True})[0] is True)
+_r7, _w7 = uc.fetch("C:/tmp/persona-morph-manifest.json")
+ok("本地源被拒时也指路（update.allow_local / PM_ALLOW_LOCAL_UPDATE）",
+   (not _r7) and ("allow_local" in _w7), _w7[:76])
+from agent import config as C                                                  # noqa: E402
+_upd = (C.DEFAULT_CONFIG.get("update") or {})
+ok("config.py 默认值里有这两个键（跟机制一起交付）",
+   "trust_custom_url" in _upd and "allow_local" in _upd, str(sorted(_upd.keys())))
+_ex7 = json.loads(io.open(os.path.join(ROOT, "config.example.json"), encoding="utf-8").read())
+ok("config.example.json 里也有这两个键（新用户能照着改）",
+   "trust_custom_url" in (_ex7.get("update") or {}) and "allow_local" in (_ex7.get("update") or {}),
+   str(sorted((_ex7.get("update") or {}).keys())))
+
 print("── 判据自省：不许再「伪造被测条件」 ──")
 # 关键字**运行时拼**出来，免得这条检查把自己的源码也算成命中（自指假红）。
 _BAD = "win" + "error"
@@ -344,5 +567,6 @@ for _p in sorted(glob.glob(os.path.join(ROOT, "scripts", "*selftest*.py"))):
         _bad_files.append(os.path.basename(_p))
 ok("没有判据在手工给异常贴 winerror（那是假绿）", not _bad_files, str(_bad_files))
 
-print("\n==== 漏洞修复回归判据（V1~V5 / V8 / V-R1-2）：%d 通过 / %d 失败 ====" % (PASS, FAIL))
+print("\n==== 漏洞修复回归判据（V1~V5 / V8 / V-R1-2 / 第三轮 V-R3-5·6·7·8·9）：%d 通过 / %d 失败 ===="
+      % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

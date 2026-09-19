@@ -161,7 +161,9 @@
  "update": {
   "url": "",
   "muted": false,
-  "skip_version": ""
+  "skip_version": "",
+  "trust_custom_url": false,
+  "allow_local": false
  },
  "voice_reply": {
   "enabled": false,

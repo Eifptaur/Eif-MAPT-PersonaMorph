@@ -18,6 +18,7 @@ import re
 import time
 
 from . import config as _config
+from . import local_guard          # V-R3-8：给回环地址的请求带上本机口令（唯一实现见 local_guard）
 
 ALLOW_REAL_FACE = False          # 恒 False：不做真人换脸/换身体（无开关可开）
 
@@ -347,7 +348,11 @@ def detect_local(timeout: float = 1.2, probes=None, ttl: float = 120.0) -> list:
     out = []
     for p in (probes if probes is not None else LOCAL_PROBES):
         try:
-            req = urllib.request.Request("http://127.0.0.1:%d%s" % (p["port"], p["path"]), method="GET")
+            _u = "http://127.0.0.1:%d%s" % (p["port"], p["path"])
+            # V-R3-8：本机监听面现在要口令（Host 校验 + X-PM-Token）⇒ 探测也得带上，
+            # 否则我们自己的本地生图后端会被探测判成"没有服务"。
+            req = urllib.request.Request(_u, method="GET",
+                                         headers=local_guard.client_headers(_u, {"User-Agent": "PersonaMorph/probe"}))
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 code = int(getattr(r, "status", 200) or 200)
             if code < 500:
@@ -410,7 +415,8 @@ def call_backend(backend: dict, prompt: str, count: int = 1, size: str = "square
         body = json.dumps({"prompt": prompt, "width": w, "height": h, "batch_size": n,
                            "n_iter": 1, "steps": int(backend.get("steps") or 20)}).encode("utf-8")
         req = urllib.request.Request(backend["url"].rstrip("/") + "/sdapi/v1/txt2img", data=body,
-                                     headers={"Content-Type": "application/json"}, method="POST")
+                                     headers=local_guard.client_headers(
+                                         backend["url"], {"Content-Type": "application/json"}), method="POST")
         with urllib.request.urlopen(req, timeout=int(backend.get("timeout") or 180)) as resp:
             j = json.loads(resp.read().decode("utf-8") or "{}")
         for i, b64 in enumerate(j.get("images") or []):
@@ -474,7 +480,8 @@ def call_backend(backend: dict, prompt: str, count: int = 1, size: str = "square
     else:                                     # generic：用户自填端点，约定返回 {"files":[...]}
         body = json.dumps({"prompt": prompt, "n": n, "size": size}).encode("utf-8")
         req = urllib.request.Request(backend["url"], data=body,
-                                     headers={"Content-Type": "application/json"}, method="POST")
+                                     headers=local_guard.client_headers(
+                                         backend["url"], {"Content-Type": "application/json"}), method="POST")
         with urllib.request.urlopen(req, timeout=int(backend.get("timeout") or 180)) as resp:
             j = json.loads(resp.read().decode("utf-8") or "{}")
         files = [str(p) for p in (j.get("files") or [])]
