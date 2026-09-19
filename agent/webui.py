@@ -117,6 +117,9 @@ def _protect_secrets(new_cfg: dict):
         smtp_new = fb_new.get("smtp")
         if isinstance(smtp_new, dict) and _is_masked(smtp_new.get("password")):
             smtp_new["password"] = (((old.get("feedback") or {}).get("smtp") or {}).get("password")) or ""
+        # V8 的第二半：webhook_token 也要"掩码值不覆盖真实值"（与 masked_config 对称，别只改一侧）
+        if _is_masked(fb_new.get("webhook_token")):
+            fb_new["webhook_token"] = (old.get("feedback") or {}).get("webhook_token") or ""
     cl_new = new_cfg.get("cloud")
     if isinstance(cl_new, dict) and _is_masked(cl_new.get("token")):
         cl_new["token"] = (old.get("cloud") or {}).get("token") or ""
@@ -385,6 +388,12 @@ class WebUI:
         if smtp.get("password"):
             smtp["password"] = mask_secret(smtp["password"])
         fb["smtp"] = smtp
+        # ⚠️ 2026-09-20 修 **V8**：`feedback.webhook_token`（PushPlus/钉钉加签的推送凭据）漏在这份
+        #   名单外 ⇒ 控制台「原始 JSON」（打的正是 GET /api/config）把它明文铺在页面上。
+        #   与 smtp.password 同源、同修法（**掩码侧与恢复侧两处都要**）。
+        if fb.get("webhook_token"):
+            fb["webhook_token"] = mask_secret(fb["webhook_token"])
+        cfg["feedback"] = fb
         cfg["feedback"] = fb
         cl = dict(cfg.get("cloud") or {})
         if cl.get("token"):
@@ -392,14 +401,35 @@ class WebUI:
         cfg["cloud"] = cl
         return cfg
 
+    def _safe_join(self, base: str, raw: str) -> str:
+        """把 URL 里给的名字安全拼到 base 下：**先 unquote、再只取 basename**，最后用 realpath
+        断言结果确实落在 base 内；任何一步可疑就返回空串（调用方一律 404）。
+
+        ⚠️ 2026-09-20 修 **V1（P0 免认证路径穿越）**：原来是 `os.path.basename(path)` **之后**才
+        `unquote()` —— 此时 `%2F` 还不是分隔符，basename 原样返回 `..%2F..%2Fconfig.json`；随后
+        unquote 把 `%2F` 还原成 `/`，`..` 就生效了 ⇒ **不带口令**就能 GET
+        `/assets/emoji/..%2F..%2Fconfig.json` 读走含 `api.api_key` 与控制台口令的 config.json
+        （实测 200 / 26262 字节）。顺序反过来 + realpath 勾边，两头都堵。
+        """
+        try:
+            import urllib.parse as _up
+            nm = os.path.basename(_up.unquote(str(raw or "")).replace("\\", "/"))
+            if not nm or nm in (".", "..") or "/" in nm or "\\" in nm or ":" in nm:
+                return ""
+            b = os.path.realpath(base)
+            fp = os.path.realpath(os.path.join(b, nm))
+            if fp != b and not fp.startswith(b + os.sep):
+                return ""
+            return fp
+        except Exception:
+            return ""
+
     def _serve_wallpaper(self, path: str, handler, query):
         """视频壁纸（免认证，支持 Range 分段）：assets/wallpaper/<file>，供 <video> 背景流式播放。"""
         try:
-            import urllib.parse as _up
-            name = _up.unquote(os.path.basename(path))
             wdir = os.path.join(self._asset_root, "wallpaper")
-            fp = os.path.join(wdir, name)
-            if not os.path.exists(fp):
+            fp = self._safe_join(wdir, path)
+            if not fp or not os.path.exists(fp):
                 handler._bytes(b"", "video/mp4", 404)
                 return
             size = os.path.getsize(fp)
@@ -461,10 +491,16 @@ class WebUI:
                 handler._bytes(b"", "image/png", 404)
                 return
             if path.startswith("/assets/emoji/"):
-                import urllib.parse as _up
-                name = _up.unquote(name)
+                # ⚠️ V1：这里原来是 `unquote(basename)`（顺序反了）⇒ 可穿越到仓库根读 config.json。
+                # 现在统一走 `_safe_join`（先 unquote 再 basename + realpath 勾边），并且只认
+                # **表情缓存那种文件名**（md5 十六进制 + 图片后缀），别的一律 404。
+                import re as _re
                 emoji_dir = self._data_path("emojis")
-                with open(os.path.join(emoji_dir, name), "rb") as f:
+                fp = self._safe_join(emoji_dir, path)
+                if not fp or not _re.match(r"^[0-9a-zA-Z_-]{6,}\.(jpg|jpeg|png|gif|webp|bmp)$",
+                                           os.path.basename(fp), _re.I):
+                    raise FileNotFoundError(path)
+                with open(fp, "rb") as f:
                     body = f.read()
             elif name == "icon.png":
                 body = self._icon_bytes
@@ -472,13 +508,14 @@ class WebUI:
                 body = (self.whale.asset_bytes(name) if self.whale else None) or b""
             else:
                 # 默认资源：assets/ 根，其次 assets/wallpaper/（ocean1.jpg 等）
+                body = None
                 for base in (self._asset_root, os.path.join(self._asset_root, "wallpaper")):
-                    fp = os.path.join(base, name)
-                    if os.path.exists(fp):
+                    fp = self._safe_join(base, name)
+                    if fp and os.path.exists(fp):
                         with open(fp, "rb") as f:
                             body = f.read()
                         break
-                else:
+                if body is None:
                     raise FileNotFoundError(name)
         except FileNotFoundError:
             handler._bytes(b"", "application/octet-stream", 404)

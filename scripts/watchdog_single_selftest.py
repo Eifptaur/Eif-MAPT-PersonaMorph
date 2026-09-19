@@ -53,6 +53,9 @@ class _Rec(object):
     """替换掉 watchdog 的 subprocess：只记录，绝不起真进程。"""
     popen_calls = []
     run_calls = []
+    # ⛔ 2026-09-20 修 V6：桩缺 `DEVNULL` ⇒ 产品代码走到"拉起机器人"那条路时抛
+    #    `type object '_Rec' has no attribute 'DEVNULL'`，而它又被写进**产品**的 data/runtime.log。
+    DEVNULL = _sp.DEVNULL
 
     @staticmethod
     def Popen(*a, **k):
@@ -68,7 +71,22 @@ class _Rec(object):
 def main():
     tmp = tempfile.mkdtemp(prefix="pm-wd-")
     WD.PID_FILE = os.path.join(tmp, "watchdog.pid")
+    # ⛔ 2026-09-20 修 V6（实测污染产品日志 1996 行 / 32.3%）：判据原来只隔离了 `PID_FILE`，
+    #    而同一个模块的 `CRASH_LOG` **默认就指向产品的 `data/runtime.log`** ⇒ 判据跑一次的副作用
+    #    会把"不是产品写的"异常灌进产品日志（真出故障时真假不分）。
+    #    ⇒ 凡"模块里会写盘的产品路径"必须一起隔离；下面再加一条机械断言钉住它。
+    _prod_log = WD.CRASH_LOG
+    WD.CRASH_LOG = os.path.join(tmp, "runtime.log")
+    _prod_before = (os.path.getsize(_prod_log) if os.path.exists(_prod_log) else 0)
     real_sub, real_sleep = WD.subprocess, WD.time.sleep
+    # 睡眠桩**有界**：判据把 time.sleep 换成空操作时，产品的"失败后重试"会退化成 0 延迟死循环
+    # （实测 0.011 秒 13 圈）⇒ 超过 50 次就抛 BaseException 收场（Exception 会被产品自己 catch）。
+    _slept = {"n": 0}
+
+    def _sleep(_s):
+        _slept["n"] += 1
+        if _slept["n"] > 50:
+            raise KeyboardInterrupt("判据：睡眠桩超过 50 次 ⇒ 停，别 0 延迟死循环")
 
     # 造一个"真的活着"的看门狗进程（借一个睡 30 秒的 python 冒充），
     # 不能用 os.getpid()：那会命中 `old == os.getpid()` 那条"就是我自己"的短路。
@@ -81,7 +99,7 @@ def main():
             # 2026-09-18：`watchdog.pid` 第二行改记**整包版本**（接管判据从"看门狗版本"
             # 升级成"包版本"）⇒ 判据这里也必须写包版本，否则会被判成"旧实例"而走接管分支（判据会挂住）。
             f.write("%d\n%s" % (sleeper.pid, WD.pkg_version()))
-        WD.subprocess, WD.time.sleep = _Rec, (lambda s: None)
+        WD.subprocess, WD.time.sleep = _Rec, _sleep
         try:
             rc = WD.main()
         except Exception as e:                                   # noqa: BLE001
@@ -97,6 +115,10 @@ def main():
             _pid = (f.read().strip().splitlines() or [""])[0].strip()
         ok("重复实例**不改写** watchdog.pid（否则停止机器人会指到一个马上就死的进程）",
            _pid == str(sleeper.pid), "pid=%s 期望=%s" % (_pid, sleeper.pid))
+        # V6 回归断言：判据**不许**写产品的运行日志（本条在"污染 1996 行"那事后补的）
+        _prod_after = (os.path.getsize(_prod_log) if os.path.exists(_prod_log) else 0)
+        ok("判据**没有**写产品的 data/runtime.log（V6 回归）", _prod_after == _prod_before,
+           "%d → %d 字节" % (_prod_before, _prod_after))
     finally:
         try:
             sleeper.terminate()

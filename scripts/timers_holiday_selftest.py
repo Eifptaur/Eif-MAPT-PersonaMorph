@@ -76,6 +76,39 @@ def main():
     timers.add("group:due", "到点了", seconds=30, now=now)
     ok("due() 只挑到点的", len(timers.due(now=now + 31)) == 1 and timers.due(now=now + 5) == [])
 
+    print("== A2. V10：写盘失败必须如实回报（不许回 ok:True 骗模型）==")
+    _good_path = timers.path
+    _rodir = tempfile.mkdtemp(prefix="timer-ro-")
+    _blocker = os.path.join(_rodir, "blocker")
+    open(_blocker, "w", encoding="utf-8").write("x")          # 父级是普通文件 ⇒ 必然写不进去
+    timers.path = lambda: os.path.join(_blocker, "timers.json")
+    ro = timers.add("group:ro", "写不进去的一条", seconds=60, now=now)
+    ok("阴性对照：写盘失败 ⇒ ok:False 且给出原因（不再说「定好了」）",
+       (not ro.get("ok")) and ("落盘" in str(ro.get("error"))) and ("可写" in str(ro.get("error"))), ro)
+    ok("写盘失败时不会凭空多出一条（list_all 仍为空）", timers.list_all("group:ro") == [])
+    timers.path = _good_path
+    gd = timers.add("group:okpath", "写得进去的一条", seconds=60, now=now)
+    ok("阳性对照：可写路径仍 ok:True（判据不是恒假）",
+       gd.get("ok") is True and len(timers.list_all("group:okpath")) == 1, gd)
+    timers.cancel("group:okpath")
+    shutil.rmtree(_rodir, ignore_errors=True)
+
+    print("== A3. V10 同一族：发出去了但状态没落盘 ⇒ 必须留痕（可能重复发，不许静默）==")
+    timers.path = lambda: os.path.join(tmp, "timers4.json")
+    timers.add("group:fin", "状态写不下去", seconds=30, now=now)
+    _real_save = timers._save
+    _logs = []
+    timers._save = lambda st: False                      # 打桩：落盘一律失败
+    try:
+        st_fin = timers.run_once(lambda ck, tx: True, now=now + 31,
+                                 log=lambda lvl, fmt, *a: _logs.append((lvl, fmt % a)))
+    finally:
+        timers._save = _real_save
+    ok("发送成功但状态没落盘 ⇒ 有 warning 留痕（阴/阳：落盘正常时不会出现这条）",
+       st_fin["sent"] == 1 and any(l == "warning" for l, _ in _logs), _logs)
+    ok("状态没落盘 ⇒ 条目仍是 pending（宁可能重复，也不吞掉这件事）",
+       len(timers.list_all("group:fin")) == 1, timers.list_all("group:fin"))
+
     print("== B. 到点发送：幂等 / 重试 / 暂停 / 禁言 ==")
     timers.path = lambda: os.path.join(tmp, "timers2.json")
     sent = []
@@ -86,6 +119,8 @@ def main():
     st2 = timers.run_once(lambda ck, tx: (sent2.append(tx), True)[1], now=now + 60)
     ok("再跑一遍不会重复发（幂等）", st2["sent"] == 0 and not sent2, st2)
     timers.add("group:t2", "会失败", seconds=30, now=now)
+    _fire2 = timers.list_all("group:t2")[0]["fire_at"]
+    _bk = timers.RETRY_BACKOFF_SECONDS
     fails = {"n": 0}
 
     def bad(ck, tx):
@@ -93,13 +128,39 @@ def main():
         return False
 
     st3 = timers.run_once(bad, now=now + 31)
+    _nt1 = timers.list_all("group:t2")[0]["next_try_at"] if timers.list_all("group:t2") else -1
     ok("发送失败：记一次尝试、状态仍是 pending（下轮会再试）",
        st3["failed"] == 1 and len(timers.list_all("group:t2")) == 1 and fails["n"] == 1, st3)
+    ok("V10 退避①：第 1 次失败后的重试时刻 = fire_at + %d 秒（不再立刻重排）" % _bk,
+       _nt1 == _fire2 + _bk * 1000, (_fire2, _nt1))
     timers.run_once(bad, now=now + 40)
-    st4 = timers.run_once(bad, now=now + 50)
+    timers.run_once(bad, now=now + 50)
+    ok("V10 退避②：退避窗口内的两次巡检**不再试**（改前这里就已把 3 次机会用光）", fails["n"] == 1, fails["n"])
+    _real_now_ms = timers._now_ms
+    _now_base = now
+
+    def _fake_now_ms(now=None):                       # 钉住"现在"＝now+50（fire_at 已过、退避还没到）
+        return int(((now if now is not None else _now_base) + 50) * 1000)
+
+    timers._now_ms = _fake_now_ms
+    try:
+        _lv = timers.list_all("group:t2")[0]
+    finally:
+        timers._now_ms = _real_now_ms
+    ok("V10 不骗人：退避期间 list_all 的剩余秒数按**下次重试**算（只看 fire_at 会显示 0 秒、像卡住）",
+       _lv["left_seconds"] == _bk - 20, _lv["left_seconds"])
+    timers.run_once(bad, now=now + 31 + _bk)
+    _nt2 = timers.list_all("group:t2")[0]["next_try_at"] if timers.list_all("group:t2") else -1
+    ok("V10 退避③：到点后第 2 次重试，下一段间隔 = fire_at + 2×%d 秒" % _bk,
+       fails["n"] == 2 and _nt2 == _fire2 + 2 * _bk * 1000, (fails["n"], _nt2))
+    timers.run_once(bad, now=now + 31 + 2 * _bk - 10)
+    ok("V10 退避④：第二段退避没到点同样不试（阴性对照）", fails["n"] == 2, fails["n"])
+    st4 = timers.run_once(bad, now=now + 31 + 2 * _bk)
     ok("连续失败到上限 ⇒ 放弃并留痕（不再无限重试）",
        fails["n"] == timers.MAX_ATTEMPTS and not timers.list_all("group:t2")
        and any(h.get("status") == "failed" for h in timers.snapshot()["history"]), fails["n"])
+    ok("V10 退避⑤：两段退避把 3 次尝试摊到 ≥ 2×%d 秒（临时故障有自愈窗口）" % _bk,
+       (_nt2 - _fire2) >= 2 * _bk * 1000, (_nt2 - _fire2))
     timers.add("group:t3", "暂停中", seconds=30, now=now)
     st5 = timers.run_once(lambda ck, tx: True, now=now + 31, paused=True)
     ok("暂停中一条都不发，状态也不动（恢复后补发）",

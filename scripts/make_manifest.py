@@ -18,6 +18,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 import time
 
@@ -32,16 +33,44 @@ FILES = "persona-morph-files.json"
 SCHEMA = "persona-morph/1"
 
 # 群相的 DLC 清单（本体＝Python 代码 + 一键启动.exe + launcher-src；**驱动微信那层锁在本体**，不许 DLC 化）
+#
+# ⛔ 2026-09-20 修 V9（选"先降级、但不骗人"这条路）：下面这些条目**当前未接线** ——
+#    `sha256`/`url` 留空、并显式标 `"placeholder": true`，语义＝**未实现，客户端目前不读**：
+#    ① `agent/` 下**没有任何代码**读 `dlc[]` / `requiresBase`（更新链只消费 base / announce）；
+#    ② 所以硬规矩①（每个包都带 sha256）在这些条目上**暂不成立**；标 placeholder 是为了把"空哈希"
+#       从"看起来像合法值"变成**显式声明**。`manifest_selftest.py` 有硬断言（空哈希且没标 placeholder ⇒ 判红）。
+#    ③ `main()` 里的 `dlc_problems()` 是同一道闸：**没标 placeholder 又没真哈希的 DLC 直接拒绝生成清单**。
+#    接线那天：填真 `sha256`/`url`、去掉 `placeholder`，并按 §三 硬规矩②在客户端按 `requiresBase` 判闸门。
 DLC = [
     {"id": "skills.eif-mapt", "name": "Eif-MAPT 技能包",
      "version": "", "requiresBase": ">=0.0.0", "sha256": "", "url": "",
-     "size": 0, "enabledByDefault": True,
-     "note": "装在 ~/.dsh/skills 的知识包（含 E 控制台与 EMAP Memorize）；版本以插件包 tan 为准"},
+     "size": 0, "enabledByDefault": True, "placeholder": True,
+     "note": "未实现（客户端目前不读 dlc/requiresBase）；装在 ~/.dsh/skills 的知识包（含 E 控制台与 EMAP Memorize），版本以插件包 tan 为准"},
     {"id": "vcable.driver", "name": "虚拟声卡（真语音条）",
      "version": "Pack45", "requiresBase": ">=0.0.0", "sha256": "", "url": "",
-     "size": 1318877, "enabledByDefault": False,
-     "note": "VB-CABLE；真语音条需要它 + 把微信输入设备指到 CABLE Output。装驱动必须由用户点一次"},
+     "size": 1318877, "enabledByDefault": False, "placeholder": True,
+     "note": "未实现（客户端目前不读 dlc/requiresBase）；VB-CABLE，真语音条需要它 + 把微信输入设备指到 CABLE Output，装驱动必须由用户点一次"},
 ]
+
+
+def dlc_problems(dlc) -> list:
+    """DLC 闸门：返回问题清单（空＝通过）。
+
+    **硬规矩①**：每个包要么带真 sha256（64 位小写十六进制），要么**显式** `"placeholder": true`
+    ——"空字符串"既不是哈希也不是声明，一律拒绝（否则等于把"没有哈希的更新链"发出去）。
+    """
+    bad = []
+    for d in (dlc or []):
+        did = d.get("id", "?")
+        sha = d.get("sha256")
+        if isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{64}", sha):
+            continue
+        if sha in ("", None) and d.get("placeholder") is True:
+            if not d.get("note"):
+                bad.append("dlc[%s] 标了 placeholder ⇒ 必须有 note 说明" % did)
+            continue
+        bad.append("dlc[%s].sha256 既不是 64 位十六进制、也没标 placeholder=true（实为 %r）" % (did, sha))
+    return bad
 
 
 def sha256_file(path):
@@ -70,6 +99,15 @@ def main():
     if not rels:
         print("✘ git 里没有可跟踪的文件（是不是不在仓库里跑？）")
         return 2
+
+    # ⛔ 出包闸门（V9）：空哈希的 DLC 一律拒绝生成清单（除非它**显式**声明 placeholder）
+    _dlc_bad = dlc_problems(DLC)
+    if _dlc_bad:
+        print("✘ DLC 段没通过硬规矩①（每个包都带 sha256；没有哈希的更新链一律不认）：")
+        for _b in _dlc_bad:
+            print("   · " + _b)
+        print("   ⇒ 要么填真 sha256/url，要么显式标 \"placeholder\": true（＝未实现、客户端目前不读）")
+        return 3
 
     files, total = {}, 0
     for rel in rels:

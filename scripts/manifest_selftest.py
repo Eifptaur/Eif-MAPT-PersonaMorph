@@ -38,6 +38,15 @@ def is_hex64(s):
     return isinstance(s, str) and bool(re.fullmatch(r"[0-9a-f]{64}", s))
 
 
+def dlc_hash_ok(d):
+    """V9 硬断言：`dlc[].sha256` 必须匹配 `^[0-9a-f]{64}$`，**或**该条显式 `placeholder is True`。
+
+    两者都不满足 ⇒ False（"空哈希 + 有 note"这种老口径不再算过：那是给空哈希开后门）。
+    """
+    sha = (d or {}).get("sha256")
+    return is_hex64(sha) or (sha == "" and (d or {}).get("placeholder") is True)
+
+
 def req_base_ok(s):
     """合法的版本区间：`>=x.y.z` 或 `>=x.y.z <a.b.c`（宽松：>= 开头即可）。"""
     return isinstance(s, str) and bool(re.match(r"^>=\s*\d+(\.\d+)*(\s*<\s*\d+(\.\d+)*)?$", s.strip()))
@@ -97,7 +106,7 @@ try:
     bad = [k for k, v in files.items() if not is_hex64(v.get("sha256"))]
     ok(not bad, "全部文件哈希合法" + ("（坏 %d 条：%s）" % (len(bad), bad[:3]) if bad else ""))
 
-    print("\n[M6] dlc 段：字段齐 + requiresBase 合法 + 带 sha256 字段位")
+    print("\n[M6] dlc 段：字段齐 + requiresBase 合法 + **哈希非空（或显式 placeholder）**")
     dlc = man.get("dlc")
     ok(isinstance(dlc, list) and len(dlc) >= 1, "dlc 是非空数组（%d 条）" % (len(dlc) if isinstance(dlc, list) else -1))
     for d in (dlc or []):
@@ -106,9 +115,66 @@ try:
             ok(k in d, "dlc[%s] 有字段 %s" % (did, k))
         ok(req_base_ok(d.get("requiresBase")), "dlc[%s].requiresBase 是合法区间（%s）" % (did, d.get("requiresBase")))
         ok(isinstance(d.get("enabledByDefault"), bool), "dlc[%s].enabledByDefault 是布尔" % did)
-        # 未发布时 sha256 允许为空，但必须写清为什么（否则就是"没有哈希的更新链"）
-        if not d.get("sha256"):
-            ok(bool(d.get("note")), "dlc[%s] sha256 为空 ⇒ 必须有 note 说明（未发布/以他处版本为准）" % did)
+        # ⛔ 2026-09-20 修 V9（原来这里是"sha256 为空 ⇒ 只要有 note 就放行"，等于给空哈希开后门）：
+        #    硬断言——每条 dlc[].sha256 必须是 ^[0-9a-f]{64}$，**或**该条显式 `placeholder is True`。
+        ok(dlc_hash_ok(d), "dlc[%s] 哈希合规：真 sha256 或显式 placeholder=true（sha256=%r placeholder=%r）"
+           % (did, d.get("sha256"), d.get("placeholder")))
+
+    print("\n[M6a] 哈希判据的阴/阳对照（证明 M6 不是恒真）")
+    ok(dlc_hash_ok({"sha256": "a" * 64}), "阳性对照：64 位小写十六进制 ⇒ 放行")
+    ok(dlc_hash_ok({"sha256": "", "placeholder": True}), "降级路径：空哈希 + 显式 placeholder=true ⇒ 放行（本轮选的路）")
+    ok(not dlc_hash_ok({"sha256": ""}), "阴性对照：空哈希且没标 placeholder ⇒ 判红（这就是 V9 原文那条）")
+    ok(not dlc_hash_ok({"sha256": "", "placeholder": False}), "阴性对照：placeholder=false 救不了空哈希")
+    ok(not dlc_hash_ok({"sha256": "A" * 64}), "阴性对照：大写十六进制不算数（正则钉死小写）")
+    ok(not dlc_hash_ok({"sha256": "0" * 63}), "阴性对照：63 位（长度不对）判红")
+    ok(not dlc_hash_ok({"sha256": "z" * 64}), "阴性对照：非十六进制字符判红")
+
+    print("\n[M6b] 降级一致性：标了 placeholder 就必须真的「没接线」，且文档写明")
+    n_ph = sum(1 for d in (dlc or []) if d.get("placeholder") is True)
+    agent_hits = []
+    _adir = os.path.join(ROOT, "agent")
+    for _fn in sorted(os.listdir(_adir)) if os.path.isdir(_adir) else []:
+        if not _fn.endswith(".py"):
+            continue
+        try:
+            _t = open(os.path.join(_adir, _fn), encoding="utf-8", errors="replace").read()
+        except Exception:
+            continue
+        if "requiresBase" in _t:
+            agent_hits.append(_fn)
+    if n_ph:
+        # placeholder 的语义＝"客户端目前不读"；一旦有人接线了，清单必须同步摘掉 placeholder（否则就是骗人）
+        ok(not agent_hits,
+           "清单有 %d 条 placeholder ⇒ agent/ 下不应有 requiresBase 消费者（实命中 %s）" % (n_ph, agent_hits or "无"))
+        _docp = os.path.join(ROOT, "docs", "设计-本体与DLC.md")
+        _doc = open(_docp, encoding="utf-8", errors="replace").read() if os.path.exists(_docp) else ""
+        ok("未接线" in _doc, "docs/设计-本体与DLC.md 写明「当前未接线」（与 placeholder 口径一致）")
+    else:
+        ok(bool(agent_hits),
+           "清单没有任何 placeholder ⇒ 必须已经接线（agent/ 下 requiresBase 消费者：%s）" % (agent_hits or "无"))
+
+    print("\n[M6c] 生成器那道闸**真的接线了**（不信源码，现场篡改 DLC 打一遍）")
+    _gatedir = os.path.join(tmp, "gate")            # 空目录：用来验"拒绝时一个文件都不写"
+    os.makedirs(_gatedir, exist_ok=True)
+    _probe = (
+        "import importlib.util,sys,os;"
+        "sys.path.insert(0, %r);"
+        "spec=importlib.util.spec_from_file_location('mm_gate', os.path.join(%r, 'make_manifest.py'));"
+        "m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m);"
+        "m.DLC=[{'id':'x.bad','name':'坏条目','version':'','requiresBase':'>=0.0.0','sha256':'','url':'','size':0,"
+        "'enabledByDefault':False,'note':'故意留空哈希且不标 placeholder'}];"
+        "sys.argv=['make_manifest.py','--out',%r];"
+        "print('GATE_RC=%%d' %% m.main())" % (ROOT, HERE, _gatedir)
+    )
+    _r2 = subprocess.run([sys.executable, "-c", _probe], capture_output=True, text=True,
+                         encoding="utf-8", errors="replace", timeout=900, cwd=ROOT,
+                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    _o2 = (_r2.stdout or "").strip()
+    ok("GATE_RC=3" in _o2,
+       "空哈希且未标 placeholder ⇒ 生成器 rc=3（拒绝出清单，不是嘴上说说）｜末行 %s"
+       % (_o2.splitlines()[-1:] or _r2.stderr[-200:]))
+    ok(os.listdir(_gatedir) == [],
+       "坏 DLC 时**一个文件都不写**（拒绝要拒绝干净）｜目录内容 %s" % os.listdir(_gatedir))
 
     print("\n[M7] announce 段：只读、不携带可执行内容")
     an = man.get("announce") or {}
