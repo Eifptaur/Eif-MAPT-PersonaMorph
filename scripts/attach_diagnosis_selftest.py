@@ -202,6 +202,12 @@ import shutil as _shutil
 import tempfile as _tempfile
 
 _root = _tempfile.mkdtemp(prefix="pm_dbprobe_")
+# ⚠️ 本段必须**封闭**（不读真机状态）：2026-09-19 给 `_probe_db_dirs` 加了「有界深扫」之后，
+#    这台机器上真的会被扫到 `M:\WX\talk\xwechat_files` ⇒ 第一档（"目录不在默认位置"）的结论
+#    会变成第三档（"目录与库都在 ⇒ 权限/占用"）⇒ 断言假红。判据要的是**语义**，所以这里把
+#    深扫打成"什么都没扫到"，深扫本身的行为由 `db_discovery_selftest.py` 专门验。
+_saved_deep = getattr(W, "_deep_scan_xwechat", None)
+W._deep_scan_xwechat = lambda *a, **k: []
 try:
     _p0 = W._probe_db_dirs(os.path.join(_root, "nope"))
     ok("用户给的目录确实被探过（但不会把它当成「找到了」）",
@@ -233,6 +239,8 @@ try:
        W._db_open_verdict({"found": ["D:\\xwechat_files"], "tried": [], "accounts": 1, "dbs": 12})[:80])
 
 finally:
+    if _saved_deep is not None:
+        W._deep_scan_xwechat = _saved_deep
     _shutil.rmtree(_root, ignore_errors=True)
 ok("db_open 失败时，那句诊断**后面附了分档结论**（不再只有一句「打不开消息库」）",
    "磁盘上" in str([s for s in _g["steps"] if s["key"] == "db_open"][0]["detail"]),

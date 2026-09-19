@@ -9252,6 +9252,62 @@ def _db_dir_candidates(extra: str = "") -> list:
     return out
 
 
+_DEEP_SKIP = {"windows", "$recycle.bin", "system volume information", "program files",
+              "program files (x86)", "perflogs", "msocache", "$windows.~bt", "$windows.~ws",
+              "node_modules", ".git", "python", "runtime", "venv", ".venv"}
+
+
+def _deep_scan_xwechat(roots: list = None, max_depth: int = 4, budget: int = 40000,
+                       time_budget: float = 6.0) -> list:
+    """**有界深扫**找微信 4.x 的数据目录（用户把文件保存位置改到嵌套目录时的唯一出路）。
+
+    为什么要有它（2026-09-19 网友反馈 v0919-2328：「打不开消息库：未找到微信数据库目录」）：
+    `_db_dir_candidates` 只覆盖**默认位置 + 各盘根**（`D:\\xwechat_files`、`D:\\WeChat\\xwechat_files`）
+    —— 用户把微信的「文件管理」位置改到 `E:\\wutong\\wxhf\\xwechat_files`、`D:\\Documents\\WeChat\\xwechat_files`
+    这种**嵌套**目录时，我们一个都探不到 ⇒ 报「未找到」而盘上明明四五十个 .db。
+    只读、有界：深度上限 + **目录数预算** + 墙上时钟预算，跳过系统目录与 node_modules/venv 之类。
+    返回**该填进「数据库目录」的那些目录**（＝账号目录的父目录，即 `xwechat_files` 本身）。
+    """
+    import time as _t
+    t0 = _t.monotonic()
+    roots = [r for r in (roots if roots is not None else _fixed_drives()) if r and os.path.isdir(r)]
+    seen, out, n = set(), [], 0
+    frontier = [(r, 0) for r in roots]
+    while frontier:
+        cur, depth = frontier.pop(0)
+        if depth > max_depth or n > budget or (_t.monotonic() - t0) > time_budget:
+            break
+        try:
+            entries = list(os.scandir(cur))
+        except Exception:
+            continue
+        for e in entries:
+            n += 1
+            if n > budget:
+                break
+            low = e.name.lower()
+            if low in _DEEP_SKIP:
+                continue
+            try:
+                if not e.is_dir(follow_symlinks=False):
+                    continue
+            except Exception:
+                continue
+            if low == "xwechat_files":
+                # 命中：这里面要真的有「账号目录 + db_storage」
+                try:
+                    if any(os.path.isdir(os.path.join(e.path, a, "db_storage")) for a in os.listdir(e.path)):
+                        if e.path not in out:
+                            out.append(e.path)
+                        continue
+                except Exception:
+                    pass
+            if depth + 1 <= max_depth and e.path not in seen:
+                seen.add(e.path)
+                frontier.append((e.path, depth + 1))
+    return out
+
+
 def _probe_db_dirs(extra: str = "") -> dict:
     """**只读**在磁盘上找微信 4.x 的数据目录（不碰驱动库、不碰窗口）。
 
@@ -9260,6 +9316,8 @@ def _probe_db_dirs(extra: str = "") -> dict:
     ——**这句话分辨不出解法完全不同的三种情况**：①目录不在默认位置（用户改了微信文件保存位置、
     或文档被重定向到 OneDrive）②目录在、但结构与驱动库对不上（版本差）③目录与库文件都在
     （权限/占用）。⇒ 独立探一遍盘，把档分开，并把**探过哪些目录**如实报出来。
+    ⭐ 2026-09-19：候选表一个都没命中时，再跑一次 `_deep_scan_xwechat`（有界深扫）—— 用户把位置
+    改到嵌套目录时，这是唯一能救回来的路。
     """
     tried = _db_dir_candidates(extra)
     found, hit, accounts, dbs = [], [], 0, 0
@@ -9281,7 +9339,33 @@ def _probe_db_dirs(extra: str = "") -> dict:
         dbs += _here
         if _here:
             hit.append(p)
-    return {"tried": tried, "found": found, "hit": hit, "accounts": accounts, "dbs": dbs}
+    deep = []
+    if not hit:
+        try:
+            deep = _deep_scan_xwechat()
+        except Exception:
+            deep = []
+        for p in deep:
+            if p not in tried:
+                tried.append(p)
+            if p not in found:
+                found.append(p)
+            _here = 0
+            try:
+                for acc in sorted(os.listdir(p)):
+                    ds = os.path.join(p, acc, "db_storage")
+                    if not os.path.isdir(ds):
+                        continue
+                    accounts += 1
+                    for _r, _d, _f in os.walk(ds):
+                        _here += sum(1 for f in _f if f.lower().endswith(".db"))
+            except Exception:
+                pass
+            dbs += _here
+            if _here:
+                hit.append(p)
+    return {"tried": tried, "found": found, "hit": hit, "accounts": accounts, "dbs": dbs,
+            "deep": deep}
 
 
 def resolve_db_dir(explicit: str = "") -> tuple:
