@@ -1,12 +1,12 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.19.4",
-    "sha256": "f9b166a384ed4be5d055d3a2f05060d5b708e5dccf2271698a8c60d5d06a8aef",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.38/persona-morph-v2.1.38.zip",
-    "build": "810041cc08bb",
-    "size": 10734421,
-    "files": 298
+    "version": "2026.9.20.1",
+    "sha256": "d60ffa09a77d9105f08255f340802e13cc32640fc4842c3f4c2c9fc1e8429748",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.39/persona-morph-v2.1.39.zip",
+    "build": "7c0aa2e2d233",
+    "size": 10779083,
+    "files": 300
   },
   "dlc": [
     {
@@ -18,7 +18,8 @@
       "url": "",
       "size": 0,
       "enabledByDefault": true,
-      "note": "装在 ~/.dsh/skills 的知识包（含 E 控制台与 EMAP Memorize）；版本以插件包 tan 为准"
+      "placeholder": true,
+      "note": "未实现（客户端目前不读 dlc/requiresBase）；装在 ~/.dsh/skills 的知识包（含 E 控制台与 EMAP Memorize），版本以插件包 tan 为准"
     },
     {
       "id": "vcable.driver",
@@ -29,17 +30,18 @@
       "url": "",
       "size": 1318877,
       "enabledByDefault": false,
-      "note": "VB-CABLE；真语音条需要它 + 把微信输入设备指到 CABLE Output。装驱动必须由用户点一次"
+      "placeholder": true,
+      "note": "未实现（客户端目前不读 dlc/requiresBase）；VB-CABLE，真语音条需要它 + 把微信输入设备指到 CABLE Output，装驱动必须由用户点一次"
     }
   ],
   "announce": {
-    "version": "2026.9.19.4",
+    "version": "2026.9.20.1",
     "notes": [
-      "重出一版把包补全：v2.1.37 的**包比清单少一个文件**（打包在提交之前，新增文件没进包，清单却按提交后的文件数算）—— 现在改成**打包前先登记**，包内容与更新清单完全一致。功能与上一版相同：①「一键启动」不再把 `py -3` 这种**命令**当文件路径判（那正是它报「Python 环境异常」的真根因，命令与路径现在都认 + 真跑一次验版本）；②微信数据目录位置改到嵌套目录时**会自己深扫找到**，不用手填"
+      "这一版把一次「只读漏洞审计」查出的 10 条全修了（含 1 条 P0）：①控制台有个免口令的路径穿越，能读走 config.json（里面有你的模型 key 和控制台口令）——已堵；②「同版本号换包」以前提示有新包、点更新却回「已是最新」——现在真的会装；③更新时有文件正被占用会被记成「已装好」且以后再也不会补换——现在记成「只装了一半」，再点一次就补齐；④干跑（只看不装）以前会把正在跑的机器人杀掉——现在纯干跑；⑤慢网下「多等一会儿」其实只多等了 50 毫秒——现在真的等；⑥一条判据会把异常写进产品的运行日志（占 32%）——已隔离并加断言；⑦一键启动「踢掉旧实例」只用已被新版 Windows 移除的 wmic、失败还静默——改用 PowerShell；⑧反馈推送的 token 在「原始 JSON」里明文显示——已打码；⑨清单里两条 DLC 的哈希是空的（死契约）——已显式标注未接线，出包时不再骗人；⑩定时提醒写盘失败还回「已定好」、重试没有退避——现在如实报错并加退避"
     ],
     "forceBase": false,
-    "minBase": "2026.9.19.4"
+    "minBase": "2026.9.20.1"
   },
-  "builtAt": "2026-09-19T21:23:15Z",
-  "updatedAt": 1789852995043
+  "builtAt": "2026-09-19T21:51:56Z",
+  "updatedAt": 1789854716488
 }
