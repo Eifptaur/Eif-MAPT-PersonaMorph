@@ -255,6 +255,17 @@ ok("setup_python.ps1 仍按 ANSI 写 python_path.txt（一键启动.exe 那一�
 _lc = text(os.path.join("launcher-src", "launcher.cs"))
 ok("一键启动.exe 先按约定找 runtime\\python\\python.exe（不靠那个 txt）",
    'Path.Combine(Root, "runtime", "python", "python.exe")' in _lc)
+# ⭐ 2026-09-20 修 V-R1-1（P0）：**整串先当路径试**（安装路径含空格时唯一能救回来的分支；
+#    默认包顶层就叫 `persona morph`）。两侧同源：launcher.cs 的 TryPy 与 installer.ps1 的 Resolve-PyCmd。
+_ps_inst = text(os.path.join("scripts", "installer.ps1"))     # 本段要用的 installer 源码
+ok("exe：切分之前先判「整串是不是一个存在的文件」（含空格路径）",
+   "if (File.Exists(cmd))" in _lc and "先判" in _lc)
+ok("installer.ps1：同样「整串先当路径试」",
+   "if (Test-Path -LiteralPath $t) {" in _ps_inst)
+ok("installer.ps1：取版本**有硬超时**（拿非 Python 的 exe 不会挂死）",
+   "function Invoke-PyVer" in _ps_inst and "WaitForExit(20000)" in _ps_inst and "$p.Kill()" in _ps_inst)
+ok("installer.ps1：只给含空格的参数加引号（`py -3` 那种短参数不许加）",
+   "-match '\\s'" in _ps_inst)
 ok("读 logs\\python_path.txt 时 936 与 UTF-8 都试、去 BOM",
    "static string ReadPyRaw" in _lc and "Encoding.GetEncoding(936), new UTF8Encoding(false)" in _lc
    and "TrimStart('\\uFEFF')" in _lc)

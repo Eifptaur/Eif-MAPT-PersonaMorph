@@ -231,17 +231,31 @@ def write_local_state(target: str, version: str, tree: str, extra=None) -> dict:
     return d
 
 
-def _is_locked(e) -> bool:
-    """这个异常是不是"文件正被别的进程使用"（Windows 共享冲突）。
+def _is_locked(e, path: str = "") -> bool:
+    """这个异常是不是"文件正被别的进程使用"（共享冲突）。只有这一种才允许"跳过并继续"。
 
-    只有这一种才允许"跳过并继续"——磁盘满、权限不对、路径错都必须回滚。
-
-    ⛔ 2026-09-20 修 **V3**：以前是 `isinstance(e, PermissionError) → True`，把"拒绝访问 / 只读
-    文件（WinError 5）"也当成"被占用" ⇒ 一个只读文件就能让整包"跳过"、还被记成"更新已装好"
-    （实测：换入 0 件仍回 rc=0）。Windows 上"正被占用"报的就是 **WinError 32/33**，
-    所以判据只看它；拿不到 winerror 的（非 Windows / 异常被包装过）一律按**真故障**处理（回滚）。
+    ⛔ 2026-09-20 **二次修（V-R3-1，上一版是"假修"）**：上一版把它收窄成 `winerror in (32,33)`，
+    可**真实**共享冲突走的是 CRT `open()`（`shutil.copy2`）——Windows 把它映射成 `EACCES(13)`、
+    **winerror 直接丢掉**。实测（真独占句柄 + 真 `share=READ|DELETE`）：
+        copy2  ⇒ PermissionError errno=13 winerror=None
+        os.replace ⇒ PermissionError errno=13 winerror=5
+    ⇒ 32/33 只出现在"判据自己伪造的属性"里，真实场景**恒假** ⇒ 换入失败 ⇒ 整包回滚：
+    用户点「立即更新」几乎必然失败（包里必然含正在运行的 `一键启动.exe`）。
+    现在按"**错误码 + 文件本身可不可写**"组合判：winerror ∈ (32,33) ⇒ 占用；
+    errno==13 或 winerror==5 ⇒ 再看文件是不是**只读属性**（只读＝真故障 ⇒ 回滚，否则＝被持有 ⇒ 跳过）。
     """
-    return getattr(e, "winerror", None) in (32, 33)
+    we = getattr(e, "winerror", None)
+    err = getattr(e, "errno", None)
+    if we in (32, 33):
+        return True
+    if we == 5 or err == 13:
+        try:
+            if path and os.path.exists(path) and not (os.stat(path).st_mode & 0o200):   # 0o200 = S_IWRITE
+                return False        # 只读文件 ⇒ 真故障，必须回滚（不许降级成"部分成功"）
+        except Exception:
+            pass
+        return True
+    return False
 
 
 def apply_full(manifest: dict, zip_path: str, target: str = ROOT, dry: bool = False, progress=None):
@@ -307,13 +321,22 @@ def apply_full(manifest: dict, zip_path: str, target: str = ROOT, dry: bool = Fa
         src_root = os.path.join(stage, top)
 
         # ---- ③ 快照"将被覆盖或新增"的每一件 ----
-        for rel in rels:
-            tp = os.path.join(target, rel.replace("/", os.sep))
-            if os.path.exists(tp):
-                snaps[rel] = sha256_file(tp)
-                bp = os.path.join(backup, rel.replace("/", os.sep))
-                os.makedirs(os.path.dirname(bp), exist_ok=True)
-                shutil.copy2(tp, bp)
+        # ⛔ 2026-09-20 修 **V-R3-4**：这一步（以及下面的组合校验）原来**没有异常保护**——
+        #   ①快照读失败会带出裸异常（用户看到的是 traceback，而不是"哪个文件读不了"）；
+        #   ②**组合校验**里 `sha256_file(tp)` 一旦抛（文件被占用/被删/权限），异常会穿出去 ⇒
+        #     **报失败但文件已经全换完、既不回滚也不写状态**（最坏的一种"半成功"）。
+        #   ⇒ 快照失败：此时一个文件都还没换 ⇒ 干净返回 1；校验抛异常：按"校验失败"处理 ⇒ 回滚。
+        try:
+            for rel in rels:
+                tp = os.path.join(target, rel.replace("/", os.sep))
+                if os.path.exists(tp):
+                    snaps[rel] = sha256_file(tp)
+                    bp = os.path.join(backup, rel.replace("/", os.sep))
+                    os.makedirs(os.path.dirname(bp), exist_ok=True)
+                    shutil.copy2(tp, bp)
+        except Exception as e:                                      # noqa: BLE001
+            return 1, "更新前快照失败（一个文件都没动）：%s（%s）" % (
+                str(e)[:80] or type(e).__name__, rel), {"phase": "snapshot"}
 
         def rollback(why):
             for rel in placed:
@@ -344,16 +367,20 @@ def apply_full(manifest: dict, zip_path: str, target: str = ROOT, dry: bool = Fa
                 # ⚠️ 2026-09-16：第一版把**任何** OSError 都当"文件被占用"跳过 ⇒ 磁盘满/权限不对
                 #    这类真故障会被降级成"部分成功"，用户以为更新好了、其实没换。
                 #    自检 self_update_selftest 的 F 段就是拿这个当反面证据（模拟磁盘错误必须回滚）。
-                if _is_locked(e):
+                if _is_locked(e, tp):
                     locked.append("%s（%s）" % (rel, str(e)[:60]))
                     continue
                 return rollback("换入失败：%s（%s）" % (rel, str(e)[:80]))
 
         # ---- ⑤ 组合校验：逐件重算（换入件必须与清单哈希逐一对上）----
-        for rel in placed:
-            tp = os.path.join(target, rel.replace("/", os.sep))
-            if sha256_file(tp) != files[rel]:
-                return rollback("组合校验失败：%s 哈希不符" % rel)
+        # ⛔ V-R3-4：这一步抛异常（文件被占用/被删/读不了）**必须回滚**，不许"报失败但已经全换完"。
+        try:
+            for rel in placed:
+                tp = os.path.join(target, rel.replace("/", os.sep))
+                if sha256_file(tp) != files[rel]:
+                    return rollback("组合校验失败：%s 哈希不符" % rel)
+        except Exception as e:                                      # noqa: BLE001
+            return rollback("组合校验时出错（%s）：%s" % (rel, str(e)[:70] or type(e).__name__))
 
         extra = {"from": cur.get("version") or "", "files": len(placed)}
         if locked:
@@ -448,6 +475,13 @@ def run_once(manifest=None, zip_path=None, target=ROOT, dry=False, progress=None
         durl = str(base.get("url") or "")
         if not durl:
             return {"ok": False, "rc": 2, "why": "清单里没给下载地址（base.url 为空）", "phase": "probe"}
+        # ⛔ 2026-09-20 修 **V-R1-2（P0）**：**清单里的下载地址也必须落在官方域**（跨域即拒）——
+        #   否则"清单里写哪个 URL 就下哪个 URL"，把"哈希校验"变成"自洽即通过"。
+        _u_ok, _u_why = uc._base_url_ok(durl)
+        _local_ok = uc.allow_local_update() and os.path.exists(durl)
+        if not _u_ok and not _local_ok:
+            _set(state="error", phase="probe", why=_u_why)
+            return {"ok": False, "rc": 2, "why": "清单给的下载地址不可信：%s" % _u_why, "phase": "probe"}
         zip_path = os.path.join(target, CACHE_REL, "persona-morph-%s.zip" % (theirs or "new"))
         _set(state="running", phase="download", why="正在下载 %s" % theirs, got=0, total=0)
         # 2026-09-17（用户报「卡在 0% 不动」）：把**换源重试**暴露到作业状态里 —— 老实现只在换源时

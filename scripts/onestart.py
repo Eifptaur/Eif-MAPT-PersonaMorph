@@ -389,34 +389,91 @@ def _enum_old_procs():
     return None, "", "；".join(errs)
 
 
+_OWN_SCRIPT_NAMES = ("persona_morph.py", "watchdog.py", "onestart.py")
+
+
+def _cmd_script_paths(cmd):
+    """从一条命令行里抽出"指我们的那三个脚本"的**路径 token**（单一实现见 `agent/proc_match.py`）。
+
+    为什么要回溯（V-R1-3）：原来的判据是"整条命令行里含子串 `persona_morph.py`"，于是
+    `D:\\tools\\onestart.py`、**别人项目**里的 `watchdog.py`、另一份解压目录里的群相副本
+    **统统会被 `taskkill /F` 强杀**（用户正在写的文件可能当场损坏）。
+    ⚠️ 2026-09-20：实现**下沉到 `agent/proc_match`**，与 `scripts/stop_bot.py`（一键关闭）共用一份 ——
+    两处各写一套必然漂移（"踢旧实例"修了、"一键关闭"还在同名就杀）。
+    """
+    from agent.proc_match import script_paths
+    return script_paths(cmd)
+
+
+def _is_our_install(cmd):
+    """这条命令行的**脚本完整路径**是否落在本安装目录（ROOT）下、且文件名是那三个之一。
+
+    ⛔ 这是 V-R1-3 的正解：`taskkill /F` 是强制终止，判据必须是"这个进程属于本次安装"，
+    而不是"它的命令行里有几个像样的字"。实现见 `agent/proc_match.is_our_install`（单一来源）。
+    """
+    from agent.proc_match import is_our_install
+    return is_our_install(cmd, ROOT)
+
+
+def _kick_why(res, rc):
+    """把 `taskkill` 失败的原因抠成一行（stderr 原文；抠不出就报退出码）。"""
+    try:
+        raw = getattr(res, "stderr", b"") or b""
+        if isinstance(raw, (bytes, bytearray)):
+            raw = bytes(raw).decode("utf-8", "ignore")
+        txt = " ".join(str(raw).split())
+    except Exception:
+        txt = ""
+    return txt[:160] or ("taskkill 退出码 %s" % rc)
+
+
 def _kick_old_instance():
     """踢掉旧版本实例（3210 的 persona_morph/watchdog + 启动器/关闭器进程）。
 
-    返回 {"killed": [pid…], "how": 枚举方式, "error": 原因}：**枚举失败时 error 非空且必写日志**——
-    "这台机器没有这个能力"不许再被吞成"没有旧实例要踢"（V7 的根因就是这个 `except Exception: pass`）。
+    返回 {"killed": [pid…], "failed": [{pid,rc,why}…], "skipped": [{pid,why}…],
+          "how": 枚举方式, "error": 原因}：
+      · **枚举失败时 error 非空且必写日志**——"这台机器没有这个能力"不许被吞成"没有旧实例要踢"（V7）；
+      · V-R1-3 两条：①只杀**命令行里出现本安装 ROOT 路径**的进程（原来"文件名像就杀"⇒ 误伤别人项目）；
+        ②`taskkill` 的**退出码纳入结果**（原来丢弃返回值、一律 append ⇒ 没杀掉也说"已踢"）。
     """
     procs, how, err = _enum_old_procs()
     if procs is None:
         log("⚠ 没能枚举进程 ⇒ 本次**没有踢任何旧实例**（旧版可能还在跑，症状＝点了没反应/还是老界面）。"
             "原因：%s" % err)
         time.sleep(1.5)
-        return {"killed": [], "how": "", "error": err}
-    killed = []
+        return {"killed": [], "failed": [], "skipped": [], "how": "", "error": err}
+    killed, failed, skipped = [], [], []
     for pid, cmd in procs:
-        if not any(k in cmd for k in ("persona_morph.py", "watchdog.py", "onestart.py")) or "plugin" in cmd:
+        if "plugin" in cmd:
+            skipped.append({"pid": pid, "why": "命令行含 plugin（插件/别的入口）"})
+            continue
+        if not _is_our_install(cmd):
+            skipped.append({"pid": pid, "why": "脚本路径不在本安装目录（别人的同名脚本，按 V-R1-3 不许杀）"})
             continue
         if pid == os.getpid():
             continue            # ⛔ 自己的命令行里也有 onestart.py ⇒ 不加这条会把启动器自己踢掉
         try:
-            subprocess.run(["taskkill", "/F", "/PID", str(pid)],
-                           capture_output=True, creationflags=0x08000000)
-            killed.append(pid)
+            res = subprocess.run(["taskkill", "/F", "/PID", str(pid)],
+                                 capture_output=True, creationflags=0x08000000)
         except Exception as e:
+            failed.append({"pid": pid, "rc": -1, "why": str(e)})
             log("踢旧实例 PID=%s 失败：%s" % (pid, e))
-    log("旧实例清理：枚举方式=%s · 候选 %d 个 · 已踢 %d 个%s"
-        % (how, len(procs), len(killed), ("（PID=%s）" % ",".join(str(x) for x in killed)) if killed else ""))
+            continue
+        rc = int(getattr(res, "returncode", 1) or 0)
+        if rc == 0:
+            killed.append(pid)
+        else:
+            why = _kick_why(res, rc)
+            failed.append({"pid": pid, "rc": rc, "why": why})
+            log("踢旧实例 PID=%s 失败：taskkill 退出码 %s（%s）" % (pid, rc, why))
+    if skipped:
+        log("旧实例清理：跳过 %d 个不属于本安装的候选（%s）"
+            % (len(skipped), "；".join("PID=%s %s" % (x["pid"], x["why"]) for x in skipped[:5])))
+    log("旧实例清理：枚举方式=%s · 候选 %d 个 · 已踢 %d 个 · 失败 %d 个 · 跳过 %d 个%s"
+        % (how, len(procs), len(killed), len(failed), len(skipped),
+           ("（PID=%s）" % ",".join(str(x) for x in killed)) if killed else ""))
     time.sleep(1.5)
-    return {"killed": killed, "how": how, "error": ""}
+    return {"killed": killed, "failed": failed, "skipped": skipped, "how": how, "error": ""}
 
 
 def _open_current_console():
@@ -487,8 +544,26 @@ def main():
                     log("⚠ 旧实例**没能清理**（%s）⇒ 仍然继续启动；若出现「点了没反应/还是老界面」，"
                         "请看 data\\runtime.log 与 logs\\console.log" % _rep_kick["error"])
                 else:
-                    log("旧实例已清理（踢掉 PID=%s），继续一键启动。"
-                        % (",".join(str(x) for x in (_rep_kick.get("killed") or [])) or "0 个"))
+                    _n_kill = len(_rep_kick.get("killed") or [])
+                    if _n_kill:
+                        log("旧实例已清理（踢掉 PID=%s），继续一键启动。"
+                            % ",".join(str(x) for x in _rep_kick["killed"]))
+                    elif _rep_kick.get("skipped"):
+                        # V-R1-3 的取舍必须说出来：旧版本进程存在、但它的脚本**不在本安装目录**
+                        # ⇒ 我们不碰它（不然就回到"文件名像就强杀"那条误伤路）。它若占着端口，
+                        # 用户需要自己收掉（「一键关闭」/任务管理器），所以这里给出可照着做的动作。
+                        log("⚠ 检测到被跳过的候选进程（PID=%s）——它们的脚本不在本安装目录，"
+                            "按「只踢本安装」的口径**没有动它们**。若启动后仍是老界面/端口被占，"
+                            "请先用「一键关闭」或任务管理器结束那几个进程。"
+                            % ",".join(str(x.get("pid")) for x in _rep_kick["skipped"][:5]))
+                    else:
+                        log("旧实例已清理（本次没有需要踢的进程），继续一键启动。")
+                _bad_kick = _rep_kick.get("failed") or []
+                if _bad_kick:
+                    # V-R1-3：踢失败也是**结果**（原来丢弃 taskkill 退出码 ⇒ 没杀掉也报"已踢"）
+                    log("⚠ 有 %d 个旧实例**没能踢掉**（%s）⇒ 它们可能仍占着端口/单实例锁。"
+                        % (len(_bad_kick),
+                           "、".join("PID=%s rc=%s" % (x.get("pid"), x.get("rc")) for x in _bad_kick)))
         except Exception:
             pass
 

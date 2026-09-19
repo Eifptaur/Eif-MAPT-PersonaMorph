@@ -9308,6 +9308,150 @@ def _deep_scan_xwechat(roots: list = None, max_depth: int = 4, budget: int = 400
     return out
 
 
+def _self_identity_hint() -> tuple:
+    """读 `data/self_identity.json` 里的「我是谁」→ `(账号目录名, wxid)`（只读、绝不抛）。
+
+    为什么要有它（V-R1-4）：深扫可能在同一台机器上撞见**多个** `xwechat_files`（旧备份、
+    别的 Windows 用户 profile、曾经的盘符副本）⇒ "哪个正在被用"的一大证据就是"它的账号目录
+    与我们记下来的本人账号对得上"。拿不到就返回空串，让判据退到"最近被写"那条。
+    """
+    try:
+        import json as _json
+        with open(os.path.join(ROOT, "data", "self_identity.json"), encoding="utf-8") as fh:
+            d = _json.load(fh) or {}
+        if not isinstance(d, dict):
+            return "", ""
+        return str(d.get("acct") or "").strip(), str(d.get("wxid") or "").strip()
+    except Exception:
+        return "", ""
+
+
+def _identity_hit(acc: str, acct: str, wxid: str) -> bool:
+    """账号目录名是不是"本人"（`self_identity.json` 记的 acct / 去掉末尾 4 位哈希的 wxid）。"""
+    a = str(acc or "").strip()
+    if not a or not (acct or wxid):
+        return False
+    if acct and a == acct:
+        return True
+    try:
+        if wxid and re.sub(r"_\w{4}$", "", a) == wxid:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _db_dir_evidence(path: str, acct: str = "", wxid: str = "") -> dict:
+    """数一个候选目录的**证据**：账号目录 / `.db` 数 / 最新写入时间 / 有没有"正在被写"的 `-wal`。
+
+    为什么要有它（V-R1-4）：深扫命中多个目录时，原实现直接取 `hit[0]`（谁先被扫到谁赢）⇒
+    可能选中 300 天前的残留、或**别人的账号**。判据应当是"哪个正在被用"，所以这里把三类
+    证据一起收齐（**只读**，不碰驱动库、不碰窗口）。
+    """
+    def _mt(p):
+        try:
+            return float(os.path.getmtime(p))
+        except Exception:
+            return 0.0
+
+    # ⚠️ `newest` 统计库内容的写入（`db_storage` 目录 + `.db` / `-wal`），但**不拿 `xwechat_files`
+    #    自己的目录 mtime 参与** —— 那个值只反映"账号目录增删过"，残留目录被复制到新盘/新建时
+    #    会显示成"刚刚"，是**假新鲜**（实测：300 天前的残留目录照样读出 0 分钟前）。它只当兜底排序用。
+    ev = {"path": path, "accounts": [], "dbs": 0, "newest": 0.0, "dir_mtime": _mt(path),
+          "newest_wal": 0.0, "identity": False, "identity_acc": ""}
+    try:
+        accs = sorted(os.listdir(path))
+    except Exception:
+        return ev
+    for acc in accs:
+        ds = os.path.join(path, acc, "db_storage")
+        if not os.path.isdir(ds):
+            continue
+        ev["accounts"].append(acc)
+        if _identity_hit(acc, acct, wxid) and not ev["identity"]:
+            ev["identity"], ev["identity_acc"] = True, acc
+        ev["newest"] = max(ev["newest"], _mt(ds))
+        for _r, _d, _f in os.walk(ds):
+            for f in _f:
+                low = f.lower()
+                fp = os.path.join(_r, f)
+                if low.endswith("-wal"):
+                    ev["newest_wal"] = max(ev["newest_wal"], _mt(fp))
+                elif low.endswith(".db"):
+                    ev["dbs"] += 1
+                    ev["newest"] = max(ev["newest"], _mt(fp))
+    return ev
+
+
+_WAL_RECENT_S = 7 * 86400.0          # 7 天内还有 -wal 写入 ⇒「这个库正在被用」的强证据
+_AMBIGUOUS_S = 3600.0                # 两个候选"最新写入时间"相差不到 1 小时 ⇒ 证据相近，不替用户猜
+
+
+def _rank_key(ev: dict) -> tuple:
+    """排序键（越大越优先）：本人账号 > 最近被写（-wal）> 库内容最新写入时刻 > .db 数量 > 目录 mtime。
+
+    ⚠️ 最后两项是**弱证据**：`.db` 数量多只是"更像一个真在用的库"，目录 mtime 只反映"账号目录
+    增删过"（复制/新解压出来的残留目录也会很新）⇒ 它们只用来分同档，不许盖过"最近被写"。
+    """
+    try:
+        _now = time.time()
+    except Exception:
+        _now = 0.0
+    return (1 if ev.get("identity") else 0,
+            1 if float(ev.get("newest_wal") or 0.0) > (_now - _WAL_RECENT_S) else 0,
+            float(ev.get("newest") or 0.0),
+            int(ev.get("dbs") or 0),
+            float(ev.get("dir_mtime") or 0.0))
+
+
+def _why_ev(ev: dict) -> str:
+    """把一条证据说成人话（进返回值与日志，用户/排查都看得懂）。"""
+    try:
+        _age = time.time() - float(ev.get("newest") or 0.0)
+        _ago = "未知" if not ev.get("newest") else ("%.0f 分钟前" % (_age / 60.0) if _age < 86400
+                                                    else "%.0f 天前" % (_age / 86400.0))
+    except Exception:
+        _ago = "未知"
+    return ("账号=%s%s；.db=%d 个；最新写入=%s%s"
+            % (",".join(ev.get("accounts") or []) or "无",
+               "（与本人一致）" if ev.get("identity") else "",
+               int(ev.get("dbs") or 0), _ago,
+               "；有最近 7 天内的 -wal 写入" if float(ev.get("newest_wal") or 0.0) > (time.time() - _WAL_RECENT_S)
+               else ""))
+
+
+def _dbs_close(x: int, y: int) -> bool:
+    """两个候选的 `.db` 数量算不算"同一量级"（比值 ≥ 0.8；都为 0 算相近）。"""
+    try:
+        a, b = int(x or 0), int(y or 0)
+    except Exception:
+        return True
+    if a <= 0 and b <= 0:
+        return True
+    if a <= 0 or b <= 0:
+        return False
+    return (min(a, b) / float(max(a, b))) >= 0.8
+
+
+def _rank_db_dirs(hit: list, evs: dict) -> tuple:
+    """把命中的候选**按证据排序** → `(排序后的路径, 证据字典, 是否证据相近)`，明细见 `_why_ev`。
+
+    ⛔ V-R1-4 的判据就在这里：原来 `hit[0]` 是"深扫先撞见谁就用谁"。现在的口径：
+      ① 账号目录与本人（`self_identity.json`）一致 ＞
+      ② 有最近 7 天内的 `-wal` 写入（"这个库正在被用"的强证据）＞
+      ③ 库内容最新写入时刻 ＞ ④ `.db` 数量 ＞ ⑤ 目录 mtime（弱证据，只用来分同档）。
+    "证据相近" = 前两档相同、最新写入时刻相差不到 1 小时、`.db` 数量同一量级 ⇒ 调用方**不自动选**。
+    """
+    ranked = sorted([p for p in (hit or [])], key=lambda p: _rank_key(evs.get(p) or {}), reverse=True)
+    ambiguous = False
+    if len(ranked) >= 2:
+        a, b = _rank_key(evs.get(ranked[0]) or {}), _rank_key(evs.get(ranked[1]) or {})
+        # 只看**主证据**（身份档 + 新鲜度档 + 库内容最新写入时刻 + .db 量级），弱证据（目录 mtime）不算
+        ambiguous = (a[0] == b[0]) and (a[1] == b[1]) and (abs(a[2] - b[2]) <= _AMBIGUOUS_S) \
+            and _dbs_close(a[3], b[3])
+    return ranked, evs, ambiguous
+
+
 def _probe_db_dirs(extra: str = "") -> dict:
     """**只读**在磁盘上找微信 4.x 的数据目录（不碰驱动库、不碰窗口）。
 
@@ -9318,26 +9462,23 @@ def _probe_db_dirs(extra: str = "") -> dict:
     （权限/占用）。⇒ 独立探一遍盘，把档分开，并把**探过哪些目录**如实报出来。
     ⭐ 2026-09-19：候选表一个都没命中时，再跑一次 `_deep_scan_xwechat`（有界深扫）—— 用户把位置
     改到嵌套目录时，这是唯一能救回来的路。
+    ⭐ 2026-09-20（V-R1-4）：`hit` **按证据排序**（本人账号 / `-wal` 最近被写 / 最新写入 / .db 数），
+    并把每个候选的证据（`evidence`）、"为什么把它排在前面"（`why`）、"是否证据相近需要用户指定"
+    （`ambiguous`）一起返回 —— 消费端不许再"取第一个"。
     """
+    _acct, _wxid = _self_identity_hint()
     tried = _db_dir_candidates(extra)
     found, hit, accounts, dbs = [], [], 0, 0
+    evs = {}
     for p in tried:
         if not os.path.isdir(p):
             continue
         found.append(p)
-        _here = 0
-        try:
-            for acc in sorted(os.listdir(p)):
-                ds = os.path.join(p, acc, "db_storage")
-                if not os.path.isdir(ds):
-                    continue
-                accounts += 1
-                for _r, _d, _f in os.walk(ds):
-                    _here += sum(1 for f in _f if f.lower().endswith(".db"))
-        except Exception:
-            pass
-        dbs += _here
-        if _here:
+        ev = _db_dir_evidence(p, _acct, _wxid)
+        evs[p] = ev
+        accounts += len(ev["accounts"])
+        dbs += int(ev["dbs"])
+        if ev["dbs"]:
             hit.append(p)
     deep = []
     if not hit:
@@ -9350,38 +9491,57 @@ def _probe_db_dirs(extra: str = "") -> dict:
                 tried.append(p)
             if p not in found:
                 found.append(p)
-            _here = 0
-            try:
-                for acc in sorted(os.listdir(p)):
-                    ds = os.path.join(p, acc, "db_storage")
-                    if not os.path.isdir(ds):
-                        continue
-                    accounts += 1
-                    for _r, _d, _f in os.walk(ds):
-                        _here += sum(1 for f in _f if f.lower().endswith(".db"))
-            except Exception:
-                pass
-            dbs += _here
-            if _here:
+            ev = evs.get(p) or _db_dir_evidence(p, _acct, _wxid)
+            evs[p] = ev
+            accounts += len(ev["accounts"])
+            dbs += int(ev["dbs"])
+            if ev["dbs"]:
                 hit.append(p)
-    return {"tried": tried, "found": found, "hit": hit, "accounts": accounts, "dbs": dbs,
-            "deep": deep}
+    ranked, evs, ambiguous = _rank_db_dirs(hit, evs)
+    why = {p: _why_ev(evs.get(p) or {}) for p in ranked}
+    if len(ranked) > 1:
+        try:
+            log.warning("磁盘上有多个微信数据目录（%d 个）：%s%s",
+                        len(ranked), "；".join("%s ← %s" % (p, why[p]) for p in ranked[:4]),
+                        "；证据相近 ⇒ 由用户指定" if ambiguous else "；已取最像「正在用」的那个")
+        except Exception:
+            pass
+    return {"tried": tried, "found": found, "hit": ranked, "accounts": accounts, "dbs": dbs,
+            "deep": deep, "evidence": evs, "why": why, "ambiguous": ambiguous}
 
 
 def resolve_db_dir(explicit: str = "") -> tuple:
-    """**决定消息库用哪个目录**：配置里填的 → 扫盘探到的（含 .db 的第一个候选）→ 空。
+    """**决定消息库用哪个目录**：配置里填的 → 扫盘探到的（含 .db 的**最优**候选）→ 空。
 
     为什么要有它（2026-09-16 网友 B 那份诊断截图）：他的微信把聊天文件放在 `E:\\xwechat_files`
     （我们**扫到了 43 个 .db**），可驱动库的自探测只认默认位置 ⇒ 一直"未找到微信数据库目录"、
     会话头与投递发送全不可用 —— **我们明明已经找到那个目录了，却没拿来用**。
-    返回 `(目录, 来源)`，来源 ∈ `"config"` / `"scanned"` / `""`。
+    返回 `(目录, 来源)`，来源 ∈ `"config"` / `"scanned"` / `"ambiguous"` / `""`。
+
+    ⭐ V-R1-4：多个候选**证据相近**时返回 `("", "ambiguous")` —— 不静默选第一个（选错＝读几个月前的
+    消息或**别人的账号**），把候选与证据写进日志，让用户在控制台「数据库目录」里点一个。
     """
     if str(explicit or "").strip():
         return str(explicit).strip(), "config"
     try:
         p = _probe_db_dirs("")
-        if p.get("hit"):
-            return str(p["hit"][0]), "scanned"
+        _hits = p.get("hit") or []
+        if _hits:
+            if p.get("ambiguous"):
+                pick = "、".join(str(x) for x in _hits[:4])
+                try:
+                    log.warning("找到多个微信数据目录且证据相近 ⇒ 不自动选（避免读到过期/别人的库）：%s；"
+                                "请在控制台「数据库目录」里指定一个%s",
+                                pick, "" if len(_hits) <= 4 else "（还有 %d 个）" % (len(_hits) - 4))
+                except Exception:
+                    pass
+                return "", "ambiguous"
+            try:
+                log.info("微信数据目录：用 %s（来源=扫盘；判据：%s）",
+                         _hits[0], (p.get("why") or {}).get(_hits[0]) or "")
+            except Exception:
+                pass
+            return str(_hits[0]), "scanned"
     except Exception:
         pass
     return "", ""

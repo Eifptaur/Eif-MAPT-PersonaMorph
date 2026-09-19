@@ -101,6 +101,110 @@ DEFAULT_URLS = (
     API_URL,
 )
 
+#: 官方域：**只有这些**（或内嵌这些域的镜像 URL）才有资格"决定版本与下载地址"。
+OFFICIAL_HOSTS = ("github.com", "www.github.com", "raw.githubusercontent.com", "api.github.com",
+                  "objects.githubusercontent.com", "codeload.github.com", "githubusercontent.com")
+#: 允许当**传输通道**的镜像（它们必须把官方地址整串内嵌在路径里 ⇒ 身份仍由内嵌地址决定）。
+PROXY_HOSTS = ("ghfast.top", "ghproxy.net", "gh-proxy.com", "gh.llkk.cc", "raw.gitmirror.com",
+               "cdn.statically.io", "cdn.jsdelivr.net", "fastly.jsdelivr.net", "gcore.jsdelivr.net")
+#: 本仓库 slug（小写）—— jsDelivr / statically / gitmirror 这类 CDN 的路径形如
+#: `cdn.jsdelivr.net/gh/<owner>/<repo>@main/...`，**没有内嵌完整 URL** ⇒ 用"路径里必须出现本仓库"
+#: 当它们的信任判据（否则任何 CDN 上的任意内容都能冒充我们的清单）。
+REPO_SLUG = "eifptaur/eif-mapt-personamorph"
+
+
+def _embedded_url(u: str) -> str:
+    """取 `https://<镜像>/https://raw.githubusercontent.com/...` 里**内嵌的那个官方地址**。
+
+    镜像的信任身份由内嵌地址决定：镜像只配当"同一份官方清单的传输通道"，
+    **不许**它自己决定"版本号与下载地址"（2026-09-20 V-R1-2）。
+    """
+    s = str(u or "")
+    i = s.find("://")
+    if i < 0:
+        return ""
+    for scheme in ("https://", "http://"):
+        j = s.find(scheme, i + 3)
+        if j > 0:
+            return s[j:]
+    return ""
+
+
+def manifest_origin_ok(u: str, cfg: dict = None) -> tuple:
+    """这个源**能不能决定"版本与下载地址"**。返回 `(ok, why)`。
+
+    ⛔ 2026-09-20 修 **V-R1-2（P0）**：原来是"**版本最高者胜**"，而清单本身没有任何真实性
+    （9 条源里 6 条是第三方反代/CDN）⇒ 任一被投毒/被劫持的镜像回一份版本号更高的清单就能赢过
+    官方源，用户点「立即更新」就会装上任意代码（而"哈希校验"只保证包与清单自洽，自洽即通过）。
+    现在：①**只有官方域**（或内嵌官方地址的已知镜像）的清单才有资格参与"选版本"；
+    ②用户自己填的 `update.url` 若不在官方/已知镜像里，需要显式 `update.trust_custom_url=true`
+    才放行（否则拒绝并告诉他开关在哪）；③第三方镜像从此只作传输通道，不作权威。
+    """
+    s = str(u or "").strip()
+    if not s:
+        return False, "空地址"
+    if not s.lower().startswith(("http://", "https://")):
+        return False, "非 http(s) 地址（本地路径只能用于离线自测）"
+    inner = _embedded_url(s)
+    target = inner or s
+    try:
+        from urllib.parse import urlparse
+        host = (urlparse(target).hostname or "").lower()
+        outer = (urlparse(s).hostname or "").lower()
+    except Exception:
+        return False, "地址解析不了"
+    if host in OFFICIAL_HOSTS or host.endswith(".githubusercontent.com"):
+        if outer in PROXY_HOSTS or outer == host or inner == "":
+            return True, ("官方域" if inner == "" else "镜像内嵌官方地址（%s）" % host)
+        return False, "外层不是已知镜像：%s" % outer
+    # 已知 CDN/镜像：**必须承载本仓库的路径**才算可信（它们没有内嵌完整 URL，只能这样认）
+    if host in PROXY_HOSTS:
+        try:
+            from urllib.parse import urlparse as _up2
+            _path = (_up2(target).path or "").lower()
+        except Exception:
+            _path = ""
+        if REPO_SLUG in _path:
+            return True, "已知镜像承载本仓库路径（%s）" % host
+        return False, "已知镜像但路径不是本仓库：%s" % host
+    c = cfg if isinstance(cfg, dict) else _cfg()
+    _cfg_url = str((c or {}).get("url") or "").strip()
+    if _cfg_url and s == _cfg_url and bool((c or {}).get("trust_custom_url")):
+        return True, "用户显式信任的自定义源（update.trust_custom_url=true）"
+    return False, "非官方域：%s" % (host or "?")
+
+
+def _base_url_ok(u: str) -> tuple:
+    """清单里给的**下载地址**也必须落在官方域内（跨域即拒）。"""
+    s = str(u or "").strip()
+    if not s:
+        return True, ""                      # 没给地址 ⇒ 由调用方按"缺 base.url"处理
+    try:
+        from urllib.parse import urlparse
+        host = (urlparse(s).hostname or "").lower()
+    except Exception:
+        return False, "下载地址解析不了"
+    if host in OFFICIAL_HOSTS or host.endswith(".githubusercontent.com"):
+        return True, ""
+    return False, "清单给的下载地址不在官方域：%s" % (host or "?")
+
+
+def allow_local_update() -> bool:
+    """**本地路径当更新源**只在显式开关下可用（离线自测/内网中转）。
+
+    生产路径（`state()` / `run_once()`）不设这个开关 ⇒ 任何"把 update.url 指向一个本地文件"
+    的注入都失效（2026-09-20 V-R1-2 的第二半）。
+    """
+    import os as _os
+    v = str(_os.environ.get("PM_ALLOW_LOCAL_UPDATE") or "").strip().lower()
+    if v in ("1", "true", "yes", "on"):
+        return True
+    try:
+        c = _cfg() or {}
+        return bool((c.get("update") or {}).get("allow_local"))
+    except Exception:
+        return False
+
 
 def _short_url(u: str) -> str:
     try:
@@ -122,17 +226,31 @@ def _ranked(got: dict, urls: list):
     为什么不是"先到的赢"：四个源里 jsDelivr 是 CDN 缓存（可能是几小时前的旧清单），
     它常常答得最快 ⇒ 按先到挑，用户会**看不到刚发布的版本**、点「立即更新」还会照旧清单装。
     版本号是数值元组（`vtuple`），比较不会踩字符串比较的坑。
+
+    ⛔ 2026-09-20 修 **V-R1-2**：**只有"官方域（或内嵌官方地址的已知镜像）"的清单才有资格
+    参与选版本** —— 否则"版本最高者胜"等于"谁被投毒谁说了算"（第三方反代回一份 2099.1.1 就赢）。
+    被忽略的来源通过 `_ranked_rejected` 暴露给调用方写进原因里，方便排障时看见。
     """
+    global _ranked_rejected
     best_u, best_m, best_v = "", None, ()
+    _ranked_rejected = []
     for u in urls:
         man = (got.get(u) or (None, ""))[0]
         if not isinstance(man, dict):
+            continue
+        _ok, _why = manifest_origin_ok(u)
+        if not _ok:
+            _ranked_rejected.append("%s（%s）" % (_short_url(u), _why))
             continue
         base = man.get("base")
         v = vtuple((base or {}).get("version")) if isinstance(base, dict) else ()
         if best_m is None or (v and v > best_v):
             best_u, best_m, best_v = u, man, v or ()
     return best_m, best_u
+
+
+#: 上一轮 `_ranked()` 里被"来源不官方"挡掉的源（给 reason 用，只读）
+_ranked_rejected = []
 
 
 def fetch_any(urls, timeout: float = 12.0, patient: float = None):
@@ -161,12 +279,19 @@ def fetch_any(urls, timeout: float = 12.0, patient: float = None):
         with lock:
             got[u] = (man, why)
 
+    def _one_to(u, to):
+        """耐心阶段专用：用**更大的超时**再打一次同一个源（V-R3-2）。"""
+        man, why = fetch(u, to)
+        with lock:
+            got[u] = (man, why)
+
     for u in urls:
         threading.Thread(target=_one, args=(u,), daemon=True).start()
     t0 = time.time()
     t_first = 0.0
     _patient = float(patient if patient is not None else 30.0)
     _waited_patient = False
+    _attempts = 0
     while True:
         _el = time.time() - t0
         if not _waited_patient and _el >= timeout + 1.0:
@@ -189,6 +314,23 @@ def fetch_any(urls, timeout: float = 12.0, patient: float = None):
             if done_all or time.time() - t_first >= GRACE_S:
                 break
         elif done_all:
+            # ⛔ 2026-09-20 修 **V-R3-2**（V5 只闭了一半）：全失败就收摊 —— 但真实慢网里
+            #   "第一遍超时"≠"源不可用"：源在 5~15 秒才答是实测存在的情况（作者那台机器 RTT ~1900ms），
+            #   而首遍用的是 `timeout`（2~8 秒）⇒ 必然先失败。⇒ 只要还有耐心预算，就把失败的源
+            #   **用「剩余预算」当新超时再打一遍**（这才是"耐心阶段"的本意），而不是让死线程白等。
+            _left = _patient - _el
+            if _attempts < 2 and _left > 2.0:
+                _attempts += 1
+                with lock:
+                    _failed = [u for u in urls if (got.get(u) or (None, ""))[0] is None]
+                    for u in _failed:
+                        got.pop(u, None)
+                _t2 = max(timeout, min(_left, 15.0))
+                print("[update] 第一遍全是失败，用剩余 %.0f 秒（单源超时 %.0f 秒）把 %d 个源再试一遍…"
+                      % (_left, _t2, len(_failed)))
+                for u in _failed:
+                    threading.Thread(target=_one_to, args=(u, _t2), daemon=True).start()
+                continue
             break
         time.sleep(0.05)
     with lock:
@@ -221,6 +363,8 @@ def fetch_any(urls, timeout: float = 12.0, patient: float = None):
             return retry_hit[0][1], "", retry_hit[0][0]
     except Exception:
         pass
+    if _ranked_rejected:
+        why = (why + "；" if why else "") + "已忽略非官方来源：" + "、".join(_ranked_rejected[:3])
     return None, "所有源都拉不到（%s）" % why, ""
 
 
@@ -253,9 +397,16 @@ def candidate_urls(cfg: dict | None = None) -> list:
 
 
 def fetch(url: str, timeout: float = 8.0):
-    """支持 http(s) 与**本地路径**（本地路径便于离线自测）。返回 (dict 或 None, 说明)。"""
+    """支持 http(s) 与**本地路径**（本地路径便于离线自测）。返回 (dict 或 None, 说明)。
+
+    ⛔ 2026-09-20 修 **V-R1-2 的第二半**：本地路径以前在生产路径上**照样可达**（把 `update.url`
+    或清单来源指向盘上一个文件就能当更新源）⇒ 现在要求显式开关（`PM_ALLOW_LOCAL_UPDATE=1`
+    或配置 `update.allow_local=true`），否则直接拒绝并说明。
+    """
     if not url:
         return None, "未配置更新源"
+    if not str(url).lower().startswith(("http://", "https://")) and not allow_local_update():
+        return None, "这个更新源不是 http(s) 地址（本地文件当更新源需要显式开启，已拒绝）"
     try:
         if url.lower().startswith(("http://", "https://")):
             req = urllib.request.Request(url, headers={"User-Agent": "persona-morph-update/1"})

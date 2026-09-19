@@ -95,7 +95,100 @@ try:
     ok("resolve_db_dir 给出深扫到的那个目录 + 来源 scanned",
        os.path.normcase(str(d)) == os.path.normcase(deep_dir) and src == "scanned", "%s / %s" % (d, src))
 
-    print("── F. 真机只读冒烟（不联网、不开窗）──")
+    print("── F. V-R1-4：多个候选时按「证据」选，不许再取第一个 ──")
+    # 造两个候选（都真的落在盘上，不伪造 mtime 之外的任何条件）：
+    #   ①「300 天前的残留」：1 个 .db，**文件与目录的 mtime 都是 300 天前**
+    #   ②「正在用的」：42 个 .db，mtime 是现在，且有一个刚写过的 `-wal`
+    _old_age = time.time() - 86400 * 300
+
+    def make_cand(base, rel, n, age_s, wal_age_s=None, acc="wxid_judge0001"):
+        ds = os.path.join(base, rel, "xwechat_files", acc, "db_storage")
+        os.makedirs(ds, exist_ok=True)
+        for i in range(n):
+            p = os.path.join(ds, "message_%d.db" % i)
+            with open(p, "wb") as f:
+                f.write(b"x")
+            os.utime(p, (age_s, age_s))
+        if wal_age_s is not None:
+            p = os.path.join(ds, "message_0.db-wal")
+            with open(p, "wb") as f:
+                f.write(b"w")
+            os.utime(p, (wal_age_s, wal_age_s))
+        os.utime(ds, (age_s, age_s))
+        return os.path.join(base, rel, "xwechat_files")
+
+    TMP2 = tempfile.mkdtemp(prefix="pm_dbpick_")
+    _c2, _d2, _id2 = W._db_dir_candidates, W._fixed_drives, getattr(W, "_self_identity_hint", None)
+    try:
+        _resid = make_cand(TMP2, os.path.join("Public", "Documents"), 1, _old_age)
+        _live = make_cand(TMP2, os.path.join("zhu", "WeChat"), 42, time.time(),
+                          wal_age_s=time.time() - 60)
+        W._db_dir_candidates = lambda extra="": []
+        W._fixed_drives = lambda: [TMP2]
+        W._self_identity_hint = lambda: ("", "")          # 先关掉身份这条，单看"旧/新"
+        _p = W._probe_db_dirs("")
+        ok("F1 阴（本条回归判据）：旧/小 vs 新/大 ⇒ hit[0] 必须是**新的那个**（原来取深扫先撞见的）",
+           (_p["hit"] or [None])[0] == _live, "hit=%s" % [_p["hit"][i][len(TMP2):] for i in range(len(_p["hit"]))])
+        ok("F1b 被放弃的候选也要在返回值里（谁被选中、为什么）",
+           _resid in (_p["hit"] or []) and bool((_p.get("why") or {}).get(_live))
+           and ("42" in (_p.get("why") or {}).get(_live, "")), str(_p.get("why"))[:200])
+        ok("F1c 证据明摆着 ⇒ 不许说「需要用户指定」", _p.get("ambiguous") is False, str(_p.get("ambiguous")))
+        _d, _s = W.resolve_db_dir("")
+        ok("F1d 决策端就用新的那个（不再静默读 300 天前的残留）",
+           os.path.normcase(str(_d)) == os.path.normcase(_live) and _s == "scanned", "%s / %s" % (_d, _s))
+        # ⚠️ 单候选的"阳"对照在下面 F2b/F2c（**不写"恒真"的断言** —— 那正是"假绿"）
+        shutil.rmtree(TMP2, ignore_errors=True)
+        TMP3 = tempfile.mkdtemp(prefix="pm_dbsingle_")
+        try:
+            _only = make_cand(TMP3, os.path.join("E", "wxhf"), 3, time.time())
+            W._fixed_drives = lambda: [TMP3]
+            _p3 = W._probe_db_dirs("")
+            ok("F2b 单候选 ⇒ hit=[它]、ambiguous=False", (_p3["hit"] == [_only]) and not _p3["ambiguous"],
+               str(_p3["hit"])[:120])
+            ok("F2c 单候选 ⇒ resolve_db_dir 给出它 + scanned",
+               W.resolve_db_dir("") == (_only, "scanned"), str(W.resolve_db_dir("")))
+        finally:
+            shutil.rmtree(TMP3, ignore_errors=True)
+        # ③ 证据相近（同档身份 / 同档新鲜度 / 写入时刻相差 <1 小时 / .db 同一量级）⇒ 不自动选
+        TMP4 = tempfile.mkdtemp(prefix="pm_dbamb_")
+        try:
+            _a = make_cand(TMP4, os.path.join("p1"), 5, time.time(), wal_age_s=time.time() - 30)
+            _b = make_cand(TMP4, os.path.join("p2"), 6, time.time(), wal_age_s=time.time() - 60)
+            W._fixed_drives = lambda: [TMP4]
+            _p4 = W._probe_db_dirs("")
+            ok("F3 阴：两个候选证据相近 ⇒ 标 ambiguous（宁可让用户点一下）",
+               _p4.get("ambiguous") is True and len(_p4["hit"]) == 2, str(_p4.get("ambiguous")))
+            _d4, _s4 = W.resolve_db_dir("")
+            ok("F3b 证据相近时**不自动选**：返回 (\"\", \"ambiguous\") 而不是 hit[0]",
+               (_d4, _s4) == ("", "ambiguous"), "%r / %r" % (_d4, _s4))
+            _dl, _sl = W.resolve_db_dir(str(_a))
+            ok("F3c 用户在配置里指定了 ⇒ 照用（不再走歧义分支）",
+               (_dl, _sl) == (_a, "config"), "%r / %r" % (_dl, _sl))
+        finally:
+            shutil.rmtree(TMP4, ignore_errors=True)
+        # ④ 阳：账号目录与「本人」一致 ⇒ 优先（哪怕它 .db 更少）
+        TMP5 = tempfile.mkdtemp(prefix="pm_dbid_")
+        try:
+            _mine = make_cand(TMP5, os.path.join("mine"), 2, time.time(),
+                              acc="wxid_judge0001")
+            _other = make_cand(TMP5, os.path.join("other"), 99, time.time(),
+                               acc="wxid_someoneelse")
+            W._fixed_drives = lambda: [TMP5]
+            W._self_identity_hint = lambda: ("wxid_judge0001", "wxid_judge0001")
+            _p5 = W._probe_db_dirs("")
+            ok("F4 阳：账号目录与本人一致 ⇒ 排在第一位（哪怕 .db 比另一个少）",
+               (_p5["hit"] or [None])[0] == _mine, "hit=%s" % [_p5["hit"][i][len(TMP5):] for i in range(len(_p5["hit"]))])
+            ok("F4b 证据里如实写出「与本人一致」",
+               "与本人一致" in ((_p5.get("why") or {}).get(_mine) or ""), str(_p5.get("why"))[:200])
+        finally:
+            shutil.rmtree(TMP5, ignore_errors=True)
+    finally:
+        W._db_dir_candidates, W._fixed_drives = _c2, _d2
+        if _id2 is not None:
+            W._self_identity_hint = _id2
+        shutil.rmtree(TMP2, ignore_errors=True)
+
+    print("── G. 真机只读冒烟（不联网、不开窗）──")
     W._db_dir_candidates, W._fixed_drives = _orig_cands, _orig_drives
     t1 = time.monotonic()
     try:

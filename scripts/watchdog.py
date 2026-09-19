@@ -5,6 +5,7 @@
 启动时把自己的 PID 写到 data/watchdog.pid，供 停止机器人 读取。
 """
 import os
+import random
 import re
 import shutil
 import subprocess
@@ -91,6 +92,70 @@ def _read_watchdog_pid():
         return pid, ver
     except Exception:
         return 0, ""
+
+
+# ── 重启策略（V-R2-1，2026-09-20）：不再"无脑每 5 秒拉一次" ─────────────────────────────
+# 病：双开（单实例锁 ⇒ exit 3）、依赖装错、配置坏掉这类"起不来"的情形下，机器人**每次都秒退**，
+#     看门狗照样每 5 秒再拉一次（实测 22 秒 5 次）⇒ 一夜上千次：CPU/句柄持续消耗、日志持续涨、
+#     反复抢单实例锁与端口；用户侧只看到"控制台连不上、日志在长"，没有任何"它其实一直在失败"的提示。
+# 治（照 systemd 的 RestartSec/StartLimitBurst 与 AWS 的反模式清单）：
+#   ① exit 3（单实例闸门：已有实例在跑）⇒ **重启没有意义** ⇒ 看门狗退场并留痕；
+#   ② 存活不足 EARLY_EXIT_S ⇒ 判"启动失败"，按 base*2^(n-1) **指数退避 + 抖动**（上限 10 分钟）；
+#   ③ 连续失败 MAX_EARLY_FAILS 次 ⇒ **停手并留痕**（写 data/runtime.log + stdout），别无声拉到天亮；
+#   ④ 跑够时长的（≥ EARLY_EXIT_S，含正常收尾退出）⇒ 仍然 5 秒重拉（正常重启语义不许改坏）。
+EARLY_EXIT_S = 10.0                 # 存活不足这个秒数 ⇒ 算"启动失败"（不是"跑完一轮"）
+BACKOFF_BASE_S = 5.0                # 退避基数
+BACKOFF_CAP_S = 600.0               # 退避上限（10 分钟）
+MAX_EARLY_FAILS = 5                 # 连续启动失败到这个次数就停手留痕
+RESTART_GAP_S = 5.0                 # 正常退出后的重拉间隔（老口径，保持不变）
+EXIT_ALREADY_RUNNING = 3            # `persona_morph.py` 的单实例闸门退出码
+
+
+def _note(msg: str) -> None:
+    """重启策略的留痕：写 `data/runtime.log`（与机器人同一份）+ 打到 stdout（有控制台时可见）。"""
+    line = "[watchdog] %s %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), msg)
+    try:
+        with open(CRASH_LOG, "a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception:
+        pass
+    try:
+        print("[watchdog] %s" % msg)
+    except Exception:
+        pass
+
+
+def _backoff_delay(fails: int) -> float:
+    """第 `fails` 次连续失败的退避秒数：`base*2^(n-1)`，封顶 10 分钟，带 ±20% 抖动。
+
+    抖动必要（AWS 的"指数退避与抖动"）：多个实例/多次重启同时退回同一秒会把"重试风暴"变成
+    "同步风暴"，加个范围就散开了。
+    """
+    try:
+        d = BACKOFF_BASE_S * (2 ** max(0, int(fails) - 1))
+    except Exception:
+        d = BACKOFF_CAP_S
+    d = min(BACKOFF_CAP_S, max(BACKOFF_BASE_S, d))
+    try:
+        d *= random.uniform(0.8, 1.2)
+    except Exception:
+        pass
+    return min(BACKOFF_CAP_S, max(0.5, d))
+
+
+def _drop_own_pid_file() -> None:
+    """退场前把 `watchdog.pid` 收掉 —— **但只在自己那条还在里面时**收。
+
+    为什么非要判（V-R2-1 的邻居坑）：`watchdog.pid` 是全安装共享的；接管场景下这里可能是
+    **别人的 pid**，无脑删会把「停止机器人」的把手一起删掉。
+    """
+    try:
+        pid, _ver = _read_watchdog_pid()
+        if pid and pid != os.getpid():
+            return
+        os.remove(PID_FILE)
+    except Exception:
+        pass
 
 
 def main():
@@ -215,6 +280,7 @@ def main():
             os.remove(STOP_FLAG)
     except Exception:
         pass
+    fails = 0                                    # 连续"启动失败"计数（V-R2-1）
     while True:
         # 用户在 5 秒宽限期内的「停止」请求 → 不再拉起，直接退场
         if os.path.exists(STOP_FLAG):
@@ -223,24 +289,30 @@ def main():
             except Exception:
                 pass
             return 0
+        _t0 = time.time()
+        rc = None
         try:
             # stderr 重定向到崩溃日志：下次机器人无声挂掉时能查到原因
             # （persona_morph 若 import 失败/启动即崩溃，之前 stderr=DEVNULL 会静默重启，无从排查）
             crash = open(CRASH_LOG, "a", encoding="utf-8")
-            crash.write("\n[watchdog] %s 拉起 persona_morph…\n" % time.strftime("%Y-%m-%d %H:%M:%S"))
-            crash.flush()
-            p = subprocess.Popen([exe, os.path.join(ROOT, "scripts", "persona_morph.py")],
-                                 cwd=ROOT, creationflags=flags,
-                                 stdin=subprocess.DEVNULL, stdout=crash, stderr=crash)
-            crash.close()
+            try:
+                crash.write("\n[watchdog] %s 拉起 persona_morph…\n" % time.strftime("%Y-%m-%d %H:%M:%S"))
+                crash.flush()
+                p = subprocess.Popen([exe, os.path.join(ROOT, "scripts", "persona_morph.py")],
+                                     cwd=ROOT, creationflags=flags,
+                                     stdin=subprocess.DEVNULL, stdout=crash, stderr=crash)
+            finally:
+                crash.close()
             p.wait()
+            rc = p.returncode
             # ⛔ 2026-09-17 加：机器人 **静默死掉**（runtime.log 里一句遗言都没有）时必须能分清
             #   它是"自己干净退出"（0）还是"被系统/别人杀掉 / 原生崩溃"（0xC0000005、0xC0000409…）。
             #   之前这里丢掉退出码，导致只能靠猜（当晚为此白烧了半轮）。
+            # ⭐ 2026-09-20（V-R2-1）再加**存活时长**：判定"这算跑完一轮"还是"根本起不来"就靠它。
             try:
                 with open(CRASH_LOG, "a", encoding="utf-8") as _c:
-                    _c.write("[watchdog] persona_morph 退出：code=%s (0x%08X)\n"
-                             % (p.returncode, (p.returncode or 0) & 0xFFFFFFFF))
+                    _c.write("[watchdog] persona_morph 退出：code=%s (0x%08X) · 存活 %.1fs\n"
+                             % (rc, (rc or 0) & 0xFFFFFFFF, time.time() - _t0))
             except Exception:
                 pass
         except Exception as e:
@@ -249,7 +321,29 @@ def main():
                     crash.write("[watchdog] 异常：%s\n" % e)
             except Exception:
                 pass
-        time.sleep(5)
+        _alive = time.time() - _t0
+        # ① 单实例闸门：有别的实例在跑（exit 3）⇒ 再拉一万次也是同一个结果 ⇒ 退场留痕
+        if rc == EXIT_ALREADY_RUNNING:
+            _note("persona_morph 报「已有实例在运行」(exit 3) ⇒ 重启没有意义，看门狗退场。"
+                  "要重来请点「一键启动」；若确认没有实例在跑，删掉 data\\bot.lock 后重试。")
+            _drop_own_pid_file()
+            return 0
+        # ② 秒退 ⇒ 判"启动失败"：指数退避 + 抖动；连续 N 次就停手（不许无声无息拉到天亮）
+        if _alive < EARLY_EXIT_S:
+            fails += 1
+            if fails >= MAX_EARLY_FAILS:
+                _note("机器人连续 %d 次启动失败（本次只活了 %.1fs，退出码=%s）⇒ 看门狗**停手**，"
+                      "不再每 5 秒重拉。原因就在本文件上面几行（stderr 也在这份日志里）；"
+                      "修好后点「一键启动」即可。" % (fails, _alive, rc))
+                _drop_own_pid_file()
+                return 1
+            _d = _backoff_delay(fails)
+            _note("机器人第 %d 次启动失败（只活了 %.1fs，退出码=%s）⇒ 退避 %.1fs 后再试"
+                  % (fails, _alive, rc, _d))
+            time.sleep(_d)
+            continue
+        fails = 0                                # 跑够时长了 ⇒ 连续失败计数清零（正常重启语义）
+        time.sleep(RESTART_GAP_S)
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@
 import logging
 import logging.handlers
 import os
+import re
 import shutil
 import sys
 
@@ -113,6 +114,93 @@ ck("watchdog 有一次性改名（老内容不丢）",
 ck("日志治理的新名在册", '("data/runtime.log"' in _lim)
 ck("旧名仍在册（清用户机器上的残留）", '("data/bot_crash.log"' in _lim)
 ck("启动提示不再把人指向旧名", "runtime.log" in _os_ and "bot_crash.log" not in _os_)
+
+print("⑦ V-R1-5：V-R1-5 补的三处「只增不减」")
+# ① 真实厂造三个超限文件（真写盘，不伪造任何状态）⇒ sweep 后必须都被裁到上限内
+_for_trim = (("data/input_audit.log", 1 * 1024 * 1024),
+             ("logs/sd_local.log", 2 * 1024 * 1024),
+             ("logs/installer.log", 2 * 1024 * 1024))
+for _rel, _limb in _for_trim:
+    _p = os.path.join(tmp, _rel.replace("/", os.sep))
+    os.makedirs(os.path.dirname(_p), exist_ok=True)
+    with open(_p, "wb") as f:
+        f.write(b"z" * (_limb + 400 * 1024))                # 真超限
+    ck("V1 造出超限的 %s（%d 字节）" % (_rel, os.path.getsize(_p)), os.path.getsize(_p) > _limb)
+_res7 = lh.sweep(tmp, keep_days=14)
+for _rel, _limb in _for_trim:
+    _p = os.path.join(tmp, _rel.replace("/", os.sep))
+    ck("V1 %s 被裁到上限内（原来不在名单里 ⇒ 只增不减）" % _rel, os.path.getsize(_p) <= _limb,
+       "size=%s lim=%s" % (os.path.getsize(_p), _limb))
+    ck("V1b %s 记进了 trimmed（看得见治理动作）" % _rel, _rel in _res7["trimmed"], str(_res7["trimmed"].keys()))
+
+# ② 失败现场：整目录按 mtime 清（老的删、当天留）
+_fail = os.path.join(tmp, "wechatauto_logs", "fail")
+_old_d = os.path.join(_fail, "20260101-000000_old")
+_new_d = os.path.join(_fail, "20990101-000000_new")
+os.makedirs(_old_d, exist_ok=True)
+os.makedirs(_new_d, exist_ok=True)
+with open(os.path.join(_old_d, "shot.png"), "wb") as f:
+    f.write(b"p" * 4096)
+with open(os.path.join(_old_d, "probe.json"), "w", encoding="utf-8") as f:
+    f.write("{}")
+with open(os.path.join(_new_d, "shot.png"), "wb") as f:
+    f.write(b"p" * 4096)
+_t_old = time.time() - 40 * 86400
+os.utime(os.path.join(_old_d, "shot.png"), (_t_old, _t_old))
+os.utime(os.path.join(_old_d, "probe.json"), (_t_old, _t_old))
+os.utime(_old_d, (_t_old, _t_old))
+_res7b = lh.sweep(tmp, keep_days=14)
+ck("V2 过期失败现场**整目录**被删（原来只删 *.log、进不了子目录）", not os.path.exists(_old_d), _old_d)
+ck("V2b 未过期的失败现场保留", os.path.isdir(_new_d), _new_d)
+ck("V2c 删除项如实记进返回值（带目录名）", "fail/20260101-000000_old" in _res7b["deleted"], str(_res7b["deleted"]))
+ck("V2d 释放字节数是真算的（≥ shot.png 的 4096）",
+   int(_res7b["trimmed"].get("wechatauto_logs/fail/20260101-000000_old") or 0) >= 4096,
+   str(_res7b["trimmed"].get("wechatauto_logs/fail/20260101-000000_old")))
+
+# ③ GLOB_DAILY：要么真被用、要么不存在（不许留死代码）
+ck("V3 GLOB_DAILY 要么被引用、要么已删（V-R1-5：定义后全仓无人使用＝死代码）",
+   _lim.count("GLOB_DAILY") == 0 or _lim.count("GLOB_DAILY") >= 2, "出现 %d 次" % _lim.count("GLOB_DAILY"))
+
+# ④ 名单必须覆盖源码里真的会追加写的日志路径（机械集合差，差不为空即红）
+print("⑧ V-R1-5：名单覆盖度（源码里出现的 logs/data 日志路径必须都在册）")
+_known = [r for r, _b, _k in lh.LOG_LIMITS]
+_NAMED = ["logs/persona_morph.log", "logs/onestart.log", "logs/wx_agent.log", "logs/sd_local.log",
+          "logs/installer.log", "data/runtime.log", "data/bot_crash.log", "data/input_audit.log",
+          "data/listener_failed.jsonl"]
+for _n in _NAMED:
+    ck("V4 名单里有 %s" % _n, _n in _known, str(_known))
+_scan_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_found = set()
+for _sub in ("agent", "scripts"):
+    for _fn in os.listdir(os.path.join(_scan_root, _sub)):
+        if not _fn.endswith(".py") or "selftest" in _fn:
+            continue                                # 判据自己的临时目录不算产品的日志
+        _txt = open(os.path.join(_scan_root, _sub, _fn), encoding="utf-8", errors="replace").read()
+        for _m in re.finditer(r"""["'](logs|data)["']\s*,\s*["']([^"']+\.log)["']""", _txt):
+            _found.add("%s/%s" % (_m.group(1), _m.group(2)))
+        for _m in re.finditer(r"""(?:LOG_DIR|LOGS_DIR|DATA_DIR)\s*,\s*["']([^"']+\.log)["']""", _txt):
+            _found.add("logs/" + _m.group(1))
+_missing = sorted(p for p in _found
+                  if p not in _known and p.split("/", 1)[1] not in ("console.url", "browser_opened.txt",
+                                                                    "browser_opened.lock", "python_path.txt"))
+ck("V5 源码里追加写的**日志**路径没有漏在名单外（漏了就是下一个 V-R1-5）",
+   not _missing, "扫到=%s 漏=%s" % (sorted(_found), _missing))
+# ⚠️ `.jsonl` 那些是**记录存储**（台账/风险事件/模型思考），不是日志：它们由各自的模块按"条数/天数"
+#    治理（`history_prune.py` 等），**不许**塞进 LOG_LIMITS —— 那会把台账当成日志截尾，等于丢证据。
+#    这条机械断言就是为了防止下一个人"顺手"把它们并进日志名单。
+for _store in ("data/message_ledger.jsonl", "data/session_log.jsonl", "logs/thoughts.jsonl"):
+    ck("V6 记录存储 %s **不在**日志名单里（数据不是日志，别用截尾治理）" % _store, _store not in _known,
+       str(_known))
+_scan2 = set()
+for _sub in ("agent", "scripts"):
+    for _fn in os.listdir(os.path.join(_scan_root, _sub)):
+        if not _fn.endswith(".py") or "selftest" in _fn:
+            continue
+        _txt = open(os.path.join(_scan_root, _sub, _fn), encoding="utf-8", errors="replace").read()
+        for _m in re.finditer(r"""["'](logs|data)["']\s*,\s*["']([^"']+\.jsonl)["']""", _txt):
+            _scan2.add("%s/%s" % (_m.group(1), _m.group(2)))
+ck("V7 记录存储（.jsonl）单独立账：本判据知道有哪些、且都不在日志名单里",
+   bool(_scan2) and not (_scan2 & set(_known)), "扫到=%s" % sorted(_scan2))
 
 shutil.rmtree(tmp, ignore_errors=True)
 print("\n== 结论：%d 通过 / %d 失败 ==" % (PASS, FAIL))

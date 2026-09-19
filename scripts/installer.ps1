@@ -338,9 +338,44 @@ if ($r.code -ne 0) {
 #   永远不是文件 ⇒ 判否 ⇒ 报"找不到 Python"。与包体无关：`pack_online.py` 的 EXCLUDE 含
 #   `runtime/`（绿色 Python 不进包）⇒ "没有 runtime\python 但有系统 Python"是**常态**。
 #   ⇒ 命令与路径都认，并且**必须真跑一次报出版本号**才算数（版本要 3.10~3.12）。
+# 有界地"跑一次拿版本号"：20 秒不返回就 Kill（C# 侧 TryPy 本来就有这个超时，
+# PowerShell 侧原来没有 ⇒ 拿一个"存在但不是 Python"的 exe 当目标会挂死，2026-09-20 实测）。
+function Invoke-PyVer([string]$exe, [string]$pre) {
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $exe
+    $a = @()
+    if ($pre) { $a += @($pre.Split(' ', [System.StringSplitOptions]::RemoveEmptyEntries)) }
+    # ⚠️ 这段脚本里**不能有双引号**：外层要用双引号包住它传给 `ProcessStartInfo.Arguments`，
+    #   带双引号会被拼坏 ⇒ python 报语法错、stdout 为空 ⇒ 判成"没报出版本号"（2026-09-20 实测踩到）。
+    $a += @('-c', "import sys;print('{}.{}'.format(*sys.version_info[:2]))")
+    # ⚠️ **只给含空格的参数加引号**（与 C# 侧 `RunPy` 一致）：给 `-3` 这种短参数也加引号，
+    #   `py` 启动器会把它当脚本名 ⇒ 无输出 ⇒ 判成"没报出版本号"（2026-09-20 实测踩到）。
+    $psi.Arguments = ($a | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' '
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
+    try {
+        $p = New-Object System.Diagnostics.Process
+        $p.StartInfo = $psi
+        if (-not $p.Start()) { return '' }
+        if (-not $p.WaitForExit(20000)) { try { $p.Kill() } catch {} ; return '' }
+        return ($p.StandardOutput.ReadToEnd() -split "`n" | Select-Object -First 1)
+    } catch { return '' }
+}
+
 function Resolve-PyCmd([string]$raw) {
     $t = ([string]$raw).Trim().TrimStart([char]0xFEFF).Trim().Trim('"').Trim()
     if (-not $t) { return $null }
+    # ⛔ 2026-09-20 修 V-R1-1（P0）：**整串先当路径试** —— 安装路径含空格时（默认包顶层就叫
+    #   `persona morph`），下面按"首个空格切分"会把路径切成 `...\persona` ⇒ 判"路径不存在"
+    #   ⇒ 全新机器（没装过 Python、正是绿色版存在的理由）完全起不来。与 `launcher.cs::TryPy`
+    #   **两侧同源**：先整串当路径，命不中再按"命令 + 参数"切分（`py -3` 那种）。
+    if (Test-Path -LiteralPath $t) {
+        $v0 = ([string](Invoke-PyVer $t '')).Trim()
+        if ($v0 -notmatch '^\d+\.\d+$') { Diag ('py 没报出版本号：' + $t); return $null }
+        return @{ exe = $t; pre = ''; ver = $v0; raw = $t }
+    }
     $exe = $t; $pre = ''
     if ($t.StartsWith('"')) {
         $q = $t.IndexOf('"', 1)
@@ -350,13 +385,7 @@ function Resolve-PyCmd([string]$raw) {
         if ($sp -gt 0) { $exe = $t.Substring(0, $sp); $pre = $t.Substring($sp + 1).Trim() }
     }
     if (($exe -match '[\\/:]') -and -not (Test-Path $exe)) { Diag ('py 路径不存在：' + $exe); return $null }
-    $ver = ''
-    try {
-        $a = @($pre.Split(' ', [System.StringSplitOptions]::RemoveEmptyEntries))
-        $a += @('-c', 'import sys;print(str(sys.version_info[0])+"."+str(sys.version_info[1]))')
-        $ver = (& $exe $a 2>$null | Select-Object -First 1)
-    } catch { Diag ('py 跑不起来：' + $t + ' / ' + $_.Exception.Message); return $null }
-    $ver = ([string]$ver).Trim()
+    $ver = ([string](Invoke-PyVer $exe $pre)).Trim()
     if ($ver -notmatch '^\d+\.\d+$') { Diag ('py 没报出版本号：' + $t); return $null }
     return @{ exe = $exe; pre = $pre; ver = $ver; raw = $t }
 }
