@@ -27,6 +27,40 @@ def token_path(root: str = "") -> str:
     return os.path.join(root or ROOT, TOKEN_REL)
 
 
+def _new_token_file(p: str, gen: str) -> str:
+    """竞态安全地建立口令文件：**独占创建**（`O_CREAT|O_EXCL`）。
+
+    ⛔ 2026-09-20 修（我自己在 V-R3-8 里留下的竞态）：原来是"读不到就生成一个再 `os.replace`"
+    —— 两个进程**同时**首建时会互相覆盖，各自 `_CACHE` 住自己那份 ⇒ **同一台机器上出现两个口令**，
+    于是本地生图服务拒掉产品自己的请求（表现成"本地生图突然不可用"）。
+    现在：独占创建成功 ⇒ 用我这份；已经存在（别人刚建好）⇒ **读回它**，绝不覆盖。
+    """
+    d = os.path.dirname(p)
+    if d:
+        try:
+            os.makedirs(d, exist_ok=True)          # `logs/` 在全新解压出来的包里可能还没有
+        except Exception:
+            return ""
+    try:
+        fd = os.open(p, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        try:
+            with open(p, encoding="utf-8") as fh:
+                return fh.read().strip()
+        except Exception:
+            return ""
+    except Exception:
+        return ""
+    try:
+        os.write(fd, (gen + "\n").encode("utf-8"))
+    finally:
+        try:
+            os.close(fd)
+        except Exception:
+            pass
+    return gen
+
+
 def token(root: str = "", create: bool = True) -> str:
     """读（或首建）本机共享口令。**永不抛**；`create=False` 且读不到就返回空串。"""
     env = str(os.environ.get(ENV_KEY) or "").strip()
@@ -47,17 +81,7 @@ def token(root: str = "", create: bool = True) -> str:
         pass
     if not create:
         return ""
-    t = secrets.token_urlsafe(24)
-    try:
-        d = os.path.dirname(p)
-        if d:
-            os.makedirs(d, exist_ok=True)
-        tmp = p + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            fh.write(t + "\n")
-        os.replace(tmp, p)
-    except Exception:
-        pass
+    t = _new_token_file(p, secrets.token_urlsafe(24))
     if not root:
         _CACHE["tok"] = t
     return t

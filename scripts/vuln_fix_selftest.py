@@ -469,6 +469,7 @@ print("── V-R3-8（P2）第二个监听面：Host 校验 + 口令（与控�
 _imports_ok = True
 try:
     import http.client                                                         # noqa: E402
+    import http.server                                                         # noqa: E402
     import threading                                                           # noqa: E402
 
     from agent import local_guard as lg                                        # noqa: E402
@@ -487,15 +488,13 @@ else:
        "X-PM-Token" in lg.client_headers("http://127.0.0.1:7860/x")
        and "X-PM-Token" not in lg.client_headers("https://api.example.com/x"))
 
-    # ⚠️ 2026-09-20：**handler 出错不许往 stderr 打 traceback** —— `run_all_selftests` 把输出里出现
-    #   `Traceback (most recent call last)` 判成本脚本红（哪怕 78/0、rc=0）。实测这条在**并发套跑**
-    #   时偶发（单跑 10 次都是 OK），所以这里把 handle_error 收成一张表：既不让它污染 stderr，
-    #   又把它变成一条**显式断言**（真出错反而更看得见，而不是被判据框架当噪声吃掉）。
+    # ⚠️ 2026-09-20：**用单线程 HTTPServer**（不是 ThreadingHTTPServer）——请求是**串行**发的，
+    #   多线程只会多出"收尾期 handler 线程还在读套接字"的竞态（并发套跑时偶发把 traceback
+    #   打进 stderr，而 `run_all_selftests` 见到 Traceback 就判本脚本红）。
+    #   单线程 + join ⇒ 收尾完全确定；`handle_error` 仍然收成一张表并**当一条显式断言**验。
     _hdl_err = []
 
-    class _QuietHTTP(SDS.ThreadingHTTPServer):
-        daemon_threads = True
-
+    class _QuietHTTP(http.server.HTTPServer):
         def handle_error(self, request, client_address):
             _hdl_err.append(repr(client_address))
 
@@ -535,9 +534,34 @@ else:
     finally:
         _httpd.shutdown()
         _httpd.server_close()
-        time.sleep(0.2)                               # 给 handler 线程收尾（别在 shutdown 后留半截连接）
+        try:
+            _thr8.join(timeout=3)                         # 单线程：join 完就彻底收干净，不留半个线程
+        except Exception:
+            pass
     ok("服务端一个 handler 异常都没有（真出错要看得见，不是被框架当 traceback 吃掉）",
        not _hdl_err, str(_hdl_err[:3]))
+
+    # ⛔ V-R3-8 的**竞态回归**（我自己留下的）：口令文件并发首建时不许互相覆盖。
+    #   两个进程同时进"读不到就生成" ⇒ 原来的 tmp+os.replace 会让各自 `_CACHE` 住不同口令，
+    #   同一台机器上出现两个口令 ⇒ 本地生图服务拒掉产品自己的请求。
+    import tempfile as _tf                                                      # noqa: E402
+    _rt = _tf.mkdtemp(prefix="pm_tokrace_")
+    _tp = lg.token_path(_rt)
+    os.makedirs(os.path.dirname(_tp), exist_ok=True)
+    io.open(_tp, "w", encoding="utf-8").write("EXISTING\n")
+    _kept = lg._new_token_file(_tp, "MINE")
+    ok(_kept == "EXISTING" and io.open(_tp, encoding="utf-8").read().strip() == "EXISTING",
+       "口令文件已存在 ⇒ **读回它**、绝不覆盖（并发首建不会互相打架）",
+       "got=%r file=%r" % (_kept, io.open(_tp, encoding="utf-8").read().strip()))
+    os.remove(_tp)
+    _made = lg._new_token_file(_tp, "MINE")
+    ok(_made == "MINE" and io.open(_tp, encoding="utf-8").read().strip() == "MINE",
+       "口令文件不存在 ⇒ 独占创建成功并落盘", "got=%r" % _made)
+    ok(lg._new_token_file(_tp, "OTHER") == "MINE",
+       "再叫一次（别人已建）⇒ 仍然读回既有的那个，不改成 OTHER")
+    _lg_src = io.open(os.path.join(ROOT, "agent", "local_guard.py"), encoding="utf-8").read()
+    ok(("os.O_EXCL" in _lg_src) and ("os.O_CREAT" in _lg_src) and ("os.replace" not in _lg_src),
+       "实现里用的是**独占创建**（不是先写临时文件再 replace）")
 
 _sds_src = io.open(os.path.join(ROOT, "agent", "sd_local_server.py"), encoding="utf-8").read()
 ok("do_GET / do_POST **两条路都**过同一道门（不是只挡了一半）",
