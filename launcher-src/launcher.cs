@@ -244,6 +244,25 @@ namespace WxLauncher
             _asking = false;
         }
 
+        /// 读 logs\python_path.txt 里那条 python 命令：**936 与 UTF-8 都试、去 BOM**，
+        /// 返回**第一个真的存在**的那个路径；一条都不可用返回空串。
+        /// 口径与 scripts\installer.ps1 那条**必须一致**（同一个文件、同一个坑，别各写一套）。
+        static string ReadPyPath(string pth)
+        {
+            try { if (!File.Exists(pth)) return ""; }
+            catch { return ""; }
+            foreach (var enc in new[] { Encoding.GetEncoding(936), new UTF8Encoding(false) })
+            {
+                try
+                {
+                    string t = File.ReadAllText(pth, enc).Trim().TrimStart('\uFEFF').Trim();
+                    if (t.Length > 0 && File.Exists(t)) return t;
+                }
+                catch { }
+            }
+            return "";
+        }
+
         void StartFlow()
         {
             try
@@ -257,13 +276,14 @@ namespace WxLauncher
                 using (var p = Process.Start(pi)) { p.WaitForExit(); }
                 Log("准备 Python 完成");
 
-                string pyCmd = "";
+                // 2026-09-19 修（与 scripts\installer.ps1 同源的那一类假报：窗口写「Python 环境异常 ·
+                //   runtime\python\python.exe 不存在」，可那个文件明明在）：以前**只按 936 解码**
+                //   logs\python_path.txt，而它是上一次安装留下的 ⇒ 换过目录 / 移动过文件夹之后它指向旧位置，
+                //   File.Exists 必然失败 ⇒ 报「不存在」。现在：①先按约定找 runtime\python\python.exe
+                //   （免编码、免陈旧路径）②再读文件，936/UTF-8 都试、去 BOM，取第一个真的存在的。
                 string pth = Path.Combine(Root, "logs", "python_path.txt");
-                if (File.Exists(pth))
-                {
-                    try { pyCmd = File.ReadAllText(pth, Encoding.GetEncoding(936)).Trim(); }
-                    catch { pyCmd = File.ReadAllText(pth).Trim(); }
-                }
+                string convPy = Path.Combine(Root, "runtime", "python", "python.exe");
+                string pyCmd = File.Exists(convPy) ? convPy : ReadPyPath(pth);
                 if (string.IsNullOrEmpty(pyCmd) || !File.Exists(pyCmd))
                 {
                     // 重跑一次准备再读
@@ -271,13 +291,14 @@ namespace WxLauncher
                         "-NoProfile -ExecutionPolicy Bypass -File \"" + ps1 + "\"");
                     pi2.UseShellExecute = false; pi2.CreateNoWindow = true;
                     using (var p2 = Process.Start(pi2)) { p2.WaitForExit(); }
-                    if (File.Exists(pth))
-                    {
-                        try { pyCmd = File.ReadAllText(pth, Encoding.GetEncoding(936)).Trim(); }
-                        catch { pyCmd = File.ReadAllText(pth).Trim(); }
-                    }
+                    pyCmd = File.Exists(convPy) ? convPy : ReadPyPath(pth);
                 }
-                if (string.IsNullOrEmpty(pyCmd) || !File.Exists(pyCmd)) { Fail("Python 环境异常（runtime\\python\\python.exe 不存在）"); return; }
+                if (string.IsNullOrEmpty(pyCmd) || !File.Exists(pyCmd))
+                {
+                    // 不许出现「请重新解压完整包」这类话（作者口径：不许覆盖解压、一定要直接更新）——
+                    // 如实说找过哪两处 + 一个不需要手动解压的下一步（与 installer.ps1 的文案同源）
+                    Fail("Python 环境异常（找过 runtime\\python\\python.exe 与 logs\\python_path.txt）——点「关闭」后重开一次；仍不行就在控制台点「检查更新」更新一版（不用自己解压）"); return;
+                }
 
                 SetState("检查 / 安装依赖…", 12, 1, "Python 就绪");
                 string onestart = Path.Combine(Root, "scripts", "onestart.py");

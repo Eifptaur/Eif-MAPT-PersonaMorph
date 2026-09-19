@@ -67,17 +67,29 @@ ok("有『先比包版本』的分支", "_stale" in OS_ and "watchdog.pid" in OS
 ok("包版本不一致 ⇒ 不跳过（照常拉起 watchdog）", "if existing is not None and not _stale:" in OS_)
 ok("日志说清是旧包残留", "旧包残留实例" in OS_)
 
-print("── D. 文案：用户可见处不许出现「覆盖解压」 ──")
+print("── D. 文案：用户不可见处不许出现「覆盖解压」这类『让用户手动解压』的说法 ──")
 _files = ["README.md", "agent/console_html.py", "launcher-src/launcher.cs", "launcher-src/close.cs",
-          "AGENTS.md"]
+          "AGENTS.md",
+          # ⭐ 2026-09-19 扩：这两处也是**用户能看到的** —— installer.ps1 的 Set-State 文案会原样显示在
+          #   「一键启动」窗口里（作者截图那句「不存在，请重新解压完整包」就是从 L349 漏出去的 ✗）。
+          "scripts/installer.ps1", "scripts/setup_python.ps1", "scripts/onestart.py"]
 _bad = []
 for rel in _files:
     p = os.path.join(ROOT, rel)
     if not os.path.exists(p):
         continue
-    if "覆盖解压" in io.open(p, encoding="utf-8", errors="ignore").read():
-        _bad.append(rel)
-ok("README/控制台/启动器里没有「覆盖解压」（%s）" % (_bad or "无"), not _bad, str(_bad))
+    _txt = io.open(p, encoding="utf-8", errors="ignore").read()
+    # ⭐ 只查"指令式"说法，且**跳过注释行**：
+    #   · onestart.py 里那句「不许覆盖解压…」是**注释里引用作者原话**（不是给用户看的）⇒ 误报 ✗
+    #   · installer.ps1 新文案里的「不用手动解压」是否定式说明 ⇒ 不该被当成违规 ✗
+    _lines = [l for l in _txt.splitlines()
+              if not l.strip().startswith(("#", "//", "<!--", "*", ">"))]
+    _body = "\n".join(_lines)
+    _hits = [w for w in ("覆盖解压", "解压覆盖", "手动解压",
+                         "请重新解压", "需重新解压", "要重新解压") if w in _body]
+    if _hits:
+        _bad.append("%s%s" % (rel, _hits))
+ok("README/控制台/启动器/安装器里没有『让用户手动解压』的说法（%s）" % (_bad or "无"), not _bad, str(_bad))
 
 print("\n==== 直接更新判据：%d 通过 / %d 失败 ====" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

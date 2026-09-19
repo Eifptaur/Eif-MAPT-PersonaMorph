@@ -98,6 +98,36 @@ try:
     a6 = D.check("%TEMP%")     # 环境变量要展开（既有 `_expand_path` 口径）
     ok("路径里的环境变量会被展开后再判", a6["path"] and "%TEMP%" not in a6["path"], a6["path"][:70])
 
+    print("── A2. 账号层（2026-09-19 加：网友反馈「大号能连、小号连不上」）──")
+    acct1 = os.path.join(good, "wxid_judge0001")
+    a7 = D.check(acct1)
+    ok("填到**账号层**：仍然算可用（不拦用户保存，只给提示）", a7["ok"] is True, str(a7["why"]))
+    ok("账号层被认出来，并点名上一级", a7["account_layer"] is True and D._same(a7["account_up"], good),
+       "%s / %s" % (a7["account_layer"], a7["account_up"]))
+    ok("账号层**必给提示**，提示里写的就是上一级路径",
+       bool(a7["hint"]) and good in a7["hint"] and "上一级" in a7["hint"], a7["hint"])
+    ok("这句提示没有括号式解释（面板 / 报告 / 控制台共用同一句）",
+       "（" not in a7["hint"] and "(" not in a7["hint"], a7["hint"][:60])
+    a8 = D.check(good)
+    ok("阴性对照：填上一级 ⇒ 不算账号层、没有提示（没坏就别报错）",
+       a8["account_layer"] is False and a8["hint"] == "", str(a8["hint"]))
+    # 同级再放一个账号目录 —— 多账号正是这个坑的现场，提示里要报出"还有几个"
+    _a2 = os.path.join(good, "wxid_judge0002", "db_storage", "message")
+    os.makedirs(_a2, exist_ok=True)
+    with open(os.path.join(_a2, "message_0.db"), "wb") as _f:
+        _f.write(b"x")
+    a9 = D.check(acct1)
+    ok("同级还有账号目录时，提示里报出还有几个", "还有 1 个账号目录" in a9["hint"], a9["hint"])
+    ok("同级账号数如实（另一个号单独计数）", a9["account_siblings"] == 1, str(a9["account_siblings"]))
+    a10 = D.check(os.path.join(acct1, "db_storage"))
+    ok("填到 db_storage 这一层：建议的上一级是**账号目录的再上一层**",
+       a10["account_layer"] is True and D._same(a10["account_up"], good), str(a10["account_up"]))
+    b6 = D.decide(acct1)
+    ok("配置填到账号层 ⇒ 决策结果带着提示（控制台那行与报告读的就是 note）",
+       bool(b6["note"]) and b6["note"] == b6["hint"] and "上一级" in b6["note"], str(b6["note"])[:80])
+    b7 = D.decide(good)
+    ok("阴性对照：配置填上一级 ⇒ note 为空", b7["note"] == "", str(b7["note"]))
+
     print("── B. 优先级：显式配置 > 扫盘最新可用 > 驱动库自探测 ──")
     # 造两个不同的"盘上目录"：older（旧）与 newer（新）——用 mtime 分出"最新"
     old_dir = make_xwechat_files(ROOT_TMP, "probe_old", mtime=1000000000)

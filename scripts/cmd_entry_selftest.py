@@ -239,12 +239,24 @@ for rel in ps1:
 ok("随包 .ps1 都是 UTF-8 **带 BOM**（无 BOM ⇒ PS 5.1 按 ANSI 解、中文注释会把语法读崩）",
    not bad_bom, "缺 BOM：%s（共查 %d 个）" % (bad_bom, len(ps1)))
 
-# ② `setup_python.ps1` 必须继续按 ANSI 写 python_path.txt —— 产物 `一键启动.exe` 是
-#    `File.ReadAllText(pth, Encoding.GetEncoding(936))` 读它的（launcher.cs:265）⇒
-#    谁把这里改成 UTF-8，中文路径下 exe 就会读到乱码并报「Python 环境异常」。
+# ② `setup_python.ps1` 必须继续按 ANSI 写 python_path.txt —— 产物 `一键启动.exe` 读它时
+#    **936 与 UTF-8 都试、去 BOM，取第一个真的存在的那个**（launcher.cs::ReadPyPath）。
+#    ⚠️ 2026-09-19 修：以前只有 936 一条路，而那个文件是**上一次安装留下的** ⇒ 换过目录/移动过文件夹
+#    之后它指向旧位置 ⇒ exe 报「Python 环境异常 · …不存在」（作者截图），而文件明明在。
 _ps1 = text(os.path.join("scripts", "setup_python.ps1"))
-ok("setup_python.ps1 仍按 ANSI 写 python_path.txt（一键启动.exe 那一侧按 936 读它）",
+ok("setup_python.ps1 仍按 ANSI 写 python_path.txt（一键启动.exe 那一侧也读了 936）",
    "Set-Content -Path $pathTxt -Value $cmd -Encoding Default" in _ps1)
+
+# ③ `一键启动.exe` 这一侧与 `installer.ps1` **同源**（同一个文件、同一个坑，两边别各写一套）：
+#    先按约定找 runtime\python\python.exe；读 txt 时 936/UTF-8 都试；找不到就说人话（不教用户解压）。
+_lc = text(os.path.join("launcher-src", "launcher.cs"))
+ok("一键启动.exe 先按约定找 runtime\\python\\python.exe（不靠那个 txt）",
+   'Path.Combine(Root, "runtime", "python", "python.exe")' in _lc)
+ok("读 logs\\python_path.txt 时 936 与 UTF-8 都试、去 BOM（取真存在的那个）",
+   "static string ReadPyPath" in _lc and "Encoding.GetEncoding(936), new UTF8Encoding(false)" in _lc
+   and "TrimStart('\\uFEFF')" in _lc)
+ok("找不到 Python 时给的是**不用解压**的下一步（与 installer.ps1 文案同源）",
+   "不用自己解压" in _lc and "检查更新" in _lc)
 
 # ③ `.cmd` 代码里不许再读那个 txt（读就有跨编码风险，见 P8），且要有 nopy 守卫
 for nm in (CHECK, ONLY):
