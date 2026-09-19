@@ -1,12 +1,12 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.18.13.8",
-    "sha256": "3720f7ffb7fe83eb697b66c2490933d06c596e1d9c595e95547410f6e9cac1d8",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.34/persona-morph-v2.1.34.zip",
-    "build": "c071acf8d4f1",
-    "size": 9404462,
-    "files": 285
+    "version": "2026.9.19.1",
+    "sha256": "20e1f5610bd172f775b65f520caa8ab7db2d5e6dad797213a67dcc766853c89e",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.35/persona-morph-v2.1.35.zip",
+    "build": "53623a675b58",
+    "size": 10699856,
+    "files": 297
   },
   "dlc": [
     {
@@ -33,13 +33,13 @@
     }
   ],
   "announce": {
-    "version": "2026.9.18.13.8",
+    "version": "2026.9.19.1",
     "notes": [
-      "修「**切换微信号**之后提示打不开消息库 / 只有前几句话回复」——多账号机器上，它现在会按**哪个账号正在被写**自动挑对那个号（以前会被「切走那一刻旧号刚被 checkpoint」骗，静默读旧号 ⇒ 新消息一条都看不到）；切号后 15 秒内自己跟着切过去，顺便把密钥缓存里那些已经不在的分片自愈掉（切号后那句 KeyError 就是它）"
+      "修三条网友报的：①控制台「群列表读不到」不再误报成「微信还没接上」——联系人库被微信占用时会如实写「群列表降级 · 消息收发不受影响」，并且自己退避重试（诊断里也多了一格「联系人库」）；②回复不再白等：模型说「本轮结束」就真的结束、发送被判否不会反复重试（实测那种 76~152 秒、几万 token 却一条都没发的轮次就是这么烧的），并加了一轮 45 秒的时间预算；③症状检验器不再假报「模型 key 没填」，档位那栏会显示**真正生效的档位**以及是谁在覆盖它"
     ],
     "forceBase": false,
-    "minBase": "2026.9.18.13.8"
+    "minBase": "2026.9.19.1"
   },
-  "builtAt": "2026-09-18T19:11:19Z",
-  "updatedAt": 1789758679020
+  "builtAt": "2026-09-19T11:25:00Z",
+  "updatedAt": 1789817100024
 }
