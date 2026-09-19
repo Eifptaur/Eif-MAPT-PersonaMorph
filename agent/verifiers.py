@@ -82,11 +82,25 @@ def _count(lines, *needles) -> int:
 
 
 def _verdict(checks, ok_all_msg, action_map) -> tuple:
-    """一条总判决：第一条不通过的检查 ⇒ 它就是卡点（顺序即优先级）。"""
+    """一条总判决：第一条不通过的检查 ⇒ 它就是卡点（顺序即优先级）。
+
+    ⭐ 2026-09-19 加**矛盾检测**：如果"负向结论"被同一份报告里的"正向证据"直接否证
+    （现场：检验器说「模型 key 没填」，可同一份报告里写着「最近一轮在 36 分钟前」——
+    没填 key 根本发不出上一轮），那就**不许**再给"去填 key"这种指令：那是把**我们自己读数的错**
+    当成用户的故障，用户只能一脸懵（原话「第三个贼奇怪」）。改判"证据矛盾、请把报告发我"。
+    """
     bad = [c for c in checks if not c["ok"]]
     if not bad:
         return True, ok_all_msg, ""
     first = bad[0]
+    _pos = {c.get("name") or "" for c in checks if c.get("ok")}
+    _alive = any(("最近有过一轮响应" in n or "监听水位有记录" in n) for n in _pos)
+    if _alive and ("模型 key" in (first.get("name") or "")):
+        return (False,
+                "证据互相矛盾：这份报告说「%s」，可同一份报告里「最近有过一轮响应 / 监听水位有记录」"
+                "是**通过**的 —— 没填 key 不可能发出上一轮 ⇒ **这是检验器的读数与运行时不一致，"
+                "不是你的配置有问题**。" % first.get("detail"),
+                "把这段报告直接粘进「反馈」发我（我照这条修检验器），**先不用改配置**")
     # 没在 action_map 里写明的检查，也要给一句可执行的下一步
     # （否则用户看到"卡住"却不知道干什么 —— 判据里专门钉了这一条）
     return (False, "卡在「%s」：%s" % (first["name"], first["detail"]),
@@ -244,8 +258,18 @@ def v_no_reply() -> dict:
     except Exception as e:
         checks.append(_check("读的是**正在用的那个微信号**", True,
                              "读不到账号信息（不影响其它判断）：%s" % str(e)[:40]))
-    key = str(((c.get("api") or {}).get("key") or "")).strip()
-    checks.append(_check("模型 key 已填", bool(key), "api.key %s" % ("已填" if key else "**没填**")))
+    # ⚠️ 2026-09-19 修：原来读 `api.key`——**配置里根本没有这个字段**（真字段是 `api.api_key`，
+    # 且运行时会先看 `providers[].api_key`）⇒ 所有用户的检验器都恒报「api.key 没填」的假卡点。
+    # 现在与运行时同源：走 `config.resolve_api_key()`（它在 llm.py 里就是发请求前的那一步）。
+    try:
+        from .config import resolve_api_key as _resolve_api_key
+        key = str(_resolve_api_key(c) or "").strip()
+        _key_src = "按运行时同源解析"
+    except Exception as _e:
+        _api_d = c.get("api") or {}
+        key = str(_api_d.get("api_key") or _api_d.get("key") or "").strip()
+        _key_src = "解析函数不可用，退回直读 api_key（%s）" % str(_e)[:24]
+    checks.append(_check("模型 key 已填", bool(key), "模型 key %s（%s）" % ("已填" if key else "**没填**", _key_src)))
     wm = _read_json(_p("data", "listener_watermark.json"), {})
     checks.append(_check("监听水位有记录（说明监听在跑）", bool(wm),
                          "水位条目 %d 个%s" % (len(wm), ("，最近：%s" % max(map(str, wm.values()))[:8]) if wm else "")))
@@ -268,8 +292,66 @@ def v_no_reply() -> dict:
     tier_ok, tier_note = True, ""
     try:
         from . import prompt as _pr
-        cfg_tier = (c.get("reply") or {}).get("tier")
-        tier_ok, tier_note = True, "回复档位配置=%s（1=只回艾特 / 2=+关键词 / 3=+随机）" % cfg_tier
+        # ⚠️ 2026-09-19 修：原来读 `c["reply"]["tier"]`（配置里没有 `reply` 段 ⇒ 恒 None）。
+        # 而且**光看全局档位不够**——真正生效的档位有四层覆盖，优先级从高到低：
+        #   ①指令禁言（tier_control.json，强制降到 1 档，最长 24h）②峰谷映射表（按时间自动切档）
+        #   ③每群独立档位（unified_tier=false + group_tier[群名]）④滑条（tier_mode!=fixed 时接管）
+        #   ⇒ 只改全局档位却被上面任一层盖住，就是"我明明调了档位它还是不搭话"的真因。
+        st = c.get("store") or {}
+        cfg_tier = st.get("context_tier")
+        _mode = str(st.get("tier_mode") or "fixed")
+        _slider = st.get("context_slider_pos")
+        _unified = st.get("unified_tier", True)
+        _gtier = st.get("group_tier") or {}
+        _sch2 = st.get("tier_schedule") or {}
+        _parts = ["配置档位=%s" % cfg_tier]
+        _over, _eff = [], None
+        try:
+            from . import tier_control as _tc2
+            _live_mute = []
+            for _k in list(((_tc2.load() or {}).get("muted") or {}).keys()):
+                try:
+                    _mi = _tc2.is_muted(_k)
+                except Exception:
+                    _mi = None
+                if _mi:
+                    _live_mute.append("%s（剩 %d 分钟%s）" % (
+                        _k, int(_mi.get("left_min") or 0),
+                        ("，%s 按的" % _mi.get("by")) if _mi.get("by") else ""))
+            if _live_mute:
+                _over.append("**临时禁言中**：%s ⇒ 该会话被强制降到 1 档" % "；".join(_live_mute))
+                _eff = 1
+            if _sch2.get("enabled"):
+                try:
+                    _mt = _tc2.scheduled_tier(cfg=c)
+                except Exception:
+                    _mt = None
+                if _mt:
+                    _over.append("**峰谷映射已开**：当前时段命中档位 %s（tier=0 表示完全不回应）" % _mt.get("tier"))
+                    if _eff is None:
+                        _eff = _mt.get("tier")
+                else:
+                    _over.append("峰谷映射已开，但当前时段没命中任何窗口")
+        except Exception as _e2:
+            _parts.append("禁言/时段状态读不到（%s）" % str(_e2)[:24])
+        if _mode != "fixed" and _slider is not None:
+            _over.append("**滑条接管**：模式=%s 且滑条位置=%s（此时全局档位不参与）" % (_mode, _slider))
+        if not _unified:
+            _over.append("**每群独立档位已开**：%d 个群有单独设置%s（全局档位对它们无效）"
+                         % (len(_gtier), ("：" + "、".join(list(_gtier)[:4])) if _gtier else ""))
+        if _eff is None:
+            _eff = cfg_tier
+        try:
+            _eff_n = int(float(_eff)) if _eff is not None else None
+        except Exception:
+            _eff_n = None
+        _note = " · ".join(_parts + (["⚠️ " + "；".join(_over)] if _over else []))
+        if _eff_n == 1:
+            tier_ok, tier_note = False, (_note + " ⇒ **生效档位是 1（只回艾特），群里说话它不会搭话**；"
+                                                 "要它主动说话就把档位调到 2（+关键词）或 3（+随机），"
+                                                 "并确认上面没有覆盖项在生效")
+        else:
+            tier_ok, tier_note = True, (_note + "（1=只回艾特 / 2=+关键词 / 3=+随机 / 4=全读）")
     except Exception:
         tier_note = "读不到回复档位"
     checks.append(_check("回复档位不是『只回艾特』却指望它搭话", tier_ok, tier_note))

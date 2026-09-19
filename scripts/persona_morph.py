@@ -697,9 +697,19 @@ class Orchestrator:
         }
 
         max_rounds = max(1, int(cfg.get("api", {}).get("max_rounds") or 12))
+        # ⭐ 2026-09-19（S1）：**一轮的时间预算**。以前只有"轮次上限"，而一次模型调用最坏 180s、
+        #   一次失败发送最坏 20~40s ⇒ 用户实测 76~152 秒一轮、还常落到 noreply。
+        #   现在到点就不再发起新的模型调用，直接收口（`sent` 非空仍算 done）。
+        _budget_ms = int(cfg.get("api", {}).get("round_budget_ms") or 45000)
+        _t_deadline = time.time() + max(5.0, _budget_ms / 1000.0)
         finish = False
+        _seen_calls = {}          # ⭐ 2026-09-19：本轮内"同工具 + 同参数"的重复计数（见下面 S3）
         for round_no in range(max_rounds):
             if self.stopped:
+                break
+            if time.time() > _t_deadline:
+                session["budget_hit"] = True
+                log.info("[%s] 到时间预算（%dms）⇒ 收口，不再发起新的模型调用", chat_key, _budget_ms)
                 break
             session["activity"] = "正在思考…"
             response = chat_completion_with_retry({"messages": messages, "tools": openai_tools})
@@ -773,10 +783,30 @@ class Orchestrator:
                 args_raw = fn.get("arguments") or "{}"
                 if name in ("web_search", "web_fetch"):
                     session["web_search_count"] += 1
+                if name == "send_message":
+                    # ⭐ 2026-09-19（S2）：记"这一轮动过发送"——跑完仍没发出去就判 `noreply_send_failed`
+                    session["send_attempts"] = int(session.get("send_attempts") or 0) + 1
                 session["activity"] = "正在调用 %s…" % name
-                result = execute_tool(tool_defs, ctx, name, args_raw)
+                # ⭐ 2026-09-19 修（S3，证据见 data/sessions/2026-09-18.jsonl 01:32:48 那条）：
+                #   模型遇到"发送通道判否"时会**同一工具同参数反复重试**（实测 send_message×3），
+                #   每次都白烧一次模型调用（≈8.6k token / 20~25s），最后仍是一条没发出去 ⇒
+                #   报障那三轮 76~152 秒、3.4~5.2 万 token、全是 noreply 就是这么来的。
+                #   这里给"同工具 + 同参数"设**本轮上限 3 次**：超了不再真执行，直接回一条
+                #   让模型断念的 tool 结果（协议上仍必须回一条 tool 消息）。
+                _sig = (name, str(args_raw))
+                _rep = _seen_calls.get(_sig, 0) + 1
+                _seen_calls[_sig] = _rep
+                if _rep > 3:
+                    result = {"content": ("⛔ 同一次调用（%s，参数完全相同）本轮已经试过 %d 次，结果不会变；"
+                                          "不要再重复调用它 —— 要么换别的办法，要么结束本轮。"
+                                          % (name, _rep - 1))}
+                    _entry["tools"].append({"name": name, "args": str(args_raw)[:180], "skipped": "repeat>3"})
+                    log.info("[%s] 第 %d 轮：%s 同参数重复第 %d 次，已短路不再执行", chat_key, round_no + 1, name, _rep)
+                else:
+                    result = execute_tool(tool_defs, ctx, name, args_raw)
                 session["activity"] = ""
-                _entry["tools"].append({"name": name, "args": str(args_raw)[:180]})
+                if _rep <= 3:
+                    _entry["tools"].append({"name": name, "args": str(args_raw)[:180]})
 
                 content_str = ""
                 images = []
@@ -797,8 +827,27 @@ class Orchestrator:
 
             messages.extend(tool_results)
             messages.extend(image_user_msgs)
+            if finish:
+                # ⭐ 2026-09-19 修（死代码）：模型调 `finish` 就是在说"本轮到此为止"，而旧代码只写了
+                #   这个变量、**循环里从没读过**（全文 grep 只有 700/795/796 三处）⇒ 白白再多跑一次模型
+                #   调用（实测 ≈8.6k token / ≈20s），最后还常落到 noreply。
+                log.info("[%s] 模型调用了 finish ⇒ 本轮到此结束（第 %d 轮）", chat_key, round_no + 1)
+                break
 
-        status = "done" if session["sent"] else "noreply"
+        # ⭐ 2026-09-19（S2）：以前"跑完一条没发"一律叫 `noreply`，报障时分不清是"模型不想说"
+        #   还是"系统回不去"（用户只能报"它不回复"，我们只能猜）。现在拆成可判读的几种结局。
+        if session["sent"]:
+            status = "done"
+        elif session.get("fallback_blocked"):
+            status = "noreply_blocked"            # 兜底文本被过滤（自我指涉 / 太长）
+        elif session.get("budget_hit"):
+            status = "noreply_budget"             # 到时间预算收口
+        elif session.get("send_attempts"):
+            status = "noreply_send_failed"        # 调过发送工具但一条都没发出去（通道判否）
+        elif not finish and round_no >= max_rounds - 1:
+            status = "noreply_max_rounds"         # 打满轮次上限（模型没给结束信号）
+        else:
+            status = "noreply"
         self.stats["sessions"] += 1
         self.stats["tokens"] += int(session["usage"]["total_tokens"])
         self.stats["sent"] += len(session["sent"])
@@ -2181,13 +2230,28 @@ def main():
                 _why = wechat_attach_status().get("reason") or "微信未接入"
             except Exception:
                 _why = "微信未接入"
-            return {"ok": False, "error": "微信还没接上 ⇒ 读不到群列表。原因：%s" % _why, "groups": []}
+            return {"ok": False, "attach_ok": False,
+                    "error": "微信还没接上 ⇒ 读不到群列表。原因：%s" % _why, "groups": []}
+        # ⭐ 2026-09-19 分层（网友报障：控制台写「微信还没接上 ⇒ 读不到群列表」，而那台机器微信在跑、
+        #   消息库能开、密钥可用）：真实失败往往只是**读 contact.db 时微信在并发写**，
+        #   消息收发完全正常 ⇒ 不许再把"某一路读取失败"说成"微信没接上"。
+        _cap_g = ""
+        try:
+            _cap_g = str((getattr(wechat, "_cap", {}) or {}).get("groups") or "")
+        except Exception:
+            _cap_g = ""
         try:
             gs = [{"name": g.get("name"), "wxid": g.get("wxid")}
                   for g in (wechat.list_groups() or [])]
         except Exception as e:
-            return {"ok": False, "error": "读群列表失败：%s" % str(e)[:120], "groups": []}
-        return {"ok": True, "groups": gs}
+            return {"ok": False, "attach_ok": True, "degraded": True,
+                    "error": ("群列表读取失败（联系人库 contact.db 被微信占用）⇒ **消息收发与监听不受影响**；"
+                              "稍等几秒再点一次即可。（%s）" % str(e)[:100]), "groups": []}
+        if not gs and _cap_g.startswith("fail"):
+            return {"ok": False, "attach_ok": True, "degraded": True,
+                    "error": ("群列表读取失败（联系人库被微信占用）⇒ **消息收发与监听不受影响**；"
+                              "稍等几秒再点一次即可。（%s）" % _cap_g[5:140]), "groups": []}
+        return {"ok": True, "attach_ok": True, "groups": gs}
 
     def memory_fn(action, chat_key="", user_id="", name="", contents=None, scope="all"):
         # 记忆页面：list（各群成员印象） / delete（删某成员印象） / update（编辑成员印象）

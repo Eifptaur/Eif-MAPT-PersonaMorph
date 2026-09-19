@@ -88,8 +88,8 @@ def _diag(vi, db=None, err="", adapter=None, deps="ok"):
 print("── A. 全过：微信在跑 / 库打得开 / 密钥可用 / 认得出你自己 ──")
 _d = _diag(_VI_RUN, db=_DB(self_info={"username": "wxid_me", "nick_name": "我"}))
 ok("ok=True 且没有卡点 step", _d["ok"] and _d["step"] == "", "ok=%s step=%r" % (_d["ok"], _d["step"]))
-ok("六步都给出来了（deps/process/version/db_open/key/self）",
-   {s["key"] for s in _d["steps"]} == {"deps", "process", "version", "db_open", "key", "self"},
+ok("七步都给出来了（deps/process/version/db_open/key/contacts/self）",
+   {s["key"] for s in _d["steps"]} == {"deps", "process", "version", "db_open", "key", "contacts", "self"},
    str([s["key"] for s in _d["steps"]]))
 ok("第一步就是「依赖装齐」（我们自己这半边先过，再谈微信）",
    _d["steps"][0]["key"] == "deps" and _d["steps"][0]["ok"], str(_d["steps"][0]))
