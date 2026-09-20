@@ -4466,11 +4466,17 @@ class WeChatAdapter:
                 #   拿不到就**先按名字切一次会话**（按名字选行，比"当前开着的恰好是它"可靠得多），
                 #   切成了照样发；两条都不成才拒（并在说明里点明缺哪一档，不静默）。
                 if _st["status"] == "ok":
-                    _strong, _strong_why = self.chat_is_open(chat_id, gui=gui, name=name)
+                    # ⛔ 2026-09-21（**第四轮审计 V-R4-5 掀出来的真缺陷**）：这里原来写的是
+                    #   `self.chat_is_open(chat_id, gui=gui, name=name)` —— 而本函数里**根本没有 `name`**
+                    #   ⇒ 每回指纹判 ok 都抛 `NameError: name 'name' is not defined`，
+                    #   再被下面那个 `except` 吞掉 + 继续发送 ⇒ **这一整档"再要一档有区分力的证据"
+                    #   从来没跑过**（"对的会发错"就是这么来的）。⇒ 不传 name，让被调方自己解析
+                    #   （`chat_is_open` / `switch_chat_posted` 都是 `name or self.display_name(chat_id)`）。
+                    _strong, _strong_why = self.chat_is_open(chat_id, gui=gui)
                     if not _strong:
                         log.warning("指纹档 ok 但**强档给不出**（%s）⇒ 不直接发，先按名字切会话再试",
                                     str(_strong_why)[:90])
-                        _sw2_ok, _sw2_why = self.switch_chat_posted(chat_id, gui=gui, name=name)
+                        _sw2_ok, _sw2_why = self.switch_chat_posted(chat_id, gui=gui)
                         if not _sw2_ok:
                             return False, ("只有会话头指纹这一档成立（**弱档、会假阳性**），"
                                            "按名字切会话也没成（%s）⇒ 这条不发：宁可漏发，绝不发错会话。"
@@ -4516,7 +4522,21 @@ class WeChatAdapter:
                 if _st["status"] in ("no_ref", "no_capture") and allow_no_ref:
                     log.info("会话头未校验（调用方显式允许，%s）：%s", _st["status"], _st["note"])
             except Exception as _e:
-                log.warning("会话头校验跳过：%s", _e)
+                # ⛔ 2026-09-21 修（第四轮审计 **V-R4-5（P1）**）：**闸门自己出错 ≠ 闸门放行** ——
+                #   原来是 `log.warning("会话头校验跳过")` 之后**继续往下发送**，
+                #   于是"闸没过"被当成"闸过了"⇒ 一遇到异常（指纹/抓图/OCR 任一抛错）就回到
+                #   "没有闸"的状态，恰好是最该拦的时候不拦。
+                #   ⇒ 只有**调用方已经拿过正面身份证据**（`allow_no_ref=True`，例如刚用
+                #     `_open_chat_guarded`/名字档验过）时才允许继续；否则 **fail-closed 拒发**。
+                if not allow_no_ref:
+                    note_switch_fail("会话头闸异常", str(_e)[:140])
+                    log.warning("会话头校验**自身出错**（%s）⇒ 按 fail-closed 这条不发"
+                                "（原来会 log 一句就继续发 = 把「闸没过」当成「闸过了」）", str(_e)[:120])
+                    return False, ("发送前的「会话头」校验本身出错了（%s）⇒ 这条**不发**："
+                                   "宁可漏发，绝不发错会话。可先在控制台点「点击测试」看"
+                                   "微信窗口/消息库状态，确认目标会话已打开再重试。" % str(_e)[:80])
+                log.warning("会话头校验自身出错（%s），但调用方已显式确认过身份（allow_no_ref=True）⇒ 继续",
+                            str(_e)[:120])
             r = gui.render_rect or (0, 0, 0, 0)
             rw, rh = int(r[2] - r[0]), int(r[3] - r[1])
             if rw <= 0 or rh <= 0:

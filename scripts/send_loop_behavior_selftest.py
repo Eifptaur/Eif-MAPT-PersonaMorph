@@ -159,6 +159,13 @@ class _Stub(object):
     def db_alive(self, chat_id):
         return self._scn.alive
 
+    def chat_is_open(self, chat_id, gui=None, name=None, allow_weak=False):
+        """⛔ 2026-09-21 补桩（V-R4-5 之后）：指纹说 ok 时，发送闸会**再要一档有区分力的证据**
+        （`chat_is_open`）。桩对象少了它 ⇒ 抛 AttributeError ⇒ 新口径下 fail-closed 拒发
+        ⇒ 本判据整段崩（实测 IndexError: `calls` 空）。本判据只测"发送循环的次序与落点"，
+        身份闸用这一行桩表示"强档通过"。"""
+        return True, "打桩：强档证据通过"
+
 
 def run(script, alive=(True, "读得到（假库）"), mode="measured", ink=None, halted=False):
     """跑一遍真函数，返回 (result, why, scn)。
@@ -217,6 +224,11 @@ def run(script, alive=(True, "读得到（假库）"), mode="measured", ink=None
 print("── A. 前三步顺序：先投递点输入栏聚焦 → 投递打字 → 才谈提交 ──")
 _s1 = [("keys", True, True)]
 _r1, _w1, _c1 = run(_s1)
+# ⛔ 2026-09-21（V-R4-5）：**这一条是那次真缺陷的兜网** —— 老代码在"指纹判 ok"那一档引用了
+#   未定义的 `name` ⇒ 每次都抛 NameError 被 except 吞掉 ⇒ 强档复核从没跑过、发送照旧。
+#   现在只要回执里出现「校验本身出错」就说明**闸里的代码又炸了**（新口径下还会拒发 ⇒ 一条都发不出去）。
+ok("身份闸在 status=ok 这一档真的跑完、没有把自己炸掉（否则回执会写「校验本身出错」）",
+   "校验本身出错" not in str(_w1), str(_w1)[:90])
 _front = [c[0] for c in _c1.calls[:3]]
 ok("顺序＝click(聚焦) → send_text(打字) → keys(回车)",
    _front == ["click", "send_text", "keys"], str(_front))
