@@ -40,6 +40,7 @@ from agent import tier_control                 # 第 15/16/18 条：固定 4 档
 from agent import timers                       # 第 12 条：计时提醒（只对当前会话 + 过风险闸门 + 条数上限）
 from agent import holidays                     # 第 13 条：节假日问候（默认只在提示词里提一句）
 from agent import archive_filter               # 第 10 条：按会话/按条屏蔽存档消息
+from agent import send_retry                 # 发送重试队列（身份判不了 ⇒ 晚点再发一次）
 from agent import listen_targets               # W-1：监听目标**按 wxid 认群**（同名群不再"勾一个监听两个"）
 from agent.config import DATA_DIR
 from agent.config import get_config, save_config
@@ -1328,6 +1329,18 @@ def _wechat_watchdog(get_wc):
             wechat = get_wc() if callable(get_wc) else get_wc
             if wechat is None:
                 continue
+            # ⛔ 2026-09-21：**到点的发送重试**（每 30 秒看一次，一轮最多 3 条）。
+            #   来源＝工具发消息时"现场没认准"被 fail-closed 拦下的那些（两群同一分钟都有消息）。
+            #   放在这个线程里：它本来就在跑、已经有 wechat 句柄，且与监听主循环互不阻塞。
+            try:
+                if True:
+                    _sr = send_retry
+                    _r = _sr.tick(lambda _cid, _txt: wechat.send_text(_cid, _txt), limit=3)
+                    if _r.get("tried"):
+                        log.info("发送重试：试了 %d 条 ⇒ 成功 %d · 还要再试 %d · 放弃 %d",
+                                 _r["tried"], _r["done"], _r["again"], _r["dropped"] + _r["expired"])
+            except Exception as _e:
+                log.debug("发送重试跳过（不影响守护）：%s", _e)
             gui = wechat._get_gui()
             hwnd = int(getattr(gui, "main_hwnd", 0) or 0) if gui else 0
             if not hwnd or not _user32_is_visible(hwnd):

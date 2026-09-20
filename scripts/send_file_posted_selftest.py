@@ -442,8 +442,15 @@ ok("有 _row_time_conflict 实现（活动行时间 vs 目标最后一条消息�
    "def _row_time_conflict" in _segO and "活动行时间对不上" in _segO)
 ok("内容级闸放行前会先查它（源码顺序：content_match 之后立刻查）",
    _segO.index("if _co.content_match(pane, nd):") < _segO.index("_cf, _cfwhy, _cdec, _ccmp = self._row_time_conflict"))
-ok("红线口径写进代码：**可比却判不了**才拦（`_ccmp and not _cdec`）",
-   "if _ccmp and not _cdec:" in _segO)
+# ⛔ 2026-09-21 改口径（业界调研 🥈 + 我们自己的残留口子）：时间档给不出结论时**不再一律判否**，
+#   改成"**内容 + 排他**"定论：看得到目标的正文、且**看不到别的监听会话的正文** ⇒ 放行；
+#   看到别家正文 ⇒ 判否。所以这条断言盯的是**排他性核对在位**（`_pane_excludes_others`），
+#   而不是旧的 `if _ccmp and not _cdec:` 那个"一律拦"的字面量。
+ok("红线仍在：时间档给不出结论时必须过**排他性核对**（`_pane_excludes_others`）",
+   "_pane_excludes_others(chat_id, pane)" in _segO
+   and "_excl, _exclwhy = self._pane_excludes_others(chat_id, pane)" in _segO)
+ok("反例锚：旧写法（`if _ccmp and not _cdec:` 一律判否）**确实**在聊天区还看得到目标正文时也拦发",
+   "if _ccmp and not _cdec:" not in _segO)
 ok("草稿行按『本来就没有可比时间』处理（不然那条会话永远发不出去）",
    "活动行是**草稿行**" in _segO and "草稿行不显示时间戳" in _segO)
 ok("发文件成功后顺手学会话头参照（该尺寸没参照时，指纹是唯一还能用的独立证据）",
@@ -475,8 +482,12 @@ try:
     _segCI = open(os.path.join(_ROOT, "agent", "wechat.py"), encoding="utf-8").read()
     _segCI = _segCI[_segCI.index("def chat_identity_ok"):]
     _segCI = _segCI[:_segCI.find("\n    def ", 10)]
-    ok("内容级闸：**可比却判不了**就判否（源码里必须有 `_ccmp and not _cdec` 这条）",
-       "if _ccmp and not _cdec:" in _segCI and "活动行时间戳读不出" in _segCI)
+    # ⛔ 2026-09-21 改口径：`chat_identity_ok` 里时间档给不出结论时**不再一律判否**，
+    #   改成"内容 + 排他"定论（见 K 段那两条）。这里盯的是**新口径在位**：
+    #   排他性核对被调用、且"读不出时间戳"这条理由仍在（只是不再单独作为拦的充分条件）。
+    ok("内容级闸：时间档给不出结论时**必须过排他性核对**（`_pane_excludes_others`）",
+       "_excl, _exclwhy = self._pane_excludes_others(chat_id, pane)" in _segCI
+       and "活动行时间戳读不出" in _segCI)
 except Exception as _eO:
     ok("_row_time_conflict 行为可测", False, str(_eO)[:80])
 
