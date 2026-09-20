@@ -1203,9 +1203,10 @@ th{color:var(--tx2);font-weight:500}
           <div class="chips" id="wlChips" data-cfg="wechat.group_name_white_list"></div>
           <div class="btns" style="margin-top:0">
             <button id="pickGroups" class="ghost">检测群聊并勾选</button>
-            <input id="customGroup" type="text" placeholder="自定义群名，回车添加" style="flex:1;background:var(--input-bg);border:1px solid var(--bd);border-radius:8px;padding:7px 10px;color:var(--tx)">
+            <input id="customGroup" type="text" placeholder="自定义群 wxid（或群名），回车添加" style="flex:1;background:var(--input-bg);border:1px solid var(--bd);border-radius:8px;padding:7px 10px;color:var(--tx)">
           </div>
-          <div class="hint">留空=所有群都监听；勾选的群才响应（也可配合「暂停」）。</div>
+          <div class="hint">留空=所有群都监听；勾选的群才响应（也可配合「暂停」）。勾选存的是**群 wxid**（唯一身份）——
+            群里出现**同名群**时只有 wxid 分得清，按名字认会「勾一个监听两个」。老配置里的群名仍然认，但同名群必须改用 wxid。</div>
         </div>
       </div>
       <div class="row"><label>监听水位</label>
@@ -2261,12 +2262,19 @@ function syncFromForm(){
 
 /* ── 左上角小鲸鱼（Canvas 绘制 + 悬停粒子动效，参考 DSH 官网颗粒感）── */
 let wlList = [];
+let _lastGroups = [];                       // 最近一次读到的群列表（把白名单里的 wxid 显示成群名）
+function wlLabel(v){
+  const s=String(v==null?'':v);
+  const hit=(_lastGroups||[]).find(g=>String((g&&g.wxid)||'')===s);
+  return hit ? String(hit.name||s) : s;     // 认不出就原样显示（不猜）
+}
 function renderChips(){
   const box=$('wlChips'); if(!box) return;
   box.innerHTML='';
   if(!wlList.length){ box.innerHTML='<span class="hint">（未勾选=监听所有群）</span>'; return; }
   wlList.forEach(g=>{
-    const s=document.createElement('span'); s.className='c'; s.textContent=g;
+    const s=document.createElement('span'); s.className='c'; s.textContent=wlLabel(g);
+    if(String(g)!==wlLabel(g)) s.title='wxid: '+String(g);      // 显示的是群名，真身份挂在 tooltip 上
     const x=document.createElement('b'); x.textContent='×'; x.title='移除';
     x.onclick=()=>{ wlList=wlList.filter(v=>v!==g); renderChips(); };
     s.appendChild(x); box.appendChild(s);
@@ -2313,11 +2321,15 @@ $('keySave').onclick = async ()=>{
     }catch(e){ /* 测试失败不打断保存成功提示 */ }
   }catch(e){ toast('保存失败：'+e.message); }
 };
-/* 通用群列表渲染：搜索框 + 滚动槽。groups=[{name,wxid}]；pick=Set(选中名)；
-   onPick(selectedSet) 每次勾选变化回调；返回时容器已含搜索框。 */
+/* 通用群列表渲染：搜索框 + 滚动槽。groups=[{name,wxid}]；pick=Set(选中项，**新口径存 wxid**、
+   老配置里存群名也认)；onPick(selectedSet) 每次勾选变化回调；返回时容器已含搜索框。 */
 function renderGroupList(box, groups, pick, onPick){
   box.innerHTML='';
   box.className='group-box';
+  // 同名群检测（W-1）：名字重复时，勾选与显示都必须落到 wxid 上
+  const nameCount={};
+  groups.forEach(g=>{ const n=String(g.name||''); nameCount[n]=(nameCount[n]||0)+1; });
+  _lastGroups = groups.slice();
   const search=document.createElement('input'); search.type='text';
   search.className='group-search'; search.placeholder='搜索群名…';
   box.appendChild(search);
@@ -2327,15 +2339,26 @@ function renderGroupList(box, groups, pick, onPick){
     list.innerHTML='';
     const kw=(filter||'').trim().toLowerCase();
     let shown=0;
+    // ⛔ W-1（第四轮审计候选）：勾选**按 wxid 存**，名字只用来显示/搜索。
+    //   原来勾的是 `g.name` ⇒ 两个同名群「勾一个＝监听两个」（消息会回到别的群去）。
     groups.forEach(g=>{
       if(kw && !String(g.name||'').toLowerCase().includes(kw)) return;
       shown++;
+      const key=String(g.wxid||'');
+      const nm=String(g.name||'');
+      const dup=(nameCount[nm]||0)>1;          // 同名群 ⇒ 这行必须能分辨是哪一间
       const lab=document.createElement('label'); lab.className='opt';
-      const inp=document.createElement('input'); inp.type='checkbox'; inp.checked=pick.has(g.name);
+      const inp=document.createElement('input'); inp.type='checkbox';
+      inp.checked=pick.has(key) || (pick.has(nm) && !dup);   // 兼容老配置（里面存的是群名）
       lab.appendChild(inp);
       const b=document.createElement('b'); b.textContent=g.name; lab.appendChild(b);
-      const h=document.createElement('span'); h.className='hint'; h.style.marginLeft='8px'; h.textContent=g.wxid; lab.appendChild(h);
-      inp.onchange=()=>{ if(inp.checked) pick.add(g.name); else pick.delete(g.name); onPick(pick); };
+      const h=document.createElement('span'); h.className='hint'; h.style.marginLeft='8px';
+      h.textContent=key+(dup?' · ⚠ 有同名群（按 wxid 区分）':''); lab.appendChild(h);
+      inp.onchange=()=>{
+        if(inp.checked){ pick.add(key); if(!dup) pick.delete(nm); }   // 勾上＝存 wxid，顺手清掉同一条老名字
+        else { pick.delete(key); pick.delete(nm); }
+        onPick(pick);
+      };
       list.appendChild(lab);
     });
     if(!shown){
@@ -3527,6 +3550,15 @@ async function loadStatus(){  try{
     window.__pausedNow = !!s.paused;      // 暂停/恢复按钮的唯一依据（不许再读按钮文字，见下面的注释）
     $('pauseBtn').textContent = s.paused ? '恢复' : '暂停';
     const tb = $('group-table').querySelector('tbody'); tb.innerHTML='';
+    // W-1：白名单里现在存 wxid ⇒ 用状态里的群表把 chips 显示成群名（列表没变就不重画）
+    if(Array.isArray(s.groups) && s.groups.length){
+      const _sig = s.groups.map(g=>String(g.wxid||'')+'|'+String(g.name||'')).join(',');
+      if(_sig !== window.__gsig){
+        window.__gsig = _sig;
+        _lastGroups = s.groups.map(g=>({name:g.name, wxid:g.wxid}));
+        renderChips();
+      }
+    }
     for(const g of s.groups){
       const tr=document.createElement('tr');
       tr.innerHTML='<td>'+esc(g.name)+'</td><td><span class="pill '+(g.target?'ok':'off')+'">'+(g.target?'监听':'忽略')+'</span></td>';
@@ -6732,17 +6764,23 @@ function renderGroupTierBox(){
   const gt = getPath(cfg,'store.group_tier') || {};
   box.innerHTML='';
   if(!groups.length){ box.innerHTML='<div class="hint">没有群白名单——群列表为空（在「微信」卡勾选群后此处自动列出）。</div>'; return; }
+  // ⚠️ W-1：白名单现在存 wxid ⇒ 这里显示群名（认不出就原样显示 wxid）。
+  //   档位键仍写**群名**（后端 `prompt.py` 两把都认，但群名是给人看/老配置在用的那个）。
+  const seen={};
   groups.forEach(g=>{
+    const nm = wlLabel(g);
+    if(seen[nm]) return;                    // 同名群：档位按名只能设一个，别重复画两行
+    seen[nm]=1;
     const row=document.createElement('div'); row.className='row';
-    row.innerHTML='<label>'+esc(g)+'</label><div class="grow"><select data-group-tier="'+esc(g)+'">'+
+    row.innerHTML='<label>'+esc(nm)+'</label><div class="grow"><select data-group-tier="'+esc(nm)+'">'+
       '<option value="">跟随全局</option><option value="1">1 档</option><option value="2">2 档</option>'+
       '<option value="3">3 档</option><option value="4">4 档</option></select></div>';
     const sel=row.querySelector('select');
-    sel.value = gt[g] != null ? String(gt[g]) : '';
+    sel.value = gt[nm] != null ? String(gt[nm]) : '';
     sel.addEventListener('change', ()=>{
       const v = sel.value ? parseInt(sel.value,10) : null;
       const cur = getPath(cfg,'store.group_tier') || {};
-      if(v === null) delete cur[g]; else cur[g] = v;
+      if(v === null) delete cur[nm]; else cur[nm] = v;
       setPath(cfg,'store.group_tier', cur);
     });
     box.appendChild(row);

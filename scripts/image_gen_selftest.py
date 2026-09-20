@@ -89,6 +89,25 @@ try:
 finally:
     IG.detect_local = _orig_detect
 
+# ⛔ 第四轮审计 V-R4-12b：**探后端时抛异常**不许被说成「你没装」——那是方向错的提示
+#   （用户会去装一个已经装好的东西）。异常原文必须带出去。
+import agent.sd_local as _sdl                                              # noqa: E402
+
+_orig_status = _sdl.status
+_orig_detect2 = IG.detect_local
+IG.detect_local = lambda *a, **k: []
+_sdl.status = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("夹具：status 炸了"))
+set_cfg(enabled=True, online_allowed=False, backends=[])
+try:
+    _pb, _pw = IG.pick_backend()
+finally:
+    _sdl.status = _orig_status
+    IG.detect_local = _orig_detect2
+ok("探后端出错 ⇒ 明说「检查本地生图后端时出错」并带出异常类型",
+   _pb is None and ("检查本地生图后端时出错" in _pw) and ("RuntimeError" in _pw), _pw)
+ok("反例锚：这条错误路径上**不许**出现「本机没探到常见生图服务」（老行为＝冤枉成没装）",
+   "没探到常见生图服务" not in _pw, _pw)
+
 set_cfg(enabled=True, online_allowed=True, online_preset="custom",
         online_api={"url": "", "key": "", "model": ""},
         backends=[{"id": "online-x", "kind": "online", "url": "http://127.0.0.1:9/x"}])

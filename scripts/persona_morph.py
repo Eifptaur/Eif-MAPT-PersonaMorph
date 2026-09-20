@@ -40,6 +40,7 @@ from agent import tier_control                 # 第 15/16/18 条：固定 4 档
 from agent import timers                       # 第 12 条：计时提醒（只对当前会话 + 过风险闸门 + 条数上限）
 from agent import holidays                     # 第 13 条：节假日问候（默认只在提示词里提一句）
 from agent import archive_filter               # 第 10 条：按会话/按条屏蔽存档消息
+from agent import listen_targets               # W-1：监听目标**按 wxid 认群**（同名群不再"勾一个监听两个"）
 from agent.config import DATA_DIR
 from agent.config import get_config, save_config
 from agent.llm import (add_usage, chat_completion, chat_completion_with_retry,
@@ -488,6 +489,7 @@ class Orchestrator:
                         self.session_log.append({
                             "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "chat_key": chat_key,
                             "chat_name": self.wechat.group_name(chat_id) or chat_id,
+                            "chat_wxid": chat_id,          # W-1：同名群下，名字不是唯一身份
                             "trigger": "人性化:收藏表情", "reasoning": "", "tools": [{"name": "collect_emoji", "args": {"path": path or "失败"}}],
                             "status": "ok" if path else "error", "ok": bool(path)})
                     except Exception:
@@ -509,6 +511,7 @@ class Orchestrator:
                             self.session_log.append({
                                 "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "chat_key": chat_key,
                                 "chat_name": self.wechat.group_name(chat_id) or chat_id,
+                                "chat_wxid": chat_id,      # W-1：同上
                                 "trigger": "人性化:回发表情", "reasoning": "", "tools": [{"name": "send_emoji", "args": {"name": pick["name"]}}],
                                 "status": "ok", "ok": True})
                         except Exception:
@@ -624,6 +627,7 @@ class Orchestrator:
                 _cn = self.wechat.group_name(chat_key.split(":", 1)[1]) if ":" in chat_key else chat_key
                 self.session_log.append({
                     "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "chat_key": chat_key, "chat_name": _cn,
+                    "chat_wxid": (chat_key.split(":", 1)[1] if ":" in chat_key else ""),   # W-1
                     "trigger": "", "reasoning": "", "tools": [], "status": "error", "ok": False,
                     "error": str(getattr(last_error, "message", last_error))[:300]})
             except Exception:
@@ -643,6 +647,7 @@ class Orchestrator:
         # 运行明细：思考过程 / token / 工具调用（控制台「运行明细」）
         _t0 = time.time()
         _entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "chat_key": chat_key, "chat_name": chat_name,
+                  "chat_wxid": chat_id,          # W-1：明细里必须有唯一身份（同名群分得清是哪一间）
                   "trigger": ("[主动话题]" if proactive else "\n".join(str(t.get("text") or "")[:120] for t in (trigger or []))),
                   "reasoning": "", "tools": [], "status": "running", "ok": None}
         persona = cfg.get("persona", {})
@@ -1582,8 +1587,11 @@ def main():
         log.warning("微信守护启动失败：%s", e)
     whitelist = cfg.get("wechat", {}).get("group_name_white_list") or []
     deny = set(cfg.get("deny", {}).get("groups") or [])
-    targets = [g for g in groups if (not whitelist or g["name"] in whitelist) and g["name"] not in deny]
-    log.info("目标群 %d 个：%s", len(targets), ", ".join(g["name"] for g in targets[:15]) if targets else "（白名单未匹配到任何群）")
+    # ⛔ W-1：**按 wxid 认群**（白名单条目可以是 wxid，也可以是老配置里的群名）。
+    #   同名群 + 白名单写名字 ⇒ 跳过并报出来（fail-closed），不许"勾一个监听两个"。
+    _res0 = listen_targets.resolve_groups(groups, whitelist, deny)
+    targets = _res0["groups"]
+    log.info("%s", listen_targets.describe(targets, _res0))
     # 私聊目标（2026-09-16 用户：「大号跟小号对谈，相当于借一个智能体进来跟自己聊天」）：
     # 群那份逻辑一个字不动，这里是**追加**；档位见 config 的 wechat.private_chat。
     _pt = []
@@ -1623,7 +1631,7 @@ def main():
         except Exception as _e:
             log.warning("取群列表失败：%s", _e)
             _gs = []
-        _t = [g for g in _gs if (not _wl or g["name"] in _wl) and g["name"] not in _deny]
+        _t = listen_targets.resolve_groups(_gs, _wl, _deny)["groups"]      # W-1：按 wxid 认群（同上）
         try:
             _p2 = [] if _mode == "off" else (wc.list_private_targets() or [])
         except Exception as _e:
@@ -2111,7 +2119,8 @@ def main():
             add("微信·目标群", "ok" if targets else "warn",
                 "发现 %d 个群，目标 %d 个：%s" % (len(groups), len(targets),
                                                "、".join(g["name"] for g in targets) or "(空)"),
-                "在配置 wechat.group_name_white_list 里加群名，留空=所有群")
+                "在配置 wechat.group_name_white_list 里加**群 wxid**（控制台勾选会存 wxid；"
+                "老配置写的群名也认，但同名群必须用 wxid），留空=所有群")
             if targets:
                 seq = wechat.latest_seq(targets[0]["wxid"])
                 _mw = ""
@@ -2637,7 +2646,9 @@ def main():
                         with open(fp, "r", encoding="utf-8") as f:
                             d = json.load(f)
                         if isinstance(d, dict) and d.get("messages"):
-                            export_chats[os.path.basename(fp)] = d.get("messages")
+                            # ⛔ S-1：档案文件名已带哈希尾巴 ⇒ 用档案里的 chat_key 当键（可读、稳定），
+                            # 老档案/读不到才退回文件名。
+                            export_chats[str(d.get("chat_key") or os.path.basename(fp))] = d.get("messages")
                     except Exception:
                         continue
             except Exception:

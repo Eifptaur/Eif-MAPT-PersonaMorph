@@ -30,8 +30,68 @@ MESSAGES_DIR = os.path.join(DATA_DIR, "messages")
 
 
 def chat_file(chat_key: str) -> str:
-    safe = re.sub(r"[^a-z0-9_]", "_", str(chat_key), flags=re.IGNORECASE)
-    return os.path.join(MESSAGES_DIR, safe + ".json")
+    """⛔ 2026-09-21 修（第四轮审计候选 **S-1**）：老实现只做字符替换 ⇒ **不同 chat_key 会撞同一个文件**。
+
+    实测：`group:wxid_a-b` 与 `group:wxid_a_b` 都归一成 `group_wxid_a_b.json` ⇒ 两个会话共用一个档案，
+    互相覆盖（用户视角＝"两个群的消息串了 / 有一个群的记录莫名少了一半"）。
+    ⇒ 现在文件名 = 归一化名 + **原有 chat_key 的短哈希**（8 位），归一化只用来"给人看"，
+    唯一性由哈希保证。
+    """
+    return os.path.join(MESSAGES_DIR, _safe_name(chat_key) + "_" + _key_hash(chat_key) + ".json")
+
+
+def _safe_name(chat_key: str) -> str:
+    return re.sub(r"[^a-z0-9_]", "_", str(chat_key), flags=re.IGNORECASE)
+
+
+def _key_hash(chat_key: str) -> str:
+    import hashlib
+    return hashlib.md5(str(chat_key).encode("utf-8")).hexdigest()[:8]
+
+
+def chat_file_legacy(chat_key: str) -> str:
+    """老命名（无哈希）——**只读兼容**：老版本的档案仍按这个名字存在磁盘上。"""
+    return os.path.join(MESSAGES_DIR, _safe_name(chat_key) + ".json")
+
+
+def chat_file_existing(chat_key: str) -> str:
+    """该会话**实际在用**的文件路径：新命名优先，没有就退回老命名（老档案不搬家、不丢）。"""
+    p = chat_file(chat_key)
+    if os.path.exists(p):
+        return p
+    q = chat_file_legacy(chat_key)
+    if os.path.exists(q):
+        return q
+    return p
+
+
+_KEY_RE = re.compile(r'"chat_key"\s*:\s*"((?:[^"\\]|\\.)*)"')
+
+
+def _read_key_of(path: str) -> str:
+    """只读文件头几 KB 抠出 `chat_key`（扫描磁盘上的档案时用，不必整份解析）。"""
+    try:
+        with open(path, "r", encoding="utf-8-sig") as f:
+            head = f.read(8192)
+    except OSError:
+        return ""
+    m = _KEY_RE.search(head)
+    if not m:
+        return ""
+    try:
+        return str(json.loads('"%s"' % m.group(1)))
+    except Exception:
+        return ""
+
+
+def _filename_key(fn: str) -> str:
+    """老命名 `group_xxx.json` → `group:xxx`（抠掉新命名的 8 位哈希尾巴，兼容两种命名）。"""
+    base = fn[:-5] if fn.lower().endswith(".json") else fn
+    base = re.sub(r"_[0-9a-f]{8}$", "", base)
+    for pre in ("group_", "private_"):
+        if base.startswith(pre):
+            return "%s:%s" % (pre[:-1], base[len(pre):])
+    return ""
 
 
 def _load_chat(chat_key: str) -> dict:
@@ -46,7 +106,7 @@ def _load_chat(chat_key: str) -> dict:
       · **读不动**（权限/被占用/IO 错）⇒ **绝不碰那个文件**，返回带 `_loadFailed` 的档，
         `_save_chat` 见到它就**拒绝写盘**（fail-closed）：宁可这条不入档，也不覆盖别人的数据。
     """
-    p = chat_file(chat_key)
+    p = chat_file_existing(chat_key)
     if not os.path.exists(p):
         return {"chat_key": chat_key, "next_local_id": 1, "messages": []}
     try:
@@ -89,10 +149,15 @@ def _save_chat(state: dict) -> None:
                     state.get("chat_key"), str(state.get("_loadFailed"))[:80])
         return
     os.makedirs(MESSAGES_DIR, exist_ok=True)
-    tmp = chat_file(state["chat_key"]) + ".tmp"
+    dst = chat_file(state["chat_key"])
+    if not os.path.exists(dst) and os.path.exists(chat_file_legacy(state["chat_key"])):
+        # 老命名档案 → 首次写新命名：**只写不搬**（老文件可能属于撞名的另一个会话，搬走＝抢数据）
+        log.info("会话档案改用带哈希的新命名（%s）：老文件保留在 %s，新档从它读入后另存",
+                 str(state.get("chat_key"))[:40], os.path.basename(chat_file_legacy(state["chat_key"])))
+    tmp = dst + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=1)
-    os.replace(tmp, chat_file(state["chat_key"]))
+    os.replace(tmp, dst)
 
 
 class ChatStore:
@@ -114,9 +179,15 @@ class ChatStore:
         try:
             files = set()
             for fn in os.listdir(MESSAGES_DIR):
-                m = re.match(r"^(group|private)_(.+)\.json$", fn)
-                if m:
-                    files.add("%s:%s" % (m.group(1), m.group(2)))
+                if not re.match(r"^(group|private)_.+\.json$", fn):
+                    continue
+                # ⛔ S-1：文件名现在带哈希尾巴 ⇒ **不能**再从文件名反推 chat_key（会得到
+                # `group:wxid_x_1a2b3c4d` 这种幽灵会话）。以档案里的 `chat_key` 为准，
+                # 读不到才退回文件名推导（老档案 / 手工放进去的文件）。
+                p = os.path.join(MESSAGES_DIR, fn)
+                ck = _read_key_of(p) or _filename_key(fn)
+                if ck:
+                    files.add(ck)
             # 与磁盘同步：内存中已被删除的 chat（手动删 json/清数据）一并移除，避免"幽灵群"出现在记忆页
             for k in [k for k in self.chats if k not in files]:
                 del self.chats[k]

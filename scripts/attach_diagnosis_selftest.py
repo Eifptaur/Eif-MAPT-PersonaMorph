@@ -441,7 +441,9 @@ _ct_parts = _ct_seg.split('"""')
 _ct_code = _ct_parts[0] + "".join(_ct_parts[2:])
 ok("重算读的是**当前配置**，不是启动时的闭包快照（否则重算也还是老口径）",
    '_wl = (_cfg_now.get("wechat") or {}).get("group_name_white_list")' in _ct_code
-   and 'g["name"] in _wl' in _ct_code and "whitelist" not in _ct_code)
+   and "resolve_groups(_gs" in _ct_code          # W-1：选群收口到解析器（按 wxid 认群）
+   and 'g["name"]' not in _ct_code               # 旧的名字匹配不许再出现
+   and "whitelist" not in _ct_code)
 _ch = _src(os.path.join("agent", "console_html.py"))
 ok("控制台侧栏显示短原因 + 悬停看逐步诊断",
    "_wa.short" in _ch and "_wa.steps.map(" in _ch)

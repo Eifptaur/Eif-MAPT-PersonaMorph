@@ -94,5 +94,101 @@ ok("E4 弹窗里写明了「后台进行」这件事（关掉弹窗也能继续�
    "后台进行" in _ch and "关掉弹窗" in _ch)
 ok("E5 弹窗里带了估时与来源（不是空口承诺）", "est.human" in _ch and "est.source" in _ch)
 
+# ── ⛔ 2026-09-21（第四轮审计 **V-R4-3，P1**）：**"有人答话" ≠ "是我们这一版的实例"** ──
+#   现场：7860 上跑着 09-19 起的旧无门禁实例（无 Host / 错口令一律 200），而复用判据只看
+#   "它回不回"，于是**一直复用**、**更新产品也不换它** ⇒ 门禁代码"修好了"但活体从没生效。
+#   这里用**两个假服务**（真 HTTP、真请求）复现两种实例，验判据能分得开。
+print("\n── F. 无门禁旧实例必须被认出来（V-R4-3）──")
+import http.server as _hs                                                      # noqa: E402
+import threading as _th                                                       # noqa: E402
+from agent import local_guard as _lg                                          # noqa: E402
+
+_JTOK = "JUDGE-TOKEN-123"
+_old_env = os.environ.get(_lg.ENV_KEY)
+os.environ[_lg.ENV_KEY] = _JTOK
+
+
+class _OldH(_hs.BaseHTTPRequestHandler):
+    """旧实例：**不认 Host、不认口令**，一律 200。"""
+
+    def log_message(self, *a):
+        pass
+
+    def do_GET(self):
+        b = b'{"ok": true}'
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(b)))
+        self.end_headers()
+        self.wfile.write(b)
+
+
+class _NewH(_hs.BaseHTTPRequestHandler):
+    """新实例：门禁（回环 Host + 口令）+ 声明 `gate`。"""
+
+    def log_message(self, *a):
+        pass
+
+    def _s(self, obj, code=200):
+        b = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Length", str(len(b)))
+        self.end_headers()
+        self.wfile.write(b)
+
+    def _deny(self):
+        _h = str(self.headers.get("Host") or "")
+        _t = str(self.headers.get("X-PM-Token") or "")
+        if not (_h.startswith("127.0.0.1") or _h.startswith("localhost")) or _t != _JTOK:
+            self._s({"detail": "denied"}, 403)
+            return False
+        return True
+
+    def do_GET(self):
+        if not self._deny():
+            return
+        self._s({"ok": True, "gate": "host+token"})
+
+
+def _serve(cls):
+    srv = _hs.HTTPServer(("127.0.0.1", 0), cls)          # 单线程（同判据框架既有口径）
+    t = _th.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    return srv, int(srv.server_address[1])
+
+
+_so = _sn = None
+try:
+    _so, _po = _serve(_OldH)
+    _sn, _pn = _serve(_NewH)
+    ok("F0 `server_alive` 对**旧无门禁实例**也回 True（这就是盲点本身）",
+       S.server_alive(_po) is True)
+    _g_old, _w_old = S.service_gated(_po)
+    ok("F1 旧实例：`service_gated` 判**不是我们这一版**（无口令 + 外域 Host 也回 200）",
+       _g_old is False and "旧实例" in str(_w_old), str(_w_old)[:70])
+    _g_new, _w_new = S.service_gated(_pn)
+    ok("F2 新实例：门禁 + `gate` 声明 ⇒ 判**是**（阳性对照，别把正常路堵了）",
+       _g_new is True and _w_new == "", "%s / %s" % (_g_new, _w_new))
+    _sds = io.open(os.path.join(ROOT, "agent", "sd_local_server.py"), encoding="utf-8").read()
+    _sdc = io.open(os.path.join(ROOT, "agent", "sd_local.py"), encoding="utf-8").read()
+    ok("F3 服务端确实会声明 `gate`（源码级）", '"gate": "host+token"' in _sds)
+    ok("F4 `start_server` 不再「看到有人答话就复用」（要先过 `service_gated`）",
+       "service_gated(port)" in _sdc)
+    ok("F5 换掉旧实例有**证据链**（只杀 pidfile 记的那个 pid）",
+       hasattr(S, "kill_stale_owner") and hasattr(S, "_port_owner_pid")
+       and "pidfile 记的是" in _sdc)
+    ok("F6 反例锚：老判据（只判 alive）**确实**会把旧实例当可用",
+       S.service_gated(_po)[0] is False and S.server_alive(_po) is True)
+finally:
+    for _s in (_so, _sn):
+        try:
+            _s.shutdown()
+            _s.server_close()
+        except Exception:
+            pass
+    if _old_env is None:
+        os.environ.pop(_lg.ENV_KEY, None)
+    else:
+        os.environ[_lg.ENV_KEY] = _old_env
+
 print("\n== 本地生图后端判据：%d 通过 / %d 失败 ==" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
