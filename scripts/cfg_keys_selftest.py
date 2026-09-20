@@ -162,5 +162,36 @@ fake["__probe__"] = {_probe: 1}
 found = dead_keys(fake, BLOBS)
 ok("塞进假死键能被抓到", any(k.endswith(_probe) for k in found), str(found[:3]))
 
+# ── ⛔ 2026-09-21（第四轮审计 **V-R4-13**）：开关写成字符串时**不许反向打开** ──
+#    `bool("false")` 是 **True** ⇒ 全项目几十处 `bool(cfg.get("开关"))` 会把本该关掉的红线开关
+#    **反着打开**。修法＝`get_config()` 载入时**一处归一化** + 新代码用 `as_bool()`。
+print("\n── J. 开关真值：\"false\" 不许被理解成开（V-R4-13）──")
+import tempfile as _tmp2                                                       # noqa: E402
+
+_p2 = os.path.join(_tmp2.mkdtemp(prefix="pm_cfg_j_"), "c.json")
+with open(_p2, "w", encoding="utf-8") as _fh2:
+    json.dump({"wechat": {"background_only": "false", "restore_minimized": "true",
+                          "minimize_warning": "false"},
+               "risk": {"block_keywords": ["off", "no", "true"]},
+               "image_gen": {"enabled": "false"}}, _fh2, ensure_ascii=False)
+_c2 = C.load_config(_p2)
+ok("J1 写成字符串 `\"false\"` 的开关，载入后是**真布尔 False**",
+   _c2["wechat"]["background_only"] is False and _c2["wechat"]["minimize_warning"] is False,
+   repr(_c2["wechat"]["background_only"]))
+ok("J2 `\"true\"` 载入后是 True（别只修一半）", _c2["wechat"]["restore_minimized"] is True)
+ok("J3 嵌套开关一样管用（image_gen.enabled）", _c2["image_gen"]["enabled"] is False)
+ok("J4 **列表一律不动**（`block_keywords` 里的 off/no/true 是真关键词，不许被转成布尔）",
+   _c2["risk"]["block_keywords"] == ["off", "no", "true"], _c2["risk"]["block_keywords"])
+ok("J5 `as_bool()`：false/FALSE/' no '/off/0 ⇒ 假；true/1/非空 ⇒ 真；None ⇒ 走 default",
+   C.as_bool("false") is False and C.as_bool("FALSE") is False and C.as_bool(" no ") is False
+   and C.as_bool("off") is False and C.as_bool("0") is False
+   and C.as_bool("true") is True and C.as_bool(1) is True and C.as_bool(None, True) is True
+   and C.as_bool(None) is False)
+ok("J6 载入路径真的调了归一化（源码级：`load_config` 里有 `_coerce_bool_strings`）",
+   "_coerce_bool_strings(cfg)" in open(os.path.join(ROOT, "agent", "config.py"),
+                                       encoding="utf-8").read())
+ok("J7 反例锚：老写法 `bool(\"false\")` **确实是 True**（这就是「反向打开」的来历）",
+   bool("false") is True and C.as_bool("false") is False)
+
 print("\n%d/%d 通过" % (PASS, PASS + FAIL))
 sys.exit(1 if FAIL else 0)

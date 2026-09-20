@@ -97,6 +97,9 @@ def main():
        "def _truthy(" in src and "_truthy(data.get(" in _seg)
     ok("④ `_truthy` 把 \"false\"/\"0\"/\"off\"/\"no\"/空串都判假",
        all(k in src[src.find("def _truthy("):][:600] for k in ('"false"', '"0"', '"off"', '"no"', '""')))
+    # ⛔ V-R4-13：真值表**只能有一处实现** —— webui 这层只多"保留 None"
+    ok("④ 真值表是**一处实现**（`_truthy` 转发到 `config.as_bool`，不各写一套）",
+       "from .config import as_bool" in src and "return as_bool(v)" in src)
 
     # ⑤ 反例锚：老写法（do_GET 不定义 data 就读）必须被同一判定器判**不合格**
     _OLD = ("def do_GET(self):\n"

@@ -14,7 +14,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from .config import deep_merge, get_config, save_config, set_config
+from .config import as_bool, deep_merge, get_config, save_config, set_config
 from . import local_guard                # V-R3-8：回环 Host 校验（与本地生图服务共用同一份实现）
 from .whale_text import DICT as WHALE_DICT, SKIP as WHALE_SKIP
 from .console_html import HTML  # 界面模板（蓝白设计，设置项全量，独立文件便于改版）
@@ -24,16 +24,15 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def _truthy(v):
-    """把「开关」读成布尔：**字符串 "false" / "0" / "off" / "no" 都是假**（`None` 保持 `None`）。
+    """把「开关」读成布尔：字符串 `"false" / "0" / "off" / "no"` 都是假；**`None` 保持 `None`**。
 
-    ⛔ 2026-09-21（第四轮审计 V-R4-15 / V-R4-13）：`bool("false")` 是 **True** ⇒
-    前端哪怕老老实实传 `"false"`，开关也会被**反向打开**；GET 路由更严重（查询串里的一切都是字符串）。
+    ⛔ 2026-09-21（第四轮审计 V-R4-15 / V-R4-13）：`bool("false")` 是 **True** ⇒ 前端哪怕老实传
+    `"false"`，开关也会被**反向打开**；GET 路由更严重（查询串里一切都是字符串）。
+    ⚠️ **一处实现**：真值表在 `config.as_bool()`，这里只多一层"保留 None"（"没传"要和"传了假"分开）。
     """
-    if v is None or isinstance(v, bool):
-        return v
-    if isinstance(v, (int, float)):
-        return bool(v)
-    return str(v).strip().lower() not in ("", "0", "false", "no", "off", "none", "null")
+    if v is None:
+        return None
+    return as_bool(v)
 
 
 # ── 数据迁移包（导出/导入：计费+对话记录 data/sessions/*.jsonl）────────────
