@@ -27,6 +27,18 @@ from agent.config import DEFAULT_CONFIG  # noqa: E402
 _orig_online_backend = IG.online_backend
 IG.online_backend = lambda: {}
 
+# ⛔ 2026-09-21：**判据不许碰用户正在跑的服务**（真机实测后果）。
+#   `pick_backend()` 在"装过、但这次没探到"时会真的调 `sd_local.ensure_running()` —— 那是产品行为
+#   （换掉没门禁的旧实例）。而 `sd_local.server_alive()` 是**机器级端口探针**：判据即使跑在
+#   `%TEMP%` 副本里，探的也是**本机 7860**。服务正忙时探针会超时（实测它加载 CUDA 模型要 22 秒，
+#   日志尾部就是"模型就绪…出图"）⇒ 判据会把**用户正在用的生图服务杀掉并重启**
+#   （本机 2026-09-21 03:40:59 实测发生过一次：pidfile 4848 → 40232）。
+#   ⇒ 判据里一律打桩；要测"错误路径"的段自己再包一层（见下面的 12b 段）。
+from agent import sd_local as _sdl                                               # noqa: E402
+_sdl.ensure_running = lambda *a, **k: (False, "判据环境：不许起/换真服务")
+_sdl.status = lambda *a, **k: {"ok": False, "installed": False, "server_alive": False, "gated": False,
+                               "gate_why": "", "why": "判据环境：不打探真端口"}
+
 PASS = 0
 FAIL = 0
 

@@ -191,6 +191,26 @@ def main():
     ok("④ 反例锚：老写法（整段带缩进一起比）**换个缩进就找不到** ⇒ 这就是「脆」的来历",
        _old_style is False)
 
+    # ── ⑤ 判据不许碰**用户正在跑的服务**（2026-09-21 真机事故后立的规矩）───────────────
+    #   现场：本机 7860 上跑着用户的本地生图服务，我跑了一次全量套件（`image_gen_selftest` 的
+    #   后端选择段会调真 `pick_backend()`）⇒ 它内部 `sd_local.status()` 探不到（服务正忙着加载
+    #   CUDA 模型）⇒ 调 `ensure_running()` ⇒ **把用户正在用的实例杀掉重启**（pidfile 4848 → 40232，
+    #   03:40:59 实测）。注意：判据跑在 `%TEMP%` 副本里也一样 —— `server_alive()` 探的是**机器级端口**。
+    #   ⇒ 规矩：判据里凡出现 `pick_backend(` / `ensure_running(`，必须同时对 `sd_local` 打桩。
+    _offenders = []
+    for _fn in files:
+        try:
+            _t = open(os.path.join(HERE, _fn), encoding="utf-8").read()
+        except Exception:
+            continue
+        if ("pick_backend(" in _t) or ("ensure_running(" in _t):
+            if ("ensure_running = lambda" not in _t) and ("ensure_running = _orig" not in _t):
+                _offenders.append(_fn)
+    ok("⑤ 判据里用到 `pick_backend()`/`ensure_running()` 的，都必须打桩（否则会杀用户正在跑的服务）",
+       not _offenders, _offenders[:4])
+    ok("⑤ 反例锚：老写法（只关在线后端、不打桩 `ensure_running`）确实会被这条扫出来",
+       ("pick_backend(" in "_x = IG.pick_backend()") and ("ensure_running = lambda" not in "_x = IG.pick_backend()"))
+
     print("\n== 汇总：%d 通过 / %d 失败 ==" % (len(PASS), len(FAIL)))
     if FAIL:
         print("失败项：")
