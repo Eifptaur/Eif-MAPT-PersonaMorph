@@ -111,9 +111,9 @@ ok("会话行点击接了偏好（order_named）", "order_named(" in BODY and "c
 ok("成功/失败都回写（record_ok / record_fail）", "record_ok(" in BODY and "record_fail(" in BODY)
 ok("**复核仍在**（授权不交给偏好）",
    "self.chat_is_open(" in BODY and "self.chat_identity_ok(" in BODY)
-ok("record_ok 只出现在复核之后（拿不到正面证据不记成功）",
-   BODY.index("chat_is_open(") < BODY.index("record_ok(")
-   and BODY.index("chat_identity_ok(") < BODY.rindex("record_ok("))
+ok("**每一处 record_ok 前面都有证据**（授权不交给偏好）", (lambda: (
+    all(any(k in BODY[max(0, i - 500):i] for k in ("chat_is_open(", "chat_identity_ok(", "_band_on_row("))
+        for i in [j for j in range(len(BODY)) if BODY.startswith("record_ok(", j)])))())
 ok("偏好读失败也只降级、不抛（except 里退回默认顺序）", "_e_cp" in BODY)
 CP.PATH = _KEEP
 try:
