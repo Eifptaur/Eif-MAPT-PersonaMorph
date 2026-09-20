@@ -702,7 +702,19 @@ class WebUI:
                 q = parse_qs(urlparse(self.path).query)
                 ck = str((q.get("chat_key") or [""])[0]).strip()
                 lim = int((q.get("limit") or ["30"])[0] or 30)
-                out = {"ok": True, "snapshot": _af.snapshot(st), "chats": _af.chat_options(st)}
+                # ⛔ V-R5B-7：名单可能是按**群名**写的 ⇒ 把"会话名解析器"传进去，否则面板恒报"命中 0 个"
+                def _name_of(_ck):
+                    try:
+                        _w = getattr(parent, "wechat", None)
+                        if _w is None and hasattr(parent, "wechat_box"):
+                            _w = (parent.wechat_box or [None])[0]
+                        if _w is None:
+                            return ""
+                        return str(_w.display_name(str(_ck).split(":", 1)[-1]) or "")
+                    except Exception:
+                        return ""
+                out = {"ok": True, "snapshot": _af.snapshot(st, name_of=_name_of),
+                       "chats": _af.chat_options(st)}
                 if ck:
                     out.update(_af.list_chat(st, ck, limit=max(1, min(200, lim))))
                 self._json(out)

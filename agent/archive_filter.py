@@ -69,14 +69,24 @@ def chat_options(store, wechat=None) -> list:
     return out
 
 
-def snapshot(store) -> dict:
-    """控制台读数：名单 + 存档里被屏蔽的条数。"""
+def snapshot(store, name_of=None) -> dict:
+    """控制台读数：名单 + 存档里被屏蔽的条数。
+
+    ⛔ 2026-09-21（第五轮回执 **V-R5B-7**，P4）：名单可能是**按群名**写的，而这里原来只拿
+    `chat_key` 去判 ⇒ 那种名单在面板上恒报"命中 0 个"。⇒ 允许调用方给一个"会话名解析器"
+    （`name_of(chat_key) -> 展示名`）；拿不到就照旧（只是少一档匹配，不假装）。
+    """
     blocked = blocked_list()
     n_blocked_entries = 0
     hits = []
     try:
         for ck in (store.list_chats() if store else []):
-            if is_blocked(chat_key=ck):
+            _nm = ""
+            try:
+                _nm = str(name_of(ck) or "") if callable(name_of) else ""
+            except Exception:
+                _nm = ""
+            if is_blocked(chat_key=ck, group_name=_nm):
                 hits.append(ck)
                 continue
             for m in store.list_entries(ck, limit=100000):

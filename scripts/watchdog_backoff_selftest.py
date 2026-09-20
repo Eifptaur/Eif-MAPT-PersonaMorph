@@ -226,6 +226,16 @@ def main():
         WD.time = time
         shutil.rmtree(tmp, ignore_errors=True)
 
+    # ── 窗口限流（第五轮回执 · 业界对账第 ⑤ 条）────────────────────────────────
+    #   老口径：只有"活不足 EARLY_EXIT_S"才算失败，跑够时长了就 `fails = 0` ⇒ **"每次都在第 61 秒崩"
+    #   会无限重启**（退避永远从头开始）。⇒ 再加一个滑动窗口闸：WINDOW_S 内重启 ≥ WINDOW_MAX ⇒ 停手。
+    _wsrc = open(os.path.join(ROOT, "scripts", "watchdog.py"), encoding="utf-8").read()
+    ok("⑤ 窗口限流在位：常量 + 滑动窗口计数 + 「反复崩溃就停手」的文案",
+       hasattr(WD, "WINDOW_S") and hasattr(WD, "WINDOW_MAX") and "_stamps" in _wsrc
+       and "判为**反复崩溃**" in _wsrc, str((getattr(WD, "WINDOW_S", None), getattr(WD, "WINDOW_MAX", None))))
+    ok("⑤ 反例锚：窗口必须比「秒退阈值」宽得多，否则它跟老口径没区别（这就是老口径的漏洞）",
+       float(WD.WINDOW_S) > float(WD.EARLY_EXIT_S) * 10, str((WD.WINDOW_S, WD.EARLY_EXIT_S)))
+
     print("\n==== 看门狗退避判据（V-R2-1）：%d 通过 / %d 失败 ====" % (len(PASS), len(FAIL)))
     if FAIL:
         print("失败项：")
