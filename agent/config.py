@@ -656,6 +656,51 @@ def deep_merge(base, override):
     return out
 
 
+_BOOL_STRINGS = {"true": True, "false": False, "yes": True, "no": False, "on": True, "off": False,
+                 "1": True, "0": False}
+# 载入归一化**只认这两个**（`"1"`/`"0"`/`"on"`/`"off"` 可能是真的字符串值 ⇒ 不许在载入时乱转）
+_COERCE_STRINGS = ("true", "false")
+
+
+def as_bool(v, default: bool = False) -> bool:
+    """把「开关」读成布尔：**字符串 `"false"` / `"no"` / `"off"` 都是假**。
+
+    ⛔ 2026-09-21（第四轮审计 **V-R4-13，P3**）：`config.json` 是人手改的，写成 `"false"`（带引号）
+    完全可能；而全项目有几十处 `bool(cfg.get("某个开关"))` —— `bool("false")` 是 **True**
+    ⇒ 开关被**反向打开**（本该关掉的红线开关反而开了）。⇒ 两件事：
+    ①`get_config()` 载入时**统一归一化**（见 `_coerce_bool_strings`）—— 一处生效，不必改那几十处；
+    ②**新代码读开关一律用本函数**，别再写裸 `bool()`。
+    """
+    if isinstance(v, bool):
+        return v
+    if v is None:
+        return bool(default)
+    if isinstance(v, (int, float)):
+        return bool(v)
+    s = str(v).strip().lower()
+    if s in _BOOL_STRINGS:
+        return _BOOL_STRINGS[s]
+    return bool(s)
+
+
+def _coerce_bool_strings(node):
+    """把配置里**写成字符串的开关**归一成真布尔 —— 只认 `"true"`/`"false"`，且**只走字典**。
+
+    为什么这么窄：`"1"`/`"0"`/`"on"`/`"off"` 都可能是**真的字符串值**（型号名、屏蔽关键词…），
+    贸然转换会改坏别的语义；而 `"false"` 当字符串用**没有任何理由** ⇒ 只转它。
+    **列表一律不动**（例：`risk.block_keywords` 里真可能出现 `"off"` 这种词，转了就坏）。
+    """
+    if isinstance(node, dict):
+        out = {}
+        for k, v in node.items():
+            if isinstance(v, str) and v.strip().lower() in _COERCE_STRINGS:
+                out[k] = (v.strip().lower() == "true")
+            else:
+                out[k] = _coerce_bool_strings(v)
+        return out
+    return node                                     # 列表/标量原样返回
+
+
 def load_config(path: str | None = None) -> dict:
     path = path or CONFIG_FILE
     cfg = copy.deepcopy(DEFAULT_CONFIG)
@@ -674,6 +719,12 @@ def load_config(path: str | None = None) -> dict:
             cfg = _migrate_once(cfg)
     except Exception as e:
         print("[config] 一次性迁移跳过：%s" % e)
+    # ⛔ V-R4-13：把"写成字符串的开关"（`"false"`）归一成真布尔 —— 一处生效，
+    #   全项目几十处 `bool(cfg.get("开关"))` 于是自动正确（否则它们会把开关**反向**打开）。
+    try:
+        cfg = _coerce_bool_strings(cfg)
+    except Exception as e:
+        print("[config] 开关归一化跳过：%s" % e)
     return cfg
 
 
