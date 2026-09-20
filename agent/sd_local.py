@@ -289,11 +289,67 @@ def _port_owner_pid(port: int):
     return None
 
 
+def cmdline_is_ours(cmd: str, port: int) -> bool:
+    """**纯函数**：这条命令行是不是"我们起的那个本地服务"（判据直接打它，不碰进程）。
+
+    要求两件都成立：①命令行里有 `sd_local_server.py`；②带着**这个**端口号。
+    """
+    _c = str(cmd or "")
+    if "sd_local_server.py" not in _c:
+        return False
+    return str(int(port)) in _c
+
+
+def _proc_cmdline(pid: int) -> str:
+    """取某进程的命令行（Windows 走 PowerShell `Get-CimInstance`；其它平台读 /proc）。取不到返回 ''。"""
+    if os.name != "nt":
+        try:
+            with open("/proc/%d/cmdline" % int(pid), "rb") as f:
+                return f.read().decode("utf-8", "replace").replace("\x00", " ").strip()
+        except Exception:
+            return ""
+    try:
+        r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                            "(Get-CimInstance Win32_Process -Filter \"ProcessId=%d\").CommandLine"
+                            % int(pid)],
+                           capture_output=True, text=True, timeout=8,
+                           creationflags=0x08000000 if os.name == "nt" else 0)
+        return str(getattr(r, "stdout", "") or "").strip()
+    except Exception:
+        return ""
+
+
+def _is_our_server(pid: int, port: int) -> tuple:
+    """那个 pid **是不是我们起的本地服务** ⇒ `(是/否, 说明)`。
+
+    ⛔ 2026-09-21（第五轮回执 **V-R5B-4 / M4**）：原来只比"pidfile 里的 pid == 端口占用者"，
+    **不验那个进程是谁** ⇒ pidfile 残留 + PID 复用（7860 恰是 Gradio / A1111 的默认口）就会
+    `taskkill /F` 掉**别人的**进程。⇒ 杀之前必须能证明那是一条 `sd_local_server.py <port>` 命令行；
+    取不到命令行 ⇒ **不杀**（宁可让用户手动处理）。
+    """
+    cmd = _proc_cmdline(pid)
+    if not cmd:
+        return False, "取不到 PID %d 的命令行（无法证明它是我们的 ⇒ 不杀）" % int(pid)
+    if not cmdline_is_ours(cmd, port):
+        return False, ("PID %d 跑的不是我们的本地服务 ⇒ 不杀（命令行 %s）"
+                       % (int(pid), cmd[:80]))
+    return True, cmd[:80]
+
+
+def _drop_pidfile() -> None:
+    """删掉 pidfile（过期的记录留着就是下一条误杀事故的种子）。"""
+    try:
+        os.remove(_pidfile())
+    except Exception:
+        pass
+
+
 def kill_stale_owner(port: int) -> tuple:
     """把占用 `port` 的**我们自己旧实例**停掉；**只在我们能证明它是我们的时才动手**。
 
-    证据链（两条都要成立）：①`data/sd_local.pid` 里记的 pid 就是**听这个端口的那个进程**；
-    ②该进程还在。取不到证据 ⇒ **不杀**（宁可让用户手动处理，也不误杀别人跑在 7860 上的东西）。
+    证据链（三条都要成立）：①`data/sd_local.pid` 里记的 pid 就是**听这个端口的那个进程**；
+    ②该进程还在；③**它的命令行确实是一条 `sd_local_server.py <port>`**（回执 V-R5B-4：只有前两条时，
+    pidfile 残留 + PID 复用会误杀别人）。取不到证据 ⇒ **不杀**。
     """
     try:
         pid = int(open(_pidfile(), encoding="utf-8").read().strip())
@@ -305,10 +361,14 @@ def kill_stale_owner(port: int) -> tuple:
     if int(owner) != int(pid):
         return False, ("占着 %d 的是 PID %s，而 pidfile 记的是 PID %s ⇒ **不是我们起的** ⇒ 不替你杀"
                        % (int(port), owner, pid))
+    _ok_id, _why_id = _is_our_server(int(pid), int(port))
+    if not _ok_id:
+        return False, _why_id
     try:
         subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True,
                        creationflags=0x08000000 if os.name == "nt" else 0)
         time.sleep(0.6)
+        _drop_pidfile()
         return True, "已停掉旧实例（PID %d）" % pid
     except Exception as e:                                   # noqa: BLE001
         return False, "停旧实例失败：%s" % str(e)[:60]
@@ -642,13 +702,27 @@ def start_server(on_log=None) -> tuple:
 
 
 def stop_server() -> tuple:
+    """停掉**我们自己的**本地服务。
+
+    ⛔ 2026-09-21（第五轮回执 **V-R5B-4 / M4**）：老实现拿到 pidfile 里的 pid 就 `taskkill /F`——
+    连"这个 pid 还听不听那个端口""它到底是不是我们的进程"都不看，全仓**零判据**覆盖。pidfile 残留 +
+    PID 复用（7860 恰是 Gradio / A1111 默认口）⇒ 会杀掉别人正在跑的东西。⇒ 先验身份；验不过就
+    **只清掉过期记录、不杀任何进程**并说清原因。
+    """
+    port = int(_cfg().get("port") or 7860)
     try:
         pid = int(open(_pidfile(), encoding="utf-8").read().strip())
     except Exception:
         return True, "没有记录在案的本地服务进程"
+    _ok_id, _why_id = _is_our_server(int(pid), port)
+    if not _ok_id:
+        _drop_pidfile()
+        return True, ("记录里的 PID %d 已经不是我们的本地服务（%s）⇒ 只清掉过期记录、"
+                      "**没有杀任何进程**" % (pid, _why_id))
     try:
         subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True,
                        creationflags=0x08000000 if os.name == "nt" else 0)
+        _drop_pidfile()
         return True, "已停止本地服务（PID %d）" % pid
     except Exception as e:                                   # noqa: BLE001
         return False, "停止失败：%s" % str(e)[:60]

@@ -153,6 +153,19 @@ def main():
         ok("③ 换个 stamp 撤不到东西（不会误还原）", hp.restore_history(trash, "19700101-000000") == 0)
         ok("③ 反例锚：老生产者的名字（多一个 `.json`）确实不是现在备份出来的名字",
            (fn + ".json." + stamp) != (fn + "." + stamp))
+        # ⛔ V-R5R-2（第五轮回执）：备份是老名字、而档案已经用上新命名 ⇒ 还原必须写回**当前在用的**名字，
+        #   否则界面报"已恢复了 1 个会话的对话历史"，模型读到的**一条都没回来**。
+        os.makedirs(trash, exist_ok=True)
+        with open(os.path.join(trash, "g1.json." + stamp), "w", encoding="utf-8") as f:
+            f.write('{"chat_key":"g1","next_local_id":9,"messages":[{"id":"1","text":"老名字备份","ts":"1"}]}')
+        with open(os.path.join(_st.MESSAGES_DIR, fn), "w", encoding="utf-8") as f:
+            f.write('{"chat_key":"g1","next_local_id":1,"messages":[]}')      # 新命名档案先清空
+        n3 = hp.restore_history(trash, stamp)
+        _txt3 = open(os.path.join(_st.MESSAGES_DIR, fn), encoding="utf-8").read()
+        ok("V-R5R-2 老名字的备份也还原到**当前在用的档案**（新命名优先 ⇒ 模型读得到）",
+           n3 == 1 and "老名字备份" in _txt3, (n3, _txt3[:60]))
+        ok("V-R5R-2 反例锚：老名字路径与新命名路径**确实是两个文件**（写错就没人读）",
+           os.path.join(_st.MESSAGES_DIR, "g1.json") != _st.chat_file("g1"))
     finally:
         _st.MESSAGES_DIR = old_dir
         import shutil

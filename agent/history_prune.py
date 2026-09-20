@@ -213,6 +213,17 @@ def restore_history(trash_root: str, stamp: str) -> int:
             try:
                 from . import store as _st
                 dst = os.path.join(_st.MESSAGES_DIR, base)
+                # ⛔ 2026-09-21（第五轮回执 **V-R5R-2**）：备份名带的是**当年的**文件名；而
+                #   `store.chat_file_existing` 现在是**新命名（带哈希）优先** ⇒ 把内容写回老名字
+                #   等于写进一个没人读的文件：界面报"已恢复了 1 个会话的对话历史"，模型读到的
+                #   **一条都没回来**。⇒ 从备份**内容里的 `chat_key`** 解析出"当前在用的档案名"，
+                #   解析不出才按原名放回（保底，绝不丢）。
+                try:
+                    _ck = _st._read_key_of(src) or _st._filename_key(base)
+                    if _ck:
+                        dst = _st.chat_file(_ck)
+                except Exception:
+                    pass
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
                 with open(src, "rb") as f1, open(dst, "wb") as f2:
                     f2.write(f1.read())

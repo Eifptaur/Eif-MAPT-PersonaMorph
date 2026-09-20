@@ -107,56 +107,18 @@ DL_MIRRORS = ("https://ghfast.top/", "https://ghproxy.net/", "https://gh-proxy.c
 STALL_S = 45.0
 
 
-#: 允许"**跟随跳转之后**"落到的主机后缀（发布资产会 302 到 `objects.githubusercontent.com`
-#: 这类 CDN；镜像前缀也会 302 回 raw.githubusercontent.com）。
-_FINAL_HOST_SUFFIXES = ("githubusercontent.com", "githubassets.com", "github.com", "github.io",
-                        "jsdelivr.net", "ghfast.top", "ghproxy.net", "gh-proxy.com", "gh.llkk.cc")
-
-
 def _final_url_ok(final: str, requested: str) -> str:
-    """回读 `r.geturl()` 之后的**二次判定**：空串＝放行，非空＝拒取原因。
+    """**转调** `update_check.final_url_ok`（唯一实现在那里）。
 
-    ⛔ 2026-09-21（第五轮审计 **V-R5A-1，P1**）：R4-2 只判了**请求**地址 ⇒ 302 跳到别的域时
-    「判的是 A、取的是 B」（审计用两个本机 HTTP 服务 + 产品自己的 `_dl_once` 实测：`ok=True`、
-    落盘＝攻击者字节）。R4 报告里自己写的建议"回读 `r.geturl()`"当时没做 ⇒ 现在补上：
-      ① 协议只许 http/https（防 `file:` 一类）；
-      ② 最终地址不许含点段（与请求侧同一判据）；
-      ③ 主机要么与**请求主机**相同（含本机测试服务器），要么落在已知域名/镜像后缀里；
-         本机/内网地址另由 `update.allow_local`（或 `PM_ALLOW_LOCAL_UPDATE=1`）显式放行。
-    注意：**镜像 302 回原站是合法跳转** ⇒ 判的是"最终地址本身合不合法"，不是"与请求地址一字不差"。
+    ⛔ 2026-09-21（回执 V-R5R-1）：同一条判据原来只写在这一侧 ⇒ 取清单那条 `fetch()` 没有它
+    ⇒ "判 A 取 B"只修了一半。⇒ 现在两侧共用一份实现，别在这里再抄一遍。
     """
     try:
-        _f = urllib.parse.urlsplit(str(final or ""))
-        _r = urllib.parse.urlsplit(str(requested or ""))
-    except Exception as e:
-        return "最终地址解析不了（%s）⇒ 拒取" % type(e).__name__
-    if _f.scheme.lower() not in ("http", "https"):
-        return "跟随跳转后协议变成 %s ⇒ 拒取" % (_f.scheme or "?")
-    _host = (_f.hostname or "").lower()
-    _rhost = (_r.hostname or "").lower()
-    _allow_local = False
-    try:
-        from . import update_check as _uc2
-        if _uc2.has_dot_segments(str(final)):
-            return "跟随跳转后地址含点段 ⇒ 拒取（判据与取件必须看同一个地址）"
-        _allow_local = bool(_uc2.allow_local_update())
-    except Exception:
-        pass
-    if _host and _host == _rhost:
-        return ""                                       # 同一主机（含本机/自建测试服务器）
-    if _allow_local:
-        try:
-            from . import local_guard as _lg
-            if _lg.is_loopback_url(str(final)):
-                return ""
-        except Exception:
-            pass
-        if _host in ("localhost", "::1", "[::1]"):
-            return ""
-    if any(_host == s or _host.endswith("." + s) for s in _FINAL_HOST_SUFFIXES):
+        from . import update_check as _uc3
+        return _uc3.final_url_ok(final, requested)
+    except Exception as e:                                  # 判据实现取不到时只留痕，不额外拦
+        log.debug("最终地址判据不可用（%s）", e)
         return ""
-    return ("跟随跳转后落到了不在允许名单里的主机（%s）⇒ 拒取（防「判的是 A、取的是 B」）"
-            % (_host or "?"))
 
 
 def _dl_once(url: str, dest: str, timeout: float, progress=None):
@@ -766,3 +728,4 @@ def start_async(target=ROOT):
     t = threading.Thread(target=_worker, name="pm-self-update", daemon=True)
     t.start()
     return {"ok": True, "state": "running", "note": "已开始更新", "job": job()}
+
