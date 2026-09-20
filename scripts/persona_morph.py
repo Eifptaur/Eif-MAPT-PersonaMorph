@@ -2114,9 +2114,25 @@ def main():
                 "在配置 wechat.group_name_white_list 里加群名，留空=所有群")
             if targets:
                 seq = wechat.latest_seq(targets[0]["wxid"])
-                add("微信·消息库可读", "ok" if seq else "fail",
-                    "目标群 %s 最新序号=%s" % (targets[0]["name"], seq),
-                    "若读数是 0 且群里已说话，可能是微信数据库位置不对（wechat.db_dir）")
+                _mw = ""
+                try:
+                    _mw = str((getattr(wechat, "_cap", {}) or {}).get("messages") or "")
+                except Exception:
+                    _mw = ""
+                if seq:
+                    add("微信·消息库可读", "ok", "目标群 %s 最新序号=%s" % (targets[0]["name"], seq), "")
+                else:
+                    # ⛔ 2026-09-20（网友 v0920-0824 的截图：这条是「最新序号=0」，而提示只说
+                    #   "可能是微信数据库位置不对"）：两种完全不同的成因必须分开说 ——
+                    #   ①**读库失败**（`_cap` 里有原因，多半是微信正在写库）②读库成功但
+                    #   **这个群确实没有可读消息**（群名/账号对不上，或群里还没有消息）。
+                    _hint = (("消息库读不出来：%s ⇒ 多半是微信正在写库，稍等几秒重测；"
+                              "仍不行再看「微信数据目录」那行对不对" % _mw[5:130])
+                             if _mw.startswith("fail")
+                             else ("这个群在消息库里没有任何可读消息 ⇒ 依次确认：①白名单里的群名"
+                                   "与微信里**完全一致** ②这个群在**当前登录**的那个号里 "
+                                   "③群里确实已经有消息（新群/刚清过聊天记录会读到 0）"))
+                    add("微信·消息库可读", "fail", "目标群 %s 最新序号=0" % targets[0]["name"], _hint)
         except Exception as e:
             add("微信·数据", "fail", str(e))
 

@@ -2355,7 +2355,14 @@ $('pickGroups').onclick = async ()=>{
     // 以前这里只按 groups 长度显示 0 个、原因被吞掉 ⇒ 现在**如实把原因显示出来**，不再让用户猜。
     if(r && r.ok === false){ toast(r.error || '读不到群列表（微信可能还没接上）'); return; }
     const groups = r.groups||[];
-    if(!groups.length){ toast('没读到任何群聊：请先在「运行状态」确认微信已连接（右上角那行会写原因）'); return; }
+    if(!groups.length){
+      // ⛔ 2026-09-20 修（网友 v0920-1227「微信已连接却找不到群聊」）：原来这里一律说
+      //   「请先在运行状态确认微信已连接」—— 可微信**明明连上了**（后端读库失败被吞成 0 个群，
+      //   见 replica_adapter.load_groups 那条注释）⇒ 把用户引向完全错误的方向。现在改成
+      //   中性、可自查、可反馈的三选一，不再断言"微信没连"。
+      toast('这台机器上读到 0 个群聊。请依次确认：①微信登录的是你要用的那个号 ②那个号里确实有群 ③「运行状态」那行写的是「已连接」。都正常的话点「反馈」把这条发我。');
+      return;
+    }
     const m=document.createElement('div'); m.className='mask';
     m.innerHTML='<div class="box" style="text-align:left"><h1>选择监听的群</h1><p>检测到 '+groups.length+' 个群聊，勾选机器人需要监听的群（全不勾=监听所有群）。</p><div id="groupPick"></div><div class="btns" style="justify-content:flex-end;margin-top:10px"><button class="pri" id="gpOk">确定</button><button class="ghost" id="gpCancel">取消</button></div></div>';
     document.body.appendChild(m);

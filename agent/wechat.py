@@ -1629,7 +1629,23 @@ class WeChatAdapter:
         try:
             msgs = self._db.get_messages(wxid, limit=1)
             return int(msgs[0]["sort_seq"]) if msgs else 0
-        except Exception:
+        except Exception as _e:
+            # ⛔ 2026-09-20 修（网友 v0920-0824 的「点击测试」截图里这条是「目标群 123 最新序号=0」，
+            #   而提示只说"可能是数据库位置不对"）：原来把异常**吞成 0** ⇒ 上层看到的是
+            #   "这个群没有任何消息"，而真相可能是"消息库根本读不出来"。现在记进 `_cap`
+            #   （点击测试会把原因原样报出来），并留一条**限频** warning —— 这个函数会被监听
+            #   循环反复调用，不许刷屏。
+            try:
+                self._cap["messages"] = "fail:%s【%s】" % (str(_e)[:100], type(_e).__name__)
+            except Exception:
+                pass
+            _now = time.time()
+            if _now - float(getattr(self, "_ls_warn_at", 0) or 0) > 60:
+                self._ls_warn_at = _now
+                try:
+                    log.warning("读消息库失败（%s 的「最新序号」读不出来）：%s", wxid, str(_e)[:120])
+                except Exception:
+                    pass
             return 0
 
     def poll_new_messages(self, wxid: str, since_seq: int, limit: int = 50) -> list:

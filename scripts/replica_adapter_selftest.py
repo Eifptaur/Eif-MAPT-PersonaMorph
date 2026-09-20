@@ -142,6 +142,51 @@ def main():
     g2 = ra.load_groups(db2)
     ok("没有 get_groups ⇒ 回退查 contact.db 也能拿到群", g2 and g2[0]["wxid"] == "12345@chatroom", str(g2)[:60])
 
+    print("— C2. 读库失败**必须抛**（2026-09-20 网友报「微信已连接却找不到群聊」的根因）—")
+
+    class BrokenDB(FakeDB):
+        """两条路都失败：公开接口抛 + contact.db 也打不开。"""
+        def get_groups(self):
+            raise RuntimeError("database is locked")
+
+        def _open(self, rel):
+            raise RuntimeError("database is locked")
+
+    class EmptyGroupsDB(FakeDB):
+        """查询**成功**但确实一个群都没有（这是事实，不是错误）。"""
+        def __init__(self):
+            super().__init__()
+            self.contact_rows = []
+
+        def get_groups(self):
+            return []
+
+    class NoShardDB(FakeDB):
+        """连 contact.db 都定位不到。"""
+        def __init__(self):
+            super().__init__()
+            self._db_files = []
+
+    try:
+        ra.load_groups(BrokenDB())
+        _g_raised = False
+    except Exception:
+        _g_raised = True
+    ok("get_groups 抛 + contact.db 打不开 ⇒ **抛**（旧版本在这里吞成「0 个群」）", _g_raised)
+    try:
+        _empty = ra.load_groups(EmptyGroupsDB())
+        _e_raised = False
+    except Exception:
+        _e_raised = True
+    ok("查询成功但没有群 ⇒ 返回空列表且**不抛**（那是事实，不是错误）",
+       (not _e_raised) and _empty == [], "raised=%s got=%r" % (_e_raised, _empty))
+    try:
+        ra.load_privates(NoShardDB())
+        _p_raised = False
+    except Exception:
+        _p_raised = True
+    ok("load_privates：定位不到 contact.db ⇒ **抛**（不许吞成「没有私聊联系人」）", _p_raised)
+
     print("— D. 跨分片查询：旧写法的静默少查已修 —")
     db3 = FakeDB()
     conns = ra.message_conns(db3, "wxid_a")
