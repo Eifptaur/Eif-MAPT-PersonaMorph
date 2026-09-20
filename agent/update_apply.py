@@ -268,6 +268,40 @@ def _perm_hint(e, tp: str) -> str:
     return ""
 
 
+def _probe_write(path: str) -> str:
+    """**真**探一下"这个文件现在能不能被我们写" —— 用来把「被别的进程持有（共享冲突）」
+    与「ACL 拒写（真故障）」分开。
+
+    返回 `"ok"` / `"sharing"`（ERROR_SHARING_VIOLATION=32）/ `"denied"`（ERROR_ACCESS_DENIED=5）/ `"unknown"`。
+    为什么必须用真 API（不能靠属性位猜）：实测**文件级 ACL** 拒写（`icacls <文件> /deny …:(WD,AD)`）时，
+    文件的只读属性位是**没变**的，靠 `st_mode & 0o200` 判不出来 ⇒ 会被当成"被占用"跳过 ⇒ 半装永久化。
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+        k32 = ctypes.windll.kernel32
+        k32.CreateFileW.restype = wintypes.HANDLE
+        k32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                                    ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD,
+                                    wintypes.HANDLE]
+        _GENERIC_WRITE = 0x40000000
+        _SHARE_ALL = 0x00000001 | 0x00000002 | 0x00000004
+        _OPEN_EXISTING = 3
+        h = k32.CreateFileW(str(path), _GENERIC_WRITE, _SHARE_ALL, None, _OPEN_EXISTING, 0x80, None)
+        _INVALID = ctypes.c_void_p(-1).value
+        if h and int(h) != int(_INVALID):
+            k32.CloseHandle(h)
+            return "ok"
+        err = int(k32.GetLastError())
+        if err == 32:
+            return "sharing"
+        if err == 5:
+            return "denied"
+        return "unknown"
+    except Exception:
+        return "unknown"
+
+
 def _is_locked(e, path: str = "") -> bool:
     """这个异常是不是"文件正被别的进程使用"（共享冲突）。只有这一种才允许"跳过并继续"。
 
@@ -287,6 +321,14 @@ def _is_locked(e, path: str = "") -> bool:
     实测（真 `icacls /deny` ）老行为给出 `rc=0 status=partial pending=['agent/c.py']`、文件没落地、
     版本不推进 ⇒ 受保护目录里的用户**永久停在"只装了一半"**，而文案还把他引去"找占用者"。
     ⇒ 现在：**目标不存在 ⇒ 一律判真故障**（回滚）；`stat` 失败也判真故障。
+
+    ⛔ 2026-09-21 **四次修（V-R4-9，第四轮审计）**：上一版对"文件已存在"的情形靠
+    `st_mode & 0o200`（只读属性位）判死活 —— 可**文件级 ACL 拒写**（实测 `icacls <文件> /deny …:(WD,AD)`）
+    **不改属性位** ⇒ 被判成"被占用"跳过 ⇒ `rc=0 status=partial`，受保护目录里的用户**永久半装**、
+    文案还把他引去"找占用者"（方向是错的）。
+    ⇒ 现在改成**真探一次**（`_probe_write`：`CreateFileW(GENERIC_WRITE, SHARE_ALL)`）：
+      `ok`（其实写得进去 ⇒ 刚才只是瞬时/共享问题）与 `sharing`（32）⇒ 算"被占用"（可跳过）；
+      **`denied`（5）/ `unknown` ⇒ 真故障**（ACL/路径/权限）⇒ 回滚并给权限方向的提示。
     """
     we = getattr(e, "winerror", None)
     err = getattr(e, "errno", None)
@@ -298,10 +340,20 @@ def _is_locked(e, path: str = "") -> bool:
         try:
             if not os.path.exists(path):
                 return False        # 新建文件却写不进去 ⇒ 目录权限/路径问题，真故障
-            if not (os.stat(path).st_mode & 0o200):   # 0o200 = S_IWRITE
-                return False        # 只读文件 ⇒ 真故障，必须回滚（不许降级成"部分成功"）
         except Exception:
-            return False            # 连 stat 都失败 ⇒ 更可能是权限/路径问题 ⇒ 真故障
+            return False            # 连 exists 都失败 ⇒ 更可能是权限/路径问题 ⇒ 真故障
+        # ⛔ V-R4-9：**真探写权限**（只读属性位判不出 ACL）
+        _p = _probe_write(path)
+        if _p == "ok" or _p == "sharing":
+            return True
+        if _p == "denied":
+            return False            # ACL 拒写 ⇒ 真故障，必须回滚（不许降级成"部分成功"）
+        # 探针给不出结论（非 Windows / API 不可用）⇒ 退回旧口径（只读属性位）
+        try:
+            if not (os.stat(path).st_mode & 0o200):   # 0o200 = S_IWRITE
+                return False
+        except Exception:
+            return False
         return True
     return False
 
