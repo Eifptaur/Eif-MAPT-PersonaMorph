@@ -211,6 +211,30 @@ def main():
     ok("⑤ 反例锚：老写法（只关在线后端、不打桩 `ensure_running`）确实会被这条扫出来",
        ("pick_backend(" in "_x = IG.pick_backend()") and ("ensure_running = lambda" not in "_x = IG.pick_backend()"))
 
+    # ── ⑥ 恒真的"三目伪装"：`True if X else False`（第五轮审计 **V-R5A-2** 的形态）─────────
+    #   现场：`vuln_fix_selftest.py:451` 那句 `True if _orig_open2 else False` —— 它本质是 `bool(X)`，
+    #   判的是"urlopen 这个名字存在"，跟被测行为毫无关系。审计把 `_dl_once` 改成"一律拒取"后跑全套：
+    #   **133 脚本 / 4072 断言 / 0 失败 / 全绿** ⇒ 整个下载功能被堵死也没人发现。
+    #   第 ② 条只认"条件位是字符串字面量"，认不出这种形态 ⇒ 这里按 AST 单独扫一遍。
+    _tern = []
+    for _fn in files:
+        try:
+            _t2 = open(os.path.join(HERE, _fn), encoding="utf-8").read()
+        except Exception:
+            continue
+        try:
+            _tr = _ast.parse(_t2)
+        except Exception:
+            continue
+        for _nd in _ast.walk(_tr):
+            if isinstance(_nd, _ast.IfExp) and _is_bool_const(_nd.body) and _is_bool_const(_nd.orelse):
+                _tern.append("%s:%d" % (_fn, getattr(_nd, "lineno", 0)))
+    ok("⑥ 没有 `True if X else False` 这种恒真伪装（它等于 `bool(X)`，与断言的名字无关）",
+       not _tern, _tern[:5])
+    ok("⑥ 反例锚：那句老写法（`True if _orig_open2 else False`）确实会被这条扫出来",
+       bool([n for n in _ast.walk(_ast.parse("ok('x', True if _orig else False)"))
+             if isinstance(n, _ast.IfExp) and _is_bool_const(n.body) and _is_bool_const(n.orelse)]))
+
     print("\n== 汇总：%d 通过 / %d 失败 ==" % (len(PASS), len(FAIL)))
     if FAIL:
         print("失败项：")

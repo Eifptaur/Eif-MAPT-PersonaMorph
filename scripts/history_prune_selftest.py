@@ -114,27 +114,45 @@ def main():
     ok("②c 对照：老窗口法确实会覆盖 07:00:36（＝这次改口径的原因）",
        _w[0] <= _b + 36_000 <= _w[1], _w)
 
-    # ③ 撤销：把 `_trash/messages/<name>.<stamp>` 放回 `MESSAGES_DIR`
+    # ③ 撤销：**真跑一遍生产者 → 消费者**（不许再手写夹具 —— 第五轮审计 V-R5B-1 正是被手写夹具漏掉的：
+    #    生产者写 `x.json.json.<stamp>`、消费者只剥 `.stamp` ⇒ 撤销"报成功"但档案一个字节都没回来）
     tmp = tempfile.mkdtemp(prefix="hp-judge-")
     from agent import store as _st
-    old_dir, old_mk = _st.MESSAGES_DIR, None
+    old_dir = _st.MESSAGES_DIR
     try:
         _st.MESSAGES_DIR = os.path.join(tmp, "messages")
         os.makedirs(_st.MESSAGES_DIR, exist_ok=True)
         trash = os.path.join(tmp, "_trash", "messages")
-        os.makedirs(trash, exist_ok=True)
         stamp = "20260918-071500"
-        fn = "group_g1.json"
-        with open(os.path.join(trash, fn + "." + stamp), "w", encoding="utf-8") as f:
-            f.write('{"chat_key":"g1","messages":[{"id":"1","text":"我说什么","ts":"1"}]}')
+        fn = os.path.basename(_st.chat_file("g1"))
+        _body = '{"chat_key":"g1","next_local_id":9,"messages":[{"id":"1","text":"我说什么","ts":"1"}]}'
+        with open(os.path.join(_st.MESSAGES_DIR, fn), "w", encoding="utf-8") as f:
+            f.write(_body)
+        store4 = _FakeStore({"g1": [{"id": "reply", "ts": str(base + 20_000), "self": True}]})
+        _res4 = hp.prune_for_deleted_runs(store4, all_e, [all_e[2]], trash_root=trash, stamp=stamp)
+        _back = sorted(os.listdir(trash)) if os.path.isdir(trash) else []
+        ok("③ 生产者备份出来的名字是 `<档案>.json.<stamp>`（**不是** `.json.json.<stamp>`）",
+           _back == [fn + "." + stamp], _back)
+        ok("③ 生产者真备份了（`backed` 有它，且内容＝原档案）",
+           bool(_res4.get("backed")) and "我说什么" in open(_res4["backed"][0], encoding="utf-8").read(),
+           _res4.get("backed"))
+        with open(os.path.join(_st.MESSAGES_DIR, fn), "w", encoding="utf-8") as f:
+            f.write('{"chat_key":"g1","next_local_id":1,"messages":[]}')      # 模拟删完之后档案被重写
         n = hp.restore_history(trash, stamp)
-        dst = os.path.join(_st.MESSAGES_DIR, fn)
-        ok("③ 撤销把存档文件还原回 `MESSAGES_DIR`",
-           n == 1 and os.path.exists(dst) and "我说什么" in open(dst, encoding="utf-8").read(),
-           (n, os.path.exists(dst)))
-        ok("③ 还原后备份被清掉（不留垃圾）",
-           not os.path.exists(os.path.join(trash, fn + "." + stamp)))
+        _txt = open(os.path.join(_st.MESSAGES_DIR, fn), encoding="utf-8").read()
+        ok("③ 撤销**真的把档案还原回来**（端到端；内容回来了，不是只把「撤销成功」写在界面上）",
+           n == 1 and "我说什么" in _txt, (n, _txt[:60]))
+        ok("③ 还原后备份被清掉（不留垃圾）", not os.path.exists(os.path.join(trash, fn + "." + stamp)))
+        # 老格式（多一个 .json）也要能撤回来 —— 升级前存下的那份不许失联
+        os.makedirs(trash, exist_ok=True)
+        with open(os.path.join(trash, fn + ".json." + stamp), "w", encoding="utf-8") as f:
+            f.write('{"chat_key":"g1","next_local_id":9,"messages":[{"id":"1","text":"老备份","ts":"1"}]}')
+        n2 = hp.restore_history(trash, stamp)
+        ok("③ 老格式备份（`x.json.json.<stamp>`）也能还原到 `x.json`（老数据不失联）",
+           n2 == 1 and "老备份" in open(os.path.join(_st.MESSAGES_DIR, fn), encoding="utf-8").read(), n2)
         ok("③ 换个 stamp 撤不到东西（不会误还原）", hp.restore_history(trash, "19700101-000000") == 0)
+        ok("③ 反例锚：老生产者的名字（多一个 `.json`）确实不是现在备份出来的名字",
+           (fn + ".json." + stamp) != (fn + "." + stamp))
     finally:
         _st.MESSAGES_DIR = old_dir
         import shutil

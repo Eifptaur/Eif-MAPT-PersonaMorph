@@ -171,7 +171,12 @@ def prune_for_deleted_runs(store, all_entries, deleted, trash_root: str = "", st
                     src = None
                 if src and os.path.exists(src):
                     os.makedirs(trash_root, exist_ok=True)
-                    dst = os.path.join(trash_root, "%s.json.%s" % (os.path.basename(src), stamp))
+                    # ⛔ 2026-09-21（第五轮审计 **V-R5B-1，P1**）：这里原来写成 `"%s.json.%s"`，
+                    #   而 `src` 本身就以 `.json` 结尾 ⇒ 备份名变成 `x.json.json.<stamp>`；
+                    #   消费者（`restore_history`）只剥 `.stamp` ⇒ 还原出个 `x.json.json`，
+                    #   真档案**一个字节都没回来**，而界面照样报"已撤销，恢复了…"（静默失败）。
+                    #   活体 `data/_trash/messages/group_*.json.json.*` 就是这条的物证。
+                    dst = os.path.join(trash_root, "%s.%s" % (os.path.basename(src), stamp))
                     shutil.copyfile(src, dst)
                     res["backed"].append(dst)
             except Exception:
@@ -198,6 +203,11 @@ def restore_history(trash_root: str, stamp: str) -> int:
                 continue
             src = os.path.join(trash_root, name)
             base = name[: -len("." + stamp)]                 # group_xxx_chatroom.json
+            # ⛔ 2026-09-21（V-R5B-1）：老实现把备份写成 `x.json.json.<stamp>`（多一个 `.json`）
+            #   ⇒ 这里必须认得**老名字**并把它纠正回 `x.json`，否则用户升级前存下的那几份
+            #   **永远撤不回来**（数据在盘上，但谁也不知道它该叫什么）。新名字走正常分支。
+            if base.endswith(".json.json"):
+                base = base[: -len(".json")]
             if not base.endswith(".json"):
                 continue
             try:
