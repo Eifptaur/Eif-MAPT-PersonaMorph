@@ -71,6 +71,42 @@ def detect_pane_left(img, lo_rel: float = 0.15, hi_rel: float = 0.60, need: int 
         return 0
 
 
+def detect_pane_left_alt(img, rail_max_rel: float = 0.12, list_w: int = 300) -> int:
+    """**结构锚**版的面板左沿：竖导航栏右沿 + 会话列表**固定像素宽**（≈300px），认不出给 0。
+
+    为什么另开一条（2026-09-21 真机实测，代价＝切会话整条第③路失效）：老口径
+    （从 `0.15w` 起找连续 24 列"近纯白"）在**聊天区左列被消息气泡占满**时，会话列表右沿那里
+    根本找不到白列 ⇒ 一路扫到气泡右边，实测报 **660**（真值 384）⇒ 会话列裁剪框跟着偏进聊天区
+    （`left-240 .. left-6`）⇒ `find_row_info` 把聊天气泡当会话行读 ⇒ "列表里没看到「×××」那一行"。
+
+    微信的会话列表是**固定像素宽、不随窗口变**（老口径的注释里也写了这一条），
+    所以"竖栏右沿 + 固定宽"是更稳的结构锚。竖栏是深色底 ⇒ 从 0 往右第一个"不再深色"的列就是栏右沿。
+    认不出（浅色主题/皮肤）返回 0，由调用方忽略本条（fail-safe）。
+    """
+    try:
+        g = img.convert("L")
+        w, h = g.size
+        px = g.load()
+        y0, y1 = int(h * 0.2), int(h * 0.8)
+        step = max(1, (y1 - y0) // 20)
+        rail_right = 0
+        for x in range(0, max(8, int(w * rail_max_rel))):
+            vals = [px[x, y] for y in range(y0, y1, step)]
+            if not vals:
+                continue
+            mean = sum(vals) / len(vals)
+            if mean >= 150:                     # 不再是深色底 ⇒ 竖栏在这一列结束了
+                rail_right = x
+                break
+        if not rail_right:
+            return 0
+        pl = int(rail_right + int(list_w))
+        if pl <= 0 or pl >= w:
+            return 0
+        return pl
+    except Exception:
+        return 0
+
 def crop_box(size, pane_left_rel=None, band_px=None, pane_left_px: int = 0) -> tuple:
     """按渲染区尺寸算出会话头文字带的像素框 (l, t, r, b)（夹在图像内）。"""
     w, h = int(size[0]), int(size[1])

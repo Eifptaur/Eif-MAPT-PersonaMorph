@@ -3711,23 +3711,71 @@ class WeChatAdapter:
             except Exception:
                 row = None
             if not row:
+                # ⚠️ 2026-09-21 加（真机实测）：单帧 OCR 会偶发读不出名字 —— 同一状态连抓 5 帧
+                #    实测 4 中 1 漏（漏的那帧名字被读成 `文件传，“星期六`，清洗后仍配不上时整条路就废）。
+                #    ⇒ 再抓 3 帧（用产品里现成的 `capture_best`）找一次，还没找到才判"列表里没有"。
+                #    fail-closed 不变：多找一次只是多给一次机会，找不到照样不点。
+                try:
+                    _img2 = _co.capture_best(gui=gui, frames=3)
+                    row = _co.find_row_info(_img2, name) if _img2 is not None else None
+                except Exception:
+                    row = None
+            if not row:
+                # ⛔ 2026-09-21 真机实测（第二个真缺陷）：`detect_pane_left` 在**聊天区左列被消息气泡
+                #    占满**时会一路扫到气泡右边（实测报 660、真值 384）⇒ 会话列裁剪框偏进聊天区
+                #    ⇒ "列表里没看到×××那一行"（那一行其实就在那儿）。老口径自己的注释里就写着
+                #    "会话列表是**固定像素宽**"，所以这里退到结构锚（竖栏右沿 + 固定列表宽）再找一次。
+                try:
+                    _alt_pl = _chh.detect_pane_left_alt(img)
+                except Exception:
+                    _alt_pl = 0
+                if _alt_pl:
+                    try:
+                        row = _co.find_row_info(img, name, pane_left=_alt_pl)
+                    except Exception:
+                        row = None
+                    if row:
+                        log.info("会话行定位：面板左沿自测偏差（改用结构锚 %s 才找到「%s」）",
+                                 _alt_pl, str(name)[:12])
+            if not row:
                 return False, "列表里没看到「%s」那一行（不滚列表——滚你屏幕比开搜索窗更打扰）" % name
             ox, oy = int(getattr(gui, "origin_x", 0)), int(getattr(gui, "origin_y", 0))
-            tgt = ib.find_render_child(main) or main
-            _ok, _why = self._click_posted(backend, tgt,
-                                           (ox + int(row["pos"][0]), oy + int(row["pos"][1])),
-                                           "会话行（列表·免搜索）")
-            if not _ok:
-                return False, _why
-            time.sleep(0.6)
-            _op, _opwhy = self.chat_is_open(chat_id, gui=gui, name=name)
-            if _op:
-                return True, "投递点会话行（列表·免搜索，强档证据：%s）" % str(_opwhy)[:80]
-            _idn, _idnwhy = self.chat_identity_ok(chat_id, gui=gui)
-            if _idn is True:
-                return True, "投递点会话行（列表·免搜索，内容级复核过）"
-            return False, ("点了列表里「%s」那一行，但没拿到『当前就是它』的正面证据：%s"
-                           % (name, str(_opwhy)[:70]))
+            # ⛔ 2026-09-21 真机实测（同一行连投 4 枪）：**点已经开着的那一行会把聊天区关掉**
+            #    —— 绿底带 有→无→有→无 交替。为此在点之前先用**纯像素**看一眼"高亮带是不是已经在
+            #    这一行上"（只看横跨整行的绿底，`chat_ocr.highlight_wide`：头像绿进不来）：
+            #    是 ⇒ 目标会话本来就是打开的，**绝不点**（点了会把用户的聊天框关掉）——直接当成功返回。
+            _wide = _co.highlight_wide(img)
+            if _wide and abs(int(_wide["y_abs"]) - int(row["y_abs"])) <= max(40, int(_co.ROW_PITCH * 0.75)):
+                return True, ("目标行已经是高亮行（纯像素判据：绿底带 %d~%d，本行 y=%s）⇒ "
+                              "**不点**（点它会把会话点关掉）" % (_wide["y0"], _wide["y1"], row["y_abs"]))
+            pt = (ox + int(row["pos"][0]), oy + int(row["pos"][1]))
+            # ⛔ 2026-09-21 真机 A/B（本机、微信 4.x、最大化窗口）：**同一落点投主窗 5/5 生效、
+            #    投渲染子窗 0/5**（判据＝绿底高亮带是否移到目标行 + 聊天区像素变化率 0.03~0.18，
+            #    且光标/前台全程不变）⇒ 渲染子窗在当前版本上**不处理投递鼠标消息**；
+            #    而 2026-09-13 的实测结论相反（"投主窗点不动"）。⇒ 不再硬编码单一目标，
+            #    改成**按序试 + 每枪自检**（`ib.row_click_targets`）。
+            #    ⚠️ 同落点第二枪必须隔开 >1.2s：微信按"间隔 + 位置"判双击 ⇒ 会话会被拖成浮动窗
+            #       甚至直接关掉（AGENTS.md 记的「连点两下会把聊天框关掉」本轮也复现了）。
+            _last = ""
+            for _i, _tgt in enumerate(ib.row_click_targets(main)):
+                if _i:
+                    time.sleep(1.35)
+                _ok, _why = self._click_posted(backend, _tgt, pt, "会话行（列表·免搜索）")
+                if not _ok:
+                    _last = str(_why)
+                    continue
+                time.sleep(0.6)
+                _op, _opwhy = self.chat_is_open(chat_id, gui=gui, name=name)
+                if _op:
+                    return True, "投递点会话行（列表·免搜索，强档证据：%s｜目标窗=%s）" % (
+                        str(_opwhy)[:70], ib.win_kind(main, _tgt))
+                _idn, _idnwhy = self.chat_identity_ok(chat_id, gui=gui)
+                if _idn is True:
+                    return True, ("投递点会话行（列表·免搜索，内容级复核过｜目标窗=%s）"
+                                  % ib.win_kind(main, _tgt))
+                _last = str(_opwhy)
+            return False, ("点了列表里「%s」那一行（主窗/渲染子窗都试过），但没拿到『当前就是它』的正面证据：%s"
+                           % (name, _last[:70]))
         except Exception as e:                                     # noqa: BLE001
             return False, "列表点击切会话异常：%s" % str(e)[:90]
 
@@ -3846,10 +3894,12 @@ class WeChatAdapter:
             # 会话列表列中心（滚轮落点）：列表在面板左沿往左约 240px 的那一列
             wheel_pt = (ox + max(30, pane - 130), oy + int(rh * 0.55))
 
-            # ⚠️ 会话行的点击与滚轮都要投给**渲染子窗**（`MMUIRenderSubWindowHW`）——2026-09-13 实测对比：
-            #    同一枪投主窗：点完当前会话没变（绿底仍在原来那行）；投渲染子窗：点完聊天区内容确实变了。
-            #    键盘与「发送」按钮投主窗仍然有效，别一起改。
+            # ⚠️ **滚轮**仍然投**渲染子窗**（唯一有实测支撑的滚轮目标）；
+            #    **会话行点击**的目标改用 `ib.row_click_targets()` 按序试（2026-09-21 实测：当前微信
+            #    版本上渲染子窗不处理投递鼠标消息、主窗才生效；2026-09-13 的结论相反）——见下面
+            #    `_row_tgts` 与 `tgt_click`。键盘与「发送」按钮投主窗仍然有效，别一起改。
             tgt = ib.find_render_child(main) or main
+            _row_tgts = ib.row_click_targets(main) or [int(main)]
 
             def _scroll(times: int) -> bool:
                 ok_s, _why_s = backend.wheel(tgt, wheel_pt, -120, times=max(1, int(times)), gap_ms=70)
@@ -3937,11 +3987,13 @@ class WeChatAdapter:
                         time.time() - _last_ts, int(_last_y), hl0["score"])
                 return False, "会话行在（OCR「%s」），但%s ⇒ **不补点**。若确需重试请稍后再调。" % (
                     str(info.get("name"))[:12], _why_cd)
-            # ⚠️ 会话行的点击要投给**渲染子窗**（`MMUIRenderSubWindowHW`）——2026-09-13 实测对比：
-            #    同一枪投主窗：点完当前会话没变（绿底仍在原来那行）；
-            #    投渲染子窗：点完聊天区内容确实变了（切过去了）。键盘/发送按钮投主窗仍然有效，别一起改。
-            tgt = ib.find_render_child(main) or main
-            tgt = ib.find_render_child(main) or main
+            # 点击目标：**第一枪投主窗**（当前微信版本实测生效），补点那一枪自动换渲染子窗
+            # （万一是老版本/别的机器上"渲染子窗才生效"）。两次点击之间本来就有 >1.2s 冷却
+            # （上面 `_pick_last` / `click_allowed`），不会被 Qt 判成双击。见 `ib.row_click_targets`。
+            # 滚轮 `tgt` 仍是渲染子窗（唯一有实测支撑的滚轮目标），别一起改。
+            _tgt_i = 1 if self._pick_last.get(str(chat_id)) else 0
+            _row_tgts = ib.row_click_targets(main) or [int(main)]
+            tgt_click = _row_tgts[min(_tgt_i, len(_row_tgts) - 1)]
             # ⚠️ 2026-09-16 修（真缺陷·r11 两次实测）：滚轮是**平滑滚动**，惯性没停行还在动 ⇒ 照算出来的
             #    y 点下去就**点空**（"点击已发出但该行没变绿底"）。⇒ 点前等列表停住（纯像素自检、不调 OCR）。
             _settled = self._list_settled(gui)
@@ -3964,10 +4016,11 @@ class WeChatAdapter:
                                    "或先在微信里点开目标会话。" % (_dt, _dx, _dy))
             # 会话行必须用**慢节奏**点击（2026-09-13 A/B：快节奏投渲染子窗高亮不动；
             #   悬停 300ms + 按住 150ms 高亮立刻跳到目标行）——见 input_backend.click 的注释
-            ok, why = self._click_posted(backend, tgt, (_cx, _cy), "会话行（切会话）",
+            ok, why = self._click_posted(backend, tgt_click, (_cx, _cy), "会话行（切会话）",
                                          allow_new=True, hover_ms=300, press_ms=150)
             if not ok:
-                return False, "投递点击会话行失败：%s" % why
+                return False, "投递点击会话行失败（目标窗=%s）：%s" % (
+                    ib.win_kind(main, tgt_click), why)
             self._row_click_last = (time.time(), _cx, _cy)
             self._pick_last[str(chat_id)] = (time.time(), clicked_y)
             # 点完顺手把"可能被独立出去的聊天窗"收回来（见 _reattach_if_floating 的注释）

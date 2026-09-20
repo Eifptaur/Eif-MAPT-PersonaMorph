@@ -274,7 +274,7 @@ ck("B17b′ 没登记过「用户自己收起」时，只压 Z 序底层、不�
 ck("B18 切会话：点列表（免搜索）**排在**搜索路线之前，且列表点击不滚列表",
    "_click_visible_session(" in SRC_WECHAT
    and SRC_WECHAT.index("self._click_visible_session(") < SRC_WECHAT.index("self.open_chat_by_search("))
-_HELP_CVS = SRC_WECHAT.split("def _click_visible_session(")[1][:2600]
+_HELP_CVS = SRC_WECHAT.split("def _click_visible_session(")[1][:4200]
 ck("B18a 「点列表」那条路**不开搜索窗、不滚列表**（只有抓图 + 投递点行 + 复核）",
    "open_chat_by_search" not in _HELP_CVS
    and ".wheel(" not in _HELP_CVS

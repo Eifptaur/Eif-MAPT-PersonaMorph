@@ -42,6 +42,25 @@ ok("名字后面的时间先被 clean 掉", CO.split_name("腾讯新闻14：47")
 ok("session_rows 用的是切过的名字（源码断言）", 'r["name"] = split_name(r["name"])' in
    open(os.path.join("agent", "chat_ocr.py"), encoding="utf-8").read())
 
+print("── A2b. 微信列表时间还有「星期X / 相对日」两种形态（真机复现：整条第③路失效）──")
+ok("clean 剥掉「星期六」", CO.clean("文件传，“星期六") == "文件传，“",
+   repr(CO.clean("文件传，“星期六")))
+ok("clean 剥掉「昨天 13：40」", CO.clean("腾讯，昨天13：40") == "腾讯，",
+   repr(CO.clean("腾讯，昨天13：40")))
+ok("行文本「文件传，“星期六」能配到「文件传输助手」",
+   CO.matches("文件传，“星期六", "文件传输助手"))
+ok("行文本「文件传，“昨天13：40」也能配上",
+   CO.matches("文件传，“昨天13：40", "文件传输助手"))
+ok("原有清洗不被破坏：时间/日期/省略号", CO.clean("文件传，17：01") == "文件传，"
+   and CO.clean("微信团队09/06") == "微信团队"
+   and CO.clean("日本爆发梅毒．．．") == "日本爆发梅毒")
+ok("星期词不在名字里时不受影响", CO.clean("星期六下午茶") == "下午茶", repr(CO.clean("星期六下午茶")))
+ok("「上午/下午/中午」不当时间剥（更像名字的一部分）", CO.clean("下午茶交流群") == "下午茶交流群")
+ok("find_row_info 单帧漏读 ⇒ 会再抓 3 帧找一次（源码断言）",
+   "capture_best(gui=gui, frames=3)" in
+   open(os.path.join("agent", "wechat.py"), encoding="utf-8").read().split(
+       "def _click_visible_session(")[1][:1800])
+
 print("── A3. 一次切会话最多一枪（连点两下会把聊天框关掉）──")
 ok("刚点过（0.5s）⇒ 不许再点", CO.click_allowed(100.0, 100.5, 3.0)[0] is False, CO.click_allowed(100.0, 100.5)[1])
 ok("超过冷却（3.1s）⇒ 允许", CO.click_allowed(100.0, 103.1, 3.0)[0] is True)
@@ -144,8 +163,128 @@ ok("切完用 highlight 自洽复核", "_co.highlight(" in _src or "_co.highligh
 ok("复核用相对判据（抗帧质量抖动）", "_co.highlight_relative(" in _src)
 ok("滚轮走 backend.wheel（投递档）", "backend.wheel(" in _src and "wheel_pt" in _src)
 ok("复核容差 28px 写死在代码里", "<= 28" in _src)
-ok("**会话行点击／滚轮投渲染子窗**（2026-09-13 实测：投主窗点不动）", "ib.find_render_child(main) or main" in _src)
+ok("**会话行点击目标＝主窗优先 + 渲染子窗兜底**（2026-09-21 真机 A/B：同落点投主窗 5/5 生效、"
+   "投渲染子窗 0/5；2026-09-13 结论相反 ⇒ 不许再硬编码单一目标）",
+   "ib.row_click_targets(main)" in _src and "ib.row_click_targets()" in _src)
+ok("主路（列表·免搜索）不再把会话行那一枪投给渲染子窗",
+   "self._click_posted(backend, tgt," not in _src
+   and "self._click_posted(backend, _tgt, pt," in _src)
+ok("补枪走 tgt_click（第二枪自动换窗）", "tgt_click" in _src)
+ok("两枪之间强制 >1.2s（否则 Qt 判双击 ⇒ 会话被拖成浮动窗/直接关掉）",
+   "time.sleep(1.35)" in _src.split("def _click_visible_session(")[1][:4500])
 ok("聊天区内容变化也当切换证据", "_co.pane_text(" in _src and "聊天区内容已变化" in _src)
+
+print("── D2. 会话行点击目标：主窗优先、渲染子窗兜底（脱机**功能**判据，不只看源码）──")
+ok("row_click_targets(0) 安全返回空", IB.row_click_targets(0) == [])
+_rc_keep = IB.find_render_child
+
+
+class _FakeSelf:
+    """只提供 `_click_visible_session` 用到的那几个接口，用来测**换窗重试**的顺序。"""
+
+    def __init__(self, hits):
+        self.clicks = []
+        self.hits = int(hits)          # 第几枪之后 chat_is_open 才算 True
+
+    def _click_posted(self, backend, hwnd, pt, tag=""):
+        self.clicks.append((int(hwnd), tuple(pt)))
+        return True, "stub"
+
+    def chat_is_open(self, chat_id, gui=None, name=None):
+        return (len(self.clicks) >= self.hits, "stub")
+
+    def chat_identity_ok(self, chat_id, gui=None):
+        return (False, "stub")
+
+
+try:
+    IB.find_render_child = lambda m: 0
+    ok("没有渲染子窗 ⇒ 只投主窗", IB.row_click_targets(777) == [777])
+    ok("win_kind 认主窗", IB.win_kind(777, 777) == "主窗")
+    IB.find_render_child = lambda m: 777
+    ok("渲染子窗句柄＝主窗 ⇒ 不重复投", IB.row_click_targets(777) == [777])
+    IB.find_render_child = lambda m: 888
+    ok("两个窗都在 ⇒ 顺序 [主窗, 渲染子窗]", IB.row_click_targets(777) == [777, 888])
+    ok("win_kind 认渲染子窗", IB.win_kind(777, 888) == "渲染子窗")
+
+    import time as _t
+    from agent import chat_header as _CH
+    _slp, _sel, _cap, _fri = _t.sleep, IB.select_backend, _CH.capture_image, CO.find_row_info
+    try:
+        _t.sleep = lambda s: None                     # 脱机：不等那 1.35s
+        IB.select_backend = lambda cfg=None, gui=None: IB.MessageBackend(activate=False)
+        _CH.capture_image = lambda gui=None, render=None: "FAKE_IMG"
+        CO.find_row_info = lambda img, name, **kw: {"pos": (10, 20), "y_abs": 100, "name": name}
+        _f1 = _FakeSelf(hits=2)
+        _o1, _w1 = W.WeChatAdapter._click_visible_session(_f1, "filehelper", "文件传输助手",
+                                                          gui=None, main=777)
+        ok("第一枪（主窗）没生效 ⇒ 自动换渲染子窗补一枪并成功",
+           _o1 is True and [c[0] for c in _f1.clicks] == [777, 888], str([c[0] for c in _f1.clicks]))
+        _f2 = _FakeSelf(hits=1)
+        _o2, _w2 = W.WeChatAdapter._click_visible_session(_f2, "filehelper", "文件传输助手",
+                                                          gui=None, main=777)
+        ok("第一枪就生效 ⇒ 只点一枪（不补、不双击）",
+           _o2 is True and [c[0] for c in _f2.clicks] == [777], str([c[0] for c in _f2.clicks]))
+        _f3 = _FakeSelf(hits=99)                      # 两个窗都没生效 ⇒ 必须失败（fail-closed）
+        _o3, _w3 = W.WeChatAdapter._click_visible_session(_f3, "filehelper", "文件传输助手",
+                                                          gui=None, main=777)
+        ok("两个窗口都没拿到正面证据 ⇒ 判失败（不硬说成功）",
+           _o3 is False and len(_f3.clicks) == 2, str(_w3)[:60])
+
+        # ⛔ 2026-09-21：**点已经开着的那一行会把会话点关**（同一行连投 4 枪：绿底带有→无→有→无）
+        #    ⇒ 目标行已是高亮行时**一枪都不许点**（纯像素判据 `highlight_wide`，只看横跨整行的绿底）。
+        _hw_keep = CO.highlight_wide
+        try:
+            CO.highlight_wide = lambda im, **kw: {"y_abs": 100, "y0": 80, "y1": 120, "score": 0.9}
+            _f4 = _FakeSelf(hits=99)
+            _o4, _w4 = W.WeChatAdapter._click_visible_session(_f4, "filehelper", "文件传输助手",
+                                                              gui=None, main=777)
+            ok("目标行已是高亮行 ⇒ 一枪都不点、直接算成功（免得把会话点关）",
+               _o4 is True and _f4.clicks == [], "点了 %s 枪｜%s" % (len(_f4.clicks), str(_w4)[:50]))
+            CO.highlight_wide = lambda im, **kw: {"y_abs": 900, "y0": 880, "y1": 920, "score": 0.9}
+            _f5 = _FakeSelf(hits=1)
+            _o5, _w5 = W.WeChatAdapter._click_visible_session(_f5, "filehelper", "文件传输助手",
+                                                              gui=None, main=777)
+            ok("高亮行在别处 ⇒ 照样点（不被这条闸误挡）",
+               _o5 is True and [c[0] for c in _f5.clicks] == [777], str([c[0] for c in _f5.clicks]))
+        finally:
+            CO.highlight_wide = _hw_keep
+
+        # ⛔ 2026-09-21 真机实测：`detect_pane_left` 在聊天区左列被气泡占满时会扫到气泡右边
+        #    （报 660、真值 384）⇒ 会话列裁剪框偏进聊天区 ⇒ "列表里没看到×××那一行"。
+        #    ⇒ 退到**结构锚**（竖栏右沿 + 固定列表宽）再找一次。
+        from agent import chat_header as CHD
+        from PIL import Image as _IM
+        _syn = _IM.new("L", (800, 400), 250)                 # 聊天区：白
+        for _x in range(0, 60):
+            for _y in range(400):
+                _syn.putpixel((_x, _y), 70)                  # 竖栏：深
+        for _x in range(60, 360):
+            for _y in range(400):
+                _syn.putpixel((_x, _y), 237)                 # 会话列表：浅灰
+        ok("结构锚＝栏右沿 60 + 固定列表宽 300 ⇒ 360", CHD.detect_pane_left_alt(_syn) == 360,
+           str(CHD.detect_pane_left_alt(_syn)))
+        ok("全是浅色（认不出竖栏）⇒ 返回 0（fail-safe，调用方忽略）",
+           CHD.detect_pane_left_alt(_IM.new("L", (800, 400), 250)) == 0)
+        ok("pane_left 能透传进 find_row_info/session_rows",
+           "pane_left: int = 0" in open(os.path.join("agent", "chat_ocr.py"),
+                                        encoding="utf-8").read().split("def find_row_info(")[1][:200])
+        _alt_keep, _fri2 = CHD.detect_pane_left_alt, CO.find_row_info
+        try:
+            CHD.detect_pane_left_alt = lambda im, **kw: 384
+            CO.find_row_info = (lambda img, name, zoom=2, want_time="", pane_left=0:
+                                ({"pos": (10, 20), "y_abs": 100, "name": name} if pane_left else None))
+            _f6 = _FakeSelf(hits=1)
+            _o6, _w6 = W.WeChatAdapter._click_visible_session(_f6, "filehelper", "文件传输助手",
+                                                              gui=None, main=777)
+            ok("老口径找不到行 ⇒ 用结构锚重找一次并照样点成",
+               _o6 is True and [c[0] for c in _f6.clicks] == [777], str(_w6)[:60])
+        finally:
+            CHD.detect_pane_left_alt, CO.find_row_info = _alt_keep, _fri2
+    finally:
+        _t.sleep, IB.select_backend, _CH.capture_image, CO.find_row_info = _slp, _sel, _cap, _fri
+finally:
+    IB.find_render_child = _rc_keep
 
 print("── E. 相对高亮判据 + 聊天区摘要（脱机）──")
 ok("input_backend 有 find_render_child", hasattr(IB, "find_render_child"))
@@ -237,7 +376,8 @@ ok("放宽的只是草稿标记形态（名字行是别的名字仍然否）",
 #    而 21：41 这种时间戳 OCR 读得准，实测按时间一次命中 y=246 那一行）
 _co_src = open(os.path.join(ROOT, "agent", "chat_ocr.py"), encoding="utf-8").read()
 _w_src = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
-ok("find_row_info 支持 want_time（按时间定位）", "def find_row_info(img, name: str, zoom: int = 2, want_time: str = \"\")" in _co_src)
+ok("find_row_info 支持 want_time（按时间定位）",
+   "want_time" in _co_src.split("def find_row_info(")[1][:220])
 ok("时间是从整行文本 full 里找的（只看 name 永远找不到时间）",
    'r.get("full")' in _co_src and "row_time_match(_blob, want)" in _co_src)
 ok("时间命中但名字明显是别的会话 ⇒ 不算（宁可不点）",
