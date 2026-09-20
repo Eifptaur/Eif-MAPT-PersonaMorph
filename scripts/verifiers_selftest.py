@@ -149,6 +149,49 @@ finally:
     V._p = _keep_p
     shutil.rmtree(_tmp4, ignore_errors=True)
 
+print("\n── C5. 第五轮回执三条：未来时间 / 全项没测到 / 坏身份（V-R5A-3 · V-R5A-4 · V-R5B-5）──")
+ok("C5a `_fresh_age` 四段口径：读不到=None · 未来=False · 区间内=True · 太旧=None",
+   V._fresh_age(None, 0, 1800) is None and V._fresh_age(-5000, 0, 1800) is False
+   and V._fresh_age(60, 0, 1800) is True and V._fresh_age(99999, 0, 1800) is None,
+   (V._fresh_age(None, 0, 1800), V._fresh_age(-5000, 0, 1800), V._fresh_age(60, 0, 1800)))
+ok("C5b 反例锚：老口径（只看上界 `<= 30`）**会把未来时间算成「刚写过」**（这就是 V-R5A-3 的现场）",
+   (-4320.0 <= 30) is True)
+_tmp5 = tempfile.mkdtemp(prefix="pm-vf5-")
+_keep_p5 = V._p
+V._p = lambda *parts: os.path.join(_tmp5, *parts)
+try:
+    os.makedirs(os.path.join(_tmp5, "data"), exist_ok=True)
+    _sp5 = os.path.join(_tmp5, "data", "update_state.json")
+    io.open(_sp5, "w", encoding="utf-8").write('{"lastStatus": "current"}')
+    _fut = time.time() + 3 * 86400
+    os.utime(_sp5, (_fut, _fut))
+    _r5f = V.run("update_stuck")
+    _fc = [c for c in _r5f["checks"] if "30 分钟内" in c["name"]]
+    ok("C5c 快照 mtime 在**未来** ⇒ 那格判 **False**（坏读数），并在 detail 里点明是「未来」",
+       len(_fc) == 1 and _fc[0]["ok"] is False and "未来" in _fc[0]["detail"], str(_fc))
+    # 坏身份：活体里那份 {"wxid": "3"}
+    io.open(os.path.join(_tmp5, "data", "self_identity.json"), "w", encoding="utf-8").write(
+        '{"wxid": "3", "acct": "", "nickname": "", "from": "echo"}')
+    _r5i = V.run("self_echo")
+    _ic = [c for c in _r5i["checks"] if c["name"].startswith("认识自己")]
+    ok("C5d 坏身份（`{\"wxid\":\"3\"}`）⇒ 那一格**不许**判 True，按「没测到」并说清原因",
+       len(_ic) == 1 and _ic[0]["ok"] is None and "不合法" in _ic[0]["detail"], str(_ic))
+    ok("C5e 反例锚：`\"3\"` 是真值字符串 —— 老写法 `True if sid else None` 正是这么把它当「已认识」的",
+       bool("3") is True)
+finally:
+    V._p = _keep_p5
+    shutil.rmtree(_tmp5, ignore_errors=True)
+_all_none = [V._check("甲", None, "读不到"), V._check("乙", None, "也读不到")]
+_an_ok, _an_msg, _ = V._verdict(_all_none, "全绿口径", {})
+ok("C5f **全项都没测到** ⇒ 总判决 = None（不是 True，也不是 False）",
+   _an_ok is None and "一项都没测到" in _an_msg, (_an_ok, _an_msg[:60]))
+_fn5 = V._finish("t5", "测试", "症状", None, _an_msg, "", _all_none)
+ok("C5g 报告头画 `○ 没测到`（不许画 ✅，也不许画 ❌），且结果里 ok 仍是 None",
+   "○ 没测到" in _fn5["report"] and _fn5["ok"] is None, _fn5["report"][:90])
+ok("C5h 三处新鲜度都走统一助手（源码级：`_fresh_age` 至少 3 处调用）",
+   V.__dict__.get("_fresh_age") is not None
+   and open(os.path.join(ROOT, "agent", "verifiers.py"), encoding="utf-8").read().count("_fresh_age(") >= 4)
+
 print("── D. 异常与未知 id 都不许抛（别把前端打崩）──")
 _u = V.run("不存在的东西")
 ok("未知 id ⇒ 同形状 + 说清可选清单", _u["ok"] is False and "没有这个检验器" in _u["verdict"], _u["verdict"][:80])

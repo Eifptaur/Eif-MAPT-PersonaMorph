@@ -9651,7 +9651,12 @@ def _self_identity_hint() -> tuple:
             d = _json.load(fh) or {}
         if not isinstance(d, dict):
             return "", ""
-        return str(d.get("acct") or "").strip(), str(d.get("wxid") or "").strip()
+        _w = str(d.get("wxid") or "").strip()
+        # ⛔ 2026-09-21（第五轮回执 V-R5B-5）：这是第三个读点，以前没净化 ⇒ `{"wxid":"3"}` 会从
+        #   这里漏出去参与"账号/本人"判定。统一走 `_valid_self_id`（唯一实现）。
+        if _w and not _valid_self_id(_w):
+            return str(d.get("acct") or "").strip(), ""
+        return str(d.get("acct") or "").strip(), _w
     except Exception:
         return "", ""
 

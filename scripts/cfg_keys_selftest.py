@@ -182,11 +182,17 @@ ok("J2 `\"true\"` 载入后是 True（别只修一半）", _c2["wechat"]["restor
 ok("J3 嵌套开关一样管用（image_gen.enabled）", _c2["image_gen"]["enabled"] is False)
 ok("J4 **列表一律不动**（`block_keywords` 里的 off/no/true 是真关键词，不许被转成布尔）",
    _c2["risk"]["block_keywords"] == ["off", "no", "true"], _c2["risk"]["block_keywords"])
-ok("J5 `as_bool()`：false/FALSE/' no '/off/0 ⇒ 假；true/1/非空 ⇒ 真；None ⇒ 走 default",
+ok("J5 `as_bool()`：false/FALSE/' no '/off/0 ⇒ 假；true/1 ⇒ 真；None ⇒ 走 default；"
+   "**认不出来的值（[]/{} /'null'/'maybe'）⇒ 也走 default，绝不朝「开」倒**",
    C.as_bool("false") is False and C.as_bool("FALSE") is False and C.as_bool(" no ") is False
    and C.as_bool("off") is False and C.as_bool("0") is False
    and C.as_bool("true") is True and C.as_bool(1) is True and C.as_bool(None, True) is True
-   and C.as_bool(None) is False)
+   and C.as_bool(None) is False
+   # ⛔ 2026-09-21（第五轮回执 V-R5B-8）：这几条以前是 `bool(s)` ⇒ `[]` / `{}` / `"null"` 全变 True
+   and C.as_bool([]) is False and C.as_bool({}) is False and C.as_bool("null") is False
+   and C.as_bool("maybe") is False and C.as_bool("maybe", True) is True)
+ok("J5b 反例锚：`bool([])` / `bool(\"null\")` 在裸 bool 下**都是真值** ⇒ 老写法就是这么把开关打开的",
+   bool([]) is False and bool("null") is True and bool(str([])) is True)
 ok("J6 载入路径真的调了归一化（源码级：`load_config` 里有 `_coerce_bool_strings`）",
    "_coerce_bool_strings(cfg)" in open(os.path.join(ROOT, "agent", "config.py"),
                                        encoding="utf-8").read())

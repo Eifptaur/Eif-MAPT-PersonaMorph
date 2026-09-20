@@ -587,6 +587,14 @@ th{color:var(--tx2);font-weight:500}
       } else if (s.status === 'error') {
         show('更新源异常：' + (s.why || ''), 'warn');
       } else { hide(); }
+      // ⛔ 2026-09-21（第五轮回执 **V-R5B-10**）：`stateSaveError` 是后端新加的"快照没写进去"，
+      //   但全仓没有消费者 ⇒ 写失败仍然只有日志知道。这里接上用户可见面：无论上面显示了什么，
+      //   只要快照没落盘就补一句（下次打开控制台会退回**旧快照**，得让用户知道这个前提）。
+      if (s.stateSaved === false || s.stateSaveError) {
+        show((txt.textContent ? txt.textContent + ' · ' : '') +
+             '（注意：这次的更新读数**没能写进快照**：' + (s.stateSaveError || '写盘失败') +
+             ' ⇒ 下次打开控制台会回到上一次的记录）', 'warn');
+      }
     }).catch(function () { hide(); });
   } catch (e) { hide(); }
   document.getElementById('updLater').onclick = hide;

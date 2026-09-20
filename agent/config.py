@@ -680,7 +680,16 @@ def as_bool(v, default: bool = False) -> bool:
     s = str(v).strip().lower()
     if s in _BOOL_STRINGS:
         return _BOOL_STRINGS[s]
-    return bool(s)
+    # ⛔ 2026-09-21（第五轮回执 **V-R5B-8**）：**不可识别的值不许朝"开"倒** —— 本函数存在的意义
+    #   就是防"开关反向"，而老写法 `return bool(s)` 让 `[]` / `{}` / `"null"` / 任何写错的词
+    #   一律变成 **True**（红线开关被自己的"防呆"打开）。⇒ 认不出来就取 `default` 并留痕。
+    try:
+        if str(s):
+            log.warning("开关值认不出来（%r）⇒ 取默认值 %s（不朝「开」倒）；"
+                        "要显式打开请写 true/on/yes/1", str(v)[:40], bool(default))
+    except Exception:
+        pass
+    return bool(default)
 
 
 def _coerce_bool_strings(node):
