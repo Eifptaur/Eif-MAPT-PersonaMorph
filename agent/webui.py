@@ -23,6 +23,19 @@ from .util import mask_secret, redact_secrets
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
+def _truthy(v):
+    """把「开关」读成布尔：**字符串 "false" / "0" / "off" / "no" 都是假**（`None` 保持 `None`）。
+
+    ⛔ 2026-09-21（第四轮审计 V-R4-15 / V-R4-13）：`bool("false")` 是 **True** ⇒
+    前端哪怕老老实实传 `"false"`，开关也会被**反向打开**；GET 路由更严重（查询串里的一切都是字符串）。
+    """
+    if v is None or isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return bool(v)
+    return str(v).strip().lower() not in ("", "0", "false", "no", "off", "none", "null")
+
+
 # ── 数据迁移包（导出/导入：计费+对话记录 data/sessions/*.jsonl）────────────
 
 def _data_export(root: str) -> bytes:
@@ -698,6 +711,16 @@ class WebUI:
             def do_GET(self):
                 parsed = urlparse(self.path)
                 path = parsed.path
+                # ⛔ 2026-09-21 修（第四轮审计 **V-R4-15，P2**）：`data` 原来**只在 `do_POST` 里定义**，
+                #   而 do_GET 里有三处分支读 `data.get(...)`（本地生图的 `/api/image_gen/local/install`、
+                #   历史目录、打开路径）⇒ **必抛 NameError**，再被外层 `except` 吞成
+                #   `{ok:false, "error":"name 'data' is not defined"}` —— 4 条 GET 路由白坏，界面上还看不出来。
+                #   GET 没有请求体 ⇒ 用**查询串**当 data（`?dir=…&allow_online=1` 这类调用照样能用）。
+                try:
+                    data = {k: (v[0] if isinstance(v, list) and v else v)
+                            for k, v in parse_qs(parsed.query).items()}
+                except Exception:
+                    data = {}
                 # 静态素材（图标/光标图）免认证：<img> 不带 token，但素材不含隐私
                 if path.startswith("/assets/"):
                     return parent._serve_asset(path, self)
@@ -1105,7 +1128,7 @@ class WebUI:
                     # **后台安装**（立刻返回；关掉弹窗也会继续下）
                     try:
                         from . import sd_local as _sd
-                        _ao = data.get("allow_online")
+                        _ao = _truthy(data.get("allow_online"))
                         _ok, _why, _info = _sd.install_async(allow_online=(None if _ao is None else bool(_ao)))
                         self._json({"ok": bool(_ok), "note": _why, "info": _info, "progress": _sd.progress()})
                     except Exception as e:
