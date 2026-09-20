@@ -161,10 +161,13 @@ def pick_main_window(cands) -> int:
 
 
 def find_render_child(main_hwnd: int) -> int:
-    """主窗里的**渲染子窗**（`MMUIRenderSubWindowHW`）：Qt 自绘界面真正绘制/接收鼠标的那一层。
+    """主窗里的**渲染子窗**（`MMUIRenderSubWindowHW`）：Qt 自绘界面真正绘制的那一层。
 
-    为什么需要：键盘、点「发送」按钮投给**主窗**是有效的；但会话列表行的点击可能归这一层处理
-    （2026-09-13 实测：投主窗点了会话行之后，绿底高亮没有转到目标行 ⇒ 怀疑投错了窗口）。
+    ⚠️ 它**能不能收投递鼠标消息，跟着微信版本变**，所以**别再拿它当会话行点击的唯一目标**：
+      · 2026-09-13（微信 4.1.15.8）：投渲染子窗能切换会话、投主窗不行；
+      · 2026-09-21（本机实测，A/B 同落点同节奏）：**反过来了** —— 投主窗 5/5 生效（绿底高亮带
+        落到目标行、聊天区像素变化），投渲染子窗 0/5（毫无反应）。
+    ⇒ 会话行点击一律用 `row_click_targets()` **按序试 + 每枪自检**。
     """
     if not main_hwnd:
         return 0
@@ -185,6 +188,42 @@ def find_render_child(main_hwnd: int) -> int:
     except Exception:
         return 0
     return hits[0] if hits else 0
+
+
+def row_click_targets(main_hwnd: int) -> list:
+    """**会话行点击**的目标窗候选顺序（按序试，每枪自检是否生效）。
+
+    为什么不再硬编码单一目标（2026-09-21 真机 A/B）：同一个落点、同一套节奏，
+    **投主窗 5/5 生效**（绿底高亮带移到目标行、聊天区像素变化率 0.03~0.18），
+    **投渲染子窗 0/5**（毫无反应）——而 2026-09-13 的实测结论**正好相反**。
+    这就是"哪个窗收鼠标消息"随微信版本变（Qt 自绘层的命中测试实现变过），
+    ⇒ 顺序＝**主窗优先**（当前版本有效），不成再换渲染子窗（老版本有效）。
+
+    ⚠️ 调用方**必须**保证同一落点的两枪间隔 >1.2s：微信按"间隔 + 位置"自己判双击，
+    两次挨太近会把会话**拖成浮动窗**甚至直接关掉（`AGENTS.md`：连点两下会把聊天框关掉）。
+    """
+    out = []
+    if main_hwnd:
+        out.append(int(main_hwnd))
+    try:
+        r = find_render_child(int(main_hwnd)) if main_hwnd else 0
+    except Exception:
+        r = 0
+    if r and int(r) not in out:
+        out.append(int(r))
+    return out
+
+
+def win_kind(main_hwnd: int, hwnd: int) -> str:
+    """给日志/说明用：这个点击目标是「主窗」还是「渲染子窗」（认不出来给句柄）。"""
+    try:
+        if int(hwnd) == int(main_hwnd):
+            return "主窗"
+        if int(hwnd) == int(find_render_child(int(main_hwnd)) or 0):
+            return "渲染子窗"
+    except Exception:
+        pass
+    return "其它窗(%s)" % hwnd
 
 
 def find_main_window() -> int:

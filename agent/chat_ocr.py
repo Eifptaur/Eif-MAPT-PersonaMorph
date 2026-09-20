@@ -363,6 +363,16 @@ def header_text(img=None, gui=None, zoom: int = 2) -> str:
 
 _time_re = re.compile(r"\d{1,2}\s*[:：]\s*\d{2}")
 _date_re = re.compile(r"\d{1,2}\s*[/月]\s*\d{1,2}\s*日?")
+# ⛔ 2026-09-21 加（真缺陷·真机复现）：微信列表里的时间还有**星期几 / 相对日**两种形态，
+#    原来只剥 `HH:MM` 与 `M/D` ⇒ 行文本「文件传，“星期六」归一成「文件传星期六」，
+#    `matches()` 于是判不出「文件传输助手」那一行 ⇒ `find_row_info` 返回 None ⇒
+#    切会话第③条路（列表里直接点）整条失效（实测 6/6 全 MISS，随后只能走搜索路线、也失败）。
+#    这两条只用于**比对前清洗**：真有个群叫「星期六」时会被洗空 ⇒ 结果是"找不到这一行"（fail-closed），
+#    不会点错会话。
+_week_re = re.compile(r"(星期|周)[一二三四五六日天]")
+# 只收微信列表**确实会用**的相对日（今天显示 `HH:MM`、更早显示 `昨天/前天`）；
+# 不碰「上午/下午/中午/晚上」——那些词更容易是名字的一部分（「下午茶」），且本机列表用 24 小时制。
+_rel_re = re.compile(r"(昨天|前天)")
 _ellip_re = re.compile(r"[.．…]{2,}")
 _hhmm_re = re.compile(r"^\s*(\d{1,2})\s*[:：]\s*(\d{2})\s*$")
 
@@ -401,6 +411,8 @@ def clean(text: str) -> str:
     t = str(text)
     t = _time_re.sub("", t)
     t = _date_re.sub("", t)
+    t = _week_re.sub("", t)
+    t = _rel_re.sub("", t)
     t = _ellip_re.sub("", t)
     return t.strip()
 
@@ -508,15 +520,22 @@ GREEN_TOL = 34                  # 颜色容差（每通道）——库里写的 
 ROW_PITCH = 64                  # 会话行高（名字行 + 预览行 ≈ 64px，实测 144→241→338…）
 
 
-def list_rows(img, zoom: int = 2) -> list:
-    """OCR 会话列表并按行聚合，返回 [{'text','y','x0','x1'}...]（按 y 升序）。"""
+def list_rows(img, zoom: int = 2, pane_left: int = 0) -> list:
+    """OCR 会话列表并按行聚合，返回 [{'text','y','x0','x1'}...]（按 y 升序）。
+
+    `pane_left`＝**调用方指定的面板左沿**（0＝自己探测）。为什么要能指定（2026-09-21）：
+    `detect_pane_left` 在"聊天区左列被气泡占满"时会一路扫到气泡右边（实测报 660、真值 384）
+    ⇒ 裁剪框偏进聊天区 ⇒ 这里什么都读不到。调用方可以先用 `chat_header.detect_pane_left_alt`
+    （竖栏右沿 + 固定列表宽）再试一次。
+    """
     try:
         w, h = img.size
-        left = 0
-        try:
-            left = ch.detect_pane_left(img) or 0
-        except Exception:
-            left = 0
+        left = int(pane_left or 0)
+        if not left:
+            try:
+                left = ch.detect_pane_left(img) or 0
+            except Exception:
+                left = 0
         if not left:
             left = int(w * ch.PANE_LEFT_REL)
         # 会话列表列：面板左沿往左约 240px（实测本机列表文字 x≈177、面板左沿 331）
@@ -584,12 +603,13 @@ def green_score(img, y_abs: int, half: int = 7, x0: int = None, x1: int = None) 
         return 0.0
 
 
-def session_rows(img, zoom: int = 2) -> list:
+def session_rows(img, zoom: int = 2, pane_left: int = 0) -> list:
     """把 OCR 行聚成"会话行"：每行 = 名字行 +（可选）预览行，按 ~64px 步距归并。
 
     返回 [{'name','preview','y_name','y_abs'}...]（y_abs ＝ 名字行的图内绝对 y）。
+    `pane_left` 透传给 `list_rows`（见那里的说明）。
     """
-    lines = list_rows(img, zoom=zoom)
+    lines = list_rows(img, zoom=zoom, pane_left=pane_left) if pane_left else list_rows(img, zoom=zoom)
     if not lines:
         return []
     rows = []
@@ -725,7 +745,7 @@ def click_allowed(last_ts: float, now: float, cooldown_s: float = 3.0) -> tuple:
     return True, ""
 
 
-def find_row_info(img, name: str, zoom: int = 2, want_time: str = ""):
+def find_row_info(img, name: str, zoom: int = 2, want_time: str = "", pane_left: int = 0):
     """同 `find_row`，但返回整条信息 `{'pos':(x,y),'y_abs':int,'name':str,'why':str}`。
 
     `want_time`＝目标会话**最后一条消息的时间**（`HH:MM`，由调用方从 DB 取）——给一条**不依赖名字**的路：
@@ -737,15 +757,16 @@ def find_row_info(img, name: str, zoom: int = 2, want_time: str = ""):
     """
     try:
         w, h = img.size
-        left = 0
-        try:
-            left = ch.detect_pane_left(img) or 0
-        except Exception:
-            left = 0
+        left = int(pane_left or 0)
+        if not left:
+            try:
+                left = ch.detect_pane_left(img) or 0
+            except Exception:
+                left = 0
         if not left:
             left = int(w * ch.PANE_LEFT_REL)
         want = hhmm(want_time)
-        rows = session_rows(img, zoom=zoom)
+        rows = session_rows(img, zoom=zoom, pane_left=pane_left) if pane_left else session_rows(img, zoom=zoom)
         for r in rows:
             nm = r.get("name") or ""
             y = int(r["y_abs"])
@@ -1057,6 +1078,63 @@ def highlight(img, min_green: float = 0.12):
             return {"y_abs": int(best["y_abs"]), "score": float(score), "name": best.get("name") or "",
                     "why": "OCR 行兜底（右半段绿底 %.2f）" % score}
         return None
+    except Exception:
+        return None
+
+
+def highlight_wide(img, min_ratio: float = 0.35, x_lo: int = None, x_hi: int = None):
+    """**只看"横跨整行"的绿底**来判高亮行（专治"头像绿"把 `highlight()` 带偏）。
+
+    为什么另开一条（2026-09-21 真机实测，代价＝六轮实验全白做）：「文件传输助手」的头像是**绿色方块**，
+    而高亮行也是绿底 ⇒ `highlight()`（走 `green_bands`，扫的是整行宽度、含头像列）把
+    **"头像绿 + 高亮行绿底"合并成一条 120~217 的带**，中心 168 落在头像那一行 ——
+    报出来的"当前会话"是错的，据此做的"换一行点"实际点的是**已经开着的那一行** ⇒ 全部假阴性。
+
+    本函数只在**右侧文字列**数绿点（默认 `[pane_left-200, pane_left-10]`，**不含头像列**），
+    要求至少 `min_ratio` 的采样点是绿：头像绿进不来；高亮行绿底横跨整行 ⇒ 一定进得来。
+    返回 `{'y_abs','y0','y1','score','x0','x1'}` 或 None（fail-closed）。
+    """
+    try:
+        if img is None:
+            return None
+        w, h = img.size
+        if x_hi is None or x_lo is None:
+            left = 0
+            try:
+                left = int(ch.detect_pane_left(img) or 0)
+            except Exception:
+                left = 0
+            if not left:
+                left = int(w * ch.PANE_LEFT_REL)
+            _lo = int(x_lo if x_lo is not None else max(0, left - 200))
+            _hi = int(x_hi if x_hi is not None else max(_lo + 40, left - 10))
+        else:
+            _lo, _hi = int(x_lo), int(x_hi)
+        _hi = min(_hi, w)
+        if _hi - _lo < 40:
+            return None
+        px = img.convert("RGB").load()
+        xs = list(range(_lo, _hi, 4))
+        need = max(4, int(len(xs) * float(min_ratio)))
+        rows = []
+        for y in range(0, h, 2):
+            c = 0
+            for x in xs:
+                r, g, b = px[x, y]
+                if g > r + 25 and g > b + 25:
+                    c += 1
+            rows.append((y, c))
+        best = max(rows, key=lambda t: t[1]) if rows else (0, 0)
+        if best[1] < need:
+            return None
+        _d = dict(rows)
+        y0 = y1 = best[0]
+        while y0 - 2 >= 0 and _d.get(y0 - 2, 0) >= best[1] * 0.5:
+            y0 -= 2
+        while y1 + 2 < h and _d.get(y1 + 2, 0) >= best[1] * 0.5:
+            y1 += 2
+        return {"y_abs": int((y0 + y1) // 2), "y0": int(y0), "y1": int(y1),
+                "score": float(best[1]) / float(max(1, len(xs))), "x0": _lo, "x1": _hi}
     except Exception:
         return None
 
