@@ -1574,10 +1574,14 @@ def main():
     except Exception:
         pass
 
+    _groups_read_failed = ""
     try:
         groups = wechat.list_groups() if wechat else []
+        if not wechat:
+            _groups_read_failed = "微信还没接上"
     except Exception as e:
         log.warning("list_groups 失败：%s", e)
+        _groups_read_failed = "%s: %s" % (type(e).__name__, str(e)[:60])
         groups = []
     # 微信卡死守护：无响应自动关闭重启 + 弹窗叫用户重新登录
     try:
@@ -1591,7 +1595,8 @@ def main():
     #   同名群 + 白名单写名字 ⇒ 跳过并报出来（fail-closed），不许"勾一个监听两个"。
     _res0 = listen_targets.resolve_groups(groups, whitelist, deny)
     targets = _res0["groups"]
-    log.info("%s", listen_targets.describe(targets, _res0))
+    # ⛔ V-R5B-9：群列表这次没读到（`groups` 是异常分支给的 []）时，别把"没匹配上"说成"改名/退群了？"
+    log.info("%s", listen_targets.describe(targets, _res0, read_failed=(_groups_read_failed or "")))
     # 私聊目标（2026-09-16 用户：「大号跟小号对谈，相当于借一个智能体进来跟自己聊天」）：
     # 群那份逻辑一个字不动，这里是**追加**；档位见 config 的 wechat.private_chat。
     _pt = []

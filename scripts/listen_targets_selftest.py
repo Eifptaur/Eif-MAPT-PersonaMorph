@@ -118,6 +118,33 @@ def main():
     ok("E8 每群档位两把都认（群名 或 wxid）——同名群下按名字找档位会串到另一间",
        "_gwxid = chat_key.split" in _pr and "for _gk in (" in _pr)
 
+    print("── F. 同名群在**档位 / 屏蔽名单 / 归因文案**三条路上的残留（第五轮回执 V-R5B-6 / V-R5B-9）──")
+    from agent import prompt as _P                                                  # noqa: E402
+    _cfg_store = {"store": {"unified_tier": False, "group_tier": {"测试": 1, "KC1": 4}}}
+    _keep_gc = _P.get_config
+    _P.get_config = lambda: _cfg_store
+    try:
+        _r_t = _P.resolve_context_tier([{"text": "@我 在吗", "self": False}], wechat_nickname="我",
+                                       chat_key="group:KC1", group_name="测试")
+    finally:
+        _P.get_config = _keep_gc
+    ok("F1 同名群的两把档位键同时存在时，**wxid 键优先**（否则给两间同名群各设档位永远只能生效第一间）",
+       int(_r_t.get("tier") or 0) == 4, _r_t)
+    ok("F2 反例锚：老写法（群名键在前）会取到 1 ⇒ 与 4 不同（这条判据正是盯这个）", 1 != 4)
+    _pm_txt = open(os.path.join(ROOT, "scripts", "persona_morph.py"), encoding="utf-8").read()
+    ok("F3 群列表读失败时，那行说明**不许**再写「改名/退群了？」（归因要跟同一份日志一致）",
+       "read_failed=(_groups_read_failed or \"\")" in _pm_txt and "_groups_read_failed" in _pm_txt)
+    _d9 = LT.describe([], {"missing": ["某个群"], "ambiguous": [], "used_name": []},
+                      read_failed="TimeoutError: 超时")
+    ok("F4 `describe(read_failed=…)` 把结论写成「群列表这次没读到（不是改名/退群）」",
+       ("没读到" in _d9) and ("改名/退群了？" not in _d9), _d9)
+    _d9b = LT.describe([], {"missing": ["某个群"], "ambiguous": [], "used_name": []})
+    ok("F5 对照：没有 read_failed 时仍照旧说「改名/退群了？」（别把正常路径也改了）",
+       "改名" in _d9b, _d9b)
+    _pr_txt = open(os.path.join(ROOT, "agent", "prompt.py"), encoding="utf-8").read()
+    ok("F6 屏蔽名单也读 wxid 键（同名群里才能只屏蔽指定那间的人）",
+       'blist.get(_key)' in _pr_txt or ('_gwxid' in _pr_txt and 'group_blocklist' in _pr_txt))
+
     print("\n== 汇总：%d 通过 / %d 失败 ==" % (len(PASS), len(FAIL)))
     if FAIL:
         print("失败项：")

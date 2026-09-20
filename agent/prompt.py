@@ -363,10 +363,13 @@ def resolve_context_tier(trigger_entries, self_nickname="", bot_name="", self_id
       · 屏蔽名单命中（昵称/wxid）→ 该条消息不参与判定（等同未接收）
     """
     c = get_config().get("store", {})
-    # 屏蔽名单：{群名: [昵称, wxid...]}——命中的消息从触发集中剔除
-    if group_name:
+    # 屏蔽名单：{群名 或 群 wxid: [昵称, wxid...]}——命中的消息从触发集中剔除
+    # ⛔ 2026-09-21（第五轮回执回执 §C-补）：**wxid 键与名字键都读、合并**（老写法只认群名 ⇒
+    #   同名群里"只屏蔽甲群那个人"做不到；而控制台已经能按 wxid 存了）。名字键保留作老配置兜底。
+    _gwxid = chat_key.split(":", 1)[1] if (chat_key and ":" in chat_key) else ""
+    for _key in ([_gwxid] if _gwxid else []) + ([str(group_name)] if group_name else []):
         blist = c.get("group_blocklist") or {}
-        blocked = blist.get(group_name) or []
+        blocked = blist.get(_key) or []
         if blocked:
             bl_low = {str(b).strip().lower() for b in blocked if str(b).strip()}
             kept = []
@@ -400,19 +403,20 @@ def resolve_context_tier(trigger_entries, self_nickname="", bot_name="", self_id
         raw_tier = float(_sch["tier"])
         tier_src = "峰谷映射 %s" % _sch["window"]
     # 每群独立档位：unified_tier=false 且该群有单独设置 → 覆盖
-    #   ⚠️ W-1：键**群名或 wxid 都认**（控制台勾选现在存 wxid；老配置里的键是群名）——
-    #   同名群下"按名字找档位"会串到另一间群去，所以 wxid 也要能对得上。
+    #   ⚠️ W-1：键**群名或 wxid 都认**（控制台勾选现在存 wxid；老配置里的键是群名）。
+    #   ⛔ 2026-09-21（第五轮回执 **V-R5B-6**）：**wxid 键必须优先** —— 老写法把群名排在前头，
+    #   于是"给同名群各设一个档位"永远只能生效第一间的名字键（等于 W-1 在档位这条路上原样还在）。
     if not c.get("unified_tier", True):
         gt = c.get("group_tier") or {}
         _gwxid = chat_key.split(":", 1)[1] if (chat_key and ":" in chat_key) else ""
-        for _gk in ([str(group_name)] if group_name else []) + ([_gwxid] if _gwxid else []):
+        for _gk in ([_gwxid] if _gwxid else []) + ([str(group_name)] if group_name else []):
             if _gk and _gk in gt:
                 try:
                     raw_tier = float(gt[_gk])
-                    tier_src = "本群独立档位"
+                    tier_src = "本群独立档位（键=%s）" % ("wxid" if _gk == _gwxid else "群名")
                     break
                 except (TypeError, ValueError):
-                    continue          # 这个键的值是坏的 ⇒ 再看下一个键（别因此丢掉 wxid 那把）
+                    continue          # 这个键的值是坏的 ⇒ 再看下一个键（别因此丢掉另一把）
     tier = 4 if (raw_tier is None or raw_tier != raw_tier) else min(4, max(1, round(raw_tier)))
     # 指令禁言（第 18 条）：会话被禁言期间**档位固定降到 1 档**（只回艾特）
     _mute = None

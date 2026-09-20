@@ -172,6 +172,24 @@ def main():
         shutil.rmtree(tmp, ignore_errors=True)
 
     # ④ 静态：控制台的删/撤销两条路都接了 history_prune
+    # ⛔ 2026-09-21（第五轮回执 **V-R5B-11**）：备份失败以前被吞掉、**照样删** ⇒ 用户删完点「撤销」
+    #   才发现什么都没备份回来。⇒ 口径：**没备份成功就不删**，并把原因带出去。
+    _bakdir = tempfile.mkdtemp(prefix="hp-bak-")
+    _blocked = os.path.join(_bakdir, "不是目录")
+    with open(_blocked, "w", encoding="utf-8") as f:
+        f.write("x")                                     # 把"回收站"位置占成一个文件 ⇒ 备份必失败
+    try:
+        _st4 = _FakeStore({"g1": [{"id": "reply", "ts": str(base + 20_000), "self": True}]})
+        _r4b = hp.prune_for_deleted_runs(_st4, all_e, [all_e[2]], trash_root=_blocked, stamp="20260921-000000")
+        ok("V-R5B-11 备份失败 ⇒ **一条都不删**（宁可这次不删，也不做不可撤销的删除）",
+           not _st4.deleted and _r4b.get("removed") == 0, (_st4.deleted, _r4b.get("removed")))
+        ok("V-R5B-11 备份失败要**记账报出来**（界面/日志能区分「没历史可还原」与「没备份成功」）",
+           bool(_r4b.get("backupFailed")) and "g1" == _r4b["backupFailed"][0].get("chat"),
+           _r4b.get("backupFailed"))
+    finally:
+        import shutil as _sh3
+        _sh3.rmtree(_bakdir, ignore_errors=True)
+
     ws = open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
     ok("④ 控制台「删运行明细」接了 `prune_for_deleted_runs`", "prune_for_deleted_runs" in ws)
     ok("④ 控制台「撤销上次删除」接了 `restore_history`", "restore_history" in ws)
