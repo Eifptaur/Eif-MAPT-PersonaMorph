@@ -24,8 +24,11 @@ from __future__ import annotations
 
 import datetime
 import json
+import logging
 import os
 import shutil
+
+log = logging.getLogger("persona-morph")
 
 # 窗口下界兜底：找不到"上一条运行记录"时，只回看这么久（毫秒）
 _DEFAULT_LOOKBACK_MS = 30 * 60 * 1000
@@ -151,7 +154,7 @@ def deleted_entry_ids(store, all_entries, deleted, lead_ms: int = _LEAD_MS, limi
 def prune_for_deleted_runs(store, all_entries, deleted, trash_root: str = "", stamp: str = "",
                            limit: int = 2000, lead_ms: int = _LEAD_MS) -> dict:
     """删掉"归属于被删轮次"的存档条；删前整份备份到 `trash_root`。返回回显用的统计。"""
-    res = {"chats": {}, "removed": 0, "backed": []}
+    res = {"chats": {}, "removed": 0, "backed": [], "backupFailed": []}
     plan = deleted_entry_ids(store, all_entries, deleted, lead_ms=lead_ms, limit=limit)
     if not plan:
         return res
@@ -161,14 +164,16 @@ def prune_for_deleted_runs(store, all_entries, deleted, trash_root: str = "", st
         return res
     for ck, ids in plan.items():
         # 删前整份备份（供「撤销上次删除」还原）
+        _backed = False
         if trash_root:
             try:
                 src = None
                 try:
                     from . import store as _st
                     src = _st.chat_file_existing(ck)
-                except Exception:
+                except Exception as e:
                     src = None
+                    _why_bak = "取档案路径失败：%s" % str(e)[:60]
                 if src and os.path.exists(src):
                     os.makedirs(trash_root, exist_ok=True)
                     # ⛔ 2026-09-21（第五轮审计 **V-R5B-1，P1**）：这里原来写成 `"%s.json.%s"`，
@@ -179,8 +184,19 @@ def prune_for_deleted_runs(store, all_entries, deleted, trash_root: str = "", st
                     dst = os.path.join(trash_root, "%s.%s" % (os.path.basename(src), stamp))
                     shutil.copyfile(src, dst)
                     res["backed"].append(dst)
-            except Exception:
-                pass
+                    _backed = True
+                else:
+                    _why_bak = "找不到该会话的档案（%s）" % (os.path.basename(str(src)) if src else "路径取不到")
+            except Exception as e:                                   # noqa: BLE001
+                _why_bak = "%s: %s" % (type(e).__name__, str(e)[:60])
+            # ⛔ 2026-09-21（第五轮回执 **V-R5B-11**）：备份失败以前被**吞掉、照样删** —— 用户删完点
+            #   「撤销」才发现什么都没备份回来（而提示还不区分"没有历史可还原"与"没备份成功"）。
+            #   ⇒ 口径：**没备份成功就不删**（宁可这次不删，也不做不可撤销的删除），并如实记账。
+            if not _backed:
+                res["backupFailed"].append({"chat": ck, "why": str(_why_bak)[:120]})
+                log.warning("备份失败（%s：%s）⇒ **本次不删**这个会话的历史（撤销必须真能撤销）",
+                            ck, str(_why_bak)[:80])
+                continue
         try:
             r = _af.delete(store, ck, ids)
             n = int((r or {}).get("changed") or 0)

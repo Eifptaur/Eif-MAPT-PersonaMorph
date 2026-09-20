@@ -1966,9 +1966,15 @@ class WebUI:
                         _note = ("已删除 %d 条记录" % _removed) if _removed else ("已删除 %d 天的记录" % len(_whole))
                         if _hres.get("removed"):
                             _note += "，并清掉对应的对话历史 %d 条（它之后不会再拿这些旧话当真）" % _hres["removed"]
+                        # ⛔ V-R5B-11：备份失败 ⇒ 那些会话**这次没删**（不可撤销的删除不做），如实说
+                        _bk_fail = _hres.get("backupFailed") or []
+                        if _bk_fail:
+                            _note += ("；有 %d 个会话**没备份成功** ⇒ 它们的历史这次**没删**"
+                                      "（撤销必须真能撤销）" % len(_bk_fail))
                         self._json({"ok": True, "note": _note, "removed": _removed,
                                     "whole_days": _whole, "days": sorted(set(_kept_days) | set(_whole)),
                                     "history_removed": _hres.get("removed", 0),
+                                    "history_backup_failed": len(_bk_fail),
                                     "history_chats": _hres.get("chats", {}),
                                     "undo": _stamp if _backup else "",
                                     "backed": sorted(_backup)})

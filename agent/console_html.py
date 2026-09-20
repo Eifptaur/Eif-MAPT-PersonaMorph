@@ -7215,7 +7215,13 @@ ttsSyncRows();
     }catch(e){ toast('安装没起来：'+e.message); }
   };
   const bs = S('sdLocalStart');
-  if(bs) bs.onclick = async ()=>{ try{ const r = await getJSON('/api/image_gen/local/start',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); toast(r.note||'已启动'); refresh(); }catch(e){ toast('启动失败：'+e.message); } };
+  // ⛔ 2026-09-21（第五轮回执 **V-R5A-8**，更正版）：服务端等模型加载最多 **60 秒**
+  //   （`sd_local.start_server`：首次要加载模型，实测 22 秒起），而 `getJSON` 的默认 abort 是 **30 秒**
+  //   ⇒ 前端先超时、抛"启动失败"，可服务其实还在起（几秒后就绪）——**假失败**。
+  //   ⇒ 这一条按服务端窗口给足（90 秒 > 60 秒窗口），并在等待期间如实说"首次要加载模型，最多 1 分钟"。
+  if(bs) bs.onclick = async ()=>{ try{ toast('正在启动本地服务…（首次要加载模型，最多约 1 分钟）');
+    const r = await getJSON('/api/image_gen/local/start',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}',timeoutMs:90000});
+    toast(r.note||'已启动'); refresh(); }catch(e){ toast('启动失败：'+e.message); } };
   // 切换档位：写配置 + 按新档重启本地服务
   const selP = S('sdPreset');
   if(selP) selP.onchange = async ()=>{

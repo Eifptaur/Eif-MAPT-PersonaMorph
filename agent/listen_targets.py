@@ -67,10 +67,12 @@ def resolve_groups(groups, whitelist, deny=None) -> dict:
     return out
 
 
-def describe(groups, res, wxid_of=None) -> str:
+def describe(groups, res, wxid_of=None, read_failed: str = "") -> str:
     """一行给人看的说明（日志与概览共用一份文案，别两处各写一遍）。
 
     `wxid_of`：可选，`gw -> 展示用 wxid 尾巴`；默认自动取。
+    `read_failed`：群列表**这次没读到**的原因 —— 有它时不许把"没匹配上"说成"改名/退群了？"
+    （那是 2026-09-21 第五轮回执 **V-R5B-9** 点名的"归因与同一条日志里的真因矛盾"）。
     """
     res = res or {}
     names = ", ".join(str(g.get("name") or g.get("wxid")) for g in (groups or [])[:15])
@@ -82,7 +84,11 @@ def describe(groups, res, wxid_of=None) -> str:
         parts.append("⚠️ **这几个群没监听**（名字对不上唯一身份）：%s ⇒ 到控制台重新勾一次"
                      "（勾选现在存 wxid，不会再靠名字认群）" % _a)
     miss = res.get("missing") or []
-    if miss:
+    if miss and read_failed:
+        parts.append("⚠️ **群列表这次没读到**（%s）⇒ 白名单里这 %d 条**现在无法判断对不对**"
+                     "（**不是**改名或退群）：%s —— 等消息库/微信接上再看这一行"
+                     % (str(read_failed)[:60], len(miss), "、".join(miss[:5])))
+    elif miss:
         parts.append("⚠️ 白名单里这些没匹配到任何群（改名/退群了？）：%s" % "、".join(miss[:5]))
     un = res.get("used_name") or []
     if un:
