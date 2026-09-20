@@ -133,5 +133,31 @@ ok("按钮接的是放行端点", "getJSON('/api/version/allow')" in H)
 ok("横幅文案说清「只对本次运行有效」", "只对本次运行有效" in H)
 ok("能力矩阵读的是 status.version（不是另拉一份）", "const vm = s.version || {}" in H)
 
+# ── ⛔ 2026-09-21（第四轮审计 **V-R4-10，P2**）：富化段被吞 ⇒ 前端把"读不到"画成
+#    「版本未实测：按严格档暂停发送（可在配置里关掉 version_gate.strict）」= 把用户指去改一个
+#    根本没拦他的开关。口径：**读数读不到 ≠ 不许发**，两侧都要如实表达。 ──
+print("── D2. 读不到 ≠ 不许发（V-R4-10） ──")
+ok("D2a status 里 version_gate **单独一层 try**（别的富化段炸了也不许把它一起丢掉）",
+   'st["version_gate"] = _vg2.status()' in WEB
+   and '{"allow": None, "level": "unknown",' in WEB)
+ok("D2b 出错时放的是 `allow=None`（读不到），**不是** False（不许发）",
+   '"allow": None, "level": "unknown"' in WEB)
+ok("D2c 外层 except 也兜底放好这两个键（不再 `except: pass` 悄悄丢）",
+   "st.setdefault(\"version_gate\", {\"allow\": None" in WEB and "st.setdefault(\"version\"," in WEB)
+ok("D2d 前端三态：只有 `allow === false` 才画红字「按严格档暂停发送」",
+   "typeof vg.allow === 'boolean'" in H and "(vg && typeof vg.allow === 'boolean') ? vg.allow : null" in H)
+ok("D2e 前端对「读不到」有中性文案（并说明不影响发送）",
+   "版本门读数读不到" in H and "：不影响发送" in H)
+ok("D2f 老写法（`vg.allow ? … : 红字`）已被替换掉",
+   "v2.textContent = vg.allow" not in H)
+ok("D2g 反例锚：老形状（`except: pass` ＋ 二值前端）**确实**会被这组判据判不合格",
+   (lambda w, h: ("st.setdefault(\"version\"," not in w) and ("typeof vg.allow" not in h)
+                 and ("st[\"version_gate\"] = _vg2.status()" in w) and ("v2.textContent = vg.allow" in h))(
+       '                            st["version"] = _vm.current()\n'
+       '                            st["version_gate"] = _vg2.status()\n'
+       '                    except Exception:\n'
+       '                        pass\n',
+       "          v2.textContent = vg.allow ? 'ok' : '版本未实测：按严格档暂停发送';\n"))
+
 print("== [version-gate] 判据：{} 通过 / {} 失败 ==".format(PASS, FAIL))
 sys.exit(1 if FAIL else 0)

@@ -894,10 +894,23 @@ class WebUI:
                             except Exception as _fe:
                                 st["ui_fp"] = {"keys": {}, "error": str(_fe)}
                             # 版本能力矩阵 + 版本门（W7：版本变了要出横幅、按未验证处理）
-                            st["version"] = _vm.current()
-                            # 版本门（W7）：没实测过的版本对 ⇒ 默认暂停发送；本会话是否已放行也一并暴露
+                            # ⛔ 2026-09-21 修（第四轮审计 **V-R4-10，P2**）：这两行原来跟其它富化段挤在
+                            #   **同一个大 try** 里，任何别的段抛异常都会把它们**一起丢掉** ⇒ 前端拿到
+                            #   `version/version_gate` 缺失 ⇒ 把"读不到"画成红字
+                            #   「版本未实测：按严格档暂停发送（可在配置里关掉 version_gate.strict）」
+                            #   ⇒ 把用户指去改一个根本没拦他的开关。⇒ 各自单独一层 try，
+                            #   出错就放 **`allow=None`（读不到）**，绝不是 False（不许发）。
                             from . import version_gate as _vg2
-                            st["version_gate"] = _vg2.status()
+                            try:
+                                st["version"] = _vm.current()
+                            except Exception as _vme:
+                                st["version"] = {"wechat": "unknown", "adapter": "",
+                                                 "error": str(_vme)[:80]}
+                            try:
+                                st["version_gate"] = _vg2.status()
+                            except Exception as _vge:
+                                st["version_gate"] = {"allow": None, "level": "unknown",
+                                                      "error": str(_vge)[:80]}
                             # 出站闸门读数（内部故障话术拦截 / 去重窗）——前端横幅要显示，见 console_html
                             try:
                                 from . import sender as _sd3
@@ -1022,8 +1035,18 @@ class WebUI:
                                 st["user_tools"] = _ut2.snapshot()
                             except Exception as _e3:
                                 st["user_tools"] = {"error": str(_e3)}
-                    except Exception:
-                        pass
+                    except Exception as _se:
+                        # ⛔ V-R4-10：**富化段出错不许悄悄丢** —— 至少把"读不到"如实放进去，
+                        #   让前端能区分「读数读不到」与「真的不许发」（`allow=None` vs `False`）。
+                        try:
+                            if isinstance(st, dict):
+                                st.setdefault("version", {"wechat": "unknown", "adapter": "",
+                                                          "error": str(_se)[:80]})
+                                st.setdefault("version_gate", {"allow": None, "level": "unknown",
+                                                               "error": str(_se)[:80]})
+                                st["status_error"] = str(_se)[:120]
+                        except Exception:
+                            pass
                     self._json(st)
                 elif path in ("/api/file_search/add", "/api/file_search/del"):
                     # 管理"可搜目录"（面板上加入/移除）

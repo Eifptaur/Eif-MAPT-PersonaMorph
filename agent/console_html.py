@@ -2925,12 +2925,23 @@ async function loadStatus(){  try{
         if(v2){
           // 2026-09-18（作者：「版本能用就行…默认放行，没必要弹那个弹窗，有问题再说」）：
           // 允许发送时就用**中性**说法与普通字色 —— 不再用"注意/临时放行"这种看着像故障的措辞。
-          v2.textContent = vg.allow
-            ? (vg.level === 'ok' ? '版本可用：已实测，照常发送'
-                                 : '版本可用：照常发送（这一版没实测记录，不影响使用）')
-            : '版本未实测：按严格档暂停发送（可在配置里关掉 version_gate.strict）';
-          v2.style.color = vg.allow ? 'var(--tx2)'
-            : (vg.level === 'ok' ? 'var(--ok-tx)' : 'var(--err-tx)');
+          // ⛔ 2026-09-21 修（第四轮审计 V-R4-10）：`allow` 缺失/非布尔时**不是**"禁止发送" ——
+          //   那是"读数读不到"（后端富化段出错时就是这个形状）。老写法 `vg.allow ? … : 红字`
+          //   会把"读不到"画成「版本未实测：按严格档暂停发送（可在配置里关掉 version_gate.strict）」，
+          //   把用户指去改一个根本没拦他的开关。⇒ 三态分开：true / false / 读不到。
+          const _allow = (vg && typeof vg.allow === 'boolean') ? vg.allow : null;
+          if(_allow === null){
+            v2.textContent = '版本门读数读不到'
+              + ((vg && vg.error) ? ('（' + vg.error + '）') : '') + '：不影响发送';
+            v2.style.color = 'var(--tx2)';
+          } else if(_allow){
+            v2.textContent = vg.level === 'ok' ? '版本可用：已实测，照常发送'
+                                               : '版本可用：照常发送（这一版没实测记录，不影响使用）';
+            v2.style.color = vg.level === 'ok' ? 'var(--ok-tx)' : 'var(--tx2)';
+          } else {
+            v2.textContent = '版本未实测：按严格档暂停发送（可在配置里关掉 version_gate.strict）';
+            v2.style.color = 'var(--err-tx)';
+          }
         }
         // 「发送已暂停」横幅：只有真的会拦住发送时才显示（allow=false），并把"拦了几次"摆出来
         try{
