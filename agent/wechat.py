@@ -1651,16 +1651,20 @@ class WeChatAdapter:
             return ""
         return self._nick_map.get(str(wxid), str(wxid))
 
-    def latest_seq(self, wxid: str) -> int:
+    def latest_seq_ex(self, wxid: str) -> tuple:
+        """读「这个会话在库里的最新序号」，**把「读失败」与「确实没有消息」分开**。
+
+        ⛔ 2026-09-21 加（第四轮审计 **V-R4-12a（P1）**）：`latest_seq` 读失败时返回 0，而监听侧
+        把它当**起点**写进水位（`wm.set(key, 0)`）⇒ **水位 0 ⇒ 从最旧历史重放**
+        （审计实测：群 A 441 条，首捞竟是 **14.1 天前**那 50 条）⇒ 机器人对着两周前的老话回，
+        而且 0 水位**永不自愈**。⇒ 返回 `(ok, seq, why)`：`ok=False` 时调用方**绝不许拿 seq 当水位**。
+        """
         try:
             msgs = self._db.get_messages(wxid, limit=1)
-            return int(msgs[0]["sort_seq"]) if msgs else 0
+            return True, (int(msgs[0]["sort_seq"]) if msgs else 0), ""
         except Exception as _e:
-            # ⛔ 2026-09-20 修（网友 v0920-0824 的「点击测试」截图里这条是「目标群 123 最新序号=0」，
-            #   而提示只说"可能是数据库位置不对"）：原来把异常**吞成 0** ⇒ 上层看到的是
-            #   "这个群没有任何消息"，而真相可能是"消息库根本读不出来"。现在记进 `_cap`
-            #   （点击测试会把原因原样报出来），并留一条**限频** warning —— 这个函数会被监听
-            #   循环反复调用，不许刷屏。
+            # `_cap` 让「点击测试」把原因原样报出来；warning **限频 60 秒**
+            # （这个函数会被监听循环反复调用，不许刷屏）。
             try:
                 self._cap["messages"] = "fail:%s【%s】" % (str(_e)[:100], type(_e).__name__)
             except Exception:
@@ -1672,10 +1676,22 @@ class WeChatAdapter:
                     log.warning("读消息库失败（%s 的「最新序号」读不出来）：%s", wxid, str(_e)[:120])
                 except Exception:
                     pass
-            return 0
+            return False, 0, "%s：%s" % (type(_e).__name__, str(_e)[:100])
 
-    def poll_new_messages(self, wxid: str, since_seq: int, limit: int = 50) -> list:
+    def latest_seq(self, wxid: str) -> int:
+        """兼容旧接口：只回序号。**读失败仍然是 0**（历史行为，很多展示类调用点依赖它）。
+
+        ⚠️ 凡是要**拿它当水位/起点**的地方，一律改用 `latest_seq_ex()` ——
+        0 与「读失败」必须分开，否则会从最旧历史重放（V-R4-12a）。
+        """
+        return self.latest_seq_ex(wxid)[1]
+
+    def poll_new_messages(self, wxid: str, since_seq: int, limit: int = 50):
         """返回 sort_seq > since_seq 的新消息（升序），归一化后。
+
+        ⛔ 2026-09-21（第四轮审计 **V-R4-7**）：**读库失败返回 `None`**（原来返回 `[]`）。
+        为什么必须分开：`[]` 与"读不出来"在监听侧长得一样 ⇒ `if not new: continue` **无声空转**
+        （用户看到的就是"它不回话，日志里什么都没有"）。`[]` 现在只表示**真的没有新消息**。
 
         🔴 2026-09-18 修（**"机器人每两分钟自己念一句"的根因**）：归一化阶段被丢掉的行
         （自己发的 / 系统消息 / 空内容）**原来直接不进批次** ⇒ 监听那边"成功才推进水位"就永远
@@ -1687,8 +1703,19 @@ class WeChatAdapter:
         """
         try:
             raws = self._db.get_new_messages(wxid, since_seq, limit)
-        except Exception:
-            return []
+        except Exception as _e:
+            try:
+                self._cap["messages"] = "fail:%s【%s】" % (str(_e)[:100], type(_e).__name__)
+            except Exception:
+                pass
+            _now = time.time()
+            if _now - float(getattr(self, "_pn_warn_at", 0) or 0) > 60:
+                self._pn_warn_at = _now
+                try:
+                    log.warning("读群[%s]的新消息失败（**不是**「没有新消息」）：%s", wxid, str(_e)[:120])
+                except Exception:
+                    pass
+            return None
         out = []
         for raw in raws:
             norm = self.normalize(raw, wxid)

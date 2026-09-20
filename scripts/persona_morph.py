@@ -2786,12 +2786,30 @@ def main():
     for g in targets:
         _key0 = "group:" + g["wxid"]
         if wm.get(_key0, 0) <= 0:
-            try:
-                wm.set(_key0, (wechat_box[0] or wechat).latest_seq(g["wxid"]))
-            except Exception:
-                wm.set(_key0, 0)
+            # ⛔ 2026-09-21（V-R4-12a，P1，第四轮审计）：**读失败绝不许把 0 写进水位** ——
+            #   0 就是"从最旧历史重放"（审计实测：首捞竟是 14.1 天前那 50 条）。
+            #   读不到就先**不给这个群定起点**（下一轮再试），并如实留痕；
+            #   循环里有一段专门把"水位 0"对齐到现有最新（或这一轮跳过这个群）。
+            _ok0, _seq0, _why0 = (wechat_box[0] or wechat).latest_seq_ex(g["wxid"])
+            if _ok0:
+                wm.set(_key0, _seq0)
+            else:
+                log.warning("群[%s] 的「最新序号」读不出来 ⇒ **不给它定起点**"
+                            "（绝不写 0＝绝不从最旧历史重放），下一轮再试：%s",
+                            g["name"], str(_why0)[:120])
     wm.flush()
     log.info("监听水位已载入：%s（重启不丢、不重放）", _wm_path)
+    _rd_last = {}          # wxid -> 上次"读不到"告警时间（限频 60 秒，别刷屏）
+
+    def _warn_rl(wxid, msg):
+        """限频 warning（读库失败会在每轮循环里复现，不许刷屏）。"""
+        try:
+            _noww = time.time()
+            if _noww - float(_rd_last.get(wxid, 0) or 0) > 60:
+                _rd_last[wxid] = _noww
+                log.warning(msg)
+        except Exception:
+            pass
 
     def _stop(signum=None, frame=None):
         log.info("收到退出信号，正在停止…")
@@ -2836,10 +2854,13 @@ def main():
         for _g in targets:
             _k = "group:" + _g["wxid"]
             if wm.get(_k, 0) <= 0:
-                try:
-                    wm.set(_k, _wc_new.latest_seq(_g["wxid"]))
-                except Exception:
-                    wm.set(_k, 0)
+                # ⛔ 同上（V-R4-12a）：切号后重定起点，**读失败不许写 0**。
+                _okn, _seqn, _whyn = _wc_new.latest_seq_ex(_g["wxid"])
+                if _okn:
+                    wm.set(_k, _seqn)
+                else:
+                    log.warning("切号后群[%s] 的最新序号读不出来 ⇒ 不给它定起点（不写 0）",
+                                _g["name"])
         wm.flush()
         if _why:
             try:
@@ -2899,12 +2920,34 @@ def main():
                     except Exception:
                         _replay = False
                     if not _replay:
+                        # ⛔ V-R4-12a：**读失败不许把 0 写进水位**（0 会变成"从最旧历史重放"）。
+                        #   读不到就**不动水位**——暂停期间的消息宁可留着，也不拿两周前的老话当新消息。
                         try:
-                            wm.set(chat_key, wechat.latest_seq(wxid))
-                            wm.flush()
+                            _okp, _seqp, _whyp = wechat.latest_seq_ex(wxid)
+                            if _okp:
+                                wm.set(chat_key, _seqp)
+                                wm.flush()
+                            else:
+                                _warn_rl(wxid, "暂停期间读不到群[%s]的最新序号 ⇒ 水位不动（不写 0）：%s"
+                                         % (g["name"], str(_whyp)[:100]))
                         except Exception:
                             pass
                     continue
+                # ⛔ 2026-09-21（V-R4-12a，P1，第四轮审计）：**水位 0 ＝ 从最旧历史重放** ——
+                #   首次运行 / 切号 / 读库失败都可能留下 0（审计实测"首捞竟是 14.1 天前那 50 条"，
+                #   而且 0 水位**永不自愈**）⇒ 能读到最新就**对齐到最新**（绝不清空重放），
+                #   读不到就**这一轮跳过这个群**（宁可不回，也不拿两周前的老话当新消息回）。
+                if int(wm.get(chat_key, 0) or 0) <= 0:
+                    _okA, _seqA, _whyA = wechat.latest_seq_ex(wxid)
+                    if _okA and _seqA > 0:
+                        log.warning("群[%s] 的水位是 0（起点没定下来）⇒ 对齐到现有最新 %d，"
+                                    "绝不从最旧历史重放", g["name"], _seqA)
+                        wm.set(chat_key, _seqA, forward_only=False)
+                        wm.flush()
+                    else:
+                        _warn_rl(wxid, "群[%s] 水位是 0 且现在读不出最新序号 ⇒ 这一轮跳过它"
+                                       "（不重放历史）：%s" % (g["name"], str(_whyA)[:100]))
+                        continue
                 # ⛔ 2026-09-17（用户问「我把聊天记录清空了，它会不会学不会、从而不发」）：
                 #   水位**只前进不回退**（防重复处理），而**微信清空聊天记录后序号可能回落 / 换库**
                 #   ⇒ 新消息的 sort_seq 小于旧水位 ⇒ 全被判成"处理过了" ⇒ **它真的不回**（而且重启
@@ -2914,9 +2957,11 @@ def main():
                     _now2 = time.time()
                     if (_now2 - float(_wm_heal.get(wxid, 0) or 0)) >= 10.0:
                         _wm_heal[wxid] = _now2
-                        _latest = int(wechat.latest_seq(wxid) or 0)
+                        # ⛔ V-R4-12a：**读失败不许当成"库里最新是 0"** —— 必须看 `ok`，
+                        #   否则"读不到"既触发不了回落自愈、又什么都看不出来（一直静默）。
+                        _okH, _latest, _whyH = wechat.latest_seq_ex(wxid)
                         _cur = int(wm.get(chat_key, 0) or 0)
-                        if _latest and _cur and _latest < _cur:
+                        if _okH and _latest and _cur and _latest < _cur:
                             log.warning("群[%s] 的消息序号回落到 %d（原水位 %d）⇒ 记录像是被清过，"
                                         "把水位对齐到最新；否则新消息会被当成旧消息跳过、它就不回了",
                                         g["name"], _latest, _cur)
@@ -2928,6 +2973,13 @@ def main():
                     new = wechat.poll_new_messages(wxid, wm.get(chat_key, 0), limit=50)
                 except Exception as e:
                     log.debug("读取群[%s]异常：%s", g["name"], e)
+                    continue
+                if new is None:
+                    # ⛔ 2026-09-21（V-R4-7，P1）：读失败**不是**"没有新消息" ——
+                    #   老实现返回 []，这里 `if not new: continue` 无声空转，
+                    #   用户看到的就是"它不回话、日志里什么都没有"。
+                    _warn_rl(wxid, "群[%s] 读新消息失败（**不是**「没有新消息」）⇒ 这一轮跳过它：%s"
+                             % (g["name"], str((getattr(wechat, "_cap", {}) or {}).get("messages") or "")[:100]))
                     continue
                 # ── 撤回核对（第 14 条兜底）：微信可能把被撤的那行**原地改写**（不新增系统行），
                 #    只认"新出现的系统行"会漏 ⇒ 定期回读近期消息在库里的当前内容核对。

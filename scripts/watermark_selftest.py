@@ -160,7 +160,7 @@ def main():
                encoding="utf-8").read()
     ok("监听循环里有自愈限频表 `_wm_heal`", "_wm_heal = {}" in _pm and "_wm_heal.get(wxid" in _pm)
     ok("判据是「最新序号**低于**水位」（正常运行时不会成立 ⇒ 不误触发）",
-       "_latest < _cur" in _pm and "latest_seq(wxid)" in _pm)
+       "_latest < _cur" in _pm and "latest_seq_ex(wxid)" in _pm)
     ok("回退走显式 `forward_only=False`（默认只前进，不许悄悄退）",
        "wm.set(chat_key, _latest, forward_only=False)" in _pm)
     ok("自愈要落盘 + 留日志（否则用户永远不知道为什么它不回）",
@@ -180,6 +180,76 @@ def main():
                encoding="utf-8").read()
     ok("控制台有按钮并打这个接口（含二次确认）",
        'id="wmReset"' in _ch and "getJSON('/api/watermark/reset'" in _ch and "uiConfirm('重新对齐监听水位？" in _ch)
+
+    # ── 第四轮审计 V-R4-12a / V-R4-7（P1）：**"读失败"与"0 / 没消息"必须分开** ──
+    #   实测现场：`latest_seq` 读失败返回 0，而监听侧把它当起点写进水位 ⇒ 水位 0 ⇒ **从最旧历史重放**
+    #   （审计实测群 A 441 条、首捞竟是 14.1 天前那 50 条），而且 0 水位**永不自愈**；
+    #   `poll_new_messages` 读失败返回 []，与"确实没有新消息"不可区分 ⇒ `if not new: continue`
+    #   无声空转（用户看到的就是"它不回话、日志什么都没有"）。
+    print("\n-- I. 读失败 ≠ 0 / 没消息（V-R4-12a / V-R4-7） --")
+    from agent import wechat as _wx                                              # noqa: E402
+
+    class _BoomDB(object):
+        def get_messages(self, *a, **k):
+            raise RuntimeError("消息库读不出来（夹具）")
+
+        def get_new_messages(self, *a, **k):
+            raise RuntimeError("消息库读不出来（夹具）")
+
+    class _OkDB(object):
+        def get_messages(self, *a, **k):
+            return [{"sort_seq": 4242}]
+
+        def get_new_messages(self, *a, **k):
+            return []
+
+    _ad_boom = _wx.WeChatAdapter.__new__(_wx.WeChatAdapter)
+    _ad_boom._db = _BoomDB()
+    _ad_boom._cap = {}
+    _ad_boom._ls_warn_at = 0
+    _ad_boom._pn_warn_at = 0
+    _okb, _seqb, _whyb = _ad_boom.latest_seq_ex("g")
+    ok("① 读失败 ⇒ `latest_seq_ex` 回 ok=False（**不许**让调用方拿它当水位）",
+       _okb is False and _seqb == 0 and bool(_whyb), (_okb, _seqb, _whyb[:40]))
+    ok("① 读失败也**留下原因**（`_cap`，点击测试/日志看得见）",
+       str(_ad_boom._cap.get("messages") or "").startswith("fail:"), _ad_boom._cap.get("messages"))
+    ok("① 兼容接口 `latest_seq` 仍回 0（历史行为，展示类调用点依赖它）",
+       _ad_boom.latest_seq("g") == 0)
+    ok("② 读失败 ⇒ `poll_new_messages` 回 **None**（不是 []＝「没有新消息」）",
+       _ad_boom.poll_new_messages("g", 0) is None)
+
+    _ad_ok = _wx.WeChatAdapter.__new__(_wx.WeChatAdapter)
+    _ad_ok._db = _OkDB()
+    _ad_ok._cap = {}
+    _okc, _seqc, _whyc = _ad_ok.latest_seq_ex("g")
+    ok("③ 正常读 ⇒ ok=True + 真序号（阳性对照，别把正常路也堵了）",
+       _okc is True and _seqc == 4242 and _whyc == "", (_okc, _seqc))
+    ok("③ 正常读但没有新消息 ⇒ `poll_new_messages` 回空列表（与 None 分开）",
+       _ad_ok.poll_new_messages("g", 0) == [])
+
+    ok("④ 三处「定起点」都走 `latest_seq_ex`（源码），且全文件**没有**把 0 写进水位",
+       "wm.set(_key0, _seq0)" in _pm and "wm.set(_k, _seqn)" in _pm
+       and "wm.set(chat_key, _seqp)" in _pm
+       and "wm.set(_key0, 0)" not in _pm and "wm.set(_k, 0)" not in _pm)
+    ok("⑤ 监听循环里有「水位 0 ⇒ 对齐到最新 / 这一轮跳过」的自愈",
+       "的水位是 0（起点没定下来）" in _pm and "水位是 0 且现在读不出最新序号" in _pm)
+    ok("⑥ 监听循环对 `None` 有显式分支（读失败不再被当成「没有新消息」）",
+       "if new is None:" in _pm and "读新消息失败（**不是**" in _pm)
+    ok("⑥ 回退自愈也看 `ok`（读失败不许当成「库里最新是 0」）",
+       "_okH and _latest and _cur and _latest < _cur" in _pm)
+    # 反例锚：老写法必须被同一组判据判不合格（证明上面这些断言有灵敏度）
+    _OLD_PM = ('    for g in targets:\n'
+               '        if wm.get("group:" + g["wxid"], 0) <= 0:\n'
+               '            try:\n'
+               '                wm.set("group:" + g["wxid"], wechat.latest_seq(g["wxid"]))\n'
+               '            except Exception:\n'
+               '                wm.set("group:" + g["wxid"], 0)\n'
+               '    new = wechat.poll_new_messages(wxid, wm.get(chat_key, 0), limit=50)\n'
+               '    if not new:\n'
+               '        continue\n')
+    _old_bad = ("latest_seq_ex" not in _OLD_PM and "if new is None:" not in _OLD_PM
+                and "wm.set(\"group:\" + g[\"wxid\"], 0)" in _OLD_PM)
+    ok("⑦ 反例锚：老写法（吞成 0 当起点 + [] 当没消息）**确实**会被判不合格", _old_bad is True)
 
     shutil.rmtree(tmp, ignore_errors=True)
     print("\n== W2 水位判据：%d 通过 / %d 失败 ==" % (len(PASS), len(FAIL)))
