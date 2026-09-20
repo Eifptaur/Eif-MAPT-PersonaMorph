@@ -280,8 +280,16 @@ def manifest_origin_ok(u: str, cfg: dict = None) -> tuple:
         return False, "已知镜像但路径不是本仓库：%s" % host
     c = cfg if isinstance(cfg, dict) else _cfg()
     _cfg_url = str((c or {}).get("url") or "").strip()
-    if _cfg_url and s == _cfg_url and bool((c or {}).get("trust_custom_url")):
-        return True, "用户显式信任的自定义源（update.trust_custom_url=true）"
+    if _cfg_url and s == _cfg_url:
+        # ⛔ 2026-09-21（第四轮审计 **V-R4-13**）：这里原来是裸 `bool(...)` ——
+        #   写 `"false"` / `"0"`（字符串）反而**开启**信任。用统一真值判断（`config.as_bool`），
+        #   这样即使配置没走 `load_config()` 的归一化（内存里 set 进来的那份）也不会反着理解。
+        try:
+            from .config import as_bool as _as_bool
+        except Exception:
+            _as_bool = bool
+        if _as_bool((c or {}).get("trust_custom_url")):
+            return True, "用户显式信任的自定义源（update.trust_custom_url=true）"
     # ⛔ V-R3-7：拒绝时必须**指路**（说清开关叫什么、写在哪），否则用户只看到"非官方域"却查不到开关
     return False, ("非官方域：%s（要用自建源/自选镜像，请在 config.json 里设 "
                    "update.trust_custom_url=true）" % (host or "?"))
@@ -556,6 +564,22 @@ def fetch(url: str, timeout: float = 8.0):
         return None, "更新源不是合法 JSON：%s" % str(e)[:60]
 
 
+def pending_list(v) -> list:
+    """把 `pendingFiles` 归一成**条目列表**（一处实现，`update_apply` 直接用它）。
+
+    ⛔ 2026-09-21（第四轮审计 **V-R4-13**）：这个字段可能是**脏数据写成字符串**（手改 / 老版本落的）
+    —— 老代码对字符串直接 `len()` ⇒ **按字符计数**，控制台于是报出
+    「还有 8 件（一、键、启、动…）」（把"一键启动.exe"一个一个字当成了不同文件）。
+    ⇒ 字符串按 `,`/`、`/换行 拆开；列表原样；其它类型忽略。
+    """
+    if isinstance(v, str):
+        s = v.replace("、", ",").replace("\r", ",").replace("\n", ",")
+        return [x.strip() for x in s.split(",") if x.strip()]
+    if isinstance(v, (list, tuple)):
+        return [str(x).strip() for x in v if str(x).strip()]
+    return []
+
+
 def _read_installed() -> dict:
     """读 `data/installed.json`（`update_apply` 写的那份：版本 + 指纹 + **pendingFiles**）。
 
@@ -651,7 +675,8 @@ def state(cfg: dict | None = None, timeout: float = 12.0) -> dict:
     #   ⇒ ①`pendingFiles` 非空时把 `current` 降级成新的 `pending` 状态，并写清"还差几件、怎么办"；
     #     ②**任何状态**都把 `pending` 带出去（公告条/检验器要看得见，不能只活在 update_apply 里）。
     _loc = _read_installed()
-    _pend = [str(x) for x in ((_loc or {}).get("pendingFiles") or [])][:50]
+    # ⛔ V-R4-13：脏数据（字符串）也要**按条目**算 —— 见 `pending_list`
+    _pend = pending_list((_loc or {}).get("pendingFiles"))[:50]
     if _pend:
         out["pending"] = _pend
         out["pendingVersion"] = str((_loc or {}).get("pendingVersion") or "")
