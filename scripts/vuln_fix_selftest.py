@@ -448,8 +448,88 @@ finally:
     U.urllib.request.urlopen = _orig_open2
 ok("下载侧（`_dl_once`）对含点段的地址**拒取且零网络请求**（判的就是取的）",
    _dok is False and not _calls and "点段" in str(_dwhy), "ok=%s calls=%d why=%s" % (_dok, len(_calls), str(_dwhy)[:60]))
-ok("下载侧对正当地址**仍然照常走网络**（不是一刀切把下载堵死）",
-   True if _orig_open2 else False)
+# ⛔ 2026-09-21（第五轮审计 **V-R5A-2**，P1·判据自身）：这里原来是一句**恒真**
+#   （`True if _orig_open2 else False`）。审计把 `_dl_once` 改成"一律拒取"后跑全套：
+#   **133 脚本 / 4072 断言 / 0 失败 / 全绿** ⇒ 整个下载功能被堵死都没人发现。
+#   ⇒ 现在真起本机 HTTP 服务：①正当地址**真的下得动**；②V-R5A-1：302 之后必须再判一次最终地址。
+import http.server as _hs                                                      # noqa: E402
+import threading as _th                                                        # noqa: E402
+from agent import update_check as _ucq                                         # noqa: E402
+
+_PAYLOAD = b"GOOD-BYTES-1234"
+_ucq_allow_local = _ucq.allow_local_update
+
+
+class _H(_hs.BaseHTTPRequestHandler):
+    redir = ""
+
+    def do_GET(self):
+        if type(self).redir:
+            self.send_response(302)
+            self.send_header("Location", type(self).redir)
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(_PAYLOAD)))
+        self.end_headers()
+        self.wfile.write(_PAYLOAD)
+
+    def log_message(self, *a):
+        pass
+
+
+def _serve(redir=""):
+    _cls = type("_H2", (_H,), {"redir": redir})
+    srv = _hs.HTTPServer(("127.0.0.1", 0), _cls)
+    _th.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, srv.server_address[1]
+
+
+_s2, _p2 = _serve()
+_s1, _p1 = _serve(redir="http://127.0.0.1:%d/good.bin" % _p2)
+_ucq.allow_local_update = lambda: False        # 判据里不许因为"允许本机源"把这道门的测试放过去
+_dl_dir = tempfile.mkdtemp(prefix="pm_vf_dl_")
+try:
+    _good = "http://127.0.0.1:%d/good.bin" % _p2
+    _tmp_a = os.path.join(_dl_dir, "good.bin")
+    _ok_a, _why_a = U._dl_once(_good, _tmp_a, 3.0)
+    _got = open(_tmp_a, "rb").read() if os.path.exists(_tmp_a) else b""
+    ok("下载侧对正当地址**真的把字节下下来**（不是一刀切把下载堵死）",
+       _ok_a is True and _got == _PAYLOAD, str((_ok_a, str(_why_a)[:50], _got[:20])))
+    _bad = "http://localhost:%d/x" % _p1        # 302 → 127.0.0.1（**另一种主机写法** ⇒ 不是同一个主机）
+    _tmp_b = os.path.join(_dl_dir, "bad.bin")
+    _ok_b, _why_b = U._dl_once(_bad, _tmp_b, 3.0)
+    ok("V-R5A-1：跟随 302 之后落到**别的主机** ⇒ 拒取（判据看的是最终取到的那个地址）",
+       _ok_b is False and ("允许名单" in str(_why_b) or "主机" in str(_why_b)) and not os.path.exists(_tmp_b),
+       str((_ok_b, str(_why_b)[:80], os.path.exists(_tmp_b))))
+    _keep_final = U._final_url_ok
+    U._final_url_ok = lambda *a, **k: ""
+    try:
+        _ok_c, _why_c = U._dl_once(_bad, _tmp_b, 3.0)
+        _got_c = open(_tmp_b, "rb").read() if os.path.exists(_tmp_b) else b""
+    finally:
+        U._final_url_ok = _keep_final
+    ok("V-R5A-1 反例锚：把这道判定摘掉（＝修之前），同一夹具**真会把跳转目标的字节写下来**",
+       _ok_c is True and _got_c == _PAYLOAD, str((_ok_c, str(_why_c)[:40], _got_c[:20])))
+    _keep_dl = U._dl_once
+    U._dl_once = lambda *a, **k: (False, "堵死（变异）")
+    try:
+        _ok_d, _ = U._dl_once(_good, _tmp_a, 3.0)
+    finally:
+        U._dl_once = _keep_dl
+    ok("V-R5A-2 反例锚：把 `_dl_once` 改成一律拒取 ⇒ 这一条会红（老写法恒真，抓不到「整个功能被堵死」）",
+       _ok_d is False)
+finally:
+    _ucq.allow_local_update = _ucq_allow_local
+    try:
+        _s1.shutdown()
+        _s2.shutdown()
+    except Exception:
+        pass
+    try:
+        _sh.rmtree(_dl_dir, ignore_errors=True)
+    except Exception:
+        pass
 try:
     _sh.rmtree(os.path.dirname(_dl_tmp), ignore_errors=True)
 except Exception:

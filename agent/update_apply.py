@@ -26,6 +26,7 @@ import shutil
 import tempfile
 import threading
 import time
+import urllib.parse
 import urllib.request
 import zipfile
 
@@ -106,6 +107,58 @@ DL_MIRRORS = ("https://ghfast.top/", "https://ghproxy.net/", "https://gh-proxy.c
 STALL_S = 45.0
 
 
+#: 允许"**跟随跳转之后**"落到的主机后缀（发布资产会 302 到 `objects.githubusercontent.com`
+#: 这类 CDN；镜像前缀也会 302 回 raw.githubusercontent.com）。
+_FINAL_HOST_SUFFIXES = ("githubusercontent.com", "githubassets.com", "github.com", "github.io",
+                        "jsdelivr.net", "ghfast.top", "ghproxy.net", "gh-proxy.com", "gh.llkk.cc")
+
+
+def _final_url_ok(final: str, requested: str) -> str:
+    """回读 `r.geturl()` 之后的**二次判定**：空串＝放行，非空＝拒取原因。
+
+    ⛔ 2026-09-21（第五轮审计 **V-R5A-1，P1**）：R4-2 只判了**请求**地址 ⇒ 302 跳到别的域时
+    「判的是 A、取的是 B」（审计用两个本机 HTTP 服务 + 产品自己的 `_dl_once` 实测：`ok=True`、
+    落盘＝攻击者字节）。R4 报告里自己写的建议"回读 `r.geturl()`"当时没做 ⇒ 现在补上：
+      ① 协议只许 http/https（防 `file:` 一类）；
+      ② 最终地址不许含点段（与请求侧同一判据）；
+      ③ 主机要么与**请求主机**相同（含本机测试服务器），要么落在已知域名/镜像后缀里；
+         本机/内网地址另由 `update.allow_local`（或 `PM_ALLOW_LOCAL_UPDATE=1`）显式放行。
+    注意：**镜像 302 回原站是合法跳转** ⇒ 判的是"最终地址本身合不合法"，不是"与请求地址一字不差"。
+    """
+    try:
+        _f = urllib.parse.urlsplit(str(final or ""))
+        _r = urllib.parse.urlsplit(str(requested or ""))
+    except Exception as e:
+        return "最终地址解析不了（%s）⇒ 拒取" % type(e).__name__
+    if _f.scheme.lower() not in ("http", "https"):
+        return "跟随跳转后协议变成 %s ⇒ 拒取" % (_f.scheme or "?")
+    _host = (_f.hostname or "").lower()
+    _rhost = (_r.hostname or "").lower()
+    _allow_local = False
+    try:
+        from . import update_check as _uc2
+        if _uc2.has_dot_segments(str(final)):
+            return "跟随跳转后地址含点段 ⇒ 拒取（判据与取件必须看同一个地址）"
+        _allow_local = bool(_uc2.allow_local_update())
+    except Exception:
+        pass
+    if _host and _host == _rhost:
+        return ""                                       # 同一主机（含本机/自建测试服务器）
+    if _allow_local:
+        try:
+            from . import local_guard as _lg
+            if _lg.is_loopback_url(str(final)):
+                return ""
+        except Exception:
+            pass
+        if _host in ("localhost", "::1", "[::1]"):
+            return ""
+    if any(_host == s or _host.endswith("." + s) for s in _FINAL_HOST_SUFFIXES):
+        return ""
+    return ("跟随跳转后落到了不在允许名单里的主机（%s）⇒ 拒取（防「判的是 A、取的是 B」）"
+            % (_host or "?"))
+
+
 def _dl_once(url: str, dest: str, timeout: float, progress=None):
     """单次下载尝试；返回 `(ok, why)`。失败时清掉半截文件。"""
     try:
@@ -124,6 +177,10 @@ def _dl_once(url: str, dest: str, timeout: float, progress=None):
             pass
         req = urllib.request.Request(url, headers={"User-Agent": UA})
         with urllib.request.urlopen(req, timeout=timeout) as r, open(dest + ".part", "wb") as fh:
+            # ⛔ V-R5A-1：**取之前再看一眼真正取到的是哪个地址**（302/镜像跳转都在这一步之后才现形）
+            _fwhy = _final_url_ok(str(r.geturl() or url), url)
+            if _fwhy:
+                raise ValueError(_fwhy)
             total = int(r.headers.get("Content-Length") or 0)
             got = 0
             while True:
