@@ -405,16 +405,24 @@ def row_time_match(blob: str, want: str) -> bool:
 
 
 def clean(text: str) -> str:
-    """清掉 OCR 常混进来的时间/日期/省略号（会话行是「名字 + 预览 + 时间」挤在一起）。"""
+    """清掉 OCR 常混进来的时间/日期/省略号（会话行是「名字 + 预览 + 时间」挤在一起）。
+
+    ⚠️ 2026-09-21 加一条**兜底**：如果这一行**整条都是时间词**（真有会话就叫「星期六」「昨天」这类），
+    剥完会剩空串 ⇒ 那等于把这一行从匹配里彻底抹掉（作者追问「那这样不会又导致该发的发不出去吗」
+    就是这一类）。⇒ **剥空就退回原文**：宁可多留一个时间词，也不许把名字洗没。
+    """
     if not text:
         return ""
+    _orig = str(text)
     t = str(text)
     t = _time_re.sub("", t)
     t = _date_re.sub("", t)
     t = _week_re.sub("", t)
     t = _rel_re.sub("", t)
     t = _ellip_re.sub("", t)
-    return t.strip()
+    t = t.strip()
+    # 剥空 ⇒ 退回原文（宁可留个时间词，也不许把"整条就是时间词的名字"洗没 ⇒ 该发的发不出去）
+    return t or _orig.strip()
 
 
 def norm(text: str) -> str:

@@ -3788,8 +3788,31 @@ class WeChatAdapter:
             # 而"点已经开着的那一行会把聊天框点关"⇒ 重投之前必须先用**纯像素绿底带**确认
             # "还没切过去"；一旦绿底带已在目标行 ⇒ 直接算成功、**绝不补枪**。
             _seq = list(_tgts) + ([_tgts[0]] if len(_tgts) > 1 else [])
+            _tol = max(40, int(_co.ROW_PITCH * 0.75))
+
+            def _band_on_row():
+                """纯像素看一眼：绿底带是不是已经落在目标行（读两帧，任一帧命中就算）。"""
+                for _k in range(2):
+                    try:
+                        _w = _co.highlight_wide(_chh.capture_image(gui=gui))
+                    except Exception:                                 # noqa: BLE001
+                        _w = None
+                    if _w and abs(int(_w["y_abs"]) - int(row["y_abs"])) <= _tol:
+                        return _w
+                    time.sleep(0.25)
+                return None
+
             for _i, _tgt in enumerate(_seq):
                 if _i:
+                    # ⛔ **补枪之前再确认一次"还没切过去"**：万一第一枪其实切成功了、只是复核没拿到证据，
+                    #    再补一枪会把刚打开的会话**点关**（实测：点已经高亮的那一行 = 关掉聊天框）。
+                    #    宁可在这里多花 ~0.5s 读两帧，也不许把"该发的会话"关掉。
+                    _wb0 = _band_on_row()
+                    if _wb0 is not None:
+                        if _cp and _ck:
+                            _cp.record_ok(_ck, "main" if int(_tgt) == int(main) else "render")
+                        return True, ("会话已在目标行（补枪前复核绿底带 %d~%d）｜上一枪目标窗=%s"
+                                      % (_wb0["y0"], _wb0["y1"], ib.win_kind(main, _seq[_i - 1])))
                     time.sleep(1.35)
                 _ok, _why = self._click_posted(backend, _tgt, pt, "会话行（列表·免搜索）")
                 if not _ok:
@@ -3810,11 +3833,8 @@ class WeChatAdapter:
                                   % ib.win_kind(main, _tgt))
                 # 第三条证据（纯像素、与 OCR 无关）：绿底带落在目标行 ⇒ 当前会话就是它。
                 # 这条专治"白字绿底读不出名字"（实测高亮行的名字 OCR 常年给空串）。
-                try:
-                    _wb = _co.highlight_wide(_chh.capture_image(gui=gui))
-                except Exception:                                     # noqa: BLE001
-                    _wb = None
-                if _wb and abs(int(_wb["y_abs"]) - int(row["y_abs"])) <= max(40, int(_co.ROW_PITCH * 0.75)):
+                _wb = _band_on_row()
+                if _wb is not None:
                     if _cp and _ck:
                         _cp.record_ok(_ck, "main" if int(_tgt) == int(main) else "render")
                     return True, ("投递点会话行（列表·免搜索，绿底带 %d~%d 落在目标行 y=%s｜目标窗=%s）"
