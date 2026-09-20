@@ -475,8 +475,8 @@ _w5 = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
 _seg5 = _w5[_w5.index("def chat_is_open"):]
 _seg5 = _seg5[:_seg5.find("\n    def ", 10)]
 ok("chat_is_open 接了标题带 OCR 这一档（源码）",
-   "header_text(" in _seg5 and "matches(_tt, want)" in _seg5)
-ok("给不出证据时不误判（读不到就往下走）", "if _tt and _co2.matches(_tt, want)" in _seg5)
+   "header_text(" in _seg5 and "matches_strict(_tt, want)" in _seg5)
+ok("给不出证据时不误判（读不到就往下走）", "if _tt and _co2.matches_strict(_tt, want)" in _seg5)
 try:
     from agent import chat_ocr as _co5
     from agent import wechat as _W5b
@@ -493,6 +493,12 @@ try:
     ok("标题带读不出 ⇒ 不误判（仍判否）", _ad5.chat_is_open("x", gui=object(), name="某会话")[0] is False)
     _co5.header_text = lambda img=None, gui=None, zoom=2: "O别人"
     ok("标题带是别的会话 ⇒ 判否", _ad5.chat_is_open("x", gui=object(), name="某会话")[0] is False)
+    # ⛔ 2026-09-21：标题带这一档也是**授权档** ⇒ 只认"完全相等（容忍 1 个前导 OCR 噪声字符）"，
+    #   不许"互相包含"——否则名字互为子串的两个群（`KC测试` 与 `测试`）会被判成同一个，回复发错群。
+    ok("标题带是另一群、名字互为子串 ⇒ 判否（防串群）",
+       _co5.matches_strict("O某会话测试", "某会话") is False
+       and _co5.matches_strict("某会话测试", "某会话") is False
+       and _co5.matches_strict("O某会话", "某会话") is True)
     _co5.capture_best, _co5.header_text = _cap5, _ht5
 except Exception as _e5c:
     ok("标题带这一档可测", False, str(_e5c)[:80])

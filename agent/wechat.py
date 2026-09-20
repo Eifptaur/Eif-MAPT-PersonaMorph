@@ -3266,7 +3266,10 @@ class WeChatAdapter:
         got, why = self.current_chat_name(gui=gui)
         try:
             from . import chat_ocr as _co
-            if got and _co.matches(got, want):
+            # ⛔ 2026-09-21：**授权档只许"完全相等"**（`matches` 是"互相包含"，
+            #   会让「KC测试」与「测试」这种互为子串的两个群被判成同一个 ⇒ 回复发进另一个群；
+            #   网友 v0919「第一个群触发、回答出现在第二个群」就是这个）。
+            if got and _co.matches_strict(got, want):
                 return True, "当前会话 OCR=%r（目标 %r）· %s" % (got, want, why)
         except Exception:
             pass
@@ -3277,7 +3280,8 @@ class WeChatAdapter:
             from . import chat_ocr as _co2
             _im4 = _co2.capture_best(gui=gui or self._get_gui(), frames=2)
             _tt = _co2.header_text(_im4) if _im4 is not None else ""
-            if _tt and _co2.matches(_tt, want):
+            # ⛔ 2026-09-21：同上 —— 标题带这一档也是**授权档**，只许完全相等（不做包含）。
+            if _tt and _co2.matches_strict(_tt, want):
                 return True, ("会话头标题带 OCR=%r 与目标 %r 匹配（不依赖活动行时间/指纹参照）"
                               % (_tt[:16], want))
         except Exception:
@@ -3628,7 +3632,9 @@ class WeChatAdapter:
         """
         try:
             from . import chat_ocr as _co
-            if _co.matches(hdr, name):
+            # ⛔ 2026-09-21：第一档改成**完全相等**（`matches` 的包含会让互为子串的两个群混掉，
+            #   走格就会走到隔壁那个群 ⇒ 屏幕被切到错的会话）。OCR 噪声由下面 loose 兜底。
+            if _co.matches_strict(hdr, name):
                 return True
             return bool(_co.loose_matches(hdr, name))
         except Exception:
@@ -5552,7 +5558,9 @@ class WeChatAdapter:
             if not (nm and hdr):
                 return False, "会话头标题带读不到（OCR 拿不到名字：nm=%r hdr=%r）" % (nm[:12], str(hdr)[:12])
             _a, _b = _co.norm(hdr), _co.norm(nm)
-            _hit = (_a == _b) if len(_b) <= 1 else _co.matches(hdr, nm)
+            # ⛔ 2026-09-21：这是**授权档**（能不能发）⇒ 只许完全相等，不许包含
+            #   （「KC测试」与「测试」互为子串时，包含判据会把回复发进另一个群）。
+            _hit = _co.matches_strict(hdr, nm) if len(_b) >= 1 else (_a == _b)
             if _hit:
                 return True, ("会话头标题带 OCR=%r 与目标 %r 匹配（纯屏幕证据，不依赖消息行；"
                               "常见于用户清空过该会话的聊天记录）" % (str(hdr)[:20], nm[:16]))
