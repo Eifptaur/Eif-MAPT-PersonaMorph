@@ -113,6 +113,15 @@ def _dl_once(url: str, dest: str, timeout: float, progress=None):
         if not str(url).lower().startswith(("http://", "https://")):
             shutil.copy2(url, dest)
             return True, ""
+        # ⛔ 2026-09-21（V-R4-2，P0）：**判的就是取的** —— 地址里带点段一律拒取。
+        #   审计实测：`…/Eifptaur/Eif-MAPT-PersonaMorph/../../attacker/x/…` 能过当时的信任判据，
+        #   而 urllib 会归一化后去取**另一个仓库**的文件（用本函数跑通了 octocat/Hello-World 的 README）。
+        try:
+            from . import update_check as _uc
+            if _uc.has_dot_segments(url):
+                return False, "下载地址里含点段（. / ..）⇒ 拒取（判据与取件必须看同一个地址）"
+        except Exception:
+            pass
         req = urllib.request.Request(url, headers={"User-Agent": UA})
         with urllib.request.urlopen(req, timeout=timeout) as r, open(dest + ".part", "wb") as fh:
             total = int(r.headers.get("Content-Length") or 0)
