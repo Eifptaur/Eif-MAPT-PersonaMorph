@@ -502,14 +502,29 @@ def fetch(url: str, timeout: float = 8.0):
         return None, "更新源不是合法 JSON：%s" % str(e)[:60]
 
 
+def _read_installed() -> dict:
+    """读 `data/installed.json`（`update_apply` 写的那份：版本 + 指纹 + **pendingFiles**）。
+
+    为什么单开一个只读函数：`state()` 以前只认 `agent/version.py` 里的版本号，而**版本号文件自己也在
+    换入清单里** —— 于是"只装了一半"这件事在"检查更新"那条路上完全不可见（见 V-R4-1）。
+    """
+    try:
+        with open(os.path.join(ROOT, "data", "installed.json"), encoding="utf-8") as fh:
+            d = json.load(fh)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
 def state(cfg: dict | None = None, timeout: float = 12.0) -> dict:
-    """给控制台的**如实**三态。`status ∈ off | error | current | newer | older`。
+    """给控制台的**如实**三态。`status ∈ off | error | current | newer | older | pending`。
 
     · `off`     ＝没配更新源（或开了"不再提醒"）⇒ 界面**什么都不显示**
     · `error`   ＝配了但拉不到/清单坏了 ⇒ 如实显示异常（不假装最新）
     · `current` ＝已是最新
     · `newer`   ＝有新版本（附 notes，供公告条显示）
     · `older`   ＝远端比本机旧（多半是配置指错了）
+    · `pending` ＝**上次只装了一半**（还有文件没换成）——再点一次「立即更新」即可补换
     """
     c = cfg if isinstance(cfg, dict) else _cfg()
     mine = current_version()
@@ -572,6 +587,28 @@ def state(cfg: dict | None = None, timeout: float = 12.0) -> dict:
     else:
         out["status"] = "newer"
         out["why"] = "有新版本 %s（当前 %s）" % (theirs, mine or "未记录")
+
+    # ⛔ 2026-09-20 修 **V-R4-1**（准备第四轮材料时由第二轮调研点名、我实读确认）：
+    #   `pendingFiles`（上次"只装了一半"的待补清单）**只有 update_apply 自己读**，`state()` 完全不看它。
+    #   而 `agent/version.py` **本身也在换入清单里** ⇒ 最常见的半装场景（`一键启动.exe`／`一键关闭.exe`
+    #   正在运行 ⇒ 那几件被占用 ⇒ 跳过，而 version.py 已经换成功）会让这里算出
+    #   `theirs == mine` 且两边指纹相同 ⇒ 报 **current（已是最新）** ⇒ 用户再也不会点第二次
+    #   ⇒ 没换成的文件**永远是旧的**，界面上一点都看不出来（半装 + 静默 + 不可诊断）。
+    #   ⇒ ①`pendingFiles` 非空时把 `current` 降级成新的 `pending` 状态，并写清"还差几件、怎么办"；
+    #     ②**任何状态**都把 `pending` 带出去（公告条/检验器要看得见，不能只活在 update_apply 里）。
+    _loc = _read_installed()
+    _pend = [str(x) for x in ((_loc or {}).get("pendingFiles") or [])][:50]
+    if _pend:
+        out["pending"] = _pend
+        out["pendingVersion"] = str((_loc or {}).get("pendingVersion") or "")
+        _tail = "、".join(_pend[:4]) + ("…" if len(_pend) > 4 else "")
+        if out["status"] == "current":
+            out["status"] = "pending"
+            out["why"] = ("上次更新只装了一半：还有 %d 件没换成（%s）—— **再点一次「立即更新」即可补换**"
+                          % (len(_pend), _tail))
+        else:
+            out["why"] = (out.get("why") or "") + ("；另外上次还有 %d 件没换成（%s），点一次「立即更新」会一起补上"
+                                                   % (len(_pend), _tail))
     st = _read_state()
     st.update({"lastCheck": out["checkedAt"], "lastStatus": out["status"], "lastError": "",
                "lastGoodUrl": out["url"]})          # 记住"哪个源能用"，下次先试它

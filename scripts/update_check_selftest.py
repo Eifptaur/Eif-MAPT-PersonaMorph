@@ -175,9 +175,15 @@ print("\n[U9] 控制台「更新公告」条：分支齐、按钮各有各的行
 _H = open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
 _W = open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
 _i = _H.find('id="updBar"')
-_seg = _H[_i:_i + 2600] if _i > 0 else ""
+# ⚠️ 2026-09-20 **第二次栽在"固定字数窗口"上**（上一版是 2600 字，注释就写在下面）：
+#   给更新条加一个 `pending` 分支（V-R4-1）之后，2600 字窗口正好把 `newer/older/error` 全挤出去
+#   ⇒ 一连 6 条假红（代码本身没问题）。⇒ 改成**跟着代码走的边界**：从 `#updBar` 一直取到这段更新条
+#   IIFE 的收尾 `})();` —— 别处插入多少都与这里无关，针对性还在。
+_s0 = _H.find("(function () {", _i)
+_e0 = _H.find("})();", _s0) if _s0 > 0 else -1
+_seg = _H[_i:(_e0 + 5)] if (_s0 > _i and _e0 > _s0) else _H[_i:_i + 2600]
 # ⚠️ 2026-09-17 教训：**固定长度的窗口很脆** —— 在 `#updBar` 下面新增一个横幅（版本门「发送已被暂停」）
-#   就把「不再提醒」那段 JS 挤出了 2600 字窗口 ⇒ 这条断言假红（代码本身没毛病）。
+#   就把「不再提醒」那段 JS 挤出了窗口 ⇒ 这条断言假红（代码本身没毛病）。
 #   改成"先在窗口里找，找不到就退回整个文件找"：保住"看的是更新条那一块"的针对性，又不被无关插入绊倒。
 def _has(*needles):
     return all(n in _seg for n in needles) or all(n in _H for n in needles)
@@ -185,11 +191,17 @@ def _has(*needles):
 ok(_i > 0, "控制台有公告条 #updBar")
 ok('id="updText"' in _seg and 'id="updGo"' in _seg and 'id="updLater"' in _seg and 'id="updSkip"' in _seg,
    "公告文案 + 三个按钮都在（立即更新 / 稍后 / 不再提醒这个版本）")
-for st in ("'newer'", "'older'", "'error'"):
+for st in ("'newer'", "'older'", "'error'", "'pending'"):
     ok(st in _seg, "有 %s 分支" % st)
 ok("有新版本" in _seg and "s.notes" in _seg, "newer 分支写「有新版本」并把公告要点拼上")
-ok(_seg.count("'warn'") >= 2, "older 与 error 都走 warn 样式（不是静默）")
+ok(_seg.count("'warn'") >= 3, "older / error / **pending** 都走 warn 样式（不是静默）")
 ok("hide()" in _seg and "else { hide(); }" in _seg, "其余状态（current / off）走隐藏")
+# ⛔ V-R4-1（2026-09-20）：半装必须**看得见**，而且不许被「不再提醒」永久消音 ——
+#   后端已把 current 降级成 pending，前端不认这个状态的话用户还是什么都看不到。
+ok("s.status === 'pending'" in _seg and "再点一次" in _seg,
+   "半装（pending）在界面上如实显示，并给出「再点一次即可补换」的下一步")
+ok("cur.status !== 'newer'" in _seg,
+   "半装时禁止「不再提醒这个版本」（theirs 常等于本机版本，按下去就永久消音）")
 ok(_has("getElementById('updLater').onclick = hide"), "「稍后」＝只隐藏，不发任何请求")
 ok(_has("fetch('/api/update')"), "取数只打 /api/update")
 ok(_has("/api/update_skip", "cur.theirs"), "「不再提醒」＝POST /api/update_skip 且带上版本号")

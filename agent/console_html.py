@@ -571,7 +571,15 @@ th{color:var(--tx2);font-weight:500}
   try {
     fetch('/api/update').then(function (r) { return r.json(); }).then(function (s) {
       cur = s;
-      if (s.status === 'newer') {
+      // ⛔ 2026-09-20 加 `pending`（V-R4-1）：上次"只装了一半"必须**看得见**。
+      //   原来这条只认 newer / older / error，其余一律隐藏 —— 而半装时后端会算出"已是最新"，
+      //   于是用户既看不到提示、也没有理由去点第二次，那几件没换成的文件永远是旧的。
+      if (s.status === 'pending') {
+        var pn = (s.pending && s.pending.length) ? s.pending.length : 0;
+        show('上次更新只装了一半：有 ' + pn + ' 件没换成'
+             + (s.pending && s.pending.length ? '（' + s.pending.slice(0, 3).join('、') + '）' : '')
+             + ' —— 再点一次「立即更新」即可补换', 'warn');
+      } else if (s.status === 'newer') {
         var n = (s.notes && s.notes.length) ? (' · ' + s.notes.join(' · ')) : '';
         show('有新版本 ' + s.theirs + '（当前 ' + (s.mine || '未记录') + '）' + n, '');
       } else if (s.status === 'older') {
@@ -583,7 +591,10 @@ th{color:var(--tx2);font-weight:500}
   } catch (e) { hide(); }
   document.getElementById('updLater').onclick = hide;
   document.getElementById('updSkip').onclick = function () {
-    if (!cur || !cur.theirs) { hide(); return; }
+    // ⛔ V-R4-1：只有"真有新版本"时才允许「不再提醒这个版本」——
+    //   半装（pending）时 theirs 往往等于本机版本，按下去会把这条提醒永久消音，
+    //   那几件没换成的文件就再也没人管了。
+    if (!cur || !cur.theirs || cur.status !== 'newer') { hide(); return; }
     try {
       fetch('/api/update_skip', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ version: cur.theirs }) })
         .then(hide).catch(hide);
