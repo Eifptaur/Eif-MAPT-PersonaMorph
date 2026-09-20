@@ -456,7 +456,7 @@ import http.server as _hs                                                      #
 import threading as _th                                                        # noqa: E402
 from agent import update_check as _ucq                                         # noqa: E402
 
-_PAYLOAD = b"GOOD-BYTES-1234"
+_PAYLOAD = b'{"version": "9999.9.9", "notes": ["attacker manifest"]}'   # 既是"字节"也是合法清单
 _ucq_allow_local = _ucq.allow_local_update
 
 
@@ -893,6 +893,40 @@ ok("控制台也认这个新状态（前端后端一体，否则后端说了界�
    "s.status === 'pending'" in _ch_src, "见 console_html.py 更新条")
 ok("…半装时**禁止**「不再提醒这个版本」（否则会把这条提醒永久消音）",
    "cur.status !== 'newer'" in _ch_src)
+
+print("\n── 第五轮回执 V-R5R-1 / V-R5R-3：**取清单那条**也必须看最终地址（同一条修复的另一半）──")
+# ⛔ 现场（回执实测）：`_dl_once` 补上了"回读最终地址"，而 `fetch()`（取清单那条）没补 ⇒
+#   A 源 302 到攻击者的域，产品把**别人的清单**（版本 9999.9.9）当官方收下，而清单决定"去下哪个包"。
+_s2b, _p2b = _serve()
+_s1b, _p1b = _serve(redir="http://127.0.0.1:%d/manifest.json" % _p2b)
+_ucq.allow_local_update = lambda: False                 # 再确认一次：判据里不许被"允许本机源"放过去
+try:
+    _plain = uc.fetch("http://127.0.0.1:%d/manifest.json" % _p2b, timeout=3.0)
+    ok("正当地址取清单**照常成功**（别把正常路堵了）", isinstance(_plain[0], dict), str(_plain)[:80])
+    _jump = uc.fetch("http://localhost:%d/manifest.json" % _p1b, timeout=3.0)
+    ok("V-R5R-1 取清单跟随 302 到**别的主机** ⇒ 拒收（判据看的是最终取到的那个地址）",
+       _jump[0] is None and ("跳转" in str(_jump[1]) or "主机" in str(_jump[1])), str(_jump)[:110])
+    _keep_fu = uc.final_url_ok
+    uc.final_url_ok = lambda *a, **k: ""
+    try:
+        _jump2 = uc.fetch("http://localhost:%d/manifest.json" % _p1b, timeout=3.0)
+    finally:
+        uc.final_url_ok = _keep_fu
+    ok("V-R5R-1 反例锚：把最终地址判定摘掉（＝补这半之前），同一夹具**真会把跳转目标的清单收下**",
+       isinstance(_jump2[0], dict), str(_jump2)[:80])
+    ok("V-R5R-3 允许名单里**没有 `github.io`**（任意用户都能托管的页面域，放了等于自己开后门）",
+       not any(str(s).endswith("github.io") for s in getattr(uc, "FINAL_HOST_SUFFIXES", ())),
+       str(getattr(uc, "FINAL_HOST_SUFFIXES", ())))
+    ok("V-R5R-3 同一判据**只有一份实现**（`update_apply` 转调 `update_check`，不许两边各抄一遍）",
+       uc.final_url_ok("http://a/x", "http://a/x") == ""
+       and "FINAL_HOST_SUFFIXES" not in io.open(os.path.join(ROOT, "agent", "update_apply.py"),
+                                                encoding="utf-8").read())
+finally:
+    try:
+        _s1b.shutdown()
+        _s2b.shutdown()
+    except Exception:
+        pass
 
 print("── 判据自省：不许再「伪造被测条件」 ──")
 # 关键字**运行时拼**出来，免得这条检查把自己的源码也算成命中（自指假红）。

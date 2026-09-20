@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import time
+import urllib.parse
 import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -327,6 +328,54 @@ def _base_url_ok(u: str) -> tuple:
     return False, "清单给的下载地址不在官方域：%s" % (host or "?")
 
 
+#: 允许"**跟随跳转之后**"落到的主机后缀 —— 发布资产会 302 到 `objects.githubusercontent.com`
+#: 这类 CDN，镜像前缀也会 302 回 `raw.githubusercontent.com`。
+#: ⛔ 2026-09-21（第五轮回执 **V-R5R-3**）：**不许放 `github.io`** —— 那是"任意用户都能托管的
+#:   页面域"（`<user>.github.io`），放进允许名单等于自己开了一扇"判 A 取 B"的门。
+FINAL_HOST_SUFFIXES = ("githubusercontent.com", "githubassets.com", "github.com",
+                       "jsdelivr.net", "ghfast.top", "ghproxy.net", "gh-proxy.com", "gh.llkk.cc")
+
+
+def final_url_ok(final: str, requested: str) -> str:
+    """**唯一实现**：回读响应对象的 `geturl()` 之后的二次判定；空串＝放行，非空＝拒取原因。
+
+    ⛔ 为什么必须有（第五轮 A 面 **V-R5A-1** + 回执 **V-R5R-1**）：只判**请求**地址时，302 一跳
+    就变成「判的是 A、取的是 B」。回执实测：`_dl_once`（下包那条）补上"回读最终地址"之后，
+    **取清单那条 `fetch()` 没补** ⇒ 攻击者源 302 到自己的域，产品把**别人的清单**（版本 9999.9.9）
+    当官方清单收下（而清单决定"去下哪个包"）⇒ 两处必须走**同一个**判据。
+    判三条：①协议只许 http/https；②最终地址不许含点段；③主机要么与**请求主机**相同
+    （含本机自建测试服务器），要么落在 `FINAL_HOST_SUFFIXES` 里；本机/内网地址另由
+    `update.allow_local`（或 `PM_ALLOW_LOCAL_UPDATE=1`）显式放行。
+    """
+    try:
+        _f = urllib.parse.urlsplit(str(final or ""))
+        _r = urllib.parse.urlsplit(str(requested or ""))
+    except Exception as e:
+        return "最终地址解析不了（%s）⇒ 拒取" % type(e).__name__
+    if _f.scheme.lower() not in ("http", "https"):
+        return "跟随跳转后协议变成 %s ⇒ 拒取" % (_f.scheme or "?")
+    _host = (_f.hostname or "").lower()
+    _rhost = (_r.hostname or "").lower()
+    if has_dot_segments(str(final)):
+        return "跟随跳转后地址含点段 ⇒ 拒取（判据与取件必须看同一个地址）"
+    _allow_local = bool(allow_local_update())
+    if _host and _host == _rhost:
+        return ""                                       # 同一主机（含本机/自建测试服务器）
+    if _allow_local:
+        try:
+            from . import local_guard as _lg
+            if _lg.is_loopback_url(str(final)):
+                return ""
+        except Exception:
+            pass
+        if _host in ("localhost", "::1", "[::1]"):
+            return ""
+    if any(_host == s or _host.endswith("." + s) for s in FINAL_HOST_SUFFIXES):
+        return ""
+    return ("跟随跳转后落到了不在允许名单里的主机（%s）⇒ 拒取（防「判的是 A、取的是 B」）"
+            % (_host or "?"))
+
+
 def allow_local_update() -> bool:
     """**本地路径当更新源**只在显式开关下可用（离线自测/内网中转）。
 
@@ -551,6 +600,12 @@ def fetch(url: str, timeout: float = 8.0):
         if url.lower().startswith(("http://", "https://")):
             req = urllib.request.Request(url, headers={"User-Agent": "persona-morph-update/1"})
             with urllib.request.urlopen(req, timeout=timeout) as r:
+                # ⛔ V-R5R-1：**取清单这条也要看最终地址**（`_dl_once` 补上了，这里当时漏了）。
+                #   回执实测：A 源 302 到攻击者的域 ⇒ 产品把别人的清单（版本 9999.9.9）当官方收下，
+                #   而清单决定"去下哪个包" ⇒ 后果等同于下到投毒包。判据用**同一个** `final_url_ok`。
+                _fwhy = final_url_ok(str(r.geturl() or url), url)
+                if _fwhy:
+                    return None, "更新源跟随跳转后不可信：%s" % _fwhy
                 raw = r.read(512 * 1024)
             # `api.github.com/.../contents/...` 返回 `{"content": "<base64>", ...}` ⇒ 特判解回来。
             # 加它的理由：它的**域名解析与路由跟 raw.githubusercontent 完全不同**——

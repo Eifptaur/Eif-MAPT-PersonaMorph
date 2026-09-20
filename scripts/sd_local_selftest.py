@@ -190,5 +190,59 @@ finally:
     else:
         os.environ[_lg.ENV_KEY] = _old_env
 
+print("\n── G. V-R5B-4/M4：杀进程前必须验身份（pidfile 残留 + PID 复用＝会杀别人）──")
+import shutil as _sh2                                                          # noqa: E402
+import tempfile as _tf2                                                        # noqa: E402
+
+ok("G1 身份判据（纯函数）：我们的服务命令行 ⇒ 认",
+   S.cmdline_is_ours(r"C:\x\python.exe -u C:\y\agent\sd_local_server.py 7860", 7860) is True)
+ok("G2 别的程序（PID 复用的现场）⇒ 不认",
+   S.cmdline_is_ours(r"C:\gradio\python.exe app.py --port 7860", 7860) is False)
+ok("G3 是我们的服务但**端口对不上** ⇒ 不认",
+   S.cmdline_is_ours(r"python -u agent\sd_local_server.py 8188", 7860) is False)
+ok("G4 取不到命令行 ⇒ 不认（宁可让用户手动处理）", S.cmdline_is_ours("", 7860) is False)
+_calls = []
+_keep_run = S.subprocess.run
+_keep_pid = S._pidfile
+_gdir = _tf2.mkdtemp(prefix="sdl-g-")
+S._pidfile = lambda: os.path.join(_gdir, "sd_local.pid")
+
+
+class _R:
+    returncode = 0
+
+    def __init__(self, out=""):
+        self.stdout = out
+
+
+def _fake_run(*a, **k):
+    """只记录**杀进程**那一类调用；顺手给 `Get-CimInstance` 返回"别的程序"的命令行（PID 复用现场）。"""
+    _cmd = " ".join(str(x) for x in (a[0] if a else []))
+    if "taskkill" in _cmd:
+        _calls.append(_cmd)
+        return _R()
+    if "CimInstance" in _cmd:
+        return _R(r"C:\Program Files\Gradio\python.exe app.py --port 7860")
+    return _R()
+
+
+S.subprocess.run = _fake_run
+try:
+    with open(S._pidfile(), "w", encoding="utf-8") as f:
+        f.write(str(os.getpid()))                 # 指着**本判据自己**：命令行不是我们的服务
+    _r5 = S.stop_server()
+    ok("G5 `stop_server` 发现「记录里的 pid 不是我们的服务」⇒ **不杀**、只清过期记录",
+       _r5[0] is True and not _calls and "没有杀任何进程" in str(_r5[1]), str((_r5, _calls)))
+    ok("G6 过期 pidfile 被清掉（别留成下一次误杀的种子）", not os.path.exists(S._pidfile()))
+    with open(S._pidfile(), "w", encoding="utf-8") as f:
+        f.write(str(os.getpid()))
+    _r6 = S.kill_stale_owner(7860)             # 端口占用者不等于 pidfile 里的 pid ⇒ 早就该拒
+    ok("G7 `kill_stale_owner` 端口占用者与 pidfile 不一致 ⇒ 拒（且没有真的 taskkill）",
+       _r6[0] is False and not _calls, str((_r6, _calls)))
+finally:
+    S.subprocess.run = _keep_run
+    S._pidfile = _keep_pid
+    _sh2.rmtree(_gdir, ignore_errors=True)
+
 print("\n== 本地生图后端判据：%d 通过 / %d 失败 ==" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
