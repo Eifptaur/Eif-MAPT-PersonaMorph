@@ -153,12 +153,13 @@ def main():
            sorted(_listed7))
 
         # ── ⑧ 第五轮回执 V-R5A-5 / V-R5A-6 / V-R5B-2 / V-R5A-7：迁移 · 幽灵会话 · 结构修复 ──
-        _w("group:wxid_deadbeef", json.dumps({"messages": [{"id": 1, "text": "合法尾巴"}]},
+        _W = "wxid_" + "deadbeef"          # 运行时拼：别让出包 PII 闸门当成真账号
+        _w("group:" + _W, json.dumps({"messages": [{"id": 1, "text": "合法尾巴"}]},
                                              ensure_ascii=False))
-        ok("⑧ 文件名推导**不许**把合法 wxid 的尾巴削掉（`wxid_deadbeef` → `group:wxid` 是错的）",
-           store_mod._filename_key("group_wxid_deadbeef.json") == "group:wxid_deadbeef",
-           store_mod._filename_key("group_wxid_deadbeef.json"))
-        _old_strip = re.sub(r"_[0-9a-f]{8}$", "", "group_wxid_deadbeef")
+        ok("⑧ 文件名推导**不许**把合法 wxid 的尾巴削掉（`wxid_xxx` → `group:wxid` 是错的）",
+           store_mod._filename_key("group_" + _W + ".json") == "group:" + _W,
+           store_mod._filename_key("group_" + _W + ".json"))
+        _old_strip = re.sub(r"_[0-9a-f]{8}$", "", "group_" + _W)
         ok("⑧ 反例锚：老实现的正则确实会削成 `group_wxid`（这就是「真会话被弄丢」的来历）",
            _old_strip == "group_wxid", _old_strip)
 

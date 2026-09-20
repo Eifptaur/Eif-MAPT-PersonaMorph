@@ -548,13 +548,13 @@ with zipfile.ZipFile(z9, "w") as _zz9:
     _zz9.writestr("persona morph/agent/c.py", "NEW")
 _t9 = U.zip_tree(z9)[0]
 _NO_WIN = getattr(subprocess, "CREATE_NO_WINDOW", 0)          # 不许闪控制台窗（proc_window_selftest 看着她）
-subprocess.run(["icacls", a9, "/deny", _u9 + ":(W)"], capture_output=True, text=True,
+subprocess.run(["icacls", a9, "/deny", _u9 + ":(W)"], capture_output=True, text=True, errors="replace",
                creationflags=_NO_WIN)
 try:
     rc9, msg9, det9 = U.apply_full({"base": {"version": "9999.9.9", "sha256": _t9, "url": ""}}, z9, d9)
     st9 = U.read_local_state(d9)
 finally:
-    subprocess.run(["icacls", a9, "/remove:d", _u9], capture_output=True, text=True,
+    subprocess.run(["icacls", a9, "/remove:d", _u9], capture_output=True, text=True, errors="replace",
                    creationflags=_NO_WIN)
 ok("目录拒写 + 新建文件 ⇒ rc=1 **回滚**（上一版是 rc=0 + status=partial）", rc9 == 1,
    "rc=%s status=%s pending=%s" % (rc9, det9.get("status"), det9.get("pending")))
@@ -576,14 +576,14 @@ print("── V-R4-9（P2）文件级 ACL 拒写 ≠ 被占用（真 icacls /den
 _f9 = os.path.join(d9, "locked_by_acl.py")
 with open(_f9, "w", encoding="utf-8") as _fh9:
     _fh9.write("OLD\n")
-subprocess.run(["icacls", _f9, "/deny", _u9 + ":(WD,AD)"], capture_output=True, text=True,
+subprocess.run(["icacls", _f9, "/deny", _u9 + ":(WD,AD)"], capture_output=True, text=True, errors="replace",
                creationflags=_NO_WIN)
 try:
     _probe = U._probe_write(_f9)
     _err = PermissionError(13, "Permission denied（夹具：ACL 拒写）")
     _locked9 = U._is_locked(_err, _f9)
 finally:
-    subprocess.run(["icacls", _f9, "/remove:d", _u9], capture_output=True, text=True,
+    subprocess.run(["icacls", _f9, "/remove:d", _u9], capture_output=True, text=True, errors="replace",
                    creationflags=_NO_WIN)
 ok("V-R4-9a 探针认得出是**拒写**（不是「被别人占着」）", _probe in ("denied", "unknown"),
    "probe=%s" % _probe)
@@ -698,11 +698,17 @@ else:
     _acl_dir = tempfile.mkdtemp(prefix="pm_acl_judge_")
     _acl_p = os.path.join(_acl_dir, "tok")
     lg._new_token_file(_acl_p, "TOKENJUDGE")
-    _before = _sp2.run(["icacls", _acl_p], capture_output=True, text=True,
-                       creationflags=_NO_WIN2).stdout
+    # ⛔ 2026-09-21（发版卡住时挖到的真根因）：`text=True` **没给 encoding/errors** 时按
+    #   `locale.getpreferredencoding()` 解 —— 而我们从带 `PYTHONIOENCODING=utf-8` 的环境里起这个判据
+    #   （发版脚本就是），子进程按 UTF-8 去解**中文的 icacls 输出**（GBK 字节）⇒ reader 线程抛
+    #   `UnicodeDecodeError` ⇒ `stdout` 变 **None** ⇒ 下面 `"(I)" not in None` 抛 TypeError ⇒
+    #   判据**崩溃**（而且崩溃型失败没有 FAIL 行，日志里看不到原因、发版就卡在这）。
+    #   ⇒ 三个口径：①`errors="replace"`；②`or ""` 兜底；③断言只依赖"有没有某个标记"。
+    _before = _sp2.run(["icacls", _acl_p], capture_output=True, text=True, errors="replace",
+                       creationflags=_NO_WIN2).stdout or ""
     _why_acl = lg._tighten_acl(_acl_p)
-    _after = _sp2.run(["icacls", _acl_p], capture_output=True, text=True,
-                      creationflags=_NO_WIN2).stdout
+    _after = _sp2.run(["icacls", _acl_p], capture_output=True, text=True, errors="replace",
+                      creationflags=_NO_WIN2).stdout or ""
     ok("V-R4-13 口令文件 ACL 能收紧（`icacls` 真跑通）", _why_acl == "", _why_acl[:80])
     ok("V-R4-13 收紧后**继承已断**（不再出现 `(I)` 继承标记）", "(I)" not in _after, _after[:80])
     ok("V-R4-13 收紧后没有 `BUILTIN\\Users` / `Everyone` 这类「人人可读」",

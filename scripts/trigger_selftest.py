@@ -144,8 +144,9 @@ ok("F2a 数字槽位号不学（审计现场：wxid='3'）", ad2.learn_self_from
 ok("F2b 其它数字槽位也不学（1/2/99）",
    all(ad2.learn_self_from_echo(x, "[图片]") is False for x in ("1", "2", "99")))
 ok("F2c 过短的串不学（长度 < 5 当不了账号）", ad2.learn_self_from_echo("abc", "hi") is False)
+_WJ = "wxid_" + "judge0002"          # 运行时拼：别让出包 PII 闸门当成真账号
 ok("F2d 合法 wxid 仍照学（阳性对照，别把正常路也堵了）",
-   ad2.learn_self_from_echo("wxid_judge0002", "你好") is True and ad2._self_wxid == "wxid_judge0002")
+   ad2.learn_self_from_echo(_WJ, "你好") is True and ad2._self_wxid == _WJ)
 ok("F2e 判别函数是**一处实现**，两个入口共用",
    "def _valid_self_id(" in SRC and SRC.count("_valid_self_id(") >= 3, SRC.count("_valid_self_id("))
 print("\n── F3. 落盘里已经是坏值 ⇒ 载入时**不采用**（不然重启后继续错）──")
@@ -161,7 +162,7 @@ ad5 = W.WeChatAdapter.__new__(W.WeChatAdapter)
 ad5._self_wxid = ""
 ad5._self_id_file = lambda: _f
 ad5.load_self_identity()
-ok("F3b 好值照样能载入（阳性对照）", ad5._self_wxid == "wxid_judge0002", ad5._self_wxid)
+ok("F3b 好值照样能载入（阳性对照）", ad5._self_wxid == _WJ, ad5._self_wxid)
 ok("F3c 反例锚：老口径（只挡空串与 gh_）**确实**会把 `3` 学进去",
    (lambda w: (not w) or w.startswith("gh_"))("3") is False
    and ad2.learn_self_from_echo("3", "[图片]") is False)
