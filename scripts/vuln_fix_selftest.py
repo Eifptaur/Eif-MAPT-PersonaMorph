@@ -487,6 +487,37 @@ ok("…文案把方向指对（目录写不进去），不是让用户去找一�
 ok("阴性对照：真句柄占用**已存在**的文件 ⇒ 仍然是 partial（V-R3-9 没把 V3 修坏）",
    rc3 == 0 and det3.get("status") == "partial" and det3.get("pending") == ["agent/c.py"])
 
+# ── ⛔ 2026-09-21（第四轮审计 **V-R4-9，P2**）：**文件级 ACL 拒写**（`icacls <文件> /deny …:(WD,AD)`）
+#    不改"只读属性位"⇒ 老口径（`st_mode & 0o200`）把它判成"被别的进程占用"跳过 ⇒
+#    `rc=0 status=partial` ⇒ 受保护目录里的用户**永久半装**，文案还把他引去"找占用者"。
+#    ⇒ 现在改成**真探写权限**（`_probe_write`：CreateFileW GENERIC_WRITE + SHARE_ALL），
+#      `denied(5)` / `unknown` 一律当**真故障**。 ──
+print("── V-R4-9（P2）文件级 ACL 拒写 ≠ 被占用（真 icacls /deny 在**文件**上）──")
+_f9 = os.path.join(d9, "locked_by_acl.py")
+with open(_f9, "w", encoding="utf-8") as _fh9:
+    _fh9.write("OLD\n")
+subprocess.run(["icacls", _f9, "/deny", _u9 + ":(WD,AD)"], capture_output=True, text=True,
+               creationflags=_NO_WIN)
+try:
+    _probe = U._probe_write(_f9)
+    _err = PermissionError(13, "Permission denied（夹具：ACL 拒写）")
+    _locked9 = U._is_locked(_err, _f9)
+finally:
+    subprocess.run(["icacls", _f9, "/remove:d", _u9], capture_output=True, text=True,
+                   creationflags=_NO_WIN)
+ok("V-R4-9a 探针认得出是**拒写**（不是「被别人占着」）", _probe in ("denied", "unknown"),
+   "probe=%s" % _probe)
+ok("V-R4-9b 文件级 ACL 拒写 ⇒ `_is_locked` 判**假**（真故障 ⇒ 必须回滚，不许跳过）",
+   _locked9 is False, "locked=%s" % _locked9)
+ok("V-R4-9c 反例锚：老口径（只读属性位）**确实**会把它当成被占用（属性位没变）",
+   bool(os.stat(_f9).st_mode & 0o200) is True)
+# 阳性对照：普通可写文件 + 同一个错误码 ⇒ 探针说 ok ⇒ 仍按"被占用"（可跳过）
+_f9b = os.path.join(d9, "normal_writable.py")
+with open(_f9b, "w", encoding="utf-8") as _fh9b:
+    _fh9b.write("OLD\n")
+ok("V-R4-9d 阳性对照：普通可写文件 ⇒ 探针 ok + `_is_locked` 仍判真（可跳过，别把 V3 修坏）",
+   U._probe_write(_f9b) == "ok" and U._is_locked(PermissionError(13, "sharing"), _f9b) is True)
+
 print("── V-R3-6（P1）回滚按「实际还原成功数」报数，不再谎报 ──")
 _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
 _k32.CreateFileW.restype = ctypes.c_void_p
