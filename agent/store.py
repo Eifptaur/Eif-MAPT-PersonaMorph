@@ -28,6 +28,9 @@ log = logging.getLogger("persona-morph")
 
 MESSAGES_DIR = os.path.join(DATA_DIR, "messages")
 
+#: 老命名档案只迁一次（进程级；`ChatStore.list_chats()` 第一次跑时触发）
+_MIGRATED = False
+
 
 def chat_file(chat_key: str) -> str:
     """⛔ 2026-09-21 修（第四轮审计候选 **S-1**）：老实现只做字符替换 ⇒ **不同 chat_key 会撞同一个文件**。
@@ -85,13 +88,93 @@ def _read_key_of(path: str) -> str:
 
 
 def _filename_key(fn: str) -> str:
-    """老命名 `group_xxx.json` → `group:xxx`（抠掉新命名的 8 位哈希尾巴，兼容两种命名）。"""
+    """老命名 `group_xxx.json` → `group:xxx`。
+
+    ⛔ 2026-09-21（第五轮回执 **V-R5A-6 / V-R5B-2**）：哈希尾巴**只有在确实等于 md5(前面那段) 时才剥**
+    —— 老实现无脑 `re.sub(r"_[0-9a-f]{8}$", "")`，会把**合法 wxid** 的尾巴削掉
+    （`group:wxid_deadbeef` → `group:wxid` ⇒ 与另一个会话撞车、还把真会话弄丢）。
+    """
     base = fn[:-5] if fn.lower().endswith(".json") else fn
-    base = re.sub(r"_[0-9a-f]{8}$", "", base)
+    m = re.match(r"^(group|private)_(.+)_([0-9a-f]{8})$", base)
+    if m:
+        _prefix, _rest, _tail = m.group(1), m.group(2), m.group(3)
+        if _key_hash("%s:%s" % (_prefix, _rest)) == _tail:
+            base = "%s_%s" % (_prefix, _rest)          # 真是我们加的那条尾巴 ⇒ 剥掉
     for pre in ("group_", "private_"):
         if base.startswith(pre):
             return "%s:%s" % (pre[:-1], base[len(pre):])
     return ""
+
+
+def _repair_state(parsed: dict, chat_key: str, path: str) -> dict:
+    """结构**缺件就补齐**（不缺就不动它）。
+
+    ⛔ 2026-09-21（第五轮回执 **V-R5A-7 / V-R5B-3**）：`_load_chat` 的"结构不对"原来只查 `messages`，
+    而它自己的文档说必须三件套 ⇒ 缺 `next_local_id` / `chat_key` 的档案被当成**正常**返回，
+    下一次 `append_incoming` 直接 `KeyError`（那个会话**从此入不了档**，而且只在日志里留一行）。
+    ⇒ 现在：能修的就修（补默认值 + 从文件名补 chat_key），确实修不了的（`messages` 不是列表）才隔离。
+    """
+    _fixed = []
+    if not isinstance(parsed.get("chat_key"), str) or not str(parsed.get("chat_key") or "").strip():
+        parsed["chat_key"] = chat_key
+        _fixed.append("chat_key")
+    _n = parsed.get("next_local_id")
+    if not isinstance(_n, int) or isinstance(_n, bool) or _n < 1:
+        _mx = 0
+        for _m in (parsed.get("messages") or []):
+            try:
+                _mx = max(_mx, int((_m or {}).get("id") or 0))
+            except Exception:
+                continue
+        parsed["next_local_id"] = _mx + 1
+        _fixed.append("next_local_id")
+    if _fixed:
+        log.warning("会话档案缺件（%s）：已补齐 %s（补齐后 id 从 %s 起）—— 修不了才隔离，能修就不丢数据",
+                    os.path.basename(str(path)), "、".join(_fixed), parsed.get("next_local_id"))
+        parsed["_repaired"] = "、".join(_fixed)
+    return parsed
+
+
+def migrate_legacy_files() -> dict:
+    """把**老命名**的档案一次性迁到新命名（带哈希），返回 `{"moved": [...], "kept": [...], "dup": [...]}`。
+
+    ⛔ 2026-09-21（第五轮回执 **V-R5A-5，P1**）：S-1 的"文件名加哈希"只对**新写**生效 ⇒ 已经撞名的
+    老档案照旧串群（回执实测：B 的历史读成 A 的、**B 的新消息被写进 A 的档案**、B 从 `list_chats` 消失）。
+    ⇒ 启动/首次列会话时迁一次：按**档案内容里的 `chat_key`** 决定它该叫什么名。
+      · 新名字没人占 ⇒ `os.replace` 改名（幂等，失败只记日志，绝不删数据）；
+      · 新名字已被占 ⇒ **不动**（读取路径本来就"新命名优先"，老文件当备份留着），只记账报出来。
+    """
+    res = {"moved": [], "kept": [], "dup": []}
+    try:
+        names = os.listdir(MESSAGES_DIR)
+    except OSError:
+        return res
+    for fn in names:
+        if not re.match(r"^(group|private)_.+\.json$", fn) or ".corrupt-" in fn:
+            continue
+        p = os.path.join(MESSAGES_DIR, fn)
+        try:
+            _ck = _read_key_of(p)
+            if not _ck:
+                continue                                    # 连 chat_key 都读不出来 ⇒ 不猜，留着
+            if os.path.normcase(p) == os.path.normcase(chat_file(_ck)):
+                continue                                    # 已经是新命名
+            dst = chat_file(_ck)
+            if os.path.exists(dst):
+                res["dup"].append(fn)
+                continue
+            os.replace(p, dst)
+            res["moved"].append("%s → %s" % (fn, os.path.basename(dst)))
+        except OSError as e:
+            res["kept"].append("%s（%s）" % (fn, str(e)[:40]))
+        except Exception:
+            continue
+    if res["moved"]:
+        log.info("会话档案迁移到新命名：%s 个（%s）", len(res["moved"]), "、".join(res["moved"][:5]))
+    if res["dup"]:
+        log.warning("有 %d 份老档案与已有新档案同名会话（%s）—— **不搬**（读取路径本来就新命名优先，"
+                    "老文件留着当备份，请人工确认后自行清理）", len(res["dup"]), "、".join(res["dup"][:3]))
+    return res
 
 
 def _load_chat(chat_key: str) -> dict:
@@ -121,11 +204,12 @@ def _load_chat(chat_key: str) -> dict:
     try:
         parsed = json.loads(raw)
         if not (isinstance(parsed, dict) and isinstance(parsed.get("messages"), list)):
-            bad = "结构不对（不是 {chat_key, next_local_id, messages:[...]}）"
+            bad = "结构不对（messages 不是列表）"
     except Exception as e:
         bad = "%s: %s" % (type(e).__name__, str(e)[:80])
     if not bad:
-        return parsed
+        # 三件套里缺 chat_key / next_local_id ⇒ **补齐**（能修就不隔离，见 `_repair_state`）
+        return _repair_state(parsed, chat_key, p)
     # 内容坏 ⇒ **先隔离**（保数据），再开新档
     q = "%s.corrupt-%s.json" % (p[:-5] if p.lower().endswith(".json") else p,
                                 time.strftime("%Y%m%d-%H%M%S"))
@@ -176,10 +260,22 @@ class ChatStore:
             del st["messages"][: len(st["messages"]) - self.max_per_chat]
 
     def list_chats(self):
+        # ⛔ V-R5A-5：先迁一次老命名档案（按内容 chat_key 改名；同名不搬）。只在本进程第一次列会话时做。
+        global _MIGRATED
+        if not _MIGRATED:
+            _MIGRATED = True
+            try:
+                migrate_legacy_files()
+            except Exception as _e:
+                log.debug("老档案迁移跳过（%s）", _e)
         try:
             files = set()
             for fn in os.listdir(MESSAGES_DIR):
                 if not re.match(r"^(group|private)_.+\.json$", fn):
+                    continue
+                # ⛔ V-R5A-6 / V-R5B-2：**隔离档不许当会话**（`x.json.corrupt-<ts>.json` 也匹配上面那条
+                #   正则 ⇒ 老实现会把每次都新建的隔离档当成一个"幽灵会话"，而真正的会话反而消失）。
+                if ".corrupt-" in fn:
                     continue
                 # ⛔ S-1：文件名现在带哈希尾巴 ⇒ **不能**再从文件名反推 chat_key（会得到
                 # `group:wxid_x_1a2b3c4d` 这种幽灵会话）。以档案里的 `chat_key` 为准，

@@ -151,6 +151,56 @@ def main():
            ("group:legacy_nohash" in _listed7)
            and len(ChatStore().recent("group:legacy_nohash", limit=5)) == 1,
            sorted(_listed7))
+
+        # ── ⑧ 第五轮回执 V-R5A-5 / V-R5A-6 / V-R5B-2 / V-R5A-7：迁移 · 幽灵会话 · 结构修复 ──
+        _w("group:wxid_deadbeef", json.dumps({"messages": [{"id": 1, "text": "合法尾巴"}]},
+                                             ensure_ascii=False))
+        ok("⑧ 文件名推导**不许**把合法 wxid 的尾巴削掉（`wxid_deadbeef` → `group:wxid` 是错的）",
+           store_mod._filename_key("group_wxid_deadbeef.json") == "group:wxid_deadbeef",
+           store_mod._filename_key("group_wxid_deadbeef.json"))
+        _old_strip = re.sub(r"_[0-9a-f]{8}$", "", "group_wxid_deadbeef")
+        ok("⑧ 反例锚：老实现的正则确实会削成 `group_wxid`（这就是「真会话被弄丢」的来历）",
+           _old_strip == "group_wxid", _old_strip)
+
+        _cp = _w("group:cp1", json.dumps({"chat_key": "group:cp1", "messages": []}, ensure_ascii=False))
+        _bad_name = os.path.basename(_cp) + ".corrupt-20260921-000000.json"
+        with open(os.path.join(tmp, _bad_name), "w", encoding="utf-8") as f:
+            f.write("{坏档案")
+        _l8 = set(ChatStore().list_chats())
+        ok("⑧ 隔离档（`*.corrupt-*.json`）**不许**变成幽灵会话", not any(".corrupt-" in k for k in _l8),
+           [k for k in _l8 if ".corrupt-" in k])
+        _w("group:repairme", json.dumps({"messages": [{"id": 7, "text": "老档没有 next_local_id"}]},
+                                        ensure_ascii=False))
+        _st8 = ChatStore()
+        _st8.append_incoming("group:repairme", 1, 2, "wxid_z", "丙", "补一条")
+        _r8 = ChatStore().recent("group:repairme", limit=10)
+        ok("⑧ 缺 `next_local_id`/`chat_key` 的老档：**补齐照常入档**（不再 KeyError 把整个群卡死）",
+           len(_r8) == 2 and int(_r8[-1]["id"]) == 8, [(m["id"], m["text"]) for m in _r8])
+
+        # 迁移：按**内容里的 chat_key** 改名到新命名（撞名不搬）
+        _legacy_ck = "group:wxid_mig1"
+        _lp = _w(_legacy_ck, json.dumps({"chat_key": _legacy_ck, "next_local_id": 2,
+                                         "messages": [{"id": 1, "text": "迁移前就在的老档"}]},
+                                        ensure_ascii=False))
+        _new_path = store_mod.chat_file(_legacy_ck)
+        ok("⑧ 迁移前：新命名档案还不存在（这就是「老档串群」的现场）",
+           (not os.path.exists(_new_path)) and os.path.exists(_lp), os.path.basename(_lp))
+        _mv = store_mod.migrate_legacy_files()
+        ok("⑧ 迁移后：老档改名到新命名，内容一条不少",
+           os.path.exists(_new_path) and (not os.path.exists(_lp))
+           and len(ChatStore().recent(_legacy_ck, limit=5)) == 1, _mv.get("moved"))
+        with open(_new_path, encoding="utf-8") as f:
+            ok("⑧ 迁移是**改名**不是删+抄（内容原样）", "迁移前就在的老档" in f.read())
+        # 撞名：新命名已被占 ⇒ 不许搬（读取路径本来就新命名优先）
+        _ck2 = "group:wxid_mig2"
+        _lp2 = _w(_ck2, json.dumps({"chat_key": _ck2, "messages": [{"id": 1, "text": "老的那份"}]},
+                                   ensure_ascii=False))
+        with open(store_mod.chat_file(_ck2), "w", encoding="utf-8") as f:
+            f.write(json.dumps({"chat_key": _ck2, "next_local_id": 2,
+                                "messages": [{"id": 1, "text": "新的那份"}]}, ensure_ascii=False))
+        _mv2 = store_mod.migrate_legacy_files()
+        ok("⑧ 新命名已被占 ⇒ **不搬**（只记账；老文件当备份留着，绝不覆盖）",
+           os.path.exists(_lp2) and os.path.basename(_lp2) in _mv2.get("dup", []), _mv2.get("dup"))
     finally:
         store_mod.MESSAGES_DIR = _keep
         shutil.rmtree(tmp, ignore_errors=True)
