@@ -19,6 +19,7 @@ import sys
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # 同目录的 `_srcmatch`
 sys.path.insert(0, ROOT)
 
 from agent import sd_local as S          # noqa: E402
@@ -173,9 +174,12 @@ try:
     ok("F3 服务端确实会声明 `gate`（源码级）", '"gate": "host+token"' in _sds)
     ok("F4 `start_server` 不再「看到有人答话就复用」（要先过 `service_gated`）",
        "service_gated(port)" in _sdc)
+    # ⛔ V-R5R-4：原来靠 `"pidfile 记的是" in _sdc` 这种**源码文本**断言（改个空格就红）
+    #   ⇒ 换成空白容忍的 `_srcmatch.has` + **行为级**判据（身份判据的纯函数矩阵，见 G 段）。
+    import _srcmatch as _sm
     ok("F5 换掉旧实例有**证据链**（只杀 pidfile 记的那个 pid）",
        hasattr(S, "kill_stale_owner") and hasattr(S, "_port_owner_pid")
-       and "pidfile 记的是" in _sdc)
+       and _sm.has(_sdc, "占着 %d 的是 PID %s") and _sm.has(_sdc, "_is_our_server"))
     ok("F6 反例锚：老判据（只判 alive）**确实**会把旧实例当可用",
        S.service_gated(_po)[0] is False and S.server_alive(_po) is True)
 finally:
