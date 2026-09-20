@@ -171,7 +171,7 @@ ok("主路（列表·免搜索）不再把会话行那一枪投给渲染子窗",
    and "self._click_posted(backend, _tgt, pt," in _src)
 ok("补枪走 tgt_click（第二枪自动换窗）", "tgt_click" in _src)
 ok("两枪之间强制 >1.2s（否则 Qt 判双击 ⇒ 会话被拖成浮动窗/直接关掉）",
-   "time.sleep(1.35)" in _src.split("def _click_visible_session(")[1][:4500])
+   "time.sleep(1.35)" in _src.split("def _click_visible_session(")[1].split("\n    def ")[0])
 ok("聊天区内容变化也当切换证据", "_co.pane_text(" in _src and "聊天区内容已变化" in _src)
 
 print("── D2. 会话行点击目标：主窗优先、渲染子窗兜底（脱机**功能**判据，不只看源码）──")
@@ -209,6 +209,27 @@ try:
 
     import time as _t
     from agent import chat_header as _CH
+    from agent import click_pref as _CP
+    # ⛔ 判据必须**无副作用**：`_click_visible_session` 成功后会写"点击目标偏好"（`data/click_targets.json`）
+    #    ——不隔离的话，第一条子用例记下的偏好会改掉后几条的目标顺序（2026-09-21 实测：断言拿到 [888,777]）。
+    #    ⇒ 整段指到临时文件，跑完删掉并还原路径。
+    _cp_path_keep = _CP.PATH
+    _cp_tmp = os.path.join(ROOT, "_scratch", "_click_pref_selftest.json")
+    _CP.PATH = _cp_tmp
+
+    def _cp_reset():
+        try:
+            if os.path.exists(_cp_tmp):
+                os.remove(_cp_tmp)
+        except Exception:
+            pass
+
+    _cp_reset()
+    # 下面这几条考的是"换窗顺序"本身 ⇒ 把写偏好**置空**，免得前一条子用例记下的偏好改掉后一条的顺序
+    # （2026-09-21 实测：不置空时后几条拿到 [888,777]，四条假红）。偏好本身的读写另在下面专测。
+    _rook, _rfail = _CP.record_ok, _CP.record_fail
+    _CP.record_ok = lambda *a, **k: None
+    _CP.record_fail = lambda *a, **k: None
     _slp, _sel, _cap, _fri = _t.sleep, IB.select_backend, _CH.capture_image, CO.find_row_info
     try:
         _t.sleep = lambda s: None                     # 脱机：不等那 1.35s
@@ -225,11 +246,30 @@ try:
                                                           gui=None, main=777)
         ok("第一枪就生效 ⇒ 只点一枪（不补、不双击）",
            _o2 is True and [c[0] for c in _f2.clicks] == [777], str([c[0] for c in _f2.clicks]))
-        _f3 = _FakeSelf(hits=99)                      # 两个窗都没生效 ⇒ 必须失败（fail-closed）
+        _f3 = _FakeSelf(hits=99)                      # 三枪都没生效 ⇒ 必须失败（fail-closed）
         _o3, _w3 = W.WeChatAdapter._click_visible_session(_f3, "filehelper", "文件传输助手",
                                                           gui=None, main=777)
-        ok("两个窗口都没拿到正面证据 ⇒ 判失败（不硬说成功）",
-           _o3 is False and len(_f3.clicks) == 2, str(_w3)[:60])
+        ok("三枪都没拿到正面证据 ⇒ 判失败（不硬说成功）",
+           _o3 is False and len(_f3.clicks) == 3, str(_w3)[:60])
+        ok("目标序列＝主窗 → 渲染子窗 → **再重投一次主窗**（治「这一枪偶发被吞」）",
+           [c[0] for c in _f3.clicks] == [777, 888, 777], str([c[0] for c in _f3.clicks]))
+        # 第三条证据（纯像素）：绿底带落在目标行 ⇒ 算切成功、**绝不补第二枪**（补了会把聊天框点关）
+        _calls = {"n": 0}
+        _hw2 = CO.highlight_wide
+
+        def _hw_stub(im, **kw):
+            _calls["n"] += 1
+            return None if _calls["n"] == 1 else {"y_abs": 100, "y0": 80, "y1": 120, "score": 0.9}
+
+        try:
+            CO.highlight_wide = _hw_stub
+            _f7 = _FakeSelf(hits=2)
+            _o7, _w7 = W.WeChatAdapter._click_visible_session(_f7, "filehelper", "文件传输助手",
+                                                              gui=None, main=777)
+            ok("第一枪后绿底带已在目标行 ⇒ 立刻算成功、不补第二枪",
+               _o7 is True and [c[0] for c in _f7.clicks] == [777], str([c[0] for c in _f7.clicks]))
+        finally:
+            CO.highlight_wide = _hw2
 
         # ⛔ 2026-09-21：**点已经开着的那一行会把会话点关**（同一行连投 4 枪：绿底带有→无→有→无）
         #    ⇒ 目标行已是高亮行时**一枪都不许点**（纯像素判据 `highlight_wide`，只看横跨整行的绿底）。
@@ -281,8 +321,38 @@ try:
                _o6 is True and [c[0] for c in _f6.clicks] == [777], str(_w6)[:60])
         finally:
             CHD.detect_pane_left_alt, CO.find_row_info = _alt_keep, _fri2
+
+        # ── 学习型偏好（`agent/click_pref`）：只改"先试哪个"，不改授权 ──
+        _CP.record_ok, _CP.record_fail = _rook, _rfail          # 放真实现回来跑这几条
+        _cp_reset()
+        _CP.record_ok("k1", "render")
+        ok("偏好：记过 render ⇒ 排序把 render 提到最前",
+           _CP.order_named([777, 888], "k1", {"main": 777, "render": 888}) == [888, 777],
+           str(_CP.order_named([777, 888], "k1", {"main": 777, "render": 888})))
+        ok("偏好：没记过的键 ⇒ 原样默认顺序（主窗优先）",
+           _CP.order_named([777, 888], "k-none", {"main": 777, "render": 888}) == [777, 888])
+        ok("偏好：键里含 版本×适配层×尺寸×DPI×后端 五轴",
+           _CP.key(wechat="4.1.15.8", adapter="1.2.2.2", w=2561, h=1599, dpi="PerMonitorV2",
+                   backend="message") == "4.1.15.8|1.2.2.2|2561x1599|PerMonitorV2|message")
+        _CP.record_fail("k1")
+        _CP.record_fail("k1")
+        ok("偏好：连续失败 2 次 ⇒ 丢掉偏好、退回默认顺序（不把版本锁死在错目标上）",
+           _CP.order_named([777, 888], "k1", {"main": 777, "render": 888}) == [777, 888])
+        ok("偏好：坏文件不抛（按空处理）",
+           (open(_cp_tmp, "w", encoding="utf-8").write("{不是JSON") or
+            _CP.order_named([777, 888], "k-any", {"main": 777, "render": 888}) == [777, 888]))
+        ok("偏好：文件是**原子写**（没有残留 .tmp）", not os.path.exists(_cp_tmp + ".tmp"))
+        _CP.record_ok = lambda *a, **k: None
+        _CP.record_fail = lambda *a, **k: None
     finally:
         _t.sleep, IB.select_backend, _CH.capture_image, CO.find_row_info = _slp, _sel, _cap, _fri
+        _CP.record_ok, _CP.record_fail = _rook, _rfail
+        _CP.PATH = _cp_path_keep                     # 偏好文件路径还原 + 临时件删掉（判据不留痕）
+        try:
+            if os.path.exists(_cp_tmp):
+                os.remove(_cp_tmp)
+        except Exception:
+            pass
 finally:
     IB.find_render_child = _rc_keep
 
