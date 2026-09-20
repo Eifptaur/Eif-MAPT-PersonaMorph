@@ -365,6 +365,37 @@ _uc_src = io.open(os.path.join(ROOT, "agent", "update_check.py"), encoding="utf-
 ok("「必须是本仓库」只有一份实现（清单源与下载地址共用 _path_has_repo）",
    _uc_src.count("_path_has_repo(") >= 3, "_path_has_repo 出现 %d 次" % _uc_src.count("_path_has_repo("))
 
+# ⛔ 2026-09-20 **第四轮开审前自查又抓到一层**：上一版用的是"路径里**出现** slug"这种**子串判据**
+#   ⇒ 攻击者只要**在自己的仓库里造一层同名目录**就能冒充官方域（实测 7 种形状全部绕过）。
+#   现在改成**按 host 的结构化判定**（owner/repo 必须在该 host 约定的段位置上）。
+#   下面这 8 条就是那 7 种绕过形状 + 1 条本仓库正面样本 —— 判据要钉到"位置"，不是"包含"。
+_SPOOF = [
+    ("攻击者仓库里造同名目录（raw）",
+     "https://raw.githubusercontent.com/attacker/x/main/Eifptaur/Eif-MAPT-PersonaMorph/main/m.json", False),
+    ("攻击者 release 把 slug 塞进路径",
+     "https://github.com/attacker/x/releases/download/v1/Eifptaur/Eif-MAPT-PersonaMorph.zip", False),
+    ("CDN 上攻击者仓库（路径里塞 slug）",
+     "https://cdn.jsdelivr.net/gh/attacker/x@main/Eifptaur/Eif-MAPT-PersonaMorph/main/x.json", False),
+    ("api.github.com 攻击者仓库（路径里塞 slug）",
+     "https://api.github.com/repos/attacker/x/contents/Eifptaur/Eif-MAPT-PersonaMorph/x.json", False),
+    ("裸镜像 + 攻击者仓库（路径里塞 slug）",
+     "https://ghfast.top/attacker/x/main/Eifptaur/Eif-MAPT-PersonaMorph/x.json", False),
+    ("镜像内嵌官方地址 + 攻击者仓库（路径里塞 slug）",
+     "https://ghfast.top/https://raw.githubusercontent.com/attacker/x/main/Eifptaur/Eif-MAPT-PersonaMorph/x.json", False),
+    ("下载地址把 slug 塞进别人的 release 路径",
+     "https://github.com/attacker/x/releases/download/v1/Eifptaur/Eif-MAPT-PersonaMorph.zip", False),
+]
+_sp_bad = [n for n, u, want in _SPOOF if uc.manifest_origin_ok(u)[0] != want]
+ok("伪造型输入（在自己的仓库里造同名目录）**一律不许被当成本仓库**",
+   not _sp_bad, "漏网：%s" % _sp_bad)
+ok("…下载地址那一条也要挡（_base_url_ok 同样按结构判）",
+   uc._base_url_ok("https://github.com/attacker/x/releases/download/v1/Eifptaur/Eif-MAPT-PersonaMorph.zip")[0] is False)
+ok("…而本仓库的正当形状仍然放行（别把自家的路也堵了）",
+   uc.manifest_origin_ok("https://raw.githubusercontent.com/Eifptaur/Eif-MAPT-PersonaMorph/main/m.json")[0] is True
+   and uc._base_url_ok("https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v1/x.zip")[0] is True)
+ok("判定是**结构化**的（按 host 的段位置），不是子串包含",
+   "_path_segments" in _uc_src and "REPO_SLUG in" not in _uc_src)
+
 print("── V-R3-9（P1）目标不存在 ⇒ 真故障回滚（不许「永久只装一半」）──")
 # 真 icacls 拒写目标目录（测完立刻移除）——**不手工造异常**。
 import subprocess                                                              # noqa: E402

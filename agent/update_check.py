@@ -130,20 +130,60 @@ def _embedded_url(u: str) -> str:
     return ""
 
 
+_SLUG_SEGS = tuple(REPO_SLUG.split("/"))          # ("eifptaur", "eif-mapt-personamorph")
+_CDN_HOSTS = ("cdn.jsdelivr.net", "fastly.jsdelivr.net", "gcore.jsdelivr.net", "cdn.statically.io")
+
+
+def _path_segments(u: str) -> list:
+    """把 URL 的 path 切成**已解码的小写段**（空段丢掉）。"""
+    try:
+        from urllib.parse import unquote, urlparse
+        p = urlparse(str(u)).path or ""
+    except Exception:
+        return []
+    return [unquote(s).strip().lower() for s in p.split("/") if s.strip()]
+
+
 def _path_has_repo(u: str) -> bool:
-    """这个 URL 的**路径里有没有本仓库**（`REPO_SLUG`）。
+    """这个 URL 的路径**在正确的位置上**指向本仓库吗？（结构化判定，不是子串包含）
 
     ⛔ 2026-09-20 修 **V-R3-5（P0，第三轮审计）**：上一版只把"已知镜像"分支要求了本仓库路径，
-    **官方域分支只看 host** —— 可 `raw.githubusercontent.com` / `github.com` 上有**无数别人的仓库**：
-        https://raw.githubusercontent.com/attacker/anything/main/persona-morph-manifest.json
-    会被判"官方域 ⇒ 可信"，投毒任一镜像即可让客户端从**攻击者自己的仓库**装包。
-    ⇒ 现在**域与路径两头都要对**：官方域 + 路径必须是本仓库（同一条判据给清单源与下载地址共用）。
+    **官方域分支只看 host** —— 可 `raw.githubusercontent.com` / `github.com` 上有**无数别人的仓库**。
+    ⇒ 修成"域 + 路径都要对"。
+
+    ⛔ 2026-09-20 **再修（第四轮开审前自查发现：上一版用的是"路径里出现 slug"这种子串判据）**：
+    实测**7 种形状都能绕过** —— 攻击者只要**在自己的仓库里造一层同名目录**即可：
+        https://raw.githubusercontent.com/attacker/x/main/Eifptaur/Eif-MAPT-PersonaMorph/main/…  ⇒ 判"官方域"
+        https://github.com/attacker/x/releases/download/v1/Eifptaur/Eif-MAPT-PersonaMorph.zip      ⇒ 判可信
+        https://cdn.jsdelivr.net/gh/attacker/x@main/Eifptaur/Eif-MAPT-PersonaMorph/main/…         ⇒ 判"承载本仓库"
+        https://api.github.com/repos/attacker/x/contents/Eifptaur/Eif-MAPT-PersonaMorph/…         ⇒ 判"官方域"
+    ⇒ 现在改成**按 host 的结构化判定**：`owner/repo` 必须出现在该 host 约定的**段位置上**
+    （raw/github/codeload/gitmirror：头两段；api：`repos/<owner>/<repo>`；jsDelivr/statically：
+    `gh/<owner>/<repo>[@ref]`）。**子串出现在别的位置一律不算。**
+    注：`objects.githubusercontent.com`（带签名的资产直链）路径里没有仓库名 ⇒ 按最严规则**一律不认**
+    —— 本产品从来不用它当清单源或下载地址，这是有意的"窄"。
     """
     try:
         from urllib.parse import urlparse
-        return REPO_SLUG in (urlparse(str(u)).path or "").lower()
+        host = (urlparse(str(u)).hostname or "").lower()
     except Exception:
         return False
+    segs = _path_segments(u)
+    if not segs:
+        return False
+    if host == "api.github.com":
+        return segs[0] == "repos" and segs[1:3] == list(_SLUG_SEGS)
+    if host in _CDN_HOSTS:
+        for i, s in enumerate(segs):
+            if s != "gh":
+                continue
+            a = segs[i + 1] if i + 1 < len(segs) else ""
+            b = segs[i + 2] if i + 2 < len(segs) else ""
+            if a == _SLUG_SEGS[0] and (b == _SLUG_SEGS[1] or b.startswith(_SLUG_SEGS[1] + "@")):
+                return True
+        return False
+    # 其余官方域 / 裸镜像（含 raw/github/codeload/gitmirror）：owner/repo 必须**就在最前面**
+    return segs[:2] == list(_SLUG_SEGS)
 
 
 def manifest_origin_ok(u: str, cfg: dict = None) -> tuple:
