@@ -630,6 +630,57 @@ ok("config.example.json 里也有这两个键（新用户能照着改）",
    "trust_custom_url" in (_ex7.get("update") or {}) and "allow_local" in (_ex7.get("update") or {}),
    str(sorted((_ex7.get("update") or {}).keys())))
 
+print("── V-R4-1（P1）半装必须看得见：pendingFiles 非空时不许报「已是最新」──")
+# 真因：`agent/version.py` **本身也在换入清单里** ⇒ 最常见的半装（一键启动.exe / 一键关闭.exe 正在运行
+# 被占用 ⇒ 跳过，而 version.py 已换成功）会让 `state()` 算出 theirs==mine 且指纹相同 ⇒ 报 current
+# ⇒ 用户再也不会点第二次 ⇒ 那几件永远是旧的，界面上完全看不出来。
+# 判据是**封闭打桩**的：不碰真 `data/installed.json`（用 `_read_installed` 桩）、不写真 update_state。
+_real_installed = uc._read_installed
+_real_fetch2 = uc.fetch_any
+_real_rs, _real_ws = uc._read_state, uc._write_state
+try:
+    from agent.version import BUILD as _MYBUILD                                # noqa: E402
+except Exception:
+    _MYBUILD = ""
+_MAN_SAME = {"base": {"version": uc.current_version(), "build": _MYBUILD, "url": "", "sha256": ""},
+             "announce": {"version": uc.current_version(), "notes": []}}
+uc._read_state = lambda: {}
+uc._write_state = lambda d: None
+uc.fetch_any = lambda urls, timeout=12.0, patient=None: (_MAN_SAME, "", "")
+try:
+    uc._read_installed = lambda: {}
+    _st_clean = uc.state()
+    ok("阴性对照：没有待补文件 ⇒ 仍然是 current（没把正常状态也改成 pending）",
+       _st_clean.get("status") == "current", "status=%s" % _st_clean.get("status"))
+    uc._read_installed = lambda: {"version": uc.current_version(),
+                                  "pendingFiles": ["agent/x.py", "一键启动.exe"],
+                                  "pendingVersion": uc.current_version()}
+    _st_pend = uc.state()
+    ok("有待补文件 ⇒ status 必须是 pending（**不再报「已是最新」**）",
+       _st_pend.get("status") == "pending", "status=%s why=%s" % (_st_pend.get("status"), str(_st_pend.get("why"))[:60]))
+    ok("…待补清单与件数都带出去了（界面/检验器看得见）",
+       (_st_pend.get("pending") or []) == ["agent/x.py", "一键启动.exe"],
+       str(_st_pend.get("pending")))
+    ok("…文案说清「还差几件 + 再点一次即可补换」",
+       ("再点一次" in str(_st_pend.get("why"))) and ("2 件" in str(_st_pend.get("why"))),
+       str(_st_pend.get("why"))[:90])
+    # 反过来：真有新版本时仍然报 newer，但要把"还有几件没换"附在原因里
+    uc.fetch_any = lambda urls, timeout=12.0, patient=None: (
+        {"base": {"version": "9999.9.9", "build": "deadbeefcafe", "url": "", "sha256": ""}, "announce": {}}, "", "")
+    _st_new = uc.state()
+    ok("有新版本 + 有待补 ⇒ 仍报 newer，但原因里带上待补（两条信息都不能丢）",
+       _st_new.get("status") == "newer" and "没换成" in str(_st_new.get("why")),
+       "status=%s why=%s" % (_st_new.get("status"), str(_st_new.get("why"))[:70]))
+finally:
+    uc._read_installed = _real_installed
+    uc.fetch_any = _real_fetch2
+    uc._read_state, uc._write_state = _real_rs, _real_ws
+_ch_src = io.open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+ok("控制台也认这个新状态（前端后端一体，否则后端说了界面也不显示）",
+   "s.status === 'pending'" in _ch_src, "见 console_html.py 更新条")
+ok("…半装时**禁止**「不再提醒这个版本」（否则会把这条提醒永久消音）",
+   "cur.status !== 'newer'" in _ch_src)
+
 print("── 判据自省：不许再「伪造被测条件」 ──")
 # 关键字**运行时拼**出来，免得这条检查把自己的源码也算成命中（自指假红）。
 _BAD = "win" + "error"
@@ -640,6 +691,6 @@ for _p in sorted(glob.glob(os.path.join(ROOT, "scripts", "*selftest*.py"))):
         _bad_files.append(os.path.basename(_p))
 ok("没有判据在手工给异常贴 winerror（那是假绿）", not _bad_files, str(_bad_files))
 
-print("\n==== 漏洞修复回归判据（V1~V5 / V8 / V-R1-2 / 第三轮 V-R3-5·6·7·8·9）：%d 通过 / %d 失败 ===="
+print("\n==== 漏洞修复回归判据（V1~V5 / V8 / V-R1-2 / V-R3-5·6·7·8·9 / V-R4-0·1）：%d 通过 / %d 失败 ===="
       % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
