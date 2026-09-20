@@ -61,17 +61,61 @@ for item in cat:
     ok("%s：报告包含症状/判决/证据/可粘进反馈" % item["id"],
        all(x in r["report"] for x in ("症状：", "判决：", "逐项证据", "粘进「反馈」")), r["report"][:80])
 
-print("── C. 判决逻辑：第一条不通过的检查＝卡点 ──")
+print("── C. 判决逻辑：第一条不通过的检查＝卡点（**三态**：True/False/None=没测到）──")
 _r = V.run("send_blocked")
 if _r["checks"]:
-    bad = [c for c in _r["checks"] if not c["ok"]]
+    bad = [c for c in _r["checks"] if c["ok"] is False]      # ⛔ V-R4-11：None 不算"坏"
     if bad:
         ok("有卡点时 verdict 点名第一条坏检查",
            bad[0]["name"] in _r["verdict"] and _r["ok"] is False, _r["verdict"][:90])
         ok("卡点带下一步动作", bool(_r["action"]), _r["action"][:60])
     else:
         ok("全通过时 verdict 给正向结论 + 不催动作",
-           _r["ok"] is True and "正常" in _r["verdict"] or "成立" in _r["verdict"], _r["verdict"][:90])
+           _r["ok"] is True and ("正常" in _r["verdict"] or "成立" in _r["verdict"]), _r["verdict"][:90])
+
+print("\n── C2. 第三态「没测到」：既不算通过也不算失败，且必须**说出来**（V-R4-11）──")
+_c_none = V._check("某格没测到", None, "读不到（夹具）")
+ok("C2a `_check(..., None, ...)` 真的存成 `None`（不许被 bool() 吞成 False）", _c_none["ok"] is None, _c_none)
+ok("C2b `_check(..., True/False, ...)` 仍是布尔",
+   V._check("a", True, "")["ok"] is True and V._check("b", False, "")["ok"] is False)
+_v_ok, _v_msg, _v_act = V._verdict([V._check("甲", True, "过了"), _c_none],
+                                   "全绿口径", {"甲": "没用"})
+ok("C2c 有「没测到」但没坏项 ⇒ 仍算**通过**，但判决里必须点出没测到",
+   _v_ok is True and "没测到" in _v_msg and "某格没测到" in _v_msg, _v_msg[:110])
+_v2_ok, _v2_msg, _ = V._verdict([V._check("乙", False, "坏了"), _c_none], "全绿口径", {"乙": "去修乙"})
+ok("C2d 有坏项 ⇒ 判否、点名那条坏的，**并且**也把没测到的说出来",
+   _v2_ok is False and "乙" in _v2_msg and "没测到" in _v2_msg, _v2_msg[:110])
+_f = V._finish("t", "测试检验器", "症状", True, "全绿口径", "", [V._check("甲", True, "过了"), _c_none])
+ok("C2e 报告逐项里没测到的画 `○`（不是 ✅ 也不是 ❌）",
+   "  ○ 某格没测到：读不到（夹具）" in _f["report"], _f["report"][-160:])
+ok("C2f 报告顶部有「○ 没测到」的计数警示", "○ 没测到" in _f["report"] and "承诺成立" in _f["report"])
+
+print("\n── C3. 静态：`_check` 的条件位不许是字面量（恒真/恒假都不行）──")
+import io as _io                                                                # noqa: E402
+import re as _re2                                                               # noqa: E402
+_vsrc = _io.open(os.path.join(ROOT, "agent", "verifiers.py"), encoding="utf-8").read()
+_lit = []
+_lit_false = []
+for _i, _ln in enumerate(_vsrc.splitlines(), 1):
+    if "_check(" not in _ln:
+        continue
+    if _re2.search(r"_check\(\s*[^,]+,\s*True\s*,", _ln):
+        _lit.append("L%d: %s" % (_i, _ln.strip()[:70]))
+    if _re2.search(r"_check\(\s*[^,]+,\s*False\s*,", _ln):
+        # `False` 允许（异常路径＝真失败）；这里只统计，给 C3a2 报个数
+        _pre = "\n".join(_vsrc.splitlines()[max(0, _i - 6):_i])
+        _lit_false.append("L%d（%s）" % (_i, "在 except 分支里" if "except" in _pre else "**不在 except 分支**"))
+ok("C3a 没有「条件位写**字面量 True**」的检查（那就是恒真＝乐观绿）", not _lit, _lit[:4])
+ok("C3a2 `False` 字面量只允许出现在**异常路径**（那是 fail-closed 的真失败，不是恒假作弊）——"
+   "本文件里剩 %d 处，都在 except 分支" % len(_lit_false), _lit_false[:3])
+ok("C3b 反例锚：老写法（`_check(\"读不到…\", True, \"…\")`）确实会被这条扫出来",
+   bool(_re2.search(r"_check\(\s*[^,]+,\s*True\s*,", '    checks.append(_check("版本门不拦发送", True, "读不到版本门"))')))
+ok("C3c 该改的那几处已经是「没测到」（None）",
+   _vsrc.count('_check("版本门不拦发送", None') == 1
+   and '_check("更新完成标志（更新成功后会写）", None' in _vsrc
+   and '_check("出站闸门没有误拦正常回复", None' in _vsrc)
+ok("C3d 两处真恒真已改成真判据（台账证据 > 0；闸门拦下过才算数）",
+   "_ev_n > 0" in _vsrc and "True if n > 0 else None" in _vsrc and "True if deny > 0 else None" in _vsrc)
 
 print("── D. 异常与未知 id 都不许抛（别把前端打崩）──")
 _u = V.run("不存在的东西")
