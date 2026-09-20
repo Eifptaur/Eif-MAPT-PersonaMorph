@@ -220,7 +220,19 @@ def load_nickname_map(db) -> dict:
 
 
 def load_groups(db) -> list:
-    """群列表 [{'name','wxid'}]：**优先公开 `get_groups()`**，拿不到再回退查 contact.db。"""
+    """群列表 [{'name','wxid'}]：**优先公开 `get_groups()`**，拿不到再回退查 contact.db。
+
+    ⛔ 2026-09-20 修（网友 v0920-1227 报「**微信已连接却找不到群聊**」，截图里控制台写着
+      「没读到任何群聊：请先在「运行状态」确认微信已连接」）：这里原来把**两条路都失败**的情况
+      用 `except Exception: pass` 悄悄吞成"0 个群" —— 于是上层 `wechat._cap["groups"]` **永远拿不到
+      fail**（它只在真抛异常时才记），`groups_fn` 便返回 `ok:True + groups:[]`，控制台据此把用户
+      引向"确认微信已连接"这个**完全错误的方向**（他那台微信明明连上了）；而白名单勾不到群 ⇒
+      用户只能手打群名 ⇒ 与 `self._groups` 里的名字对不上 ⇒ `targets` 为空 ⇒ **监听循环什么都不做、
+      群里 @ 也不回**（正是那份反馈的后半段）。
+    ⇒ 现在：**查询真的失败了就抛**（由 `wechat._load_groups` 记进 `_cap` 并如实显示给用户）；
+      **查询成功、确实一个群都没有**才返回空列表（那是事实，不是错误）。
+    """
+    errs = []
     if has_api(db, "get_groups"):
         try:
             rows = db.get_groups() or []
@@ -235,25 +247,26 @@ def load_groups(db) -> list:
                     out.append({"name": name, "wxid": wxid})
             if out:
                 return out
-        except Exception:
-            pass
-    groups = []
+            errs.append("get_groups() 给出 0 条")
+        except Exception as _e:
+            errs.append("get_groups()：%s" % (str(_e)[:80] or type(_e).__name__))
     rel = contact_db_rel(db)
     if rel is None:
-        return groups
+        raise RuntimeError("找不到联系人库 contact.db%s"
+                           % ("（%s）" % "；".join(errs) if errs else ""))
     conn = None
     try:
         conn = open_shard(db, rel)
         rows = conn.execute(
             "SELECT username, nick_name, remark FROM contact WHERE username LIKE '%@chatroom'").fetchall()
-        for r in rows:
-            groups.append({"name": str(r["remark"] or r["nick_name"] or r["username"]),
-                           "wxid": str(r["username"])})
-    except Exception:
-        pass
+    except Exception as _e:
+        raise RuntimeError("读 contact.db 失败：%s%s"
+                           % (str(_e)[:80] or type(_e).__name__,
+                              ("（此前：%s）" % "；".join(errs)) if errs else ""))
     finally:
         close_all([conn])
-    return groups
+    return [{"name": str(r["remark"] or r["nick_name"] or r["username"]),
+             "wxid": str(r["username"])} for r in rows]
 
 
 # 微信系统号 / 服务号（不是真人私聊）——私聊发现时要排掉
@@ -275,22 +288,24 @@ def load_privates(db) -> list:
     out = []
     rel = contact_db_rel(db)
     if rel is None:
-        return out
+        # ⛔ 2026-09-20：与 `load_groups` 同族 —— 原来这里返回空列表，把"找不到联系人库"
+        #   说成"没有私聊联系人"。现在如实抛（由 `wechat._load_privates` 记进 `_cap`）。
+        raise RuntimeError("找不到联系人库 contact.db")
     conn = None
     try:
         conn = open_shard(db, rel)
         rows = conn.execute("SELECT username, nick_name, remark FROM contact").fetchall()
-        for r in rows:
-            wxid = str(r["username"] or "")
-            if not wxid or wxid.endswith("@chatroom"):
-                continue
-            if wxid.lower() in _SYS_CONTACTS:
-                continue
-            out.append({"name": str(r["remark"] or r["nick_name"] or wxid), "wxid": wxid})
-    except Exception:
-        pass
+    except Exception as _e:
+        raise RuntimeError("读 contact.db 失败：%s" % (str(_e)[:80] or type(_e).__name__))
     finally:
         close_all([conn])
+    for r in rows:
+        wxid = str(r["username"] or "")
+        if not wxid or wxid.endswith("@chatroom"):
+            continue
+        if wxid.lower() in _SYS_CONTACTS:
+            continue
+        out.append({"name": str(r["remark"] or r["nick_name"] or wxid), "wxid": wxid})
     return out
 
 

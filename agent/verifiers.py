@@ -94,10 +94,12 @@ def _verdict(checks, ok_all_msg, action_map) -> tuple:
         return True, ok_all_msg, ""
     first = bad[0]
     _pos = {c.get("name") or "" for c in checks if c.get("ok")}
-    _alive = any(("最近有过一轮响应" in n or "监听水位有记录" in n) for n in _pos)
+    # ⚠️ 2026-09-20：水位那一格已改名（`监听水位有记录` → **`监听水位有推进`**，并改成看"序号>0"），
+    #   这里的字符串匹配要跟着改——两边都列上，免得改名把"矛盾检测"悄悄失效（那是假绿）。
+    _alive = any(("最近有过一轮响应" in n or "监听水位有" in n) for n in _pos)
     if _alive and ("模型 key" in (first.get("name") or "")):
         return (False,
-                "证据互相矛盾：这份报告说「%s」，可同一份报告里「最近有过一轮响应 / 监听水位有记录」"
+                "证据互相矛盾：这份报告说「%s」，可同一份报告里「最近有过一轮响应 / 监听水位有推进」"
                 "是**通过**的 —— 没填 key 不可能发出上一轮 ⇒ **这是检验器的读数与运行时不一致，"
                 "不是你的配置有问题**。" % first.get("detail"),
                 "把这段报告直接粘进「反馈」发我（我照这条修检验器），**先不用改配置**")
@@ -319,9 +321,28 @@ def v_no_reply() -> dict:
         key = str(_api_d.get("api_key") or _api_d.get("key") or "").strip()
         _key_src = "解析函数不可用，退回直读 api_key（%s）" % str(_e)[:24]
     checks.append(_check("模型 key 已填", bool(key), "模型 key %s（%s）" % ("已填" if key else "**没填**", _key_src)))
+    try:
+        _wl = [str(x) for x in ((c.get("wechat") or {}).get("group_name_white_list") or [])]
+    except Exception:
+        _wl = []
+    checks.append(_check("勾了监听目标群", True,
+                         ("白名单 %d 个：%s（**名字要与微信里完全一致**，差一个字就匹配不上 ⇒ 监听不到）"
+                          % (len(_wl), "、".join(_wl[:5]))) if _wl else "白名单留空 ＝ 监听所有群"))
     wm = _read_json(_p("data", "listener_watermark.json"), {})
-    checks.append(_check("监听水位有记录（说明监听在跑）", bool(wm),
-                         "水位条目 %d 个%s" % (len(wm), ("，最近：%s" % max(map(str, wm.values()))[:8]) if wm else "")))
+    # ⛔ 2026-09-20 修（网友 v0920-0824 的报告里这一格被判 ✅：「水位条目 2 个，**最近：0**」）：
+    #   只看到"有条目"就判过，是**太弱**的判据 —— 水位停在 0 说明**监听从来没读到过目标群的消息**
+    #   （最常见：白名单群名与微信里不一致 / 那个群不在当前登录的号里 / 消息库读不出来）。
+    #   它比"最近有过一轮响应"更靠前，所以必须在这里就把卡点拦住，别让判决指到后面去。
+    try:
+        _wvals = [int(v) for v in (wm or {}).values()]
+    except Exception:
+        _wvals = []
+    _wmax = max(_wvals) if _wvals else 0
+    _wm_detail = ("水位条目 %d 个，最高序号 %d" % (len(wm), _wmax)) if wm else "还没有水位记录（监听没在跑）"
+    if wm and _wmax <= 0:
+        _wm_detail += ("：**从没读到过目标群的消息** ⇒ 依次查 ①白名单群名与微信里完全一致 "
+                       "②那个群在当前登录的号里 ③「点击测试」里「微信·消息库可读」那一格")
+    checks.append(_check("监听水位有推进（说明真的读到了目标群的消息）", bool(wm) and _wmax > 0, _wm_detail))
     sess = sorted([f for f in (os.listdir(_p("data", "sessions")) if os.path.isdir(_p("data", "sessions")) else [])
                    if f.endswith(".jsonl")])
     last_age = None
@@ -409,7 +430,9 @@ def v_no_reply() -> dict:
                                    {"没有处于暂停": "点「继续」", "模型 key 已填": "控制台「模型」面板填 key",
                                     "读的是**正在用的那个微信号**":
                                         "重启一次机器人（旧版本）；新版会在 15 秒内自动跟着切过去",
-                                    "监听水位有记录（说明监听在跑）": "点「一键启动」并看「微信」面板的逐步检查"})
+                                    "监听水位有推进（说明真的读到了目标群的消息）":
+                                        "点「一键启动」并看「微信」面板的逐步检查；"
+                                        "重点核白名单里的群名与微信里是否**完全一致**"})
     return _finish("no_reply", "它不回复", "群里说话它不理、只有艾特才有反应、整天没动静",
                    ok, verdict, action, checks)
 
