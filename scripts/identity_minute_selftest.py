@@ -137,6 +137,26 @@ def main():
     ok("C6 反例锚：**把这道门摘掉**，同一夹具下时间档又放行了（证明 False 是这道门给的，不是别的原因）",
        _okp2 is True and _okt2 is True, (_okt2, _whyt2, _okp2, _whyp2))
 
+    print("\n── G. 内容排他：时间档给不出结论时，靠「内容排他」决定发不发（本次新增的放行依据）──")
+    # 现场（真机）：两个群同一分钟都有消息 ⇒ 时间档分不出；但两个群的**正文不同** ⇒ 内容能分。
+    _ad2 = _fake_adapter()
+    _ex_a, _why_a = _ad2._pane_excludes_others(
+        "group:" + A_ID, "甲群刚才说的那句话内容")
+    ok("G1 聊天区只有目标群的正文 ⇒ **排他**（这一支是「这就能发」的依据）",
+       _ex_a is True, _why_a)
+    _ex_b, _why_b = _ad2._pane_excludes_others(
+        "group:" + A_ID, "另外这里是 乙群说的是完全不同的一句")
+    ok("G2 聊天区里出现**别的监听会话**的正文 ⇒ **不排他**（判否，宁可漏发）",
+       _ex_b is False and "别的会话" in str(_why_b), _why_b)
+    _ex_c, _why_c = _ad2._pane_excludes_others("group:" + A_ID, "")
+    ok("G3 聊天区读不到字 ⇒ 不排他（不许把「没读到」当「干净」）", _ex_c is False, _why_c)
+    _WT = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
+    ok("G4 时间档给不出结论时**必须**过排他性核对（两处：长针档 + 短指纹档）",
+       _WT.count("_pane_excludes_others(chat_id, pane)") >= 2,
+       _WT.count("_pane_excludes_others(chat_id, pane)"))
+    ok("G5 反例锚：旧写法（时间档判不了就一律判否）会让「用户想发也发不出去」 —— 断言它已经不在",
+       "if _ccmp and not _cdec:\n                                return False" not in _WT)
+
     print("── D. 收口：三档都走同一道门（别再各写一份）──")
     import _srcmatch as _sm                                                      # noqa: E402
     _TEXT_W = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
@@ -162,14 +182,26 @@ def main():
 
 
 class _FakeDB:
-    """只实现 `get_messages`（`_last_time_hhmm` 与 `_pane_time_hits` 就用这一个）。"""
+    """只实现 `get_messages`（`_last_time_hhmm` / `_pane_time_hits` / `recent_texts` 都用它）。"""
 
-    def __init__(self, times):
+
+    def __init__(self, times, texts=None):
         self.times = times
+        self.texts = texts or {}
 
     def get_messages(self, chat_id, limit=1):
         cid = str(chat_id).split(":", 1)[-1]
-        return [{"create_time": t} for t in list(self.times.get(cid) or [])[:max(1, int(limit))]]
+        _ts = list(self.times.get(cid) or [])
+        _tx = list(self.texts.get(cid) or [])
+        _n = max(1, int(limit))
+        out = []
+        for i in range(min(max(len(_ts), len(_tx)), _n)):
+            _r = {"create_time": (_ts[i] if i < len(_ts) else (_ts[-1] if _ts else 0))}
+            if i < len(_tx):
+                _r["text"] = _tx[i]
+                _r["content"] = _tx[i]
+            out.append(_r)
+        return out
 
 
 def _fake_adapter():
@@ -180,6 +212,10 @@ def _fake_adapter():
         A_ID: [now],
         B_ID: [now],                     # 同一分钟（真机是差 13 秒）
         "wxid_solo": [now - 7 * 60],     # 另一个分钟 ⇒ 不算"同分钟"
+    }, texts={
+        A_ID: ["甲群刚才说的那句话内容"],
+        B_ID: ["乙群说的是完全不同的一句"],
+        "wxid_solo": ["独聊说的话又是另一句"],
     })
     ad.cfg = {"wechat": {"group_name_white_list": ["KC", "测试"]}}
     ad._mon_cache = None

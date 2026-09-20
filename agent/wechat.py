@@ -3344,7 +3344,7 @@ class WeChatAdapter:
             if st.get("status") == "ok":
                 if allow_weak:
                     return True, "会话头指纹判 ok（**弱档**：对面 r25 实测它对不同会话也会判 True）"
-                return False, ("只有会话头指纹档成立（**弱档、会假阳性**：对面 r25 实测两个不同会话"
+                return False, ("【可重试】只有会话头指纹档成立（**弱档、会假阳性**：对面 r25 实测两个不同会话"
                                "同时判 True）⇒ 不足以确认当前会话，按**未确认**处理")
         except Exception:
             pass
@@ -4495,7 +4495,7 @@ class WeChatAdapter:
                                     str(_strong_why)[:90])
                         _sw2_ok, _sw2_why = self.switch_chat_posted(chat_id, gui=gui)
                         if not _sw2_ok:
-                            return False, ("只有会话头指纹这一档成立（**弱档、会假阳性**），"
+                            return False, ("【可重试】只有会话头指纹这一档成立（**弱档、会假阳性**），"
                                            "按名字切会话也没成（%s）⇒ 这条不发：宁可漏发，绝不发错会话。"
                                            "（想让它发：把目标会话在微信里点开，或让它在会话列表里能被认出来）"
                                            % str(_sw2_why)[:70])
@@ -4513,7 +4513,7 @@ class WeChatAdapter:
                     #   ⚠️ 红线没有放宽：强档给不出证据时，这里仍然拒发。
                     _ok_strong, _why_strong = self.chat_is_open(chat_id, gui=gui)
                     if not _ok_strong:
-                        return False, "会话头不匹配，拒绝投递（防发错会话）：%s" % _st["note"]
+                        return False, "【可重试】会话头不匹配，拒绝投递（防发错会话）：%s" % _st["note"]
                     log.warning("会话头指纹判 mismatch（%s），但**强档证据成立** ⇒ 放行并重学参照：%s",
                                 str(_st["note"])[:70], str(_why_strong)[:130])
                     try:
@@ -5143,7 +5143,7 @@ class WeChatAdapter:
                 #    目标会话独有的短指纹（`2qqwq`）⇒ 后者是更硬的证据（项目口径：最后一道闸是内容）。
                 _idn0, _why0 = self.chat_identity_ok(chat_id, gui=gui)
                 if _idn0 is not True:
-                    return False, "发文件要求目标会话已打开且被确认：%s" % why_open
+                    return False, "【可重试】发文件要求目标会话已打开且被确认：%s" % why_open
                 ok_open, why_open = True, "内容级证据顶替名字闸：%s" % _why0
             if not ok_open:
                 # ⚠️ 措辞（2026-09-16 r26 对面指出）：**这是"调用方声明"，不是"真人当面确认"**——
@@ -5638,6 +5638,41 @@ class WeChatAdapter:
         except Exception as e:
             return False, "会话头标题带比对异常：%s" % str(e)[:40]
 
+    def _pane_excludes_others(self, chat_id: str, pane: str) -> tuple:
+        """**排他性核对**：聊天区里有没有**别的监听会话**最近的正文。
+
+        返回 `(是否排他, 说明)`。为什么要它（2026-09-21，业界调研 🥈 + 我们自己的残留口子）：
+        时间档给不出结论时（活动行时间读不出、或**同一分钟有别人也在说话**），"聊天区内容像目标"
+        这一条单独还不够 —— 跨机 r14 实测过"用户把同一批东西转进两个会话"⇒ 内容逐字雷同、
+        两个目标同时放行。而**内容排他**（看得到目标的正文、看不到别人的正文）是能区分的：
+        两个群的正文一般不同，而"当前开着的是 B"时，B 的正文会出现在聊天区里。
+        ⚠️ 不许循环论证：参照物全部来自**数据库**（各会话自己的最近消息），不看当前窗的身份。
+        """
+        try:
+            from . import chat_ocr as _co
+            _pn = _co.norm_alnum(pane)
+            if not _pn:
+                return False, "聊天区读不到字 ⇒ 无法做排他性核对"
+            _mine = {str(x).strip().lower() for x in (self.recent_texts(chat_id) or [])}
+            for _ck in self._monitored_chat_ids():
+                if _ck == chat_id:
+                    continue
+                for _nd in (self.recent_texts(_ck.split(":", 1)[-1]) or []):
+                    _s = str(_nd or "").strip()
+                    if len(_s) < 6 or _s.lower() in _mine:
+                        continue                      # 太短 / 与目标自己的文本重复 ⇒ 不算"别人的"
+                    try:
+                        if _co.low_entropy(_co.norm_alnum(_s)):
+                            continue
+                        if _co.content_match(pane, _s):
+                            return False, ("聊天区里出现了**别的会话**的正文（%r…，来自 %s）"
+                                           % (_s[:14], _ck))
+                    except Exception:
+                        continue
+            return True, "聊天区里没有别的监听会话的正文（内容排他）"
+        except Exception as e:
+            return False, "排他性核对异常（%s）" % type(e).__name__
+
     def chat_identity_ok(self, chat_id: str, gui=None, name: str = ""):
         """**内容级**身份核对：当前聊天区里应看得到目标会话最近若干条文本里的**任意一条**。
 
@@ -5701,24 +5736,37 @@ class WeChatAdapter:
                         #    两个会话内容逐字相同时，内容闸会同时放行两个目标 ⇒ 用"只有一个活动行"把它分开）。
                         _cf, _cfwhy, _cdec, _ccmp = self._row_time_conflict(chat_id, gui=gui)
                         if _cf:
-                            return False, ("聊天区内容像目标（%r…），但**活动行时间对不上**（%s）⇒ 判否："
+                            return False, ("【可重试】聊天区内容像目标（%r…），但**活动行时间对不上**（%s）⇒ 判否："
                                            "同屏两个会话内容雷同时，以活动行为准" % (nd[:16], _cfwhy))
-                        if _ccmp and not _cdec:
-                            # ⛔ 2026-09-16 r16：**判不了就不放行**——但只在"本该判得了"的时候。
-                            #    跨机实测：那台的活动行时间戳时好时坏，读不到时"内容像"对同屏两个会话
-                            #    同时成立 ⇒ 双放行复现（正对"发错会话"的事故面）⇒ **目标最后一条是今天的
-                            #    消息**（列表那行本该显示 HH:MM）时，读不出就等于判不了 ⇒ 判否。
-                            #    若目标最后一条**不是今天**（行上显示"昨天18:xx"），本来就没有 HH:MM 可对，
-                            #    这是**已知局限**（日期标签还没做比对），此时不因它拦，交给其它档。
-                            if self._last_time_hhmm(chat_id):
-                                return False, ("聊天区内容像目标（%r…），但**活动行时间戳读不出**（%s）⇒ 判否："
-                                               "同屏内容雷同时内容这一条没有区分力，必须由活动行时间定论"
-                                               % (nd[:16], _cfwhy))
-                        return True, "聊天区里认出了目标会话最近的内容（%r…）" % nd[:16]
+                        # ⛔ 2026-09-16 r16 的原口径：时间戳读不出且"本该可比"⇒ 判否。
+                        #   ⛔ 2026-09-21 收紧＋放行（业界调研 🥈）：时间档给不出结论的**两种**情形
+                        #   （①活动行时间戳读不出 ②同一分钟有别人也在说话 ⇒ `_ccmp=False`）**都不再一律判否**，
+                        #   改成**由内容排他性定论**：
+                        #     · 聊天区里看得到目标的正文、且**看不到**别的监听会话的正文 ⇒ 放行（用户想让它发出去）；
+                        #     · 看到别家正文 ⇒ 判否（宁可漏发，绝不发错）。
+                        #   r14 那条防线没丢：两个会话内容**逐字雷同**时，别家的正文**也在**聊天区里
+                        #   （`_mine` 会把与目标重复的文本排除，所以"真雷同"会走到判否那一支）。
+                        _excl, _exclwhy = self._pane_excludes_others(chat_id, pane)
+                        if _excl:
+                            return True, ("聊天区内容像目标（%r…）＋ %s ⇒ 放行（时间档给不出结论：%s）"
+                                          % (nd[:16], _exclwhy, str(_cfwhy)[:60]))
+                        if (_ccmp and not _cdec) and self._last_time_hhmm(chat_id):
+                            return False, ("聊天区内容像目标（%r…），但**活动行时间戳读不出**（%s）"
+                                           "且%s ⇒ 判否：时间定不了、内容又不排他，宁可漏发"
+                                           % (nd[:16], _cfwhy, _exclwhy))
+                        return False, ("聊天区内容像目标（%r…），但%s ⇒ 判否："
+                                       "同屏有两个会话的正文，内容这一条没有区分力"
+                                       % (nd[:16], _exclwhy))
                 elif nn and nn in pane_n and not _co.low_entropy(nn) and len(nn) >= 4:
                     # ⚠️ 短指纹档也要两道下界（2026-09-16 跨机 r10 的 fail-open 教训）：
                     #   低熵（纯数字）不算证据；太短（<4）也不算 —— 否则"1"这种字符都能放行。
-                    return True, "聊天区里认出了目标会话的短指纹 %r（严格子串）" % nd[:12]
+                    # ⛔ 2026-09-21：**再过一道排他性**（这一档以前没有任何时间/排他检查，
+                    #   同分钟或内容雷同时可以直接放行 ⇒ 与 r14 那条防线自相矛盾）。
+                    _ex2, _ex2why = self._pane_excludes_others(chat_id, pane)
+                    if not _ex2:
+                        return False, ("聊天区里认出了目标的短指纹 %r，但%s ⇒ 判否（短指纹不排他）"
+                                       % (nd[:12], _ex2why))
+                    return True, "聊天区里认出了目标会话的短指纹 %r（严格子串，且内容排他）" % nd[:12]
             # 最后一档：文件卡指纹（会话最近几条全是文件卡时，上面两档会全部落空）
             f_ok, f_why = self.pane_file_card_ok(chat_id, pane)
             if f_ok is True:
@@ -5800,7 +5848,8 @@ class WeChatAdapter:
                     for _nd in needles[:3])
             except Exception:
                 _obs = "（观测量算不出来）"
-            return False, ("聊天区里**没有**目标会话最近的任何一条文本（试过 %d 条，如 %r…；文件卡档：%s）"
+            return False, ("【可重试】聊天区里**没有**目标会话最近的任何一条文本"
+                           "（试过 %d 条，如 %r…；文件卡档：%s）"
                            "｜观测：聊天区读到 %d 字（前 24 字 %r）· %s ⇒ 当前开着的很可能不是目标会话"
                            % (len(needles), needles[0][:16], f_why, len(pane), pane[:24], _obs))
         except Exception as e:
