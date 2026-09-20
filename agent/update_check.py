@@ -134,14 +134,62 @@ _SLUG_SEGS = tuple(REPO_SLUG.split("/"))          # ("eifptaur", "eif-mapt-perso
 _CDN_HOSTS = ("cdn.jsdelivr.net", "fastly.jsdelivr.net", "gcore.jsdelivr.net", "cdn.statically.io")
 
 
-def _path_segments(u: str) -> list:
-    """把 URL 的 path 切成**已解码的小写段**（空段丢掉）。"""
+def _raw_segments(u: str) -> list:
+    """URL path 的**原始段**（不解码）——用来查"有没有点段"。"""
     try:
-        from urllib.parse import unquote, urlparse
+        from urllib.parse import urlparse
         p = urlparse(str(u)).path or ""
     except Exception:
         return []
-    return [unquote(s).strip().lower() for s in p.split("/") if s.strip()]
+    return [s for s in p.replace("\\", "/").split("/") if s.strip()]
+
+
+def _decoded_segment(s: str) -> str:
+    """段解码：**解两次**（`%252e%252e` → `%2e%2e` → `..`）——判据要比下载侧更严。"""
+    from urllib.parse import unquote
+    t = str(s)
+    for _ in range(2):
+        n = unquote(t)
+        if n == t:
+            break
+        t = n
+    return t
+
+
+def has_dot_segments(u: str) -> bool:
+    """URL 路径里有没有 `.` / `..` 段（含百分号编码与反斜杠变体）。
+
+    ⛔ 2026-09-21 加 **V-R4-2（P0，第四轮审计）**：判据原来只切**原始**段，而下载侧
+    （`urllib`，RFC 3986）会**先归一化点段再发请求** ⇒
+      `…/Eifptaur/Eif-MAPT-PersonaMorph/../../attacker/x/releases/download/v1/p.zip`
+    在我们眼里"头两段就是本仓库"（判可信），**实际取回的是别人仓库的文件**
+    （审计用产品自己的 `_dl_once` 实测：连 octocat/Hello-World 的 README 都取回来了，
+    sha 与正常路径逐字节一致 ⇒ 投毒任一镜像就能装任意仓库的包）。
+    ⇒ 本产品生成的地址里**永远不含点段**（分片/镜像都是拼接固定段），所以**见到点段一律拒**
+    （fail-closed），并且下载侧用同一个判据再拦一次（"判的就是取的"）。
+    """
+    for s in _raw_segments(u):
+        # 段内也要查：`..%5c..%5cattacker` 解出来是 `..\..\attacker`（反斜杠变体），
+        # 而 `x%2f..%2f..` 这种"编码分隔符"同样是在切段之后才露出点段 ⇒ 解完再按 `/` 与 `\` 拆开看。
+        t = _decoded_segment(s).replace("\\", "/")
+        if any(p in (".", "..") for p in t.split("/") if p):
+            return True
+    return False
+
+
+def _path_segments(u: str) -> list:
+    """把 URL 的 path 切成**已解码、已归一化的小写段**（空段丢掉；`.`/`..` 按 RFC 3986 归约）。"""
+    out = []
+    for s in _raw_segments(u):
+        t = _decoded_segment(s).strip()
+        if not t or t == ".":
+            continue
+        if t == "..":
+            if out:
+                out.pop()
+            continue
+        out.append(t.lower())
+    return out
 
 
 def _path_has_repo(u: str) -> bool:
@@ -162,7 +210,13 @@ def _path_has_repo(u: str) -> bool:
     `gh/<owner>/<repo>[@ref]`）。**子串出现在别的位置一律不算。**
     注：`objects.githubusercontent.com`（带签名的资产直链）路径里没有仓库名 ⇒ 按最严规则**一律不认**
     —— 本产品从来不用它当清单源或下载地址，这是有意的"窄"。
+
+    ⛔ 2026-09-21 **再加一条（V-R4-2，P0，第四轮审计）**：路径里**含点段（`.`/`..`，含 `%2e` 各种编码）
+    一律拒** —— 否则判据看的是"未归一化的原始段"、而下载侧会归一化后去取**另一个仓库**的文件
+    （实测绕过成功）。见 `has_dot_segments()`。
     """
+    if has_dot_segments(u):
+        return False
     try:
         from urllib.parse import urlparse
         host = (urlparse(str(u)).hostname or "").lower()

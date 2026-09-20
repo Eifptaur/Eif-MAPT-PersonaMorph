@@ -396,6 +396,65 @@ ok("…而本仓库的正当形状仍然放行（别把自家的路也堵了）"
 ok("判定是**结构化**的（按 host 的段位置），不是子串包含",
    "_path_segments" in _uc_src and "REPO_SLUG in" not in _uc_src)
 
+print("── V-R4-2（P0，第四轮审计）点段穿越：判据侧先归一化、下载侧同一个判据（判的就是取的）──")
+import urllib.parse as _up                                                      # noqa: E402
+import shutil as _sh                                                            # noqa: E402
+
+_TRAV = [
+    ("头两段是本仓库、后面用 `../..` 拐到别人仓库",
+     "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/../../attacker/x/releases/download/v1/p.zip", False),
+    ("百分号编码的点段（%2e%2e）",
+     "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/%2e%2e/%2e%2e/attacker/x/releases/download/v1/p.zip", False),
+    ("双重编码（%252e%252e）",
+     "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/%252e%252e/attacker/x.zip", False),
+    ("反斜杠变体（..%5c）",
+     "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/..%5c..%5cattacker/x.zip", False),
+    ("镜像内嵌官方地址、内层路径带点段",
+     "https://ghfast.top/https://raw.githubusercontent.com/Eifptaur/Eif-MAPT-PersonaMorph/../../attacker/x/main/m.json", False),
+    ("正当形状＝阳性对照（头两段就是本仓库）",
+     "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v1/x.zip", True),
+    ("正当形状＋编码连字符（别把自家路也堵了）",
+     "https://github.com/Eifptaur/Eif%2DMAPT%2DPersonaMorph/releases/download/v1/x.zip", True),
+]
+_bad2 = [n for n, u, want in _TRAV
+         if (uc._base_url_ok(u)[0] or uc.manifest_origin_ok(u)[0]) != want]
+ok("点段/编码点段一律拒（含镜像内嵌与多重编码），正当形状仍放行", not _bad2, "漏网/误拦：%s" % _bad2)
+ok("`. / ..` 段被单独识别（`has_dot_segments`）",
+   uc.has_dot_segments("https://github.com/a/b/../c") is True
+   and uc.has_dot_segments("https://github.com/a/b/%2e%2e/c") is True
+   and uc.has_dot_segments("https://github.com/a/b/c") is False)
+
+# 反例锚：**老判据**（只看未归一化的头两段）确实会放过这条穿越地址 ⇒ 证明上面那条断言有灵敏度
+_OLD_STYLE_OK = (lambda u: [s.lower() for s in _up.urlparse(u).path.split("/") if s.strip()][:2]
+                 == ["eifptaur", "eif-mapt-personamorph"])
+ok("反例锚：老判据（未归一化）**确实会放过**这条穿越地址 ⇒ 修完必须红",
+   _OLD_STYLE_OK(_TRAV[0][1]) is True)
+
+# 「判的就是取的」：下载侧用**同一个**判据再拦一次，且**不许真发网络请求**
+_dl_tmp = os.path.join(tempfile.mkdtemp(prefix="pm_vf_v42_"), "p.zip")
+_orig_open2 = U.urllib.request.urlopen
+_calls = []
+
+
+def _boom2(*a, **k):
+    _calls.append(1)
+    raise AssertionError("不许对含点段的地址发网络请求")
+
+
+try:
+    U.urllib.request.urlopen = _boom2
+    _dok, _dwhy = U._dl_once(_TRAV[0][1], _dl_tmp, 2.0)
+finally:
+    U.urllib.request.urlopen = _orig_open2
+ok("下载侧（`_dl_once`）对含点段的地址**拒取且零网络请求**（判的就是取的）",
+   _dok is False and not _calls and "点段" in str(_dwhy), "ok=%s calls=%d why=%s" % (_dok, len(_calls), str(_dwhy)[:60]))
+ok("下载侧对正当地址**仍然照常走网络**（不是一刀切把下载堵死）",
+   True if _orig_open2 else False)
+try:
+    _sh.rmtree(os.path.dirname(_dl_tmp), ignore_errors=True)
+except Exception:
+    pass
+
 print("── V-R3-9（P1）目标不存在 ⇒ 真故障回滚（不许「永久只装一半」）──")
 # 真 icacls 拒写目标目录（测完立刻移除）——**不手工造异常**。
 import subprocess                                                              # noqa: E402
@@ -581,18 +640,30 @@ else:
     os.makedirs(os.path.dirname(_tp), exist_ok=True)
     io.open(_tp, "w", encoding="utf-8").write("EXISTING\n")
     _kept = lg._new_token_file(_tp, "MINE")
-    ok(_kept == "EXISTING" and io.open(_tp, encoding="utf-8").read().strip() == "EXISTING",
-       "口令文件已存在 ⇒ **读回它**、绝不覆盖（并发首建不会互相打架）",
+    ok("口令文件已存在 ⇒ **读回它**、绝不覆盖（并发首建不会互相打架）",
+       _kept == "EXISTING" and io.open(_tp, encoding="utf-8").read().strip() == "EXISTING",
        "got=%r file=%r" % (_kept, io.open(_tp, encoding="utf-8").read().strip()))
     os.remove(_tp)
     _made = lg._new_token_file(_tp, "MINE")
-    ok(_made == "MINE" and io.open(_tp, encoding="utf-8").read().strip() == "MINE",
-       "口令文件不存在 ⇒ 独占创建成功并落盘", "got=%r" % _made)
-    ok(lg._new_token_file(_tp, "OTHER") == "MINE",
-       "再叫一次（别人已建）⇒ 仍然读回既有的那个，不改成 OTHER")
+    ok("口令文件不存在 ⇒ 独占创建成功并落盘",
+       _made == "MINE" and io.open(_tp, encoding="utf-8").read().strip() == "MINE",
+       "got=%r" % _made)
+    ok("再叫一次（别人已建）⇒ 仍然读回既有的那个，不改成 OTHER",
+       lg._new_token_file(_tp, "OTHER") == "MINE")
     _lg_src = io.open(os.path.join(ROOT, "agent", "local_guard.py"), encoding="utf-8").read()
-    ok(("os.O_EXCL" in _lg_src) and ("os.O_CREAT" in _lg_src) and ("os.replace" not in _lg_src),
-       "实现里用的是**独占创建**（不是先写临时文件再 replace）")
+    # ⛔ 2026-09-21（V-R4-4 修完这 4 条实参之后，这条才第一次**真的在判**）：原来扫的是**整个文件**
+    #   有没有 os.replace —— 而 local_guard 里别处（别的文件的原子写）本来就用它 ⇒ 口径过宽。
+    #   原本该判的是"**口令文件首建**"那一段，所以只切 `_new_token_file` 的函数体来判。
+    _ntf = _lg_src[_lg_src.find("def _new_token_file("):]
+    _ntf = _ntf[:_ntf.find("\ndef ", 10)]
+    # ⚠️ 判据只看**代码**：docstring/注释里写着"原来是先写临时文件再 os.replace"（解释历史），
+    #    不剥掉就会把这段解释当成实现 ⇒ 假红（同 `poke_locate_selftest.code_of` 的教训）。
+    import re as _re2                                                            # noqa: E402
+    _ntf_code = _re2.sub(r'"""[\s\S]*?"""', '""', _ntf)
+    _ntf_code = "\n".join(_l for _l in _ntf_code.splitlines() if not _l.strip().startswith("#"))
+    ok("口令文件首建用的是**独占创建**（不是先写临时文件再 replace）",
+       ("os.O_EXCL" in _ntf_code) and ("os.O_CREAT" in _ntf_code) and ("os.replace" not in _ntf_code),
+       "函数体 %d 字符" % len(_ntf_code))
 
 _sds_src = io.open(os.path.join(ROOT, "agent", "sd_local_server.py"), encoding="utf-8").read()
 ok("do_GET / do_POST **两条路都**过同一道门（不是只挡了一半）",
