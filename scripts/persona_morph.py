@@ -2166,14 +2166,20 @@ def main():
                 ("发现 %d 个输入叠加层（手写画布/输入体验）" % overlays["n"]) if overlays["n"] else "无（正常）",
                 "点击前会自动清理；若反复出现请关闭触控键盘（Win+Ctrl+O）")
             if gui is not None and mode != "code":
-                # 真实点击自检：与拍一拍完全相同「移动+右键」逻辑，右键一条消息看菜单是否弹出
-                # 仅报告，不写状态（不再自动进入低功率——曾导致拍一拍被长期禁用）
+                # 点击自检（2026-09-21 重做）：**与拍一拍实操同源**——取帧 → 检测头像方块 →
+                # 右键 → 只识别菜单（绝不点菜单项、绝不拍人）。仅报告，不写状态
+                # （不再自动进入低功率——曾导致拍一拍被长期禁用）。
+                #   三态分开：ok=通过；skip=**当前会话没有可拍的对象**（条件不具备，算「注意」，
+                #   不是故障）；其余=链路真红。
                 try:
                     cr = wechat.click_self_test()
-                    add("适配·点击实测(拍一拍同链路)", "ok" if cr.get("ok") else "fail",
-                        cr.get("detail", ""),
-                        "" if cr.get("ok") else "点击投递异常：检查是否在真实桌面启动(scripts\\启动机器人.vbs)、"
-                        "是否打开了群聊、机器是否卡顿/有拦截软件")
+                    _st = "ok" if cr.get("ok") else ("warn" if cr.get("skip") else "fail")
+                    add("适配·点击实测(拍一拍同链路)", _st, cr.get("detail", ""),
+                        "" if _st == "ok" else (
+                            "这不是故障：打开一个群聊（有聊天记录的）再点一次「点击测试」"
+                            if _st == "warn" else
+                            "与实操走同一条链（头像方块 → 右键 → 菜单识别）：先看微信窗口是不是"
+                            "被别的窗口盖住/最小化，再看有没有拦截软件；也可用「拍一拍检测」按钮复核"))
                 except Exception as e:
                     add("适配·点击实测", "fail", str(e))
         except Exception as e:

@@ -7987,6 +7987,55 @@ class WeChatAdapter:
             ok, msg = self.send_poke(chat_id, target_name, target_id, dbg=steps)
         return {"ok": ok, "message": msg, "steps": steps}
 
+    def _probe_poke_menu(self, gui, rel_x: int, rel_y: int) -> tuple:
+        """在 (rel_x, rel_y) 右键 → **只识别**菜单里有没有「拍一拍」，返回 (menu 或 None, why)。
+
+        ⛔ 这条是**唯一**的"只验不拍"实现：**绝不点任何菜单项**（结构上不可能拍到人）。
+        两个调用方共用它，避免检验侧与实操侧分叉：
+          · `_verify_poke_menu_inner`（控制台「拍一拍检测」的简易模式）
+          · `click_self_test`（「点击测试」里那格「点击实测(拍一拍同链路)」）
+
+        ⛔ 2026-09-18 删掉"改右键气泡"这条路：微信 4.1.15.8 的**消息菜单里没有「拍一拍」**
+          （只有**头像菜单**里有），实测日志读到的是 撤销/放大阅读/翻译/转发/收藏 ⇒ 那条路是死的。
+        """
+        ok, why = self._click(gui, rel_x, rel_y, right=True)
+        if not ok:
+            return None, "右键被拦截：%s" % why
+        time.sleep(0.9)
+        uia = gui._get_uia()
+        menu = None
+        if uia is not None:
+            for label in ("拍一拍", "引用", "回复", "转发"):
+                try:
+                    if uia._uia_find_menu_item(label) is not None:
+                        menu = label
+                        break
+                except Exception:
+                    continue
+        if menu is None:
+            # OCR 兜底（只判断，不点击）；严格「真菜单」过滤：
+            # 聊天文本（如「@E 第二条：拍一拍拍不上…」）含有 @、长于 12 字或行高
+            # 远超菜单字条 h<46 · scale=3 还原后 → 全部剔除，杜绝误报成功
+            try:
+                items = gui.ocr_zoomed((gui.right_pane_left, max(0, rel_y - 40),
+                                        gui.render_w, min(gui.render_h, rel_y + 360)), scale=3)
+            except Exception:
+                items = []
+            for text, x, y, w, h in items:
+                t = (text or "").strip()
+                if not t or "@" in t or len(t) > 12 or h > 46:
+                    continue
+                if t in ("拍一拍", "引用", "回复", "转发"):
+                    menu = t
+                    break
+        # 关闭菜单：只有 UIA 确认到菜单节点才按 Esc（防误关聊天窗）
+        if uia is not None and menu is not None and (menu in ("拍一拍", "引用", "回复", "转发")):
+            try:
+                gui._input.key(0x1B)
+            except Exception:
+                pass
+        return menu, ("识别到「%s」" % menu if menu else "右键后未识别到菜单")
+
     def _verify_poke_menu(self, chat_id: str, target_name: str, target_id: str = "",
                           dbg: list | None = None) -> tuple:
         """简易拍一拍检测（串行锁内执行）：只确认「定位 → 右键能弹出含拍一拍的菜单」。
@@ -8021,45 +8070,11 @@ class WeChatAdapter:
                 return False, "定位不到「%s」的头像：%s" % (target_name, _why)
             ax, ay, _score = located
             _d("头像位置：渲染坐标 (%d,%d)（已过归属校验：落在检测到的头像方块内）" % (ax, ay))
-            # ⛔ 2026-09-18 删掉"改右键气泡"这条路：微信 4.1.15.8 的**消息菜单里没有「拍一拍」**
-            #   （只有**头像菜单**里有），实测日志读到的是 撤销/放大阅读/翻译/转发/收藏 ⇒ 那条路是死的。
-            ok, why = self._click(gui, ax, ay, right=True)
-            if not ok:
-                _d("✘ 右键被拦截：%s" % why)
-                return False, "右键被拦截：%s" % why
-            time.sleep(0.9)
-            uia = gui._get_uia()
-            menu = None
-            if uia is not None:
-                for label in ("拍一拍", "引用", "回复", "转发"):
-                    try:
-                        if uia._uia_find_menu_item(label) is not None:
-                            menu = label
-                            break
-                    except Exception:
-                        continue
-            if menu is None:
-                # OCR 兜底（只判断，不点击）；严格「真菜单」过滤：
-                # 聊天文本（如「@E 第二条：拍一拍拍不上…」）含有 @、长于 12 字或行高
-                # 远超菜单字条 h<46 · scale=3 还原后 → 全部剔除，杜绝误报成功
-                try:
-                    items = gui.ocr_zoomed((gui.right_pane_left, max(0, ay - 40),
-                                            gui.render_w, min(gui.render_h, ay + 360)), scale=3)
-                except Exception:
-                    items = []
-                for text, x, y, w, h in items:
-                    t = (text or "").strip()
-                    if not t or "@" in t or len(t) > 12 or h > 46:
-                        continue
-                    if t in ("拍一拍", "引用", "回复", "转发"):
-                        menu = t
-                        break
-            # 关闭菜单：只有 UIA 确认到菜单节点才按 Esc（防误关聊天窗）
-            if uia is not None and menu is not None and (menu in ("拍一拍", "引用", "回复", "转发")):
-                try:
-                    gui._input.key(0x1B)
-                except Exception:
-                    pass
+            # 落点已定 ⇒ 右键 + **只识别**菜单（`_probe_poke_menu`：绝不点菜单项）
+            menu, why = self._probe_poke_menu(gui, ax, ay)
+            if menu is None and str(why).startswith("右键被拦截"):
+                _d("✘ %s" % why)
+                return False, why
             self._scroll_to_bottom(gui)
             if menu:
                 return True, "✅ 菜单可弹出（识别到「%s」）——仅验证，未执行拍一拍" % menu
@@ -8068,39 +8083,54 @@ class WeChatAdapter:
             return False, "异常：%s" % e
 
     def click_self_test(self) -> dict:
-        """真实点击自检（安全版）：不切换会话、不搜索、不翻页——
-        只验证「当前前台会话」头像定位+右键菜单可弹（同拍一拍链路，但绝不动会话列表/搜索框）。
+        """点击自检（安全版）：**与拍一拍实操同源**，但绝不点菜单项、绝不拍任何人。
+
+        链路＝取帧(PrintWindow) → 现量 pane_left → 运行时检测头像方块 → 取"对方（左）
+        最下面那个方块"中心右键 → `_probe_poke_menu` 只识别菜单（同 `_send_poke_locate`
+        的方块来源、同 `_verify_poke_menu_inner` 的菜单判定）。不切会话、不搜索、不滚动。
+
+        ⛔ 2026-09-21 重做。老实现两处硬伤（作者截图里那格一直「未通过」的根因）：
+          ① **落点来自公式**（按会话区宽度乘比例再加固定偏移），而实操早在 2026-09-18
+             就改成"运行时检测头像方块 + 归属校验"⇒ **检验和实操不是一条链**：公式点落进
+             气泡 ⇒ 弹的是消息菜单（里面没有「拍一拍」）⇒ 这格**永远红**；
+          ② 它调的是**会点菜单项**的那个旧函数 ⇒ 万一公式点正好落在某人头像上，
+             "点击测试"会**真的拍那个人一下**（对外可见、还可能拍错人）。
         """
         try:
-            # 直接用当前已打开的会话（微信前台那个）验证菜单链路；不 open_chat、不搜索
             gui = self._get_gui()
             from . import ui_adapt
-            from .ui_adapt import click as _click
             if not ui_adapt.prepare_screen(gui):
                 return {"ok": False, "detail": "屏幕预检失败（微信窗口不可见）"}
-            box = gui.get_input_box()
-            if not box:
-                return {"ok": False, "detail": "当前没有打开的会话（请先打开任意群聊再体检）"}
-            # 在消息区找一条群友消息做右键验证：限定当前视口（不滚动、不搜索）
-            items = []
+            from . import chat_header as _ch
+            img = _ch.grab_render(gui)
+            if img is None:
+                return {"ok": False, "detail": "抓不到微信画面（PrintWindow 失败）⇒ 量不到头像，不猜点"}
+            rw = int(getattr(gui, "render_w", 0) or 0) or img.size[0]
+            pane_left = 0
             try:
-                top = max(80, box[1] - 520)
-                items = gui.ocr((gui.right_pane_left, top, gui.render_w, box[1]))
+                pane_left = int(_ch.detect_pane_left(img)) or 0
             except Exception:
-                pass
-            mid_x = (gui.right_pane_left + gui.render_w) // 2
-            items = [it for it in items if it[3] > 30 and (gui.right_pane_left + 60) < it[1] < mid_x]
-            if not items:
-                return {"ok": False, "detail": "当前会话没有可见文字消息（换到一个聊过的群再试）"}
-            items.sort(key=lambda b: b[1])
-            row = items[-1]  # 视口内最后一条可见消息
-            ax = gui.right_pane_left + int((gui.render_w - gui.right_pane_left) * 0.185)
-            ay = row[1] - 32
-            # 候选点右键，验证「拍一拍」菜单（仅验证不点击菜单项）
-            for cx, cy in [(ax + 130, ay + 30), (ax + 80, ay + 30), (ax + 40, ay + 40)]:
-                if self._right_click_menu(gui, cx, cy, "拍一拍"):
-                    return {"ok": True, "detail": "菜单可弹出（识别到「拍一拍」）——仅验证，未执行拍一拍"}
-            return {"ok": False, "detail": "当前会话右键未出「拍一拍」菜单（换一个聊过的群试试）"}
+                pane_left = 0
+            if not pane_left:
+                pane_left = int(getattr(gui, "right_pane_left", 0) or 0)
+            blocks = self._avatar_blocks(img, pane_left)
+            mid = (int(pane_left) + int(rw)) // 2 if pane_left else int(rw) // 2
+            side = [b for b in blocks if (b[0] + b[2]) // 2 <= mid]
+            if not side:
+                return {"ok": False, "skip": True,
+                        "detail": "这一帧没检测到对方头像方块（整帧共 %d 个）⇒ 当前会话没有"
+                                  "可拍的对象（打开一个群聊/有聊天记录的会话再测）" % len(blocks)}
+            side.sort(key=lambda b: b[1])
+            b = side[-1]                       # 视口内最后一条消息的头像
+            ax, ay = (b[0] + b[2]) // 2, (b[1] + b[3]) // 2
+            menu, why = self._probe_poke_menu(gui, ax, ay)
+            if menu:
+                return {"ok": True,
+                        "detail": "菜单可弹出（在检测到的头像方块 (%d,%d) 上右键，识别到「%s」）"
+                                  "——仅验证，未点菜单项、未拍任何人" % (ax, ay, menu)}
+            return {"ok": False,
+                    "detail": "在检测到的头像方块 (%d,%d) 上右键没识别到菜单（%s）"
+                              "——与实操同一条链，问题在右键或菜单识别这一跳" % (ax, ay, why)}
         except Exception as e:
             return {"ok": False, "detail": "异常：%s" % e}
 

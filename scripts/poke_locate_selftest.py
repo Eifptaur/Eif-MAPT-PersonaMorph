@@ -351,6 +351,60 @@ def main():
        "menu_item_score" in open(os.path.join(ROOT, "agent", "input_backend.py"),
                                  encoding="utf-8").read())
 
+    # ⑬ ⭐ 「点击测试」里那格必须与实操**同一条链**，且**绝不点菜单项**（不真拍人）
+    #    起因（作者 2026-09-21 截图）：那格一直「未通过」，他的判断是
+    #    「**感觉检验和实操不是一条链路的**」—— 判对了：它还在用公式落点（按会话区宽度
+    #    乘比例 + 固定偏移）和**会点菜单项**的旧函数，而实操早在 2026-09-18 就换成
+    #    "运行时检测头像方块 + 只验菜单"了 ⇒ 公式点落进气泡、弹的是消息菜单（没有「拍一拍」）
+    #    ⇒ 永远红；更糟的是万一公式点正好落在某人头像上，"点击测试"会**真的拍那个人**。
+    import re as _re
+
+    def _code_only(body):
+        """去掉 docstring 再看——解释性文字里提到旧写法，不许把判据判红。"""
+        t = body or ""
+        t = _re.sub(r'"""[\s\S]*?"""', '""', t)
+        return _re.sub(r"'''[\s\S]*?'''", "''", t)
+
+    def _clk_bad(body):
+        """体检那格**不许**有的东西；返回违规说明（空＝合格）。"""
+        t = _code_only(body)
+        bad = []
+        if "_avatar_blocks" not in t:
+            bad.append("落点不是运行时检测的头像方块（缺 _avatar_blocks）")
+        if "* 0.185" in t:
+            bad.append("还在用 0.185 公式落点")
+        if "get_input_box" in t:
+            bad.append("还在调 get_input_box（连失会 bring_to_front 把微信置顶）")
+        if "gui.ocr(" in t:
+            bad.append("还在用抓屏 OCR（遮挡时读到别人的像素）")
+        if "_probe_poke_menu" not in t:
+            bad.append("菜单判定没走 _probe_poke_menu（检验侧与实操侧分叉）")
+        if "menu_click" in t or "_right_click_menu(" in t:
+            bad.append("会点菜单项 ⇒ 会真的拍人")
+        return bad
+
+    b_clk = code_of(src, "click_self_test")
+    b_probe = code_of(src, "_probe_poke_menu")
+    b_vmenu = code_of(src, "_verify_poke_menu_inner")
+    ok("⑬ 切到了 click_self_test / _probe_poke_menu / _verify_poke_menu_inner 三个方法体",
+       all(x for x in (b_clk, b_probe, b_vmenu)))
+    _cbad = _clk_bad(b_clk)
+    ok("⑬ 点击测试那格与实操同源（头像方块 → 右键 → 只识别菜单）且绝不点菜单项",
+       not _cbad, _cbad)
+    _OLD = ("    def click_self_test(self):\n"
+            "        ax = gui.right_pane_left + int((gui.render_w - gui.right_pane_left) * 0.185)\n"
+            "        box = gui.get_input_box()\n"
+            "        items = gui.ocr((gui.right_pane_left, 0, gui.render_w, 0))\n"
+            "        if self._right_click_menu(gui, ax, ax, \"拍一拍\"):\n"
+            "            return True\n")
+    _obad = _clk_bad(_OLD)
+    ok("⑬ 负例：老实现（公式落点 + 抓屏 OCR + 点菜单项）被同一判据判不合格",
+       len(_obad) >= 5, _obad)
+    ok("⑬ `_probe_poke_menu` 本体里没有任何「点菜单项」动作（只识别不点击）",
+       bool(b_probe) and "menu_click" not in _code_only(b_probe))
+    ok("⑬ 简易检测（控制台「拍一拍检测」）也走同一个 _probe_poke_menu（一处实现，防两边分叉）",
+       "_probe_poke_menu" in _code_only(b_vmenu))
+
     print("\n== 汇总：%d 通过 / %d 失败 ==" % (len(PASS), len(FAIL)))
     if FAIL:
         print("失败项：")
