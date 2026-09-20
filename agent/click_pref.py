@@ -19,13 +19,30 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import time
+
+from .config import DATA_DIR
 
 log = logging.getLogger("persona-morph")
 
-PATH = os.path.join("data", "click_targets.json")
+# ⛔ 2026-09-21 修（第六轮 **V-R6-20**）：原来写的是 `os.path.join("data", ...)`（吃 CWD）——
+#   生产启动都钉了 `cwd=ROOT` 所以现网没炸，但换个启动方式就会写到别处、且和 `send_retry` 不同源。
+PATH = os.path.join(DATA_DIR, "click_targets.json")
+# ⛔ 2026-09-21 加（第六轮 **V-R6-8**）：模块里原来**一把锁都没有**，而写者确实并存
+#   （30s 心跳线程经 `send_text`→切会话→`_click_visible_session` 调 `record_ok`，与监听线程并发）
+#   ⇒ 实测 3 线程×150 次只剩 6 次（丢 444 次）。这里给"读-改-写"整段加锁。
+_LOCK = threading.RLock()
 MAX_FAIL = 2                       # 连续失败到这个数 ⇒ 丢弃偏好
 MAX_KEYS = 40                      # 老版本/老尺寸的记录上限（防文件长胖）
+
+
+def _safe_int(v) -> int:
+    """安全转 int（脏数据不许把整条链路带崩）。"""
+    try:
+        return int(v)
+    except Exception:
+        return 0
 
 
 def key(wechat: str = "", adapter: str = "", w: int = 0, h: int = 0,
@@ -52,9 +69,11 @@ def _load() -> dict:
 def _save(d: dict) -> None:
     """原子写；**永不抛**（偏好坏了不能挡住切会话）。"""
     try:
-        ks = list((d.get("keys") or {}).items())
+        ks = [(k, v) for k, v in (d.get("keys") or {}).items() if isinstance(v, dict)]
         if len(ks) > MAX_KEYS:                                    # 只留最近的 MAX_KEYS 条
-            ks.sort(key=lambda t: int((t[1] or {}).get("at") or 0), reverse=True)
+            # ⛔ V-R6-18：排序键原来直接 `int(v.get("at"))` —— 一条脏条目（`at` 不是数字）
+            #   就会让**读整段**抛错，被本函数的 except 吞掉 ⇒ 之后每次记录都写不进盘。
+            ks.sort(key=lambda t: _safe_int((t[1] or {}).get("at")), reverse=True)
             d["keys"] = dict(ks[:MAX_KEYS])
         os.makedirs(os.path.dirname(PATH) or ".", exist_ok=True)
         tmp = PATH + ".tmp"
@@ -64,12 +83,21 @@ def _save(d: dict) -> None:
             os.fsync(f.fileno())
         os.replace(tmp, PATH)
     except Exception as e:                                        # noqa: BLE001
-        log.debug("点击目标偏好写失败（忽略）：%s", e)
+        # ⛔ V-R6-18：原来只有 DEBUG ⇒ "之后再也写不进盘"这件事在日志里看不见
+        log.warning("点击目标偏好写失败（忽略，不影响切会话）：%s", e)
 
 
 def peek(k: str) -> dict:
-    """看这条键记住了什么（只读，给日志/控制台用）。"""
-    return dict(((_load().get("keys") or {}).get(k) or {}))
+    """看这条键记住了什么（只读，给日志/控制台用）。
+
+    ⛔ V-R6-19：原来 `dict(...再解包)` 遇到"某条记录不是字典"会抛 `ValueError`
+    （判据自己声称"坏数据不许挡路（永不抛）"，实际只测了会吞异常的那条路）⇒ 加类型判断。
+    """
+    try:
+        v = (_load().get("keys") or {}).get(k)
+        return dict(v) if isinstance(v, dict) else {}
+    except Exception:                                             # noqa: BLE001
+        return {}
 
 
 def order_named(base, k: str, named: dict) -> list:
@@ -95,14 +123,15 @@ def order_named(base, k: str, named: dict) -> list:
 def record_ok(k: str, kind: str) -> None:
     """记一次"这个目标真的生效了"（kind ∈ main/render/其它）。"""
     try:
-        d = _load()
-        cur = dict((d["keys"] or {}).get(k) or {})
-        cur["ok"] = str(kind)
-        cur["okN"] = int(cur.get("okN") or 0) + 1
-        cur["failN"] = 0
-        cur["at"] = int(time.time())
-        d.setdefault("keys", {})[k] = cur
-        _save(d)
+        with _LOCK:                                     # ⛔ V-R6-8：读-改-写整段加锁（丢更新实测 450→6）
+            d = _load()
+            cur = dict((d["keys"] or {}).get(k) or {})
+            cur["ok"] = str(kind)
+            cur["okN"] = _safe_int(cur.get("okN")) + 1
+            cur["failN"] = 0
+            cur["at"] = int(time.time())
+            d.setdefault("keys", {})[k] = cur
+            _save(d)
     except Exception as e:                                        # noqa: BLE001
         log.debug("点击目标偏好记录失败（忽略）：%s", e)
 
@@ -110,16 +139,17 @@ def record_ok(k: str, kind: str) -> None:
 def record_fail(k: str) -> None:
     """记一次"所有目标都没生效"：连续到 `MAX_FAIL` 就丢掉这条偏好（退回默认顺序）。"""
     try:
-        d = _load()
-        cur = dict((d["keys"] or {}).get(k) or {})
-        cur["failN"] = int(cur.get("failN") or 0) + 1
-        cur["at"] = int(time.time())
-        if cur["failN"] >= MAX_FAIL:
-            (d.get("keys") or {}).pop(k, None)
-            log.info("点击目标偏好：连 %d 次没生效 ⇒ 丢掉这条偏好、退回默认顺序（%s）", MAX_FAIL, k)
-        else:
-            d.setdefault("keys", {})[k] = cur
-        _save(d)
+        with _LOCK:
+            d = _load()
+            cur = dict((d["keys"] or {}).get(k) or {})
+            cur["failN"] = _safe_int(cur.get("failN")) + 1
+            cur["at"] = int(time.time())
+            if cur["failN"] >= MAX_FAIL:
+                (d.get("keys") or {}).pop(k, None)
+                log.info("点击目标偏好：连 %d 次没生效 ⇒ 丢掉这条偏好、退回默认顺序（%s）", MAX_FAIL, k)
+            else:
+                d.setdefault("keys", {})[k] = cur
+            _save(d)
     except Exception as e:                                        # noqa: BLE001
         log.debug("点击目标偏好记录失败（忽略）：%s", e)
 

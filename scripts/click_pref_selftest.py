@@ -47,8 +47,9 @@ print("── A. 键：五轴（微信版本 × 适配层 × 渲染尺寸 × DPI
 ok("五个轴都进键", CP.key("4.1.15.8", "1.2.2.2", 2561, 1599, "PerMonitorV2", "message")
    == "4.1.15.8|1.2.2.2|2561x1599|PerMonitorV2|message")
 ok("缺项用 unknown / 0 兜底，不抛", "unknown|unknown|0x0||" in CP.key())
-ok("同机同尺寸 ⇒ 键相同", CP.key("4.1.15.8", "1.2.2.2", 2561, 1599, "d", "message")
-   == CP.key("4.1.15.8", "1.2.2.2", 2561, 1599, "d", "message"))
+ok("键里带上了渲染尺寸（`2561x1599` 原样出现）",
+   "2561x1599" in CP.key("4.1.15.8", "1.2.2.2", 2561, 1599, "d", "m"),
+   CP.key("4.1.15.8", "1.2.2.2", 2561, 1599, "d", "m"))
 ok("换尺寸 ⇒ 键不同（尺寸会重排 UI，实测过）",
    CP.key("4.1.15.8", "1.2.2.2", 2561, 1599, "d", "m") != CP.key("4.1.15.8", "1.2.2.2", 900, 680, "d", "m"))
 ok("换微信版本 ⇒ 键不同", CP.key("4.1.15.8", "1.2.2.2", 1, 1, "d", "m") != CP.key("4.1.16.0", "1.2.2.2", 1, 1, "d", "m"))
@@ -99,6 +100,31 @@ CP.PATH = TMP
 CP.record_ok("kok", "main")
 ok("落盘的是合法 JSON", isinstance(json.load(open(TMP, encoding="utf-8")).get("keys"), dict))
 ok("没有残留 .tmp（temp + os.replace）", not os.path.exists(TMP + ".tmp"))
+# ⛔ 2026-09-21 加（第六轮 **V-R6-8/24**）：并发写**丢更新**是这个模块上一条真缺陷（实测 3 线程×150 次只剩 6 次）。
+#   单线程写一遍是"空判"——这里真的并发写，断言"次数不丢、文件不坏"。
+import threading as _th                                                          # noqa: E402
+CP.clear("并发前清空") if hasattr(CP, "clear") else None
+if os.path.exists(TMP):
+    os.remove(TMP)
+CP._cache = None
+_N = 120
+
+
+def _writer(tag):
+    for i in range(_N):
+        CP.record_ok("cc|%s" % tag, "main")
+
+
+_ts = [_th.Thread(target=_writer, args=("t%d" % i,)) for i in range(3)]
+for _t in _ts:
+    _t.start()
+for _t in _ts:
+    _t.join()
+_counts = [int((CP.peek("cc|t%d" % i) or {}).get("okN") or 0) for i in range(3)]
+ok("3 线程×%d 次并发写 ⇒ **一次都不丢**（模块级 RLock）" % _N,
+   _counts == [_N] * 3, str(_counts))
+ok("并发写完文件仍是合法 JSON 且无 .tmp 残留",
+   isinstance(json.load(open(TMP, encoding="utf-8")).get("keys"), dict) and not os.path.exists(TMP + ".tmp"))
 for i in range(CP.MAX_KEYS + 6):
     CP.record_ok("kk%d" % i, "main")
 ok("记录条数有上限（防文件长胖）", len(CP.stats().get("keys") or {}) <= CP.MAX_KEYS,

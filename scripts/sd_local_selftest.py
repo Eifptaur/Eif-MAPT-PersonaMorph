@@ -204,6 +204,14 @@ ok("G2 别的程序（PID 复用的现场）⇒ 不认",
    S.cmdline_is_ours(r"C:\gradio\python.exe app.py --port 7860", 7860) is False)
 ok("G3 是我们的服务但**端口对不上** ⇒ 不认",
    S.cmdline_is_ours(r"python -u agent\sd_local_server.py 8188", 7860) is False)
+# ⛔ 2026-09-21 加（第六轮 **V-R6-33**）：端口原来是子串匹配 ⇒ `17860` 里含 `7860` 会被误认，
+#   拿它当身份证据去 stop/kill 就可能打到**别人的**进程。改成按词边界（数字前后不许再有数字）。
+ok("G3b 端口**子串**不许误认（`--port 17860` 对 7860 必须 False）",
+   S.cmdline_is_ours(r"python -u agent\sd_local_server.py --port 17860", 7860) is False)
+ok("G3c 端口**更长**也不许误认（`78600` 对 786 必须 False）",
+   S.cmdline_is_ours(r"python -u agent\sd_local_server.py 78600", 786) is False)
+ok("G3d 显式 `--port 7860` 认得（新写法优先）",
+   S.cmdline_is_ours(r"python -u agent\sd_local_server.py --port 7860", 7860) is True)
 ok("G4 取不到命令行 ⇒ 不认（宁可让用户手动处理）", S.cmdline_is_ours("", 7860) is False)
 _calls = []
 _keep_run = S.subprocess.run

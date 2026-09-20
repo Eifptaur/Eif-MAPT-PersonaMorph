@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import hmac as _hmac
 import json
 import os
 import re
@@ -650,17 +651,21 @@ class WebUI:
                 try:
                     import http.cookies as _hc
                     for m in re.findall(r"(?:^|;\s*)wxauth=([^;]+)", str(self.headers.get("Cookie") or "")):
-                        if m.strip() == token:
+                        # ⛔ 2026-09-21 修（第六轮 **V-R6-26**）：口令比较原来是 `==`（逐字符早停）
+                        #   ⇒ 理论上可被计时侧信道逐位猜出。改成**常数时间比较**。
+                        if _hmac.compare_digest(str(m).strip(), token):
                             return True
                 except Exception:
                     pass
                 # ② 支持 ?token= 或 Authorization: Bearer
                 q = urlparse(self.path).query
                 from urllib.parse import parse_qs
-                if token in parse_qs(q).get("token", []):
+                if any(_hmac.compare_digest(str(x), token) for x in parse_qs(q).get("token", [])):
                     return True
-                auth = self.headers.get("Authorization", "")
-                return auth == "Bearer " + token
+                auth = str(self.headers.get("Authorization", "") or "")
+                if auth.startswith("Bearer ") and _hmac.compare_digest(auth[7:], token):
+                    return True
+                return False
 
             def _set_session_cookie(self):
                 """登录成功时种会话 Cookie（HttpOnly，防 JS 读取）。
@@ -733,6 +738,12 @@ class WebUI:
                 except Exception:
                     data = {}
                 # 静态素材（图标/光标图）免认证：<img> 不带 token，但素材不含隐私
+                # ⛔ 2026-09-21 修（第六轮 **V-R6-26**）：这三条**免认证**路由原来**不校验 Host**
+                #   （`_auth_ok` 才校验）⇒ 外域页面/DNS rebinding 能带着外域 Host 读它们（版本号泄露 + 探测本机是否有本产品）。
+                #   ⇒ 免认证 ≠ 免 Host 校验：先过同一份回环校验再放行。
+                if path.startswith("/assets/") or path.startswith("/wallpaper/") or path == "/api/version":
+                    if not local_guard.host_ok(self.headers.get("Host")):
+                        return self._json({"error": "bad host"}, 403)
                 if path.startswith("/assets/"):
                     return parent._serve_asset(path, self)
                 if path.startswith("/wallpaper/"):
@@ -2200,6 +2211,11 @@ class WebUI:
                     try:
                         import json as _j
                         d = str(data.get("d") or "")
+                        # ⛔ 2026-09-21 修（第六轮 **V-R6-26c**）：`d` 原来**不校验**就拼进文件名
+                        #   （`d + ".jsonl"`）⇒ `d="../../config"` 这类能读到 data/ 之外的 .jsonl 形状的路径。
+                        #   ⇒ 只收严格 `YYYY-MM-DD`（`cal_list` 那边早就这么判了，这里漏了）。
+                        if d and not re.match(r"^\d{4}-\d{2}-\d{2}$", d):
+                            return self._json({"error": "bad date"}, 400)
                         _sf = os.path.join(parent._data_path("sessions"), (d + ".jsonl"))
                         agg = {"date": d, "sessions": 0, "tokens": 0, "cost": 0.0, "calls": 0, "sent": 0}
                         if d and os.path.exists(_sf):

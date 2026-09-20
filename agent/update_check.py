@@ -697,6 +697,45 @@ def state(cfg: dict | None = None, timeout: float = 12.0) -> dict:
     theirs = str(base.get("version") or an.get("version") or "")
     out["theirs"] = theirs
     out["notes"] = [str(x) for x in (an.get("notes") or [])][:8]
+    # ⛔ 2026-09-21 加（第六轮 **V-R6-27**，TUF 的两个"廉价面"，不做签名那一层）：
+    #   ① **freeze 防护＝`expires` 过期判否**：清单里带 `base.expires`（发版脚本写 = builtAt + 30 天），
+    #      过期就**拒绝据此更新**并如实说原因（否则一个被控的源可以永远喂同一份旧清单）；
+    #   ② **rollback 防护＝单调版本**：把"见过的最高版本"记进状态，远端低于它就拒（哪怕它比本机新）。
+    _exp = str(base.get("expires") or "").strip()
+    out["expires"] = _exp
+    if _exp:
+        try:
+            _t = time.mktime(time.strptime(_exp[:19], "%Y-%m-%dT%H:%M:%S"))
+        except Exception:
+            _t = None
+        if _t is not None and time.time() > _t:
+            out["status"] = "error"
+            out["why"] = ("更新清单已过期（expires=%s）⇒ 这次不据此更新：请检查系统时间，"
+                          "或换一个更新源/手动下载" % _exp)
+            st0 = _read_state()
+            st0.update({"lastCheck": out["checkedAt"], "lastStatus": "error",
+                        "lastError": out["why"], "lastGoodUrl": out["url"]})
+            _ws0 = _write_state(st0)
+            out["stateSaved"] = (_ws0 == "")
+            if _ws0:
+                out["stateSaveError"] = _ws0
+            return out
+    _st_prev = _read_state()
+    _maxseen = str((_st_prev or {}).get("maxSeenVersion") or "")
+    out["maxSeenVersion"] = _maxseen
+    if (theirs and theirs != mine and _maxseen and vtuple(theirs) and vtuple(_maxseen)
+            and vtuple(theirs) < vtuple(_maxseen)):
+        out["status"] = "error"
+        out["why"] = ("更新源给的版本（%s）比**见过的最高版本**（%s）还旧 ⇒ 判为回滚/降级，拒绝据此更新"
+                      % (theirs, _maxseen))
+        st1 = dict(_st_prev or {})
+        st1.update({"lastCheck": out["checkedAt"], "lastStatus": "error",
+                    "lastError": out["why"], "lastGoodUrl": out["url"]})
+        _ws1 = _write_state(st1)
+        out["stateSaved"] = (_ws1 == "")
+        if _ws1:
+            out["stateSaveError"] = _ws1
+        return out
     # 自更新要用它俩（2026-09-16：控制台「立即更新」真正开始下载+换入，不再只打印指路文案）
     out["baseUrl"] = str(base.get("url") or "")
     out["baseSha256"] = str(base.get("sha256") or "")
@@ -760,6 +799,13 @@ def state(cfg: dict | None = None, timeout: float = 12.0) -> dict:
     st = _read_state()
     st.update({"lastCheck": out["checkedAt"], "lastStatus": out["status"], "lastError": "",
                "lastGoodUrl": out["url"]})          # 记住"哪个源能用"，下次先试它
+    # ⛔ V-R6-27②：**见过的最高版本**要落盘（单调，只升不降）——下一次就能识别"源给了更旧的版本"。
+    try:
+        if theirs and vtuple(theirs) and (not out.get("maxSeenVersion")
+                                          or vtuple(theirs) > vtuple(str(out.get("maxSeenVersion")))):
+            st["maxSeenVersion"] = theirs
+    except Exception:
+        pass
     _wsw = _write_state(st)                         # V-R4-12c：写失败要让外面看得见（别当"已记下"）
     out["stateSaved"] = (_wsw == "")
     if _wsw:

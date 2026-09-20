@@ -81,7 +81,11 @@ def detect_pane_left_alt(img, rail_max_rel: float = 0.12, list_w: int = 300) -> 
 
     微信的会话列表是**固定像素宽、不随窗口变**（老口径的注释里也写了这一条），
     所以"竖栏右沿 + 固定宽"是更稳的结构锚。竖栏是深色底 ⇒ 从 0 往右第一个"不再深色"的列就是栏右沿。
-    认不出（浅色主题/皮肤）返回 0，由调用方忽略本条（fail-safe）。
+    ⚠️ **它能工作的前提是"竖栏是深色底"**：真机实测**浅色/系统皮肤下才认得出**，而**深色主题下竖栏与列表
+    全暗 ⇒ 恒返回 0**（第六轮 **V-R6-13** 更正了早先写反的 docstring）；不激活还原窗口的**过渡帧**
+    里竖栏也还不是深色 ⇒ 同样返回 0。调用方必须按"没有兜底"处理（不要拿 0 当"左沿在 0"）。
+    另：`list_w=300` 是从两条真机读数（276 / 329）取的中间值 ⇒ **本身带 ±25px 偏差**，
+    只适合用来**修"过冲"**（老口径扫进聊天区那种量级），不适合当精确左沿。
     """
     try:
         g = img.convert("L")
@@ -106,6 +110,63 @@ def detect_pane_left_alt(img, rail_max_rel: float = 0.12, list_w: int = 300) -> 
         return pl
     except Exception:
         return 0
+
+
+def pane_left_for(img, cross_check: bool = True) -> int:
+    """**本帧的面板左沿（唯一入口）**：老口径与结构锚交叉校验，结果挂在图像对象上只算一次。
+
+    为什么要有这个入口（第六轮 **V-R6-11**）：老口径（连续白列）单用时，聊天区左列被气泡占满
+    就会**过冲**进聊天区（实测 660 / 真值 384），而 "谁在量左沿" 分散在 `chat_ocr` 的十几处
+    （`_green_x` / `green_bands` / `green_row_ratio` / `highlight(_wide)` / `_name_box` / `find_row`…）
+    ⇒ 只修一处不解决问题。⇒ 收敛到本函数，所有消费者都走它。
+
+    交叉校验口径（**结构锚只用来修"过冲"**）：
+      · 老口径是**上界**（会话列表是灰底、聊天区才是白的 ⇒ 白列起点不会早于真左沿）；
+      · 结构锚≈真值（带 ±25px 常量偏差），但在深色主题/过渡帧里给 0；
+      · 两者都有且 `老口径 > 结构锚 + 80` ⇒ 判老口径过冲，**改用结构锚**（并记一行日志）；
+      · 其余情况用老口径；只有结构锚可用就用它；都没有 ⇒ 比例兜底。
+    """
+    try:
+        v = getattr(img, "_pm_pane_left", None)
+        if v is not None:
+            return int(v)
+    except Exception:
+        pass
+    left = 0
+    try:
+        left = int(detect_pane_left(img) or 0)
+    except Exception:
+        left = 0
+    alt = 0
+    if cross_check:
+        try:
+            alt = int(detect_pane_left_alt(img) or 0)
+        except Exception:
+            alt = 0
+    val = 0
+    if left and alt and left > alt + 80:
+        val = alt
+        try:
+            import logging as _lg
+            _lg.getLogger("persona-morph").info(
+                "面板左沿：老口径 %s 疑似过冲（结构锚 %s）⇒ 改用结构锚", left, alt)
+        except Exception:
+            pass
+    elif left:
+        val = left
+    elif alt:
+        val = alt
+    else:
+        try:
+            val = int(img.size[0] * PANE_LEFT_REL)
+        except Exception:
+            val = 0
+    try:
+        img._pm_pane_left = int(val)            # 同一帧只算一次（同一对象被十几个函数各调一遍）
+    except Exception:
+        pass
+    return int(val)
+
 
 def crop_box(size, pane_left_rel=None, band_px=None, pane_left_px: int = 0) -> tuple:
     """按渲染区尺寸算出会话头文字带的像素框 (l, t, r, b)（夹在图像内）。"""

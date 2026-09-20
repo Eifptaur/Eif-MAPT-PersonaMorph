@@ -292,7 +292,7 @@ def header_box(img) -> tuple:
     w, h = img.size
     left = 0
     try:
-        left = ch.detect_pane_left(img) or 0
+        left = ch.pane_left_for(img) or 0
     except Exception:
         left = 0
     if not left:
@@ -369,10 +369,10 @@ _date_re = re.compile(r"\d{1,2}\s*[/月]\s*\d{1,2}\s*日?")
 #    切会话第③条路（列表里直接点）整条失效（实测 6/6 全 MISS，随后只能走搜索路线、也失败）。
 #    这两条只用于**比对前清洗**：真有个群叫「星期六」时会被洗空 ⇒ 结果是"找不到这一行"（fail-closed），
 #    不会点错会话。
-_week_re = re.compile(r"(星期|周)[一二三四五六日天]")
+_week_re = re.compile(r"(?:星期|周)[一二三四五六日天]")     # ⚠️ 用非捕获组：`findall` 要给**整词**
 # 只收微信列表**确实会用**的相对日（今天显示 `HH:MM`、更早显示 `昨天/前天`）；
 # 不碰「上午/下午/中午/晚上」——那些词更容易是名字的一部分（「下午茶」），且本机列表用 24 小时制。
-_rel_re = re.compile(r"(昨天|前天)")
+_rel_re = re.compile(r"(?:昨天|前天)")
 _ellip_re = re.compile(r"[.．…]{2,}")
 _hhmm_re = re.compile(r"^\s*(\d{1,2})\s*[:：]\s*(\d{2})\s*$")
 
@@ -468,6 +468,14 @@ def matches_strict(text: str, name: str) -> bool:
       才认得出人来）。根治要把群人数从库里取来核；在此之前这一侧宁可**漏发**也不乱发。
     """
     try:
+        # ⛔ 2026-09-21 修（第六轮 **V-R6-2**，可能发错人）：`norm()` 会剥掉「星期X/周X/昨天/前天」
+        #   ⇒ **两个完全不同的名字会被归一成同一个**（实测 `norm('星期六播报') == norm('星期天播报') == '播报'`）
+        #   ⇒ 授权档判相等 ⇒ 可能发进另一个会话。⇒ 授权档额外要求**这类时间词的指纹守恒**：
+        #   两边剥掉的星期/相对日**必须一致**（都没有，或都有同一批）。展示用清洗照旧（`matches()` 不受影响）。
+        _fa = sorted(_week_re.findall(str(text or "")) + _rel_re.findall(str(text or "")))
+        _fb = sorted(_week_re.findall(str(name or "")) + _rel_re.findall(str(name or "")))
+        if _fa != _fb:
+            return False
         a, b = norm(text), norm(name)
         for _p in ("草稿", "draft"):        # 行文本可能带草稿标记；它不是"另一个会话"
             if a.startswith(_p):
@@ -541,7 +549,7 @@ def list_rows(img, zoom: int = 2, pane_left: int = 0) -> list:
         left = int(pane_left or 0)
         if not left:
             try:
-                left = ch.detect_pane_left(img) or 0
+                left = ch.pane_left_for(img) or 0
             except Exception:
                 left = 0
         if not left:
@@ -591,7 +599,7 @@ def green_score(img, y_abs: int, half: int = 7, x0: int = None, x1: int = None) 
         if x0 is None or x1 is None:
             left = 0
             try:
-                left = ch.detect_pane_left(img) or 0
+                left = ch.pane_left_for(img) or 0
             except Exception:
                 left = 0
             if not left:
@@ -643,7 +651,7 @@ def _green_at(img, y_abs: int, half: int = 6) -> float:
         w, h = rgb.size
         left = 0
         try:
-            left = ch.detect_pane_left(img) or 0
+            left = ch.pane_left_for(img) or 0
         except Exception:
             left = 0
         if not left:
@@ -667,7 +675,7 @@ def _name_box(img, y_abs: int) -> tuple:
     w, h = img.size
     left = 0
     try:
-        left = ch.detect_pane_left(img) or 0
+        left = ch.pane_left_for(img) or 0
     except Exception:
         left = 0
     if not left:
@@ -707,7 +715,7 @@ def find_row(img, name: str, zoom: int = 2):
         w, h = img.size
         left = 0
         try:
-            left = ch.detect_pane_left(img) or 0
+            left = ch.pane_left_for(img) or 0
         except Exception:
             left = 0
         if not left:
@@ -768,7 +776,7 @@ def find_row_info(img, name: str, zoom: int = 2, want_time: str = "", pane_left:
         left = int(pane_left or 0)
         if not left:
             try:
-                left = ch.detect_pane_left(img) or 0
+                left = ch.pane_left_for(img) or 0
             except Exception:
                 left = 0
         if not left:
@@ -806,10 +814,12 @@ def find_row_info(img, name: str, zoom: int = 2, want_time: str = "", pane_left:
                         _same = []
                     if len(norm(name)) <= 2 and len(_same) == 1:
                         return {"pos": (max(0, left - 150), min(h - 2, y + 16)), "y_abs": y, "name": nm,
+                        "pane_left": int(left),
                                 "why": ("按最后消息时间 %s 命中，且该时刻在列表里唯一（该行名字 OCR=%r 与目标 %r "
                                         "不像，按「短名单字母 OCR 认不准」放行）" % (want, got, name))}
                     continue
                 return {"pos": (max(0, left - 150), min(h - 2, y + 16)), "y_abs": y, "name": nm,
+                        "pane_left": int(left),
                         "why": "按最后消息时间 %s 命中（该行名字 OCR=%r）" % (want, got)}
             if want:
                 continue
@@ -833,6 +843,7 @@ def find_row_info(img, name: str, zoom: int = 2, want_time: str = "", pane_left:
                 if not matches(got, name):
                     continue
             return {"pos": (max(0, left - 150), min(h - 2, y + 16)), "y_abs": y, "name": nm,
+                        "pane_left": int(left),
                     "why": "按名字匹配（%r）" % nm}
         return None
     except Exception:
@@ -852,7 +863,7 @@ def row_time_read(img, y_abs: int, time_hr: int = 130, left=None) -> str:
         left = int(left or 0)
         if not left:
             try:
-                left = ch.detect_pane_left(img) or 0
+                left = ch.pane_left_for(img) or 0
             except Exception:
                 left = 0
         if not left:
@@ -971,11 +982,16 @@ def green_bands(img, min_ratio: float = 0.30, min_h: int = 28,
 
 
 def _green_x(img):
-    """**不含头像**的那一段取样窗 `(x0, x1)`：面板左沿往左 144~14 px（列表右半段，纯背景）。"""
+    """**不含头像**的那一段取样窗 `(x0, x1)`：面板左沿往左 144~14 px（列表右半段，纯背景）。
+
+    ⚠️ 2026-09-21（第六轮 **V-R6-11**）：左沿改走**唯一入口** `ch.pane_left_for(img)`
+    （老口径 + 结构锚交叉校验）——原来这里各自调 `detect_pane_left`，老口径过冲时取样窗
+    会整块搬进聊天区（实测给 `(457,587)` / 真值应是 `(160,350)`）。
+    """
     w = img.size[0]
     left = 0
     try:
-        left = ch.detect_pane_left(img) or 0
+        left = ch.pane_left_for(img) or 0
     except Exception:
         left = 0
     if not left:
@@ -1090,7 +1106,8 @@ def highlight(img, min_green: float = 0.12):
         return None
 
 
-def highlight_wide(img, min_ratio: float = 0.35, x_lo: int = None, x_hi: int = None):
+def highlight_wide(img, min_ratio: float = 0.35, x_lo: int = None, x_hi: int = None,
+                   pane_left: int = 0):
     """**只看"横跨整行"的绿底**来判高亮行（专治"头像绿"把 `highlight()` 带偏）。
 
     为什么另开一条（2026-09-21 真机实测，代价＝六轮实验全白做）：「文件传输助手」的头像是**绿色方块**，
@@ -1109,9 +1126,9 @@ def highlight_wide(img, min_ratio: float = 0.35, x_lo: int = None, x_hi: int = N
         if x_hi is None or x_lo is None:
             left = 0
             try:
-                left = int(ch.detect_pane_left(img) or 0)
+                left = int(pane_left or 0) or int(ch.pane_left_for(img) or 0)
             except Exception:
-                left = 0
+                left = int(pane_left or 0)
             if not left:
                 left = int(w * ch.PANE_LEFT_REL)
             _lo = int(x_lo if x_lo is not None else max(0, left - 200))
@@ -1129,7 +1146,10 @@ def highlight_wide(img, min_ratio: float = 0.35, x_lo: int = None, x_hi: int = N
             c = 0
             for x in xs:
                 r, g, b = px[x, y]
-                if g > r + 25 and g > b + 25:
+                # ⚠️ 2026-09-21（第六轮 **V-R6-12**）：绿判据必须与同模块 `_is_green` **共用一套** ——
+                #    原来这里写的是 `g > r+25 and g > b+25`，跨机实测的活动行**浅绿** (169,212,196)
+                #    会被它判 False（212 > 196+25=221 不成立）⇒ 那台机器上这条守卫恒 None。
+                if _is_green(r, g, b):
                     c += 1
             rows.append((y, c))
         best = max(rows, key=lambda t: t[1]) if rows else (0, 0)
@@ -1300,7 +1320,7 @@ def pane_text(img, limit: int = 200, zoom: int = 2) -> str:
         w, h = img.size
         left = 0
         try:
-            left = ch.detect_pane_left(img) or 0
+            left = ch.pane_left_for(img) or 0
         except Exception:
             left = 0
         if not left:
@@ -1532,7 +1552,7 @@ def _list_span(img, left=None):
     w = img.size[0]
     if left is None:
         try:
-            left = ch.detect_pane_left(img) or 0
+            left = ch.pane_left_for(img) or 0
         except Exception:
             left = 0
     if not left:

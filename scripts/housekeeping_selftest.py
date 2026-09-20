@@ -141,10 +141,13 @@ try:
     ok("不存在时返回 0 而不是报错", HK.prune_dir(os.path.join(tmp, "nope")) ==
        {"removed": 0, "bytes": 0, "kept": 0})
     ok("cleanup_dir 拒绝删非 pm- 名字的目录", HK.cleanup_dir(d2) is False and os.path.isdir(d2))
-    ok("cleanup_dir 删得掉 pm- 名字的目录",
-       HK.cleanup_dir(os.path.join(tmp, "pm-todelete")) is False          # 不存在 ⇒ False
-       and (os.makedirs(os.path.join(tmp, "pm-todelete"), exist_ok=True) or True)
-       and HK.cleanup_dir(os.path.join(tmp, "pm-todelete")) is True)
+    # ⛔ 2026-09-21 修（第六轮 **V-R6-31**）：原来把 `os.makedirs(...)` 塞在断言里靠 `or True` 兜住
+    #   ⇒ 断言里出现"永远为真"的子表达式（卫生网新族 `X or True` 当场抓出）。副作用移出断言。
+    _p_del = os.path.join(tmp, "pm-todelete")
+    _no_exist = HK.cleanup_dir(_p_del) is False          # 不存在 ⇒ False
+    os.makedirs(_p_del, exist_ok=True)
+    ok("cleanup_dir：不存在时 False、存在（pm- 前缀）时删得掉",
+       _no_exist and HK.cleanup_dir(_p_del) is True)
 
     sect("E. tick() 的账目形状（不真扫真目录，只看结构）")
     rep = HK.tick(dry=True)

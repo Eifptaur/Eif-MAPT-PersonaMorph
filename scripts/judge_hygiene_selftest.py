@@ -38,9 +38,12 @@ def ok(name, cond, detail=""):
 
 _NAME_WORDS = {"name", "title", "label", "desc", "what", "case", "why", "msg"}
 _SELF = os.path.basename(os.path.abspath(__file__))
-#: 脆断言（`"带空白的整段源码" in SRC_xxx`）的**基线**：2026-09-21 实测 383（审计口径 379+）。
-#   **只许降不许升** —— 把旧的换成 `scripts/_srcmatch.py::has()` 就会降；新写判据别再加这类写法。
-BRITTLE_BASELINE = 383
+#: 脆断言（`"带空白的整段源码" in SRC_xxx`）的**基线**。
+#   ⛔ 2026-09-21 改口径（第六轮 **V-R6-14**）：原来只看"右边变量名匹配 `src|web|html|body|code|h$`"，
+#   实测有 **102 条**针在源码变量上却被变量名漏掉（盲区）。现在**不看变量名** ⇒ 基线按新口径重测为
+#   **851**（旧口径下是 383；两者不可比，别拿新旧数字对账）。
+#   **只许降不许升**：新写的这类断言请优先用 `scripts/_srcmatch.py::has()`（空白容忍）就会降。
+BRITTLE_BASELINE = 851
 
 
 def _helper_styles(tree: ast.AST) -> dict:
@@ -162,8 +165,15 @@ def main():
             if not _re3.search(r"\s", left.value):          # 单token 的针（没有空白）不算脆
                 continue
             names = [s.id for c in node.comparators for s in _ast.walk(c) if isinstance(s, _ast.Name)]
-            if any(_SRCISH.search(n) for n in names):
-                hits.append("%s:%d" % ("", getattr(node, "lineno", 0)))
+            # ⛔ 2026-09-21 改（第六轮 **V-R6-14**）：原来还要求 `any(_SRCISH.search(n) for n in names)`
+            #   —— "针在源码变量上、但变量名不符合 `src|web|html|body|code|h$`"的那些塌进盲区
+            #   （审计独立复算：这类有 **102 条**）。⇒ **不再看变量名**：只要"左边是带空白的字符串常量、
+            #   右边取了某个变量"，就算这类脆断言（右边完全没有变量名的纯字面量比较不算）。
+            #   注意：这条口径更宽（会把"OCR 文本 in txt"这类也计进来）——代价是基线数字变大；
+            #   换来的是**没有盲区**，新写的这类断言请优先用 `scripts/_srcmatch.py::has()`。
+            if not names:
+                continue
+            hits.append("%s:%d" % ("", getattr(node, "lineno", 0)))
         return hits
 
     _cens = {}
@@ -240,6 +250,61 @@ def main():
     ok("⑥ 反例锚：那句老写法（`True if _orig_open2 else False`）确实会被这条扫出来",
        bool([n for n in _ast.walk(_ast.parse("ok('x', True if _orig else False)"))
              if isinstance(n, _ast.IfExp) and _is_bool_const(n.body) and _is_bool_const(n.orelse)]))
+
+    # ⛔ 2026-09-21 加（第六轮 **V-R6-31**）：上一轮那 4 条是**逐点修**的，网子只扫 `True if X else False`
+    #   一种写法 ⇒ `X or True` / 自比较 `x == x` / 常量可折叠 三族全在盲区（本轮实测各有命中）。
+    #   ⚠️ **只看"判据辅助函数的实参"**：`lambda …: (lst.append(x) or True)` 这类**打桩**是正当写法，
+    #   不该被判据卫生网误伤（第一版就是这么误报的）。
+    _HELPERS = ("ok", "ck", "check", "_ok", "assert_ok", "ck_ok")
+
+    def _assert_args(_tree):
+        out = []
+        for _n in _ast.walk(_tree):
+            if (isinstance(_n, _ast.Call) and isinstance(_n.func, _ast.Name)
+                    and _n.func.id in _HELPERS):
+                out.extend(_n.args)
+        return out
+
+    _family = {"or_true": [], "self_cmp": [], "const_fold": []}
+    for _fn in files:
+        try:
+            _t3 = open(os.path.join(HERE, _fn), encoding="utf-8").read()
+            _tr3 = _ast.parse(_t3)
+        except Exception:
+            continue
+        for _arg in _assert_args(_tr3):
+            _baseline = getattr(_arg, "lineno", 0)
+            for _nd in _ast.walk(_arg):
+                _ln = getattr(_nd, "lineno", 0) or _baseline
+                if isinstance(_nd, _ast.BoolOp) and isinstance(_nd.op, _ast.Or):
+                    if any(isinstance(v, _ast.Constant) and v.value is True for v in _nd.values):
+                        _family["or_true"].append("%s:%d" % (_fn, _ln))
+                if isinstance(_nd, _ast.Compare) and len(_nd.ops) == 1 and len(_nd.comparators) == 1:
+                    _l, _r = _nd.left, _nd.comparators[0]
+                    if (isinstance(_nd.ops[0], (_ast.Eq, _ast.Is))
+                            and _ast.dump(_l) == _ast.dump(_r)):
+                        _family["self_cmp"].append("%s:%d" % (_fn, _ln))
+                if isinstance(_nd, _ast.Compare) and all(
+                        isinstance(x, _ast.Constant) and isinstance(x.value, (int, float, str, bool))
+                        for x in [_nd.left] + list(_nd.comparators)):
+                    _family["const_fold"].append("%s:%d" % (_fn, _ln))
+    ok("⑥b 没有 `X or True` 这种恒真（本轮实测 3 处，棘轮原来完全不覆盖）",
+       not _family["or_true"], _family["or_true"][:5])
+    ok("⑥c 没有自比较（`x == x` / `x is x`——等于常量 True）",
+       not _family["self_cmp"], _family["self_cmp"][:5])
+    ok("⑥d 没有「两个常量比大小」（`1 != 4` 那种永远为真的断言）",
+       not _family["const_fold"], _family["const_fold"][:5])
+    _probe = _ast.parse("ok('a', 1 != 4)\nok('b', x == x)\nok('c', _f() or True)")
+    _pn = list(_ast.walk(_probe))
+    _p_or = any(isinstance(n, _ast.BoolOp) and isinstance(n.op, _ast.Or)
+                and any(isinstance(v, _ast.Constant) and v.value is True for v in n.values) for n in _pn)
+    _p_self = any(isinstance(n, _ast.Compare) and len(n.ops) == 1
+                  and _ast.dump(n.left) == _ast.dump(n.comparators[0]) for n in _pn)
+    _p_cf = any(isinstance(n, _ast.Compare) and all(
+        isinstance(x, _ast.Constant) and isinstance(x.value, (int, float, str, bool))
+        for x in [n.left] + list(n.comparators)) for n in _pn)
+    ok("⑥e 反例锚：三族写法（`or True` / `x == x` / `1 != 4`）都能被上面三条扫出来",
+       _p_or and _p_self and _p_cf, "or=%s self=%s const=%s" % (_p_or, _p_self, _p_cf))
 
     print("\n== 汇总：%d 通过 / %d 失败 ==" % (len(PASS), len(FAIL)))
     if FAIL:

@@ -94,6 +94,8 @@ def main():
     ap.add_argument("--version", default=CODE_VERSION)
     ap.add_argument("--build", default="", help="内容指纹（发布链从**包内**读出来传进来；留空则读源文件）")
     ap.add_argument("--built-at", default="")
+    ap.add_argument("--expires-days", type=int, default=30,
+                    help="清单有效期（天，默认 30；客户端过期即拒 ⇒ TUF freeze 防护的廉价面）")
     a = ap.parse_args()
 
     rels = sorted(r for r in po.tracked() if not po.excluded(r))
@@ -146,11 +148,17 @@ def main():
             _BUILD = _rbf()
         except Exception:
             _BUILD = ""
+    # ⛔ V-R6-27①：清单有效期（UTC，`YYYY-MM-DDTHH:MM:SSZ`）。客户端过期即拒（freeze 防护）。
+    _exp_days = int(getattr(a, "expires_days", 30) or 30)
+    _expires_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + _exp_days * 86400))
     manifest = {
         "schema": SCHEMA,
         "base": {"version": a.version, "sha256": tree_sha, "url": a.url,
                  "build": str(_BUILD or ""),
-                 "size": total, "files": len(files)},
+                 "size": total, "files": len(files),
+                 # ⛔ 2026-09-21 加（第六轮 **V-R6-27①**，TUF 的 freeze 面）：清单**带有效期**，
+                 #   客户端（`update_check.state()`）过期就拒。默认 30 天，可用 `--expires-days` 调。
+                 "expires": _expires_at},
         "dlc": DLC,
         "announce": {"version": a.version, "notes": notes,
                      "forceBase": False, "minBase": a.version},

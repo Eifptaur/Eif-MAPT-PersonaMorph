@@ -206,6 +206,30 @@ def main():
         store_mod.MESSAGES_DIR = _keep
         shutil.rmtree(tmp, ignore_errors=True)
 
+    # ── V-R6-25：老命名残留**不许串群**（老档案里的 chat_key 与请求的不一致 ⇒ 当它不存在）──
+    _keep3 = store_mod.MESSAGES_DIR
+    _tmp3 = tempfile.mkdtemp(prefix="pm_store_v25_")
+    try:
+        store_mod.MESSAGES_DIR = _tmp3
+        _ka, _kb = "group:甲会话", "group:乙会话"
+        # 故意造一个"老命名的文件，内容其实是别的会话"
+        _lg = store_mod.chat_file_legacy(_ka)
+        with open(_lg, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"chat_key": _kb, "next_local_id": 9,
+                                "messages": [{"id": 1, "text": "别人的话"}]}, ensure_ascii=False))
+        _got = store_mod.chat_file_existing(_ka)
+        ok("V-R6-25 老档案里的 chat_key 与请求的不一致 ⇒ **不拿它当这个会话的档案**（防串群）",
+           _got == store_mod.chat_file(_ka) and _got != _lg, _got)
+        # 正向对照：内容一致的老档案照样能用（老用户不丢档案）
+        with open(_lg, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"chat_key": _ka, "next_local_id": 1, "messages": []},
+                               ensure_ascii=False))
+        ok("V-R6-25b 正向对照：chat_key 一致的老档案**照样认**（老用户不丢档案）",
+           store_mod.chat_file_existing(_ka) == _lg, store_mod.chat_file_existing(_ka))
+    finally:
+        store_mod.MESSAGES_DIR = _keep3
+        shutil.rmtree(_tmp3, ignore_errors=True)
+
     print("\n== 汇总：%d 通过 / %d 失败 ==" % (len(PASS), len(FAIL)))
     if FAIL:
         print("失败项：")

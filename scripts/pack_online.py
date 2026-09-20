@@ -41,6 +41,12 @@ EXCLUDE = (
     "whale-widget/upstream-0.3.9/",       # 上游原文留档（README/PROVENANCE/package.json）＝开发资料，不随包发
     "whale-widget/assets/DSniang02.png",  # 备用整图：我们的路由用不到（image.png 走 DSniang1.png）
     "whale-widget/assets/DSH2.png",       # 上游 README 展示图：程序不用（1.1MB，别白占包体积）
+    # ⛔ 2026-09-21 加（第六轮 **V-R6-23**）：这四件**只被上游留档文档引用**，`agent/whale.py` 已把同族
+    #   资源声明为不支持 ⇒ 死重约 **3.2MB ≈ 包体 22%**（挂件判据只查"仓库里在不在"，不查"包里在不在"）。
+    "whale-widget/assets/bubble-money1.gif",
+    "whale-widget/assets/bubble-petpet.gif",
+    "whale-widget/assets/minecraft-exp-orb.wav",
+    "whale-widget/assets/task-end-a.wav",
     "scripts/pack_online.py",   # 打包器自身：里面有扫描规则字面量（含用户名样本），不进包
     "persona-morph-manifest.json",  # 更新清单：它给的是"包内文件的哈希"，自己进包会**哈希自指**死循环
     "offline/",           # 离线运行时与 wheel（在线包不需要）
