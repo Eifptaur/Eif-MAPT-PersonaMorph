@@ -82,7 +82,8 @@ def main():
     ok("④ 空输入判否", co.matches_strict("", "测试") is False and co.matches_strict("测试", "") is False
        and co.matches_strict("", "") is False)
 
-    # ── 穷举互斥：严格档为真 ⇔ 归一化后完全相等（**只允许文档里写明的装饰**：草稿标记）──
+    # ── 穷举互斥：严格档为真 ⇔ 归一化后完全相等（**只允许文档里写明的装饰**：草稿标记）
+    #    ＋ 2026-09-21（V-R4-8）：**目标名带括号数字时，屏幕必须带同一个数字** ──
     def _canon(s):
         t = co.norm(s)
         for _p in ("草稿", "draft"):
@@ -90,16 +91,41 @@ def main():
                 t = t[len(_p):]
         return t
 
+    def _want(a, b):
+        """按**文档里的口径**算期望：归一化相等 ＋（目标名带括号数字 ⇒ 屏幕得带同一个）。"""
+        if _canon(a) != _canon(b):
+            # 允许一个实测噪声字符打头
+            if not (len(_canon(a)) == len(_canon(b)) + 1
+                    and _canon(a)[0] in getattr(co, "_JUNK_HEAD", ())
+                    and _canon(a)[1:] == _canon(b)):
+                return False
+        _kb = co._count_tail(b)
+        if _kb and co._count_tail(a) != _kb:
+            return False
+        return True
+
     NAMES = ["测试", "KC测试", "KC", "测试测试", "测试(2)", "演示（3）", "演示", "草稿测试", "测试 12:03"]
     leaked = []
     for a in NAMES:
         for b in NAMES:
-            want = (_canon(a) == _canon(b))
+            want = _want(a, b)
             got = co.matches_strict(a, b)
             if got != want:
                 leaked.append("%s|%s want=%s got=%s" % (a, b, want, got))
-    ok("⑤ 严格档为真 ⇔ 归一化后相等（%d×%d 组合无意外放行，只允许草稿标记这一种装饰）" % (len(NAMES), len(NAMES)),
-       not leaked, leaked[:3])
+    ok("⑤ 严格档与口径逐条一致（%d×%d 组合无意外放行；含「目标带括号数字」那条新规则）"
+       % (len(NAMES), len(NAMES)), not leaked, leaked[:3])
+
+    # ── V-R4-8 两条残留的**新口径**（收紧了哪两条、哪一条仍是"已知残留"）──
+    ok("⑨ 目标名带括号数字 ⇒ 屏幕必须带同一个（`测试` 不许冒充 `测试(2)`）",
+       co.matches_strict("测试", "测试(2)") is False
+       and co.matches_strict("测试(2)", "测试(2)") is True)
+    ok("⑨ 前导噪声收紧：`X测试` 不再撞 `测试`（只容忍实测到的那几个字符）",
+       co.matches_strict("X测试", "测试") is False
+       and co.matches_strict("o测试", "测试") is True
+       and co.matches_strict("O某会话", "某会话") is True)
+    ok("⑨ 【已知残留·写在判据里】反向那侧仍判相等（`测试(2)` 可能真的是「成员数」）："
+       "目标是 `测试`、屏幕是 `测试(2)` ⇒ True，靠其它档兜底",
+       co.matches_strict("测试(2)", "测试") is True)
 
     # ── 兜底档不许把嵌套名放过（`_header_match` 的第二档就是它）──
     ok("⑥ 宽松兜底 `loose_matches(\"KC测试\",\"测试\")` 为假（否则走格仍会走到隔壁群）",
