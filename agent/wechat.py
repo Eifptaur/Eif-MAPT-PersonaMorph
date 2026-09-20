@@ -3757,7 +3757,38 @@ class WeChatAdapter:
             #    ⚠️ 同落点第二枪必须隔开 >1.2s：微信按"间隔 + 位置"判双击 ⇒ 会话会被拖成浮动窗
             #       甚至直接关掉（AGENTS.md 记的「连点两下会把聊天框关掉」本轮也复现了）。
             _last = ""
-            for _i, _tgt in enumerate(ib.row_click_targets(main)):
+            # ⚡ 2026-09-21 加：**学习型偏好**（`agent/click_pref.py`）——按"微信版本 × 适配层 ×
+            #    渲染区尺寸 × DPI × 输入后端"记住**上一次哪个目标真的生效了**，只用来决定**先试哪个**。
+            #    为什么不做"版本 → 方法"的写死表：2026-09-13 的结论被写进注释与判据，2026-09-21 就反了。
+            #    授权不变：**每枪之后照旧现场复核**，偏好不参与"发不发"；记错了最坏＝多花一枪。
+            _cp, _ck = None, ""
+            _tgts = list(ib.row_click_targets(main))
+            try:
+                from . import click_pref as _cp_mod
+                _cp = _cp_mod
+                _vi = wechat_version_info() or {}
+                _rr = tuple(getattr(gui, "render_rect", None) or (0, 0, 0, 0))
+                _ck = _cp.key(wechat=str(_vi.get("version") or ""),
+                              adapter=str(_vi.get("adapter") or ""),
+                              w=int(_rr[2] - _rr[0]), h=int(_rr[3] - _rr[1]),
+                              dpi=str(ib.DPI_MODE), backend=str(getattr(backend, "name", "")))
+                _named = {"main": int(main)}
+                _rc = int(ib.find_render_child(main) or 0)
+                if _rc and _rc != int(main):
+                    _named["render"] = _rc
+                _tgts = _cp.order_named(_tgts, _ck, _named)
+                _pk = _cp.peek(_ck)
+                if _pk.get("ok"):
+                    log.info("会话行点击：按偏好先试「%s」（该 版本×尺寸 上次生效 %s 次，键=%s）",
+                             _pk.get("ok"), _pk.get("okN"), _ck)
+            except Exception as _e_cp:                                # noqa: BLE001
+                log.debug("点击目标偏好不可用（按默认顺序）：%s", _e_cp)
+            # 目标序列＝默认顺序（主窗 → 渲染子窗）+ **末尾把首选目标再投一次**：
+            # 2026-09-21 真机观察，会话行这一枪**偶发被吞**（同一落点隔 >1.35s 再投一次就成了），
+            # 而"点已经开着的那一行会把聊天框点关"⇒ 重投之前必须先用**纯像素绿底带**确认
+            # "还没切过去"；一旦绿底带已在目标行 ⇒ 直接算成功、**绝不补枪**。
+            _seq = list(_tgts) + ([_tgts[0]] if len(_tgts) > 1 else [])
+            for _i, _tgt in enumerate(_seq):
                 if _i:
                     time.sleep(1.35)
                 _ok, _why = self._click_posted(backend, _tgt, pt, "会话行（列表·免搜索）")
@@ -3767,13 +3798,30 @@ class WeChatAdapter:
                 time.sleep(0.6)
                 _op, _opwhy = self.chat_is_open(chat_id, gui=gui, name=name)
                 if _op:
+                    if _cp and _ck:
+                        _cp.record_ok(_ck, "main" if int(_tgt) == int(main) else "render")
                     return True, "投递点会话行（列表·免搜索，强档证据：%s｜目标窗=%s）" % (
                         str(_opwhy)[:70], ib.win_kind(main, _tgt))
                 _idn, _idnwhy = self.chat_identity_ok(chat_id, gui=gui)
                 if _idn is True:
+                    if _cp and _ck:
+                        _cp.record_ok(_ck, "main" if int(_tgt) == int(main) else "render")
                     return True, ("投递点会话行（列表·免搜索，内容级复核过｜目标窗=%s）"
                                   % ib.win_kind(main, _tgt))
+                # 第三条证据（纯像素、与 OCR 无关）：绿底带落在目标行 ⇒ 当前会话就是它。
+                # 这条专治"白字绿底读不出名字"（实测高亮行的名字 OCR 常年给空串）。
+                try:
+                    _wb = _co.highlight_wide(_chh.capture_image(gui=gui))
+                except Exception:                                     # noqa: BLE001
+                    _wb = None
+                if _wb and abs(int(_wb["y_abs"]) - int(row["y_abs"])) <= max(40, int(_co.ROW_PITCH * 0.75)):
+                    if _cp and _ck:
+                        _cp.record_ok(_ck, "main" if int(_tgt) == int(main) else "render")
+                    return True, ("投递点会话行（列表·免搜索，绿底带 %d~%d 落在目标行 y=%s｜目标窗=%s）"
+                                  % (_wb["y0"], _wb["y1"], row["y_abs"], ib.win_kind(main, _tgt)))
                 _last = str(_opwhy)
+            if _cp and _ck:
+                _cp.record_fail(_ck)
             return False, ("点了列表里「%s」那一行（主窗/渲染子窗都试过），但没拿到『当前就是它』的正面证据：%s"
                            % (name, _last[:70]))
         except Exception as e:                                     # noqa: BLE001
