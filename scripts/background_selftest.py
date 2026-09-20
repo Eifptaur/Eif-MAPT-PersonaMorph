@@ -849,8 +849,9 @@ ck("E6 wechat.replay_on_resume 真的有代码读它（不是死键）",
    'get("wechat") or {}).get("replay_on_resume", False)' in _PM_SRC)
 ck("E7 默认不补（安全侧：不许一恢复就连回几十条）",
    '"replay_on_resume": False' in SRC_CFG)
-ck("E8 默认档仍然推进水位并落盘（关掉补处理时行为与原来一致）",
-   "wm.set(chat_key, wechat.latest_seq(wxid))" in _SEG_PAUSE and "wm.flush()" in _SEG_PAUSE)
+ck("E8 默认档仍然推进水位并落盘（关掉补处理时行为与原来一致；2026-09-21 起读失败**不写 0**）",
+   "wechat.latest_seq_ex(wxid)" in _SEG_PAUSE and "wm.set(chat_key, _seqp)" in _SEG_PAUSE
+   and "wm.flush()" in _SEG_PAUSE and "wm.set(chat_key, 0)" not in _PM_SRC)
 ck("E9 控制台有这个开关 + 示例配置同步",
    'data-cfg="wechat.replay_on_resume"' in SRC_CONSOLE
    and '"replay_on_resume"' in open(os.path.join(ROOT, "config.example.json"), encoding="utf-8").read())
