@@ -54,8 +54,12 @@ def main():
         ok("A1 发送层打的 `【可重试】` 前缀 ⇒ 收", SR.retryable("【可重试】会话头不匹配，拒绝投递（防发错会话）") is True)
         ok("A2 普通失败（内容为空 / 图源挂了）⇒ **不收**", SR.retryable("消息内容为空") is False
            and SR.retryable("图片下载失败：TimeoutError") is False)
-        ok("A3 反例锚：老做法（按关键词猜，例：见「会话」就收）会把**不可重试**的也收进来",
-           ("会话" in "会话里没有这条消息（内容为空）") and SR.retryable("会话里没有这条消息（内容为空）") is False)
+        # ⛔ 2026-09-21 修（第六轮 **V-R6-31**）：原来第一段是 `"会话" in "会话里没有…"`（两个字面量
+        #   ⇒ 恒真）。改成**显式建模老做法**，这样它验的是"新老口径真的不同"，而不是一句常真话。
+        _old_guess = lambda _w: "会话" in _w            # noqa: E731  老做法：见「会话」就收（已废弃）
+        ok("A3 反例锚：老做法（按关键词猜）会把**不可重试**的也收进来",
+           _old_guess("会话里没有这条消息（内容为空）") is True
+           and SR.retryable("会话里没有这条消息（内容为空）") is False)
         ok("A4 前缀在**发送层源码**里真的有（`wechat.py` 至少 5 处）",
            open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read().count("【可重试】") >= 5,
            open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read().count("【可重试】"))
@@ -121,11 +125,92 @@ def main():
         with io.open(SR.PATH, "w", encoding="utf-8") as f:
             f.write("{这不是 JSON")
         SR._cache = None
-        ok("F1 队列文件坏了 ⇒ 按空队列起（不抛、不删原文件）",
-           SR.stats()["pending"] == 0 and os.path.exists(SR.PATH))
+        ok("F1 队列文件坏了 ⇒ 按空队列起（不抛）＋**坏文件改名留证**（`.bad.<ts>`，内容仍可查）",
+           SR.stats()["pending"] == 0
+           and any(".bad." in x for x in os.listdir(os.path.dirname(SR.PATH))),
+           str([x for x in os.listdir(os.path.dirname(SR.PATH)) if ".bad." in x])[:80])
         SR._cache = None
         _bad = SR.enqueue("group:E", "写不进去", "【可重试】原因", now=_T + 80)
-        ok("F2 路径不可写时也不抛（`ok=True` + `saveError` 带原因）", _bad.get("ok") is True, _bad)
+        ok("F2 路径不可写时也不抛（`ok=True` + `saveError` 带原因）",
+           _bad.get("ok") is True and isinstance(_bad.get("saveError"), str), _bad)
+        # ⛔ 2026-09-21 加（第六轮 **V-R6-16**）：三条"静默面"各一条断言
+        SR.clear("判据重置")
+        SR._cache = None
+        for _i in range(SR.MAX_ITEMS + 3):
+            SR.enqueue("group:O%d" % _i, "o%d" % _i, "【可重试】原因", now=_T + 200.0 + _i)
+        ok("F3 队列满 ⇒ 丢最旧，但**计入 stats**（不再静默）",
+           SR.stats().get("overflowDropped", 0) >= 1, str(SR.stats().get("overflowDropped")))
+        SR.clear("判据重置")
+        SR._cache = None
+        SR.enqueue("group:P", "反复入队", "【可重试】原因", now=_T + 300)
+        SR.enqueue("group:P", "反复入队", "【可重试】原因", now=_T + 310)     # 反复入队不得把到点推走
+        ok("F4 反复入队**不重置到点时间**（防饥饿）",
+           len(SR.due(now=_T + 300 + SR.BACKOFF[0] + 0.2)) == 1,
+           str(len(SR.due(now=_T + 300 + SR.BACKOFF[0] + 0.2))))
+        # ⛔ 2026-09-21 加（第六轮 **V-R6-4/5**）：年龄闸提前 + 停机不是失败
+        SR.clear("判据重置")
+        SR._cache = None
+        _e = SR.enqueue("group:Q", "隔夜那条", "【可重试】原因", now=_T + 400)
+        _acts = []
+        _calls = {"n": 0}
+
+        def _fake_send(_cid, _txt):
+            _calls["n"] += 1
+            return True, "ok"
+
+        _r_old = SR.tick(_fake_send, now=_T + 400 + SR.MAX_AGE_S + 5, limit=3)
+        ok("F5 超龄条目 ⇒ **先过期丢弃、不许真发**（年龄闸在 `if ok:` 之前）",
+           _calls["n"] == 0 and _r_old.get("expired") == 1, str(_r_old))
+        SR.clear("判据重置")
+        SR._cache = None
+        SR.enqueue("group:R", "暂停时那条", "【可重试】原因", now=_T + 500)
+        _r_halt = SR.tick(_fake_send, now=_T + 500 + SR.BACKOFF[0] + 1, limit=3,
+                          halt_fn=lambda: "机器人已暂停 ⇒ 这条不发")
+        ok("F6 暂停/停止时 tick **一条都不试**（条目留着，不被 dropped 销毁）",
+           _r_halt.get("tried") == 0 and _r_halt.get("held") == 1 and SR.stats()["pending"] == 1,
+           str(_r_halt) + " pending=%d" % SR.stats()["pending"])
+        _r_hold = SR.resolve(SR._load()[0]["id"], False, "机器人已停止 ⇒ 这条不发", now=_T + 600)
+        ok("F7 停机话术走 resolve 也只**保留**（held），不当成「不可重试」丢掉",
+           _r_hold == "held" and SR.stats()["pending"] == 1, "%s pending=%d" % (_r_hold, SR.stats()["pending"]))
+
+        # ── G. **接线**（跨模块）：工具层的失败真的会入队 ──────────────────────────────
+        # ⛔ 2026-09-21 加（第六轮 **V-R6-9**，这是本轮最贵的漏检）：原来的判据只测 `send_retry` 模块自己，
+        #   **不 import `tools.py`** ⇒ 接线断掉（`str.get` on str ⇒ 异常被吞成 DEBUG）时判据照样全绿，
+        #   而生产里"判不了就晚点补发"从来没生效过。这里用假 sender 造一条失败，断言真入了队。
+        SR.clear("判据重置")
+        SR._cache = None
+        from agent import tools as T
+
+        class _FakeSender:
+            def __init__(self, err):
+                self.err = err
+                self.seen = []
+
+            def send_text_batch(self, chat_key, messages, **kw):
+                self.seen.append(list(messages))
+                return {"sent": [], "failed": [{"index": 0, "text": str(messages[0])[:20],
+                                                "error": self.err, "src": str(messages[0])}]}
+
+        class _FakeStore:
+            def find_by_mid(self, *a, **k):
+                return None
+
+        _ctx = {"chat_key": "group:filehelper", "sender": _FakeSender("【可重试】现场没认准"),
+                "store": _FakeStore(), "session": {"sent": []}}
+        _res = T._exec_send_message(_ctx, {"messages": ["整条原文：带 markdown [链接](http://x) 的那条"]})
+        _q = SR._load()
+        ok("G1 工具层收到「可重试」失败 ⇒ **真入队**（接线通）",
+           SR.stats()["pending"] == 1, str(SR.stats())[:120])
+        ok("G2 入队的是**原文**（不是前 20 字盲找、也不是已发成功那条）",
+           bool(_q) and str(_q[0].get("text") or "").startswith("整条原文"), str(_q[:1])[:120])
+        SR.clear("判据重置")
+        SR._cache = None
+        _ctx2 = {"chat_key": "group:filehelper", "sender": _FakeSender("内容为空，发送失败"),
+                 "store": _FakeStore(), "session": {"sent": []}}
+        T._exec_send_message(_ctx2, {"messages": ["这条不该入队"]})
+        ok("G3 非「可重试」失败 ⇒ 不入队（fail-closed 但不乱补）", SR.stats()["pending"] == 0)
+        SR.clear("判据重置")
+        SR._cache = None
     finally:
         SR.PATH, SR._cache = _orig_path, _orig_cache
         import shutil

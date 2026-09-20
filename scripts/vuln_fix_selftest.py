@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import glob
 import io
+import json
 import os
 import stat
 import sys
@@ -160,6 +161,25 @@ ok("…installed.json 的**版本不许被推上去**（否则重跑会被「已
 _rc4, _m4, _d4 = U.apply_full(man3, zp3, d3)
 ok("解锁后重跑 ⇒ 真的补换（V3 的核心回归）", io.open(f3).read() == "NEW",
    "文件内容=%s" % io.open(f3).read()[:12])
+
+print("── V3c `pendingFiles` 非空 ⇒ 不许短路成「已是最新」（第六轮 V-R6-30）──")
+# ⛔ 2026-09-21 加：这一条原来**是空的** —— 判据里没有任何东西覆盖 `if _same_tree and not _pending:`
+#   里那个 `not _pending`（A 面实测：把 `not _pending` 摘掉，5 个判据全绿，变红 0）。
+#   而"版本相同 + 树相同 + 有待补文件"恰恰是真实场景（上一趟有文件被占用）⇒ 判 current 就永远补不回来。
+d6 = tempfile.mkdtemp(prefix="pm_vf_v3c_")
+os.makedirs(os.path.join(d6, "agent"))
+io.open(os.path.join(d6, "agent", "c.py"), "w", encoding="utf-8").write("OLD")
+zp6, tree6 = mk_pkg(d6, body="NEW")
+os.makedirs(os.path.join(d6, "data"), exist_ok=True)
+io.open(os.path.join(d6, "data", "installed.json"), "w", encoding="utf-8").write(
+    json.dumps({"version": "9999.9.9", "sha256": tree6, "pendingFiles": ["agent/c.py"]}))
+_rc6, _m6, _det6 = U.apply_full({"base": {"version": "9999.9.9", "sha256": tree6, "url": ""}}, zp6, d6)
+ok("版本+树都对、但 `pendingFiles` 非空 ⇒ **不许**判 current（否则被跳过的文件永远补不回来）",
+   str(_det6.get("status") or "") != "current",
+   "status=%s msg=%s" % (_det6.get("status"), str(_m6)[:40]))
+ok("…而且这一趟真的把那一件补上了（内容变 NEW）",
+   io.open(os.path.join(d6, "agent", "c.py"), encoding="utf-8").read() == "NEW",
+   io.open(os.path.join(d6, "agent", "c.py"), encoding="utf-8").read()[:12])
 
 print("── V4 干跑只说不做 ──")
 d5 = tempfile.mkdtemp(prefix="pm_vf_v4_")

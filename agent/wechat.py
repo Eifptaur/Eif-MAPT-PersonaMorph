@@ -2954,6 +2954,12 @@ class WeChatAdapter:
         否则（`mismatch`/`no_ref`/抓不到）**退回真实路径**——真实路径会先按名字打开会话，
         顺便把这个尺寸下的会话头学到手，于是**下一次就能走投递**。
         """
+        # ⛔ 2026-09-21 加（第六轮 **V-R6-5 附**）：本函数**本体**原来没有停机/暂停闸
+        #   （全文件只有投递发送那几处有）⇒ `input.backend=real` + `allow_real_fallback=true` 时，
+        #   暂停期间照样会真动鼠标把消息发出去。这里补上，与链上其它咽喉点同口径。
+        _halt0 = _control_halt()
+        if _halt0:
+            return False, _halt0
         # OCR 总时间窗（测机手册 ④）：这一笔发送链允许花在 OCR 上的总时间（超时按"自检不可用"处理）
         try:
             from . import chat_ocr as _co
@@ -3789,30 +3795,49 @@ class WeChatAdapter:
             # "还没切过去"；一旦绿底带已在目标行 ⇒ 直接算成功、**绝不补枪**。
             _seq = list(_tgts) + ([_tgts[0]] if len(_tgts) > 1 else [])
             _tol = max(40, int(_co.ROW_PITCH * 0.75))
+            _row_pl = int(row.get("pane_left") or 0)      # 找行时用的锚（老口径+结构锚交叉校验过）
 
             def _band_on_row():
-                """纯像素看一眼：绿底带是不是已经落在目标行（读两帧，任一帧命中就算）。"""
+                """纯像素看一眼：绿底带是不是已经落在目标行。返回 `(band 或 None, 能不能测量)`。
+
+                ⛔ 2026-09-21 修（第六轮 **V-R6-3/11/12**）：①**显式传窗**（`row["pane_left"]`）——
+                找行用了哪个锚，复核就用哪个锚，否则老口径再过冲一次、守卫就瞎了；②**返回"能不能测量"**
+                ——量不到时调用方必须 fail-closed（原来异常/量不到一律 `None`＝fail-open ⇒ 在目标行
+                已高亮时补枪＝把用户的聊天框点关）。
+                """
+                _seen = False
                 for _k in range(2):
                     try:
-                        _w = _co.highlight_wide(_chh.capture_image(gui=gui))
+                        _im = _chh.capture_image(gui=gui)
+                    except Exception:                                 # noqa: BLE001
+                        _im = None
+                    if _im is None:
+                        continue
+                    try:
+                        _w = _co.highlight_wide(_im, pane_left=_row_pl)
                     except Exception:                                 # noqa: BLE001
                         _w = None
+                    _seen = True
                     if _w and abs(int(_w["y_abs"]) - int(row["y_abs"])) <= _tol:
-                        return _w
+                        return _w, True
                     time.sleep(0.25)
-                return None
+                return None, _seen
 
             for _i, _tgt in enumerate(_seq):
                 if _i:
                     # ⛔ **补枪之前再确认一次"还没切过去"**：万一第一枪其实切成功了、只是复核没拿到证据，
                     #    再补一枪会把刚打开的会话**点关**（实测：点已经高亮的那一行 = 关掉聊天框）。
                     #    宁可在这里多花 ~0.5s 读两帧，也不许把"该发的会话"关掉。
-                    _wb0 = _band_on_row()
+                    _wb0, _meas = _band_on_row()
                     if _wb0 is not None:
+                        _prev = _seq[_i - 1]     # ⛔ V-R6-10：生效的是**上一枪**那个窗，不是还没点的 _tgt
                         if _cp and _ck:
-                            _cp.record_ok(_ck, "main" if int(_tgt) == int(main) else "render")
-                        return True, ("会话已在目标行（补枪前复核绿底带 %d~%d）｜上一枪目标窗=%s"
-                                      % (_wb0["y0"], _wb0["y1"], ib.win_kind(main, _seq[_i - 1])))
+                            _cp.record_ok(_ck, "main" if int(_prev) == int(main) else "render")
+                        return True, ("会话已在目标行（补枪前复核绿底带 %d~%d）｜生效的是上一枪目标窗=%s"
+                                      % (_wb0["y0"], _wb0["y1"], ib.win_kind(main, _prev)))
+                    if not _meas:
+                        return False, ("补枪前**量不到**绿底带（面板左沿锚不可用）⇒ 本次不再补枪："
+                                       "宁可这次不切，也不许把用户刚打开的会话点关（fail-closed）")
                     time.sleep(1.35)
                 _ok, _why = self._click_posted(backend, _tgt, pt, "会话行（列表·免搜索）")
                 if not _ok:
@@ -3833,7 +3858,7 @@ class WeChatAdapter:
                                   % ib.win_kind(main, _tgt))
                 # 第三条证据（纯像素、与 OCR 无关）：绿底带落在目标行 ⇒ 当前会话就是它。
                 # 这条专治"白字绿底读不出名字"（实测高亮行的名字 OCR 常年给空串）。
-                _wb = _band_on_row()
+                _wb, _ = _band_on_row()
                 if _wb is not None:
                     if _cp and _ck:
                         _cp.record_ok(_ck, "main" if int(_tgt) == int(main) else "render")
@@ -5780,8 +5805,22 @@ class WeChatAdapter:
                     continue
                 for _nd in (self.recent_texts(_ck.split(":", 1)[-1]) or []):
                     _s = str(_nd or "").strip()
-                    if len(_s) < 6 or _s.lower() in _mine:
-                        continue                      # 太短 / 与目标自己的文本重复 ⇒ 不算"别人的"
+                    if len(_s) < 6:
+                        continue                      # 太短 ⇒ 不构成证据
+                    if _s.lower() in _mine:
+                        # ⛔ 2026-09-21 修（第六轮 **V-R6-1**，真回归）：别家正文与目标**逐字雷同**时，
+                        #   "跳过它"等于把 r14 的形状（用户把同一批东西转进两个会话）判成"没有别人"
+                        #   ⇒ 假排他 ⇒ 放行 ⇒ 可能发错会话。v2.1.43 的那一版这里根本没有本函数，
+                        #   走的是"判不了就不放行"。
+                        #   ⇒ 雷同**不构成排他证据**：只要它出现在聊天区里，就说明"当前开着的可能就是它"
+                        #   ⇒ 判不了（fail-closed），宁可漏发。
+                        try:
+                            if _co.content_match(pane, _s):
+                                return False, ("别的会话正文与目标**逐字雷同**且出现在聊天区（%r…，来自 %s）"
+                                               "⇒ 判不了，不放行" % (_s[:14], _ck))
+                        except Exception:
+                            pass
+                        continue
                     try:
                         if _co.low_entropy(_co.norm_alnum(_s)):
                             continue

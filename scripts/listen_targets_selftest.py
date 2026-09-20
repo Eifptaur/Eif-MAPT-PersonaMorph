@@ -130,7 +130,12 @@ def main():
         _P.get_config = _keep_gc
     ok("F1 同名群的两把档位键同时存在时，**wxid 键优先**（否则给两间同名群各设档位永远只能生效第一间）",
        int(_r_t.get("tier") or 0) == 4, _r_t)
-    ok("F2 反例锚：老写法（群名键在前）会取到 1 ⇒ 与 4 不同（这条判据正是盯这个）", 1 != 4)
+    # ⛔ 2026-09-21 修（第六轮 **V-R6-31**）：这条原来是 `ok(..., 1 != 4)` —— 一句**常真话**，
+    #   等于没验。改成**真按老口径算一遍**：老写法（群名键在前）取到的是 1，与 wxid 键取到的 4 不同。
+    _old_pick = lambda _g: int((_cfg_store["store"]["group_tier"] or {}).get(_g) or 0)   # noqa: E731
+    ok("F2 反例锚：老写法（群名键在前）会取到 1 ⇒ 与本判据取到的 4 **确实不同**（这条判据正是盯这个）",
+       _old_pick("测试") == 1 and int(_r_t.get("tier") or 0) == 4 and _old_pick("测试") != int(_r_t.get("tier") or 0),
+       "老=%s 新=%s" % (_old_pick("测试"), _r_t.get("tier")))
     _pm_txt = open(os.path.join(ROOT, "scripts", "persona_morph.py"), encoding="utf-8").read()
     ok("F3 群列表读失败时，那行说明**不许**再写「改名/退群了？」（归因要跟同一份日志一致）",
        "read_failed=(_groups_read_failed or \"\")" in _pm_txt and "_groups_read_failed" in _pm_txt)

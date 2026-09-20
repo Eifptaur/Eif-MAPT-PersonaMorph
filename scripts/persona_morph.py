@@ -1333,12 +1333,25 @@ def _wechat_watchdog(get_wc):
             #   来源＝工具发消息时"现场没认准"被 fail-closed 拦下的那些（两群同一分钟都有消息）。
             #   放在这个线程里：它本来就在跑、已经有 wechat 句柄，且与监听主循环互不阻塞。
             try:
-                if True:
-                    _sr = send_retry
-                    _r = _sr.tick(lambda _cid, _txt: wechat.send_text(_cid, _txt), limit=3)
-                    if _r.get("tried"):
-                        log.info("发送重试：试了 %d 条 ⇒ 成功 %d · 还要再试 %d · 放弃 %d",
-                                 _r["tried"], _r["done"], _r["again"], _r["dropped"] + _r["expired"])
+                # ⛔ 2026-09-21 修（第六轮 **V-R6-5/21**）：原来这里套着 `if True:`（本轮唯一新增的
+                #   "永远为真"形态），而且 **tick 不看停机/暂停闸** —— 机器人暂停/停止时，
+                #   `wechat.send_text` 返回"机器人已暂停 ⇒ 这条不发"（不带 `【可重试】`），
+                #   `resolve()` 于是判"不可重试"⇒ **条目被 dropped 永久销毁**（config 默认 `start_paused`
+                #   ＋队列跨重启落盘 ⇒ 一重启就把队列烧空）。⇒ 传闸门进去：暂停/停止时一条都不试。
+                _sr = send_retry
+
+                def _halt_now():
+                    try:
+                        from agent import control as _ctl
+                        return _ctl.halt_reason()
+                    except Exception:
+                        return ""
+
+                _r = _sr.tick(lambda _cid, _txt: wechat.send_text(_cid, _txt), limit=3, halt_fn=_halt_now)
+                if _r.get("tried") or _r.get("held"):
+                    log.info("发送重试：试了 %d 条 ⇒ 成功 %d · 还要再试 %d · 放弃 %d · 等解禁 %d",
+                             _r["tried"], _r["done"], _r["again"],
+                             _r["dropped"] + _r["expired"], _r.get("held", 0))
             except Exception as _e:
                 log.debug("发送重试跳过（不影响守护）：%s", _e)
             gui = wechat._get_gui()

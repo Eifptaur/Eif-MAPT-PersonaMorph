@@ -29,6 +29,24 @@ PASS = 0
 FAIL = 0
 
 
+def skip(name, why=""):
+    """**环境不可用**的断言：显式 SKIP，不计入通过也不判失败。
+
+    ⛔ 2026-09-21 加（第六轮 **V-R6-15**）：产品自己的口径是"自检不可用 ⇒ 不算证据"
+    （`chat_ocr.blocked()` 明确给出熔断/预算用尽的信号），而本判据原来把"OCR 读不出"当成**失败**
+    ⇒ 并发跑套件时 OCR 争用会偶发 80/1（单跑 81/0），把"环境抖动"报成"回归"。
+    """
+    print("  SKIP %s%s" % (name, ("  [%s]" % why) if why else ""))
+
+
+def _ocr_blocked() -> str:
+    """本机此刻能不能做 OCR（空串＝可以）。"""
+    try:
+        return str(CO.blocked() or "")
+    except Exception:
+        return ""
+
+
 def ok(name, cond, detail=""):
     global PASS, FAIL
     if cond:
@@ -127,7 +145,11 @@ ok("box 落点落在会话列表列内",
 if f:
     real = _orig_rec(im2.crop((89, 30, 328, 135)).resize((478, 210)))
     txt = " ".join(str(t) for t, *_ in real)
-    ok("真字体合成的「搜索」WinRT OCR 读得出来（box 形态可实测）", "搜索" in txt, "OCR=%r" % txt[:40])
+    # ⛔ V-R6-15：OCR 不可用（并发争用/熔断）时按 SKIP 记，不当失败——产品口径就是"自检不可用 ⇒ 不算证据"
+    if (not txt.strip()) and _ocr_blocked():
+        skip("真字体合成的「搜索」WinRT OCR 读得出来（box 形态可实测）", _ocr_blocked()[:70])
+    else:
+        ok("真字体合成的「搜索」WinRT OCR 读得出来（box 形态可实测）", "搜索" in txt, "OCR=%r" % txt[:40])
 
 print("③ 导航栏通高深色竖条不许当图标")
 im3, d3 = base_img()                            # 只留导轨，标题带里没有任何图标
@@ -279,11 +301,16 @@ def _searchwin_frame():
 
 _swf = _searchwin_frame()
 _r_sw = CO.looks_like_search_window_frame(_swf)
-ok("帧顶部写着「搜索聊天记录」⇒ 判「这是搜索窗画面」（第二道闸）", _r_sw[0] is True, str(_r_sw))
+if _r_sw[0] is True or not _ocr_blocked():
+    ok("帧顶部写着「搜索聊天记录」⇒ 判「这是搜索窗画面」（第二道闸）", _r_sw[0] is True, str(_r_sw))
+else:
+    skip("帧顶部写着「搜索聊天记录」⇒ 判「这是搜索窗画面」（第二道闸）", _ocr_blocked()[:70])
 ok("正常主窗帧不会被误判成搜索窗画面", CO.looks_like_search_window_frame(base_img())[0] is False)
-ok("**在这张帧里不许找搜索入口**（原来会挑到文字碎片 ⇒ 点到会话行）",
-   CO.find_search_entry(_swf, left=310) is None,
-   str(CO.find_search_entry(_swf, left=310)))
+_se_sw = CO.find_search_entry(_swf, left=310)
+if _se_sw is None or not _ocr_blocked():
+    ok("**在这张帧里不许找搜索入口**（原来会挑到文字碎片 ⇒ 点到会话行）", _se_sw is None, str(_se_sw))
+else:
+    skip("**在这张帧里不许找搜索入口**（原来会挑到文字碎片 ⇒ 点到会话行）", _ocr_blocked()[:70])
 
 _h_src = open(os.path.join(ROOT, "agent", "chat_header.py"), encoding="utf-8").read()
 ok("遮挡判据含**同进程兄弟窗**（_OCCLUDE_ALLOW + 纯函数 _occlusion_verdict）",

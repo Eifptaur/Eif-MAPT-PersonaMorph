@@ -293,11 +293,21 @@ def cmdline_is_ours(cmd: str, port: int) -> bool:
     """**纯函数**：这条命令行是不是"我们起的那个本地服务"（判据直接打它，不碰进程）。
 
     要求两件都成立：①命令行里有 `sd_local_server.py`；②带着**这个**端口号。
+
+    ⛔ 2026-09-21 修（第六轮 **V-R6-33**）：端口原来是**子串**匹配 —— `'… 17860'` 里含 `7860`、
+    `'… 78600'` 里含 `786`，都会误判成"是我们的进程" ⇒ 拿它当身份证据去 stop/kill 就可能打到别人。
+    ⇒ 改成**按词边界匹配**（数字前后都不能再有数字），并优先认 `--port 7860` 这种显式写法。
     """
     _c = str(cmd or "")
     if "sd_local_server.py" not in _c:
         return False
-    return str(int(port)) in _c
+    try:
+        _p = int(port)
+    except Exception:
+        return False
+    if re.search(r"--port[=\s]+%d(?![0-9])" % _p, _c):
+        return True
+    return bool(re.search(r"(?<![0-9])%d(?![0-9])" % _p, _c))
 
 
 def _proc_cmdline(pid: int) -> str:

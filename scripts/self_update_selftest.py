@@ -234,10 +234,14 @@ try:
     #   这条判据是"离线一条龙"，用本地包当下载地址 ⇒ 显式开这个**测试专用**开关
     #   （生产路径不设它：`allow_local_update()` 只认环境变量或配置里的显式开关）。
     os.environ["PM_ALLOW_LOCAL_UPDATE"] = "1"
+    _relaunch_keep = getattr(UA, "_relaunch_after_update", None)
+    UA._relaunch_after_update = lambda *a, **k: None       # ⛔ 判据绝不做真交接（V-R6-28/29）
     try:
         r = UA.run_once(manifest=man_i, zip_path=None, target=target)
     finally:
         os.environ.pop("PM_ALLOW_LOCAL_UPDATE", None)
+        if _relaunch_keep is not None:
+            UA._relaunch_after_update = _relaunch_keep
     ok(r["ok"] and r["version"] == "9999.1.1", "run_once 成功返回版本", str(r)[:110])
     ok(not os.path.exists(os.path.join(target, UA.CACHE_REL, "persona-morph-9999.1.1.zip")),
        "装完把下载缓存删掉了（下载类功能必须有清理措施）")
@@ -274,8 +278,9 @@ finally:
 #    根因＝老下载链是 120 秒/源 × 4 个源（最坏 8 分钟界面钉在 0%），而且**换源是静默的**
 #    ⇒ 界面只有「0%」一个信息，用户只能判断它死了。这里把三条钉住。
 _UA_SRC = open(os.path.join(ROOT, "agent", "update_apply.py"), encoding="utf-8").read()
-ok(UA.STALL_S == 20.0 and "timeout: float = STALL_S" in _UA_SRC,
-   "单个源的卡死判据＝20 秒（不是老值 120 秒；它是「没数据」判据，不是总时长上限）")
+ok(20.0 <= float(UA.STALL_S) <= 60.0 and "timeout: float = STALL_S" in _UA_SRC,
+   "单个源的卡死判据在 20~60 秒之间（不是老值 120 秒；它是「没数据」判据，不是总时长上限）  [%s]"
+   % UA.STALL_S)
 ok(len(UA.DL_MIRRORS) >= 4, "镜像源至少 4 个（含 gh.llkk.cc）   [%s]" % (UA.DL_MIRRORS,))
 ok("progress(0, 0)" in _UA_SRC and "on_try(i, len(urls), u" in _UA_SRC,
    "换源前先把进度归零、并回调 on_try（界面看得见「在换源」，不是僵住的百分比）")

@@ -219,7 +219,11 @@ try:
     #    ——不隔离的话，第一条子用例记下的偏好会改掉后几条的目标顺序（2026-09-21 实测：断言拿到 [888,777]）。
     #    ⇒ 整段指到临时文件，跑完删掉并还原路径。
     _cp_path_keep = _CP.PATH
-    _cp_tmp = os.path.join(ROOT, "_scratch", "_click_pref_selftest.json")
+    # ⛔ 2026-09-21 修（第六轮 **V-R6-22**）：原来写的是**仓库内固定路径** `ROOT/_scratch/...`
+    #   ⇒ 并发跑两套判据互踩、而且会在真仓库留痕（`_scratch` 是 gitignore 的，`git status` 看不出来）。
+    #   `click_pref_selftest` 早就正确地用了 `tempfile`，这里跟它对齐。
+    import tempfile as _tf
+    _cp_tmp = os.path.join(_tf.gettempdir(), "_click_pref_selftest_session_pick.json")
     _CP.PATH = _cp_tmp
 
     def _cp_reset():

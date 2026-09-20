@@ -623,22 +623,29 @@ def _exec_send_message(ctx, args):
                      "error": str(f.get("error") or "未给原因")[:180]}
                     for f in result["failed"]]
             _queued = 0
-            for _f in _why:
+            for _idx, _f in enumerate(_why):
                 log.warning("发送失败（第 %d 条「%s」）：%s", _f["index"], _f["text"], _f["error"])
                 # ⛔ 2026-09-21（业界调研：判不了的消息进**失败可见的重试队列**，别直接丢）：
                 #   身份类拒发（"当前开着的很可能不是目标会话"这类）往往是**瞬态**（两个群同一分钟
                 #   都有消息）⇒ 排进重试队列，等现场清楚了自动再发一次，把"这次不回"变成"晚点回"。
                 try:
                     from . import send_retry as _sr
-                    if _sr.retryable(_f["error"]) and str(_f["text"]).strip():
-                        _full = next((str(m) for m in messages
-                                      if str(m.get("text") or "")[:20] == str(_f["text"])), "")
+                    # ⛔ 2026-09-21 修（第六轮 **V-R6-6/7**）：原来这里写的是
+                    #   `str(m.get("text") or "")` —— 而 `messages` 的元素是**字符串**
+                    #   （`util.normalize_message_list` 返回 str 列表）⇒ `AttributeError` 被下面的
+                    #   `except` 吞成 DEBUG ⇒ **send_retry 在生产里一条都没进过**（整套"判不了就晚点补发"
+                    #   从未生效）；而且原来是"拿失败回执的前 20 字去 messages 里盲找"，同前缀的两条会
+                    #   入队**已发成功**那条 ⇒ 补发＝重复发。
+                    #   ⇒ 改成用**发送层回传的原文**（`sender.failed[*]["src"]`，已按 parts 对齐）。
+                    if _sr.retryable(_f["error"]):
+                        _rawf = result["failed"][_idx] if _idx < len(result["failed"]) else {}
+                        _full = str(_rawf.get("src") or "")
                         if _full.strip():
                             _r = _sr.enqueue(ctx["chat_key"], _full, _f["error"])
                             if _r.get("ok"):
                                 _queued += 1
                 except Exception as _e:
-                    log.debug("重试入队失败（不影响本次返回）：%s", _e)
+                    log.warning("重试入队失败（不影响本次返回）：%s", _e)
             note += ("（另有 %d 条发送失败：%s。成功的不需要重发；"
                      "**失败的先照原因处理**，别盲目重试）"
                      % (len(_why), "；".join("第%d条「%s」＝%s" % (_f["index"], _f["text"], _f["error"])

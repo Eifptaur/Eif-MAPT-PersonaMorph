@@ -58,13 +58,23 @@ def chat_file_legacy(chat_key: str) -> str:
 
 
 def chat_file_existing(chat_key: str) -> str:
-    """该会话**实际在用**的文件路径：新命名优先，没有就退回老命名（老档案不搬家、不丢）。"""
+    """该会话**实际在用**的文件路径：新命名优先，没有就退回老命名（老档案不搬家、不丢）。
+
+    ⛔ 2026-09-21 修（第六轮 **V-R6-25**）：老命名是**无哈希**的（`_safe_name` 对 `:` 等字符做替换），
+    ⇒ 磁盘上残留的老档案有可能**不是这个会话的**（不同 chat_key 被 `_safe_name` 归并，或用户手改名）。
+    原来只要文件在就当成"这个会话的档案"直接读 ⇒ **读到别人的档案（串群）**。
+    ⇒ 退回老命名之前先**核一眼文件里的 `chat_key`**：与请求的不一致就当它不存在（并留一行日志）。
+    """
     p = chat_file(chat_key)
     if os.path.exists(p):
         return p
     q = chat_file_legacy(chat_key)
     if os.path.exists(q):
-        return q
+        _k = _read_key_of(q)
+        if (not _k) or _k == str(chat_key):
+            return q
+        log.warning("老档案 %s 里的 chat_key=%r 与请求的 %r 不一致 ⇒ 不拿它当这个会话的档案（防串群）",
+                    os.path.basename(q), _k[:40], str(chat_key)[:40])
     return p
 
 

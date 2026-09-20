@@ -36,6 +36,22 @@ _NUM = re.compile(r"(\d+)\s*(?:个)?\s*通过\s*/\s*(\d+)\s*(?:个)?\s*失败")
 _ANY_FAIL = re.compile(r"(\d+)\s*(?:个)?\s*失败")
 _FAIL_LINE = re.compile(r"^\s*FAIL\b", re.M)
 _TRACE = re.compile(r"Traceback \(most recent call last\)")
+# ⛔ 2026-09-21 加（第六轮 **V-R6-28**）：**"被提前吃掉"必须判红**。
+#   原来只看 rc / FAIL 行 / Traceback ⇒ 判据若在中间 `os._exit(0)`（本项目的
+#   `self_update_selftest` 就因为走了真更新链而自杀过），rc=0、无 FAIL、无 Traceback ⇒ **判绿**，
+#   其后二十多条断言从没执行也没人知道（含一条真红）。⇒ 现在要求输出里必须有**汇总行**
+#   （形如「N 通过 / M 失败」「131/131 通过」「结果：81 通过 / 0 失败」…）。
+_SUMMARY = re.compile(
+    r"\d+\s*/\s*\d+\s*通过"                                  # 131/131 通过
+    r"|\d+\s*(?:个)?\s*通过\s*/\s*\d+\s*(?:个)?\s*失败"        # 44 通过 / 0 失败
+    r"|通过\s*\d+\s*/\s*失败\s*\d+"                           # 通过 21 / 失败 0
+    r"|\d+\s*PASS\s*/\s*\d+\s*FAIL"                           # 44 PASS / 0 FAIL
+    r"|汇总|结论|结果[:：]")
+
+
+def _has_summary(out: str) -> bool:
+    """输出里有没有"跑完了"的汇总行（没有 ⇒ 这个脚本可能被中途吃掉）。"""
+    return bool(_SUMMARY.search(out or ""))
 
 
 def _parse(out: str):
@@ -77,9 +93,11 @@ def _run_one(name: str, timeout: int, gate: threading.Semaphore) -> dict:
             _hold.release()
     sec = time.time() - t
     ps, fs = _parse(out)
-    ok = ((rc == 0) and not fs and not _FAIL_LINE.search(out) and not _TRACE.search(out))
+    _summed = _has_summary(out)
+    ok = ((rc == 0) and not fs and not _FAIL_LINE.search(out) and not _TRACE.search(out)
+          and _summed)
     return {"name": name, "out": out, "rc": rc, "sec": sec, "ps": ps, "fs": fs, "ok": ok,
-            "heavy": heavy}
+            "summed": _summed, "heavy": heavy}
 
 
 def main() -> int:
@@ -122,6 +140,8 @@ def main() -> int:
             bad.append((n, r["rc"], r["ps"], r["fs"], r["out"]))
         line = "%-34s %-4s %s" % (n, "OK" if r["ok"] else "RED",
                                   ("%s/%s" % (r["ps"], r["fs"])) if r["ps"] is not None else "rc=%d" % r["rc"])
+        if not r.get("summed", True):
+            line += "  ⚠️无汇总行（可能被中途吃掉）"
         if a.v or not r["ok"]:
             tail = [l for l in r["out"].strip().splitlines() if l.strip()]
             if a.v and tail:

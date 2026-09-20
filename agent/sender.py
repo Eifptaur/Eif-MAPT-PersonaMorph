@@ -32,6 +32,10 @@ _INTERNAL_FAIL_PHRASES = (
     "这轮先不说", "本轮先不说", "这轮不说了", "本轮不说了",
     "工具报错", "工具调用失败", "接口报错", "系统错误", "内部错误",
     "没有拿到会话", "抓不到会话", "获取会话失败",
+    # ⛔ 2026-09-21 加（第六轮 **V-R6-17**）：`send_retry` 接线修好后，工具回执里会出现
+    #   "我已经排进重试队列 / 自动补发一次 / 现场没认准" 这类**内部机制话术**，模型一旦转述就进群。
+    #   实测原来 3/3 放行（只有带"没发出去"的那种才被拦）⇒ 补进词表。
+    "重试队列", "排进队列", "排进重试", "补发", "没认准", "现场没认准",
 )
 # 结构性判据（2026-09-18 加，现场新变体「（发送没成功，这轮先不说了）」靠词表漏了）：
 #   一句**被括号整体包起来**（或很短）的话，同时带 A 组（动作/系统词）和 B 组（失败态词）
@@ -150,14 +154,22 @@ class SendQueue:
             raise RuntimeError("消息列表为空")
         hard_split = int(get_config().get("send", {}).get("hard_split_at") or 0)
         parts = []
+        # ⛔ 2026-09-21 加（第六轮 **V-R6-7**）：`parts` 是"过 md_to_plain + 可能被 hard_split"之后的产物，
+        #   **下标与调用方的 `messages` 不对应**（还有内部话术闸/去重会删条目）⇒ 失败回执里必须带上
+        #   **原始那条文本**，否则调用方只能拿前 20 字去 `messages` 里盲找（会入队"已发成功"那条 ⇒ 补发＝重复发）。
+        part_src = []
         for m in list_msgs:
-            plain = md_to_plain(str(m or ""))
+            _orig = str(m or "")
+            plain = md_to_plain(_orig)
             if not plain:
                 continue
             if hard_split > 0 and len(plain) > hard_split:
-                parts.extend(split_for_wx(plain, hard_split))
+                _sp = split_for_wx(plain, hard_split)
+                parts.extend(_sp)
+                part_src.extend([_orig] * len(_sp))
             else:
                 parts.append(plain)
+                part_src.append(_orig)
         if not parts:
             raise RuntimeError("消息内容为空")
 
@@ -165,14 +177,17 @@ class SendQueue:
         #   **内部故障话术的机械拦网** —— 以前只写在提示词里（`prompt.py` 第 7 条），模型不听话时照样发进群。
         #   这是项目红线（故障只许出现在本机控制台与日志），所以在这里**发之前**逐条筛掉。
         _kept = []
-        for _t in parts:
+        _kept_src = []
+        for _t, _src in zip(parts, part_src):
             _why = _is_internal_failure(_t)
             if _why:
                 log.warning("拦下内部故障话术（%s）：%s", _why, _t[:60])
                 _blocked_internal.append({"why": _why, "text": _t[:120]})
                 continue
             _kept.append(_t)
+            _kept_src.append(_src)
         parts = _kept
+        part_src = _kept_src
         if not parts:
             raise RuntimeError("这一批全被内部故障话术闸拦下（故障只留本机日志，不发群）")
 
@@ -188,12 +203,15 @@ class SendQueue:
             _recent_self = []
         if _recent_self:
             _kept2 = []
-            for _t in parts:
+            _kept2_src = []
+            for _t, _src in zip(parts, part_src):
                 if _t in _recent_self:
                     log.warning("跳过重复发送（%.0fs 内已发过同一句）：%s", _DEDUP_WINDOW_S, _t[:60])
                     continue
                 _kept2.append(_t)
+                _kept2_src.append(_src)
             parts = _kept2
+            part_src = _kept2_src
             if not parts:
                 raise RuntimeError("这一批与最近刚发过的内容重复，已跳过（防连发两次）")
 
@@ -258,7 +276,8 @@ class SendQueue:
                         pass
                     sent.append({"text": text, "at": format_clock_time(ts)})
                 except Exception as e:
-                    failed.append({"index": i, "text": text, "error": str(e)})
+                    failed.append({"index": i, "text": text, "error": str(e),
+                                   "src": (part_src[i] if i < len(part_src) else text)})
         if failed and not sent:
             raise RuntimeError("；".join("第%d条「%s」：%s" % (f["index"] + 1, str(f["text"])[:20], f["error"]) for f in failed))
         if failed:
