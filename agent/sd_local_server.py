@@ -132,7 +132,10 @@ class H(BaseHTTPRequestHandler):
             return self._send({"progress": 1.0 if _state["ready"] else 0.0,
                                "state": {"sampling_step": 0, "sampling_steps": 0}})
         if p in ("/", "/internal/ping") or p.startswith("/sdapi/v1/options"):
-            return self._send({"ok": True, **_state})
+            # ⛔ 2026-09-21（第四轮审计 **V-R4-3**）：**如实声明"门禁已开"** ——
+            #   客户端靠这个字段区分"我们这一版（带 Host+口令门禁）的实例"与
+            #   "09-19 起的旧无门禁实例"（后者只会回 `{"ok": true, ...}`，没有 `gate`）。
+            return self._send({"ok": True, "gate": "host+token", **_state})
         return self._send({"detail": "not found"}, 404)
 
     def do_POST(self):

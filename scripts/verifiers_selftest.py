@@ -19,7 +19,10 @@
 """
 import io
 import os
+import shutil
 import sys
+import tempfile
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -117,6 +120,35 @@ ok("C3c 该改的那几处已经是「没测到」（None）",
 ok("C3d 两处真恒真已改成真判据（台账证据 > 0；闸门拦下过才算数）",
    "_ev_n > 0" in _vsrc and "True if n > 0 else None" in _vsrc and "True if deny > 0 else None" in _vsrc)
 
+print("\n── C4. 更新快照的**新鲜度**：旧快照只能当历史（V-R4-12c）──")
+_tmp4 = tempfile.mkdtemp(prefix="pm-vf-")
+_keep_p = V._p
+V._p = lambda *parts: os.path.join(_tmp4, *parts)          # 夹具：全部读数指到临时目录，不碰真 data/
+try:
+    os.makedirs(os.path.join(_tmp4, "data"), exist_ok=True)
+    _sp = os.path.join(_tmp4, "data", "update_state.json")
+    io.open(_sp, "w", encoding="utf-8").write('{"lastStatus": "current", "version": "2026.9.20.4"}')
+    _fresh = [c for c in V.run("update_stuck")["checks"] if "30 分钟内" in c["name"]]
+    ok("C4a 刚写过的快照 ⇒ 新鲜度那格 = True（下面用旧快照验它不是恒真）",
+       len(_fresh) == 1 and _fresh[0]["ok"] is True, str(_fresh))
+    _old = time.time() - 2 * 86400
+    os.utime(_sp, (_old, _old))
+    _r4 = V.run("update_stuck")
+    _stale = [c for c in _r4["checks"] if "30 分钟内" in c["name"]]
+    ok("C4b 旧快照（2 天前）⇒ 那格 = **没测到（None）**，不许判成失败（免得冤枉成「更新链坏了」）",
+       len(_stale) == 1 and _stale[0]["ok"] is None, str(_stale))
+    ok("C4c 旧快照时给**指对方向**的话：去点「检查更新」",
+       bool(_stale) and "检查更新" in _stale[0]["detail"], _stale[0]["detail"] if _stale else "")
+    _readable = [c for c in _r4["checks"] if c["name"] == "更新状态文件可读"]
+    ok("C4d 反例锚：老那格（只看 `bool(st)`）在旧快照上照样 ✅ ⇒ 光靠它分不出新旧",
+       len(_readable) == 1 and _readable[0]["ok"] is True, str(_readable))
+    ok("C4e 旧快照进「没测到」清单、**不进卡点**（判决的卡点里不许点它）",
+       "卡在「这份快照" not in (_r4.get("verdict") or "") and "没测到" in (_r4.get("verdict") or ""),
+       (_r4.get("verdict") or "")[:100])
+finally:
+    V._p = _keep_p
+    shutil.rmtree(_tmp4, ignore_errors=True)
+
 print("── D. 异常与未知 id 都不许抛（别把前端打崩）──")
 _u = V.run("不存在的东西")
 ok("未知 id ⇒ 同形状 + 说清可选清单", _u["ok"] is False and "没有这个检验器" in _u["verdict"], _u["verdict"][:80])
@@ -161,8 +193,8 @@ ok("水位那一格看的是**值**（序号 > 0），不是只看有没有条�
    "_wmax" in _V and "_wmax > 0" in _V, "见 v_no_reply")
 ok("水位为 0 时给出**分层**的处置语（群名 / 账号 / 消息库 三查）",
    "从没读到过目标群的消息" in _V and "点击测试" in _V)
-ok("新增「勾了监听目标群」一格（提示群名要与微信里完全一致）",
-   "勾了监听目标群" in _V and "差一个字就匹配不上" in _V)
+ok("新增「勾了监听目标群」一格（提示群名要与微信里完全一致 / 同名群要用 wxid）",
+   "差一个字" in _V and "有同名群" in _V and "勾选存的是 wxid" in _V)
 ok("矛盾检测没有因为改名而失效（`监听水位有` 前缀仍然命中）",
    '"监听水位有" in n' in _V)
 

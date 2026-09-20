@@ -232,6 +232,88 @@ def server_alive(port: int = None) -> bool:
         return False
 
 
+def service_gated(port: int = None) -> tuple:
+    """`7860` 上跑着的服务，**是"我们这一版（带门禁）"的吗**？返回 `(ok, why)`。
+
+    ⛔ 2026-09-21（第四轮审计 **V-R4-3，P1**）：原来只判"有人答话"（`server_alive`）⇒
+    机器上 09-19 起的**旧无门禁实例**（无 Host / 错口令一律 200）会被**一直复用**，
+    **更新产品也不会换掉它** ⇒ 门禁代码在仓库里"修好了"，**活体从来没生效**。
+    ⇒ 发**两个真请求**（缺一不可）：
+      ①**反证**：不带口令 + **外域 Host** 打 `/internal/ping` —— 带门禁的服务必须**拒**（401/403）；
+         若照样 200 ⇒ 那就是旧实例 ⇒ `(False, "跑着的是没有门禁的旧实例")`；
+      ②**正证**：带口令 + 回环 Host —— 必须 200，且响应里声明 `gate` 标记（旧版没有这个字段）。
+    """
+    from . import local_guard as _lg
+    u = server_url(port) + "/internal/ping"
+    # ① 反证：故意不带口令、并用外域 Host
+    try:
+        _req_bad = urllib.request.Request(
+            u, headers={"Host": "evil.example:%d" % int(port or _cfg().get("port") or 7860),
+                        "User-Agent": "PersonaMorph/gatecheck"})
+        with urllib.request.urlopen(_req_bad, timeout=1.5) as _r:
+            if int(getattr(_r, "status", 200) or 200) < 400:
+                return False, ("跑着的是**没有门禁的旧实例**：不带口令 + 外域 Host 也照样回 200"
+                               "（这一版的代码带 Host+口令门禁，说明它不是我起的）")
+    except urllib.error.HTTPError as _e:
+        if int(getattr(_e, "code", 0) or 0) not in (401, 403):
+            return False, ("服务对「无口令 / 外域 Host」的回应不是 401/403，而是 %s ⇒ 认不出它"
+                           % getattr(_e, "code", "?"))
+    except Exception as _e:
+        return False, "连不上或读不到回应：%s" % str(_e)[:60]
+    # ② 正证：带口令 + 回环 Host，并核对 `gate` 声明
+    try:
+        _req_ok = urllib.request.Request(u, headers=_lg.client_headers(
+            u, {"User-Agent": "PersonaMorph/gatecheck"}))
+        with urllib.request.urlopen(_req_ok, timeout=1.5) as _r:
+            _body = _r.read(2000).decode("utf-8", "ignore")
+        if '"gate"' in _body:
+            return True, ""
+        return False, "服务认了口令，但响应里没有 `gate` 声明（像是新老之间的版本）"
+    except Exception as _e:
+        return False, "带口令也读不到门禁声明：%s" % str(_e)[:60]
+
+
+def _port_owner_pid(port: int):
+    """谁在听这个端口？（解析 `netstat -ano`；查不到返回 None）"""
+    try:
+        r = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True,
+                           creationflags=0x08000000 if os.name == "nt" else 0)
+        for line in str(getattr(r, "stdout", "") or "").splitlines():
+            parts = line.split()
+            if len(parts) < 5:
+                continue
+            if parts[1].endswith(":%d" % int(port)) and parts[3].upper() == "LISTENING":
+                return int(parts[4])
+    except Exception:
+        pass
+    return None
+
+
+def kill_stale_owner(port: int) -> tuple:
+    """把占用 `port` 的**我们自己旧实例**停掉；**只在我们能证明它是我们的时才动手**。
+
+    证据链（两条都要成立）：①`data/sd_local.pid` 里记的 pid 就是**听这个端口的那个进程**；
+    ②该进程还在。取不到证据 ⇒ **不杀**（宁可让用户手动处理，也不误杀别人跑在 7860 上的东西）。
+    """
+    try:
+        pid = int(open(_pidfile(), encoding="utf-8").read().strip())
+    except Exception:
+        return False, "没有 pidfile 记录（无法证明那是我起的 ⇒ 不替你杀）"
+    owner = _port_owner_pid(port)
+    if owner is None:
+        return False, "查不到端口占用者"
+    if int(owner) != int(pid):
+        return False, ("占着 %d 的是 PID %s，而 pidfile 记的是 PID %s ⇒ **不是我们起的** ⇒ 不替你杀"
+                       % (int(port), owner, pid))
+    try:
+        subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True,
+                       creationflags=0x08000000 if os.name == "nt" else 0)
+        time.sleep(0.6)
+        return True, "已停掉旧实例（PID %d）" % pid
+    except Exception as e:                                   # noqa: BLE001
+        return False, "停旧实例失败：%s" % str(e)[:60]
+
+
 def status() -> dict:
     c = _cfg()
     pid = active_id()
@@ -240,6 +322,8 @@ def status() -> dict:
     dok, dwhy = _deps_ok()
     mok = os.path.exists(mp)
     alive = server_alive(c.get("port"))
+    # ⛔ V-R4-3：**"有人答话"不等于"是我们这一版的实例"** —— 旧无门禁实例必须被认出来
+    gated, gwhy = (service_gated(c.get("port")) if alive else (False, ""))
     why = ""
     if not dok:
         why = dwhy
@@ -247,9 +331,12 @@ def status() -> dict:
         why = "「%s」的模型还没下（要下 %.2f GB）" % (p["label"], preset_gb())
     elif not alive:
         why = "模型在，但本地服务没在跑（可以一键启动）"
-    return {"ok": bool(dok and mok and alive), "why": why, "deps_ok": dok, "model_ok": mok,
+    elif not gated:
+        why = ("7860 上跑着的是**没有门禁的旧实例** ⇒ 点「一键启动」会换掉它（%s）" % str(gwhy)[:80])
+    return {"ok": bool(dok and mok and alive and gated), "why": why, "deps_ok": dok, "model_ok": mok,
             "model_path": mp, "model_gb": preset_gb(), "deps_gb": DEPS_GB,
-            "server_alive": alive, "port": int(c.get("port") or 7860),
+            "server_alive": alive, "gated": bool(gated), "gate_why": str(gwhy)[:120],
+            "port": int(c.get("port") or 7860),
             "allow_online_install": bool(c.get("allow_online_install")),
             "switch": bool(c.get("enabled")), "auto_start": bool(c.get("auto_start")),
             "installed": bool(dok and mok),
@@ -507,7 +594,19 @@ def start_server(on_log=None) -> tuple:
     p = preset(active_id())
     port = int(c.get("port") or 7860)
     if server_alive(port):
-        return True, "本地服务已经在跑（%s）" % server_url(port)
+        # ⛔ V-R4-3：**先问"是不是我们这一版（带门禁）的实例"**，不是 ⇒ 换掉它（能证明是我们起的才动手）
+        _g_ok, _g_why = service_gated(port)
+        if _g_ok:
+            return True, "本地服务已经在跑（%s）" % server_url(port)
+        _k_ok, _k_why = kill_stale_owner(port)
+        if not _k_ok:
+            return False, ("7860 上跑着的服务**不认口令**（旧版本留下的实例），本回合不换它：%s"
+                           "（%s）⇒ 请手动关掉它，或在控制台把端口改一个。" % (_k_why, str(_g_why)[:80]))
+        if on_log:
+            try:
+                on_log("已停掉旧的无门禁实例：%s" % _k_why)
+            except Exception:
+                pass
     exe = os.path.join(ROOT, "runtime", "python", "python.exe")
     if not os.path.exists(exe):
         exe = sys.executable
@@ -561,8 +660,11 @@ def ensure_running() -> tuple:
     st = status()
     if not (st["deps_ok"] and st["model_ok"]):
         return False, st["why"]
-    if st["server_alive"]:
+    if st["server_alive"] and st.get("gated"):
         return True, "已在跑"
+    if st["server_alive"] and not st.get("gated"):
+        # ⛔ V-R4-3：端口被**旧的无门禁实例**占着 ⇒ 自愈（换掉它），别让它永久挡着
+        return start_server()
     if not c.get("auto_start", True):
         return False, "本地服务没在跑，且自启关着"
     return start_server()

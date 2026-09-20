@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -121,6 +122,35 @@ def main():
                 '    return {"chat_key": chat_key, "messages": []}\n')
         ok("⑥ 反例锚：老写法（except pass ⇒ 返回空壳）确实会被判不合格",
            ("_loadFailed" not in _OLD) and ("corrupt-" not in _OLD) and ("except Exception:\n        pass" in _OLD))
+
+        # ── ⑦ S-1：不同 chat_key 不许撞同一个档案文件（第四轮审计候选）──
+        #    老实现只做字符替换 ⇒ `group:wxid_a-b` 与 `group:wxid_a_b` 撞成一个文件、互相覆盖。
+        _k1, _k2 = "group:wxid_a-b", "group:wxid_a_b"
+        ok("⑦ 反例锚：老归一化对这两个 key 确实同名（不靠哈希就区分不开）",
+           store_mod._safe_name(_k1) == store_mod._safe_name(_k2), store_mod._safe_name(_k1))
+        ok("⑦ 两个 key 的档案路径必须不同",
+           store_mod.chat_file(_k1) != store_mod.chat_file(_k2),
+           (os.path.basename(store_mod.chat_file(_k1)), os.path.basename(store_mod.chat_file(_k2))))
+        ChatStore().append_incoming(_k1, 1, 1, "wxid_x", "甲", "只在短横线那个会话")
+        ChatStore().append_incoming(_k2, 1, 1, "wxid_x", "甲", "只在下划线那个会话")
+        _t1 = [m["text"] for m in ChatStore().recent(_k1, limit=10)]
+        _t2 = [m["text"] for m in ChatStore().recent(_k2, limit=10)]
+        ok("⑦ 两个会话各存各的（互不覆盖 —— 老实现就是在这丢数据）",
+           _t1 == ["只在短横线那个会话"] and _t2 == ["只在下划线那个会话"], (_t1, _t2))
+        _both = sorted(f for f in os.listdir(tmp)
+                       if f.startswith("group_wxid_a_b_") and f.endswith(".json") and ".corrupt-" not in f)
+        ok("⑦ 磁盘上是**两个**文件（同名归一 + 不同哈希）", len(_both) == 2, _both)
+        _listed = set(ChatStore().list_chats())
+        ok("⑦ list_chats 给的是**真 chat_key**，不是带哈希尾巴的幽灵名",
+           {_k1, _k2} <= _listed and not [k for k in _listed if re.search(r"_[0-9a-f]{8}$", k)],
+           sorted(_listed))
+        # 老命名档案（无哈希、且内容里没有 chat_key 字段）仍要能被发现与读到 —— 老数据不许失联
+        _w("group:legacy_nohash", json.dumps({"messages": [{"id": 1, "text": "老档案"}]}, ensure_ascii=False))
+        _listed7 = set(ChatStore().list_chats())
+        ok("⑦ 老命名档案仍能被发现（从文件名推回会话）并读到内容",
+           ("group:legacy_nohash" in _listed7)
+           and len(ChatStore().recent("group:legacy_nohash", limit=5)) == 1,
+           sorted(_listed7))
     finally:
         store_mod.MESSAGES_DIR = _keep
         shutil.rmtree(tmp, ignore_errors=True)

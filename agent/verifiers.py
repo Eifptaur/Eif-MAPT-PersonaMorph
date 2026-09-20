@@ -352,7 +352,8 @@ def v_no_reply() -> dict:
     # ⛔ V-R4-11：原来是硬编码 `True`（恒真）。白名单**留空＝监听所有群**是合法配置（判过）；
     #   填了名字能不能真对上，由下面「监听水位有推进」那一格定论 ⇒ 这里只给"没测到 + 说明"。
     checks.append(_check("勾了监听目标群", (True if not _wl else None),
-                         ("白名单 %d 个：%s（**名字要与微信里完全一致**，差一个字就匹配不上 ⇒ 监听不到；"
+                         ("白名单 %d 个：%s（**勾选存的是 wxid，群名要与微信里完全一致**——"
+                          "老配置写的是群名，名字差一个字或**有同名群**都会匹配不上 ⇒ 监听不到；"
                           "能不能对上由下面「监听水位有推进」那格定论）"
                           % (len(_wl), "、".join(_wl[:5]))) if _wl else "白名单留空 ＝ 监听所有群"))
     wm = _read_json(_p("data", "listener_watermark.json"), {})
@@ -550,8 +551,23 @@ def v_fg_disturb() -> dict:
 def v_update_stuck() -> dict:
     checks = []
     st = _read_json(_p("data", "update_state.json"), {})
-    checks.append(_check("更新状态文件可读", bool(st), "lastStatus=%s · version=%s"
-                         % (st.get("lastStatus") or st.get("status") or "-", st.get("version") or "-")))
+    # ⛔ V-R4-12c：这份快照是**上次点「检查更新」时**写的 ⇒ 旧快照**不能**当成"现在的更新结论"
+    #   （尤其 `_write_state` 写失败时，用户看到的其实是更早那份）。⇒ 把写入时间摆出来当证据，
+    #   新鲜度单独一格判：新鲜=true、旧=**没测到**（第三态，不是通过）。
+    _age_min = None
+    _age_txt = "读不到写入时间"
+    try:
+        _age_min = (time.time() - os.path.getmtime(_p("data", "update_state.json"))) / 60.0
+        _age_txt = ("%.0f 分钟前写的" % _age_min) if _age_min < 1440 else ("%.1f 天前写的" % (_age_min / 1440.0))
+    except Exception:
+        pass
+    checks.append(_check("更新状态文件可读", bool(st), "lastStatus=%s · version=%s · 快照是 %s"
+                         % (st.get("lastStatus") or st.get("status") or "-", st.get("version") or "-", _age_txt)))
+    _fresh = True if (_age_min is not None and _age_min <= 30) else None
+    checks.append(_check("这份快照是最近 30 分钟内写的（旧快照不算「现在的结论」）", _fresh,
+                         "%s%s" % (_age_txt,
+                                   "" if _fresh is True else
+                                   " ⇒ 太旧了：控制台点一次「检查更新」再看这格（旧快照只能当历史）")))
     pid_txt = ""
     try:
         pid_txt = io.open(_p("data", "watchdog.pid"), encoding="utf-8", errors="replace").read()[:40]

@@ -13,12 +13,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import time
 
 from . import config as _config
 from . import local_guard          # V-R3-8：给回环地址的请求带上本机口令（唯一实现见 local_guard）
+log = logging.getLogger("persona-morph")
 
 ALLOW_REAL_FACE = False          # 恒 False：不做真人换脸/换身体（无开关可开）
 
@@ -217,6 +219,7 @@ def pick_backend():
     用户口径是「不要让用户搞这搞那的操作」：装好了就该直接用，不该还要求他记得去启动服务。
     """
     bs = backends()
+    _probe_err = ""
     if not bs:
         try:
             from . import sd_local as _sd
@@ -224,12 +227,19 @@ def pick_backend():
             if st.get("installed") and not st.get("server_alive"):
                 _sd.ensure_running()
                 bs = backends()
-        except Exception:
-            pass
+        except Exception as e:
+            # ⛔ V-R4-12b：原来吞掉异常直接落到"本机没探到常见生图服务…把其中一个跑起来"，
+            #   把"检查本身出错"说成"你没装" ⇒ **方向错的提示**。现在如实带出原因。
+            _probe_err = "%s: %s" % (type(e).__name__, str(e)[:80])
+            log.warning("检查/拉起「群相本地生图后端」时出错（%s）⇒ 这次不当作『没装』", _probe_err)
     if not bs:
         online = [b for b in (cfg().get("backends") or []) if isinstance(b, dict) and str(b.get("kind")) == "online"]
         if online and not cfg().get("online_allowed"):
             return None, "只配了在线生图后端，但 image_gen.online_allowed=False（出网未允许）"
+        if _probe_err:
+            return None, ("**检查本地生图后端时出错**（%s）⇒ 这与『有没有装』无关：先看日志，" % _probe_err
+                          + "或在控制台「要图」面板点「安装本地生图后端」重装一次，"
+                          + "也可以打开「允许出网」用免密钥在线生图")
         return None, ("本机没探到常见生图服务（A1111/Fooocus :7860/:7865 · ComfyUI :8188 · InvokeAI :9090），"
                       "也没有在控制台填后端 ⇒ 把其中一个跑起来，或在控制台「要图」面板点"
                       "「安装本地生图后端」（装完自动配好），或者打开「允许出网」用免密钥在线生图")

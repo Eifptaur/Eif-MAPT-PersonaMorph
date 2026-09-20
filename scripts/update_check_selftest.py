@@ -463,5 +463,26 @@ ok("as_bool((c or {}).get(\"trust_custom_url\"))" in _ucsrc2,
 ok(bool("false") is True and UC.pending_list("一") == ["一"],
    "反例锚：裸 `bool(\"false\")` **确实是 True** —— 这就是「写 false 反而开启」的来历")
 
+# ── ⛔ 2026-09-21（第四轮审计 **V-R4-12c**）：状态快照写失败**不许吞** ──
+#    原来 `except: pass` ⇒ `data/update_state.json` 留的是**旧快照**，而检验器把它当"现在的更新结论"
+#    报给用户。⇒ 写失败必须返回原因，`state()` 也得把它带出去。
+print("\n── V-R4-12c：`_write_state` 写失败要留下原因（旧快照 ≠ 现在的结论）──")
+ok(UC._write_state({"k": 1}) == "", "写成功 ⇒ 返回空串（正常路没被堵）")
+_block = os.path.join(tmp, "blocker")
+io.open(_block, "w", encoding="utf-8").write("我是文件，不是目录")
+_keep_sp = UC._state_path
+UC._state_path = lambda: os.path.join(_block, "update_state.json")
+try:
+    _why = UC._write_state({"k": 2})
+finally:
+    UC._state_path = _keep_sp
+ok(isinstance(_why, str) and bool(_why), "写失败 ⇒ 返回**人话原因**（不是 None / 空串）", _why)
+_ucsrc3 = io.open(os.path.join(ROOT, "agent", "update_check.py"), encoding="utf-8").read()
+_frag = _ucsrc3[_ucsrc3.find("def _write_state("):_ucsrc3.find("def current_version(")]
+ok("except Exception:\n        pass" not in _frag,
+   "反例锚：`_write_state` 里不再有 `except: pass`（老写法 ⇒ 返回 None ⇒ 上面那条必红）", _frag[-100:])
+ok('out["stateSaved"]' in _ucsrc3 and "stateSaveError" in _ucsrc3,
+   "源码级：`state()` 把写失败带出去（`stateSaved` / `stateSaveError`）")
+
 print("\n==== 更新检查判据：%d 通过 / %d 失败 ====" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

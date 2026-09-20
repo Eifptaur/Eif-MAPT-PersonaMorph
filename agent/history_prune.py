@@ -166,7 +166,7 @@ def prune_for_deleted_runs(store, all_entries, deleted, trash_root: str = "", st
                 src = None
                 try:
                     from . import store as _st
-                    src = _st.chat_file(ck)
+                    src = _st.chat_file_existing(ck)
                 except Exception:
                     src = None
                 if src and os.path.exists(src):

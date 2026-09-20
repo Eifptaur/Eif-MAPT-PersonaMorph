@@ -10,11 +10,13 @@
 只做**判断与状态**，不下载、不换文件（那是 `scripts/pm_update.py` 的活）。
 """
 import json
+import logging
 import os
 import time
 import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+log = logging.getLogger("persona-morph")
 STATE_REL = os.path.join("data", "update_state.json")
 
 
@@ -41,7 +43,13 @@ def _read_state() -> dict:
         return {}
 
 
-def _write_state(d: dict) -> None:
+def _write_state(d: dict) -> str:
+    """写更新状态快照。**成功返回 `""`，失败返回人话原因**（第四轮审计 V-R4-12c）。
+
+    ⛔ 原来 `except: pass` ⇒ 写失败无声无息，而 `data/update_state.json` 会被
+    `verifiers.v_update_stuck()` 当成"**现在**的更新结论"报给用户 —— 用户看到的其实是**旧快照**。
+    ⇒ 现在写失败必须留原因：调用方把原因带出去（`state()` 的 `stateSaveError`），日志里也有话。
+    """
     p = _state_path()
     try:
         os.makedirs(os.path.dirname(p), exist_ok=True)
@@ -50,8 +58,11 @@ def _write_state(d: dict) -> None:
             json.dump(d, fh, ensure_ascii=False, indent=2)
             fh.write("\n")
         os.replace(tmp, p)
-    except Exception:
-        pass
+        return ""
+    except Exception as e:
+        why = "%s: %s" % (type(e).__name__, str(e)[:80])
+        log.warning("更新状态快照写不进去（%s）⇒ 这次读数只对当场有效，下次打开会退回**旧快照**（别把旧快照当现在的结论）", why)
+        return why
 
 
 def current_version() -> str:
@@ -619,7 +630,10 @@ def state(cfg: dict | None = None, timeout: float = 12.0) -> dict:
         out["checkedAt"] = int(time.time())
         st = _read_state()
         st.update({"lastCheck": out["checkedAt"], "lastError": why, "lastStatus": "error"})
-        _write_state(st)
+        _wsw = _write_state(st)
+        out["stateSaved"] = (_wsw == "")
+        if _wsw:
+            out["stateSaveError"] = _wsw
         return out
     if used:
         out["url"] = used
@@ -691,7 +705,10 @@ def state(cfg: dict | None = None, timeout: float = 12.0) -> dict:
     st = _read_state()
     st.update({"lastCheck": out["checkedAt"], "lastStatus": out["status"], "lastError": "",
                "lastGoodUrl": out["url"]})          # 记住"哪个源能用"，下次先试它
-    _write_state(st)
+    _wsw = _write_state(st)                         # V-R4-12c：写失败要让外面看得见（别当"已记下"）
+    out["stateSaved"] = (_wsw == "")
+    if _wsw:
+        out["stateSaveError"] = _wsw
     return out
 
 
