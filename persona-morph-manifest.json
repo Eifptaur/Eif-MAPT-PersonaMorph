@@ -1,12 +1,12 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.21.2",
-    "sha256": "6a69506108b06c8453bb07e661c1d6ed5bf91d48185325abaa53b496e74805a7",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.44/persona-morph-v2.1.44.zip",
-    "build": "1731087e3888",
-    "size": 11234790,
-    "files": 318
+    "version": "2026.9.21.3",
+    "sha256": "82f3638faec08f040b32b3d4f9fbcc423caf3c56322a21a3861b094d4a380f21",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.45/persona-morph-v2.1.45.zip",
+    "build": "cc0eb9bb68bf",
+    "size": 14434322,
+    "files": 322
   },
   "dlc": [
     {
@@ -35,13 +35,13 @@
     }
   ],
   "announce": {
-    "version": "2026.9.21.2",
+    "version": "2026.9.21.3",
     "notes": [
-      "修复了一些 bug"
+      "新增：控制台小鲸鱼挂件升到上游 0.3.9（随上游带来新的挂件能力与修复）"
     ],
     "forceBase": false,
-    "minBase": "2026.9.21.2"
+    "minBase": "2026.9.21.3"
   },
-  "builtAt": "2026-09-20T21:29:56Z",
-  "updatedAt": 1789939796038
+  "builtAt": "2026-09-20T21:45:48Z",
+  "updatedAt": 1789940748892
 }
