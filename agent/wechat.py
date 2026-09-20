@@ -824,6 +824,32 @@ def is_search_window(cls: str, title: str) -> bool:
     return False
 
 
+# ── 切会话失败台账（给人看的：控制台「症状检验器 · 它不回复」读它）──────────────
+#   2026-09-21 加。起因（网友 v0919 追加反馈③「聊了一会儿就不回话了，运行日志只有那三行」）：
+#   失败过去只写 log.info，用户对着控制台完全看不出「消息进来了、回复却一条都发不出去」。
+_SWITCH_FAILS: list = []
+_SWITCH_FAILS_MAX = 20
+
+
+def note_switch_fail(where: str, why: str) -> None:
+    """记一条「切不到会话 / 确认不了目标会话」的失败（最近 N 条）。**绝不抛异常**。"""
+    try:
+        _SWITCH_FAILS.append({"t": time.strftime("%m-%d %H:%M:%S"), "where": str(where)[:40],
+                              "why": str(why)[:200]})
+        while len(_SWITCH_FAILS) > _SWITCH_FAILS_MAX:
+            _SWITCH_FAILS.pop(0)
+    except Exception:
+        pass
+
+
+def recent_switch_fails(n: int = 5) -> list:
+    """最近 N 条切会话失败（旧的在前）。"""
+    try:
+        return list(_SWITCH_FAILS)[-max(1, int(n)):]
+    except Exception:
+        return []
+
+
 def _close_search_popover(hwnd: int) -> bool:
     """投递 `WM_CLOSE` 关掉搜索浮层（对面 r12 实测：一枪就关，关掉后前台自动回微信主窗）。
 
@@ -2936,6 +2962,7 @@ class WeChatAdapter:
                                 if _idn is not True and _idn is not None:
                                     # 证据**说不是** ⇒ 坚决不发（防发错人）
                                     log.warning("切会话后内容级复核判否（%s）⇒ 这条不发（防发错人）", _idwhy)
+                                    note_switch_fail("切会话后内容级复核", str(_idwhy)[:140])
                                     return False, ("切完会话后**内容级复核说不是这个会话**（%s）⇒ 这条不发 —— "
                                                    "宁可漏发，绝不发错人。" % str(_idwhy)[:60])
                                 if _idn is None:
@@ -2947,6 +2974,7 @@ class WeChatAdapter:
                                     _nm_ok, _nm_why = self.chat_is_open(chat_id, gui=gui, name=name)
                                     if not _nm_ok:
                                         log.warning("无可比对文本，且名字档也没确认（%s）⇒ 这条不发", _nm_why)
+                                        note_switch_fail("名字档没确认", str(_nm_why)[:140])
                                         return False, ("这个会话里没有能比对的文字（%s），名字档也没确认（%s）⇒ "
                                                        "这条不发。把目标会话在微信里点开、或让它有一条文字消息，再重试。"
                                                        % (str(_idwhy)[:50], str(_nm_why)[:50]))
@@ -2965,6 +2993,9 @@ class WeChatAdapter:
                         _st_status = "异常:%s" % type(e).__name__
                 # ⛔ 退回真鼠标/真键盘前必须过这道闸（默认关；见 `_real_fallback_allowed` 注释里的事故）
                 if not self._real_fallback_allowed():
+                    # 2026-09-21：这条是"消息进来了、回复却发不出去"最常见的一跳 ⇒ 记台账，
+                    # 让控制台「症状检验器 · 它不回复」能把它摆出来（原来只有日志文件里一行）。
+                    note_switch_fail("发送前确认不了目标会话", str(_st_status))
                     return False, ("投递档确认不了目标会话（会话头三态=%s，投递切会话也没成）⇒ 按最高目标"
                                    "**不退回真鼠标**（`input.allow_real_fallback` 默认关，真鼠标会动你的光标）；"
                                    "要允许请显式打开它，或先把目标会话在微信里点开" % _st_status)
@@ -3318,6 +3349,52 @@ class WeChatAdapter:
         except Exception as e:
             log.warning("无激活还原最小化窗口失败：%s", e)
             return False
+
+    @staticmethod
+    def _clear_search_input(backend, hwnd) -> bool:
+        """**确定性清空**搜索框：Ctrl+A 全选 → Backspace 删。
+
+        为什么不数退格（2026-09-21，网友 v0919 追加反馈②③的根因）：固定退格数是个猜数，
+        框里字多一个就清不干净 ⇒ 查询词**累积**（「KC」→「KCKC」→「KCKCKC」）⇒ 结果行匹配不上
+        ⇒ 切会话永远失败 ⇒ 回复一条都发不出去。全选之后删，与框里有多少字无关。
+        失败时退回"多发几个退格"（空框时无害）；返回是否发出了清空动作。
+        """
+        try:
+            from . import input_backend as _ib
+            backend.keys(int(hwnd), (_ib.VK_CONTROL, 0x41))       # Ctrl+A
+            time.sleep(0.08)
+            backend.keys(int(hwnd), (0x08,))                     # Backspace
+            time.sleep(0.12)
+            return True
+        except Exception:
+            try:
+                backend.send_text(int(hwnd), "\b" * 24)           # 兜底：多退格（空框时无害）
+                time.sleep(0.12)
+                return True
+            except Exception:
+                return False
+
+    def _clear_search_windows(self, gui=None) -> int:
+        """把屏幕上**搜索窗里的查询词**清干净（返回清了几个）。只动搜索窗，绝不碰微信主窗。
+
+        调用点：搜索路线收尾（见 `open_chat_by_search` 的 finally）。目的是**不留痕迹**——
+        留在框里的词会被微信记进搜索历史，而且会成为下一次"累积"的种子。
+        """
+        n = 0
+        try:
+            from . import input_backend as _ib
+            backend = _ib.select_backend(gui=gui)
+            if not isinstance(backend, _ib.MessageBackend):
+                return 0
+            for h, *_r in self._search_window_hwnds(gui=gui):
+                try:
+                    if self._clear_search_input(backend, int(h)):
+                        n += 1
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return n
 
     def close_search_popovers(self, gui=None, only_new=None) -> int:
         """把屏幕上残留的**搜索窗口**关掉（返回关掉几个）。失败静默、**绝不关微信主窗**。
@@ -3673,7 +3750,10 @@ class WeChatAdapter:
                 _sok, _swhy = self.open_chat_by_search(chat_id, name=name, gui=gui)
                 if _sok:
                     return True, "搜索框切会话成功（%s）" % str(_swhy)[:60]
-                log.info("切会话：搜索框路线没成（%s）", str(_swhy)[:80])
+                # 2026-09-21：失败要在**日志里看得见**（原来只 log.info，用户对着控制台只能看到
+                # 三行 checkpoint ⇒ 完全不知道"消息进来了、回复却一条都发不出去"）。
+                log.warning("切会话：搜索框路线没成（%s）", str(_swhy)[:120])
+                note_switch_fail("搜索框路线", str(_swhy)[:160])
             except Exception as _e:                          # noqa: BLE001
                 _swhy = "异常：%s" % str(_e)[:80]
                 log.warning("切会话：搜索框路线异常（%s）", str(_e)[:80])
@@ -4098,11 +4178,13 @@ class WeChatAdapter:
                     shot_size = pimg.size
                     row = _co.find_popover_row(pimg, name)
                 if not row:
-                    try:
-                        backend.send_text(int(pop_hwnd), "\b" * 8)
-                        time.sleep(0.3)
-                    except Exception:
-                        pass
+                    # ⛔ 2026-09-21 改（网友 v0919 追加反馈 ②③ 的真根因）：清空**不许再「盲发 8 个退格」**
+                    #   ——那是个猜数、而且**不验证**：框里超过 8 个字就清不干净 ⇒ 下一次的查询词是
+                    #   「旧词＋新词」⇒ 越滚越长（现场：框里是「KCKCKC」，微信搜索历史里堆着
+                    #   「测试测试」「测试测试测试」「KC测试测试」一条比一条长）⇒ 结果行永远匹配不上
+                    #   ⇒ 切会话永远失败 ⇒ **每条回复都发不出去**（表现＝「聊一会儿就不回话了」）。
+                    #   ⇒ 改成**确定性清空**（Ctrl+A 全选 → Backspace 删，与框里有多少字无关）。
+                    self._clear_search_input(backend, int(pop_hwnd))
                     ok_t, why_t = backend.send_text(int(pop_hwnd), name)
                     if not ok_t:
                         return False, "往搜索浮层投字失败：%s" % why_t
@@ -4189,6 +4271,9 @@ class WeChatAdapter:
             self._click_posted(backend, main, (ox + int(ent["x"]), oy + int(ent["y"])),
                                  "搜索入口", allow_new=True)[0]
             time.sleep(0.25)                   # 2026-09-18：0.45 → 0.25
+            # ⛔ 2026-09-21 加：这条路线以前**完全不清空**搜索框 —— 上一次留下的字会跟这次拼在一起
+            #   （网友现场「KCKCKC」「测试测试测试」就是这么来的）。打字前一律先确定性清空。
+            self._clear_search_input(backend, int(main))
             ok_t, why_t = backend.send_text(main, name)
             if not ok_t:
                 return False, "搜索框打字失败：%s" % why_t
@@ -4275,6 +4360,12 @@ class WeChatAdapter:
             # ⚠️ 这条链会抢前台（开浮层/投字/点行，实测浮层 1.63s + 主窗 8.96s 且不还）⇒ 出去一律还回去。
             #    成功路径也照还：切完会话不需要占着前台。
             try:
+                # ⛔ 2026-09-21：出去之前**把搜索框里的查询词清干净**（确定性 Ctrl+A → Del）。
+                #   为什么必须在这里做：留在框里的词会被微信记进**搜索历史**（网友截图里那一串
+                #   「测试测试测试」「KC测试测试」），而且下次进来时它就是"累积"的种子。
+                _nclr = self._clear_search_windows(gui=gui)
+                if _nclr:
+                    log.info("切会话·搜索路线收尾：已清空 %d 个搜索框", _nclr)
                 # ⚡ 2026-09-18 晚：**本次新开的**搜索窗口一律关掉（含独立「搜索聊天记录」窗）——
                 #    作者现场「你怎么点出来个搜索聊天记录啊」就是失败路径把窗留在屏幕上造成的。
                 _closed = self.close_search_popovers(gui=gui, only_new=_pre_sw)

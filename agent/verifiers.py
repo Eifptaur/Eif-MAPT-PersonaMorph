@@ -359,6 +359,24 @@ def v_no_reply() -> dict:
     checks.append(_check("最近有过一轮响应", last_age is not None and last_age < 24 * 60,
                          ("最近一轮在 %.0f 分钟前（%s）" % (last_age, sess[-1])) if last_age is not None
                          else "今天的会话日志里没有可用时间戳"))
+    # ⛔ 2026-09-21 加（网友 v0919 追加反馈③：「聊了一会儿之后就不回话了」，而运行日志只有三行
+    #   checkpoint）：「消息进来了、回复却一条都发不出去」这一类过去只写 log.info ⇒ 用户对着界面
+    #   完全看不出毛病在哪。台账见 `wechat.note_switch_fail`。
+    try:
+        from . import wechat as _wx2
+        _sf = _wx2.recent_switch_fails(5)
+    except Exception:
+        _sf = []
+    if _sf:
+        _last = _sf[-1]
+        checks.append(_check(
+            "最近没有『切不到会话 ⇒ 回复发不出去』的记录", False,
+            "本次运行已有 %d 次没能把回复发出去（最后一条 %s · %s：%s）⇒ 它**读得到消息、只是发不出去**："
+            "把目标会话在微信里点开，或让它在会话列表/搜索里能被认出来，再试一次"
+            % (len(_sf), _last.get("t", "?"), _last.get("where", "?"), str(_last.get("why", ""))[:90])))
+    else:
+        checks.append(_check("最近没有『切不到会话 ⇒ 回复发不出去』的记录", True,
+                             "本次运行到现在没有这类失败"))
     tier_ok, tier_note = True, ""
     try:
         from . import prompt as _pr
