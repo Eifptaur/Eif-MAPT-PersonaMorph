@@ -5,13 +5,13 @@
 
 | 项 | 值 |
 |---|---|
-| 已 vendor 的上游版本 | **0.3.5**（2026-09-18 发布；上一版 0.2.10） |
-| 移植日期 | 2026-09-19 |
+| 已 vendor 的上游版本 | **0.3.9**（2026-09-21 升；0.3.5 = 2026-09-18，0.2.10 = 上一版）|
+| 移植日期 | 2026-09-19（0.3.5）；**2026-09-21 重新 vendor 到 0.3.9** |
 | 前端脚本 | `client/widget.js` ← 上游 `assets/whale-widget.js`（0.3.5 起前端脚本挪到 assets/ 下） |
 | 宿主侧 | `agent/whale.py`（Python 重写，非 Node） |
-| 原文留档 | `upstream-0.3.5/`（README / PROVENANCE / package.json） |
+| 原文留档 | `upstream-0.3.9/`（README / PROVENANCE / package.json）—— 0.3.5 的留档已随升级删除 |
 | 许可 | 代码 MIT；**`assets/**` 不在 MIT 范围内**（上游 `PROVENANCE.md`：图片/动图/音效 "as-is 随插件分发，不授予再许可"）。⚠️ 本项目移植并随包分发该挂件**已获原作者同意**（用户 2026-09-19 告知），这是继续 vendor 素材的前提。 |
-| 价目表 | **唯一来源** `agent/model_prices.py`（照抄上游 0.3.5 lib/index.js L436-495）。别在别处再写一份 —— 上游 0.3.5 改了表（Flash 2026-09-10 降价）与公式（reasoning ⊆ output，输出只算一次）。 |
+| 价目表 | **唯一来源** `agent/model_prices.py`（照抄上游 0.3.9 lib/index.js L436-495（**0.3.9 与 0.3.5 的表和公式一致**，已逐行对数））。别在别处再写一份 —— 上游 0.3.5 改了表（Flash 2026-09-10 降价）与公式（reasoning ⊆ output，输出只算一次）。 |
 
 ## 一、相对上游的改动（**唯一一处，重新 vendor 时必须重打**）
 
@@ -29,7 +29,7 @@ if (!r) r = document.body        // ← 群相移植补丁 v1（唯一改动）
 机械判据：`scripts/whale_widget_selftest.py` G 段 —— 该行必须**恰好出现一次**，且
 `client/widget.js` 必须带 `dshwv-` 类名与 0.3.x 的菜单文案（证明换的是新版而不是旧版）。
 
-## 二、接口覆盖（上游 0.3.5 客户端会调 22 个端点）
+## 二、接口覆盖（上游 0.3.9 客户端会调的端点 —— 与 0.3.5 **同一组 22 个**，已用正则从新脚本里抠出来对过）
 
 **已实现（7 个老端点，与 0.2.x 完全一致）**：
 `balance.json` · `size.json`（GET/PUT）· `last-turn.json` · `image.png` · `rua.gif` ·

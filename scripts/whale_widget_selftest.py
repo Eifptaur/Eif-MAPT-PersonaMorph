@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """小鲸鱼挂件（移植版）判据（2026-09-19 立）。
 
-起因：把上游 `dsh-whale-widget` 从 **0.2.10 升到 0.3.5** 时对账，发现两件必须守死的事 ——
+起因：把上游 `dsh-whale-widget` 从 **0.2.10 升到 0.3.5**（2026-09-21 再升到 **0.3.9**）时对账，发现两件必须守死的事 ——
   ① **价目表唯一来源**：仓里原本三份（`agent/whale.py` 挂件那份、`agent/llm.py::_OFFICIAL_PRICES`
      成本估算那份、`agent/stats.py` 注释那份）且互相打架 —— 挂件 pro 行是 4.5/13.5/0.15（Pro 保持
      Flash 3 倍价），而 llm.py 那份写的是 2/8/0.04 ⇒ **同一个 usage 在控制台会算出两个数**。
-     现在统一到 `agent/model_prices.py`（照抄上游 0.3.5 lib/index.js L436-495）。
-  ② **输出不许重复计费**：上游 0.3.5 修了 issue #89 / PR #83 —— `reasoningTokens ⊆ outputTokens`
+     现在统一到 `agent/model_prices.py`（照抄上游 lib/index.js L436-495；0.3.9 与 0.3.5 的表和公式一致）。
+  ② **输出不许重复计费**：上游（0.3.5 起）修了 issue #89 / PR #83 —— `reasoningTokens ⊆ outputTokens`
      ⇒ 输出侧只能算一次；旧移植版写的是 `(completion + reasoning)`，**偏高约一倍**。
-另外守：上游改价/改资产时这两条要能变红（把上游 0.3.5 的数字与文件名钉进判据）。
+另外守：上游改价/改资产时这两条要能变红（把上游的数字与文件名钉进判据；当前钉的是 **0.3.9**）。
 
 用法：`py -3 scripts\\whale_widget_selftest.py`
 """
@@ -65,10 +65,10 @@ ok("whale.py 里不再有价目表定义（只剩导入）",
 ok("上游调价时改哪儿写在文件抬头（下一个维护者不用猜）",
    "BASE_PRICE" in src("agent/model_prices.py") and "上游调价时改这一个文件" in src("agent/model_prices.py"))
 
-print("── B. 表值 == 上游 dsh-whale-widget@0.3.5（上游再涨价这里要红）──")
-ok("Flash 谷/峰四档 = 上游 0.3.5", P.BASE_PRICE == {"hit": [0.02, 0.04], "miss": [1.0, 2.0], "out": [4.0, 8.0]},
+print("── B. 表值 == 上游 dsh-whale-widget@0.3.9（上游再涨价这里要红）──")
+ok("Flash 谷/峰四档 = 上游 0.3.9", P.BASE_PRICE == {"hit": [0.02, 0.04], "miss": [1.0, 2.0], "out": [4.0, 8.0]},
    str(P.BASE_PRICE))
-ok("Pro 谷/峰四档 = 上游 0.3.5（Pro 保持 3 倍价、计费不变）",
+ok("Pro 谷/峰四档 = 上游 0.3.9（Pro 保持 3 倍价、计费不变）",
    P.PRO_PRICE == {"hit": [0.15, 0.3], "miss": [4.5, 9.0], "out": [13.5, 27.0]}, str(P.PRO_PRICE))
 ok("时段表 = 工作日 9-12 / 14-18（北京时间）", P.PEAK_HOURS == ((9, 12), (14, 18)), str(P.PEAK_HOURS))
 ok("周末全天谷价的生效分界在场（2026-08-23）", P.WEEKEND_VALLEY_FROM_SEC > 0)
@@ -172,18 +172,18 @@ ok("是 0.3.x 的界面（带 0.3 的菜单文案与新版类名）",
    "dshwv- × %d" % _cli.count("dshwv-"))
 _pn = src("whale-widget/PORT-NOTES.md")
 ok("移植记录在位（上游版本 / 补丁 / 接口覆盖 / 许可 / 重 vendor 步骤）",
-   all(k in _pn for k in ("0.3.5", "群相移植补丁 v1", "接口覆盖", "PROVENANCE", "重新 vendor")))
+   all(k in _pn for k in ("0.3.9", "群相移植补丁 v1", "接口覆盖", "PROVENANCE", "重新 vendor")))
 ok("移植记录写明素材许可与「已获原作者同意」（继续 vendor 的前提）", "已获原作者同意" in _pn)
-_up = os.path.join(ROOT, "whale-widget", "upstream-0.3.5")
+_up = os.path.join(ROOT, "whale-widget", "upstream-0.3.9")
 ok("上游原文留档在位（README / PROVENANCE / package.json）",
    all(os.path.exists(os.path.join(_up, f2)) for f2 in ("README-原版.md", "PROVENANCE-原版.md", "package.json")))
 try:
     import json as _json
     _pk = _json.load(open(os.path.join(_up, "package.json"), encoding="utf-8"))
-    ok("留档那份 package.json 版本 = 0.3.5（与 PORT-NOTES 对得上）", _pk.get("version") == "0.3.5",
+    ok("留档那份 package.json 版本 = 0.3.9（与 PORT-NOTES 对得上）", _pk.get("version") == "0.3.9",
        str(_pk.get("version")))
 except Exception as e:
-    ok("留档那份 package.json 版本 = 0.3.5", False, str(e)[:60])
+    ok("留档那份 package.json 版本 = 0.3.9", False, str(e)[:60])
 _wh = src("agent/whale.py")
 ok("新端点两种处理都在：能落地的真存（bubble/audio）+ 其余如实说不支持",
    "def save_cfg" in _wh and "def unsupported" in _wh and "_UNSUPPORTED" in _wh)
