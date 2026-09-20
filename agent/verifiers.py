@@ -70,7 +70,14 @@ def _port_open(port: int = 0, timeout: float = 0.6) -> bool:
 
 
 def _check(name, ok, detail) -> dict:
-    return {"name": name, "ok": bool(ok), "detail": str(detail)}
+    """一格检查。`ok` 是**三态**：True 通过 / False 未通过 / **None ＝ 没测到**。
+
+    ⛔ 2026-09-21 修（第四轮审计 **V-R4-11，P2**）：原来只允许布尔，于是"读不到就按乐观处理"
+    的那几处直接写了 `True` ⇒ 报告画 ✅，而结论可能与事实相反（审计点名：用户点「抢窗口」时
+    报告写「✅ 后台承诺成立」）。⇒ 现在"没测到"有自己的一档：**既不算通过、也不算失败**，
+    并在判决与逐项里单独标出来（**不许拿"没测到"冒充"承诺成立"**）。
+    """
+    return {"name": name, "ok": (None if ok is None else bool(ok)), "detail": str(detail)}
 
 
 def _count(lines, *needles) -> int:
@@ -89,9 +96,19 @@ def _verdict(checks, ok_all_msg, action_map) -> tuple:
     没填 key 根本发不出上一轮），那就**不许**再给"去填 key"这种指令：那是把**我们自己读数的错**
     当成用户的故障，用户只能一脸懵（原话「第三个贼奇怪」）。改判"证据矛盾、请把报告发我"。
     """
-    bad = [c for c in checks if not c["ok"]]
+    bad = [c for c in checks if c["ok"] is False]
+    unknown = [c for c in checks if c["ok"] is None]
+
+    def _caveat(msg):
+        """把"没测到"的项**明说出来**（V-R4-11：不许拿没测到冒充承诺成立）。"""
+        if not unknown:
+            return msg
+        _names = "、".join((c.get("name") or "?") for c in unknown[:4])
+        return ("%s（另有 %d 项**没测到**：%s%s —— 这些既不算通过也不算失败，别当成「承诺成立」）"
+                % (msg, len(unknown), _names, "…" if len(unknown) > 4 else ""))
+
     if not bad:
-        return True, ok_all_msg, ""
+        return True, _caveat(ok_all_msg), ""
     first = bad[0]
     _pos = {c.get("name") or "" for c in checks if c.get("ok")}
     # ⚠️ 2026-09-20：水位那一格已改名（`监听水位有记录` → **`监听水位有推进`**，并改成看"序号>0"），
@@ -105,7 +122,7 @@ def _verdict(checks, ok_all_msg, action_map) -> tuple:
                 "把这段报告直接粘进「反馈」发我（我照这条修检验器），**先不用改配置**")
     # 没在 action_map 里写明的检查，也要给一句可执行的下一步
     # （否则用户看到"卡住"却不知道干什么 —— 判据里专门钉了这一条）
-    return (False, "卡在「%s」：%s" % (first["name"], first["detail"]),
+    return (False, _caveat("卡在「%s」：%s" % (first["name"], first["detail"])),
             action_map.get(first["name"]) or "把这段报告粘进「反馈」发我，我照着这条定位")
 
 
@@ -134,7 +151,8 @@ def v_send_blocked() -> dict:
         checks.append(_check("版本门不拦发送", allow is not False,
                              "level=%s allow=%s" % (lvl, allow)))
     except Exception as e:
-        checks.append(_check("版本门不拦发送", True, "读不到版本门（按不拦处理）：%s" % str(e)[:40]))
+        checks.append(_check("版本门不拦发送", None,
+                             "说明（不是判据）：读不到版本门 ⇒ 没测到，按不拦处理：%s" % str(e)[:40]))
     # 投递后端 + 后台档
     ib = (c.get("input") or {})
     bo = bool((c.get("wechat") or {}).get("background_only", True))
@@ -177,8 +195,8 @@ def v_send_blocked() -> dict:
         from . import sender as _s
         og = _s.outbound_gate_status() or {}
         n = int(og.get("blocked") or og.get("count") or 0)
-        checks.append(_check("出站闸门没有误拦正常回复", True,
-                             "已拦下 %d 条内部故障话术（只留本机日志，不进群）" % n))
+        checks.append(_check("出站闸门没有误拦正常回复", None,
+                             "说明（不是判据）：已拦下 %d 条内部故障话术（只留本机日志，不进群）" % n))
     except Exception:
         pass
     ok, verdict, action = _verdict(checks, "发送链各环节都正常：暂停关、版本门放行、投递档可用、"
@@ -199,8 +217,9 @@ def v_self_echo() -> dict:
     ident = _read_json(_p("data", "self_identity.json"), {})
     sid = str(ident.get("wxid") or "")
     checks.append(_check("认识自己（self_wxid）或有替代证据",
-                         True, ("已认识：来源=%s" % ident.get("from")) if sid else
-                         "**没认出自己**——不影响：判自己还靠下面三档"))
+                         True if sid else None,
+                         ("已认识：来源=%s" % ident.get("from")) if sid else
+                         "**没认出自己**（不影响：判自己还靠下面三档，所以这里记「没测到」而不是判坏）"))
     local = _read_json(_p("data", "self_local_ids.json"), {})
     # 台账格式（2026-09-19 起带账号）：{"acct": "wxid_…", "rows": {chat: [[lid,ct,ts],…]}}；
     # 老格式就是 {chat: […] }。两种都读得出来，别让检验器因为格式升级而误报"台账是空的"。
@@ -220,9 +239,14 @@ def v_self_echo() -> dict:
     self_w = _count(led, '"self_wxid_hit": true')
     local_hit = _count(led, '"self_local_hit": true')
     echo = _count(led, '"echo_hit": true')
-    checks.append(_check("台账里能看到「判为自己」的证据", (self_w + local_hit + echo) >= 0,
-                         "最近 %d 条：喂给模型 %d 条 · self_wxid 命中 %d · **自家行号命中 %d** · 回声命中 %d"
-                         % (len(led), keep, self_w, local_hit, echo)))
+    # ⛔ V-R4-11：这一格原来是 `(self_w + local_hit + echo) >= 0` —— **恒真**（计数不可能为负）。
+    #   台账空的时候（刚装/还没发过）也判不了，那属于"没测到"，不是"通过"。
+    _ev_n = self_w + local_hit + echo
+    checks.append(_check("台账里能看到「判为自己」的证据",
+                         None if not led else (_ev_n > 0),
+                         "最近 %d 条：喂给模型 %d 条 · self_wxid 命中 %d · **自家行号命中 %d** · 回声命中 %d%s"
+                         % (len(led), keep, self_w, local_hit, echo,
+                            "" if led else "（台账还是空的 ⇒ 没测到）")))
     bad_reply = _count(_tail(_p("logs", "persona_morph.log"), 400), "回自己")
     checks.append(_check("近期没有『回自己』的记录", bad_reply == 0,
                          "日志里出现 %d 次相关记录" % bad_reply))
@@ -293,7 +317,7 @@ def v_no_reply() -> dict:
                          "旧版本重启一次机器人即可"
         checks.append(_check("读的是**正在用的那个微信号**", _acc_ok, _acc_note))
     except Exception as e:
-        checks.append(_check("读的是**正在用的那个微信号**", True,
+        checks.append(_check("读的是**正在用的那个微信号**", None,
                              "读不到账号信息（不影响其它判断）：%s" % str(e)[:40]))
     # ⭐ 2026-09-19 加（网友反馈「**大号能连、小号连接不上**」的行业口径：库目录 vs 选中的账号）：
     #    「数据库目录」填到**账号层**＝把某个号钉死（`wechat_dir.pick_account` 的 pinned 那条），
@@ -307,7 +331,7 @@ def v_no_reply() -> dict:
                              _hint or ("填的是账号目录的上一级，切号会自动跟随" if _cfgd
                                        else "没填自定义目录，按自动检测走")))
     except Exception as _e2:
-        checks.append(_check("「数据库目录」没有填到账号层", True,
+        checks.append(_check("「数据库目录」没有填到账号层", None,
                              "判不了（不影响其它判断）：%s" % str(_e2)[:40]))
     # ⚠️ 2026-09-19 修：原来读 `api.key`——**配置里根本没有这个字段**（真字段是 `api.api_key`，
     # 且运行时会先看 `providers[].api_key`）⇒ 所有用户的检验器都恒报「api.key 没填」的假卡点。
@@ -325,8 +349,11 @@ def v_no_reply() -> dict:
         _wl = [str(x) for x in ((c.get("wechat") or {}).get("group_name_white_list") or [])]
     except Exception:
         _wl = []
-    checks.append(_check("勾了监听目标群", True,
-                         ("白名单 %d 个：%s（**名字要与微信里完全一致**，差一个字就匹配不上 ⇒ 监听不到）"
+    # ⛔ V-R4-11：原来是硬编码 `True`（恒真）。白名单**留空＝监听所有群**是合法配置（判过）；
+    #   填了名字能不能真对上，由下面「监听水位有推进」那一格定论 ⇒ 这里只给"没测到 + 说明"。
+    checks.append(_check("勾了监听目标群", (True if not _wl else None),
+                         ("白名单 %d 个：%s（**名字要与微信里完全一致**，差一个字就匹配不上 ⇒ 监听不到；"
+                          "能不能对上由下面「监听水位有推进」那格定论）"
                           % (len(_wl), "、".join(_wl[:5]))) if _wl else "白名单留空 ＝ 监听所有群"))
     wm = _read_json(_p("data", "listener_watermark.json"), {})
     # ⛔ 2026-09-20 修（网友 v0920-0824 的报告里这一格被判 ✅：「水位条目 2 个，**最近：0**」）：
@@ -367,16 +394,12 @@ def v_no_reply() -> dict:
         _sf = _wx2.recent_switch_fails(5)
     except Exception:
         _sf = []
-    if _sf:
-        _last = _sf[-1]
-        checks.append(_check(
-            "最近没有『切不到会话 ⇒ 回复发不出去』的记录", False,
-            "本次运行已有 %d 次没能把回复发出去（最后一条 %s · %s：%s）⇒ 它**读得到消息、只是发不出去**："
-            "把目标会话在微信里点开，或让它在会话列表/搜索里能被认出来，再试一次"
-            % (len(_sf), _last.get("t", "?"), _last.get("where", "?"), str(_last.get("why", ""))[:90])))
-    else:
-        checks.append(_check("最近没有『切不到会话 ⇒ 回复发不出去』的记录", True,
-                             "本次运行到现在没有这类失败"))
+    _last = _sf[-1] if _sf else {}
+    checks.append(_check("最近没有『切不到会话 ⇒ 回复发不出去』的记录", not _sf,
+                         ("本次运行已有 %d 次没能把回复发出去（最后一条 %s · %s：%s）⇒ 它**读得到消息、只是发不出去**："
+                          "把目标会话在微信里点开，或让它在会话列表/搜索里能被认出来，再试一次"
+                          % (len(_sf), _last.get("t", "?"), _last.get("where", "?"), str(_last.get("why", ""))[:90]))
+                         if _sf else "本次运行到现在没有这类失败"))
     tier_ok, tier_note = True, ""
     try:
         from . import prompt as _pr
@@ -499,16 +522,24 @@ def v_fg_disturb() -> dict:
     except Exception:
         pass
     n = int(refused.get("count") or 0)
-    checks.append(_check("置前请求都被闸门拦住了", True,
-                         "累计拦下 %d 次置前/置顶%s" % (n, ("（最近原因：%s）" % str(refused.get("why"))[:60])
-                                                    if refused.get("why") else "")))
+    # ⛔ V-R4-11：这两格原来是硬编码 `True`（恒真）⇒ 报告画 ✅「闸门在拦」，而"没拦过"也画 ✅。
+    #   口径改成：**拦下过（n>0）才算有证据**；一次没拦 = **没测到**（不是承诺成立）。
+    checks.append(_check("置前请求都被闸门拦住了（拦下过才算数）",
+                         True if n > 0 else None,
+                         "累计拦下 %d 次置前/置顶%s%s"
+                         % (n, ("（最近原因：%s）" % str(refused.get("why"))[:60])
+                            if refused.get("why") else "",
+                            "" if n > 0 else " ⇒ 没拦下过 = 没测到（不能据此说闸门一定在工作）")))
     logs = _tail(_p("logs", "persona_morph.log"), 400)
     deny = _count(logs, "拒绝置前") + _count(logs, "拒绝置顶")
-    checks.append(_check("最近日志里能看到闸门在工作", True, "近 400 行里 %d 条拒绝置前/置顶" % deny))
+    checks.append(_check("最近日志里能看到闸门在工作", True if deny > 0 else None,
+                         "近 400 行里 %d 条拒绝置前/置顶%s"
+                         % (deny, "" if deny > 0 else " ⇒ 没有证据 ⇒ 没测到（不是通过）")))
     ok_audit = os.path.exists(_p("scripts", "fg_audit_selftest.py"))
     checks.append(_check("静态审计判据在（防止以后偷偷加置前）", ok_audit,
                          "scripts/fg_audit_selftest.py %s" % ("在" if ok_audit else "**不在**")))
-    ok, verdict, action = _verdict(checks, "后台承诺成立：只走后台开着、真鼠标兜底关着、闸门在拦、静态审计在",
+    ok, verdict, action = _verdict(checks, "只走后台开着、真鼠标兜底关着、静态审计判据在位"
+                                            "（闸门**有没有真的拦过**看上面那两格：拦下过才算证据）",
                                    {"「只走后台」是开着的": "控制台「微信」面板把「只走后台」打开",
                                     "真鼠标兜底是关着的": "把 input.allow_real_fallback 关掉"})
     return _finish("fg_disturb", "抢窗口 / 动我鼠标", "它把我的窗口顶到前台、抢我鼠标、打扰我打字",
@@ -540,7 +571,7 @@ def v_update_stuck() -> dict:
     ok_url = bool(url) and (":%d" % port) in url
     checks.append(_check("console.url 与控制台端口一致", ok_url,
                          "%s（端口应为 %d）" % ((url[:60] + "…") if url else "没有这个文件", port)))
-    checks.append(_check("更新完成标志（更新成功后会写）", True,
+    checks.append(_check("更新完成标志（更新成功后会写）", None,
                          "%s" % ("data/update_done.flag 在（上次更新已自完成）"
                                  if os.path.exists(_p("data", "update_done.flag")) else "没有完成标志")))
     ok, verdict, action = _verdict(checks, "更新链三件都在：状态文件、看门狗 pid、控制台端口与 console.url 对得上",
@@ -608,7 +639,7 @@ def v_update_source() -> dict:
             dt = time.time() - t0
             if man:
                 okn += 1
-                checks.append(_check("源 %s" % U._short_url(u), True,
+                checks.append(_check("源 %s" % U._short_url(u), bool(man),
                                      "通（%.1fs，远端版本 %s）"
                                      % (dt, (man.get("base") or {}).get("version") or "?")))
             else:
@@ -649,14 +680,18 @@ VERIFIERS = {
 
 
 def _finish(vid, name, symptom, ok, verdict, action, checks) -> dict:
+    _n_unk = sum(1 for c in checks if c.get("ok") is None)
     lines = ["【检验器 · %s】" % name,
              "症状：%s" % symptom,
              "判决：%s %s" % ("✅ 通过" if ok else "❌ 卡住", verdict)]
+    if _n_unk:
+        lines.append("（本页有 %d 项 **○ 没测到**：不算通过也不算失败 —— 别把「没测到」当「承诺成立」）" % _n_unk)
     if action:
         lines.append("下一步：%s" % action)
     lines.append("逐项证据（只读检查，没动窗口/没发消息）：")
     for ch in checks:
-        lines.append("  %s %s：%s" % ("✅" if ch["ok"] else "❌", ch["name"], ch["detail"]))
+        _m = "✅" if ch.get("ok") is True else ("❌" if ch.get("ok") is False else "○")
+        lines.append("  %s %s：%s" % (_m, ch["name"], ch["detail"]))
     lines.append("（这段可以直接粘进「反馈」发我）")
     return {"id": vid, "name": name, "symptom": symptom, "ok": bool(ok), "verdict": verdict,
             "action": action, "checks": checks, "report": "\n".join(lines)}
