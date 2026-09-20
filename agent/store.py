@@ -16,11 +16,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import threading
+import time
 
 from .config import DATA_DIR, get_config
+
+log = logging.getLogger("persona-morph")
 
 MESSAGES_DIR = os.path.join(DATA_DIR, "messages")
 
@@ -31,17 +35,59 @@ def chat_file(chat_key: str) -> str:
 
 
 def _load_chat(chat_key: str) -> dict:
+    """读某会话的档案。**读失败不再悄悄返回空壳**。
+
+    ⛔ 2026-09-21 修（第四轮审计 **V-R4-6，P1**）：老实现无论什么失败都返回空壳，
+    而调用方随后一保存就**用"空壳 + 新条目"覆盖掉原文件** —— 审计实测：8 条历史 165B → 1 条 279B，
+    等于**静默丢数据**（用户只会觉得"它把我之前的记录清了"）。⇒ 分三种情况：
+      · 文件**不存在** ＝ 新会话 ⇒ 正常空壳（合法路径，别拦）；
+      · 内容**坏**（解析不了）⇒ 把原文件**隔离**成 `*.corrupt-<时间戳>.json`（数据不丢、可人工恢复），
+        再开新档，并在新档里记 `quarantined`（日志/控制台看得见）；
+      · **读不动**（权限/被占用/IO 错）⇒ **绝不碰那个文件**，返回带 `_loadFailed` 的档，
+        `_save_chat` 见到它就**拒绝写盘**（fail-closed）：宁可这条不入档，也不覆盖别人的数据。
+    """
+    p = chat_file(chat_key)
+    if not os.path.exists(p):
+        return {"chat_key": chat_key, "next_local_id": 1, "messages": []}
     try:
-        with open(chat_file(chat_key), "r", encoding="utf-8-sig") as f:
-            parsed = json.load(f)
-        if isinstance(parsed, dict) and isinstance(parsed.get("messages"), list):
-            return parsed
-    except Exception:
-        pass
-    return {"chat_key": chat_key, "next_local_id": 1, "messages": []}
+        with open(p, "r", encoding="utf-8-sig") as f:
+            raw = f.read()
+    except OSError as e:
+        log.warning("会话档案读不动（%s）：%s: %s ⇒ **本次不写盘**（不覆盖原文件），这条不入档",
+                    chat_key, type(e).__name__, str(e)[:80])
+        return {"chat_key": chat_key, "next_local_id": 1, "messages": [],
+                "_loadFailed": "%s: %s" % (type(e).__name__, str(e)[:80])}
+    bad = ""
+    try:
+        parsed = json.loads(raw)
+        if not (isinstance(parsed, dict) and isinstance(parsed.get("messages"), list)):
+            bad = "结构不对（不是 {chat_key, next_local_id, messages:[...]}）"
+    except Exception as e:
+        bad = "%s: %s" % (type(e).__name__, str(e)[:80])
+    if not bad:
+        return parsed
+    # 内容坏 ⇒ **先隔离**（保数据），再开新档
+    q = "%s.corrupt-%s.json" % (p[:-5] if p.lower().endswith(".json") else p,
+                                time.strftime("%Y%m%d-%H%M%S"))
+    try:
+        os.replace(p, q)
+        log.warning("会话档案内容坏（%s：%s）⇒ 已隔离到 %s（旧数据没丢，可人工恢复），另开新档",
+                    chat_key, bad, os.path.basename(q))
+        return {"chat_key": chat_key, "next_local_id": 1, "messages": [],
+                "quarantined": os.path.basename(q)}
+    except OSError as e:
+        log.warning("会话档案内容坏、且隔离失败（%s：%s）⇒ **本次不写盘**（不覆盖原文件）",
+                    type(e).__name__, str(e)[:80])
+        return {"chat_key": chat_key, "next_local_id": 1, "messages": [],
+                "_loadFailed": "内容坏且隔离失败：%s" % str(e)[:60]}
 
 
 def _save_chat(state: dict) -> None:
+    # ⛔ V-R4-6：读失败（`_loadFailed`）时**拒绝写回** —— 否则空壳会把原档案覆盖掉。
+    if state.get("_loadFailed"):
+        log.warning("会话档案先前读失败（%s：%s）⇒ 本次**不写盘**（保原文件）",
+                    state.get("chat_key"), str(state.get("_loadFailed"))[:80])
+        return
     os.makedirs(MESSAGES_DIR, exist_ok=True)
     tmp = chat_file(state["chat_key"]) + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:

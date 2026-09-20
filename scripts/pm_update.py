@@ -83,6 +83,20 @@ def _touched(rel):
     return not any(rel == n.rstrip("/") or rel.startswith(n) for n in NEVER_TOUCH)
 
 
+def _ver_key(v: str) -> tuple:
+    """版本比较键。**与主路同源**：直接用 `agent.update_check.vtuple`（每段拆成 (数字,字母,数字)）。
+
+    ⛔ 2026-09-21 修（第四轮审计 **V-R4-14，P2**）：这里原来是**裸字符串比较** ——
+    `"2026.9.9" > "2026.9.10"` 在字符串序里是 **True**（'9' > '1'）⇒ 远端更旧也会报"有新版本"。
+    拿不到主路实现时返回 `()`，由调用方按"不敢比"处理；**绝不退回裸字符串比较**。
+    """
+    try:
+        from agent.update_check import vtuple as _vt
+        return _vt(v) or ()
+    except Exception:
+        return ()
+
+
 def check_update(manifest, target):
     """三态：newer / current / older（读不到清单由调用方处理）。"""
     base = manifest.get("base") or {}
@@ -94,8 +108,15 @@ def check_update(manifest, target):
                 "why": "本地没有版本记录（第一次接入更新链）"}
     if theirs == mine:
         return {"status": "current", "mine": mine, "theirs": theirs, "why": "已是最新"}
-    return {"status": "newer" if theirs > mine else "older", "mine": mine, "theirs": theirs,
-            "why": "远端 %s / 本地 %s" % (theirs, mine)}
+    # ⛔ V-R4-14：按**数值段**比，不按字符串比（`"2026.9.9" > "2026.9.10"` 是错的）
+    _kt, _km = _ver_key(theirs), _ver_key(mine)
+    if _kt and _km and _kt != _km:
+        return {"status": "newer" if _kt > _km else "older", "mine": mine, "theirs": theirs,
+                "why": "远端 %s / 本地 %s（按数值段比较）" % (theirs, mine)}
+    # 解析不出方向（版本号不是纯数字段式，或两侧解析成同一个键）⇒ 只敢说"不同"，不说方向
+    return {"status": "newer", "mine": mine, "theirs": theirs,
+            "why": "远端 %s / 本地 %s（版本号不是纯数字段式 ⇒ 只能按「不同即有新版本」处理）"
+                   % (theirs, mine)}
 
 
 def apply_update(manifest, patch, payload_zip, target, dry=False):

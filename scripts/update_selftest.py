@@ -101,6 +101,33 @@ try:
     man_old["base"]["version"] = "0.9.0"
     ok(U.check_update(man_old, target)["status"] == "older", "远端更旧 ⇒ older")
 
+    # ⛔ 2026-09-21 加（第四轮审计 **V-R4-14，P2**）：版本比较原来是**裸字符串** ——
+    #   `"2026.9.9" > "2026.9.10"` 在字符串序里是 **True**（'9' > '1'）⇒ 远端更旧也报"有新版本"。
+    #   注意本文件的 helper 是 `ok(cond, msg)`（**条件在前**），别按别的文件那套写反。
+    print("\n[U1b] 版本比较必须按**数值段**（不是字符串序）")
+    _man = lambda v: {"base": {"version": v}}                                    # noqa: E731
+    _t2 = os.path.join(tmp, "v2")
+    _st2 = os.path.join(_t2, U.STATE_REL)          # 用模块自己的常量，别猜路径（`data/installed.json`）
+    os.makedirs(os.path.dirname(_st2), exist_ok=True)
+    with open(_st2, "w", encoding="utf-8") as _f:
+        json.dump({"version": "2026.9.9", "sha256": "x"}, _f)
+    _r_new = U.check_update(_man("2026.9.10"), _t2)
+    ok(_r_new["status"] == "newer",
+       "本地 2026.9.9 / 远端 2026.9.10 ⇒ newer（按数值）：%s" % _r_new["why"])
+    _r_old = U.check_update(_man("2026.8.20"), _t2)
+    ok(_r_old["status"] == "older",
+       "本地 2026.9.9 / 远端 2026.8.20 ⇒ older（按数值：8 < 9）：%s" % _r_old["why"])
+    _r_same = U.check_update(_man("2026.9.9.0"), _t2)
+    ok(_r_same["status"] in ("newer", "older"),
+       "本地 2026.9.9 / 远端 2026.9.9.0 ⇒ 不崩、给出方向（同一个键 ⇒ 按「不同即有新版」）：%s" % _r_same["why"])
+    _r_xy = U.check_update(_man("x.y"), _t2)
+    ok(_r_xy["status"] in ("newer", "older"),
+       "版本号不是数字段式（x.y）也不崩、也不瞎定方向：%s" % _r_xy["why"])
+    # 反例锚：老写法（裸字符串比较）在这一组用例上**判错** ⇒ 证明上面两条断言有灵敏度
+    _old_cmp = (lambda theirs, mine: theirs > mine)
+    ok(_old_cmp("2026.9.9", "2026.9.10") is True,
+       "反例锚：裸字符串比较把 2026.9.9 > 2026.9.10 判成 True（老写法确实会误报有新版本）")
+
     print("\n[U2] 干跑：只说不做")
     before_a = sha(os.path.join(target, "agent", "a.py"))
     rc, msg, _ = U.apply_update(manifest, patch, payload, target, dry=True)
