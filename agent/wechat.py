@@ -1993,6 +1993,15 @@ class WeChatAdapter:
             d = {}
         w = str(d.get("wxid") or "").strip()
         _acct = str(d.get("acct") or "").strip()
+        # ⛔ 2026-09-21（V-R4 活体异常）：落盘里是**数字槽位号**这类坏值时，载入时也**不采用**
+        #   —— 否则重启之后继续拿它当"我自己"（那正是审计看到的 `{"wxid": "3"}`）。
+        if w and not _valid_self_id(w):
+            try:
+                log.warning("落盘的「自己是谁」不是账号形状（%r）⇒ 不采用，等这一轮从自己消息的回读里重新学",
+                            w[:12])
+            except Exception:
+                pass
+            return d
         _me = _db_account_of(self)
         _me_w = self.db_account_wxid()
         _stale = bool(w) and ((_acct and _me and _acct != _me) or (_me_w and w != _me_w))
@@ -2021,7 +2030,15 @@ class WeChatAdapter:
         现在把"我们刚发出去、又读回来的那条"当成最可靠样本：它的 sender_wxid 必然是我。
         """
         w = str(sender_wxid or "").strip()
-        if not w or w.startswith("gh_"):                 # 公众号等不是人，别学
+        # ⛔ 2026-09-21（V-R4 活体异常）：**数字槽位号不是账号**（`real_sender_id`）——
+        #   原来只挡了空串与 `gh_`，于是把 `"3"` 学成了"我自己"（审计在 `data/self_identity.json`
+        #   里抓到的就是这个）。判别收在一处：`_valid_self_id`。
+        if not _valid_self_id(w):
+            if w and not w.startswith("gh_"):
+                try:
+                    log.warning("回声里学会的「自己」不是账号形状（%r）⇒ 不学（数字槽位号会被误伤）", w[:12])
+                except Exception:
+                    pass
             return False
         if w == self._self_wxid:
             return False
@@ -9498,6 +9515,23 @@ def _deep_scan_xwechat(roots: list = None, max_depth: int = 4, budget: int = 400
                 seen.add(e.path)
                 frontier.append((e.path, depth + 1))
     return out
+
+
+def _valid_self_id(w: str) -> bool:
+    """这个字符串**配不配当"我自己"的 wxid**（一处实现，两个入口共用）。
+
+    ⛔ 2026-09-21（第四轮审计点名的活体异常）：`data/self_identity.json` 里存成了
+    `{"wxid": "3", "from": "echo", "sample": "[图片]"}` —— 把微信内部的**数字槽位号**
+    （消息表里的 `real_sender_id`）当成了"我自己"。一旦学错，下面那串"这条是不是我发的"
+    判断会**按槽位号误伤**（谁的槽位号撞上谁就被当成自己，表现为"机器人回自己/把别人的话当自己的"）。
+    ⇒ 只接受账号形状：非空、**不是纯数字**、长度 ≥ 5、且不是公众号（`gh_`）。
+    """
+    s = str(w or "").strip()
+    if not s or s.isdigit() or len(s) < 5:
+        return False
+    if s.startswith("gh_"):
+        return False
+    return True
 
 
 def _self_identity_hint() -> tuple:
