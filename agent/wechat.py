@@ -5592,6 +5592,12 @@ class WeChatAdapter:
                 return False, "活动行时间戳 OCR 连试 5 帧都没读出来（判据不可用）", False, True
             if self._norm_hhmm(_ht) != self._norm_hhmm(_lt):
                 return True, "活动行（y=%s）时间 %s ≠ 目标最后一条消息时间 %s" % (_hy, _ht, _lt), True, True
+            # ⛔ 2026-09-21：时间相同时**先问"这一分钟是不是只有它"**——两个会话同一分钟都有消息时，
+            #   这一档给不出结论（`decided=False`），调用方按"判不了就不放行"处理（见 chat_identity_ok）。
+            _rivals = self._same_minute_rivals(chat_id, _lt)
+            if _rivals:
+                return (False, "同一分钟还有别的会话也有消息（%s）⇒ 时间档分不出是哪个会话"
+                        % "、".join(_rivals[:3]), False, False)
             return False, "", True, True
         except Exception:
             return False, "判据异常", False, False
@@ -5813,6 +5819,14 @@ class WeChatAdapter:
         _lt = self._last_time_hhmm(chat_id)
         if not _lt:
             return False, "目标会话最后一条消息不是今天的（会话列表那行不显示 HH:MM）"
+        # ⛔ 2026-09-21：**同一分钟内还有别的会话也有消息 ⇒ 这一档没有区分力，一律不给正面结论**。
+        #   它的"第二道证据"（聊天区里出现同一 HH:MM）属于**当前开着的那个会话**——如果那个会话
+        #   恰好也在这一分钟有消息，它就自己满足了 ⇒ 循环论证 ⇒ 把回复投进另一个群（真机两群
+        #   最后消息只差 13 秒）。⇒ 直接返回 False（不是"是它"，也不是"不是它"）。
+        _rivals = self._same_minute_rivals(chat_id, _lt)
+        if _rivals:
+            return False, ("同一分钟（%s）还有别的会话也有消息（%s）⇒ 时间档分不出是哪个会话，"
+                           "改由名字/标题带那两档定论" % (_lt, "、".join(_rivals[:3])))
         try:
             _himg = _co.capture_best(gui=gui or self._get_gui(), frames=2)
             _ht, _hy = _co.highlight_time(_himg) if _himg is not None else ("", None)
@@ -5870,6 +5884,19 @@ class WeChatAdapter:
             want.add((lt.tm_year, lt.tm_mon, lt.tm_mday, lt.tm_hour, lt.tm_min))
         if not want:
             return False, "目标会话最近 %d 条没有可用时间" % len(rows), []
+        # ⛔ 2026-09-21：**同一分钟还有别的会话也有消息 ⇒ 这一档同样没有区分力**（理由见
+        #   `_same_minute_rivals`）：当前开着的另一个会话，它自己那条消息的 HH:MM 也落在目标的
+        #   最近时间集合里 ⇒ "两个独立来源"其实只有屏幕这一个来源。
+        try:
+            _t0 = float(rows[0].get("create_time") or 0)
+            if _t0 > 1e12:
+                _t0 = _t0 / 1000.0
+            _rivals = self._same_minute_rivals(chat_id, time.strftime("%H:%M", time.localtime(_t0)))
+        except Exception:
+            _rivals = []
+        if _rivals:
+            return False, ("同一分钟还有别的会话也有消息（%s）⇒ 时间档分不出是哪个会话"
+                           % "、".join(_rivals[:3])), []
         now = time.localtime()
         today = _dt.date(now.tm_year, now.tm_mon, now.tm_mday)
         hits, seen = [], set()
@@ -5907,6 +5934,83 @@ class WeChatAdapter:
             return time.strftime("%H:%M", lt)
         except Exception:
             return ""
+
+    def _monitored_chat_ids(self) -> list:
+        """本机**监听中的会话** chat_key 列表（群白名单 ∩ 群列表 ＋ 私聊目标）。
+
+        为什么需要（2026-09-21 真机定案）：时间类判据要回答"这一分钟是不是只属于目标"，
+        那就得知道**还有哪些会话可能在说话**。列表来自同一份配置与同一个选群实现
+        （`listen_targets.resolve_groups`），不另写一套匹配。缓存 60 秒（选群要读库/群列表，
+        不该在每次发送校验里重跑）。
+        """
+        _now = time.time()
+        _c = getattr(self, "_mon_cache", None)
+        if _c and (_now - float(_c[0])) < 60.0:
+            return list(_c[1])
+        out = []
+        try:
+            from . import listen_targets as _lt
+            _cfg = self.cfg or {}
+            _wl = (_cfg.get("wechat") or {}).get("group_name_white_list") or []
+            _dy = (_cfg.get("deny") or {}).get("groups") or []
+            for _g in (_lt.resolve_groups(self.list_groups() or [], _wl, _dy).get("groups") or []):
+                _w = str(_g.get("wxid") or "")
+                if _w:
+                    out.append("group:" + _w)
+        except Exception as _e:
+            log.debug("取监听群失败（时间档的同分钟核对会退化）: %s", _e)
+        try:
+            for _c2 in (self.list_private_targets() or []):
+                _w2 = str(_c2.get("wxid") or "")
+                if _w2:
+                    out.append("private:" + _w2)
+        except Exception as _e:
+            log.debug("取私聊目标失败（同上）: %s", _e)
+        try:
+            self._mon_cache = (_now, list(out))
+        except Exception:
+            pass
+        return out
+
+    def _same_minute_rivals(self, chat_id: str, hhmm: str, limit: int = 40) -> list:
+        """**同一分钟内**还有哪些监听中的会话也有最后一条消息 ⇒ 返回它们的名字（不含自己）。
+
+        ⛔ 这条是本项目"串群"家族的共享闸门（2026-09-21，由网友 v0919 的真机三个文件定案）。
+        会话列表只显示 `HH:MM`（分钟级）⇒ **两个会话在同一分钟都有消息时**，所有"用时间认身份"
+        的判据都**没有区分力**：
+          · `_row_time_conflict`（负判据"活动行时间≠目标最后时间 ⇒ 不是它"）不会报冲突；
+          · `_active_row_time_ok`（正判据）会拿"聊天区里出现同一 HH:MM"当独立证据——而那个聊天区
+            正好属于**当前开着（可能不是目标）的那个会话**，它自己就有同一分钟的消息 ⇒ **循环论证**；
+          · `_pane_time_hits` 同理。
+        网友真机数据：两个监控群（「KC」/「测试」）最后消息相差 **13 秒**（`listener_watermark.json`
+        1789879968000 / 1789879981000）⇒ 同一分钟 —— 他报的「我在第一个群说话、回答跑到第二个群」
+        就发生在这一格里（`persona_morph.log` 只有启停、没有处理明细，说明当时是"以为当前会话就是目标"
+        直接投递）。
+        ⇒ 口径：**这一档只在"这一分钟唯一属于目标"时才允许给结论**；有别人同分钟 ⇒ 返回它们的名字，
+          调用方按"判不出"处理（fail-closed：宁可漏发，绝不发错会话），并在文案里点明是谁在抢。
+        """
+        want = self._norm_hhmm(hhmm)
+        if not want:
+            return []
+        out = []
+        try:
+            _ids = self._monitored_chat_ids()[:max(1, int(limit))]
+        except Exception:
+            return []
+        for ck in _ids:
+            if ck == chat_id:
+                continue
+            try:
+                if self._norm_hhmm(self._last_time_hhmm(ck)) == want:
+                    _nm = ""
+                    try:
+                        _nm = str(self.display_name(ck.split(":", 1)[-1]) or "").strip()
+                    except Exception:
+                        _nm = ""
+                    out.append(("%s（%s）" % (_nm, ck)) if (_nm and _nm != ck) else ck)
+            except Exception:
+                continue
+        return out
 
     @staticmethod
     def _file_fingerprints(name: str) -> list:

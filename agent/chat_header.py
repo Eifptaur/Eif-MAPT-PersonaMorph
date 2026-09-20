@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import time
 
@@ -136,8 +137,34 @@ def similarity(a, b) -> float:
     return max(0.0, 1.0 - diff / 255.0)
 
 
+#: **第二条件**：暗点分布的**形状**一致性（余弦）。见 `pattern_score` 的说明。
+DEFAULT_COSINE = 0.95
+
+
+def pattern_score(a, b) -> float:
+    """两边归一化后的**余弦** —— 只看"暗点分布的形状"，不看整体幅度。
+
+    ⛔ 为什么必须加第二条件（2026-09-21 由网友 v0919 的真机 `chat_headers.json` 定案）：
+      `similarity` 是 `1 − 平均绝对差/255`，而会话头指纹绝大多数维是 0、只有中间十几维有值
+      ⇒ 值域被压在 0.85~1.0 这条窄带里 ⇒ **两个不同的短群名**能拿到很高的分。真机实测
+      （他的两个群「KC」/「测试」，1160x900 与 1562x1324 两档）：
+        · `similarity` = **0.9480 ≥ 0.90** ⇒ 判"同一个会话"（**假阳性**）；
+        · 同一会话 vs 自己 = 1.0000；跟 filehelper = 0.8783 ⇒ 0.90 这个阈值**没有安全间隔**。
+      而形状指标把这三者拉开：同一会话 **1.0000**、这两个短名 **0.8635**、filehelper **0.6471**
+      ⇒ 两个条件同时要求（`≥0.90` 且 `≥0.95`）就有 0.086 的安全余量，且同一会话仍然过。
+    """
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    na = math.sqrt(sum(float(x) * float(x) for x in a))
+    nb = math.sqrt(sum(float(y) * float(y) for y in b))
+    if na <= 0.0 or nb <= 0.0:
+        return 0.0
+    return max(0.0, sum(float(x) * float(y) for x, y in zip(a, b)) / (na * nb))
+
+
 def match(a, b, threshold: float = DEFAULT_THRESHOLD) -> bool:
-    return similarity(a, b) >= float(threshold)
+    """两个条件都过才算匹配（幅度相似 **且** 形状一致）。"""
+    return (similarity(a, b) >= float(threshold)) and (pattern_score(a, b) >= DEFAULT_COSINE)
 
 
 # ── 落盘（原子写）──────────────────────────────────────────────────────
@@ -172,11 +199,20 @@ def size_key(img_or_size) -> str:
 
 
 def remember(chat_id: str, fp, note: str = "", path: str = None, size: str = "*") -> dict:
-    """记住某会话**某个窗口尺寸下**的会话头指纹（覆盖式）。**空白图一律不记**（见 `is_blank`）。"""
+    """记住某会话**某个窗口尺寸下**的会话头指纹（覆盖式）。**空白图一律不记**（见 `is_blank`）。
+
+    ⛔ 2026-09-21 加**退化指纹**这一关（`degenerate_reason`）：网友真机库里那条
+    `[0]*63 + [255]` 就是被这里放进来的，进库以后那个尺寸档长期误判 ⇒ 学之前在门口拦掉。
+    """
     data = load(path)
     if is_blank(fp):
         log.warning("拒绝记住空白会话头指纹：%s（尺寸 %s）——大概率是窗口最小化/抓不到画面",
                     chat_id, size)
+        return data
+    _deg = degenerate_reason(fp)
+    if _deg:
+        log.warning("拒绝记住**退化**的会话头指纹：%s（尺寸 %s）—— %s（这条指纹没抓到名字那条带子；"
+                    "记进去会让这个尺寸档长期误判）", chat_id, size, _deg)
         return data
     ent = data.get(str(chat_id)) or {}
     sizes = ent.get("sizes") or {}
@@ -338,6 +374,36 @@ def is_blank(fp) -> bool:
     if (max(v) - min(v)) < 8:          # 全平：最小化 / 抓不到画面
         return True
     return min(v) > 110                 # 有起伏，但整条带子里一个暗列都没有 ⇒ 没有字
+
+
+def degenerate_reason(fp, bins: int = BINS) -> str:
+    """指纹是不是**退化的**（不是"没字"，而是"根本没抓到名字那条带"）——返回人话原因，空串＝正常。
+
+    ⛔ 真机证据（2026-09-21，网友 v0919 的 `data/chat_headers.json`）：
+    `49615732107@chatroom` 的 `1716x900` 参照 ＝ `[0]*63 + [255]`：**63 维是"没有墨"、只有最右边一维满墨**
+    （本文件的指纹是"逐列暗点密度"，`0`＝这一列没有字、`255`＝这一列满墨；正常一帧＝中间十几列有墨）。
+    同一会话其它四个尺寸（1562x1324 / 1160x900 / 1107x1324 / 1107x900）**逐字节完全相同且正常**
+    ⇒ 那一条是在画面异常时学到的。`is_blank` 抓不住它（极差 255、最暗列 0 都过），
+    而它一旦进了库，该尺寸档就**长期误判**（好帧跟它比只有 0.8713 < 0.90）。
+    判据三条（都取自"名字一定从这条带子的左边开始、且只占其中一段"）：
+      ① **有墨的列**（≥110）少于 2 个  ⇒ 那不是一行字；
+      ② 有墨的列全在右半段 ⇒ 名字不可能从那里开始；
+      ③ 整条带子几乎每一列都是墨（≥ 总数−8）⇒ 没抓到名字那条带（黑屏/整块背景）。
+    """
+    try:
+        v = [int(x) for x in fp]
+    except Exception:
+        return "指纹不是整数序列"
+    if not v:
+        return "空指纹"
+    ink = [i for i, x in enumerate(v) if x >= 110]
+    if len(ink) < 2:
+        return "有墨的列只有 %d 个（不是一行字；位置 %s）" % (len(ink), ink[:5])
+    if min(ink) >= max(1, len(v) // 2):
+        return "有墨的列全在右半边（最左墨列 第%d 维）⇒ 名字不可能从那里开始" % min(ink)
+    if len(ink) >= max(2, len(v) - 8):
+        return "几乎每一列都有墨（%d/%d）⇒ 没抓到名字那条带（黑屏或整块背景）" % (len(ink), len(v))
+    return ""
 
 
 def _window_belongs_to(hwnd, allow) -> bool:
@@ -552,11 +618,23 @@ def check(chat_id: str, gui=None, path: str = None,
                     key, chat_id)
         return {"status": "no_ref", "sim": 0.0, "size": key,
                 "note": "参照学歪了（那条带子里没有字）⇒ 本次不拦，成功发送后会重学"}
+    _deg = degenerate_reason(ref)
+    if _deg:
+        # ⛔ 2026-09-21：**退化参照**也按 no_ref 放行（同"学歪了"的道理）——
+        #   网友真机库里那条 `[0]*63+[255]` 就属于这一类，拿它比会长期误判（好帧只有 0.8713）。
+        log.warning("该尺寸（%s）的会话头参照是**退化**的（%s）⇒ 按 no_ref 放行、不再拦发：%s",
+                    key, _deg, chat_id)
+        return {"status": "no_ref", "sim": 0.0, "size": key,
+                "note": "参照退化（%s）⇒ 本次不拦，成功发送后会重学" % _deg}
     sim = similarity(ref, fp)
-    if sim >= threshold:
-        return {"status": "ok", "sim": sim, "size": key, "note": "相似度 %.3f" % sim}
-    return {"status": "mismatch", "sim": sim, "size": key,
-            "note": "相似度 %.3f < %.2f（当前打开的很可能不是 %s）" % (sim, threshold, chat_id)}
+    cos = pattern_score(ref, fp)
+    if sim >= threshold and cos >= DEFAULT_COSINE:
+        return {"status": "ok", "sim": sim, "cos": cos, "size": key,
+                "note": "相似度 %.3f · 形状 %.3f" % (sim, cos)}
+    return {"status": "mismatch", "sim": sim, "cos": cos, "size": key,
+            "note": ("相似度 %.3f < %.2f" % (sim, threshold)) if sim < threshold
+                    else ("形状一致性 %.3f < %.2f（分数像但暗点分布不像 ⇒ 多半是**另一个短名会话**）"
+                          % (cos, DEFAULT_COSINE))}
 
 
 def _gui():
@@ -570,11 +648,16 @@ def verify(chat_id: str, gui=None, render=None, threshold: float = DEFAULT_THRES
     ref = reference(chat_id, path)
     if not ref:
         return False, "没有 %s 的会话头参照（先用 remember() 存一次）" % chat_id
+    _deg = degenerate_reason(ref)
+    if _deg:
+        return False, "参照已失效（%s）⇒ 请重新学一次（下次发送成功会自动重学）" % _deg
     cur = capture(gui=gui, render=render)
     if not cur:
         return False, "这次没抓到会话头（窗口不可见？）"
     s = similarity(ref, cur)
-    return (s >= threshold), "相似度 %.3f（阈值 %.2f）" % (s, threshold)
+    c = pattern_score(ref, cur)
+    ok = (s >= threshold) and (c >= DEFAULT_COSINE)
+    return ok, "相似度 %.3f（阈值 %.2f）· 形状 %.3f（阈值 %.2f）" % (s, threshold, c, DEFAULT_COSINE)
 
 
 def seed_from_main(chat_id: str, note: str = "seeded", path: str = None) -> tuple:
