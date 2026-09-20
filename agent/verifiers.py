@@ -88,6 +88,32 @@ def _count(lines, *needles) -> int:
     return n
 
 
+def _fresh_age(secs, lo: float, hi: float):
+    """**统一的新鲜度助手**（三处共用）：`secs` 是不是落在 `[lo, hi]` 秒这个"刚写过"的区间里。
+
+    返回 `True` / `False` / `None(=读不到，没测到)`。
+
+    ⛔ 2026-09-21（第五轮回执 **V-R5A-3 + U3**）：三处"新鲜度"以前各写各的，而且**只看上界** ⇒
+    **未来时间**（系统时钟错乱、文件被改过、挂载时钟偏移）会被算成"刚刚写过"：
+    实测 `update_state.json` 的 mtime 设成 3 天后 ⇒ 判"最近 30 分钟内写的"，detail 里还打出
+    `-4320 分钟前`。⇒ 口径统一成三段（与项目惯例一致）：
+      · 读不到 ⇒ **None**（没测到）；
+      · **下界都不满足（含负数＝未来）⇒ False**（坏读数：这不是"新鲜"，也不是"旧"）；
+      · 区间内 ⇒ **True**；**超过上界 ⇒ None**（东西就是旧的＝这次没有新证据，不是"故障"）。
+    """
+    if secs is None:
+        return None
+    try:
+        s = float(secs)
+    except Exception:
+        return None
+    if s < float(lo):
+        return False
+    if s <= float(hi):
+        return True
+    return None
+
+
 def _verdict(checks, ok_all_msg, action_map) -> tuple:
     """一条总判决：第一条不通过的检查 ⇒ 它就是卡点（顺序即优先级）。
 
@@ -108,6 +134,13 @@ def _verdict(checks, ok_all_msg, action_map) -> tuple:
                 % (msg, len(unknown), _names, "…" if len(unknown) > 4 else ""))
 
     if not bad:
+        # ⛔ 2026-09-21（第五轮回执 **V-R5A-4**）：一项都没测到（全是 None）时**不许给 ✅** ——
+        #   以前只改了措辞（"另有 N 项没测到"），判决却仍是"通过"，用户看到的就是 ✅。
+        #   ⇒ 全空 ⇒ `ok=None`（没测到），由 `_finish` 渲染成"没测到"，调用方/面板都不把它当通过。
+        if checks and all(c["ok"] is None for c in checks):
+            return (None, "**一项都没测到**：%s（这不是「通过」，是这次没能取到判据所需的现场；"
+                          "把这段报告发我，或按下面几格补齐现场后重跑）"
+                    % "、".join((c.get("name") or "?") for c in checks[:4]), "")
         return True, _caveat(ok_all_msg), ""
     first = bad[0]
     _pos = {c.get("name") or "" for c in checks if c.get("ok")}
@@ -216,10 +249,24 @@ def v_self_echo() -> dict:
     checks = []
     ident = _read_json(_p("data", "self_identity.json"), {})
     sid = str(ident.get("wxid") or "")
+    # ⛔ 2026-09-21（第五轮回执 **V-R5B-5**）：坏身份（活体里是 `{"wxid":"3"}`）以前只在 wechat 的
+    #   两个读点净化，检验器这里**照样判「✅ 已认识」** ⇒ 用户点"它回自己"看到的是"通过"。
+    #   ⇒ 这里也走**同一个** `wechat._valid_self_id`（唯一实现），不合法就按"没测到"记账并说清原因。
+    _sid_bad = ""
+    if sid:
+        try:
+            from .wechat import _valid_self_id as _vsid
+            if not _vsid(sid):
+                _sid_bad, sid = sid, ""
+        except Exception:
+            pass
     checks.append(_check("认识自己（self_wxid）或有替代证据",
                          True if sid else None,
                          ("已认识：来源=%s" % ident.get("from")) if sid else
-                         "**没认出自己**（不影响：判自己还靠下面三档，所以这里记「没测到」而不是判坏）"))
+                         ("**学到的身份不合法（%r）**：那不是账号形状（纯数字/太短）⇒ 判定为「没测到」；"
+                          "它会在下次发送成功回读时被重学（也可删 data/self_identity.json 后重启）"
+                          % _sid_bad if _sid_bad else
+                          "**没认出自己**（不影响：判自己还靠下面三档，所以这里记「没测到」而不是判坏）")))
     local = _read_json(_p("data", "self_local_ids.json"), {})
     # 台账格式（2026-09-19 起带账号）：{"acct": "wxid_…", "rows": {chat: [[lid,ct,ts],…]}}；
     # 老格式就是 {chat: […] }。两种都读得出来，别让检验器因为格式升级而误报"台账是空的"。
@@ -295,9 +342,12 @@ def v_no_reply() -> dict:
                         _age = int(_now - float(_a["live"]))
                 except Exception:
                     _age = None
-                if _age is not None and _age <= 300:
+                # ⛔ V-R5A-3/U3：走统一助手（**未来时间**不算"刚写过"）
+                if _fresh_age(_age, 0, 300) is True:
                     _live_names.append(_nm)
                     _st = "库正在被写（%ds 前）" % _age
+                elif _age is not None and _age < 0:
+                    _st = "**时间戳在未来**（%ds）⇒ 这个读数不可信（时钟/文件被改过？）" % _age
                 elif _age is not None:
                     _st = "**没在动**（%s 前写过）" % (("%d 分钟" % (_age // 60)) if _age >= 90 else ("%ds" % _age))
                 else:
@@ -384,7 +434,8 @@ def v_no_reply() -> dict:
                 last_age = (time.time() - t0) / 60.0
         except Exception:
             pass
-    checks.append(_check("最近有过一轮响应", last_age is not None and last_age < 24 * 60,
+    checks.append(_check("最近有过一轮响应", _fresh_age(last_age * 60 if last_age is not None else None,
+                                                        0, 24 * 3600),
                          ("最近一轮在 %.0f 分钟前（%s）" % (last_age, sess[-1])) if last_age is not None
                          else "今天的会话日志里没有可用时间戳"))
     # ⛔ 2026-09-21 加（网友 v0919 追加反馈③：「聊了一会儿之后就不回话了」，而运行日志只有三行
@@ -563,7 +614,10 @@ def v_update_stuck() -> dict:
         pass
     checks.append(_check("更新状态文件可读", bool(st), "lastStatus=%s · version=%s · 快照是 %s"
                          % (st.get("lastStatus") or st.get("status") or "-", st.get("version") or "-", _age_txt)))
-    _fresh = True if (_age_min is not None and _age_min <= 30) else None
+    _fresh = _fresh_age((_age_min * 60) if _age_min is not None else None, 0, 30 * 60)
+    # ⛔ V-R5A-3：未来 mtime ⇒ `_fresh_age` 回 False（坏读数），detail 要写清是"未来"而不是"旧"。
+    if _fresh is False and _age_min is not None and _age_min < 0:
+        _age_txt = "写入时间在**未来**（%.0f 分钟）⇒ 这个快照不可信（时钟或文件被改过）" % _age_min
     checks.append(_check("这份快照是最近 30 分钟内写的（旧快照不算「现在的结论」）", _fresh,
                          "%s%s" % (_age_txt,
                                    "" if _fresh is True else
@@ -697,9 +751,12 @@ VERIFIERS = {
 
 def _finish(vid, name, symptom, ok, verdict, action, checks) -> dict:
     _n_unk = sum(1 for c in checks if c.get("ok") is None)
+    # ⛔ V-R5A-4：`ok=None`（全项没测到）要**如实画成「○ 没测到」**，不许落进 `if ok` 的假值分支
+    #   画成 ❌（那是"证据说不是"），也不许画 ✅（那是"承诺成立"）。
+    _head = "✅ 通过" if ok is True else ("❌ 卡住" if ok is False else "○ 没测到")
     lines = ["【检验器 · %s】" % name,
              "症状：%s" % symptom,
-             "判决：%s %s" % ("✅ 通过" if ok else "❌ 卡住", verdict)]
+             "判决：%s %s" % (_head, verdict)]
     if _n_unk:
         lines.append("（本页有 %d 项 **○ 没测到**：不算通过也不算失败 —— 别把「没测到」当「承诺成立」）" % _n_unk)
     if action:
@@ -709,8 +766,8 @@ def _finish(vid, name, symptom, ok, verdict, action, checks) -> dict:
         _m = "✅" if ch.get("ok") is True else ("❌" if ch.get("ok") is False else "○")
         lines.append("  %s %s：%s" % (_m, ch["name"], ch["detail"]))
     lines.append("（这段可以直接粘进「反馈」发我）")
-    return {"id": vid, "name": name, "symptom": symptom, "ok": bool(ok), "verdict": verdict,
-            "action": action, "checks": checks, "report": "\n".join(lines)}
+    return {"id": vid, "name": name, "symptom": symptom, "ok": (None if ok is None else bool(ok)),
+            "verdict": verdict, "action": action, "checks": checks, "report": "\n".join(lines)}
 
 
 def catalog() -> list:

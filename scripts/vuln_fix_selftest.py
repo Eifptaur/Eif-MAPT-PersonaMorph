@@ -893,6 +893,9 @@ ok("控制台也认这个新状态（前端后端一体，否则后端说了界�
    "s.status === 'pending'" in _ch_src, "见 console_html.py 更新条")
 ok("…半装时**禁止**「不再提醒这个版本」（否则会把这条提醒永久消音）",
    "cur.status !== 'newer'" in _ch_src)
+# ⛔ V-R5B-10：`stateSaveError` / `stateSaved` 以前**全仓没有消费者**（写快照失败只有日志知道）
+ok("V-R5B-10 控制台真的**消费** `stateSaveError`（后端说有字段、界面不读＝等于没接线）",
+   "s.stateSaveError" in _ch_src and "s.stateSaved === false" in _ch_src)
 
 print("\n── 第五轮回执 V-R5R-1 / V-R5R-3：**取清单那条**也必须看最终地址（同一条修复的另一半）──")
 # ⛔ 现场（回执实测）：`_dl_once` 补上了"回读最终地址"，而 `fetch()`（取清单那条）没补 ⇒
