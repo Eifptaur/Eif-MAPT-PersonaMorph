@@ -92,7 +92,7 @@ def _filename_key(fn: str) -> str:
 
     ⛔ 2026-09-21（第五轮回执 **V-R5A-6 / V-R5B-2**）：哈希尾巴**只有在确实等于 md5(前面那段) 时才剥**
     —— 老实现无脑 `re.sub(r"_[0-9a-f]{8}$", "")`，会把**合法 wxid** 的尾巴削掉
-    （`group:wxid_deadbeef` → `group:wxid` ⇒ 与另一个会话撞车、还把真会话弄丢）。
+    （带 8 位十六进制尾巴的**合法 wxid** 会被削掉尾巴 ⇒ 与另一个会话撞车、还把真会话弄丢）。
     """
     base = fn[:-5] if fn.lower().endswith(".json") else fn
     m = re.match(r"^(group|private)_(.+)_([0-9a-f]{8})$", base)
