@@ -284,13 +284,40 @@ try:
     ck("H2 这一关排在 mismatch 那一关**之前**（先补强证据，再谈指纹判否）",
        _SEG.index('if _st["status"] == "ok":') < _SEG.index('if _st["status"] == "mismatch":'))
     ck("H3 强档给不出时**先按名字切会话**再发（按名字选行，比『当前开着的恰好是它』可靠）",
-       "_sw2_ok, _sw2_why = self.switch_chat_posted(chat_id, gui=gui, name=name)" in _SEG)
+       "_sw2_ok, _sw2_why = self.switch_chat_posted(chat_id, gui=gui)" in _SEG)
+    # ⛔ 2026-09-21（V-R4-5 掀出来的真缺陷）：原来这两处写的是 `name=name`，而本函数里**没有 `name`**
+    #   ⇒ 每次指纹判 ok 都抛 NameError、被 except 吞掉继续发送 ⇒ **强档复核从来没跑过**。
+    #   ⇒ 这条断言钉住"不许再引用未定义的名字"（`name=name` 这种写法不许回来）。
+    # ⚠️ 静态判据只看**代码**（本段新写的注释里为解释历史引用了老的 `name=name`）
+    _SEG_CODE = "\n".join(_l for _l in _SEG.splitlines() if not _l.strip().startswith("#"))
+    ck("H3b 这一段不许引用未定义的 `name`（老写法 `name=name` ⇒ NameError ⇒ 强档从没跑过）",
+       "name=name" not in _SEG_CODE and "chat_is_open(chat_id, gui=gui)" in _SEG_CODE)
     ck("H4 两条都不成才拒，且说明里点明『弱档会假阳性』＋『宁可漏发，绝不发错会话』",
        "弱档、会假阳性" in _SEG and "宁可漏发，绝不发错会话" in _SEG)
     ck("H5 不静默：拒发时同时落一条 warning 日志（现场可查）",
        "不直接发，先按名字切会话再试" in _SEG)
     ck("H6 与 `chat_is_open` 既有口径一致（那里早就写明授权闸默认不接指纹）",
        "allow_weak" in SRC and "授权写动作的最后一道闸绝不接它" in SRC)
+    # ⛔ 2026-09-21 加（第四轮审计 **V-R4-5（P1）**）：**闸门自己出错 ≠ 闸门放行**。
+    #   老写法是 `except Exception: log.warning("会话头校验跳过")` 之后**继续往下发送** ⇒
+    #   一遇到异常（指纹/抓图/OCR 任一抛错）就回到"没有闸"的状态 —— 恰好是最该拦的时候不拦。
+    # ⚠️ 静态判据只看**代码**：新写的注释里为了解释历史引用了旧文案（"会话头校验跳过"），
+    #    不剥注释就会把这条判成红（同 `poke_locate_selftest.code_of` 的教训）。
+    _CODE = "\n".join(_l for _l in SRC.splitlines() if not _l.strip().startswith("#"))
+    ck("H7 会话头闸**自身出错**时报 fail-closed（不再 log 一句就继续发）",
+       "会话头闸异常" in _SEG and "if not allow_no_ref:" in _SEG
+       and "这条**不发**" in _SEG and "会话头校验跳过" not in _CODE)
+    ck("H7 例外只留给『调用方已显式确认身份』这条通道（allow_no_ref=True 才继续）",
+       "但调用方已显式确认过身份（allow_no_ref=True）" in _SEG)
+    ck("H7 闸异常也记台账（控制台/检验器看得见）",
+       'note_switch_fail("会话头闸异常"' in _SEG)
+    # 反例锚：老写法（只有一行 warning、没有 return False）必须被同一组判据判不合格
+    _OLD_GATE = ('            except Exception as _e:\n'
+                 '                log.warning("会话头校验跳过：%s", _e)\n'
+                 '            r = gui.render_rect or (0, 0, 0, 0)\n')
+    _old_bad7 = ("会话头闸异常" not in _OLD_GATE and "if not allow_no_ref:" not in _OLD_GATE
+                 and "会话头校验跳过" in _OLD_GATE)
+    ck("H7 反例锚：老写法（log 一句就继续发）**确实**会被判不合格", _old_bad7 is True)
 except Exception as e:
     ck("H 弱档指纹不授权", False, repr(e)[:90])
 
