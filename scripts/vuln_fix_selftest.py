@@ -931,6 +931,11 @@ finally:
     except Exception:
         pass
 
+ok("V-R5R-4 折叠层有**行为级**判据：反斜杠/多重编码的点段也得认出来（不只是「函数存在」）",
+   uc.has_dot_segments("a\\..\\b") is True and uc.has_dot_segments("%252e%252e/x") is True
+   and uc.has_dot_segments("a/../b") is True and uc.has_dot_segments("a/b") is False,
+   str((uc.has_dot_segments("a\\..\\b"), uc.has_dot_segments("%252e%252e/x"))))
+
 print("── 判据自省：不许再「伪造被测条件」 ──")
 # 关键字**运行时拼**出来，免得这条检查把自己的源码也算成命中（自指假红）。
 _BAD = "win" + "error"

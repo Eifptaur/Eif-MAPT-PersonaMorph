@@ -107,6 +107,10 @@ EARLY_EXIT_S = 10.0                 # 存活不足这个秒数 ⇒ 算"启动失
 BACKOFF_BASE_S = 5.0                # 退避基数
 BACKOFF_CAP_S = 600.0               # 退避上限（10 分钟）
 MAX_EARLY_FAILS = 5                 # 连续启动失败到这个次数就停手留痕
+#: 窗口限流（业界对账第 ⑤ 条）：`WINDOW_S` 秒内重启 `WINDOW_MAX` 次 ⇒ 判「反复崩溃」、停手留痕。
+#: 为什么单列：老口径「跑够 10 秒就清零」，于是「每次都在第 61 秒崩」会无限重启。
+WINDOW_S = 600.0                    # 观察窗（10 分钟）
+WINDOW_MAX = 6                      # 窗口内最多重启次数（给正常重启语义留足余量）
 RESTART_GAP_S = 5.0                 # 正常退出后的重拉间隔（老口径，保持不变）
 EXIT_ALREADY_RUNNING = 3            # `persona_morph.py` 的单实例闸门退出码
 
@@ -281,6 +285,7 @@ def main():
     except Exception:
         pass
     fails = 0                                    # 连续"启动失败"计数（V-R2-1）
+    _stamps = []                                 # 窗口限流用的重启时间戳（对账第 ⑤ 条）
     while True:
         # 用户在 5 秒宽限期内的「停止」请求 → 不再拉起，直接退场
         if os.path.exists(STOP_FLAG):
@@ -343,6 +348,17 @@ def main():
             time.sleep(_d)
             continue
         fails = 0                                # 跑够时长了 ⇒ 连续失败计数清零（正常重启语义）
+        # ⛔ 2026-09-21（第五轮回执 · 业界对账第 ⑤ 条）：**窗口限流** —— 老口径只在"活不足 10 秒"时
+        #   计数，跑够 61 秒就清零 ⇒ "每次都在第 61 秒崩"会**无限重启到天亮**（退避永远从头开始）。
+        #   ⇒ 再记一个滑动窗口：WINDOW_S 秒内重启次数 ≥ WINDOW_MAX ⇒ 停手留痕（与"连续秒退"分开记）。
+        _stamps.append(time.time())
+        _stamps[:] = [t for t in _stamps if (time.time() - t) <= WINDOW_S]
+        if len(_stamps) >= WINDOW_MAX:
+            _note("最近 %.0f 秒内重启了 %d 次（本次活了 %.1fs，退出码=%s）⇒ 判为**反复崩溃**，"
+                  "看门狗停手不再重拉。先看本文件上面几行的原因；修好后点「一键启动」。"
+                  % (WINDOW_S, len(_stamps), _alive, rc))
+            _drop_own_pid_file()
+            return 1
         time.sleep(RESTART_GAP_S)
 
 
