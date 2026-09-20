@@ -91,8 +91,9 @@ ok("同一次借用里再 note 不覆盖（返回 False）", WB.note_original(77
 f.rect = (200, 60, 1360, 960)          # 模拟"被我们钉成了别的尺寸"
 ok("用户/我们中途改了 rect，也不覆盖原始记账", WB.note_original(777) is False
    and WB.snapshot()["rect"] == (100, 50, 1260, 950))
-ok("note_forced() 记下我们钉的那一版", (WB.note_forced((200, 60, 1360, 960)) or True)
-   and WB.snapshot()["forced"] == (200, 60, 1360, 960))
+# ⛔ V-R5R-4：`(WB.note_forced(...) or True)` 把返回值抹掉了 ⇒ 先调用、再断言真正的结果
+WB.note_forced((200, 60, 1360, 960))      # 返回值不承载证据，证据看下面的 snapshot
+ok("note_forced() 记下我们钉的那一版", WB.snapshot()["forced"] == (200, 60, 1360, 960))
 
 print("\n[二] 归还的规矩（C/D/E）")
 f = fresh()

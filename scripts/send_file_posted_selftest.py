@@ -76,7 +76,8 @@ ok("文件指纹＝文件名里那串「日期+构建号」数字，并给出去
 _fps = A._file_fingerprints("Agent启动器-2026.09.14.383.zip")
 ok("运行时：从真实文件名提出指纹 20260914383（含 2026914383 变体）",
    "20260914383" in _fps and "2026914383" in _fps, str(_fps))
-ok("运行时：没有版本号的文件名不硬凑指纹（返回空，交给别的档）", A._file_fingerprints("Eif-MAPT-console-0.1.4.zip") == [] or True,
+ok("运行时：没有版本号的文件名不硬凑指纹（返回空，交给别的档）", # ⛔ V-R5R-4：`== [] or True` 恒真 ⇒ 去掉 `or True`
+   A._file_fingerprints("Eif-MAPT-console-0.1.4.zip") == [],
    str(A._file_fingerprints("note.md")))
 # 2026-09-14 修的两个真缺陷（E 明明开着、闸门却判否）——自检钉住，别让它回来：
 # ⚠️ 2026-09-16：这两档**抽成了 `_active_row_time_ok()`**（`chat_identity_ok` 与 `chat_is_open`

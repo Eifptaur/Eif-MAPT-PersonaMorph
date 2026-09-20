@@ -350,7 +350,8 @@ ck("B20 忙闲判据用 Windows 通知系统那套（SHQueryUserNotificationStat
    "SHQueryUserNotificationState" in SRC_WECHAT and "QUNS_BUSY" in SRC_WECHAT
    and "前台窗口铺满整块屏幕" in SRC_WECHAT)
 ck("B20a 全屏/演示/静默这些状态都算忙（状态表覆盖）",
-   all(("1:" in SRC_WECHAT or True) for _ in [0]) and SRC_WECHAT.count("QUNS_BUSY") >= 2
+   # ⛔ V-R5R-4：`("1:" in SRC_WECHAT or True)` 是**死合取项**（恒真）⇒ 去掉它，只留真判据
+   SRC_WECHAT.count("QUNS_BUSY") >= 2
    and "D3D 独占全屏游戏" in SRC_WECHAT and "演示模式" in SRC_WECHAT and "系统静默时段" in SRC_WECHAT)
 _ck20 = ["self._busy_reason(\"切会话\")", "self._busy_reason(\"搜索切会话\"", "self._busy_reason(\"按键走格\"",
          "self._busy_reason(\"表情面板\")", "self._busy_reason(\"投递发送\""]

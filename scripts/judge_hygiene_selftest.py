@@ -104,8 +104,14 @@ def main():
             if ni is not None and len(args) > ni and _is_bool_const(args[ni]):
                 bad.append("%s:%d %s() 的名字位是**布尔字面量**（打印出来是 True/False，没有人话）⇒ 实参写反了"
                            % (fn, getattr(node, "lineno", 0), node.func.id))
-    ok("① 扫到了判据脚本（≥100 个才叫扫到了；认不出 helper 签名的跳过并列出）",
-       scanned >= 100, "有签名的 %d 个 / 共 %d 个；跳过 %d 个" % (scanned, len(files), len(skipped)))
+    # ⛔ V-R5R-4：`skipped` 门不严 —— 只要有文件"认不出签名"被跳过，那个门就等于没有。
+    #   口径：**跳过只许来自白名单**（现在只有跑全套的 runner 一个），白名单只许降。
+    _SKIP_ALLOW = {"run_all_selftests.py"}
+    _unexpected = [x for x in skipped if x not in _SKIP_ALLOW]
+    ok("① 扫到了判据脚本（≥100 个；跳过**只许**来自白名单，名单只许降）",
+       scanned >= 100 and not _unexpected, "有签名的 %d 个 / 共 %d 个；跳过 %s%s"
+       % (scanned, len(files), skipped or "无",
+          ("（⚠️ 白名单外的跳过：%s ⇒ 先收掉它）" % "、".join(_unexpected)) if _unexpected else ""))
     ok("② **零**违规：条件位不许是字符串、名字位不许是布尔（V-R4-4 这一类）",
        not bad, bad[:8] if bad else "")
     if skipped:

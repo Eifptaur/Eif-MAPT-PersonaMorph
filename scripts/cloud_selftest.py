@@ -187,7 +187,8 @@ def main():
         r = cloud.upload("persona", {"a": 1}, dry=False)
         ok("默认仍是 bearer（不写 auth_style 时行为不变）",
            sent[0]["headers"].get("authorization") == "Bearer T0KEN" and r["ok"], r.get("auth_style"))
-        ok("未知 which ⇒ 拒绝", not cloud.upload("nope", {})["ok"] or True)
+        # ⛔ 2026-09-21（第五轮回执 V-R5R-4）：原来写成 `not ...["ok"] or True` ⇒ **恒真**（改成什么都过）
+        ok("未知 which ⇒ 拒绝", cloud.upload("nope", {})["ok"] is False)
         cloud.urllib.request.urlopen = real_urlopen
 
         print("== D. 快照与接线 ==")
