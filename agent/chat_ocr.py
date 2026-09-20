@@ -415,6 +415,16 @@ def norm(text: str) -> str:
     return t.lower()
 
 
+_JUNK_HEAD = ("o", "0", "〇", "○", "●", "•", "·")        # 实测到的"标题带前导噪声"字符
+_CNT_TAIL = re.compile(r"[（(]\s*(\d+)\s*[）)]\s*$")
+
+
+def _count_tail(s: str) -> str:
+    """取末尾的括号数字（`测试(2)` → `2`）；没有就回空串。"""
+    m = _CNT_TAIL.search(str(s or "").strip())
+    return m.group(1) if m else ""
+
+
 def matches_strict(text: str, name: str) -> bool:
     """**授权档**的名字判据：归一化后必须**完全相等**，不做包含。
 
@@ -427,9 +437,15 @@ def matches_strict(text: str, name: str) -> bool:
 
     归一化会剥掉时间/标点/群名后的成员数「（8）」等装饰（见 `norm()`），
     所以「演示（3）」与「演示」照样判相等。
-    ⚠️ 残留风险（写在这里，别当成已解决）：若真有两个群叫「测试」与「测试(2)」，
-      `norm()` 会把后者的括号数字也当"成员数"剥掉 ⇒ 二者仍然相等。根治要把群人数
-      从库里取来核；在此之前这一档**宁可判否（漏发）也不放行**（发错群是对外可见的事故）。
+
+    ⛔ 2026-09-21 再收紧（第四轮审计 **V-R4-8**，两条残留）：
+      ① 前导噪声**只容忍实测到的那几个字符**（`o/0/〇/○/●/•/·`）—— 原来"任意一个 ASCII 字符"都容忍
+         ⇒ 真有个群叫 `X测试` 时会跟 `测试` 撞上；
+      ② **目标名自己带括号数字**时（如 `测试(2)`），屏幕上**必须带同一个数字**才算同一个 ——
+         原来 `norm()` 会把两边的括号数字都当"成员数"剥掉 ⇒ `测试(2)` 与 `测试` 撞上。
+      ⚠️ 仍留一条**已知残留**（写在这里，别当成已解决）：反过来（目标是 `测试`、屏幕是 `测试(2)`）
+      仍会判相等 —— 因为那个括号数字**可能真的是成员数**（现场「演示（3）」就是这一种，剥掉它
+      才认得出人来）。根治要把群人数从库里取来核；在此之前这一侧宁可**漏发**也不乱发。
     """
     try:
         a, b = norm(text), norm(name)
@@ -440,13 +456,16 @@ def matches_strict(text: str, name: str) -> bool:
                 b = b[len(_p):]
         if not a or not b:
             return False
-        if a == b:
+        _kb = _count_tail(name)
+
+        def _cnt_ok() -> bool:
+            """② 目标名带括号数字 ⇒ 屏幕上也得带同一个数字。"""
+            return (not _kb) or (_count_tail(text) == _kb)
+
+        if a == b and _cnt_ok():
             return True
-        # 容忍**一个**前导 ASCII 噪声字符：会话头标题带 OCR 实测会多读出一个 `O`
-        #   （对面 r25 原话：`OE` vs `O文亻牛传输助手` ⇒ 只有它这一档能判出"现在是谁"）。
-        #   **只容忍 1 个**：`KC测试` vs `测试`、`测试测试` vs `测试` 这种"名字互为子串"
-        #   差 2 个字以上，照样判否 —— 那才是本次要堵的串群口子。
-        if len(a) == len(b) + 1 and a[0].isascii() and a[1:] == b:
+        # ① 只容忍**实测到的**前导噪声字符（原来任意 ASCII 都行 ⇒ `X测试` 会撞 `测试`）
+        if len(a) == len(b) + 1 and a[0] in _JUNK_HEAD and a[1:] == b and _cnt_ok():
             return True
         return False
     except Exception:
