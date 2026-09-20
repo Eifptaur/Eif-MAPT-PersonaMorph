@@ -617,8 +617,8 @@ ck("B21b 「目标会话库里没有可比对内容」这一档先试纯屏幕�
    "（清空过聊天记录 ⇒ Msg_<md5> 整张没了 ⇒ 老写法一进门就 None ⇒ 发文件链无条件拒发）",
    "self._screen_only_identity(chat_id, gui=gui, name=name)" in _IDN
    and _IDN.find("self._screen_only_identity(") < _IDN.find("纯屏幕兜底也没过"))
-ck("B21c 单字/单字母名字在这一档必须完全相等（`E班群` 不算 `E`）",
-   "len(_b) <= 1 else _co.matches(hdr, nm)" in _SO and "完全相等" in _SO)
+ck("B21c 名字档一律走**完全相等**（`E班群` 不算 `E`；2026-09-21 起连「互为子串的两个群」也不许混）",
+   "_co.matches_strict(hdr, nm)" in _SO and "完全相等" in _SO)
 ck("B21d 发文件链：拿不到内容级证据但**名字档已过**时按名字档放行（与发文字链同一口径）",
    "但**名字档已确认**" in SRC_WECHAT and "按名字档放行（记账）" in SRC_WECHAT)
 ck("B18 竞态如实写进控制台（用户 2026-09-15 要求「这个你要如实跟用户讲清楚」）",

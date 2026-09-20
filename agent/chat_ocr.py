@@ -415,6 +415,44 @@ def norm(text: str) -> str:
     return t.lower()
 
 
+def matches_strict(text: str, name: str) -> bool:
+    """**授权档**的名字判据：归一化后必须**完全相等**，不做包含。
+
+    为什么要单开这一条（2026-09-21，网友 v0919「串群」的真根因）：
+      `matches()` 是**互相包含即可**（为的是容忍"名字＋预览＋时间"这种整行文本）。
+      于是**名字互为子串的两个群**会被判成同一个 —— 当前开着「KC测试」而目标是「测试」时
+      `matches("KC测试", "测试")` → True ⇒ `chat_is_open` 说"就是它" ⇒ 投递把回复
+      直接发进了**另一个群**（表现＝作者转述的「第一个群触发、回答出现在第二个群」）。
+      ⇒ **凡"能不能发 / 是不是这个会话"的判定，只许用本函数**；`matches()` 继续只用于"找行"。
+
+    归一化会剥掉时间/标点/群名后的成员数「（8）」等装饰（见 `norm()`），
+    所以「演示（3）」与「演示」照样判相等。
+    ⚠️ 残留风险（写在这里，别当成已解决）：若真有两个群叫「测试」与「测试(2)」，
+      `norm()` 会把后者的括号数字也当"成员数"剥掉 ⇒ 二者仍然相等。根治要把群人数
+      从库里取来核；在此之前这一档**宁可判否（漏发）也不放行**（发错群是对外可见的事故）。
+    """
+    try:
+        a, b = norm(text), norm(name)
+        for _p in ("草稿", "draft"):        # 行文本可能带草稿标记；它不是"另一个会话"
+            if a.startswith(_p):
+                a = a[len(_p):]
+            if b.startswith(_p):
+                b = b[len(_p):]
+        if not a or not b:
+            return False
+        if a == b:
+            return True
+        # 容忍**一个**前导 ASCII 噪声字符：会话头标题带 OCR 实测会多读出一个 `O`
+        #   （对面 r25 原话：`OE` vs `O文亻牛传输助手` ⇒ 只有它这一档能判出"现在是谁"）。
+        #   **只容忍 1 个**：`KC测试` vs `测试`、`测试测试` vs `测试` 这种"名字互为子串"
+        #   差 2 个字以上，照样判否 —— 那才是本次要堵的串群口子。
+        if len(a) == len(b) + 1 and a[0].isascii() and a[1:] == b:
+            return True
+        return False
+    except Exception:
+        return False
+
+
 def matches(text: str, name: str) -> bool:
     """OCR 文本与目标会话名是否算同一个（互相包含即可，容忍 OCR 漏字/多字/截断省略号）。
 
