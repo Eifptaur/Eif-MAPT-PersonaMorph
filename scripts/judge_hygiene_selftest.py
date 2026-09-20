@@ -38,6 +38,9 @@ def ok(name, cond, detail=""):
 
 _NAME_WORDS = {"name", "title", "label", "desc", "what", "case", "why", "msg"}
 _SELF = os.path.basename(os.path.abspath(__file__))
+#: 脆断言（`"带空白的整段源码" in SRC_xxx`）的**基线**：2026-09-21 实测 383（审计口径 379+）。
+#   **只许降不许升** —— 把旧的换成 `scripts/_srcmatch.py::has()` 就会降；新写判据别再加这类写法。
+BRITTLE_BASELINE = 383
 
 
 def _helper_styles(tree: ast.AST) -> dict:
@@ -125,6 +128,68 @@ def main():
                 _hits.append("名字位是布尔")
     ok("③ 负例：写反的两条（条件位放描述文本 / 名字位放 True）都被同一判定器抓出",
        len(_hits) == 3 and "条件位是字符串" in _hits and "名字位是布尔" in _hits, _hits)
+
+    # ── ④ 源码文本的**脆断言**普查（第四轮审计 V-R4-13 第三条）────────────────────────
+    #   定义：`"带空白的整段源码" in SRC_xxx` —— 源码一改缩进/换行就红（行为没变）。
+    #   审计实测 80/129 个判据文件都有这类写法（前 26 个文件共 379 条）。
+    #   处置：①新写判据**优先用 `scripts/_srcmatch.py::has()`**（空白容忍、不计数）；
+    #        ②这个数**只许降不许升**（把旧的换成 `_srcmatch.has` 就会降）。
+    import ast as _ast
+    import re as _re3
+    _SRCISH = _re3.compile(r"src|web|html|body|code|h$", _re3.I)
+
+    def _brittle_in(src_text):
+        """返回这份判据里"脆断言"的条数与位置（只看 `"…" in <src 变量>`）。"""
+        hits = []
+        try:
+            tree = _ast.parse(src_text)
+        except Exception:
+            return hits
+        for node in _ast.walk(tree):
+            if not isinstance(node, _ast.Compare):
+                continue
+            if not any(isinstance(op, (_ast.In, _ast.NotIn)) for op in node.ops):
+                continue
+            left = node.left
+            if not (isinstance(left, _ast.Constant) and isinstance(left.value, str)):
+                continue
+            if not _re3.search(r"\s", left.value):          # 单token 的针（没有空白）不算脆
+                continue
+            names = [s.id for c in node.comparators for s in _ast.walk(c) if isinstance(s, _ast.Name)]
+            if any(_SRCISH.search(n) for n in names):
+                hits.append("%s:%d" % ("", getattr(node, "lineno", 0)))
+        return hits
+
+    _cens = {}
+    for _fn in files:
+        try:
+            _txt = open(os.path.join(HERE, _fn), encoding="utf-8").read()
+        except Exception:
+            continue
+        _h = _brittle_in(_txt)
+        if _h:
+            _cens[_fn] = len(_h)
+    _total = sum(_cens.values())
+    ok("④ 普查跑得起来且**只许降不许升**（当前 %d ≤ 基线 %d）" % (_total, BRITTLE_BASELINE),
+       _total <= BRITTLE_BASELINE, "超了 %d 条：%s" % (_total - BRITTLE_BASELINE,
+                                                     sorted(_cens.items(), key=lambda x: -x[1])[:4]))
+    _top = sorted(_cens.items(), key=lambda x: -x[1])[:5]
+    print("   （最脆的五个文件：%s —— 改这几个文件时优先把新写/要动的断言换成 `_srcmatch.has()`）"
+          % "、".join("%s %d" % (k, v) for k, v in _top))
+    # 空白容忍的 helper 必须在位，并且**真的**解决"改缩进就红"
+    try:
+        sys.path.insert(0, HERE)
+        import _srcmatch as _sm2
+        _has_ok = _sm2.has("def f(a, b):\n    return a + b\n",
+                           "def f(a, b):", "return a + b")
+        _old_style = ("def f(a, b):\n        return a + b\n"          # 换个缩进
+                      .find("def f(a, b):\n    return a + b\n") >= 0)
+    except Exception as _e4:
+        _has_ok, _old_style = False, True
+        print("   （_srcmatch 导入失败：%s）" % str(_e4)[:60])
+    ok("④ `_srcmatch.has()` 在位且**空白容忍**", _has_ok is True)
+    ok("④ 反例锚：老写法（整段带缩进一起比）**换个缩进就找不到** ⇒ 这就是「脆」的来历",
+       _old_style is False)
 
     print("\n== 汇总：%d 通过 / %d 失败 ==" % (len(PASS), len(FAIL)))
     if FAIL:

@@ -37,6 +37,8 @@ def ck(name, cond, extra=""):
 from agent import bg_status as BG          # noqa: E402
 from agent import input_backend as ib      # noqa: E402
 from agent import wechat as WC             # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _srcmatch as _sm                    # noqa: E402  空白容忍的源码断言（V-R4-13 第三条）
 
 SRC_WECHAT = io.open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
 SRC_IB = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -75,7 +77,9 @@ ck("A4j 拍一拍候选点重试（主点 → 方块内上下微移），每枪�
 #   原来那条 `right_pane_left + 0.185×pane` 的公式候选，实测就是 (434,423)：点在气泡上、
 #   弹的是消息菜单（无「拍一拍」）⇒ 已删。
 ck("A4j2 拍一拍候选点被夹在检测到的头像方块内（公式候选已删）",
-   "bbox[0] + 4 <= x <= bbox[2] - 4" in SRC_WECHAT)
+   # ⛔ 2026-09-21（第四轮审计 V-R4-13 第三条）：这条原来直接 `"…" in SRC_WECHAT` ——
+   #   源码里空格/换行一变就红（行为没变）。改用空白容忍的 `_srcmatch.has()`（见该模块口径）。
+   _sm.has(SRC_WECHAT, "bbox[0] + 4 <= x <= bbox[2] - 4"))
 ck("A4k 菜单点击前把 OCR 明细（文本@y）打进日志（便于判「点偏了没有」）",
    "菜单 OCR 明细" in SRC_IB)
 # A4i（2026-09-18 现场两次回拍失败后加）：**定位失败时先滚到最新再找一遍**

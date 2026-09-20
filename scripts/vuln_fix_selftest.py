@@ -609,6 +609,37 @@ else:
        "X-PM-Token" in lg.client_headers("http://127.0.0.1:7860/x")
        and "X-PM-Token" not in lg.client_headers("https://api.example.com/x"))
 
+    # ⛔ 2026-09-21（第四轮审计 **V-R4-13**）：口令文件在 Windows 上 `0o600` **不改 ACL**
+    #   （实测：文件照样继承父目录的 `BUILTIN\Users`）⇒ 同机其它用户能读到口令。
+    #   ⇒ 修法＝建完/读到既有文件时都真用 `icacls` 收紧（断继承 + 只授本人/系统账号），
+    #     并且**收紧失败要如实说**（不许假装成功）。这里用**真 icacls** 复核。
+    import subprocess as _sp2                                                  # noqa: E402
+    _NO_WIN2 = getattr(_sp2, "CREATE_NO_WINDOW", 0)
+    _acl_dir = tempfile.mkdtemp(prefix="pm_acl_judge_")
+    _acl_p = os.path.join(_acl_dir, "tok")
+    lg._new_token_file(_acl_p, "TOKENJUDGE")
+    _before = _sp2.run(["icacls", _acl_p], capture_output=True, text=True,
+                       creationflags=_NO_WIN2).stdout
+    _why_acl = lg._tighten_acl(_acl_p)
+    _after = _sp2.run(["icacls", _acl_p], capture_output=True, text=True,
+                      creationflags=_NO_WIN2).stdout
+    ok("V-R4-13 口令文件 ACL 能收紧（`icacls` 真跑通）", _why_acl == "", _why_acl[:80])
+    ok("V-R4-13 收紧后**继承已断**（不再出现 `(I)` 继承标记）", "(I)" not in _after, _after[:80])
+    ok("V-R4-13 收紧后没有 `BUILTIN\\Users` / `Everyone` 这类「人人可读」",
+       ("BUILTIN\\Users" not in _after) and ("Everyone" not in _after), _after[:80])
+    ok("V-R4-13 收紧后**自己仍读得到**（别把口令锁死）",
+       bool(open(_acl_p, encoding="utf-8").read().strip()))
+    ok("V-R4-13 反例锚：**不收紧**时确实是继承来的宽 ACL（`(I)` 在）",
+       "(I)" in _before, _before[:80])
+    _lg2 = io.open(os.path.join(ROOT, "agent", "local_guard.py"), encoding="utf-8").read()
+    ok("V-R4-13 源码级：`token()` 里**建完收紧 + 读到既有也补收紧**",
+       _lg2.count("_tighten_acl(p)") >= 2 and "acl_ok" in _lg2)
+    try:
+        import shutil as _sh2
+        _sh2.rmtree(_acl_dir, ignore_errors=True)
+    except Exception:
+        pass
+
     # ⚠️ 2026-09-20：**用单线程 HTTPServer**（不是 ThreadingHTTPServer）——请求是**串行**发的，
     #   多线程只会多出"收尾期 handler 线程还在读套接字"的竞态（并发套跑时偶发把 traceback
     #   打进 stderr，而 `run_all_selftests` 见到 Traceback 就判本脚本红）。

@@ -4,6 +4,7 @@
 设计见 `docs/设计-本体与DLC.md` §五。
 """
 import hashlib
+import io
 import json
 import os
 import shutil
@@ -434,6 +435,33 @@ finally:
     UC.fetch = _real_fetch
 ok(_u13c == UC.DEFAULT_URLS[1],
    "版本相同 ⇒ 按候选顺序取先者（不因改动乱跳源）", str(_u13c)[:48])
+
+# ── ⛔ 2026-09-21（第四轮审计 **V-R4-13**）：两处"读数/真值"小瑕疵 ──
+print("\n── V-R4-13：pendingFiles 脏数据按**条目**算 ＋ trust_custom_url 的真值判断 ──")
+ok(UC.pending_list("一键启动.exe,一键关闭.exe") == ["一键启动.exe", "一键关闭.exe"],
+   "pendingFiles 是字符串时按**条目**拆（不许按字符 ⇒ 别报「还有 8 件（一、键、启、动…）」）",
+   UC.pending_list("一键启动.exe,一键关闭.exe"))
+ok(UC.pending_list("a、b\nc") == ["a", "b", "c"], "顿号/换行也算分隔符", UC.pending_list("a、b\nc"))
+ok(UC.pending_list(["x", "y"]) == ["x", "y"] and UC.pending_list(None) == []
+   and UC.pending_list(123) == [], "列表原样 / 空与怪类型 ⇒ 空列表")
+ok(UC.manifest_origin_ok("https://example.com/x",
+                         {"url": "https://example.com/x", "trust_custom_url": "false"})[0] is False,
+   "`trust_custom_url` 写字符串 `\"false\"` **不许**开启信任（裸 bool() 会把它当真）",
+   UC.manifest_origin_ok("https://example.com/x",
+                         {"url": "https://example.com/x", "trust_custom_url": "false"})[1][:40])
+ok(UC.manifest_origin_ok("https://example.com/x",
+                         {"url": "https://example.com/x", "trust_custom_url": "true"})[0] is True,
+   "写 `\"true\"` 仍然开（别把正常路堵了）")
+ok(UC.manifest_origin_ok("https://example.com/x",
+                         {"url": "https://example.com/x", "trust_custom_url": "0"})[0] is False,
+   "写 `\"0\"` 也算关（真值表里 0/off/no 都是假）")
+_ucsrc2 = io.open(os.path.join(ROOT, "agent", "update_check.py"), encoding="utf-8").read()
+ok("pending_list((_loc or {}).get(\"pendingFiles\"))" in _ucsrc2,
+   "源码级：`state()` 用 `pending_list(...)`（不是 `len(字符串)`）")
+ok("as_bool((c or {}).get(\"trust_custom_url\"))" in _ucsrc2,
+   "源码级：信任判据走 `config.as_bool`（不再裸 `bool(`）")
+ok(bool("false") is True and UC.pending_list("一") == ["一"],
+   "反例锚：裸 `bool(\"false\")` **确实是 True** —— 这就是「写 false 反而开启」的来历")
 
 print("\n==== 更新检查判据：%d 通过 / %d 失败 ====" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

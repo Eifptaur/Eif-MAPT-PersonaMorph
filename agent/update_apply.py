@@ -380,7 +380,9 @@ def apply_full(manifest: dict, zip_path: str, target: str = ROOT, dry: bool = Fa
         #    ②上次"有文件被占用没换"留下的待办也一并被吞掉，**被跳过的文件永远不会补换**。
         #    现在：版本相同还要**树哈希相同**、且**没有待补文件**，才算真"已是最新"。
         _same_tree = str(cur.get("sha256") or "") == want_tree
-        _pending = list(cur.get("pendingFiles") or [])
+        # ⛔ V-R4-13：`pendingFiles` 脏数据是**字符串**时不许按字符算（见 `uc.pending_list`）
+        from . import update_check as _uc_p
+        _pending = _uc_p.pending_list(cur.get("pendingFiles"))
         if _same_tree and not _pending:
             return 0, "已是最新（%s），什么都没做" % want_ver, {"status": "current"}
         if _pending:
