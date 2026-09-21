@@ -450,6 +450,9 @@ button.ghost:hover{border-color:var(--blue);color:var(--blue)}
 button.ghost[data-vstate="ok"]{border-color:var(--ok);color:var(--ok)}
 button.ghost[data-vstate="partial"]{border-color:var(--warn);color:var(--warn)}
 button.ghost[data-vstate="fail"]{border-color:var(--err);color:var(--err)}
+/* ⛔ 2026-09-22 加（第十二轮 V-R12-3）：**「没测到」要有自己的样子** —— 老写法里 `unknown` 没有样式，
+   于是它和"从没点过"完全同形（用户看不出这一格这次没验成）。虚线边 + 略暗，与"没点过"区分开。 */
+button.ghost[data-vstate="unknown"]{border-style:dashed;opacity:.72}
 button.danger{background:var(--err-soft);color:var(--err-tx)}
 button.danger:hover{filter:brightness(1.12)}
 button:disabled{opacity:.5;cursor:not-allowed}

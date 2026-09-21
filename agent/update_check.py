@@ -674,6 +674,21 @@ def _expires_ts(v) -> float:
         return 0.0
 
 
+def _ver_ts(v) -> float:
+    """版本号（`2026.9.22` / `2026.9.22.1`）→ 时间戳（解析不出年月日 ⇒ 0.0）。
+
+    ⛔ 第十二轮 **V-R12-4** 用：判断"这份清单的版本比今天超前多少天"。发版脚本写的是
+    `builtAt` 那一天（`scripts\\make_manifest.py`），所以它天然能当"日期"来比。
+    """
+    try:
+        p = [int(x) for x in str(v or "").strip().split(".")[:3]]
+        if len(p) < 3 or not (2000 <= p[0] <= 2199) or not (1 <= p[1] <= 12) or not (1 <= p[2] <= 31):
+            return 0.0
+        return time.mktime((p[0], p[1], p[2], 0, 0, 0, 0, 0, -1))
+    except Exception:
+        return 0.0
+
+
 def manifest_gates(man: dict, mine: str | None = None, max_seen: str | None = None,
                    now: float | None = None) -> dict:
     """更新清单的两道闸（freeze＝`expires` 过期 / rollback＝单调版本）——**唯一实现**。
@@ -719,6 +734,21 @@ def manifest_gates(man: dict, mine: str | None = None, max_seen: str | None = No
         #   **再也装不了任何更新**（界面还把锅甩给更新源），产品里又没有复位入口。
         #   这里按"版本号第一段（年）超前 > 1 年"判**异常清单**：`ok=False` + `block_install=True`
         #   （`state()` 报 error、`run_once()` 拒装），并让调用方**不记** `maxSeenVersion`。
+        # ⛔ 2026-09-22 修（第十二轮 **V-R12-4** · P2）：把判据从"只看年"换成**时间跨度** ——
+        #   只看年的话投毒面从"无界"缩到"≤1 年"（发版时手误把 2026 打成 2027 就够砖死那台机器）；
+        #   而且"一年以内的高版本"完全没人管。现在：version 能解析出年月日时，
+        #   **比今天超前 > 180 天** ⇒ 判异常清单（拒装且不入账）。
+        #   为什么与"今天"比、而不是与 `mine` 比：用户可能装着很老的版本（半年没更新），
+        #   拿 `mine` 当基准会把**正常的新版本**误判成超前 ⇒ 那是把老用户锁死。
+        _td = _ver_ts(theirs)
+        _now = time.time() if now is None else float(now)
+        if _td and _td > _now + 180 * 86400.0:
+            out.update(ok=False, kind="far_ahead", block_install=True,
+                       why=("更新源给的版本（%s）比**今天**还超前半年以上 ⇒ 判为异常清单"
+                            "（多半是镜像/反代改过回包，或发版时版本号打错）⇒ 这次不更新，"
+                            "也**不会**把它记进「见过的最高版本」；控制台「版本」面板可点「重置更新状态」"
+                            % theirs))
+            return out
         _vm = vtuple(mine) if mine else ()
         if _vm and int(_vt[0]) > int(_vm[0]) + 1:
             out.update(ok=False, kind="far_ahead", block_install=True,
@@ -787,7 +817,15 @@ def state(cfg: dict | None = None, timeout: float = 12.0) -> dict:
     _gate = manifest_gates(man, mine=mine)
     out["expires"] = _gate["expires"]
     out["maxSeenVersion"] = _gate["maxSeenVersion"]
-    if _gate["kind"] in ("expired", "rollback"):
+    # ⛔ 2026-09-22 修（第十二轮 **V-R12-1** · P1）：**必须把 `kind` 抄进 `out`** ——
+    #   第十一轮加的那道"只有过闸的清单才配入账"守卫写的是 `if not out.get("kind")`，
+    #   而 `state()` 从来没往 `out` 里放过 `kind` ⇒ `out.get("kind")` 恒 `None` ⇒ 守卫**永不成立**
+    #   （审计实测：源给 `2099.9.9` 照样被写进 `maxSeenVersion`，此后真清单全判 rollback 拒装，
+    #    而同一个 `state()` 还报"有新版本" —— 同一份清单两条路相反）。
+    out["kind"] = str(_gate.get("kind") or "")
+    if out["kind"] in ("expired", "rollback", "far_ahead"):
+        # `far_ahead` 也必须在**这里**早退（第十一轮只加了闸门、忘了把这一档接进来）：
+        # 超前一年以上的清单要**如实报 error**，而不是"有新版本"。
         out["status"] = "error"
         out["why"] = _gate["why"]
         st0 = _read_state()

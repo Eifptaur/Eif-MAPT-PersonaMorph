@@ -853,6 +853,17 @@ def _s13_risk_oneclick_recover(TMP):
         _after16 = json.load(io.open(_st16b, encoding="utf-8"))
         check("⑯f 反例锚：老写法（只改内存、不落盘）⇒ 盘上仍是 paused=True（重启就粘回来）",
            _after16.get("paused") is True)
+        # ⛔ 第十二轮 **V-R12-5**（P2）：**暂停方向也要落盘**（第十一轮只给恢复方向补了 `_save()`）
+        _g16b = R.RiskGate(path=_st16, event_path=_ev16)
+        _g16b._st["paused"] = False
+        _ctl16.is_paused = lambda: True        # 顶栏按了「暂停」⇒ 标记出现
+        _g16b._flag_seen = False               # 上一轮看到的是"没暂停"（这是跳变）
+        _g16b.is_paused()
+        _disk16b = json.load(io.open(_st16, encoding="utf-8"))
+        check("⑯g 跟随『暂停』也要**落盘**（老写法只改内存 ⇒ 盘上还是 paused=false，重启即无声恢复）",
+              _g16b.snapshot().get("paused") is True and _disk16b.get("paused") is True
+              and int(_disk16b.get("paused_by_operator") or 0) >= 1,
+              str({k: _disk16b.get(k) for k in ("paused", "paused_by_operator")}))
     finally:
         R.STATE_PATH = _saved_state16
         try:

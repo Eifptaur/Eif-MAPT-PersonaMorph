@@ -1356,14 +1356,38 @@ _ATTACH = {"tries": 0, "at": 0.0, "err": "", "diag": None,
 
 
 def _wm_account_of(_wc) -> str:
-    """当前 adapter **正在读哪个账号**（`WeChatDB.account`；认不出返回空串＝沿用老键名）。
+    """当前 adapter **正在读哪个账号**（`WeChatDB.account`）。
 
     V-R10-30：水位表按账号分命名空间，切号时两个账号的序号格子互不污染。
+    ⛔ 2026-09-22 修（第十二轮 **V-R12-6** · P3）：adapter 说"我不知道我是谁"（新 adapter 还没开库 /
+    旧 adapter 的 `_db` 被 `_release_adapter` 置空）时，**回落到 `wechat_dir` 的判断** ——
+    它按"哪个账号目录的 `-wal` 在动"挑账号，是这台机器上**唯一**能在不依赖 adapter 的情况下
+    说出账号名的地方。都不行才回空串（那就是 `listener_watermark` 里那个保留命名空间 `?`）。
+    为什么必须有这一层：`?` 是所有"认不出账号的时刻"**共用**的格子 —— 用得越少，两号互相污染
+    的窗口越窄（这是 V-R11-5 的同族残留）。
     """
     try:
-        return str(getattr(_wc, "db_account", lambda: "")() or "")
+        _a = str(getattr(_wc, "db_account", lambda: "")() or "")
     except Exception:
-        return ""
+        _a = ""
+    if _a:
+        return _a
+    try:
+        from agent import wechat_dir as _wd_acct
+        _st = _wd_acct.status() or {}
+        _a = str(_st.get("account") or _st.get("now_account") or "")
+        if _a:
+            return _a
+    except Exception:
+        pass
+    try:
+        from agent import wechat_dir as _wd_pick
+        _fn = getattr(_wd_pick, "pick_account", None)
+        if callable(_fn):
+            return str(_fn() or "")
+    except Exception:
+        pass
+    return ""
 
 
 def _release_adapter(_wc_old) -> None:

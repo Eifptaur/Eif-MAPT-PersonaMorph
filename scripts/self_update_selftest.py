@@ -480,8 +480,25 @@ finally:
 _src_uc11 = io.open(os.path.join(ROOT, "agent", "update_check.py"), encoding="utf-8").read()
 _src_w11 = io.open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
 _src_c11 = io.open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
-ok(_sm.has(_src_uc11, 'if not out.get("kind") and theirs and vtuple(theirs)'),
-   "源码级锚：`state()` 只在 **两道闸都过** 时才写 `maxSeenVersion`（被拒的清单一律不入账）")
+# ⛔ 2026-09-22 修（第十二轮 **V-R12-1 / V-R12-10**）：源码子串断言**抓不住**"那道守卫永不成立"
+#   （`state()` 不把 `kind` 抄进 `out` ⇒ `out.get("kind")` 恒 None ⇒ `not ...` 恒真）。换成**行为锚**。
+_far_r12 = {"base": {"version": "2099.9.9", "url": "https://github.com/x/y.zip"}, "announce": {}}
+_saved_fa12 = _uc_top.fetch_any
+_saved_sp12 = _uc_top._state_path
+try:
+    _uc_top.fetch_any = lambda urls, timeout=12.0, patient=None: (dict(_far_r12), "", "")
+    _uc_top._state_path = lambda: _state11
+    with io.open(_state11, "w", encoding="utf-8") as _f12:
+        json.dump({"maxSeenVersion": "2026.1.1.1"}, _f12)
+    _st_r12 = _uc_top.state({"url": "https://example.com/m.json"})
+    _after_r12 = json.load(io.open(_state11, encoding="utf-8"))
+finally:
+    _uc_top.fetch_any = _saved_fa12
+    _uc_top._state_path = _saved_sp12
+ok(_st_r12.get("status") == "error" and _st_r12.get("kind") == "far_ahead"
+   and str(_after_r12.get("maxSeenVersion") or "") == "2026.1.1.1",
+   "行为锚：`state()` 对超前清单**报 error 且不入账**（第十一轮只有源码子串断言 ⇒ 守卫是死代码）",
+   "%s / after=%s" % (str(_st_r12)[:90], _after_r12.get("maxSeenVersion")))
 ok(_sm.has(_src_w11, '"/api/update_reset"') and _sm.has(_src_c11, 'id="updReset"')
    and _sm.has(_src_c11, "'/api/update_reset'"),
    "接线：webui 有 `/api/update_reset`，控制台横幅上有「重置更新状态」按钮且真打这个接口")
