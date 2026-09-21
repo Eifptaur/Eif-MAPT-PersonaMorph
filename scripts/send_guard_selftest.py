@@ -223,6 +223,11 @@ try:
     _ad._self_nickname = ""
     _ad._recent_sent = WC.deque(maxlen=200)
     _ad._LEDGER = WC.deque(maxlen=10)
+    # ⛔ V-R7-4：判据**不写产品** `data/message_ledger.jsonl`（normalize → _note_ledger 会落盘）。
+    #   台账路径已抽成模块级 `WC._ledger_path()`，指到临时目录即可；产品默认行为不变。
+    import tempfile as _tf4                                        # noqa: E402
+    _ad_ledger_tmp = os.path.join(_tf4.mkdtemp(prefix="pm-sg-ledger-"), "ledger.jsonl")
+    WC._ledger_path = lambda: _ad_ledger_tmp       # 本判据全程用它（产品那份一字不动）
     _IMG_ROW = {"local_id": 9, "type": "图片", "sender_id": 3, "create_time": int(time.time()),
                 "content": '<?xml version="1.0"?><msg><img hdlength="28592"/></msg>'}
     _TXT_ROW = {"local_id": 10, "type": "文本", "sender_id": 3, "create_time": int(time.time()),

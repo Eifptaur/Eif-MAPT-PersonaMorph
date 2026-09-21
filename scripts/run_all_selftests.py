@@ -82,7 +82,18 @@ def _run_one(name: str, timeout: int, gate: threading.Semaphore) -> dict:
     try:
         try:
             r = subprocess.run([sys.executable, p], cwd=ROOT, capture_output=True,
-                               creationflags=_NO_WINDOW | _BELOW_NORMAL, timeout=timeout)
+                               creationflags=_NO_WINDOW | _BELOW_NORMAL, timeout=timeout,
+                               # ⛔ 2026-09-21 加（第七轮 **V-R7-1**）：子进程**必须显式拿到
+                               #   `PYTHONIOENCODING=utf-8`** —— 否则 Windows 下判据的 stdout 会按
+                               #   系统 ANSI(GBK) 编码，父进程按 UTF-8 解码 ⇒ 中文汇总行读不出 ⇒
+                               #   "缺汇总行即判红"这条新规则直接把**好判据判成假红**
+                               #   （实测 `no_underline_selftest` 7/0 被判 None/None）。
+                               # ⛔ 2026-09-21 加（第七轮 **V-R7-12**）：套件里跑的判据一律带
+                               #   `PM_JUDGE_NO_PROC=1` ⇒ "真起进程 / 真开端口"那几段（watchdog 的
+                               #   E 段、whale/console_chrome/voice_models 的真起 WebUI 段）自动
+                               #   跳过并打一行 SKIP；**手动单跑不加它，动态段照旧真起真收**。
+                               env={**os.environ, "PYTHONIOENCODING": "utf-8",
+                                    "PM_JUDGE_NO_PROC": "1"})
             out = (r.stdout or b"").decode("utf-8", "replace") + \
                   (r.stderr or b"").decode("utf-8", "replace")
             rc = r.returncode

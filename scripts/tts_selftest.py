@@ -51,6 +51,11 @@ finally:
     T.voices = _real_voices
 
 print("── B. 合成真出文件 ──")
+# ⛔ V-R7-4：判据**不写产品媒体目录** `media/tts/`。`tts.out_dir()` 是唯一落点函数，
+#   指到临时目录即可（wav 与 to_playable 的 mp3 都在它下面）；产品默认行为不变。
+import tempfile as _tf                                          # noqa: E402
+_T_OUT = _tf.mkdtemp(prefix="pm-tts-")
+T.out_dir = lambda: _T_OUT
 if not st["ok"]:
     print("  SKIP 本机没有 SAPI 合成声音")
 else:

@@ -106,6 +106,13 @@ def main():
     ok("非白名单发指令 ⇒ handled 但**不生效**", bad_cmd["handled"] and bad_cmd["action"] == "denied")
     ok("非白名单的指令不落盘（防有人喊一句就把机器人按住）",
        tc.is_muted("group:g1") is None and not os.path.exists(st_file))
+    # V-R7-5 #4：原来的"阴性对照"用的是**非空**白名单（["群主"]）⇒ 与"空白名单 fail-closed"正交。
+    # 这里补一条真·空白名单对照：连群主本人发指令都必须不生效。
+    empty_cmd = tc.handle_command("group:g4", {"text": "@bot 禁言", "sender_name": "群主", "sender_id": "wxid_a"},
+                                 at_me=True, cfg=cfg_with(tier_cmd_admins=[]))
+    ok("空白名单阴性对照：连群主发指令也不生效（fail-closed）",
+       empty_cmd["handled"] and empty_cmd["action"] == "denied", str(empty_cmd.get("action")))
+    ok("空白名单下同样不落盘", tc.is_muted("group:g4") is None)
     good = tc.handle_command("group:g1", {"text": "@bot 禁言 10", "sender_name": "群主", "sender_id": "wxid_a"},
                              at_me=True, cfg=cfg_with(tier_cmd_admins=["群主"]))
     ok("白名单发指令 ⇒ 记禁言 10 分钟", good["action"] == "mute" and good["minutes"] == 10)

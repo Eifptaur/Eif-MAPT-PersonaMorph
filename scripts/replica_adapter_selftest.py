@@ -162,9 +162,11 @@ def main():
             return []
 
     class NoShardDB(FakeDB):
-        """连 contact.db 都定位不到。"""
+        """连 contact.db 都定位不到（顺便把公开接口也去掉 ⇒ 只能走"回退查库"那条路）。
+        V-R7-11：原来这个替身还留着可用的 `get_groups`，于是 `load_groups` 走公开接口就返回了、
+        永远碰不到 `if rel is None: raise` 那一行（把 raise 改成 `return []` 判据仍全绿）。"""
         def __init__(self):
-            super().__init__()
+            super().__init__(with_get_groups=False)
             self._db_files = []
 
     try:
@@ -186,6 +188,15 @@ def main():
     except Exception:
         _p_raised = True
     ok("load_privates：定位不到 contact.db ⇒ **抛**（不许吞成「没有私聊联系人」）", _p_raised)
+    # V-R7-11：原先只有 load_privates 那条守着「定位不到 contact.db」这一路，
+    # load_groups 里的同名守卫变异成 `return []` 时判据仍全绿 ⇒ 这里补上同一条守卫的断言（消息里要说出 contact.db）
+    try:
+        ra.load_groups(NoShardDB())
+        _gg_raised, _gg_why = False, ""
+    except Exception as _ge:
+        _gg_raised, _gg_why = True, "%s: %s" % (type(_ge).__name__, _ge)
+    ok("load_groups：定位不到 contact.db ⇒ **抛**且说清是 contact.db（不许静默返回「0 个群」）",
+       _gg_raised and "contact.db" in _gg_why, _gg_why)
 
     print("— D. 跨分片查询：旧写法的静默少查已修 —")
     db3 = FakeDB()

@@ -31,6 +31,8 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # 同目录的 `_srcmatch`
+import _srcmatch as _sm                                          # noqa: E402  空白容忍的源码断言（V-R4-13 第三条）
 os.environ["WX_NO_UI_POP"] = "1"
 
 from agent import notify_ui as NU          # noqa: E402
@@ -376,21 +378,34 @@ finally:
 print("── F. 接线：onestart / persona_morph 不再各开一处 ──")
 _on = src("scripts/onestart.py")
 _wx = src("scripts/persona_morph.py")
-ok("persona_morph 走唯一的 open_console", "from agent.notify_ui import open_console" in _wx)
+ok("persona_morph 走唯一的 open_console", _sm.has(_wx, "from agent.notify_ui import open_console"))
 ok("persona_morph 里没有自己写的浏览器锁（[browser-lock] 已撤）", "[browser-lock]" not in _wx)
-ok("persona_morph 不再自己 cmd start 开浏览器", '"cmd", "/c", "start"' not in _wx)
-ok("persona_morph 仍尊重 auto_open_browser 开关", 'auto_open_browser", True' in _wx)
+ok("persona_morph 不再自己 cmd start 开浏览器", not _sm.has(_wx, '"cmd", "/c", "start"'))
+ok("persona_morph 仍尊重 auto_open_browser 开关", _sm.has(_wx, 'auto_open_browser", True'))
 ok("控制台地址只由 webui 落盘（agent/webui.py 里有 write_console_url）", "write_console_url" in src("agent/webui.py"))
 ok("onestart 侧开窗也走同一实现", "notify_ui" in _on or "open_console" in _on)
 
 print("── G. 一键关闭：关得掉（markers 含现行入口 + 关后回读端口）──")
 _cl = src("launcher-src/close.cs")
 ok("close.cs markers 含 persona_morph.py（现行入口）", "persona_morph.py" in _cl)
-ok("close.cs 有端口占用兜底 + 关后回读", "PortOwner(" in _cl and "仍被 pid" in _cl)
+ok("close.cs 有端口占用兜底 + 关后回读", "PortOwner(" in _cl and _sm.has(_cl, "仍被 pid"))
 ok("close_all.ps1 也含 persona_morph.py", "persona_morph.py" in src("scripts/close_all.ps1"))
 
 print("── H. 自家控制台窗口：尺寸按 DPI/工作区算 + 能拉边缩放 ──")
 _exe = os.path.join(ROOT, "一键启动.exe")
+# ⛔ V-R7-4：`一键启动.exe --winprobe` 会把窗口几何**落盘**到 exe 同级的 `data/console_window.txt`
+#   （`launcher.cs:1177 GeoFile()` ＝ `Application.ExecutablePath` 所在目录 + `data/`）⇒ 判据每跑
+#   一次就改掉用户存好的控制台位置与大小。修法＝把 exe 与它启动要用的 DLL **复制到临时目录再跑**，
+#   产物落在副本里；exe 与产品行为一字未改（探针输出、下面所有断言完全不变）。
+_exe_dir = ""
+if os.path.exists(_exe):
+    _exe_dir = tempfile.mkdtemp(prefix="pm-exe-judge-")
+    shutil.copy(_exe, _exe_dir)
+    if os.path.exists(os.path.join(ROOT, "WebView2Loader.dll")):
+        shutil.copy(os.path.join(ROOT, "WebView2Loader.dll"), _exe_dir)
+    if os.path.isdir(os.path.join(ROOT, "lib")):
+        shutil.copytree(os.path.join(ROOT, "lib"), os.path.join(_exe_dir, "lib"))
+    _exe = os.path.join(_exe_dir, "一键启动.exe")
 if os.path.exists(_exe):
     _out = subprocess.run([_exe, "--winprobe"], capture_output=True, cwd=ROOT,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout.decode("utf-8", "replace")
@@ -418,7 +433,7 @@ if os.path.exists(_exe):
         ok("活窗口：无边框", "border=None" in _L, _L)
         ok("留了缩放环（左/右/下 ≥5px）", _pad[0] >= 5 and _pad[2] >= 5 and _pad[3] >= 5, str(_pad))
         ok("顶部 0（标题带要能拖，不被缩放环抢走）", _pad[1] == 0, str(_pad))
-        _wv = [l for l in _lines if "ctrl WebView2" in l]
+        _wv = [l for l in _lines if _sm.has(l, "ctrl WebView2")]
         if _wv:
             _x = int(_wv[0].split("X=")[1].split(",")[0])
             ok("WebView2 被环让开（左边距＝环宽，不盖住缩放环）", _x == _pad[0], "x=%d ring=%d" % (_x, _pad[0]))
@@ -444,8 +459,8 @@ if os.path.exists(_exe):
     else:
         skip("活窗口探针", "没有 live 行")
     ok("源码：WM_NCHITTEST 生效点 + 圆角随尺寸重算",
-       "m.Msg == 0x0084" in src("launcher-src/launcher.cs") and
-       "f.Resize += delegate { Reclip(f); }" in src("launcher-src/stylekit.cs"))
+       _sm.has(src("launcher-src/launcher.cs"), "m.Msg == 0x0084") and
+       _sm.has(src("launcher-src/stylekit.cs"), "f.Resize += delegate { Reclip(f); }"))
 else:
     skip("H. 自家控制台窗口探针", "没编译出 一键启动.exe")
 
@@ -456,32 +471,32 @@ _css = _CH.HTML.split("<style>", 1)[1].split("</style>", 1)[0]
 _i = _css.rfind(".side .nav a{")                # 生效的是最后一条同选择器规则
 _seg = _css[_i:_css.find("}", _i)] if _i >= 0 else ""
 ok("生效的那条 `.side .nav a` 规则里真带上了 padding/margin/字号（不是躺在死字符串里）",
-   "padding:12px 14px" in _seg and "margin:4px 0" in _seg and "font-size:14.5px" in _seg,
+   _sm.has(_seg, "padding:12px 14px") and _sm.has(_seg, "margin:4px 0") and "font-size:14.5px" in _seg,
    _seg.strip()[:70])
 ok("没有把 CSS 写成裸字符串字面量（历史坑：相邻字符串只是算一下扔掉 ⇒ 浏览器收不到）",
-   '".nav a{' not in _html)
+   not _sm.has(_html, '".nav a{'))
 _seg_icon = _css[_css.find(".side .nav a svg{"):]
 _seg_icon = _seg_icon[: _seg_icon.find("}")]
 ok("图标 ≥18px（原来 16）", "width:18px" in _seg_icon and "height:18px" in _seg_icon, _seg_icon.strip())
-ok("侧栏列宽 ≥252px（原来 216）", "grid-template-columns:252px 1fr" in _html)
+ok("侧栏列宽 ≥252px（原来 216）", _sm.has(_html, "grid-template-columns:252px 1fr"))
 
 print("── J. 收起态导航 + 长清单折叠 + 微信后台纪律（2026-09-14 用户三项反馈）──")
 # 2026-09-15 口径变更（用户当面点第 ⑤⑥ 条）：收起按钮从小把手改成**整行**「‹ 收起 / › 展开」、
 # 栅格列宽跟着收（.shell.tight 64px）⇒ 旧的 88px 与 absolute right:2px 断言已作废。
-ok("收起态：栅格列跟着收（.shell.tight 64px）", ".shell.tight{grid-template-columns:64px 1fr;gap:8px}" in _html)
-ok("收起态：图标更大（22px）", ".side.tight .nav a svg{width:22px" in _html)
-ok("收起态：行内边距更松（≥14px）", ".side.tight .nav a{justify-content:center;gap:0;padding:14px 0}" in _html)
-ok("收起按钮是整行（不是贴右缘的小把手）", ".side .nav-tg{position:static;width:100%" in _html)
+ok("收起态：栅格列跟着收（.shell.tight 64px）", _sm.has(_html, ".shell.tight{grid-template-columns:64px 1fr;gap:8px}"))
+ok("收起态：图标更大（22px）", _sm.has(_html, ".side.tight .nav a svg{width:22px"))
+ok("收起态：行内边距更松（≥14px）", _sm.has(_html, ".side.tight .nav a{justify-content:center;gap:0;padding:14px 0}"))
+ok("收起按钮是整行（不是贴右缘的小把手）", _sm.has(_html, ".side .nav-tg{position:static;width:100%"))
 ok("长清单折叠：有按钮条样式", ".fold-bar" in _html and ".fold-tg" in _html)
 ok("长清单折叠：目标覆盖 ≥8 类", _html.count('["#') + _html.count('[".') >= 8, str(_html.count('["#')))
-ok("长清单折叠：默认是收起态（按钮写着「展开全部」）", "b.textContent = '展开全部'" in _html)
+ok("长清单折叠：默认是收起态（按钮写着「展开全部」）", _sm.has(_html, "b.textContent = '展开全部'"))
 ok("长清单折叠：列表重渲染后能自动补回按钮（MutationObserver）", "MutationObserver" in _html)
 
 _cfg_src = src("agent/config.py")
 # 2026-09-16 改口径（已知现象：「你把限位设成默认吧，因为用户在后台都不在意这个，而且也能防止点错」）：
 # 「限位」默认**开**；关掉时才"绝不动窗口"——两处读取点的 fail-closed 语义必须还在。
-ok("默认开「限位」（ui.lock_window_pos=True）", '"lock_window_pos": True' in _cfg_src)
-ok("默认不抢前台（ui.allow_foreground=False）", '"allow_foreground": False' in _cfg_src)
+ok("默认开「限位」（ui.lock_window_pos=True）", _sm.has(_cfg_src, '"lock_window_pos": True'))
+ok("默认不抢前台（ui.allow_foreground=False）", _sm.has(_cfg_src, '"allow_foreground": False'))
 _ua = src("agent/ui_adapt.py")
 _fg_body = _ua[_ua.index("def _force_geometry"):]
 _fg_body = _fg_body[:_fg_body.index("\n\n\ndef ")]
@@ -492,7 +507,7 @@ if _dq >= 0 and _dq2 > _dq:
     _fg_body = _fg_body[:_dq] + _fg_body[_dq2 + 3:]
 ok("_force_geometry 里不再强行 SW_RESTORE（把最小化的微信弹出来）", "ShowWindow" not in _fg_body)
 ok("_force_geometry 只在开关为真时才动（缺省按「不动」办）+ 最小化时不动",
-   'lock_window_pos", False' in _ua and "IsIconic" in _fg_body)
+   _sm.has(_ua, 'lock_window_pos", False') and "IsIconic" in _fg_body)
 ok("抢前台的三处都有 allow_foreground 门", _ua.count("_cfg_bool(\"allow_foreground\", False)") >= 3,
    str(_ua.count("_cfg_bool(\"allow_foreground\", False)")))
 ok("两个开关都映射到界面（有 data-cfg）",
@@ -503,9 +518,9 @@ _lc = src("launcher-src/launcher.cs")
 # 2026-09-15 口径变更：顶栏三键从「— / □❐ / ✕ 三种异族字形」改成同一个自绘控件 GlyphButton
 # （launcher-src/wingliphs.cs 的 GlyphKind{Min,Max,Restore,Close}，同一支笔按高度等比）。
 ok("顶栏三个键是同一套自绘字形（GlyphButton + GlyphKind）",
-   "GlyphButton" in _lc and "GlyphKind" in _lc and "_btnMax = maxb" in _lc)
+   "GlyphButton" in _lc and "GlyphKind" in _lc and _sm.has(_lc, "_btnMax = maxb"))
 ok("最大化走 ToggleMax（按钮与标题栏双击同一处）",
-   "public void ToggleMax()" in _lc and "m.Msg == 0x00A3" in _lc)
+   _sm.has(_lc, "public void ToggleMax()") and _sm.has(_lc, "m.Msg == 0x00A3"))
 ok("无边框窗自己处理 WM_GETMINMAXINFO + WM_NCCALCSIZE（否则会盖住任务栏）",
    "WM_GETMINMAXINFO" in _lc and "0x0024" in _lc and "0x0083" in _lc and "NCCALCSIZE_PARAMS" in _lc)
 if os.path.exists(_exe):
@@ -539,14 +554,16 @@ print("── L. 「重启后页面自己连回来」（2026-09-18 用户实测�
 #      「正在重启，页面稍后会自己连回来」⇒ **承诺没有实现**。这三条钉住它别再退化。
 _ch = src("agent/console_html.py")
 ok("L1 有周期性状态轮询（外部重启/改状态后页面会自己更新）",
-   "__statusPoll = setInterval" in _ch, "")
+   _sm.has(_ch, "__statusPoll = setInterval"), "")
 ok("L2 服务器换进程（started_at 变）⇒ 页面自己重载",
-   "window.__srvStartedAt !== s.started_at" in _ch and "location.reload()" in _ch)
+   _sm.has(_ch, "window.__srvStartedAt !== s.started_at") and "location.reload()" in _ch)
 ok("L3 连续取不到状态 ⇒ 也重载一次（带次数上限，防风暴）",
-   "window.__pollFails >= 3" in _ch and "__reloads" in _ch)
+   _sm.has(_ch, "window.__pollFails >= 3") and "__reloads" in _ch)
 ok("L4 文案与机制一致（页面确实写着「稍后会自己连回来」，而机制真的存在）",
    "页面稍后会自己连回来" in _ch and "location.reload()" in _ch)
 ok("L5 轮询只启动一次（不重复叠加）", "if(!window.__statusPoll)" in _ch)
 
 print("控制台开窗/窗口/导航判据：%d 通过 / %d 失败 / %d 跳过" % (PASS, FAIL, SKIP))
+if _exe_dir:
+    shutil.rmtree(_exe_dir, ignore_errors=True)      # V-R7-4：判据自带的 exe 副本不留痕迹
 sys.exit(1 if FAIL else 0)

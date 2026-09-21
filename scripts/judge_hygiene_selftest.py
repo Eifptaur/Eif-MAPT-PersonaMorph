@@ -43,7 +43,10 @@ _SELF = os.path.basename(os.path.abspath(__file__))
 #   实测有 **102 条**针在源码变量上却被变量名漏掉（盲区）。现在**不看变量名** ⇒ 基线按新口径重测为
 #   **851**（旧口径下是 383；两者不可比，别拿新旧数字对账）。
 #   **只许降不许升**：新写的这类断言请优先用 `scripts/_srcmatch.py::has()`（空白容忍）就会降。
-BRITTLE_BASELINE = 851
+#   ⬇ 2026-09-21（第七轮 **V-R7-7**）：最脆的五个文件共 **246 条**机械换成 `_srcmatch.has()`
+#   （background 100 + console_chrome 44 + send_file_posted 39 + session_pick 38 + console_open 25）
+#   ⇒ 851 → **605**（实测 605）。
+BRITTLE_BASELINE = 605
 
 
 def _helper_styles(tree: ast.AST) -> dict:

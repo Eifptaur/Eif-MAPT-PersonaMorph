@@ -16,6 +16,8 @@ import sys
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # 同目录的 `_srcmatch`
+import _srcmatch as _sm                                          # noqa: E402  空白容忍的源码断言（V-R4-13 第三条）
 
 from agent.wechat import WeChatAdapter  # noqa: E402
 
@@ -61,18 +63,18 @@ seg = SRC[i:(_j if _j > 0 else i + 11000)] if i >= 0 else ""
 ok("会话闸在先，拿不到证据就 return False", "发文件要求目标会话已打开且被确认" in seg)
 ok("用 UIA 的 SetValue 写文件名", "GetValuePattern().SetValue" in seg)
 ok("点「打开」（或回车兜底）", "打开" in seg and "SendKeys(\"{Enter}\")" in seg)
-ok("最后投递点「发送」", "send_pt" in seg and "backend.click(main_hwnd, send_pt)" in seg)
+ok("最后投递点「发送」", "send_pt" in seg and _sm.has(seg, "backend.click(main_hwnd, send_pt)"))
 ok("只认 DB 回读判成功", "_looks_like_file_msg" in seg)
 ok("注释里写明剪贴板那条无效、别再试", "剪贴板那条" in seg and "别再往那条路上试" in seg)
 # 2026-09-14 新增的"台账档"（当天实测：DB content 是压缩占位符 + 会话行 OCR 只剩 `[图片]` ⇒ 前几档全失效）：
 ok("身份闸有「我们发给该会话的文件名」这一档（屏幕 × 本机发送台账两个独立来源）",
    "_sent_file_names(" in SRC and "_file_fingerprints(" in SRC and "版本指纹" in SRC)
 ok("刚发完的文件卡有「截断兜底」：按文件名开头 3 字认，但**必须**带「文件」前缀（否则正文提到文件名会假阳性 ⇒ 发错会话）",
-   '("文件" + _head) in _pane_norm' in SRC and "_head = \"\".join(ch for ch in _stem if ch.isalnum())[:3]" in SRC)
+   _sm.has(SRC, '("文件" + _head) in _pane_norm') and _sm.has(SRC, "_head = \"\".join(ch for ch in _stem if ch.isalnum())[:3]"))
 ok("同一约束也套在「当前会话那一行」的文字上（聊天区滚到别处、文件卡不在可见区时也能认）",
-   '_row_txt = str((_hl2 or {}).get("name") or "")' in SRC and "_co.norm_alnum(_row_txt)" in SRC)
+   _sm.has(SRC, '_row_txt = str((_hl2 or {}).get("name") or "")') and "_co.norm_alnum(_row_txt)" in SRC)
 ok("文件指纹＝文件名里那串「日期+构建号」数字，并给出去前导零变体（防 OCR 把 09 读成 9）",
-   "def _file_fingerprints" in SRC and 'g.lstrip("0")' in SRC)
+   _sm.has(SRC, "def _file_fingerprints") and 'g.lstrip("0")' in SRC)
 _fps = A._file_fingerprints("Agent启动器-2026.09.14.383.zip")
 ok("运行时：从真实文件名提出指纹 20260914383（含 2026914383 变体）",
    "20260914383" in _fps and "2026914383" in _fps, str(_fps))
@@ -83,11 +85,11 @@ ok("运行时：没有版本号的文件名不硬凑指纹（返回空，交给�
 # ⚠️ 2026-09-16：这两档**抽成了 `_active_row_time_ok()`**（`chat_identity_ok` 与 `chat_is_open`
 #    共用同一条证据链），所以断言改成钉"抽出来的那一处"，并要求两条闸都真的接上了它。
 ok("身份闸时间档做了时间归一化（列表读到的 1:35 与 DB 的 01:35 视为同一时刻）",
-   "def _active_row_time_ok" in SRC and "self._norm_hhmm(_ht) != self._norm_hhmm(_lt)" in SRC
-   and "_ok_t, _why_t = self._active_row_time_ok(chat_id, pane=pane, gui=gui)" in SRC
-   and "_ok3, _why3 = self._active_row_time_ok(chat_id, gui=gui)" in SRC)
+   _sm.has(SRC, "def _active_row_time_ok") and _sm.has(SRC, "self._norm_hhmm(_ht) != self._norm_hhmm(_lt)")
+   and _sm.has(SRC, "_ok_t, _why_t = self._active_row_time_ok(chat_id, pane=pane, gui=gui)")
+   and _sm.has(SRC, "_ok3, _why3 = self._active_row_time_ok(chat_id, gui=gui)"))
 ok("时间档第二道证据有「该时刻在会话列表里唯一」这一档（聊天区不渲染时间时也能认）",
-   "_uniq = (_n == 1)" in SRC and "if _pane_hit or _uniq:" in SRC)
+   _sm.has(SRC, "_uniq = (_n == 1)") and _sm.has(SRC, "if _pane_hit or _uniq:"))
 
 print("── D. 防重复发送闸（2026-09-13 用户当场发现『你发了两个文件给我，一模一样的』）──")
 import tempfile          # noqa: E402
@@ -221,9 +223,9 @@ except Exception as _e3:
 print("── H. 两处测量必须共用一份实现（对面点名的硬需求：产品 4 簇 / 探针 5 簇）──")
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _probe = open(os.path.join(_ROOT, "scripts", "file_btn_probe.py"), encoding="utf-8").read()
-ok("探针 import 了共用实现（agent.input_bar）", "agent.input_bar" in _probe or "input_bar as _ib" in _probe)
+ok("探针 import 了共用实现（agent.input_bar）", "agent.input_bar" in _probe or _sm.has(_probe, "input_bar as _ib"))
 ok("探针不再自带行聚类扫描（自己那份一定漂）",
-   "px[x, y] < gray" not in _probe and "px[x, y] < gray_thr" not in _probe)
+   not _sm.has(_probe, "px[x, y] < gray") and not _sm.has(_probe, "px[x, y] < gray_thr"))
 _ibsrc = open(os.path.join(_ROOT, "agent", "input_bar.py"), encoding="utf-8").read()
 ok("共用实现里有用例数字对得上的常量（阈值/间距容差/左溢容差都在一处）",
    all(k in _ibsrc for k in ("GRAY_THR", "RUN_TOL", "PANE_SLACK")))
@@ -299,7 +301,7 @@ try:
     _wxsrc4 = open(os.path.join(_ROOT, "agent", "wechat.py"), encoding="utf-8").read()
     _segid4 = _wxsrc4[_wxsrc4.index("def chat_identity_ok"):_wxsrc4.index("def _last_time_hhmm")]
     ok("短指纹档也加了两道下界（低熵不算 + <4 不算）",
-       "low_entropy(nn)" in _segid4 and "len(nn) >= 4" in _segid4)
+       "low_entropy(nn)" in _segid4 and _sm.has(_segid4, "len(nn) >= 4"))
 
     # ⛔⛔ 2026-09-16 晚：**过修成反向问题**（跨机 r11 报告 ①③）——对面那台聊天区里是**上千字的报告**、
     #   屏幕只可见 142~334 字，而原来的片段下界是 `针长 × 30%`＝300 字 ⇒ **永远凑不出** ⇒
@@ -332,9 +334,9 @@ print("── L. 关「选择文件」对话框不许把微信顶到前台（202
 # **关掉对话框之后**前台变成微信主窗 ✗ ⇒ 处置＝关前后各记一次前台，关完还回去。
 _wxsrc5 = open(os.path.join(_ROOT, "agent", "wechat.py"), encoding="utf-8").read()
 ok("有『打开对话框之前记下前台』的实现（_stash_fg）",
-   "def _stash_fg" in _wxsrc5 and "_FG_STASH" in _wxsrc5)
+   _sm.has(_wxsrc5, "def _stash_fg") and "_FG_STASH" in _wxsrc5)
 ok("有『还回前台』的实现（且拒绝还给对话框/死窗口）",
-   "def _restore_fg" in _wxsrc5 and "SetForegroundWindow" in _wxsrc5
+   _sm.has(_wxsrc5, "def _restore_fg") and "SetForegroundWindow" in _wxsrc5
    and '#32770' in _wxsrc5 and "IsWindow" in _wxsrc5)
 _seg_send = _wxsrc5[_wxsrc5.index("def send_file_posted"):]
 ok("产品发文件路径：**点 📁 之前**就 stash 前台",
@@ -357,24 +359,24 @@ print("── M. 抢前台那一步＝**写文件名**（用户 2026-09-16 当�
 #      都是消息，不 SetFocus / 不 SetForegroundWindow ⇒ 前台不变；
 #   ② 退回 UIA 那条路时才需要"还"，而且是**盯着还**（对话框激活是异步的，单枪必打空）。
 ok("写文件名优先走 WM_SETTEXT（消息投递，不进前台）",
-   "_fill_dialog_name(" in _wxsrc5 and "WM_SETTEXT" in _wxsrc5 and "DLG_ID_FILENAME = 1148" in _wxsrc5)
+   "_fill_dialog_name(" in _wxsrc5 and "WM_SETTEXT" in _wxsrc5 and _sm.has(_wxsrc5, "DLG_ID_FILENAME = 1148"))
 ok("点「打开」优先走 BM_CLICK（消息投递，不进前台）",
-   "_click_dialog_open(" in _wxsrc5 and "BM_CLICK" in _wxsrc5 and "DLG_ID_OK = 1" in _wxsrc5)
+   "_click_dialog_open(" in _wxsrc5 and "BM_CLICK" in _wxsrc5 and _sm.has(_wxsrc5, "DLG_ID_OK = 1"))
 ok("退回 UIA 时才『盯着还前台』（对话框激活是异步的，单枪会打空）",
    'target.GetValuePattern().SetValue' in _wxsrc5
    and '_restore_fg_until("写完文件名（粘贴那一步）"' in _wxsrc5)
 ok("框一消失就立刻还（不再先 sleep 2.0 —— 那会让用户多丢约 2 秒前台）",
-   "if _wait_dialog_gone(int(hwnd), 4.0):" in _wxsrc5
+   _sm.has(_wxsrc5, "if _wait_dialog_gone(int(hwnd), 4.0):")
    and '_restore_fg_until("对话框关闭后"' in _wxsrc5)
 ok("_wait_dialog_gone 返回「真的没了」（调用方靠它决定走哪条收尾路）",
-   "def _wait_dialog_gone(hwnd: int, timeout: float = 1.5) -> bool:" in _wxsrc5)
+   _sm.has(_wxsrc5, "def _wait_dialog_gone(hwnd: int, timeout: float = 1.5) -> bool:"))
 # ⛔⛔ 本轮的**真根因**：`import ctypes` 原来只在函数里局部 import，模块级这些函数（_fg_now /
 #   _wait_dialog_gone / _restore_fg / 对话框消息驱动）一律 NameError，而外面包着 except ⇒ **静默失效**。
 #   实测证据：修复后 `还前台（对话框关闭后）：25692654 → 134730（结果=True）`，之前一条日志都没有。
 ok("模块级 import ctypes（缺了 ⇒ 还前台/等框消失全部静默失效）",
    __import__("re").search(r"^import ctypes\b", _wxsrc5, __import__("re").M) is not None)
 ok("还前台的日志带 note 与前后 hwnd（跨机报告能核对到步）",
-   'log.info("还前台（%s）：%s → %s（结果=%s，AttachThreadInput 绕法）"' in _wxsrc5)
+   _sm.has(_wxsrc5, 'log.info("还前台（%s）：%s → %s（结果=%s，AttachThreadInput 绕法）"'))
 try:
     from agent import wechat as _W5
     ok("_wait_dialog_gone(0, 0.1) 对不存在的窗口判『已消失』并返回 bool",
@@ -399,22 +401,21 @@ print("── N. 发送/自检路径**不许悄悄退回真鼠标**（跨机 r12
 # 光标动了 16s，日志 '投递切会话：False → 改走真实路径'）。⇒ 真鼠标兜底改成**显式 opt-in**（默认关）。
 _segN = open(os.path.join(_ROOT, "agent", "wechat.py"), encoding="utf-8").read()
 ok("有开关实现：默认关 + 环境变量可强制关",
-   "def _real_fallback_allowed" in _segN and 'get("allow_real_fallback", False)' in _segN
+   _sm.has(_segN, "def _real_fallback_allowed") and _sm.has(_segN, 'get("allow_real_fallback", False)')
    and "WXAGENT_REAL_FALLBACK" in _segN)
 _cfgN = open(os.path.join(_ROOT, "agent", "config.py"), encoding="utf-8").read()
 ok("config 默认值＝False，并把事故写在注释里",
-   '"allow_real_fallback": False' in _cfgN and "动了 16 秒光标" in _cfgN)
+   _sm.has(_cfgN, '"allow_real_fallback": False') and _sm.has(_cfgN, "动了 16 秒光标"))
 _segS = _segN[_segN.index("def send_text("):]
 _segS = _segS[:_segS.find("\n    def ", 10)]          # 只在 `send_text` 这一个函数体里比顺序
 ok("这道闸压在**真实路径之前**（同一函数内的顺序）",
-   "if not self._real_fallback_allowed():" in _segS
+   _sm.has(_segS, "if not self._real_fallback_allowed():")
    and _segS.index("if not self._real_fallback_allowed():") < _segS.index("_send_with_foreground"))
-ok("不退回时把原因说清（带会话头三态）", "不退回真鼠标" in _segN and "% _st_status" in _segN)
+ok("不退回时把原因说清（带会话头三态）", "不退回真鼠标" in _segN and _sm.has(_segN, "% _st_status"))
 ok("自检工具（collect_report）强制关掉真鼠标兜底",
-   'os.environ["WXAGENT_REAL_FALLBACK"] = "0"' in
-   open(os.path.join(_ROOT, "scripts", "collect_report.py"), encoding="utf-8").read())
+   _sm.has(open(os.path.join(_ROOT, "scripts", "collect_report.py"), encoding="utf-8").read(), 'os.environ["WXAGENT_REAL_FALLBACK"] = "0"'))
 ok("搜索浮层失败要自己关掉（别留屏 + 别占前台）",
-   "def _close_search_popover" in _segN and _segN.count("_close_search_popover(") >= 3)
+   _sm.has(_segN, "def _close_search_popover") and _segN.count("_close_search_popover(") >= 3)
 try:
     import os as _osN
     from agent import wechat as _WN
@@ -439,7 +440,7 @@ except Exception as _eN:
 print("── O. 内容像还不够：**活动行时间**要跟目标对得上（跨机 r14：两个会话内容逐字相同时会双放行）──")
 _segO = open(os.path.join(_ROOT, "agent", "wechat.py"), encoding="utf-8").read()
 ok("有 _row_time_conflict 实现（活动行时间 vs 目标最后一条消息时间）",
-   "def _row_time_conflict" in _segO and "活动行时间对不上" in _segO)
+   _sm.has(_segO, "def _row_time_conflict") and "活动行时间对不上" in _segO)
 ok("内容级闸放行前会先查它（源码顺序：content_match 之后立刻查）",
    _segO.index("if _co.content_match(pane, nd):") < _segO.index("_cf, _cfwhy, _cdec, _ccmp = self._row_time_conflict"))
 # ⛔ 2026-09-21 改口径（业界调研 🥈 + 我们自己的残留口子）：时间档给不出结论时**不再一律判否**，
@@ -447,14 +448,14 @@ ok("内容级闸放行前会先查它（源码顺序：content_match 之后立�
 #   看到别家正文 ⇒ 判否。所以这条断言盯的是**排他性核对在位**（`_pane_excludes_others`），
 #   而不是旧的 `if _ccmp and not _cdec:` 那个"一律拦"的字面量。
 ok("红线仍在：时间档给不出结论时必须过**排他性核对**（`_pane_excludes_others`）",
-   "_pane_excludes_others(chat_id, pane)" in _segO
-   and "_excl, _exclwhy = self._pane_excludes_others(chat_id, pane)" in _segO)
+   _sm.has(_segO, "_pane_excludes_others(chat_id, pane)")
+   and _sm.has(_segO, "_excl, _exclwhy = self._pane_excludes_others(chat_id, pane)"))
 ok("反例锚：旧写法（`if _ccmp and not _cdec:` 一律判否）**确实**在聊天区还看得到目标正文时也拦发",
-   "if _ccmp and not _cdec:" not in _segO)
+   not _sm.has(_segO, "if _ccmp and not _cdec:"))
 ok("草稿行按『本来就没有可比时间』处理（不然那条会话永远发不出去）",
    "活动行是**草稿行**" in _segO and "草稿行不显示时间戳" in _segO)
 ok("发文件成功后顺手学会话头参照（该尺寸没参照时，指纹是唯一还能用的独立证据）",
-   "_learn_chat_header(chat_id, gui=gui)" in open(os.path.join(_ROOT, "agent", "wechat.py"), encoding="utf-8").read())
+   _sm.has(open(os.path.join(_ROOT, "agent", "wechat.py"), encoding="utf-8").read(), "_learn_chat_header(chat_id, gui=gui)"))
 try:
     from agent import chat_ocr as _coO
     from agent import wechat as _WO
@@ -486,7 +487,7 @@ try:
     #   改成"内容 + 排他"定论（见 K 段那两条）。这里盯的是**新口径在位**：
     #   排他性核对被调用、且"读不出时间戳"这条理由仍在（只是不再单独作为拦的充分条件）。
     ok("内容级闸：时间档给不出结论时**必须过排他性核对**（`_pane_excludes_others`）",
-       "_excl, _exclwhy = self._pane_excludes_others(chat_id, pane)" in _segCI
+       _sm.has(_segCI, "_excl, _exclwhy = self._pane_excludes_others(chat_id, pane)")
        and "活动行时间戳读不出" in _segCI)
 except Exception as _eO:
     ok("_row_time_conflict 行为可测", False, str(_eO)[:80])
@@ -496,14 +497,13 @@ _segP = open(os.path.join(_ROOT, "agent", "wechat.py"), encoding="utf-8").read()
 _segP = _segP[_segP.index("def _row_time_conflict"):]
 _segP = _segP[:_segP.find("\n    def ", 10)]
 ok("读不出时会**重试捕获**（不是单帧就下结论）",
-   "for _i in range(4):" in _segP and "time.sleep(0.35)" in _segP)
+   _sm.has(_segP, "for _i in range(4):") and "time.sleep(0.35)" in _segP)
 ok("重试还是读不出才判『判据不可用』（判词写明试了几帧）",
-   "连试 5 帧都没读出来" in _segP)
+   _sm.has(_segP, "连试 5 帧都没读出来"))
 ok("重试用的是新捕获（`capture_best` 每次重抓，不吃旧帧）",
    _segP.count("capture_best(") >= 2)
 ok("tools.py 那句生硬措辞已改顺（不许再出现嵌套引号那版）",
-   "那一下会让微信**短暂占前台约 0.5~3 秒**" in
-   open(os.path.join(_ROOT, "agent", "tools.py"), encoding="utf-8").read())
+   _sm.has(open(os.path.join(_ROOT, "agent", "tools.py"), encoding="utf-8").read(), "那一下会让微信**短暂占前台约 0.5~3 秒**"))
 
 print("== [send-file-posted] 判据：{} 通过 / {} 失败 ==".format(PASS, FAIL))
 sys.exit(1 if FAIL else 0)

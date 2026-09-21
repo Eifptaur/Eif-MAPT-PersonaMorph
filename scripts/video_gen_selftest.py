@@ -115,6 +115,9 @@ _real_cfg = VG.cfg
 _real_seen = VG._seen_path
 # 自检不污染真数据：去重用的"见过指纹"文件指到临时目录（否则跑一次自检就把真库塞满测试指纹）
 VG._seen_path = lambda: os.path.join(TMP, "seen.json")
+# ⛔ V-R7-4：成品目录也指到临时目录 —— 原来往用户**生产媒体目录** `data/gen_videos/` 落
+#   `gen_generic-*.mp4`（用户看得见）。产品默认行为不变：`out_dir()` 本身没改，只是这里打桩。
+VG.out_dir = lambda: TMP
 
 
 def set_cfg(**kw):

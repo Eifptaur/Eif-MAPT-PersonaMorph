@@ -38,7 +38,9 @@
   "emoji_send_mode": "auto",
   "owner_accounts": [],
   "owner_mode": "know",
-  "private_chat": "owner_only"
+  "private_chat": "owner_only",
+  "echo_window_s": 120,
+  "limit_window": "shrink_only"
  },
  "persona": {
   "bot_name": "小鲸鱼",
@@ -149,7 +151,14 @@
   "max_mb": 8,
   "min_gap_seconds": 20,
   "avoid_recent": 30,
-  "include_gif": true
+  "include_gif": true,
+  "cache_fallback": false,
+  "meta_timeout_ms": 6000,
+  "download_timeout_ms": 6000,
+  "download_race": 4,
+  "total_budget_ms": 12000,
+  "source_cooldown_s": 600,
+  "slow_cooldown_s": 120
  },
  "voice": {
   "enabled": false,
@@ -183,7 +192,11 @@
   "vc_params": "",
   "vc_json_field": "",
   "vc_fail_open": false,
-  "vc_timeout_ms": 60000
+  "vc_timeout_ms": 60000,
+  "run_boost": 25,
+  "form": "strip",
+  "fallback_file": true,
+  "pronounce": ""
  },
  "file_search": {
   "enabled": false,
@@ -214,7 +227,25 @@
    "blacklist": true,
    "text": true,
    "classifier": true
-  }
+  },
+  "local_sd": {
+   "enabled": true,
+   "port": 7860,
+   "model_dir": "data/sd_model",
+   "allow_online_install": false,
+   "auto_start": true,
+   "steps": 4
+  },
+  "online_preset": "pollinations",
+  "online_api": {
+   "url": "",
+   "key": "",
+   "model": "",
+   "timeout": 120
+  },
+  "online_first": true,
+  "strip_watermark": true,
+  "watermark_crop": 0.06
  },
  "input": {
   "backend": "auto",
@@ -391,6 +422,8 @@
   "enabled": true,
   "to": "",
   "upload_url": "",
+  "webhook_url": "",
+  "webhook_token": "",
   "smtp": {
    "host": "smtp.qq.com",
    "port": 465,
@@ -431,7 +464,9 @@
    "falloff": 4.0,
    "rings": 1,
    "ring_speed": 0.4
-  }
+  },
+  "balance_display": "real",
+  "balance_fake": ""
  },
  "server": {
   "enabled": true,
@@ -457,5 +492,21 @@
    "redline": true,
    "classifier": true
   }
+ },
+ "voice_strip": {
+  "enabled": true,
+  "record_btn": [
+   0.878,
+   0.943
+  ],
+  "send_btn": [
+   0.932,
+   0.945
+  ],
+  "out_device": "cable",
+  "meter_guard": true,
+  "real_click": true,
+  "enter_via": "alt",
+  "fallback_click": true
  }
 }

@@ -103,6 +103,58 @@ with tempfile.TemporaryDirectory() as td:
        ch.reference("filehelper", p, size="777x555", strict=True) == []
        and ch.reference("filehelper", p, size="1139x890", strict=True) == fa)
 
+print("[P] 短名假阳性（分数像、形状不像）与「学歪的参照」")
+# ⛔ V-R7-14：这两族以前**零覆盖**——变异 `chat_header.py:264`（摘掉形状闸）与 `:305`
+#   （`if is_blank(fp):` → `if False:`）之后，本判据仍 19 通过 / 0 失败。
+#   ① 两个**不同的短群名**在幅度指标上能拿到 0.98（真机实测 0.948 ≥ 0.90）⇒ 只看相似度会把
+#      它们判成「同一个会话」（假阳性）；形状闸（`pattern_score >= DEFAULT_COSINE`）必须拦下。
+#   ② `remember()` 的 `is_blank` 闸：空白帧学进参照库会让该尺寸档**永远判不匹配**
+#      ⇒ 打好的回复被整条丢掉（用户报「机器人有时不回话」的真因链）。
+_ia, _ib = fake_window("abc"), fake_window("abd")
+_pa, _pb = ch.fingerprint(_ia), ch.fingerprint(_ib)
+_sim_p, _cos_p = ch.similarity(_pa, _pb), ch.pattern_score(_pa, _pb)
+ck("P1 两个不同短群名：相似度 ≥ 0.90 但形状闸拦下 ⇒ match() 为 False（相似度那条闸有守备）",
+   _sim_p >= ch.DEFAULT_THRESHOLD and _cos_p < ch.DEFAULT_COSINE and ch.match(_pa, _pb) is False,
+   "相似度 %.3f（阈值 %.2f）· 形状 %.3f（阈值 %.2f）"
+   % (_sim_p, ch.DEFAULT_THRESHOLD, _cos_p, ch.DEFAULT_COSINE))
+with tempfile.TemporaryDirectory() as td_p:
+    _pp = os.path.join(td_p, "hdr.json")
+    ch.remember("shortname", _pa, path=_pp, size=ch.size_key(_ia))
+    _cap0 = ch.capture_image                     # 用合成帧当"当前画面"，把 check() 的判分分支钉住
+    try:
+        ch.capture_image = lambda gui=None, render=None: _ib
+        _r = ch.check("shortname", path=_pp)
+    finally:
+        ch.capture_image = _cap0
+    ck("P2 check() 的 mismatch 分支：分数像但形状不像 ⇒ 判 mismatch（不许当 ok 放行）",
+       (_r.get("status") == "mismatch" and float(_r.get("sim") or 0) >= ch.DEFAULT_THRESHOLD
+        and "形状" in (_r.get("note") or "")),
+       "status=%s · %s" % (_r.get("status"), _r.get("note")))
+    ch.remember("blank", [255] * 64, path=_pp)
+    ck("P3 空白帧（全 255）一律不进参照库 ⇒ reference 为空",
+       ch.reference("blank", _pp) == [], "reference=%s" % (ch.reference("blank", _pp) or "[]"))
+    ch.remember("degen", [0] * 63 + [255], path=_pp)
+    ck("P4 退化帧（[0]*63+[255]）一律不进参照库 ⇒ reference 为空",
+       ch.reference("degen", _pp) == [], "reference=%s" % (ch.reference("degen", _pp) or "[]"))
+    # —— 隔离测试（V-R7-14 的"该补什么"要的是能变红）：`is_blank` 与 `degenerate_reason` 是**两道**
+    #    闸，下游会替上游挡住同一类帧 ⇒ 把下游打桩成"看不出问题"，被守的那一道才会单独现形。
+    _deg0 = ch.degenerate_reason
+    try:
+        ch.degenerate_reason = lambda fp, bins=ch.BINS: ""
+        ch.remember("blank2", [255] * 64, path=_pp)
+        ck("P5 is_blank 是**独立**那道闸（下游打桩后仍拒绝空白帧）",
+           ch.reference("blank2", _pp) == [], "reference=%s" % (ch.reference("blank2", _pp) or "[]"))
+    finally:
+        ch.degenerate_reason = _deg0
+    _blank0 = ch.is_blank
+    try:
+        ch.is_blank = lambda fp: False
+        ch.remember("degen2", [0] * 63 + [255], path=_pp)
+        ck("P6 degenerate_reason 是**独立**那道闸（上游打桩后仍拒绝退化帧）",
+           ch.reference("degen2", _pp) == [], "reference=%s" % (ch.reference("degen2", _pp) or "[]"))
+    finally:
+        ch.is_blank = _blank0
+
 print("[L] 实机（抓不到不算失败）")
 try:
     fp1 = ch.capture()

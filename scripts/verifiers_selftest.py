@@ -30,6 +30,12 @@ sys.path.insert(0, ROOT)
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
 from agent import verifiers as V          # noqa: E402
+from agent import update_check as _uc     # noqa: E402
+
+# ⛔ V-R7-4：判据**不写产品** `data/update_state.json`（本判据会跑 `update_check.state()` ⇒ 落盘）。
+#   `_state_path()` 是唯一落点函数，指到临时目录即可；产品默认行为不变（默认仍写生产路径）。
+_state_dir = tempfile.mkdtemp(prefix="pm-vf-state-")
+_uc._state_path = lambda: os.path.join(_state_dir, "update_state.json")
 
 PASS = FAIL = 0
 

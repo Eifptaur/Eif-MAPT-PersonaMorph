@@ -110,6 +110,18 @@ def main():
         ok("⑤ `_load_chat` 里有隔离动作（`corrupt-`）与 `os.replace`", "corrupt-" in _body and "os.replace(" in _body)
         ok("⑤ `_save_chat` 见到 `_loadFailed` 就**直接返回、不写盘**",
            "_loadFailed" in _src[_src.find("def _save_chat("):][:600])
+        # ⑤ 可执行反向锚（V-R7-5 #2）：上面两条只 grep 源码文本 —— 分支被写死（`if False:`）时
+        # 文本还在、判据照样绿。这里真调一次带 `_loadFailed` 的 `_save_chat`，断言**一个文件都不写**。
+        _fd = tempfile.mkdtemp(prefix="pm_store_failwrite_")
+        store_mod.MESSAGES_DIR = _fd
+        try:
+            store_mod._save_chat({"chat_key": "group:failwrite", "next_local_id": 1, "messages": [],
+                                  "_loadFailed": "PermissionError: 读不动（自检造的假故障）"})
+            _left = os.listdir(_fd)
+        finally:
+            store_mod.MESSAGES_DIR = tmp
+        ok("⑤ 反向锚：带 `_loadFailed` 的档调 `_save_chat` ⇒ 一个文件都不写（fail-closed 真活着）",
+           _left == [], str(_left))
         # 反例锚：老写法（一把 pass 之后返回空壳）必须被判不合格
         _OLD = ('def _load_chat(chat_key):\n'
                 '    try:\n'

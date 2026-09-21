@@ -191,31 +191,37 @@ def main():
                                        encoding="utf-8").read(), "")
 
         print("\n== E. 真机端到端：临时副本里真起一个看门狗（stub 机器人 exit 3）==")
-        wd = tempfile.mkdtemp(prefix="pm-wdreal-")
-        try:
-            os.makedirs(os.path.join(wd, "scripts"), exist_ok=True)
-            shutil.copy(os.path.join(ROOT, "scripts", "watchdog.py"),
-                        os.path.join(wd, "scripts", "watchdog.py"))
-            with open(os.path.join(wd, "scripts", "persona_morph.py"), "w", encoding="utf-8") as f:
-                f.write(STUB % 3)
-            t0 = time.time()
-            p = _sp.Popen([sys.executable, os.path.join(wd, "scripts", "watchdog.py")],
-                          cwd=wd, creationflags=getattr(_sp, "CREATE_NO_WINDOW", 0),
-                          stdin=_sp.DEVNULL, stdout=_sp.PIPE, stderr=_sp.PIPE)
+        if os.environ.get("PM_JUDGE_NO_PROC") == "1":
+            # ⛔ V-R7-12：判据环境（`run_all_selftests.py` 会带这个开关）⇒ **只跑静态/内存那半**，
+            #   本段"真 Popen 一个看门狗进程"整段跳过，并**明确打一行 SKIP**（不冒充通过）。
+            #   单跑（不带这个环境变量）时，这一段照旧真起真收 —— 那是有价值的证据。
+            print("  SKIP E. 真机端到端：PM_JUDGE_NO_PROC=1 ⇒ 不真起看门狗进程（E1~E4 不判）")
+        else:
+            wd = tempfile.mkdtemp(prefix="pm-wdreal-")
             try:
-                rc4 = p.wait(timeout=60)                  # ⛔ 必须带超时，别把判据挂死
-            except _sp.TimeoutExpired:
-                p.kill()
-                rc4 = "TIMEOUT"
-            el = time.time() - t0
-            ok("E1 真看门狗进程**自己退出**（exit 3 条件下不再转圈）", rc4 == 0, "rc=%r 用时=%.1fs" % (rc4, el))
-            ok("E2 且是「很快」退出（≤20 秒，不是等天亮）", isinstance(el, float) and el <= 20.0, "%.1fs" % el)
-            _spawns = os.path.join(wd, "data", "spawns.log")
-            _n = len(open(_spawns, encoding="utf-8").read().strip().splitlines()) if os.path.exists(_spawns) else 0
-            ok("E3 stub 机器人只被拉起 1 次（改前 22 秒 5 次）", _n == 1, "spawns=%d" % _n)
-            ok("E4 真跑也收掉了自己的 watchdog.pid", not os.path.exists(os.path.join(wd, "data", "watchdog.pid")), "")
-        finally:
-            shutil.rmtree(wd, ignore_errors=True)
+                os.makedirs(os.path.join(wd, "scripts"), exist_ok=True)
+                shutil.copy(os.path.join(ROOT, "scripts", "watchdog.py"),
+                            os.path.join(wd, "scripts", "watchdog.py"))
+                with open(os.path.join(wd, "scripts", "persona_morph.py"), "w", encoding="utf-8") as f:
+                    f.write(STUB % 3)
+                t0 = time.time()
+                p = _sp.Popen([sys.executable, os.path.join(wd, "scripts", "watchdog.py")],
+                              cwd=wd, creationflags=getattr(_sp, "CREATE_NO_WINDOW", 0),
+                              stdin=_sp.DEVNULL, stdout=_sp.PIPE, stderr=_sp.PIPE)
+                try:
+                    rc4 = p.wait(timeout=60)                  # ⛔ 必须带超时，别把判据挂死
+                except _sp.TimeoutExpired:
+                    p.kill()
+                    rc4 = "TIMEOUT"
+                el = time.time() - t0
+                ok("E1 真看门狗进程**自己退出**（exit 3 条件下不再转圈）", rc4 == 0, "rc=%r 用时=%.1fs" % (rc4, el))
+                ok("E2 且是「很快」退出（≤20 秒，不是等天亮）", isinstance(el, float) and el <= 20.0, "%.1fs" % el)
+                _spawns = os.path.join(wd, "data", "spawns.log")
+                _n = len(open(_spawns, encoding="utf-8").read().strip().splitlines()) if os.path.exists(_spawns) else 0
+                ok("E3 stub 机器人只被拉起 1 次（改前 22 秒 5 次）", _n == 1, "spawns=%d" % _n)
+                ok("E4 真跑也收掉了自己的 watchdog.pid", not os.path.exists(os.path.join(wd, "data", "watchdog.pid")), "")
+            finally:
+                shutil.rmtree(wd, ignore_errors=True)
 
         print("\n== F. 判据自身的纪律 ==")
         _prod_after = (os.path.getsize(_prod_log) if os.path.exists(_prod_log) else 0)

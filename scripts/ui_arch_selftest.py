@@ -48,10 +48,13 @@ def ok(name, cond, detail=""):
 def scan(src: str) -> dict:
     """把一份 console HTML 的信息架构量出来（判据与阴性对照共用同一套口径）。"""
     body = re.sub(r"<script[\s\S]*?</script>", "", src)          # 脚本段不是真实绑定
-    secs = re.findall(r'<section id="(sec-[a-z0-9\-]+)"', body)
+    # ⛔ V-R7-15（大小写）：这两条正则**必须大小写不敏感**。老写法（无 `re.I`）遇到
+    #   `href="#sec-wechat-TYPO"` 这类含大写的链接**整条匹配不上**（字符类停在 T，后面还要求紧跟 `"`）
+    #   ⇒ 一条真死链既不进 `navs` 也不进 `navs_set` ⇒「导航无死链」白绿。id 与 href 用同一套口径。
+    secs = re.findall(r'<section id="(sec-[a-z0-9\-]+)"', body, re.I)
     # ⚠️ 2026-09-16：`navs` 以前是 **set**（顺序丢了）⇒ 没法判"分区顺序 == 导航顺序"。
     #    现在 list 保序（判顺序用），另存 `navs_set` 给"有没有/死链"用。两个都留着，别只留一个。
-    navs = re.findall(r'href="#(sec-[a-z0-9\-]+)"', body)
+    navs = re.findall(r'href="#(sec-[a-z0-9\-]+)"', body, re.I)
     navs_set = set(navs)
     keys = re.findall(r'data-cfg="([^"]+)"', body)
     miss_h2, miss_desc, sizes = [], [], []
@@ -115,6 +118,19 @@ ok("人造缺导航被抓出", sm["no_nav"] == ["sec-a", "sec-b"], str(sm["no_na
 ok("人造死链被抓出", sm["dead_nav"] == ["sec-gone"], str(sm["dead_nav"]))
 ok("人造缺 desc 被抓出", sm["miss_desc"] == ["sec-b"], str(sm["miss_desc"]))
 ok("脚本段里的假 data-cfg 被忽略（不误报）", "c.d" not in sm["outside"][1:], str(sm["outside"]))
+
+print("── ⑤b 大小写：`sec-*` 的 id 与 href 都必须被认出来（正则大小写不敏感）──")
+# ⛔ V-R7-15（次要项，alpha 发现）：老正则 `sec-[a-z0-9\-]+` 大小写敏感 ⇒ 带大写的
+#   `href="#sec-xxx-TYPO"` 整条漏读（字符类停在 T、后面还要求紧跟 `"`）⇒ 真死链照样全绿。
+#   下面三条＝让这件事**能变红**：把 `re.I` 拿掉，它们立刻就红。
+sm_up = scan('<section id="sec-UP"><h2>甲</h2><div class="desc">x</div>'
+             '<a href="#sec-GONE-TYPO">大写死链</a>')
+ok("大写 `sec-*` 也要被算成面板（不许整块漏读）", sm_up["secs"] == ["sec-UP"], str(sm_up["secs"]))
+ok("大写 `sec-*` 的 href 也要被算成导航 ⇒ 它的死链抓得到",
+   sm_up["dead_nav"] == ["sec-GONE-TYPO"], str(sm_up["dead_nav"]))
+_inj = scan(SRC + '<a href="#sec-OVERVIEW-TYPO">大写死链</a>')
+ok("真页面里混进一条大写死链也要报红（② 那条断言不是恒真）",
+   _inj["dead_nav"] == ["sec-OVERVIEW-TYPO"], str(_inj["dead_nav"]))
 
 print("── 丁. 分区顺序必须与左导航顺序**完全一致**（用户 2026-09-16 报：「卡片功能栏顺序不是严格按照左边导航栏的顺序来的，所以有时候划着划着，卡片导航栏会乱跳」）──")
 _bad = next((("导航 %s ↔ 面板 %s" % (a, b)) for a, b in zip(m["navs"], m["secs"]) if a != b), "")
