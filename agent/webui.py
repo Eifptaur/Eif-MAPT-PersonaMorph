@@ -1470,6 +1470,13 @@ class WebUI:
                             _risk.pause(str((data or {}).get("reason") or "手动暂停"))
                         elif act == "resume":
                             _risk.resume()
+                        elif act == "recover":
+                            # ⛔ 2026-09-21（第十轮 **V-R10-24** 的收尾）：`risk.recover()`
+                            #   原来**全仓零调用者**（B 线复核时点出：它只活在模块里）——
+                            #   而它干的事跟 `resume()` 不是一件：**两套停机开关一起清**
+                            #   （config 的 `risk.paused` + 控制台横幅认的 `data/paused.flag`），
+                            #   坏档 fail-closed 把用户锁住时，这就是那把"一键恢复"的钥匙。
+                            _risk.recover()
                         self._json({"ok": True, "risk": _risk.snapshot()})
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)}, 500)
