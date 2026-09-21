@@ -542,6 +542,61 @@ class Orchestrator:
         pending = self.store.peek_unread(chat_key, 200)
         if not pending:
             return
+        # ── 名字面（先算出来：下面切分"哪些消息是**明确指向它**的"要用）──────────────
+        self_nickname = cfg.get("persona", {}).get("self_nickname") or cfg.get("wechat", {}).get("bot_nickname") or ""
+        bot_name = cfg.get("persona", {}).get("bot_name") or ""
+        self_id = self.wechat.self_wxid
+        # 微信实际昵称（数据库读取，群里 @ 的一般是它）——防止自设自我昵称后漏识别
+        try:
+            wechat_nick = self.wechat.self_nickname
+        except Exception:
+            wechat_nick = ""
+        # ⛔ 2026-09-21 加（第九轮 **V-R9-15/16/17** ＋ 作者原话「**给模型喂的前几分钟就够了**」）：
+        #   停机/卡顿之后补进来的整批未读**不再一次性倒给模型**。切三桶（纯函数见
+        #   `agent\feed_window.py`）：**keep** 喂模型 · **skip** 陈旧闲聊（标已读、不回）·
+        #   **retry** 超上限（**退回未读**，下一轮还在窗口里就能处理）。
+        #   ⚠️ 「明确指向它的」（@ 我 / 引用我）**不受时间窗限制** —— 否则就是把"一次性说好多"
+        #   换成另一种形态的"它不理我"（审计明确警告过这条）。
+        _feed = None
+        try:
+            from agent import feed_window as _fw
+            _st_cfg = (cfg.get("store") or {})
+
+            def _directed(_m):
+                _t = str((_m or {}).get("text") or "")
+                if _t.startswith("[引用") or _t.startswith("[拍一拍]"):
+                    return True
+                if is_at_me(_t, self_nickname, bot_name):
+                    return True
+                return bool(wechat_nick) and is_at_me(_t, wechat_nick, "", "")
+
+            _feed = _fw.pick_feed(pending,
+                                  window_min=_st_cfg.get("feed_window_min", 10),
+                                  max_n=_st_cfg.get("feed_max_count", 150),
+                                  directed=_directed)
+            if _feed["skip"] or _feed["retry"]:
+                log.info("%s 未读 %d 条 ⇒ 喂模型 %d · 陈旧不回 %d · 超限退回未读 %d（最早一条 %.0f 分钟前）",
+                         chat_key, len(pending), len(_feed["keep"]), len(_feed["skip"]),
+                         len(_feed["retry"]), float(_feed.get("oldest_age_min") or 0))
+            # 陈旧的那些：标已读（本次**故意**不回）、但不丢；超限的那些**保持未读**
+            if _feed["skip"]:
+                self.store.mark_read(chat_key, [m.get("id") for m in _feed["skip"]])
+            if not _feed["keep"]:
+                try:
+                    from agent import thought_trace as _tt0
+                    _tt0.note(chat_key, "tier", tier=0, should=False,
+                              why="这一批都是 %.0f 分钟前的旧闲聊（时间窗 %s 分钟），本次不回"
+                                  % (float(_feed.get("oldest_age_min") or 0),
+                                     _st_cfg.get("feed_window_min", 10)),
+                              src="时间窗", snippet=str((pending[-1] or {}).get("text") or "")[:80])
+                except Exception:
+                    pass
+                return
+            pending = _feed["keep"]
+            self.store.mark_read(chat_key, [m.get("id") for m in pending])
+        except Exception as _e_fw:
+            log.info("未读切分不可用（按原口径整批处理）：%s", _e_fw)
+            _feed = None
 
         # ── 人性化行为决策（省 token 规则引擎，不调 LLM）──────────────
         # 收到表情 → 概率收藏；群里有表情时 → 概率回发收藏的表情；新话题 → 概率 @ 活跃成员
@@ -556,21 +611,14 @@ class Orchestrator:
             now = time.time()
             last = self._last_trigger.get(chat_key)
             if last and last[0] == fp and last[2] and (now - last[1]) < 300:
-                marked = self.store.mark_all_read(chat_key)
-                log.info("%s 同一批消息 5 分钟内已处理过，跳过重复唤醒（标记 %d 条已读）", chat_key, marked)
+                # ⛔ 2026-09-21 改（V-R9-16）：**不再 `mark_all_read`** —— 上面已经"点名标读"了
+                #   要喂的与陈旧的；这里再整批标读会把"超限退回未读"的那些一并吞掉。
+                log.info("%s 同一批消息 5 分钟内已处理过，跳过重复唤醒（本批 %d 条）",
+                         chat_key, len(pending))
                 return
             self._last_trigger[chat_key] = (fp, now, False)
         except Exception:
             pass
-
-        self_nickname = cfg.get("persona", {}).get("self_nickname") or cfg.get("wechat", {}).get("bot_nickname") or ""
-        bot_name = cfg.get("persona", {}).get("bot_name") or ""
-        self_id = self.wechat.self_wxid
-        # 微信实际昵称（数据库读取，群里 @ 的一般是它）——防止自设自我昵称后漏识别
-        try:
-            wechat_nick = self.wechat.self_nickname
-        except Exception:
-            wechat_nick = ""
 
         # ⚠️ 2026-09-15 修真 bug：这里原来**没传 chat_key/group_name** ⇒ 每群独立档位、
         #   群屏蔽名单、指令禁言在生产路径里从来没生效（自检自己在测试里传了 chat_key，所以一直全绿）。
@@ -606,12 +654,16 @@ class Orchestrator:
         except Exception:
             pass
         if not tier_result["should_respond"]:
-            marked = self.store.mark_all_read(chat_key)
-            if marked:
-                log.info("%s %d 条未命中触发条件（档位 %s），已标记已读、不响应", chat_key, marked, tier_result["reason"])
+            # ⛔ 2026-09-21 改（第九轮 V-R9-16）：**不再 `mark_all_read`** —— 上面把"喂模型的"与
+            #   "陈旧不回的"已经**点名标读**了；超上限的那些要**保持未读**（下一轮还在窗口里就能
+            #   被处理）。原来这一句会把它们一并标掉＝静默丢。
+            log.info("%s %d 条未命中触发条件（档位 %s），本次不响应（超限退回未读的 %d 条留到下一轮）",
+                     chat_key, len(pending), tier_result["reason"],
+                     len((_feed or {}).get("retry") or []))
             return
 
-        trigger = self.store.drain_unread(chat_key)
+        trigger = list(pending)          # ⛔ 2026-09-21 改：不再 `drain_unread`（那会把"退回未读"的也标掉），
+                                         #   直接用上面切好的"要喂模型的那一批"（已点名标读）
         if not trigger:
             return
 
@@ -1318,6 +1370,7 @@ def wechat_attach_status() -> dict:
             "short": attach_short_reason(d) if d else "",
             "step": str(d.get("step") or ""),
             "action": str(d.get("action") or ""),
+            "targets_zero": bool(_ATTACH.get("targets_zero")),
             "steps": list(d.get("steps") or [])}
 
 
@@ -1617,6 +1670,17 @@ def main():
         groups = wechat.list_groups() if wechat else []
         if not wechat:
             _groups_read_failed = "微信还没接上"
+        else:
+            # ⛔ 2026-09-21 加（第九轮 **V-R9-8**）：**真信号在 `_cap` 里**，不是"抛没抛异常" ——
+            #   `list_groups()` 只是 return 内存里的列表、永不抛 ⇒ 老写法在"读库失败"时
+            #   `read_failed=''` ⇒ describe 把"没匹配上"说成「改名/退群了？」（归因矛盾）。
+            try:
+                _groups_read_failed = wechat.groups_read_error() or ""
+            except Exception:
+                _groups_read_failed = ""
+            if _groups_read_failed:
+                log.warning("群列表这次没读到（%s）⇒ 下面「没匹配上」的归因会按它来说，"
+                            "别当成改名/退群", _groups_read_failed[:80])
     except Exception as e:
         log.warning("list_groups 失败：%s", e)
         _groups_read_failed = "%s: %s" % (type(e).__name__, str(e)[:60])
@@ -1635,6 +1699,19 @@ def main():
     targets = _res0["groups"]
     # ⛔ V-R5B-9：群列表这次没读到（`groups` 是异常分支给的 []）时，别把"没匹配上"说成"改名/退群了？"
     log.info("%s", listen_targets.describe(targets, _res0, read_failed=(_groups_read_failed or "")))
+    # ⛔ 2026-09-21 加（第九轮 **V-R9-9** · P1）：**监听目标为 0 ⇒ 主循环零轮次**（`for g in targets:`
+    #   一条都不进）⇒ **群里 @ 它一条都不回**，而老代码只有一行 info 计数 ⇒ 用户完全看不到卡点
+    #   （B站两条「检测不到群聊」就是这条链的出口）。⇒ 给一次**可见告警**（日志 warn + 控制台那份
+    #   接入状态里带一个 `targets_zero`）。
+    if not targets:
+        _tz_hint = ("（群列表这次**没读到**：%s）" % _groups_read_failed) if _groups_read_failed else ""
+        log.warning("⚠️ 监听目标 0 个 ⇒ **群里 @ 它也不会回**（不是「它坏了」，是没东西可听）："
+                    "去控制台「微信」面板勾选要听的群（勾选存的是群 wxid），"
+                    "或把「群名白名单」留空＝监听所有群。%s", _tz_hint)
+        try:
+            _ATTACH["targets_zero"] = True
+        except Exception:
+            pass
     # 私聊目标（2026-09-16 用户：「大号跟小号对谈，相当于借一个智能体进来跟自己聊天」）：
     # 群那份逻辑一个字不动，这里是**追加**；档位见 config 的 wechat.private_chat。
     _pt = []

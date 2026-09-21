@@ -13,6 +13,7 @@ import os
 import re
 import threading
 
+from . import persist
 from .config import DATA_DIR, get_config
 
 MEMORY_DIR = os.path.join(DATA_DIR, "memory")
@@ -40,11 +41,14 @@ def _read_json(file, fallback):
 
 
 def _write_json(file, value):
-    os.makedirs(os.path.dirname(file), exist_ok=True)
-    tmp = file + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(value, f, ensure_ascii=False, indent=1)
-    os.replace(tmp, file)
+    """原子写（`persist.atomic_write_json`：tmp 名带 pid + 随机后缀 + `os.replace`），失败**抛异常**。
+
+    V-R9-22：老写法共用 `<file>.tmp` 这个名字 ⇒ 并发写同一个成员档（巡检线程/多开实例）会
+    **打开同一个临时文件**互相穿插出半截 JSON（审计实测 200 次并发写坏 46 个），而读侧 `_read_json`
+    又静默回 fallback ⇒ 印象全没了。失败仍然抛（不吞），调用方的既有语义不变。
+    """
+    if not persist.atomic_write_json(file, value, indent=1):
+        raise OSError("记忆落盘失败（原档未动）：%s" % file)
 
 
 def _chat_dir(chat_key: str) -> str:

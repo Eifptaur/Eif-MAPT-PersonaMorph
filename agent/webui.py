@@ -855,6 +855,12 @@ class WebUI:
                         from urllib.parse import urlparse as _up, parse_qs as _pq
                         from . import verifiers as _vf
                         _q = _pq(_up(self.path).query)
+                        # ⛔ 2026-09-21 加（第九轮 V-R9-11）：把**运行中实例**的 `_db_how` 喂给检验器 ——
+                        #   否则"我读的是不是正在写的那个号"那格只能判假绿（`status()` 不带 how 就没这一维）。
+                        try:
+                            _vf.set_runtime_how(getattr(_current_wx(parent), "_db_how", None))
+                        except Exception:
+                            pass
                         self._json(_vf.run(str((_q.get("id") or [""])[0] or "")))
                     except Exception as e:                                   # noqa: BLE001
                         self._json({"ok": False, "error": str(e)})
@@ -1277,8 +1283,25 @@ class WebUI:
                 elif path == "/api/logs":
                     self._json({"lines": list(parent.log_buffer)})
                 elif path == "/api/wechat-groups":
-                    # 检测到的群聊列表（白名单勾选用，GET）
+                    # 检测到的群聊列表（白名单勾选用，GET 的旧处理器）；`?refresh=1` 同上面那条口径
                     try:
+                        _rf2 = ""
+                        try:
+                            from urllib.parse import urlparse as _up4, parse_qs as _pq4
+                            _rf2 = str((_pq4(_up4(self.path).query).get("refresh") or [""])[0] or "").lower()
+                        except Exception:
+                            _rf2 = ""
+                        if _rf2 in ("1", "true", "yes", "on"):
+                            _o4 = _current_wx(parent)
+                            if _o4 is not None and hasattr(_o4, "refresh_groups"):
+                                try:
+                                    _o4.refresh_groups()
+                                except Exception as _e4:
+                                    self._json({"ok": False, "attach_ok": True, "degraded": True,
+                                                "error": ("重读群列表失败（联系人库被微信占用？）⇒ "
+                                                          "消息收发不受影响；稍等几秒再试。（%s）"
+                                                          % str(_e4)[:100]), "groups": []})
+                                    return
                         self._json(parent.groups_fn())
                     except Exception as e:
                         self._json({"ok": False, "error": str(e), "groups": []})
@@ -1656,6 +1679,12 @@ class WebUI:
                         from urllib.parse import urlparse as _up, parse_qs as _pq
                         from . import verifiers as _vf
                         _q = _pq(_up(self.path).query)
+                        # ⛔ 2026-09-21 加（第九轮 V-R9-11）：同上一处 —— 把运行中实例的 `_db_how`
+                        #   喂给检验器，"我读的是不是正在写的那个号"那格才有铁证（否则只能判假绿）。
+                        try:
+                            _vf.set_runtime_how(getattr(_current_wx(parent), "_db_how", None))
+                        except Exception:
+                            pass
                         self._json(_vf.run(str((_q.get("id") or [""])[0] or "")))
                     except Exception as e:                                   # noqa: BLE001
                         self._json({"ok": False, "error": str(e)})
@@ -1687,8 +1716,29 @@ class WebUI:
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)})
                 elif path == "/api/wechat-groups":
-                    # 检测到的群聊列表（白名单勾选用）
+                    # 检测到的群聊列表（白名单勾选用）；`?refresh=1` ⇒ **强制重读一次**（第九轮 V-R9-11：
+                    # 群列表只在接入那一跳读一次，用户新加群/改群名/换号后没有刷新入口，只能重启）
                     try:
+                        _rf = ""
+                        try:
+                            from urllib.parse import urlparse as _up3, parse_qs as _pq3
+                            _rf = str((_pq3(_up3(self.path).query).get("refresh") or [""])[0] or "").lower()
+                        except Exception:
+                            _rf = ""
+                        if _rf in ("1", "true", "yes", "on"):
+                            _o3 = _current_wx(parent)
+                            if _o3 is None or not hasattr(_o3, "refresh_groups"):
+                                self._json({"ok": False, "attach_ok": False,
+                                            "error": "微信还没接上 ⇒ 没法重读群列表", "groups": []})
+                                return
+                            try:
+                                _o3.refresh_groups()
+                            except Exception as _e3:
+                                self._json({"ok": False, "attach_ok": True, "degraded": True,
+                                            "error": ("重读群列表失败（联系人库 contact.db 被微信占用？）⇒ "
+                                                      "消息收发与监听不受影响；稍等几秒再点一次。（%s）"
+                                                      % str(_e3)[:100]), "groups": []})
+                                return
                         self._json(parent.groups_fn())
                     except Exception as e:
                         self._json({"ok": False, "error": str(e), "groups": []})

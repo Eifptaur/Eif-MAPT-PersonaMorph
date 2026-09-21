@@ -18,9 +18,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import time
+
+from . import persist
+
+log = logging.getLogger("persona-morph")
 
 DEFAULT_RETRY = 3
 DEFAULT_RETRY_SLEEP = 0.5
@@ -49,13 +54,35 @@ class Watermark:
 
     # ---- 读写 ----
     def load(self) -> dict:
-        try:
-            with open(self.path, "r", encoding="utf-8-sig") as f:
-                d = json.load(f)
-            if isinstance(d, dict):
-                self.data = {str(k): int(v or 0) for k, v in d.items()}
-        except Exception:
+        """读水位表：**按条目校验**，一条坏值只丢那一条。
+
+        V-R9-18 的原始症状：老写法 `{str(k): int(v or 0) for k, v in d.items()}`
+        ——**只要有一个值不是能转 int 的东西**（手工改过、被第三方工具动过），`int()` 抛异常
+        ⇒ 整表归零 ⇒ 下一次 `flush()` 只写回本次动过的那个键 ⇒ **别的会话的水位全没了**
+        （要么重放、要么静默丢）。现在：坏条目单独丢、日志里如实说丢了几条，其余键原样保留。
+
+        整档读不出来（解析失败 / 顶层不是对象）时走 `persist.load_or_quarantine`：
+        坏档改名 `.bad.<时间戳>` 留证，不让下一次 flush 把它静默覆盖掉。
+        """
+        _BAD = object()                      # 哨兵：分得清"读到的东西"与"走的默认值"
+        d = persist.load_or_quarantine(self.path, _BAD)
+        if d is _BAD:
             self.data = {}
+        elif not isinstance(d, dict):
+            log.warning("水位表顶层不是对象（形状不对）⇒ 已按坏档留证：%s",
+                        persist.quarantine(self.path) or "留证失败")
+            self.data = {}
+        else:
+            data, dropped = {}, 0
+            for k, v in d.items():
+                try:
+                    data[str(k)] = int(v)
+                except (TypeError, ValueError):
+                    dropped += 1             # 只丢这一条，**不**把整表归零
+            if dropped:
+                log.warning("水位表有 %d 条坏条目（值不是整数）已丢弃、其余 %d 条保留：%s",
+                            dropped, len(data), self.path)
+            self.data = data
         self._dirty = False
         return self.data
 
@@ -80,23 +107,16 @@ class Watermark:
         return s
 
     def flush(self) -> bool:
-        """原子落盘（temp + os.replace）；没有变化就不写。"""
+        """原子落盘（`persist.atomic_write_json`：tmp 名带 pid+随机后缀 + `os.replace`）；没有变化就不写。
+
+        V-R9-22：老写法共用 `<path>.tmp` ⇒ 并发/多进程写会互相穿插出坏 JSON；失败返回 False（不吞）。
+        """
         if not self._dirty:
             return True
-        try:
-            d = os.path.dirname(os.path.abspath(self.path))
-            if d:
-                os.makedirs(d, exist_ok=True)
-            tmp = self.path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(self.data, f, ensure_ascii=False, indent=1, sort_keys=True)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp, self.path)
+        if persist.atomic_write_json(self.path, self.data, indent=1, sort_keys=True):
             self._dirty = False
             return True
-        except Exception:
-            return False
+        return False
 
 
 def dead_letter(path: str, record: dict) -> bool:

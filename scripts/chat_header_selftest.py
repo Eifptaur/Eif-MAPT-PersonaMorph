@@ -174,7 +174,8 @@ with tempfile.TemporaryDirectory() as td_p:
        "有墨列=%d" % len([1 for _x in _pa if _x]))
     # P9：把这类帧**绕过 remember 直接落盘**（＝缝存在时的老行为）⇒ 同尺寸档的正常帧判 mismatch。
     #     这条不是为了"留个旧行为"，而是把 P8 防住的**后果**钉在判据里（防将来有人把入库闸拆了还觉得没事）。
-    ch.save({"s05old": {"sizes": {"1139x890": {"fp": list(_fp_s05), "when": ""}}}}, _pp)
+    ch.save({"s05old": {"sizes": {"1139x890": {"fp": list(_fp_s05), "when": "",
+                                               "band": ch.BAND_VERSION}}}}, _pp)
     _cap1 = ch.capture_image
     try:
         ch.capture_image = lambda gui=None, render=None: fake_window("文件传输助手")
@@ -184,6 +185,80 @@ with tempfile.TemporaryDirectory() as td_p:
     ck("P9 后果锚：库里若真有这类参照 ⇒ 同尺寸的正常帧判 **mismatch**（这就是 V-R8-2 的「长期漏发」）",
        _r9.get("status") == "mismatch" and float(_r9.get("sim") or 0) < ch.DEFAULT_THRESHOLD,
        "status=%s · %s" % (_r9.get("status"), _r9.get("note")))
+
+print("[T] 自绘标题条上方的自适应文字带（第九轮 V-R9-3：固定 y0 压在标题条上 ⇒ 指纹退化 ⇒ 该尺寸档永远学不到参照）")
+
+
+def _fake_with_titlebar(text, size=(1076, 1046), bar=(38, 50), text_y=54):
+    """造一张**带自绘深色标题条**的渲染区图（真机几何：条子在 y≈38~50，标题文字在其下方）。"""
+    img = Image.new("RGB", size, (245, 245, 245))
+    d = ImageDraw.Draw(img)
+    pl = int(size[0] * ch.PANE_LEFT_REL)
+    d.rectangle((pl, 0, size[0], size[1]), fill=(255, 255, 255))
+    d.rectangle((pl, bar[0], size[0], bar[1]), fill=(38, 38, 38))
+    try:
+        font = ImageFont.truetype("C:/Windows/Fonts/msyh.ttc", 28)
+    except Exception:
+        font = ImageFont.load_default()
+    d.text((pl + 16, text_y), text, fill=(20, 20, 20), font=font)
+    return img
+
+
+_timg = _fake_with_titlebar("E")
+_tbox = ch.crop_box(_timg.size)
+_ty0 = ch.detect_band_y0(_timg, _tbox[0], _tbox[2])
+ck("T1 自适应把带子挪到标题条**下方**（> 兜底的 %d）" % ch.BAND_PX[1],
+   _ty0 > int(ch.BAND_PX[1]), "测出 y0=%d（兜底 %d）" % (_ty0, ch.BAND_PX[1]))
+_old_fp = ch.fingerprint(_timg, band_px=ch.BAND_PX)
+_new_fp = ch.fingerprint(_timg)
+_old_ink = len([v for v in _old_fp if v])
+_new_ink = len([v for v in _new_fp if v])
+ck("T2 **反例锚**：旧固定带压在标题条上 ⇒ 退化（几乎每列都有墨）",
+   ch.degenerate_reason(_old_fp) != "" or _old_ink >= 40,
+   "旧带墨列=%d · %s" % (_old_ink, ch.degenerate_reason(_old_fp) or "未判退化"))
+ck("T3 自适应带 ⇒ **非退化**（墨列集中，不是满屏）",
+   (not ch.degenerate_reason(_new_fp)) and _new_ink < 40,
+   "新带墨列=%d · %s" % (_new_ink, ch.degenerate_reason(_new_fp) or "未判退化"))
+_plain = fake_window("E", size=(1076, 1046))
+_pbox = ch.crop_box(_plain.size)
+ck("T4 没有那条横条 ⇒ 不误挪（保持兜底 y0）",
+   ch.detect_band_y0(_plain, _pbox[0], _pbox[2]) == int(ch.BAND_PX[1]),
+   "y0=%d" % ch.detect_band_y0(_plain, _pbox[0], _pbox[2]))
+_tp = os.path.join(tempfile.mkdtemp(prefix="pm-ch-"), "chat_headers.json")
+_timg2 = _fake_with_titlebar("文件传输助手")
+_new_fp2 = ch.fingerprint(_timg2)
+ck("T5a 自适应带上的正常标题**能过入库闸**（有墨列 ≥ 4）",
+   len([v for v in _new_fp2 if v]) >= 4, "有墨列=%d" % len([v for v in _new_fp2 if v]))
+ch.remember("filehelper", _new_fp2, path=_tp, size="1076x1046")
+ck("T5 新学的参照带当前带子版本 ⇒ 取得到",
+   len(ch.reference("filehelper", path=_tp, size="1076x1046", strict=True)) == len(_new_fp2),
+   "reference=%d 维" % len(ch.reference("filehelper", path=_tp, size="1076x1046", strict=True)))
+import json as _json                                                            # noqa: E402
+with open(_tp, "w", encoding="utf-8") as _f:                                    # 旧版参照（旧带子）
+    _json.dump({"filehelper": {"sizes": {"1076x1046": {"fp": _new_fp2, "band": 1}}}}, _f)
+ck("T6 **带子算法变了 ⇒ 旧参照当「没有」**（no_ref 不拦发送，而不是 mismatch 去拦）",
+   ch.reference("filehelper", path=_tp, size="1076x1046", strict=True) == [])
+
+print("[F] 帧质量闸（第九轮 V-R9-6：半黑半白 / 纯黑帧以前会被当好帧）")
+_blk = Image.new("RGB", (400, 300), (0, 0, 0))
+_half = Image.new("RGB", (400, 300), (255, 255, 255))
+_hd = ImageDraw.Draw(_half)
+_hd.rectangle((0, 150, 400, 300), fill=(0, 0, 0))                  # 半黑半白（mean/std 都像好帧）
+ck("F1 纯黑帧 ⇒ 不是好帧", ch._frame_ok(_blk) is False)
+ck("F2 **半黑半白色块帧 ⇒ 不是好帧**（每行都是平的：真画面总有有结构的那几行）",
+   ch._frame_ok(_half) is False)
+_good = Image.new("RGB", (400, 300), (250, 250, 250))              # 像"聊天区"：白底 + 几块文字/头像
+_gd = ImageDraw.Draw(_good)
+for _i in range(6):
+    _gd.rectangle((20, 20 + _i * 40, 200 + _i * 20, 44 + _i * 40), fill=(40, 40, 40))
+ck("F3 阳性对照：有内容（文字块/头像那样的结构）的画面 ⇒ 仍是好帧", ch._frame_ok(_good) is True,
+   "mean/std/极差 都在阈上）")
+ck("F4 纯黑帧的指纹**必须是空**（旧口径会给 [255]*64 这种看着有依据的假指纹）",
+   ch.fingerprint(_blk, band_px=ch.BAND_PX) == [],
+   "指纹 %s" % (ch.fingerprint(_blk, band_px=ch.BAND_PX) or "[]"))
+_old_mean, _old_std = 140.0, 126.9        # 侦察线实测的"半黑半白"帧读数
+ck("F5 反例锚：老口径（只要 mean>25 且 std>12）**放行**这张帧",
+   (_old_mean > 25) and (_old_std > 12), "mean=%s std=%s" % (_old_mean, _old_std))
 
 print("[L] 实机（抓不到不算失败）")
 try:

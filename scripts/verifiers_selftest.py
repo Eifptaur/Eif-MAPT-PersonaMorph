@@ -31,6 +31,8 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
 from agent import verifiers as V          # noqa: E402
 from agent import update_check as _uc     # noqa: E402
+sys.path.insert(0, HERE)
+import _srcmatch as _sm                   # noqa: E402  空白容忍的源码断言（V-R4-13 第三条）
 
 # ⛔ V-R7-4：判据**不写产品** `data/update_state.json`（本判据会跑 `update_check.state()` ⇒ 落盘）。
 #   `_state_path()` 是唯一落点函数，指到临时目录即可；产品默认行为不变（默认仍写生产路径）。
@@ -120,11 +122,10 @@ ok("C3a2 `False` 字面量只允许出现在**异常路径**（那是 fail-close
 ok("C3b 反例锚：老写法（`_check(\"读不到…\", True, \"…\")`）确实会被这条扫出来",
    bool(_re2.search(r"_check\(\s*[^,]+,\s*True\s*,", '    checks.append(_check("版本门不拦发送", True, "读不到版本门"))')))
 ok("C3c 该改的那几处已经是「没测到」（None）",
-   _vsrc.count('_check("版本门不拦发送", None') == 1
-   and '_check("更新完成标志（更新成功后会写）", None' in _vsrc
+   _sm.has(_vsrc, '_check("版本门不拦发送", None') and "_check(\"更新完成标志（更新成功后会写）\", None" in _vsrc
    and '_check("出站闸门没有误拦正常回复", None' in _vsrc)
 ok("C3d 两处真恒真已改成真判据（台账证据 > 0；闸门拦下过才算数）",
-   "_ev_n > 0" in _vsrc and "True if n > 0 else None" in _vsrc and "True if deny > 0 else None" in _vsrc)
+   _sm.has(_vsrc, "_ev_n > 0", "True if n > 0 else None", "True if deny > 0 else None"))
 
 print("\n── C4. 更新快照的**新鲜度**：旧快照只能当历史（V-R4-12c）──")
 _tmp4 = tempfile.mkdtemp(prefix="pm-vf-")
@@ -208,6 +209,9 @@ V._p = lambda *parts: os.path.join(_tmp6, *parts)
 os.makedirs(os.path.join(_tmp6, "data"), exist_ok=True)
 from agent import wechat as _wxL                                          # noqa: E402
 _saved_led = list(_wxL._SWITCH_FAILS)
+# ⛔ 判据**不许写产品 `data/`**：台账现在会落盘（V-R9-12），所以把路径打到临时目录
+_saved_led_path = _wxL._switch_fails_path
+_wxL._switch_fails_path = lambda: os.path.join(_tmp6, "switch_fails.jsonl")
 try:
     _wxL._SWITCH_FAILS[:] = []
     _r6 = V.run("send_blocked")
@@ -240,8 +244,59 @@ try:
        "空=%r 有=%r" % (_r6["ok"], _r6b["ok"]))
 finally:
     _wxL._SWITCH_FAILS[:] = _saved_led
+    _wxL._switch_fails_path = _saved_led_path
     V._p = _keep_p6
     shutil.rmtree(_tmp6, ignore_errors=True)
+
+print("\n── C8. 第九轮 V-R9-12/13/14：台账落盘 · 读不到日志＝没测到 · 报告头不许画 ✅ ──")
+_tmp8 = tempfile.mkdtemp(prefix="pm-vf8-")
+_saved8 = (_wxL._switch_fails_path, list(_wxL._SWITCH_FAILS), V._p)
+_wxL._switch_fails_path = lambda: os.path.join(_tmp8, "switch_fails.jsonl")
+V._p = lambda *parts: os.path.join(_tmp8, *parts)
+try:
+    os.makedirs(os.path.join(_tmp8, "data", "sessions"), exist_ok=True)
+    _wxL._SWITCH_FAILS[:] = []
+    _wxL.note_switch_fail("单测落盘", "这条要被写进文件")
+    ok("C8a 台账落盘了（文件存在且能读回）", os.path.exists(_wxL._switch_fails_path()),
+       _wxL._switch_fails_path())
+    _wxL._SWITCH_FAILS[:] = []                      # 模拟重启：内存台账清空
+    _r8 = _wxL.recent_switch_fails(3)
+    ok("C8b **重启（内存清空）后仍读得到**（这就是 V-R9-12 的那半条修复）",
+       bool(_r8) and "这条要被写进文件" in str((_r8[-1] or {}).get("why") or ""), str(_r8))
+    ok("C8c `_tail2` 语义：文件不存在 ⇒ 空表；读不到（目录）⇒ **None（没测到）**",
+       V._tail2(os.path.join(_tmp8, "no_such.log")) == []
+       and V._tail2(_tmp8) is None, (V._tail2(os.path.join(_tmp8, "no_such.log")), V._tail2(_tmp8)))
+    _emoji_src = io.open(os.path.join(ROOT, "agent", "verifiers.py"), encoding="utf-8").read()
+    ok("C8e 源码级：那一格是 `(files > 0) and key_ok`", "(files > 0) and key_ok" in _emoji_src)
+    from agent import emoticon as _emo                                     # noqa: E402
+    _o1, _o2, _o3 = _emo.any_sticker_files, _emo.load_cached_key, _emo.verify_key
+    _emo.any_sticker_files = lambda limit=200: ["x"] * 3                   # 有本地表情文件
+    _emo.load_cached_key = lambda *a, **k: ""                              # 但没有可用 key
+    try:
+        _ce = [c for c in V.run("emoji_blank")["checks"] if c["name"] == "表情能离线解出原图"]
+        ok("C8e′ **行为锚**：有表情文件但 key 不可用 ⇒ 那一格判 False（老的恒真写法会判 True）",
+           len(_ce) == 1 and _ce[0]["ok"] is False, str(_ce))
+    finally:
+        _emo.any_sticker_files, _emo.load_cached_key, _emo.verify_key = _o1, _o2, _o3
+    _head1 = V._finish("t8", "测试", "症状", True, "全绿口径", "",
+                       [V._check("甲", True, "过了"), V._check("乙", None, "读不到")])
+    ok("C8f 报告头：1 项 True + 1 项 None ⇒ **不许**画 ✅，画「◐ 部分通过」",
+       "◐" in _head1["report"] and "✅ 通过" not in _head1["report"], _head1["report"][:60])
+    _head2 = V._finish("t8b", "测试", "症状", True, "全绿口径", "", [V._check("甲", True, "过了")])
+    ok("C8g 全 True ⇒ 仍是 ✅（阳性对照，别把正常报告也改花）", "✅ 通过" in _head2["report"])
+    # 会话档案里的物证（noreply_send_failed）⇒ 那一格判否、成为卡点
+    io.open(os.path.join(_tmp8, "data", "sessions", "2026-09-21.jsonl"), "w",
+            encoding="utf-8").write('{"chat": "g", "status": "noreply_send_failed"}\n')
+    _r8b = V.run("send_blocked")
+    _c8 = [c for c in _r8b["checks"] if c["name"].startswith("最近几轮里没有")]
+    ok("C8h 会话档案里写着 `noreply_send_failed` ⇒ 那一格判 False",
+       len(_c8) == 1 and _c8[0]["ok"] is False, str(_c8))
+    ok("C8i 它成为卡点（判决点名它）", "调过发送却一条都没发出去" in (_r8b.get("verdict") or ""),
+       (_r8b.get("verdict") or "")[:90])
+finally:
+    (_wxL._switch_fails_path, _saved_led8, V._p) = _saved8
+    _wxL._SWITCH_FAILS[:] = _saved_led8 if isinstance(_saved_led8, list) else []
+    shutil.rmtree(_tmp8, ignore_errors=True)
 
 print("\n── C7. 反馈「艾特它 它不会回复」：报告里要能看见「群里 @ 的是谁」（说明格，不误判）──")
 from agent import thought_trace as _ttJ                                      # noqa: E402

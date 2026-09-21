@@ -24,6 +24,7 @@ import os
 import time
 from typing import Callable
 
+from . import persist
 from .config import get_config, DATA_DIR
 
 log = logging.getLogger("persona-morph")
@@ -78,12 +79,13 @@ def _load_layout() -> dict:
 
 
 def _save_layout(d: dict):
-    try:
-        os.makedirs(os.path.dirname(_LAYOUT_FILE), exist_ok=True)
-        with open(_LAYOUT_FILE, "w", encoding="utf-8") as f:
-            json.dump(d, f, ensure_ascii=False, indent=1)
-    except Exception:
-        pass
+    """原子写布局标定（`persist.atomic_write_json`：tmp 名带 pid + 随机后缀 + `os.replace`）。
+
+    V-R9-22：老写法就地覆盖 ⇒ 写一半崩掉就留半截 JSON，下一次 `_load_layout()` 静默回 `{}`
+    ⇒ 标定白做（还得再动一次用户的窗口重标）。失败留日志，不再 `except: pass`。
+    """
+    if not persist.atomic_write_json(_LAYOUT_FILE, d, indent=1):
+        log.warning("UI 布局标定落盘失败（本次标定不保留）：%s", _LAYOUT_FILE)
 
 
 def _layout_stale(gui) -> bool:

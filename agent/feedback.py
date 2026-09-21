@@ -333,6 +333,29 @@ def compose(item: dict) -> str:
     return out
 
 
+def _harden_redirects() -> None:
+    """V-R9-23：跨主机 302 时不许把自定义头带过去（实现只有 `safe_fetch` 那一处，这里只负责装）。
+
+    ⚠️ 本模块现在发的都是无凭据头（只有 Content-Type）——这道闸是"以后谁加了 Cookie/自定义 key
+    头，也自动被剥"的兜底；装不上只记一条 warning，不静默。
+    """
+    try:
+        from .safe_fetch import harden_urllib
+        harden_urllib()
+    except Exception as e:                                   # pragma: no cover - 极端环境
+        logging.getLogger("persona-morph").warning(
+            "安全层不可用，重定向凭据剥离没装上（V-R9-23）：%s", e)
+
+
+def _read_cap(resp, max_bytes: int, what: str = "回包") -> bytes:
+    """V-R9-26：带上限读回包（原来 `r.read()` 收完再 `[:300]` 切片＝**事后**截断，白吃内存）。"""
+    try:
+        from .safe_fetch import read_capped
+        return read_capped(resp, max_bytes, what)
+    except ImportError:
+        return resp.read(int(max_bytes) + 1)[:int(max_bytes)]
+
+
 def _post(url: str, payload: dict, timeout: int = 10) -> dict:
     """POST JSON 到用户自建中转；返回 {ok, status, why}（401/400 也算"送到了但对方拒收"，如实报）。"""
     import urllib.error
@@ -340,12 +363,14 @@ def _post(url: str, payload: dict, timeout: int = 10) -> dict:
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(url, data=body,
                                  headers={"Content-Type": "application/json; charset=utf-8"})
+    _harden_redirects()                    # V-R9-23
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
-            txt = r.read().decode("utf-8", "replace")[:300]
+            txt = _read_cap(r, 64 * 1024, "反馈通道回包").decode("utf-8", "replace")[:300]
             return {"ok": 200 <= r.status < 300, "status": r.status, "why": txt}
     except urllib.error.HTTPError as e:
-        return {"ok": False, "status": e.code, "why": (e.read()[:200].decode("utf-8", "replace"))}
+        # 只读前 200 字节：`e.read()` 是"读完再切"（对面可以灌爆内存）
+        return {"ok": False, "status": e.code, "why": (e.read(200)[:200].decode("utf-8", "replace"))}
     except Exception as e:
         return {"ok": False, "status": 0, "why": "%s: %s" % (type(e).__name__, str(e)[:120])}
 
@@ -443,9 +468,10 @@ def _wecom_upload(url: str, key: str, name: str, raw: bytes, timeout: int = 30) 
         ("--%s--\r\n" % bound).encode()])
     req = urllib.request.Request(up, data=body, headers={
         "Content-Type": "multipart/form-data; boundary=%s" % bound})
+    _harden_redirects()                    # V-R9-23
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
-            txt = r.read().decode("utf-8", "replace")[:400]
+            txt = _read_cap(r, 64 * 1024, "企微上传回包").decode("utf-8", "replace")[:400]
     except Exception as e:
         return {"ok": False, "why": "%s: %s" % (type(e).__name__, str(e)[:100])}
     try:

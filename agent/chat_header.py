@@ -29,7 +29,12 @@ log = logging.getLogger("persona-morph")
 STORE_PATH = os.path.join(ROOT, "data", "chat_headers.json")
 # 会话名区域（**渲染区相对比例**）：避开左侧会话列表（<0.26）、右侧按钮与窗口按钮
 PANE_LEFT_REL = 0.26          # 会话列表面板右边界（**兜底**比例；优先用 detect_pane_left 实测）
-BAND_PX = (10, 38, 340, 56)   # 文字带：(距面板左边界 dx, y, 宽, 高) —— **固定物理像素**
+BAND_PX = (10, 38, 340, 56)   # 文字带：(距面板左边界 dx, y, 宽, 高) —— **兜底固定像素**（自适应见 detect_band_y0）
+#: 「整行都是深色」的判定：用来找那条**自绘标题条**（`detect_band_y0`）。
+BAND_FULL_DARK = 0.85
+#: 文字带算法版本。**改了带子算法就 +1** —— 旧参照按"没有参照"处理（`no_ref` ⇒ 不拦发送、下次成功
+#: 自动重学），而不是按 `mismatch` 处理：否则老用户升级后第一枪会被自己的旧参照拦下来。
+BAND_VERSION = 2
                               # ⇒ 与窗口尺寸无关（实测：会话列表是"固定像素宽"，不是按窗口比例缩放）
 BINS = 64                     # 逐列暗点密度剖面维数
 DARK = 165                    # 暗点阈值（会话名是深色字，背景近白）
@@ -183,6 +188,52 @@ def crop_box(size, pane_left_rel=None, band_px=None, pane_left_px: int = 0) -> t
     return (l, t, max(l + 1, r), max(t + 1, b))
 
 
+def detect_band_y0(img, x0: int, x1: int, default_y0: int = None, max_scan: int = 96,
+                   max_y0: int = 72) -> int:
+    """在渲染区顶部找那条**全宽深色横条**（微信自绘标题条），把文字带放到它**下方**。
+
+    ⛔ 2026-09-21 加（第九轮 **V-R9-3 · P1**，真机实测）：`BAND_PX` 的 `y0=38` 是**固定物理像素**，
+    而新版微信在会话区顶部有一条**自绘深色标题条**（本机实测：渲染区 1076×1046 时它压在 y≈38~50）
+    ⇒ 文字带大半落在标题条上 ⇒ 指纹变成「**64 列全有墨**」的退化帧 ⇒ `is_blank`/`degenerate_reason`
+    两道闸都拒收 ⇒ **这个尺寸档永远学不到参照**（`check()` 永远 `no_ref`、永不 `mismatch`）⇒ 只剩
+    "投递切会话 + 内容级复核"兜底，兜不住就整条拒发 —— 正是网友说的「读得到、只是发不出去」
+    「艾特它它不回复」。归因文案当时还把它写成"窗口最小化/抓不到画面"，方向完全不对。
+
+    ⇒ 现在：扫顶部若干行，找**连续 ≥4 行「整行都是深色」**的那条横条，带子落到它下方 +3px；
+      找不到（老版微信没这条、本来就是白底）就退回原来的固定 y0。返回的是**绝对像素** y0。
+    """
+    try:
+        if default_y0 is None:
+            default_y0 = BAND_PX[1]
+        g = img.convert("L")
+        w, h = g.size
+        x0, x1 = max(0, int(x0)), min(int(w), int(x1))
+        if x1 <= x0 or h < 12:
+            return int(default_y0)
+        px = g.load()
+        step = max(1, (x1 - x0) // 60)
+        run, run_end = 0, None
+        for y in range(0, min(int(max_scan), h)):
+            dark = tot = 0
+            for x in range(x0, x1, step):
+                tot += 1
+                if px[x, y] < DARK:
+                    dark += 1
+            if tot and (dark / float(tot)) >= BAND_FULL_DARK:
+                run += 1
+                run_end = y
+                continue
+            if run >= 4:                      # 那条横条结束了
+                break
+            run, run_end = 0, None
+        if run_end is None or run < 4:
+            return int(default_y0)             # 没有这种横条 ⇒ 维持原样
+        y0 = int(run_end) + 3
+        return int(max(int(default_y0), min(y0, int(max_y0))))
+    except Exception:
+        return int(default_y0)
+
+
 def fingerprint(img, pane_left_rel=None, band_px=None, bins: int = BINS) -> list:
     """会话头区域的**逐列暗点密度剖面**（bins 维，0~255）。
 
@@ -199,6 +250,14 @@ def fingerprint(img, pane_left_rel=None, band_px=None, bins: int = BINS) -> list
         if pane_left_rel is None and band_px is None:
             pl = detect_pane_left(img)
         box = crop_box(img.size, pane_left_rel, band_px, pane_left_px=pl)
+        # ⛔ 2026-09-21 加（第九轮 **V-R9-3**）：生产路径（自动锚点）下先**自适应**把文字带挪到
+        #   那条自绘深色标题条**下方** —— 固定 y0 在真机上会压在标题条上 ⇒ 指纹退化 ⇒ 该尺寸档
+        #   永远学不到参照（详见 `detect_band_y0`）。
+        if pane_left_rel is None and band_px is None:
+            _y0 = detect_band_y0(img, box[0], box[2])
+            if _y0 != int(box[1]):
+                box = crop_box(img.size, pane_left_rel,
+                               (BAND_PX[0], _y0, BAND_PX[2], BAND_PX[3]), pane_left_px=pl)
         g = img.convert("L").crop(box)
         w, h = g.size
         if w < bins or h < 4:
@@ -219,8 +278,15 @@ def fingerprint(img, pane_left_rel=None, band_px=None, bins: int = BINS) -> list
         # 按"最强列"归一化：不这么做的话暗点占比只有 20~50/255，
         # 不同会话名的差异会被整体压平（实测相似度高达 0.976＝等于没区分度）。
         mx = max(raw) if raw else 0.0
+        mn = min(raw) if raw else 0.0
         if mx <= 0.0:
             return []                     # 一点墨都没有 ⇒ 视为无效指纹（不许当"匹配"）
+        # ⛔ 2026-09-21 加（第九轮 **V-R9-6**）：**整幅近单色** ⇒ 逐列密度几乎相同 —— 最典型的是
+        #   纯黑帧（每列都满墨 ⇒ 归一化后 `[255]*64`）。那**不是指纹，是"没内容"**：旧代码在这里
+        #   照样返回 64 维非空指纹 ⇒ 上层把本该 `no_capture` 的一帧变成 `no_ref`/`mismatch`
+        #   （看着"有依据"，其实什么也没看到）。⇒ 剖面近乎平坦（最强列与最弱列差 < 6%）就返回空。
+        if (mx - mn) < 0.06 * mx:
+            return []
         return [int(round(255.0 * v / mx)) for v in raw]
     except Exception:
         return []
@@ -303,8 +369,8 @@ def remember(chat_id: str, fp, note: str = "", path: str = None, size: str = "*"
     """
     data = load(path)
     if is_blank(fp):
-        log.warning("拒绝记住空白会话头指纹：%s（尺寸 %s）——大概率是窗口最小化/抓不到画面",
-                    chat_id, size)
+        log.warning("拒绝记住空白会话头指纹：%s（尺寸 %s）—— 窗口最小化/抓不到画面，"
+                    "或**文字带压在自绘标题条上**（见 `detect_band_y0`）", chat_id, size)
         return data
     _deg = degenerate_reason(fp)
     if _deg:
@@ -329,7 +395,7 @@ def remember(chat_id: str, fp, note: str = "", path: str = None, size: str = "*"
     if ent.get("fp") and "*" not in sizes:          # 兼容旧格式（无尺寸键）
         sizes["*"] = {"fp": list(ent.get("fp") or []), "when": ent.get("when", "")}
     sizes[str(size or "*")] = {"fp": list(fp or []), "when": time.strftime("%Y-%m-%d %H:%M:%S"),
-                               "note": note or ""}
+                               "note": note or "", "band": BAND_VERSION}
     data[str(chat_id)] = {"sizes": sizes, "when": time.strftime("%Y-%m-%d %H:%M:%S")}
     save(data, path)
     return data
@@ -340,19 +406,26 @@ def reference(chat_id: str, path: str = None, size: str = None, strict: bool = F
 
     为什么校验必须 strict：实测指纹**不可跨窗口尺寸复用**（微信按尺寸重排表头，
     同会话在 1000×760 下相似度只有 0.65）⇒ 拿错尺寸的参照去比会**误拦正常发送**。
+
+    ⛔ 2026-09-21 加（第九轮 **V-R9-3**）：**带子算法版本对不上的参照一律当"没有"** ——
+    旧参照是用固定 y0 学的（可能学的是压在标题条上的退化帧），拿它比会得出 `mismatch` 去拦发送；
+    当"没有参照"则只是 `no_ref`（不拦、下次成功发送自动重学）⇒ 升级不会把老用户堵在门口。
     """
+    def _fresh(v) -> bool:
+        return bool((v or {}).get("fp")) and int((v or {}).get("band") or 0) == BAND_VERSION
+
     ent = (load(path).get(str(chat_id)) or {})
     sizes = ent.get("sizes") or {}
     if not sizes and ent.get("fp"):
         return [] if strict else list(ent.get("fp") or [])
-    if size and (sizes.get(str(size)) or {}).get("fp"):
+    if size and _fresh(sizes.get(str(size))):
         return list(sizes[str(size)]["fp"])
     if strict:
         return []
-    if (sizes.get("*") or {}).get("fp"):
+    if _fresh(sizes.get("*")):
         return list(sizes["*"]["fp"])
     for v in sizes.values():
-        if (v or {}).get("fp"):
+        if _fresh(v):
             return list(v["fp"])
     return []
 
@@ -431,15 +504,33 @@ def _crop_render(img, main, render):
 
 
 def _frame_ok(img) -> bool:
-    """判"这幅图是不是真画面"：既不能近乎全黑，也不能是**纯色**（黑屏/白屏/没画完的帧）。
+    """判"这幅图是不是真画面"：既不能近乎全黑，也不能是**纯色 / 色块**（黑屏/白屏/没画完的帧）。
 
     实测依据（2026-09-13）：好帧 mean≈198~236、std≈75；PrintWindow 失败帧 mean 0~6.6、std≈0。
     只看 mean 会把"半黑半白/没画完"的帧放进来，所以**同时要求 std > 12**。
+
+    ⛔ 2026-09-21 加（第九轮 **V-R9-6** · P3）：上面两条还是太松 —— 侦察线实测「**半黑半白**」帧
+    （mean 140 / std 126.9）会被当**好帧**返回。⇒ 再补两条：①**极差** `hi-lo >= 40`（真画面必有明暗差）；
+    ②**至少有一行是有结构的**（逐行 std 最大值 ≥ 3）—— 半黑半白那种"两大块纯色"帧**每一行都是平的**，
+    而真画面里总有文字/图标/头像那几行是有结构的。两条都是"确认它像画面"，不是"确认它好看"。
     """
     try:
         from PIL import ImageStat
-        st = ImageStat.Stat(img.convert("L"))
-        return st.mean[0] > 25 and st.stddev[0] > 12
+        g = img.convert("L")
+        st = ImageStat.Stat(g)
+        lo, hi = st.extrema[0]
+        if not (st.mean[0] > 25 and st.stddev[0] > 12 and (hi - lo) >= 40):
+            return False
+        small = g.resize((64, 64))
+        px = small.load()
+        best = 0.0
+        for y in range(64):
+            row = [px[x, y] for x in range(64)]
+            m = sum(row) / 64.0
+            best = max(best, (sum((a - m) ** 2 for a in row) / 64.0) ** 0.5)
+            if best >= 3.0:
+                return True
+        return False
     except Exception:
         return False
 
@@ -551,7 +642,11 @@ def _occlusion_verdict(seen, main_pid: int) -> bool:
     """
     hits = [s for s in seen if int(s[0])]
     if not hits:
-        return False
+        # ⛔ 2026-09-21 修（第九轮 **V-R9-4** · P2）：**一个点都没采到**（`WindowFromPoint` 全给 0，
+        #   或边界太窄）以前判"没遮挡" ⇒ 退回抓屏 ⇒ 可能读到别人家的像素。采样失败＝**未知**，
+        #   未知一律按"遮挡"处理（fail-closed：宁可这次抓不到、返回 None，也不许把别人的画面
+        #   当微信的画面往下传）。
+        return True
     bad = sum(1 for _pid, ours in hits if not ours)
     return bad >= max(1, len(hits) // 4)
 
@@ -663,11 +758,18 @@ def grab_render(gui=None, render=None, tries: int = 12):
             _p = wintypes.DWORD()
             ctypes.windll.user32.GetWindowThreadProcessId(main, ctypes.byref(_p))
             main_pid = int(_p.value)
-        if main_pid and _region_occluded(render, main_pid):
+        # ⛔ 2026-09-21 修（第九轮 **V-R9-4**）：拿不到主窗 PID ⇒ **不许退** —— 旧代码写的是
+        #   `if main_pid and _region_occluded(...)`，`main_hwnd=0`（或取不到 PID）时**整段遮挡校验
+        #   被跳过**、直接抓屏（侦察线 A 打桩实测：真调了 `ImageGrab.grab` 并拿到哨兵图＝别人家像素）。
+        if not main_pid:
+            log.warning("拿不到主窗 PID（main_hwnd 缺失）⇒ **不退回抓屏**：抓屏可能读到别人家的像素")
+            return None
+        if _region_occluded(render, main_pid):
             log.warning("渲染区被别的窗口遮挡（PrintWindow 也没拿到帧）⇒ 不退回抓屏："
                         "抓屏会读到别人家的像素，返回 None 更诚实")
             return None
-        return ImageGrab.grab((int(render[0]), int(render[1]), int(render[2]), int(render[3])))
+        return ImageGrab.grab((int(render[0]), int(render[1]), int(render[2]), int(render[3])),
+                              all_screens=True)     # V-R9-6：副屏/负坐标下不带它只抓到主屏的空白
     except Exception as e:
         log.warning("渲染区抓取失败：%s", e)
         return None

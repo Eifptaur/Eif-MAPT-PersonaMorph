@@ -121,11 +121,13 @@ class _Stub(object):
 
 
 def run(scn, text="SELFTEST-TOKEN-准备画面"):
-    saved = (W._control_halt, W._main_iconic_hint, ch.check, vg.check, co.begin_window)
+    saved = (W._control_halt, W._main_iconic_hint, ch.check, vg.check, co.begin_window,
+             W._minimize_back_if_needed)
     W._control_halt = lambda: ""
     W._main_iconic_hint = lambda gui: scn.iconic_hint
     vg.check = lambda kind, **kw: {"allow": True, "reason": ""}
     co.begin_window = lambda s: None
+    W._minimize_back_if_needed = lambda note="": scn.events.append("putback")
 
     def _check(chat_id, gui=None, path=None, threshold=None):
         scn.events.append("check")
@@ -135,7 +137,8 @@ def run(scn, text="SELFTEST-TOKEN-准备画面"):
     try:
         return W.WeChatAdapter.send_text(_Stub(scn), "filehelper", text)
     finally:
-        (W._control_halt, W._main_iconic_hint, ch.check, vg.check, co.begin_window) = saved
+        (W._control_halt, W._main_iconic_hint, ch.check, vg.check, co.begin_window,
+         W._minimize_back_if_needed) = saved
 
 
 print("── A1. 投递档：先准备画面，**且必须在会话头判据之前** ──")
@@ -183,6 +186,25 @@ _h1 = W._main_iconic_hint(type("G", (), {"main_hwnd": 4242})())
 ok("拿得到句柄 ⇒ 三态之一（最小化 / 在屏幕上 / 未知），且不抛", isinstance(_h1, str) and _h1, _h1)
 _h2 = W._main_iconic_hint(None)
 ok("传 None 也不抛", isinstance(_h2, str) and _h2, _h2)
+
+print("── A6. 还原与放回**必须成对**（第九轮 V-R9-1：v2.1.52 的早退路径不放回，用户微信被摊在桌面上）──")
+
+
+def _pair(events):
+    return [e for e in events if e in ("prepare", "putback")]
+
+
+ok("A6a 成功路径成对：prepare 一次 + putback 一次", _pair(_s1.events) == ["prepare", "putback"],
+   str(_s1.events))
+ok("A6b **早退路径（拒发）也成对** —— 这条就是 V-R9-1 的回归锚",
+   _pair(_s4.events) == ["prepare", "putback"], str(_s4.events))
+_old_events = ["prepare"]          # 老写法：早退路径只有 prepare、没有 putback
+ok("A6c 反例锚：老写法（只剩 prepare）过不了 A6b", _pair(_old_events) != ["prepare", "putback"],
+   str(_pair(_old_events)))
+ok("A6d 放回挂在 finally 上（源码形态）",
+   "finally:" in open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                  "agent", "wechat.py"), encoding="utf-8").read()
+   .split("def send_text(")[1].split("\n    def ", 2)[0])
 
 print("\n==== 发送前准备画面判据：%d 通过 / %d 失败 ====" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

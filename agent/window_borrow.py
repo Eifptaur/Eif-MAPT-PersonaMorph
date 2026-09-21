@@ -27,6 +27,8 @@ import os
 import threading
 import time
 
+from . import persist
+
 log = logging.getLogger("persona-morph")
 
 IDLE_S = 60.0        # 空闲多久算「用完了」（这期间没有任何输入动作就归还）
@@ -76,7 +78,12 @@ def _persist_path() -> str:
 
 
 def _persist() -> None:
-    """把当前借用状态落盘（没借用 ⇒ 删掉记录）。**调用点必须在 `_lock` 之外**。"""
+    """把当前借用状态落盘（没借用 ⇒ 删掉记录）。**调用点必须在 `_lock` 之外**。
+
+    V-R9-22：改走 `persist.atomic_write_json`（tmp 名带 pid + 随机后缀 + `os.replace`）。
+    老写法是就地覆盖 ⇒ 写一半被强杀/崩溃时留下半截 JSON，而 `recover()` 读到坏档是**删掉放弃**
+    ⇒ 用户的窗口再也还不回去（审计 `window_borrow.recover:111-119`）。
+    """
     p = _persist_path()
     if not p:
         return
@@ -87,12 +94,12 @@ def _persist() -> None:
             if os.path.exists(p):
                 os.remove(p)
             return
-        with open(p, "w", encoding="utf-8") as f:
-            json.dump({"hwnd": s["hwnd"], "rect": list(s["rect"] or []),
-                       "forced": list(s["forced"]) if s["forced"] else None,
-                       "at": s["at"]}, f)
-    except Exception:
-        pass
+        if not persist.atomic_write_json(p, {"hwnd": s["hwnd"], "rect": list(s["rect"] or []),
+                                             "forced": list(s["forced"]) if s["forced"] else None,
+                                             "at": s["at"]}, indent=None):
+            log.warning("窗口借用记录落盘失败（被强杀时可能还不回窗口）：%s", p)
+    except Exception as e:
+        log.warning("窗口借用记录写入异常：%s", e)
 
 
 def recover(reason: str = "上次进程留下的借用") -> bool:

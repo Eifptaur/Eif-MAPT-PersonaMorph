@@ -353,6 +353,8 @@
   "all_count": 30,
   "past_window_min": 30,
   "past_floor_count": 8,
+  "feed_window_min": 10,
+  "feed_max_count": 150,
   "unified_tier": true,
   "group_tier": {},
   "group_blocklist": {},

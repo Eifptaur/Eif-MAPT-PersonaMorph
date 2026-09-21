@@ -64,8 +64,9 @@ class _Resp:
     def __init__(self, raw, ctype="audio/wav", status=200):
         self._raw, self.headers, self.status = raw, {"Content-Type": ctype}, status
 
-    def read(self):
-        return self._raw
+    def read(self, n=-1):
+        # V-R9-26：产品改成 `read(上限+1)` 的带限读取 ⇒ 替身要认这个形参（否则 TypeError 假红）
+        return self._raw if (n is None or int(n) < 0) else self._raw[:int(n)]
 
     def __enter__(self):
         return self

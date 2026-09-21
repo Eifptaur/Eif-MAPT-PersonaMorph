@@ -7,7 +7,12 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import os
+
+from . import persist
+
+log = logging.getLogger("persona-morph")
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -473,6 +478,13 @@ DEFAULT_CONFIG = {
         "all_count": 30,
         "past_window_min": 30,        # 历史上下文只带最近 N 分钟（0=不限，防回应很久前的旧艾特/旧话题）
         "past_floor_count": 8,       # 时间窗外至少保留最近 N 条（防止长时间静默后看不到上文；0=关闭兜底）
+        # ⛔ 2026-09-21 加（第九轮 V-R9-15/16/17 ＋ 作者原话「给模型喂的前几分钟就够了」）：**喂给模型**
+        #   的时间窗与条数上限。停机/卡顿后补进来的整批未读不再一次性倒给模型：
+        #   · 窗外的**旧闲聊** ⇒ 标已读、本次不回（`feed_window_min`，0=不限）；
+        #   · 超上限的**退回未读**（`feed_max_count`，下一轮还在窗口里就能处理）；
+        #   · ⚠️ **@ 我 / 引用我** 的消息**不受时间窗限制**（再旧也留着）——否则就是新的"它不理我"。
+        "feed_window_min": 10,       # 只把最近 N 分钟的未读当"要我回"（0=不限）
+        "feed_max_count": 150,       # 单轮最多喂多少条（超出的退回未读）
         "unified_tier": True,         # true=上方档位对所有群生效；false=可按群单独设置（group_tier）
         "group_tier": {},             # {群名: 1~4} 仅 unified_tier=false 时生效；未设置的群跟随全局
         "group_blocklist": {},        # {群名: [昵称, wxid...]} 被屏蔽群员：不存档、不触发、不进提示词
@@ -563,7 +575,13 @@ DEFAULT_CONFIG = {
         #   或你自己的中转），请求体会按域名自动选形态（见 `feedback._post_webhook`）。
         # 2026-09-17 填入产品自带的反馈接收端（企业微信内部群「消息推送 → 自定义消息推送」机器人）：
         # 已用 `_scratch/check_webhook.py` 实测 `errcode:0`（能发文本、也能 upload_media）⇒ 用户侧**零配置**即可提交。
-        "webhook_url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=c8de1c5e-22d0-4528-9413-43d3d464805b",
+        # ⛔ 2026-09-21 修（第九轮 V-R9-28 · **P1 凭据泄漏**）：这里原来硬编码着**产品自带的**企业微信
+        #   群机器人 webhook（带 key）——而**仓库是公开的** ⇒ 那个 key 必须视为已泄露（谁都能往那个群
+        #   推消息、也能读到反馈内容）；出包闸门又不认 webhook 形态、控制台还把它打码 ⇒ 三方都看不见。
+        #   ⇒ 现在：代码与示例一律**留空**，真实地址只写在**本机 `config.json`**（gitignore，不出包）。
+        #   ⚠️ 作者侧动作：那个已公开的 key **要去企微后台轮换**（改配置挡不住"谁能读仓库"）。
+        #   要让"用户零配置"继续成立，走 `upload_url`（自己的中转）或让用户自填——不再内置共享密钥。
+        "webhook_url": "",            # 只填在本机 config.json；**绝不进仓库/包**
         "webhook_token": "",
         "smtp": {
             "host": "smtp.qq.com",    # QQ 邮箱 465 SSL；163 用 smtp.163.com
@@ -842,12 +860,35 @@ _MIGRATIONS = (
 
 def _migrate_once(cfg: dict) -> dict:
     """跑**还没做过**的一次性迁移（各自记标记）；跑完把标记写进 `data/config_migrations.json`，
-    之后用户的改动不再被覆盖。"""
-    try:
-        with open(MIGRATIONS_MARK, "r", encoding="utf-8") as f:
-            done = set(json.load(f) or [])
-    except Exception:
-        done = set()
+    之后用户的改动不再被覆盖。
+
+    ⛔ **V-R9-20（审计第九轮，本轮修）**：老写法把「标记文件坏掉」与「第一次运行」混成一件事
+    （`except: done = set()`）⇒ 标记一坏就把**全部迁移重放一遍**，而迁移的收尾是 `save_config()`
+    **整体覆盖**用户那份 config.json ⇒ 用户显式关掉的 `wechat.background_only` /
+    `ui.lock_window_pos` / `input.allow_real_fallback` 被改回去（审计实测复现）。
+    现在的口径：**文件不在 = 第一次运行（照常全跑）；文件在但读不出来 = 一条都不跑**，
+    坏档走 `persist.load_or_quarantine` 改名 `.bad.<时间戳>` 留证 + 记日志。
+    """
+    existed = os.path.exists(MIGRATIONS_MARK)
+    _NO_MARK = object()                       # 哨兵：分得清"读到的内容"与"走的默认值"
+    raw = persist.load_or_quarantine(MIGRATIONS_MARK, _NO_MARK)
+    if raw is _NO_MARK:
+        if existed:
+            # 坏档 / 读失败：**不许**静默重放全部迁移（那会覆盖用户手改过的 config.json）
+            print("[config] 迁移记录读不出来（已按坏档留证 .bad.<时间戳>）⇒ 本次一条一次性迁移都不跑，"
+                  "绝不覆盖你的 config.json")
+            log.warning("迁移标记读不出来 ⇒ 跳过全部一次性迁移（防覆盖用户 config.json）：%s",
+                        MIGRATIONS_MARK)
+            return cfg
+        done = set()                          # 第一次运行：全都还没做过（正常全跑）
+    elif isinstance(raw, list):
+        done = {str(x) for x in raw}
+    else:
+        # 能解析但不是列表（形状不对）⇒ 同样是坏档：留证 + 一律不跑
+        print("[config] 迁移记录形状不对 ⇒ 已留证并跳过本次迁移，绝不覆盖你的 config.json")
+        log.warning("迁移标记形状不对 ⇒ 跳过全部一次性迁移（已留证 %s）：%s",
+                    persist.quarantine(MIGRATIONS_MARK) or "留证失败", MIGRATIONS_MARK)
+        return cfg
     todo = [(t, fn, how) for (t, fn, how) in _MIGRATIONS if t not in done]
     if not todo:
         return cfg
@@ -858,12 +899,11 @@ def _migrate_once(cfg: dict) -> dict:
         if changed:
             all_changed += changed
             undoes.append(how)
-    try:
-        os.makedirs(DATA_DIR, exist_ok=True)
-        with open(MIGRATIONS_MARK, "w", encoding="utf-8") as f:
-            json.dump(sorted(done), f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
+    # V-R9-22：走原子写（tmp 名带 pid + 随机后缀 + os.replace），不再就地覆盖
+    if not persist.atomic_write_json(MIGRATIONS_MARK, sorted(done), indent=2):
+        # 写不进去 ⇒ 下次启动还会把这批迁移重跑一遍（用户改过的键会被再改一次）⇒ 必须留日志
+        log.warning("迁移标记写不进去 ⇒ 下次启动会再跑一遍这批一次性迁移（data/ 可写？）：%s",
+                    MIGRATIONS_MARK)
     if all_changed:
         print("[config] 一次性迁移（要改回来：%s）：%s" % ("；".join(undoes), "；".join(all_changed)))
         try:

@@ -405,6 +405,24 @@ def _note_generated(path: str, backend_id: str = "gen") -> str:
         return ""
 
 
+def _harden_redirects() -> None:
+    """V-R9-23：确保 urllib 跟 302 时**不把出图 key 带到新主机**（实现只有 safe_fetch 那一处）。"""
+    try:
+        from .safe_fetch import harden_urllib
+        harden_urllib()
+    except Exception as e:                                   # pragma: no cover - 极端环境
+        log.warning("安全层不可用，重定向凭据剥离没装上（V-R9-23）：%s", e)
+
+
+def _capped(resp, max_bytes: int, what: str) -> bytes:
+    """V-R9-26：带上限读响应体（拿不到 safe_fetch 就退回"读上限+1 再截断"，绝不 `read()` 一把梭）。"""
+    try:
+        from .safe_fetch import read_capped
+        return read_capped(resp, max_bytes, what)
+    except ImportError:
+        return resp.read(int(max_bytes) + 1)[:int(max_bytes)]
+
+
 def call_backend(backend: dict, prompt: str, count: int = 1, size: str = "square"):
     """真去生图：按后端协议分发。**未接后端时不会被调用**；请求体里不构造任何 r18 字段。
 
@@ -413,10 +431,15 @@ def call_backend(backend: dict, prompt: str, count: int = 1, size: str = "square
     硅基流动 / 智谱 / 火山方舟 / 任何自建服务，POST {url}/images/generations）·
     `generic`（用户自己填的 HTTP 端点，POST {prompt,n,size}）。
     `comfyui` 目前只做**探测**：它要一份工作流 JSON，还没内置（探到会在面板里说明）。
+
+    ⛔ 2026-09-21 第九轮审计补的三处（V-R9-23/24/26）：①发请求前装"跨主机剥凭据"处理器
+    （302 到新主机不许带 `Authorization`/`X-PM-Token`）；②`data[].url` 这回链**先过 SSRF 闸门再 GET**；
+    ③每个 `resp.read()` 都有上限（超了判失败，不整包收进内存）。
     """
     import base64
     import urllib.parse
     import urllib.request
+    _harden_redirects()
     w, h = SIZE_PX.get(size or "square", SIZE_PX["square"])
     proto = str(backend.get("proto") or "generic")
     n = max(1, int(count or 1))
@@ -428,7 +451,9 @@ def call_backend(backend: dict, prompt: str, count: int = 1, size: str = "square
                                      headers=local_guard.client_headers(
                                          backend["url"], {"Content-Type": "application/json"}), method="POST")
         with urllib.request.urlopen(req, timeout=int(backend.get("timeout") or 180)) as resp:
-            j = json.loads(resp.read().decode("utf-8") or "{}")
+            # 16MB：a1111 把图**base64 塞在 JSON 里**，1024² 一张约 1.5~2MB（batch 2 ⇒ ~4MB），
+            # 16MB 够正常批量、又挡住"对面无限灌"
+            j = json.loads(_capped(resp, 16 * 1024 * 1024, "a1111 出图回包").decode("utf-8") or "{}")
         for i, b64 in enumerate(j.get("images") or []):
             files.append(_save_image_bytes(base64.b64decode(b64.split(",")[-1]),
                                            "%s_%d" % (backend.get("id") or "a1111", i)))
@@ -446,8 +471,17 @@ def call_backend(backend: dict, prompt: str, count: int = 1, size: str = "square
                    + "?width=%d&height=%d&nologo=true&referrer=PersonaMorph&seed=%d" % (w, h, int(time.time()) + i)
                    + (("&model=" + urllib.parse.quote(_m)) if _m else ""))
             req = urllib.request.Request(url, headers=dict(_hdr), method="GET")
-            with urllib.request.urlopen(req, timeout=int(backend.get("timeout") or 180)) as resp:
-                data = resp.read()
+            try:
+                _resp = urllib.request.urlopen(req, timeout=int(backend.get("timeout") or 180))
+            except Exception as e:
+                # V-R9-27：pollinations 的 **prompt 在被请求的 URL 路径里** ⇒ 异常信息（含完整 URL）
+                # 不许原样往外抛，否则私聊内容会顺着日志/控制台漏出去。只留类型与状态码。
+                _code = getattr(e, "code", "")
+                raise ValueError("在线生图请求失败（%s%s）——提示词在请求地址里，故不回显地址"
+                                 % (type(e).__name__, (" HTTP %s" % _code) if _code else ""))
+            with _resp as resp:
+                # 8MB：出图回包就是**一张图**（PNG/JPEG 通常 0.5~3MB），8MB 是宽裕上限
+                data = _capped(resp, 8 * 1024 * 1024, "pollinations 出图回包")
             if not data or len(data) < 128:
                 raise ValueError("在线生图返回的数据太小（%d 字节）" % len(data or b""))
             files.append(_save_image_bytes(data, str(backend.get("id") or "pollinations")))
@@ -474,7 +508,7 @@ def call_backend(backend: dict, prompt: str, count: int = 1, size: str = "square
                         if str(backend.get("key") or "") else {})},
             method="POST")
         with urllib.request.urlopen(req, timeout=int(backend.get("timeout") or 180)) as resp:
-            j = json.loads(resp.read().decode("utf-8") or "{}")
+            j = json.loads(_capped(resp, 32 * 1024 * 1024, "在线出图回包").decode("utf-8") or "{}")
         for i, it in enumerate(j.get("data") or []):
             b64 = it.get("b64_json") if isinstance(it, dict) else None
             if b64:
@@ -483,9 +517,20 @@ def call_backend(backend: dict, prompt: str, count: int = 1, size: str = "square
                 continue
             link = (it or {}).get("url") if isinstance(it, dict) else None
             if link:
+                # V-R9-24：这个地址是**对方的回包**给的 ⇒ 一次未校验的二次 GET 就等于把产品当内网
+                # 探测器（E 线实测假后端回 `http://127.0.0.1:41011/png`，产品真去 GET 并落盘）。
+                try:
+                    from .safe_fetch import guard_remote_url
+                except Exception:
+                    raise ValueError("安全抓取层不可用：拒绝下载后端给的图片地址（fail-closed）")
+                try:
+                    guard_remote_url(str(link), base)
+                except Exception as e:
+                    raise ValueError("后端给的图片地址不可信（%s）：%s" % (type(e).__name__, str(e)[:80]))
                 r2 = urllib.request.Request(str(link), headers={"User-Agent": "PersonaMorph/1.0"})
                 with urllib.request.urlopen(r2, timeout=int(backend.get("timeout") or 180)) as rr:
-                    files.append(_save_image_bytes(rr.read(),
+                    # 8MB：单张图（同 pollinations 那条的口径）
+                    files.append(_save_image_bytes(_capped(rr, 8 * 1024 * 1024, "后端图片回包"),
                                                    "%s_%d" % (backend.get("id") or "online", i)))
     else:                                     # generic：用户自填端点，约定返回 {"files":[...]}
         body = json.dumps({"prompt": prompt, "n": n, "size": size}).encode("utf-8")
@@ -493,7 +538,8 @@ def call_backend(backend: dict, prompt: str, count: int = 1, size: str = "square
                                      headers=local_guard.client_headers(
                                          backend["url"], {"Content-Type": "application/json"}), method="POST")
         with urllib.request.urlopen(req, timeout=int(backend.get("timeout") or 180)) as resp:
-            j = json.loads(resp.read().decode("utf-8") or "{}")
+            # 4MB：generic 只回 `files` 路径清单（自建服务几十字节），4MB 已经极宽
+            j = json.loads(_capped(resp, 4 * 1024 * 1024, "generic 出图回包").decode("utf-8") or "{}")
         files = [str(p) for p in (j.get("files") or [])]
     return {"files": files, "proto": proto}
 

@@ -201,19 +201,27 @@ def contact_db_rel(db):
 
 
 def load_nickname_map(db) -> dict:
-    """wxid -> 显示名 的整表映射（老 `_load_nicknames` 的唯一实现，走适配层）。"""
+    """wxid -> 显示名 的整表映射（老 `_load_nicknames` 的唯一实现，走适配层）。
+
+    ⛔ 2026-09-21 修（第九轮 **V-R9-7** · P1）：原来**三类失败全部静默返回 `{}`**（`rel is None`
+    直接 return、查询异常 `except: pass`）—— 而 2026-09-20 那次同族修复只改了 `load_groups`
+    与 `load_privates`（都改成"真失败就抛"）⇒ `wechat._load_nicknames` 的 `_cap["contacts"]`
+    一个字节都记不到、昵称静默退化成 wxid、"登记大号按昵称"永远匹配不上（用户报过的
+    「无法识别我的大号」）。⇒ 与那两条同口径：**真失败就抛**（由 `wechat._load_nicknames`
+    记进 `_cap` 并如实显示）；查询成功但确实一个联系人都没有 ⇒ 返回空表（那是事实）。
+    """
     mapping = {}
     rel = contact_db_rel(db)
     if rel is None:
-        return mapping
+        raise RuntimeError("找不到联系人库 contact.db")
     conn = None
     try:
         conn = open_shard(db, rel)
         rows = conn.execute("SELECT username, nick_name, remark FROM contact").fetchall()
         for r in rows:
             mapping[str(r["username"])] = str(r["remark"] or r["nick_name"] or r["username"])
-    except Exception:
-        pass
+    except Exception as _e:
+        raise RuntimeError("读 contact.db 失败：%s" % (str(_e)[:80] or type(_e).__name__))
     finally:
         close_all([conn])
     return mapping

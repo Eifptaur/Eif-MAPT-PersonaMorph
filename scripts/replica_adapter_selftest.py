@@ -275,6 +275,49 @@ def main():
     ok("一个都补不到时**不清空**分片表（安全线）",
        _r4.get("dropped") == [] and len(ra.iter_shards(_sd4)) == 2, "%s / %d" % (_r4.get("dropped"), len(ra.iter_shards(_sd4))))
 
+    print("── V-R9-33：zstd 压缩正文还原（真 zstd 帧 ⇒ 真正文；这一族以前**零判据**）──")
+    # 为什么要有它：微信 4.x 把**长文本/文件卡**的 content 用 zstd 压缩存库，还原走
+    # `recover_text`/`message_text`/`fill_text`。审计实测：把这三个函数改坏，本判据
+    # **31/0 全绿** ⇒ 用户粘来的长段落会被读成 `[文本]`、机器人"看不见"内容（正对反馈里的
+    # "读得到/读不到都是这一环"）。
+    try:
+        _z = ra.zstd_module()
+        if _z is None:
+            ok("zstd 模块可用（驱动库自带 zstandard）", False,
+               "runtime 里没有 zstandard ⇒ 长消息还原这族在本机不可测（**不是通过**）")
+        else:
+            _long = ("这是一条超过九百个字符的长消息，用来验证压缩正文能被完整还原。" * 40)
+            _frame = _z.ZstdCompressor().compress(_long.encode("utf-8"))
+            ok("zstd 帧的 magic 对得上（`28 b5 2f fd`）", bytes(_frame[:4]) == ra.ZSTD_MAGIC,
+               bytes(_frame[:4]).hex())
+            ok("`recover_text` 把长消息**原样还原**（不是 `[文本]` 占位）",
+               ra.recover_text(_frame) == _long, "还原 %d 字 / 原文 %d 字"
+               % (len(ra.recover_text(_frame) or ""), len(_long)))
+            ok("已经是 str ⇒ 原样返回", ra.recover_text("普通短消息") == "普通短消息")
+            ok("拿不到 / 解不开 ⇒ 空串（不抛异常、也不给占位符）",
+               ra.recover_text(None) == "" and ra.recover_text(b"") == ""
+               and ra.recover_text(b"\x28\xb5\x2f\xfd-not-a-frame") == "")
+
+            _db = type("D", (), {"get_message_row": staticmethod(
+                lambda c, l: {"content": None, "compress_content": _frame})})()
+            ok("`message_text` 走同一条还原路径（压缩帧在 compress_content 里）",
+               ra.message_text(_db, "group:g", 703) == _long,
+               len(ra.message_text(_db, "group:g", 703) or ""))
+            ok("`fill_text`：友好化给的是 `[文本]` 而库里有长正文 ⇒ 用正文换回去",
+               ra.fill_text(_db, "group:g", 703, "[文本]") == _long)
+            ok("`fill_text`：本来就不是类型标签 ⇒ 原样返回（不乱查库）",
+               ra.fill_text(_db, "group:g", 703, "这就是正文") == "这就是正文")
+            # 反例锚：把 zstd 拿掉 ⇒ 上面那两条"还原"必须变红（证明这组断言有区分力）
+            _orig_z = ra.zstd_module
+            try:
+                ra.zstd_module = lambda: None
+                ok("反例锚：zstd 不可用时 `recover_text` 只给空串（上面那条确实在守还原）",
+                   ra.recover_text(_frame) == "")
+            finally:
+                ra.zstd_module = _orig_z
+    except Exception as _e_z:
+        ok("zstd 正文还原这组能跑起来", False, str(_e_z)[:120])
+
     print("\n== 适配层单测：%d 通过 / %d 失败 ==" % (len(PASS), len(FAIL)))
     return 1 if FAIL else 0
 

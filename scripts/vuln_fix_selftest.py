@@ -720,6 +720,17 @@ else:
     _tok8 = lg.token()                    # 走上面那个 lambda ⇒ 同一个临时口令（不再碰生产文件）
     ok("本机口令已建立（logs/sd_local.token，随机 url-safe）", bool(_tok8) and len(_tok8) >= 16,
        "len=%d" % len(_tok8))
+    # ⛔ 2026-09-21 加（第九轮 **V-R9-29** · P3）：**把 V-R8-7 那条修复本身钉住** ——
+    #   它的唯一可观测差异是**生产文件的 ACL**（内容/大小/mtime 全不变）⇒ 任何人重构这段打桩
+    #   都会**无声地**把副作用带回来（审计实测：只摘掉上面那 6 行，本判据仍 123/0 全绿，而
+    #   `logs\sd_local.token` 的继承条目 3 → 0）。⇒ 这里加**正向断言**：打桩真的生效了。
+    ok("V-R8-7 正向锚：口令取自**临时根**（`lg.token` 已被替换成桩）",
+       getattr(lg.token, "__name__", "") == "<lambda>", str(getattr(lg.token, "__name__", "?")))
+    ok("V-R8-7 正向锚：共享开关 `PM_LOCAL_TOKEN` 已设成同一串（服务端那份模块也读它）",
+       str(os.environ.get(lg.ENV_KEY) or "") == _tok8 and bool(_tok8),
+       "env 长度=%d" % len(str(os.environ.get(lg.ENV_KEY) or "")))
+    ok("V-R8-7 正向锚：`local_guard` 这个名字预先指向**同一份模块**（别再加载第二份）",
+       sys.modules.get("local_guard") is lg)
     ok("Host 判据：回环三种写法放行、外域拒",
        lg.host_ok("127.0.0.1:7860") and lg.host_ok("localhost:7860") and lg.host_ok("[::1]:7860")
        and not lg.host_ok("evil.example:7860") and not lg.host_ok(""))

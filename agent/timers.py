@@ -13,12 +13,15 @@
 """
 from __future__ import annotations
 
-import json
+import logging
 import os
 import threading
 import time
 
+from . import persist
 from .config import DATA_DIR
+
+log = logging.getLogger("persona-morph")
 
 _lock = threading.RLock()
 
@@ -42,31 +45,34 @@ def _now_ms(now=None) -> int:
 
 
 def load() -> dict:
-    try:
-        with open(path(), "r", encoding="utf-8-sig") as f:
-            d = json.load(f)
-        if isinstance(d, dict) and isinstance(d.get("items"), list):
-            d.setdefault("history", [])
-            d.setdefault("next_id", 1)
-            return d
-    except Exception:
-        pass
+    """读状态；**坏档走统一招式 `persist.load_or_quarantine`**（改名 `.bad.<时间戳>` 留证 + 记一条 warn）。
+
+    V-R9-18：老写法是 `except: pass` ⇒ 坏档静默变默认值，紧接着 `_save()` **整体覆盖**
+    ⇒ "坏文件 + 一次写入 = 旧提醒全没"，而 `add()` 还照旧回 `ok=True`（模型据此对用户说"已定好"）。
+    改成留证后，坏档一个字节都不丢、还能人工修回来。
+    """
+    _BAD = object()                      # 哨兵：分得清"读到的东西"与"走的默认值"
+    d = persist.load_or_quarantine(path(), _BAD)
+    if isinstance(d, dict) and isinstance(d.get("items"), list):
+        d.setdefault("history", [])
+        d.setdefault("next_id", 1)
+        return d
+    if d is not _BAD:
+        # 能解析但**形状不对**（顶层不是 dict / items 不是列表）同样是坏档：留证再回默认值，
+        # 否则下一次 `_save` 会把它整体盖掉（同一个 V-R9-18 的后果）。
+        log.warning("定时提醒状态形状不对 ⇒ 已按坏档留证：%s", persist.quarantine(path()) or "留证失败")
     return {"items": [], "history": [], "next_id": 1, "updatedAt": 0}
 
 
 def _save(st: dict) -> bool:
-    """原子写。**返回是否真的落盘成功**（V10：写失败不许吞成 `pass`——调用方要据它如实回报）。"""
+    """原子写。**返回是否真的落盘成功**（V10：写失败不许吞成 `pass`——调用方要据它如实回报）。
+
+    V-R9-22：改走 `persist.atomic_write_json`（tmp 名带 pid + 随机后缀 + `os.replace`），
+    不再共用 `timers.json.tmp` 这个名字。
+    """
     with _lock:
-        try:
-            os.makedirs(os.path.dirname(path()), exist_ok=True)
-            st["updatedAt"] = int(time.time() * 1000)
-            tmp = path() + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(st, f, ensure_ascii=False, indent=1)
-            os.replace(tmp, path())
-            return True
-        except Exception:
-            return False
+        st["updatedAt"] = int(time.time() * 1000)
+        return persist.atomic_write_json(path(), st, indent=1)
 
 
 def _pending(st: dict) -> list:

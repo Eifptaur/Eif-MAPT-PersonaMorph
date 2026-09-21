@@ -68,6 +68,34 @@ def console_lock_path(root: str = "") -> str:
     return os.path.join(root or ROOT, "logs", "browser_opened.lock")
 
 
+_ACL_ONCE = {"console_url": False}
+
+
+def _tighten_console_url_acl(p: str) -> None:
+    """V-R9-27：`logs/console.url` 里是**带口令的完整地址**（明文），只许本人读。
+
+    与 `local_guard` 对 `sd_local.token` 的做法同一套（`icacls` 断继承 + 只授本人/SYSTEM/管理员）——
+    复用那个实现，不再写第二份。每进程只做一次（`icacls` 要起两个进程，别挂在热路径上）。
+    收紧失败**不当成功**：写一条 warning（口令仍可用，风险只是同机其它账号能读到）。
+    """
+    if _ACL_ONCE["console_url"]:
+        return
+    _ACL_ONCE["console_url"] = True
+    try:
+        import logging
+        from .local_guard import _tighten_acl
+        why = _tighten_acl(p)
+        if why:
+            logging.getLogger("persona-morph").warning(
+                "logs/console.url 的 ACL 没能收紧：%s（口令仍可用，但同机其它账号可能读得到）", why)
+    except Exception as e:                                   # pragma: no cover - 极端环境
+        try:
+            import logging
+            logging.getLogger("persona-morph").warning("收紧 console.url ACL 时异常：%s", e)
+        except Exception:
+            pass
+
+
 def write_console_url(url: str, root: str = "") -> bool:
     """把"可直接使用的控制台地址"原子落盘（temp + os.replace）。"""
     try:
@@ -77,6 +105,7 @@ def write_console_url(url: str, root: str = "") -> bool:
         with open(tmp, "w", encoding="utf-8") as f:
             f.write(str(url or ""))
         os.replace(tmp, p)
+        _tighten_console_url_acl(p)      # V-R9-27：口令文件只许本人读
         return True
     except Exception:
         return False
@@ -183,8 +212,28 @@ def console_lock_fresh(seconds: float = CONSOLE_LOCK_SECONDS, root: str = "") ->
 
 
 # ── 密钥脱敏（控制台/日志不暴露完整 API Key）─────────────────────────────
-
-_SECRET_RE = re.compile(r"(sk-[A-Za-z0-9_\-]{8,})")
+# ⛔ 2026-09-21（第九轮审计 **V-R9-27**）：原来只认 `sk-`（`if "sk-" not in t: return t`），
+#   E 线实测**智谱 / 火山方舟 uuid / 百度千帆 / 企微 webhook key / 钉钉 access_token 全部原样漏出**。
+#   现在四类都认：①各家 key 的字面形态 ②`键=值`形态（key/access_token/api_key/token/secret/
+#   password/authorization）③UUID 形态（企微 webhook 与火山都用它）④`Bearer xxx`。
+_BEARER_RE = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-]{6,}")
+_SECRET_RES = (
+    (re.compile(r"sk-[A-Za-z0-9_\-]{8,}"), lambda m: m.group(0)[:3] + "***"),
+    (re.compile(r"bce-v3/ALTAK-[A-Za-z0-9]+/[0-9a-f]+", re.I), lambda m: "bce-v3/ALTAK-***"),
+    (re.compile(r"[0-9a-f]{32}\.[A-Za-z0-9]{12,}"), lambda m: m.group(0)[:6] + "***"),      # 智谱
+    (re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.I),
+     lambda m: m.group(0)[:8] + "-****-****-****-************"),                          # 企微 key / 火山
+    (_BEARER_RE, lambda m: "Bearer ***"),
+    (re.compile(r"(?i)\b(key|access_token|api[-_]?key|token|secret|password|passwd|pwd|authorization)"
+                r"(\s*[:=]\s*)(?![Bb]earer\b)([A-Za-z0-9._\-]{6,})"),
+     lambda m: m.group(1) + m.group(2) + m.group(3)[:3] + "***"),
+)
+#: 快速预筛（`redact_secrets` 挂在每一条日志的 formatter 上）：一次预扫决定要不要跑那 6 条规则。
+#  ⚠️ 必须把"没有关键词的形态"也扫进来 —— 智谱 key（`32hex.16字母`）与 UUID 形态都不含任何关键词，
+#  第一版只用关键词表预筛 ⇒ 这两种当场漏掉（自己踩的，写在判据里守）。
+_REDACT_QUICK = re.compile(
+    r"sk-|bce-v3|[Kk]ey|KEY|[Tt]oken|TOKEN|secret|Secret|Bearer|bearer|password|passwd|pwd"
+    r"|authorization|Authorization|[0-9a-fA-F]{8}-|[0-9a-f]{32}\.")
 
 
 def mask_url_token(url: str) -> str:
@@ -206,11 +255,13 @@ def mask_secret(secret) -> str:
 
 
 def redact_secrets(text) -> str:
-    """把文本里的 sk- 长密钥替换为 sk-***（日志/存档脱敏用）。"""
+    """把文本里的各家密钥替换成 `前缀***`（日志/存档脱敏用，见上方 `_SECRET_RES`）。"""
     t = str(text or "")
-    if "sk-" not in t:
+    if not t or not _REDACT_QUICK.search(t):
         return t
-    return _SECRET_RE.sub(lambda m: (m.group(1)[:3] + "***"), t)
+    for rx, rep in _SECRET_RES:
+        t = rx.sub(rep, t)
+    return t
 
 
 def pad2(n: int) -> str:
