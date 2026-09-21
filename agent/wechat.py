@@ -37,6 +37,14 @@ def message_ledger(n: int = 30) -> list:
         return []
 
 
+def _ledger_path() -> str:
+    """判定台账的落盘路径（V-R7-4：抽成模块级函数，**只为判据能打桩**到临时目录）。
+
+    默认行为与抽取前**逐字一致**：`os.path.join(ROOT, "data", "message_ledger.jsonl")`。
+    """
+    return os.path.join(ROOT, "data", "message_ledger.jsonl")
+
+
 def _self_local_note(obj, chat_id, local_id, create_time=None) -> None:
     """登记「这条库行是我发的」——**模块级安全入口**：对象没这能力/记账出错都不影响发送。
 
@@ -2225,7 +2233,7 @@ class WeChatAdapter:
                 "keep": bool(out), "why": why, "text": text[:60],
             })
             try:
-                p = os.path.join(ROOT, "data", "message_ledger.jsonl")
+                p = _ledger_path()
                 os.makedirs(os.path.dirname(p), exist_ok=True)
                 with open(p, "a", encoding="utf-8") as fh:
                     fh.write(_json.dumps(_LEDGER[-1], ensure_ascii=False) + "\n")

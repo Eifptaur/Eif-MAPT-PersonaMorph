@@ -93,7 +93,8 @@ def main():
     ok("探测结果齐全（ffmpeg 路径/识别可用性/就绪）",
        set(p.keys()) >= {"ffmpeg", "asr", "ready", "why"})
     if not p["ready"]:
-        ok("⚠️ 本机没有 ffmpeg ⇒ 只验诚实路径（跳过真读）", True, p["why"])
+        # V-R7-10：原来是 `ok(..., True)`（恒真白拿一条绿）⇒ 改成 SKIP：明确"这条没验到"，不计入通过数
+        print("SKIP  本机没有 ffmpeg ⇒ 只验诚实路径（跳过真读）：%s" % p.get("why"))
     else:
         vid = os.path.join(tmp, "clip.mp4")
         ok("合成一段 2 秒测试视频成功", mk_video(vid), os.path.getsize(vid) if os.path.isfile(vid) else 0)

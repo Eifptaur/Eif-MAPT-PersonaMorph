@@ -48,7 +48,8 @@ GOOD = {
 
 print("── A. 清单校验 ──")
 ok("好清单通过", UT.validate(GOOD)[0] is not None)
-ok("坏 JSON 不在这里管（load 里报）", True)
+# V-R7-10：这里原有 `ok("坏 JSON 不在这里管（load 里报）", True)`——恒真、什么都没验，故作废删除；
+# 该行为（坏 JSON 进 problems、好清单照常加载、坏文件不阻断后续文件）由下面 B 段那条真断言覆盖。
 
 cases = [
     (dict(GOOD, name="Bad Name"), "不合规"),

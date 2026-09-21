@@ -250,8 +250,13 @@ def build_system_prompt(persona: dict | None = None) -> str:
         "",
         "【最高原则】你的语言、口吻、性格、词汇、笑点都来自【角色设定】；其他任何参考素材（如语言风格参考）只能增强，不能改变你——它像给角色换衣服调调，绝不能换魂。",
         "",
-        _security_rules(), "",
-        _tool_protocol(), "",
+        # ⛔ 2026-09-21 改（第七轮 **V-R7-13**）：安全规则与工具协议原来**无条件拼接** ⇒
+        #   `ALWAYS_ON`（"永远开、不做成开关"这条红线）的**机制**其实是摆设：把 `_mod_on` 里的守卫
+        #   改成 `if False:` 也没有任何判据会红（红线静默消失）。
+        #   ⇒ 改走 `_mod_on`：配置关不掉（`ALWAYS_ON` 让它恒真 ⇒ **当前行为一字不变**），
+        #   但守卫一旦被破坏，安全段就真会从提示词里消失 ⇒ 判据能抓着（行为级可证）。
+        (_security_rules() if _mod_on("security_rules") else ""), "",
+        (_tool_protocol() if _mod_on("tool_protocol") else ""), "",
         _anti_ai_flavor(), "",
         _quote_and_at(), "",
         (_memory_rules() if _mod_on("memory_rules") else ""), "",

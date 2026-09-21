@@ -81,7 +81,7 @@ ck("A4j2 拍一拍候选点被夹在检测到的头像方块内（公式候选�
    #   源码里空格/换行一变就红（行为没变）。改用空白容忍的 `_srcmatch.has()`（见该模块口径）。
    _sm.has(SRC_WECHAT, "bbox[0] + 4 <= x <= bbox[2] - 4"))
 ck("A4k 菜单点击前把 OCR 明细（文本@y）打进日志（便于判「点偏了没有」）",
-   "菜单 OCR 明细" in SRC_IB)
+   _sm.has(SRC_IB, "菜单 OCR 明细"))
 # A4i（2026-09-18 现场两次回拍失败后加）：**定位失败时先滚到最新再找一遍**
 #   真因：`_send_poke_locate` 的 OCR 路径只在当前视口找、且只保留左侧（对方）的行，items 一空直接
 #   return None；`scroll` 参数只喂给 UIA（我们环境 UIA 不通）⇒ 对方消息不在视口/记录被清空就永远失败。
@@ -102,23 +102,23 @@ ck("A4h2 拍一拍不再走气泡菜单（该路径已被本机实测证伪，�
 #   + `已拍一拍「E」（已验证：数据库中新增拍一拍事件）`，而用户说「**他拍不到我**」——
 #   兜底那一枪点了不知道是什么的项，验证又把"对方拍我"的行当成"我拍成功"。
 ck("A4f 菜单点击匹配不到就**不点**（兜底改成显式 opt-in，默认关）",
-   "allow_top_fallback: bool = False" in SRC_IB and "if not allow_top_fallback" in SRC_IB
+   _sm.has(SRC_IB, "allow_top_fallback: bool = False") and _sm.has(SRC_IB, "if not allow_top_fallback")
    and "防点到不知道是什么的项" in SRC_IB)
 ck("A4g 回拍验证认方向（只认「我发起」的拍拍；旧判据的返回语句已删）",
    "_poke_is_mine" in SRC_WECHAT and "你拍了拍" in SRC_WECHAT
-   and '（已验证：数据库中新增拍一拍事件）" % target_name' not in SRC_WECHAT)
+   and not _sm.has(SRC_WECHAT, '（已验证：数据库中新增拍一拍事件）" % target_name'))
 # A4e（2026-09-18 事故后加）：**主窗兜底不许按标题找**
 #   老代码在 _get_gui 的兜底里匹配 `窗口标题 == "微信"`，而本机微信窗口标题是「群deepseek」
 #   （机器人在微信里的昵称）⇒ 永远找不到主窗、永远救不回来。改成"窗口类 + 渲染子窗 + 宽度"。
 ck("A4e 主窗兜底按「窗口类 + MMUIRenderSubWindowHW 子窗」找（与标题无关）",
-   't.value == "微信"' not in SRC_WECHAT and "MMUIRenderSubWindowHW" in SRC_WECHAT
+   not _sm.has(SRC_WECHAT, 't.value == "微信"') and "MMUIRenderSubWindowHW" in SRC_WECHAT
    and 'Qt51514QWindowIcon' in SRC_WECHAT)
 # A4d（2026-09-18 用户当场纠正后加）：**还前台之前先看用户是否在操作**
 #   用户原话：「不是你刚刚把窗口收起了，我把窗口点出来了」——_restore_fg_until 会主动
 #   SetForegroundWindow 抢回"进入时记下的窗口"；用户中途自己点了微信出来，我们这一枪会把他刚点出来的
 #   窗口压回去 ⇒ 违反"不打扰用户"。⇒ 现在抢之前先查 GetLastInputInfo：最近 1.2s 有输入就不抢。
 ck("A4d 还前台前先看用户是否在操作（最近 1.2s 有输入 ⇒ 不抢前台）",
-   "def _user_idle_seconds(" in SRC_WECHAT and "_user_idle_seconds() < 1.2" in SRC_WECHAT
+   _sm.has(SRC_WECHAT, "def _user_idle_seconds(") and _sm.has(SRC_WECHAT, "_user_idle_seconds() < 1.2")
    and "不抢用户刚切过去的窗口" in SRC_WECHAT)
 ck("A4c 全表不许再出现「不负责改前台」这类与实测不符的表述",
    "不负责改前台" not in open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -153,24 +153,24 @@ for fn, label, need_gate in (("_send_poke_inner", "拍一拍", False), ("_reply_
         # 点赞/评论/发表仍是真鼠标路线（悬停蓝点/真实滚轮回顶/点发表），所以它们的闸保留。
         ck("B5.%s（%s）不再一进门就跳过（改走投递优先）" % (fn, label), "_background_only" not in body)
 ck("B5x 投递右键链与统一闸门都在（真鼠标许可只由 _real_mouse_allowed 判）",
-   "def _right_click_menu_posted(" in SRC_WECHAT and "def _real_mouse_allowed(" in SRC_WECHAT)
+   _sm.has(SRC_WECHAT, "def _right_click_menu_posted(") and _sm.has(SRC_WECHAT, "def _real_mouse_allowed("))
 # ── B5z（2026-09-18 拍摄现场后加）：拍一拍/引用/表情的**唯一咽喉点**必须先走投递 ──────────────
 #   现场：`演示 → 回拍「E」：打开会话失败`，而同一刻日志明明写着「投递切会话：True」——
 #   根因是 `_open_chat_guarded` **只做真鼠标闸**，真鼠标兜底关着（默认）就一律 False，
 #   于是拍一拍/引用/表情面板这 7 处调用全废。用户原话：「拍一拍等等这些本身就可以右键投递吧」。
 _guard = SRC_WECHAT.split("def _open_chat_guarded(")[1][:2600]
 ck("B5z1 _open_chat_guarded 接受 chat_id（否则没法做投递判定）",
-   "def _open_chat_guarded(self, name: str, chat_id: str = \"\")" in SRC_WECHAT)
+   _sm.has(SRC_WECHAT, "def _open_chat_guarded(self, name: str, chat_id: str = \"\")"))
 ck("B5z2 它**先问强档**（当前会话就是目标 ⇒ 什么都不用做）",
-   "self.chat_is_open(chat_id, gui=gui)" in _guard)
-ck("B5z3 再走**投递切会话**（switch_chat_posted）", "switch_chat_posted(chat_id, gui=gui)" in _guard)
+   _sm.has(_guard, "self.chat_is_open(chat_id, gui=gui)"))
+ck("B5z3 再走**投递切会话**（switch_chat_posted）", _sm.has(_guard, "switch_chat_posted(chat_id, gui=gui)"))
 ck("B5z4 真鼠标闸排在投递之后（投递能成就不动光标）",
    _guard.find("switch_chat_posted(chat_id, gui=gui)") < _guard.find("_real_fallback_allowed()") >= 0
    if "_real_fallback_allowed()" in _guard else False)
 _guard_calls = [ln for ln in SRC_WECHAT.splitlines()
-                if "_open_chat_guarded(" in ln and "def _open_chat_guarded" not in ln
+                if "_open_chat_guarded(" in ln and not _sm.has(ln, "def _open_chat_guarded")
                 and not ln.strip().startswith("#")]
-_guard_calls_cid = [ln for ln in _guard_calls if ", chat_id)" in ln]
+_guard_calls_cid = [ln for ln in _guard_calls if _sm.has(ln, ", chat_id)")]
 ck("B5z5 该传 chat_id 的调用点都传了（拍一拍/自检/引用/消息菜单/表情 ≥5 处）",
    len(_guard_calls_cid) >= 5,
    "传了 %d 处 / 共 %d 处调用（故意留 2 处老行为：朋友圈链 + 自动开第一个群的探测分支）"
@@ -178,33 +178,31 @@ ck("B5z5 该传 chat_id 的调用点都传了（拍一拍/自检/引用/消息�
 # B5z6/B5z7 表情链：**开面板前要确认会话、点完必须回读确认**（现场：面板开了、表情没发出去、还报成功）
 _epo = SRC_WECHAT.split("def emoji_panel_open(")[1][:3000]
 ck("B5z6 emoji_panel_open 不再无视切会话结果（确认不了就失败返回）",
-   "不在未知会话上开表情面板" in _epo and "def emoji_panel_open(self, group_name: str = \"\", chat_id: str = \"\")" in SRC_WECHAT)
+   "不在未知会话上开表情面板" in _epo and _sm.has(SRC_WECHAT, "def emoji_panel_open(self, group_name: str = \"\", chat_id: str = \"\")"))
 _eps = SRC_WECHAT.split("def emoji_panel_send(")[1][:7000]
 ck("B5z7 emoji_panel_send **点完回读确认**（latest_seq 前后比对，确认不到就重试/如实失败）",
    "latest_seq(chat_id)" in _eps and "库里没出现新行" in _eps)
 # B5z9（2026-09-18 二次修）：**一律先点 ♡ 收藏标签**（不许再靠 `_emoji_bottom_bar` 猜"面板默认是收藏视图"），
 # 且网格必须用**我们自己实测的常量**（老常量纵向偏上约 96px ⇒ 点在格子缝里、什么也发不出去）。
 ck("B5z9 表情链一律先点 ♡ 收藏标签（面板相对 0.314/0.918，实测值；不再被 `_emoji_bottom_bar` 猜着跳过）",
-   "0.314" in _eps and "0.918" in _eps and "if not self._emoji_bottom_bar" not in _eps)
+   "0.314" in _eps and "0.918" in _eps and not _sm.has(_eps, "if not self._emoji_bottom_bar"))
 ck("B5z10 网格用实测锚点（第一格 0.183/0.166、步长 0.170/0.162），老常量只作候选兜底",
-   "0.183 + _col * 0.170" in _eps and "0.166 + _row * 0.162" in _eps
-   and "legacy" in _eps and "0.10 + _col * 0.19" in _eps)
+   _sm.has(_eps, "0.183 + _col * 0.170") and _sm.has(_eps, "0.166 + _row * 0.162")
+   and "legacy" in _eps and _sm.has(_eps, "0.10 + _col * 0.19"))
 ck("B5z11 表情链每一步都留日志（现场运维看得到它到底点了哪里）",
    _eps.count("表情链") >= 3, "日志点 %d 处" % _eps.count("表情链"))
 # B5z12（2026-09-18 现场）：开表情面板**不许无条件先搜索**（用户：「它似乎想要搜索的时候，把微信窗口置顶了」）
 _epo2 = SRC_WECHAT.split("def emoji_panel_open(")[1][:2600]
 ck("B5z12 开面板前先用强档确认当前会话（是则**不搜索、不切会话**）",
-   "self.chat_is_open(chat_id, gui=gui)" in _epo2 and "不搜索、不切会话" in _epo2)
+   _sm.has(_epo2, "self.chat_is_open(chat_id, gui=gui)") and "不搜索、不切会话" in _epo2)
 ck("B5z13 搜索只在「确认不了当前会话」时才发生（不再无条件 _search_group）",
-   "if not _already and not self._search_group(" in _epo2,
+   _sm.has(_epo2, "if not _already and not self._search_group("),
    "（老写法是无条件 `if not self._search_group(...)`）")
 ck("B5z8 表情工具把 chat_id 传进这两条（开面板 + 送格）",
-   "emoji_panel_open(group_name=_gname, chat_id=_cid)" in
-   open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                     "agent", "tools.py"), encoding="utf-8").read())
+   _sm.has(open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                     "agent", "tools.py"), encoding="utf-8").read(), "emoji_panel_open(group_name=_gname, chat_id=_cid)"))
 ck("B5y 只投递时不抢前台（_prepare_for_capture 按档位分叉）",
-   "def _prepare_for_capture(" in SRC_WECHAT and "_ensure_main_visible(gui, main)" in
-   SRC_WECHAT.split("def _prepare_for_capture(")[1][:900])
+   _sm.has(SRC_WECHAT, "def _prepare_for_capture(") and _sm.has(SRC_WECHAT.split("def _prepare_for_capture(")[1][:900], "_ensure_main_visible(gui, main)"))
 _gate = SRC_WECHAT.split("def _background_only(")[1][:800]
 ck("B6 闸读的是 config.wechat.background_only", "background_only" in _gate and "wechat" in _gate)
 ck("B7 config 默认值里有这个键", '"background_only"' in SRC_CFG)
@@ -231,10 +229,10 @@ _HELP = SRC_WECHAT.split("def _ensure_main_visible(")[1][:2200]
 ck("B14 有「无激活还原最小化窗口」的实现（真的读 IsIconic 判断）",
    "u.IsIconic(int(main))" in _HELP)
 ck("B15 用的是 SW_SHOWNOACTIVATE（4）而不是 SW_RESTORE，且代码里不抢前台",
-   "u.ShowWindow(int(main), 4)" in _HELP
-   and "u.SetWindowPos(int(main), 0, 0, 0, 0, 0," in _HELP
+   _sm.has(_HELP, "u.ShowWindow(int(main), 4)")
+   and _sm.has(_HELP, "u.SetWindowPos(int(main), 0, 0, 0, 0, 0,")
    and "SetForegroundWindow(int(main))" not in _HELP
-   and "ShowWindow(int(main), 9)" not in _HELP)
+   and not _sm.has(_HELP, "ShowWindow(int(main), 9)"))
 ck("B16 还原开关映射到 config + 界面（默认开）",
    '"restore_minimized"' in SRC_CFG and 'data-cfg="wechat.restore_minimized"' in SRC_CONSOLE)
 ck("B17 三条会抓图的投递链都在入口调了它（切会话 / 搜索框切会话 / 投递发文字）",
@@ -244,7 +242,7 @@ ck("B17 三条会抓图的投递链都在入口调了它（切会话 / 搜索框
 # B17′~B17c 用完要把"为干活还原出来的"主窗**放回收起状态**（2026-09-16 对面 r22 验收 FAIL 项：
 #   不激活还原 ✓、还前台 ✓，但结束后 `IsIconic=False` ⇒ 用户的微信从"收在任务栏"变成"摊在桌面上"）
 ck("B17a 还原时登记了「这是为干活还原的」",
-   "_MINIMIZED_BY_US = int(main)" in SRC_WECHAT)
+   _sm.has(SRC_WECHAT, "_MINIMIZED_BY_US = int(main)"))
 _HELP_MIN = SRC_WECHAT.split("def _minimize_back_if_needed(")[1][:2600]
 # ⚠️ 断言要**去注释**（整行注释 + **行尾注释**都要去）：函数里那段解释"以前是 ShowWindow(hwnd, 6)"
 #    的注释会让 `not in` 假红（同型坑见 lesson 0mu61n2m：静态判据扫到注释里的旧写法）。
@@ -252,9 +250,9 @@ _HELP_MIN_NC = "\n".join(l for l in _HELP_MIN.splitlines() if not l.strip().star
 _HELP_MIN_CODE = "\n".join(l.split("#")[0] for l in _HELP_MIN.splitlines())
 ck("B17b 收尾时三条安全线都在（没登记不动 / 已收起不动 / 用户正在用就不动），"
    "且**用户自己收起的要还他收着**、不是用户收起的只压 Z 序底层",
-   "if not hwnd:" in _HELP_MIN_NC
+   _sm.has(_HELP_MIN_NC, "if not hwnd:")
    and "u.IsIconic(hwnd)" in _HELP_MIN_NC
-   and "int(u.GetForegroundWindow() or 0) == hwnd" in _HELP_MIN_NC
+   and _sm.has(_HELP_MIN_NC, "int(u.GetForegroundWindow() or 0) == hwnd")
    and "SetWindowPos" in _HELP_MIN_NC
    and "_WAS_ICONIC_BY_US" in _HELP_MIN_NC
    # ⚡ 2026-09-18 晚改口径（网友反馈：「游戏无论全不全屏，只要把它最小化后，它要发消息时都会被
@@ -297,23 +295,23 @@ _KEYS_SEG = _KEYS_SEG[:_KEYS_SEG.find("\n    def ", 10)]
 ck("B19a 按键必须**带伪激活**（实测：不带时微信不理投递的方向键）",
    "ib.MessageBackend(activate=True)" in _KEYS_SEG and "_VK_DOWN" in _KEYS_SEG and "_VK_UP" in _KEYS_SEG)
 ck("B19b **每按一格都读会话头确认**（走过头能立刻发现；不是「按完再猜」）",
-   "_header_now(gui)" in _KEYS_SEG and "_header_match(name, hdr)" in _KEYS_SEG)
+   "_header_now(gui)" in _KEYS_SEG and _sm.has(_KEYS_SEG, "_header_match(name, hdr)"))
 ck("B19c 这条路上**不许有坐标点击、不许滚动、不许开搜索窗**",
    "_click_posted(" not in _KEYS_SEG and ".wheel(" not in _KEYS_SEG
    and "open_chat_by_search" not in _KEYS_SEG and "SetCursorPos" not in _KEYS_SEG)
 ck("B19d 读不到会话头就**不按键**（fail-closed：不许闭着眼往下走）",
    "读不到会话头" in _KEYS_SEG and "不按键" in _KEYS_SEG)
 ck("B19e 走法有界（budget ≤6，实测 24 格＝占前台 7.45s ⇒ 不许放长）+ 反向自纠偏（两相）",
-   "_KEYS_WALK_BUDGET" in SRC_WECHAT and "for _phase in (0, 1)" in _KEYS_SEG
-   and "budget = int" in _KEYS_SEG)
+   "_KEYS_WALK_BUDGET" in SRC_WECHAT and _sm.has(_KEYS_SEG, "for _phase in (0, 1)")
+   and _sm.has(_KEYS_SEG, "budget = int"))
 ck("B19h **每按一格就把前台还回去**（伪激活必然招来微信占前台；实测 24 格累计 7.45s）",
    "_restore_fg_until(\"按键走格（每格还）\"" in _KEYS_SEG and "_fg_stash_ok()" in _KEYS_SEG)
 ck("B19i 名字匹配**严格优先、宽容兜底**（实测 OCR 会吃掉 emoji：`海绵宝宝の吸🈲课堂` 读成 `海绵宝宝吸课堂`）",
-   "def _header_match(" in SRC_WECHAT and "loose_matches(hdr, name)" in SRC_WECHAT)
+   _sm.has(SRC_WECHAT, "def _header_match(") and _sm.has(SRC_WECHAT, "loose_matches(hdr, name)"))
 ck("B19j 还前台时：**前台落在微信主窗上**不受「最近有输入就不抢」那条拦（那是我们的伪激活招来的）",
-   "_we_caused" in SRC_WECHAT and "not _we_caused" in SRC_WECHAT)
+   "_we_caused" in SRC_WECHAT and _sm.has(SRC_WECHAT, "not _we_caused"))
 ck("B19f 方向由**数据**定（各会话最后消息时间倒序），不是靠猜",
-   "int(rows[0].get(\"create_time\") or 0)" in SRC_WECHAT and "def _walk_dir(" in SRC_WECHAT
+   _sm.has(SRC_WECHAT, "int(rows[0].get(\"create_time\") or 0)") and _sm.has(SRC_WECHAT, "def _walk_dir(")
    and "目标更旧" in SRC_WECHAT)
 
 print("── B19g 方向函数是纯逻辑：目标更旧 ⇒ 往下；更新 ⇒ 往上；数据不全 ⇒ 0（默认往下）──")
@@ -352,7 +350,7 @@ ck("B20 忙闲判据用 Windows 通知系统那套（SHQueryUserNotificationStat
 ck("B20a 全屏/演示/静默这些状态都算忙（状态表覆盖）",
    # ⛔ V-R5R-4：`("1:" in SRC_WECHAT or True)` 是**死合取项**（恒真）⇒ 去掉它，只留真判据
    SRC_WECHAT.count("QUNS_BUSY") >= 2
-   and "D3D 独占全屏游戏" in SRC_WECHAT and "演示模式" in SRC_WECHAT and "系统静默时段" in SRC_WECHAT)
+   and _sm.has(SRC_WECHAT, "D3D 独占全屏游戏") and "演示模式" in SRC_WECHAT and "系统静默时段" in SRC_WECHAT)
 _ck20 = ["self._busy_reason(\"切会话\")", "self._busy_reason(\"搜索切会话\"", "self._busy_reason(\"按键走格\"",
          "self._busy_reason(\"表情面板\")", "self._busy_reason(\"投递发送\""]
 _missing20 = [x for x in _ck20 if x not in SRC_WECHAT]
@@ -360,7 +358,7 @@ ck("B20b 会动窗的每一条路都先问过「用户忙不忙」（缺：%s）
    not _missing20)
 ck("B20c 忙就先等再决定（有上限），仍忙则**如实停下**（文案里点名原因，不静默硬动）",
    "_wait_fullscreen_clear" in SRC_WECHAT and "本次不动窗（如实停下）" in SRC_WECHAT
-   and "你在忙（%s）⇒ 这条先不发" in SRC_WECHAT)
+   and _sm.has(SRC_WECHAT, "你在忙（%s）⇒ 这条先不发"))
 _CONSOLE20 = SRC_CONSOLE
 _BG20 = io.open(os.path.join(ROOT, "agent", "bg_status.py"), encoding="utf-8").read()
 ck("B20d 对外文案如实写明「全屏玩游戏/演示时不动窗」（用户看得见）",
@@ -371,10 +369,10 @@ ck("B20d 对外文案如实写明「全屏玩游戏/演示时不动窗」（用�
 #   不摁 1.0~7.5s、**摁住 0.15s**；产品路径（切会话 + 快路径发消息 + 切回）三次动作**各占前台 0.00s**，
 #   而 DB 回读全部命中、摁住线程在链尾正常停掉。
 ck("B21 有「摁住微信」的三个件：`_hold_begin` / `_hold_end` / `_HoldDown`",
-   "def _hold_begin(" in SRC_WECHAT and "def _hold_end(" in SRC_WECHAT and "class _HoldDown(" in SRC_WECHAT)
+   _sm.has(SRC_WECHAT, "def _hold_begin(") and _sm.has(SRC_WECHAT, "def _hold_end(") and _sm.has(SRC_WECHAT, "class _HoldDown("))
 ck("B21a 摁的动作＝**微信一到前台就还用户窗口**（按进程判）+ **压 Z 序底层**（NOACTIVATE，不动几何/可见性）",
-   "GetWindowThreadProcessId(cur)[1]) == int(wxpid)" in SRC_WECHAT
-   and "HWND_BOTTOM" in SRC_WECHAT and "0x0002 | 0x0001 | 0x0010" in SRC_WECHAT)
+   _sm.has(SRC_WECHAT, "GetWindowThreadProcessId(cur)[1]) == int(wxpid)")
+   and "HWND_BOTTOM" in SRC_WECHAT and _sm.has(SRC_WECHAT, "0x0002 | 0x0001 | 0x0010"))
 _ck21 = ["_hold_begin(\"快路径发送\")", "_hold_begin(\"按键走格\")"]
 _miss21 = [x for x in _ck21 if x not in SRC_WECHAT]
 ck("B21b 真正动窗的两条路（快路径发送 / 按键走格）都摁住（缺：%s）" % (_miss21 or "无"), not _miss21)
@@ -389,14 +387,14 @@ ck("B21d 对外文案写明「它会把你原来的窗口摁在最前 / 把微�
 # ── B22：**等一个"他没在打字"的空档**（作者 2026-09-19：「用户有键盘操作的时候，就专门挑他没有的那一下，
 #   就闪那么一下」）＋ 发表情方式做成可选项（他自己选真表情还是发图片，代价写进控制台）──
 ck("B22 空档等待放宽到秒级（切会话 8s / 发送 6s），不再是 1.6s 就硬上",
-   "_wait_user_pause(max_s=8.0, idle=0.9)" in SRC_WECHAT
-   and "_wait_user_pause(max_s=6.0, idle=0.9)" in SRC_WECHAT)
+   _sm.has(SRC_WECHAT, "_wait_user_pause(max_s=8.0, idle=0.9)")
+   and _sm.has(SRC_WECHAT, "_wait_user_pause(max_s=6.0, idle=0.9)"))
 _SRC_TOOLS = io.open(os.path.join(ROOT, "agent", "tools.py"), encoding="utf-8").read()
 _SRC_CFG = io.open(os.path.join(ROOT, "agent", "config.py"), encoding="utf-8").read()
 _SRC_CONSOLE2 = io.open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
 _EX = io.open(os.path.join(ROOT, "config.example.json"), encoding="utf-8").read()
 ck("B22a 发表情方式＝可选项（config 默认 auto + 默认档说明三种取值）",
-   '"emoji_send_mode": "auto"' in _SRC_CFG and '"emoji_send_mode": "auto"' in _EX)
+   _sm.has(_SRC_CFG, '"emoji_send_mode": "auto"') and _sm.has(_EX, '"emoji_send_mode": "auto"'))
 ck("B22b 控制台有对应的下拉（三档：自动 / 只用真表情 / 只用图片）",
    'data-cfg="wechat.emoji_send_mode"' in _SRC_CONSOLE2
    and _SRC_CONSOLE2.count('value="auto"') >= 1 and 'value="real"' in _SRC_CONSOLE2
@@ -404,7 +402,7 @@ ck("B22b 控制台有对应的下拉（三档：自动 / 只用真表情 / 只�
 ck("B22c 代价写在界面里（真表情＝浮层要激活、前台会闪；图片＝对方看到的是图片）",
    "必须被激活才能渲染" in _SRC_CONSOLE2 and "对方收到的是图片" in _SRC_CONSOLE2)
 ck("B22d 产品按这个选项分流（只图 imag不面板 / 只真表情 real 不许改发图片 / auto 兜底）",
-   '_mode != "image"' in _SRC_TOOLS and '_mode == "real"' in _SRC_TOOLS
+   _sm.has(_SRC_TOOLS, '_mode != "image"') and _sm.has(_SRC_TOOLS, '_mode == "real"')
    and "emoji_panel_open" in _SRC_TOOLS and "posted_paste" in _SRC_TOOLS)
 ck("B17c 放回收起状态**只在链收尾**做（`_restore_fg_until` 里不再顺手放回）",
    # 2026-09-18 改口径（现场现象：「他还在不停地缩小，就是把微信最小化，然后又把微信切出来」）：
@@ -416,8 +414,8 @@ ck("B17c 放回收起状态**只在链收尾**做（`_restore_fg_until` 里不�
 # B17c′ 兜底还原**不许再裸最小化用户的微信**（那条 `ShowWindow(main_hwnd, 6)` 没有安全线，
 #   会把用户自己正在用的微信收进任务栏）；要收回归位统一走 `_minimize_back_if_needed`（三条安全线）
 ck("B17c′ `_restore_after_send` 不再裸 SW_MINIMIZE 主窗，改走带安全线的放回",
-   "def _restore_after_send(" in SRC_WECHAT
-   and "ShowWindow(gui.main_hwnd, 6)" not in SRC_WECHAT
+   _sm.has(SRC_WECHAT, "def _restore_after_send(")
+   and not _sm.has(SRC_WECHAT, "ShowWindow(gui.main_hwnd, 6)")
    and "_minimize_back_if_needed(\"发送后收尾（_restore_after_send）\")" in SRC_WECHAT)
 ck("B17c‴ 会还原主窗的其它链也各自补了收尾放回（语音条标定/试发那条）",
    '_minimize_back_if_needed("语音条标定/试发收尾")' in io.open(
@@ -425,8 +423,8 @@ ck("B17c‴ 会还原主窗的其它链也各自补了收尾放回（语音条�
 # B17c″ 回声窗放宽到 120 秒（可配 `wechat.echo_window_s`）：30 秒太短，发出→回读之间夹着
 #   发图/切会话/OCR 就会判成"别人的话" ⇒ 回自己（现场：机器人跟自己吵了 8 条）
 ck("B17c″ 回声窗走 `_echo_window()`（默认 120 秒、可配）+ 文本归一化比对",
-   "def _echo_window(" in SRC_WECHAT and "echo_window_s" in SRC_CFG
-   and "def _echo_norm(" in SRC_WECHAT and "self._echo_norm(sent_text)" in SRC_WECHAT)
+   _sm.has(SRC_WECHAT, "def _echo_window(") and "echo_window_s" in SRC_CFG
+   and _sm.has(SRC_WECHAT, "def _echo_norm(") and "self._echo_norm(sent_text)" in SRC_WECHAT)
 # B18（2026-09-16 用户要求：「他老是想找会话列表那一条究竟在哪儿，**他不能直接点击输搜索框输入吗**」）：
 #   切会话必须**搜索框优先** —— 搜索入口位置固定、不依赖滚动、也不怕列表被别的窗口盖住；
 #   老的「找行 + 滚轮」只作兜底（保留，不删）。
@@ -441,27 +439,27 @@ ck("B18 切会话是搜索框优先（搜索调用必须出现在找行之前）
 #   ⚠️ 与 `input.allow_real_fallback` 的区别：那个管"投递自检不过时退不退回真鼠标"，
 #      本开关管"这条路径本来就走真鼠标时要不要执行"。两个都默认关掉才叫安全。
 ck("B19 「只走后台」默认是 True（安全侧，改之前是 False）",
-   '"background_only": True' in SRC_CFG)
+   _sm.has(SRC_CFG, '"background_only": True'))
 ck("B19a 每条真鼠标路径都被闸挡住（background_only 直检 ≥7 处 + 真鼠标判据统一走 ui_adapt.fg_allowed）",
    SRC_WECHAT.count("self._background_only()") >= 7
    and SRC_WECHAT.count("self._real_mouse_allowed()") >= 3
-   and "def fg_allowed(" in SRC_UIADAPT
-   and "return bool(_ua.fg_allowed()[0])" in SRC_WECHAT)
+   and _sm.has(SRC_UIADAPT, "def fg_allowed(")
+   and _sm.has(SRC_WECHAT, "return bool(_ua.fg_allowed()[0])"))
 # B19c（2026-09-18 作者发火后加）：**置前/置顶**也必须走同一道闸，而且闸要**上在 GUI 对象上**
 #   （只改自己的调用点挡不住库里自动重校准触发的那一类：get_input_box → calibrate_layout → bring_to_front）
 ck("B19c 置前/置顶统一走 fg_allowed，且**类级闸在构造之前**就装上（含库内自动触发那类）",
-   "def harden_gui_class(" in SRC_UIADAPT and "def harden_gui(" in SRC_UIADAPT
+   _sm.has(SRC_UIADAPT, "def harden_gui_class(") and _sm.has(SRC_UIADAPT, "def harden_gui(")
    and "_HARDEN_TARGETS" in SRC_UIADAPT
    and "_ua.harden_gui_class()" in SRC_WECHAT and "_ua2.harden_gui(self._gui)" in SRC_WECHAT)
 ck("B19b 真鼠标兜底也默认关（allow_real_fallback 默认 False）",
-   '"allow_real_fallback": False' in SRC_CFG)
+   _sm.has(SRC_CFG, '"allow_real_fallback": False'))
 # B20（2026-09-16 已知现象：「他点了一下搜索框，又不点，又搁那划会话列表」）：
 #   搜索路线点了**名字匹配**的结果行、内容也像目标，却因为「活动行时间戳读不出」被判否
 #   ⇒ 整条搜索判失败 ⇒ **回退"找行 + 滚轮"** ⇒ 用户看到它在划会话列表。
 #   修法：在搜索路线这个上下文里把"读不出"按**弱证据**放行（发送闸不动）。
 _SEG_SEARCH = SRC_WECHAT.split("def open_chat_by_search(")[1][:16000]
 ck("B20 搜索路线：'时间戳读不出'按弱证据放行（不再整条回退去滚列表）",
-   '_why_s = str(idn_why)' in _SEG_SEARCH and '"读不出" in _why_s' in _SEG_SEARCH)
+   _sm.has(_SEG_SEARCH, '_why_s = str(idn_why)') and _sm.has(_SEG_SEARCH, '"读不出" in _why_s'))
 ck("B20a 发送闸没跟着放宽（注释里写明「发送闸一个字不动」）",
    "发送闸一个字不动" in _SEG_SEARCH)
 # B21（2026-09-16 用户当面问：「他照理来说不是应该投递到微信的窗口上吗？为什么还会划我的控制台」）：
@@ -505,10 +503,10 @@ ck("B21 全库每处真鼠标调用都过了 real_guard（不然会点到你别�
 ck("B21c 扫描非空转：数到 ≥4 个带守卫的真鼠标函数（改前是 0；2026-09-17 由 5 降为 4）",
    _n_guard >= 4, "带守卫 %d 个" % _n_guard)
 ck("B21a real_guard 会检查光标是否真的到位（SetCursorPos 可能静默返回 0）",
-   "返回 0，光标没到位" in open(
-       os.path.join(ROOT, "agent", "ui_adapt.py"), encoding="utf-8").read())
+   _sm.has(open(
+       os.path.join(ROOT, "agent", "ui_adapt.py"), encoding="utf-8").read(), "返回 0，光标没到位"))
 ck("B21b 朋友圈那条链的 ESC 只在前台确实是微信时才发（否则会切走/关掉用户正用的窗口）",
-   "_fg in _ours" in SRC_WECHAT)
+   _sm.has(SRC_WECHAT, "_fg in _ours"))
 # B22（2026-09-16 踩到的真坑）：把默认值改成安全的一侧，**对老用户完全无效**——
 #   `deep_merge(DEFAULT_CONFIG, config.json)` 是用户文件覆盖默认值，而在线包不带 config.json、
 #   更新也不覆盖用户那份 ⇒ 用户那份里早写着 `background_only: false`，升级后照旧动他的鼠标。
@@ -517,14 +515,14 @@ ck("B22 有一次性安全默认值迁移（老 config.json 也会被补上）",
    "_migrate_once" in SRC_CFG and "config_migrations.json" in SRC_CFG
    and "_SAFE_DEFAULTS_TAG" in SRC_CFG)
 ck("B22a 迁移只对真实 config.json 跑（自定义 path 不写回用户配置）",
-   "os.path.abspath(path) == os.path.abspath(CONFIG_FILE)" in SRC_CFG)
+   _sm.has(SRC_CFG, "os.path.abspath(path) == os.path.abspath(CONFIG_FILE)"))
 # B22b（2026-09-16 用户：「你把限位设成默认吧，因为用户在后台都不在意这个，而且也能防止点错」）：
 #   「限位」`ui.lock_window_pos` 改成默认开 ⇒ 老用户那份 config.json 里写着 false 的也必须搬到 true，
 #   否则"改默认值"对他们无效（与 B22 同一个坑）。这里守三件事：新默认 + 迁移项在表里 + 只做一次。
-ck("B22b 限位默认开（ui.lock_window_pos=True）", '"lock_window_pos": True' in SRC_CFG)
+ck("B22b 限位默认开（ui.lock_window_pos=True）", _sm.has(SRC_CFG, '"lock_window_pos": True'))
 ck("B22b2 「限位」也有一次性迁移（老 config.json 里 false 会被搬到 true）",
    "_WINDOW_POS_TAG" in SRC_CFG and "_window_pos_once" in SRC_CFG
-   and "_MIGRATIONS = (" in SRC_CFG)
+   and _sm.has(SRC_CFG, "_MIGRATIONS = ("))
 try:
     from agent import config as _C                                        # noqa: E402
     _t = {"ui": {"lock_window_pos": False}, "wechat": {"background_only": True},
@@ -548,7 +546,7 @@ ck("B23 搜索失败后默认不回退（开关检查必须出现在'找会话�
    0 <= _HIT_GATE and 0 <= _HIT_ROW2 and _HIT_GATE < _HIT_ROW2,
    "gate@%d row@%d" % (_HIT_GATE, _HIT_ROW2))
 ck("B23a 开关默认 False（安全的一侧：不滚用户的列表）",
-   '"scroll_list_fallback": False' in SRC_CFG)
+   _sm.has(SRC_CFG, '"scroll_list_fallback": False'))
 ck("B23b 控制台有这个可选档位（不替用户拍板）",
    'data-cfg="wechat.scroll_list_fallback"' in SRC_CONSOLE)
 ck("B23c 不回退时如实说明原因（不静默失败）",
@@ -567,7 +565,7 @@ _ST = SRC_WECHAT.split("def send_text_posted(")[1]
 #   改成按函数边界切：只取"发文字"这一段。
 _ST = _ST[:_ST.index("def send_image_posted(")]
 ck("B17d 指纹档给不出结论时改用四档证据兜底（否则 no_ref 死锁）",
-   "self.chat_is_open(chat_id, gui=gui)" in _ST)
+   _sm.has(_ST, "self.chat_is_open(chat_id, gui=gui)"))
 ck("B17e 四档放行后顺手补参照（破死锁的钥匙）",
    "放行时补参照" in _ST)
 ck("B17f 宽松成功分支也学参照（对面 r23 的 A 枪走的就是这条）",
@@ -578,27 +576,27 @@ ck("B17g 两条投递链的收尾（含早退路径）都放回收起状态",
 # B17h r24 现场：最小化还原后投递打字不生效（同一轮里可见态 A1/A2 都成功、token 两处都搜不到）
 #   ⇒ 打字前必须先投递点一次输入栏把焦点给它（旧版从不点输入框，靠"正常态默认有焦点"）
 ck("B17h 打字前先投递聚焦输入栏（最小化还原后 WM_CHAR 会被丢）",
-   "_click_posted(backend, main, focus_pt" in _ST and "投递聚焦输入栏失败" in _ST)
+   _sm.has(_ST, "_click_posted(backend, main, focus_pt") and "投递聚焦输入栏失败" in _ST)
 # B24（2026-09-16 用户转述的已知现象：「不会发消息了：**写在文本框，但是不发送**」）：
 #   老实现**只点一枪「发送」按钮**、然后干等 DB —— 那一枪没生效就没人补第二枪，字留在输入框里。
 #   口径照抄上游 `wechatauto/guia.py::click_send()`：**回车优先 + 最多 3 枪**（上游原话
 #   「输入框刚粘贴完必已聚焦，回车最可靠」，点按钮只是回退）。
 ck("B24 发送是**多枪重试**（最多 3 枪，不是点一枪就等）",
-   "for _i in range(1, 4)" in _ST and "_fired" in _ST and "_one_shot(" in _ST)
+   _sm.has(_ST, "for _i in range(1, 4)") and "_fired" in _ST and "_one_shot(" in _ST)
 ck("B24a **回车优先**，且**不再点「发送」按钮**（那条枪落在工具栏带上，实测把微信截图按开四次）",
-   "backend.keys(main, [ib.VK_RETURN])" in _ST
-   and "backend.click(main, send_pt)" not in _ST
+   _sm.has(_ST, "backend.keys(main, [ib.VK_RETURN])")
+   and not _sm.has(_ST, "backend.click(main, send_pt)")
    and "不再点按钮" in _ST)
 ck("B24b 成功判据**仍然只认 DB 回读**（不因为「点过了」就算成功）",
-   "str(rows[0].get(\"local_id\")) != base_sig" in _ST and "_new_row()" in _ST
-   and "DB 回读 local_id=" in _ST)
+   _sm.has(_ST, "str(rows[0].get(\"local_id\")) != base_sig") and "_new_row()" in _ST
+   and _sm.has(_ST, "DB 回读 local_id="))
 ck("B24c 每一枪之后都还前台（伪激活会让微信短暂置前）",
    _ST.count('_restore_fg_until("投递发送后"') >= 1
    and _ST.find('_restore_fg_until("投递发送后"') > _ST.find("for _i in range(1, 4)"))
 ck("B24d 失败时如实说清「文字可能还留在输入框里」（别只说「未生效」）",
    "文字可能还留在输入框里" in _ST)
 ck("B24e 三枪都没打出去 ⇒ 如实报「三枪都没打出去」，不冒充「已投递」",
-   "三枪都没打出去" in _ST and "if not _fired:" in _ST)
+   "三枪都没打出去" in _ST and _sm.has(_ST, "if not _fired:"))
 # B20~B21 档位强弱（2026-09-16 r25 对面实测：会话头指纹档**会假阳性**——当前明明开着「E」时
 #   `chat_is_open("filehelper")` 也返回 True；而 r24 我刚把这个函数接进身份闸的兜底 ⇒ 等于给"发错
 #   会话"开了一道缝。⇒ 指纹档降级为弱档、默认不采信；标题带档提为首选（对面实测它有区分力：
@@ -617,13 +615,13 @@ ck("B21 标题带档排在指纹档之前（对面实测才有区分力的是它
 _IDN = SRC_WECHAT.split("def chat_identity_ok(")[1][:12000]
 _SO = SRC_WECHAT.split("def _screen_only_identity(")[1][:3000]
 ck("B21a 纯屏幕身份档存在：会话头标题带 OCR（不依赖数据库）",
-   "纯屏幕证据" in _SO and "header_text" in _SO and "def _screen_only_identity(" in SRC_WECHAT)
+   "纯屏幕证据" in _SO and "header_text" in _SO and _sm.has(SRC_WECHAT, "def _screen_only_identity("))
 ck("B21b 「目标会话库里没有可比对内容」这一档先试纯屏幕证据再返回 None"
    "（清空过聊天记录 ⇒ Msg_<md5> 整张没了 ⇒ 老写法一进门就 None ⇒ 发文件链无条件拒发）",
-   "self._screen_only_identity(chat_id, gui=gui, name=name)" in _IDN
+   _sm.has(_IDN, "self._screen_only_identity(chat_id, gui=gui, name=name)")
    and _IDN.find("self._screen_only_identity(") < _IDN.find("纯屏幕兜底也没过"))
 ck("B21c 名字档一律走**完全相等**（`E班群` 不算 `E`；2026-09-21 起连「互为子串的两个群」也不许混）",
-   "_co.matches_strict(hdr, nm)" in _SO and "完全相等" in _SO)
+   _sm.has(_SO, "_co.matches_strict(hdr, nm)") and "完全相等" in _SO)
 ck("B21d 发文件链：拿不到内容级证据但**名字档已过**时按名字档放行（与发文字链同一口径）",
    "但**名字档已确认**" in SRC_WECHAT and "按名字档放行（记账）" in SRC_WECHAT)
 ck("B18 竞态如实写进控制台（用户 2026-09-15 要求「这个你要如实跟用户讲清楚」）",
@@ -633,10 +631,10 @@ _M_OPEN = SRC_WECHAT.split("def moments_open_posted(")[1][:3200]
 _M_SCROLL = SRC_WECHAT.split("def moments_scroll_posted(")[1][:2400]
 ck("B19 两条靠画面判成功的路径都先量了「零动作地板」（阈值跟着地板走）",
    "_gray_thresholds" in _M_OPEN and "_gray_thresholds" in _M_SCROLL
-   and "def _gray_noise_floor(" in SRC_WECHAT)
+   and _sm.has(SRC_WECHAT, "def _gray_noise_floor("))
 ck("B20 老写死的 0.15 / 0.01 绝对值判定已清除（改为 None ⇒ 不动手）",
-   "<= 0.15" not in _M_OPEN and "<= 0.01" not in _M_OPEN
-   and "<= 0.01" not in _M_SCROLL
+   not _sm.has(_M_OPEN, "<= 0.15") and not _sm.has(_M_OPEN, "<= 0.01")
+   and not _sm.has(_M_SCROLL, "<= 0.01")
    and "_GRAY_NOISE_MAX" in SRC_WECHAT and "_UNSTABLE_MSG" in SRC_WECHAT)
 ck("B21 判据不可用时**一枪都不投**（拒绝早于任何 click/wheel）",
    _M_OPEN.index("_gray_thresholds") < _M_OPEN.index("b.click(")
@@ -819,7 +817,7 @@ finally:
 
 # ── D 如实可见 ───────────────────────────────────────────────────────────
 print("[D] 如实可见：控制台显示这张表 + 档位 + 「只走后台」开关")
-ck("D1 /api/status 暴露 bg 段", 'st["bg"] = _bg.status()' in SRC_WEBUI)
+ck("D1 /api/status 暴露 bg 段", _sm.has(SRC_WEBUI, 'st["bg"] = _bg.status()'))
 ck("D2 控制台有这张表的位置（bgList）", 'id="bgList"' in SRC_CONSOLE and 'id="bgHead"' in SRC_CONSOLE)
 ck("D3 控制台有「只走后台」开关（同一个 config 键）",
    'data-cfg="wechat.background_only"' in SRC_CONSOLE)
@@ -851,12 +849,12 @@ ck("E5 反证：这个键只在函数体里被读，不是散在别处又抄一�
 _PM_SRC = open(os.path.join(ROOT, "scripts", "persona_morph.py"), encoding="utf-8").read()
 _SEG_PAUSE = _PM_SRC.split("if orch.paused:")[1][:900]
 ck("E6 wechat.replay_on_resume 真的有代码读它（不是死键）",
-   'get("wechat") or {}).get("replay_on_resume", False)' in _PM_SRC)
+   _sm.has(_PM_SRC, 'get("wechat") or {}).get("replay_on_resume", False)'))
 ck("E7 默认不补（安全侧：不许一恢复就连回几十条）",
-   '"replay_on_resume": False' in SRC_CFG)
+   _sm.has(SRC_CFG, '"replay_on_resume": False'))
 ck("E8 默认档仍然推进水位并落盘（关掉补处理时行为与原来一致；2026-09-21 起读失败**不写 0**）",
-   "wechat.latest_seq_ex(wxid)" in _SEG_PAUSE and "wm.set(chat_key, _seqp)" in _SEG_PAUSE
-   and "wm.flush()" in _SEG_PAUSE and "wm.set(chat_key, 0)" not in _PM_SRC)
+   "wechat.latest_seq_ex(wxid)" in _SEG_PAUSE and _sm.has(_SEG_PAUSE, "wm.set(chat_key, _seqp)")
+   and "wm.flush()" in _SEG_PAUSE and not _sm.has(_PM_SRC, "wm.set(chat_key, 0)"))
 ck("E9 控制台有这个开关 + 示例配置同步",
    'data-cfg="wechat.replay_on_resume"' in SRC_CONSOLE
    and '"replay_on_resume"' in open(os.path.join(ROOT, "config.example.json"), encoding="utf-8").read())
@@ -900,9 +898,9 @@ ck("F5 点完「发送」后立刻盯着还前台（把可见时长压到最短�
 #   ⇒ 这里守两件事：①右键自动换主窗、左键仍用调用方给的窗（行为级）；②三个可复用件都在。
 _IB_SRC = io.open(os.path.join(ROOT, "agent", "input_backend.py"), encoding="utf-8").read()
 ck("B25 右键不再直接拒绝（那条拒发的 return 已删，注释里提到旧写法不算）",
-   'return False, "投递右键尚未实测' not in _IB_SRC)
+   not _sm.has(_IB_SRC, 'return False, "投递右键尚未实测'))
 ck("B25a 有菜单窗类名常量 + 差分找窗 + 投递点菜单项三个件",
-   "MENU_CLASS" in _IB_SRC and "def menu_new_windows(" in _IB_SRC and "def menu_click(" in _IB_SRC)
+   "MENU_CLASS" in _IB_SRC and _sm.has(_IB_SRC, "def menu_new_windows(") and _sm.has(_IB_SRC, "def menu_click("))
 ck("B25b 右键分支会换成主窗（注释写清「左键投子窗/右键投主窗」不可互推）",
    "find_main_window()" in _IB_SRC and "右键投渲染子窗不弹菜单" in _IB_SRC)
 try:
@@ -935,14 +933,14 @@ except Exception as _e:
 #   上沿带必须贴在框顶；④量不到 ⇒ **返回 None 而不是猜一个矩形**。
 _W_SRC = io.open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
 ck("B26a 有三个件：窗口自身画面量框 / 上沿带 / 墨点阳性对照",
-   "def _probe_input_box_frame(" in _W_SRC and "def _input_top_band(" in _W_SRC
-   and "def _input_ink(" in _W_SRC)
+   _sm.has(_W_SRC, "def _probe_input_box_frame(") and _sm.has(_W_SRC, "def _input_top_band(")
+   and _sm.has(_W_SRC, "def _input_ink("))
 ck("B26b 三处落点里不再有按比例算的输入框点位（0.87 只许留在注释里）",
-   "rh * 0.87" not in _W_SRC and "rh * _FOCUS_Y" not in _W_SRC and "render_h - 250" not in _W_SRC)
+   not _sm.has(_W_SRC, "rh * 0.87") and not _sm.has(_W_SRC, "rh * _FOCUS_Y") and not _sm.has(_W_SRC, "render_h - 250"))
 ck("B26c 发文字/发图两条链都改成实测上沿带，且打字后有阳性对照",
-   _W_SRC.count("_input_top_band(gui)") >= 3 and "_input_ink(gui, _box2)" in _W_SRC)
+   _W_SRC.count("_input_top_band(gui)") >= 3 and _sm.has(_W_SRC, "_input_ink(gui, _box2)"))
 ck("B26d 引用链回退不再直接走驱动库真鼠标通路（先投递、真鼠标档才回退）",
-   "self.send_text_posted(text, chat_id, allow_no_ref=True)" in _W_SRC
+   _sm.has(_W_SRC, "self.send_text_posted(text, chat_id, allow_no_ref=True)")
    and "_real_mouse_allowed()" in _W_SRC)
 try:
     from PIL import Image as _Im

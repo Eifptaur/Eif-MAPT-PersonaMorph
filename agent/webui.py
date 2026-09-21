@@ -38,6 +38,16 @@ def _truthy(v):
 
 # ── 数据迁移包（导出/导入：计费+对话记录 data/sessions/*.jsonl）────────────
 
+def cal_date_ok(d) -> bool:
+    """`/api/stats/cal` 的日期闸（第六轮 **V-R6-26c**）：只收严格 `YYYY-MM-DD`；空串＝「今天」，放行。
+
+    抽成模块级**纯函数**是为了能被行为判据直接调 —— 原来这段内联在 POST 处理里，
+    判据只能 grep 源码文本 ⇒ 分支被写死也看不出来（第七轮 V-R7-3 的要求）。
+    """
+    s = str(d or "")
+    return (not s) or bool(re.match(r"^\d{4}-\d{2}-\d{2}$", s))
+
+
 def _data_export(root: str) -> bytes:
     """所有计费/对话记录导成一个 zip（sessions/YYYY-MM-DD.jsonl + manifest）。"""
     import io
@@ -2214,7 +2224,7 @@ class WebUI:
                         # ⛔ 2026-09-21 修（第六轮 **V-R6-26c**）：`d` 原来**不校验**就拼进文件名
                         #   （`d + ".jsonl"`）⇒ `d="../../config"` 这类能读到 data/ 之外的 .jsonl 形状的路径。
                         #   ⇒ 只收严格 `YYYY-MM-DD`（`cal_list` 那边早就这么判了，这里漏了）。
-                        if d and not re.match(r"^\d{4}-\d{2}-\d{2}$", d):
+                        if not cal_date_ok(d):
                             return self._json({"error": "bad date"}, 400)
                         _sf = os.path.join(parent._data_path("sessions"), (d + ".jsonl"))
                         agg = {"date": d, "sessions": 0, "tokens": 0, "cost": 0.0, "calls": 0, "sent": 0}

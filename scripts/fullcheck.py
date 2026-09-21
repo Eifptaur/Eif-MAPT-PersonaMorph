@@ -141,6 +141,12 @@ for _old in ("deepseek-v4-flash", "deepseek-v4-flash-vision-exp", "deepseek-chat
 from agent.prompt import resolve_context_tier
 cfg2 = {"store": {"context_tier": 2, "unified_tier": True, "group_tier": {},
                   "group_blocklist": {}, "keywords": ["鲸鱼"], "random_percent": 60}}
+# ⛔ V-R7-2 ①：注入之前**必须先 prime `get_config()`** —— 否则 `_current_config` 会被
+#   `get_config()` 的重载覆盖，判据读到的是真配置（context_tier=1）⇒ "默认2档关键词触发" 假红。
+try:
+    config.get_config()
+except Exception:
+    pass
 config._current_config = cfg2
 r = resolve_context_tier([{"sender_name": "小明", "sender_id": "x", "text": "聊鲸鱼"}],
                          wechat_nickname="小鲸鱼", chat_key="g", group_name="g")
@@ -355,7 +361,12 @@ try:
         _t = io.open(os.path.join(_sdir, _n), encoding="utf-8").read()
         if "\u2714" in _t or "\u2718" in _t:
             _risky.append(_n)
-            if "sys.stdout.reconfigure" not in _t:
+            # ⛔ V-R7-2 ③：垫片有两种**等价**写法 —— ① 直接 `sys.stdout.reconfigure(...)`；
+            #   ② `for _s in (sys.stdout, sys.stderr): _s.reconfigure(...)`（本项目多条用这种）。
+            #   老判据只认 ① ⇒ 把 ② 误报成"缺垫片"（假红：那两条实测在 GBK 子进程里不崩）。
+            _shim = ("sys.stdout.reconfigure" in _t
+                     or ("reconfigure(" in _t and re.search(r"for\s+\w+\s+in\s*\(\s*sys\.stdout", _t)))
+            if not _shim:
                 _noshim.append(_n)
     check("打印 ✔/✘ 的判据都带 UTF-8 垫片（重定向下不崩）", not _noshim,
           "缺垫片=%s（共 %d 条会打印 ✔/✘）" % (_noshim, len(_risky)))

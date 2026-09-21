@@ -79,9 +79,11 @@ def main():
         ok("未点名 id ⇒ 改动 0 条（不瞎动）", af.block(st, "group:g1", [])["changed"] == 0)
 
         print("== C. 按条清除（必须点名，绝不做顺手清空）==")
+        _b4 = len(st.list_entries("group:g1", limit=10))      # V-R7-5 #3：按 before 比对，不写死条数
         bad = af.delete(st, "group:g1", [])
         ok("空 ids 一律拒绝（本功能不做「清空」）", bad["ok"] is False and bad["changed"] == 0, bad)
-        ok("拒绝后一条都没少", len(st.list_entries("group:g1", limit=10)) == 2)
+        ok("拒绝后条数一条不差（零副作用，与清除前的实际条数比对）",
+           _b4 == 2 and len(st.list_entries("group:g1", limit=10)) == _b4)
         d = af.delete(st, "group:g1", [2])
         ok("点名删除生效", d["ok"] and d["changed"] == 1 and len(st.list_entries("group:g1", limit=10)) == 1)
         ok("删的是点名那条", st.find_by_id("group:g1", 2) is None and st.find_by_id("group:g1", 1) is not None)

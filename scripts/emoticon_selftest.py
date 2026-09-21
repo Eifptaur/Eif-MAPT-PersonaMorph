@@ -94,7 +94,10 @@ with open(sample, "wb") as fh:
 ok("verify_key 对正确的 key 判 True", em.verify_key(key, sample) is True)
 ok("verify_key 对错误的 key 判 False", em.verify_key(b"\x00" * 16, sample) is False)
 
-real_keyfile = em._key_file()
+# ⛔ V-R7-4：判据**不写产品** `data/emoticon_key.json`。把 key 文件指到临时目录再跑同一段
+#   逻辑（产品默认行为不变：`_key_file()` 本身没动，只是这里打桩；下面的 backup/restore 照旧）。
+real_keyfile = os.path.join(tempfile.mkdtemp(prefix="emokey-"), "emoticon_key.json")
+em._key_file = lambda: real_keyfile
 backup = None
 if os.path.exists(real_keyfile):
     backup = io.open(real_keyfile, encoding="utf-8").read()

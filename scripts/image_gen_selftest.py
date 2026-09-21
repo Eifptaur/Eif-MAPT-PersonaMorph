@@ -340,6 +340,11 @@ class _FakeGen(http.server.BaseHTTPRequestHandler):
 _srv = http.server.HTTPServer(("127.0.0.1", 0), _FakeGen)
 _port = _srv.server_address[1]
 threading.Thread(target=_srv.serve_forever, daemon=True).start()
+# ⛔ V-R7-4：判据**不写产品媒体目录** `data/gen_images/`（`_save_image_bytes`/`_note_generated`
+#   用的是**相对路径** `data/gen_images/...`）⇒ 本节把 cwd 切到临时目录，跑完切回。
+#   产品默认行为不变（相对路径写法没动，只是判据期间 cwd 不同）。
+_cwd0 = os.getcwd()
+os.chdir(tempfile.mkdtemp(prefix="pm-ig-judge-"))
 try:
     _det = IG.detect_local(timeout=2.0, probes=[{"id": "fake-a1111", "kind": "local", "proto": "a1111",
                                                  "port": _port, "path": "/sdapi/v1/sd-models",
@@ -392,6 +397,7 @@ finally:
         _srv.shutdown()
     except Exception:
         pass
+    os.chdir(_cwd0)
 
 print("⑥ 红线在源码里是硬编码的（结构断言）")
 src = open(os.path.join(ROOT, "agent", "image_gen.py"), encoding="utf-8").read()

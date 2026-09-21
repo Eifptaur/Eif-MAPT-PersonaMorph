@@ -95,7 +95,8 @@ try:
     ok("长键优先、各换各的（没有「停止」吃掉「停止检测」）",
        "停止检测（不测了，我摊牌）" in out and ">停止（打烊）<" in out, out[:90])
     ok("整节点才换：句子里的「模型 API」不乱换", "不通时先看这里" in out and out.count("模型 API") == 1, out)
-    ok("普通模式原样返回", W.WebUI._apply_whale.__doc__ is not None)
+    # V-R7-10：这里原有 `ok("普通模式原样返回", W.WebUI._apply_whale.__doc__ is not None)`——只查了文档字符串存在，
+    # 恒真且与"普通模式"无关；普通模式的行为已由下面第 105 行那条真断言（一个字都不改）覆盖，故作废删除。
 finally:
     W.get_config = _orig
 
@@ -119,36 +120,41 @@ _collide = [k for k, v in NAV.items() if v in DICT]
 ok("导航短表的**结果**不能再是总表的键（否则第二趟会把它再翻成长文案）", not _collide, str(_collide))
 
 print("── D. 直发页面实测：切鲸语后整页确实变了 ──")
-try:
-    import urllib.request
-
-    import socket
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    free = s.getsockname()[1]
-    s.close()
-    base = dict(_orig() or {})
-    base["server"] = {"enabled": True, "host": "127.0.0.1", "port": free, "token": "whale-judge",
-                      "auto_open_browser": False}
-    base["ui"] = {"text_style": "whale"}
-    W.get_config = lambda: base
-    w3 = W.WebUI(lambda: {}, [])
-    import tempfile as _tf
-    w3.console_url_root = _tf.mkdtemp(prefix="cuj-")   # ⚠️ 判据不写产品那份 logs/console.url（2026-09-18）
-    port = w3.start()
+if os.environ.get("PM_JUDGE_NO_PROC") == "1":
+    # ⛔ V-R7-12：判据环境（`run_all_selftests.py` 会带这个开关）⇒ **只跑静态/内存那半**，
+    #   这一段的"真起 WebUI 服务"整段跳过，并**明确打一行 SKIP**（不冒充通过；单跑仍然跑全）。
+    skip("D. 直发页面实测", "PM_JUDGE_NO_PROC=1 ⇒ 跳过真起控制台那半（D 段 2 条不判）")
+else:
     try:
-        with urllib.request.urlopen("http://127.0.0.1:%d/?token=whale-judge" % port, timeout=6) as r:
-            page = r.read().decode("utf-8", "replace")
-        n_hit = sum(1 for k, v in DICT.items() if ("<" in page and v in page))
-        ok("页面里出现了大量鲸语文案（≥80 条）", n_hit >= 80, "命中 %d 条" % n_hit)
-        ok("字典已注入到前端（const WHALE_TXT = { 不是空对象）",
-           "const WHALE_TXT = {}" not in page and '"🐋 概览' in page)
+        import urllib.request
+
+        import socket
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        free = s.getsockname()[1]
+        s.close()
+        base = dict(_orig() or {})
+        base["server"] = {"enabled": True, "host": "127.0.0.1", "port": free, "token": "whale-judge",
+                          "auto_open_browser": False}
+        base["ui"] = {"text_style": "whale"}
+        W.get_config = lambda: base
+        w3 = W.WebUI(lambda: {}, [])
+        import tempfile as _tf
+        w3.console_url_root = _tf.mkdtemp(prefix="cuj-")   # ⚠️ 判据不写产品那份 logs/console.url（2026-09-18）
+        port = w3.start()
+        try:
+            with urllib.request.urlopen("http://127.0.0.1:%d/?token=whale-judge" % port, timeout=6) as r:
+                page = r.read().decode("utf-8", "replace")
+            n_hit = sum(1 for k, v in DICT.items() if ("<" in page and v in page))
+            ok("页面里出现了大量鲸语文案（≥80 条）", n_hit >= 80, "命中 %d 条" % n_hit)
+            ok("字典已注入到前端（const WHALE_TXT = { 不是空对象）",
+               "const WHALE_TXT = {}" not in page and '"🐋 概览' in page)
+        finally:
+            w3.stop()
+    except Exception as e:
+        skip("D. 直发页面实测", "起不了控制台：%s" % e)
     finally:
-        w3.stop()
-except Exception as e:
-    skip("D. 直发页面实测", "起不了控制台：%s" % e)
-finally:
-    W.get_config = _orig
+        W.get_config = _orig
 
 print("── E. 用量计数单点来源（token 调研 C9：calls 曾长期虚高一倍）──")
 try:

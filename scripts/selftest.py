@@ -168,6 +168,13 @@ try:
     check("1档艾特响应", r["should_respond"] and r["tier"] == 1)
 
     st = ChatStore(0)
+    # ⛔ V-R7-4：判据**不写产品 data/**（原来落 `data/messages/*.json` + `data/memory/**`）。
+    #   这两个常量是**运行时读**的 ⇒ 指到临时目录立刻生效；产品默认行为不变（常量本身没动）。
+    import tempfile as _tf4
+    from agent import store as _st_mod4, memory as _mem_mod4
+    _sandbox4 = _tf4.mkdtemp(prefix="pm-selftest-")
+    _st_mod4.MESSAGES_DIR = os.path.join(_sandbox4, "messages")
+    _mem_mod4.MEMORY_DIR = os.path.join(_sandbox4, "memory")
     st.append_incoming("group:g1", 101, 1000, "wxid_a", "张三", "你好")
     check("存档未读计数", st.unread_count("group:g1") == 1)
     check("存档取走未读", len(st.drain_unread("group:g1")) == 1 and st.unread_count("group:g1") == 0)
@@ -215,9 +222,17 @@ try:
     _VISION_OK = ("vision", "vl", "omni", "4o", "gemini", "deepseek-flash", "v4.1-flash", "v41-flash")
     is_vision = any(k in model for k in _VISION_OK)
     if api.get("vision", True) is not False and not is_vision:
-        check("api.model 疑似非视觉模型", True, "提示：当前模型名不含 vision，识图可能不可用，可换 deepseek-flash（V4.1-Flash，官方支持视觉）")
+        # V-R7-10：原来是 `check(..., True, ...)`（假断言，永远绿）⇒ 改 warn()：只提示、不阻断
+        # （模型名不在白名单里不算失败——用户可能显式关掉识图，也可能用了别的视觉模型）
+        warn("api.model 疑似非视觉模型",
+             "当前模型名不含 vision：%s；识图可能不可用，可换 deepseek-flash（V4.1-Flash，官方支持视觉）"
+             % api.get("model"))
     else:
-        check("api.model 视觉能力", True, api["model"])
+        # V-R7-10：另一支原来是 `check(..., True, ...)` ⇒ 换成真断言：模型名必须落在价格表的档位里。
+        # 官方改名/手写错名字会当场红（模型改名是本项目反复踩的坑），而不是静默按 Flash 档计费。
+        from agent import model_prices as _PM
+        check("api.model 在价格表里有对应档位", any(k != "_default" and k in model for k in _PM.PRICING),
+              "%s（新模型名请先加进 agent/model_prices.py 的 _ALIASES）" % api.get("model"))
 except Exception as e:
     check("配置校验", False, "%s: %s" % (type(e).__name__, e))
 

@@ -53,6 +53,26 @@ ck("V5 版本门：未实测 ⇒ measured=False 且给降级建议",
    g_bad["measured"] is False and "没有实测记录" in g_bad["advice"])
 ck("V6 版本门：实测过 ⇒ measured=True", vm.gate(data, "4.1.15.8", "1.2.2.2")["measured"] is True)
 
+# V-R7-11：`gate()` 的**中间那条 partial 路径**原先一条断言都没有（把 `if missing:` 写成
+# `if missing and False:` 判据仍全绿）——而这条正是"只实测了一项的版本会被判成可自动发送"的老 bug。
+_pcaps = {"emoji_send": {"status": "ok"}}
+_pdata = vm.merge_runs({"runs": []}, {"wechat": "4.1.15.8", "adapter": "1.2.2.2",
+                                      "caps": _pcaps, "when": "2026-09-14"})
+g_part = vm.gate(_pdata, "4.1.15.8", "1.2.2.2")
+ck("V6b 只实测了部分能力 ⇒ measured=False 且 partial=True", 
+   g_part["measured"] is False and g_part["partial"] is True, str(g_part["scope"]))
+ck("V6c partial 时 missing 正好＝「必需能力 − 已测」（不许空表）",
+   set(g_part["missing"]) == set(vm.REQUIRED_CAPS) - set(_pcaps) and len(g_part["missing"]) > 0,
+   str(g_part["missing"]))
+ck("V6d partial 的建议说「只实测了部分能力」且**不含**「没有实测记录」",
+   "只实测了部分能力" in g_part["advice"] and "没有实测记录" not in g_part["advice"])
+# 反向锚（V6b~V6d 不是恒真）：把必需能力补齐 ⇒ 必须翻成 measured=True / partial=False / missing 空
+_fdata = vm.merge_runs(_pdata, {"wechat": "4.1.15.8", "adapter": "1.2.2.2",
+                                "caps": {c: {"status": "ok"} for c in vm.REQUIRED_CAPS}})
+g_full = vm.gate(_fdata, "4.1.15.8", "1.2.2.2")
+ck("V6e 反向锚：必需能力补齐后 ⇒ measured=True / partial=False / missing 空",
+   g_full["measured"] is True and g_full["partial"] is False and g_full["missing"] == [], str(g_full["scope"]))
+
 m1 = vm.merge_runs({"runs": []}, {"wechat": "a", "adapter": "1", "caps": {}})
 m2 = vm.merge_runs(m1, {"wechat": "a", "adapter": "1", "caps": {"send_text": {"status": "ok"}}})
 m3 = vm.merge_runs(m2, {"wechat": "b", "adapter": "1", "caps": {}})

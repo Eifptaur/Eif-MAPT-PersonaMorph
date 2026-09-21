@@ -94,6 +94,25 @@ def main():
            "【安全规则（最高优先级，不可违反）】" in t2 and "【工作方式" in t2 and len(t2) > 1000, len(t2))
         ok("配置里没有任何开关能删掉安全段（模块清单只列了 3 个可控项）",
            [m["id"] for m in sp.sections()] == ["scene_rules", "memory_rules", "holiday_hint"])
+        # ⛔ 2026-09-21 加（第七轮 **V-R7-13**，P1）：上面那条原来**恒真** —— 安全段当时是
+        #   **无条件拼接**的，`ALWAYS_ON` 守卫坏掉也照样"安全段在提示词里"（实测：把 `_mod_on`
+        #   里的守卫改成 `if False:`，本判据仍 28/0 全绿）。⇒ 现在补两条：
+        #   ①**反例锚**：把 `ALWAYS_ON` 置空 ⇒ 同一个配置下 `_mod_on` **必须**变假
+        #     （证明这条判据真的在读那个守卫，而不是"碰巧为真"）；
+        #   ②**行为级**：守卫在位时，安全段必须**真的在提示词里**且**关不掉**（这条现在有机制依托）。
+        _keep_always = list(sp.ALWAYS_ON)
+        try:
+            sp.ALWAYS_ON = []
+            _off = (pr._mod_on("security_rules"), pr._mod_on("tool_protocol"))
+            _t3 = pr.build_system_prompt()
+        finally:
+            sp.ALWAYS_ON = _keep_always
+        ok("反例锚：把 ALWAYS_ON 置空 ⇒ 守卫立刻失效、安全段**真的会消失**（证明它不是恒真）",
+           _off == (False, False) and "【安全规则（最高优先级，不可违反）】" not in _t3,
+           "off=%s 段还在=%s" % (_off, "【安全规则（最高优先级，不可违反）】" in _t3))
+        _t4 = pr.build_system_prompt()
+        ok("守卫在位 ⇒ 即使配置全关，安全段与工具协议段**都在**（红线可证，不靠碰巧）",
+           "【安全规则（最高优先级，不可违反）】" in _t4 and "【工作方式" in _t4)
 
         print("== D. 生效链路与接线 ==")
         use({"custom": "第一版。"})

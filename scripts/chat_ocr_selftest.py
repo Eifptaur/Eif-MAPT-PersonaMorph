@@ -45,6 +45,11 @@ ck("带群成员数", ocr.matches("群deepseek（8）", "群deepseek"))
 ck("不同名字不匹配", not ocr.matches("腾讯新闻", "文件传输助手"))
 ck("空串不匹配", not ocr.matches("", "文件传输助手"))
 ck("单字不误配", not ocr.matches("巷", "文件传输助手"))
+# V-R7-8：原来单字只剩上面那条否定式 ⇒ 把 chat_ocr 的「单字名字」分支删掉它仍为真（恒绿）。
+# 补三条正例（反向锚：撤掉单字分支 ⇒ 前两条必红）。
+ck("单字名字：同名配上", ocr.matches("E", "E"))
+ck("单字名字：会话名里的单字配上", ocr.matches("[草稿]EE", "E"))
+ck("单字名字反向锚：对不上时仍为 False", not ocr.matches("群里的人", "E"))
 
 print("③ 绿底高亮行检测（合成图：第 2 行绿底）")
 try:
