@@ -58,11 +58,14 @@ ok("可选缺时把缺的项列出来（用户知道还差什么）", "opencv-py
 _r3, _m3 = SD.verdict([("a", "1", ">=1", True)], [("a", "1", ">=1", True)])
 ok("全齐 ⇒ 通过并报总数", _r3 == 0 and "全部" in _m3, _m3[:64])
 
-print("── B. 源码级：流式 · 无总时长上限 · 空闲判卡死 ──")
+print("── B. 行为级：流式 · 无总时长上限 · 空闲判卡死 ──")
+# ⛔ V-R8-7（第八轮）：这里原有三条**源码级**判据（`"def _run_stream(" in _sd`、
+#   `"capture_output=True" not in _sd`、`"IDLE_LIMIT" in _sd`）—— 它们只证明"名字在文件里"，
+#   把 `_run_stream` 改成整段缓存、或把空闲上限真删掉，照样绿。**已按审计建议删掉**：
+#   下面 C 段是**行为级**覆盖（真跑一条会打字的命令看输出是否当场拿到 = 流式；
+#   真跑一条卡住的命令看它按空闲上限被杀 = 空闲判死），比这三条硬。
+#   ⚠️ 留着的是"**不存在**"类判据（`timeout=900 not in 源码`）—— 那类没法用行为证否，只能扫源码。
 _sd = src("scripts/setup_deps.py")
-ok("有流式执行器 _run_stream", "def _run_stream(" in _sd)
-ok("不再整段缓存 pip 输出（没有 capture_output=True）", "capture_output=True" not in _sd)
-ok("有「连续无输出」的空闲上限 IDLE_LIMIT", "IDLE_LIMIT" in _sd)
 ok("没有 pip 的总时长上限（timeout=900 已去掉）", "timeout=900" not in _sd)
 ok("所有源都失败后有再试一次的兜底（用最快的那个源）", "再试一次最快的那个源" in _sd)
 ok("先并行测速挑最快的镜像（慢在往返次数，不是字节数）",

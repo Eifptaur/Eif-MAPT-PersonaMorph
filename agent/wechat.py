@@ -4665,6 +4665,12 @@ class WeChatAdapter:
                     #   （名字 OCR / 会话头标题带 / 高亮行时间×DB，都是能回答"现在是谁"的证据）：
                     #   强档成立 ⇒ 放行并**把这个尺寸的参照重学一遍**（旧参照已经不可信）；强档也给不出才拒。
                     #   ⚠️ 红线没有放宽：强档给不出证据时，这里仍然拒发。
+                    #   ⚠️ 2026-09-21 核实口径（第八轮 **V-R8-2 后半**）：这里的 `return False` 只拒
+                    #      **投递档**，不是"消息发不出去"——调用方 `send_text` 收到后会继续走
+                    #      「投递切会话（`switch_chat_posted`）+ OCR/内容级复核」，再不成才落到
+                    #      **真实档**（`wechat.py:3073` 的 `gui.send_msg(who=名字)`），真实档由
+                    #      `input.allow_real_fallback` 统一把关（默认关＝按最高目标不抢鼠标，
+                    #      只有那时才真的不发，并如实返回原因）。
                     _ok_strong, _why_strong = self.chat_is_open(chat_id, gui=gui)
                     if not _ok_strong:
                         return False, "【可重试】会话头不匹配，拒绝投递（防发错会话）：%s" % _st["note"]

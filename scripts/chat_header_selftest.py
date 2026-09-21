@@ -154,6 +154,36 @@ with tempfile.TemporaryDirectory() as td_p:
            ch.reference("degen2", _pp) == [], "reference=%s" % (ch.reference("degen2", _pp) or "[]"))
     finally:
         ch.is_blank = _blank0
+    # —— V-R8-2 的那道缝：真造帧「标题带里只有两条竖线、没有字」（审计的 S05/S12/S19/S20 那族）——
+    #    指纹语义（见 `chat_header.py` 的 `degenerate_reason` docstring）：逐列暗点密度，
+    #    `0`＝这一列没有字、`255`＝满墨。两条竖线 ⇒ **只有 2 个有墨的列**。
+    #   审计实测（20 个现场真跑三家函数）：这类帧 `is_blank` 判否、`degenerate_reason` 判否
+    #    ⇒ `remember()` 照收 ⇒ 该尺寸档此后跟正常帧比只有 sim≈0.71 ⇒ **长期漏发**。
+    #    ⇒ 收口落在**入库入口**（`remember()` 的「有墨的列 < 4」），下面 P7~P9 把这条守备钉住。
+    _fp_s05 = [0] * 20 + [145, 150] + [0] * (ch.BINS - 22)
+    ck("P7 缝的来历（先说清「两道闸都放行」，否则 P8 会被当成「随手加的一条」）：这类帧 "
+       "is_blank / degenerate_reason **都不拦**",
+       ch.is_blank(_fp_s05) is False and ch.degenerate_reason(_fp_s05) == "",
+       "is_blank=%s · 退化闸=%r" % (ch.is_blank(_fp_s05), ch.degenerate_reason(_fp_s05)))
+    ch.remember("s05", _fp_s05, path=_pp, size="1139x890")
+    ck("P8 反例锚（V-R8-2）：S05 那类帧**必须进不去参照库**（进库＝该尺寸档此后一直判 mismatch＝漏发）",
+       ch.reference("s05", _pp) == [], "reference=%s" % (ch.reference("s05", _pp) or "[]"))
+    ch.remember("s05good", _pa, path=_pp, size="1139x890")
+    ck("P8b 阳性对照：正常帧（有墨的列远多于 4）照旧入库 ⇒ 上面那条不是「什么都拒」",
+       ch.reference("s05good", _pp) == _pa,
+       "有墨列=%d" % len([1 for _x in _pa if _x]))
+    # P9：把这类帧**绕过 remember 直接落盘**（＝缝存在时的老行为）⇒ 同尺寸档的正常帧判 mismatch。
+    #     这条不是为了"留个旧行为"，而是把 P8 防住的**后果**钉在判据里（防将来有人把入库闸拆了还觉得没事）。
+    ch.save({"s05old": {"sizes": {"1139x890": {"fp": list(_fp_s05), "when": ""}}}}, _pp)
+    _cap1 = ch.capture_image
+    try:
+        ch.capture_image = lambda gui=None, render=None: fake_window("文件传输助手")
+        _r9 = ch.check("s05old", path=_pp)
+    finally:
+        ch.capture_image = _cap1
+    ck("P9 后果锚：库里若真有这类参照 ⇒ 同尺寸的正常帧判 **mismatch**（这就是 V-R8-2 的「长期漏发」）",
+       _r9.get("status") == "mismatch" and float(_r9.get("sim") or 0) < ch.DEFAULT_THRESHOLD,
+       "status=%s · %s" % (_r9.get("status"), _r9.get("note")))
 
 print("[L] 实机（抓不到不算失败）")
 try:

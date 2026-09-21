@@ -694,12 +694,30 @@ try:
     import threading                                                           # noqa: E402
 
     from agent import local_guard as lg                                        # noqa: E402
+    # ⛔ V-R8-7（第八轮）：口令落**临时根**，别碰生产 `logs\sd_local.token` ——
+    #   原来 `lg.token()` 会经 `_tighten_acl` 真跑一遍 `icacls /inheritance:r`，把生产口令文件的
+    #   ACL 收紧掉；`Length`/`mtime` 一点没变 ⇒「mtime + 清单」这类监视面**看不见**这次写入。
+    #   ⚠️ 打桩要排在 `import sd_local_server` **之前**（import 期任何一次取口令都会落到真口令上）。
+    #   ⚠️ 更要紧的是：**服务端那份 `local_guard` 是另一个模块对象** ——
+    #   `sd_local_server._deny()` 里写的是 `import local_guard`（绝对导入，不是 `from . import`），
+    #   判据进程里那个名字不在 sys.path 上 ⇒ 走它的回落分支把 `agent/` 插进 sys.path 再 import，
+    #   于是**同一个文件被加载成第二份模块**（实测：`local_guard is not agent.local_guard`）
+    #   ⇒ 只给 `agent.local_guard` 打桩对它无效：服务端仍比真口令，`口令对了⇒200` 与
+    #   `?token= 也认` 两条变 401（我实测复现过，且**与打桩先后顺序无关**）。
+    #   ⇒ 三条一起做：①在临时根里真建一份口令文件；②`token` 打桩；
+    #     ③把口令经模块自带的共享开关统一（`PM_LOCAL_TOKEN`，`token()` 第一行就读它），
+    #       并把 `local_guard` 这个名字**预先指向同一份模块**（不让它再加载第二份）。
+    _ROOT8 = tempfile.mkdtemp()
+    _tok8 = lg.token(_ROOT8)
+    lg.token = lambda root="", create=True: _tok8
+    os.environ[lg.ENV_KEY] = _tok8
+    sys.modules.setdefault("local_guard", lg)
     from agent import sd_local_server as SDS                                   # noqa: E402
 except Exception as _e:                                                        # noqa: BLE001
     _imports_ok = False
     ok("能 import local_guard / sd_local_server", False, str(_e)[:90])
 else:
-    _tok8 = lg.token()
+    _tok8 = lg.token()                    # 走上面那个 lambda ⇒ 同一个临时口令（不再碰生产文件）
     ok("本机口令已建立（logs/sd_local.token，随机 url-safe）", bool(_tok8) and len(_tok8) >= 16,
        "len=%d" % len(_tok8))
     ok("Host 判据：回环三种写法放行、外域拒",
@@ -798,6 +816,11 @@ else:
             pass
     ok("服务端一个 handler 异常都没有（真出错要看得见，不是被框架当 traceback 吃掉）",
        not _hdl_err, str(_hdl_err[:3]))
+    try:
+        import shutil as _sh8                                                  # noqa: E402
+        _sh8.rmtree(_ROOT8, ignore_errors=True)     # 临时口令（含被收紧 ACL 的文件）不留在 %TEMP%
+    except Exception:
+        pass
 
     # ⛔ V-R3-8 的**竞态回归**（我自己留下的）：口令文件并发首建时不许互相覆盖。
     #   两个进程同时进"读不到就生成" ⇒ 原来的 tmp+os.replace 会让各自 `_CACHE` 住不同口令，
@@ -946,10 +969,29 @@ try:
     ok("V-R5R-3 允许名单里**没有 `github.io`**（任意用户都能托管的页面域，放了等于自己开后门）",
        not any(str(s).endswith("github.io") for s in getattr(uc, "FINAL_HOST_SUFFIXES", ())),
        str(getattr(uc, "FINAL_HOST_SUFFIXES", ())))
-    ok("V-R5R-3 同一判据**只有一份实现**（`update_apply` 转调 `update_check`，不许两边各抄一遍）",
-       uc.final_url_ok("http://a/x", "http://a/x") == ""
-       and "FINAL_HOST_SUFFIXES" not in io.open(os.path.join(ROOT, "agent", "update_apply.py"),
-                                                encoding="utf-8").read())
+    # ⛔ V-R8-7 **行为级锚**（第八轮）：原来这条是"`update_apply` 源码里没有 `FINAL_HOST_SUFFIXES`
+    #   这个常量名"—— **文本＝假保证**：把那份名单重抄成一个字面量/别的变量名照样过。
+    #   现在改成**打桩唯一实现**，看它是不是真转调、且实参顺序是 `(final, requested)`。
+    #   ⚠️ 顺序写反会拿到「放行」（`github.com` 正在允许名单里）⇒ 第三条就是给这个陷阱做的对照。
+    _keep_fuo = uc.final_url_ok
+    _seen8 = []
+
+    def _spy_fuo(final, requested):
+        _seen8.append((str(final), str(requested)))
+        return "桩：拒取"
+
+    try:
+        uc.final_url_ok = _spy_fuo
+        _ua_why = U._final_url_ok("https://evil.github.io/m.json", "https://github.com/o/r")
+    finally:
+        uc.final_url_ok = _keep_fuo
+    ok("V-R5R-3 行为级：`update_apply._final_url_ok` 真**转调** `update_check.final_url_ok`（唯一实现）",
+       _ua_why == "桩：拒取", "返回 %r" % (_ua_why,))
+    ok("V-R5R-3 实参顺序是 `(final, requested)`（打桩记到的两个实参必须原样透传）",
+       _seen8 == [("https://evil.github.io/m.json", "https://github.com/o/r")], str(_seen8))
+    ok("V-R5R-3 对照：同一对地址**顺序写反**时真实现确实返回「放行」（证明上一条不是在测空气）",
+       uc.final_url_ok("https://github.com/o/r", "https://evil.github.io/m.json") == "",
+       "github.com 在允许名单里 ⇒ 写反就会放行")
 finally:
     try:
         _s1b.shutdown()

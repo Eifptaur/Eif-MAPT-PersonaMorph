@@ -179,10 +179,37 @@ finally:
 
 print("── D. 个人信息不进代码/包 ──")
 ok("代码里没有真实收件邮箱", MAIL_A not in HTML and MAIL_B not in src("agent/feedback.py"))
-ok("代码里没有真实邮箱（全仓源码）",
-   not any(MAIL_A in src(p) for p in ("agent/config.py", "agent/webui.py", "config.example.json")))
+
+
+def _raw(rel):
+    """按**字节**读（打包器就是这么扫的）：latin1 不会因编码失败丢字节，ASCII 的针照样找得到。"""
+    try:
+        with io.open(os.path.join(ROOT, rel.replace("/", os.sep)), "rb") as fh:
+            return fh.read().decode("latin1", "ignore")
+    except OSError:
+        return ""
+
+
+# ⛔ V-R8-7 **行为级锚**（第八轮）：这条原来自称「全仓源码」，实际只查了**写死的 3 个文件**
+#   （`agent/config.py` / `agent/webui.py` / `config.example.json`）。改成**真出包清单** ——
+#   `pack_online.tracked() − excluded()` ＝"真会发给用户的那批文件"（322 个量级）。
+#   ⚠️ 打包器自己的 `SCAN` 规则里**没有邮箱类规则** ⇒ 这一条是邮箱泄密的**唯一把关**。
+try:
+    if os.path.join(ROOT, "scripts") not in sys.path:
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import pack_online as _po
+    _pack = [f for f in _po.tracked() if not _po.excluded(f)]
+    _pack_err = ""
+except Exception as _e_pack:
+    _pack, _pack_err = [], str(_e_pack)[:90]
+ok("D-pk0 真出包清单拿得到（`pack_online.tracked() − excluded()`；拿不到就判红，不许静默降级成「没扫」）",
+   len(_pack) > 100 and not _pack_err, "n=%d · %s" % (len(_pack), _pack_err or "ok"))
+ok("D-pk1 量具阳性对照：按字节真读到了文件内容（读成空串会让下面那条**假绿**）",
+   "def submit(" in _raw("agent/feedback.py"), "%d 字符" % len(_raw("agent/feedback.py")))
+_hits = [f for f in _pack if MAIL_A in _raw(f)]
+ok("代码里没有真实邮箱（**真出包清单全扫**，不再是写死三个文件）", not _hits, str(_hits[:3]))
 ok("示例配置里 feedback 段是空的（不给真实地址）",
-   MAIL_A not in src("config.example.json") and MAIL_B not in src("config.example.json"))
+   MAIL_A not in _raw("config.example.json") and MAIL_B not in _raw("config.example.json"))
 _c = FB.compose({"kind": "建议", "text": "一句原话", "at_h": "2026-09-14 10:00:00", "ver": "b.x",
                  "contact": "c", "env": {}})
 # 口径 2026-09-15：正文＝原话原样（只加一行元信息）⇒ 断言"元信息在头一行 + 原话原样在后"
