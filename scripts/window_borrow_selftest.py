@@ -26,6 +26,11 @@ os.chdir(ROOT)
 
 from agent import window_borrow as WB        # noqa: E402
 from agent import config as CFG              # noqa: E402
+# ⛔ V-R14-7 隔离：本判据里有**打桩不来**的几段（真 `touch()` / 真看门线程归还）⇒ 产品
+#   `data\window_borrow.json` 会被建出来又删掉（净变化 0，只有持续采样才看得见）。
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # scripts\（见 `_iso14` 文件头）
+import _iso14                                # noqa: E402
+_iso14.window_borrow()
 
 PASS = 0
 FAIL = 0

@@ -33,6 +33,10 @@ sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # 同目录的 `_srcmatch`
 import _srcmatch as _sm                                          # noqa: E402  空白容忍的源码断言（V-R4-13 第三条）
+# ⛔ V-R14-7 隔离：D2 段要"真锁的行为"（自己建锁再删）⇒ 跑前跑后对账看不见（净变化 0），
+#   可那一刻产品的 `logs\browser_opened.lock` 确实在 ⇒ 真机器人正在开窗时会被判成"别人刚开过"。
+import _iso14                                                     # noqa: E402
+_iso14.console_lock()
 os.environ["WX_NO_UI_POP"] = "1"
 
 from agent import notify_ui as NU          # noqa: E402
@@ -440,6 +444,50 @@ try:
                _resp.splitlines()[0] if _resp else "(空)")
         except Exception as _e413:
             ok("请求体超上限 ⇒ 413", False, str(_e413)[:80])
+        # ⛔ 2026-09-22 加（第十四轮 **V-R14-6** · P3）：**负的 `Content-Length` 也要拒** ——
+        #   第十一轮（V-R11-10）修的就是这条，而它从修好到今天**一条判据都没有**（审计连点四轮）。
+        #   为什么要判：`self.rfile.read(-1)` 的语义是**读到底**，老写法只挡"太大"⇒ 上限形同虚设。
+        #   可达性诚实说明：`do_POST` 第一句就是口令校验 ⇒ 只有本机控制台能走到这一步，
+        #   所以这条是"口径闭合"，不是"远程可利用"。
+        try:
+            import socket as _sk2
+            _s3 = _sk2.create_connection(("127.0.0.1", _port), timeout=5)
+            _s3.sendall(("POST /api/verifiers?token=judge-token-1234567890 HTTP/1.1\r\n"
+                         "Host: 127.0.0.1:%d\r\nContent-Length: -1\r\n"
+                         "Connection: close\r\n\r\n" % _port).encode("ascii"))
+            _resp3 = _s3.recv(200).decode("latin1", "replace")
+            _s3.close()
+            ok("负 `Content-Length` ⇒ **413**（`read(-1)`＝读到底，上限会被绕过）",
+               "413" in _resp3, _resp3.splitlines()[0] if _resp3 else "(空)")
+        except Exception as _e413b:
+            ok("负 `Content-Length` ⇒ 413", False, str(_e413b)[:80])
+        try:
+            import socket as _sk3
+            _s4 = _sk3.create_connection(("127.0.0.1", _port), timeout=5)
+            # ⚠️ 阳性对照要打**不存在的路由**：路由分派发生在读完体之后，未知路径回 404 且不碰任何
+            #   真实子系统的桩（拿 `/api/verifiers` 当靶子会让桩里的 `catalog()` 抛异常、
+            #   服务端打一串 traceback ⇒ runner 的"有 traceback 即判红"会把这条**好判据**判成假红）。
+            _s4.sendall(("POST /api/__judge_probe_none__?token=judge-token-1234567890 HTTP/1.1\r\n"
+                         "Host: 127.0.0.1:%d\r\nContent-Length: 2\r\n"
+                         "Connection: close\r\n\r\n{}" % _port).encode("ascii"))
+            _resp4 = b""
+            try:
+                while True:
+                    _chunk = _s4.recv(4096)
+                    if not _chunk:
+                        break
+                    _resp4 += _chunk
+                    if len(_resp4) > 8192:
+                        break
+            except Exception:
+                pass
+            _s4.close()
+            _resp4s = _resp4.decode("latin1", "replace")
+            ok("阳性对照：正常长度**不**被 413 误伤（未知路由照常回 404）",
+               bool(_resp4s) and "413" not in _resp4s and "404" in _resp4s,
+               _resp4s.splitlines()[0] if _resp4s else "(空)")
+        except Exception as _e413c:
+            ok("阳性对照：正常长度不被 413 误伤", False, str(_e413c)[:80])
     finally:
         try:
             if _w is not None:

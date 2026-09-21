@@ -15,6 +15,12 @@ import sys
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# ⛔ V-R14-1 隔离：判据不许写产品 data/ 与 logs/（台账指到临时区）。
+#   ⚠️ 见 `scripts\_iso14.py` 文件头：手抄的隔离段若写在 `sys.path.insert` 之前会**静默失效**。
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # scripts\（见 `_iso14` 文件头）
+import _iso14                                   # noqa: E402
+_iso14.wechat()
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 

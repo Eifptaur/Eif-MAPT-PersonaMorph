@@ -83,7 +83,10 @@ class _SecretFormatter(logging.Formatter):
         except Exception:
             return super().format(record)
 
-LOG_DIR = os.path.join(ROOT, "logs")
+#: ⛔ 第十四轮 **V-R14-1**：日志目录**可注入**（`PM_LOG_DIR`）—— 判据/探针只要 `import persona_morph`
+#:   就会在**产品** `logs/persona_morph.log` 上挂一个 FileHandler（实测 `feed_window_selftest` 因此
+#:   在产品日志里写了 680 字节）。判据在 import 之前设 `PM_LOG_DIR=%TEMP%` 即可隔离；产品不设＝原样。
+LOG_DIR = os.environ.get("PM_LOG_DIR") or os.path.join(ROOT, "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
 
 class _FlushFileHandler(logging.handlers.RotatingFileHandler):

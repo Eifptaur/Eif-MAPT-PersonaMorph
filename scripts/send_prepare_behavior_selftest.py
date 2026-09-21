@@ -26,6 +26,14 @@ import threading
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# ⛔ V-R14-1 隔离：判据不许写产品 data/ 与 logs/（台账指到临时区）。
+#   ⚠️ 第一版这段是在 `from agent import wechat as W` **之前**用 `W.…` 打桩的（名字还没定义 ⇒
+#   NameError 被 `except: pass` 静默吞掉）⇒ 一次都没生效。现在收口到 `scripts\_iso14.py` 一处，
+#   并且**先 import 再打桩**。
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # scripts\（见 `_iso14` 文件头）
+import _iso14                                   # noqa: E402
+_iso14.wechat()
+
 from agent import wechat as W              # noqa: E402
 from agent import chat_header as ch        # noqa: E402
 from agent import version_gate as vg       # noqa: E402

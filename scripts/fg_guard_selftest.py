@@ -26,6 +26,11 @@ except Exception:
     pass
 
 from agent import config as cfg_mod       # noqa: E402
+# ⛔ V-R14-7 隔离：本判据会走**真**发送准备链（假 GUI），那条链会登记/归还窗口借用 ⇒
+#   产品的 `data\window_borrow.json` 会被建出来又删掉（净变化 0，只有持续采样才看得见）。
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # scripts\（见 `_iso14` 文件头）
+import _iso14                             # noqa: E402
+_iso14.window_borrow()
 from agent import ui_adapt as ua          # noqa: E402
 
 WECHAT_PY = os.path.join(ROOT, "agent", "wechat.py")

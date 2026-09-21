@@ -71,6 +71,74 @@ _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 
 _BELOW_NORMAL = 0x00004000 if os.name == "nt" else 0     # 别跟用户抢 CPU：全套默认低优先级
 
 
+def _snap_product() -> dict:
+    """产品目录洁净度快照（第十四轮 **V-R14-1** 的总闸）。
+
+    只盯**顶层的** `data/` 与 `logs/` 文件（不看 `gen_images`/`tts_cache`/`__pycache__` 这些目录，
+    也不递归）——判据/探针写脏产品的形态就是"多出一个 `paused.flag`"或"某个 jsonl 长大了一截"。
+    返回 `{相对路径: (size, mtime_ns)}`；读不到的条目跳过（不因为读不到就判脏）。
+    """
+    out = {}
+    for d in ("data", "logs"):
+        base = os.path.join(ROOT, d)
+        try:
+            names = os.listdir(base)
+        except Exception:
+            continue
+        for n in names:
+            p = os.path.join(base, n)
+            try:
+                if not os.path.isfile(p):
+                    continue
+                st = os.stat(p)
+                out["%s/%s" % (d, n)] = (int(st.st_size), int(st.st_mtime_ns))
+            except Exception:
+                continue
+    return out
+
+
+def _diff_product(a: dict, b: dict) -> list:
+    """两次快照的差异，人类可读（新增/消失/改动）。"""
+    out = []
+    for k in sorted(set(a) | set(b)):
+        if k not in a:
+            out.append("%s（新增）" % k)
+        elif k not in b:
+            out.append("%s（消失）" % k)
+        elif a[k] != b[k]:
+            out.append("%s（改动）" % k)
+    return out
+
+
+def _watch_product(stop: threading.Event, seen: dict) -> None:
+    """跑判据期间**持续**采样产品目录（第十四轮 **V-R14-7**，我自己补的仪器缺口）。
+
+    为什么还要它：跑前/跑后各拍一张快照**只能看见净变化** —— 判据里"创建 `data\\window_borrow.json`
+    又删掉它"这种**瞬时写**（净变化＝0）在串行扫描里完全看不见（第十四轮实测：串行跑一遍产品目录
+    "全绿"，而并发跑时邻座判据的窗口正拍到它 ⇒ 归因一片混乱）。瞬时写一样是"判据改用户状态"，
+    而且**真实危害更大**（机器人正在跑时，一个凭空出现的借用登记会改变它的放回行为）。
+
+    采样间隔 40ms：读的是 `listdir` + `stat`（顶两层），比判据本身便宜得多。
+    """
+    while not stop.is_set():
+        try:
+            for k, v in _snap_product().items():
+                if seen.get(k) != v:
+                    seen[k] = v
+        except Exception:
+            pass
+        stop.wait(0.04)
+
+
+def _diff_seen(before: dict, after: dict, seen: dict) -> list:
+    """瞬时写：某个键出现过"既不是跑前、也不是跑后"的那个状态。"""
+    out = []
+    for k, v in sorted((seen or {}).items()):
+        if before.get(k) != v and after.get(k) != v:
+            out.append("%s（瞬时%s）" % (k, "新增" if k not in before else "改动"))
+    return out
+
+
 def _run_one(name: str, timeout: int, gate: threading.Semaphore) -> dict:
     """跑一条判据。**会开窗/开服务的那些先过 `gate`（同时只允许一条）**，其余并发跑。"""
     p = os.path.join(HERE, name)
@@ -79,6 +147,11 @@ def _run_one(name: str, timeout: int, gate: threading.Semaphore) -> dict:
     if _hold:
         _hold.acquire()
     t = time.time()                                   # 计时**从真正开跑算起**（不含等闸，读数才诚实）
+    _prod0 = _snap_product()                          # ⛔ V-R14-1：这条判据跑之前的**产品目录**快照
+    _seen = {}                                        # ⛔ V-R14-7：跑的过程中持续采样（抓瞬时写）
+    _stop = threading.Event()
+    _watch = threading.Thread(target=_watch_product, args=(_stop, _seen), daemon=True)
+    _watch.start()
     try:
         try:
             r = subprocess.run([sys.executable, p], cwd=ROOT, capture_output=True,
@@ -100,15 +173,23 @@ def _run_one(name: str, timeout: int, gate: threading.Semaphore) -> dict:
         except subprocess.TimeoutExpired:
             out, rc = "TIMEOUT", -9
     finally:
+        _stop.set()
+        try:
+            _watch.join(timeout=1.0)
+        except Exception:
+            pass
         if _hold:
             _hold.release()
     sec = time.time() - t
+    _prod1 = _snap_product()
+    _dirty = _diff_product(_prod0, _prod1)            # V-R14-1：这条判据动了产品目录吗（净变化）
+    _dirty += _diff_seen(_prod0, _prod1, _seen)       # V-R14-7：瞬时写也要判红
     ps, fs = _parse(out)
     _summed = _has_summary(out)
     ok = ((rc == 0) and not fs and not _FAIL_LINE.search(out) and not _TRACE.search(out)
           and _summed)
     return {"name": name, "out": out, "rc": rc, "sec": sec, "ps": ps, "fs": fs, "ok": ok,
-            "summed": _summed, "heavy": heavy}
+            "summed": _summed, "heavy": heavy, "dirty": _dirty}
 
 
 def main() -> int:
@@ -163,11 +244,27 @@ def main() -> int:
     print("脚本 %d 个 · 用时 %.0fs · 断言合计 %d 通过 / %d 失败 · %s"
           % (len(names), time.time() - t0, total_p, total_f,
              "全绿" if not bad else "**有 %d 个脚本红**" % len(bad)))
+    # ⛔ 2026-09-22 加（第十四轮 **V-R14-1** 的最值钱一条）：**产品目录洁净度总闸** ——
+    #   跑前跑后对 `data/` + `logs/` 的顶层文件做快照，任何变化都判 FAIL 并指出是哪条判据。
+    #   为什么要有它：历轮的"判据卫生"只查过几个已知点（`update_state` / `risk_events` /
+    #   `logs\sd_local.token`），**从没做过全目录对账** ⇒ 9 轮都没发现 `risk_selftest` 会在产品目录里
+    #   创建 `data\paused.flag`（而每个发送链每一步都查它 ⇒ 跑一次复核就把用户的机器人暂停了）。
+    #   有了这条，"判据不许写产品 data/"才从纪律变成守备。
+    _dirty_judges = [(n, results[n].get("dirty") or []) for n in names if (results[n].get("dirty") or [])]
+    _pure = not _dirty_judges
+    if not _pure:
+        print("\n" + "!" * 72)
+        print("⚠️ **判据写脏了产品目录**（data/ 或 logs/）—— 这会让用户的状态被自检改动，必须修：")
+        for _n, _files in _dirty_judges:
+            print("   %-34s → %s" % (_n, "、".join(_files[:6])))
+        print("   修法：该判据在开头（`sys.path` 就绪之后、任何 `agent.*` 之前）调 "
+              "`import _iso14; _iso14.all_()` 把路径指到 %TEMP%。")
+        print("!" * 72)
     for n, rc, ps, fs, out in bad:
         print("\n---- RED: %s (rc=%s, %s/%s) ----" % (n, rc, ps, fs))
         tail = [l for l in out.strip().splitlines() if l.strip()][-14:]
         print("\n".join(tail))
-    return 1 if bad else 0
+    return 1 if (bad or not _pure) else 0
 
 
 if __name__ == "__main__":

@@ -15,17 +15,33 @@ import os
 import time
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+#: 两个标记的路径 —— **可注入**（第十三/十四轮：判据只能打桩函数、没法传参隔离，
+#: 于是 `risk_selftest` 跑一次就在**产品目录**里创建了 `data\paused.flag`，
+#: 而每个发送链每一步都查它 ⇒ **跑一次复核就把用户的机器人暂停了**）。
+#: 判据/探针请用 `set_paths(...)` 或直接改这两个模块级变量指到 `%TEMP%`。
+PAUSED_PATH = os.path.join(_ROOT, "data", "paused.flag")
+STOPPED_PATH = os.path.join(_ROOT, "data", "stopped.flag")
 _CACHE = {"at": 0.0, "paused": False, "stopped": False, "ttl": 0.4}   # 0.4s 缓存：避免每条都摸盘
+
+
+def set_paths(paused: str = "", stopped: str = "") -> dict:
+    """把两个标记路径换掉（判据隔离用）；返回**旧值**方便还原。传空串＝保持不动。"""
+    global PAUSED_PATH, STOPPED_PATH
+    old = {"paused": PAUSED_PATH, "stopped": STOPPED_PATH}
+    if paused:
+        PAUSED_PATH = str(paused)
+    if stopped:
+        STOPPED_PATH = str(stopped)
+    _CACHE["at"] = 0.0                      # 换路径必须让缓存立刻失效
+    return old
 
 
 def _flags() -> tuple:
     now = time.time()
     if now - float(_CACHE["at"] or 0) < float(_CACHE["ttl"] or 0.4):
         return bool(_CACHE["paused"]), bool(_CACHE["stopped"])
-    p = os.path.join(_ROOT, "data", "paused.flag")
-    s = os.path.join(_ROOT, "data", "stopped.flag")
-    _CACHE["paused"] = os.path.exists(p)
-    _CACHE["stopped"] = os.path.exists(s)
+    _CACHE["paused"] = os.path.exists(PAUSED_PATH)
+    _CACHE["stopped"] = os.path.exists(STOPPED_PATH)
     _CACHE["at"] = now
     return _CACHE["paused"], _CACHE["stopped"]
 
@@ -50,9 +66,12 @@ def halt_reason() -> str:
     return ""
 
 
-def set_paused_flag(on: bool) -> bool:
-    """给**非主进程**（脚本/控制台接口）写暂停标记用；主进程走 `orch.set_paused()`。"""
-    p = os.path.join(_ROOT, "data", "paused.flag")
+def set_paused_flag(on: bool, path: str = "") -> bool:
+    """给**非主进程**（脚本/控制台接口）写暂停标记用；主进程走 `orch.set_paused()`。
+
+    `path` 不给就用模块级的 `PAUSED_PATH`（判据可传临时档；见文件头那段）。
+    """
+    p = str(path or PAUSED_PATH)
     try:
         if on:
             os.makedirs(os.path.dirname(p), exist_ok=True)
