@@ -47,7 +47,8 @@ from agent.config import get_config, save_config
 from agent.llm import (add_usage, chat_completion, chat_completion_with_retry,
                        empty_usage, estimate_cost, is_retryable_error, query_balance)
 from agent.memory import MemoryStore
-from agent.prompt import build_system_prompt, build_user_prompt, resolve_context_tier, is_at_me
+from agent.prompt import (build_system_prompt, build_user_prompt, resolve_context_tier, is_at_me,
+                          observed_at)
 from agent.sender import SendQueue
 from agent.session_log import SessionLog
 from agent.stats import UsageStats
@@ -588,9 +589,20 @@ class Orchestrator:
                 _snip = str((pending[-1] or {}).get("text") or "")[:80]
             except Exception:
                 _snip = ""
+            # ⛔ 2026-09-21 加（反馈「艾特它 它不会回复」）：把**这批消息里出现的 @ 名字**与
+            #   **它以为自己的名字**一起留痕 —— 微信群里 @ 用的是「群昵称」，可能既不是配置里的
+            #   机器人昵称、也不是库里的账号昵称 ⇒ `is_at_me` 认不出"这是 @ 我"（档位 2/3 下就等于
+            #   没被唤醒）。留了这两串，下一份反馈就能直接定案，不必再猜。
+            _ats = []
+            for _m in (pending or []):
+                _a = observed_at((_m or {}).get("text"))
+                if _a and _a not in _ats:
+                    _ats.append(_a)
+            _known = "、".join(x for x in (self_nickname, wechat_nick, bot_name) if x)
             _tt.note(chat_key, "tier", tier=tier_result.get("tier"),
                      should=bool(tier_result.get("should_respond")),
-                     why=tier_result.get("reason"), src=tier_result.get("tier_source"), snippet=_snip)
+                     why=tier_result.get("reason"), src=tier_result.get("tier_source"), snippet=_snip,
+                     at="、".join(_ats[:3]), known=_known)
         except Exception:
             pass
         if not tier_result["should_respond"]:

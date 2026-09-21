@@ -198,6 +198,82 @@ ok("C5h 三处新鲜度都走统一助手（源码级：`_fresh_age` 至少 3 �
    V.__dict__.get("_fresh_age") is not None
    and open(os.path.join(ROOT, "agent", "verifiers.py"), encoding="utf-8").read().count("_fresh_age(") >= 4)
 
+print("\n── C6. 反馈 v0921-0922：『消息发不出去』不许给假「通过」（台账入卡点 · 没记录＝没测到）──")
+# ⛔ 现场：那位网友报「消息发不出去、卡在未通过 会话投递失败」，而本检验器给的是 ✅「通过」——
+#   因为原来只看**日志最后 200 行**（刚重启/日志轮转后是空的 ⇒ 一律判 True），
+#   而真失败记在**进程内台账**（`wechat.note_switch_fail`）里，本检验器一条都不看。
+_tmp6 = tempfile.mkdtemp(prefix="pm-vf6-")
+_keep_p6 = V._p
+V._p = lambda *parts: os.path.join(_tmp6, *parts)
+os.makedirs(os.path.join(_tmp6, "data"), exist_ok=True)
+from agent import wechat as _wxL                                          # noqa: E402
+_saved_led = list(_wxL._SWITCH_FAILS)
+try:
+    _wxL._SWITCH_FAILS[:] = []
+    _r6 = V.run("send_blocked")
+    _g6 = [c for c in _r6["checks"] if c["name"] == "最近的发送记录里没有失败"]
+    ok("C6a 没有发送记录 ⇒ 那一格是**没测到（None）**，不是「通过」",
+       len(_g6) == 1 and _g6[0]["ok"] is None, str(_g6))
+    ok("C6b 说明里就写着「没测到」，并告诉用户怎么才能测到",
+       bool(_g6) and "没测到" in _g6[0]["detail"] and "再点一次" in _g6[0]["detail"],
+       _g6[0]["detail"][:90] if _g6 else "")
+    ok("C6c 反例锚：老写法（条件位写 True＋『这条不判坏』）在**没有记录**时给的就是「通过」",
+       V._check("最近的发送记录里没有失败", True, "最近没有发送记录 ⇒ 这条不判坏")["ok"] is True)
+    _l6 = [c for c in _r6["checks"] if c["name"].startswith("最近没有『确认不了目标会话")]
+    ok("C6d 新增一格盯**切会话失败台账**（与「它不回复」那一格同源）", len(_l6) == 1,
+       str([c["name"] for c in _r6["checks"]]))
+    ok("C6e 台账为空 ⇒ 这一格判 True（进程内台账本来就空着，这是事实不是没测到）",
+       bool(_l6) and _l6[0]["ok"] is True, str(_l6))
+    _wxL.note_switch_fail("发送前确认不了目标会话",
+                          "no_capture：抓不到渲染区（窗口不可见/权限不足）｜投递切会话：没成"
+                          "｜**微信主窗当时是最小化的**")
+    _r6b = V.run("send_blocked")
+    _l6b = [c for c in _r6b["checks"] if c["name"].startswith("最近没有『确认不了目标会话")]
+    ok("C6f 台账里有一条 ⇒ 这一格判 False", bool(_l6b) and _l6b[0]["ok"] is False, str(_l6b))
+    ok("C6g 它成为**卡点**（判决点名它，不再是被日志那格蒙过去）",
+       "确认不了目标会话" in (_r6b.get("verdict") or ""), (_r6b.get("verdict") or "")[:100])
+    ok("C6h 明细把原始原因带出来（用户看得懂：抓不到渲染区 / 最小化）",
+       bool(_l6b) and ("抓不到渲染区" in _l6b[0]["detail"]) and ("最小化" in _l6b[0]["detail"]),
+       _l6b[0]["detail"][:120] if _l6b else "")
+    ok("C6i **灵敏度**：同一次调用，台账空 ⇒ 不判否；多一条记录 ⇒ 判否（这条判据真的会红）",
+       _r6["ok"] is not False and _r6b["ok"] is False,
+       "空=%r 有=%r" % (_r6["ok"], _r6b["ok"]))
+finally:
+    _wxL._SWITCH_FAILS[:] = _saved_led
+    V._p = _keep_p6
+    shutil.rmtree(_tmp6, ignore_errors=True)
+
+print("\n── C7. 反馈「艾特它 它不会回复」：报告里要能看见「群里 @ 的是谁」（说明格，不误判）──")
+from agent import thought_trace as _ttJ                                      # noqa: E402
+from agent import prompt as _prJ                                             # noqa: E402
+_keep_ttf = _ttJ.FILE
+_tmp7 = tempfile.mkdtemp(prefix="pm-vf7-")
+_ttJ.FILE = os.path.join(_tmp7, "thoughts.jsonl")
+try:
+    ok("C7a `observed_at` 取得出 @ 后那串名字（微信用的分隔符 U+2005 也认）",
+       _prJ.observed_at("wxid_a: @群昵称甲\u2005你好") == "群昵称甲",
+       _prJ.observed_at("wxid_a: @群昵称甲\u2005你好"))
+    ok("C7b 没有 @ ⇒ 空串；怪输入不抛",
+       _prJ.observed_at("普通一句话") == "" and _prJ.observed_at(None) == "")
+    _c7 = [c for c in V.run("no_reply")["checks"] if c["name"] == "群里最近 @ 的名字它认得"]
+    ok("C7c 没样本时是**说明格（None）**并写清「没测到」",
+       len(_c7) == 1 and _c7[0]["ok"] is None and "没测到" in _c7[0]["detail"], str(_c7))
+    io.open(_ttJ.FILE, "w", encoding="utf-8").write(
+        '{"chat": "g1", "kind": "tier", "at": "群昵称甲", "known": "群deepseek"}\n')
+    _c7b = [c for c in V.run("no_reply")["checks"] if c["name"] == "群里最近 @ 的名字它认得"]
+    ok("C7d 名字**对不上** ⇒ 仍不判坏（那个 @ 也可能是 @ 别人的），但两个名字都进报告 + 给出动作",
+       len(_c7b) == 1 and _c7b[0]["ok"] is None
+       and ("群昵称甲" in _c7b[0]["detail"]) and ("群deepseek" in _c7b[0]["detail"])
+       and ("群昵称" in _c7b[0]["detail"]), _c7b[0]["detail"][:120] if _c7b else "")
+    io.open(_ttJ.FILE, "w", encoding="utf-8").write(
+        '{"chat": "g1", "kind": "tier", "at": "群deepseek", "known": "群deepseek"}\n')
+    _c7c = [c for c in V.run("no_reply")["checks"] if c["name"] == "群里最近 @ 的名字它认得"]
+    ok("C7e 名字**一致** ⇒ 判 True（同一判定器翻面 ⇒ 它有灵敏度）",
+       len(_c7c) == 1 and _c7c[0]["ok"] is True, str(_c7c))
+finally:
+    _ttJ.FILE = _keep_ttf
+    shutil.rmtree(_tmp7, ignore_errors=True)
+
 print("── D. 异常与未知 id 都不许抛（别把前端打崩）──")
 _u = V.run("不存在的东西")
 ok("未知 id ⇒ 同形状 + 说清可选清单", _u["ok"] is False and "没有这个检验器" in _u["verdict"], _u["verdict"][:80])

@@ -221,8 +221,29 @@ def v_send_blocked() -> dict:
     elif last_ok:
         _send_ok, _send_detail = True, "最近 200 行里有 %d 条成功发送记录" % last_ok
     else:
-        _send_ok, _send_detail = True, "最近没有发送记录（刚重启/还没发过）⇒ 这条不判坏"
+        # ⛔ 2026-09-21 修（网友 v0921-0922 报「消息发不出去」而本检验器给了 ✅「通过」）：
+        #   "日志里没有发送记录"＝**没测到**，不是"通过"（刚重启 / 日志轮转后这里本来就是空的）。
+        #   判据只能拿它当"未知"，让用户知道**这一格没给他任何保证**。
+        _send_ok, _send_detail = None, ("**没测到**：日志最近 200 行里没有任何发送记录"
+                                       "（刚重启/还没发过）—— 这既不算通过也不算失败；"
+                                       "在群里回它一句，再点一次这个检验器就能测到")
     checks.append(_check("最近的发送记录里没有失败", _send_ok, _send_detail))
+    # ⛔ 2026-09-21 加（同一个反馈的第二半）：真失败记在**进程内台账**里
+    #   （`wechat.note_switch_fail`，与「它不回复」那一格同源）——"发送前确认不了目标会话 /
+    #   内容级复核判否 / 名字档没确认"都在那儿，而本检验器原来一条都不看（只看日志尾部）。
+    try:
+        from . import wechat as _wx3
+        _sf2 = _wx3.recent_switch_fails(5)
+    except Exception:
+        _sf2 = []
+    _last2 = _sf2[-1] if _sf2 else {}
+    checks.append(_check("最近没有『确认不了目标会话 ⇒ 发不出去』的记录", not _sf2,
+                         ("本次运行已有 %d 次没能把回复发出去（最后一条 %s · %s：%s）⇒ 消息读得到、"
+                          "只是发不出去：先把目标会话在微信里点开再重试（最后一条里若写着「最小化」，"
+                          "把微信从任务栏点出来即可）。"
+                          % (len(_sf2), _last2.get("t", "?"), _last2.get("where", "?"),
+                             str(_last2.get("why", ""))[:150]))
+                         if _sf2 else "本次运行到现在没有『确认不了目标会话』的失败记录"))
     # 内部故障话术拦截（拦得对，但用户要知道它拦了什么）
     try:
         from . import sender as _s
@@ -233,12 +254,17 @@ def v_send_blocked() -> dict:
     except Exception:
         pass
     ok, verdict, action = _verdict(checks, "发送链各环节都正常：暂停关、版本门放行、投递档可用、"
-                                           "主窗在、消息库可读、最近有成功发送记录",
+                                           "主窗在、消息库可读，最近的发送记录里没有失败"
+                                           "（该格若为「没测到」＝这一项没给保证，别当承诺成立）",
                                    {"没有处于暂停": "点控制台的「继续」",
                                     "版本门不拦发送": "控制台「微信」面板看版本门横幅",
                                     "投递档可用（不是只走真鼠标被闸住）": "把 input.backend 选回投递档",
                                     "微信主窗找得到": "把微信窗口从托盘里点出来（Ctrl+Alt+W）",
-                                    "消息库读得到": "控制台「微信」面板跑一次「接微信」逐步检查"})
+                                    "消息库读得到": "控制台「微信」面板跑一次「接微信」逐步检查",
+                                    "最近的发送记录里没有失败": "把日志尾部那份文件一起反馈（控制台「反馈」可带附件）",
+                                    "最近没有『确认不了目标会话 ⇒ 发不出去』的记录":
+                                        "把目标会话在微信里点开再重试；最后一条若写着「最小化」，"
+                                        "把微信从任务栏点出来（或打开「最小化时自己还原」）"})
     return _finish("send_blocked", "消息发不出去 / 卡在未通过", "消息发不出去、聊天记录生成了但发不出、"
                                                               "卡在「未通过 会话投递失败」", ok, verdict, action, checks)
 
@@ -518,6 +544,35 @@ def v_no_reply() -> dict:
     except Exception:
         tier_note = "读不到回复档位"
     checks.append(_check("回复档位不是『只回艾特』却指望它搭话", tier_ok, tier_note))
+    # ⛔ 2026-09-21 加（B站评论「**艾特它 它不会回复**」）：把"群里最近 @ 的那个名字"摆到报告里 ——
+    #   微信 @ 用的是**群昵称**，可能既不是配置里的机器人昵称、也不是库里的账号昵称 ⇒
+    #   `is_at_me` 认不出"这是 @ 我"（档位 2/3 下就等于**没被唤醒**，用户看到的就是"艾特它也不回"）。
+    #   这是**说明格（None）**：不判好坏（那个 @ 也可能是 @ 别人的），只让报告带上"它看到的是谁的名字"，
+    #   名字对不上时给出可执行的一步。留痕见 `persona_morph.py` 的 `_tt.note(..., at=, known=)`。
+    try:
+        from . import thought_trace as _tt2
+        _at_last, _known_last = "", ""
+        for _it in reversed(_tt2.recent("", 50)):
+            if str(_it.get("at") or ""):
+                _at_last = str(_it.get("at"))
+                _known_last = str(_it.get("known") or "")
+                break
+        if _at_last:
+            _hit = any(_at_last == _x for _x in _known_last.split("、") if _x)
+            checks.append(_check("群里最近 @ 的名字它认得", True if _hit else None,
+                                 ("最近一次看到的 @ 名字是「%s」，与它以为的名字一致（%s）"
+                                  % (_at_last, _known_last)) if _hit else
+                                 ("最近一次看到的 @ 名字是「**%s**」，而它以为自己的名字是「%s」 ⇒ "
+                                  "**名字不一致时 @ 唤不醒它**：到微信里把这个号的群昵称改成与「机器人昵称」"
+                                  "一致，或反过来把「%s」填进机器人昵称。"
+                                  % (_at_last, _known_last or "（这次没记到）", _at_last))))
+        else:
+            checks.append(_check("群里最近 @ 的名字它认得", None,
+                                 "运行记录里还没有「有人 @ 它」的样本 ⇒ **没测到**"
+                                 "（这一格什么都不保证）；让人在群里 @ 它一次再看"))
+    except Exception as _e_at:
+        checks.append(_check("群里最近 @ 的名字它认得", None,
+                             "读不到运行记录（不影响其它判断）：%s" % str(_e_at)[:40]))
     ok, verdict, action = _verdict(checks, "监听在跑、key 已填、最近有响应记录 ⇒ 不回复多半是**档位/触发条件**"
                                            "（档位 1 只回艾特、档位 2 要关键词）",
                                    {"没有处于暂停": "点「继续」", "模型 key 已填": "控制台「模型」面板填 key",
