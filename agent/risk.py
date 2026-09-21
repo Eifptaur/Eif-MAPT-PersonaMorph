@@ -162,7 +162,9 @@ class RiskGate(object):
                     # ⛔ 第十一轮 V-R11-7：①这次暂停**是不是坏档 fail-closed 造成的**
                     #   （顶栏『恢复』能解开它，但必须说清解的是什么）②被操作者解开的次数
                     #   （留痕：能区分"正常恢复"与"有人把坏档锁顶开了"）。
-                    "fail_closed": False, "recovered_by_operator": 0}
+                    "fail_closed": False, "recovered_by_operator": 0,
+                    # ⛔ 第十二轮 V-R12-5：一键**暂停**方向也要留痕（与恢复方向对偶）
+                    "paused_by_operator": 0}
         self._load()
 
     # ── 状态读写 ────────────────────────────────────────────────────────
@@ -238,6 +240,21 @@ class RiskGate(object):
         if not persist.atomic_write_json(self.path, self._st, indent=None):
             log.warning("风险闸门状态落盘失败 ⇒ 停机开关重启后可能丢失（原档未动）：%s", self.path)
 
+    def _event_external(self, code: str, msg: str) -> None:
+        """把一条事实写进**事件台账**（`data/risk_events.jsonl`）—— 状态档写不进去时用它。
+
+        ⛔ 第十二轮 **V-R12-7**：坏档留证失败 ⇒ 状态档**拒写**（保住原档），但"操作者解开过这次暂停"
+        这件事不能跟着丢 —— 这台机器上唯一还能追加写的档就是事件台账（不受 `_refuse_overwrite` 管）。
+        """
+        try:
+            rec = {"ts": int(time.time() * 1000), "level": 3, "code": str(code)[:40],
+                   "chat": "", "allowed": True, "msg": str(msg)[:200], "text": ""}
+            os.makedirs(os.path.dirname(self.event_path), exist_ok=True)
+            with open(self.event_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+
     def _event(self, verdict, chat_key, text=""):
         rec = {"ts": int(time.time() * 1000), "level": verdict.level, "code": verdict.code,
                "chat": str(chat_key or "")[:60], "allowed": bool(verdict.allowed),
@@ -282,9 +299,18 @@ class RiskGate(object):
         if now == prev:
             return
         if now and not self._st.get("paused"):
+            # ⛔ 2026-09-22 修（第十二轮 **V-R12-5** · P2）：**暂停方向也要落盘** —— 第十一轮只给
+            #   "恢复"方向补了 `_save()`，于是"操作者按了暂停"只活在内存里：盘上还是 `paused:false`，
+            #   别的读者（verifiers 读快照 / 重启后的 `_load`）看到的是旧值，flag 一被清就无声恢复。
             self._st["paused"] = True
             self._st["paused_reason"] = "控制台按了「暂停所有发送」"
-            log.info("风险闸门：跟随控制台『暂停』标记 ⇒ 暂停自动发送")
+            self._st["paused_by_operator"] = int(self._st.get("paused_by_operator") or 0) + 1
+            try:
+                self._save()
+            except Exception as _e_sv2:
+                log.warning("风险闸门：跟随『暂停』时落盘失败（重启后可能不再暂停）：%s", _e_sv2)
+            log.warning("风险闸门：跟随控制台『暂停』标记 ⇒ 暂停自动发送（一键暂停路径 · 第 %d 次）",
+                        self._st["paused_by_operator"])
         elif (not now) and self._st.get("paused"):
             # 一键恢复：用户在界面上点『恢复』（标记消失）⇒ 闸门跟着解，不用去碰没有前端入口的 API
             # ⛔ 2026-09-21 修（第十一轮 **V-R11-7** · P2）：这条"出口"保留（把用户锁死更糟），
@@ -301,6 +327,14 @@ class RiskGate(object):
                 self._save()
             except Exception as _e_sv:
                 log.warning("风险闸门：跟随『恢复』时落盘失败（重启后可能又粘上暂停）：%s", _e_sv)
+            if self._refuse_overwrite:
+                # ⛔ 2026-09-22 加（第十二轮 **V-R12-7** · P3）：坏档**留证也失败**时 `_save` 是**拒写**的
+                #   ⇒ 内存里锁解开了、盘上一个字节没变，重启后 fail-closed 暂停又回来，连
+                #   `recovered_by_operator` 也一起归零（事后无从知道"有人解开过"）。
+                #   那就把这件事实**写到另一个不受保护的档**（事件台账，追加热写）。
+                self._event_external("operator_recover_refused_persist",
+                                     "坏档留证失败 ⇒ 状态档拒写；这次由操作者解开的暂停**只活在内存**"
+                                     "（重启会回到 fail-closed 暂停）")
             log.warning("风险闸门：跟随控制台『恢复』标记 ⇒ 已恢复自动发送（一键恢复路径 · 第 %d 次）%s",
                         self._st["recovered_by_operator"],
                         "——⚠️ 这次的暂停原本是**坏档 fail-closed** 造成的：锁已按你的操作解开，"

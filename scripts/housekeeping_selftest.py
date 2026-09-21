@@ -198,14 +198,34 @@ try:
     ok("V-R11-12 反例锚（灵敏度）：老写法（只看前缀）会把 `seg_1.txt` 一起删掉",
        "seg_1.txt".startswith(HK.MEDIA_PREFIXES) is True
        and HK.is_our_media_name("seg_1.txt") is False)
+    # ⛔ 第十二轮 V-R12-9：**传别的 prefixes 元组时许不许静默关掉形状检查**（老写法会关）
+    _d8c = os.path.join(tmp, "d8c")
+    os.makedirs(_d8c, exist_ok=True)
+    _u8c = touch(_d8c, "seg_1.txt", 4096, age_s=30 * 86400, now=now)      # 用户的文件（形状不对）
+    _o8c = touch(_d8c, "tts_120002.wav", 4096, age_s=30 * 86400, now=now)  # 真产物
+    _r8c = HK.prune_dir(_d8c, keep_newest=0, max_age_days=1, now=now,
+                        prefixes=("tts_", "vc_", "seg_"))                 # ⬅ 与默认元组"相等"但**不是默认对象**
+    ok("V-R12-9 形状检查默认一律开：传自定义 prefixes 也不许把它静默关掉",
+       os.path.exists(_u8c) and (not os.path.exists(_o8c)) and _r8c["removed"] == 1,
+       "留下用户文件=%s 清掉真产物=%s removed=%s" % (os.path.exists(_u8c), not os.path.exists(_o8c), _r8c["removed"]))
+    _d8d = os.path.join(tmp, "d8d")
+    os.makedirs(_d8d, exist_ok=True)
+    _u8d = touch(_d8d, "seg_1.txt", 4096, age_s=30 * 86400, now=now)
+    HK.prune_dir(_d8d, keep_newest=0, max_age_days=1, now=now, prefixes=(), shape_check=False)
+    ok("V-R12-9 反例锚：显式 `shape_check=False` （＋不筛前缀）才等价于老行为 ⇒ 用户文件真被删",
+       not os.path.exists(_u8d))
 
     def _old_way_kills_user(now_):
-        """反例锚：`prefixes=()`＝老行为（不筛名字）⇒ 同一批"用户的文件"必被删。"""
+        """反例锚：`prefixes=()` + `shape_check=False` ＝ 老行为（既不筛前缀、也不看形状）⇒ 必被删。
+
+        ⚠️ 第十二轮 **V-R12-9**：形状检查现在**默认开**（旧写法传别的 `prefixes` 元组会**静默**关掉它，
+        语义与 docstring 相反）⇒ 这条反例锚必须**显式**把两道都关掉，才等价于"修之前的行为"。
+        """
         _d = os.path.join(tmp, "d8-oldway")
         os.makedirs(_d, exist_ok=True)
         for _nm in ("我的会议录音.mp3", "DSC_0042.JPG"):
             _p = touch(_d, _nm, 8192, age_s=30 * 86400, now=now_)
-        HK.prune_dir(_d, keep_newest=0, max_age_days=1, now=now_, prefixes=())
+        HK.prune_dir(_d, keep_newest=0, max_age_days=1, now=now_, prefixes=(), shape_check=False)
         return not os.path.exists(os.path.join(_d, "我的会议录音.mp3"))
 
     ok("反证（灵敏度）：把前缀白名单去掉，同一夹具里用户文件**真的会被删**",

@@ -184,7 +184,7 @@ def sweep_temp(prefixes=TEMP_PREFIXES, max_age_h: float = 24.0, root: str | None
 
 def prune_dir(path: str, keep_newest: int = 0, max_age_days: float = 0.0, max_mb: float = 0.0,
               min_age_s: float = MIN_AGE_S, now: float | None = None, dry: bool = False,
-              prefixes=MEDIA_PREFIXES, ledger: str = "") -> dict:
+              prefixes=MEDIA_PREFIXES, ledger: str = "", shape_check: bool = True) -> dict:
     """按策略清一个目录里**我们自己造的产物**（不递归、不删子目录）⇒ `{removed, bytes, kept, skipped, ledger}`。
 
     删除条件（满足任一，且都得先过"够老"这一关）：
@@ -199,15 +199,19 @@ def prune_dir(path: str, keep_newest: int = 0, max_age_days: float = 0.0, max_mb
 
     ⛔ 2026-09-22 再加 **V-R11-12（P3）**：光看前缀还不够 —— 这个目录是**用户可配**的
     （`voice_reply.dir`），`seg_1.txt` / `vc_notes.md` 这类"用户自己起的名"照样会被误删。
-    ⇒ 默认走**双条件**（前缀 **且** 扩展名是我们真会产出的那些，见 `is_our_media_name`）；
-    显式传 `prefixes=None` 时退回"只看前缀"（只给"我自己造的临时目录"这类调用方用）。
+    ⇒ 默认走**双条件**（前缀 **且** 形状（正则）对得上我们真会产出的名字，见 `is_our_media_name`）。
+
+    ⛔ 第十二轮 **V-R12-9（P3）**：形状检查**默认一律开**，只有显式 `shape_check=False` 才关
+    （老写法 `_strict = (prefixes == MEDIA_PREFIXES)` ⇒ 调用方传**别的**前缀元组时会**静默**
+    把形状检查关掉，语义与 docstring 相反）。`prefixes=None / ()` ＝ **不按前缀筛**（"我自己造的
+    临时目录"这类调用方用），但**形状检查照旧**——两条互不牵连。
     """
     now = time.time() if now is None else now
     res = {"removed": 0, "bytes": 0, "kept": 0, "skipped": 0, "ledger": ""}
     if not path or not os.path.isdir(path):
         return res
     _pref = tuple(prefixes or ())
-    _strict = (prefixes is None or tuple(prefixes or ()) == tuple(MEDIA_PREFIXES))
+    _strict = bool(shape_check)
     items = []
     for nm in os.listdir(path):
         p = os.path.join(path, nm)

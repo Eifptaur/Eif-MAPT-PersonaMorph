@@ -299,6 +299,13 @@ try:
        '_ACCT_CHK["at"] = time.time() + 45.0' in _pm)
     ok("旧的「启动时微信没开 ⇒ 10 秒重试」那条仍在（没被这次改动挤掉）",
        'wechat_box[0] is None and (time.time() - float(_ATTACH.get("at") or 0)) >= 10' in _pm)
+    # ⛔ 第十二轮 **V-R12-6**（P3）：水位表的账号维**不许**因为 adapter 说"我不知道我是谁"就塌回
+    #   `?` 那个共用格子 —— 必须先去 `wechat_dir` 问一次（它按"哪个账号目录在写"判断）。
+    _seg_acct = _pm[_pm.index("def _wm_account_of("):]
+    _seg_acct = _seg_acct[:_seg_acct.index("def _release_adapter(")]
+    ok("V-R12-6：`_wm_account_of` 认不出账号时**回落到 `wechat_dir`**（少用一次那个共用的 `?` 格子）",
+       "db_account" in _seg_acct and "wechat_dir" in _seg_acct
+       and ("status()" in _seg_acct or "pick_account" in _seg_acct), _seg_acct[:120].replace("\n", " "))
     _rep = _src(os.path.join("scripts", "collect_report.py"))
     ok("检验报告会印**在读哪个账号** + 这台机器上有哪几个号",
        "消息库账号: " in _rep and "这台机器上的微信账号目录" in _rep)

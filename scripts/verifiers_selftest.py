@@ -309,10 +309,33 @@ ok("C11b2 图例**不用 emoji 符号**（显示层自研口径 · `console_copy
    _sm.has(_ch11, "勾＝通过") and _sm.has(_ch11, "空心圆＝没测到"))
 ok("C11c **判决→界面状态**的映射在位（按钮 dataset.vstate + 判决摘要 #vfState）",
    _sm.has(_ch11, "dataset.vstate") and _sm.has(_ch11, 'id="vfState"'))
-ok("C11d 三态各有自己的样式（通过/部分通过/卡住 ⇒ 三个 data-vstate 规则）",
-   _ch11.count("button.ghost[data-vstate=") == 3, "%d 条" % _ch11.count("button.ghost[data-vstate="))
+ok("C11d 四档各有自己的样式（通过/部分通过/卡住/**没测到** ⇒ 四个 data-vstate 规则）",
+   _ch11.count("button.ghost[data-vstate=") == 4, "%d 条" % _ch11.count("button.ghost[data-vstate="))
 ok("C11e 映射的取值来自**同一次结果**的 ok/partial（不另算一套）",
    _sm.has(_ch11, "r.partial") and _sm.has(_ch11, "r.ok === false"))
+# ⛔ 2026-09-22 加（第十二轮 **V-R12-3** · P2）：**行为级**锚 —— 把前端那段判决映射**抽出来在 node 里跑**
+#   四种输入，断言 `没测到 ⇒ unknown`（老写法把最后的 `'unknown'` 改成 `'ok'` 时，这条必红；
+#   而它此前**任何判据都抓不住** —— 一次改动就能把"没测到"重新变成绿按钮）。
+try:
+    import json as _json11                                          # noqa: E402
+    _st_i = _ch11.index("const st = (r && r.ok === false)")
+    _st_end = "'unknown'));"
+    _st_j = _ch11.index(_st_end, _st_i) + len(_st_end)      # ⚠️ 只切到这条 const 语句结尾
+    _js11 = _ch11[_st_i:_st_j]
+    _node11 = os.path.join(tempfile.mkdtemp(prefix="pm-vfjs-"), "m.js")
+    with io.open(_node11, "w", encoding="utf-8") as _f:
+        _f.write("const r = JSON.parse(process.argv[2]);\n" + _js11 + "\nconsole.log(st);\n")
+    import subprocess as _sp                                              # noqa: E402
+    _cases11 = [({"ok": None}, "unknown"), ({"ok": True, "partial": True}, "partial"),
+                ({"ok": False}, "fail"), ({"ok": True}, "ok")]
+    _got11 = []
+    for _in, _want in _cases11:
+        _r11js = _sp.run(["node", _node11, _json11.dumps(_in)], capture_output=True, text=True, timeout=30)
+        _got11.append((_in, (_r11js.stdout or "").strip(), _want))
+    ok("C11e2 行为级：四种结果 ⇒ 四档状态（`没测到` 必须落 `unknown`，不许落 `ok`）",
+       all(g == w for _i, g, w in _got11), str(_got11))
+except Exception as _e11:
+    ok("C11e2 行为级：四档映射", False, "跑不起来：%s" % str(_e11)[:80])
 # 反例锚：老写法（只把 report 塞进 <pre>、不设状态、没有图例）用**同一条判据**判不合格
 _OLDUI11 = ("pre.textContent=(r&&r.report)||JSON.stringify(r,null,1);\n"
             "        if(cp) cp.disabled=!(r&&r.report);\n")

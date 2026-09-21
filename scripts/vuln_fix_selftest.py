@@ -949,7 +949,7 @@ try:
        str(_st_pend.get("why"))[:90])
     # 反过来：真有新版本时仍然报 newer，但要把"还有几件没换"附在原因里
     uc.fetch_any = lambda urls, timeout=12.0, patient=None: (
-        {"base": {"version": "9999.9.9", "build": "deadbeefcafe", "url": "", "sha256": ""}, "announce": {}}, "", "")
+        {"base": {"version": "2026.10.1.1", "build": "deadbeefcafe", "url": "", "sha256": ""}, "announce": {}}, "", "")
     _st_new = uc.state()
     ok("有新版本 + 有待补 ⇒ 仍报 newer，但原因里带上待补（两条信息都不能丢）",
        _st_new.get("status") == "newer" and "没换成" in str(_st_new.get("why")),

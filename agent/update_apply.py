@@ -624,9 +624,9 @@ def run_once(manifest=None, zip_path=None, target=ROOT, dry=False, progress=None
         return {"ok": False, "rc": 2, "why": _gate["why"], "phase": "probe",
                 "version": theirs, "gate": _gate.get("kind"), "needRestart": False}
     if zip_path:
-        # ⛔ 2026-09-22（第十一轮 **V-R11-2** 第 2 条）：明确给了包（自测/本地安装）时由调用方保证
-        #   地址可信 ⇒ 这里入账。
-        _note_seen(theirs)
+        # ⛔ 2026-09-22（第十二轮 **V-R12-8**）：入账挪到**真装成功之后**（见下面唯一的 `_note_seen` 调用点）
+        #   —— 明确给了包也不在这里记：干跑/失败都不许顶高回滚闸。
+        pass
     # ⛔ 2026-09-20 修 **V2**：同版本号换包（"只修 bug 不改版本"这条路，`make_manifest --build` 就是
     #   为它准备的）以前**只比版本号** ⇒ 控制台侧比了内容指纹判 `newer`、这里却回"已是最新"，
     #   于是横幅永远消不掉、点「立即更新」静默什么都不做。现在两边都比：版本 ≤ 我的 **且** 指纹相同
@@ -663,10 +663,10 @@ def run_once(manifest=None, zip_path=None, target=ROOT, dry=False, progress=None
         if not _u_ok and not _local_ok:
             _set(state="error", phase="probe", why=_u_why)
             return {"ok": False, "rc": 2, "why": "清单给的下载地址不可信：%s" % _u_why, "phase": "probe"}
-        # ⛔ 2026-09-22 修（第十一轮 **V-R11-2** 第 2 条 · P1）：**先验"下载地址可信"、再记
-        #   「见过的最高版本」** —— 老写法把 `_note_seen(theirs)` 放在这一步**之前**，于是一份
-        #   下载地址都不可信的清单照样能把用户的回滚闸顶高（＝不可信的源也能改本机状态）。
-        _note_seen(theirs)
+        # ⛔ 2026-09-22 修（第十二轮 **V-R12-8** · P3）：这里**不再入账** —— 老写法在"地址可信"
+        #   之后就记 `maxSeenVersion`，而下载/哈希/换入都还没发生（失败、干跑都算"见过"）⇒
+        #   会留下"见过但没装上"的版本号白白顶高回滚闸。现在唯一的入账点在**真装成功之后**。
+        #   （地址可信性检查本身当然仍必须在下载之前。）
         zip_path = os.path.join(target, CACHE_REL, "persona-morph-%s.zip" % (theirs or "new"))
         _set(state="running", phase="download", why="正在下载 %s" % theirs, got=0, total=0)
         # 2026-09-17（用户报「卡在 0% 不动」）：把**换源重试**暴露到作业状态里 —— 老实现只在换源时
@@ -706,6 +706,11 @@ def run_once(manifest=None, zip_path=None, target=ROOT, dry=False, progress=None
     #   （而模块 docstring 给的示例用法正是 `run_once(dry=True)`）。干跑必须"只说不做"。
     _real = bool(rc == 0) and (not dry) and (not detail.get("dry")) \
         and (detail.get("status") != "current")
+    # ⛔ 2026-09-22 修（第十二轮 **V-R12-8** · P3）：`_note_seen` **挪到"真装成功"之后** ——
+    #   老写法在"过了下载地址检查"就入账（下载/哈希/换入都还没发生），干跑也会入账 ⇒
+    #   留下一堆"见过但没装上"的版本号，白白顶高回滚闸（干跑/失败都不该记）。
+    if rc == 0 and not dry and not detail.get("dry") and detail.get("status") != "current":
+        _note_seen(theirs)
     if rc == 0:
         _set(state="done", phase="done", msg=msg, needRestart=_real, why="")
     else:

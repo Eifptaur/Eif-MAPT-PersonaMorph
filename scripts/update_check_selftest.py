@@ -527,5 +527,34 @@ _st_now = _j27.load(open(UC._state_path(), encoding="utf-8"))
 ok(_o_hi.get("status") == "newer" and str(_st_now.get("maxSeenVersion") or "") == "2026.10.1.1",
    "③ 见过的最高版本**落盘**（下次才能识别回滚）", str(_st_now)[:110])
 
+print("\n[U11] 第十二轮 V-R12-1/4：上界闸门要**真的拦住**、把结论说对、且不入账（不是源码子串）")
+_man_far = mk_manifest(os.path.join(tmp, "far.json"), "2099.9.9", ["超前"])
+open(UC._state_path(), "w", encoding="utf-8").write(_j27.dumps({"maxSeenVersion": "2026.1.1.1"}))
+_o_far = _orig_state({"url": _man_far})
+_st_far = _j27.load(open(UC._state_path(), encoding="utf-8"))
+ok(_o_far.get("status") == "error" and _o_far.get("kind") == "far_ahead",
+   "④ 超前半年以上的清单 ⇒ `state()` 报 **error + kind=far_ahead**（第十一轮这里曾报 `newer`）",
+   str(_o_far)[:140])
+ok(str(_st_far.get("maxSeenVersion") or "") == "2026.1.1.1",
+   "④ …而且**没有入账**（`state()` 必须把 `kind` 抄进 `out`，否则那道守卫永不成立 —— V-R12-1）",
+   str(_st_far)[:110])
+_man_typo = mk_manifest(os.path.join(tmp, "typo.json"), "2027.9.22", ["手误版本号"])
+open(UC._state_path(), "w", encoding="utf-8").write(_j27.dumps({"maxSeenVersion": "2026.1.1.1"}))
+_o_typo = _orig_state({"url": _man_typo})
+ok(_o_typo.get("status") == "error" and _o_typo.get("kind") == "far_ahead",
+   "④b 判据是**时间跨度**（超前 > 180 天）而不是「只看年」⇒ 一年以内的手误版本也拦得住（V-R12-4）",
+   str(_o_typo)[:130])
+_man_ok11 = mk_manifest(os.path.join(tmp, "ok11.json"), "2026.10.1.1", ["正常"])
+ok(_orig_state({"url": _man_ok11}).get("status") == "newer",
+   "④c 阳性对照：同年内的正常新版本照旧判 `newer`（上界没把正常路堵死）")
+open(UC._state_path(), "w", encoding="utf-8").write(_j27.dumps({"maxSeenVersion": "2099.9.9"}))
+_rst11 = UC.reset_seen_version()
+_st_rst11 = _j27.load(open(UC._state_path(), encoding="utf-8"))
+ok(_rst11.get("ok") is True and "maxSeenVersion" not in _st_rst11
+   and str(_rst11.get("before") or "") == "2099.9.9",
+   "⑤ 复位口（`reset_seen_version`）清掉那一个键、别的读数不动", str(_rst11)[:110])
+ok(_orig_state({"url": _man_ok11}).get("status") == "newer",
+   "⑤ …复位之后真清单不再被判回滚（闸门解开）")
+
 print("\n==== 更新检查判据：%d 通过 / %d 失败 ====" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

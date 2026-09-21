@@ -647,56 +647,79 @@ def _section_L27():
     _th.Thread(target=_srv27.serve_forever, daemon=True).start()
 
     _real_gai27 = socket.getaddrinfo
+    _real_conn27 = socket.create_connection
     _real_priv27 = SF._is_private_ip
     _calls27 = {"n": 0}
+    # ⛔ 2026-09-22 修（第十二轮 **V-R12-2** · P1）：**判据钉在"连接的目标是谁"上，而不是"解析了几次"**。
+    #   旧写法（DNS 翻转 + 预置计数）被审计实测否掉：真实调用点退回 `urlopen` 后，老写法只消耗
+    #   **2 次解析**（闸门 1 次 + 连接 1 次）⇒ 落在我的"第 3 次起才坏"之外 ⇒ L27a/L27b 全绿
+    #   （"灵敏度是造出来的"）。现在改成**连接层直接取证**：
+    #     · 钉 IP 的实现 ⇒ `socket.create_connection` 拿到的是**IP 字面量**（"127.0.0.1"）；
+    #     · `urlopen` 老写法 ⇒ `http.client` 传进来的是**主机名**（"pinned.test"）⇒ 当场判否。
+    #   这条判据不依赖任何"预置计数"，退回老写法**必红**。
+    _conn27 = []
+
+    def _spy_conn27(address, *a, **k):
+        _conn27.append(tuple(address) if isinstance(address, (tuple, list)) else (address,))
+        host = str(_conn27[-1][0])
+        # 只放行"已校验的 IP"：主机名一律拒（老写法就是拿着域名来连的）
+        if host != "127.0.0.1":
+            raise OSError("判据夹具：连接目标是 %r（不是校验过的 IP）⇒ 判否" % host)
+        return _real_conn27(("127.0.0.1", int(_conn27[-1][1])), *a, **k)
 
     def _flip27(host, port, *a, **k):
-        """**闸门那两次解析**给 127.0.0.1（真服务）；之后的解析给 127.0.0.2（没人监听）。
-
-        为什么是"第 1~2 次"：闸门自己会解两次（AF_UNSPEC 两种族，见 L22 的读数 hits=4）；
-        钉 IP 的实现**连的时候不再解析** ⇒ 永远用不到那个坏地址；老写法（`urlopen`）在连接时
-        再解一次 ⇒ 拿到坏地址 ⇒ 连不上（这就是"DNS 翻转穿透闸门"的可复现形态）。
-        """
         _calls27["n"] += 1
-        ip = "127.0.0.1" if _calls27["n"] <= 2 else "127.0.0.2"
-        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, int(port) if port else 80))]
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", int(port) if port else 80))]
+
+    def _ip_literal(addr):
+        try:
+            ipaddress.ip_address(str(addr))
+            return True
+        except Exception:
+            return False
 
     _tmp27 = tempfile.mkdtemp(prefix="pm-l27-")
     try:
         socket.getaddrinfo = _flip27
+        socket.create_connection = _spy_conn27
         SF._is_private_ip = lambda *a, **k: False      # 只在本段里放私网（否则闸门先拒，测不到连接层）
         # ① bilibili._download
         from agent import bilibili as _b27                              # noqa: E402
         _dest27 = os.path.join(_tmp27, "a.mp3")
         _bytes27, _why27 = _b27._download("http://pinned.test:%d/a.mp3" % _port27, _dest27)
-        ok("L27a `bilibili._download` 连的是**校验过的那次解析**（DNS 第 2 次翻转 ⇒ 仍拿到真内容）",
-           int(_bytes27 or 0) == len(_body27), "bytes=%s why=%s 解析次数=%d" % (_bytes27, _why27, _calls27["n"]))
+        ok("L27a `bilibili._download` 的连接目标是**IP 字面量**（不是域名 ⇒ 没给 DNS 第二次机会）",
+           int(_bytes27 or 0) == len(_body27) and _conn27 and all(_ip_literal(a[0]) for a in _conn27),
+           "bytes=%s why=%s 连接目标=%s" % (_bytes27, _why27, _conn27[:3]))
         # ② video_gen._get（URL → bytes 的那条）
         from agent import video_gen as _v27                             # noqa: E402
-        _calls27["n"] = 0
+        _conn27.clear()
         _got27 = _v27._get("http://pinned.test:%d/v.mp4" % _port27, 10, allow_private=True)
-        ok("L27b `video_gen._get` 同上（翻转后照样拿到真内容）",
-           _got27 == _body27, "len=%s 解析次数=%d" % (len(_got27 or b""), _calls27["n"]))
+        ok("L27b `video_gen._get` 同上（连的是 IP 字面量）",
+           _got27 == _body27 and _conn27 and all(_ip_literal(a[0]) for a in _conn27),
+           "len=%s 连接目标=%s" % (len(_got27 or b""), _conn27[:3]))
         # ③ image_gen 的回链分支：**只在这一段里**不许出现 urlopen（其它协议仍在用它是合法的）
         _ig27 = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                   "agent", "image_gen.py"), encoding="utf-8").read()
         _seg27 = _ig27[_ig27.index("_same = bool(_so(str(link), base))"):]
         _seg27 = _seg27[:_seg27.index("_save_image_bytes(_data")]
+        _seg27_ok = ("fetch_pinned_stream" in _seg27) and ("urlopen(" not in _seg27)
         ok("L27c `image_gen` 的回链分支：只走 `fetch_pinned_stream`，段里没有 `urlopen(` 调用",
-           "fetch_pinned_stream" in _seg27 and "urlopen(" not in _seg27, _seg27[:80].replace("\n", " "))
-        # ④ 反例锚：把老写法加回来 ⇒ 上面两条**必须红**（用同一套夹具复刻老写法）
-        #    注意把计数器摆到"闸门已经解过两次"的位置：老写法在**连接时**再解一次 ⇒ 第 3 次 ⇒ 坏地址
-        _calls27["n"] = 2
+           _seg27_ok, ("命中" if _seg27_ok else _seg27[:80].replace("\n", " ")))
+        # ④ 反例锚：**同一条判据**下，老写法（`urlopen`）拿域名去连 ⇒ 必被抓住
+        _conn27.clear()
         _old_ok27 = True
         try:
             _req = urllib.request.Request("http://pinned.test:%d/a.mp3" % _port27)
             urllib.request.urlopen(_req, timeout=5).read()
         except Exception:
-            _old_ok27 = False                          # 第 3 次解析⇒127.0.0.2⇒连不上 ⇒ 老写法必失败
-        ok("L27d 反例锚（灵敏度）：**同一夹具**下老写法（`urlopen` 二次解析）连不上 ⇒ L27a/b 真的会红",
-           _old_ok27 is False and _calls27["n"] >= 3, "老写法成功=%s 解析次数=%d" % (_old_ok27, _calls27["n"]))
+            _old_ok27 = False          # 连接层拿到的是 "pinned.test" ⇒ 夹具拒 ⇒ 老写法必失败
+        _old_targets = [str(a[0]) for a in _conn27]
+        ok("L27d 反例锚（灵敏度）：**同一判据**下老写法连的是域名 ⇒ 必红（不靠预置计数）",
+           _old_ok27 is False and bool(_old_targets) and not all(_ip_literal(t) for t in _old_targets),
+           "老写法成功=%s 连接目标=%s" % (_old_ok27, _old_targets[:3]))
     finally:
         socket.getaddrinfo = _real_gai27
+        socket.create_connection = _real_conn27
         SF._is_private_ip = _real_priv27
         try:
             _srv27.shutdown()
