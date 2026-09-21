@@ -5012,6 +5012,13 @@ $('pauseBtn').onclick = async ()=>{
   btn.textContent = wantPaused ? '暂停中…' : '恢复中…';
   try{
     await getJSON(wantPaused ? '/api/pause' : '/api/resume', {method:'POST'});
+    // ⛔ 2026-09-21 加（第十轮 **V-R10-24** 的收尾）：**"恢复"要真能救回来** ——
+    //   坏档 fail-closed 时，`paused.flag`（控制台横幅认的那套）与 `risk.paused`（配置那套）
+    //   可能只剩一套被清掉 ⇒ 用户点「恢复」看着好了、实际还在停发。所以"想恢复"这一路
+    //   再补一发**两把钥匙一起清**的 `risk.recover()`；补刀失败**不影响**主路径的提示。
+    if(!wantPaused){
+      try{ await postJSON('/api/risk', {action: 'recover'}); }catch(_e){ /* 补刀失败不遮主结果 */ }
+    }
     window.__pausedNow = wantPaused;
     btn.textContent = wantPaused ? '恢复' : '暂停';      // 按钮上写"下一步能做什么"
     if($('runText')) $('runText').textContent = wantPaused ? '已暂停' : '运行中';

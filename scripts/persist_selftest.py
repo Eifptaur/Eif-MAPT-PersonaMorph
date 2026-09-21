@@ -801,6 +801,19 @@ def _s13_risk_oneclick_recover(TMP):
                          'with open(_p, "w", encoding="utf-8") as f:\n    _json.dump(x, f, indent=1)\n')))
     shutil.rmtree(_t14, ignore_errors=True)
 
+    print("\n== ⑮ V-R10-24 收尾：`recover()` 必须有真调用者（一键恢复） ==")
+    _ui15 = _read(os.path.join(ROOT, "agent", "webui.py"))
+    _ch15 = _read(os.path.join(ROOT, "agent", "console_html.py"))
+    check("⑮ `POST /api/risk` 支持 `action=recover`（不再只是模块里的死函数）",
+          SM.has(_ui15, 'act == "recover"') and SM.has(_ui15, "_risk.recover()"))
+    check("⑮ 控制台点「恢复」时补一发 recover（两套停机开关一起清）",
+          SM.has(_ch15, "postJSON('/api/risk', {action: 'recover'})"))
+    _OLDCH15 = "await getJSON('/api/resume', {method:'POST'});"        # 老写法：控制台只打 resume
+    _OLDU15 = 'elif act == "resume":\n            _risk.resume()'       # 老写法：/api/risk 没有 recover 档
+    check("⑮ 反例锚：老写法（控制台只打 /api/resume、`/api/risk` 只有 pause/resume）"
+          "用**同一条判据**判不合格",
+          (not SM.has(_OLDCH15, "postJSON('/api/risk'")) and (not SM.has(_OLDU15, 'act == "recover"')))
+
 
 if __name__ == "__main__":
     main()
