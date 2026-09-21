@@ -172,8 +172,12 @@ def main():
     # ── 用户拍板（2026-09-17）：「不要让用户担风险啊，还要删这删那的、还要试这试那的，不行」 ──
     #    ⇒ 老办法"删 data\listener_watermark.json"不许留给用户，必须变成控制台上的一个按钮。
     print("\n-- H. 用户零操作：控制台一键「重新对齐监听水位」（不删文件、不重启） --")
-    ok("主程序里有 _reset_watermark（按当前最新对齐、显式 forward_only=False）",
-       "def _reset_watermark()" in _pm and 'wm.set("group:" + wxid, seq, forward_only=False)' in _pm)
+    ok("主程序里有 _reset_watermark（按当前最新对齐、显式 forward_only=False；"
+       "V-R11-13 起改调带 `ok` 的 `latest_seq_ex`，读失败**不动水位**）",
+       "def _reset_watermark()" in _pm
+       and _sm.has(_pm, 'wm.set("group:" + wxid, int(_seq13), forward_only=False)')
+       and _sm.has(_pm, "_ok13, _seq13, _why13 = _wc.latest_seq_ex(wxid)")
+       and not _sm.has(_pm, 'wm.set("group:" + wxid, seq, forward_only=False)'))
     ok("它接进了 WebUI（watermark_reset_fn=_reset_watermark）",
        "watermark_reset_fn=_reset_watermark" in _pm)
     _ui = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "agent", "webui.py"),
@@ -274,13 +278,33 @@ def main():
     ok("② 两个账号的格子**同时留在文件里**，切回来各读各的",
        _wa2.get("group:x") == 900 and _wb2.get("group:x") == 7,
        (_wa2.get("group:x"), _wb2.get("group:x")))
-    ok("③ 空账号（认不出账号）⇒ **沿用老键名**，单号机器行为一字不变",
+    ok("③ 空账号（认不出账号）⇒ 走**保留命名空间 `?`**，绝不回退到无前缀的老键名（V-R11-5）",
        lw.Watermark(_p_acct).data.get("group:x") is None
        and lw.Watermark(_p_acct, "acctB")._ns("group:x") == "acctB|group:x"
-       and lw.Watermark(_p_acct)._ns("group:x") == "group:x")
+       and lw.Watermark(_p_acct)._ns("group:x") == "?|group:x")
+    # ⛔ V-R11-5：老档里躺着一个**无前缀**的键（＝升级前"两个号共用的那一格"）——
+    #   认不出账号时**不许**直接继承它（要么读 0 走"对齐到最新"，要么按 `?` 各自记账）。
+    _p_legacy = os.path.join(tmp, "wm_legacy.json")
+    with open(_p_legacy, "w", encoding="utf-8") as _f11:
+        json.dump({"group:x": 900}, _f11)                 # 模拟升级前的老档（无账号维）
+    _w_unknown = lw.Watermark(_p_legacy)                  # 认不出账号（account = ''）
+    ok("③b 老档（无前缀的共用格）+ 认不出账号 ⇒ 读到的是 **0**（不许继承那 900）",
+       _w_unknown.get("group:x") == 0, "读到 %s" % _w_unknown.get("group:x"))
+    _w_unknown.set("group:x", 42)
+    _w_unknown.flush()
+    _legacy_data = dict(lw.Watermark(_p_legacy).data)
+    ok("③c 认不出账号时写进 `?|…` 这一格，且**老键原样留着**（升级不丢数据、也不越权继承）",
+       _legacy_data.get("?|group:x") == 42 and _legacy_data.get("group:x") == 900,
+       str(_legacy_data)[:140])
+
+    def _old_ns11(acct, k):                              # 老写法：空账号 ⇒ 不加前缀
+        return ("%s|%s" % (acct, k)) if acct else str(k)
+    ok("③d 反例锚：老写法（空账号不加前缀）会**直接读到**那个 900（＝别号的水位）",
+       _legacy_data.get(_old_ns11("", "group:x"), 0) == 900,
+       str(_legacy_data)[:120])
     _wa2.set_account("")
-    ok("④ `set_account('')` 回到老命名空间（降级路径可回退）",
-       _wa2.get("group:x") == 0 and _wa2._ns("k") == "k")
+    ok("④ `set_account('')` ⇒ 走**保留命名空间 `?`**（V-R11-5：不再回退到无前缀老键）",
+       _wa2.get("group:x") == 0 and _wa2._ns("k") == "?|k")
     _wa2.set_account("acctA")
     ok("④ 切回去仍读得到（set_account 只换命名空间、不丢数据）", _wa2.get("group:x") == 900)
     # flush 真失败：打桩 atomic_write_json ⇒ 必须回 False 并留痕（老写法丢返回值 ⇒ 静默）
@@ -340,6 +364,48 @@ def main():
     _old_bad2 = ("self.account" not in _OLD_WM and "self._ns(" not in _OLD_WM
                  and "def flush(self):\n        persist" in _OLD_WM.replace("\r", ""))
     ok("⑧ 反例锚：老写法（无账号维 + flush 不看返回值）**确实**会被判不合格", _old_bad2 is True)
+
+    # ── 第十一轮 V-R11-1（P1）：**带账号时「只前进」必须照样成立** ──
+    #   老写法 `k = self._ns(chat_key)` 之后又 `cur = self.get(k)`，而 `get()` 内部**再套一次** `_ns`
+    #   ⇒ `cur` 恒 0 ⇒ 任何更小的值都能写进去（水位倒退＝从旧位置重放）。J 段 18 条全绿也抓不住它，
+    #   因为那些夹具都只测"隔离/共存/回退/返回值"，**没有一条**去测"带账号写一个更小的值"。
+    _p11 = os.path.join(tmp, "wm_acct_forward.json")
+    _w11 = lw.Watermark(_p11, "acctA")
+    _w11.set("group:x", 900)
+    _ret_small = _w11.set("group:x", 5)
+    ok("J-1 带账号时写更小的值 ⇒ **必须被拒**（默认只前进在账号维下照样成立）",
+       _w11.get("group:x") == 900, "900 之后写 5 ⇒ 现在是 %s" % _w11.get("group:x"))
+    ok("J-2 被拒时返回值 == 原水位（调用方拿返回值也不会拿到 0）",
+       _ret_small == 900, "返回 %s" % (_ret_small,))
+    ok("J-3 带账号时写更大的值 ⇒ 正常前进（阳性对照，别把整条路堵死）",
+       _w11.set("group:x", 1200) == 1200 and _w11.get("group:x") == 1200)
+    _w11.flush()
+    ok("J-4 落盘后换一个实例读回：账号格子里的就是 1200（不是 0、也不是 5）",
+       lw.Watermark(_p11, "acctA").get("group:x") == 1200
+       and lw.Watermark(_p11, "acctB").get("group:x") == 0)
+    # 反例锚：老写法（把带前缀的键又喂给 get）
+    class _OldNS(object):
+        def __init__(self):
+            self.data = {}
+
+        def _ns(self, k):
+            return "acctA|" + str(k)
+
+        def get(self, k, default=0):
+            return self.data.get(self._ns(k), default)      # ⬅ 又套一次
+
+        def set(self, chat_key, seq, forward_only=True):
+            k = self._ns(chat_key)
+            cur = self.get(k)                               # ⬅ 老写法：cur 恒 0
+            if forward_only and seq <= cur:
+                return cur
+            self.data[k] = seq
+            return seq
+    _old11 = _OldNS()
+    _old11.set("group:x", 900)
+    _old11.set("group:x", 5)
+    ok("J-5 反例锚：老写法（`cur = self.get(k)` 双套前缀）**确实**会放过倒退（写进 5）",
+       _old11.data["acctA|group:x"] == 5, str(_old11.data))
 
     shutil.rmtree(tmp, ignore_errors=True)
     print("\n== W2 水位判据：%d 通过 / %d 失败 ==" % (len(PASS), len(FAIL)))

@@ -1434,8 +1434,13 @@ class WebUI:
                     length = int(self.headers.get("Content-Length") or 0)
                 except Exception:
                     length = 0
-                if length > _MAX_BODY:
-                    return self._json({"error": "请求体过大（上限 %d 字节）" % _MAX_BODY}, 413)
+                if length < 0 or length > _MAX_BODY:
+                    # ⛔ 2026-09-22 修（第十一轮 **V-R11-10** · P3）：**负的 `Content-Length` 也要拒** ——
+                    #   老写法只挡"太大"，而 `self.rfile.read(-1)` 的语义是**读到底**
+                    #   （本轮实测 `BufferedReader.read(-1)` 读满 100000 字节）⇒ 上限形同虚设。
+                    #   （可达性诚实说明：`do_POST`/`do_PUT` 第一句就是口令校验，只有本机控制台
+                    #    能走到这里；但口径必须闭合。）
+                    return self._json({"error": "请求体过大或长度非法（上限 %d 字节）" % _MAX_BODY}, 413)
                 try:
                     raw = self.rfile.read(length) if length else b"{}"
                 except Exception:
@@ -1461,6 +1466,15 @@ class WebUI:
                         self._json(_ua.start_async())
                     except Exception as e:
                         self._json({"ok": False, "why": "起不动更新作业：%s" % str(e)[:80]}, 500)
+                elif path == "/api/update_reset":
+                    # ⛔ 2026-09-22 加（第十一轮 **V-R11-2** 第 3 条）：**更新闸门卡死的出口** ——
+                    #   只清状态快照里的 `maxSeenVersion`（别的读数不动），控制台「版本」横幅上那颗
+                    #   「重置更新状态」按钮打这里。
+                    try:
+                        from . import update_check as _uc_r
+                        self._json(_uc_r.reset_seen_version())
+                    except Exception as e:
+                        self._json({"ok": False, "why": "重置失败：%s" % str(e)[:80]}, 500)
                 elif path == "/api/risk":
                     # 风险闸门：暂停/恢复/查看（只影响本机行为，绝不往微信侧发任何提示）
                     try:

@@ -448,14 +448,20 @@ def _s7_migrations(TMP):
 def _s8_watermark_entries(TMP):
     print("== ⑧ V-R9-18：水位表一条坏值 ⇒ 只丢那一条（不整表归零） ==")
     p = os.path.join(TMP, "listener_watermark.json")
+    # ⛔ 第十一轮 V-R11-5 之后：**水位表永远带账号前缀**（认不出账号时用保留名 `?`）——
+    #   所以这里用带前缀的键做夹具；另留一个无前缀老键，专门验"升级不丢数据、但也不越权继承"。
     with io.open(p, "w", encoding="utf-8") as f:
-        json.dump({"group:a": 100, "group:b": "坏值", "group:c": 55, "group:d": "12"}, f)
+        json.dump({"acctA|group:a": 100, "acctA|group:b": "坏值", "acctA|group:c": 55,
+                   "acctA|group:d": "12", "group:legacy": 7}, f)
     n_before = len(_hits("坏条目"))
-    wm = LW.Watermark(p)
+    wm = LW.Watermark(p, "acctA")
     check("⑧ 坏条目只丢自己（另一个会话的水位原样保留）",
           wm.get("group:a") == 100 and wm.get("group:c") == 55, str(wm.data))
     check("⑧ 坏条目本身回 0", wm.get("group:b") == 0, str(wm.data))
-    check("⑧ 反例锚：老写法（整表推导式）在这里会把 group:a/group:c 一起归零", wm.data == {"group:a": 100, "group:c": 55, "group:d": 12}, str(wm.data))
+    check("⑧ 反例锚：老写法（整表推导式）会把好的那几条一起归零",
+          wm.data.get("acctA|group:a") == 100 and wm.data.get("acctA|group:b") is None, str(wm.data))
+    check("⑧ 无前缀老键：**保留在表里、但不参与读写**（V-R11-5：不许当成本账号的水位）",
+          wm.data.get("group:legacy") == 7 and wm.get("group:legacy") == 0, str(wm.data))
     check("⑧ 日志里**如实说了丢几条**",
           len(_hits("坏条目")) > n_before
           and any(SM.has(m, "1 条坏条目") for m in _hits("坏条目")),
@@ -464,7 +470,7 @@ def _s8_watermark_entries(TMP):
 
     wm.set("group:a", 200)
     check("⑧ flush 走原子写：文件合法且不留 .tmp",
-          wm.flush() and json.load(io.open(p, encoding="utf-8"))["group:a"] == 200
+          wm.flush() and json.load(io.open(p, encoding="utf-8"))["acctA|group:a"] == 200
           and glob.glob(p + "*.tmp") == [])
 
     # 整档坏掉 ⇒ 留证（而不是静默当空表，然后被下一次 flush 覆盖）
@@ -800,6 +806,60 @@ def _s13_risk_oneclick_recover(TMP):
           bool(re.search(r'with open\((_p|cats_p|pers_p), "w"',
                          'with open(_p, "w", encoding="utf-8") as f:\n    _json.dump(x, f, indent=1)\n')))
     shutil.rmtree(_t14, ignore_errors=True)
+
+    print("\n== ⑯ V-R11-7：顶栏『恢复』解开坏档 fail-closed 的锁 ⇒ 必须**落盘 + 留痕** ==")
+    # ⛔ 现场（第十一轮 P2）：`risk._sync_operator` 的恢复分支**只改内存不落盘** ⇒ 重启又粘上暂停
+    #   （用户看到"恢复了又自己停了"却查不出原因）；而且它解开的是坏档 fail-closed 的锁，
+    #   解开了却**不留痕** ⇒ 事后无从判断"这个暂停本来是坏档引起的、被人顶开了"。
+    _t16 = tempfile.mkdtemp(prefix="pm-persist16-")
+    _st16 = os.path.join(_t16, "risk_state.json")
+    _ev16 = os.path.join(_t16, "risk_events.jsonl")
+    _saved_state16 = R.STATE_PATH
+    try:
+        from agent import control as _ctl16                            # noqa: E402
+        _saved_ip16, _saved_spf16 = _ctl16.is_paused, _ctl16.set_paused_flag
+        R.STATE_PATH = _st16
+        _ctl16.is_paused = lambda: False          # 顶栏此刻已回到「恢复」态（＝跳变的另一半）
+        _ctl16.set_paused_flag = lambda *a, **k: None
+        _n_cap16 = len(CAP.msgs)
+        _g16 = R.RiskGate(path=_st16, event_path=_ev16)
+        _g16._fail_closed("夹具：风险状态文件读不出来")     # 造出"坏档 fail-closed 的暂停"
+        check("⑯a 夹具到位：坏档 ⇒ paused=True 且标记 fail_closed（这次暂停的**来源**是可读的）",
+           _g16.snapshot().get("paused") is True and _g16.snapshot().get("fail_closed") is True,
+           str(_g16.snapshot())[:120])
+        _g16._flag_seen = True                    # 上一轮看到的标记是「暂停」⇒ 现在消失＝有人按了恢复
+        _g16.is_paused()                          # 触发 _sync_operator
+        _on_disk16 = json.load(io.open(_st16, encoding="utf-8"))
+        check("⑯b 一键恢复**落盘**（老写法：内存变了、盘上还是 paused=True ⇒ 重启又粘住）",
+           _on_disk16.get("paused") is False and _on_disk16.get("fail_closed") is False,
+           str({k: _on_disk16.get(k) for k in ("paused", "fail_closed", "recovered_by_operator")}))
+        check("⑯c 留痕：盘上记下「被操作者解开过」（`recovered_by_operator` 计数 ≥1）",
+           int(_on_disk16.get("recovered_by_operator") or 0) >= 1,
+           str(_on_disk16.get("recovered_by_operator")))
+        _msgs16 = " ".join(CAP.msgs[_n_cap16:])
+        check("⑯d 日志里说清「解的是坏档那把锁」（用户/我们事后能归因，不是一句「已恢复」）",
+           ("坏档" in _msgs16) and ("恢复" in _msgs16), _msgs16[-160:])
+        check("⑯e 坏档**留证不丢**（恢复只解锁，不改写/不删除原档保护）",
+           bool(_g16.snapshot().get("fail_closed")) is False and os.path.exists(_st16) is True)
+        # 反例锚：老写法（只改内存）
+        _st16b = os.path.join(_t16, "risk_state_old.json")
+        with io.open(_st16b, "w", encoding="utf-8") as _f16:
+            json.dump({"paused": True, "paused_reason": "夹具：坏档", "blocks": 3,
+                       "min": [], "hour": [], "day": [], "day_key": "", "chats": {},
+                       "events": [], "recent": [], "fail_closed": True}, _f16)
+        _old_st16 = json.load(io.open(_st16b, encoding="utf-8"))
+        _old_st16["paused"] = False                    # ⬅ 老写法：只改内存
+        _old_st16["paused_reason"] = ""
+        _after16 = json.load(io.open(_st16b, encoding="utf-8"))
+        check("⑯f 反例锚：老写法（只改内存、不落盘）⇒ 盘上仍是 paused=True（重启就粘回来）",
+           _after16.get("paused") is True)
+    finally:
+        R.STATE_PATH = _saved_state16
+        try:
+            _ctl16.is_paused, _ctl16.set_paused_flag = _saved_ip16, _saved_spf16
+        except Exception:
+            pass
+        shutil.rmtree(_t16, ignore_errors=True)
 
     print("\n== ⑮ V-R10-24 收尾：`recover()` 必须有真调用者（一键恢复） ==")
     _ui15 = _read(os.path.join(ROOT, "agent", "webui.py"))

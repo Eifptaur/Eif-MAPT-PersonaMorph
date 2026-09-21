@@ -1878,15 +1878,23 @@ def main():
             wxid = g.get("wxid")
             if not wxid:
                 continue
+            # ⛔ 2026-09-22 修（第十一轮 **V-R11-13** · P3）：这里原来用**不带 `ok`** 的
+            #   `latest_seq()`，而它读失败也回 0，配上 `forward_only=False` ⇒ **0 真写进水位数**
+            #   —— 与同一文件里那条铁律（V-R4-12a：「读失败绝不许把 0 写进水位」）口径相反。
+            #   现在改调 `latest_seq_ex`：读失败就**不动这个群的水位**，把原因回给按钮。
             try:
-                seq = int((_wc.latest_seq(wxid) if _wc else 0) or 0)
-                wm.set("group:" + wxid, seq, forward_only=False)
+                _ok13, _seq13, _why13 = _wc.latest_seq_ex(wxid) if _wc else (False, 0, "微信还没接上")
+                if not _ok13 or not _seq13:
+                    errs.append("%s：最新序号读不出来（**没动它的水位**）%s"
+                                % (g.get("name") or wxid, str(_why13 or "")[:60]))
+                    continue
+                wm.set("group:" + wxid, int(_seq13), forward_only=False)
                 n += 1
             except Exception as e:
                 errs.append("%s：%s" % (g.get("name") or wxid, e))
         _okw = listener_watermark.flush_checked(wm, log=log, why="控制台一键对齐水位")
         log.info("监听水位已重新对齐（%d 个群）%s", n, ("；失败：%s" % errs[:2]) if errs else "")
-        return {"ok": bool(_okw), "n": n, "errs": errs,
+        return {"ok": bool(_okw and not errs), "n": n, "errs": errs,
                 "saved": bool(_okw), "why": "" if _okw else (wm.last_error or "水位表没写进磁盘")}
 
     def _refresh_targets(why=""):

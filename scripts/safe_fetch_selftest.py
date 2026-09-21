@@ -28,6 +28,7 @@ from __future__ import annotations
 import http.server
 import ipaddress
 import os
+import shutil
 import socket
 import ssl
 import sys
@@ -600,6 +601,7 @@ def main() -> int:
     ok("G6 空地址 ⇒ 拒（不当成「没给就算了」）", b, w[:44])
 
     _section_L()
+    _section_L27()
     _section_M()
 
     print("\nsafe_fetch 判据：%d 通过 / %d 失败" % (PASS, FAIL))
@@ -609,6 +611,101 @@ def main() -> int:
 
 
 # ── L. 连接层（V-R10-32/33/36/38）───────────────────────────────────────
+def _section_L27():
+    """**调用点级**的钉 IP 守备（第十一轮 **V-R11-3** · P1）。
+
+    审计原话：L18 只是"源码里有没有这个词"的子串检查，把老写法**加回来**（而不是删掉新写法）时
+    照样绿；L23 的 DNS 翻转打在**第 1 次**解析上（两种实现都会先被闸门拒）⇒ 三处调用点**没有行为守备**。
+
+    这里用**决定性**的手法：`socket.getaddrinfo` 第 1 次给真地址（本地 HTTP 服务）、
+    **第 2 次给一个没人监听的地址**（DNS 翻转）。于是：
+      · 钉 IP 的实现 ⇒ 连第 1 次那个地址 ⇒ **下载成功**；
+      · `urlopen` 二次解析的老写法 ⇒ 连第 2 次那个地址 ⇒ **失败**（红）。
+    `_is_private_ip` 在本段内被打成"永远 False"（否则环回地址会被闸门直接拒，测不到连接层）。
+    """
+    print("== L27. 调用点级行为守备：钉 IP ⇒ 连的是**校验过的那一次解析**（V-R11-2/3）==")
+    import http.server as _hs                                              # noqa: E402
+    import threading as _th                                                # noqa: E402
+
+    _body27 = b"PM-R11-PINNED-BODY" * 200
+    _REQ27 = {"n": 0}
+
+    class _H27(_hs.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            _REQ27["n"] += 1
+            self.send_response(200)
+            self.send_header("Content-Type", "audio/mpeg")
+            self.send_header("Content-Length", str(len(_body27)))
+            self.end_headers()
+            self.wfile.write(_body27)
+
+    _srv27 = _hs.HTTPServer(("127.0.0.1", 0), _H27)
+    _port27 = _srv27.server_address[1]
+    _th.Thread(target=_srv27.serve_forever, daemon=True).start()
+
+    _real_gai27 = socket.getaddrinfo
+    _real_priv27 = SF._is_private_ip
+    _calls27 = {"n": 0}
+
+    def _flip27(host, port, *a, **k):
+        """**闸门那两次解析**给 127.0.0.1（真服务）；之后的解析给 127.0.0.2（没人监听）。
+
+        为什么是"第 1~2 次"：闸门自己会解两次（AF_UNSPEC 两种族，见 L22 的读数 hits=4）；
+        钉 IP 的实现**连的时候不再解析** ⇒ 永远用不到那个坏地址；老写法（`urlopen`）在连接时
+        再解一次 ⇒ 拿到坏地址 ⇒ 连不上（这就是"DNS 翻转穿透闸门"的可复现形态）。
+        """
+        _calls27["n"] += 1
+        ip = "127.0.0.1" if _calls27["n"] <= 2 else "127.0.0.2"
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, int(port) if port else 80))]
+
+    _tmp27 = tempfile.mkdtemp(prefix="pm-l27-")
+    try:
+        socket.getaddrinfo = _flip27
+        SF._is_private_ip = lambda *a, **k: False      # 只在本段里放私网（否则闸门先拒，测不到连接层）
+        # ① bilibili._download
+        from agent import bilibili as _b27                              # noqa: E402
+        _dest27 = os.path.join(_tmp27, "a.mp3")
+        _bytes27, _why27 = _b27._download("http://pinned.test:%d/a.mp3" % _port27, _dest27)
+        ok("L27a `bilibili._download` 连的是**校验过的那次解析**（DNS 第 2 次翻转 ⇒ 仍拿到真内容）",
+           int(_bytes27 or 0) == len(_body27), "bytes=%s why=%s 解析次数=%d" % (_bytes27, _why27, _calls27["n"]))
+        # ② video_gen._get（URL → bytes 的那条）
+        from agent import video_gen as _v27                             # noqa: E402
+        _calls27["n"] = 0
+        _got27 = _v27._get("http://pinned.test:%d/v.mp4" % _port27, 10, allow_private=True)
+        ok("L27b `video_gen._get` 同上（翻转后照样拿到真内容）",
+           _got27 == _body27, "len=%s 解析次数=%d" % (len(_got27 or b""), _calls27["n"]))
+        # ③ image_gen 的回链分支：**只在这一段里**不许出现 urlopen（其它协议仍在用它是合法的）
+        _ig27 = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                  "agent", "image_gen.py"), encoding="utf-8").read()
+        _seg27 = _ig27[_ig27.index("_same = bool(_so(str(link), base))"):]
+        _seg27 = _seg27[:_seg27.index("_save_image_bytes(_data")]
+        ok("L27c `image_gen` 的回链分支：只走 `fetch_pinned_stream`，段里没有 `urlopen(` 调用",
+           "fetch_pinned_stream" in _seg27 and "urlopen(" not in _seg27, _seg27[:80].replace("\n", " "))
+        # ④ 反例锚：把老写法加回来 ⇒ 上面两条**必须红**（用同一套夹具复刻老写法）
+        #    注意把计数器摆到"闸门已经解过两次"的位置：老写法在**连接时**再解一次 ⇒ 第 3 次 ⇒ 坏地址
+        _calls27["n"] = 2
+        _old_ok27 = True
+        try:
+            _req = urllib.request.Request("http://pinned.test:%d/a.mp3" % _port27)
+            urllib.request.urlopen(_req, timeout=5).read()
+        except Exception:
+            _old_ok27 = False                          # 第 3 次解析⇒127.0.0.2⇒连不上 ⇒ 老写法必失败
+        ok("L27d 反例锚（灵敏度）：**同一夹具**下老写法（`urlopen` 二次解析）连不上 ⇒ L27a/b 真的会红",
+           _old_ok27 is False and _calls27["n"] >= 3, "老写法成功=%s 解析次数=%d" % (_old_ok27, _calls27["n"]))
+    finally:
+        socket.getaddrinfo = _real_gai27
+        SF._is_private_ip = _real_priv27
+        try:
+            _srv27.shutdown()
+            _srv27.server_close()
+        except Exception:
+            pass
+        shutil.rmtree(_tmp27, ignore_errors=True)
+
+
 def _section_M():
     """**V-R10-34 第 4 条**：`read_stream` 的墙钟预算必须**落在 socket 超时上**。
 
@@ -886,7 +983,9 @@ def _section_L():
     ok("L17 带 IP 版照样拦内网（不是绕开闸门的旁路）", bool(_g), _g[:40])
 
     # ══ L18：三处"二次解析"调用点必须已经改走钉 IP 传输（V-R10-32）══
-    #  反例：把 `bilibili._download` 改回 `urllib.request.urlopen(url)` ⇒ L18 必红。
+    #  ⚠️ 诚实说明（第十一轮 **V-R11-3**）：**光靠 L18 守不住** —— 它只是"源码里有没有这个词"的
+    #     子串检查，把老写法**加回来**（而不是删掉新写法）时它照样绿（审计实测：三处全退回老写法，
+    #     本判据 89/0 全绿）。真正的**行为级**守备在 L24~L26（打桩连接层，断言"连的是哪个 IP"）。
     print("== L2x. 三处「校验一次、连接再解析」的调用点（V-R10-32/33）==")
     for _f, _tag, _must in (
             ("bilibili.py", "bilibili._download", "fetch_pinned_stream"),
@@ -895,8 +994,10 @@ def _section_L():
             ("cloud.py", "cloud.probe 的 HEAD", "pinned_head")):
         _src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                  "agent", _f), encoding="utf-8").read()
-        ok("L18 %s 走钉 IP 传输（%s）" % (_tag, _must), _must in _src,
-           "在 agent/%s 里找不到 %s" % (_f, _must))
+        _hit = _must in _src
+        # 通过时**不许**再打印"找不到"（第十一轮 V-R11-11 第 2 条：那句恒打印的详情会骗读日志的人）
+        ok("L18 %s 走钉 IP 传输（%s）" % (_tag, _must), _hit,
+           ("在 agent/%s 里找不到 %s" % (_f, _must)) if not _hit else "命中 %s" % _must)
 
     # ══ L19~L22：`cloud.probe` 的 HEAD 段（V-R10-33）——第 3 次解析必须打不到 ══
     #  反例：把 `pinned_head` 换回 `urllib.request.Request(fixed, method="HEAD")` + `urlopen`

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import tempfile
 import time
@@ -37,6 +38,30 @@ TEMP_PREFIXES = ("pm-",)
 #: `tts_seg_*.wav` / `vc_*.wav` / `seg_*.txt`，见 `tts.py` / `voice_models.py`）。
 #: ⛔ 只删这些 —— 用户自己丢进同一目录的文件（录音、照片…）一个都不许碰。
 MEDIA_PREFIXES = ("tts_", "vc_", "seg_")
+#: ⛔ 2026-09-22 加（第十一轮 **V-R11-12** · P3）：`voice_reply.dir` / `tts.out_dir()` 都是**用户可配**的，
+#:   一旦指到"用户自己的目录"，那里任何以 `tts_`/`vc_`/`seg_` 开头的**非产品**文件
+#:   （`seg_1.txt`、`vc_notes.md`、`tts_backup.zip` 这类名字并不稀罕）仍会被删。
+#:   ⇒ 光看前缀不够：**必须长得像我们真会产出的那个形状**才算我们的东西（正则逐族钉死，
+#:   形状来自生产者：`tts.py` 的 `tts_%H%M%S.wav` · `voice_models.py` 的 `tts_edge_/tts_seg_/vc_/seg_`
+#:   + `<%H%M%S><毫秒3位>` 时间戳）。
+_MEDIA_NAME_RES = (
+    re.compile(r"^tts_\d{6,20}(_\d{1,4})?\.(wav|mp3|m4a|ogg)$"),
+    re.compile(r"^tts_(edge|seg|custom)_\d{6,20}(_\d{1,4})?\.(wav|mp3|m4a|ogg)$"),
+    re.compile(r"^vc_\d{6,20}(_\d{1,4})?\.(wav|mp3|m4a|flac)$"),
+    re.compile(r"^seg_\d{6,20}(_\d{1,3})?\.(wav|txt)$"),
+)
+
+
+def is_our_media_name(name: str) -> bool:
+    """`True` ⇒ 这个文件名**确实长得像我们造的产物**（V-R11-12：正则钉形状，不是只看前缀）。
+
+    只在"删除"这条路上用；不匹配就**不删**（宁可留一点垃圾，也绝不动用户的文件）。
+    """
+    n = str(name or "")
+    for _re_name in _MEDIA_NAME_RES:
+        if _re_name.match(n):
+            return True
+    return False
 #: 十分钟内产生的文件一律不动（可能正在被读/被发送）
 MIN_AGE_S = 600.0
 #: TTS 产物保留策略（媒体目录：合成出来的 wav/mp3，发完就没用了）
@@ -171,14 +196,18 @@ def prune_dir(path: str, keep_newest: int = 0, max_age_days: float = 0.0, max_mb
     ⛔ 2026-09-22 修 **V-R10-29（P1，数据安全）**：**只删自己造的** —— 文件名必须以 `prefixes` 里的前缀
     开头（与 `sweep_temp` 同一套口径）。审计夹具实测的旧行为：把 `我的会议录音.mp3` / `DSC_0042.JPG`
     和我们的产物放在同一目录里跑清理，**用户自己的文件被删掉了**（无回收站、不可逆）。
-    `prefixes` 传空 ⇒ 不筛（只给"我自己造的临时目录"这种调用方用；产品路径一律带白名单）。
-    `ledger` 非空时**删之前**逐行追加"要删哪些、多大、什么时候删的"（有账可查；干跑不写）。
+
+    ⛔ 2026-09-22 再加 **V-R11-12（P3）**：光看前缀还不够 —— 这个目录是**用户可配**的
+    （`voice_reply.dir`），`seg_1.txt` / `vc_notes.md` 这类"用户自己起的名"照样会被误删。
+    ⇒ 默认走**双条件**（前缀 **且** 扩展名是我们真会产出的那些，见 `is_our_media_name`）；
+    显式传 `prefixes=None` 时退回"只看前缀"（只给"我自己造的临时目录"这类调用方用）。
     """
     now = time.time() if now is None else now
     res = {"removed": 0, "bytes": 0, "kept": 0, "skipped": 0, "ledger": ""}
     if not path or not os.path.isdir(path):
         return res
     _pref = tuple(prefixes or ())
+    _strict = (prefixes is None or tuple(prefixes or ()) == tuple(MEDIA_PREFIXES))
     items = []
     for nm in os.listdir(path):
         p = os.path.join(path, nm)
@@ -186,6 +215,10 @@ def prune_dir(path: str, keep_newest: int = 0, max_age_days: float = 0.0, max_mb
             continue
         if _pref and not nm.startswith(_pref):
             res["skipped"] += 1                # 不是我们造的名字 ⇒ 一律不碰（哪怕它最老、最大）
+            continue
+        if _strict and not is_our_media_name(nm):
+            # 前缀对上了，但扩展名不是我们产出的那几种 ⇒ 仍然当成"用户的文件"
+            res["skipped"] += 1
             continue
         try:
             st = os.stat(p)

@@ -78,7 +78,7 @@ try:
                                                "minBase": ver}}, fh, ensure_ascii=False)
         return path
 
-    newp = mk_manifest(os.path.join(tmp, "new.json"), "2099.1.1.1", ["要点一", "要点二"])
+    newp = mk_manifest(os.path.join(tmp, "new.json"), "2026.10.1.1", ["要点一", "要点二"])
     samep = mk_manifest(os.path.join(tmp, "same.json"), VERSION)
     oldp = mk_manifest(os.path.join(tmp, "old.json"), "2000.1.1.1")
     nover = os.path.join(tmp, "nover.json")
@@ -96,13 +96,13 @@ try:
 
     print("\n[U2] 用户开了不再提醒 / 不再提醒这个版本 ⇒ off")
     ok(UC.state({"url": newp, "muted": True})["status"] == "off", "muted ⇒ off")
-    ok(UC.state({"url": newp, "skip_version": "2099.1.1.1"})["status"] == "off", "skip_version 命中 ⇒ off")
+    ok(UC.state({"url": newp, "skip_version": "2026.10.1.1"})["status"] == "off", "skip_version 命中 ⇒ off")
     ok(UC.state({"url": newp, "skip_version": "其它版本"})["status"] == "newer", "skip 的是别的版本 ⇒ 正常判 newer")
 
     print("\n[U3] 有新版本 ⇒ newer（要点透传，供公告条显示）")
     r = UC.state({"url": newp})
     ok(r["status"] == "newer", "status=newer")
-    ok(r["mine"] == VERSION and r["theirs"] == "2099.1.1.1", "本机 %s / 远端 %s" % (r["mine"], r["theirs"]))
+    ok(r["mine"] == VERSION and r["theirs"] == "2026.10.1.1", "本机 %s / 远端 %s" % (r["mine"], r["theirs"]))
     ok(r["notes"] == ["要点一", "要点二"], "notes 原样透传（%s）" % r["notes"])
     ok(r["checkedAt"] > 0, "记了检查时间")
 
@@ -245,9 +245,9 @@ ok(len(UC.DEFAULT_URLS) >= 8, "源足够多（2026-09-18 那台机器「一直 t
 ok(any("api.github.com" in u for u in UC.DEFAULT_URLS),
    "有一条**完全不同网络路径**的兜底源（api.github.com contents 接口）")
 _MAN = {"schema": "persona-morph/1",
-        "base": {"version": "2099.1.1.1", "sha256": "b" * 64, "url": "", "size": 1, "files": 1},
-        "dlc": [], "announce": {"version": "2099.1.1.1", "notes": ["备用源可用"],
-                                "forceBase": False, "minBase": "2099.1.1.1"}}
+        "base": {"version": "2026.10.1.1", "sha256": "b" * 64, "url": "", "size": 1, "files": 1},
+        "dlc": [], "announce": {"version": "2026.10.1.1", "notes": ["备用源可用"],
+                                "forceBase": False, "minBase": "2026.10.1.1"}}
 _real_fetch = UC.fetch
 
 
@@ -373,7 +373,7 @@ def _mk13(ver, note):
 
 
 _stale13 = _mk13("2000.1.1.1", "CDN 旧缓存")
-_fresh13 = _mk13("2099.1.1.1", "镜像新清单")
+_fresh13 = _mk13("2026.10.1.1", "镜像新清单")
 _arrive13 = []
 
 
@@ -403,7 +403,7 @@ try:
 finally:
     UC.fetch = _real_fetch
 _el13 = time.time() - _t13
-ok(_m13 is not None and _u13 == UC.DEFAULT_URLS[2] and _m13["base"]["version"] == "2099.1.1.1",
+ok(_m13 is not None and _u13 == UC.DEFAULT_URLS[2] and _m13["base"]["version"] == "2026.10.1.1",
    "版本高的赢（挑的是后到的镜像，不是先到的 CDN）", "%s → %s" % (_u13 == UC.DEFAULT_URLS[2], _m13 and _m13["base"]["version"]))
 # 反对照：确认这判据**不是恒真**——先到的确实是那份旧缓存
 ok(bool(_arrive13) and _arrive13[0] == UC.DEFAULT_URLS[1] and UC.DEFAULT_URLS[2] in _arrive13,
@@ -504,27 +504,27 @@ ok('out["stateSaved"]' in _ucsrc3 and "stateSaveError" in _ucsrc3,
 
 print("\n[U10] TUF 廉价两面：清单 `expires`（freeze）+ 单调版本（rollback）——第六轮 V-R6-27")
 import json as _j27                                                            # noqa: E402
-_exp_man = mk_manifest(os.path.join(tmp, "expired.json"), "2099.1.1.1", ["要点"])
+_exp_man = mk_manifest(os.path.join(tmp, "expired.json"), "2026.10.1.1", ["要点"])
 _jd = _j27.load(open(_exp_man, encoding="utf-8"))
 _jd.setdefault("base", {})["expires"] = "2000-01-01T00:00:00Z"
 _j27.dump(_jd, open(_exp_man, "w", encoding="utf-8"), ensure_ascii=False)
 _o_exp = _orig_state({"url": _exp_man})
 ok(_o_exp.get("status") == "error" and "过期" in str(_o_exp.get("why") or ""),
    "① 清单 `expires` 已过期 ⇒ 拒绝据此更新（freeze 防护）", str(_o_exp)[:130])
-_ok_man = mk_manifest(os.path.join(tmp, "okexp.json"), "2099.1.1.1", ["要点"])
+_ok_man = mk_manifest(os.path.join(tmp, "okexp.json"), "2026.10.1.1", ["要点"])
 _jd2 = _j27.load(open(_ok_man, encoding="utf-8"))
 _jd2.setdefault("base", {})["expires"] = "2099-01-01T00:00:00Z"
 _j27.dump(_jd2, open(_ok_man, "w", encoding="utf-8"), ensure_ascii=False)
 ok(_orig_state({"url": _ok_man}).get("status") == "newer",
    "①b 正向对照：没过期 ⇒ 照常判 newer（别把正常清单也拦死）")
-open(UC._state_path(), "w", encoding="utf-8").write(_j27.dumps({"maxSeenVersion": "2099.9.9"}))
+open(UC._state_path(), "w", encoding="utf-8").write(_j27.dumps({"maxSeenVersion": "2027.9.9"}))
 _o_rb = _orig_state({"url": _ok_man})
 ok(_o_rb.get("status") == "error" and "回滚" in str(_o_rb.get("why") or ""),
    "② 源给的版本低于「见过的最高版本」⇒ 判回滚、拒据此更新", str(_o_rb)[:130])
 open(UC._state_path(), "w", encoding="utf-8").write(_j27.dumps({"maxSeenVersion": "2000.1.1.1"}))
 _o_hi = _orig_state({"url": _ok_man})
 _st_now = _j27.load(open(UC._state_path(), encoding="utf-8"))
-ok(_o_hi.get("status") == "newer" and str(_st_now.get("maxSeenVersion") or "") == "2099.1.1.1",
+ok(_o_hi.get("status") == "newer" and str(_st_now.get("maxSeenVersion") or "") == "2026.10.1.1",
    "③ 见过的最高版本**落盘**（下次才能识别回滚）", str(_st_now)[:110])
 
 print("\n==== 更新检查判据：%d 通过 / %d 失败 ====" % (PASS, FAIL))

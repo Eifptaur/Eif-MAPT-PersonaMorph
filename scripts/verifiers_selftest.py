@@ -292,6 +292,33 @@ finally:
     _wxL.LEDGER_WRITE_ERR["err"] = _savedL.get("err", "")
     shutil.rmtree(_tmpL, ignore_errors=True)
 
+print("\n── C11. 检验器的**前端映射**（第十一轮：作者问「这个检验器需要前端的，映射好没有」）──")
+# ⛔ 现场：第十轮我把后端做完了（六环 db_unreadable / 三态 / 说明格 / partial），但**前端一字未动**——
+#   症状按钮是从 `/api/verifiers`（`catalog()`）动态建的，所以新条目会自己出现（这半是通的）；
+#   可「◐ 部分通过 / ○ 没测到」的含义、以及**后端判决到界面状态的映射**（哪一格卡住）**完全没有**，
+#   用户点完十个症状，界面上全是同一个样子。这一节把"通的"和"该有的"一起钉住。
+_ch11 = open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+_cat11 = V.catalog()
+ok("C11a 症状入口是**数据驱动**的：清单来自 `catalog()`，含「消息库读不到」",
+   any(v.get("id") == "db_unreadable" for v in _cat11)
+   and all({"id", "name"} <= set(v.keys()) for v in _cat11), str([v.get("id") for v in _cat11])[:120])
+ok("C11b 面板有**图例**：四档判决都在文案里（且写明「没测到」不算通过也不算失败）",
+   _sm.has(_ch11, "判决分四档") and _sm.has(_ch11, "部分通过") and _sm.has(_ch11, "没测到")
+   and _sm.has(_ch11, "不算通过也不算失败"))
+ok("C11b2 图例**不用 emoji 符号**（显示层自研口径 · `console_copy_selftest` A 段会红）",
+   _sm.has(_ch11, "勾＝通过") and _sm.has(_ch11, "空心圆＝没测到"))
+ok("C11c **判决→界面状态**的映射在位（按钮 dataset.vstate + 判决摘要 #vfState）",
+   _sm.has(_ch11, "dataset.vstate") and _sm.has(_ch11, 'id="vfState"'))
+ok("C11d 三态各有自己的样式（通过/部分通过/卡住 ⇒ 三个 data-vstate 规则）",
+   _ch11.count("button.ghost[data-vstate=") == 3, "%d 条" % _ch11.count("button.ghost[data-vstate="))
+ok("C11e 映射的取值来自**同一次结果**的 ok/partial（不另算一套）",
+   _sm.has(_ch11, "r.partial") and _sm.has(_ch11, "r.ok === false"))
+# 反例锚：老写法（只把 report 塞进 <pre>、不设状态、没有图例）用**同一条判据**判不合格
+_OLDUI11 = ("pre.textContent=(r&&r.report)||JSON.stringify(r,null,1);\n"
+            "        if(cp) cp.disabled=!(r&&r.report);\n")
+ok("C11f 反例锚：老写法（只塞 report、无图例、无状态映射）**过不了** C11b/C11c 这两条",
+   (not _sm.has(_OLDUI11, "dataset.vstate")) and (not _sm.has(_OLDUI11, "判决分四档")))
+
 print("\n── C8. 第九轮 V-R9-12/13/14：台账落盘 · 读不到日志＝没测到 · 报告头不许画 ✅ ──")
 _tmp8 = tempfile.mkdtemp(prefix="pm-vf8-")
 _saved8 = (_wxL._switch_fails_path, list(_wxL._SWITCH_FAILS), V._p)
@@ -453,6 +480,59 @@ ok("C10e 接线：`webui` 的 `/api/verify` 每次把 `_db_how` + `_cap` 喂进�
    open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read().count("set_runtime_how") >= 2
    and "getattr(_wo" in open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
    or "getattr(_wo2" in open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read())
+
+print("\n── C12. 第十一轮 V-R11-4/6：`db_unreadable` 的「拿不到证据」与「整环消失」两档 ──")
+# ⛔ 审计原话：这两档原来**没有夹具**（第④格只在"有 how / 没 how"两头被覆盖；`status()` 永远返回非空）
+#   ⇒ 第④格在多账号+无证据时给 ✅（detail 自己写着"拿不到写入证据"）、`status()` 返回空对象时**整环消失**。
+_saved_how12 = dict(getattr(V, "_RUNTIME_HOW", {}) or {})
+try:
+    from agent import wechat_dir as _wd12                              # noqa: E402
+    _saved_status12 = _wd12.status
+    V.set_runtime_how({"dir": r"D:\wxdata", "account": "wxid_a"}, {"messages": "ok"})
+
+    def _mk(_live, _names):
+        return lambda *a, **k: {"effective": r"D:\wxdata", "now": r"D:\wxdata",
+                                "source_text": "配置", "ok": True, "account": "wxid_a",
+                                "account_names": list(_names), "account_live": _live}
+
+    def _cell12(_rep, _nm):
+        return [c for c in _rep["checks"] if c["name"] == _nm]
+
+    _wd12.status = _mk(None, ["wxid_a", "wxid_b"])
+    _r12a = V.run("db_unreadable")
+    _c12a = _cell12(_r12a, "读的是**正在写的那个号**")
+    ok("C12a 多账号 + 拿不到写入证据 ⇒ 那一格**必须是 None（没测到）**（老写法在这里给 ✅）",
+       len(_c12a) == 1 and _c12a[0]["ok"] is None, str(_c12a))
+    _wd12.status = _mk(False, ["wxid_a", "wxid_b"])
+    _c12b = _cell12(V.run("db_unreadable"), "读的是**正在写的那个号**")
+    ok("C12b 多账号 + 明确「没在动」⇒ 判 False（真失败，不是没测到）",
+       len(_c12b) == 1 and _c12b[0]["ok"] is False, str(_c12b))
+    _wd12.status = _mk(None, ["wxid_a"])
+    _c12c = _cell12(V.run("db_unreadable"), "读的是**正在写的那个号**")
+    ok("C12c 阳性对照：**单账号**机器不需要写入证据 ⇒ 照旧判 True（别把正常路也判没测到）",
+       len(_c12c) == 1 and _c12c[0]["ok"] is True, str(_c12c))
+    _wd12.status = lambda *a, **k: {}                     # 空对象（不抛异常）
+    _r12d = V.run("db_unreadable")
+    _c12d = _cell12(_r12d, "读的是**实际在用**的数据目录")
+    ok("C12d `status()` 返回**空对象** ⇒ 那一环**仍要有一格**（不许整环消失）且 = None",
+       len(_c12d) == 1 and _c12d[0]["ok"] is None, str(_c12d))
+    ok("C12e 而且它说清了「空对象」这件事（用户能区分「没读到」与「目录没问题」）",
+       bool(_c12d) and "空对象" in _c12d[0]["detail"], _c12d[0]["detail"][:100] if _c12d else "")
+    # 反例锚：老写法（第④格 `True if (len(_ns) < 2 or _live is not False) else False` + 没有空对象分支）
+    # ⚠️ 老写法本身**不能用 `True if X else False` 的形状写出来**（判据卫生 ⑥ 会把它当恒真伪装 ——
+    #    2026-09-22 实测就是这么红的）⇒ 拆成 if/return，语义一样。
+    def _old_live12(_ns, _live):
+        if len(_ns) < 2:
+            return True
+        return _live is not False
+    ok("C12f 反例锚：老写法在「多账号 + 无证据」下回 True ⇒ 用同一条判据判不合格",
+       _old_live12(["a", "b"], None) is True)
+finally:
+    try:
+        _wd12.status = _saved_status12
+    except Exception:
+        pass
+    V.set_runtime_how(_saved_how12)
 
 print("── D. 异常与未知 id 都不许抛（别把前端打崩）──")
 _u = V.run("不存在的东西")
