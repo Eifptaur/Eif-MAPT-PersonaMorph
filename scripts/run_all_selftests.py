@@ -93,7 +93,7 @@ def _run_one(name: str, timeout: int, gate: threading.Semaphore) -> dict:
                                #   E 段、whale/console_chrome/voice_models 的真起 WebUI 段）自动
                                #   跳过并打一行 SKIP；**手动单跑不加它，动态段照旧真起真收**。
                                env={**os.environ, "PYTHONIOENCODING": "utf-8",
-                                    "PM_JUDGE_NO_PROC": "1"})
+                                    "PM_JUDGE_NO_PROC": "1", "PYTHONUNBUFFERED": "1"})
             out = (r.stdout or b"").decode("utf-8", "replace") + \
                   (r.stderr or b"").decode("utf-8", "replace")
             rc = r.returncode
