@@ -46,11 +46,51 @@ def _tail(path, n: int = 400) -> list:
         return []
 
 
+def _tail2(path, n: int = 400):
+    """与 `_tail` 同，但**读不到就返回 None**（＝没测到），而不是吞成空表。
+
+    ⛔ 2026-09-21 加（第九轮 **V-R9-13** · P1）：`_tail` 把"文件不存在 / 权限被拒 / 编码炸"
+    一律变成 `[]` ⇒ 调用方拿到空表就判"最近 0 次相关记录" ⇒ **报成 ✅**。审计用真 `icacls /deny`
+    造出的现场正是这样：日志里明明有两行失败，检验器却给"通过"。凡"最近有没有 X 的记录"这类
+    检查，**读不到日志就是没测到**（None），不是"没有记录"。
+    """
+    try:
+        with io.open(path, encoding="utf-8", errors="replace") as fh:
+            return fh.read().splitlines()[-n:]
+    except FileNotFoundError:
+        return []                      # 文件还没生成 ⇒ 确实"没有记录"（刚装/刚重启）
+    except Exception:
+        return None                    # 读不到（权限/编码/盘）⇒ 没测到
+
+
+_CFG_ERR = ""          # 配置读不到时记下原因（V-R9-14：用了内置默认值的那几格**不算结论**）
+_RUNTIME_HOW: dict = {}   # 运行中实例的 `_db_how`（webui 每次跑检验器前喂，见 V-R9-11）
+
+
+def set_runtime_how(how) -> None:
+    """把**运行中实例**的 `_db_how` 喂进来（`webui` 的 `/api/verify` 每次调一次）。**绝不抛**。
+
+    ⛔ 2026-09-21 加（第九轮 **V-R9-11**）：`wechat_dir.status()` **不带 `how`** 时拿不到
+    "我在读哪个账号"这一维（`account`/`account_names`/`account_live` 全是空），而检验器原来据此判
+    **✅**（报告里明明写着"在读账号 没认出来"）⇒ 假绿。有了这份 how，账号那一格才有铁证；
+    拿不到就**如实判「没测到」**。
+    """
+    global _RUNTIME_HOW
+    try:
+        _RUNTIME_HOW = dict(how or {})
+    except Exception:
+        _RUNTIME_HOW = {}
+
+
 def _cfg() -> dict:
+    global _CFG_ERR
     try:
         from .config import get_config
-        return get_config() or {}
-    except Exception:
+        cfg = get_config() or {}
+        _CFG_ERR = "" if cfg else "配置是空的"
+        return cfg
+    except Exception as e:
+        _CFG_ERR = str(e)[:60] or type(e).__name__
         return {}
 
 
@@ -211,8 +251,14 @@ def v_send_blocked() -> dict:
         checks.append(_check("消息库读得到", False, "打不开消息库：%s" % str(e)[:60]))
     # 最近一次投递发送的结果
     last_ok = _count(log_tail[-200:], "投递发送成功")
+    # ⛔ 2026-09-21 加（V-R9-12）：**针要够宽** —— 原来的三根（投递发送失败 / 会话头不匹配 /
+    #   判据不可用）认不出 `send_text` 拒发时真正写进日志的那两句（"投递档确认不了目标会话"、
+    #   "内容级复核说不是这个会话"）⇒ 审计的 C 线夹具里摆着真失败、判决仍是 ✅。
     last_fail = [l for l in log_tail[-200:] if ("投递发送失败" in l or "会话头不匹配，拒绝投递" in l
-                                                or "判据不可用" in l)]
+                                                or "判据不可用" in l
+                                                or "投递档确认不了目标会话" in l
+                                                or "内容级复核说不是这个会话" in l
+                                                or "名字档也没确认" in l)]
     # ⚠️ 别把"最近没发过"当成故障：刚重启/刚装好时日志里本来就没有成功记录 —— 那是"未知"，
     #    不是"坏了"。只有**确实有失败/可疑记录**时才判不通过（避免检验器自己吓用户）。
     if last_fail:
@@ -228,22 +274,47 @@ def v_send_blocked() -> dict:
                                        "（刚重启/还没发过）—— 这既不算通过也不算失败；"
                                        "在群里回它一句，再点一次这个检验器就能测到")
     checks.append(_check("最近的发送记录里没有失败", _send_ok, _send_detail))
-    # ⛔ 2026-09-21 加（同一个反馈的第二半）：真失败记在**进程内台账**里
-    #   （`wechat.note_switch_fail`，与「它不回复」那一格同源）——"发送前确认不了目标会话 /
-    #   内容级复核判否 / 名字档没确认"都在那儿，而本检验器原来一条都不看（只看日志尾部）。
+    # ⛔ 2026-09-21 加（V-R9-12）：**第三份物证**＝按天落盘的会话档案 `data\sessions\*.jsonl` 里的
+    #   `status`（`noreply_send_failed`＝"这一轮调过发送工具、却一条都没发出去"）。日志会轮转、
+    #   进程内台账会随重启清空，而这份是落档的 ⇒ 三个来源互相独立，缺一个还有别的。
+    try:
+        _sd = _p("data", "sessions")
+        _sess = sorted(f for f in (os.listdir(_sd) if os.path.isdir(_sd) else [])
+                       if f.endswith(".jsonl"))[-3:]
+        if not _sess:
+            checks.append(_check("最近几轮里没有『调过发送却一条都没发出去』的记录", None,
+                                 "还没有会话档案（刚装/刚重启）⇒ **没测到**"))
+        else:
+            _nfail = sum(_count(_tail(os.path.join(_sd, _fn), 400) or [], "noreply_send_failed")
+                         for _fn in _sess)
+            checks.append(_check("最近几轮里没有『调过发送却一条都没发出去』的记录", _nfail == 0,
+                                 ("最近 %d 份会话档案里有 %d 条 `noreply_send_failed`"
+                                  "（＝那几轮调过发送、却一条都没发出去）" % (len(_sess), _nfail))
+                                 if _nfail else
+                                 "最近 %d 份会话档案里没有这条状态" % len(_sess)))
+    except Exception as _e_sess:
+        checks.append(_check("最近几轮里没有『调过发送却一条都没发出去』的记录", None,
+                             "读不到会话档案（不影响其它判断）：%s" % str(_e_sess)[:40]))
+    # ⛔ 2026-09-21 加（同一个反馈的第二半）：真失败记在**台账**里
+    #   （`wechat.note_switch_fail`，与「它不回复」那一格同源，**已落盘** ⇒ 重启也看得见）。
     try:
         from . import wechat as _wx3
         _sf2 = _wx3.recent_switch_fails(5)
-    except Exception:
-        _sf2 = []
-    _last2 = _sf2[-1] if _sf2 else {}
-    checks.append(_check("最近没有『确认不了目标会话 ⇒ 发不出去』的记录", not _sf2,
-                         ("本次运行已有 %d 次没能把回复发出去（最后一条 %s · %s：%s）⇒ 消息读得到、"
-                          "只是发不出去：先把目标会话在微信里点开再重试（最后一条里若写着「最小化」，"
-                          "把微信从任务栏点出来即可）。"
-                          % (len(_sf2), _last2.get("t", "?"), _last2.get("where", "?"),
-                             str(_last2.get("why", ""))[:150]))
-                         if _sf2 else "本次运行到现在没有『确认不了目标会话』的失败记录"))
+    except Exception as _e_sf2:
+        _sf2 = None
+    if _sf2 is None:
+        # 读不到台账 ≠ 没有失败（V-R9-13 的同一条口径）
+        checks.append(_check("最近没有『确认不了目标会话 ⇒ 发不出去』的记录", None,
+                             "读不到这份台账（不影响其它判断）：%s" % str(_e_sf2)[:40]))
+    else:
+        _last2 = _sf2[-1] if _sf2 else {}
+        checks.append(_check("最近没有『确认不了目标会话 ⇒ 发不出去』的记录", not _sf2,
+                             ("已有 %d 次没能把回复发出去（最后一条 %s · %s：%s）⇒ 消息读得到、"
+                              "只是发不出去：先把目标会话在微信里点开再重试（最后一条里若写着"
+                              "「最小化」，把微信从任务栏点出来即可）。"
+                              % (len(_sf2), _last2.get("t", "?"), _last2.get("where", "?"),
+                                 str(_last2.get("why", ""))[:150]))
+                             if _sf2 else "台账里没有『确认不了目标会话』的失败记录"))
     # 内部故障话术拦截（拦得对，但用户要知道它拦了什么）
     try:
         from . import sender as _s
@@ -320,9 +391,12 @@ def v_self_echo() -> dict:
                          "最近 %d 条：喂给模型 %d 条 · self_wxid 命中 %d · **自家行号命中 %d** · 回声命中 %d%s"
                          % (len(led), keep, self_w, local_hit, echo,
                             "" if led else "（台账还是空的 ⇒ 没测到）")))
-    bad_reply = _count(_tail(_p("logs", "persona_morph.log"), 400), "回自己")
-    checks.append(_check("近期没有『回自己』的记录", bad_reply == 0,
-                         "日志里出现 %d 次相关记录" % bad_reply))
+    _bad_tail = _tail2(_p("logs", "persona_morph.log"), 400)
+    bad_reply = _count(_bad_tail or [], "回自己")
+    checks.append(_check("近期没有『回自己』的记录",
+                         None if _bad_tail is None else (bad_reply == 0),
+                         "日志读不到 ⇒ **没测到**（不是「没有记录」）" if _bad_tail is None
+                         else ("日志里出现 %d 次相关记录" % bad_reply)))
     ok, verdict, action = _verdict(checks, "判自己四档齐备：self_wxid/自家行号/回声窗/昵称，台账里也在正常命中",
                                    {"自家消息行号表在工作": "先成功发一条消息，行号表就会开始记（或看下载/权限是否挡住 data 目录写入）"})
     return _finish("self_echo", "它回自己 / 把我认成它", "机器人回自己刚发的消息、把我发的话当成别人说的",
@@ -340,21 +414,36 @@ def v_no_reply() -> dict:
     #    新消息一条都进不来，而暂停/水位/key 全都是好的，用户只能报"它不回了"。
     try:
         from . import wechat_dir as _wd_v
-        _wv = _wd_v.status()
-        _acc = str(_wv.get("account") or "")
-        _ns = list(_wv.get("account_names") or [])
+        # ⛔ 2026-09-21 修（第九轮 **V-R9-11** · P2）：`status()` **不带 `how`** 时拿不到账号这一维
+        #   （`account` / `account_names` / `account_live` / `dir` 全是空）—— 而 `_acc_ok` 在
+        #   "没有账号列表"时判 **True** ⇒ **假绿**（报告里写着"在读账号 没认出来"、判决却是 ✅）；
+        #   下面那段"每个号的活跃证据"也因为 `_par` 恒空而**从来没跑过**（死代码）。
+        #   ⇒ 现在：优先用**运行中实例**那份 `_db_how`（`webui` 每次跑检验器前会喂进来，
+        #     见 `set_runtime_how`）；拿不到就**如实判「没测到」**，不再给假 ✅。
+        _how = dict(_RUNTIME_HOW or {})
+        _wv = _wd_v.status(how=_how) if _how else _wd_v.status()
+        _acc = str(_wv.get("account") or (_how.get("account") or ""))
+        _ns = list(_wv.get("account_names") or (_how.get("account_names") or []))
         _live = _wv.get("account_live")
+        if _live is None and _acc:
+            _als = list(_how.get("accounts_live") or [])
+            _live = (_acc in _als) if _als else None
         _acc_ok = (not _ns) or (len(_ns) < 2) or (_live is not False)
         _acc_note = ("在读账号 %s（%s）" % (_acc or "没认出来",
                                           "库正在被写" if _live else
                                           ("**没在动**" if _live is False else "拿不到写入证据")))
+        if not _acc:
+            _acc_ok = None            # **没测到**：不装"这个号没问题"
+            _acc_note = ("拿不到运行中的实例（机器人没在跑 / 旧版本）⇒ 这一格**没测到**："
+                         "它本来用来回答「我读的是不是正在写的那个号」，没有实例就没有铁证。"
+                         "跑着机器人的话点一次「接微信」再点这个检验器")
         if len(_ns) > 1:
             _acc_note += "；这台机器上有 %d 个账号" % len(_ns)
             # ⭐ 2026-09-19 加（网友反馈：「**大号能连、小号连接不上**」）：把**每个号的活跃证据
             #   并排印出来**，并直接判"我在读的那个号是不是正在被写的那个"——多账号机器上
             #   这是最难自查的一条（读到不在写的号时，新消息一条都进不来，而其它检查全绿）。
             try:
-                _par = str(_wv.get("dir") or _wv.get("parent") or _wv.get("account_dir") or "")
+                _par = str(_how.get("dir") or _wv.get("dir") or _wv.get("effective") or "")
                 _alist = _wd_v.accounts(_par) if _par else []
             except Exception:
                 _alist = []
@@ -542,7 +631,8 @@ def v_no_reply() -> dict:
         else:
             tier_ok, tier_note = True, (_note + "（1=只回艾特 / 2=+关键词 / 3=+随机 / 4=全读）")
     except Exception:
-        tier_note = "读不到回复档位"
+        # ⛔ 2026-09-21 修（V-R9-14）：**读不到档位 ⇒ 没测到**，不许留 `tier_ok=True`（那会判 ✅）。
+        tier_ok, tier_note = None, "读不到回复档位（配置读不到）⇒ 这一格**没测到**"
     checks.append(_check("回复档位不是『只回艾特』却指望它搭话", tier_ok, tier_note))
     # ⛔ 2026-09-21 加（B站评论「**艾特它 它不会回复**」）：把"群里最近 @ 的那个名字"摆到报告里 ——
     #   微信 @ 用的是**群昵称**，可能既不是配置里的机器人昵称、也不是库里的账号昵称 ⇒
@@ -602,11 +692,16 @@ def v_emoji_blank() -> dict:
             files, "已缓存且校验通过" if key_ok else "**没有可用 key**", kf.get("seed") or "-")
     except Exception as e:
         note = "表情模块不可用：%s" % str(e)[:50]
-    checks.append(_check("表情能离线解出原图", (files > 0) and (key_ok or files > 0), note))
-    logs = _tail(_p("logs", "persona_morph.log"), 400)
-    shot_fail = _count(logs, "表情截图没取到") + _count(logs, "表情截图跳过")
-    checks.append(_check("最近没有『只能截图又截不到』的记录", shot_fail == 0,
-                         "相关记录 %d 条（新版本会先离线解原图，解不出才截图）" % shot_fail))
+    # ⛔ 2026-09-21 修（第九轮 **V-R9-13**）：原来是 `(files > 0) and (key_ok or files > 0)`
+    #   —— **等价于 `files > 0`**（恒真伪装）。现场后果：key 明明没有，明细写"**没有可用 key**"、
+    #   总判决却写"key 可用"，自相矛盾。⇒ 两个条件都要真成立才算过。
+    checks.append(_check("表情能离线解出原图", (files > 0) and key_ok, note))
+    logs = _tail2(_p("logs", "persona_morph.log"), 400)
+    shot_fail = _count(logs or [], "表情截图没取到") + _count(logs or [], "表情截图跳过")
+    checks.append(_check("最近没有『只能截图又截不到』的记录",
+                         None if logs is None else (shot_fail == 0),
+                         "日志读不到 ⇒ **没测到**（不是「没有记录」）" if logs is None
+                         else ("相关记录 %d 条（新版本会先离线解原图，解不出才截图）" % shot_fail)))
     ok, verdict, action = _verdict(checks, "表情模块正常：视觉开关在、本地有表情文件、key 可用",
                                    {"看图（视觉）是开着的": "控制台「模型」面板勾上「视觉(看图)」",
                                     "表情能离线解出原图": "先让群里发一个表情（要本机有那个表情文件），再点这个检验器"})
@@ -808,10 +903,20 @@ def _finish(vid, name, symptom, ok, verdict, action, checks) -> dict:
     _n_unk = sum(1 for c in checks if c.get("ok") is None)
     # ⛔ V-R5A-4：`ok=None`（全项没测到）要**如实画成「○ 没测到」**，不许落进 `if ok` 的假值分支
     #   画成 ❌（那是"证据说不是"），也不许画 ✅（那是"承诺成立"）。
-    _head = "✅ 通过" if ok is True else ("❌ 卡住" if ok is False else "○ 没测到")
+    # ⛔ 2026-09-21 加（第九轮 **V-R9-14**）：**有没测到的项时，报告头也不许打 ✅** ——
+    #   现场是「一格 True + 其余 None」被画成 ✅，用户拿去当"没问题"（而那一格根本什么都没保证）。
+    if ok is True:
+        _head = "✅ 通过" if not _n_unk else ("◐ 部分通过（%d 项没测到）" % _n_unk)
+    elif ok is False:
+        _head = "❌ 卡住"
+    else:
+        _head = "○ 没测到"
     lines = ["【检验器 · %s】" % name,
              "症状：%s" % symptom,
              "判决：%s %s" % (_head, verdict)]
+    if _CFG_ERR:
+        lines.append("⚠️ 配置没读到（%s）：下面依赖配置的那几格用的是**内置默认值** ⇒ "
+                     "它们的结论不算数（去控制台确认配置能正常打开）" % _CFG_ERR)
     if _n_unk:
         lines.append("（本页有 %d 项 **○ 没测到**：不算通过也不算失败 —— 别把「没测到」当「承诺成立」）" % _n_unk)
     if action:

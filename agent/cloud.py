@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import socket
 import ssl
@@ -46,8 +47,33 @@ def cfg() -> dict:
         return dict(DEFAULTS)
 
 
+def _harden_redirects() -> bool:
+    """V-R9-23：确保 urllib 跟 302 时**不把 `Bearer cloud.token` 带到新主机**。
+
+    实现只有一处（`safe_fetch.CredentialStrippingRedirectHandler`）——这里只负责"装上去"。
+    装不上就如实记日志（不静默）：安全层不可用时至少留下痕迹。
+    """
+    try:
+        from .safe_fetch import harden_urllib
+        return bool(harden_urllib())
+    except Exception as e:                                   # pragma: no cover - 极端环境
+        logging.getLogger("persona-morph").warning(
+            "安全层不可用，重定向凭据剥离没装上（V-R9-23）：%s", e)
+        return False
+
+
 def normalize_url(raw: str) -> tuple:
-    """URL 校验 → (ok, 规范化后的 url, 原因)。空串＝未配置（不算错）。"""
+    """URL 校验 → (ok, 规范化后的 url, 原因)。空串＝未配置（不算错）。
+
+    ⛔ 2026-09-21（第九轮审计 **V-R9-25**）：这里原来是一张**字符串表**（`localhost` / `127.0.0.1`
+    / `::1` / `0.0.0.0` / `.local` / 三个私有段）。E 线实测 `localhost.`（尾点）、
+    `169.254.169.254`、`[::ffff:127.0.0.1]`、`127.1`、`0x7f000001`、`2130706433`、`100.64.0.1`
+    **七种形态全部放行**，而且 `probe()` 会**真连过去**（`stage=tcp/http` 就是回包）
+    ⇒ 拿到控制台口令的人可以把它当**内网端口扫描器**用。
+    现在整段改调 `safe_fetch.validate_url`（它**解析后核 IP**，同一份实测全拦），
+    `cloud.allow_private` 仍是那个显式开关（`validate_url` 正好有这个形参）。
+    ⚠️ 代价：这里现在会做一次 DNS 解析（原来只比字符串）——这是"fail-closed"必须付的。
+    """
     u = str(raw or "").strip()
     if not u:
         return True, "", "未配置"
@@ -59,12 +85,21 @@ def normalize_url(raw: str) -> tuple:
         return False, "", "URL 解析失败：%s" % str(e)[:60]
     if not p.netloc:
         return False, "", "缺少主机名"
-    host = (p.hostname or "").lower()
     c = cfg()
-    private = (host in ("localhost", "127.0.0.1", "::1", "0.0.0.0")
-               or host.endswith(".local") or re.match(r"^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)", host))
-    if private and not c.get("allow_private"):
-        return False, "", "看起来是环回/内网地址；确实要发到内网请显式打开 cloud.allow_private"
+    try:
+        from .safe_fetch import validate_url, FetchError as _FetchError
+    except Exception as e:
+        return False, "", "安全层不可用，拒绝校验（fail-closed）：%s" % str(e)[:60]
+    try:
+        validate_url(u, allow_private=bool(c.get("allow_private")))
+    except _FetchError as e:
+        why = str(e)[:60]
+        if ("内网" in why) or ("本机" in why):
+            return False, "", ("看起来是环回/内网地址（%s）；确实要发到内网请显式打开 "
+                              "cloud.allow_private" % why)
+        return False, "", "网址不可用：%s" % why
+    except Exception as e:
+        return False, "", "网址校验异常：%s" % str(e)[:60]
     return True, u.rstrip("/"), ""
 
 
@@ -87,19 +122,27 @@ def probe(which: str = "", url: str = "", timeout_ms: int = 0) -> dict:
         url = str(c.get(key) or "")
     ok, fixed, why = normalize_url(url)
     if not ok:
-        return {"ok": False, "stage": "config", "why": why, "status": 0, "ms": 0, "url": url}
+        # `normalize_url` 现在也做 DNS 校验（V-R9-25）⇒ 解析失败这一种仍要如实报 `stage=dns`
+        # （探测器的意义就是"告诉用户卡在哪一段"："URL 解析失败"不算 DNS，"域名解析失败"才算）
+        _stage = "dns" if "域名解析" in str(why) else "config"
+        return {"ok": False, "stage": _stage, "why": why, "status": 0, "ms": 0, "url": url}
     if not fixed:
         return {"ok": False, "stage": "config", "why": "未配置接收端网址", "status": 0, "ms": 0, "url": ""}
     t0 = time.time()
     ms = lambda: int((time.time() - t0) * 1000)  # noqa: E731
     host, port, scheme = _split_host(fixed)
+    # V-R9-25（TOCTOU）：**校验时解析到哪个 IP，就用哪个 IP 连** —— 原来这里是
+    # `getaddrinfo()` 看一眼、`create_connection((host, port))` 再解析一次，两次结果可以不同
+    # （DNS rebinding 实测能让第二次解析落到环回）。
     try:
-        socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+        from .safe_fetch import validate_url as _vurl
+        _scheme, _host, _port, _path, ip = _vurl(
+            fixed, allow_private=bool(c.get("allow_private")))
     except Exception as e:
         return {"ok": False, "stage": "dns", "why": "域名解析不了（%s）——常见于网址写错、或本机 DNS/网络被限制" % str(e)[:60],
                 "status": 0, "ms": ms(), "url": fixed}
     try:
-        with socket.create_connection((host, port), timeout=max(2.0, (timeout_ms or c["timeout_ms"]) / 1000.0)):
+        with socket.create_connection((ip, port), timeout=max(2.0, (timeout_ms or c["timeout_ms"]) / 1000.0)):
             pass
     except Exception as e:
         return {"ok": False, "stage": "tcp", "why": "连不上端口 %d（%s）——可能被墙/防火墙挡、或对方没起服务"
@@ -107,14 +150,17 @@ def probe(which: str = "", url: str = "", timeout_ms: int = 0) -> dict:
     if scheme == "https":
         try:
             ctx = ssl.create_default_context()
-            with socket.create_connection((host, port), timeout=max(2.0, (timeout_ms or c["timeout_ms"]) / 1000.0)) as s:
+            with socket.create_connection((ip, port), timeout=max(2.0, (timeout_ms or c["timeout_ms"]) / 1000.0)) as s:
                 with ctx.wrap_socket(s, server_hostname=host):
                     pass
         except Exception as e:
             return {"ok": False, "stage": "tls", "why": "TLS 握手失败（%s）——证书/中间人/需要信任链" % str(e)[:60],
                     "status": 0, "ms": ms(), "url": fixed}
     # HTTP 段：只发 HEAD，不带 Authorization、不带 body
+    # （这一段仍按域名发：`urllib` 自己解析一次；TCP/TLS 两段已钉在已校验 IP 上 ⇒ 想当端口扫描器
+    #   也扫不动，剩下的是"探测阶段 DNS 再变一次"的窄口子，如实记在交接里，不假装没有。）
     try:
+        _harden_redirects()
         req = urllib.request.Request(fixed, method="HEAD", headers={"User-Agent": "PersonaMorph/probe"})
         with urllib.request.urlopen(req, timeout=max(2.0, (timeout_ms or c["timeout_ms"]) / 1000.0)) as r:
             return {"ok": True, "stage": "http", "status": int(getattr(r, "status", 0) or 0),
@@ -176,6 +222,7 @@ def upload(which: str, payload: dict, dry: bool = True) -> dict:
         headers["authorization"] = "Bearer " + tok
     body = json.dumps(out_obj, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(fixed, data=body, headers=headers, method="POST")
+    _harden_redirects()                    # V-R9-23：跨主机跳转时剥掉 Bearer
     try:
         with urllib.request.urlopen(req, timeout=max(2.0, c["timeout_ms"] / 1000.0)) as r:
             status = int(getattr(r, "status", 0) or 0)
@@ -184,7 +231,14 @@ def upload(which: str, payload: dict, dry: bool = True) -> dict:
             if style != "body_key":
                 return dict(base, ok=True)
             # body_key 形态：必须**回包确认** ok:true，否则如实说"没接住"
-            raw = r.read() if hasattr(r, "read") else b""
+            # V-R9-26：读取带上限（接收端回包正常只有几百字节；1MB 足够，超了就是异常 ⇒ 判"没接住"）
+            try:
+                from .safe_fetch import read_capped
+                raw = read_capped(r, 1024 * 1024, "接收端回包") if hasattr(r, "read") else b""
+            except ImportError:
+                raw = r.read(1024 * 1024 + 1)[:1024 * 1024]
+            except Exception as e:
+                return dict(base, ok=False, why="接收端回包超限/读不动，不敢当成功：%s" % str(e)[:60])
             try:
                 j = json.loads(raw.decode("utf-8", "replace"))
             except Exception:

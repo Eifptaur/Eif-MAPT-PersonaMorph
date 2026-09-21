@@ -862,6 +862,8 @@ th{color:var(--tx2);font-weight:500}
       <div class="row"><label>单档上下文上限</label><div class="grow"><input type="number" min="1" data-cfg="store.all_count"></div></div>
       <div class="row"><label>历史窗口(分钟)</label><div class="grow"><input type="number" min="0" data-cfg="store.past_window_min" title="0=不限"> <span class="hint">只把最近 N 分钟内的消息给模型当历史，防它回应很久之前的艾特/旧话题</span></div></div>
       <div class="row"><label>历史兜底条数</label><div class="grow"><input type="number" min="0" data-cfg="store.past_floor_count" title="时间窗外至少保留最近 N 条；0=关闭"> <span class="hint">长时间静默后仍能看到上文</span></div></div>
+      <div class="row"><label>新消息时间窗(分钟)</label><div class="grow"><input type="number" min="0" data-cfg="store.feed_window_min" title="0=不限"> <span class="hint">停机/卡顿后补进来的整批未读里，只把最近 N 分钟的当作「要我回」（更早的旧闲聊标已读、不回）；<b>@ 你 / 引用你的消息不受这个窗限制</b></span></div></div>
+      <div class="row"><label>单轮最多读几条</label><div class="grow"><input type="number" min="1" data-cfg="store.feed_max_count" title="超出的退回未读、下一轮再处理"> <span class="hint">防积压一次性灌给模型（也防它一口气回一大串）</span></div></div>
       <div class="row"><label>每群消息上限</label><div class="grow"><input type="number" min="0" data-cfg="store.max_messages_per_chat" title="0=不限制"></div></div>
       <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
       <div class="row"><label>每群独立档位</label><input type="checkbox" data-cfg="store.unified_tier" id="unifiedTierChk" checked><span class="hint">取消勾选后，可在下方按群单独设置响应档位（未设置的群跟随全局）</span></div>
@@ -1211,6 +1213,7 @@ th{color:var(--tx2);font-weight:500}
           <div class="chips" id="wlChips" data-cfg="wechat.group_name_white_list"></div>
           <div class="btns" style="margin-top:0">
             <button id="pickGroups" class="ghost">检测群聊并勾选</button>
+            <button id="refreshGroups" class="ghost" title="重新读一次群列表（新加群/改群名/换号之后用；不用重启程序）">刷新群列表</button>
             <input id="customGroup" type="text" placeholder="自定义群 wxid（或群名），回车添加" style="flex:1;background:var(--input-bg);border:1px solid var(--bd);border-radius:8px;padding:7px 10px;color:var(--tx)">
           </div>
           <div class="hint">留空=所有群都监听；勾选的群才响应（也可配合「暂停」）。勾选存的是**群 wxid**（唯一身份）——
@@ -2379,6 +2382,16 @@ function renderGroupList(box, groups, pick, onPick){
   draw('');
   return {search, list, draw};
 }
+// ⛔ 2026-09-21 加（第九轮 V-R9-11）：**刷新群列表** —— 群/昵称只在"接入那一跳"读一次，
+//   用户新加群 / 改群名 / 换了微信号之后，原来只能重启整个程序才认（界面上只会写"读到 0 个群聊"）。
+$('refreshGroups').onclick = async ()=>{
+  try{
+    const r = await getJSON('/api/wechat-groups?refresh=1');
+    if(r && r.ok === false){ toast(r.error || '重读群列表失败'); return; }
+    const n = (r.groups||[]).length;
+    toast('已重读：这台机器上读到 ' + n + ' 个群聊' + (n? '' : '（确认微信登录的是你要的那个号、且那个号里有群）'));
+  }catch(e){ toast('重读失败：' + e); }
+};
 $('pickGroups').onclick = async ()=>{
   try{
     const r = await getJSON('/api/wechat-groups');
@@ -2916,8 +2929,12 @@ async function loadStatus(){  try{
       // 悬停给全文 + 逐步诊断；每 10 秒会自动重试接入，接上后这里自己会变成"已连接"。
       const _wa = s.wechat_attach || {};
       const _ss = $('sideStatus');
+      // ⛔ 2026-09-21 加（第九轮 V-R9-9）：**监听目标 0 个 ⇒ 群里 @ 它也不回** —— 这是"检测不到群聊"
+      // 那条反馈的出口，必须摆在侧栏上（而不是只在日志里一行 warn）。
       _ss.textContent = (s.wechat_connected ? '微信已连接'
-                        : ('微信未连接' + (_wa.short ? (' · 原因：' + _wa.short) : ''))) + ' · 启动于 '+s.started_at;
+                        : ('微信未连接' + (_wa.short ? (' · 原因：' + _wa.short) : '')))
+                        + (_wa.targets_zero ? ' · ⚠️ 监听目标 0 个（去「微信」面板勾群）' : '')
+                        + ' · 启动于 '+s.started_at;
       _ss.title = s.wechat_connected ? '已接上微信客户端'
         : ((_wa.reason || '还没拿到失败原因（等一次接入尝试，或看日志）')
            + '\n自动重试：已试 ' + (_wa.tries||0) + ' 次（每 10 秒一次，接上就自动开始工作）'
@@ -4842,6 +4859,19 @@ async function onboarding(){
           toast('昵称没填，先按默认的来——之后可在「微信」面板里改');
         }
         const r = await getJSON('/api/wechat-groups');
+        // ⛔ 2026-09-21 修（第九轮 **V-R9-10** · P1）：向导这一步原来**完全不看 `r.ok`** ——
+        //   后端明确回了 `ok:false + error`（微信没接上 / contact.db 被占用）时，照样显示
+        //   「检测到 0 个群聊 / 请确认微信已登录」，把新用户推去查一个**无关方向**。
+        //   同一个接口的「选择监听的群」按钮 2026-09-20 已经判了 `r.ok`，向导这条被漏了。
+        //   ⇒ 现在：如实说原因 + 告诉他不勾也能先跑（不勾＝监听所有群），并让人点「下一步」重试。
+        if(r && r.ok === false){
+          $('obDesc').textContent = '第 3 步/共 5 步：这台机器上**暂时读不到群列表** —— ' + (r.error || '原因未明');
+          $('obBody').innerHTML = '<div class="hint" style="line-height:2">读不到群列表时这一步勾不了，'
+            + '但**不影响先把程序跑起来**：不勾＝监听所有群（等你之后在「微信」面板里勾也行）。<br>'
+            + '要现在勾：先确认微信已登录的是你要的那个号、那个号里确实有群，然后点「下一步」重试。</div>';
+          $('obNext').textContent='下一步'; step=3;
+          return;
+        }
         const groups = r.groups||[];
         $('obDesc').textContent = '第 3 步/共 5 步：勾选需要机器人监听的群（全不勾=监听所有群）。检测到 '+groups.length+' 个群聊。';
         const body=$('obBody'); body.innerHTML='';

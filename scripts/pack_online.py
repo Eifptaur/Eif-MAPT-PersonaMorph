@@ -61,6 +61,14 @@ SCAN = [
     ("API 密钥", r"sk-[A-Za-z0-9_\-]{10,}", True),
     ("Bearer 头", r"[Bb]earer\s+[A-Za-z0-9._\-]{12,}", True),
     ("token 值", r"token[\"'\s:=]{1,4}[A-Za-z0-9]{16,}", True),
+    # ⛔ 2026-09-21 加（第九轮 **V-R9-28**）：企微/钉钉 webhook 的 key **也是一种凭据** ——
+    #   当时 `agent\config.py:566` 内置了产品自带的企业微信机器人 webhook（带 key）随包发布，
+    #   而这三条规则都不认它（出包闸门实测"致命 0"）＋控制台把它打码 ⇒ 谁都看不见、一直留着。
+    #   规则写**真实形态**（企微 key 是 UUID、钉钉 access_token 是长 hex）⇒ 判据里的假 fixtures
+    #   （`key=K` / `access_token=x` / `FAKEWEBHOOKKEY0001`）不会误伤。
+    ("企业微信 webhook key", r"webhook/send\?key=[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-", True),
+    ("钉钉 webhook token", r"robot/send\?access_token=[0-9a-fA-F]{32,}", True),
+    ("长密钥参数", r"(?:key|access_token|secret)=[0-9a-fA-F]{32,}", True),
     ("微信账号/数据", r"wxid_[A-Za-z0-9]{6,}|MsgAttach|WeChat Files[/\\]", True),
     ("开发资料引用", r"_scratch[/\\]", False),   # 注：`wechatauto_logs/` 是本产品自己的运行日志目录，不算开发资料
     ("署名/仓库名", r"Eifptaur|Eif-MAPT", False),

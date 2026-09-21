@@ -373,11 +373,40 @@ class ChatStore:
         return sum(1 for m in st["messages"]
                    if not m["read"] and not m["self"] and not m.get("recalled") and not m.get("blocked"))
 
-    def peek_unread(self, chat_key: str, limit: int = 3):
+    def mark_read(self, chat_key: str, ids) -> int:
+        """只把**点名的**那几条标已读（返回条数）。
+
+        ⛔ 2026-09-21 加（第九轮 **V-R9-16**）：`mark_all_read` 与 `drain_unread` 都是"整批标读" ——
+        而新的喂模型口径要能"**只标这次真看过的**"，把超上限的那些**退回未读**（下轮还能处理）。
+        """
+        want = {str(x) for x in (ids or []) if str(x) != ""}
+        if not want:
+            return 0
+        with self._lock:
+            st = self._state(chat_key)
+            n = 0
+            for m in st["messages"]:
+                if not m["read"] and str(m.get("id")) in want:
+                    m["read"] = True
+                    n += 1
+            if n:
+                _save_chat(st)
+            return n
+
+    def peek_unread(self, chat_key: str, limit: int = 3, newest: bool = True):
+        """未读列表。**默认取最新的 `limit` 条**（保持时间顺序）。
+
+        ⛔ 2026-09-21 修（第九轮 **V-R9-15** · P1）：原来是 `[...][:limit]` ＝ 取**最旧**的 N 条 ——
+        积压 >200 条时，**最新那条 @ 它的话**落在窗口外 ⇒ 档位判成"没触发" ⇒ 连同整批被标已读
+        ⇒ 永久吞掉（用户看到的就是"有时候一句话不回"）。
+        `newest=False` 保留旧语义（只有判据/兼容路径会用）。
+        """
         st = self._state(chat_key)
-        return [m for m in st["messages"]
+        rows = [m for m in st["messages"]
                 if not m["read"] and not m["self"] and not m.get("recalled")
-                and not m.get("blocked")][: max(1, int(limit or 3))]
+                and not m.get("blocked")]
+        k = max(1, int(limit or 3))
+        return rows[-k:] if newest else rows[:k]
 
     def recent(self, chat_key: str, limit: int = 80, offset: int = 0, include_self: bool = True,
                include_recalled: bool = False, include_blocked: bool = False):

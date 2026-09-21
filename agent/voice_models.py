@@ -70,6 +70,30 @@ def _out_dir() -> str:
         return d
 
 
+def _harden_redirects() -> None:
+    """V-R9-23：跨主机 302 时不许把自定义头带过去（实现只有 `safe_fetch` 那一处，这里只负责装）。
+
+    ⚠️ 本模块发的请求只有 Content-Type/Accept（无凭据头）——这是"端点自己 302 到别处"时的兜底。
+    """
+    try:
+        from .safe_fetch import harden_urllib
+        harden_urllib()
+    except Exception as e:                                   # pragma: no cover - 极端环境
+        log.warning("安全层不可用，重定向凭据剥离没装上（V-R9-23）：%s", e)
+
+
+def _read_capped(resp, what: str = "语音回包") -> bytes:
+    """V-R9-26：带上限读回包。32MB 的取值理由：TTS/变声回的是**一整段音频**，
+    1 分钟 44.1kHz wav ≈ 5MB、常见 mp3 只有几百 KB ⇒ 32MB 覆盖正常业务，
+    同时把"对面无限灌数据"的峰值内存钉住（原来 `r.read()` 是无上限的）。"""
+    cap = 32 * 1024 * 1024
+    try:
+        from .safe_fetch import read_capped
+        return read_capped(resp, cap, what)
+    except ImportError:
+        return resp.read(cap + 1)[:cap]
+
+
 def _post(url: str, text: str, timeout: int, cfg: dict):
     """POST 一段文本，返回 (raw_bytes, content_type, status)。判据里替身这个函数，不联网。"""
     body = {"text": text, "text_lang": str(cfg.get("http_lang") or "zh")}
@@ -78,8 +102,9 @@ def _post(url: str, text: str, timeout: int, cfg: dict):
     data = json.dumps(body, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(url, data=data, method="POST",
                                  headers={"Content-Type": "application/json", "Accept": "*/*"})
+    _harden_redirects()                    # V-R9-23
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read(), (r.headers.get("Content-Type") or ""), getattr(r, "status", 200)
+        return _read_capped(r, "TTS 回包"), (r.headers.get("Content-Type") or ""), getattr(r, "status", 200)
 
 
 def _looks_audio(raw: bytes, ctype: str) -> bool:
@@ -192,8 +217,9 @@ def _post_audio(url: str, audio: bytes, cfg: dict, timeout: int, filename: str =
         req = urllib.request.Request(url, data=b"".join(chunks), method="POST",
                                      headers={"Content-Type": "multipart/form-data; boundary=%s" % bd,
                                               "Accept": "*/*"})
+    _harden_redirects()                    # V-R9-23
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read(), (r.headers.get("Content-Type") or ""), getattr(r, "status", 200)
+        return _read_capped(r, "变声回包"), (r.headers.get("Content-Type") or ""), getattr(r, "status", 200)
 
 
 def vc_convert(path: str, cfg: dict | None = None, timeout: int = DEFAULT_TIMEOUT):

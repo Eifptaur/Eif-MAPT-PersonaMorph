@@ -20,6 +20,7 @@ import json
 import os
 import re
 import subprocess
+import time
 import urllib.error
 import urllib.request
 
@@ -73,7 +74,12 @@ def _get_json(url: str, timeout: int = TIMEOUT):
     })
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
-            raw = r.read()
+            # V-R9-26：带上限读（接口回包正常几 KB~几百 KB；4MB 是宽裕上限，超了当"回包异常"）
+            try:
+                from .safe_fetch import read_capped
+                raw = read_capped(r, 4 * 1024 * 1024, "B 站接口回包")
+            except ImportError:
+                raw = r.read(4 * 1024 * 1024 + 1)[:4 * 1024 * 1024]
     except urllib.error.HTTPError as e:
         return None, "HTTP %s（接口拒绝或不存在）" % e.code
     except Exception as e:
@@ -220,18 +226,39 @@ def audio_url(bvid: str, cid, timeout: int = TIMEOUT):
     return (u or None), ("" if u else "接口没给音频地址")
 
 
-def _download(url: str, dest: str, timeout: int = 180):
-    """把音频流落到文件 ⇒ `(字节数, 原因)`。B 站 CDN 要带 Referer，否则 403。"""
+def _download(url: str, dest: str, timeout: int = 180, max_bytes: int = 128 * 1024 * 1024):
+    """把音频流落到文件 ⇒ `(字节数, 原因)`。B 站 CDN 要带 Referer，否则 403。
+
+    ⛔ 2026-09-21 第九轮审计（V-R9-24/26/27）：
+    · 这个地址来自 **B 站接口的回包**（`audio_url()`）⇒ 下手前先过 `safe_fetch` 闸门
+      （拿不到安全层就 fail-closed，一个字节都不下）；
+    · 128MB 上限：低码率音频轨（1:19 的视频约 659KB）正常远小于它，超了就是异常；
+    · **整轮墙钟上限**：`urlopen(timeout=)` 只管单次 recv，对面涓流就能把整条链挂住 ⇒
+      每块之间核一次总耗时。
+    """
+    try:
+        from .safe_fetch import guard_remote_url
+    except Exception:
+        return 0, "安全抓取层不可用：拒绝下载接口给的音频地址（fail-closed）"
+    try:
+        guard_remote_url(url)
+    except Exception as e:
+        return 0, "接口给的音频地址不可信：%s" % (str(e)[:70] or type(e).__name__)
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Referer": "https://www.bilibili.com/"})
+    t0 = time.monotonic()
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r, open(dest, "wb") as f:
             n = 0
             while True:
+                if (time.monotonic() - t0) > float(timeout):
+                    raise TimeoutError("总耗时超过 %s 秒（慢速流已放弃）" % timeout)
                 chunk = r.read(65536)
                 if not chunk:
                     break
                 f.write(chunk)
                 n += len(chunk)
+                if n > int(max_bytes):
+                    raise RuntimeError("音频流超过 %.0fMB 上限" % (int(max_bytes) / 1048576.0))
         return n, ""
     except urllib.error.HTTPError as e:
         return 0, "音频流 HTTP %s（B 站 CDN 拒绝，通常是防盗链）" % e.code

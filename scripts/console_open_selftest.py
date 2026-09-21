@@ -361,6 +361,43 @@ try:
         ok("落盘的地址访问 ⇒ 200（不是 401）", _good == 200, str(_good))
         _bad = _code("http://127.0.0.1:%d/?token=" % _port)
         ok("阴性对照：空口令地址 ⇒ 401 unauthorized（旧写法就是这样打开的）", _bad == 401, str(_bad))
+
+        # ⛔ 2026-09-21 加（第九轮 **V-R9-33** / F144·F147·F150）：**POST 路由的空口令必须 fail-closed**。
+        #   审计实测：三条变异（`/api/emojis/delete` 的 basename 守卫、空 token 的 fail-closed、
+        #   每条 POST 路由的 `_auth_ok`）本段**全放过** —— 因为这里原来只对 **GET** 发请求、
+        #   token 用的还是非空常量。⇒ 现在挑一批**只读/无副作用**的 POST 路由，各打一发不带口令的，
+        #   断言 401/403（鉴权在分发之前就把请求拒了 ⇒ 不可能误改任何东西）。
+        #   ⚠️ 故意**不碰** shutdown/restart/update/delete/pause 这类会动状态的路线 ——
+        #      判据自己不许成为风险源（万一是"鉴权坏了"，打过去就真出事）。
+        def _code_post(u, body=b""):
+            # ⚠️ 空体（Content-Length: 0）：带一个 JSON 体时，服务端在鉴权处直接拒、**不回读 body**
+            #    ⇒ 有些路由上客户端会看到连接被重置（实测 `/api/stats/cal_list` 报 WinError 10053），
+            #    那是"被拒"不是"放行"，但会让断言分不清 ⇒ 统一发空体。
+            _rq = urllib.request.Request(u, data=body, method="POST",
+                                         headers={"Content-Type": "application/json"})
+            try:
+                with urllib.request.urlopen(_rq, timeout=5) as r:
+                    return r.status
+            except urllib.error.HTTPError as e:
+                return e.code
+            except Exception as e:
+                return "ERR:%s" % e
+
+        _SAFE_POST = ["/api/verifiers", "/api/verify", "/api/sessions", "/api/memory",
+                      "/api/risk", "/api/prices", "/api/scoring/stats", "/api/stats/cal_list",
+                      "/api/wechat-groups", "/api/wechat/dir", "/api/prompt/preview"]
+        _open_post = []
+        for _rp in _SAFE_POST:
+            _c = _code_post("http://127.0.0.1:%d%s" % (_port, _rp))
+            if _c not in (401, 403):
+                _open_post.append("%s⇒%s" % (_rp, _c))
+        ok("**每条 POST 路由都不带口令 ⇒ 401/403**（审计 F147/F150：这一段原来只测 GET）",
+           not _open_post, "没有拒绝的：" + "、".join(_open_post))
+        _auth_c = _code_post("http://127.0.0.1:%d/api/verifiers?token=judge-token-1234567890" % _port)
+        ok("阳性对照：带对口令的 POST 不被拦（不是「一律 401」）", _auth_c == 200, str(_auth_c))
+        _src_ui = open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
+        _seg_post = _src_ui[_src_ui.index("def do_POST"):_src_ui.index("\n    def ", _src_ui.index("def do_POST") + 10)]
+        ok("do_POST 里有统一鉴权（`_auth_ok` 出现在 POST 段）", "_auth_ok" in _seg_post)
     finally:
         try:
             if _w is not None:

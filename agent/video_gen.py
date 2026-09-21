@@ -150,10 +150,21 @@ def _save_bytes(data: bytes, tag: str) -> str:
     return p
 
 
+def _capped(resp, max_bytes: int, what: str) -> bytes:
+    """V-R9-26：带上限读响应体（拿不到 safe_fetch 就退回"读上限+1 再截断"，绝不 `read()` 一把梭）。"""
+    try:
+        from .safe_fetch import read_capped
+        return read_capped(resp, max_bytes, what)
+    except ImportError:
+        return resp.read(int(max_bytes) + 1)[:int(max_bytes)]
+
+
 def _get(url: str, timeout: int) -> bytes:
+    """下载一段字节。V-R9-26：**带 64MB 上限**——单条视频按 `MAX_MB=30` 早就该被过滤链拒掉，
+    64MB 只是"对面无限灌数据"时的兜底，正常业务碰不到。"""
     req = urllib.request.Request(url, method="GET", headers={"User-Agent": "pm-video-gen"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read()
+        return _capped(r, 64 * 1024 * 1024, "视频字节")
 
 
 def _comfy_generate(backend: dict, prompt: str, seconds: int):
@@ -178,14 +189,17 @@ def _comfy_generate(backend: dict, prompt: str, seconds: int):
     req = urllib.request.Request(base + "/prompt", data=body,
                                  headers={"Content-Type": "application/json"}, method="POST")
     with urllib.request.urlopen(req, timeout=30) as r:
-        pid = str((json.loads(r.read().decode("utf-8") or "{}") or {}).get("prompt_id") or "")
+        # 4MB：ComfyUI 的 /prompt 只回一个 prompt_id（几十字节），4MB 已经极宽
+        pid = str((json.loads(_capped(r, 4 * 1024 * 1024, "ComfyUI 提交回包").decode("utf-8") or "{}")
+                   or {}).get("prompt_id") or "")
     if not pid:
         raise ValueError("ComfyUI 没返回 prompt_id（工作流可能不合法）")
     t0 = time.time()
     while time.time() - t0 < int(backend.get("timeout") or DEFAULT_TIMEOUT):
         time.sleep(1.5)
         with urllib.request.urlopen(base + "/history/" + pid, timeout=20) as r:
-            hist = json.loads(r.read().decode("utf-8") or "{}")
+            # 4MB：历史里只有输出文件名清单（正常几 KB），4MB 是宽裕上限
+            hist = json.loads(_capped(r, 4 * 1024 * 1024, "ComfyUI 历史回包").decode("utf-8") or "{}")
         ent = (hist or {}).get(pid)
         if not ent:
             continue
@@ -229,7 +243,8 @@ def call_backend(backend: dict, prompt: str, seconds: int = 5):
                                  headers={"Content-Type": "application/json"}, method="POST")
     with urllib.request.urlopen(req, timeout=int(backend.get("timeout") or DEFAULT_TIMEOUT)) as resp:
         ctype = (resp.headers.get("Content-Type") or "").lower()
-        raw = resp.read()
+        # 64MB：这一条可能**直接回视频字节**（口径 ①）⇒ 同 `_get` 的上限
+        raw = _capped(resp, 64 * 1024 * 1024, "视频后端回包")
     files = []
     if ctype.startswith("video/") or raw[:4] in (b"\x00\x00\x00\x18", b"\x00\x00\x00\x20") or b"ftyp" in raw[:16]:
         files.append(_save_bytes(raw, backend.get("id") or "video"))
@@ -244,6 +259,16 @@ def call_backend(backend: dict, prompt: str, seconds: int = 5):
                 u = j[k].strip()
                 break
         if u.startswith("http"):
+            # V-R9-24：这个地址是**后端回包**给的 ⇒ 二次 GET 之前先过 SSRF 闸门
+            # （E 线实测：假后端把 `url` 指向 `127.0.0.1` ⇒ 产品真去打内网/环回）
+            try:
+                from .safe_fetch import guard_remote_url
+            except Exception:
+                raise ValueError("安全抓取层不可用：拒绝下载后端给的视频地址（fail-closed）")
+            try:
+                guard_remote_url(u, str(backend.get("url") or ""))
+            except Exception as e:
+                raise ValueError("后端给的视频地址不可信（%s）：%s" % (type(e).__name__, str(e)[:80]))
             files.append(_save_bytes(_get(u, int(backend.get("timeout") or DEFAULT_TIMEOUT)),
                                      backend.get("id") or "video"))
         elif isinstance(j.get("files"), list) and j["files"]:

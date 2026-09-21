@@ -223,11 +223,11 @@ ck("B13 两条靠画面判成功的投递路径都挂了这道守卫",
    SRC_WECHAT.split("def moments_open_posted(")[1][:2500].count("_moments_judge_blind") >= 1
    and SRC_WECHAT.split("def moments_scroll_posted(")[1][:2500].count("_moments_judge_blind") >= 1)
 # B14~B17 最小化 ⇒ **不激活地**还原再干活（2026-09-15 用户：「那个最小化，你应该可以自己在后台切出来吧」）
-_HELP = SRC_WECHAT.split("def _ensure_main_visible(")[1][:2200]
+_HELP = SRC_WECHAT.split("def _ensure_main_visible(")[1][:3400]
 # ⚠️ 只认**代码形态**的字面量（带 `u.` 前缀与参数），不搜裸 API 名——docstring 里为了说明历史坑
 #    **引用**了 `SetForegroundWindow`/`SW_RESTORE` 这些名字，搜整段会自命中（第三次踩同一个坑）。
-ck("B14 有「无激活还原最小化窗口」的实现（真的读 IsIconic 判断）",
-   "u.IsIconic(int(main))" in _HELP)
+ck("B14 有「无激活还原最小化/隐藏窗口」的实现（两态都真读，不是只看 IsIconic）",
+   "bool(u.IsIconic(int(main)))" in _HELP and "IsWindowVisible(int(main))" in _HELP)
 ck("B15 用的是 SW_SHOWNOACTIVATE（4）而不是 SW_RESTORE，且代码里不抢前台",
    _sm.has(_HELP, "u.ShowWindow(int(main), 4)")
    and _sm.has(_HELP, "u.SetWindowPos(int(main), 0, 0, 0, 0, 0,")
@@ -573,6 +573,15 @@ ck("B17f 宽松成功分支也学参照（对面 r23 的 A 枪走的就是这条
 ck("B17g 两条投递链的收尾（含早退路径）都放回收起状态",
    '_minimize_back_if_needed("投递文本链收尾")' in SRC_WECHAT
    and '_minimize_back_if_needed("投递文件链收尾")' in SRC_WECHAT)
+# ⛔ 2026-09-21 加（第九轮 **V-R9-1（P1）**）：`send_text` 自己也要放回 —— v2.1.52 给它加了
+#   "进门前准备画面"（会不激活还原主窗），而放回当时只在 `send_text_posted` 链尾 ⇒ 本函数的多条
+#   **早退**（会话头确认不了 / 真鼠标兜底被闸 / 遮挡预检不过）都在放回之前 return ⇒ 用户收起的微信
+#   被摊在桌面上。修法＝挂在本函数的 `finally`（源码级只钉"那一句在 send_text 里"，行为锚见
+#   `scripts\send_prepare_behavior_selftest.py` A6 段：早退路径也必须成对）。
+_SEND_TEXT_SEG = SRC_WECHAT.split("def send_text(")[1].split("\n    def ", 2)[0]
+ck("B17h `send_text` 的 finally 里放回（含早退路径）",
+   "_minimize_back_if_needed(\"投递文本链收尾（含早退）\")" in _SEND_TEXT_SEG
+   and "finally:" in _SEND_TEXT_SEG)
 # B17h r24 现场：最小化还原后投递打字不生效（同一轮里可见态 A1/A2 都成功、token 两处都搜不到）
 #   ⇒ 打字前必须先投递点一次输入栏把焦点给它（旧版从不点输入框，靠"正常态默认有焦点"）
 ck("B17h 打字前先投递聚焦输入栏（最小化还原后 WM_CHAR 会被丢）",

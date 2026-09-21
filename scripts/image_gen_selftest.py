@@ -392,6 +392,61 @@ try:
     set_cfg(enabled=True, online_allowed=True)
     ok("允许出网时 pollinations 出现在可用后端里（免密钥、不用用户配）",
        any(b["id"] == "pollinations" for b in IG.backends()), str([b["id"] for b in IG.backends()]))
+
+    # ⛔ 第九轮 V-R9-24：远端回包里的 `data[].url` 原来是**无校验二次 GET**（假出图服务把它指向
+    #   127.0.0.1 ⇒ 产品真去打内网/环回）。这里用两个假后端守：①回链指向别处的内网地址 ⇒ 必须拒；
+    #   ②回链指向**后端自己**（本地部署的常态）⇒ 照常取回（证明不是一刀切误伤本地后端）。
+    class _FakeOpenAI(http.server.BaseHTTPRequestHandler):
+        url_to_return = ""
+
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            raw = base64.b64decode(_PNG_B64)
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length") or 0)
+            if n:
+                self.rfile.read(n)
+            out = json.dumps({"data": [{"url": _FakeOpenAI.url_to_return}]}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out)))
+            self.end_headers()
+            self.wfile.write(out)
+
+    _srv2 = http.server.HTTPServer(("127.0.0.1", 0), _FakeOpenAI)
+    _port2 = _srv2.server_address[1]
+    threading.Thread(target=_srv2.serve_forever, daemon=True).start()
+    _online = {"id": "fake-online", "kind": "online", "proto": "openai_image",
+               "url": "http://127.0.0.1:%d/v1" % _port2, "model": "fake-model"}
+    _FakeOpenAI.url_to_return = "http://127.0.0.1:41011/png"       # 别处的内网地址（E 线复现形态）
+    try:
+        IG.call_backend(_online, "两只猫")
+        _refused, _why = False, ""
+    except Exception as e:
+        _refused, _why = True, "%s: %s" % (type(e).__name__, str(e)[:60])
+    ok("V-R9-24：回包里的 url 指向内网 ⇒ **拒**（不二次 GET）", _refused and "不可信" in _why, _why)
+    _FakeOpenAI.url_to_return = "http://127.0.0.1:%d/img" % _port2   # 同源（本地后端自己的静态资源）
+    try:
+        _rr = IG.call_backend(_online, "两只猫")
+        _same_ok = len(_rr.get("files") or []) == 1 and os.path.exists(_rr["files"][0])
+        _same_why = str([os.path.basename(x) for x in _rr.get("files") or []])
+    except Exception as e:
+        _same_ok, _same_why = False, "%s: %s" % (type(e).__name__, str(e)[:60])
+    ok("阳性对照：同源回链照常取回（本地后端不被误伤）", _same_ok, _same_why)
+    ok("V-R9-24：二次 GET 之前调的是 safe_fetch 的统一闸门（源码断言）",
+       "guard_remote_url" in open(os.path.join(ROOT, "agent", "image_gen.py"), encoding="utf-8").read())
+    try:
+        _srv2.shutdown()
+    except Exception:
+        pass
 finally:
     try:
         _srv.shutdown()

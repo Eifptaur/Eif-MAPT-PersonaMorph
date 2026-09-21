@@ -24,6 +24,24 @@ from agent import cloud                              # noqa: E402
 PASS, FAIL = [], []
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# ⛔ 2026-09-21（第九轮 V-R9-25 改动后）：`cloud.normalize_url` 现在**会做 DNS 解析**
+#   （原来只比字符串表）⇒ 判据必须自己把解析钉住，否则 A/D/E 三段会去打真 DNS。
+_DNS_TABLE = {"a.com": "93.184.216.34", "example.com": "93.184.216.34", "hook.example": "93.184.216.34"}
+
+
+def _install_offline_resolver():
+    """离线替身：只认表里的名字，别的一律 `gaierror`（判据不打公网、也不碰真 DNS）。"""
+    real = socket.getaddrinfo
+
+    def fake(host, port, *a, **k):
+        ip = _DNS_TABLE.get(str(host).lower())
+        if ip is None:
+            raise socket.gaierror(-2, "Name or service not known")
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, int(port or 0)))]
+
+    socket.getaddrinfo = fake
+    return real
+
 
 def ok(name, cond, detail=""):
     (PASS if cond else FAIL).append(name)
@@ -52,6 +70,7 @@ def main():
 
     try:
         print("== A. URL 校验 ==")
+        _offline_gai = _install_offline_resolver()          # 离线：normalize_url 现在会解析
         use({})
         ok("空串 = 未配置（不算错）", cloud.normalize_url("") == (True, "", "未配置"))
         ok("http/https 都收", cloud.normalize_url("http://a.com/x")[0] and cloud.normalize_url("https://a.com/x")[0])
@@ -60,6 +79,11 @@ def main():
         ok("缺主机名拒", not cloud.normalize_url("https:///hook")[0])
         for bad in ("http://127.0.0.1:8080/hook", "http://localhost:8080", "http://192.168.1.9/hook", "http://10.0.0.5/x"):
             ok("环回/内网默认拒：" + bad, not cloud.normalize_url(bad)[0], cloud.normalize_url(bad)[2][:30])
+        # ⛔ 第九轮 V-R9-25：字符串表时代这 7 种形态**全部放行**（E 线实测），现在逐条守
+        for bad2 in ("http://localhost.:8000/x", "http://169.254.169.254/latest/meta-data/",
+                     "http://[::ffff:127.0.0.1]:8080/", "http://127.1:8080/x",
+                     "http://0x7f000001:8080/x", "http://2130706433:8080/x", "http://100.64.0.1/x"):
+            ok("新口径拦住绕过形态：" + bad2, not cloud.normalize_url(bad2)[0], cloud.normalize_url(bad2)[2][:34])
         use({"allow_private": True})
         ok("显式打开 allow_private 后内网放行", cloud.normalize_url("http://127.0.0.1:8080/hook")[0])
         ok("公网地址照旧放行", cloud.normalize_url("https://example.com/hook")[0])
@@ -76,7 +100,7 @@ def main():
         socket.getaddrinfo = raise_dns
         r = cloud.probe(url="https://no-such-host.invalid/hook")
         ok("DNS 失败 ⇒ stage=dns 且说明原因", r["stage"] == "dns" and not r["ok"], r["why"][:40])
-        socket.getaddrinfo = real_gai
+        _offline_gai = _install_offline_resolver()          # 装回离线替身（别落到真 DNS）
 
         def raise_tcp(*a, **k):
             raise TimeoutError("timed out")
@@ -84,7 +108,18 @@ def main():
         socket.create_connection = raise_tcp
         r = cloud.probe(url="https://93.184.216.34/hook")
         ok("TCP 连不上 ⇒ stage=tcp（＝可能被墙/没起服务）", r["stage"] == "tcp" and not r["ok"], r["why"][:46])
-        socket.create_connection = real_conn
+        # ⛔ 判据**不出网**：TCP 段改成"连得上"的假连接（原来这里 restore 真实现 ⇒ 会真连 example.com）
+        class _FakeSock:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        socket.create_connection = lambda *a, **k: _FakeSock()
+        r = cloud.probe(url="https://example.com/hook")
+        ok("https 且 TLS 不通 ⇒ stage=tls（离线可判、说明卡在 TLS）",
+           r["stage"] == "tls" and not r["ok"], str(r.get("why"))[:44])
 
         seen = []
 
@@ -95,7 +130,9 @@ def main():
             return FakeResp(200)
 
         cloud.urllib.request.urlopen = fake_head
-        r = cloud.probe(url="https://example.com/hook")
+        # 用 **http** 走 HEAD 那两段：https 会先过 TLS（上面那条已单独判过），
+        # 而判据不许真出网 ⇒ 只在"假连接 + 假 urlopen"下跑 HTTP 段
+        r = cloud.probe(url="http://example.com/hook")
         ok("HEAD 成功 ⇒ stage=http ok", r["ok"] and r["stage"] == "http" and r["status"] == 200, r)
         req = seen[-1]
         ok("探测用的是 HEAD", req["method"] == "HEAD", req["method"])
@@ -106,7 +143,7 @@ def main():
             raise cloud.urllib.error.HTTPError(req.full_url, 405, "Method Not Allowed", {}, None)
 
         cloud.urllib.request.urlopen = fake_405
-        r = cloud.probe(url="https://example.com/hook")
+        r = cloud.probe(url="http://example.com/hook")
         ok("接收端只收 POST（405）⇒ 仍算可达（说明地址对）", r["ok"] and r["status"] == 405, r["why"][:50])
         cloud.urllib.request.urlopen = real_urlopen
 
@@ -141,8 +178,9 @@ def main():
             def __init__(self, obj, status=200):
                 self._raw = json.dumps(obj).encode("utf-8")
                 self.status = status
-            def read(self):
-                return self._raw
+            def read(self, n=-1):
+                # V-R9-26：产品改成 `read(上限+1)` 的带限读取 ⇒ 替身要认这个形参
+                return self._raw if (n is None or int(n) < 0) else self._raw[:int(n)]
             def __enter__(self):
                 return self
             def __exit__(self, *a):
@@ -150,8 +188,9 @@ def main():
 
         class FakeRawResp:
             status = 200
-            def read(self):
-                return b"<html>hi</html>"
+            def read(self, n=-1):
+                b = b"<html>hi</html>"
+                return b if (n is None or int(n) < 0) else b[:int(n)]
             def __enter__(self):
                 return self
             def __exit__(self, *a):

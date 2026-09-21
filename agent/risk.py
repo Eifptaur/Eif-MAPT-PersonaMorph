@@ -49,6 +49,7 @@ import re
 import threading
 import time
 
+from . import persist
 from .config import DATA_DIR, get_config
 
 log = logging.getLogger("persona-morph")
@@ -159,27 +160,29 @@ class RiskGate(object):
         self._load()
 
     # ── 状态读写 ────────────────────────────────────────────────────────
+    # ⛔ V-R9-18（审计第九轮，本轮修）：原 `_load` 是 `except: log.warning` ⇒ **fail-open**——
+    #    `risk_state.json` 坏掉/读不出来时 `paused` 掉回默认的 False，**停机开关静默解除**，
+    #    机器人接着往外发。读不出"停止开关"绝不能等价于"没有暂停" ⇒ 改成 **fail-closed**：
+    #    坏档照 `persist.quarantine` 改名留证，内存里置 paused=True + 写清原因，
+    #    用户确认后在控制台点『恢复发送』即可（坏档没丢，还能人工修回来）。
     def _load(self):
-        try:
-            if os.path.exists(self.path):
-                with open(self.path, "r", encoding="utf-8") as f:
-                    d = json.load(f) or {}
-                if isinstance(d, dict):
-                    self._st.update({k: v for k, v in d.items() if k in self._st})
-        except Exception as e:
-            log.warning("风险闸门状态读取失败（按空状态继续）：%s", e)
+        if not os.path.exists(self.path):
+            return                       # 从来没落过状态 ⇒ 空状态起步（这不是坏档）
+        _BAD = object()                  # 哨兵：读到了什么 / 走的默认值，用 `is` 分得清
+        d = persist.load_or_quarantine(self.path, _BAD)
+        if d is _BAD:
+            self._st["paused"] = True
+            self._st["paused_reason"] = "风险状态文件读不出来，已按最保守处理成暂停"
+            log.warning("风险闸门状态读不出来 ⇒ **按暂停（fail-closed）**处理，确认后可点『恢复发送』：%s",
+                        self.path)
+            return
+        if isinstance(d, dict):
+            self._st.update({k: v for k, v in d.items() if k in self._st})
 
     def _save(self):
-        try:
-            os.makedirs(os.path.dirname(self.path), exist_ok=True)
-            tmp = self.path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(self._st, f, ensure_ascii=False)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp, self.path)
-        except Exception as e:
-            log.warning("风险闸门状态落盘失败：%s", e)
+        # V-R9-22：临时名带 pid + 随机后缀 + os.replace（老写法共用 `path + ".tmp"`）
+        if not persist.atomic_write_json(self.path, self._st, indent=None):
+            log.warning("风险闸门状态落盘失败 ⇒ 停机开关重启后可能丢失（原档未动）：%s", self.path)
 
     def _event(self, verdict, chat_key, text=""):
         rec = {"ts": int(time.time() * 1000), "level": verdict.level, "code": verdict.code,

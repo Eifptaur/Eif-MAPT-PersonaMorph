@@ -20,6 +20,8 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _srcmatch as _sm          # noqa: E402  空白容忍的源码断言（V-R4-13 第三条）
 
 from PIL import Image, ImageDraw  # noqa: E402
 from agent import chat_ocr as CO  # noqa: E402
@@ -174,12 +176,15 @@ src = open(os.path.join(ROOT, "agent", "chat_header.py"), encoding="utf-8").read
 ok("grab_render 会试渲染子窗", "find_render_child" in src and "渲染子窗" in src)
 ok("grab_render 有重试（tries）", "tries: int = 12" in src and "for _round in range(max(1, int(tries)))" in src)
 ok("帧质量闸（既不太暗也不是纯色帧）", "_frame_ok" in src and "stddev" in src)
-ok("退回抓屏前先过遮挡校验", "_region_occluded" in src and src.index("_region_occluded(render, main_pid)") < src.index("ImageGrab.grab"))
-ok("退回抓屏只作最后手段（PrintWindow 优先）", src.index("_print_window") < src.index("ImageGrab.grab"))
+ok("退回抓屏前先过遮挡校验（且**拿不到主窗 PID 时不许退**，第九轮 V-R9-4）",
+   "_region_occluded" in src and src.index("_region_occluded(render, main_pid)") < src.index("return ImageGrab.grab(")
+   and "if not main_pid:" in src)
+ok("退回抓屏只作最后手段（PrintWindow 优先）",
+   src.index("_print_window") < src.index("return ImageGrab.grab("))
 w_src = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
 ok("open_chat_by_search 用 find_search_entry（两套 UI 都走这条路）", "find_search_entry" in w_src)
 ok("图标形态下先确认搜索框展开再打字", "不往下打字" in w_src)
-ok("打字投主窗（键盘），点图标投渲染子窗（鼠标）", "backend.send_text(main, name)" in w_src)
+ok("打字投主窗（键盘），点图标投渲染子窗（鼠标）", _sm.has(w_src, "backend.send_text(main, name)"))
 
 print("⑦ 图标候选块里挑搜索入口：**形状判据**（跨机 r11 实测：对面那台点到了导航栏那块）")
 # 对面 r11 的现场（原样搬来当回归）：
@@ -264,12 +269,12 @@ _w3 = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
 _seg_box = _w3[_w3.index("def open_chat_by_search"):]
 _seg_box = _seg_box[:_seg_box.find("\n    def ", 10)]
 ok("box 路线里也调 _find_search_popover（先按浮层试）", "_find_search_popover(main)" in _seg_box)
-ok("浮层里用 find_popover_row 找目标行", "find_popover_row(_pop[2], name)" in _seg_box)
+ok("浮层里用 find_popover_row 找目标行", _sm.has(_seg_box, "find_popover_row(_pop[2], name)"))
 ok("浮层判否时要关掉它再退回主窗那条路", "_close_search_popover(int(_ph))" in _seg_box)
 ok("切会话失败要把列表滚回顶部（**两条**失败分支都调同一个实现）",
    _w3.count("self._scroll_list_to_top(") >= 2 and "def _scroll_list_to_top" in _w3)
 ok("还原用的是产品已验证的滚轮形状（times=8, gap_ms=70，不自己换参数）",
-   "times=8, gap_ms=70" in _w3)
+   _sm.has(_w3, "times=8, gap_ms=70"))
 
 print("⑫ 现场取证（2026-09-18 晚）：抓到兄弟窗画面 / 文字碎片当图标 / 独立「搜索聊天记录」窗")
 # 现场：`wechatauto_logs\fail\20260918-220433_search_entry\`（probe.json + shot.png）
@@ -324,7 +329,9 @@ ok("全是自家允许窗口（主窗/渲染子窗）⇒ 不算遮挡",
    _ov([(100, True)] * 4, 100) is False)
 ok("别的进程盖住 ⇒ 判遮挡（旧口径不许丢）",
    _ov([(200, False)] * 4, 100) is True)
-ok("采样点全落空（pid=0）⇒ 不判遮挡", _ov([(0, False)] * 4, 100) is False)
+# ⛔ 2026-09-21 改口径（第九轮 **V-R9-4**）：采样全落空（pid=0）＝**未知** ⇒ 按"遮挡"处理（fail-closed），
+#   旧口径判 False（"没遮挡"＝可以退回抓屏）会让抓屏读到别人家的像素。
+ok("采样点全落空（pid=0）⇒ **判遮挡**（未知一律 fail-closed，V-R9-4）", _ov([(0, False)] * 4, 100) is True)
 ok("只有零星盖住（<1/4，9 个采样点里 1 个）⇒ 不判遮挡",
    _ov([(200, False)] + [(100, True)] * 8, 100) is False)
 ok("4 个采样点里 1 个被盖住 ⇒ 判遮挡（旧口径如此，不许悄悄改松）",
@@ -336,7 +343,7 @@ ok("搜索窗判据是纯函数（含独立「搜索聊天记录」窗）",
 ok("独立搜索窗**能被找到**（_find_search_popover 走 _search_window_hwnds）",
    "_search_window_hwnds(main=main)" in _w_src2)
 ok("独立搜索窗**能被关掉**（close_search_popovers 也走同一枚举）",
-   "for h, _rect, _cls, _ttl in self._search_window_hwnds(gui=gui):" in _w_src2)
+   _sm.has(_w_src2, "for h, _rect, _cls, _ttl in self._search_window_hwnds(gui=gui):"))
 ok("收尾只关**本次新开的**（only_new＝动手前的 hwnd 集合，不碰用户自己开的窗）",
    "only_new" in _w_src2 and "_pre_sw" in _w_src2 and "close_search_popovers(gui=gui, only_new=_pre_sw)" in _w_src2)
 ok("「找不到搜索入口」也要留现场（原来是裸返回）", "search_entry_missing" in _w_src2)
@@ -367,7 +374,7 @@ _icon_seg = _icon_seg[:_icon_seg.index("# —— box 形态")]
 ok("图标路线：**先看强档证据**（chat_is_open），再谈内容级复核",
    "chat_is_open(chat_id, gui=gui, name=name)" in _icon_seg
    and _icon_seg.index("chat_is_open(chat_id, gui=gui, name=name)") < _icon_seg.index("chat_identity_ok(chat_id, gui=gui)"))
-ok("图标路线：强档证据是**轮询**等出来的（不是打一枪就判否）", "for _i in range(4)" in _icon_seg)
+ok("图标路线：强档证据是**轮询**等出来的（不是打一枪就判否）", _sm.has(_icon_seg, "for _i in range(4)"))
 ok("图标路线：做内容级复核**之前先关掉浮层**（浮层盖着聊天区 ⇒ 读不到内容）",
    _icon_seg.index("_close_search_popover(int(pop_hwnd))") < _icon_seg.index("chat_identity_ok(chat_id, gui=gui)"))
 ok("图标路线：判据**不可用**（读不出）时按弱证据计切成功（原来这里直接判否 ⇒ 又搜一遍）",
@@ -398,7 +405,7 @@ ok("_emoji_btn_pos **先现量**、比例法只当兜底",
    and _seg_btn.index("grab_render") < _seg_btn.index("int(w * 0.324)"))
 
 print("⑮ 收藏表情：媒体消息（气泡没有可读文本）必须走几何定位，且**不许猜点**")
-ok("message_menu 有 media/want_lid 形参", "media: bool = False, want_lid=None" in _w14)
+ok("message_menu 有 media/want_lid 形参", _sm.has(_w14, "media: bool = False, want_lid=None"))
 ok("collect_emoji_native 透传 media=True/want_lid", "media=True, want_lid=local_id" in _w14)
 ok("媒体占位文本表存在（[表情]/[动画表情]/[图片]…）", "_MEDIA_PLACEHOLDERS" in _w14)
 _seg_ml = _w14[_w14.index("def _media_bubble_locate"):]

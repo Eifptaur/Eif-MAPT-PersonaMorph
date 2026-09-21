@@ -837,23 +837,84 @@ def is_search_window(cls: str, title: str) -> bool:
 #   失败过去只写 log.info，用户对着控制台完全看不出「消息进来了、回复却一条都发不出去」。
 _SWITCH_FAILS: list = []
 _SWITCH_FAILS_MAX = 20
+_SWITCH_FAILS_FILE_MAX = 128 * 1024      # 落盘上限：超了只留最近 100 条（不许无界长）
+
+
+def _switch_fails_path() -> str:
+    """切会话失败台账的落盘路径（**模块级函数**，只为判据能打桩到临时目录）。"""
+    return os.path.join(ROOT, "data", "switch_fails.jsonl")
+
+
+def _switch_fails_write(item: dict) -> None:
+    """落盘一条（**绝不抛**）。超过上限就把文件重写成"最近 100 条"。"""
+    try:
+        import json as _json            # ⚠️ 本文件没有模块级 json（各处都是函数内 import）——
+                                        # 第一版就是漏了这句：写入被 `except: pass` 吞掉，
+                                        # 落盘文件 0 字节（C8b 判据当场抓出来）
+        p = _switch_fails_path()
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "a", encoding="utf-8") as fh:
+            fh.write(_json.dumps(item, ensure_ascii=False) + "\n")
+        try:
+            if os.path.getsize(p) > _SWITCH_FAILS_FILE_MAX:
+                with open(p, encoding="utf-8", errors="replace") as fh:
+                    _keep = fh.readlines()[-100:]
+                _tmp = p + ".tmp"
+                with open(_tmp, "w", encoding="utf-8") as fh:
+                    fh.writelines(_keep)
+                os.replace(_tmp, p)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+def _switch_fails_from_file(n: int) -> list:
+    """从落盘台账读最近 n 条（坏行跳过）。**绝不抛**。"""
+    try:
+        import json as _json
+        p = _switch_fails_path()
+        if not os.path.exists(p):
+            return []
+        rows = []
+        with open(p, encoding="utf-8", errors="replace") as fh:
+            for ln in fh:
+                ln = ln.strip()
+                if not ln:
+                    continue
+                try:
+                    rows.append(_json.loads(ln))
+                except Exception:
+                    continue
+        return rows[-max(1, int(n)):]
+    except Exception:
+        return []
 
 
 def note_switch_fail(where: str, why: str) -> None:
-    """记一条「切不到会话 / 确认不了目标会话」的失败（最近 N 条）。**绝不抛异常**。"""
+    """记一条「切不到会话 / 确认不了目标会话」的失败（最近 N 条 + **落盘**）。**绝不抛异常**。
+
+    ⛔ 2026-09-21 修（第九轮 **V-R9-12** · P1）：原来只有**进程内的 list** ⇒ 重启就空 ⇒ 用户
+    （或我们）重启之后再点检验器，看到的又是"没有这类失败记录"＝ ✅（假安心）。
+    ⇒ 现在同时写 `data\\switch_fails.jsonl`（128 KB 上限、超限只留最近 100 条）。
+    """
     try:
-        _SWITCH_FAILS.append({"t": time.strftime("%m-%d %H:%M:%S"), "where": str(where)[:40],
-                              "why": str(why)[:200]})
+        item = {"t": time.strftime("%m-%d %H:%M:%S"), "where": str(where)[:40],
+                "why": str(why)[:200]}
+        _SWITCH_FAILS.append(item)
         while len(_SWITCH_FAILS) > _SWITCH_FAILS_MAX:
             _SWITCH_FAILS.pop(0)
+        _switch_fails_write(item)
     except Exception:
         pass
 
 
 def recent_switch_fails(n: int = 5) -> list:
-    """最近 N 条切会话失败（旧的在前）。"""
+    """最近 N 条切会话失败（旧的在前）。**内存优先**（当次运行最准）；内存空（刚重启）⇒ 读盘。"""
     try:
-        return list(_SWITCH_FAILS)[-max(1, int(n)):]
+        k = max(1, int(n))
+        got = list(_SWITCH_FAILS)[-k:]
+        return got if got else _switch_fails_from_file(k)
     except Exception:
         return []
 
@@ -1636,6 +1697,51 @@ class WeChatAdapter:
 
     def list_groups(self) -> list:
         return list(self._groups)
+
+    def refresh_groups(self) -> list:
+        """**强制重读**群列表（控制台「刷新群列表」按钮用）。**失败会抛**，由调用方如实报。
+
+        ⛔ 2026-09-21 加（第九轮 **V-R9-11** · P2）：群/昵称三张表只在**接入那一跳**读一次
+        （`_load_*` 的唯一调用点），之后既没有刷新入口、也不会自愈 ⇒ 用户"新加了群 / 改了群名 /
+        换了号"之后必须**重启整个程序**才认，而界面上只会写"读到 0 个群聊"。
+        """
+        try:
+            self._groups = list(self._db_retry(
+                lambda: replica_adapter.load_groups(self._db), tag="groups") or [])
+            self._cap["groups"] = "ok"
+        except Exception as _e:
+            self._cap["groups"] = "fail:%s【%s】" % (str(_e)[:100], type(_e).__name__)
+            raise
+        # 昵称表同一跳重读（认大号/显示名都靠它；失败只记账，不让"刷群"失败）
+        try:
+            self._nick_map = dict(self._db_retry(
+                lambda: replica_adapter.load_nickname_map(self._db), tag="nicknames") or {})
+            self._cap["contacts"] = "ok"
+        except Exception as _e2:
+            self._cap["contacts"] = "fail:%s【%s】" % (str(_e2)[:100], type(_e2).__name__)
+        return list(self._groups)
+
+    def groups_read_error(self) -> str:
+        """群列表**这次为什么没读到**（`_cap["groups"]` 里记着 fail 原因；没失败返回空串）。
+
+        ⛔ 2026-09-21 加（第九轮 **V-R9-8** · P1）：启动时 `_groups_read_failed` 的唯一来源是
+        `list_groups()` **抛异常** —— 而它只是 `return list(self._groups)`，**永不抛** ⇒ 群读真失败时
+        那个变量是空串 ⇒ `listen_targets.describe` 把"没匹配上"说成「改名/退群了？」
+        （归因跟同一条日志里的真因矛盾：上面明明写着读库失败）。
+        """
+        try:
+            c = str((self._cap or {}).get("groups") or "")
+            return c if c.startswith("fail:") else ""
+        except Exception:
+            return ""
+
+    def contacts_read_error(self) -> str:
+        """联系人库**这次为什么没读到**（同上，给"认不出大号"那类报障用的）。"""
+        try:
+            c = str((self._cap or {}).get("contacts") or "")
+            return c if c.startswith("fail:") else ""
+        except Exception:
+            return ""
 
     def list_privates(self) -> list:
         """私聊联系人列表（2026-09-16 加，供监听目标发现用）。"""
@@ -2572,7 +2678,7 @@ class WeChatAdapter:
                         # ⛔ 2026-09-15 改：原来这里是 `ShowWindow(hwnd, 9)`（SW_RESTORE，**会激活窗口**）
                         #    + `SetForegroundWindow`（**抢前台**）——正是既有口径：障过的"一打开就把我的微信切出来"。
                         #    改成**不激活地**还原（不动光标），与三条投递链同一套实现。
-                        log.info("微信主窗被隐藏/最小化 ⇒ 按进程+窗口类找回并**不激活地**还原：hwnd=%s", found[0])
+                        log.info("微信主窗找不到（隐藏/最小化）⇒ 按进程+窗口类找回后交给无激活还原：hwnd=%s", found[0])
                         self._ensure_main_visible(None, int(found[0]))
                         time.sleep(0.3)
                     else:
@@ -3128,6 +3234,16 @@ class WeChatAdapter:
                 return ok, _resp_msg(r)
         except Exception as e:
             return False, str(e)
+        finally:
+            # ⛔ 2026-09-21 修（第九轮 **V-R9-1（P1）**——这条是 v2.1.52 我自己引入的回归）：
+            #   v2.1.52 给投递分支加了"进门前按档位准备画面"（会**不激活地还原**用户收起来的主窗），
+            #   而放回只挂在 `send_text_posted` 的链尾 —— 本函数却有**多条早退**（会话头确认不了、
+            #   真鼠标兜底被闸住、遮挡预检不过…）都在放回之前 `return` ⇒ **用户自己收进任务栏的微信
+            #   被摊在桌面上**（正是 2026-09-18 网友投诉的那一类打扰），残留登记还会让下一次链尾
+            #   把它收走。⇒ 放回挪到本函数的 **finally**：成功、拒发、抛异常三条路都走这一句；
+            #   `_minimize_back_if_needed` 自身幂等（先清零登记）＋三条安全线（没登记/已最小化/在前台
+            #   都不动），所以成功路径上链尾已放过一次也不会重复动作。
+            _minimize_back_if_needed("投递文本链收尾（含早退）")
 
     def send_text_at(self, chat_id: str, member_name: str, text: str):
         """在群里 @ 成员并发送文本。返回 (ok, message)。"""
@@ -3414,7 +3530,7 @@ class WeChatAdapter:
         return False, "当前会话 OCR=%r（目标 %r）· %s" % (got, want, why)
 
     def _ensure_main_visible(self, gui, main: int) -> bool:
-        """主窗被最小化时**不激活地**还原（不动光标（伪激活可能短暂置前约 1~3 秒后自动还回）），让"抓图类判据"能工作。
+        """主窗被**最小化或隐藏**时**不激活地**还原（不动光标（伪激活可能短暂置前约 1~3 秒后自动还回）），让"抓图类判据"能工作。
 
         2026-09-15 实测（`_scratch/restore_probe.py`）：`ShowWindow(SW_SHOWNOACTIVATE)`
         + `SetWindowPos(…SWP_NOMOVE|NOSIZE|NOZORDER|NOACTIVATE|SHOWWINDOW)` 能把最小化的微信
@@ -3426,7 +3542,18 @@ class WeChatAdapter:
         try:
             import ctypes as _ct
             u = _ct.windll.user32
-            if not u.IsIconic(int(main)):
+            # ⛔ 2026-09-21 修（第九轮 **V-R9-5** · P2）：原来只看 `IsIconic` ⇒ **`SW_HIDE` 隐藏的主窗
+            #   在这里"什么都没做"**（本机实测 280 个顶层窗 `IsWindowVisible=0 且 IsIconic=0`），
+            #   而隐藏态抓图必 `no_capture` ⇒ 判据一路"抓不到画面"，调用方却以为还原过了。
+            #   ⇒ 两态一起认：最小化（IsIconic）与**被隐藏**（not IsWindowVisible）都走同一套
+            #   不激活还原；`_WAS_ICONIC_BY_US` 只在**真最小化**时登记（用户自己收起来的那种），
+            #   隐藏态不在链尾替他最小化。
+            _iconic = bool(u.IsIconic(int(main)))
+            try:
+                _hidden = not bool(u.IsWindowVisible(int(main)))
+            except Exception:
+                _hidden = False
+            if not _iconic and not _hidden:
                 return False
             from .config import get_config
             cfg = (get_config() or {}).get("wechat", {}) or {}
@@ -3436,11 +3563,13 @@ class WeChatAdapter:
                 # 自己还原」关了，微信最小化时我干不了活**。开着提醒就把话说清楚（日志/控制台可见），
                 # 关掉就只留一行说明——不假装做成、也不反复唠叨。
                 if bool(cfg.get("minimize_warning", True)):
-                    log.warning("微信主窗现在是最小化的，而「最小化时自己还原」是关的 ⇒ 这一次只能如实停下"
+                    log.warning("微信主窗现在是%s的，而「最小化时自己还原」是关的 ⇒ 这一次只能如实停下"
                                 "（不假装做成）。想让它自己接着干，就把「最小化时自己还原」打开；"
-                                "不想再看到这条提醒，就把「最小化提醒」关掉。")
+                                "不想再看到这条提醒，就把「最小化提醒」关掉。"
+                                % ("最小化" if _iconic else "被隐藏"))
                 else:
-                    log.info("微信主窗最小化且未开自动还原 ⇒ 如实停下（已按设置不提醒）")
+                    log.info("微信主窗%s且未开自动还原 ⇒ 如实停下（已按设置不提醒）"
+                             % ("最小化" if _iconic else "被隐藏"))
                 return False
             u.ShowWindow(int(main), 4)                                   # SW_SHOWNOACTIVATE
             time.sleep(0.4)
@@ -3453,9 +3582,10 @@ class WeChatAdapter:
             except Exception:
                 pass
             global _MINIMIZED_BY_US, _WAS_ICONIC_BY_US
-            _MINIMIZED_BY_US = int(main)      # 登记：干完活由 `_restore_fg_until` 放回收起状态
-            _WAS_ICONIC_BY_US = int(main)     # 记下"是用户自己收起来的" ⇒ 链尾要还他收着（见 _minimize_back_if_needed）
-            log.info("微信主窗原来是最小化：已**不激活**还原（不动光标（伪激活可能短暂置前约 1~3 秒后自动还回））后继续")
+            _MINIMIZED_BY_US = int(main)      # 登记：干完活由链尾 `_minimize_back_if_needed` 放回
+            _WAS_ICONIC_BY_US = int(main) if _iconic else 0   # 只有"用户自己收起来的"才在链尾还他收着
+            log.info("微信主窗原来%s：已**不激活**还原（不动光标（伪激活可能短暂置前约 1~3 秒后自动还回））后继续",
+                     "是最小化的" if _iconic else "是被隐藏的")
             return True
         except Exception as e:
             log.warning("无激活还原最小化窗口失败：%s", e)

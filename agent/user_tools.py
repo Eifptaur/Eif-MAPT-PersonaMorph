@@ -191,44 +191,9 @@ def _is_private_host(url: str) -> bool:
         return False
 
 
-def call(tool: dict, args: dict, _fetch=None) -> dict:
-    """执行一个自定义工具（**只发 HTTP**）。返回 `{content, is_error}`。"""
-    try:
-        from . import safe_fetch
-    except Exception:
-        safe_fetch = None
-    all_args = dict(args or {})
-    url = _render(str(tool.get("url") or ""), all_args)
-    q = _render(tool.get("query") or {}, all_args)
-    if q:
-        url = url + ("&" if "?" in url else "?") + urllib.parse.urlencode({k: v for k, v in q.items()})
-    if not _host_allowed(url, tool.get("allow_hosts")):
-        return {"content": "错误：请求地址的主机不在白名单里（%s）" % url, "is_error": True}
-    if _is_private_host(url):
-        return {"content": "错误：地址指向内网/本机，被拒（%s）" % url, "is_error": True}
-    # 真发请求时才做 DNS 级校验（`safe_fetch` 会解析域名——离线/测试注入 fetch 时跳过，
-    # 但上面的字面级内网判定始终生效）
-    if _fetch is None and safe_fetch is not None:
-        try:
-            safe_fetch.validate_url(url, allow_private=False)
-        except Exception as e:
-            return {"content": "错误：地址被安全策略拒绝：%s" % e, "is_error": True}
-    method = str(tool.get("method") or "GET").upper()
-    data = None
-    headers = {str(k): str(v) for k, v in (tool.get("headers") or {}).items()}
-    if method == "POST":
-        body = _render(tool.get("body") or {}, all_args)
-        data = json.dumps(body, ensure_ascii=False).encode("utf-8")
-        headers.setdefault("Content-Type", "application/json")
-    headers.setdefault("User-Agent", "PersonaMorph/1.0 (user tool)")
-    req = urllib.request.Request(url, data=data, headers=headers, method=method)
-    _f = _fetch or urllib.request.urlopen
-    try:
-        with _f(req, timeout=max(1.0, int(tool.get("timeout_ms") or 8000) / 1000.0)) as r:
-            raw = r.read(int(tool.get("max_chars") or 4000) * 4 + 1)
-        txt = raw.decode("utf-8", "ignore")
-    except Exception as e:
-        return {"content": "错误：请求失败（%s: %s）" % (type(e).__name__, str(e)[:120]), "is_error": True}
+def _finish(tool: dict, raw: bytes) -> dict:
+    """把原始字节变成工具结果（decode → response_path → 截断）。两条发送路径共用。"""
+    txt = (raw or b"").decode("utf-8", "ignore")
     if tool.get("response_path"):
         try:
             got = _dig(json.loads(txt), tool["response_path"])
@@ -238,6 +203,61 @@ def call(tool: dict, args: dict, _fetch=None) -> dict:
             pass
     txt = txt[:int(tool.get("max_chars") or 4000)]
     return {"content": txt or "（接口返回了空内容）", "is_error": False}
+
+
+def call(tool: dict, args: dict, _fetch=None) -> dict:
+    """执行一个自定义工具（**只发 HTTP**）。返回 `{content, is_error}`。
+
+    ⛔ 2026-09-21（第九轮审计 **V-R9-25**）：原来这里是"`safe_fetch.validate_url()` 判一下过不过
+    ⇒ 真正连接时 `urllib` **再解析一次域名**"，校验到的 IP 被丢掉 —— E 线实测把
+    `getaddrinfo` 做成"首次给公网、二次给环回"就能绕过（返回成功、环回服务收到请求＝典型 TOCTOU）。
+    现在**校验与连接是同一个 IP**：走 `safe_fetch.fetch_pinned()`（钉 IP + 逐跳复校 + 跨主机剥凭据头）。
+    `_fetch` 只给判据注入用（那条路径不发真请求）。
+    """
+    try:
+        from . import safe_fetch
+    except Exception:
+        safe_fetch = None
+    all_args = dict(args or {})
+    url = _render(str(tool.get("url") or ""), all_args)
+    q = _render(tool.get("query") or {}, all_args)
+    if q:
+        url = url + ("&" if "?" in url else "?") + urllib.parse.urlencode({k: v for k, v in q.items()})
+    hosts = tool.get("allow_hosts")
+    if not _host_allowed(url, hosts):
+        return {"content": "错误：请求地址的主机不在白名单里（%s）" % url, "is_error": True}
+    if _is_private_host(url):
+        return {"content": "错误：地址指向内网/本机，被拒（%s）" % url, "is_error": True}
+    method = str(tool.get("method") or "GET").upper()
+    data = None
+    headers = {str(k): str(v) for k, v in (tool.get("headers") or {}).items()}
+    if method == "POST":
+        body = _render(tool.get("body") or {}, all_args)
+        data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        headers.setdefault("Content-Type", "application/json")
+    headers.setdefault("User-Agent", "PersonaMorph/1.0 (user tool)")
+    max_chars = int(tool.get("max_chars") or 4000)
+    timeout = max(1.0, int(tool.get("timeout_ms") or 8000) / 1000.0)
+    if _fetch is None:
+        # 生产路径：**安全层拿不到就 fail-closed**（不发一个字节）
+        if safe_fetch is None:
+            return {"content": "错误：安全抓取层不可用，拒绝外发（fail-closed）", "is_error": True}
+        try:
+            r = safe_fetch.fetch_pinned(
+                url, method=method, data=data, headers=headers, timeout=timeout,
+                max_bytes=max_chars * 4 + 1, allow_private=False,
+                # 白名单**每一跳都要过**：否则一次 302 就跳出 allow_hosts 了
+                host_allowed=lambda u: _host_allowed(u, hosts))
+        except Exception as e:
+            return {"content": "错误：请求失败（%s: %s）" % (type(e).__name__, str(e)[:120]), "is_error": True}
+        return _finish(tool, r.get("body") or b"")
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with _fetch(req, timeout=timeout) as r:
+            raw = r.read(max_chars * 4 + 1)          # V-R9-26：读取带上限
+    except Exception as e:
+        return {"content": "错误：请求失败（%s: %s）" % (type(e).__name__, str(e)[:120]), "is_error": True}
+    return _finish(tool, raw)
 
 
 def as_tool_defs(builtin_names=()) -> tuple:

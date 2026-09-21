@@ -6,14 +6,57 @@ import html as html_mod
 import json
 import os
 import re
+import time
 from urllib.parse import quote, urlencode, urlparse, parse_qsl, urlunparse
 
 import requests
 
 from .config import get_config
-from .safe_fetch import safe_fetch
+from .safe_fetch import safe_fetch, read_stream
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+
+# ── V-R9-26 / V-R9-27 的两个数：**回包上限**与**整轮墙钟预算** ────────────────────
+# HTML_MAX_BYTES＝2MB：搜索结果页正常 100~500KB（Bing/Google 都塞内联样式），2MB 是宽裕上限。
+# JSON_MAX_BYTES＝4MB：各搜索 API 的 JSON（前 6~10 条结果）正常几十 KB。
+# WALL_S＝20s：一次搜索的**总耗时**上限（含连接）。为什么不是 requests 的 `timeout=`：
+#   它只管**单次 recv**，对面每 6 秒吐 1 字节就能把"声明 15 秒"的请求拖到 **63 秒**
+#   （审计 V-R9E-6 实测），而 `web_search` 是在唤醒链路上被模型调的 ⇒ 等于把主流程挂住。
+HTML_MAX_BYTES = 2 * 1024 * 1024
+JSON_MAX_BYTES = 4 * 1024 * 1024
+CONNECT_TIMEOUT = 5
+READ_TIMEOUT = 8
+WALL_S = 20.0
+
+
+def _get_capped(resp, max_bytes: int, what: str, t0: float = None) -> bytes:
+    """V-R9-26/27：带上限 + 整轮墙钟预算地读回包（超限/超时**抛**，不整包收进内存）。"""
+    return read_stream(resp, max_bytes, budget_s=WALL_S, t0=t0, what=what)
+
+
+def _decode(resp, raw: bytes) -> str:
+    """按回包声明的编码解码（没有就用 utf-8）；等价于原来的 `resp.text` 但不整包进内存两次。"""
+    enc = getattr(resp, "encoding", None) or "utf-8"
+    try:
+        return raw.decode(str(enc), "replace")
+    except Exception:
+        return raw.decode("utf-8", "replace")
+
+
+def _body_text(resp, max_bytes: int, what: str, t0: float = None) -> str:
+    return _decode(resp, _get_capped(resp, max_bytes, what, t0=t0))
+
+
+def _err_text(resp, cap: int = 300) -> str:
+    """错误回包的短摘要（**也带上限**：错误页同样可能被对面灌成 200MB）。"""
+    try:
+        return _body_text(resp, max(cap * 4, 4096), "错误回包")[:cap]
+    except Exception:
+        return ""
+
+
+def _json_capped(resp, what: str, t0: float = None) -> dict:
+    return json.loads(_body_text(resp, JSON_MAX_BYTES, what, t0=t0) or "{}")
 
 
 def sanitize_query(query) -> str:
@@ -30,10 +73,12 @@ def bing_search(query: str, search_url: str | None = None) -> dict:
     url = search_url or cfg.get("search_url") or "https://cn.bing.com/search"
     max_results = max(1, min(10, int(cfg.get("max_results") or 6)))
     target = url + ("&" if "?" in url else "?") + urlencode({"q": query})
-    resp = requests.get(target, headers={"user-agent": UA, "accept-language": "zh-CN,zh;q=0.9"}, timeout=15)
+    t0 = time.monotonic()
+    resp = requests.get(target, headers={"user-agent": UA, "accept-language": "zh-CN,zh;q=0.9"},
+                        timeout=(CONNECT_TIMEOUT, READ_TIMEOUT), stream=True)
     if resp.status_code != 200:
         raise RuntimeError("搜索服务 HTTP %d" % resp.status_code)
-    html_text = resp.text
+    html_text = _body_text(resp, HTML_MAX_BYTES, "搜索页 HTML", t0=t0)
     results = []
     for block in html_text.split('<li class="b_algo"')[1:]:
         href_m = re.search(r'<a[^>]+href="(https?://[^"]+)"', block, re.IGNORECASE)
@@ -56,11 +101,13 @@ def google_search(query: str) -> dict:
     cfg = get_config().get("web_search", {})
     max_results = max(1, min(10, int(cfg.get("max_results") or 6)))
     url = "https://www.google.com/search?" + urlencode({"q": query, "hl": "zh-CN"})
+    t0 = time.monotonic()
     resp = requests.get(url, headers={"user-agent": UA,
-                                      "accept-language": "zh-CN,zh;q=0.9,en;q=0.8"}, timeout=(3, 8))
+                                      "accept-language": "zh-CN,zh;q=0.9,en;q=0.8"},
+                        timeout=(3, 8), stream=True)
     if resp.status_code != 200:
         raise RuntimeError("Google 搜索 HTTP %d" % resp.status_code)
-    html_text = resp.text
+    html_text = _body_text(resp, HTML_MAX_BYTES, "Google 搜索页", t0=t0)
     results = []
     for block in re.split(r'<div class="[^"]*(?:MjjYud|g)"', html_text)[1:]:
         href_m = re.search(r'href="(/url\?q=([^"&]+)|https?://[^"]+)"', block, re.IGNORECASE)
@@ -134,14 +181,16 @@ def _deepseek_search(query: str) -> dict:
         raise RuntimeError("DeepSeek 搜索需要 API Key（可用主 API 配置）")
     base = str(cfg.get("base_url") or "https://api.deepseek.com/responses").rstrip("/")
     model = str(cfg.get("model") or "deepseek-chat")
+    t0 = time.monotonic()
     resp = requests.post(base, headers={"content-type": "application/json", "authorization": "Bearer " + api_key},
                          json={"model": model,
                                "input": "请联网搜索并回答（用中文，简洁、只给结论和关键信息）：%s" % query,
                                "tools": [{"type": "web_search"}], "stream": False},
-                         timeout=max(10, int(cfg.get("timeout_ms") or 60000)) / 1000.0)
+                         timeout=(CONNECT_TIMEOUT, max(10, int(cfg.get("timeout_ms") or 60000)) / 1000.0),
+                         stream=True)
     if resp.status_code != 200:
-        raise RuntimeError("DeepSeek 搜索 HTTP %d：%s" % (resp.status_code, resp.text[:300]))
-    data = resp.json()
+        raise RuntimeError("DeepSeek 搜索 HTTP %d：%s" % (resp.status_code, _err_text(resp)))
+    data = _json_capped(resp, "DeepSeek 搜索回包", t0=t0)
     # Responses API：正文在 output[] 中 type=message 的 content[].text
     out = ""
     for item in (data.get("output") or []):
@@ -162,12 +211,14 @@ def _zhipu_search(query: str) -> dict:
         raise RuntimeError("智谱搜索需要 API Key")
     endpoint = str(cfg.get("base_url") or "https://open.bigmodel.cn/api/paas/v4/web_search").rstrip("/")
     count = min(50, max(1, int(cfg.get("count") or 10)))
+    t0 = time.monotonic()
     resp = requests.post(endpoint, headers={"content-type": "application/json", "authorization": "Bearer " + api_key},
                          json={"search_engine": cfg.get("engine") or "search_std", "search_query": query, "count": count},
-                         timeout=max(10, int(cfg.get("timeout_ms") or 20000)) / 1000.0)
+                         timeout=(CONNECT_TIMEOUT, max(10, int(cfg.get("timeout_ms") or 20000)) / 1000.0),
+                         stream=True)
     if resp.status_code != 200:
-        raise RuntimeError("智谱搜索 HTTP %d：%s" % (resp.status_code, resp.text[:300]))
-    data = resp.json()
+        raise RuntimeError("智谱搜索 HTTP %d：%s" % (resp.status_code, _err_text(resp)))
+    data = _json_capped(resp, "智谱搜索回包", t0=t0)
     arr = data.get("search_result") or []
     max_r = max(1, int(get_config().get("web_search", {}).get("max_results") or 6))
     results = [{"title": (r.get("title") or r.get("name") or "（无标题）").strip(),
@@ -186,12 +237,14 @@ def _bocha_search(query: str) -> dict:
         raise RuntimeError("博查搜索需要 API Key")
     endpoint = str(cfg.get("base_url") or "https://api.bochaai.com/v1/web-search").rstrip("/")
     count = min(50, max(1, int(cfg.get("count") or 10)))
+    t0 = time.monotonic()
     resp = requests.post(endpoint, headers={"content-type": "application/json", "authorization": "Bearer " + api_key},
                          json={"query": query, "count": count, "freshness": "noLimit", "summary": False},
-                         timeout=max(10, int(cfg.get("timeout_ms") or 20000)) / 1000.0)
+                         timeout=(CONNECT_TIMEOUT, max(10, int(cfg.get("timeout_ms") or 20000)) / 1000.0),
+                         stream=True)
     if resp.status_code != 200:
-        raise RuntimeError("博查搜索 HTTP %d：%s" % (resp.status_code, resp.text[:300]))
-    data = resp.json()
+        raise RuntimeError("博查搜索 HTTP %d：%s" % (resp.status_code, _err_text(resp)))
+    data = _json_capped(resp, "博查搜索回包", t0=t0)
     if data.get("code") and int(data["code"]) != 200:
         raise RuntimeError("博查搜索 API 错误：%s" % (data.get("message") or data.get("msg") or "未知"))
     arr = (((data.get("data") or {}).get("webPages") or {}).get("value")) or []
@@ -212,14 +265,16 @@ def _baidu_search(query: str) -> dict:
         raise RuntimeError("百度搜索需要 API Key")
     endpoint = str(cfg.get("base_url") or "https://qianfan.baidubce.com/v2/ai_search/web_search").rstrip("/")
     top_k = min(10, max(1, int(cfg.get("count") or 6)))
+    t0 = time.monotonic()
     resp = requests.post(endpoint, headers={"content-type": "application/json", "authorization": "Bearer " + api_key},
                          json={"messages": [{"role": "user", "content": query}],
                                "search_source": "baidu_search_v2",
                                "resource_type_filter": [{"type": "web", "top_k": top_k}]},
-                         timeout=max(10, int(cfg.get("timeout_ms") or 20000)) / 1000.0)
+                         timeout=(CONNECT_TIMEOUT, max(10, int(cfg.get("timeout_ms") or 20000)) / 1000.0),
+                         stream=True)
     if resp.status_code != 200:
-        raise RuntimeError("百度搜索 HTTP %d：%s" % (resp.status_code, resp.text[:300]))
-    data = resp.json()
+        raise RuntimeError("百度搜索 HTTP %d：%s" % (resp.status_code, _err_text(resp)))
+    data = _json_capped(resp, "百度搜索回包", t0=t0)
     if data.get("error_code") and int(data["error_code"]) != 0:
         raise RuntimeError("百度搜索 API 错误：%s" % (data.get("error_msg") or data.get("message") or "未知"))
     arr = data.get("references") or []
@@ -240,12 +295,14 @@ def _metaso_search(query: str) -> dict:
     headers = {"content-type": "application/json"}
     if api_key:
         headers["authorization"] = "Bearer " + api_key
+    t0 = time.monotonic()
     resp = requests.post(endpoint, headers=headers,
                          json={"query": query, "top_k": min(10, max(1, int(cfg.get("count") or 6)))},
-                         timeout=max(10, int(cfg.get("timeout_ms") or 20000)) / 1000.0)
+                         timeout=(CONNECT_TIMEOUT, max(10, int(cfg.get("timeout_ms") or 20000)) / 1000.0),
+                         stream=True)
     if resp.status_code != 200:
-        raise RuntimeError("秘塔搜索 HTTP %d：%s" % (resp.status_code, resp.text[:300]))
-    data = resp.json()
+        raise RuntimeError("秘塔搜索 HTTP %d：%s" % (resp.status_code, _err_text(resp)))
+    data = _json_capped(resp, "秘塔搜索回包", t0=t0)
     arr = data.get("results") or data.get("data") or data.get("sources") or []
     max_r = max(1, int(get_config().get("web_search", {}).get("max_results") or 6))
     results = [{"title": (r.get("title") or r.get("name") or "（无标题）").strip(),
@@ -282,11 +339,13 @@ def _custom_search(query: str, provider_id: str) -> dict:
     headers = {"content-type": "application/json"}
     if api_key:
         headers["authorization"] = "Bearer " + api_key
+    t0 = time.monotonic()
     resp = requests.post(endpoint, headers=headers, json=body,
-                         timeout=max(10, int(cfg.get("timeout_ms") or 20000)) / 1000.0)
+                         timeout=(CONNECT_TIMEOUT, max(10, int(cfg.get("timeout_ms") or 20000)) / 1000.0),
+                         stream=True)
     if resp.status_code != 200:
-        raise RuntimeError("自定义搜索 HTTP %d：%s" % (resp.status_code, resp.text[:300]))
-    data = resp.json()
+        raise RuntimeError("自定义搜索 HTTP %d：%s" % (resp.status_code, _err_text(resp)))
+    data = _json_capped(resp, "自定义搜索回包", t0=t0)
     arr = data.get("results") or data.get("data") or data.get("sources") or \
         data.get("references") or ((data.get("webPages") or {}).get("value")) or \
         (data if isinstance(data, list) else [])
