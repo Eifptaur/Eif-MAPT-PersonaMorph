@@ -344,6 +344,96 @@ ok("① 反例锚：老写法（提示词拼进 URL 路径）用**同一条判�
    _prompt_leaks("https://image.pollinations.ai/prompt/" + _up_poll.quote(_POLL_PROMPT)
                  + "?width=1024&height=1024", ""))
 
+# ⛔ 2026-09-22 加（第十三轮 **V-R13-3** · P2）：image_gen 的回链**换成行为锚**（段内子串换种写法就绕过）。
+#   手法与 `safe_fetch_selftest` L27 同一套：本地假后端 + **连接层取证**（连的必须是 IP 字面量）。
+print("\n② 回链（backend 回包里的 data[].url）连的是 IP 字面量（V-R13-3 行为锚）")
+import http.server as _hs13                                                              # noqa: E402
+import socket as _sock13                                                                 # noqa: E402
+import threading as _th13                                                                # noqa: E402
+from agent import safe_fetch as _SF13                                                    # noqa: E402
+
+_PORT13 = [0]
+
+
+class _H13(_hs13.BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+
+    def do_POST(self):
+        _n = int(self.headers.get("Content-Length") or 0)
+        self.rfile.read(_n)
+        _b = json.dumps({"created": 1, "data": [
+            {"url": "http://pinned.test:%d/img13.png" % _PORT13[0]}]}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(_b)))
+        self.end_headers()
+        self.wfile.write(_b)
+
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "image/png")
+        self.send_header("Content-Length", str(len(_POLL_BYTES)))
+        self.end_headers()
+        self.wfile.write(_POLL_BYTES)
+
+
+_srv13 = _hs13.HTTPServer(("127.0.0.1", 0), _H13)
+_PORT13[0] = _srv13.server_address[1]
+_th13.Thread(target=_srv13.serve_forever, daemon=True).start()
+_real_gai13 = _sock13.getaddrinfo
+_real_conn13 = _sock13.create_connection
+_real_priv13 = _SF13._is_private_ip
+_conn13 = []
+
+
+def _spy13(address, *a, **k):
+    """只**记录**连接目标（不拒）—— 因为请求阶段（POST /images/generations）本来就是普通 urlopen
+    （后端地址是用户配的，产品口径如此），只有**回链下载那一跳**必须用钉 IP 传输。"""
+    _conn13.append(tuple(address) if isinstance(address, (tuple, list)) else (address,))
+    return _real_conn13(("127.0.0.1", int(_conn13[-1][1])), *a, **k)
+
+
+_orig_save13 = IG._save_image_bytes
+_tmp13b = tempfile.mkdtemp(prefix="pm-ig13-")
+
+
+def _save13(data, tag):
+    _p = os.path.join(_tmp13b, "%s_13.png" % str(tag))
+    with open(_p, "wb") as _f:
+        _f.write(data)
+    return _p
+
+
+try:
+    _sock13.getaddrinfo = lambda host, port, *a, **k: [
+        (_sock13.AF_INET, _sock13.SOCK_STREAM, 6, "", ("127.0.0.1", int(port) if port else 80))]
+    _sock13.create_connection = _spy13
+    _SF13._is_private_ip = lambda *a, **k: False
+    IG._save_image_bytes = _save13
+    _r13b = IG.call_backend({"id": "online13", "kind": "online", "proto": "openai_image",
+                             "url": "http://pinned.test:%d" % _PORT13[0], "model": "m13", "key": "k13"},
+                            "一只猫", count=1, size="square")
+    # 回链那一跳必须是**钉 IP**（地址是 IP 字面量）；老写法（urlopen 二次解析）这一跳会带域名
+    # ⇒ 「IP 字面量连接数」为 0 ⇒ 这条必红。请求阶段带域名是**允许**的，所以这里只数不拒。
+    _ip_conn13 = [x for x in _conn13 if str(x[0]) == "127.0.0.1"]
+    ok("② 回链下载那一跳连的是**已校验的 IP 字面量**（连接层取证，不是段内 grep）",
+       bool(_r13b.get("files")) and len(_ip_conn13) >= 1,
+       "files=%s 连接目标=%s" % (len(_r13b.get("files") or []), _conn13[:4]))
+except Exception as _e13:
+    ok("② 回链下载时每次都连已校验的 IP", False, "跑不起来：%s" % str(_e13)[:100])
+finally:
+    _sock13.getaddrinfo = _real_gai13
+    _sock13.create_connection = _real_conn13
+    _SF13._is_private_ip = _real_priv13
+    IG._save_image_bytes = _orig_save13
+    try:
+        _srv13.shutdown()
+        _srv13.server_close()
+    except Exception:
+        pass
+    _sh_poll.rmtree(_tmp13b, ignore_errors=True)
+
 # 去水印：功能性（真裁一张图）+ 口径（带 token/要 key 的后端不动它）
 _wt = tempfile.mkdtemp(prefix="imggen_wm_")
 _wi = os.path.join(_wt, "wm.jpg")

@@ -322,6 +322,11 @@ try:
     _st_end = "'unknown'));"
     _st_j = _ch11.index(_st_end, _st_i) + len(_st_end)      # ⚠️ 只切到这条 const 语句结尾
     _js11 = _ch11[_st_i:_st_j]
+    # ⛔ 2026-09-22 修（第十三轮 **V-R13-9** · P3）：把"**抠不到**"与"**语义错**"分成两条 ——
+    #   老写法一旦 `console_html.py` 那段换了写法（缩进/引号/换行），C11e2 会以"四档映射错了"的
+    #   面目变红（把人引到错方向）。现在先报"夹具失效，请更新抠取锚"。
+    ok("C11e2a 夹具：能从 `console_html.py` 里**抠到**那段判决映射（抠不到＝夹具失效，不是产品错）",
+       "r.ok === false" in _js11 and "'unknown'" in _js11, _js11[:80].replace("\n", " "))
     _node11 = os.path.join(tempfile.mkdtemp(prefix="pm-vfjs-"), "m.js")
     with io.open(_node11, "w", encoding="utf-8") as _f:
         _f.write("const r = JSON.parse(process.argv[2]);\n" + _js11 + "\nconsole.log(st);\n")
@@ -332,10 +337,10 @@ try:
     for _in, _want in _cases11:
         _r11js = _sp.run(["node", _node11, _json11.dumps(_in)], capture_output=True, text=True, timeout=30)
         _got11.append((_in, (_r11js.stdout or "").strip(), _want))
-    ok("C11e2 行为级：四种结果 ⇒ 四档状态（`没测到` 必须落 `unknown`，不许落 `ok`）",
+    ok("C11e2b 行为级：四种结果 ⇒ 四档状态（`没测到` 必须落 `unknown`，不许落 `ok`）",
        all(g == w for _i, g, w in _got11), str(_got11))
 except Exception as _e11:
-    ok("C11e2 行为级：四档映射", False, "跑不起来：%s" % str(_e11)[:80])
+    ok("C11e2a 夹具：能从 `console_html.py` 里抠到那段判决映射", False, "抠取失败：%s" % str(_e11)[:80])
 # 反例锚：老写法（只把 report 塞进 <pre>、不设状态、没有图例）用**同一条判据**判不合格
 _OLDUI11 = ("pre.textContent=(r&&r.report)||JSON.stringify(r,null,1);\n"
             "        if(cp) cp.disabled=!(r&&r.report);\n")

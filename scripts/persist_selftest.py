@@ -864,6 +864,10 @@ def _s13_risk_oneclick_recover(TMP):
               _g16b.snapshot().get("paused") is True and _disk16b.get("paused") is True
               and int(_disk16b.get("paused_by_operator") or 0) >= 1,
               str({k: _disk16b.get(k) for k in ("paused", "paused_by_operator")}))
+        # ⛔ 第十三轮 **V-R13-7**（P3）：新计数必须**进快照**（否则控制台/检验器看不到它）
+        check("⑯h `snapshot()` 里能看到 `paused_by_operator`（第十二轮加了字段忘了露出来）",
+              int(_g16b.snapshot().get("paused_by_operator") or 0) >= 1,
+              str({k: _g16b.snapshot().get(k) for k in ("paused", "paused_by_operator")}))
     finally:
         R.STATE_PATH = _saved_state16
         try:

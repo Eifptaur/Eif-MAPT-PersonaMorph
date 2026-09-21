@@ -214,6 +214,15 @@ try:
     HK.prune_dir(_d8d, keep_newest=0, max_age_days=1, now=now, prefixes=(), shape_check=False)
     ok("V-R12-9 反例锚：显式 `shape_check=False` （＋不筛前缀）才等价于老行为 ⇒ 用户文件真被删",
        not os.path.exists(_u8d))
+    # ⛔ 第十三轮 V-R13-6：`prefixes=()` 的语义要和 docstring 一致 —— **不按前缀筛，但形状检查照旧**
+    _d8e = os.path.join(tmp, "d8e")
+    os.makedirs(_d8e, exist_ok=True)
+    _u8e = touch(_d8e, "我的会议录音.mp3", 4096, age_s=30 * 86400, now=now)
+    _o8e = touch(_d8e, "tts_120003.wav", 4096, age_s=30 * 86400, now=now)
+    _r8e = HK.prune_dir(_d8e, keep_newest=0, max_age_days=1, now=now, prefixes=())
+    ok("V-R13-6 `prefixes=()` ＝ 不按前缀筛，但形状检查**仍开着**（docstring 与实现对齐）",
+       os.path.exists(_u8e) and (not os.path.exists(_o8e)) and _r8e["removed"] == 1,
+       "用户文件在=%s 真产物在=%s removed=%s" % (os.path.exists(_u8e), os.path.exists(_o8e), _r8e["removed"]))
 
     def _old_way_kills_user(now_):
         """反例锚：`prefixes=()` + `shape_check=False` ＝ 老行为（既不筛前缀、也不看形状）⇒ 必被删。

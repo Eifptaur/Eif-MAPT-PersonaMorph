@@ -504,6 +504,33 @@ ok(_sm.has(_src_w11, '"/api/update_reset"') and _sm.has(_src_c11, 'id="updReset"
    "接线：webui 有 `/api/update_reset`，控制台横幅上有「重置更新状态」按钮且真打这个接口")
 ok(_g11.get("kind") == "far_ahead",
    "反例锚：老写法（无条件写 `maxSeenVersion`）遇上越界版本 ⇒ 判据里那条 `far_ahead` 会红")
+# ⛔ 2026-09-22 加（第十三轮 **V-R13-2** · P2）：**入账时机的行为锚** ——
+#   `_note_seen` 现在只在"真装成功之后"；老写法（放在"过了下载地址检查"）会让**装失败的清单也入账**。
+#   夹具：清单合法 + 本地包是坏的（`zip_path` 指向一个不是 zip 的文件）⇒ 装失败 ⇒ 盘上不许动。
+_state13 = os.path.join(_tmp11, "note_seen13.json")
+_saved_sp13 = _uc_top._state_path
+_tgt13 = os.path.join(_tmp11, "t13")
+os.makedirs(_tgt13, exist_ok=True)
+_badzip13 = os.path.join(_tmp11, "bad13.zip")
+with io.open(_badzip13, "w", encoding="utf-8") as _f13:
+    _f13.write("这不是一个 zip")
+try:
+    _uc_top._state_path = lambda: _state13
+    with io.open(_state13, "w", encoding="utf-8") as _f13b:
+        json.dump({"maxSeenVersion": "2026.1.1.1"}, _f13b)
+    os.environ["PM_ALLOW_LOCAL_UPDATE"] = "1"
+    try:
+        _r13 = UA.run_once(manifest={"base": {"version": "2026.11.1.1", "sha256": "0" * 64,
+                                              "url": _badzip13}, "announce": {}},
+                           zip_path=_badzip13, target=_tgt13)
+    finally:
+        os.environ.pop("PM_ALLOW_LOCAL_UPDATE", None)
+    _after13 = json.load(io.open(_state13, encoding="utf-8"))
+    ok(_r13.get("ok") is False and str(_after13.get("maxSeenVersion") or "") == "2026.1.1.1",
+       "行为锚：**装失败/干跑都不许把版本记进「见过的最高版本」**（老写法在过地址检查时就记）",
+       "ok=%s after=%s" % (_r13.get("ok"), _after13.get("maxSeenVersion")))
+finally:
+    _uc_top._state_path = _saved_sp13
 shutil.rmtree(_tmp11, ignore_errors=True)
 
 print("\n==== 自更新判据：%d 通过 / %d 失败 ====" % (PASS, FAIL))
