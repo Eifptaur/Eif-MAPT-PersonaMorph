@@ -311,6 +311,8 @@ try:
     #   且 `pick_account()` 回的是**字典**、`status()` 不带 `how` 时本机没有 `account` 键 ⇒
     #   整条回落等于没写（`?` 共用格子没收窄），而 account_follow_selftest 照样全绿。
     import importlib.util as _ilu                                          # noqa: E402
+    # ⛔ V-R14-1：import 之前把日志目录指到临时区（否则 import 期的 logging 会挂在产品日志上）
+    os.environ["PM_LOG_DIR"] = os.path.join(tempfile.mkdtemp(prefix="pm-acct-log-"), "logs")
     _spec = _ilu.spec_from_file_location("pm_r13_acct", os.path.join(ROOT, "scripts", "persona_morph.py"))
     _pmmod = _ilu.module_from_spec(_spec)
     _spec.loader.exec_module(_pmmod)

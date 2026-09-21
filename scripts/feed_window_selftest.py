@@ -102,6 +102,9 @@ try:
        st.mark_read("group:g", []) == 0 and st.unread_count("group:g") == 3)
 
     print("── C. wake 端到端：只喂「该喂的那一批」 ──")
+    # ⛔ 第十四轮 **V-R14-1**：import 之前先把日志目录指到临时区 —— 否则 `persona_morph` 的
+    #   import 期 logging 会把 FileHandler 挂到**产品** `logs/persona_morph.log` 上（实测 +680B）。
+    os.environ["PM_LOG_DIR"] = os.path.join(_tmp, "logs")
     import persona_morph as pm                                              # noqa: E402
     from agent import thought_trace as TT                                   # noqa: E402
 

@@ -531,6 +531,33 @@ try:
        "ok=%s after=%s" % (_r13.get("ok"), _after13.get("maxSeenVersion")))
 finally:
     _uc_top._state_path = _saved_sp13
+# ⛔ 2026-09-22 加（第十四轮 **V-R14-2** · P2）：上面那条锚走的是「**显式给包**」那条路
+#   （`zip_path=_badzip13`），而 V-R12-8 真正修掉的是**下载分支**那处入账 —— 一份"地址可信、
+#   下载失败"的清单照样会被记进 `maxSeenVersion`。审计实测：把 `_note_seen` 挪回下载分支那处，
+#   上面那条锚**全绿**（抓不住）。这条补上：合法清单 + `zip_path=None` + 打桩下载函数必失败（不出网）。
+_state14 = os.path.join(_tmp11, "note_seen14.json")
+_saved_sp14, _saved_dl14 = _uc_top._state_path, UA.download
+_tgt14b = os.path.join(_tmp11, "t14")
+os.makedirs(_tgt14b, exist_ok=True)
+try:
+    _uc_top._state_path = lambda: _state14
+    UA.download = lambda *a, **k: (False, "判据打桩：下载必失败（不出网）")
+    with io.open(_state14, "w", encoding="utf-8") as _f14:
+        json.dump({"maxSeenVersion": "2026.1.1.1"}, _f14)
+    _r14b = UA.run_once(manifest={"base": {"version": "2026.11.1.1", "sha256": "0" * 64,
+                                           "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/"
+                                                  "releases/download/v9/pm.zip"},
+                                  "announce": {}}, zip_path=None, target=_tgt14b)
+    _after14 = json.load(io.open(_state14, encoding="utf-8"))
+    ok(_r14b.get("ok") is False and _r14b.get("phase") == "download"
+       and str(_after14.get("maxSeenVersion") or "") == "2026.1.1.1",
+       "行为锚（V-R14-2）：**下载分支**失败也不许入账（老写法在「过了地址检查」时就记 ⇒ "
+       "备份/镜像不通也白白顶高回滚闸）",
+       "ok=%s phase=%s after=%s" % (_r14b.get("ok"), _r14b.get("phase"),
+                                    _after14.get("maxSeenVersion")))
+finally:
+    _uc_top._state_path = _saved_sp14
+    UA.download = _saved_dl14
 shutil.rmtree(_tmp11, ignore_errors=True)
 
 print("\n==== 自更新判据：%d 通过 / %d 失败 ====" % (PASS, FAIL))

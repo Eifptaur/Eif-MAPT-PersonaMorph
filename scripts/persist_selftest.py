@@ -43,6 +43,12 @@ try:
 except Exception:
     pass
 
+# ⛔ V-R14-1 隔离：判据不许写产品 data/ 与 logs/。
+#   本判据的 ⑬ 段会调 `risk.recover()`，它顺带 `control.set_paused_flag(False)`（不带 path）
+#   ⇒ 老写法**把用户真的 `data\paused.flag` 删掉了**（产品目录对账当场抓到）。收口到 `_iso14`。
+import _iso14                                   # noqa: E402
+_iso14.control()
+
 import _srcmatch as SM                 # noqa: E402
 from agent import config as C          # noqa: E402
 from agent import holidays as H        # noqa: E402
@@ -515,6 +521,28 @@ def _s9_source_anchors():
           and SM.has(files["holidays"], "节日问候状态落盘失败"))
     check("⑨ memory / window_borrow / wechat_ui 三处就地重写也改了（V-R9-22 点名）",
           all(SM.has(files[n], "atomic_write_json") for n in ("memory", "window_borrow", "wechat_ui")))
+    # ⛔ 2026-09-22 加（第十四轮 **V-R14-3** · P3）：**棘轮** —— 全仓固定 `<path>.tmp` 的处数只许下降。
+    #   审计口径（`agent\*.py` 的**代码行**含 `.tmp"`，**排除 `persist.py`** —— 它就是那个正确的
+    #   统一实现本身）：本轮实测 **33 处**（与审计独立数出来的 33 完全一致）。
+    #   审计结论是"不必一次全换"（现场 0 次 `.bad.*` 证据、一次全换风险大于收益），但**不许再涨**：
+    #   新写的落盘点一律走 `persist.atomic_write_json/text`；谁加回一处固定临时名，这条立刻红。
+    _TMP_RATCHET = 33
+    _tmp_hits = []
+    for _fn in sorted(os.listdir(os.path.join(ROOT, "agent"))):
+        if not _fn.endswith(".py") or _fn == "persist.py":
+            continue
+        for _i, _l in enumerate(_code_lines(_read(os.path.join(ROOT, "agent", _fn))), 1):
+            if '.tmp"' in _l:
+                _tmp_hits.append("%s:%d" % (_fn, _i))
+    check("⑰ 固定 `<path>.tmp` 的处数**只许下降**（V-R14-3 棘轮：基线 %d 处，实测 %d 处 ⇒ %s）"
+          % (_TMP_RATCHET, len(_tmp_hits),
+             "没涨" if len(_tmp_hits) <= _TMP_RATCHET else "**涨了**"),
+          len(_tmp_hits) <= _TMP_RATCHET,
+          "超基线的新增处：" + str(_tmp_hits[_TMP_RATCHET:_TMP_RATCHET + 5]) if len(_tmp_hits) > _TMP_RATCHET
+          else "未超基线")
+    check("⑰ 反例锚：这条检测器**抓得住**（合成一行固定临时名 ⇒ 命中；纯注释行不算 ⇒ 不虚报）",
+          any('.tmp"' in _l for _l in _code_lines('tmp = p + ".tmp"\n'))
+          and not any('.tmp"' in _l for _l in _code_lines('# tmp = p + ".tmp"\n')))
 
 
 # ── ⑩ 并发写：不许"返回 False 却当成功"（V-R10-22）──────────────────────

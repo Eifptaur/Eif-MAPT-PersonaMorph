@@ -20,6 +20,13 @@ import sys
 import socket
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# ⛔ V-R14-1 隔离：判据不许写产品 data/ 与 logs/（更新状态快照 / 暂停标记 / 探针的窗口几何）。
+#   ⚠️ 第一版这段写在 `sys.path.insert(0, ROOT)` **之前** ⇒ ImportError 被静默吞掉、隔离没生效。
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # scripts\（见 `_iso14` 文件头）
+import _iso14                                   # noqa: E402
+_iso14.update_state()
+_iso14.control()
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 try:
@@ -97,6 +104,21 @@ ck("A21 左导航跟着指示条滚（激活项滚出可视区就滚回来：平
    and "const top = navEl.scrollTop, vh = navEl.clientHeight, PAD = 8;" in SRC_C)
 
 _EXE = os.path.join(ROOT, "一键启动.exe")
+# ⛔ V-R14-1：`--cursorprobe` 会走 `GeoFile()`＝**exe 同级目录 + data/**，也就是产品的
+#   `data\console_window.txt`（用户存好的控制台位置与大小）⇒ 判据每跑一次就改掉它。
+#   修法（与 `console_open_selftest` 的 `--winprobe` 同一招）：把 exe 与它要用的 DLL **复制到临时目录再跑**，
+#   产物落在副本里；exe 与产品行为一字未改，下面所有断言不变。
+if os.path.exists(_EXE):
+    import shutil as _sh14
+    import tempfile as _tf14
+    _exe_dir14 = _tf14.mkdtemp(prefix="pm-cursor-judge-")
+    _sh14.copy(_EXE, _exe_dir14)
+    for _n14 in ("WebView2Loader.dll",):
+        if os.path.exists(os.path.join(ROOT, _n14)):
+            _sh14.copy(os.path.join(ROOT, _n14), _exe_dir14)
+    if os.path.isdir(os.path.join(ROOT, "lib")):
+        _sh14.copytree(os.path.join(ROOT, "lib"), os.path.join(_exe_dir14, "lib"))
+    _EXE = os.path.join(_exe_dir14, "一键启动.exe")
 if not os.path.exists(_EXE):
     skip("B 活体探针", "一键启动.exe 不存在（先编译）")
 else:

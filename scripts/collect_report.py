@@ -522,11 +522,22 @@ def sec_delivery():
     try:
         from agent import housekeeping as HK
         f = HK.footprint()
-        lines.append("  磁盘: 临时残留 %d 项 / %.2f MB · 语音产物 %d 个 / %.2f MB"
+        _dirs = f["dirs"]
+        # ⛔ V-R14-4（第十四轮，P3）：①把**占用最大的目录**也报出来（原来只报临时残留与语音产物，
+        #   而 `data/gen_images` 实测 665MB＝`data/` 的 99%，用户看不到）；②写明**删除不可恢复**
+        #   （`housekeeping_pruned.jsonl` 是审计记录、不是回收站）——"清得掉多少"与"删了能不能回来"
+        #   是两件事，用户有权先知道再决定。
+        _big = sorted(((_v.get("mb", 0), _k, _v.get("files", 0)) for _k, _v in _dirs.items()),
+                      reverse=True)[:2]
+        lines.append("  磁盘: 临时残留 %d 项 / %.2f MB · 语音产物 %d 个 / %.2f MB · 占用最大 %s"
                      % (f["temp"]["entries"], f["temp"]["mb"],
-                        f["dirs"].get("media/tts", {}).get("files", 0),
-                        f["dirs"].get("media/tts", {}).get("mb", 0)))
-        raw["disk"] = {"temp": f["temp"], "tts": f["dirs"].get("media/tts")}
+                        _dirs.get("media/tts", {}).get("files", 0),
+                        _dirs.get("media/tts", {}).get("mb", 0),
+                        " · ".join("%s %.1f MB/%d 个" % (_k, _m, _n) for _m, _k, _n in _big) or "—"))
+        lines.append("        （清理**只删我们自己造的文件**；删除**不可恢复**——那份清单只记「删了什么」、"
+                     "不是回收站；图库只报数不清理）")
+        raw["disk"] = {"temp": f["temp"], "tts": _dirs.get("media/tts"), "dirs": _dirs,
+                       "note": "删除不可恢复（无备份）；图库 data/gen_images 只报数"}
     except Exception as e:
         lines.append("  磁盘: 查不了（%s）" % type(e).__name__)
     return lines, raw

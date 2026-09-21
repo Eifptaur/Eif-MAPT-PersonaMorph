@@ -25,6 +25,13 @@ os.chdir(ROOT)
 
 from agent import feedback as FB            # noqa: E402
 
+# ⛔ V-R14-7 隔离：本判据的四个夹具（`feedback_selftest*.jsonl` / `feedback_rejected_selftest.jsonl` /
+#   附件目录）原来都写在**产品 `data\` 里**，用完即删 ⇒ 跑前跑后对账的净变化是 0、判据看着"干净"，
+#   而那一瞬间真机器人（或用户）在 `data\` 里看到的是我们的夹具。改到 %TEMP%（持续采样闸当场抓到的）。
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # scripts\（见 `_iso14` 文件头）
+import _iso14                               # noqa: E402
+_FB_ISO = _iso14.ISO
+
 # 收件邮箱只用于「断言它不在代码里」⇒ **拼出来**：把真实地址写进仓库会命中打包器的
 # 个人信息闸门（2026-09-15 实测被拦，这段注释本身就是修法）。
 MAIL_A = "ptmo" + "urning@qq.com"
@@ -72,7 +79,7 @@ ok("这些键在 config.json 里仍然存在（运维/作者可配）",
 
 print("── C. 三态如实：没通道就必须说「没发出去」──")
 _saved = FB.FEEDBACK_FILE
-_tmp = os.path.join(ROOT, "data", "feedback_selftest.jsonl")
+_tmp = os.path.join(_FB_ISO, "feedback_selftest.jsonl")
 FB.FEEDBACK_FILE = _tmp
 try:
     try:
@@ -220,8 +227,8 @@ ok("正文＝用户原话原样（只加一行元信息：类型/时间/版本/�
 
 print("── E. 防刷限流：咽喉点 + 被拒的不落盘 ──")
 _C_saved = (FB.FEEDBACK_FILE, FB.REJECT_FILE, dict(FB.LIMIT), FB._cfg)
-_tmp3 = os.path.join(ROOT, "data", "feedback_selftest3.jsonl")
-_rej3 = os.path.join(ROOT, "data", "feedback_rejected_selftest.jsonl")
+_tmp3 = os.path.join(_FB_ISO, "feedback_selftest3.jsonl")
+_rej3 = os.path.join(_FB_ISO, "feedback_rejected_selftest.jsonl")
 try:
     for _p in (_tmp3, _rej3):
         try:
@@ -410,8 +417,8 @@ ok("会写盘就得有上限：附件目录的上限与清理都在（用户既�
    int(FB.ATTACH.get("keep_files") or 0) > 0 and int(FB.ATTACH.get("keep_bytes") or 0) > 0, str(FB.ATTACH))
 
 _sv = (FB.MEDIA_DIR, FB.FEEDBACK_FILE, dict(FB.LIMIT), FB._cfg, dict(FB.ATTACH))
-_mdir = os.path.join(ROOT, "data", "feedback_selftest_media")
-_tmp4 = os.path.join(ROOT, "data", "feedback_selftest4.jsonl")
+_mdir = os.path.join(_FB_ISO, "media")
+_tmp4 = os.path.join(_FB_ISO, "feedback_selftest4.jsonl")
 try:
     for _p in (_tmp4,):
         try:

@@ -14,6 +14,15 @@ import tempfile
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# ⛔ V-R14-1 隔离：判据不许写产品 data/ 与 logs/。
+#   ⚠️ 第一版这段手抄在这里（`try: from agent import control … except: pass`）**是坏的**：
+#   它写在 `sys.path.insert(0, ROOT)` **之前**（跑脚本时 `sys.path[0]` 是 `scripts\`，工作目录不在
+#   `sys.path` 里）⇒ ImportError 被静默吞掉 ⇒ 隔离一次都没生效，本条判据照样创建产品
+#   `data\paused.flag`（＝跑一次复核就把用户的机器人暂停了）。现在收口到 `scripts\_iso14.py` 一处。
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # scripts\（见 `_iso14` 文件头）
+import _iso14                                   # noqa: E402
+_iso14.all_()
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 try:
