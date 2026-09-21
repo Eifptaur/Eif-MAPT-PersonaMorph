@@ -54,11 +54,14 @@ def _write_state(d: dict) -> str:
     p = _state_path()
     try:
         os.makedirs(os.path.dirname(p), exist_ok=True)
-        tmp = p + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(d, fh, ensure_ascii=False, indent=2)
-            fh.write("\n")
-        os.replace(tmp, p)
+        # ⛔ 2026-09-22 修（第十一轮 **V-R11-9** · P3）：老写法自己拼 `<path>.tmp` ——
+        #   控制台轮询 `state()` 与安装作业 `_note_seen` 是**两个写者**，撞同一个临时名时
+        #   **双方都写不进去**（实测 WinError 32/13）⇒ "新装的那道回滚闸可能永远没被记上"，
+        #   而这道闸现在守着第十轮那条 P0。统一走 `persist.atomic_write_json`（唯一临时名 + fsync +
+        #   有界重试 + 孤儿清扫）。
+        from . import persist as _persist
+        if not _persist.atomic_write_json(p, d, indent=2, sort_keys=False):
+            raise OSError("原子写失败（目标被占用 / 磁盘不可写）")
         return ""
     except Exception as e:
         why = "%s: %s" % (type(e).__name__, str(e)[:80])
@@ -710,6 +713,20 @@ def manifest_gates(man: dict, mine: str | None = None, max_seen: str | None = No
     # ② rollback：单调版本（远端不许比"见过的最高版本"低，哪怕它比本机新）
     _vt = vtuple(theirs)
     if theirs and _vt:
+        # ⛔ 2026-09-22 加（第十一轮 **V-R11-2** · P1）：**离谱的超前版本要拦住、而且不许入账**。
+        #   现场：第三方反代/CDN 篡改回包体、或发版时版本号打错一位（`9999.9.9`）⇒ 旧代码无条件
+        #   把它写进 `maxSeenVersion` ⇒ 之后**真清单与所有未来版本**全被判 `rollback` ⇒ 那台机器
+        #   **再也装不了任何更新**（界面还把锅甩给更新源），产品里又没有复位入口。
+        #   这里按"版本号第一段（年）超前 > 1 年"判**异常清单**：`ok=False` + `block_install=True`
+        #   （`state()` 报 error、`run_once()` 拒装），并让调用方**不记** `maxSeenVersion`。
+        _vm = vtuple(mine) if mine else ()
+        if _vm and int(_vt[0]) > int(_vm[0]) + 1:
+            out.update(ok=False, kind="far_ahead", block_install=True,
+                       why=("更新源给的版本（%s）比本机（%s）**超前一年以上** ⇒ 判为异常清单"
+                            "（多半是镜像/反代改过回包，或发版时版本号打错）⇒ 这次不更新，"
+                            "也**不会**把它记进「见过的最高版本」；控制台「版本」面板可点「重置更新状态」"
+                            % (theirs, mine)))
+            return out
         if out["maxSeenVersion"] and out["maxSeenVersion"] != theirs \
                 and vtuple(out["maxSeenVersion"]) and _vt < vtuple(out["maxSeenVersion"]):
             out.update(ok=False, kind="rollback", block_install=True,
@@ -845,9 +862,12 @@ def state(cfg: dict | None = None, timeout: float = 12.0) -> dict:
     st.update({"lastCheck": out["checkedAt"], "lastStatus": out["status"], "lastError": "",
                "lastGoodUrl": out["url"]})          # 记住"哪个源能用"，下次先试它
     # ⛔ V-R6-27②：**见过的最高版本**要落盘（单调，只升不降）——下一次就能识别"源给了更旧的版本"。
+    # ⛔ 2026-09-22 修（第十一轮 **V-R11-2** · P1）：**只有"两道闸都过"的清单才配入账** ——
+    #   过期/回滚/**超前一年以上**（`far_ahead`）这些被拒的清单一律**不许**顶高这道闸，
+    #   否则一次异常回包就能把用户的更新链**永久砖死**（真清单从此全被判 rollback）。
     try:
-        if theirs and vtuple(theirs) and (not out.get("maxSeenVersion")
-                                          or vtuple(theirs) > vtuple(str(out.get("maxSeenVersion")))):
+        if not out.get("kind") and theirs and vtuple(theirs) and (not out.get("maxSeenVersion")
+                                                                 or vtuple(theirs) > vtuple(str(out.get("maxSeenVersion")))):
             st["maxSeenVersion"] = theirs
     except Exception:
         pass
@@ -856,6 +876,28 @@ def state(cfg: dict | None = None, timeout: float = 12.0) -> dict:
     if _wsw:
         out["stateSaveError"] = _wsw
     return out
+
+
+def reset_seen_version() -> dict:
+    """**一键复位「见过的最高版本」**（第十一轮 **V-R11-2** 第 3 条 · P1）。
+
+    为什么要有它：`maxSeenVersion` 是单调闸门，一旦被顶到天上（被改过的镜像清单给了
+    `9999.9.9`、或发版时版本号打错一位），**真清单与所有未来版本**都会被判"回滚/降级" ⇒
+    那台机器再也装不了任何更新，而产品里没有任何复位入口（用户只能手删 `data/update_state.json`）。
+
+    只清**这一个键**（别的读数/上次状态一律不动），并把清掉前后的值如实回给控制台。
+    """
+    try:
+        st = _read_state() or {}
+        before = str(st.get("maxSeenVersion") or "")
+        st = dict(st)
+        st.pop("maxSeenVersion", None)
+        err = _write_state(st)
+        if err:
+            return {"ok": False, "why": "状态快照没写进去：%s" % err, "before": before}
+        return {"ok": True, "before": before, "after": "", "path": _state_path()}
+    except Exception as e:
+        return {"ok": False, "why": "%s: %s" % (type(e).__name__, str(e)[:60])}
 
 
 def skip_version(v: str) -> dict:

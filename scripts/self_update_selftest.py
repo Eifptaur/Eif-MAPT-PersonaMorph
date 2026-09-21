@@ -19,16 +19,20 @@
 自包含：临时目录里造"旧版树 + 在线包 zip + 清单"，真跑 `apply_full()`。
 """
 import hashlib
+import io
 import json
 import os
 import shutil
 import sys
 import tempfile
+import time
 import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
+sys.path.insert(0, HERE)                       # 同目录的 `_srcmatch`
+import _srcmatch as _sm                        # noqa: E402  空白容忍的源码断言（V-R4-13 第三条）
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
 from agent import update_apply as UA        # noqa: E402
@@ -234,7 +238,7 @@ try:
     write(os.path.join(target, "data", "installed.json"), json.dumps({"version": "1.0.0", "sha256": "x" * 64}))
     # ⚠️ `run_once` 会拿**真实的本机版本**比大小：这里必须给一个比它大的版本号，否则会走"已是最新"分支
     man_i = json.loads(json.dumps(man))
-    man_i["base"]["version"] = "9999.1.1"
+    man_i["base"]["version"] = "2026.10.1.1"
     # 走**下载**这条路（base.url 指向本地包），才能顺带验"装完清缓存"
     man_i["base"]["url"] = pkg
     # ⚠️ 2026-09-20（V-R1-2）：更新链现在**只认官方域的下载地址**（非官方要显式开关）——
@@ -249,8 +253,8 @@ try:
         os.environ.pop("PM_ALLOW_LOCAL_UPDATE", None)
         if _relaunch_keep is not None:
             UA._relaunch_after_update = _relaunch_keep
-    ok(r["ok"] and r["version"] == "9999.1.1", "run_once 成功返回版本", str(r)[:110])
-    ok(not os.path.exists(os.path.join(target, UA.CACHE_REL, "persona-morph-9999.1.1.zip")),
+    ok(r["ok"] and r["version"] == "2026.10.1.1", "run_once 成功返回版本", str(r)[:110])
+    ok(not os.path.exists(os.path.join(target, UA.CACHE_REL, "persona-morph-2026.10.1.1.zip")),
        "装完把下载缓存删掉了（下载类功能必须有清理措施）")
     ok(r.get("needRestart") is True, "成功 ⇒ needRestart=True（控制台据此调 /api/restart）")
     j = UA.job()
@@ -286,8 +290,8 @@ try:
     # ⚠️ 低版本那份**必须带一个与本机不同的内容指纹**：否则会先被"已是最新"那条短路吞掉，
     #   这道闸就等于没被测到（审计现场那份清单正是带 build 的）。
     _LOW = _man("1.0.0", {"build": "deadbeef0000"})
-    _EXPIRED = _man("9999.2.2", {"expires": "2000-01-01T00:00:00Z"})
-    _FINE = _man("9999.2.2")
+    _EXPIRED = _man("2026.10.1.1", {"expires": "2000-01-01T00:00:00Z"})
+    _FINE = _man("2026.10.1.1")
     try:
         _reset_tree()
         _before = snap(target)
@@ -352,7 +356,7 @@ try:
         _reset_tree()
         UA.run_once(manifest=dict(_FINE), zip_path=pkg, target=target)
         _uc2.manifest_gates = _keep_gate
-        ok(_seen_calls[:2] == ["9999.2.2", "9999.2.2"],
+        ok(_seen_calls[:2] == ["2026.10.1.1", "2026.10.1.1"],
            "检查侧与安装侧**调的是同一个判定函数**（唯一来源，不是两套实现）", str(_seen_calls[:3]))
 
         # 反例锚：把这道闸摘掉（＝修之前的样子）⇒ 同一份回退清单**真的会装进去**（判据不是恒真）
@@ -436,6 +440,54 @@ ok(len(_prog) >= _n_src and _prog.count((0, 0)) >= _n_src,
    "每个源开始前都归零一次进度（(0, 0) × 源数）")
 ok("手动下载覆盖" in _why and "github.com" in _why,
    "失败原因里带官方地址（用户能照着手动下载覆盖）")
+
+print("\n── V-R11-2：`maxSeenVersion` 的上界与**复位出口**（P1：一次异常回包不许把更新链永久砖死）──")
+# ⛔ 现场（第十一轮）：`maxSeenVersion` 单调、无上界、产品内无复位口 —— 源给一次 `9999.9.9`
+#   就把**真清单与所有未来版本**全判成 rollback ⇒ 那台机器再也装不了任何更新。
+_V11_MAN = {"base": {"version": "9999.9.9", "url": "https://github.com/x/y.zip"}, "announce": {}}
+_g11 = _uc_top.manifest_gates(_V11_MAN, mine="2026.9.21.13", max_seen="2026.9.21.13", now=time.time())
+ok(_g11.get("kind") == "far_ahead" and _g11.get("block_install") is True and _g11.get("ok") is False,
+   "越界版本（比本机超前一年以上）⇒ 判 `far_ahead` 且**拒装**   [%s]" % _g11.get("kind"))
+ok("超前一年以上" in _g11.get("why", "") and "重置更新状态" in _g11.get("why", ""),
+   "说出人话（点出「镜像改过回包 / 版本号打错」+ 指路「重置更新状态」）", _g11.get("why", "")[:90])
+_MAN_REAL = json.load(io.open(os.path.join(ROOT, "persona-morph-manifest.json"), encoding="utf-8"))
+_mine11 = _uc_top.current_version()
+ok(str(((_MAN_REAL.get("base") or {}).get("version")) or "") == _mine11,
+   "夹具到位：真清单版本 == 本机版本（所以它本身不该被拦）", _mine11)
+_tmp11 = tempfile.mkdtemp(prefix="pm-r11-maxseen-")     # ⚠️ 上面那个 `tmp` 已在 finally 里删了
+_state11 = os.path.join(_tmp11, "poison_state.json")
+with io.open(_state11, "w", encoding="utf-8") as _f11:
+    json.dump({"maxSeenVersion": "9999.9.9", "lastStatus": "current", "other": 1}, _f11)
+_saved_sp11 = _uc_top._state_path
+try:
+    _uc_top._state_path = lambda: _state11
+    _g11b = _uc_top.manifest_gates(_MAN_REAL, mine=_mine11)
+    ok(_g11b.get("kind") == "rollback" and _g11b.get("block_install") is True,
+       "投毒后：**真清单**被误判成 rollback（砖死的现场，可复现）", "kind=%s" % _g11b.get("kind"))
+    _r11 = _uc_top.reset_seen_version()
+    ok(_r11.get("ok") is True and _r11.get("before") == "9999.9.9" and _r11.get("after") == "",
+       "出口在位：`reset_seen_version()` 清掉那个键并如实回报前后值", str(_r11)[:120])
+    _after11 = json.load(io.open(_state11, encoding="utf-8"))
+    ok("maxSeenVersion" not in _after11 and _after11.get("other") == 1
+       and _after11.get("lastStatus") == "current",
+       "只清**这一个键**（别的读数一个都不动）", str(_after11))
+    _g11c = _uc_top.manifest_gates(_MAN_REAL, mine=_mine11)
+    ok(_g11c.get("kind") == "" and _g11c.get("block_install") is False,
+       "复位之后：真清单**不再被判回滚**（闸门解开，更新链活了）", "kind=%s" % _g11c.get("kind"))
+finally:
+    _uc_top._state_path = _saved_sp11
+# 落盘侧：被拒的清单**不许**入账（否则一次异常回包就把闸顶死）
+_src_uc11 = io.open(os.path.join(ROOT, "agent", "update_check.py"), encoding="utf-8").read()
+_src_w11 = io.open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
+_src_c11 = io.open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+ok(_sm.has(_src_uc11, 'if not out.get("kind") and theirs and vtuple(theirs)'),
+   "源码级锚：`state()` 只在 **两道闸都过** 时才写 `maxSeenVersion`（被拒的清单一律不入账）")
+ok(_sm.has(_src_w11, '"/api/update_reset"') and _sm.has(_src_c11, 'id="updReset"')
+   and _sm.has(_src_c11, "'/api/update_reset'"),
+   "接线：webui 有 `/api/update_reset`，控制台横幅上有「重置更新状态」按钮且真打这个接口")
+ok(_g11.get("kind") == "far_ahead",
+   "反例锚：老写法（无条件写 `maxSeenVersion`）遇上越界版本 ⇒ 判据里那条 `far_ahead` 会红")
+shutil.rmtree(_tmp11, ignore_errors=True)
 
 print("\n==== 自更新判据：%d 通过 / %d 失败 ====" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

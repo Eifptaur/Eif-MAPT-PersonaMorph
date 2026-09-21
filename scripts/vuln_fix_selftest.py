@@ -195,7 +195,9 @@ zp5, tree5 = mk_pkg(d5, rel="agent/x.py", body="x=1")
 hits5 = []
 U._relaunch_after_update = lambda v="": hits5.append(v)
 try:
-    r5 = U.run_once(manifest={"base": {"version": "9999.9.9", "sha256": tree5, "url": ""}},
+    # ⚠️ 第十一轮 V-R11-2 之后：`run_once()` 会拦"超前本机一年以上"的清单（far_ahead）⇒
+    #    这里当"合法新版本"的夹具必须是**同年的真实未来版本**，不能再拿 `9999.9.9` 当正常版本。
+    r5 = U.run_once(manifest={"base": {"version": "2026.10.1.1", "sha256": tree5, "url": ""}},
                     zip_path=zp5, target=d5, dry=True)
 finally:
     U._relaunch_after_update = _real_relaunch
@@ -1048,8 +1050,8 @@ U._relaunch_after_update = lambda *a, **k: None
 try:
     # ⚠️ 低版本那份必须带**与本机不同的内容指纹**：否则会先被"已是最新"短路吞掉，闸门就没被测到
     _low10 = _man10("1.0.0", {"build": "0ldc0ffee000"})
-    _exp10 = _man10("9999.9.9", {"expires": "2000-01-01T00:00:00Z"})
-    _fine10 = _man10("9999.9.9")
+    _exp10 = _man10("2026.10.1.1", {"expires": "2000-01-01T00:00:00Z"})
+    _fine10 = _man10("2026.10.1.1")
     for _nm10, _m10, _kind10 in (("版本回退清单", _low10, "older"), ("expires 过期清单", _exp10, "expired")):
         if os.path.exists(_sf10):
             os.remove(_sf10)

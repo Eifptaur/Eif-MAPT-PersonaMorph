@@ -574,7 +574,11 @@ def _note_seen(version: str) -> None:
         if not old or not uc.vtuple(old) or uc.vtuple(old) < uc.vtuple(v):
             st = dict(st or {})
             st["maxSeenVersion"] = v
-            uc._write_state(st)
+            # ⛔ 2026-09-22（第十一轮 **V-R11-9** · P3）：写失败**不许静默**（老写法丢返回值）——
+            #   吞掉的话用户/我们无从知道"这道闸其实没记上"，下次就会被同一份旧清单再拦一次。
+            _err = uc._write_state(st)
+            if _err:
+                log.warning("更新状态落盘失败（「见过的最高版本」没记上，本次更新照常）：%s", _err)
     except Exception:
         pass
 
@@ -619,7 +623,10 @@ def run_once(manifest=None, zip_path=None, target=ROOT, dry=False, progress=None
         _set(state="error", phase="probe", why=_gate["why"])
         return {"ok": False, "rc": 2, "why": _gate["why"], "phase": "probe",
                 "version": theirs, "gate": _gate.get("kind"), "needRestart": False}
-    _note_seen(theirs)
+    if zip_path:
+        # ⛔ 2026-09-22（第十一轮 **V-R11-2** 第 2 条）：明确给了包（自测/本地安装）时由调用方保证
+        #   地址可信 ⇒ 这里入账。
+        _note_seen(theirs)
     # ⛔ 2026-09-20 修 **V2**：同版本号换包（"只修 bug 不改版本"这条路，`make_manifest --build` 就是
     #   为它准备的）以前**只比版本号** ⇒ 控制台侧比了内容指纹判 `newer`、这里却回"已是最新"，
     #   于是横幅永远消不掉、点「立即更新」静默什么都不做。现在两边都比：版本 ≤ 我的 **且** 指纹相同
@@ -656,6 +663,10 @@ def run_once(manifest=None, zip_path=None, target=ROOT, dry=False, progress=None
         if not _u_ok and not _local_ok:
             _set(state="error", phase="probe", why=_u_why)
             return {"ok": False, "rc": 2, "why": "清单给的下载地址不可信：%s" % _u_why, "phase": "probe"}
+        # ⛔ 2026-09-22 修（第十一轮 **V-R11-2** 第 2 条 · P1）：**先验"下载地址可信"、再记
+        #   「见过的最高版本」** —— 老写法把 `_note_seen(theirs)` 放在这一步**之前**，于是一份
+        #   下载地址都不可信的清单照样能把用户的回滚闸顶高（＝不可信的源也能改本机状态）。
+        _note_seen(theirs)
         zip_path = os.path.join(target, CACHE_REL, "persona-morph-%s.zip" % (theirs or "new"))
         _set(state="running", phase="download", why="正在下载 %s" % theirs, got=0, total=0)
         # 2026-09-17（用户报「卡在 0% 不动」）：把**换源重试**暴露到作业状态里 —— 老实现只在换源时

@@ -444,6 +444,12 @@ button.pri{background:var(--blue);color:#fff;box-shadow:0 4px 12px rgba(77,107,2
 button.pri:hover{background:var(--blue2)}
 button.ghost{background:var(--card);border:1px solid var(--bd);color:var(--tx)}
 button.ghost:hover{border-color:var(--blue);color:var(--blue)}
+/* ⛔ 2026-09-21 加（第十一轮 V-R11 · 作者问「检验器需要前端的，映射好没有」）：
+   症状按钮要把**后端判决**画出来（同一次结果里的 ok / partial ⇒ 按钮边框与字色三态），
+   否则用户点完只能自己从报告文字里读，界面上一片"都点过了"没有区别。 */
+button.ghost[data-vstate="ok"]{border-color:var(--ok);color:var(--ok)}
+button.ghost[data-vstate="partial"]{border-color:var(--warn);color:var(--warn)}
+button.ghost[data-vstate="fail"]{border-color:var(--err);color:var(--err)}
 button.danger{background:var(--err-soft);color:var(--err-tx)}
 button.danger:hover{filter:brightness(1.12)}
 button:disabled{opacity:.5;cursor:not-allowed}
@@ -529,6 +535,7 @@ th{color:var(--tx2);font-weight:500}
   <button id="updGo" class="pri">立即更新</button>
   <button id="updLater" class="ghost">稍后</button>
   <button id="updSkip" class="ghost">不再提醒这个版本</button>
+  <button id="updReset" class="ghost" title="清掉本机记的「见过的最高版本」——更新被判成回滚/降级、明明有新版本却装不上时用它">重置更新状态</button>
 </div>
 <!-- 「发送已被暂停」横幅（2026-09-17 加）：用户「佬」报「能识别群，但发不了消息，试什么都不发」
      —— 真因是**版本门**（微信版本 × 适配层没实测 ⇒ 每次发送被拦），而提示藏在「版本能力矩阵」里，
@@ -607,6 +614,20 @@ th{color:var(--tx2);font-weight:500}
       fetch('/api/update_skip', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ version: cur.theirs }) })
         .then(hide).catch(hide);
     } catch (e) { hide(); }
+  };
+  document.getElementById('updReset').onclick = function () {
+    // ⛔ 2026-09-22 加（第十一轮 **V-R11-2** 第 3 条 · P1）：**"闸门卡死"要有个出口**。
+    //   现场：一份被镜像改过的清单（版本 9999.9.9）会把本机记的「见过的最高版本」顶到天上，
+    //   此后**真清单与所有未来版本**全被判"回滚/降级" ⇒ 那台机器再也装不了任何更新，
+    //   而产品里唯一的出路是手删 `data/update_state.json`。这个按钮＝那个出口（只清这一个键）。
+    uiConfirm('重置更新状态？', '只会清掉本机记的「见过的最高版本」（更新状态快照里的一个键），别的什么都不动。'
+      + '什么时候用：明明有新版本、它却说「更新源给的版本更旧 ⇒ 判为回滚」。', function () {
+      getJSON('/api/update_reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+        .then(function (r) {
+          if (r && r.ok) { toast('已重置（原记录 ' + (r.before || '无') + ' ⇒ 现在 ' + (r.after || '清空') + '）'); loadStatus(); }
+          else { toast('重置失败：' + ((r && (r.why || r.error)) || '未说明')); }
+        }).catch(function (e) { toast('重置失败：' + e); });
+    });
   };
   document.getElementById('updGo').onclick = function () {
     // 「立即更新」真干活（2026-09-16 用户：「做出来居然不给用户用」）：
@@ -777,7 +798,12 @@ th{color:var(--tx2);font-weight:500}
       </div>
       <div class="desc" style="margin-top:12px"><b>症状检验器</b>：哪方面有问题就点哪一个，
       <b>只读检查</b>（不动窗口、不发消息、不改配置），下面出一段能直接粘进「反馈」的报告。</div>
+      <div class="desc">怎么看报告（<b>判决分四档</b>）：<b>通过</b> · <b>卡住</b>（证据说就是它）·
+      <b>部分通过</b>（有项目<b>没测到</b>）· <b>没测到</b>（这一格这次验不了：不算通过也不算失败 ——
+      别把它当「没问题」）。逐项前头那个符号就是这四档：<b>勾＝通过 · 叉＝卡住 · 半圆＝部分通过 · 空心圆＝没测到</b>。
+      点完之后<b>症状按钮自己会变色</b>：绿＝通过 · 黄＝部分通过 · 红＝卡住。</div>
       <div class="btns" id="vfBtns"></div>
+      <div class="desc" id="vfState" style="margin:2px 0 0"></div>
       <pre class="out dn" id="vfResult"></pre>
       <div class="btns"><button class="ghost" id="vfCopy" disabled>复制报告</button>
         <span class="hint" id="vfTip" style="align-self:center">每个 1~3 秒</span></div>
@@ -5239,11 +5265,32 @@ if($('codeCheckDeps')) $('codeCheckDeps').onclick = ()=>runCodeCheck(true);
     b.onclick=async()=>{
       pre.classList.remove('dn'); pre.textContent='正在检查：'+v.name+'…';
       if(cp) cp.disabled=true;
+      if($('vfState')) $('vfState').textContent='';
       try{
         const r=await getJSON('/api/verify?id='+encodeURIComponent(v.id));
         pre.textContent=(r&&r.report)||JSON.stringify(r,null,1);
         if(cp) cp.disabled=!(r&&r.report);
-      }catch(e){ pre.textContent='检验器跑不起来：'+e; }
+        // ⛔ 2026-09-21 加（第十一轮 V-R11 · 作者：「检验器需要前端的，映射好没有」）：
+        //   把**后端的判决**映射到界面上 —— ①按钮三态（通过/部分通过/卡住）②一行判决摘要。
+        //   老写法只把 report 塞进 <pre>，用户点完十个症状，界面上全是同一个样子，
+        //   「哪一格卡住、哪一格没测到」只能自己从报告文字里读。
+        const st = (r && r.ok === false) ? 'fail'
+                 : ((r && r.partial) ? 'partial'
+                 : ((r && r.ok === true) ? 'ok' : 'unknown'));
+        b.dataset.vstate = st;
+        if($('vfState')){
+          // ⚠️ 这里**不许用 emoji**（显示层自研口径 · `console_copy_selftest` A 段会红）——
+          //    所以四档判决用文字说，不用勾/叉/圆那些符号（报告正文里的符号是服务端生成的，不在此限）。
+          const txt = (st==='fail') ? '这一次：卡住（证据说就是它 —— 照报告里的「下一步」做）'
+                    : (st==='partial') ? '这一次：部分通过（有项目没测到：不算通过也不算失败）'
+                    : (st==='ok') ? '这一次：通过（这一页的判据这次都验到了）'
+                    : '这一次：没测到（这次验不了 —— 别当成「没问题」）';
+          $('vfState').textContent = txt;
+        }
+      }catch(e){
+        pre.textContent='检验器跑不起来：'+e;
+        b.dataset.vstate='unknown';
+      }
     };
     box.appendChild(b);
   });

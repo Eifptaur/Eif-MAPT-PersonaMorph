@@ -50,8 +50,9 @@ class Watermark:
     共用一个序号格子（`group:<wxid>`）：A 号把水位推到 900，切到 B 号后 B 号同一群的
     1~900 号消息会被判成"处理过了"⇒ **静默不回**；切回 A 号又被 B 号的低水位拖着重放。
     ⇒ 现在按**账号**分命名空间（`account|group:<wxid>`）：
-      · `account` 为空（认不出账号）时**保持老键名**——单号机器行为一字不变；
-      · 老文件里的无前缀键**原样留着**，新命名空间从 0 起 ⇒ 上层"水位 0 就对齐到最新"
+      · `account` 认不出来时用**保留名 `?`**（V-R11-5：绝不回退到"无前缀"的老键名 —— 那正是
+        升级前两个号共用的那一格）；
+      · 老文件里的无前缀键**原样留着但不参与读写**，新命名空间从 0 起 ⇒ 上层"水位 0 就对齐到最新"
         （`persona_morph.py` 那段）保证**不重放历史、也不会漏掉新消息**；
       · 切号只换命名空间（`set_account`），两个账号的格子同时在文件里，切回来继续用。
     """
@@ -74,9 +75,17 @@ class Watermark:
         return self.account
 
     def _ns(self, chat_key) -> str:
-        """给 chat_key 加上账号前缀（认不出账号时不加，保持老行为）。"""
-        k = str(chat_key)
-        return ("%s|%s" % (self.account, k)) if self.account else k
+        """给 chat_key 加上账号前缀。**认不出账号时用保留名 `?`**（见下面的 V-R11-5 说明）。
+
+        ⛔ 2026-09-21 修（第十一轮 **V-R11-5** · P2）：老写法"认不出账号 ⇒ 不加前缀、沿用老键名"，
+        而老键名在多账号机器上的语义恰好是「**升级前两个号共用的那一格**」——`db_account()` 拿不到
+        账号（新 adapter 还没开库 / 旧 adapter 的 `_db` 被 `_release_adapter` 置空）时就会塌回老键，
+        把 V-R10-30 的原始症状（两号水位互相污染）重新拿出来用。
+        ⇒ 现在**永远带前缀**，认不出账号就用保留名 `?`。代价是升级后第一枪（以及账号时有时无的
+        机器）会走一次"水位 0 ⇒ 对齐到最新"（与账号可识别时的行为一致）——**不重放历史、不漏新消息**。
+        """
+        a = self.account or "?"
+        return "%s|%s" % (a, str(chat_key))
 
     # ---- 读写 ----
     def load(self) -> dict:
@@ -125,13 +134,22 @@ class Watermark:
             return int(default or 0)
 
     def set(self, chat_key: str, seq, forward_only: bool = True) -> int:
-        """写入水位。forward_only=True（默认）时不允许回退 —— 水位倒退会导致重复处理。"""
+        """写入水位。forward_only=True（默认）时不允许回退 —— 水位倒退会导致重复处理。
+
+        ⛔ 2026-09-21 修（第十一轮 **V-R11-1** · P1）：`k` 已经带过账号前缀，**不能再喂给
+        `get()`**（`get()` 内部还会套一次 `_ns`）——老写法 `cur = self.get(k)` 让 `cur` **恒为 0**
+        ⇒ 账号维一旦开启，"默认只前进"这道闸**当场失效**（任何更小的值都能写进去＝水位倒退＝
+        从旧位置重放）。现在直接查表（键就是 `k`），并把这个"自己写的键自己读"的语义写死在这里。
+        """
         try:
             s = int(seq or 0)
         except Exception:
             return self.get(chat_key)
         k = self._ns(chat_key)
-        cur = self.get(k)
+        try:
+            cur = int(self.data.get(k, 0) or 0)      # ⬅ 键已带前缀，**直接查表**，别再走 get()
+        except (TypeError, ValueError):
+            cur = 0
         if forward_only and s <= cur:
             return cur
         self.data[k] = s

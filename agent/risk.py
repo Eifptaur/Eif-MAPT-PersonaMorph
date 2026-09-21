@@ -158,7 +158,11 @@ class RiskGate(object):
         self._flag_seen = None               # V-R10-24：控制台『暂停/恢复』标记的上次值
         self._st = {"paused": False, "paused_reason": "", "blocks": 0,
                     "min": [], "hour": [], "day": [], "day_key": "",
-                    "chats": {}, "events": [], "recent": []}
+                    "chats": {}, "events": [], "recent": [],
+                    # ⛔ 第十一轮 V-R11-7：①这次暂停**是不是坏档 fail-closed 造成的**
+                    #   （顶栏『恢复』能解开它，但必须说清解的是什么）②被操作者解开的次数
+                    #   （留痕：能区分"正常恢复"与"有人把坏档锁顶开了"）。
+                    "fail_closed": False, "recovered_by_operator": 0}
         self._load()
 
     # ── 状态读写 ────────────────────────────────────────────────────────
@@ -216,10 +220,13 @@ class RiskGate(object):
                         ("已按坏档留证：%s" % kept) if kept else "**留证失败 ⇒ 原档保持原样、禁止覆盖**")
             return
         self._st.update({k: v for k, v in d.items() if k in self._st})
+        # 档**这次读得动且形状对** ⇒ 之前那次 fail-closed 已经不成立了（别让它跨重启粘住）
+        self._st["fail_closed"] = False
 
     def _fail_closed(self, reason: str):
         self._st["paused"] = True
         self._st["paused_reason"] = reason
+        self._st["fail_closed"] = True          # V-R11-7：标记"这次暂停是坏档引起的"
         log.warning("风险闸门 %s —— 确认后可点控制台『恢复发送』：%s", reason, self.path)
 
     def _save(self):
@@ -244,7 +251,7 @@ class RiskGate(object):
             pass
 
     # ── 停机开关 ────────────────────────────────────────────────────────
-    def _sync_operator(self, force: bool = False):
+    def _sync_operator(self):
         """把控制台那个『暂停所有发送』勾选框 / 顶栏『暂停』按钮的**文件级真相**并进来。
 
         V-R10-24（审计第十轮）：产品里其实有**两套互不相通的停机开关**，用户会被锁死——
@@ -258,6 +265,9 @@ class RiskGate(object):
         为什么只看"跳变"：配置里的 `risk.paused` 与 `_load` 的 fail-closed 是两个独立来源，
         按"当前值"同步会在每次首查就把 fail-closed 的暂停抹掉。跳变则专指"刚有人按了按钮"。
         只在**默认状态档**上生效（判据各自用 `tempfile` 建独立实例，不受本机 data/ 影响）。
+
+        ⛔ 第十一轮 **V-R11-11 第 3 条**：老签名 `_sync_operator(force=False)` 的 `force=True`
+        **全仓无调用者**（死参）⇒ 删掉，行为不变（`force` 只跳过"首次只记基线"与"值没变就返回"）。
         """
         if os.path.abspath(self.path) != os.path.abspath(STATE_PATH):
             return
@@ -267,9 +277,9 @@ class RiskGate(object):
         except Exception:
             return
         prev, self._flag_seen = self._flag_seen, now
-        if prev is None and not force:
+        if prev is None:
             return                                  # 首次：只记基线，不做动作
-        if now == prev and not force:
+        if now == prev:
             return
         if now and not self._st.get("paused"):
             self._st["paused"] = True
@@ -277,10 +287,24 @@ class RiskGate(object):
             log.info("风险闸门：跟随控制台『暂停』标记 ⇒ 暂停自动发送")
         elif (not now) and self._st.get("paused"):
             # 一键恢复：用户在界面上点『恢复』（标记消失）⇒ 闸门跟着解，不用去碰没有前端入口的 API
+            # ⛔ 2026-09-21 修（第十一轮 **V-R11-7** · P2）：这条"出口"保留（把用户锁死更糟），
+            #   但补三件：①**落盘**（老写法只改内存 ⇒ 重启又粘上暂停，用户看到"恢复了又自己停了"
+            #   却查不出原因）②**留痕**（这次解的是不是坏档 fail-closed 的锁，写进状态与日志）
+            #   ③坏档本身**不被抹掉**（`_refuse_overwrite` / 留证文件仍在原地，人工还能查）。
+            _was_flc = bool(self._st.get("fail_closed"))
             self._st["paused"] = False
             self._st["paused_reason"] = ""
             self._st["blocks"] = 0
-            log.info("风险闸门：跟随控制台『恢复』标记 ⇒ 已恢复自动发送（一键恢复路径）")
+            self._st["fail_closed"] = False
+            self._st["recovered_by_operator"] = int(self._st.get("recovered_by_operator") or 0) + 1
+            try:
+                self._save()
+            except Exception as _e_sv:
+                log.warning("风险闸门：跟随『恢复』时落盘失败（重启后可能又粘上暂停）：%s", _e_sv)
+            log.warning("风险闸门：跟随控制台『恢复』标记 ⇒ 已恢复自动发送（一键恢复路径 · 第 %d 次）%s",
+                        self._st["recovered_by_operator"],
+                        "——⚠️ 这次的暂停原本是**坏档 fail-closed** 造成的：锁已按你的操作解开，"
+                        "坏档留证仍在 data/ 下（要恢复旧状态就人工看它）" if _was_flc else "")
 
     def pause(self, reason: str = ""):
         with self._lock:
@@ -316,6 +340,7 @@ class RiskGate(object):
             self._st["paused"] = False
             self._st["paused_reason"] = ""
             self._st["blocks"] = 0
+            self._st["fail_closed"] = False      # V-R11-7：显式恢复 ⇒ 坏档锁也算解开了
             self._save()
         try:
             from . import control as _ctl
@@ -506,6 +531,10 @@ class RiskGate(object):
                 "enabled": bool(cfg.get("enabled", True)),
                 "paused": bool(self._st.get("paused")),
                 "paused_reason": self._st.get("paused_reason") or "",
+                # ⛔ V-R11-7：这两项给控制台/检验器看 —— ①这次暂停是不是坏档引起的
+                #   ②有没有人用顶栏『恢复』把坏档锁顶开过（留痕，别让"证据"随恢复消失）
+                "fail_closed": bool(self._st.get("fail_closed")),
+                "recovered_by_operator": int(self._st.get("recovered_by_operator") or 0),
                 "blocks": int(self._st.get("blocks") or 0),
                 "minute": len(self._st["min"]), "minute_cap": int(cfg.get("per_minute") or 0),
                 "hour": len(self._st["hour"]), "hour_cap": int(cfg.get("per_hour") or 0),

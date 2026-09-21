@@ -976,6 +976,13 @@ def v_db_unreadable() -> dict:
                                  True if _okd else False,
                                  "现在读：%s（%s）%s" % (_eff or "没认出来", _src or "来源未知",
                                                        ("；" + str(_wv.get("note") or "")) if _wv.get("note") else "")))
+    else:
+        # ⛔ 2026-09-21 修（第十一轮 **V-R11-6** · P2）：`status()` **返回空对象**时（不抛异常、
+        #   只是什么都没读回来）原来这一环**整格消失** —— 报告里"少了一环"这件事本身看不见，
+        #   用户看到的是一个"环数不确定"的清单。现在空对象也必须**留下一格**（如实标"没测到"）。
+        checks.append(_check("读的是**实际在用**的数据目录", None,
+                             "数据目录状态是**空对象**（拿不回任何读数：没有运行中实例 / 旧版本 / "
+                             "status 内部提前返回）⇒ 这一格**没测到**（不是「目录没问题」）"))
     # ③ 开库那一步的结果（唯一来源：运行中实例的 `_cap`）
     _cap = dict(_RUNTIME_CAP or {})
     if _cap:
@@ -998,13 +1005,20 @@ def v_db_unreadable() -> dict:
         checks.append(_check("读的是**正在写的那个号**", None,
                              "拿不到账号维（没有运行中实例）⇒ 这一格**没测到**"))
     else:
-        _aok = True if (len(_ns) < 2 or _live is not False) else False
+        # ⛔ 2026-09-21 修（第十一轮 **V-R11-4** · P2）：**多账号 + 拿不到写入证据 ⇒ 没测到** ——
+        #   老写法 `_aok = True if (len(_ns) < 2 or _live is not False) else False` 在这一档给 ✅
+        #   （detail 自己都写着"拿不到写入证据"）。单账号机器无害（就一个号，不需要比），
+        #   但**多账号机器**上"在读的到底是不是正在写的那个号"正是原始症状，不许拿 ✅ 冒充。
+        if len(_ns) > 1 and _live is None:
+            _aok = None
+        else:
+            _aok = True if (len(_ns) < 2 or _live is not False) else False
         checks.append(_check("读的是**正在写的那个号**", _aok,
                              "在读 %s%s%s" % (_acc,
                                               ("；这台机器有 %d 个账号" % len(_ns)) if len(_ns) > 1 else "",
                                               "" if _live else
                                               ("（**没在动** ⇒ 很可能读的是另一个号）" if _live is False
-                                               else "（拿不到写入证据）"))))
+                                               else "（拿不到写入证据 ⇒ 多账号下**这一格没测到**）"))))
     # ⑤ 目录有没有填到账号层（唯一来源：wechat_dir.account_hint）
     try:
         from . import wechat_dir as _wd_h2
