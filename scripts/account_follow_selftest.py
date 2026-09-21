@@ -187,6 +187,27 @@ try:
     ok("你把账号目录**钉死**了 ⇒ 不切（切了还是它，否则会变成每 15 秒重连一次的循环）",
        _sw_pin.get("stale") is False and "钉死" in str(_sw_pin.get("why")), str(_sw_pin.get("why"))[:100])
 
+    print("── C2. **两个号都没在写**时也得跟切（V-R10-28：旧规则④在这里永不跟切，与 pick_account 相反）──")
+    # 现场：切到 B 号之后 B 号**短期没收到消息** ⇒ 旧实现的 `others`（别的号 -wal 新鲜）是空集
+    #   ⇒ `return out` **永不跟切**：继续读 A 号旧库、一点异常都没有；要"新号先收到一条消息"才自愈
+    #   —— 而它盯的正是"读不到消息的那个库"（自指）。修法＝两条路走同一个判定（pick_account 是唯一来源）。
+    _sw_idle = D.switched("wxid_IDLE_old", _p2, pin="")
+    ok("两个号都静默 ⇒ **仍然跟切**到 pick_account 挑中的那个号",
+       _sw_idle.get("stale") is True and _sw_idle.get("live") == _pk3.get("name"), str(_sw_idle)[:130])
+    ok("**同一事实同一结论**：switched().live == pick_account().name",
+       _sw_idle.get("live") == _pk3.get("name"), "%s / %s" % (_sw_idle.get("live"), _pk3.get("name")))
+    ok("切号理由点名两个号（人话）",
+       "wxid_IDLE_old" in str(_sw_idle.get("why")) and "wxid_IDLE_live" in str(_sw_idle.get("why")),
+       str(_sw_idle.get("why"))[:120])
+    _sw_idle_ok = D.switched("wxid_IDLE_live", _p2, pin="")
+    ok("阴性对照：我读的就是那个号 ⇒ 不切（别自己跟自己抖）",
+       _sw_idle_ok.get("stale") is False, str(_sw_idle_ok)[:90])
+    # 反例锚：老规则④的判据（别的号里 -wal 新鲜的）在这个夹具里就是空集 ⇒ 旧实现必然红
+    _old_others = [a for a in D.accounts(_p2)
+                   if a["name"] != "wxid_IDLE_old" and a["wal"] and (NOW - a["wal"]) <= D._LIVE_WINDOW_S]
+    ok("反例锚：老规则④（只看「别的号 -wal 新鲜」）在这个夹具里是空集 ⇒ 旧实现永不跟切",
+       _old_others == [])
+
     print("── D. 开库链：多账号显式带 account；单账号一跳都不多加 ──")
     W._db_dir_candidates = lambda extra="": (([extra] if str(extra or "").strip() else []) + [parent])
     _plan = W._db_open_plan(parent)

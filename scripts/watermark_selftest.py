@@ -13,12 +13,14 @@ import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 except Exception:
     pass
 
 from agent import listener_watermark as lw  # noqa: E402
+import _srcmatch as _sm                      # noqa: E402  空白容忍的源码断言（V-R4-13 第三条）
 
 PASS, FAIL = [], []
 
@@ -163,8 +165,10 @@ def main():
        "_latest < _cur" in _pm and "latest_seq_ex(wxid)" in _pm)
     ok("回退走显式 `forward_only=False`（默认只前进，不许悄悄退）",
        "wm.set(chat_key, _latest, forward_only=False)" in _pm)
-    ok("自愈要落盘 + 留日志（否则用户永远不知道为什么它不回）",
-       "wm.flush()" in _pm and "记录像是被清过" in _pm)
+    ok("自愈要落盘 + 留日志（否则用户永远不知道为什么它不回）；"
+       "**落盘看返回值**（V-R10-30：`wm.flush()` 裸调用一处都不许剩）",
+       _sm.has(_pm, "flush_checked(wm") and not _sm.has(_pm, "wm.flush()")
+       and "记录像是被清过" in _pm)
     # ── 用户拍板（2026-09-17）：「不要让用户担风险啊，还要删这删那的、还要试这试那的，不行」 ──
     #    ⇒ 老办法"删 data\listener_watermark.json"不许留给用户，必须变成控制台上的一个按钮。
     print("\n-- H. 用户零操作：控制台一键「重新对齐监听水位」（不删文件、不重启） --")
@@ -250,6 +254,92 @@ def main():
     _old_bad = ("latest_seq_ex" not in _OLD_PM and "if new is None:" not in _OLD_PM
                 and "wm.set(\"group:\" + g[\"wxid\"], 0)" in _OLD_PM)
     ok("⑦ 反例锚：老写法（吞成 0 当起点 + [] 当没消息）**确实**会被判不合格", _old_bad is True)
+
+    # ── 第十轮 V-R10-30（P2）：**水位表账号维** · **flush 看返回值** · 切号放掉旧句柄 ──
+    #   症状：切号后两号水位互相污染（A 号推到 900 ⇒ B 号 1~900 被判"处理过了"⇒ 静默不回）；
+    #   `persist.atomic_write_json` 在目标被占用/真并发时必然 WinError 5，而 8 个调用点全丢返回值。
+    print("\n-- J. 账号维 / flush 返回值 / 切号释放旧句柄（V-R10-30） --")
+    _p_acct = os.path.join(tmp, "wm_acct.json")
+    _wa = lw.Watermark(_p_acct, "acctA")
+    _wa.set("group:x", 900)
+    _ok_f1 = _wa.flush()
+    _wb = lw.Watermark(_p_acct, "acctB")
+    ok("① 换账号 ⇒ **读不到**另一个号的同一群水位（不再互相污染）",
+       _ok_f1 is True and _wa.get("group:x") == 900 and _wb.get("group:x") == 0,
+       (_wa.get("group:x"), _wb.get("group:x")))
+    _wb.set("group:x", 7)
+    _wb.flush()
+    _wa2 = lw.Watermark(_p_acct, "acctA")
+    _wb2 = lw.Watermark(_p_acct, "acctB")
+    ok("② 两个账号的格子**同时留在文件里**，切回来各读各的",
+       _wa2.get("group:x") == 900 and _wb2.get("group:x") == 7,
+       (_wa2.get("group:x"), _wb2.get("group:x")))
+    ok("③ 空账号（认不出账号）⇒ **沿用老键名**，单号机器行为一字不变",
+       lw.Watermark(_p_acct).data.get("group:x") is None
+       and lw.Watermark(_p_acct, "acctB")._ns("group:x") == "acctB|group:x"
+       and lw.Watermark(_p_acct)._ns("group:x") == "group:x")
+    _wa2.set_account("")
+    ok("④ `set_account('')` 回到老命名空间（降级路径可回退）",
+       _wa2.get("group:x") == 0 and _wa2._ns("k") == "k")
+    _wa2.set_account("acctA")
+    ok("④ 切回去仍读得到（set_account 只换命名空间、不丢数据）", _wa2.get("group:x") == 900)
+    # flush 真失败：打桩 atomic_write_json ⇒ 必须回 False 并留痕（老写法丢返回值 ⇒ 静默）
+    _p_bad = os.path.join(tmp, "wm_bad.json")
+    _wbad = lw.Watermark(_p_bad, "acctA")
+    _wbad.set("group:y", 5)
+    _orig_awj = lw.persist.atomic_write_json
+    _warned = []
+    try:
+        lw.persist.atomic_write_json = lambda *a, **k: False
+        ok("⑤ 落盘失败 ⇒ `flush()` 回 **False**（不许静默说成功）", _wbad.flush() is False)
+        ok("⑤ 失败留痕：`fail_count` 累加 + `last_error` 有话说",
+           _wbad.fail_count == 1 and bool(_wbad.last_error), (_wbad.fail_count, _wbad.last_error))
+        ok("⑤ `flush_checked` 回 False 且**不抛**（主循环不许被打断）",
+           lw.flush_checked(_wbad, log=lambda lvl, fmt, *a: _warned.append(fmt % a if a else fmt),
+                            why="判据") is False)
+        ok("⑤ 且**告警一次**（用户/日志看得见，不许悄悄丢水位）",
+           len(_warned) == 1 and "没写进磁盘" in _warned[0], _warned[:1])
+        _w2bad = lw.Watermark(_p_bad, "acctA")
+        _n_before = len(_warned)
+        lw.persist.atomic_write_json = lambda *a, **k: True
+        _w2bad.set("group:y", 5)
+        ok("⑤ 阳性对照：改成写成功 ⇒ `flush_checked` 回 True 且**不告警**（别把正常路判失败）",
+           lw.flush_checked(_w2bad, log=lambda lvl, fmt, *a: _warned.append(fmt % a if a else fmt),
+                            why="判据") is True and len(_warned) == _n_before)
+    finally:
+        lw.persist.atomic_write_json = _orig_awj
+    _pf = os.path.join(tmp, "wm_refuse.json")
+    _wr = lw.Watermark(_pf, "acctA")
+    _wr.set("group:z", 3)
+    _wr._refuse_overwrite = True
+    ok("⑥ 坏档留证失败 ⇒ flush 拒写也**计入 fail_count**（与真失败同一口径）",
+       _wr.flush() is False and _wr.fail_count == 1 and "拒绝覆盖" in _wr.last_error)
+    # 源码锚：三条接入路径只有 _adopt_wc 是唯一收口 ⇒ 它必须做全三件（释放旧句柄 / 切账号维 / 看返回值）
+    _seg_adopt = _pm[_pm.index("def _adopt_wc(_wc_new"):]
+    _seg_adopt = _seg_adopt[:_seg_adopt.index("while not orch.stopped")]
+    ok("⑦ `_adopt_wc` 释放旧 adapter（含旧账号解密缓存）",
+       _sm.has(_pm, "_release_adapter(_wc_old)") and _sm.has(_pm, "_clear_decrypted_cache"))
+    ok("⑦ `_adopt_wc` 切水位表的账号命名空间（切号后两号不再共用一个格子）",
+       _sm.has(_seg_adopt, "wm.set_account(_wm_account_of(_wc_new))"))
+    ok("⑦ `_adopt_wc` 落盘看返回值、失败记进 `_ATTACH`",
+       _sm.has(_seg_adopt, "listener_watermark.flush_checked(wm") and _sm.has(_seg_adopt, "_ATTACH["))
+    ok("⑦ 启动那一刻就把水位表绑到当前账号（不是切号时才想起来）",
+       _sm.has(_pm, "Watermark(_wm_path, _wm_account_of(wechat_box[0]))"))
+    ok("⑦ 两路运行期接入（微信晚接入 / 切号跟随）都走 `_adopt_wc` 这一个收口",
+       _pm.count("_adopt_wc(_wc_new)") >= 1 and _pm.count('_adopt_wc(_wc_sw, "切号跟随")') == 1)
+    # 反例锚：老写法（无账号维 + 裸 flush）必须被上面这组判据判不合格
+    _OLD_WM = ('class Watermark:\n'
+               '    def __init__(self, path):\n'
+               '        self.data = {}\n'
+               '\n'
+               '    def get(self, chat_key):\n'
+               '        return self.data.get(str(chat_key), 0)\n'
+               '\n'
+               '    def flush(self):\n'
+               '        persist.atomic_write_json(self.path, self.data)\n')
+    _old_bad2 = ("self.account" not in _OLD_WM and "self._ns(" not in _OLD_WM
+                 and "def flush(self):\n        persist" in _OLD_WM.replace("\r", ""))
+    ok("⑧ 反例锚：老写法（无账号维 + flush 不看返回值）**确实**会被判不合格", _old_bad2 is True)
 
     shutil.rmtree(tmp, ignore_errors=True)
     print("\n== W2 水位判据：%d 通过 / %d 失败 ==" % (len(PASS), len(FAIL)))

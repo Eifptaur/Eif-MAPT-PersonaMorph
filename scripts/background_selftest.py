@@ -856,14 +856,14 @@ ck("E5 反证：这个键只在函数体里被读，不是散在别处又抄一�
 #   默认（不补）＝暂停期间把水位推到最新并落盘 ⇒ 恢复时不重放积压（否则恢复瞬间"每条都回"）；
 #   打开 ⇒ 不推进水位 ⇒ 恢复后补上（长暂停会集中回一阵）。既有口径：不替他二选一。
 _PM_SRC = open(os.path.join(ROOT, "scripts", "persona_morph.py"), encoding="utf-8").read()
-_SEG_PAUSE = _PM_SRC.split("if orch.paused:")[1][:900]
+_SEG_PAUSE = _PM_SRC.split("if orch.paused:")[1][:1400]
 ck("E6 wechat.replay_on_resume 真的有代码读它（不是死键）",
    _sm.has(_PM_SRC, 'get("wechat") or {}).get("replay_on_resume", False)'))
 ck("E7 默认不补（安全侧：不许一恢复就连回几十条）",
    _sm.has(SRC_CFG, '"replay_on_resume": False'))
 ck("E8 默认档仍然推进水位并落盘（关掉补处理时行为与原来一致；2026-09-21 起读失败**不写 0**）",
    "wechat.latest_seq_ex(wxid)" in _SEG_PAUSE and _sm.has(_SEG_PAUSE, "wm.set(chat_key, _seqp)")
-   and "wm.flush()" in _SEG_PAUSE and not _sm.has(_PM_SRC, "wm.set(chat_key, 0)"))
+   and _sm.has(_SEG_PAUSE, "flush_checked(wm") and not _sm.has(_PM_SRC, "wm.set(chat_key, 0)"))
 ck("E9 控制台有这个开关 + 示例配置同步",
    'data-cfg="wechat.replay_on_resume"' in SRC_CONSOLE
    and '"replay_on_resume"' in open(os.path.join(ROOT, "config.example.json"), encoding="utf-8").read())

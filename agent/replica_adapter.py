@@ -463,8 +463,17 @@ def recover_text(raw) -> str:
         except Exception:
             try:                               # 流式兜底（有些帧只能在流式 API 下解）
                 import io
+                # ⛔ 2026-09-21 修（第十轮 **V-R10-11**）：流式兜底原来**没有上限** —— 审计实测
+                #   403 字节的帧解出 12MB、1299 字节解出 40MB（把上面那句 `max_output_size=8MB`
+                #   整个绕穿）。⇒ 改成**读的时候就卡住**：多读一个字节发现超限就判失败。
+                _cap = 8 * 1024 * 1024
                 with z.ZstdDecompressor().stream_reader(io.BytesIO(b)) as rd:
-                    return rd.read().decode("utf-8", "replace")
+                    _buf = rd.read(_cap + 1)
+                if len(_buf) > _cap:
+                    log.warning("zstd 流式解压超过上限（%d 字节 > %d）⇒ 丢弃这条正文（防解压炸弹）",
+                                len(_buf), _cap)
+                    return ""
+                return _buf.decode("utf-8", "replace")
             except Exception:
                 return ""
     return b.decode("utf-8", "replace")

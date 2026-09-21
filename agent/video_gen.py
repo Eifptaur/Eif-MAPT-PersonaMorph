@@ -159,12 +159,72 @@ def _capped(resp, max_bytes: int, what: str) -> bytes:
         return resp.read(int(max_bytes) + 1)[:int(max_bytes)]
 
 
-def _get(url: str, timeout: int) -> bytes:
+def _get(url: str, timeout: int, allow_private: bool = None) -> bytes:
     """下载一段字节。V-R9-26：**带 64MB 上限**——单条视频按 `MAX_MB=30` 早就该被过滤链拒掉，
-    64MB 只是"对面无限灌数据"时的兜底，正常业务碰不到。"""
-    req = urllib.request.Request(url, method="GET", headers={"User-Agent": "pm-video-gen"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return _capped(r, 64 * 1024 * 1024, "视频字节")
+    64MB 只是"对面无限灌数据"时的兜底，正常业务碰不到。
+
+    V-R10-32：走 `safe_fetch.fetch_pinned_stream`（**一次解析、钉 IP**）。老写法是
+    `urllib.urlopen(url)` —— 连接时自己再解析一次域名，闸门校验的那次解析跟真正连接的那次
+    可以不同（DNS rebinding 实测能落到环回）。
+    `allow_private`：不给则按调用点判（本机 ComfyUI 的 `/view` 走本机，后端回链走公网口径）。
+    """
+    import tempfile
+    from .safe_fetch import fetch_pinned_stream, guard_remote_url
+    if allow_private is None:
+        allow_private = _is_local_url(url)
+    _fd, _tmp = tempfile.mkstemp(prefix="pm-vid-", suffix=".bin")
+    os.close(_fd)
+    try:
+        r = fetch_pinned_stream(url, _tmp, timeout=timeout, max_bytes=64 * 1024 * 1024,
+                                allow_private=bool(allow_private),
+                                headers={"User-Agent": "pm-video-gen"})
+        if int(r.get("status") or 0) >= 400:
+            raise RuntimeError("HTTP %s" % r.get("status"))
+        with open(_tmp, "rb") as f:
+            return f.read()
+    finally:
+        try:
+            if os.path.exists(_tmp):
+                os.remove(_tmp)
+        except Exception:
+            pass
+
+
+def _guard_reply_url(url: str, base_url: str = "") -> None:
+    """后端回包里的 url：下手前先过 `safe_fetch` 的**统一闸门**（V-R9-24 唯一入口）。
+
+    V-R10-32：闸门只负责"这个地址可信吗"；**连接**必须用 `_get` 的钉 IP 传输
+    （`guard_remote_url` 只回字符串，拿它配 `urllib.urlopen` 就是二次解析）。
+    """
+    from .safe_fetch import guard_remote_url
+    guard_remote_url(str(url), str(base_url or ""))
+
+
+def _is_local_url(url: str) -> bool:
+    """本机后端（ComfyUI / a1111 那类）的地址 ⇒ 才允许连私网（与 `image_gen` 同一口径）。"""
+    try:
+        h = urllib.parse.urlsplit(str(url or "")).hostname or ""
+    except Exception:
+        return False
+    return h in ("127.0.0.1", "localhost", "::1")
+
+
+def _same_origin(a: str, b: str) -> bool:
+    """两个地址是不是**同一个源**（scheme + host + 端口，逐项相等）。
+
+    V-R10-34 用：后端回包里的下载地址只有与"用户自己配的那个后端"同源时，
+    才允许它连私网（私网放行**不由回包里的地址**说了算）。
+    """
+    try:
+        _a = urllib.parse.urlsplit(str(a or ""))
+        _b = urllib.parse.urlsplit(str(b or ""))
+    except Exception:
+        return False
+    if not _a.hostname or not _b.hostname:
+        return False
+    _pa = _a.port or (443 if _a.scheme == "https" else 80)
+    _pb = _b.port or (443 if _b.scheme == "https" else 80)
+    return (_a.scheme.lower(), _a.hostname.lower(), _pa) == (_b.scheme.lower(), _b.hostname.lower(), _pb)
 
 
 def _comfy_generate(backend: dict, prompt: str, seconds: int):
@@ -261,15 +321,19 @@ def call_backend(backend: dict, prompt: str, seconds: int = 5):
         if u.startswith("http"):
             # V-R9-24：这个地址是**后端回包**给的 ⇒ 二次 GET 之前先过 SSRF 闸门
             # （E 线实测：假后端把 `url` 指向 `127.0.0.1` ⇒ 产品真去打内网/环回）
-            try:
-                from .safe_fetch import guard_remote_url
-            except Exception:
-                raise ValueError("安全抓取层不可用：拒绝下载后端给的视频地址（fail-closed）")
-            try:
-                guard_remote_url(u, str(backend.get("url") or ""))
-            except Exception as e:
-                raise ValueError("后端给的视频地址不可信（%s）：%s" % (type(e).__name__, str(e)[:80]))
-            files.append(_save_bytes(_get(u, int(backend.get("timeout") or DEFAULT_TIMEOUT)),
+            # V-R10-32：过闸门不够——`_get` 现在整条走 `fetch_pinned_stream`（一次解析、钉 IP）。
+            # ⛔ 2026-09-21（V-R10-34 复核）：`allow_private` **不能一律 False** ——
+            #   用户配的本机后端（ComfyUI / 本地中转）回的下载地址**本来就在本机**，
+            #   一律禁私网等于"本机后端这条链一个文件都收不回来"（判据 D② 当场变红）。
+            #   正确口径＝**同源才放行私网**：只有当"用户自己配的那个后端"就是本机地址、
+            #   且回包里的下载地址与它**同源**（scheme+host+port 逐项相等）时，才允许连私网。
+            #   这样公网后端 + 回链指向环回/内网（DNS rebinding 与"假后端指内网"两种）
+            #   依旧被闸门挡死——私网放行从来不由**回包里的地址**说了算。
+            _u_base = str(backend.get("url") or "")
+            _guard_reply_url(u, _u_base)
+            _allow_priv = _same_origin(u, _u_base) and _is_local_url(_u_base)
+            files.append(_save_bytes(_get(u, int(backend.get("timeout") or DEFAULT_TIMEOUT),
+                                          allow_private=_allow_priv),
                                      backend.get("id") or "video"))
         elif isinstance(j.get("files"), list) and j["files"]:
             for p in j["files"]:

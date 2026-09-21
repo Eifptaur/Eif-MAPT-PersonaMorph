@@ -150,6 +150,57 @@ def main():
     ok("F6 屏蔽名单也读 wxid 键（同名群里才能只屏蔽指定那间的人）",
        'blist.get(_key)' in _pr_txt or ('_gwxid' in _pr_txt and 'group_blocklist' in _pr_txt))
 
+    print("── G. 第十轮 V-R10-13/14/15/31：群列表链的四条修复各自要有守备 ──")
+    # G1（V-R10-13）：`targets_zero` **不再单向闩锁** —— 现在是"现算"（`bool(not _t)`），
+    #   所以群列表恢复之后它会自己变回 False（旧写法只写 True、全仓无处置 False ⇒ 侧栏永久报警）。
+    ok("G1 `targets_zero` 是**现算**的（`bool(not _t)`），不是单向闩锁",
+       "bool(not _t)" in _pm_txt, "见 persona_morph._collect_targets")
+    _old_latch_src = 'if not targets:\n        _ATTACH["targets_zero"] = True'
+    ok("G1b 反例锚：老写法（只写 `= True`、没有 False 处置）过不了 G1",
+       "bool(not _t)" not in _old_latch_src)
+    # G2（V-R10-14）：刷新群列表之后要**重算监听目标**（webui 调 parent 的回调；persona_morph 提供它）
+    _web = open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
+    ok("G2 「刷新群列表」会触发一次监听目标重算（`refresh_targets_fn` 两头都在）",
+       "refresh_targets_fn" in _web and "refresh_targets_fn=lambda" in _pm_txt)
+    # G3（V-R10-15）：归因一致性 —— `_collect_targets` 里也要传真因给 describe（不只启动那一次）
+    _ct = _pm_txt.split("def _collect_targets(")[1][:2600]
+    ok("G3 晚接入/配置保存这条路上，`describe(read_failed=…)` 也带**真因**",
+       "read_failed=_read_failed" in _ct and "groups_read_error" in _ct)
+    # G4（V-R10-15）：向导的重试按钮带 `?refresh=1`（原来是假重试：走内存缓存）
+    _con = open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+    ok("G4 向导「重试读取」带 `?refresh=1`（第十轮点名的假重试）",
+       "_obForceRefresh" in _con and "?refresh=1" in _con)
+    # G5（V-R9-7 / V-R10-31）：昵称表的三类失败要**如实抛**（不再静默 `{}`）
+    import sqlite3                                                              # noqa: E402
+    import tempfile                                                             # noqa: E402
+    from agent import replica_adapter as RA                                     # noqa: E402
+    _td = tempfile.mkdtemp(prefix="pm-lt-")
+    _bad = os.path.join(_td, "contact.db")
+    with sqlite3.connect(_bad) as _c:
+        _c.execute("CREATE TABLE other (a TEXT)")                               # 缺 contact 表
+        _c.commit()
+
+    class _Db(object):
+        def __init__(self, p):
+            self._p = p
+
+        def _db_files(self):
+            return [("contact/contact.db", self._p, 1)]
+
+    _raised = False
+    try:
+        RA.load_nickname_map(_Db(_bad))
+    except Exception:
+        _raised = True
+    ok("G5 坏联系人库 ⇒ `load_nickname_map` **抛**（旧写法静默 `{}` ⇒ 昵称退化成 wxid、认不出大号）",
+       _raised)
+    _raised_g = False
+    try:
+        RA.load_groups(_Db(_bad))
+    except Exception:
+        _raised_g = True
+    ok("G5b 对照：`load_groups` 对同一份坏库也抛（三条路同一口径，V-R9-7 的收口才算完整）", _raised_g)
+
     print("\n== 汇总：%d 通过 / %d 失败 ==" % (len(PASS), len(FAIL)))
     if FAIL:
         print("失败项：")

@@ -239,6 +239,233 @@ with open(_tp, "w", encoding="utf-8") as _f:                                    
 ck("T6 **带子算法变了 ⇒ 旧参照当「没有」**（no_ref 不拦发送，而不是 mismatch 去拦）",
    ch.reference("filehelper", path=_tp, size="1076x1046", strict=True) == [])
 
+# ══════════════════════════════════════════════════════════════════════════════
+# W/X/Y/Z 段：第十轮（V-R10-1 / V-R10-5 / V-R10-6 / V-R10-7）
+#   全部**离线合成帧** —— 不起 GUI、不碰真实微信/鼠标（真机读数写在各条说明里，见审计第十轮）。
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def _font28():
+    try:
+        return ImageFont.truetype("C:/Windows/Fonts/msyh.ttc", 28)
+    except Exception:
+        return ImageFont.load_default()
+
+
+def _old_pane_scan(img, lo_rel=0.15, hi_rel=0.60, need=24):
+    """**老口径**（V-R10-1 之前）的左沿扫描：下界 ＝ `int(w × lo_rel)`（纯相对、随宽度线性放大）。
+
+    判据用它当**反例锚**：同一帧按老代码扫一遍 ⇒ 宽窗下返回 0（真机 2538 宽实测也是 0）。
+    """
+    g = img.convert("L")
+    w, h = g.size
+    px = g.load()
+    y0, y1 = int(h * 0.25), int(h * 0.75)
+    step = max(1, (y1 - y0) // 12)
+    run, start = 0, 0
+    for x in range(int(w * lo_rel), min(w, int(w * hi_rel))):
+        vals = [px[x, y] for y in range(y0, y1, step)]
+        if not vals:
+            continue
+        if sum(vals) / len(vals) >= ch.WHITE:
+            if run == 0:
+                start = x
+            run += 1
+            if run >= need:
+                return start
+        else:
+            run = 0
+    return 0
+
+
+def _best_row_std(img):
+    """老口径（V-R9-6 版 `_frame_ok`）唯一的"有没有结构"读数：逐行 std 的最大值。"""
+    small = img.convert("L").resize((64, 64))
+    px = small.load()
+    best = 0.0
+    for y in range(64):
+        row = [px[x, y] for x in range(64)]
+        m = sum(row) / 64.0
+        best = max(best, (sum((a - m) ** 2 for a in row) / 64.0) ** 0.5)
+    return best
+
+
+def fake_wide(text="文件传输助手", size=(2538, 1589), pl=331, white_to=380):
+    """**真机最大化那一帧**的模型（本机 2560×1600 工作区 ⇒ 渲染 2538×1589，审计第十轮实测）：
+    会话列表**固定像素宽**（左沿 331）、紧跟一条白边到 380、再往右是浅灰「气泡带」到 0.60w，
+    最后又白 —— 复刻真机读数：**从 `0.15×宽`（380）起扫，找不到连续 24 列近纯白**。
+    """
+    img = Image.new("RGB", size, (245, 245, 245))
+    d = ImageDraw.Draw(img)
+    d.rectangle((pl, 0, white_to, size[1]), fill=(255, 255, 255))
+    d.rectangle((white_to, 0, int(size[0] * 0.60), size[1]), fill=(246, 246, 246))
+    d.rectangle((int(size[0] * 0.60), 0, size[0], size[1]), fill=(255, 255, 255))
+    d.text((pl + 10, 46), text, fill=(20, 20, 20), font=_font28())
+    return img
+
+
+def _bar_frame(text="文件传输助手", size=(1076, 1046), bar=(96, 103), text_y=112, pl=330):
+    """顶部那条**自绘深色横条**（`bar` = 上边/下边）+ 条子下方的会话名（真机几何见 `detect_band_y0`）。"""
+    img = Image.new("RGB", size, (245, 245, 245))
+    d = ImageDraw.Draw(img)
+    d.rectangle((pl, 0, size[0], size[1]), fill=(255, 255, 255))
+    d.rectangle((pl, bar[0], size[0], bar[1]), fill=(38, 38, 38))
+    d.text((pl + 12, text_y), text, fill=(20, 20, 20), font=_font28())
+    return img
+
+
+def _name_frame(name, size=(1139, 890), pl=331, y=46):
+    """真机那一档几何（会话列表 331 宽）下的会话头帧，文字写在带子里。"""
+    img = Image.new("RGB", size, (245, 245, 245))
+    d = ImageDraw.Draw(img)
+    d.rectangle((pl, 0, size[0], size[1]), fill=(255, 255, 255))
+    d.text((pl + 12, y), name, fill=(20, 20, 20), font=_font28())
+    return img
+
+
+def _deg_short(fp):
+    v = [int(x) for x in (fp or [])]
+    return len([i for i, x in enumerate(v) if x != 0])      # 有墨（非零）的列数，同 `remember()` 的口径
+
+
+print("[W] 窗口几何：**最大化/宽窗**也要测得出左沿并出指纹（第十轮 V-R10-1·P1）")
+print("    真机实测（审计）：渲染 2538×1589 时 `detect_pane_left=0`、`fingerprint` 空、`check=no_capture`；"
+      "同一帧只把下界改小到 ≤331 就恢复（0.12→331 / 0.10→331 / 0.04→331）。")
+for _wsz in ((1178, 738), (2178, 1190), (2538, 1589)):
+    _wi = fake_wide(size=_wsz)
+    ck("W1 宽窗 %s：量出固定像素左沿 331（会话列表不随宽度缩放）" % (_wsz,),
+       abs(ch.detect_pane_left(_wi) - 331) <= 8,
+       "测得 %d · pane_left_for=%d" % (ch.detect_pane_left(_wi), ch.pane_left_for(_wi)))
+_wimg = fake_wide()
+_wh = _wimg.size[0]
+ck("W1b 反例锚：同一帧按**老口径**（下界 = 0.15×%d = %d，越过真左沿 331）扫 ⇒ **0**"
+   % (_wh, int(_wh * 0.15)),
+   _old_pane_scan(_wimg) == 0 and int(_wh * 0.15) > 331,
+   "老口径扫描=%d（新口径=%d）" % (_old_pane_scan(_wimg), ch.detect_pane_left(_wimg)))
+_wfp = ch.fingerprint(_wimg)
+ck("W1c 本帧必须出**非空、非退化**指纹（老代码在最大化档恒 `no_capture`：整条会话头闸失效）",
+   bool(_wfp) and not ch.degenerate_reason(_wfp),
+   "%d 维 · 有墨列=%d · 退化=%r" % (len(_wfp), _deg_short(_wfp), ch.degenerate_reason(_wfp) or ""))
+ck("W1d 反例锚：退回 `0.26×宽` 兜底比例（老代码在 pl=0 时就走这条）⇒ 带子落进气泡带 ⇒ **空指纹**",
+   ch.fingerprint(_wimg, pane_left_rel=ch.PANE_LEFT_REL) == [],
+   "指纹 %s" % (ch.fingerprint(_wimg, pane_left_rel=ch.PANE_LEFT_REL) or "[]"))
+ck("W1e 窄窗照旧：900×680 / 1139×890 也能量出左沿（不是「只顾宽窗」）",
+   ch.detect_pane_left(fake_wide(size=(900, 680), pl=280, white_to=320)) > 0
+   and ch.detect_pane_left(fake_window("文件传输助手")) > 0,
+   "%d / %d" % (ch.detect_pane_left(fake_wide(size=(900, 680), pl=280, white_to=320)),
+                ch.detect_pane_left(fake_window("文件传输助手"))))
+# —— W1f：**锚点必须走 `pane_left_for` 这个唯一入口**（老口径扫不到白列时不能掉进比例兜底）——
+#    现场＝第六轮 V-R6-11：聊天区左列被消息气泡占满 ⇒ 老口径返回 0，而"竖栏右沿 + 列表固定宽"
+#    的结构锚仍认得出左沿。这一帧的真左沿 360；名字写在 660（只落在结构锚的带子里）。
+_bub = Image.new("RGB", (1139, 890), (245, 245, 245))
+_bd = ImageDraw.Draw(_bub)
+_bd.rectangle((0, 0, 60, 890), fill=(40, 40, 40))                   # 深色竖导航栏
+_bd.rectangle((60, 0, 360, 890), fill=(245, 245, 245))              # 会话列表（固定 300 宽）
+_bd.rectangle((360, 0, 911, 890), fill=(230, 230, 230))             # 气泡带（非白 ⇒ 老口径扫不出白列）
+_bd.rectangle((911, 0, 1139, 890), fill=(255, 255, 255))
+_bd.text((660, 46), "文件传输助手", fill=(20, 20, 20), font=_font28())
+ck("W1f 老口径在这帧上就是 0（V-R6-11 现场），结构锚给 360 ⇒ `pane_left_for` 必须取到 360",
+   ch.detect_pane_left(_bub) == 0 and ch.pane_left_for(_bub) == 360,
+   "老口径=%d · 结构锚=%d · pane_left_for=%d"
+   % (ch.detect_pane_left(_bub), ch.detect_pane_left_alt(_bub), ch.pane_left_for(_bub)))
+_bfp = ch.fingerprint(_bub)
+ck("W1g **`fingerprint` 必须走 `pane_left_for`**（名字只落在结构锚那条带子里 ⇒ 非空；"
+   "退回老口径那一层就掉进 `0.26×宽` 兜底 ⇒ 空指纹）",
+   bool(_bfp) and ch.fingerprint(_bub, pane_left_rel=ch.PANE_LEFT_REL) == [],
+   "生产路径 %d 维 · 反例锚（0.26w 兜底）%s"
+   % (len(_bfp), ch.fingerprint(_bub, pane_left_rel=ch.PANE_LEFT_REL) or "[]"))
+
+print("[X] 自适应带子的**钳位边界**（第十轮 V-R10-5·P2：`max_y0=72`/`max_scan=96` 卡死 ⇒ V-R9-3 原症状复现）")
+_xa = _bar_frame(bar=(38, 50), text_y=54)
+_xb = _bar_frame(bar=(96, 103), text_y=112, size=(1076, 1046))      # 条上边 ≥96：超出老 max_scan
+_xc = _bar_frame(bar=(70, 103), text_y=112, size=(1076, 890))       # 条底边 103：被老 max_y0=72 钳住
+
+
+def _y0_pair(im):
+    box = ch.crop_box(im.size, pane_left_px=ch.pane_left_for(im))
+    return (ch.detect_band_y0(im, box[0], box[2]),
+            ch.detect_band_y0(im, box[0], box[2], max_scan=96, max_y0=72))
+
+
+def _fp_old_band(im, y0):
+    return ch.fingerprint(im, band_px=(ch.BAND_PX[0], y0, ch.BAND_PX[2], ch.BAND_PX[3]),
+                          pane_left_px=ch.pane_left_for(im))
+
+
+_xay, _xao = _y0_pair(_xa)
+ck("X1 阳性对照：正常几何（条 38~50）新老口径都把带子挪到条下方（没改坏）",
+   _xay == _xao == 53 and not ch.degenerate_reason(ch.fingerprint(_xa)),
+   "新=%d 老=%d" % (_xay, _xao))
+_xby, _xbo = _y0_pair(_xb)
+ck("X2 **条上边 ≥96（老 max_scan 之外）**：新口径把带子推下去且指纹干净；老口径退回 38 ⇒ 空指纹",
+   _xby > int(ch.BAND_PX[1]) and _xbo == int(ch.BAND_PX[1])
+   and (not ch.fingerprint(_xb) or not ch.degenerate_reason(ch.fingerprint(_xb)))
+   and _fp_old_band(_xb, _xbo) == [],
+   "新 y0=%d（有墨列=%d）· 老 y0=%d（老带子指纹=%s）"
+   % (_xby, _deg_short(ch.fingerprint(_xb)), _xbo, _fp_old_band(_xb, _xbo) or "[]"))
+_xcy, _xco = _y0_pair(_xc)
+ck("X3 **条底边 103（被老 max_y0=72 钳住）**：新口径指纹可入库；老带子 ⇒ 「几乎每一列都有墨」的退化指纹"
+   "（逐字复现 V-R9-3/V-R10-5 的症状：该尺寸档永远学不到参照）",
+   _xcy > int(ch.BAND_PX[1]) and not ch.degenerate_reason(ch.fingerprint(_xc))
+   and ch.degenerate_reason(_fp_old_band(_xc, _xco)) != "",
+   "新 y0=%d（有墨列=%d）· 老 y0=%d ⇒ 老带子 %r"
+   % (_xcy, _deg_short(ch.fingerprint(_xc)), _xco, ch.degenerate_reason(_fp_old_band(_xc, _xco))))
+
+print("[Y] 帧质量与遮挡的缝（第十轮 V-R10-6·P3）")
+_half_lr = Image.new("RGB", (400, 300), (255, 255, 255))
+_hd2 = ImageDraw.Draw(_half_lr)
+_hd2.rectangle((0, 0, 200, 300), fill=(0, 0, 0))          # **左半深、右半浅**（每行都不平）
+ck("Y1 左右两大色块拼起来的帧 ⇒ **不是好帧**（每列都是平的 ⇒ 一个方向没有结构）",
+   ch._frame_ok(_half_lr) is False)
+ck("Y1b 反例锚：老口径（只看**逐行**结构）在这帧上读数 = %.1f（≥3 ⇒ 它会判「好帧」，这就是那道缝）"
+   % _best_row_std(_half_lr),
+   _best_row_std(_half_lr) >= 3.0, "best_row=%.1f" % _best_row_std(_half_lr))
+ck("Y1c 兜底帧准入也必须拒收它（`_mono` 认同一族，否则它会以「兜底帧」身份回到链上）",
+   ch._mono(_half_lr) is True)
+_goodY = Image.new("RGB", (400, 300), (250, 250, 250))    # 像"聊天区"：白底 + 几块文字/头像
+_gdY = ImageDraw.Draw(_goodY)
+for _iy in range(6):
+    _gdY.rectangle((20, 20 + _iy * 40, 200 + _iy * 20, 44 + _iy * 40), fill=(40, 40, 40))
+ck("Y1d 阳性对照：真画面（文字块/头像那样的结构）仍是好帧、也不算 mono",
+   ch._frame_ok(_goodY) is True and ch._mono(_goodY) is False)
+ck("Y2 **退化渲染矩形**（<8px）⇒ 按**未知＝遮挡**处理（老写法 `return False` 会退回抓屏）",
+   ch._region_occluded((0, 0, 4, 4), 1234) is True)
+ck("Y2b 正常矩形照旧走采样（不因为上面那条变成「永远判遮挡」）",
+   ch._occlusion_verdict([(100, True)] * 4, 100) is False)
+
+print("[Z] 单字会话名的**既定代价**（第十轮 V-R10-7·P3：学不到参照；钉住「不拦发送」这一侧）")
+_zE = ch.fingerprint(_name_frame("E"))
+_zI = ch.fingerprint(_name_frame("I"))
+print("    INFO 合成帧读数：E ⇒ 有墨（≥110）列 %s、非零列 %d、退化=%r；I ⇒ 有墨列 %s、退化=%r"
+      % ([i for i, v in enumerate(_zE) if v >= 110], _deg_short(_zE), ch.degenerate_reason(_zE) or "",
+         [i for i, v in enumerate(_zI) if v >= 110], ch.degenerate_reason(_zI) or ""))
+print("    INFO 真机（审计第十轮）：「E」在 9 档尺寸下都是 `有墨的列只有 1 个（不是一行字）` ⇒ 学不到参照")
+ck("Z1 单字名的帧要么判退化、要么有墨列 < 4（两条入库闸至少命中一条）",
+   bool(ch.degenerate_reason(_zI)) or _deg_short(_zI) < 4,
+   "I: %r · 非零列=%d" % (ch.degenerate_reason(_zI) or "", _deg_short(_zI)))
+with tempfile.TemporaryDirectory() as _tdZ:
+    _pZ = os.path.join(_tdZ, "hdr.json")
+    ch.remember("singleE", _zE, path=_pZ, size="1139x890")
+    ch.remember("singleI", _zI, path=_pZ, size="1139x890")
+    ck("Z2 单字会话名的帧**进不了参照库**（remember 两道闸拦下 ⇒ reference 为空）",
+       ch.reference("singleE", _pZ, size="1139x890", strict=True) == []
+       and ch.reference("singleI", _pZ, size="1139x890", strict=True) == [],
+       "E 非零列=%d · I 非零列=%d" % (_deg_short(_zE), _deg_short(_zI)))
+    _capZ = ch.capture_image
+    try:
+        ch.capture_image = lambda gui=None, render=None: _name_frame("E")
+        _rz = ch.check("singleE", path=_pZ)
+    finally:
+        ch.capture_image = _capZ
+    ck("Z3 **后果锚**：学不到参照 ⇒ `check()` 判 **no_ref（不拦发送）**，"
+       "**不许**判 mismatch（那才是「这个会话永久漏发」）",
+       _rz.get("status") == "no_ref", "status=%s · %s" % (_rz.get("status"), _rz.get("note")))
+    _nameZ = ch.fingerprint(_name_frame("文件传输助手"))
+    ch.remember("multi", _nameZ, path=_pZ, size="1139x890")
+    ck("Z4 阳性对照：多字名字同尺寸 ⇒ 正常入库（不是「什么都拒」）",
+       len(ch.reference("multi", _pZ, size="1139x890", strict=True)) == len(_nameZ),
+       "有墨列=%d" % _deg_short(_nameZ))
+
 print("[F] 帧质量闸（第九轮 V-R9-6：半黑半白 / 纯黑帧以前会被当好帧）")
 _blk = Image.new("RGB", (400, 300), (0, 0, 0))
 _half = Image.new("RGB", (400, 300), (255, 255, 255))

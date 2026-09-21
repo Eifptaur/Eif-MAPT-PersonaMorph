@@ -248,6 +248,50 @@ finally:
     V._p = _keep_p6
     shutil.rmtree(_tmp6, ignore_errors=True)
 
+print("\n── C6-L. 台账**写不进磁盘**时必须说出来（V-R10-12：老写法 `except: pass` ⇒ 重启回到假绿）──")
+_tmpL = tempfile.mkdtemp(prefix="pm-vfL-")
+_savedL = dict(_wxL.LEDGER_WRITE_ERR)
+_blockerL = os.path.join(_tmpL, "blocker")
+with open(_blockerL, "w", encoding="utf-8") as _fhL:
+    _fhL.write("x")          # 拿它当"目录"用 ⇒ 下面的路径必然建不出来/写不进去
+try:
+    _wxL.LEDGER_WRITE_ERR.update({"err": "", "n": 0, "at": 0.0})
+    _wxL._switch_fails_path = lambda: os.path.join(_blockerL, "switch_fails.jsonl")
+    _wxL.note_switch_fail("发送前确认不了目标会话", "判据夹具：写不进去")
+    _errL = _wxL.ledger_write_error()
+    ok("C6L-a 写失败**留痕**（err 非空 + 计数涨），不再静默",
+       bool(_errL.get("err")) and int(_errL.get("n") or 0) >= 1, str(_errL)[:120])
+    ok("C6L-b 写失败也不影响主流程（台账读回空表、绝不抛）",
+       _wxL._switch_fails_from_file(5) == [])
+    _rL = V.run("send_blocked")
+    _cL = [c for c in _rL["checks"] if c["name"].startswith("判定台账能落盘")]
+    ok("C6L-c 检验器**多出一格**盯它，且判 False（不是拿旧台账画 ✅）",
+       len(_cL) == 1 and _cL[0]["ok"] is False, str(_cL)[:180])
+    ok("C6L-d 说明里点出「旧台账」这个真陷阱（用户知道该去看磁盘/权限）",
+       bool(_cL) and "旧台账" in _cL[0]["detail"], _cL[0]["detail"][:120] if _cL else "")
+    _wxL._switch_fails_path = lambda: os.path.join(_tmpL, "switch_fails.jsonl")
+    _wxL.note_switch_fail("发送前确认不了目标会话", "判据夹具：这次写得进去")
+    _rLb = V.run("send_blocked")
+    _cLb = [c for c in _rLb["checks"] if c["name"].startswith("判定台账能落盘")]
+    ok("C6L-e 阳性对照：之后写成功 ⇒ 状态**自动清掉**、这一格回 True（一次抖动不挂死）",
+       not _wxL.ledger_write_error().get("err") and bool(_cLb) and _cLb[0]["ok"] is True,
+       str(_cLb)[:120])
+    # 反例锚：老写法（吞掉异常、不记账）必须被上面这组判据判不合格
+    def _old_write_L(path):
+        try:
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write("{}\n")
+        except Exception:
+            pass
+    _wxL.LEDGER_WRITE_ERR.update({"err": "", "n": 0, "at": 0.0})
+    _old_write_L(os.path.join(_blockerL, "switch_fails.jsonl"))
+    ok("C6L-f 反例锚：老写法（`except: pass`）写失败后**状态依旧干净** ⇒ 判据确实有灵敏度",
+       _wxL.ledger_write_error().get("err") == "")
+finally:
+    _wxL.LEDGER_WRITE_ERR.update(_savedL)
+    _wxL.LEDGER_WRITE_ERR["err"] = _savedL.get("err", "")
+    shutil.rmtree(_tmpL, ignore_errors=True)
+
 print("\n── C8. 第九轮 V-R9-12/13/14：台账落盘 · 读不到日志＝没测到 · 报告头不许画 ✅ ──")
 _tmp8 = tempfile.mkdtemp(prefix="pm-vf8-")
 _saved8 = (_wxL._switch_fails_path, list(_wxL._SWITCH_FAILS), V._p)
@@ -267,7 +311,7 @@ try:
        V._tail2(os.path.join(_tmp8, "no_such.log")) == []
        and V._tail2(_tmp8) is None, (V._tail2(os.path.join(_tmp8, "no_such.log")), V._tail2(_tmp8)))
     _emoji_src = io.open(os.path.join(ROOT, "agent", "verifiers.py"), encoding="utf-8").read()
-    ok("C8e 源码级：那一格是 `(files > 0) and key_ok`", "(files > 0) and key_ok" in _emoji_src)
+    ok("C8e 源码级：那一格是 `(files > 0) and key_ok`", _sm.has(_emoji_src, "(files > 0) and key_ok"))
     from agent import emoticon as _emo                                     # noqa: E402
     _o1, _o2, _o3 = _emo.any_sticker_files, _emo.load_cached_key, _emo.verify_key
     _emo.any_sticker_files = lambda limit=200: ["x"] * 3                   # 有本地表情文件
@@ -281,9 +325,10 @@ try:
     _head1 = V._finish("t8", "测试", "症状", True, "全绿口径", "",
                        [V._check("甲", True, "过了"), V._check("乙", None, "读不到")])
     ok("C8f 报告头：1 项 True + 1 项 None ⇒ **不许**画 ✅，画「◐ 部分通过」",
-       "◐" in _head1["report"] and "✅ 通过" not in _head1["report"], _head1["report"][:60])
+       _sm.has(_head1["report"], "◐") and not _sm.has(_head1["report"], "✅ 通过"),
+       _head1["report"][:60])
     _head2 = V._finish("t8b", "测试", "症状", True, "全绿口径", "", [V._check("甲", True, "过了")])
-    ok("C8g 全 True ⇒ 仍是 ✅（阳性对照，别把正常报告也改花）", "✅ 通过" in _head2["report"])
+    ok("C8g 全 True ⇒ 仍是 ✅（阳性对照，别把正常报告也改花）", _sm.has(_head2["report"], "✅ 通过"))
     # 会话档案里的物证（noreply_send_failed）⇒ 那一格判否、成为卡点
     io.open(os.path.join(_tmp8, "data", "sessions", "2026-09-21.jsonl"), "w",
             encoding="utf-8").write('{"chat": "g", "status": "noreply_send_failed"}\n')
@@ -328,6 +373,86 @@ try:
 finally:
     _ttJ.FILE = _keep_ttf
     shutil.rmtree(_tmp7, ignore_errors=True)
+
+print("\n── C9. 第十轮 V-R10-8/10/39：说明格分档 · partial 同源 · 「读不到日志就不许给 ✅」全量性质锚 ──")
+ok("C9a 新入口「消息库读不到」在清单里（作者点名的反复症状终于有了专门入口）",
+   "db_unreadable" in {x["id"] for x in V.catalog()}, str([x["id"] for x in V.catalog()]))
+_f_info = V._check("说明书格", None, "顺便告诉你一件事", info=True)
+_f_unk = V._check("真没测到格", None, "读不到")
+_r_info = V._finish("t9", "测试", "症状", True, "全绿口径", "", [V._check("甲", True, "过了"), _f_info])
+_r_unk = V._finish("t9b", "测试", "症状", True, "全绿口径", "", [V._check("甲", True, "过了"), _f_unk])
+ok("C9b **说明格不算「没测到」** ⇒ 报告头仍是 ✅（第十轮 V-R10-10：以前会恒 ◐、永不给 ✅）",
+   _sm.has(_r_info["report"], "✅ 通过") and _r_info.get("partial") is False, _r_info["report"][:60])
+ok("C9c 反例锚：同样的 None 但**不是说明格** ⇒ 头变 ◐（证明分档真的在起作用）",
+   _sm.has(_r_unk["report"], "◐") and _r_unk.get("partial") is True, _r_unk["report"][:60])
+ok("C9d `partial` 与报告头**同源**（都来自同一次 _n_unk 计算）",
+   (_r_unk.get("partial") is True) == _sm.has(_r_unk["report"], "◐")
+   and (_r_info.get("partial") is False) == _sm.has(_r_info["report"], "✅ 通过"))
+# ⛔ V-R10-39：**性质锚** —— 对每一个检验器，"日志读不到"时**不许**给出 ✅（一次性覆盖剩下那几格）。
+#   做法：把 `_tail2` 打成"永远返回 None 并记录被调用"。若某个检验器读了日志、拿不到内容，
+#   却在结果里给 `ok=True` 且 `partial=False`，就说明"读不到 ⇒ ✅"这条假绿又回来了。
+_calls = {"n": 0}
+_saved_t2 = V._tail2
+
+
+def _t2_none(path, n=400):
+    _calls["n"] += 1
+    return None
+
+
+V._tail2 = _t2_none
+try:
+    _liars = []
+    for _item in V.catalog():
+        _calls["n"] = 0
+        try:
+            _rr = V.run(_item["id"])
+        except Exception as _e:
+            continue
+        if _calls["n"] and _rr.get("ok") is True and not _rr.get("partial"):
+            _liars.append(_item["id"])
+    ok("C9e **性质锚**：日志读不到时，任何检验器都不许给「✅ 通过」（V-R10-8 那两格的同类）",
+       not _liars, "仍然假绿的：" + "、".join(_liars))
+finally:
+    V._tail2 = _saved_t2
+
+print("\n── C10. 第十轮 V-R10-39：三态契约那 4 格（账号 / 档位 / set_runtime_how / 配置错原因）补齐反例锚 ──")
+# 这四条是审计点名的"变异把『没测到 ⇒ None』改回『⇒ True』，判据照样全绿"：
+#   它们都属"证据缺失时必须认怂"这一族，各配一条锚。
+_saved_how = dict(getattr(V, "_RUNTIME_HOW", {}) or {})
+_saved_cfg = V._cfg
+try:
+    V.set_runtime_how(None)                                   # G407 / G405：没有运行中实例
+    _c_acc = [c for c in V.run("no_reply")["checks"] if c["name"] == "读的是**正在用的那个微信号**"]
+    ok("C10a（G405/G407）拿不到运行中实例 ⇒ 账号格**必须是 None（没测到）**，不许判 True",
+       len(_c_acc) == 1 and _c_acc[0]["ok"] is None, str(_c_acc))
+    V.set_runtime_how({"account": "wxid_me", "accounts_live": ["wxid_me"]})
+    _c_acc2 = [c for c in V.run("no_reply")["checks"] if c["name"] == "读的是**正在用的那个微信号**"]
+    ok("C10b 阳性对照：喂进「正在写的号」⇒ 那一格能给 True（不是永远 None）",
+       len(_c_acc2) == 1 and _c_acc2[0]["ok"] is True, str(_c_acc2))
+
+    def _cfg_empty():
+        # 忠实模拟"配置读不到 ⇒ 内部回落到内置默认值"那条路（第十轮 G406/G408 就是在这条路上变异）：
+        # 返回空配置，同时把 `_CFG_ERR` 置上（真实现里由 `_cfg()` 自己设）。
+        V._CFG_ERR = "夹具：配置读不到"
+        return {}
+    V._cfg = _cfg_empty                                        # G406 / G408
+    try:
+        _r_cfg = V.run("no_reply")
+        _c_tier = [c for c in _r_cfg["checks"] if c["name"] == "回复档位不是『只回艾特』却指望它搭话"]
+        ok("C10c（G406）配置读不到 ⇒ 档位格**必须是 None**，不许留 True 判 ✅",
+           len(_c_tier) == 1 and _c_tier[0]["ok"] is None, str(_c_tier))
+        ok("C10d（G408）配置读不到时报告头要**明说用了内置默认值**（那几格不算结论）",
+           "配置没读到" in _r_cfg["report"], _r_cfg["report"][:120])
+    finally:
+        V._cfg = _saved_cfg
+        V._CFG_ERR = ""
+finally:
+    V.set_runtime_how(_saved_how)
+ok("C10e 接线：`webui` 的 `/api/verify` 每次把 `_db_how` + `_cap` 喂进来（G407 全仓零引用那件事）",
+   open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read().count("set_runtime_how") >= 2
+   and "getattr(_wo" in open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
+   or "getattr(_wo2" in open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read())
 
 print("── D. 异常与未知 id 都不许抛（别把前端打崩）──")
 _u = V.run("不存在的东西")

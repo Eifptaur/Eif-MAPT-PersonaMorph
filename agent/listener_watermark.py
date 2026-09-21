@@ -44,13 +44,39 @@ def chat_lock(chat_key: str) -> threading.RLock:
 
 
 class Watermark:
-    """持久化水位：{chat_key: int}。原子写；默认只前进。"""
+    """持久化水位：`{账号维|chat_key: int}`（账号维可为空）。原子写；默认只前进。
 
-    def __init__(self, path: str):
+    V-R10-30（2026-09-21）：老实现**只有 chat_key 一维** ⇒ 切号后两个账号的同一个群
+    共用一个序号格子（`group:<wxid>`）：A 号把水位推到 900，切到 B 号后 B 号同一群的
+    1~900 号消息会被判成"处理过了"⇒ **静默不回**；切回 A 号又被 B 号的低水位拖着重放。
+    ⇒ 现在按**账号**分命名空间（`account|group:<wxid>`）：
+      · `account` 为空（认不出账号）时**保持老键名**——单号机器行为一字不变；
+      · 老文件里的无前缀键**原样留着**，新命名空间从 0 起 ⇒ 上层"水位 0 就对齐到最新"
+        （`persona_morph.py` 那段）保证**不重放历史、也不会漏掉新消息**；
+      · 切号只换命名空间（`set_account`），两个账号的格子同时在文件里，切回来继续用。
+    """
+
+    def __init__(self, path: str, account: str = ""):
         self.path = str(path)
+        self.account = str(account or "")
         self._dirty = False
+        self._refuse_overwrite = False      # V-R10-23：坏档留证失败 ⇒ 置 True，flush 拒绝写
+        self.fail_count = 0                 # V-R10-30：flush 真失败（或拒写）的累计次数
+        self.last_error = ""
         self.data: dict = {}
         self.load()
+
+    def set_account(self, account) -> str:
+        """切号：只换命名空间。**不写盘**（切号本身没改任何水位）。"""
+        a = str(account or "")
+        if a != self.account:
+            self.account = a
+        return self.account
+
+    def _ns(self, chat_key) -> str:
+        """给 chat_key 加上账号前缀（认不出账号时不加，保持老行为）。"""
+        k = str(chat_key)
+        return ("%s|%s" % (self.account, k)) if self.account else k
 
     # ---- 读写 ----
     def load(self) -> dict:
@@ -65,12 +91,18 @@ class Watermark:
         坏档改名 `.bad.<时间戳>` 留证，不让下一次 flush 把它静默覆盖掉。
         """
         _BAD = object()                      # 哨兵：分得清"读到的东西"与"走的默认值"
-        d = persist.load_or_quarantine(self.path, _BAD)
+        d, ok_overwrite = persist.load_checked(self.path, _BAD)
+        # V-R10-23：原档读不出来**且留证失败** ⇒ 它还留在原地；这一次 flush 写出去就是
+        # "整表被空表覆盖"（水位全丢 ⇒ 要么重放、要么静默丢）。⇒ 把"禁止覆盖"顶到 flush 上。
+        self._refuse_overwrite = not ok_overwrite
         if d is _BAD:
             self.data = {}
         elif not isinstance(d, dict):
-            log.warning("水位表顶层不是对象（形状不对）⇒ 已按坏档留证：%s",
-                        persist.quarantine(self.path) or "留证失败")
+            kept = persist.quarantine(self.path)
+            if not kept:
+                self._refuse_overwrite = True
+            log.warning("水位表顶层不是对象（形状不对）⇒ %s",
+                        ("已按坏档留证：%s" % kept) if kept else "**留证失败 ⇒ 原档保持原样、禁止覆盖**")
             self.data = {}
         else:
             data, dropped = {}, 0
@@ -88,7 +120,7 @@ class Watermark:
 
     def get(self, chat_key: str, default: int = 0) -> int:
         try:
-            return int(self.data.get(str(chat_key), default) or 0)
+            return int(self.data.get(self._ns(chat_key), default) or 0)
         except Exception:
             return int(default or 0)
 
@@ -98,7 +130,7 @@ class Watermark:
             s = int(seq or 0)
         except Exception:
             return self.get(chat_key)
-        k = str(chat_key)
+        k = self._ns(chat_key)
         cur = self.get(k)
         if forward_only and s <= cur:
             return cur
@@ -110,13 +142,63 @@ class Watermark:
         """原子落盘（`persist.atomic_write_json`：tmp 名带 pid+随机后缀 + `os.replace`）；没有变化就不写。
 
         V-R9-22：老写法共用 `<path>.tmp` ⇒ 并发/多进程写会互相穿插出坏 JSON；失败返回 False（不吞）。
+        V-R10-23：坏档**留证失败**（原档还在原地）时**拒绝写**——写出去就是整表被覆盖。
         """
         if not self._dirty:
             return True
+        if getattr(self, "_refuse_overwrite", False):
+            log.warning("水位表读不出来且留证失败 ⇒ **拒绝覆盖**（本次 flush 不落盘）：%s", self.path)
+            self.fail_count += 1
+            self.last_error = "坏档留证失败 ⇒ 拒绝覆盖"
+            return False
         if persist.atomic_write_json(self.path, self.data, indent=1, sort_keys=True):
             self._dirty = False
             return True
+        self.fail_count += 1
+        self.last_error = self.last_error or "原子写失败（目标被占用 / 磁盘不可写？）"
         return False
+
+
+_FLUSH_WARN_AT: dict = {}
+
+
+def flush_checked(wm: "Watermark", log=None, why: str = "", warn_gap: float = 60.0) -> bool:
+    """**看返回值**地 flush 水位表（V-R10-30）。
+
+    为什么要有它：`persist.atomic_write_json` 在"目标被以不共享 DELETE 的方式占用"或
+    真并发时**必然** `WinError 5`（审计实测：两进程同时 flush 双双失败）——老代码 8 个
+    调用点全是 `wm.flush()` **丢掉返回值**，于是水位明明没落盘、程序却当成写成功了，
+    重启后从旧水位重放（重复回复）或被上层误判。
+
+    失败时：①`wm.fail_count/last_error` 留痕（控制台/自检可读）②按 `warn_gap` 限频告警
+    （每 60 秒至多一条，不刷屏）③返回 False 交给调用方处置。**不抛异常**。
+    """
+    try:
+        ok = bool(wm.flush())
+    except Exception as e:                  # flush 本身崩了也算失败，不许把异常抛给主循环
+        ok = False
+        try:
+            wm.fail_count += 1
+            wm.last_error = "%s: %s" % (type(e).__name__, e)
+        except Exception:
+            pass
+    if ok:
+        return True
+    try:
+        now = time.time()
+        key = str(getattr(wm, "path", "") or "")
+        if now - float(_FLUSH_WARN_AT.get(key, 0) or 0) >= float(warn_gap):
+            _FLUSH_WARN_AT[key] = now
+            _msg = ("水位表**没写进磁盘**（%s）—— 序号已在内存里，重启会从旧水位接着读"
+                    "（可能重放/漏判）：%s") % (why or "flush 失败", getattr(wm, "last_error", "") or "?")
+            if log is not None:
+                if hasattr(log, "warning"):          # logging.Logger
+                    log.warning("%s", _msg)
+                else:                                # process_batch 那种 (level, fmt, *args) 回调
+                    log("warn", "%s", _msg)
+    except Exception:
+        pass
+    return False
 
 
 def dead_letter(path: str, record: dict) -> bool:
@@ -186,7 +268,7 @@ def process_batch(chat_key: str, items, handler, wm: "Watermark", log=None,
             if ok:
                 stats["processed"] += 1
                 wm.set(chat_key, seq)
-                wm.flush()
+                flush_checked(wm, log=log, why="批内成功推进（chat=%s）" % chat_key)
             else:
                 stats["failed"] += 1
                 rec = {"ts": int(time.time() * 1000), "chat": chat_key, "mid": _mid(it),
@@ -201,7 +283,7 @@ def process_batch(chat_key: str, items, handler, wm: "Watermark", log=None,
                 log("error", "chat=%s mid=%s seq=%s 重试 %d 次仍失败（%s）⇒ 已记入 %s 并**越过**该条",
                     chat_key, _mid(it), seq, max_retry, last_err, deadletter_path or "(未配置 dead-letter)")
                 wm.set(chat_key, seq)
-                wm.flush()
+                flush_checked(wm, log=log, why="越过毒消息推进（chat=%s）" % chat_key)
         stats["advanced_to"] = wm.get(chat_key)
     return stats
 

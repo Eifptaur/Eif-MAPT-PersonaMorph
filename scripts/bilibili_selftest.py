@@ -272,5 +272,14 @@ try:
 finally:
     B._get_json, B._download = _sg, _sd
 
+# ⛔ 第十轮 V-R10-34 第 5 条：音频流上限是 **384MB**（不是 128MB）—— 128MB 会误伤
+#   2 小时高码率音频（192kbps ≈ 173MB / 320kbps ≈ 288MB）。这条断言是为了**别被改回去**：
+#   比 256MB 小就是回退，比 1GB 大等于上限名存实亡。
+_lim = B._download.__defaults__[1]
+ok("音频流上限 ≥ 256MB 且 ≤ 1GB（V-R10-34 第 5 条：128MB 会误伤长音频）",
+   256 * 1024 * 1024 <= int(_lim) <= 1024 * 1024 * 1024, "%d 字节" % int(_lim))
+ok("音频流**不再**用整轮墙钟当超时（改成逐 recv 的 socket 超时：稳定推进的流不许被掐）",
+   "墙钟换成" in (B._download.__doc__ or ""), (B._download.__doc__ or "")[:60])
+
 print("\n%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

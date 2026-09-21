@@ -49,6 +49,7 @@ from agent import holidays as H        # noqa: E402
 from agent import listener_watermark as LW   # noqa: E402
 from agent import persist as P         # noqa: E402
 from agent import risk as R            # noqa: E402
+from agent import timers as T          # noqa: E402
 
 PASS = FAIL = 0
 
@@ -107,8 +108,52 @@ def main():
         _s7_migrations(TMP)
         _s8_watermark_entries(TMP)
         _s9_source_anchors()
+        _s10_concurrent_no_loss(TMP)
+        _s11_quarantine_fail_no_overwrite(TMP)
+        _s12_risk_shape_hole(TMP)
+        _s13_risk_oneclick_recover(TMP)
     finally:
         shutil.rmtree(TMP, ignore_errors=True)
+
+
+class _FailQuarantine:
+    """上下文管理器：让"读这个档"必失败、且 `persist.quarantine` 对它**也必失败**。
+
+    为什么用打桩而不是抢 Windows 独占句柄：判据要**确定、快、可无人运行**（抢句柄的做法
+    在别的机器上时灵时不灵）。V-R10-23 要考的是"留证失败时下游怎么办"，
+    打桩正好精确定位到那两行（读失败 + 改名失败），而且能给出反例锚。
+    """
+
+    def __init__(self, path, fail_read=True):
+        self.path = os.path.abspath(str(path))
+        self.fail_read = bool(fail_read)
+        self.hits = 0
+        self.renames = 0
+
+    def __enter__(self):
+        self._real_replace = P.os.replace
+        self._real_load = P.json.load
+
+        def _boom(src, dst):
+            if os.path.abspath(str(src)) == self.path:
+                self.renames += 1
+                raise PermissionError(5, "判据打桩：留证必失败")
+            return self._real_replace(src, dst)
+
+        def _bad_load(fp, *a, **k):
+            if self.fail_read:
+                self.hits += 1
+                raise ValueError("判据打桩：这个档读不出来")
+            return self._real_load(fp, *a, **k)
+
+        P.os.replace = _boom
+        P.json.load = _bad_load
+        return self
+
+    def __exit__(self, *exc):
+        P.os.replace = self._real_replace
+        P.json.load = self._real_load
+        return False
 
 
 # ── ① 坏档留证 ──────────────────────────────────────────────────────────
@@ -443,9 +488,11 @@ def _s9_source_anchors():
     check("⑨ 五个落盘点都 import 了 persist（唯一实现，不再各写一份）",
           all(SM.has(files[n], "from . import persist") for n in five),
           str([n for n in five if not SM.has(files[n], "from . import persist")]))
-    check("⑨ 读侧都走 load_or_quarantine",
-          all(SM.has(files[n], "load_or_quarantine") for n in five),
-          str([n for n in five if not SM.has(files[n], "load_or_quarantine")]))
+    check("⑨ 读侧都走统一读招式（`load_or_quarantine` / 带「原档还在」信号的 `load_checked`）",
+          all((SM.has(files[n], "load_or_quarantine") or SM.has(files[n], "load_checked"))
+              for n in five),
+          str([n for n in five if not (SM.has(files[n], "load_or_quarantine")
+                                      or SM.has(files[n], "load_checked"))]))
     check("⑨ 写侧都走 atomic_write_json",
           all(SM.has(files[n], "atomic_write_json") for n in five),
           str([n for n in five if not SM.has(files[n], "atomic_write_json")]))
@@ -464,7 +511,298 @@ def _s9_source_anchors():
           all(SM.has(files[n], "atomic_write_json") for n in ("memory", "window_borrow", "wechat_ui")))
 
 
+# ── ⑩ 并发写：不许"返回 False 却当成功"（V-R10-22）──────────────────────
+def _s10_concurrent_no_loss(TMP):
+    print("== ⑩ V-R10-22：竞争下不许静默丢写（老写法实测 71% 返回 False） ==")
+    p = os.path.join(TMP, "loss.json")
+    stop = threading.Event()
+    fails = []
+    total = []
+
+    def _reader():
+        while not stop.is_set():
+            try:
+                with io.open(p, "r", encoding="utf-8") as f:
+                    json.loads(f.read())
+            except (FileNotFoundError, PermissionError, OSError):
+                pass
+            except Exception as e:
+                fails.append("read:%s" % type(e).__name__)
+            time.sleep(0.0005)
+
+    def _writer(i):
+        for r in range(10):
+            total.append(1)
+            if P.atomic_write_json(p, {"i": i, "r": r, "pad": "x" * 2000}) is False:
+                fails.append("write:%d/%d" % (i, r))
+
+    rt = threading.Thread(target=_reader)
+    rt.daemon = True
+    rt.start()
+    ths = [threading.Thread(target=_writer, args=(i,)) for i in range(20)]
+    for t in ths:
+        t.start()
+    for t in ths:
+        t.join()
+    stop.set()
+    rt.join(timeout=2)
+
+    check("⑩ 20 线程 × 10 写 + 1 读线程：**一次 False 都没有**（重试把瞬时共享冲突吃掉）",
+          len(fails) == 0, "失败 %d 次：%s" % (len(fails), str(fails[:4])))
+    check("⑩ 反例锚：老写法（一次 `os.replace` 失败就返回 False）在这个夹具下**确实会失败**"
+          "（证明 ⑩ 的「0 次」不是恒真）",
+          _repro_old_write_fails(TMP) > 0)
+    check("⑩ 写完之后文件是可解析 JSON，且内容与某一次写完全一致（不半截）",
+          isinstance(json.load(io.open(p, encoding="utf-8")), dict))
+    check("⑩ 一个 .tmp 都不剩", glob.glob(p + "*.tmp") == [], str(glob.glob(p + "*.tmp")))
+    check("⑩ 模块级如实记账：`REPLACE_FAILURES` 是计数字典（失败不许无声无息）",
+          isinstance(getattr(P, "REPLACE_FAILURES", None), dict)
+          and "count" in P.REPLACE_FAILURES)
+
+
+def _repro_old_write_fails(TMP, rounds=200) -> int:
+    """复刻"老写法"（共用 tmp 名 + 一次 os.replace 不作重试）在同一夹具下的失败次数。
+
+    这是 ⑩ 的**反例锚**：如果这里也是 0，说明夹具退化了（比如盘/系统不再抢），
+    判据得换夹具；这里 >0 才说明"重试"是真正起作用的那一环。
+    """
+    p = os.path.join(TMP, "old_loss.json")
+    n = [0]
+    lock = threading.Lock()
+
+    def _old_write(data):
+        tmp = p + ".tmp"
+        try:
+            with io.open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f)
+            P.os.replace(tmp, p)
+            return True
+        except Exception:
+            try:
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+            except Exception:
+                pass
+            return False
+
+    def _w(i):
+        for r in range(rounds // 4):
+            if not _old_write({"i": i, "r": r, "pad": "x" * 2000}):
+                with lock:
+                    n[0] += 1
+
+    ths = [threading.Thread(target=_w, args=(i,)) for i in range(4)]
+    for t in ths:
+        t.start()
+    for t in ths:
+        t.join()
+    return n[0]
+
+
+# ── ⑪ 留证失败 ⇒ 禁止覆盖（V-R10-23，V-R9-18 的回归）───────────────────
+def _s11_quarantine_fail_no_overwrite(TMP):
+    print("== ⑪ V-R10-23：坏档**留证失败** ⇒ 必须拒绝覆盖（原档一个字节不许动） ==")
+    # (a) 纯 persist 层：`load_checked` 要把"原档还在"如实回出来
+    p = os.path.join(TMP, "keep17.json")
+    raw = '{"items": [1, 2, 3]}   <<< 坏在半截'
+    with io.open(p, "w", encoding="utf-8") as f:
+        f.write(raw)
+    with _FailQuarantine(p) as fc:
+        got, ok_over = P.load_checked(p, "默认")
+    check("⑪(a) 留证失败 ⇒ `可覆盖=False`（调用方能知道原档还在）", ok_over is False, str(ok_over))
+    check("⑪(a) 留证失败 ⇒ 原档**原地不动**（一个字节没丢）",
+          os.path.exists(p) and _read(p) == raw, repr(_read(p))[:40] if os.path.exists(p) else "缺失")
+    check("⑪(a) 打桩确实生效过（不是没走到那条路）", fc.hits >= 1 and fc.renames >= 1,
+          "read_fail=%s rename_fail=%s" % (fc.hits, fc.renames))
+    check("⑪(a) 日志如实说「留证失败 ⇒ 禁止覆盖」",
+          any("留证失败" in m for m in _hits("JSON 读不出来")), str(_hits("JSON 读不出来")[-1:]))
+
+    # (b) timers：审计实测场景（20 条提醒只剩 2 条）——留证失败时 add() 必须回 ok:False
+    tdir = os.path.join(TMP, "t11")
+    os.makedirs(tdir, exist_ok=True)
+    tpath = os.path.join(tdir, "timers.json")
+    # ⚠️ 用 **2 条**（不是 20 条）：要真的走到 `_save()` 那条路，不能先被"每会话上限 3 条"的
+    #    业务闸门拦掉（那样 `ok:False` 是假阳性，`_save` 根本没被调用）。
+    body = json.dumps({"items": [{"id": i, "chat": "group:x", "note": "提醒%d" % i,
+                                  "status": "pending", "fire_at": 0, "seconds": 60}
+                                 for i in range(2)], "history": [], "next_id": 3})
+    with io.open(tpath, "w", encoding="utf-8") as f:
+        f.write(body)
+    _real_path = T.path
+    T.path = lambda: tpath
+    n_before_refuse = len(_hits("拒绝覆盖"))
+    try:
+        with _FailQuarantine(tpath):
+            got2 = T.add("group:x", "新提醒", seconds=120)
+        n_items = len(json.load(io.open(tpath, encoding="utf-8")).get("items") or [])
+    finally:
+        T.path = _real_path
+    check("⑪(b) 留证失败时 `timers.add` 回 ok:False（不许当作「已定好」）",
+          got2.get("ok") is False, str(got2))
+    check("⑪(b) 3 条原提醒**一条都没丢**（老写法这里会被空表盖掉）", n_items == 2, "items=%d" % n_items)
+    check("⑪(b) 拒绝覆盖时留了 warn（不是静默）",
+          len(_hits("拒绝覆盖")) > n_before_refuse,
+          str(_hits("拒绝覆盖")[:1]))
+
+    # (c) watermark / risk / holidays 三处同口径
+    wpath = os.path.join(TMP, "wm11.json")
+    with io.open(wpath, "w", encoding="utf-8") as f:
+        f.write("{ 半截")
+    with _FailQuarantine(wpath):
+        wm = LW.Watermark(wpath)
+        wm.set("group:a", 99)
+        wm_ok = wm.flush()
+    check("⑪(c) watermark：留证失败 ⇒ flush 拒绝写（原档没被空表盖掉）",
+          wm_ok is False and _read(wpath) == "{ 半截", "ok=%s raw=%r" % (wm_ok, _read(wpath)))
+
+    rpath = os.path.join(TMP, "risk11.json")
+    with io.open(rpath, "w", encoding="utf-8") as f:
+        f.write("[1,2,3]")
+    with _FailQuarantine(rpath):
+        g = R.RiskGate(path=rpath, event_path=os.path.join(TMP, "ev11.jsonl"))
+        g2 = R.RiskGate(path=rpath, event_path=os.path.join(TMP, "ev11b.jsonl"))
+    check("⑪(c) risk：留证失败 ⇒ 依旧 fail-closed（暂停）且原档没被覆盖",
+          g.is_paused() is True and _read(rpath) == "[1,2,3]", repr(_read(rpath)))
+
+    hpath = os.path.join(TMP, "hol11.json")
+    with io.open(hpath, "w", encoding="utf-8") as f:
+        f.write("{ 半截")
+    _real_hp = H.state_path
+    H.state_path = lambda: hpath
+    try:
+        with _FailQuarantine(hpath):
+            H.mark_greeted("2026-10-01", "群deepseek")
+        h_ok = (not os.path.exists(hpath + ".bad.json"))
+    finally:
+        H.state_path = _real_hp
+    check("⑪(c) holidays：留证失败 ⇒ 拒绝写（原档保持原样）",
+          _read(hpath) == "{ 半截" and h_ok, repr(_read(hpath)))
+
+    # (d) 阳性对照：正常坏档（留证**成功**）时，写侧照常工作（没把整条路堵死）
+    p2 = os.path.join(TMP, "normal11.json")
+    with io.open(p2, "w", encoding="utf-8") as f:
+        f.write("{ 半截")
+    got3, ok_over3 = P.load_checked(p2, "默认")
+    check("⑪(d) 阳性对照：能留证时 `可覆盖=True`（不许一刀切全拒）",
+          ok_over3 is True and got3 == "默认" and len(glob.glob(p2 + ".bad.*")) == 1,
+          "ok=%s bads=%s" % (ok_over3, glob.glob(p2 + ".bad.*")))
+
+
+# ── ⑫ risk 形状洞必须 fail-closed（V-R10-25）────────────────────────────
+def _s12_risk_shape_hole(TMP):
+    print("== ⑫ V-R10-25：risk 顶层形状不对（list/str/null/空 dict）⇒ 必须 fail-closed ==")
+    cases = [("[]", "list"), ('"hello"', "str"), ("null", "null"), ("{}", "空 dict"), ("123", "数字")]
+    for payload, label in cases:
+        p = os.path.join(TMP, "shape_%s.json" % label)
+        with io.open(p, "w", encoding="utf-8") as f:
+            f.write(payload)
+        g = R.RiskGate(path=p, event_path=os.path.join(TMP, "ev12.jsonl"))
+        v = g.check("group:x", "你好")
+        check("⑫ 顶层是%s ⇒ paused=True（老写法这里是 False＝闸门放行）" % label,
+              g.is_paused() is True, "payload=%s paused=%s" % (payload, g.is_paused()))
+        check("⑫ 顶层是%s ⇒ check() 真的拦下（code=paused）" % label,
+              (not v.allowed) and v.code == "paused", repr(v))
+        check("⑫ 顶层是%s ⇒ 原因对用户说清了（不是空串）" % label,
+              bool(g.snapshot().get("paused_reason")), g.snapshot().get("paused_reason"))
+        check("⑫ 顶层是%s ⇒ 形状不对=坏档，已留证（`{}`/`null` 也不放过）" % label,
+              len(glob.glob(p + ".bad.*")) == 1, str(glob.glob(p + ".bad.*")))
+
+    # 键值类型错（`paused` 是字符串）同样是形状不对 ⇒ fail-closed，不许"当 True"或"当 False"
+    p = os.path.join(TMP, "shape_keytype.json")
+    with io.open(p, "w", encoding="utf-8") as f:
+        f.write('{"paused": "yes", "blocks": 3}')
+    g = R.RiskGate(path=p, event_path=os.path.join(TMP, "ev12b.jsonl"))
+    check("⑫ 键值类型不对（paused 是字符串）⇒ fail-closed + 留证",
+          g.is_paused() is True and len(glob.glob(p + ".bad.*")) == 1,
+          "paused=%s bads=%s" % (g.is_paused(), glob.glob(p + ".bad.*")))
+
+    # 阳性对照：形状**正确**的状态档照常载入（不许把正常档也判成坏档）
+    p2 = os.path.join(TMP, "shape_ok.json")
+    with io.open(p2, "w", encoding="utf-8") as f:
+        json.dump({"paused": True, "paused_reason": "连续 5 次被拦", "blocks": 5,
+                   "min": [], "hour": [], "day": [], "day_key": "", "chats": {},
+                   "events": [], "recent": []}, f)
+    g2 = R.RiskGate(path=p2, event_path=os.path.join(TMP, "ev12c.jsonl"))
+    check("⑫ 阳性对照：形状正确的档照常载入（paused=True 被读回来）",
+          g2.is_paused() is True and glob.glob(p2 + ".bad.*") == [], str(glob.glob(p2 + ".bad.*")))
+    p3 = os.path.join(TMP, "shape_false.json")
+    with io.open(p3, "w", encoding="utf-8") as f:
+        json.dump({"paused": False, "blocks": 0, "min": [], "hour": [], "day": [],
+                   "day_key": "", "chats": {}, "events": [], "recent": []}, f)
+    g3 = R.RiskGate(path=p3, event_path=os.path.join(TMP, "ev12d.jsonl"))
+    check("⑫ 阳性对照：`paused=False` 的合法档不被误判成坏档，闸门放行",
+          g3.is_paused() is False and g3.check("group:x", "你好").allowed
+          and glob.glob(p3 + ".bad.*") == [], str(glob.glob(p3 + ".bad.*")))
+
+
+# ── ⑬ fail-closed 之后的一键恢复（V-R10-24）─────────────────────────────
+def _s13_risk_oneclick_recover(TMP):
+    print("== ⑬ V-R10-24：fail-closed 不许把用户锁死——要有一键恢复路径 ==")
+    p = os.path.join(TMP, "rec13.json")
+    with io.open(p, "w", encoding="utf-8") as f:
+        f.write("{ 半截")
+    g = R.RiskGate(path=p, event_path=os.path.join(TMP, "ev13.jsonl"))
+    check("⑬ 前置：坏档 ⇒ 确实被锁住（fail-closed）",
+          g.is_paused() is True and not g.check("group:x", "你好").allowed)
+    snap = g.recover()
+    check("⑬ `recover()` 之后 paused=False（一键恢复真的解开了）", snap.get("paused") is False, str(snap)[:80])
+    check("⑬ `recover()` 之后 check() 放行", g.check("group:x", "你好").allowed)
+    check("⑬ `recover()` 之后 blocks 归零", int(snap.get("blocks") or 0) == 0, str(snap.get("blocks")))
+    check("⑬ 模块级也有一键恢复入口（控制台/脚本能直接调）", callable(getattr(R, "recover", None)))
+    check("⑬ 受控的闸门本体（`POST /api/risk` action=resume 走的就是它）仍是活的",
+          callable(getattr(g, "resume", None)))
+
+    # "被拦升级导致暂停"也必须能一键恢复（不是只有坏档那一种）
+    p2 = os.path.join(TMP, "rec13b.json")
+    g2 = R.RiskGate(path=p2, event_path=os.path.join(TMP, "ev13b.jsonl"))
+    g2.pause("连续 5 次被风险闸门拦下")
+    check("⑬ 人工/自动暂停之后同样能一键恢复",
+          g2.is_paused() is True and g2.recover().get("paused") is False
+          and g2.check("group:x", "你好").allowed)
+
+    # 两套停机开关的同步（V-R10-24 的另一半：控制台的勾选框/按钮不再是"另一套"）
+    check("⑬ 源码级锚：risk 会去读控制台的暂停标记（`control.is_paused`）",
+          SM.has(_read(os.path.join(ROOT, "agent", "risk.py")), "control"))
+    check("⑬ 源码级锚：`recover()` 同时清两套开关（写回 `set_paused_flag(False)`）",
+          SM.has(_read(os.path.join(ROOT, "agent", "risk.py")), "set_paused_flag"))
+
+    print("\n== ⑭ V-R10-26：文本也能原子写 · webui 不再就地重写 ==")
+    _t14 = tempfile.mkdtemp(prefix="pm-persist14-")
+    _t14p = os.path.join(_t14, "log.jsonl")
+    check("⑭ `atomic_write_text` 写入正确且返回 True",
+          P.atomic_write_text(_t14p, "a\nb\n", newline="\n") is True
+          and io.open(_t14p, encoding="utf-8").read() == "a\nb\n")
+    _t14old = io.open(_t14p, encoding="utf-8").read()
+    _orig_rr = P._replace_retry
+    try:
+        P._replace_retry = lambda tmp, path: False
+        _ok14 = P.atomic_write_text(_t14p, "坏内容", newline="\n")
+    finally:
+        P._replace_retry = _orig_rr
+    check("⑭ 换档失败 ⇒ 返回 False 且**原档一个字节没动**（不许写半截）",
+          _ok14 is False and io.open(_t14p, encoding="utf-8").read() == _t14old)
+    _left14 = [f for f in os.listdir(_t14) if f.endswith(".tmp")]
+    check("⑭ 失败后**自己的临时档已被清掉**（不留孤儿）", _left14 == [], str(_left14))
+    _p14src = _read(os.path.join(ROOT, "agent", "persist.py"))
+    check("⑭ 两个原子写都用**唯一临时名**（pid + 随机段），不是共用的 `<path>.tmp`",
+          _p14src.count("secrets.token_hex(4)") >= 2)
+    # webui：这一族"就地重写"是老毛病（写一半断电/并发 ⇒ 半截 JSON；V-R10-26 点名 8 处）
+    _w14 = _read(os.path.join(ROOT, "agent", "webui.py"))
+    check("⑭ webui 里**没有**就地重写（`open(<数据档>, \"w\")` ⇒ 0 处）",
+          not re.search(r'with open\((_p|cats_p|pers_p), "w"', _w14))
+    check("⑭ webui 的落盘全走 `persist.atomic_write_*`（≥8 处）",
+          (_w14.count("persist.atomic_write_json(") + _w14.count("persist.atomic_write_text(")) >= 8)
+    check("⑭ 而且**每一处都看返回值**（原子写失败是返回 False、不抛 ⇒ 不看就变成"
+          "「失败了还报成功」）",
+          (_w14.count("if not persist.atomic_write_json(")
+           + _w14.count("if not persist.atomic_write_text(")) >= 8)
+    check("⑭ 反例锚：老写法（`with open(_p, \"w\")` + `json.dump`）用**同一条判据**判不合格",
+          bool(re.search(r'with open\((_p|cats_p|pers_p), "w"',
+                         'with open(_p, "w", encoding="utf-8") as f:\n    _json.dump(x, f, indent=1)\n')))
+    shutil.rmtree(_t14, ignore_errors=True)
+
+
 if __name__ == "__main__":
     main()
-    print("\n== 持久化判据（V-R9-18/19/20/22）：%d 通过 / %d 失败 ==" % (PASS, FAIL))
+    print("\n== 持久化判据（V-R9-18/19/20/22 · V-R10-22/23/24/25）：%d 通过 / %d 失败 ==" % (PASS, FAIL))
     sys.exit(1 if FAIL else 0)

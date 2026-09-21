@@ -4858,7 +4858,11 @@ async function onboarding(){
         }else{
           toast('昵称没填，先按默认的来——之后可在「微信」面板里改');
         }
-        const r = await getJSON('/api/wechat-groups');
+        // ⛔ 第十轮 **V-R10-15**：向导自己那颗「下一步」以前是**假重试**（不带 `?refresh=1`，
+        //   走的是内存缓存 ⇒ 重试不出变化），能真刷新的是「微信」面板那颗按钮、向导又没告诉他。
+        //   ⇒ 这里给两颗真按钮：重试＝带 `?refresh=1` 重走本步；跳过＝不勾（＝监听所有群）继续。
+        const r = await getJSON('/api/wechat-groups' + (window._obForceRefresh ? '?refresh=1' : ''));
+        window._obForceRefresh = false;
         // ⛔ 2026-09-21 修（第九轮 **V-R9-10** · P1）：向导这一步原来**完全不看 `r.ok`** ——
         //   后端明确回了 `ok:false + error`（微信没接上 / contact.db 被占用）时，照样显示
         //   「检测到 0 个群聊 / 请确认微信已登录」，把新用户推去查一个**无关方向**。
@@ -4868,7 +4872,12 @@ async function onboarding(){
           $('obDesc').textContent = '第 3 步/共 5 步：这台机器上**暂时读不到群列表** —— ' + (r.error || '原因未明');
           $('obBody').innerHTML = '<div class="hint" style="line-height:2">读不到群列表时这一步勾不了，'
             + '但**不影响先把程序跑起来**：不勾＝监听所有群（等你之后在「微信」面板里勾也行）。<br>'
-            + '要现在勾：先确认微信已登录的是你要的那个号、那个号里确实有群，然后点「下一步」重试。</div>';
+            + '要现在勾：先确认微信已登录的是你要的那个号、那个号里确实有群，然后点下面的「重试读取」。</div>'
+            + '<div class="btns" style="justify-content:flex-start;margin-top:10px">'
+            + '<button class="pri" id="obRetryGroups">重试读取（重新读微信）</button>'
+            + '<button class="ghost" id="obSkipGroups">先跳过（不勾＝监听所有群）</button></div>';
+          $('obRetryGroups').onclick = ()=>{ window._obForceRefresh = true; step = 2; $('obNext').onclick(); };
+          $('obSkipGroups').onclick = ()=>{ step = 3; $('obNext').onclick(); };
           $('obNext').textContent='下一步'; step=3;
           return;
         }

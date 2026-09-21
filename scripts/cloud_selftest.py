@@ -121,31 +121,79 @@ def main():
         ok("https 且 TLS 不通 ⇒ stage=tls（离线可判、说明卡在 TLS）",
            r["stage"] == "tls" and not r["ok"], str(r.get("why"))[:44])
 
+        # ⛔ 第十轮 V-R10-33：HEAD 段**不再走 `urllib.urlopen`**（那会自己再解析一次域名），
+        #   改走 `safe_fetch.pinned_head`（钉 IP）。⇒ 判据改成打桩**连接类**，
+        #   这样既能守住"只发 HEAD / 不带凭据 / 不带数据"，也能守住"连的是已校验的 IP"。
+        from agent import safe_fetch as SF                      # noqa: E402
         seen = []
+        _head_status = {"v": 200}
+        _real_http_cls = SF._PinnedHTTPConnection
+        _dials = []
 
-        def fake_head(req, timeout=None):
-            seen.append({"method": req.get_method(), "url": req.full_url,
-                         "headers": {k.lower(): v for k, v in (req.headers or {}).items()},
-                         "data": req.data})
-            return FakeResp(200)
+        class _HeadProbeSock:
+            def __init__(self):
+                self.buf = bytearray()
 
-        cloud.urllib.request.urlopen = fake_head
-        # 用 **http** 走 HEAD 那两段：https 会先过 TLS（上面那条已单独判过），
-        # 而判据不许真出网 ⇒ 只在"假连接 + 假 urlopen"下跑 HTTP 段
-        r = cloud.probe(url="http://example.com/hook")
-        ok("HEAD 成功 ⇒ stage=http ok", r["ok"] and r["stage"] == "http" and r["status"] == 200, r)
-        req = seen[-1]
-        ok("探测用的是 HEAD", req["method"] == "HEAD", req["method"])
-        ok("**探测不带任何数据**（req.data 为空）", not req["data"], str(req["data"])[:40])
-        ok("**探测不带凭据**（没有 authorization 头）", "authorization" not in req["headers"], list(req["headers"]))
+            def sendall(self, d):
+                self.buf += bytes(d or b"")
 
-        def fake_405(req, timeout=None):
-            raise cloud.urllib.error.HTTPError(req.full_url, 405, "Method Not Allowed", {}, None)
+            def __enter__(self):
+                return self
 
-        cloud.urllib.request.urlopen = fake_405
-        r = cloud.probe(url="http://example.com/hook")
-        ok("接收端只收 POST（405）⇒ 仍算可达（说明地址对）", r["ok"] and r["status"] == 405, r["why"][:50])
-        cloud.urllib.request.urlopen = real_urlopen
+            def __exit__(self, *a):
+                return False
+
+            def close(self):
+                pass
+
+        class _HeadProbeResp:
+            def __init__(self, status):
+                self.status = status
+
+            def getheaders(self):
+                return []
+
+            def getheader(self, k, default=None):
+                return default
+
+        class _HeadProbeConn(_real_http_cls):
+            def connect(self):
+                _dials.append((str(self._pinned_ip), int(self.port)))
+                self.sock = _HeadProbeSock()
+
+            def request(self, method, url, body=None, headers=None):
+                seen.append({"method": method, "path": url,
+                             "headers": {str(k).lower(): str(v) for k, v in (headers or {}).items()},
+                             "data": body})
+                self.connect()
+                return None
+
+            def getresponse(self):
+                return _HeadProbeResp(_head_status["v"])
+
+            def close(self):
+                return None
+
+        SF._PinnedHTTPConnection = _HeadProbeConn
+        try:
+            r = cloud.probe(url="http://example.com/hook")
+            ok("HEAD 成功 ⇒ stage=http ok", r["ok"] and r["stage"] == "http" and r["status"] == 200, r)
+            req = seen[-1] if seen else {}
+            ok("探测用的是 HEAD", req.get("method") == "HEAD", str(req.get("method")))
+            ok("**探测不带任何数据**（body 为空）", not req.get("data"), str(req.get("data"))[:40])
+            ok("**探测不带凭据**（没有 authorization 头）",
+               "authorization" not in (req.get("headers") or {}), list((req.get("headers") or {})))
+            # V-R10-33：HEAD 段必须连**闸门校验过的那个 IP**（不再按域名解析一次）
+            ok("HEAD 段连的是已校验的 IP（钉 IP，不是再解析域名）",
+               _dials == [("93.184.216.34", 80)], str(_dials))
+
+            _head_status["v"] = 405
+            r = cloud.probe(url="http://example.com/hook")
+            ok("接收端只收 POST（405）⇒ 仍算可达（说明地址对）",
+               r["ok"] and r["status"] == 405, str(r.get("why"))[:50])
+        finally:
+            SF._PinnedHTTPConnection = _real_http_cls
+            socket.create_connection = real_conn
 
         print("== C. upload：默认关 ⇒ 一个请求都不发 ==")
         use({})

@@ -467,17 +467,25 @@ def call_backend(backend: dict, prompt: str, count: int = 1, size: str = "square
             _hdr["Authorization"] = "Bearer " + _tok
         for i in range(n):
             _m = str(backend.get("model") or "").strip()
-            url = (backend["url"].rstrip("/") + "/" + urllib.parse.quote(prompt)
+            # ⛔ 2026-09-21 修（第十轮 **V-R10-34** 第 6 条 · 第九轮未闭合项）：**提示词不许再进 URL**。
+            #   老写法把 prompt 拼进路径（`/prompt/<urlencode(prompt)>`）⇒ 私聊原文出现在**请求行**里
+            #   （审计实测 2750 字 → 24.7KB，无截断），中间任何代理/网关/日志都会把它捡走。
+            #   一手取证（当天实跑 4 组对照探针）：
+            #   `POST {base}/?width=…&model=…` + JSON body `{"prompt": …}` ⇒ **HTTP 200 / image/jpeg**，
+            #   与老的 GET 那条回的是同一张图 ⇒ 非内容参数留在查询串、**内容放 body**。
+            url = (backend["url"].rstrip("/") + "/"
                    + "?width=%d&height=%d&nologo=true&referrer=PersonaMorph&seed=%d" % (w, h, int(time.time()) + i)
                    + (("&model=" + urllib.parse.quote(_m)) if _m else ""))
-            req = urllib.request.Request(url, headers=dict(_hdr), method="GET")
+            _body = json.dumps({"prompt": prompt}).encode("utf-8")
+            _hdr["Content-Type"] = "application/json"
+            req = urllib.request.Request(url, data=_body, headers=dict(_hdr), method="POST")
             try:
                 _resp = urllib.request.urlopen(req, timeout=int(backend.get("timeout") or 180))
             except Exception as e:
-                # V-R9-27：pollinations 的 **prompt 在被请求的 URL 路径里** ⇒ 异常信息（含完整 URL）
-                # 不许原样往外抛，否则私聊内容会顺着日志/控制台漏出去。只留类型与状态码。
+                # V-R9-27：异常信息里**不许**原样带出请求地址（里面有过提示词的历史，
+                # 且将来也可能加参数）；只留类型与状态码。
                 _code = getattr(e, "code", "")
-                raise ValueError("在线生图请求失败（%s%s）——提示词在请求地址里，故不回显地址"
+                raise ValueError("在线生图请求失败（%s%s）——不回显请求地址（以免带出参数）"
                                  % (type(e).__name__, (" HTTP %s" % _code) if _code else ""))
             with _resp as resp:
                 # 8MB：出图回包就是**一张图**（PNG/JPEG 通常 0.5~3MB），8MB 是宽裕上限
@@ -519,19 +527,47 @@ def call_backend(backend: dict, prompt: str, count: int = 1, size: str = "square
             if link:
                 # V-R9-24：这个地址是**对方的回包**给的 ⇒ 一次未校验的二次 GET 就等于把产品当内网
                 # 探测器（E 线实测假后端回 `http://127.0.0.1:41011/png`，产品真去 GET 并落盘）。
+                # V-R10-32：光过闸门不够——**老的 `urllib.urlopen` 连接时会再解析一次域名**，
+                # 闸门看的是第 1 次解析、连接用的是第 2 次 ⇒ rebinding 直接穿透（实测落盘）。
+                # 现在走 `fetch_pinned_stream`：一次解析、钉 IP、上限 8MB（同 pollinations 口径）。
                 try:
-                    from .safe_fetch import guard_remote_url
+                    from .safe_fetch import guard_remote_url as _guard, _same_origin as _so
+                    from .safe_fetch import fetch_pinned_stream
                 except Exception:
                     raise ValueError("安全抓取层不可用：拒绝下载后端给的图片地址（fail-closed）")
+                # V-R9-24：**先过统一闸门**（远端回包里的地址在下手前一律校验）；
+                # 与 base 同源时保留"本地后端回本机地址"的既有口径（否则本地部署会被误伤）。
+                _same = bool(_so(str(link), base))
                 try:
-                    guard_remote_url(str(link), base)
+                    _guard(str(link), base)
                 except Exception as e:
                     raise ValueError("后端给的图片地址不可信（%s）：%s" % (type(e).__name__, str(e)[:80]))
-                r2 = urllib.request.Request(str(link), headers={"User-Agent": "PersonaMorph/1.0"})
-                with urllib.request.urlopen(r2, timeout=int(backend.get("timeout") or 180)) as rr:
-                    # 8MB：单张图（同 pollinations 那条的口径）
-                    files.append(_save_image_bytes(_capped(rr, 8 * 1024 * 1024, "后端图片回包"),
-                                                   "%s_%d" % (backend.get("id") or "online", i)))
+                import tempfile
+                _fd, _tmp = tempfile.mkstemp(prefix="pm-online-img-", suffix=".bin")
+                os.close(_fd)
+                try:
+                    try:
+                        # V-R10-32：连接走**钉 IP**（一次解析），不再 `urllib.urlopen` 二次解析
+                        fr = fetch_pinned_stream(str(link), _tmp,
+                                                 timeout=int(backend.get("timeout") or 180),
+                                                 max_bytes=8 * 1024 * 1024,
+                                                 allow_private=_same,
+                                                 headers={"Referer": base})
+                    except Exception as e:
+                        raise ValueError("后端给的图片地址不可信（%s）：%s"
+                                         % (type(e).__name__, str(e)[:80]))
+                    if int(fr.get("status") or 0) >= 400:
+                        raise ValueError("后端给的图片地址回了 HTTP %s" % fr.get("status"))
+                    with open(_tmp, "rb") as f:
+                        _data = f.read()
+                    # 8MB：单张图（同 pollinations 那条的口径）；落盘仍走 `_save_image_bytes` 一处
+                    files.append(_save_image_bytes(_data, "%s_%d" % (backend.get("id") or "online", i)))
+                finally:
+                    try:
+                        if os.path.exists(_tmp):
+                            os.remove(_tmp)
+                    except Exception:
+                        pass
     else:                                     # generic：用户自填端点，约定返回 {"files":[...]}
         body = json.dumps({"prompt": prompt, "n": n, "size": size}).encode("utf-8")
         req = urllib.request.Request(backend["url"], data=body,

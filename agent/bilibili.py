@@ -226,44 +226,44 @@ def audio_url(bvid: str, cid, timeout: int = TIMEOUT):
     return (u or None), ("" if u else "接口没给音频地址")
 
 
-def _download(url: str, dest: str, timeout: int = 180, max_bytes: int = 128 * 1024 * 1024):
+def _download(url: str, dest: str, timeout: int = 180, max_bytes: int = 384 * 1024 * 1024):
     """把音频流落到文件 ⇒ `(字节数, 原因)`。B 站 CDN 要带 Referer，否则 403。
 
     ⛔ 2026-09-21 第九轮审计（V-R9-24/26/27）：
     · 这个地址来自 **B 站接口的回包**（`audio_url()`）⇒ 下手前先过 `safe_fetch` 闸门
       （拿不到安全层就 fail-closed，一个字节都不下）；
-    · 128MB 上限：低码率音频轨（1:19 的视频约 659KB）正常远小于它，超了就是异常；
-    · **整轮墙钟上限**：`urlopen(timeout=)` 只管单次 recv，对面涓流就能把整条链挂住 ⇒
-      每块之间核一次总耗时。
+    · 体积上限：低码率音频轨（1:19 的视频约 659KB）正常远小于它，超了就是异常。
+
+    ⛔ 第十轮审计 **V-R10-34 第 5 条**（改了两处口径，都写在这里免得被改回去）：
+    · **上限从 128MB 抬到 384MB** —— 128MB 会**误伤正经内容**：2 小时 192kbps ≈ 173MB、
+      320kbps ≈ 288MB（审计点名的"2 小时高码率音频"就是这么被拒的）。384MB 仍是有界上限，
+      而且超限走 `truncated` ⇒ 上层如实报错、**不落半成品**（`download_audio` 会删小文件）。
+    · **整轮墙钟换成"逐 recv 的 socket 超时"**（V-R9-27 的老写法用整轮墙钟，审计实测会把
+      **稳定推进**的流掐断：2.5 秒中止、已收 589824B）。现在超时是 `timeout=180s` 级别的
+      **空闲超时**：对面涓流照旧被掐，但**只要在推进就一直下**（`_pinned_exchange` 逐块读、
+      socket 超时由 `PINNED_TIMEOUT_S`/`timeout` 管）。
+
+    ⛔ 第十轮审计 **V-R10-32**：老写法是"`guard_remote_url` 校验一次 ⇒ `urllib.urlopen(url)`
+    **再解析一次域名**"——闸门看的是第 1 次解析，真正连接用的是第 2 次解析，
+    E 线实测**把环回服务的 190 字节落盘**。现在整条下载走 `safe_fetch.fetch_pinned_stream()`：
+    **一次解析、钉进 socket**，顺带把"上限 / 超时 / 上限读体"三件事按统一口径一起收掉。
     """
     try:
-        from .safe_fetch import guard_remote_url
+        from .safe_fetch import fetch_pinned_stream
     except Exception:
         return 0, "安全抓取层不可用：拒绝下载接口给的音频地址（fail-closed）"
     try:
-        guard_remote_url(url)
+        r = fetch_pinned_stream(url, dest, timeout=timeout, max_bytes=int(max_bytes),
+                                headers={"Referer": "https://www.bilibili.com/"})
     except Exception as e:
         return 0, "接口给的音频地址不可信：%s" % (str(e)[:70] or type(e).__name__)
-    req = urllib.request.Request(url, headers={"User-Agent": UA, "Referer": "https://www.bilibili.com/"})
-    t0 = time.monotonic()
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r, open(dest, "wb") as f:
-            n = 0
-            while True:
-                if (time.monotonic() - t0) > float(timeout):
-                    raise TimeoutError("总耗时超过 %s 秒（慢速流已放弃）" % timeout)
-                chunk = r.read(65536)
-                if not chunk:
-                    break
-                f.write(chunk)
-                n += len(chunk)
-                if n > int(max_bytes):
-                    raise RuntimeError("音频流超过 %.0fMB 上限" % (int(max_bytes) / 1048576.0))
-        return n, ""
-    except urllib.error.HTTPError as e:
-        return 0, "音频流 HTTP %s（B 站 CDN 拒绝，通常是防盗链）" % e.code
-    except Exception as e:
-        return 0, "音频流下载失败：%s" % (str(e)[:70] or type(e).__name__)
+    if int(r.get("status") or 0) in (403, 401):
+        return 0, "音频流 HTTP %s（B 站 CDN 拒绝，通常是防盗链）" % r.get("status")
+    if int(r.get("status") or 0) >= 400:
+        return 0, "音频流 HTTP %s" % r.get("status")
+    if r.get("truncated"):
+        return 0, "音频流超过 %.0fMB 上限（已中止）" % (int(max_bytes) / 1048576.0)
+    return int(r.get("bytes") or 0), ""
 
 
 def download_audio(bvid: str, cid, out_dir: str, timeout: int = 180):

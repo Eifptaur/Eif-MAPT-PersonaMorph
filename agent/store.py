@@ -400,12 +400,23 @@ class ChatStore:
         积压 >200 条时，**最新那条 @ 它的话**落在窗口外 ⇒ 档位判成"没触发" ⇒ 连同整批被标已读
         ⇒ 永久吞掉（用户看到的就是"有时候一句话不回"）。
         `newest=False` 保留旧语义（只有判据/兼容路径会用）。
+
+        ⛔ 2026-09-21 再修（第十轮 **V-R10-18** · P1）：`limit <= 0` ⇒ **返回全部未读** ——
+        原来 `wake` 固定要 200 条，**超出那一截的未读既不喂也不标读**（审计叫它"第二道黑洞"：
+        400 条里永远有 200 条谁都不管）。切分交给 `feed_window.pick_feed`（纯函数，它才决定
+        喂哪些、跳哪些、退哪些）。
         """
         st = self._state(chat_key)
         rows = [m for m in st["messages"]
                 if not m["read"] and not m["self"] and not m.get("recalled")
                 and not m.get("blocked")]
-        k = max(1, int(limit or 3))
+        try:
+            k = int(limit or 0)
+        except Exception:
+            k = 3
+        if k <= 0:
+            return rows
+        k = max(1, k)
         return rows[-k:] if newest else rows[:k]
 
     def recent(self, chat_key: str, limit: int = 80, offset: int = 0, include_self: bool = True,

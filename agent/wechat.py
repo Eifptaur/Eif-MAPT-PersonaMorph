@@ -45,6 +45,50 @@ def _ledger_path() -> str:
     return os.path.join(ROOT, "data", "message_ledger.jsonl")
 
 
+#: 台账写不进磁盘时的留痕（V-R10-12）。`err` 非空＝最近一次写失败；**写成功后清掉**。
+LEDGER_WRITE_ERR = {"err": "", "path": "", "n": 0, "at": 0.0}
+
+
+def _note_ledger_write_fail(err, path: str = "") -> None:
+    """台账**写失败不许静默**（V-R10-12，P3）。
+
+    为什么：老写法是 `except Exception: pass` —— 台账写不进去时界面上一切照旧，重启后
+    检验器读的是**旧台账**，于是"最近没有这类失败记录"这句又会亮起来（第九轮那个假绿
+    就是从这条路回来的）。现在：①留痕并限频告警（60 秒至多一条）②把状态暴露给检验器
+    （`ledger_write_error()`）③只要之后有一次写成功就清掉，别把一次抖动一直挂着。
+    """
+    try:
+        now = time.time()
+        LEDGER_WRITE_ERR["err"] = "%s: %s" % (type(err).__name__, err)
+        LEDGER_WRITE_ERR["path"] = str(path or "")
+        LEDGER_WRITE_ERR["n"] = int(LEDGER_WRITE_ERR.get("n") or 0) + 1
+        if now - float(LEDGER_WRITE_ERR.get("at") or 0.0) >= 60:
+            LEDGER_WRITE_ERR["at"] = now
+            logging.getLogger("persona-morph").warning(
+                "判定台账**写不进磁盘**（%s）：%s ⇒ 进程内的记录还在，"
+                "但重启后检验器只能看**旧台账**（结论可能过时）",
+                path or "?", LEDGER_WRITE_ERR["err"])
+    except Exception:
+        pass
+
+
+def _note_ledger_write_ok() -> None:
+    """写成功就把上一次的错误清掉（不然一次磁盘抖动会一直挂在检验器上）。"""
+    try:
+        if LEDGER_WRITE_ERR.get("err"):
+            LEDGER_WRITE_ERR["err"] = ""
+    except Exception:
+        pass
+
+
+def ledger_write_error() -> dict:
+    """台账最近一次落盘失败（给控制台/检验器看）。`err` 为空＝最近一次写是成功的。"""
+    try:
+        return dict(LEDGER_WRITE_ERR)
+    except Exception:
+        return {"err": ""}
+
+
 def _self_local_note(obj, chat_id, local_id, create_time=None) -> None:
     """登记「这条库行是我发的」——**模块级安全入口**：对象没这能力/记账出错都不影响发送。
 
@@ -591,23 +635,38 @@ def _minimize_back_if_needed(note: str = "") -> None:
 
     ⚡ 2026-09-19 凌晨：这里同时是**链尾**（"投递文本链收尾"/"投递文件链收尾"都调它）⇒ 顺手
     `_hold_end()` **停止"摁住微信"**（早退路径由 90s 心跳 TTL 兜底，不留常驻线程）。
+
+    ⛔ 2026-09-21 修（第十轮 **V-R10-4** · P2）：**登记只在"这笔债真的了结"时清**。原来函数一进门
+      就 `_MINIMIZED_BY_US = 0`，而"它现在是前台就不动"那条安全线（③）是**在清完之后**才判的
+      ⇒ 用户正在用微信时，这一笔"我们为干活还原出来的"债被**悄悄注销**、窗口再没人还他收着
+      （侦察线端到端实测：`fg=主窗` 时零动作，而登记已清 ⇒ 不可恢复）。⇒ 现在：窗口没了 /
+      已经是收起的 / 我们真的动过（收回归位或压底层）才清；**前台这一条保留登记**，等下一次链尾。
+      三条安全线一条不少（用户在用微信时照样一枪不动，只是**账留着**）。
     """
     _hold_end()
     global _MINIMIZED_BY_US
     hwnd = int(_MINIMIZED_BY_US or 0)
     if not hwnd:
         return
-    _MINIMIZED_BY_US = 0
     _was_iconic = int(_WAS_ICONIC_BY_US or 0) == hwnd
-    globals()["_WAS_ICONIC_BY_US"] = 0
+
+    def _settled():
+        globals()["_MINIMIZED_BY_US"] = 0
+        globals()["_WAS_ICONIC_BY_US"] = 0
+
     try:
         import ctypes as _ct
         u = _ct.windll.user32
         if not u.IsWindow(hwnd):
+            _settled()                        # 窗口都没了 ⇒ 债自然了结
             return
         if u.IsIconic(hwnd):
+            _settled()                        # 已经是收起的 ⇒ 用户看到的状态与原来一致
             return
         if int(u.GetForegroundWindow() or 0) == hwnd:
+            # ⛔ V-R10-4：**不清登记**（见 docstring）—— 这一笔还没还上，留给下一次链尾。
+            log.info("放回暂缓（%s）：微信此刻正在前台（用户在用它）⇒ **保留登记**，等下一次链尾再还",
+                     note or "未注明")
             return
         if _was_iconic:
             # ⚡ 2026-09-18 晚：**它是用户自己收起来的** ⇒ 链尾还他收着（非前台窗口最小化不会激活别人）。            #   为什么必须还（网友反馈原文）：「游戏无论全不全屏，只要把它最小化后，它要发消息时都会被
@@ -615,6 +674,7 @@ def _minimize_back_if_needed(note: str = "") -> None:
             u.ShowWindow(_ct.c_void_p(hwnd), 6)               # SW_MINIMIZE（它本来就不是前台，不会激活谁）
             time.sleep(0.15)
             log.info("收回原位（%s）：微信主窗是**用户自己收起来的** ⇒ 恢复成最小化", note or "未注明")
+            _settled()
             return
         # 🔴 2026-09-18 改（作者原话：「**为什么非要最小化呢？不要最小化呀，就置于底层**」）：
         #   以前这里 `ShowWindow(hwnd, 6)` ＝ SW_MINIMIZE，把"为干活还原出来的"主窗**重新最小化**。
@@ -625,8 +685,10 @@ def _minimize_back_if_needed(note: str = "") -> None:
                                        0x0002 | 0x0001 | 0x0010)
         log.info("置于底层（%s）：微信主窗压回 Z 序底层（不最小化；那是我们为干活还原出来的）",
                  note or "未注明")
+        _settled()
     except Exception as e:
-        log.warning("放回最小化失败：%s", e)
+        # 异常时**保留登记**：窗口状态未知 ⇒ 留给下一次链尾重试（安全线会拦住不该动的那些情况）
+        log.warning("放回最小化失败：%s（登记保留，等下一次链尾再试）", e)
 
 
 def _user_idle_seconds() -> float:
@@ -855,6 +917,7 @@ def _switch_fails_write(item: dict) -> None:
         os.makedirs(os.path.dirname(p), exist_ok=True)
         with open(p, "a", encoding="utf-8") as fh:
             fh.write(_json.dumps(item, ensure_ascii=False) + "\n")
+        _note_ledger_write_ok()
         try:
             if os.path.getsize(p) > _SWITCH_FAILS_FILE_MAX:
                 with open(p, encoding="utf-8", errors="replace") as fh:
@@ -865,8 +928,8 @@ def _switch_fails_write(item: dict) -> None:
                 os.replace(_tmp, p)
         except Exception:
             pass
-    except Exception:
-        pass
+    except Exception as _e_sfw:                 # V-R10-12：写失败留痕（不再静默）
+        _note_ledger_write_fail(_e_sfw, locals().get("p") or "")
 
 
 def _switch_fails_from_file(n: int) -> list:
@@ -2362,8 +2425,11 @@ class WeChatAdapter:
                 os.makedirs(os.path.dirname(p), exist_ok=True)
                 with open(p, "a", encoding="utf-8") as fh:
                     fh.write(_json.dumps(_LEDGER[-1], ensure_ascii=False) + "\n")
-            except Exception:
-                pass
+                _note_ledger_write_ok()
+            except Exception as _e_lw:
+                # ⛔ 2026-09-21（V-R10-12）：老写法 `pass` ⇒ 写不进去**静默**，
+                #   重启后检验器读旧台账（假绿又回来了）。
+                _note_ledger_write_fail(_e_lw, locals().get("p") or "")
         except Exception:
             pass
 
@@ -2602,6 +2668,12 @@ class WeChatAdapter:
     # ── 发送 ─────────────────────────────────────────────────────────────
 
     def _get_gui(self):
+        # ⛔ 2026-09-21 加（第十轮 **V-R10-3 · P2**）：自愈分支还原过主窗就必须放回 ——
+        #   原来自愈之后**全函数一句放回都没有**（侦察线打桩实测：`_ensure_main_visible=1` 次、
+        #   退出时 `_MINIMIZED_BY_US` 残留）⇒ 只读调用点（诊断/探针）走一次 `_get_gui()` 就把
+        #   用户收在任务栏的微信**永久摊在桌面上**。下面两条出口各补一次（构造成功=函数收尾、
+        #   构造失败=抛错之前），`_healed` 只在真的还原过时才置位（放回自身幂等 + 三条安全线）。
+        _healed = 0
         if self._gui is None:
             # ⚠️ 2026-09-18：先把驱动库的已知缺名字补上（`guia.py` 漏 import threading ⇒
             #   一旦触发"输入框探测连续失败 → 自动重新校准布局"就必然崩在那行、校准永远不生效）。
@@ -2679,12 +2751,16 @@ class WeChatAdapter:
                         #    + `SetForegroundWindow`（**抢前台**）——正是既有口径：障过的"一打开就把我的微信切出来"。
                         #    改成**不激活地**还原（不动光标），与三条投递链同一套实现。
                         log.info("微信主窗找不到（隐藏/最小化）⇒ 按进程+窗口类找回后交给无激活还原：hwnd=%s", found[0])
-                        self._ensure_main_visible(None, int(found[0]))
+                        if self._ensure_main_visible(None, int(found[0])):
+                            _healed = int(found[0])
                         time.sleep(0.3)
                     else:
                         log.info("主窗兜底枚举没找到候选（微信进程/窗口类都没命中）")
                     self._gui = WeChatGUI()
                 except Exception:
+                    # 构造失败也要把这一笔还原还回去（否则登记残留 ⇒ 用户微信一直摊在桌面上）
+                    if _healed:
+                        _minimize_back_if_needed("_get_gui 自愈失败收尾")
                     raise WeChatError("不可用：微信主窗口不可见（恢复失败）。请打开电脑微信后重试。")
             # 🔴 2026-09-18（作者发火后立）：**GUI 一建好立刻上闸**——因为下面那次校准、
             #   以及库里 `get_input_box()` 探针失败后的自动重校准，都会走
@@ -2711,6 +2787,11 @@ class WeChatAdapter:
             except Exception:
                 pass
             self._install_ui_patches(self._gui)
+            if _healed:
+                # ⛔ V-R10-3：自愈还原的那一笔债在**函数收尾**结清（不放在"还原那一步之后"——
+                #   构造 GUI 与紧跟其后的启动校准都需要画面）。之后要用画面的链会自己
+                #   `_ensure_main_visible`（2026-09-21 起的统一口径），登记的账不会漏。
+                _minimize_back_if_needed("_get_gui 自愈收尾")
         return self._gui
 
     def _limit_wechat_window(self, gui) -> None:
@@ -2995,36 +3076,46 @@ class WeChatAdapter:
         单条发送则每条发完立即恢复。恢复失败有三级兜底：
         取消置顶 → 恢复原前台窗口（AttachThreadInput 提权）→ 放底/最小化。
         """
-        # ⛔ 2026-09-17 红线收口（用户实测报障：「他输入文字的时候，直接把我光标拉到那儿去了」）：
-        #    **真鼠标闸放到唯一咽喉点**。以前只有 `send_text` 自己过闸，而
-        #    `send_text_at`（@某人）与 `send_image`（发图）**直接落到这里** ⇒ 在
-        #    `background_only=true` 的承诺下**照样动用户光标**（库的 `send_msg/at_member/send_image`
-        #    本来就是 SetCursorPos + mouse_event 的真鼠标实现）。
-        #    闸门语义见 `_real_fallback_allowed()`：默认关，要真鼠标必须显式打开配置。
-        if not self._real_fallback_allowed():
-            return {"status": "blocked",
-                    "message": ("按最高目标**不退回真鼠标**（这条发送路径会动你的光标）；"
-                                "要允许请打开 input.allow_real_fallback，或先让投递档确认目标会话"),
-                    "data": {}}
-        self._fg_enter()
-        cur0 = _cursor_pos()      # 最高目标硬自检②：L0 真实路径"用完必须把光标还回去"
         try:
-            result = fn(*args, **kwargs)
-            return result
-        finally:
-            self._fg_exit()
+            # ⛔ 2026-09-17 红线收口（用户实测报障：「他输入文字的时候，直接把我光标拉到那儿去了」）：
+            #    **真鼠标闸放到唯一咽喉点**。以前只有 `send_text` 自己过闸，而
+            #    `send_text_at`（@某人）与 `send_image`（发图）**直接落到这里** ⇒ 在
+            #    `background_only=true` 的承诺下**照样动用户光标**（库的 `send_msg/at_member/send_image`
+            #    本来就是 SetCursorPos + mouse_event 的真鼠标实现）。
+            #    闸门语义见 `_real_fallback_allowed()`：默认关，要真鼠标必须显式打开配置。
+            if not self._real_fallback_allowed():
+                return {"status": "blocked",
+                        "message": ("按最高目标**不退回真鼠标**（这条发送路径会动你的光标）；"
+                                    "要允许请打开 input.allow_real_fallback，或先让投递档确认目标会话"),
+                        "data": {}}
+            self._fg_enter()
+            cur0 = _cursor_pos()      # 最高目标硬自检②：L0 真实路径"用完必须把光标还回去"
             try:
-                if cur0 and cur0 != (0, 0) and _cursor_pos() != cur0:
-                    import ctypes as _ct
-                    ok_cur = _ct.windll.user32.SetCursorPos(int(cur0[0]), int(cur0[1]))
-                    if ok_cur:
-                        log.info("真实路径结束后已把光标还原到 %s", cur0)
-                    else:
-                        # 实测：本机 SetCursorPos 会返回 0（失败）且 GetLastError=0 —— 此时**不要谎报已还原**，
-                        # 如实记一行，方便下次定位"为什么光标没回来"（2026-09-13 记录）
-                        log.warning("光标还原失败：SetCursorPos 返回 0（目标 %s，当前位置 %s）", cur0, _cursor_pos())
-            except Exception as _e:
-                log.info("光标还原失败（不影响发送）：%s", _e)
+                result = fn(*args, **kwargs)
+                return result
+            finally:
+                self._fg_exit()
+                try:
+                    if cur0 and cur0 != (0, 0) and _cursor_pos() != cur0:
+                        import ctypes as _ct
+                        ok_cur = _ct.windll.user32.SetCursorPos(int(cur0[0]), int(cur0[1]))
+                        if ok_cur:
+                            log.info("真实路径结束后已把光标还原到 %s", cur0)
+                        else:
+                            # 实测：本机 SetCursorPos 会返回 0（失败）且 GetLastError=0 —— 此时**不要谎报已还原**，
+                            # 如实记一行，方便下次定位"为什么光标没回来"（2026-09-13 记录）
+                            log.warning("光标还原失败：SetCursorPos 返回 0（目标 %s，当前位置 %s）", cur0, _cursor_pos())
+                except Exception as _e:
+                    log.info("光标还原失败（不影响发送）：%s", _e)
+        finally:
+            # ⛔ 2026-09-21 加（第十轮 **V-R10-2 · P1**）：**放回下沉到这一处**，覆盖所有走本包装的
+            #   链（`send_text_at` @某人 / `send_image` 发图 / 其它真鼠标档链）。原因：链条在
+            #   `_fg_enter()` **之前**就 `return {"status":"blocked"}`（真鼠标兜底默认关 ⇒ 默认配置
+            #   下必走这条）⇒ 原来只挂在 `send_text` 自己 finally 上的放回**永不执行** ⇒ 用户收进
+            #   任务栏的微信被摊在桌面上，残留登记还会让下一次链尾把它收走（第九轮刚修好的一收一放
+            #   在另一条链上原样复现）。⚠️ 本句与 `send_text` 的 finally 是同一件事，幂等（先结清
+            #   登记再动手），重复调用无害。
+            _minimize_back_if_needed("真鼠标链收尾（含早退）")
 
     def _learn_chat_header(self, chat_id: str, gui=None) -> bool:
         """DB 回读确认发送成功后，补一条"当前窗口尺寸"下的会话头参照。
@@ -3087,11 +3178,17 @@ class WeChatAdapter:
         否则（`mismatch`/`no_ref`/抓不到）**退回真实路径**——真实路径会先按名字打开会话，
         顺便把这个尺寸下的会话头学到手，于是**下一次就能走投递**。
         """
+        # ⛔ 2026-09-21 加（第十轮 **V-R10-6** · P3）：下面三道早退闸（停机 / 版本门 / 去重）都在
+        #   `try` **之前**，本函数的 `finally` 罩不到它们 ⇒ 上一次链留下的登记（"我们为干活还原
+        #   出来的主窗"）就没人还了。⇒ 每处 return 前各补一次放回（与 finally 同一句，幂等）。
+        #   为什么不在链头统一结清：`_minimize_back_if_needed` 一进门就 `_hold_end()`，链头无条件
+        #   调它会误停**别的链**正在摁的那一下；这三处是"本函数确实什么都没干"的分支，最窄。
         # ⛔ 2026-09-21 加（第六轮 **V-R6-5 附**）：本函数**本体**原来没有停机/暂停闸
         #   （全文件只有投递发送那几处有）⇒ `input.backend=real` + `allow_real_fallback=true` 时，
         #   暂停期间照样会真动鼠标把消息发出去。这里补上，与链上其它咽喉点同口径。
         _halt0 = _control_halt()
         if _halt0:
+            _minimize_back_if_needed("投递文本链收尾（含早退）")
             return False, _halt0
         # OCR 总时间窗（测机手册 ④）：这一笔发送链允许花在 OCR 上的总时间（超时按"自检不可用"处理）
         try:
@@ -3105,10 +3202,12 @@ class WeChatAdapter:
             _g = _vg.check("send", wechat=wx_version_for_gate())
             if not _g["allow"]:
                 _vg.note_blocked("send", _g["reason"])      # 记账：控制台横幅与日志都要看得见
+                _minimize_back_if_needed("投递文本链收尾（含早退）")
                 return False, _g["reason"]
         except Exception:
             pass
         if not self._dedup_send(chat_id, text):
+            _minimize_back_if_needed("投递文本链收尾（含早退）")
             return True, "重复发送已拦截（3 秒内同一文本）"
         name = self.group_name(chat_id)
         _st_status = "没走投递档"
