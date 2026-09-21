@@ -12,9 +12,18 @@
   2. **刚出炉的不动**：任何文件在 `MIN_AGE_S`（默认 10 分钟）内一律不删——它可能正在被发送。
   3. **有账可查**：`footprint()` 只读、给控制台/日志看；`tick()` 每次返回"删了几个、回收了多少"，
      **不返回值就不算做过**（本项目的老规矩）。
+
+⛔ 2026-09-22 修 **V-R10-29（P1，数据安全）**：上面第 1 条以前**只管临时目录**，媒体目录那条路
+   （`prune_dir`）是"按策略删**目录里所有**文件"⇒ 审计夹具里把**用户自己的文件**（`我的会议录音.mp3`、
+   `DSC_0042.JPG`）一起删了；而且 `tick()` 清的是**硬编码** `ROOT\media\tts`，产物却落在**用户可配**的
+   `voice_reply.dir` ⇒ 配了绝对路径的用户那边"产物永不清理、配到自己目录则启动时清它"。现在：
+   · `prune_dir` 加**文件名前缀白名单**（与 `sweep_temp` 同口径）：不是我们造的名字，一个都不碰；
+   · `tick()` 与 `known_dirs()` 都改用 `tts_dir()`（真值来自 `tts.out_dir()`，唯一来源）；
+   · 删除**之前**先写清单（`data/housekeeping_pruned.jsonl`，逐行可复核、可回滚找证）。
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import tempfile
@@ -24,11 +33,17 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 #: 我们在系统临时目录里的前缀（只清这些；别的程序、别的工具的残留一概不碰）
 TEMP_PREFIXES = ("pm-",)
+#: 我们在媒体目录里的**产物文件名前缀**（`tts_*.wav` / `tts_custom_*.mp3` / `tts_edge_*.mp3` /
+#: `tts_seg_*.wav` / `vc_*.wav` / `seg_*.txt`，见 `tts.py` / `voice_models.py`）。
+#: ⛔ 只删这些 —— 用户自己丢进同一目录的文件（录音、照片…）一个都不许碰。
+MEDIA_PREFIXES = ("tts_", "vc_", "seg_")
 #: 十分钟内产生的文件一律不动（可能正在被读/被发送）
 MIN_AGE_S = 600.0
 #: TTS 产物保留策略（媒体目录：合成出来的 wav/mp3，发完就没用了）
 TTS_KEEP_NEWEST = 60
 TTS_MAX_MB = 300
+#: 删除清单（删之前写、只增不改）：`{at, path, size, mtime}` 一行一条
+LEDGER_REL = os.path.join("data", "housekeeping_pruned.jsonl")
 
 
 def temp_root(root: str | None = None) -> str:
@@ -50,10 +65,26 @@ def dir_footprint(path: str) -> dict:
     return {"files": n, "bytes": b, "mb": round(b / 1048576.0, 2)}
 
 
+def tts_dir() -> str:
+    """媒体产物目录的**实际值**（用户可配 `voice_reply.dir`）—— 唯一来源 `tts.out_dir()`。
+
+    ⛔ V-R10-29：`tick()` 原来硬编码 `ROOT\\media\\tts`，而产物落在这个可配目录里 ⇒ 用户配了
+    绝对路径时"该清的没清、不该清的反而被清"（配置指到自己目录 ⇒ 启动时清他的目录）。
+    """
+    try:
+        from . import tts as _tts
+        d = str(_tts.out_dir() or "")
+        if d:
+            return d
+    except Exception:
+        pass
+    return os.path.join(ROOT, "media", "tts")
+
+
 def known_dirs() -> dict:
     """我们会写的目录清单（只读体检用）。**用户自己的图库不在清理范围内，只报数。**"""
     return {
-        "media/tts": os.path.join(ROOT, "media", "tts"),
+        "media/tts": tts_dir(),                     # 实际生效的产物目录（可配）
         "media/img": os.path.join(ROOT, "media", "img"),
         "data/gen_images": os.path.join(ROOT, "data", "gen_images"),
         "logs": os.path.join(ROOT, "logs"),
@@ -127,23 +158,34 @@ def sweep_temp(prefixes=TEMP_PREFIXES, max_age_h: float = 24.0, root: str | None
 
 
 def prune_dir(path: str, keep_newest: int = 0, max_age_days: float = 0.0, max_mb: float = 0.0,
-              min_age_s: float = MIN_AGE_S, now: float | None = None, dry: bool = False) -> dict:
-    """按策略清一个目录里的**文件**（不递归、不删子目录）⇒ `{removed, bytes, kept}`。
+              min_age_s: float = MIN_AGE_S, now: float | None = None, dry: bool = False,
+              prefixes=MEDIA_PREFIXES, ledger: str = "") -> dict:
+    """按策略清一个目录里**我们自己造的产物**（不递归、不删子目录）⇒ `{removed, bytes, kept, skipped, ledger}`。
 
     删除条件（满足任一，且都得先过"够老"这一关）：
       · 排在最新 `keep_newest` 个之外；
       · 超过 `max_age_days` 天；
       · 目录总量超过 `max_mb` MB 时，从最旧的开始删到不超。
     `min_age_s` 内的文件**一律不动**（可能正被发送）。
+
+    ⛔ 2026-09-22 修 **V-R10-29（P1，数据安全）**：**只删自己造的** —— 文件名必须以 `prefixes` 里的前缀
+    开头（与 `sweep_temp` 同一套口径）。审计夹具实测的旧行为：把 `我的会议录音.mp3` / `DSC_0042.JPG`
+    和我们的产物放在同一目录里跑清理，**用户自己的文件被删掉了**（无回收站、不可逆）。
+    `prefixes` 传空 ⇒ 不筛（只给"我自己造的临时目录"这种调用方用；产品路径一律带白名单）。
+    `ledger` 非空时**删之前**逐行追加"要删哪些、多大、什么时候删的"（有账可查；干跑不写）。
     """
     now = time.time() if now is None else now
-    res = {"removed": 0, "bytes": 0, "kept": 0}
+    res = {"removed": 0, "bytes": 0, "kept": 0, "skipped": 0, "ledger": ""}
     if not path or not os.path.isdir(path):
         return res
+    _pref = tuple(prefixes or ())
     items = []
     for nm in os.listdir(path):
         p = os.path.join(path, nm)
         if not os.path.isfile(p):
+            continue
+        if _pref and not nm.startswith(_pref):
+            res["skipped"] += 1                # 不是我们造的名字 ⇒ 一律不碰（哪怕它最老、最大）
             continue
         try:
             st = os.stat(p)
@@ -172,6 +214,18 @@ def prune_dir(path: str, keep_newest: int = 0, max_age_days: float = 0.0, max_mb
                 continue
             doomed.add(p)
             freed += sz
+    # ⛔ 删除**之前**写清单（干跑不写）：删了什么、多大、什么时候删的 —— 事后可复核
+    if doomed and ledger and not dry:
+        res["ledger"] = str(ledger)
+        try:
+            os.makedirs(os.path.dirname(os.path.abspath(ledger)), exist_ok=True)
+            with open(ledger, "a", encoding="utf-8") as fh:
+                for p, sz, mt in items:
+                    if p in doomed:
+                        fh.write(json.dumps({"at": now, "path": p, "size": sz, "mtime": mt},
+                                            ensure_ascii=False) + "\n")
+        except Exception:
+            res["ledger"] = ""
     for p, sz, _mt in items:
         if p not in doomed:
             res["kept"] += 1
@@ -219,19 +273,29 @@ def cleanup_dir(d: str) -> bool:
     return False
 
 
-def tick(dry: bool = False, root: str | None = None, now: float | None = None) -> dict:
-    """一次收尾：清临时残留 + 收 TTS 产物。启动时调一次，也可以随时手动调。"""
+def tick(dry: bool = False, root: str | None = None, now: float | None = None,
+         media_dir: str = "", ledger: str = "") -> dict:
+    """一次收尾：清临时残留 + 收**实际的**产物目录。启动时调一次，也可以随时手动调。
+
+    ⛔ V-R10-29：产物目录用 `tts_dir()`（用户可配 `voice_reply.dir`），不再硬编码 `ROOT\\media\\tts`；
+    删之前写清单（`data/housekeeping_pruned.jsonl`）；只删 `MEDIA_PREFIXES` 里那些**我们造的**文件名。
+    `media_dir` / `ledger` 是**给判据用的显式入口**（不传就走生产默认值），免得自检去碰真的
+    `data/` 与用户配置的那个目录。
+    """
     t = sweep_temp(root=root, now=now, dry=dry)
-    m = prune_dir(os.path.join(ROOT, "media", "tts"), keep_newest=TTS_KEEP_NEWEST,
-                  max_mb=TTS_MAX_MB, now=now, dry=dry)
+    d = media_dir or tts_dir()
+    _led = ledger or ("" if dry else os.path.join(ROOT, LEDGER_REL))
+    m = prune_dir(d, keep_newest=TTS_KEEP_NEWEST, max_mb=TTS_MAX_MB, now=now, dry=dry,
+                  prefixes=MEDIA_PREFIXES, ledger=_led)
     freed = t["bytes"] + m["bytes"]
-    return {"temp": t, "media_tts": m, "freed_bytes": freed, "freed_mb": round(freed / 1048576.0, 2),
-            "dry": bool(dry)}
+    return {"temp": t, "media_tts": m, "media_dir": d, "freed_bytes": freed,
+            "freed_mb": round(freed / 1048576.0, 2), "dry": bool(dry)}
 
 
 def brief(rep: dict) -> str:
     """给日志/控制台的一句话（没有数字就不算做过）。"""
     if not rep:
         return "收尾：没有结果"
-    return ("收尾：临时目录清 %d 项、产物目录清 %d 个文件，共回收 %.2f MB"
-            % (rep["temp"]["removed"], rep["media_tts"]["removed"], rep.get("freed_mb") or 0))
+    return ("收尾：临时目录清 %d 项、产物目录清 %d 个文件（跳过 %d 个不是我们造的文件），共回收 %.2f MB"
+            % (rep["temp"]["removed"], rep["media_tts"]["removed"],
+               rep["media_tts"].get("skipped") or 0, rep.get("freed_mb") or 0))

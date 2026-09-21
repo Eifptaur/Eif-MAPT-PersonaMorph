@@ -557,6 +557,28 @@ def job() -> dict:
         return dict(JOB)
 
 
+def _note_seen(version: str) -> None:
+    """把「见过的最高版本」**单调**记进更新状态快照（与 `update_check.state()` 同一个键）。
+
+    为什么安装侧也要记（V-R10-27 的另一半）：`maxSeenVersion` 以前**只有检查侧写、没有任何一侧读**
+    （审计判它"死代码"）⇒ "只看过「立即更新」、从没点过检查更新"的机器上，那道回滚闸一直是空的。
+    写失败不影响本次更新（只记一笔，绝不让它挡住装包）。
+    """
+    try:
+        from . import update_check as uc
+        v = str(version or "")
+        if not v or not uc.vtuple(v):
+            return
+        st = uc._read_state()
+        old = str((st or {}).get("maxSeenVersion") or "")
+        if not old or not uc.vtuple(old) or uc.vtuple(old) < uc.vtuple(v):
+            st = dict(st or {})
+            st["maxSeenVersion"] = v
+            uc._write_state(st)
+    except Exception:
+        pass
+
+
 def run_once(manifest=None, zip_path=None, target=ROOT, dry=False, progress=None):
     """一条龙：拉清单 → 下载（可给现成包）→ 整包换入。返回 dict（CLI/自测/控制台共用）。"""
     from . import update_check as uc          # 延迟导入：控制台只要读状态时不拉起这条链
@@ -586,6 +608,18 @@ def run_once(manifest=None, zip_path=None, target=ROOT, dry=False, progress=None
          why="本机 %s / 远端 %s" % (mine or "未记录", theirs or "?"))
     if not theirs:
         return {"ok": False, "rc": 2, "why": "清单里没有版本号", "phase": "probe"}
+    # ⛔ 2026-09-22 修 **V-R10-27（P0）**：`state()` 的两道闸（`expires` 过期 / 单调版本回滚）以前
+    #   **只装在检查侧**，而这里——**真正动盘的那条路**——对它们 **0 命中**。审计用假源实测：
+    #   「远端 2026.9.1.1（< 本机 2026.9.21.11）⇒ `state()` 判 older，`run_once()` 照样装、
+    #     version.py 变 OLD；`expires=2020-01-01` ⇒ `state()` 报错，`run_once()` 照装」。
+    #   后果＝被控的源/坏镜像只要让清单变旧或过期，就能把用户**降级**到有漏洞的旧版。
+    #   ⇒ 安装入口复检**同一个纯函数** `update_check.manifest_gates`（唯一实现，"检查说不许"≡"装的时候不许"）。
+    _gate = uc.manifest_gates(manifest, mine=mine)
+    if _gate.get("block_install"):
+        _set(state="error", phase="probe", why=_gate["why"])
+        return {"ok": False, "rc": 2, "why": _gate["why"], "phase": "probe",
+                "version": theirs, "gate": _gate.get("kind"), "needRestart": False}
+    _note_seen(theirs)
     # ⛔ 2026-09-20 修 **V2**：同版本号换包（"只修 bug 不改版本"这条路，`make_manifest --build` 就是
     #   为它准备的）以前**只比版本号** ⇒ 控制台侧比了内容指纹判 `newer`、这里却回"已是最新"，
     #   于是横幅永远消不掉、点「立即更新」静默什么都不做。现在两边都比：版本 ≤ 我的 **且** 指纹相同
@@ -604,8 +638,12 @@ def run_once(manifest=None, zip_path=None, target=ROOT, dry=False, progress=None
         return {"ok": True, "rc": 0, "phase": "current", "version": theirs, "needRestart": False,
                 "msg": "已是最新"}
     if not _same_build:
-        print("[update] 版本号相同（%s）但内容指纹不同（本机 %s / 远端 %s）⇒ 按「同版本换包」继续装"
-              % (theirs or "?", _b_mine[:12], _b_theirs[:12]))
+        # ⛔ 2026-09-22：这句话原来**恒说「版本号相同」**，而版本真的前进/回退时也照样这么打
+        #   （排障时按它读会读错方向 —— 我修 V-R10-27 时就先被它骗过一次）。改成如实说版本去哪了。
+        _vnote = ("版本号相同（%s）" % theirs) if str(theirs) == str(mine) \
+            else ("版本号 %s → %s" % (mine or "未记录", theirs))
+        print("[update] %s 但内容指纹不同（本机 %s / 远端 %s）⇒ 继续换入"
+              % (_vnote, _b_mine[:12], _b_theirs[:12]))
 
     if not zip_path:
         durl = str(base.get("url") or "")

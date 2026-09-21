@@ -418,7 +418,8 @@ def switched(mine: str, parent: str, window_s: float = _LIVE_WINDOW_S, pin=None)
       ① 只有一个账号目录 ⇒ 永不切；
       ② 我正在读的那个号**自己的 -wal 还新鲜** ⇒ 不切；
       ③ **你把某个账号目录钉死了** ⇒ 不切（切了还是它 ⇒ 会变成每 15 秒重连一次的循环）；
-      ④ 只有"别的号明显在写、我这个已经静默"才切（这就是"切换微信号"的现场）。
+      ④ 目标号＝**`pick_account()` 挑出来的那一个**（唯一来源，V-R10-28）——"别的号明显在写、
+         我这个已经静默"与"两个号都没在写"都走它；只有"全机器都没有 -wal 证据"时才不动。
     返回 `{"stale":bool, "mine","live","why","accounts"}`；`mine` 为空（不知道在读哪个）时不切。
     `pin`：显式配置那条路径（不传就现读配置）。
     """
@@ -446,12 +447,24 @@ def switched(mine: str, parent: str, window_s: float = _LIVE_WINDOW_S, pin=None)
         return out
     now = time.time()
     if me[0]["wal"] and (now - me[0]["wal"]) <= window_s:
-        return out                      # ② 我自己还活着 ⇒ 不动
-    others = [a for a in accs
-              if a["name"] != out["mine"] and a["wal"] and (now - a["wal"]) <= window_s]
-    if not others:
+        return out                      # ② 我自己还活着 ⇒ 不动（多开时不许来回抖）
+    # ⛔ 2026-09-22 修 **V-R10-28（P1）**：这里原来是「别的号里 -wal 新鲜的」列表 + `if not others: return out`
+    #   ⇒ **两个号都没在写时永不跟切**；而同一夹具下 `pick_account()` 能挑对号 ⇒ **同一事实两条路相反**。
+    #   用户故事：切到 B 号后 B 号短期没收到消息 ⇒ 我们继续读 A 号旧库、**无任何异常**，非得"新号先收到
+    #   一条消息"才自愈 —— 而它盯的正是"读不到消息的那个库"（自指）。
+    #   ⇒ 现在**唯一来源**：该切到哪个号＝`pick_account()` 的答案（上面已算好的 `_pk`），规则④只是它的执行者。
+    #   唯一保留的保守分支：**全机器都没有 -wal 证据**时不动（`.db` 会被「切走时 checkpoint」骗，宁可不切）。
+    _wanted = str(_pk.get("name") or "")
+    _wl = [x for x in accs if x["name"] == _wanted]
+    if not _wanted or _wanted == out["mine"] or not _wl:
         return out
-    a = sorted(others, key=lambda x: x["wal"], reverse=True)[0]
+    a = _wl[0]
+    if _pk.get("pinned"):
+        out.update(stale=True, live=a["name"],
+                   why=("你把账号目录钉死在 %s ⇒ 跟着切到它（现在读的是 %s）" % (a["name"], out["mine"])))
+        return out
+    if not (a.get("wal") and (not me[0].get("wal") or float(a["wal"]) > float(me[0]["wal"]))):
+        return out
     out.update(stale=True, live=a["name"],
                why=("在读的账号 %s 已经 %s 没往库里写了，而账号 %s 的 -wal 是 %s"
                     "⇒ 微信像是切到了 %s"

@@ -691,6 +691,29 @@ def build_trigger_block(trigger_entries, ctx) -> str:
     return "\n".join(lines)
 
 
+def stale_note_for(entries, now_ms: int = None) -> str:
+    """"这批触发消息有多旧"的一句话（纯函数，判据可直接测）。≥10 分钟才给；取不到时间戳就不给。
+
+    ⛔ 2026-09-21 加（第九轮 V-R9-17 的残留）：原来只在 `thought_trace` 里留痕、**没进提示词**
+    ⇒ 模型把"三小时前/六天前"的消息当成刚刚发生的事来回（通知补发/离线补收场景很常见）。
+    ⚠️ 本文件**顶层没有 `import time`**（见 `_active_gap_min` 那段的注释：写成 `time.time()`
+    会被 except 吞成 0 —— 这里就是抽成纯函数 + `__import__` 的理由）。
+    """
+    try:
+        now = int(now_ms if now_ms is not None else __import__("time").time() * 1000)
+        tss = [int((m or {}).get("ts") or 0) for m in (entries or [])]
+        tss = [t for t in tss if t > 0]
+        if not tss:
+            return ""
+        age_min = max(0.0, (now - min(tss)) / 60000.0)
+        if age_min < 10:
+            return ""
+        return ("\n⚠️ 注意：这批里**最早那条是 %.0f 分钟前**的（不是刚刚）—— 按现在的时间来回，"
+                "别当成刚发生的事；特别旧又已经过时的，可以不回。" % age_min)
+    except Exception:
+        return ""
+
+
 def build_user_prompt(ctx) -> str:
     cfg = get_config()
     now = __import__("time").time() * 1000
@@ -745,8 +768,12 @@ def build_user_prompt(ctx) -> str:
         parts.append("【主动开话题】群里最近比较安静，没人 @ 你。想聊的话，自己找个自然的话题抛出一条（一句即可，别像开场白）；不想聊就直接结束。发送用 send_message。")
     else:
         trigger_block = build_trigger_block(ctx["trigger_entries"], ctx)
-        parts.append("【本次唤醒】以下是你还没看过的最新消息（每条前的 #数字 是消息 id，引用回复/看图时用它；已自动标记为已读；处理期间新来的消息%s）：\n%s" % (
-            unread_note or "会在你结束后再给你", trigger_block))
+        # ⛔ 2026-09-21 加（第九轮 **V-R9-17** 的残留，第十轮 V-R10-21 点到）：把**这批消息有多旧**
+        #   写进提示词本身 —— 原来只在 `thought_trace` 里留痕，模型看不到，于是它会把
+        #   "三小时前/六天前"的消息当成**刚刚发生**来回应（通知/补发场景下很常见）。
+        _stale_note = stale_note_for(ctx.get("trigger_entries"))
+        parts.append("【本次唤醒】以下是你还没看过的最新消息（每条前的 #数字 是消息 id，引用回复/看图时用它；已自动标记为已读；处理期间新来的消息%s）：\n%s%s" % (
+            unread_note or "会在你结束后再给你", trigger_block, _stale_note))
 
     # 参与度参考
     parts.append("【参与度参考】%s" % _participation_text(cfg.get("persona", {}).get("participation")))

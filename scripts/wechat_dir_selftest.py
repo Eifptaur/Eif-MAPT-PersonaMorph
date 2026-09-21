@@ -299,6 +299,56 @@ try:
     ok("报告不再因为库打不开而整段退化成取不到",
        "_how_err" in _rep and "打不开或取不到" in _rep)
 
+    print("── G. 两个号都静默：`switched()` 与 `pick_account()` 必须同一结论（V-R10-28，P1）──")
+    # 现场：用户切到 B 号后 B 号**短期没收到消息** ⇒ 旧规则④（`others` 为空就 `return out`）**永不跟切**
+    #   ⇒ 继续读 A 号旧库、**无任何异常**；而同一夹具下 `pick_account()` 能挑对号
+    #   ⇒ **同一事实两条路相反**。修法＝让两条路走同一个判定（switched 认 pick_account 的答案）。
+    import time as _time
+    _now2 = _time.time()
+
+    def _mk2(parent, acct, db_age_h, wal_age_h):
+        d = os.path.join(parent, acct, "db_storage", "message")
+        os.makedirs(d, exist_ok=True)
+        p = os.path.join(d, "message_0.db")
+        with open(p, "wb") as f:
+            f.write(b"x")
+        os.utime(p, (_now2 - db_age_h * 3600, _now2 - db_age_h * 3600))
+        w = p + "-wal"
+        with open(w, "wb") as f:
+            f.write(b"x")
+        os.utime(w, (_now2 - wal_age_h * 3600, _now2 - wal_age_h * 3600))
+        return os.path.join(parent, acct)
+
+    _p2 = os.path.join(ROOT_TMP, "both_idle")
+    _mk2(_p2, "wxid_OLD_1111", db_age_h=0.05, wal_age_h=0.5)     # 切走的号：主库刚被 checkpoint
+    _mk2(_p2, "wxid_LIVE_2222", db_age_h=50.0, wal_age_h=0.2)    # 在用的号：-wal 更晚（12 分钟前）
+    _pk2 = D.pick_account(_p2)
+    ok("两个号**都没在写**时，pick_account 按「-wal 更晚」挑中在用的那个",
+       _pk2.get("name") == "wxid_LIVE_2222", str(_pk2.get("why"))[:100])
+    _sw2 = D.switched("wxid_OLD_1111", _p2, pin="")
+    ok("同一事实：**switched() 也跟切到同一个号**（旧规则在这里永不跟切）",
+       _sw2.get("stale") is True and _sw2.get("live") == "wxid_LIVE_2222", str(_sw2)[:130])
+    ok("**两条路同一结论**：switched().live == pick_account().name",
+       _sw2.get("live") == _pk2.get("name"), "%s / %s" % (_sw2.get("live"), _pk2.get("name")))
+    ok("切号理由点名两个号（人话，说清了为什么切）",
+       "wxid_OLD_1111" in str(_sw2.get("why")) and "wxid_LIVE_2222" in str(_sw2.get("why")),
+       str(_sw2.get("why"))[:120])
+    _sw2b = D.switched("wxid_LIVE_2222", _p2, pin="")
+    ok("阴性对照：当前读的正好是被挑中的那个号 ⇒ 不切（别自己跟自己抖）", _sw2b.get("stale") is False,
+       str(_sw2b)[:90])
+    _others_old = [a for a in D.accounts(_p2)
+                   if a["name"] != "wxid_OLD_1111" and a["wal"] and (_now2 - a["wal"]) <= D._LIVE_WINDOW_S]
+    ok("反例锚：老规则④（只看「别的号 -wal 新鲜」）在这个夹具里是**空集** ⇒ 旧实现永不跟切",
+       _others_old == [])
+    # 规则②（我自己还在写就不切）是**唯一**保留的保守分支：多开时两个号同时活着，不许每 15 秒重连
+    _p3 = os.path.join(ROOT_TMP, "mine_live")
+    _mk2(_p3, "wxid_A_1111", db_age_h=5.0, wal_age_h=0.0005)     # 我读的号刚写过
+    _mk2(_p3, "wxid_B_2222", db_age_h=5.0, wal_age_h=0.0001)     # 另一个号写得更晚
+    ok("规则②（多开防抖，**故意**不跟 pick_account 动）：我这号 -wal 还新鲜 ⇒ 不切",
+       D.switched("wxid_A_1111", _p3, pin="").get("stale") is False
+       and D.pick_account(_p3).get("name") == "wxid_B_2222",
+       str(D.switched("wxid_A_1111", _p3, pin=""))[:90])
+
     print("── F. 判据不瞎（阴性对照）──")
     _patch_cands(cands_all)
     f1 = D.decide(good)

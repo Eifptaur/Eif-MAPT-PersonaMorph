@@ -29,12 +29,19 @@ log = logging.getLogger("persona-morph")
 STORE_PATH = os.path.join(ROOT, "data", "chat_headers.json")
 # 会话名区域（**渲染区相对比例**）：避开左侧会话列表（<0.26）、右侧按钮与窗口按钮
 PANE_LEFT_REL = 0.26          # 会话列表面板右边界（**兜底**比例；优先用 detect_pane_left 实测）
+#: 面板左沿扫描的**固定像素下界**（V-R10-1）。见 `detect_pane_left`：会话列表是**固定像素宽**，
+#: 扫描窗口没有理由随窗口宽度线性放大 —— 原来纯用 `0.15×宽`，最大化（渲染 2538×1589）时下界
+#: 变成 380 > 真实左沿 331 ⇒ 探测器在报警范围内找不到白列 ⇒ 返回 0 ⇒ 兜底比例把标题带甩到
+#: 聊天区中部 ⇒ **空指纹** ⇒ `check()` 恒 `no_capture`（最大化窗口下整条会话头闸失效）。
+PANE_SCAN_MIN_PX = 100
 BAND_PX = (10, 38, 340, 56)   # 文字带：(距面板左边界 dx, y, 宽, 高) —— **兜底固定像素**（自适应见 detect_band_y0）
 #: 「整行都是深色」的判定：用来找那条**自绘标题条**（`detect_band_y0`）。
 BAND_FULL_DARK = 0.85
 #: 文字带算法版本。**改了带子算法就 +1** —— 旧参照按"没有参照"处理（`no_ref` ⇒ 不拦发送、下次成功
 #: 自动重学），而不是按 `mismatch` 处理：否则老用户升级后第一枪会被自己的旧参照拦下来。
-BAND_VERSION = 2
+#: ⛔ 2026-09-21 由 **2 升到 3**（第十轮 **V-R10-1**）：扫描下界改固定像素（`PANE_SCAN_MIN_PX`）
+#: ⇒ **所有尺寸档的指纹都会变** ⇒ 旧参照必须按 `no_ref` 重学（产品自带这条机制，只改这一个常量）。
+BAND_VERSION = 3
                               # ⇒ 与窗口尺寸无关（实测：会话列表是"固定像素宽"，不是按窗口比例缩放）
 BINS = 64                     # 逐列暗点密度剖面维数
 DARK = 165                    # 暗点阈值（会话名是深色字，背景近白）
@@ -49,6 +56,14 @@ def detect_pane_left(img, lo_rel: float = 0.15, hi_rel: float = 0.60, need: int 
     为什么不能只按比例：实测会话列表是**固定像素宽（约 300px）**，窗口一变窄，
     `0.26×宽` 就漂进会话列表里，指纹跟着错（相似度掉到 0.70~0.90）。
     找不到（深色主题/特殊皮肤）就返回 0，由调用方退回比例兜底。
+
+    ⛔ 2026-09-21 修（第十轮 **V-R10-1 · P1**）：**下界必须"固定像素优先"**，不能纯按宽度比例。
+      真机实测（本机 2560×1600 工作区 ⇒ 渲染 2538×1589）：会话列表左沿仍是 **331**（固定像素宽），
+      而 `0.15×2538 = 380` > 331 ⇒ 扫描从"左沿右边"起步 ⇒ 白列在报警范围之外 ⇒ 返回 0
+      ⇒ `fingerprint` 退回 `0.26×宽=661` 的兜底比例 ⇒ 带子落到聊天区中部 ⇒ 空指纹 ⇒
+      `check()` 恒 `no_capture`（**用户把微信最大化后，会话头三闸整档失效**）。
+      同一帧只把下界改小复算：`0.15`(380)→0 · `0.12`(304)→331 · `0.10`→331 · `0.04`→331。
+      ⇒ 下界取 `min(w × lo_rel, PANE_SCAN_MIN_PX)`：宽窗按 100px、窄窗仍按比例（与老口径一致）。
     """
     try:
         g = img.convert("L")
@@ -57,7 +72,8 @@ def detect_pane_left(img, lo_rel: float = 0.15, hi_rel: float = 0.60, need: int 
         y0, y1 = int(h * 0.25), int(h * 0.75)
         step = max(1, (y1 - y0) // 12)
         run, start = 0, 0
-        for x in range(int(w * lo_rel), min(w, int(w * hi_rel))):
+        _lo = int(min(w * lo_rel, PANE_SCAN_MIN_PX))
+        for x in range(_lo, min(w, int(w * hi_rel))):
             tot = n = 0
             for y in range(y0, y1, step):
                 tot += px[x, y]
@@ -188,8 +204,8 @@ def crop_box(size, pane_left_rel=None, band_px=None, pane_left_px: int = 0) -> t
     return (l, t, max(l + 1, r), max(t + 1, b))
 
 
-def detect_band_y0(img, x0: int, x1: int, default_y0: int = None, max_scan: int = 96,
-                   max_y0: int = 72) -> int:
+def detect_band_y0(img, x0: int, x1: int, default_y0: int = None, max_scan: int = None,
+                   max_y0: int = None) -> int:
     """在渲染区顶部找那条**全宽深色横条**（微信自绘标题条），把文字带放到它**下方**。
 
     ⛔ 2026-09-21 加（第九轮 **V-R9-3 · P1**，真机实测）：`BAND_PX` 的 `y0=38` 是**固定物理像素**，
@@ -201,6 +217,13 @@ def detect_band_y0(img, x0: int, x1: int, default_y0: int = None, max_scan: int 
 
     ⇒ 现在：扫顶部若干行，找**连续 ≥4 行「整行都是深色」**的那条横条，带子落到它下方 +3px；
       找不到（老版微信没这条、本来就是白底）就退回原来的固定 y0。返回的是**绝对像素** y0。
+
+    ⛔ 2026-09-21 修（第十轮 **V-R10-5 · P2**）：两个上限**原来是写死的 96 / 72**，于是
+      · 横条**底边在 72..103** ⇒ `y0` 被钳回 72 ⇒ 带子仍压在条子上 ⇒ 指纹 **64/64**（＝V-R9-3 原症状）；
+      · 横条**上边 ≥96** ⇒ 超出 `max_scan` ⇒ 根本没扫到 ⇒ 退回 38 ⇒ **空指纹**。
+      ⇒ 改成**按渲染高度比例**（`max_scan = max(96, 0.12h)`、`max_y0 = max(72, 0.10h)`，宽高窗都留出
+        余量），并且 `fingerprint` 在第一次自适应仍拿不到可用指纹时会**一次性**用更宽的窗口再试一次
+        （见那边的 `_y0b`；不引入循环）。传了显式值就按传的算（判据用得到）。
     """
     try:
         if default_y0 is None:
@@ -210,6 +233,10 @@ def detect_band_y0(img, x0: int, x1: int, default_y0: int = None, max_scan: int 
         x0, x1 = max(0, int(x0)), min(int(w), int(x1))
         if x1 <= x0 or h < 12:
             return int(default_y0)
+        if max_scan is None:
+            max_scan = max(96, int(h * 0.12))
+        if max_y0 is None:
+            max_y0 = max(72, int(h * 0.10))
         px = g.load()
         step = max(1, (x1 - x0) // 60)
         run, run_end = 0, None
@@ -234,7 +261,7 @@ def detect_band_y0(img, x0: int, x1: int, default_y0: int = None, max_scan: int 
         return int(default_y0)
 
 
-def fingerprint(img, pane_left_rel=None, band_px=None, bins: int = BINS) -> list:
+def fingerprint(img, pane_left_rel=None, band_px=None, bins: int = BINS, pane_left_px: int = 0) -> list:
     """会话头区域的**逐列暗点密度剖面**（bins 维，0~255）。
 
     三条踩出来的规矩：
@@ -242,52 +269,91 @@ def fingerprint(img, pane_left_rel=None, band_px=None, bins: int = BINS) -> list
       ② **按最强列归一化**（不归一化时暗点占比只有 20~50/255，差异被整体压平）；
       ③ **锚点要实测面板左沿**（`detect_pane_left`）——会话列表是固定像素宽、不按窗口比例，
          只按比例放带会在换尺寸时漂进会话列表（实测相似度掉到 0.70~0.90）。
+
+    ⛔ 2026-09-21 两处修（第十轮）：
+      · **V-R10-1**：锚点改走**唯一入口 `pane_left_for`**（老口径 → 结构锚交叉校验 → 比例兜底
+        三层都写好了），不再只调老口径那一层 —— 老口径返回 0 时（最大化窗口的现场）过去会
+        直接掉进 `0.26×宽` 的兜底比例，而结构锚本来能给出 390（越过单字标题、但远好于 661）。
+      · **V-R10-5**：带子第一次自适应失败（空指纹 / 退化 / **每列都有墨**）时**一次性**用更宽的
+        扫描窗口再试一次（不引入循环）—— 有些几何下那条深色标题条的底边落在 `max_scan`/`max_y0`
+        之外，只做比例钳位仍然够不着（详见 `detect_band_y0`）。
+
+    `pane_left_px` ＝ 显式钉住锚点（**判据用**：把"旧带子/旧钳位"在同一条左沿上复算，见
+    `scripts\\chat_header_selftest.py` 的 W 段；生产路径不传它，走 `pane_left_for`）。
     """
     try:
         if not hasattr(img, "size"):
             return []
-        pl = 0
-        if pane_left_rel is None and band_px is None:
-            pl = detect_pane_left(img)
+        _auto = (pane_left_rel is None and band_px is None)
+        pl = int(pane_left_px or 0)
+        if not pl and _auto:
+            pl = pane_left_for(img)
+
+        def _raw(bx) -> list:
+            sub = img.convert("L").crop(bx)
+            w, h = sub.size
+            if w < bins or h < 4:
+                return []
+            px = sub.load()
+            step = max(1, h // 24)
+            out = []
+            for i in range(bins):
+                x0 = int(i * w / bins)
+                x1 = max(x0 + 1, int((i + 1) * w / bins))
+                dark = tot = 0
+                for x in range(x0, x1):
+                    for y in range(0, h, step):
+                        tot += 1
+                        if px[x, y] < DARK:
+                            dark += 1
+                out.append(dark / float(max(1, tot)))
+            return out
+
+        def _norm(raw) -> list:
+            # 按"最强列"归一化：不这么做的话暗点占比只有 20~50/255，
+            # 不同会话名的差异会被整体压平（实测相似度高达 0.976＝等于没区分度）。
+            mx = max(raw) if raw else 0.0
+            mn = min(raw) if raw else 0.0
+            if mx <= 0.0:
+                return []                 # 一点墨都没有 ⇒ 视为无效指纹（不许当"匹配"）
+            # ⛔ 2026-09-21 加（第九轮 **V-R9-6**）：**整幅近单色** ⇒ 逐列密度几乎相同 —— 最典型的是
+            #   纯黑帧（每列都满墨 ⇒ 归一化后 `[255]*64`）。那**不是指纹，是"没内容"**：旧代码在这里
+            #   照样返回 64 维非空指纹 ⇒ 上层把本该 `no_capture` 的一帧变成 `no_ref`/`mismatch`
+            #   （看着"有依据"，其实什么也没看到）。⇒ 剖面近乎平坦（最强列与最弱列差 < 6%）就返回空。
+            if (mx - mn) < 0.06 * mx:
+                return []
+            return [int(round(255.0 * v / mx)) for v in raw]
+
         box = crop_box(img.size, pane_left_rel, band_px, pane_left_px=pl)
         # ⛔ 2026-09-21 加（第九轮 **V-R9-3**）：生产路径（自动锚点）下先**自适应**把文字带挪到
         #   那条自绘深色标题条**下方** —— 固定 y0 在真机上会压在标题条上 ⇒ 指纹退化 ⇒ 该尺寸档
         #   永远学不到参照（详见 `detect_band_y0`）。
-        if pane_left_rel is None and band_px is None:
+        _y0 = 0
+        if _auto:
             _y0 = detect_band_y0(img, box[0], box[2])
             if _y0 != int(box[1]):
                 box = crop_box(img.size, pane_left_rel,
                                (BAND_PX[0], _y0, BAND_PX[2], BAND_PX[3]), pane_left_px=pl)
-        g = img.convert("L").crop(box)
-        w, h = g.size
-        if w < bins or h < 4:
-            return []
-        px = g.load()
-        step = max(1, h // 24)
-        raw = []
-        for i in range(bins):
-            x0 = int(i * w / bins)
-            x1 = max(x0 + 1, int((i + 1) * w / bins))
-            dark = tot = 0
-            for x in range(x0, x1):
-                for y in range(0, h, step):
-                    tot += 1
-                    if px[x, y] < DARK:
-                        dark += 1
-            raw.append(dark / float(max(1, tot)))
-        # 按"最强列"归一化：不这么做的话暗点占比只有 20~50/255，
-        # 不同会话名的差异会被整体压平（实测相似度高达 0.976＝等于没区分度）。
-        mx = max(raw) if raw else 0.0
-        mn = min(raw) if raw else 0.0
-        if mx <= 0.0:
-            return []                     # 一点墨都没有 ⇒ 视为无效指纹（不许当"匹配"）
-        # ⛔ 2026-09-21 加（第九轮 **V-R9-6**）：**整幅近单色** ⇒ 逐列密度几乎相同 —— 最典型的是
-        #   纯黑帧（每列都满墨 ⇒ 归一化后 `[255]*64`）。那**不是指纹，是"没内容"**：旧代码在这里
-        #   照样返回 64 维非空指纹 ⇒ 上层把本该 `no_capture` 的一帧变成 `no_ref`/`mismatch`
-        #   （看着"有依据"，其实什么也没看到）。⇒ 剖面近乎平坦（最强列与最弱列差 < 6%）就返回空。
-        if (mx - mn) < 0.06 * mx:
-            return []
-        return [int(round(255.0 * v / mx)) for v in raw]
+        fp = _norm(_raw(box))
+        if not _auto:
+            return fp
+        if fp and not degenerate_reason(fp) and min(fp) == 0:
+            return fp
+        # ⛔ 2026-09-21 加（第十轮 **V-R10-5**）：**一次性**更宽窗口回退。触发条件＝这条自适应带子
+        #   没能拿到**干净**的指纹：空 / 退化 / **每一列都有墨**（`min(fp) > 0` ＝ 带子里压着一条
+        #   通栏的深色元素，比如那条自绘标题条没被推下去）。这三种都说明那条横条多半落在上面那次
+        #   扫描窗口**之外**（底边 > max_y0、或上边 > max_scan）⇒ 用"整幅上部三成"再扫一次；
+        #   只有当它给出**更干净**的结果（非空、非退化、min==0）才采用，否则维持第一次。只回退一次。
+        _h = int(img.size[1])
+        _y0b = detect_band_y0(img, box[0], box[2],
+                              max_scan=max(96, int(_h * 0.30)), max_y0=max(72, int(_h * 0.30)))
+        if _y0b and _y0b != _y0:
+            _box2 = crop_box(img.size, pane_left_rel,
+                             (BAND_PX[0], _y0b, BAND_PX[2], BAND_PX[3]), pane_left_px=pl)
+            _fp2 = _norm(_raw(_box2))
+            if _fp2 and not degenerate_reason(_fp2) and min(_fp2) == 0:
+                return _fp2
+        return fp
     except Exception:
         return []
 
@@ -503,6 +569,36 @@ def _crop_render(img, main, render):
         return None
 
 
+def _blocky(img) -> bool:
+    """整幅是**两大块纯色拼起来的**（左右 或 上下 半幅各自近单色）⇒ True（＝不是画面）。
+
+    ⛔ 2026-09-21 加（第十轮 **V-R10-6** · P3）：V-R9-6 那条"至少有一行是有结构的"只看**行**方向，
+    于是「**左半深、右半浅**」的帧每一行都不平 ⇒ 蒙混过关（侦察线实测：`_frame_ok=True`、
+    指纹 33/64、`is_blank=False`、`degenerate_reason=''` ⇒ **参照进了库** ⇒ 之后同尺寸档判 mismatch）。
+    ⇒ 口径改成"**行、列两个方向都得有结构**"：真画面（文字/图标/头像）两个方向都有起伏，
+    而"两个大色块拼起来"的帧必有一个方向整片是平的。`_frame_ok` 与 `_mono` 共用这一条。
+    """
+    try:
+        small = img.convert("L").resize((64, 64))
+        px = small.load()
+        best_row = best_col = 0.0
+        for y in range(64):
+            row = [px[x, y] for x in range(64)]
+            m = sum(row) / 64.0
+            best_row = max(best_row, (sum((a - m) ** 2 for a in row) / 64.0) ** 0.5)
+            if best_row >= 3.0 and best_col >= 3.0:
+                return False
+        for x in range(64):
+            col = [px[x, y] for y in range(64)]
+            m = sum(col) / 64.0
+            best_col = max(best_col, (sum((a - m) ** 2 for a in col) / 64.0) ** 0.5)
+            if best_row >= 3.0 and best_col >= 3.0:
+                return False
+        return True
+    except Exception:
+        return False
+
+
 def _frame_ok(img) -> bool:
     """判"这幅图是不是真画面"：既不能近乎全黑，也不能是**纯色 / 色块**（黑屏/白屏/没画完的帧）。
 
@@ -513,6 +609,7 @@ def _frame_ok(img) -> bool:
     （mean 140 / std 126.9）会被当**好帧**返回。⇒ 再补两条：①**极差** `hi-lo >= 40`（真画面必有明暗差）；
     ②**至少有一行是有结构的**（逐行 std 最大值 ≥ 3）—— 半黑半白那种"两大块纯色"帧**每一行都是平的**，
     而真画面里总有文字/图标/头像那几行是有结构的。两条都是"确认它像画面"，不是"确认它好看"。
+    ⛔ 第十轮 **V-R10-6**：第②条只看行 ⇒ 左右分块的帧漏过 ⇒ 改由 `_blocky()` 统一判"两个方向都得有结构"。
     """
     try:
         from PIL import ImageStat
@@ -521,16 +618,7 @@ def _frame_ok(img) -> bool:
         lo, hi = st.extrema[0]
         if not (st.mean[0] > 25 and st.stddev[0] > 12 and (hi - lo) >= 40):
             return False
-        small = g.resize((64, 64))
-        px = small.load()
-        best = 0.0
-        for y in range(64):
-            row = [px[x, y] for x in range(64)]
-            m = sum(row) / 64.0
-            best = max(best, (sum((a - m) ** 2 for a in row) / 64.0) ** 0.5)
-            if best >= 3.0:
-                return True
-        return False
+        return not _blocky(g)
     except Exception:
         return False
 
@@ -544,12 +632,14 @@ def _mono(img, span: float = 8.0) -> bool:
     为什么要补它（2026-09-15 跨机实测抓到的真缺陷）：微信**最小化**时 `PrintWindow` 会返回
     **纯白帧**（实测 mean=255 / std=0，指纹 [255,255,255,…]），而 `grab_render` 原来把
     "质量可疑但有内容"的帧无条件留作兜底 ⇒ 上层拿到全白图、报告还写"会话头指纹：可抓"。
+    ⛔ 第十轮 **V-R10-6**：这里也要认"**两大块纯色拼起来**"那一类（否则它只是被 `_frame_ok` 拒收，
+    却仍以"兜底帧"的身份回到整条链上 ⇒ 缝还在，见 `_blocky`）。
     """
     try:
         from PIL import ImageStat
         st = ImageStat.Stat(img.convert("L"))
         lo, hi = st.extrema[0]
-        return st.stddev[0] < 2.0 or (hi - lo) < span
+        return st.stddev[0] < 2.0 or (hi - lo) < span or _blocky(img)
     except Exception:
         return True
 
@@ -667,6 +757,12 @@ def _region_occluded(render, main_pid: int, samples: int = 3) -> bool:
     实测（2026-09-13）：用户的浏览器盖在微信上时，退回 `ImageGrab` 会拿到 Chrome 的画面，
     下游 OCR 于是"读到"浏览器内容（会话列表 0~1 行、搜索框区域被污染），**全程不报错**。
     2026-09-18 扩到**同进程兄弟窗**（见 `_OCCLUDE_ALLOW` 的现场取证）：没设允许集时退回旧口径（只比 pid）。
+
+    ⛔ 2026-09-21 修（第十轮 **V-R10-6** · P3）：**退化矩形**（宽或高 < 8px）过去 `return False`
+    ＝"没遮挡" ⇒ 调用方照旧退回抓屏（侦察线实测：真调了一次 `ImageGrab` 抓 4×4 的屏）。
+    影响有界（帧宽 <64 ⇒ 指纹必空 ⇒ 只会 `no_capture`、不会发错人），但口径是错的：**矩形退化 ＝
+    我们没量到渲染区 ＝ 未知**，未知一律按"遮挡"处理（同 `_occlusion_verdict` 的全落空口径）⇒
+    不退抓屏，返回 None 更诚实。
     """
     try:
         import ctypes
@@ -674,7 +770,9 @@ def _region_occluded(render, main_pid: int, samples: int = 3) -> bool:
         u32 = ctypes.windll.user32
         x0, y0, x1, y1 = [int(v) for v in render]
         if x1 - x0 < 8 or y1 - y0 < 8:
-            return False
+            log.warning("渲染区矩形退化（%sx%s）⇒ 按**未知＝遮挡**处理，不退回抓屏",
+                        x1 - x0, y1 - y0)
+            return True
         seen = []
         for i in range(samples):
             for j in range(samples):

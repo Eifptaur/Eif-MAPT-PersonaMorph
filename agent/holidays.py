@@ -121,14 +121,24 @@ def load_state() -> dict:
     ⇒ 20 秒一轮的巡检接着重发。留证之后至少能一眼看出「是状态丢了，不是没发过」。
     """
     _BAD = object()                      # 哨兵：分得清"读到的东西"与"走的默认值"
-    d = persist.load_or_quarantine(state_path(), _BAD)
+    d, ok_overwrite = persist.load_checked(state_path(), _BAD)
     if isinstance(d, dict) and isinstance(d.get("greeted"), dict):
+        if not ok_overwrite:
+            d["_refuse_overwrite"] = True          # V-R10-23：原档还在 ⇒ 禁止覆盖
         return d
     if d is not _BAD:
         # 形状不对（greeted 不是对象）同样是坏档：留证再回默认值，别让它被下一次写盘盖掉
-        log.warning("节日问候状态形状不对 ⇒ 已按坏档留证：%s",
-                    persist.quarantine(state_path()) or "留证失败")
-    return {"greeted": {}, "updatedAt": 0}
+        kept = persist.quarantine(state_path())
+        log.warning("节日问候状态形状不对 ⇒ %s",
+                    ("已按坏档留证：%s" % kept) if kept else "**留证失败 ⇒ 原档保持原样、禁止覆盖**")
+        out = {"greeted": {}, "updatedAt": 0}
+        if not kept and not ok_overwrite:
+            out["_refuse_overwrite"] = True
+        return out
+    out = {"greeted": {}, "updatedAt": 0}
+    if not ok_overwrite:
+        out["_refuse_overwrite"] = True
+    return out
 
 
 def _save_state(st: dict) -> bool:
@@ -137,10 +147,17 @@ def _save_state(st: dict) -> bool:
     老写法是 `except: pass`（`agent/holidays.py:119` 旧版）——连一行日志都没有，于是
     "状态没写成功 ⇒ 每 20 秒重发一次"这件事**没人看得出来**。现在：走 `persist.atomic_write_json`
     （tmp 名带 pid+随机后缀，V-R9-22），失败记一条 warn，调用方据此在内存里打"已问候"标记。
+    V-R10-23：`st` 带 `_refuse_overwrite`（坏档还在原地、留证失败）时**拒绝写**——
+    盖掉它就是"今天已问候的会话全变没发过"，接着 20 秒一轮地重发。
     """
     with _lock:
+        if st.get("_refuse_overwrite"):
+            log.warning("节日问候状态档读不出来且留证失败 ⇒ **拒绝覆盖**（本次不落盘，靠内存标记防重发）：%s",
+                        state_path())
+            return False
         st["updatedAt"] = int(time.time() * 1000)
-        ok = persist.atomic_write_json(state_path(), st, indent=1)
+        payload = {k: v for k, v in st.items() if not str(k).startswith("_")}
+        ok = persist.atomic_write_json(state_path(), payload, indent=1)
         if not ok:
             log.warning("节日问候状态落盘失败 ⇒ 本进程内已记「已问候」，这一轮不再重试、不再重发：%s",
                         state_path())

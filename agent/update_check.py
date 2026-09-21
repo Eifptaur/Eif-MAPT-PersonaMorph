@@ -660,6 +660,70 @@ def _read_installed() -> dict:
         return {}
 
 
+def _expires_ts(v) -> float:
+    """`2026-09-20T12:00:00Z` → 时间戳（空/非法 ⇒ 0.0，表示"没有这道闸"）。"""
+    s = str(v or "").strip()
+    if not s:
+        return 0.0
+    try:
+        return time.mktime(time.strptime(s[:19], "%Y-%m-%dT%H:%M:%S"))
+    except Exception:
+        return 0.0
+
+
+def manifest_gates(man: dict, mine: str | None = None, max_seen: str | None = None,
+                   now: float | None = None) -> dict:
+    """更新清单的两道闸（freeze＝`expires` 过期 / rollback＝单调版本）——**唯一实现**。
+
+    ⛔ 2026-09-22 修 **V-R10-27（P0）**：这两道闸原本**只装在检查侧**（`state()`），而**真正动盘的是
+    `agent/update_apply.py::run_once()`** —— 它对 `expires` / `maxSeenVersion` **0 命中**：审计用假源
+    实测"远端 2026.9.1.1（< 本机 2026.9.21.11）照样真装进去、`expires=2020-01-01` 照装"，
+    即用户会被**降级**到有漏洞的旧版。⇒ 判定下沉成这个纯函数，`state()` 与 `run_once()` 都调它：
+    「检查说不行」与「真装的时候不行」必须是**同一个判定**（同一事实两条路不许相反）。
+
+    `mine`＝本机版本（不传则现读）；`max_seen`＝"见过的最高版本"（不传则现读状态快照）。
+
+    返回 `{"ok","kind","why","theirs","mine","expires","maxSeenVersion","block_install"}`，`kind`：
+      ""         ＝两道闸都过（能不能装再看版本/指纹，由调用方判）
+      "expired"  ＝清单已过期 ⇒ 拒据此更新（`state()` 报 error、`run_once()` 拒装）
+      "rollback" ＝比"见过的最高版本"还旧 ⇒ 判回滚/降级（同上）
+      "older"    ＝比本机装的还旧（审计里那条降级路径）⇒ **`run_once()` 必须拒装**；
+                   `state()` 保留既有语义（status=`older`，如实说"更新源可能指错了"，不当成错误）
+    `block_install`：**安装侧**的判据（含 `older`）——`run_once()` 只看这一个键。
+    """
+    base = (man or {}).get("base") or {}
+    an = (man or {}).get("announce") or {}
+    theirs = str(base.get("version") or an.get("version") or "")
+    mine = current_version() if mine is None else str(mine or "")
+    if max_seen is None:
+        max_seen = str((_read_state() or {}).get("maxSeenVersion") or "")
+    out = {"ok": True, "kind": "", "why": "", "theirs": theirs, "mine": mine,
+           "expires": str(base.get("expires") or "").strip(),
+           "maxSeenVersion": str(max_seen or ""), "block_install": False}
+    # ① freeze：`expires` 过期（发版脚本写 = builtAt + 30 天）
+    _t = _expires_ts(out["expires"])
+    if _t and (time.time() if now is None else float(now)) > _t:
+        out.update(ok=False, kind="expired", block_install=True,
+                   why=("更新清单已过期（expires=%s）⇒ 这次不据此更新：请检查系统时间，"
+                        "或换一个更新源/手动下载" % out["expires"]))
+        return out
+    # ② rollback：单调版本（远端不许比"见过的最高版本"低，哪怕它比本机新）
+    _vt = vtuple(theirs)
+    if theirs and _vt:
+        if out["maxSeenVersion"] and out["maxSeenVersion"] != theirs \
+                and vtuple(out["maxSeenVersion"]) and _vt < vtuple(out["maxSeenVersion"]):
+            out.update(ok=False, kind="rollback", block_install=True,
+                       why=("更新源给的版本（%s）比**见过的最高版本**（%s）还旧 ⇒ 判为回滚/降级，"
+                            "拒绝据此更新" % (theirs, out["maxSeenVersion"])))
+            return out
+        if mine and mine != theirs and vtuple(mine) and _vt < vtuple(mine):
+            out.update(kind="older", block_install=True,
+                       why=("更新源给的版本（%s）比本机装着的（%s）还旧 ⇒ 判为回滚/降级，"
+                            "拒绝据此更新（更新源可能指错了）" % (theirs, mine)))
+            return out
+    return out
+
+
 def state(cfg: dict | None = None, timeout: float = 12.0) -> dict:
     """给控制台的**如实**三态。`status ∈ off | error | current | newer | older | pending`。
 
@@ -701,40 +765,21 @@ def state(cfg: dict | None = None, timeout: float = 12.0) -> dict:
     #   ① **freeze 防护＝`expires` 过期判否**：清单里带 `base.expires`（发版脚本写 = builtAt + 30 天），
     #      过期就**拒绝据此更新**并如实说原因（否则一个被控的源可以永远喂同一份旧清单）；
     #   ② **rollback 防护＝单调版本**：把"见过的最高版本"记进状态，远端低于它就拒（哪怕它比本机新）。
-    _exp = str(base.get("expires") or "").strip()
-    out["expires"] = _exp
-    if _exp:
-        try:
-            _t = time.mktime(time.strptime(_exp[:19], "%Y-%m-%dT%H:%M:%S"))
-        except Exception:
-            _t = None
-        if _t is not None and time.time() > _t:
-            out["status"] = "error"
-            out["why"] = ("更新清单已过期（expires=%s）⇒ 这次不据此更新：请检查系统时间，"
-                          "或换一个更新源/手动下载" % _exp)
-            st0 = _read_state()
-            st0.update({"lastCheck": out["checkedAt"], "lastStatus": "error",
-                        "lastError": out["why"], "lastGoodUrl": out["url"]})
-            _ws0 = _write_state(st0)
-            out["stateSaved"] = (_ws0 == "")
-            if _ws0:
-                out["stateSaveError"] = _ws0
-            return out
-    _st_prev = _read_state()
-    _maxseen = str((_st_prev or {}).get("maxSeenVersion") or "")
-    out["maxSeenVersion"] = _maxseen
-    if (theirs and theirs != mine and _maxseen and vtuple(theirs) and vtuple(_maxseen)
-            and vtuple(theirs) < vtuple(_maxseen)):
+    # ⛔ 2026-09-22（**V-R10-27**）：这两道判定现在**只有一处实现**（`manifest_gates`），
+    #   安装侧 `update_apply.run_once()` 复检的就是同一个函数 —— 不许再各写一套（那正是这条 P0 的成因）。
+    _gate = manifest_gates(man, mine=mine)
+    out["expires"] = _gate["expires"]
+    out["maxSeenVersion"] = _gate["maxSeenVersion"]
+    if _gate["kind"] in ("expired", "rollback"):
         out["status"] = "error"
-        out["why"] = ("更新源给的版本（%s）比**见过的最高版本**（%s）还旧 ⇒ 判为回滚/降级，拒绝据此更新"
-                      % (theirs, _maxseen))
-        st1 = dict(_st_prev or {})
-        st1.update({"lastCheck": out["checkedAt"], "lastStatus": "error",
+        out["why"] = _gate["why"]
+        st0 = _read_state()
+        st0.update({"lastCheck": out["checkedAt"], "lastStatus": "error",
                     "lastError": out["why"], "lastGoodUrl": out["url"]})
-        _ws1 = _write_state(st1)
-        out["stateSaved"] = (_ws1 == "")
-        if _ws1:
-            out["stateSaveError"] = _ws1
+        _ws0 = _write_state(st0)
+        out["stateSaved"] = (_ws0 == "")
+        if _ws0:
+            out["stateSaveError"] = _ws0
         return out
     # 自更新要用它俩（2026-09-16：控制台「立即更新」真正开始下载+换入，不再只打印指路文案）
     out["baseUrl"] = str(base.get("url") or "")

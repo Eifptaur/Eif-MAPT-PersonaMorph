@@ -226,5 +226,38 @@ finally:
         pass
 
 print("")
+print("── I. 第十轮 V-R10-34：探测出口的**响应体上限** ──")
+
+
+class _BigResp(object):
+    def __init__(self, n):
+        self.n = n
+
+    def read(self, size=-1):
+        if size is None or size < 0:
+            return b"x" * self.n
+        return b"x" * min(self.n, size)
+
+
+class _SmallResp(object):
+    def read(self, size=-1):
+        return b'{"ok": 1}'
+
+
+try:
+    _small = LM._read_json(_SmallResp())
+    ok("I1 正常小响应体 ⇒ 能解析（阳性对照，别把正常路径也拦了）", _small.get("ok") == 1, str(_small))
+    _raised = False
+    try:
+        LM._read_json(_BigResp(LM._MAX_JSON + 10))
+    except Exception:
+        _raised = True
+    ok("I2 **超过上限**的响应体 ⇒ 抛（不当成正常 JSON 收完；第十轮实测 64MB ⇒ 峰值 128MB，且并发 5 个）",
+       _raised)
+    ok("I3 上限是个可读常量（判据与实现同源，改一处即可）",
+       isinstance(LM._MAX_JSON, int) and LM._MAX_JSON >= 1024 * 1024, str(getattr(LM, "_MAX_JSON", None)))
+except Exception as _e:
+    ok("I 段能跑起来", False, str(_e)[:100])
+
 print("本机模型探测判据：%d 通过 / %d 失败 / %d 跳过" % (PASS, FAIL, SKIP_N))
 sys.exit(1 if FAIL else 0)

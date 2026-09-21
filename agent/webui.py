@@ -15,6 +15,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
+from . import persist        # V-R10-26：原子写（唯一临时名 + fsync + os.replace）
 from .config import as_bool, deep_merge, get_config, save_config, set_config
 from . import local_guard                # V-R3-8：回环 Host 校验（与本地生图服务共用同一份实现）
 from .whale_text import DICT as WHALE_DICT, SKIP as WHALE_SKIP
@@ -855,10 +856,13 @@ class WebUI:
                         from urllib.parse import urlparse as _up, parse_qs as _pq
                         from . import verifiers as _vf
                         _q = _pq(_up(self.path).query)
-                        # ⛔ 2026-09-21 加（第九轮 V-R9-11）：把**运行中实例**的 `_db_how` 喂给检验器 ——
-                        #   否则"我读的是不是正在写的那个号"那格只能判假绿（`status()` 不带 how 就没这一维）。
+                        # ⛔ 2026-09-21 加（第九轮 V-R9-11 / 第十轮 V-R10-8）：把**运行中实例**的
+                        #   `_db_how` 与 `_cap` 喂给检验器 —— 否则"我读的是不是正在写的那个号"
+                        #   与"哪张表读失败了"（「消息库读不到」那条链的核心）只能判假绿。
                         try:
-                            _vf.set_runtime_how(getattr(_current_wx(parent), "_db_how", None))
+                            _wo = _current_wx(parent)
+                            _vf.set_runtime_how(getattr(_wo, "_db_how", None),
+                                                getattr(_wo, "_cap", None))
                         except Exception:
                             pass
                         self._json(_vf.run(str((_q.get("id") or [""])[0] or "")))
@@ -1421,8 +1425,21 @@ class WebUI:
 
             def _handle_body_request(self):
                 path = urlparse(self.path).path
-                length = int(self.headers.get("Content-Length") or 0)
-                raw = self.rfile.read(length) if length else b"{}"
+                # ⛔ 2026-09-21 修（第十轮 **V-R10-34**）：原来按 `Content-Length` **全收** ——
+                #   实测 64MB 全读进内存；更糟的是"声明 200MB、只发 1MB"会把处理线程**卡死**
+                #   （守着一个永远读不满的体）。⇒ 加**上限**（超限直接 413，不再读了），
+                #   并把读取本身容错（客户端半途断开 ⇒ 当空体，交给各路由自己报错）。
+                _MAX_BODY = 8 * 1024 * 1024
+                try:
+                    length = int(self.headers.get("Content-Length") or 0)
+                except Exception:
+                    length = 0
+                if length > _MAX_BODY:
+                    return self._json({"error": "请求体过大（上限 %d 字节）" % _MAX_BODY}, 413)
+                try:
+                    raw = self.rfile.read(length) if length else b"{}"
+                except Exception:
+                    raw = b"{}"
                 try:
                     data = json.loads(raw.decode("utf-8")) if raw else {}
                 except Exception:
@@ -1679,10 +1696,13 @@ class WebUI:
                         from urllib.parse import urlparse as _up, parse_qs as _pq
                         from . import verifiers as _vf
                         _q = _pq(_up(self.path).query)
-                        # ⛔ 2026-09-21 加（第九轮 V-R9-11）：同上一处 —— 把运行中实例的 `_db_how`
-                        #   喂给检验器，"我读的是不是正在写的那个号"那格才有铁证（否则只能判假绿）。
+                        # ⛔ 2026-09-21 加（第九轮 V-R9-11 / 第十轮 V-R10-8）：同上一处 —— 把运行中
+                        #   实例的 `_db_how` 与 `_cap` 都喂给检验器，"我读的是不是正在写的那个号"
+                        #   与"哪张表读失败了"才有铁证（否则只能判假绿）。
                         try:
-                            _vf.set_runtime_how(getattr(_current_wx(parent), "_db_how", None))
+                            _wo2 = _current_wx(parent)
+                            _vf.set_runtime_how(getattr(_wo2, "_db_how", None),
+                                                getattr(_wo2, "_cap", None))
                         except Exception:
                             pass
                         self._json(_vf.run(str((_q.get("id") or [""])[0] or "")))
@@ -1739,6 +1759,14 @@ class WebUI:
                                                       "消息收发与监听不受影响；稍等几秒再点一次。（%s）"
                                                       % str(_e3)[:100]), "groups": []})
                                 return
+                            # ⛔ 第十轮 **V-R10-14**：刷完必须**重算监听目标**（否则新群不进 targets、
+                            #   显示名还是 wxid，界面同时给出"读到 N 个群 / 监听目标 0 个"两个结论）。
+                            try:
+                                _rt = getattr(parent, "refresh_targets_fn", None)
+                                if callable(_rt):
+                                    _rt("控制台「刷新群列表」")
+                            except Exception as _e3b:
+                                print("重算监听目标失败（不影响群列表本身）：%s" % str(_e3b)[:80])
                         self._json(parent.groups_fn())
                     except Exception as e:
                         self._json({"ok": False, "error": str(e), "groups": []})
@@ -2027,10 +2055,10 @@ class WebUI:
                                         continue
                                     _keep.append(_ln if _ln.endswith("\n") else _ln + "\n")
                                 if _hit:
-                                    _tmp = _f + ".tmp"
-                                    with open(_tmp, "w", encoding="utf-8", newline="\n") as fh:
-                                        fh.writelines(_keep)
-                                    os.replace(_tmp, _f)
+                                    # V-R10-26：自己拼 `<path>.tmp` 的话，两个写者会撞同一个临时档；
+                                    #   崩溃留下的孤儿也没人清 ⇒ 走统一的原子写（唯一临时名 + fsync + replace）
+                                    if not persist.atomic_write_text(_f, "".join(_keep), newline="\n"):
+                                        raise IOError("日志重写没写进磁盘（原档未动）：%s" % _f)
                                     _removed += _hit
                                     _kept_days.append(_d)
                             except Exception:
@@ -2125,8 +2153,8 @@ class WebUI:
                             _us["day"] = {"sessions": 0, "calls": 0, "tokens": 0, "sent": 0, "cost": 0.0}
                             _us["period"] = {"sessions": 0, "calls": 0, "tokens": 0, "sent": 0, "cost": 0.0}
                             _us["total"] = {"sessions": 0, "calls": 0, "tokens": 0, "sent": 0, "cost": 0.0}
-                            with open(_p, "w", encoding="utf-8") as f:
-                                _j2.dump(_us, f, ensure_ascii=False, indent=1)
+                            if not persist.atomic_write_json(_p, _us, indent=1):
+                                raise IOError("写盘失败（原档一个字节都没动）：%s" % _p)
                         self._json({"ok": True, "note": "已清空计费历史（%d 天记录全部删除，累计归零）" % _n})
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)})
@@ -2259,8 +2287,8 @@ class WebUI:
                                 _t["sessions"] = max(0, int(_t.get("sessions") or 0) - int(agg["sessions"]))
                                 _t["sent"] = max(0, int(_t.get("sent") or 0) - int(agg["sent"]))
                                 _us["day"] = _t
-                            with open(_p, "w", encoding="utf-8") as f:
-                                _j2.dump(_us, f, ensure_ascii=False, indent=1)
+                            if not persist.atomic_write_json(_p, _us, indent=1):
+                                raise IOError("写盘失败（原档一个字节都没动）：%s" % _p)
                         self._json({"ok": True,
                                     "note": "已删除 %d 天的计费日志（%s）" % (len(_gone), ", ".join(sorted(_gone)[:12])),
                                     "removed": sorted(_gone)})
@@ -2405,8 +2433,8 @@ class WebUI:
                             cur = user_cats.get(name, {}) or {}
                             cur["desc"] = str(data.get("desc") or cur.get("desc") or "")
                             user_cats[name] = cur
-                            with open(_p, "w", encoding="utf-8") as f:
-                                _json.dump(user_cats, f, ensure_ascii=False, indent=1)
+                            if not persist.atomic_write_json(_p, user_cats, indent=1):
+                                raise IOError("写盘失败（原档一个字节都没动）：%s" % _p)
                             self._json({"ok": True})
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)})
@@ -2423,8 +2451,8 @@ class WebUI:
                         except Exception:
                             user_cats = {}
                         user_cats.pop(name, None)
-                        with open(cats_p, "w", encoding="utf-8") as f:
-                            _json.dump(user_cats, f, ensure_ascii=False, indent=1)
+                        if not persist.atomic_write_json(cats_p, user_cats, indent=1):
+                            raise IOError("写盘失败（原档一个字节都没动）：%s" % cats_p)
                         # 该分区下的卡移到默认
                         try:
                             with open(pers_p, "r", encoding="utf-8") as f:
@@ -2434,8 +2462,8 @@ class WebUI:
                         for k, v in items.items():
                             if (v or {}).get("cat") == name:
                                 v["cat"] = "📝 自定义"
-                        with open(pers_p, "w", encoding="utf-8") as f:
-                            _json.dump(items, f, ensure_ascii=False, indent=1)
+                        if not persist.atomic_write_json(pers_p, items, indent=1):
+                            raise IOError("写盘失败（原档一个字节都没动）：%s" % pers_p)
                         self._json({"ok": True})
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)})
@@ -2472,8 +2500,8 @@ class WebUI:
                                 cur["text"] = text
                             cur["cat"] = cat
                             items[key] = cur
-                            with open(_p, "w", encoding="utf-8") as f:
-                                _json.dump(items, f, ensure_ascii=False, indent=1)
+                            if not persist.atomic_write_json(_p, items, indent=1):
+                                raise IOError("写盘失败（原档一个字节都没动）：%s" % _p)
                             self._json({"ok": True, "key": key})
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)})
@@ -2488,8 +2516,8 @@ class WebUI:
                         except Exception:
                             items = {}
                         items.pop(str(data.get("key") or ""), None)
-                        with open(_p, "w", encoding="utf-8") as f:
-                            _json.dump(items, f, ensure_ascii=False, indent=1)
+                        if not persist.atomic_write_json(_p, items, indent=1):
+                            raise IOError("写盘失败（原档一个字节都没动）：%s" % _p)
                         self._json({"ok": True})
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)})

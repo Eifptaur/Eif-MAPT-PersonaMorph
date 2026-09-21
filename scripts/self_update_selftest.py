@@ -12,6 +12,9 @@
   ④ **绝不碰运行时/用户文件**（`data/`、`config.json`、日志）——连包里夹带的 `data/` 也不许落地
   ⑤ 接线：`POST /api/update_apply` 在 do_POST 段、控制台点按钮会轮询进度并调重启、
      **旧的指路文案必须已经消失**（它就是"做出来不给用户用"的原罪）
+  ⑥ **L 段（V-R10-27，P0）**：两道闸在**真装那一刻**也生效 —— 走真路径 `run_once()`：
+     版本回退清单 / `expires` 过期清单 / 低于 `maxSeenVersion` ⇒ 一律**拒装且一个文件都不动**；
+     并断言"同一份清单 `state()` 与 `run_once()` 同一结论"＋反例锚（摘掉闸就必须真装进去）。
 
 自包含：临时目录里造"旧版树 + 在线包 zip + 清单"，真跑 `apply_full()`。
 """
@@ -78,6 +81,10 @@ def snap(root):
 
 
 tmp = tempfile.mkdtemp(prefix="pm-selfup-")
+# ⛔ V-R10-27：`run_once()` 现在会（单调）记 `maxSeenVersion`，而本判据喂的是 9999.x 这种假版本
+#   ⇒ 状态文件指到临时目录，**别写用户真的 `data/update_state.json`**（跑一次自检就把他的回滚闸顶高）。
+from agent import update_check as _uc_top                                       # noqa: E402
+_uc_top._state_path = lambda: os.path.join(tmp, "update_state.json")
 try:
     target = os.path.join(tmp, "install")
     old = {"agent/a.py": "A=1\n", "agent/b.py": "B=1\n", "README.md": "old\n"}
@@ -248,6 +255,126 @@ try:
     ok(r.get("needRestart") is True, "成功 ⇒ needRestart=True（控制台据此调 /api/restart）")
     j = UA.job()
     ok(j["state"] == "done" and j["msg"], "作业状态可被控制台读到（state=%s）" % j["state"], str(j)[:110])
+
+    print("── L. P0（V-R10-27）：版本回退 / expires 过期 ⇒ `run_once()` 必须**拒装**（不许真降级）──")
+    # 现场（审计用假源实测）：`run_once()` **完全绕过** `state()` 的两道闸 ——
+    #   · 远端 `2026.9.1.1`（< 本机 `2026.9.21.11`）：`state()` 判 `older`，`run_once()` **照样真装**；
+    #   · `expires=2020-01-01`：`state()` 报「清单已过期」，`run_once()` **照装**；
+    #   · `maxSeenVersion` 是**死代码**（只有检查侧写、没有任何一侧读）。
+    # ⇒ 这一节全部走**真路径** `run_once()`，并断言"同一份清单 `state()` 与 `run_once()` 同一结论"。
+    from agent import update_check as _uc2                                    # noqa: E402
+    _sf = os.path.join(tmp, "p0_update_state.json")
+    _keep_sp, _keep_fa, _keep_ri = _uc2._state_path, _uc2.fetch_any, _uc2._read_installed
+    _keep_gate, _keep_rel2 = _uc2.manifest_gates, UA._relaunch_after_update
+    _uc2._state_path = lambda: _sf
+    _uc2._read_installed = lambda: {}          # 别去读真的 data/installed.json
+    UA._relaunch_after_update = lambda *a, **k: None
+
+    def _reset_tree():
+        for _rel in ("agent/a.py", "agent/b.py", "README.md"):
+            write(os.path.join(target, _rel.replace("/", os.sep)), old[_rel])
+        if os.path.exists(os.path.join(target, "agent", "c.py")):
+            os.remove(os.path.join(target, "agent", "c.py"))
+        write(os.path.join(target, "data", "installed.json"),
+              json.dumps({"version": "1.0.0", "sha256": "x" * 64}))
+
+    def _man(ver, extra=None):
+        _b = {"version": ver, "sha256": want_tree, "url": pkg, "size": 1, "files": len(new)}
+        _b.update(extra or {})
+        return {"schema": "persona-morph/1", "base": _b, "announce": {"version": ver, "notes": []}}
+
+    # ⚠️ 低版本那份**必须带一个与本机不同的内容指纹**：否则会先被"已是最新"那条短路吞掉，
+    #   这道闸就等于没被测到（审计现场那份清单正是带 build 的）。
+    _LOW = _man("1.0.0", {"build": "deadbeef0000"})
+    _EXPIRED = _man("9999.2.2", {"expires": "2000-01-01T00:00:00Z"})
+    _FINE = _man("9999.2.2")
+    try:
+        _reset_tree()
+        _before = snap(target)
+        _r_low = UA.run_once(manifest=dict(_LOW), zip_path=pkg, target=target)
+        ok(_r_low.get("ok") is False and _r_low.get("gate") == "older",
+           "**版本回退清单 ⇒ `run_once()` 拒装**（gate=%s）" % _r_low.get("gate"), str(_r_low)[:130])
+        ok("还旧" in str(_r_low.get("why")) and "回滚" in str(_r_low.get("why")),
+           "…理由说清是「比本机还旧」（不是含糊的失败）", str(_r_low.get("why"))[:90])
+        ok(snap(target) == _before,
+           "…**整棵树一个字节都没动**（真路径上拒装，不是只报了个错）")
+
+        _r_exp = UA.run_once(manifest=dict(_EXPIRED), zip_path=pkg, target=target)
+        ok(_r_exp.get("ok") is False and _r_exp.get("gate") == "expired",
+           "**expires 过期清单 ⇒ `run_once()` 拒装**（gate=%s）" % _r_exp.get("gate"), str(_r_exp)[:130])
+        ok("过期" in str(_r_exp.get("why")), "…理由里写明了「过期」", str(_r_exp.get("why"))[:90])
+        ok(snap(target) == _before, "…树还是没动")
+
+        # 单调版本（rollback）：远端**比见过最高版本低**也要拒（哪怕它比本机新）
+        with open(_sf, "w", encoding="utf-8") as _f:
+            json.dump({"maxSeenVersion": "9999.9.9"}, _f)
+        _r_rb = UA.run_once(manifest=dict(_FINE), zip_path=pkg, target=target)
+        ok(_r_rb.get("ok") is False and _r_rb.get("gate") == "rollback",
+           "**低于「见过的最高版本」⇒ `run_once()` 也拒**（maxSeenVersion 不再是死代码）",
+           str(_r_rb)[:130])
+        ok(snap(target) == _before, "…树仍然没动")
+        os.remove(_sf)
+
+        # ⭐ P0 的本质：**同一份清单，`state()` 与 `run_once()` 必须同一结论**
+        def _state_of(_m):
+            _uc2.fetch_any = lambda urls, timeout=12.0, patient=None: (dict(_m), "", "")
+            return _uc2.state({"url": "https://example.com/m.json"})
+
+        _pairs = []
+        for _nm, _m in (("回退", _LOW), ("过期", _EXPIRED), ("正常新清单", _FINE)):
+            _st = _state_of(_m)
+            _by_state = _st.get("status") in ("older", "error")      # 检查侧：不许据它更新
+            _reset_tree()
+            _r = UA.run_once(manifest=dict(_m), zip_path=pkg, target=target)
+            _by_apply = not _r.get("ok")                             # 安装侧：拒装
+            _pairs.append((_nm, _st.get("status"), _by_state, _by_apply))
+        ok(all(a == b for _n, _s, a, b in _pairs),
+           "**同一份清单 `state()` 与 `run_once()` 结论一致**（三份清单逐个对）",
+           "；".join("%s：state=%s 拒绝=%s/装=%s" % (_n, _s, a, b) for _n, _s, a, b in _pairs))
+        ok([_n for _n, _s, a, b in _pairs if a and b] == ["回退", "过期"],
+           "…且三份清单里两份必须被拒（不是恒真：第三份是放行的阳性对照）",
+           str([(n, s) for n, s, a, b in _pairs]))
+        ok(_pairs[2][1] == "newer" and os.path.exists(os.path.join(target, "agent", "c.py")),
+           "…阳性对照：正常新清单 **state=newer 且 run_once 真装**（闸门没把正常路堵死）",
+           "%s / c.py=%s" % (_pairs[2][1], os.path.exists(os.path.join(target, "agent", "c.py"))))
+
+        # ⭐ 唯一来源：检查侧与安装侧**调的是同一个函数**（不许各写一套 —— 那正是这条 P0 的成因）
+        _seen_calls = []
+
+        def _spy_gate(man, mine=None, max_seen=None, now=None):
+            _seen_calls.append(str((man or {}).get("base", {}).get("version") or ""))
+            return _keep_gate(man, mine=mine, max_seen=max_seen, now=now)
+
+        _uc2.manifest_gates = _spy_gate
+        if os.path.exists(_sf):
+            os.remove(_sf)
+        _state_of(_FINE)
+        _reset_tree()
+        UA.run_once(manifest=dict(_FINE), zip_path=pkg, target=target)
+        _uc2.manifest_gates = _keep_gate
+        ok(_seen_calls[:2] == ["9999.2.2", "9999.2.2"],
+           "检查侧与安装侧**调的是同一个判定函数**（唯一来源，不是两套实现）", str(_seen_calls[:3]))
+
+        # 反例锚：把这道闸摘掉（＝修之前的样子）⇒ 同一份回退清单**真的会装进去**（判据不是恒真）
+        if os.path.exists(_sf):
+            os.remove(_sf)
+        _reset_tree()
+        _before2 = snap(target)
+        _uc2.manifest_gates = lambda *a, **k: {"ok": True, "kind": "", "why": "", "block_install": False,
+                                              "theirs": "", "mine": "", "expires": "", "maxSeenVersion": ""}
+        try:
+            _r_old = UA.run_once(manifest=dict(_LOW), zip_path=pkg, target=target)
+        finally:
+            _uc2.manifest_gates = _keep_gate
+        ok(_r_old.get("ok") is True and snap(target) != _before2,
+           "反例锚：**摘掉这道闸**（＝修之前）同一份回退清单会真装进去 ⇒ 上面那些断言抓得住回归",
+           "ok=%s 树变了=%s" % (_r_old.get("ok"), snap(target) != _before2))
+    finally:
+        _uc2.manifest_gates = _keep_gate
+        _uc2._state_path, _uc2.fetch_any, _uc2._read_installed = _keep_sp, _keep_fa, _keep_ri
+        UA._relaunch_after_update = _keep_rel2
+        if os.path.exists(_sf):
+            os.remove(_sf)
 
     print("── J. start_async 防重入 ──")
     UA._set(state="running", phase="download")

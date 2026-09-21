@@ -13,6 +13,8 @@
      且是"删最旧的、留最新的"。
   D. **有账可查**：`tick()` / `sweep_temp()` / `prune_dir()` 都必须返回"删了几个 + 回收多少字节"，
      空手而归也要有数字（本项目的规矩：没有数字就不算做过）。
+  G. **数据安全（V-R10-29，P1）**：媒体目录可能被用户配到自己也在用的目录 ⇒ **用户自己的文件
+     必须原样保留**（只删我们造的前缀），删之前要写清单，tick 清的必须是**配置里的那个目录**。
 
 用法：`py -3 scripts/housekeeping_selftest.py`（不联网、不碰真目录、不删用户任何东西）
 """
@@ -87,12 +89,13 @@ try:
     sect("B. 刚出炉的不动（可能正在被发送）")
     d2 = os.path.join(tmp, "d2")
     os.makedirs(d2, exist_ok=True)
-    touch(d2, "new.bin", 500, age_s=5, now=now)
-    touch(d2, "old.bin", 500, age_s=3600, now=now)
+    # ⛔ V-R10-29：媒体目录只认**我们造的名字**（`tts_` / `vc_` / `seg_` 前缀）⇒ 夹具改成本项目的产物名
+    touch(d2, "tts_new.wav", 500, age_s=5, now=now)
+    touch(d2, "tts_old.wav", 500, age_s=3600, now=now)
     rb = HK.prune_dir(d2, keep_newest=1, now=now)
-    ok("keep_newest=1 ⇒ 只留最新那个", sorted(os.listdir(d2)) == ["new.bin"], str(os.listdir(d2)))
+    ok("keep_newest=1 ⇒ 只留最新那个", sorted(os.listdir(d2)) == ["tts_new.wav"], str(os.listdir(d2)))
     ok("刚出炉的没被删（它在 min_age_s 内，哪怕是「该留的那个」也不删）",
-       os.path.exists(os.path.join(d2, "new.bin")))
+       os.path.exists(os.path.join(d2, "tts_new.wav")))
     ok("回收字节数对得上", rb["bytes"] >= 500, repr(rb["bytes"]))
 
     # ── C. 三条策略各自生效 ─────────────────────────────────────────────────
@@ -100,46 +103,48 @@ try:
     d3 = os.path.join(tmp, "d3")
     os.makedirs(d3, exist_ok=True)
     for i in range(6):
-        touch(d3, "f%d.bin" % i, 1000, age_s=(6 - i) * 700, now=now)   # f5 最新
+        touch(d3, "tts_f%d.wav" % i, 1000, age_s=(6 - i) * 700, now=now)   # f5 最新
     HK.prune_dir(d3, keep_newest=2, now=now)
     left = sorted(os.listdir(d3))
-    ok("keep_newest=2 ⇒ 留最新两个", left == ["f4.bin", "f5.bin"], str(left))
+    ok("keep_newest=2 ⇒ 留最新两个", left == ["tts_f4.wav", "tts_f5.wav"], str(left))
 
     d4 = os.path.join(tmp, "d4")
     os.makedirs(d4, exist_ok=True)
-    touch(d4, "ancient.bin", 100, age_s=10 * 86400, now=now)
-    touch(d4, "recent.bin", 100, age_s=3600, now=now)
+    touch(d4, "tts_ancient.wav", 100, age_s=10 * 86400, now=now)
+    touch(d4, "tts_recent.wav", 100, age_s=3600, now=now)
     HK.prune_dir(d4, max_age_days=3, now=now)
-    ok("max_age_days=3 ⇒ 只清超龄的", sorted(os.listdir(d4)) == ["recent.bin"], str(os.listdir(d4)))
+    ok("max_age_days=3 ⇒ 只清超龄的", sorted(os.listdir(d4)) == ["tts_recent.wav"], str(os.listdir(d4)))
 
     d5 = os.path.join(tmp, "d5")
     os.makedirs(d5, exist_ok=True)
     for i in range(5):
-        touch(d5, "big%d.bin" % i, 400 * 1024, age_s=(5 - i) * 700, now=now)   # 共约 2 MB
+        touch(d5, "tts_big%d.wav" % i, 400 * 1024, age_s=(5 - i) * 700, now=now)   # 共约 2 MB
     HK.prune_dir(d5, max_mb=0.8, now=now)
     total = sum(os.path.getsize(os.path.join(d5, f)) for f in os.listdir(d5))
     ok("max_mb=0.8 ⇒ 从最旧的删到不超上限", total <= 0.8 * 1048576, "剩余 %.2f MB" % (total / 1048576.0))
-    ok("max_mb 生效时留的是最新的那批", "big4.bin" in os.listdir(d5), str(sorted(os.listdir(d5))))
+    ok("max_mb 生效时留的是最新的那批", "tts_big4.wav" in os.listdir(d5), str(sorted(os.listdir(d5))))
     ok("反证：干跑一个都不删", True)   # 下面单独测
 
     # ── D. 干跑 + 有账可查 + 越界保护 ───────────────────────────────────────
     sect("D. 干跑不删、账目齐全、越界保护")
     d6 = os.path.join(tmp, "d6")
     os.makedirs(d6, exist_ok=True)
-    touch(d6, "x.bin", 700, age_s=7200, now=now)
+    touch(d6, "tts_x.wav", 700, age_s=7200, now=now)
     rd = HK.prune_dir(d6, keep_newest=0, max_age_days=0.01, now=now, dry=True)   # 0.01 天 ≈ 14 分钟
     ok("干跑：报告说删了 1 个", rd["removed"] == 1, repr(rd))
-    ok("干跑：**文件其实还在**", os.path.exists(os.path.join(d6, "x.bin")))
+    ok("干跑：**文件其实还在**", os.path.exists(os.path.join(d6, "tts_x.wav")))
 
     d7 = os.path.join(tmp, "d7")
     os.makedirs(d7, exist_ok=True)
-    touch(d7, "y.bin", 300, age_s=7200, now=now)
+    touch(d7, "tts_y.wav", 300, age_s=7200, now=now)
     HK.prune_dir(d7, keep_newest=0, max_age_days=0, max_mb=0, now=now, dry=True)
     ok("反证：三条策略全为 0 ⇒ 什么都不删（不能因为「没给条件」就清空）",
-       os.path.exists(os.path.join(d7, "y.bin")))
+       os.path.exists(os.path.join(d7, "tts_y.wav")))
 
-    ok("不存在时返回 0 而不是报错", HK.prune_dir(os.path.join(tmp, "nope")) ==
-       {"removed": 0, "bytes": 0, "kept": 0})
+    _empty = HK.prune_dir(os.path.join(tmp, "nope"))
+    ok("不存在时返回 0 而不是报错",
+       _empty["removed"] == 0 and _empty["bytes"] == 0 and _empty["kept"] == 0
+       and _empty["skipped"] == 0, repr(_empty))
     ok("cleanup_dir 拒绝删非 pm- 名字的目录", HK.cleanup_dir(d2) is False and os.path.isdir(d2))
     # ⛔ 2026-09-21 修（第六轮 **V-R6-31**）：原来把 `os.makedirs(...)` 塞在断言里靠 `or True` 兜住
     #   ⇒ 断言里出现"永远为真"的子表达式（卫生网新族 `X or True` 当场抓出）。副作用移出断言。
@@ -148,6 +153,58 @@ try:
     os.makedirs(_p_del, exist_ok=True)
     ok("cleanup_dir：不存在时 False、存在（pm- 前缀）时删得掉",
        _no_exist and HK.cleanup_dir(_p_del) is True)
+
+    # ── G. 数据安全：用户自己的文件必须原样保留（V-R10-29，P1）────────────────
+    sect("G. 数据安全：同一目录里**用户自己的文件**一个都不许删（V-R10-29）")
+    # 现场：产物目录**用户可配**（`voice_reply.dir`），他完全可能把它指到一个自己也在用的目录；
+    # 旧 `prune_dir` 只看"够不够老 / 超不超量"，**不看文件名前缀** ⇒ 审计夹具里
+    # `我的会议录音.mp3` / `DSC_0042.JPG` 跟我们的产物同目录时**被一起删掉**（无回收站、不可逆）。
+    d8 = os.path.join(tmp, "d8")
+    os.makedirs(d8, exist_ok=True)
+    mine_old = touch(d8, "tts_20260101_1200.mp3", 4096, age_s=9 * 86400, now=now)    # 我们的产物（9 天）
+    mine_old2 = touch(d8, "vc_20260101_1200.wav", 4096, age_s=9 * 86400, now=now)    # 我们的产物（变声）
+    theirs_mp3 = touch(d8, "我的会议录音.mp3", 8192, age_s=30 * 86400, now=now)      # 用户的（更老）
+    theirs_jpg = touch(d8, "DSC_0042.JPG", 8192, age_s=30 * 86400, now=now)          # 用户的（更老）
+    r8 = HK.prune_dir(d8, keep_newest=0, max_age_days=1, now=now)
+    ok("**用户自己的文件原样保留**（`我的会议录音.mp3`）", os.path.exists(theirs_mp3))
+    ok("**用户自己的文件原样保留**（`DSC_0042.JPG`）", os.path.exists(theirs_jpg))
+    ok("我们自己的产物照样按时清掉（前缀白名单没把功能一起关掉）",
+       (not os.path.exists(mine_old)) and (not os.path.exists(mine_old2)) and r8["removed"] == 2,
+       "removed=%s kept=%s" % (r8["removed"], r8["kept"]))
+    ok("被跳过的用户文件**如实计数**（不是悄悄忽略）", r8["skipped"] == 2, repr(r8["skipped"]))
+
+    def _old_way_kills_user(now_):
+        """反例锚：`prefixes=()`＝老行为（不筛名字）⇒ 同一批"用户的文件"必被删。"""
+        _d = os.path.join(tmp, "d8-oldway")
+        os.makedirs(_d, exist_ok=True)
+        for _nm in ("我的会议录音.mp3", "DSC_0042.JPG"):
+            _p = touch(_d, _nm, 8192, age_s=30 * 86400, now=now_)
+        HK.prune_dir(_d, keep_newest=0, max_age_days=1, now=now_, prefixes=())
+        return not os.path.exists(os.path.join(_d, "我的会议录音.mp3"))
+
+    ok("反证（灵敏度）：把前缀白名单去掉，同一夹具里用户文件**真的会被删**",
+       _old_way_kills_user(now) is True)
+    ok("反证：默认前缀就是本项目的产物前缀（空 ⇒ 等于不筛，那才是老毛病）",
+       HK.MEDIA_PREFIXES == ("tts_", "vc_", "seg_"), repr(HK.MEDIA_PREFIXES))
+
+    # 删除清单：**删之前**写、只增不改（有账可查、事后能复核删了什么）
+    led = os.path.join(tmp, "pruned.jsonl")
+    d9 = os.path.join(tmp, "d9")
+    os.makedirs(d9, exist_ok=True)
+    touch(d9, "tts_ledger.wav", 1024, age_s=3 * 86400, now=now)
+    touch(d9, "我的另一个文件.mp3", 1024, age_s=3 * 86400, now=now)
+    r9 = HK.prune_dir(d9, keep_newest=0, max_age_days=1, now=now, ledger=led)
+    _lines = open(led, encoding="utf-8").read().strip().splitlines() if os.path.exists(led) else []
+    ok("删除前写了清单（一行一条：路径 / 大小 / 时间）",
+       len(_lines) == 1 and "tts_ledger.wav" in _lines[0] and '"size"' in _lines[0], str(_lines)[:120])
+    ok("清单里**没有**用户文件（只记我们删了什么）",
+       all("我的另一个文件" not in x for x in _lines), str(_lines)[:80])
+    ok("清单路径原样带回来（调用方/日志看得见）", r9["ledger"] == led and os.path.exists(led))
+    led2 = os.path.join(tmp, "pruned2.jsonl")
+    touch(d9, "tts_dry.wav", 1024, age_s=3 * 86400, now=now)
+    HK.prune_dir(d9, keep_newest=0, max_age_days=1, now=now, ledger=led2, dry=True)
+    ok("干跑：**不写清单、也不删**",
+       (not os.path.exists(led2)) and os.path.exists(os.path.join(d9, "tts_dry.wav")))
 
     sect("E. tick() 的账目形状（不真扫真目录，只看结构）")
     rep = HK.tick(dry=True)
@@ -160,6 +217,31 @@ try:
     ok("footprint 的 temp 带 entries/files/mb/names", all(k in fp["temp"] for k in ("entries", "files", "mb", "names")))
     ok("footprint 只统计我们前缀的条目（名字都带 pm-）",
        all(n.startswith("pm-") for n in fp["temp"]["names"]), str(fp["temp"]["names"][:3]))
+    # ⛔ V-R10-29：tick 清的必须是**配置里的那个目录**（不是硬编码 `ROOT\media\tts`）
+    _d_tick = os.path.join(tmp, "tick_media")
+    os.makedirs(_d_tick, exist_ok=True)
+    _troot = os.path.join(tmp, "tick_root")
+    os.makedirs(_troot, exist_ok=True)
+    touch(_d_tick, "tts_tick_old.mp3", 200 * 1024, age_s=3 * 86400, now=now)
+    touch(_d_tick, "tts_tick_old2.mp3", 200 * 1024, age_s=3 * 86400, now=now)
+    _tick_user = touch(_d_tick, "用户的录音.mp3", 200 * 1024, age_s=30 * 86400, now=now)
+    _led_tick = os.path.join(tmp, "tick_ledger.jsonl")
+    _saved_tts_dir, _saved_maxmb = HK.tts_dir, HK.TTS_MAX_MB
+    HK.tts_dir = lambda: _d_tick                 # 模拟"用户把 voice_reply.dir 配到别处"
+    HK.TTS_MAX_MB = 0.001                        # 1KB 上限 ⇒ 逼它按"总量超限"从最旧的开始删
+    try:
+        _rt = HK.tick(root=_troot, now=now, ledger=_led_tick)
+    finally:
+        HK.tts_dir, HK.TTS_MAX_MB = _saved_tts_dir, _saved_maxmb
+    ok("tick 清的是 `tts_dir()` 的实际值（用户可配目录）", _rt["media_dir"] == _d_tick, _rt["media_dir"])
+    ok("tick 真的在那个目录里清了我们的产物（没白报数）",
+       _rt["media_tts"]["removed"] >= 1 and not os.path.exists(os.path.join(_d_tick, "tts_tick_old.mp3")),
+       str(_rt["media_tts"]))
+    ok("tick 清到用户文件那一层也**不碰它**", os.path.exists(_tick_user))
+    ok("tick 也写了删除清单（启动时那次收尾同样有账可查）",
+       os.path.exists(_led_tick) and "tts_tick" in open(_led_tick, encoding="utf-8").read())
+    ok("brief() 把「跳过了几个不是我们造的文件」也念出来",
+       "跳过" in HK.brief(_rt), HK.brief(_rt))
 
     sect("F. 接线（改完不许只留在函数里）")
     bl = open(os.path.join("agent", "bilibili.py"), encoding="utf-8").read()
@@ -169,6 +251,12 @@ try:
     pp = open(os.path.join("scripts", "persona_morph.py"), encoding="utf-8").read()
     ok("启动时跑一次收尾并记日志", "_hk.tick()" in pp and "_hk.brief" in pp)
     ok("启动收尾失败不影响启动（包了 try）", "磁盘收尾跳过" in pp)
+    _hk_src = open(os.path.join("agent", "housekeeping.py"), encoding="utf-8").read()
+    ok("源码级：tick 不再把硬编码 `media/tts` 喂给 prune_dir（V-R10-29 的老写法）",
+       'prune_dir(os.path.join(ROOT, "media", "tts")' not in _hk_src
+       and "d = media_dir or tts_dir()" in _hk_src)
+    ok("源码级：prune_dir 的名字前缀白名单是**默认参数**（调用方忘传也不会退化成删全部）",
+       "prefixes=MEDIA_PREFIXES" in _hk_src and "startswith(_pref)" in _hk_src)
     tl = open(os.path.join("agent", "tools.py"), encoding="utf-8").read()
     _i = tl.find("def _exec_read_video")
     _seg = tl[_i:_i + 2600] if _i > 0 else ""

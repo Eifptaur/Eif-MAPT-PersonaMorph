@@ -69,10 +69,23 @@ def _safe_cfg():
 
 
 # ── 两个网络出口（自检里替身它们；不改这两处就没法离线测）────────────────────
+# ⛔ 2026-09-21 修（第十轮 **V-R10-34**）：这两个出口原来 `r.read()` **没有上限** ——
+#   本机模型服务（或伪装的端点）回 64MB 时 tracemalloc 峰值 128MB，而 `discover()` 还会**并发 5 个**。
+#   探端点只需要一小段 JSON ⇒ 8MB 足够，超了当失败（宁可探测失败，也不要被一个端点吃光内存）。
+_MAX_JSON = 8 * 1024 * 1024
+
+
+def _read_json(r) -> dict:
+    buf = r.read(_MAX_JSON + 1)
+    if len(buf) > _MAX_JSON:
+        raise ValueError("响应体超过上限（%d 字节）" % _MAX_JSON)
+    return json.loads(buf.decode("utf-8", "replace"))
+
+
 def _http_get_json(url, timeout):
     req = urllib.request.Request(url, headers={"Accept": "application/json"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode("utf-8", "replace"))
+        return _read_json(r)
 
 
 def _http_post_json(url, payload, timeout, headers=None):
@@ -81,7 +94,7 @@ def _http_post_json(url, payload, timeout, headers=None):
     h.update(headers or {})
     req = urllib.request.Request(url, data=body, headers=h, method="POST")
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode("utf-8", "replace"))
+        return _read_json(r)
 
 
 # ── 探测：/v1/models ─────────────────────────────────────────────────────────

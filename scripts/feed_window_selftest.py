@@ -28,6 +28,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
 from agent import feed_window as FW          # noqa: E402
 from agent import store as ST                # noqa: E402
+import _srcmatch as _sm                      # noqa: E402  空白容忍的源码断言（V-R4-13 第三条）
 
 PASS, FAIL = [], []
 
@@ -57,13 +58,19 @@ ok("A3 **@ 我 / 引用我的消息不受时间窗限制**（200 分钟前的也
    [m["id"] for m in _r2["keep"]] == [1] and not _r2["skip"], _r2)
 _r3 = FW.pick_feed([_m(i, 0.5, "第 %d 条" % i) for i in range(1, 8)], now_ms=NOW,
                    window_min=10, max_n=3)
-ok("A4 超上限 ⇒ 只留最新 3 条，其余进 **retry（退回未读）**（不是丢掉）",
-   [m["id"] for m in _r3["keep"]] == [5, 6, 7] and [m["id"] for m in _r3["retry"]] == [1, 2, 3, 4],
+ok("A4 超上限 ⇒ 喂**最旧**那几条（FIFO）、其余进 **retry（退回未读）**"
+   "（第十轮 V-R10-17：原来只留「最新」 ⇒ 到货 ≥ 上限时最旧的永远排不上）",
+   [m["id"] for m in _r3["keep"]] == [1, 2, 3] and [m["id"] for m in _r3["retry"]] == [4, 5, 6, 7],
    (_r3["keep"], _r3["retry"]))
-_r4 = FW.pick_feed([_m(1, 99, "旧 @我", ), _m(2, 0.1, "新"), _m(3, 0.2, "新2")], now_ms=NOW,
-                   window_min=10, max_n=2, directed=lambda m: m["id"] == 1)
-ok("A5 上限之下**优先保「指向它」的**，其余只留最新",
-   [m["id"] for m in _r4["keep"]] == [1, 3], _r4["keep"])
+_r4 = FW.pick_feed([_m(1, 99, "旧 @我"), _m(2, 0.1, "新"), _m(3, 0.2, "新2"), _m(4, 0.3, "新3")],
+                   now_ms=NOW, window_min=10, max_n=3, directed=lambda m: m["id"] == 1)
+ok("A5 上限之下**优先保「指向它」的**，其余按 FIFO 补足名额",
+   [m["id"] for m in _r4["keep"]] == [1, 2, 3] and [m["id"] for m in _r4["retry"]] == [4], _r4)
+# ⛔ 第十轮 V-R10-19：**directed 洪泛不许把上限废掉**（原来 `keep == _dir` ⇒ 1000 条全 @ 就是 1000 条）
+_r5b = FW.pick_feed([_m(i, 0.1, "@我 第%d条" % i) for i in range(1, 41)], now_ms=NOW, window_min=10,
+                    max_n=10, directed=lambda m: True)
+ok("A5b **全 @ 洪泛也夹上限**（40 条全 directed + cap 10 ⇒ 只喂 10 条，其余退回未读）",
+   len(_r5b["keep"]) == 10 and len(_r5b["retry"]) == 30, (len(_r5b["keep"]), len(_r5b["retry"])))
 _r5 = FW.pick_feed([_m(3, 0.1, "b"), _m(1, 0.2, "a"), _m(2, 0.3, "c")], now_ms=NOW, window_min=10)
 ok("A6 三桶都保持**传入顺序**（不乱序）", [m["id"] for m in _r5["keep"]] == [3, 1, 2], _r5["keep"])
 ok("A7 window_min=0 ⇒ 不限时间（全进 keep）",
@@ -167,9 +174,64 @@ try:
         for i in range(1, 6):
             _s4.append_incoming("group:g", "n%d" % i, REAL - (10 - i) * 1000, "u1", "甲", "第%d条" % i)
         pm.Orchestrator.wake(_Self(_s4), "group:g")
-        ok("C5 上限 2 ⇒ 只喂最新 2 条", _calls and _calls[-1] == ["第4条", "第5条"], _calls)
+        ok("C5 上限 2 ⇒ 喂**最旧** 2 条（FIFO；第十轮 V-R10-17）", _calls and _calls[-1] == ["第1条", "第2条"],
+           _calls)
         ok("C6 被挤出来的 3 条**仍在未读**（退回下一轮，不丢）", _s4.unread_count("group:g") == 3,
            _s4.unread_count("group:g"))
+
+        # C7：**多轮收敛 / 不饥饿**（第十轮 V-R10-17 的核心：不许有人永远排不上）——
+        #   到货 200/上限 150：物理上追不上，但 FIFO 保证「最早那条一定被喂过」；旧口径（留最新）里它永远排不上。
+        _nid = [0]
+
+        def _sim(rounds, arrive, cap):
+            _back, _fed, _now = [], set(), 1_800_000_000_000
+            for _r in range(rounds):
+                _now += 60_000
+                for _i in range(arrive):
+                    _nid[0] += 1
+                    _back.append({"id": _nid[0], "mid": "s%d" % _nid[0], "text": "第%d条" % _nid[0],
+                                  "ts": _now - 1000})
+                _rr = FW.pick_feed(_back, now_ms=_now, window_min=10, max_n=cap, directed=lambda m: False)
+                _fed.update(m["id"] for m in _rr["keep"])
+                _back = list(_rr["retry"])          # keep 被标读、skip 也被标读 ⇒ 都离开未读集合
+            return _back, _fed
+
+        _back7, _fed7 = _sim(6, 200, 150)
+        ok("C7 **FIFO 不饥饿**：到货 200 > 上限 150 时，最早那条（id=1）**仍然被喂过**"
+           "（旧口径「只留最新」里它永远排不上 ⇒ 这就是 V-R10-17 的活锁）",
+           1 in _fed7, "喂过的最小 id=%s" % (min(_fed7) if _fed7 else None))
+        _nid[0] = 0
+        _back8, _fed8 = _sim(8, 140, 150)
+        ok("C8 到货 140 < 上限 150 ⇒ 几轮之后 backlog **收敛**（不会线性发散）",
+           len(_back8) < 140, "8 轮后仍剩 %d 条" % len(_back8))
+
+        # C9：**第二道黑洞**（第十轮 V-R10-18）—— 未读 260 > 老的 peek(200) 上限时，多出来的 60 条
+        #   以前既不喂也不标读、不进任何桶（永远躺在那）。现在 peek(0) 取全部 ⇒ 喂 + 退回 = 总数。
+        _calls[:] = []
+        _s9 = ST.ChatStore()
+        for _i in range(1, 261):
+            _s9.append_incoming("group:g9", "b%d" % _i, REAL - 5000, "u1", "甲", "第%d条" % _i)
+        pm.Orchestrator.wake(_Self(_s9), "group:g9")
+        _fedn = len(_calls[-1]) if _calls else 0
+        _left = _s9.unread_count("group:g9")
+        ok("C9 **没有黑洞**：260 条未读 ⇒ 喂掉 + 退回未读 == 260（老口径会永远剩 60 条没人管）",
+           _fedn + _left == 260 and _left > 0, "喂 %d · 剩 %d" % (_fedn, _left))
+
+        # C10：**异常路径也要标读**（第十轮 V-R10-20：`pick_feed` 抛 ⇒ 喂了模型却没人标读 ⇒
+        #   5 分钟去重到期后同一批再喂一次）。把 pick_feed 打成抛异常，看未读是否被清掉。
+        _calls[:] = []
+        _s10 = ST.ChatStore()
+        for _i in range(1, 6):
+            _s10.append_incoming("group:g10", "e%d" % _i, REAL - 5000, "u1", "甲", "第%d条" % _i)
+        _orig_pf = FW.pick_feed
+        FW.pick_feed = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("夹具：切分炸了"))
+        try:
+            pm.Orchestrator.wake(_Self(_s10), "group:g10")
+        finally:
+            FW.pick_feed = _orig_pf
+        ok("C10 切分抛异常时：**喂出去的仍然被标读**（否则 5 分钟后会重复喂一遍）",
+           bool(_calls) and _s10.unread_count("group:g10") == 0,
+           "喂 %d 条 · 剩未读 %d" % (len(_calls[-1]) if _calls else 0, _s10.unread_count("group:g10")))
     finally:
         (pm.get_config, pm.resolve_context_tier, TT.note, ST.MESSAGES_DIR) = _saved
 
@@ -179,11 +241,30 @@ try:
     ok("D1 wake 里调了 `feed_window.pick_feed`", "pick_feed(" in _wake)
     ok("D2 wake 里用 `mark_read`（点名标读），不再用 `mark_all_read`/`drain_unread` 整批标读",
        "mark_read(" in _wake and "mark_all_read(" not in _wake and "drain_unread(" not in _wake)
-    ok("D3 喂给模型的就是切出来的那一批（`trigger = list(pending)`）", "trigger = list(pending)" in _wake)
+    ok("D3 喂给模型的就是切出来的那一批（`trigger = list(pending)`）", _sm.has(_wake, "trigger = list(pending)"))
 finally:
     ST.MESSAGES_DIR = _ST_MSG_DIR
     import shutil                                                            # noqa: E402
     shutil.rmtree(_tmp, ignore_errors=True)
+
+print("── E. 陈旧标记**进提示词**（第九轮 V-R9-17 的残留：原来只落 thought_trace，模型看不到）──")
+from agent import prompt as _P                                              # noqa: E402
+_NOWP = 1_800_000_000_000
+ok("E1 新鲜的批 ⇒ 不加陈旧提示",
+   _P.stale_note_for([{"ts": _NOWP - 60_000}], now_ms=_NOWP) == "")
+ok("E2 40 分钟前的批 ⇒ 加一句「最早那条是 X 分钟前」",
+   _sm.has(_P.stale_note_for([{"ts": _NOWP - 40 * 60_000}], now_ms=_NOWP), "40 分钟前"))
+ok("E3 六天前 ⇒ 也加，且数字对得上（8640 分钟）",
+   "8640" in _P.stale_note_for([{"ts": _NOWP - 6 * 24 * 3600_000}], now_ms=_NOWP))
+ok("E4 拿不到时间戳 / 空批 ⇒ 不加（不瞎说）",
+   _P.stale_note_for([{"text": "x"}], now_ms=_NOWP) == ""
+   and _P.stale_note_for([], now_ms=_NOWP) == "")
+ok("E5 提示词里真的接上了它（`build_user_prompt` 里调 `stale_note_for`）",
+   "stale_note_for(ctx.get(\"trigger_entries\"))" in
+   open(os.path.join(ROOT, "agent", "prompt.py"), encoding="utf-8").read())
+ok("E6 ⚠️ 本文件顶层**没有** `import time` —— 别在 prompt.py 里写 `time.time()`（会被 except 吞成 0）",
+   not _sm.has(open(os.path.join(ROOT, "agent", "prompt.py"), encoding="utf-8").read().split("\n\n\n")[0],
+               "import time"))
 
 print("\n==== 未读批切分判据：%d 通过 / %d 失败 ====" % (len(PASS), len(FAIL)))
 if FAIL:

@@ -50,18 +50,36 @@ def load() -> dict:
     V-R9-18：老写法是 `except: pass` ⇒ 坏档静默变默认值，紧接着 `_save()` **整体覆盖**
     ⇒ "坏文件 + 一次写入 = 旧提醒全没"，而 `add()` 还照旧回 `ok=True`（模型据此对用户说"已定好"）。
     改成留证后，坏档一个字节都不丢、还能人工修回来。
+
+    V-R10-23（V-R9-18 的回归）：**留证本身也会失败**（ACL 拒读 / 另一进程独占句柄）
+    ⇒ 原档留在原地，而下游拿默认值写一次就把它盖了（审计实测 20 条提醒只剩 2 条）。
+    所以这里用 `load_checked()` 拿到"原档是否还在"，在返回的 dict 上打 `_refuse_overwrite`
+    标记；`_save()` 见到它就**拒绝写盘**（宁可登记失败报错，也不静默丢用户数据）。
     """
     _BAD = object()                      # 哨兵：分得清"读到的东西"与"走的默认值"
-    d = persist.load_or_quarantine(path(), _BAD)
+    d, ok_overwrite = persist.load_checked(path(), _BAD)
     if isinstance(d, dict) and isinstance(d.get("items"), list):
         d.setdefault("history", [])
         d.setdefault("next_id", 1)
+        if not ok_overwrite:
+            d["_refuse_overwrite"] = True
         return d
     if d is not _BAD:
         # 能解析但**形状不对**（顶层不是 dict / items 不是列表）同样是坏档：留证再回默认值，
         # 否则下一次 `_save` 会把它整体盖掉（同一个 V-R9-18 的后果）。
-        log.warning("定时提醒状态形状不对 ⇒ 已按坏档留证：%s", persist.quarantine(path()) or "留证失败")
-    return {"items": [], "history": [], "next_id": 1, "updatedAt": 0}
+        kept = persist.quarantine(path())
+        if not kept:
+            log.warning("定时提醒状态形状不对，且**留证失败** ⇒ 原档保持原样、禁止覆盖：%s", path())
+        else:
+            log.warning("定时提醒状态形状不对 ⇒ 已按坏档留证：%s", kept)
+        out = {"items": [], "history": [], "next_id": 1, "updatedAt": 0}
+        if not kept and not ok_overwrite:
+            out["_refuse_overwrite"] = True
+        return out
+    out = {"items": [], "history": [], "next_id": 1, "updatedAt": 0}
+    if not ok_overwrite:
+        out["_refuse_overwrite"] = True
+    return out
 
 
 def _save(st: dict) -> bool:
@@ -69,10 +87,18 @@ def _save(st: dict) -> bool:
 
     V-R9-22：改走 `persist.atomic_write_json`（tmp 名带 pid + 随机后缀 + `os.replace`），
     不再共用 `timers.json.tmp` 这个名字。
+    V-R10-23：`st` 带 `_refuse_overwrite`（坏档还在原地、留证失败）时**拒绝写**——
+    这一枪打出去就是"旧提醒全没"，宁可让 `add()` 回 `ok:False` 让用户看见。
+    落盘时把 `_` 开头的内部键摘掉（不许写进用户态文件）。
     """
     with _lock:
+        if st.get("_refuse_overwrite"):
+            log.warning("定时提醒状态档读不出来且留证失败 ⇒ **拒绝覆盖**（本次登记/更新不落盘）：%s",
+                        path())
+            return False
         st["updatedAt"] = int(time.time() * 1000)
-        return persist.atomic_write_json(path(), st, indent=1)
+        payload = {k: v for k, v in st.items() if not str(k).startswith("_")}
+        return persist.atomic_write_json(path(), payload, indent=1)
 
 
 def _pending(st: dict) -> list:

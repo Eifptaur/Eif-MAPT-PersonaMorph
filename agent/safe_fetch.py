@@ -20,6 +20,7 @@ from __future__ import annotations
 import http.client
 import ipaddress
 import logging
+import os
 import socket
 import ssl
 import time
@@ -152,27 +153,85 @@ def iter_response(resp, chunk: int = 65536):
     return _gen()
 
 
+def _sock_of(resp):
+    """尽量摸到响应背后的 socket（拿不到就 None，绝不抛）。"""
+    try:
+        for _o in (getattr(resp, "fp", None), getattr(getattr(resp, "raw", None), "_fp", None), resp):
+            if _o is None:
+                continue
+            _s = getattr(_o, "_sock", None) or getattr(getattr(_o, "raw", None), "_sock", None)
+            if _s is not None:
+                return _s
+    except Exception:
+        pass
+    return None
+
+
+def _arm_budget(resp, t0: float, budget_s: float, what: str) -> None:
+    """把"整轮墙钟预算"落到**下一次 recv 的 socket 超时**上（V-R10-34 第 4 条）。
+
+    为什么老写法不够（审计实测）：只在**两块之间**核墙钟 ⇒ 对面"连上就不吐字节"时，
+    卡在单次 `recv` 上的那段时间**完全不进预算**（`budget_s=2` 实测 10 秒才返回、0 字节）。
+    现在每轮动手前先算剩余预算：①已经超了 ⇒ 当场抛；②还没超 ⇒ 把 socket 超时**压到**
+    剩余预算（只收紧、不放宽；下限 0.2 秒免得 0 超时变成非阻塞空转）。
+    拿不到 socket 时退化成"只在块之间核"（老行为，至少不比原来差）。
+    """
+    if not budget_s:
+        return
+    left = float(budget_s) - (time.monotonic() - float(t0))
+    if left <= 0:
+        _close_quiet(resp)
+        raise TimeoutError("总耗时超过 %.1f 秒的墙钟预算，已放弃（V-R9-27）" % float(budget_s))
+    _s = _sock_of(resp)
+    if _s is None:
+        return
+    try:
+        _cur = _s.gettimeout()
+    except Exception:
+        _cur = None
+    _new = max(0.2, left)
+    try:
+        if _cur is None or _cur <= 0 or _new < float(_cur):
+            _s.settimeout(_new)
+    except Exception:
+        pass
+
+
 def read_stream(resp, max_bytes: int = 0, budget_s: float = 0.0, t0: float = None,
                 what: str = "响应体") -> bytes:
     """**分块**读完，边读边核"总上限"与"整轮墙钟预算"（超了就抛并尽力断开）。
 
     为什么不是一把 `resp.read()`：`urlopen(timeout=)` / `requests(timeout=)` 都只管**单次 recv**，
     对面每 6 秒吐 1 字节就能把"声明 15 秒"的请求拖到 63 秒（审计实测 V-R9E-6）。
-    这里在**每块之间**核一次墙钟 ⇒ 总耗时有上限（≈ budget + 一次 recv 的 timeout）。
+    V-R10-34 第 4 条：光在**块之间**核还不够 —— 对面**一块都不吐**时预算根本没生效
+    （实测 `budget_s=2` / 10 秒才返回 / 0 字节）⇒ 现在**每次 recv 之前**先把 socket
+    超时压到剩余预算（`_arm_budget`），不吐字节也会在预算附近退出。
     """
     cap = int(max_bytes or DEFAULT_MAX_BYTES)
     t0 = time.monotonic() if t0 is None else t0
     got = bytearray()
-    for buf in iter_response(resp):
-        if not buf:
-            continue
-        got += buf
-        if len(got) > cap:
-            _close_quiet(resp)
-            raise FetchError("%s超过 %.1fMB 上限，已中止读取（V-R9-26）" % (what, cap / 1048576.0))
-        if budget_s and (time.monotonic() - t0) > float(budget_s):
-            _close_quiet(resp)
-            raise TimeoutError("总耗时超过 %.1f 秒的墙钟预算，已放弃（V-R9-27）" % float(budget_s))
+    it = iter_response(resp)
+    try:
+        while True:
+            _arm_budget(resp, t0, budget_s, what)     # ⬅ 动手前先核预算 + 压超时
+            try:
+                buf = next(it)
+            except StopIteration:
+                break
+            if not buf:
+                continue
+            got += buf
+            if len(got) > cap:
+                _close_quiet(resp)
+                raise FetchError("%s超过 %.1fMB 上限，已中止读取（V-R9-26）" % (what, cap / 1048576.0))
+            if budget_s and (time.monotonic() - t0) > float(budget_s):
+                _close_quiet(resp)
+                raise TimeoutError("总耗时超过 %.1f 秒的墙钟预算，已放弃（V-R9-27）" % float(budget_s))
+    except BaseException:
+        # 任何异常路径都**尽力断开**（socket 超时是从 `read` 里抛出来的那一种，
+        # 老写法在这里会把连接挂着 —— V-R10-34 第 4 条配套）。
+        _close_quiet(resp)
+        raise
     return bytes(got)
 
 
@@ -247,13 +306,22 @@ def validate_url(raw: str, allow_private: bool = False):
 
 
 class _PinnedHTTPSConnection(http.client.HTTPSConnection):
-    """连接固定 IP，但 SNI/证书校验仍针对原始域名（防 DNS rebinding 的关键）。"""
+    """连接固定 IP，但 SNI/证书校验仍针对原始域名（防 DNS rebinding 的关键）。
+
+    ⚠️ 证书校验**不许关**（V-R10-38 的 G015 变异点）：这里用的是
+    `ssl._create_default_https_context()`（= `create_default_context()`，`CERT_REQUIRED` +
+    `check_hostname=True`）。任何人把它换成 `_create_unverified_context()` /
+    `check_hostname=False` / `verify_mode=CERT_NONE` 都等于把 HTTPS 降成明文，
+    判据 `safe_fetch_selftest` 的 L2 段逐条钉住这一点。
+    """
 
     def __init__(self, host, ip, port=None, timeout=20, **kw):
         self._pinned_ip = ip
         super().__init__(host, port=port, timeout=timeout, **kw)
 
     def connect(self):
+        # ⚠️ 连接目标是**已校验的那个 IP**（`self._pinned_ip`），不是域名 ⇒ 不给 DNS 第二次机会。
+        # 判据 L1 段把 `socket.create_connection` 打桩，断言这里拿到的就是闸门校验过的 IP。
         self.sock = socket.create_connection((self._pinned_ip, self.port), self.timeout)
         if self._tunnel_host:
             self._tunnel()
@@ -274,10 +342,17 @@ class _PinnedHTTPConnection(http.client.HTTPConnection):
 
 
 def _pinned_exchange(scheme, host, port, path, ip, method="GET", data=None, headers=None,
-                     max_bytes=DEFAULT_MAX_BYTES):
-    """用**已校验的 IP** 发一次请求（连接时不再解析域名 ⇒ 没有 TOCTOU/rebinding 窗口）。"""
+                     max_bytes=DEFAULT_MAX_BYTES, timeout=None, out_path=None):
+    """用**已校验的 IP** 发一次请求（连接时不再解析域名 ⇒ 没有 TOCTOU/rebinding 窗口）。
+
+    `timeout`：**调用方的超时**要能传进去（V-R10-34：老写法写死 20s，`user_tools` 的
+    `timeout_ms` 形同虚设——实测 20.0s vs urlopen 1.0s）。不给才回落到 20s。
+    `out_path`：给了就**边收边写文件**（`fetch_pinned_stream` 用），否则字节放 `body`。
+    两者都按 `max_bytes` 上限截断并如实回 `truncated`（不谎报，V-R10-38 的 G024）。
+    """
     cls = _PinnedHTTPSConnection if scheme == "https" else _PinnedHTTPConnection
-    conn = cls(host, ip, port=port, timeout=20)
+    conn = cls(host, ip, port=port, timeout=float(timeout or PINNED_TIMEOUT_S))
+    # `Host` 由**我们**按域名给出：调用方同名的头一律跳过 ⇒ 不许覆盖（V-R10-38 的 G023）。
     h = {"Host": host, "User-Agent": UA,
          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8,image/*;q=0.8",
          "Accept-Language": "zh-CN,zh;q=0.9"}
@@ -285,23 +360,56 @@ def _pinned_exchange(scheme, host, port, path, ip, method="GET", data=None, head
         if str(k).lower() == "host":
             continue
         h[str(k)] = str(v)
-    conn.request(str(method or "GET").upper(), path, body=data, headers=h)
-    resp = conn.getresponse()
-    status = resp.status
-    hdrs = {}
     try:
-        hdrs = {k.lower(): v for k, v in (resp.getheaders() or [])}
-    except Exception:
-        pass
-    cap = int(max_bytes or DEFAULT_MAX_BYTES)
-    body = resp.read(cap + 1)
-    truncated = len(body) > cap
-    body = body[:cap]
-    conn.close()
-    return {"status": status, "headers": hdrs,
-            "location": str(resp.getheader("location") or ""),
-            "content_type": str(resp.getheader("content-type") or ""),
-            "body": body, "truncated": truncated}
+        conn.request(str(method or "GET").upper(), path, body=data, headers=h)
+        resp = conn.getresponse()
+        status = resp.status
+        hdrs = {}
+        try:
+            hdrs = {k.lower(): v for k, v in (resp.getheaders() or [])}
+        except Exception:
+            pass
+        cap = int(max_bytes or DEFAULT_MAX_BYTES)
+        location = str(resp.getheader("location") or "")
+        ctype = str(resp.getheader("content-type") or "")
+        got = 0
+        truncated = False
+        buf = bytearray()
+        fh = None
+        write = None
+        try:
+            if out_path:
+                fh = open(out_path, "wb")
+                write = fh.write
+            else:
+                write = buf.extend
+            while True:
+                chunk = resp.read(65536)
+                if not chunk:
+                    break
+                got += len(chunk)
+                if got > cap:
+                    # 超限：**拒绝**（与 `read_capped` 同口径），把已收的按 cap 截断并把
+                    # `truncated=True` 如实回给调用方（不许谎报，V-R10-38 的 G024）
+                    write(chunk[:max(0, cap - (got - len(chunk)))])
+                    got = cap
+                    truncated = True
+                    break
+                write(chunk)
+        finally:
+            if fh is not None:
+                try:
+                    fh.close()
+                except Exception:
+                    pass
+        body = b"" if out_path else bytes(buf)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return {"status": status, "headers": hdrs, "location": location, "content_type": ctype,
+            "body": body, "truncated": truncated, "bytes": got, "path": out_path or ""}
 
 
 def _pinned_request(scheme, host, port, path, ip, max_bytes, as_binary):
@@ -313,15 +421,81 @@ def _pinned_request(scheme, host, port, path, ip, max_bytes, as_binary):
 
 MAX_REDIRECTS = 5
 
+#: 钉 IP 传输层的**默认**超时（调用方不给才用它）。V-R10-34：老写法把 20s **写死**在
+#: `fetch_pinned` 里 ⇒ `user_tools` 的 `timeout_ms` 完全失效（实测 20.0s vs urlopen 1.0s）。
+PINNED_TIMEOUT_S = 20.0
 
-def fetch_pinned(url, method="GET", data=None, headers=None, timeout=20, max_bytes=DEFAULT_MAX_BYTES,
-                 allow_private=False, host_allowed=None, max_redirects=MAX_REDIRECTS):
-    """带 SSRF 闸门的**钉 IP** 请求 ⇒ `{url, status, headers, body, truncated}`。
 
-    V-R9-25（`user_tools` 的 TOCTOU）：校验时解析到的 IP **直接钉进 socket**，连接时不再解析
-    ⇒ DNS rebinding 打不到环回。逐跳复校（每一跳重新 `validate_url`），跨主机/跨 scheme 的跳转
-    **剥掉凭据类头**（与 `CredentialStrippingRedirectHandler` 同口径）。
-    `host_allowed(url) -> bool`：调用方自己的白名单（每跳都问一次）；不通过抛 `FetchError`。
+def _exchange(scheme, host, port, path, ip, method, data, headers, max_bytes,
+              timeout=None, out_path=None):
+    """调 `_pinned_exchange`，**按需要加长参数表**（判据/替身只声明 9 个形参时也能打桩）。
+
+    为什么要这层：`timeout`/`out_path` 是本轮新加的两个能力（V-R10-34 的"调用方超时"、
+    V-R10-32 的"流式落盘"），只在**真的需要**时才多传两个位置参数——否则旧判据里那些
+    9 参替身（`def fake_exch(scheme, host, port, path, ip, method="GET", data=None,
+    headers=None, max_bytes=...)`）会 TypeError 炸掉。**不是放水**：
+    `timeout` 有值（含显式 0/默认 20）与 `out_path` 有值这两种"新能力真被用到"的场合，
+    一律传满 11 个位置参数，打桩者必须如实声明。
+    """
+    if timeout is None and out_path is None:
+        return _pinned_exchange(scheme, host, port, path, ip, method, data, headers, max_bytes)
+    return _pinned_exchange(scheme, host, port, path, ip, method, data, headers, max_bytes,
+                            timeout, out_path)
+
+
+def _exchange_head(scheme, host, port, path, ip, headers=None, timeout=None):
+    """`pinned_head` 的传输面：**只发 HEAD、不读体**，且可被打桩（判据靠它断言连接目标）。"""
+    cls = _PinnedHTTPSConnection if scheme == "https" else _PinnedHTTPConnection
+    conn = cls(host, ip, port=port, timeout=float(timeout or PINNED_TIMEOUT_S))
+    h = {"Host": host, "User-Agent": UA, "Connection": "close"}
+    for k, v in (headers or {}).items():
+        if str(k).lower() == "host":
+            continue
+        h[str(k)] = str(v)
+    try:
+        conn.request("HEAD", path, body=None, headers=h)
+        resp = conn.getresponse()
+        return {"status": int(resp.status), "location": str(resp.getheader("location") or "")}
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def pinned_head(url, headers=None, timeout=None, max_redirects=MAX_REDIRECTS):
+    """带 SSRF 闸门的**钉 IP HEAD**（V-R10-33 的修法）⇒ `{url, status}`。
+
+    为什么不能"TCP/TLS 段钉了 IP、HTTP 段还按域名发"（老 `cloud.probe` 就是这么写的）：
+    那一段会**第 3 次解析域名**，审计实测第 3 次给环回 ⇒ HEAD 真打到 `127.0.0.1`，
+    而面板报 `ok=true / stage=http / 200`（把内网当成了"可达"）。
+    这里每一跳都 `validate_url` 解一次、**拿到的 IP 直接连**，与 `fetch_pinned` 同一口径；
+    手动跟 30x 且跨源剥凭据（本函数不带凭据，剥的是调用方给的头）。
+    """
+    cur = str(url or "")
+    hdrs = {str(k): str(v) for k, v in (headers or {}).items()}
+    for _ in range(int(max_redirects) + 1):
+        scheme, host, port, path, ip = validate_url(cur)
+        r = _exchange_head(scheme, host, port, path, ip, hdrs, timeout)
+        if r["status"] in (301, 302, 303, 307, 308) and r["location"]:
+            nxt = urljoin(cur, r["location"])
+            if not _same_origin(cur, nxt):
+                for k in [k for k in list(hdrs) if k.lower() in CREDENTIAL_HEADERS]:
+                    hdrs.pop(k, None)
+            cur = nxt
+            continue
+        return {"url": cur, "status": r["status"]}
+    raise FetchError("重定向次数过多，已停止")
+
+
+def _pin_loop(url, method="GET", data=None, headers=None, timeout=None, max_bytes=DEFAULT_MAX_BYTES,
+              allow_private=False, host_allowed=None, max_redirects=MAX_REDIRECTS, out_path=None):
+    """**唯一**的"校验 + 钉 IP + 逐跳复校 + 跨主机剥凭据"循环（`fetch_pinned` /
+    `fetch_pinned_stream` / `cloud.probe` 都走它，不许各写一套）。
+
+    口径（V-R10-32/33 的核心）：**校验用的地址与连接用的 IP 必须是同一次解析的结果**——
+    `validate_url` 一次解出 IP，这个 IP 直接交给 `_pinned_exchange` 钉进 socket；
+    绝不允许"校验一次、连接时再解析一次"（那就是 DNS rebinding 的穿透窗口）。
     """
     cur = str(url or "")
     hdrs = {str(k): str(v) for k, v in (headers or {}).items()}
@@ -331,7 +505,8 @@ def fetch_pinned(url, method="GET", data=None, headers=None, timeout=20, max_byt
         if host_allowed is not None and not host_allowed(cur):
             raise FetchError("地址的主机不在允许清单里：%s" % cur)
         scheme, host, port, path, ip = validate_url(cur, allow_private=allow_private)
-        r = _pinned_exchange(scheme, host, port, path, ip, m, body, hdrs, max_bytes)
+        r = _exchange(scheme, host, port, path, ip, m, body, hdrs, max_bytes,
+                      timeout, out_path)
         if r["status"] in (301, 302, 303, 307, 308) and r["location"]:
             nxt = urljoin(cur, r["location"])
             if not _same_origin(cur, nxt):
@@ -342,22 +517,100 @@ def fetch_pinned(url, method="GET", data=None, headers=None, timeout=20, max_byt
             cur = nxt
             continue
         return {"url": cur, "status": r["status"], "headers": r["headers"],
-                "body": r["body"], "truncated": r["truncated"]}
+                "location": r["location"], "content_type": r["content_type"],
+                "body": r["body"], "truncated": r["truncated"],
+                "bytes": r.get("bytes", len(r["body"])), "path": r.get("path", "")}
     raise FetchError("重定向次数过多，已停止")
 
 
-def guard_remote_url(url: str, base_url: str = "") -> str:
+def fetch_pinned(url, method="GET", data=None, headers=None, timeout=None, max_bytes=DEFAULT_MAX_BYTES,
+                 allow_private=False, host_allowed=None, max_redirects=MAX_REDIRECTS):
+    """带 SSRF 闸门的**钉 IP** 请求 ⇒ `{url, status, headers, body, truncated}`。
+
+    V-R9-25（`user_tools` 的 TOCTOU）：校验时解析到的 IP **直接钉进 socket**，连接时不再解析
+    ⇒ DNS rebinding 打不到环回。逐跳复校（每一跳重新 `validate_url`），跨主机/跨 scheme 的跳转
+    **剥掉凭据类头**（与 `CredentialStrippingRedirectHandler` 同口径）。
+    `host_allowed(url) -> bool`：调用方自己的白名单（每跳都问一次）；不通过抛 `FetchError`。
+    `timeout`：**用调用方给的那个**（V-R10-34；不给则由 `_pinned_exchange` 回落到
+    `PINNED_TIMEOUT_S`）。⚠️ 显式给值时它一定会传进传输层——判据 L4 段把
+    `socket.create_connection` 打桩，断言"调用方说 1 秒，socket 拿到的就是 1 秒"。
+    """
+    r = _pin_loop(url, method=method, data=data, headers=headers, timeout=timeout,
+                  max_bytes=max_bytes, allow_private=allow_private, host_allowed=host_allowed,
+                  max_redirects=max_redirects)
+    return {"url": r["url"], "status": r["status"], "headers": r["headers"],
+            "body": r["body"], "truncated": r["truncated"]}
+
+
+def fetch_pinned_stream(url, dest, method="GET", data=None, headers=None, timeout=None,
+                        max_bytes=DEFAULT_MAX_BYTES, allow_private=False, host_allowed=None,
+                        max_redirects=MAX_REDIRECTS):
+    """**钉 IP 流式下载到文件**（V-R10-32/34 的统一出口）⇒ `{url, status, headers, bytes,
+    truncated}`；失败**不留半截文件**。
+
+    为什么要有它：`bilibili._download` / `image_gen` 的二次 GET / `video_gen` 的回链下载
+    原先都是"过一遍 `guard_remote_url` 闸门，然后 `urllib.urlopen(url)` **再解析一次域名**"
+    ⇒ 闸门校验的是第 1 次解析，真正连接用的是第 2 次解析 —— 审计实测**把环回内容落盘**。
+    走这里则与 `fetch_pinned` 同一条循环：**一次解析、钉进 socket**，顺便把
+    "整轮墙钟 / 体积上限 / 无上限读体"三个老毛病一起按统一口径收掉。
+    """
+    dest = str(dest or "")
+    if not dest:
+        raise FetchError("流式下载要一个目标文件路径")
+    d = os.path.dirname(os.path.abspath(dest))
+    if d:
+        os.makedirs(d, exist_ok=True)
+    tmo = PINNED_TIMEOUT_S if timeout is None else timeout
+    ok = False
+    try:
+        r = _pin_loop(url, method=method, data=data, headers=headers, timeout=tmo,
+                      max_bytes=max_bytes, allow_private=allow_private, host_allowed=host_allowed,
+                      max_redirects=max_redirects, out_path=dest)
+        ok = True
+        return {"url": r["url"], "status": r["status"], "headers": r["headers"],
+                "bytes": int(r.get("bytes") or 0), "truncated": bool(r["truncated"]),
+                "content_type": r["content_type"], "path": dest}
+    finally:
+        if not ok:
+            try:
+                if os.path.exists(dest):
+                    os.remove(dest)
+            except Exception:
+                pass
+
+
+
+def validate_remote_url(url: str, base_url: str = "", allow_private=None):
+    """`guard_remote_url` 的**带 IP 版**（V-R10-32/33 的修法）⇒ `(url, ip)`。
+
+    ⚠️ 出网面的核心口径：**校验用的地址与连接用的 IP 必须是同一次解析的结果**。
+    老口径只回一个字符串，调用方拿着字符串去 `urllib.urlopen(...)` ⇒ **连接时又解析一次**
+    ⇒ 审计实测第 2/3 次解析给环回，环回内容真被落盘（DNS rebinding 穿透闸门）。
+    这里把 `validate_url` 那一次解析出的 IP **一起交出来**，调用方必须用它连接
+    （`fetch_pinned` / `fetch_pinned_stream` 已经这么做了）。
+    """
+    u = str(url or "").strip()
+    if not u:
+        raise FetchError("远端没有给出可用地址")
+    if allow_private is None:
+        allow_private = _same_origin(u, base_url)
+    _scheme, _host, _port, _path, ip = validate_url(u, allow_private=bool(allow_private))
+    return u, ip
+
+
+def guard_remote_url(url: str, base_url: str = "", allow_private=None) -> str:
     """**远端回包里的地址**在下手之前统一过闸门（V-R9-24）；被拒抛 `FetchError`。
 
     · 与 `base_url`（我们主动联系的那个后端）**同源** ⇒ 只是把同一台服务上的静态资源取回来，
       不增加可达面（本机后端回本机地址是本地部署的常态）⇒ 允许；
     · 其它一律按公网口径核 ⇒ `127.0.0.1` / `169.254.169.254` / `localhost.` / `[::ffff:127.0.0.1]` /
       `127.1` / `0x7f000001` / `2130706433` / `100.64.0.1` 全部拦（`validate_url` 实测全拦）。
+
+    ⚠️ 只回字符串 ⇒ **别拿它配 `urllib.urlopen`**（那是二次解析，V-R10-32）。
+    要连接就用 `validate_remote_url()` 拿 IP 后走 `fetch_pinned*`，或 `allow_private` 显式开关
+    （V-R10-35：三处 guard 原先没有这个开关，Docker 里回链 `compose` 服务名会被硬拒）。
     """
-    u = str(url or "").strip()
-    if not u:
-        raise FetchError("远端没有给出可用地址")
-    validate_url(u, allow_private=_same_origin(u, base_url))
+    u, _ip = validate_remote_url(url, base_url, allow_private)
     return u
 
 

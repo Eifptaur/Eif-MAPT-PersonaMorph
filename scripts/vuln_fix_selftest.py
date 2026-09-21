@@ -11,6 +11,8 @@
   V4  `run_once(dry=True)` 不许交接（不调 `_relaunch_after_update`、needRestart=False）
   V5  慢源的"耐心阶段"要真的等（打桩 fetch 睡 5 秒 ⇒ 必须拿到清单）；复核拿到清单就直接用
   V8  `masked_config()` 必须掩掉 `feedback.webhook_token`，且 `_protect_secrets()` 不许用掩码值覆盖真值
+  V-R10-27（P0）  更新链的两道闸（版本回退 / `expires` 过期）必须在**真装那一刻**也生效：
+                  走真路径 `run_once()` ⇒ 拒装且一个文件都不动；`state()` 与 `run_once()` 同一结论
 
 用法：`runtime\\python\\python.exe scripts\\vuln_fix_selftest.py`
 """
@@ -36,6 +38,12 @@ except Exception:
 from agent import update_apply as U        # noqa: E402
 from agent import update_check as uc       # noqa: E402
 from agent import webui as W               # noqa: E402
+
+# ⛔ V-R10-27：`run_once()` 现在会**单调记** `maxSeenVersion`，而本判据要给它喂 9999.x 这种假版本
+#   ⇒ 状态文件必须指到临时目录：判据**绝不许写用户真的 `data/update_state.json`**
+#   （否则跑一次自检就把他那边的回滚闸顶到 9999 —— 真清单会被判"回滚"而永远更新不了）。
+_STATE_TMP = tempfile.mkdtemp(prefix="pm_vf_state_")
+uc._state_path = lambda: os.path.join(_STATE_TMP, "update_state.json")
 
 PASS = FAIL = 0
 
@@ -1014,6 +1022,80 @@ ok("V-R5R-4 折叠层有**行为级**判据：反斜杠/多重编码的点段也
    uc.has_dot_segments("a\\..\\b") is True and uc.has_dot_segments("%252e%252e/x") is True
    and uc.has_dot_segments("a/../b") is True and uc.has_dot_segments("a/b") is False,
    str((uc.has_dot_segments("a\\..\\b"), uc.has_dot_segments("%252e%252e/x"))))
+
+print("── V-R10-27（P0）更新链：两道闸必须在**真装那一刻**也生效（版本回退 / expires 过期）──")
+# 现场（审计假源实测）：`state()` 对低版本判 `older`、对过期清单判 `error`，而**真正动盘的**
+#   `update_apply.run_once()` 完全绕过这两道闸 ⇒ 照样真装（version.py 变 OLD）。这一节**只走真路径**。
+import shutil as _sh10                                                            # noqa: E402
+_d10 = tempfile.mkdtemp(prefix="pm_vf_v10_")
+os.makedirs(os.path.join(_d10, "agent"), exist_ok=True)
+_z10, _t10 = mk_pkg(_d10, rel="agent/z10.py", body="Z10")
+
+
+def _man10(v, extra=None):
+    _b = {"version": v, "sha256": _t10, "url": _z10}
+    _b.update(extra or {})
+    return {"base": _b, "announce": {"version": v, "notes": []}}
+
+
+_z10file = os.path.join(_d10, "agent", "z10.py")
+_sf10 = os.path.join(_d10, "update_state.json")
+_sp10, _fa10, _ri10 = uc._state_path, uc.fetch_any, uc._read_installed
+_rl10 = U._relaunch_after_update
+uc._state_path = lambda: _sf10                # 判据绝不动真 data/update_state.json
+uc._read_installed = lambda: {}
+U._relaunch_after_update = lambda *a, **k: None
+try:
+    # ⚠️ 低版本那份必须带**与本机不同的内容指纹**：否则会先被"已是最新"短路吞掉，闸门就没被测到
+    _low10 = _man10("1.0.0", {"build": "0ldc0ffee000"})
+    _exp10 = _man10("9999.9.9", {"expires": "2000-01-01T00:00:00Z"})
+    _fine10 = _man10("9999.9.9")
+    for _nm10, _m10, _kind10 in (("版本回退清单", _low10, "older"), ("expires 过期清单", _exp10, "expired")):
+        if os.path.exists(_sf10):
+            os.remove(_sf10)
+        _before10 = sorted(os.listdir(os.path.join(_d10, "agent")))
+        _r10 = U.run_once(manifest=dict(_m10), zip_path=_z10, target=_d10)
+        ok("V-R10-27 %s ⇒ `run_once()` **拒装**（gate=%s）" % (_nm10, _r10.get("gate")),
+           _r10.get("ok") is False and _r10.get("gate") == _kind10, str(_r10)[:130])
+        ok("V-R10-27 …同一个夹具里**一个文件都没落地**（走的是真路径，不是只报了个错）",
+           (not os.path.exists(_z10file))
+           and sorted(os.listdir(os.path.join(_d10, "agent"))) == _before10)
+    # ⭐ P0 的本质：**同一份清单，`state()` 与 `run_once()` 必须同一结论**
+    _conc10 = []
+    for _nm10, _m10 in (("回退", _low10), ("过期", _exp10), ("正常新清单", _fine10)):
+        if os.path.exists(_sf10):
+            os.remove(_sf10)
+        uc.fetch_any = lambda urls, timeout=12.0, patient=None, _mm=_m10: (dict(_mm), "", "")
+        _st10 = uc.state({"url": "https://example.com/m.json"})
+        _r10b = U.run_once(manifest=dict(_m10), zip_path=_z10, target=_d10)
+        _conc10.append((_nm10, _st10.get("status"), _st10.get("status") in ("older", "error"),
+                        not _r10b.get("ok")))
+    ok("V-R10-27 **同一份清单 `state()` 与 `run_once()` 结论一致**（逐份对）",
+       all(a == b for _n, _s, a, b in _conc10),
+       "；".join("%s：state=%s 拒绝=%s/装=%s" % x for x in _conc10))
+    ok("V-R10-27 …三份里被拒的**正是那两份**（不是恒真：第三份是放行的阳性对照）",
+       sorted(_n for _n, _s, a, b in _conc10 if b) == ["回退", "过期"],
+       str([(n, s) for n, s, a, b in _conc10]))
+    ok("V-R10-27 …阳性对照：正常新清单 state=newer **且真装进去了**（闸门没把正常路堵死）",
+       _conc10[2][1] == "newer" and os.path.exists(_z10file), str(_conc10[2]))
+    # 反例锚：把这道闸摘掉（＝修之前的样子）⇒ 同一份回退清单**真的会装进去**
+    _keep_g10 = uc.manifest_gates
+    if os.path.exists(_sf10):
+        os.remove(_sf10)
+    if os.path.exists(_z10file):
+        os.remove(_z10file)
+    uc.manifest_gates = lambda *a, **k: {"ok": True, "kind": "", "why": "",
+                                        "block_install": False, "theirs": "", "mine": ""}
+    try:
+        _r10c = U.run_once(manifest=dict(_low10), zip_path=_z10, target=_d10)
+    finally:
+        uc.manifest_gates = _keep_g10
+    ok("V-R10-27 反例锚：**摘掉这道闸**（＝修之前）同一份回退清单**真会装进去** ⇒ 上面那些断言抓得住回归",
+       _r10c.get("ok") is True and os.path.exists(_z10file), str(_r10c)[:90])
+finally:
+    uc._state_path, uc.fetch_any, uc._read_installed = _sp10, _fa10, _ri10
+    U._relaunch_after_update = _rl10
+    _sh10.rmtree(_d10, ignore_errors=True)
 
 print("── 判据自省：不许再「伪造被测条件」 ──")
 # 关键字**运行时拼**出来，免得这条检查把自己的源码也算成命中（自指假红）。

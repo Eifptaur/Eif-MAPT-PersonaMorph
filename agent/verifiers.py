@@ -65,21 +65,26 @@ def _tail2(path, n: int = 400):
 
 _CFG_ERR = ""          # 配置读不到时记下原因（V-R9-14：用了内置默认值的那几格**不算结论**）
 _RUNTIME_HOW: dict = {}   # 运行中实例的 `_db_how`（webui 每次跑检验器前喂，见 V-R9-11）
+_RUNTIME_CAP: dict = {}   # 运行中实例的 `_cap`（各张表的读写结果；V-R10-8 起"消息库读不到"要用）
 
 
-def set_runtime_how(how) -> None:
-    """把**运行中实例**的 `_db_how` 喂进来（`webui` 的 `/api/verify` 每次调一次）。**绝不抛**。
+def set_runtime_how(how, cap=None) -> None:
+    """把**运行中实例**的 `_db_how`（与 `_cap`）喂进来（`webui` 的 `/api/verify` 每次调一次）。**绝不抛**。
 
     ⛔ 2026-09-21 加（第九轮 **V-R9-11**）：`wechat_dir.status()` **不带 `how`** 时拿不到
     "我在读哪个账号"这一维（`account`/`account_names`/`account_live` 全是空），而检验器原来据此判
-    **✅**（报告里明明写着"在读账号 没认出来"）⇒ 假绿。有了这份 how，账号那一格才有铁证；
-    拿不到就**如实判「没测到」**。
+    **✅**（报告里明明写着"在读账号 没认出来"）⇒ 假绿。`cap` 是同一原则的延伸：**哪张表读失败了**
+    只有运行中实例知道（"消息库读不到"这条症状的定位就靠它）。
     """
-    global _RUNTIME_HOW
+    global _RUNTIME_HOW, _RUNTIME_CAP
     try:
         _RUNTIME_HOW = dict(how or {})
     except Exception:
         _RUNTIME_HOW = {}
+    try:
+        _RUNTIME_CAP = dict(cap or {})
+    except Exception:
+        _RUNTIME_CAP = {}
 
 
 def _cfg() -> dict:
@@ -109,15 +114,20 @@ def _port_open(port: int = 0, timeout: float = 0.6) -> bool:
         return False
 
 
-def _check(name, ok, detail) -> dict:
+def _check(name, ok, detail, info: bool = False) -> dict:
     """一格检查。`ok` 是**三态**：True 通过 / False 未通过 / **None ＝ 没测到**。
 
     ⛔ 2026-09-21 修（第四轮审计 **V-R4-11，P2**）：原来只允许布尔，于是"读不到就按乐观处理"
     的那几处直接写了 `True` ⇒ 报告画 ✅，而结论可能与事实相反（审计点名：用户点「抢窗口」时
     报告写「✅ 后台承诺成立」）。⇒ 现在"没测到"有自己的一档：**既不算通过、也不算失败**，
     并在判决与逐项里单独标出来（**不许拿"没测到"冒充"承诺成立"**）。
+
+    `info=True` ＝ **说明格**（第十轮 **V-R10-10**）：它读出来的是"顺便告诉你一件事"，**不是判据**
+    （例：出站闸门拦了几条 / 有没有 `update_done.flag` / 最近看到的 @ 名字是谁）。这类格用
+    `ok=None` 只是为了画 `○`，**不许算进"没测到"的计数** —— 否则报告头会**恒 ◐、永不给 ✅**。
     """
-    return {"name": name, "ok": (None if ok is None else bool(ok)), "detail": str(detail)}
+    return {"name": name, "ok": (None if ok is None else bool(ok)), "detail": str(detail),
+            "info": bool(info) or None}
 
 
 def _count(lines, *needles) -> int:
@@ -285,16 +295,40 @@ def v_send_blocked() -> dict:
             checks.append(_check("最近几轮里没有『调过发送却一条都没发出去』的记录", None,
                                  "还没有会话档案（刚装/刚重启）⇒ **没测到**"))
         else:
-            _nfail = sum(_count(_tail(os.path.join(_sd, _fn), 400) or [], "noreply_send_failed")
+            _nfail = sum(_count((_tail2(os.path.join(_sd, _fn), 400) or []), "noreply_send_failed")
                          for _fn in _sess)
-            checks.append(_check("最近几轮里没有『调过发送却一条都没发出去』的记录", _nfail == 0,
-                                 ("最近 %d 份会话档案里有 %d 条 `noreply_send_failed`"
-                                  "（＝那几轮调过发送、却一条都没发出去）" % (len(_sess), _nfail))
-                                 if _nfail else
-                                 "最近 %d 份会话档案里没有这条状态" % len(_sess)))
+            # ⛔ 2026-09-21 修（第十轮 **V-R10-8**）：这里原来用 `_tail` —— **读不到 ⇒ 空表 ⇒
+            #   `_nfail=0` ⇒ 判 ✅**（审计用真 `icacls /deny` 造出"读不到、但文件里真有两行失败"的现场，
+            #   报告照样写「✅ 最近几轮里没有这条记录」）。⇒ 改 `_tail2`：读不到就是**没测到**。
+            _sess_unread = any(_tail2(os.path.join(_sd, _fn), 400) is None for _fn in _sess)
+            checks.append(_check("最近几轮里没有『调过发送却一条都没发出去』的记录",
+                                 None if _sess_unread else (_nfail == 0),
+                                 ("**会话档案读不到**（权限/占用）⇒ 这一格**没测到**"
+                                  "（不是「没有失败记录」）") if _sess_unread else
+                                 (("最近 %d 份会话档案里有 %d 条 `noreply_send_failed`"
+                                   "（＝那几轮调过发送、却一条都没发出去）" % (len(_sess), _nfail))
+                                  if _nfail else
+                                  "最近 %d 份会话档案里没有这条状态" % len(_sess))))
     except Exception as _e_sess:
         checks.append(_check("最近几轮里没有『调过发送却一条都没发出去』的记录", None,
                              "读不到会话档案（不影响其它判断）：%s" % str(_e_sess)[:40]))
+    # ⛔ 2026-09-21 加（第十轮 **V-R10-12**）：台账**写不进磁盘**时必须自己说出来 ——
+    #   否则上面这几格的"最近没有失败记录"读的是**旧台账**，界面依旧一片 ✅
+    #   （第九轮那个假绿就是顺着这条路回来的）。写失败会在 `wechat._note_ledger_write_fail`
+    #   留痕、之后任何一次写成功都会清掉 ⇒ 这里读到的"有错"就是**刚刚真的写不进去**。
+    try:
+        from . import wechat as _wx4
+        _lwe = _wx4.ledger_write_error()
+    except Exception as _e_lwe:
+        _lwe = {"err": "读不到台账状态：%s" % str(_e_lwe)[:40], "n": 0}
+    _lwe_ok = not _lwe.get("err")
+    checks.append(_check("判定台账能落盘（写不进去时上面几格只能看旧记录）",
+                         _lwe_ok,
+                         ("台账最近一次写盘是成功的（%s）"
+                          % (str(_lwe.get("path") or "") or "data\\message_ledger.jsonl")) if _lwe_ok else
+                         ("台账已连续写失败 %d 次（%s）⇒ 上面「没有失败记录」很可能只是"
+                          "**旧台账**：先看磁盘空间与 `data\\` 权限，重启后这一格才会更新"
+                          % (int(_lwe.get("n") or 0), str(_lwe.get("err"))[:120]))))
     # ⛔ 2026-09-21 加（同一个反馈的第二半）：真失败记在**台账**里
     #   （`wechat.note_switch_fail`，与「它不回复」那一格同源，**已落盘** ⇒ 重启也看得见）。
     try:
@@ -321,7 +355,8 @@ def v_send_blocked() -> dict:
         og = _s.outbound_gate_status() or {}
         n = int(og.get("blocked") or og.get("count") or 0)
         checks.append(_check("出站闸门没有误拦正常回复", None,
-                             "说明（不是判据）：已拦下 %d 条内部故障话术（只留本机日志，不进群）" % n))
+                             "说明（不是判据）：已拦下 %d 条内部故障话术（只留本机日志，不进群）" % n,
+                             info=True))
     except Exception:
         pass
     ok, verdict, action = _verdict(checks, "发送链各环节都正常：暂停关、版本门放行、投递档可用、"
@@ -568,8 +603,14 @@ def v_no_reply() -> dict:
                           % (len(_sf), _last.get("t", "?"), _last.get("where", "?"), str(_last.get("why", ""))[:90]))
                          if _sf else "本次运行到现在没有这类失败"))
     tier_ok, tier_note = True, ""
+    if _CFG_ERR:
+        # ⛔ 2026-09-21 修（第十轮 **G406**）：配置读不到时，档位是从**内置默认值**里读的 ⇒ 这一格
+        #   给出的"档位正常"**不算结论**（审计变异实测：把"没测到 ⇒ None"改回"⇒ True"，判据照样全绿）。
+        tier_ok, tier_note = None, "配置读不到（%s）⇒ 档位是按**内置默认值**判的，**这一格没测到**" % _CFG_ERR
     try:
         from . import prompt as _pr
+        if _CFG_ERR:
+            raise RuntimeError("__cfg_unreadable__")
         # ⚠️ 2026-09-19 修：原来读 `c["reply"]["tier"]`（配置里没有 `reply` 段 ⇒ 恒 None）。
         # 而且**光看全局档位不够**——真正生效的档位有四层覆盖，优先级从高到低：
         #   ①指令禁言（tier_control.json，强制降到 1 档，最长 24h）②峰谷映射表（按时间自动切档）
@@ -632,7 +673,8 @@ def v_no_reply() -> dict:
             tier_ok, tier_note = True, (_note + "（1=只回艾特 / 2=+关键词 / 3=+随机 / 4=全读）")
     except Exception:
         # ⛔ 2026-09-21 修（V-R9-14）：**读不到档位 ⇒ 没测到**，不许留 `tier_ok=True`（那会判 ✅）。
-        tier_ok, tier_note = None, "读不到回复档位（配置读不到）⇒ 这一格**没测到**"
+        tier_ok = None
+        tier_note = tier_note or "读不到回复档位（配置读不到）⇒ 这一格**没测到**"
     checks.append(_check("回复档位不是『只回艾特』却指望它搭话", tier_ok, tier_note))
     # ⛔ 2026-09-21 加（B站评论「**艾特它 它不会回复**」）：把"群里最近 @ 的那个名字"摆到报告里 ——
     #   微信 @ 用的是**群昵称**，可能既不是配置里的机器人昵称、也不是库里的账号昵称 ⇒
@@ -655,14 +697,17 @@ def v_no_reply() -> dict:
                                  ("最近一次看到的 @ 名字是「**%s**」，而它以为自己的名字是「%s」 ⇒ "
                                   "**名字不一致时 @ 唤不醒它**：到微信里把这个号的群昵称改成与「机器人昵称」"
                                   "一致，或反过来把「%s」填进机器人昵称。"
-                                  % (_at_last, _known_last or "（这次没记到）", _at_last))))
+                                  % (_at_last, _known_last or "（这次没记到）", _at_last)),
+                                 info=True))
         else:
             checks.append(_check("群里最近 @ 的名字它认得", None,
                                  "运行记录里还没有「有人 @ 它」的样本 ⇒ **没测到**"
-                                 "（这一格什么都不保证）；让人在群里 @ 它一次再看"))
+                                 "（这一格什么都不保证）；让人在群里 @ 它一次再看",
+                                 info=True))
     except Exception as _e_at:
         checks.append(_check("群里最近 @ 的名字它认得", None,
-                             "读不到运行记录（不影响其它判断）：%s" % str(_e_at)[:40]))
+                             "读不到运行记录（不影响其它判断）：%s" % str(_e_at)[:40],
+                             info=True))
     ok, verdict, action = _verdict(checks, "监听在跑、key 已填、最近有响应记录 ⇒ 不回复多半是**档位/触发条件**"
                                            "（档位 1 只回艾特、档位 2 要关键词）",
                                    {"没有处于暂停": "点「继续」", "模型 key 已填": "控制台「模型」面板填 key",
@@ -793,7 +838,8 @@ def v_update_stuck() -> dict:
                          "%s（端口应为 %d）" % ((url[:60] + "…") if url else "没有这个文件", port)))
     checks.append(_check("更新完成标志（更新成功后会写）", None,
                          "%s" % ("data/update_done.flag 在（上次更新已自完成）"
-                                 if os.path.exists(_p("data", "update_done.flag")) else "没有完成标志")))
+                                 if os.path.exists(_p("data", "update_done.flag")) else "没有完成标志"),
+                         info=True))
     ok, verdict, action = _verdict(checks, "更新链三件都在：状态文件、看门狗 pid、控制台端口与 console.url 对得上",
                                    {"看门狗 pid 可解析": "点「一键关闭」再「一键启动」（新版会自动清理残留 pid）",
                                     "控制台端口在听": "点「一键启动」，再打开控制台",
@@ -887,8 +933,120 @@ def v_update_source() -> dict:
 
 
 # ── 注册与渲染 ─────────────────────────────────────────────────────────────
+# ── ⑨ 消息库读不到（作者 2026-09-21 点名要"能精准到哪一环"）────────────────────
+def v_db_unreadable() -> dict:
+    """症状：控制台写「消息库读不到 / 打不开消息库 / 找不到群聊」。**按链路走，一环一格**。
+
+    为什么单独开这个入口（作者原话：「因为现在还是有些问题在反复出现，比如消息库读不到」＋
+    「能不能精准地检验到到底是哪一环出了问题」）：库原来的 8 个检验器里**没有这个症状的入口** ——
+    "读不到库"散在「消息发不出去」的一格与「它不回复」的水位格里，用户点哪个都只能看到半条链，
+    于是**只能猜**。本检验器把链路摊平：①微信接没接上 → ②数据目录是怎么定的 → ③开库那一步的
+    结果（`_cap`）→ ④读的是不是**正在写**的那个号 → ⑤目录有没有填到**账号层** →
+    ⑥最硬的一格：库能不能真出会话（`list_message_chats`）。
+    **每格只有一个来源**（同一事实不许两处各算一份——第十轮 V-R10-28 就是"同一事实两条路相反"）。
+    """
+    c = _cfg()
+    checks = []
+    # ① 有没有"运行中的实例"（这是整条链的起点：没实例 ⇒ 后面几格全是"没测到"，别装读到了）
+    _how = dict(_RUNTIME_HOW or {})
+    checks.append(_check("机器人接上了微信（有运行中的实例）", True if _how else None,
+                         "运行中实例在读：%s" % (str(_how.get("dir") or "?")[:60] if _how else
+                                            "拿不到运行中实例（机器人没在跑 / 旧版本）⇒ 这一格**没测到**")))
+    # ② 数据目录是怎么定的（唯一来源：wechat_dir.status）
+    try:
+        from . import wechat_dir as _wd_d
+        _wv = _wd_d.status(how=_how) if _how else _wd_d.status()
+    except Exception as _e1:
+        _wv = {}
+        checks.append(_check("数据目录状态读得到", None,
+                             "读不到（不影响其它判断）：%s" % str(_e1)[:40]))
+    if _wv:
+        _eff_raw = str(_wv.get("effective") or "")
+        _eff = str(_wv.get("now") or _eff_raw or "")
+        _src = str(_wv.get("source_text") or _wv.get("src") or "")
+        _okd = bool(_wv.get("ok"))
+        if not _how or not _eff_raw:
+            # ⛔ 别把"机器人没在跑"说成"目录不对"（这正是本轮要治的归因矛盾）：
+            #   没有运行中实例时，`effective` 是空的 ⇒ 这一格只能**没测到**。
+            checks.append(_check("读的是**实际在用**的数据目录", None,
+                                 "拿不到运行中实例 ⇒ 这一格**没测到**（按配置/自动检测它*打算*用：%s）"
+                                 % (_eff or "还没定")))
+        else:
+            checks.append(_check("读的是**实际在用**的数据目录",
+                                 True if _okd else False,
+                                 "现在读：%s（%s）%s" % (_eff or "没认出来", _src or "来源未知",
+                                                       ("；" + str(_wv.get("note") or "")) if _wv.get("note") else "")))
+    # ③ 开库那一步的结果（唯一来源：运行中实例的 `_cap`）
+    _cap = dict(_RUNTIME_CAP or {})
+    if _cap:
+        _bad = ["%s：%s" % (k, str(v)[5:]) for k, v in _cap.items()
+                if str(v).startswith("fail")]
+        checks.append(_check("开库/读表这一步没有报错", not _bad,
+                             "、".join(_bad)[:180] if _bad else
+                             "各张表都读到了（%s）" % "、".join(sorted(_cap.keys())[:6])))
+    else:
+        checks.append(_check("开库/读表这一步没有报错", None,
+                             "拿不到运行中实例的读数（机器人没在跑 / 旧版本）⇒ 这一格**没测到**"))
+    # ④ 读的是不是"正在被写"的那个号（唯一来源：同一份 status 的账号维）
+    _acc = str(_wv.get("account") or (_how.get("account") or ""))
+    _live = _wv.get("account_live")
+    if _live is None and _acc:
+        _als = list(_how.get("accounts_live") or [])
+        _live = (_acc in _als) if _als else None
+    _ns = list(_wv.get("account_names") or (_how.get("account_names") or []))
+    if not _acc:
+        checks.append(_check("读的是**正在写的那个号**", None,
+                             "拿不到账号维（没有运行中实例）⇒ 这一格**没测到**"))
+    else:
+        _aok = True if (len(_ns) < 2 or _live is not False) else False
+        checks.append(_check("读的是**正在写的那个号**", _aok,
+                             "在读 %s%s%s" % (_acc,
+                                              ("；这台机器有 %d 个账号" % len(_ns)) if len(_ns) > 1 else "",
+                                              "" if _live else
+                                              ("（**没在动** ⇒ 很可能读的是另一个号）" if _live is False
+                                               else "（拿不到写入证据）"))))
+    # ⑤ 目录有没有填到账号层（唯一来源：wechat_dir.account_hint）
+    try:
+        from . import wechat_dir as _wd_h2
+        _cfgd = str(_wd_h2.configured_path() or "")
+        _hint = _wd_h2.account_hint(_cfgd) if _cfgd else ""
+        checks.append(_check("「数据库目录」没有填到账号层", not _hint,
+                             _hint or ("填的是账号目录的上一级，切号会自动跟随" if _cfgd
+                                       else "没填自定义目录，按自动检测走")))
+    except Exception as _e5:
+        checks.append(_check("「数据库目录」没有填到账号层", None,
+                             "判不了（不影响其它判断）：%s" % str(_e5)[:40]))
+    # ⑥ 最硬的一格：库能不能真出会话（唯一来源：驱动库自己）
+    try:
+        from wechatauto import WeChatDB
+        _db = WeChatDB()
+        _chats = _db.list_message_chats() or []
+        checks.append(_check("消息库读得到会话（最硬的一格）", bool(_chats),
+                             "会话 %d 个 · 目录 %s" % (len(_chats),
+                                                     os.path.basename(str(getattr(_db, "account_dir", "")) or "-"))))
+    except Exception as _e6:
+        checks.append(_check("消息库读得到会话（最硬的一格）", False,
+                             "**打开消息库就失败了**：%s【%s】⇒ 把这一行连同上面的目录/账号一起发我"
+                             % (str(_e6)[:90], type(_e6).__name__)))
+    ok, verdict, action = _verdict(checks,
+                                   "这一份走下来：微信在、目录对、号对、库里能出会话 ⇒ 现在读得到",
+                                   {"数据目录状态读得到": "重启一次机器人，让「接微信」重新走一遍",
+                                    "读的是**实际在用**的数据目录": "控制台「微信」面板看「数据库目录」那行怎么写的",
+                                    "开库/读表这一步没有报错": "点控制台的「接微信」，按它的逐步检查再走一遍",
+                                    "读的是**正在写的那个号**":
+                                        "把「数据库目录」改成账号目录的**上一级**（别钉到某个号）；"
+                                        "机器人会在 15 秒内自己跟着切",
+                                    "「数据库目录」没有填到账号层": "改填账号目录的上一级",
+                                    "消息库读得到会话（最硬的一格）":
+                                        "把这段报告发我（附日志尾部）—— 打开库失败的原因就在上面那一行里"})
+    return _finish("db_unreadable", "消息库读不到 / 打不开消息库",
+                   "控制台写「消息库读不到 / 打不开消息库 / 找不到群聊」，读不到聊天记录",
+                   ok, verdict, action, checks)
+
+
 VERIFIERS = {
     "send_blocked": ("消息发不出去", v_send_blocked),
+    "db_unreadable": ("消息库读不到", v_db_unreadable),
     "self_echo": ("它回自己 / 把我认成它", v_self_echo),
     "no_reply": ("它不回复", v_no_reply),
     "emoji_blank": ("表情包看不到", v_emoji_blank),
@@ -900,7 +1058,10 @@ VERIFIERS = {
 
 
 def _finish(vid, name, symptom, ok, verdict, action, checks) -> dict:
-    _n_unk = sum(1 for c in checks if c.get("ok") is None)
+    # ⛔ 2026-09-21 修（第十轮 **V-R10-10**）：**说明格不算"没测到"** —— 它们本来就不是判据，
+    #   算进去会让 `v_send_blocked` / `v_update_stuck` **恒 ◐、永不给 ✅**（审计场景 E 实测）。
+    _unk = [c for c in checks if c.get("ok") is None and not c.get("info")]
+    _n_unk = len(_unk)
     # ⛔ V-R5A-4：`ok=None`（全项没测到）要**如实画成「○ 没测到」**，不许落进 `if ok` 的假值分支
     #   画成 ❌（那是"证据说不是"），也不许画 ✅（那是"承诺成立"）。
     # ⛔ 2026-09-21 加（第九轮 **V-R9-14**）：**有没测到的项时，报告头也不许打 ✅** ——
@@ -926,7 +1087,11 @@ def _finish(vid, name, symptom, ok, verdict, action, checks) -> dict:
         _m = "✅" if ch.get("ok") is True else ("❌" if ch.get("ok") is False else "○")
         lines.append("  %s %s：%s" % (_m, ch["name"], ch["detail"]))
     lines.append("（这段可以直接粘进「反馈」发我）")
+    # ⛔ 2026-09-21 加（第十轮 **V-R10-10**）：把"部分通过"这件事**同时**放进结果字段 ——
+    #   原来只有 `report` 的头部文字变了、`ok` 仍是 True ⇒ 控制台/调用方看到的还是"通过"，
+    #   两处不同源。现在 `partial` 与报告头**同源**（都来自同一次 `_n_unk` 计算）。
     return {"id": vid, "name": name, "symptom": symptom, "ok": (None if ok is None else bool(ok)),
+            "partial": bool(ok is True and _n_unk),
             "verdict": verdict, "action": action, "checks": checks, "report": "\n".join(lines)}
 
 

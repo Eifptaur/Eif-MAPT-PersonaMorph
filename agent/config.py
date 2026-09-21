@@ -801,13 +801,24 @@ def set_config(cfg: dict) -> None:
     _config_stamp = _stamp(CONFIG_FILE)
 
 
-def save_config(cfg: dict | None = None) -> None:
+def save_config(cfg: dict | None = None, path: str | None = None) -> None:
+    """把配置**原子落盘**（tmp + `os.replace`）。
+
+    `path` 是**判据隔离口**（V-R10-10，2026-09-21）：不传就写产品那份 `config.json`。
+    为什么必须留这个口：判据要覆盖"保存配置"这条路（V-R9-33 的建议），而直接调
+    `save_config()` 会把**用户真的 config.json 覆写掉**——B 线实测撞上两次
+    （副本 25991 字节 → 164 字节）。⇒ 只多一个"写到哪"的参数：
+    **产品调用点一个字不改**（默认仍是 `CONFIG_FILE`），判据写临时目录。
+    """
     cfg = cfg or get_config()
-    os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
-    tmp = CONFIG_FILE + ".tmp"
+    p = str(path or CONFIG_FILE)
+    _d = os.path.dirname(p)
+    if _d:
+        os.makedirs(_d, exist_ok=True)
+    tmp = p + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, CONFIG_FILE)
+    os.replace(tmp, p)
 
 
 # ── 一次性迁移：把「安全默认值」补到**已存在**的 config.json 上（2026-09-16 立）─────────

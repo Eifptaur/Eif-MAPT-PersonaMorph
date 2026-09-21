@@ -255,6 +255,95 @@ ok("call_backend 支持 openai_image 协议（一个协议覆盖三家兼容接�
 ok("pollinations 协议会带 token（官方：nologo 要有账号 ⇒ 带 Bearer 才免水印）",
    "Authorization" in open(os.path.join(ROOT, "agent", "image_gen.py"), encoding="utf-8").read())
 
+# ⛔ 第十轮 **V-R10-34** 第 6 条（第九轮未闭合项）：pollinations 的**提示词不许进 URL**。
+#   老写法 `GET /prompt/<urlencode(prompt)>` 把私聊原文塞进**请求行**（审计实测 2750 字 → 24.7KB）。
+#   当天一手取证（4 组对照探针）：`POST {base}/?query` + JSON body
+#   `{"prompt": …}` 回的是同一张图（HTTP 200 / image/jpeg）⇒ 内容放 body、非内容参数留查询串。
+import io as _io_poll                                                                    # noqa: E402
+import shutil as _sh_poll                                                                # noqa: E402
+import urllib.parse as _up_poll                                                          # noqa: E402
+import urllib.request as _ur_poll                                                        # noqa: E402
+
+_POLL_PROMPT = "私聊原文：张三手机号13800000000，画只猫"
+_seen_poll = {}
+_orig_urlopen = _ur_poll.urlopen
+
+
+class _FakePollResp(object):
+    status = 200
+
+    def __init__(self, data):
+        self._d = data
+        self.headers = {"Content-Type": "image/png"}
+
+    def read(self, n=-1):
+        return self._d if (not n or n < 0) else self._d[:n]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+_buf_poll = _io_poll.BytesIO()
+Image.new("RGB", (96, 96), (7, 8, 9)).save(_buf_poll, "PNG")
+_POLL_BYTES = _buf_poll.getvalue()
+
+
+def _fake_poll_open(req, **kw):
+    _seen_poll["url"] = req.full_url
+    _seen_poll["method"] = req.get_method()
+    _seen_poll["body"] = (req.data or b"").decode("utf-8", "replace")
+    return _FakePollResp(_POLL_BYTES)
+
+
+def _prompt_leaks(url, body):
+    """同一条判据：URL 里出现（原文或 urlencode 后的）提示词、或 body 里没有它 ＝ 泄漏。"""
+    return (_up_poll.quote(_POLL_PROMPT) in str(url)) or (_POLL_PROMPT in str(url)) \
+        or ("prompt" not in str(body))
+
+
+# ⛔ 判据**不许往产品 `data/gen_images` 落文件**（其余测试文件的既有口径）：把落盘口改到临时目录，
+#   测完删掉 —— 这里只验"传输形状"，不验产品目录布局。
+_orig_save_poll = IG._save_image_bytes
+_tmp_poll_dir = tempfile.mkdtemp(prefix="pm-poll-")
+
+
+def _save_tmp_poll(data, tag):
+    _p = os.path.join(_tmp_poll_dir, "%s_%d.png" % (str(tag), int(time.time() * 1000) % 100000))
+    with open(_p, "wb") as _fh:
+        _fh.write(data)
+    return _p
+
+
+try:
+    IG._save_image_bytes = _save_tmp_poll
+    _ur_poll.urlopen = _fake_poll_open
+    try:
+        _rp_poll = IG.call_backend({"id": "pollinations", "kind": "online", "proto": "pollinations",
+                                    "url": "https://image.pollinations.ai/prompt/", "model": "sana"},
+                                   _POLL_PROMPT, count=1, size="square")
+    finally:
+        _ur_poll.urlopen = _orig_urlopen
+finally:
+    IG._save_image_bytes = _orig_save_poll
+    _sh_poll.rmtree(_tmp_poll_dir, ignore_errors=True)
+ok("① 走的是 POST + JSON body，提示词在 **body** 里",
+   _seen_poll.get("method") == "POST" and "prompt" in (_seen_poll.get("body") or ""),
+   str(_seen_poll)[:120])
+ok("① URL 里**一个字符都不带**（原文与 urlencode 两种形态都没有）",
+   not _prompt_leaks(_seen_poll.get("url") or "", _seen_poll.get("body") or ""),
+   str(_seen_poll.get("url"))[:120])
+ok("① 非内容参数（尺寸/模型/seed）仍在查询串里（后端照旧认得出）",
+   "width=" in (_seen_poll.get("url") or "") and "model=sana" in (_seen_poll.get("url") or ""),
+   str(_seen_poll.get("url"))[:130])
+ok("① 正常拿到 1 张图（改了传输形状没改行为）",
+   bool(_rp_poll.get("files")) and len(_rp_poll["files"]) == 1, str(_rp_poll.get("files"))[:80])
+ok("① 反例锚：老写法（提示词拼进 URL 路径）用**同一条判据**判『漏』",
+   _prompt_leaks("https://image.pollinations.ai/prompt/" + _up_poll.quote(_POLL_PROMPT)
+                 + "?width=1024&height=1024", ""))
+
 # 去水印：功能性（真裁一张图）+ 口径（带 token/要 key 的后端不动它）
 _wt = tempfile.mkdtemp(prefix="imggen_wm_")
 _wi = os.path.join(_wt, "wm.jpg")

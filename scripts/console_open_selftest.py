@@ -362,18 +362,17 @@ try:
         _bad = _code("http://127.0.0.1:%d/?token=" % _port)
         ok("阴性对照：空口令地址 ⇒ 401 unauthorized（旧写法就是这样打开的）", _bad == 401, str(_bad))
 
-        # ⛔ 2026-09-21 加（第九轮 **V-R9-33** / F144·F147·F150）：**POST 路由的空口令必须 fail-closed**。
-        #   审计实测：三条变异（`/api/emojis/delete` 的 basename 守卫、空 token 的 fail-closed、
-        #   每条 POST 路由的 `_auth_ok`）本段**全放过** —— 因为这里原来只对 **GET** 发请求、
-        #   token 用的还是非空常量。⇒ 现在挑一批**只读/无副作用**的 POST 路由，各打一发不带口令的，
+        # ⛔ 2026-09-21 加（第九轮 **V-R9-33** / 第十轮 **V-R10-9**）：**每一条写入口的空口令必须 fail-closed**。
+        #   审计实测：我第一版手写了 11 条"安全路由" ⇒ 实际有 71 条 POST + 一条 **`do_PUT`**
+        #   （`PUT /api/config` 无口令 **200 且真落盘**）而判据 84/0 全绿 —— 那次"覆盖"是假的。
+        #   ⇒ 现在**从产品源码里枚举**路由（`do_POST` + `do_PUT` 两段都扫），逐条打"不带口令"，
         #   断言 401/403（鉴权在分发之前就把请求拒了 ⇒ 不可能误改任何东西）。
-        #   ⚠️ 故意**不碰** shutdown/restart/update/delete/pause 这类会动状态的路线 ——
-        #      判据自己不许成为风险源（万一是"鉴权坏了"，打过去就真出事）。
-        def _code_post(u, body=b""):
-            # ⚠️ 空体（Content-Length: 0）：带一个 JSON 体时，服务端在鉴权处直接拒、**不回读 body**
-            #    ⇒ 有些路由上客户端会看到连接被重置（实测 `/api/stats/cal_list` 报 WinError 10053），
-            #    那是"被拒"不是"放行"，但会让断言分不清 ⇒ 统一发空体。
-            _rq = urllib.request.Request(u, data=body, method="POST",
+        #   ⚠️ 判据起的是**自己的** WebUI 实例（parent 是桩，没有 shutdown/restart 那些回调）
+        #      ⇒ 即便某条路由的鉴权真坏了，落到桩上也只会 500，不会把本进程弄死。
+        def _code_post(u, body=b"", method="POST"):
+            # ⚠️ 空体（Content-Length: 0）：带 JSON 体时服务端在鉴权处直接拒、**不回读 body**，
+            #    有些路由上客户端会看到连接被重置 —— 那是"被拒"不是"放行"，但会让断言分不清。
+            _rq = urllib.request.Request(u, data=body, method=method,
                                          headers={"Content-Type": "application/json"})
             try:
                 with urllib.request.urlopen(_rq, timeout=5) as r:
@@ -383,21 +382,64 @@ try:
             except Exception as e:
                 return "ERR:%s" % e
 
-        _SAFE_POST = ["/api/verifiers", "/api/verify", "/api/sessions", "/api/memory",
-                      "/api/risk", "/api/prices", "/api/scoring/stats", "/api/stats/cal_list",
-                      "/api/wechat-groups", "/api/wechat/dir", "/api/prompt/preview"]
-        _open_post = []
-        for _rp in _SAFE_POST:
-            _c = _code_post("http://127.0.0.1:%d%s" % (_port, _rp))
+        import re as _re
+        _uisrc = open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
+        _routes = []
+        for _mname, _meth in (("def do_POST", "POST"), ("def do_PUT", "PUT"), ("def do_DELETE", "DELETE")):
+            if _mname not in _uisrc:
+                continue
+            _seg = _uisrc[_uisrc.index(_mname):]
+            _nxt = _seg.find("\n    def ", 10)
+            if _nxt > 0:
+                _seg = _seg[:_nxt]
+            for _p in sorted(set(_re.findall(r'path == "(/api/[A-Za-z0-9_/\-]+)"', _seg))):
+                _routes.append((_meth, _p))
+        _open_w = []
+        for _method, _rp in _routes:
+            _c = _code_post("http://127.0.0.1:%d%s" % (_port, _rp), method=_method)
             if _c not in (401, 403):
-                _open_post.append("%s⇒%s" % (_rp, _c))
-        ok("**每条 POST 路由都不带口令 ⇒ 401/403**（审计 F147/F150：这一段原来只测 GET）",
-           not _open_post, "没有拒绝的：" + "、".join(_open_post))
+                _open_w.append("%s %s⇒%s" % (_method, _rp, _c))
+        ok("**枚举出来的每条写入口（POST/PUT/DELETE，%d 条）不带口令 ⇒ 401/403**"
+           "（第九轮只测了手写的 11 条 POST、漏了 do_PUT ⇒ V-R10-9）" % len(_routes),
+           bool(_routes) and not _open_w,
+           "没有拒绝的（%d/%d 条）：%s" % (len(_open_w), len(_routes), "、".join(_open_w[:6])))
         _auth_c = _code_post("http://127.0.0.1:%d/api/verifiers?token=judge-token-1234567890" % _port)
         ok("阳性对照：带对口令的 POST 不被拦（不是「一律 401」）", _auth_c == 200, str(_auth_c))
+        _wrong = _code_post("http://127.0.0.1:%d/api/verify?token=wrong-token-000000" % _port)
+        ok("错口令也拒（401/403）", _wrong in (401, 403), str(_wrong))
         _src_ui = open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
         _seg_post = _src_ui[_src_ui.index("def do_POST"):_src_ui.index("\n    def ", _src_ui.index("def do_POST") + 10)]
         ok("do_POST 里有统一鉴权（`_auth_ok` 出现在 POST 段）", "_auth_ok" in _seg_post)
+        _seg_put = _src_ui[_src_ui.index("def do_PUT"):_src_ui.index("\n    def ", _src_ui.index("def do_PUT") + 10)]
+        ok("do_PUT 里有统一鉴权（第十轮点名的第二条写入口）", "_auth_ok" in _seg_put)
+        # ⛔ 2026-09-21 加（第十轮 **V-R10-10**）：`save_config` 必须有**可注入根**。
+        #   判据一旦照 V-R9-33 的建议扩到 `/api/config` 的落盘，就会把**用户真的 config.json**
+        #   覆写掉（B 线实测撞上两次：那个副本 25991 字节 → 164 字节，事后从真仓库只读拷回）。
+        from agent import config as _C10
+        _iso_dir = tempfile.mkdtemp(prefix="pm-iso-cfg-")
+        _iso = os.path.join(_iso_dir, "config.json")
+        _C10.save_config({"probe": 1}, path=_iso)
+        ok("`save_config(path=…)` 真写到指定文件（判据不必再拿产品配置当靶子）",
+           json.load(open(_iso, encoding="utf-8")).get("probe") == 1)
+        ok("不传 `path` 时默认仍是产品 `CONFIG_FILE`（产品调用点零改动）",
+           _sm.has(open(os.path.join(ROOT, "agent", "config.py"), encoding="utf-8").read(),
+                   "p = str(path or CONFIG_FILE)"))
+        shutil.rmtree(_iso_dir, ignore_errors=True)
+        # ⛔ 第十轮 **V-R10-34**：请求体上限 —— 原来按 `Content-Length` **全收**（64MB 全读），
+        #   而且"声明 200MB、只发 1MB"会把线程**卡死**。现在超限直接 413（**在读体之前**判）。
+        #   用裸 socket 发一个"声明天量、体不发"的请求：带对口令 ⇒ 进到读体那一步 ⇒ 应立刻 413。
+        try:
+            import socket as _sk
+            _s2 = _sk.create_connection(("127.0.0.1", _port), timeout=5)
+            _s2.sendall(("POST /api/verifiers?token=judge-token-1234567890 HTTP/1.1\r\n"
+                         "Host: 127.0.0.1:%d\r\nContent-Length: 9000000\r\n"
+                         "Connection: close\r\n\r\n" % _port).encode("ascii"))
+            _resp = _s2.recv(200).decode("latin1", "replace")
+            _s2.close()
+            ok("请求体超上限 ⇒ **413**（不再全收，也不会守着读不满的体卡死）", "413" in _resp,
+               _resp.splitlines()[0] if _resp else "(空)")
+        except Exception as _e413:
+            ok("请求体超上限 ⇒ 413", False, str(_e413)[:80])
     finally:
         try:
             if _w is not None:

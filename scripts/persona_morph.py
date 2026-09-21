@@ -539,7 +539,11 @@ class Orchestrator:
         if not str(api.get("base_url") or "").strip() or not str(api.get("model") or "").strip():
             return  # 模型未配置：消息保留未读，不产生报错会话
 
-        pending = self.store.peek_unread(chat_key, 200)
+        # ⛔ 2026-09-21 修（第十轮 **V-R10-18** · P1）：`limit=0` ⇒ **取全部未读**。原来固定 200 条，
+        #   超出那一截**既不喂也不标读**（审计叫它"第二道黑洞"：400 条里永远有 200 条谁都不管，
+        #   把 cap 提到 300 也一样）。切分全交给下面的 `pick_feed`（纯函数）：
+        #   喂哪些 / 跳哪些（陈旧，标已读）/ 退哪些（超限，保持未读）。
+        pending = self.store.peek_unread(chat_key, 0)
         if not pending:
             return
         # ── 名字面（先算出来：下面切分"哪些消息是**明确指向它**的"要用）──────────────
@@ -667,25 +671,39 @@ class Orchestrator:
         if not trigger:
             return
 
-        # 会话级重试：只在一次都没发出过消息时才重试（避免重复发言）
-        session = None
-        last_error = None
-        for attempt in range(3):
-            session = {"chat_key": chat_key, "sent": [], "usage": empty_usage(), "past_state_count": 0,
-                       "feedbacks": [], "finish_reason": None, "web_search_count": 0, "activity": "",
-                       "model": api.get("model"), "prompt_chars": 0}
-            try:
-                self.run_agent(chat_key, trigger, tier_result, session)
-                last_error = None
-                break
-            except Exception as e:
-                last_error = e
-                can_retry = attempt < 2 and is_retryable_error(e) and not session["sent"] and not self.stopped
-                if not can_retry:
+        # ⛔ 2026-09-21 修（第十轮 **V-R10-20** · P1）：**"喂了模型"必须蕴含"已标读"** ——
+        #   第九轮我把 `mark_all_read/drain_unread` 换掉时**没补兜底**：`pick_feed` 抛异常（或
+        #   `mark_read` 自己抛，Windows 上 `.tmp` Permission denied 就会）⇒ 那一批喂给模型却没人
+        #   标读 ⇒ 5 分钟去重到期后**同一批再喂一次**（重复回复）+ 排空循环每 1.2s 空转。
+        #   ⇒ 把"标读"放进 `finally`：只要这一批真喂出去了，无论中途怎么炸都标掉。
+        _fed_ids = [m.get("id") for m in trigger]
+        try:
+            # 会话级重试：只在一次都没发出过消息时才重试（避免重复发言）
+            session = None
+            last_error = None
+            for attempt in range(3):
+                session = {"chat_key": chat_key, "sent": [], "usage": empty_usage(), "past_state_count": 0,
+                           "feedbacks": [], "finish_reason": None, "web_search_count": 0, "activity": "",
+                           "model": api.get("model"), "prompt_chars": 0}
+                try:
+                    self.run_agent(chat_key, trigger, tier_result, session)
+                    last_error = None
                     break
-                wait = 1.0 * (2 ** attempt)
-                log.warning("会话 %s 第 %d 次失败（未发出任何消息），%.0fms 后重试：%s", chat_key, attempt + 1, wait * 1000, getattr(e, "message", e))
-                time.sleep(wait)
+                except Exception as e:
+                    last_error = e
+                    can_retry = attempt < 2 and is_retryable_error(e) and not session["sent"] and not self.stopped
+                    if not can_retry:
+                        break
+                    wait = 1.0 * (2 ** attempt)
+                    log.warning("会话 %s 第 %d 次失败（未发出任何消息），%.0fms 后重试：%s", chat_key, attempt + 1, wait * 1000, getattr(e, "message", e))
+                    time.sleep(wait)
+        finally:
+            try:
+                _n = self.store.mark_read(chat_key, _fed_ids)
+                if _n:
+                    log.debug("%s 本轮喂给模型的 %d 条已标读（finally 兜底）", chat_key, _n)
+            except Exception as _e_mark:
+                log.warning("%s 标读失败（可能重复喂一次）：%s", chat_key, str(_e_mark)[:80])
         if last_error:
             log.error("运行 %s 出错: %s", chat_key, getattr(last_error, "message", last_error))
             try:
@@ -1333,7 +1351,58 @@ def _maybe_auto_fix():
 #   老实现只有一个是/否（`wechat is not None`）：用户看到"微信未连接"却不知道**为什么**，
 #   我们也只能来回猜、来回问。⇒ 每次接入（成功或失败）都把**逐步诊断**记在这里，
 #   控制台侧栏显示一行短原因（悬停看全文），反馈诊断包带上完整 steps。
-_ATTACH = {"tries": 0, "at": 0.0, "err": "", "diag": None}
+_ATTACH = {"tries": 0, "at": 0.0, "err": "", "diag": None,
+           "wm_account": "", "wm_flush_fail": 0}      # V-R10-30：水位表挂在哪个账号 + 落盘失败次数
+
+
+def _wm_account_of(_wc) -> str:
+    """当前 adapter **正在读哪个账号**（`WeChatDB.account`；认不出返回空串＝沿用老键名）。
+
+    V-R10-30：水位表按账号分命名空间，切号时两个账号的序号格子互不污染。
+    """
+    try:
+        return str(getattr(_wc, "db_account", lambda: "")() or "")
+    except Exception:
+        return ""
+
+
+def _release_adapter(_wc_old) -> None:
+    """切号/重连时**把旧 adapter 的句柄与解密缓存放掉**（V-R10-30 第三条）。
+
+    为什么必须做（审计原文：「`_adopt_wc` 不关旧 DB 句柄」）：
+      · 旧 `WeChatDB` 的解密缓存（`workdir` 下 `.db/.stamp`）是**旧账号聊天记录的明文副本**
+        —— 切号后没人再用它，却一直躺在临时目录里；
+      · 旧 `WeChatGUI` 抓着的 UIA/窗口句柄 / 旧 `WeChatDB` 抓着的库文件表都是**过期引用**，
+        留着只会让"到底在读哪个号"变得说不清（真出问题时无法归因）。
+    参数是"通用释放"：这些 API 名字在驱动库里不统一（`close`/`Close`/`release`/`_clear_decrypted_cache`），
+    逐个试、失败只告警——**绝不让释放失败挡住新号的接入**。
+    """
+    if _wc_old is None:
+        return
+    _db = None
+    try:
+        _db = getattr(_wc_old, "_db", None)
+        _clr = getattr(_db, "_clear_decrypted_cache", None)
+        if callable(_clr):
+            _clr()
+            log.info("切号：旧账号的解密缓存已清掉（%s）", getattr(_db, "workdir", "") or "?")
+    except Exception as e:
+        log.warning("切号：清旧账号解密缓存失败（不影响新号接入）：%s", e)
+    for _obj, _names in ((_db, ("close", "Close", "release")),
+                         (getattr(_wc_old, "_gui", None), ("Close", "close", "release"))):
+        for _n in _names:
+            _fn = getattr(_obj, _n, None)
+            if callable(_fn):
+                try:
+                    _fn()
+                except Exception as e:
+                    log.debug("切号：旧句柄 %s() 释放失败（忽略）：%s", _n, e)
+                break
+    try:
+        _wc_old._db = None                      # 断开引用 ⇒ 不让过期句柄继续活到下一轮
+        _wc_old._gui = None
+    except Exception:
+        pass
 
 
 def _attach_wechat(cfg):
@@ -1748,10 +1817,44 @@ def main():
         _mode = str((_cfg_now.get("wechat") or {}).get("private_chat") or "owner_only")
         try:
             _gs = wc.list_groups() or []
+            # ⛔ 单一来源：为什么没读到群列表 —— 走 `wechat.groups_read_error()`（与启动那一次同一个口径）
+            try:
+                _cap_g = str(wc.groups_read_error() or "")
+            except Exception:
+                _cap_g = ""
+                try:
+                    _cap_g = str((getattr(wc, "_cap", {}) or {}).get("groups") or "")
+                except Exception:
+                    _cap_g = ""
         except Exception as _e:
             log.warning("取群列表失败：%s", _e)
-            _gs = []
-        _t = listen_targets.resolve_groups(_gs, _wl, _deny)["groups"]      # W-1：按 wxid 认群（同上）
+            _gs, _cap_g = [], "%s: %s" % (type(_e).__name__, str(_e)[:60])
+        _res = listen_targets.resolve_groups(_gs, _wl, _deny)                  # W-1：按 wxid 认群（同上）
+        _t = _res["groups"]
+        # ⛔ 2026-09-21 加（第十轮 **V-R10-13/14/15**）：
+        #   ①**目标为 0 这件事在这里现算**（原来只在启动那一次写 `_ATTACH["targets_zero"]=True`，
+        #     是个**单向闩锁**：启动时微信没开（最常见）就永久报警，即便群列表后来恢复了 ——
+        #     归因与事实矛盾）；
+        #   ②`describe` 的**真因**（群列表读失败）在这里也要传 —— 晚接入/配置保存走的是本函数，
+        #     原来只有启动那一次传真因（审计点名"归因一致性三处"）；
+        #   ③“刷新群列表”之后要能走到这里（见 webui 的 refresh 回调）。
+        _read_failed = ""
+        if not wc:
+            _read_failed = "微信还没接上"
+        elif str(_cap_g).startswith("fail"):
+            _read_failed = str(_cap_g)[5:140]
+        try:
+            log.info("%s", listen_targets.describe(_t, _res, read_failed=_read_failed))
+        except Exception:
+            pass
+        try:
+            _ATTACH["targets_zero"] = bool(not _t)
+            if not _t:
+                _why = ("（群列表这次**没读到**：%s）" % _read_failed) if _read_failed else ""
+                log.warning("⚠️ 监听目标 0 个 ⇒ **群里 @ 它也不会回**：去控制台「微信」面板勾选要听的群，"
+                            "或把「群名白名单」留空＝监听所有群。%s", _why)
+        except Exception:
+            pass
         try:
             _p2 = [] if _mode == "off" else (wc.list_private_targets() or [])
         except Exception as _e:
@@ -1781,12 +1884,10 @@ def main():
                 n += 1
             except Exception as e:
                 errs.append("%s：%s" % (g.get("name") or wxid, e))
-        try:
-            wm.flush()
-        except Exception:
-            pass
+        _okw = listener_watermark.flush_checked(wm, log=log, why="控制台一键对齐水位")
         log.info("监听水位已重新对齐（%d 个群）%s", n, ("；失败：%s" % errs[:2]) if errs else "")
-        return {"ok": True, "n": n, "errs": errs}
+        return {"ok": bool(_okw), "n": n, "errs": errs,
+                "saved": bool(_okw), "why": "" if _okw else (wm.last_error or "水位表没写进磁盘")}
 
     def _refresh_targets(why=""):
         """按当前配置**就地刷新**监听目标（配置保存后也走这里）。
@@ -2854,6 +2955,10 @@ def main():
                   shutdown_fn=shutdown_fn, whale=orch.whale,
                   poke_test_fn=poke_test_fn, selfcheck_fn=selfcheck_fn, restart_fn=restart_fn,
                   groups_fn=groups_fn, memory_fn=memory_fn,
+                  # ⛔ 第十轮 **V-R10-14**：「刷新群列表」只换 `wechat._groups` 是不够的 ——
+                  #   监听侧的 targets 也得重算（否则界面同时出现"读到 N 个群"与"监听目标 0 个"
+                  #   两个矛盾结论，且新群的显示名一直是 wxid）。
+                  refresh_targets_fn=lambda why="刷新群列表": _refresh_targets(why),
                   sessions_fn=lambda limit: orch.session_log.recent(limit),
   store=orch.store,
                   community_export_fn=community_export_fn,
@@ -2912,7 +3017,8 @@ def main():
     # 只有在第一次运行（没有水位文件）时才用 latest_seq 当起点（不重放历史）。
     _wm_path = os.path.join(DATA_DIR, "listener_watermark.json")
     _dl_path = os.path.join(DATA_DIR, "listener_failed.jsonl")
-    wm = listener_watermark.Watermark(_wm_path)
+    wm = listener_watermark.Watermark(_wm_path, _wm_account_of(wechat_box[0]))
+    _ATTACH["wm_account"] = wm.account
     _wm_log = listener_watermark.make_log(log)
     for g in targets:
         _key0 = "group:" + g["wxid"]
@@ -2928,8 +3034,8 @@ def main():
                 log.warning("群[%s] 的「最新序号」读不出来 ⇒ **不给它定起点**"
                             "（绝不写 0＝绝不从最旧历史重放），下一轮再试：%s",
                             g["name"], str(_why0)[:120])
-    wm.flush()
-    log.info("监听水位已载入：%s（重启不丢、不重放）", _wm_path)
+    listener_watermark.flush_checked(wm, log=log, why="启动时把各群起点写盘")
+    log.info("监听水位已载入：%s（重启不丢、不重放；账号维=%s）", _wm_path, wm.account or "（认不出账号⇒沿用老键名）")
     _rd_last = {}          # wxid -> 上次"读不到"告警时间（限频 60 秒，别刷屏）
 
     def _warn_rl(wxid, msg):
@@ -2973,12 +3079,28 @@ def main():
         为什么必须换全：`sender` / `orch` / `target_wxids` 各自抱着一份引用，只换
         `wechat_box[0]` 的话发送链还拿着旧账号那个对象 ⇒ 表面"接上了"，其实一条都发不出去
         （旧号的库/窗口句柄都过期了）。
+
+        V-R10-30（2026-09-21）补齐三件**原来三条接入路径各做各的、实际只有这一条做全**的事：
+          ① 旧 adapter 的句柄与旧账号的解密缓存**先放掉**（`_release_adapter`）；
+          ② 水位表**切到新账号的命名空间**（`wm.set_account`）——切号后两号水位不再互相污染；
+          ③ 水位落盘**看返回值**（`flush_checked`）并把失败次数记进 `_ATTACH`，不再静默。
         """
         nonlocal wechat, groups, targets
+        _wc_old = wechat_box[0]
+        if _wc_old is not None and _wc_old is not _wc_new:
+            try:
+                _release_adapter(_wc_old)
+            except Exception as e:
+                log.warning("切号：释放旧 adapter 异常（继续接新号）：%s", e)
         wechat_box[0] = _wc_new
         wechat = _wc_new
         sender.wechat = _wc_new
         orch.wechat = _wc_new
+        try:
+            wm.set_account(_wm_account_of(_wc_new))
+        except Exception as e:
+            log.warning("切号：水位表切换账号命名空间失败（沿用上一个）：%s", e)
+        _ATTACH["wm_account"] = wm.account
         groups, targets = _collect_targets(_wc_new)
         target_wxids.clear()
         target_wxids.update(g["wxid"] for g in targets)
@@ -2992,7 +3114,8 @@ def main():
                 else:
                     log.warning("切号后群[%s] 的最新序号读不出来 ⇒ 不给它定起点（不写 0）",
                                 _g["name"])
-        wm.flush()
+        if not listener_watermark.flush_checked(wm, log=log, why="切号/接入后写回水位"):
+            _ATTACH["wm_flush_fail"] = int(_ATTACH.get("wm_flush_fail") or 0) + 1
         if _why:
             try:
                 _acct = _wc_new.db_account() or "?"
@@ -3057,7 +3180,7 @@ def main():
                             _okp, _seqp, _whyp = wechat.latest_seq_ex(wxid)
                             if _okp:
                                 wm.set(chat_key, _seqp)
-                                wm.flush()
+                                listener_watermark.flush_checked(wm, log=log, why="暂停中把水位推到最新")
                             else:
                                 _warn_rl(wxid, "暂停期间读不到群[%s]的最新序号 ⇒ 水位不动（不写 0）：%s"
                                          % (g["name"], str(_whyp)[:100]))
@@ -3074,7 +3197,7 @@ def main():
                         log.warning("群[%s] 的水位是 0（起点没定下来）⇒ 对齐到现有最新 %d，"
                                     "绝不从最旧历史重放", g["name"], _seqA)
                         wm.set(chat_key, _seqA, forward_only=False)
-                        wm.flush()
+                        listener_watermark.flush_checked(wm, log=log, why="水位 0 ⇒ 对齐到最新")
                     else:
                         _warn_rl(wxid, "群[%s] 水位是 0 且现在读不出最新序号 ⇒ 这一轮跳过它"
                                        "（不重放历史）：%s" % (g["name"], str(_whyA)[:100]))
@@ -3097,7 +3220,7 @@ def main():
                                         "把水位对齐到最新；否则新消息会被当成旧消息跳过、它就不回了",
                                         g["name"], _latest, _cur)
                             wm.set(chat_key, _latest, forward_only=False)
-                            wm.flush()
+                            listener_watermark.flush_checked(wm, log=log, why="序号回落自愈")
                 except Exception as e:
                     log.debug("水位自愈检查失败（不影响监听）：%s", e)
                 try:
@@ -3218,7 +3341,7 @@ def main():
             log.error("轮询循环异常：%s", e)
         time.sleep(poll_interval)
     try:
-        wm.flush()
+        listener_watermark.flush_checked(wm, log=log, why="退出前写回水位", warn_gap=0.0)
     except Exception:
         pass
 

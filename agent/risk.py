@@ -154,6 +154,8 @@ class RiskGate(object):
         self.path = path
         self.event_path = event_path
         self._lock = threading.RLock()
+        self._refuse_overwrite = False       # V-R10-23：坏档留证失败 ⇒ 拒绝覆盖原档
+        self._flag_seen = None               # V-R10-24：控制台『暂停/恢复』标记的上次值
         self._st = {"paused": False, "paused_reason": "", "blocks": 0,
                     "min": [], "hour": [], "day": [], "day_key": "",
                     "chats": {}, "events": [], "recent": []}
@@ -165,22 +167,67 @@ class RiskGate(object):
     #    机器人接着往外发。读不出"停止开关"绝不能等价于"没有暂停" ⇒ 改成 **fail-closed**：
     #    坏档照 `persist.quarantine` 改名留证，内存里置 paused=True + 写清原因，
     #    用户确认后在控制台点『恢复发送』即可（坏档没丢，还能人工修回来）。
+    # ⛔ V-R10-25（第十轮）：`_load` 原来只对"读不出来"fail-closed，**形状洞是 fail-open**——
+    #    顶层是 list / str / None / `{}` 时 `isinstance(d, dict)` 不成立 ⇒ 既不留证、也不暂停，
+    #    `paused` 落回 False（实测 `allowed=true` 闸门放行）。与 timers/holidays/watermark/config
+    #    四处同口径：**形状不对 = 坏档**（留证 + fail-closed）。
+    #    为什么 `{}` 也算：闸门的状态**永远不是空的**（paused/blocks/day_key/chats… 全是键），
+    #    空 dict 只可能来自"被清空/写坏"，绝不该等价于"没暂停"。
+    _KEYS = ("paused", "paused_reason", "blocks", "min", "hour", "day", "day_key",
+             "chats", "events", "recent")
+
+    @classmethod
+    def _shape_ok(cls, d) -> bool:
+        """顶层必须是对象，且 10 个键的类型必须与内存初值一致（少键可以，错型不行）。"""
+        if not isinstance(d, dict) or not d:
+            return False
+        ref = {"paused": False, "paused_reason": "", "blocks": 0, "min": [], "hour": [],
+               "day": [], "day_key": "", "chats": {}, "events": [], "recent": []}
+        for k, v in d.items():
+            if k not in ref:
+                continue
+            if k == "blocks":
+                if not isinstance(v, int) or isinstance(v, bool):
+                    return False
+            elif not isinstance(v, type(ref[k])):
+                return False
+        return True
+
     def _load(self):
         if not os.path.exists(self.path):
             return                       # 从来没落过状态 ⇒ 空状态起步（这不是坏档）
         _BAD = object()                  # 哨兵：读到了什么 / 走的默认值，用 `is` 分得清
-        d = persist.load_or_quarantine(self.path, _BAD)
+        d, ok_overwrite = persist.load_checked(self.path, _BAD)
+        # V-R10-23：原档读不出来且留证也失败 ⇒ 原档还在原地。这里**不写盘**（`_save` 拒写），
+        # 否则那一枪就把用户的停机开关/计数盖掉了。
+        self._refuse_overwrite = not ok_overwrite
         if d is _BAD:
-            self._st["paused"] = True
-            self._st["paused_reason"] = "风险状态文件读不出来，已按最保守处理成暂停"
-            log.warning("风险闸门状态读不出来 ⇒ **按暂停（fail-closed）**处理，确认后可点『恢复发送』：%s",
-                        self.path)
+            self._fail_closed("风险状态文件读不出来，已按最保守处理成暂停")
             return
-        if isinstance(d, dict):
-            self._st.update({k: v for k, v in d.items() if k in self._st})
+        if not self._shape_ok(d):
+            # ⚠️ `null` 也要走这里：`json.load` 对字面量 `null` 是**成功**返回 `None`（不是异常）
+            # ⇒ 上面那个分支抓不到它，而它就是审计点名的"顶层 null ⇒ fail-open"那一种。
+            kept = persist.quarantine(self.path)
+            if not kept:
+                self._refuse_overwrite = True
+            self._fail_closed("风险状态文件形状不对（顶层不是合法状态对象），已按最保守处理成暂停")
+            log.warning("风险闸门状态形状不对（类型 %s）⇒ %s",
+                        type(d).__name__,
+                        ("已按坏档留证：%s" % kept) if kept else "**留证失败 ⇒ 原档保持原样、禁止覆盖**")
+            return
+        self._st.update({k: v for k, v in d.items() if k in self._st})
+
+    def _fail_closed(self, reason: str):
+        self._st["paused"] = True
+        self._st["paused_reason"] = reason
+        log.warning("风险闸门 %s —— 确认后可点控制台『恢复发送』：%s", reason, self.path)
 
     def _save(self):
         # V-R9-22：临时名带 pid + 随机后缀 + os.replace（老写法共用 `path + ".tmp"`）
+        if self._refuse_overwrite:
+            # V-R10-23：原档读不出来且留证失败 ⇒ 它还在原地；写出去就是把它整体覆盖。
+            log.warning("风险闸门状态档读不出来且留证失败 ⇒ **拒绝覆盖**（本次不落盘）：%s", self.path)
+            return
         if not persist.atomic_write_json(self.path, self._st, indent=None):
             log.warning("风险闸门状态落盘失败 ⇒ 停机开关重启后可能丢失（原档未动）：%s", self.path)
 
@@ -197,11 +244,72 @@ class RiskGate(object):
             pass
 
     # ── 停机开关 ────────────────────────────────────────────────────────
+    def _sync_operator(self, force: bool = False):
+        """把控制台那个『暂停所有发送』勾选框 / 顶栏『暂停』按钮的**文件级真相**并进来。
+
+        V-R10-24（审计第十轮）：产品里其实有**两套互不相通的停机开关**，用户会被锁死——
+          ①`risk.paused`（落 `data/risk_state.json`，跨重启粘住；`POST /api/risk` 是唯一能恢复的
+            入口，而**全仓没有任何前端调用它**）；
+          ②`data/paused.flag`（顶栏『暂停/恢复』按钮、`agent/control.is_paused()`，每个发送链
+            每一步都查它）。
+        ⇒ 只被 ① 锁住时，用户按遍界面上的按钮都解不开（它改的是 ②）。
+        这里把 ② 的**跳变**当作操作者的显式指令：标记出现 ⇒ 跟着暂停；标记消失 ⇒ 跟着恢复。
+
+        为什么只看"跳变"：配置里的 `risk.paused` 与 `_load` 的 fail-closed 是两个独立来源，
+        按"当前值"同步会在每次首查就把 fail-closed 的暂停抹掉。跳变则专指"刚有人按了按钮"。
+        只在**默认状态档**上生效（判据各自用 `tempfile` 建独立实例，不受本机 data/ 影响）。
+        """
+        if os.path.abspath(self.path) != os.path.abspath(STATE_PATH):
+            return
+        try:
+            from . import control as _ctl
+            now = bool(_ctl.is_paused())
+        except Exception:
+            return
+        prev, self._flag_seen = self._flag_seen, now
+        if prev is None and not force:
+            return                                  # 首次：只记基线，不做动作
+        if now == prev and not force:
+            return
+        if now and not self._st.get("paused"):
+            self._st["paused"] = True
+            self._st["paused_reason"] = "控制台按了「暂停所有发送」"
+            log.info("风险闸门：跟随控制台『暂停』标记 ⇒ 暂停自动发送")
+        elif (not now) and self._st.get("paused"):
+            # 一键恢复：用户在界面上点『恢复』（标记消失）⇒ 闸门跟着解，不用去碰没有前端入口的 API
+            self._st["paused"] = False
+            self._st["paused_reason"] = ""
+            self._st["blocks"] = 0
+            log.info("风险闸门：跟随控制台『恢复』标记 ⇒ 已恢复自动发送（一键恢复路径）")
+
     def pause(self, reason: str = ""):
         with self._lock:
             self._st["paused"] = True
             self._st["paused_reason"] = str(reason or "")[:120]
             self._save()
+        # 两套开关互相同步：闸门暂停 ⇒ 也让 `control.is_paused()` 为真（发送链每一步都查它）
+        try:
+            from . import control as _ctl
+            _ctl.set_paused_flag(True)
+        except Exception:
+            pass
+
+    def recover(self) -> dict:
+        """**一键恢复**（V-R10-24）：清掉闸门暂停 + 清掉控制台的暂停标记 ⇒ 立刻能发。
+
+        为什么要有它：`risk.paused` 是**落盘**的（跨重启粘住），而原先唯一的恢复入口
+        `POST /api/risk`（`agent/webui.py:1447`）**全仓没有前端调用者**——坏档 fail-closed
+        或被拦升级之后，用户按遍界面都解不开。控制台的可点入口是顶栏『暂停/恢复』
+        （`/api/pause`|`/api/resume` → `orch.set_paused()` + `data/paused.flag`）；
+        本方法把**两套开关一起清干净**，让"再点一次恢复"或调用本方法都能真的恢复。
+        """
+        self.resume()
+        try:
+            from . import control as _ctl
+            _ctl.set_paused_flag(False)
+        except Exception:
+            pass
+        return self.snapshot()
 
     def resume(self):
         with self._lock:
@@ -209,9 +317,18 @@ class RiskGate(object):
             self._st["paused_reason"] = ""
             self._st["blocks"] = 0
             self._save()
+        try:
+            from . import control as _ctl
+            _ctl.set_paused_flag(False)
+        except Exception:
+            pass
 
     def is_paused(self) -> bool:
-        return bool(self._st.get("paused"))
+        # V-R10-24：控制台顶栏『暂停/恢复』改的是 `data/paused.flag`；它一变，这里要跟着变
+        # （否则界面上显示"运行中"、闸门却在拦，用户找不到原因）。
+        with self._lock:
+            self._sync_operator()
+            return bool(self._st.get("paused"))
 
     # ── 主判定 ──────────────────────────────────────────────────────────
     def check(self, chat_key: str, text: str = "", now: float = None,
@@ -238,6 +355,9 @@ class RiskGate(object):
             return Verdict(True, "L3", "disabled", "")
 
         with self._lock:
+            # V-R10-24：先并一次"操作者刚按的那个开关"（控制台勾选框 / 顶栏暂停按钮）
+            self._sync_operator()
+
             # L0 停机开关
             if self._st.get("paused"):
                 why = self._st.get("paused_reason") or "手动暂停"
@@ -427,3 +547,8 @@ def pause(reason: str = ""):
 
 def resume():
     gate().resume()
+
+
+def recover() -> dict:
+    """**一键恢复**（V-R10-24）：闸门暂停 + 控制台暂停标记一起清，立刻能发（详见 `RiskGate.recover`）。"""
+    return gate().recover()

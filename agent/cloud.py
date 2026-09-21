@@ -157,18 +157,27 @@ def probe(which: str = "", url: str = "", timeout_ms: int = 0) -> dict:
             return {"ok": False, "stage": "tls", "why": "TLS 握手失败（%s）——证书/中间人/需要信任链" % str(e)[:60],
                     "status": 0, "ms": ms(), "url": fixed}
     # HTTP 段：只发 HEAD，不带 Authorization、不带 body
-    # （这一段仍按域名发：`urllib` 自己解析一次；TCP/TLS 两段已钉在已校验 IP 上 ⇒ 想当端口扫描器
-    #   也扫不动，剩下的是"探测阶段 DNS 再变一次"的窄口子，如实记在交接里，不假装没有。）
+    # ⛔ V-R10-33（第十轮）：老写法是"上面 TCP/TLS 两段钉了 IP，这一段却**按域名**发" ⇒
+    #    `urllib` 自己**第 3 次解析**域名，审计实测第 3 次给环回 ⇒ HEAD 真打到 `127.0.0.1`，
+    #    而面板报 `ok=true / stage=http / 200`（把内网当成了"可达"）。
+    #    ⇒ 改用 `safe_fetch.pinned_head()`：**校验用的 IP 与连接用的 IP 是同一次解析**。
     try:
-        _harden_redirects()
-        req = urllib.request.Request(fixed, method="HEAD", headers={"User-Agent": "PersonaMorph/probe"})
-        with urllib.request.urlopen(req, timeout=max(2.0, (timeout_ms or c["timeout_ms"]) / 1000.0)) as r:
-            return {"ok": True, "stage": "http", "status": int(getattr(r, "status", 0) or 0),
-                    "ms": ms(), "url": fixed, "why": "可达（HEAD 成功）"}
-    except urllib.error.HTTPError as e:
-        # 4xx/5xx 也算"能连上"：说明地址通、只是不接受 HEAD 或路径不对
-        return {"ok": True, "stage": "http", "status": int(e.code), "ms": ms(), "url": fixed,
-                "why": "地址可达，但服务返回 HTTP %d（多数接收端只收 POST，看到 405/404 属正常）" % e.code}
+        from .safe_fetch import pinned_head as _phead
+    except Exception as e:
+        return {"ok": False, "stage": "http", "why": "安全抓取层不可用（fail-closed）：%s" % str(e)[:60],
+                "status": 0, "ms": ms(), "url": fixed}
+    try:
+        _hr = _phead(fixed, headers={"User-Agent": "PersonaMorph/probe"},
+                     timeout=max(2.0, (timeout_ms or c["timeout_ms"]) / 1000.0))
+        _code = int(_hr.get("status") or 0)
+        if _code >= 400:
+            # 4xx/5xx 也算"能连上"：说明地址通、只是不接受 HEAD 或路径不对
+            # （多数接收端只收 POST，看到 405/404 属正常）
+            return {"ok": True, "stage": "http", "status": _code, "ms": ms(),
+                    "url": _hr.get("url") or fixed,
+                    "why": "地址可达，但服务返回 HTTP %d（多数接收端只收 POST，看到 405/404 属正常）" % _code}
+        return {"ok": True, "stage": "http", "status": _code,
+                "ms": ms(), "url": _hr.get("url") or fixed, "why": "可达（HEAD 成功）"}
     except Exception as e:
         return {"ok": False, "stage": "http", "why": "连上了但这个地址没给出 HTTP 应答（%s）" % str(e)[:60],
                 "status": 0, "ms": ms(), "url": fixed}
