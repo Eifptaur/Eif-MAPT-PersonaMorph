@@ -1,13 +1,13 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.21.10",
-    "sha256": "7dfe3d73ab3a6ce9e639c5be0052ebcaae9d752d27ccf62d16a5af54dc2b2264",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.52/persona-morph-v2.1.52.zip",
-    "build": "d152381eeae9",
-    "size": 11443254,
-    "files": 323,
-    "expires": "2026-10-21T12:43:25Z"
+    "version": "2026.9.21.11",
+    "sha256": "cc40f1d56bf860b44786ed7a9f0f8ca7162c8347322fa60f251eca45c6beaf13",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.53/persona-morph-v2.1.53.zip",
+    "build": "9767ff8d820e",
+    "size": 11623353,
+    "files": 329,
+    "expires": "2026-10-21T13:56:07Z"
   },
   "dlc": [
     {
@@ -36,13 +36,13 @@
     }
   ],
   "announce": {
-    "version": "2026.9.21.10",
+    "version": "2026.9.21.11",
     "notes": [
       "修复了一些 bug"
     ],
     "forceBase": false,
-    "minBase": "2026.9.21.10"
+    "minBase": "2026.9.21.11"
   },
-  "builtAt": "2026-09-21T12:43:25Z",
-  "updatedAt": 1789994605928
+  "builtAt": "2026-09-21T13:56:07Z",
+  "updatedAt": 1789998967249
 }
