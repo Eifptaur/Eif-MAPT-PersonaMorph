@@ -1372,19 +1372,34 @@ def _wm_account_of(_wc) -> str:
         _a = ""
     if _a:
         return _a
+    # ⛔ 2026-09-22 修（第十三轮 **V-R13-1** · P2）：这一段原来是**死代码** ——
+    #   ①`pick_account(parent, prefer="")` 的 `parent` 是**必填**，我上一版不传参 ⇒ 必然 TypeError 被吞；
+    #   ②`status()` **不带 `how`** 时在本机不返回 `account` 键 ⇒ 上面那半也拿不到东西；
+    #   ③而且 `pick_account()` 回的是**字典**（`{"name","dir",…}`），我原来 `str(...)` 直接套了个 dict。
+    #   现在按真实签名调用（先拿 effective 目录当 parent、configured 当 prefer，取 `name`）。
     try:
         from agent import wechat_dir as _wd_acct
-        _st = _wd_acct.status() or {}
-        _a = str(_st.get("account") or _st.get("now_account") or "")
+        _cfg_dir = ""
+        try:
+            _cfg_dir = str(_wd_acct.configured_path() or "")
+        except Exception:
+            _cfg_dir = ""
+        try:
+            _st_acct = _wd_acct.status() or {}
+        except Exception:
+            _st_acct = {}
+        _a = str(_st_acct.get("account") or "")
         if _a:
             return _a
-    except Exception:
-        pass
-    try:
-        from agent import wechat_dir as _wd_pick
-        _fn = getattr(_wd_pick, "pick_account", None)
-        if callable(_fn):
-            return str(_fn() or "")
+        _parent = str(_st_acct.get("effective") or _st_acct.get("now") or _cfg_dir or "")
+        if _parent:
+            _picked = _wd_acct.pick_account(_parent, _cfg_dir) or {}
+            if isinstance(_picked, dict):
+                _a = str(_picked.get("name") or "")
+            else:                                  # 兼容"直接回名字"的老形态
+                _a = str(_picked or "")
+            if _a:
+                return _a
     except Exception:
         pass
     return ""

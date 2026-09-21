@@ -686,14 +686,24 @@ def _section_L27():
         # ① bilibili._download
         from agent import bilibili as _b27                              # noqa: E402
         _dest27 = os.path.join(_tmp27, "a.mp3")
-        _bytes27, _why27 = _b27._download("http://pinned.test:%d/a.mp3" % _port27, _dest27)
+        # ⛔ 2026-09-22 修（第十三轮 **V-R13-4** · P3）：三个调用点**逐个包 try/except** ——
+        #   老写法下 L27b 会抛 `URLError` 逃出判据（rc=1 但没有 FAIL 行、后面的 M 段全没跑，
+        #   读日志的人只会看到"判据崩了"而不是"守备没生效"）。
+        try:
+            _bytes27, _why27 = _b27._download("http://pinned.test:%d/a.mp3" % _port27, _dest27)
+        except Exception as _e27a:
+            _bytes27, _why27 = 0, "夹具里抛了 %s: %s" % (type(_e27a).__name__, str(_e27a)[:60])
         ok("L27a `bilibili._download` 的连接目标是**IP 字面量**（不是域名 ⇒ 没给 DNS 第二次机会）",
            int(_bytes27 or 0) == len(_body27) and _conn27 and all(_ip_literal(a[0]) for a in _conn27),
            "bytes=%s why=%s 连接目标=%s" % (_bytes27, _why27, _conn27[:3]))
         # ② video_gen._get（URL → bytes 的那条）
         from agent import video_gen as _v27                             # noqa: E402
         _conn27.clear()
-        _got27 = _v27._get("http://pinned.test:%d/v.mp4" % _port27, 10, allow_private=True)
+        try:
+            _got27 = _v27._get("http://pinned.test:%d/v.mp4" % _port27, 10, allow_private=True)
+        except Exception as _e27b:
+            _got27 = b""
+            _conn27.append(("(抛了 %s)" % type(_e27b).__name__, 0))
         ok("L27b `video_gen._get` 同上（连的是 IP 字面量）",
            _got27 == _body27 and _conn27 and all(_ip_literal(a[0]) for a in _conn27),
            "len=%s 连接目标=%s" % (len(_got27 or b""), _conn27[:3]))

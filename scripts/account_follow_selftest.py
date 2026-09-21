@@ -306,6 +306,49 @@ try:
     ok("V-R12-6：`_wm_account_of` 认不出账号时**回落到 `wechat_dir`**（少用一次那个共用的 `?` 格子）",
        "db_account" in _seg_acct and "wechat_dir" in _seg_acct
        and ("status()" in _seg_acct or "pick_account" in _seg_acct), _seg_acct[:120].replace("\n", " "))
+    # ⛔ 2026-09-22 加（第十三轮 **V-R13-1** · P2）：**行为锚**（源码锚抓不住"回落的下一半是死代码"）。
+    #   现场：`pick_account(parent, prefer="")` 的 `parent` 是**必填**，上一版不传 ⇒ TypeError 被吞；
+    #   且 `pick_account()` 回的是**字典**、`status()` 不带 `how` 时本机没有 `account` 键 ⇒
+    #   整条回落等于没写（`?` 共用格子没收窄），而 account_follow_selftest 照样全绿。
+    import importlib.util as _ilu                                          # noqa: E402
+    _spec = _ilu.spec_from_file_location("pm_r13_acct", os.path.join(ROOT, "scripts", "persona_morph.py"))
+    _pmmod = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_pmmod)
+    from agent import wechat_dir as _W13                                   # noqa: E402
+    _saved13 = (_W13.status, _W13.pick_account, _W13.configured_path)
+
+    class _NoAcct13(object):
+        def db_account(self):
+            return ""
+
+    class _HasAcct13(object):
+        def db_account(self):
+            return "wxid_A"
+
+    try:
+        ok("V-R13-1① adapter 说得出账号 ⇒ 直接用它（阳性对照）",
+           _pmmod._wm_account_of(_HasAcct13()) == "wxid_A")
+        _W13.status = lambda *a, **k: {"account": "wxid_FROM_STATUS", "effective": r"D:\wx"}
+        ok("V-R13-1② `status()` 给出 account ⇒ 回落生效",
+           _pmmod._wm_account_of(_NoAcct13()) == "wxid_FROM_STATUS")
+        _W13.status = lambda *a, **k: {"effective": r"D:\wx", "now": r"D:\wx"}
+        _W13.configured_path = lambda: r"D:\wx"
+        _calls13 = []
+
+        def _pick13(parent, prefer=""):
+            _calls13.append((parent, prefer))
+            return {"name": "wxid_FROM_PICK", "dir": r"D:\wx\wxid_FROM_PICK"}
+        _W13.pick_account = _pick13
+        _got13 = _pmmod._wm_account_of(_NoAcct13())
+        ok("V-R13-1③ `status()` 不给账号 ⇒ 用 `pick_account(parent, prefer)` **带 parent** 挑（且取字典的 name）",
+           _got13 == "wxid_FROM_PICK" and bool(_calls13) and bool(_calls13[0][0]),
+           "拿到 %r 调用参数 %s" % (_got13, _calls13))
+        _W13.status = lambda *a, **k: {}
+        _W13.configured_path = lambda: ""
+        ok("V-R13-1④ 全都说不出 ⇒ 回空串（那时才用保留命名空间 `?`）",
+           _pmmod._wm_account_of(_NoAcct13()) == "")
+    finally:
+        _W13.status, _W13.pick_account, _W13.configured_path = _saved13
     _rep = _src(os.path.join("scripts", "collect_report.py"))
     ok("检验报告会印**在读哪个账号** + 这台机器上有哪几个号",
        "消息库账号: " in _rep and "这台机器上的微信账号目录" in _rep)

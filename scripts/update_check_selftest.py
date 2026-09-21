@@ -538,11 +538,16 @@ ok(_o_far.get("status") == "error" and _o_far.get("kind") == "far_ahead",
 ok(str(_st_far.get("maxSeenVersion") or "") == "2026.1.1.1",
    "④ …而且**没有入账**（`state()` 必须把 `kind` 抄进 `out`，否则那道守卫永不成立 —— V-R12-1）",
    str(_st_far)[:110])
-_man_typo = mk_manifest(os.path.join(tmp, "typo.json"), "2027.9.22", ["手误版本号"])
+# ⛔ 2026-09-22 修（第十三轮 **V-R13-5** · P3）：**版本号相对"今天"动态生成** ——
+#   老写法写死 `2027.9.22`，那是一次**日期炸弹**：约 2027-03-25 起（今天+180 天 ≥ 该日）
+#   这条断言必然变红，而红的原因与代码无关。
+_typo_v = time.strftime("%Y.%m.%d", time.localtime(time.time() + 240 * 86400))
+_man_typo = mk_manifest(os.path.join(tmp, "typo.json"), _typo_v, ["手误版本号（今天+240 天）"])
 open(UC._state_path(), "w", encoding="utf-8").write(_j27.dumps({"maxSeenVersion": "2026.1.1.1"}))
 _o_typo = _orig_state({"url": _man_typo})
 ok(_o_typo.get("status") == "error" and _o_typo.get("kind") == "far_ahead",
-   "④b 判据是**时间跨度**（超前 > 180 天）而不是「只看年」⇒ 一年以内的手误版本也拦得住（V-R12-4）",
+   "④b 判据是**时间跨度**（超前 > 180 天）而不是「只看年」⇒ 手误版本号也拦得住（V-R12-4；"
+   "样本＝今天+240 天 ⇒ 不会变成日期炸弹，V-R13-5）",
    str(_o_typo)[:130])
 _man_ok11 = mk_manifest(os.path.join(tmp, "ok11.json"), "2026.10.1.1", ["正常"])
 ok(_orig_state({"url": _man_ok11}).get("status") == "newer",

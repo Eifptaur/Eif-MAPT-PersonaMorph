@@ -150,9 +150,14 @@ def _cfg() -> dict:
 class RiskGate(object):
     """有状态的闸门：窗口计数 + 停机开关 + 事件留痕（状态原子落盘）。"""
 
-    def __init__(self, path: str = STATE_PATH, event_path: str = EVENT_PATH):
+    def __init__(self, path: str = STATE_PATH, event_path: str = ""):
         self.path = path
-        self.event_path = event_path
+        # ⛔ 2026-09-22 修（第十三轮 **V-R13-8** · P3）：事件台账**默认跟随 `path` 所在目录** ——
+        #   老写法默认写死产品 `data/risk_events.jsonl` ⇒ 只把 state 指到临时档的探针/判据
+        #   照样会往**产品台账**里追加（第十二轮我自己的探针就这么写进去 3 行）。
+        #   产品调用点两个都不传 ⇒ 仍然是 `data/risk_events.jsonl`，行为不变。
+        self.event_path = str(event_path or os.path.join(os.path.dirname(os.path.abspath(path)),
+                                                         "risk_events.jsonl"))
         self._lock = threading.RLock()
         self._refuse_overwrite = False       # V-R10-23：坏档留证失败 ⇒ 拒绝覆盖原档
         self._flag_seen = None               # V-R10-24：控制台『暂停/恢复』标记的上次值
@@ -569,6 +574,9 @@ class RiskGate(object):
                 #   ②有没有人用顶栏『恢复』把坏档锁顶开过（留痕，别让"证据"随恢复消失）
                 "fail_closed": bool(self._st.get("fail_closed")),
                 "recovered_by_operator": int(self._st.get("recovered_by_operator") or 0),
+                # ⛔ 第十三轮 **V-R13-7**：一键**暂停**方向的计数也要露出来（第十二轮只加了字段、
+                #   忘了进 `snapshot()` ⇒ 控制台/检验器看不到这个新计数）。
+                "paused_by_operator": int(self._st.get("paused_by_operator") or 0),
                 "blocks": int(self._st.get("blocks") or 0),
                 "minute": len(self._st["min"]), "minute_cap": int(cfg.get("per_minute") or 0),
                 "hour": len(self._st["hour"]), "hour_cap": int(cfg.get("per_hour") or 0),
