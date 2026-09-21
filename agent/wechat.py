@@ -858,6 +858,25 @@ def recent_switch_fails(n: int = 5) -> list:
         return []
 
 
+def _main_iconic_hint(gui) -> str:
+    """主窗当时是不是最小化（给台账/回执用的一句话）。**只读、绝不抛**。
+
+    为什么要它（2026-09-21 网友 v0921-1613 的报告）：那条台账原来只写 `no_capture` 一个英文词 ——
+    用户看到"确认不了目标会话"完全不知道该干什么；而**微信收在任务栏**正是这类失败最常见的原因
+    （抓图类判据在最小化时拿不到画面），说明白了他自己就能解决（把微信点出来）。
+    """
+    try:
+        import ctypes as _ct
+        mh = int(getattr(gui, "main_hwnd", 0) or 0)
+        if not mh:
+            return "主窗句柄未知"
+        if _ct.windll.user32.IsIconic(mh):
+            return "**微信主窗当时是最小化的**（抓不到画面 ⇒ 判据给不出结论，把微信点出来即可）"
+        return "微信主窗当时在屏幕上"
+    except Exception:
+        return "主窗状态未知"
+
+
 def _close_search_popover(hwnd: int) -> bool:
     """投递 `WM_CLOSE` 关掉搜索浮层（对面 r12 实测：一枪就关，关掉后前台自动回微信主窗）。
 
@@ -2987,14 +3006,37 @@ class WeChatAdapter:
             return True, "重复发送已拦截（3 秒内同一文本）"
         name = self.group_name(chat_id)
         _st_status = "没走投递档"
+        _st_note = ""            # 会话头三态判据的原话（台账/回执要它，别只留一个英文状态码）
+        _sw_msg = ""             # 投递切会话那一步的回执（用户看得懂的是它，不是状态码）
         try:
             with self._send_lock:  # 所有碰微信窗口的操作统一串行（发消息/引用/拍一拍/回拍不打架）
                 gui = self._get_gui()
                 if self._posted_preferred():
+                    # ⛔ 2026-09-21 修（网友 v0921-1613 反馈：检验器判「它读得到消息、只是发不出去」，
+                    #   台账里那条是 `no_capture`）：**抓图类判据先要有画面** —— 微信收在任务栏/被隐藏时
+                    #   `chat_header.check()` 必然 `no_capture`（实测口径见 `grab_render` 与
+                    #   `_ensure_main_visible` 的注释），于是每一次都只能靠"投递切会话"去兜，
+                    #   兜不住就整条拒发（`input.allow_real_fallback` 默认关）＝
+                    #   **微信最小化时一条回复都发不出去**。
+                    #   ⇒ 与 切会话 / 搜索框切会话 / 投递发送 三条链同口径：先**按档位**准备画面
+                    #     （投递档只做**不激活**还原，不主动把微信拉到前台），准备完再判会话头 ——
+                    #     最小化时也能直接走投递发送，不必先走"投递切会话"那条更险的路。
+                    if not self._real_mouse_allowed():
+                        try:
+                            _main0 = int(getattr(gui, "main_hwnd", 0) or 0)
+                            if _main0:
+                                self._ensure_main_visible(gui, _main0)
+                                try:
+                                    gui._update_render_rect()
+                                except Exception:
+                                    pass
+                        except Exception as _e0:
+                            log.info("发送前准备画面失败（继续按判据走）：%s", _e0)
                     try:
                         from . import chat_header as _ch
                         st = _ch.check(chat_id, gui=gui)
                         _st_status = str(st.get("status"))
+                        _st_note = str(st.get("note") or "")
                         if st["status"] == "ok":
                             ok, msg = self.send_text_posted(text, chat_id)
                             if ok:
@@ -3005,6 +3047,7 @@ class WeChatAdapter:
                             # 投递不切会话，但"切会话"这一步本身也能投递（投递点击会话行 + 库只读确认）。
                             # 切成功后"当前会话＝目标会话"有正面证据 ⇒ 允许 allow_no_ref=True 投递发送。
                             sw_ok, sw_msg = self.switch_chat_posted(chat_id, gui=gui)
+                            _sw_msg = str(sw_msg)
                             log.info("投递切会话：%s —— %s", sw_ok, sw_msg)
                             if sw_ok:
                                 try:
@@ -3053,7 +3096,13 @@ class WeChatAdapter:
                 if not self._real_fallback_allowed():
                     # 2026-09-21：这条是"消息进来了、回复却发不出去"最常见的一跳 ⇒ 记台账，
                     # 让控制台「症状检验器 · 它不回复」能把它摆出来（原来只有日志文件里一行）。
-                    note_switch_fail("发送前确认不了目标会话", str(_st_status))
+                    # ⛔ 2026-09-21 修（反馈 v0921-1613 的台账只有一个 `no_capture` 英文词：用户看不懂，
+                    #   我们也分不出"窗口不可见"和"画面里没有会话头"该怎么教他）：把**判据原话 +
+                    #   投递切会话的回执 + 主窗当时是不是最小化**一起记进去。
+                    note_switch_fail("发送前确认不了目标会话",
+                                     "%s：%s｜投递切会话：%s｜%s"
+                                     % (_st_status or "?", _st_note or "-",
+                                        _sw_msg or "没走到这一步", _main_iconic_hint(gui)))
                     return False, ("投递档确认不了目标会话（会话头三态=%s，投递切会话也没成）⇒ 按最高目标"
                                    "**不退回真鼠标**（`input.allow_real_fallback` 默认关，真鼠标会动你的光标）；"
                                    "要允许请显式打开它，或先把目标会话在微信里点开" % _st_status)

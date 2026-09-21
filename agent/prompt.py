@@ -341,6 +341,27 @@ def is_at_me(text, self_nickname="", bot_name="", self_id=""):
     return _at_hit(text, self_nickname) or _at_hit(text, bot_name)
 
 
+def observed_at(text) -> str:
+    """文本里**第一个** `@某某` 的那个「某某」（按分隔符裁断）。判不出返回空串。**只读、绝不抛**。
+
+    为什么单独要它（2026-09-21 反馈：B 站评论区「艾特它 它不会回复」）：
+    `is_at_me` 只回答"@ 的是不是我"，答不了"那它 @ 的是**谁**"——而微信群里 @ 用的是
+    **群昵称**，它可能与配置里的机器人昵称、库里读到的账号昵称**都不一样**（用户给机器人在群里
+    改过名字）。拿不到那一串，我们就只能猜；记下来，下一份反馈里便能一眼看出是不是名字对不上。
+    """
+    try:
+        t = str(text or "")
+        i = t.find("@")
+        if i < 0:
+            return ""
+        j = i + 1
+        while j < len(t) and t[j] not in AT_SEPS:
+            j += 1
+        return t[i + 1:j].strip()
+    except Exception:
+        return ""
+
+
 def hit_keyword(text, keywords=None):
     t = str(text or "").lower()
     if not t:
