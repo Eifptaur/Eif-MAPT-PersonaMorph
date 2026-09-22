@@ -58,6 +58,10 @@ ok("只把**还开着**的单子给弹窗（已表态的不再弹）",
    'if str(_pit.get("status")) == "open"' in status_blk)
 ok("开单走 version_gate.pending（幂等）", "_vg2.pending()" in status_blk)
 decide_blk = seg(W, 'elif path == "/api/decide"', "elif path ==", "decide 段")
+if "_vg5.decide(" not in decide_blk:
+    # ⛔ 2026-09-22（Phase B 第二批）：这条路由的分支体已搬成 `_rapi_decide_post`（路由表里登记）
+    #   ⇒ 段落改从**方法**取；没搬时仍走上面那一句（旧结构照样能跑）。
+    decide_blk = seg(W, "def _rapi_decide_post(", "    def ", "decide 段（方法）")
 ok("POST /api/decide 在位", bool(decide_blk))
 ok("表态走 version_gate.decide（落台账 + 写回矩阵）", "_vg5.decide(" in decide_blk)
 ok("读的是 JSON body 里的 id/choice", '"id"' in decide_blk and '"choice"' in decide_blk)

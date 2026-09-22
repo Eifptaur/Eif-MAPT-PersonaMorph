@@ -127,45 +127,110 @@ ROUTES = {
 HANDLERS = {
     "/api/archive": {
         "GET": "_rapi_archive",
+        "POST": "_rapi_archive_post",
+    },
+    "/api/archive/block": {
+        "POST": "_rapi_archive_block_post",
+    },
+    "/api/archive/delete": {
+        "POST": "_rapi_archive_block_post",
+    },
+    "/api/archive/unblock": {
+        "POST": "_rapi_archive_block_post",
     },
     "/api/balance": {
         "GET": "_rapi_balance",
     },
     "/api/briefs": {
         "GET": "_rapi_briefs",
+        "POST": "_rapi_briefs_post",
+    },
+    "/api/cloud/test": {
+        "POST": "_rapi_cloud_test_post",
+    },
+    "/api/code-check": {
+        "POST": "_rapi_code_check_post",
+    },
+    "/api/code-check/progress": {
+        "POST": "_rapi_code_check_progress_post",
+    },
+    "/api/community/export": {
+        "POST": "_rapi_community_export_post",
+    },
+    "/api/community/upload": {
+        "POST": "_rapi_community_upload_post",
     },
     "/api/config": {
         "GET": "_rapi_config",
+        "POST": "_rapi_config_post",
+    },
+    "/api/cursor/reset": {
+        "POST": "_rapi_cursor_reset_post",
+    },
+    "/api/cursor/upload": {
+        "POST": "_rapi_cursor_upload_post",
+    },
+    "/api/data/export": {
+        "POST": "_rapi_data_export_post",
+    },
+    "/api/data/import": {
+        "POST": "_rapi_data_import_post",
+    },
+    "/api/decide": {
+        "POST": "_rapi_decide_post",
     },
     "/api/emojis": {
         "GET": "_rapi_emojis",
     },
+    "/api/emojis/delete": {
+        "POST": "_rapi_emojis_delete_post",
+    },
     "/api/feedback": {
         "GET": "_rapi_feedback",
     },
+    "/api/feedback/flush": {
+        "POST": "_rapi_feedback_flush_post",
+    },
+    "/api/feedback/submit": {
+        "POST": "_rapi_feedback_submit_post",
+    },
     "/api/file_search/add": {
         "GET": "_rapi_file_search_add",
+        "POST": "_rapi_file_search_add_post",
     },
     "/api/file_search/del": {
         "GET": "_rapi_file_search_add",
+        "POST": "_rapi_file_search_add_post",
     },
     "/api/image_gen/local": {
         "GET": "_rapi_image_gen_local",
     },
     "/api/image_gen/local/install": {
         "GET": "_rapi_image_gen_local_install",
+        "POST": "_rapi_image_gen_local_install_post",
+    },
+    "/api/image_gen/local/preset": {
+        "POST": "_rapi_image_gen_local_preset_post",
     },
     "/api/image_gen/local/progress": {
         "GET": "_rapi_image_gen_local_progress",
     },
     "/api/image_gen/local/start": {
         "GET": "_rapi_image_gen_local_start",
+        "POST": "_rapi_image_gen_local_start_post",
     },
     "/api/image_gen/local/stop": {
         "GET": "_rapi_image_gen_local_stop",
+        "POST": "_rapi_image_gen_local_stop_post",
     },
     "/api/image_gen/test": {
         "GET": "_rapi_image_gen_test",
+    },
+    "/api/learning/evaluate": {
+        "POST": "_rapi_learning_evaluate_post",
+    },
+    "/api/learning/start": {
+        "POST": "_rapi_learning_start_post",
     },
     "/api/local-models": {
         "GET": "_rapi_local_models",
@@ -175,39 +240,128 @@ HANDLERS = {
     },
     "/api/memory": {
         "GET": "_rapi_memory",
+        "POST": "_rapi_memory_post",
+    },
+    "/api/memory/deep-profile": {
+        "POST": "_rapi_memory_deep_profile_post",
     },
     "/api/open-path": {
         "GET": "_rapi_open_path",
+        "POST": "_rapi_open_path_post",
+    },
+    "/api/pause": {
+        "POST": "_rapi_pause_post",
+    },
+    "/api/persona/ai-enrich": {
+        "POST": "_rapi_persona_ai_enrich_post",
+    },
+    "/api/persona/behavior-recommend": {
+        "POST": "_rapi_persona_behavior_recommend_post",
     },
     "/api/persona/cats": {
         "GET": "_rapi_persona_cats",
+    },
+    "/api/persona/cats/del": {
+        "POST": "_rapi_persona_cats_del_post",
+    },
+    "/api/persona/cats/save": {
+        "POST": "_rapi_persona_cats_save_post",
+    },
+    "/api/persona/score": {
+        "POST": "_rapi_persona_score_post",
+    },
+    "/api/persona/web-fetch": {
+        "POST": "_rapi_persona_web_fetch_post",
     },
     "/api/personas": {
         "GET": "_rapi_personas",
     },
     "/api/personas/custom": {
         "GET": "_rapi_personas_custom",
+        "POST": "_rapi_personas_custom_post",
+    },
+    "/api/personas/custom/del": {
+        "POST": "_rapi_personas_custom_del_post",
+    },
+    "/api/personas/fav": {
+        "POST": "_rapi_personas_fav_post",
     },
     "/api/personas/favs": {
         "GET": "_rapi_personas_favs",
+        "POST": "_rapi_personas_favs_post",
+    },
+    "/api/personas/rate": {
+        "POST": "_rapi_personas_rate_post",
     },
     "/api/personas/scores": {
         "GET": "_rapi_personas_scores",
     },
+    "/api/poke-test": {
+        "POST": "_rapi_poke_test_post",
+    },
+    "/api/prices": {
+        "POST": "_rapi_prices_post",
+    },
     "/api/prompt/preview": {
         "GET": "_rapi_prompt_preview",
+        "POST": "_rapi_prompt_preview_post",
+    },
+    "/api/restart": {
+        "POST": "_rapi_restart_post",
+    },
+    "/api/resume": {
+        "POST": "_rapi_resume_post",
+    },
+    "/api/risk": {
+        "POST": "_rapi_risk_post",
+    },
+    "/api/scoring/import": {
+        "POST": "_rapi_scoring_import_post",
+    },
+    "/api/scoring/stats": {
+        "POST": "_rapi_scoring_stats_post",
+    },
+    "/api/selfcheck": {
+        "POST": "_rapi_selfcheck_post",
     },
     "/api/selfcheck-stop": {
         "GET": "_rapi_selfcheck_stop",
+        "POST": "_rapi_selfcheck_stop_post",
     },
     "/api/sessions": {
         "GET": "_rapi_sessions",
+        "POST": "_rapi_sessions_post",
+    },
+    "/api/sessions/delete": {
+        "POST": "_rapi_sessions_delete_post",
+    },
+    "/api/sessions/restore": {
+        "POST": "_rapi_sessions_restore_post",
+    },
+    "/api/shutdown": {
+        "POST": "_rapi_shutdown_post",
+    },
+    "/api/stats/cal": {
+        "POST": "_rapi_stats_cal_post",
+    },
+    "/api/stats/cal_clear": {
+        "POST": "_rapi_stats_cal_clear_post",
+    },
+    "/api/stats/cal_delete": {
+        "POST": "_rapi_stats_cal_delete_post",
+    },
+    "/api/stats/cal_list": {
+        "POST": "_rapi_stats_cal_list_post",
     },
     "/api/status": {
         "GET": "_rapi_status",
     },
+    "/api/test-api": {
+        "POST": "_rapi_test_api_post",
+    },
     "/api/tools/new_manifest": {
         "GET": "_rapi_tools_new_manifest",
+        "POST": "_rapi_tools_new_manifest_post",
     },
     "/api/tools/reload": {
         "GET": "_rapi_tools_reload",
@@ -221,20 +375,40 @@ HANDLERS = {
     "/api/ui-layout": {
         "GET": "_rapi_ui_layout",
     },
+    "/api/ui/background": {
+        "POST": "_rapi_ui_background_post",
+    },
     "/api/ui/recalibrate": {
         "GET": "_rapi_ui_recalibrate",
+        "POST": "_rapi_ui_recalibrate_post",
     },
     "/api/ui_fingerprint/forget": {
         "GET": "_rapi_ui_fingerprint_forget",
+        "POST": "_rapi_ui_fingerprint_forget_post",
     },
     "/api/ui_fingerprint/take": {
         "GET": "_rapi_ui_fingerprint_take",
+        "POST": "_rapi_ui_fingerprint_take_post",
+    },
+    "/api/update_apply": {
+        "POST": "_rapi_update_apply_post",
+    },
+    "/api/update_reset": {
+        "POST": "_rapi_update_reset_post",
+    },
+    "/api/update_skip": {
+        "POST": "_rapi_update_skip_post",
     },
     "/api/verifiers": {
         "GET": "_rapi_verifiers",
+        "POST": "_rapi_verifiers_post",
     },
     "/api/verify": {
         "GET": "_rapi_verify",
+        "POST": "_rapi_verify_post",
+    },
+    "/api/version/action": {
+        "POST": "_rapi_version_action_post",
     },
     "/api/version/allow": {
         "GET": "_rapi_version_allow",
@@ -248,11 +422,16 @@ HANDLERS = {
     "/api/voice/vc-probe": {
         "GET": "_rapi_voice_vc_probe",
     },
+    "/api/watermark/reset": {
+        "POST": "_rapi_watermark_reset_post",
+    },
     "/api/wechat-groups": {
         "GET": "_rapi_wechat_groups",
+        "POST": "_rapi_wechat_groups_post",
     },
     "/api/wechat/dir": {
         "GET": "_rapi_wechat_dir",
+        "POST": "_rapi_wechat_dir_post",
     },
     "/api/wechat/recheck": {
         "GET": "_rapi_wechat_recheck",

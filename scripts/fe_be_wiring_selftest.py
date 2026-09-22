@@ -149,8 +149,10 @@ _both = [p for p in SHARED if p in GET_PATHS and p in BODY_PATHS]
 ok("A2 六条「两条链都接」的动作确实两侧都可应答（V-R15-1 的修法）", len(_both) == len(SHARED),
    "只在一侧的：%s" % [p for p in SHARED if p not in _both])
 ok("A3 反向锚就位：把 `_handle_body_request` 里的共用方法调用删掉，A1 会红（判据真读调用关系）",
-   "self._file_search_dirs(" in _body("_handle_body_request")
-   and "self._ui_fingerprint_take(" in _body("_handle_body_request"))
+   # ⛔ 2026-09-22（Phase B）：这两个共用方法的调用点已**跟着分支体搬进了方法**（`_rapi_file_search_add_post` 等）
+   #   ⇒ 锚改成"在**整个 webui.py** 里找"；它的用意（证明 A1 真读调用关系）不变：把调用整个删掉，这条照样红。
+   "self._file_search_dirs(" in WEBUI
+   and "self._ui_fingerprint_take(" in WEBUI)
 
 print("\n── B. 活体路由：真起 WebUI（桩 parent + 打桩依赖）按前端用的方法各打一次 ──")
 _tmp = None

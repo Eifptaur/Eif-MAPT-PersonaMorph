@@ -283,9 +283,22 @@ def main():
 
         print("== F. 接线（活体）：/api/config 落盘失败时内存那份不许被换掉 ==")
         _webui_src = io.open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
-        _i_save = _webui_src.find("                            save_config(new_cfg)")
-        _i_set = _webui_src.find("                            set_config(new_cfg)")
-        ok("F1 源码顺序＝**先 `save_config` 再 `set_config`**（盘与内存要么一起新、要么一起旧）",
+        # ⛔ 2026-09-22（Phase B）：原来按"固定缩进的那一行"找 —— 分支体搬进方法后缩进变了。
+        #   改成**AST**：两个调用在**同一个函数**里，且 `save_config` 在 `set_config` **之前**。
+        import ast as _ast3
+        _tree3 = _ast3.parse(_webui_src)
+        _i_save = _i_set = -1
+        for _fn3 in _ast3.walk(_tree3):
+            if not isinstance(_fn3, _ast3.FunctionDef):
+                continue
+            _save_l = [x.lineno for x in _ast3.walk(_fn3)
+                       if isinstance(x, _ast3.Call) and getattr(x.func, "id", "") == "save_config"]
+            _set_l = [x.lineno for x in _ast3.walk(_fn3)
+                      if isinstance(x, _ast3.Call) and getattr(x.func, "id", "") == "set_config"]
+            if _save_l and _set_l:
+                _i_save, _i_set = min(_save_l), min(_set_l)
+                break
+        ok("F1 同一个处理函数里＝**先 `save_config` 再 `set_config`**（盘与内存要么一起新、要么一起旧）",
            _i_save > 0 and _i_set > _i_save, "save@%d set@%d" % (_i_save, _i_set))
         import socket
         import urllib.error
