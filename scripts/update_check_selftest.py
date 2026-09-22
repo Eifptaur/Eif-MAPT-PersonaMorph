@@ -135,7 +135,9 @@ try:
     ok(_f1 == _f2 and len(_f1) == 12, "同输入两次算出来一样（%s）" % _f1)
     _old_build = VER.BUILD
     _vpath = os.path.join(ROOT, "agent", "version.py")
-    _src = open(_vpath, encoding="utf-8").read()
+    # ⛔ 2026-09-22：读的时候也必须 `newline=""` —— 文本模式会把 CRLF 翻成 LF，写完（`newline=""` 不翻译）
+    #   文件就变成 LF 结尾 ⇒ `git status` 里 `agent/version.py` 永远是"已修改"（判据把工作树弄脏了）。
+    _src = open(_vpath, encoding="utf-8", newline="").read()
     try:
         VER.write_build("ffffffffffff")
         _f3 = VER.build_fingerprint(["agent/version.py", "agent/update_check.py"], root=ROOT)
