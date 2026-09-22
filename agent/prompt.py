@@ -741,6 +741,18 @@ def build_user_prompt(ctx) -> str:
         parts.append("【过去状态】（这个会话此前的记录都没能取到——不是\"第一次参与\"，别当成新会话处理）")
     else:
         parts.append("【过去状态】（暂无历史记录，这是你第一次参与这个会话）")
+    # ①b **预设信息**（2026-09-22，B站网友要的）：管理员按会话提前设好的背景事实，
+    #   **只在本会话内容相关时注入**、到期自动舍弃、结构上只读本会话（不外泄）。
+    #   放在"过去状态"之后、"当前时间"之前：稳定内容靠前（缓存友好），且紧挨着本轮要回答的东西。
+    try:
+        from . import briefs as _bf
+        _bk = _bf.block(ctx.get("chat_key"), " ".join(
+            str(m.get("text") or "") for m in (ctx.get("trigger_entries") or [])))
+        if _bk:
+            parts.append(_bk)
+    except Exception:
+        pass
+
     # ② 易变段（时间 / 第 N 次 / 此刻状态）——必须排在历史之后
     parts.append("【当前时间】%s" % format_full_time(now))
     parts.append("【会话标识】%s · 第 %d 次处理（所有发送工具自动限定在本会话，无法发到别处）" % (ctx["chat_key"], ctx.get("run_seq", 1)))

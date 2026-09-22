@@ -1292,6 +1292,103 @@ th{color:var(--tx2);font-weight:500}
           <span class="hint">实验性（需入口坐标校准 + 朋友圈窗口可见）</span></div>
         <div class="row"><label>点赞概率</label><input type="number" min="0" max="1" step="0.05" data-cfg="behavior.like_moments.probability"></div>
       </div>
+      <hr style="border:none;border-top:1px solid var(--bd);margin:14px 0">
+      <div class="desc">预设信息：给<b>某一个会话</b>提前设定它用得到的背景事实（例：这个群周六下午社庆、地点在 3 号工作室）。只在<b>该会话</b>的内容相关时才注入给模型；可设截止日期，到期<b>自动舍弃</b>；<b>只属于该会话，不会带到别的会话</b>。</div>
+      <div class="mid">
+        <div class="row"><label>会话</label><div class="grow">
+          <select id="bfChat" style="max-width:300px"></select>
+          <button id="bfRefresh" class="ghost" style="margin-left:8px">刷新会话</button>
+          <input type="text" id="bfChatKey" placeholder="也可以直接填会话 key（私聊形如 private:wxid_xxx）" style="margin-top:6px">
+        </div></div>
+      </div>
+      <div class="mid">
+        <div class="row"><label>内容</label><div class="grow">
+          <input type="text" id="bfText" placeholder="例：这个群周六下午社庆，地点在 3 号工作室">
+        </div></div>
+        <div class="row"><label>截止日期</label><div class="grow">
+          <input type="text" id="bfUntil" placeholder="YYYY-MM-DD（留空＝永久）" style="max-width:190px">
+          <label style="margin-left:12px"><input type="checkbox" id="bfAlways"> 每次都用（不做相关性判断）</label>
+          <button id="bfAdd" style="margin-left:12px">添加</button>
+        </div></div>
+      </div>
+      <div id="bfList" class="desc" style="margin-top:4px">点「刷新会话」加载。</div>
+      <div class="desc">代价说清：这段文字会随<b>该会话</b>的请求一起发给模型（用本机模型则不出本机）；相关性判断是<b>字面</b>匹配——换个说法可能匹配不上，那这一次就不注入。</div>
+      <script>
+      function bfEsc(s){ return String(s==null?'':s).replace(/[&<>]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;'})[c]; }); }
+      function bfKey(){
+        var t = (document.getElementById('bfChatKey').value||'').trim();
+        return t || (document.getElementById('bfChat').value||'');
+      }
+      async function bfChats(){
+        var sel = document.getElementById('bfChat'); var cur = sel.value;
+        var groups = [];
+        try{ var r = await getJSON('/api/wechat-groups'); groups = (r && r.groups) || []; }catch(e){ groups = []; }
+        sel.innerHTML = '';
+        if(!groups.length){
+          var o = document.createElement('option'); o.value = ''; o.textContent = '（没读到群聊，可在下面手填 key）'; sel.appendChild(o);
+        }
+        groups.forEach(function(g){
+          var o = document.createElement('option'); o.value = 'group:' + (g.wxid||'');
+          o.textContent = (g.name||g.wxid||''); sel.appendChild(o);
+        });
+        if(cur) sel.value = cur;
+        await bfLoad();
+      }
+      async function bfLoad(){
+        var box = document.getElementById('bfList'); var chat = bfKey();
+        if(!chat){ box.textContent = '先选一个会话（或在下面填会话 key）。'; return; }
+        try{
+          var d = await getJSON('/api/briefs?chat=' + encodeURIComponent(chat));
+          if(d && d.ok === false){ box.textContent = '读不到：' + (d.error||d.why||''); return; }
+          var h = '<div style="margin:4px 0"><b>' + bfEsc(chat) + '</b>：' + ((d.active||[]).length) + ' 条在用'
+                + (((d.expired||[]).length)? ('，' + (d.expired||[]).length + ' 条已到期（下次用到时自动舍弃）') : '') + '</div>';
+          (d.active||[]).forEach(function(it){
+            h += '<div class="row" style="align-items:center"><span style="flex:1">' + bfEsc(it.text)
+               + '<span class="hint">（' + (it.always? '每次都用' : '相关才用') + ' · ' + bfEsc(it.until_text) + '）</span></span>'
+               + '<button class="ghost" data-del="' + bfEsc(it.id) + '">删除</button></div>';
+          });
+          (d.expired||[]).forEach(function(it){
+            h += '<div class="row" style="align-items:center;opacity:.55"><span style="flex:1">' + bfEsc(it.text)
+               + '<span class="hint">（已到期）</span></span>'
+               + '<button class="ghost" data-del="' + bfEsc(it.id) + '">删除</button></div>';
+          });
+          if(!(d.active||[]).length && !(d.expired||[]).length){ h += '<span class="hint">这个会话还没设过预设信息。</span>'; }
+          box.innerHTML = h;
+          box.querySelectorAll('button[data-del]').forEach(function(b){
+            b.onclick = function(){ bfDel(b.getAttribute('data-del')); };
+          });
+        }catch(e){ box.textContent = '读不到：' + e; }
+      }
+      async function bfAdd(){
+        var chat = bfKey(); var text = (document.getElementById('bfText').value||'').trim();
+        if(!chat){ toast('先选会话'); return; }
+        if(!text){ toast('先写内容'); return; }
+        try{
+          var r = await getJSON('/api/briefs', {method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({action:'add', chat: chat, text: text,
+              until: (document.getElementById('bfUntil').value||'').trim(),
+              always: document.getElementById('bfAlways').checked})});
+          if(r && r.ok === false){ toast(r.why || '没加上'); return; }
+          document.getElementById('bfText').value = '';
+          document.getElementById('bfUntil').value = '';
+          document.getElementById('bfAlways').checked = false;
+          toast('已加上（只对这个会话生效）'); bfLoad();
+        }catch(e){ toast('没加上：' + e); }
+      }
+      async function bfDel(id){
+        try{
+          var r = await getJSON('/api/briefs', {method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({action:'del', chat: bfKey(), id: id})});
+          if(r && r.ok === false){ toast(r.why || '没删掉'); return; }
+          bfLoad();
+        }catch(e){ toast('没删掉：' + e); }
+      }
+      document.getElementById('bfChat').onchange = bfLoad;
+      document.getElementById('bfChatKey').onchange = bfLoad;
+      document.getElementById('bfRefresh').onclick = bfChats;
+      document.getElementById('bfAdd').onclick = bfAdd;
+      setTimeout(function(){ try{ bfChats(); }catch(e){} }, 1200);
+      </script>
     </section>
     <section id="sec-vermat" class="card" data-sec>
       <h2>版本能力矩阵</h2>

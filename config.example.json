@@ -364,6 +364,10 @@
    "enabled": true,
    "window_sec": 180,
    "heuristic": true
+  },
+  "briefs": {
+   "enabled": true,
+   "inject_max": 5
   }
  },
  "cloud": {
