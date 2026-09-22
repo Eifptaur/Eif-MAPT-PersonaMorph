@@ -555,6 +555,10 @@ def sec_compat():
     try:
         from agent import compat as _cp
         lines.extend(["  " + x for x in _cp.lines()])
+        # ⛔ 2026-09-22：再加**11 条轴**的现测事实（＝机器可读的兼容性矩阵；业界口径统一是
+        #   "探测能力、别按版本分支"，所以每行都必须是这台机器上量出来的值，量不到写"未知"）。
+        lines.append("  —— 兼容性矩阵（11 条轴，全部现测；不是「支持/不支持」）——")
+        lines.extend([x for x in _cp.axis_lines()])
     except Exception as e:                                        # noqa: BLE001
         lines.append("  兼容性指纹采集失败：%s: %s" % (type(e).__name__, str(e)[:80]))
     lines.append("  （把这一节连同前几节一起发回来即可；里面不含口令、不含账号目录名）")

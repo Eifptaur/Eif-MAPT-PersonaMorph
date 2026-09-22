@@ -76,7 +76,24 @@ def main():
     ok("logs/ 顶层没有多出文件（也没少）", _ld0 == _ld1,
        str(set(_ld1) ^ set(_ld0))[:80])
 
-    print("== D. 接线（报告里必须有这一节）==")
+    print("== D. 兼容性矩阵（11 条轴，全部是现测事实）==")
+    _ax = CP.axes()
+    ok("矩阵给出 11 条轴（业界口径：能力/事实矩阵，不是「支持/不支持」）",
+       len(_ax) == 11, "条数=%d" % len(_ax))
+    ok("每一行都有 axis / fact / value 三个字段且非空",
+       all(str(a.get("axis") or "").strip() and str(a.get("fact") or "").strip()
+           and str(a.get("value") or "").strip() for a in _ax),
+       str([a.get("axis") for a in _ax if not str(a.get("value") or "").strip()]))
+    ok("矩阵里不许出现「支持/不支持」这种结论式措辞（必须是探测事实）",
+       not any("不支持" in str(a.get("value")) or "已支持" in str(a.get("value")) for a in _ax))
+    _names = [a["axis"] for a in _ax]
+    ok("11 条轴覆盖我们真踩过的差异（抽查 5 条）",
+       all(any(k in n for n in _names) for k in ("UI 代", "DPI", "加密模式", "WebView2", "端口")),
+       "、".join(_names)[:120])
+    ok("axis_lines() 与 axes() 条数一致（报告里贴的就是同一份）",
+       len(CP.axis_lines()) == len(_ax), "%d / %d" % (len(CP.axis_lines()), len(_ax)))
+
+    print("== E. 接线（报告里必须有这一节）==")
     src = io.open(os.path.join(ROOT, "scripts", "collect_report.py"), encoding="utf-8").read()
     ok("collect_report 里有 sec_compat 这一节", _sm.has(src, "def sec_compat()"))
     ok("报告标题里点了名（用户能找到该发哪一段）", _sm.has(src, "七、兼容性指纹"))
