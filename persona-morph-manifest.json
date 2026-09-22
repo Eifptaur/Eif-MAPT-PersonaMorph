@@ -1,13 +1,13 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.22.2",
-    "sha256": "20a08915509c285baa7ad38f51cfd7c9a9cc9cb2789c0172d65bdb3ca0e4d3e2",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.60/persona-morph-v2.1.60.zip",
-    "build": "8d222ac4421c",
-    "size": 11998137,
+    "version": "2026.9.22.3",
+    "sha256": "1ac5b777788c3a31752b0ea281326577fe76e112604640fdd8be67b478edb8a8",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.61/persona-morph-v2.1.61.zip",
+    "build": "7df279f7f30d",
+    "size": 12001605,
     "files": 331,
-    "expires": "2026-10-22T00:46:17Z"
+    "expires": "2026-10-22T01:34:15Z"
   },
   "dlc": [
     {
@@ -36,13 +36,13 @@
     }
   ],
   "announce": {
-    "version": "2026.9.22.2",
+    "version": "2026.9.22.3",
     "notes": [
-      "修复了一些 bug"
+      "修复了一些 bug，并把后台口径写得更清楚"
     ],
     "forceBase": false,
-    "minBase": "2026.9.22.2"
+    "minBase": "2026.9.22.3"
   },
-  "builtAt": "2026-09-22T00:46:17Z",
-  "updatedAt": 1790037977715
+  "builtAt": "2026-09-22T01:34:15Z",
+  "updatedAt": 1790040855735
 }
