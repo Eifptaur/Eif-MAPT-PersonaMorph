@@ -228,7 +228,17 @@ def load_nickname_map(db) -> dict:
 
 
 def load_groups(db) -> list:
-    """群列表 [{'name','wxid'}]：**优先公开 `get_groups()`**，拿不到再回退查 contact.db。
+    """群列表 [{'name','wxid'}]：**两个来源取并集**（2026-09-22 修「只认到一个群」）。
+
+    ⛔ 为什么必须并集（B站网友实测：「我拉她进了两个群，只能检测到一个」）：两条来源**各自会漏**——
+      ① 驱动库 `get_groups()` 读的是 `contact.db` 的 **`chat_room` 表**：它只收录"已经展开过群成员/
+         进过通讯录"的群聊，**刚被拉进去、还没点开过的群可能压根不在那张表里**；
+      ② `contact` 表的 `@chatroom` 行更全（会话列表里出现过的群都在），但拿不到群主/成员数。
+    老实现是"①拿到非空就 `return out`" ⇒ ① 只给出 1 个群时，② 里明明还躺着的另一个群
+    **永远看不到**（用户看到的就是"只检测到一个"）⇒ 现在**两路都跑**、按 wxid 取并集：
+    名字优先用 ② 的 `remark/nick_name`（②本来就是解密后的联系人表），取不到再退回 ① 的名字。
+    失败语义不变：**两路都失败才抛**（由 `wechat._load_groups` 记进 `_cap` 并如实显示）；
+    只有一路成功 ⇒ 返回它并允许另一路为空（errs 里留着原因，供上层诊断）。
 
     ⛔ 2026-09-20 修（网友 v0920-1227 报「**微信已连接却找不到群聊**」，截图里控制台写着
       「没读到任何群聊：请先在「运行状态」确认微信已连接」）：这里原来把**两条路都失败**的情况
@@ -241,10 +251,14 @@ def load_groups(db) -> list:
       **查询成功、确实一个群都没有**才返回空列表（那是事实，不是错误）。
     """
     errs = []
+    found = []          # [(wxid, name)] —— 两个来源都往里追加，最后按 wxid 去重合并
+    ok_src = 0
+    # ── 来源①：驱动库 get_groups()（contact.db 的 chat_room 表；新群可能还没有）────────────
     if has_api(db, "get_groups"):
         try:
             rows = db.get_groups() or []
-            out = []
+            ok_src += 1                       # 调用本身没抛＝这条路可用（给 0 条也是"可用且为空"）
+            n0 = 0
             for r in rows:
                 try:
                     wxid = str(r.get("username") or "")
@@ -252,29 +266,47 @@ def load_groups(db) -> list:
                 except Exception:
                     continue
                 if wxid:
-                    out.append({"name": name, "wxid": wxid})
-            if out:
-                return out
-            errs.append("get_groups() 给出 0 条")
+                    found.append((wxid, name))
+                    n0 += 1
+            if not n0:
+                errs.append("get_groups() 给出 0 条")
         except Exception as _e:
             errs.append("get_groups()：%s" % (str(_e)[:80] or type(_e).__name__))
+    else:
+        errs.append("驱动库没有 get_groups()")
+    # ── 来源②：contact 表的 @chatroom 行（更全，但不给群主/成员数）——**不再被①短路** ──────
     rel = contact_db_rel(db)
+    contact_names = {}
     if rel is None:
-        raise RuntimeError("找不到联系人库 contact.db%s"
-                           % ("（%s）" % "；".join(errs) if errs else ""))
-    conn = None
-    try:
-        conn = open_shard(db, rel)
-        rows = conn.execute(
-            "SELECT username, nick_name, remark FROM contact WHERE username LIKE '%@chatroom'").fetchall()
-    except Exception as _e:
-        raise RuntimeError("读 contact.db 失败：%s%s"
-                           % (str(_e)[:80] or type(_e).__name__,
-                              ("（此前：%s）" % "；".join(errs)) if errs else ""))
-    finally:
-        close_all([conn])
-    return [{"name": str(r["remark"] or r["nick_name"] or r["username"]),
-             "wxid": str(r["username"])} for r in rows]
+        errs.append("找不到联系人库 contact.db")
+    else:
+        conn = None
+        try:
+            conn = open_shard(db, rel)
+            rows = conn.execute(
+                "SELECT username, nick_name, remark FROM contact WHERE username LIKE '%@chatroom'").fetchall()
+            ok_src += 1
+            for r in rows:
+                wxid = str(r["username"])
+                contact_names[wxid] = str(r["remark"] or r["nick_name"] or wxid)
+        except Exception as _e:
+            errs.append("读 contact.db 失败：%s" % (str(_e)[:80] or type(_e).__name__))
+        finally:
+            close_all([conn])
+    if not ok_src:
+        # 两条路**都**没成 ⇒ 真失败（上层据此记 `_cap["groups"]` 并如实显示，不引向"微信没连接"）
+        raise RuntimeError("群列表读不到：%s" % ("；".join(errs) or "两条来源都不可用"))
+    out, seen = [], set()
+    for wxid, name in found:
+        if wxid in seen:
+            continue
+        seen.add(wxid)
+        out.append({"name": contact_names.get(wxid) or name, "wxid": wxid})
+    for wxid, name in contact_names.items():      # ② 里有、① 里没有的群（＝被短路的那些）
+        if wxid not in seen:
+            seen.add(wxid)
+            out.append({"name": name, "wxid": wxid})
+    return out
 
 
 # 微信系统号 / 服务号（不是真人私聊）——私聊发现时要排掉

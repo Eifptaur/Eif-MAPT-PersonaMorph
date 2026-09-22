@@ -133,14 +133,42 @@ def main():
     m = ra.load_nickname_map(db)
     ok("昵称映射：备注优先、回退昵称", m.get("wxid_a") == "备注A" and m.get("wxid_b") == "昵称B", len(m))
 
-    print("— C. 群列表：公开 API 优先，缺失才回退私有 —")
+    print("— C. 群列表：**两个来源取并集**（2026-09-22 修「只检测到一个群」）—")
     dbg = FakeDB()                       # 用新实例：上一个用例已经查过 contact.db，日志里会带噪音
     g = ra.load_groups(dbg)
-    ok("有 get_groups ⇒ 走公开 API", g and g[0]["wxid"] == "12345@chatroom" and g[0]["name"] == "群一")
-    ok("走公开 API 时**没有**碰 contact.db", all(k != "contact" for k, _, _ in dbg.log), str([k for k, _, _ in dbg.log]))
+    ok("两条来源都跑：`chat_room` 给出群一", g and g[0]["wxid"] == "12345@chatroom" and g[0]["name"] == "群一")
+    ok("**不再被公开接口短路**（contact.db 也要查——老实现拿到非空就 return）",
+       any(k == "contact" for k, _, _ in dbg.log), str([k for k, _, _ in dbg.log]))
     db2 = FakeDB(with_get_groups=False)
     g2 = ra.load_groups(db2)
     ok("没有 get_groups ⇒ 回退查 contact.db 也能拿到群", g2 and g2[0]["wxid"] == "12345@chatroom", str(g2)[:60])
+
+    # ⛔ C1b（B站网友实测「拉进两个群只检测到一个」的回归锚）：
+    #   `chat_room` 只收录"展开过/进过通讯录"的群，另一个群只活在 contact 表里。
+    #   老实现（非空即返回）会把它整条丢掉 ⇒ 这条断言必须红。
+    class PartialChatRoomDB(FakeDB):
+        def __init__(self):
+            super().__init__()
+            self.contact_rows = list(self.contact_rows) + [
+                Row([("username", "67890@chatroom"), ("nick_name", "群二"), ("remark", "")])]
+
+    _gp = ra.load_groups(PartialChatRoomDB())
+    _ids = sorted(x["wxid"] for x in _gp)
+    ok("chat_room 只给 1 个群时，contact 里另一个群**也要在**（并集，不是取其一）",
+       _ids == ["12345@chatroom", "67890@chatroom"], str(_ids))
+
+    # C1c：名字以 contact 表为准（remark/nick_name 才是解密后的显示名），缺了才退回公开接口给的名字
+    class RenamedDB(FakeDB):
+        def __init__(self):
+            super().__init__()
+            self.contact_rows = [Row([("username", "12345@chatroom"), ("nick_name", "真群名"), ("remark", "")])]
+
+        def get_groups(self):
+            return [{"username": "12345@chatroom", "name": "12345@chatroom", "owner": "", "member_count": 0, "members": []}]
+
+    _gr = ra.load_groups(RenamedDB())
+    ok("群名优先用 contact 表的（公开接口只给了 wxid 时也要显示真名）",
+       _gr and _gr[0]["name"] == "真群名", str(_gr)[:60])
 
     print("— C2. 读库失败**必须抛**（2026-09-20 网友报「微信已连接却找不到群聊」的根因）—")
 

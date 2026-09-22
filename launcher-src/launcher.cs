@@ -1378,6 +1378,9 @@ static class Program
                             // 用户实测「其他都行了，只有点停止关窗不行」⇒ 单靠页面 `window.close()`
                             // 在这台机器上没触发宿主关窗，而这条 postMessage 通道已被 ESC 验证可用。
                             if (msg == "pm-close-window") { try { Close(); } catch { } return; }
+                            // ⛔ 2026-09-22：我们自己那张"控制台正在启动"的重试页要求再试一次
+                            //   （页面 postMessage 比 JS 直接 location.replace 稳：宿主这边一定能拿到）。
+                            if (msg == "pm-retry") { try { _wv.CoreWebView2.Navigate(_url); } catch { } return; }
                             if (msg == "pm-esc-exit-fullscreen" && WindowState == FormWindowState.Maximized)
                             {
                                 WindowState = FormWindowState.Normal;
@@ -1387,6 +1390,20 @@ static class Program
                             }
                         }
                         catch { }
+                    };
+                }
+                catch { }
+                // ⛔ 2026-09-22 加（**B站网友报「打不开控制台 / 无法访问此页面」的那个入口**）：
+                //   机器人没在跑/还没就绪时，这里的 `Navigate(_url)` 会**成功返回**、随后把
+                //   WebView2 的默认错误页（一屏 ERR_CONNECTION_REFUSED）显示给用户 —— 用户当然以为
+                //   产品坏了。⇒ 导航失败一律换成**我们自己的**"正在重试"页（含自动重试 + 手动重试 +
+                //   去哪儿看日志），端口一起来就自动接上，全程不出现浏览器错误页。
+                try
+                {
+                    _wv.CoreWebView2.NavigationCompleted += delegate(object s3, Microsoft.Web.WebView2.Core.CoreWebView2NavigationCompletedEventArgs e3)
+                    {
+                        if (e3.IsSuccess) return;
+                        try { _wv.CoreWebView2.NavigateToString(Ui.RetryPage(_url)); } catch { }
                     };
                 }
                 catch { }
@@ -1825,6 +1842,51 @@ static class Program
             catch { return -999; }
         }
 
+        /// ⛔ 2026-09-22 加：**"控制台还没起来"要用我们自己的页说**（显示层自研 + 不许给用户一屏 Edge 错误）。
+        ///
+        /// 现场（B站网友截图）：地址是 `127.0.0.1` 但机器人没在跑/还在起 ⇒ WebView2 直接显示
+        /// `ERR_CONNECTION_REFUSED` 的浏览器错误页，用户只看到"无法访问此页面"，以为产品坏了。
+        /// ⇒ 导航失败时换成这张自绘页：**自动重试**（端口一起来就接上）+ 手动重试 + 如实说明去哪看日志。
+        public static string EscapeHtml(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return "";
+            return s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;")
+                    .Replace("\"", "&quot;").Replace("'", "&#39;");
+        }
+
+        public static string RetryPage(string url)
+        {
+            string safe = EscapeHtml(url);
+            string jsUrl = (url ?? "").Replace("\\", "\\\\").Replace("\"", "\\\"");   // JS 字符串里的地址：用**原始**值
+            string shown = EscapeHtml(url != null && url.IndexOf('?') > 0 ? url.Substring(0, url.IndexOf('?')) : (url ?? ""));
+            var sb = new StringBuilder();
+            sb.Append("<!doctype html><html><head><meta charset=\"utf-8\"><title>群相 控制台</title><style>");
+            sb.Append("html,body{margin:0;height:100%;background:#0E1420;color:#E7ECF5;");
+            sb.Append("font-family:'Microsoft YaHei UI','Microsoft YaHei',sans-serif}");
+            sb.Append(".w{max-width:560px;margin:0 auto;padding:96px 28px 0}");
+            sb.Append("h1{font-size:20px;font-weight:600;margin:0 0 14px}");
+            sb.Append("p{font-size:13.5px;line-height:1.9;color:#9FB0C9;margin:0 0 10px}");
+            sb.Append("code{font-size:12.5px;color:#7FB0FF;background:#141C2B;padding:2px 6px;border-radius:4px}");
+            sb.Append("b{color:#E7ECF5;font-weight:600}");
+            sb.Append("button{margin-top:14px;background:#2E6BE6;color:#fff;border:0;border-radius:8px;");
+            sb.Append("padding:9px 18px;font-size:13px;cursor:pointer}");
+            sb.Append("</style></head><body><div class=\"w\">");
+            sb.Append("<h1>控制台正在启动…</h1>");
+            sb.Append("<p>还没连上 <code>" + shown + "</code>（第 <b id=\"n\">0</b> 次自动重试）。</p>");
+            sb.Append("<p id=\"s\">机器人启动时要准备 Python 环境、装依赖并连微信，第一次可能要一两分钟。这个窗口会自己接上，不用管它。</p>");
+            sb.Append("<p>一直连不上就看 <code>logs\\persona_morph.log</code> 与 <code>logs\\onestart.log</code>，或重新点一次「一键启动」。</p>");
+            sb.Append("<button onclick=\"go()\">立即重试</button>");
+            sb.Append("</div><script>var n=0;var u=\"" + jsUrl + "\";");
+            sb.Append("function go(){try{if(window.chrome&&chrome.webview){chrome.webview.postMessage('pm-retry');return;}}catch(e){}");
+            sb.Append("try{location.replace(u);}catch(e){}}");
+            sb.Append("function tick(){n++;try{document.getElementById('n').textContent=n;}catch(e){}");
+            sb.Append("if(n>40){try{document.getElementById('s').textContent=");
+            sb.Append("'已重试 40 次仍连不上：机器人可能没起来。请看 logs\\\\persona_morph.log，或重新点「一键启动」。';}catch(e){}return;}");
+            sb.Append("setTimeout(go,2500);}");
+            sb.Append("setTimeout(tick,1500);</script></body></html>");
+            return sb.ToString();
+        }
+
         /// 回退原因落盘（尽力而为，失败不影响开窗）
         public static void NoteFallback(string root, string why)
         {
@@ -2007,7 +2069,79 @@ static class Program
         }
         public static void FallbackBrowser(string url)
         {
+            string dir = Path.GetDirectoryName(Application.ExecutablePath);
+            // ⛔ 2026-09-22 加（第十五轮 V-R15-3 之后又出现的一屏同样报错）：**浏览器兜底也要探活**。
+            //   这条路上没有 WebView2 可以画重试页 ⇒ 死链就是死链（用户截图正是 Edge 上的
+            //   「无法访问此页面 / 127.0.0.1 拒绝连接」）⇒ 不再开它，改用**我们自己的**浮窗把话说清楚。
+            if (string.IsNullOrEmpty(url) || !url.StartsWith("http"))
+            {
+                NoteFallback(dir, "没有可用地址 ⇒ 不开浏览器");
+                return;
+            }
+            if (!PortAlive(url))
+            {
+                NoteFallback(dir, "地址端口没人应答（机器人没在跑/还没就绪）⇒ 不开死页，改弹自家提示窗");
+                try { using (DeadLinkForm f = new DeadLinkForm(url)) { f.ShowDialog(); } } catch { }
+                return;
+            }
             try { System.Diagnostics.Process.Start(url); } catch { }
+        }
+
+        /// 自家提示窗：**"控制台还没就绪"**（死链时用它顶替一屏 ERR_CONNECTION_REFUSED）。
+        /// 零系统 MessageBox（红线），按钮＝重试 / 关闭；重试就再探一次活、活着才开窗。
+        public class DeadLinkForm : Form
+        {
+            public DeadLinkForm(string url)
+            {
+                string root = Path.GetDirectoryName(Application.ExecutablePath);
+                Text = "群相 控制台";
+                StartPosition = FormStartPosition.CenterScreen;
+                ClientSize = new Size(470, 250);
+                Label t = new Label();
+                t.Text = "控制台还没就绪";
+                t.Font = new Font("Microsoft YaHei UI", 14, FontStyle.Bold);
+                t.Location = new Point(24, 22); t.AutoSize = true;
+                Controls.Add(t);
+                Label m = new Label();
+                m.Text = "机器人还没起来（或刚刚被关掉），现在打开只会是一屏「无法访问此页面」。"
+                       + Environment.NewLine
+                       + "点「一键启动」把控制台拉起来；已经起来了就点「重试」。"
+                       + Environment.NewLine + Environment.NewLine
+                       + "还不行的话看 logs\\persona_morph.log 与 logs\\onestart.log。";
+                m.Font = new Font("Microsoft YaHei UI", 9.5f);
+                m.ForeColor = Color.FromArgb(76, 92, 118);
+                m.Location = new Point(24, 62); m.Size = new Size(420, 120);
+                Controls.Add(m);
+                Button retry = new RoundButton();
+                retry.Text = "重试";
+                retry.Size = new Size(96, 34);
+                retry.Location = new Point(348, 200);
+                retry.FlatStyle = FlatStyle.Flat;
+                retry.BackColor = Color.FromArgb(64, 140, 255);
+                retry.ForeColor = Color.White;
+                retry.Click += delegate
+                {
+                    try
+                    {
+                        string _why2 = "";
+                        string u = Ui.ConsoleUrl(root, out _why2);
+                        if (!string.IsNullOrEmpty(u) && Ui.PortAlive(u)) { Ui.OpenConsole(u); }
+                    }
+                    catch { }
+                    Close();
+                };
+                Controls.Add(retry);
+                Button no = new RoundButton();
+                no.Text = "关闭";
+                no.Size = new Size(88, 34);
+                no.Location = new Point(250, 200);
+                no.FlatStyle = FlatStyle.Flat;
+                no.Click += delegate { Close(); };
+                Controls.Add(no);
+                AcceptButton = retry; CancelButton = no;
+                try { string ico = Path.Combine(root, "assets", "app.ico"); if (File.Exists(ico)) Icon = Icon.ExtractAssociatedIcon(ico); } catch { }
+                StyleKit.Apply(this, "群相 控制台");
+            }
         }
 
         /// 取证探针：把每个弹窗**离屏**渲染成 PNG（不显示、不抢焦点），逐张人工核对外观

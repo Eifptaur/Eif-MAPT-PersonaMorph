@@ -543,6 +543,24 @@ def sec_delivery():
     return lines, raw
 
 
+def sec_compat():
+    """七、兼容性指纹：**每台机器都不一样**的那些事实（只读，任何一节失败都不影响其它节）。
+
+    ⛔ 为什么要单独一节（2026-09-22；作者原话「其实最重要的就是兼容性，好多人的电脑跟好多人
+      的情况都不一样」）：报障里最常见的对不上，就是"我这台是那样、你那台是这样"——
+      Windows 版本/DPI/微信主窗类名/Python/端口/WebView2/消息库目录与分片/库页1 是明文头还是全加密。
+      这几行**一贴出来，多半不用再问第二轮**。同一份口径也在 `agent\\compat.py`（唯一实现）。
+    """
+    lines = []
+    try:
+        from agent import compat as _cp
+        lines.extend(["  " + x for x in _cp.lines()])
+    except Exception as e:                                        # noqa: BLE001
+        lines.append("  兼容性指纹采集失败：%s: %s" % (type(e).__name__, str(e)[:80]))
+    lines.append("  （把这一节连同前几节一起发回来即可；里面不含口令、不含账号目录名）")
+    return lines, {}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--send-test", action="store_true", help="额外做一次投递发送实测（会真发一条测试消息）")
@@ -576,6 +594,9 @@ def main():
         add("六、投递发送实测", lines, raw)
     else:
         add("六、投递发送实测", ["  未执行（加 --send-test 才会真发一条测试消息）"], {})
+    # 七、兼容性指纹（2026-09-22 加）：**永远排在最后**，用户报障时连它一起发回来
+    lines, raw = safe(sec_compat, "七、兼容性指纹") or ([], {})
+    add("七、兼容性指纹（报障时请带上这一节）", lines, raw)
 
     ts = time.strftime("%Y%m%d-%H%M%S")
     os.makedirs(OUT_DIR, exist_ok=True)

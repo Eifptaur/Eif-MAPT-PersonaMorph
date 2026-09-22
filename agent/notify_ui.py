@@ -432,13 +432,29 @@ def open_console(url: str = "", browser_path: str = "", take_lock: bool = True, 
                     "hwnd": _ex, "ready": ready, "raise": _rp}
         except Exception as e:
             log.debug("复用控制台窗口失败，改为新开：%s", e)
+    # ⛔ 2026-09-22 加（**同一屏 ERR_CONNECTION_REFUSED 的第二个入口**）：地址**现在是死的**吗？
+    #   机器人还没起来/刚被关掉时，`console_url()` 只能给出"配置文件里那个端口"——它没人听；
+    #   老实现照样 `Process.Start(浏览器, 死地址)` ⇒ 用户看到的就是「无法访问此页面 / 127.0.0.1 拒绝连接」。
+    #   ① 自家 WebView2 窗口：**照开**（C# 侧撞到导航失败会显示我们自己的"正在重试"页并在端口起来后自动接上，
+    #      比一屏 Edge 错误页强得多，也不会把用户引到"程序坏了"）；② 浏览器兜底：**没人在听就不开**，
+    #      如实返回 `how=dead`，由调用方（启动器/一键启动）用自家面板告诉用户"控制台还没就绪"。
+    _live = False
+    try:
+        _live = _url_live(url)
+    except Exception:
+        _live = False
     if ready["ok"]:
         try:
             subprocess.Popen([os.path.join(ROOT, "一键启动.exe"), "--console", url],
                              creationflags=0x08000000)
-            return {"ok": True, "how": "webview", "why": "", "ready": ready}
+            return {"ok": True, "how": "webview", "why": "", "ready": ready, "live": _live}
         except Exception as e:
             ready["why"] = "自家窗口启动异常：%s" % e
+    if not _live:
+        return {"ok": False, "how": "dead", "ready": ready, "live": False,
+                "why": ("控制台地址 %s 没人应答（多半是机器人没在跑/还没就绪）⇒ "
+                        "这次**不开一屏 ERR_CONNECTION_REFUSED**；请点「一键启动」把控制台拉起来，"
+                        "或稍等几秒后重试" % str(url).split("?")[0])}
     bp = ""
     try:
         from .util import pick_browser
@@ -451,7 +467,7 @@ def open_console(url: str = "", browser_path: str = "", take_lock: bool = True, 
         else:
             import webbrowser
             webbrowser.open(url)
-        return {"ok": True, "how": "browser", "why": ready["why"], "ready": ready}
+        return {"ok": True, "how": "browser", "why": ready["why"], "ready": ready, "live": True}
     except Exception as e:
         return {"ok": False, "how": "", "why": "打开控制台失败：%s（请手动访问）" % e, "ready": ready}
 

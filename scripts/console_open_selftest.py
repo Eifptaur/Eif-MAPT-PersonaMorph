@@ -188,10 +188,42 @@ class _FakePopen(object):
         calls.append(cmd)
 
 
+# ⛔ 2026-09-22 加：**浏览器兜底必须探活**（第十五轮 V-R15-3 之后又冒出来的同一屏
+#   `ERR_CONNECTION_REFUSED`）。⇒ 本节要有个**真在听**的地址才能测"该开就开"那条，
+#   死地址（39998）用来测"死链不开"那条。监听只在本进程内、不对外、用完即关。
+import socket as _jsock
+_srv = _jsock.socket()
+_srv.bind(("127.0.0.1", 0))
+_srv.listen(50)
+_LIVE_URL = "http://127.0.0.1:%d/?token=ZZZ" % _srv.getsockname()[1]
+_DEAD_URL = "http://127.0.0.1:39998/?token=ZZZ"
+
+
+def _jsrv_accept():                      # 真把连接收掉，免得 backlog 满后被判成"死链"
+    import threading as _jth
+    def _loop():
+        while True:
+            try:
+                _c, _ = _srv.accept()
+                try:
+                    _c.close()
+                except Exception:
+                    pass
+            except Exception:
+                break
+    _t = _jth.Thread(target=_loop)
+    _t.daemon = True
+    _t.start()
+
+
+_jsrv_accept()
+
 calls = []
+_wcu_real = U.write_console_url          # ⛔ D 段一律**不落盘**产品那份 logs/console.url
 try:
+    U.write_console_url = lambda *a, **k: None
     NU.subprocess.Popen = _FakePopen
-    NU.console_url = lambda anchor="": "http://127.0.0.1:39998/?token=ZZZ"
+    NU.console_url = lambda anchor="": _LIVE_URL
     U.take_console_lock = lambda *a, **k: True
     NU.find_console_window = lambda: 0            # 本机没有开着的控制台 ⇒ 走"新开"分支
 
@@ -208,11 +240,22 @@ try:
                                 "why": "目录里没有 一键启动.exe", "ok": False}
     calls[:] = []
     _r2 = NU.open_console(take_lock=False)
-    ok("② 自家窗口不可用 ⇒ 才回退浏览器，且**如实报原因**",
+    ok("② 自家窗口不可用 + 地址**活着** ⇒ 才回退浏览器，且**如实报原因**",
        _r2.get("how") == "browser" and bool(_r2.get("why")) and len(calls) == 1, str(_r2.get("why"))[:30])
+
+    # ②b ⛔ 2026-09-22：**死链不许开浏览器**（B站网友截图那一屏「无法访问此页面」就是它）
+    NU.console_url = lambda anchor="": _DEAD_URL
+    calls[:] = []
+    _r2b = NU.open_console(take_lock=False)
+    ok("②b 自家窗口不可用 + 地址**没人应答** ⇒ 不开死页（how=dead、一枪都不发）",
+       _r2b.get("how") == "dead" and len(calls) == 0 and bool(_r2b.get("why")),
+       "%s / 开窗 %d 次" % (_r2b.get("how"), len(calls)))
+    ok("②b 死链的理由说清「没人应答」（不是含糊其辞）",
+       "没人应答" in str(_r2b.get("why") or ""), str(_r2b.get("why"))[:60])
 
     U.take_console_lock = lambda *a, **k: False
     NU._WAIT_WINDOW_TRIES = 1            # 判据里别真等 6 秒
+    NU.console_url = lambda anchor="": _LIVE_URL
     calls[:] = []
     _r3 = NU.open_console()
     ok("③ 锁被占**但一个窗口都没有** ⇒ 照开（锁不许吞掉「根本没有窗口」）",
@@ -273,7 +316,12 @@ finally:
     NU.subprocess.Popen, NU.webview_ready = _real_popen, _real_ready
     NU.console_url = _real_url
     U.take_console_lock = _real_lock
+    U.write_console_url = _wcu_real
     NU.find_console_window, NU.raise_without_stealing = _real_findc, _real_raise
+    try:
+        _srv.close()          # 收掉本节自己起的那个探活监听（不留后台套接字）
+    except Exception:
+        pass
     # 2026-09-18：这里原来 `rm_url_file()`（删产品那份地址文件）——删它对本节断言毫无用处，
     #   只会让后面的 E 段读不到文件、并把产品推到"只能靠配置兜底"的路上。改为不动它。
 
