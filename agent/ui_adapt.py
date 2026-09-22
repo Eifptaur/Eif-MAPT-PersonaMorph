@@ -26,12 +26,16 @@ config.json 里的相关设置（均在 Web 控制台「界面适配」卡片可
 from __future__ import annotations
 
 import ctypes
+import logging
 import os
 import subprocess
 import time
 from ctypes import wintypes
 
 from .config import get_config
+
+# 与发送链同一个 logger 名 ⇒ 日志在主日志里能连着看
+log = logging.getLogger("persona-morph")
 
 _user32 = ctypes.windll.user32
 
@@ -731,11 +735,71 @@ def heal_input():
         pass
 
 
+def _cursor_now():
+    """当前光标位置（取不到就 None）。"""
+    try:
+        pt = wintypes.POINT()
+        if _user32.GetCursorPos(ctypes.byref(pt)):
+            return (int(pt.x), int(pt.y))
+    except Exception:                                            # noqa: BLE001
+        pass
+    return None
+
+
+def _cursor_restore(pos, why: str = "") -> bool:
+    """把光标放回 `pos`（真鼠标档用完**必须**还回去）。失败只记日志。"""
+    if not pos:
+        return False
+    try:
+        _user32.SetCursorPos(int(pos[0]), int(pos[1]))
+        time.sleep(0.05)
+        back = _cursor_now()
+        if back != pos:
+            log.warning("真鼠标档：光标没能还原（%s → %s）%s", pos, back, why)
+            return False
+        return True
+    except Exception as e:                                       # noqa: BLE001
+        try:
+            log.warning("真鼠标档：还原光标异常（%s）：%s", why, e)
+        except Exception:                                        # noqa: BLE001
+            pass
+        return False
+
+
+def _real_mouse_allowed() -> bool:
+    """这一枪允许用**真鼠标**吗（默认**不允许**）。
+
+    口径与 `WeChatAdapter._real_fallback_allowed()` 一致（那一处是发送链的闸门）：
+      · `WXAGENT_REAL_FALLBACK=0` ⇒ **强制关**（自检/诊断路径用它兜底，无视 config）；
+      · 否则看 `input.allow_real_fallback`（默认 False）。
+    """
+    try:
+        if str(os.environ.get("WXAGENT_REAL_FALLBACK", "")).strip() == "0":
+            return False
+    except Exception:                                            # noqa: BLE001
+        pass
+    try:
+        return bool((get_config().get("input") or {}).get("allow_real_fallback", False))
+    except Exception:                                            # noqa: BLE001
+        return False
+
+
 def click(gui, x: int, y: int, right: bool = False, scale=None, extra_hwnds: tuple = (), heal: bool = True) -> tuple:
     """统一点击入口（wx_click 的适配层）。
 
+    ⛔ 2026-09-22 修（**真机四项复测第一枪就抓到的红线违例**）：这里原来是**无条件** `gui.wx_click()`
+    —— 那是库自己的真实鼠标（`SetCursorPos` + `mouse_event`），于是两件事同时错：
+      ① 它**绕过了输入档位**（`input.backend` / `input.allow_real_fallback` / `WXAGENT_REAL_FALLBACK`）
+         —— 而 `wechat.py` 自己的切会话分支是**认这道闸**的（日志原话：「不切会话：open_chat 是真鼠标
+         路径（会动你的光标）⇒ 按最高目标拒绝」）⇒ 同一份红线、两个入口两套标准；
+      ② 点完**不还原光标**（现场原始读数：打开表情面板把光标从 (233,1599) 移到 **(1564,1144)** 并留在那儿；
+         落点日志 `笑脸落点 (374,994)` + 渲染原点 (1190,150) 正好等于那个光标位置）。
+    ⇒ 现在按档位走：**投递优先**（默认档、完全不动光标）；投递没成且没显式开真鼠标兜底 ⇒ **这一枪不发**
+    （宁可少做一个动作，也不动用户的鼠标）；真鼠标档必须在 `input.allow_real_fallback` 显式打开，
+    且**用完把光标放回原处**（前后一致 + 留痕）。
+
     x/y 为微信渲染窗口相对坐标（截图/OCR 空间）。会：
-      换算鼠标空间（CPI 缩放）→ 归属校验（确保点是微信）→ wx_click。
+      换算鼠标空间（CPI 缩放）→ 归属校验（确保点是微信）→ **按输入档位**点。
     extra_hwnds：额外认作「微信窗口」的句柄（如朋友圈/视频号等独立子窗），
     保证在子窗口上点击不被 ensure_point 误判为"别家窗口"而拒绝。
     heal=False：点击后不做光标自愈移动（悬停出菜单场景必须禁用，
@@ -748,10 +812,43 @@ def click(gui, x: int, y: int, right: bool = False, scale=None, extra_hwnds: tup
         ok, why = ensure_point(sx, sy, hwnds, gui=gui)
         if not ok:
             return False, why
+        # ① 先看档位：auto/message ⇒ 投递点击（不动光标）
+        backend = None
+        try:
+            from . import input_backend as _ib
+            backend = _ib.select_backend(gui=gui)
+        except Exception as _e:                                  # noqa: BLE001
+            log.info("取输入档位失败（按严口径继续判）：%s", _e)
+        if backend is not None and not bool(getattr(backend, "touches_cursor", True)):
+            try:
+                _ok2, _why2 = backend.click(int(getattr(gui, "main_hwnd", 0) or 0), (sx, sy), right=right)
+            except Exception as _e2:                             # noqa: BLE001
+                _ok2, _why2 = False, str(_e2)
+            if _ok2:
+                return True, ""
+            if not _real_mouse_allowed():
+                return False, ("投递点击没成（%s）⇒ **不发这一枪**："
+                               "不动你的鼠标是硬口径，而 `input.allow_real_fallback` 没开"
+                               % str(_why2)[:80])
+        # ② 真鼠标档：必须显式允许；用完光标还原 + 留痕
+        if not _real_mouse_allowed():
+            return False, ("当前输入档是真鼠标，而 `input.allow_real_fallback` 没开 ⇒ **不发这一枪**"
+                           "（不动你的鼠标是硬口径）")
+        _cur = _cursor_now()
+        # 真鼠标动作**必须先过 `real_guard`**（它就是为了"`SetCursorPos` 会静默失败"
+        # 而设的：光标没到位就发 `mouse_event` 会点到用户正在用的窗口）。
+        try:
+            _okg, _whyg = real_guard(sx, sy, gui=gui, extra_hwnds=tuple(extra_hwnds))
+        except Exception as _e3:                                 # noqa: BLE001
+            _okg, _whyg = False, str(_e3)
+        if not _okg:
+            _cursor_restore(_cur, why="ui_adapt.click 真鼠标档（守卫拒绝）")
+            return False, "真鼠标档守卫拒绝：%s" % str(_whyg)[:90]
         try:
             gui.wx_click(sx, sy, right=right)
             return True, ""
         finally:
+            _cursor_restore(_cur, why="ui_adapt.click 真鼠标档")
             if heal:
                 heal_input()
     except Exception as e:

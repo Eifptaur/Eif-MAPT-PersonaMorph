@@ -470,7 +470,10 @@ ck("B20a 发送闸没跟着放宽（注释里写明「发送闸一个字不动�
 #     ⇒ 老代码两件事都不检查，光标没到位也照发 mouse_event ⇒ 点击/滚轮落到**用户的控制台**上。
 #   ⇒ 机械自检：全库扫，**凡含 mouse_event / SetCursorPos 的函数**，要么包含 `real_guard`，
 #     要么在白名单里（只有"还原光标/守卫自身/自检工具"三类可以不带守卫）。
-_ALLOW_NO_GUARD = {"heal_input", "real_guard", "self_test", "_send_with_foreground"}
+_ALLOW_NO_GUARD = {"heal_input", "real_guard", "self_test", "_send_with_foreground",
+                   # 2026-09-22 加：这两个就是"还原光标"本身（白名单里的第一类）——
+                   # `_cursor_now` 只读，`_cursor_restore` 只把光标放回原处
+                   "_cursor_now", "_cursor_restore"}
 _bad_guard = []
 _n_guard = 0
 try:
