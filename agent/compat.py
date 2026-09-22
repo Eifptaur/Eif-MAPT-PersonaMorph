@@ -323,9 +323,126 @@ def axis_lines(how: dict | None = None) -> list:
     return out
 
 
+def _dpi_awareness() -> str:
+    """DPI 感知模式（0=不感知 1=系统 2=每显示器）——**可读本身**就是这条轴的行为判据。"""
+    try:
+        import ctypes
+        u = ctypes.windll.user32
+        ctx = u.GetThreadDpiAwarenessContext()
+        aw = int(u.GetAwarenessFromDpiAwarenessContext(ctx))
+        return {0: "不感知（UNAWARE，坐标要按 DPI 换算）", 1: "系统级（SYSTEM）",
+                2: "每显示器（PER_MONITOR）"}.get(aw, "未知值 %s" % aw)
+    except Exception as e:                                        # noqa: BLE001
+        return "读不到（%s）" % type(e).__name__
+
+
+def _can_listen() -> str:
+    """本机能不能起回环监听（控制台那条路的前提）——真 bind 一个临时端口再关掉。"""
+    try:
+        import socket
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+        s.listen(1)
+        s.close()
+        return "可以（临时端口 %d 起得来又立刻关掉）" % port
+    except Exception as e:                                        # noqa: BLE001
+        return "不行：%s: %s" % (type(e).__name__, str(e)[:40])
+
+
+def _python_ok() -> str:
+    """解释器是否在支持区间（我们在 3.10~3.12 上实测过；其它版本只提示不拦）。"""
+    v = (sys.version_info[0], sys.version_info[1])
+    ok = (3, 10) <= v <= (3, 12)
+    return "%d.%d.%d · %s · %s" % (sys.version_info[0], sys.version_info[1], sys.version_info[2],
+                                  "64-bit" if sys.maxsize > 2 ** 32 else "32-bit",
+                                  "在支持区间" if ok else "**不在实测区间（3.10~3.12）**，只提示不拦")
+
+
+def smoke() -> list:
+    """**最小冒烟矩阵**：11 条轴各一条**行为断言**（不是"支持/不支持"，也不是"读了个值"）。
+
+    判据形态＝ `{axis, probe(做了什么), verdict(ok/skip/fail), evidence}`：
+      · `ok`   ＝ 这条能力**在这台机器上当场成立**（做了那件事、拿到了结果）
+      · `skip` ＝ 这次测不了，**并说清为什么**（例：微信没在跑 / 还没触发过 / 体检不联网）
+      · `fail` ＝ 做了但确实不行（这才是要处理的那类）
+    全部**只读**：不碰微信进程内存、不动窗口、不发消息、不写任何文件（判据守着这三条）。
+    """
+    f = fingerprint()
+    w, d = f.get("windows", {}) or {}, f.get("display", {}) or {}
+    c, g = f.get("wechat_window", {}) or {}, f.get("data_dir", {}) or {}
+    r = f.get("runtime", {}) or {}
+    out = []
+
+    def add(axis, probe, verdict, evidence):
+        out.append({"axis": axis, "probe": probe, "verdict": verdict, "evidence": evidence})
+
+    # 1. 微信版本 / UI 代
+    if c.get("hwnd"):
+        add("微信版本 / UI 代", "找到微信主窗并读类名（UI 代的直接证据）", "ok",
+            "类名=%s · 可见=%s" % (c.get("class"), c.get("visible")))
+    else:
+        add("微信版本 / UI 代", "找微信主窗", "skip", "现在没找到主窗（微信没在跑 / 收在托盘）⇒ 这条测不了")
+    # 2. Windows 版本
+    add("Windows 版本", "读系统版本与 build", "ok" if w.get("build") else "fail",
+        "%s build %s · %s" % (w.get("release"), w.get("build"), w.get("arch")))
+    # 3. DPI / 多显示器
+    _dpi = _dpi_awareness()
+    add("DPI 缩放 / 多显示器", "读主屏分辨率 / 缩放 / 显示器数 + 读本进程 DPI 感知",
+        "ok" if (d.get("primary") and "读不到" not in _dpi) else "fail",
+        "%s · %s · %s 个 · 本进程=%s" % (d.get("primary"), d.get("scale"), d.get("monitors"), _dpi))
+    # 4. 会话行点击投哪个窗（学习到的偏好＝本机真的成功过）
+    _cp = _click_pref()
+    add("会话行点击投哪个窗", "读「哪个目标窗成功过」的学习记录（click_pref）",
+        "ok" if "成功过" in _cp else "skip", _cp)
+    # 5. 消息库目录 / 账号数
+    if g.get("dir"):
+        add("消息库目录 / 账号数", "定位在用的库目录 + 数账号 + 列分片", "ok",
+            "来源=%s · 账号 %s 个 · 分片=%s" % (g.get("how"), g.get("accounts"), g.get("shards") or "?"))
+    else:
+        add("消息库目录 / 账号数", "定位在用的库目录", "skip",
+            "这次没定位到（来源=%s）⇒ 换台机器/换目录时这一步会先失败" % (g.get("how") or "?"))
+    # 6. 加密模式（页 1）
+    _p1 = str(g.get("page1") or "")
+    add("加密模式（页 1）", "读库文件前 16 字节判明文头/密文",
+        "ok" if _p1.startswith(("明文头", "密文")) else "skip",
+        _p1 or "没定位到库文件 ⇒ 这条测不了")
+    # 7. WebView2
+    _wv = str(r.get("webview2") or "")
+    add("WebView2", "读 WebView2 运行时版本（决定控制台用自家窗口还是回退浏览器）",
+        "ok" if _wv and "未装" not in _wv else "skip", _wv or "未装 ⇒ 会自动回退浏览器（不是故障）")
+    # 8. Python
+    _py = _python_ok()
+    add("Python 运行环境", "解释器版本/位数是否在实测区间", "ok" if "在支持区间" in _py else "skip", _py)
+    # 9. 控制台端口
+    _ls = _can_listen()
+    add("控制台端口", "真起一次回环监听（并看权威端口此刻在不在听）",
+        "ok" if _ls.startswith("可以") else "fail",
+        "%s · 权威端口 %s 在听=%s" % (_ls, r.get("port") or "?", r.get("console_live")))
+    # 10. 更新源（体检不联网 —— 宁可 skip，也不假装测过）
+    add("更新源可达性 / 延迟", "读上次探测结论（**体检不联网**）", "skip",
+        "%s ——这条**体检不联网**，所以只报上次结论；要现测就点控制台「更新」" % _update_state())
+    # 11. 权限 / UIPI
+    add("权限 / 完整性级别（UIPI）", "读本进程是否管理员（与微信不一致时注入会被静默拦）",
+        "ok" if w.get("admin") is not None else "skip",
+        "本进程管理员=%s（微信侧要等接入后才比得上）" % w.get("admin"))
+    return out
+
+
+def smoke_lines() -> list:
+    """冒烟矩阵的 ASCII 形态（判据逐行解析；也给用户复制）。"""
+    out = []
+    for a in smoke():
+        out.append("AXIS|%s|%s|%s|%s" % (a["axis"], a["verdict"], a["probe"], a["evidence"]))
+    return out
+
+
 if __name__ == "__main__":
     for _ln in lines():
         print(_ln)
     print("—— 兼容性矩阵（11 条轴，全部是现测事实）——")
     for _ln in axis_lines():
+        print(_ln)
+    print("—— 最小冒烟矩阵（11 条轴，逐条行为断言）——")
+    for _ln in smoke_lines():
         print(_ln)

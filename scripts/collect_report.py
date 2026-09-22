@@ -559,6 +559,10 @@ def sec_compat():
         #   "探测能力、别按版本分支"，所以每行都必须是这台机器上量出来的值，量不到写"未知"）。
         lines.append("  —— 兼容性矩阵（11 条轴，全部现测；不是「支持/不支持」）——")
         lines.extend([x for x in _cp.axis_lines()])
+        # ⛔ 2026-09-22：再给**最小冒烟矩阵** —— 11 条轴各一条**行为断言**（ok/skip/fail + 证据）。
+        #   目的＝"换一台机器先跑一遍就知道哪条能力在这台机器上成立"，比"读了几个值"更能定位。
+        lines.append("  —— 最小冒烟矩阵（11 条轴，逐条行为断言；skip 都写清了为什么测不了）——")
+        lines.extend([x for x in _cp.smoke_lines()])
     except Exception as e:                                        # noqa: BLE001
         lines.append("  兼容性指纹采集失败：%s: %s" % (type(e).__name__, str(e)[:80]))
     lines.append("  （把这一节连同前几节一起发回来即可；里面不含口令、不含账号目录名）")
