@@ -121,6 +121,18 @@ def validate(mf: dict, builtin_names=(), seen=()) -> tuple:
         return None, "params.properties 必须是对象"
     if isinstance(props, dict) and name in props:                   # 参数名当工具名那种乱象，直接掐掉
         return None, "params 里出现了与工具同名的字段「%s」，像是把参数名当工具名了" % name
+    # 展示用字段（对标 nonebot2 / koishi：这些**只用于显示**，我们不解析、不拉取、不校验签名）
+    version = str(mf.get("version") or "").strip()[:20]
+    author = str(mf.get("author") or "").strip()[:40]
+    homepage = str(mf.get("homepage") or "").strip()
+    if homepage and not homepage.lower().startswith(("http://", "https://")):
+        return None, "homepage 必须是 http/https 链接（它只是给你自己写的工具留个认领位）"
+    # 「这个工具怎么用」：只进控制台、**不进提示词**（省 token 的边界见 tools.py 的裁剪注释）
+    usage = str(mf.get("usage") or "").strip()[:200]
+    examples = mf.get("examples") or []
+    if not isinstance(examples, list):
+        return None, "examples 必须是数组（每个元素＝一条参数的 JSON 字符串）"
+    examples = [str(x).strip()[:200] for x in examples if str(x or "").strip()][:3]
     return {"name": name, "description": desc, "method": method, "url": url,
             "allow_hosts": [str(h).strip().lower() for h in hosts if str(h).strip()],
             "headers": mf.get("headers") or {}, "query": mf.get("query") or {},
@@ -128,7 +140,54 @@ def validate(mf: dict, builtin_names=(), seen=()) -> tuple:
             "timeout_ms": int(mf.get("timeout_ms") or _cfg().get("timeout_ms") or 8000),
             "response_path": str(mf.get("response_path") or ""),
             "max_chars": int(mf.get("max_chars") or _cfg().get("max_chars") or 4000),
-            "enabled": bool(mf.get("enabled", True)), "file": ""}, ""
+            "enabled": bool(mf.get("enabled", True)), "file": "",
+            "version": version, "author": author, "homepage": homepage,
+            "usage": usage, "examples": examples}, ""
+
+
+def _fix_hint(why: str) -> str:
+    """坏清单的「人话修法」（只给控制台看；**不进提示词、不改任何发给模型的内容**）。
+
+    对标 koishi 的"必填未填＝红条"：光说哪里不对不够，得说**怎么改**。
+    """
+    w = str(why or "")
+    if "allow_hosts" in w and "白名单" in w:
+        return "把 url 的域名原样写进 allow_hosts（至少一项；子域可以用 .前缀 一次覆盖）"
+    if "JSON" in w:
+        return "点「生成模板清单」重新生成一份，或拿模板逐行比对是不是少了引号/逗号"
+    if "name" in w and "不合规" in w:
+        return "name 要 [a-z_][a-z0-9_]{2,30}：小写字母或下划线开头，别用中文/大写/连字符"
+    if "重名" in w:
+        return "换一个 name（内置工具的名字不许被覆盖）"
+    if "description" in w:
+        return "description 写清「什么时候该用它」，至少 6 个字——它会进提示词，模型靠它挑工具"
+    if "url" in w:
+        return "url 要完整的 http/https 地址，例：https://api.example.com/weather"
+    if "method" in w:
+        return "method 只支持 GET 或 POST"
+    if "params" in w:
+        return "params 用 {\"type\":\"object\",\"properties\":{…},\"required\":[…]} 这个形状"
+    if "homepage" in w:
+        return "homepage 要么不写，要么写成 http/https 链接"
+    if "examples" in w:
+        return "examples 要写成数组，每个元素是一条参数的 JSON 字符串，例：[\"{\\\"city\\\": \\\"北京\\\"}\"]"
+    if "内网" in w or "本机" in w:
+        return "内网/本机地址永远拒绝（写进 allow_hosts 也一样）——换一个公网地址"
+    if "目录不存在" in w:
+        return "建一个 tools.d/ 目录（点「生成模板清单」会自动建）"
+    if "上限" in w:
+        return "调大「最多加载」，或先停用几个清单文件"
+    return "对着「怎么加工具」弹窗里的模板逐项核一遍"
+
+
+def _bad(file: str, why: str) -> dict:
+    """坏清单条目：人话在前，**附上码与修法**（码只给控制台/日志/统计，不影响任何发给模型的文本）。"""
+    try:
+        from . import reason_codes as _rc
+        lab = _rc.label("manifest_bad")
+    except Exception:
+        lab = "清单不合法"
+    return {"file": file, "why": why, "fix": _fix_hint(why), "code": "manifest_bad", "code_label": lab}
 
 
 def load(builtin_names=()) -> tuple:
@@ -136,7 +195,7 @@ def load(builtin_names=()) -> tuple:
     d = manifest_dir()
     tools, problems, seen = [], [], []
     if not os.path.isdir(d):
-        return tools, [{"file": d, "why": "清单目录不存在（自己建一个 tools.d/ 放 *.json 即可）"}], d
+        return tools, [_bad(d, "清单目录不存在（自己建一个 tools.d/ 放 *.json 即可）")], d
     for fn in sorted(os.listdir(d)):
         if not fn.lower().endswith(".json"):
             continue
@@ -145,18 +204,18 @@ def load(builtin_names=()) -> tuple:
             with open(p, "r", encoding="utf-8") as fh:
                 mf = json.load(fh)
         except Exception as e:
-            problems.append({"file": p, "why": "JSON 读不出来：%s" % type(e).__name__})
+            problems.append(_bad(p, "JSON 读不出来：%s" % type(e).__name__))
             continue
         clean, why = validate(mf, builtin_names=builtin_names, seen=seen)
         if not clean:
-            problems.append({"file": p, "why": why})
+            problems.append(_bad(p, why))
             continue
         clean["file"] = p
         seen.append(clean["name"])
         tools.append(clean)
     if len(tools) > int(_cfg().get("max_tools") or 30):
-        problems.append({"file": d, "why": "清单超过上限（%s 个），只加载了前 %s 个"
-                                            % (len(tools), int(_cfg().get("max_tools") or 30))})
+        problems.append(_bad(d, "清单超过上限（%s 个），只加载了前 %s 个"
+                                % (len(tools), int(_cfg().get("max_tools") or 30))))
         tools = tools[:int(_cfg().get("max_tools") or 30)]
     return tools, problems, d
 
@@ -290,6 +349,10 @@ TEMPLATE = {
     "url": "https://api.example.com/x",
     "allow_hosts": ["api.example.com"],
     "params": {"type": "object", "properties": {}, "required": []},
+    # 下面三个**只给控制台看**（不进提示词）：怎么用、参数长什么样、谁写的
+    "usage": "什么时候点它、参数怎么填（一句话）",
+    "examples": ["{}"],
+    "author": "",
 }
 
 
@@ -343,6 +406,28 @@ def set_enabled(name: str, on: bool) -> tuple:
     return False, "清单里没有名为 %s 的工具" % n
 
 
+def _next_step(snap: dict) -> dict:
+    """**只读已有状态**推导"下一步该干什么"（不引入新概念）。
+
+    `step` 指向控制台 `GUIDES.tools.steps` 的第几步（1-based；0＝没有对应步骤）——
+    **文案只有一份**：前端拿 step 去取引导里那几步的原话，后端不另写一份说明。
+    对标结论（nonebot2/koishi）：两家都只有"装完让你自己去配置页"，**"装完怎么引导"这一格是空的**。
+    """
+    tools = snap.get("tools") or []
+    if snap.get("problems"):
+        return {"code": "fix_manifest", "step": 2}
+    if not tools:
+        return {"code": "gen_template", "step": 1}
+    if not snap.get("enabled"):
+        return {"code": "enable_switch", "step": 3}
+    ticked = [t for t in tools if t.get("enabled")]
+    if not ticked:
+        return {"code": "tick_tool", "step": 3}
+    if all(int(t.get("calls") or 0) == 0 for t in ticked):
+        return {"code": "try_call", "step": 4}
+    return {"code": "done", "step": 0}
+
+
 def snapshot() -> dict:
     """控制台「工具与插件」面板的数据源（现场读清单目录 + 统计）。"""
     from . import tool_stats
@@ -356,11 +441,17 @@ def snapshot() -> dict:
         out.append({"name": t["name"], "description": t["description"], "enabled": bool(t.get("enabled")),
                     "host": (urllib.parse.urlparse(t["url"]).hostname or ""), "method": t["method"],
                     "file": os.path.basename(t.get("file") or ""), "source": "第三方",
+                    "version": t.get("version") or "", "author": t.get("author") or "",
+                    "homepage": t.get("homepage") or "", "usage": t.get("usage") or "",
+                    "examples": list(t.get("examples") or []),
                     "calls": int(counts.get(key) or 0), "errors": int((stats.get("errors") or {}).get(key) or 0),
                     "last": int(last.get(key) or 0)})
-    return {"enabled": enabled(), "dir": d, "tools": out, "problems": problems,
+    snap = {"enabled": enabled(), "dir": d, "tools": out, "problems": problems,
             "counts_total": int(stats.get("total") or 0), "kinds": int(stats.get("kinds") or 0),
+            "ticked": len([t for t in out if t["enabled"]]),
             "note": "自定义工具＝别人写的 HTTP 接口：只发 HTTP、不跑本地代码、域名白名单、默认关"}
+    snap["next_step"] = _next_step(snap)
+    return snap
 
 
 if __name__ == "__main__":

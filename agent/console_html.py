@@ -571,6 +571,11 @@ th{color:var(--tx2);font-weight:500}
 /* 常驻公告：只用虚线描边跟更新条区分，不上色、不抢眼（它天天都在） */
 .updbar.notice{border-style:dashed}
 .updbar.notice #noticeText{flex:1 1 auto;min-width:0;line-height:1.5}
+/* 插件面板顶上的状态条（同一套视觉语言，但在卡片里：不要左右外边距） */
+.utbar{display:flex;align-items:center;gap:10px;margin:2px 0 10px;padding:9px 14px;border-radius:10px;
+  background:var(--card,#1b1e24);border:1px solid var(--bd,var(--line,#2a2f37));color:var(--tx,#e6e8ec);font-size:13px}
+.utbar.warn{border-color:#8a7a3a}
+.utbar button{flex:none;white-space:nowrap}
 </style>
 <script>
 (function () {
@@ -1767,6 +1772,16 @@ th{color:var(--tx2);font-weight:500}
     </section>
     <section id="sec-tools" class="card" data-sec>
       <h2>工具与插件（自定义工具）</h2>
+      <div id="utBar" class="utbar" style="display:none">
+        <div style="flex:1 1 auto;min-width:0;line-height:1.5">
+          <div class="hint" style="margin:0">自定义工具＝别人写的 HTTP 接口：<b>只发 HTTP、不跑本地代码</b>；白名单必填，<b>内网/本机地址永远拒绝</b>。</div>
+          <div id="utBarStat" style="margin-top:3px"></div>
+          <div id="utBarNext" style="margin-top:4px"></div>
+          <div class="hint" style="margin:3px 0 0">坏了不用猜：坏清单逐条列在下面（带原因码与怎么改）。</div>
+        </div>
+        <button id="utBarGuide" class="ghost">怎么加工具</button>
+        <button id="utBarProblems" class="ghost">看问题</button>
+      </div>
       <div class="desc">把 <b>一个工具一个 <code>.json</code></b> 丢进 <code>tools.d/</code>，在这里**勾选**后模型才能用它。边界先说清：<b>只发 HTTP、不执行任何本地代码</b>；<code>allow_hosts</code> 域名白名单必填，<b>内网/本机地址永远拒绝</b>（写进白名单也一样）；参数必须是合法配置格式；**坏清单会在下面逐条列出来**（不会静默跳过）。<b>不知道怎么写？点下面的「怎么加工具」——三步 + 可复制模板 + 一键生成，全在弹窗里。</b></div>
       <div class="row"><label>总开关</label><input type="checkbox" data-cfg="user_tools.enabled">
         <span class="hint">默认关：关着时这些清单一个都不加载，模型也看不到。</span></div>
@@ -1785,6 +1800,7 @@ th{color:var(--tx2);font-weight:500}
         <button class="pri" data-save>保存设置（工具与插件）</button>
       </div>
       <div class="hint">调用次数来自唯一分发点的统计（内置与自定义工具都算）——一眼能看出哪些工具只是摆设。写好了拿不准通不通，就在那一行点「试一下」：填参数、真发一次请求、返回内容当场显示（也会记一次调用）。</div>
+      <div id="utDropped" class="hint"></div>
     </section>
     <section id="sec-poke" class="card" data-sec>
       <h2>拍一拍（行为）</h2>
@@ -1828,6 +1844,7 @@ th{color:var(--tx2);font-weight:500}
       <div style="max-height:340px;overflow-y:auto;border:1px solid var(--bd);border-radius:10px">
         <table id="memTable" style="width:100%"><thead><tr><th style="width:26px"><input type="checkbox" id="memCheckAll" title="全选"></th><th>成员</th><th>印象数</th><th>更新时间</th><th></th></tr></thead><tbody></tbody></table>
       </div>
+      <div class="hint" id="memAudit"></div>
       <div class="hint" id="memEmpty">（无记忆数据）</div>
     </section>
     <section id="sec-memory-set" class="card" data-sec>
@@ -3493,8 +3510,7 @@ async function loadStatus(){  try{
         const g = $('utGlobals');
         const listBox = $('utList');
         if(g && !ut.error){
-          g.textContent = (ut.enabled ? '总开关：开' : '总开关：关（清单不加载）') +
-            ' ｜ 目录：' + (ut.dir || '-') + ' ｜ 已装 ' + ((ut.tools || []).length) + ' 个 ｜ 累计调用 ' + (ut.counts_total || 0) + ' 次';
+          g.textContent = utStatLine(ut);   // 与顶部状态条同一份文本（utStatLine）
         }else if(g && ut.error){ g.textContent = '读取失败：' + ut.error; g.style.color = 'var(--err-tx)'; }
         if(listBox && !ut.error){
           listBox.textContent = '';
@@ -3519,10 +3535,17 @@ async function loadStatus(){  try{
             lab.appendChild(cb); lab.appendChild(document.createTextNode(' ' + t.name));
             row.appendChild(lab);
             const v = document.createElement('div'); v.className = 'grow';
-            v.textContent = '[' + (t.source || '第三方') + '] ' + (t.host || '-') + ' · ' + (t.description || '') +
+            v.textContent = '[' + (t.source || '第三方') + (t.author ? ('：' + t.author) : '') + '] '
+              + (t.version ? ('v' + t.version + ' · ') : '') + (t.host || '-') + ' · ' + (t.description || '') +
               ' ｜ 调用 ' + (t.calls || 0) + ' 次' + (t.errors ? ('（失败 ' + t.errors + '）') : '') +
               (t.last ? (' ｜ 最近 ' + new Date(t.last * 1000).toLocaleString()) : '');
             row.appendChild(v);
+            if(t.usage){
+              // 「怎么用」只在这里显示（**不进提示词**：省 token 的边界见 tools.py 的裁剪注释）
+              const uh = document.createElement('div'); uh.className = 'hint';
+              uh.textContent = '用法：' + t.usage;
+              row.appendChild(uh);
+            }
             const ai = document.createElement('input');
             ai.type = 'text'; ai.style.width = '150px';
             ai.title = '给这个工具的参数（JSON 对象，例：{"city": "北京"}）；它会替换 url/query/body 里的 {占位}';
@@ -3559,6 +3582,17 @@ async function loadStatus(){  try{
                  测试不改清单 ⇒ 本来就不需要重画。 */
             };
             row.appendChild(ai); row.appendChild(tb);
+            if(t.examples && t.examples.length){
+              // 清单里写好的例子：点一下就填进参数框（不用手打 JSON）
+              const ch = document.createElement('span'); ch.className = 'hint';
+              t.examples.forEach(function(ex, i){
+                const b = document.createElement('button');
+                b.className = 'ghost'; b.textContent = '例' + (i + 1); b.title = ex;
+                b.onclick = function(){ ai.value = ex; keep.args = ex; res.textContent = ''; res.style.color = ''; };
+                ch.appendChild(b);
+              });
+              row.appendChild(ch);
+            }
             listBox.appendChild(row);
             listBox.appendChild(res);
           });
@@ -3570,11 +3604,17 @@ async function loadStatus(){  try{
           if(!ps.length){ pr.textContent = '清单没有问题。'; }
           ps.forEach(function(p){
             const d = document.createElement('div');
-            d.textContent = '注意：' + (p.file || '') + '：' + (p.why || '');
+            // 人话在前、码在后（与 tools.py 的既有口径一致）；每条再给一句**怎么改**
+            d.textContent = '注意：' + (p.file || '') + '：' + (p.why || '')
+              + (p.code_label ? (' ［' + p.code_label + (p.code ? '·' + p.code : '') + '］') : '')
+              + (p.fix ? ('  → ' + p.fix) : '');
             d.style.color = 'var(--warn-tx)';
             pr.appendChild(d);
           });
         }
+        // ③b/③c（2026-09-22，对标 nonebot2/koishi）：顶部状态条 + 「本次没给模型的工具」
+        utRenderBar(ut);
+        utRenderDropped(s.tools || {});
       }catch(e){}
       try{
         const fs = s.file_search || {};
@@ -4791,7 +4831,7 @@ const GUIDES = {
       '④ 勾选之前先在那一行点「试一下」：填好参数（JSON，不填就是 {}）按一下，它会**真发一次请求**并把返回内容显示在下面——不用等聊天时才发现写错了',
       '出错不用猜：坏清单会一条条列在「清单现状」下面；运行时的报错会原样返回给模型，也会显示在「试一下」的结果里。'
     ],
-    copy: [{label: '复制最小模板', text: '{\n  "name": "my_tool",\n  "description": "这个工具做什么、什么时候用",\n  "enabled": false,\n  "method": "GET",\n  "url": "https://api.example.com/x",\n  "allow_hosts": ["api.example.com"],\n  "params": {"type": "object", "properties": {}, "required": []}\n}'}],
+    copy: [{label: '复制最小模板', text: '{\n  "name": "my_tool",\n  "description": "这个工具做什么、什么时候用",\n  "enabled": false,\n  "method": "GET",\n  "url": "https://api.example.com/x",\n  "allow_hosts": ["api.example.com"],\n  "params": {"type": "object", "properties": {}, "required": []},\n  "usage": "怎么用（只给控制台看，不进提示词）",\n  "examples": ["{}"],\n  "author": ""\n}'}],
     actions: [{label: '生成模板清单到 tools.d/', kind: 'gen'}, {label: '打开 tools.d 目录', kind: 'open', arg: 'tools.d'}]
   },
   voice: {
@@ -6361,6 +6401,62 @@ function memTime(ts){
   const p=n=>String(n).padStart(2,'0');
   return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes());
 }
+/* ── 插件面板：状态条与「下一步」──────────────────────────────────────────────
+   ⛔ 文案只有一份：下一步的说明**取自 `GUIDES.tools.steps`**（后端只给 next_step.step 下标），
+   后端不再另写一份说明；状态条与下面那行统计也共用同一个 utStatLine()。
+   面板是 4 秒轮询重画的 ⇒ 只在文本变化时写 DOM（否则会每 4 秒抖一下）。
+   「不做」的判据（来源于对标结论）：还没动过（开关关着、一个清单都没有）⇒ 只留第一段 + 引导按钮；
+   全都勾选、没有问题、也调用过 ⇒ 整条收起。*/
+function utStatLine(ut){
+  return (ut.enabled ? '总开关：开' : '总开关：关（清单不加载）') +
+    ' ｜ 目录：' + (ut.dir || '-') + ' ｜ 已装 ' + ((ut.tools || []).length) + ' 个' +
+    ' ｜ 已勾选 ' + (ut.ticked || 0) + ' 个' +
+    ' ｜ 累计调用 ' + (ut.counts_total || 0) + ' 次';
+}
+function utRenderBar(ut){
+  const bar = document.getElementById('utBar'); if(!bar) return;
+  if(!ut || ut.error){ bar.style.display = 'none'; return; }
+  const ns = ut.next_step || {};
+  const untouched = !ut.enabled && !((ut.tools || []).length) && !(ut.counts_total || 0);
+  if(ns.code === 'done' && !untouched){ bar.style.display = 'none'; return; }   // 都齐了 ⇒ 收起
+  const stat = document.getElementById('utBarStat');
+  const next = document.getElementById('utBarNext');
+  const gb = document.getElementById('utBarGuide');
+  if(stat){
+    const line = untouched ? '' : utStatLine(ut);
+    if(stat.textContent !== line) stat.textContent = line;
+  }
+  if(next){
+    let txt = '';
+    if(!untouched && ns.step){
+      const steps = (typeof GUIDES !== 'undefined' && GUIDES.tools && GUIDES.tools.steps) || [];
+      txt = '下一步（第 ' + ns.step + ' 步）：' + (steps[ns.step - 1] || '');
+    }
+    if(next.textContent !== txt) next.textContent = txt;
+  }
+  if(gb) gb.textContent = untouched ? '怎么加工具' : '看这一步怎么做';
+  bar.style.display = '';
+}
+function utRenderDropped(tl){
+  const box = document.getElementById('utDropped'); if(!box) return;
+  const dd = (tl && tl.dropped) || [];
+  const sig = JSON.stringify(dd);
+  if(box.dataset.sig === sig) return;          // 变化才重画（不然展开状态每 4 秒被收回去）
+  box.dataset.sig = sig;
+  box.textContent = '';
+  if(!dd.length) return;                       // 空就不渲染（不占位置）
+  const det = document.createElement('details');
+  const sm = document.createElement('summary');
+  sm.textContent = '本次没给模型的工具（' + dd.length + ' 个）';
+  det.appendChild(sm);
+  dd.forEach(function(x){
+    const d = document.createElement('div');
+    d.textContent = '· ' + (x.name || x.tool || '?') + ' → ' + (x.why || '');
+    d.style.color = 'var(--warn-tx)';
+    det.appendChild(d);
+  });
+  box.appendChild(det);
+}
 async function loadMemory(chat_key){
   try{
     const r = await getJSON('/api/memory'+(chat_key?('?chat_key='+encodeURIComponent(chat_key)):''));
@@ -6371,6 +6467,17 @@ async function loadMemory(chat_key){
     chats.forEach(c=>{ const o=document.createElement('option'); o.value=c.chat_key; o.textContent=c.name+'（'+c.count+' 人）'; sel.appendChild(o); });
     if(prev && chats.some(c=>c.chat_key===prev)) sel.value=prev; else sel.value = r.chat_key || '';
     memMembers = r.members||[];
+    // 整理是**整份覆盖**：模型顺手少写一条就是静默丢。后端把"最近一次真丢了东西"的记录带上来，
+    // 这里如实显示丢了哪几条、去哪儿捞（审计只追加，不改任何记忆内容）。
+    { const _au=$('memAudit'); if(_au){
+        const a = r.audit||null;
+        const ds = (a && Array.isArray(a.dropped)) ? a.dropped : [];
+        _au.textContent = ds.length
+          ? ('⚠ 最近一次自动整理丢了 ' + ds.length + ' 条旧印象：' + ds.slice(0,2).join('；')
+             + (ds.length>2?(' … 共 '+ds.length+' 条'):'') + ' —— 原文留在 data/memory_history/ 里，可捞回')
+          : '';
+        _au.style.color = ds.length ? 'var(--warn-tx)' : '';
+      } }
     const tb=$('memTable').querySelector('tbody'); tb.innerHTML='';
     $('memEmpty').style.display = memMembers.length?'none':'block';
     // ⛔ 2026-09-17：重绘即复位 —— 否则上一轮勾选留下的"亮着"会被带进这一轮（点了却什么都没删）
@@ -6855,11 +6962,16 @@ async function probeWechatDir(){
     toast('已尝试打开官网：' + u + '（打不开就手动复制到浏览器）');
   };
   /* 应用内引导按钮：所有"怎么办"都在弹窗里（不再叫用户去读文件） */
-  [['utGuide','tools'], ['ttsGuide','tts'], ['igGuide','imggen'], ['vgGuide','video'], ['vsGuide','voice'], ['irGuide','image'], ['fwGuide','forward'], ['fsGuide','file']]
+  [['utGuide','tools'], ['utBarGuide','tools'], ['ttsGuide','tts'], ['igGuide','imggen'], ['vgGuide','video'], ['vsGuide','voice'], ['irGuide','image'], ['fwGuide','forward'], ['fsGuide','file']]
     .forEach(function(pair){
       const b = document.getElementById(pair[0]);
       if(b) b.onclick = function(){ openGuide(pair[1]); };
     });
+  { const bp = document.getElementById('utBarProblems');
+    if(bp) bp.onclick = function(){
+      const pr = document.getElementById('utProblems');
+      if(pr && pr.scrollIntoView) pr.scrollIntoView({block:'center'});
+    }; }
   const fsAddBtn = document.getElementById('fsAdd');
   if(fsAddBtn) fsAddBtn.onclick = async ()=>{
     const i = document.getElementById('fsNewDir');
