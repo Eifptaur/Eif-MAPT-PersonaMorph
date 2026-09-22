@@ -2602,7 +2602,17 @@ def main():
                         members = orch.memory.members(chat_key) or []
                     except Exception:
                         members = []
-                return {"ok": True, "chats": chats, "chat_key": chat_key, "members": members}
+                audit = None
+                if chat_key:
+                    try:
+                        # 最近一次**真丢了东西**的整理 ⇒ 记忆页据此如实提示（丢了哪几条、去哪儿捞）
+                        for rec in reversed(orch.memory.overwrite_history(chat_key, 20)):
+                            if rec.get("dropped"):
+                                audit = rec
+                                break
+                    except Exception:
+                        audit = None
+                return {"ok": True, "chats": chats, "chat_key": chat_key, "members": members, "audit": audit}
             if action == "clear_all":
                 # 清除全部记忆：所有群的成员印象 + 共享记忆 + 会话日志（运行明细/对话历史）
                 try:

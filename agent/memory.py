@@ -9,14 +9,23 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import threading
+import time
 
 from . import persist
 from .config import DATA_DIR, get_config
 
+log = logging.getLogger(__name__)
+
 MEMORY_DIR = os.path.join(DATA_DIR, "memory")
+
+#: 覆盖审计面（对标 mem0 的 history 表；来源与理由见 `research\对标-mem0.md` §五 L1）。
+#  ⛔ 故意**不放在** `MEMORY_DIR` 下面：`_chat_keys()` 把 `MEMORY_DIR` 的每个子目录都当"一个群"
+#  （跨群互通的枚举口径），往里塞一个 `_history` 就等于凭空多出一个群。
+HISTORY_DIR = os.path.join(DATA_DIR, "memory_history")
 
 
 def _chat_dir_name(chat_key: str) -> str:
@@ -53,6 +62,57 @@ def _write_json(file, value):
 
 def _chat_dir(chat_key: str) -> str:
     return os.path.join(MEMORY_DIR, _chat_dir_name(chat_key))
+
+
+def _history_file(chat_key: str) -> str:
+    return os.path.join(HISTORY_DIR, "%s.jsonl" % _chat_dir_name(chat_key))
+
+
+def audit_overwrite(chat_key: str, user_id: str, before, after) -> dict:
+    """整份覆盖**之前**记一笔（只追加）：丢了哪些旧印象、多了哪些新印象。
+
+    为什么要有（2026-09-22，对标 mem0 的 `history` 表）：`replace_member()` 是**整份覆盖**，
+    唯一守门是调用方的长度比较（`len(新) <= len(旧)`）⇒ 模型整理时"顺手少写一条"就是**静默丢**：
+    旧条目直接没了，没有任何痕迹、也捞不回来。这里只做**机械集合差**（逐字比对，
+    不做语义猜测、不改任何存储行为）；审计本身失败绝不打断主流程。
+    """
+    b = [str(x) for x in (before or [])]
+    a = [str(x) for x in (after or [])]
+    rec = {"at": int(time.time() * 1000), "userId": str(user_id or ""),
+           "before": len(b), "after": len(a),
+           "dropped": [x for x in b if x not in a], "added": [x for x in a if x not in b]}
+    if not (rec["dropped"] or rec["added"]):
+        return rec
+    try:
+        os.makedirs(HISTORY_DIR, exist_ok=True)
+        with open(_history_file(chat_key), "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except Exception as e:
+        log.warning("记忆覆盖审计没写下去（主流程不受影响）：%s", e)
+    return rec
+
+
+def history(chat_key: str, limit: int = 50) -> list:
+    """读回这个群的覆盖审计（旧 → 新，最多 `limit` 条）。读不出来就返回空表，不抛。"""
+    out = []
+    try:
+        with open(_history_file(chat_key), "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    continue
+                if isinstance(rec, dict):
+                    out.append(rec)
+    except FileNotFoundError:
+        return []
+    except Exception as e:
+        log.warning("记忆覆盖审计读不出来：%s", e)
+        return []
+    return out[-max(1, int(limit)):]
 
 
 def _data_dir() -> str:
@@ -326,11 +386,24 @@ class MemoryStore:
         now = int(__import__("time").time() * 1000)
         impressions = [{"content": str(s or "").strip()[:300], "createdAt": now}
                        for s in contents if str(s or "").strip()][:20]
+        if old.get("impressions"):
+            # 整份覆盖前先记一笔（丢了什么、多了什么）——静默丢印象正是这条链的老毛病
+            audit_overwrite(chat_key, uid,
+                            [str(e.get("content") or "") for e in (old.get("impressions") or [])],
+                            [e["content"] for e in impressions])
         member = {"userId": uid, "name": final_name, "impressions": impressions,
                   "updatedAt": now, "lastConsolidatedAt": old.get("lastConsolidatedAt") or 0}
         _write_json(_member_file(chat_key, uid, final_name), member)
         m[uid] = member
         return member
+
+    def overwrite_history(self, chat_key: str, limit: int = 20) -> list:
+        """这个群"整份覆盖过哪些印象"的审计（旧 → 新，最多 limit 条；读不出来就是空表）。
+
+        实现是模块函数 `history()`；单独留一个方法是因为主流程（记忆整理）与记忆页都按
+        `orch.memory.xxx` 的写法调用。
+        """
+        return history(chat_key, limit)
 
     @staticmethod
     def _rel_time(ts_ms: int) -> str:
