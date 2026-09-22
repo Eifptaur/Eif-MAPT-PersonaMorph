@@ -621,6 +621,38 @@ def line(info: dict) -> str:
     return (base + "；" + note) if note else base
 
 
+def remember_scanned(picked: str, configured: str = "") -> dict:
+    """**扫盘探到的目录自动记住**（2026-09-22 作者口径：「我更想让用户不用测这测那的就能搞好」）。
+
+    为什么要有它：原来扫盘成功只**打一句提示**「建议在控制台「数据库目录」里保存它」（2026-09-16
+    定的口径：不写用户 config）—— 但对**从没填过**的机器，这句话等于每次都让用户去点一下；作者本机
+    就是这种（库在自定义路径 `M:\\WX\\talk\\xwechat_files`，每次启动都扫盘 + 每次都提醒）。
+    ⇒ 只在**用户从没填过**（`configured` 为空）时自动记住；填过就先不动（填错了另有提示，不替他改）。
+    写盘走 `save()` 的**校验**：校验不过/写不进去都只返回原因，**绝不影响继续用扫盘结果**。
+
+    返回 `{"ok","saved","why"}`；**永不抛**。
+    """
+    # ⛔ 判据/自检环境（`run_all_selftests` 会给子判据带 `PM_JUDGE_NO_PROC=1`）**不许写产品配置**：
+    #   否则一条「打开消息库」的判据就会把**真人那份 config.json** 改了（本项新增的自动记忆）。
+    try:
+        if str(os.environ.get("PM_JUDGE_NO_PROC", "")).strip() == "1":
+            return {"ok": False, "saved": False, "why": "判据/自检环境 ⇒ 不写产品配置"}
+    except Exception:                                        # noqa: BLE001
+        pass
+    p = expand(picked)
+    if not p:
+        return {"ok": False, "saved": False, "why": "扫盘结果为空"}
+    if str(configured or "").strip():
+        return {"ok": False, "saved": False, "why": "「数据库目录」本来就有值 ⇒ 不替你改"}
+    try:
+        r = save(p)
+    except Exception as e:                                       # noqa: BLE001
+        return {"ok": False, "saved": False, "why": "写配置失败：%s" % str(e)[:80]}
+    if r.get("ok"):
+        return {"ok": True, "saved": True, "why": ""}
+    return {"ok": False, "saved": False, "why": str(r.get("error") or "校验没过")[:110]}
+
+
 def save(path: str, on_save=None) -> dict:
     """控制台「保存并重探」：**校验通过才写进配置**，不通过就把原因与回落目标返回去。
 

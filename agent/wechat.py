@@ -1591,12 +1591,24 @@ class WeChatAdapter:
         _src = str(_how.get("src") or "")
         if _src == "scanned":
             # 2026-09-16（网友 B 的诊断截图）：**不写用户的 config，但必须留痕** ——
-            # 否则用户会以为"我什么都没配它就好了"，下次换台机器/换个目录又要重新踩一遍。
+            #  否则用户会以为"我什么都没配它就好了"，下次换台机器/换个目录又要重新踩一遍。
+            # ⛔ 2026-09-22 改（作者口径「**我更想让用户不用测这测那的就能搞好**」；本机实测：
+            #  库在自定义路径上（M:\WX\talk\xwechat_files）⇒ 每次启动都扫盘、每次都提醒）：
+            #  **从没填过**的机器上，扫盘探到的目录**自动记住**（走 `wechat_dir.remember_scanned`：
+            #  只在配置为空时写、写前先校验、写不进去只记 warn、绝不影响继续用扫盘结果）；
+            #  填过但用不了的，走下面那条（只提示、**不替他改**）。
             try:
-                log.warning("「数据库目录」没配 ⇒ 自动用了扫盘探到的 %s"
-                            "（建议在控制台「数据库目录」里保存它，免得下次又靠扫盘）", _picked)
-            except Exception:
-                pass
+                from . import wechat_dir as _wdr
+                _rr = _wdr.remember_scanned(_picked, _dd)
+                if _rr.get("saved"):
+                    log.info("「数据库目录」没配 ⇒ 用了扫盘探到的 %s，**已自动记住**（以后不用再扫盘；"
+                             "想改就在控制台「数据库目录」里改）", _picked)
+                else:
+                    log.warning("「数据库目录」没配 ⇒ 自动用了扫盘探到的 %s（没自动记住：%s）",
+                                _picked, _rr.get("why") or "未知")
+            except Exception as _e_rs:
+                log.warning("「数据库目录」没配 ⇒ 自动用了扫盘探到的 %s（记忆动作异常：%s）",
+                            _picked, str(_e_rs)[:80])
         elif _dd and _src != "config":
             # 配置里填了、但那条路用不了 ⇒ **必须说出来**（静默改用别的目录会让用户
             # 以为"我填的那个生效了"，下次换机器又踩）。不替他改配置，只给能照着做的动作。
@@ -11033,8 +11045,20 @@ def attach_diagnosis(adapter=None, err="", db=None) -> dict:
                              % (_d, (_errs[0][2] if _errs else "开不了"),
                                 _how.get("dir") or "驱动库自探测", _src))
             if _src == "scanned":
-                _bits.append("**自动用了扫盘探到的目录** %s；建议把它填进下面「数据库目录」"
-                             % _how.get("dir"))
+                # ⛔ 2026-09-22 改口径（作者：「我更想让用户不用测这测那的就能搞好」）：扫盘探到的目录
+                #   **会被自动记住**（见 `wechat_dir.remember_scanned`）⇒ 报告里不能再叫用户去填一遍；
+                #   没记成（判据环境 / 盘不可写）才如实说。判据就读配置**现在的值**来定措辞。
+                try:
+                    _now_dir = str((get_config().get("wechat") or {}).get("db_dir") or "")
+                except Exception:
+                    _now_dir = ""
+                if _now_dir and _now_dir.strip() == str(_how.get("dir") or "").strip():
+                    _bits.append("**自动用了扫盘探到的目录** %s，已自动记住"
+                                 "（以后不用再扫盘；想改在下面「数据库目录」里改）"
+                                 % _how.get("dir"))
+                else:
+                    _bits.append("**自动用了扫盘探到的目录** %s（没自动记住：判据/只读环境）"
+                                 "；建议把它填进下面「数据库目录」" % _how.get("dir"))
             if _bits:
                 _ok_how += "（" + "；".join(_bits) + "）"
             steps.append({"key": "db_open", "name": "打开消息库", "ok": True, "detail": _ok_how})

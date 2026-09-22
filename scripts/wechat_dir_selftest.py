@@ -389,5 +389,49 @@ finally:
     C.set_config(_saved_cfg)
     shutil.rmtree(ROOT_TMP, ignore_errors=True)
 
+print("\n── E. 扫盘探到就**自动记住**（2026-09-22，作者：「不用测这测那」）──")
+_sv_save = D.save
+# ⚠️ 判据自己跑在 `PM_JUDGE_NO_PROC=1` 下（run_all_selftests 会给子判据带）⇒ E1 要验"真去写了"就得
+#   先把它拿掉，跑完再还回去（E7 专门验"判据环境下不写"）。
+_sv_env = os.environ.pop("PM_JUDGE_NO_PROC", None)
+_calls = []
+try:
+    D.save = lambda pth, on_save=None: (_calls.append(pth), {"ok": True})[1]
+    _r1 = D.remember_scanned("M:\\WX\\talk\\xwechat_files", "")
+    ok("E1 配置里没填、扫盘探到 ⇒ **真去写了**（且写的就是扫盘那个路径）",
+       _r1.get("saved") is True and _calls == ["M:\\WX\\talk\\xwechat_files"], str(_r1) + str(_calls))
+    _calls.clear()
+    _r2 = D.remember_scanned("M:\\WX\\talk\\xwechat_files", "D:\\我自己填的")
+    ok("E2 配置里**本来就有值** ⇒ 一个字都不动（不替用户改）",
+       _r2.get("saved") is False and not _calls and "不替你改" in str(_r2.get("why")), str(_r2))
+    D.save = lambda pth, on_save=None: (_ for _ in ()).throw(OSError("判据模拟：盘不可写"))
+    _r3 = D.remember_scanned("M:\\WX\\talk\\xwechat_files", "")
+    ok("E3 写盘抛异常 ⇒ 如实报「没记成」、**不抛**（继续用扫盘结果就行）",
+       _r3.get("saved") is False and "写配置失败" in str(_r3.get("why")), str(_r3))
+    D.save = lambda pth, on_save=None: {"ok": False, "error": "这个目录用不了"}
+    _r4 = D.remember_scanned("M:\\WX\\talk\\xwechat_files", "")
+    ok("E4 校验没过 ⇒ 报出原因、不写", _r4.get("saved") is False and "用不了" in str(_r4.get("why")), str(_r4))
+    _r5 = D.remember_scanned("", "")
+    ok("E5 扫盘结果为空 ⇒ 什么都不做", _r5.get("saved") is False and not _calls, str(_r5))
+finally:
+    D.save = _sv_save
+    if _sv_env is not None:
+        os.environ["PM_JUDGE_NO_PROC"] = _sv_env
+
+# E7：判据/自检环境下**不许写产品配置**（`PM_JUDGE_NO_PROC=1`）
+os.environ["PM_JUDGE_NO_PROC"] = "1"
+try:
+    _r7 = D.remember_scanned("M:\\\\WX\\\\talk\\\\xwechat_files", "")
+finally:
+    if _sv_env is None:
+        os.environ.pop("PM_JUDGE_NO_PROC", None)
+    else:
+        os.environ["PM_JUDGE_NO_PROC"] = _sv_env
+ok("E7 判据/自检环境下**不写产品配置**（否则一条「打开消息库」的判据会改了真人那份 config.json）",
+   _r7.get("saved") is False and "判据" in str(_r7.get("why")), str(_r7))
+_src_w = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
+ok("E6 接线：开库那条链在 scanned 分支里真调了它（不是写了没人用）",
+   _src_w.find("remember_scanned(_picked, _dd)") >= 0)
+
 print("\n微信数据目录判据：%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

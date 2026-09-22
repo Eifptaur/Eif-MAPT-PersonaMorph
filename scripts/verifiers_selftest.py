@@ -477,10 +477,19 @@ print("\n── C10. 第十轮 V-R10-39：三态契约那 4 格（账号 / 档�
 _saved_how = dict(getattr(V, "_RUNTIME_HOW", {}) or {})
 _saved_cfg = V._cfg
 try:
+    # ⛔ 2026-09-22：原来只靠 `set_runtime_how(None)` —— 而验证器在拿不到实例时会去调
+    #   `wechat_dir.status()`（不带 how）；作者本机**切了号**之后那一条真的能给出结论
+    #   （读着旧号 / 另一个号在写）⇒ 这两条判据就变成"看真机当时状态"。⇒ 把 status 打桩，
+    #   两条各自固定一种输入（C10a＝什么都读不到；C10b＝明确的"正在写的就是我"）。
+    import agent.wechat_dir as _WDV
+    _sv_status = _WDV.status
+    _WDV.status = lambda how=None: {}
     V.set_runtime_how(None)                                   # G407 / G405：没有运行中实例
     _c_acc = [c for c in V.run("no_reply")["checks"] if c["name"] == "读的是**正在用的那个微信号**"]
     ok("C10a（G405/G407）拿不到运行中实例 ⇒ 账号格**必须是 None（没测到）**，不许判 True",
        len(_c_acc) == 1 and _c_acc[0]["ok"] is None, str(_c_acc))
+    _WDV.status = lambda how=None: {"account": "wxid_me", "account_names": ["wxid_me"],
+                                    "account_live": True, "dir": "X"}
     V.set_runtime_how({"account": "wxid_me", "accounts_live": ["wxid_me"]})
     _c_acc2 = [c for c in V.run("no_reply")["checks"] if c["name"] == "读的是**正在用的那个微信号**"]
     ok("C10b 阳性对照：喂进「正在写的号」⇒ 那一格能给 True（不是永远 None）",
@@ -504,6 +513,10 @@ try:
         V._CFG_ERR = ""
 finally:
     V.set_runtime_how(_saved_how)
+    try:
+        _WDV.status = _sv_status
+    except Exception:
+        pass
 ok("C10e 接线：`webui` 的 `/api/verify` 每次把 `_db_how` + `_cap` 喂进来（G407 全仓零引用那件事）",
    open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read().count("set_runtime_how") >= 2
    and "getattr(_wo" in open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
