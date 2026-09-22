@@ -124,6 +124,18 @@ def _strict() -> bool:
         return False
 
 
+def _gate_facts(vm, adapter: str) -> str:
+    """给版本门算**事实键**（主窗类名 / DPI 感知 / 适配层）；算不出来就返回空串 ⇒ 退回版本键。
+
+    ⛔ 2026-09-22（兼容性落地第 ⑦ 项）：判定依据从"按版本号查表"改成**优先按这台机器的事实查**
+    （同一个版本号的 UI 可能已经变了；而版本号本身也会撒谎）。只读探测、绝不抛。
+    """
+    try:
+        return str(vm.fact_key(adapter) or "")
+    except Exception:
+        return ""
+
+
 def check(capability: str = "send", wechat: str = "", adapter: str = "") -> dict:
     """发送前查一次。返回 {level, allow, reason, wechat, adapter}。
 
@@ -135,17 +147,19 @@ def check(capability: str = "send", wechat: str = "", adapter: str = "") -> dict
         data = vm.load()
         w = wechat or current_wechat_version() or "unknown"
         a = adapter or vm.adapter_version()
-        g = vm.gate(data, w, a)
+        g = vm.gate(data, w, a, facts=_gate_facts(vm, a))
+        _basis = str(g.get("basis") or "")
+        _bnote = str(g.get("basis_note") or "")
         if g.get("measured"):
-            return {"level": "ok", "allow": True, "wechat": w, "adapter": a,
-                    "reason": "版本对已实测（%s × %s）" % (w, a)}
+            return {"level": "ok", "allow": True, "wechat": w, "adapter": a, "basis": _basis,
+                    "reason": "版本对已实测（%s × %s）%s" % (w, a, ("；" + _bnote) if _bnote else "")}
         if not _strict():
             if not w or w == "unknown":
                 return {"level": "warn", "allow": True, "wechat": "unknown", "adapter": a,
                         "reason": "读不到微信版本（%s）⇒ **不拦发送**，照常发（读不到版本是环境态，"
                                   "不等于版本不兼容）；发不出去请把日志尾部反馈给我们"
                                   % ("微信没在跑" if not wechat_running() else "微信在跑但没读到版本号")}
-            return {"level": "warn", "allow": True, "wechat": w, "adapter": a,
+            return {"level": "warn", "allow": True, "wechat": w, "adapter": a, "basis": _basis,
                     "reason": "微信 %s × 适配层 %s 没有实测记录 ⇒ **照常发送**（按未知版本处理），"
                               "若某条能力不好用请反馈；想改成「没实测就停手」可在配置里开 version_gate.strict" % (w, a)}
         if is_allowed():

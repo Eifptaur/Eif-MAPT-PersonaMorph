@@ -113,6 +113,50 @@ def find_run(data: dict, wechat: str, adapter: str) -> dict | None:
     return None
 
 
+def fact_key(adapter: str = "") -> str:
+    """**事实键**：把"这台机器此刻长什么样"压成一个键（主窗类名 | DPI 感知 | 适配层）。
+
+    为什么要有它（2026-09-22，兼容性落地第 ⑦ 项；业界调研结论：**探测能力、别按版本分支**）：
+      · 同一个版本号的微信，因 UI 代 / 主题 / 缩放不同，**吃不吃投递都可能不一样**
+        （我们实测过一次反例：同一台机器两次测"会话行该投哪个窗"，结论正好相反）；
+      · 而版本号本身会撒谎（官方承认 Win11 的 UA 里仍写 `Windows NT 10.0`）。
+      ⇒ 实测记录的**首选索引**应该是"当时那台机器的事实"，版本只当参考。
+    只读探测：找主窗读类名 + 读本进程 DPI 感知；**任何一步拿不到就留空，绝不抛错**。
+    """
+    parts = []
+    try:
+        import ctypes
+        from . import input_backend as _ib
+        hwnd = int(_ib.find_main_window() or 0)
+        if hwnd:
+            buf = ctypes.create_unicode_buffer(256)
+            ctypes.windll.user32.GetClassNameW(ctypes.c_void_p(hwnd), buf, 256)
+            if buf.value:
+                parts.append(str(buf.value))
+        try:
+            ctx = ctypes.windll.user32.GetThreadDpiAwarenessContext()
+            parts.append("dpi%d" % int(ctypes.windll.user32.GetAwarenessFromDpiAwarenessContext(ctx)))
+        except Exception:
+            pass
+    except Exception:
+        pass
+    a = str(adapter or "")
+    if a:
+        parts.append(a)
+    return "|".join(parts)
+
+
+def find_run_facts(data: dict, fkey: str) -> dict | None:
+    """按**事实键**找最近一条实测记录（新的优先：同一台机器换版本后再测，取最新那次）。"""
+    k = str(fkey or "")
+    if not k:
+        return None
+    for r in reversed(list((data or {}).get("runs") or [])):
+        if str(r.get("facts") or "") == k:
+            return r
+    return None
+
+
 def capabilities(data: dict, wechat: str, adapter: str) -> dict:
     """按 (微信版本, 适配层版本) 给出**逐能力状态**；没实测过的版本对 ⇒ 全部 unknown。"""
     run = find_run(data, wechat, adapter)
@@ -129,19 +173,27 @@ def capabilities(data: dict, wechat: str, adapter: str) -> dict:
     return out
 
 
-def gate(data: dict, wechat: str, adapter: str) -> dict:
+def gate(data: dict, wechat: str, adapter: str, facts: str = "") -> dict:
     """版本门：当前这对版本的**必需能力集**（`REQUIRED_CAPS`）都实测过没有？
 
     三态（2026-09-14 由测机报告改）：
       · `measured=True`  —— 必需能力都有非 unknown 的结论 ⇒ 可自动发送
       · `partial=True`   —— 有 run，但必需能力还缺/还是 unknown ⇒ **仍按未实测处理**（安全门不许被"只测一项"点亮）
       · 两者皆 False     —— 这对版本完全没有实测记录
+    ⛔ 2026-09-22 加 `facts`（**事实键**，兼容性落地第 ⑦ 项）：**同一台机器的 UI 指纹**优先于版本号 ——
+       有事实记录就用它（`basis="facts"`），没有才退回版本键（`basis="version"`，UI 可能已经变了），
+       都没有则 `basis="none"`。**判据仍是实测记录本身**，`basis` 只是"这条结论的依据有多贴"。
     """
-    run = find_run(data, wechat, adapter)
+    _fr = find_run_facts(data, facts) if facts else None
+    run = _fr or find_run(data, wechat, adapter)
+    _basis = "facts" if _fr else ("version" if run else "none")
+    _bnote = {"facts": "依据＝同一台机器的 UI 指纹（主窗类名/DPI/适配层）",
+              "version": "依据＝同版本号的历史记录（UI 指纹没对上 ⇒ 只作参考）",
+              "none": ""}.get(_basis, "")
     if not run:
         return {
             "measured": False, "partial": False, "wechat": wechat, "adapter": adapter,
-            "scope": [], "missing": list(REQUIRED_CAPS), "when": "",
+            "scope": [], "missing": list(REQUIRED_CAPS), "when": "", "basis": _basis,
             "advice": ("微信 %s × 适配层 %s **没有实测记录**：发送这类动窗口/动键盘的能力按未验证处理 —— "
                        "控制台出横幅、默认降到真鼠标档或暂停自动发送，等跑一次实测再放开" % (wechat, adapter)),
         }
@@ -153,12 +205,15 @@ def gate(data: dict, wechat: str, adapter: str) -> dict:
         return {
             "measured": False, "partial": True, "wechat": wechat, "adapter": adapter,
             "scope": scope, "missing": missing, "when": str(run.get("when") or ""),
+            "basis": _basis, "basis_note": _bnote,
             "advice": ("微信 %s × 适配层 %s **只实测了部分能力**（%s），必需能力「%s」还没有结论 ⇒ "
-                       "按**未实测**处理：发送前仍需用户放行" % (
-                           wechat, adapter, "、".join(scope) or "无", "、".join(missing))),
+                       "按**未实测**处理：发送前仍需用户放行%s" % (
+                           wechat, adapter, "、".join(scope) or "无", "、".join(missing),
+                           ("（%s）" % _bnote) if _bnote else "")),
         }
     return {"measured": True, "partial": False, "wechat": wechat, "adapter": adapter,
-            "scope": scope, "missing": [], "advice": "", "when": str(run.get("when") or "")}
+            "scope": scope, "missing": [], "advice": "", "when": str(run.get("when") or ""),
+            "basis": _basis, "basis_note": _bnote}
 
 
 def summarize(caps: dict) -> str:
@@ -201,8 +256,13 @@ def save(data: dict, path: str | None = None) -> str:
 
 
 def record(wechat: str, adapter: str, caps: dict, path: str | None = None) -> dict:
-    """记一次实测（caps: {能力id: {"status":…, "evidence":…}}），返回新矩阵。"""
-    data = merge_runs(load(path), {"wechat": wechat, "adapter": adapter, "caps": caps})
+    """记一次实测（caps: {能力id: {"status":…, "evidence":…}}），返回新矩阵。
+
+    ⛔ 2026-09-22：每条记录同时写 **`facts` 事实键**（主窗类名/DPI/适配层）—— 以后 `gate()` 先用它、
+    版本号只当参考（同版本号的 UI 可能已经变了；版本号本身也会撒谎）。
+    """
+    data = merge_runs(load(path), {"wechat": wechat, "adapter": adapter, "caps": caps,
+                                   "facts": fact_key(adapter)})
     save(data, path)
     return data
 

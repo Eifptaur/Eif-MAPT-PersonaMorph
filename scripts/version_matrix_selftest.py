@@ -80,5 +80,27 @@ old = {"schema": 1, "runs": [{"wechat": W, "adapter": A, "when": "2026-01-01",
 g4 = VM.gate(old, W, A)
 ok("老 run（无 scope）⇒ 仍能判 measured=True", g4["measured"] is True, str(g4.get("scope")))
 
+print("── G. 事实键：同一个版本号的 UI 变了也要认出来（2026-09-22 兼容性落地第 ⑦ 项）──")
+_fk = str(VM.fact_key(A))
+ok("fact_key() 不抛、且带上适配层（没有微信在跑时也能返回）", A in _fk, _fk[:60])
+_facts = "clsX|dpi2|" + A
+_d7 = VM.merge_runs({"schema": 1, "runs": []},
+                    {"wechat": W, "adapter": A, "facts": _facts,
+                     "caps": {"send_text": {"status": "ok", "evidence": "同一台机器实测"}}})
+ok("记录里带上了 facts 事实键", (VM.find_run_facts(_d7, _facts) or {}).get("facts") == _facts)
+_g_facts = VM.gate(_d7, "9.9.9.9", A, facts=_facts)
+ok("按事实键查得到 ⇒ measured=True 且 basis=facts（**版本号对不上也算实测过**）",
+   _g_facts["measured"] is True and _g_facts.get("basis") == "facts",
+   "basis=%s" % _g_facts.get("basis"))
+_g_ver = VM.gate(_d7, W, A, facts="另一个指纹|dpi2|" + A)
+ok("事实键对不上、版本键对得上 ⇒ basis=version（只作参考，并说得出来）",
+   _g_ver["measured"] is True and _g_ver.get("basis") == "version"
+   and "只作参考" in str(_g_ver.get("basis_note") or ""), "basis=%s" % _g_ver.get("basis"))
+_g_none = VM.gate(_d7, "8.8.8.8", A, facts="没见过的指纹|" + A)
+ok("两把键都对不上 ⇒ basis=none 且 measured=False",
+   _g_none["measured"] is False and _g_none.get("basis") == "none")
+ok("向后兼容：不传 facts 时行为和以前一样（basis 退成 version）",
+   VM.gate(_d7, W, A)["measured"] is True and VM.gate(_d7, W, A).get("basis") == "version")
+
 print("\n结果：%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
