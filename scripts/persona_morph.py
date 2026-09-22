@@ -434,7 +434,27 @@ class Orchestrator:
         t.start()
 
     def _run_proactive_agent(self, chat_key: str):
-        """主动开话题的一次运行：无未读触发，走 run_agent 但触发批为空（proactive 标记）。"""
+        """主动开话题的一次运行：无未读触发，走 run_agent 但触发批为空（proactive 标记）。
+
+        ⛔ 2026-09-22 加（第十五轮 **V-R15-4** · 网友报「有时会重复回复」）：**先过 `running_chats` 闸**。
+          老实现既不看也不登记它，直接丢进同一个 executor ⇒ 它可以和 `wake` **并发**为同一个群跑两次
+          `run_agent`（同一批上下文跑两遍、同一个群两次发言）——「重复回复」的第二条独立成因。
+          闸门与 `_on_wake_timer` 完全同一套（进不去就不跑）；**出口放 finally**，中途 return / 抛异常
+          也要放掉占位，否则这个群会被永久挡住。
+        """
+        with self._lock:
+            if chat_key in self.running_chats:
+                log.info("主动话题跳过：%s 正在跑（避免与 wake 并发跑两次）", chat_key)
+                return
+            self.running_chats.add(chat_key)
+        try:
+            self._proactive_once(chat_key)
+        finally:
+            with self._lock:
+                self.running_chats.discard(chat_key)
+
+    def _proactive_once(self, chat_key: str):
+        """主动话题的实际一次运行（占位闸由 `_run_proactive_agent` 拿住）。"""
         try:
             if self.paused or self.stopped:
                 return

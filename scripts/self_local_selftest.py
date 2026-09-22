@@ -190,11 +190,28 @@ ok("判据异常时**按未命中继续**（不许因为判自己崩掉监听）
 
 _seg = _SRC[_SRC.index("def send_text_posted("):]
 _seg = _seg[:_seg.index("def send_image_posted(")]
-ok("发文字：登记在『内容与本次一致』确认之内",
-   'if str(text)[:20] in str(head.get("content") or ""):' in _seg
-   and _seg.index("_self_local_note") > _seg.index('if str(text)[:20] in str(head.get("content") or ""):'))
-ok("发文字：内容不一致那条『宽松成功』分支**不登记**",
-   _seg.count("_self_local_note") == 1)
+# ⛔ 2026-09-22 改口径（第十五轮 **V-R15-4**）：原判据钉的是"**只有一处** `_self_local_note`，
+#   且在『内容与本次一致』那句之后"。现在这一版**多了一处**登记（快路径超时后的复核：确认最近几行里
+#   已有本次文本才登记自我行号 ⇒ 不重复打字），所以按"**总数 == 1**"判会误红。
+#   ⇒ 口径改成**不变量的形态**：①登记次数 ≤ "内容确认"守卫数（每一处登记都有一次内容核对）；
+#   ②**每一处**登记调用点前面不远就有 `str(text)[:20] in str(` 这个内容守卫（防"没核对就登记"）。
+#   老形状（内容不一致那条宽松分支里也登记）照样会被第二条抓住。
+_notes = _seg.count("_self_local_note")
+_guards = _seg.count("str(text)[:20] in str(")
+ok("发文字：**每一次**自我行号登记都在『内容与本次一致』确认之内（登记数 ≤ 内容确认数）",
+   _notes >= 1 and _guards >= _notes,
+   "登记 %d 处 / 内容确认 %d 处" % (_notes, _guards))
+_orphan = []
+_p = 0
+while True:
+    _p = _seg.find("_self_local_note", _p)
+    if _p < 0:
+        break
+    if "str(text)[:20] in str(" not in _seg[max(0, _p - 420):_p]:
+        _orphan.append(_p)
+    _p += 1
+ok("发文字：内容不一致那条『宽松成功』分支**不登记**（没有「没核对就登记」的调用点）",
+   not _orphan, "可疑位置 %s" % _orphan[:3])
 
 _seg2 = _SRC[_SRC.index("def send_image_posted("):]
 _seg2 = _seg2[:_seg2.index("def send_file_posted(")]

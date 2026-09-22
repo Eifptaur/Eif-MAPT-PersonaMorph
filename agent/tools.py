@@ -831,6 +831,15 @@ def _exec_forward_media(ctx, args):
         ok_flag, msg = ctx["wechat"].send_file_posted(ctx["chat_id"], path)
         if not ok_flag:
             return _ok("转发没成功：%s" % msg)
+        # ⛔ 2026-09-22 加（第十五轮 **V-R15-4** · 网友报「有时会重复回复」）：**转发成功也要记账**。
+        #   兜底补发（`persona_morph.py` 那条"模型一条都没发、而最终文本写成要对群友说的话就替它发出去"）
+        #   只认 `session["sent"]` 是否为空 —— 这条链过去**发完不记账** ⇒ 那一轮再以纯文本收尾
+        #   就会被兜底**再发一遍**（同一件事对外出现两次）。这里的记账形状与 `send_message` 一致。
+        try:
+            ctx["session"]["sent"].append({"type": kind, "text": "[%s]" % ("视频" if kind == "video" else "文件"),
+                                           "at": None})
+        except Exception as _e_sent:                                  # noqa: BLE001
+            log.warning("转发后记账失败（不影响本次转发）：%s", _e_sent)
         return _ok({"sent": True, "note": "已转发（这一步短暂用过前台）。不要输出\"已发送\"类汇报。"})
     except Exception as e:
         return _err(str(e))

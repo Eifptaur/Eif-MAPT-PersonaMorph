@@ -264,15 +264,6 @@ def _mark_browser_opened():
         pass
 
 
-def _try_browser_lock(seconds=90):
-    """原子抢占"打开控制台"锁（**与机器人侧同一把锁**：`agent/util.take_console_lock`）。"""
-    try:
-        from agent.util import take_console_lock
-        return take_console_lock(seconds)
-    except Exception:
-        return True
-
-
 def _build_tag_local():
     try:
         import datetime
@@ -477,11 +468,15 @@ def _kick_old_instance():
 
 
 def _open_current_console():
-    """同版本已在运行：走原子锁拿到才打开（否则不重复开第二个）。"""
+    """同版本已在运行 ⇒ 打开控制台。
+
+    ⛔ 2026-09-22 修（第十五轮 **V-R15-3** · 网友报「打不开控制台」）：老实现是
+      **"抢不到开窗锁就直接 return True"** —— 于是"锁在（90 秒新鲜期内）但其实一个控制台窗口都没有"
+      时，这一跳**什么都不开也不说**（用户主观就是"点了一次没反应，等一分多钟再点一下才出来"）。
+      正确的收口 2026-09-18 已经做在 `notify_ui.open_console` 里（先看真窗口 → 在就复用；
+      不在才谈锁，锁抢不到也等窗口、等不到照开）。⇒ 这里**不再自己判**，一律交给它。
+    """
     try:
-        if not _try_browser_lock():
-            log("浏览器已打开（同版本控制台在运行），本次不重复打开。")
-            return True
         from agent.config import get_config
         sc = get_config().get("server", {})
         url = "http://127.0.0.1:%s/?token=%s" % (int(sc.get("port") or 3210), str(sc.get("token") or ""))

@@ -306,6 +306,19 @@ class ChatStore:
     def append_incoming(self, chat_key: str, mid, ts, sender_id, sender_name, text, reply=None, media=None):
         with self._lock:
             st = self._state(chat_key)
+            # ⛔ 2026-09-22 加（第十五轮 **V-R15-4** · 网友报「有时会重复回复」）：**同一条入站消息只许有一份**。
+            #   起因：监听水位**落盘失败只 warning**（内存前进、盘上落后），而硬杀/更新接管走
+            #   `taskkill /F`（不走退出前 flush）⇒ 重启后从旧水位重读整批 ⇒ 同一行又变成"新未读"
+            #   ⇒ **同一个问题回两遍**。去重键用 `mid`（微信自己的消息 id，重放时不变；
+            #   本地 `id` 每次都会重排，不能当键）。命中就**原样返回已有 entry**：
+            #   不新增、不置未读（已读的保持已读，绝不制造一条"新消息"）。
+            if mid not in (None, "", 0, "0"):
+                _key = str(mid)
+                # ⚠️ 只扫**最近 200 条**：`max_per_chat` 默认 0＝不裁剪，历史可能上千条，
+                #    逐条全扫会把监听热路径拖慢。重放的窗口必然是"刚过去的一批"，200 条绰绰有余。
+                for _m in list(st.get("messages") or [])[-200:][::-1]:
+                    if str(_m.get("mid") or "") == _key:
+                        return _m
             entry = {
                 "id": st["next_local_id"],
                 "mid": mid,

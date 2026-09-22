@@ -408,6 +408,33 @@ def main():
        _old11.data["acctA|group:x"] == 5, str(_old11.data))
 
     shutil.rmtree(tmp, ignore_errors=True)
+
+    # ── V-R15-4：同一 mid 只许有一份（重放不许变成"第二条未读"）────────────────────────
+    # ⛔ 网友报「有时会重复回复」的第二条独立成因：水位**落盘失败只 warning**（内存前进、盘上落后），
+    #   而硬杀/更新接管走 `taskkill /F`（不走退出前 flush）⇒ 重启后从旧水位重读整批 ⇒ 同一行
+    #   又变成"新未读"再喂模型一次。这里钉住"去重键＝mid"（本地 id 每轮重排，当不了键）。
+    print("\n── V-R15-4：同一条入站消息（同一 mid）只许有一份 ──")
+    try:
+        from agent import store as _st
+        _sd = tempfile.mkdtemp(prefix="pm-mid-judge-")
+        _saved_dir = _st.MESSAGES_DIR
+        _st.MESSAGES_DIR = _sd                      # 判据绝不写产品的 data/messages/
+        try:
+            _cs = _st.ChatStore()
+            _e1 = _cs.append_incoming("group:judge", "mid-AAA", 1700000000000, "u1", "甲", "你好")
+            _e2 = _cs.append_incoming("group:judge", "mid-AAA", 1700000000000, "u1", "甲", "你好")
+            _un = _cs.peek_unread("group:judge", limit=5) or []
+            ok("同一 mid 第二次进来 ⇒ **不新增、不制造未读**（老写法会多一条 ⇒ 必红）",
+               _e1.get("id") == _e2.get("id") and len(_un) == 1,
+               "unread=%d · id %s/%s" % (len(_un), _e1.get("id"), _e2.get("id")))
+            _e3 = _cs.append_incoming("group:judge", "mid-BBB", 1700000001000, "u1", "甲", "在吗")
+            ok("去重**不误伤正常消息**（换一个 mid 照常新增）", _e3.get("id") != _e1.get("id"),
+               "id=%s" % _e3.get("id"))
+        finally:
+            _st.MESSAGES_DIR = _saved_dir
+            shutil.rmtree(_sd, ignore_errors=True)
+    except Exception as e:
+        ok("mid 去重锚可跑", False, str(e)[:90])
     print("\n== W2 水位判据：%d 通过 / %d 失败 ==" % (len(PASS), len(FAIL)))
     return 1 if FAIL else 0
 

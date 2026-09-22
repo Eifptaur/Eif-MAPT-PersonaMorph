@@ -261,6 +261,40 @@ def detect_band_y0(img, x0: int, x1: int, default_y0: int = None, max_scan: int 
         return int(default_y0)
 
 
+def band_box(img, pane_left_rel=None, band_px=None, pane_left_px: int = 0,
+             wide: bool = False) -> tuple:
+    """会话头"文字带"的像素框 —— **唯一实现**（指纹与 OCR 两条链都走这里）。
+
+    ⛔ 2026-09-22 加（第十五轮 **V-R15-2** · 网友报「经常读不到窗口 / 认不对群名」）：
+      `chat_ocr.header_box` 原来是**第二份实现**，而且 `y0` 直接吃固定 `BAND_PX[1]=38`、
+      **完全不过 `detect_band_y0`** ⇒ 微信那条自绘深色标题条压在 y≈38~50 时：
+        · 指纹那一半第九轮已修（V-R9-3：把带子推到标题条下方）；
+        · **OCR 那一半照旧去读标题条** ⇒ `matches_strict` 判否 ⇒ 「认不对群名」、
+          该尺寸档永远学不到参照、`send_text` 只能退回"投递切会话 + 内容级复核"、兜不住就整条拒发。
+      ⇒ 现在两条链共用这一个函数：**同一块带子、同一套自适应 y0**。
+
+    `wide=True` ＝用"整幅上部三成"再扫一次（给指纹那条链的一次性回退用；见 `fingerprint`）。
+    `pane_left_rel` / `band_px` 显式传入时**不做自适应**（判据要把"老口径"在同一条左沿上复算）。
+    """
+    pl = int(pane_left_px or 0)
+    _auto = (pane_left_rel is None and band_px is None)
+    if not pl and _auto:
+        pl = pane_left_for(img)
+    box = crop_box(img.size, pane_left_rel, band_px, pane_left_px=pl)
+    if not _auto:
+        return box
+    if wide:
+        _h = int(img.size[1])
+        y0 = detect_band_y0(img, box[0], box[2],
+                            max_scan=max(96, int(_h * 0.30)), max_y0=max(72, int(_h * 0.30)))
+    else:
+        y0 = detect_band_y0(img, box[0], box[2])
+    if y0 != int(box[1]):
+        box = crop_box(img.size, pane_left_rel,
+                       (BAND_PX[0], y0, BAND_PX[2], BAND_PX[3]), pane_left_px=pl)
+    return box
+
+
 def fingerprint(img, pane_left_rel=None, band_px=None, bins: int = BINS, pane_left_px: int = 0) -> list:
     """会话头区域的**逐列暗点密度剖面**（bins 维，0~255）。
 
@@ -324,16 +358,11 @@ def fingerprint(img, pane_left_rel=None, band_px=None, bins: int = BINS, pane_le
                 return []
             return [int(round(255.0 * v / mx)) for v in raw]
 
-        box = crop_box(img.size, pane_left_rel, band_px, pane_left_px=pl)
+        box = band_box(img, pane_left_rel, band_px, pane_left_px=pl)
         # ⛔ 2026-09-21 加（第九轮 **V-R9-3**）：生产路径（自动锚点）下先**自适应**把文字带挪到
         #   那条自绘深色标题条**下方** —— 固定 y0 在真机上会压在标题条上 ⇒ 指纹退化 ⇒ 该尺寸档
-        #   永远学不到参照（详见 `detect_band_y0`）。
-        _y0 = 0
-        if _auto:
-            _y0 = detect_band_y0(img, box[0], box[2])
-            if _y0 != int(box[1]):
-                box = crop_box(img.size, pane_left_rel,
-                               (BAND_PX[0], _y0, BAND_PX[2], BAND_PX[3]), pane_left_px=pl)
+        #   永远学不到参照（详见 `detect_band_y0`）。V-R15-2 起见 `band_box`（唯一实现）。
+        _y0 = int(box[1])
         fp = _norm(_raw(box))
         if not _auto:
             return fp
@@ -344,13 +373,9 @@ def fingerprint(img, pane_left_rel=None, band_px=None, bins: int = BINS, pane_le
         #   通栏的深色元素，比如那条自绘标题条没被推下去）。这三种都说明那条横条多半落在上面那次
         #   扫描窗口**之外**（底边 > max_y0、或上边 > max_scan）⇒ 用"整幅上部三成"再扫一次；
         #   只有当它给出**更干净**的结果（非空、非退化、min==0）才采用，否则维持第一次。只回退一次。
-        _h = int(img.size[1])
-        _y0b = detect_band_y0(img, box[0], box[2],
-                              max_scan=max(96, int(_h * 0.30)), max_y0=max(72, int(_h * 0.30)))
-        if _y0b and _y0b != _y0:
-            _box2 = crop_box(img.size, pane_left_rel,
-                             (BAND_PX[0], _y0b, BAND_PX[2], BAND_PX[3]), pane_left_px=pl)
-            _fp2 = _norm(_raw(_box2))
+        _box_wide = band_box(img, pane_left_rel, band_px, pane_left_px=pl, wide=True)
+        if int(_box_wide[1]) != _y0:
+            _fp2 = _norm(_raw(_box_wide))
             if _fp2 and not degenerate_reason(_fp2) and min(_fp2) == 0:
                 return _fp2
         return fp

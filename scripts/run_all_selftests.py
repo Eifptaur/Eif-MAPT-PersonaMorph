@@ -110,15 +110,57 @@ def _diff_product(a: dict, b: dict) -> list:
     return out
 
 
+#: **派生文件**：判据历史上写脏过、而写脏之后"会一直脏着"的那几个产品文件。
+#: 为什么光"判红"不够（第十五轮 **V-R15-3** 的教训，我自己踩的）：`logs/console.url` 决定启动器
+#: 开哪个地址 —— 被判据写成死链之后，用户点「一键启动」得到的就是一屏 `ERR_CONNECTION_REFUSED`
+#: （＝网友报的「打不开控制台」）。所以仪器必须**既报出来、也不留伤**：跑每条判据前备份、跑完还原。
+_DERIVED = ("logs/console.url", "logs/browser_opened.lock")
+
+
+def _snap_derived() -> dict:
+    out = {}
+    for rel in _DERIVED:
+        p = os.path.join(ROOT, rel.replace("/", os.sep))
+        try:
+            with open(p, "rb") as fh:
+                out[rel] = fh.read()
+        except Exception:
+            out[rel] = None
+    return out
+
+
+def _restore_derived(snap: dict) -> list:
+    """把派生文件还原成快照的样子；返回**真被还原过的**文件名（用来打一行可见的回执）。"""
+    back = []
+    for rel, want in (snap or {}).items():
+        p = os.path.join(ROOT, rel.replace("/", os.sep))
+        try:
+            cur = None
+            try:
+                with open(p, "rb") as fh:
+                    cur = fh.read()
+            except Exception:
+                cur = None
+            if want is None:
+                if cur is not None:
+                    os.remove(p)
+                    back.append(rel)
+            elif cur != want:
+                os.makedirs(os.path.dirname(p), exist_ok=True)
+                with open(p, "wb") as fh:
+                    fh.write(want)
+                back.append(rel)
+        except Exception:
+            pass
+    return back
+
+
 def _watch_product(stop: threading.Event, seen: dict) -> None:
     """跑判据期间**持续**采样产品目录（第十四轮 **V-R14-7**，我自己补的仪器缺口）。
 
-    为什么还要它：跑前/跑后各拍一张快照**只能看见净变化** —— 判据里"创建 `data\\window_borrow.json`
-    又删掉它"这种**瞬时写**（净变化＝0）在串行扫描里完全看不见（第十四轮实测：串行跑一遍产品目录
-    "全绿"，而并发跑时邻座判据的窗口正拍到它 ⇒ 归因一片混乱）。瞬时写一样是"判据改用户状态"，
-    而且**真实危害更大**（机器人正在跑时，一个凭空出现的借用登记会改变它的放回行为）。
-
-    采样间隔 40ms：读的是 `listdir` + `stat`（顶两层），比判据本身便宜得多。
+    跑前/跑后各拍一张快照**只看得到净变化** —— "创建又删掉"的瞬时写（净变化＝0）在串行扫描里
+    完全看不见；而瞬时写一样是"判据改用户状态"，危害还更大（机器人正在跑时，一个凭空出现的
+    借用登记会改变它的放回行为）。采样间隔 40ms，读的是 `listdir`+`stat`，比判据本身便宜得多。
     """
     while not stop.is_set():
         try:
@@ -148,6 +190,7 @@ def _run_one(name: str, timeout: int, gate: threading.Semaphore) -> dict:
         _hold.acquire()
     t = time.time()                                   # 计时**从真正开跑算起**（不含等闸，读数才诚实）
     _prod0 = _snap_product()                          # ⛔ V-R14-1：这条判据跑之前的**产品目录**快照
+    _dev0 = _snap_derived()                           # ⛔ V-R15-3：派生文件（console.url / 开窗锁）也要备份
     _seen = {}                                        # ⛔ V-R14-7：跑的过程中持续采样（抓瞬时写）
     _stop = threading.Event()
     _watch = threading.Thread(target=_watch_product, args=(_stop, _seen), daemon=True)
@@ -184,12 +227,13 @@ def _run_one(name: str, timeout: int, gate: threading.Semaphore) -> dict:
     _prod1 = _snap_product()
     _dirty = _diff_product(_prod0, _prod1)            # V-R14-1：这条判据动了产品目录吗（净变化）
     _dirty += _diff_seen(_prod0, _prod1, _seen)       # V-R14-7：瞬时写也要判红
+    _restored = _restore_derived(_dev0)               # V-R15-3：**判红照旧，但不留伤**（还原派生文件）
     ps, fs = _parse(out)
     _summed = _has_summary(out)
     ok = ((rc == 0) and not fs and not _FAIL_LINE.search(out) and not _TRACE.search(out)
           and _summed)
     return {"name": name, "out": out, "rc": rc, "sec": sec, "ps": ps, "fs": fs, "ok": ok,
-            "summed": _summed, "heavy": heavy, "dirty": _dirty}
+            "summed": _summed, "heavy": heavy, "dirty": _dirty, "restored": _restored}
 
 
 def main() -> int:
@@ -260,6 +304,15 @@ def main() -> int:
         print("   修法：该判据在开头（`sys.path` 就绪之后、任何 `agent.*` 之前）调 "
               "`import _iso14; _iso14.all_()` 把路径指到 %TEMP%。")
         print("!" * 72)
+    # ⛔ V-R15-3：派生文件（`logs/console.url` 等）**跑完一律还原** —— 它们脏了会让"点一键启动开不出
+    #   控制台"，而这条判据可能几年都不再跑一次。还原是静默的伤害控制，**回执必须打出来**（不许悄悄做）。
+    _fixed = [(n, results[n].get("restored") or []) for n in names if (results[n].get("restored") or [])]
+    if _fixed:
+        print("\n" + "-" * 72)
+        print("↩️ 派生文件已还原（判据写脏了它们 ⇒ 已恢复成跑之前的样子，伤害不留到下一次）：")
+        for _n, _fs2 in _fixed:
+            print("   %-34s ← %s" % (_n, "、".join(_fs2)))
+        print("-" * 72)
     for n, rc, ps, fs, out in bad:
         print("\n---- RED: %s (rc=%s, %s/%s) ----" % (n, rc, ps, fs))
         tail = [l for l in out.strip().splitlines() if l.strip()][-14:]

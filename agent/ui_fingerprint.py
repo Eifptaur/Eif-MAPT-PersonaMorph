@@ -163,7 +163,7 @@ def _grab(gui):
     try:
         from PIL import ImageGrab
         r = gui.render_rect
-        return ImageGrab.grab((int(r[0]), int(r[1]), int(r[2]), int(r[3])))
+        return ImageGrab.grab((int(r[0]), int(r[1]), int(r[2]), int(r[3])), all_screens=True)
     except Exception:
         return None
 

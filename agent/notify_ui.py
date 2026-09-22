@@ -403,6 +403,20 @@ def open_console(url: str = "", browser_path: str = "", take_lock: bool = True, 
         _ex = int(find_console_window() or 0)
     except Exception:
         _ex = 0
+    # ⛔ 2026-09-22 加（第十五轮 **V-R15-3** · 网友报「打不开控制台」）：**先把"死页"这件事说清楚**。
+    #   复用分支只 `flash`/抬起、**从不导航或刷新** ⇒ 窗口里若是 `ERR_CONNECTION_REFUSED` 或 401 的旧页，
+    #   用户怎么点都是那一屏死页。这里**如实留痕**（要打开的那个地址连不上 ⇒ 很可能控制台服务没在跑）。
+    #   ⚠️ 这一版**不改复用语义**（窗口在就复用，2026-09-18 定的"不攒窗口"口径不放宽）——
+    #   真正"把死页刷回来"需要一个 `--console-reuse` 的导航口（C# 侧加 `CoreWebView2.Navigate`），
+    #   属下一版的事；这里只保证用户/我们**看得见原因**（日志里有这一行）。
+    if _ex and url:
+        try:
+            if not _url_live(url):
+                log.warning("已有控制台窗口，但要打开的地址 %s 连不上（很可能控制台服务没在跑）——"
+                            "仍按既定口径复用它；若窗口里是错误页，请点「重启」或重新「一键启动」",
+                            str(url).split("?")[0])
+        except Exception:
+            pass
     if _ex and _u().IsWindow(_ex):
         try:
             if str(mode or "") == "quiet":

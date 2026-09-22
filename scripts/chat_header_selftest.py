@@ -239,6 +239,26 @@ with open(_tp, "w", encoding="utf-8") as _f:                                    
 ck("T6 **带子算法变了 ⇒ 旧参照当「没有」**（no_ref 不拦发送，而不是 mismatch 去拦）",
    ch.reference("filehelper", path=_tp, size="1076x1046", strict=True) == [])
 
+print("[V2] 会话头带子**同源**（第十五轮 **V-R15-2**：OCR 侧原来吃固定 y0=38、不过自适应 ⇒ 认不对群名）")
+try:
+    from agent import chat_ocr as _co                                              # noqa: E402
+    _vimg = _fake_with_titlebar("演示（3）")
+    _vb_ch = tuple(ch.band_box(_vimg))
+    _vb_ocr = tuple(_co.header_box(_vimg))
+    ck("V2a 指纹侧的带子被推到标题条**下方**（y0 > 兜底 %d）" % ch.BAND_PX[1],
+       _vb_ch[1] > int(ch.BAND_PX[1]), "band_box y0=%d" % _vb_ch[1])
+    ck("V2b **OCR 侧与指纹侧是同一块带子**（老写法固定 y0=38 ⇒ 这条必红）",
+       _vb_ocr == _vb_ch, "ocr=%s · header=%s" % (_vb_ocr, _vb_ch))
+    ck("V2c 反例锚：固定 y0 确实压在标题条（38~50）里 —— 这就是当时 OCR 读到标题条的原因",
+       int(ch.BAND_PX[1]) < 50, "固定 y0=%d" % int(ch.BAND_PX[1]))
+    ck("V2d 没有那条横条时两边都不动（不会把老版微信的带子弄歪）",
+       tuple(_co.header_box(_plain)) == tuple(ch.band_box(_plain)),
+       "ocr=%s · header=%s" % (tuple(_co.header_box(_plain)), tuple(ch.band_box(_plain))))
+    ck("V2e `chat_ocr.header_box` 真的**调** `band_box`（源码级锚：防以后又被抄成第二份实现）",
+       "band_box(" in open(os.path.join(ROOT, "agent", "chat_ocr.py"), encoding="utf-8").read())
+except Exception as _e:
+    ck("V2 同源锚可跑（chat_ocr 能 import）", False, str(_e)[:100])
+
 # ══════════════════════════════════════════════════════════════════════════════
 # W/X/Y/Z 段：第十轮（V-R10-1 / V-R10-5 / V-R10-6 / V-R10-7）
 #   全部**离线合成帧** —— 不起 GUI、不碰真实微信/鼠标（真机读数写在各条说明里，见审计第十轮）。

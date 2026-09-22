@@ -3549,7 +3549,11 @@ class WeChatAdapter:
             return None
         _restore_fg_until("投递发送·快路径（打完立刻还）", timeout=0.4, keep=False)
         _hold_end()          # 发送动作已完成 ⇒ 停摁（后面只读 DB，不再碰窗口）
-        deadline = time.time() + 2.6
+        # ⛔ 2026-09-22 改（第十五轮 **V-R15-4** · 网友报「有时会重复回复」）：2.6 秒 → **6.5 秒**。
+        #   这段等待**发生在还前台之后**（上面两行已经 `_restore_fg_until` + `_hold_end`），所以加长它
+        #   只是"多读几次 DB"，**不占前台、不碰窗口**；而它换掉的是"回读慢 ⇒ 老链把同一段字重打一遍"
+        #   这个**会重复发消息**的真缺陷（本文件自述写库 ~1.6s、图片 30~60s ⇒ 2.6s 本来就在临界上）。
+        deadline = time.time() + 6.5
         while time.time() < deadline:
             time.sleep(0.3)
             try:
@@ -5019,6 +5023,39 @@ class WeChatAdapter:
             if _fast is not None:
                 return _fast
             log.info("快路径没等到新行 ⇒ 回退老链（点框 + 阳性对照 + 多枪）")
+            # ⛔ 2026-09-22 加（第十五轮 **V-R15-4** · 网友报「有时会重复回复」）：
+            #   **重新打字之前，最后核一次"是不是其实已经发出去了"**。
+            #   为什么必须核：老链是"重新投一遍同样的字 + 再开枪"，只要库写得比我们回读慢一点
+            #   （本文件自述写库 ~1.6s、图片 30~60s），群里就会**同一句出现两遍**。三道去重
+            #   （`_dedup_send` 3 秒窗 / `SendQueue` 20 秒同文本 / `wake` 批次指纹）**都锁不住这条**：
+            #   它们认的是"已经记账的自我文本"，而这一枪**没记账**。
+            #   判据＝同一会话最近几行里，有 **local_id 比我们开工前更新、文本含本次文本、时间在 90 秒内**
+            #   的行 ⇒ 判为已发出，**不再打字**（宁可少发一次，也不要重复发 —— 重复发是对外可见的）。
+            #   读不到库 ⇒ 维持老行为（照旧回退老链），不因为这次核对而拒发。
+            try:
+                _rows_chk = list(self._db.get_messages(chat_id, limit=4) or [])
+            except Exception:
+                _rows_chk = []
+            _now_ms = int(time.time() * 1000)
+            for _r in _rows_chk:
+                if str(_r.get("local_id")) == str(base_sig):
+                    continue
+                _ct2 = _r.get("create_time") or 0
+                try:
+                    _ct2 = int(_ct2)
+                except Exception:
+                    _ct2 = 0
+                if _ct2 and _ct2 > 10 ** 11 and (_now_ms - _ct2) > 90000:
+                    continue                       # 太旧（多半是上一次同文本）⇒ 不算"这一枪发出去了"
+                if str(text)[:20] and str(text)[:20] in str(_r.get("content") or ""):
+                    try:
+                        _self_local_note(self, chat_id, _r.get("local_id"), _r.get("create_time"))
+                    except Exception:
+                        pass
+                    log.info("快路径超时后的复核：该会话已有本次文本的新行（local_id=%s）"
+                             "⇒ **判定已发出，不再重复打字**（V-R15-4）", _r.get("local_id"))
+                    return True, ("投递发送成功（快路径超时，但复核到新行 local_id=%s；未重复打字）"
+                                  % _r.get("local_id"))
             # ⛔ 2026-09-16 r24 对面现场：**最小化还原之后投递打字不生效**。
             #    他的对照很干净：同一会话、同一轮里，可见态两枪（A1/A2）回读都成功（local_id 27/28），
             #    只有最小化那一枪读不到新行，而且那个 token 在「文件传输助手」与「E」里
@@ -6701,7 +6738,7 @@ class WeChatAdapter:
         try:
             from PIL import ImageGrab
             from wechatauto import ScreenOCR
-            img = ImageGrab.grab(rect)
+            img = ImageGrab.grab(rect, all_screens=True)
             res = ScreenOCR.recognize(img)
             out = []
             for item in (res or []):
@@ -6746,7 +6783,7 @@ class WeChatAdapter:
             u.GetWindowRect(int(gui.main_hwnd), ctypes.byref(r))
             l, t, rt, b = r.left, r.top, r.right, r.bottom
             W, H = rt - l, b - t
-            img = ImageGrab.grab((l, t, rt, b)).convert("RGB")
+            img = ImageGrab.grab((l, t, rt, b), all_screens=True).convert("RGB")
             px = img.load()
             pts = []
             for y in range(int(H * 0.55), int(H * 0.99), 2):
@@ -6774,7 +6811,7 @@ class WeChatAdapter:
             u.GetWindowRect(int(gui.main_hwnd), ctypes.byref(r))
             l, t, rt, b = r.left, r.top, r.right, r.bottom
             W, H = rt - l, b - t
-            img = ImageGrab.grab((l, t, rt, b)).convert("L")
+            img = ImageGrab.grab((l, t, rt, b), all_screens=True).convert("L")
             px = img.load()
             x0, x1 = 3, max(4, int(W * 0.085))
             items = []
@@ -6877,7 +6914,7 @@ class WeChatAdapter:
             if img is None:
                 from PIL import ImageGrab
                 l, t, r, b = [int(v) for v in rect]
-                img = ImageGrab.grab((l, t, r, b))
+                img = ImageGrab.grab((l, t, r, b), all_screens=True)
             return list(img.convert("L").resize(scale).getdata())
         except Exception:
             return None
@@ -7563,7 +7600,7 @@ class WeChatAdapter:
                 try:
                     from PIL import ImageGrab
                     rect = self._moments_focus() or self._get_gui().render_rect
-                    ImageGrab.grab((rect[0], rect[1], rect[2], rect[3])).save(_os.path.join(_sdir, name))
+                    ImageGrab.grab((rect[0], rect[1], rect[2], rect[3]), all_screens=True).save(_os.path.join(_sdir, name))
                 except Exception:
                     pass
         try:
@@ -7697,7 +7734,7 @@ class WeChatAdapter:
             if not rect:
                 return []
             from PIL import ImageGrab
-            img = ImageGrab.grab((rect[0], rect[1], rect[2], rect[3]))
+            img = ImageGrab.grab((rect[0], rect[1], rect[2], rect[3]), all_screens=True)
             from wechatauto import ScreenOCR
             res = ScreenOCR.recognize(img)
             out = []
@@ -9438,7 +9475,7 @@ class WeChatAdapter:
             x0, x1 = max(0, cx0 - 52), min(sw, cx0 + 52)
             y_lo, y_hi = int(sh * 0.20), int(sh * 0.92)   # 排除顶栏 / 底部栏
             # 只截「第一列小竖条」(约 100px 宽)——ImageGrab 比整窗快一个量级；隔行扫描 + 首完整行早停
-            img = ImageGrab.grab((sx + x0, sy + y_lo, sx + x1, sy + y_hi)).convert("RGB")
+            img = ImageGrab.grab((sx + x0, sy + y_lo, sx + x1, sy + y_hi), all_screens=True).convert("RGB")
             W2, H2 = img.size
             px = img.load()
             step = 3
@@ -9475,7 +9512,7 @@ class WeChatAdapter:
             x0, x1 = max(0, cx0 - 52), min(sw, cx0 + 52)
             y_lo, y_hi = int(sh * 0.20), int(sh * 0.92)
             # 只截第一列小竖条 + 从底向上倒扫 + 完整行早停
-            img = ImageGrab.grab((sx + x0, sy + y_lo, sx + x1, sy + y_hi)).convert("RGB")
+            img = ImageGrab.grab((sx + x0, sy + y_lo, sx + x1, sy + y_hi), all_screens=True).convert("RGB")
             W2, H2 = img.size
             px = img.load()
             step = 3
