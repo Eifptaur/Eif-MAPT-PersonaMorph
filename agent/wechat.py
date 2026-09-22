@@ -1458,6 +1458,14 @@ class WeChatAdapter:
             from wechatauto import WeChatDB, MediaDownloader
         except ImportError as e:
             raise WeChatError("未安装 wechatauto：请先安装依赖（pip install -r requirements.txt）。%s" % e)
+        # ⛔ 2026-09-22：**在读任何页之前**把"页 1 明文头按磁盘事实判"的兼容补丁装上——
+        #    库自己那句"数据库合并失败(文件被微信并发改写)"可能只是**模式判错**，
+        #    而我们若照着"并发"退避重试，永远好不了（另一台机器上实测过）。
+        try:
+            from . import replica_adapter as _ra_cp
+            _ra_cp.ensure_compat_patches()
+        except Exception:
+            pass
         self.refresh_cfg()                      # 现取当前配置（不拿启动时的旧快照）
         _dd = str(self.cfg.get("wechat", {}).get("db_dir") or "").strip()
         # ⛔ 2026-09-18（用户反馈：「自己自定义的地址他检测不到」「他回我之前自定义的地址里去看文件了」）：
@@ -1662,7 +1670,7 @@ class WeChatAdapter:
         try:
             return self._db_retry(lambda: replica_adapter.load_nickname_map(self._db), tag="nicknames")
         except Exception as _e:
-            self._cap["contacts"] = "fail:%s【%s】" % (str(_e)[:100], type(_e).__name__)
+            self._cap["contacts"] = "fail:%s【%s】%s" % (str(_e)[:100], type(_e).__name__, replica_adapter.explain_db_error(_e))
             return {}
 
     def _load_groups(self) -> list:
@@ -1670,7 +1678,7 @@ class WeChatAdapter:
         try:
             return self._db_retry(lambda: replica_adapter.load_groups(self._db), tag="groups")
         except Exception as _e:
-            self._cap["groups"] = "fail:%s【%s】" % (str(_e)[:100], type(_e).__name__)
+            self._cap["groups"] = "fail:%s【%s】%s" % (str(_e)[:100], type(_e).__name__, replica_adapter.explain_db_error(_e))
             return []
 
     def _load_privates(self) -> list:
@@ -1678,7 +1686,7 @@ class WeChatAdapter:
         try:
             return self._db_retry(lambda: replica_adapter.load_privates(self._db), tag="privates")
         except Exception as _e:
-            self._cap["privates"] = "fail:%s【%s】" % (str(_e)[:100], type(_e).__name__)
+            self._cap["privates"] = "fail:%s【%s】%s" % (str(_e)[:100], type(_e).__name__, replica_adapter.explain_db_error(_e))
             return []
 
     # ── 读取 ─────────────────────────────────────────────────────────────
@@ -1773,7 +1781,7 @@ class WeChatAdapter:
                 lambda: replica_adapter.load_groups(self._db), tag="groups") or [])
             self._cap["groups"] = "ok"
         except Exception as _e:
-            self._cap["groups"] = "fail:%s【%s】" % (str(_e)[:100], type(_e).__name__)
+            self._cap["groups"] = "fail:%s【%s】%s" % (str(_e)[:100], type(_e).__name__, replica_adapter.explain_db_error(_e))
             raise
         # 昵称表同一跳重读（认大号/显示名都靠它；失败只记账，不让"刷群"失败）
         try:
@@ -1862,7 +1870,7 @@ class WeChatAdapter:
             # `_cap` 让「点击测试」把原因原样报出来；warning **限频 60 秒**
             # （这个函数会被监听循环反复调用，不许刷屏）。
             try:
-                self._cap["messages"] = "fail:%s【%s】" % (str(_e)[:100], type(_e).__name__)
+                self._cap["messages"] = "fail:%s【%s】%s" % (str(_e)[:100], type(_e).__name__, replica_adapter.explain_db_error(_e))
             except Exception:
                 pass
             _now = time.time()
@@ -1901,7 +1909,7 @@ class WeChatAdapter:
             raws = self._db.get_new_messages(wxid, since_seq, limit)
         except Exception as _e:
             try:
-                self._cap["messages"] = "fail:%s【%s】" % (str(_e)[:100], type(_e).__name__)
+                self._cap["messages"] = "fail:%s【%s】%s" % (str(_e)[:100], type(_e).__name__, replica_adapter.explain_db_error(_e))
             except Exception:
                 pass
             _now = time.time()

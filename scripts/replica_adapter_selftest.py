@@ -5,8 +5,11 @@
 from __future__ import annotations
 
 import importlib.metadata as md
+import io
 import os
 import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -170,7 +173,63 @@ def main():
     ok("群名优先用 contact 表的（公开接口只给了 wxid 时也要显示真名）",
        _gr and _gr[0]["name"] == "真群名", str(_gr)[:60])
 
-    print("— C2. 读库失败**必须抛**（2026-09-20 网友报「微信已连接却找不到群聊」的根因）—")
+    print("— C2. 页 1 明文头：**按磁盘事实**判（2026-09-22；别人机器实测的「模式判错」）—")
+    #   真事：库的 `_decrypt_page` 只要密钥是 48 字节就认定"明文头模式"，把文件里那 16 字节原样当明文头；
+    #   而全加密的库里那 16 字节是密文 salt ⇒ 页 1 头被拼坏 ⇒ 报「数据库合并失败(文件被微信并发改写)」
+    #   （与并发无关）。我们的补丁改成看**磁盘事实**：真等于 SQLite 魔数才当明文头。
+    _wdb = None
+    _real_aes = None
+    _orig_dec = None
+    try:
+        from wechatauto import db as _wdb
+        _orig_dec = ra.original_decrypt_page() or _wdb._decrypt_page
+        _real_aes = _wdb._aes_cbc_decrypt
+
+        def _stub_aes(key, iv, data):        # 把"解密"换成可控桩：只测**页 1 头**的判断
+            return b"\x01" * len(data)
+
+        _wdb._aes_cbc_decrypt = _stub_aes
+        _st = ra.fix_page1_plaintext_header()
+        ok("补丁装上（patched / 已装过）", _st in ("patched", "skip:already"), _st)
+
+        _magic = b"SQLite format 3\x00"
+        _enc = bytearray(b"\x9f" * _wdb.PAGE_SZ)          # 首 16 字节是**密文 salt**（不是魔数）
+        _plain = bytearray(b"\x9f" * _wdb.PAGE_SZ)
+        _plain[0:16] = _magic                             # 真·明文头
+        _k48 = b"k" * 48
+        _r_enc = _wdb._decrypt_page(_k48, bytes(_enc), 1)
+        ok("全加密库（48 字节密钥）⇒ 补出来必须是 SQLite 魔数开头",
+           bytes(_r_enc[:16]) == _magic, repr(bytes(_r_enc[:16])))
+        _r_plain = _wdb._decrypt_page(_k48, bytes(_plain), 1)
+        ok("真·明文头 ⇒ 原样保留那 16 字节（不许改写成魔数）",
+           bytes(_r_plain[:16]) == _magic, repr(bytes(_r_plain[:16])))
+        _old = _orig_dec(_k48, bytes(_enc), 1)
+        ok("灵敏度：老实现会把**密文**当明文头（首 16 字节不是魔数）⇒ 这条判据真能红",
+           bytes(_old[:16]) != _magic, repr(bytes(_old[:16])))
+    except Exception as _ce:                              # noqa: BLE001
+        ok("页 1 模式补丁可测（驱动库在不在）", False, "%s: %s" % (type(_ce).__name__, str(_ce)[:60]))
+    finally:
+        try:
+            if _wdb is not None and _real_aes is not None:
+                _wdb._aes_cbc_decrypt = _real_aes                       # 桩件还原
+                _wdb._decrypt_page = _orig_dec                         # 原始实现还原
+                ra._PATCHED["done"] = False
+                ra.fix_page1_plaintext_header()                        # 用真 AES 重新装上补丁
+            ok("收尾：驱动库里没有留下我们的桩件（AES 仍是原来的那个）",
+               (_wdb is None) or (_wdb._aes_cbc_decrypt is _real_aes))
+        except Exception:
+            pass
+
+    _wxa = io.open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
+    ok("接线：_init_db 在读库之前装补丁（不然库自己先坏在模式上）",
+       "_ra_cp.ensure_compat_patches()" in _wxa)
+    _ra_src = io.open(os.path.join(ROOT, "agent", "replica_adapter.py"), encoding="utf-8").read()
+    ok("接线：open_shard 也装一次（兜住不走 adapter 构造的读法）",
+       "ensure_compat_patches()" in _ra_src)
+    ok("错误文案去误导：库那句「并发改写」要附上真实可能原因",
+       "不一定是并发" in _ra_src and "explain_db_error" in _wxa)
+
+    print("— C3. 读库失败**必须抛**（2026-09-20 网友报「微信已连接却找不到群聊」的根因）—")
 
     class BrokenDB(FakeDB):
         """两条路都失败：公开接口抛 + contact.db 也打不开。"""

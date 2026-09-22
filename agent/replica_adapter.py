@@ -20,7 +20,102 @@
 from __future__ import annotations
 
 import importlib.metadata as md
+import logging
 import os
+
+_SQLITE_MAGIC = b"SQLite format 3\x00"
+
+
+def fix_page1_plaintext_header() -> str:
+    """把驱动库「页 1 是不是明文头」的判断改成**按磁盘事实**判。
+
+    ⛔ 真事（2026-09-22，另一位维护者在**别人机器上**实测）：`wechatauto/db.py::_decrypt_page(enc_key, page, 1)`
+      只要 `len(enc_key) == 48` 就认定这是 `cipher_plaintext_header_size` 明文头模式，把**文件里那 16
+      个字节原样**当明文头拼回去。可在那台机器上那个库是**全加密**的 —— 那 16 字节是密文 salt
+      ⇒ 拼出来的页 1 头是坏的 ⇒ 库报「**数据库合并失败(文件被微信并发改写)**」，而**与并发毫无关系**
+      （他连复制文件哈希都一致、contact 库还能正常打开）。我们照着那句话做退避重试，永远好不了。
+    ⇒ 按磁盘事实判：**只有**文件里那 16 字节真的等于 `SQLite format 3\\x00` 才当明文头（保原样），
+      否则一律补标准魔数。两种库都能正确解密（同一份判断，不再靠"密钥多长"猜）。
+
+    ⚠️ 打在**我们这侧**（进程内替换库模块里的函数），**不改 site-packages 里的文件** ——
+      那份文件重装依赖/更新就会被覆盖（对方留的 `db.py.bak-*` 就是证据）。返回一句状态给判据看。
+    """
+    try:
+        from wechatauto import db as _wdb
+    except Exception as _e:                                        # noqa: BLE001
+        return "no_lib:%s" % type(_e).__name__
+    _orig = getattr(_wdb, "_decrypt_page", None)
+    if not callable(_orig):
+        return "skip:no_func"
+    if getattr(_orig, "_pm_disk_fact", False):
+        return "skip:already"
+    _page_sz = int(getattr(_wdb, "PAGE_SZ", 4096))
+    _reserve = int(getattr(_wdb, "RESERVE_SZ", 80))
+    _aes = getattr(_wdb, "_aes_cbc_decrypt", None)
+    if not callable(_aes):
+        return "skip:no_aes"
+
+    def _decrypt_page(enc_key, page, pgno):                        # noqa: ANN001
+        if int(pgno) != 1:
+            return _orig(enc_key, page, pgno)
+        try:
+            head = bytes(page[:16])
+            plain = bool(head == _SQLITE_MAGIC)
+            iv = page[_page_sz - _reserve: _page_sz - _reserve + 16]
+            key = enc_key[:32] if len(enc_key) == 48 else enc_key
+            body = _aes(key, iv, page[16: _page_sz - _reserve])
+            return (head if plain else _SQLITE_MAGIC) + body + b"\x00" * _reserve
+        except Exception:                                          # noqa: BLE001
+            return _orig(enc_key, page, pgno)                      # 兜底：退回原实现，绝不更坏
+
+    _decrypt_page._pm_disk_fact = True
+    try:
+        if _ORIGINAL["fn"] is None:
+            _ORIGINAL["fn"] = _orig          # 留一份原始实现（给判据做灵敏度对照；也方便回滚）
+        _wdb._decrypt_page = _decrypt_page
+    except Exception as _e:                                        # noqa: BLE001
+        return "error:%s" % type(_e).__name__
+    return "patched"
+
+
+_PATCHED = {"done": False, "how": ""}
+_ORIGINAL = {"fn": None}          # 补丁前的库实现（判据要拿它做"老写法确实会坏"的灵敏度对照）
+
+
+def original_decrypt_page():
+    """补丁**之前**那个库实现（没有装过补丁时返回 None）。判据/排查用它做灵敏度对照。"""
+    return _ORIGINAL["fn"]
+
+
+def ensure_compat_patches() -> str:
+    """进程内**一次**装好兼容性补丁（读库之前调；幂等、永不抛）。"""
+    if not _PATCHED["done"]:
+        try:
+            _PATCHED["how"] = fix_page1_plaintext_header()
+        except Exception as _e:                                    # noqa: BLE001
+            _PATCHED["how"] = "error:%s" % type(_e).__name__
+        _PATCHED["done"] = True
+        try:
+            if str(_PATCHED["how"]).startswith("patched"):
+                logging.getLogger("persona-morph").info(
+                    "适配层兼容补丁：页 1 明文头改为**按磁盘事实**判（全加密库不再被当成明文头模式）")
+        except Exception:
+            pass
+    return _PATCHED["how"]
+
+
+def explain_db_error(e) -> str:
+    """把"库报的那句话"翻译成**可能原因清单**（去掉误导），没命中就返回空串。
+
+    为什么：`数据库合并失败(文件被微信并发改写)` 这句会把所有人（用户、我们、审计）引向"并发"，
+    而同类现象的真因可能是**解密模式判错 / 密钥过期 / 缓存分片陈旧 / 权限**。文案必须摊开说。
+    """
+    s = "%s" % (e or "")
+    hit = [k for k in ("合并失败", "并发改写", "quick_check", "解密", "decrypt", "密钥", "key") if k in s]
+    if not hit:
+        return ""
+    return ("（这句是驱动库的说法，**不一定是并发**：同类现象还可能是①页1 明文头/全加密模式判错 "
+            "②密钥过期或取自别的微信进程 ③密钥缓存里的陈旧分片 ④文件被占用/权限 —— 现已按磁盘事实判模式）")
 
 # ---- 版本口径 ---------------------------------------------------------------
 PKG = "wechatauto-replica"
@@ -171,6 +266,7 @@ def open_shard(db, rel):
     这里先补一次密钥再试；仍不行就如实返回 None —— 一个懒创建的媒体分片不该把整条链打死
     （调用方都已在 try 里用连接，None 会被它们当成"这个分片读不了"跳过）。
     """
+    ensure_compat_patches()      # ⛔ 读任何页之前先把"页 1 模式"补丁装上（2026-09-22）
     try:
         return db._open(rel)
     except KeyError:
