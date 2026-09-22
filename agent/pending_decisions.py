@@ -200,11 +200,16 @@ def apply_choice(item: dict | None) -> dict:
         return {"action": "none", "label": "", "cmd": "", "message": "按「什么都不做」处理：不发送、不改配置"}
     opt = next((o for o in (it.get("options") or []) if str(o.get("key")) == ch), {})
     act = str(opt.get("action") or "none")
-    cmd = {"upgrade_adapter": "检查微信版本.bat --update", "heal_deps": "检查微信版本.bat"}.get(act, "")
+    # ⛔ 2026-09-22 修（作者口径「我更想让用户不用测这测那的就能搞好」）：这里原来硬写着
+    #   `检查微信版本` + `.bat` 那个名字 —— 而**那个文件在包里根本不存在**（全仓找不到；用户按指引
+    #   去找只会找不到文件）。而且"这条选择要跑什么命令"在 `version_gate.action_cmd()` 里
+    #   **已经有唯一实现**（返回真实的 runtime python + scripts\wechat_check.py --update）⇒
+    #   这里不再自己写一份死字符串，一律留空、由调用方用那一个实现填。
+    cmd = ""
     msg = {
         "allow_session": "已放行本次运行：发送会按未验证版本对继续，重启后重新拦",
-        "upgrade_adapter": "去升级适配层：跑一次 检查微信版本.bat --update，升完重测能力矩阵",
-        "heal_deps": "去更新本体：跑一次 检查微信版本.bat，按体检结论修依赖",
+        "upgrade_adapter": "点「升级适配层」就行：产品在**后台自己装**（不重装微信、不用你跑任何命令），装完重测能力矩阵",
+        "heal_deps": "点「更新本体」就行：产品在后台按体检结论补齐依赖，不用你跑任何命令",
         "guidance": "这一版要在微信那边处理：先看适配层有没有对应版本，我们不装也不降级微信",
         "none": "按「什么都不做」处理：不发送、不改配置",
     }.get(act, "")

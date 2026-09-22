@@ -329,7 +329,12 @@ def compose(item: dict) -> str:
         out += "\n\n--- 附件（%d 个）\n" % len(_fs) + "\n".join(
             "- %s（%s）" % (f.get("name"), human_size(f.get("size"))) for f in _fs)
     if item.get("env"):
-        out += "\n\n--- 环境（自动附带，便于定位）\n" + json.dumps(item["env"], ensure_ascii=False)
+        _env = dict(item["env"])
+        _cp = str(_env.pop("compat", "") or "")
+        out += "\n\n--- 环境（自动附带，便于定位）\n" + json.dumps(_env, ensure_ascii=False)
+        if _cp:
+            # ⛔ 2026-09-22：兼容性那一段**原样贴文本**（它本来就是给人读的），不要 JSON 转义
+            out += "\n\n" + _cp
     return out
 
 

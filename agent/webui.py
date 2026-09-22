@@ -2515,6 +2515,17 @@ class WebUI:
                                           "tries": int(_att.get("tries") or 0),
                                           "detail": str(_att.get("reason") or "")[:400],
                                           "steps": list(_att.get("steps") or [])}}
+                        # ⛔ 2026-09-22 加（作者口径「**我更想让用户不用测这测那的就能搞好**」）：
+                        #   兼容性那段**自动带上** —— 用户点一下反馈就够了，不用跑体检、不用点
+                        #   检验器、不用去「报告」文件夹找文件。内容是**白名单脱敏**的（见
+                        #   `compat.attach_text`：不带群名/昵称/路径/消息内容）。
+                        #   关掉它：`config.json` → `feedback.attach_compat = false`（面板上也写着）。
+                        try:
+                            if as_bool((get_config().get("feedback") or {}).get("attach_compat", True)):
+                                from . import compat as _cpfb
+                                env["compat"] = _cpfb.attach_text()
+                        except Exception:
+                            pass
                         # 附件（2026-09-17 用户：「可以让用户选填一个联系邮箱」+ 图片/文件都要能提交）：
                         # 前端把文件读成 base64 一起 POST 上来；这里只做**总量闸**，具体上限与落盘在 FB 里。
                         _files = data.get("files")

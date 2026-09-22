@@ -101,6 +101,85 @@ def main():
     ok("指纹口径只有一处实现（compat.py 是唯一来源）",
        _sm.has(io.open(os.path.join(ROOT, "agent", "compat.py"), encoding="utf-8").read(), "def fingerprint()"))
 
+    # ══════════════════════════════════════════════════════════════════════════
+    # F. 自动化那一半（2026-09-22，作者：「**我更想让用户不用测这测那的就能搞好**」）
+    #    口径：数据由**产品自己**采（启动时 auto_run）与记（失败时 note_failure），
+    #    用户点一下「反馈」就自动带走 ⇒ 本段既查"真能采到/记到"，也查**脱敏**（两向锚）。
+    #    ⚠️ 全部写盘都打桩到临时目录：判据绝不许碰产品 data\（总闸会对账）。
+    # ══════════════════════════════════════════════════════════════════════════
+    print("\n== F. 自动化：产品自己采 / 自己记 / 反馈自动带上 ==")
+    import json as _json
+    import os as _os
+    import tempfile as _tf
+    _tmp = _tf.mkdtemp(prefix="pm-compat-auto-")
+    _st = _os.path.join(_tmp, "compat_last.json")
+    _fa = _os.path.join(_tmp, "compat_failures.json")
+    _p1, _p2 = CP._state_path, CP._fail_path
+    CP._state_path = lambda: _st
+    CP._fail_path = lambda: _fa
+    try:
+        r1 = CP.auto_run("判据-第一次", force=True)
+        ok("F1 `auto_run(force=True)` 真采到东西并落盘（11 条轴 + 指纹）",
+           bool(r1.get("ran")) and _os.path.exists(_st) and len(CP.last().get("smoke") or []) == 11,
+           str(r1)[:80])
+        ok("F2 摘要一行能读（`11 轴：ok n / skip n / fail n`）",
+           _sm.has(CP.summary_line(), "11 轴"), CP.summary_line()[:90])
+        r2 = CP.auto_run("判据-紧接着")
+        ok("F3 半小时内不重复采（紧接着再调一次 ⇒ 跳过，省开销）",
+           r2.get("ran") is False, str(r2)[:60])
+
+        CP.note_failure("db_unreadable", "read_messages")
+        CP.note_failure("db_unreadable", "read_messages")          # 5 秒内重复 ⇒ 去重
+        CP.note_failure("target_moved", "click_row")
+        _fl = CP.failures()
+        ok("F4 失败记了两条（同码同点 5 秒内**去重**，不刷屏）", len(_fl) == 2, str([f.get("code") for f in _fl]))
+        _keys = sorted(set(k for f in _fl for k in f))
+        ok("F5 失败记录**只**有 时间/原因码/调用点/detail（不记参数、不记消息内容）",
+           set(_keys) <= {"at", "at_text", "code", "where", "detail"}, str(_keys))
+        for _i in range(40):
+            CP.note_failure("code%d" % _i, "w%d" % _i)
+        ok("F6 失败记录有上限（不会无限长）", len(CP.failures()) <= CP.FAIL_KEEP,
+           "%d 条" % len(CP.failures()))
+
+        CP.note_failure("identity_unconfirmed", "judge_probe")     # 一条**新鲜**的，用来验它会出现在文本里
+        _t = CP.attach_text()
+        ok("F7 `attach_text` 是一段能直接发出去的文本（含系统/轴值/最近失败码三样）",
+           ("系统:" in _t) and ("轴值:" in _t) and ("最近失败" in _t) and ("identity_unconfirmed" in _t),
+           "%d 行" % len(_t.splitlines()))
+        # ⛔ 两向锚：往状态文件里塞**带群名与路径**的指纹 ⇒ 吐出来的文本里一个都不许出现
+        _d = CP.last()
+        _d["fingerprint"]["wechat_window"]["title"] = "某个群的群名不该外泄"
+        _d["fingerprint"]["data_dir"]["dir"] = "C:\\Users\\某个人\\Documents\\xwechat_files"
+        io.open(_st, "w", encoding="utf-8").write(_json.dumps(_d, ensure_ascii=False))
+        _t2 = CP.attach_text()
+        ok("F8 脱敏（反向锚）：注入「群名 + 用户目录」后，`attach_text` 里**一个都不出现**",
+           ("某个群的群名不该外泄" not in _t2) and ("某个人" not in _t2) and ("xwechat_files" not in _t2),
+           _t2[:60].replace("\n", " "))
+        io.open(_st, "w", encoding="utf-8").write("{ 这不是合法 JSON")
+        ok("F9 状态文件坏了 ⇒ `last()` 回空、`attach_text()` 照样出文本（永不抛）",
+           CP.last() == {} and "兼容性" in CP.attach_text())
+
+        _wv = io.open(_os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
+        ok("F10 接线：反馈提交处真的把 `attach_text()` 放进 env（不是写了没人调）",
+           _sm.has(_wv, 'env["compat"] = _cpfb.attach_text()'))
+        ok("F11 接线：开关读的是 `feedback.attach_compat`（默认开，可关）",
+           _sm.has(_wv, '("attach_compat", True)') or _sm.has(_wv, "attach_compat"))
+        _ts = io.open(_os.path.join(ROOT, "agent", "tools.py"), encoding="utf-8").read()
+        ok("F12 接线：失败**唯一分发点**记一笔（工具失败全覆盖）", _sm.has(_ts, "_cp.note_failure(_code, name)"))
+        _cm = io.open(_os.path.join(ROOT, "agent", "feedback.py"), encoding="utf-8").read()
+        ok("F13 接线：邮件正文把兼容性那段**原样贴**（不 JSON 转义）",
+           _sm.has(_cm, '_env.pop("compat"') and _sm.has(_cm, "out += \"\\n\\n\" + _cp"))
+        _sm2 = io.open(_os.path.join(ROOT, "scripts", "persona_morph.py"), encoding="utf-8").read()
+        ok("F14 接线：启动时后台线程自动采一次（用户什么都不用点）",
+           _sm.has(_sm2, '_cpm.auto_run("启动自动体检")'))
+    finally:
+        CP._state_path, CP._fail_path = _p1, _p2
+        try:
+            import shutil as _sh
+            _sh.rmtree(_tmp, ignore_errors=True)
+        except Exception:                                        # noqa: BLE001
+            pass
+
     print("== 兼容性指纹判据：%d 通过 / %d 失败 ==" % (PASS[0], FAIL[0]))
     return 0 if FAIL[0] == 0 else 1
 

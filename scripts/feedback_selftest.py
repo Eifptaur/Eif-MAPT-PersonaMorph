@@ -558,17 +558,42 @@ finally:
             pass
     _shutil.rmtree(_mdir, ignore_errors=True)
 
-print("\n── J. 常驻公告：有问题就去反馈（2026-09-17 用户：「可以挂个常驻公告，说明有问题就点击导航栏的『反馈』，把问题进行反馈，最好是附上报告或者截图」）──")
+print("\n── J. 常驻公告 + 「不用你测」（2026-09-17 挂公告；**2026-09-22 改口径**：作者原话\n"
+      "     「**我更想让用户不用测这测那的就能搞好**」⇒ 以前公告让人附「检验报告」，现在不要求了）──")
 _ji = _ui2.find('id="noticeBar"')
 ok("界面上有常驻公告条 #noticeBar", _ji > 0, "")
-_jseg = _ui2[_ji:_ji + 520] if _ji > 0 else ""
+_jseg = _ui2[_ji:_ji + 620] if _ji > 0 else ""
 ok("公告是**常驻**的（不带 display:none，跟「只在有事时出现」的更新条区分开）",
    bool(_jseg) and "display:none" not in _jseg, _jseg[:56].replace("\n", " "))
-ok("公告点名要附截图或检验报告（用户原话里的两个词都在）",
-   "截图" in _jseg and "检验报告" in _jseg, _jseg[:56].replace("\n", " "))
+ok("公告写明「不用你跑任何检查」（新口径：数据产品自己带，不再要用户交报告）",
+   "不用你跑任何检查" in _jseg, _jseg[:56].replace("\n", " "))
 ok("公告里就有一个「去反馈」按钮（不用用户自己找入口）", "去反馈" in _jseg, "")
 ok("「去反馈」复用导航那一项切面板（不另写一套切面板逻辑）",
    "querySelector('#nav a[href=\"#sec-feedback\"]')" in _ui2, "")
+_ji2 = _ui2.find('id="sec-feedback"')
+_jseg2 = _ui2[_ji2:_ji2 + 1800] if _ji2 > 0 else ""
+ok("反馈栏写明**自动带上**兼容性摘要（用户什么都不用跑）",
+   ("自动带上" in _jseg2) and ("兼容性摘要" in _jseg2), _jseg2[:70].replace("\n", " "))
+ok("反馈栏把**脱敏边界**写在用户看得见的地方（无群名/昵称/路径/聊天内容 + 给关掉的键）",
+   ("群名" in _jseg2) and ("attach_compat" in _jseg2), "")
+ok("症状检验器那段改成「不用你点它」（留着是给自己想看的时候点）",
+   "不用你点它" in _ui2, "")
+
+print("\n── K. 兼容性摘要**原样进邮件正文**（不 JSON 转义）+ 缺了也不影响提交 ──")
+_cp_txt = "—— 兼容性（产品自己记的，不用你跑任何检查）——\n系统: Windows 11 build 1 · 轴值:\n  [DPI] 150%"
+_out = FB.compose({"kind": "问题", "at_h": "2026-09-22 20:00:00", "ver": "2.1.64",
+                   "text": "发不出去", "env": {"wechat": "已连接", "compat": _cp_txt}})
+ok("K1 兼容性那段在正文里**逐字**出现（换行没被转义成 \\n）",
+   _cp_txt in _out, _out[-160:].replace("\n", "|"))
+ok("K2 同一次里 env 的其它字段照旧是 JSON（没把整块 env 都改成裸文本）",
+   _out.find('"wechat": "已连接"') >= 0, _out[-160:].replace("\n", "|"))
+_cp_absent = FB.compose({"kind": "问题", "at_h": "x", "ver": "1", "text": "只有正文", "env": {"wechat": "y"}})
+ok("K3 env 里**没有** compat（关掉开关/取不到）时，正文照样成文、不报错",
+   ("只有正文" in _cp_absent) and ("兼容性（产品自己记的" not in _cp_absent),
+   _cp_absent[:60].replace("\n", "|"))
+_cfgsrc = io.open(os.path.join(ROOT, "agent", "config.py"), encoding="utf-8").read()
+ok("K4 自动带上这件事是**可关**的（配置键 `feedback.attach_compat` 默认 True）",
+   _cfgsrc.find('"attach_compat": True') >= 0, "")
 
 print("")
 print("反馈栏判据：%d 通过 / %d 失败" % (PASS, FAIL))

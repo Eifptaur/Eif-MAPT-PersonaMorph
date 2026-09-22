@@ -426,6 +426,7 @@
  },
  "feedback": {
   "enabled": true,
+  "attach_compat": true,
   "to": "",
   "upload_url": "",
   "webhook_url": "",

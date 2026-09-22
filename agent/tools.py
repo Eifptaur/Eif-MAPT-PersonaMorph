@@ -1693,7 +1693,14 @@ def execute_tool(defs: list, ctx, name: str, args_json: str):
     try:
         if isinstance(res, dict) and res.get("is_error"):
             from . import reason_codes as _rc
-            res.setdefault("code", _rc.classify(res.get("content") or ""))
+            _code = _rc.classify(res.get("content") or "")
+            res.setdefault("code", _code)
+            # ⛔ 2026-09-22 加（作者口径「**我更想让用户不用测这测那的就能搞好**」）：
+            #   失败**顺手记一笔**（只记 原因码 + 调用点 + 时间，**不记参数、不记消息内容**），
+            #   用户点「反馈」时这份记录自动带上 ⇒ 他不用复现、不用跑检验器、不用翻日志。
+            #   这里同样是**唯一分发点**（内置与自定义工具全覆盖）。
+            from . import compat as _cp
+            _cp.note_failure(_code, name)
     except Exception:
         pass
     # ⚠️ 「借来的窗口用完就还」的**操作边界**（2026-09-15 跨机 P16①）：这一层是**所有工具调用的

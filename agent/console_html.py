@@ -555,7 +555,7 @@ th{color:var(--tx2);font-weight:500}
 <!-- 常驻公告（2026-09-17 用户：「可以挂个常驻公告，说明有问题就点击导航栏的『反馈』，把问题进行反馈，最好是附上报告或者截图」）
      ⇒ 不做弹窗、不自动消失：它就一直在那儿；点「去反馈」直接切到反馈栏。 -->
 <div id="noticeBar" class="updbar notice">
-  <span id="noticeText">遇到问题就点左边导航的「反馈」提交一下——能附上截图或「检验报告」的话，我定位得快得多。</span>
+  <span id="noticeText">遇到问题就点「反馈」提交一下 —— <b>不用你跑任何检查</b>：这台机器的兼容性信息（系统/缩放/微信版本/最近失败）它自己会带上。</span>
   <span class="sp"></span>
   <button id="noticeGo" class="ghost">去反馈</button>
 </div>
@@ -799,8 +799,9 @@ th{color:var(--tx2);font-weight:500}
         <button id="codeCheckDeps" class="ghost" title="额外跑依赖版本详细核对（55 项，稍慢）">代码检测＋依赖核对</button>
         <button class="ghost" id="codeCheckTip2" title="点击切换到概览查看常驻状态条" onclick="document.getElementById('sec-overview').scrollIntoView({behavior:'smooth'})">查看进度条</button>
       </div>
-      <div class="desc" style="margin-top:12px"><b>症状检验器</b>：哪方面有问题就点哪一个，
-      <b>只读检查</b>（不动窗口、不发消息、不改配置），下面出一段能直接粘进「反馈」的报告。</div>
+      <div class="desc" style="margin-top:12px"><b>症状检验器</b>：<b>不用你点它</b> —— 出问题时产品自己会把这些
+      （原因码 + 调用点 + 兼容性摘要）记进本机记录，你点一下「反馈」就一起带走了。这里留着是给<b>你自己想看</b>的时候点的：
+      <b>只读检查</b>（不动窗口、不发消息、不改配置），点完下面出一段可直接粘贴的报告。</div>
       <div class="desc">怎么看报告（<b>判决分四档</b>）：<b>通过</b> · <b>卡住</b>（证据说就是它）·
       <b>部分通过</b>（有项目<b>没测到</b>）· <b>没测到</b>（这一格这次验不了：不算通过也不算失败 ——
       别把它当「没问题」）。逐项前头那个符号就是这四档：<b>勾＝通过 · 叉＝卡住 · 半圆＝部分通过 · 空心圆＝没测到</b>。
@@ -1998,7 +1999,10 @@ th{color:var(--tx2);font-weight:500}
     <section id="sec-feedback" class="card" data-sec>
       <h2>反馈</h2>
       <div class="desc">有什么想说的、想让它变成什么样的，写在这儿点提交就行。</div>
-      <div class="desc" style="margin-top:-2px"><b>有问题一定要反馈 —— 每一次反馈都会让体验变得更好。</b>你遇到的那一下，往往就是它最该改的地方；顺手带上截图或「检验报告」，我定位得快得多。</div>
+      <div class="desc" style="margin-top:-2px"><b>有问题一定要反馈 —— 每一次反馈都会让体验变得更好。</b>你遇到的那一下，往往就是它最该改的地方。
+      <b>不用你先跑任何检查</b>：提交时会自动带上这台机器的兼容性摘要（系统/缩放/微信版本/库页模式/最近的失败原因码），
+      你只要把「你做了什么、看到什么」写清楚就行。想附截图也可以（选填）。</div>
+      <div class="hint">自动带的内容里<b>没有</b>群名、昵称、文件路径与聊天内容；想不带就改配置 <code>feedback.attach_compat = false</code>。</div>
       <div class="hint" id="fbWarn" style="display:none;color:var(--warn)"></div>
       <div class="row"><label>类型</label><div class="grow"><select id="fbKind">
         <option value="问题">问题（有东西坏了 / 不对）</option>
@@ -3590,7 +3594,7 @@ async function loadStatus(){  try{
       if(wd){ renderWechatDir(wd); }
       const dh = $('depHint');
       if(dh){
-        dh.textContent = s.dep_ok ? '版本体检：匹配（微信/适配层/依赖均符合要求）' : '注意：版本体检：存在不匹配（重启时自动弹窗询问修正，或运行 检查微信版本.bat --update）';
+        dh.textContent = s.dep_ok ? '版本体检：匹配（微信/适配层/依赖均符合要求）' : '注意：版本体检：存在不匹配（点上方「升级适配层」即可 —— 产品在后台自己装，不用你跑任何东西）';
         dh.style.color = s.dep_ok ? 'var(--ok-tx)' : 'var(--err-tx)';
       }
     }catch(e){}
@@ -6914,7 +6918,7 @@ async function probeWechatDir(){
   };
   const allowBtn = document.getElementById('vmAllow');
   const _allowSend = async ()=>{
-    try{ await getJSON('/api/version/allow'); toast('已放行（只对本次运行有效）：发送会按未验证版本对继续，出问题请到「检查微信版本」升级适配层'); loadStatus(); }
+    try{ await getJSON('/api/version/allow'); toast('已放行（只对本次运行有效）：发送会按未验证版本对继续，出问题就在「版本」面板点「升级适配层」（产品后台自己装）'); loadStatus(); }
     catch(e){ toast('放行失败：' + e.message); }
   };
   if(allowBtn) allowBtn.onclick = _allowSend;

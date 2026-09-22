@@ -338,6 +338,13 @@ def decide(decision_id: str, choice: str, note: str = "",
     from . import version_matrix as vm
     item = pd.resolve(decision_id, choice, note=note, p=decisions_path)
     act = pd.apply_choice(item)
+    # ⛔ 2026-09-22：`cmd` **只由这里（`action_cmd` 唯一实现）填** —— 原来 `pending_decisions`
+    #   自己硬写了一句「跑根目录那个版本检查 bat」，而那个文件包里不存在（死指引）。
+    #   `pending_decisions` 那边已改成留空，命令一律在这里按真实路径生成。
+    try:
+        act["cmd"] = action_cmd(str(item.get("choice") or "")) or act.get("cmd") or ""
+    except Exception:                                            # noqa: BLE001
+        pass
     w = str(item.get("wechat") or wechat or "unknown")
     a = str(item.get("adapter") or adapter or vm.adapter_version())
     try:

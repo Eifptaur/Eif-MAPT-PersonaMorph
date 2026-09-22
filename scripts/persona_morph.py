@@ -3106,6 +3106,21 @@ def main():
                             g["name"], str(_why0)[:120])
     listener_watermark.flush_checked(wm, log=log, why="启动时把各群起点写盘")
     log.info("监听水位已载入：%s（重启不丢、不重放；账号维=%s）", _wm_path, wm.account or "（认不出账号⇒沿用老键名）")
+    # ⛔ 2026-09-22 加（作者口径「**我更想让用户不用测这测那的就能搞好**」）：启动时**产品自己**采一次
+    #   兼容性体检（11 条轴的行为断言，全部只读、不碰微信进程、不动窗口），落 `data/compat_last.json`
+    #   ⇒ 以后用户点「反馈」时这份东西自动带上，他不用跑体检、不用点检验器、不用找报告文件。
+    #   放后台线程：`smoke()` 里有一条要真起一次回环监听，不许拖慢启动。半小时内有记录就自动跳过。
+    try:
+        def _compat_boot():
+            try:
+                from agent import compat as _cpm
+                _r = _cpm.auto_run("启动自动体检")
+                log.info("兼容性自动体检：%s", _r.get("summary") or _r.get("why") or _r)
+            except Exception as _e:                              # noqa: BLE001
+                log.warning("兼容性自动体检跳过（不影响运行）：%s", _e)
+        threading.Thread(target=_compat_boot, daemon=True, name="compat-boot").start()
+    except Exception as _e:                                      # noqa: BLE001
+        log.warning("兼容性自动体检线程没起起来（不影响运行）：%s", _e)
     _rd_last = {}          # wxid -> 上次"读不到"告警时间（限频 60 秒，别刷屏）
 
     def _warn_rl(wxid, msg):
