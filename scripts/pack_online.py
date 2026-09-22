@@ -87,6 +87,11 @@ ALLOW = (
     # 临时目录里的假 `xwechat_files/db_storage`）验"有界深扫能不能找到嵌套的自定义数据目录"
     # ⇒ 合成夹具、不含任何真实账号 ⇒ 显式放行并写明理由。
     ("scripts/db_discovery_selftest.py", "微信账号/数据"),
+    # 同上：`compat_selftest` 的 F8 **反向锚**往状态文件里塞「群名 + 用户目录」，用来断言
+    # `compat.attach_text()` 会把它们脱敏掉；那条 `C:\Users\某个人\Documents\xwechat_files`
+    # 是**故意造的假路径**（连用户名都是占位词「某个人」），不是任何真实用户的目录
+    # ⇒ 合成夹具 ⇒ 显式放行并写明理由（2026-09-22 v2.1.64 出包时被这道闸拦下，按规矩办）。
+    ("scripts/compat_selftest.py", "Windows 绝对路径"),
 )
 
 SKIP_BIN = re.compile(r"\.(png|jpe?g|gif|ico|woff2?|ttf|mp4|zip|db|sqlite3?)$", re.I)
@@ -235,7 +240,13 @@ def main():
             "whale-widget/LICENSE-原版.txt"]
     missing = [n for n in need if n not in rel_names]
     outside = [n for n in names if not n.startswith(ZIP_TOP + "/")]
-    if bad_state or bad_trace or missing or outside:
+    # ③ **依赖与运行期数据不随版本变**（2026-09-22 立约；来源＝`research\更新机制-增量与实际做法.md` §五 4）：
+    #    包里不许有 `runtime/`（便携 Python 与用户装好的依赖）、`data/`、`config.json`。
+    #    以前这是"包里碰巧没有"（靠排除），现在**写成断言**——改一次打包规则就不会悄悄把
+    #    用户装好的依赖覆盖掉（那正是用户抱怨"更新完又装一遍"的来源）。
+    forbidden = sorted(n for n in rel_names
+                       if n == "config.json" or n.startswith(("runtime/", "data/")))
+    if bad_state or bad_trace or missing or outside or forbidden:
         print("❌ 出厂初始状态断言未过 ⇒ 拒绝出包（exit 4）：")
         if bad_state:
             print("   · 含运行期数据：%s" % bad_state[:8])
@@ -245,6 +256,8 @@ def main():
             print("   · 缺必需文件：%s" % missing)
         if outside:
             print("   · 有文件不在顶层目录下：%s" % outside[:5])
+        if forbidden:
+            print("   · 含不该随包分发的运行时/数据（依赖要留在用户机器上）：%s" % forbidden[:8])
         return 4
     print(f"✅ 出包：{out}  {len(files)} 文件 / {size:.2f} MB  （注意项 {warn_total} 条，非致命）")
     print(f"   解压后顶层目录：{ZIP_TOP}/（用户看到的就是这个名字）")

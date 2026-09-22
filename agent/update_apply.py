@@ -21,8 +21,11 @@
 """
 import hashlib
 import json
+import logging
 import os
 import shutil
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -30,10 +33,16 @@ import urllib.parse
 import urllib.request
 import zipfile
 
+log = logging.getLogger(__name__)
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # 本体更新**一律不碰**的东西（在线包里也没有它们，这里是第二道闸）
-NEVER_TOUCH = ("data/", "config.json", "logs/", "wechatauto_logs/", "报告/", "_scratch/", "offline/")
+NEVER_TOUCH = ("data/", "config.json", "logs/", "wechatauto_logs/", "报告/", "_scratch/", "offline/",
+               # ⛔ 2026-09-22：`runtime/` 原来**只靠"包里恰好没有"**（不是契约）⇒ 改一次打包规则
+               #   就可能把用户装好的依赖覆盖掉（用户抱怨的"更新完又装一遍"就是这一类）。
+               #    来源＝`research\更新机制-增量与实际做法.md` §五 4（Velopack 同口径：程序目录只放程序）。
+               "runtime/")
 # 编译缓存不换（换它没意义，还可能被占用）
 SKIP_REL = ("__pycache__/",)
 UA = "persona-morph-update/1"
@@ -731,6 +740,13 @@ def _relaunch_after_update(version: str = "") -> None:
       · 而"已经装上坏代码"的机器，**没法靠进程内代码自救** —— 唯一可靠的是**用磁盘上的新代码**接手。
     ⇒ 所以更新这条链**不依赖旧的进程内重启**：直接 spawn 新看门狗（新文件、带 `--takeover`，
       它自己收旧看门狗 + 清实例证据 + 开机器人），然后本进程 `os._exit(0)`。
+
+    ⛔ **2026-09-22 修掉的一个 P0（对标调研顺带实测出来的，作者问「这个更新是否真的起效」时定的案）**：
+      这个模块原来**只 import 到 `zipfile`**（没有 `sys` / `subprocess` / `log`），而下面用的是
+      `sys.executable` 与 `subprocess.Popen` ⇒ 两个 `NameError` 被 `except Exception: pass` 吞掉，
+      随后**照旧 `os._exit(0)`** ⇒ 现象就是"更新装好了、没人接替、机器人被自己杀掉、控制台变无法访问"
+      （作者 2026-09-18 报的那次，根因一直以为是收尾策略，其实是这两行 import 缺失）。
+      现在的纪律：**拉不起新看门狗就不许退场**——把原因报到作业状态上（控制台还在，用户看得见、点得动）。
     """
     try:
         import json as _json
@@ -753,8 +769,16 @@ def _relaunch_after_update(version: str = "") -> None:
         subprocess.Popen([exe, os.path.join(ROOT, "scripts", "watchdog.py"), "--takeover", "--delay=3"],
                          cwd=ROOT, creationflags=flags, stdin=subprocess.DEVNULL,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception:
-        pass
+    except Exception as e:
+        # ⛔ 不许再 `pass` 后照旧退场：那等于"更新装完就把机器人杀了、还没人接替"
+        try:
+            _set(state="error", phase="handoff",
+                 why="更新已装好，但没能拉起新的看门狗：%s —— 请点「重启」，或重新打开一键启动"
+                     % (str(e)[:120] or type(e).__name__))
+        except Exception:
+            pass
+        log.warning("更新后接管失败（本进程不退场，避免没人接替）：%s", e)
+        return
     try:
         import time as _t2
         _t2.sleep(0.4)                        # 让 spawn 落地（Popen 已返回，这里只是给文件系统一点时间）

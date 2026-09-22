@@ -30,7 +30,9 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
 STATE_REL = os.path.join("data", "installed.json")
 # 这些是**运行时/用户**文件，不属于本体，更新一律不碰（也不参与组合校验）
-NEVER_TOUCH = ("data/", "config.json", "logs/", "wechatauto_logs/", "报告/")
+# ⛔ 2026-09-22 加 `runtime/`：依赖（便携 Python + 用户装好的包）必须留在用户机器上，
+#   以前只靠"增量包里恰好没有"，现在是契约（与 `agent/update_apply.py` 的 NEVER_TOUCH 同口径）。
+NEVER_TOUCH = ("data/", "config.json", "logs/", "wechatauto_logs/", "报告/", "runtime/")
 
 
 def sha256_file(p):
