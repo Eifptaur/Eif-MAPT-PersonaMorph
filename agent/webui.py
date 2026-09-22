@@ -820,6 +820,43 @@ class WebUI:
                 except Exception as e:                                   # noqa: BLE001
                     self._json({"ok": False, "error": str(e)}, 500)
 
+            def _briefs_api(self, data, method="GET"):
+                """预设信息：**按会话**提前设定的背景事实（读/增/删/清到期）。
+
+                GET `?chat=<key>` ⇒ 本会话的条目（**只读本会话**）；不带 chat ⇒ 只给"哪些会话设过 + 计数"。
+                POST `{action: add|del|prune, chat, text?, until?, always?, id?}`。
+                两条链共用这一份实现（V-R15-1：只注册在一条链里 = 另一条方法静默 404）。
+                文案与代价（会随该会话的请求发给模型；相关判断是字面匹配）写在控制台面板那一行。
+                """
+                try:
+                    from . import briefs as _br
+                except Exception as e:                                   # noqa: BLE001
+                    return self._json({"ok": False, "error": "预设信息模块不可用：%s" % e})
+                _d = data if isinstance(data, dict) else {}
+                if str(method).upper() == "GET":
+                    chat = str(_d.get("chat") or "").strip()
+                    if not chat:
+                        return self._json({"ok": True, "chats": _br.all_counts()})
+                    d = _br.list_for(chat)
+                    d["error"] = ""
+                    return self._json(d)
+                act = str(_d.get("action") or "").strip()
+                chat = str(_d.get("chat") or "").strip()
+                if act == "add":
+                    r = _br.add(chat, _d.get("text"), _d.get("until"), bool(_d.get("always")))
+                elif act == "del":
+                    r = _br.remove(chat, _d.get("id"))
+                elif act == "prune":
+                    r = {"ok": True, "dropped": _br.prune(chat or None)}
+                else:
+                    r = {"ok": False, "why": "未知动作：%s（只支持 add / del / prune）" % (act or "（空）")}
+                try:
+                    if r.get("ok") and act in ("add", "del", "prune"):
+                        r["list"] = _br.list_for(chat)
+                except Exception:
+                    pass
+                return self._json(r)
+
             def _personas_favs(self):
                 """人设星标集合（读）。⛔ V-R15-1：前端用 **GET** 读它，而实现原先只在 POST 链里
                 ⇒ 每次都 404，而前端那处是 `try{…}catch(e){}` **静默失败** ⇒ 星标在面板上
@@ -1193,6 +1230,10 @@ class WebUI:
                 elif path in ("/api/file_search/add", "/api/file_search/del"):
                     # 管理"可搜目录"（面板上加入/移除）—— V-R15-1：与 POST 链共用 `_file_search_dirs`
                     self._file_search_dirs(data, path, parsed.query)
+                elif path == "/api/briefs":
+                    # 预设信息（**读**）—— 前端用 GET 读，与 POST 链共用 `_briefs_api`（V-R15-1 的教训：
+                    # 同一能力只注册在一条链里、前端用另一条方法时就是静默 404）
+                    self._briefs_api(data, "GET")
                 elif path == "/api/tools/new_manifest":
                     self._tools_new_manifest()
                 elif path == "/api/tools/reload":
@@ -2751,6 +2792,9 @@ class WebUI:
                 elif path == "/api/personas/favs":
                     # 人设星标集合 —— V-R15-1：前端用 GET 读，与 POST 链共用 `_personas_favs`
                     self._personas_favs()
+                elif path == "/api/briefs":
+                    # 预设信息（**增删**）—— 与 GET 链共用 `_briefs_api`
+                    self._briefs_api(data, "POST")
                 elif path == "/api/personas/fav":
                     # 设/取消星标（POST {key, fav}）
                     try:
