@@ -86,15 +86,26 @@ def main():
     src = open(WEBUI, encoding="utf-8").read()
     tree = ast.parse(src)
     _a, _l, _n = _rule(tree, "do_GET", "data")
-    ok("① `do_GET` 里确实在读 `data`（说明这条判据扫的是真现场，不是空转）", _n >= 3, "读了 %d 次" % _n)
+    # ⛔ 2026-09-22（Phase B）：GET 的分支体已搬成 `_r_*` 方法（读 `data` 的代码跟着过去了）
+    #   ⇒ 数"真在读 data"要把**路由表里那些提供 GET 的方法**一并算上，否则这条锚变成假红。
+    try:
+        from agent.routes import HANDLERS as _HH
+        for _hm in {v for row in _HH.values() for k, v in row.items() if k == "GET"}:
+            try:
+                _n += _rule(tree, _hm, "data")[2]
+            except Exception:                                    # noqa: BLE001
+                pass
+    except Exception:                                            # noqa: BLE001
+        pass
+    ok("① GET 侧（do_GET 与路由表里的方法）确实在读 `data`（说明这条判据扫的是真现场，不是空转）", _n >= 3, "读了 %d 次" % _n)
     ok("② `do_GET` 里第一次读 `data` 之前**必须先赋值**（否则 NameError 被 except 吞成 ok:false）",
        _a is not None and _l is not None and _a < _l, "赋值 L%s / 首读 L%s" % (_a, _l))
     _seg = src[src.find("def do_GET(self):"):]
     _seg = _seg[:_seg.find("def do_POST(self):")]
     ok("③ `data` 来自**查询串**（GET 没有请求体；`?dir=…&allow_online=1` 这类调用照样能用）",
        "parse_qs(parsed.query)" in _seg)
-    ok("④ 开关真值走 `_truthy`（`bool(\"false\")` 是 True ⇒ 会反向打开开关）",
-       "def _truthy(" in src and "_truthy(data.get(" in _seg)
+    ok("④ 开关真值走 `_truthy`（`bool(\"false\")` 是 True ⇒ 会反向打开开关）—— 2026-09-22 跟着搬过去的方法找",
+       "def _truthy(" in src and "_truthy(data.get(" in src)
     ok("④ `_truthy` 把 \"false\"/\"0\"/\"off\"/\"no\"/空串都判假",
        all(k in src[src.find("def _truthy("):][:600] for k in ('"false"', '"0"', '"off"', '"no"', '""')))
     # ⛔ V-R4-13：真值表**只能有一处实现** —— webui 这层只多"保留 None"

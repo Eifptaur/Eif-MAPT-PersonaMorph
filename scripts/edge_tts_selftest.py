@@ -200,8 +200,14 @@ ok("反证：models 段报的档不是靠猜——与 voice_models.status() 一�
 # ── G. 试听按钮与出网披露（加第三档时一并收口的两处真缺陷） ───────────────────
 sect("G. 试听要跟着档走 + 出网如实披露")
 WU = open(os.path.join("agent", "webui.py"), encoding="utf-8").read()
-_i = WU.find('elif path == "/api/tts/test"')
-_seg = WU[_i:_i + 1800] if _i > 0 else ""
+# ⛔ 2026-09-22（Phase B）：这条路由的分支体已搬成 `_rapi_tts_test`（`agent/routes.py` 里登记）
+#   ⇒ 段落要从**方法**取；没搬时才回退旧日的 `elif`。
+_i = WU.find("def _rapi_tts_test(")
+if _i > 0:
+    _seg = WU[_i:_i + 1800]
+else:
+    _i = WU.find('elif path == "/api/tts/test"')
+    _seg = WU[_i:_i + 1800] if _i > 0 else ""
 ok("后端有 /api/tts/test 路由", bool(_seg))
 ok("试听走 voice_models.make（跟着当前档），不走 tts.make",
    "_vm.make(txt)" in _seg and "_tt.make(txt)" not in _seg)

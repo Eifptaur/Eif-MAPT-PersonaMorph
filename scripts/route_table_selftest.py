@@ -107,8 +107,19 @@ def code_routes():
                         out.setdefault(p, set()).add(method)
                 elif test is not None:
                     seg = re.sub(r"\s+", " ", ast.get_source_segment(SRC, test) or "")
-                    if seg and not seg.startswith("path.startswith(\"/assets"):
+                    if seg and not seg.startswith("path.startswith(\"/assets") \
+                            and "_dispatch(" not in seg:
                         npatt += 1
+    # ⛔ 2026-09-22（Phase B 第一批）：已搬到路由表的那些路径**不在链里了** ⇒
+    #   "能不能应答"要算上 `agent/routes.py::HANDLERS`；另外 `elif self._dispatch(...)` 那一支
+    #   是**搬迁本身**留下的，不算"非字面路由分支"。
+    try:
+        from agent.routes import HANDLERS as _H
+    except Exception:                                            # noqa: BLE001
+        _H = {}
+    for _p2, _row in _H.items():
+        for _m2 in _row:
+            out.setdefault(_p2, set()).add(str(_m2).upper())
     return out, npatt
 
 
@@ -176,7 +187,8 @@ ok("D2 两条链都接的路由在表里也能看出来（方法超过一个）"
                 sum(1 for v in CODE.values() if len(v) > 1)))
 _src_routes = io.open(os.path.join(ROOT, "agent", "routes.py"), encoding="utf-8").read()
 ok("D3 Phase B（物理合并）的三个机械陷阱写进了表文件的备注（不然下一批会重新踩）",
-   _sm.has(_src_routes, "body[-1].end_lineno") and _sm.has(_src_routes, "Handler 类的体内"))
+   _sm.has(_src_routes, "body[-1].end_lineno") and _sm.has(_src_routes, "Handler") \
+   and _sm.has(_src_routes, "类体内") and _sm.has(_src_routes, "插入下标"))
 
 print("== 路由表判据：%d 通过 / %d 失败 ==" % (PASS[0], FAIL[0]))
 sys.exit(1 if FAIL[0] else 0)

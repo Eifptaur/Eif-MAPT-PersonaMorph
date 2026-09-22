@@ -1,21 +1,22 @@
 # -*- coding: utf-8 -*-
-"""**唯一路由表**：每个 `/api/…` 路径允许哪些 HTTP 方法（`agent/webui.py` 里两条分派链的**声明**）。
+"""**唯一路由表**（声明）+ **已搬成方法的那部分**（`HANDLERS`）。
 
-**为什么要它**（对标 CowAgent，2026-09-22 第 ④ 项）：`webui.py` 有 `do_GET` / `_handle_body_request`
-**两条互相独立的分派链**——同一个能力只注册在一条链里、而前端用另一个方法调，就会静默 404
-（第十二轮 `/api/archive`、第十五轮 7 处，都是这个形状）。CowAgent 靠「结构上只有一张路由表」
-让这类错误不存在。
+`agent/webui.py` 原来有 `do_GET` / `_handle_body_request` **两条互相独立的分派链**
+（共 145 个分支）—— 同一个能力只注册在一条链里、而前端用另一个方法调，
+就会静默 404（第十二轮 `/api/archive`、第十五轮 7 处都是这个形状）。
+CowAgent 靠「结构上只有一张路由表」让这类错误不存在。
 
-**本表的地位（Phase A）**：它是**声明 + 对账**用的唯一清单，代码暂时仍是那两条链
-（物理合并＝Phase B，见文末备注）。`scripts/route_table_selftest.py` 双向锁死：
-表 == 代码（表里不许有代码没有的路由、代码里也不许有表外的路由），所以**加一条路由必须同时进本表**。
+两层结构（分批搬迁期间并存）：
+  · `ROUTES`：**声明**——每个路径允许哪些方法（全量 103 条，由 Phase A 定下来）；
+  · `HANDLERS`：**已物理搬过去的**：`路径 → {方法: Handler 上的函数名}`；
+    `webui.py::Handler._dispatch` 只认这里成对存在的 (路径, 方法)，命中就调用；
+    没搬的照旧走原来那条 `if/elif` 链（行为一个字不变）。
 
-格式：`ROUTES[路径] = (允许的方法…)`；`PATTERNS` 是**非字面**分支（`path in (…, endswith…)` 那种），
-无法按路径枚举，登记条件原文以便人工核对。
+`scripts/route_table_selftest.py` 双向对账：声明 ↔（链里的字面分支 ＋ `HANDLERS`）；
+并且**同一条路由不许两处都接**（链里还有分支就不该在 HANDLERS 里）。
 """
 
-
-#: 路径 → 允许的方法（GET / POST / PUT 都算 POST 链）
+#: 路径 → 允许的方法（声明）
 ROUTES = {
     "/": ("GET",),
     "/api/archive": ("GET", "POST"),
@@ -122,8 +123,143 @@ ROUTES = {
     "/index.html": ("GET",),
 }
 
-#: 两条链里**非字面**的分支（条件原文）：这些路径没法按字符串枚举，
-#: 但它们也在表外 ⇒ 判据只要求「字面路径」两边一致。
+#: 已搬成 Handler 方法的：路径 → {方法: 函数名}
+HANDLERS = {
+    "/api/archive": {
+        "GET": "_rapi_archive",
+    },
+    "/api/balance": {
+        "GET": "_rapi_balance",
+    },
+    "/api/briefs": {
+        "GET": "_rapi_briefs",
+    },
+    "/api/config": {
+        "GET": "_rapi_config",
+    },
+    "/api/emojis": {
+        "GET": "_rapi_emojis",
+    },
+    "/api/feedback": {
+        "GET": "_rapi_feedback",
+    },
+    "/api/file_search/add": {
+        "GET": "_rapi_file_search_add",
+    },
+    "/api/file_search/del": {
+        "GET": "_rapi_file_search_add",
+    },
+    "/api/image_gen/local": {
+        "GET": "_rapi_image_gen_local",
+    },
+    "/api/image_gen/local/install": {
+        "GET": "_rapi_image_gen_local_install",
+    },
+    "/api/image_gen/local/progress": {
+        "GET": "_rapi_image_gen_local_progress",
+    },
+    "/api/image_gen/local/start": {
+        "GET": "_rapi_image_gen_local_start",
+    },
+    "/api/image_gen/local/stop": {
+        "GET": "_rapi_image_gen_local_stop",
+    },
+    "/api/image_gen/test": {
+        "GET": "_rapi_image_gen_test",
+    },
+    "/api/local-models": {
+        "GET": "_rapi_local_models",
+    },
+    "/api/logs": {
+        "GET": "_rapi_logs",
+    },
+    "/api/memory": {
+        "GET": "_rapi_memory",
+    },
+    "/api/open-path": {
+        "GET": "_rapi_open_path",
+    },
+    "/api/persona/cats": {
+        "GET": "_rapi_persona_cats",
+    },
+    "/api/personas": {
+        "GET": "_rapi_personas",
+    },
+    "/api/personas/custom": {
+        "GET": "_rapi_personas_custom",
+    },
+    "/api/personas/favs": {
+        "GET": "_rapi_personas_favs",
+    },
+    "/api/personas/scores": {
+        "GET": "_rapi_personas_scores",
+    },
+    "/api/prompt/preview": {
+        "GET": "_rapi_prompt_preview",
+    },
+    "/api/selfcheck-stop": {
+        "GET": "_rapi_selfcheck_stop",
+    },
+    "/api/sessions": {
+        "GET": "_rapi_sessions",
+    },
+    "/api/status": {
+        "GET": "_rapi_status",
+    },
+    "/api/tools/new_manifest": {
+        "GET": "_rapi_tools_new_manifest",
+    },
+    "/api/tools/reload": {
+        "GET": "_rapi_tools_reload",
+    },
+    "/api/tools/toggle": {
+        "GET": "_rapi_tools_toggle",
+    },
+    "/api/tts/test": {
+        "GET": "_rapi_tts_test",
+    },
+    "/api/ui-layout": {
+        "GET": "_rapi_ui_layout",
+    },
+    "/api/ui/recalibrate": {
+        "GET": "_rapi_ui_recalibrate",
+    },
+    "/api/ui_fingerprint/forget": {
+        "GET": "_rapi_ui_fingerprint_forget",
+    },
+    "/api/ui_fingerprint/take": {
+        "GET": "_rapi_ui_fingerprint_take",
+    },
+    "/api/verifiers": {
+        "GET": "_rapi_verifiers",
+    },
+    "/api/verify": {
+        "GET": "_rapi_verify",
+    },
+    "/api/version/allow": {
+        "GET": "_rapi_version_allow",
+    },
+    "/api/voice/probe": {
+        "GET": "_rapi_voice_probe",
+    },
+    "/api/voice/test": {
+        "GET": "_rapi_voice_test",
+    },
+    "/api/voice/vc-probe": {
+        "GET": "_rapi_voice_vc_probe",
+    },
+    "/api/wechat-groups": {
+        "GET": "_rapi_wechat_groups",
+    },
+    "/api/wechat/dir": {
+        "GET": "_rapi_wechat_dir",
+    },
+    "/api/wechat/recheck": {
+        "GET": "_rapi_wechat_recheck",
+    },
+}
+
+#: 两条链里**非字面**的分支（条件原文）：这些路径没法按字符串枚举。
 PATTERNS = [
     'path.startswith("/wallpaper/")',
     'not self._auth_ok()',
@@ -134,11 +270,12 @@ PATTERNS = [
     'length < 0 or length > _MAX_BODY',
 ]
 
-# ── Phase B 备注（物理合并那一步的三个机械陷阱，2026-09-22 试过一版并回退）──────────
-#   ① 分支体的结束行要用 **`body[-1].end_lineno`**，不能用 `If.end_lineno`（后者把 `orelse`
-#      也算进去 ⇒ 最后一个 `elif` 的删除区间会吞掉链尾那个 `else:`，分派那句插不进去）；
-#   ② 链尾 `else:` 那一行要**连缩进一起匹配**（`else:` 遍地都是，只看 strip 会匹配到前一个
-#      分支里嵌套的 `else:`，而它在删除区间里 ⇒ 同样插不进去）；
-#   ③ 新方法必须插在 **Handler 类的体内**：`class Handler` 不是 `WebUI` 的最后一个成员，
-#      按「最后一个成员的 end_lineno」往后插会插进 `WebUI.stop()` 里（`self._dispatch` 就找不到了）。
-#      正确做法＝插在 Handler 类体最后一行的**之前**，或插到类体末尾并保证缩进 12 空格落在类内。
+# ── Phase B 记账（2026-09-22，第一版试搬时连撞三个机械陷阱，已全部修好）───────────
+#   ① 分支体的删除区间用 **`body[-1].end_lineno`**：`If.end_lineno` 把 `orelse` 也算进去，
+#      最后一个 `elif` 会把链尾那个 `else:` 一起吞掉 ⇒ 分派那句插不进去；
+#   ② 链尾 `else:` 要**连缩进一起匹配**：`else:` 遍地都是，只比 `strip()` 会命中
+#      前一个分支里嵌套的 `else:`（它在删除区间里）；
+#   ③ 新方法必须落在 **Handler 类体内**（`class Handler` 在 `WebUI.__init__` 里、缩进 8）；
+#      而插入下标必须算在**删完之后**的行号上（拿原行号当索引会越界 ⇒
+#      新方法被追加到文件末尾、落进 `WebUI.stop()`，`self._dispatch` 就找不到）。
+#   上面三条已写进迁移器 `_scratch\_migrate_get.py` 的自检（落盘前会 assert）。

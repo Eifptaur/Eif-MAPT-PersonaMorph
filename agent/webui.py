@@ -950,564 +950,51 @@ class WebUI:
                     self.wfile.write(body)
                 elif path.startswith("/dsh-whale/"):
                     parent._whale_get(self, path, parsed.query)
-                elif path == "/api/voice/probe":
-                    # ③ 自带模型：连通测试（只真发一次极短文本，**不改任何配置**）
-                    try:
-                        from . import voice_models as _vmod
-                        _q2 = parse_qs(parsed.query)
-                        self._json(dict({"ok": True}, **_vmod.probe((_q2.get("url") or [""])[0])))
-                    except Exception as _e2:
-                        self._json({"ok": False, "error": str(_e2)}, 500)
-                elif path == "/api/voice/vc-probe":
-                    # 变声段（第二段）连通测试：造一段 440Hz 测试音送进去，**不改任何配置**
-                    try:
-                        from . import voice_models as _vmod
-                        _q3 = parse_qs(parsed.query)
-                        self._json(dict({"ok": True}, **_vmod.probe_vc((_q3.get("url") or [""])[0])))
-                    except Exception as _e3:
-                        self._json({"ok": False, "error": str(_e3)}, 500)
-                elif path == "/api/local-models":
-                    # 本机模型端点探测（2026-09-15 任务书 ②）：只探测与展示，**绝不自动启用**——
-                    # 切换 Base URL/模型必须由用户在面板上点（route 只读 discover/test_chat，不写配置）。
-                    try:
-                        from . import local_models as _lm
-                        _q = parse_qs(parsed.query)
-                        if (_q.get("test") or [""])[0] == "1":
-                            self._json(dict({"ok": True}, **_lm.test_chat(
-                                (_q.get("base_url") or [""])[0], (_q.get("model") or [""])[0])))
-                        else:
-                            _found, _meta = _lm.discover()
-                            self._json({"ok": True, "found": _found, "meta": _meta,
-                                        "capability": _lm.CAPABILITY_NOTE})
-                    except Exception as _e:
-                        self._json({"ok": False, "error": str(_e)}, 500)
-                elif path == "/api/verifiers":
-                    # 症状检验器（2026-09-18）：控制台用 GET 取清单（POST 那条链里也留了同样的入口，两条路都能用）
-                    try:
-                        from . import verifiers as _vf
-                        self._json({"ok": True, "verifiers": _vf.catalog()})
-                    except Exception as e:                                   # noqa: BLE001
-                        self._json({"ok": False, "error": str(e)})
-                elif path == "/api/verify":
-                    try:
-                        from urllib.parse import urlparse as _up, parse_qs as _pq
-                        from . import verifiers as _vf
-                        _q = _pq(_up(self.path).query)
-                        # ⛔ 2026-09-21 加（第九轮 V-R9-11 / 第十轮 V-R10-8）：把**运行中实例**的
-                        #   `_db_how` 与 `_cap` 喂给检验器 —— 否则"我读的是不是正在写的那个号"
-                        #   与"哪张表读失败了"（「消息库读不到」那条链的核心）只能判假绿。
-                        try:
-                            _wo = _current_wx(parent)
-                            _vf.set_runtime_how(getattr(_wo, "_db_how", None),
-                                                getattr(_wo, "_cap", None))
-                        except Exception:
-                            pass
-                        self._json(_vf.run(str((_q.get("id") or [""])[0] or "")))
-                    except Exception as e:                                   # noqa: BLE001
-                        self._json({"ok": False, "error": str(e)})
-                elif path == "/api/config":
-                    self._json(parent.masked_config())
-                elif path == "/api/memory":
-                    # 记忆页面：?chat_key= 传群则返回该群成员印象列表
-                    q = parse_qs(parsed.query)
-                    chat_key = (q.get("chat_key") or [""])[0]
-                    try:
-                        self._json(parent.memory_fn("list", chat_key))
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e)})
-                elif path == "/api/sessions":
-                    # 运行明细（思考/token/工具）：?limit=30
-                    q = parse_qs(parsed.query)
-                    try:
-                        self._json({"ok": True, "sessions": parent.sessions_fn(
-                            int((q.get("limit") or ["30"])[0]))})
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e)})
-                elif path == "/api/status":
-                    st = parent.status_provider()
-                    try:
-                        from . import risk as _risk
-                        from . import input_backend as _ib
-                        from . import version_matrix as _vm
-                        from . import dep_heal as _dh
-                        if isinstance(st, dict):
-                            st = dict(st)
-                            st["risk"] = _risk.snapshot()
-                            # 当前输入后端档位（AGENTS §2.1 第 4 条：用了哪一档必须看得见）
-                            st["input"] = _ib.status()
-                            # 后台能力矩阵（⑥ 全后台审计）：每条路径是"全程后台"还是"真鼠标"，
-                            # 单一事实源在 agent/bg_status.py —— 控制台照它显示，不另写一份。
-                            try:
-                                from . import bg_status as _bg
-                                st["bg"] = _bg.status()
-                            except Exception as _be:
-                                st["bg"] = {"paths": [], "error": str(_be)}
-                            # 「我自己是谁」（2026-09-16，已知现象：「无法识别大号用户 / 无法识别我的账号」）：
-                            # `wechat.py` 只从驱动库的 `get_self_info()` 拿自己的账号，**拿不到时那一串
-                            # "这条是不是我发的"判断会静默失效**（会回自己/@ 自己不理）。这里如实暴露：
-                            # `ok=False` ⇒ 控制台**写"没认出来"**，不许装没事。
-                            try:
-                                _wx = None
-                                for _n in ("wechat", "adapter", "wx", "wxadapter", "bot", "worker"):
-                                    _o = getattr(parent, _n, None)
-                                    if _o is not None and hasattr(_o, "self_identity"):
-                                        _wx = _o
-                                        break
-                                st["self"] = (_wx.self_identity() if _wx is not None
-                                              else {"ok": False, "why": "还拿不到微信实例（机器人未启动？）"})
-                            except Exception as _se:
-                                st["self"] = {"ok": False, "why": str(_se)}
-                            # 「我的其他账号（大号）」（2026-09-16 已知现象：「无法识别我的大号」）：
-                            # 登记了几项、昵称有几项**真在群成员里匹配上了**、当前反应档位 —— 摆出来让用户核对。
-                            try:
-                                st["owner"] = (_wx.owner_status() if _wx is not None
-                                               and hasattr(_wx, "owner_status")
-                                               else {"count": 0, "mode": "know", "why": "还拿不到微信实例（机器人未启动？）"})
-                            except Exception as _oe:
-                                st["owner"] = {"count": 0, "mode": "know", "why": str(_oe)}
-                            # 图标指纹表（⑦ 点击正确性）：按 微信版本×尺寸×DPI 存了几条、什么时候取的
-                            try:
-                                from . import ui_fingerprint as _ufp
-                                st["ui_fp"] = _ufp.hits()
-                                st["ui_fp"]["digest"] = _ufp.digest()
-                            except Exception as _fe:
-                                st["ui_fp"] = {"keys": {}, "error": str(_fe)}
-                            # 版本能力矩阵 + 版本门（W7：版本变了要出横幅、按未验证处理）
-                            # ⛔ 2026-09-21 修（第四轮审计 **V-R4-10，P2**）：这两行原来跟其它富化段挤在
-                            #   **同一个大 try** 里，任何别的段抛异常都会把它们**一起丢掉** ⇒ 前端拿到
-                            #   `version/version_gate` 缺失 ⇒ 把"读不到"画成红字
-                            #   「版本未实测：按严格档暂停发送（可在配置里关掉 version_gate.strict）」
-                            #   ⇒ 把用户指去改一个根本没拦他的开关。⇒ 各自单独一层 try，
-                            #   出错就放 **`allow=None`（读不到）**，绝不是 False（不许发）。
-                            from . import version_gate as _vg2
-                            try:
-                                st["version"] = _vm.current()
-                            except Exception as _vme:
-                                st["version"] = {"wechat": "unknown", "adapter": "",
-                                                 "error": str(_vme)[:80]}
-                            try:
-                                st["version_gate"] = _vg2.status()
-                            except Exception as _vge:
-                                st["version_gate"] = {"allow": None, "level": "unknown",
-                                                      "error": str(_vge)[:80]}
-                            # 出站闸门读数（内部故障话术拦截 / 去重窗）——前端横幅要显示，见 console_html
-                            try:
-                                from . import sender as _sd3
-                                st["outbound_gate"] = _sd3.outbound_gate_status()
-                            except Exception as _oe:
-                                st["outbound_gate"] = {"blocked_internal": 0, "error": str(_oe)[:60]}
-                            # 待决单（⑦ 版本不匹配四选一）：门没过就把这件事开成一张单，控制台据此弹模态。
-                            # 开单是幂等的（同一对版本只开一次、问过就不再问），所以这里每次轮询调用是安全的。
-                            try:
-                                from . import pending_decisions as _pd
-                                _pnd = _vg2.pending()
-                                _pit = _pnd.get("item") or {}
-                                st["pending_decisions"] = {
-                                    "open": len(_pd.open_items()),
-                                    "summary": _pd.summary(),
-                                    "needed": bool(_pnd.get("needed")),
-                                    "item": _pit if str(_pit.get("status")) == "open" else None,
-                                }
-                            except Exception as _pe:
-                                st["pending_decisions"] = {"open": 0, "error": str(_pe)}
-                            # 一键动作的后台作业（⑦）：升级适配层 / 更新本体 都是分钟级，
-                            # 起在后台线程里（agent/jobs.py），这里把状态给控制台显示跑到哪、成没成。
-                            try:
-                                from . import jobs as _jobs
-                                st["jobs"] = _jobs.status().get("jobs") or {}
-                            except Exception as _je:
-                                st["jobs"] = {"_error": str(_je)}
-                            # 微信装没装（2026-09-13：没装就带用户去官网，不做静默安装）
-                            try:
-                                from .wechat import wechat_version_info as _wvi
-                                _wi = _wvi() or {}
-                                st["wechat_install"] = _wi.get("install") or {
-                                    "state": _wi.get("state") or "unknown",
-                                    "installed": bool(_wi.get("installed")),
-                                    "detail": _wi.get("detail") or "",
-                                    "official_url": "https://weixin.qq.com/",
-                                    "action": "none"}
-                            except Exception as _e:
-                                st["wechat_install"] = {"state": "unknown", "installed": False,
-                                                        "detail": "检测异常：" + str(_e),
-                                                        "official_url": "https://weixin.qq.com/",
-                                                        "action": "none"}
-                            # 微信数据目录（2026-09-18 用户反馈：「他回我之前自定义的地址里去看文件了」）：
-                            # 这一项报的是**当前实际在读的目录**（不是配置值），还带上"你填的那个为什么
-                            # 没用、现在回落到哪"。控制台「微信数据目录」那一行直接显示它。
-                            try:
-                                from . import wechat_dir as _wdir_s
-                                _wxo = _current_wx(parent)
-                                st["wechat_dir"] = _wdir_s.status(
-                                    how=getattr(_wxo, "_db_how", None) if _wxo is not None else None,
-                                    dir_info=getattr(_wxo, "_db_dir_info", None) if _wxo is not None else None)
-                            except Exception as _wde:
-                                st["wechat_dir"] = {"ok": False, "effective": "", "src": "?",
-                                                    "now": "取不到", "candidates": [],
-                                                    "text": "取不到微信数据目录状态",
-                                                    "note": "取不到微信数据目录状态：%s" % _wde}
-                            # 依赖体检（盯项目运行时的 site-packages，不是当前进程）
-                            st["deps"] = {"summary": _dh.summary_line(),
-                                          "offline_available": _dh.offline_available(),
-                                          "source": _dh.probe_source()}
-                            # 媒体与语音（能力 A/B/C）：引擎链实测状态 + 图库现状 + 转发开关
-                            try:
-                                from . import media_status as _ms
-                                st["media"] = _ms.snapshot()
-                            except Exception as _e2:
-                                st["media"] = {"error": str(_e2)}
-                            # 上云（预留接口）：端点三态 + 是否配了 Token
-                            try:
-                                from . import cloud as _cl2
-                                st["cloud"] = _cl2.snapshot()
-                            except Exception as _e11:
-                                st["cloud"] = {"error": str(_e11)}
-                            # 图/文/视频分流 + 视频读取（第 20 条）
-                            try:
-                                from . import model_routes as _mrt
-                                from . import video_read as _vrd
-                                st["model_routes"] = _mrt.snapshot()
-                                st["video_read"] = _vrd.snapshot()
-                            except Exception as _e10:
-                                st["model_routes"] = {"error": str(_e10)}
-                            # 存档屏蔽（第 10 条）：名单 + 存档里被屏蔽的条数
-                            try:
-                                from . import archive_filter as _af2
-                                st["archive"] = _af2.snapshot(getattr(parent, "store", None))
-                            except Exception as _e9:
-                                st["archive"] = {"error": str(_e9)}
-                            # 计时提醒 + 节假日问候（第 12/13 条）
-                            try:
-                                from . import timers as _tmr
-                                from . import holidays as _hol2
-                                st["timers"] = _tmr.snapshot()
-                                st["holiday"] = _hol2.snapshot()
-                            except Exception as _e8:
-                                st["timers"] = {"error": str(_e8)}
-                            # 响应等级三件（第 15/16/18 条）：档位模式 / 峰谷映射 / 指令禁言现状
-                            try:
-                                from . import tier_control as _tcl
-                                st["tier"] = _tcl.snapshot()
-                            except Exception as _e7:
-                                st["tier"] = {"error": str(_e7)}
-                            # 备选模型（第 3 条）：清单 + 最近一次"改用备选"的现场
-                            try:
-                                from .llm import fallback_status as _fbs
-                                st["fallback"] = _fbs()
-                            except Exception as _e6:
-                                st["fallback"] = {"error": str(_e6)}
-                            # 撤回剔除（第 14 条）：已剔除多少条 + 最近一条的现场
-                            try:
-                                from . import recall as _rcl
-                                st["recall"] = _rcl.summary()
-                            except Exception as _e5:
-                                st["recall"] = {"error": str(_e5)}
-                            # 本地文件搜索（找文件并发送）：现场读目录状态 + 台账
-                            try:
-                                from . import file_search as _fsx
-                                st["file_search"] = _fsx.snapshot()
-                            except Exception as _e4:
-                                st["file_search"] = {"error": str(_e4)}
-                            # 自定义工具（工具与插件面板）：清单现场扫 + 调用统计
-                            try:
-                                from . import user_tools as _ut2
-                                st["user_tools"] = _ut2.snapshot()
-                            except Exception as _e3:
-                                st["user_tools"] = {"error": str(_e3)}
-                    except Exception as _se:
-                        # ⛔ V-R4-10：**富化段出错不许悄悄丢** —— 至少把"读不到"如实放进去，
-                        #   让前端能区分「读数读不到」与「真的不许发」（`allow=None` vs `False`）。
-                        try:
-                            if isinstance(st, dict):
-                                st.setdefault("version", {"wechat": "unknown", "adapter": "",
-                                                          "error": str(_se)[:80]})
-                                st.setdefault("version_gate", {"allow": None, "level": "unknown",
-                                                               "error": str(_se)[:80]})
-                                st["status_error"] = str(_se)[:120]
-                        except Exception:
-                            pass
-                    self._json(st)
-                elif path in ("/api/file_search/add", "/api/file_search/del"):
-                    # 管理"可搜目录"（面板上加入/移除）—— V-R15-1：与 POST 链共用 `_file_search_dirs`
-                    self._file_search_dirs(data, path, parsed.query)
-                elif path == "/api/briefs":
-                    # 预设信息（**读**）—— 前端用 GET 读，与 POST 链共用 `_briefs_api`（V-R15-1 的教训：
-                    # 同一能力只注册在一条链里、前端用另一条方法时就是静默 404）
-                    self._briefs_api(data, "GET")
-                elif path == "/api/tools/new_manifest":
-                    self._tools_new_manifest()
-                elif path == "/api/tools/reload":
-                    # 重新扫清单目录（快照本来就是现场算的；这个端点让"重新加载"有个明确的动作与回执）
-                    try:
-                        from . import user_tools as _ut3
-                        snap = _ut3.snapshot()
-                        self._json({"ok": True, "tools": snap,
-                                    "note": "清单已重扫；正在跑的会话在下一轮构建工具清单时生效"})
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e)})
-                elif path == "/api/tools/toggle":
-                    # 勾选启停：直接改清单文件里的 enabled
-                    try:
-                        from . import user_tools as _ut4
-                        q = parse_qs(urlparse(self.path).query)
-                        nm = str((q.get("name") or [""])[0])
-                        on = str((q.get("on") or ["1"])[0]) not in ("0", "false", "False", "")
-                        ok_t, why_t = _ut4.set_enabled(nm, on)
-                        self._json({"ok": bool(ok_t), "why": why_t, "tools": _ut4.snapshot()})
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e)})
-                elif path == "/api/ui_fingerprint/take":
-                    # 「重新取指纹」—— V-R15-1：与 POST 链共用 `_ui_fingerprint_take`
-                    self._ui_fingerprint_take(data, parsed.query)
-                elif path == "/api/ui_fingerprint/forget":
-                    self._ui_fingerprint_forget(data, parsed.query)
-                elif path == "/api/prompt/preview":
-                    # 系统提示词预览 —— V-R15-1：前端用 GET，而实现原先只在 POST 链里 ⇒ 修成两链共用
-                    self._prompt_preview()
-                elif path == "/api/personas/favs":
-                    # 人设星标集合（读）—— V-R15-1：前端用 GET 读它，而实现原先只在 POST 链里
-                    #   ⇒ 每次都 404，而前端那处 `catch(e){}` 静默吞掉 ⇒ **星标在面板上永远不亮**。
-                    self._personas_favs()
-                elif path == "/api/image_gen/local":
-                    # 本地轻量生图后端：状态 + 「要装的话，要下多少 / 大概多久」（估时**当场测速**）
-                    #   ⚠️ 这是 GET 分支：**没有 `data`**（那是 POST 的解析体）——要从查询串取 `estimate`。
-                    try:
-                        from urllib.parse import parse_qs as _pq, urlparse as _up
-                        from . import sd_local as _sd
-                        _qs = _pq(_up(self.path).query)
-                        _out = {"ok": True, "status": _sd.status()}
-                        if str((_qs.get("estimate") or ["0"])[0]).lower() not in ("", "0", "false"):
-                            _out["estimate"] = _sd.estimate(do_probe=True)
-                        self._json(_out)
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e)})
-                elif path == "/api/image_gen/local/progress":
-                    # 安装进度（控制台每秒轮询它画进度条：已下/总量/百分比/速度/预计剩余）
-                    try:
-                        from . import sd_local as _sd
-                        self._json({"ok": True, "progress": _sd.progress(), "status": _sd.status()})
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e)})
-                elif path == "/api/image_gen/local/install":
-                    # **后台安装**（立刻返回；关掉弹窗也会继续下）
-                    try:
-                        from . import sd_local as _sd
-                        _ao = _truthy(data.get("allow_online"))
-                        _ok, _why, _info = _sd.install_async(allow_online=(None if _ao is None else bool(_ao)))
-                        self._json({"ok": bool(_ok), "note": _why, "info": _info, "progress": _sd.progress()})
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e)})
-                elif path == "/api/image_gen/local/start":
-                    try:
-                        from . import sd_local as _sd
-                        _ok, _why = _sd.start_server()
-                        self._json({"ok": bool(_ok), "note": _why})
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e)})
-                elif path == "/api/image_gen/local/stop":
-                    try:
-                        from . import sd_local as _sd
-                        _ok, _why = _sd.stop_server()
-                        self._json({"ok": bool(_ok), "note": _why})
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e)})
-                elif path == "/api/image_gen/test":
-                    try:
-                        from . import image_gen as _ig
-                        _r = _ig.generate("", "帮我画一张两只猫的图")
-                        self._json({"ok": bool(_r.get("ok")), "result": _r})
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e)})
-                elif path == "/api/tts/test":
-                    # 「试听一句」：真跑一遍**当前选的那一档**的合成（不发送；系统档不出网，edge 档联网）。
-                    # 走 voice_models.make() 而不是 tts.make()——否则面板上写着「edge 神经语音」，
-                    # 试听放出来的却是系统机械音（2026-09-15 加第三档音源时一并收口）。
-                    try:
-                        from . import voice_models as _vm
-                        txt = "这是一条语音回复的试听"
-                        try:
-                            q = parse_qs(urlparse(self.path).query)
-                            if (q.get("text") or [""])[0]:
-                                txt = str((q.get("text") or [""])[0])[:120]
-                        except Exception:
-                            pass
-                        p, err, info = _vm.make(txt)
-                        _inf = dict(info or {})
-                        _be = str(_inf.get("engine") or _vm.backend())
-                        self._json({"ok": bool(p), "path": p or "", "err": err or "",
-                                    "info": _inf, "engine": _be,
-                                    "size": (os.path.getsize(p) if p and os.path.exists(p) else 0),
-                                    "note": "试听只做合成，不会发送；发出去的是音频文件，不是微信语音条。"
-                                            "当前这一档＝%s" % _be})
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e)})
-                elif path == "/api/voice/test":
-                    # 「测试引擎」：真跑一遍 TTS→WAV→SILK(微信帧)→解码→识别（不需要微信、不出网）
-                    try:
-                        from . import voice as _vt
-                        r = _vt.selftest_loop()
-                        self._json({"ok": bool(r.get("ok")), "result": r})
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e)})
-                elif path == "/api/wechat/recheck":
-                    try:
-                        from .wechat import wechat_version_info as _wvi2
-                        info = _wvi2() or {}
-                        self._json({"ok": True, "version": info, "install": info.get("install") or {}})
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e)})
-                elif path == "/api/wechat/dir":
-                    # 微信数据目录（2026-09-18 用户反馈：「能不能让我自己选微信的地址」）：
-                    # GET＝**只探测**：候选目录逐个给出"能不能用 + 为什么"，外加**当前实际在读哪个**
-                    # （不是配置值）。写配置走 POST 那条（那里先过校验）。
-                    try:
-                        from . import wechat_dir as _wdir2
-                        _q4 = parse_qs(parsed.query)
-                        _extra = (_q4.get("path") or [""])[0]
-                        _r4 = _wdir2.status(_current_dir_how(parent),
-                                            explicit=(_extra or None))
-                        _r4["candidates"] = _wdir2.probe(_extra or "").get("candidates") or []
-                        _r4["ok"] = True
-                        self._json(_r4)
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e)}, 500)
-                elif path == "/api/version/allow":
-                    try:
-                        from . import version_gate as _vg3
-                        _vg3.allow_session("console")
-                        self._json({"ok": True, "gate": _vg3.status()})
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e)})
-                elif path == "/api/balance":
-                    try:
-                        self._json(parent.balance_fn())
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e)})
-                elif path == "/api/logs":
-                    self._json({"lines": list(parent.log_buffer)})
-                elif path == "/api/wechat-groups":
-                    # 检测到的群聊列表（白名单勾选用，GET 的旧处理器）；`?refresh=1` 同上面那条口径
-                    try:
-                        _rf2 = ""
-                        try:
-                            from urllib.parse import urlparse as _up4, parse_qs as _pq4
-                            _rf2 = str((_pq4(_up4(self.path).query).get("refresh") or [""])[0] or "").lower()
-                        except Exception:
-                            _rf2 = ""
-                        if _rf2 in ("1", "true", "yes", "on"):
-                            _o4 = _current_wx(parent)
-                            if _o4 is not None and hasattr(_o4, "refresh_groups"):
-                                try:
-                                    _o4.refresh_groups()
-                                except Exception as _e4:
-                                    self._json({"ok": False, "attach_ok": True, "degraded": True,
-                                                "error": ("重读群列表失败（联系人库被微信占用？）⇒ "
-                                                          "消息收发不受影响；稍等几秒再试。（%s）"
-                                                          % str(_e4)[:100]), "groups": []})
-                                    return
-                        self._json(parent.groups_fn())
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e), "groups": []})
-                elif path == "/api/emojis":
-                    # 表情包收藏夹列表（GET）
-                    try:
-                        self._json({"ok": True, "emojis": parent.emojis_fn()})
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e), "emojis": []})
-                elif path == "/api/personas/scores":
-                    # 角色评分表：系统自动贴合分 + 用户分（GET）
-                    try:
-                        self._json(parent.persona_scores_fn())
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e)})
-                elif path == "/api/feedback":
-                    # 反馈队列状态（GET）：待发/已发/当前通道 —— 界面顶部那条状态行用它
-                    try:
-                        from . import feedback as FB
-                        st = FB.stats()
-                        st["ok"] = True
-                        st["recent"] = [{"id": it.get("id"), "kind": it.get("kind"),
-                                         "at_h": it.get("at_h"), "sent_h": it.get("sent_h", ""),
-                                         "text": str(it.get("text") or "")[:60]}
-                                        for it in sorted(FB._read_all(), key=lambda x: x.get("at") or 0)[-5:]]
-                        self._json(st)
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e)})
-                elif path == "/api/personas":
-                    # 热门人设选单（GET，带分区 cat）
-                    try:
-                        from agent.persona import PERSONAS, PERSONA_CATS
-                        self._json({"ok": True, "personas": [
-                            {"key": k, "name": v.get("name") or k, "text": v.get("text") or "",
-                             "cat": PERSONA_CATS.get(k, "🔥 网络热门")}
-                            for k, v in PERSONAS.items()]})
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e)})
-                elif path == "/api/persona/cats":
-                    # 分区列表（GET）：内置 + 用户新建分区
-                    try:
-                        import json as _json
-                        _p = os.path.join(parent._asset_root, "..", "data", "persona_cats.json")
-                        try:
-                            with open(_p, "r", encoding="utf-8") as f:
-                                user_cats = _json.load(f)
-                        except Exception:
-                            user_cats = {}
-                        from agent.persona import PERSONA_CATS
-                        built = sorted(set(PERSONA_CATS.values()))
-                        self._json({"ok": True, "built": built,
-                                    "user": [{"name": k, "desc": (v or {}).get("desc", "")} for k, v in user_cats.items()]})
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e)})
-                elif path == "/api/personas/custom":
-                    # 自定义角色卡列表（GET）
-                    try:
-                        import json as _json
-                        _p = os.path.join(parent._asset_root, "..", "data", "custom_personas.json")
-                        try:
-                            with open(_p, "r", encoding="utf-8") as f:
-                                items = _json.load(f)
-                        except Exception:
-                            items = {}
-                        self._json({"ok": True, "custom": [
-                            {"key": k, "name": (v or {}).get("name", k), "text": (v or {}).get("text", ""),
-                             "cat": (v or {}).get("cat") or "📝 自定义"}
-                            for k, v in items.items()]})
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e)})
-                elif path == "/api/ui-layout":
-                    # 微信 UI 图标库标定状态（GET）
-                    try:
-                        from agent.wechat_ui import _load_layout
-                        self._json({"ok": True, "layout": _load_layout()})
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e)})
-                elif path == "/api/ui/recalibrate":
-                    # 重新标定微信 UI 图标库（POST；接管鼠标瞬间，需微信在前台）
-                    try:
-                        self._json(parent.recalibrate_fn())
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e)})
-                elif path == "/api/open-path":
-                    # 打开导出文件所在位置（POST {path}）
-                    try:
-                        self._json(parent.open_path_fn(str(data.get("path") or "")))
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e)})
-                elif path == "/api/selfcheck-stop":
-                    # 停止当前一键体检（POST；设置取消标志，体检循环下一步即退出）
-                    try:
-                        parent.selfcheck_stop_fn()
-                        self._json({"ok": True})
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e)})
-                elif path == "/api/archive":
-                    # 存档屏蔽（第 10 条）：**GET 也接**（2026-09-17 修：原来只注册在 POST 分支，
-                    # 前端用 GET ⇒ 每次 404 ⇒ 弹"读会话列表失败"、整个面板是死的）
-                    try:
-                        self._archive_view()
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e)}, 500)
+                # 原：elif path == "/api/voice/probe": ⇒ 已搬到 agent/routes.py → _rapi_voice_probe（/api/voice/probe）
+                # 原：elif path == "/api/voice/vc-probe": ⇒ 已搬到 agent/routes.py → _rapi_voice_vc_probe（/api/voice/vc-probe）
+                # 原：elif path == "/api/local-models": ⇒ 已搬到 agent/routes.py → _rapi_local_models（/api/local-models）
+                # 原：elif path == "/api/verifiers": ⇒ 已搬到 agent/routes.py → _rapi_verifiers（/api/verifiers）
+                # 原：elif path == "/api/verify": ⇒ 已搬到 agent/routes.py → _rapi_verify（/api/verify）
+                # 原：elif path == "/api/config": ⇒ 已搬到 agent/routes.py → _rapi_config（/api/config）
+                # 原：elif path == "/api/memory": ⇒ 已搬到 agent/routes.py → _rapi_memory（/api/memory）
+                # 原：elif path == "/api/sessions": ⇒ 已搬到 agent/routes.py → _rapi_sessions（/api/sessions）
+                # 原：elif path == "/api/status": ⇒ 已搬到 agent/routes.py → _rapi_status（/api/status）
+                # 原：elif path in ("/api/file_search/add", "/api/file_search/del"): ⇒ 已搬到 agent/routes.py → _rapi_file_search_add（/api/file_search/add, /api/file_search/del）
+                # 原：elif path == "/api/briefs": ⇒ 已搬到 agent/routes.py → _rapi_briefs（/api/briefs）
+                # 原：elif path == "/api/tools/new_manifest": ⇒ 已搬到 agent/routes.py → _rapi_tools_new_manifest（/api/tools/new_manifest）
+                # 原：elif path == "/api/tools/reload": ⇒ 已搬到 agent/routes.py → _rapi_tools_reload（/api/tools/reload）
+                # 原：elif path == "/api/tools/toggle": ⇒ 已搬到 agent/routes.py → _rapi_tools_toggle（/api/tools/toggle）
+                # 原：elif path == "/api/ui_fingerprint/take": ⇒ 已搬到 agent/routes.py → _rapi_ui_fingerprint_take（/api/ui_fingerprint/take）
+                # 原：elif path == "/api/ui_fingerprint/forget": ⇒ 已搬到 agent/routes.py → _rapi_ui_fingerprint_forget（/api/ui_fingerprint/forget）
+                # 原：elif path == "/api/prompt/preview": ⇒ 已搬到 agent/routes.py → _rapi_prompt_preview（/api/prompt/preview）
+                # 原：elif path == "/api/personas/favs": ⇒ 已搬到 agent/routes.py → _rapi_personas_favs（/api/personas/favs）
+                # 原：elif path == "/api/image_gen/local": ⇒ 已搬到 agent/routes.py → _rapi_image_gen_local（/api/image_gen/local）
+                # 原：elif path == "/api/image_gen/local/progress": ⇒ 已搬到 agent/routes.py → _rapi_image_gen_local_progress（/api/image_gen/local/progress）
+                # 原：elif path == "/api/image_gen/local/install": ⇒ 已搬到 agent/routes.py → _rapi_image_gen_local_install（/api/image_gen/local/install）
+                # 原：elif path == "/api/image_gen/local/start": ⇒ 已搬到 agent/routes.py → _rapi_image_gen_local_start（/api/image_gen/local/start）
+                # 原：elif path == "/api/image_gen/local/stop": ⇒ 已搬到 agent/routes.py → _rapi_image_gen_local_stop（/api/image_gen/local/stop）
+                # 原：elif path == "/api/image_gen/test": ⇒ 已搬到 agent/routes.py → _rapi_image_gen_test（/api/image_gen/test）
+                # 原：elif path == "/api/tts/test": ⇒ 已搬到 agent/routes.py → _rapi_tts_test（/api/tts/test）
+                # 原：elif path == "/api/voice/test": ⇒ 已搬到 agent/routes.py → _rapi_voice_test（/api/voice/test）
+                # 原：elif path == "/api/wechat/recheck": ⇒ 已搬到 agent/routes.py → _rapi_wechat_recheck（/api/wechat/recheck）
+                # 原：elif path == "/api/wechat/dir": ⇒ 已搬到 agent/routes.py → _rapi_wechat_dir（/api/wechat/dir）
+                # 原：elif path == "/api/version/allow": ⇒ 已搬到 agent/routes.py → _rapi_version_allow（/api/version/allow）
+                # 原：elif path == "/api/balance": ⇒ 已搬到 agent/routes.py → _rapi_balance（/api/balance）
+                # 原：elif path == "/api/logs": ⇒ 已搬到 agent/routes.py → _rapi_logs（/api/logs）
+                # 原：elif path == "/api/wechat-groups": ⇒ 已搬到 agent/routes.py → _rapi_wechat_groups（/api/wechat-groups）
+                # 原：elif path == "/api/emojis": ⇒ 已搬到 agent/routes.py → _rapi_emojis（/api/emojis）
+                # 原：elif path == "/api/personas/scores": ⇒ 已搬到 agent/routes.py → _rapi_personas_scores（/api/personas/scores）
+                # 原：elif path == "/api/feedback": ⇒ 已搬到 agent/routes.py → _rapi_feedback（/api/feedback）
+                # 原：elif path == "/api/personas": ⇒ 已搬到 agent/routes.py → _rapi_personas（/api/personas）
+                # 原：elif path == "/api/persona/cats": ⇒ 已搬到 agent/routes.py → _rapi_persona_cats（/api/persona/cats）
+                # 原：elif path == "/api/personas/custom": ⇒ 已搬到 agent/routes.py → _rapi_personas_custom（/api/personas/custom）
+                # 原：elif path == "/api/ui-layout": ⇒ 已搬到 agent/routes.py → _rapi_ui_layout（/api/ui-layout）
+                # 原：elif path == "/api/ui/recalibrate": ⇒ 已搬到 agent/routes.py → _rapi_ui_recalibrate（/api/ui/recalibrate）
+                # 原：elif path == "/api/open-path": ⇒ 已搬到 agent/routes.py → _rapi_open_path（/api/open-path）
+                # 原：elif path == "/api/selfcheck-stop": ⇒ 已搬到 agent/routes.py → _rapi_selfcheck_stop（/api/selfcheck-stop）
+                # 原：elif path == "/api/archive": ⇒ 已搬到 agent/routes.py → _rapi_archive（/api/archive）
+                elif self._dispatch(path, data, parsed, "GET"):
+                    pass        # 路由表命中（唯一分派点，见 agent/routes.py）
                 else:
                     self._json({"error": "not found"}, 404)
 
@@ -2870,6 +2357,635 @@ class WebUI:
                     self._ui_fingerprint_forget(data, urlparse(self.path).query)
                 else:
                     self._json({"error": "not found"}, 404)
+
+# ── 路由表分派（第一批：do_GET 的字面 /api 分支；见 agent/routes.py）──
+
+            def _dispatch(self, path, data, parsed, method):
+                """**唯一分派点**：查 `agent/routes.ROUTES`（路径 → 方法 → 处理函数名）。
+
+                只认表里**成对存在**的 (路径, 方法)：命中就调用并返回 True；
+                否则返回 False，交回原来那条 `if/elif` 链（没搬的路由行为一个字不变）。
+                """
+                try:
+                    from .routes import HANDLERS as _R      # ⚠️ 是 HANDLERS（路径→方法→函数名），不是 ROUTES（声明）
+                except Exception:                                    # noqa: BLE001
+                    return False
+                row = _R.get(path)
+                if not isinstance(row, dict):
+                    return False
+                fn = row.get(method)
+                if not fn:
+                    return False
+                try:
+                    getattr(self, fn)(data, parsed, method)
+                except Exception as e:                               # noqa: BLE001
+                    self._json({"ok": False, "error": str(e)}, 500)
+                return True
+
+
+            def _rapi_voice_probe(self, data, parsed, method):
+                # 原 do_GET:953
+                try:
+                    from . import voice_models as _vmod
+                    _q2 = parse_qs(parsed.query)
+                    self._json(dict({"ok": True}, **_vmod.probe((_q2.get("url") or [""])[0])))
+                except Exception as _e2:
+                    self._json({"ok": False, "error": str(_e2)}, 500)
+
+            def _rapi_voice_vc_probe(self, data, parsed, method):
+                # 原 do_GET:961
+                try:
+                    from . import voice_models as _vmod
+                    _q3 = parse_qs(parsed.query)
+                    self._json(dict({"ok": True}, **_vmod.probe_vc((_q3.get("url") or [""])[0])))
+                except Exception as _e3:
+                    self._json({"ok": False, "error": str(_e3)}, 500)
+
+            def _rapi_local_models(self, data, parsed, method):
+                # 原 do_GET:969
+                try:
+                    from . import local_models as _lm
+                    _q = parse_qs(parsed.query)
+                    if (_q.get("test") or [""])[0] == "1":
+                        self._json(dict({"ok": True}, **_lm.test_chat(
+                            (_q.get("base_url") or [""])[0], (_q.get("model") or [""])[0])))
+                    else:
+                        _found, _meta = _lm.discover()
+                        self._json({"ok": True, "found": _found, "meta": _meta,
+                                    "capability": _lm.CAPABILITY_NOTE})
+                except Exception as _e:
+                    self._json({"ok": False, "error": str(_e)}, 500)
+
+            def _rapi_verifiers(self, data, parsed, method):
+                # 原 do_GET:984
+                try:
+                    from . import verifiers as _vf
+                    self._json({"ok": True, "verifiers": _vf.catalog()})
+                except Exception as e:                                   # noqa: BLE001
+                    self._json({"ok": False, "error": str(e)})
+
+            def _rapi_verify(self, data, parsed, method):
+                # 原 do_GET:991
+                try:
+                    from urllib.parse import urlparse as _up, parse_qs as _pq
+                    from . import verifiers as _vf
+                    _q = _pq(_up(self.path).query)
+                    # ⛔ 2026-09-21 加（第九轮 V-R9-11 / 第十轮 V-R10-8）：把**运行中实例**的
+                    #   `_db_how` 与 `_cap` 喂给检验器 —— 否则"我读的是不是正在写的那个号"
+                    #   与"哪张表读失败了"（「消息库读不到」那条链的核心）只能判假绿。
+                    try:
+                        _wo = _current_wx(parent)
+                        _vf.set_runtime_how(getattr(_wo, "_db_how", None),
+                                            getattr(_wo, "_cap", None))
+                    except Exception:
+                        pass
+                    self._json(_vf.run(str((_q.get("id") or [""])[0] or "")))
+                except Exception as e:                                   # noqa: BLE001
+                    self._json({"ok": False, "error": str(e)})
+
+            def _rapi_config(self, data, parsed, method):
+                # 原 do_GET:1008
+                self._json(parent.masked_config())
+
+            def _rapi_memory(self, data, parsed, method):
+                # 原 do_GET:1010
+                q = parse_qs(parsed.query)
+                chat_key = (q.get("chat_key") or [""])[0]
+                try:
+                    self._json(parent.memory_fn("list", chat_key))
+                except Exception as e:
+                    self._json({"ok": False, "error": str(e)})
+
+            def _rapi_sessions(self, data, parsed, method):
+                # 原 do_GET:1018
+                q = parse_qs(parsed.query)
+                try:
+                    self._json({"ok": True, "sessions": parent.sessions_fn(
+                        int((q.get("limit") or ["30"])[0]))})
+                except Exception as e:
+                    self._json({"ok": False, "error": str(e)})
+
+            def _rapi_status(self, data, parsed, method):
+                # 原 do_GET:1026
+                st = parent.status_provider()
+                try:
+                    from . import risk as _risk
+                    from . import input_backend as _ib
+                    from . import version_matrix as _vm
+                    from . import dep_heal as _dh
+                    if isinstance(st, dict):
+                        st = dict(st)
+                        st["risk"] = _risk.snapshot()
+                        # 当前输入后端档位（AGENTS §2.1 第 4 条：用了哪一档必须看得见）
+                        st["input"] = _ib.status()
+                        # 后台能力矩阵（⑥ 全后台审计）：每条路径是"全程后台"还是"真鼠标"，
+                        # 单一事实源在 agent/bg_status.py —— 控制台照它显示，不另写一份。
+                        try:
+                            from . import bg_status as _bg
+                            st["bg"] = _bg.status()
+                        except Exception as _be:
+                            st["bg"] = {"paths": [], "error": str(_be)}
+                        # 「我自己是谁」（2026-09-16，已知现象：「无法识别大号用户 / 无法识别我的账号」）：
+                        # `wechat.py` 只从驱动库的 `get_self_info()` 拿自己的账号，**拿不到时那一串
+                        # "这条是不是我发的"判断会静默失效**（会回自己/@ 自己不理）。这里如实暴露：
+                        # `ok=False` ⇒ 控制台**写"没认出来"**，不许装没事。
+                        try:
+                            _wx = None
+                            for _n in ("wechat", "adapter", "wx", "wxadapter", "bot", "worker"):
+                                _o = getattr(parent, _n, None)
+                                if _o is not None and hasattr(_o, "self_identity"):
+                                    _wx = _o
+                                    break
+                            st["self"] = (_wx.self_identity() if _wx is not None
+                                          else {"ok": False, "why": "还拿不到微信实例（机器人未启动？）"})
+                        except Exception as _se:
+                            st["self"] = {"ok": False, "why": str(_se)}
+                        # 「我的其他账号（大号）」（2026-09-16 已知现象：「无法识别我的大号」）：
+                        # 登记了几项、昵称有几项**真在群成员里匹配上了**、当前反应档位 —— 摆出来让用户核对。
+                        try:
+                            st["owner"] = (_wx.owner_status() if _wx is not None
+                                           and hasattr(_wx, "owner_status")
+                                           else {"count": 0, "mode": "know", "why": "还拿不到微信实例（机器人未启动？）"})
+                        except Exception as _oe:
+                            st["owner"] = {"count": 0, "mode": "know", "why": str(_oe)}
+                        # 图标指纹表（⑦ 点击正确性）：按 微信版本×尺寸×DPI 存了几条、什么时候取的
+                        try:
+                            from . import ui_fingerprint as _ufp
+                            st["ui_fp"] = _ufp.hits()
+                            st["ui_fp"]["digest"] = _ufp.digest()
+                        except Exception as _fe:
+                            st["ui_fp"] = {"keys": {}, "error": str(_fe)}
+                        # 版本能力矩阵 + 版本门（W7：版本变了要出横幅、按未验证处理）
+                        # ⛔ 2026-09-21 修（第四轮审计 **V-R4-10，P2**）：这两行原来跟其它富化段挤在
+                        #   **同一个大 try** 里，任何别的段抛异常都会把它们**一起丢掉** ⇒ 前端拿到
+                        #   `version/version_gate` 缺失 ⇒ 把"读不到"画成红字
+                        #   「版本未实测：按严格档暂停发送（可在配置里关掉 version_gate.strict）」
+                        #   ⇒ 把用户指去改一个根本没拦他的开关。⇒ 各自单独一层 try，
+                        #   出错就放 **`allow=None`（读不到）**，绝不是 False（不许发）。
+                        from . import version_gate as _vg2
+                        try:
+                            st["version"] = _vm.current()
+                        except Exception as _vme:
+                            st["version"] = {"wechat": "unknown", "adapter": "",
+                                             "error": str(_vme)[:80]}
+                        try:
+                            st["version_gate"] = _vg2.status()
+                        except Exception as _vge:
+                            st["version_gate"] = {"allow": None, "level": "unknown",
+                                                  "error": str(_vge)[:80]}
+                        # 出站闸门读数（内部故障话术拦截 / 去重窗）——前端横幅要显示，见 console_html
+                        try:
+                            from . import sender as _sd3
+                            st["outbound_gate"] = _sd3.outbound_gate_status()
+                        except Exception as _oe:
+                            st["outbound_gate"] = {"blocked_internal": 0, "error": str(_oe)[:60]}
+                        # 待决单（⑦ 版本不匹配四选一）：门没过就把这件事开成一张单，控制台据此弹模态。
+                        # 开单是幂等的（同一对版本只开一次、问过就不再问），所以这里每次轮询调用是安全的。
+                        try:
+                            from . import pending_decisions as _pd
+                            _pnd = _vg2.pending()
+                            _pit = _pnd.get("item") or {}
+                            st["pending_decisions"] = {
+                                "open": len(_pd.open_items()),
+                                "summary": _pd.summary(),
+                                "needed": bool(_pnd.get("needed")),
+                                "item": _pit if str(_pit.get("status")) == "open" else None,
+                            }
+                        except Exception as _pe:
+                            st["pending_decisions"] = {"open": 0, "error": str(_pe)}
+                        # 一键动作的后台作业（⑦）：升级适配层 / 更新本体 都是分钟级，
+                        # 起在后台线程里（agent/jobs.py），这里把状态给控制台显示跑到哪、成没成。
+                        try:
+                            from . import jobs as _jobs
+                            st["jobs"] = _jobs.status().get("jobs") or {}
+                        except Exception as _je:
+                            st["jobs"] = {"_error": str(_je)}
+                        # 微信装没装（2026-09-13：没装就带用户去官网，不做静默安装）
+                        try:
+                            from .wechat import wechat_version_info as _wvi
+                            _wi = _wvi() or {}
+                            st["wechat_install"] = _wi.get("install") or {
+                                "state": _wi.get("state") or "unknown",
+                                "installed": bool(_wi.get("installed")),
+                                "detail": _wi.get("detail") or "",
+                                "official_url": "https://weixin.qq.com/",
+                                "action": "none"}
+                        except Exception as _e:
+                            st["wechat_install"] = {"state": "unknown", "installed": False,
+                                                    "detail": "检测异常：" + str(_e),
+                                                    "official_url": "https://weixin.qq.com/",
+                                                    "action": "none"}
+                        # 微信数据目录（2026-09-18 用户反馈：「他回我之前自定义的地址里去看文件了」）：
+                        # 这一项报的是**当前实际在读的目录**（不是配置值），还带上"你填的那个为什么
+                        # 没用、现在回落到哪"。控制台「微信数据目录」那一行直接显示它。
+                        try:
+                            from . import wechat_dir as _wdir_s
+                            _wxo = _current_wx(parent)
+                            st["wechat_dir"] = _wdir_s.status(
+                                how=getattr(_wxo, "_db_how", None) if _wxo is not None else None,
+                                dir_info=getattr(_wxo, "_db_dir_info", None) if _wxo is not None else None)
+                        except Exception as _wde:
+                            st["wechat_dir"] = {"ok": False, "effective": "", "src": "?",
+                                                "now": "取不到", "candidates": [],
+                                                "text": "取不到微信数据目录状态",
+                                                "note": "取不到微信数据目录状态：%s" % _wde}
+                        # 依赖体检（盯项目运行时的 site-packages，不是当前进程）
+                        st["deps"] = {"summary": _dh.summary_line(),
+                                      "offline_available": _dh.offline_available(),
+                                      "source": _dh.probe_source()}
+                        # 媒体与语音（能力 A/B/C）：引擎链实测状态 + 图库现状 + 转发开关
+                        try:
+                            from . import media_status as _ms
+                            st["media"] = _ms.snapshot()
+                        except Exception as _e2:
+                            st["media"] = {"error": str(_e2)}
+                        # 上云（预留接口）：端点三态 + 是否配了 Token
+                        try:
+                            from . import cloud as _cl2
+                            st["cloud"] = _cl2.snapshot()
+                        except Exception as _e11:
+                            st["cloud"] = {"error": str(_e11)}
+                        # 图/文/视频分流 + 视频读取（第 20 条）
+                        try:
+                            from . import model_routes as _mrt
+                            from . import video_read as _vrd
+                            st["model_routes"] = _mrt.snapshot()
+                            st["video_read"] = _vrd.snapshot()
+                        except Exception as _e10:
+                            st["model_routes"] = {"error": str(_e10)}
+                        # 存档屏蔽（第 10 条）：名单 + 存档里被屏蔽的条数
+                        try:
+                            from . import archive_filter as _af2
+                            st["archive"] = _af2.snapshot(getattr(parent, "store", None))
+                        except Exception as _e9:
+                            st["archive"] = {"error": str(_e9)}
+                        # 计时提醒 + 节假日问候（第 12/13 条）
+                        try:
+                            from . import timers as _tmr
+                            from . import holidays as _hol2
+                            st["timers"] = _tmr.snapshot()
+                            st["holiday"] = _hol2.snapshot()
+                        except Exception as _e8:
+                            st["timers"] = {"error": str(_e8)}
+                        # 响应等级三件（第 15/16/18 条）：档位模式 / 峰谷映射 / 指令禁言现状
+                        try:
+                            from . import tier_control as _tcl
+                            st["tier"] = _tcl.snapshot()
+                        except Exception as _e7:
+                            st["tier"] = {"error": str(_e7)}
+                        # 备选模型（第 3 条）：清单 + 最近一次"改用备选"的现场
+                        try:
+                            from .llm import fallback_status as _fbs
+                            st["fallback"] = _fbs()
+                        except Exception as _e6:
+                            st["fallback"] = {"error": str(_e6)}
+                        # 撤回剔除（第 14 条）：已剔除多少条 + 最近一条的现场
+                        try:
+                            from . import recall as _rcl
+                            st["recall"] = _rcl.summary()
+                        except Exception as _e5:
+                            st["recall"] = {"error": str(_e5)}
+                        # 本地文件搜索（找文件并发送）：现场读目录状态 + 台账
+                        try:
+                            from . import file_search as _fsx
+                            st["file_search"] = _fsx.snapshot()
+                        except Exception as _e4:
+                            st["file_search"] = {"error": str(_e4)}
+                        # 自定义工具（工具与插件面板）：清单现场扫 + 调用统计
+                        try:
+                            from . import user_tools as _ut2
+                            st["user_tools"] = _ut2.snapshot()
+                        except Exception as _e3:
+                            st["user_tools"] = {"error": str(_e3)}
+                except Exception as _se:
+                    # ⛔ V-R4-10：**富化段出错不许悄悄丢** —— 至少把"读不到"如实放进去，
+                    #   让前端能区分「读数读不到」与「真的不许发」（`allow=None` vs `False`）。
+                    try:
+                        if isinstance(st, dict):
+                            st.setdefault("version", {"wechat": "unknown", "adapter": "",
+                                                      "error": str(_se)[:80]})
+                            st.setdefault("version_gate", {"allow": None, "level": "unknown",
+                                                           "error": str(_se)[:80]})
+                            st["status_error"] = str(_se)[:120]
+                    except Exception:
+                        pass
+                self._json(st)
+
+            def _rapi_file_search_add(self, data, parsed, method):
+                # 原 do_GET:1230
+                self._file_search_dirs(data, path, parsed.query)
+
+            def _rapi_briefs(self, data, parsed, method):
+                # 原 do_GET:1233
+                self._briefs_api(data, "GET")
+
+            def _rapi_tools_new_manifest(self, data, parsed, method):
+                # 原 do_GET:1237
+                self._tools_new_manifest()
+
+            def _rapi_tools_reload(self, data, parsed, method):
+                # 原 do_GET:1239
+                try:
+                    from . import user_tools as _ut3
+                    snap = _ut3.snapshot()
+                    self._json({"ok": True, "tools": snap,
+                                "note": "清单已重扫；正在跑的会话在下一轮构建工具清单时生效"})
+                except Exception as e:
+                    self._json({"ok": False, "error": str(e)})
+
+            def _rapi_tools_toggle(self, data, parsed, method):
+                # 原 do_GET:1248
+                try:
+                    from . import user_tools as _ut4
+                    q = parse_qs(urlparse(self.path).query)
+                    nm = str((q.get("name") or [""])[0])
+                    on = str((q.get("on") or ["1"])[0]) not in ("0", "false", "False", "")
+                    ok_t, why_t = _ut4.set_enabled(nm, on)
+                    self._json({"ok": bool(ok_t), "why": why_t, "tools": _ut4.snapshot()})
+                except Exception as e:
+                    self._json({"ok": False, "error": str(e)})
+
+            def _rapi_ui_fingerprint_take(self, data, parsed, method):
+                # 原 do_GET:1259
+                self._ui_fingerprint_take(data, parsed.query)
+
+            def _rapi_ui_fingerprint_forget(self, data, parsed, method):
+                # 原 do_GET:1262
+                self._ui_fingerprint_forget(data, parsed.query)
+
+            def _rapi_prompt_preview(self, data, parsed, method):
+                # 原 do_GET:1264
+                self._prompt_preview()
+
+            def _rapi_personas_favs(self, data, parsed, method):
+                # 原 do_GET:1267
+                self._personas_favs()
+
+            def _rapi_image_gen_local(self, data, parsed, method):
+                # 原 do_GET:1271
+                try:
+                    from urllib.parse import parse_qs as _pq, urlparse as _up
+                    from . import sd_local as _sd
+                    _qs = _pq(_up(self.path).query)
+                    _out = {"ok": True, "status": _sd.status()}
+                    if str((_qs.get("estimate") or ["0"])[0]).lower() not in ("", "0", "false"):
+                        _out["estimate"] = _sd.estimate(do_probe=True)
+                    self._json(_out)
+                except Exception as e:
+                    self._json({"ok": False, "error": str(e)})
+
+            def _rapi_image_gen_local_progress(self, data, parsed, method):
+                # 原 do_GET:1284
+                try:
+                    from . import sd_local as _sd
+                    self._json({"ok": True, "progress": _sd.progress(), "status": _sd.status()})
+                except Exception as e:
+                    self._json({"ok": False, "error": str(e)})
+
+            def _rapi_image_gen_local_install(self, data, parsed, method):
+                # 原 do_GET:1291
+                try:
+                    from . import sd_local as _sd
+                    _ao = _truthy(data.get("allow_online"))
+                    _ok, _why, _info = _sd.install_async(allow_online=(None if _ao is None else bool(_ao)))
+                    self._json({"ok": bool(_ok), "note": _why, "info": _info, "progress": _sd.progress()})
+                except Exception as e:
+                    self._json({"ok": False, "error": str(e)})
+
+            def _rapi_image_gen_local_start(self, data, parsed, method):
+                # 原 do_GET:1300
+                try:
+                    from . import sd_local as _sd
+                    _ok, _why = _sd.start_server()
+                    self._json({"ok": bool(_ok), "note": _why})
+                except Exception as e:
+                    self._json({"ok": False, "error": str(e)})
+
+            def _rapi_image_gen_local_stop(self, data, parsed, method):
+                # 原 do_GET:1307
+                try:
+                    from . import sd_local as _sd
+                    _ok, _why = _sd.stop_server()
+                    self._json({"ok": bool(_ok), "note": _why})
+                except Exception as e:
+                    self._json({"ok": False, "error": str(e)})
+
+            def _rapi_image_gen_test(self, data, parsed, method):
+                # 原 do_GET:1314
+                try:
+                    from . import image_gen as _ig
+                    _r = _ig.generate("", "帮我画一张两只猫的图")
+                    self._json({"ok": bool(_r.get("ok")), "result": _r})
+                except Exception as e:
+                    self._json({"ok": False, "error": str(e)})
+
+            def _rapi_tts_test(self, data, parsed, method):
+                # 原 do_GET:1321
+                try:
+                    from . import voice_models as _vm
+                    txt = "这是一条语音回复的试听"
+                    try:
+                        q = parse_qs(urlparse(self.path).query)
+                        if (q.get("text") or [""])[0]:
+                            txt = str((q.get("text") or [""])[0])[:120]
+                    except Exception:
+                        pass
+                    p, err, info = _vm.make(txt)
+                    _inf = dict(info or {})
+                    _be = str(_inf.get("engine") or _vm.backend())
+                    self._json({"ok": bool(p), "path": p or "", "err": err or "",
+                                "info": _inf, "engine": _be,
+                                "size": (os.path.getsize(p) if p and os.path.exists(p) else 0),
+                                "note": "试听只做合成，不会发送；发出去的是音频文件，不是微信语音条。"
+                                        "当前这一档＝%s" % _be})
+                except Exception as e:
+                    self._json({"ok": False, "error": str(e)})
+
+            def _rapi_voice_test(self, data, parsed, method):
+                # 原 do_GET:1344
+                try:
+                    from . import voice as _vt
+                    r = _vt.selftest_loop()
+                    self._json({"ok": bool(r.get("ok")), "result": r})
+                except Exception as e:
+                    self._json({"ok": False, "error": str(e)})
+
+            def _rapi_wechat_recheck(self, data, parsed, method):
+                # 原 do_GET:1352
+                try:
+                    from .wechat import wechat_version_info as _wvi2
+                    info = _wvi2() or {}
+                    self._json({"ok": True, "version": info, "install": info.get("install") or {}})
+                except Exception as e:
+                    self._json({"ok": False, "error": str(e)})
+
+            def _rapi_wechat_dir(self, data, parsed, method):
+                # 原 do_GET:1359
+                try:
+                    from . import wechat_dir as _wdir2
+                    _q4 = parse_qs(parsed.query)
+                    _extra = (_q4.get("path") or [""])[0]
+                    _r4 = _wdir2.status(_current_dir_how(parent),
+                                        explicit=(_extra or None))
+                    _r4["candidates"] = _wdir2.probe(_extra or "").get("candidates") or []
+                    _r4["ok"] = True
+                    self._json(_r4)
+                except Exception as e:
+                    self._json({"ok": False, "error": str(e)}, 500)
+
+            def _rapi_version_allow(self, data, parsed, method):
+                # 原 do_GET:1374
+                try:
+                    from . import version_gate as _vg3
+                    _vg3.allow_session("console")
+                    self._json({"ok": True, "gate": _vg3.status()})
+                except Exception as e:
+                    self._json({"ok": False, "error": str(e)})
+
+            def _rapi_balance(self, data, parsed, method):
+                # 原 do_GET:1381
+                try:
+                    self._json(parent.balance_fn())
+                except Exception as e:
+                    self._json({"ok": False, "error": str(e)})
+
+            def _rapi_logs(self, data, parsed, method):
+                # 原 do_GET:1386
+                self._json({"lines": list(parent.log_buffer)})
+
+            def _rapi_wechat_groups(self, data, parsed, method):
+                # 原 do_GET:1388
+                try:
+                    _rf2 = ""
+                    try:
+                        from urllib.parse import urlparse as _up4, parse_qs as _pq4
+                        _rf2 = str((_pq4(_up4(self.path).query).get("refresh") or [""])[0] or "").lower()
+                    except Exception:
+                        _rf2 = ""
+                    if _rf2 in ("1", "true", "yes", "on"):
+                        _o4 = _current_wx(parent)
+                        if _o4 is not None and hasattr(_o4, "refresh_groups"):
+                            try:
+                                _o4.refresh_groups()
+                            except Exception as _e4:
+                                self._json({"ok": False, "attach_ok": True, "degraded": True,
+                                            "error": ("重读群列表失败（联系人库被微信占用？）⇒ "
+                                                      "消息收发不受影响；稍等几秒再试。（%s）"
+                                                      % str(_e4)[:100]), "groups": []})
+                                return
+                    self._json(parent.groups_fn())
+                except Exception as e:
+                    self._json({"ok": False, "error": str(e), "groups": []})
+
+            def _rapi_emojis(self, data, parsed, method):
+                # 原 do_GET:1411
+                try:
+                    self._json({"ok": True, "emojis": parent.emojis_fn()})
+                except Exception as e:
+                    self._json({"ok": False, "error": str(e), "emojis": []})
+
+            def _rapi_personas_scores(self, data, parsed, method):
+                # 原 do_GET:1417
+                try:
+                    self._json(parent.persona_scores_fn())
+                except Exception as e:
+                    self._json({"ok": False, "error": str(e)})
+
+            def _rapi_feedback(self, data, parsed, method):
+                # 原 do_GET:1423
+                try:
+                    from . import feedback as FB
+                    st = FB.stats()
+                    st["ok"] = True
+                    st["recent"] = [{"id": it.get("id"), "kind": it.get("kind"),
+                                     "at_h": it.get("at_h"), "sent_h": it.get("sent_h", ""),
+                                     "text": str(it.get("text") or "")[:60]}
+                                    for it in sorted(FB._read_all(), key=lambda x: x.get("at") or 0)[-5:]]
+                    self._json(st)
+                except Exception as e:
+                    self._json({"ok": False, "error": str(e)})
+
+            def _rapi_personas(self, data, parsed, method):
+                # 原 do_GET:1436
+                try:
+                    from agent.persona import PERSONAS, PERSONA_CATS
+                    self._json({"ok": True, "personas": [
+                        {"key": k, "name": v.get("name") or k, "text": v.get("text") or "",
+                         "cat": PERSONA_CATS.get(k, "🔥 网络热门")}
+                        for k, v in PERSONAS.items()]})
+                except Exception as e:
+                    self._json({"ok": False, "error": str(e)})
+
+            def _rapi_persona_cats(self, data, parsed, method):
+                # 原 do_GET:1446
+                try:
+                    import json as _json
+                    _p = os.path.join(parent._asset_root, "..", "data", "persona_cats.json")
+                    try:
+                        with open(_p, "r", encoding="utf-8") as f:
+                            user_cats = _json.load(f)
+                    except Exception:
+                        user_cats = {}
+                    from agent.persona import PERSONA_CATS
+                    built = sorted(set(PERSONA_CATS.values()))
+                    self._json({"ok": True, "built": built,
+                                "user": [{"name": k, "desc": (v or {}).get("desc", "")} for k, v in user_cats.items()]})
+                except Exception as e:
+                    self._json({"ok": False, "error": str(e)})
+
+            def _rapi_personas_custom(self, data, parsed, method):
+                # 原 do_GET:1462
+                try:
+                    import json as _json
+                    _p = os.path.join(parent._asset_root, "..", "data", "custom_personas.json")
+                    try:
+                        with open(_p, "r", encoding="utf-8") as f:
+                            items = _json.load(f)
+                    except Exception:
+                        items = {}
+                    self._json({"ok": True, "custom": [
+                        {"key": k, "name": (v or {}).get("name", k), "text": (v or {}).get("text", ""),
+                         "cat": (v or {}).get("cat") or "📝 自定义"}
+                        for k, v in items.items()]})
+                except Exception as e:
+                    self._json({"ok": False, "error": str(e)})
+
+            def _rapi_ui_layout(self, data, parsed, method):
+                # 原 do_GET:1478
+                try:
+                    from agent.wechat_ui import _load_layout
+                    self._json({"ok": True, "layout": _load_layout()})
+                except Exception as e:
+                    self._json({"ok": False, "error": str(e)})
+
+            def _rapi_ui_recalibrate(self, data, parsed, method):
+                # 原 do_GET:1485
+                try:
+                    self._json(parent.recalibrate_fn())
+                except Exception as e:
+                    self._json({"ok": False, "error": str(e)})
+
+            def _rapi_open_path(self, data, parsed, method):
+                # 原 do_GET:1491
+                try:
+                    self._json(parent.open_path_fn(str(data.get("path") or "")))
+                except Exception as e:
+                    self._json({"ok": False, "error": str(e)})
+
+            def _rapi_selfcheck_stop(self, data, parsed, method):
+                # 原 do_GET:1497
+                try:
+                    parent.selfcheck_stop_fn()
+                    self._json({"ok": True})
+                except Exception as e:
+                    self._json({"ok": False, "error": str(e)})
+
+            def _rapi_archive(self, data, parsed, method):
+                # 原 do_GET:1504
+                try:
+                    self._archive_view()
+                except Exception as e:
+                    self._json({"ok": False, "error": str(e)}, 500)
 
         # 端口自适应：被占用则顺延
         for offset in range(20):
