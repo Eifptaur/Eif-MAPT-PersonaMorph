@@ -9,6 +9,7 @@ import copy
 import json
 import logging
 import os
+import time
 
 from . import persist
 
@@ -735,17 +736,50 @@ def _coerce_bool_strings(node):
     return node                                     # 列表/标量原样返回
 
 
+_READ_TRIES = 5           # 读配置最多试几次（瞬态占用专用）
+_READ_BACKOFF = 0.01      # 首次退避秒数（0.01/0.02/0.04/0.08，总计约 0.15s）
+
+
+def _read_config_once(path: str) -> tuple:
+    """读盘上那份配置，**瞬态占用**（别人正在 `os.replace` 换档 / 杀软正在扫）重试几次。
+
+    为什么必须重试（2026-09-22，Windows 实测）：`os.replace` 换档的那一瞬间，
+    另一个线程/进程去 `open()` 同一个档会**偶发 `PermissionError`**（本地压测里真出现过）。
+    原来的写法是"这一下读不到 ⇒ 直接退回内置默认值"，而 `config.json` 里装着**全部能力开关**
+    ⇒ 一次瞬态占用就能让"整份配置凭空回到默认"（能力被停用），且日志里只有一行 `print`。
+    返回 `(解析出来的 dict 或 None, 错误文案或 None, 是否瞬态)`；
+    **坏 JSON 不重试**（重试没有意义，那是文件真坏了，交给上层按默认值走并留痕）。
+    """
+    err = None
+    transient = False
+    for i in range(_READ_TRIES):
+        try:
+            with open(path, "r", encoding="utf-8-sig") as f:
+                return json.load(f), None, False
+        except FileNotFoundError:
+            return None, None, False
+        except Exception as e:                                   # noqa: BLE001
+            err = e
+            if isinstance(e, (json.JSONDecodeError, UnicodeDecodeError)):
+                return None, str(e), False
+            transient = True
+            if i < _READ_TRIES - 1:
+                time.sleep(_READ_BACKOFF * (2 ** i))
+    return None, str(err), transient
+
+
 def load_config(path: str | None = None) -> dict:
     path = path or CONFIG_FILE
     cfg = copy.deepcopy(DEFAULT_CONFIG)
-    try:
-        with open(path, "r", encoding="utf-8-sig") as f:
-            parsed = json.load(f)
-        cfg = deep_merge(cfg, parsed)
-    except FileNotFoundError:
-        pass
-    except Exception as e:
-        print("[config] 读取配置失败，使用默认值：%s" % e)
+    parsed, _err, _transient = _read_config_once(path)
+    if parsed is not None:
+        try:
+            cfg = deep_merge(cfg, parsed)
+        except Exception as e:                                   # noqa: BLE001
+            print("[config] 配置合并失败，使用默认值：%s" % e)
+    elif _err:
+        print("[config] 读取配置失败，使用默认值：%s%s"
+              % (_err, "（重试 %d 次仍被占用）" % _READ_TRIES if _transient else ""))
     # 只对**真正那份** config.json 做一次性迁移（带自定义 path 的调用多半是自检/夹具，
     # 绝不能把关卡写回用户真实的那份）
     try:
@@ -792,9 +826,24 @@ def get_config() -> dict:
 
 
 def reload_config(path: str | None = None) -> dict:
-    """**显式的失效入口**：丢掉内存里那份，从磁盘重读一遍，并记下新的指纹。"""
+    """**显式的失效入口**：丢掉内存里那份，从磁盘重读一遍，并记下新的指纹。
+
+    ⛔ 2026-09-22 修（对标 CowAgent 教训 ③"配置**读/写回**失败**只许告警、不许停用能力**"）：
+    读不到（`PermissionError`/被独占/临时坏档）时，原来会**把内存里那份换成内置默认值** ——
+    而能力开关注定读的是内存这份 ⇒ **一次瞬态读失败 = 全部能力当场回到默认**（用户看到的是
+    "设置没了/功能突然不工作"），而且只有一行 `print`。⇒ 两条收口：
+    ① 读之前先按 `_read_config_once` 重试（吃下"别人正在换档"的那一下）；
+    ② 真读不到时**保留内存里那份**（只刷新指纹，免得每次 `get_config()` 都去撞一次盘）、
+       并留一条 warn。首次启动（内存里本来就没有）仍按默认值走。
+    """
     global _current_config, _config_stamp
     p = path or CONFIG_FILE
+    parsed, err, transient = _read_config_once(p)
+    if parsed is None and err and _current_config is not None \
+            and os.path.abspath(p) == os.path.abspath(CONFIG_FILE):
+        log.warning("读取配置失败（%s），保留内存里那份、不退回默认值：%s", "被占用" if transient else "档坏了", err)
+        _config_stamp = _stamp(p)
+        return _current_config
     _current_config = load_config(p)
     _config_stamp = _stamp(p)
     return _current_config
@@ -816,16 +865,23 @@ def save_config(cfg: dict | None = None, path: str | None = None) -> None:
     `save_config()` 会把**用户真的 config.json 覆写掉**——B 线实测撞上两次
     （副本 25991 字节 → 164 字节）。⇒ 只多一个"写到哪"的参数：
     **产品调用点一个字不改**（默认仍是 `CONFIG_FILE`），判据写临时目录。
+
+    ⛔ 2026-09-22 修（对标 CowAgent 学到的教训 ③，见 `docs`/记忆里的"配置写回失败
+    只许告警、不许停用能力"）：原来这里是**自己拼 `<path>.tmp`**（临时名固定）——
+    而 `config.json` 恰好是"坏了就**全部能力一起停用**"的那个档（版本门/后台档/口令/
+    数据目录/各类开关全在里面）。落点有四处会并发写它：控制台 `/api/config`、
+    `/api/wechat/dir`、启动时的一次性迁移、后台线程里的档位标定（`sd_local` /
+    `voice_strip`）——固定临时名 ⇒ 两个写者**打开同一个临时档**，内容互相穿插，
+    `os.replace` 换上去的就是**半截/混合 JSON** ⇒ 下次启动读配置失败、退回默认值，
+    用户"所有设置凭空没了"。⇒ 一律走 `persist.atomic_write_json`（临时名带 pid +
+    随机数、`flush`+`fsync`、`os.replace` 撞占用有界重试）。
+    失败语义**一个字不改**：仍然是**抛异常**（调用方那圈 `try/except` 靠它判成败；
+    若改成静默返回，"写失败"会被当成"保存成功"上报给用户）。
     """
     cfg = cfg or get_config()
     p = str(path or CONFIG_FILE)
-    _d = os.path.dirname(p)
-    if _d:
-        os.makedirs(_d, exist_ok=True)
-    tmp = p + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, p)
+    if not persist.atomic_write_json(p, cfg, indent=2):
+        raise OSError("配置落盘失败（原档未动）：%s" % p)
 
 
 # ── 一次性迁移：把「安全默认值」补到**已存在**的 config.json 上（2026-09-16 立）─────────

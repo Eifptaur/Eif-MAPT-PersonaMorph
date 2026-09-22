@@ -1632,8 +1632,13 @@ class WebUI:
                         if _bad_dir:
                             self._json(_bad_dir)
                         else:
-                            set_config(new_cfg)
+                            # ⛔ 2026-09-22 修（对标 CowAgent 的"配置写回失败**只许告警、不许停用/改动能力**"）：
+                            #   原来是**先 `set_config` 再 `save_config`** ⇒ 落盘失败时抛异常、控制台如实报
+                            #   `{ok:false}`，可**内存里那份已经被换掉了**——于是"这项能力实际上是开着的"，
+                            #   用户却被告知没保存；重启后它又悄悄变回旧的（状态前后不一致，最难查）。
+                            #   ⇒ 顺序倒过来：**先落盘、成了再换内存**（盘与内存要么一起新、要么一起旧）。
                             save_config(new_cfg)
+                            set_config(new_cfg)
                             if parent.on_save:
                                 parent.on_save(new_cfg)
                             self._json({"ok": True})

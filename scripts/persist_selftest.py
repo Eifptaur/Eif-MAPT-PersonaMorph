@@ -526,7 +526,10 @@ def _s9_source_anchors():
     #   统一实现本身）：本轮实测 **33 处**（与审计独立数出来的 33 完全一致）。
     #   审计结论是"不必一次全换"（现场 0 次 `.bad.*` 证据、一次全换风险大于收益），但**不许再涨**：
     #   新写的落盘点一律走 `persist.atomic_write_json/text`；谁加回一处固定临时名，这条立刻红。
-    _TMP_RATCHET = 33
+    #   ⛔ 2026-09-22 下调 33 → **32**：`config.save_config` 那一处换成了 `persist.atomic_write_json`
+    #   （`config.json` 坏了就是"全部能力一起回默认值"，是最不能赌的那一个档；判据见
+    #   `scripts\config_writeback_selftest.py`）⇒ 基线跟着降到实测值，锁住这次的收益。
+    _TMP_RATCHET = 32
     _tmp_hits = []
     for _fn in sorted(os.listdir(os.path.join(ROOT, "agent"))):
         if not _fn.endswith(".py") or _fn == "persist.py":
