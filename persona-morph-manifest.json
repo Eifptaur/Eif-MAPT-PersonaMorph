@@ -1,13 +1,13 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.22.4",
-    "sha256": "bfc73b668a511279533c76549c11e55b79b59fe1b6360c3dddd10b14720ce8f5",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.62/persona-morph-v2.1.62.zip",
-    "build": "30759e406191",
-    "size": 12051778,
-    "files": 333,
-    "expires": "2026-10-22T11:33:33Z"
+    "version": "2026.9.22.5",
+    "sha256": "563f5ef6f6885fd840e2e6e376234811c7f4865381bb4f97e9e9a7a7d4e2e8c1",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.63/persona-morph-v2.1.63.zip",
+    "build": "b1542db8877c",
+    "size": 12108183,
+    "files": 338,
+    "expires": "2026-10-22T12:10:52Z"
   },
   "dlc": [
     {
@@ -36,13 +36,13 @@
     }
   ],
   "announce": {
-    "version": "2026.9.22.4",
+    "version": "2026.9.22.5",
     "notes": [
-      "修复了一些 bug"
+      "新增「预设信息」：按会话设定背景信息，可设截止日期、到期自动舍弃、只在该会话相关时注入"
     ],
     "forceBase": false,
-    "minBase": "2026.9.22.4"
+    "minBase": "2026.9.22.5"
   },
-  "builtAt": "2026-09-22T11:33:33Z",
-  "updatedAt": 1790076813357
+  "builtAt": "2026-09-22T12:10:52Z",
+  "updatedAt": 1790079052224
 }
