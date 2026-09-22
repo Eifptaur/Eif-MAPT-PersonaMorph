@@ -104,6 +104,14 @@ def _reachable(chain):
 
 GET_PATHS = _reachable("do_GET")
 BODY_PATHS = _reachable("_handle_body_request")
+# ⛔ 2026-09-22（第 ④ 项 Phase B 第一批）：`do_GET` 里那些字面 `/api/…` 分支已经**搬到
+#   `agent/routes.py` 的 `HANDLERS`**（按路由表分派），所以"能不能应答"= 链里的字面量 ∪ 表里已搬过去的。
+try:
+    from agent.routes import HANDLERS as _H
+except Exception:                                                # noqa: BLE001
+    _H = {}
+GET_PATHS = GET_PATHS | {p for p, row in _H.items() if "GET" in row}
+BODY_PATHS = BODY_PATHS | {p for p, row in _H.items() if ("POST" in row or "PUT" in row)}
 
 # ── 前端调用（方法从 opts 里读；helper 名字不是方法） ─────────────────────
 CLINES = CONSOLE.splitlines()
