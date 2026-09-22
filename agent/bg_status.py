@@ -14,6 +14,13 @@
   posted_fallback 默认投递，判据不过时**默认不退回真鼠标**（`input.allow_real_fallback` 默认关）——**返回消息里必须写明档位与原因**
   real            目前只能真鼠标（会动光标、可能短暂置前），如实标注
   skipped         本产品不提供（如实说"跳过"，不做）
+
+⛔ 2026-09-22 加（第十五轮对标 **MaaFramework**《2.4 控制方式说明》）：**对外一律按"两列"说** ——
+  **「抢占鼠标」**（光标会不会被拿走）与 **「支持后台」**（不要求目标窗口在前台即可工作）是两件事。
+  上游把那 12 种 Win32 输入方式就是按这两列编表的（`SendMessage`/`PostMessage`＝抢占鼠标 **否** / 支持后台 **是**；
+  `Seize`＝**是** / **否**；`WithCursorPos` 系列＝**短暂** / 是），我们原来把"不动光标"与"窗口短暂置前"
+  挤在同一句里，读者容易误读成同一件事。⇒ 本模块在 `paths()` 里给每条**补一句两列前缀**（不改各条自己的措辞，
+  判据在认它）；对照全文见 `WX-chatbot\research\对标-MaaFramework.md`。
 """
 
 # 一定非得走前台的路径（会动光标 / 会真占前台）——后台档对这些一律「跳过并说明原因」，不偷偷用真鼠标。
@@ -117,23 +124,46 @@ PATHS = [
     },
 ]
 
+#: 「两列口径」——每条路径在**对外说法**里都要带的那一句（见模块头那段说明）。
+#: 上游口径（MaaFramework《2.4 控制方式说明》）：SendMessage/PostMessage 系＝抢占鼠标「否」/ 支持后台「是」；
+#: Seize（≈我们的真鼠标）＝「是」/「否」；WithCursorPos 系＝抢占鼠标「**短暂**」/ 支持后台「是」。
+AXIS = {
+    "posted": "抢占鼠标：否｜支持后台：是",
+    "posted_fallback": "默认抢占鼠标：否｜支持后台：是（判据不成立时默认不回落；真鼠标＝抢占鼠标：是｜支持后台：否）",
+    "real": "抢占鼠标：是｜支持后台：否",
+    "skipped": "本产品不提供（不做）",
+}
+
 STATUS_LABEL = {
-    "posted": "全程后台",
-    "posted_fallback": "后台优先（默认投递；不成立时默认**不**回落真鼠标）",
-    "real": "真鼠标",
-    "skipped": "已跳过",
+    "posted": "全程后台（抢占鼠标：否｜支持后台：是）",
+    "posted_fallback": "后台优先（抢占鼠标：否｜支持后台：是；不成立时默认**不**回落真鼠标）",
+    "real": "真鼠标（抢占鼠标：是｜支持后台：否）",
+    "skipped": "已跳过（本产品不提供）",
 }
 
 _STATUS_ORDER = {"posted": 0, "posted_fallback": 1, "real": 2, "skipped": 3}
 
 
 def paths() -> list:
-    """按"后台程度"排序返回矩阵（好读的那份，给控制台/报告用）。"""
-    return sorted([dict(p) for p in PATHS], key=lambda p: (_STATUS_ORDER.get(p["status"], 9), p["key"]))
+    """按"后台程度"排序返回矩阵（好读的那份，给控制台/报告用）。
+
+    ⛔ 2026-09-22 加（第十五轮对标 MaaFramework）：**给每条补一句"两列口径"前缀** ——
+      「抢占鼠标」（光标会不会被拿走）与「支持后台」（不要求前台即工作）分开写。
+      **不改各条自己的 `detail` 措辞**（判据在认那些字，含 `switch_chat` 的"短暂把微信置前…自动还回"），
+      只在前面前缀一句；幂等（已有前缀就不重复加）。
+    """
+    out = []
+    for p in sorted([dict(x) for x in PATHS], key=lambda p: (_STATUS_ORDER.get(p["status"], 9), p["key"])):
+        _axis = AXIS.get(str(p.get("status") or ""), "")
+        if _axis and not str(p.get("detail") or "").startswith(_axis):
+            p["detail"] = "%s。%s" % (_axis, p.get("detail") or "")
+        out.append(p)
+    return out
 
 
 def get(key: str) -> dict:
-    for p in PATHS:
+    """取一条（与 `paths()` 同口径：带两列前缀），找不到返回 `{}`。"""
+    for p in paths():
         if p["key"] == key:
             return dict(p)
     return {}
