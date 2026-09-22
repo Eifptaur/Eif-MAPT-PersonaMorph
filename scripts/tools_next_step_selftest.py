@@ -145,6 +145,90 @@ ok("README 字段表补了五个展示字段 + 「不是安装源」边界",
    all(("`%s`" % k) in _rd for k in ("usage", "examples", "version", "author", "homepage"))
    and _sm.has(_rd, "不是安装源"))
 
+print("── D. 导入/导出：文档 → 插件（前后端映射一起钉）──")
+_tmp2 = tempfile.mkdtemp(prefix="pm_toolsexp_")
+_real_cfg2 = UT._cfg
+try:
+    UT._cfg = lambda: {"dir": _tmp2, "enabled": True, "max_tools": 30, "timeout_ms": 8000, "max_chars": 4000}
+    _a = dict(_base, name="exp_a", usage="甲怎么用", author="张三", version="1.0")
+    _b = dict(_base, name="exp_b", url="https://api.example.com/b")
+    _doc = json.dumps({"kind": UT.BUNDLE_KIND, "version": "1.0", "count": 2, "tools": [_a, _b]}, ensure_ascii=False)
+    _r = UT.import_text(_doc)
+    ok("导入一份捆：两个都写进去了", _r["ok"] and _r["added"] == ["exp_a", "exp_b"], str(_r["added"]))
+    ok("落盘文件名＝工具名.json",
+       sorted(os.listdir(_tmp2)) == ["exp_a.json", "exp_b.json"], str(sorted(os.listdir(_tmp2))))
+    _txt, _why = UT.export_text()
+    _back = json.loads(_txt)
+    ok("导出全部＝一份带 kind/count/tools 的文档",
+       _back.get("kind") == UT.BUNDLE_KIND and _back.get("count") == 2 and len(_back["tools"]) == 2, _why)
+    _one, _onewhy = UT.export_text("exp_a")
+    _onej = json.loads(_one)
+    ok("单份导出只有那一份清单（没有捆的壳）",
+       _onej.get("name") == "exp_a" and "kind" not in _onej and _onej.get("usage") == "甲怎么用", _onewhy)
+    # 往返：把导出的文档导进**另一个目录**，结果必须一致
+    _tmp3 = tempfile.mkdtemp(prefix="pm_toolsexp2_")
+    UT._cfg = lambda: {"dir": _tmp3, "enabled": True, "max_tools": 30, "timeout_ms": 8000, "max_chars": 4000}
+    _r2 = UT.import_text(_txt)
+    _round = {t["name"]: t for t in UT.load()[0]}
+    ok("往返一致：导出→导入另一处，名字/地址/白名单/展示字段都对得上",
+       _r2["ok"] and _round.get("exp_a", {}).get("url") == "https://api.example.com/x"
+       and _round.get("exp_b", {}).get("allow_hosts") == ["api.example.com"]
+       and _round.get("exp_a", {}).get("version") == "1.0", str(_r2["added"]))
+    UT._cfg = lambda: {"dir": _tmp2, "enabled": True, "max_tools": 30, "timeout_ms": 8000, "max_chars": 4000}
+    _n_before = sorted(os.listdir(_tmp2))
+    _r3 = UT.import_text(_doc)
+    ok("重名默认不覆盖（跳过并说清怎么替换）",
+       not _r3["added"] and len(_r3["skipped"]) == 2 and "覆盖同名" in _r3["skipped"][0]["why"],
+       str(_r3["skipped"][0]["why"])[:40])
+    ok("跳过时一个字节都没写（文件列表不变）", sorted(os.listdir(_tmp2)) == _n_before, str(sorted(os.listdir(_tmp2))))
+    _r4 = UT.import_text(_doc, overwrite=True)
+    ok("勾了「覆盖同名」才替换", _r4["replaced"] == ["exp_a", "exp_b"], str(_r4["replaced"]))
+    _bad_doc = json.dumps([dict(_base, name="exp_bad", url="https://x.example.org/",
+                                allow_hosts=["other.com"], description="白名单对不上的工具")], ensure_ascii=False)
+    _r5 = UT.import_text(_bad_doc)
+    ok("坏清单被拦下、带修法、**不写盘**",
+       not _r5["added"] and "白名单" in _r5["skipped"][0]["why"] and "exp_bad.json" not in os.listdir(_tmp2),
+       str(_r5["skipped"][0])[:70])
+    ok("不是 JSON ⇒ 明确说清", UT.import_text("不是 json")["error"].startswith("不是合法的 JSON"))
+    ok("空文档（[]）⇒ 明确说清", "没有工具" in UT.import_text("[]")["error"])
+    ok("少 name 的清单 ⇒ 当坏清单列出来（不是静默通过）",
+       "不合规" in UT.import_text("{}")["skipped"][0]["why"], str(UT.import_text("{}")["skipped"][0]["why"])[:50])
+    _builtin = UT._builtin_names()
+    if _builtin:
+        _r6 = UT.import_text(json.dumps(dict(_base, name=_builtin[0], description="撞内置名的工具"), ensure_ascii=False))
+        ok("与内置工具重名 ⇒ 拒（%s）" % _builtin[0],
+           not _r6["added"] and "重名" in _r6["skipped"][0]["why"], str(_r6["skipped"][0]["why"])[:50])
+    else:
+        print("  SKIP 内置名清单取不到（这个环境 import 不进 tools.py）")
+finally:
+    UT._cfg = _real_cfg2
+    shutil.rmtree(_tmp2, ignore_errors=True)
+    shutil.rmtree(_tmp3, ignore_errors=True)
+
+_src = io.open(os.path.join(ROOT, "agent", "user_tools.py"), encoding="utf-8").read()
+_seg_imp = _src[_src.find("def import_text("):_src.find("def _next_step(")]
+ok("导入只写 JSON：不执行代码、不下载、不碰 data/",
+   not any(k in _seg_imp for k in ("exec(", "eval(", "subprocess", "urlopen", "urllib.request.urlopen", "shutil.copy")))
+ok("导入走原子写（persist.atomic_write_json），不自己造 .tmp",
+   _sm.has(_seg_imp, "persist.atomic_write_json"))
+_wu2 = io.open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
+from agent.routes import ROUTES as _R2, HANDLERS as _HD2  # noqa: E402
+ok("路由表：/api/tools/export = GET → _rapi_tools_export",
+   _R2.get("/api/tools/export") == ("GET",) and (_HD2.get("/api/tools/export") or {}).get("GET") == "_rapi_tools_export")
+ok("路由表：/api/tools/import = POST → _rapi_tools_import_post",
+   _R2.get("/api/tools/import") == ("POST",)
+   and (_HD2.get("/api/tools/import") or {}).get("POST") == "_rapi_tools_import_post")
+ok("两个方法都在 webui 里，且走 user_tools 的同一实现（不另写一份）",
+   _sm.has(_wu2, "def _rapi_tools_export(self, path, data, parsed, method):", "_ut6.export_text(nm)")
+   and _sm.has(_wu2, "_ut8.import_text(text, overwrite=as_bool(", "r[\"tools\"] = _ut8.snapshot()"))
+ok("前后端映射：面板有导入/导出按钮、且都打到了对应端点",
+   'id="utExport"' in _seg and 'id="utImport"' in _seg
+   and _sm.has(HTML, "const be = document.getElementById('utExport')")
+   and _sm.has(HTML, "const bi = document.getElementById('utImport')")
+   and _sm.has(HTML, "/api/tools/export") and _sm.has(HTML, "/api/tools/import"))
+ok("每行也有「导出」（只导这一份）", _sm.has(HTML, "eb.textContent = '导出'", "utExportDlg(t.name)"))
+ok("引导里写了这一步（第 ⑤ 步：导入/导出）", _sm.has(HTML, "⑤", "导入工具", "导出工具"))
+
 print("")
 print("「装完怎么引导」判据：%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

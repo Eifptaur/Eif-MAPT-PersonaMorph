@@ -406,6 +406,133 @@ def set_enabled(name: str, on: bool) -> tuple:
     return False, "清单里没有名为 %s 的工具" % n
 
 
+def _builtin_names() -> tuple:
+    """内置工具名（导入时用来拦"覆盖内置"）。拿不到就退回空表——**不许因此让导入失败**。
+
+    ⚠️ 名字来源是 `tools._builtin_tool_defs()`（不是 `tools.defs`：**那个名字不存在**，
+    2026-09-22 判据里踩过一次——写成 `from .tools import defs` 会静默退回空表，
+    于是"与内置重名"这条拦不住）。
+    """
+    try:
+        from .tools import _builtin_tool_defs
+        return tuple(d.get("name") for d in (_builtin_tool_defs() or []) if d.get("name"))
+    except Exception:
+        return ()
+
+
+BUNDLE_KIND = "persona-morph-tools"
+
+
+def export_text(name: str = "") -> tuple:
+    """把工具导出成**一份文档**（给用户备份/分享）。返回 `(文本, 说明)`。
+
+    · 传 `name`：只导出那一个工具的原始清单（最干净，别人改个名字就能用）
+    · 不传：导出全部，外面套一层**捆**（`kind` / `version` / `exported_at` / `tools`）
+      导入时两种形态都认（单独一份清单 / 捆 / 裸数组都行）。
+
+    ⛔ 只读清单文件、只生成文本：不执行任何代码、不访问网络。
+    """
+    tools, _problems, _d = load()
+    if name:
+        hit = [t for t in tools if t["name"] == str(name or "").strip().lower()]
+        if not hit:
+            return "", "没有名为 %s 的工具（先点「重新加载清单」看看它有没有被列出来）" % name
+        raw = _read_manifest(hit[0].get("file") or "")
+        if raw is None:
+            return "", "读不到清单文件：%s" % (hit[0].get("file") or "")
+        return json.dumps(raw, ensure_ascii=False, indent=2), "已导出 1 个工具"
+    items = []
+    for t in tools:
+        raw = _read_manifest(t.get("file") or "")
+        if raw is not None:
+            items.append(raw)
+    doc = {"kind": BUNDLE_KIND, "version": "1.0", "exported_at": int(time.time() * 1000),
+           "count": len(items), "tools": items}
+    return json.dumps(doc, ensure_ascii=False, indent=2), "已导出 %d 个工具" % len(items)
+
+
+def _read_manifest(path: str):
+    try:
+        with open(path, "r", encoding="utf-8-sig") as fh:
+            obj = json.load(fh)
+        return obj if isinstance(obj, dict) else None
+    except Exception:
+        return None
+
+
+def _import_items(text: str) -> tuple:
+    """把导入的文本拆成"待写入的清单列表"。认三种形态：单份清单 / 捆 / 裸数组。"""
+    obj = json.loads(text)
+    if isinstance(obj, list):
+        return obj
+    if isinstance(obj, dict) and isinstance(obj.get("tools"), list):
+        return obj["tools"]
+    if isinstance(obj, dict):
+        return [obj]
+    return []
+
+
+def import_text(text: str, overwrite: bool = False) -> dict:
+    """**导入＝把文档变成插件**：校验后写进 `tools.d/<name>.json`。
+
+    · 校验走**同一套** `validate()`（白名单必填、内网一律拒、不许与内置重名、清单内不许重名）
+    · 重名默认**不覆盖**（跳过并说明）；`overwrite=True` 才替换同名的那一份
+    · 返回 `{ok, added[], replaced[], skipped[{name,why,fix}], dir, note}`，**坏的一份都不写**
+    · ⛔ 只写 JSON 清单：不执行任何代码、不下载任何东西、不碰 `data/`
+    """
+    try:
+        items = _import_items(text)
+    except Exception as e:
+        return {"ok": False, "error": "不是合法的 JSON：%s" % str(e)[:120], "added": [], "replaced": [], "skipped": []}
+    if not items:
+        return {"ok": False, "error": "这份文档里没有工具（认单份清单 / 捆 / 数组三种形态）",
+                "added": [], "replaced": [], "skipped": []}
+    d = manifest_dir()
+    try:
+        os.makedirs(d, exist_ok=True)
+    except Exception as e:
+        return {"ok": False, "error": "建目录失败：%s" % type(e).__name__, "added": [], "replaced": [], "skipped": []}
+    _tools, _problems, _d = load()
+    existing = {t["name"]: t for t in _tools}
+    on_disk = set()
+    try:
+        on_disk = {fn[:-5] for fn in os.listdir(d) if fn.lower().endswith(".json")}
+    except Exception:
+        pass
+    builtin = _builtin_names()
+    added, replaced, skipped, seen = [], [], [], []
+    from . import persist
+    for mf in items:
+        clean, why = validate(mf, builtin_names=builtin, seen=seen)
+        if not clean:
+            _nm_bad = str(mf.get("name") or "") if isinstance(mf, dict) else ""
+            skipped.append({"name": _nm_bad or "?", "why": why, "fix": _fix_hint(why)})
+            continue
+        nm = clean["name"]
+        if nm in existing or nm in on_disk:
+            if not overwrite:
+                skipped.append({"name": nm, "why": "已经有一个同名工具了（要替换就先勾上「覆盖同名」）",
+                                "fix": "改名，或勾上「覆盖同名」再导一次"})
+                continue
+            replaced.append(nm)
+        else:
+            added.append(nm)
+        seen.append(nm)
+        p = os.path.join(d, nm + ".json")
+        on_disk.add(nm)
+        clean.pop("file", None)
+        if not persist.atomic_write_json(p, clean, indent=2):
+            skipped.append({"name": nm, "why": "写文件失败（原档未动）", "fix": "检查 tools.d 目录权限"})
+            if nm in added:
+                added.remove(nm)
+            if nm in replaced:
+                replaced.remove(nm)
+    ok_any = bool(added or replaced)
+    return {"ok": ok_any or not skipped, "added": added, "replaced": replaced, "skipped": skipped, "dir": d,
+            "note": "已写进 %s：新增 %d 个、替换 %d 个、跳过 %d 个。回面板点「重新加载清单」再勾选。"
+                    % (os.path.basename(d) or d, len(added), len(replaced), len(skipped))}
+
+
 def _next_step(snap: dict) -> dict:
     """**只读已有状态**推导"下一步该干什么"（不引入新概念）。
 

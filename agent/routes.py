@@ -93,6 +93,8 @@ ROUTES = {
     "/api/stats/cal_list": ("POST",),
     "/api/status": ("GET",),
     "/api/test-api": ("POST",),
+    "/api/tools/export": ("GET",),
+    "/api/tools/import": ("POST",),
     "/api/tools/new_manifest": ("GET", "POST"),
     "/api/tools/reload": ("GET",),
     "/api/tools/test": ("GET",),
@@ -360,6 +362,12 @@ HANDLERS = {
     },
     "/api/test-api": {
         "POST": "_rapi_test_api_post",
+    },
+    "/api/tools/export": {
+        "GET": "_rapi_tools_export",
+    },
+    "/api/tools/import": {
+        "POST": "_rapi_tools_import_post",
     },
     "/api/tools/new_manifest": {
         "GET": "_rapi_tools_new_manifest",

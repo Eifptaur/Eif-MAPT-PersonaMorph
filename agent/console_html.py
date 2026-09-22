@@ -1782,7 +1782,7 @@ th{color:var(--tx2);font-weight:500}
         <button id="utBarGuide" class="ghost">怎么加工具</button>
         <button id="utBarProblems" class="ghost">看问题</button>
       </div>
-      <div class="desc">把 <b>一个工具一个 <code>.json</code></b> 丢进 <code>tools.d/</code>，在这里**勾选**后模型才能用它。边界先说清：<b>只发 HTTP、不执行任何本地代码</b>；<code>allow_hosts</code> 域名白名单必填，<b>内网/本机地址永远拒绝</b>（写进白名单也一样）；参数必须是合法配置格式；**坏清单会在下面逐条列出来**（不会静默跳过）。<b>不知道怎么写？点下面的「怎么加工具」——三步 + 可复制模板 + 一键生成，全在弹窗里。</b></div>
+      <div class="desc">把 <b>一个工具一个 <code>.json</code></b> 丢进 <code>tools.d/</code>，在这里**勾选**后模型才能用它。边界先说清：<b>只发 HTTP、不执行任何本地代码</b>；<code>allow_hosts</code> 域名白名单必填，<b>内网/本机地址永远拒绝</b>（写进白名单也一样）；参数必须是合法配置格式；**坏清单会在下面逐条列出来**（不会静默跳过）。<b>不会写就点「怎么加工具 / 自己写一个」——三步 + 可复制模板 + 一键生成，全在弹窗里；别人给了你一份文档，点「导入工具」就等于装上它，「导出工具」则把你这边的打包成一份文档发给别人。</b></div>
       <div class="row"><label>总开关</label><input type="checkbox" data-cfg="user_tools.enabled">
         <span class="hint">默认关：关着时这些清单一个都不加载，模型也看不到。</span></div>
       <div class="row"><label>清单现状</label><div class="grow"><b id="utGlobals">检测中…</b>
@@ -1795,7 +1795,9 @@ th{color:var(--tx2);font-weight:500}
       <div class="row"><label>单次超时(毫秒)</label><input type="number" min="500" max="60000" data-cfg="user_tools.timeout_ms"></div>
       <div class="row"><label>结果截断(字符)</label><input type="number" min="200" max="20000" data-cfg="user_tools.max_chars"></div>
       <div class="btns">
-        <button id="utGuide" class="ghost">怎么加工具（看这里）</button>
+        <button id="utGuide" class="ghost">怎么加工具 / 自己写一个（看这里）</button>
+        <button id="utExport" class="ghost">导出工具</button>
+        <button id="utImport" class="ghost">导入工具</button>
         <button id="utReload" class="ghost">重新加载清单</button>
         <button class="pri" data-save>保存设置（工具与插件）</button>
       </div>
@@ -3582,6 +3584,11 @@ async function loadStatus(){  try{
                  测试不改清单 ⇒ 本来就不需要重画。 */
             };
             row.appendChild(ai); row.appendChild(tb);
+            const eb = document.createElement('button');
+            eb.className = 'ghost'; eb.textContent = '导出';
+            eb.title = '把这一份工具导出成一份可以直接发给别人的文档';
+            eb.onclick = function(){ utExportDlg(t.name); };
+            row.appendChild(eb);
             if(t.examples && t.examples.length){
               // 清单里写好的例子：点一下就填进参数框（不用手打 JSON）
               const ch = document.createElement('span'); ch.className = 'hint';
@@ -4829,6 +4836,7 @@ const GUIDES = {
       '② 改 4 个地方：name（工具名，小写字母/下划线）、description（什么时候该用它）、url（接口地址）、allow_hosts（域名白名单，必须包含 url 的域名）',
       '③ 回本页点「重新加载清单」→ 打开总开关 → 在列表里勾选你的工具 ⇒ 下一轮对话模型就能用它',
       '④ 勾选之前先在那一行点「试一下」：填好参数（JSON，不填就是 {}）按一下，它会**真发一次请求**并把返回内容显示在下面——不用等聊天时才发现写错了',
+      '⑤ 别人给了你一份 .json 文档：点「导入工具」选文件或粘贴，校验通过就写进 tools.d/（同名默认不覆盖，要替换就勾「覆盖同名」）；你想分享自己的工具就点「导出工具」，它会给你一份可以直接发出去的文档（那一行还有一个「导出」只导这一份）。',
       '出错不用猜：坏清单会一条条列在「清单现状」下面；运行时的报错会原样返回给模型，也会显示在「试一下」的结果里。'
     ],
     copy: [{label: '复制最小模板', text: '{\n  "name": "my_tool",\n  "description": "这个工具做什么、什么时候用",\n  "enabled": false,\n  "method": "GET",\n  "url": "https://api.example.com/x",\n  "allow_hosts": ["api.example.com"],\n  "params": {"type": "object", "properties": {}, "required": []},\n  "usage": "怎么用（只给控制台看，不进提示词）",\n  "examples": ["{}"],\n  "author": ""\n}'}],
@@ -4973,6 +4981,99 @@ function openGuide(key){
   box.appendChild(btns); m.appendChild(box); document.body.appendChild(m); maskOpen(m);
 }
 
+async function utExportDlg(name){
+  let r = null;
+  try{ r = await getJSON('/api/tools/export' + (name ? ('?name=' + encodeURIComponent(name)) : '')); }
+  catch(e){ toast('导出失败：' + e.message); return; }
+  if(!r || !r.ok){ toast((r && (r.why || r.error)) || '导出失败'); return; }
+  const m = document.createElement('div'); m.className = 'mask';
+  const box = document.createElement('div'); box.className = 'box'; box.style.maxWidth = '660px'; box.style.textAlign = 'left';
+  const h = document.createElement('h1'); h.textContent = name ? ('导出「' + name + '」') : '导出全部工具'; box.appendChild(h);
+  const p = document.createElement('p');
+  p.textContent = '这是一份可以直接发给别人的文档：对方在自己的控制台点「导入工具」贴上/选中它，就等于装上了。'
+    + '文档里只有清单本身（地址、白名单、说明、用法、示例），不含你的任何本机信息。';
+  box.appendChild(p);
+  const ta = document.createElement('textarea'); ta.value = r.text || ''; ta.rows = 12;
+  ta.style.cssText = 'width:100%;box-sizing:border-box;white-space:pre;font-size:12px;line-height:1.55;'
+    + 'background:rgba(127,127,127,.12);border-radius:9px;padding:8px 10px';
+  box.appendChild(ta);
+  const btns = document.createElement('div'); btns.className = 'btns';
+  const bCopy = document.createElement('button'); bCopy.className = 'ghost'; bCopy.textContent = '复制文档';
+  bCopy.onclick = function(){ copyText(ta.value); };
+  const bSave = document.createElement('button'); bSave.className = 'ghost'; bSave.textContent = '另存为 .json';
+  bSave.onclick = function(){ utDownload((name || 'my-tools') + '.json', ta.value); };
+  const bOk = document.createElement('button'); bOk.className = 'pri'; bOk.textContent = '关闭';
+  bOk.onclick = function(){ maskClose(m); m.remove(); };
+  btns.appendChild(bCopy); btns.appendChild(bSave); btns.appendChild(bOk);
+  box.appendChild(btns); m.appendChild(box); document.body.appendChild(m); maskOpen(m);
+}
+function utDownload(fn, text){
+  try{
+    const blob = new Blob([text], {type: 'application/json'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = fn;
+    document.body.appendChild(a); a.click();
+    setTimeout(function(){ try{ URL.revokeObjectURL(a.href); a.remove(); }catch(e){} }, 1200);
+    toast('已开始下载 ' + fn);
+  }catch(e){ toast('下载不了，请用「复制文档」：' + e.message); }
+}
+function utImportDlg(){
+  const m = document.createElement('div'); m.className = 'mask';
+  const box = document.createElement('div'); box.className = 'box'; box.style.maxWidth = '660px'; box.style.textAlign = 'left';
+  const h = document.createElement('h1'); h.textContent = '导入工具 ＝ 把一份文档变成插件'; box.appendChild(h);
+  const p = document.createElement('p');
+  p.textContent = '选一个别人给你的 .json，或把内容贴进下面。导入只做一件事：把清单校验后写进 tools.d/ ——'
+    + '不执行任何代码、不下载任何东西；域名白名单必填、内网/本机地址照旧一律拒。'
+    + '同名工具默认不动它（要替换就勾「覆盖同名」）。';
+  box.appendChild(p);
+  const row = document.createElement('div'); row.className = 'row';
+  const ov = document.createElement('input'); ov.type = 'checkbox';
+  const lab = document.createElement('label'); lab.appendChild(ov); lab.appendChild(document.createTextNode(' 覆盖同名工具'));
+  const fi = document.createElement('input'); fi.type = 'file'; fi.accept = '.json,application/json';
+  row.appendChild(lab); row.appendChild(fi);
+  const ta = document.createElement('textarea'); ta.rows = 9; ta.placeholder = '也可以把文档内容粘在这里…';
+  ta.style.cssText = 'width:100%;box-sizing:border-box;white-space:pre;font-size:12px;line-height:1.55;'
+    + 'background:rgba(127,127,127,.12);border-radius:9px;padding:8px 10px';
+  const res = document.createElement('div'); res.className = 'hint';
+  box.appendChild(row); box.appendChild(ta); box.appendChild(res);
+  fi.onchange = function(){
+    const f = fi.files && fi.files[0]; if(!f) return;
+    const fr = new FileReader();
+    fr.onload = function(){
+      ta.value = String(fr.result || '');
+      res.style.color = ''; res.textContent = '已读入 ' + f.name + '（' + ta.value.length + ' 字符），按「导入」写入。';
+    };
+    fr.onerror = function(){ res.style.color = 'var(--err-tx)'; res.textContent = '读文件失败'; };
+    fr.readAsText(f, 'utf-8');
+  };
+  const btns = document.createElement('div'); btns.className = 'btns';
+  const bGo = document.createElement('button'); bGo.className = 'pri'; bGo.textContent = '导入';
+  bGo.onclick = async function(){
+    if(!ta.value.trim()){ res.style.color = 'var(--err-tx)'; res.textContent = '先选文件、或把内容贴进来'; return; }
+    bGo.disabled = true; bGo.textContent = '导入中…';
+    try{
+      const r = await getJSON('/api/tools/import', {method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({text: ta.value, overwrite: !!ov.checked})});
+      const lines = [];
+      res.style.color = (r && r.ok) ? '' : 'var(--err-tx)';
+      if(r && r.error) lines.push('没成功：' + r.error);
+      if(r && (r.added || []).length) lines.push('新增：' + (r.added || []).join('、'));
+      if(r && (r.replaced || []).length) lines.push('替换：' + (r.replaced || []).join('、'));
+      ((r && r.skipped) || []).forEach(function(s){
+        lines.push('跳过 ' + s.name + '：' + s.why + (s.fix ? ('　→ ' + s.fix) : ''));
+      });
+      if(r && r.note) lines.push(r.note);
+      res.style.whiteSpace = 'pre-wrap';
+      res.textContent = lines.join('\n') || '没有可导入的内容';
+      loadStatus();
+    }catch(e){ res.style.color = 'var(--err-tx)'; res.textContent = '导入失败：' + e.message; }
+    bGo.disabled = false; bGo.textContent = '导入';
+  };
+  const bOk = document.createElement('button'); bOk.className = 'ghost'; bOk.textContent = '关闭';
+  bOk.onclick = function(){ maskClose(m); m.remove(); };
+  btns.appendChild(bGo); btns.appendChild(bOk);
+  box.appendChild(btns); m.appendChild(box); document.body.appendChild(m); maskOpen(m);
+}
 async function guideAction(a){
   try{
     if(a.kind === 'open'){
@@ -6972,6 +7073,8 @@ async function probeWechatDir(){
       const pr = document.getElementById('utProblems');
       if(pr && pr.scrollIntoView) pr.scrollIntoView({block:'center'});
     }; }
+  { const be = document.getElementById('utExport'); if(be) be.onclick = function(){ utExportDlg(''); }; }
+  { const bi = document.getElementById('utImport'); if(bi) bi.onclick = utImportDlg; }
   const fsAddBtn = document.getElementById('fsAdd');
   if(fsAddBtn) fsAddBtn.onclick = async ()=>{
     const i = document.getElementById('fsNewDir');

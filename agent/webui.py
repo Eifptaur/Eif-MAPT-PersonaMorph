@@ -1481,6 +1481,18 @@ class WebUI:
                 except Exception as e:
                     self._json({"ok": False, "error": str(e)})
 
+            def _rapi_tools_export(self, path, data, parsed, method):
+                # 2026-09-22 新增：把工具导出成**一份文档**（只生成文本：不写文件、不访问网络）
+                try:
+                    from . import user_tools as _ut6
+                    q = parse_qs(urlparse(self.path).query)
+                    nm = str((q.get("name") or [""])[0]).strip().lower()
+                    text, why = _ut6.export_text(nm)
+                    self._json({"ok": bool(text), "name": nm, "text": text, "why": why,
+                                "note": "把这份文档发给别人，对方在「工具与插件」点「导入工具」就能加上。"})
+                except Exception as e:
+                    self._json({"ok": False, "error": str(e)})
+
             def _rapi_tools_test(self, path, data, parsed, method):
                 # 2026-09-22 新增（③b「插件加到软件里的引导」配套）：勾选之前先「试一下」。
                 # 复用**唯一执行点** `user_tools.call()`（只发 HTTP、域名白名单、内网永远拒），
@@ -3149,6 +3161,20 @@ X.XX
             def _rapi_tools_new_manifest_post(self, path, data, parsed, method):
                 # 原 _handle_body_request:2352
                 self._tools_new_manifest()
+
+            def _rapi_tools_import_post(self, path, data, parsed, method):
+                # 2026-09-22 新增：**导入＝把文档变成插件**（只写 tools.d/*.json；校验走同一套 validate）
+                try:
+                    from . import user_tools as _ut8
+                    text = str((data or {}).get("text") or "")
+                    if not text.strip():
+                        self._json({"ok": False, "error": "没有内容：选一个 .json，或把文档粘进来"})
+                        return
+                    r = _ut8.import_text(text, overwrite=as_bool((data or {}).get("overwrite")))
+                    r["tools"] = _ut8.snapshot()
+                    self._json(r)
+                except Exception as e:
+                    self._json({"ok": False, "error": str(e)})
 
             def _rapi_ui_fingerprint_take_post(self, path, data, parsed, method):
                 # 原 _handle_body_request:2354
