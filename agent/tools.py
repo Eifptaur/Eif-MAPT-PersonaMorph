@@ -1686,6 +1686,16 @@ def execute_tool(defs: list, ctx, name: str, args_json: str):
         _ts.note(name, ok=not (isinstance(res, dict) and res.get("is_error")))
     except Exception:
         pass
+    # ⛔ 2026-09-22 加：失败结果附一个**机器可读的原因码**（唯一分发点 ⇒ 一处即全覆盖）。
+    #   取自官方 `winapp ui` 的做法（target_moved / foreground_not_target / no_interactive_desktop…）。
+    #   ⚠️ 只 `setdefault` 一个 `code` 字段：**content 原文一个字都不改**（模型看到的还是原文，
+    #      码只给日志/判据/统计用），也**不许拿码当"能不能发"的判据**（判据仍是现场证据）。
+    try:
+        if isinstance(res, dict) and res.get("is_error"):
+            from . import reason_codes as _rc
+            res.setdefault("code", _rc.classify(res.get("content") or ""))
+    except Exception:
+        pass
     # ⚠️ 「借来的窗口用完就还」的**操作边界**（2026-09-15 跨机 P16①）：这一层是**所有工具调用的
     #    唯一分发点**，在这里还窗口 ⇒ 机器人持续活动时也不会把用户的窗口长期钉在 1160×900
     #    （空闲看门线程仍作兜底）。失败一律吞掉：还窗口不该影响任何工具的结果。

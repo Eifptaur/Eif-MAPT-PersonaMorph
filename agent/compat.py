@@ -234,6 +234,98 @@ def lines() -> list:
     return out
 
 
+def _click_pref() -> str:
+    """「会话行点击该投哪个窗」这条轴的事实：**学习到的偏好**（不是按版本猜的表）。"""
+    try:
+        from . import click_pref as _cp
+        d = {}
+        try:
+            import json
+            with open(getattr(_cp, "PATH", ""), encoding="utf-8") as fh:
+                d = json.load(fh) or {}
+        except Exception:
+            d = {}
+        if not isinstance(d, dict) or not d:
+            return "未记录（还没成功过 ⇒ 用默认候选顺序）"
+        keys = d.get("keys") if isinstance(d.get("keys"), dict) else {}
+        items = []
+        for k, v in list(keys.items())[:2]:
+            if isinstance(v, dict):
+                items.append("%s ⇒ 成功过 %s（成 %s / 败 %s）"
+                             % (str(k)[:44], v.get("ok") or "?", v.get("okN"), v.get("failN")))
+        return "；".join(items) if items else "未记录（还没成功过 ⇒ 用默认候选顺序）"
+    except Exception:
+        return "未知（读不到偏好文件）"
+
+
+def _update_state() -> str:
+    """更新源这条轴：只报**上一次探测的结论**（不在体检里联网，联网留给更新面板）。"""
+    try:
+        import json
+        p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         "data", "update_state.json")
+        with open(p, encoding="utf-8") as fh:
+            d = json.load(fh) or {}
+        st = str(d.get("lastStatus") or d.get("status") or "")
+        src = str(d.get("lastSource") or d.get("source") or "")
+        if st or src:
+            return "上次探测：%s%s" % (st or "?", ("（源=%s）" % src) if src else "")
+    except Exception:
+        pass
+    return "未探测（点控制台「更新」即得）"
+
+
+def axes(how: dict | None = None) -> list:
+    """**机器可读的兼容性矩阵**：11 条"我们真踩过"的差异轴 → 此刻探测到的事实。
+
+    为什么是"事实"而不是"支持/不支持"（2026-09-22，依据业界调研）：
+      官方口径统一＝**探测能力，别按版本分支**（MDN / 微软 Edge 文档）；微软自家的 `winapp ui`
+      也是拿一张"框架 × 能力"矩阵说话。⇒ 我们这张表的每一行都必须是**这台机器上现测到的值**，
+      测不到就如实写"未知"，**绝不允许按版本外推**。
+    """
+    f = fingerprint() if not isinstance(how, dict) else fingerprint()
+    w, d, c = f.get("windows", {}) or {}, f.get("display", {}) or {}, f.get("wechat_window", {}) or {}
+    g, r = f.get("data_dir", {}) or {}, f.get("runtime", {}) or {}
+    _cls = str(c.get("class") or "")
+    return [
+        {"axis": "微信版本 / UI 代", "fact": "主窗类名（UI 代的直接证据）+ 可见性",
+         "value": ("%s · 可见=%s" % (_cls or "没找到主窗", c.get("visible")))},
+        {"axis": "Windows 版本", "fact": "ProductName（按 build 号纠正）+ build",
+         "value": "%s build %s" % (w.get("release") or "?", w.get("build") or "?")},
+        {"axis": "DPI 缩放 / 多显示器", "fact": "主屏分辨率 + 系统缩放 + 显示器数",
+         "value": "%s · %s · %s 个" % (d.get("primary") or "?", d.get("scale") or "?",
+                                      d.get("monitors"))},
+        {"axis": "会话行点击投哪个窗", "fact": "学习到的偏好（按 版本×适配层×尺寸×DPI×后端 记）",
+         "value": _click_pref()},
+        {"axis": "消息库目录 / 账号数", "fact": "实际在用目录的来源 + 账号目录数 + 分片名",
+         "value": "来源=%s · 账号 %s 个 · 分片=%s" % (g.get("how") or "?", g.get("accounts"),
+                                                 g.get("shards") or "?")},
+        {"axis": "加密模式（页 1）", "fact": "库文件前 16 字节 = SQLite 魔数？",
+         "value": str(g.get("page1") or "未知（没定位到库文件）")},
+        {"axis": "WebView2", "fact": "运行时版本（读注册表 pv）",
+         "value": str(r.get("webview2") or "?")},
+        {"axis": "Python 运行环境", "fact": "解释器版本 + 便携/系统",
+         "value": str(r.get("python") or "?")},
+        {"axis": "控制台端口", "fact": "权威地址里的端口 + 此刻有没有人在听",
+         "value": "%s · 在听=%s" % (r.get("port") or "?", r.get("console_live"))},
+        {"axis": "更新源可达性 / 延迟", "fact": "上一次探测的结论（体检不联网）",
+         "value": _update_state()},
+        {"axis": "权限 / 完整性级别（UIPI）", "fact": "我方进程是否管理员（与微信不一致时注入会被静默拦）",
+         "value": "本进程管理员=%s" % w.get("admin")},
+    ]
+
+
+def axis_lines(how: dict | None = None) -> list:
+    """矩阵的"给人看"形态（报告里跟指纹一起贴回来）。"""
+    out = []
+    for a in axes(how):
+        out.append("  [%s] %s ← %s" % (a["axis"], a["value"], a["fact"]))
+    return out
+
+
 if __name__ == "__main__":
     for _ln in lines():
+        print(_ln)
+    print("—— 兼容性矩阵（11 条轴，全部是现测事实）——")
+    for _ln in axis_lines():
         print(_ln)
