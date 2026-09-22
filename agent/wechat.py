@@ -45,6 +45,19 @@ def _ledger_path() -> str:
     return os.path.join(ROOT, "data", "message_ledger.jsonl")
 
 
+def _rc_classify(why) -> str:
+    """账本条目用的**原因码**（唯一入口）。
+
+    ⚠️ 出错一律给 `unknown`、**绝不抛**：账本写不进去比码不准严重得多。
+    码只做统计与判据，**不当任何放行/拒绝的依据**（判据仍是现场证据）。
+    """
+    try:
+        from . import reason_codes as _rc
+        return _rc.classify(why)
+    except Exception:
+        return "unknown"
+
+
 #: 台账写不进磁盘时的留痕（V-R10-12）。`err` 非空＝最近一次写失败；**写成功后清掉**。
 LEDGER_WRITE_ERR = {"err": "", "path": "", "n": 0, "at": 0.0}
 
@@ -2427,6 +2440,9 @@ class WeChatAdapter:
                 "sender_id": raw.get("sender_id"), "sender_wxid": _mask_id(sender_wxid),
                 "self_wxid_hit": self_hit, "echo_hit": echo_hit, "self_local_hit": bool(sl_hit),
                 "keep": bool(out), "why": why, "text": text[:60],
+                # ⛔ 2026-09-22：给"为什么留/为什么丢"配一个**机器可读的码**（human 读 why、
+                #    程序读 code）。码只做统计与判据，**不当任何放行/拒绝的依据**。
+                "code": _rc_classify(why),
             })
             try:
                 p = _ledger_path()
