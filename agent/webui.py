@@ -341,7 +341,11 @@ class WebUI:
                  persona_score_custom_fn=None, persona_ai_enrich_fn=None,
                  community_export_fn=None, community_upload_fn=None, scoring_import_fn=None,
                  watermark_reset_fn=None,
-                 store=None):
+                 store=None,
+                 # ⛔ V-R10-14 补（2026-09-23 E2 根因）：webui 内部是
+                 #   `getattr(parent, "refresh_targets_fn", None)` 取它的，但构造函数从没收过这个参数
+                 #   ⇒ persona_morph.py:3041 一传参就 TypeError，**后端整条起不来**（控制台永远起不来）。
+                 refresh_targets_fn=None):
         self.status_provider = status_provider      # () -> dict
         self.log_buffer = log_buffer                # collections.deque[str]
         self.test_api_fn = test_api_fn              # () -> dict
@@ -356,6 +360,9 @@ class WebUI:
         self.poke_test_fn = poke_test_fn or (lambda: {"error": "未提供 poke_test_fn"})  # () -> dict
         self.selfcheck_fn = selfcheck_fn or (lambda: {"ok": False, "error": "未提供 selfcheck_fn"})  # () -> dict
         self.groups_fn = groups_fn or (lambda: {"ok": True, "groups": []})  # () -> dict（群列表）
+        # (why) -> None：刷完群列表要重算监听目标（V-R10-14）。原来是 getattr 取的"隐身属性"，
+        # 构造函数没收 ⇒ 谁传谁 TypeError。现在正式接住；没给就退化成 no-op（老调用点不受影响）。
+        self.refresh_targets_fn = refresh_targets_fn or (lambda why="刷新群列表": None)
         self.memory_fn = memory_fn or (lambda action, chat_key="", user_id="": {"ok": True,
                                                                                "chats": [], "members": []})  # (action, chat_key, user_id) -> dict
         self.sessions_fn = sessions_fn or (lambda limit: [])  # (limit) -> list（运行明细）

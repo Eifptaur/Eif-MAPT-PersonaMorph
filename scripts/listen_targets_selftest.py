@@ -162,6 +162,25 @@ def main():
     _web = open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
     ok("G2 「刷新群列表」会触发一次监听目标重算（`refresh_targets_fn` 两头都在）",
        "refresh_targets_fn" in _web and "refresh_targets_fn=lambda" in _pm_txt)
+    #   ⚠️ 2026-09-23 补（E2 根因）：**"字符串在里面" ≠ "构造函数真收"**。原判据两头都命中，
+    #   而 `WebUI.__init__` 根本没这个形参 ⇒ 后端走到 `WebUI(...)` 那行就 TypeError，
+    #   控制台永远起不来（而这条自检一直是绿的）。⇒ 现在改成**结构判据**：先 reflect 签名，
+    #   reflect 不了（环境缺依赖）就退到 AST 读形参表 —— 都不再拿 grep 冒充"接线正确"。
+    _sig_ok = False
+    try:
+        import inspect as _insp                                                 # noqa: E402
+        import agent.webui as _wm                                               # noqa: E402
+        _sig_ok = "refresh_targets_fn" in _insp.signature(_wm.WebUI.__init__).parameters
+    except Exception:
+        import ast as _ast                                                      # noqa: E402
+        for _cls in [n for n in _ast.parse(_web).body
+                     if isinstance(n, _ast.ClassDef) and n.name == "WebUI"]:
+            for _fn in [n for n in _cls.body
+                        if isinstance(n, _ast.FunctionDef) and n.name == "__init__"]:
+                _sig_ok = "refresh_targets_fn" in ([a.arg for a in _fn.args.args]
+                                                   + [a.arg for a in _fn.args.kwonlyargs])
+    ok("G2b `WebUI.__init__` 必须**真的收** `refresh_targets_fn`（否则后端 TypeError、控制台起不来）",
+       _sig_ok)
     # G3（V-R10-15）：归因一致性 —— `_collect_targets` 里也要传真因给 describe（不只启动那一次）
     _ct = _pm_txt.split("def _collect_targets(")[1][:2600]
     ok("G3 晚接入/配置保存这条路上，`describe(read_failed=…)` 也带**真因**",

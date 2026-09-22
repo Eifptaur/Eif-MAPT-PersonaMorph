@@ -95,10 +95,12 @@ def _tighten_acl(p: str) -> str:
                             "/grant:r", "%s:(R,W)" % _user,
                             "/grant:r", "SYSTEM:(R,W)",
                             "/grant:r", "Administrators:(R,W)"],
-                           capture_output=True, text=True, creationflags=_flags)
+                           capture_output=True, text=True, errors="replace",
+                           creationflags=_flags)
         if int(getattr(r, "returncode", 1) or 0) != 0:
             return "icacls 收紧失败：%s" % str(getattr(r, "stderr", "") or getattr(r, "stdout", ""))[:80].strip()
-        r2 = subprocess.run(["icacls", p], capture_output=True, text=True, creationflags=_flags)
+        r2 = subprocess.run(["icacls", p], capture_output=True, text=True, errors="replace",
+                           creationflags=_flags)
         out = str(getattr(r2, "stdout", "") or "")
         # 复核：`icacls` 每行形如 `<路径> <主体>:(权限)`（第一行带路径、后面只给主体）。
         # ⚠️ 主体名**可能带空格**（`NT AUTHORITY\SYSTEM`）⇒ 不能按空白切词、也不能只截冒号前一段，
