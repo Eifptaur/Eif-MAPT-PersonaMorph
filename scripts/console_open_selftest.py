@@ -502,6 +502,48 @@ finally:
     #    （下一次启动器只能靠配置兜底；万一配置里没口令就又回到 401 那条老路）。现在只清隔离目录。
     shutil.rmtree(_e_tmp, ignore_errors=True)
 
+print("── E2. 端口被占而顺延时，落盘的地址必须是**真实端口**（第十五轮 V-R15-3）──")
+try:
+    import socket as _skp
+    from agent import webui as _W2
+    _hold = _skp.socket()
+    _hold.bind(("127.0.0.1", 0))
+    _hold.listen(1)
+    _occ = int(_hold.getsockname()[1])          # 故意把"配置端口"占住 ⇒ 逼 webui 走顺延
+    _iso2 = tempfile.mkdtemp(prefix="pm-url-judge-")
+    _orig_get2 = _W2.get_config
+    _base2 = dict(_orig_get2() or {})
+    _base2["server"] = {"enabled": True, "host": "127.0.0.1", "port": _occ,
+                        "token": "judge-token-1234567890", "auto_open_browser": False}
+    _W2.get_config = lambda: _base2
+    _w2 = None
+    try:
+        _w2 = _W2.WebUI(lambda: {}, [])
+        _w2.console_url_root = _iso2          # 判据绝不碰产品那份 logs/console.url
+        _p2 = int(_w2.start())
+        _u2 = U.read_console_url(root=_iso2)
+        ok("E2a 配置端口被占 ⇒ 真的顺延到别的端口（实际 ≠ 配置）", _p2 != _occ,
+           "配置=%d 实际=%d" % (_occ, _p2))
+        # ⛔ 反例锚：老写法 `write_console_url("…:%d…" % port)`（用**配置端口**）⇒ 这条必红，
+        #   而启动器照那份地址开窗就是一屏 ERR_CONNECTION_REFUSED（＝网友说的"打不开控制台"）。
+        ok("E2b 落盘地址用的是**真实端口**（老写法写配置端口 ⇒ 必红）",
+           (":%d/" % _p2) in _u2 and (":%d/" % _occ) not in _u2,
+           (_u2 or "").replace("token=", "token=***"))
+    finally:
+        try:
+            if _w2 is not None:
+                _w2.stop()
+        except Exception:
+            pass
+        _W2.get_config = _orig_get2
+        try:
+            _hold.close()
+        except Exception:
+            pass
+        shutil.rmtree(_iso2, ignore_errors=True)
+except Exception as _e2b:
+    skip("E2 端口顺延一致性", "起不了控制台：%s" % _e2b)
+
 print("── F. 接线：onestart / persona_morph 不再各开一处 ──")
 _on = src("scripts/onestart.py")
 _wx = src("scripts/persona_morph.py")
@@ -689,6 +731,70 @@ ok("L3 连续取不到状态 ⇒ 也重载一次（带次数上限，防风暴�
 ok("L4 文案与机制一致（页面确实写着「稍后会自己连回来」，而机制真的存在）",
    "页面稍后会自己连回来" in _ch and "location.reload()" in _ch)
 ok("L5 轮询只启动一次（不重复叠加）", "if(!window.__statusPoll)" in _ch)
+
+print("")
+print("── M. 死链不许被启动器取用 + 派生文件必须被 runner 还原（第十五轮 V-R15-3）──")
+# ⛔ 为什么：`logs/console.url` 是"上一次跑控制台"写下的地址，机器人停了它还在。老代码（C# 侧
+#   `Ui.ConsoleUrl`）只判"以 http 开头"就照它开窗 ⇒ **一屏 ERR_CONNECTION_REFUSED**
+#   ＝ 网友报的「打不开控制台」。这是那条 bug 的行为级守备：探针 `--urlprobe` 不许取出死链。
+if os.path.exists(_exe) and _exe_dir:
+    try:
+        import json as _json2
+        import socket as _sk3
+        # 一个**没人听**的端口（绑上再关掉 ⇒ 大概率仍空闲且无人应答）
+        _sD = _sk3.socket()
+        _sD.bind(("127.0.0.1", 0))
+        _dead_p = int(_sD.getsockname()[1])
+        _sD.close()
+        # 一个**真有人听**的端口（阳性对照）
+        _sL = _sk3.socket()
+        _sL.bind(("127.0.0.1", 0))
+        _sL.listen(1)
+        _live_p = int(_sL.getsockname()[1])
+        os.makedirs(os.path.join(_exe_dir, "logs"), exist_ok=True)
+        _cf2 = os.path.join(_exe_dir, "config.json")
+        # 夹具设计：**地址文件指向死端口、配置指向活端口** —— 这样才能验证"文件里的死链被拒、
+        # 而不是被别的原因（配置也死了）一起算进去"。
+        with open(_cf2, "w", encoding="utf-8") as _f2:
+            _json2.dump({"server": {"port": _live_p, "token": "judge-token-abcdef"}}, _f2)
+        _uf2 = os.path.join(_exe_dir, "logs", "console.url")
+
+        def _probe():
+            o = subprocess.run([_exe, "--urlprobe"], capture_output=True, cwd=ROOT,
+                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            t = (o.stdout or b"").decode("utf-8", "replace") + (o.stderr or b"").decode("utf-8", "replace")
+            f = {}
+            for ln in t.splitlines():
+                if "=" in ln:
+                    k, v = ln.split("=", 1)
+                    f[k.strip()] = v.strip()
+            return f
+
+        with open(_uf2, "w", encoding="utf-8") as _f3:
+            _f3.write("http://127.0.0.1:%d/?token=deadbeef" % _dead_p)
+        _pA = _probe()
+        ok("M1 死链（端口没人应答）**不许**被 `--urlprobe` 取用（老写法只判 http ⇒ 必红）",
+           (":%d/" % _dead_p) not in str(_pA.get("url") or ""),
+           "url=%s kind=%s" % (_pA.get("url"), _pA.get("fallback_kind")))
+        # ⚠️ 用 **ASCII 标记**断言，不用中文（`--urlprobe` 的输出经 OEM 代码页重定向会变乱码 ——
+        #   与 `--winprobe` 的 `eq_workarea=True` 同一套教训）。
+        ok("M2 拒绝时**说得出原因**（`fallback_kind=dead_link`，现场不用猜）",
+           str(_pA.get("fallback_kind") or "") == "dead_link", str(_pA.get("fallback_kind")))
+        with open(_uf2, "w", encoding="utf-8") as _f4:
+            _f4.write("http://127.0.0.1:%d/?token=livebeef" % _live_p)
+        _pB = _probe()
+        ok("M3 阳性对照：活着的那条地址照常取用（不是「一律拒绝」）",
+           (":%d/" % _live_p) in str(_pB.get("url") or "") and str(_pB.get("fallback_kind") or "") == "",
+           "url=%s kind=%s" % (_pB.get("url"), _pB.get("fallback_kind")))
+        _sL.close()
+    except Exception as _eM:
+        skip("M. 死链守备实测", str(_eM)[:60])
+else:
+    skip("M. 死链守备实测", "没有 一键启动.exe（先编译）")
+_RA = src("scripts/run_all_selftests.py")
+ok("M4 派生文件（console.url / 开窗锁）跑完**一律还原**（判红归判红，伤害不许留到下一次）",
+   "_DERIVED" in _RA and "_restore_derived" in _RA and "logs/console.url" in _RA)
+ok("M5 还原动作**有可见回执**（不许悄悄做）", "派生文件已还原" in _RA)
 
 print("控制台开窗/窗口/导航判据：%d 通过 / %d 失败 / %d 跳过" % (PASS, FAIL, SKIP))
 if _exe_dir:

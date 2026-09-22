@@ -343,7 +343,7 @@ def sec_visual():
                 from agent.wechat import WeChatAdapter
                 gui = WeChatAdapter()._get_gui()
                 gui._update_render_rect()
-                img = ImageGrab.grab(tuple(gui.render_rect))
+                img = ImageGrab.grab(tuple(gui.render_rect), all_screens=True)
                 pane = ch.detect_pane_left(img)
                 lines.append("  探测到的聊天面板左沿: %s px（渲染宽 %d）" % (
                     pane or "未探测到（将用比例兜底）", gui.render_rect[2] - gui.render_rect[0]))

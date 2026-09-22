@@ -735,6 +735,106 @@ class WebUI:
                     out.update(_af.list_chat(st, ck, limit=max(1, min(200, lim))))
                 self._json(out)
 
+            # ── 两条链共用的小动作（V-R15-1：一处实现、GET 与 POST 都接）──────────────────
+            # ⛔ 2026-09-22 加（第十五轮 · 网友报「点了没反应」）：这一批路由历史上**只注册在一条链里**，
+            #   而控制台前端用的偏偏是另一条 ⇒ 每次都 **404**（前端 `getJSON` 在 `!r.ok` 时抛，
+            #   只接住原始 JSON 的调用点就把 `{"error": "not found"}` 当文案弹出来，看着像"没反应"）。
+            #   本轮实测踩到 **6 处**：
+            #     · 后端只有 GET、前端发 POST：`/api/file_search/add` · `/api/file_search/del`
+            #       · `/api/tools/new_manifest` · `/api/ui_fingerprint/take` · `/api/ui_fingerprint/forget`
+            #     · 后端只有 POST 链、前端发 GET：`/api/prompt/preview`
+            #   ⇒ 一律抽成方法，两条链调**同一份**（照 `/api/archive` 那次的修法，别再各写一遍）。
+            def _file_search_dirs(self, data, path, query=""):
+                """管理"可搜目录"（面板上加入/移除）。GET 从查询串取 `dir`，POST 从 JSON 体取。"""
+                try:
+                    from . import file_search as _fsd
+                    from .config import get_config as _gc4, save_config as _scv4, set_config as _sc4
+                    d = ""
+                    if isinstance(data, dict):
+                        d = str(data.get("dir") or "")
+                    if not d:
+                        _q4 = parse_qs(str(query or ""))
+                        d = str((_q4.get("dir") or [""])[0])
+                    d = d.strip()
+                    c4 = _gc4()
+                    c4.setdefault("file_search", {})
+                    cur = [str(x) for x in (c4["file_search"].get("dirs") or [])]
+                    if str(path).endswith("/add"):
+                        if d and d not in cur:
+                            cur.append(d)
+                        note = ("已加入：%s" % d) if d else "没给目录"
+                    else:
+                        cur = [x for x in cur if x != d]
+                        note = ("已移除：%s" % d) if d else "没给目录"
+                    c4["file_search"]["dirs"] = cur
+                    _sc4(c4)
+                    _scv4(c4)
+                    self._json({"ok": True, "note": note, "file_search": _fsd.snapshot()})
+                except Exception as e:                                   # noqa: BLE001
+                    self._json({"ok": False, "error": str(e)})
+
+            def _tools_new_manifest(self):
+                """「怎么加工具」弹窗的一键动作：在 tools.d/ 里生成一份可编辑模板。"""
+                try:
+                    from . import user_tools as _ut5
+                    p, why = _ut5.write_template()
+                    self._json({"ok": bool(p), "path": p or "", "why": why,
+                                "note": "改完点「重新加载清单」，再勾选即可；坏清单会在面板里逐条列出"})
+                except Exception as e:                                   # noqa: BLE001
+                    self._json({"ok": False, "error": str(e)})
+
+            def _ui_fingerprint_take(self, data=None, query=""):
+                """「重新取指纹」：给图标库里的命名目标各取一份 dHash 指纹（只**看**不点）。"""
+                try:
+                    from . import ui_fingerprint as _ufp
+                    from . import wechat as _wx3
+                    names_raw = str((data or {}).get("names") or "") if isinstance(data, dict) else ""
+                    if not names_raw:
+                        _q5 = parse_qs(str(query or ""))
+                        names_raw = str((_q5.get("names") or [""])[0])
+                    names = [s for s in names_raw.split(",") if s.strip()]
+                    gui = _wx3.WeChatAdapter()._get_gui()
+                    r = _ufp.take(gui, names or None)
+                    self._json({"ok": True, "result": r, "status": _ufp.hits(),
+                                "digest": _ufp.digest()})
+                except Exception as e:                                   # noqa: BLE001
+                    self._json({"ok": False, "error": str(e)})
+
+            def _ui_fingerprint_forget(self, data=None, query=""):
+                """丢掉旧指纹（`key` 可选：给就只丢那一个）。"""
+                try:
+                    from . import ui_fingerprint as _ufp2
+                    k = str((data or {}).get("key") or "") if isinstance(data, dict) else ""
+                    if not k:
+                        _q6 = parse_qs(str(query or ""))
+                        k = str((_q6.get("key") or [""])[0])
+                    self._json({"ok": True, "result": _ufp2.forget(k or None), "status": _ufp2.hits()})
+                except Exception as e:                                   # noqa: BLE001
+                    self._json({"ok": False, "error": str(e)})
+
+            def _prompt_preview(self):
+                """系统提示词编辑（第 11 条）：让用户看见"此刻真正送出的系统提示词"。"""
+                try:
+                    from . import system_prompt as _spv
+                    self._json(_spv.preview())
+                except Exception as e:                                   # noqa: BLE001
+                    self._json({"ok": False, "error": str(e)}, 500)
+
+            def _personas_favs(self):
+                """人设星标集合（读）。⛔ V-R15-1：前端用 **GET** 读它，而实现原先只在 POST 链里
+                ⇒ 每次都 404，而前端那处是 `try{…}catch(e){}` **静默失败** ⇒ 星标在面板上
+                **永远显示不出来**（点了收藏、刷新后还是没星）。两条链共用这一份。"""
+                try:
+                    import json as _json
+                    try:
+                        with open(parent._data_path("persona_favs.json"), "r", encoding="utf-8") as f:
+                            favs = _json.load(f)
+                    except Exception:
+                        favs = {}
+                    self._json({"ok": True, "favs": favs})
+                except Exception as e:                                   # noqa: BLE001
+                    self._json({"ok": False, "error": str(e)})
+
             def do_GET(self):
                 parsed = urlparse(self.path)
                 path = parsed.path
@@ -1091,42 +1191,10 @@ class WebUI:
                             pass
                     self._json(st)
                 elif path in ("/api/file_search/add", "/api/file_search/del"):
-                    # 管理"可搜目录"（面板上加入/移除）
-                    try:
-                        from . import file_search as _fsd
-                        from .config import get_config as _gc4, save_config as _scv4, set_config as _sc4
-                        d = ""
-                        if isinstance(data, dict):
-                            d = str(data.get("dir") or "")
-                        if not d:
-                            _q4 = parse_qs(urlparse(self.path).query)
-                            d = str((_q4.get("dir") or [""])[0])
-                        d = d.strip()
-                        c4 = _gc4()
-                        c4.setdefault("file_search", {})
-                        cur = [str(x) for x in (c4["file_search"].get("dirs") or [])]
-                        if path.endswith("/add"):
-                            if d and d not in cur:
-                                cur.append(d)
-                            note = ("已加入：%s" % d) if d else "没给目录"
-                        else:
-                            cur = [x for x in cur if x != d]
-                            note = ("已移除：%s" % d) if d else "没给目录"
-                        c4["file_search"]["dirs"] = cur
-                        _sc4(c4)
-                        _scv4(c4)
-                        self._json({"ok": True, "note": note, "file_search": _fsd.snapshot()})
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e)})
+                    # 管理"可搜目录"（面板上加入/移除）—— V-R15-1：与 POST 链共用 `_file_search_dirs`
+                    self._file_search_dirs(data, path, parsed.query)
                 elif path == "/api/tools/new_manifest":
-                    # 「怎么加工具」弹窗的一键动作：在 tools.d/ 里生成一份可编辑模板
-                    try:
-                        from . import user_tools as _ut5
-                        p, why = _ut5.write_template()
-                        self._json({"ok": bool(p), "path": p or "", "why": why,
-                                    "note": "改完点「重新加载清单」，再勾选即可；坏清单会在面板里逐条列出"})
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e)})
+                    self._tools_new_manifest()
                 elif path == "/api/tools/reload":
                     # 重新扫清单目录（快照本来就是现场算的；这个端点让"重新加载"有个明确的动作与回执）
                     try:
@@ -1148,27 +1216,17 @@ class WebUI:
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)})
                 elif path == "/api/ui_fingerprint/take":
-                    # 「重新取指纹」（⑦ 点击正确性）：给图标库里的命名目标各取一份 dHash 指纹。
-                    # 只**看**不点：抓渲染区画面裁小块，抓不到/全黑就如实报失败，绝不写假指纹。
-                    try:
-                        from . import ui_fingerprint as _ufp
-                        from . import wechat as _wx3
-                        q = parse_qs(urlparse(self.path).query)
-                        names = [s for s in str((q.get("names") or [""])[0]).split(",") if s.strip()]
-                        gui = _wx3.WeChatAdapter()._get_gui()
-                        r = _ufp.take(gui, names or None)
-                        self._json({"ok": True, "result": r, "status": _ufp.hits(),
-                                    "digest": _ufp.digest()})
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e)})
+                    # 「重新取指纹」—— V-R15-1：与 POST 链共用 `_ui_fingerprint_take`
+                    self._ui_fingerprint_take(data, parsed.query)
                 elif path == "/api/ui_fingerprint/forget":
-                    try:
-                        from . import ui_fingerprint as _ufp2
-                        q = parse_qs(urlparse(self.path).query)
-                        k = str((q.get("key") or [""])[0]) or None
-                        self._json({"ok": True, "result": _ufp2.forget(k), "status": _ufp2.hits()})
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e)})
+                    self._ui_fingerprint_forget(data, parsed.query)
+                elif path == "/api/prompt/preview":
+                    # 系统提示词预览 —— V-R15-1：前端用 GET，而实现原先只在 POST 链里 ⇒ 修成两链共用
+                    self._prompt_preview()
+                elif path == "/api/personas/favs":
+                    # 人设星标集合（读）—— V-R15-1：前端用 GET 读它，而实现原先只在 POST 链里
+                    #   ⇒ 每次都 404，而前端那处 `catch(e){}` 静默吞掉 ⇒ **星标在面板上永远不亮**。
+                    self._personas_favs()
                 elif path == "/api/image_gen/local":
                     # 本地轻量生图后端：状态 + 「要装的话，要下多少 / 大概多久」（估时**当场测速**）
                     #   ⚠️ 这是 GET 分支：**没有 `data`**（那是 POST 的解析体）——要从查询串取 `estimate`。
@@ -1592,11 +1650,8 @@ class WebUI:
                         self._json({"ok": False, "error": str(e)}, 500)
                 elif path == "/api/prompt/preview":
                     # 系统提示词编辑（第 11 条）：让用户看见"此刻真正送出的系统提示词"
-                    try:
-                        from . import system_prompt as _spv
-                        self._json(_spv.preview())
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e)}, 500)
+                    #   V-R15-1：与 GET 链共用 `_prompt_preview`（原先只有这一条链有它）
+                    self._prompt_preview()
                 elif path == "/api/cursor/upload":
                     # 自定义光标：base64 PNG/JPEG → assets/custom-cursor.png
                     # 浏览器 css cursor 硬限制：≤128×128、PNG/SVG/ICO、透明底最佳、加载失败静默回退（白箭头根因=404空图）
@@ -2694,17 +2749,8 @@ class WebUI:
                     except Exception as e:
                         self._json({"ok": False, "error": str(e).split("\n")[0][:140] or "图片处理失败"})
                 elif path == "/api/personas/favs":
-                    # 人设星标集合（GET）
-                    try:
-                        import json as _json
-                        try:
-                            with open(parent._data_path("persona_favs.json"), "r", encoding="utf-8") as f:
-                                favs = _json.load(f)
-                        except Exception:
-                            favs = {}
-                        self._json({"ok": True, "favs": favs})
-                    except Exception as e:
-                        self._json({"ok": False, "error": str(e)})
+                    # 人设星标集合 —— V-R15-1：前端用 GET 读，与 POST 链共用 `_personas_favs`
+                    self._personas_favs()
                 elif path == "/api/personas/fav":
                     # 设/取消星标（POST {key, fav}）
                     try:
@@ -2751,6 +2797,17 @@ class WebUI:
                         self._json(parent.open_path_fn(str(data.get("path") or "")))
                     except Exception as e:
                         self._json({"ok": False, "error": str(e)})
+                # ⛔ V-R15-1（第十五轮）：这四条**后端原先只注册在 do_GET 链**，而控制台前端发的是
+                #   POST ⇒ 每次都 404（`_handle_body_request` 的末尾 else），界面上只弹一句
+                #   `{"error": "not found"}` 或者干脆没反应。现在两条链调同一份实现。
+                elif path in ("/api/file_search/add", "/api/file_search/del"):
+                    self._file_search_dirs(data, path, urlparse(self.path).query)
+                elif path == "/api/tools/new_manifest":
+                    self._tools_new_manifest()
+                elif path == "/api/ui_fingerprint/take":
+                    self._ui_fingerprint_take(data, urlparse(self.path).query)
+                elif path == "/api/ui_fingerprint/forget":
+                    self._ui_fingerprint_forget(data, urlparse(self.path).query)
                 else:
                     self._json({"error": "not found"}, 404)
 
@@ -2764,6 +2821,20 @@ class WebUI:
                 continue
         if self._server is None:
             raise RuntimeError("无法启动 Web 控制台：端口 %d-%d 均被占用" % (port, port + 19))
+
+        # ⛔ 2026-09-22 修（第十五轮 **V-R15-3** · 网友报「打不开控制台」）：**上面那次写盘用的是
+        #   `cfg.port`（配置端口），而真正 bind 的是 `port + offset`（`self.port`）** —— 配置端口被
+        #   别的程序占用时 webui 会**静默顺延**到 3211/3212…，`logs/console.url` 里却还写着 3210
+        #   ⇒ 启动器照着它开窗 = 一屏 `ERR_CONNECTION_REFUSED`（=用户说的"打不开控制台"）。
+        #   ⇒ bind 成功之后**用真实端口重写一次**（第二份地址文件，覆盖前一份）。
+        try:
+            from .util import write_console_url
+            _tok1 = str(cfg.get("token") or "").strip()
+            write_console_url("http://127.0.0.1:%d/" % int(self.port)
+                              + (("?token=" + _tok1) if _tok1 else ""),
+                              root=str(getattr(self, "console_url_root", "") or ""))
+        except Exception:
+            pass
 
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()

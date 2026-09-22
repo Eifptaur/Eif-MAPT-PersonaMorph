@@ -4,6 +4,7 @@ using System;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
+using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
@@ -467,26 +468,18 @@ namespace WxLauncher
     {
         internal static int ReadPort()
         {
-            try
-            {
-                string root = Path.GetDirectoryName(Application.ExecutablePath);
-                string cf = Path.Combine(root, "config.json");
-                if (File.Exists(cf))
-                {
-                    string t = File.ReadAllText(cf);
-                    int i = t.IndexOf("\"port\"");
-                    if (i >= 0)
-                    {
-                        int j = t.IndexOf(":", i + 6);
-                        int k = t.IndexOf("\"", j + 1);
-                        int end = t.IndexOf("\"", k + 1);
-                        string v = t.Substring(k + 1, end - k - 1).Trim();
-                        int pr = 0;
-                        if (int.TryParse(v, out pr) && pr > 0) return pr;
-                    }
-                }
-            }
-            catch { }
+            // ⛔ 2026-09-22 修（第十五轮 **V-R15-3** · 网友报「打不开控制台」）：
+            //   老实现是"**全文找第一个 `"port"`**" —— 在真实 config.json 上它抓到的是 `local_sd` 段的键
+            //   （实拍解析出字符串 `"model_dir"`）⇒ `int.TryParse` 失败 ⇒ **恒回落 3210**。
+            //   于是"用户把 server.port 改过 / 3210 被别人占着"这两种情形下，启动器预检连的是错的端口。
+            //   这跟当年"在 config.json 里瞎找 token、抓到 cloud.token（空）⇒ 401"是同一个病。
+            //   现在：①先定位 `"server"` 段再取它的 `port`；②取不到就回读 `logs\console.url` 的端口
+            //   （那是"上一次真跑起来的端口"，比配置更接近真相）；③都没有才回落 3210。
+            string root = Path.GetDirectoryName(Application.ExecutablePath);
+            int p = Ui.ServerPortFromConfig(root);
+            if (p > 0) return p;
+            int p2 = Ui.PortFromUrlFile(root);
+            if (p2 > 0) return p2;
             return 3210;
         }
     }
@@ -563,7 +556,7 @@ namespace WxLauncher
             {
                 try
                 {
-                    using (var cc = new System.Net.Sockets.TcpClient()) { cc.Connect("127.0.0.1", 3210); }
+                    using (var cc = new System.Net.Sockets.TcpClient()) { cc.Connect("127.0.0.1", PortHelper.ReadPort()); }
                     failCount = 0;
                 }
                 catch
@@ -817,9 +810,19 @@ static class Program
                     string dir0 = Path.GetDirectoryName(Application.ExecutablePath);
                     string why0 = "";
                     string url0 = Ui.ConsoleUrl(dir0, out why0);
+                    // ⛔ V-R15-3：**只有真有人在听才开窗** —— 地址文件是"上一次"跑控制台时写下的，
+                    //   机器人停掉之后它仍在；老写法无条件拿配置端口兜底，而那个端口多半也没人听
+                    //   ⇒ 用户看到一屏 ERR_CONNECTION_REFUSED（＝网友报的「打不开控制台」）。
+                    //   现在两个候选地址都**探活**，都不通就不开窗，让下面的正常启动流程把控制台拉起来。
                     if (url0 == null || !url0.StartsWith("http"))
-                        url0 = "http://127.0.0.1:" + PortHelper.ReadPort() + "/";
-                    Ui.OpenConsole(url0);
+                    {
+                        string urlCfg = "http://127.0.0.1:" + PortHelper.ReadPort() + "/";
+                        url0 = Ui.PortAlive(urlCfg) ? urlCfg : null;
+                    }
+                    if (url0 != null && url0.StartsWith("http")) Ui.OpenConsole(url0);
+                    else Ui.NoteFallback(dir0, (why0 == "" ? "没有可用地址" : why0)
+                        + "；两个候选地址都没人应答 ⇒ 这次**不开空窗**（避免一屏 ERR_CONNECTION_REFUSED），"
+                        + "由下面的正常启动流程把控制台拉起来");
                 }
                 else
                 {
@@ -1792,6 +1795,7 @@ static class Program
             string root = Path.GetDirectoryName(Application.ExecutablePath);
             string why = "";
             string u = ConsoleUrl(root, out why);
+            if (string.IsNullOrEmpty(u)) u = "";        // V-R15-3：死链时 ConsoleUrl 会回 null，探针不许崩
             string tok = "";
             int qi = u.IndexOf("token=");
             if (qi >= 0) tok = u.Substring(qi + 6);
@@ -1800,6 +1804,14 @@ static class Program
             sb.AppendLine("token_len=" + tok.Length);
             sb.AppendLine("token_head=" + (tok.Length > 0 ? tok.Substring(0, Math.Min(3, tok.Length)) : ""));
             sb.AppendLine("fallback_reason=" + why);
+            // ⛔ V-R15-3：**ASCII 分类标记** —— 中文经 OEM 代码页重定向会变乱码，判据没法断言；
+            //   与 `--winprobe` 的 `eq_workarea=True`/`restored_state=Normal` 同一套做法。
+            string kind = "";
+            if (why.Contains("死链") || why.Contains("没人应答")) kind = "dead_link";
+            else if (why.Contains("没有 logs")) kind = "no_file";
+            else if (why.Contains("不是地址")) kind = "not_url";
+            else if (why.Contains("失败")) kind = "read_fail";
+            sb.AppendLine("fallback_kind=" + kind);
             return sb.ToString();
         }
 
@@ -1831,6 +1843,88 @@ static class Program
         /// ② 兜底＝在 config.json 里**先定位 server 段**再取 token/port。
         /// ⛔ 绝不再全文找第一个 "token"：config.json 里排在前面的 `cloud.token` 是空串，
         ///    抓错就会打开一个 `/?token=` 的地址 ⇒ 控制台回 `{"error":"unauthorized"}`（另一台机器实测）。
+        /// 从 config.json 的 **server 段**取 port（V-R15-3：不许再"全文找第一个 port"）。
+        public static int ServerPortFromConfig(string root)
+        {
+            try
+            {
+                string cf = Path.Combine(root, "config.json");
+                if (!File.Exists(cf)) return 0;
+                string s = File.ReadAllText(cf);
+                int i = s.IndexOf("\"server\"");
+                if (i < 0) return 0;
+                int b = s.IndexOf('{', i);
+                if (b < 0) return 0;
+                int depth = 0, j = b;
+                for (; j < s.Length; j++)
+                {
+                    if (s[j] == '{') depth++;
+                    else if (s[j] == '}') { depth--; if (depth == 0) break; }
+                }
+                string seg = s.Substring(b, Math.Min(s.Length, j + 1) - b);
+                string p = JsonValue(seg, "port");
+                int v = 0;
+                if (p != "" && int.TryParse(p, out v) && v > 0) return v;
+            }
+            catch { }
+            return 0;
+        }
+
+        /// 从 `logs\console.url` 里取端口（V-R15-3：地址文件里的端口是"上一次真跑起来的那一个"）。
+        public static int PortFromUrlFile(string root)
+        {
+            try
+            {
+                string uf = Path.Combine(root, "logs", "console.url");
+                if (!File.Exists(uf)) return 0;
+                string u = (File.ReadAllText(uf) ?? "").Trim();
+                int c = u.IndexOf("://");
+                if (c < 0) return 0;
+                string rest = u.Substring(c + 3);
+                int slash = rest.IndexOf('/');
+                if (slash >= 0) rest = rest.Substring(0, slash);
+                int colon = rest.LastIndexOf(':');
+                if (colon <= 0) return 0;
+                int v = 0;
+                if (int.TryParse(rest.Substring(colon + 1), out v) && v > 0) return v;
+            }
+            catch { }
+            return 0;
+        }
+
+        /// 这个地址指向的端口**真有人应答吗**（第十五轮 V-R15-3 的活性闸）。
+        ///
+        /// 为什么必须有：`logs\console.url` 是**上一次**跑控制台时写下的地址，机器人停掉之后它仍在。
+        /// 老实现只判"以 http 开头"就照它开窗 ⇒ 一屏 `ERR_CONNECTION_REFUSED` ＝ 用户口中的
+        /// 「打不开控制台」。这里做一次 400ms 的 TCP 连接探测：连不上就**当作没有这个地址**，
+        /// 让调用方走"重新拉起控制台"的正路（而不是开一个死窗）。
+        /// 纯探测：不写任何文件、不发任何数据、立即关闭。
+        public static bool PortAlive(string url, int timeoutMs = 400)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(url) || !url.StartsWith("http")) return false;
+                string rest = url.Substring(url.IndexOf("://") + 3);
+                int slash = rest.IndexOf('/');
+                if (slash >= 0) rest = rest.Substring(0, slash);
+                int colon = rest.LastIndexOf(':');
+                if (colon <= 0) return false;
+                string host = rest.Substring(0, colon);
+                int port = 0;
+                if (!int.TryParse(rest.Substring(colon + 1), out port) || port <= 0) return false;
+                var c = new TcpClient();
+                try
+                {
+                    var ar = c.BeginConnect(host, port, null, null);
+                    if (!ar.AsyncWaitHandle.WaitOne(timeoutMs)) return false;
+                    c.EndConnect(ar);
+                    return c.Connected;
+                }
+                finally { try { c.Close(); } catch { } }
+            }
+            catch { return false; }
+        }
+
         public static string ConsoleUrl(string root, out string why)
         {
             why = "";
@@ -1840,13 +1934,20 @@ static class Program
                 if (File.Exists(uf))
                 {
                     string u = (File.ReadAllText(uf) ?? "").Trim();
-                    if (u.StartsWith("http")) return u;
-                    why = "logs\\console.url 内容不是地址";
+                    // ⛔ V-R15-3：**先探活再用** —— 死链（机器人早停了、或端口顺延时写错了端口）
+                    //   直接当"没有地址"，落到下面的配置回退；否则用户点「一键启动」只会得到
+                    //   一个 ERR_CONNECTION_REFUSED 的空窗。
+                    if (u.StartsWith("http"))
+                    {
+                        if (PortAlive(u)) return u;
+                        why = "logs\\console.url 指向的端口没人应答（死链，按没有地址处理）";
+                    }
+                    else why = "logs\\console.url 内容不是地址";
                 }
                 else why = "没有 logs\\console.url";
             }
             catch (Exception ex) { why = "读 console.url 失败：" + ex.Message; }
-            string port = "3210", tok = "";
+            string port = PortHelper.ReadPort().ToString(), tok = "";   // V-R15-3：默认值也走同一份来源（不再写死 3210）
             try
             {
                 string cf = Path.Combine(root, "config.json");

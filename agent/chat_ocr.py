@@ -288,7 +288,21 @@ def recognize(img, timeout=None) -> list:
 
 
 def header_box(img) -> tuple:
-    """会话头文字带的像素矩形 (x0,y0,x1,y1)：优先用实测聊天面板左沿，退比例兜底。"""
+    """会话头文字带的像素矩形 (x0,y0,x1,y1) —— **与指纹同源**（走 `chat_header.band_box`）。
+
+    ⛔ 2026-09-22 修（第十五轮 **V-R15-2** · 网友报「经常读不到窗口和认不对群名」）：
+      本函数原来是**第二份实现**：`y0` 直接吃固定 `BAND_PX[1]=38`、**完全不过 `detect_band_y0`**。
+      而微信新版在会话区顶部有一条**自绘深色标题条**（本机实测压在 y≈38~50）⇒
+        · 指纹那一半第九轮已修（V-R9-3：把带子推到标题条下方）；
+        · **这一半照旧去读那条标题条** ⇒ `matches_strict` 判否 ⇒「认不对群名」、
+          该尺寸档永远学不到参照、`send_text` 只能退回投递切会话 + 内容级复核，兜不住就整条拒发。
+      第九轮那条修复只做了一半 —— 现在两条链共用 `chat_header.band_box`（一块带子、一套自适应 y0）。
+    """
+    try:
+        return tuple(ch.band_box(img))
+    except Exception:
+        pass
+    # band_box 不可用时的最后一道（纯比例兜底）：宁可给旧口径，也不要抛出去把整条链打断
     w, h = img.size
     left = 0
     try:
