@@ -479,8 +479,13 @@ def _open_current_console():
     try:
         from agent.config import get_config
         sc = get_config().get("server", {})
-        url = "http://127.0.0.1:%s/?token=%s" % (int(sc.get("port") or 3210), str(sc.get("token") or ""))
-        return _open_console(url)
+        # ⛔ 2026-09-22 修（**第三个"打不开控制台"的入口**）：老实现**手拼配置端口**——
+        #   而 webui 在端口被占时会**静默顺延**（3210→3211…），`logs/console.url` 里才是真端口
+        #   ⇒ 拼出来的地址没人听，用户点了「打开控制台」就是一屏 ERR_CONNECTION_REFUSED。
+        #   ⇒ 地址一律交给唯一实现（`notify_ui.console_url`：先读带口令的 console.url 并**探活**，
+        #      死了才回落配置），这里不再自己拼。`sc` 只留着做兜底日志。
+        _ = sc
+        return _open_console("")
     except Exception as e:
         log("打开控制台失败：%s" % e)
         return False
@@ -689,10 +694,30 @@ def main():
         while time.time() - t0 < 120:
             try:
                 import socket as _sock
-                _s = _sock.socket()
-                _s.settimeout(1.5)
-                _up = _s.connect_ex(("127.0.0.1", _port)) == 0
-                _s.close()
+                # ⛔ 2026-09-22 修：老实现**只探配置端口** —— 而 webui 在端口被占时会静默顺延
+                #   （3210→3211…）⇒ 明明已经就绪，这里却一直判"没就绪"，白等 120 秒、最后
+                #   再开一次窗（用户看到的就是"等了很久才出来/一屏拒绝连接"）。
+                #   ⇒ 两个端口都探：配置端口 + `logs\console.url` 里那个**真端口**。
+                _ports = [_port]
+                try:
+                    from agent.util import read_console_url as _rcu
+                    import re as _re2
+                    _m2 = _re2.search(r":(\d{2,5})/", str(_rcu() or ""))
+                    if _m2 and int(_m2.group(1)) not in _ports:
+                        _ports.append(int(_m2.group(1)))
+                except Exception:
+                    pass
+                _up = False
+                for _p in _ports:
+                    try:
+                        _s = _sock.socket()
+                        _s.settimeout(1.5)
+                        _up = _s.connect_ex(("127.0.0.1", int(_p))) == 0
+                        _s.close()
+                    except Exception:
+                        _up = False
+                    if _up:
+                        break
                 if _up:
                     # 单点打开策略：优先由机器人侧（webui 就绪后、原子锁保护）打开；
                     # 启动器只等待就绪，不抢开（避免双开）。
