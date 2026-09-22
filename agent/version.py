@@ -25,7 +25,7 @@ VERSION = '2026.9.22.5'
 #   "版本号没变、但包的内容变了" ⇒ 照常提示更新。
 # ⚠️ **它对已经在跑的老版无效**（老版没有这段代码，只认版本号）⇒ 老用户只能靠**版本号前进**触达；
 #   这正是"修一个 bug 就发一个版本号"那条口径的由来（见上面 docstring）。
-BUILD = 'b1542db8877c'
+BUILD = '9d07891458b8'
 
 import hashlib as _hashlib          # noqa: E402
 import os as _os                    # noqa: E402
@@ -65,9 +65,16 @@ def write_build(value: str, path: str = "") -> str:
     `base.build` 与包里的实际 BUILD 不一致（用户侧会一直提示"有新包"）。⇒ 这里清缓存。
     """
     p = path or _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "version.py")
-    with open(p, "r", encoding="utf-8") as fh:
+    # ⛔ 2026-09-22：读的时候也必须 `newline=""`（与写的口径一致）—— 文本模式会把 CRLF 翻成 LF，
+    #   而写用的是 `newline=""`（不翻译）⇒ **这一写就把整个文件的换行符换掉了**（实测 97 行 CRLF 全变 LF）：
+    #   ① `git status` 里 `version.py` 永远显示"已修改"（判据/出包跑一次就脏一次工作树）；
+    #   ② 指纹判据「改 BUILD 行 ⇒ 指纹不变」会红（换行符也是内容）。
+    with open(p, "r", encoding="utf-8", newline="") as fh:
         s = fh.read()
-    s2 = _re.sub(r"(?m)^BUILD\s*=.*$", "BUILD = '%s'" % str(value), s, count=1)
+    # ⚠️ 正则要**连行尾一起保住**：`.*$` 会把行尾那个 `\r` 吃掉 ⇒ 全文变成"CRLF 里夹一行 LF"
+    #   （实测 CRLF 101 → 100），git 照样判"已修改"。改成前瞻 `(?=\r?$)`，替换段里不吞 `\r`。
+    s2 = _re.sub(r"(?m)^BUILD(\s*=\s*).*?(?=\r?$)",
+                 lambda m: "BUILD%s'%s'" % (m.group(1), str(value)), s, count=1)
     with open(p, "w", encoding="utf-8", newline="") as fh:
         fh.write(s2)
     try:
