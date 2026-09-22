@@ -97,6 +97,11 @@ def enqueue(chat_key: str, text: str, why: str = "", now: float = None) -> dict:
         for it in items:
             if it.get("chat_key") == chat_key and it.get("text") == text:
                 it["why"] = str(why or it.get("why") or "")[:200]
+                try:                        # 原因码同步（2026-09-22）：去重更新时也要跟着刷新
+                    from . import reason_codes as _rc
+                    it["code"] = _rc.classify(it["why"])
+                except Exception:
+                    pass
                 # ⛔ 2026-09-21 修（第六轮 **V-R6-16③**）：原来每次都把 `next_at` 重置成 `now+15`
                 #   ⇒ 反复入队会让本该到点的条目**永远到不了点**（饥饿），饿到 MAX_AGE_S 后一失败就丢。
                 #   ⇒ 只允许**往早提**（min），且不许超过 `created + MAX_AGE_S`。
@@ -116,8 +121,14 @@ def enqueue(chat_key: str, text: str, why: str = "", now: float = None) -> dict:
             items = items[-MAX_ITEMS + 1:]
             _DROPPED["n"] = int(_DROPPED.get("n") or 0) + _drop
         _id = "r%d.%d" % (int(_now * 1000), len(items))
+        _code = ""
+        try:                                # 原因码（2026-09-22，照官方 winapp ui 的做法）：
+            from . import reason_codes as _rc   # 让"为什么没发出去"可统计、判据钉得住
+            _code = _rc.classify(why)
+        except Exception:
+            _code = ""
         items.append({"id": _id, "chat_key": chat_key, "text": text,
-                      "why": str(why or "")[:200], "tries": 0, "created": _now,
+                      "why": str(why or "")[:200], "code": _code, "tries": 0, "created": _now,
                       "next_at": _now + BACKOFF[0], "last": ""})
         _why_save = _save(items)
         log.info("这条没能发出去，已排进重试队列（%s）：%s ⇒ %.0fs 后重试；原因：%s",
