@@ -509,19 +509,42 @@ else:
        "acts=%s · iconic=%s · 登记=%s" % (_f7n.acts, _f7n.iconic, W._MINIMIZED_BY_US))
     _reset_state()
 
-print("── B8. V-R10-4：前台态**不许注销这笔债**（原来一进门就清零 ⇒ 窗口再没人还）──")
+print("── B8. V-R10-4 + 2026-09-22 收紧：前台态**不许注销这笔债**；而「你根本没在动」时**必须照还** ──")
 _f8 = _U32(iconic=True, fg=777)
 _u8, _s8 = _patch_u32(_f8)
+_idle_real = W._user_idle_seconds
 try:
     W._MINIMIZED_BY_US = BTN_MAIN
     W._WAS_ICONIC_BY_US = BTN_MAIN
     _f8.iconic = False
-    _f8.fg = BTN_MAIN                       # 微信此刻是前台（用户正在用它）
-    W._minimize_back_if_needed("自检：前台态")
+    _f8.fg = BTN_MAIN                       # 微信此刻是前台
+    # ⛔ 2026-09-22 改口径：第③条从"它在不在前台"收紧成"**你最近 1.2 秒内有没有键鼠输入**"。
+    #   现场：整链会发伪激活 ⇒ **微信被我们自己顶到前台**，老口径于是把"放回"整个吃掉
+    #   （实测末态 IsIconic=False、整链微信占前台 72%）⇒ 这里先把"你刚刚动过鼠标"喂进去。
+    W._user_idle_seconds = lambda: 0.2
+    W._minimize_back_if_needed("自检：前台态（你刚动过鼠标）")
     _kept = int(W._MINIMIZED_BY_US or 0)
-    ok("B8a 前台态：一枪不动（安全线③），但**登记保留**（V-R10-4：这笔债还没还）",
+    ok("B8a 前台 + **你刚动过鼠标** ⇒ 一枪不动（安全线③），但**登记保留**（V-R10-4：这笔债还没还）",
        _kept == BTN_MAIN and _f8.acts == [], "登记=%s · acts=%s" % (_kept, _f8.acts))
+    # 新口径的正向锚：前台但**你已经 5 秒没动** ⇒ 那是伪激活招来的，必须照还
+    W._user_idle_seconds = lambda: 5.0
+    W._minimize_back_if_needed("自检：前台态（你已经走开）")
+    ok("B8a′ 前台 + **你已经 5 秒没动键鼠** ⇒ **照还**（ShowWindow(6) + 登记清零）："
+       "这条就是 2026-09-22 真机复测修掉的那一格（改前它会一直拖到「下一次链尾」＝永远不还）",
+       _f8.acts == [("ShowWindow", 6)] and _f8.iconic is True
+       and int(W._MINIMIZED_BY_US or 0) == 0, "acts=%s · iconic=%s · 登记=%s"
+       % (_f8.acts, _f8.iconic, W._MINIMIZED_BY_US))
+    # 再来一遍"刚动过"的场景，验 B8b/B8c（下一次链尾真还）
+    W._MINIMIZED_BY_US = BTN_MAIN
+    W._WAS_ICONIC_BY_US = BTN_MAIN
+    _f8.acts = []
+    _f8.iconic = False
+    _f8.fg = BTN_MAIN
+    W._user_idle_seconds = lambda: 0.2
+    W._minimize_back_if_needed("自检：前台态（第二次）")
+    _kept = int(W._MINIMIZED_BY_US or 0)
     _f8.fg = 777                            # 用户切走了 ⇒ 下一次链尾该真动手
+    W._user_idle_seconds = _idle_real
     W._minimize_back_if_needed("自检：下一次链尾")
     ok("B8b 用户切走之后的下一次链尾：**真把窗口还回去了**（ShowWindow(6)）且登记清零",
        _f8.acts == [("ShowWindow", 6)] and _f8.iconic is True
@@ -529,6 +552,7 @@ try:
     ok("B8c 反例锚：老写法（**一进门就清零**）在 B8a 那一步就把债注销了 ⇒ 之后无凭无据、窗口永远摊着",
        _kept == BTN_MAIN, "老写法会在 B8a 之后得到登记=0")
 finally:
+    W._user_idle_seconds = _idle_real
     _restore_u32(_u8, _s8)
     _reset_state()
 

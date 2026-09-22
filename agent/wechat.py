@@ -639,6 +639,31 @@ _MINIMIZED_BY_US = 0        # 为了干活而还原出来的那个主窗（0 = �
 _WAS_ICONIC_BY_US = 0
 
 
+PUT_BACK_IDLE_S = 1.2      # 「你最近有没有真的在动键鼠」的门槛（与 `_restore_fg_until` 同一口径）
+
+
+def _put_back_decision(*, registered: int, alive: bool, iconic: bool, is_fg: bool,
+                       was_iconic: bool, idle_s) -> str:
+    """**放回策略**（纯函数，判据直接测它）：返回 `"none" | "defer" | "minimize" | "bottom"`。
+
+    三条安全线一条不少，只是第③条**收紧了**：
+      ⛔ 2026-09-22（真机四项复测抓到的缺陷）：整链会发伪激活（`WM_ACTIVATE`），**微信是被我们自己顶到
+        前台的**，而原来那条"前台==主窗 ⇒ 你在用它 ⇒ 不动"就把**放回**整个吃掉了 ⇒ 作者自己收起来的
+        微信，机器人干完活**留在前台**（实测末态 `IsIconic=False`、登记还挂着、整链微信占前台
+        16.15s / 22.3s ＝ 72%；日志原话「放回暂缓：微信此刻正在前台（用户在用它）⇒ 保留登记」）。
+      ⇒ 判据从"它在不在前台"换成"**你最近 1.2 秒内有真实键鼠输入吗**"（与 `_restore_fg_until` 同一门槛）：
+        有 ⇒ 你真在用，不动（**登记留着**，下次链尾再还）；没有/读不到 ⇒ 那是我们招来的，照还。
+    """
+    if not registered or not alive:
+        return "none"
+    if iconic:
+        return "none"
+    _idle = None if idle_s is None else float(idle_s)
+    if is_fg and (_idle is None or _idle < PUT_BACK_IDLE_S):
+        return "defer"
+    return "minimize" if was_iconic else "bottom"
+
+
 def _minimize_back_if_needed(note: str = "") -> None:
     """把"为干活还原出来的"主窗**压回 Z 序底层**（⚠️ 不再最小化，作者 2026-09-18 定；三条安全线都不许少）。
 
@@ -676,16 +701,31 @@ def _minimize_back_if_needed(note: str = "") -> None:
         if u.IsIconic(hwnd):
             _settled()                        # 已经是收起的 ⇒ 用户看到的状态与原来一致
             return
-        if int(u.GetForegroundWindow() or 0) == hwnd:
+        _is_fg = (int(u.GetForegroundWindow() or 0) == hwnd)
+        try:
+            _idle = _user_idle_seconds()
+        except Exception:                                        # noqa: BLE001
+            _idle = None
+        _act = _put_back_decision(registered=hwnd, alive=True, iconic=False, is_fg=_is_fg,
+                                  was_iconic=_was_iconic, idle_s=_idle)
+        if _act == "defer":
             # ⛔ V-R10-4：**不清登记**（见 docstring）—— 这一笔还没还上，留给下一次链尾。
-            log.info("放回暂缓（%s）：微信此刻正在前台（用户在用它）⇒ **保留登记**，等下一次链尾再还",
-                     note or "未注明")
+            log.info("放回暂缓（%s）：微信在前台且最近 %s 秒内有你的键鼠输入"
+                     "⇒ **保留登记**，等下一次链尾再还",
+                     note or "未注明", "未知" if _idle is None else "%.2f" % _idle)
             return
         if _was_iconic:
             # ⚡ 2026-09-18 晚：**它是用户自己收起来的** ⇒ 链尾还他收着（非前台窗口最小化不会激活别人）。            #   为什么必须还（网友反馈原文）：「游戏无论全不全屏，只要把它最小化后，它要发消息时都会被
             #   激活到最上面」——我们为抓图还原出来，干完却不收回去，用户屏幕上就多出一个微信窗。
             u.ShowWindow(_ct.c_void_p(hwnd), 6)               # SW_MINIMIZE（它本来就不是前台，不会激活谁）
             time.sleep(0.15)
+            # ⛔ 2026-09-22：这一枪可能是**对着前台窗口**打的（伪激活把它顶上来了）⇒ 收起之后
+            #   把前台还给 stash 里那个真用户窗口（只在它确实不是微信自己时），别让焦点落到不知道哪里去。
+            try:
+                if _fg_stash_ok():
+                    _restore_fg(int(_FG_STASH.get("hwnd") or 0), "%s（收回原位后还前台）" % (note or ""), keep=True)
+            except Exception as _e_rf:                           # noqa: BLE001
+                log.info("收回原位后还前台没成（不影响窗口状态）：%s", _e_rf)
             log.info("收回原位（%s）：微信主窗是**用户自己收起来的** ⇒ 恢复成最小化", note or "未注明")
             _settled()
             return
@@ -740,6 +780,14 @@ def _restore_fg_until(note: str = "", timeout: float = 2.5, keep: bool = True,
     """
     h = int(_FG_STASH.get("hwnd") or 0)
     if not h:
+        return False
+    # ⛔ 2026-09-22（真机四项复测）：实测日志里有这么一条 ——
+    #   `还前台收尾：试了 0 次，最终前台=447223716 ✅ 已回到用户窗口`，而 447223716 **就是微信主窗**。
+    #   根因：stash 里记的那个“用户窗口”本身就是微信（链头时它已在前台，是我们自己伪激活招来的）
+    #   ⇒ “还”成了空操作，还假报了一个 ✅。`_fg_stash_ok()` 早就写好了这个判断，只是这里一直没用上。
+    if not _fg_stash_ok():
+        log.info("还前台跳过（%s）：stash 里那个窗口**就是微信自己**（伪激活招来的）⇒ 没得还",
+                 note or "未注明")
         return False
     # 🔴 2026-09-18 加闸（用户现场：「**不是你刚刚把窗口收起了，我把窗口点出来了**」）：
     #   这条链会 **主动 `SetForegroundWindow` 去抢回**"进入时记下的那个窗口"。如果**用户在中途自己
@@ -9456,15 +9504,12 @@ class WeChatAdapter:
                                        "**不在未知会话上开表情面板**（防把表情发到别的群）")
                 time.sleep(0.25)   # 进群后立刻移向笑脸（原 0.40 压缩；仍够会话切稳）
             else:
-                # 无会话名：自动开第一个群（只探测一次，避免 UIA 连续失败重试）
-                try:
-                    for g in self.list_groups():
-                        if g.get("name"):
-                            self._open_chat_guarded(g["name"])
-                            time.sleep(1.0)
-                            break
-                except Exception:
-                    pass
+                # ⛔ 2026-09-22 改（真机四项复测抓到）：原来这里**自动开第一个群**（本次实测日志里目标＝
+                #   某个演示群）—— 那等于"在未知会话上开表情面板"，虽然下面还有"确认不了就失败"的兜底，
+                #   但**默认行为本身危险**（表情发错群是对外可见的事故）。生产两个调用点都传了
+                #   group_name/chat_id（`tools.py` 两处）⇒ 这里**如实拒绝**，不再替调用方挑会话。
+                return False, ("没给目标会话 ⇒ 不开表情面板（拒绝在未知会话上开面板）；"
+                               "调用方请传 group_name / chat_id —— 生产路径本来就都传")
             # ② 点笑脸（去掉此前"点消息区空白关面板"的冗余动作——它会先把光标移到窗口中间偏右悬停 0.3s，
             #    浪费大量时间；表情面板不会遮挡输入栏笑脸，直接点即可。保留 heal=False 防取消菜单）
             render = gui.render_rect or gui._update_render_rect() or (0, 0, 0, 0)

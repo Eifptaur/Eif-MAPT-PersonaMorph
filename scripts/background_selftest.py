@@ -243,7 +243,9 @@ ck("B17 三条会抓图的投递链都在入口调了它（切会话 / 搜索框
 #   不激活还原 ✓、还前台 ✓，但结束后 `IsIconic=False` ⇒ 用户的微信从"收在任务栏"变成"摊在桌面上"）
 ck("B17a 还原时登记了「这是为干活还原的」",
    _sm.has(SRC_WECHAT, "_MINIMIZED_BY_US = int(main)"))
-_HELP_MIN = SRC_WECHAT.split("def _minimize_back_if_needed(")[1][:2600]
+# ⛔ 2026-09-22：原来是 `[:2600]`——凭一个写死的字符数切函数，函数一变长就把后半段（`SetWindowPos`）切在外面
+#   ⇒ 改成"切到下一个顶层 def 为止"，不再依赖长度。
+_HELP_MIN = SRC_WECHAT.split("def _minimize_back_if_needed(")[1].split("\ndef ", 1)[0]
 # ⚠️ 断言要**去注释**（整行注释 + **行尾注释**都要去）：函数里那段解释"以前是 ShowWindow(hwnd, 6)"
 #    的注释会让 `not in` 假红（同型坑见 lesson 0mu61n2m：静态判据扫到注释里的旧写法）。
 _HELP_MIN_NC = "\n".join(l for l in _HELP_MIN.splitlines() if not l.strip().startswith("#"))
@@ -261,8 +263,10 @@ ck("B17b 收尾时三条安全线都在（没登记不动 / 已收起不动 / �
    #   平白多一个微信窗。⇒ 两种情况分开断言（这段是去注释后的代码，别拿注释当证据）。
    and "收回原位" in _HELP_MIN_CODE)
 # 反向对照：**不是**用户收起的（我们没登记 iconic）时，只压底层、**绝不**最小化
-_HELP_MIN_TAIL = _HELP_MIN_CODE.split("if _was_iconic:")[-1]
-_HELP_MIN_TAIL = _HELP_MIN_TAIL.split("return", 1)[-1]      # 跳过"收回原位"那一段，只看 else 路
+# ⛔ 2026-09-22：原来是 `split("if _was_iconic:")[-1].split("return", 1)[-1]`——靠"第一个 return"当分界线，
+#   而 iconic 分支里加了"收回原位后还前台"之后就不准了（切在了还在 iconic 分支里的地方）。
+#   ⇒ 直接以"**收起原位那一枪**"(它只在 iconic 分支里) 当分界线，只看后面的 bottom 路。
+_HELP_MIN_TAIL = _HELP_MIN_CODE.split("u.ShowWindow(_ct.c_void_p(hwnd), 6)")[-1]
 ck("B17b′ 没登记过「用户自己收起」时，只压 Z 序底层、不最小化",
    "SetWindowPos" in _HELP_MIN_TAIL and "SW_MINIMIZE" not in _HELP_MIN_TAIL
    and "ShowWindow" not in _HELP_MIN_TAIL)
