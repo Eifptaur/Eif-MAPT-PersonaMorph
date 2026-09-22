@@ -7,7 +7,8 @@
 CowAgent 靠「结构上只有一张路由表」让这类错误不存在。
 
 两层结构（分批搬迁期间并存）：
-  · `ROUTES`：**声明**——每个路径允许哪些方法（全量 103 条，由 Phase A 定下来）；
+  · `ROUTES`：**声明**——每个路径允许哪些方法（全量 104 条，由 Phase A 定下来，
+    2026-09-22 加了 `/api/tools/test`：Phase B 之后新增路由的标准动作就是「方法 + 这张表两行」）；
   · `HANDLERS`：**已物理搬过去的**：`路径 → {方法: Handler 上的函数名}`；
     `webui.py::Handler._dispatch` 只认这里成对存在的 (路径, 方法)，命中就调用；
     没搬的照旧走原来那条 `if/elif` 链（行为一个字不变）。
@@ -94,6 +95,7 @@ ROUTES = {
     "/api/test-api": ("POST",),
     "/api/tools/new_manifest": ("GET", "POST"),
     "/api/tools/reload": ("GET",),
+    "/api/tools/test": ("GET",),
     "/api/tools/toggle": ("GET",),
     "/api/tts/test": ("GET",),
     "/api/ui-layout": ("GET",),
@@ -365,6 +367,9 @@ HANDLERS = {
     },
     "/api/tools/reload": {
         "GET": "_rapi_tools_reload",
+    },
+    "/api/tools/test": {
+        "GET": "_rapi_tools_test",
     },
     "/api/tools/toggle": {
         "GET": "_rapi_tools_toggle",

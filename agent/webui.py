@@ -1481,6 +1481,38 @@ class WebUI:
                 except Exception as e:
                     self._json({"ok": False, "error": str(e)})
 
+            def _rapi_tools_test(self, path, data, parsed, method):
+                # 2026-09-22 新增（③b「插件加到软件里的引导」配套）：勾选之前先「试一下」。
+                # 复用**唯一执行点** `user_tools.call()`（只发 HTTP、域名白名单、内网永远拒），
+                # 这里不另写一条出网路径——否则那条路不会被既有判据约束到。
+                try:
+                    from . import user_tools as _ut5
+                    q = parse_qs(urlparse(self.path).query)
+                    nm = str((q.get("name") or [""])[0]).strip().lower()
+                    raw = str((q.get("args") or ["{}"])[0]).strip() or "{}"
+                    try:
+                        args = json.loads(raw)
+                    except Exception as e:
+                        self._json({"ok": False, "error": "参数不是合法 JSON：%s" % e})
+                        return
+                    if not isinstance(args, dict):
+                        self._json({"ok": False, "error": '参数必须是一个 JSON 对象，例如 {"city": "北京"}'})
+                        return
+                    hit = [t for t in _ut5.load()[0] if t.get("name") == nm]
+                    if not hit:
+                        self._json({"ok": False, "error": "没找到自定义工具「%s」——先点「重新加载清单」，"
+                                                           "看它是不是作为坏清单列在下面了" % (nm or "?")})
+                        return
+                    t0 = time.time()
+                    r = _ut5.call(hit[0], args)
+                    self._json({"ok": not r.get("is_error"), "is_error": bool(r.get("is_error")),
+                                "name": nm, "host": (urlparse(str(hit[0].get("url") or "")).hostname or ""),
+                                "ms": int((time.time() - t0) * 1000),
+                                "content": str(r.get("content") or ""),
+                                "note": "这次是**真发了一次 HTTP**（也会记进调用次数）；模型每用一次同样记一次。"})
+                except Exception as e:
+                    self._json({"ok": False, "error": str(e)})
+
             def _rapi_ui_fingerprint_take(self, path, data, parsed, method):
                 # 原 do_GET:1259
                 self._ui_fingerprint_take(data, parsed.query)

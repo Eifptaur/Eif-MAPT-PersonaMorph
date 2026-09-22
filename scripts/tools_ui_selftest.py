@@ -23,6 +23,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 PASS = 0
 FAIL = 0
@@ -39,6 +40,7 @@ def ok(name, cond, detail=""):
 
 from agent import console_html as CH  # noqa: E402
 from agent import user_tools as UT  # noqa: E402
+import _srcmatch as _sm  # noqa: E402  空白容忍的源码断言（V-R4-13 第三条；脆断言只许降不许升）
 
 HTML = CH.HTML
 print("── A. 分区与导航 ──")
@@ -71,12 +73,40 @@ for el in ("utGlobals", "utList", "utProblems"):
     ok("JS 会填 #%s" % el, ("$('%s')" % el) in HTML)
 ok("勾选框打到 /api/tools/toggle", "/api/tools/toggle" in HTML)
 ok("重新加载打到 /api/tools/reload", "/api/tools/reload" in HTML)
+# ③b（2026-09-22）：「怎么加工具」引导的最后一环 —— 勾选前能当场验一次（否则只能等聊天时才发现写错）
+ok("每行有「试一下」按钮，打到 /api/tools/test", "试一下" in HTML and "/api/tools/test" in HTML)
+ok("「试一下」请求带上参数（&args=，JSON 对象）",
+   _sm.has(HTML, "&args=") and _sm.has(HTML, "JSON 对象"))
+ok("引导里写了这一步（第 ④ 步）", "④" in HTML and "真发一次请求" in HTML)
 
 print("── E. 后端接线 ──")
 _wu = open(os.path.join("agent", "webui.py"), encoding="utf-8").read()
 ok("/api/status 带 user_tools 段", 'st["user_tools"] = _ut2.snapshot()' in _wu)
 ok("/api/tools/reload 端点存在", 'elif path == "/api/tools/reload"' in _wu)
 ok("/api/tools/toggle 端点存在", 'elif path == "/api/tools/toggle"' in _wu)
+
+print("── E2. 「试一下」＝ Phase B 之后新增路由的标准动作（方法 + 路由表两行）──")
+import ast  # noqa: E402
+from agent.routes import ROUTES as _R, HANDLERS as _HD  # noqa: E402
+ok("路由表声明了 /api/tools/test = GET", _R.get("/api/tools/test") == ("GET",), str(_R.get("/api/tools/test")))
+ok("路由表把 GET 指到 _rapi_tools_test",
+   (_HD.get("/api/tools/test") or {}).get("GET") == "_rapi_tools_test",
+   str(_HD.get("/api/tools/test")))
+_tgt = None
+for _n in ast.walk(ast.parse(_wu)):
+    if isinstance(_n, ast.FunctionDef) and _n.name == "_rapi_tools_test":
+        _tgt = _n
+_msrc = ast.get_source_segment(_wu, _tgt) if _tgt else ""
+ok("方法存在且签名是 (self, path, data, parsed, method)",
+   _sm.has(_msrc, "def _rapi_tools_test(self, path, data, parsed, method):"))
+ok("「试一下」走唯一执行点 user_tools.call（不另写一条出网路径）",
+   _sm.has(_msrc, "_ut5.call(hit[0], args)"))
+ok("方法里没有自己手搓出网（urlopen / requests / 直连 safe_fetch）",
+   not any(k in _msrc for k in ("urlopen", "requests.", "safe_fetch.fetch")),
+   "、".join([k for k in ("urlopen", "requests.", "safe_fetch.fetch") if k in _msrc]))
+ok("坏参数先拒：json.loads 在 user_tools.call 之前（不许带着坏参数发请求）",
+   bool(_msrc) and _msrc.find("json.loads") < _msrc.find("_ut5.call"))
+ok("非对象参数也拒（拒绝文案写了 JSON 对象）", _sm.has(_msrc, "必须是", "JSON 对象"))
 
 print("── F. 行为：勾选真的写进清单文件 ──")
 tmp = tempfile.mkdtemp(prefix="pm_toolsui_")

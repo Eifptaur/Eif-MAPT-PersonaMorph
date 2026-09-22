@@ -1784,7 +1784,7 @@ th{color:var(--tx2);font-weight:500}
         <button id="utReload" class="ghost">重新加载清单</button>
         <button class="pri" data-save>保存设置（工具与插件）</button>
       </div>
-      <div class="hint">调用次数来自唯一分发点的统计（内置与自定义工具都算）——一眼能看出哪些工具只是摆设。</div>
+      <div class="hint">调用次数来自唯一分发点的统计（内置与自定义工具都算）——一眼能看出哪些工具只是摆设。写好了拿不准通不通，就在那一行点「试一下」：填参数、真发一次请求、返回内容当场显示（也会记一次调用）。</div>
     </section>
     <section id="sec-poke" class="card" data-sec>
       <h2>拍一拍（行为）</h2>
@@ -3504,6 +3504,7 @@ async function loadStatus(){  try{
             d.textContent = '还没有自定义工具：点上面的「怎么加工具」——它能在 tools.d/ 里直接生成一份可编辑的模板。';
             listBox.appendChild(d);
           }
+          const UT_KEEP = window.__utTestKeep = window.__utTestKeep || {};
           tools.forEach(function(t){
             const row = document.createElement('div'); row.className = 'row';
             const lab = document.createElement('label');
@@ -3522,7 +3523,44 @@ async function loadStatus(){  try{
               ' ｜ 调用 ' + (t.calls || 0) + ' 次' + (t.errors ? ('（失败 ' + t.errors + '）') : '') +
               (t.last ? (' ｜ 最近 ' + new Date(t.last * 1000).toLocaleString()) : '');
             row.appendChild(v);
+            const ai = document.createElement('input');
+            ai.type = 'text'; ai.style.width = '150px';
+            ai.title = '给这个工具的参数（JSON 对象，例：{"city": "北京"}）；它会替换 url/query/body 里的 {占位}';
+            const tb = document.createElement('button');
+            tb.className = 'ghost'; tb.textContent = '试一下';
+            const res = document.createElement('div'); res.className = 'hint';
+            /* 状态栏每 8s 调一次 loadStatus()，会把整个清单**重画**一遍 ⇒
+               手填的参数与上次的测试结果必须存在渲染之外，否则打字打到一半就被清空
+               （2026-09-22 真机点出来的缺陷）。*/
+            const keep = UT_KEEP[t.name] = UT_KEEP[t.name] || {};
+            ai.value = keep.args || '{}';
+            ai.oninput = function(){ keep.args = ai.value; };
+            if(keep.text){ res.textContent = keep.text; if(keep.err){ res.style.color = 'var(--err-tx)'; } }
+            tb.onclick = async function(){
+              tb.disabled = true; tb.textContent = '发请求…';
+              keep.args = ai.value;
+              keep.err = false; keep.text = '正在真发一次 HTTP 请求（最多等到这个工具的超时设置）…';
+              res.style.color = ''; res.textContent = keep.text;
+              try{
+                const r = await getJSON('/api/tools/test?name=' + encodeURIComponent(t.name) +
+                                        '&args=' + encodeURIComponent(ai.value || '{}'));
+                if(r && r.ok){
+                  keep.text = '通了 · ' + (r.ms || 0) + 'ms · ' + (r.host || '') + ' 返回：' + (r.content || '（空）');
+                }else{
+                  keep.err = true;
+                  keep.text = '没通 · ' + ((r && (r.error || r.content)) || '未知错误');
+                }
+              }catch(e){ keep.err = true; keep.text = '没通 · ' + e.message; }
+              res.style.color = keep.err ? 'var(--err-tx)' : '';
+              res.textContent = keep.text;
+              tb.disabled = false; tb.textContent = '试一下';
+              /* ⛔ 这里**不许**调 loadStatus()：那会把整个清单重画一遍，
+                 刚拿到的返回内容当场被抹掉（2026-09-22 真机点出来的缺陷）。
+                 测试不改清单 ⇒ 本来就不需要重画。 */
+            };
+            row.appendChild(ai); row.appendChild(tb);
             listBox.appendChild(row);
+            listBox.appendChild(res);
           });
         }
         const pr = $('utProblems');
@@ -4750,7 +4788,8 @@ const GUIDES = {
       '① 点下面的「生成模板清单」，会在 tools.d/ 里写好一个可编辑的示例（也可以先复制模板再自己建文件）',
       '② 改 4 个地方：name（工具名，小写字母/下划线）、description（什么时候该用它）、url（接口地址）、allow_hosts（域名白名单，必须包含 url 的域名）',
       '③ 回本页点「重新加载清单」→ 打开总开关 → 在列表里勾选你的工具 ⇒ 下一轮对话模型就能用它',
-      '出错不用猜：坏清单会一条条列在「清单现状」下面；运行时的报错会原样返回给模型。'
+      '④ 勾选之前先在那一行点「试一下」：填好参数（JSON，不填就是 {}）按一下，它会**真发一次请求**并把返回内容显示在下面——不用等聊天时才发现写错了',
+      '出错不用猜：坏清单会一条条列在「清单现状」下面；运行时的报错会原样返回给模型，也会显示在「试一下」的结果里。'
     ],
     copy: [{label: '复制最小模板', text: '{\n  "name": "my_tool",\n  "description": "这个工具做什么、什么时候用",\n  "enabled": false,\n  "method": "GET",\n  "url": "https://api.example.com/x",\n  "allow_hosts": ["api.example.com"],\n  "params": {"type": "object", "properties": {}, "required": []}\n}'}],
     actions: [{label: '生成模板清单到 tools.d/', kind: 'gen'}, {label: '打开 tools.d 目录', kind: 'open', arg: 'tools.d'}]

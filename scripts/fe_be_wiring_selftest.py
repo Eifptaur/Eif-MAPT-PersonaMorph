@@ -196,6 +196,22 @@ try:
     _stub(UFP, "digest", lambda: "0" * 12)
     _stub(SP, "preview", lambda: {"ok": True, "system": "判据用假提示词"})
 
+    # ③b（2026-09-22）：`/api/tools/test`（控制台「试一下」）——清单目录指到临时区，
+    # 执行点打桩成记录器（**判据不出网**）；B7 再把真实现还原回来验内网守卫。
+    _tools_dir = os.path.join(_tmp, "tools.d")
+    os.makedirs(_tools_dir, exist_ok=True)
+    for _nm, _u, _hs in (("judge_demo", "https://api.example.com/x", ["api.example.com"]),
+                         ("judge_private", "http://127.0.0.1:9/x", ["127.0.0.1"])):
+        with open(os.path.join(_tools_dir, _nm + ".json"), "w", encoding="utf-8") as _fh:
+            _json.dump({"name": _nm, "description": "判据里临时造的工具", "enabled": False,
+                        "method": "GET", "url": _u, "allow_hosts": _hs,
+                        "params": {"type": "object", "properties": {}, "required": []}}, _fh, ensure_ascii=False)
+    _stub(UT, "_cfg", lambda: {"dir": _tools_dir, "enabled": True, "max_tools": 30,
+                               "timeout_ms": 8000, "max_chars": 4000})
+    _seen = []
+    _stub(UT, "call", lambda tool, args, _fetch=None: (
+        _seen.append((tool.get("name"), dict(args or {}))) or {"content": "假返回 · 判据不打网", "is_error": False}))
+
     _s = socket.socket()
     _s.bind(("127.0.0.1", 0))
     _port = _s.getsockname()[1]
@@ -213,7 +229,8 @@ try:
     _tok = "?token=wiring-judge-token"
 
     def _req(method, path, body=None):
-        url = _base + path + _tok
+        # path 自带查询串时要接 `&token=`，否则 token 会被并进上一个参数的值里
+        url = _base + path + (_tok if "?" not in path else "&" + _tok[1:])
         data = _json.dumps(body or {}).encode("utf-8") if method != "GET" else None
         req = urllib.request.Request(url, data=data, method=method)
         if data:
@@ -244,6 +261,42 @@ try:
     _code, _txt = _req("POST", "/api/file_search/add", {"dir": "D:\\judge-dir"})
     ok("B3 加目录这条路**回执可读**（`ok` + `note`），不是 404 的原始 JSON",
        '"ok"' in _txt and '"note"' in _txt, _txt[:80])
+
+    print("── B 续：「试一下」（/api/tools/test）：真分派链 + 坏参数先拒 + 内网照样拒 ──")
+
+    def _jr(txt):
+        try:
+            return _json.loads(txt or "{}")
+        except Exception:
+            return {}
+
+    _code, _txt = _req("GET", "/api/tools/test?name=judge_demo&args=%7B%22city%22%3A%22x%22%7D")
+    _r = _jr(_txt)
+    ok("B4 回执可读：ok + content + ms + host（走的是唯一执行点）",
+       _code == 200 and _r.get("ok") is True and "假返回" in str(_r.get("content"))
+       and isinstance(_r.get("ms"), int) and _r.get("host") == "api.example.com", _txt[:90])
+    ok("B5 参数原样传给唯一执行点（不是空参、不是字符串）",
+       _seen == [("judge_demo", {"city": "x"})], str(_seen))
+    _n0 = len(_seen)
+    _code, _txt = _req("GET", "/api/tools/test?name=judge_demo&args=not-json")
+    _r = _jr(_txt)
+    ok("B6 坏参数当场拒，且**一个请求都没发**",
+       _r.get("ok") is False and "JSON" in str(_r.get("error")) and len(_seen) == _n0,
+       str(_r.get("error"))[:60])
+    _code, _txt = _req("GET", "/api/tools/test?name=judge_demo&args=%5B1%2C2%5D")
+    _r = _jr(_txt)
+    ok("B7 参数不是对象（数组）也拒", _r.get("ok") is False and "对象" in str(_r.get("error")),
+       str(_r.get("error"))[:60])
+    _code, _txt = _req("GET", "/api/tools/test?name=judge_nope&args=%7B%7D")
+    _r = _jr(_txt)
+    ok("B8 名字不存在 ⇒ 说清「没找到」并指路「重新加载清单」",
+       _r.get("ok") is False and "没找到" in str(_r.get("error")), str(_r.get("error"))[:60])
+    # 这一条要验**真实现**里的内网守卫，所以把 call 还原；守卫在发请求之前就返回 ⇒ 仍然不出网
+    setattr(UT, "call", _saved[(UT, "call")])
+    _code, _txt = _req("GET", "/api/tools/test?name=judge_private&args=%7B%7D")
+    _r = _jr(_txt)
+    ok("B9 内网/本机地址在「试一下」这条路上同样被拒（真守卫、未发请求）",
+       _r.get("ok") is False and "内网" in str(_r.get("content")), _txt[:90])
 finally:
     try:
         if _w is not None:
