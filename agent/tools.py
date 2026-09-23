@@ -623,6 +623,22 @@ def _exec_read_video(ctx, args):
     return {"content": _image_parts(head, data_urls)}
 
 
+def _effective_response_tier(ctx):
+    """当前生效的响应档位（含峰谷映射 / 每群独立档位 / 指令禁言），用于视频解析分档闸门。
+
+    复用 `prompt.resolve_context_tier` 的同一套判定（喂空触发集 ⇒ 只取配置档位，不做逐条触发判定），
+    取不到就按最高档(4)放行（fail-open，避免误拦正常解析）。
+    """
+    try:
+        from .prompt import resolve_context_tier
+        info = resolve_context_tier([], chat_key=str(ctx.get("chat_key") or ""),
+                                    store=ctx.get("store"))
+        t = int(info.get("tier") or 4)
+        return t if t >= 0 else 4
+    except Exception:
+        return 4
+
+
 def _exec_read_video_url(ctx, args):
     """读**非 B 站**视频外链（丙-11 A3 工具化）：识别 → 下载 → 抽帧 → 视觉模型。
 
@@ -643,6 +659,12 @@ def _exec_read_video_url(ctx, args):
     vcfg = cfg.get("video_url") or {}
     if vcfg.get("enabled") is False:
         return _err("外链视频解析已在控制台关闭（video_url.enabled=false）")
+    # 视频解析分档（丙-12）：当前响应档位低于门槛 ⇒ 不解析（AND 关系：档位够 + 开关开 = 才解析）
+    _vmin = int((cfg.get("store") or {}).get("video_min_tier", 4) or 4)
+    _cur_tier = _effective_response_tier(ctx)
+    if _cur_tier < _vmin:
+        return _err("当前响应档位(%d)低于视频解析门槛(%d)：低档位不解析视频（省 token/算力）。"
+                    "把群档位调高、或等高档位时段再发即可。" % (_cur_tier, _vmin))
     text = str(args.get("url") or "").strip()
     if not text:
         return _err("没给链接。把群友发的那句话（含链接）整段丢进来就行。")
@@ -1615,6 +1637,12 @@ def _exec_read_bilibili(ctx, args):
             _bcfg = {}
         if _bcfg.get("enabled") is False:
             return _err("看懂 B 站链接这个功能已在控制台关闭（bilibili.enabled）")
+        # 视频解析分档（丙-12）：当前响应档位低于门槛 ⇒ 不解析（AND 关系：档位够 + 开关开 = 才解析）
+        _vmin = int(((_gc2() or {}).get("store") or {}).get("video_min_tier", 4) or 4)
+        _cur_tier = _effective_response_tier(ctx)
+        if _cur_tier < _vmin:
+            return _err("当前响应档位(%d)低于视频解析门槛(%d)：低档位不解析 B 站视频（省 token/算力）。"
+                        "把群档位调高、或等高档位时段再发即可。" % (_cur_tier, _vmin))
         v, why = _bili.info(str(args.get("url") or args.get("text") or ""))
         if not v:
             return _err("解析不了这条 B 站链接：%s" % why)
