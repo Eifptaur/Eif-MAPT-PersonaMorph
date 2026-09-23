@@ -17,9 +17,18 @@ HTML = r"""<!DOCTYPE html>
 <link rel="icon" href="/assets/icon.png" type="image/png">
 <style>
 :root{
-  /* ── 默认主题：「鲸落」深蓝海（whale）——海浪底图 + 深蓝 tint + 慢速动效 ──
-     背景=实拍海浪（assets/wallpaper/ocean1.jpg，本机文件），深蓝 tint 与慢速缩放；
-     卡片=浅蓝半透毛玻璃、导航栏=更深蓝实体——色差分三层凸显透明 */
+  /* 按钮交互（2026-09-23 加）：按下位移 / 焦点环 / 主按钮高光 三件，三主题各自取色。
+     why 成对出现：`--btn-lift` 按下时是**正数**下沉、`--btn-press` 是缩放；
+     焦点环必须用**半透明**色，否则在深色主题上会糊成一圈实心白边。 */
+  --btn-press:.975; --btn-lift:1px;
+  --btn-ring:rgba(111,207,255,.55); --btn-glow:rgba(111,207,255,.35);
+  --btn-sheen:rgba(255,255,255,.22);
+
+  /* ══ 默认主题：「鲸落」深蓝海（whale）——实拍海浪底图 + 深蓝 tint + 慢速动效 ══
+     三层的色差是这套语言的骨架：①海浪底图（最亮、有动感）②卡片＝浅蓝半透毛玻璃
+     （透出底图）③导航栏＝更深蓝实体（压住底图，给"我在这里"的锚点）。
+     本轮只做**打磨与一致性**，不推倒重来：色相保持在 200°~215° 的蓝，
+     拿掉偏青/偏紫的杂色，把三级文字/边框/状态色收成同一支调子。 */
   --blue:#6FCFFF; --blue2:#4FB3F2; --blue-soft:rgba(63,168,240,.15); --blue-line:rgba(120,190,255,.32);
   --bg:linear-gradient(160deg,rgba(8,30,58,.62),rgba(12,44,84,.45) 45%,rgba(18,48,96,.55) 100%);
   --bg-solid:rgba(12,34,62,.86);
@@ -30,36 +39,93 @@ HTML = r"""<!DOCTYPE html>
   --input-bg:rgba(255,255,255,.09); --hover-bg:rgba(255,255,255,.16); --input-bd:rgba(160,210,255,.35); --topbar:rgba(8,24,46,.7);
   --code-bg:rgba(4,16,32,.7); --code-tx:#BFE9FF; --ok-soft:rgba(53,240,192,.14); --ok-tx:#7AF9E2;
   --err-soft:rgba(255,138,138,.16); --err-tx:#FFB0B0; --menu-bg:#0C2440;
+  /* 三级文字（2026-09-22 三主题重构新增）：正文 / 次要 / 说明。
+     原来只有 --tx2 一档，长说明与行标签同色 ⇒ 层级糊成一片。 */
+  --tx3:rgba(169,209,236,.72);
+  /* 可用性语义色（面板状态徽章用，三主题各自取色）*/
+  --st-ok-bg:rgba(53,240,192,.14); --st-ok-bd:rgba(53,240,192,.42); --st-ok-tx:#7AF9E2;
+  --st-idle-bg:rgba(169,209,236,.12); --st-idle-bd:rgba(169,209,236,.34); --st-idle-tx:#BFE2F5;
+  --st-warn-bg:rgba(255,209,102,.15); --st-warn-bd:rgba(255,209,102,.44); --st-warn-tx:#FFE0A3;
+  --st-err-bg:rgba(255,138,138,.16); --st-err-bd:rgba(255,138,138,.46); --st-err-tx:#FFB0B0;
+  --st-info-bg:rgba(111,207,255,.14); --st-info-bd:rgba(111,207,255,.42); --st-info-tx:#A9E4FF;
+  /* 导航分组标签与分组块（深蓝实体上的分层）*/
+  --navgrp-tx:rgba(169,209,236,.62); --navgrp-line:rgba(120,190,255,.16);
+  --radius-card:16px;
 }
-/* 浅色主题（手动）——明亮蓝白 */
+/* ══ 浅色主题：参考 Meta（Facebook / Instagram 的现代界面语言）══
+   设计思路（与 whale 的差异在设计层，不是换色）：
+   · **实底、零玻璃**：Meta 的界面没有毛玻璃与背景图，整块用不透明色块堆叠
+     ⇒ 白卡浮在极浅灰蓝底上，靠 1px 细边与极轻阴影分开，不靠透明。
+   · **克制的分隔**：不用大圆角与重阴影，分隔线是主角（细、低对比、只画该画的地方）。
+   · **单一强调色**：整个界面只有一支蓝（#0866FF，Meta 蓝）用于可点项与主按钮，
+     其余全是中性灰阶 ⇒ 一眼就知道哪里能点。
+   · **字级清晰**：标题/正文/说明三档拉开，行高放松，长说明读得下去。 */
 :root[data-theme=light]{
-  --blue:#5B78F7; --blue2:#4A67F0; --blue-soft:#EEF2FF; --blue-line:#DCE4FF;
-  --bg:#F5F7FD; --bg-solid:#F5F7FD; --card:#FFFFFF; --bd:#EBEFF8; --tx:#1F2937; --tx2:#6B7280;
-  --ok:#10B981; --warn:#F59E0B; --err:#EF4444; --shadow:0 1px 3px rgba(31,41,55,.06),0 8px 24px rgba(77,107,254,.06);
-  --input-bg:#F8FAFE; --hover-bg:#F8FAFF; --input-bd:#DCE4FF; --topbar:rgba(255,255,255,.92);
-  --code-bg:#0F172A; --code-tx:#D8E0F0; --ok-soft:#D1FAE5; --ok-tx:#047857;
-  --err-soft:#FEE2E2; --err-tx:#B91C1C; --menu-bg:#FFFFFF;
+  --btn-press:.97; --btn-lift:1px;
+  --btn-ring:rgba(8,102,255,.38); --btn-glow:rgba(8,102,255,.28);
+  --btn-sheen:rgba(255,255,255,.42);
+
+  --blue:#0866FF; --blue2:#0455D6; --blue-soft:#EBF2FF; --blue-line:#D6E4FF;
+  --bg:#F7F8FA; --bg-solid:#FFFFFF; --card:#FFFFFF; --bd:#E4E6EB; --tx:#1C1E21; --tx2:#65676B;
+  --ok:#00A36C; --warn:#D9820A; --err:#E41E3F; --shadow:0 1px 2px rgba(0,0,0,.06),0 2px 8px rgba(0,0,0,.04);
+  --input-bg:#F5F6F8; --hover-bg:#F0F2F5; --input-bd:#DADDE1; --topbar:rgba(255,255,255,.96);
+  --code-bg:#F0F2F5; --code-tx:#1C1E21; --ok-soft:#E3F6EE; --ok-tx:#00734D;
+  --err-soft:#FDEBEE; --err-tx:#B3122C; --menu-bg:#FFFFFF;
+  --tx3:#8A8D91;
+  --st-ok-bg:#E3F6EE; --st-ok-bd:#BFE9D9; --st-ok-tx:#00734D;
+  --st-idle-bg:#F0F2F5; --st-idle-bd:#DADDE1; --st-idle-tx:#65676B;
+  --st-warn-bg:#FDF3E3; --st-warn-bd:#F2DDB4; --st-warn-tx:#9A5B00;
+  --st-err-bg:#FDEBEE; --st-err-bd:#F6C9D2; --st-err-tx:#B3122C;
+  --st-info-bg:#EBF2FF; --st-info-bd:#CCDEFF; --st-info-tx:#0455D6;
+  --navgrp-tx:#8A8D91; --navgrp-line:#E4E6EB;
+  --radius-card:12px;
 }
-/* 深色主题（手动） */
+/* ══ 深色主题：参考 LINEAR（Linear.app 的产品界面语言）══
+   设计思路：
+   · **近黑、非纯黑**：画布 #08090A、卡片 #101113 逐级抬升，靠 1px 极细描边
+     分出行与卡，而不是靠阴影——阴影在近黑上根本不显形。
+   · **低饱和、高对比**：正文接近白（#F7F8F8）保证长文本可读，彩色一律降饱和，
+     只有"当前/可点"才给一点点靛蓝（#5E6AD2）。
+   · **信息密度高**：行距紧、字号小一档、靠留白与描边而非大圆角划分区块。 */
 :root[data-theme=dark]{
-  --blue:#7C96FF; --blue2:#5F7BFF; --blue-soft:#1E2A4A; --blue-line:#2A3A66;
-  --bg:#0E1420; --bg-solid:#131A27; --card:#151D2E; --bd:#263348; --tx:#E6EAF3; --tx2:#98A6C0;
-  --ok:#34D399; --warn:#FBBF24; --err:#F87171;
-  --shadow:0 1px 3px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);
-  --input-bg:#0F1626; --hover-bg:#1B2438; --input-bd:#2A3A66; --topbar:rgba(21,29,46,.92);
-  --code-bg:#0A0E16; --code-tx:#A9B8D0; --ok-soft:#10352A; --ok-tx:#5EEAD4;
-  --err-soft:#3A1A1A; --err-tx:#FCA5A5; --menu-bg:#1B2438;
+  --btn-press:.972; --btn-lift:1px;
+  --btn-ring:rgba(124,140,255,.42); --btn-glow:rgba(94,106,210,.30);
+  --btn-sheen:rgba(255,255,255,.10);
+
+  --blue:#8B93FF; --blue2:#6E78E8; --blue-soft:#181B2C; --blue-line:#262A44;
+  --bg:#08090A; --bg-solid:#101113; --card:#101113; --bd:#1D1F23; --tx:#F7F8F8; --tx2:#8A8F98;
+  --ok:#4CB782; --warn:#D9A441; --err:#EB5757;
+  --shadow:0 1px 2px rgba(0,0,0,.5),0 8px 24px rgba(0,0,0,.4);
+  --input-bg:#141517; --hover-bg:#181A1C; --input-bd:#26282D; --topbar:rgba(16,17,19,.94);
+  --code-bg:#0A0B0C; --code-tx:#C9CDD4; --ok-soft:#122A20; --ok-tx:#6FD39B;
+  --err-soft:#2A1416; --err-tx:#F08A8A; --menu-bg:#16181B;
+  --tx3:#62666D;
+  --st-ok-bg:#122A20; --st-ok-bd:#204A36; --st-ok-tx:#6FD39B;
+  --st-idle-bg:#16181B; --st-idle-bd:#26282D; --st-idle-tx:#8A8F98;
+  --st-warn-bg:#2A2216; --st-warn-bd:#4A3B1F; --st-warn-tx:#E0B65E;
+  --st-err-bg:#2A1416; --st-err-bd:#4A2427; --st-err-tx:#F08A8A;
+  --st-info-bg:#141828; --st-info-bd:#262A44; --st-info-tx:#9BA3FF;
+  --navgrp-tx:#62666D; --navgrp-line:#1D1F23;
+  --radius-card:10px;
 }
 /* 系统跟随（仅未手动设置主题（无 data-theme=跟随系统）时生效；whale/light/dark 都不跟随） */
 @media (prefers-color-scheme: dark){
   :root:not([data-theme]){
-    --blue:#7C96FF; --blue2:#5F7BFF; --blue-soft:#1E2A4A; --blue-line:#2A3A66;
-    --bg:#0E1420; --bg-solid:#131A27; --card:#151D2E; --bd:#263348; --tx:#E6EAF3; --tx2:#98A6C0;
-    --ok:#34D399; --warn:#FBBF24; --err:#F87171;
-    --shadow:0 1px 3px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);
-    --input-bg:#0F1626; --hover-bg:#1B2438; --input-bd:#2A3A66; --topbar:rgba(21,29,46,.92);
-    --code-bg:#0A0E16; --code-tx:#A9B8D0; --ok-soft:#10352A; --ok-tx:#5EEAD4;
-    --err-soft:#3A1A1A; --err-tx:#FCA5A5; --menu-bg:#1B2438;
+    --blue:#8B93FF; --blue2:#6E78E8; --blue-soft:#181B2C; --blue-line:#262A44;
+    --bg:#08090A; --bg-solid:#101113; --card:#101113; --bd:#1D1F23; --tx:#F7F8F8; --tx2:#8A8F98;
+    --ok:#4CB782; --warn:#D9A441; --err:#EB5757;
+    --shadow:0 1px 2px rgba(0,0,0,.5),0 8px 24px rgba(0,0,0,.4);
+    --input-bg:#141517; --hover-bg:#181A1C; --input-bd:#26282D; --topbar:rgba(16,17,19,.94);
+    --code-bg:#0A0B0C; --code-tx:#C9CDD4; --ok-soft:#122A20; --ok-tx:#6FD39B;
+    --err-soft:#2A1416; --err-tx:#F08A8A; --menu-bg:#16181B;
+    --tx3:#62666D;
+    --st-ok-bg:#122A20; --st-ok-bd:#204A36; --st-ok-tx:#6FD39B;
+    --st-idle-bg:#16181B; --st-idle-bd:#26282D; --st-idle-tx:#8A8F98;
+    --st-warn-bg:#2A2216; --st-warn-bd:#4A3B1F; --st-warn-tx:#E0B65E;
+    --st-err-bg:#2A1416; --st-err-bd:#4A2427; --st-err-tx:#F08A8A;
+    --st-info-bg:#141828; --st-info-bd:#262A44; --st-info-tx:#9BA3FF;
+    --navgrp-tx:#62666D; --navgrp-line:#1D1F23;
+    --radius-card:10px;
   }
 }
 /* 全局滚动条自绘（2026-09-16 用户：「又白又灰的，跟我们色调完全不搭」）——
@@ -85,11 +151,67 @@ body.whale-anim::after{content:"";position:fixed;inset:0;z-index:-1;pointer-even
     radial-gradient(300px 300px at 78% 68%,rgba(120,220,200,.12),transparent 65%),
     radial-gradient(240px 240px at 36% 26%,rgba(255,220,170,.10),transparent 65%),
     var(--bg)}
+/* ══════════════════════════════════════════════════════════════════════════
+   三套主题的「视觉语言」分层（2026-09-22 三主题重构）
+   上面 :root 只管色值；这里管**结构与质感**——同样是"卡片 + 分隔 + 阴影"，
+   三套主题的取舍完全不同。改这里之前先读这一段，别只盯着配色。
+
+   · whale  ｜海里的一层玻璃：底图是活的（慢动效），卡片半透把底图透出来，
+             导航实体压住底图；明暗靠"透明层次"表达，阴影是光的散射。
+   · light  ｜Meta 式实底：没有玻璃、没有底图，白卡叠在极浅灰底上；
+             分隔靠 1px 细线与极轻阴影，界面只有一支蓝是"可点"的信号。
+   · dark   ｜Linear 式近黑：卡片是抬升一档的实色，看不见阴影（近黑上不显形），
+             全部靠 1px 描边分块；彩色一律降饱和，只有可点项给一点靛蓝。
+   ══════════════════════════════════════════════════════════════════════════ */
+/* 导航空态占位（收起态下也要能读） */
+.side .nav-empty{font-size:12px;color:var(--tx2);padding:8px 12px;line-height:1.6}
 /* 导航栏：更深蓝实体（与卡片/背景拉开色差；用不透明色避免透出海洋渐变导致滚动后上下色差——030117） */
 .side{background:rgba(11,30,56,1);border:1px solid rgba(120,180,240,.28);box-shadow:var(--shadow);backdrop-filter:none}
 .side::after{background:repeating-linear-gradient(115deg,rgba(255,255,255,.10) 0 1px,transparent 1px 22px);opacity:.5}
 .side .nav a{background:transparent}
 .side .nav a.on{background:rgba(63,168,240,.22);color:#fff;font-weight:600}
+/* 卡片：whale 里是"玻璃片"，与下面两套实底主题拉开（cover 掉 .card 的透明底） */
+:root[data-theme=light] .side{background:#FFFFFF;border:1px solid var(--bd);box-shadow:none}
+:root[data-theme=light] .side::after{content:none}
+:root[data-theme=light] .card{background:var(--card)}
+:root[data-theme=light] .card::before,:root[data-theme=light] .card::after{content:none}
+:root[data-theme=light] .card{box-shadow:var(--shadow);border-radius:var(--radius-card)}
+:root[data-theme=light] .card:hover{filter:none;box-shadow:0 1px 2px rgba(0,0,0,.07),0 4px 14px rgba(0,0,0,.06)}
+:root[data-theme=light] .card h2{padding-bottom:8px;border-bottom:1px solid var(--bd)}
+:root[data-theme=light] .side .nav a{margin:2px 0;padding:10px 12px;border-radius:10px;font-size:14px}
+:root[data-theme=light] .side .nav a.on{background:var(--blue-soft);color:var(--blue);font-weight:600}
+:root[data-theme=dark] .side{background:#0D0E10;border:1px solid var(--bd);box-shadow:none}
+:root[data-theme=dark] .side::after{content:none}
+:root[data-theme=dark] .card{background:var(--card);border:1px solid var(--bd);box-shadow:none;border-radius:var(--radius-card)}
+:root[data-theme=dark] .card::before{content:none}
+:root[data-theme=dark] .card::after{content:none}
+:root[data-theme=dark] .card:hover{filter:none;box-shadow:0 0 0 1px #2A2D33,0 8px 24px rgba(0,0,0,.5)}
+:root[data-theme=dark] .card h2{border-bottom:1px solid var(--bd);padding-bottom:9px}
+:root[data-theme=dark] .side .nav a{margin:1px 0;padding:9px 12px;border-radius:8px;font-size:13.5px}
+:root[data-theme=dark] .side .nav a.on{background:var(--blue-soft);color:var(--tx);font-weight:600}
+/* 系统跟随的深色（无 data-theme 时）与 dark 同语言，避免"跟随系统"落到 whale 的玻璃上 */
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme]) .side{background:#0D0E10;border:1px solid var(--bd);box-shadow:none}
+  :root:not([data-theme]) .card,:root:not([data-theme]) .side{border-radius:var(--radius-card)}
+  :root:not([data-theme]) .card h2{border-bottom:1px solid var(--bd);padding-bottom:9px}
+}
+/* 主按钮：light/dark 都不用 whale 的渐变玻璃，改实色（Meta 的蓝 / Linear 的靛） */
+:root[data-theme=light] .pri{background:var(--blue);box-shadow:0 1px 2px rgba(0,0,0,.12);border:1px solid transparent}
+:root[data-theme=light] .pri:hover{background:var(--blue2);filter:none}
+:root[data-theme=dark] .pri{background:var(--blue);box-shadow:none;border:1px solid transparent}
+:root[data-theme=dark] .pri:hover{background:var(--blue2);filter:none}
+/* 导航分组头：三套主题的语气不同（whale 是"海图上的分栏"，light 是"小号全大写标签"，
+   dark 是 Linear 那种"极淡小字 + 宽字距"）——这是设计语言差异，不是色值差异。 */
+:root[data-theme=light] .side .nav-grp-hd{font-size:11.5px;color:#8A8D91;letter-spacing:.02em;font-weight:600;
+  padding:9px 12px 4px}
+:root[data-theme=light] .side .nav-grp + .nav-grp{border-top:1px solid var(--navgrp-line);margin-top:6px;padding-top:6px}
+:root[data-theme=light] .side .nav-find input{border-radius:10px;padding:9px 12px}
+:root[data-theme=dark] .side .nav-grp-hd{font-size:10.5px;color:#5A5E66;letter-spacing:.09em;font-weight:600;
+  padding:8px 10px 3px}
+:root[data-theme=dark] .side .nav-grp + .nav-grp{border-top:1px solid var(--navgrp-line);margin-top:3px;padding-top:3px}
+:root[data-theme=dark] .side .nav-find input{border-radius:7px;padding:7px 10px;background:#141517}
+:root[data-theme=light] .empty{border-style:solid;border-color:var(--bd);background:#FAFBFC}
+:root[data-theme=dark] .empty{background:#0C0D0F}
 /* 100 左侧导航（用户 2026-09-13 定稿方向 B）：图标自绘 + 可滚动 + 名字可收起（像 DeepSeek 那样） */
 .side .nav{overflow-y:auto;overflow-x:hidden;max-height:calc(100vh - 210px);padding-right:2px;scrollbar-width:thin}
 .side .nav::-webkit-scrollbar{width:6px}
@@ -116,6 +238,70 @@ body.whale-anim::after{content:"";position:fixed;inset:0;z-index:-1;pointer-even
   display:flex;align-items:center;justify-content:center;gap:8px;font-size:12.5px;line-height:1;
   border-radius:8px;z-index:auto;opacity:.9}
 .side.tight .nav-tg{padding:9px 0}
+
+/* ── 左导航「分组 + 快速找功能」（2026-09-22 三主题重构；用户口径：
+      「25 条平铺 → 请分组、按使用频率排序、支持收起展开与快速定位，让新用户 3 秒内找到我要改什么」）──
+   两条硬约束（与既有判据对齐，改这里先看）：
+   ① `nav_ui_selftest` 只统计 `#nav a`（分组头是 <button>，不进导航项计数）；
+      且仍要求「每项 inline SVG + viewBox="0 0 16 16" + currentColor」⇒ 组头箭头也照此写。
+   ② `ui_arch_selftest` 要求「导航顺序 == 面板顺序」，分组只是**视觉包装**，
+      不改变 <a> 在 DOM 里的先后 ⇒ 重排必须同时改面板块的顺序。
+   收起态（.side.tight）只留图标：组名与搜索框要隐掉，否则 64px 的栏里塞不下。 */
+.side .nav-find{margin:0 0 8px;position:relative}
+.side .nav-find input{width:100%;box-sizing:border-box;padding:8px 10px;font-size:12.5px;line-height:1;
+  border-radius:8px;border:1px solid var(--input-bd);background:var(--input-bg);color:var(--tx);
+  outline:none;transition:border-color .16s ease,background .16s ease}
+.side .nav-find input::placeholder{color:var(--tx2);opacity:.8}
+.side .nav-find input:focus{border-color:var(--blue);background:var(--hover-bg)}
+.side .nav-find-res{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:40;display:none;max-height:260px;
+  overflow-y:auto;border-radius:10px;border:1px solid var(--bd);background:var(--menu-bg);
+  box-shadow:0 10px 30px rgba(0,0,0,.32);padding:4px}
+.side .nav-find-res.open{display:block}
+.side .nav-find-res a,.side .nav-find-res .nfr-empty{display:block;padding:7px 10px;border-radius:7px;
+  font-size:12.5px;line-height:1.4;color:var(--tx2);text-decoration:none;background:transparent;border:none}
+.side .nav-find-res a:hover{background:var(--hover-bg);color:var(--tx)}
+.side .nav-find-res a b{color:var(--blue);font-weight:600}
+.side .nav-find-res .nfr-empty{color:var(--tx2);opacity:.85}
+/* 分组块：组间用一条极淡的分隔线断句，组内项贴紧（分组是为了"扫读"，不是为了"分开"） */
+.side .nav-grp{margin:0 0 2px}
+.side .nav-grp + .nav-grp{border-top:1px solid var(--navgrp-line);margin-top:4px;padding-top:4px}
+.side .nav-grp-hd{display:flex;align-items:center;justify-content:space-between;width:100%;box-sizing:border-box;
+  padding:7px 10px 4px;margin:0;background:transparent;border:none;cursor:pointer;font:inherit;
+  color:var(--navgrp-tx);font-size:11px;font-weight:600;letter-spacing:.06em;line-height:1.2;text-align:left;
+  transition:color .16s ease}
+.side .nav-grp-hd:hover{color:var(--tx2)}
+.side .nav-grp-hd .gt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.side .nav-grp-hd .gc{width:12px;height:12px;flex:none;opacity:.7;transition:transform .18s ease}
+.side .nav-grp.collapsed .nav-grp-hd .gc{transform:rotate(-90deg)}
+.side .nav-grp.collapsed .nav-grp-bd{display:none}
+/* 收起态：只剩图标 ⇒ 组头隐掉、分组线也隐掉，搜索框换成"只留图标按钮"的观感 */
+.side.tight .nav-grp-hd{display:none}
+.side.tight .nav-grp + .nav-grp{border-top:none;margin-top:0;padding-top:0}
+.side.tight .nav-grp.collapsed .nav-grp-bd{display:block}   /* 收起态不许再藏项，否则点不到 */
+.side.tight .nav-find{display:none}
+/* 面板内的状态徽章（可用性：一眼看出"在跑 / 没连上 / 待更新 / 已就绪"） */
+.st{display:inline-flex;align-items:center;gap:6px;height:22px;box-sizing:border-box;padding:0 9px;
+  border-radius:11px;font-size:11.5px;font-weight:600;line-height:1;white-space:nowrap;
+  border:1px solid var(--st-idle-bd);background:var(--st-idle-bg);color:var(--st-idle-tx)}
+.st::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;flex:none;opacity:.9}
+.st.ok{border-color:var(--st-ok-bd);background:var(--st-ok-bg);color:var(--st-ok-tx)}
+.st.warn{border-color:var(--st-warn-bd);background:var(--st-warn-bg);color:var(--st-warn-tx)}
+.st.err{border-color:var(--st-err-bd);background:var(--st-err-bg);color:var(--st-err-tx)}
+.st.info{border-color:var(--st-info-bd);background:var(--st-info-bg);color:var(--st-info-tx)}
+.st.ok::before{animation:stPulse 2.4s ease-in-out infinite}
+@keyframes stPulse{0%,100%{opacity:.9}50%{opacity:.35}}
+/* 面板头：标题 + 状态徽章同一行（省一行高度，扫读时"标题—状态"是一个整体） */
+.sec-hd{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.sec-hd h2{flex:1;min-width:120px}
+/* 空态 / 失败态：统一观感（图标 + 一句话 + 下一步按钮），不许"点了没反应" */
+.empty{display:flex;flex-direction:column;align-items:center;gap:8px;padding:22px 16px;text-align:center;
+  border-radius:10px;border:1px dashed var(--bd);background:transparent}
+.empty svg{width:26px;height:26px;opacity:.55;color:var(--tx2)}
+.empty .et{font-size:13px;font-weight:600;color:var(--tx2);line-height:1.4}
+.empty .ed{font-size:12.5px;color:var(--tx3);line-height:1.6;max-width:420px}
+.empty.err{border-color:var(--st-err-bd);background:var(--st-err-bg)}
+.empty.err svg,.empty.err .et{color:var(--st-err-tx)}
+.empty .eb{margin-top:2px}
 /* 顶部「机器人已停止」横幅（2026-09-15）：替掉原来那个"弹模态 + 自己关窗口"的做法。
    用户报「屏幕上一直在闪弹窗」的根因就是旧做法里的 window.open('', '_self') → window.close()。
    横幅本身可关（知道了），页面原地不动，状态灯置灰。 */
@@ -336,11 +522,39 @@ a:hover,a:focus,a:visited,a:active{text-decoration:none}   /* 控制台所有字
   top:0;height:3px;opacity:0;transition:top .28s cubic-bezier(.34,1.4,.64,1),opacity .2s}
 .nav a{position:relative;z-index:1}
 .nav a:hover{background:var(--bg-solid)}
+.nav a:active{transform:scale(.985)}
 .nav a.on{background:var(--blue-soft);color:var(--blue);font-weight:600;position:relative}
 .nav a.on::before{content:"";position:absolute;left:0;top:12px;bottom:12px;width:3px;border-radius:2px;background:var(--blue)}
 .card{transition:box-shadow .2s ease,transform .2s ease}
 .card:hover{box-shadow:0 2px 6px rgba(31,41,55,.07),0 16px 40px rgba(77,107,254,.10)}
-button:active{transform:scale(.97)}
+/* ══ 按钮交互特效（2026-09-23 加，作者：「你能不能做按钮的点击特效」）══════════
+   以前这里只有一行 `button:active{transform:scale(.97)}` —— 点了有反馈，但
+   ① 悬停时主按钮**没有**任何变化（看不出"这个能点"）② 键盘 Tab 过来**没有焦点环**
+   （拿键盘的人不知道焦点在哪）③ 按下只有缩放、没有"沉下去"的位移，手感发飘。
+   下面按 悬停 → 按下 → 焦点 → 禁用 四态补齐，并把"能点得出来"当第一要务：
+     · 悬停  → 浮起 1px + 描边染强调色 + 极轻投影（`translateY(-1px)`）
+     · 按下  → **下沉 1px + 缩小 .97**，同时把悬停的浮起抵消掉 ⇒ 有真实的"按进去"感
+     · 焦点  → 2px 半透明焦点环（`:focus-visible`，鼠标点不触发，只有键盘触发）
+     · 主按钮 → 悬停时叠一道自上而下的**高光**（`linear-gradient` 走 `--btn-sheen`）
+   三套主题的 `--btn-*` 值各自取色（whale 青蓝 / light Meta 蓝 / dark Linear 紫蓝），
+   所以这条规则在三个主题下都成立，不需要为某个主题写特例。 */
+button{outline:none}
+button:not(:disabled){will-change:transform}
+button:hover:not(:disabled){transform:translateY(calc(-1 * var(--btn-lift)))}
+button:active:not(:disabled){transform:translateY(var(--btn-lift)) scale(var(--btn-press))}
+button:focus-visible{outline:2px solid var(--btn-ring);outline-offset:2px}
+button.pri{position:relative;overflow:hidden}
+button.pri::after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+  background:linear-gradient(180deg,var(--btn-sheen),transparent 62%);opacity:0;transition:opacity .18s ease}
+button.pri:hover:not(:disabled)::after{opacity:1}
+button.pri:hover:not(:disabled){box-shadow:0 6px 18px var(--btn-glow)}
+button.pri:active:not(:disabled){box-shadow:0 2px 6px var(--btn-glow)}
+/* 幽灵按钮：悬停/按下时底色也跟上（原先只换描边与字色，按下去整块还是白的） */
+button.ghost:hover:not(:disabled){background:var(--hover-bg)}
+button.ghost:active:not(:disabled){background:var(--blue-soft)}
+/* 危险按钮：按下时额外压暗一点，强化"这一步有后果" */
+button.danger:active:not(:disabled){filter:brightness(.94)}
+button:disabled{transform:none}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
 .chips .c{display:inline-flex;align-items:center;gap:6px;background:var(--blue-soft);border:1px solid var(--blue-line);
   color:var(--blue);border-radius:14px;padding:3px 10px;font-size:12.5px}
@@ -372,6 +586,10 @@ button:active{transform:scale(.97)}
 .card h2{font-size:15px;margin-bottom:4px;color:var(--blue);display:flex;align-items:center;gap:6px}
 /* 柔和过渡：卡片/按钮/输入/导航淡入与浮起 */
 .card,button.pri,button.ghost,.nav a,.chips .c,.row input,.row select,.row textarea,.dsel-btn,.pick .opt{transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease,background .18s ease,color .18s ease}
+/* 按钮的 transform 过渡单独给一条曲线：`cubic-bezier(.34,1.4,.64,1)` 带一点点**回弹**，
+   按下去"嗒"的一下才有手感（用统一的 .18s ease 会显得绵）。
+   注意只覆盖 transform —— box-shadow/background 仍走上面的 .18s ease，不然悬停会一起弹。 */
+button:not(:disabled){transition:transform .13s cubic-bezier(.34,1.4,.64,1),box-shadow .18s ease,border-color .18s ease,background .18s ease,color .18s ease,filter .18s ease}
 @keyframes wxpage{from{opacity:.4;transform:translateY(5px)}to{opacity:1;transform:none}}
 .card{animation:wxpage .3s ease}
 .mask .box{animation:wxpage .22s ease;max-height:86vh;overflow:auto}
@@ -440,6 +658,13 @@ body.locked{overflow:hidden}
 .mid > *{flex:1;min-width:240px}
 .btns{display:flex;gap:10px;margin-top:8px;flex-wrap:wrap}
 button{border:0;border-radius:8px;padding:8px 18px;cursor:pointer;font:inherit;font-weight:600;transition:.15s}
+/* 系统开了「减少动态效果」⇒ 把位移/缩放全关掉，只留颜色变化做反馈。
+   这不是可选项：前庭功能敏感的人会因为元素位移而眩晕（WCAG 2.3.3）。
+   注意 `!important` 在这里是**必要**的 —— 下面的按钮交互规则选择器权重更高。 */
+@media (prefers-reduced-motion:reduce){
+  button:not(:disabled),button.pri::after,.nav a:active{transition:none!important}
+  button:hover:not(:disabled),button:active:not(:disabled),.nav a:active{transform:none!important}
+}
 button.pri{background:var(--blue);color:#fff;box-shadow:0 4px 12px rgba(77,107,254,.3)}
 button.pri:hover{background:var(--blue2)}
 button.ghost{background:var(--card);border:1px solid var(--bd);color:var(--tx)}
@@ -702,35 +927,64 @@ th{color:var(--tx2);font-weight:500}
 <div class="shell">
   <aside class="side">
     <div class="status"><b>运行状态</b><p id="sideStatus">未连接</p></div>
-    <button id="navToggle" class="ghost nav-tg" title="收起 / 展开导航名字">‹</button>
+    <button id="navToggle" class="ghost nav-tg" title="收起 / 展开导航名字">‹ 收起</button>
+    <div class="nav-find" id="navFindBox">
+      <input type="text" id="navFind" placeholder="找功能…（如：发消息 / 换模型）" autocomplete="off" aria-label="在导航里快速找功能">
+      <div class="nav-find-res" id="navFindRes"></div>
+    </div>
     <nav class="nav" id="nav">
+      <div class="nav-grp" data-grp="day">
+        <button class="nav-grp-hd" type="button"><span class="gt">日常</span><svg class="gc" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
+        <div class="nav-grp-bd">
       <a href="#sec-overview" class="on"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 8l3.1-2.2" stroke="currentColor" stroke-width="1.4" fill="none"/></svg><span class="lb">概览</span></a>
-      <a href="#sec-check"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M5 8.2l2.1 2.1L11 6" fill="none" stroke="currentColor" stroke-width="1.5"/></svg><span class="lb">体检</span></a>
-      <a href="#sec-bot"><svg viewBox="0 0 16 16"><rect x="3.2" y="5" width="9.6" height="7.4" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 3v2" stroke="currentColor" stroke-width="1.4"/><circle cx="6.2" cy="8.6" r=".9" fill="currentColor"/><circle cx="9.8" cy="8.6" r=".9" fill="currentColor"/></svg><span class="lb">机器人</span></a>
-      <a href="#sec-advanced"><svg viewBox="0 0 16 16"><path d="M2 5h12M2 11h12" stroke="currentColor" stroke-width="1.4" fill="none"/><circle cx="6" cy="5" r="1.9" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="11" cy="11" r="1.9" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">高级</span></a>
-      <a href="#sec-sessions"><svg viewBox="0 0 16 16"><path d="M3 4.5h10M3 8h10M3 11.5h10" stroke="currentColor" stroke-width="1.4" fill="none"/><circle cx="1.5" cy="4.5" r=".9" fill="currentColor"/><circle cx="1.5" cy="8" r=".9" fill="currentColor"/><circle cx="1.5" cy="11.5" r=".9" fill="currentColor"/></svg><span class="lb">明细</span></a>
-      <a href="#sec-model"><svg viewBox="0 0 16 16"><rect x="4" y="4" width="8" height="8" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M6.5 1.6v2.4M9.5 1.6v2.4M6.5 12v2.4M9.5 12v2.4M1.6 6.5h2.4M1.6 9.5h2.4M12 6.5h2.4M12 9.5h2.4" stroke="currentColor" stroke-width="1.3" fill="none"/></svg><span class="lb">模型</span></a>
       <a href="#sec-wechat"><svg viewBox="0 0 16 16"><path d="M6.2 3.2c-2.6 0-4.7 1.7-4.7 3.9 0 1.2.6 2.3 1.7 3l-.4 1.6 1.8-.9c.5.1 1 .2 1.6.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M9.9 6.6c-2.2 0-4 1.5-4 3.4 0 1.9 1.8 3.4 4 3.4.4 0 .9-.1 1.3-.2l1.5.8-.3-1.4c.9-.6 1.5-1.5 1.5-2.6 0-1.9-1.8-3.4-4-3.4z" fill="none" stroke="currentColor" stroke-width="1.3"/></svg><span class="lb">微信</span></a>
-      <a href="#sec-vermat"><svg viewBox="0 0 16 16"><path d="M8 1.8l5.4 2.7v6.9L8 14.2 2.6 11.4V4.5z" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M2.8 4.6L8 7.3l5.2-2.7M8 7.3v6.8" fill="none" stroke="currentColor" stroke-width="1.2"/></svg><span class="lb">版本</span></a>
+      <a href="#sec-bot"><svg viewBox="0 0 16 16"><rect x="3.2" y="5" width="9.6" height="7.4" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 3v2" stroke="currentColor" stroke-width="1.4"/><circle cx="6.2" cy="8.6" r=".9" fill="currentColor"/><circle cx="9.8" cy="8.6" r=".9" fill="currentColor"/></svg><span class="lb">机器人</span></a>
+      <a href="#sec-persona"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="6" cy="7" r=".9" fill="currentColor"/><circle cx="10" cy="7" r=".9" fill="currentColor"/><path d="M5.6 10.2c1.4 1.1 3.4 1.1 4.8 0" fill="none" stroke="currentColor" stroke-width="1.3"/></svg><span class="lb">人设</span></a>
+      <a href="#sec-check"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M5 8.2l2.1 2.1L11 6" fill="none" stroke="currentColor" stroke-width="1.5"/></svg><span class="lb">体检</span></a>
+        </div>
+      </div>
+      <div class="nav-grp" data-grp="brain">
+        <button class="nav-grp-hd" type="button"><span class="gt">智能</span><svg class="gc" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
+        <div class="nav-grp-bd">
+      <a href="#sec-model"><svg viewBox="0 0 16 16"><rect x="4" y="4" width="8" height="8" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M6.5 1.6v2.4M9.5 1.6v2.4M6.5 12v2.4M9.5 12v2.4M1.6 6.5h2.4M1.6 9.5h2.4M12 6.5h2.4M12 9.5h2.4" stroke="currentColor" stroke-width="1.3" fill="none"/></svg><span class="lb">模型</span></a>
+      <a href="#sec-memory"><svg viewBox="0 0 16 16"><path d="M4 2.4h8v11.2L8 11.4l-4 2.2z" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">记忆</span></a>
+      <a href="#sec-memory-set"><svg viewBox="0 0 16 16"><circle cx="3.6" cy="8" r="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="12.4" cy="4" r="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="12.4" cy="12" r="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M5.2 7.2l5.6-2.4M5.2 8.8l5.6 2.4" stroke="currentColor" stroke-width="1.3" fill="none"/></svg><span class="lb">共享</span></a>
+      <a href="#sec-search"><svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10.4 10.4L14 14" stroke="currentColor" stroke-width="1.5" fill="none"/></svg><span class="lb">搜索</span></a>
+      <a href="#sec-community"><svg viewBox="0 0 16 16"><circle cx="5" cy="6" r="2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="11" cy="6" r="2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M1.6 12.4c.5-1.8 1.9-2.8 3.4-2.8s2.9 1 3.4 2.8M8.6 9.9c.6-.2 1.2-.3 1.8-.3 1.5 0 2.9 1 3.4 2.8" fill="none" stroke="currentColor" stroke-width="1.3"/></svg><span class="lb">社区</span></a>
+        </div>
+      </div>
+      <div class="nav-grp" data-grp="media">
+        <button class="nav-grp-hd" type="button"><span class="gt">内容</span><svg class="gc" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
+        <div class="nav-grp-bd">
       <a href="#sec-media"><svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="5.6" cy="6.4" r="1.3" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M2.6 11.4l3.4-3 2.7 2.4 2.2-1.9 2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg><span class="lb">媒体</span></a>
       <a href="#sec-tts"><svg viewBox="0 0 16 16"><path d="M3 6.4v3.2M6 4.2v7.6M9 2.8v10.4M12 5.4v5.2" stroke="currentColor" stroke-width="1.4" fill="none"/></svg><span class="lb">语音</span></a>
       <a href="#sec-imggen"><svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M4.4 10.8l2.6-2.4 2 1.8 1.6-1.4 2.4 2.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M11.2 4.4l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z" fill="none" stroke="currentColor" stroke-width="1.1"/></svg><span class="lb">要图</span></a>
       <a href="#sec-videogen"><svg viewBox="0 0 16 16"><rect x="2" y="3.4" width="9.2" height="9.2" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M11.2 7.2l2.8-1.8v5.2l-2.8-1.8z" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">视频</span></a>
       <a href="#sec-tools"><svg viewBox="0 0 16 16"><rect x="3" y="3" width="7" height="7" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10 6.4h1.6a1.6 1.6 0 010 3.2H10" fill="none" stroke="currentColor" stroke-width="1.4"/><rect x="6" y="10" width="7" height="3.4" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">插件</span></a>
       <a href="#sec-poke"><svg viewBox="0 0 16 16"><circle cx="8" cy="7" r="2.4" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M2.6 12.6c.7-2.4 2.9-3.6 5.4-3.6s4.7 1.2 5.4 3.6" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="12.6" cy="3.4" r="1.2" fill="currentColor"/></svg><span class="lb">拍拍</span></a>
-      <a href="#sec-memory"><svg viewBox="0 0 16 16"><path d="M4 2.4h8v11.2L8 11.4l-4 2.2z" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">记忆</span></a>
-      <a href="#sec-memory-set"><svg viewBox="0 0 16 16"><circle cx="3.6" cy="8" r="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="12.4" cy="4" r="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="12.4" cy="12" r="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M5.2 7.2l5.6-2.4M5.2 8.8l5.6 2.4" stroke="currentColor" stroke-width="1.3" fill="none"/></svg><span class="lb">共享</span></a>
-      <a href="#sec-persona"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="6" cy="7" r=".9" fill="currentColor"/><circle cx="10" cy="7" r=".9" fill="currentColor"/><path d="M5.6 10.2c1.4 1.1 3.4 1.1 4.8 0" fill="none" stroke="currentColor" stroke-width="1.3"/></svg><span class="lb">人设</span></a>
-      <a href="#sec-community"><svg viewBox="0 0 16 16"><circle cx="5" cy="6" r="2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="11" cy="6" r="2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M1.6 12.4c.5-1.8 1.9-2.8 3.4-2.8s2.9 1 3.4 2.8M8.6 9.9c.6-.2 1.2-.3 1.8-.3 1.5 0 2.9 1 3.4 2.8" fill="none" stroke="currentColor" stroke-width="1.3"/></svg><span class="lb">社区</span></a>
+        </div>
+      </div>
+      <div class="nav-grp" data-grp="ops">
+        <button class="nav-grp-hd" type="button"><span class="gt">运行</span><svg class="gc" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
+        <div class="nav-grp-bd">
+      <a href="#sec-sessions"><svg viewBox="0 0 16 16"><path d="M3 4.5h10M3 8h10M3 11.5h10" stroke="currentColor" stroke-width="1.4" fill="none"/><circle cx="1.5" cy="4.5" r=".9" fill="currentColor"/><circle cx="1.5" cy="8" r=".9" fill="currentColor"/><circle cx="1.5" cy="11.5" r=".9" fill="currentColor"/></svg><span class="lb">明细</span></a>
       <a href="#sec-feedback"><svg viewBox="0 0 16 16"><path d="M2.4 3.6h11.2v7.2H7.2L4.2 13.4V10.8H2.4z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M5.2 6.2h5.6M5.2 8.4h3.6" stroke="currentColor" stroke-width="1.3" fill="none"/></svg><span class="lb">反馈</span></a>
       <a href="#sec-send"><svg viewBox="0 0 16 16"><path d="M14 2L2 7.4l4.2 1.6L13 4l-4.8 6.6.6 3.4z" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">发送</span></a>
-      <a href="#sec-search"><svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10.4 10.4L14 14" stroke="currentColor" stroke-width="1.5" fill="none"/></svg><span class="lb">搜索</span></a>
+      <a href="#sec-log"><svg viewBox="0 0 16 16"><path d="M4 2h5.6L13 5.4V14H4z" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M9.4 2v3.6H13" fill="none" stroke="currentColor" stroke-width="1.2"/></svg><span class="lb">日志</span></a>
+      <a href="#sec-vermat"><svg viewBox="0 0 16 16"><path d="M8 1.8l5.4 2.7v6.9L8 14.2 2.6 11.4V4.5z" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M2.8 4.6L8 7.3l5.2-2.7M8 7.3v6.8" fill="none" stroke="currentColor" stroke-width="1.2"/></svg><span class="lb">版本</span></a>
       <a href="#sec-server"><svg viewBox="0 0 16 16"><rect x="2.4" y="3" width="11.2" height="4.2" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.4"/><rect x="2.4" y="8.8" width="11.2" height="4.2" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="4.8" cy="5.1" r=".8" fill="currentColor"/><circle cx="4.8" cy="10.9" r=".8" fill="currentColor"/></svg><span class="lb">服务</span></a>
+      <a href="#sec-advanced"><svg viewBox="0 0 16 16"><path d="M2 5h12M2 11h12" stroke="currentColor" stroke-width="1.4" fill="none"/><circle cx="6" cy="5" r="1.9" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="11" cy="11" r="1.9" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">高级</span></a>
+        </div>
+      </div>
+      <div class="nav-grp" data-grp="look">
+        <button class="nav-grp-hd" type="button"><span class="gt">外观</span><svg class="gc" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
+        <div class="nav-grp-bd">
       <a href="#sec-ui"><svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M6 3v10" stroke="currentColor" stroke-width="1.3" fill="none"/></svg><span class="lb">界面</span></a>
+      <a href="#sec-json"><svg viewBox="0 0 16 16"><path d="M6.4 2.6C4.8 2.6 5 4.4 5 5.6s-.6 1.8-1.6 2.4c1 .6 1.6 1.2 1.6 2.4s-.2 3 1.4 3M9.6 2.6c1.6 0 1.4 1.8 1.4 3s.6 1.8 1.6 2.4c-1 .6-1.6 1.2-1.6 2.4s.2 3-1.4 3" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">配置格式</span></a>
       <a href="#sec-cursor"><svg viewBox="0 0 16 16"><path d="M4 2l8.2 6.1-3.4.5 2 3.6-1.8 1-2-3.7L4.6 12z" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">光标</span></a>
       <a href="#sec-wavefx"><svg viewBox="0 0 16 16"><path d="M1.6 9.2c1.6-3.2 3.2-3.2 4.8 0s3.2 3.2 4.8 0 3.2-3.2 4.8 0" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">波纹</span></a>
-      <a href="#sec-log"><svg viewBox="0 0 16 16"><path d="M4 2h5.6L13 5.4V14H4z" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M9.4 2v3.6H13" fill="none" stroke="currentColor" stroke-width="1.2"/></svg><span class="lb">日志</span></a>
-      <a href="#sec-json"><svg viewBox="0 0 16 16"><path d="M6.4 2.6C4.8 2.6 5 4.4 5 5.6s-.6 1.8-1.6 2.4c1 .6 1.6 1.2 1.6 2.4s-.2 3 1.4 3M9.6 2.6c1.6 0 1.4 1.8 1.4 3s.6 1.8 1.6 2.4c-1 .6-1.6 1.2-1.6 2.4s.2 3-1.4 3" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">配置格式</span></a>
+        </div>
+      </div>
     </nav>
   </aside>
 
@@ -744,7 +998,7 @@ th{color:var(--tx2);font-weight:500}
         <button class="ghost tiny" id="dataImport" type="button" title="从迁移包导入（合并到当前数据，按内容去重）"><img src="/assets/icon-whale.png" style="width:14px;height:14px;vertical-align:-2px;margin-right:4px">迁移数据</button>
         <input type="file" id="dataImportFile" accept=".zip" style="display:none">
       </span>
-      <h2>概览</h2>
+      <div class="sec-hd"><h2>概览</h2><span class="st" id="stOverview">读取中</span></div>
       <div class="desc">机器人运作状态与账户信息（数据每 8 秒自动刷新）。</div>
       <div class="ov-checkbar" id="codeCheckTip" style="font-weight:700;font-size:12.5px;padding:8px 12px;border-radius:10px;border:1px solid var(--blue-line);background:rgba(63,168,240,.07);color:var(--blue);margin-bottom:12px">代码检测：尚未运行（点「检测中心」页的代码检测/代码检测＋依赖核对）</div>
       <div class="stat">
@@ -796,417 +1050,7 @@ th{color:var(--tx2);font-weight:500}
         <span class="hint" id="testResult" style="align-self:center"></span>
       </div>
     </section>
-    <section id="sec-check" class="card" data-sec>
-      <h2>检测中心（代码检测 / 点击测试）</h2>
-      <div class="desc">「代码检测」= 纯代码层检查（编译/依赖/角色卡评估/种子库/提示词静态/保护机制——零风险，实测约 0.5~3 秒）；「点击测试」= 环境/配置/界面自动化共 55 项（全程序内完成，不碰鼠标；只为让目标接受投递消息会短暂置前——实测发文字约 1 秒、切会话 3~7 秒、切会话失败重试可达约 15 秒）。
-      <div class="btns">
-        <button id="codeCheck" class="pri">代码检测</button>
-        <button id="codeCheckDeps" class="ghost" title="额外跑依赖版本详细核对（55 项，稍慢）">代码检测＋依赖核对</button>
-        <button class="ghost" id="codeCheckTip2" title="点击切换到概览查看常驻状态条" onclick="document.getElementById('sec-overview').scrollIntoView({behavior:'smooth'})">查看进度条</button>
-      </div>
-      <div class="desc" style="margin-top:12px"><b>症状检验器</b>：<b>不用你点它</b> —— 出问题时产品自己会把这些
-      （原因码 + 调用点 + 兼容性摘要）记进本机记录，你点一下「反馈」就一起带走了。这里留着是给<b>你自己想看</b>的时候点的：
-      <b>只读检查</b>（不动窗口、不发消息、不改配置），点完下面出一段可直接粘贴的报告。</div>
-      <div class="desc">怎么看报告（<b>判决分四档</b>）：<b>通过</b> · <b>卡住</b>（证据说就是它）·
-      <b>部分通过</b>（有项目<b>没测到</b>）· <b>没测到</b>（这一格这次验不了：不算通过也不算失败 ——
-      别把它当「没问题」）。逐项前头那个符号就是这四档：<b>勾＝通过 · 叉＝卡住 · 半圆＝部分通过 · 空心圆＝没测到</b>。
-      点完之后<b>症状按钮自己会变色</b>：绿＝通过 · 黄＝部分通过 · 红＝卡住。</div>
-      <div class="btns" id="vfBtns"></div>
-      <div class="desc" id="vfState" style="margin:2px 0 0"></div>
-      <pre class="out dn" id="vfResult"></pre>
-      <div class="btns"><button class="ghost" id="vfCopy" disabled>复制报告</button>
-        <span class="hint" id="vfTip" style="align-self:center">每个 1~3 秒</span></div>
-      <hr style="border:none;border-top:1px solid var(--bd);margin:14px 0">
-      <div class="btns">
-        <button id="selfCheck" class="pri">点击测试</button>
-        <button id="selfCheckStop" class="ghost" disabled>停止检测</button>
-        <span class="hint" id="selfCheckTip" style="align-self:center">进行中约 40~70 秒（含程序鼠标操作；可随时「停止检测」）</span>
-      </div>
-      <pre class="out dn" id="selfCheckResult"></pre>
-      <hr style="border:none;border-top:1px solid var(--bd);margin:14px 0">
-      <div class="row"><label>拍一拍目标群</label>
-        <div class="grow"><select id="pokeGroup">
-          <option value="">自动（最近有人发言的群）</option>
-        </select></div>
-      </div>
-      <div class="row"><label>简易检测</label><input type="checkbox" id="pokeVerifyOnly" checked title="只验证右键头像能弹出「拍一拍」菜单，不点击、不拍任何人">
-        <span class="hint">勾选=只验证菜单可弹（绝不到任何群友）；取消勾选=完整执行拍一拍（会真正拍一下）</span>
-      </div>
-      <div class="btns">
-        <button id="pokeTest" class="pri">拍一拍检测</button>
-        <span class="hint" id="uiTestResult" style="align-self:center"></span>
-      </div>
-      <div class="hint" style="color:var(--err-tx)">注意：拍一拍是右键「对方头像」触发：头像由程序识别，若群内同名/头像辨识不清，理论上有拍到其他群友的风险——所以默认用「简易检测」，确认无误后再完整执行。</div>
-      <div class="hint" id="uiTestDetail"></div>
-      <hr style="border:none;border-top:1px solid var(--bd);margin:14px 0">
-      <h2>功能自检清单（按重要性排序）</h2>
-      <table id="checkList">
-        <thead><tr><th style="width:26px">结果</th><th>项目</th><th>怎么测</th><th>预期</th></tr></thead>
-        <tbody>
-          <tr><td><input type="checkbox" class="ck"></td><td>1. 环境体检</td><td>点上方「点击测试」</td><td>无 项（允许 注意：提示）</td></tr>
-          <tr><td><input type="checkbox" class="ck"></td><td>2. 发消息</td><td>群里 @机器人 说句话</td><td>机器人正常回复，且不重复</td></tr>
-          <tr><td><input type="checkbox" class="ck"></td><td>3. 拍一拍</td><td>先「简易检测」，再完整检测</td><td>简易=菜单可弹；完整=群里出现拍一拍提示</td></tr>
-          <tr><td><input type="checkbox" class="ck"></td><td>4. 引用回复</td><td>让机器人 引用某条消息回复</td><td>出现引用样式（灰底卡片）且内容正确</td></tr>
-          <tr><td><input type="checkbox" class="ck"></td><td>5. 发图</td><td>发一张带图消息，让机器人「发一张图」</td><td>群里出现机器人转发的图片</td></tr>
-          <tr><td><input type="checkbox" class="ck"></td><td>6. 识图</td><td>引用图片 + @机器人 分析这张</td><td>机器人正确描述图片内容</td></tr>
-          <tr><td><input type="checkbox" class="ck"></td><td>7. 联网搜索</td><td>@机器人 今天的天气/新闻</td><td>给出实时信息（联网层开启）</td></tr>
-          <tr><td><input type="checkbox" class="ck"></td><td>8. 记忆</td><td>聊天里让机器人记住一件事 → 控制台「记忆」页看</td><td>印象出现、可删除</td></tr>
-          <tr><td><input type="checkbox" class="ck"></td><td>9. 挂件</td><td>看右下角鲸鱼挂件（余额/今日已用/每轮消耗）</td><td>数据变化、点击刷新、可拖拽</td></tr>
-          <tr><td><input type="checkbox" class="ck"></td><td>10. 启停重启</td><td>顶部 停止/重启（无窗口）→ 双击 启动机器人.vbs</td><td>页面变「已停止」、重启后台接管</td></tr>
-          <tr><td><input type="checkbox" class="ck"></td><td>11. 多厂商切换</td><td>模型 API 切到 Kimi/智谱/ChatGPT/Claude/Gemini 等 → 保存 → 测试连通</td><td>默认弹 Key 输入，测试通过</td></tr>
-        </tbody>
-      </table>
-      <div class="btns" style="margin-top:8px"><button id="ckReset" class="ghost">重置勾选</button><span class="hint" id="ckCount" style="align-self:center"></span></div>
-    </section>
-    <section id="sec-bot" class="card" data-sec>
-      <h2>机器人与响应档位</h2>
-      <div class="desc">机器人怎么称呼自己、响应到什么程度、给模型多少上下文。改完保存即生效。（档位/档位模式改完即生效；涉及轮询与身份项的改完建议重启一次）</div>
-      <div class="row"><label>机器人昵称</label><div class="grow"><input type="text" data-cfg="wechat.bot_nickname"></div></div>
-      <div class="row"><label>自我称呼</label><div class="grow"><input type="text" data-cfg="persona.self_nickname" placeholder="留空=机器人昵称，用于识别「我」"></div></div>
-      <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
-      <div class="row"><label>响应档位</label><div class="grow"><select data-cfg="store.context_tier" id="ctxTier">
-        <option value="1">1 档：仅艾特</option><option value="2">2 档：+关键词</option>
-        <option value="3">3 档：+随机</option><option value="4">4 档：全响应</option></select>
-        <div class="hint">1 档只回艾特；2 档加关键词；3 档再加随机；4 档全回。关键词在 2/3 档生效，随机只在 3 档生效。</div>
-      </div></div>
-      <div class="row"><label>档位模式</label><div class="grow"><select data-cfg="store.tier_mode">
-        <option value="fixed">固定 4 档（推荐：1/2/3/4 四个离散值，滑条不参与）</option>
-        <option value="slider">滑条微调（旧行为：随机比例由滑条位置决定）</option></select>
-        <div class="hint">「固定 4 档」＝档位只有 1/2/3/4；想用老版本的滑条连续微调就切到第二项。</div>
-      </div></div>
-      <div class="row"><label>峰谷映射</label><input type="checkbox" data-cfg="store.tier_schedule.enabled">
-        <span class="hint">按「时段 → 档位」自动切换：命中哪个时段就用哪个档（表格见下方）</span></div>
-      <div class="mid" id="schedRows">
-        <div class="row"><label>时段表(配置格式)</label><div class="grow">
-          <textarea data-cfg="store.tier_schedule.table" rows="3" spellcheck="false" placeholder='[{"from":"09:00","to":"12:00","tier":2,"note":"工作时间"},{"from":"00:00","to":"08:00","tier":0,"note":"夜间静默"}]'></textarea>
-          <div class="hint">数组，<b>按顺序取第一个命中的窗口</b>；支持跨午夜（22:00 → 02:00）；<b>tier 只能 0~4</b>，其中 <b>0＝该时段完全不回应（静默）</b>。没命中任何窗口就用上面的全局档位。</div>
-        </div></div>
-      </div>
-      <div class="row"><label>指令白名单</label><div class="grow">
-        <textarea data-cfg="store.tier_cmd_admins" rows="2" spellcheck="false" placeholder="如：群主昵称, wxid_xxx（逗号或换行分隔）"></textarea>
-        <div class="hint">在群里 <b>@机器人 +「禁言」/「禁言 15」/「解除禁言」</b> ⇒ 本群档位临时固定到 <b>1 档（只回艾特）</b>，到期自动恢复（默认 30 分钟，最长 24 小时）。<b>留空＝谁都不能下这个指令</b>（否则群里任何人喊一句就能把机器人按住）。指令不会在群里回话，只在日志与控制台可见。</div>
-      </div></div>
-      <div class="row"><label>响应等级现状</label><div class="grow"><span id="tierStat" class="hint">读取中…</span></div></div>
-      <div class="row" data-tier="2,3"><label>关键词(逗号)</label><div class="grow"><input type="text" data-cfg="store.keywords" placeholder="2/3档命中即响应"></div></div>
-      <div class="row" data-tier="3"><label>随机概率%</label><div class="grow"><input type="number" min="0" max="100" data-cfg="store.random_percent"></div></div>
-      <div class="mid">
-        <div class="row"><label>艾特上下文条数</label><input type="number" min="1" data-cfg="store.at_count"></div>
-        <div class="row" data-tier="2,3"><label>关键词上下文</label><input type="number" min="1" data-cfg="store.keyword_count"></div>
-        <div class="row" data-tier="3"><label>随机上下文</label><input type="number" min="1" data-cfg="store.random_count"></div>
-      </div>
-      <div class="row"><label>单档上下文上限</label><div class="grow"><input type="number" min="1" data-cfg="store.all_count"></div></div>
-      <div class="row"><label>历史窗口(分钟)</label><div class="grow"><input type="number" min="0" data-cfg="store.past_window_min" title="0=不限"> <span class="hint">只把最近 N 分钟内的消息给模型当历史，防它回应很久之前的艾特/旧话题</span></div></div>
-      <div class="row"><label>历史兜底条数</label><div class="grow"><input type="number" min="0" data-cfg="store.past_floor_count" title="时间窗外至少保留最近 N 条；0=关闭"> <span class="hint">长时间静默后仍能看到上文</span></div></div>
-      <div class="row"><label>新消息时间窗(分钟)</label><div class="grow"><input type="number" min="0" data-cfg="store.feed_window_min" title="0=不限"> <span class="hint">停机/卡顿后补进来的整批未读里，只把最近 N 分钟的当作「要我回」（更早的旧闲聊标已读、不回）；<b>@ 你 / 引用你的消息不受这个窗限制</b></span></div></div>
-      <div class="row"><label>单轮最多读几条</label><div class="grow"><input type="number" min="1" data-cfg="store.feed_max_count" title="超出的退回未读、下一轮再处理"> <span class="hint">防积压一次性灌给模型（也防它一口气回一大串）</span></div></div>
-      <div class="row"><label>每群消息上限</label><div class="grow"><input type="number" min="0" data-cfg="store.max_messages_per_chat" title="0=不限制"></div></div>
-      <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
-      <div class="row"><label>每群独立档位</label><input type="checkbox" data-cfg="store.unified_tier" id="unifiedTierChk" checked><span class="hint">取消勾选后，可在下方按群单独设置响应档位（未设置的群跟随全局）</span></div>
-      <div id="groupTierBox"><div class="hint">勾选"每群独立档位"后，这里按群显示档位下拉并保存到 store.group_tier。</div></div>
-      <div class="row"><label>屏蔽名单(按群)</label><div class="grow">
-        <textarea id="blocklistBox" data-cfg="store.group_blocklist" rows="3" placeholder='{"群名": ["昵称或wxid", ...]}'></textarea>
-        <div class="hint">配置格式：{群名: [要屏蔽的昵称/wxid…]}。被屏蔽者消息不存档、不触发、不进提示词。</div>
-      </div></div>
-      <div class="row"><label>屏蔽存档的会话</label><div class="grow">
-        <textarea data-cfg="store.archive_block_chats" rows="2" spellcheck="false" placeholder="如：某广告群, group:wxid_xxx（逗号或换行分隔）"></textarea>
-        <div class="hint">名单里的<b>整个会话</b>：消息<b>不写进存档</b> ⇒ 也就不回、不进记忆、不进未读触发（监听水位照常推进、日志会写明原因）。与上面的「按群按人屏蔽」不是一件事：那个只管某个群友，这个管整个会话。</div>
-      </div></div>
-      <div class="row"><label>表情包积极度</label><div class="grow"><select data-cfg="store.sticker_level">
-        <option value="0">0：不鼓励</option><option value="1">1：偶尔</option>
-        <option value="2">2：较积极</option><option value="3">3：表情包爱好者</option></select>
-        <div class="hint">提示词层面引导，不强制。</div>
-      </div></div>
-      <div class="btns"><button class="pri" data-save>保存设置（身份与响应）</button></div>
-    </section>
-    <section id="sec-advanced" class="card" data-sec>
-      <h2>调试 · 高级功能</h2>
-      <div class="desc">一般用户不用、其他分区没覆盖的可调项（行为引擎完整参数 / UI 图标库 / 学习机制）。</div>
-
-      <hr style="border:none;border-top:1px solid var(--bd);margin:14px 0">
-      <div class="desc">人性化行为完整参数（一般用户不用；微信卡只有概率，这里调冷却/每日上限/开关）：</div>
-      <div class="mid">
-        <div class="row"><label>收藏表情-冷却(秒)</label><input type="number" min="0" data-cfg="behavior.collect_emoji.cooldown_s"></div>
-        <div class="row"><label>收藏表情-每日上限</label><input type="number" min="0" data-cfg="behavior.collect_emoji.daily_limit"></div>
-      </div>
-      <div class="mid">
-        <div class="row"><label>回发表情-冷却(秒)</label><input type="number" min="0" data-cfg="behavior.send_emoji.cooldown_s"></div>
-        <div class="row"><label>回发表情-每日上限</label><input type="number" min="0" data-cfg="behavior.send_emoji.daily_limit"></div>
-      </div>
-      <div class="mid">
-        <div class="row"><label>@群友-冷却(秒)</label><input type="number" min="0" data-cfg="behavior.at_member.cooldown_s"></div>
-        <div class="row"><label>@群友-每日上限</label><input type="number" min="0" data-cfg="behavior.at_member.daily_limit"></div>
-      </div>
-      <div class="mid">
-        <div class="row"><label>点赞-每日上限</label><input type="number" min="0" data-cfg="behavior.like_moments.daily_limit"></div>
-        <div class="row"><label>点赞-冷却(秒)</label><input type="number" min="0" data-cfg="behavior.like_moments.cooldown_s"></div>
-      </div>
-      <div class="desc">朋友圈（刷/点赞/评论/发布；默认全关=机器人不主动碰朋友圈，打开后按概率低频触发）：</div>
-      <div class="mid">
-        <div class="row"><label>刷朋友圈</label><input type="checkbox" data-cfg="behavior.moments_surf.enabled"><span class="hint">开启后按概率自动刷（截图给模型看更耗用量，频率请保守）</span></div>
-        <div class="row"><label>刷-概率</label><input type="number" min="0" max="1" step="0.05" data-cfg="behavior.moments_surf.probability"></div>
-      </div>
-      <div class="mid">
-        <div class="row"><label>刷-每日上限</label><input type="number" min="0" data-cfg="behavior.moments_surf.daily_limit"></div>
-        <div class="row"><label>刷-冷却(秒)</label><input type="number" min="0" data-cfg="behavior.moments_surf.cooldown_s"></div>
-      </div>
-      <div class="mid">
-        <div class="row"><label>点赞</label><input type="checkbox" data-cfg="behavior.like_moments.enabled"></div>
-        <div class="row"><label>评论朋友圈</label><input type="checkbox" data-cfg="behavior.moments_comment.enabled"><span class="hint">默认关（评论是有感而发不该高频）</span></div>
-      </div>
-      <div class="mid">
-        <div class="row"><label>评-概率</label><input type="number" min="0" max="1" step="0.05" data-cfg="behavior.moments_comment.probability"></div>
-        <div class="row"><label>评-每日上限</label><input type="number" min="0" data-cfg="behavior.moments_comment.daily_limit"></div>
-      </div>
-      <div class="mid">
-        <div class="row"><label>发朋友圈</label><input type="checkbox" data-cfg="behavior.moments_publish.enabled"><span class="hint">默认关（公开发布，慎重）</span></div>
-        <div class="row"><label>发-概率</label><input type="number" min="0" max="1" step="0.05" data-cfg="behavior.moments_publish.probability"></div>
-      </div>
-      <div class="mid">
-        <div class="row"><label>发-每日上限</label><input type="number" min="0" data-cfg="behavior.moments_publish.daily_limit"></div>
-        <div class="row"><label>发-冷却(秒)</label><input type="number" min="0" data-cfg="behavior.moments_publish.cooldown_s"></div>
-      </div>
-      <div class="desc">风险闸门（默认只管内容与任务层；节奏类默认不限，交给你自己把控）</div>
-      <div class="hint" style="margin-top:0">
-        默认把关的是<b>内容与任务</b>：同一内容短时间发给多个会话（群发特征）· 同会话重复内容 · 链接堆积（只记录）· 你自己填的禁止词。<br>
-        频率与夜间静默默认<b>不限 / 关闭</b>；想自己掐节奏就在下面填数字，<b>0＝不限</b>。账号风险由使用者自行把控与承担。
-      </div>
-      <div class="mid">
-        <div class="row"><label>闸门总开关</label><input type="checkbox" data-cfg="risk.enabled"><span class="hint">取消勾选＝完全不做内容/任务把关</span></div>
-        <div class="row"><label>暂停所有发送</label><input type="checkbox" data-cfg="risk.paused"><span class="hint">勾上＝立刻停发（本机生效，不会给对方发任何提示）</span></div>
-      </div>
-      <div class="mid">
-        <div class="row"><label>每分钟上限</label><input type="number" min="0" data-cfg="risk.per_minute"><span class="hint">0＝不限</span></div>
-        <div class="row"><label>每小时上限</label><input type="number" min="0" data-cfg="risk.per_hour"><span class="hint">0＝不限</span></div>
-      </div>
-      <div class="mid">
-        <div class="row"><label>每天上限</label><input type="number" min="0" data-cfg="risk.per_day"><span class="hint">0＝不限</span></div>
-        <div class="row"><label>单会话每小时</label><input type="number" min="0" data-cfg="risk.per_chat_per_hour"><span class="hint">0＝不限</span></div>
-      </div>
-      <div class="mid">
-        <div class="row"><label>同会话最小间隔(秒)</label><input type="number" min="0" data-cfg="risk.min_gap_seconds"><span class="hint">0＝不限</span></div>
-        <div class="row"><label>群发判定：会话数</label><input type="number" min="0" data-cfg="risk.broadcast_chats"><span class="hint">同一内容窗口内发给 N 个不同会话即判群发；0＝关</span></div>
-      </div>
-      <div class="mid">
-        <div class="row"><label>群发判定：窗口(秒)</label><input type="number" min="0" data-cfg="risk.broadcast_window_seconds"></div>
-        <div class="row"><label>单条链接上限</label><input type="number" min="0" data-cfg="risk.max_links"><span class="hint">超过只记录不拦</span></div>
-      </div>
-      <div class="mid">
-        <div class="row"><label>重复内容窗口(秒)</label><input type="number" min="0" data-cfg="risk.dup_window_seconds"></div>
-        <div class="row"><label>重复判定最短字数</label><input type="number" min="0" data-cfg="risk.dup_min_len"></div>
-      </div>
-      <div class="row"><label>禁止词</label><div class="grow"><input data-cfg="risk.block_keywords" placeholder="逗号分隔，命中即拦下；留空＝不启用"></div></div>
-      <div class="row"><label>观察词</label><div class="grow"><input data-cfg="risk.watch_keywords" placeholder="逗号分隔，命中只记录不拦"></div></div>
-      <div class="desc">微信 UI 图标库（一次性标定；自动检测侧栏图标序列，坐标按窗口尺寸换算）：</div>
-      <div class="row"><label>当前布局</label><div class="grow">
-        <span class="hint" id="uiLayoutStat">加载中…</span>
-        <button id="uiLayoutReload" class="ghost" style="margin-left:8px">刷新</button>
-        <button id="uiRecalibrate" class="pri" style="margin-left:8px">重新标定（接管鼠标）</button>
-        <div class="hint">自动检测微信侧栏图标序列写入 data/ui_layout.json；请确保微信窗口在前台再点（会瞬间点击左栏）</div>
-      </div></div>
-      <div class="desc">语言风格训练（机器学习）</div>
-      <div class="hint" style="margin-top:0">
-        机制：机器人每次发言后，若群友在 24h 内热烈回应（@ 它 / 接话 / 追问）→ 该条话术加分；冷场 → 降权。热度半衰期 7 天，老梗自动衰减，防饱和。<br>
-        <b>不变人原则</b>：风格学习<b>只给内置的 DeepSeek 小鲸鱼用</b>——它学的是"话怎么说才机灵"，不是学群友的口癖。你自己导入的角色卡（动漫角色 / 原创 / 真人）<b>不参与风格学习</b>：角色设定是绝对基准、权重最高，参考素材只能"换衣服不能换魂"。
-      </div>
-      <div style="display:flex;gap:12px;align-items:center;margin:14px 0 18px;padding:14px;border-radius:14px;background:rgba(63,168,240,.08);border:1px solid var(--blue-line)">
-        <button id="learnApply" class="pri" title="点击开启机器学习，机制会真的开始工作（有群友回应时学习）" style="font-weight:700">确定学习</button>
-        <button id="learnEval" class="ghost" title="模型按评分细则评估：学习前后对话质量变化，打分并说明提升多少" style="font-weight:700">学习评估</button>
-        <span id="learnRst" class="hint" style="flex:1"></span>
-      </div>
-      <div class="row"><label>种子库状态</label><div class="grow">
-        <span class="hint" id="seedStats" style="display:inline-block">加载中…</span>
-        <button id="seedReload" class="ghost" style="margin-left:8px">刷新</button>
-        <span class="hint">趣味种子库（内置官方 212 条 + 你导入的金句，合计可在下方状态看到）；「社区与学习」页可导入金句墙种子。</span>
-      </div></div>
-      <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
-      <div class="row"><label>计时提醒</label><input type="checkbox" data-cfg="timers.enabled">
-        <span class="hint">群友在对话里让你「N 分钟后提醒」，模型就调 set_timer —— <b>只能设到当前会话</b>（工具参数里没有"发给谁"），每条会话最多挂 3 条、全局最多 20 条、30 秒~7 天；到点发送<b>仍然过风险闸门</b>，暂停/禁言期间不发、恢复后补发</span></div>
-      <div class="row"><label>节日问候</label><div class="grow"><select data-cfg="holiday.mode">
-        <option value="off">off：完全不提</option>
-        <option value="passive">passive：只在对话里自然带一句（默认，绝不主动发）</option>
-        <option value="active">active：到点主动问候（必须填下面的白名单）</option></select>
-        <div class="hint">默认 passive ＝ 只往提示词里加一句「今天是 X 节」，<b>一条消息都不会主动发</b>；active 才主动发，且受"白名单 + 每天每会话一次 + 只在 9~21 点"三重限制</div>
-      </div></div>
-      <div class="mid" id="holidayRows">
-        <div class="row"><label>问候白名单</label><div class="grow">
-          <textarea data-cfg="holiday.greet_chats" rows="2" spellcheck="false" placeholder="如：群deepseek, 文件传输助手（逗号或换行分隔）"></textarea>
-          <div class="hint">只有名单里的会话会被主动问候；<b>留空＝即使选了 active 也不会主动发</b>（防"节日变群发"）</div>
-        </div></div>
-        <div class="row"><label>起始小时</label><input type="number" min="0" max="20" data-cfg="holiday.greet_hour"><span class="hint">默认 9：只在 9 点到 21 点之间主动问候</span></div>
-      </div>
-      <div class="row"><label>提醒/节日现状</label><div class="grow"><span id="timerStat" class="hint">读取中…</span></div></div>
-    </section>
-    <section id="sec-sessions" class="card" data-sec>
-      <h2>运行明细</h2>
-      <div class="desc">简明日志：发了什么、多少用量、耗时（服务端按天落盘，最近 30 轮）。每个日期记录可勾选删除（按日期删，不可恢复）。</div>
-      <div class="btns">
-        <button id="sessRefresh" class="pri">刷新</button>
-        <label class="hint" style="align-self:center;cursor:pointer"><input type="checkbox" id="sessExpand"> 展开详情（推理/工具/触发）</label>
-        <span class="hint" style="align-self:center">推理文本按输出价计费，控制台「省用量开关」默认已关闭思考。</span>
-      </div>
-      <div class="btns">
-        <button id="sessSelDel" class="danger" disabled>删除选中（勾选日期删除）</button>
-        <button id="sessUndo" class="ghost" style="display:none" disabled title="把上一次删除的记录原样放回来">撤销上次删除</button>
-        <button id="sessClear" class="danger" title="清空全部运行明细（会话日志/对话历史）——模型将不再记得这些对话">一键清全部</button>
-        <span class="hint" style="align-self:center">勾选每条记录左侧「删」→「删除选中」＝**只删这几条**（同一天其他记录不动）；删错了点「撤销上次删除」。</span>
-      </div>
-      <div id="sessBox" style="max-height:360px;overflow-y:auto;border:1px solid var(--bd);border-radius:10px;padding:10px 12px;margin-top:10px;background:var(--input-bg)">
-        <div id="sessList" style="display:flex;flex-direction:column;gap:8px">
-          <div class="hint" style="padding:14px;text-align:center;color:var(--tx2)">加载中…</div>
-        </div>
-      </div>
-      <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
-      <h3 style="font-size:14px;margin:6px 0">存档：按条屏蔽 / 清除</h3>
-      <div class="desc">上面的「屏蔽存档的会话」管整个会话；这里管<b>单条消息</b>：<b>屏蔽</b>＝留着但不再进上下文/记忆（可随时解除），<b>清除</b>＝真删（不可恢复，必须点名条目）。</div>
-      <div class="btns">
-        <select id="arcChat" style="min-width:200px"></select>
-        <input type="number" id="arcLimit" value="30" min="1" max="200" style="width:80px" title="读取最近多少条">
-        <button id="arcLoad" class="pri">读取该会话存档</button>
-        <button id="arcReload" class="ghost">刷新会话列表</button>
-        <span class="hint" id="arcInfo" style="align-self:center">—</span>
-      </div>
-      <div id="arcList" style="max-height:300px;overflow-y:auto;border:1px solid var(--bd);border-radius:10px;padding:10px 12px;background:var(--input-bg)">
-        <div class="hint" style="padding:10px;text-align:center">点「读取该会话存档」后，这里按条显示（#编号 发送者：内容），每行可单独屏蔽 / 解除 / 清除。</div>
-      </div>
-    </section>
-    <section id="sec-model" class="card" data-sec>
-      <h2>模型 API</h2>
-      <div class="desc">密钥在控制台首次引导填入后自动保存，无需再改 config.json。</div>
-      <div class="row"><label>接口地址</label><div class="grow"><input type="text" data-cfg="api.base_url"><span class="hint" style="margin-top:4px;display:block">可填官方地址，也可填「API 中转站」地址（如 https://api.中轉站.com/v1——常更便宜、能降低 花费；填中转站地址+对应口令即可，无需改其它设置）。</span></div></div>
-      <div class="row"><label>密钥</label>
-        <div class="grow">
-          <input type="password" id="apiKeyInput" data-cfg="api.api_key" placeholder="sk-...">
-          <div class="btns" style="margin-top:6px">
-            <button id="keySave" class="pri">保存 Key</button>
-            <button id="keyReset" class="ghost">重置 Key（重新填写）</button>
-          </div>
-          <div class="hint">点「保存 Key」立即生效（无需滚到底）；空 Key 会保留当前值。打码值只显示在页面上，真实密钥仅存服务器 config.json。</div>
-        </div></div>
-      <div class="row"><label>模型厂商</label>
-        <div class="grow"><select id="providerSel">
-          <option value="deepseek">DeepSeek（默认，见下方模型列表）</option>
-          <option value="moonshot">Moonshot Kimi</option>
-          <option value="zhipu">智谱 GLM</option>
-          <option value="qwen">通义千问（阿里）</option>
-          <option value="minimax">MiniMax</option>
-          <option value="doubao">豆包（火山方舟）</option>
-          <option value="openai">ChatGPT（OpenAI）</option>
-          <option value="claude">Claude（Anthropic，OpenAI 兼容端点）</option>
-          <option value="gemini">Gemini（Google）</option>
-          <option value="grok">Grok（xAI）</option>
-          <option value="nvidia">NVIDIA（Nemotron）</option>
-          <option value="openrouter">OpenRouter（聚合）</option>
-          <option value="custom">自定义（手动填 URL/Key/模型）</option>
-        </select>
-        <div class="hint">切换厂商会自动替换 接口地址，并弹窗让您填入该厂商的 密钥；模型列表现场切换。</div>
-      </div></div>
-      <div class="row"><label>模型</label>
-        <div class="grow">
-          <select id="modelSel" style="margin-bottom:6px"></select>
-          <input type="text" id="modelCustom" class="dn" placeholder="自定义模型名（如 glm-4-plus）">
-          <div class="hint">所选厂商的常用模型都在下拉里；不够用就选「自定义」手填，或直接改配置文件。</div>
-        </div></div>
-      <div class="row"><label>本机模型</label>
-        <div class="grow">
-          <div class="btns" style="margin-bottom:6px">
-            <button id="localProbe" class="ghost">探测本机模型</button>
-            <span class="hint" id="localHint">只探回环地址：Ollama 11434 · LM Studio 1234 · vLLM 8000 · llama.cpp 8080 · text-gen-webui 5000</span>
-          </div>
-          <div id="localList"></div>
-          <div class="hint">探测只能证明<b>端点活着、有哪些模型、多快</b>；<b>工具与视觉是否支持一律「未声明」</b>——要判定请用上面的「测试 API」真跑一轮。点「用这个」只把地址与模型名填进上面的输入框，仍需你点保存；<b>探测本身不改任何配置</b>（本机模型零成本、不出网，适合当评审/红队那一档）。</div>
-        </div></div>
-      <script>
-      (function(){
-        var btn = document.getElementById('localProbe');
-        if (!btn) return;
-        var list = document.getElementById('localList'), hint = document.getElementById('localHint');
-        function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
-        function headers(){ return (typeof URL_TOKEN !== 'undefined' && URL_TOKEN) ? {Authorization:'Bearer '+URL_TOKEN} : {}; }
-        function card(r){
-          var ok = !!r.reachable, ms = (r.models||[]);
-          var chips = ms.map(function(m){ return '<span class="chip">'+esc(m)+'</span>'; }).join(' ');
-          var btns = (ok && ms.length) ? ('<button class="ghost useLocal" data-url="'+esc(r.base_url)+'" data-model="'+esc(ms[0])+'">用这个</button>'
-                    + '<button class="ghost testLocal" data-url="'+esc(r.base_url)+'" data-model="'+esc(ms[0])+'">连通测试</button>') : '';
-          return '<div class="card" style="margin:6px 0;padding:8px 10px">'
-            + '<div><b>'+esc(r.name||r.id)+'</b> <span class="hint">'+esc(r.base_url)+'</span></div>'
-            + '<div class="hint" style="margin:4px 0">'+(ok ? ('可用 · '+r.ms+'ms · 模型 '+ms.length+' 个') : ('未发现 · '+esc(r.error)))+'</div>'
-            + (chips ? '<div style="margin:4px 0">'+chips+'</div>' : '')
-            + '<div class="btns">'+btns+'<span class="testOut hint"></span></div></div>';
-        }
-        btn.onclick = function(){
-          btn.disabled = true; hint.textContent = '探测中（每端点 1.2s 超时，并发）';
-          fetch('/api/local-models', {headers: headers()})
-            .then(function(r){ return r.json(); })
-            .then(function(d){
-              var all = ((d.meta||{}).all || []);
-              list.innerHTML = all.map(card).join('')
-                + '<div class="hint">共探 '+((d.meta||{}).checked||0)+' 个端点，用时 '+((d.meta||{}).elapsed_ms||0)+'ms。能力口径：'+esc(d.capability||'')+'</div>';
-              hint.textContent = (d.found||[]).length ? ('发现 '+d.found.length+' 个可用端点') : '没发现本机端点（没装或没启动都算正常）';
-            })
-            .catch(function(e){ hint.textContent = '探测失败：'+e; })
-            .then(function(){ btn.disabled = false; });
-        };
-        list.addEventListener('click', function(ev){
-          var t = ev.target;
-          if (t.classList && t.classList.contains('useLocal')) {
-            var bu = document.querySelector('input[data-cfg="api.base_url"]');
-            if (bu) { bu.value = t.getAttribute('data-url'); bu.dispatchEvent(new Event('input', {bubbles:true})); }
-            var mc = document.getElementById('modelCustom');
-            if (mc) { mc.value = t.getAttribute('data-model'); mc.classList.remove('dn'); }
-            hint.textContent = '已填入 接口地址 与模型名——记得点下面的「保存设置（模型 API）」';
-          } else if (t.classList && t.classList.contains('testLocal')) {
-            var out = t.parentNode.querySelector('.testOut');
-            out.textContent = ' 测试中……';
-            fetch('/api/local-models?test=1&base_url='+encodeURIComponent(t.getAttribute('data-url'))
-                  +'&model='+encodeURIComponent(t.getAttribute('data-model')), {headers: headers()})
-              .then(function(r){ return r.json(); })
-              .then(function(d){
-                out.textContent = d.ok ? (' 能对话 · '+d.ms+'ms · 回显「'+(d.reply||'')+'」 · '+(d.note||'')) : (' 失败：'+(d.error||'未知'));
-              })
-              .catch(function(e){ out.textContent = ' 失败：'+e; });
-          }
-        });
-      })();
-      </script>
-      <div class="row"><label>备选模型</label><div class="grow">
-        <textarea data-cfg="api.fallback_models" rows="2" spellcheck="false" placeholder="如：deepseek-chat, glm-4-flash（逗号或换行分隔；留空＝关闭）"></textarea>
-        <div class="hint">主模型失败时<b>按顺序逐个改用下面的模型</b>（同一个 接口地址 与 Key）：
-        可重试的错误（5xx / 429 限流 / 超时 / 断网 / 返回的不是配置格式）以及「模型名不存在」这类会切换；
-        鉴权错误（401 / 403 / Key 无效）不切换（换模型也救不了 Key）。最多试 3 个。</div>
-      </div></div>
-      <div class="row"><label>备选使用</label><div class="grow"><span id="fallbackStat" class="hint">读取中…</span></div></div>
-      <div class="row"><label>模型分流</label><div class="grow">
-        <div class="hint" style="margin-bottom:6px">按输入类型分别指定模型：<b>留空＝用上面的主模型</b>（默认行为不变）。带图的请求会走「带图」那一档（群友发图、看图工具、视频抽帧都算带图）。</div>
-        <div class="row"><label>纯文字</label><input type="text" data-cfg="api.model_routes.text" placeholder="留空＝主模型"></div>
-        <div class="row"><label>带图</label><input type="text" data-cfg="api.model_routes.image" placeholder="如：deepseek-v4-flash-vision-exp"></div>
-        <div class="row"><label>视频</label><input type="text" data-cfg="api.model_routes.video" placeholder="留空＝跟「带图」同一个"></div>
-        <div class="hint" id="routeStat">读取中…</div>
-      </div></div>
-      <div class="row"><label>视觉(看图)</label><input type="checkbox" data-cfg="api.vision"><span class="hint">模型支持图片则勾选</span></div>
-      <label class="think-card" id="thinkCard" title="模型返回的「推理文本」是生成的思考链式输出，并非真实内部思维；它按输出价计费，通常占一个会话用量的 50~90%。">
-        <input type="checkbox" data-cfg="api.thinking" id="thinkOffChk" checked>
-        <div>
-          <div class="tc-title">省用量：关闭模型思考<span class="tc-badge" id="thinkBadge">已开启省用量</span></div>
-          <div class="tc-sub">勾选 = 关闭推理文本（api.thinking=off），单会话可省 50~90% 用量；群里闲聊/问答建议保持勾选。
-          取消勾选 = 跟随模型默认（auto）或强制思考（on），回答更「深思熟虑」但费用量、更慢。</div>
-        </div>
-      </label>
-      <div class="row"><label>温度</label><input type="range" id="api.temperature" min="0" max="1" step="0.05" data-cfg="api.temperature"><span class="val" id="api.temperature-v">0.8</span></div>
-      <div class="row"><label>单次工具轮数</label><div class="grow"><input type="number" data-cfg="api.max_rounds" min="1" max="50"></div></div>
-      <div class="row"><label>请求超时(ms)</label><div class="grow"><input type="number" data-cfg="api.timeout_ms" min="5000" step="1000"></div></div>
-      <div class="mid">
-        <div class="row"><label>输入单价/百万</label><input type="number" step="0.01" data-cfg="api.price_input_per_m"><span class="val">元</span></div>
-        <div class="row"><label>输出单价/百万</label><input type="number" step="0.01" data-cfg="api.price_output_per_m"><span class="val">元</span></div>
-        <div class="row"><label>缓存单价/百万</label><input type="number" step="0.01" data-cfg="api.price_cached_per_m"><span class="val">元</span></div>
-      </div>
-      <div class="row"><label>内置官方价</label><input type="checkbox" data-cfg="api.use_official_price"><span class="hint">上面填 0 时用内置官方单价表</span></div>
-      <div class="row"><label>按型号单价(配置格式)</label><div class="grow">
-        <textarea data-cfg="api.model_prices" rows="3" spellcheck="false" placeholder='{"deepseek-v4-flash": {"in": 1.5, "out": 4.5, "cached": 0.05}}'></textarea>
-        <div class="hint">优先级最高：按模型 id 覆盖内置价（元/百万用量）。示例见左。</div>
-      </div></div>
-      <div class="btns"><button class="pri" data-save>保存设置（模型 API）</button></div>
-    </section>
-    <section id="sec-wechat" class="card" data-sec>      <div class="row"><label>微信版本</label><div class="grow"><b id="wxver">检测中…</b></div></div>
+<section id="sec-wechat" class="card" data-sec>      <div class="row"><label>微信版本</label><div class="grow"><b id="wxver">检测中…</b></div></div>
       <div class="row" id="wxAttachRow" style="display:none"><label>接入诊断</label><div class="grow">
         <div id="wxAttachSteps" class="hint" style="line-height:1.8"></div>
         <div class="hint">上面是「接微信」的逐步检查（进程 / 版本 / 打开消息库 / 密钥 / 认出你的账号）。
@@ -1220,7 +1064,7 @@ th{color:var(--tx2);font-weight:500}
         </div>
         <div class="hint">我们不会替你静默安装（要下安装包 + 管理员权限）——只带你去官网，装好登录后点右边那颗重新检测。</div>
       </div></div>
-      <h2>微信</h2>
+      <div class="sec-hd"><h2>微信</h2><span class="st" id="stWechat">读取中</span></div>
       <div class="desc">机器人微信身份与轮询 / 白名单。改完保存后需要重启才能完全生效。</div>
       <div class="row"><label>我的其他账号</label><div class="grow"><input type="text" data-cfg="wechat.owner_accounts" placeholder="你的大号，多个用逗号分隔；填 wxid 最准，填昵称也行">
         <span class="hint">机器人跑在小号上时，<b>你自己另外的号（大号）</b>在群里说话，程序默认会把大号当成普通群友。登记在这里它就认得出来。填 <b>wxid</b> 最准，填昵称也能用——下面会列出它匹配到哪些账号，方便你核对有没有认错。</span>
@@ -1396,62 +1240,483 @@ th{color:var(--tx2);font-weight:500}
       setTimeout(function(){ try{ bfChats(); }catch(e){} }, 1200);
       </script>
     </section>
-    <section id="sec-vermat" class="card" data-sec>
-      <h2>版本能力矩阵</h2>
-      <div class="desc">当前「微信版本 × 适配层版本」下每个能力的实测状态。**没有实测记录的版本对按未知处理，但默认照常发送**（只在这里标出来提醒你）；想改成「没实测就停手」可在配置里开 <code>version_gate.strict</code>，开了之后才需要点「本次允许发送」临时放行。</div>
-      <div class="row"><label>当前版本对</label><div class="grow"><b id="vmVer">检测中…</b></div></div>
-      <div class="row"><label>版本门</label><div class="grow">
-        <b id="vmGate">检测中…</b>
-        <div class="btns" style="margin-top:6px"><button id="vmAllow" class="ghost">本次允许发送</button></div>
-        <div class="hint">只对本次运行有效（重启后重新拦），我们不会把"放行"写进配置。</div>
+<section id="sec-bot" class="card" data-sec>
+      <div class="sec-hd"><h2>机器人与响应档位</h2><span class="st" id="stBot">读取中</span></div>
+      <div class="desc">机器人怎么称呼自己、响应到什么程度、给模型多少上下文。改完保存即生效。（档位/档位模式改完即生效；涉及轮询与身份项的改完建议重启一次）</div>
+      <div class="row"><label>机器人昵称</label><div class="grow"><input type="text" data-cfg="wechat.bot_nickname"></div></div>
+      <div class="row"><label>自我称呼</label><div class="grow"><input type="text" data-cfg="persona.self_nickname" placeholder="留空=机器人昵称，用于识别「我」"></div></div>
+      <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
+      <div class="row"><label>响应档位</label><div class="grow"><select data-cfg="store.context_tier" id="ctxTier">
+        <option value="1">1 档：仅艾特</option><option value="2">2 档：+关键词</option>
+        <option value="3">3 档：+随机</option><option value="4">4 档：全响应</option></select>
+        <div class="hint">1 档只回艾特；2 档加关键词；3 档再加随机；4 档全回。关键词在 2/3 档生效，随机只在 3 档生效。</div>
       </div></div>
-      <div id="vmList" class="hint"></div>
-      <div class="row"><label>后台能力</label><div class="grow">
-        <b id="bgHead">检测中…</b>
-        <div id="bgList" class="hint"></div>
-        <div class="hint">这份表是<b>单一事实源</b>（agent/bg_status.py）：写"全程后台"的路径可以不动光标、不要求窗口可见（<b>可能短暂置前，随后自动还回</b>——实测：取 GUI / 朋友圈滚动 / 表情面板 <b>0 秒</b>、发文字约 1 秒、切会话 3~7 秒、<b>切会话失败重试可达约 15 秒</b>。<b>一定非得走前台</b>的只有三项：朋友圈点赞/评论/发朋友圈 · 转发视频文件那一下（系统选择文件框）· UI 标定与真鼠标兜底档（默认关））；写"真鼠标"的会动你的光标，勾上下面这个开关就让它们直接跳过并如实告诉你。</div>
+      <div class="row"><label>档位模式</label><div class="grow"><select data-cfg="store.tier_mode">
+        <option value="fixed">固定 4 档（推荐：1/2/3/4 四个离散值，滑条不参与）</option>
+        <option value="slider">滑条微调（旧行为：随机比例由滑条位置决定）</option></select>
+        <div class="hint">「固定 4 档」＝档位只有 1/2/3/4；想用老版本的滑条连续微调就切到第二项。</div>
       </div></div>
-      <div class="row"><label>只走后台</label><input type="checkbox" data-cfg="wechat.background_only">
-        <span class="hint"><b>默认开</b>（老版本留下的配置会被一次性迁移成开）。开了之后：<b>朋友圈点赞·评论 / 发朋友圈 / UI 标定</b> 一律<b>跳过并说明原因</b>（这几条确实只能用真鼠标）；而 <b>拍一拍 / 引用</b> 已经改成<b>走投递</b>（不动光标（可能短暂置前（2026-09-18 本机实测：发文字约 1 秒｜切会话 3~7 秒｜切会话失败重试可达约 15 秒），随后自动还回）），<b>不再被这个开关拦住</b>。关掉它上面那三条才可用——但它们是<b>真实鼠标</b>（移动光标 + 发全局点击），点的是<b>光标所在的那个窗口</b>（可能是你正在用的程序，比如这个控制台），所以请在电脑前时再关。发送文字、图片、表情、切会话、刷朋友圈一直走后台投递。</span></div>
-      <div class="row"><label>恢复后补处理</label><input type="checkbox" data-cfg="wechat.replay_on_resume">
-        <span class="hint">机器人暂停时群里照常有人说话。<b>默认不补</b>：恢复后只从那一刻往后回，暂停期间那些当没看见。<b>勾上就补</b>：恢复后按消息顺序把暂停期间的积压一批批处理——<b>停得越久、恢复瞬间回复越密集</b>（可能连回几十条），想清楚再勾。</span></div>
-      <div class="row"><label>搜索失败时扫会话列表</label><input type="checkbox" data-cfg="wechat.scroll_list_fallback">
-        <span class="hint">**默认关**。切会话现在是「在搜索框里打名字 → 点结果行」；搜索没成时默认**停手并说明原因**。打开这个开关，它才会退回老路——在会话列表里找行、必要时滚轮往下翻（**滚轮不动你的光标，但会话列表会在你眼前滚动**，看着就像它在划你的列表）。想成功率优先、不介意列表动几下，就打开它。</span></div>
-      <div class="row"><label>发表情方式</label><select data-cfg="wechat.emoji_send_mode">
-        <option value="auto">自动：先真表情，面板不通就发图片</option>
-        <option value="real">只用真表情：走微信表情面板</option>
-        <option value="image">只用图片：对方看到的是图片</option>
-      </select>
-        <span class="hint">两条路的<b>代价写清楚</b>，你按自己的取舍选。<b>真表情</b>走微信表情面板——它是"浮层"，
-        <b>必须被激活才能渲染</b>，所以那一下<b>前台会闪</b>（实测约 2~7 秒；而且和"摁住微信"冲突，得临时松手）。
-        <b>发图片</b>走"剪贴板 + 输入框右键粘贴"——<b>不需要浮层、全程能摁住</b>（实测 7.2 秒发出、
-        微信占前台 0.05 秒），代价是<b>对方收到的是图片</b>（动态表情会变成静态首帧）。默认"自动"。</span></div>
-      <div class="row"><label>图标指纹</label><div class="grow">
-        <b id="ufpHead">检测中…</b>
-        <div class="btns" style="margin-top:6px">
-          <button id="ufpTake" class="ghost">重新取指纹</button>
-          <button id="ufpForget" class="ghost">丢掉旧指纹</button>
-        </div>
-        <div id="ufpList" class="hint"></div>
-        <div class="hint">点任何图标之前，程序会先比一次<b>图标指纹</b>（目标点周围 48×48 的 dHash，按「微信版本 × 渲染区尺寸 × 缩放」分开存）。指纹<b>明确对不上</b>就停手并告诉你原因——那说明这个位置现在不像原来那个图标（微信更新了 UI / 窗口改了尺寸），照着过期比例盲点只会点到别处。没有记录或窗口最小化抓不到图时放行但留痕（不把第一次用锁死）。</div>
+      <div class="row"><label>峰谷映射</label><input type="checkbox" data-cfg="store.tier_schedule.enabled">
+        <span class="hint">按「时段 → 档位」自动切换：命中哪个时段就用哪个档（表格见下方）</span></div>
+      <div class="mid" id="schedRows">
+        <div class="row"><label>时段表(配置格式)</label><div class="grow">
+          <textarea data-cfg="store.tier_schedule.table" rows="3" spellcheck="false" placeholder='[{"from":"09:00","to":"12:00","tier":2,"note":"工作时间"},{"from":"00:00","to":"08:00","tier":0,"note":"夜间静默"}]'></textarea>
+          <div class="hint">数组，<b>按顺序取第一个命中的窗口</b>；支持跨午夜（22:00 → 02:00）；<b>tier 只能 0~4</b>，其中 <b>0＝该时段完全不回应（静默）</b>。没命中任何窗口就用上面的全局档位。</div>
+        </div></div>
+      </div>
+      <div class="row"><label>指令白名单</label><div class="grow">
+        <textarea data-cfg="store.tier_cmd_admins" rows="2" spellcheck="false" placeholder="如：群主昵称, wxid_xxx（逗号或换行分隔）"></textarea>
+        <div class="hint">在群里 <b>@机器人 +「禁言」/「禁言 15」/「解除禁言」</b> ⇒ 本群档位临时固定到 <b>1 档（只回艾特）</b>，到期自动恢复（默认 30 分钟，最长 24 小时）。<b>留空＝谁都不能下这个指令</b>（否则群里任何人喊一句就能把机器人按住）。指令不会在群里回话，只在日志与控制台可见。</div>
       </div></div>
-      <div class="row"><label>待拍板</label><div class="grow">
-        <b id="pdStat">检测中…</b>
-        <div class="btns" style="margin-top:6px"><button id="pdOpen" class="ghost">版本不匹配怎么办</button></div>
-        <div class="hint">不匹配时开一张单：一键升级适配层 · 更新本体 · 仅本次允许 · 微信本身要处理。× 等于什么都不做，单子留着、同一对版本不再追问。</div>
+      <div class="row"><label>响应等级现状</label><div class="grow"><span id="tierStat" class="hint">读取中…</span></div></div>
+      <div class="row" data-tier="2,3"><label>关键词(逗号)</label><div class="grow"><input type="text" data-cfg="store.keywords" placeholder="2/3档命中即响应"></div></div>
+      <div class="row" data-tier="3"><label>随机概率%</label><div class="grow"><input type="number" min="0" max="100" data-cfg="store.random_percent"></div></div>
+      <div class="mid">
+        <div class="row"><label>艾特上下文条数</label><input type="number" min="1" data-cfg="store.at_count"></div>
+        <div class="row" data-tier="2,3"><label>关键词上下文</label><input type="number" min="1" data-cfg="store.keyword_count"></div>
+        <div class="row" data-tier="3"><label>随机上下文</label><input type="number" min="1" data-cfg="store.random_count"></div>
+      </div>
+      <div class="row"><label>单档上下文上限</label><div class="grow"><input type="number" min="1" data-cfg="store.all_count"></div></div>
+      <div class="row"><label>历史窗口(分钟)</label><div class="grow"><input type="number" min="0" data-cfg="store.past_window_min" title="0=不限"> <span class="hint">只把最近 N 分钟内的消息给模型当历史，防它回应很久之前的艾特/旧话题</span></div></div>
+      <div class="row"><label>历史兜底条数</label><div class="grow"><input type="number" min="0" data-cfg="store.past_floor_count" title="时间窗外至少保留最近 N 条；0=关闭"> <span class="hint">长时间静默后仍能看到上文</span></div></div>
+      <div class="row"><label>新消息时间窗(分钟)</label><div class="grow"><input type="number" min="0" data-cfg="store.feed_window_min" title="0=不限"> <span class="hint">停机/卡顿后补进来的整批未读里，只把最近 N 分钟的当作「要我回」（更早的旧闲聊标已读、不回）；<b>@ 你 / 引用你的消息不受这个窗限制</b></span></div></div>
+      <div class="row"><label>单轮最多读几条</label><div class="grow"><input type="number" min="1" data-cfg="store.feed_max_count" title="超出的退回未读、下一轮再处理"> <span class="hint">防积压一次性灌给模型（也防它一口气回一大串）</span></div></div>
+      <div class="row"><label>每群消息上限</label><div class="grow"><input type="number" min="0" data-cfg="store.max_messages_per_chat" title="0=不限制"></div></div>
+      <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
+      <div class="row"><label>每群独立档位</label><input type="checkbox" data-cfg="store.unified_tier" id="unifiedTierChk" checked><span class="hint">取消勾选后，可在下方按群单独设置响应档位（未设置的群跟随全局）</span></div>
+      <div id="groupTierBox"><div class="hint">勾选"每群独立档位"后，这里按群显示档位下拉并保存到 store.group_tier。</div></div>
+      <div class="row"><label>屏蔽名单(按群)</label><div class="grow">
+        <textarea id="blocklistBox" data-cfg="store.group_blocklist" rows="3" placeholder='{"群名": ["昵称或wxid", ...]}'></textarea>
+        <div class="hint">配置格式：{群名: [要屏蔽的昵称/wxid…]}。被屏蔽者消息不存档、不触发、不进提示词。</div>
       </div></div>
-      <div class="row"><label>最近表态</label><div class="grow"><b id="vmDec">暂无</b></div></div>
-      <div class="row"><label>一键修</label><div class="grow">
-        <b id="actStat">没有在跑的事</b>
-        <div class="btns" style="margin-top:6px">
-          <button id="actHeal" class="ghost">依赖自愈</button>
-          <button id="actUp" class="ghost">升级适配层</button>
-        </div>
-        <div class="hint">两条都在后台跑，跑完这一行显示结果 · 都不动微信本体。</div>
+      <div class="row"><label>屏蔽存档的会话</label><div class="grow">
+        <textarea data-cfg="store.archive_block_chats" rows="2" spellcheck="false" placeholder="如：某广告群, group:wxid_xxx（逗号或换行分隔）"></textarea>
+        <div class="hint">名单里的<b>整个会话</b>：消息<b>不写进存档</b> ⇒ 也就不回、不进记忆、不进未读触发（监听水位照常推进、日志会写明原因）。与上面的「按群按人屏蔽」不是一件事：那个只管某个群友，这个管整个会话。</div>
       </div></div>
+      <div class="row"><label>表情包积极度</label><div class="grow"><select data-cfg="store.sticker_level">
+        <option value="0">0：不鼓励</option><option value="1">1：偶尔</option>
+        <option value="2">2：较积极</option><option value="3">3：表情包爱好者</option></select>
+        <div class="hint">提示词层面引导，不强制。</div>
+      </div></div>
+      <div class="btns"><button class="pri" data-save>保存设置（身份与响应）</button></div>
     </section>
-    <section id="sec-media" class="card" data-sec>
-      <h2>媒体与语音（随机图 / 语音转文字 / 视频·文件）</h2>
+<section id="sec-persona" class="card" data-sec>
+      <div class="sec-hd"><h2>人设与响应</h2><span class="st" id="stPersona">读取中</span></div>
+      <div class="desc">机器人以谁的身份在群里说话、怎么参与：人设名、参与度、自我介绍与群名片。改完立刻生效。</div>
+      <div class="row"><label>人设名</label><div class="grow"><input type="text" data-cfg="persona.bot_name"></div></div>
+      <div class="row"><label>人设选单</label><div class="grow">
+        <div id="personaCats" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;align-items:center">
+          <button id="pCatAdd" class="ghost" style="padding:2px 10px" title="新建分区或添加角色">＋ 新建/添加</button>
+        </div>
+        <div class="btns" style="justify-content:flex-start;gap:8px">
+          <button id="pSort" class="ghost" title="点击：分数高→低；再点：低→高；再点回到高→低（WPS 式切换）" style="font-weight:700">↓ 按评估分数排序</button>
+          <span class="hint" id="pSortHint">（点一下正序，再点一下倒序）</span>
+          <button id="pSortOff" class="ghost">恢复默认顺序</button>
+          <button id="pRestorePrev" class="ghost" title="撤销最近一次应用的人设（真实有效：恢复上一个人设名+文本）" style="color:var(--warn);border-color:var(--warn)">恢复上个人设</button>
+        </div>
+        <input type="text" id="personaSearch" class="group-search" placeholder="搜索人设（如 傲娇/毒舌/猫/程序员）…">
+        <div id="personaList" style="max-height:320px;overflow-y:auto;border:1px solid var(--bd);border-radius:10px;padding:6px;background:var(--input-bg)">
+          <div class="hint">加载中…</div>
+        </div>
+        <div class="hint">星标=收藏置顶（始终显示在最上）；每张卡右下角 ⋯ =更多操作（为模型打星/编辑/移动/删除）。排序按模型评估分高→低（当前视图=全部或当前分区）。</div>
+      </div></div>
+      <div class="row"><label>参与度</label><div class="grow"><select data-cfg="persona.participation">
+        <option value="low">安静型</option><option value="medium">普通群友</option><option value="high">活跃型</option></select></div></div>
+      <div class="row"><label>自定义角色文本</label><div class="grow"><textarea data-cfg="persona.role_text" placeholder="留空=内置小鲸鱼角色卡；填了=完全替换。可参考 agent/persona.py"></textarea></div></div>
+      <div class="row"><label>评分补足</label><div class="grow">
+        <div class="btns" style="justify-content:flex-start;gap:8px">
+          <button id="pScoreLLM" class="ghost">模型评分</button>
+          <button id="pEnrich" class="ghost">模型补足</button>
+          <button id="pWebFetch" class="ghost">联网收集真实资料</button>
+          <label style="display:flex;align-items:center;gap:6px">补足轮数
+            <select id="pRounds" style="width:64px"><option value="1">1 轮</option><option value="2">2 轮</option><option value="3">3 轮</option></select>
+          </label>
+          <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="pUseLlm" checked>允许模型处理</label>
+        </div>
+        <span class="hint" id="pScoreRst"></span>
+        <div class="hint">「联网收集真实资料」：按角色名检索主流媒体/官方/百科中**角色真实说过的话、做过的事**（语录/访谈/言论），只返回搜索引擎摘要原文（含来源链接），**绝不编造**；检索不到会明确提示"未检索到第一手资料"。**所有角色卡均可使用**（联网取真实资料 → 模型补足，逻辑正确不会 OOC）。</div>
+        <div class="hint" style="color:var(--warn)">注意：**机器学习（金句素材库训练 / 学习评估）仅默认角色卡（小鲸鱼）启用**——AI 本体学习真实表达不易 OOC；**其他角色卡不应用机器学习**，但联网收集/模型补足不受限。</div>
+        <div class="hint">【评分细则】风格辨识25%/角色贴合30%/内在一致20%/表达自然15%/完整可用10%，每维 0~100.00 精确百分位；无口头禅→风格≤45；通用词口头禅→≤70；AI套话→表达≤65；客服口吻→贴合≤60；换角色都能用→≤50；示例占位→完整≤75；沉默类无扩展→≤70；缺说话规则→≤70；满分唯一条件=仅凭提示词+一次提醒即逐句贴合本人（否则一律<95，优秀 88~94.99）。</div>
+        <div class="hint">「模型补足」按人设驱动（让说话更贴近本人，不是为分数调整）；每轮补足后自动重评：分数上升才继续下一轮，不升/降即停止；轮数可选（1~3 轮，每轮约 10~30 秒耗少量用量）；完成后点「保存」落盘。</div>
+      </div></div>
+      <div class="row"><label>角色卡行为推荐</label><div class="grow">
+        <button id="roleHintBtn" class="ghost" type="button">根据角色卡推荐行为档</button>
+        <span class="hint" id="roleHintRst"></span>
+        <div class="hint" id="roleHintDetail" style="display:none">
+          <label style="display:inline-flex;align-items:center;gap:4px;margin-right:10px">参与度
+            <select id="roleHintPart"><option value="low">安静</option><option value="medium">普通</option><option value="high">活跃</option></select></label>
+          <label style="display:inline-flex;align-items:center;gap:4px">表情包
+            <select id="roleHintSticker"><option value="0">少</option><option value="1">偶尔</option><option value="2">较多</option><option value="3">爱好者</option></select></label>
+          <button id="roleHintApply" class="pri" type="button">应用</button>
+        </div>
+        <div class="hint">建议来自角色卡文本关键词（本地零用量）；应用后保存即生效。</div>
+      </div></div>
+      <div class="row"><label>额外规则</label><div class="grow"><textarea data-cfg="persona.custom_rules" placeholder="如：回复永远不超过 5 个字"></textarea></div></div>
+      <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
+      <div class="row"><label>系统提示词补充</label><div class="grow">
+        <textarea data-cfg="system_prompt.custom" rows="5" spellcheck="false" placeholder="写在这里的文字会追加到系统提示词的最末尾，并标注为「管理员补充系统提示词（最高优先级）」。例：群里有人聊游戏时别插嘴；回复里不要出现「哈哈」两个字。"></textarea>
+        <div class="hint">保存后<b>下一轮就生效</b>（不用重启）。不知道怎么改就先点「预览」，看着真实提示词再写；写坏了点「清空」即可。<b>安全规则与工具协议永远在，改不掉</b>。</div>
+        <div class="btns">
+          <button id="promptPreviewBtn" class="ghost">预览当前系统提示词</button>
+          <button id="promptClearBtn" class="ghost">清空补充</button>
+          <span class="hint" id="promptInfo" style="align-self:center">—</span>
+        </div>
+        <pre id="promptPreview" class="out" style="display:none;max-height:320px;overflow:auto;white-space:pre-wrap"></pre>
+      </div></div>
+      <div class="row"><label>模块开关</label><div class="grow">
+        <label class="hint" style="display:inline-block;margin-right:14px"><input type="checkbox" data-cfg="system_prompt.enable_scene_rules"> 微信场景规则</label>
+        <label class="hint" style="display:inline-block;margin-right:14px"><input type="checkbox" data-cfg="system_prompt.enable_memory_rules"> 记忆使用规则</label>
+        <label class="hint" style="display:inline-block"><input type="checkbox" data-cfg="system_prompt.enable_holiday_hint"> 节日提示</label>
+        <div class="hint">关掉哪一块，系统提示词里就少哪一段（安全规则、工具协议不在可关之列）；改组队或老手才需要动。</div>
+      </div></div>
+      <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
+      <div class="row"><label>撤回后剔除</label><input type="checkbox" data-cfg="store.recall.enabled">
+        <span class="hint">群友撤回消息后，把已经进过上下文的那条从存档里剔除：模型不再引用、记忆不再提炼它（存档条目会保留为「已撤回」标记，便于追溯）</span></div>
+      <div class="mid" id="recallRows">
+        <div class="row"><label>兜底时间窗(秒)</label><div class="grow"><input type="number" min="0" data-cfg="store.recall.window_sec" title="拿不到 newmsgid 时，只在这个时间窗内找同一发送者的最近一条">
+          <span class="hint">微信报文里没有 newmsgid 时才启用兜底匹配；窗口越小越不容易删错</span></div></div>
+        <div class="row"><label>兜底匹配</label><div class="grow"><input type="checkbox" data-cfg="store.recall.heuristic">
+          <span class="hint">关掉＝只认 newmsgid 精确匹配（宁可漏删，也不误删别人刚说的话）</span></div></div>
+        <div class="row"><label>已剔除</label><div class="grow"><span id="recallStat" class="hint">读取中…</span></div></div>
+      </div>
+      <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
+      <div class="row"><label>主动开话题</label><input type="checkbox" data-cfg="proactive.enabled">
+        <span class="hint">群冷场超过阈值后，按概率主动抛一个话题（默认关；费少量用量）</span></div>
+      <div class="mid" id="proactiveRows">
+        <div class="row"><label>冷场阈值(毫秒)</label><input type="number" min="1" data-cfg="proactive.idle_threshold_ms" title="毫秒；默认 1800000（30 分钟）"></div>
+        <div class="row"><label>检查间隔(毫秒)</label><input type="number" min="1" data-cfg="proactive.check_interval_min_ms" title="毫秒；默认 1800000（30 分钟）"></div>
+        <div class="row"><label>检查上限(毫秒)</label><input type="number" min="1" data-cfg="proactive.check_interval_max_ms" title="毫秒；默认 5400000（90 分钟）"></div>
+        <div class="row"><label>触发概率(小数)</label><input type="number" min="0" max="1" step="0.05" data-cfg="proactive.probability" title="0~1；默认 0.25（25%）"></div>
+      </div>
+      <div class="btns"><button class="pri" data-save>保存设置（人设与响应）</button></div>
+    </section>
+<section id="sec-check" class="card" data-sec>
+      <div class="sec-hd"><h2>检测中心（代码检测 / 点击测试）</h2><span class="st" id="stCheck">还没检测</span></div>
+      <div class="desc">「代码检测」= 纯代码层检查（编译/依赖/角色卡评估/种子库/提示词静态/保护机制——零风险，实测约 0.5~3 秒）；「点击测试」= 环境/配置/界面自动化共 55 项（全程序内完成，不碰鼠标；只为让目标接受投递消息会短暂置前——实测发文字约 1 秒、切会话 3~7 秒、切会话失败重试可达约 15 秒）。
+      <div class="btns">
+        <button id="codeCheck" class="pri">代码检测</button>
+        <button id="codeCheckDeps" class="ghost" title="额外跑依赖版本详细核对（55 项，稍慢）">代码检测＋依赖核对</button>
+        <button class="ghost" id="codeCheckTip2" title="点击切换到概览查看常驻状态条" onclick="document.getElementById('sec-overview').scrollIntoView({behavior:'smooth'})">查看进度条</button>
+      </div>
+      <div class="desc" style="margin-top:12px"><b>症状检验器</b>：<b>不用你点它</b> —— 出问题时产品自己会把这些
+      （原因码 + 调用点 + 兼容性摘要）记进本机记录，你点一下「反馈」就一起带走了。这里留着是给<b>你自己想看</b>的时候点的：
+      <b>只读检查</b>（不动窗口、不发消息、不改配置），点完下面出一段可直接粘贴的报告。</div>
+      <div class="desc">怎么看报告（<b>判决分四档</b>）：<b>通过</b> · <b>卡住</b>（证据说就是它）·
+      <b>部分通过</b>（有项目<b>没测到</b>）· <b>没测到</b>（这一格这次验不了：不算通过也不算失败 ——
+      别把它当「没问题」）。逐项前头那个符号就是这四档：<b>勾＝通过 · 叉＝卡住 · 半圆＝部分通过 · 空心圆＝没测到</b>。
+      点完之后<b>症状按钮自己会变色</b>：绿＝通过 · 黄＝部分通过 · 红＝卡住。</div>
+      <div class="btns" id="vfBtns"></div>
+      <div class="desc" id="vfState" style="margin:2px 0 0"></div>
+      <pre class="out dn" id="vfResult"></pre>
+      <div class="btns"><button class="ghost" id="vfCopy" disabled>复制报告</button>
+        <span class="hint" id="vfTip" style="align-self:center">每个 1~3 秒</span></div>
+      <hr style="border:none;border-top:1px solid var(--bd);margin:14px 0">
+      <div class="btns">
+        <button id="selfCheck" class="pri">点击测试</button>
+        <button id="selfCheckStop" class="ghost" disabled>停止检测</button>
+        <span class="hint" id="selfCheckTip" style="align-self:center">进行中约 40~70 秒（含程序鼠标操作；可随时「停止检测」）</span>
+      </div>
+      <pre class="out dn" id="selfCheckResult"></pre>
+      <hr style="border:none;border-top:1px solid var(--bd);margin:14px 0">
+      <div class="row"><label>拍一拍目标群</label>
+        <div class="grow"><select id="pokeGroup">
+          <option value="">自动（最近有人发言的群）</option>
+        </select></div>
+      </div>
+      <div class="row"><label>简易检测</label><input type="checkbox" id="pokeVerifyOnly" checked title="只验证右键头像能弹出「拍一拍」菜单，不点击、不拍任何人">
+        <span class="hint">勾选=只验证菜单可弹（绝不到任何群友）；取消勾选=完整执行拍一拍（会真正拍一下）</span>
+      </div>
+      <div class="btns">
+        <button id="pokeTest" class="pri">拍一拍检测</button>
+        <span class="hint" id="uiTestResult" style="align-self:center"></span>
+      </div>
+      <div class="hint" style="color:var(--err-tx)">注意：拍一拍是右键「对方头像」触发：头像由程序识别，若群内同名/头像辨识不清，理论上有拍到其他群友的风险——所以默认用「简易检测」，确认无误后再完整执行。</div>
+      <div class="hint" id="uiTestDetail"></div>
+      <hr style="border:none;border-top:1px solid var(--bd);margin:14px 0">
+      <h2>功能自检清单（按重要性排序）</h2>
+      <table id="checkList">
+        <thead><tr><th style="width:26px">结果</th><th>项目</th><th>怎么测</th><th>预期</th></tr></thead>
+        <tbody>
+          <tr><td><input type="checkbox" class="ck"></td><td>1. 环境体检</td><td>点上方「点击测试」</td><td>无 项（允许 注意：提示）</td></tr>
+          <tr><td><input type="checkbox" class="ck"></td><td>2. 发消息</td><td>群里 @机器人 说句话</td><td>机器人正常回复，且不重复</td></tr>
+          <tr><td><input type="checkbox" class="ck"></td><td>3. 拍一拍</td><td>先「简易检测」，再完整检测</td><td>简易=菜单可弹；完整=群里出现拍一拍提示</td></tr>
+          <tr><td><input type="checkbox" class="ck"></td><td>4. 引用回复</td><td>让机器人 引用某条消息回复</td><td>出现引用样式（灰底卡片）且内容正确</td></tr>
+          <tr><td><input type="checkbox" class="ck"></td><td>5. 发图</td><td>发一张带图消息，让机器人「发一张图」</td><td>群里出现机器人转发的图片</td></tr>
+          <tr><td><input type="checkbox" class="ck"></td><td>6. 识图</td><td>引用图片 + @机器人 分析这张</td><td>机器人正确描述图片内容</td></tr>
+          <tr><td><input type="checkbox" class="ck"></td><td>7. 联网搜索</td><td>@机器人 今天的天气/新闻</td><td>给出实时信息（联网层开启）</td></tr>
+          <tr><td><input type="checkbox" class="ck"></td><td>8. 记忆</td><td>聊天里让机器人记住一件事 → 控制台「记忆」页看</td><td>印象出现、可删除</td></tr>
+          <tr><td><input type="checkbox" class="ck"></td><td>9. 挂件</td><td>看右下角鲸鱼挂件（余额/今日已用/每轮消耗）</td><td>数据变化、点击刷新、可拖拽</td></tr>
+          <tr><td><input type="checkbox" class="ck"></td><td>10. 启停重启</td><td>顶部 停止/重启（无窗口）→ 双击 启动机器人.vbs</td><td>页面变「已停止」、重启后台接管</td></tr>
+          <tr><td><input type="checkbox" class="ck"></td><td>11. 多厂商切换</td><td>模型 API 切到 Kimi/智谱/ChatGPT/Claude/Gemini 等 → 保存 → 测试连通</td><td>默认弹 Key 输入，测试通过</td></tr>
+        </tbody>
+      </table>
+      <div class="btns" style="margin-top:8px"><button id="ckReset" class="ghost">重置勾选</button><span class="hint" id="ckCount" style="align-self:center"></span></div>
+    </section>
+<section id="sec-model" class="card" data-sec>
+      <div class="sec-hd"><h2>模型 API</h2><span class="st" id="stModel">读取中</span></div>
+      <div class="desc">密钥在控制台首次引导填入后自动保存，无需再改 config.json。</div>
+      <div class="row"><label>接口地址</label><div class="grow"><input type="text" data-cfg="api.base_url"><span class="hint" style="margin-top:4px;display:block">可填官方地址，也可填「API 中转站」地址（如 https://api.中轉站.com/v1——常更便宜、能降低 花费；填中转站地址+对应口令即可，无需改其它设置）。</span></div></div>
+      <div class="row"><label>密钥</label>
+        <div class="grow">
+          <input type="password" id="apiKeyInput" data-cfg="api.api_key" placeholder="sk-...">
+          <div class="btns" style="margin-top:6px">
+            <button id="keySave" class="pri">保存 Key</button>
+            <button id="keyReset" class="ghost">重置 Key（重新填写）</button>
+          </div>
+          <div class="hint">点「保存 Key」立即生效（无需滚到底）；空 Key 会保留当前值。打码值只显示在页面上，真实密钥仅存服务器 config.json。</div>
+        </div></div>
+      <div class="row"><label>模型厂商</label>
+        <div class="grow"><select id="providerSel">
+          <option value="deepseek">DeepSeek（默认，见下方模型列表）</option>
+          <option value="moonshot">Moonshot Kimi</option>
+          <option value="zhipu">智谱 GLM</option>
+          <option value="qwen">通义千问（阿里）</option>
+          <option value="minimax">MiniMax</option>
+          <option value="doubao">豆包（火山方舟）</option>
+          <option value="openai">ChatGPT（OpenAI）</option>
+          <option value="claude">Claude（Anthropic，OpenAI 兼容端点）</option>
+          <option value="gemini">Gemini（Google）</option>
+          <option value="grok">Grok（xAI）</option>
+          <option value="nvidia">NVIDIA（Nemotron）</option>
+          <option value="openrouter">OpenRouter（聚合）</option>
+          <option value="custom">自定义（手动填 URL/Key/模型）</option>
+        </select>
+        <div class="hint">切换厂商会自动替换 接口地址，并弹窗让您填入该厂商的 密钥；模型列表现场切换。</div>
+      </div></div>
+      <div class="row"><label>模型</label>
+        <div class="grow">
+          <select id="modelSel" style="margin-bottom:6px"></select>
+          <input type="text" id="modelCustom" class="dn" placeholder="自定义模型名（如 glm-4-plus）">
+          <div class="hint">所选厂商的常用模型都在下拉里；不够用就选「自定义」手填，或直接改配置文件。</div>
+        </div></div>
+      <div class="row"><label>本机模型</label>
+        <div class="grow">
+          <div class="btns" style="margin-bottom:6px">
+            <button id="localProbe" class="ghost">探测本机模型</button>
+            <span class="hint" id="localHint">只探回环地址：Ollama 11434 · LM Studio 1234 · vLLM 8000 · llama.cpp 8080 · text-gen-webui 5000</span>
+          </div>
+          <div id="localList"></div>
+          <div class="hint">探测只能证明<b>端点活着、有哪些模型、多快</b>；<b>工具与视觉是否支持一律「未声明」</b>——要判定请用上面的「测试 API」真跑一轮。点「用这个」只把地址与模型名填进上面的输入框，仍需你点保存；<b>探测本身不改任何配置</b>（本机模型零成本、不出网，适合当评审/红队那一档）。</div>
+        </div></div>
+      <script>
+      (function(){
+        var btn = document.getElementById('localProbe');
+        if (!btn) return;
+        var list = document.getElementById('localList'), hint = document.getElementById('localHint');
+        function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+        function headers(){ return (typeof URL_TOKEN !== 'undefined' && URL_TOKEN) ? {Authorization:'Bearer '+URL_TOKEN} : {}; }
+        function card(r){
+          var ok = !!r.reachable, ms = (r.models||[]);
+          var chips = ms.map(function(m){ return '<span class="chip">'+esc(m)+'</span>'; }).join(' ');
+          var btns = (ok && ms.length) ? ('<button class="ghost useLocal" data-url="'+esc(r.base_url)+'" data-model="'+esc(ms[0])+'">用这个</button>'
+                    + '<button class="ghost testLocal" data-url="'+esc(r.base_url)+'" data-model="'+esc(ms[0])+'">连通测试</button>') : '';
+          return '<div class="card" style="margin:6px 0;padding:8px 10px">'
+            + '<div><b>'+esc(r.name||r.id)+'</b> <span class="hint">'+esc(r.base_url)+'</span></div>'
+            + '<div class="hint" style="margin:4px 0">'+(ok ? ('可用 · '+r.ms+'ms · 模型 '+ms.length+' 个') : ('未发现 · '+esc(r.error)))+'</div>'
+            + (chips ? '<div style="margin:4px 0">'+chips+'</div>' : '')
+            + '<div class="btns">'+btns+'<span class="testOut hint"></span></div></div>';
+        }
+        btn.onclick = function(){
+          btn.disabled = true; hint.textContent = '探测中（每端点 1.2s 超时，并发）';
+          fetch('/api/local-models', {headers: headers()})
+            .then(function(r){ return r.json(); })
+            .then(function(d){
+              var all = ((d.meta||{}).all || []);
+              list.innerHTML = all.map(card).join('')
+                + '<div class="hint">共探 '+((d.meta||{}).checked||0)+' 个端点，用时 '+((d.meta||{}).elapsed_ms||0)+'ms。能力口径：'+esc(d.capability||'')+'</div>';
+              hint.textContent = (d.found||[]).length ? ('发现 '+d.found.length+' 个可用端点') : '没发现本机端点（没装或没启动都算正常）';
+            })
+            .catch(function(e){ hint.textContent = '探测失败：'+e; })
+            .then(function(){ btn.disabled = false; });
+        };
+        list.addEventListener('click', function(ev){
+          var t = ev.target;
+          if (t.classList && t.classList.contains('useLocal')) {
+            var bu = document.querySelector('input[data-cfg="api.base_url"]');
+            if (bu) { bu.value = t.getAttribute('data-url'); bu.dispatchEvent(new Event('input', {bubbles:true})); }
+            var mc = document.getElementById('modelCustom');
+            if (mc) { mc.value = t.getAttribute('data-model'); mc.classList.remove('dn'); }
+            hint.textContent = '已填入 接口地址 与模型名——记得点下面的「保存设置（模型 API）」';
+          } else if (t.classList && t.classList.contains('testLocal')) {
+            var out = t.parentNode.querySelector('.testOut');
+            out.textContent = ' 测试中……';
+            fetch('/api/local-models?test=1&base_url='+encodeURIComponent(t.getAttribute('data-url'))
+                  +'&model='+encodeURIComponent(t.getAttribute('data-model')), {headers: headers()})
+              .then(function(r){ return r.json(); })
+              .then(function(d){
+                out.textContent = d.ok ? (' 能对话 · '+d.ms+'ms · 回显「'+(d.reply||'')+'」 · '+(d.note||'')) : (' 失败：'+(d.error||'未知'));
+              })
+              .catch(function(e){ out.textContent = ' 失败：'+e; });
+          }
+        });
+      })();
+      </script>
+      <div class="row"><label>备选模型</label><div class="grow">
+        <textarea data-cfg="api.fallback_models" rows="2" spellcheck="false" placeholder="如：deepseek-chat, glm-4-flash（逗号或换行分隔；留空＝关闭）"></textarea>
+        <div class="hint">主模型失败时<b>按顺序逐个改用下面的模型</b>（同一个 接口地址 与 Key）：
+        可重试的错误（5xx / 429 限流 / 超时 / 断网 / 返回的不是配置格式）以及「模型名不存在」这类会切换；
+        鉴权错误（401 / 403 / Key 无效）不切换（换模型也救不了 Key）。最多试 3 个。</div>
+      </div></div>
+      <div class="row"><label>备选使用</label><div class="grow"><span id="fallbackStat" class="hint">读取中…</span></div></div>
+      <div class="row"><label>模型分流</label><div class="grow">
+        <div class="hint" style="margin-bottom:6px">按输入类型分别指定模型：<b>留空＝用上面的主模型</b>（默认行为不变）。带图的请求会走「带图」那一档（群友发图、看图工具、视频抽帧都算带图）。</div>
+        <div class="row"><label>纯文字</label><input type="text" data-cfg="api.model_routes.text" placeholder="留空＝主模型"></div>
+        <div class="row"><label>带图</label><input type="text" data-cfg="api.model_routes.image" placeholder="如：deepseek-v4-flash-vision-exp"></div>
+        <div class="row"><label>视频</label><input type="text" data-cfg="api.model_routes.video" placeholder="留空＝跟「带图」同一个"></div>
+        <div class="hint" id="routeStat">读取中…</div>
+      </div></div>
+      <div class="row"><label>视觉(看图)</label><input type="checkbox" data-cfg="api.vision"><span class="hint">模型支持图片则勾选</span></div>
+      <label class="think-card" id="thinkCard" title="模型返回的「推理文本」是生成的思考链式输出，并非真实内部思维；它按输出价计费，通常占一个会话用量的 50~90%。">
+        <input type="checkbox" data-cfg="api.thinking" id="thinkOffChk" checked>
+        <div>
+          <div class="tc-title">省用量：关闭模型思考<span class="tc-badge" id="thinkBadge">已开启省用量</span></div>
+          <div class="tc-sub">勾选 = 关闭推理文本（api.thinking=off），单会话可省 50~90% 用量；群里闲聊/问答建议保持勾选。
+          取消勾选 = 跟随模型默认（auto）或强制思考（on），回答更「深思熟虑」但费用量、更慢。</div>
+        </div>
+      </label>
+      <div class="row"><label>温度</label><input type="range" id="api.temperature" min="0" max="1" step="0.05" data-cfg="api.temperature"><span class="val" id="api.temperature-v">0.8</span></div>
+      <div class="row"><label>单次工具轮数</label><div class="grow"><input type="number" data-cfg="api.max_rounds" min="1" max="50"></div></div>
+      <div class="row"><label>请求超时(ms)</label><div class="grow"><input type="number" data-cfg="api.timeout_ms" min="5000" step="1000"></div></div>
+      <div class="mid">
+        <div class="row"><label>输入单价/百万</label><input type="number" step="0.01" data-cfg="api.price_input_per_m"><span class="val">元</span></div>
+        <div class="row"><label>输出单价/百万</label><input type="number" step="0.01" data-cfg="api.price_output_per_m"><span class="val">元</span></div>
+        <div class="row"><label>缓存单价/百万</label><input type="number" step="0.01" data-cfg="api.price_cached_per_m"><span class="val">元</span></div>
+      </div>
+      <div class="row"><label>内置官方价</label><input type="checkbox" data-cfg="api.use_official_price"><span class="hint">上面填 0 时用内置官方单价表</span></div>
+      <div class="row"><label>按型号单价(配置格式)</label><div class="grow">
+        <textarea data-cfg="api.model_prices" rows="3" spellcheck="false" placeholder='{"deepseek-v4-flash": {"in": 1.5, "out": 4.5, "cached": 0.05}}'></textarea>
+        <div class="hint">优先级最高：按模型 id 覆盖内置价（元/百万用量）。示例见左。</div>
+      </div></div>
+      <div class="btns"><button class="pri" data-save>保存设置（模型 API）</button></div>
+    </section>
+<section id="sec-memory" class="card" data-sec>
+      <h2>记忆（群友印象）</h2>
+      <div class="desc">每个群友的长期印象，机器人回复时会参考。点「保存设置」不影响此处；删除即从记忆中移除。</div>
+      <div class="row"><label>选择群聊</label>
+        <div class="grow">
+          <input type="text" id="memSearch" class="group-search" placeholder="搜索群名，回车选中第一个匹配…">
+          <select id="memChats"><option value="">（加载中…）</option></select>
+          <button id="memRefresh" class="ghost" style="margin-top:6px">刷新</button>
+        </div>
+      </div>
+      <div class="row"><label>关机总结印象</label><div class="grow">
+        <input type="checkbox" data-cfg="memory.summarize_on_exit" checked title="每次关闭机器人时把本次对话总结成群友印象（只在那时调一次模型，平时绝不计费）">
+        <span class="hint">每次关闭机器人时自动把本对话总结为群友印象（仅关机时调一次模型；平时不调，不耗用量）。</span>
+      </div></div>
+      <div class="row"><label>清除记忆</label><div class="grow">
+        <div class="btns" style="justify-content:flex-start;gap:8px">
+          <button id="memClearSel" class="danger" disabled>清除勾选的印象</button>
+          <button id="memClearAll" class="danger">清除全部</button>
+          <span class="hint" id="memClearRst"></span>
+        </div>
+        <div class="hint">① 成员印象=记忆页勾选清除/本按钮清除全部；②「清除全部」=印象+共享记忆全清；③ 会话日志/运行明细的删除在「运行明细」页。</div>
+      </div></div>
+      <div class="row"><label>删除范围</label><div class="grow"><select id="memScope">
+        <option value="all">所有群一起删（推荐）</option>
+        <option value="this">只删当前选中的这个群</option></select>
+        <span class="hint">记忆在开了「跨群互通」时是<b>合并展示</b>的：选「只删当前选中的这个群」时，同一个人在别的群那份还在，<b>列表里仍会看到它</b>——所以程序会在结果里告诉你还剩几个群留着（要删干净就选上面那一档）。</span></div></div>
+      <div style="max-height:340px;overflow-y:auto;border:1px solid var(--bd);border-radius:10px">
+        <table id="memTable" style="width:100%"><thead><tr><th style="width:26px"><input type="checkbox" id="memCheckAll" title="全选"></th><th>成员</th><th>印象数</th><th>更新时间</th><th></th></tr></thead><tbody></tbody></table>
+      </div>
+      <div class="hint" id="memAudit"></div>
+      <div class="hint" id="memEmpty">（无记忆数据）</div>
+    </section>
+<section id="sec-memory-set" class="card" data-sec>
+      <h2>记忆（共享设置）</h2>
+      <div class="desc">记忆怎么存、怎么共享、什么时候整理；每个群的记忆默认互相隔离，只有你点头的群之间才共享。</div>
+      <div class="row"><label>自动整理</label><input type="checkbox" data-cfg="memory.consolidate_enabled"></div>
+      <div class="row"><label>共享记忆池</label><input type="checkbox" data-cfg="memory.share_across_groups" checked id="memShareChk">
+        <span class="hint">勾选=所有群共享一个记忆池（群间互通）；不勾=每群独立（默认，群间互不串味）</span></div>
+      <div class="row" id="memGroupsRow"><label>共享群（可选）</label><div class="grow">
+        <div id="memGroupsBox" style="display:flex;flex-wrap:wrap;gap:6px"><span class="hint">加载中…</span></div>
+        <div class="hint">勾选几个群 → 只有这些群间共享记忆（比全共享更精准；不勾=用上方总开关）</div>
+      </div></div>
+      <div class="row"><label>整理间隔(小时)</label><div class="grow"><input type="number" min="1" data-cfg="memory.consolidate_min_interval_ms"></div></div>
+      <div class="mid">
+        <div class="row"><label>最少印象数</label><input type="number" min="1" data-cfg="memory.consolidate_min_impressions"></div>
+        <div class="row"><label>每成员印象上限</label><input type="number" min="1" data-cfg="memory.max_impressions_per_member"></div>
+        <div class="row"><label>发现最少消息</label><input type="number" min="1" data-cfg="memory.discover_min_messages"></div>
+        <div class="row"><label>发现最多成员</label><input type="number" min="1" data-cfg="memory.discover_max_members"></div>
+      </div>
+      <div class="btns"><button class="pri" data-save>保存设置（记忆共享）</button></div>
+    </section>
+<section id="sec-search" class="card" data-sec>
+      <div class="sec-hd"><h2>联网搜索</h2><span class="st" id="stSearch">读取中</span></div>
+      <div class="row"><label>启用</label><input type="checkbox" data-cfg="web_search.enabled"></div>
+      <div class="row"><label>引擎</label><div class="grow"><select data-cfg="web_search.provider" id="wsProvider">
+        <option value="bing">Bing（免key）</option><option value="deepseek">DeepSeek</option>
+        <option value="zhipu">智谱</option><option value="bocha">博查</option>
+        <option value="baidu">百度千帆</option><option value="metaso">秘塔</option><option value="custom">自定义</option></select>
+        <div class="hint" id="wsHint">Bing 免 Key；其余引擎填「引擎 Key」与「接口地址」（留空=官方默认；DeepSeek 另有模型、智谱另有 engine）。</div></div></div>
+      <div class="row"><label>结果数</label><div class="grow"><input type="number" min="1" max="20" data-cfg="web_search.max_results"></div></div>
+      <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
+      <div class="desc">当前引擎参数（切换引擎自动带出对应小节，保存真实落盘 web_search.&lt;provider&gt;）：</div>
+      <div class="row"><label>引擎 Key</label><div class="grow"><input type="password" id="wsKey" placeholder="贴该引擎的 密钥" autocomplete="off"></div></div>
+      <div class="row"><label>接口地址</label><div class="grow"><input type="text" id="wsUrl" placeholder="留空=官方默认"></div></div>
+      <div class="row" data-ws="deepseek"><label>模型</label><div class="grow"><input type="text" id="wsModel" placeholder="deepseek-chat"></div></div>
+      <div class="row" data-ws="zhipu"><label>engine</label><div class="grow"><input type="text" id="wsEngine" placeholder="search_std"></div></div>
+      <div class="row"><label>请求数</label><div class="grow"><input type="number" id="wsCount" min="1" max="50"></div></div>
+      <div class="btns"><button class="pri" data-save>保存设置（联网搜索）</button></div>
+    </section>
+<section id="sec-community" class="card" data-sec>
+      <h2>社区与学习</h2>
+      <div class="desc">金句/意见/聊天记录本地导出；可选上传到自配服务器；反应评分引擎让机器人越聊越有趣（防饱和）。</div>
+      <div class="row"><label>评分引擎</label><input type="checkbox" data-cfg="scoring.enabled" checked><span class="hint">本地正反馈评分（零用量）；群友回应热烈→高效反应进入提示词参考</span></div>
+      <div class="row"><label>种子库</label><input type="checkbox" data-cfg="scoring.seed_library" checked><span class="hint">内置有趣开场/接梗 small-sample 参考</span></div>
+      <div class="row"><label>在线评分</label><input type="checkbox" data-cfg="scoring.online_scoring"><span class="hint">每次 reaction 后调 LLM 打分（费用量，默认关）</span></div>
+      <div class="row"><label>热度衰减</label><input type="checkbox" data-cfg="scoring.heat_decay" checked><span class="hint">老梗降权，防饱和</span></div>
+      <div class="row"><label>导入金句种子</label><div class="grow"><textarea id="seedImport" rows="2" placeholder="粘贴金句墙导出的文本，每行一条…"></textarea>
+        <div class="row"><label>自定义金句(选单)</label><div class="grow"><input type="text" id="seedCustomTxt" placeholder="输入一句你的自定义金句，点「添加」进库（学习/接梗参考）" style="flex:1"><button id="seedCustomAdd" class="ghost">添加</button><span id="seedCustomRst" class="hint"></span></div></div>
+        <div class="btns"><button id="seedImportBtn" class="ghost">导入种子库</button><button id="seedImportFile" class="ghost">选择文件导入</button><input type="file" id="seedFile" accept=".txt,.json,text/plain,application/json" style="display:none"><span class="hint" id="seedImportRst"></span></div>
+        <div class="hint">粘贴导入（每行一条）；或「选择文件导入」读 txt/json 文件——导入自动查重（精确+72% 相似度）后写入并立即生效。</div>
+      </div></div>
+      <div class="row"><label>导出目录</label><div class="grow"><input type="text" data-cfg="community.export_dir" placeholder="exports">
+        <div class="hint">金句/意见/聊天记录导出到项目根下该目录（相对路径）。</div></div></div>
+      <div class="row"><label>导出</label><div class="grow">
+        <div class="btns">
+          <button id="exportHolyshits" class="ghost">导出金句</button>
+          <button id="exportFeedback" class="ghost">导出意见反馈</button>
+          <button id="exportMessages" class="ghost">导出聊天记录</button>
+          <button id="openExportDir" class="ghost">打开导出文件夹</button>
+        </div>
+        <div class="hint" id="exportRst">导出为本地文件（community.export_dir）；「打开导出文件夹」直接用资源管理器定位。</div>
+      </div></div>
+      <div class="row"><label>社区上传</label><input type="checkbox" data-cfg="community.upload_enabled"><span class="hint">开启后金句/意见可 POST 到下方 URL（需自配服务器）</span></div>
+      <div class="row"><label>金句上传 URL</label><div class="grow"><input type="text" data-cfg="community.holyshits_upload_url" placeholder="留空=仅本地导出"></div></div>
+      <div class="row"><label>意见反馈上传 URL</label><div class="grow"><input type="text" data-cfg="community.feedback_upload_url" placeholder="留空=仅本地导出"></div></div>
+      <div class="row"><label>上传动作</label><div class="grow">
+        <div class="btns" style="justify-content:flex-start;gap:8px">
+          <button id="openSeedBtn" class="ghost">打开种子库</button>
+          <button id="uploadSeeds" class="ghost" disabled>确认上传金句</button>
+          <button id="uploadFeedback" class="ghost" disabled>确认上传意见</button>
+          <span class="hint" id="uploadRst">默认关闭（需勾选「社区上传」+填对应 URL）；确认后上传到你的服务器。</span>
+        </div>
+      </div></div>
+      <div class="row"><label>意见上传 URL</label><div class="grow"><input type="text" data-cfg="community.feedback_upload_url" placeholder="留空=仅本地导出"></div></div>
+      <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
+      <div class="row"><label>上云（预留）</label><input type="checkbox" data-cfg="cloud.enabled">
+        <span class="hint">默认关：<b>关着时一个字节都不会上传</b>。这里只把接口留好——接收端网址填进去、点「测试连通」看通不通；要真发再打开这个开关</span></div>
+      <div class="mid" id="cloudRows">
+        <div class="row"><label>人设接收端</label><div class="grow"><div class="btns" style="justify-content:flex-start;gap:8px">
+          <input type="text" data-cfg="cloud.persona_url" placeholder="https://你的服务器/hook/persona" style="flex:1">
+          <button class="ghost" data-cloud-test="persona">测试连通</button>
+        </div></div></div>
+        <div class="row"><label>名单接收端</label><div class="grow"><div class="btns" style="justify-content:flex-start;gap:8px">
+          <input type="text" data-cfg="cloud.blocklist_url" placeholder="https://你的服务器/hook/blocklist" style="flex:1">
+          <button class="ghost" data-cloud-test="blocklist">测试连通</button>
+        </div></div></div>
+        <div class="row"><label>接收端口令</label><div class="grow"><input type="password" data-cfg="cloud.token" placeholder="对方要求鉴权时才填（Bearer）">
+          <div class="hint">保存过即以掩码显示，要改就重新填。探测连通<b>不带口令</b>；只有真上传时才带上。接收端要满足什么，见 <b>docs\上云接口契约.md</b>（方法/路径/请求体/响应约定都写在里面，可直接发给对方）</div>
+        </div></div>
+        <div class="row"><label>鉴权方式</label><div class="grow"><select data-cfg="cloud.auth_style">
+          <option value="bearer">放请求头</option>
+          <option value="body_key">放请求体</option></select>
+          <span class="hint">按接收端要求选。默认<b>放请求头</b>（<b>Bearer</b>，收到 2xx 就算成功）；<b>放请求体</b>＝凭据放在请求体的 <b>key</b> 字段里、<b>且要求回包 ok:true 才算成功</b>——自建站常常"路径写错也回 200"，这时只有第二种能分清"真收下了"和"没接住"。</span></div></div>
+        <div class="row"><label>连通结果</label><div class="grow"><span id="cloudStat" class="hint">还没测过</span></div></div>
+      </div>
+    </section>
+<section id="sec-media" class="card" data-sec>
+      <div class="sec-hd"><h2>媒体与语音（随机图 / 语音转文字 / 视频·文件）</h2><span class="st" id="stMedia">读取中</span></div>
       <div class="desc">三项能力的状态都在这一屏：能用的显示**实测**结果，不能用的写清缺哪一环、怎么补。下面这些开关**默认都是关的**——开着才会真的动。</div>
 
       <div class="sub">① 语音转文字</div>
@@ -1541,8 +1806,8 @@ th{color:var(--tx2);font-weight:500}
         <span class="hint">让它听一条 B 站视频最多听多少秒（默认 120）。只下载声音那一轨，比整段视频小很多。</span></div>
       <div class="btns"><button class="pri" data-save>保存设置（媒体与语音）</button></div>
     </section>
-    <section id="sec-tts" class="card" data-sec>
-      <h2>语音回复（TTS）</h2>
+<section id="sec-tts" class="card" data-sec>
+      <div class="sec-hd"><h2>语音回复（TTS）</h2><span class="st" id="stTts">读取中</span></div>
       <div class="desc">让机器人**用语音回一句**：文字合成为音频再发出去。**当前形态＝音频文件，不是微信语音条**——微信 PC 没有"把任意音频发成语音条"的接口；真语音条要装虚拟声卡 + 用微信录音按钮（属待拍板项）。**合成在哪做，取决于下面的「声音来源」那一档**：<b>系统声音</b>＝全程本机、内容不出网；<b>edge 神经语音</b>＝把<b>要念的那一句话</b>发到微软的在线语音服务（只发这一句，不发聊天记录、不发联系人；不上传音频，它只回音频）；<b>自带模型</b>＝发到你自己跑的那个本地服务。</div>
       <div class="row"><label>引擎状态</label><div class="grow"><b id="ttsWhy">检测中…</b>
         <div id="ttsList" class="hint"></div></div></div>
@@ -1657,7 +1922,7 @@ th{color:var(--tx2);font-weight:500}
       </div>
       <div id="ttsOut" class="hint">点「试听一句」会**按当前选的那一档音源**合成一条示例音频并报出产物路径 / 档位 / 格式 / 大小；**不会发到任何会话**（系统声音档不出网，edge 档要联网）。</div>
     </section>
-    <section id="sec-imggen" class="card" data-sec>
+<section id="sec-imggen" class="card" data-sec>
       <h2>群友要图（按需求生成）</h2>
       <div class="desc">群友说「画一张 / 生成一张 / 来张 xx 的图」时，让模型调 <code>gen_image</code>：先解析要什么，再挑一个生图后端生成，**生成后必过过滤链**，任一层不确定就不发。<b>后端不用你选</b>：程序会自己探本机常用的生图服务（A1111 :7860 / ComfyUI :8188 / Fooocus :7865 / InvokeAI :9090，只读探活），探到就用；也可以在下面「生图后端」里手填固定用哪个。在线还有免密钥的 pollinations（开了「允许出网」才会用到）。**一个都没探到、也没手填**时，模型会如实回「还没配后端」——**不会假装生成过**。红线是硬的：不生成真人换脸/换身体、不生成成人内容，且这些要求本身也不照做。</div>
       <div class="row"><label>后端状态</label><div class="grow"><b id="igWhy">检测中…</b>
@@ -1738,7 +2003,7 @@ th{color:var(--tx2);font-weight:500}
       </div>
       <div id="igOut" class="hint">点「试一次」会拿一句话跑完整条链（解析 → 挑后端 → 生成 → 过滤），并把每一步的结论原样贴出来；**不会发到任何会话**。</div>
     </section>
-    <section id="sec-videogen" class="card" data-sec>
+<section id="sec-videogen" class="card" data-sec>
       <h2>AI 视频（几秒到几十秒的小视频）</h2>
       <div class="desc">群友说「给我做一个…的视频」时，机器人可以去做一条短小视频，做好**自动发出去**。**视频比图慢得多**（几十秒到几分钟），所以是"先回一句正在做、做好再发"，不会卡着聊天。**没配后端就如实说没配**，绝不假装做过。</div>
       <div class="row"><label>总开关</label><input type="checkbox" data-cfg="video_gen.enabled">
@@ -1770,7 +2035,7 @@ th{color:var(--tx2);font-weight:500}
       </div>
       <div id="vgOut" class="hint">**后端不用你选**：程序会自己探本机在跑的 ComfyUI（:8188）等能出视频的服务，探到就用；想固定用某一个，在上面「后端（可填多个）」里手填即可。一个都没探到、也没手填时，模型会如实说「还没配后端」，不会硬编。</div>
     </section>
-    <section id="sec-tools" class="card" data-sec>
+<section id="sec-tools" class="card" data-sec>
       <h2>工具与插件（自定义工具）</h2>
       <div id="utBar" class="utbar" style="display:none">
         <div style="flex:1 1 auto;min-width:0;line-height:1.5">
@@ -1804,7 +2069,7 @@ th{color:var(--tx2);font-weight:500}
       <div class="hint">调用次数来自唯一分发点的统计（内置与自定义工具都算）——一眼能看出哪些工具只是摆设。写好了拿不准通不通，就在那一行点「试一下」：填参数、真发一次请求、返回内容当场显示（也会记一次调用）。</div>
       <div id="utDropped" class="hint"></div>
     </section>
-    <section id="sec-poke" class="card" data-sec>
+<section id="sec-poke" class="card" data-sec>
       <h2>拍一拍（行为）</h2>
       <div class="desc">自动回拍 / 主动皮一下的频率与冷却。注意：拍一拍有误拍风险（同名/头像辨识不清），建议保持「简易检测」优先。</div>
       <div class="mid">
@@ -1817,205 +2082,40 @@ th{color:var(--tx2);font-weight:500}
       </div>
       <div class="btns"><button class="pri" data-save>保存设置（拍一拍）</button></div>
     </section>
-    <section id="sec-memory" class="card" data-sec>
-      <h2>记忆（群友印象）</h2>
-      <div class="desc">每个群友的长期印象，机器人回复时会参考。点「保存设置」不影响此处；删除即从记忆中移除。</div>
-      <div class="row"><label>选择群聊</label>
-        <div class="grow">
-          <input type="text" id="memSearch" class="group-search" placeholder="搜索群名，回车选中第一个匹配…">
-          <select id="memChats"><option value="">（加载中…）</option></select>
-          <button id="memRefresh" class="ghost" style="margin-top:6px">刷新</button>
-        </div>
+<section id="sec-sessions" class="card" data-sec>
+      <h2>运行明细</h2>
+      <div class="desc">简明日志：发了什么、多少用量、耗时（服务端按天落盘，最近 30 轮）。每个日期记录可勾选删除（按日期删，不可恢复）。</div>
+      <div class="btns">
+        <button id="sessRefresh" class="pri">刷新</button>
+        <label class="hint" style="align-self:center;cursor:pointer"><input type="checkbox" id="sessExpand"> 展开详情（推理/工具/触发）</label>
+        <span class="hint" style="align-self:center">推理文本按输出价计费，控制台「省用量开关」默认已关闭思考。</span>
       </div>
-      <div class="row"><label>关机总结印象</label><div class="grow">
-        <input type="checkbox" data-cfg="memory.summarize_on_exit" checked title="每次关闭机器人时把本次对话总结成群友印象（只在那时调一次模型，平时绝不计费）">
-        <span class="hint">每次关闭机器人时自动把本对话总结为群友印象（仅关机时调一次模型；平时不调，不耗用量）。</span>
-      </div></div>
-      <div class="row"><label>清除记忆</label><div class="grow">
-        <div class="btns" style="justify-content:flex-start;gap:8px">
-          <button id="memClearSel" class="danger" disabled>清除勾选的印象</button>
-          <button id="memClearAll" class="danger">清除全部</button>
-          <span class="hint" id="memClearRst"></span>
-        </div>
-        <div class="hint">① 成员印象=记忆页勾选清除/本按钮清除全部；②「清除全部」=印象+共享记忆全清；③ 会话日志/运行明细的删除在「运行明细」页。</div>
-      </div></div>
-      <div class="row"><label>删除范围</label><div class="grow"><select id="memScope">
-        <option value="all">所有群一起删（推荐）</option>
-        <option value="this">只删当前选中的这个群</option></select>
-        <span class="hint">记忆在开了「跨群互通」时是<b>合并展示</b>的：选「只删当前选中的这个群」时，同一个人在别的群那份还在，<b>列表里仍会看到它</b>——所以程序会在结果里告诉你还剩几个群留着（要删干净就选上面那一档）。</span></div></div>
-      <div style="max-height:340px;overflow-y:auto;border:1px solid var(--bd);border-radius:10px">
-        <table id="memTable" style="width:100%"><thead><tr><th style="width:26px"><input type="checkbox" id="memCheckAll" title="全选"></th><th>成员</th><th>印象数</th><th>更新时间</th><th></th></tr></thead><tbody></tbody></table>
+      <div class="btns">
+        <button id="sessSelDel" class="danger" disabled>删除选中（勾选日期删除）</button>
+        <button id="sessUndo" class="ghost" style="display:none" disabled title="把上一次删除的记录原样放回来">撤销上次删除</button>
+        <button id="sessClear" class="danger" title="清空全部运行明细（会话日志/对话历史）——模型将不再记得这些对话">一键清全部</button>
+        <span class="hint" style="align-self:center">勾选每条记录左侧「删」→「删除选中」＝**只删这几条**（同一天其他记录不动）；删错了点「撤销上次删除」。</span>
       </div>
-      <div class="hint" id="memAudit"></div>
-      <div class="hint" id="memEmpty">（无记忆数据）</div>
-    </section>
-    <section id="sec-memory-set" class="card" data-sec>
-      <h2>记忆（共享设置）</h2>
-      <div class="desc">记忆怎么存、怎么共享、什么时候整理；每个群的记忆默认互相隔离，只有你点头的群之间才共享。</div>
-      <div class="row"><label>自动整理</label><input type="checkbox" data-cfg="memory.consolidate_enabled"></div>
-      <div class="row"><label>共享记忆池</label><input type="checkbox" data-cfg="memory.share_across_groups" checked id="memShareChk">
-        <span class="hint">勾选=所有群共享一个记忆池（群间互通）；不勾=每群独立（默认，群间互不串味）</span></div>
-      <div class="row" id="memGroupsRow"><label>共享群（可选）</label><div class="grow">
-        <div id="memGroupsBox" style="display:flex;flex-wrap:wrap;gap:6px"><span class="hint">加载中…</span></div>
-        <div class="hint">勾选几个群 → 只有这些群间共享记忆（比全共享更精准；不勾=用上方总开关）</div>
-      </div></div>
-      <div class="row"><label>整理间隔(小时)</label><div class="grow"><input type="number" min="1" data-cfg="memory.consolidate_min_interval_ms"></div></div>
-      <div class="mid">
-        <div class="row"><label>最少印象数</label><input type="number" min="1" data-cfg="memory.consolidate_min_impressions"></div>
-        <div class="row"><label>每成员印象上限</label><input type="number" min="1" data-cfg="memory.max_impressions_per_member"></div>
-        <div class="row"><label>发现最少消息</label><input type="number" min="1" data-cfg="memory.discover_min_messages"></div>
-        <div class="row"><label>发现最多成员</label><input type="number" min="1" data-cfg="memory.discover_max_members"></div>
-      </div>
-      <div class="btns"><button class="pri" data-save>保存设置（记忆共享）</button></div>
-    </section>
-    <section id="sec-persona" class="card" data-sec>
-      <h2>人设与响应</h2>
-      <div class="desc">机器人以谁的身份在群里说话、怎么参与：人设名、参与度、自我介绍与群名片。改完立刻生效。</div>
-      <div class="row"><label>人设名</label><div class="grow"><input type="text" data-cfg="persona.bot_name"></div></div>
-      <div class="row"><label>人设选单</label><div class="grow">
-        <div id="personaCats" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;align-items:center">
-          <button id="pCatAdd" class="ghost" style="padding:2px 10px" title="新建分区或添加角色">＋ 新建/添加</button>
+      <div id="sessBox" style="max-height:360px;overflow-y:auto;border:1px solid var(--bd);border-radius:10px;padding:10px 12px;margin-top:10px;background:var(--input-bg)">
+        <div id="sessList" style="display:flex;flex-direction:column;gap:8px">
+          <div class="hint" style="padding:14px;text-align:center;color:var(--tx2)">加载中…</div>
         </div>
-        <div class="btns" style="justify-content:flex-start;gap:8px">
-          <button id="pSort" class="ghost" title="点击：分数高→低；再点：低→高；再点回到高→低（WPS 式切换）" style="font-weight:700">↓ 按评估分数排序</button>
-          <span class="hint" id="pSortHint">（点一下正序，再点一下倒序）</span>
-          <button id="pSortOff" class="ghost">恢复默认顺序</button>
-          <button id="pRestorePrev" class="ghost" title="撤销最近一次应用的人设（真实有效：恢复上一个人设名+文本）" style="color:var(--warn);border-color:var(--warn)">恢复上个人设</button>
-        </div>
-        <input type="text" id="personaSearch" class="group-search" placeholder="搜索人设（如 傲娇/毒舌/猫/程序员）…">
-        <div id="personaList" style="max-height:320px;overflow-y:auto;border:1px solid var(--bd);border-radius:10px;padding:6px;background:var(--input-bg)">
-          <div class="hint">加载中…</div>
-        </div>
-        <div class="hint">星标=收藏置顶（始终显示在最上）；每张卡右下角 ⋯ =更多操作（为模型打星/编辑/移动/删除）。排序按模型评估分高→低（当前视图=全部或当前分区）。</div>
-      </div></div>
-      <div class="row"><label>参与度</label><div class="grow"><select data-cfg="persona.participation">
-        <option value="low">安静型</option><option value="medium">普通群友</option><option value="high">活跃型</option></select></div></div>
-      <div class="row"><label>自定义角色文本</label><div class="grow"><textarea data-cfg="persona.role_text" placeholder="留空=内置小鲸鱼角色卡；填了=完全替换。可参考 agent/persona.py"></textarea></div></div>
-      <div class="row"><label>评分补足</label><div class="grow">
-        <div class="btns" style="justify-content:flex-start;gap:8px">
-          <button id="pScoreLLM" class="ghost">模型评分</button>
-          <button id="pEnrich" class="ghost">模型补足</button>
-          <button id="pWebFetch" class="ghost">联网收集真实资料</button>
-          <label style="display:flex;align-items:center;gap:6px">补足轮数
-            <select id="pRounds" style="width:64px"><option value="1">1 轮</option><option value="2">2 轮</option><option value="3">3 轮</option></select>
-          </label>
-          <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="pUseLlm" checked>允许模型处理</label>
-        </div>
-        <span class="hint" id="pScoreRst"></span>
-        <div class="hint">「联网收集真实资料」：按角色名检索主流媒体/官方/百科中**角色真实说过的话、做过的事**（语录/访谈/言论），只返回搜索引擎摘要原文（含来源链接），**绝不编造**；检索不到会明确提示"未检索到第一手资料"。**所有角色卡均可使用**（联网取真实资料 → 模型补足，逻辑正确不会 OOC）。</div>
-        <div class="hint" style="color:var(--warn)">注意：**机器学习（金句素材库训练 / 学习评估）仅默认角色卡（小鲸鱼）启用**——AI 本体学习真实表达不易 OOC；**其他角色卡不应用机器学习**，但联网收集/模型补足不受限。</div>
-        <div class="hint">【评分细则】风格辨识25%/角色贴合30%/内在一致20%/表达自然15%/完整可用10%，每维 0~100.00 精确百分位；无口头禅→风格≤45；通用词口头禅→≤70；AI套话→表达≤65；客服口吻→贴合≤60；换角色都能用→≤50；示例占位→完整≤75；沉默类无扩展→≤70；缺说话规则→≤70；满分唯一条件=仅凭提示词+一次提醒即逐句贴合本人（否则一律<95，优秀 88~94.99）。</div>
-        <div class="hint">「模型补足」按人设驱动（让说话更贴近本人，不是为分数调整）；每轮补足后自动重评：分数上升才继续下一轮，不升/降即停止；轮数可选（1~3 轮，每轮约 10~30 秒耗少量用量）；完成后点「保存」落盘。</div>
-      </div></div>
-      <div class="row"><label>角色卡行为推荐</label><div class="grow">
-        <button id="roleHintBtn" class="ghost" type="button">根据角色卡推荐行为档</button>
-        <span class="hint" id="roleHintRst"></span>
-        <div class="hint" id="roleHintDetail" style="display:none">
-          <label style="display:inline-flex;align-items:center;gap:4px;margin-right:10px">参与度
-            <select id="roleHintPart"><option value="low">安静</option><option value="medium">普通</option><option value="high">活跃</option></select></label>
-          <label style="display:inline-flex;align-items:center;gap:4px">表情包
-            <select id="roleHintSticker"><option value="0">少</option><option value="1">偶尔</option><option value="2">较多</option><option value="3">爱好者</option></select></label>
-          <button id="roleHintApply" class="pri" type="button">应用</button>
-        </div>
-        <div class="hint">建议来自角色卡文本关键词（本地零用量）；应用后保存即生效。</div>
-      </div></div>
-      <div class="row"><label>额外规则</label><div class="grow"><textarea data-cfg="persona.custom_rules" placeholder="如：回复永远不超过 5 个字"></textarea></div></div>
-      <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
-      <div class="row"><label>系统提示词补充</label><div class="grow">
-        <textarea data-cfg="system_prompt.custom" rows="5" spellcheck="false" placeholder="写在这里的文字会追加到系统提示词的最末尾，并标注为「管理员补充系统提示词（最高优先级）」。例：群里有人聊游戏时别插嘴；回复里不要出现「哈哈」两个字。"></textarea>
-        <div class="hint">保存后<b>下一轮就生效</b>（不用重启）。不知道怎么改就先点「预览」，看着真实提示词再写；写坏了点「清空」即可。<b>安全规则与工具协议永远在，改不掉</b>。</div>
-        <div class="btns">
-          <button id="promptPreviewBtn" class="ghost">预览当前系统提示词</button>
-          <button id="promptClearBtn" class="ghost">清空补充</button>
-          <span class="hint" id="promptInfo" style="align-self:center">—</span>
-        </div>
-        <pre id="promptPreview" class="out" style="display:none;max-height:320px;overflow:auto;white-space:pre-wrap"></pre>
-      </div></div>
-      <div class="row"><label>模块开关</label><div class="grow">
-        <label class="hint" style="display:inline-block;margin-right:14px"><input type="checkbox" data-cfg="system_prompt.enable_scene_rules"> 微信场景规则</label>
-        <label class="hint" style="display:inline-block;margin-right:14px"><input type="checkbox" data-cfg="system_prompt.enable_memory_rules"> 记忆使用规则</label>
-        <label class="hint" style="display:inline-block"><input type="checkbox" data-cfg="system_prompt.enable_holiday_hint"> 节日提示</label>
-        <div class="hint">关掉哪一块，系统提示词里就少哪一段（安全规则、工具协议不在可关之列）；改组队或老手才需要动。</div>
-      </div></div>
-      <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
-      <div class="row"><label>撤回后剔除</label><input type="checkbox" data-cfg="store.recall.enabled">
-        <span class="hint">群友撤回消息后，把已经进过上下文的那条从存档里剔除：模型不再引用、记忆不再提炼它（存档条目会保留为「已撤回」标记，便于追溯）</span></div>
-      <div class="mid" id="recallRows">
-        <div class="row"><label>兜底时间窗(秒)</label><div class="grow"><input type="number" min="0" data-cfg="store.recall.window_sec" title="拿不到 newmsgid 时，只在这个时间窗内找同一发送者的最近一条">
-          <span class="hint">微信报文里没有 newmsgid 时才启用兜底匹配；窗口越小越不容易删错</span></div></div>
-        <div class="row"><label>兜底匹配</label><div class="grow"><input type="checkbox" data-cfg="store.recall.heuristic">
-          <span class="hint">关掉＝只认 newmsgid 精确匹配（宁可漏删，也不误删别人刚说的话）</span></div></div>
-        <div class="row"><label>已剔除</label><div class="grow"><span id="recallStat" class="hint">读取中…</span></div></div>
       </div>
       <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
-      <div class="row"><label>主动开话题</label><input type="checkbox" data-cfg="proactive.enabled">
-        <span class="hint">群冷场超过阈值后，按概率主动抛一个话题（默认关；费少量用量）</span></div>
-      <div class="mid" id="proactiveRows">
-        <div class="row"><label>冷场阈值(毫秒)</label><input type="number" min="1" data-cfg="proactive.idle_threshold_ms" title="毫秒；默认 1800000（30 分钟）"></div>
-        <div class="row"><label>检查间隔(毫秒)</label><input type="number" min="1" data-cfg="proactive.check_interval_min_ms" title="毫秒；默认 1800000（30 分钟）"></div>
-        <div class="row"><label>检查上限(毫秒)</label><input type="number" min="1" data-cfg="proactive.check_interval_max_ms" title="毫秒；默认 5400000（90 分钟）"></div>
-        <div class="row"><label>触发概率(小数)</label><input type="number" min="0" max="1" step="0.05" data-cfg="proactive.probability" title="0~1；默认 0.25（25%）"></div>
+      <h3 style="font-size:14px;margin:6px 0">存档：按条屏蔽 / 清除</h3>
+      <div class="desc">上面的「屏蔽存档的会话」管整个会话；这里管<b>单条消息</b>：<b>屏蔽</b>＝留着但不再进上下文/记忆（可随时解除），<b>清除</b>＝真删（不可恢复，必须点名条目）。</div>
+      <div class="btns">
+        <select id="arcChat" style="min-width:200px"></select>
+        <input type="number" id="arcLimit" value="30" min="1" max="200" style="width:80px" title="读取最近多少条">
+        <button id="arcLoad" class="pri">读取该会话存档</button>
+        <button id="arcReload" class="ghost">刷新会话列表</button>
+        <span class="hint" id="arcInfo" style="align-self:center">—</span>
       </div>
-      <div class="btns"><button class="pri" data-save>保存设置（人设与响应）</button></div>
-    </section>
-    <section id="sec-community" class="card" data-sec>
-      <h2>社区与学习</h2>
-      <div class="desc">金句/意见/聊天记录本地导出；可选上传到自配服务器；反应评分引擎让机器人越聊越有趣（防饱和）。</div>
-      <div class="row"><label>评分引擎</label><input type="checkbox" data-cfg="scoring.enabled" checked><span class="hint">本地正反馈评分（零用量）；群友回应热烈→高效反应进入提示词参考</span></div>
-      <div class="row"><label>种子库</label><input type="checkbox" data-cfg="scoring.seed_library" checked><span class="hint">内置有趣开场/接梗 small-sample 参考</span></div>
-      <div class="row"><label>在线评分</label><input type="checkbox" data-cfg="scoring.online_scoring"><span class="hint">每次 reaction 后调 LLM 打分（费用量，默认关）</span></div>
-      <div class="row"><label>热度衰减</label><input type="checkbox" data-cfg="scoring.heat_decay" checked><span class="hint">老梗降权，防饱和</span></div>
-      <div class="row"><label>导入金句种子</label><div class="grow"><textarea id="seedImport" rows="2" placeholder="粘贴金句墙导出的文本，每行一条…"></textarea>
-        <div class="row"><label>自定义金句(选单)</label><div class="grow"><input type="text" id="seedCustomTxt" placeholder="输入一句你的自定义金句，点「添加」进库（学习/接梗参考）" style="flex:1"><button id="seedCustomAdd" class="ghost">添加</button><span id="seedCustomRst" class="hint"></span></div></div>
-        <div class="btns"><button id="seedImportBtn" class="ghost">导入种子库</button><button id="seedImportFile" class="ghost">选择文件导入</button><input type="file" id="seedFile" accept=".txt,.json,text/plain,application/json" style="display:none"><span class="hint" id="seedImportRst"></span></div>
-        <div class="hint">粘贴导入（每行一条）；或「选择文件导入」读 txt/json 文件——导入自动查重（精确+72% 相似度）后写入并立即生效。</div>
-      </div></div>
-      <div class="row"><label>导出目录</label><div class="grow"><input type="text" data-cfg="community.export_dir" placeholder="exports">
-        <div class="hint">金句/意见/聊天记录导出到项目根下该目录（相对路径）。</div></div></div>
-      <div class="row"><label>导出</label><div class="grow">
-        <div class="btns">
-          <button id="exportHolyshits" class="ghost">导出金句</button>
-          <button id="exportFeedback" class="ghost">导出意见反馈</button>
-          <button id="exportMessages" class="ghost">导出聊天记录</button>
-          <button id="openExportDir" class="ghost">打开导出文件夹</button>
-        </div>
-        <div class="hint" id="exportRst">导出为本地文件（community.export_dir）；「打开导出文件夹」直接用资源管理器定位。</div>
-      </div></div>
-      <div class="row"><label>社区上传</label><input type="checkbox" data-cfg="community.upload_enabled"><span class="hint">开启后金句/意见可 POST 到下方 URL（需自配服务器）</span></div>
-      <div class="row"><label>金句上传 URL</label><div class="grow"><input type="text" data-cfg="community.holyshits_upload_url" placeholder="留空=仅本地导出"></div></div>
-      <div class="row"><label>意见反馈上传 URL</label><div class="grow"><input type="text" data-cfg="community.feedback_upload_url" placeholder="留空=仅本地导出"></div></div>
-      <div class="row"><label>上传动作</label><div class="grow">
-        <div class="btns" style="justify-content:flex-start;gap:8px">
-          <button id="openSeedBtn" class="ghost">打开种子库</button>
-          <button id="uploadSeeds" class="ghost" disabled>确认上传金句</button>
-          <button id="uploadFeedback" class="ghost" disabled>确认上传意见</button>
-          <span class="hint" id="uploadRst">默认关闭（需勾选「社区上传」+填对应 URL）；确认后上传到你的服务器。</span>
-        </div>
-      </div></div>
-      <div class="row"><label>意见上传 URL</label><div class="grow"><input type="text" data-cfg="community.feedback_upload_url" placeholder="留空=仅本地导出"></div></div>
-      <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
-      <div class="row"><label>上云（预留）</label><input type="checkbox" data-cfg="cloud.enabled">
-        <span class="hint">默认关：<b>关着时一个字节都不会上传</b>。这里只把接口留好——接收端网址填进去、点「测试连通」看通不通；要真发再打开这个开关</span></div>
-      <div class="mid" id="cloudRows">
-        <div class="row"><label>人设接收端</label><div class="grow"><div class="btns" style="justify-content:flex-start;gap:8px">
-          <input type="text" data-cfg="cloud.persona_url" placeholder="https://你的服务器/hook/persona" style="flex:1">
-          <button class="ghost" data-cloud-test="persona">测试连通</button>
-        </div></div></div>
-        <div class="row"><label>名单接收端</label><div class="grow"><div class="btns" style="justify-content:flex-start;gap:8px">
-          <input type="text" data-cfg="cloud.blocklist_url" placeholder="https://你的服务器/hook/blocklist" style="flex:1">
-          <button class="ghost" data-cloud-test="blocklist">测试连通</button>
-        </div></div></div>
-        <div class="row"><label>接收端口令</label><div class="grow"><input type="password" data-cfg="cloud.token" placeholder="对方要求鉴权时才填（Bearer）">
-          <div class="hint">保存过即以掩码显示，要改就重新填。探测连通<b>不带口令</b>；只有真上传时才带上。接收端要满足什么，见 <b>docs\上云接口契约.md</b>（方法/路径/请求体/响应约定都写在里面，可直接发给对方）</div>
-        </div></div>
-        <div class="row"><label>鉴权方式</label><div class="grow"><select data-cfg="cloud.auth_style">
-          <option value="bearer">放请求头</option>
-          <option value="body_key">放请求体</option></select>
-          <span class="hint">按接收端要求选。默认<b>放请求头</b>（<b>Bearer</b>，收到 2xx 就算成功）；<b>放请求体</b>＝凭据放在请求体的 <b>key</b> 字段里、<b>且要求回包 ok:true 才算成功</b>——自建站常常"路径写错也回 200"，这时只有第二种能分清"真收下了"和"没接住"。</span></div></div>
-        <div class="row"><label>连通结果</label><div class="grow"><span id="cloudStat" class="hint">还没测过</span></div></div>
+      <div id="arcList" style="max-height:300px;overflow-y:auto;border:1px solid var(--bd);border-radius:10px;padding:10px 12px;background:var(--input-bg)">
+        <div class="hint" style="padding:10px;text-align:center">点「读取该会话存档」后，这里按条显示（#编号 发送者：内容），每行可单独屏蔽 / 解除 / 清除。</div>
       </div>
     </section>
-    <section id="sec-feedback" class="card" data-sec>
+<section id="sec-feedback" class="card" data-sec>
       <h2>反馈</h2>
       <div class="desc">有什么想说的、想让它变成什么样的，写在这儿点提交就行。</div>
       <div class="desc" style="margin-top:-2px"><b>有问题一定要反馈 —— 每一次反馈都会让体验变得更好。</b>你遇到的那一下，往往就是它最该改的地方。
@@ -2044,7 +2144,7 @@ th{color:var(--tx2);font-weight:500}
         <div class="row"><label>提交记录</label><div class="grow"><span id="fbRecent" class="hint">读取中…</span></div></div>
       </div>
     </section>
-    <section id="sec-send" class="card" data-sec>
+<section id="sec-send" class="card" data-sec>
       <h2>发送限制</h2>
       <div class="desc">真人化间隔与限频，防止刷屏/封号风险。</div>
       <div class="mid">
@@ -2077,25 +2177,70 @@ th{color:var(--tx2);font-weight:500}
         <span class="hint">勾选=用 系统无障碍接口 SetValue 后台直写输入框（不点输入框/不粘贴）；不勾=点输入框+粘贴（兼容部分微信版本）</span></div>
       <div class="btns"><button class="pri" data-save>保存设置（发送限制）</button></div>
     </section>
-    <section id="sec-search" class="card" data-sec>
-      <h2>联网搜索</h2>
-      <div class="row"><label>启用</label><input type="checkbox" data-cfg="web_search.enabled"></div>
-      <div class="row"><label>引擎</label><div class="grow"><select data-cfg="web_search.provider" id="wsProvider">
-        <option value="bing">Bing（免key）</option><option value="deepseek">DeepSeek</option>
-        <option value="zhipu">智谱</option><option value="bocha">博查</option>
-        <option value="baidu">百度千帆</option><option value="metaso">秘塔</option><option value="custom">自定义</option></select>
-        <div class="hint" id="wsHint">Bing 免 Key；其余引擎填「引擎 Key」与「接口地址」（留空=官方默认；DeepSeek 另有模型、智谱另有 engine）。</div></div></div>
-      <div class="row"><label>结果数</label><div class="grow"><input type="number" min="1" max="20" data-cfg="web_search.max_results"></div></div>
-      <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
-      <div class="desc">当前引擎参数（切换引擎自动带出对应小节，保存真实落盘 web_search.&lt;provider&gt;）：</div>
-      <div class="row"><label>引擎 Key</label><div class="grow"><input type="password" id="wsKey" placeholder="贴该引擎的 密钥" autocomplete="off"></div></div>
-      <div class="row"><label>接口地址</label><div class="grow"><input type="text" id="wsUrl" placeholder="留空=官方默认"></div></div>
-      <div class="row" data-ws="deepseek"><label>模型</label><div class="grow"><input type="text" id="wsModel" placeholder="deepseek-chat"></div></div>
-      <div class="row" data-ws="zhipu"><label>engine</label><div class="grow"><input type="text" id="wsEngine" placeholder="search_std"></div></div>
-      <div class="row"><label>请求数</label><div class="grow"><input type="number" id="wsCount" min="1" max="50"></div></div>
-      <div class="btns"><button class="pri" data-save>保存设置（联网搜索）</button></div>
+<section id="sec-log" class="card" data-sec>
+      <div class="sec-hd"><h2>运行日志</h2><span class="st" id="stLog">读取中</span></div>
+      <div class="desc">机器人的动作与失败原因都在这里；出问题先看这一屏，再谈别的。</div>
+      <div class="btns" style="margin-bottom:10px">
+        <button id="refreshLog" class="ghost">刷新</button>
+        <label class="hint" style="align-self:center"><input type="checkbox" id="autolog" checked> 自动刷新</label>
+      </div>
+      <pre class="out" id="log" style="height:380px">加载中…</pre>
     </section>
-    <section id="sec-server" class="card" data-sec>
+<section id="sec-vermat" class="card" data-sec>
+      <h2>版本能力矩阵</h2>
+      <div class="desc">当前「微信版本 × 适配层版本」下每个能力的实测状态。**没有实测记录的版本对按未知处理，但默认照常发送**（只在这里标出来提醒你）；想改成「没实测就停手」可在配置里开 <code>version_gate.strict</code>，开了之后才需要点「本次允许发送」临时放行。</div>
+      <div class="row"><label>当前版本对</label><div class="grow"><b id="vmVer">检测中…</b></div></div>
+      <div class="row"><label>版本门</label><div class="grow">
+        <b id="vmGate">检测中…</b>
+        <div class="btns" style="margin-top:6px"><button id="vmAllow" class="ghost">本次允许发送</button></div>
+        <div class="hint">只对本次运行有效（重启后重新拦），我们不会把"放行"写进配置。</div>
+      </div></div>
+      <div id="vmList" class="hint"></div>
+      <div class="row"><label>后台能力</label><div class="grow">
+        <b id="bgHead">检测中…</b>
+        <div id="bgList" class="hint"></div>
+        <div class="hint">这份表是<b>单一事实源</b>（agent/bg_status.py）：写"全程后台"的路径可以不动光标、不要求窗口可见（<b>可能短暂置前，随后自动还回</b>——实测：取 GUI / 朋友圈滚动 / 表情面板 <b>0 秒</b>、发文字约 1 秒、切会话 3~7 秒、<b>切会话失败重试可达约 15 秒</b>。<b>一定非得走前台</b>的只有三项：朋友圈点赞/评论/发朋友圈 · 转发视频文件那一下（系统选择文件框）· UI 标定与真鼠标兜底档（默认关））；写"真鼠标"的会动你的光标，勾上下面这个开关就让它们直接跳过并如实告诉你。</div>
+      </div></div>
+      <div class="row"><label>只走后台</label><input type="checkbox" data-cfg="wechat.background_only">
+        <span class="hint"><b>默认开</b>（老版本留下的配置会被一次性迁移成开）。开了之后：<b>朋友圈点赞·评论 / 发朋友圈 / UI 标定</b> 一律<b>跳过并说明原因</b>（这几条确实只能用真鼠标）；而 <b>拍一拍 / 引用</b> 已经改成<b>走投递</b>（不动光标（可能短暂置前（2026-09-18 本机实测：发文字约 1 秒｜切会话 3~7 秒｜切会话失败重试可达约 15 秒），随后自动还回）），<b>不再被这个开关拦住</b>。关掉它上面那三条才可用——但它们是<b>真实鼠标</b>（移动光标 + 发全局点击），点的是<b>光标所在的那个窗口</b>（可能是你正在用的程序，比如这个控制台），所以请在电脑前时再关。发送文字、图片、表情、切会话、刷朋友圈一直走后台投递。</span></div>
+      <div class="row"><label>恢复后补处理</label><input type="checkbox" data-cfg="wechat.replay_on_resume">
+        <span class="hint">机器人暂停时群里照常有人说话。<b>默认不补</b>：恢复后只从那一刻往后回，暂停期间那些当没看见。<b>勾上就补</b>：恢复后按消息顺序把暂停期间的积压一批批处理——<b>停得越久、恢复瞬间回复越密集</b>（可能连回几十条），想清楚再勾。</span></div>
+      <div class="row"><label>搜索失败时扫会话列表</label><input type="checkbox" data-cfg="wechat.scroll_list_fallback">
+        <span class="hint">**默认关**。切会话现在是「在搜索框里打名字 → 点结果行」；搜索没成时默认**停手并说明原因**。打开这个开关，它才会退回老路——在会话列表里找行、必要时滚轮往下翻（**滚轮不动你的光标，但会话列表会在你眼前滚动**，看着就像它在划你的列表）。想成功率优先、不介意列表动几下，就打开它。</span></div>
+      <div class="row"><label>发表情方式</label><select data-cfg="wechat.emoji_send_mode">
+        <option value="auto">自动：先真表情，面板不通就发图片</option>
+        <option value="real">只用真表情：走微信表情面板</option>
+        <option value="image">只用图片：对方看到的是图片</option>
+      </select>
+        <span class="hint">两条路的<b>代价写清楚</b>，你按自己的取舍选。<b>真表情</b>走微信表情面板——它是"浮层"，
+        <b>必须被激活才能渲染</b>，所以那一下<b>前台会闪</b>（实测约 2~7 秒；而且和"摁住微信"冲突，得临时松手）。
+        <b>发图片</b>走"剪贴板 + 输入框右键粘贴"——<b>不需要浮层、全程能摁住</b>（实测 7.2 秒发出、
+        微信占前台 0.05 秒），代价是<b>对方收到的是图片</b>（动态表情会变成静态首帧）。默认"自动"。</span></div>
+      <div class="row"><label>图标指纹</label><div class="grow">
+        <b id="ufpHead">检测中…</b>
+        <div class="btns" style="margin-top:6px">
+          <button id="ufpTake" class="ghost">重新取指纹</button>
+          <button id="ufpForget" class="ghost">丢掉旧指纹</button>
+        </div>
+        <div id="ufpList" class="hint"></div>
+        <div class="hint">点任何图标之前，程序会先比一次<b>图标指纹</b>（目标点周围 48×48 的 dHash，按「微信版本 × 渲染区尺寸 × 缩放」分开存）。指纹<b>明确对不上</b>就停手并告诉你原因——那说明这个位置现在不像原来那个图标（微信更新了 UI / 窗口改了尺寸），照着过期比例盲点只会点到别处。没有记录或窗口最小化抓不到图时放行但留痕（不把第一次用锁死）。</div>
+      </div></div>
+      <div class="row"><label>待拍板</label><div class="grow">
+        <b id="pdStat">检测中…</b>
+        <div class="btns" style="margin-top:6px"><button id="pdOpen" class="ghost">版本不匹配怎么办</button></div>
+        <div class="hint">不匹配时开一张单：一键升级适配层 · 更新本体 · 仅本次允许 · 微信本身要处理。× 等于什么都不做，单子留着、同一对版本不再追问。</div>
+      </div></div>
+      <div class="row"><label>最近表态</label><div class="grow"><b id="vmDec">暂无</b></div></div>
+      <div class="row"><label>一键修</label><div class="grow">
+        <b id="actStat">没有在跑的事</b>
+        <div class="btns" style="margin-top:6px">
+          <button id="actHeal" class="ghost">依赖自愈</button>
+          <button id="actUp" class="ghost">升级适配层</button>
+        </div>
+        <div class="hint">两条都在后台跑，跑完这一行显示结果 · 都不动微信本体。</div>
+      </div></div>
+    </section>
+<section id="sec-server" class="card" data-sec>
       <h2>服务器</h2>
       <div class="desc">控制台的监听地址与访问口令。默认只听本机；改完要重启控制台才生效。</div>
       <div class="row"><label>监听地址</label><div class="grow"><input type="text" data-cfg="server.host" title="默认只允许本机访问"></div></div>
@@ -2109,7 +2254,125 @@ th{color:var(--tx2);font-weight:500}
         <div class="hint">概览卡的「今日/本周/本月」用量卡按此周期归零重计（历史保留 24 期）。</div></div></div>
       <div class="btns"><button class="pri" data-save>保存设置（服务器）</button></div>
     </section>
-    <section id="sec-ui" class="card" data-sec>
+<section id="sec-advanced" class="card" data-sec>
+      <h2>调试 · 高级功能</h2>
+      <div class="desc">一般用户不用、其他分区没覆盖的可调项（行为引擎完整参数 / UI 图标库 / 学习机制）。</div>
+
+      <hr style="border:none;border-top:1px solid var(--bd);margin:14px 0">
+      <div class="desc">人性化行为完整参数（一般用户不用；微信卡只有概率，这里调冷却/每日上限/开关）：</div>
+      <div class="mid">
+        <div class="row"><label>收藏表情-冷却(秒)</label><input type="number" min="0" data-cfg="behavior.collect_emoji.cooldown_s"></div>
+        <div class="row"><label>收藏表情-每日上限</label><input type="number" min="0" data-cfg="behavior.collect_emoji.daily_limit"></div>
+      </div>
+      <div class="mid">
+        <div class="row"><label>回发表情-冷却(秒)</label><input type="number" min="0" data-cfg="behavior.send_emoji.cooldown_s"></div>
+        <div class="row"><label>回发表情-每日上限</label><input type="number" min="0" data-cfg="behavior.send_emoji.daily_limit"></div>
+      </div>
+      <div class="mid">
+        <div class="row"><label>@群友-冷却(秒)</label><input type="number" min="0" data-cfg="behavior.at_member.cooldown_s"></div>
+        <div class="row"><label>@群友-每日上限</label><input type="number" min="0" data-cfg="behavior.at_member.daily_limit"></div>
+      </div>
+      <div class="mid">
+        <div class="row"><label>点赞-每日上限</label><input type="number" min="0" data-cfg="behavior.like_moments.daily_limit"></div>
+        <div class="row"><label>点赞-冷却(秒)</label><input type="number" min="0" data-cfg="behavior.like_moments.cooldown_s"></div>
+      </div>
+      <div class="desc">朋友圈（刷/点赞/评论/发布；默认全关=机器人不主动碰朋友圈，打开后按概率低频触发）：</div>
+      <div class="mid">
+        <div class="row"><label>刷朋友圈</label><input type="checkbox" data-cfg="behavior.moments_surf.enabled"><span class="hint">开启后按概率自动刷（截图给模型看更耗用量，频率请保守）</span></div>
+        <div class="row"><label>刷-概率</label><input type="number" min="0" max="1" step="0.05" data-cfg="behavior.moments_surf.probability"></div>
+      </div>
+      <div class="mid">
+        <div class="row"><label>刷-每日上限</label><input type="number" min="0" data-cfg="behavior.moments_surf.daily_limit"></div>
+        <div class="row"><label>刷-冷却(秒)</label><input type="number" min="0" data-cfg="behavior.moments_surf.cooldown_s"></div>
+      </div>
+      <div class="mid">
+        <div class="row"><label>点赞</label><input type="checkbox" data-cfg="behavior.like_moments.enabled"></div>
+        <div class="row"><label>评论朋友圈</label><input type="checkbox" data-cfg="behavior.moments_comment.enabled"><span class="hint">默认关（评论是有感而发不该高频）</span></div>
+      </div>
+      <div class="mid">
+        <div class="row"><label>评-概率</label><input type="number" min="0" max="1" step="0.05" data-cfg="behavior.moments_comment.probability"></div>
+        <div class="row"><label>评-每日上限</label><input type="number" min="0" data-cfg="behavior.moments_comment.daily_limit"></div>
+      </div>
+      <div class="mid">
+        <div class="row"><label>发朋友圈</label><input type="checkbox" data-cfg="behavior.moments_publish.enabled"><span class="hint">默认关（公开发布，慎重）</span></div>
+        <div class="row"><label>发-概率</label><input type="number" min="0" max="1" step="0.05" data-cfg="behavior.moments_publish.probability"></div>
+      </div>
+      <div class="mid">
+        <div class="row"><label>发-每日上限</label><input type="number" min="0" data-cfg="behavior.moments_publish.daily_limit"></div>
+        <div class="row"><label>发-冷却(秒)</label><input type="number" min="0" data-cfg="behavior.moments_publish.cooldown_s"></div>
+      </div>
+      <div class="desc">风险闸门（默认只管内容与任务层；节奏类默认不限，交给你自己把控）</div>
+      <div class="hint" style="margin-top:0">
+        默认把关的是<b>内容与任务</b>：同一内容短时间发给多个会话（群发特征）· 同会话重复内容 · 链接堆积（只记录）· 你自己填的禁止词。<br>
+        频率与夜间静默默认<b>不限 / 关闭</b>；想自己掐节奏就在下面填数字，<b>0＝不限</b>。账号风险由使用者自行把控与承担。
+      </div>
+      <div class="mid">
+        <div class="row"><label>闸门总开关</label><input type="checkbox" data-cfg="risk.enabled"><span class="hint">取消勾选＝完全不做内容/任务把关</span></div>
+        <div class="row"><label>暂停所有发送</label><input type="checkbox" data-cfg="risk.paused"><span class="hint">勾上＝立刻停发（本机生效，不会给对方发任何提示）</span></div>
+      </div>
+      <div class="mid">
+        <div class="row"><label>每分钟上限</label><input type="number" min="0" data-cfg="risk.per_minute"><span class="hint">0＝不限</span></div>
+        <div class="row"><label>每小时上限</label><input type="number" min="0" data-cfg="risk.per_hour"><span class="hint">0＝不限</span></div>
+      </div>
+      <div class="mid">
+        <div class="row"><label>每天上限</label><input type="number" min="0" data-cfg="risk.per_day"><span class="hint">0＝不限</span></div>
+        <div class="row"><label>单会话每小时</label><input type="number" min="0" data-cfg="risk.per_chat_per_hour"><span class="hint">0＝不限</span></div>
+      </div>
+      <div class="mid">
+        <div class="row"><label>同会话最小间隔(秒)</label><input type="number" min="0" data-cfg="risk.min_gap_seconds"><span class="hint">0＝不限</span></div>
+        <div class="row"><label>群发判定：会话数</label><input type="number" min="0" data-cfg="risk.broadcast_chats"><span class="hint">同一内容窗口内发给 N 个不同会话即判群发；0＝关</span></div>
+      </div>
+      <div class="mid">
+        <div class="row"><label>群发判定：窗口(秒)</label><input type="number" min="0" data-cfg="risk.broadcast_window_seconds"></div>
+        <div class="row"><label>单条链接上限</label><input type="number" min="0" data-cfg="risk.max_links"><span class="hint">超过只记录不拦</span></div>
+      </div>
+      <div class="mid">
+        <div class="row"><label>重复内容窗口(秒)</label><input type="number" min="0" data-cfg="risk.dup_window_seconds"></div>
+        <div class="row"><label>重复判定最短字数</label><input type="number" min="0" data-cfg="risk.dup_min_len"></div>
+      </div>
+      <div class="row"><label>禁止词</label><div class="grow"><input data-cfg="risk.block_keywords" placeholder="逗号分隔，命中即拦下；留空＝不启用"></div></div>
+      <div class="row"><label>观察词</label><div class="grow"><input data-cfg="risk.watch_keywords" placeholder="逗号分隔，命中只记录不拦"></div></div>
+      <div class="desc">微信 UI 图标库（一次性标定；自动检测侧栏图标序列，坐标按窗口尺寸换算）：</div>
+      <div class="row"><label>当前布局</label><div class="grow">
+        <span class="hint" id="uiLayoutStat">加载中…</span>
+        <button id="uiLayoutReload" class="ghost" style="margin-left:8px">刷新</button>
+        <button id="uiRecalibrate" class="pri" style="margin-left:8px">重新标定（接管鼠标）</button>
+        <div class="hint">自动检测微信侧栏图标序列写入 data/ui_layout.json；请确保微信窗口在前台再点（会瞬间点击左栏）</div>
+      </div></div>
+      <div class="desc">语言风格训练（机器学习）</div>
+      <div class="hint" style="margin-top:0">
+        机制：机器人每次发言后，若群友在 24h 内热烈回应（@ 它 / 接话 / 追问）→ 该条话术加分；冷场 → 降权。热度半衰期 7 天，老梗自动衰减，防饱和。<br>
+        <b>不变人原则</b>：风格学习<b>只给内置的 DeepSeek 小鲸鱼用</b>——它学的是"话怎么说才机灵"，不是学群友的口癖。你自己导入的角色卡（动漫角色 / 原创 / 真人）<b>不参与风格学习</b>：角色设定是绝对基准、权重最高，参考素材只能"换衣服不能换魂"。
+      </div>
+      <div style="display:flex;gap:12px;align-items:center;margin:14px 0 18px;padding:14px;border-radius:14px;background:rgba(63,168,240,.08);border:1px solid var(--blue-line)">
+        <button id="learnApply" class="pri" title="点击开启机器学习，机制会真的开始工作（有群友回应时学习）" style="font-weight:700">确定学习</button>
+        <button id="learnEval" class="ghost" title="模型按评分细则评估：学习前后对话质量变化，打分并说明提升多少" style="font-weight:700">学习评估</button>
+        <span id="learnRst" class="hint" style="flex:1"></span>
+      </div>
+      <div class="row"><label>种子库状态</label><div class="grow">
+        <span class="hint" id="seedStats" style="display:inline-block">加载中…</span>
+        <button id="seedReload" class="ghost" style="margin-left:8px">刷新</button>
+        <span class="hint">趣味种子库（内置官方 212 条 + 你导入的金句，合计可在下方状态看到）；「社区与学习」页可导入金句墙种子。</span>
+      </div></div>
+      <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
+      <div class="row"><label>计时提醒</label><input type="checkbox" data-cfg="timers.enabled">
+        <span class="hint">群友在对话里让你「N 分钟后提醒」，模型就调 set_timer —— <b>只能设到当前会话</b>（工具参数里没有"发给谁"），每条会话最多挂 3 条、全局最多 20 条、30 秒~7 天；到点发送<b>仍然过风险闸门</b>，暂停/禁言期间不发、恢复后补发</span></div>
+      <div class="row"><label>节日问候</label><div class="grow"><select data-cfg="holiday.mode">
+        <option value="off">off：完全不提</option>
+        <option value="passive">passive：只在对话里自然带一句（默认，绝不主动发）</option>
+        <option value="active">active：到点主动问候（必须填下面的白名单）</option></select>
+        <div class="hint">默认 passive ＝ 只往提示词里加一句「今天是 X 节」，<b>一条消息都不会主动发</b>；active 才主动发，且受"白名单 + 每天每会话一次 + 只在 9~21 点"三重限制</div>
+      </div></div>
+      <div class="mid" id="holidayRows">
+        <div class="row"><label>问候白名单</label><div class="grow">
+          <textarea data-cfg="holiday.greet_chats" rows="2" spellcheck="false" placeholder="如：群deepseek, 文件传输助手（逗号或换行分隔）"></textarea>
+          <div class="hint">只有名单里的会话会被主动问候；<b>留空＝即使选了 active 也不会主动发</b>（防"节日变群发"）</div>
+        </div></div>
+        <div class="row"><label>起始小时</label><input type="number" min="0" max="20" data-cfg="holiday.greet_hour"><span class="hint">默认 9：只在 9 点到 21 点之间主动问候</span></div>
+      </div>
+      <div class="row"><label>提醒/节日现状</label><div class="grow"><span id="timerStat" class="hint">读取中…</span></div></div>
+    </section>
+<section id="sec-ui" class="card" data-sec>
       <h2>界面适配（缩放 / 遮挡 / 主题）</h2>
       <div class="desc">这台机器的显示缩放、遮挡清理与主题。点击位置对不上时先来这里。</div>
       <div class="row"><label>显示缩放</label><div class="grow"><select data-cfg="ui.coord_scale">
@@ -2145,7 +2408,17 @@ th{color:var(--tx2);font-weight:500}
         <span class="hint">开启后：进入页面把地址栏路径替换成随机乱码（保护访问地址不被他人复制直接登入；刷新靠会话 Cookie）。端口号无法乱码（浏览器必须用真实端口连接）。默认关。</span></div>
       <div class="btns"><button class="pri" data-save>保存设置（界面适配）</button></div>
     </section>
-    <section id="sec-cursor" class="card" data-sec>
+<section id="sec-json" class="card" data-sec>
+      <h2>完整配置文件（高级）</h2>
+      <div class="desc">全部配置的配置文件。只在面板里找不到对应开关时才动它，保存前先备份。</div>
+      <textarea id="rawjson" spellcheck="false" style="width:100%;min-height:260px;font-family:ui-monospace,Consolas,monospace;font-size:12.5px;background:var(--input-bg);border:1px solid var(--bd);border-radius:8px;padding:10px;color:var(--tx)"></textarea>
+      <div class="btns">
+        <button id="saveAll" class="pri">保存全部设置</button>
+        <button id="rawJsonBtn" class="ghost">新窗口查看配置文件</button>
+      </div>
+      <div class="hint">保存后需重启才能完全生效的部分：模型/人设/白名单等；暂停恢复、测试 API 即时生效。可改可不改：一般用上面各分区即可。</div>
+    </section>
+<section id="sec-cursor" class="card" data-sec>
       <h2>光标设置</h2>
       <div class="desc">把鼠标指针换成鲸鱼（或你自己的图片），点击时向下点头；默认鲸鱼小蓝鲸（22）。</div>
       <div class="row"><label>启用鲸鱼光标</label><input type="checkbox" data-cfg="ui.whale_cursor"></div>
@@ -2170,7 +2443,7 @@ th{color:var(--tx2);font-weight:500}
       <div class="hint">时长公式（dist=拖拽距离 px）：蠕动 260×dist/100×系数④（600~2400ms）；纸飞机 170×dist/100×系数+0.58s（变形/翻回）；扎入 90×dist/100×系数+0.78s（含 0.5s 消失+冒出）。可在控制台 Console 看每次返回的日志（如 [whale-return]）。</div>
       <div class="btns"><button class="pri" id="cursorSaveBtn">保存光标设置</button></div>
     </section>
-    <section id="sec-wavefx" class="card" data-sec>
+<section id="sec-wavefx" class="card" data-sec>
       <h2>水光波纹（鼠标投石入水）</h2>
       <div class="desc">鼠标像石子投入湖面：一道波纹从鼠标处肉眼可见地一波波荡开，扩散范围=光标所在的整个模块（顶栏/导航栏/功能卡），到模块边缘极强衰减、绝不越界；拖动越快荡得越快。所有参数即时生效。</div>
       <div class="row"><label>启用水光波纹</label><input type="checkbox" data-cfg="ui.wave_fx.enabled"><span class="hint">关闭后完全无扭曲</span></div>
@@ -2184,26 +2457,6 @@ th{color:var(--tx2);font-weight:500}
       <div class="row"><label>波纹荡开速度</label><input type="number" min="0.1" max="1.5" step="0.05" data-cfg="ui.wave_fx.ring_speed"><span class="hint">一圈≈1/速度 秒（0.4≈2.5s 一波，肉眼可见）</span></div>
       <div class="btns"><button class="pri" id="wavefxApply" style="background:linear-gradient(135deg,#30B0C8,#0E8FB0)">应用水光波纹设置</button></div>
     </section>
-    <section id="sec-log" class="card" data-sec>
-      <h2>运行日志</h2>
-      <div class="desc">机器人的动作与失败原因都在这里；出问题先看这一屏，再谈别的。</div>
-      <div class="btns" style="margin-bottom:10px">
-        <button id="refreshLog" class="ghost">刷新</button>
-        <label class="hint" style="align-self:center"><input type="checkbox" id="autolog" checked> 自动刷新</label>
-      </div>
-      <pre class="out" id="log" style="height:380px">加载中…</pre>
-    </section>
-    <section id="sec-json" class="card" data-sec>
-      <h2>完整配置文件（高级）</h2>
-      <div class="desc">全部配置的配置文件。只在面板里找不到对应开关时才动它，保存前先备份。</div>
-      <textarea id="rawjson" spellcheck="false" style="width:100%;min-height:260px;font-family:ui-monospace,Consolas,monospace;font-size:12.5px;background:var(--input-bg);border:1px solid var(--bd);border-radius:8px;padding:10px;color:var(--tx)"></textarea>
-      <div class="btns">
-        <button id="saveAll" class="pri">保存全部设置</button>
-        <button id="rawJsonBtn" class="ghost">新窗口查看配置文件</button>
-      </div>
-      <div class="hint">保存后需重启才能完全生效的部分：模型/人设/白名单等；暂停恢复、测试 API 即时生效。可改可不改：一般用上面各分区即可。</div>
-    </section>
-
   </main>
 </div>
 
@@ -3037,6 +3290,141 @@ async function loadBalance(){
   }catch(e){ el.textContent='查询失败'; }
 }
 
+/* ── 面板状态徽章（2026-09-22 三主题重构 · 可用性）────────────────────────────
+   用户口径：「每个面板要有：一句话标题、**当前状态一眼可读**（在跑／没连上／待更新／已就绪）…
+   不许"点了没反应"」。
+   设计三条：
+   ① **单一数据源**：全部从 `/api/status` 那一份 `s` 推出来（与顶栏/侧栏同一份），
+      不另开接口、不猜——拿不到就写「读取中 / 读不到」，绝不显示成"正常"。
+   ② **一个函数管全部**：`setSt(id, level, text, tip)`，level ∈ ok/warn/err/info/idle。
+   ③ 徽章文案是**短状态词**（≤8 字），细节放 title 悬停——面板头一行扫过去就知道该不该点进去。
+   注意：这里新增的文案要同步进 `agent/whale_text.py` 的 DICT（whale_selftest 覆盖 ≥99%）。 */
+function setSt(id, level, text, tip){
+  const el = document.getElementById(id);
+  if(!el) return;
+  el.className = 'st' + (level && level !== 'idle' ? (' ' + level) : '');
+  el.textContent = text;
+  if(tip) el.title = tip; else el.removeAttribute('title');
+}
+function refreshBadges(s){
+  try{
+    const paused = !!s.paused, wxOn = !!s.wechat_connected;
+    const _wa = s.wechat_attach || {};
+    const wv = s.wechat_version || {};
+    const vg = s.version_gate || {};
+    const vm = s.version || {};
+    /* 概览：机器人整体的"动没动"——暂停/在跑是用户最关心的一件事 */
+    setSt('stOverview', paused ? 'warn' : (wxOn ? 'ok' : 'warn'),
+          paused ? '已暂停' : (wxOn ? '运行中' : '微信没连上'),
+          paused ? '机器人已暂停：不会回复任何消息。去顶部点「恢复」继续。'
+                 : (wxOn ? '机器人在跑，微信已接上。' : ('微信没接上' + (_wa.short ? ('：' + _wa.short) : '') + '；每 10 秒自动重试。')));
+    /* 微信：连接 + 监听目标数（0 个 ＝ 群里 @ 也不回，必须点出来） */
+    const _n = (s.listen && typeof s.listen.groups === 'number') ? ((s.listen.groups||0) + (s.listen.privates||0)) : null;
+    const _zero = !!(s.listen && s.listen.groups === 0 && s.listen.privates === 0);
+    setSt('stWechat', !wxOn ? 'err' : (_zero ? 'warn' : 'ok'),
+          !wxOn ? '没连上' : (_zero ? '要勾群' : ('已连接 · 监听 ' + _n + ' 个')),
+          !wxOn ? ('微信客户端没接上' + (_wa.short ? ('：' + _wa.short) : '') + '；去看看下面的逐步诊断')
+                : (_zero ? '微信接上了，但**一个监听目标都没有**——群里 @ 它也不会回。请在本页勾选要监听的群/人。'
+                         : ('微信已接上，正在监听 ' + _n + ' 个会话（群 ' + (s.listen.groups||0) + ' · 私聊 ' + (s.listen.privates||0) + '）。')));
+    /* 机器人：拿不到配置就算 idle（不改后端、只看 /api/status 是否带出来） */
+    setSt('stBot', paused ? 'warn' : 'ok', paused ? '停着' : '已就绪',
+          paused ? '机器人已暂停，档位改了也不会生效；先恢复再改。' : '档位与昵称改完保存即生效。');
+    /* 模型：有没有填密钥（后端把结果放在 model 段；拿不到就如实写"读取中"） */
+    try{
+      const mo = s.model || {};
+      if(typeof mo.configured === 'boolean'){
+        setSt('stModel', mo.configured ? 'ok' : 'err',
+              mo.configured ? (mo.name ? String(mo.name).slice(0,10) : '已配置') : '没填密钥',
+              mo.configured ? ('当前模型：' + (mo.name || '（没记名字）') + '；换厂商/换模型都在本页。')
+                            : '还没填 API 密钥——模型不会工作。在本页填好密钥点保存即可。');
+      }else{
+        setSt('stModel', 'idle', '读取中', '这一版后台没给模型配置状态，填入后点保存即可。');
+      }
+    }catch(e){ setSt('stModel', 'idle', '读取中', ''); }
+    /* 版本能力矩阵：allowed / 实测 / 严格档拦停 三态（口径与面板里那段一致，别另立说法） */
+    try{
+      const _allow = (vg && typeof vg.allow === 'boolean') ? vg.allow : null;
+      const verTxt = (vm.wechat && vm.wechat !== 'unknown') ? ('微信 ' + vm.wechat) : '微信版本读不到';
+      if(_allow === null) setSt('stVermat', 'idle', '读不到', '版本门读数读不到：不影响发送。');
+      else if(_allow) setSt('stVermat', vg.level === 'ok' ? 'ok' : 'info',
+            vg.level === 'ok' ? '已实测' : '能发',
+            verTxt + (vg.level === 'ok' ? '：这一版有实测记录，照常发送。' : '：这一版没实测记录，但照常发送（不影响使用）。'));
+      else setSt('stVermat', 'err', '拦停', verTxt + '：按严格档暂停发送。可在本页关掉 version_gate.strict。');
+    }catch(e){}
+    /* 语音 / 要图 / 视频 / 搜索 / 插件：后端给状态就写，不给就写「读取中」（绝不写成"可用了"） */
+    try{
+      const t = s.tts || {};
+      if(typeof t.ready === 'boolean'){
+        setSt('stTts', t.ready ? 'ok' : 'warn', t.ready ? '可用' : '缺一步',
+              t.ready ? '语音合成可用（形态是音频文件，不是微信语音条）。' : ('还没配好' + (t.why ? ('：' + t.why) : '') + '，看本页第一段说明。'));
+      }else{ setSt('stTts', 'idle', '读取中', ''); }
+    }catch(e){ setSt('stTts', 'idle', '读取中', ''); }
+    try{
+      const ig = s.image_gen || s.imggen || {};
+      if(typeof ig.ready === 'boolean'){
+        setSt('stImggen', ig.ready ? 'ok' : 'warn', ig.ready ? '可用' : '缺一步',
+              ig.ready ? '群友说「画一张」时能生成并发出去。' : ('还没有可用的生图后端' + (ig.why ? ('：' + ig.why) : '') + '，看本页说明怎么补。'));
+      }else{ setSt('stImggen', 'idle', '读取中', ''); }
+    }catch(e){ setSt('stImggen', 'idle', '读取中', ''); }
+    try{
+      const vd = s.video_gen || s.videogen || {};
+      if(typeof vd.ready === 'boolean'){
+        setSt('stVideogen', vd.ready ? 'ok' : 'warn', vd.ready ? '可用' : '缺一步',
+              vd.ready ? '能做短视频并自动发出去（比图慢得多，几十秒到几分钟）。' : ('还没有可用的视频后端' + (vd.why ? ('：' + vd.why) : '') + '。'));
+      }else{ setSt('stVideogen', 'idle', '读取中', ''); }
+    }catch(e){ setSt('stVideogen', 'idle', '读取中', ''); }
+    try{
+      const we = s.web_search || {};
+      if(typeof we.ready === 'boolean' || we.provider){
+        const _on = (we.enabled !== false);
+        setSt('stSearch', _on ? 'ok' : 'idle',
+              _on ? (we.provider ? String(we.provider).slice(0,8) : '已开') : '关着',
+              _on ? ('联网搜索走 ' + (we.provider || '默认引擎') + '；换引擎在本页。') : '联网搜索当前是关的。');
+      }else{ setSt('stSearch', 'idle', '读取中', ''); }
+    }catch(e){ setSt('stSearch', 'idle', '读取中', ''); }
+    try{
+      const tl = s.tools || {};
+      if(typeof tl.count === 'number'){
+        setSt('stTools', tl.enabled > 0 ? 'ok' : 'idle',
+              (tl.enabled||0) + ' / ' + tl.count + ' 开',
+              'tools.d/ 里共 ' + tl.count + ' 个工具，已勾选启用 ' + (tl.enabled||0) + ' 个（只发 HTTP，不执行本地程序）。');
+      }else{ setSt('stTools', 'idle', '读取中', ''); }
+    }catch(e){ setSt('stTools', 'idle', '读取中', ''); }
+    /* 日志 / 明细 / 记忆 / 服务器：这些没有"好/坏"之分，用中性信息态说明"有多少" */
+    try{
+      const lg = document.getElementById('log');
+      const lines = lg ? (lg.textContent || '').split('\n').filter(function(x){ return x.trim(); }).length : 0;
+      setSt('stLog', 'idle', lines ? (lines + ' 行') : '还没输出',
+            lines ? '当前这一屏有 ' + lines + ' 行日志；出问题先看这里。' : '还没有日志内容（机器人刚开始跑就是这样）。');
+    }catch(e){}
+    try{
+      const ss = document.getElementById('sessBox');
+      const n = ss ? ss.querySelectorAll('tr, .sess-item, li').length : 0;
+      setSt('stSessions', 'idle', n ? (n + ' 条') : '暂无记录',
+            n ? ('最近有 ' + n + ' 条运行记录（服务端按天落盘，最多 30 轮）。') : '还没有运行记录：机器人跑起来并回过消息后才会出现。');
+    }catch(e){}
+    try{
+      const mm = document.getElementById('memTable');
+      const n = mm ? mm.querySelectorAll('tr, .mem-item, li').length : 0;
+      const chat = document.getElementById('memChats');
+      const hasChat = chat && chat.options && chat.options.length > 0;
+      setSt('stMemory', n ? 'info' : 'idle', n ? (n + ' 条印象') : '空',
+            n ? '当前会话记住了 ' + n + ' 条群友印象（删掉即从记忆移除）。'
+              : (hasChat ? '这个会话还没有印象：机器人在群里聊过之后才会有。' : '还没选会话：先在上面选一个群/人。'));
+    }catch(e){}
+    try{
+      setSt('stServer', 'info', '本机 ' + (location.port || '?'),
+            '控制台只听本机（端口 ' + (location.port || '?') + '）；改监听地址或口令要重启控制台才生效。');
+    }catch(e){}
+    /* 人设：有没有人设可用（与「人设」面板的列表同一个 DOM 来源） */
+    try{
+      const pl = document.getElementById('personaList');
+      const n = pl ? pl.querySelectorAll('tr, .persona-item, li, .pcard').length : 0;
+      setSt('stPersona', n ? 'ok' : 'warn', n ? (n + ' 个人设') : '还没有人设',
+            n ? ('人设库里有 ' + n + ' 个人设，选中一个它就是机器人说话的身份。') : '还没有人设脚本：先在上面那个入口生成或导入一个。');
+    }catch(e){}
+  }catch(e){}
+}
 async function loadStatus(){  try{
     const s = await getJSON('/api/status');
     /* 🔴 2026-09-18 加：**服务器重启后页面自己连回来**。
@@ -3052,6 +3440,8 @@ async function loadStatus(){  try{
       }
     }catch(e){}
     window.__pollFails = 0; window.__hadOk = true;
+    /* 面板状态徽章：与顶栏/侧栏同一份 `s`（单一数据源），每次刷新一起更新 */
+    try{ refreshBadges(s); }catch(e){}
     $('dot').className = 'dot ' + (s.wechat_connected ? 'on':'');
     $('runText').textContent = s.paused ? '已暂停' : '运行中';
     /* 顶栏状态行（2026-09-16 待拍板三件之一）：暂停态 already 在上面那个 chip；这里补"监听几个会话"与"主人登记几项"。
@@ -6719,6 +7109,137 @@ $('memSearch').addEventListener('keydown', (e)=>{
   e.preventDefault();
 });
 
+/* ── 左导航「分组折叠 + 快速找功能」（2026-09-22 三主题重构新增）──────────────
+   用户口径：「25 条平铺 → 请分组、按使用频率排序、支持收起展开与快速定位，
+   让新用户 3 秒内找到我要改什么」。
+   两条设计约束：
+   ① 折叠状态要**跨刷新记住**（localStorage），且默认全展开——新用户第一眼要看到全貌；
+   ② 收起态（.side.tight，只剩图标）下**不许再折叠分组**（否则图标藏进折叠块里点不到），
+      所以 CSS 里 `.side.tight .nav-grp-bd` 强制 display:block，这里也只切类名不去动它。
+   搜索：按「导航名 + 所在分组名 + 面板一句话说明」三路匹配，面板说明从 DOM 里现取
+   （`#sec-* .desc`）⇒ 用户搜「发消息」也能命中「发送」页，不用记我们的命名。 */
+(function(){
+  const navEl = document.querySelector('#nav');
+  if(!navEl) return;
+  const sideEl = document.querySelector('.side');
+  const LSKEY = 'navGrpClosed';
+
+  /* 分组折叠：状态存 localStorage（一个数组，存被折叠的 data-grp） */
+  let closed = [];
+  try{ closed = JSON.parse(localStorage.getItem(LSKEY) || '[]') || []; }catch(e){ closed = []; }
+  if(!Array.isArray(closed)) closed = [];
+  function saveClosed(){ try{ localStorage.setItem(LSKEY, JSON.stringify(closed)); }catch(e){} }
+  function applyClosed(){
+    navEl.querySelectorAll('.nav-grp').forEach(g=>{
+      const key = g.getAttribute('data-grp') || '';
+      g.classList.toggle('collapsed', closed.indexOf(key) >= 0);
+    });
+  }
+  applyClosed();
+  navEl.addEventListener('click', (e)=>{
+    const hd = e.target.closest ? e.target.closest('.nav-grp-hd') : null;
+    if(!hd) return;
+    // 收起态只剩图标时不响应（CSS 里组头也藏了，这里是双保险）
+    if(sideEl && sideEl.classList.contains('tight')) return;
+    const g = hd.parentNode;
+    const key = g.getAttribute('data-grp') || '';
+    const i = closed.indexOf(key);
+    if(i >= 0) closed.splice(i, 1); else closed.push(key);
+    saveClosed();
+    g.classList.toggle('collapsed', i < 0);
+    try{ window.dispatchEvent(new Event('resize')); }catch(err){}   // 折叠改了高度，指示条要让外层重算
+    const on = navEl.querySelector('a.on');
+    if(on) on.dispatchEvent(new Event('nav-recalc', {bubbles:true}));
+  });
+
+  /* 快速找功能：输入即过滤出一个下拉候选（点一下直接跳过去） */
+  const box = document.getElementById('navFind');
+  const res = document.getElementById('navFindRes');
+  const wrap = document.getElementById('navFindBox');
+  if(box && res && wrap){
+    const items = Array.from(navEl.querySelectorAll('a')).map(a=>{
+      const href = a.getAttribute('href') || '';
+      const sid = href.replace('#','');
+      const name = (a.querySelector('.lb') ? a.querySelector('.lb').textContent : a.textContent) || '';
+      const grpEl = a.closest ? a.closest('.nav-grp') : null;
+      const grp = grpEl && grpEl.querySelector('.gt') ? grpEl.querySelector('.gt').textContent : '';
+      let desc = '';
+      try{
+        const sec = document.getElementById(sid);
+        const d = sec ? sec.querySelector('.desc') : null;
+        if(d) desc = (d.textContent || '').trim();
+      }catch(e){}
+      return {href: href, sid: sid, name: (name||'').trim(), grp: (grp||'').trim(), desc: desc};
+    });
+    function esc(s){ return String(s||'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+    function mark(text, kw){
+      if(!kw) return esc(text);
+      const i = text.toLowerCase().indexOf(kw);
+      if(i < 0) return esc(text);
+      return esc(text.slice(0,i)) + '<b>' + esc(text.slice(i, i+kw.length)) + '</b>' + esc(text.slice(i+kw.length));
+    }
+    function run(){
+      const kw = (box.value || '').trim().toLowerCase();
+      if(!kw){ res.classList.remove('open'); res.innerHTML = ''; return; }
+      const hits = items.filter(it=>
+        it.name.toLowerCase().indexOf(kw) >= 0 ||
+        it.grp.toLowerCase().indexOf(kw) >= 0 ||
+        it.desc.toLowerCase().indexOf(kw) >= 0);
+      if(!hits.length){
+        res.innerHTML = '<div class="nfr-empty">没找到「' + esc(box.value.trim()) + '」——换个说法试试，比如"发消息""换模型"</div>';
+        res.classList.add('open');
+        return;
+      }
+      res.innerHTML = hits.slice(0, 12).map(it=>{
+        // 命中说明行时把说明里的关键词也标出来（用户才知道"为什么它被搜到"）
+        const why = (it.name.toLowerCase().indexOf(kw) < 0 && it.desc.toLowerCase().indexOf(kw) >= 0)
+          ? '<span style="display:block;font-size:11.5px;color:var(--tx3);margin-top:2px">' + mark(it.desc.slice(0, 46), kw) + '</span>' : '';
+        return '<a href="' + esc(it.href) + '">' + mark(it.name, kw) +
+               '<span style="color:var(--tx3);font-weight:400">　' + esc(it.grp) + '</span>' + why + '</a>';
+      }).join('');
+      res.classList.add('open');
+    }
+    box.addEventListener('input', run);
+    box.addEventListener('focus', ()=>{ if((box.value||'').trim()) run(); });
+    box.addEventListener('keydown', (e)=>{
+      if(e.key === 'Escape'){ box.value=''; res.classList.remove('open'); res.innerHTML=''; box.blur(); }
+      if(e.key === 'Enter'){
+        const first = res.querySelector('a');
+        if(first){ first.click(); res.classList.remove('open'); box.value=''; }
+      }
+    });
+    res.addEventListener('click', (e)=>{
+      const a = e.target.closest ? e.target.closest('a') : null;
+      if(!a) return;
+      // 命中被折叠的分组时先展开它（否则跳过去看不见高亮）
+      const sid = (a.getAttribute('href')||'').replace('#','');
+      const tgt = document.getElementById(sid);
+      const g = tgt && tgt.closest ? tgt.closest('.nav-grp') : null;   // 面板不在导航里，得回导航找
+      const navA = navEl.querySelector('a[href="#' + sid + '"]');
+      const g2 = navA && navA.closest ? navA.closest('.nav-grp') : null;
+      if(g2 && g2.classList.contains('collapsed')){
+        const key = g2.getAttribute('data-grp') || '';
+        const i = closed.indexOf(key);
+        if(i >= 0){ closed.splice(i,1); saveClosed(); }
+        g2.classList.remove('collapsed');
+      }
+      res.classList.remove('open');
+      box.value = '';
+    });
+    document.addEventListener('click', (e)=>{
+      if(!wrap.contains(e.target)) res.classList.remove('open');
+    });
+    /* 快捷键：`/` 直接跳进搜索框（不动后端、不抢别的输入框；在输入态里不触发） */
+    document.addEventListener('keydown', (e)=>{
+      if(e.key !== '/') return;
+      const t = e.target;
+      const tag = (t && t.tagName || '').toLowerCase();
+      if(tag === 'input' || tag === 'textarea' || tag === 'select' || (t && t.isContentEditable)) return;
+      e.preventDefault(); box.focus(); box.select();
+    });
+  }
+})();
+
 /* 导航：滚动同步高亮 + 蓝色指示条平滑滑动 */
 (function(){
   const navEl = document.querySelector('#nav');
@@ -6753,6 +7274,15 @@ $('memSearch').addEventListener('keydown', (e)=>{
     if(a){ links.forEach(x=>x.classList.toggle('on', x===a)); moveInd(a); revealInd(a); }
   }
   window.addEventListener('scroll', ()=>requestAnimationFrame(sync), {passive:true});
+  window.addEventListener('resize', ()=>requestAnimationFrame(sync));
+  document.addEventListener('nav-recalc', ()=>requestAnimationFrame(sync));
+  /* 点导航跳转后也要重算指示条：`scroll-behavior:smooth` 让 scroll 事件来得慢，
+     若只靠 scroll 监听，指示条会"慢半拍"地追上去（2026-09-17 用户报过）。 */
+  navEl.addEventListener('click', (e)=>{
+    const a = e.target.closest ? e.target.closest('a[href^="#sec-"]') : null;
+    if(!a) return;
+    setTimeout(()=>{ links.forEach(x=>x.classList.toggle('on', x===a)); moveInd(a); revealInd(a); }, 60);
+  });
   // 100 导航名字收起/展开（用户口径："像 DeepSeek 一样，可以展开看到全部名字，或者收起那些名字"）
   try{
     const sideEl = document.querySelector('.side'), tgEl = document.getElementById('navToggle');
