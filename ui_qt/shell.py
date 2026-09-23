@@ -161,6 +161,9 @@ class Shell(QWidget):
         self.t = t
         self.text_style = str(config_io.read_path("ui.text_style", "normal") or "normal")
         # ui.text_style 轴：normal / whale（丙-4 起从真配置初始化，不再硬编码 normal）
+        # 主题跟随的「上次见过的值」基线 = config 当前值（不是本壳初始主题）：
+        # 这样初始主题 ≠ config 值的多 Shell 场景（shoot 取证）不会被跟随逻辑拽回。
+        self._theme_seen = str(config_io.read_path("ui.theme", "") or "")
         self._orig_texts: dict = {}  # 鲸语切换的原文缓存（控件重建后清空）
         # ── 鲸落视觉本体（ocean.py）：底图 + tint + 三层波浪，只在 whale 主题启用 ──
         self._wp_path: Path | None = None      # 当前底图来源（含自定义背景判路）
@@ -244,12 +247,16 @@ class Shell(QWidget):
             self._cursor.refresh_from_config()
         except Exception:  # noqa: BLE001
             pass
-        # 主题跟随（丙-4）：web 面板改了 ui.theme → 现场换。Qt 无 system 跟随，
-        # 映射表（THEMES）之外的键不动；本壳自己写主题也走 config，值一致就不触发。
+        # 主题跟随（丙-4）：**外部**（web 面板/别的进程）改了 ui.theme 才跟 ——
+        # 判据是「与上次见过的值不同」，不是「与当前主题不同」：后者会把多 Shell
+        # 异构场景（shoot 取证每镜头一主题）和本壳自己切的现场统统拽回 config
+        # 旧值（2026-09-23 实测翻车）。Qt 无 system 跟随，映射表外的键不动。
         try:
             th = str(config_io.read_path("ui.theme", "") or "")
-            if th and th != self.t.key and th in THEMES:
-                self._switch_theme(th)
+            if th and th != self._theme_seen:
+                self._theme_seen = th
+                if th in THEMES and th != self.t.key:
+                    self._switch_theme(th, persist=False)
         except Exception:  # noqa: BLE001
             pass
         wp_before = self._wp_path
@@ -604,9 +611,13 @@ class Shell(QWidget):
 
     # ------------------------------------------------------------ 主题切换
 
-    def _switch_theme(self, key: str) -> None:
+    def _switch_theme(self, key: str, persist: bool = True) -> None:
         """现场换主题 —— 不用重启。
 
+        persist=True（顶栏用户切换）：主题也写回 config.ui.theme —— 不写的话
+        4 秒后主题跟随会把现场切回 config 旧值（2026-09-23 light/dark 截图
+        全组翻车的现场教训），且重启不保持。persist=False（_watch_config
+        跟随路径）：值本来就来自 config，不回写。
         ⚠️ 这正是 Qt 的**代价**所在：换主题要重建整套样式表（下面 `_restyle`），
            而 web 侧只是换一个 `data-theme` 属性、浏览器自己重画。
            原型里这次重建**会丢掉搜索框里的字与折叠状态** —— 真实产品必须把这些
@@ -614,6 +625,12 @@ class Shell(QWidget):
            ⇒ 这条就是"Qt 的迭代成本"的具体形状，别只在文档里说。
         """
         self.t = THEMES[key]
+        if persist:
+            try:
+                config_io.write_patch({"ui.theme": key})
+                self._theme_seen = key   # 自己写的自己认，别让跟随逻辑再切一遍
+            except Exception:  # noqa: BLE001
+                pass
         # 记住状态再重建
         kept_find = self.find.text()
         closed = {g.title for g in self._groups() if g.collapsed}

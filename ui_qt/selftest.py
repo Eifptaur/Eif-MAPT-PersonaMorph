@@ -151,8 +151,10 @@ def t_nav() -> None:
        "1 档：仅艾特" in src and "4 档：全响应" in src)
     ck("保存行走 config_io（write_patch + 已保存/没保存成 回执）",
        "_save_bot_panel" in src and "已保存" in src and "没保存成" in src)
-    ck("主题跟随（_watch_config 读 ui.theme → _switch_theme）",
-       "ui.theme" in src and "_switch_theme(th)" in src)
+    ck("主题跟随只认外部变化（_theme_seen 基线 + persist=False 不回写）",
+       "ui.theme" in src and "_theme_seen" in src and "_switch_theme(th, persist=False)" in src)
+    ck("顶栏切主题持久化（_switch_theme 写 ui.theme，重启保持）",
+       '"ui.theme": key' in src and "persist: bool = True" in src)
     ck("演示按钮 = 假装后台挂了（不用「模拟『服务死掉』」）",
        "假装后台挂了" in src and "模拟『服务死掉』" not in src)
 

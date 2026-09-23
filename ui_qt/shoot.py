@@ -31,6 +31,12 @@ sys.path.insert(0, str(HERE))
 #    ⇒ 这条和 C# 侧 ` CaptureOffscreen`（README 硬规矩 6）是同一个目的：
 #      **出图绝不许把窗口闪到用户屏幕上。**
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
+# 取证专用隔离配置：机器人主面板镜头会真写盘（保存回执取证），
+# 不能把测试值写进项目根的 config.json —— 指到系统临时目录去。
+os.environ.setdefault(
+    "WX_AGENT_CONFIG",
+    str(Path(os.environ.get("TEMP", os.environ.get("TMP", "/tmp"))) / "qt-shoot-config.json"),
+)
 
 from PySide6.QtCore import QSize, Qt  # noqa: E402
 from PySide6.QtGui import QGuiApplication  # noqa: E402
@@ -184,11 +190,33 @@ def shot_heal(key: str) -> str:
     return p
 
 
+def shot_botpanel(key: str) -> str:
+    """镜头 5：机器人主面板真配置（丙-4）—— 新四行 + 保存回执 + 鲸语立即生效。
+
+    填三行 → 点保存（真写盘，隔离配置路径）→ 截「已保存」回执。
+    鲸语开关保存在 `_save_bot_panel` 里走顶栏同一条 `_pick` 路径 ⇒
+    截图里整窗文案已换鲸语 —— 一张图同时证明「保存→写盘→立即应用」。
+    """
+    w, _t = _mk(key)
+    from PySide6.QtWidgets import QApplication as A  # noqa: PLC0415
+
+    w.nick.setText("群小鲸")
+    w.self_nick.setText("朕")
+    w.tier.cb.setCurrentIndex(3)
+    w.sw_emoji.setChecked(True)
+    w._save_bot_panel()
+    A.processEvents()
+    p = _save(w, f"{key}-5-机器人主面板")
+    w.close()
+    return p
+
+
 SHOTS = [
     ("整窗（看气质）", shot_overview),
     ("导航搜索（看可用性）", shot_nav),
     ("二次确认（原生真模态）", shot_confirm),
     ("后台死掉（用户报的场景）", shot_heal),
+    ("机器人主面板（真配置+保存回执）", shot_botpanel),
 ]
 
 
