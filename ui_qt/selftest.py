@@ -1354,10 +1354,210 @@ def t_ocr9() -> None:
         sys.path.remove(str(root))
 
 
+# ---------------------------------------------------------------- 7. 真机第六批（丙-10）
+
+def t_c10() -> None:
+    """丙-10 真机第六批：五条 P0 + P1 的**可断言的形态**钉在这里。
+
+    真机证据（窗口拖动/波纹实拍）另有取证脚本 —— 自检只钉「代码形态与模块
+    解耦」这类不依赖屏幕的东西，绝不冒充真机验收。
+    """
+    import os  # noqa: PLC0415
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+    ssrc = (HERE / "shell.py").read_text(encoding="utf-8")
+    msrc = (HERE / "sec_meta.py").read_text(encoding="utf-8")
+    lsrc = (HERE / "panels_qt.py").read_text(encoding="utf-8")
+    csrc = (HERE / "panels_custom.py").read_text(encoding="utf-8")
+    usrc = (HERE / "updbar.py").read_text(encoding="utf-8")
+
+    def _body(src: str, name: str, indent: int = 4) -> str:
+        i = src.find(f"def {name}(")
+        if i < 0:
+            return ""
+        j = src.find("\n" + " " * indent + "def ", i + 1)
+        return src[i:j if j > 0 else len(src)]
+
+    # ── P0-1：_rebuild 里 _refresh_backdrop 必须**先于** _restyle（顺序即根因）
+    rb = _body(ssrc, "_rebuild")
+    i_ref = rb.find("self._refresh_backdrop()")
+    i_rst = rb.find("self._restyle()")
+    ck("c10P1: _rebuild 里 _refresh_backdrop 先于 _restyle（主题残留根因）",
+       0 <= i_ref < i_rst, str((i_ref, i_rst)))
+    ck("c10P1: 顺序修复带说明注释（防被后人「顺手」倒回去）",
+       "P0-1" in rb and "_backdrop_on" in rb)
+
+    # ── P0-4：真机两个致命根因都钉住（offscreen 单测测不到，必须源码级防回归）
+    #   ⚠️ 只在**代码行**上判（剥掉注释）——我特意把错误写法也写在注释里做说明，
+    #      直接对全文断言会「打脸自己」（丙-9 教训）。
+    nat = _body(ssrc, "nativeEvent")
+    _nat_code = "\n".join(ln for ln in nat.splitlines() if not ln.strip().startswith("#"))
+    ck("c10P4: QCursor 从 QtGui 导入（原来错写 QtCore → 真机每次 ImportError）",
+       "from PySide6.QtGui import QCursor" in _nat_code
+       and "from PySide6.QtCore import QCursor" not in _nat_code)
+    ck("c10P4: _HT 索引用 r（_hit_test 返回键名串）——不再错写 r[0]（KeyError:'t'）",
+       "self._HT[r]" in _nat_code and "self._HT[r[0]]" not in _nat_code)
+    ck("c10P4: _hit_test 明示返回 _HT 键名（调用方按键取值）",
+       "返回 _HT 键名" in _body(ssrc, "_hit_test"))
+    # 右缘滚动条例外收窄：整条右缘豁免会让 right/bottomright 死区（team-lead 扫描 6/8）
+    ht = _body(ssrc, "_hit_test")
+    ck("c10P4: 右缘滚动条例外收窄为「光标落在滚动条自身几何内」（不再整条右缘豁免）",
+       "_on_scrollbar()" in ht and "def _on_scrollbar(" in ht
+       and "hit.rect().contains(local)" in ht)
+    ck("c10P4: 四角优先于四边（topleft/topright/bottomleft/bottomright 都在）",
+       all(('"%s"' % k) in ht for k in
+           ("topleft", "topright", "bottomleft", "bottomright", "left", "right", "top", "bottom")))
+
+    # ── P0-2：解析层三新类型 + 渲染层三接线 + binds 门槛
+    ck("c10P2: _parse_nonwidget_row 存在（无控件块不再一律 info）",
+       "def _parse_nonwidget_row(" in msrc)
+    ck("c10P2: 四档判定 table > buttons > status > info 齐备",
+       all(k in msrc for k in ('Row("table"', 'Row("buttons"', 'Row("status"', 'Row("info"')))
+    ck("c10P2: Row 扩了 actions/status_id/headers/rows 四字段",
+       all(k in msrc for k in ("actions:", "status_id:", "headers:", "rows:")))
+    ck("c10P2: 渲染层三新 kind 都接了控件",
+       all(k in lsrc for k in ('r.kind == "buttons"', 'r.kind == "status"', 'r.kind == "table"')))
+    ck("c10P2: 渲染层三构造器存在（_btn_group/_status_chip/_table_row）",
+       all(("def " + n + "(") in lsrc for n in ("_btn_group", "_status_chip", "_table_row")))
+    ck("c10P2: 无 cfg 的 status/buttons 不进 binds（不被当输入框调 editingFinished）",
+       "and r.cfg" in _body(lsrc, "_row"))
+
+    # 真跑：三类 web 样本块 → 解析出正确 kind（不靠读源码）
+    import sec_meta  # noqa: PLC0415
+
+    r_btn = sec_meta._parse_row(
+        '<div class="row-btns"><button id="btnGo">开始</button>'
+        '<button data-act="stop">停止</button></div>', "操作")
+    ck("c10P2: 真跑 <button> 块 → kind=buttons 且抽出 2 个动作",
+       r_btn.kind == "buttons" and len(r_btn.actions) == 2,
+       f"{r_btn.kind}/{r_btn.actions}")
+    ck("c10P2: 真跑 buttons 动作 id 取 id=/data-act=（btnGo / stop）",
+       [a[1] for a in r_btn.actions] == ["btnGo", "stop"], str(r_btn.actions))
+    r_st = sec_meta._parse_row('<div>微信版本：<b id="wxver">读取中</b></div>', "版本")
+    ck("c10P2: 真跑状态行 <b id=…> → kind=status 且带 status_id",
+       r_st.kind == "status" and r_st.status_id == "wxver", f"{r_st.kind}/{r_st.status_id}")
+    r_tb = sec_meta._parse_row(
+        '<table><thead><tr><th>能力</th><th>状态</th></tr></thead>'
+        '<tbody><tr><td>发消息</td><td>可用</td></tr></tbody></table>', "矩阵")
+    ck("c10P2: 真跑 <table> → kind=table 且表头/数据行都提出来",
+       r_tb.kind == "table" and r_tb.headers == ["能力", "状态"] and r_tb.rows == [["发消息", "可用"]],
+       f"{r_tb.kind}/{r_tb.headers}/{r_tb.rows}")
+    r_in = sec_meta._parse_row("<p>下面这段只是说明文字，没有控件。</p>", "说明")
+    ck("c10P2: 真跑纯说明块 → 仍是 info（没把说明错判成按钮）",
+       r_in.kind == "info", r_in.kind)
+
+    # ── P0-3：vermat 面板 = 版本与更新卡 + 能力矩阵（真值非「检测中」占位）
+    ck("c10P3: vermat_panel 已登记进 MANUAL", '"vermat": vermat_panel' in csrc)
+    # ⚠️ vermat_panel 内有大量 4 空格缩进的**嵌套函数**，用 4 空格边界会截断 ——
+    #    取到下一个顶层 def（0 缩进）为止。
+    _i = csrc.find("def vermat_panel(")
+    _j = csrc.find("\ndef ", _i + 1)
+    vp = csrc[_i:_j if _j > 0 else len(csrc)]
+    ck("c10P3: 含「版本与更新」常驻卡（更新入口挪到版本页）", 'h2(t, "版本与更新")' in vp)
+    ck("c10P3: 含「能力矩阵」卡", 'h2(t, "能力矩阵")' in vp)
+    ck("c10P3: 矩阵读 /api/status 真值（version_gate + version）",
+       "_load_status()" in vp and "version_gate" in vp and "version" in vp)
+    ck("c10P3: 三态口径（allowed/已实测/拦停）+ 本次允许发送入口",
+       "已实测" in vp and "拦停" in vp and "/api/version_allow" in vp)
+    ck("c10P3: 更新卡复用 updbar.decide（不重写一套判定）", "updbar.decide" in vp)
+    ck("c10P3: L2 缺陷已除——本地 get_json/post_json 不再裸用（走 agent_bridge）",
+       "from agent_bridge import get_json" in vp and vp.count("post_json(") <= vp.count("from agent_bridge import post_json"))
+    ck("c10P3: 无死代码（空 desc 占位已删）", 'empty = desc(t, "")' not in vp)
+
+    # ── P0-5：波纹模块存在且**与背景海浪解耦**（不共用 Timer / 不碰 OceanWaves）
+    wsrc = (HERE / "wavefx.py").read_text(encoding="utf-8")
+    ck("c10P5: wavefx.WaveFX 独立模块存在", "class WaveFX(" in wsrc)
+    ck("c10P5: 波纹持自己的 QTimer（不借背景海浪的）",
+       "self._timer = QTimer(self)" in wsrc)
+    # 两个实锤 bug 的形态防回归（_c10_wave_diag / _c10_verify2 取证）
+    ck("c10P5: _last_move_t 初值取当前时刻（0.0 会让首次 dt 巨大→能量恒锁地板）",
+       "self._last_move_t = time.monotonic()" in wsrc)
+    ck("c10P5: 相位用绝对时间驱动（_t0 每次移动都重置会让环长不出来）",
+       "phase0 = ((time.monotonic() * ring_speed))" in wsrc)
+    ck("c10P5: shimmer 永不为 0（原来 sin=-1 时整帧全暗=肉眼当没画）",
+       "0.6 + 0.4 * math.sin(" in wsrc)
+    ck("c10P5: 环从 24px 起（不等 0，停下瞬间就有可见波前）",
+       "r = 24.0 + ph * (radius - 24.0)" in wsrc)
+    # 解耦硬判据看**代码**（剥掉 docstring）——docstring 里提 OceanWaves 是解释性说明，
+    #  "提到过" ≠ "依赖它"；真依赖会出现 `import ocean` / `OceanWaves(` 调用。
+    _wsrc_code = re.sub(r'""".*?"""', "", wsrc, flags=re.S)
+    ck("c10P5: 波纹模块代码零依赖 OceanWaves（解耦硬判据）",
+       "OceanWaves" not in _wsrc_code and "import ocean" not in _wsrc_code,
+       " / ".join(ln.strip() for ln in _wsrc_code.splitlines() if "OceanWaves" in ln)[:80])
+    ck("c10P5: Shell.paintEvent 在内容之上画波纹",
+       "_wavefx.paint(" in _body(ssrc, "paintEvent"))
+    ck("c10P5: Shell.mouseMoveEvent 转发光标（投石）",
+       "_wave_from_pos(" in _body(ssrc, "mouseMoveEvent"))
+    # 内容层会先吃 mouseMove ⇒ 必须开 mouseTracking + 应用级兜住鼠标移动
+    ck("c10P5: 开 mouseTracking（否则波纹只在按住拖动时才动）",
+       "self.setMouseTracking(True)" in ssrc)
+    ck("c10P5: 应用级事件过滤兜住内容层鼠标移动（eventFilter→_wave_from_pos）",
+       "def eventFilter(" in ssrc and "_wave_from_pos(" in _body(ssrc, "eventFilter")
+       and "installEventFilter(self)" in ssrc)
+    ck("c10P5: 参数即时生效（_watch_config 调 refresh_from_config）",
+       "refresh_from_config()" in ssrc)
+    # 真跑：开关只动自己，背景海浪（_ocean）与波纹互不牵连
+    from PySide6.QtCore import QPointF, Qt  # noqa: PLC0415
+    from PySide6.QtWidgets import QApplication  # noqa: PLC0415
+
+    QApplication.instance() or QApplication([])
+    from shell import Shell  # noqa: PLC0415
+    from stylekit_qt import THEMES  # noqa: PLC0415
+
+    w = Shell(THEMES["whale"])
+    w.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+    w.show()
+    QApplication.processEvents()
+    ocean_active_before = w._ocean.active
+    w._wavefx.set_enabled(False)
+    ck("c10P5: 关波纹不牵连背景海浪（_ocean 状态不变）",
+       w._ocean.active == ocean_active_before and not w._wavefx.active,
+       f"ocean={w._ocean.active} wave={w._wavefx.active}")
+    w._wavefx.set_enabled(True)
+    ck("c10P5: 开波纹只启自己的 Timer", w._wavefx.active and not w._ocean.active,
+       f"ocean={w._ocean.active} wave={w._wavefx.active}")
+    w._wavefx.on_mouse_move(QPointF(120, 90))
+    ck("c10P5: 鼠标移动更新波纹中心（真跑 on_mouse_move）",
+       (round(w._wavefx._pos.x()), round(w._wavefx._pos.y())) == (120, 90),
+       f"{w._wavefx._pos.x()},{w._wavefx._pos.y()}")
+    # 能量必须**响应速度**（原 bug：恒被地板锁 0.25，快慢一个样）
+    import time as _tm  # noqa: PLC0415
+
+    _tm.sleep(0.05)
+    w._wavefx.on_mouse_move(QPointF(420, 90))   # 一次大步（≈6000px/s）
+    e_fast = w._wavefx._energy
+    ck("c10P5: 快速移动能量真上去（不再恒锁地板 0.25）", e_fast > 0.5, f"energy={e_fast:.3f}")
+    # 相位由绝对时间驱动 → 立刻能画出可见环（不等一整圈）
+    from PySide6.QtGui import QPainter, QPixmap  # noqa: PLC0415
+
+    _pm = QPixmap(400, 300)
+    _pm.fill(Qt.GlobalColor.transparent)
+    _p = QPainter(_pm)
+    w._wavefx.paint(_p, 400, 300, 1.0)
+    _p.end()
+    _img = _pm.toImage()
+    _mx = max(_img.pixelColor(x, y).alpha()
+              for x in range(0, 400, 3) for y in range(0, 300, 3))
+    ck("c10P5: 停下瞬间就能画出可见环（绝对时间相位，不等整圈）", _mx >= 8,
+       f"max_alpha={_mx}")
+    w._wavefx.set_enabled(False)
+    w.close()
+
+    # ── P1：切界面闪窗——_rebuild 开头先收回浮层（Qt.Popup 独立顶层窗）
+    ck("c10P1b: _rebuild 开头调 _close_transient_popups（先收回再拆）",
+       "_close_transient_popups()" in rb and rb.find("_close_transient_popups()") < rb.find("lay.takeAt"))
+    ck("c10P1b: 收回器覆盖外观 popover + 更新胶囊 pop",
+       "def _close_transient_popups(" in ssrc and "_look_pop" in ssrc and '"UpdPill"' in ssrc)
+    ck("c10P1b: UpdPill 提供 close_pop（父还在时先收回）",
+       "def close_pop(" in usrc)
+
+
 def main() -> int:
     for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
                t_visual, t_badges, t_status_chain, t_bot_controls, t_window_chrome, t_dpi_motion,
-               t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch, t_bootstrap32, t_ocr9):
+               t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch, t_bootstrap32, t_ocr9,
+               t_c10):
         try:
             fn()
         except Exception as e:  # noqa: BLE001
