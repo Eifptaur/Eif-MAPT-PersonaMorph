@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import config_io  # noqa: E402  丙-4：面板读写 config.json 的桥（save→set 同 webui 次序）
 
-from PySide6.QtCore import QSize, Qt, QTimer  # noqa: E402
+from PySide6.QtCore import QEvent, QPointF, QSize, Qt, QTimer  # noqa: E402
 from PySide6.QtGui import (  # noqa: E402
     QColor,
     QGuiApplication,
@@ -202,12 +202,25 @@ class Shell(QWidget):
         # 的 WM_NCHITTEST（原生 HTCAPTION 才有 Aero Snap、Win+方向键、双击最大化）；
         # 叉号不进顶栏 —— 「停止」承担关停语义，关窗=收进托盘（关窗≠停机）。
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+        # ⛔ 丙-10 P0-5 真机实锤：默认 mouseMoveEvent 只在**按住鼠标键拖动**时来 ——
+        #   波纹要跟着光标自由移动就必须开 mouseTracking（web 侧波纹随鼠标即动，
+        #   没有「必须先按住」这一说）。不开就只在拖窗口时才见波纹，等于失效。
+        self.setMouseTracking(True)
         self.resize(1120, 720)
         self.setMinimumSize(860, 560)
         self._build()
         self._setup_tray(icon)
         # 视觉本体与鱼光标：建在 _restyle 之前（_restyle 要按 backdrop 分支）
         self._ocean = OceanWaves(self)
+        # 丙-10 P0-5：鼠标波纹 —— 与 _ocean **并列的独立对象**（各自 Timer、互不牵连）。
+        # 取证结论：Qt 侧原本从未实现波纹（不是丙-8 I 误伤）；web 侧是 SVG 滤镜
+        # （feTurbulence/feDisplacementMap），Qt 无等价能力 ⇒ 按用户拍板做原生近似。
+        from wavefx import WaveFX  # noqa: PLC0415
+
+        self._wavefx = WaveFX(self)
+        self._wavefx.set_enabled(bool(self._wavefx._cfg.get("enabled", True)))
+        # 丙-10 P0-5：应用级兜住鼠标移动（内容层会先吃事件，见 eventFilter 说明）
+        QApplication.instance().installEventFilter(self)
         self._cursor = WhaleCursor(Path(__file__).resolve().parents[1], parent=self)
         # 丙-6 #12：中键滚轮模式（web PM_WHEEL 完整迁移）—— 注入 WhaleCursor，
         # 事件委托见 cursor_fx.eventFilter；fallback = 当前页 QScrollArea（web scrollerAt 兜底）。
@@ -314,6 +327,12 @@ class Shell(QWidget):
             self._cursor.refresh_from_config()
         except Exception:  # noqa: BLE001
             pass
+        # 丙-10 P0-5：波纹参数即时生效（web 侧「应用水光波纹设置」同款语义）
+        try:
+            if getattr(self, "_wavefx", None) is not None:
+                self._wavefx.refresh_from_config()
+        except Exception:  # noqa: BLE001
+            pass
         # 主题跟随（丙-4）：**外部**（web 面板/别的进程）改了 ui.theme 才跟 ——
         # 判据是「与上次见过的值不同」，不是「与当前主题不同」：后者会把多 Shell
         # 异构场景（shoot 取证每镜头一主题）和本壳自己切的现场统统拽回 config
@@ -337,6 +356,40 @@ class Shell(QWidget):
             paint_backdrop(p, self.width(), self.height(), self._wp_scaled)
         else:
             p.fillRect(self.rect(), self.t.q("bg"))
+        # 丙-10 P0-5：鼠标波纹画在**内容之上**（与 OceanWaves 的壁纸层并列且解耦）
+        try:
+            if getattr(self, "_wavefx", None) is not None:
+                self._wavefx.paint(p, self.width(), self.height(), self.devicePixelRatioF())
+        except Exception:  # noqa: BLE001   波纹绘制失败绝不能拖垮窗口
+            pass
+
+    def mouseMoveEvent(self, ev) -> None:  # noqa: N802  丙-10 P0-5：光标处投石
+        self._wave_from_pos(QPointF(ev.position()))
+        super().mouseMoveEvent(ev)
+
+    def eventFilter(self, obj, ev) -> bool:  # noqa: N802  丙-10 P0-5：穿透取鼠标
+        """内容层（滚动区/标签）会先吃掉 mouseMove ⇒ 光靠 Shell.mouseMoveEvent
+        收不到「光标在内容上移动」。这里在**应用级**再兜一层：任何鼠标移动事件
+        落到本窗口区域内时都转给波纹，保证 web 同款「随鼠标即动」。
+
+        只在窗口可见且波纹开启时生效，代价可忽略（一次坐标映射 + 一次 update）。
+        """
+        try:
+            if ev.type() == QEvent.Type.MouseMove and self.isVisible():
+                gpos = ev.globalPosition()
+                if self.rect().contains(self.mapFromGlobal(gpos.toPoint())):
+                    self._wave_from_pos(QPointF(gpos) - QPointF(self.mapToGlobal(self.rect().topLeft())))
+        except Exception:  # noqa: BLE001
+            pass
+        return super().eventFilter(obj, ev)
+
+    def _wave_from_pos(self, local: QPointF) -> None:
+        """把窗口内逻辑坐标喂给波纹（mouseMoveEvent 与 eventFilter 共用）。"""
+        try:
+            if getattr(self, "_wavefx", None) is not None:
+                self._wavefx.on_mouse_move(local)
+        except Exception:  # noqa: BLE001
+            pass
 
     def resizeEvent(self, ev) -> None:  # noqa: N802
         super().resizeEvent(ev)
