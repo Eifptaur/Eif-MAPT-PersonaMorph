@@ -250,26 +250,23 @@ _HELP_MIN = SRC_WECHAT.split("def _minimize_back_if_needed(")[1].split("\ndef ",
 #    的注释会让 `not in` 假红（同型坑见 lesson 0mu61n2m：静态判据扫到注释里的旧写法）。
 _HELP_MIN_NC = "\n".join(l for l in _HELP_MIN.splitlines() if not l.strip().startswith("#"))
 _HELP_MIN_CODE = "\n".join(l.split("#")[0] for l in _HELP_MIN.splitlines())
+# ⚡ 2026-09-24：函数 docstring 里为记史保留了 `ShowWindow(hwnd, 6)` 字样，静态判据不得把它当证据
+#   ⇒ 先剥掉三引号 docstring 再扫代码（同型坑见 lesson 0mu61n2m：静态判据扫到叙述里的旧写法）。
+_i0 = _HELP_MIN.find('"""')
+_i1 = _HELP_MIN.find('"""', _i0 + 3) if _i0 >= 0 else -1
+_HELP_MIN_NODOC = (_HELP_MIN[:_i0] + _HELP_MIN[_i1 + 3:]) if (_i0 >= 0 and _i1 > _i0) else _HELP_MIN
+_HELP_MIN_NODOC_NC = "\n".join(l.split("#")[0] for l in _HELP_MIN_NODOC.splitlines())
 ck("B17b 收尾时三条安全线都在（没登记不动 / 已收起不动 / 用户正在用就不动），"
-   "且**用户自己收起的要还他收着**、不是用户收起的只压 Z 序底层",
+   "且⚡2026-09-24 起**两条路径动作统一：都只压 Z 序底层、绝不再最小化归还**",
    _sm.has(_HELP_MIN_NC, "if not hwnd:")
    and "u.IsIconic(hwnd)" in _HELP_MIN_NC
    and _sm.has(_HELP_MIN_NC, "int(u.GetForegroundWindow() or 0) == hwnd")
-   and "SetWindowPos" in _HELP_MIN_NC
    and "_WAS_ICONIC_BY_US" in _HELP_MIN_NC
-   # ⚡ 2026-09-18 晚改口径（网友反馈：「游戏无论全不全屏，只要把它最小化后，它要发消息时都会被
-   #   激活到最上面」）：作者那句「不要最小化呀，就置于底层」管的是**链中间不许一收一放**；
-   #   而"**用户自己收起过的**窗，我们为了抓图还原出来"必须在链尾还他收着 —— 否则用户屏幕上
-   #   平白多一个微信窗。⇒ 两种情况分开断言（这段是去注释后的代码，别拿注释当证据）。
-   and "收回原位" in _HELP_MIN_CODE)
-# 反向对照：**不是**用户收起的（我们没登记 iconic）时，只压底层、**绝不**最小化
-# ⛔ 2026-09-22：原来是 `split("if _was_iconic:")[-1].split("return", 1)[-1]`——靠"第一个 return"当分界线，
-#   而 iconic 分支里加了"收回原位后还前台"之后就不准了（切在了还在 iconic 分支里的地方）。
-#   ⇒ 直接以"**收起原位那一枪**"(它只在 iconic 分支里) 当分界线，只看后面的 bottom 路。
-_HELP_MIN_TAIL = _HELP_MIN_CODE.split("u.ShowWindow(_ct.c_void_p(hwnd), 6)")[-1]
-ck("B17b′ 没登记过「用户自己收起」时，只压 Z 序底层、不最小化",
-   "SetWindowPos" in _HELP_MIN_TAIL and "SW_MINIMIZE" not in _HELP_MIN_TAIL
-   and "ShowWindow" not in _HELP_MIN_TAIL)
+   and _HELP_MIN_NODOC_NC.count("SetWindowPos") >= 2
+   and "ShowWindow" not in _HELP_MIN_NODOC_NC)
+# 反向对照（⚡2026-09-24 收紧）：去 docstring/注释后的函数体里，**任何** ShowWindow 收起都不许有
+ck("B17b′ ⚡2026-09-24 源码（去 docstring/注释）里不再有任何 ShowWindow 收起，收起只走 SetWindowPos",
+   "ShowWindow" not in _HELP_MIN_NODOC_NC and "SetWindowPos" in _HELP_MIN_NODOC_NC)
 # ── B18：切会话"能点列表就不开搜索窗"（作者 2026-09-18 口径 + 网友反馈「窗口跳出来…原因就是这个
 #    搜索框」）：顺序必须是 ①已在目标会话 ⇒ 什么都不做 ②列表里看得见 ⇒ 投递点那一行（不开窗）
 #    ③看不见才走搜索路线。且"点列表"这条路**不许滚列表**（滚动在他眼前动屏幕）。
@@ -382,7 +379,7 @@ _miss21 = [x for x in _ck21 if x not in SRC_WECHAT]
 ck("B21b 真正动窗的两条路（快路径发送 / 按键走格）都摁住（缺：%s）" % (_miss21 or "无"), not _miss21)
 ck("B21c 链尾与每条路由结束都**停摁**（`_minimize_back_if_needed` 里也有），且**有 45s 心跳 TTL 兜底**"
    "（防早退留常驻线程）",
-   "_hold_end()" in SRC_WECHAT.split("def _minimize_back_if_needed(")[1][:900]
+   "_hold_end()" in SRC_WECHAT.split("def _minimize_back_if_needed(")[1][:1600]
    and SRC_WECHAT.count("_hold_end()") >= 4
    and "45.0" in SRC_WECHAT and "没有心跳" in SRC_WECHAT)
 ck("B21d 对外文案写明「它会把你原来的窗口摁在最前 / 把微信压回去」",

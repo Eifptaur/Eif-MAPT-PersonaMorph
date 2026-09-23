@@ -53,14 +53,14 @@ ok("A3 它已经是最小化的 ⇒ 什么都不做（用户自己收的，别�
    D(registered=HWND, alive=True, iconic=True, is_fg=True, was_iconic=True, idle_s=0.1) == "none")
 ok("A4 它在前台、**你 0.2 秒前还在动键鼠** ⇒ 不动（登记留着，下次链尾再还）",
    D(registered=HWND, alive=True, iconic=False, is_fg=True, was_iconic=True, idle_s=0.2) == "defer")
-ok("A5 它在前台、**你已经 5 秒没动** ⇒ 照还，而且**还成最小化**（用户自己收起过的那种）",
-   D(registered=HWND, alive=True, iconic=False, is_fg=True, was_iconic=True, idle_s=5.0) == "minimize")
+ok("A5 ⚡2026-09-24 它在前台、**你已经 5 秒没动** ⇒ 照还，但**只压 Z 序底层**（不再最小化归还）",
+   D(registered=HWND, alive=True, iconic=False, is_fg=True, was_iconic=True, idle_s=5.0) == "bottom")
 ok("A6 它在前台、你没动、但**我们没登记过收起来** ⇒ 只压 Z 序底层（不最小化）",
    D(registered=HWND, alive=True, iconic=False, is_fg=True, was_iconic=False, idle_s=5.0) == "bottom")
 ok("A7 空闲读数拿不到（None）⇒ **保守**：当作用户在用，不动",
    D(registered=HWND, alive=True, iconic=False, is_fg=True, was_iconic=True, idle_s=None) == "defer")
-ok("A8 它压根不在前台（用户已经切到别的程序）⇒ 直接按原口径放回",
-   D(registered=HWND, alive=True, iconic=False, is_fg=False, was_iconic=True, idle_s=0.05) == "minimize")
+ok("A8 ⚡2026-09-24 它压根不在前台（用户已切到别的程序）⇒ 放回，同样**只压底层**（不再最小化）",
+   D(registered=HWND, alive=True, iconic=False, is_fg=False, was_iconic=True, idle_s=0.05) == "bottom")
 ok("A9 反向锚：**旧规则**（只看「在不在前台」）在这两格会给 defer —— 现规则必须给出动作",
    D(registered=HWND, alive=True, iconic=False, is_fg=True, was_iconic=True, idle_s=5.0) != "defer"
    and D(registered=HWND, alive=True, iconic=False, is_fg=True, was_iconic=False, idle_s=5.0) != "defer")
@@ -74,12 +74,16 @@ ok("B1 链尾真的用了这个策略（不是写了没人调）",
 ok("B2 三条安全线仍在（没登记不动 / 已收起不动 / 前台判据）",
    _sm.has(_MIN_CODE, "if not hwnd:") and "u.IsIconic(hwnd)" in _MIN_CODE
    and _sm.has(_MIN_CODE, "int(u.GetForegroundWindow() or 0) == hwnd"))
-ok("B3 「用户自己收起的要还他收着」这条口径没变（minimize 分支仍在）",
-   "收回原位" in _MIN_CODE and "_WAS_ICONIC_BY_US" in _MIN_CODE)
+ok("B3 ⚡2026-09-24 **取消「最小化归还」**：不许再出现 SW_MINIMIZE 调用"
+   "（docstring 里的历史叙述不算，故只认精确调用形式）",
+   "ShowWindow(_ct.c_void_p(hwnd), 6)" not in _MIN_CODE
+   and "_ct.windll.user32.SetWindowPos" in _MIN_CODE)
+ok("B3b 两条路径动作统一：`was_iconic` 分支与默认分支都走 SetWindowPos（只压 Z 序底层）",
+   "_WAS_ICONIC_BY_US" in _MIN_CODE and _MIN_CODE.count("SetWindowPos") >= 2)
 ok("B4 「不是用户收起的只压 Z 序底层、绝不最小化」这条也没变",
    "SetWindowPos" in _MIN_CODE.split("if _was_iconic:")[-1])
-ok("B5 收回原位之后把前台还给 stash 里那个真用户窗口（避免焦点乱跑）",
-   _sm.has(_MIN, "_fg_stash_ok()") and _sm.has(_MIN, "收回原位后还前台"))
+ok("B5 ⚡2026-09-24 不再需要「收回原位后还前台」——压底层用 SWP_NOACTIVATE，本就不抢焦点",
+   "收回原位后还前台" not in _MIN)
 ok("B6 门槛与 `_restore_fg_until` 同一口径（1.2 秒常量只定义一处）",
    _SRC.find("PUT_BACK_IDLE_S = 1.2") >= 0 and _sm.has(_MIN_CODE, "PUT_BACK_IDLE_S")
    or _sm.has(_MIN_CODE, "_put_back_decision("))

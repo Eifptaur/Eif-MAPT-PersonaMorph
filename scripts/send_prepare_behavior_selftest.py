@@ -420,23 +420,24 @@ for _kind, _label in (("at", "`send_text_at`（@某人）"), ("image", "`send_im
        _rb and not bool(_rb[0]) and "不退回真鼠标" in str(_rb[1] or ""), str(_rb)[:110])
     ok("B2 %s：**真的还原过**（ShowWindow(4) 一次）—— 不是「什么都没做」的空跑" % _label,
        _fb.acts.count(("ShowWindow", 4)) == 1, str(_fb.acts))
-    ok("B3 %s：**真的放回了**（ShowWindow(6) 一次，不是只「调用了一下」）" % _label,
-       _fb.acts.count(("ShowWindow", 6)) == 1 and _fb.iconic is True, str(_fb.acts))
+    ok("B3 ⚡2026-09-24 %s：**真的放回了**（SetWindowPos 压 Z 序底层，绝无 ShowWindow(6) 最小化）" % _label,
+       ("SetWindowPos",) in _fb.acts and ("ShowWindow", 6) not in _fb.acts
+       and _fb.iconic is False, str(_fb.acts))
     ok("B4 %s：退出时**没有残留登记**（下一次链尾不会再把它收走）" % _label,
        int(W._MINIMIZED_BY_US or 0) == 0 and int(W._WAS_ICONIC_BY_US or 0) == 0,
        "登记=%s" % W._MINIMIZED_BY_US)
     _rn, _fn, _an = _run_chain(_kind, no_putback=True)
-    ok("B5 %s 反例锚（把放回摘掉）⇒ 窗口仍摊着（iconic=False）+ 登记残留 ⇒ 上面三条会变红"
+    ok("B5 ⚡2026-09-24 %s 反例锚（把放回摘掉）⇒ 登记残留（正路此时已清零）⇒ 上面几条会变红"
        % _label,
-       _fn.acts.count(("ShowWindow", 6)) == 0 and _fn.iconic is False
-       and int(W._MINIMIZED_BY_US or 0) == BTN_MAIN,
+       int(W._MINIMIZED_BY_US or 0) == BTN_MAIN,
        "acts=%s · iconic=%s · 登记=%s" % (_fn.acts, _fn.iconic, W._MINIMIZED_BY_US))
     _reset_state()
 
 _rb2, _fb2, _ab2 = _run_chain("at", allow_real=True)
-ok("B6 真鼠标档（**显式允许**时走真链）：成功路径也成对（还原一次 + 放回一次、无残留登记）",
+ok("B6 ⚡2026-09-24 真鼠标档（**显式允许**时走真链）：成功路径成对（还原一次 + 放回压底层一次、绝无最小化、无残留登记）",
    bool(_rb2[0]) and _fb2.acts.count(("ShowWindow", 4)) == 1
-   and _fb2.acts.count(("ShowWindow", 6)) == 1 and int(W._MINIMIZED_BY_US or 0) == 0,
+   and ("SetWindowPos",) in _fb2.acts and ("ShowWindow", 6) not in _fb2.acts
+   and int(W._MINIMIZED_BY_US or 0) == 0,
    "acts=%s · 登记=%s · %s" % (_fb2.acts, W._MINIMIZED_BY_US, str(_rb2)[:80]))
 _reset_state()
 
@@ -499,8 +500,8 @@ else:
     _g7, _f7 = _run_get_gui()
     ok("B7a 自愈确实走过：还原了一次（ShowWindow(4)）且拿到了 GUI",
        _g7 is not None and _f7.acts.count(("ShowWindow", 4)) == 1, str(_f7.acts))
-    ok("B7b 自愈之后**必须放回**（ShowWindow(6) 一次、窗口回到收起态、无残留登记）",
-       _f7.acts.count(("ShowWindow", 6)) == 1 and _f7.iconic is True
+    ok("B7b ⚡2026-09-24 自愈之后**必须放回**（SetWindowPos 压底层一次、绝无 ShowWindow(6)、无残留登记）",
+       ("SetWindowPos",) in _f7.acts and ("ShowWindow", 6) not in _f7.acts
        and int(W._MINIMIZED_BY_US or 0) == 0,
        "acts=%s · iconic=%s · 登记=%s" % (_f7.acts, _f7.iconic, W._MINIMIZED_BY_US))
     _g7n, _f7n = _run_get_gui(no_putback=True)
@@ -529,10 +530,10 @@ try:
     # 新口径的正向锚：前台但**你已经 5 秒没动** ⇒ 那是伪激活招来的，必须照还
     W._user_idle_seconds = lambda: 5.0
     W._minimize_back_if_needed("自检：前台态（你已经走开）")
-    ok("B8a′ 前台 + **你已经 5 秒没动键鼠** ⇒ **照还**（ShowWindow(6) + 登记清零）："
+    ok("B8a′ ⚡2026-09-24 前台 + **你已经 5 秒没动键鼠** ⇒ **照还**（SetWindowPos 压底层 + 登记清零）："
        "这条就是 2026-09-22 真机复测修掉的那一格（改前它会一直拖到「下一次链尾」＝永远不还）",
-       _f8.acts == [("ShowWindow", 6)] and _f8.iconic is True
-       and int(W._MINIMIZED_BY_US or 0) == 0, "acts=%s · iconic=%s · 登记=%s"
+       _f8.acts == [("SetWindowPos",)] and int(W._MINIMIZED_BY_US or 0) == 0,
+       "acts=%s · iconic=%s · 登记=%s"
        % (_f8.acts, _f8.iconic, W._MINIMIZED_BY_US))
     # 再来一遍"刚动过"的场景，验 B8b/B8c（下一次链尾真还）
     W._MINIMIZED_BY_US = BTN_MAIN
@@ -546,9 +547,9 @@ try:
     _f8.fg = 777                            # 用户切走了 ⇒ 下一次链尾该真动手
     W._user_idle_seconds = _idle_real
     W._minimize_back_if_needed("自检：下一次链尾")
-    ok("B8b 用户切走之后的下一次链尾：**真把窗口还回去了**（ShowWindow(6)）且登记清零",
-       _f8.acts == [("ShowWindow", 6)] and _f8.iconic is True
-       and int(W._MINIMIZED_BY_US or 0) == 0, "acts=%s · 登记=%s" % (_f8.acts, W._MINIMIZED_BY_US))
+    ok("B8b ⚡2026-09-24 用户切走之后的下一次链尾：**真放回**（SetWindowPos 压底层）且登记清零",
+       _f8.acts == [("SetWindowPos",)] and int(W._MINIMIZED_BY_US or 0) == 0,
+       "acts=%s · 登记=%s" % (_f8.acts, W._MINIMIZED_BY_US))
     ok("B8c 反例锚：老写法（**一进门就清零**）在 B8a 那一步就把债注销了 ⇒ 之后无凭无据、窗口永远摊着",
        _kept == BTN_MAIN, "老写法会在 B8a 之后得到登记=0")
 finally:
@@ -567,9 +568,9 @@ try:
     _r10 = W.WeChatAdapter.send_text(object(), "filehelper", "SELFTEST-B10")
     ok("B10a 停机闸早退：如实返回（这一步本来就在 `try` 之前，`finally` 罩不到）",
        _r10 and _r10[0] is False and "已停止" in str(_r10[1]), str(_r10)[:80])
-    ok("B10b 早退前**顺手结清上一笔债**：ShowWindow(6) 一次、登记清零（用户收起的微信被还回去了）",
-       _f10.acts == [("ShowWindow", 6)] and _f10.iconic is True
-       and int(W._MINIMIZED_BY_US or 0) == 0, "acts=%s · 登记=%s" % (_f10.acts, W._MINIMIZED_BY_US))
+    ok("B10b ⚡2026-09-24 早退前**顺手结清上一笔债**：SetWindowPos 压底层一次、登记清零（微信留在桌面/后台，不再收起）",
+       _f10.acts == [("SetWindowPos",)] and int(W._MINIMIZED_BY_US or 0) == 0,
+       "acts=%s · 登记=%s" % (_f10.acts, W._MINIMIZED_BY_US))
     W._MINIMIZED_BY_US = BTN_MAIN
     W._WAS_ICONIC_BY_US = BTN_MAIN
     _f10.iconic = False
