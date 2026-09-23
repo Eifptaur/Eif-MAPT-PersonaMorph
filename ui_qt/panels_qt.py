@@ -62,7 +62,7 @@ def badge_for(sec: str, st: dict) -> tuple[str, str, str] | None:
       · stOverview/stLog/stSessions 由各自面板自刷新（overview 8s 定时、
         log 真读文件行数、sessions 拉 /api/sessions 计数），此处返回 None 跳过，
         防止两处双写打架。
-    拿不到数据一律 idle「读取中」，绝不默认成 ok（widgets.Badge 纪律）。
+    拿不到数据一律 info「未检测」（中性灰，表示这版后台没给该字段），绝不默认成 ok（widgets.Badge 纪律）。
     返回 None = 该 sec 无后台口径，徽章由面板本地语义管（已加载/已保存）。
     """
     if not isinstance(st, dict):
@@ -94,7 +94,7 @@ def badge_for(sec: str, st: dict) -> tuple[str, str, str] | None:
         return ("ok", "已连接", "微信已接上（监听目标数读不到）。")
 
     if sec == "model":
-        # web stModel：configured 是 bool 才给结论，否则 idle「读取中」
+        # web stModel：configured 是 bool 才给结论，否则 info「未检测」（缺字段不伪装成读取中）
         mo = st.get("model")
         if isinstance(mo, dict) and isinstance(mo.get("configured"), bool):
             if mo["configured"]:
@@ -102,7 +102,7 @@ def badge_for(sec: str, st: dict) -> tuple[str, str, str] | None:
                 return ("ok", name[:10] or "已配置",
                         f"当前模型：{name or '（没记名字）'}；换厂商/换模型都在本页。")
             return ("err", "没填密钥", "还没填 API 密钥——模型不会工作。在本页填好密钥点保存即可。")
-        return ("idle", "读取中", "这一版后台没给模型配置状态，填入后点保存即可。")
+        return ("info", "未检测", "这一版后台没给模型配置状态，填入后点保存即可。")
 
     if sec == "tts":
         t = st.get("tts")
@@ -112,7 +112,7 @@ def badge_for(sec: str, st: dict) -> tuple[str, str, str] | None:
                 return ("ok", "可用", "语音合成可用（形态是音频文件，不是微信语音条）。")
             why = t.get("why") or ""
             return ("warn", "缺一步", "还没配好" + (f"：{why}" if why else "") + "，看本页第一段说明。")
-        return ("idle", "读取中", "")
+        return ("info", "未检测", "这一版后台没给语音合成就绪状态（tts.ready 缺失），本页操作不受影响。")
 
     if sec == "imggen":
         ig = st.get("image_gen") or st.get("imggen")
@@ -122,7 +122,7 @@ def badge_for(sec: str, st: dict) -> tuple[str, str, str] | None:
                 return ("ok", "可用", "群友说「画一张」时能生成并发出去。")
             why = ig.get("why") or ""
             return ("warn", "缺一步", "还没有可用的生图后端" + (f"：{why}" if why else "") + "，看本页说明怎么补。")
-        return ("idle", "读取中", "")
+        return ("info", "未检测", "这一版后台没给生图后端就绪状态（image_gen.ready 缺失），本页操作不受影响。")
 
     if sec == "videogen":
         vd = st.get("video_gen") or st.get("videogen")
@@ -132,7 +132,7 @@ def badge_for(sec: str, st: dict) -> tuple[str, str, str] | None:
                 return ("ok", "可用", "能做短视频并自动发出去（比图慢得多，几十秒到几分钟）。")
             why = vd.get("why") or ""
             return ("warn", "缺一步", "还没有可用的视频后端" + (f"：{why}" if why else "") + "。")
-        return ("idle", "读取中", "")
+        return ("info", "未检测", "这一版后台没给视频后端就绪状态（video_gen.ready 缺失），本页操作不受影响。")
 
     if sec == "search":
         # web stSearch：ready 是 bool 或给了 provider 才给结论；enabled!==false 算开
@@ -143,7 +143,7 @@ def badge_for(sec: str, st: dict) -> tuple[str, str, str] | None:
                 return ("idle", "关着", "联网搜索当前是关的。")
             p = str(we.get("provider") or "").strip()
             return ("ok", p[:8] or "已开", f"联网搜索走 {p or '默认引擎'}；换引擎在本页。")
-        return ("idle", "读取中", "")
+        return ("info", "未检测", "这一版后台没给联网搜索就绪状态（web_search.ready/provider 缺失），本页操作不受影响。")
 
     if sec == "tools":
         tl = st.get("tools")
@@ -155,7 +155,7 @@ def badge_for(sec: str, st: dict) -> tuple[str, str, str] | None:
             if en > 0:
                 return ("ok", txt, f"tools.d/ 里共 {int(cnt)} 个工具，已勾选启用 {int(en)} 个（只发 HTTP，不执行本地程序）。")
             return ("idle", txt, f"tools.d/ 里共 {int(cnt)} 个工具，一个都没启用。")
-        return ("idle", "读取中", "")
+        return ("info", "未检测", "这一版后台没给工具清单计数（tools.count 缺失），本页操作不受影响。")
 
     if sec == "vermat":
         # web stVermat：allow 三态（None=读不到 / 真=已实测·能发 / 假=拦停）
@@ -167,7 +167,7 @@ def badge_for(sec: str, st: dict) -> tuple[str, str, str] | None:
         ver = str(vm.get("wechat") or "").strip()
         vt = f"微信 {ver}" if ver and ver != "unknown" else "微信版本读不到"
         if allow is None:
-            return ("idle", "读不到", f"{vt}：版本门读数读不到，不影响发送。")
+            return ("info", "读不到", f"{vt}：版本门读数读不到，不影响发送。")
         if allow:
             if vg.get("level") == "ok":
                 return ("ok", "已实测", f"{vt}：这一版有实测记录，照常发送。")
@@ -182,7 +182,7 @@ def badge_for(sec: str, st: dict) -> tuple[str, str, str] | None:
             if isinstance(v, dict) and isinstance(v.get("ready"), bool):
                 flags.append(v["ready"])
         if not flags:
-            return ("idle", "读取中", "")
+            return ("info", "未检测", "这一版后台没给语音/生图/视频任一就绪状态，媒体能力暂未检测。")
         if all(flags):
             return ("ok", "可用", "语音 / 生图 / 视频都配好了。")
         return ("warn", "缺一步", "媒体能力有缺项：语音 / 生图 / 视频，看各页面第一段说明补齐。")
@@ -368,7 +368,7 @@ def _status_chip(t: Tokens, status_id: str) -> QWidget:
 
     Qt 壳不接实时 /api/status 时就地读一次；读不到如实写「读不到」，绝不编数。
     """
-    lab = QLabel("读取中")
+    lab = QLabel("未检测")
     lab.setFont(qfont(t, t.body_size - 0.5))
     lab.setStyleSheet(f"color:{t.tx2};background:transparent;")
     lab.setProperty("web_status_id", status_id or "")
@@ -537,7 +537,7 @@ def _cfg_panel(t: Tokens, s: "sec_meta.Sec", on_save=None) -> QWidget:
     lay = QVBoxLayout(page)
     lay.setContentsMargins(28, 24, 28, 24)
     lay.setSpacing(14)
-    badge = Badge(t, "idle", "读取中")
+    badge = Badge(t, "info", "未检测")
     page._c8_badge = badge          # Shell._apply_badges 按此引用分发（P0-A①）
     lay.addWidget(h2(t, s.title, badge))
     if s.desc:

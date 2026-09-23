@@ -545,7 +545,7 @@ def t_badges() -> None:
              "web_search": {"provider": "bing", "enabled": False}}
     ck("徽章 全关/关着=idle（不写 ok）",
        bf("tools", S_OFF)[:2] == ("idle", "0 / 12 开") and bf("search", S_OFF)[:2] == ("idle", "关着"))
-    ck("徽章 空 status 不编数（idle 读取中）", bf("model", {})[:2] == ("idle", "读取中"))
+    ck("徽章 空 status 不编数（info 未检测）", bf("model", {})[:2] == ("info", "未检测"))
 
     # ② 接线源码：轮询/分发/引用挂载/旧病根消除
     ssrc = (HERE / "shell.py").read_text(encoding="utf-8")
