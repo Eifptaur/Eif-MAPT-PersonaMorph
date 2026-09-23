@@ -32,18 +32,26 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import config_io  # noqa: E402  丙-4：面板读写 config.json 的桥（save→set 同 webui 次序）
 
-from PySide6.QtCore import Qt, QTimer  # noqa: E402
-from PySide6.QtGui import QColor, QGuiApplication, QIcon, QPainter, QPixmap  # noqa: E402
+from PySide6.QtCore import QSize, Qt, QTimer  # noqa: E402
+from PySide6.QtGui import (  # noqa: E402
+    QColor,
+    QGuiApplication,
+    QIcon,
+    QPainter,
+    QPixmap,
+)
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
     QFrame,
     QHBoxLayout,
     QLabel,
     QMenu,
+    QPushButton,
     QScrollArea,
     QSizePolicy,
     QStackedWidget,
     QSystemTrayIcon,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -54,7 +62,19 @@ from heal import Health, Probe, plan_for, probe_backend  # noqa: E402
 from ocean import OceanWaves, paint_backdrop  # noqa: E402
 from panels_qt import BATCH_SECS, build_panel  # noqa: E402
 from stylekit_qt import THEMES, Tokens, apply_font_to_app, qfont, resolve_family, rgba  # noqa: E402
-from widgets import Badge, Btn, Card, Field, NavGroup, NavItem, SearchBox, Switch, desc, h2  # noqa: E402
+from widgets import (  # noqa: E402
+    Badge,
+    Btn,
+    Card,
+    Field,
+    IconBtn,
+    NavGroup,
+    NavItem,
+    SearchBox,
+    Switch,
+    desc,
+    h2,
+)
 
 
 # ---------------------------------------------------------------- DPI 纪律
@@ -211,6 +231,16 @@ class Shell(QWidget):
         # 9 源竞速可能拖到秒级，后台线程拉）。
         self._upd_state: dict | None = None     # 最近一次 /api/update 真值（_rebuild 恢复用）
         QTimer.singleShot(600, self._upd_first_check)
+        # 丙-7 #16：暂停/恢复 —— 方向唯一依据 = /api/status 的 paused 字段
+        # （web 血泪注释：不许读按钮文字做依据），独立 8 秒轻轮询（web loadStatus
+        # 同款间隔）。_pause_busy = 点击防重入（web busy 守卫同款）。
+        self._paused = False
+        self._pause_busy = False
+        QTimer.singleShot(900, self._poll_paused)
+        self._pause_timer = QTimer(self)
+        self._pause_timer.setInterval(8000)
+        self._pause_timer.timeout.connect(self._poll_paused)
+        self._pause_timer.start()
 
     # ------------------------------------------------------------ 鲸落视觉本体
 
@@ -299,6 +329,11 @@ class Shell(QWidget):
         super().resizeEvent(ev)
         self._rescale_wp()
         self._ocean.invalidate()
+        # 丙-7 #17：最大化/还原的画法随窗口态切换（双击顶栏的原生最大化
+        # 不走 _toggle_max，挂在 resize 上才盖得住所有进入最大化的路径）
+        btn = getattr(self, "btn_max", None)
+        if btn is not None:
+            btn.update()
 
     def showEvent(self, ev) -> None:  # noqa: N802
         super().showEvent(ev)
@@ -482,9 +517,10 @@ class Shell(QWidget):
         ver.setStyleSheet(f"color:{self.t.tx2};background:transparent;")
         lay.addWidget(ver)
 
-        # 更新公告条（丙-6 #13）：web updbar 的 Qt 复刻 —— 四态机 + 三按钮真接线。
-        # 旧写法是写死「有新版可用」的静态 QLabel（无点击无真值），用户点了没下文
-        # —— 假条已拆。数据由 _upd_first_check 拉真值喂入。
+        # 更新公告胶囊（丙-6 #13 接真值 + 丙-7 #14 形态改造）：顶栏只留胶囊，
+        # 点开从下方滑出面板（notes 逐条 + 三按钮 + 进度态）—— 丙-6 把三按钮
+        # 塞进顶栏是设计失误（用户截图：三按钮挤成墨块；web 真值 updBar 本是
+        # 顶栏下方独立一行）。API 链路沿用丙-6，只换 UI 形态。
         from updbar import UpdateBar  # noqa: PLC0415
 
         self.updbar = UpdateBar(self.t)
@@ -493,28 +529,65 @@ class Shell(QWidget):
 
         lay.addStretch(1)
 
-        # 整体状态徽章（对齐 web 侧顶栏那个"在跑/没连上"）
-        self.st_top = Badge(self.t, "idle", "读取中")
-        lay.addWidget(self.st_top)
+        # ── 外观切换图标（丙-7 #15，用户点单：文案 + 主题「本质上都属于一种界面
+        # 切换」，常态收起只显示图标，点开弹出切换组）──
+        # 控件复用现有 Segmented，只是从顶栏搬进 Popover（改动最小）。
+        import icons as _icons  # noqa: PLC0415
 
-        # 文案风格切换（ui.text_style 轴）—— 用户观察：「语言风格切换在哪里？」
-        # web 侧把它藏在「界面」面板的下拉里，可发现性差；原型把它提到顶栏，和主题轴并排。
+        self.btn_look = QPushButton(bar)
+        self.btn_look.setFixedSize(36, 34)
+        self.btn_look.setIcon(QIcon(_icons.appearance_pixmap(self.t.tx2, 20)))
+        self.btn_look.setIconSize(QSize(20, 20))
+        self.btn_look.setToolTip("外观切换（文案 / 主题）")
+        self.btn_look.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_look.setStyleSheet(
+            "QPushButton{background:transparent;border:none;border-radius:8px;}"
+            f"QPushButton:hover{{background:{rgba(self.t.q('tx'), 14).name(QColor.NameFormat.HexArgb)};}}"
+        )
+        self.btn_look.clicked.connect(
+            lambda: self._look_pop.toggle_at(self.btn_look, width=250, align="right"))
+        lay.addWidget(self.btn_look)
+
+        # 外观 popover：挂在 titlebar 下（主题重建销毁顶栏时面板随葬，不留幽灵浮层）
+        from popover import Popover  # noqa: PLC0415
+
+        self._look_pop = Popover(self.t, parent=bar)
+        cap_tx = QLabel("文案")
+        cap_tx.setFont(qfont(self.t, 10.5))
+        cap_tx.setStyleSheet(f"color:{self.t.tx3};background:transparent;")
+        self._look_pop.add(cap_tx)
         from widgets import Segmented  # noqa: PLC0415
 
         self.style_seg = Segmented(
             self.t, [("normal", "正常"), ("whale", "鲸语")], value=getattr(self, "text_style", "normal")
         )
         self.style_seg.changed.connect(self._apply_text_style)
-        lay.addWidget(self.style_seg)
-
-        # 主题切换（ui.theme 轴）—— 滑槽式，替代原来"三个并排方按钮"（用户：太方了）
+        self._look_pop.add(self.style_seg)
+        cap_th = QLabel("主题")
+        cap_th.setFont(qfont(self.t, 10.5))
+        cap_th.setStyleSheet(f"color:{self.t.tx3};background:transparent;")
+        self._look_pop.add(cap_th)
         self.theme_seg = Segmented(
             self.t,
             [(k, tk.label.split(" · ")[0].split("（")[0]) for k, tk in THEMES.items()],
             value=self.t.key,
         )
         self.theme_seg.changed.connect(self._switch_theme)
-        lay.addWidget(self.theme_seg)
+        self._look_pop.add(self.theme_seg)
+
+        # 整体状态徽章（对齐 web 侧顶栏那个"在跑/没连上"）
+        self.st_top = Badge(self.t, "idle", "读取中")
+        lay.addWidget(self.st_top)
+
+        # ── 暂停/恢复（丙-7 #16，web 真值 L755/L4180/L5714）──
+        # web 控制台顶栏一直有 pauseBtn，丙-3~6 落位时漏了（用户抓的）。
+        # 语义：暂停 = 进程活着只是不回任何消息（≠ 停止 = 进程退出）⇒
+        # 轻按钮 ghost 档、不需要危险确认。方向唯一依据 = /api/status 的
+        # paused 字段（web 血泪注释：不许读按钮文字做依据）。
+        self.btn_pause = Btn("暂停", self.t, "ghost")
+        self.btn_pause.setToolTip("暂停后机器人不回复任何消息（进程还活着，不是停止）")
+        self.btn_pause.clicked.connect(self._on_pause_click)
+        lay.addWidget(self.btn_pause)
 
         # 机器人控制（丙-5 #3）：重启/停止 —— web 侧顶栏同款动作，走原生确认弹窗。
         # 路由是 /api/restart、/api/shutdown（POST），经 agent_bridge.post_api 发出，
@@ -527,17 +600,16 @@ class Shell(QWidget):
         self.btn_stop.clicked.connect(self._bot_stop)
         lay.addWidget(self.btn_stop)
 
-        # 窗口控制（丙-5 #5）：无边框后自绘顶栏承担 最小化/最大化切换。
-        # **没有叉号** —— 关窗≠停机：Alt+F4/任务栏关闭收进托盘，
-        # 真正的关停语义在「停止」钮（POST /api/shutdown，带确认）。
-        self.btn_min = Btn("—", self.t, "ghost")
-        self.btn_min.setFixedWidth(44)
+        # 窗口控制（丙-5 #5 无边框体系 + 丙-7 #17 重绘）：自绘 IconBtn ——
+        # 最小化=粗横线、最大化/还原=直角方框（还原态双框交叠），无边框无底色
+        # hover 浅底，笔画 2px（用户：更简约、粗一点）。**没有叉号** ——
+        # 关窗≠停机：Alt+F4/任务栏关闭收进托盘，真正的关停语义在「停止」钮。
+        self.btn_min = IconBtn(self.t, "min", bar)
         self.btn_min.setToolTip("最小化")
         self.btn_min.clicked.connect(self.showMinimized)
         lay.addWidget(self.btn_min)
 
-        self.btn_max = Btn("□", self.t, "ghost")
-        self.btn_max.setFixedWidth(44)
+        self.btn_max = IconBtn(self.t, "max", bar)
         self.btn_max.setToolTip("最大化 / 还原（双击顶栏同款）")
         self.btn_max.clicked.connect(self._toggle_max)
         lay.addWidget(self.btn_max)
@@ -1120,15 +1192,126 @@ class Shell(QWidget):
 
         QTimer.singleShot(150, _apply)
 
+    # ------------------------------------------------------------ 暂停/恢复（丙-7 #16）
+
+    def _poll_paused(self) -> None:
+        """拉一次 /api/status，把顶层 paused 字段落到按钮（web loadStatus 同款）。"""
+        box: dict = {"done": False, "val": None}
+
+        def _work() -> None:
+            from config_io import get_json  # noqa: PLC0415
+
+            box["val"] = get_json("/api/status", timeout=5.0)
+            box["done"] = True
+
+        import threading as _th  # noqa: PLC0415
+
+        _th.Thread(target=_work, daemon=True, name="status-poll").start()
+
+        def _apply() -> None:
+            if not box["done"]:
+                QTimer.singleShot(150, _apply)
+                return
+            s = box["val"]
+            if isinstance(s, dict):
+                self._apply_paused(bool(s.get("paused")))
+
+        QTimer.singleShot(150, _apply)
+
+    def _apply_paused(self, paused: bool) -> None:
+        """paused 真值落地。唯一依据 = /api/status 的 paused 字段（web L4180
+        血泪注释：不许读按钮文字做依据）。点击进行中不抢（web busy 守卫同款）。"""
+        if getattr(self, "_pause_busy", False):
+            return
+        self._paused = paused
+        btn = getattr(self, "btn_pause", None)
+        if btn is not None:
+            # 按钮上写「下一步能做什么」（web L5723 同款语义）
+            btn.setText("恢复" if paused else "暂停")
+            btn.setToolTip("机器人现在不会回复任何消息；点这个恢复收发"
+                           if paused else "暂停后机器人不回复任何消息（进程还活着，不是停止）")
+
+    def _on_pause_click(self) -> None:
+        """暂停/恢复 → POST /api/pause 或 /api/resume。
+
+        对齐 web pauseBtn.onclick（console_html.py L5702-5730）全语义：
+          · 方向 = 用户这一下**想要**的结果状态（wantPaused = not paused；
+            web 原话：判据必须钉住这个方向，第一版调反过）
+          · 点下去立刻禁用 + 「暂停中…/恢复中…」防连点
+          · 成功就地翻转（不等轮询）+ 徽章如实
+          · 失败恢复原状并如实报错（toast 的 Qt 等价 = 按钮处 QToolTip）
+          · 恢复路径补刀 /api/risk recover（V-R10-24：paused.flag 与
+            risk.paused 两把钥匙一起清，否则用户点「恢复」看着好了、
+            实际还在停发；补刀失败不影响主结果）
+        暂停 ≠ 停止：进程活着只是不回消息 ⇒ 无危险确认（工单口径）。
+        """
+        if self._pause_busy:
+            return
+        want = not self._paused          # 当前在跑 ⇒ 这一下是想暂停
+        self._pause_busy = True
+        btn = self.btn_pause
+        btn.setEnabled(False)
+        btn.setText("恢复中…" if want else "暂停中…")
+        box: dict = {"done": False, "r": None}
+
+        def _work() -> None:
+            from agent_bridge import post_json  # noqa: PLC0415
+
+            box["r"] = post_json("/api/pause" if want else "/api/resume", {})
+            box["done"] = True
+
+        import threading as _th  # noqa: PLC0415
+
+        _th.Thread(target=_work, daemon=True, name="pause-toggle").start()
+
+        def _done() -> None:
+            if not box["done"]:
+                QTimer.singleShot(150, _done)
+                return
+            self._pause_busy = False
+            btn.setEnabled(True)
+            r = box["r"]
+            ok = isinstance(r, dict) and r.get("ok") is not False
+            if not ok:
+                why = r.get("why") if isinstance(r, dict) else None
+                self._apply_paused(self._paused)     # 失败恢复原状（按钮文字/使能）
+                QToolTip.showText(
+                    btn.mapToGlobal(btn.rect().center()),
+                    "没切成：%s" % (why or "没连上后台（状态没有改变）"), btn)
+                return
+            self._paused = want                      # 就地翻转，不等轮询（web 同款）
+            btn.setText("恢复" if want else "暂停")
+            # 状态徽章立即如实（探活循环随后按 /api/status 刷回同一结论）
+            self.st_top.set("idle" if want else "ok", "已暂停" if want else "后台在跑")
+            if not want:
+                # 恢复补刀（web L5719-5721 同款；失败不遮主结果）
+                def _recover() -> None:
+                    from agent_bridge import post_json  # noqa: PLC0415
+
+                    try:
+                        post_json("/api/risk", {"action": "recover"})
+                    except Exception:  # noqa: BLE001
+                        pass
+
+                _th.Thread(target=_recover, daemon=True, name="risk-recover").start()
+
+        QTimer.singleShot(150, _done)
+
     def _show_probe(self, p: Probe) -> None:
         plan = plan_for(p)
         lvl = p.level
-        self.st_top.set(lvl, {
+        txt = {
             "ok": "后台在跑",
             "info": "启动中",
             "err": "没连上",
             "warn": "状态不明",
-        }.get(lvl, "读取中"))
+        }.get(lvl, "读取中")
+        # 丙-7 #16：暂停中徽章如实 —— 进程活着（探活 ok）但不回任何消息
+        # （web L5724 同款：runText 显示「已暂停」）。下轮 /api/status 轮询
+        # 会把按钮文案刷回同一结论。
+        if lvl == "ok" and getattr(self, "_paused", False):
+            txt = "已暂停"
+        self.st_top.set(lvl, txt)
         self.heal_title.setText(plan.title)
         self.heal_body.setText(plan.body)
         self.heal_btn.setText(plan.action_label or "重连")

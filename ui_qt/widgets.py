@@ -14,6 +14,7 @@ from __future__ import annotations
 from PySide6.QtCore import Property, QEasingCurve, QPropertyAnimation, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPixmap, QPen
 from PySide6.QtWidgets import (
+    QAbstractButton,
     QCheckBox,
     QFrame,
     QGraphicsDropShadowEffect,
@@ -487,6 +488,77 @@ def desc(t: Tokens, text: str) -> QLabel:
 
 
 # ---------------------------------------------------------------- 顶栏两件
+
+
+class IconBtn(QAbstractButton):
+    """无边框自绘图标按钮（丙-7 #17 窗口控制重绘）。
+
+    用户原话：「最小化和全屏的按钮，设计得太奇怪了，你把它变得更简约一点，
+    然后稍微粗一点」。旧形态是 Btn("—")/Btn("□") ghost 方块（带边框带底）；
+    新形态对齐微信/系统惯例：
+      · 最小化 = 一条粗横线
+      · 最大化（未最大化态）= 一个直角方框
+      · 还原（最大化态）   = 双直角框交叠
+      · 常态无边框无底色，hover 出浅底圆角；笔画 ~2px、圆头；
+        颜色 token 化：常态 tx2、hover 变 tx（工单 #17 规格）。
+    只管绘制 —— WM_NCHITTEST 拖拽/resize 分支一行不动（丙-5 #5 体系）。
+    """
+
+    def __init__(self, t: Tokens, kind: str, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.t = t
+        self.kind = kind          # "min" | "max"（max 的画法随 isMaximized 态切换）
+        self._hover = False
+        self.setFixedSize(44, 34)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def enterEvent(self, e):  # noqa: N802
+        self._hover = True
+        self.update()
+        super().enterEvent(e)
+
+    def leaveEvent(self, e):  # noqa: N802
+        self._hover = False
+        self.update()
+        super().leaveEvent(e)
+
+    def _ink(self) -> QColor:
+        return self.t.q("tx") if self._hover else self.t.q("tx2")
+
+    def paintEvent(self, _e):  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        if self._hover:
+            # hover 浅底圆角（无描边 —— 用户要「简约」：只有底色变化提示可点）
+            path = QPainterPath()
+            path.addRoundedRect(QRectF(2, 1, w - 4, h - 2), 7, 7)
+            p.fillPath(path, rgba(self.t.q("tx"), 16))
+        ink = self._ink()
+        pen = QPen(ink)
+        pen.setWidthF(2.0)                      # 工单：笔画 ~2px，比旧 1px 粗
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        cy = h / 2.0
+        if self.kind == "min":
+            # 一条粗横线（几何居中，宽 20）
+            p.drawLine(int(w / 2 - 10), int(cy), int(w / 2 + 10), int(cy))
+        elif self.kind == "max":
+            win = self.window()
+            maximized = bool(win is not None and win.isMaximized())
+            if not maximized:
+                # 最大化：单个直角方框
+                p.drawRect(int(w / 2 - 9), int(cy - 8), 18, 16)
+            else:
+                # 还原：双直角框交叠（后框画右上缺角 L，前框整框）
+                p.drawLine(w // 2 - 1, int(cy) - 10, w // 2 + 9, int(cy) - 10)
+                p.drawLine(w // 2 + 9, int(cy) - 10, w // 2 + 9, int(cy))
+                p.drawRect(w // 2 - 9, int(cy) - 6, 18, 16)
+        else:
+            p.drawRect(int(w / 2 - 9), int(cy - 8), 18, 16)
+        p.end()
 
 
 class WhaleBadge(QLabel):

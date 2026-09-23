@@ -868,7 +868,8 @@ def ssrc_shell() -> str:
 # ---------------------------------------------------------------- 丙-6 #13：更新公告条拆假接真
 
 def t_updbar() -> None:
-    """#13 假条拆除 + /api/update 四态机 + 三按钮真接线（join_url 口径）。"""
+    """#13 假条拆除 + /api/update 四态机 + 三按钮真接线（join_url 口径）；
+    #14 胶囊 + 下滑 popover 形态（丙-7）。"""
     from PySide6.QtWidgets import QApplication  # noqa: PLC0415
 
     QApplication.instance() or QApplication([])
@@ -897,23 +898,53 @@ def t_updbar() -> None:
     ck("updbar: 快照写失败独立追加（主态隐藏也出）",
        "没能写进快照" in n and "盘满" in n and w is True, n[:50])
 
-    # ② 行为级：apply_state 落地 + skip 仅 newer + 稍后会话抑制
+    # ①.5 胶囊短文案纯函数（丙-7 #14：顶栏只留胶囊，无新版无异常不出现）
+    p = updbar.pill({"status": "newer", "theirs": "9.9"})
+    ck("pill: newer（真版本号）", p is not None and p[0] == "有新版本 9.9" and p[1] is False)
+    p = updbar.pill({"status": "pending", "pending": ["x"]})
+    ck("pill: pending（warn）", p is not None and "装了一半" in p[0] and p[1] is True)
+    ck("pill: older（warn）", updbar.pill({"status": "older"}) is not None
+       and updbar.pill({"status": "older"})[1] is True)
+    ck("pill: error（warn）", updbar.pill({"status": "error"}) is not None
+       and updbar.pill({"status": "error"})[1] is True)
+    ck("pill: current/off 不出现", updbar.pill({"status": "current"}) is None
+       and updbar.pill({"status": "off"}) is None and updbar.pill(None) is None)
+    p = updbar.pill({"status": "current", "stateSaved": False})
+    ck("pill: 快照失败照出（web 语义，读数没落盘必须看得见）",
+       p is not None and "快照" in p[0] and p[1] is True)
+
+    # ② 行为级：apply_state 落地 + 胶囊/面板填充 + skip 仅 newer + 稍后会话抑制
     from stylekit_qt import WHALE  # noqa: PLC0415
 
     bar = updbar.UpdateBar(WHALE)
-    bar.apply_state({"status": "newer", "theirs": "9.9", "mine": "1.0"})
-    ck("updbar: newer 时条可见", bar.isVisible() and "9.9" in bar.txt.text())
+    bar.apply_state({"status": "newer", "theirs": "9.9", "mine": "1.0",
+                     "notes": ["修 A", "修 B"]})
+    ck("updbar: newer 时胶囊可见（短文案）", bar.isVisible() and "9.9" in bar.txt.text())
+    ck("updbar: 面板正文短版 + notes 逐条（明细不重复）",
+       "9.9" in bar.detail.text() and "修 A" not in bar.detail.text()
+       and "· 修 A" in bar.notes.text() and "· 修 B" in bar.notes.text())
     ck("updbar: 不再提醒仅 newer 允许（V-R4-1）", bar.btn_skip.isEnabled() is True)
     bar.apply_state({"status": "pending", "pending": ["x"]})
     ck("updbar: pending 时不再提醒被禁用", bar.btn_skip.isEnabled() is False)
     bar._on_later()
-    ck("updbar: 稍后 → 条隐藏", not bar.isVisible())
+    ck("updbar: 稍后 → 胶囊隐藏", not bar.isVisible())
     bar.apply_state({"status": "pending", "pending": ["x"]})
     ck("updbar: 同版本稍后后不再弹（会话抑制）", not bar.isVisible())
     bar.apply_state({"status": "newer", "theirs": "10.0", "mine": "1.0"})
     ck("updbar: 出新版本照常弹（抑制不跨版本）", bar.isVisible())
     bar.apply_state(None)
-    ck("updbar: 拉取失败 → 条消失（不是灰着）", not bar.isVisible())
+    ck("updbar: 拉取失败 → 胶囊消失（不是灰着）", not bar.isVisible())
+    bar._set_progress("正在下载 42%")
+    ck("updbar: 进度双写（胶囊 + 面板同步）",
+       bar.txt.text() == "正在下载 42%" and bar.prog.text() == "正在下载 42%"
+       and not bar.prog.isHidden())   # isHidden：显式隐藏标志（面板未 show 时 isVisible 恒 False）
+    # Popover 容器语义（工单 #14：220ms OutCubic 可打断；外点/Esc 收回由 Qt.Popup 白拿）
+    psrc = (HERE / "popover.py").read_text(encoding="utf-8")
+    ck("popover: Qt.Popup 旗标（点外/Esc 收回白拿）", "Qt.WindowType.Popup" in psrc)
+    ck("popover: 220ms OutCubic（工单规格）", "DUR_MS = 220" in psrc
+       and "OutCubic" in psrc and "QPropertyAnimation" in psrc)
+    ck("popover: 动画可打断（重入 stop 旧动画，不叠两层透明度）",
+       ".stop()" in psrc and "_op_anim" in psrc)
 
     # ③ 接线与口径（源码级）
     ssrc = ssrc_shell()
@@ -936,6 +967,100 @@ def t_updbar() -> None:
        "def post_json" in bsrc2 and "join_url(base or current_url(), api)" in bsrc2)
 
 
+# ---------------------------------------------------------------- 丙-7 #14+#15：外观图标收纳
+
+def t_pop_look() -> None:
+    """#15 外观切换图标 + popover 收纳（文案/主题两轴搬出顶栏）。"""
+    from PySide6.QtWidgets import QApplication  # noqa: PLC0415
+
+    QApplication.instance() or QApplication([])
+
+    import icons  # noqa: PLC0415
+
+    # ① 新图标：三条横向调节滑杆 + 圆点钮（中条偏右 = 经典「调节」语义）
+    ap = icons.APPEARANCE
+    ck("icons: APPEARANCE 三条横滑杆 + 三圆点",
+       ap.count("M2.4") == 3 and ap.count("<circle") == 3 and 'cx="10.6"' in ap)
+    ck("icons: 中条圆点偏右（调节语义）", 'cx="10.6" cy="8"' in ap)
+    ck("icons: 圆头描边 1.6（20px 档 ≈2px 物理）",
+       'stroke-width="1.6"' in ap and 'stroke-linecap="round"' in ap)
+    pm = icons.appearance_pixmap("#65676B", 20)
+    ck("icons: 20px 渲染非空", not pm.isNull() and pm.width() == 40)   # dpr=2
+
+    # ② 顶栏收纳（源码级）：Segmented 从顶栏布局搬进 Popover
+    ssrc = ssrc_shell()
+    ck("look: style_seg/theme_seg 不再直挂顶栏布局",
+       "lay.addWidget(self.style_seg)" not in ssrc and "lay.addWidget(self.theme_seg)" not in ssrc)
+    ck("look: 两个 Segmented 复用现有控件、挂进 popover",
+       "self._look_pop.add(self.style_seg)" in ssrc and "self._look_pop.add(self.theme_seg)" in ssrc)
+    ck("look: 外观图标按钮接线（appearance_pixmap + toggle_at）",
+       "self.btn_look = QPushButton" in ssrc and "appearance_pixmap" in ssrc
+       and 'self._look_pop.toggle_at(self.btn_look' in ssrc)
+    ck("look: changed 信号仍接原链路（切换行为不变）",
+       'self.style_seg.changed.connect(self._apply_text_style)' in ssrc
+       and 'self.theme_seg.changed.connect(self._switch_theme)' in ssrc)
+
+
+# ---------------------------------------------------------------- 丙-7 #16+#17：暂停回归 + 窗口按钮重绘
+
+def t_pause_win() -> None:
+    """#16 暂停/恢复（web 真值 L755/L4180/L5714 全语义）+ #17 窗口控制重绘。"""
+    ssrc = ssrc_shell()
+
+    # ① 暂停按钮归位（web pauseBtn 一直在顶栏，丙-3~6 漏了）
+    ck("pause: 按钮在顶栏（ghost 档，暂停≠停止不需要危险确认）",
+       'self.btn_pause = Btn("暂停", self.t, "ghost")' in ssrc)
+    ck("pause: 顺序 = 状态徽章 → 暂停 → 重启 → 停止（用户目标形态）",
+       0 < ssrc.index("self.btn_pause = Btn") < ssrc.index("self.btn_restart = Btn")
+       < ssrc.index('self.btn_stop = Btn'))
+
+    # ② 方向唯一依据 = paused 字段（web L4180 血泪注释：不许读按钮文字做依据）
+    ck("pause: 方向 = not self._paused（wantPaused = 这一下想要的结果状态）",
+       "want = not self._paused" in ssrc)
+    ck("pause: 源码里没有读按钮文字判方向（web 血泪禁令）",
+       "btn_pause.text()" not in ssrc and "btn_pause.text() ==" not in ssrc)
+    ck("pause: busy 防重入 + 「暂停中…/恢复中…」",
+       "self._pause_busy = True" in ssrc and "恢复中…" in ssrc and "暂停中…" in ssrc)
+
+    # ③ API 链路 + 恢复补刀（V-R10-24 两把钥匙一起清）
+    ck("pause: POST /api/pause 与 /api/resume 二选一",
+       '"/api/pause" if want else "/api/resume"' in ssrc)
+    ck("pause: 恢复路径补刀 /api/risk recover（web L5719-5721 同款）",
+       '"/api/risk"' in ssrc and '"action": "recover"' in ssrc)
+    ck("pause: 补刀失败不遮主结果（try 包裹）",
+       "_recover" in ssrc and "except Exception" in ssrc)
+
+    # ④ 状态来源：/api/status 轮询 + 徽章如实
+    ck("pause: paused 从 /api/status 读（独立 8 秒轻轮询，web loadStatus 同款间隔）",
+       'get_json("/api/status"' in ssrc and "setInterval(8000)" in ssrc
+       and 'bool(s.get("paused"))' in ssrc)
+    ck("pause: 成功就地翻转不等轮询（web 同款）",
+       "self._paused = want" in ssrc)
+    ck("pause: 失败恢复原状 + 如实报错（QToolTip = web toast 的 Qt 等价）",
+       "self._apply_paused(self._paused)" in ssrc and "没切成：" in ssrc)
+    ck("pause: 探活徽章感知暂停（进程活着但不回消息 → 「已暂停」）",
+       'txt = "已暂停"' in ssrc)
+
+    # ⑤ 窗口控制重绘（#17：更简约、笔画粗一点）
+    wsrc = (HERE / "widgets.py").read_text(encoding="utf-8")
+    ck("win: IconBtn 自绘（QAbstractButton 基类 + paintEvent）",
+       "class IconBtn(QAbstractButton)" in wsrc and "def paintEvent" in wsrc)
+    ck("win: 笔画 2px 圆头（工单规格）",
+       "setWidthF(2.0)" in wsrc and "RoundCap" in wsrc)
+    ck("win: hover 浅底圆角 + token 化（tx2 常态 / tx hover）",
+       'rgba(self.t.q("tx"), 16)' in wsrc
+       and 'self.t.q("tx") if self._hover else self.t.q("tx2")' in wsrc)
+    ck("win: 最大化/还原双态（还原 = 双直角框交叠）",
+       "isMaximized" in wsrc and "drawRect" in wsrc and "drawLine" in wsrc)
+    ck("win: 旧文字按钮已拆（「—」「□」Btn 不在壳源码）",
+       'Btn("—"' not in ssrc and 'Btn("□"' not in ssrc)
+    ck("win: 新按钮接进顶栏（WM_NCHITTEST 分支不动）",
+       "self.btn_min = IconBtn" in ssrc and "self.btn_max = IconBtn" in ssrc
+       and "WM_NCHITTEST" in ssrc)
+    ck("win: 最大化态切换跟随窗口（resize 钩子盖住双击顶栏的原生最大化）",
+       "btn.update()" in ssrc and "def resizeEvent" in ssrc)
+
+
 # ---------------------------------------------------------------- 5. 纪律：不碰产品代码
 
 def t_no_touch() -> None:
@@ -955,7 +1080,7 @@ def t_no_touch() -> None:
 def main() -> int:
     for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
                t_visual, t_status_chain, t_bot_controls, t_window_chrome, t_dpi_motion,
-               t_wheel_nod, t_updbar, t_no_touch):
+               t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch):
         try:
             fn()
         except Exception as e:  # noqa: BLE001

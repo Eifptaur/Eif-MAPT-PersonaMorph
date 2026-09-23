@@ -55,6 +55,23 @@ INNER: dict[str, str] = {
 CHEVRON = '<path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>'
 
 
+#: 外观切换图标（丙-7 #15 新设计）：三条横向调节滑杆 + 圆点钮（中条圆点偏右
+#: —— 经典「调节」语义）。涵盖「文案体系 + 主题」= 外观调节。
+#: 描边 1.6（16 视框 → 20px 顶栏档渲染时 ≈2px 物理），圆头。
+APPEARANCE = (
+    '<path d="M2.4 4h11.2M2.4 8h11.2M2.4 12h11.2" fill="none" stroke="currentColor" '
+    'stroke-width="1.6" stroke-linecap="round"/>'
+    '<circle cx="5.4" cy="4" r="1.9" fill="none" stroke="currentColor" stroke-width="1.6"/>'
+    '<circle cx="10.6" cy="8" r="1.9" fill="none" stroke="currentColor" stroke-width="1.6"/>'
+    '<circle cx="6.8" cy="12" r="1.9" fill="none" stroke="currentColor" stroke-width="1.6"/>'
+)
+
+
+def appearance_pixmap(color: str, size: int = 20) -> QPixmap:
+    """顶栏外观切换图标（20px 档）。"""
+    return svg_pixmap(APPEARANCE, color, size)
+
+
 #: 侧栏收起/展开双箭头（丙-5 #8：收起态按钮**只显示图标**，禁 emoji/文字箭头）
 CHEVS_R = ('<path d="M4.2 4.5L8 8l-3.8 3.5M9.2 4.5L13 8l-3.8 3.5" fill="none" '
            'stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>')
