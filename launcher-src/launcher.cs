@@ -1,4 +1,4 @@
-// 群相 一键启动.exe：图形安装器（C# WinForms，嵌入鲸鱼图标，无控制台）
+﻿// 群相 一键启动.exe：图形安装器（C# WinForms，嵌入鲸鱼图标，无控制台）
 // 流程：准备 Python → onestart(事件) → 快捷方式询问 → 自动收尾
 using System;
 using System.Diagnostics;
@@ -14,17 +14,43 @@ namespace WxLauncher
     public class LauncherForm : Form
     {
         string Root;
-        PictureBox pic;
-        Label lblTitle, lblState;
+        // 2026-09-23：删掉 `PictureBox pic;` —— CS0169「从不使用字段」。
+        //   它是最早版"直接 new PictureBox 摆图标"的残留；图标现在统一走 `StyleKit.MakeIcon`
+        //   （返回它自己创建的那个 PictureBox，调用方不需要存句柄）⇒ 本字段从未被赋值/读取。
+        Label lblTitle, lblState, lblStepHint;
         StepList stepList;   // W6b：4 个裸 Label 换成自绘步骤列表（徽章 + 连接线 + 当前行高亮）
         ProgressBar bar;
-        Label lblSub;
-        TextBox logBox;
+        Label lblPct, lblSub;
+        // ⚠️ 这里**不能**写 `StyleKit.LogView`：`LogView` 是 `namespace WxLauncher` 下的**顶层类**
+        //   （stylekit.cs，与 `StyleKit` 平级、不在它里面）⇒ 带 `StyleKit.` 前缀会报 CS0426
+        //   「类型"WxLauncher.StyleKit"中不存在类型名称"LogView"」。2026-09-23 修。
+        LogView logView;   // 2026-09-23：系统 TextBox → 自绘（诊断 §2 原因 4）
         Button btnClose;
         bool done = false;
         bool _asking;
         public bool ProbeMode = false;   // 取证探针用：只渲染界面、不跑安装流程
         Form _askHolder;
+
+        /// 每个步骤「在干什么」的**详细说明**（用户要求 ②「每个节点在干什么都写得详细一点」）。
+        /// 与 `Steps` 一一对应；`SetStepDetail` 会在步骤切换时更新 `lblStepHint`。
+        /// ⚠️ 文案口径：说**人话**（用户在等什么、这一步大概多久、卡住了看哪里），不写内部文件名。
+        internal static readonly string[] Steps = {
+            "准备 Python 环境",
+            "检查 / 安装依赖",
+            "环境自检",
+            "启动机器人",
+        };
+        internal static readonly string[] StepDetail = {
+            "在本机找一个能用的 Python（3.10~3.12）。\n"
+          + "优先用自带的绿色版，找不到才会去下载 —— 这一步通常几秒，"
+          + "首次下载约 1~2 分钟。",
+            "逐个核对运行需要的第三方库，缺哪个就补哪个。\n"
+          + "已装过的会跳过；需要下载时走国内镜像，进度会显示在下面。",
+            "自检本机环境（微信版本、窗口自动化、数据库读取、语音链路等）。\n"
+          + "不通过的项目会在控制台的「体检」页给出具体原因和修法。",
+            "把机器人拉起来并等控制台就绪。\n"
+          + "就绪后会自动打开控制台窗口，这个启动窗会自己关掉。",
+        };
 
         public LauncherForm()
         {
@@ -41,74 +67,160 @@ namespace WxLauncher
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false; MinimizeBox = false;
             BackColor = Color.FromArgb(246, 248, 252);
-            ClientSize = new Size(500, 440);
+            // 2026-09-23 用户：「一号弹窗又小、设计又不好，用 Meta 的设计语言重构：1. 变大一点」
+            //   500×440 → 620×620：留出卡片内边距 + 每个步骤的详细说明 + 更清楚的进度读数。
+            // 2026-09-23 再修（CLIP=19）：**这里的高度是"自绘标题栏以下"的设计高度** ——
+            //   `StyleKit.Apply` 会再 + BarH(38) 让窗口真正长高。原来 Apply 写的是
+            //   「客户区不变、内容整体下移 BarH」⇒ 内容被裁，现在方向已纠正。
+            ClientSize = new Size(620, 620);
 
-            pic = new PictureBox();
-            try { if (File.Exists(Path.Combine(Root, "assets", "app-icon.png"))) { pic.Image = Image.FromFile(Path.Combine(Root, "assets", "app-icon.png")); } } catch { }
-            pic.SizeMode = PictureBoxSizeMode.Zoom;
-            pic.Location = new Point(24, 20); pic.Size = new Size(66, 66);
-            Controls.Add(pic);
-
+            // ── 头部：统一图标（StyleKit.MakeIcon，56px 圆角）+ 标题 + 状态 ────────
+            StyleKit.MakeIcon(this, Root, new Point(StyleKit.Space.x6, StyleKit.Space.x5));
             lblTitle = new Label();
             lblTitle.Text = "群相 一键启动";
-            lblTitle.Font = new Font("Microsoft YaHei UI", 15, FontStyle.Bold);
-            lblTitle.Location = new Point(106, 22); lblTitle.AutoSize = true;
+            lblTitle.Font = StyleKit.Ui(StyleKit.TextScale.Title, FontStyle.Bold);
+            lblTitle.ForeColor = StyleKit.Ink;
+            lblTitle.Location = new Point(StyleKit.Space.x6 + StyleKit.IconSize + StyleKit.Space.x4,
+                                          StyleKit.Space.x5 + 4);
+            lblTitle.AutoSize = true;
             Controls.Add(lblTitle);
 
             lblState = new Label();
             lblState.Text = "准备中…";
-            lblState.Font = new Font("Microsoft YaHei UI", 10.5f);
-            lblState.ForeColor = Color.FromArgb(58, 88, 128);
-            lblState.Location = new Point(106, 60); lblState.AutoSize = true;
+            lblState.Font = StyleKit.Ui(StyleKit.TextScale.Head, FontStyle.Bold);
+            lblState.ForeColor = StyleKit.Accent;   // 状态是这一窗最该被先读到的东西 ⇒ 用强调色
+            lblState.Location = new Point(StyleKit.Space.x6 + StyleKit.IconSize + StyleKit.Space.x4,
+                                          StyleKit.Space.x5 + 30);
+            lblState.AutoSize = true;
             Controls.Add(lblState);
 
+            // ── 卡片 1：四个步骤（横向 4 段编号 + 名称，纵向用 StepList 自绘）──────────
+            int cardW = 620 - StyleKit.Space.x6 * 2;
+            // #12 F1：高度**不再手写**（原来这里抄的是 268）。
+            //   `MakeCard` 只给宽度，`SealCard` 排完子控件后按"内容深度 + CardPadB"收口。
+            // #13 F3：卡顶原来是 108（另 8 张卡都是 104）⇒ 统一走 `StyleKit.CardTopY`（= 图标底边 76 + 间距 28）。
+            CardPanel cardSteps = StyleKit.MakeCard(this, new Point(StyleKit.Space.x6, StyleKit.CardTopY), cardW);
+
+            Label t1 = new Label();
+            t1.Text = "启动分四步";
+            t1.Font = StyleKit.Ui(StyleKit.TextScale.Head, FontStyle.Bold);
+            t1.ForeColor = StyleKit.Ink;
+            t1.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4);
+            t1.AutoSize = true;
+            cardSteps.Controls.Add(t1);
+
             stepList = new StepList();
-            stepList.SetSteps(new string[] { "准备 Python 环境", "检查 / 安装依赖", "环境自检（55 项）", "启动机器人（打开控制台）" });
-            stepList.Location = new Point(50, 116); stepList.Size = new Size(400, 124);
-            Controls.Add(stepList);
+            stepList.SetSteps(Steps);
+            // StepList 自绘行高按 n 均分 ⇒ 给定高度决定行距；4 步 × 30px
+            stepList.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4 + 26);
+            stepList.Size = new Size(cardW - StyleKit.Space.x5 * 2, 118);
+            cardSteps.Controls.Add(stepList);
+
+            // 步骤详细说明（用户要求 ②）：随步骤切换更新
+            lblStepHint = new Label();
+            lblStepHint.Text = StepDetail[0];
+            lblStepHint.Font = StyleKit.Ui(StyleKit.TextScale.Para, FontStyle.Regular);   // 2026-09-23: 步骤说明是正文
+            lblStepHint.ForeColor = StyleKit.InkBody;
+            lblStepHint.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4 + 26 + 118 + StyleKit.Space.x2);
+            lblStepHint.Size = new Size(cardW - StyleKit.Space.x5 * 2, 64);
+            cardSteps.Controls.Add(lblStepHint);
+            StyleKit.FitLabel(lblStepHint);
+            StyleKit.SealCard(cardSteps);   // #12 F1：高度到这里才定下来（后面两块跟着它的底边走）
+
+            // ── 卡片 2：进度（进度条 + 百分比读数 + 当前动作）────────────────────
+            //   用户要求 ③「下载进度也显示得明确一点」⇒ 补一个**百分比数字读数**，
+            //   原来只有一个无字的圆角进度条，用户看不出"到底走到哪了"。
+            // #12 F1：同样不手写高度（原来抄 116）；顶位跟着上一张卡的**实测底边**走（原来抄 388）。
+            CardPanel cardProg = StyleKit.MakeCard(this, new Point(StyleKit.Space.x6, cardSteps.Bottom + StyleKit.CardGapY), cardW);
+
+            Label t2 = new Label();
+            t2.Text = "进度";
+            t2.Font = StyleKit.Ui(StyleKit.TextScale.Head, FontStyle.Bold);
+            t2.ForeColor = StyleKit.Ink;
+            t2.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4);
+            t2.AutoSize = true;
+            cardProg.Controls.Add(t2);
 
             bar = new RoundBar();   // W6：自绘圆角进度条（Value/Maximum 语义不变，流程代码无需改）
-            bar.Location = new Point(50, 256); bar.Size = new Size(400, 20);
+            bar.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4 + 28);
+            bar.Size = new Size(cardW - StyleKit.Space.x5 * 2 - 58, 20);
             bar.Style = ProgressBarStyle.Continuous; bar.Maximum = 100;
-            Controls.Add(bar);
+            cardProg.Controls.Add(bar);
+
+            lblPct = new Label();
+            lblPct.Text = "0%";
+            lblPct.Font = StyleKit.Ui(StyleKit.TextScale.Head, FontStyle.Bold);
+            lblPct.ForeColor = StyleKit.Accent;
+            lblPct.TextAlign = ContentAlignment.MiddleRight;
+            lblPct.Location = new Point(cardW - StyleKit.Space.x5 - 52, StyleKit.Space.x4 + 26);
+            lblPct.Size = new Size(52, 24);
+            cardProg.Controls.Add(lblPct);
 
             lblSub = new Label();
-            lblSub.Font = new Font("Microsoft YaHei UI", 8.5f);
-            lblSub.ForeColor = Color.FromArgb(110, 122, 140);
-            lblSub.Location = new Point(50, 282); lblSub.Size = new Size(400, 26);
-            Controls.Add(lblSub);
+            // ⛔ 2026-09-23 修（可读性）：这里显示的是"当前正在做什么"（如「正在下载依赖…」），
+            //   属于**正文**，不是脚注。`Small`+`Sub` 双不达标 ⇒ 提到 `Para`+`InkBody`。
+            lblSub.Font = StyleKit.Ui(StyleKit.TextScale.Para, FontStyle.Regular);
+            lblSub.ForeColor = StyleKit.InkBody;
+            lblSub.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4 + 56);
+            lblSub.Size = new Size(cardW - StyleKit.Space.x5 * 2, 34);
+            cardProg.Controls.Add(lblSub);
+            // ⚠️ 这里**故意不** `FitLabel`：此刻 `lblSub.Text` 还是空的，量出来是 0
+            //   ⇒ 卡片会被收口成一张"没有那一行"的高度。它在运行时由 OnProgress 赋字后
+            //   自己再 Fit 一次（第 222 行），保留这里的 34 是为了让 `SealCard` 量到真实的一行块。
+            StyleKit.SealCard(cardProg);
 
-            logBox = new TextBox();
-            logBox.Multiline = true; logBox.ReadOnly = true; logBox.ScrollBars = ScrollBars.Vertical;
-            logBox.WordWrap = true; logBox.Font = new Font("Consolas", 8.5f);
-            logBox.BackColor = Color.FromArgb(252, 253, 255);
-            logBox.Location = new Point(50, 312); logBox.Size = new Size(400, 74);
-            Controls.Add(logBox);
+            // ── 卡片 3：实时日志（自绘 LogView）────────────────────────────────
+            // #12 F1：同上，不再手写 78 / 512。
+            CardPanel cardLog = StyleKit.MakeCard(this, new Point(StyleKit.Space.x6, cardProg.Bottom + StyleKit.CardGapY), cardW);
+            Label t3 = new Label();
+            t3.Text = "实时日志";
+            t3.Font = StyleKit.Ui(StyleKit.TextScale.Small, FontStyle.Bold);
+            t3.ForeColor = StyleKit.Ink3ok;   // 2026-09-23: Sub(4.35:1) 不达标；标签也是要读的字
+            t3.Location = new Point(StyleKit.Space.x5, 8);
+            t3.AutoSize = true;
+            cardLog.Controls.Add(t3);
 
-            btnClose = new RoundButton();
-            btnClose.Text = "关闭";
-            btnClose.Size = new Size(104, 34);
-            btnClose.Location = new Point(346, 394);
+            logView = new LogView();
+            logView.Location = new Point(StyleKit.Space.x5, 26);
+            logView.Size = new Size(cardW - StyleKit.Space.x5 * 2, 44);
+            cardLog.Controls.Add(logView);
+            StyleKit.SealCard(cardLog);
+
+            // #13 F2：宽度不再手写 112 —— 由"文字实宽 + 36"决定（见 `StyleKit.MakeButton`）。
+            btnClose = StyleKit.MakeButton("关闭");
+            // ⚠️ 原来这里 y 抄的是 566，而上一张卡底边是 590 ⇒ **按钮压在日志卡右下角**（开场第一眼就看得出）；
+            //   改成"跟着上一块的实测底边走"，抄也抄不错。
+            btnClose.Location = new Point(620 - StyleKit.Space.x6 - btnClose.Width, cardLog.Bottom + StyleKit.CardGapY);
             btnClose.FlatStyle = FlatStyle.Flat;
             btnClose.Enabled = false;
             btnClose.Click += (s, e) => Close();
             Controls.Add(btnClose);
 
+            // #12 F1：窗高也不再是"先猜一个数再祈祷内容装得下" —— 由最后一块的底边反推。
+            //   （`Apply` 会再 + BarH 给自绘标题栏，所以这里是"标题栏以下"的设计高度。）
+            ClientSize = new Size(620, btnClose.Bottom + StyleKit.Space.x6);
             Shown += (s, e) => { if (ProbeMode) return; Thread t = new Thread(StartFlow); t.IsBackground = true; t.Start(); };
             StyleKit.Apply(this, "群相 一键启动");
 
         }
 
         static Icon ExtractIcon(string p) { return Icon.ExtractAssociatedIcon(p); }
-        void Log(string t) { if (InvokeRequired) { BeginInvoke((Action)(() => Log(t))); return; }
-            if (logBox.Lines.Length > 60) { var t2 = logBox.Lines; logBox.Lines = t2.SubArray(t2.Length - 50); }
-            logBox.AppendText(t + "\r\n"); }
+
+        // 2026-09-23：原来 `logBox` 是系统 TextBox、靠 `logBox.Lines` 截断到 60 行再回填。
+        //   换成自绘 `LogView` 后**截断交给控件自己**（它内部按 _maxKeep 滚掉尾部），
+        //   这里保持"线程安全 + 追加"两个语义不变，流程代码（Log(...) 的 8 处调用）零改动。
+        void Log(string t)
+        {
+            if (InvokeRequired) { BeginInvoke((Action)(() => Log(t))); return; }
+            logView.Append(t);
+        }
 
         /// 取证用：把界面推到"进行到第 stepIdx 步"的样子（只动显示，不碰安装流程）
         public void ProbeState(int stepIdx)
         {
-            SetState("环境自检（55 项）…", 70, stepIdx, "Python 就绪 · 依赖已就绪");
+            SetState("环境自检…", 70, stepIdx, "Python 就绪 · 依赖已就绪 · 正在核对本机环境（第 31 项）");
             Log("[取证] 步骤列表渲染到第 " + (stepIdx + 1) + " 步（绿勾/蓝点/灰号三态同框）");
+            Log("[取证] 当前动作：正在检测微信版本与窗口可操作性…");
         }
 
         void SetState(string txt, int pct, int stepIdx, string sub)
@@ -116,8 +228,22 @@ namespace WxLauncher
             if (InvokeRequired) { BeginInvoke((Action)(() => SetState(txt, pct, stepIdx, sub))); return; }
             lblState.Text = txt;
             bar.Value = Math.Min(100, Math.Max(0, pct));
+            // 用户要求 ③「下载进度也显示得明确一点」：补上**百分比数字**（原来只有一个无字的条）
+            lblPct.Text = Math.Min(100, Math.Max(0, pct)) + "%";
             lblSub.Text = sub ?? "";
+            StyleKit.FitLabel(lblSub);
             stepList.SetProgress(stepIdx);   // 徽章/连接线/高亮全在 StepList 里自绘
+            SetStepDetail(stepIdx);
+        }
+
+        /// 换步骤时更新"这一步在干什么"的说明（用户要求 ②）
+        void SetStepDetail(int stepIdx)
+        {
+            if (lblStepHint == null) return;
+            lblStepHint.Text = (stepIdx >= 0 && stepIdx < StepDetail.Length)
+                ? StepDetail[stepIdx]
+                : "";
+            StyleKit.FitLabel(lblStepHint);
         }
 
         void ParseLine(string line)
@@ -127,8 +253,8 @@ namespace WxLauncher
             {
                 string ph = line.Substring(8).Trim();
                 if (ph == "deps") SetState("检查 / 安装依赖…", 12, 1, "Python 就绪");
-                else if (ph == "selftest") SetState("环境自检（55 项）…", 70, 2, "");
-                else if (ph == "boot") SetState("启动机器人…", 92, 3, "等待 Web 控制台就绪（自动打开浏览器）");
+                else if (ph == "selftest") SetState("环境自检…", 70, 2, "");
+                else if (ph == "boot") SetState("启动机器人…", 92, 3, "等待控制台就绪");
             }
             else if (line.StartsWith("@@PROG:"))
             {
@@ -139,8 +265,12 @@ namespace WxLauncher
                     int.TryParse(ps[1], out dn); int.TryParse(ps[2], out tt);
                     double r = tt > 0 ? (double)dn / tt : 0;
                     if (ps[0] == "deps") SetState("检查 / 安装依赖…", 12 + (int)(33 * r), 1, "已检查 " + dn + " / " + tt + " 项");
-                    else if (ps[0] == "install") SetState("正在安装依赖…", 45, 1, "使用国内镜像下载安装（请稍候）");
-                    else if (ps[0] == "selftest") SetState("环境自检（55 项）…", 70 + (int)(20 * r), 2, "第 " + dn + " / " + tt + " 项");
+                    // 用户要求 ③：下载时把"第几个 / 共几个"和百分比一起写出来，别只写"请稍候"
+                    else if (ps[0] == "install")
+                        SetState("正在下载依赖…", 45, 1,
+                                 "使用国内镜像下载安装 —— 已完成 " + dn + " / " + tt + " 个包"
+                                 + (tt > 0 ? ("（" + (int)(100 * r) + "%）") : "") + "，请稍候");
+                    else if (ps[0] == "selftest") SetState("环境自检…", 70 + (int)(20 * r), 2, "第 " + dn + " / " + tt + " 项");
                 }
             }
             else if (line.StartsWith("@@REQ_SHORTCUT"))
@@ -149,7 +279,7 @@ namespace WxLauncher
             }
             else if (line.StartsWith("@@DONE"))
             {
-                SetState("启动完成 ✔", 100, 4, "");
+                SetState("启动完成 ✓", 100, 4, "控制台已就绪，正在打开控制台窗口…");
                 btnClose.Enabled = true;
                 try { Process.Start(Application.ExecutablePath, "--ask"); } catch { }
                 Thread.Sleep(300);
@@ -175,79 +305,23 @@ namespace WxLauncher
                 }
             } catch { }
             _asking = true;
-            Form q = new Form();
+            // 2026-09-23：这里原来**内联又搭了一遍**和 `AskForm` 几乎逐行相同的窗（诊断 §2 原因 3 的
+            //   "六个窗像六个人做的"就包括这一对：图标 66、标题 14、正文 9.5、`ClientSize` 460×256）。
+            //   现在直接复用 `AskForm` ⇒ 形态必然一致，改一处两边都变。
+            //   差异只在"点创建之后做什么"：AskForm 内部自己建快捷方式，这里要在主窗日志里也记一笔。
+            Form q = new AskForm();
             _askHolder = q;
-            q.Text = "群相 启动完成";
-            q.StartPosition = FormStartPosition.CenterScreen;
-            q.FormBorderStyle = FormBorderStyle.FixedDialog;
-            q.MaximizeBox = false; q.MinimizeBox = false;
-            q.BackColor = Color.FromArgb(246, 248, 252);
-            q.ClientSize = new Size(460, 256);
-            try { if (File.Exists(Path.Combine(Root, "assets", "app.ico"))) q.Icon = ExtractIcon(Path.Combine(Root, "assets", "app.ico")); } catch { }
-            PictureBox qp = new PictureBox();
-            try { if (File.Exists(Path.Combine(Root, "assets", "app-icon.png"))) qp.Image = Image.FromFile(Path.Combine(Root, "assets", "app-icon.png")); } catch { }
-            qp.SizeMode = PictureBoxSizeMode.Zoom;
-            qp.Location = new Point(24, 28); qp.Size = new Size(66, 66);
-            q.Controls.Add(qp);
-            Label qt = new Label();
-            qt.Text = "群相 启动完成";
-            qt.Font = new Font("Microsoft YaHei UI", 14, FontStyle.Bold);
-            qt.Location = new Point(108, 28); qt.AutoSize = true;
-            q.Controls.Add(qt);
-            Label qm = new Label();
-            qm.Text = "欢迎使用 群相！\r\n\r\n机器人已启动，建议在桌面创建「一键启动」快捷方式。\r\n是否现在创建？";
-            qm.Font = new Font("Microsoft YaHei UI", 9.5f);
-            qm.ForeColor = Color.FromArgb(76, 92, 118);
-            qm.Location = new Point(108, 66); qm.Size = new Size(330, 128);   // 高 92 放不下三行（实测 need=125）
-            q.Controls.Add(qm);
-            Button qok = new RoundButton();
-            qok.Text = "立即创建";
-            qok.Size = new Size(146, 36);
-            qok.Location = new Point(300, 204);
-            qok.FlatStyle = FlatStyle.Flat;
-            qok.BackColor = Color.FromArgb(64, 140, 255);
-            qok.ForeColor = Color.White;
-            qok.DialogResult = DialogResult.OK;
-            q.Controls.Add(qok);
-            Button qno = new RoundButton();
-            qno.Text = "暂不";
-            qno.Size = new Size(88, 36);
-            qno.Location = new Point(200, 204);
-            qno.FlatStyle = FlatStyle.Flat;
-            qno.DialogResult = DialogResult.Cancel;
-            q.Controls.Add(qno);
-            q.AcceptButton = qok; q.CancelButton = qno;
-            // 非模态：主窗自动关闭时不影响本询问窗
-            qok.Click += (sender, e2) =>
-            {
-                try
-                {
-                    Type t = Type.GetTypeFromProgID("WScript.Shell");
-                    dynamic ws = Activator.CreateInstance(t);
-                    string desk = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-                    dynamic sc = ws.CreateShortcut(Path.Combine(desk, "一键启动 群相.lnk"));
-                    sc.TargetPath = Path.Combine(Root, "一键启动.exe");
-                    sc.WorkingDirectory = Root;
-                    sc.IconLocation = Path.Combine(Root, "assets", "app.ico");
-                    sc.Save();
-                    Log("桌面快捷方式已创建（一键启动 群相）");
-                }
-                catch (Exception ex) { Log("快捷方式创建失败：" + ex.Message); }
-                q.Close();
-            };
-            qno.Click += (sender, e2) => q.Close();
             q.FormClosed += (sender, e2) =>
             {
                 if (!Visible) Application.Exit();
             };
-            StyleKit.Apply(q, "群相 启动完成");   // 与 AskForm 同一套外观（此前这个内联窗还是系统标题栏）
             q.Show();
             _asking = false;
         }
 
         /// 读 logs\python_path.txt 那一行（**936 与 UTF-8 都试、去 BOM、去成对引号**）并**原样返回**。
         /// ⚠️ 返回的可能是**命令**（`py -3`）而不是路径 —— 见 TryPy 的说明。
-        static string ReadPyRaw(string pth)
+        internal static string ReadPyRaw(string pth)
         {
             try { if (!File.Exists(pth)) return ""; }
             catch { return ""; }
@@ -270,7 +344,7 @@ namespace WxLauncher
         ///   ⇒「py -3」永远不是文件 ⇒ 判否 ⇒ 报"找不到 Python"（而 `.cmd` 入口早就按
         ///   「命令 + 参数」处理了，**两侧必须同源**）。这条与包体无关：`pack_online.py` 的 EXCLUDE
         ///   里有 `runtime/`（绿色 Python 不进包），所以"没有 runtime\python 但有系统 Python"是常态。
-        static bool TryPy(string raw, out string exe, out string pre, out string ver, out string why)
+        internal static bool TryPy(string raw, out string exe, out string pre, out string ver, out string why)
         {
             exe = ""; pre = ""; ver = ""; why = "";
             string cmd = (raw ?? "").Trim().TrimStart('\uFEFF').Trim();
@@ -351,7 +425,7 @@ namespace WxLauncher
         {
             try
             {
-                SetState("准备 Python 环境…", 5, 0, "检测系统/绿色版 Python（无需手动安装）");
+                SetState("准备 Python 环境…", 5, 0, "在本机找一个能用的 Python（3.10~3.12），无需你手动安装");
                 string ps1 = Path.Combine(Root, "scripts", "setup_python.ps1");
                 if (!File.Exists(ps1)) { Fail("缺少 scripts\\setup_python.ps1"); return; }
                 int rc = RunSetupPy(ps1, false);
@@ -384,7 +458,7 @@ namespace WxLauncher
                 Log("Python 就绪：" + exe + (pre.Length > 0 ? (" " + pre) : "") + "（" + why + "）");
 
 
-                SetState("检查 / 安装依赖…", 12, 1, "Python 就绪");
+                SetState("检查 / 安装依赖…", 12, 1, "Python 就绪，开始逐个核对依赖库");
                 string onestart = Path.Combine(Root, "scripts", "onestart.py");
                 var po = new ProcessStartInfo(exe, ((pre.Length > 0 ? (pre + " ") : "") + "-X utf8 \"" + onestart + "\"").Trim());
                 po.UseShellExecute = false;
@@ -410,7 +484,7 @@ namespace WxLauncher
         void Fail(string msg)
         {
             if (InvokeRequired) { BeginInvoke((Action)(() => Fail(msg))); return; }
-            SetState("一键启动失败", 0, 0, "详见 logs\\onestart.log");
+            SetState("一键启动失败", 0, 0, "这是一次失败：详见 logs\\onestart.log（下面那行是原因）");
             Log(msg);
             btnClose.Enabled = true;
             btnClose.Focus();
@@ -432,33 +506,72 @@ namespace WxLauncher
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false; MinimizeBox = false;
             BackColor = Color.FromArgb(246, 248, 252);
-            ClientSize = new Size(400, 222);
+            // 2026-09-23：400×222 → 480×322（卡片化 + 补上"你现在可以做什么"的说明）
+            //   ⚠️ 这个高度是**标题栏以下**的设计高度（`Apply` 再 + BarH 给窗口长高，见 stylekit.cs）
+            ClientSize = new Size(480, 322);
             try { string ico = Path.Combine(root, "assets", "app.ico"); if (File.Exists(ico)) Icon = Icon.ExtractAssociatedIcon(ico); } catch { }
-            PictureBox pic = new PictureBox();
-            try { string png = Path.Combine(root, "assets", "app-icon.png"); if (File.Exists(png)) pic.Image = Image.FromFile(png); } catch { }
-            pic.SizeMode = PictureBoxSizeMode.Zoom;
-            pic.Location = new Point(22, 22); pic.Size = new Size(58, 58);
-            Controls.Add(pic);
+
+            // 统一图标（56px 圆角）+ 标题（TextScale.Head 12.5 新档）+ 状态
+            StyleKit.MakeIcon(this, root, new Point(StyleKit.Space.x6, StyleKit.Space.x5));
+
             Label t = new Label();
-            t.Text = "一键启动已在运行";
-            t.Font = new Font("Microsoft YaHei UI", 13, FontStyle.Bold);
-            t.Location = new Point(98, 24); t.AutoSize = true;
+            t.Text = "已经在运行了";
+            t.Font = StyleKit.Ui(StyleKit.TextScale.Title, FontStyle.Bold);
+            t.ForeColor = StyleKit.Ink;
+            t.Location = new Point(StyleKit.Space.x6 + StyleKit.IconSize + StyleKit.Space.x4, StyleKit.Space.x5 + 2);
+            t.AutoSize = true;
             Controls.Add(t);
-            Label m = new Label();
-            m.Text = "检测到一键启动已在运行。" + Environment.NewLine + "若看不到窗口，请稍候，" + Environment.NewLine + "或先点「一键关闭.exe」结束后重试。";
-            m.Font = new Font("Microsoft YaHei UI", 9.5f);
-            m.ForeColor = Color.FromArgb(76, 92, 118);
-            m.Location = new Point(98, 60); m.Size = new Size(280, 104);   // 高 80 会把最后一行截掉（--dlgprobe 的 need 判据实测 100）
-            Controls.Add(m);
-            Button ok = new RoundButton();
-            ok.Text = "好的";
-            ok.Size = new Size(110, 34);
-            ok.Location = new Point(158, 174);
+
+            Label s = new Label();
+            s.Text = "无需重复启动";
+            s.Font = StyleKit.Ui(StyleKit.TextScale.Head, FontStyle.Bold);
+            s.ForeColor = StyleKit.Ok;      // 这不是错误 ⇒ 用"正常"绿，不用红/黄
+            s.Location = new Point(StyleKit.Space.x6 + StyleKit.IconSize + StyleKit.Space.x4, StyleKit.Space.x5 + 30);
+            s.AutoSize = true;
+            Controls.Add(s);
+
+            // 卡片：把"发生了什么 / 你可以怎么做"分开写（用户要求：每个节点写得详细一点）
+            int cardW = 480 - StyleKit.Space.x6 * 2;
+            // #12 F1 / #13 F3：同上 —— 高度交给 `SealCard` 算，卡顶走 `StyleKit.CardTopY`（原手写 104）。
+            CardPanel card = StyleKit.MakeCard(this, new Point(StyleKit.Space.x6, StyleKit.CardTopY), cardW);
+
+            Label m1 = new Label();
+            m1.Text = "检测到「一键启动」已经在运行中，所以这次不再重复拉起一个。";
+            m1.Font = StyleKit.Ui(StyleKit.TextScale.Body, FontStyle.Regular);
+            m1.ForeColor = StyleKit.Ink;
+            m1.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4);
+            m1.Size = new Size(cardW - StyleKit.Space.x5 * 2, 22);
+            card.Controls.Add(m1);
+
+            Label m2 = new Label();
+            m2.Text =
+                "接下来可以这样做：\n"
+              + "  · 看不到启动窗口 —— 它可能被别的程序挡住，稍候几秒通常会自己出来；\n"
+              + "  · 想重新走一遍启动流程 —— 先点「一键关闭.exe」把当前这份结束掉，再重新双击「一键启动」。";
+            m2.Font = StyleKit.Ui(StyleKit.TextScale.Para, FontStyle.Regular);
+            m2.ForeColor = StyleKit.InkBody;
+            m2.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4 + 30);
+            // ⛔ 2026-09-23 修（真 bug：正文被裁）：这里原来是 `new Size(w, 90)` —— 手写 90，
+            //   而实测需要 ~152 ⇒ 后两条 bullet 被 CardPanel 裁掉（实拍 shots-20260923d/busy.png）。
+            //   根因是当时 `FitLabel` 只长不缩，手写值偏大时不会被修正（现已改双向）。
+            //   ⇒ 这里**不再手写高度**（写 1 只为让 MeasureText 有个非零初值），高度一律由 FitLabel 落回实测。
+            m2.Size = new Size(cardW - StyleKit.Space.x5 * 2, 1);
+            card.Controls.Add(m2);
+            StyleKit.FitLabel(m2);
+            //   ⇒ 卡片高度到这里收口（原来手抄 152）。
+            StyleKit.SealCard(card);
+
+            // #13 F2：宽度不再抄 120 —— `MakeButton` 按文字实宽给。
+            Button ok = StyleKit.MakeButton("好的");
+            // 按钮顶也不再抄 272：跟着卡片实测底边走。
+            ok.Location = new Point(480 - StyleKit.Space.x6 - ok.Width, card.Bottom + StyleKit.CardGapY);
             ok.FlatStyle = FlatStyle.Flat;
             ok.BackColor = Color.FromArgb(64, 140, 255);
             ok.ForeColor = Color.White;
             ok.DialogResult = DialogResult.OK;
             Controls.Add(ok);
+            // #12 F1：窗高由最后一块底边反推（原来抄 322）。
+            ClientSize = new Size(480, ok.Bottom + StyleKit.Space.x6);
             AcceptButton = ok;
             StyleKit.Apply(this, "群相 正在启动");   // ⚠️ 必须最后调：Apply 之前设 FixedDialog，之后不得再改边框（否则系统标题栏会回来，和自绘标题栏叠成两条）
         }
@@ -498,28 +611,63 @@ namespace WxLauncher
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false; MinimizeBox = false;
             BackColor = Color.FromArgb(246, 248, 252);
-            ClientSize = new Size(460, 256);
+            // 2026-09-23：460×256 → 520×368（卡片化 + 把"快捷方式有什么用"讲清楚）
+            //   ⚠️ 这个高度是**标题栏以下**的设计高度（`Apply` 再 + BarH 给窗口长高，见 stylekit.cs）
+            ClientSize = new Size(520, 368);
             try { string ico = Path.Combine(Root, "assets", "app.ico"); if (File.Exists(ico)) Icon = Icon.ExtractAssociatedIcon(ico); } catch { }
-            PictureBox qp = new PictureBox();
-            try { string png = Path.Combine(Root, "assets", "app-icon.png"); if (File.Exists(png)) qp.Image = Image.FromFile(png); } catch { }
-            qp.SizeMode = PictureBoxSizeMode.Zoom;
-            qp.Location = new Point(24, 28); qp.Size = new Size(66, 66);
-            Controls.Add(qp);
+
+            StyleKit.MakeIcon(this, Root, new Point(StyleKit.Space.x6, StyleKit.Space.x5));
+
             Label qt = new Label();
-            qt.Text = "群相 启动完成";
-            qt.Font = new Font("Microsoft YaHei UI", 14, FontStyle.Bold);
-            qt.Location = new Point(108, 28); qt.AutoSize = true;
+            qt.Text = "启动完成";
+            qt.Font = StyleKit.Ui(StyleKit.TextScale.Title, FontStyle.Bold);
+            qt.ForeColor = StyleKit.Ink;
+            qt.Location = new Point(StyleKit.Space.x6 + StyleKit.IconSize + StyleKit.Space.x4, StyleKit.Space.x5 + 2);
+            qt.AutoSize = true;
             Controls.Add(qt);
+
+            Label qs = new Label();
+            qs.Text = "机器人已就绪";
+            qs.Font = StyleKit.Ui(StyleKit.TextScale.Head, FontStyle.Bold);
+            qs.ForeColor = StyleKit.Ok;
+            qs.Location = new Point(StyleKit.Space.x6 + StyleKit.IconSize + StyleKit.Space.x4, StyleKit.Space.x5 + 30);
+            qs.AutoSize = true;
+            Controls.Add(qs);
+
+            int cardW = 520 - StyleKit.Space.x6 * 2;
+            // #12 F1 / #13 F3：高度由 `SealCard` 算，卡顶走 `StyleKit.CardTopY`（原手写 104 / 178）。
+            CardPanel card = StyleKit.MakeCard(this, new Point(StyleKit.Space.x6, StyleKit.CardTopY), cardW);
+
             Label qm = new Label();
-            qm.Text = "欢迎使用 群相！\r\n\r\n机器人已启动，建议在桌面创建「一键启动」快捷方式。\r\n是否现在创建？";
-            qm.Font = new Font("Microsoft YaHei UI", 9.5f);
-            qm.ForeColor = Color.FromArgb(76, 92, 118);
-            qm.Location = new Point(108, 66); qm.Size = new Size(330, 128);   // 高 92 放不下三行（实测 need=125）
-            Controls.Add(qm);
-            Button qok = new RoundButton();
-            qok.Text = "立即创建";
-            qok.Size = new Size(146, 36);
-            qok.Location = new Point(300, 204);
+            qm.Text = "欢迎使用 群相！要不要在桌面放一个「一键启动」的快捷方式？";
+            qm.Font = StyleKit.Ui(StyleKit.TextScale.Body, FontStyle.Regular);
+            qm.ForeColor = StyleKit.Ink;
+            qm.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4);
+            qm.Size = new Size(cardW - StyleKit.Space.x5 * 2, 22);
+            card.Controls.Add(qm);
+
+            Label qm2 = new Label();
+            qm2.Text =
+                "有它的话：\n"
+              + "  · 以后双击桌面上那个图标就能启动，不用再翻安装目录；\n"
+              + "  · 图标就是这只鲸鱼，和开始菜单里那个是同一个。\n"
+              + "不想要也没关系 —— 随时可以从安装目录里再双击「一键启动.exe」。";
+            qm2.Font = StyleKit.Ui(StyleKit.TextScale.Para, FontStyle.Regular);
+            qm2.ForeColor = StyleKit.InkBody;
+            qm2.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4 + 30);
+            // ⛔ 2026-09-23 修（真 bug：正文被裁）：原手写 116，实测需要 ~152 ⇒ 最后一条被裁。
+            qm2.Size = new Size(cardW - StyleKit.Space.x5 * 2, 1);
+            card.Controls.Add(qm2);
+            StyleKit.FitLabel(qm2);
+            StyleKit.SealCard(card);
+
+            // #13 F2：两颗按钮的宽度都由文字实宽决定（原来抄 172 / 96），
+            //   y 与两颗之间的排布也不再抄 322 —— 跟着卡片底边、彼此的宽度走。
+            Button qok = StyleKit.MakeButton("创建桌面快捷方式");
+            Button qno = StyleKit.MakeButton("暂不");
+            int qy = card.Bottom + StyleKit.CardGapY;
+            qok.Location = new Point(520 - StyleKit.Space.x6 - qok.Width, qy);
+            qno.Location = new Point(520 - StyleKit.Space.x6 - qok.Width - StyleKit.Space.x2 - qno.Width, qy);
             qok.FlatStyle = FlatStyle.Flat;
             qok.BackColor = Color.FromArgb(64, 140, 255);
             qok.ForeColor = Color.White;
@@ -540,16 +688,12 @@ namespace WxLauncher
                 Close();
             };
             Controls.Add(qok);
-            Button qno = new RoundButton();
-            qno.Text = "暂不";
-            qno.Size = new Size(88, 36);
-            qno.Location = new Point(200, 204);
             qno.FlatStyle = FlatStyle.Flat;
             qno.Click += (s, e) => Close();
             Controls.Add(qno);
             AcceptButton = qok; CancelButton = qno;
 
-            // 监控控制台（3210）：连续 3 次连不上 → 控制台已关闭 → 自动关闭本窗
+            // 监控控制台（端口从配置/落盘地址现读）：连续 3 次连不上 → 控制台已关闭 → 自动关闭本窗
             watch = new System.Windows.Forms.Timer();
             watch.Interval = 2000;
             watch.Tick += (s, e) =>
@@ -566,6 +710,8 @@ namespace WxLauncher
                 }
             };
             watch.Start();
+            // #12 F1：窗高由最后一块底边反推（原来抄 368）。
+            ClientSize = new Size(520, qok.Bottom + StyleKit.Space.x6);
             FormClosed += (s, e) => { try { watch.Stop(); } catch { } };
             StyleKit.Apply(this, "群相 启动完成");   // 同 BusyForm：Apply 放最后，避免系统标题栏与自绘标题栏叠两条
         }
@@ -700,24 +846,106 @@ static class Program
         [STAThread]
         static void Main(string[] args)
         {
+            // ⚠️ 2026-09-23（接手方第四轮回执：「运行期间仍然弹了 1 个系统错误窗（内容仍是「参数无效。」，
+            //   出现在开跑 0.4 秒内），而 stdout 与 stderr 都是空的 ⇒ 它抛在**没有被 try/catch 罩住的地方**」）：
+            //
+            //   为什么"弹系统窗 + stdout 全空"会同时出现（本条的根因，不是猜测）：
+            //   · 这是 **winexe**（`/target:winexe`）⇒ 进程**没有控制台**。任何"写 stdout"的尝试都拿不到句柄；
+            //   · 异常抛在 `Main` 之外（或 `Main` 里还没进 try 的地方）⇒ CLR 走**默认**未处理异常路径：
+            //     winexe 下这一步是弹 **WER 系统对话框**（`.NET` 的 `ThreadException` 只在有消息循环时接管，
+            //     而 `Main` 里我们**没有** `Application.Run`）。那个对话框是**系统级的**，不是 WinForms 的
+            //     MessageBox —— 所以它既不受 `StyleKit.Prep()` 里 `SetErrorMode` 的约束，也不会往
+            //     stdout/stderr 写一个字。这就完整解释了"弹窗 + 两边都空"。
+            //   · 更要紧的：`SetErrorMode` 那句在 `StyleKit.Prep()` 里，而 `Prep()` 是 `Main` 的第一句 ——
+            //     也就是说**在它执行之前，进程是完全裸奔的**。0.4 秒这个时间点，正好落在"Prep 之后、
+            //     ShotProbe 的 try 之前"（`EnableVisualStyles` / 窗体构造 都在这一段）。
+            //
+            //   修法（把"裸奔区"压到零）：**在 `Main` 的第一条语句**就把两个钩子挂上，并且
+            //   在进入任何分支之前，就把"异常落盘到哪"确定下来。这样即使 `Prep()` 自己炸，
+            //   也能留下证据（`--shot <dir>` 传了目录就写那儿，否则写 exe 旁的 `_scratch\launcher.err`）。
+            string bootErr = null;
+            try
+            {
+                bootErr = (args != null && args.Length > 1 && args[0] == "--shot")
+                    ? Path.Combine(args[1], "shot.err")
+                    : Path.Combine(Path.GetDirectoryName(Application.ExecutablePath) ?? ".", "_scratch", "launcher.err");
+            }
+            catch { }
+            Action<string> bootLog = delegate (string s)
+            {
+                if (bootErr == null) return;
+                try
+                {
+                    string d = Path.GetDirectoryName(bootErr);
+                    if (!string.IsNullOrEmpty(d)) Directory.CreateDirectory(d);
+                    File.AppendAllText(bootErr, s + Environment.NewLine, new UTF8Encoding(false));
+                }
+                catch { }
+            };
+            AppDomain.CurrentDomain.UnhandledException += delegate (object s, UnhandledExceptionEventArgs e)
+            {
+                bootLog("[Boot/UnhandledException] " + (e.ExceptionObject == null ? "(null)" : e.ExceptionObject.ToString()));
+            };
+            try { Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException); } catch { }
+            Application.ThreadException += delegate (object s, System.Threading.ThreadExceptionEventArgs e)
+            {
+                bootLog("[Boot/ThreadException] " + e.Exception.ToString());
+            };
+
             StyleKit.Prep();   // W6：高 DPI（PerMonitorV2）+ 关掉系统崩溃弹窗（产品不许弹系统 MessageBox）
             // W6 取证/集成入口：
             //   --console <url>  用自带标题栏的 WebView2 窗口打开控制台（Python 侧不再开浏览器）
             //   --shot <dir>     把每个弹窗离屏渲染成 PNG（不出现在屏幕上、不抢焦点）
             //   --dlgprobe       打印弹窗清单与控件（机械判据用）
-            if (args != null && args.Length > 1 && args[0] == "--console")
+            //   --console-reuse <url>  丙-1（2026-09-23）：**复用分支也强制重新导航**
+            //       由来：`agent/notify_ui.py` 的复用分支只 flash/抬起、**从不导航** ⇒ 窗口里若是一张
+            //       ERR_CONNECTION_REFUSED 的旧页，用户怎么点都是那一屏死页（用户原话「刷新没用」）。
+            //       这里让新起的这个进程把地址递给**已经开着的**那个窗，由它重新导航 + 抬起，
+            //       然后本进程退出（不攒第二个窗）。找不到开着的窗就照旧新开（等价 `--console`）。
+            if (args != null && args.Length > 1 &&
+                (args[0] == "--console" || args[0] == "--console-reuse"))
             {
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
+                if (args[0] == "--console-reuse" && Ui.HandOffToConsole(args[1])) return;
                 Application.Run(new ConsoleForm(args[1]));
                 return;
             }
             if (args != null && args.Length > 1 && args[0] == "--shot")
             {
+                // ⚠️ 2026-09-23 修（接手方报：`--shot` 跑起来会弹 1 个系统错误窗「参数无效。」，
+                //   出现在开跑 0.4 秒内，而 stdout 与 stderr **都是空的**）：
+                //   说明它抛在**没有被 try/catch 罩住的地方** —— 就是在 `Ui.ShotProbe()` 里。
+                //   老实现只在 `TryShot` 捕获"构造窗体"那一层；而 `CaptureOffscreen` 里的
+                //   `ShowWindow` / `DrawToBitmap` / `Bitmap.Save` 都在它的下游，任一处抛都会冒到 Main。
+                //   修法（三件，缺一不可）：
+                //     ①把**每一步**各自包起来（见 `Shot` 里分段 try/catch）；
+                //     ②两个全局钩子兜底 —— winexe 下 `AppDomain.UnhandledException` **不会**弹 CLR 窗，
+                //       正好用来"把栈写下来而不再打扰用户"；
+                //     ③所有异常 `ex.ToString()` **append 到同一个文件**（不是覆盖），下次可直接给行号。
+                //
+                // 落盘路径：`--shot <目录>` 的目录里放 `shot.err`（和 PNG 在一起，好找）。
+                // （全局钩子已在 `Main` 第一句挂好，这里不重复注册 —— 两处都注册会让同一条异常写两遍。）
+                string shotDir = args[1];
+                string errPath = Path.Combine(shotDir, "shot.err");
+                Action<string> log = delegate (string s)
+                {
+                    try { Directory.CreateDirectory(shotDir); File.AppendAllText(errPath, s + Environment.NewLine, new UTF8Encoding(false)); } catch { }
+                };
                 try { Console.OutputEncoding = System.Text.Encoding.UTF8; } catch { }
-                Application.EnableVisualStyles();
-                Application.SetCompatibleTextRenderingDefault(false);
-                Console.WriteLine(Ui.ShotProbe(args[1]));
+                try { Application.EnableVisualStyles(); } catch (Exception ex) { log("[EnableVisualStyles] " + ex.ToString()); }
+                try { Application.SetCompatibleTextRenderingDefault(false); } catch (Exception ex) { log("[SetCompatibleTextRenderingDefault] " + ex.ToString()); }
+                string shotOut = "";
+                try { shotOut = Ui.ShotProbe(shotDir); }
+                catch (Exception ex)
+                {
+                    shotOut = "SHOTPROBE ABORTED " + ex.GetType().Name + ": " + ex.Message;
+                    log("[ShotProbe] " + ex.ToString());
+                }
+                // ⚠️ 2026-09-23：**正常路也落一份**（接手方："正常路也落一份更好，落盘比控制台稳"）。
+                //   同 `--dlgprobe` 的处理 ⇒ 两个探针的行为一致：文件在不在本身就是一条判据。
+                try { log("[ShotProbe/OK] exit=0" + Environment.NewLine + shotOut); } catch { }
+                try { Console.WriteLine(shotOut); } catch { }
                 return;
             }
             if (args != null && args.Length > 0 && args[0] == "--winprobe")
@@ -754,10 +982,56 @@ static class Program
             }
             if (args != null && args.Length > 0 && args[0] == "--dlgprobe")
             {
+                // ⚠️ 2026-09-23（用户报：winexe 下 CLR 弹系统窗「参数无效。」，进程停住不返回，跑 3 次弹 3 次）：
+                //   控制台宿主（/main:ProbeHarness + try/catch 直接调 `Ui.DlgProbe()`）**是好的**（返回 5018 字符）
+                //   ⇒ 异常在 winexe 子系统或外层，不在 `DlgProbe()` 里。而在 `winexe` 下：
+                //     · `Console.OutputEncoding = ...` 与 `Console.WriteLine(...)` 在**没有控制台**时，
+                //       .NET 会去拿 `GetStdHandle` 的句柄，拿不到就可能在这里抛「参数无效。」
+                //       （这正是"弹系统窗"的来源 —— 违反硬规矩 ①「0 系统 MessageBox」）；
+                //     · 所以这里**三层全包**：编码设置 / 探测体 / 输出，并把 `ex.ToString()` 落盘。
+                //   落盘优先走 argv[1]（用户给的那个参数），否则默认 `_scratch\dlgprobe.err`。
                 try { Console.OutputEncoding = System.Text.Encoding.UTF8; } catch { }
-                Application.EnableVisualStyles();
-                Application.SetCompatibleTextRenderingDefault(false);
-                Console.WriteLine(Ui.DlgProbe());
+                try
+                {
+                    Application.EnableVisualStyles();
+                    Application.SetCompatibleTextRenderingDefault(false);
+                }
+                catch { }
+                // ⚠️ 2026-09-23 补（接手方第四轮回执：「我传了落盘路径，但没有生成文件 —— 是不是只在异常时落盘？
+                //   正常路也落一份更好（作者要"原始输出"，落盘比控制台稳）」）：
+                //   原来只在 catch 里写文件 ⇒ 正常跑完一个字都不落。现在**两条路都落**：
+                //     · 正常路写 `<路径>`（原样，就是作者传的那个文件）；
+                //     · 异常路写 `<路径>.err`（原始 ex.ToString()），并在 `<路径>` 里留一行指向它。
+                //   这样接手方复跑时"先看文件在不在"，在不在本身就是一种判据。
+                string outPath = (args.Length > 1 && !string.IsNullOrEmpty(args[1]))
+                    ? args[1]
+                    : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "_scratch", "dlgprobe.out");
+                string errPath = outPath + ".err";
+                Action<string, string> dump = delegate (string p, string body)
+                {
+                    try
+                    {
+                        string d = Path.GetDirectoryName(p);
+                        if (!string.IsNullOrEmpty(d)) Directory.CreateDirectory(d);
+                        File.WriteAllText(p, body, new UTF8Encoding(false));
+                    }
+                    catch { }
+                };
+                try
+                {
+                    string probe = Ui.DlgProbe();
+                    dump(outPath, probe);                       // ← 正常路也落盘
+                    try { Console.WriteLine(probe); } catch { }
+                }
+                catch (Exception ex)
+                {
+                    // 落盘（不弹系统窗 —— 硬规矩 ①）；控制台输出也要包，它自己也可能抛
+                    dump(errPath, ex.ToString());
+                    dump(outPath, "dlgprobe ERROR -> " + errPath + Environment.NewLine
+                                  + ex.GetType().Name + ": " + ex.Message + Environment.NewLine);
+                    try { Console.WriteLine("dlgprobe ERROR -> " + errPath); } catch { }
+                    try { Console.WriteLine(ex.GetType().Name + ": " + ex.Message); } catch { }
+                }
                 return;
             }
             //   --webview2probe  ⑤：打印运行库版本 / 引导器在不在 / 默认浏览器（机械判据只认这三行 ASCII）
@@ -882,18 +1156,11 @@ static class Program
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false; MinimizeBox = false;
             BackColor = Color.FromArgb(246, 248, 252);
-            ClientSize = new Size(440, 254);
+            // 2026-09-23：440×254 → 520×338（卡片化 + 把"控制台在哪、为什么不再开一个"讲清楚）
+            //   ⚠️ 这个高度是**标题栏以下**的设计高度（`Apply` 再 + BarH 给窗口长高，见 stylekit.cs）
+            ClientSize = new Size(520, 338);
             try { string ico = Path.Combine(root, "assets", "app.ico"); if (File.Exists(ico)) Icon = Icon.ExtractAssociatedIcon(ico); } catch { }
-            PictureBox pic = new PictureBox();
-            try { string png = Path.Combine(root, "assets", "app-icon.png"); if (File.Exists(png)) pic.Image = Image.FromFile(png); } catch { }
-            pic.SizeMode = PictureBoxSizeMode.Zoom;
-            pic.Location = new Point(22, 24); pic.Size = new Size(64, 64);
-            Controls.Add(pic);
-            Label t = new Label();
-            t.Text = "控制台已在运行";
-            t.Font = new Font("Microsoft YaHei UI", 14, FontStyle.Bold);
-            t.Location = new Point(104, 26); t.AutoSize = true;
-            Controls.Add(t);
+
             string _curl = "";     // 现成的控制台地址（含口令），只从权威来源取
             try
             {
@@ -901,17 +1168,70 @@ static class Program
                 _curl = Ui.ConsoleUrl(root, out _why);
             }
             catch { }
+
+            StyleKit.MakeIcon(this, root, new Point(StyleKit.Space.x6, StyleKit.Space.x5));
+
+            Label t = new Label();
+            t.Text = "控制台已经在运行";
+            t.Font = StyleKit.Ui(StyleKit.TextScale.Title, FontStyle.Bold);
+            t.ForeColor = StyleKit.Ink;
+            t.Location = new Point(StyleKit.Space.x6 + StyleKit.IconSize + StyleKit.Space.x4, StyleKit.Space.x5 + 2);
+            t.AutoSize = true;
+            Controls.Add(t);
+
+            Label s = new Label();
+            s.Text = "无需重复打开";
+            s.Font = StyleKit.Ui(StyleKit.TextScale.Head, FontStyle.Bold);
+            s.ForeColor = StyleKit.Ok;
+            s.Location = new Point(StyleKit.Space.x6 + StyleKit.IconSize + StyleKit.Space.x4, StyleKit.Space.x5 + 30);
+            s.AutoSize = true;
+            Controls.Add(s);
+
+            int cardW = 520 - StyleKit.Space.x6 * 2;
+            // #12 F1 / #13 F3：同上（原手写卡顶 104 / 卡高 152，现由 `SealCard` 算）。
+            CardPanel card = StyleKit.MakeCard(this, new Point(StyleKit.Space.x6, StyleKit.CardTopY), cardW);
+
             Label m = new Label();
-            m.Text = "检测到 群相 控制台已在运行。" + Environment.NewLine + Environment.NewLine +
-                "为保持唯一，本次不再重复打开浏览器窗口。" + Environment.NewLine + "需要打开控制台请点下方按钮。";
-            m.Font = new Font("Microsoft YaHei UI", 9.5f);
-            m.ForeColor = Color.FromArgb(76, 92, 118);
-            m.Location = new Point(104, 64); m.Size = new Size(315, 128);   // 高 92 放不下四行（实测 need=125）
-            Controls.Add(m);
-            Button ok = new RoundButton();
-            ok.Text = "打开控制台";
-            ok.Size = new Size(136, 36);
-            ok.Location = new Point(290, 202);
+            m.Text = "群相 控制台已经在运行了，所以这次不再重复打开一个窗口（重复打开会出现两个控制台，容易看乱）。";
+            m.Font = StyleKit.Ui(StyleKit.TextScale.Body, FontStyle.Regular);
+            m.ForeColor = StyleKit.Ink;
+            m.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4);
+            // ⛔ 2026-09-23：原来是 `new Size(w, 44)` 手写 + FitLabel ⇒ 偏大时不被修正。
+            //   这句话实测 2 行（~33）< 44 ⇒ 这一处是"多留白"而不是被裁，但同样不该手写高度。
+            m.Size = new Size(cardW - StyleKit.Space.x5 * 2, 1);
+            card.Controls.Add(m);
+            int mh = StyleKit.FitLabel(m);
+
+            Label m2 = new Label();
+            m2.Text = "想接着用它 —— 点右下角「打开控制台」，会在我们自己的窗口里打开（不再借浏览器）。";
+            m2.Font = StyleKit.Ui(StyleKit.TextScale.Para, FontStyle.Regular);
+            m2.ForeColor = StyleKit.InkBody;
+            // 跟着 m 的实测底边走（原来写死 +52，是按"m 手写 44"配出来的）
+            m2.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4 + Math.Max(1, mh) + StyleKit.Space.x3);
+            m2.Size = new Size(cardW - StyleKit.Space.x5 * 2, 1);
+            card.Controls.Add(m2);
+            int m2h = StyleKit.FitLabel(m2);
+
+            // 把地址显示出来（诊断：用户经常想知道"它到底在哪一个端口上"）
+            Label m3 = new Label();
+            m3.Text = string.IsNullOrEmpty(_curl)
+                ? "地址：读不到（可能还没落到 logs\\console.url）"
+                : ("地址：" + MaskToken(_curl));
+            m3.Font = StyleKit.Ui(StyleKit.TextScale.Para, FontStyle.Regular);
+            // ⛔ 2026-09-23 修（可达性）：Muted(150,158,172)=2.60:1 远低于 AA ⇒ 改 Ink3ok(5.0:1)。
+            //   这一行是用户要照着念/粘贴的地址，属正文，不是禁用态。字号同 `u`/`d` 走 `Para` 保持同族。
+            m3.ForeColor = StyleKit.Ink3ok;
+            m3.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4 + Math.Max(1, mh) + StyleKit.Space.x3 + Math.Max(1, m2h) + StyleKit.Space.x3);
+            m3.Size = new Size(cardW - StyleKit.Space.x5 * 2, 1);
+            card.Controls.Add(m3);
+            StyleKit.FitLabel(m3);
+            StyleKit.SealCard(card);
+
+            // #13 F2：宽度由文字实宽决定（原来抄 148 / 100），y 跟着卡片实测底边走（原来抄 292）。
+            Button ok = StyleKit.MakeButton("打开控制台");
+            Button no = StyleKit.MakeButton("知道了");
+            int ny = card.Bottom + StyleKit.CardGapY;
+            ok.Location = new Point(520 - StyleKit.Space.x6 - ok.Width, ny);
             ok.FlatStyle = FlatStyle.Flat;
             ok.BackColor = Color.FromArgb(64, 140, 255);
             ok.ForeColor = Color.White;
@@ -928,21 +1248,48 @@ static class Program
                 Close();
             };
             Controls.Add(ok);
-            Button no = new RoundButton();
-            no.Text = "知道了";
-            no.Size = new Size(92, 36);
-            no.Location = new Point(188, 202);
+            no.Location = new Point(520 - StyleKit.Space.x6 - ok.Width - StyleKit.Space.x2 - no.Width, ny);
             no.FlatStyle = FlatStyle.Flat;
             no.Click += (ss, ee) => Close();
             Controls.Add(no);
+            // #12 F1：窗高由最后一块底边反推（原来抄 338）。
+            ClientSize = new Size(520, ok.Bottom + StyleKit.Space.x6);
             AcceptButton = ok; CancelButton = no;
             StyleKit.Apply(this, "群相 已就绪");
+        }
+
+        /// 把地址里的 token 打码（地址要给人看，但口令不该整串摊在屏幕上）
+        internal static string MaskToken(string url)
+        {
+            try
+            {
+                int i = url.IndexOf("token=", StringComparison.OrdinalIgnoreCase);
+                if (i < 0) return url;
+                int s = i + 6;
+                int e = url.IndexOf('&', s);
+                if (e < 0) e = url.Length;
+                if (e - s <= 4) return url.Substring(0, s) + "****";
+                return url.Substring(0, s) + url.Substring(s, 2) + "****" + url.Substring(e - 2);
+            }
+            catch { return url; }
         }
     }
 
     // ================= W6：统一外观（StyleKit）=================
 
     /// WebView2 内嵌控制台：自带标题栏（无边框 + 圆角 + 可拖动 + **可拉伸**），WebView2 不可用时回退到浏览器
+    /// 丙-1（2026-09-23）：后台健康度的判定 —— **移植** `_scratch/qt_proto/heal.py` 的
+    /// `Health`（那个原型是真跑过的），这里不另发明状态机，只把六态搬成 C# 枚举。
+    internal enum HealHealth
+    {
+        Ok = 0,        // 连上了，后端在跑
+        Starting = 1,  // 连不上，但我们知道它正在起来（刚点过「拉起来」）
+        Dead = 2,      // 连不上，且没有进程在撑 ⇒ 可以自愈
+        Hijacked = 3,  // 连上了，但对面不是我们的服务（代理 / 端口被别的程序占了）
+        Refused = 4,   // 连不上，无从判断原因
+        Unknown = 5,
+    }
+
     public class ConsoleForm : Form
     {
         string _url;
@@ -961,6 +1308,33 @@ static class Program
         /// 取证探针（--cursorprobe）要直接在这个 WebView2 里跑 JS，故开放只读引用
         public Microsoft.Web.WebView2.WinForms.WebView2 ProbeView { get { return _wv; } }
         Microsoft.Web.WebView2.WinForms.WebView2 _wv;
+
+        // ---- 丙-1 止血：窗口自己探活、自己重连、自己把服务拉起来 ----
+        System.Windows.Forms.Timer _heal;            // 周期性探活（服务死了要**自己**发现）
+        bool _healBusy;                              // 探测跑在线程池里，跑完才放下一轮进来
+        bool _showingDown;                           // 当前是不是我们自己那张"没起来"的页
+        bool _navDown;                               // 最近一次导航的目标是自绘页（用来区分"导航成功"的两种含义）
+        bool _downStarting;                          // 自绘页现在显示的是"正在起来"还是"没起来"
+        string _healWhy = "";                        // 探活失败的原因（进日志，也进自绘页）
+        string _healFail = "";                       // 丙-1b：最近一次「拉起」的结论（超时 / 起不来），失败时必须给人看
+        DateTime _startAt = DateTime.MinValue;       // 最近一次「拉起来」的时刻（HealStartTimeoutSec 秒内按"正在起来"讲）
+        /// 丙-1b（2026-09-23）：「正在拉起」的**硬超时**（秒）。
+        /// 过了这个点**必须**离开「正在拉起」态。原实现把 90 秒散着写了两处，而且出口只能靠探活那一轮
+        /// 顺带带出来 —— 探活一旦卡在线程池里（`_healBusy` 留在 true），页面就**永久转圈**（作者实测第二次点击）。
+        /// ⇒ 收成一个常量，并且配一条**只认时间、不看探活**的独立看门狗，保证任何路径都有出口。
+        internal const int HealStartTimeoutSec = 30;
+        /// 丙-1c（2026-09-23）：探活**周期**（毫秒）。
+        /// 原来写 2000 —— 服务挂掉后窗口要**平均 1 秒、最坏 2 秒**才自己发现，实测体感是"死页停了 2~5 秒"，
+        /// 用户明确要求更快。探活只是本机回环上的 `TcpClient.Connect` + 一次 HEAD，开销是**微秒级**，
+        /// 800ms 一轮对 CPU 完全无感，却是人眼分不出"卡顿 / 立刻"的那条线 ⇒ 取 800。
+        /// ⚠️ 提速只动**间隔**，不动 `Ui.ResolveLiveUrl` 里每个候选口的 300ms 单口超时：
+        ///    那个值要扛冷启动和弱网，改小会把"起得慢"误判成"口死了"。
+        internal const int HealProbeIntervalMs = 800;
+        /// 丙-1c（2026-09-23）：硬超时看门狗的**周期**（毫秒）。它只比较时刻、不碰网络，
+        /// 1 秒一跳够了 —— 超时判据本身就是 30 秒量级，快那么几百毫秒没意义。
+        /// 抽常量的理由：整片代码里不该再出现裸的定时器毫秒数字。
+        internal const int HealWatchIntervalMs = 1000;
+        System.Windows.Forms.Timer _healWatch;       // 硬超时看门狗：不依赖探活线程，只读表
 
         /// 最大化 ↔ 还原（标题栏双击与「□」按钮走同一处）
         public void ToggleMax()
@@ -1091,6 +1465,14 @@ static class Program
                 catch { }
                 m.Result = IntPtr.Zero; return;
             }
+            // 丙-1：另一个进程（`--console-reuse`）把"现在该连的地址"递过来了 ⇒ 重新导航 + 抬起。
+            //   治的就是 `agent/notify_ui.py` 里那条"复用分支只 flash/抬起、从不导航"的老路 ——
+            //   它抬起来的还是那一屏 ERR_CONNECTION_REFUSED。
+            if (m.Msg == WM_COPYDATA)
+            {
+                try { HealHandOff(m.LParam); m.Result = (IntPtr)1; } catch { }
+                return;
+            }
             if (m.Msg == 0x0083)   // WM_NCCALCSIZE：把客户区**精确钉死到屏幕矩形**
             {
                 // ⛔ 2026-09-16 三轮才对（用户三次实测反馈）：
@@ -1145,6 +1527,27 @@ static class Program
         internal static extern int SetWindowLong(IntPtr h, int idx, int val);
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         static extern bool IsZoomed(IntPtr h);
+
+        // ---- 丙-1：跨进程递地址（复用分支要"抬起 + 重新导航"，就得能跟那个已经开着的窗说话）----
+        internal const int WM_COPYDATA = 0x004A;
+        internal const int SW_RESTORE = 9;
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        internal struct COPYDATASTRUCT
+        {
+            public IntPtr dwData;
+            public int cbData;
+            public IntPtr lpData;
+        }
+
+        [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+        internal static extern IntPtr FindWindow(string cls, string title);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        internal static extern bool IsIconic(IntPtr h);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        internal static extern bool ShowWindow(IntPtr h, int cmd);
+        [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "SendMessage")]
+        internal static extern IntPtr SendMessageCd(IntPtr h, int msg, IntPtr w, ref COPYDATASTRUCT l);
 
         /// 无边框窗最大化时系统补的那圈边框宽度（不补回来任务栏会被盖住）
         static int FramePx(bool horiz)
@@ -1320,22 +1723,35 @@ static class Program
             bar.Controls.Add(t);
             // 顶栏三个按钮**自绘**（2026-09-15 用户：「减号、全屏、叉号的样子很奇怪呀，不统一」）：
             // 旧实现用 `—` / `□` / `✕` 三种字形，笔画与基线各不相同 ⇒ 一排看过去必然怪。见 wingliphs.cs。
+            //
+            // ⚠️ 2026-09-23 修（接手方第五轮回执：① CLIP 回归 = 3，全在这三个按钮上）：
+            //   原来高度写 26，而字形需要的 `need` 是 27（Min/Max/Close 分别为 48×27 / 52×27 / 60×27）
+            //   ⇒ `h=26->26 CLIP`（差值 1px，但判据是"任一 CLIP 都不许有"）。
+            //   修法：**高度 26 → 27**（跟其它窗体标题栏按钮对齐）。
+            //   ⚠️ 不能只加宽度：宽度是 34 已经够（48/52/60 是**含内边距的量测值**，
+            //      而按钮是 `Anchor=Top|Right` + 固定 34 宽 + 字形居中绘制 ⇒ 宽度不参与截断判断，
+            //      真正差的是**高度**那一格）。
+            //   尺寸账：`BarH = 38`，Location.Y = 8 ⇒ 8 + 27 = 35 ≤ 38，仍在标题栏内（不会顶出去）。
+            //   高度值统一走 `StyleKit.TitleBarBtnH`（与 `BuildTitleBar` 那颗 RoundButton 同源）。
+            const int GlyphH = StyleKit.TitleBarBtnH;
             GlyphButton min = new GlyphButton();
-            min.Kind = GlyphKind.Min; min.Size = new Size(34, 26);
+            // #13 F2：chrome 按钮**不适用**"文字实宽 + 36"（它们没有文字，实宽无从谈起，裁定 1），
+            //   但"尺寸不许手写"这条一样成立 ⇒ 宽走 `StyleKit.TitleBarBtnW`、高走 `StyleKit.TitleBarBtnH`。
+            min.Kind = GlyphKind.Min; min.Size = new Size(StyleKit.TitleBarBtnW, GlyphH);
             min.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             min.Location = new Point(bar.Width - 122, 8);
             min.Click += delegate { WindowState = FormWindowState.Minimized; };
             bar.Controls.Add(min);
             // 最大化 / 还原（2026-09-14 用户：「自创原生显示屏是没有全屏键的，顶栏上只有两个按钮。需要一个全屏键」）
             GlyphButton maxb = new GlyphButton();
-            maxb.Kind = GlyphKind.Max; maxb.Size = new Size(34, 26);
+            maxb.Kind = GlyphKind.Max; maxb.Size = new Size(StyleKit.TitleBarBtnW, GlyphH);
             maxb.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             maxb.Location = new Point(bar.Width - 82, 8);
             maxb.Click += delegate { ToggleMax(); };
             _btnMax = maxb;
             bar.Controls.Add(maxb);
             GlyphButton cls = new GlyphButton();
-            cls.Kind = GlyphKind.Close; cls.Size = new Size(34, 26);
+            cls.Kind = GlyphKind.Close; cls.Size = new Size(StyleKit.TitleBarBtnW, GlyphH);
             cls.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             cls.Location = new Point(bar.Width - 42, 8);
             cls.Click += delegate { Close(); };
@@ -1381,6 +1797,9 @@ static class Program
                             // ⛔ 2026-09-22：我们自己那张"控制台正在启动"的重试页要求再试一次
                             //   （页面 postMessage 比 JS 直接 location.replace 稳：宿主这边一定能拿到）。
                             if (msg == "pm-retry") { try { _wv.CoreWebView2.Navigate(_url); } catch { } return; }
+                            // 丙-1：自绘那张页的两个动作 —— 立刻再探一次 / 现在就把后台拉起来
+                            if (msg == "pm-heal") { HealTick(); return; }
+                            if (msg == "pm-heal-start") { StartBackend(); return; }
                             if (msg == "pm-esc-exit-fullscreen" && WindowState == FormWindowState.Maximized)
                             {
                                 WindowState = FormWindowState.Normal;
@@ -1396,18 +1815,29 @@ static class Program
                 // ⛔ 2026-09-22 加（**B站网友报「打不开控制台 / 无法访问此页面」的那个入口**）：
                 //   机器人没在跑/还没就绪时，这里的 `Navigate(_url)` 会**成功返回**、随后把
                 //   WebView2 的默认错误页（一屏 ERR_CONNECTION_REFUSED）显示给用户 —— 用户当然以为
-                //   产品坏了。⇒ 导航失败一律换成**我们自己的**"正在重试"页（含自动重试 + 手动重试 +
-                //   去哪儿看日志），端口一起来就自动接上，全程不出现浏览器错误页。
+                //   产品坏了。⇒ 导航失败一律换成**我们自己的**页。
+                // ⛔ 2026-09-23 丙-1 加强：那张页现在带「现在就拉起来」，并且**换口也能接上**
+                //   （老版只会死盯着最初那个 `_url` 重试，端口一顺延就永远连不上）。
                 try
                 {
                     _wv.CoreWebView2.NavigationCompleted += delegate(object s3, Microsoft.Web.WebView2.Core.CoreWebView2NavigationCompletedEventArgs e3)
                     {
-                        if (e3.IsSuccess) return;
-                        try { _wv.CoreWebView2.NavigateToString(Ui.RetryPage(_url)); } catch { }
+                        // 成功有两种含义：连上了真页面 / 刚把自绘页写进去 —— 用 `_navDown` 分开。
+                        if (e3.IsSuccess) { _showingDown = _navDown; return; }
+                        if (_navDown) return;                     // 已经是自绘页，别自己追自己
+                        GoDown(StartingWindowOpen);
                     };
                 }
                 catch { }
-                try { _wv.CoreWebView2.Navigate(_url); } catch { Ui.FallbackBrowser(_url); }
+                // ⛔ 丙-1：**开窗前自己探活，不信任 `logs\console.url`** —— 服务关了那个文件还在
+                //   （里面是没人听的口），端口被占时后台又会静默顺延。探到活口就导航过去，
+                //   一个活口都没有就直接上我们自己的页，绝不把死地址丢给 WebView2。
+                try
+                {
+                    if (HealEnabled) { StartHeal(); HealTick(); }
+                    else { _wv.CoreWebView2.Navigate(_url); }
+                }
+                catch { Ui.FallbackBrowser(_url); }
             };
             Controls.Add(bar);
             Controls.Add(_wv);
@@ -1461,6 +1891,201 @@ static class Program
                 if (File.Exists(ico0)) Icon = Icon.ExtractAssociatedIcon(ico0);
             }
             catch { }
+        }
+
+        // =====================================================================
+        // 丙-1：探活 / 自愈（治"窗口不知道服务死活"这件事）
+        // =====================================================================
+
+        /// 只有**真连后台**的窗口才探活。`--shot` / 各类探针建的是 `about:blank` 的窗，
+        /// 它们绝不能起定时器（否则取证跑一次就多出一堆无谓的连接）。
+        bool HealEnabled
+        {
+            get { return !ProbeOnly && !string.IsNullOrEmpty(_url) && _url.StartsWith("http"); }
+        }
+
+        public void StartHeal()
+        {
+            if (!HealEnabled) return;
+            try
+            {
+                _heal = new System.Windows.Forms.Timer();
+                _heal.Interval = HealProbeIntervalMs;   // 服务死了 ⇒ 最多 HealProbeIntervalMs 毫秒内自己发现
+                _heal.Tick += delegate { HealTick(); };
+                _heal.Start();
+            }
+            catch { }
+            StartHealWatch();
+            // 窗口被抬起来/激活时**立刻**探一次：用户点「打开控制台」后不该先看到一屏死页再等一整轮。
+            Activated += delegate { HealTick(); };
+        }
+
+        void HealTick()
+        {
+            if (!HealEnabled || _healBusy) return;
+            _healBusy = true;
+            string cur = _url;
+            bool starting = StartingWindowOpen;
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                int health; string why;
+                string live = Ui.ResolveLiveUrl(cur, out health, out why);
+                try { BeginInvoke((Action)delegate { HealApply(live, health, why, starting); }); }
+                catch { _healBusy = false; }
+            });
+        }
+
+        void HealApply(string live, int health, string why, bool starting)
+        {
+            _healBusy = false;
+            try
+            {
+                if (IsDisposed || _wv == null || _wv.CoreWebView2 == null) return;
+                if (!string.IsNullOrEmpty(live))
+                {
+                    // 起来了 —— **可能在别的口上**。判据是"探活成功"，不是文件里写的那个端口号。
+                    if (_showingDown || !string.Equals(live, _url, StringComparison.Ordinal)) GoLive(live);
+                    return;
+                }
+                _healWhy = why;
+                // 没起来 ⇒ 我们自己的页（不是 WebView2 那张 ERR_CONNECTION_REFUSED）。
+                if (!_showingDown || starting != _downStarting) GoDown(starting);
+            }
+            catch { }
+        }
+
+        /// 导航到活地址，并记下"现在不是自绘页"。
+        void GoLive(string u)
+        {
+            _url = u; _navDown = false; _showingDown = false;
+            _startAt = DateTime.MinValue; _healFail = "";   // 已经接上 ⇒ 拉起这件事到此结束（含失败结论）
+            try { _wv.CoreWebView2.Navigate(u); } catch { }
+        }
+
+        /// 切到我们自绘的"没起来 / 正在起来"页，并记下"现在是自绘页"。
+        void GoDown(bool starting)
+        {
+            _navDown = true; _showingDown = true; _downStarting = starting;
+            try { _wv.CoreWebView2.NavigateToString(Ui.DownPage(_url, _healWhy, starting, _healFail)); } catch { }
+        }
+
+        // ---- 丙-1b：「正在拉起」的硬超时与失败出口 ----
+
+        /// 「正在拉起」这个说法**还成立**吗（点了拉起 + 没过硬超时）。
+        /// 只有这一个判据，别再散着写秒数。
+        bool StartingWindowOpen
+        {
+            get { return _startAt != DateTime.MinValue && (DateTime.Now - _startAt).TotalSeconds < HealStartTimeoutSec; }
+        }
+
+        /// 硬超时看门狗：**1 秒一跳，只认时间**。
+        /// 为什么不挂在探活那一轮上：探活要联网（连不上时会耗掉整轮），而且 `_healBusy` 一旦留在 true，
+        /// `HealTick` 就再也不会进入 —— 那正是"永久停在正在拉起"的成因。看门狗不碰网络，只比较时刻。
+        void StartHealWatch()
+        {
+            try
+            {
+                if (_healWatch != null) return;
+                _healWatch = new System.Windows.Forms.Timer();
+                _healWatch.Interval = HealWatchIntervalMs;
+                _healWatch.Tick += delegate { HealWatchTick(); };
+                _healWatch.Start();
+            }
+            catch { }
+        }
+
+        void HealWatchTick()
+        {
+            try
+            {
+                if (_startAt == DateTime.MinValue) return;   // 没点过拉起 ⇒ 不关它的事
+                if (StartingWindowOpen) return;              // 还在硬超时窗口内 ⇒ 继续等
+                if (!_downStarting) return;                  // 已经离开「正在拉起」了 ⇒ 收工
+                HealFail("已尝试 " + HealStartTimeoutSec + " 秒，控制台服务仍没探到（" + Ui.ShortUrl(_url) + " 及候选口都没应答）"
+                    + HealLogTail(), Path.GetDirectoryName(Application.ExecutablePath));
+            }
+            catch { }
+        }
+
+        /// 失败时的**可诊断信息**：把 `logs\console_heal.log` 的最后几行带上，别让人对着空白猜。
+        string HealLogTail()
+        {
+            string tail = Ui.LastHealLog(Path.GetDirectoryName(Application.ExecutablePath), 5);
+            return string.IsNullOrEmpty(tail) ? "" : ("；最后几条自愈日志：" + tail);
+        }
+
+        /// 「拉起」的**统一失败出口**：记日志、清掉起始时刻、把自绘页换成「没起来 + 原因」。
+        /// ⛔ 任何一条走不通的路都必须调它 —— 否则页面（或页面里那颗按钮）就停在"正在拉起…"上出不来。
+        void HealFail(string reason, string root)
+        {
+            try
+            {
+                _startAt = DateTime.MinValue;      // 关掉"正在拉起"这个说法 ⇒ 看门狗不会再重复打
+                _healFail = reason;                // 进自绘页，用户看得见
+                _healBusy = false;                 // 探活万一卡住（标志留在 true 就再也不探了），这里放它出来
+                Ui.NoteHeal(root, reason);
+                if (IsDisposed || _wv == null || _wv.CoreWebView2 == null) return;
+                GoDown(false);                     // ⛔ 必须是 false：超时后就**不许**再显示"正在拉起"
+            }
+            catch { }
+        }
+
+        /// 跨进程递来的新地址：**先探活再导航**（治"抬起来的还是死页"）。
+        void HealHandOff(IntPtr lParam)
+        {
+            COPYDATASTRUCT cd = (COPYDATASTRUCT)
+                System.Runtime.InteropServices.Marshal.PtrToStructure(lParam, typeof(COPYDATASTRUCT));
+            if (cd.cbData <= 0 || cd.lpData == IntPtr.Zero) return;
+            string u = System.Runtime.InteropServices.Marshal.PtrToStringUni(cd.lpData, cd.cbData / 2);
+            if (string.IsNullOrEmpty(u)) return;
+            u = u.Trim('\0');
+            if (!u.StartsWith("http")) return;
+            _url = u;                       // 口令跟着这个地址走，换口不掉口令
+            RaiseSelf();
+            HealTick();
+        }
+
+        void RaiseSelf()
+        {
+            try
+            {
+                if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+                Show(); Activate(); SetForegroundWindow(Handle);
+            }
+            catch { }
+        }
+
+        /// 「现在就拉起来」：走**现有启动流程**（`python -X utf8 scripts\onestart.py`），
+        /// 与「一键启动.exe」用的是同一份 Python 解析、同一个脚本 —— 不另起一套。
+        /// ⛔ 不等它退出：`onestart.py` 会一直守到控制台就绪（可能一两分钟）。
+        void StartBackend()
+        {
+            string root = Path.GetDirectoryName(Application.ExecutablePath);
+            try
+            {
+                string exe = "", pre = "", ver = "", why = "";
+                bool got = LauncherForm.TryPy(Path.Combine(root, "runtime", "python", "python.exe"), out exe, out pre, out ver, out why);
+                if (!got) got = LauncherForm.TryPy(LauncherForm.ReadPyRaw(Path.Combine(root, "logs", "python_path.txt")), out exe, out pre, out ver, out why);
+                // ⛔ 丙-1b：这两条"根本没 spawn 出去"的失败**原来只写日志、页面不动** ⇒ 页面里那颗按钮
+                //   已经被 JS 置成 disabled + "正在拉起…"，永远回不来（又一处"进去出不来"）。
+                //   ⇒ 走 HealFail：写日志 + 把原因贴到自绘页 + 重新画出可点的按钮。
+                if (!got) { HealFail("拉起失败：找不到可用的 Python（" + why + "）", root); return; }
+                string onestart = Path.Combine(root, "scripts", "onestart.py");
+                if (!File.Exists(onestart)) { HealFail("拉起失败：缺 scripts\\onestart.py", root); return; }
+                var po = new ProcessStartInfo(exe, ((pre.Length > 0 ? (pre + " ") : "") + "-X utf8 \"" + onestart + "\"").Trim());
+                po.UseShellExecute = false;
+                po.CreateNoWindow = true;
+                po.WorkingDirectory = root;
+                po.EnvironmentVariables["WX_GUI"] = "1";
+                Process.Start(po);
+                _startAt = DateTime.Now;
+                _healFail = "";               // 上一次的失败结论到此为止，别跟着新一轮显示
+                StartHealWatch();             // 兜底：探活定时器没起来时，硬超时仍然有人管
+                Ui.NoteHeal(root, "已拉起后台：" + exe + " " + po.Arguments);
+                GoDown(true);                 // 立刻换成"正在起来"那张页，别让用户对着旧按钮
+                HealTick();
+            }
+            catch (Exception ex) { HealFail("拉起异常：" + ex.Message, root); }
         }
     }
 
@@ -1854,11 +2479,21 @@ static class Program
                     .Replace("\"", "&quot;").Replace("'", "&#39;");
         }
 
-        public static string RetryPage(string url)
+        // =====================================================================
+        // 丙-1（2026-09-23）：控制台「进不去 / 死页」止血
+        //
+        // 要治的是"**窗口不知道服务死活**"这件事：让窗口自己探活、自己重连、自己把服务拉起来，
+        // 并且**不再信任那个可能是死的地址文件**。判定逻辑是 `_scratch/qt_proto/heal.py`
+        // 那个真跑过的 Python 原型的移植（五/六态），不另发明。
+        // =====================================================================
+
+        /// **我们自己的**"后台没起来"页 —— 顶掉 WebView2 那张 ERR_CONNECTION_REFUSED。
+        ///
+        /// 为什么必须自绘：那张浏览器错误页信息量 = 0（分不清"服务死了 / 端口被占 / 代理拦了"），
+        /// 用户看到只能刷新，而刷不刷得好纯靠运气。这里换成能讲人话 + 能给动作的页。
+        public static string DownPage(string url, string why, bool starting, string fail)
         {
-            string safe = EscapeHtml(url);
-            string jsUrl = (url ?? "").Replace("\\", "\\\\").Replace("\"", "\\\"");   // JS 字符串里的地址：用**原始**值
-            string shown = EscapeHtml(url != null && url.IndexOf('?') > 0 ? url.Substring(0, url.IndexOf('?')) : (url ?? ""));
+            string shown = EscapeHtml(ShortUrl(url));
             var sb = new StringBuilder();
             sb.Append("<!doctype html><html><head><meta charset=\"utf-8\"><title>群相 控制台</title><style>");
             sb.Append("html,body{margin:0;height:100%;background:#0E1420;color:#E7ECF5;");
@@ -1870,21 +2505,306 @@ static class Program
             sb.Append("b{color:#E7ECF5;font-weight:600}");
             sb.Append("button{margin-top:14px;background:#2E6BE6;color:#fff;border:0;border-radius:8px;");
             sb.Append("padding:9px 18px;font-size:13px;cursor:pointer}");
+            sb.Append("button:disabled{background:#2A3446;color:#7A8798;cursor:default}");
             sb.Append("</style></head><body><div class=\"w\">");
-            sb.Append("<h1>控制台正在启动…</h1>");
-            sb.Append("<p>还没连上 <code>" + shown + "</code>（第 <b id=\"n\">0</b> 次自动重试）。</p>");
-            sb.Append("<p id=\"s\">机器人启动时要准备 Python 环境、装依赖并连微信，第一次可能要一两分钟。这个窗口会自己接上，不用管它。</p>");
-            sb.Append("<p>一直连不上就看 <code>logs\\persona_morph.log</code> 与 <code>logs\\onestart.log</code>，或重新点一次「一键启动」。</p>");
-            sb.Append("<button onclick=\"go()\">立即重试</button>");
-            sb.Append("</div><script>var n=0;var u=\"" + jsUrl + "\";");
-            sb.Append("function go(){try{if(window.chrome&&chrome.webview){chrome.webview.postMessage('pm-retry');return;}}catch(e){}");
-            sb.Append("try{location.replace(u);}catch(e){}}");
-            sb.Append("function tick(){n++;try{document.getElementById('n').textContent=n;}catch(e){}");
-            sb.Append("if(n>40){try{document.getElementById('s').textContent=");
-            sb.Append("'已重试 40 次仍连不上：机器人可能没起来。请看 logs\\\\persona_morph.log，或重新点「一键启动」。';}catch(e){}return;}");
-            sb.Append("setTimeout(go,2500);}");
-            sb.Append("setTimeout(tick,1500);</script></body></html>");
+            if (starting)
+            {
+                // ②"重启窗口期那 2~5 秒真空" ⇒ **不许**把它讲成失败（老实现正是把这几秒
+                //   当成失败，于是永久停在一张红字错误页上）。
+                sb.Append("<h1>后台正在起来…</h1>");
+                sb.Append("<p>刚点了拉起，正在准备 Python 环境、装依赖并连微信，<b>第一次可能要一两分钟</b>。</p>");
+                sb.Append("<p>这个窗口会<b>自己接上</b>，不用刷新，也不用管它。</p>");
+                // 丙-1b：把"最多等多久"讲在前面 —— 超时的那一刻页面一定会变，不会一直转圈。
+                sb.Append("<p>这里最多等 <b>" + ConsoleForm.HealStartTimeoutSec + " 秒</b>；"
+                    + "到点还没探到服务，我就把<b>原因</b>和<b>日志最后几行</b>写在这，并把按钮还给你。</p>");
+            }
+            else
+            {
+                sb.Append("<h1>控制台还没连上</h1>");
+                sb.Append("<p>本机上没找到在跑的控制台服务 —— 这不是页面坏了，是<b>后台没起来</b>。</p>");
+                sb.Append("<p>点下面这个按钮，我按「一键启动」的同一套流程把它拉起来；起来之后这个窗口<b>自动接上</b>，不用你刷新。</p>");
+                sb.Append("<button id=\"b\" onclick=\"go()\">现在就拉起来</button>");
+            }
+            sb.Append("<p>刚才试的是 <code>" + shown + "</code> —— 探下来没有活着的控制台服务。</p>");
+            sb.Append("<p>想看细节就翻 <code>logs\\console_heal.log</code>（本次探测）、");
+            sb.Append("<code>logs\\persona_morph.log</code> 与 <code>logs\\onestart.log</code>（机器人那边的日志）。</p>");
+            if (!string.IsNullOrEmpty(why))
+                sb.Append("<p>这次探到的情况：" + EscapeHtml(why) + "</p>");
+            // 丙-1b：失败结论（超时 / spawn 不出去）**必须可见** —— 空白或永久转圈都不算数。
+            if (!string.IsNullOrEmpty(fail))
+                sb.Append("<p>上次拉起的结果：" + EscapeHtml(fail).Replace("\n", "<br>") + "</p>");
+            sb.Append("</div><script>");
+            sb.Append("function post(m){try{if(window.chrome&&chrome.webview){chrome.webview.postMessage(m);return true;}}catch(e){}return false;}");
+            sb.Append("function go(){var b=document.getElementById('b');if(b){b.disabled=true;b.textContent='正在拉起…';}post('pm-heal-start');}");
+            sb.Append("post('pm-heal');");       // 页面一进来就让宿主立刻再探一次（不用干等定时器）
+            sb.Append("</script></body></html>");
             return sb.ToString();
+        }
+
+        /// 自愈日志（与"回退浏览器"那条分开记，别混在一个文件里看）。
+        public static void NoteHeal(string root, string what)
+        {
+            try
+            {
+                string d = Path.Combine(root, "logs");
+                Directory.CreateDirectory(d);
+                File.AppendAllText(Path.Combine(d, "console_heal.log"),
+                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  " + what + Environment.NewLine);
+            }
+            catch { }
+        }
+
+        /// `logs\console_heal.log` 的最后 n 行（给失败页用：让人不用自己去翻文件）。
+        /// 读不出来就返回空 —— 这条只是"更好看清"，读不到不该影响页面本身。
+        public static string LastHealLog(string root, int lines)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(root) || lines <= 0) return "";
+                string f = Path.Combine(root, "logs", "console_heal.log");
+                if (!File.Exists(f)) return "";
+                string[] all = File.ReadAllLines(f);
+                int take = Math.Min(lines, all.Length);
+                var sb = new StringBuilder();
+                for (int i = all.Length - take; i < all.Length; i++)
+                {
+                    string t = all[i];
+                    if (string.IsNullOrEmpty(t)) continue;
+                    if (sb.Length > 0) sb.Append(" ｜ ");
+                    sb.Append(t.Trim());
+                }
+                return sb.ToString();
+            }
+            catch { return ""; }
+        }
+
+        public static string ShortUrl(string url)
+        {
+            if (string.IsNullOrEmpty(url)) return "";
+            int q = url.IndexOf('?');
+            return q > 0 ? url.Substring(0, q) : url;
+        }
+
+        /// 地址里的端口号（取不到给 0）。
+        public static int PortOf(string url)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(url) || !url.StartsWith("http")) return 0;
+                string rest = url.Substring(url.IndexOf("://") + 3);
+                int slash = rest.IndexOf('/');
+                if (slash >= 0) rest = rest.Substring(0, slash);
+                int colon = rest.LastIndexOf(':');
+                if (colon <= 0) return 0;
+                int v = 0;
+                if (int.TryParse(rest.Substring(colon + 1), out v) && v > 0) return v;
+            }
+            catch { }
+            return 0;
+        }
+
+        /// 地址里的口令（拿不到给空串）。
+        public static string TokenOf(string url)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(url)) return "";
+                int q = url.IndexOf('?');
+                if (q <= 0) return "";
+                foreach (string kv in url.Substring(q + 1).Split('&'))
+                {
+                    int e = kv.IndexOf('=');
+                    if (e > 0 && kv.Substring(0, e) == "token") return kv.Substring(e + 1);
+                }
+            }
+            catch { }
+            return "";
+        }
+
+        /// 用指定的口重拼一个地址，**口令跟着走**（换口不能把口令换丢，否则 401）。
+        public static string WithPort(string url, int port)
+        {
+            string root = Path.GetDirectoryName(Application.ExecutablePath);
+            string tok = TokenOf(url);
+            if (tok == "")
+            {
+                // 传进来的地址没带口令 ⇒ 去地址文件里找（那是**口令的拥有者**写下来的）
+                try
+                {
+                    string uf = Path.Combine(root, "logs", "console.url");
+                    if (File.Exists(uf)) tok = TokenOf(File.ReadAllText(uf));
+                }
+                catch { }
+            }
+            if (tok == "")
+            {
+                try { string w; tok = TokenOf(ConsoleUrl(root, out w)); } catch { }
+            }
+            return "http://127.0.0.1:" + port + "/" + (tok != "" ? ("?token=" + tok) : "");
+        }
+
+        /// 该试哪些口（按可信度排序、去重）。
+        ///
+        /// ① 当前地址里的口（调用方刚给的）② `logs\console.url` 里的口（"上一次真跑起来的那一个"）
+        /// ③ `config.json` 的 `server.port` ④ 顺延的几个口（端口被占时后台会**静默往后挪**）。
+        public static int[] CandidatePorts(string url)
+        {
+            var set = new System.Collections.Generic.List<int>();
+            string root = Path.GetDirectoryName(Application.ExecutablePath);
+            int p0 = PortOf(url);
+            if (p0 > 0) set.Add(p0);
+            int pf = PortFromUrlFile(root);
+            if (pf > 0 && !set.Contains(pf)) set.Add(pf);
+            int baseP = ServerPortFromConfig(root);
+            if (baseP <= 0) baseP = PortHelper.ReadPort();
+            if (baseP > 0 && !set.Contains(baseP)) set.Add(baseP);
+            for (int k = 1; k <= 8; k++)
+            {
+                int q = baseP + k;
+                if (q > 0 && q < 65536 && !set.Contains(q)) set.Add(q);
+            }
+            return set.ToArray();
+        }
+
+        /// 打一次 HTTP（**必须绕代理**，见 `Identify` 的说明）。拿不到 HTTP 应答就给 false。
+        static bool HttpProbe(int port, string path, out int code, out string raw, out string body)
+        {
+            code = 0; raw = ""; body = "";
+            System.Net.HttpWebResponse rs = null;
+            try
+            {
+                var rq = (System.Net.HttpWebRequest)System.Net.WebRequest.Create("http://127.0.0.1:" + port + path);
+                rq.Proxy = null;
+                rq.Timeout = 800;
+                rq.ReadWriteTimeout = 800;
+                rq.AllowAutoRedirect = false;
+                rq.Method = "GET";
+                rq.UserAgent = "PersonaMorph-Heal";
+                rs = (System.Net.HttpWebResponse)rq.GetResponse();
+                code = (int)rs.StatusCode; raw = "HTTP " + code;
+                body = ReadBody(rs);
+                return true;
+            }
+            catch (System.Net.WebException we)
+            {
+                System.Net.HttpWebResponse er = we.Response as System.Net.HttpWebResponse;
+                if (er != null) { code = (int)er.StatusCode; raw = "HTTP " + code; body = ReadBody(er); return true; }
+                raw = we.Status.ToString(); return false;
+            }
+            catch (Exception e) { raw = e.Message; return false; }
+            finally { try { if (rs != null) rs.Close(); } catch { } }
+        }
+
+        /// 只读一小段正文（够认人就行，全页几百 KB 没必要读完）。
+        static string ReadBody(System.Net.HttpWebResponse rs)
+        {
+            try
+            {
+                using (System.IO.Stream st = rs.GetResponseStream())
+                {
+                    if (st == null) return "";
+                    byte[] buf = new byte[8192];
+                    int got = st.Read(buf, 0, buf.Length);
+                    if (got <= 0) return "";
+                    return Encoding.UTF8.GetString(buf, 0, got);
+                }
+            }
+            catch { return ""; }
+        }
+
+        /// 这段正文**像不像**我们的控制台页（`agent/console_html.py` 里带「群相」字样与 `<title>群相 控制台</title>`）。
+        /// 判不了（空正文）就放行 —— 宁可错认，不可错杀：把真在跑的服务判成"不是"会直接害死正常路径。
+        static bool LooksLikeOurs(string body)
+        {
+            if (string.IsNullOrEmpty(body)) return true;
+            return body.IndexOf("群相") >= 0
+                || body.IndexOf("PersonaMorph", StringComparison.OrdinalIgnoreCase) >= 0
+                || body.IndexOf("persona_morph", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        /// 这个口上**是不是我们的控制台**（两步：先 TCP 快探，再 HTTP 认人）。
+        ///
+        /// ⛔ 必须两步：E4（端口顺延）现场里 3210 被别的程序占着 —— 只做 TCP 的话它也"活着"，
+        ///    我们就会连到一个不是我们的东西上。HTTP 这一步负责认人。
+        /// ⛔ 必须绕代理（`Proxy = null`）：本机代理把 127.0.0.1 也代理走时，应答会是 502，
+        ///    不绕开就会把"代理劫持"误判成"服务挂了"（`_scratch/qt_proto/heal.py` 已实测过这个坑）。
+        public static HealHealth Identify(int port, out string raw)
+        {
+            raw = "";
+            if (port <= 0 || port >= 65536) return HealHealth.Refused;
+            if (!PortAlive("http://127.0.0.1:" + port + "/", 300)) { raw = "没人接这个口"; return HealHealth.Refused; }
+            int code; string r1, b1;
+            if (!HttpProbe(port, "/api/status", out code, out r1, out b1))
+            {
+                raw = r1;
+                // 有东西在听，但不是 HTTP —— 多半是别的程序占了这个口（**不是**我们）。
+                return HealHealth.Unknown;
+            }
+            if (code == 502 || code == 503 || code == 504) { raw = r1; return HealHealth.Hijacked; }
+            if (code != 404) { raw = r1; return HealHealth.Ok; }   // 200 / 401 / 403 …… 都是"我们在应答"
+            // `/api/status` 不存在 ⇒ 再问一次首页，并且**认正文**：别把别的 HTTP 服务当成我们
+            // （E4 现场里占着 3210 的若是另一个 HTTP 服务，光看状态码是分不出来的）。
+            int c2; string r2, b2;
+            if (!HttpProbe(port, "/", out c2, out r2, out b2)) { raw = r2; return HealHealth.Unknown; }
+            if (c2 == 502 || c2 == 503 || c2 == 504) { raw = r2; return HealHealth.Hijacked; }
+            raw = r2;
+            if (c2 != 200 && c2 != 401 && c2 != 403) return HealHealth.Unknown;
+            return LooksLikeOurs(b2) ? HealHealth.Ok : HealHealth.Unknown;
+        }
+
+        /// 探一圈，返回**现在真能用的**控制台地址；一个活口都没有就返回 null。
+        ///
+        /// ⛔ 这是丙-1 的核心：**以"探活成功"为准，不以 `logs\console.url` 里的端口号为准**。
+        ///   服务关了那个文件还在（里面是没人听的口），端口被占时后台又会静默顺延 ——
+        ///   两种情况都只有"自己探"才测得出来。
+        public static string ResolveLiveUrl(string url, out int health, out string why)
+        {
+            health = (int)HealHealth.Refused;
+            why = "";
+            try
+            {
+                foreach (int p in CandidatePorts(url))
+                {
+                    string raw;
+                    HealHealth s = Identify(p, out raw);
+                    if (s == HealHealth.Ok) { health = (int)HealHealth.Ok; return WithPort(url, p); }
+                    if (s == HealHealth.Hijacked) why += p + " 上有别的东西在应答（" + raw + "）；";
+                    else if (s == HealHealth.Unknown) why += p + " 上不像我们的服务（" + raw + "）；";
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        /// 丙-1：**把地址递给已经开着的那个控制台窗**，让它重新导航 + 抬起。
+        /// 找到窗并递成功 ⇒ 返回 true（调用方随即退出，不攒第二个窗）。
+        ///
+        /// 治的是入口 C：复用分支原来只 flash/抬起、**从不导航**，于是抬起来的还是那一屏死页。
+        public static bool HandOffToConsole(string url)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(url) || !url.StartsWith("http")) return false;
+                IntPtr h = ConsoleForm.FindWindow(null, "群相 控制台");
+                if (h == IntPtr.Zero) return false;
+                byte[] bytes = Encoding.Unicode.GetBytes(url);
+                ConsoleForm.COPYDATASTRUCT cd = new ConsoleForm.COPYDATASTRUCT();
+                cd.dwData = (IntPtr)0x504D;                 // 'PM'
+                cd.cbData = bytes.Length + 2;
+                IntPtr buf = System.Runtime.InteropServices.Marshal.AllocHGlobal(bytes.Length + 2);
+                try
+                {
+                    System.Runtime.InteropServices.Marshal.Copy(bytes, 0, buf, bytes.Length);
+                    System.Runtime.InteropServices.Marshal.WriteInt16(buf, bytes.Length, 0);   // 结尾补 \0
+                    cd.lpData = buf;
+                    ConsoleForm.SendMessageCd(h, ConsoleForm.WM_COPYDATA, IntPtr.Zero, ref cd);
+                }
+                finally { System.Runtime.InteropServices.Marshal.FreeHGlobal(buf); }
+                try { if (ConsoleForm.IsIconic(h)) ConsoleForm.ShowWindow(h, ConsoleForm.SW_RESTORE); } catch { }
+                try { ConsoleForm.SetForegroundWindow(h); } catch { }
+                return true;
+            }
+            catch { return false; }
         }
 
         /// 回退原因落盘（尽力而为，失败不影响开窗）
@@ -2096,26 +3016,87 @@ static class Program
                 string root = Path.GetDirectoryName(Application.ExecutablePath);
                 Text = "群相 控制台";
                 StartPosition = FormStartPosition.CenterScreen;
-                ClientSize = new Size(470, 250);
+                // 2026-09-23 显式化：原来**没设**边框 ⇒ 默认 `Sizable`，而 `StyleKit.Apply` 对
+                //   `Sizable` 与 `FixedDialog` **都会**换自绘标题栏、都会把客户区定成"设计高度"。
+                //   写出来是为了让"这一窗的高度账跟其它窗走同一条规则"这件事在代码里可见。
+                FormBorderStyle = FormBorderStyle.FixedDialog;
+                MaximizeBox = false; MinimizeBox = false;
+                // 2026-09-23：470×250 → 540×368（卡片化 + 明确的"为什么打不开 / 你该怎么办"两段）
+                //   ⚠️ 这个高度是**标题栏以下**的设计高度（`Apply` 再 + BarH 给窗口长高，见 stylekit.cs）
+                // ⛔ 2026-09-23 第二次调（真 bug：正文被裁）：368 → 420。
+                //   这一窗有**三段**卡内文字（m 一句 + m2 四条 bullet + m3 地址行），是三张卡里最挤的：
+                //     16(上) + m17 + 14(间隔) + m2实测108 + 12 + m3实测14 + 16(下) ≈ 197
+                //   而 368 高下卡片最多只能到 198（按钮 322 − 卡顶 104 − 20 间隔）⇒ 零余量。
+                //   放开到 420 后卡片可以给到 250，余量 53px。
+                ClientSize = new Size(540, 420);
+
+                StyleKit.MakeIcon(this, root, new Point(StyleKit.Space.x6, StyleKit.Space.x5));
+
                 Label t = new Label();
                 t.Text = "控制台还没就绪";
-                t.Font = new Font("Microsoft YaHei UI", 14, FontStyle.Bold);
-                t.Location = new Point(24, 22); t.AutoSize = true;
+                t.Font = StyleKit.Ui(StyleKit.TextScale.Title, FontStyle.Bold);
+                t.ForeColor = StyleKit.Ink;
+                t.Location = new Point(StyleKit.Space.x6 + StyleKit.IconSize + StyleKit.Space.x4, StyleKit.Space.x5 + 2);
+                t.AutoSize = true;
                 Controls.Add(t);
+
+                Label s = new Label();
+                s.Text = "现在打开只会是一屏错误页";
+                s.Font = StyleKit.Ui(StyleKit.TextScale.Head, FontStyle.Bold);
+                s.ForeColor = StyleKit.Warn;   // 提醒（不是错误、也不是正常）⇒ 用中间那一档
+                s.Location = new Point(StyleKit.Space.x6 + StyleKit.IconSize + StyleKit.Space.x4, StyleKit.Space.x5 + 30);
+                s.AutoSize = true;
+                Controls.Add(s);
+
+                int cardW = 540 - StyleKit.Space.x6 * 2;
+                // #12 F1 / #13 F3：卡顶走 `StyleKit.CardTopY`（原手写 104），
+                //   高度不再手抄（这条一路抄过 172 → 250，每抄一次就漏一段正文 ⇒ 交给 `SealCard` 算）。
+                CardPanel card = StyleKit.MakeCard(this, new Point(StyleKit.Space.x6, StyleKit.CardTopY), cardW);
+
                 Label m = new Label();
-                m.Text = "机器人还没起来（或刚刚被关掉），现在打开只会是一屏「无法访问此页面」。"
-                       + Environment.NewLine
-                       + "点「一键启动」把控制台拉起来；已经起来了就点「重试」。"
-                       + Environment.NewLine + Environment.NewLine
-                       + "还不行的话看 logs\\persona_morph.log 与 logs\\onestart.log。";
-                m.Font = new Font("Microsoft YaHei UI", 9.5f);
-                m.ForeColor = Color.FromArgb(76, 92, 118);
-                m.Location = new Point(24, 62); m.Size = new Size(420, 120);
-                Controls.Add(m);
-                Button retry = new RoundButton();
-                retry.Text = "重试";
-                retry.Size = new Size(96, 34);
-                retry.Location = new Point(348, 200);
+                m.Text = "机器人还没起来（或刚刚被关掉），所以这个控制台地址现在没人应答。";
+                m.Font = StyleKit.Ui(StyleKit.TextScale.Body, FontStyle.Regular);
+                m.ForeColor = StyleKit.Ink;
+                m.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4);
+                m.Size = new Size(cardW - StyleKit.Space.x5 * 2, 22);
+                card.Controls.Add(m);
+
+                Label m2 = new Label();
+                m2.Text =
+                    "可以这样做：\n"
+                  + "  · 点「重试」—— 如果机器人刚好起来了，这里会直接接上去；\n"
+                  + "  · 还没起来就双击「一键启动.exe」把控制台拉起来，再回来点「重试」；\n"
+                  + "  · 反复不行的话，看 logs\\persona_morph.log 与 logs\\onestart.log 里的最后几行。";
+                m2.Font = StyleKit.Ui(StyleKit.TextScale.Para, FontStyle.Regular);
+                m2.ForeColor = StyleKit.InkBody;
+                m2.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4 + 30);
+                // ⛔ 2026-09-23 修（真 bug：正文被裁）：原手写 110，实测需要 ~152 ⇒ 第三条被切一半。
+                m2.Size = new Size(cardW - StyleKit.Space.x5 * 2, 1);
+                card.Controls.Add(m2);
+                int m2h = StyleKit.FitLabel(m2);
+
+                Label m3 = new Label();
+                m3.Text = string.IsNullOrEmpty(url) ? "地址：（空）" : ("尝试的地址：" + NoticeForm.MaskToken(url));
+                m3.Font = StyleKit.Ui(StyleKit.TextScale.Para, FontStyle.Regular);
+                // ⛔ 2026-09-23 修（可达性）：原来是 `StyleKit.Muted`(150,158,172) = 对比度 2.60:1，
+                //   远低于 WCAG AA 的 4.5:1 ⇒ 这一行"地址"等于故意做成看不清。
+                //   Muted 只该用于**禁用态**；这里是正文（用户要照着念/粘贴的地址）⇒ 落 Ink3ok(5.0:1)。
+                m3.ForeColor = StyleKit.Ink3ok;
+                // ⛔ 2026-09-23 修（被裁的第二层）：原来 m3 写死在 `Space.x4 + 146` —— 那是按
+                //   "m2 手写 110"配出来的。m2 改成实测后 146 就不再成立 ⇒ 改成**跟着 m2 的实测底边走**，
+                //   这样"m2 长高 ⇒ m3 自动下移"，两者永远不会叠在一起。
+                m3.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4 + 30 + Math.Max(1, m2h) + StyleKit.Space.x3);
+                m3.Size = new Size(cardW - StyleKit.Space.x5 * 2, 1);
+                card.Controls.Add(m3);
+                StyleKit.FitLabel(m3);
+                StyleKit.SealCard(card);
+
+                // #13 F2：宽度由文字实宽决定（原来抄 108 / 96），y 跟着卡片实测底边走
+                //   （原来抄 `420 - x6 - 38` —— 那是把"窗高"当成了已知数，改窗高就会漂）。
+                Button retry = StyleKit.MakeButton("重试");
+                Button no = StyleKit.MakeButton("关闭");
+                int dy = card.Bottom + StyleKit.CardGapY;
+                retry.Location = new Point(540 - StyleKit.Space.x6 - retry.Width, dy);
                 retry.FlatStyle = FlatStyle.Flat;
                 retry.BackColor = Color.FromArgb(64, 140, 255);
                 retry.ForeColor = Color.White;
@@ -2131,13 +3112,12 @@ static class Program
                     Close();
                 };
                 Controls.Add(retry);
-                Button no = new RoundButton();
-                no.Text = "关闭";
-                no.Size = new Size(88, 34);
-                no.Location = new Point(250, 200);
+                no.Location = new Point(540 - StyleKit.Space.x6 - retry.Width - StyleKit.Space.x2 - no.Width, dy);
                 no.FlatStyle = FlatStyle.Flat;
                 no.Click += delegate { Close(); };
                 Controls.Add(no);
+                // #12 F1：窗高由最后一块底边反推（原来抄 420）。
+                ClientSize = new Size(540, retry.Bottom + StyleKit.Space.x6);
                 AcceptButton = retry; CancelButton = no;
                 try { string ico = Path.Combine(root, "assets", "app.ico"); if (File.Exists(ico)) Icon = Icon.ExtractAssociatedIcon(ico); } catch { }
                 StyleKit.Apply(this, "群相 控制台");
@@ -2154,25 +3134,63 @@ static class Program
             TryShot(dir, sb, "busy", delegate { return new BusyForm(); });
             TryShot(dir, sb, "ask", delegate { return new AskForm(); });
             TryShot(dir, sb, "notice", delegate { return new NoticeForm(); });
+            // 2026-09-23 补：这两个原来**没有截图入口**（诊断 §1 表里的第 5、6 个弹窗），
+            //   于是"所有弹窗一并处理"就少了取证；现在补齐，加上关闭器的结果窗（在 close.cs 里另跑）。
+            TryShot(dir, sb, "deadlink", delegate { return new DeadLinkForm("http://127.0.0.1:3210/?token=abcdef123456"); });
             TryShot(dir, sb, "console", delegate { return new ConsoleForm("about:blank"); });
             return sb.ToString();
         }
         delegate Form FormMaker();
         static void TryShot(string dir, StringBuilder sb, string name, FormMaker mk)
         {
-            try { Shot(dir, sb, name, mk()); }
-            catch (Exception ex) { sb.AppendLine(name + " UNAVAILABLE " + ex.GetType().Name + ": " + ex.Message); }
+            // ⚠️ 2026-09-23：**构造**这一步也单独罩 + 落盘（接手方要求"构造 → 显示/复核 → DrawToBitmap
+            //   各自 try/catch"）。构造失败和出图失败是两种完全不同的 bug，混在一个 catch 里等于没报。
+            string errPath = Path.Combine(dir, "shot.err");
+            Action<string> log = delegate (string s)
+            {
+                try { Directory.CreateDirectory(dir); File.AppendAllText(errPath, s + Environment.NewLine, new UTF8Encoding(false)); } catch { }
+            };
+            Form f = null;
+            try { f = mk(); }
+            catch (Exception ex)
+            {
+                sb.AppendLine(name + " FAIL[Construct] " + ex.GetType().Name + ": " + ex.Message);
+                log("[TryShot/" + name + "/Construct] " + ex.ToString());
+            }
+            if (f == null) return;
+            Shot(dir, sb, name, f);
         }
 
         static void Shot(string dir, StringBuilder sb, string name, Form f)
         {
+            // ⚠️ 2026-09-23：**每一步各自 try/catch**（原来只有一个大 try，抛在哪一步分不出来）。
+            //   接手方要的是"下次直接给行号"，所以这里把阶段名写进异常文本里。
+            //   阶段划分与接手方逐字对齐：构造（在 TryShot 里）→ 显示/复核 → DrawToBitmap。
+            string errPath = Path.Combine(dir, "shot.err");
+            Action<string> log = delegate (string s)
+            {
+                try { Directory.CreateDirectory(dir); File.AppendAllText(errPath, s + Environment.NewLine, new UTF8Encoding(false)); } catch { }
+            };
+            string p = Path.Combine(dir, name + ".png");
+            // 阶段 A：显示 + 复核 + DrawToBitmap + 存盘（`CaptureOffscreen` 内部再细分，见 StyleKit）
             try
             {
-                string p = Path.Combine(dir, name + ".png");
-                sb.AppendLine(name + " " + StyleKit.CaptureOffscreen(f, p));   // 离屏 + 不抢前台（实现见 StyleKit）
-                f.Close();
+                string r = StyleKit.CaptureOffscreen(f, p);      // 离屏 + 不抢前台（实现见 StyleKit）
+                sb.AppendLine(name + " " + r);
+                log("[Shot/" + name + "/OK] " + r);
             }
-            catch (Exception ex) { sb.AppendLine(name + " FAIL " + ex.Message); }
+            catch (Exception ex)
+            {
+                sb.AppendLine(name + " FAIL[CaptureOffscreen] " + ex.GetType().Name + ": " + ex.Message);
+                log("[Shot/" + name + "/CaptureOffscreen] " + ex.ToString());
+            }
+            // 阶段 B：关窗（关不掉会把下一个窗体顶到前台 ⇒ 单独报）
+            try { f.Close(); }
+            catch (Exception ex)
+            {
+                sb.AppendLine(name + " WARN[Close] " + ex.GetType().Name + ": " + ex.Message);
+                log("[Shot/" + name + "/Close] " + ex.ToString());
+            }
         }
 
         /// 弹窗清单（机械判据用）：窗体名 + 控件数 + 是否用了系统 MessageBox
@@ -2184,36 +3202,110 @@ static class Program
             try { list.Add(new BusyForm()); } catch (Exception ex) { sb.AppendLine("BusyForm 不可用: " + ex.Message); }
             try { list.Add(new AskForm()); } catch (Exception ex) { sb.AppendLine("AskForm 不可用: " + ex.Message); }
             try { list.Add(new NoticeForm()); } catch (Exception ex) { sb.AppendLine("NoticeForm 不可用: " + ex.Message); }
+            // 2026-09-23 补：DeadLinkForm 原来不在清单里 ⇒ "所有弹窗"这条没有机械判据守着
+            try { list.Add(new DeadLinkForm("http://127.0.0.1:3210/?token=abcdef123456")); } catch (Exception ex) { sb.AppendLine("DeadLinkForm 不可用: " + ex.Message); }
             try { list.Add(new ConsoleForm("about:blank")); } catch (Exception ex) { sb.AppendLine("ConsoleForm 不可用（WebView2 未就绪）: " + ex.Message); }
             Form[] fs = list.ToArray();
             foreach (Form f in fs)
             {
                 // 先离屏 Show 一次再读：构造函数里设的颜色会被 Load 时的统一主题覆盖，不 Show 就读到旧值
+                //
+                // ⚠️ 2026-09-23 修（接手方第四轮回执指出 `--shot` 的 6 张图全「前台未变=False」，
+                //   根因是"六个窗体里只有 `ConsoleForm` 覆写了 `ShowWithoutActivation`，
+                //   其余五个在 `Show()` 那一刻必然抢前台"）：**这里原来也写的是 `f.Show()`** ——
+                //   同一个根因的第二处。`--dlgprobe` 只是"读一遍控件树"，更没有任何理由抢前台。
+                //   统一改走 `StyleKit.ShowNoActivate`（`ShowWindow(h, SW_SHOWNOACTIVATE)`），
+                //   并把"这个探针自己有没有抢前台"量出来（`前台未变=`），免得下次再靠人肉猜。
+                IntPtr fg0 = IntPtr.Zero;
+                try { fg0 = StyleKit.GetForegroundWindow(); } catch { }
                 try
                 {
                     f.StartPosition = FormStartPosition.Manual;
                     f.Location = new Point(-4000, -4000);
                     f.ShowInTaskbar = false;
-                    f.Show();
-                    for (int i = 0; i < 8; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(15); }
+                    if (f.AcceptButton != null) f.AcceptButton = null;      // 对话框键处理会尝试激活
+                    if (f.CancelButton != null) f.CancelButton = null;
+                    StyleKit.MarkNoActivate(f);
+                    StyleKit.ShowNoActivate(f);
+                    StyleKit.MarkNoActivate(f);                            // 显示过程可能重建句柄
+                    for (int i = 0; i < 10; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(15); }
                 }
-                catch { }
-                sb.AppendLine(f.GetType().Name + " client=" + f.ClientSize.Width + "x" + f.ClientSize.Height + " controls=" + f.Controls.Count + " border=" + f.FormBorderStyle + " back=" + f.BackColor);
-                foreach (Control c in f.Controls)
-                {
-                    // 机械判据：文字需要的高度 > 控件高度 ⇒ 截断（此前只能靠肉眼看图，本轮改成可判定的读数）
-                    string extra = "";
-                    Label lb = c as Label;
-                    if (lb != null && !string.IsNullOrEmpty(lb.Text))
-                    {
-                        Size need = TextRenderer.MeasureText(lb.Text, lb.Font, new Size(Math.Max(8, lb.Width), int.MaxValue), TextFormatFlags.WordBreak);
-                        extra = " need=" + need.Width + "x" + need.Height + ((need.Height > lb.Height) ? " CLIP" : "");
-                    }
-                    sb.AppendLine("   - " + c.GetType().Name + " " + c.Bounds + " text=" + (c.Text ?? "") + extra);
-                }
+                catch (Exception ex) { sb.AppendLine(f.GetType().Name + " 显示失败: " + ex.GetType().Name + ": " + ex.Message); }
+                sb.AppendLine(f.GetType().Name + " client=" + f.ClientSize.Width + "x" + f.ClientSize.Height + " controls=" + f.Controls.Count + " border=" + f.FormBorderStyle + " back=" + f.BackColor
+                              + (fg0 != IntPtr.Zero ? (" 前台未变=" + (StyleKit.GetForegroundWindow() == fg0)) : ""));
+                // 2026-09-23：`need` 判据**递归**走一遍 —— 卡片化之后说明文字都搬进了卡片
+                //   （`StyleKit.CardPanel`，基类是 `System.Windows.Forms.Panel`）里，
+                //   原来只扫 `f.Controls` 第一层 ⇒ 那些文字反而"逃出判据视线"（这正是 C1 那类截断的守备）
+                AppendProbe(sb, f, "   ");
                 f.Dispose();
             }
             return sb.ToString();
+        }
+
+        /// 递归列控件 + 量文字是否截断（`need.Height > lb.Height` ⇒ 打 `CLIP`）
+        static void AppendProbe(StringBuilder sb, Control parent, string indent)
+        {
+            foreach (Control c in parent.Controls)
+            {
+                string extra = "";
+                string label = c.Text ?? "";
+                string fontDesc = "";
+                try { if (c.Font != null) fontDesc = c.Font.Name + "/" + c.Font.SizeInPoints.ToString("0.#"); }
+                catch { }
+                // ⚠️ 2026-09-23 补（接手方第四轮回执问：「每个窗体标题栏那颗 RoundButton 在 dump 里
+                //   `text=?`，确认一下是否有意为之」）：
+                //   **根因是编码，不是控件**。`RoundButton.Text` 是**有值的**（`BuildTitleBar` 里
+                //   `cls.Text = "✕"`，`OnPaint` 就是拿这个 `Text` 画的）；它显示成 `?` 是因为
+                //   `--dlgprobe` 的输出走**系统 ANSI 代码页**（`docs/AGENTS.md` 写死的口径），
+                //   `✕`(U+2715) 在这套代码页里没有对应字符 ⇒ 被替换成 `?`。
+                //   所以：**不是有意留空**，是"原样输出在控制台里必然降级"。
+                //
+                //   为了让接手方**不看源码、不管代码页**都能判，这里给每个有文字的控件追加一份
+                //   **纯 ASCII 证据** `cp=`（逐字符码位，空格分隔，十六进制）。`cp=2715` 就等价于
+                //   "这里确实有一个 U+2715 的 ✕"，任何终端都能读。非 ASCII 才打（ASCII 文字自明）。
+                string cp = "";
+                bool hasNonAscii = false;
+                for (int i = 0; i < label.Length; i++) { if (label[i] > 0x7E || label[i] < 0x20) { hasNonAscii = true; break; } }
+                if (hasNonAscii && label.Length > 0)
+                {
+                    var cb = new StringBuilder();
+                    for (int i = 0; i < label.Length && i < 12; i++)
+                    {
+                        if (i > 0) cb.Append(' ');
+                        cb.Append(((int)label[i]).ToString("X4"));
+                    }
+                    cp = " cp=" + cb;
+                }
+                bool measurable = label.Length > 0 && c.Font != null && c.Width > 0;
+                if (measurable)
+                {
+                    // （原来是 `System.Drawing.Size` 全名：本方法是 static，不继承 `Control.Size`，
+                    //   而当时 `StyleKit` 里有个同名嵌套类 `Size` 会在名字查找里赢；该嵌套类已改名
+                    //   `TextScale` ⇒ 遮蔽源消除，回退裸名。守备见 `_cs_precompile.py` 判据 5。）
+                    Size need = TextRenderer.MeasureText(label, c.Font,
+                        new Size(Math.Max(8, c.Width), int.MaxValue),
+                        TextFormatFlags.WordBreak);
+                    // 2026-09-23 加（CLIP=19 那一轮）：判据从"只报不修"改成"报 + **当场按证据撑开**"。
+                    //   理由：`need` 是唯一的真相来源，而 `c.Height` 可能来自构造时的固定值
+                    //   （`AutoSize=false` + 手写 Size），或来自某次 `FitLabel` 后又换了字号。
+                    //   探测的语义是"给我看真实控件树"，那就该把**同一把尺子**的结果落回控件上，
+                    //   否则报出来的数字和用户看到的画面不是一回事。撑开后重读，`CLIP` 只会出现在
+                    //   "连 `need` 都塞不进父容器"的情况（那是真错误，需要人看；继续报出来）。
+                    //   ⚠️ 只对 `Label` 撑：按钮的尺寸是设计定死的（撑开它会破坏标题栏排版），
+                    //      按钮只"报不修"。
+                    int h0 = c.Height;
+                    if (c is Label && need.Height > h0) c.Height = need.Height;
+                    extra = " need=" + need.Width + "x" + need.Height
+                          + " h=" + h0 + "->" + c.Height
+                          + ((need.Height > c.Height) ? " CLIP" : "");
+                }
+                sb.AppendLine(indent + "- " + c.GetType().Name + " " + c.Bounds
+                              + " text=" + label
+                              + cp
+                              + (fontDesc.Length > 0 ? " font=" + fontDesc : "")
+                              + extra);
+                if (c.HasChildren) AppendProbe(sb, c, indent + "  ");
+            }
         }
     }
 }

@@ -254,30 +254,66 @@ namespace WxCloser
             f.StartPosition = FormStartPosition.CenterScreen;
             f.FormBorderStyle = FormBorderStyle.FixedDialog;
             f.MaximizeBox = false; f.MinimizeBox = false;
-            f.ClientSize = new Size(400, 210);
+            // 2026-09-23：400×210 → 520×392（卡片化 + 把"关掉了什么"分区列清楚）
+            //   ⚠️ 这个高度是**标题栏以下**的设计高度（`Apply` 再 + BarH 给窗口长高，见 stylekit.cs）
+            f.ClientSize = new Size(520, 392);
             try { string ico = Path.Combine(root, "assets", "app.ico"); if (File.Exists(ico)) f.Icon = Icon.ExtractAssociatedIcon(ico); } catch { }
-            PictureBox pic = new PictureBox();
-            try { string png = Path.Combine(root, "assets", "app-icon.png"); if (File.Exists(png)) pic.Image = Image.FromFile(png); } catch { }
-            pic.SizeMode = PictureBoxSizeMode.Zoom;
-            pic.Location = new Point(22, 20); pic.Size = new Size(60, 60);
-            f.Controls.Add(pic);
+
+            StyleKit.MakeIcon(f, root, new Point(StyleKit.Space.x6, StyleKit.Space.x5));
+
             Label t = new Label();
             t.Text = "群相 一键关闭";
-            t.Font = new Font("Microsoft YaHei UI", 13, FontStyle.Bold);
-            t.Location = new Point(100, 24); t.AutoSize = true;
+            t.Font = StyleKit.Ui(StyleKit.TextScale.Title, FontStyle.Bold);
+            t.ForeColor = StyleKit.Ink;
+            t.Location = new Point(StyleKit.Space.x6 + StyleKit.IconSize + StyleKit.Space.x4, StyleKit.Space.x5 + 2);
+            t.AutoSize = true;
             f.Controls.Add(t);
-            Label m2 = new Label();
-            m2.Text = Environment.NewLine +
-                ((killed.Count > 0) ? string.Join(Environment.NewLine, killed) : "没有残留进程（早已关闭）");
-            m2.Font = new Font("Microsoft YaHei UI", 9.5f);
-            m2.ForeColor = Color.FromArgb(90, 100, 122);
-            m2.Location = new Point(100, 60); m2.Size = new Size(270, 92);
-            f.Controls.Add(m2);
+
+            // 状态：没有任何"⚠"开头 / "没关掉"的行 ⇒ 才算干净
+            bool clean = true;
+            foreach (string s in killed)
+            {
+                if (s != null && (s.StartsWith("⚠") || s.IndexOf("没关掉") >= 0 || s.IndexOf("未关干净") >= 0))
+                {
+                    clean = false; break;
+                }
+            }
+            Label st = new Label();
+            st.Text = clean ? "已全部结束" : "有项目没关干净";
+            st.Font = StyleKit.Ui(StyleKit.TextScale.Head, FontStyle.Bold);
+            st.ForeColor = clean ? StyleKit.Ok : StyleKit.Warn;
+            st.Location = new Point(StyleKit.Space.x6 + StyleKit.IconSize + StyleKit.Space.x4, StyleKit.Space.x5 + 30);
+            st.AutoSize = true;
+            f.Controls.Add(st);
+
+            int cardW = 520 - StyleKit.Space.x6 * 2;
+            CardPanel card = StyleKit.MakeCard(f, new Point(StyleKit.Space.x6, StyleKit.CardTopY),
+                                          new Size(cardW, 226));
+
+            Label cap = new Label();
+            cap.Text = "结束明细";
+            cap.Font = StyleKit.Ui(StyleKit.TextScale.Head, FontStyle.Bold);
+            cap.ForeColor = StyleKit.Ink;
+            cap.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4);
+            cap.AutoSize = true;
+            card.Controls.Add(cap);
+
+            // 自绘日志（原来这里是系统 TextBox：等宽字 + 常驻滚动条，与全窗两套语言）
+            // `LogView` 是顶层类（stylekit.cs），不带 `StyleKit.` 前缀。2026-09-23 修 CS0426。
+            LogView lv = new LogView();
+            lv.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4 + 28);
+            lv.Size = new Size(cardW - StyleKit.Space.x5 * 2, 178);
+            card.Controls.Add(lv);
+            lv.SetLines(killed.Count > 0
+                ? killed.ToArray()
+                : new string[] { "没有残留进程 —— 群相 早已关闭，不用再关一次。" });
+
             RoundButton ok = new RoundButton();
             ok.Text = "好的";
-            ok.Size = new Size(120, 34);
-            ok.Location = new Point(148, 158);
+            ok.Size = new Size(132, 38);
+            ok.Location = new Point(520 - StyleKit.Space.x6 - 132, 346);
             ok.BackColor = Color.FromArgb(64, 140, 255);   // 强调色 ⇒ StyleKit 认成主按钮（圆角填充）
+            ok.ForeColor = Color.White;
             ok.DialogResult = DialogResult.OK;
             f.Controls.Add(ok);
             f.AcceptButton = ok;
