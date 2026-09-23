@@ -364,6 +364,7 @@ class Field(QWidget):
     ):
         super().__init__(parent)
         self.t = t
+        self.control = control   # 丙-4 接线：保存时要按行取值，控件引用挂在行上
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(16)

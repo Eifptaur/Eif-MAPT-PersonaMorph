@@ -141,9 +141,18 @@ def t_nav() -> None:
     ck("组头折叠 chevron 已接线（不再用文字箭头）",
        "chevron_pixmap(" in wid and '"▾' not in wid and '"▸' not in wid)
 
-    # ★ 文案修正（2026-09-23 用户逐条点名的三处）
-    ck("默认机器人名 = 群DeepSeek（沿用控制台口径）", '"群DeepSeek"' in src)
-    ck("「开机自启」（不用「开机自动起来」）", "开机自启" in src and "开机自动起来" not in src)
+    # ★ 机器人主面板接真配置（丙-4）：原型硬编码值（群DeepSeek/开机自启摆设行）退役
+    ck("机器人主面板四行接真键位（bot_nickname/self_nickname/context_tier/text_style）",
+       all(k in src for k in (
+           "wechat.bot_nickname", "persona.self_nickname",
+           "store.context_tier", "ui.text_style",
+       )) and "config_io.write_patch" in src)
+    ck("响应档位四档文案与 web 同口径（1 档：仅艾特 → 4 档：全响应）",
+       "1 档：仅艾特" in src and "4 档：全响应" in src)
+    ck("保存行走 config_io（write_patch + 已保存/没保存成 回执）",
+       "_save_bot_panel" in src and "已保存" in src and "没保存成" in src)
+    ck("主题跟随（_watch_config 读 ui.theme → _switch_theme）",
+       "ui.theme" in src and "_switch_theme(th)" in src)
     ck("演示按钮 = 假装后台挂了（不用「模拟『服务死掉』」）",
        "假装后台挂了" in src and "模拟『服务死掉』" not in src)
 

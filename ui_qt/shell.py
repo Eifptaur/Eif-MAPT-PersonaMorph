@@ -25,9 +25,12 @@
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import config_io  # noqa: E402  丙-4：面板读写 config.json 的桥（save→set 同 webui 次序）
 
 from PySide6.QtCore import Qt, QTimer  # noqa: E402
 from PySide6.QtGui import QColor, QGuiApplication, QPainter, QPixmap  # noqa: E402
@@ -156,7 +159,8 @@ class Shell(QWidget):
     def __init__(self, t: Tokens):
         super().__init__()
         self.t = t
-        self.text_style = "normal"   # ui.text_style 轴：normal / whale
+        self.text_style = str(config_io.read_path("ui.text_style", "normal") or "normal")
+        # ui.text_style 轴：normal / whale（丙-4 起从真配置初始化，不再硬编码 normal）
         self._orig_texts: dict = {}  # 鲸语切换的原文缓存（控件重建后清空）
         # ── 鲸落视觉本体（ocean.py）：底图 + tint + 三层波浪，只在 whale 主题启用 ──
         self._wp_path: Path | None = None      # 当前底图来源（含自定义背景判路）
@@ -235,9 +239,17 @@ class Shell(QWidget):
         self._ocean.set_active(self._backdrop_on and self.isVisible())
 
     def _watch_config(self) -> None:
-        """4 秒一跳的配置跟随（挂在探活定时器上）：web 面板改了光标/背景，这里跟上。"""
+        """4 秒一跳的配置跟随（挂在探活定时器上）：web 面板改了光标/背景/主题，这里跟上。"""
         try:
             self._cursor.refresh_from_config()
+        except Exception:  # noqa: BLE001
+            pass
+        # 主题跟随（丙-4）：web 面板改了 ui.theme → 现场换。Qt 无 system 跟随，
+        # 映射表（THEMES）之外的键不动；本壳自己写主题也走 config，值一致就不触发。
+        try:
+            th = str(config_io.read_path("ui.theme", "") or "")
+            if th and th != self.t.key and th in THEMES:
+                self._switch_theme(th)
         except Exception:  # noqa: BLE001
             pass
         wp_before = self._wp_path
@@ -269,7 +281,12 @@ class Shell(QWidget):
     # ------------------------------------------------------------ 结构
 
     def _build(self) -> None:
-        root = QVBoxLayout(self)
+        # 复用已有顶层布局（_rebuild 重建时 QWidget 的 d->layout 指针卸不掉，
+        # 再 QVBoxLayout(self) 会撞 "already has a layout" 警告且新布局装不上，
+        # 重建后整窗失去几何管理 —— 2026-09-23 主题跟随功能实测踩中）。
+        root = self.layout()
+        if root is None:
+            root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
@@ -405,7 +422,8 @@ class Shell(QWidget):
             if sec == "bot":
                 continue
             self._page_of[sec] = self.stack.count()
-            self.stack.addWidget(build_panel(self.t, sec))
+            # 保存成功 → _watch_config：光标/壁纸/主题 4s 内不再等探活，当场跟上
+            self.stack.addWidget(build_panel(self.t, sec, on_save=self._watch_config))
         return self.stack
 
     def _build_bot_panel(self) -> QWidget:
@@ -421,33 +439,55 @@ class Shell(QWidget):
         lay.addWidget(
             desc(
                 self.t,
-                "这里决定它叫什么、说话像谁、多快回你。改完立刻生效，不用重启。",
+                "机器人怎么称呼自己、响应到什么程度。改完保存即生效；涉及身份项的改完建议重启一次。",
             )
         )
 
-        # ── 唯一的设置卡（原型只做一张，够看手感）──
+        # ── 设置卡：四行全接真配置（web sec-bot 同款键位，丙-4）──
+        #   机器人昵称→wechat.bot_nickname / 自我称呼→persona.self_nickname /
+        #   响应档位→store.context_tier（后端 float() 消费，1-4 离散）/
+        #   鲸语模式→ui.text_style（保存后走顶栏同一条 _apply_text_style 路径）。
+        #   原「开机自启」行删除：config 里没有这个键，原型那行是摆设；换上真键。
         card = Card(self.t)
         self.card = card
 
-        self.nick = self._line("群DeepSeek", placeholder="它叫什么")
+        self.nick = self._line(
+            str(config_io.read_path("wechat.bot_nickname", "") or ""),
+            placeholder="它叫什么",
+        )
         card.body.addWidget(
-            Field(self.t, "它的名字", "群里别人 @它 时用的名字", self.nick, card)
+            Field(self.t, "机器人昵称", "群里别人 @它 时用的名字", self.nick, card)
         )
         card.body.addWidget(self._divider())
 
-        self.arch = _Combo(["谨慎（先看懂再说）", "正常（默认）", "积极（话多）"], self.t)
+        self.self_nick = self._line(
+            str(config_io.read_path("persona.self_nickname", "") or ""),
+            placeholder="留空=机器人昵称，用于识别「我」",
+        )
         card.body.addWidget(
-            Field(self.t, "响应档位", "它多主动说话。越靠后越爱搭话", self.arch, card)
+            Field(self.t, "自我称呼", "它怎么称呼自己", self.self_nick, card)
         )
         card.body.addWidget(self._divider())
 
-        self.sw_on = Switch(self.t, True)
+        tier_labels = ["1 档：仅艾特", "2 档：+关键词", "3 档：+随机", "4 档：全响应"]
+        self.tier = _Combo(tier_labels, self.t)
+        raw_tier = config_io.read_path("store.context_tier", 2)
+        try:
+            self.tier.cb.setCurrentIndex(max(0, min(3, int(float(raw_tier)) - 1)))
+        except (TypeError, ValueError):
+            self.tier.cb.setCurrentIndex(1)
         card.body.addWidget(
-            Field(self.t, "开机自启", "开机后在后台待着，不占屏幕", self.sw_on, card)
+            Field(
+                self.t,
+                "响应档位",
+                "1 档只回艾特；2 档加关键词；3 档再加随机；4 档全回",
+                self.tier,
+                card,
+            )
         )
         card.body.addWidget(self._divider())
 
-        self.sw_emoji = Switch(self.t, False)
+        self.sw_emoji = Switch(self.t, self.text_style == "whale")
         card.body.addWidget(
             Field(
                 self.t,
@@ -458,6 +498,18 @@ class Shell(QWidget):
             )
         )
         lay.addWidget(card)
+
+        # ── 保存行：真写 config.json（config_io.write_patch）+ 回执 ──
+        srow = QHBoxLayout()
+        srow.setSpacing(10)
+        self.btn_save_bot = Btn("保存设置", self.t, "primary")
+        self.btn_save_bot.clicked.connect(self._save_bot_panel)
+        srow.addWidget(self.btn_save_bot)
+        self.bot_note = QLabel("")
+        self.bot_note.setFont(qfont(self.t, 12))
+        srow.addWidget(self.bot_note)
+        srow.addStretch(1)
+        lay.addLayout(srow)
 
         # ── 危险操作 + 二次确认 ──
         danger = Card(self.t)
@@ -501,6 +553,30 @@ class Shell(QWidget):
 
         lay.addStretch(1)
         return main
+
+    def _save_bot_panel(self) -> None:
+        """机器人主面板四行真写盘（config_io.write_patch → save→set）。
+
+        鲸语模式保存后立即应用：走顶栏 Segmented 同一条 `_pick` 路径，
+        发 changed → `_apply_text_style` 统一换词，两处切换器不会打架。
+        """
+        style = "whale" if self.sw_emoji.isChecked() else "normal"
+        ok, msg = config_io.write_patch(
+            {
+                "wechat.bot_nickname": self.nick.text().strip(),
+                "persona.self_nickname": self.self_nick.text().strip(),
+                "store.context_tier": int(self.tier.cb.currentIndex() + 1),
+                "ui.text_style": style,
+            }
+        )
+        if ok:
+            self.bot_note.setText(f"已保存 {time.strftime('%H:%M:%S')}")
+            self.bot_note.setStyleSheet(f"color:{self.t.ok};border:none;")
+            if style != self.text_style and hasattr(self, "style_seg"):
+                self.style_seg._pick(style)  # noqa: SLF001  同包内复用（发 changed 即应用）
+        else:
+            self.bot_note.setText(f"没保存成：{msg}")
+            self.bot_note.setStyleSheet(f"color:{self.t.err};border:none;")
 
     # ------------------------------------------------------------ 小零件
 
@@ -574,6 +650,8 @@ class Shell(QWidget):
                     sit = sub.takeAt(0)
                     if sit.widget():
                         sit.widget().deleteLater()
+        # 注：顶层布局对象本身卸不掉（QWidget 没有公开的卸载 API，QObject setParent
+        # 动不了 d->layout 指针）—— 所以 _build 改为「有布局就复用」，不再新建。
         self._build()
         self._restyle()
         # 主题换轴 ⇒ 画卷开关/光标底图都可能变：重判 backdrop + 全控件重刷鱼光标
