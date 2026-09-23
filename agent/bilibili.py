@@ -41,6 +41,64 @@ RE_B23 = re.compile(r"https?://b23\.tv/[0-9A-Za-z]+", re.I)
 #: 完整视频页
 RE_PAGE = re.compile(r"https?://(?:www\.|m\.)?bilibili\.com/video/(BV[0-9A-Za-z]{10}|av\d{1,12})", re.I)
 
+# ── 多平台外链识别（丙-11 A1，2026-09-24）─────────────────────────────────────
+# 为什么放在这里而不是独立模块：本模块已经是「视频外链」这件事的唯一落点（B 站之外全仓零识别），
+# 抽出去只会多一个 import 层、多一处要同步的常量表；而 B 站那段老识别（`parse`）**一个字节都不动**，
+# 新表只看域名、不碰 BV/av 正则 ⇒ 「B 站优先走老路」天然成立。
+# 口径：**只认域名，不猜内容**（认不出＝unknown，绝不硬认）。
+#: 平台 → 该平台认得的域名（子域一律放行：`www.`/`m.`/`v.` 等前缀由 `_host_of` 归一后比对）
+PLATFORM_HOSTS = {
+    "bilibili": ("bilibili.com", "b23.tv"),
+    "douyin": ("douyin.com", "iesdouyin.com"),
+    "kuaishou": ("kuaishou.com",),
+    "xiaohongshu": ("xiaohongshu.com", "xhslink.com"),
+    "youtube": ("youtube.com", "youtu.be"),
+}
+#: 认视频链接用的粗正则（只要 http(s)://…，具体平台交给域名表判）
+RE_URL = re.compile(r"https?://[^\s<>\"'）)】\]]+", re.I)
+
+
+def _host_of(url: str) -> str:
+    """从 URL 里抠出**主机名小写**（去掉 userinfo / 端口 / 路径 / 查询串）。取不到返回空串。"""
+    s = str(url or "").strip()
+    m = re.match(r"https?://(?:[^/@\s]*@)?([^/?#:\s]+)", s, re.I)
+    return (m.group(1) if m else "").strip().lower().rstrip(".")
+
+
+def _platform_of_host(host: str) -> str:
+    """主机名 → 平台名。`bilibili.com` 与任意子域（`www.` / `m.` / `b23.tv` 等）都命中。"""
+    for plat, hosts in PLATFORM_HOSTS.items():
+        for h in hosts:
+            if host == h or host.endswith("." + h):
+                return plat
+    return ""
+
+
+def identify_media_url(text: str):
+    """从一段文字里认出**任意支持平台**的视频外链 ⇒ `{"platform", "url", "kind"}` 或 `None`。
+
+    与 `parse()`（只认 B 站）**互不影响**：本函数是"这是哪个平台的什么链接"的粗判，`parse()` 是
+    "B 站视频标识是什么"的精判。上层口径是 **B 站优先走 `parse()` 老路**（本函数命中的 bilibili
+    结果只当作"确实是 B 站链接"的信号，解析仍交给老路）。
+
+    返回 `None` ＝ 这段话里没有可识别的外链（**不是报错**）。
+    认不出平台 ⇒ 返回 `platform="unknown"` 且 `kind="unknown"`（由上层如实报"暂不支持"）。
+    """
+    s = str(text or "")
+    m = RE_URL.search(s)
+    if not m:
+        return None
+    url = m.group(0).rstrip(".,;，。；")            # 中文句末标点常被正则一起吃进来，切掉
+    host = _host_of(url)
+    if not host:
+        return None
+    plat = _platform_of_host(host)
+    # 只把"看起来是视频内容页/短链"的链接算 kind=video：**不做平台特有的路径猜解**
+    # （各平台分享链接形态多变，硬猜路径＝编造；认不出就走 unknown，由上层如实说）。
+    if not plat:
+        return {"platform": "unknown", "url": url, "kind": "unknown"}
+    return {"platform": plat, "url": url, "kind": "video"}
+
 
 def parse(text: str):
     """从一段文字里认出 B 站视频标识。返回 `{bvid|aid, raw, kind}` 或 `None`。
