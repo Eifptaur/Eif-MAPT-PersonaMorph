@@ -582,6 +582,13 @@ def _exec_read_video(ctx, args):
         cfg = {}
     if (cfg.get("video_read") or {}).get("enabled") is False:
         return _err("视频读取功能已在控制台关闭（video_read.enabled=false）")
+    # 视频解析分档（丙-12）：当前响应档位低于门槛 ⇒ 不解析（AND 关系：档位够 + 开关开 = 才解析）。
+    # 这条覆盖**本地视频卡**（type=43，群友转发进来的视频，走 local_id，不下载），同样受视频分档约束。
+    _vmin = int((cfg.get("store") or {}).get("video_min_tier", 4) or 4)
+    _cur_tier = _effective_response_tier(ctx)
+    if _cur_tier < _vmin:
+        return _err("当前响应档位(%d)低于视频解析门槛(%d)：低档位不解析视频（省 token/算力）。"
+                    "把群档位调高、或等高档位时段再发即可。" % (_cur_tier, _vmin))
     items, bad = _media_items(ctx, args.get("message_id"), "video")
     if bad:
         return bad

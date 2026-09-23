@@ -121,7 +121,8 @@ def _scene_rules() -> str:
     _vmt = int((cfg.get("store") or {}).get("video_min_tier", 4) or 4)
     _vu_on = bool((cfg.get("video_url") or {}).get("enabled", False)) is True
     _bi_on = bool((cfg.get("bilibili") or {}).get("enabled", True)) is not False
-    lines.append("- 视频解析分档：read_bilibili 与 read_video_url 都只在**当前响应档位 ≥ %d** 时才解析视频；"
+    lines.append("- 视频解析分档：read_video（群友转发进来的**本地视频卡**，type=43，走 local_id 不下载）、"
+                 "read_bilibili 与 read_video_url **三条都只在当前响应档位 ≥ %d 时才解析视频**；"
                  "低档位不解析（省 token / 算力）。档位够、且对应开关开着，工具才会真去解析；"
                  "否则它会如实说「当前档位过低、暂不解析视频」——照它的原因说，别假装看过视频。" % _vmt)
     # B 站（轻：只读公开接口拿标题/字幕，不下载整段视频）
