@@ -18,7 +18,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QAbstractAnimation, QEasingCurve, QPoint, QPropertyAnimation, Qt
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QVBoxLayout, QWidget
 
 from stylekit_qt import Tokens, rgba
@@ -56,13 +56,35 @@ class Popover(QFrame):
 
     # ------------------------------------------------------------ 样式
 
+    def paintEvent(self, _e) -> None:  # noqa: N802
+        """丙-8 H（用户原话「它们俩都全透明，会和下面的字混在一起」）：
+        底色**自绘**，不再依赖 QSS——QFrame#Popover 的 QSS background 在
+        WA_TranslucentBackground + Qt.Popup 组合下真机被吃掉（探针
+        _c8_popprobe.py 像素实锤：三主题中心 alpha=0）。画法＝圆角 path 内
+        先填 bg 再叠 card（半透明 token）→ 与页面卡片完全同观感、纯 token
+        派生；圆角外**不画**（保持真透明，四角不露方形底角）。"""
+        from PySide6.QtGui import QPainterPath  # noqa: PLC0415
+        from PySide6.QtCore import QRectF  # noqa: PLC0415
+
+        t = self.t
+        r = t.radius_card
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), r, r)
+        p.setPen(QPen(t.q("bd"), 1))
+        p.setBrush(t.q("bg"))
+        p.drawPath(path)                     # 底：bg 实色（whale=深海底）
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(t.q("card"))              # 叠：card 半透明 → 与页面卡片同观感
+        p.drawRoundedRect(QRectF(self.rect()).adjusted(1.5, 1.5, -1.5, -1.5), r - 1.5, r - 1.5)
+        p.end()
+
     def _restyle(self) -> None:
         t = self.t
-        # 面板底 = card 实底（whale 玻璃下 card 是半透明 → 垫一层 bg 保可读，
-        # 同 _Combo 下拉列表的做法：whale 用深蓝实底，不透出内容层）
-        base = t.card if not t.glass else "#0E2136"
+        # 底色改由 paintEvent 自绘（见上）；QSS 只管子控件文字与描边外的杂项
         self.setStyleSheet(
-            f"QFrame#Popover{{background:{base};border:1px solid {t.bd};"
+            f"QFrame#Popover{{border:1px solid {t.bd};"
             f"border-radius:{t.radius_card}px;}}"
             f"QFrame#Popover QLabel{{color:{t.tx};background:transparent;}}"
         )

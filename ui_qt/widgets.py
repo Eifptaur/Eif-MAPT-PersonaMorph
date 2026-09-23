@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Property, QEasingCurve, QPropertyAnimation, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import Property, QEasingCurve, QPropertyAnimation, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPixmap, QPen
 from PySide6.QtWidgets import (
     QAbstractButton,
@@ -125,11 +125,17 @@ class Btn(QPushButton):
         """
         t, r = self.t, self.role
         rad = t.radius_btn
+        # 丙-8 L：按压态要「一眼可辨」——底色往字色轴压一档（亮主题=变深、
+        # 暗主题=提亮一档，都是暗色 UI 的标准按压惯例），描边同步加深。
+        # web 侧 translateY(1px) scale(.975) 在 QSS 里没有 transform 等价物，
+        # 压字 1px（padding 上+1 下-1）保持，靠底/边双深化补足可辨度。
+        press_border = ""
         if r == "primary":
             bg, bg_h = t.blue, t.blue2
             fg = "#0A1B2E" if t.key == "whale" else "#FFFFFF"
             bd = "transparent"
-            bg_p = t.blue2
+            bg_p = mix(t.q("blue2"), t.q("tx"), 0.22).name(QColor.NameFormat.HexArgb)
+            press_border = mix(t.q("blue2"), t.q("tx"), 0.45).name(QColor.NameFormat.HexArgb)
         elif r == "danger":
             # ⚠️ rgba() 返回的是 QColor 对象 —— 直接插进 QSS f-string 会变成
             #    "background:<PySide6.QtGui.QColor object at 0x…>" 垃圾值，
@@ -141,17 +147,23 @@ class Btn(QPushButton):
             bg_h = rgba(t.q("err"), 34).name(QColor.NameFormat.HexArgb)
             bg_p = rgba(t.q("err"), 46).name(QColor.NameFormat.HexArgb)
             bd = rgba(t.q("err"), 110).name(QColor.NameFormat.HexArgb)
+            press_border = rgba(t.q("err"), 170).name(QColor.NameFormat.HexArgb)
         else:  # ghost —— web: hover 染描边+染字+hover-bg；active 落 blue_soft
             bg = mix(t.q("bg"), t.q("tx"), 0.05).name(QColor.NameFormat.HexArgb)
             bg_h = mix(t.q("bg"), t.q("tx"), 0.10).name(QColor.NameFormat.HexArgb)
             fg = t.tx
             bd = t.bd
             bg_p = t.blue_soft
+            press_border = mix(t.q("blue"), t.q("tx"), 0.30).name(QColor.NameFormat.HexArgb)
         hover_extra = ""
         pressed_extra = ""
         if r == "ghost":
             hover_extra = f"color:{t.blue};border:1px solid {t.blue};"
-            pressed_extra = f"color:{t.blue};"
+            pressed_extra = f"color:{t.blue};border:1px solid {press_border};"
+        elif r == "primary":
+            pressed_extra = f"border:1px solid {press_border};"
+        else:
+            pressed_extra = f"border:1px solid {press_border};"
         return (
             f"QPushButton{{background:{bg};color:{fg};border:1px solid {bd};"
             f"border-radius:{rad}px;padding:7px 16px;}}"
@@ -184,6 +196,7 @@ class Badge(QLabel):
 
     def set(self, level: str, text: str, tip: str = "") -> None:
         bg, bd, fg = status_colors(self.t, level)
+        self.level = level          # 丙-8 P0-A⑤：探针/selftest 可断言当前态
         self.setText(text)
         self.setToolTip(tip or text)
         self.setStyleSheet(
@@ -253,9 +266,12 @@ class NavGroup(QWidget):
         self.bl.addWidget(w)
 
     def set_tight(self, tight: bool) -> None:
-        """窄栏缩略（丙-5 #8）：侧栏收起时组名只留首字，tooltip 补全名。"""
-        self.hd_lb.setText(self.title[0] if tight else self.title)
+        """窄栏缩略 —— 丙-8 E 用户拍板：收起态**不留首字**，组头整行隐藏，
+        侧栏只留导航项的图标；展开还原整行组名。"""
+        self.hd.setVisible(not tight)
         self.hd.setToolTip(self.title if tight else "")
+        # 「间隔也稍微变大一点」——窄栏下行距放宽
+        self.bl.setSpacing(4 if tight else 1)
 
     def toggle(self) -> None:
         self.collapsed = not self.collapsed
@@ -287,6 +303,8 @@ class NavItem(QPushButton):
         self.icon_key = icon_key
         self.active = False
         self._hover = False
+        self._tight = False      # 丙-8 E：窄栏纯图标态
+        self._label = text       # 收起清文字前的原文（还原用）
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setCheckable(False)
         self.setFixedHeight(30)
@@ -303,13 +321,30 @@ class NavItem(QPushButton):
         t = self.t
         if self.active:
             return t.tx if t.key == "whale" else t.blue
-        return t.tx if self._hover else t.tx2
+        # 丙-8 G：常态直接全亮 —— 用户原话「各种图标全都看不清」，
+        # tx2 在浅色底上对比不足；hover/选中再靠底色与色相区分
+        return t.tx
 
     def _refresh_icon(self) -> None:
         import icons as _icons  # noqa: PLC0415
 
         if self.icon_key:
             self.setIcon(_icons.nav_icon(self.icon_key, self._icon_color(), 16))
+
+    def set_tight(self, tight: bool) -> None:
+        """窄栏缩略（丙-8 E 用户拍板：收起=**纯图标**，不留文字）——
+        清文字只留图标，图标放大一档 16→20，行距加高；展开时全部还原。
+        文本存 _label，_restyle/set_active 重绘不影响还原。"""
+        if tight and not self._tight:
+            self._label = self.text()
+            self.setText("")
+            self.setIconSize(QSize(20, 20))
+            self.setFixedHeight(34)
+        elif not tight and self._tight:
+            self.setText(getattr(self, "_label", "") or self.text())
+            self.setIconSize(QSize(16, 16))
+            self.setFixedHeight(30)
+        self._tight = tight
 
     def set_active(self, on: bool) -> None:
         self.active = on
@@ -346,6 +381,7 @@ class NavItem(QPushButton):
                 f"border-radius:0 {t.radius_btn}px {t.radius_btn}px 0;"
                 f"text-align:left;padding:0 10px 0 12px;}}"
                 f"QPushButton:hover{{background:{rgba(t.q('tx'), 0 if t.glass else 14).name(QColor.NameFormat.HexArgb)};color:{t.tx};}}"
+                f"QPushButton:pressed{{background:{rgba(t.q('tx'), 0 if t.glass else 26).name(QColor.NameFormat.HexArgb)};color:{t.tx};}}"   # 丙-8 L 按压加深
             )
 
 
@@ -854,6 +890,7 @@ class Segmented(QWidget):
             f"border-radius:{max(2, t.radius_btn - 2)}px;}}"
             "QPushButton{background:transparent;border:none;color:" + off + ";padding:0;}"
             f"QPushButton:hover{{color:{t.tx};}}"
+            f"QPushButton:pressed{{color:{t.blue};}}"   # 丙-8 L 按压给色反馈
         )
         for b, (key, _lb) in zip(self._buttons, self.options):
             b.setFont(qfont(t, 12.5, 600 if key == self._value else 500))
@@ -862,4 +899,5 @@ class Segmented(QWidget):
                 + (on if key == self._value else off)
                 + ";padding:0;}"
                 f"QPushButton:hover{{color:{t.tx};}}"
+                f"QPushButton:pressed{{color:{t.blue};}}"   # 丙-8 L 按压给色反馈
             )

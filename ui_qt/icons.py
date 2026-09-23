@@ -57,13 +57,14 @@ CHEVRON = '<path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width
 
 #: 外观切换图标（丙-7 #15 新设计）：三条横向调节滑杆 + 圆点钮（中条圆点偏右
 #: —— 经典「调节」语义）。涵盖「文案体系 + 主题」= 外观调节。
-#: 描边 1.6（16 视框 → 20px 顶栏档渲染时 ≈2px 物理），圆头。
+#: 描边 2.0（16 视框 → 20px 顶栏档渲染 ≈2.5px 物理）—— 丙-8 F：1.6 太灰看不清，
+#: 与最小化/全屏（IconBtn 笔画 2px）同规格提亮；圆头。
 APPEARANCE = (
     '<path d="M2.4 4h11.2M2.4 8h11.2M2.4 12h11.2" fill="none" stroke="currentColor" '
-    'stroke-width="1.6" stroke-linecap="round"/>'
-    '<circle cx="5.4" cy="4" r="1.9" fill="none" stroke="currentColor" stroke-width="1.6"/>'
-    '<circle cx="10.6" cy="8" r="1.9" fill="none" stroke="currentColor" stroke-width="1.6"/>'
-    '<circle cx="6.8" cy="12" r="1.9" fill="none" stroke="currentColor" stroke-width="1.6"/>'
+    'stroke-width="2.0" stroke-linecap="round"/>'
+    '<circle cx="5.4" cy="4" r="1.9" fill="none" stroke="currentColor" stroke-width="2.0"/>'
+    '<circle cx="10.6" cy="8" r="1.9" fill="none" stroke="currentColor" stroke-width="2.0"/>'
+    '<circle cx="6.8" cy="12" r="1.9" fill="none" stroke="currentColor" stroke-width="2.0"/>'
 )
 
 

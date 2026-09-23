@@ -30,9 +30,10 @@ from PySide6.QtWidgets import QApplication
 
 SPIN_FRAMES = 24          # web SPIN_FRAMES（console_html.py L2912）
 SPIN_MS = 22              # web SPIN_MS（24 × 22 ≈ 530ms 一圈）
-NOD_MS_DEFAULT = 320      # 丙-6 #11 可感知性修复：web 真值 180ms 真机看不见（用户复验反馈）
+NOD_MS_DEFAULT = 400      # 丙-8 K：用户复验 320ms 仍无感 → 工单拍板直接做足 400ms（上限）
 NOD_MS_DEBUG = 1500       # PM_CURSOR_NOD_DEBUG=1 → 真机定因开关（肉眼必见，机制通不通一锤定音）
 NOD_MS = NOD_MS_DEFAULT   # 兼容旧引用；实际取值走 _nod_ms()
+NOD_SCALE = 1.3           # 丙-8 K：歪头帧放大上限（工单规格 ≤1.3x）——「看得见」不再依赖调试开关
 HOTSPOT = (8, 8)          # web cursor:url() 8 8
 _MAX_CUR = 128            # webui 服务端同款上限（图片已 resize ≤128）
 
@@ -40,14 +41,13 @@ _MAX_CUR = 128            # webui 服务端同款上限（图片已 resize ≤12
 def _nod_ms(env: str | None = None) -> int:
     """点头帧时长（毫秒）。
 
-    丙-6 #11 两步走：
-    · 默认 320ms —— 可感知性修复。web 真值 180ms 单帧在真机上肉眼确认不了
-      （总调度取证：机制活着、帧文件 OK，用户中键能转 = 同链路可用，
-      唯一差异就是 nod 只有 180ms）。300~400 区间取下段 320：
-      比 180 长 78% 保证"看见"，短于 400 避免拖沓。
+    丙-6 #11 → 丙-8 K 两步走：
+    · 默认 400ms —— 丙-6 曾从 web 真值 180ms 提到 320ms，用户复验**仍然无感**
+      （丙-8 工单原话「点击没有点头特效」）⇒ 机制取证 + 强调做足双管齐下：
+      时长顶满 400ms 区间上限 + 歪头帧放大 1.3x（见 NOD_SCALE），
+      让「看得见」不再依赖用户跑 PM_CURSOR_NOD_DEBUG。
     · 环境变量 PM_CURSOR_NOD_DEBUG=1 → 1500ms —— 真机定因开关：
       延长到肉眼必见，用户点一下就能判「机制通还是不通」。
-      通 ⇒ 320ms 收尾；不通 ⇒ 加日志定位（取证结论后补进丙-6 回执）。
     """
     v = os.environ.get("PM_CURSOR_NOD_DEBUG") if env is None else env
     if str(v or "").strip() == "1":
@@ -130,9 +130,24 @@ class WhaleCursor(QObject):
     def _rebuild(self, custom: bool) -> None:
         base_pm, nod_pm = self._pick_pair(custom)
         self._base = self._to_cursor(base_pm)
-        self._nod = self._to_cursor(nod_pm) if self._base else None
+        self._nod = self._to_nod_cursor(nod_pm) if self._base else None
         self._frames = self._build_frames(base_pm) if self._base else []
         self._custom = custom
+
+    @staticmethod
+    def _to_nod_cursor(pm: QPixmap) -> QCursor | None:
+        """歪头帧 cursor —— 丙-8 K：放大 NOD_SCALE(1.3x) 强调「点头看得见」，
+        hotspot 同步 ×1.3 保持指向不变；超 _MAX_CUR 上限就退回原尺寸（不炸）。"""
+        if pm.isNull():
+            return None
+        w = int(pm.width() * NOD_SCALE)
+        h = int(pm.height() * NOD_SCALE)
+        if w > _MAX_CUR or h > _MAX_CUR:
+            return WhaleCursor._to_cursor(pm)
+        big = pm.scaled(w, h,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation)
+        return QCursor(big, int(HOTSPOT[0] * NOD_SCALE), int(HOTSPOT[1] * NOD_SCALE))
 
     def _build_frames(self, base_pm: QPixmap) -> list[QCursor]:
         """中键旋转帧：当前光标图绕中心转 24 帧（web buildFrames canvas 同款）。"""

@@ -178,14 +178,17 @@ def _pen_rgba(r: int, g_: int, b: int, a: int, width: float):
     return pen
 
 
-def paint_backdrop(p: QPainter, w: int, h: int, wp: QPixmap, ocean: OceanWaves, dpr: float) -> None:
-    """海底画卷全幅绘制：底图 → tint → 三层波浪（Shell.paintEvent 专用）。"""
+def paint_backdrop(p: QPainter, w: int, h: int, wp: QPixmap) -> None:
+    """海底画卷（静底版）—— 底图 → tint（Shell.paintEvent 专用）。
+
+    丙-8 I（2026-09-24 用户拍板）：**三层波浪动画砍掉**，只留 ocean.jpg 静底图。
+    旧签名里的 `ocean: OceanWaves` 参数与末尾的 `ocean.paint(...)` 一并移除——
+    调用点只剩本函数，波浪从此不进产品渲染路径。"""
     if not wp.isNull():
         dw = wp.width() / (wp.devicePixelRatio() or 1.0)
         dh = wp.height() / (wp.devicePixelRatio() or 1.0)
         p.drawPixmap(QRectF((w - dw) / 2.0, (h - dh) / 2.0, dw, dh), wp, QRectF(0, 0, wp.width(), wp.height()))
     p.fillRect(QRectF(0, 0, w, h), tint_gradient(w, h))
-    ocean.paint(p, w, h, dpr)
 
 
 def _selftest() -> list[tuple[str, bool, str]]:
