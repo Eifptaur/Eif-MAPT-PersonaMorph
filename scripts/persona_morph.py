@@ -3052,55 +3052,68 @@ def main():
                   persona_rate_fn=persona_rate_fn,
                   persona_score_custom_fn=persona_score_custom_fn,
                   persona_ai_enrich_fn=persona_ai_enrich_fn)
+    # ── 控制台启动编排（丙-5 #1 双窗收口，2026-09-23）────────────────────
+    # 顺序：① webui 起服务（快，秒级——"控制台永远先启动"口径不变，微信校准不挡它）
+    #       ② Qt 原生壳自举（唯一通路 qt_bootstrap.ensure_pyside6；已装则秒回）
+    #       ③ **开窗决策押到自举之后**：Qt 正常 ⇒ 原生界面就是控制台，
+    #          ConsoleForm 绝不打开（真机首跑双窗根因＝旧顺序先 open_console
+    #          开出 WebView2 窗、紧接着 start_qt_shell 又开一窗 ⇒ 两窗并存抢主）；
+    #          Qt 自举失败 ⇒ 照旧 open_console（丙-3 网页后备逻辑原样保留）。
+    #   注意：网页控制台**服务**（webui）与网页版可达性一个字不动（工单第 2 节第 3
+    #   条"随时可回退"），收口的只是"启动时再自动弹一个网页窗"这件事。
+    _qt_ok = False
+    url = ""
     try:
-        # 控制台永远先启动（微信 UIA 几何调整可能因校准耗时/卡住，不能挡在它前面）
         port = webui.start()
         if port:
             token = str(server_cfg.get("token") or "").strip()
             url = "http://127.0.0.1:%d" % port + (("/?token=" + token) if token else "")
             log.info("Web 控制台：%s", mask_url_token(url))
-            if server_cfg.get("auto_open_browser", True) is not False:
-                # 开窗只走一处（`agent/notify_ui.open_console`）：优先级＝自家 WebView2 窗口 → 浏览器，
-                # 并且**所有入口共用同一把锁**（logs/browser_opened.lock）。
-                # 2026-09-14 修"自家窗口 + 浏览器同时弹"：原先这里自己拿锁开浏览器、启动器那边另拿一次，
-                # 两个入口各开一个 ⇒ 双窗。
-                try:
-                    from agent.notify_ui import open_console as _open_console
-                    _rep = _open_console(url, browser_path=str(server_cfg.get("browser_path") or ""),
-                                         mode="quiet")   # 机器人自己开窗 ⇒ 后台开（只闪任务栏，绝不抬到前台顶掉用户）
-                    _how = str(_rep.get("how") or "")
-                    if _how == "webview":
-                        log.info("已在我们自己的窗口里打开控制台（不依赖浏览器）")
-                    elif _how == "reuse":
-                        log.info("控制台已经开着 ⇒ 复用那个窗口（不再新开）")
-                    elif _how == "browser":
-                        log.info("自家控制台窗口不可用（%s）⇒ 已回退浏览器", _rep.get("why") or "原因未知")
-                    elif _how == "skip":
-                        log.info("%s", _rep.get("why") or "本次不重复打开")
-                    else:
-                        log.warning("打开控制台失败：%s", _rep.get("why") or "")
-                except Exception as e:
-                    log.warning("打开控制台异常（请手动访问 %s）：%s", mask_url_token(url), e)
     except Exception as e:
         log.warning("Web 控制台启动失败：%s", e)
 
-    # ── Qt 原生控制台（丙-3 第一步落位，2026-09-23）────────────────────────
-    # 过渡期与网页控制台**并存**（网页一个字不动，随时可回退——工单第 2 节第 3 条）。
-    # 自举唯一通路：qt_bootstrap.ensure_pyside6（四钉子：Essentials==6.11.2 /
-    # 版本幂等 / 国内镜像 / 失败讲人话）。缺组件时装完才继续，装不上就记日志、
-    # 继续用网页控制台——Qt 壳自举失败不能拖死机器人本体。
-    # 界面跑在主进程内的子线程（ui_qt/app.py），探活走 addr.resolve → heal.probe
-    # 原型同款口径（绕代理、六态判别），端口只用于探活、界面不经端口。
+    # Qt 自举 + 子线程拉原生壳（界面跑在主进程内的子线程，ui_qt/app.py；
+    # 探活走 addr.resolve → heal.probe 原型同款口径（绕代理、六态判别），
+    # 端口只用于探活、界面不经端口）。装不上就记日志、走下面的网页后备——
+    # Qt 壳自举失败不能拖死机器人本体。
     try:
         from qt_bootstrap import ensure_pyside6
         _ok6, _why6 = ensure_pyside6(log=log)
         if _ok6:
             from ui_qt.app import start_qt_shell
-            start_qt_shell(log=log)
+            _qt_ok = bool(start_qt_shell(log=log))
+            if not _qt_ok:
+                log.warning("Qt 控制台线程派发失败，本次走网页控制台")
         else:
-            log.warning("Qt 控制台自举未成功，本次继续用网页控制台：%s", _why6)
+            log.warning("Qt 控制台自举未成功，本次走网页控制台：%s", _why6)
     except Exception as e:
         log.warning("Qt 控制台启动失败（不影响网页控制台）：%s", e)
+
+    if url and _qt_ok:
+        log.info("原生控制台已打开，不再另开网页控制台窗口（网页版仍可手动访问：%s）",
+                 mask_url_token(url))
+    elif url and server_cfg.get("auto_open_browser", True) is not False:
+        # 开窗只走一处（`agent/notify_ui.open_console`）：优先级＝自家 WebView2 窗口 → 浏览器，
+        # 并且**所有入口共用同一把锁**（logs/browser_opened.lock）。
+        # 2026-09-14 修"自家窗口 + 浏览器同时弹"：原先这里自己拿锁开浏览器、启动器那边另拿一次，
+        # 两个入口各开一个 ⇒ 双窗。
+        try:
+            from agent.notify_ui import open_console as _open_console
+            _rep = _open_console(url, browser_path=str(server_cfg.get("browser_path") or ""),
+                                 mode="quiet")   # 机器人自己开窗 ⇒ 后台开（只闪任务栏，绝不抬到前台顶掉用户）
+            _how = str(_rep.get("how") or "")
+            if _how == "webview":
+                log.info("已在我们自己的窗口里打开控制台（不依赖浏览器）")
+            elif _how == "reuse":
+                log.info("控制台已经开着 ⇒ 复用那个窗口（不再新开）")
+            elif _how == "browser":
+                log.info("自家控制台窗口不可用（%s）⇒ 已回退浏览器", _rep.get("why") or "原因未知")
+            elif _how == "skip":
+                log.info("%s", _rep.get("why") or "本次不重复打开")
+            else:
+                log.warning("打开控制台失败：%s", _rep.get("why") or "")
+        except Exception as e:
+            log.warning("打开控制台异常（请手动访问 %s）：%s", mask_url_token(url), e)
 
     # 首步：把微信窗口移到固定位置+标准大小（几何恒定，坐标只按 DPI 换算；
     # 放在控制台之后——UIA 校准可能耗数十秒甚至卡住，不能拖累控制台）
