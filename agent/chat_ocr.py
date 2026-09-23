@@ -287,6 +287,190 @@ def recognize(img, timeout=None) -> list:
     return list(val or [])
 
 
+# ————————————————— 丙-9 A1：第二引擎 RapidOCR（串联降级，调研 S1） —————————————————
+# 为什么：WinRT OCR 精度差（asyncio 取消不响应缺陷 + 25s 硬超时 + 2 次熔断 120s 全哑），
+# 强档证据帧读空时整条身份闸 fail-closed。RapidOCR（rapidocr_onnxruntime，PP-OCRv4）
+# 纯本地离线推理，作为**补读引擎**：WinRT 先跑（快速路径），空/失败帧才用 RapidOCR
+# 对同一帧重试，任一引擎给出非空结果即算数。**不是每帧双跑**（控制耗时）。
+# fail-closed 铁律不变：两引擎全挂 ⇒ 仍按"自检不可用"拒发（绝不变成"没证据也能发"）。
+
+_RAPID_PKG = "rapidocr-onnxruntime"      # pip 包名（import 名是 rapidocr_onnxruntime）
+_RAPID_TIMEOUT_S = 20.0                  # RapidOCR 同步推理单帧上限（线程 join 硬超时）
+_RAPID_PIP_TIMEOUT = 900                 # 自举 pip 单镜像上限（依赖链 ≈ 百 MB）
+_RAPID_MIRRORS = (
+    "https://pypi.tuna.tsinghua.edu.cn/simple",
+    "https://mirrors.aliyun.com/pypi/simple/",
+    "https://mirrors.cloud.tencent.com/pypi/simple/",
+)
+_rapid_lock = threading.Lock()
+_rapid_state = {"tried": False, "ok": False, "why": "", "engine": None}
+
+
+def _rapid_log(line: str) -> None:
+    """RapidOCR 自举/推理过程留痕（logs/rapidocr_boot.log；失败不抛，绝不影响主链）。"""
+    try:
+        log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
+        os.makedirs(log_dir, exist_ok=True)
+        with open(os.path.join(log_dir, "rapidocr_boot.log"), "a", encoding="utf-8") as f:
+            f.write(time.strftime("[%Y-%m-%d %H:%M:%S] ") + line + "\n")
+    except Exception:
+        pass
+
+
+def _rapid_probe_once(mirror: str, timeout: float = 3.0) -> tuple:
+    """探镜像的 /simple/rapidocr-onnxruntime/ 页：(通?, 耗时)。qt_bootstrap 镜像竞速同思路。"""
+    import urllib.error
+    import urllib.request
+    url = mirror.rstrip("/") + "/" + _RAPID_PKG + "/"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (ocr-bootstrap-probe)"})
+    t0 = time.perf_counter()
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return (getattr(r, "status", 200) == 200), time.perf_counter() - t0
+    except Exception:
+        return False, time.perf_counter() - t0
+
+
+def _rapid_bootstrap() -> tuple:
+    """懒加载自举：已装 → 直接 import；没装 → 镜像竞速选最快通源 pip 装（装到当前解释器）。
+
+    只做一次（成败都记账在 `_rapid_state`）。**安装失败讲人话降级回 WinRT-only**：
+    返回 (False, 原因)，调用方照旧走 WinRT，不阻塞启动、不报死。
+    """
+    import importlib.util
+    import subprocess
+    import sys as _sys
+
+    if importlib.util.find_spec("rapidocr_onnxruntime") is not None:
+        return True, ""
+    _rapid_log("未安装，开始自举（依赖链约百 MB，一次性）")
+    # 竞速：并行探三源 /simple/<包>/，最快通的先装（qt_bootstrap 九源模式同思路）
+    probe = {}
+    ths = []
+    for m in _RAPID_MIRRORS:
+        def _one(mm=m):
+            probe[mm] = _rapid_probe_once(mm)
+        t = threading.Thread(target=_one, daemon=True)
+        t.start()
+        ths.append(t)
+    for t in ths:
+        t.join(6.0)
+    order = sorted((m for m, r in probe.items() if r[0]), key=lambda m: probe[m][1])
+    if not order:
+        why = "全部镜像都没探通（断网或源全挂）"
+        _rapid_log("自举放弃：" + why)
+        return False, why
+    flags = 0x08000000 if os.name == "nt" else 0     # pythonw 下不闪黑窗（与 qt_bootstrap 同款）
+    for mirror in order:
+        try:
+            _rapid_log("pip install 尝试源 %s" % mirror)
+            r = subprocess.run(
+                [_sys.executable, "-m", "pip", "install", _RAPID_PKG,
+                 "-i", mirror, "--no-warn-script-location", "--disable-pip-version-check"],
+                capture_output=True, text=True, timeout=_RAPID_PIP_TIMEOUT, creationflags=flags)
+        except subprocess.TimeoutExpired:
+            _rapid_log("pip 超时（>%ds）%s" % (_RAPID_PIP_TIMEOUT, mirror))
+            continue
+        except Exception as e:                       # noqa: BLE001
+            _rapid_log("pip 异常 %s: %s" % (type(e).__name__, e))
+            continue
+        if r.returncode == 0:
+            _rapid_log("自举成功（源 %s）" % mirror)
+            return True, ""
+        _rapid_log("pip 失败 rc=%s 尾行 %s" % (r.returncode, ((r.stdout or "") + (r.stderr or "")).strip()[-200:]))
+    why = "所有镜像 pip 都没装上（网络或依赖链问题）；本次启动降级为只用内置 OCR"
+    _rapid_log("自举放弃：" + why)
+    return False, why
+
+
+def _rapid_engine():
+    """进程内单例 RapidOCR 引擎（首次初始化读模型 ≈1 秒，之后复用）。失败返回 None。"""
+    with _rapid_lock:
+        e = _rapid_state.get("engine")
+        if e is not None:
+            return e
+        if not _rapid_state["tried"]:
+            _rapid_state["tried"] = True
+            ok, why = _rapid_bootstrap()
+            if not ok:
+                _rapid_state["ok"] = False
+                _rapid_state["why"] = why
+                return None
+            try:
+                from rapidocr_onnxruntime import RapidOCR
+                _rapid_state["engine"] = RapidOCR()
+                _rapid_state["ok"] = True
+                _rapid_state["why"] = ""
+            except Exception as ex:                  # noqa: BLE001
+                _rapid_state["ok"] = False
+                _rapid_state["why"] = "装上了但初始化失败 %s: %s" % (type(ex).__name__, ex)
+                _rapid_log(_rapid_state["why"])
+        return _rapid_state.get("engine")
+
+
+def rapidocr_status() -> dict:
+    """第二引擎健康快照（体检/回执用）：ready / 未自举 / 降级原因。"""
+    with _rapid_lock:
+        st = _rapid_state["tried"]
+        return {"tried": st, "ok": bool(_rapid_state["ok"]),
+                "why": str(_rapid_state["why"] or ("可用" if _rapid_state["ok"] else ""))}
+
+
+def _rapid_recognize(img, timeout=None) -> list:
+    """RapidOCR 对 PIL 图跑一帧，返回 [(text, x, y, w, h)]（与 recognize 同构）。
+
+    同步推理 ⇒ 依旧走 `_run_hard`（daemon 线程 + join 硬超时）防单帧卡死；
+    预算口径与 WinRT 同一套（`_left`∩熔断），绝不绕过 fail-closed。
+    不可用/失败/超时返回 []。
+    """
+    eng = _rapid_engine()
+    if eng is None:
+        return []
+    left = _left(_RAPID_TIMEOUT_S if timeout is None else float(timeout))
+    if left <= 0.0:
+        return []
+
+    def _run():
+        import numpy as np
+        arr = np.asarray(img.convert("RGB"))[:, :, ::-1]      # PIL RGB → BGR（cv2 系模型口径）
+        res, _elapse = eng(arr)
+        out = []
+        for item in (res or []):
+            try:
+                box, text, _score = item[0], item[1], item[2]
+                xs = [p[0] for p in box]
+                ys = [p[1] for p in box]
+                out.append((str(text), int(min(xs)), int(min(ys)),
+                            int(max(xs) - min(xs)), int(max(ys) - min(ys))))
+            except Exception:                                # noqa: BLE001
+                continue
+        return out
+
+    ok, val, why = _run_hard(_run, left, "RapidOCR")
+    if not ok:
+        _rapid_log("推理失败 %s" % why)
+        return []
+    return list(val or [])
+
+
+def recognize_dual(img, timeout=None) -> list:
+    """丙-9 A1 串联降级：WinRT 先跑，**空/失败帧**才用 RapidOCR 对同一帧重试。
+
+    「任一引擎给出非空结果即算数」；正常路径零额外开销（WinRT 读到就直接返回）。
+    预算/熔断 fail-closed 与 `recognize` 完全同一套：熔断中或本笔预算用尽时
+    **RapidOCR 也不跑**——两引擎全挂 ⇒ 仍按"自检不可用"处理，绝不放行。
+    """
+    items = recognize(img, timeout=timeout)
+    if items:
+        return items
+    if blocked():                     # 熔断中 / 预算用尽：第二引擎也不许跑（fail-closed）
+        return []
+    left = _left(_RAPID_TIMEOUT_S if timeout is None else float(timeout))
+    if left <= 0.0:
+        return []
+    return _rapid_recognize(img, timeout=left)
+
+
 def header_box(img) -> tuple:
     """会话头文字带的像素矩形 (x0,y0,x1,y1) —— **与指纹同源**（走 `chat_header.band_box`）。
 
@@ -338,6 +522,58 @@ def _band_ink(im, dark: int = 190) -> float:
         return 1.0        # 量不出来就当有字（宁可多花一次 OCR，也别把"有字"当"空白"漏掉）
 
 
+# ————————————————— 丙-9 B：反色二值化预处理管线（调研 S2） —————————————————
+# 为什么：高亮行是**白字绿底**（反色底），直接识别基本必败（实测单字母 E → 「巷」）；
+# 标题带是浅灰细字，对比度也弱。管线 = 自动对比拉伸 → （可选）反色还原 → Otsu 二值化 → 放大。
+# 依赖纪律：**只用 PIL + numpy**（两者都已在 runtime site-packages），禁 opencv-python。
+
+def _otsu_thresh(im) -> int:
+    """灰度直方图的 Otsu 大津阈值（numpy 十来行，不引 cv2）。纯色/全黑图退 165。"""
+    try:
+        import numpy as np
+        hist = np.asarray(im.histogram(), dtype=float)
+        total = hist.sum()
+        if total <= 0:
+            return 165
+        levels = np.arange(256, dtype=float)
+        w0 = np.cumsum(hist)
+        w1 = total - w0
+        valid = (w0 > 0) & (w1 > 0)
+        if not valid.any():
+            return 165
+        sum_all = float(np.dot(hist, levels))
+        m0 = np.cumsum(hist * levels) / np.maximum(w0, 1e-9)
+        m1 = (sum_all - np.cumsum(hist * levels)) / np.maximum(w1, 1e-9)
+        var = np.where(valid, w0 * w1 * (m0 - m1) ** 2, 0.0)
+        t = int(np.argmax(var))
+        return max(40, min(220, t))
+    except Exception:
+        return 165
+
+
+def preprocess_ink(crop, zoom: int = 2, invert: bool = False, thresh: int = None):
+    """丙-9 B：强档帧送 OCR 前的预处理管线 —— 自动对比 → （可选）反色还原 → Otsu 二值化 → 放大。
+
+    `invert=True` 用于**白字绿底**的活动行/名字区（反色还原成"深字浅底"再识别）；
+    标题带那种深字浅底给 `invert=False`（只做对比+二值化+放大）。任何异常退回原图。
+    """
+    try:
+        from PIL import Image, ImageOps
+        g = ImageOps.autocontrast(crop.convert("L"))
+        if invert:
+            g = ImageOps.invert(g)
+        t = int(thresh) if thresh is not None else _otsu_thresh(g)
+        bw = g.point(lambda v: 255 if v >= t else 0).convert("RGB")
+        z = int(zoom or 0)
+        if z > 1:
+            # ⛔ 探针实证（丙-9）：resize 默认 BICUBIC 会在**二值图**上插出中间灰值（0/255 之外的色阶），
+            # 把"二值化"这一步的努力打回去 ⇒ 显式最近邻（NEAREST），保住纯黑白。
+            bw = bw.resize((bw.width * z, bw.height * z), Image.NEAREST)
+        return bw
+    except Exception:
+        return crop
+
+
 def header_text(img=None, gui=None, zoom: int = 2) -> str:
     """OCR 会话头，返回识别到的文字（读不到返回 ""）。zoom＝放大倍数（小字放大后识别率更高）。
 
@@ -366,8 +602,9 @@ def header_text(img=None, gui=None, zoom: int = 2) -> str:
             if z and z > 1 and z not in zooms:
                 zooms.append(z)
         for z in zooms:
-            c = crop.resize((crop.width * z, crop.height * z))
-            got = "".join(str(i[0]) for i in recognize(c)).strip()
+            # 丙-9 B：标题带走预处理管线（对比+二值化+放大，替代裸 resize）；丙-9 A1：读空由 RapidOCR 补
+            c = preprocess_ink(crop, zoom=z, invert=False)
+            got = "".join(str(i[0]) for i in recognize_dual(c)).strip()
             if got:
                 return got
         return ""
@@ -408,14 +645,66 @@ def row_time_match(blob: str, want: str) -> bool:
     """`blob`（一行/一屏的 OCR 文本）里是否有与目标时刻 `want` **同一个**时间戳。
 
     两侧都过 `hhmm()`（`'01：03'` / `'1:03'` / `'01:03'` 视为同一时刻）。
+    ⛔ 丙-9 A2（调研 S3）：OCR 错一个字（`O→0`）整个强档③就哑 ⇒ 候选先过错字容错映射，
+       再与 DB 时间做**编辑距离 ≤1** 的模糊匹配。边界：只放宽 **OCR 读数**容错——
+       时间×DB 的判定结构不变、身份要求不放宽（fail-closed 口径不动）。
     """
     w = hhmm(want)
     if not w:
         return False
-    for m in _time_re.finditer(str(blob or "")):
-        if hhmm(m.group(0)) == w:
+    # ⛔ 探针实证（丙-9）：`O9:4O` 这类开头/结尾字母误读，正则 `\d…` 连候选都提不出来（先丢帧）
+    # ⇒ 必须对**整段 blob 先过错字映射、再跑正则提取**；提取后的 `_hhmm_fuzzy_eq` 继续兜剩余形态。
+    for m in _time_re.finditer(_fix_time_typo(str(blob or ""))):
+        raw = m.group(0)
+        if hhmm(raw) == w:
+            return True
+        if _hhmm_fuzzy_eq(raw, w):
             return True
     return False
+
+
+# ————————————————— 丙-9 A2：时间戳读数的错字容错（调研 S3） —————————————————
+# OCR 实测会把 `0` 读成 `O/o`、`1` 读成 `l/I`、`5` 读成 `S`、半角冒号变全角；
+# 这些映射**只作用于 OCR 读数侧**（DB 侧是从库里取的干净 HH:MM，不需要修）。
+_TYPO_TRANS = str.maketrans({"O": "0", "o": "0", "l": "1", "I": "1", "S": "5", "：": ":"})
+
+
+def _fix_time_typo(s: str) -> str:
+    """时间戳读数的错字容错映射：`O/o→0`、`l/I→1`、`S→5`、全角`：→:`。"""
+    return str(s or "").translate(_TYPO_TRANS)
+
+
+def _edit_dist_le1(a: str, b: str) -> bool:
+    """编辑距离 ≤1（同长一处替换；长差 1 一处插入/删除）。短串专用，O(n) 双指针。"""
+    if abs(len(a) - len(b)) > 1:
+        return False
+    if len(a) == len(b):
+        return sum(1 for x, y in zip(a, b) if x != y) <= 1
+    if len(a) > len(b):
+        a, b = b, a                      # 保证 a 短 b 长
+    i = j = 0
+    used = False
+    while i < len(a) and j < len(b):
+        if a[i] == b[j]:
+            i += 1
+            j += 1
+            continue
+        if used:
+            return False
+        used = True
+        j += 1                            # 在长串里跳过一个（插入/删除）
+    return True
+
+
+def _hhmm_fuzzy_eq(raw: str, want: str) -> bool:
+    """OCR 读数 `raw` 与 DB 时间 `want`（都是 `H:MM` 形）容错相等：
+    错字映射修复后相等，或修复后仍编辑距离 ≤1（识别器偶尔把对的数字读成错的）。"""
+    a = hhmm(_fix_time_typo(raw))
+    if not a:
+        return False
+    if a == want:
+        return True
+    return _edit_dist_le1(a, want)
 
 
 def clean(text: str) -> str:
@@ -698,21 +987,18 @@ def _name_box(img, y_abs: int) -> tuple:
 
 
 def name_of_row(img, y_abs: int, text: str = "", zoom: int = 3) -> str:
-    """只 OCR 该行的**名字区**（左侧、上半天），拿更干净的名字；失败退回整行文本。"""
+    """只 OCR 该行的**名字区**（左侧、上半天），拿更干净的名字；失败退回整行文本。
+
+    ⛔ 丙-9 B：高亮行是白字绿底 ⇒ 反色还原+二值化（preprocess_ink invert=True）后识别；
+    ⛔ 丙-9 A1：读空时由 RapidOCR 对同一帧补读（current_chat_name 的高亮行名字走这里）。
+    """
     try:
         w, h = img.size
         box = _name_box(img, y_abs)
         crop = img.crop(box)
         if crop.width < 8 or crop.height < 6:
             return text
-        if zoom > 1:
-            crop = crop.resize((crop.width * zoom, crop.height * zoom))
-        from PIL import ImageOps
-        try:
-            crop = ImageOps.autocontrast(crop.convert("L")).convert("RGB")   # 白字绿底：先拉对比再识别
-        except Exception:
-            pass
-        got = clean("".join(str(i[0]) for i in recognize(crop))).strip()
+        got = clean("".join(str(i[0]) for i in recognize_dual(preprocess_ink(crop, zoom=zoom, invert=True)))).strip()
         return got or clean(text)
     except Exception:
         return text
@@ -886,14 +1172,12 @@ def row_time_read(img, y_abs: int, time_hr: int = 130, left=None) -> str:
         crop = img.crop(box)
         if crop.width < 20 or crop.height < 10:
             return ""
-        crop = crop.resize((crop.width * 3, crop.height * 3))
-        from PIL import ImageOps
+        # 丙-9 B：时间栏两次尝试都走预处理管线（白字绿底 ⇒ invert=True；正读侧二值化即可）
         for _inv in (False, True):
-            g = ImageOps.autocontrast(crop.convert("L"))
-            if _inv:
-                g = ImageOps.invert(g)
-            txt = "".join(str(i) for i, *_ in recognize(g.convert("RGB")))
-            for m in _time_re.finditer(txt):
+            g = preprocess_ink(crop, zoom=3, invert=_inv)
+            txt = "".join(str(i) for i, *_ in recognize_dual(g))
+            # 与 row_time_match 同口径（丙-9 A2）：OCR 读数先过错字映射再提候选（`19:4O` 这类否则必丢帧）
+            for m in _time_re.finditer(_fix_time_typo(txt)):
                 t = hhmm(m.group(0))
                 if t:
                     return t
@@ -1081,10 +1365,9 @@ def _band_name(img, y_abs: int) -> str:
         crop = img.crop(_name_box(img, int(y_abs)))
         if crop.width < 8 or crop.height < 6:
             return ""
-        crop = crop.resize((crop.width * 3, crop.height * 3))
-        from PIL import ImageOps
-        inv = ImageOps.invert(ImageOps.autocontrast(crop.convert("L"))).convert("RGB")
-        return clean("".join(str(i[0]) for i in recognize(inv))).strip()
+        # 丙-9 B：反相路径改走预处理管线（反色还原+二值化）；丙-9 A1：读空由 RapidOCR 补
+        inv = preprocess_ink(crop, zoom=3, invert=True)
+        return clean("".join(str(i[0]) for i in recognize_dual(inv))).strip()
     except Exception:
         return ""
 
@@ -1345,7 +1628,8 @@ def pane_text(img, limit: int = 200, zoom: int = 2) -> str:
             crop = img.crop(b)
             if zoom and int(zoom) > 1:
                 crop = crop.resize((crop.width * int(zoom), crop.height * int(zoom)))
-            return "".join(str(i[0]) for i in recognize(crop))
+            # 丙-9 A1：聊天区全文是强档证据 ⇒ 读空由 RapidOCR 补读（B 管线不加——普通深字浅底，二值化无益）
+            return "".join(str(i[0]) for i in recognize_dual(crop))
 
         txt = _read(box)
         if not txt.strip():
