@@ -3437,7 +3437,12 @@ def main():
                             log.info("群[%s]指令禁言：%s ⇒ %s", _g["name"], _cmd.get("action"), _cmd.get("note"))
                         return {"command": _cmd}
                     entry = store.append_incoming(_chat_key, nm["mid"], nm["ts"], nm["sender_id"],
-                                                  nm["sender_name"], nm["text"], media=nm["media"])
+                                                  nm["sender_name"], nm["text"], media=nm["media"],
+                                                  # ⛔ 2026-09-24（丙-11 B3）：补传 `reply`（被引用内容
+                                                  #   与发送者）。`wechat` 侧已产出（B1/B2），落档由
+                                                  #   `store.append_incoming` 的 `reply` 形参收（store.py:331）。
+                                                  #   无引用时为 None —— 与既有行为完全一致（原来恒 None）。
+                                                  reply=nm.get("reply"))
                     if not entry:
                         return None                     # 没落库 ⇒ 判失败，交给 process_batch 重试
                     # ── 系统自动回拍：别人拍一拍机器人 → 延迟 ~18 秒后按概率回拍（90%）──

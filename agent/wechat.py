@@ -2087,9 +2087,47 @@ class WeChatAdapter:
                         media = [{"kind": "image", "local_id": local_id}]
                 except Exception:
                     pass
-            return {"text": title or "[引用消息]", "media": media, "sender_wxid": sender_wxid}
+            # ⛔ 2026-09-24（丙-11 B1）：**补产出被引用内容的来源**（`prompt.py::resolve_context_tier`
+            #   的 `quote_me` 主路径读 `e["reply"]`，原来恒为 None ⇒ 主路径永远走不到，只剩脆弱的
+            #   文字前缀兜底）。口径：**只从报文里取，取不到就空串，绝不猜**。
+            #   微信 refermsg 里：`fromusr`=被引用消息发送者 wxid、`displayname`=其显示名、
+            #   `<content>`=被引用正文。三个字段任一缺失都不报错（老版本/异形报文）；
+            #   被引用正文兜底用 title（引用卡片标题，本函数本来就在用的那个）。
+            reply = self._parse_refermsg(txt, title)
+            return {"text": title or "[引用消息]", "media": media, "sender_wxid": sender_wxid,
+                    "reply": reply}
         except Exception:
             return None
+
+    @staticmethod
+    def _parse_refermsg(txt: str, fallback_text: str = ""):
+        """从已解压的 appmsg 报文里抠出**被引用内容** ⇒ `{sender, sender_id, text}`。
+
+        取不到任何东西时返回 `None`（＝"这条引用没解析出来源"，与"没有引用"同义），
+        **绝不编造发送者或内容**。三个字段都做了宽松容错（缺哪个就空串），
+        因为微信各版本 refermsg 的字段名/存在性不稳定（`fromusr` / `displayname` / `content`）。
+        """
+        seg_m = re.search(r"<refermsg>(.*?)</refermsg>", str(txt or ""), re.S)
+        if not seg_m:
+            return None
+        seg = seg_m.group(1)
+        sender_id = ""
+        m = re.search(r"<fromusr>(.*?)</fromusr>", seg, re.S)
+        if m:
+            sender_id = html.unescape(m.group(1)).strip()
+        sender = ""
+        m = re.search(r"<displayname>(.*?)</displayname>", seg, re.S)
+        if m:
+            sender = html.unescape(m.group(1)).strip()
+        text = ""
+        m = re.search(r"<content>(.*?)</content>", seg, re.S)
+        if m:
+            text = html.unescape(m.group(1)).strip()
+        if not text:
+            text = str(fallback_text or "").strip()
+        if not (sender or sender_id or text):
+            return None
+        return {"sender": sender, "sender_id": sender_id, "text": text}
 
     def _mark_sent(self, text: str):
         """记录一条自己刚发出去的消息文本（用于过滤数据库回读的"回声"）。"""
@@ -2747,6 +2785,12 @@ class WeChatAdapter:
             "mtype": mtype,
             "poker_wxid": (parsed.get("poker_wxid") if parsed else ""),
             "owner": _is_owner,
+            # ⛔ 2026-09-24（丙-11 B2）：**补 `reply` 键**（被引用内容与发送者）。原来这个 dict 没有
+            #   这一项 ⇒ `store.append_incoming(...)` 只能拿 `reply=None` ⇒ `entry["reply"]` 恒空
+            #   ⇒ `prompt.py` 的 `quote_me` 主路径永远走不到。无引用（`parsed` 为 None 或没解析出
+            #   来源）时**必须给 None**（而不是空 dict）——「没有引用」和「引用了解析失败」在
+            #   语义上都不该被当成"引用了我"，主路径只认非空值。
+            "reply": (parsed.get("reply") if isinstance(parsed, dict) else None) or None,
         }
 
     # ── 发送 ─────────────────────────────────────────────────────────────
