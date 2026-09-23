@@ -25,10 +25,15 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QPlainTextEdit,
     QVBoxLayout,
     QWidget,
@@ -37,7 +42,7 @@ from PySide6.QtWidgets import (
 import config_io
 import sec_meta
 from stylekit_qt import Tokens, qfont, rgba
-from widgets import Badge, Btn, Card, desc, h2
+from widgets import Badge, Btn, Card, Field, Switch, desc, h2
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[0]
