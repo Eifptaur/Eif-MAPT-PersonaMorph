@@ -30,7 +30,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from PySide6.QtCore import Qt, QTimer  # noqa: E402
-from PySide6.QtGui import QColor, QGuiApplication  # noqa: E402
+from PySide6.QtGui import QColor, QGuiApplication, QPainter, QPixmap  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
     QFrame,
@@ -44,7 +44,9 @@ from PySide6.QtWidgets import (  # noqa: E402
 )
 
 from confirm import ConfirmDialog  # noqa: E402
+from cursor_fx import WhaleCursor  # noqa: E402
 from heal import Health, Probe, plan_for, probe_backend  # noqa: E402
+from ocean import OceanWaves, paint_backdrop  # noqa: E402
 from panels_qt import BATCH_SECS, build_panel  # noqa: E402
 from stylekit_qt import THEMES, Tokens, apply_font_to_app, qfont, resolve_family, rgba  # noqa: E402
 from widgets import Badge, Btn, Card, Field, NavGroup, NavItem, SearchBox, Switch, desc, h2  # noqa: E402
@@ -156,17 +158,113 @@ class Shell(QWidget):
         self.t = t
         self.text_style = "normal"   # ui.text_style 轴：normal / whale
         self._orig_texts: dict = {}  # 鲸语切换的原文缓存（控件重建后清空）
+        # ── 鲸落视觉本体（ocean.py）：底图 + tint + 三层波浪，只在 whale 主题启用 ──
+        self._wp_path: Path | None = None      # 当前底图来源（含自定义背景判路）
+        self._wp_src: "QPixmap | None" = None  # 原图
+        self._wp_scaled: "QPixmap | None" = None
+        self._wp_scaled_for = None             # (w, h, dpr) 重缩放判据
+        self._backdrop_on = False              # whale + 底图可用 才 True
         self.setWindowTitle("群相 控制台")   # 落位适配：正式壳不再是「原型」（app.py 启动器同名兜底）
         self.resize(1120, 720)
         self.setMinimumSize(860, 560)
         self._build()
+        # 视觉本体与鱼光标：建在 _restyle 之前（_restyle 要按 backdrop 分支）
+        self._ocean = OceanWaves(self)
+        self._cursor = WhaleCursor(Path(__file__).resolve().parents[1], parent=self)
+        self._load_wallpaper()
+        self._refresh_backdrop()
         self._restyle()
+        self._cursor.refresh_from_config()
 
-        # 后台探活 —— 原型的关键演示点
+        # 后台探活 —— 原型的关键演示点（顺带当配置轮询：光标/壁纸 4 秒内跟随 web 面板的改动）
         self._probe_timer = QTimer(self)
         self._probe_timer.timeout.connect(self._probe)
         self._probe_timer.start(4000)
         QTimer.singleShot(300, self._probe)
+
+    # ------------------------------------------------------------ 鲸落视觉本体
+
+    def _wallpaper_source(self) -> Path:
+        """底图来源：config `ui.background == 'custom'` 用上传的 data/ui_bg.jpg，
+        否则默认海 assets/wallpaper/ocean1.jpg（web applyCustomBg 同款判路）。
+        自定义文件缺失 ⇒ 回默认海，不白屏。"""
+        root = Path(__file__).resolve().parents[1]
+        try:
+            from agent.config import get_config  # noqa: PLC0415
+
+            custom = (get_config().get("ui") or {}).get("background") == "custom"
+        except Exception:  # noqa: BLE001
+            custom = False
+        if custom:
+            try:
+                from agent.config import DATA_DIR  # noqa: PLC0415
+
+                p = Path(DATA_DIR) / "ui_bg.jpg"
+                if p.exists():
+                    return p
+            except Exception:  # noqa: BLE001
+                pass
+        return root / "assets" / "wallpaper" / "ocean1.jpg"
+
+    def _load_wallpaper(self) -> None:
+        src = self._wallpaper_source()
+        if src == self._wp_path and self._wp_src is not None:
+            return
+        self._wp_path = src
+        pm = QPixmap(str(src)) if src.exists() else QPixmap()
+        self._wp_src = None if pm.isNull() else pm
+        self._wp_scaled_for = None   # 来源变了 ⇒ 强制重缩放
+
+    def _rescale_wp(self) -> None:
+        """cover 缩放缓存（30fps 每帧只做 1:1 贴图，缩放只在尺寸变化时做一次）。"""
+        if self._wp_src is None:
+            self._wp_scaled = None
+            return
+        key = (self.width(), self.height(), self.devicePixelRatioF())
+        if key == self._wp_scaled_for and self._wp_scaled is not None:
+            return
+        from ocean import cover_pixmap  # noqa: PLC0415
+
+        self._wp_scaled = cover_pixmap(self._wp_src, self.width(), self.height(), self.devicePixelRatioF())
+        self._wp_scaled_for = key
+
+    def _refresh_backdrop(self) -> None:
+        """whale 主题 + 底图可用 ⇒ 开画卷与波浪；其余主题回到原 flat 底。"""
+        self._rescale_wp()
+        self._backdrop_on = self.t.key == "whale" and self._wp_scaled is not None
+        self._ocean.set_active(self._backdrop_on and self.isVisible())
+
+    def _watch_config(self) -> None:
+        """4 秒一跳的配置跟随（挂在探活定时器上）：web 面板改了光标/背景，这里跟上。"""
+        try:
+            self._cursor.refresh_from_config()
+        except Exception:  # noqa: BLE001
+            pass
+        wp_before = self._wp_path
+        self._load_wallpaper()
+        if wp_before != self._wp_path or self._wp_scaled is None:
+            self._refresh_backdrop()
+
+    def paintEvent(self, ev) -> None:  # noqa: N802
+        p = QPainter(self)
+        if self._backdrop_on and self._wp_scaled is not None:
+            paint_backdrop(p, self.width(), self.height(), self._wp_scaled,
+                           self._ocean, self.devicePixelRatioF())
+        else:
+            p.fillRect(self.rect(), self.t.q("bg"))
+
+    def resizeEvent(self, ev) -> None:  # noqa: N802
+        super().resizeEvent(ev)
+        self._rescale_wp()
+        self._ocean.invalidate()
+
+    def showEvent(self, ev) -> None:  # noqa: N802
+        super().showEvent(ev)
+        self._ocean.set_active(self._backdrop_on)
+
+    def hideEvent(self, ev) -> None:  # noqa: N802
+        super().hideEvent(ev)
+        self._ocean.set_active(False)   # CPU 纪律：看不见就不转
 
     # ------------------------------------------------------------ 结构
 
@@ -478,6 +576,9 @@ class Shell(QWidget):
                         sit.widget().deleteLater()
         self._build()
         self._restyle()
+        # 主题换轴 ⇒ 画卷开关/光标底图都可能变：重判 backdrop + 全控件重刷鱼光标
+        self._refresh_backdrop()
+        self._cursor.reapply()
         # 重建后控件是新的：鲸语缓存清掉；若正处鲸语态，对新城控件重放
         self._orig_texts = {}
         if getattr(self, "text_style", "normal") == "whale":
@@ -539,6 +640,26 @@ class Shell(QWidget):
         sb = t.scrollbar_alpha
         knob = rgba(t.q("tx"), sb).name(QColor.NameFormat.HexArgb)
         knob_h = rgba(t.q("tx"), min(255, sb + 40)).name(QColor.NameFormat.HexArgb)
+        if getattr(self, "_backdrop_on", False):
+            # ── 画卷模式（whale + 底图可用）：全局透明让 Shell.paintEvent 透出来，
+            #    顶栏/侧栏用 web 同款深蓝玻璃压住底图（--topbar rgba(8,24,46,.7) /
+            #    --bg-solid rgba(12,34,62,.86)，console_html.py L39/L34）。
+            #    各控件自带显式背景，全局透明只影响容器层 —— 卡片仍是半透玻璃。
+            self.setStyleSheet(
+                f"QWidget{{background:transparent;}}"
+                f"#TitleBar{{background:rgba(8,24,46,178);border-bottom:1px solid {t.bd};}}"
+                f"#Side{{background:rgba(12,34,62,219);border-right:1px solid {t.bd};}}"
+                f"#Main{{background:transparent;}}"
+                f"QLabel{{background:transparent;color:{t.tx};}}"
+                f"QScrollArea{{background:transparent;border:none;}}"
+                f"QScrollBar:vertical{{background:transparent;width:6px;margin:0;}}"
+                f"QScrollBar::handle:vertical{{background:{knob};border-radius:3px;min-height:28px;}}"
+                f"QScrollBar::handle:vertical:hover{{background:{knob_h};}}"
+                f"QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{{height:0;}}"
+                f"QScrollBar::add-page:vertical,QScrollBar::sub-page:vertical{{background:transparent;}}"
+                f"QScrollBar:horizontal{{height:0px;}}"
+            )
+            return
         self.setStyleSheet(
             f"QWidget{{background:{bg};}}"
             f"#TitleBar{{background:{t.card if not t.glass else rgba(t.q('tx'), 12).name(QColor.NameFormat.HexArgb)};"
@@ -596,6 +717,7 @@ class Shell(QWidget):
 
         p = probe_backend(current_url())
         self._show_probe(p)
+        self._watch_config()   # 顺跳：光标/壁纸跟随 config（web 面板改了 4 秒内生效）
 
     def _show_probe(self, p: Probe) -> None:
         plan = plan_for(p)

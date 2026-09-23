@@ -423,6 +423,44 @@ def t_panels() -> None:
     w.close()
 
 
+# ---------------------------------------------------------------- 4.5 视觉本体（丙-4）
+
+def t_visual() -> None:
+    """鲸落视觉本体：画卷（ocean1+tint+三层波浪）与鱼光标 —— 参数对齐 web 真值。"""
+    import ocean  # noqa: PLC0415
+    import cursor_fx  # noqa: PLC0415
+
+    # 模块级自检（参数真值 + 瓦片渲染 + 帧旋转）整批并入
+    for name, ok, extra in ocean._selftest():
+        ck("ocean · " + name, ok, extra)
+    for name, ok, extra in cursor_fx._selftest():
+        ck("cursor · " + name, ok, extra)
+
+    # Shell 集成：whale 开画卷、窗口藏起就停、light 不启用
+    from shell import Shell  # noqa: PLC0415
+    from stylekit_qt import THEMES  # noqa: PLC0415
+
+    w = Shell(THEMES["whale"])
+    w.show()
+    ck("画卷: whale 主题自动开启", w._backdrop_on is True)
+    ck("画卷: 默认底图真实可读（ocean1.jpg）", w._wp_src is not None)
+    ck("波浪: 30fps 上限（QTimer 33ms）在转", w._ocean.active and w._ocean._timer.interval() == 33)
+    pm = w.grab()
+    colors = {pm.toImage().pixelColor(x, y).rgba()
+              for x in (300, 500, 700, 900) for y in (500, 600, 650)}
+    ck("画卷: 离屏抓帧非平色（底图/波浪真画上了）", len(colors) >= 4, f"distinct={len(colors)}")
+    w.hide()
+    ck("波浪: 窗口藏起就停（CPU 纪律）", not w._ocean.active)
+    ck("光标: Shell 已挂管理器（开=有底图 / 关=按配置）",
+       w._cursor is not None and (w._cursor._base is not None or not w._cursor.enabled))
+    w.close()
+
+    w2 = Shell(THEMES["light"])
+    w2.show()
+    ck("画卷: light 主题不启用", w2._backdrop_on is False and not w2._ocean.active)
+    w2.close()
+
+
 # ---------------------------------------------------------------- 5. 纪律：不碰产品代码
 
 def t_no_touch() -> None:
@@ -440,7 +478,8 @@ def t_no_touch() -> None:
 # ---------------------------------------------------------------- 主
 
 def main() -> int:
-    for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels, t_no_touch):
+    for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
+               t_visual, t_no_touch):
         try:
             fn()
         except Exception as e:  # noqa: BLE001
