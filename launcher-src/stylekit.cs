@@ -570,12 +570,52 @@ namespace WxLauncher
         }
 
         /// 造一个统一尺寸的图标控件并挂到窗体上。找不到图就返回 null（调用方自行决定留不留白）。
+        /// ⛔ 丙-5 #2（2026-09-23，真机首跑用户报「图标黑色块」）：
+        ///   原来统一用 `app-icon.png` —— 它是**深色圆角方块底**上的鲸鱼，在启动器这种
+        ///   极浅底(246,248,252)上就是一个高对比的黑方块（视觉层级倒置，诊断 §2 原因 3
+        ///   早有记录，用户真机首跑坐实）。现在**优先取 `icon-whale.png`（透明底的完整
+        ///   鲸鱼）直接缩放、不套方块遮罩**；没有那张图才回退旧口径（遮罩版方图）。
         public static PictureBox MakeIcon(Form f, string root, Point at)
         {
             return MakeIcon(f, root, at, IconSize);
         }
         public static PictureBox MakeIcon(Form f, string root, Point at, int size)
         {
+            // 透明底的完整鲸鱼：直接高质量缩放，保留 PNG 自带的 alpha（不做方形遮罩）
+            string whale = Path.Combine(root, "assets", "icon-whale.png");
+            if (File.Exists(whale))
+            {
+                Bitmap whaleBmp = null;
+                try
+                {
+                    using (Image src = Image.FromFile(whale))
+                    {
+                        whaleBmp = new Bitmap(size, size);
+                        using (Graphics g = Graphics.FromImage(whaleBmp))
+                        {
+                            g.SmoothingMode = SmoothingMode.AntiAlias;
+                            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                            g.Clear(Color.Transparent);
+                            g.DrawImage(src, new Rectangle(0, 0, size, size));
+                        }
+                    }   // src 到此释放（像素已拷进 whaleBmp，同 RoundIcon 的所有权口径）
+                    PictureBox pic = new PictureBox();
+                    pic.Image = whaleBmp;                  // 所有权转移给 PictureBox（必须活着）
+                    whaleBmp = null;                       // 成功路不再由 catch 兜底处置
+                    pic.SizeMode = PictureBoxSizeMode.Zoom;
+                    pic.Location = at;
+                    pic.Size = new Size(size, size);
+                    pic.BackColor = Color.Transparent;
+                    f.Controls.Add(pic);
+                    return pic;
+                }
+                catch
+                {
+                    // 画不出来 ⇒ 自己收拾干净再落旧口径，绝不交半张图
+                    try { if (whaleBmp != null) whaleBmp.Dispose(); } catch { }
+                }
+            }
             Image img = RoundIcon(Path.Combine(root, "assets", "app-icon.png"), size);
             if (img == null) return null;
             PictureBox pic = new PictureBox();

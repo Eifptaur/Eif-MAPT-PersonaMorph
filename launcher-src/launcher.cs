@@ -80,18 +80,23 @@ namespace WxLauncher
             lblTitle.Text = "群相 一键启动";
             lblTitle.Font = StyleKit.Ui(StyleKit.TextScale.Title, FontStyle.Bold);
             lblTitle.ForeColor = StyleKit.Ink;
+            lblTitle.AutoSize = true;
             lblTitle.Location = new Point(StyleKit.Space.x6 + StyleKit.IconSize + StyleKit.Space.x4,
                                           StyleKit.Space.x5 + 4);
-            lblTitle.AutoSize = true;
             Controls.Add(lblTitle);
 
             lblState = new Label();
             lblState.Text = "准备中…";
             lblState.Font = StyleKit.Ui(StyleKit.TextScale.Head, FontStyle.Bold);
             lblState.ForeColor = StyleKit.Accent;   // 状态是这一窗最该被先读到的东西 ⇒ 用强调色
-            lblState.Location = new Point(StyleKit.Space.x6 + StyleKit.IconSize + StyleKit.Space.x4,
-                                          StyleKit.Space.x5 + 30);
             lblState.AutoSize = true;
+            // ⛔ 丙-5 #2（2026-09-23，真机首跑用户报「副标题文字重叠」）：
+            //   状态行原来手写 `y = x5 + 30` —— 主标题 15pt 在 100% DPI 下行高 ~27px 尚可，
+            //   125/150% DPI 下实测行高 34~40px ⇒ 手写偏移把状态行压进标题字里。
+            //   修法＝**跟着标题的实测底边走**（AutoSize 标签的 Height 由字体真实量出），
+            //   任何 DPI 下都刚好贴着标题下一行，不再叠字。
+            lblState.Location = new Point(StyleKit.Space.x6 + StyleKit.IconSize + StyleKit.Space.x4,
+                                          lblTitle.Bottom + StyleKit.Space.x2);
             Controls.Add(lblState);
 
             // ── 卡片 1：四个步骤（横向 4 段编号 + 名称，纵向用 StepList 自绘）──────────
