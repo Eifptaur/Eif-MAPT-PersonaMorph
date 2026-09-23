@@ -172,8 +172,11 @@ namespace WxLauncher
             Controls.Add(s);
 
             int cardW = 540 - StyleKit.Space.x6 * 2;
-            CardPanel card = StyleKit.MakeCard(this, new Point(StyleKit.Space.x6, StyleKit.CardTopY),
-                                          new Size(cardW, 168));
+            // 2026-09-23（B 批）：高度**不再手写 168** —— 正文早就是内容驱动的（`FitLabel` 量 what/d，
+            //   地址行接在实测底边之后），卡高写死 ⇒ 内容被卡片的裁剪区切掉。
+            //   修前实拍：卡内子控件排到 Y=289，而卡高 168 ⇒「怎么办」下半段与「控制台地址」整行都在裁剪区外。
+            //   ⇒ 与 launcher.cs 的 7 张卡同构：只给宽度，排完内容 `SealCard` 收口。
+            CardPanel card = StyleKit.MakeCard(this, new Point(StyleKit.Space.x6, StyleKit.CardTopY), cardW);
 
             // 说清楚"这是干什么用的"——原来直接讲"控制台窗口要用它"，用户不知道"它"是什么
             Label what = new Label();
@@ -219,50 +222,53 @@ namespace WxLauncher
             u.Text = "控制台地址：" + NoticeForm.MaskToken(url);
             card.Controls.Add(u);
             StyleKit.FitLabel(u);
+            StyleKit.SealCard(card);     // #12 F1：高度到这里才定下来（按钮行跟着它的实测底边走）
 
-            // 按钮：**有主次**（原来四个一模一样）。主＝一键安装（真有引导器时）或浏览器，次＝其余。
-            int bx = 540 - StyleKit.Space.x6;
-            RoundButton no = Make("知道了", 112);
-            no.Location = new Point(bx - 112, 316);
-            no.Click += delegate { Action = "none"; Close(); };
-            Controls.Add(no);
-            bx -= 112 + StyleKit.Space.x2;
+            // 按钮：**有主次 + 分两行**（2026-09-23 B 批修）。
+            //   修前：4 颗挤一行，`bx` 从 516 一路左推 ⇒ 主按钮 x=-12（左边 12px 落在客户区外，
+            //   圆角与「一」字一起被切）；而 4 颗按合同宽加起来 ≈616 远超 540
+            //   ⇒ **一行根本放不下**，这不是"换个算宽函数"能解决的 ⇒ 拆两行。
+            //   与 launcher.cs 其余窗体统一口径：宽度一律 `MakeButton`（＝文字实宽 + 36）、
+            //   位置从**卡片实测底边**往下排（原来写死 y=316，卡一长高就会叠上）、
+            //   主按钮独占最下一行且右下角对齐，次按钮在它上一行同样右对齐。
+            RoundButton ins = hasBoot ? StyleKit.MakeButton("一键安装并打开") : null;
+            RoundButton br = hasBrowser ? StyleKit.MakeButton("用浏览器打开") : null;
+            RoundButton cp = StyleKit.MakeButton("复制网址");
+            RoundButton no = StyleKit.MakeButton("知道了");
+            RoundButton pri = (ins != null) ? ins : br;      // 主按钮：能装就"一键安装"，否则"用浏览器"
+            RoundButton secBr = (pri == br) ? null : br;     // 浏览器当了主按钮，次行不再重复一颗
 
-            RoundButton cp = Make("复制网址", 112);
-            cp.Location = new Point(bx - 112, 316);
+            int right = 540 - StyleKit.Space.x6;             // 右对齐基准线 = 516
+            int secY = card.Bottom + StyleKit.CardGapY;      // 次按钮行：跟着卡片实测底边
+            int priY = secY + StyleKit.BtnH + StyleKit.Space.x2;
+
+            int x = right;                                   // 次行从右往左排
+            if (secBr != null) { secBr.Location = new Point(x - secBr.Width, secY); x -= secBr.Width + StyleKit.Space.x2; }
+            cp.Location = new Point(x - cp.Width, secY); x -= cp.Width + StyleKit.Space.x2;
+            no.Location = new Point(x - no.Width, secY); x -= no.Width + StyleKit.Space.x2;
+
+            int bottom = secY + StyleKit.BtnH;               // 没有主按钮时，窗高按次行算
+            if (pri != null)
+            {
+                pri.Location = new Point(right - pri.Width, priY);
+                // 走 token 不写字面色：`Restyle` 的主按钮判定是颜色谓词（B>200 && R<140 && G<200），
+                //   判完会把底色统一改写成 `Accent` ⇒ 写 `Accent` 与写那个字面量渲染完全一致。
+                pri.BackColor = StyleKit.Accent;
+                pri.ForeColor = Color.White;
+                pri.Click += delegate { Action = (pri == ins) ? "install" : "browser"; Close(); };
+                Controls.Add(pri);
+                bottom = pri.Bottom;
+            }
+            if (secBr != null) { secBr.Click += delegate { Action = "browser"; Close(); }; Controls.Add(secBr); }
             cp.Click += delegate { Action = "copy"; Close(); };
+            no.Click += delegate { Action = "none"; Close(); };
             Controls.Add(cp);
-            bx -= 112 + StyleKit.Space.x2;
+            Controls.Add(no);
 
-            if (hasBrowser)
-            {
-                RoundButton br = Make("用浏览器打开", 132);
-                br.Location = new Point(bx - 132, 316);
-                br.Click += delegate { Action = "browser"; Close(); };
-                Controls.Add(br);
-                bx -= 132 + StyleKit.Space.x2;
-            }
-            if (hasBoot)
-            {
-                RoundButton ins = Make("一键安装并打开", 148);
-                ins.Location = new Point(bx - 148, 316);
-                // 强调色 ⇒ StyleKit.Restyle 认成主按钮（圆角填充 + 白字 + 加粗）
-                ins.BackColor = Color.FromArgb(64, 140, 255);
-                ins.ForeColor = Color.White;
-                ins.Click += delegate { Action = "install"; Close(); };
-                Controls.Add(ins);
-            }
-
+            // #12 F1：窗高由**最后一行的底边**反推（原来写死 360 —— 卡一长高内容就顶出去）
+            ClientSize = new Size(540, bottom + StyleKit.Space.x6);
             StyleKit.Apply(this, "群相 控制台窗口");   // ⚠️ 最后一句：Apply 之后不得再改边框
         }
 
-        static RoundButton Make(string text, int w)
-        {
-            RoundButton b = new RoundButton();
-            b.Text = text;
-            b.Size = new Size(w, 38);
-            b.FlatStyle = FlatStyle.Flat;
-            return b;
-        }
     }
 }

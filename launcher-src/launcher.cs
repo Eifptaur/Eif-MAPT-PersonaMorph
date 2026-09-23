@@ -1,4 +1,4 @@
-﻿// 群相 一键启动.exe：图形安装器（C# WinForms，嵌入鲸鱼图标，无控制台）
+// 群相 一键启动.exe：图形安装器（C# WinForms，嵌入鲸鱼图标，无控制台）
 // 流程：准备 Python → onestart(事件) → 快捷方式询问 → 自动收尾
 using System;
 using System.Diagnostics;
@@ -3138,6 +3138,28 @@ static class Program
             //   于是"所有弹窗一并处理"就少了取证；现在补齐，加上关闭器的结果窗（在 close.cs 里另跑）。
             TryShot(dir, sb, "deadlink", delegate { return new DeadLinkForm("http://127.0.0.1:3210/?token=abcdef123456"); });
             TryShot(dir, sb, "console", delegate { return new ConsoleForm("about:blank"); });
+            // 2026-09-23（B 批）：`WebView2MissingForm` 原来**零覆盖** —— 既不在 `--shot` 也不在
+            //   `--dlgprobe`，于是它的按钮行溢出（4 颗挤一行 ⇒ 主按钮 x=-12、左边 12px 落在客户区外）
+            //   一直没有任何机械判据看得见。
+            //   本机实测：`hasBoot`=true（`assets\webview2\MicrosoftEdgeWebview2Setup.exe` 在）+
+            //   `hasBrowser`=true（默认浏览器 ChromeHTML）⇒ 这一张**天然就是 4 颗按钮的溢出场景**。
+            TryShot(dir, sb, "webview2missing", delegate {
+                return new WebView2MissingForm(AppDomain.CurrentDomain.BaseDirectory,
+                                               "http://127.0.0.1:3210/?token=abcdef123456"); });
+            // 变体：换一个"没有引导器"的 root ⇒ `hasBoot`=false，覆盖「只有浏览器」那条分支
+            //   （3 颗按钮、主按钮是"用浏览器打开"）。临时 root 里补一份 app-icon.png，
+            //   免得这张图的图标缺失被误读成缺陷（`MakeIcon` 找不到图会静默返回 null）。
+            TryShot(dir, sb, "webview2missing-noboot", delegate {
+                string bare = Path.Combine(dir, "_noboot");
+                try
+                {
+                    Directory.CreateDirectory(Path.Combine(bare, "assets"));
+                    File.Copy(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "assets", "app-icon.png"),
+                              Path.Combine(bare, "assets", "app-icon.png"), true);
+                }
+                catch { }
+                return new WebView2MissingForm(bare, "http://127.0.0.1:3210/?token=abcdef123456");
+            });
             return sb.ToString();
         }
         delegate Form FormMaker();
@@ -3204,6 +3226,9 @@ static class Program
             try { list.Add(new NoticeForm()); } catch (Exception ex) { sb.AppendLine("NoticeForm 不可用: " + ex.Message); }
             // 2026-09-23 补：DeadLinkForm 原来不在清单里 ⇒ "所有弹窗"这条没有机械判据守着
             try { list.Add(new DeadLinkForm("http://127.0.0.1:3210/?token=abcdef123456")); } catch (Exception ex) { sb.AppendLine("DeadLinkForm 不可用: " + ex.Message); }
+            // 2026-09-23（B 批）：同 `ShotProbe` —— 这个窗体原来也不在清单里，
+            //   于是"每颗按钮 x>=24 且 x+w<=516"这条几何判据**根本没有读数来源**。
+            try { list.Add(new WebView2MissingForm(AppDomain.CurrentDomain.BaseDirectory, "http://127.0.0.1:3210/?token=abcdef123456")); } catch (Exception ex) { sb.AppendLine("WebView2MissingForm 不可用: " + ex.Message); }
             try { list.Add(new ConsoleForm("about:blank")); } catch (Exception ex) { sb.AppendLine("ConsoleForm 不可用（WebView2 未就绪）: " + ex.Message); }
             Form[] fs = list.ToArray();
             foreach (Form f in fs)
