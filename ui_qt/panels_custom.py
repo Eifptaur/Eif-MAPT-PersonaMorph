@@ -607,37 +607,115 @@ def _row_btn_refresh(t: Tokens, hook) -> QWidget:
 
 
 def sessions_panel(t: Tokens) -> QWidget:
+    """运行明细 —— 丙-12 P0-C：web 的 #sessList / #arcList 两块动态列表原本全失，这里补齐：
+      · sessList（web :2107）：GET /api/sessions?limit=30 拿运行明细，逐条渲染
+        （勾选框 + 群名 + 状态 + 时间 + token/费用），支持**按条勾选删除**；
+      · 四钮（:2096-2104）：刷新(sessRefresh) / 删除选中(sessSelDel) / 撤销(sessUndo)
+        / 清空(sessClear)；删除选中 POST /api/sessions/delete、撤销 POST
+        /api/sessions/restore、清空 POST /api/memory clear_sessions（与 web 同款）；
+      · 存档 arcList（web :2121）：arcChat 群选 + arcLimit + 读取该会话存档(arcLoad) +
+        刷新会话列表(arcReload)，逐条渲染 #arcList 并支持 屏蔽/解除/清除
+        （POST /api/archive/block、/unblock、/delete）。
+    说明（回执用）：原 sessions_panel 只渲染了一个**纯文本 JSON 阅读框**（见丙-8 时期
+    实现，没有列表/勾选/撤销），本次在保留「原始 JSON 折叠查看」的同时，新增上面两组
+    真动态列表与完整按钮语义。"""
     s = sec_meta.get("sessions")
     page, lay, badge = _page(t, s.title)
     lay.addWidget(desc(t, s.desc or "发了什么、多少用量、耗时，按天落盘可勾选删除。"))
-    card = Card(t)
-    card.body.addWidget(h2(t, "后台明细数据（/api/sessions）"))
-    area = _plain_area(t, "", placeholder="连上后台后显示明细数据", height=300)
-    card.body.addWidget(area)
-    note = desc(t, "")
+    from panels_qt import _line  # noqa: PLC0415
 
-    def _refresh() -> None:
-        data = config_io.get_json("/api/sessions")
-        if data is None:
-            area.setPlainText("")
-            note.setText("后台没连上（或该接口未提供）。顶部状态灯恢复绿色后点「刷新」再试；"
-                         "日常的按天明细请用网页控制台的「明细」页。")
+    state: dict = {"sessions": [], "undo": ""}
+
+    # ── 运行明细卡（#sessList）──
+    scard = Card(t)
+    scard.body.addWidget(h2(t, "运行明细（/api/sessions）"))
+    btn_row = QHBoxLayout()
+    b_refresh = Btn("刷新", t, "primary")
+    b_refresh.setObjectName("sessRefresh")
+    b_sel = Btn("删除选中", t, "danger")
+    b_sel.setObjectName("sessSelDel")
+    b_sel.setEnabled(False)
+    b_undo = Btn("撤销上次删除", t, "ghost")
+    b_undo.setObjectName("sessUndo")
+    b_undo.setEnabled(False)
+    b_clear = Btn("一键清全部", t, "danger")
+    b_clear.setObjectName("sessClear")
+    btn_row.addWidget(b_refresh)
+    btn_row.addWidget(b_sel)
+    btn_row.addWidget(b_undo)
+    btn_row.addWidget(b_clear)
+    btn_row.addStretch(1)
+    scard.body.addLayout(btn_row)
+    sess_list = _bordered_list(t, "sessList", 240)
+    scard.body.addWidget(sess_list)
+    snote = desc(t, "")
+    scard.body.addWidget(snote)
+    scard.body.addWidget(desc(t, "勾选每条左侧「删」→「删除选中」＝只删这几条（同一天其他记录不动）；"
+                                "删错了点「撤销上次删除」。清空＝清全部明细（不可恢复）。"))
+    lay.addWidget(scard)
+
+    def _sync_sel_btn() -> None:
+        any_checked = False
+        for i in range(sess_list.count()):
+            w = sess_list.itemWidget(sess_list.item(i))
+            cb = w.findChild(QCheckBox) if w else None
+            if cb and cb.isChecked():
+                any_checked = True
+        b_sel.setEnabled(any_checked)
+
+    def _render_sessions() -> None:
+        items = state["sessions"]
+        sess_list.clear()
+        for e in items:
+            it = QListWidgetItem()
+            sess_list.addItem(it)
+            sess_list.setItemWidget(it, _session_card(t, e, _sync_sel_btn))
+            it.setSizeHint(sess_list.itemWidget(it).sizeHint())
+        n = len(items)
+        badge.set("idle", f"{n} 条" if n else "暂无记录")
+        _sync_sel_btn()
+
+    def load_sessions() -> None:
+        try:
+            r = config_io.get_json("/api/sessions?limit=30", timeout=5.0)
+        except Exception:  # noqa: BLE001
+            r = None
+        if not isinstance(r, dict):
+            snote.setText("后台没连上（或该接口未提供）。顶部状态灯恢复绿色后点「刷新」再试。")
             badge.set("err", "读不到")
             return
-        text = json.dumps(data, ensure_ascii=False, indent=1)
-        area.setPlainText(text[:8000] + ("\n…（截断显示前 8000 字符）" if len(text) > 8000 else ""))
-        note.setText(f"读取成功 · {time.strftime('%H:%M:%S')}")
-        # web stSessions 口径（DOM 计数的 Qt 等价）：数顶层记录条数，数不出就不编
-        n = len(data) if isinstance(data, (list, dict)) else 0
-        badge.set("idle", f"{n} 条" if n else "暂无记录")
+        state["sessions"] = r.get("sessions") or []
+        snote.setText(f"读取成功 · {time.strftime('%H:%M:%S')} · {len(state['sessions'])} 条")
+        _render_sessions()
 
-    _refresh()
-    card.body.addWidget(note)
-    lay.addWidget(card)
+    def _del_selected() -> None:
+        sel = []
+        for i in range(sess_list.count()):
+            w = sess_list.itemWidget(sess_list.item(i))
+            cb = w.findChild(QCheckBox) if w else None
+            if cb and cb.isChecked():
+                e = state["sessions"][i]
+                sel.append({"date": str(e.get("ts") or "")[:10], "ts": str(e.get("ts") or "")})
+        if not sel:
+            snote.setText("请先勾选要删除的记录")
+            return
+        snote.setText(f"删除 {len(sel)} 条中…")
+        _async_post(page, "/api/sessions/delete", {"items": sel}, lambda r, e: (
+            state.__setitem__("undo", (r or {}).get("undo", "")) if (r and r.get("ok")) else None,
+            b_undo.setEnabled(bool(state["undo"])),
+            load_sessions(),
+            snote.setText((r or {}).get("note") or f"已删除 {len(sel)} 条" if (r and r.get("ok"))
+                          else f"删除失败：{e or (r or {}).get('error') or '后台没连上'}")))
 
-    # 丙-8 P0-A②：清空真接线（web sessClear 同款 = POST /api/memory clear_sessions，
-    # 带 uiConfirm 危险确认）；「删除所选日期」在 Qt 侧没有按天勾选 UI，按钮移除
-    # （残留一个点了没反应的按钮比少一个按钮更伤——web 有勾选/撤销完整语义，留在网页控制台）。
+    def _undo() -> None:
+        if not state["undo"]:
+            snote.setText("没有可撤销的删除")
+            return
+        snote.setText("撤销上次删除中…")
+        _async_post(page, "/api/sessions/restore", {"undo": state["undo"]}, lambda r, e: (
+            state.__setitem__("undo", ""), b_undo.setEnabled(False), load_sessions(),
+            snote.setText("已撤销" if (r and r.get("ok")) else f"撤销失败：{e or (r or {}).get('error') or '后台没连上'}")))
+
     def _clear_sessions() -> None:
         from confirm import ConfirmDialog  # noqa: PLC0415
         d = ConfirmDialog(
@@ -647,37 +725,187 @@ def sessions_panel(t: Tokens) -> QWidget:
             confirm_label="确认清空", cancel_label="算了", dangerous=True)
         if not d.exec():
             return
-        note.setText("清空中…")
-        box: dict = {"done": False, "r": None, "err": None}
+        snote.setText("清空中…")
+        _async_post(page, "/api/memory", {"action": "clear_sessions"}, lambda r, e: (
+            load_sessions(),
+            snote.setText("会话日志已清除" if (r and (r.get("ok") or r.get("note")))
+                          else f"清空失败：{e or (r or {}).get('error') or '后台没连上'}")))
 
-        def _work() -> None:
-            from agent_bridge import post_json  # noqa: PLC0415
-            try:
-                box["r"] = post_json("/api/memory", {"action": "clear_sessions"}, timeout=60.0)
-            except Exception as e:  # noqa: BLE001
-                box["err"] = str(e)
-            box["done"] = True
+    b_refresh.clicked.connect(load_sessions)
+    b_sel.clicked.connect(_del_selected)
+    b_undo.clicked.connect(_undo)
+    b_clear.clicked.connect(_clear_sessions)
+    # 自检钩子
+    page.c12_list = sess_list
+    page.c12_load = load_sessions
+    load_sessions()
 
-        import threading as _th  # noqa: PLC0415
-        _th.Thread(target=_work, daemon=True, name="c8-sess-clear").start()
+    # ── 存档卡（#arcList，web :2112-2122）──
+    acard = Card(t)
+    acard.body.addWidget(h2(t, "存档：按条屏蔽 / 清除"))
+    arc_row = QHBoxLayout()
+    arc_chat = QComboBox()
+    arc_chat.setObjectName("arcChat")
+    arc_chat.setMinimumWidth(220)
+    arc_chat.setFixedHeight(32)
+    arc_chat.setFont(qfont(t, t.body_size))
+    arc_chat.setStyleSheet(
+        f"QComboBox{{background:{rgba(t.q('tx'), 0 if t.glass else 16).name(QColor.NameFormat.HexArgb)};"
+        f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:0 10px;}}"
+        f"QComboBox::drop-down{{border:none;width:22px;}}"
+        f"QComboBox QAbstractItemView{{background:{'#0E2136' if t.glass else t.card};"
+        f"color:{t.tx};border:1px solid {t.bd};}}")
+    arc_limit = _line(t, "30", placeholder="条数")
+    arc_limit.setObjectName("arcLimit")
+    arc_limit.setFixedWidth(70)
+    b_arc_load = Btn("读取该会话存档", t, "primary")
+    b_arc_load.setObjectName("arcLoad")
+    b_arc_reload = Btn("刷新会话列表", t, "ghost")
+    b_arc_reload.setObjectName("arcReload")
+    arc_row.addWidget(QLabel("会话"))
+    arc_row.addWidget(arc_chat, 1)
+    arc_row.addWidget(QLabel("条数"))
+    arc_row.addWidget(arc_limit)
+    arc_row.addWidget(b_arc_load)
+    arc_row.addWidget(b_arc_reload)
+    acard.body.addLayout(arc_row)
+    arc_list = _bordered_list(t, "arcList", 200)
+    acard.body.addWidget(arc_list)
+    anote = desc(t, "")
+    acard.body.addWidget(anote)
+    lay.addWidget(acard)
 
-        def _apply() -> None:
-            if not box["done"]:
-                QTimer.singleShot(300, _apply)
-                return
-            r = box.get("r") or {}
-            if r.get("ok") or r.get("note"):
-                note.setText("会话日志已清除" + (f"（{r.get('note')}）" if r.get("note") else ""))
-            else:
-                note.setText(f"清空失败：{r.get('error') or box.get('err') or '后台没连上'}")
-            _refresh()
-        QTimer.singleShot(300, _apply)
+    def load_arc_chats() -> None:
+        try:
+            r = config_io.get_json("/api/archive", timeout=5.0)
+        except Exception:  # noqa: BLE001
+            r = None
+        chats = (r or {}).get("chats") or []
+        arc_chat.clear()
+        for c in chats:
+            arc_chat.addItem(f"{c.get('chat_key')}（{c.get('messages') or 0} 条）", c.get("chat_key"))
+        sn = (r or {}).get("snapshot") or {}
+        anote.setText(f"屏蔽会话 {len(sn.get('chats') or [])} 个 ｜ 已屏蔽条目 {sn.get('blocked_entries') or 0} 条")
 
-    hooks = [_refresh, _clear_sessions]
-    lay.addLayout(_btn_row(t, [("刷新", "primary"), ("清空全部明细", "danger")], hooks))
-    lay.addWidget(desc(t, "按天勾选删除、撤销上次删除等完整语义在网页控制台的「明细」页（有勾选 UI 与二次确认）。"))
+    def load_arc() -> None:
+        ck = arc_chat.currentData()
+        if not ck:
+            anote.setText("还没有可选会话（先让机器人跑一会儿）")
+            return
+        try:
+            lim = max(1, min(200, int((arc_limit.text() or "30").strip() or 30)))
+        except ValueError:
+            lim = 30
+        anote.setText("读取中…")
+        try:
+            r = config_io.get_json(f"/api/archive?chat_key={ck}&limit={lim}", timeout=5.0)
+        except Exception as e:  # noqa: BLE001
+            r = None
+        if not isinstance(r, dict):
+            anote.setText(f"读存档失败：{e}")
+            return
+        items = r.get("items") or []
+        arc_list.clear()
+        for m in items:
+            it = QListWidgetItem()
+            arc_list.addItem(it)
+            arc_list.setItemWidget(it, _archive_card(t, ck, m, load_arc))
+            it.setSizeHint(arc_list.itemWidget(it).sizeHint())
+        anote.setText(f"该会话 {len(items)} 条存档条目")
+
+    b_arc_load.clicked.connect(load_arc)
+    b_arc_reload.clicked.connect(load_arc_chats)
+    load_arc_chats()
+
+    # 原始 JSON 折叠查看（保留丙-8 时期的原始数据透视，便于排障）
+    jcard = Card(t)
+    jcard.body.addWidget(h2(t, "原始返回（/api/sessions 透视）"))
+    area = _plain_area(t, "", placeholder="连上后台后显示明细数据", height=160)
+    jcard.body.addWidget(area)
+    jnote = desc(t, "")
+
+    def _refresh_raw() -> None:
+        data = config_io.get_json("/api/sessions", timeout=5.0)
+        if data is None:
+            area.setPlainText("")
+            jnote.setText("后台没连上（或该接口未提供）。")
+            return
+        text = json.dumps(data, ensure_ascii=False, indent=1)
+        area.setPlainText(text[:8000] + ("\n…（截断显示前 8000 字符）" if len(text) > 8000 else ""))
+        jnote.setText(f"读取成功 · {time.strftime('%H:%M:%S')}")
+
+    _refresh_raw()
+    jcard.body.addWidget(jnote)
+    lay.addWidget(jcard)
+
     lay.addStretch(1)
     return page
+
+
+def _session_card(t: Tokens, e: dict, sync_fn) -> QWidget:
+    w = QWidget()
+    w.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+    w.setStyleSheet("background:transparent;")
+    h = QHBoxLayout(w)
+    h.setContentsMargins(6, 4, 6, 4)
+    h.setSpacing(8)
+    pick = QCheckBox()
+    pick.setFixedSize(18, 18)
+    pick.toggled.connect(lambda _=False: sync_fn())
+    h.addWidget(pick)
+    name = QLabel(str(e.get("chat_name") or e.get("chat_key") or "?"))
+    name.setFont(qfont(t, 12.5, 500))
+    name.setStyleSheet(f"color:{t.tx};background:transparent;")
+    name.setMinimumWidth(120)
+    status = QLabel(str(e.get("status") or ""))
+    status.setFont(qfont(t, 11.5))
+    status.setStyleSheet(f"color:{t.tx2};background:transparent;")
+    ts = QLabel(str(e.get("ts") or "").replace("T", " "))
+    ts.setFont(qfont(t, 11))
+    ts.setStyleSheet(f"color:{t.tx3};background:transparent;")
+    meta = QLabel(f"{e.get('tokens') or 0} tok · ¥{float(e.get('cost') or 0):.4f} · {e.get('latency_ms') or 0}ms")
+    meta.setFont(qfont(t, 11))
+    meta.setStyleSheet(f"color:{t.tx3};background:transparent;")
+    h.addWidget(name)
+    h.addWidget(status)
+    h.addWidget(ts)
+    h.addWidget(meta)
+    h.addStretch(1)
+    return w
+
+
+def _archive_card(t: Tokens, chat_key: str, m: dict, reload_fn) -> QWidget:
+    w = QWidget()
+    w.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+    w.setStyleSheet("background:transparent;")
+    h = QHBoxLayout(w)
+    h.setContentsMargins(6, 4, 6, 4)
+    h.setSpacing(8)
+    tag = "［已屏蔽］" if m.get("blocked") else ("［已撤回］" if m.get("recalled") else "")
+    txt = QLabel(f"#{m.get('id')} {(m.get('self') and '我' or (m.get('sender') or '?'))}：{tag}{m.get('text')}")
+    txt.setFont(qfont(t, 11.5))
+    txt.setStyleSheet(f"color:{t.tx3 if m.get('blocked') else t.tx};background:transparent;")
+    txt.setWordWrap(True)
+    h.addWidget(txt, 1)
+    b_block = Btn("屏蔽" if not m.get("blocked") else "解除", t, "ghost")
+    b_block.setFixedWidth(54)
+    b_block.clicked.connect(lambda _=False: _arc_action(chat_key, m.get("id"),
+                                                        "unblock" if m.get("blocked") else "block", reload_fn))
+    b_del = Btn("清除", t, "ghost")
+    b_del.setFixedWidth(54)
+    b_del.clicked.connect(lambda _=False: _arc_action(chat_key, m.get("id"), "delete", reload_fn))
+    h.addWidget(b_block)
+    h.addWidget(b_del)
+    return w
+
+
+def _arc_action(chat_key: str, mid, action: str, reload_fn) -> None:
+    api = {"block": "/api/archive/block", "unblock": "/api/archive/unblock",
+           "delete": "/api/archive/delete"}.get(action)
+    if not api:
+        return
+    _async_post(None, api, {"chat_key": chat_key, "ids": [mid]},
+                lambda r, e: reload_fn())
 
 
 # ---------------------------------------------------------------- 日志（真读 logs/persona_morph.log 尾部）
@@ -940,9 +1168,849 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
     return page
 
 
+# ================================================================ 丙-12：人设 / 记忆 / 运行明细
+#
+# 这三个面板在 web 侧核心是「动态列表」——由 JS 从 /api/personas / /api/memory
+# / /api/sessions 拉取后再渲染进 #personaList / #memTable / #sessList，静态 HTML
+# 里没有这些列表，元数据驱动（sec_meta/_cfg_panel）永远做不出来 ⇒ 必须手写挂 MANUAL。
+# 所有后端接口名**照抄** agent/console_html.py 里的 JS 绑定（见各函数出处注释），
+# 不自己编接口、不造死按钮。
+
+# ---------------------------------------------------------------- 公共小工具（仅本文件内用）
+
+
+def _bordered_list(t: Tokens, name: str, min_h: int = 200) -> QListWidget:
+    """一个带边框、可滚的动态列表容器；objectName 固定，便于自检按名取证。"""
+    lw = QListWidget()
+    lw.setObjectName(name)
+    lw.setMinimumHeight(min_h)
+    lw.setStyleSheet(
+        f"QListWidget{{background:{rgba(t.q('tx'), 0 if t.glass else 16).name(QColor.NameFormat.HexArgb)};"
+        f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:4px;}}"
+        f"QListWidget::item{{border-bottom:1px solid {t.bd};padding:2px 0;}}"
+    )
+    return lw
+
+
+def _async_post(page: QWidget, api: str, body: dict, on_done, timeout: float = 120.0) -> None:
+    """后台线程 POST（对齐 web 同款接口），UI 只在主线程落地（box 模式）。"""
+    import threading  # noqa: PLC0415
+
+    from agent_bridge import post_json  # noqa: PLC0415
+
+    box: dict = {"done": False, "r": None, "err": None}
+
+    def _work() -> None:
+        try:
+            box["r"] = post_json(api, body, timeout=timeout)
+        except Exception as e:  # noqa: BLE001
+            box["err"] = str(e)
+        box["done"] = True
+
+    threading.Thread(target=_work, daemon=True, name="c12-post").start()
+
+    def _apply() -> None:
+        if not box["done"]:
+            QTimer.singleShot(300, _apply)
+            return
+        on_done(box.get("r"), box.get("err"))
+
+    QTimer.singleShot(300, _apply)
+
+
+def _append_save(t: Tokens, lay, binds: list, badge: Badge) -> None:
+    """保存行（丙-4 接线口径，复用 /api/config 深合并落盘）：收集 {点路径:值}
+    → config_io.write_patch；并带「改完即生效」开关（防抖 600ms 自动写）。"""
+    from PySide6.QtCore import QSettings, QTimer as _QTimer  # noqa: PLC0415
+
+    brow = QHBoxLayout()
+    btn = Btn("保存设置", t, "primary")
+    note = QLabel("改完点保存 → 写入 config.json（与网页控制台同一份）")
+    note.setFont(qfont(t, 12.5))
+    note.setStyleSheet(f"color:{t.tx3};background:transparent;")
+
+    def _collect() -> dict:
+        patch: dict = {}
+        for cfg, ctrl, kind in binds:
+            try:
+                if kind == "checkbox":
+                    patch[cfg] = bool(ctrl.isChecked())
+                elif kind == "number":
+                    s = ctrl.text().strip()
+                    if s:
+                        try:
+                            f = float(s)
+                            patch[cfg] = int(f) if f == int(f) else f
+                        except ValueError:
+                            pass
+                elif kind == "select":
+                    patch[cfg] = str(ctrl.currentData())
+                elif kind == "textarea":
+                    patch[cfg] = ctrl.toPlainText()
+                else:
+                    patch[cfg] = ctrl.text()
+            except Exception:  # noqa: BLE001
+                pass
+        return patch
+
+    def _feedback(ok: bool, msg: str) -> None:
+        note.setText(("已保存：" if ok else "没保存成：") + msg + f"  ·  {time.strftime('%H:%M:%S')}")
+        note.setStyleSheet(f"color:{t.ok if ok else t.err};background:transparent;")
+        if ok:
+            badge.set("ok", "已保存")
+        else:
+            badge.set("err", "没保存成")
+
+    def _do_save() -> None:
+        patch = _collect()
+        if not patch:
+            _feedback(False, "没有要保存的改动")
+            return
+        ok, msg = config_io.write_patch(patch)
+        _feedback(ok, msg)
+
+    btn.clicked.connect(_do_save)
+
+    auto_chk = Switch(t, bool(QSettings("WXAgent", "persona-morph-ui").value("auto_apply", True, type=bool)))
+    auto_lbl = QLabel("改完即生效")
+    auto_lbl.setFont(qfont(t, 12))
+    auto_lbl.setStyleSheet(f"color:{t.tx3};background:transparent;")
+    debounce = _QTimer(None)
+    debounce.setSingleShot(True)
+    debounce.setInterval(600)
+
+    def _auto_write() -> None:
+        patch = _collect()
+        if not patch:
+            return
+        ok, msg = config_io.write_patch(patch)
+        _feedback(ok, msg)
+
+    debounce.timeout.connect(_auto_write)
+
+    def _mark_dirty() -> None:
+        if auto_chk.isChecked():
+            debounce.start()
+
+    for _cfg, ctrl, kind in binds:
+        if ctrl is None:
+            continue
+        if kind == "checkbox":
+            ctrl.toggled.connect(_mark_dirty)
+        elif kind == "select":
+            ctrl.currentIndexChanged.connect(_mark_dirty)
+        elif kind == "textarea":
+            ctrl.textChanged.connect(_mark_dirty)
+        else:
+            ctrl.editingFinished.connect(_mark_dirty)
+
+    def _on_auto(on: bool) -> None:
+        QSettings("WXAgent", "persona-morph-ui").setValue("auto_apply", bool(on))
+        if on:
+            note.setText("改完即生效：已开启（改动自动写入 config.json）")
+            debounce.start()
+        else:
+            note.setText("已关闭自动生效：改完请点「保存设置」")
+            note.setStyleSheet(f"color:{t.tx3};background:transparent;")
+
+    auto_chk.toggled.connect(_on_auto)
+
+    brow.addWidget(btn)
+    brow.addWidget(auto_chk)
+    brow.addWidget(auto_lbl)
+    brow.addWidget(note, 0, Qt.AlignmentFlag.AlignVCenter)
+    brow.addStretch(1)
+    lay.addLayout(brow)
+
+
+# ---------------------------------------------------------------- 人设面板（P0-A：列表 / 搜索 / 排序 / 评分）
+
+
+def persona_panel(t: Tokens) -> QWidget:
+    """人设与响应 —— 丙-12 一次解掉用户点名的四件事：
+      · 人设列表：读 /api/personas（照 console_html.py:6180 同款接口，合并 custom/scores），
+        逐张卡：星标 / 人设名 / 模型分 / 使用 / 删除（web #personaList :1318）。
+      · 搜索框：personaSearch（:1317）—— textChanged 实时过滤列表（对齐 web L6259）。
+      · 排序按钮：pSort WPS 三态（高→低 / 低→高 / 默认，:1312）+ pSortOff（:1314）
+        + pRestorePrev 恢复上个人设（:1315）。
+      · 评分三按钮：pScoreLLM（:1328 → POST /api/persona/score）、pEnrich
+        （:1329 → POST /api/persona/ai-enrich）、pWebFetch（:1330 →
+        POST /api/persona/web-fetch）—— 全部**真接后端**，结果回显 pScoreRst（:1336）。
+      下方叠可写配置（人设名 / 参与度 / 角色文本 / 系统提示词补充 / 三个模块开关全要 /
+      撤回后剔除 recallRows / 主动开话题 proactiveRows），复用 panels_qt 的控件 + config_io 落盘。
+    """
+    s = sec_meta.get("persona")
+    page, lay, badge = _page(t, s.title, "idle", "读取中")
+    lay.addWidget(desc(t, s.desc or "机器人以谁的身份在群里说话、怎么参与。改完保存即生效。"))
+
+    state: dict = {"items": [], "sort": 0}
+
+    # ── 人设库卡 ──
+    pcard = Card(t)
+    pcard.body.addWidget(h2(t, "人设库（/api/personas）"))
+
+    # 按钮排：排序 / 恢复默认 / 恢复上个人设（对齐 web 人设选单 btns :1311-1316）
+    btn_row = QHBoxLayout()
+    b_sort = Btn("↓ 按评估分数排序", t, "ghost")
+    b_sort.setObjectName("pSort")
+    b_sort_off = Btn("恢复默认顺序", t, "ghost")
+    b_sort_off.setObjectName("pSortOff")
+    b_restore = Btn("恢复上个人设", t, "ghost")
+    b_restore.setObjectName("pRestorePrev")
+    btn_row.addWidget(b_sort)
+    btn_row.addWidget(b_sort_off)
+    btn_row.addWidget(b_restore)
+    btn_row.addStretch(1)
+    pcard.body.addLayout(btn_row)
+
+    # 搜索框（personaSearch :1317）
+    from panels_qt import _line  # noqa: PLC0415
+    search = _line(t, "", placeholder="搜索人设（如 傲娇/毒舌/猫/程序员）…")
+    search.setObjectName("personaSearch")
+    pcard.body.addWidget(search)
+
+    listw = _bordered_list(t, "personaList", 220)
+    pcard.body.addWidget(listw)
+    pcard.body.addWidget(desc(t, "星标=收藏置顶；排序按模型评估分。点「使用」即切换当前人设（重启机器人后生效）。"))
+    lay.addWidget(pcard)
+
+    pnote = desc(t, "")
+    lay.addWidget(pnote)
+
+    def _render() -> None:
+        items = state["items"]
+        q = (search.text() or "").strip().lower()
+        show = [p for p in items
+                if not q or q in (p.get("name") or "").lower()
+                or q in (p.get("key") or "").lower()
+                or q in (p.get("text") or "").lower()]
+        if state["sort"] == 1:                       # 高→低
+            show = sorted(show, key=lambda p: -(p.get("__score") or 0))
+        elif state["sort"] == 2:                     # 低→高
+            show = sorted(show, key=lambda p: (p.get("__score") or 0))
+        show = sorted(show, key=lambda p: 0 if p.get("fav") else 1)   # 星标置顶
+        listw.clear()
+        for p in show:
+            it = QListWidgetItem()
+            listw.addItem(it)
+            listw.setItemWidget(it, _persona_card(t, p, handlers))
+            it.setSizeHint(listw.itemWidget(it).sizeHint())
+        badge.set("info", f"{len(items)} 个" if items else "暂无人设")
+
+    def set_personas(items: list) -> None:
+        state["items"] = list(items or [])
+        _render()
+
+    def apply_sort() -> None:
+        state["sort"] = (state["sort"] + 1) % 3
+        lbl = {0: "↓ 按评估分数排序", 1: "↑ 按评估分数排序（高→低）",
+               2: "↑ 按评估分数排序（低→高）"}.get(state["sort"], "↓ 按评估分数排序")
+        b_sort.setText(lbl)
+        _render()
+
+    def _restore_prev() -> None:
+        prev = config_io.read_path("persona.last_used") or {}
+        if not (prev.get("name") or prev.get("text")):
+            pnote.setText("还没有可恢复的人设（先「使用」过一次）")
+            return
+        pnote.setText(f"恢复上个人设「{prev.get('name') or '未命名'}」中…")
+        _async_post(None, "/api/config", {
+            "persona": {"bot_name": prev.get("name", ""), "role_text": prev.get("text", "")}
+        }, lambda r, e: pnote.setText(
+            "已恢复上个人设并保存（重启后生效）" if (r and r.get("ok") is not False)
+            else f"恢复失败：{e or (r or {}).get('error') or '后台没连上'}"))
+
+    def _apply_persona(p: dict) -> None:
+        cur = {"name": config_io.read_path("persona.bot_name") or "",
+               "text": config_io.read_path("persona.role_text") or ""}
+        pnote.setText(f"切换人设「{p.get('name') or '未命名'}」并保存…")
+        _async_post(None, "/api/config", {
+            "persona": {"last_used": cur, "bot_name": p.get("name", ""),
+                        "role_text": p.get("text") or ""}
+        }, lambda r, e: pnote.setText(
+            f"已切换人设「{p.get('name') or '未命名'}」并保存（重启后生效）"
+            if (r and r.get("ok") is not False)
+            else f"切换失败：{e or (r or {}).get('error') or '后台没连上'}"))
+
+    def _del_persona(p: dict) -> None:
+        if not (p.get("key") or "").startswith("custom"):
+            pnote.setText("仅自定义角色可删除（内置/默认角色不可删）")
+            return
+        pnote.setText(f"删除「{p.get('name') or ''}」中…")
+        _async_post(None, "/api/personas/custom/del", {"key": p.get("key")},
+                    lambda r, e: (load_personas() or pnote.setText(
+                        f"已删除（{r.get('note') if isinstance(r, dict) else ''}）"
+                        if (r and r.get("ok") is not False)
+                        else f"删除失败：{e or (r or {}).get('error') or '后台没连上'}")))
+
+    def _fav_persona(p: dict) -> None:
+        new_fav = not p.get("fav")
+        p["fav"] = new_fav
+        _async_post(None, "/api/personas/fav",
+                    {"key": p.get("key"), "fav": new_fav}, lambda r, e: None)
+        _render()
+
+    handlers = {"use": _apply_persona, "del": _del_persona, "fav": _fav_persona}
+
+    def load_personas() -> None:
+        try:
+            r = config_io.get_json("/api/personas", timeout=5.0)
+        except Exception:  # noqa: BLE001
+            r = None
+        items = (r or {}).get("personas") or [] if isinstance(r, dict) else []
+        try:
+            rc = config_io.get_json("/api/personas/custom", timeout=5.0) or {}
+            for c in (rc.get("custom") or []):
+                items.append({"name": c.get("name"), "key": c.get("key"),
+                              "text": c.get("text"), "cat": c.get("cat") or "自定义"})
+        except Exception:  # noqa: BLE001
+            pass
+        scores = {}
+        try:
+            rs = config_io.get_json("/api/personas/scores", timeout=5.0) or {}
+            for x in (rs.get("rows") or []):
+                scores[x.get("key")] = x
+        except Exception:  # noqa: BLE001
+            pass
+        favs = {}
+        try:
+            rf = config_io.get_json("/api/personas/favs", timeout=5.0) or {}
+            favs = rf.get("favs") or {}
+        except Exception:  # noqa: BLE001
+            pass
+        for p in items:
+            sc = scores.get(p.get("key")) or {}
+            p["__score"] = sc.get("model")
+            p["fav"] = bool(favs.get(p.get("key")))
+        set_personas(items)
+
+    # 自检钩子（按名/按属性取证）
+    page.c12_set_personas = set_personas
+    page.c12_apply_sort = apply_sort
+    page.c12_sort_state = lambda: state["sort"]
+    page.c12_list = listw
+    page.c12_search = search
+    page.c12_load = load_personas
+
+    search.textChanged.connect(_render)
+    b_sort.clicked.connect(apply_sort)
+    b_sort_off.clicked.connect(lambda: (state.__setitem__("sort", 0),
+                                        b_sort.setText("↓ 按评估分数排序"), _render()))
+    b_restore.clicked.connect(_restore_prev)
+    load_personas()
+
+    # ── 评分补足块（pScoreLLM / pEnrich / pWebFetch 真接后端，:1326-1336）──
+    rcard = Card(t)
+    rcard.body.addWidget(h2(t, "评分补足"))
+    rrow = QHBoxLayout()
+    b_score = Btn("模型评分", t, "ghost")
+    b_score.setObjectName("pScoreLLM")
+    b_enrich = Btn("模型补足", t, "ghost")
+    b_enrich.setObjectName("pEnrich")
+    b_wf = Btn("联网收集真实资料", t, "ghost")
+    b_wf.setObjectName("pWebFetch")
+    from panels_qt import Combo  # noqa: PLC0415
+    rounds = Combo(t, [("1 轮", "1"), ("2 轮", "2"), ("3 轮", "3")], "1")
+    rounds.setObjectName("pRounds")
+    use_llm = Switch(t, True)
+    use_llm.setObjectName("pUseLlm")
+    rrow.addWidget(b_score)
+    rrow.addWidget(b_enrich)
+    rrow.addWidget(b_wf)
+    rrow.addWidget(QLabel("补足轮数"))
+    rrow.addWidget(rounds)
+    rrow.addWidget(use_llm)
+    rrow.addWidget(QLabel("允许模型处理"))
+    rrow.addStretch(1)
+    rcard.body.addLayout(rrow)
+    rst = QLabel("")
+    rst.setObjectName("pScoreRst")
+    rst.setFont(qfont(t, 12))
+    rst.setStyleSheet(f"color:{t.tx2};background:transparent;")
+    rst.setWordWrap(True)
+    rcard.body.addWidget(rst)
+    rcard.body.addWidget(desc(t, "「联网收集真实资料」按角色名检索主流媒体/官方/百科真实语录（只返回搜索摘要，不编造），"
+                                "追加到下方「自定义角色文本」；「模型补足」按人设贴近度修正。"))
+    lay.addWidget(rcard)
+
+    def _score() -> None:
+        text = role_text_ctrl.toPlainText()
+        if not use_llm.isChecked():
+            rst.setText('未勾选「允许模型处理」——评分需模型参与（勾选后点此）')
+            return
+        if not text.strip():
+            rst.setText("请先填写角色文本（或从人设库选一个「使用」）")
+            return
+        rst.setText("模型评分中（约 10~30 秒）…")
+        _async_post(None, "/api/persona/score", {"text": text, "llm": True},
+                    lambda r, e: rst.setText(
+                        f"模型评分 {float(r['score']):.1f} 分　{r.get('reason') or ''}"
+                        if (r and r.get("ok") and r.get("score") is not None)
+                        else f"评分失败：{e or (r or {}).get('error') or '后台没连上'}"),
+                    timeout=60.0)
+
+    def _enrich() -> None:
+        text = role_text_ctrl.toPlainText()
+        name = name_ctrl.text().strip()
+        if not name:
+            rst.setText("请先填「人设名」（模型按角色名联网整理设定）")
+            return
+        n = int(rounds.currentData() or "1")
+        rst.setText(f"模型补足中（{n} 轮，每轮 10~30 秒）…")
+        _async_post(None, "/api/persona/ai-enrich", {"name": name, "text": text, "rounds": n},
+                    lambda r, e: (role_text_ctrl.setPlainText(r.get("text", text))
+                                  if (r and r.get("ok") and r.get("text") is not None) else None,
+                                  rst.setText(
+                                      f"补足完成（最终 {r.get('score'):.2f} 分）"
+                                      if (r and r.get("ok"))
+                                      else f"模型失败：{e or (r or {}).get('error') or '后台没连上'}")),
+                    timeout=120.0)
+
+    def _webfetch() -> None:
+        name = name_ctrl.text().strip()
+        if not name:
+            rst.setText("请先填「人设名」（按角色名联网检索其真实言论资料）")
+            return
+        rst.setText(f"联网检索「{name}」的真实语录/访谈/言论…（约 20~60 秒）")
+        _async_post(None, "/api/persona/web-fetch", {"name": name},
+                    lambda r, e: (role_text_ctrl.setPlainText(
+                        (role_text_ctrl.toPlainText().strip() + "\n\n" + _wf_head(r))
+                        if (r and r.get("ok")) else role_text_ctrl.toPlainText()),
+                        rst.setText(
+                            f"已收集真实资料（{(r or {}).get('results') and len(r.get('results')) or 0} 条来源）"
+                            "，已追加到角色文本下方——请核对后再保存"
+                            if (r and r.get("ok"))
+                            else f"检索失败：{e or (r or {}).get('error') or '后台没连上'}")),
+                    timeout=120.0)
+
+    b_score.clicked.connect(_score)
+    b_enrich.clicked.connect(_enrich)
+    b_wf.clicked.connect(_webfetch)
+
+    # ── 可写配置（人设名 / 参与度 / 角色文本 / 系统提示词补充 / 3 模块开关 / recall / proactive）──
+    ccard = Card(t)
+    ccard.body.addWidget(h2(t, "人设与响应配置"))
+    binds: list = []
+    from panels_qt import _area  # noqa: PLC0415
+
+    name_ctrl = _line(t, _as_text(config_io.read_path("persona.bot_name")),
+                      placeholder="留空=内置小鲸鱼角色卡")
+    name_ctrl.setObjectName("personaName")
+    ccard.body.addWidget(Field(t, "人设名", "机器人以谁的身份说话", name_ctrl))
+    binds.append(("persona.bot_name", name_ctrl, "text"))
+
+    part = Combo(t, [("安静型", "low"), ("普通群友", "medium"), ("活跃型", "high")],
+                 config_io.read_path("persona.participation") or "medium")
+    part.setObjectName("personaPart")
+    ccard.body.addWidget(Field(t, "参与度", "在群里多话还是少话", part))
+    binds.append(("persona.participation", part, "select"))
+
+    role_text_ctrl = _area(t, _as_text(config_io.read_path("persona.role_text")),
+                          rows=4, placeholder="留空=内置小鲸鱼角色卡；填了=完全替换")
+    role_text_ctrl.setObjectName("personaRoleText")
+    ccard.body.addWidget(Field(t, "自定义角色文本", "留空=内置；填了=完全替换（可参考 agent/persona.py）", role_text_ctrl))
+    binds.append(("persona.role_text", role_text_ctrl, "textarea"))
+
+    custom_rules = _area(t, _as_text(config_io.read_path("persona.custom_rules")),
+                         rows=2, placeholder="如：回复永远不超过 5 个字")
+    ccard.body.addWidget(Field(t, "额外规则", "人设之外的补充约束", custom_rules))
+    binds.append(("persona.custom_rules", custom_rules, "textarea"))
+
+    sys_custom = _area(t, _as_text(config_io.read_path("system_prompt.custom")),
+                       rows=3, placeholder="追加到系统提示词末尾（管理员补充，最高优先级）")
+    ccard.body.addWidget(Field(t, "系统提示词补充", "写在这里的文字追加到系统提示词末尾；保存后下一轮生效", sys_custom))
+    binds.append(("system_prompt.custom", sys_custom, "textarea"))
+
+    ccard.body.addWidget(_divider_local(t))
+    ccard.body.addWidget(h2(t, "模块开关（三个全要，对齐 web :1366-1369）"))
+    sw_scene = Switch(t, bool(config_io.read_path("system_prompt.enable_scene_rules")))
+    sw_scene.setObjectName("swScene")
+    ccard.body.addWidget(Field(t, "微信场景规则", "关掉=系统提示词少这一段", sw_scene))
+    binds.append(("system_prompt.enable_scene_rules", sw_scene, "checkbox"))
+    sw_mem = Switch(t, bool(config_io.read_path("system_prompt.enable_memory_rules")))
+    sw_mem.setObjectName("swMemoryRules")
+    ccard.body.addWidget(Field(t, "记忆使用规则", "关掉=系统提示词少这一段", sw_mem))
+    binds.append(("system_prompt.enable_memory_rules", sw_mem, "checkbox"))
+    sw_holiday = Switch(t, bool(config_io.read_path("system_prompt.enable_holiday_hint")))
+    sw_holiday.setObjectName("swHoliday")
+    ccard.body.addWidget(Field(t, "节日提示", "关掉=系统提示词少这一段", sw_holiday))
+    binds.append(("system_prompt.enable_holiday_hint", sw_holiday, "checkbox"))
+
+    ccard.body.addWidget(_divider_local(t))
+    ccard.body.addWidget(h2(t, "撤回后剔除（recallRows，web :1373-1381）"))
+    sw_recall = Switch(t, bool(config_io.read_path("store.recall.enabled")))
+    ccard.body.addWidget(Field(t, "撤回后剔除", "群友撤回的消息从存档剔除（保留「已撤回」标记）", sw_recall))
+    binds.append(("store.recall.enabled", sw_recall, "checkbox"))
+    win_sec = _line(t, _as_text(config_io.read_path("store.recall.window_sec")), placeholder="默认 0")
+    ccard.body.addWidget(Field(t, "兜底时间窗(秒)", "拿不到 newmsgid 时的时间窗", win_sec))
+    binds.append(("store.recall.window_sec", win_sec, "number"))
+    sw_heur = Switch(t, bool(config_io.read_path("store.recall.heuristic")))
+    ccard.body.addWidget(Field(t, "兜底匹配", "关掉=只认 newmsgid 精确匹配", sw_heur))
+    binds.append(("store.recall.heuristic", sw_heur, "checkbox"))
+
+    ccard.body.addWidget(_divider_local(t))
+    ccard.body.addWidget(h2(t, "主动开话题（proactiveRows，web :1383-1390）"))
+    sw_pro = Switch(t, bool(config_io.read_path("proactive.enabled")))
+    ccard.body.addWidget(Field(t, "主动开话题", "群冷场超阈值后按概率抛话题（默认关）", sw_pro))
+    binds.append(("proactive.enabled", sw_pro, "checkbox"))
+    pro_idle = _line(t, _as_text(config_io.read_path("proactive.idle_threshold_ms")), placeholder="默认 1800000")
+    ccard.body.addWidget(Field(t, "冷场阈值(毫秒)", "默认 1800000（30 分钟）", pro_idle))
+    binds.append(("proactive.idle_threshold_ms", pro_idle, "number"))
+    pro_min = _line(t, _as_text(config_io.read_path("proactive.check_interval_min_ms")), placeholder="默认 1800000")
+    ccard.body.addWidget(Field(t, "检查间隔(毫秒)", "默认 1800000（30 分钟）", pro_min))
+    binds.append(("proactive.check_interval_min_ms", pro_min, "number"))
+    pro_max = _line(t, _as_text(config_io.read_path("proactive.check_interval_max_ms")), placeholder="默认 5400000")
+    ccard.body.addWidget(Field(t, "检查上限(毫秒)", "默认 5400000（90 分钟）", pro_max))
+    binds.append(("proactive.check_interval_max_ms", pro_max, "number"))
+    pro_prob = _line(t, _as_text(config_io.read_path("proactive.probability")), placeholder="默认 0.25")
+    ccard.body.addWidget(Field(t, "触发概率(小数)", "0~1，默认 0.25", pro_prob))
+    binds.append(("proactive.probability", pro_prob, "number"))
+
+    lay.addWidget(ccard)
+    _append_save(t, lay, binds, badge)
+
+    lay.addStretch(1)
+    return page
+
+
+def _as_text(v) -> str:
+    if v is None:
+        return ""
+    if isinstance(v, (list, dict)):
+        try:
+            return json.dumps(v, ensure_ascii=False)
+        except Exception:  # noqa: BLE001
+            return ""
+    return str(v)
+
+
+def _divider_local(t: Tokens) -> QFrame:
+    d = QFrame()
+    d.setFixedHeight(1)
+    d.setStyleSheet(f"background:{t.bd};border:none;")
+    return d
+
+
+def _persona_card(t: Tokens, p: dict, handlers: dict) -> QWidget:
+    w = QWidget()
+    w.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+    w.setStyleSheet("background:transparent;")
+    h = QHBoxLayout(w)
+    h.setContentsMargins(6, 4, 6, 4)
+    h.setSpacing(8)
+    fav = Btn("已收藏" if p.get("fav") else "收藏", t, "ghost")
+    fav.setFixedWidth(56)
+    fav.clicked.connect(lambda _=False, _p=p: handlers["fav"](_p))
+    name = QLabel(p.get("name") or "(未命名)")
+    name.setFont(qfont(t, 13, 600))
+    name.setStyleSheet(f"color:{t.tx};background:transparent;")
+    name.setMinimumWidth(110)
+    sc = p.get("__score")
+    sc_lb = QLabel(f"模型 {sc:.2f}" if isinstance(sc, (int, float)) else "")
+    sc_lb.setFont(qfont(t, 12))
+    sc_lb.setStyleSheet(f"color:{t.warn};background:transparent;")
+    use = Btn("使用", t, "ghost")
+    use.setFixedWidth(54)
+    use.clicked.connect(lambda _=False, _p=p: handlers["use"](_p))
+    delete = Btn("删", t, "ghost")
+    delete.setFixedWidth(40)
+    delete.clicked.connect(lambda _=False, _p=p: handlers["del"](_p))
+    txt = QLabel((p.get("text") or "").replace("\n", " ")[:60])
+    txt.setFont(qfont(t, 11.5))
+    txt.setStyleSheet(f"color:{t.tx3};background:transparent;")
+    txt.setWordWrap(True)
+    h.addWidget(fav)
+    h.addWidget(name)
+    h.addWidget(sc_lb)
+    h.addWidget(txt, 1)
+    h.addWidget(use)
+    h.addWidget(delete)
+    return w
+
+
+def _wf_head(r: dict) -> str:
+    if not isinstance(r, dict) or not r.get("ok"):
+        return ""
+    head = "【联网真实资料 · 来源为主流媒体/官方/百科搜索摘要，未编造 —— 请人工核对后提取】\n"
+    for q in (r.get("quotes") or []):
+        head += f'- "{q}"\n'
+    for n in (r.get("notes") or [])[:2]:
+        if n:
+            head += f"· {n}\n"
+    head += "\n【来源链接】\n"
+    for it in (r.get("results") or [])[:8]:
+        head += f"- {it.get('title')}：{it.get('url')}\n"
+    return head
+
+
+# ---------------------------------------------------------------- 记忆面板（P0-B：印象列表 / 群选 / 清除）
+
+
+def memory_panel(t: Tokens) -> QWidget:
+    """记忆（群友印象）—— 丙-12 P0-B：web 核心动态列表全失，这里补齐：
+      · memChats 群选下拉（:1598）：GET /api/memory 拿 chats 列表填充；
+      · memTable 印象列表（:1619）：成员 / 印象数 / 更新时间 / 删除勾选，逐行渲染；
+      · memRefresh（:1599）/ memClearSel（清除勾选的印象）/ memClearAll（清除全部）；
+      · 下方叠 memory 可写配置（summarize_on_exit / consolidate_enabled /
+        share_across_groups）+ 共享群勾选（memGroupsBox，GET /api/wechat-groups）。
+    接口名照抄 console_html.py 的 loadMemory（:6969）/ 清除块（:7065）。"""
+    s = sec_meta.get("memory")
+    page, lay, badge = _page(t, s.title, "idle", "读取中")
+    lay.addWidget(desc(t, s.desc or "每个群友的长期印象，机器人回复时会参考。"))
+    from panels_qt import _line, Combo  # noqa: PLC0415
+
+    state: dict = {"members": [], "chat_key": "", "chats": [], "filling": False}
+
+    mcard = Card(t)
+    mcard.body.addWidget(h2(t, "群友印象（/api/memory）"))
+
+    # 群选下拉 + 群内搜索 + 刷新（对齐 web :1595-1600）
+    chat_row = QHBoxLayout()
+    mem_search = _line(t, "", placeholder="搜索群名…")
+    mem_search.setObjectName("memSearch")
+    chat_sel = QComboBox()
+    chat_sel.setObjectName("memChats")
+    chat_sel.setMinimumWidth(240)
+    chat_sel.setFixedHeight(32)
+    chat_sel.setFont(qfont(t, t.body_size))
+    chat_sel.setStyleSheet(
+        f"QComboBox{{background:{rgba(t.q('tx'), 0 if t.glass else 16).name(QColor.NameFormat.HexArgb)};"
+        f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:0 10px;}}"
+        f"QComboBox::drop-down{{border:none;width:22px;}}"
+        f"QComboBox QAbstractItemView{{background:{'#0E2136' if t.glass else t.card};"
+        f"color:{t.tx};border:1px solid {t.bd};}}")
+    b_refresh = Btn("刷新", t, "ghost")
+    b_refresh.setObjectName("memRefresh")
+    chat_row.addWidget(QLabel("选择群聊"))
+    chat_row.addWidget(chat_sel, 1)
+    chat_row.addWidget(mem_search)
+    chat_row.addWidget(b_refresh)
+    mcard.body.addLayout(chat_row)
+    mcard.body.addWidget(desc(t, "群内搜索框实时过滤上面的下拉选项。"))
+
+    mem_table = _bordered_list(t, "memTable", 220)
+    mcard.body.addWidget(mem_table)
+    mnote = desc(t, "")
+    mcard.body.addWidget(mnote)
+
+    # 清除按钮排（memClearSel / memClearAll，web :1606-1610）
+    clr_row = QHBoxLayout()
+    b_sel = Btn("清除勾选的印象", t, "danger")
+    b_sel.setObjectName("memClearSel")
+    b_sel.setEnabled(False)
+    b_all = Btn("清除全部", t, "danger")
+    b_all.setObjectName("memClearAll")
+    clr_row.addWidget(b_sel)
+    clr_row.addWidget(b_all)
+    clr_row.addStretch(1)
+    mcard.body.addLayout(clr_row)
+    lay.addWidget(mcard)
+
+    def _sync_sel_btn() -> None:
+        any_checked = False
+        for i in range(mem_table.count()):
+            w = mem_table.itemWidget(mem_table.item(i))
+            cb = w.findChild(QCheckBox) if w else None
+            if cb and cb.isChecked():
+                any_checked = True
+        b_sel.setEnabled(any_checked)
+
+    def _render_members() -> None:
+        members = state["members"]
+        mem_table.clear()
+        for m in members:
+            it = QListWidgetItem()
+            mem_table.addItem(it)
+            mem_table.setItemWidget(it, _member_card(t, m, state["chat_key"], _render_members, _sync_sel_btn))
+            it.setSizeHint(mem_table.itemWidget(it).sizeHint())
+        badge.set("info", f"{len(members)} 人" if members else "暂无印象")
+        _sync_sel_btn()
+
+    def _fill_chats(kw: str = "") -> None:
+        state["filling"] = True
+        chats = state["chats"]
+        prev = chat_sel.currentData()
+        chat_sel.clear()
+        chat_sel.addItem("— 选择群聊 —", "")
+        for c in chats:
+            nm = c.get("name") or ""
+            if kw and kw.lower() not in nm.lower():
+                continue
+            chat_sel.addItem(f"{nm}（{c.get('count')} 人）", c.get("chat_key"))
+        datas = [chat_sel.itemData(i) for i in range(chat_sel.count())]
+        if prev and prev in datas:
+            chat_sel.setCurrentIndex(datas.index(prev))
+        state["filling"] = False
+
+    def _on_chat(_idx: int) -> None:
+        if state["filling"]:
+            return
+        load_memory(chat_sel.currentData() or "")
+
+    def load_memory(chat_key: str = "") -> None:
+        state["chat_key"] = chat_key
+        try:
+            r = config_io.get_json("/api/memory" + (f"?chat_key={chat_key}" if chat_key else ""), timeout=5.0)
+        except Exception:  # noqa: BLE001
+            r = None
+        if not isinstance(r, dict):
+            mnote.setText("后台没连上（或该接口未提供）。顶部状态灯恢复绿色后点「刷新」再试。")
+            badge.set("err", "读不到")
+            return
+        state["chats"] = r.get("chats") or []
+        _fill_chats(mem_search.text())
+        state["members"] = r.get("members") or []
+        mnote.setText(f"读取成功 · {time.strftime('%H:%M:%S')} · {len(state['members'])} 位成员")
+        _render_members()
+
+    # 共享群（memGroupsBox）：GET /api/wechat-groups（web :6043）
+    def load_groups() -> None:
+        try:
+            r = config_io.get_json("/api/wechat-groups", timeout=5.0)
+        except Exception:  # noqa: BLE001
+            r = None
+        groups = (r or {}).get("groups") or []
+        mem_groups.clear()
+        if not groups:
+            mem_groups.addItem("未检测到群（启动机器人并检测群后这里会列出）")
+            return
+        for g in groups:
+            mem_groups.addItem(g.get("name") or g.get("nick") or g.get("wxid") or "",
+                               g.get("wxid") or g.get("name") or "")
+
+    chat_sel.currentIndexChanged.connect(_on_chat)
+    mem_search.textChanged.connect(lambda: _fill_chats(mem_search.text()))
+    b_refresh.clicked.connect(lambda: (load_memory(chat_sel.currentData() or ""), load_groups()))
+
+    def _clear_sel() -> None:
+        picked = []
+        for i in range(mem_table.count()):
+            w = mem_table.itemWidget(mem_table.item(i))
+            cb = w.findChild(QCheckBox) if w else None
+            if cb and cb.isChecked():
+                picked.append(w.property("uid"))
+        if not picked:
+            mnote.setText("请先勾选要清除的成员")
+            return
+        scope = "this" if mem_scope.currentData() == "this" else "all"
+        mnote.setText(f"清除 {len(picked)} 位成员印象中…")
+        _async_post(None, "/api/memory",
+                    {"chat_key": state["chat_key"], "user_ids": picked, "scope": scope},
+                    lambda r, e: (load_memory(state["chat_key"]) or mnote.setText(
+                        f"已清除 {len(picked)} 位" if (r and r.get("ok") is not False)
+                        else f"清除失败：{e or (r or {}).get('error') or '后台没连上'}")))
+
+    def _clear_all() -> None:
+        mnote.setText("清除全部记忆中…")
+        _async_post(None, "/api/memory", {"action": "clear_all"},
+                    lambda r, e: (load_memory(state["chat_key"]) or mnote.setText(
+                        "全部记忆已清除" if (r and r.get("ok"))
+                        else f"清除失败：{e or (r or {}).get('error') or '后台没连上'}")))
+
+    b_sel.clicked.connect(_clear_sel)
+    b_all.clicked.connect(_clear_all)
+
+    # ── 可写配置块（memory + memory-set）──
+    ccard = Card(t)
+    ccard.body.addWidget(h2(t, "记忆设置"))
+    binds: list = []
+    sw_summ = Switch(t, bool(config_io.read_path("memory.summarize_on_exit")))
+    ccard.body.addWidget(Field(t, "关机总结印象", "每次关闭机器人时把对话总结为群友印象（仅关机调一次模型）", sw_summ))
+    binds.append(("memory.summarize_on_exit", sw_summ, "checkbox"))
+    sw_consol = Switch(t, bool(config_io.read_path("memory.consolidate_enabled")))
+    ccard.body.addWidget(Field(t, "自动整理", "定时把零散印象合并、去冗余", sw_consol))
+    binds.append(("memory.consolidate_enabled", sw_consol, "checkbox"))
+    sw_share = Switch(t, bool(config_io.read_path("memory.share_across_groups", True)))
+    ccard.body.addWidget(Field(t, "共享记忆池", "勾选=所有群共享一个记忆池；不勾=每群独立", sw_share))
+    binds.append(("memory.share_across_groups", sw_share, "checkbox"))
+
+    ccard.body.addWidget(_divider_local(t))
+    ccard.body.addWidget(h2(t, "共享群（可选，memGroupsBox）"))
+    mem_groups = QComboBox()
+    mem_groups.setObjectName("memGroupsBox")
+    mem_groups.setMinimumWidth(240)
+    mem_groups.setFixedHeight(32)
+    mem_groups.setFont(qfont(t, t.body_size))
+    mem_groups.setStyleSheet(
+        f"QComboBox{{background:{rgba(t.q('tx'), 0 if t.glass else 16).name(QColor.NameFormat.HexArgb)};"
+        f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:0 10px;}}"
+        f"QComboBox::drop-down{{border:none;width:22px;}}"
+        f"QComboBox QAbstractItemView{{background:{'#0E2136' if t.glass else t.card};"
+        f"color:{t.tx};border:1px solid {t.bd};}}")
+    ccard.body.addWidget(Field(t, "共享群（选好后保存写入 memory.shared_group_names）",
+                               "与这些群共享记忆；与 web syncMemGroupsToCfg 同义", mem_groups))
+    ccard.body.addWidget(desc(t, "web 用一组勾选框管理共享群；Qt 侧这里用下拉列出已检测到的群，"
+                                "保存时把当前选中的群名写入 memory.shared_group_names。"))
+    lay.addWidget(ccard)
+
+    # memScope（删除范围，web :1614）
+    scope_row = QHBoxLayout()
+    mem_scope = Combo(t, [("所有群一起删（推荐）", "all"), ("只删当前选中的这个群", "this")], "all")
+    mem_scope.setObjectName("memScope")
+    scope_row.addWidget(QLabel("删除范围"))
+    scope_row.addWidget(mem_scope)
+    scope_row.addStretch(1)
+    mcard.body.addLayout(scope_row)
+
+    _append_save(t, lay, binds, badge)
+
+    # 自检钩子
+    page.c12_load = lambda: (load_memory(chat_sel.currentData() or ""), load_groups())
+    page.c12_table = mem_table
+    page.c12_chats = chat_sel
+
+    load_memory("")
+    load_groups()
+    lay.addStretch(1)
+    return page
+
+
+def _member_card(t: Tokens, m: dict, chat_key: str, reload_fn, sync_fn) -> QWidget:
+    w = QWidget()
+    w.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+    w.setStyleSheet("background:transparent;")
+    w.setProperty("uid", m.get("userId") or m.get("name") or "")
+    h = QHBoxLayout(w)
+    h.setContentsMargins(6, 4, 6, 4)
+    h.setSpacing(8)
+    pick = QCheckBox()
+    pick.setFixedSize(18, 18)
+    pick.toggled.connect(lambda _=False: sync_fn())
+    name = QLabel(m.get("name") or m.get("userId") or "某人")
+    name.setFont(qfont(t, 12.5))
+    name.setStyleSheet(f"color:{t.tx};background:transparent;")
+    n = len(m.get("impressions") or []) if isinstance(m.get("impressions"), list) else 0
+    cnt = QLabel(f"{n} 条印象")
+    cnt.setFont(qfont(t, 12))
+    cnt.setStyleSheet(f"color:{t.tx2};background:transparent;")
+    upd = QLabel(str(m.get("updatedAt") or ""))
+    upd.setFont(qfont(t, 11.5))
+    upd.setStyleSheet(f"color:{t.tx3};background:transparent;")
+    del_btn = Btn("删除", t, "ghost")
+    del_btn.setFixedWidth(54)
+    del_btn.clicked.connect(lambda _=False: _del_member(chat_key, m, reload_fn))
+    h.addWidget(pick)
+    h.addWidget(name)
+    h.addWidget(cnt)
+    h.addWidget(upd)
+    h.addStretch(1)
+    h.addWidget(del_btn)
+    return w
+
+
+def _del_member(chat_key: str, m: dict, reload_fn) -> None:
+    _async_post(None, "/api/memory",
+                {"chat_key": chat_key, "user_id": m.get("userId")},
+                lambda r, e: reload_fn())
+
+
+# ---------------------------------------------------------------- 分发表（panels_qt.build_panel 查这里）
+
 MANUAL = {
     "overview": overview_panel,
     "check": check_panel,
+    "persona": persona_panel,
+    "memory": memory_panel,
     "sessions": sessions_panel,
     "log": log_panel,
     "json": json_panel,

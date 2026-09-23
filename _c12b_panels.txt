@@ -1,0 +1,64 @@
+QFontDatabase: Cannot find font directory C:/Users/ptmou/Desktop/WX-chatbot/persona-morph/runtime/python/lib/site-packages/PySide6/lib/fonts.
+Note that Qt no longer ships fonts. Deploy some (from https://dejavu-fonts.github.io/ for example) or switch to fontconfig.
+Traceback (most recent call last):
+  File "C:\Users\ptmou\Desktop\WX-chatbot\persona-morph\ui_qt\panels_custom.py", line 1558, in _enrich
+    n = int(rounds.currentData() or "1")
+ValueError: invalid literal for int() with base 10: '1 轮'
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+================================================================
+丙-12 面板取证 · 人设/记忆/运行明细 三张动态列表
+================================================================
+
+— persona_panel —
+  [PASS] personaList 列表控件存在  —— type=QListWidget
+  [PASS] 注入 3 条假人设 → 渲染出 3 行  —— 实际行数=3
+  [PASS] 搜索「猫」→ 只剩含猫的 1 行  —— 实际行数=1
+  [PASS] 清空搜索 → 回到 3 行  —— 实际行数=3
+  [PASS] pSort 点击 → 排序态切换 (0→1)  —— 0→1
+  [PASS] 评分按钮 pScoreLLM 存在且已绑定  —— clicked 可触发处理函数
+  [PASS] 评分按钮 pEnrich 存在且已绑定  —— clicked 可触发处理函数
+  [PASS] 评分按钮 pWebFetch 存在且已绑定  —— clicked 可触发处理函数
+  [PASS] 配置控件 personaName 存在
+  [PASS] 配置控件 personaRoleText 存在
+  [PASS] 配置控件 swScene 存在
+  [PASS] 配置控件 swMemoryRules 存在
+  [PASS] 配置控件 swHoliday 存在
+  [PASS] 配置控件 pUseLlm 存在
+  [PASS] 配置控件 pRounds 存在
+  [PASS] 配置控件 pScoreRst 存在
+
+— memory_panel —
+  [PASS] memTable 印象列表存在  —— type=QListWidget
+  [PASS] 记忆控件 memChats 存在
+  [PASS] 记忆控件 memSearch 存在
+  [PASS] 记忆控件 memRefresh 存在
+  [PASS] 记忆控件 memClearSel 存在
+  [PASS] 记忆控件 memClearAll 存在
+  [PASS] 记忆控件 memGroupsBox 存在
+  [PASS] 记忆控件 memScope 存在
+
+— sessions_panel —
+  [PASS] sessList 运行明细列表存在  —— type=QListWidget
+  [PASS] arcList 存档列表存在  —— type=QListWidget
+  [PASS] 明细控件 sessRefresh 存在
+  [PASS] 明细控件 sessSelDel 存在
+  [PASS] 明细控件 sessUndo 存在
+  [PASS] 明细控件 sessClear 存在
+  [PASS] 明细控件 arcChat 存在
+  [PASS] 明细控件 arcLimit 存在
+  [PASS] 明细控件 arcLoad 存在
+  [PASS] 明细控件 arcReload 存在
+
+— 截图 —
+  截图已存 ui_qt/shots\c12b-persona.png
+  [PASS] 截图 c12b-persona.png  —— ui_qt/shots\c12b-persona.png
+  截图已存 ui_qt/shots\c12b-memory.png
+  [PASS] 截图 c12b-memory.png  —— ui_qt/shots\c12b-memory.png
+  截图已存 ui_qt/shots\c12b-sessions.png
+  [PASS] 截图 c12b-sessions.png  —— ui_qt/shots\c12b-sessions.png
+
+================================================================
+合计 37 项断言，通过 37，失败 0
+================================================================
