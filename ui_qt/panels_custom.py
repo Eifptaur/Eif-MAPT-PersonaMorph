@@ -503,8 +503,99 @@ def check_panel(t: Tokens) -> QWidget:
     for it in items:
         card2.body.addWidget(desc(t, it))
     lay.addWidget(card2)
+
+    # ── 视频通路（丙-11 C2）：三态徽章，数据来自 /api/status 的 media.video ──
+    # 工单 R2：控制台原来**看不到视频死活**（ffmpeg/ASR/yt-dlp），这里补上。
+    # 数据源与网页控制台同一份快照（media_status.snapshot()["video"]），不另造一份。
+    # ⚠️ 禁 emoji：图标取项目锁定图标库（icons INNER），徽章用 widgets.Badge。
+    card3 = Card(t)
+    card3.body.addWidget(h2(t, "视频通路（ffmpeg / 本机识别 / 下载器）"))
+    card3.body.addWidget(desc(
+        t, "本地视频抽帧与 B 站外链解析要 ffmpeg；「听」视频要本机中文识别；"
+           "抖音/快手/小红书/YouTube 这类外链还要下载器（yt-dlp）。三项都是**现场探测**，不是写死的。"))
+    vid_note = desc(t, "读取中…")
+    vid_badges: list = []
+
+    def _mk_video_row(label: str) -> object:
+        row = QHBoxLayout()
+        name = desc(t, label)
+        name.setMinimumWidth(190)
+        bd = Badge(t, "idle", "读取中")
+        row.addWidget(name)
+        row.addWidget(bd)
+        row.addStretch(1)
+        box = QWidget()
+        box.setLayout(row)
+        card3.body.addWidget(box)
+        vid_badges.append(bd)
+        return bd
+
+    bd_ff = _mk_video_row("ffmpeg（抽帧 / 抽音频）")
+    bd_asr = _mk_video_row("本机识别（听音频，离线）")
+    bd_bili = _mk_video_row("B 站链接解析")
+    bd_dl = _mk_video_row("外链下载器（yt-dlp）")
+    bd_url = _mk_video_row("外链视频解析开关")
+    card3.body.addWidget(vid_note)
+
+    def _refresh_video() -> None:
+        """读 /api/status 的 media.video（拿不到就全部落 idle，**绝不默认写 ok**）。"""
+        try:
+            st = config_io.get_json("/api/status") or {}
+        except Exception:  # noqa: BLE001
+            st = {}
+        vid = ((st.get("media") or {}).get("video") or {}) if isinstance(st, dict) else {}
+        if not vid:
+            for bd in vid_badges:
+                bd.set("idle", "读不到", "后台没连上或该接口未提供 media.video，重连后点「刷新」")
+            vid_note.setText("读不到视频通路状态（后台没连上，或这版后台还没提供该字段）。")
+            return
+        vr = vid.get("video_read") or {}
+        if vr.get("ready"):
+            bd_ff.set("ok", "就绪", "ffmpeg：%s" % (vr.get("ffmpeg") or ""))
+        else:
+            bd_ff.set("err", "缺 ffmpeg", (vr.get("why") or "没找到 ffmpeg（抽帧/抽音频都要它）"))
+        asr = vr.get("asr") or {}
+        if asr.get("ok"):
+            bd_asr.set("ok", "就绪", "本机识别可用（离线，不出网）")
+        else:
+            bd_asr.set("warn", "不可用", asr.get("why") or "本机识别引擎不可用（只影响音频转文字）")
+        bili = vid.get("bilibili") or {}
+        if bili.get("enabled"):
+            bd_bili.set("ok", "已开启", "B 站链接解析已开启（听视频上限 %s 秒）"
+                        % (bili.get("listen_max_seconds") or "?"))
+        else:
+            bd_bili.set("warn", "已关闭", "B 站链接解析已在控制台关闭（bilibili.enabled）")
+        ur = vid.get("video_url") or {}
+        if ur.get("ytdlp_ready"):
+            bd_dl.set("ok", "已安装", "yt-dlp：%s" % (ur.get("ytdlp") or ""))
+        else:
+            bd_dl.set("err", "未安装", ur.get("why") or "还没装下载器 yt-dlp（外链视频解析需要它）")
+        if ur.get("enabled"):
+            bd_url.set("ok", "已开启", "外链视频解析已开启（抽 %s 帧 / 音频识别 %s 秒）"
+                       % (ur.get("max_frames") or "?", ur.get("max_seconds") or "?"))
+        else:
+            bd_url.set("warn", "默认关闭", "外链视频解析默认关闭（要真下载整段视频，按需在配置里打开）")
+        vid_note.setText("读取成功 · %s（与网页控制台同一份 /api/status 快照）"
+                         % time.strftime("%H:%M:%S"))
+
+    _refresh_video()
+    card3.body.addWidget(_row_btn_refresh(t, _refresh_video))
+    lay.addWidget(card3)
+
     lay.addStretch(1)
     return page
+
+
+def _row_btn_refresh(t: Tokens, hook) -> QWidget:
+    """一个右对齐的「刷新」按钮行（面板内局部刷新用；与 web 同语义）。"""
+    row = QHBoxLayout()
+    b = Btn("刷新", t, "ghost")
+    b.clicked.connect(hook)
+    row.addStretch(1)
+    row.addWidget(b)
+    box = QWidget()
+    box.setLayout(row)
+    return box
 
 
 # ---------------------------------------------------------------- 明细（GET /api/sessions，拿不到如实说）

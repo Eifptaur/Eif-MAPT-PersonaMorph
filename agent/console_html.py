@@ -1804,6 +1804,13 @@ th{color:var(--tx2);font-weight:500}
         <span class="hint">群友发来 B 站链接（或 BV 号）时，机器人可以去查这条视频的标题、UP、时长、简介和字幕，再回答「这视频讲什么」——<b>不会瞎猜</b>，查不到就直说查不到。查的时候需要连一次 B 站（要用网），看不出来源时它不会假装看过。</span></div>
       <div class="row"><label>听B站视频(秒)</label><input type="number" min="10" max="600" data-cfg="bilibili.listen_max_seconds">
         <span class="hint">让它听一条 B 站视频最多听多少秒（默认 120）。只下载声音那一轨，比整段视频小很多。</span></div>
+      <div class="row"><label>外链视频解析</label><input type="checkbox" data-cfg="video_url.enabled">
+        <span class="hint">默认关。开启后，群友发来 <b>抖音 / 快手 / 小红书 / YouTube</b> 这类外链时，机器人可以把视频下载下来、抽几帧画面看，再回答「这视频讲了什么」——不是只看标题。<b>这条会真下载整段视频</b>（比 B 站那条重得多），而且要装下载器 yt-dlp；没装、下不动或平台不支持时它会如实说原因，<b>绝不假装看过、不编内容</b>。</span></div>
+      <div class="mid" id="videoUrlRows">
+        <div class="row"><label>外链抽帧数</label><input type="number" min="1" max="8" data-cfg="video_url.max_frames"><span class="hint">默认 4，最多 8（独立于上面的「抽帧数」：外链更贵）</span></div>
+        <div class="row"><label>外链识别上限(秒)</label><input type="number" min="5" max="600" data-cfg="video_url.max_seconds"><span class="hint">外链视频音频最多识别多少秒（默认 60）</span></div>
+        <div class="row"><label>下载超时(秒)</label><input type="number" min="30" max="1800" data-cfg="video_url.download_timeout"><span class="hint">下载一条外链视频最多等多久（默认 300）</span></div>
+      </div>
       <div class="btns"><button class="pri" data-save>保存设置（媒体与语音）</button></div>
     </section>
 <section id="sec-tts" class="card" data-sec>
@@ -3716,6 +3723,15 @@ async function loadStatus(){  try{
           el.textContent = vr.ready
             ? ('可用：ffmpeg 已就绪 ｜ 音频识别' + (a.ok ? '可用' : ('不可用（' + (a.why || '') + '）')) + ' ｜ 默认抽 ' + ((vr.limits||{}).default_frames || 4) + ' 帧')
             : ('不可用：' + (vr.why || '缺 ffmpeg') + ' —— 群里发视频时会如实说读不了');
+          // 丙-11 C3：把「外链视频解析」与「下载器」也接到这一行（数据源 media.video，现场探测）
+          try{
+            const mv = ((s.media || {}).video || {});
+            const ur = mv.video_url || {};
+            if(el.textContent && (ur.enabled !== undefined)){
+              el.textContent += ' ｜ 外链解析：' + (ur.enabled ? '已开启' : '默认关闭')
+                + ' ｜ 下载器 yt-dlp：' + (ur.ytdlp_ready ? '已安装' : '未安装');
+            }
+          }catch(e){}
         }
       }catch(e){}
       try{

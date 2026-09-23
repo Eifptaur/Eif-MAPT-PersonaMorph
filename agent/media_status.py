@@ -11,6 +11,7 @@
       "voice_cfg": {"enabled": bool, "engine": "auto|sapi|off"}
       "image":     {"enabled", "mode", "dir"(绝对路径), "count"(图库里几张), "sources"}
       "forward":   {"optin": bool, "note": "为什么默认关"}
+      "video":     {"video_read"(ffmpeg/ASR 就绪), "bilibili"(开关), "video_url"(开关/yt-dlp)}
     }
 """
 from __future__ import annotations
@@ -72,6 +73,9 @@ def snapshot() -> dict:
         "video_gen": _video_gen_snapshot(),
         # 大图自动压缩（对账清单第 22 条）：只读快照，面板上的键是 send.image_compress.*
         "img_compress": _img_compress_snapshot(),
+        # 视频通路（丙-11 C1，2026-09-24）：控制台原来看不到视频死活（ffmpeg/ASR/yt-dlp）。
+        # 全部**现场探测**，不写死"可用"（本模块的开篇口径）。
+        "video": _video_snapshot(),
     }
 
 
@@ -105,6 +109,60 @@ def _video_gen_snapshot() -> dict:
         return VG.snapshot()
     except Exception as e:
         return {"enabled": False, "error": type(e).__name__, "why": str(e)[:80], "backends": []}
+
+
+def _video_snapshot() -> dict:
+    """视频通路只读快照（丙-11 C1）：本地视频读取 + B 站 + 外链解析三条腿的就绪状态。
+
+    为什么要它（工单 R2）：`snapshot()` 原来**完全没收视频这一块** ⇒ 控制台上 ffmpeg 有没有、
+    本机识别能不能用、yt-dlp 装没装，用户全看不到（坏在哪只能猜）。这里**现场探测**，任一项
+    取不到都如实写 why（`probe()` / `ytdlp_bin()` 自己就是 fail-closed 的如实返回）。
+    三块任一 import 失败也不该把整个 status 拖挂 ⇒ 各自包一层。
+    """
+    out = {
+        # 本地视频读取：ffmpeg（抽帧/抽音频）+ 本机 ASR（听音频）
+        "video_read": {"ok": False, "ready": False, "ffmpeg": "", "asr": None, "why": "取不到"},
+        # B 站通路：开关 + 听视频上限
+        "bilibili": {"enabled": False, "listen_max_seconds": 0},
+        # 外链通路（丙-11 A）：开关 + 下载器 + 抽帧上限
+        "video_url": {"enabled": False, "max_frames": 0, "max_seconds": 0,
+                      "ytdlp": "", "ytdlp_ready": False, "why": ""},
+    }
+    try:
+        from . import video_read as VR
+        snap = VR.snapshot()
+        out["video_read"] = {"ok": bool(snap.get("ready")), "ready": bool(snap.get("ready")),
+                             "ffmpeg": str(snap.get("ffmpeg") or ""), "asr": snap.get("asr") or {},
+                             "why": str(snap.get("why") or ""), "note": str(snap.get("note") or ""),
+                             "limits": snap.get("limits") or {}}
+    except Exception as e:
+        out["video_read"] = {"ok": False, "ready": False, "ffmpeg": "", "asr": None,
+                             "why": "视频读取模块不可用：%s" % str(e)[:80]}
+    try:
+        from .config import get_config
+        cfg = get_config() or {}
+        bc = cfg.get("bilibili") or {}
+        out["bilibili"] = {"enabled": bool(bc.get("enabled")),
+                           "listen_max_seconds": int(bc.get("listen_max_seconds") or 0)}
+        uc = cfg.get("video_url") or {}
+        out["video_url"].update({"enabled": bool(uc.get("enabled")),
+                                 "max_frames": int(uc.get("max_frames") or 0),
+                                 "max_seconds": int(uc.get("max_seconds") or 0)})
+    except Exception as e:
+        out["video_url"]["why"] = "配置读不到：%s" % str(e)[:60]
+    # 下载器（yt-dlp）：**现场探测**（有/没有都如实报，没装时 why 指路）
+    try:
+        from . import bilibili as B
+        exe = str(B.ytdlp_bin() or "")
+        out["video_url"]["ytdlp"] = exe
+        out["video_url"]["ytdlp_ready"] = bool(exe)
+        if not exe:
+            out["video_url"]["why"] = "还没装下载器 yt-dlp（外链视频解析需要它）"
+    except Exception as e:
+        out["video_url"]["ytdlp"] = ""
+        out["video_url"]["ytdlp_ready"] = False
+        out["video_url"]["why"] = "下载器探测失败：%s" % str(e)[:60]
+    return out
 
 
 def _image_gen_snapshot() -> dict:
