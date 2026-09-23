@@ -433,6 +433,60 @@ def download(url_or_bvid: str, out_dir: str, timeout: int = 300):
     return best, ""
 
 
+# ── 外链视频「看一遍」：下载 → 抽帧 → 视觉模型（丙-11 A3，2026-09-24）───────────
+# 为什么要它：B 站那条路（`info()`）只能拿标题/UP/字幕，「没字幕就只剩标题」；而视频理解在本项目
+# 已有现成链路（`video_read.read()`：ffmpeg 抽帧 → `model_routes.image` 分流 → 视觉模型 + SAPI 听音频）。
+# 这里**只做搬运**：平台识别 → 下载（`download()` 泛化后已能吃任意 URL）→ 交给 `video_read.read()`。
+# **绝不在本模块重写抽帧**（工单明确不做，`video_read.py` 那套是唯一的抽帧实现）。
+#
+# fail-closed 三条：
+#   ① 不支持的平台 / 认不出 ⇒ 返回原因，**不硬试**；
+#   ② yt-dlp 没装 / 下载失败 ⇒ 原样透传 `download()` 的原因（它已经如实报）；
+#   ③ 抽帧失败 ⇒ 原样透传 `video_read.read()` 的 error，**绝不返回空帧当成功**。
+def read_external(text: str, max_frames: int = 4, max_seconds: int = 60,
+                  download_timeout: int = 300):
+    """从一段文字里认出外链视频并「看一遍」⇒ `(结果 dict|None, 原因)`。
+
+    结果 dict 就是 `agent/video_read.py::read()` 的返回（含 `frames` / `audio_text` / `note` /
+    `dir` / `ok`），外加 `platform` 与 `url` 两个字段方便上层如实报「读的是哪条」。
+    **调用方负责 `video_read.cleanup(res["dir"])`**（临时帧图与音频）。
+
+    `platform == "bilibili"` 时**不在这里处理**：B 站走 `info()` 老路（有字幕就更省），
+    上层据此分流（「B 站优先走老路」）。这里只负责非 B 站外链。
+    """
+    import tempfile
+    ident = identify_media_url(text)
+    if not ident:
+        return None, "这段话里没找到视频链接（抖音 / 快手 / 小红书 / YouTube 等分享链接都行）"
+    plat = str(ident.get("platform") or "unknown")
+    if plat == "bilibili":
+        return None, "这是 B 站链接：请走 read_bilibili（B 站有字幕那条更省，不带字幕才需要下载看）"
+    if plat == "unknown":
+        return None, ("这个平台的链接我暂不支持（只认 B 站 / 抖音 / 快手 / 小红书 / YouTube）：%s"
+                      % str(ident.get("url") or "")[:100])
+    url = str(ident.get("url") or "")
+    exe = ytdlp_bin()
+    if not exe:
+        return None, "要下载视频得先有 yt-dlp（本机没找到：可 `py -3 -m pip install yt-dlp` 或用项目 runtime）"
+    tmp = tempfile.mkdtemp(prefix="pm-video-")            # pm-video- 前缀 ⇒ video_read.cleanup 认得
+    path, why = download(url, tmp, timeout=int(download_timeout or 300))
+    if not path:
+        from . import housekeeping as HK
+        HK.cleanup_dir(tmp)
+        return None, "这条 %s 链接没能下下来：%s" % (plat, why)
+    from . import video_read as VR
+    try:
+        res = VR.read(path, max_frames=max_frames, max_seconds=max_seconds, work_dir=tmp)
+    except Exception as e:
+        res = {"ok": False, "error": "读视频异常：%s" % str(e)[:100], "frames": [], "note": "", "dir": tmp}
+    res["platform"] = plat
+    res["url"] = url
+    if not res.get("ok"):
+        # 抽帧失败：临时目录由调用方 cleanup（把 dir 带回去，别在这里偷偷删了让上层拿不到证据）
+        return None, res.get("error") or "读视频失败"
+    return res, ""
+
+
 def info(text: str, want_subtitle: bool = True, timeout: int = TIMEOUT):
     """主入口：从一段文字里解析 B 站视频 ⇒ `(dict|None, 原因)`。
 

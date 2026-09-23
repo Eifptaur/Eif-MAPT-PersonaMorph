@@ -399,11 +399,17 @@
   "max_frames": 4,
   "max_seconds": 60
  },
- "bilibili": {
-  "enabled": true,
-  "listen_max_seconds": 120
- },
- "memory": {
+  "bilibili": {
+    "enabled": true,
+    "listen_max_seconds": 120
+  },
+  "video_url": {
+    "enabled": false,
+    "max_frames": 4,
+    "max_seconds": 60,
+    "download_timeout": 300
+  },
+  "memory": {
   "consolidate_enabled": true,
   "consolidate_min_interval_ms": 21600000,
   "consolidate_min_impressions": 4,
