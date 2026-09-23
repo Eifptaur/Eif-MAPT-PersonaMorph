@@ -116,9 +116,15 @@ namespace WxLauncher
 
             stepList = new StepList();
             stepList.SetSteps(Steps);
-            // StepList 自绘行高按 n 均分 ⇒ 给定高度决定行距；4 步 × 30px
-            stepList.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4 + 26);
-            stepList.Size = new Size(cardW - StyleKit.Space.x5 * 2, 118);
+            // StepList 自绘行高按 n 均分 ⇒ 给定高度决定行距。
+            // ⚠️ 2026-09-23（#18 叠字根治）：高度原写死 118（100% 下 4 步 × ~30px）——
+            //   150% 下 Body 字高 27px，均分行高只剩 29px ⇒ 相邻步骤文字几乎贴上。
+            //   改成"行数 × 当前行高 + 间距"（100% 下仍 ≈118，高 DPI 下自动长高）。
+            //   ⚠️ y 同理：原写死 `Space.x4 + 26`，150% 下区头"启动分四步"实高 33px 会压到步骤区
+            //   ⇒ 改**跟着 t1 的实测底边走**。
+            stepList.Location = new Point(StyleKit.Space.x5, t1.Bottom + StyleKit.Space.x2);
+            stepList.Size = new Size(cardW - StyleKit.Space.x5 * 2,
+                Math.Max(118, Steps.Length * StyleKit.LineHeight(stepList.Font) + StyleKit.Space.x3));
             cardSteps.Controls.Add(stepList);
 
             // 步骤详细说明（用户要求 ②）：随步骤切换更新
@@ -126,7 +132,8 @@ namespace WxLauncher
             lblStepHint.Text = StepDetail[0];
             lblStepHint.Font = StyleKit.Ui(StyleKit.TextScale.Para, FontStyle.Regular);   // 2026-09-23: 步骤说明是正文
             lblStepHint.ForeColor = StyleKit.InkBody;
-            lblStepHint.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4 + 26 + 118 + StyleKit.Space.x2);
+            // ⚠️ 2026-09-23（#18）：y 原来按"手写 26 + 手写 118"拼出来 —— 前两者都实测化后跟着新底边走
+            lblStepHint.Location = new Point(StyleKit.Space.x5, stepList.Bottom + StyleKit.Space.x2);
             lblStepHint.Size = new Size(cardW - StyleKit.Space.x5 * 2, 64);
             cardSteps.Controls.Add(lblStepHint);
             StyleKit.FitLabel(lblStepHint);
@@ -147,7 +154,9 @@ namespace WxLauncher
             cardProg.Controls.Add(t2);
 
             bar = new RoundBar();   // W6：自绘圆角进度条（Value/Maximum 语义不变，流程代码无需改）
-            bar.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4 + 28);
+            // ⚠️ 2026-09-23（#18 叠字根治）：y 原写死 `Space.x4 + 28` —— 150% 下 t2 实高 33px 会压到进度条
+            //   ⇒ 改**跟着 t2 的实测底边走**。
+            bar.Location = new Point(StyleKit.Space.x5, t2.Bottom + StyleKit.Space.x2);
             bar.Size = new Size(cardW - StyleKit.Space.x5 * 2 - 58, 20);
             bar.Style = ProgressBarStyle.Continuous; bar.Maximum = 100;
             cardProg.Controls.Add(bar);
@@ -157,16 +166,23 @@ namespace WxLauncher
             lblPct.Font = StyleKit.Ui(StyleKit.TextScale.Head, FontStyle.Bold);
             lblPct.ForeColor = StyleKit.Accent;
             lblPct.TextAlign = ContentAlignment.MiddleRight;
-            lblPct.Location = new Point(cardW - StyleKit.Space.x5 - 52, StyleKit.Space.x4 + 26);
-            lblPct.Size = new Size(52, 24);
+            // ⚠️ 2026-09-23（#18）：原 `Size(52, 24)` 写死 —— 150% 下 Head 字高 33px 既撑破 24 的高、
+            //   "100%" 的实宽也超 52 ⇒ 改 AutoSize（宽高都由字实测），右缘贴卡片右内边距、
+            //   垂直方向对进度条居中；Anchor=Right 保证运行时从 "0%" 涨到 "100%" 时向左长、不顶出卡片。
+            lblPct.AutoSize = true;
+            lblPct.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             cardProg.Controls.Add(lblPct);
+            // 垂直对进度条居中；150% 下字高(33) > bar 高(20) 时以"不叠上 t2"为下限（差 2px 呼吸）
+            lblPct.Location = new Point(cardW - StyleKit.Space.x5 - lblPct.Width,
+                Math.Max(t2.Bottom + 2, bar.Top + (bar.Height - lblPct.Height) / 2));
 
             lblSub = new Label();
             // ⛔ 2026-09-23 修（可读性）：这里显示的是"当前正在做什么"（如「正在下载依赖…」），
             //   属于**正文**，不是脚注。`Small`+`Sub` 双不达标 ⇒ 提到 `Para`+`InkBody`。
             lblSub.Font = StyleKit.Ui(StyleKit.TextScale.Para, FontStyle.Regular);
             lblSub.ForeColor = StyleKit.InkBody;
-            lblSub.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4 + 56);
+            // ⚠️ 2026-09-23（#18）：y 原写死 `Space.x4 + 56`（按 100% 的 bar 底边配的）⇒ 改跟着 bar 实测底边走
+            lblSub.Location = new Point(StyleKit.Space.x5, bar.Bottom + StyleKit.Space.x2);
             lblSub.Size = new Size(cardW - StyleKit.Space.x5 * 2, 34);
             cardProg.Controls.Add(lblSub);
             // ⚠️ 这里**故意不** `FitLabel`：此刻 `lblSub.Text` 还是空的，量出来是 0
@@ -186,8 +202,11 @@ namespace WxLauncher
             cardLog.Controls.Add(t3);
 
             logView = new LogView();
-            logView.Location = new Point(StyleKit.Space.x5, 26);
-            logView.Size = new Size(cardW - StyleKit.Space.x5 * 2, 44);
+            // ⚠️ 2026-09-23（#18 叠字根治）：y 原写死 26 —— 150% 下 t3 实高 24px（顶 y=8 ⇒ 底 32）
+            //   会压进日志区 ⇒ 改**跟着 t3 的实测底边走**。
+            logView.Location = new Point(StyleKit.Space.x5, t3.Bottom + StyleKit.Space.x1);
+            // 高度同理不写死 44：按"2 行 × 当前行高"给（100% 下 ≈46，与原观感一致）
+            logView.Size = new Size(cardW - StyleKit.Space.x5 * 2, Math.Max(44, StyleKit.LineHeight(logView.Font) * 2));
             cardLog.Controls.Add(logView);
             StyleKit.SealCard(cardLog);
 
@@ -531,7 +550,11 @@ namespace WxLauncher
             s.Text = "无需重复启动";
             s.Font = StyleKit.Ui(StyleKit.TextScale.Head, FontStyle.Bold);
             s.ForeColor = StyleKit.Ok;      // 这不是错误 ⇒ 用"正常"绿，不用红/黄
-            s.Location = new Point(StyleKit.Space.x6 + StyleKit.IconSize + StyleKit.Space.x4, StyleKit.Space.x5 + 30);
+            // ⚠️ 2026-09-23（#18 叠字根治）：y 原写死 `Space.x5 + 30`（100% 的标题字高配的）——
+            //   150% 下 Title(15f Bold) 实高 40px ⇒ 副标题叠进标题 12px（用户截图现场）。
+            //   改**跟着标题的实测底边走**，任何 DPI 下都刚好在标题下一行。以下五个弹窗同款。
+            s.Location = new Point(StyleKit.Space.x6 + StyleKit.IconSize + StyleKit.Space.x4,
+                                   t.Bottom + StyleKit.Space.x1);
             s.AutoSize = true;
             Controls.Add(s);
 
@@ -545,8 +568,11 @@ namespace WxLauncher
             m1.Font = StyleKit.Ui(StyleKit.TextScale.Body, FontStyle.Regular);
             m1.ForeColor = StyleKit.Ink;
             m1.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4);
-            m1.Size = new Size(cardW - StyleKit.Space.x5 * 2, 22);
+            // ⚠️ 2026-09-23（#18 叠字根治）：高度原写死 22 —— 150% 下 Body 字高 27px ⇒ m1 自己先被裁。
+            //   改 `Size(w,1)` + `FitLabel` 实测落回（本文件 m2/m3 早就是这个口径）。
+            m1.Size = new Size(cardW - StyleKit.Space.x5 * 2, 1);
             card.Controls.Add(m1);
+            int m1h = StyleKit.FitLabel(m1);
 
             Label m2 = new Label();
             m2.Text =
@@ -555,7 +581,8 @@ namespace WxLauncher
               + "  · 想重新走一遍启动流程 —— 先点「一键关闭.exe」把当前这份结束掉，再重新双击「一键启动」。";
             m2.Font = StyleKit.Ui(StyleKit.TextScale.Para, FontStyle.Regular);
             m2.ForeColor = StyleKit.InkBody;
-            m2.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4 + 30);
+            // ⚠️ 2026-09-23（#18）：y 原写死 `Space.x4 + 30`（按 m1 手写 22 配的）⇒ 改跟 m1 实测底边走
+            m2.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4 + Math.Max(1, m1h) + StyleKit.Space.x2);
             // ⛔ 2026-09-23 修（真 bug：正文被裁）：这里原来是 `new Size(w, 90)` —— 手写 90，
             //   而实测需要 ~152 ⇒ 后两条 bullet 被 CardPanel 裁掉（实拍 shots-20260923d/busy.png）。
             //   根因是当时 `FitLabel` 只长不缩，手写值偏大时不会被修正（现已改双向）。
@@ -637,7 +664,9 @@ namespace WxLauncher
             s.Text = "只此一次 · 不影响数据";
             s.Font = StyleKit.Ui(StyleKit.TextScale.Head, FontStyle.Bold);
             s.ForeColor = StyleKit.Ok;      // 不是错误 ⇒ 用"正常"绿
-            s.Location = new Point(StyleKit.Space.x6 + StyleKit.IconSize + StyleKit.Space.x4, StyleKit.Space.x5 + 30);
+            // ⚠️ 2026-09-23（#18 叠字根治）：跟着标题实测底边走（原写死 +30，150% 下叠 12px）——BusyForm 同款
+            s.Location = new Point(StyleKit.Space.x6 + StyleKit.IconSize + StyleKit.Space.x4,
+                                   t.Bottom + StyleKit.Space.x1);
             s.AutoSize = true;
             Controls.Add(s);
 
@@ -651,8 +680,10 @@ namespace WxLauncher
             m1.Font = StyleKit.Ui(StyleKit.TextScale.Body, FontStyle.Regular);
             m1.ForeColor = StyleKit.Ink;
             m1.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4);
-            m1.Size = new Size(cardW - StyleKit.Space.x5 * 2, 22);
+            // ⚠️ 2026-09-23（#18 叠字根治）：高度原写死 22 ⇒ 改 FitLabel 实测（BusyForm 同款）
+            m1.Size = new Size(cardW - StyleKit.Space.x5 * 2, 1);
             card.Controls.Add(m1);
+            int m1h = StyleKit.FitLabel(m1);
 
             Label m2 = new Label();
             m2.Text =
@@ -662,7 +693,8 @@ namespace WxLauncher
               + "  · 如果最后提示没装上 —— 检查一下网络，重新打开程序会自动再试。";
             m2.Font = StyleKit.Ui(StyleKit.TextScale.Para, FontStyle.Regular);
             m2.ForeColor = StyleKit.InkBody;
-            m2.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4 + 30);
+            // ⚠️ 2026-09-23（#18）：y 改跟 m1 实测底边走（原写死 `Space.x4 + 30`）
+            m2.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4 + Math.Max(1, m1h) + StyleKit.Space.x2);
             // 高度不手写（BusyForm 实测教训：手写会被裁），交给 FitLabel 实测落回
             m2.Size = new Size(cardW - StyleKit.Space.x5 * 2, 1);
             card.Controls.Add(m2);
@@ -735,7 +767,9 @@ namespace WxLauncher
             qs.Text = "机器人已就绪";
             qs.Font = StyleKit.Ui(StyleKit.TextScale.Head, FontStyle.Bold);
             qs.ForeColor = StyleKit.Ok;
-            qs.Location = new Point(StyleKit.Space.x6 + StyleKit.IconSize + StyleKit.Space.x4, StyleKit.Space.x5 + 30);
+            // ⚠️ 2026-09-23（#18 叠字根治）：跟着标题实测底边走（原写死 +30，150% 下叠 12px）——BusyForm 同款
+            qs.Location = new Point(StyleKit.Space.x6 + StyleKit.IconSize + StyleKit.Space.x4,
+                                    qt.Bottom + StyleKit.Space.x1);
             qs.AutoSize = true;
             Controls.Add(qs);
 
@@ -748,8 +782,10 @@ namespace WxLauncher
             qm.Font = StyleKit.Ui(StyleKit.TextScale.Body, FontStyle.Regular);
             qm.ForeColor = StyleKit.Ink;
             qm.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4);
-            qm.Size = new Size(cardW - StyleKit.Space.x5 * 2, 22);
+            // ⚠️ 2026-09-23（#18 叠字根治）：高度原写死 22 ⇒ 改 FitLabel 实测（BusyForm 同款）
+            qm.Size = new Size(cardW - StyleKit.Space.x5 * 2, 1);
             card.Controls.Add(qm);
+            int qmh = StyleKit.FitLabel(qm);
 
             Label qm2 = new Label();
             qm2.Text =
@@ -759,7 +795,8 @@ namespace WxLauncher
               + "不想要也没关系 —— 随时可以从安装目录里再双击「一键启动.exe」。";
             qm2.Font = StyleKit.Ui(StyleKit.TextScale.Para, FontStyle.Regular);
             qm2.ForeColor = StyleKit.InkBody;
-            qm2.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4 + 30);
+            // ⚠️ 2026-09-23（#18）：y 改跟 qm 实测底边走（原写死 `Space.x4 + 30`）
+            qm2.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4 + Math.Max(1, qmh) + StyleKit.Space.x2);
             // ⛔ 2026-09-23 修（真 bug：正文被裁）：原手写 116，实测需要 ~152 ⇒ 最后一条被裁。
             qm2.Size = new Size(cardW - StyleKit.Space.x5 * 2, 1);
             card.Controls.Add(qm2);
@@ -1300,7 +1337,9 @@ static class Program
             s.Text = "无需重复打开";
             s.Font = StyleKit.Ui(StyleKit.TextScale.Head, FontStyle.Bold);
             s.ForeColor = StyleKit.Ok;
-            s.Location = new Point(StyleKit.Space.x6 + StyleKit.IconSize + StyleKit.Space.x4, StyleKit.Space.x5 + 30);
+            // ⚠️ 2026-09-23（#18 叠字根治）：跟着标题实测底边走（原写死 +30，150% 下叠 12px）——BusyForm 同款
+            s.Location = new Point(StyleKit.Space.x6 + StyleKit.IconSize + StyleKit.Space.x4,
+                                   t.Bottom + StyleKit.Space.x1);
             s.AutoSize = true;
             Controls.Add(s);
 
@@ -3169,7 +3208,9 @@ static class Program
                 s.Text = "现在打开只会是一屏错误页";
                 s.Font = StyleKit.Ui(StyleKit.TextScale.Head, FontStyle.Bold);
                 s.ForeColor = StyleKit.Warn;   // 提醒（不是错误、也不是正常）⇒ 用中间那一档
-                s.Location = new Point(StyleKit.Space.x6 + StyleKit.IconSize + StyleKit.Space.x4, StyleKit.Space.x5 + 30);
+                // ⚠️ 2026-09-23（#18 叠字根治）：跟着标题实测底边走（原写死 +30，150% 下叠 12px）——BusyForm 同款
+                s.Location = new Point(StyleKit.Space.x6 + StyleKit.IconSize + StyleKit.Space.x4,
+                                       t.Bottom + StyleKit.Space.x1);
                 s.AutoSize = true;
                 Controls.Add(s);
 
@@ -3183,8 +3224,10 @@ static class Program
                 m.Font = StyleKit.Ui(StyleKit.TextScale.Body, FontStyle.Regular);
                 m.ForeColor = StyleKit.Ink;
                 m.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4);
-                m.Size = new Size(cardW - StyleKit.Space.x5 * 2, 22);
+                // ⚠️ 2026-09-23（#18 叠字根治）：高度原写死 22 ⇒ 改 FitLabel 实测（BusyForm 同款）
+                m.Size = new Size(cardW - StyleKit.Space.x5 * 2, 1);
                 card.Controls.Add(m);
+                int mh = StyleKit.FitLabel(m);
 
                 Label m2 = new Label();
                 m2.Text =
@@ -3194,11 +3237,12 @@ static class Program
                   + "  · 反复不行的话，看 logs\\persona_morph.log 与 logs\\onestart.log 里的最后几行。";
                 m2.Font = StyleKit.Ui(StyleKit.TextScale.Para, FontStyle.Regular);
                 m2.ForeColor = StyleKit.InkBody;
-                m2.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4 + 30);
+                // ⚠️ 2026-09-23（#18）：y 改跟 m 实测底边走（原写死 `Space.x4 + 30`）
+                m2.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4 + Math.Max(1, mh) + StyleKit.Space.x2);
                 // ⛔ 2026-09-23 修（真 bug：正文被裁）：原手写 110，实测需要 ~152 ⇒ 第三条被切一半。
                 m2.Size = new Size(cardW - StyleKit.Space.x5 * 2, 1);
                 card.Controls.Add(m2);
-                int m2h = StyleKit.FitLabel(m2);
+                StyleKit.FitLabel(m2);   // #18：m3 直接跟 m2.Bottom ⇒ 这里不再需要接住返回值
 
                 Label m3 = new Label();
                 m3.Text = string.IsNullOrEmpty(url) ? "地址：（空）" : ("尝试的地址：" + NoticeForm.MaskToken(url));
@@ -3210,7 +3254,8 @@ static class Program
                 // ⛔ 2026-09-23 修（被裁的第二层）：原来 m3 写死在 `Space.x4 + 146` —— 那是按
                 //   "m2 手写 110"配出来的。m2 改成实测后 146 就不再成立 ⇒ 改成**跟着 m2 的实测底边走**，
                 //   这样"m2 长高 ⇒ m3 自动下移"，两者永远不会叠在一起。
-                m3.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4 + 30 + Math.Max(1, m2h) + StyleKit.Space.x3);
+                //   （#18 再修：m2 自己的 y 也改实测推进了 ⇒ 这里直接用 m2.Bottom，不再手工拼链。）
+                m3.Location = new Point(StyleKit.Space.x5, m2.Bottom + StyleKit.Space.x3);
                 m3.Size = new Size(cardW - StyleKit.Space.x5 * 2, 1);
                 card.Controls.Add(m3);
                 StyleKit.FitLabel(m3);

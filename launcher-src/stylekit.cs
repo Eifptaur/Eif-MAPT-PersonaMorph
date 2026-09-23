@@ -76,11 +76,19 @@ namespace WxLauncher
         /// 实测：单倍行距（1.0）中文读起来"挤"；1.45 是中文正文的舒适档（西文 1.5 对应的中文值）。
         public const float LineGap = 1.45f;
 
-        /// 按字号算一行的高度（含行距）。多行自绘文本用这个推进 y，别用 `Font.Height`。
+        /// 按字体算一行的高度（含行距）。多行自绘文本用这个推进 y，别用 `Font.Height`。
+        ///
+        /// ⚠️ 2026-09-23（#18 叠字根治）：行高必须跟**像素**（`f.Height`，随 DPI 放大）走，
+        ///   不能跟**磅值**（`f.Size`，不随 DPI）走 —— 原公式 `f.Size * LineGap * 1.34 + 2`
+        ///   在任何 DPI 下都给出同一个像素数（Para 10.5 → 22），而 150% DPI 下 Para 的实际
+        ///   字高是 **28px**（实测 `_scratch/c7_probe_out.log`：本机 system_dpi=144）
+        ///   ⇒ LogView 每行叠 6px，正是用户截图里日志叠字的真根因。
+        ///   系数 1.2：96dpi 下与旧公式基本重合（Para: 19*1.2≈23 vs 旧 22，±1px 无感），
+        ///   高 DPI 下正好还原成"旧值 × DPI 缩放"（150%: 28*1.2≈34 = 22*1.5）。
         public static int LineHeight(Font f)
         {
             if (f == null) return 16;
-            return (int)Math.Round(f.Size * LineGap * 1.34 + 2);   // 1.34 ≈ 字面高/字号（雅黑实测）
+            return (int)Math.Round(f.Height * 1.2);
         }
 
         /// 三种语义字色（按"重要程度"选，不要按"好不好看"选）
@@ -171,13 +179,24 @@ namespace WxLauncher
         public const int BtnPadX = 18;
 
 
+        /// 字号倍率（**取证专用**，平时恒 1）：`一键关闭.exe --shot <dir> <scale>` 时设成 scale。
+        /// 本机系统 DPI 是恒定的（实测 144 = 150%），离屏出图没有"换 DPI"的开关 ⇒
+        /// 用"字号乘数"等效模拟：scale = 96/144 ≈ 0.667 出等效 100% 的图、0.833 出 125%、1 出本机 150%。
+        /// 为什么乘在 `Ui` / `Mono`（字体唯一入口）而不是事后拉伸窗体：
+        /// 构造期所有实测（`MeasureText` / AutoSize / `FitLabel` / `SealCard`）都拿 `Ui()` 的字号量
+        /// ⇒ 乘在这里 = **完整模拟高 DPI 的构造几何**（大字体 → 实测推进自动让位），
+        /// 不是"画完再贴大字"的假象。
+        public static float FontScale = 1f;
+
         public static Font Ui(float size, FontStyle fs)
         {
+            size *= FontScale;
             try { return new Font("Microsoft YaHei UI", size, fs); }
             catch { return new Font(FontFamily.GenericSansSerif, size, fs); }
         }
         public static Font Mono(float size)
         {
+            size *= FontScale;
             try { return new Font("Consolas", size); }
             catch { return new Font(FontFamily.GenericMonospace, size); }
         }
@@ -244,11 +263,12 @@ namespace WxLauncher
             FontStyle style = (fallback != null) ? fallback.Style : FontStyle.Regular;
             if (HasCjk(text)) return fallback ?? Ui(size, style);
             // 纯西文 ⇒ 用 Segoe UI（缓存：同一 size+style 复用，避免 DrawText 热路径反复 new Font）
-            if (_uiFontCache == null || _uiFontSize != size || _uiFontStyle != style)
+            // ⚠️ 2026-09-23（#18）：这里也要乘 `FontScale` —— Segoe UI 分支是唯一绕过 `Ui()` 的字体出口
+            if (_uiFontCache == null || _uiFontSize != size * FontScale || _uiFontStyle != style)
             {
-                try { _uiFontCache = new Font("Segoe UI", size, style); }
+                try { _uiFontCache = new Font("Segoe UI", size * FontScale, style); }
                 catch { return fallback ?? Ui(size, style); }
-                _uiFontSize = size; _uiFontStyle = style;
+                _uiFontSize = size * FontScale; _uiFontStyle = style;
             }
             return _uiFontCache;
         }
@@ -618,14 +638,18 @@ namespace WxLauncher
             }
             Image img = RoundIcon(Path.Combine(root, "assets", "app-icon.png"), size);
             if (img == null) return null;
-            PictureBox pic = new PictureBox();
-            pic.Image = img;
-            pic.SizeMode = PictureBoxSizeMode.Zoom;
-            pic.Location = at;
-            pic.Size = new Size(size, size);
-            pic.BackColor = Color.Transparent;
-            f.Controls.Add(pic);
-            return pic;
+            // ⛔ 2026-09-23（#18 顺手修编译阻断，行为零变更）：这里原来也叫 `pic`，
+            //   与上面 if 块里的 `pic` 构成 CS0136（子级作用域已用过这个名字）——
+            //   实测 HEAD（03c2ba7）就编不过（丙-6 门禁没覆盖 C# 编译所以漏了）。
+            //   改名 `fbPic`（fallback 的意思），其余一字不动。
+            PictureBox fbPic = new PictureBox();
+            fbPic.Image = img;
+            fbPic.SizeMode = PictureBoxSizeMode.Zoom;
+            fbPic.Location = at;
+            fbPic.Size = new Size(size, size);
+            fbPic.BackColor = Color.Transparent;
+            f.Controls.Add(fbPic);
+            return fbPic;
         }
 
         /// 统一正文标签（省得每个窗体各写各的 Font/ForeColor）。
@@ -1004,7 +1028,9 @@ namespace WxLauncher
             new System.Collections.Generic.List<string>();
         int _maxKeep = 400;          // 只留尾部若干行（原来窗体侧截到 50，这里放宽、由窗体决定）
         int _top;                    // 第一行可见索引（由滚动条控制）
-        int _rowH = 17;
+        // ⚠️ 2026-09-23（#18 叠字根治）：`_rowH = 17` 写死已删 —— 行高一律走 `StyleKit.LineHeight(Font)`。
+        //   原来它作为"地板"出现在 VisibleRows / OnPaint 两处 `Math.Max(_rowH, LineHeight(Font))` 里，
+        //   而 LineHeight 改成 DPI 感知（像素口径）后，它只会把高 DPI 的行高**往小拉** ⇒ 没有存在意义了。
         bool _stick = true;          // 是否"粘在底部"（用户在底部时新行自动滚出来）
 
         // ── 滚动条状态（2026-09-23 加：可悬停、可拖动） ──
@@ -1164,15 +1190,13 @@ namespace WxLauncher
         /// 供窗体侧读回（`--dlgprobe` 的机械判据要用到行数/末行）
         public string Tail() { return _lines.Count == 0 ? "" : _lines[_lines.Count - 1]; }
 
-        /// 可见行数。⚠️ 2026-09-23：行高改为走 `StyleKit.LineHeight`（与绘制时同一个尺子）——
-        ///   原来这里用常量 `_rowH = 17`，而绘制时也用 17，看着一致；
-        ///   但**换过字号之后**（比如 `Small` 8.5 → `Para` 10.5）两者会不一致 ⇒ 底部空一行或半行被切。
-        ///   改成"同一个函数算"就不会再出现这种偏差。
+        /// 可见行数。⚠️ 2026-09-23（#18 再修）：`LineHeight` 已改成**像素口径**（随 DPI 缩放），
+        ///   这里与 `OnPaint` 用同一个函数 ⇒ "行高多少"只有一把尺子，高 DPI 下不再叠字。
         int VisibleRows
         {
             get
             {
-                int rh = Math.Max(1, Math.Max(_rowH, StyleKit.LineHeight(Font)));
+                int rh = Math.Max(1, StyleKit.LineHeight(Font));
                 return Math.Max(1, (Height - 2 * Pad) / rh);
             }
         }
@@ -1222,8 +1246,8 @@ namespace WxLauncher
             //   否则日志文字会**压在滑块底下**（上一版 3px 滑块压在字的右边就是这个问题）。
             int textRight = Width - SbHot;
             int y = Pad;
-            // 多行自绘文本要自己按行高排；`LineHeight` 是统一口径（含 1.45 行距）
-            int rowH = Math.Max(_rowH, StyleKit.LineHeight(Font));
+            // 多行自绘文本要自己按行高排；`LineHeight` 是统一口径（像素、随 DPI 缩放——#18 叠字根治）
+            int rowH = StyleKit.LineHeight(Font);
             for (int i = _top; i < _lines.Count && i < _top + rows; i++)
             {
                 // 末行（最新一行）用主色加重，其余用**达标**的次要色 ⇒ 一眼看到"刚发生了什么"
@@ -1458,8 +1482,14 @@ namespace WxLauncher
             g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
             int n = _steps.Length;
             if (n == 0 || Height < 8) return;
-            int rowH = Math.Max(24, Height / n);
-            int cx = 15;
+            // ⚠️ 2026-09-23（#18 叠字根治）：行高下限从写死 24 改为 `LineHeight(Font)`（随 DPI 缩放）——
+            //   150% 下 Body 字高 27px，原 24px 下限会让相邻两行的文字几乎贴上；
+            //   控件高度由窗体侧按行数 × LineHeight 给足（launcher.cs），这里只是防御性下限。
+            int rowH = Math.Max(StyleKit.LineHeight(Font), Math.Max(24, Height / n));
+            // 圆圈尺寸同样不能写死 20：150% 下 Micro(8f) 数字高 23px 会戳出圆圈 ⇒ 跟着字高走
+            int boxS = Math.Max(20, StyleKit.LineHeight(StyleKit.Ui(StyleKit.TextScale.Micro, FontStyle.Bold)) + 1);
+            float k = boxS / 20f;   // 圆内对勾等小形状按圆圈等比缩放
+            int cx = boxS / 2 + 5;
             using (var linePen = new Pen(StyleKit.Line, 2f))
             using (var okBrush = new SolidBrush(StyleKit.Ok))
             using (var acBrush = new SolidBrush(StyleKit.Accent))
@@ -1472,15 +1502,18 @@ namespace WxLauncher
                 {
                     int cy = i * rowH + rowH / 2;
                     bool done = (i < _idx), cur = (i == _idx);
-                    if (i < n - 1) g.DrawLine(linePen, cx, cy + 11, cx, cy + rowH - 11);
+                    if (i < n - 1) g.DrawLine(linePen, cx, cy + boxS / 2 + 1, cx, cy + rowH - boxS / 2 - 1);
                     if (cur)
                         using (var pill = RoundBar.RoundRect(new Rectangle(2, cy - rowH / 2 + 2, Width - 4, rowH - 4), 8))
                             g.FillPath(softBrush, pill);
-                    Rectangle box = new Rectangle(cx - 10, cy - 10, 20, 20);
+                    Rectangle box = new Rectangle(cx - boxS / 2, cy - boxS / 2, boxS, boxS);
                     if (done)
                     {
                         g.FillEllipse(okBrush, box);
-                        g.DrawLines(tickPen, new Point[] { new Point(cx - 5, cy), new Point(cx - 1, cy + 4), new Point(cx + 5, cy - 4) });
+                        g.DrawLines(tickPen, new Point[] {
+                            new Point((int)(cx - 5 * k), cy),
+                            new Point((int)(cx - 1 * k), (int)(cy + 4 * k)),
+                            new Point((int)(cx + 5 * k), (int)(cy - 4 * k)) });
                     }
                     else
                     {
@@ -1497,7 +1530,7 @@ namespace WxLauncher
                     Color ink = done ? StyleKit.Ink : (cur ? StyleKit.Link : StyleKit.Ink3ok);
                     Font f = cur ? StyleKit.Ui(StyleKit.TextScale.Body, FontStyle.Bold) : Font;
                     StyleKit.DrawText(g, _steps[i], f,
-                        new Rectangle(cx + 20, cy - rowH / 2, Math.Max(10, Width - cx - 22), rowH), ink,
+                        new Rectangle(cx + boxS + 2, cy - rowH / 2, Math.Max(10, Width - cx - boxS - 4), rowH), ink,
                         TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
                 }
             }

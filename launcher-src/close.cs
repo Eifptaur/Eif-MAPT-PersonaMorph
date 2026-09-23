@@ -22,11 +22,35 @@ namespace WxCloser
 
             string root = Path.GetDirectoryName(Application.ExecutablePath);
 
-            // 取证入口：把结果窗离屏渲染成 PNG（不显示、不抢焦点），与被关掉的进程无关
+            // 取证入口：把结果窗离屏渲染成 PNG（不显示、不抢焦点），与被关掉的进程无关。
+            // ⚠️ 2026-09-23（#18）：可选第三参 = 字号倍率（等效 DPI 模拟，见 StyleKit.FontScale）——
+            //   本机系统 DPI 恒 144（150%），`--shot <dir> 0.667` 出等效 100% 图、`0.833` 出 125% 图、
+            //   省略时 = 本机原生 150%。
             if (args != null && args.Length > 1 && args[0] == "--shot")
             {
                 try { Console.OutputEncoding = System.Text.Encoding.UTF8; } catch { }
-                Console.WriteLine(Shot(args[1], root));
+                float scale = 1f;
+                if (args.Length > 2)
+                {
+                    try { scale = float.Parse(args[2], System.Globalization.CultureInfo.InvariantCulture); } catch { }
+                    if (scale <= 0.1f) scale = 1f;
+                }
+                // ⛔ 2026-09-23（#18）：失败要**如实说原因**（项目纪律）——原来这里任何异常都静默死掉
+                //   （winexe 没控制台，Console.WriteLine 也看不到），取证的人只看到"没图"。
+                //   异常全文落盘 <dir>\close-shot.err，成功时把返回串也存 <dir>\close-shot.out。
+                try
+                {
+                    string ret = Shot(args[1], root, scale);
+                    try { File.WriteAllText(Path.Combine(args[1], "close-shot.out"), ret + Environment.NewLine, System.Text.Encoding.UTF8); } catch { }
+                    Console.WriteLine(ret);
+                }
+                catch (Exception ex)
+                {
+                    string dump = "--shot FAILED: " + ex.GetType().Name + ": " + ex.Message + Environment.NewLine
+                                + (ex.StackTrace ?? "");
+                    try { Directory.CreateDirectory(args[1]); File.WriteAllText(Path.Combine(args[1], "close-shot.err"), dump, System.Text.Encoding.UTF8); } catch { }
+                    Console.WriteLine(dump);
+                }
                 return;
             }
 
@@ -282,13 +306,19 @@ namespace WxCloser
             st.Text = clean ? "已全部结束" : "有项目没关干净";
             st.Font = StyleKit.Ui(StyleKit.TextScale.Head, FontStyle.Bold);
             st.ForeColor = clean ? StyleKit.Ok : StyleKit.Warn;
-            st.Location = new Point(StyleKit.Space.x6 + StyleKit.IconSize + StyleKit.Space.x4, StyleKit.Space.x5 + 30);
+            // ⚠️ 2026-09-23（#18 叠字根治）：副标题 y 原写死 `Space.x5 + 30` —— 那是按 100% DPI 的
+            //   标题字高（27px）配的；150% 下 Title(15f) 实高 40px ⇒ 副标题叠进标题里
+            //   （用户截图「其他弹窗全是这样」的现场）。改成**跟着标题的实测底边走**
+            //   （AutoSize 标签的 Height 由字体真实量出），任何 DPI 下都刚好在标题下一行。
+            st.Location = new Point(StyleKit.Space.x6 + StyleKit.IconSize + StyleKit.Space.x4,
+                                    t.Bottom + StyleKit.Space.x1);
             st.AutoSize = true;
             f.Controls.Add(st);
 
             int cardW = 520 - StyleKit.Space.x6 * 2;
-            CardPanel card = StyleKit.MakeCard(f, new Point(StyleKit.Space.x6, StyleKit.CardTopY),
-                                          new Size(cardW, 226));
+            // #12 F1：高度不再手写 226 —— 150% 下卡内「结束明细」标题、日志区都按大字体排，
+            //   写死的卡高会把日志区下半截切掉。只给宽度，排完 `SealCard` 收口（launcher.cs 同构）。
+            CardPanel card = StyleKit.MakeCard(f, new Point(StyleKit.Space.x6, StyleKit.CardTopY), cardW);
 
             Label cap = new Label();
             cap.Text = "结束明细";
@@ -301,37 +331,53 @@ namespace WxCloser
             // 自绘日志（原来这里是系统 TextBox：等宽字 + 常驻滚动条，与全窗两套语言）
             // `LogView` 是顶层类（stylekit.cs），不带 `StyleKit.` 前缀。2026-09-23 修 CS0426。
             LogView lv = new LogView();
-            lv.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4 + 28);
-            lv.Size = new Size(cardW - StyleKit.Space.x5 * 2, 178);
+            // ⚠️ 2026-09-23（#18 叠字根治）：y 原写死 `Space.x4 + 28`（100% 的标题高 22 + 6 间距）——
+            //   150% 下 cap 实高 33px ⇒ 日志区顶边压进标题。改**跟着 cap 的实测底边走**。
+            //   高度也不再写死 178：按"8 行 × 当前行高 + 上下内边距"算（等效 100% 下的原设计 178），
+            //   高 DPI 下日志可见行数不缩水。
+            int lvH = Math.Max(178, StyleKit.LineHeight(lv.Font) * 8 + 16);
+            lv.Location = new Point(StyleKit.Space.x5, cap.Bottom + StyleKit.Space.x2);
+            lv.Size = new Size(cardW - StyleKit.Space.x5 * 2, lvH);
             card.Controls.Add(lv);
             lv.SetLines(killed.Count > 0
                 ? killed.ToArray()
                 : new string[] { "没有残留进程 —— 群相 早已关闭，不用再关一次。" });
+            StyleKit.SealCard(card);   // #18：卡高到这里才定（日志区、标题都按实测）
 
-            RoundButton ok = new RoundButton();
-            ok.Text = "好的";
-            ok.Size = new Size(132, 38);
-            ok.Location = new Point(520 - StyleKit.Space.x6 - 132, 346);
+            // #13 F2：宽度改走 `MakeButton`（＝文字实宽 + 36，原来手写 132），
+            //   y 跟着卡片实测底边走（原来写死 346 —— 卡一长高按钮就压在卡上）。
+            RoundButton ok = StyleKit.MakeButton("好的");
+            ok.Location = new Point(520 - StyleKit.Space.x6 - ok.Width, card.Bottom + StyleKit.CardGapY);
             ok.BackColor = Color.FromArgb(64, 140, 255);   // 强调色 ⇒ StyleKit 认成主按钮（圆角填充）
             ok.ForeColor = Color.White;
             ok.DialogResult = DialogResult.OK;
             f.Controls.Add(ok);
             f.AcceptButton = ok;
+            // #18：窗高由最后一行的底边反推（原来写死 392 —— 内容按实测排下来 100% 下正好也是这个数，
+            //   高 DPI 下内容变高 ⇒ 窗口跟着长高，不再切字）。
+            f.ClientSize = new Size(520, ok.Bottom + StyleKit.Space.x6);
             StyleKit.Apply(f, "群相 一键关闭");
             return f;
         }
 
         /// 离屏渲染取证（不 Show()：Show 会激活窗口抢前台；实现见 StyleKit.CaptureOffscreen）
-        static string Shot(string dir, string root)
+        /// ⚠️ 2026-09-23（#18）：加 scale 参数 —— 等效 DPI 模拟（见 StyleKit.FontScale 与 Main 的 --shot 注释）。
+        static string Shot(string dir, string root, float scale)
         {
             var fake = new List<string>(new string[] { "python.exe (pid 4242)", "wx_agent.py (pid 5150)" });
-            Form f = BuildForm(root, fake);
+            float saved = StyleKit.FontScale;
             try
             {
-                Directory.CreateDirectory(dir);
-                return "close " + StyleKit.CaptureOffscreen(f, Path.Combine(dir, "close.png"));
+                StyleKit.FontScale = scale;
+                Form f = BuildForm(root, fake);
+                try
+                {
+                    Directory.CreateDirectory(dir);
+                    return "close " + StyleKit.CaptureOffscreen(f, Path.Combine(dir, "close.png"));
+                }
+                finally { f.Dispose(); }
             }
-            finally { f.Dispose(); }
+            finally { StyleKit.FontScale = saved; }
         }
     }
 }

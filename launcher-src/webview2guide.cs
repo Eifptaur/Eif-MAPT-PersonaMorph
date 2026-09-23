@@ -1,5 +1,18 @@
 // webview2guide.cs —— ⑤ WebView2 引导器（2026-09-15）
 //
+// ⛔⛔⛔ 2026-09-23 总调度标记：**本文件整份待删，丙-3 之后不再需要。**
+//     路线已拍板走丙（见 `docs\Qt自绘UI-验证结论与路线.md`，用户原话「我要选丙，就是两个都要」）：
+//       丙-1 合进程止血 → 丙-2 把 27 个面板换成 PySide6/Qt 真原生 → **丙-3 删掉 WebView2 依赖 + 打包**。
+//     控制台一旦是本地原生控件，就不再经过 WebView2 ⇒
+//       · 本文件（引导安装 WebView2）
+//       · `launcher.cs` 里的 `WebView2MissingForm`（缺运行库的兜底提示）
+//       · `launcher.cs` 里的 `ConsoleForm`（用 WebView2 渲染控制台）
+//     三处**一起作废**，届时整块删除、不要再往里投入。
+//
+// ⚠️ 在丙-3 落地之前，本文件**仍在生效**（用户机器可能确实没装 WebView2），
+//    所以 2026-09-23 修的按钮行溢出（主按钮 x=-12 被切）不算白修：过渡期还在用。
+//    **但任何"为了更好看/更好用"的新投入，一律不做。** 只允许修阻断性缺陷。
+//
 // 补的缺口：**本机既没装 WebView2 运行库、又没可用浏览器** ⇒ 控制台根本打不开（旧实现只回退浏览器，
 // 回退失败就什么都不发生，用户看到的是"点了按钮没反应"）。
 //
@@ -167,7 +180,10 @@ namespace WxLauncher
             s.Text = hasBoot ? "可以一键装上" : "这次看不了控制台";
             s.Font = StyleKit.Ui(StyleKit.TextScale.Head, FontStyle.Bold);
             s.ForeColor = hasBoot ? StyleKit.Warn : StyleKit.Danger;
-            s.Location = new Point(StyleKit.Space.x6 + StyleKit.IconSize + StyleKit.Space.x4, StyleKit.Space.x5 + 30);
+            // ⚠️ 2026-09-23（#18 叠字根治）：y 原写死 `Space.x5 + 30`（100% 的标题字高配的）——
+            //   150% 下 Title 实高 40px ⇒ 副标题叠进标题。改**跟着标题的实测底边走**（close.cs 同款）。
+            s.Location = new Point(StyleKit.Space.x6 + StyleKit.IconSize + StyleKit.Space.x4,
+                                   t.Bottom + StyleKit.Space.x1);
             s.AutoSize = true;
             Controls.Add(s);
 
