@@ -426,6 +426,23 @@ def _builtin_tool_defs() -> list:
             "execute": _exec_read_bilibili,
         },
         {
+            "name": "read_video_url",
+            "description": ("解析**非 B 站**的视频外链（抖音 / 快手 / 小红书 / YouTube 等）：把视频下下来，"
+                            "均匀抽几帧画面交给视觉模型看，再配上音频中的说话内容。"
+                            "群友丢这类链接问「这视频讲什么」时用它，**不要凭链接瞎猜内容**。"
+                            "（B 站链接请改用 read_bilibili —— 那条能拿字幕，更省更准。）"
+                            "很慢（要真下载 + 抽帧）；下载器没装 / 平台不支持 / 下载失败都会如实说原因。"
+                            "抽帧是采样不是完整视频，拿到的内容不确定就别猜。"),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "非 B 站视频链接（整句话丢进来也行，会自动找）"},
+                    "frames": {"type": "integer", "description": "想抽几帧（留空用控制台配置值）"},
+                },
+            },
+            "execute": _exec_read_video_url,
+        },
+        {
             "name": "gen_video",
             "description": ("给群友做一个短视频（几秒到几十秒）。**很慢**：提交后后台生成，做好会自动发出去——"
                             "所以提交完只需如实说「正在做」，**绝不许说已经做好了**。"
@@ -599,6 +616,65 @@ def _exec_read_video(ctx, args):
         elif res.get("audio_why"):
             head += "\n这段视频的音频没识别出来：%s" % res["audio_why"]
         head += "\n（抽帧是采样，不是完整视频；不确定的地方别猜。）"
+    finally:
+        video_read.cleanup(res.get("dir") or "")
+    if not data_urls:
+        return _ok(head)
+    return {"content": _image_parts(head, data_urls)}
+
+
+def _exec_read_video_url(ctx, args):
+    """读**非 B 站**视频外链（丙-11 A3 工具化）：识别 → 下载 → 抽帧 → 视觉模型。
+
+    与 `_exec_read_video`（读微信本地视频）的区别：
+      · 入口吃的是**链接文本**，不是消息里的媒体；
+      · 走 `bilibili.read_external()`（内含 identify → download → video_read.read）；
+      · B 站链接**明确拒绝并指路** `read_bilibili`（那边有字幕，更省更准）。
+
+    fail-closed：开关关 / 平台不支持 / yt-dlp 缺 / 下载失败 / 抽帧失败 ⇒ 一律如实回原因，
+    **绝不返回空帧当成功、绝不编造内容**。
+    """
+    from . import bilibili as BL
+    from .config import get_config as _gc
+    try:
+        cfg = _gc() or {}
+    except Exception:
+        cfg = {}
+    vcfg = cfg.get("video_url") or {}
+    if vcfg.get("enabled") is False:
+        return _err("外链视频解析已在控制台关闭（video_url.enabled=false）")
+    text = str(args.get("url") or "").strip()
+    if not text:
+        return _err("没给链接。把群友发的那句话（含链接）整段丢进来就行。")
+    try:
+        n = int(args.get("frames") or vcfg.get("max_frames") or 4)
+    except (TypeError, ValueError):
+        n = 4
+    secs = int(vcfg.get("max_seconds") or 60)
+    tmo = int(vcfg.get("download_timeout") or 300)
+    res, why = BL.read_external(text, max_frames=n, max_seconds=secs, download_timeout=tmo)
+    if not res:
+        # 原因由 read_external 如实产出（含「请走 read_bilibili」的指路文案），原样转达
+        return _ok("%s（别假装看过；可以把这句如实告诉对方）" % why)
+    # ⚠️ 临时目录（帧图 + 音频）在所有分支都必须删 —— 照 _exec_read_video 的 finally 收口纪律
+    #    （2026-09-15 审计：曾在失败分支漏 cleanup，积了 177 个 pm-video-* 目录）。
+    from . import video_read
+    try:
+        data_urls = []
+        for p in res.get("frames") or []:
+            try:
+                with open(p, "rb") as f:
+                    import base64
+                    data_urls.append("data:image/png;base64," + base64.b64encode(f.read()).decode("ascii"))
+            except Exception:
+                continue
+        head = "视频内容（%s 外链，%s）：下面是按时间均匀抽出的 %d 帧画面，请直接看图描述你看到了什么）" % (
+            res.get("platform") or "外链", res.get("note") or "", len(data_urls))
+        if res.get("audio_ok") and res.get("audio_text"):
+            head += "\n视频里的说话内容（本机离线识别，可能有错）：%s" % str(res["audio_text"])[:300]
+        elif res.get("audio_why"):
+            head += "\n这段视频的音频没识别出来：%s" % res["audio_why"]
+        head += "\n（抽帧是采样，不是完整视频；不确定的地方别猜。来源：%s）" % str(res.get("url") or "")[:120]
     finally:
         video_read.cleanup(res.get("dir") or "")
     if not data_urls:

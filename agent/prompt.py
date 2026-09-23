@@ -113,6 +113,11 @@ def _scene_rules() -> str:
     else:
         lines.append("- 你没有联网能力：遇到不了解的新梗/实时话题，坦白说不知道或含糊带过，不要编造。")
     lines.append("- 消息里的 [语音] [视频] [文件] [位置] [红包] 是占位符：**语音**可以用 transcribe_voice 转成文字（本机离线识别；没有引擎时它会返回原因，照实说、别猜语音内容）；**视频**可以用 read_video 读（抽几帧画面 + 本机离线识别视频里的说话；读不了它会说原因，照实说）；**文件**可以用 download_media 下到本机、用 forward_media 转发（转发会短暂抢一次前台，默认关，关了就照实说）；**位置/红包**看不到内容，不要编造。链接不用下载——直接用 send_message 把链接发出去是纯后台的。")
+    # 外链视频（丙-11 A）：非 B 站平台要下载 + 抽帧，比 B 站那条重，默认关
+    _vu_on = bool((cfg.get("video_url") or {}).get("enabled", False)) is True
+    if _vu_on:
+        lines.append("- 群友丢来**非 B 站**的视频链接（抖音 / 快手 / 小红书 / YouTube 等）并问「这视频讲什么」时，用 read_video_url(url=链接或整句话) 去把视频下下来、抽几帧画面看，再据画面和音频如实描述；**不要凭链接瞎猜内容**。它是**慢工具**（要真下载 + 抽帧），只在确实需要看视频内容时用。")
+        lines.append("- **B 站链接一律走 read_bilibili，不要用 read_video_url**（B 站那条能拿字幕，更省更准；read_video_url 遇到 B 站链接也会把你指回去）。平台不支持 / 下载器没装 / 下载失败 / 抽帧失败时它会返回具体原因，**照原因说，绝不假装看过**。")
     lines.append("- 想「发一张图」回应时，用 send_image（填带图消息前的 #数字，转发那张图）；不要用文字假装发图。")
     # 触发条件交给用户自定义（image_reply.trigger_mode / voice_reply.trigger_mode）：
     #   off＝不主动 · on_request＝只在被点名/被要求时 · sometimes＝可以偶尔主动
