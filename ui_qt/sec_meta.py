@@ -64,6 +64,10 @@ class Row:
     status_id: str = ""                                           # status：web <b id>
     headers: list[str] = field(default_factory=list)               # table：表头
     rows: list[list[str]] = field(default_factory=list)            # table：数据行
+    # 丙-12：mid 子行的可辨识标记（渲染层据此缩进/折叠，与顶层 row 区分）
+    sub: bool = False          # True = 位于某个 <div class="mid"> 块内（mid 子行）
+    group: str = ""            # 所属 mid 块的标题（取最近前置 <div class="desc"> 或顶层 row 标签）
+    indent: int = 0            # 渲染缩进档位（mid 子行 = 1，顶层 = 0）
 
 
 @dataclass
@@ -215,6 +219,60 @@ def _parse_nonwidget_row(chunk: str, label: str) -> Row:
 
 
 _CACHE: dict[str, Sec] = {}
+
+
+def _div_close(body: str, open_gt: int) -> int:
+    """open_gt = 某个 <div ...> 右尖括号 '>' 的索引；返回与之匹配的 </div> 起始索引。
+
+    用 div 深度计数做括号匹配，使每个 <div class="row"> 都能取到它「自己」的闭合，
+    而不会在碰到 <div class="mid"> / <div class="btns"> 时提前停（这正是旧前瞻截断的根因）。
+    """
+    depth = 1
+    i = open_gt + 1
+    n = len(body)
+    while i < n:
+        lt = body.find('<', i)
+        if lt < 0:
+            break
+        if body.startswith('</div>', lt):
+            depth -= 1
+            if depth == 0:
+                return lt
+            i = lt + 6
+        elif body.startswith('<div', lt):
+            depth += 1
+            gt = body.find('>', lt)
+            i = gt + 1 if gt >= 0 else n
+        else:
+            gt = body.find('>', lt)
+            i = gt + 1 if gt >= 0 else n
+    return -1
+
+
+def _mid_group(body: str, mid_start: int) -> str:
+    """mid 块标题：取它之前最近的 <div class="desc"> 文本或顶层 <div class="row"> 标签。"""
+    best, best_pos = "", -1
+    for dm in re.finditer(r'<div class="desc">(.*?)</div>', body, re.S):
+        if dm.start() < mid_start and dm.start() > best_pos:
+            best_pos = dm.start()
+            best = _first_sentence(dm.group(1), 36)
+    for rm in re.finditer(r'<div class="row"[^>]*>\s*<label>([^<]+)</label>', body):
+        if rm.start() < mid_start and rm.start() > best_pos:
+            best_pos = rm.start()
+            best = _clean(rm.group(1))
+    return best
+
+
+def _mid_ranges(body: str) -> list:
+    """返回每个 <div class="mid"> 的 (open_start, close_start, group_title)。"""
+    out = []
+    for m in re.finditer(r'<div class="mid"', body):
+        gt = body.find('>', m.start())
+        close = _div_close(body, gt)
+        if close < 0:
+            continue
+        out.append((m.start(), close, _mid_group(body, m.start())))
+    return out
 
 
 def secs() -> dict[str, Sec]:
