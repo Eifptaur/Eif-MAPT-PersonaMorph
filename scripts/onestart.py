@@ -665,22 +665,108 @@ def main():
                 % (_rec or "(读不出，多半是旧版格式)", _cur))
     except Exception:
         _stale = False
+    # ⛔ 2026-09-23 修：「已在运行」不能只信单实例互斥体 —— 互斥体只证明「有进程持锁」，
+    #    不证明「控制台起来了」。真机出现过：互斥体被半死不活的机器人/看门狗占着，
+    #    `data\bot.lock` 里留着一个早就退出的 pid（67776），这儿就当成"已在运行"直接 return 0
+    #    ⇒ 控制台 webui 根本没人拉起，端口全程没人听，用户点「现在就拉起来」毫无反应。
+    #    ⇒ 判据改成 **进程在 + 端口在**，两条都满足才算"已在运行"；否则照常往下走拉起流程。
+    #    （`agent\single_instance.py` 的 probe() 在 Windows 分支只验互斥体存在、不验 pid 死活，
+    #     这是既有行为；本项目不动 `agent\`，就地在 onestart.py 这一处绕开。）
+    _port_up = False
+    _port_hit = 0
+    _ports_tried = []
+    if existing is not None and not _stale:
+        try:
+            import json as _pj
+            import socket as _psk
+            # 候选口 1：`config.json` 的 server.port（读不到就按缺省 3210）
+            _cfg_port = 3210
+            try:
+                with open(os.path.join(ROOT, "config.json"), encoding="utf-8") as _pcf:
+                    _server = (_pj.load(_pcf).get("server", {}) or {})
+                _cfg_port = int(_server.get("port") or 3210)
+            except Exception:
+                _cfg_port = 3210
+            # 候选口 2：顺延口 —— webui 在端口被占时会静默顺延（3210→3211…），往上多试 5 个
+            for _p in range(_cfg_port, _cfg_port + 6):
+                if _p not in _ports_tried:
+                    _ports_tried.append(_p)
+            # 候选口 3：`logs\console.url` 里那个端口 —— **只当候选之一，探活通了才算**
+            #   （这文件可能是死地址，所以它单独出现时不作数）
+            try:
+                from agent.util import read_console_url as _prcu
+                import re as _pre
+                _pm = _pre.search(r":(\d{2,5})/", str(_prcu() or ""))
+                if _pm:
+                    _pu = int(_pm.group(1))
+                    if _pu not in _ports_tried:
+                        _ports_tried.append(_pu)
+            except Exception:
+                pass
+            # TCP connect 探活：连得上即"端口在"（300~500ms 就够，别在这里耗时间）
+            for _p in _ports_tried:
+                try:
+                    _pc = _psk.create_connection(("127.0.0.1", _p), timeout=0.4)
+                    _pc.close()
+                    _port_up = True
+                    _port_hit = _p
+                    break
+                except Exception:
+                    continue
+        except Exception:
+            _port_up = False
     if existing is not None and not _stale:
         _who = ("pid=%s" % existing) if (existing and existing > 0) else "pid 未知"
-        log("检测到机器人已在运行（%s）→ 打开控制台，不再重复启动。%s" % (
-            _who, "如想重启请先「停止机器人」."))
-        try:
-            # 已有实例：走同一个开窗实现（自家 WebView2 窗口优先；地址从权威来源取，不再手拼 token）
-            _open_console("")
-        except Exception:
-            pass
-        return 0
+        _tried = "、".join(str(x) for x in _ports_tried) or "(没探到候选端口)"
+        if _port_up:
+            log("检测到机器人已在运行（%s；控制台端口 %s 有人听，探过 %s）→ 打开控制台，不再重复启动。%s" % (
+                _who, _port_hit, _tried, "如想重启请先「停止机器人」."))
+            try:
+                # 已有实例：走同一个开窗实现（自家 WebView2 窗口优先；地址从权威来源取，不再手拼 token）
+                _open_console("")
+            except Exception:
+                pass
+            return 0
+        # 进程持锁但控制台端口没人听（典型僵尸 pid）⇒ 不跳过，照常往下走拉起流程。
+        # 这句必须打出来，否则用户只看到"又在装依赖"却不知道为什么没走"已在运行"捷径。
+        log("单实例说在跑（%s），但控制台端口没人听（探过 %s）⇒ 按「没在跑」处理，往下照常拉起。" % (
+            _who, _tried))
     try:
-        subprocess.Popen([py, watchdog], creationflags=0x08000000,
-                         cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        _wd_proc = subprocess.Popen([py, watchdog], creationflags=0x08000000,
+                                    cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception as e:
         log("启动失败: %s" % e)
         return 1
+    # ⛔ 2026-09-23 加：**「拉起来了」不等于「跑起来了」**。子进程 stdio 全走 DEVNULL
+    #   （`persona_morph.py` 入口的 `_auto_pythonw()` 还会把自己用 pythonw 重起一份、stdio 全关），
+    #   它一旦崩，外面一点痕迹都没有。今天那个 P0「控制台永远起不来」真因是后端一行 TypeError，
+    #   就是因为没落退出码，才只能看到「机器人已启动 ✔」、看不到它其实立刻就死了。
+    #   ⇒ 这里起一个 daemon 线程在后台 wait()，子进程一结束就把**退出码 + 结束时刻**写进日志；
+    #     退出码非 0（或为负＝Windows 上被信号/异常终止）要显眼标出来，让人一眼看到「拉起失败」。
+    #   ⛔ 绝不能在主流程里直接 wait()：watchdog 是长期运行的进程，堵在这里就再也走不到后面的就绪轮询了。
+    try:
+        def _watch_watchdog_exit(_proc=_wd_proc, _pid=_wd_proc.pid):
+            try:
+                _code = _proc.wait()
+            except Exception as _we:
+                log("看门狗退出码监听失败（pid=%s）：%s" % (_pid, _we))
+                return
+            _end = time.strftime("%H:%M:%S")
+            if _code == 0:
+                log("看门狗进程已自行结束：pid=%s，退出码=0，结束于 %s"
+                    "（控制台若还在跑属正常交接，否则请查上方日志）" % (_pid, _end))
+                return
+            # 用纯 ASCII 的 `!!!` 而不是 emoji 叉号（U+274C）：日志文件/控制台在中文 Windows 下
+            # 会走 GBK，非 ASCII 符号有乱码甚至 UnicodeDecodeError 的风险（项目今天刚在
+            # `agent\local_guard.py` 的 icacls 回显上被同类问题咬过一次），视觉冲击用 ASCII 一样够。
+            log("!!! 拉起失败 !!! 看门狗进程已退出：pid=%s，退出码=%s（非 0），结束于 %s。"
+                "——机器人并没有跑起来，请往上翻日志找真因（后端异常 / 依赖缺失 / 端口占用等）。"
+                % (_pid, _code, _end))
+
+        threading.Thread(target=_watch_watchdog_exit, daemon=True).start()
+    except Exception as _te:
+        # 监听本身失败不能影响主流程，只记一笔
+        log("（已忽略）看门狗退出码监听线程起不来：%s" % _te)
     log("机器人已启动 ✔（等待控制台就绪，随后自动打开控制台窗口；完成后本窗口自动关闭）")
     # 轮询等控制台就绪再开窗：webui 会因微信布局校准等延迟就绪，只试一次会漏掉
     try:
@@ -728,9 +814,25 @@ def main():
                     #   "机器人侧已打开" ⇒ 启动器不开、新机器人又抢不到锁 ⇒ **两边都不开**。
                     #   修法在 `agent/util.py`：锁文件带 pid，**写锁进程已死即视为过期**，
                     #   于是这里会正确地走到下面的兜底 `_open_console()`。
-                    _w_hwnd = int(_probe_console_window() or 0)
+                    # ⛔ 2026-09-23 加（丙-5#1 竞态守卫）：**端口通 ≠ 窗已显示**。Qt 壳在
+                    #   persona_morph.py 里要等 PySide6 自举完才 show，快则 2~3 秒、慢则十来秒；
+                    #   老逻辑端口一通就 `_probe_console_window()`，此刻「群相 控制台」窗还没出来
+                    #   ⇒ 误判"机器人侧没开" ⇒ 启动器抢开网页窗 ⇒ **真机首跑双窗**（用户问题②）。
+                    #   ⇒ 端口通后**最多再等 15 秒**窗出现（每秒探一次）；等到 = Qt 壳或网页后备
+                    #     已开，启动器仍不开；超时 = Qt 自举失败且后备也没开，才走启动器兜底。
+                    _w_hwnd = 0
+                    _waited = 0
+                    while _waited < 15:
+                        _w_hwnd = int(_probe_console_window() or 0)
+                        if _w_hwnd:
+                            break
+                        if _waited == 0:
+                            log("控制台端口已通，等「群相 控制台」窗口出现（最多 15 秒，Qt 壳自举中）…")
+                        time.sleep(1)
+                        _waited += 1
                     _opened_by_bot = bool(_w_hwnd)
                     if not _opened_by_bot:
+                        log("控制台端口通了但 15 秒内没等到窗口 ⇒ 走启动器后备开窗。")
                         try:
                             _open_console("", _bpath)     # 地址为空 ⇒ 由 open_console 取权威地址（此刻已落盘）
                         except Exception as e:
