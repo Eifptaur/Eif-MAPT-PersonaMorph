@@ -865,6 +865,77 @@ def ssrc_shell() -> str:
     return (HERE / "shell.py").read_text(encoding="utf-8")
 
 
+# ---------------------------------------------------------------- 丙-6 #13：更新公告条拆假接真
+
+def t_updbar() -> None:
+    """#13 假条拆除 + /api/update 四态机 + 三按钮真接线（join_url 口径）。"""
+    from PySide6.QtWidgets import QApplication  # noqa: PLC0415
+
+    QApplication.instance() or QApplication([])
+
+    import updbar  # noqa: PLC0415
+
+    # ① 四态机纯函数（web L817-837 逐条对照）
+    n, w = updbar.decide({"status": "pending", "pending": ["a.py", "b.py", "c.py", "d.py"]})
+    ck("updbar: pending 文案（半装补换 + 前 3 件名）",
+       "4 件没换成" in n and "a.py" in n and "d.py" not in n and w is True, n[:50])
+    n, w = updbar.decide({"status": "newer", "theirs": "2026.9.30", "mine": "2026.9.23",
+                          "notes": ["修 A", "修 B"]})
+    ck("updbar: newer 文案（真版本号 + notes · 连接）",
+       "有新版本 2026.9.30" in n and "当前 2026.9.23" in n and "修 A · 修 B" in n and w is False, n[:50])
+    n, w = updbar.decide({"status": "older", "theirs": "1.0"})
+    ck("updbar: older 文案（源配错，warn）", "比本机旧" in n and w is True)
+    n, w = updbar.decide({"status": "error", "why": "清单 404"})
+    ck("updbar: error 文案（源异常，warn）", "更新源异常：清单 404" in n and w is True)
+    n, _ = updbar.decide({"status": "current"})
+    ck("updbar: current 隐藏（没有新版不出条，绝不放占位）", n == "")
+    n, _ = updbar.decide({"status": "off"})
+    ck("updbar: off（不再提醒生效）隐藏", n == "")
+    n, _ = updbar.decide(None)
+    ck("updbar: 拉取失败隐藏（不是假文案）", n == "")
+    n, w = updbar.decide({"status": "current", "stateSaved": False, "stateSaveError": "盘满"})
+    ck("updbar: 快照写失败独立追加（主态隐藏也出）",
+       "没能写进快照" in n and "盘满" in n and w is True, n[:50])
+
+    # ② 行为级：apply_state 落地 + skip 仅 newer + 稍后会话抑制
+    from stylekit_qt import WHALE  # noqa: PLC0415
+
+    bar = updbar.UpdateBar(WHALE)
+    bar.apply_state({"status": "newer", "theirs": "9.9", "mine": "1.0"})
+    ck("updbar: newer 时条可见", bar.isVisible() and "9.9" in bar.txt.text())
+    ck("updbar: 不再提醒仅 newer 允许（V-R4-1）", bar.btn_skip.isEnabled() is True)
+    bar.apply_state({"status": "pending", "pending": ["x"]})
+    ck("updbar: pending 时不再提醒被禁用", bar.btn_skip.isEnabled() is False)
+    bar._on_later()
+    ck("updbar: 稍后 → 条隐藏", not bar.isVisible())
+    bar.apply_state({"status": "pending", "pending": ["x"]})
+    ck("updbar: 同版本稍后后不再弹（会话抑制）", not bar.isVisible())
+    bar.apply_state({"status": "newer", "theirs": "10.0", "mine": "1.0"})
+    ck("updbar: 出新版本照常弹（抑制不跨版本）", bar.isVisible())
+    bar.apply_state(None)
+    ck("updbar: 拉取失败 → 条消失（不是灰着）", not bar.isVisible())
+
+    # ③ 接线与口径（源码级）
+    ssrc = ssrc_shell()
+    ck("updbar: 假条文案已拆除（「有新版可用 · 3 项改进」不在壳源码）",
+       "有新版可用 · 3 项改进" not in ssrc)
+    ck("updbar: UpdateBar 接进顶栏（_rebuild 后 apply_state 恢复）",
+       "self.updbar = UpdateBar(self.t)" in ssrc
+       and 'apply_state(getattr(self, "_upd_state", None))' in ssrc)
+    ck("updbar: 首拉挂 _upd_first_check（页面加载拉一次语义）",
+       "def _upd_first_check" in ssrc and 'get_json("/api/update"' in ssrc)
+    usrc = (HERE / "updbar.py").read_text(encoding="utf-8")
+    ck("updbar: apply/skip 走 post_json（读回 JSON，why 逐字给用户）",
+       'post_json("/api/update_apply"' in usrc and 'post_json("/api/update_skip"' in usrc)
+    ck("updbar: 更新完成自动重启（web 同款）", 'post_api("/api/restart")' in usrc)
+    ck("updbar: job 轮询 900ms（web 同款）", "setInterval(900)" in usrc)
+    ck("updbar: 确认弹窗明说数据不动（可取消不破坏后台）",
+       "ConfirmDialog" in usrc and "dangerous=False" in usrc and "not d.result_ok" in usrc)
+    bsrc2 = (HERE / "agent_bridge.py").read_text(encoding="utf-8")
+    ck("updbar: post_json 走 join_url 口径（丙-5 #0 教训，不手拼 base+path）",
+       "def post_json" in bsrc2 and "join_url(base or current_url(), api)" in bsrc2)
+
+
 # ---------------------------------------------------------------- 5. 纪律：不碰产品代码
 
 def t_no_touch() -> None:
@@ -884,7 +955,7 @@ def t_no_touch() -> None:
 def main() -> int:
     for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
                t_visual, t_status_chain, t_bot_controls, t_window_chrome, t_dpi_motion,
-               t_wheel_nod, t_no_touch):
+               t_wheel_nod, t_updbar, t_no_touch):
         try:
             fn()
         except Exception as e:  # noqa: BLE001

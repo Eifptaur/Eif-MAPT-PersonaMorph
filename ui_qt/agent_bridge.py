@@ -116,6 +116,48 @@ def post_api(api: str, timeout: float = 5.0, base: str = "") -> tuple[bool, str]
         return False, "%s: %s" % (type(e).__name__, str(reason)[:80])
 
 
+def post_json(api: str, body: dict | None = None, timeout: float = 8.0,
+              base: str = "") -> dict | None:
+    """POST 一个后台 API 并读回 JSON 响应（丙-6 #13 更新条用：/api/update_apply、
+    /api/update_skip）。与 post_api 的差别：需要**响应体** —— update_apply 的
+    {"ok": false, "why": …}、update_skip 的回执都要逐字给用户看，不能只给"送达"。
+
+    地址与拼接口径同 post_api（current_url + addr.join_url，丙-5 #0 教训）。
+    返回 dict；连接层失败（没连上/超时）返回 None —— 调用方如实显示，别骗人。
+    HTTPError 时尝试解析错误响应体（后端 500 也带 {"ok":false,"why"}）。
+    """
+    from addr import join_url  # noqa: PLC0415
+
+    url = join_url(base or current_url(), api)
+    try:
+        import json as _j  # noqa: PLC0415
+        import urllib.error  # noqa: PLC0415
+        import urllib.request as ur  # noqa: PLC0415
+
+        payload = _j.dumps(body or {}).encode("utf-8")
+        opener = ur.build_opener(ur.ProxyHandler({}))   # 必须绕代理（heal/post_api 同款）
+        req = ur.Request(
+            url,
+            data=payload,
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with opener.open(req, timeout=timeout) as r:
+            return _j.loads(r.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as e:
+        try:
+            import json as _j2  # noqa: PLC0415
+
+            return _j2.loads(e.read().decode("utf-8", "replace"))
+        except Exception:  # noqa: BLE001
+            return {"ok": False, "why": "HTTP %d（被拒绝）" % e.code}
+    except Exception as e:  # noqa: BLE001
+        reason = getattr(e, "reason", e)
+        return None if "ConnectionRefusedError" in {
+            type(e).__name__, type(reason).__name__} else {
+            "ok": False, "why": "%s: %s" % (type(e).__name__, str(reason)[:80])}
+
+
 def console_process_alive() -> tuple[bool, str]:
     """本机有没有"群相"的 Python 进程在跑。
 

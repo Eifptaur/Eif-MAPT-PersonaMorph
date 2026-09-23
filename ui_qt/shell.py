@@ -207,6 +207,10 @@ class Shell(QWidget):
         self._probe_timer.timeout.connect(self._probe)
         self._probe_timer.start(4000)
         QTimer.singleShot(300, self._probe)
+        # 丙-6 #13：更新公告条首拉（web updbar 语义 = 页面加载时 GET /api/update 一次；
+        # 9 源竞速可能拖到秒级，后台线程拉）。
+        self._upd_state: dict | None = None     # 最近一次 /api/update 真值（_rebuild 恢复用）
+        QTimer.singleShot(600, self._upd_first_check)
 
     # ------------------------------------------------------------ 鲸落视觉本体
 
@@ -478,14 +482,14 @@ class Shell(QWidget):
         ver.setStyleSheet(f"color:{self.t.tx2};background:transparent;")
         lay.addWidget(ver)
 
-        # 更新公告条（web 侧顶部常驻那条）
-        ann = QLabel("有新版可用 · 3 项改进")
-        ann.setFont(qfont(self.t, 11.5, 500))
-        ann.setStyleSheet(
-            f"color:{self.t.blue};background:{self.t.blue_soft};"
-            f"border-radius:9px;padding:3px 10px;"
-        )
-        lay.addWidget(ann)
+        # 更新公告条（丙-6 #13）：web updbar 的 Qt 复刻 —— 四态机 + 三按钮真接线。
+        # 旧写法是写死「有新版可用」的静态 QLabel（无点击无真值），用户点了没下文
+        # —— 假条已拆。数据由 _upd_first_check 拉真值喂入。
+        from updbar import UpdateBar  # noqa: PLC0415
+
+        self.updbar = UpdateBar(self.t)
+        self.updbar.apply_state(getattr(self, "_upd_state", None))
+        lay.addWidget(self.updbar)
 
         lay.addStretch(1)
 
@@ -1089,6 +1093,32 @@ class Shell(QWidget):
         p = probe_backend(current_url())
         self._show_probe(p)
         self._watch_config()   # 顺跳：光标/壁纸跟随 config（web 面板改了 4 秒内生效）
+
+    def _upd_first_check(self) -> None:
+        """丙-6 #13：更新公告条首拉。web updbar = 页面加载时拉一次（不做周期轮询）；
+        /api/update 背后是 9 源竞速，可能拖到秒级 —— 后台线程拉，主线程落地。"""
+        box: dict = {"done": False, "val": None}
+
+        def _work() -> None:
+            from config_io import get_json  # noqa: PLC0415
+
+            box["val"] = get_json("/api/update", timeout=10.0)
+            box["done"] = True
+
+        import threading as _th  # noqa: PLC0415
+
+        _th.Thread(target=_work, daemon=True, name="upd-first").start()
+
+        def _apply() -> None:
+            if not box["done"]:
+                QTimer.singleShot(150, _apply)
+                return
+            self._upd_state = box["val"] if isinstance(box["val"], dict) else None
+            bar = getattr(self, "updbar", None)
+            if bar is not None:
+                bar.apply_state(self._upd_state)
+
+        QTimer.singleShot(150, _apply)
 
     def _show_probe(self, p: Probe) -> None:
         plan = plan_for(p)
