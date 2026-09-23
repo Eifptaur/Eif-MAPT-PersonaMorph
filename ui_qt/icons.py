@@ -55,6 +55,22 @@ INNER: dict[str, str] = {
 CHEVRON = '<path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>'
 
 
+#: 侧栏收起/展开双箭头（丙-5 #8：收起态按钮**只显示图标**，禁 emoji/文字箭头）
+CHEVS_R = ('<path d="M4.2 4.5L8 8l-3.8 3.5M9.2 4.5L13 8l-3.8 3.5" fill="none" '
+           'stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>')
+CHEVS_L = ('<path d="M11.8 4.5L8 8l3.8 3.5M6.8 4.5L3 8l3.8 3.5" fill="none" '
+           'stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>')
+
+
+def chevs_pixmap(color: str, collapsed: bool = False, size: int = 14) -> QPixmap:
+    """侧栏收起/展开双箭头。
+
+    语义=「点了会发生什么」：收起态（窄栏）显示 »（点了=向外展开），
+    展开态显示 «（点了=向内收起）。
+    """
+    return svg_pixmap(CHEVS_R if collapsed else CHEVS_L, color, size)
+
+
 def _ink(color: str) -> str:
     """任意可解析色值（QSS 的 rgba() 串 / hex / 色名）→ QtSvg 认的写法。
 

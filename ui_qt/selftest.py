@@ -711,6 +711,53 @@ def t_window_chrome() -> None:
     ck("页面栈显式透明加固", 'self.stack.setStyleSheet("background:transparent;")' in ssrc)
 
 
+# ---------------------------------------------------------------- 4.9 叠字/收起语义/动效（丙-5 #7 #8 #9）
+
+def t_dpi_motion() -> None:
+    """#7 叠字根治 = 页面级滚动容器 + 行级 QFontMetrics 最小高；
+    #8 收起态只显示图标（自绘 SVG）+ 组头首字缩略；
+    #9 切换动效 150-180ms OutCubic、可打断、禁弹跳一族。"""
+    ssrc = (HERE / "shell.py").read_text(encoding="utf-8")
+    wsrc = (HERE / "widgets.py").read_text(encoding="utf-8")
+    isrc = (HERE / "icons.py").read_text(encoding="utf-8")
+
+    # ① #7 根治：每页套 QScrollArea（web 版整页滚动的对齐物）
+    ck("页面滚动容器存在（_wrap_scroll）", "def _wrap_scroll" in ssrc)
+    ck("页栈所有页都套滚动容器", 'self.stack.addWidget(self._wrap_scroll(' in ssrc
+       and "build_panel(self.t, sec, on_save=self._watch_config)" in ssrc)
+    ck("滚动区 viewport 透明加固覆盖全部 QScrollArea",
+       "self.findChildren(QScrollArea)" in ssrc)
+
+    # ② #7 行级兜底：Field 最小行高按实测度量
+    ck("Field 最小行高按 QFontMetrics 实测",
+       "class Field" in wsrc and "QFontMetrics" in wsrc and "setMinimumHeight" in wsrc)
+    ck("Segmented 度量取选中态 600 字重（高亮框内装的是它）",
+       "fm_sel = QFontMetrics(qfont(t, 12.5, 600))" in wsrc)
+    ck("Segmented 高度自适应行高（不写死 28）", "fm_sel.height() + 12" in wsrc)
+    ck("Segmented knob 高随容器（不写死 24）", "self.height() - 4" in wsrc)
+
+    # ③ #8 收起语义
+    ck("双箭头自绘 SVG 存在（禁 emoji）", "CHEVS_R" in isrc and "CHEVS_L" in isrc
+       and "def chevs_pixmap" in isrc)
+    ck("收起态按钮只显示图标（清文字 +setIcon）",
+       'self.btn_tight.setText("")' in ssrc and "self.btn_tight.setIcon(" in ssrc)
+    ck("组头窄栏首字缩略（NavGroup.set_tight）",
+       "def set_tight" in wsrc and "self.title[0]" in wsrc)
+
+    # ④ #9 动效纪律
+    ck("页面淡入 150ms", "setDuration(150)" in ssrc)
+    ck("主题交叉淡入 180ms", "setDuration(180)" in ssrc)
+    ck("缓动全库只用 OutCubic（禁弹跳/过冲一族）",
+       "OutCubic" in ssrc and "Overshoot" not in ssrc and "OutBounce" not in ssrc
+       and "OutElastic" not in ssrc)
+    ck("交叉淡入可打断且不悬挂（veil 完成即清引用）",
+       "def _crossfade_snapshot" in ssrc and "def _crossfade_play" in ssrc
+       and "def _fade_veil_done" in ssrc)
+    ck("淡入覆盖层事件穿透（不阻塞输入）", "WA_TransparentForMouseEvents" in ssrc)
+    ck("页面 effect 用完即卸（离屏合成不留常驻成本）",
+       'page.setGraphicsEffect(None)' in ssrc)
+
+
 # ---------------------------------------------------------------- 5. 纪律：不碰产品代码
 
 def t_no_touch() -> None:
@@ -729,7 +776,7 @@ def t_no_touch() -> None:
 
 def main() -> int:
     for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
-               t_visual, t_status_chain, t_bot_controls, t_window_chrome, t_no_touch):
+               t_visual, t_status_chain, t_bot_controls, t_window_chrome, t_dpi_motion, t_no_touch):
         try:
             fn()
         except Exception as e:  # noqa: BLE001

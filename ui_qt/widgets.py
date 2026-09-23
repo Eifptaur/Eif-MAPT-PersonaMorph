@@ -251,6 +251,11 @@ class NavGroup(QWidget):
     def add(self, w: QWidget) -> None:
         self.bl.addWidget(w)
 
+    def set_tight(self, tight: bool) -> None:
+        """窄栏缩略（丙-5 #8）：侧栏收起时组名只留首字，tooltip 补全名。"""
+        self.hd_lb.setText(self.title[0] if tight else self.title)
+        self.hd.setToolTip(self.title if tight else "")
+
     def toggle(self) -> None:
         self.collapsed = not self.collapsed
         self.body.setVisible(not self.collapsed)
@@ -383,6 +388,15 @@ class Field(QWidget):
             d.setWordWrap(True)
             left.addWidget(d)
         root.addLayout(left, 1)
+        # 丙-5 #7：最小行高按 QFontMetrics 实测 —— 标签+说明永不重叠。
+        # （根治在页面级：Shell._wrap_scroll 给每页套了滚动容器，压缩不再发生；
+        # 这里是行级兜底，就算哪天又有人把行塞进不可滚的固定高容器也不会叠。）
+        from PySide6.QtGui import QFontMetrics  # noqa: PLC0415
+
+        fm_lb = QFontMetrics(qfont(t, t.body_size, 500))
+        fm_ds = QFontMetrics(qfont(t, t.body_size - 1.5, 400))
+        need = fm_lb.height() + (2 + fm_ds.height() if desc else 0) + 6
+        self.setMinimumHeight(max(34, need))
         if control is not None:
             root.addWidget(control, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
@@ -671,9 +685,18 @@ class Segmented(QWidget):
         from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QRect  # noqa: PLC0415
         from PySide6.QtGui import QFontMetrics  # noqa: PLC0415
 
-        fm = QFontMetrics(qfont(t, 12.5, 500))
-        self._w = max(56, max(fm.horizontalAdvance(lb) for _k, lb in options) + 30)
-        self.setFixedHeight(28)
+        # 丙-5 #7（真机问题③「鲸落高亮框裁一半」）：
+        #   老写法 fixed 高 28 / knob 高 24 / 宽按 500 字重 + 30 —— 但选中态
+        #   按钮是 **600 字重**（更宽），且高 DPI 下 point 字体行高变大，
+        #   固定像素必裁。全部改按 QFontMetrics 实测：
+        #   · 宽 = 600 字重实测 advance + 随行高的余量
+        #   · 高 = 实测行高 + 呼吸余量（DPI 越高自动越高）
+        #   · knob 高 = 容器高 - 4（不再写死 24）
+        self._f = qfont(t, 12.5, 500)
+        fm_sel = QFontMetrics(qfont(t, 12.5, 600))   # 高亮框里装的是选中态字重
+        pad = max(30, round(fm_sel.height() * 1.1))
+        self._w = max(56, max(fm_sel.horizontalAdvance(lb) for _k, lb in options) + pad)
+        self.setFixedHeight(max(28, fm_sel.height() + 12))
         self.setFixedWidth(self._w * len(options) + 4)
         self.setObjectName("Seg")
 
@@ -687,6 +710,7 @@ class Segmented(QWidget):
             b = QPushButton(label, self)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             b.setFixedWidth(self._w)
+            b.setFont(self._f)
             b.setFlat(True)
             b.clicked.connect(lambda _=False, k=key: self._pick(k))
             self._buttons.append(b)
@@ -700,7 +724,8 @@ class Segmented(QWidget):
 
     def _target(self) -> "QRect":  # noqa: F821
         idx = self._keys.index(self._value) if self._value in self._keys else 0
-        return self._QRect(2 + idx * self._w, 2, self._w, 24)
+        # knob 高随容器走（丙-5 #7：高 DPI 行高自适应，不再写死 24）
+        return self._QRect(2 + idx * self._w, 2, self._w, self.height() - 4)
 
     def _place_knob(self, instant: bool = False) -> None:
         r = self._target()

@@ -434,14 +434,15 @@ class Shell(QWidget):
         body.addWidget(self._build_main(), 1)
         root.addLayout(body, 1)
 
-        # 丙-5 #4 加固：海洋画卷是 Shell.paintEvent 整窗画的（z 序最底），内容区
-        # 能不能透出海取决于中间容器的底。全局 QSS 已把 QWidget 打透明，但
-        # QScrollArea 的 viewport 和 QStackedWidget 页面在真机/不同平台上有
-        # palette 兜底（qt_scrollarea_viewport 的 Base 色），显式点名最稳 ——
-        # 用户问题⑥「内容区是纯深色底」的防御性收口。
-        for wdg in (self.scroll.viewport(),):
-            wdg.setStyleSheet("background:transparent;")
-            wdg.setAutoFillBackground(False)
+        # 丙-5 #4 加固 + #7 滚动页：画卷是 Shell.paintEvent 整窗画的（z 序最底），
+        # 内容区能不能透出海取决于中间容器的底。全局 QSS 已把 QWidget 打透明，
+        # 但 QScrollArea 的 viewport 在真机/不同平台上有 palette 兜底
+        # （qt_scrollarea_viewport 的 Base 色），显式点名最稳 —— 覆盖侧栏与
+        # 全部页面滚动区（丙-5 #7 起每页都套了 QScrollArea）。
+        for sc in self.findChildren(QScrollArea):
+            vp = sc.viewport()
+            vp.setStyleSheet("background:transparent;")
+            vp.setAutoFillBackground(False)
         self.stack.setStyleSheet("background:transparent;")
 
     def _build_titlebar(self) -> QWidget:
@@ -589,14 +590,29 @@ class Shell(QWidget):
 
         self.stack = QStackedWidget()
         self._page_of: dict[str, int] = {"bot": 0}
-        self.stack.addWidget(self._build_bot_panel())
+        self.stack.addWidget(self._wrap_scroll(self._build_bot_panel()))
         for sec in BATCH_SECS:
             if sec == "bot":
                 continue
             self._page_of[sec] = self.stack.count()
             # 保存成功 → _watch_config：光标/壁纸/主题 4s 内不再等探活，当场跟上
-            self.stack.addWidget(build_panel(self.t, sec, on_save=self._watch_config))
+            self.stack.addWidget(self._wrap_scroll(build_panel(self.t, sec, on_save=self._watch_config)))
         return self.stack
+
+    @staticmethod
+    def _wrap_scroll(page: QWidget) -> QScrollArea:
+        """页面套滚动容器（丙-5 #7 叠字根治）。
+
+        真机问题①的根因不是 DPI：主面板/模型页等内容**超一屏**时，
+        页面 QVBoxLayout 把压缩量全打在可压缩的标签/描述上 —— 标签与描述
+        直接叠成一坨（150% 截图复现实锤，1.0 档同样叠）。web 版是整页滚动，
+        Qt 版对齐：每页套 QScrollArea，内容再高也只滚不压。
+        """
+        sc = QScrollArea()
+        sc.setWidgetResizable(True)
+        sc.setFrameShape(QFrame.Shape.NoFrame)
+        sc.setWidget(page)
+        return sc
 
     def _build_bot_panel(self) -> QWidget:
         main = QFrame()
@@ -776,6 +792,78 @@ class Shell(QWidget):
 
     # ------------------------------------------------------------ 主题切换
 
+    # ------------------------------------------------------------ 切换动效（丙-5 #9）
+
+    def _animate_page_in(self, page: QWidget) -> None:
+        """页面切换轻淡入：150ms OutCubic（工单禁弹跳一族），可打断 ——
+        重入时先停旧动画、复位旧 effect，绝不叠加两层透明度。"""
+        from PySide6.QtCore import (  # noqa: PLC0415
+            QAbstractAnimation,
+            QEasingCurve,
+            QPropertyAnimation,
+        )
+        from PySide6.QtWidgets import QGraphicsOpacityEffect  # noqa: PLC0415
+
+        old = getattr(self, "_page_anim", None)
+        if old is not None:
+            old.stop()
+            oe = getattr(self, "_page_effect", None)
+            if oe is not None:
+                oe.setOpacity(1.0)
+        eff = QGraphicsOpacityEffect(page)
+        eff.setOpacity(0.0)
+        page.setGraphicsEffect(eff)
+        an = QPropertyAnimation(eff, b"opacity", self)
+        an.setDuration(150)
+        an.setEasingCurve(QEasingCurve.Type.OutCubic)
+        an.setStartValue(0.0)
+        an.setEndValue(1.0)
+        an.finished.connect(lambda: page.setGraphicsEffect(None))
+        an.start(QAbstractAnimation.DeletionPolicy.KeepWhenStopped)
+        self._page_anim, self._page_effect = an, eff
+
+    def _crossfade_snapshot(self) -> None:
+        """旧帧抓取（丙-5 #9 第一步）—— 必须在改样式/重建**之前**调。"""
+        self._fade_pm = self.grab()
+
+    def _crossfade_play(self) -> None:
+        """交叉淡入（丙-5 #9 第二步）：新 UI 就位后，旧帧盖顶 180ms 淡出。
+
+        web 侧交叉淡入的 Qt 等价物 —— 换主题是整套样式重建（_rebuild），
+        做不了逐帧插值，就用旧相盖顶淡出。动效不阻塞输入（纯视觉层，
+        事件穿透），再切一次时新 veil 直接盖上（可打断）。
+        """
+        from PySide6.QtCore import QEasingCurve, QPropertyAnimation  # noqa: PLC0415
+        from PySide6.QtWidgets import QGraphicsOpacityEffect, QLabel  # noqa: PLC0415
+
+        pm = getattr(self, "_fade_pm", None)
+        if pm is None:
+            return
+        self._fade_pm = None
+        veil = QLabel(self)
+        veil.setPixmap(pm)
+        veil.setGeometry(self.rect())
+        veil.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        veil.show()
+        veil.raise_()        # _rebuild 后新控件 z 序更高 —— veil 必须再抬到最上
+        eff = QGraphicsOpacityEffect(veil)
+        veil.setGraphicsEffect(eff)
+        an = QPropertyAnimation(eff, b"opacity", self)
+        an.setDuration(180)
+        an.setEasingCurve(QEasingCurve.Type.OutCubic)
+        an.setStartValue(1.0)
+        an.setEndValue(0.0)
+        an.finished.connect(self._fade_veil_done)
+        an.start()
+        self._fade_veil = veil   # 保活到动画完；重入时旧 veil 被新的盖住、各自收敛
+
+    def _fade_veil_done(self) -> None:
+        """淡出完成：清引用（防悬挂）+ 删覆盖层。"""
+        v = getattr(self, "_fade_veil", None)
+        self._fade_veil = None
+        if v is not None:
+            v.deleteLater()
+
     def _switch_theme(self, key: str, persist: bool = True) -> None:
         """现场换主题 —— 不用重启。
 
@@ -790,6 +878,7 @@ class Shell(QWidget):
            ⇒ 这条就是"Qt 的迭代成本"的具体形状，别只在文档里说。
         """
         self.t = THEMES[key]
+        self._crossfade_snapshot()   # 丙-5 #9：旧帧先抓（新样式还没生效）
         if persist:
             try:
                 config_io.write_patch({"ui.theme": key})
@@ -805,6 +894,7 @@ class Shell(QWidget):
             if g.title in closed and not g.collapsed:
                 g.toggle()
         apply_font_to_app(QApplication.instance(), self.t)
+        self._crossfade_play()   # 新 UI 就位后旧帧淡出（丙-5 #9）
 
     def _groups(self) -> list[NavGroup]:
         seen: list[NavGroup] = []
@@ -939,13 +1029,24 @@ class Shell(QWidget):
         )
 
     def _toggle_tight(self) -> None:
-        # 对齐 web 侧 `.side.tight`（64px 图标栏）。原型先只改宽度 + 文案。
+        """丙-5 #8（用户问题④）：按钮显示「点了会发生什么」——
+        收起态**只显示图标**（» 自绘 SVG，点了=展开），不再是被裁一半的「收」字；
+        窄栏下分组标题只留首字缩略（NavGroup.set_tight），tooltip 补全名。"""
+        import icons as _icons  # noqa: PLC0415
+
         cur = self.btn_tight.text().startswith("‹")
         side = self.find.parentWidget().parentWidget()
-        side.setFixedWidth(232 if cur else 76)
-        self.btn_tight.setText("› 展开" if cur else "‹ 收起")
-        for it in self.find.parentWidget().findChildren(NavItem):
-            it.setVisible(cur)
+        side.setFixedWidth(76 if cur else 232)
+        for _it, g, _sec, _label in self.items:
+            g.set_tight(cur)
+        if cur:    # 将收起
+            self.btn_tight.setText("")
+            self.btn_tight.setIcon(QIcon(_icons.chevs_pixmap(self.t.tx2, collapsed=True)))
+            self.btn_tight.setToolTip("展开侧栏")
+        else:      # 将展开
+            self.btn_tight.setIcon(QIcon())
+            self.btn_tight.setText("‹ 收起")
+            self.btn_tight.setToolTip("")
 
     # ------------------------------------------------------------ 交互
 
@@ -970,6 +1071,7 @@ class Shell(QWidget):
         idx = getattr(self, "_page_of", {}).get(sec)
         if idx is not None:
             self.stack.setCurrentIndex(idx)
+            self._animate_page_in(self.stack.currentWidget())   # 丙-5 #9 轻淡入
 
     def _probe(self) -> None:
         """探一次后台，把结果翻译成界面上该说的话。"""
