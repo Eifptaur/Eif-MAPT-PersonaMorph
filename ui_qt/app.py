@@ -60,6 +60,12 @@ def start_qt_shell(log=None, theme: str = "whale") -> bool:
             # 空参数表：Qt 不该解析机器人自己的命令行（--foreground 等）
             app = QApplication.instance() or QApplication([])
             app.setApplicationName("Persona Morph 控制台")
+            # 丙-5 #6：任务栏/窗口图标用透明底完整鲸鱼（真机问题⑨）
+            _icon_path = HERE.parent / "assets" / "icon-whale.png"
+            if _icon_path.exists():
+                from PySide6.QtGui import QIcon  # noqa: PLC0415
+
+                app.setWindowIcon(QIcon(str(_icon_path)))
 
             t = THEMES.get(theme) or THEMES["whale"]
             # 字体：双字体注册（朝華標題A 标题 / 屏显臻宋 正文）+ 需要时降级 UI 字体

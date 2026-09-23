@@ -33,15 +33,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import config_io  # noqa: E402  丙-4：面板读写 config.json 的桥（save→set 同 webui 次序）
 
 from PySide6.QtCore import Qt, QTimer  # noqa: E402
-from PySide6.QtGui import QColor, QGuiApplication, QPainter, QPixmap  # noqa: E402
+from PySide6.QtGui import QColor, QGuiApplication, QIcon, QPainter, QPixmap  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QScrollArea,
     QSizePolicy,
     QStackedWidget,
+    QSystemTrayIcon,
     QVBoxLayout,
     QWidget,
 )
@@ -172,9 +174,17 @@ class Shell(QWidget):
         self._wp_scaled_for = None             # (w, h, dpr) 重缩放判据
         self._backdrop_on = False              # whale + 底图可用 才 True
         self.setWindowTitle("群相 控制台")   # 落位适配：正式壳不再是「原型」（app.py 启动器同名兜底）
+        # 丙-5 #6：任务栏/窗口图标用透明底完整鲸鱼（真机问题⑨：显示的是进程图标）
+        icon = QIcon(str(Path(__file__).resolve().parents[1] / "assets" / "icon-whale.png"))
+        self.setWindowIcon(icon)
+        # 丙-5 #5：去系统边框（对齐微信）—— 拖拽/边缘 resize/贴边走 nativeEvent
+        # 的 WM_NCHITTEST（原生 HTCAPTION 才有 Aero Snap、Win+方向键、双击最大化）；
+        # 叉号不进顶栏 —— 「停止」承担关停语义，关窗=收进托盘（关窗≠停机）。
+        self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
         self.resize(1120, 720)
         self.setMinimumSize(860, 560)
         self._build()
+        self._setup_tray(icon)
         # 视觉本体与鱼光标：建在 _restyle 之前（_restyle 要按 backdrop 分支）
         self._ocean = OceanWaves(self)
         self._cursor = WhaleCursor(Path(__file__).resolve().parents[1], parent=self)
@@ -285,6 +295,124 @@ class Shell(QWidget):
         super().hideEvent(ev)
         self._ocean.set_active(False)   # CPU 纪律：看不见就不转
 
+    # ------------------------------------------------------------ 窗口壳（丙-5 #5）
+
+    def _toggle_max(self) -> None:
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
+
+    def nativeEvent(self, etype, message):  # noqa: N802
+        """WM_NCHITTEST —— 无边框窗口的「原生手感」一刀切：
+        顶栏空白=HTCAPTION（原生拖拽 + 双击最大化 + Aero Snap + Win+方向键贴边，
+        这正是工单要的「尽量原生」）；四边四角=HT*（原生 resize）；
+        顶栏上的按钮/分段器、内容区一律放回默认（HTCLIENT，能点能动）。
+        非 Windows 平台直接放行。"""
+        if etype == b"windows_generic_MSG":
+            try:
+                import ctypes
+                import ctypes.wintypes as wt
+
+                from PySide6.QtCore import QCursor  # noqa: PLC0415
+
+                msg = wt.MSG.from_address(int(message))
+                if msg.message == 0x0084:            # WM_NCHITTEST
+                    HT = {"client": 1, "caption": 2, "left": 10, "right": 11,
+                          "top": 12, "topleft": 13, "topright": 14,
+                          "bottom": 15, "bottomleft": 16, "bottomright": 17}
+                    gp = self.mapFromGlobal(QCursor.pos())   # 全程 Qt 逻辑坐标，免 DPI 换算
+                    w, h, m = self.width(), self.height(), 8
+                    hit = self.childAt(gp)
+                    on_widget = hit is not None and hit is not getattr(self, "titlebar", None)
+                    if not on_widget and gp.y() < 0:          # 窗口上方悬停（贴边时）仍可拖
+                        on_widget = False
+                    # ① 顶栏上的真实控件（按钮/分段器/徽章）必须能点
+                    if on_widget:
+                        return False, 0
+                    # ② 四边四角热区（比 caption 优先 —— 顶栏角落也能拉，同微信）
+                    near_l, near_r = gp.x() <= m, gp.x() >= w - m
+                    near_t, near_b = gp.y() <= m, gp.y() >= h - m
+                    if near_t and near_l:
+                        return True, HT["topleft"]
+                    if near_t and near_r:
+                        return True, HT["topright"]
+                    if near_b and near_l:
+                        return True, HT["bottomleft"]
+                    if near_b and near_r:
+                        return True, HT["bottomright"]
+                    if near_l:
+                        return True, HT["left"]
+                    if near_r:
+                        return True, HT["right"]
+                    if near_t:
+                        return True, HT["top"]
+                    if near_b:
+                        return True, HT["bottom"]
+                    # ③ 顶栏空白 = 原生标题栏（拖拽/双击最大化/贴边全白拿）
+                    if gp.y() < 60:
+                        return True, HT["caption"]
+                    return True, HT["client"]
+            except Exception:  # noqa: BLE001   命中测试失败绝不能拖垮窗口
+                return False, 0
+        return super().nativeEvent(etype, message)
+
+    def _setup_tray(self, icon: QIcon) -> None:
+        """关窗≠停机的落点：鲸鱼托盘（菜单：显示主窗 / 停止）。
+
+        agent/tray.py 是 raw Win32 线程托盘（后端通知用）；Qt 壳里
+        QSystemTrayIcon 与界面同事件循环，菜单/激活信号直连槽，不另起线程。
+        """
+        self._tray = None
+        try:
+            if not QSystemTrayIcon.isSystemTrayAvailable():
+                return   # 无托盘环境（服务器/精简系统）：关窗退回真关，机器人不受影响
+            menu = QMenu(self)
+            # 全局 QSS 的 QWidget{background:transparent} 会把弹窗打成透明 —— 菜单自带上底
+            t = self.t
+            menu.setStyleSheet(
+                f"QMenu{{background:{t.card};color:{t.tx};border:1px solid {t.bd};border-radius:10px;}}"
+                f"QMenu::item{{padding:7px 22px;}}"
+                f"QMenu::item:selected{{background:{t.blue_soft};}}"
+            )
+            menu.addAction("显示主窗", self._tray_show)
+            menu.addSeparator()
+            menu.addAction("停止", self._tray_stop)     # 与顶栏「停止」同一确认流
+            self._tray = QSystemTrayIcon(icon, self)
+            self._tray.setContextMenu(menu)
+            self._tray.setToolTip("群相 控制台 —— 机器人正在跑，点图标回到主窗")
+            self._tray.activated.connect(
+                lambda r: self._tray_show()
+                if r == QSystemTrayIcon.ActivationReason.DoubleClick else None)
+            self._tray.show()
+        except Exception:  # noqa: BLE001
+            self._tray = None   # 托盘失败不拦启动
+
+    def _tray_show(self) -> None:
+        self.show()
+        self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMinimized)
+        self.raise_()
+        self.activateWindow()
+
+    def _tray_stop(self) -> None:
+        # 主窗藏着时先亮出来 —— 确认弹窗要居中在用户看得见的地方
+        if not self.isVisible():
+            self._tray_show()
+        self._bot_stop()
+
+    def closeEvent(self, ev) -> None:  # noqa: N802
+        """Alt+F4 / 任务栏关闭 = 收进托盘（web 版口径：关窗≠停机）。
+        真正的关停在「停止」钮：POST /api/shutdown 带打字门槛确认。"""
+        if getattr(self, "_tray", None) is not None and self._tray.isVisible():
+            ev.ignore()
+            self.hide()
+            self._ocean.set_active(False)   # CPU 纪律：藏起来就停画
+            self._tray.showMessage(
+                "群相 控制台", "机器人还在跑，窗口收进托盘了。点托盘图标可再打开。",
+                QSystemTrayIcon.MessageIcon.Information, 3000)
+            return
+        ev.accept()   # 无托盘环境：退回真关（机器人主循环在另一条线程，不受影响）
+
     # ------------------------------------------------------------ 结构
 
     def _build(self) -> None:
@@ -306,9 +434,20 @@ class Shell(QWidget):
         body.addWidget(self._build_main(), 1)
         root.addLayout(body, 1)
 
+        # 丙-5 #4 加固：海洋画卷是 Shell.paintEvent 整窗画的（z 序最底），内容区
+        # 能不能透出海取决于中间容器的底。全局 QSS 已把 QWidget 打透明，但
+        # QScrollArea 的 viewport 和 QStackedWidget 页面在真机/不同平台上有
+        # palette 兜底（qt_scrollarea_viewport 的 Base 色），显式点名最稳 ——
+        # 用户问题⑥「内容区是纯深色底」的防御性收口。
+        for wdg in (self.scroll.viewport(),):
+            wdg.setStyleSheet("background:transparent;")
+            wdg.setAutoFillBackground(False)
+        self.stack.setStyleSheet("background:transparent;")
+
     def _build_titlebar(self) -> QWidget:
         bar = QFrame()
         bar.setObjectName("TitleBar")
+        self.titlebar = bar      # nativeEvent 命中测试要用（空白区=HTCAPTION）
         bar.setFixedHeight(60)
         lay = QHBoxLayout(bar)
         lay.setContentsMargins(14, 4, 14, 4)
@@ -373,6 +512,21 @@ class Shell(QWidget):
         self.btn_stop = Btn("停止", self.t, "danger")
         self.btn_stop.clicked.connect(self._bot_stop)
         lay.addWidget(self.btn_stop)
+
+        # 窗口控制（丙-5 #5）：无边框后自绘顶栏承担 最小化/最大化切换。
+        # **没有叉号** —— 关窗≠停机：Alt+F4/任务栏关闭收进托盘，
+        # 真正的关停语义在「停止」钮（POST /api/shutdown，带确认）。
+        self.btn_min = Btn("—", self.t, "ghost")
+        self.btn_min.setFixedWidth(44)
+        self.btn_min.setToolTip("最小化")
+        self.btn_min.clicked.connect(self.showMinimized)
+        lay.addWidget(self.btn_min)
+
+        self.btn_max = Btn("□", self.t, "ghost")
+        self.btn_max.setFixedWidth(44)
+        self.btn_max.setToolTip("最大化 / 还原（双击顶栏同款）")
+        self.btn_max.clicked.connect(self._toggle_max)
+        lay.addWidget(self.btn_max)
 
         return bar
 

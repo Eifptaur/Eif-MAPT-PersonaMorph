@@ -666,6 +666,51 @@ def t_bot_controls() -> None:
     ck("拒绝连接 → 判失败并说明『没连上』", ok3 is False and "没连上" in note3, note3)
 
 
+# ---------------------------------------------------------------- 4.8 窗口壳：无边框/托盘/图标（丙-5 #5 #6）
+
+def t_window_chrome() -> None:
+    """无边框窗口（对齐微信）：拖拽/resize/贴边走 WM_NCHITTEST 原生；
+    删叉号 —— 「停止」承担关停、关窗=收进托盘（关窗≠停机）；
+    任务栏图标 = 透明底完整鲸鱼。"""
+    ssrc = (HERE / "shell.py").read_text(encoding="utf-8")
+    asrc = (HERE / "app.py").read_text(encoding="utf-8")
+
+    # ① 无边框 + 原生手感
+    ck("无边框已开（FramelessWindowHint）", "FramelessWindowHint" in ssrc)
+    ck("WM_NCHITTEST 原生命中测试（0x0084）", "0x0084" in ssrc)
+    ck("顶栏空白=HTCAPTION（原生拖拽/双击最大化/贴边）", '"caption"' in ssrc)
+    ck("四边四角热区（原生 resize）", all(k in ssrc for k in
+       ('"topleft"', '"topright"', '"bottomleft"', '"bottomright"')))
+    ck("最小化/最大化钮已接线", "showMinimized" in ssrc and "def _toggle_max" in ssrc)
+
+    # ② 删叉号：顶栏不许出现关闭钮；关窗语义在「停止」+ 托盘
+    import re  # noqa: PLC0415
+    close_btn = re.findall(r'Btn\(\s*"[×✕✖Xx]"', ssrc)
+    ck("顶栏没有关闭叉钮（用户原话）", not close_btn, ",".join(close_btn))
+    ck("停止钮存在（承担关停语义）", 'Btn("停止", self.t, "danger")' in ssrc)
+
+    # ③ 关窗 ≠ 停机：closeEvent 拦截 → 托盘
+    i = ssrc.find("def closeEvent(")
+    j = ssrc.find("\n    def ", i + 1)
+    cev = ssrc[i:j if j > 0 else len(ssrc)]
+    ck("closeEvent 拦截（ev.ignore）", "ev.ignore()" in cev)
+    ck("closeEvent 收进托盘（hide + 气泡）", "self.hide()" in cev and "showMessage" in cev)
+    ck("托盘建立（QSystemTrayIcon）", "QSystemTrayIcon" in ssrc)
+    ck("托盘菜单：显示主窗/停止", '"显示主窗"' in ssrc and '"停止"' in ssrc)
+    ck("托盘停止走同一条确认流（_bot_stop）", "def _tray_stop" in ssrc and "_bot_stop()" in ssrc)
+    ck("托盘不可用环境退回真关（不拦启动）", "ev.accept()" in cev)
+
+    # ④ 任务栏图标（真机问题⑨）
+    ck("Shell 窗口图标 = icon-whale.png", "icon-whale.png" in ssrc)
+    ck("app 入口全局图标 = icon-whale.png",
+       "setWindowIcon" in asrc and "icon-whale.png" in asrc)
+
+    # ⑤ 海洋底全窗加固（真机问题⑥）：viewport/页面栈显式透明
+    ck("画卷 viewport 显式透明加固", 'setStyleSheet("background:transparent;")' in ssrc
+       and "viewport()" in ssrc)
+    ck("页面栈显式透明加固", 'self.stack.setStyleSheet("background:transparent;")' in ssrc)
+
+
 # ---------------------------------------------------------------- 5. 纪律：不碰产品代码
 
 def t_no_touch() -> None:
@@ -684,7 +729,7 @@ def t_no_touch() -> None:
 
 def main() -> int:
     for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
-               t_visual, t_status_chain, t_bot_controls, t_no_touch):
+               t_visual, t_status_chain, t_bot_controls, t_window_chrome, t_no_touch):
         try:
             fn()
         except Exception as e:  # noqa: BLE001
