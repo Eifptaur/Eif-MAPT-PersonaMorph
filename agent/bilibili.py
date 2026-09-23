@@ -382,10 +382,14 @@ def listen(text: str, max_seconds: int = 120, timeout: int = 180):
 
 
 def download(url_or_bvid: str, out_dir: str, timeout: int = 300):
-    """下载 B 站视频到 `out_dir` ⇒ `(文件路径|None, 原因)`。
+    """下载视频到 `out_dir` ⇒ `(文件路径|None, 原因)`。
 
     **依赖外部 `yt-dlp`**（不随包分发，因为它是独立程序且版本更新频繁）。没有就如实报"没装 yt-dlp"，
     绝不假装下载过、也不生成空文件。
+
+    ⚠️ 2026-09-24（丙-11 A2）**泛化**：yt-dlp 本身就是通用抽取器（B 站 / 抖音 / 快手 /
+    小红书 / YouTube 都吃），所以这里**不再前置 B 站断言** —— 传什么 URL 就下什么。
+    平台识别交给 `identify_media_url()`、拒绝不支持的平台由上层做（本函数只管"能不能下"）。
     """
     if not str(url_or_bvid or "").strip():
         return None, "没给链接或 BV 号"
@@ -397,14 +401,27 @@ def download(url_or_bvid: str, out_dir: str, timeout: int = 300):
     except Exception as e:
         return None, "下载目录建不出来：%s" % str(e)[:60]
     tmpl = os.path.join(out_dir, "%(id)s.%(ext)s")
+    # ⚠️ 丙-11 A2：yt-dlp 合并音视频轨要 ffmpeg ⇒ 把项目**唯一解析入口**的 ffmpeg 路径透传给它
+    #   （`--ffmpeg-location`）。拿不到 ffmpeg 时**不传这一项**（让 yt-dlp 自己找 PATH），
+    #   而不是传空串 —— 传空串会让 yt-dlp 直接报参数错，把"没有 ffmpeg"变成"参数非法"。
+    args = [exe, "-f", "mp4/best", "--no-playlist", "-o", tmpl]
+    ff = ""
     try:
-        r = subprocess.run([exe, "-f", "mp4/best", "--no-playlist", "-o", tmpl, str(url_or_bvid).strip()],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout,
+        from .ffmpeg_bin import path as _ff_path
+        ff = str(_ff_path() or "")
+    except Exception:
+        ff = ""
+    if ff:
+        args += ["--ffmpeg-location", ff]
+    args.append(str(url_or_bvid).strip())
+    try:
+        r = subprocess.run(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout,
                            creationflags=0x08000000 if os.name == "nt" else 0)   # 不许闪控制台窗
     except Exception as e:
         return None, "yt-dlp 跑挂了：%s" % (str(e)[:70] or type(e).__name__)
     if r.returncode != 0:
-        return None, "yt-dlp 下载失败（rc=%s；可能是需要登录/大会员，或视频已删）" % r.returncode
+        return None, ("yt-dlp 下载失败（rc=%s；可能是需要登录/大会员、视频已删，"
+                      "或这个平台 yt-dlp 抽不出来）" % r.returncode)
     best = None
     for fn in os.listdir(out_dir):
         p = os.path.join(out_dir, fn)
