@@ -40,6 +40,14 @@ _FRAME_MS = 33          # ≈30fps，与 ocean.py 同档（丙-4 工单钉死的
 # 取 0.35 而非 0（初始态）——0 时 alpha 系数 0.4 太淡，人眼在浅色玻璃上几乎看不见。
 _E_MIN = 0.35
 
+# 参考速度（px/s）：把 EMA 速度归一到 energy 的分母。取「人慢慢挪手」的量级——
+# web 的 gain 是相位增量不是强度比例（见 __init__ 注释），所以这里不能借 max_gain
+# 当分母（那样 667px/s 就饱和，慢手/快手看不出差别 = energy 形同虚设）。
+# 400px/s ≈ 手匀速小幅度移动；到 _V_REF 即满档，以下线性可分。
+_V_REF = 400.0
+# EMA 系数（对齐 web console_html.py:6596 `m*0.7 + v*0.3`）
+_EMA_KEEP = 0.7
+
 
 class WaveFX(QObject):
     """鼠标波纹驱动器 —— 组合进 Shell（Shell.paintEvent 调 `paint()`）。
@@ -64,6 +72,14 @@ class WaveFX(QObject):
         #   ⇒ 用**当前时刻**做初值，第一次移动的 dt 才是真实的帧间隔。
         self._last_move_t = time.monotonic()
         self._cfg = self._read_cfg()
+        # ⛔ 丙-10 P0-5 返工（team-lead 复核）：原实现把 `energy` 当强度归一，
+        #   分母取 `cap=max_gain=8` ⇒ 667 px/s × mouse_gain 0.02 = 13.3 > 8 ⇒
+        #   恒满档；人**慢慢挪手**（300~1000 px/s）也是满档 ⇒ energy 形同虚设。
+        #   根因：web 侧 `gain = min(max_gain, _mouseSpeed*mouse_gain)` 是**相位速度
+        #   增量**（喂给 phSpeed），不是 0..1 的强度比例（console_html.py:6626）。
+        #   对齐 web：速度先过 EMA 平滑（web `m*0.7 + v*0.3`），再用一个**人手可真
+        #   分辨的参考速度** `_V_REF`（慢挪 ~400px/s ⇒ 中等能量）做归一。
+        self._speed_ema = 0.0           # EMA 平滑速度（web _mouseSpeed 同款）
 
     # ------------------------------------------------------------ 配置
 
@@ -126,10 +142,12 @@ class WaveFX(QObject):
         dt = max(1e-3, now - self._last_move_t)
         self._last_move_t = now
         dist = math.hypot(gp.x() - self._pos.x(), gp.y() - self._pos.y())
-        speed = dist / dt                       # px/s
-        gain = float(self._cfg.get("mouse_gain", 0.03))
-        cap = float(self._cfg.get("max_gain", 8))
-        self._energy = min(1.0, max(_E_MIN, min(cap, speed * gain) / max(1e-6, cap)))
+        speed = dist / dt                       # px/s（瞬时）
+        # EMA 平滑（web `_mouseSpeed*0.7 + v*0.3`）：单帧抖动不该让强度跳变。
+        self._speed_ema = self._speed_ema * _EMA_KEEP + speed * (1.0 - _EMA_KEEP)
+        # 归一：以「人手能分辨的参考速度」为分母（不是 max_gain）——
+        # 慢挪(~200px/s)→约 0.5、匀速(~400px/s)→约 1.0，快手更快但封顶 1.0。
+        self._energy = min(1.0, max(_E_MIN, self._speed_ema / _V_REF))
         self._pos = QPointF(gp)
         self._t0 = now                          # 光标一动，重新投石（web 同款）
         self._shell.update()
@@ -181,9 +199,13 @@ class WaveFX(QObject):
             # 距离衰减（web falloff 语义）：越远越弱，模块外几乎无影响
             fade = max(0.0, 1.0 - (r / max(1.0, radius)) ** (falloff / 4.0))
             # 波前内部的频闪（web 基础波速语义）：sin 让环亮度起伏。
-            # ⛔ 丙-10 P0-5：原 `0.5 + 0.5*sin` 会**整帧压到 0**（sin=-1 时全暗）
-            #   ⇒ 环在暗相时肉眼当它「没画」。改为 0.6~1.0 区间起伏（永不为 0）。
-            shimmer = 0.6 + 0.4 * math.sin(time.monotonic() * base_speed + i * 1.7)
+            # ⛔ 丙-10 P0-5 返工（team-lead 复核 F5 逐帧实测）：
+            #   ① 原 `0.5 + 0.5*sin` 会**整帧压到 0**（sin=-1 时全暗）⇒ 环在暗相
+            #      时肉眼当它「没画」；
+            #   ② 改成 `0.6 + 0.4*sin` 后暗相 0.2 仍偏低 —— 实测暗相帧 alpha 只剩
+            #      9~19（浅色玻璃上≈不可见）。⇒ 下限抬到 0.78，起伏收在 0.78~1.0，
+            #      保留「波前流动」的观感，但不让任何一帧掉到人眼阈值下。
+            shimmer = 0.78 + 0.22 * math.sin(time.monotonic() * base_speed + i * 1.7)
             # 基础可见度：energy 只做**增强**（0.62→1.0 系数），不参与「有没有」
             # ——web 的波纹是常驻透镜，静止时也在（见 config.py 注释「控制台可调」）。
             vis = 0.62 + 0.38 * self._energy

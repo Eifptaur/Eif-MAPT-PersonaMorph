@@ -1475,8 +1475,13 @@ def t_c10() -> None:
        "self._last_move_t = time.monotonic()" in wsrc)
     ck("c10P5: 相位用绝对时间驱动（_t0 每次移动都重置会让环长不出来）",
        "phase0 = ((time.monotonic() * ring_speed))" in wsrc)
-    ck("c10P5: shimmer 永不为 0（原来 sin=-1 时整帧全暗=肉眼当没画）",
-       "0.6 + 0.4 * math.sin(" in wsrc)
+    ck("c10P5: shimmer 永不为 0（原来 sin=-1 时整帧全暗=肉眼当没画；返工后下限抬到 0.78，暗相帧 alpha 不再掉到人眼阈值下）",
+       "0.78 + 0.22 * math.sin(" in wsrc)
+    # 能量归一不再借 max_gain 当分母（那会让 667px/s 就饱和 ⇒ 慢手/快手无差别）
+    ck("c10P5: energy 归一用参考速度 _V_REF（不是 max_gain 当分母→不再恒满档）",
+       "_V_REF = 400.0" in wsrc and "self._speed_ema / _V_REF" in wsrc)
+    ck("c10P5: 速度过 EMA 平滑（对齐 web _mouseSpeed*0.7+v*0.3）",
+       "_EMA_KEEP = 0.7" in wsrc and "self._speed_ema * _EMA_KEEP" in wsrc)
     ck("c10P5: 环从 24px 起（不等 0，停下瞬间就有可见波前）",
        "r = 24.0 + ph * (radius - 24.0)" in wsrc)
     # 解耦硬判据看**代码**（剥掉 docstring）——docstring 里提 OceanWaves 是解释性说明，
