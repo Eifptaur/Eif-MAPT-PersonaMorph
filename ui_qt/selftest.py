@@ -1225,12 +1225,33 @@ def t_no_touch() -> None:
     ck("PySide6 没被塞进 offline/wheels（不进打包）", not has_pyside)
 
 
+# ---------------------------------------------------------------- 6. 自举收口：32 位判别（丙-8 补单）
+
+def t_bootstrap32() -> None:
+    """qt_bootstrap._selftest 全量收录（真跑，不 mock 网络）。
+
+    核心：32 位 Python 在任何 pip 动作之前被拒（PySide6 wheel 只有 win_amd64，
+    丙-8 兼容性审计第③项实锤）—— 判据 struct.calcsize("P")==4（指针字节数）。
+    """
+    root = HERE.parents[0]
+    sys.path.insert(0, str(root))
+    try:
+        import qt_bootstrap  # noqa: PLC0415
+
+        for name, ok, extra in qt_bootstrap._selftest():
+            ck(f"bootstrap: {name}", ok, extra[:90])
+    except Exception as e:  # noqa: BLE001
+        ck("bootstrap 自检可执行", False, f"{type(e).__name__}: {e}"[:110])
+    finally:
+        sys.path.remove(str(root))
+
+
 # ---------------------------------------------------------------- 主
 
 def main() -> int:
     for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
                t_visual, t_badges, t_status_chain, t_bot_controls, t_window_chrome, t_dpi_motion,
-               t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch):
+               t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch, t_bootstrap32):
         try:
             fn()
         except Exception as e:  # noqa: BLE001

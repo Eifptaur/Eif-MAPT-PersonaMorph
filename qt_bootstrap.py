@@ -217,6 +217,17 @@ def ensure_pyside6(log=None) -> tuple[bool, str]:
             except Exception:  # noqa: BLE001
                 pass
 
+    # 丙-8 收尾（team-lead 批复）：32 位判别放最前、任何 pip 动作之前 ——
+    # PySide6 官方 wheel 只有 win_amd64（丙-8 兼容性审计第③项实锤），
+    # 32 位 Python 上怎么装都是失败，不如一开始就讲人话，别让用户白等三镜像竞速。
+    import struct  # noqa: PLC0415
+
+    if struct.calcsize("P") == 4:   # 指针 4 字节 = 32 位进程（64 位是 8）
+        _log("error", "当前 Python 是 32 位，本产品不支持")
+        return (False,
+                "当前 Python 为 32 位，本产品仅支持 64 位 Windows"
+                "（界面组件没有 32 位安装包）。请换用 64 位 Python 后重新打开程序。")
+
     # 快路径：已装且版本对（钉子 2 的幂等分支，首启之后每次启动都走这里）
     if pyside6_installed():
         return True, "ok"
@@ -289,6 +300,23 @@ def _selftest() -> list[tuple[str, bool, str]]:
     # 1) 幂等：已装 ⇒ 不碰网络直接 True
     ok, why = ensure_pyside6()
     out.append(("已装环境 ensure_pyside6 幂等通过（不下载）", ok and why == "ok", why))
+
+    # 1b) 丙-8 收尾：32 位判别 —— wheel 只有 win_amd64（审计第③项），
+    #     32 位 Python 在任何 pip 动作之前就拒掉；64 位放行走正常流程
+    import struct  # noqa: PLC0415
+
+    _real_calcsize = struct.calcsize
+    try:
+        struct.calcsize = lambda _fmt: 4   # mock：32 位进程
+        ok32, why32 = ensure_pyside6()
+        out.append(("32 位 Python 入口即拒（不碰 pip/镜像，讲人话）",
+                    ok32 is False and "32 位" in why32 and "64 位" in why32, why32))
+        struct.calcsize = lambda _fmt: 8   # mock：64 位进程
+        ok64, why64 = ensure_pyside6()
+        out.append(("64 位 Python 正常放行（不触发 32 位拒绝分支）",
+                    ok64 is True and why64 == "ok", why64))
+    finally:
+        struct.calcsize = _real_calcsize
 
     # 2) 钉子 2：版本口径 —— pin 与 metadata 一致才放行
     try:
