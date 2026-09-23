@@ -5037,15 +5037,34 @@ class WeChatAdapter:
                     #      **真实档**（`wechat.py:3073` 的 `gui.send_msg(who=名字)`），真实档由
                     #      `input.allow_real_fallback` 统一把关（默认关＝按最高目标不抢鼠标，
                     #      只有那时才真的不发，并如实返回原因）。
-                    _ok_strong, _why_strong = self.chat_is_open(chat_id, gui=gui)
-                    if not _ok_strong:
-                        return False, "【可重试】会话头不匹配，拒绝投递（防发错会话）：%s" % _st["note"]
-                    log.warning("会话头指纹判 mismatch（%s），但**强档证据成立** ⇒ 放行并重学参照：%s",
-                                str(_st["note"])[:70], str(_why_strong)[:130])
-                    try:
-                        log.info("重学参照（旧参照已不可信）：%s", self._learn_chat_header(chat_id, gui=gui))
-                    except Exception as _e:
-                        log.debug("重学参照失败（不影响本次放行）：%s", _e)
+                    #   丙-9 C1（调研 S5 去冗余）：mismatch 时**先问 G9 内容级复核**
+                    #   （`chat_identity_ok`：内容指纹×DB＋排他性/时间档互证都在它内部，区分力最强）——
+                    #   给出 True 就**直接放行终局**，不再回头问 G10 名字档/时间档做强档互证
+                    #   （省一整轮 OCR 预算，也消除"低置信证据被两闸重复消费"）；
+                    #   False/None 才落到下面的 G10 强档链（原退回链一条不少，fail-closed 口径不动）。
+                    _idn9, _idwhy9 = self.chat_identity_ok(chat_id, gui=gui)
+                    if _idn9 is True:
+                        log.info("会话头指纹判 mismatch（%s），但**内容级复核确认是目标会话** ⇒ 直接放行"
+                                 "（丙-9 C1 短路，不再问强档互证）：%s", str(_st["note"])[:70], str(_idwhy9)[:130])
+                        try:
+                            log.info("重学参照（旧参照已不可信）：%s", self._learn_chat_header(chat_id, gui=gui))
+                        except Exception as _e:
+                            log.debug("重学参照失败（不影响本次放行）：%s", _e)
+                    else:
+                        _ok_strong, _why_strong = self.chat_is_open(chat_id, gui=gui)
+                        if not _ok_strong:
+                            # 丙-9 C2：拒发理由以**强档结论**为准——指纹降为观测日志，不再单独构成拒发理由。
+                            log.warning("会话头指纹 mismatch（观测：%s）且强档证据也给不出（%s）⇒ 拒投递",
+                                        str(_st["note"])[:70], str(_why_strong)[:130])
+                            return False, ("【可重试】会话头指纹不匹配，且名字/标题带/活动行时间等强档证据"
+                                           "也给不出（%s）⇒ 拒绝投递（防发错会话：宁可漏发，绝不发错）"
+                                           % str(_why_strong)[:110])
+                        log.warning("会话头指纹判 mismatch（%s），但**强档证据成立** ⇒ 放行并重学参照：%s",
+                                    str(_st["note"])[:70], str(_why_strong)[:130])
+                        try:
+                            log.info("重学参照（旧参照已不可信）：%s", self._learn_chat_header(chat_id, gui=gui))
+                        except Exception as _e:
+                            log.debug("重学参照失败（不影响本次放行）：%s", _e)
                 if _st["status"] in ("no_ref", "no_capture") and not allow_no_ref:
                     # ⛔ 死锁修复（2026-09-16 对面 r23 现场）：老代码在这里**直接拒**，而参照只在
                     #    "发送成功之后"才学 ⇒ `no_ref` 一旦成立就永远拒、永远学不到 —— 最小化与
