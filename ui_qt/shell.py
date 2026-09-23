@@ -530,26 +530,58 @@ class Shell(QWidget):
         hit = self.childAt(gp)
         # ① 四边四角热区（比控件命中优先 —— 见上，内容铺满后
         #    「先放行控件」会让边缘永远 HTCLIENT）。
-        # ⛔ 丙-10 P0-4 真机实锤第 3 处（team-lead 独立扫描复现，6/8 命中）：
-        #   原例外是 `near_r and isinstance(hit, QAbstractSlider)` —— **整条右缘
-        #   无条件豁免**。但页面滚动条只有 6px 宽、且只覆盖内容区高度；顶栏段的
-        #   右缘、滚动条上下的右缘本该给 right/bottomright，全被这一条吞掉 ⇒
-        #   「拉右边界/右下角没反应」。⇒ 例外收窄为「光标真落在那个滚动条**自己
-        #   的几何范围**内」才放行（gp.x() 在 slider 的 x 区间 + 同属右缘一列）。
-        near_l, near_r = gp.x() <= m, gp.x() >= w - m
+        # ⛔ 丙-10 P0-4 真机实锤第 3 处（team-lead 亲验复现，6/8 命中）：
+        #   右缘此前被**整条无条件豁免**给滚动条 ⇒ right/bottomright 死区。
+        #   上一版收窄成 `_on_scrollbar()` 仍没修好——因为内容区的竖向滚动条
+        #   高 660px、**纵向覆盖整个内容区**（实测窗口坐标 x=[1094,1100)
+        #   y=[60,720)），而右缘热区只有 8px（x>=1092）⇒ 热区里除最内 2px 外
+        #   全被判成「压在滚动条上」⇒ 右缘中段整条死掉。
+        #   ⇒ 正确语义（对齐 Windows 原生）：**滚动条只让出它自己那 6px 本体**，
+        #     热区里落在它内侧的部分照常给 right；两个**缩放角**（topright /
+        #     bottomright）优先于滚动条例外（角点是缩放专用区，不该被滚动条抢）。
+        near_l = gp.x() <= m
         near_t, near_b = gp.y() <= m, gp.y() >= h - m
 
-        def _on_scrollbar() -> bool:
-            if not isinstance(hit, QAbstractSlider):
-                return False
-            try:
-                # slider 用父坐标；gp 是窗口坐标 ⇒ 换算后判包含
-                local = hit.mapFrom(self, gp)
-                return hit.rect().contains(local)
-            except Exception:  # noqa: BLE001
-                return False
+        def _sb_x_left() -> float | None:
+            """若右缘那一列压着**可见的竖向滚动条**，返回它在窗口坐标里的左边界 x；
+            否则 None（右缘没有滚动条挡路，整条热区都能缩放）。
 
-        if (near_l or near_r or near_t or near_b) and not (near_r and _on_scrollbar()):
+            ⛔ 不能用 `childAt(gp)` 判（丙-10 返工实锤）：热区里只有滚动条**本体**
+              那 6px 的 childAt 才是滚动条；热区更靠内的部分拿到的是内容 QFrame
+               ⇒ 用 childAt 判会漏掉「右缘被挡」这个事实，加宽逻辑永远不触发。
+               ⇒ 改成**几何反查**：直接遍历右缘那一列的可见竖向滚动条。
+            """
+            try:
+                from PySide6.QtWidgets import QScrollBar  # noqa: PLC0415
+
+                for sb in self.findChildren(QScrollBar):
+                    if not sb.isVisible() or sb.orientation() != Qt.Orientation.Vertical:
+                        continue
+                    tl = sb.mapTo(self, sb.rect().topLeft())
+                    x0 = tl.x()
+                    x1 = x0 + sb.width()
+                    y0 = tl.y()
+                    y1 = y0 + sb.height()
+                    # 该滚动条是否压在右缘热区内、且纵向覆盖当前光标
+                    if x1 > w - m and x0 < w and y0 <= gp.y() <= y1:
+                        return float(x0)
+            except Exception:  # noqa: BLE001
+                pass
+            return None
+
+        sb_left = _sb_x_left()
+        # 右缘热区：默认 w-m..w-1；若被滚动条挡住，向左加宽到「滚动条左侧仍有
+        # m 宽」。注意 near_r 必须**先**由加宽后的下界算出（不能先算 near_r 再
+        # 用它决定要不要查 sb_left —— 那样热区更靠内的点会因初始 near_r=False
+        # 而永远查不到滚动条，加宽逻辑永不触发，返工时踩过）。
+        right_edge = sb_left - m if sb_left is not None else w - m
+        near_r = gp.x() >= min(w - m, right_edge)
+        # 角点优先：上下两个右角落在滚动条纵向范围内时**不放行**（缩放优先）。
+        at_corner = (near_t or near_b) and near_r
+        # 中段：只有 gp.x() 真落在滚动条 6px 本体（x >= sb_left）才放行给滚动。
+        on_sb_body = (sb_left is not None) and (gp.x() >= sb_left) and not at_corner
+
+        if (near_l or near_r or near_t or near_b) and not on_sb_body:
             if near_t and near_l:
                 return "topleft"
             if near_t and near_r:

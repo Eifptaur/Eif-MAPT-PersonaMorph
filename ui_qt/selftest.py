@@ -1400,11 +1400,19 @@ def t_c10() -> None:
        "self._HT[r]" in _nat_code and "self._HT[r[0]]" not in _nat_code)
     ck("c10P4: _hit_test 明示返回 _HT 键名（调用方按键取值）",
        "返回 _HT 键名" in _body(ssrc, "_hit_test"))
-    # 右缘滚动条例外收窄：整条右缘豁免会让 right/bottomright 死区（team-lead 扫描 6/8）
+    # 右缘滚动条例外：整条右缘豁免会让 right/bottomright 死区（team-lead 扫描 6/8）
+    # 返工第二轮：滚动条纵向覆盖整个内容区（高 660），按 childAt 判仍把热区吞掉 ⇒
+    # 改为「滚动条只让出自己那 6px 本体 + 右缘热区向左加宽 + 角点优先」。
     ht = _body(ssrc, "_hit_test")
-    ck("c10P4: 右缘滚动条例外收窄为「光标落在滚动条自身几何内」（不再整条右缘豁免）",
-       "_on_scrollbar()" in ht and "def _on_scrollbar(" in ht
-       and "hit.rect().contains(local)" in ht)
+    ck("c10P4: 右缘用 _sb_x_left() 几何反查滚动条（不用 childAt —— 它只在滚动条本体那 6px 才返回滚动条）",
+       "def _sb_x_left(" in ht and "findChildren(QScrollBar)" in ht)
+    ck("c10P4: 右缘热区被滚动条挡住时向左加宽（保证仍有 m 宽可拉）",
+       "right_edge = sb_left - m if sb_left is not None else w - m" in ht
+       and "min(w - m, right_edge)" in ht)
+    ck("c10P4: 滚动条本体仍放行（on_sb_body；压在滚动条上要能滚）",
+       "on_sb_body = " in ht and "gp.x() >= sb_left" in ht)
+    ck("c10P4: 缩放角优先于滚动条例外（at_corner 参与 on_sb_body 判定）",
+       "at_corner = " in ht and "and not at_corner" in ht)
     ck("c10P4: 四角优先于四边（topleft/topright/bottomleft/bottomright 都在）",
        all(('"%s"' % k) in ht for k in
            ("topleft", "topright", "bottomleft", "bottomright", "left", "right", "top", "bottom")))
@@ -1422,6 +1430,60 @@ def t_c10() -> None:
        all(("def " + n + "(") in lsrc for n in ("_btn_group", "_status_chip", "_table_row")))
     ck("c10P2: 无 cfg 的 status/buttons 不进 binds（不被当输入框调 editingFinished）",
        "and r.cfg" in _body(lsrc, "_row"))
+
+    # 真跑 P0-4：直调 _hit_test 验「右缘中段能缩放」+「滚动条本体留滚动」两立
+    # （返工第二轮，team-lead 亲验 6/8 后重做；零注入，读生产对象几何）
+    def _c10p4_real() -> tuple:
+        import os as _os  # noqa: PLC0415
+
+        _os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6.QtCore import QPoint, Qt  # noqa: PLC0415
+        from PySide6.QtWidgets import QApplication, QScrollBar  # noqa: PLC0415
+
+        from shell import Shell  # noqa: PLC0415
+        from stylekit_qt import THEMES, ensure_fonts  # noqa: PLC0415
+
+        app = QApplication.instance() or QApplication([])
+        ensure_fonts()
+        sh = Shell(THEMES["light"])
+        sh.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        sh.resize(1100, 720)
+        sh.show()
+        app.processEvents()
+        W, H = sh.width(), sh.height()
+        res = {
+            "右下角": sh._hit_test(QPoint(W - 2, H - 2)),
+            # W-6 可能正压滚动条本体（体宽 6px，右缘贴边）⇒ 用刚好落在
+            # 「滚动条左侧加宽热区」内的点验 right
+            "右缘中段": sh._hit_test(QPoint(W - 10, H // 2)),
+            "左缘": sh._hit_test(QPoint(2, H // 2)),
+        }
+        # 滚动条本体的左边界（用它自己那 6px 判「本体仍放行」）
+        sb_l = None
+        for sb in sh.findChildren(QScrollBar):
+            if sb.isVisible() and sb.orientation() == Qt.Orientation.Vertical:
+                x0 = sb.mapTo(sh, sb.rect().topLeft()).x()
+                if x0 + sb.width() > W - 8:
+                    sb_l = x0
+        res["_sb_left"] = sb_l
+        res["滚动条本体"] = None if sb_l is None else sh._hit_test(QPoint(sb_l + 1, H // 2))
+        res["_sb_max"] = max([s.maximum() for s in sh.findChildren(QScrollBar)
+                              if s.isVisible()] or [0])
+        sh.close()
+        app.processEvents()
+        return res
+
+    _p4 = _c10p4_real()
+    ck("c10P4 真跑: 右下角 → bottomright（返工前是死区 None）",
+       _p4["右下角"] == "bottomright", str(_p4["右下角"]))
+    ck("c10P4 真跑: 右缘热区在中段 → right（返工前整条被滚动条吞成 None）",
+       _p4["右缘中段"] == "right", str(_p4["右缘中段"]))
+    ck("c10P4 真跑: 左缘 → left（未被右缘改动误伤）",
+       _p4["左缘"] == "left", str(_p4["左缘"]))
+    ck("c10P4 真跑: 滚动条本体仍放行 → None（压在滚动条上必须能滚）",
+       _p4["_sb_left"] is not None and _p4["滚动条本体"] is None
+       and _p4["_sb_max"] > 0,
+       f"sb_left={_p4['_sb_left']} body={_p4['滚动条本体']} max={_p4['_sb_max']}")
 
     # 真跑：三类 web 样本块 → 解析出正确 kind（不靠读源码）
     import sec_meta  # noqa: PLC0415
