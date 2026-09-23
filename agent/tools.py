@@ -633,14 +633,17 @@ def _exec_read_video(ctx, args):
 def _effective_response_tier(ctx):
     """当前生效的响应档位（含峰谷映射 / 每群独立档位 / 指令禁言），用于视频解析分档闸门。
 
-    复用 `prompt.resolve_context_tier` 的同一套判定（喂空触发集 ⇒ 只取配置档位，不做逐条触发判定），
-    取不到就按最高档(4)放行（fail-open，避免误拦正常解析）。
+    复用 `prompt.resolve_context_tier` 的同一套判定（喂空触发集 ⇒ 只取配置档位，不做逐条触发判定）。
+    **只有「取不到」（tier 为 None / 抛异常）才 fail-open 到最高档 4**；`tier==0` 是**合法的静默档**
+    （峰谷映射返回 0 = 该时段完全不回应），必须原样返回、绝不能抬成 4 —— 否则「夜间静默」会被绕过。
+    ⚠️ 不能用 `int(tier or 4)`：Python 里 0 是 falsy，会把静默档误抬成 4（丙-12 修）。
     """
     try:
         from .prompt import resolve_context_tier
         info = resolve_context_tier([], chat_key=str(ctx.get("chat_key") or ""),
                                     store=ctx.get("store"))
-        t = int(info.get("tier") or 4)
+        _t = info.get("tier")
+        t = 4 if _t is None else int(_t)
         return t if t >= 0 else 4
     except Exception:
         return 4

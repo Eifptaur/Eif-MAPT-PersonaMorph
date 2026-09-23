@@ -199,5 +199,45 @@ ok("J6 载入路径真的调了归一化（源码级：`load_config` 里有 `_co
 ok("J7 反例锚：老写法 `bool(\"false\")` **确实是 True**（这就是「反向打开」的来历）",
    bool("false") is True and C.as_bool("false") is False)
 
+# ── ⛔ 2026-09-24（丙-12 falsy-zero 回归）：`_effective_response_tier` 在 tier=0 必须返回 0 ──
+#    为什么：峰谷映射的**静默档 tier=0** 是合法档位；老写法 `int(info.get("tier") or 4)` 里
+#    `0 or 4` ⇒ 4（Python 数字 0 是 falsy）⇒ 「夜间静默」会被视频解析分档闸门**绕过**（按最高档放行）。
+#    这里钉住边界：0 原样返回、None 才 fail-open 到 4、异常也回 4。
+print("\n── K. 视频分档闸门：tier=0 不许被抬成 4（丙-12 falsy-zero）──")
+from agent import tools as _tools  # noqa: E402
+from agent import prompt as _prompt  # noqa: E402
+
+_real_rct = _prompt.resolve_context_tier
+
+
+def _stub_tier(val):
+    def _f(*_a, **_k):
+        if isinstance(val, Exception):
+            raise val
+        return {"tier": val}
+    return _f
+
+
+try:
+    _prompt.resolve_context_tier = _stub_tier(0)
+    ok("K1 tier=0（峰谷静默档）⇒ 返回 0，绝不是 4",
+       _tools._effective_response_tier({"chat_key": "g:x"}) == 0,
+       str(_tools._effective_response_tier({"chat_key": "g:x"})))
+    _prompt.resolve_context_tier = _stub_tier(None)
+    ok("K2 tier=None（取不到）⇒ fail-open 到 4",
+       _tools._effective_response_tier({"chat_key": "g:x"}) == 4)
+    _prompt.resolve_context_tier = _stub_tier(2)
+    ok("K3 tier=2 ⇒ 原样返回 2", _tools._effective_response_tier({"chat_key": "g:x"}) == 2)
+    _prompt.resolve_context_tier = _stub_tier(RuntimeError("boom"))
+    ok("K4 抛异常 ⇒ fail-open 到 4",
+       _tools._effective_response_tier({"chat_key": "g:x"}) == 4)
+    _prompt.resolve_context_tier = _stub_tier(0)
+    # 行为级：档位 0 时 read_bilibili 被闸门拦下（不解析）
+    _res = _tools._exec_read_bilibili({"chat_key": "g:x"}, {"url": "BV1nkYV6oEMZ"})
+    ok("K5 档位 0 时 read_bilibili 被分档闸门拦下（is_error=True、含门槛文案）",
+       bool(_res.get("is_error")) and "视频解析门槛" in str(_res.get("content") or ""))
+finally:
+    _prompt.resolve_context_tier = _real_rct
+
 print("\n%d/%d 通过" % (PASS, PASS + FAIL))
 sys.exit(1 if FAIL else 0)
