@@ -15,9 +15,13 @@
                              Widgets/Svg；完整版 633MB 里 Addons 234MB 用不上）；
   2. 钉版本 ==6.11.2      —— 与原型一致；已装 6.11.2 直接跳过（幂等），
                              版本不符才重装，绝不悄悄换版本；
-  3. 国内镜像             —— 默认清华源；失败自动轮换阿里/腾讯国内镜像
-                             （2026-09-23 本机实测清华对 cp310 wheel 返回 403，
-                             阿里成功 —— 轮换是「国内镜像」钉子的兜底，不是换源）；
+  3. 国内镜像 + 并行探测竞速  —— 借鉴 agent/update_check.py::fetch_any 的成熟机制
+                             （2026-09-23 工单·丙-4 第三步）：pip 一次只能指一个源 ⇒
+                             先并发 GET 各镜像 /simple/<包>/ 页（单源 ~2s 超时），选**最快通的**
+                             再 pip install；全败放慢（5s）整轮重试一次；403 视为该源失败
+                             立即换下一个，不当终态（清华对 cp310 wheel 返回 403 的教训，
+                             阿里成功）；全挂时逐源列「哪条、什么错」人话诊断；
+                             仍是全国内源，不碰裸 pypi；
   4. 失败讲人话           —— 返回人话原因，绝不裸 traceback、绝不弹系统窗；
                              调用方（persona_morph.py）拿去记日志，过渡期
                              继续用网页控制台。
@@ -57,8 +61,12 @@ MIRRORS = (
 # pythonw 下起子进程不闪黑窗（与 agent_bridge.console_process_alive 同款）
 _CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
-# 单镜像超时：约 100MB 下载，慢机器也要给足；三个镜像最坏 3×900s
+# 单镜像超时：约 100MB 下载，慢机器也要给足；最坏 = 探测选中的那 1 个 × 900s
 _PIP_TIMEOUT = 900
+
+# 探测（借鉴 update_check 两阶段等待）：普通窗口 2s ⇒ 全败放慢 5s 再整轮试一次
+_PROBE_TIMEOUT = 2.0
+_PROBE_PATIENT = 5.0
 
 
 def pyside6_installed(pin: str = PYSIDE_PIN) -> bool:
@@ -76,6 +84,82 @@ def pyside6_installed(pin: str = PYSIDE_PIN) -> bool:
         # 有模块没 metadata（手工拷贝等）⇒ 按版本不符处理，重装拿回钉子
         return False
     return ver == pin
+
+
+def _mirror_tag(mirror: str) -> str:
+    """镜像的人话短名（逐源诊断行用）：tuna→清华 / aliyun→阿里 / tencent→腾讯。"""
+    if "tuna" in mirror:
+        return "清华"
+    if "aliyun" in mirror:
+        return "阿里"
+    if "tencent" in mirror:
+        return "腾讯"
+    return mirror.split("//")[-1].split("/")[0]
+
+
+def _probe_url(mirror: str) -> str:
+    """探测地址 = 镜像的 PEP 503 simple 包页（证明「这个源真有这个包」，不只是索引活着）。"""
+    return mirror.rstrip("/") + "/" + PYSIDE_PKG.lower() + "/"
+
+
+def _probe_once(mirror: str, timeout: float) -> tuple[bool, float, str]:
+    """轻量 GET /simple/<包>/ 页。返回 (通?, 耗时s, 人话原因)。
+
+    403 = 源拒绝 —— 只是「该源没过」的依据，不当终态（钉子 3 教训：清华 403，阿里成）。
+    """
+    import time as _t
+    import urllib.error
+    import urllib.request
+
+    req = urllib.request.Request(
+        _probe_url(mirror),
+        headers={"User-Agent": "Mozilla/5.0 (qt-bootstrap-probe)"},
+    )
+    t0 = _t.perf_counter()
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            code = getattr(r, "status", 200)
+            elapsed = _t.perf_counter() - t0
+            if code == 200:
+                return True, elapsed, ""
+            return False, elapsed, f"HTTP {code}"
+    except urllib.error.HTTPError as e:
+        return False, _t.perf_counter() - t0, f"HTTP {e.code}（源拒绝）"
+    except Exception as e:  # noqa: BLE001
+        return False, _t.perf_counter() - t0, f"{type(e).__name__}"
+
+
+def _probe_mirrors(mirrors=MIRRORS, timeout: float = _PROBE_TIMEOUT):
+    """并行探测：每源一线程（update_check::fetch_any 同款），全部收齐 ——
+    并行 ⇒ 最坏 ≈ 单源超时；串行轮询是老做法的病根（逐个等满最坏 3×超时）。"""
+    import threading
+
+    got: dict[str, tuple[bool, float, str]] = {}
+    lock = threading.Lock()
+
+    def _one(m: str) -> None:
+        res = _probe_once(m, timeout)
+        with lock:
+            got[m] = res
+
+    ts = [threading.Thread(target=_one, args=(m,), daemon=True) for m in mirrors]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join(timeout + 2.0)
+    for m in mirrors:
+        got.setdefault(m, (False, timeout, "探测未归（超时）"))
+    return got
+
+
+def _pick_mirror(probe: dict) -> list[str]:
+    """探得通的按耗时升序排（最快通的最先装）；挂的不进装单（pip 对它必败，不再白等）。"""
+    return sorted((m for m, r in probe.items() if r[0]), key=lambda m: probe[m][1])
+
+
+def _diag_lines(pairs: list[tuple[str, str]]) -> str:
+    """逐源诊断行：「清华→HTTP 403（源拒绝）；阿里→超时」——用户粘出来一眼可排障。"""
+    return "；".join(f"{tag}→{(reason or 'ok')[:80]}" for tag, reason in pairs)
 
 
 def _pip_install(python_exe: str, mirror: str) -> tuple[bool, str]:
@@ -151,15 +235,35 @@ def ensure_pyside6(log=None) -> tuple[bool, str]:
     _log("info", ("版本不符，正在更新" if had_old else "首次启动，正在下载")
          + f"（约 100MB，{PYSIDE_PKG}=={PYSIDE_PIN}）")
 
+    # ── 并行探测竞速（借鉴 update_check::fetch_any：并行 ⇒ 最坏 ≈ 一个超时）──
+    # pip 一次只能指一个源 ⇒ 先并发探各镜像的 /simple/<包>/ 页，谁最快通指谁装。
+    probe = _probe_mirrors(MIRRORS, _PROBE_TIMEOUT)
+    if not any(r[0] for r in probe.values()):
+        # 全败 ⇒ 耐心一轮（慢网 RTT 大的现场：几轮 TLS 握手就把 2s 吃光）
+        _log("warning", "所有镜像第一遍都没探通，放慢再试一轮…")
+        probe = _probe_mirrors(MIRRORS, _PROBE_PATIENT)
+    usable = _pick_mirror(probe)
+    if not usable:
+        # 全挂：逐源列出哪条、什么错（BusyForm 口径的人话，用户粘出来一眼可排障）
+        diag = _diag_lines([(_mirror_tag(m), probe[m][2]) for m in MIRRORS])
+        _log("warning", "全部镜像都没探通：" + diag)
+        return False, _humanize_fail([]) + "逐源情况：" + diag + "。"
+
     tails: list[str] = []
-    for mirror in MIRRORS:
+    for mirror in usable:
         ok, tail = _pip_install(python_exe, mirror)
         if ok:
             break
         tails.append(tail)
         _log("warning", f"镜像没成，换下一个：{mirror}（{tail[:160]}）")
     else:
-        return False, _humanize_fail(tails)
+        # 装单上的镜像 pip 全败：诊断行取 pip 尾行（比探测原因更贴近真实死因）
+        diag = _diag_lines([
+            (_mirror_tag(m), (tails[i].strip().splitlines() or ["pip 失败"])[-1])
+            for i, m in enumerate(usable)
+        ])
+        _log("warning", "所有镜像 pip 都没成：" + diag)
+        return False, _humanize_fail(tails) + "逐源情况：" + diag + "。"
 
     # 装完复查：缓存失效 + 版本核对（不许「pip 说装好了」就完事）
     importlib.invalidate_caches()
@@ -217,6 +321,44 @@ def _selftest() -> list[tuple[str, bool, str]]:
                 MIRRORS[0].startswith("https://pypi.tuna") and
                 all(("tuna" in m) or ("aliyun" in m) or ("tencent" in m) or ("ustc" in m)
                     or ("bit." in m) for m in MIRRORS), ";".join(MIRRORS)))
+
+    # 6) 并行探测竞速：探得通的按耗时升序（最快通的最先装），挂的不进装单
+    fake_probe = {
+        MIRRORS[0]: (True, 0.9, ""),
+        MIRRORS[1]: (True, 0.2, ""),
+        MIRRORS[2]: (False, 2.0, "HTTP 403（源拒绝）"),
+    }
+    picked = _pick_mirror(fake_probe)
+    out.append(("探测竞速：最快通的最先装、403 源不进装单",
+                picked == [MIRRORS[1], MIRRORS[0]], str(picked)))
+
+    # 7) 403 = 该源失败（不当终态，不当成「包不存在」）
+    import unittest.mock as _m
+    import urllib.error as _ue
+    with _m.patch("urllib.request.urlopen",
+                  side_effect=_ue.HTTPError(_probe_url(MIRRORS[0]), 403, "Forbidden", None, None)):
+        pok, _pel, pwhy = _probe_once(MIRRORS[0], 2.0)
+    out.append(("探测把 403 判为该源失败并记原因", (not pok) and "403" in pwhy, pwhy))
+
+    # 8) 全部镜像挂 ⇒ 不碰 pip、耐心重试一轮、逐源诊断进人话文案
+    calls = {"probe_rounds": 0, "pip": 0}
+
+    def _fail_probe(mirrors=MIRRORS, timeout=_PROBE_TIMEOUT):
+        calls["probe_rounds"] += 1
+        return {m: (False, timeout, "ConnectionError") for m in mirrors}
+
+    with _m.patch.object(sys.modules[__name__], "pyside6_installed", lambda pin=PYSIDE_PIN: False), \
+         _m.patch.object(sys.modules[__name__], "_probe_mirrors", _fail_probe), \
+         _m.patch.object(sys.modules[__name__], "_pip_install",
+                         lambda *a, **k: calls.__setitem__("pip", calls["pip"] + 1) or (False, "")):
+        bad_ok, bad_why = ensure_pyside6()
+    out.append(("全部镜像挂：pip 一次没跑、耐心重试恰好一轮（共 2 轮探测）",
+                (not bad_ok) and calls["pip"] == 0 and calls["probe_rounds"] == 2,
+                f"pip={calls['pip']} rounds={calls['probe_rounds']}"))
+    out.append(("全部镜像挂：人话文案带逐源诊断（三条源都在、给的还是原话）",
+                "逐源情况" in bad_why and all(t in bad_why for t in ("清华", "阿里", "腾讯"))
+                and "ConnectionError" in bad_why and "网页控制台" in bad_why,
+                bad_why[-90:]))
     return out
 
 
