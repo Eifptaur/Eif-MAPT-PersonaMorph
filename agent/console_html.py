@@ -2175,6 +2175,8 @@ th{color:var(--tx2);font-weight:500}
       <div class="hint" style="margin-top:8px">引用规则：机器人上一条消息超过「对话冷却」秒（对话已冷场）时，以「引用概率」（默认 70%）自动引用对方最近的一句话，让"新开头"更像真人接话；模型显式指定引用时以模型为准。</div>
       <div class="row"><label>系统无障碍接口 直写输入</label><input type="checkbox" data-cfg="send.uia_setvalue" checked>
         <span class="hint">勾选=用 系统无障碍接口 SetValue 后台直写输入框（不点输入框/不粘贴）；不勾=点输入框+粘贴（兼容部分微信版本）</span></div>
+      <div class="row"><label>允许真鼠标兜底</label><input type="checkbox" data-cfg="input.allow_real_fallback">
+        <span class="hint">默认关：投递档确认不了目标会话时<b>宁可漏发、绝不发错</b>，全程不动你的鼠标。打开＝允许机器人<b>真实移动光标、点输入框、点发送</b>（会短暂占用你的鼠标）；只建议「投递档老失败、机器空闲可托管」的场景再开，会话识别正常时不需要它。</span></div>
       <div class="btns"><button class="pri" data-save>保存设置（发送限制）</button></div>
     </section>
 <section id="sec-log" class="card" data-sec>

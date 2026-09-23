@@ -251,7 +251,8 @@
   "backend": "auto",
   "press_ms": 60,
   "activate": true,
-  "allow_real_fallback": false
+  "allow_real_fallback": false,
+  "_note_allow_real_fallback": "真鼠标兜底（默认关）。关＝投递档确认不了目标会话时宁可漏发、绝不发错，全程不动你的鼠标；开＝允许机器人真实移动光标、点输入框、点发送（会短暂占用你的鼠标）。只建议「投递档老失败、机器空闲可托管」的场景再打开；白名单与会话识别正常时不需要它。web 控制台「发送限制」页也有同一个开关。"
  },
  "risk": {
   "enabled": true,
