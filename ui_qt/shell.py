@@ -363,6 +363,17 @@ class Shell(QWidget):
         self.theme_seg.changed.connect(self._switch_theme)
         lay.addWidget(self.theme_seg)
 
+        # 机器人控制（丙-5 #3）：重启/停止 —— web 侧顶栏同款动作，走原生确认弹窗。
+        # 路由是 /api/restart、/api/shutdown（POST），经 agent_bridge.post_api 发出，
+        # agent/ 一行不改。danger 红钮只给「停止」—— 它不可一键反悔。
+        self.btn_restart = Btn("重启", self.t, "ghost")
+        self.btn_restart.clicked.connect(self._bot_restart)
+        lay.addWidget(self.btn_restart)
+
+        self.btn_stop = Btn("停止", self.t, "danger")
+        self.btn_stop.clicked.connect(self._bot_stop)
+        lay.addWidget(self.btn_stop)
+
         return bar
 
     def _build_side(self) -> QWidget:
@@ -843,6 +854,100 @@ class Shell(QWidget):
                 can_self_heal=True,
             )
         )
+
+    # ------------------------------------------------------------ 机器人控制（丙-5 #3）
+
+    def _fire_api(self, api: str, done) -> None:
+        """后台线程发 POST，不冻结界面（网络调用可能拖到 5 秒超时）。
+
+        结果经 150ms 轮询交回主线程 —— 跨线程直接摸 Qt 控件是禁区。
+        `done(ok, note)` 一定在主线程被恰好调用一次。
+        """
+        import threading  # noqa: PLC0415
+
+        from agent_bridge import post_api  # noqa: PLC0415
+
+        box: dict = {"ok": None, "note": ""}
+
+        def _work() -> None:
+            box["ok"], box["note"] = post_api(api)
+
+        threading.Thread(target=_work, daemon=True, name="post-" + api).start()
+
+        def _poll() -> None:
+            if box["ok"] is None:
+                QTimer.singleShot(150, _poll)
+                return
+            done(box["ok"], box["note"])
+
+        QTimer.singleShot(150, _poll)
+
+    def _bot_restart(self) -> None:
+        """重启机器人 → POST /api/restart。
+
+        后端语义（webui.py）：0.5 秒后杀旧看门狗→拉新看门狗→2 秒后本进程强退，
+        由看门狗重新拉起全套。chip 先落「重启中」，探活循环几秒内会刷回真实状态。
+        """
+        d = ConfirmDialog(
+            self.t,
+            self,
+            "重启机器人？",
+            "后台进程会退出并重新拉起，几秒钟内消息不收发。",
+            [
+                "重启期间（通常几秒）新消息不收不发",
+                "重启完成后状态徽章会自己变回『后台在跑』",
+                "这个原生窗口不用关，会自动重连",
+            ],
+            confirm_label="重启",
+            cancel_label="算了",
+            dangerous=False,
+        )
+        d.exec()
+        if not d.result_ok:
+            return
+        self.st_top.set("info", "重启中")
+
+        def _done(ok: bool, note: str) -> None:
+            if ok:
+                return  # 探活循环接手：新进程起来后徽章自动回「后台在跑」
+            self.st_top.set("warn", "重启失败", note)
+
+        self._fire_api("/api/restart", _done)
+
+    def _bot_stop(self) -> None:
+        """停止机器人 → POST /api/shutdown（不可一键反悔 → typed_word 门槛）。
+
+        后端语义（webui.py）：响应一发出就写 stopped.flag + 杀看门狗 +
+        `os._exit(0)` —— **整个进程死**，这个原生窗口随之关闭。所以后果
+        必须写明白；响应多半读不完整，post_api 已按「送达」口径容忍。
+        """
+        d = ConfirmDialog(
+            self.t,
+            self,
+            "停止机器人？",
+            "整个后台进程会退出，这个原生窗口也会随之关闭。",
+            [
+                "机器人立刻停止收发消息",
+                "后台看门狗一并退出，进程整个结束",
+                "这个原生窗口会随之关闭",
+                "想再用要重新一键启动",
+            ],
+            confirm_label="停止",
+            cancel_label="算了",
+            dangerous=True,
+            typed_word="停止",
+        )
+        d.exec()
+        if not d.result_ok:
+            return
+        self.st_top.set("warn", "正在停止")
+
+        def _done(ok: bool, note: str) -> None:
+            if ok:
+                return  # 进程马上会死，不需要再刷任何界面
+            self.st_top.set("err", "停止失败", note)
+
+        self._fire_api("/api/shutdown", _done)
 
     def _confirm_reset(self) -> None:
         d = ConfirmDialog(

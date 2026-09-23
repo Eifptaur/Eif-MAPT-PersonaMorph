@@ -62,6 +62,60 @@ def current_url() -> str:
     return "http://127.0.0.1:%d/" % port
 
 
+def post_api(api: str, timeout: float = 5.0, base: str = "") -> tuple[bool, str]:
+    """POST 一个后台 API（顶栏「重启」「停止」用：/api/restart、/api/shutdown）。
+
+    地址走 current_url() 的权威口径（base 参数留给自测/复用注入），
+    拼接走 addr.join_url（丙-5 #0 的教训：
+    base 自带 ?token= 时手拼 `rstrip+"/"+path` 会把路径塞进 query → 401）。
+
+    返回 (ok, 说明)。**连接在响应读完前被切断也算送达** ——
+    /api/shutdown 的实现是响应一发出就写 stopped.flag + `os._exit(0)`，
+    客户端几乎必然读不到完整响应（web 侧 console_html.py 对同款行为
+    早有注释：「响应很可能还没读完连接就断」）。所以按异常类型细分：
+    远端主动断开（RemoteDisconnected 一族）= 请求已被后台处理，算成功；
+    拒绝连接 = 服务没在跑，算失败。任何路径都不抛异常 ——
+    按钮点了必须给个说法，不能无声无息。
+    """
+    from addr import join_url  # noqa: PLC0415
+
+    url = join_url(base or current_url(), api)
+    try:
+        import urllib.error  # noqa: PLC0415
+        import urllib.request as ur  # noqa: PLC0415
+
+        opener = ur.build_opener(ur.ProxyHandler({}))   # 必须绕代理（同 heal 口径）
+        req = ur.Request(
+            url,
+            data=b"",
+            method="POST",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        with opener.open(req, timeout=timeout) as r:
+            return True, "HTTP %d" % getattr(r, "status", 200)
+    except urllib.error.HTTPError as e:
+        # 4xx/5xx = 请求被拒/处理失败，动作没有执行 —— 一律不算送达
+        # （尤其 401：token 不对，restart/shutdown 根本没发生，别骗用户「已送达」）
+        return False, "HTTP %d（被拒绝）" % e.code
+    except Exception as e:  # noqa: BLE001
+        # urllib 会把多数网络错包进 URLError（.reason 是根因）；握手前的
+        # ConnectionResetError 等则直接抛。先拿两头的类型名再归类。
+        reason = getattr(e, "reason", e)
+        names = {type(e).__name__, type(reason).__name__}
+        if "ConnectionRefusedError" in names:
+            return False, "没连上（后台没在跑）"
+        # 远端处理完请求后主动断线：只有请求已到达并被处理才可能出现
+        if names & {"RemoteDisconnected", "IncompleteRead", "BadStatusLine",
+                    "ConnectionResetError", "BrokenPipeError"}:
+            return True, "已送达（后台退出切断了响应）"
+        if names & {"TimeoutError", "socket.timeout"}:
+            # 本机实测（Windows）：连未监听端口多半不是 refused，而是 SYN 被静默
+            # drop → 超时。restart/shutdown 的 POST 正常毫秒级返回，拖满超时
+            # 基本就是没人听 —— 对用户如实说「没连上」，别误报「后台在忙」。
+            return False, "没连上（后台没回应）"
+        return False, "%s: %s" % (type(e).__name__, str(reason)[:80])
+
+
 def console_process_alive() -> tuple[bool, str]:
     """本机有没有"群相"的 Python 进程在跑。
 

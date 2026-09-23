@@ -538,6 +538,134 @@ def t_status_chain() -> None:
        ppos != -1 and (qpos == -1 or ppos < qpos), j3)
 
 
+# ---------------------------------------------------------------- 4.7 顶栏机器人控制（丙-5 #3）
+
+def t_bot_controls() -> None:
+    """顶栏「重启」「停止」：走 agent_bridge.post_api（join_url 口径，agent/ 零改动）；
+    停止不可反悔 → 打字门槛 + 后果如实；「响应被急退切断也算送达」用真 socket 钉死。"""
+    import socket as _sock  # noqa: PLC0415
+    import threading  # noqa: PLC0415
+    from http.server import BaseHTTPRequestHandler, HTTPServer  # noqa: PLC0415
+
+    import agent_bridge  # noqa: PLC0415
+
+    ssrc = (HERE / "shell.py").read_text(encoding="utf-8")
+    bsrc = (HERE / "agent_bridge.py").read_text(encoding="utf-8")
+
+    def _method_src(src: str, name: str) -> str:
+        i = src.find(f"def {name}(")
+        if i < 0:
+            return ""
+        j = src.find("\n    def ", i + 1)
+        return src[i:j if j > 0 else len(src)]
+
+    # ① 走桥接助手，不手拼 URL；agent/ 一行不改
+    #    （顶栏按钮经 _fire_api 间接调 post_api —— 助手内部统一走 post_api(api)）
+    ck("顶栏重启走 _fire_api(/api/restart)→post_api", '_fire_api("/api/restart"' in ssrc)
+    ck("顶栏停止走 _fire_api(/api/shutdown)→post_api", '_fire_api("/api/shutdown"' in ssrc)
+    ck("_fire_api 统一走 post_api（不手拼 URL）", "post_api(api)" in ssrc)
+
+    # ② 确认弹窗纪律：两个动作都过 ConfirmDialog；停止是危险钮 + 打字门槛
+    rst = _method_src(ssrc, "_bot_restart")
+    pst = _method_src(ssrc, "_bot_stop")
+    ck("重启动作过 ConfirmDialog 且等 result_ok",
+       "ConfirmDialog(" in rst and "result_ok" in rst)
+    ck("停止动作过 ConfirmDialog 且等 result_ok",
+       "ConfirmDialog(" in pst and "result_ok" in pst)
+    ck("停止带打字门槛（不可一键反悔）", 'typed_word="停止"' in pst)
+    ck("重启不是危险确认（动作可逆）", "dangerous=False" in rst)
+    ck("停止是 danger 红钮", 'Btn("停止", self.t, "danger")' in ssrc)
+    ck("停止后果如实：原生窗口会随之关闭", "原生窗口会随之关闭" in pst)
+    ck("POST 不冻结界面（经 _fire_api 线程）", "_fire_api" in rst and "_fire_api" in pst)
+    ck("失败要有说法（重启/停止失败都落徽章）", "重启失败" in rst and "停止失败" in pst)
+
+    # ③ bridge 助手口径
+    ck("post_api 存在且绕代理（ProxyHandler 空）",
+       "def post_api(" in bsrc and "ProxyHandler({})" in bsrc)
+    ck("post_api 拼接走 join_url（丙-5 #0 口径）", "join_url(base or current_url(), api)" in bsrc)
+    ck("post_api 容忍急退断连（RemoteDisconnected 一族）", "RemoteDisconnected" in bsrc)
+
+    # ④ 真 socket A：正常 200 —— 且用带 token 的 base 验 path 落位（401 现场）
+    seen: dict = {}
+
+    class _H(BaseHTTPRequestHandler):
+        def do_POST(self):
+            seen["path"] = self.path
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", "2")
+            self.end_headers()
+            self.wfile.write(b"ok")
+
+        def log_message(self, *a):  # 静音
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), _H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        ok1, note1 = agent_bridge.post_api(
+            "/api/restart", base=f"http://127.0.0.1:{srv.server_address[1]}/?token=tk", timeout=3.0)
+        ck("真 socket: 正常 200 → 送达", ok1 and "200" in note1, note1)
+        ck("真 socket: 服务端收到 /api/restart?token=tk",
+           seen.get("path") == "/api/restart?token=tk", str(seen.get("path")))
+    finally:
+        srv.shutdown()
+
+    # ④b 真 socket：401 鉴权被拒 → 必须判失败（动作没执行，不许骗「已送达」）
+    class _H401(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.send_response(401)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, *a):  # 静音
+            pass
+
+    srv401 = HTTPServer(("127.0.0.1", 0), _H401)
+    threading.Thread(target=srv401.serve_forever, daemon=True).start()
+    try:
+        ok4, note4 = agent_bridge.post_api(
+            "/api/restart", base=f"http://127.0.0.1:{srv401.server_address[1]}/", timeout=3.0)
+        ck("真 socket: 401 被拒 → 判失败且带码", ok4 is False and "401" in note4, note4)
+    finally:
+        srv401.shutdown()
+
+    # ⑤ 真 socket B：模拟 shutdown 急退 —— 后端读完请求、一个字节不回就断开
+    #    （webui.py 的 shutdown_fn 是写完响应就 os._exit(0)，客户端几乎读不到完整响应）
+    lst = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+    lst.setsockopt(_sock.SOL_SOCKET, _sock.SO_REUSEADDR, 1)
+    lst.bind(("127.0.0.1", 0))
+    lst.listen(1)
+    got: list = []
+
+    def _cut() -> None:
+        try:
+            conn, _ = lst.accept()
+            data = conn.recv(65536)
+            got.append(bool(data) and data.startswith(b"POST /api/shutdown"))
+            conn.close()   # 不回一个字节 —— os._exit(0) 的形态
+        except Exception:
+            got.append(False)
+
+    threading.Thread(target=_cut, daemon=True).start()
+    try:
+        ok2, note2 = agent_bridge.post_api(
+            "/api/shutdown", base=f"http://127.0.0.1:{lst.getsockname()[1]}/", timeout=3.0)
+        ck("急退切断响应也算送达（ok=True）", ok2 is True, note2)
+        ck("切断现场确实收到了 POST /api/shutdown", bool(got) and got[0], str(got))
+    finally:
+        lst.close()
+
+    # ⑥ 拒绝连接 → 失败并给原因（bind 后立刻 close 的端口，理论上可能被抢，
+    #    但毫秒级窗口内概率可忽略；真失败也说明环境有异常，值得报出来）
+    dead = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+    dead.bind(("127.0.0.1", 0))
+    dport = dead.getsockname()[1]
+    dead.close()
+    ok3, note3 = agent_bridge.post_api("/api/restart", base=f"http://127.0.0.1:{dport}/", timeout=2.0)
+    ck("拒绝连接 → 判失败并说明『没连上』", ok3 is False and "没连上" in note3, note3)
+
+
 # ---------------------------------------------------------------- 5. 纪律：不碰产品代码
 
 def t_no_touch() -> None:
@@ -556,7 +684,7 @@ def t_no_touch() -> None:
 
 def main() -> int:
     for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
-               t_visual, t_status_chain, t_no_touch):
+               t_visual, t_status_chain, t_bot_controls, t_no_touch):
         try:
             fn()
         except Exception as e:  # noqa: BLE001
