@@ -41,8 +41,13 @@ import importlib
 import importlib.metadata
 import importlib.util
 import os
+import re
 import subprocess
 import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -67,6 +72,25 @@ _PIP_TIMEOUT = 900
 # 探测（借鉴 update_check 两阶段等待）：普通窗口 2s ⇒ 全败放慢 5s 再整轮试一次
 _PROBE_TIMEOUT = 2.0
 _PROBE_PATIENT = 5.0
+
+# ── 丙-11 F：分块并发下载（把单连接 1MB/s 拉到近带宽上限）──
+# 分块线程数（收益最大项按工单建议 4~8；默认 6，兼顾老机器与镜像限流）
+_CHUNK_WORKERS = 6
+# 单块的探测/下载超时：块不大（~几 MB），给 60s 足够；卡住就整体回退单连接
+_CHUNK_TIMEOUT = 60.0
+# 测速：拿 wheel 头几 MB 比吞吐（比"通不通"更能反映真实下载速度）
+_SPEED_SAMPLE_BYTES = 1 << 20        # 1 MiB 采样
+_SPEED_TIMEOUT = 6.0                 # 采样单源超时
+# 低于这个大小不值得分块（分块起线程的开销会盖过收益）——100MB 的 wheel 远超之
+_CHUNK_MIN_BYTES = 4 << 20           # 4 MiB
+# 自适应闸门（丙-11 F 实测结论）：**本机实测**单连接已达 34~37MB/s 时，分块并发因
+# 每段各做一次 TLS 握手反而更慢（实测 21MB/s）⇒ 只有**单连接确实慢**（< 此阈值）才分块。
+# 用户现场是 1MB/s，远低于阈值 ⇒ 会走分块；快机器不受影响（少一次并发开销）。
+_CHUNK_SLOW_MBPS = 8.0               # 单连接低于此 MB/s 才值得并发分块
+# 本地 wheel 下载目录名（装在 %TEMP% 下；断点续传靠它复用已下的 .part）
+_FETCH_DIR_NAME = "pm-pyside6-wheel"
+
+_UA = "Mozilla/5.0 (qt-bootstrap)"
 
 
 def pyside6_installed(pin: str = PYSIDE_PIN) -> bool:
@@ -162,14 +186,404 @@ def _diag_lines(pairs: list[tuple[str, str]]) -> str:
     return "；".join(f"{tag}→{(reason or 'ok')[:80]}" for tag, reason in pairs)
 
 
+# ─────────────────────────── 丙-11 F：下载提速 ───────────────────────────
+# 病根（工单 1.4 / F 根因）：pip 对 ~100MB 的大 wheel **单连接**下载、无分块无续传，
+# 用户实测 1MB/s。下面这套 = ① 测速选最快镜像 ② Range 分块并发下 wheel 到本地
+# ③ pip install --no-index 本地装 ④ 进度可见 ⑤ 断点续传；每步失败都**回退**既有
+# 单连接 pip 通路，绝不把"没下成"当"下成了"（fail-closed）。
+
+def _fast_download_enabled() -> bool:
+    """快通路开关（环境变量 `PM_FAST_DL`，默认开）。`0/false/no/off` ⇒ 关（回到老路）。
+
+    留开关的意义：万一某台机器的镜像对并发分块不友好，用户能用它一键退回老通路。
+    """
+    v = str(os.environ.get("PM_FAST_DL", "") or "").strip().lower()
+    return v not in ("0", "false", "no", "off")
+
+
+def _make_progress(_log, mirror: str):
+    """造一个限频的进度回调（每 ~10% 或每 2s 报一次，**不刷屏**）。返回 None 也给得起。"""
+    state = {"last_t": 0.0, "last_p": -1}
+
+    def _progress(done: int, total: int) -> None:
+        try:
+            pct = int(done * 100 / total) if total else 0
+        except Exception:  # noqa: BLE001
+            return
+        now = time.time()
+        if pct - state["last_p"] >= 10 or (now - state["last_t"] >= 2.0 and pct != state["last_p"]):
+            state["last_p"] = pct
+            state["last_t"] = now
+            mb = done / (1024.0 * 1024.0)
+            _log("info", f"下载进度 {pct}%（{mb:.0f}MB，来自{_mirror_tag(mirror)}）")
+
+    return _progress
+
+
+def _wheel_url(mirror: str, timeout: float = _SPEED_TIMEOUT) -> tuple[str, str]:
+    """从镜像的 PEP 503 `/simple/<包>/` 页里抠出**与钉版本匹配的 wheel 绝对 URL**。
+
+    返回 `(url, 原因)`；拿不到 url 时 `url == ""`，原因是人话（供回退诊断）。
+    只认 win_amd64 cp310/cp3x wheel —— 与钉子 2（钉版本）一致。
+    """
+    url = _probe_url(mirror)                    # <mirror>/pyside6-essentials/
+    # 包名里可能出现 - 或 _（PEP 503 归一化）⇒ 用 [_-] 类；**先 escape 再拼类**
+    # （踩坑：re.escape("[-_]") 会把 [] 转义成字面量 ⇒ 类失效，永远匹配不到）
+    m = re.escape(PYSIDE_PKG.split("-")[0].lower()) + r"[-_]" + \
+        re.escape(PYSIDE_PKG.split("-", 1)[1].lower() if "-" in PYSIDE_PKG else "")
+    pat = re.compile(r'href\s*=\s*["\']([^"\']+\.whl)(?:#[^"\']*)?["\']', re.I)
+    tag_ver = re.escape(PYSIDE_PIN)
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": _UA})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            html = r.read().decode("utf-8", "replace")
+    except Exception as e:  # noqa: BLE001
+        return "", f"{type(e).__name__}"
+    cands = []
+    for href in pat.findall(html):
+        low = href.lower()
+        if not re.search(r"%s[_-]%s" % (m, tag_ver), low):
+            continue
+        if "win_amd64" not in low:
+            continue
+        cands.append(href)
+    if not cands:
+        return "", "该源没给出匹配的 win_amd64 wheel"
+    # 相对路径补全成绝对（有的镜像 simple 页给的是相对 href）
+    from urllib.parse import urljoin
+    return urljoin(url, cands[0]), ""
+
+
+def _speed_of_mirror(mirror: str, timeout: float = _SPEED_TIMEOUT) -> tuple[bool, float, str, str]:
+    """测一个镜像的**真实下载吞吐**：对 wheel 做 ranged GET 取 _SPEED_SAMPLE_BYTES。
+
+    返回 `(通?, 每秒字节, wheel_url, 原因)`。比 `/simple/` 页探活更贴近"正式下会多快"。
+    """
+    wu, why = _wheel_url(mirror, timeout)
+    if not wu:
+        return False, 0.0, "", why
+    req = urllib.request.Request(
+        wu, headers={"User-Agent": _UA, "Range": "bytes=0-%d" % (_SPEED_SAMPLE_BYTES - 1)})
+    t0 = time.perf_counter()
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            data = r.read(_SPEED_SAMPLE_BYTES)
+    except Exception as e:  # noqa: BLE001
+        return False, 0.0, wu, f"{type(e).__name__}"
+    el = max(time.perf_counter() - t0, 1e-3)
+    n = len(data or b"")
+    if n <= 0:
+        return False, 0.0, wu, "采样为空"
+    return True, n / el, wu, ""
+
+
+def _speed_mirrors(mirrors=MIRRORS, timeout: float = _SPEED_TIMEOUT) -> dict:
+    """**并行**测各镜像吞吐（同 _probe_mirrors 的线程模型）。返回 {mirror: (通, bps, url, why)}。"""
+    import threading
+
+    got: dict[str, tuple[bool, float, str, str]] = {}
+    lock = threading.Lock()
+
+    def _one(m: str) -> None:
+        res = _speed_of_mirror(m, timeout)
+        with lock:
+            got[m] = res
+
+    ts = [threading.Thread(target=_one, args=(m,), daemon=True) for m in mirrors]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join(timeout + 4.0)
+    for m in mirrors:
+        got.setdefault(m, (False, 0.0, "", "测速未归（超时）"))
+    return got
+
+
+def _pick_fastest(speed: dict, fallback: list[str]) -> list[str]:
+    """按测得的吞吐**降序**排可用镜像（最快的先试）；测不到吞吐的沿用探活顺序垫后。
+
+    `fallback` = 探活挑出的装单（_pick_mirror 结果）。这样即使测速全挂，也不至于
+    把原本探得通的源丢掉 —— 只是回到"按探活耗时"的老顺序。
+    """
+    usable = [m for m, r in speed.items() if r[0] and r[1] > 0]
+    usable.sort(key=lambda m: speed[m][1], reverse=True)
+    tail = [m for m in fallback if m not in usable]
+    return usable + tail
+
+
+def _http_get_range(url: str, start: int, end: int, timeout: float = _CHUNK_TIMEOUT,
+                    retries: int = 2) -> bytes:
+    """取 [start, end] 闭区间字节。**校验必须拿到整段**，否则抛异常（交给整体回退）。"""
+    want = end - start + 1
+    last = None
+    for _ in range(max(1, retries + 1)):
+        req = urllib.request.Request(
+            url, headers={"User-Agent": _UA, "Range": "bytes=%d-%d" % (start, end)})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                data = r.read()
+            if data is not None and len(data) == want:
+                return data
+            last = "分块长度不符（要 %d 得 %d）" % (want, len(data or b""))
+        except Exception as e:  # noqa: BLE001
+            last = "%s" % type(e).__name__
+    raise RuntimeError(last or "分块下载失败")
+
+
+def _should_chunk(bps: float) -> bool:
+    """单连接实测吞吐是否**慢到值得并发分块**。拿不到吞吐（<=0）时保守返回 False（走单连接）。"""
+    try:
+        mbps = float(bps) / (1024.0 * 1024.0)
+    except (TypeError, ValueError):
+        return False
+    return mbps > 0 and mbps < _CHUNK_SLOW_MBPS
+
+
+def _wheel_total_size(url: str, timeout: float = _SPEED_TIMEOUT) -> tuple[int, bool]:
+    """HEAD 探 wheel 总大小与**是否支持 Range**。返回 `(总字节, 支持Range?)`。
+
+    支持 Range 的判据（两个都要）：`Accept-Ranges: bytes` 或对 ranged GET 回 206；
+    总大小来自 `Content-Length`（HEAD 拿不到就 ranged GET 的 `Content-Range`）。
+    拿不到总大小时返回 `(0, False)` —— 上层据此回退单连接。
+    """
+    total, accept = 0, False
+    try:
+        req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": _UA})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            cl = r.headers.get("Content-Length")
+            total = int(cl) if (cl or "").isdigit() else 0
+            ar = str(r.headers.get("Accept-Ranges") or "").lower()
+            accept = "bytes" in ar
+    except Exception:  # noqa: BLE001
+        pass
+    if total <= 0:
+        # HEAD 不通/无 CL ⇒ 用一次 ranged GET 的 Content-Range 兜底探总长与 206 支持
+        try:
+            req = urllib.request.Request(
+                url, headers={"User-Agent": _UA, "Range": "bytes=0-0"})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                code = getattr(r, "status", 200)
+                cr = str(r.headers.get("Content-Range") or "")
+                m = re.search(r"/(\d+)\s*$", cr)
+                if m:
+                    total = int(m.group(1))
+                if code == 206 or "bytes" in str(r.headers.get("Accept-Ranges") or "").lower():
+                    accept = True
+        except Exception:  # noqa: BLE001
+            pass
+    if total <= 0:
+        return 0, False
+    return total, accept
+
+
+def _fetch_wheel_chunked(url: str, dest: str, total: int, workers: int = _CHUNK_WORKERS,
+                         progress=None) -> tuple[bool, str]:
+    """Range 分块并发下 wheel 到 `dest`（断点续传：dest 已存在则读其长度续下）。
+
+    返回 `(成功?, 原因)`。**失败即返回 False**，由上层回退单连接 pip —— 这里不吞错、
+    不写半截文件冒充成品（unlink 半截文件后返回 False）。
+    """
+    import threading
+
+    part = dest + ".part"
+    have = 0
+    if os.path.exists(part):
+        have = os.path.getsize(part)      # 断点：上次下到哪
+        if have >= total:
+            have = 0                      # 已有 part 至少和 total 一样大 ⇒ 不可信，重下
+            try:
+                os.remove(part)
+            except OSError:
+                pass
+    if have == 0 and os.path.exists(part):
+        try:
+            os.remove(part)
+        except OSError:
+            pass
+
+    # 断点续传要能**按偏移改写**已下的 .part ⇒ 必须 r+b（"ab" 会忽略 seek、永远追加到末尾，
+    # 踩坑：续传后长度对但内容错位）。首次下载用 wb 建文件。
+    if have and os.path.exists(part):
+        fh = open(part, "r+b")
+    else:
+        fh = open(part, "wb")
+    lock = threading.Lock()
+    done = {"n": have}
+    errs: list = []
+
+    def _seg(s: int, e: int) -> None:
+        try:
+            data = _http_get_range(url, s, e)
+        except Exception as ex:  # noqa: BLE001
+            with lock:
+                errs.append(str(ex))
+            return
+        with lock:
+            fh.seek(s)
+            fh.write(data)
+            done["n"] += len(data)
+            if progress is not None:
+                try:
+                    progress(done["n"], total)
+                except Exception:  # noqa: BLE001
+                    pass
+
+    try:
+        # 分块：从 have 之后开始切（已下的段不再重下 ⇒ 断点续传）
+        span = total - have
+        n = max(1, min(int(workers or 1), (span + (1 << 20) - 1) // (1 << 20) or 1))
+        step = (span + n - 1) // n
+        segs = []
+        s = have
+        while s < total:
+            e = min(s + step - 1, total - 1)
+            segs.append((s, e))
+            s = e + 1
+        ts = [threading.Thread(target=_seg, args=(a, b), daemon=True) for a, b in segs]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join(_CHUNK_TIMEOUT + 10.0)
+    finally:
+        try:
+            fh.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    if errs:
+        # 半截 part 留着重试（断点续传）；本次如实返回失败
+        return False, "分块下载失败：" + errs[0][:80]
+    try:
+        size = os.path.getsize(part)
+    except OSError:
+        size = -1
+    if size != total:
+        return False, "分块下载不完整（%d/%d）" % (size, total)
+    try:
+        if os.path.exists(dest):
+            os.remove(dest)
+        os.replace(part, dest)
+    except OSError as e:
+        return False, "落盘失败：%s" % type(e).__name__
+    return True, ""
+
+
+def _fetch_wheel(mirror: str, cache_dir: str, progress=None, bps: float = 0.0) -> tuple[str, str, str]:
+    """把钉版本的 wheel 下到 cache_dir。返回 `(本地whl路径, 说明, 下载方式)`。
+
+    下载方式 ∈ {"chunked", "single"}；失败时路径为 ""。
+    **自适应**（丙-11 F 实测）：先探总长 + Range 支持；只有当单连接实测吞吐
+    `bps` 慢到 `_should_chunk()` 判定"值得并发"时，才走 Range 分块并发；
+    否则走单连接（快机器上并发反而更慢）。分块失败一律回退单连接。
+    """
+    wu, why = _wheel_url(mirror)
+    if not wu:
+        return "", why, ""
+    total, accept = _wheel_total_size(wu)
+    if total <= 0:
+        return "", "拿不到 wheel 大小", ""
+    fname = wu.rsplit("/", 1)[-1].split("?")[0] or (PYSIDE_PKG + ".whl")
+    dest = os.path.join(cache_dir, fname)
+    if os.path.exists(dest) and os.path.getsize(dest) == total:
+        return dest, "", "chunked"        # 已有完整本地文件 ⇒ 命中断点
+    os.makedirs(cache_dir, exist_ok=True)
+    why_chunk = ""
+    if accept and total >= _CHUNK_MIN_BYTES and _should_chunk(bps):
+        ok, why = _fetch_wheel_chunked(wu, dest, total, _CHUNK_WORKERS, progress)
+        if ok:
+            return dest, "", "chunked"
+        # 分块失败 ⇒ 不急着放弃：回退单连接（镜像可能限并发）
+        why_chunk = why
+    ok, why = _fetch_wheel_single(wu, dest, total, progress)
+    if ok:
+        return dest, "", "single"
+    return "", (why_chunk + "；" if why_chunk else "") + why, ""
+
+
+def _fetch_wheel_single(url: str, dest: str, total: int, progress=None) -> tuple[bool, str]:
+    """单连接流式下 wheel（**不经过 pip**，但只有一条连接）。支持断点续传（Range from part size）。"""
+    part = dest + ".part"
+    have = os.path.getsize(part) if os.path.exists(part) else 0
+    if have >= total:
+        have = 0
+    headers = {"User-Agent": _UA}
+    if have > 0:
+        headers["Range"] = "bytes=%d-" % have
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=_CHUNK_TIMEOUT) as r:
+            code = getattr(r, "status", 200)
+            if have > 0 and code != 206:
+                have = 0                  # 源不吃续传 ⇒ 从头来（截断已下的）
+            mode = "ab" if have else "wb"
+            n = have
+            with open(part, mode) as fh:
+                while True:
+                    buf = r.read(1 << 16)
+                    if not buf:
+                        break
+                    fh.write(buf)
+                    n += len(buf)
+                    if progress is not None:
+                        try:
+                            progress(n, total)
+                        except Exception:  # noqa: BLE001
+                            pass
+    except Exception as e:  # noqa: BLE001
+        return False, "单连接下载失败：%s" % type(e).__name__
+    try:
+        size = os.path.getsize(part)
+    except OSError:
+        size = -1
+    if size != total:
+        return False, "单连接下载不完整（%d/%d）" % (size, total)
+    try:
+        if os.path.exists(dest):
+            os.remove(dest)
+        os.replace(part, dest)
+    except OSError as e:
+        return False, "落盘失败：%s" % type(e).__name__
+    return True, ""
+
+
+def _pip_install_local(python_exe: str, wheel_path: str) -> tuple[bool, str]:
+    """对已下到本地的 wheel 跑 `pip install --no-index --find-links <dir>`（离线装）。
+
+    为什么本地装：把"下载"与"安装"解耦 —— 下载走我们自己的分块通路（快），
+    安装交给 pip（依赖解析/落盘/校验都成熟），不再让 pip 用单连接慢慢拉。
+    """
+    folder = os.path.dirname(os.path.abspath(wheel_path))
+    cmd = [
+        python_exe, "-m", "pip", "install",
+        "--no-index", "--find-links", folder,
+        f"{PYSIDE_PKG}=={PYSIDE_PIN}",
+        "--no-warn-script-location",
+        "--disable-pip-version-check",
+        "--retries", "2", "--timeout", "30",
+    ]
+    try:
+        r = subprocess.run(
+            cmd, capture_output=True, text=True,
+            timeout=_PIP_TIMEOUT, creationflags=_CREATE_NO_WINDOW,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"本地 pip 安装超时（>{_PIP_TIMEOUT}s）"
+    except Exception as e:  # noqa: BLE001
+        return False, f"{type(e).__name__}: {e}"
+    tail = ((r.stdout or "") + (r.stderr or "")).strip()[-400:]
+    return r.returncode == 0, tail
+
+
 def _pip_install(python_exe: str, mirror: str) -> tuple[bool, str]:
-    """对一个镜像跑一次 pip。返回 (成功?, 原始输出尾部——只进日志不进界面)。"""
+    """对一个镜像跑一次 pip（**兜底通路**：分块下载不可用/失败时用它）。返回 (成功?, 输出尾)。"""
     cmd = [
         python_exe, "-m", "pip", "install",
         f"{PYSIDE_PKG}=={PYSIDE_PIN}",       # 钉子 1+2：只装 Essentials、钉版本
         "-i", mirror,                        # 钉子 3：国内镜像
         "--no-warn-script-location",
         "--disable-pip-version-check",
+        # 丙-11 F3：弱网加固 —— 别卡死重下、别写缓存占盘
+        "--retries", "3", "--timeout", "30", "--no-cache-dir",
     ]
     try:
         r = subprocess.run(
@@ -259,6 +673,31 @@ def ensure_pyside6(log=None) -> tuple[bool, str]:
         diag = _diag_lines([(_mirror_tag(m), probe[m][2]) for m in MIRRORS])
         _log("warning", "全部镜像都没探通：" + diag)
         return False, _humanize_fail([]) + "逐源情况：" + diag + "。"
+
+    # ── 丙-11 F：快通路 —— 测速选最快源 → 自己分块并发下 wheel → 本地 pip 装 ──
+    # 不通则 **完整回退** 既有单连接 pip 通路（下面那段），绝不半途而废。
+    if _fast_download_enabled():
+        _log("info", "正在为各镜像测速（挑最快的源）…")
+        speed = _speed_mirrors(usable, _SPEED_TIMEOUT)
+        order = _pick_fastest(speed, usable)
+        cache_dir = os.path.join(tempfile.gettempdir(), _FETCH_DIR_NAME)
+        fast_ok = False
+        for mirror in order:
+            prog = _make_progress(_log, mirror)
+            # bps 来自测速采样：慢才分块（自适应，见 _fetch_wheel 注释）
+            _bps = float((speed.get(mirror) or (False, 0.0, "", ""))[1] or 0.0)
+            whl, why, how = _fetch_wheel(mirror, cache_dir, prog, _bps)
+            if not whl:
+                _log("warning", f"本地下载没成：{_mirror_tag(mirror)}→{why[:100]}")
+                continue
+            _log("info", f"已下到本地（{how}）：{os.path.basename(whl)}，开始安装…")
+            iok, itail = _pip_install_local(python_exe, whl)
+            if iok:
+                fast_ok = True
+                break
+            _log("warning", f"本地 wheel 安装没成：{_mirror_tag(mirror)}（{itail[:160]}）")
+        if not fast_ok:
+            _log("warning", "快通路没成，回到常规下载（单连接 pip）…")
 
     tails: list[str] = []
     for mirror in usable:
