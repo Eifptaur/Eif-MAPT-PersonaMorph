@@ -3084,6 +3084,24 @@ def main():
     except Exception as e:
         log.warning("Web 控制台启动失败：%s", e)
 
+    # ── Qt 原生控制台（丙-3 第一步落位，2026-09-23）────────────────────────
+    # 过渡期与网页控制台**并存**（网页一个字不动，随时可回退——工单第 2 节第 3 条）。
+    # 自举唯一通路：qt_bootstrap.ensure_pyside6（四钉子：Essentials==6.11.2 /
+    # 版本幂等 / 国内镜像 / 失败讲人话）。缺组件时装完才继续，装不上就记日志、
+    # 继续用网页控制台——Qt 壳自举失败不能拖死机器人本体。
+    # 界面跑在主进程内的子线程（ui_qt/app.py），探活走 addr.resolve → heal.probe
+    # 原型同款口径（绕代理、六态判别），端口只用于探活、界面不经端口。
+    try:
+        from qt_bootstrap import ensure_pyside6
+        _ok6, _why6 = ensure_pyside6(log=log)
+        if _ok6:
+            from ui_qt.app import start_qt_shell
+            start_qt_shell(log=log)
+        else:
+            log.warning("Qt 控制台自举未成功，本次继续用网页控制台：%s", _why6)
+    except Exception as e:
+        log.warning("Qt 控制台启动失败（不影响网页控制台）：%s", e)
+
     # 首步：把微信窗口移到固定位置+标准大小（几何恒定，坐标只按 DPI 换算；
     # 放在控制台之后——UIA 校准可能耗数十秒甚至卡住，不能拖累控制台）
     try:
