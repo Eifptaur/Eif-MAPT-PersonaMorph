@@ -405,6 +405,7 @@ class Shell(QWidget):
         super().showEvent(ev)
         self._ocean.set_active(False)   # 丙-8 I：波浪动效已砍，show 也不再转
         self._apply_round_corners()     # 丙-8 M：Win11 圆角 / Win10 方角回退
+        self._ensure_resize_style()     # 丙-13：注入 WS_THICKFRAME（能拖不能缩的真根因）
 
     def _apply_round_corners(self) -> None:
         """丙-8 M：Win11 走 DWM 圆角（DWMWA_WINDOW_CORNER_PREFERENCE = 33，ROUND = 2）。
@@ -422,6 +423,41 @@ class Shell(QWidget):
             ctypes.windll.dwmapi.DwmSetWindowAttribute(
                 ctypes.c_void_p(hwnd), 33, ctypes.byref(val), ctypes.sizeof(val))
         except Exception:  # noqa: BLE001 — Win10/非 Windows：方角即回退
+            pass
+
+    _resize_style_done = False
+
+    def _ensure_resize_style(self) -> None:
+        """丙-13（真机反馈「面板能拖动、不能缩放」）：给无边框窗注入 WS_THICKFRAME。
+
+        根因：FramelessWindowHint 在 Windows 上 = WS_POPUP —— **没有 THICKFRAME 的窗口，
+        Windows 会忽略一切 HT*(HTLEFT/HTRIGHT/HTBOTTOMRIGHT…) 缩放请求**；而 HTCAPTION
+        拖动不需要 THICKFRAME ⇒「能拖、不能缩」。丙-10 P0-4 把 `_hit_test`/`nativeEvent`
+        的 Python 层修对了（selftest 八方向全绿），但 Windows 样式层不放行照样缩不动 ——
+        同一个坑的第二次：**「Python 逻辑层全绿 ≠ Windows 层接受」**。
+        配方：showEvent 注入 WS_THICKFRAME + `nativeEvent` 吃掉 WM_NCCALCSIZE 的边框区
+        （视觉保持无边框）。幂等；非 Windows / 注入失败静默回退（不缩放也不崩）。
+        """
+        if Shell._resize_style_done:
+            return
+        try:
+            import ctypes  # noqa: PLC0415
+
+            hwnd = int(self.winId())
+            if not hwnd:
+                return
+            user32 = ctypes.windll.user32
+            GWL_STYLE = -16
+            WS_THICKFRAME = 0x00040000
+            _get = getattr(user32, "GetWindowLongPtrW", None) or user32.GetWindowLongW
+            _set = getattr(user32, "SetWindowLongPtrW", None) or user32.SetWindowLongW
+            style = int(_get(hwnd, GWL_STYLE))
+            if not style & WS_THICKFRAME:
+                _set(hwnd, GWL_STYLE, style | WS_THICKFRAME)
+                # FRAMECHANGED（0x0020）让样式立刻生效；NOMOVE|NOSIZE 不动几何
+                user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0020)
+            Shell._resize_style_done = True
+        except Exception:  # noqa: BLE001 — 非 Windows / 注入失败：保持现状（不缩放也不崩）
             pass
 
     def hideEvent(self, ev) -> None:  # noqa: N802
@@ -474,6 +510,26 @@ class Shell(QWidget):
                 from PySide6.QtGui import QCursor  # noqa: PLC0415
 
                 msg = wt.MSG.from_address(int(message))
+                if msg.message == 0x0083:            # WM_NCCALCSIZE —— 丙-13（见 _ensure_resize_style）
+                    if msg.wParam:                   # wParam=TRUE ⇒ 系统要画 non-client 边框区
+                        if self.isMaximized():
+                            # 最大化时系统按「有边框窗口」给一圈 padding，客户区会四周各溢出
+                            # 一个边框宽（盖任务栏/出屏）⇒ 把 lParam 指向的 RECT 内缩掉。
+                            try:
+                                import ctypes as _ct2  # noqa: PLC0415
+
+                                _u = _ct2.windll.user32
+                                _dx = (_u.GetSystemMetrics(32)       # SM_CXSIZEFRAME
+                                       + _u.GetSystemMetrics(92))    # SM_CXPADDEDBORDER
+                                _rc = wt.RECT.from_address(int(msg.lParam))
+                                _rc.left += _dx
+                                _rc.top += _dx
+                                _rc.right -= _dx
+                                _rc.bottom -= _dx
+                            except Exception:  # noqa: BLE001
+                                pass
+                        return True, 0               # 0 = 客户区=整个窗口（无边框视觉保住）
+                    return False, 0
                 if msg.message == 0x0084:            # WM_NCHITTEST
                     gp = self.mapFromGlobal(QCursor.pos())   # 全程 Qt 逻辑坐标，免 DPI 换算
                     r = self._hit_test(gp)

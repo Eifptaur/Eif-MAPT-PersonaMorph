@@ -1241,7 +1241,8 @@ def t_bootstrap32() -> None:
         for name, ok, extra in qt_bootstrap._selftest():
             ck(f"bootstrap: {name}", ok, extra[:90])
     except Exception as e:  # noqa: BLE001
-        ck("bootstrap 自检可执行", False, f"{type(e).__name__}: {e}"[:110])
+        ck("bootstrap 自检可执行", False,
+           "【本段未跑完，其后断言全部未执行】" + f"{type(e).__name__}: {e}"[:110])
     finally:
         sys.path.remove(str(root))
 
@@ -1254,7 +1255,15 @@ def t_ocr9() -> None:
     纪律：只真跑**纯函数**（错字映射、编辑距离、行匹配、PIL 合成图管线），
     绝不碰 `_rapid_engine()` / `_rapid_bootstrap()` —— 那会在 RapidOCR 缺席时
     触发真自举（pip 下载百 MB），自检不允许有网络副作用。
+
+    ⛔ ADV-5（静默吞断言）：依赖导入一律提到 try **外面**。PIL 写进 try 里时，
+    缺依赖会抛 ModuleNotFoundError 被 `except` 吞成一条 fail，**其后 15 条 `ck()`
+    整段不执行**（历史事故：托管解释器 423/1 vs 产品运行时 438/0，差额 15 全是
+    被吞的断言），结论行看起来「只是少一条」而实际是「一大段没跑」= 伪装通过。
+    提到外面 ⇒ 缺依赖**立刻硬失败**（tk 起不来、进程非 0 退出），不再伪装。
     """
+    from PIL import Image  # noqa: PLC0415  # ADV-5：必须在 try 之外，缺依赖要硬失败
+
     root = HERE.parents[0]
     sys.path.insert(0, str(root))
     try:
@@ -1297,7 +1306,6 @@ def t_ocr9() -> None:
             ck("ocr: 强档路径 %s 接入预处理管线" % fn, "preprocess_ink(" in body(fn))
         ck("ocr: pane_text 只换双引擎不叠管线", "recognize_dual(" in body("pane_text")
            and "preprocess_ink(" not in body("pane_text"))
-        from PIL import Image
 
         gimg = Image.new("RGB", (60, 20), (81, 167, 116))
         for _x in range(6, 14):
@@ -1349,7 +1357,8 @@ def t_ocr9() -> None:
         ck("ocr9D: config.py 默认值 false 未变",
            '"allow_real_fallback": False' in (root / "agent" / "config.py").read_text(encoding="utf-8"))
     except Exception as e:  # noqa: BLE001
-        ck("ocr9 自检可执行", False, f"{type(e).__name__}: {e}"[:110])
+        ck("ocr9 自检可执行", False,
+           "【本段未跑完，其后断言全部未执行】" + f"{type(e).__name__}: {e}"[:110])
     finally:
         sys.path.remove(str(root))
 
@@ -1620,11 +1629,41 @@ def t_c10() -> None:
        "def close_pop(" in usrc)
 
 
+def t_c13() -> None:
+    """丙-13（真机反馈「面板能拖动、不能缩放」）：窗口缩放的 **Windows 样式层**配方钉死。
+
+    根因与丙-10 P0-4 同型：_hit_test/nativeEvent 的 Python 层全对（selftest 八方向全绿），
+    但 FramelessWindowHint=WS_POPUP 没有 WS_THICKFRAME —— Windows 对没有 THICKFRAME 的
+    窗口**忽略一切 HT* 缩放请求**（HTCAPTION 拖动不需要它 ⇒ 「能拖、不能缩」）。
+    本组断言只钉「配方在源码里」；真机缩放手感仍需真人验证，不冒充。
+    """
+    ssrc = (HERE / "shell.py").read_text(encoding="utf-8")
+
+    def _body(src: str, name: str) -> str:
+        i = src.find(f"def {name}(")
+        j = src.find("\n    def ", i + 1)
+        return src[i:j if j > 0 else len(src)]
+
+    ck("c13: showEvent 注入 WS_THICKFRAME（Windows 忽略无 THICKFRAME 窗口的一切缩放请求）",
+       "_ensure_resize_style" in _body(ssrc, "showEvent")
+       and "WS_THICKFRAME" in _body(ssrc, "_ensure_resize_style")
+       and "0x00040000" in _body(ssrc, "_ensure_resize_style"))
+    ck("c13: 注入幂等（_resize_style_done）且用 FRAMECHANGED 立即生效",
+       "_resize_style_done" in ssrc and "SetWindowPos" in _body(ssrc, "_ensure_resize_style"))
+    nat = _body(ssrc, "nativeEvent")
+    _nat_code = "\n".join(ln for ln in nat.splitlines() if not ln.strip().startswith("#"))
+    ck("c13: nativeEvent 吃掉 WM_NCCALCSIZE 边框区（wParam=TRUE ⇒ return True,0 保无边框视觉）",
+       "0x0083" in _nat_code and "return True, 0" in _nat_code)
+    ck("c13: 最大化时内缩系统边框 padding（否则客户区四周溢出、盖任务栏）",
+       "isMaximized" in _nat_code and "GetSystemMetrics(32)" in _nat_code
+       and "GetSystemMetrics(92)" in _nat_code)
+
+
 def main() -> int:
     for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
                t_visual, t_badges, t_status_chain, t_bot_controls, t_window_chrome, t_dpi_motion,
                t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch, t_bootstrap32, t_ocr9,
-               t_c10):
+               t_c10, t_c13):
         try:
             fn()
         except Exception as e:  # noqa: BLE001
