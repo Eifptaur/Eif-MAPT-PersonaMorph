@@ -1248,10 +1248,116 @@ def t_bootstrap32() -> None:
 
 # ---------------------------------------------------------------- 主
 
+def t_ocr9() -> None:
+    """丙-9 A 批（agent/chat_ocr）：双引擎封装 / 时间戳容错 / 预处理管线。
+
+    纪律：只真跑**纯函数**（错字映射、编辑距离、行匹配、PIL 合成图管线），
+    绝不碰 `_rapid_engine()` / `_rapid_bootstrap()` —— 那会在 RapidOCR 缺席时
+    触发真自举（pip 下载百 MB），自检不允许有网络副作用。
+    """
+    root = HERE.parents[0]
+    sys.path.insert(0, str(root))
+    try:
+        import agent.chat_ocr as co  # noqa: PLC0415
+
+        src = (root / "agent" / "chat_ocr.py").read_text(encoding="utf-8")
+
+        def body(name: str) -> str:
+            m = re.search(r"def %s\b.*?(?=\ndef |\Z)" % re.escape(name), src, re.S)
+            return re.sub(r'""".*?"""', "", m.group(0), flags=re.S) if m else ""
+
+        # A1 双引擎封装（源码形态断言一律剔 docstring，防断言自咬）
+        ck("ocr: recognize_dual 封装存在", bool(body("recognize_dual")))
+        ck("ocr: _rapid_recognize 封装存在", bool(body("_rapid_recognize")))
+        ck("ocr: rapidocr_status 记账口存在", bool(body("rapidocr_status")))
+        d = body("recognize_dual")
+        m_win = re.search(r"(?<![A-Za-z_])recognize\(", d)
+        m_rap = d.find("_rapid_recognize(")
+        m_blk = d.find("if blocked():")
+        ck("ocr: 串联顺序 WinRT 先跑（recognize 先于 _rapid_recognize）",
+           bool(m_win) and 0 <= m_win.start() < m_rap, str((m_win.start() if m_win else -1, m_rap)))
+        ck("ocr: 熔断/预算用尽时第二引擎短路", 0 <= m_blk < m_rap and "return []" in d,
+           str((m_blk, m_rap)))
+        ck("ocr: 自举状态默认未尝试（自检不触发真自举）", co._rapid_state.get("tried") is False)
+
+        # A2 时间戳读数容错（纯函数真跑）
+        ck("ocr: 错字映射函数存在", bool(body("_fix_time_typo")) and "_TYPO_TRANS" in src)
+        ck("ocr: 编辑距离函数存在", bool(body("_edit_dist_le1")))
+        ck("ocr: 真跑 O9:4O 命中 want=9:40", co.row_time_match("O9:4O", "9:40"))
+        ck("ocr: 真跑 19:4O 命中 want=19:40", co.row_time_match("19:4O", "19:40"))
+        ck("ocr: 容错上限距离 1（距离 2 仍拒）", not co.row_time_match("xx 9:53 yy", "9:41"))
+        ck("ocr: 严格相等口径不回归", co.row_time_match("xx 19：41 yy", "19:41"))
+        ck("ocr: row_time_read 也是先修后提取", "_fix_time_typo(txt)" in body("row_time_read"))
+
+        # B 预处理管线（PIL 合成图真跑）
+        ck("ocr: preprocess_ink 管线存在", bool(body("preprocess_ink")))
+        ck("ocr: 二值图放大用最近邻采样", "Image.NEAREST" in body("preprocess_ink"))
+        ck("ocr: Otsu 阈值函数存在", bool(body("_otsu_thresh")))
+        for fn in ("header_text", "name_of_row", "_band_name", "row_time_read"):
+            ck("ocr: 强档路径 %s 接入预处理管线" % fn, "preprocess_ink(" in body(fn))
+        ck("ocr: pane_text 只换双引擎不叠管线", "recognize_dual(" in body("pane_text")
+           and "preprocess_ink(" not in body("pane_text"))
+        from PIL import Image
+
+        gimg = Image.new("RGB", (60, 20), (81, 167, 116))
+        for _x in range(6, 14):
+            for _y in range(6, 14):
+                gimg.putpixel((_x, _y), (255, 255, 255))
+        bw = co.preprocess_ink(gimg, zoom=2, invert=True)
+        ck("ocr: 管线真跑 2x 放大", bw.size == (120, 40), str(bw.size))
+        ck("ocr: 管线真跑输出纯黑白", set(c[1] for c in bw.convert("L").getcolors()) <= {0, 255})
+        ck("ocr: Otsu 阈值在合理区间", 40 <= co._otsu_thresh(gimg.convert("L")) <= 220)
+
+        # C 批：发送链去冗余（agent/wechat.py 丙-9 C1/C2，源码形态断言）
+        src_w = (root / "agent" / "wechat.py").read_text(encoding="utf-8")
+
+        def wbody(name: str) -> str:
+            m = re.search(r"def %s\b.*?(?=\n    def |\Z)" % re.escape(name), src_w, re.S)
+            return re.sub(r'""".*?"""', "", m.group(0), flags=re.S) if m else ""
+
+        sp = wbody("send_text_posted")
+        i_idn = sp.find("_idn9, _idwhy9 = self.chat_identity_ok")
+        i_else = sp.find("else:", i_idn) if i_idn >= 0 else -1
+        i_strong = sp.find("_ok_strong, _why_strong = self.chat_is_open")
+        ck("ocr9C: mismatch 分支先问 G9 内容级复核（chat_identity_ok 前置）", i_idn >= 0, str(i_idn))
+        ck("ocr9C: G9 True 直接放行（短路分支内不再调 chat_is_open）",
+           0 <= i_idn < i_else and "chat_is_open" not in sp[i_idn:i_else], str((i_idn, i_else)))
+        ck("ocr9C: G9 非 True 才落到 G10 强档链（原退回链保留）",
+           0 <= i_else < i_strong, str((i_else, i_strong)))
+        ck("ocr9C: G8 降日志——旧「指纹单独拒发」文案已死",
+           'return False, "【可重试】会话头不匹配' not in sp)
+        ck("ocr9C: 新拒发理由以强档结论为准（指纹仅观测）",
+           "强档证据" in sp and "也给不出" in sp and "指纹 mismatch（观测：" in sp)
+        ck("ocr9C: 底线——no_ref 四档链与 mismatch 强档放行原样保留",
+           "四档证据也都给不出" in sp and "强档证据成立" in sp)
+
+        # D2 批：真鼠标兜底——默认关未变 + 引导四件落位（丙-9 D2）
+        import json as _json
+
+        _cfgex = _json.loads((root / "config.example.json").read_text(encoding="utf-8"))
+        ck("ocr9D: config.example 真鼠标兜底默认 false 未变",
+           _cfgex.get("input", {}).get("allow_real_fallback") is False)
+        ck("ocr9D: 讲人话注释键已落位（≥40 字）",
+           len(str(_cfgex.get("input", {}).get("_note_allow_real_fallback", ""))) >= 40)
+        ck("ocr9D: web 控制台有真鼠标兜底开关（data-cfg 绑定）",
+           'data-cfg="input.allow_real_fallback"'
+           in (root / "agent" / "console_html.py").read_text(encoding="utf-8"))
+        ck("ocr9D: 新文案同步进 whale_text 字典",
+           "允许真鼠标兜底" in (root / "agent" / "whale_text.py").read_text(encoding="utf-8"))
+        _rd = (root / "使用说明.md").read_text(encoding="utf-8")
+        ck("ocr9D: 使用说明有「消息发不出去」自查小节", "消息发不出去" in _rd and "真鼠标兜底" in _rd)
+        ck("ocr9D: config.py 默认值 false 未变",
+           '"allow_real_fallback": False' in (root / "agent" / "config.py").read_text(encoding="utf-8"))
+    except Exception as e:  # noqa: BLE001
+        ck("ocr9 自检可执行", False, f"{type(e).__name__}: {e}"[:110])
+    finally:
+        sys.path.remove(str(root))
+
+
 def main() -> int:
     for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
                t_visual, t_badges, t_status_chain, t_bot_controls, t_window_chrome, t_dpi_motion,
-               t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch, t_bootstrap32):
+               t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch, t_bootstrap32, t_ocr9):
         try:
             fn()
         except Exception as e:  # noqa: BLE001
