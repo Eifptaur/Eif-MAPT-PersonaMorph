@@ -42,6 +42,7 @@ Qt 无 feTurbulence/feDisplacementMap，也无 backdrop-filter。采用：
 from __future__ import annotations
 
 import math
+import os
 import time
 
 import numpy as np
@@ -71,6 +72,11 @@ _DEFAULTS = {
 # 处理分辨率（相对设备像素的缩采比例）：实测 0.5x 稳过 30fps
 _PROC_SCALE = 0.5
 
+# ⛔ 丙-14 止血开关：真窗口的 lens effect 挂载默认禁用 —— 半成品 effect 曾把作者控制台
+#   打断成「卡死→拉起黑屏」（draw 每帧 TypeError → PySide6 段错误 0xC0000005，见 draw 注释）。
+#   PM_WAVE_LENS=1 为实验性显式开启（供波纹重做完成后的真机试验）。
+_LENS_MOUNT_OK = os.environ.get("PM_WAVE_LENS") == "1"
+
 
 class _WaveLensEffect(QGraphicsEffect):
     """挂在 Shell 根窗的取源-位移效果（丙-12 核心）。
@@ -83,7 +89,17 @@ class _WaveLensEffect(QGraphicsEffect):
         self._wf = wavefx
 
     def draw(self, painter):
-        src = self.sourcePixmap(QGraphicsEffect.PixmapPadMode.NoPad)
+        # ⛔ 丙-14 止血：原写法 `sourcePixmap(PixmapPadMode.NoPad)` 把 mode 当第一个参数
+        #   （正确签名：sourcePixmap(system, offset, mode)）⇒ **每帧 TypeError**。
+        #   该异常发生在 Qt C++ 层调 Python 覆写的边界上，累计触发 PySide6 段错误
+        #   （0xC0000005）—— 作者真机「卡死→自动拉起黑屏→再启动仍黑」即此所致
+        #   （effect 挂在 Shell 根窗上，draw 一炸整窗绘制全断）。
+        #   修：签名对齐 + fail-safe —— 取源失败就整帧放弃，绝不让波纹拖垮窗口绘制。
+        try:
+            src = self.sourcePixmap(Qt.CoordinateSystem.DeviceCoordinates,
+                                    None, QGraphicsEffect.PixmapPadMode.NoPad)
+        except Exception:  # noqa: BLE001
+            return
         if src.isNull():
             return
         # 整窗画回（UI 正常显示，作为未扭曲底图）
@@ -208,7 +224,11 @@ class WaveFX(QObject):
         self._enabled = bool(on)
         try:
             if self._enabled:
-                if self._shell.graphicsEffect() is not self._fx:
+                # ⛔ 丙-14 止血：effect 挂载默认禁用（_LENS_MOUNT_OK，见模块头注释）——
+                #   半成品 effect 挂在 Shell 根窗上曾致「卡死/黑屏」；波纹正式重做完成并
+                #   真机验收通过前不挂。timer 与参数链路照常，仅不再接管整窗绘制。
+                if (_LENS_MOUNT_OK
+                        and self._shell.graphicsEffect() is not self._fx):
                     self._shell.setGraphicsEffect(self._fx)
                 if not self._timer.isActive():
                     self._timer.start()

@@ -426,6 +426,7 @@ class Shell(QWidget):
             pass
 
     _resize_style_done = False
+    _thickframe_ok = False   # 丙-14：注入成功才处理 NCCALCSIZE；逃生门/失败时完全跳过
 
     def _ensure_resize_style(self) -> None:
         """丙-13（真机反馈「面板能拖动、不能缩放」）：给无边框窗注入 WS_THICKFRAME。
@@ -439,6 +440,12 @@ class Shell(QWidget):
         （视觉保持无边框）。幂等；非 Windows / 注入失败静默回退（不缩放也不崩）。
         """
         if Shell._resize_style_done:
+            return
+        if os.environ.get("QT_NO_THICKFRAME"):
+            # 丙-14 逃生门：QT_NO_THICKFRAME=1 ⇒ 完全跳过注入与 NCCALCSIZE 接管，
+            # 回到「能拖不能缩」的改前安全态。作者真机出现过「重新拉起后黑屏」，
+            # 该开关用于秒级自救与二分定位（黑屏是否与本配方相关）。
+            Shell._resize_style_done = True
             return
         try:
             import ctypes  # noqa: PLC0415
@@ -456,9 +463,10 @@ class Shell(QWidget):
                 _set(hwnd, GWL_STYLE, style | WS_THICKFRAME)
                 # FRAMECHANGED（0x0020）让样式立刻生效；NOMOVE|NOSIZE 不动几何
                 user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0020)
+            Shell._thickframe_ok = True
             Shell._resize_style_done = True
         except Exception:  # noqa: BLE001 — 非 Windows / 注入失败：保持现状（不缩放也不崩）
-            pass
+            Shell._resize_style_done = True
 
     def hideEvent(self, ev) -> None:  # noqa: N802
         super().hideEvent(ev)
@@ -510,7 +518,9 @@ class Shell(QWidget):
                 from PySide6.QtGui import QCursor  # noqa: PLC0415
 
                 msg = wt.MSG.from_address(int(message))
-                if msg.message == 0x0083:            # WM_NCCALCSIZE —— 丙-13（见 _ensure_resize_style）
+                if msg.message == 0x0083 and Shell._thickframe_ok:
+                    # WM_NCCALCSIZE —— 丙-13/丙-14：仅 THICKFRAME 注入成功后才接管；
+                    # 逃生门（QT_NO_THICKFRAME）或注入失败时完全放行 Qt 默认处理。
                     if msg.wParam:                   # wParam=TRUE ⇒ 系统要画 non-client 边框区
                         if self.isMaximized():
                             # 最大化时系统按「有边框窗口」给一圈 padding，客户区会四周各溢出

@@ -1657,6 +1657,9 @@ def t_c13() -> None:
     ck("c13: 最大化时内缩系统边框 padding（否则客户区四周溢出、盖任务栏）",
        "isMaximized" in _nat_code and "GetSystemMetrics(32)" in _nat_code
        and "GetSystemMetrics(92)" in _nat_code)
+    ck("c13: 逃生门 QT_NO_THICKFRAME（真机黑屏时秒级回退安全态）与 NCCALCSIZE 接管守卫",
+       "QT_NO_THICKFRAME" in _body(ssrc, "_ensure_resize_style")
+       and "Shell._thickframe_ok" in _nat_code)
 
 
 def main() -> int:
