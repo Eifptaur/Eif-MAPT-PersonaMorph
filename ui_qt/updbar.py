@@ -166,6 +166,16 @@ class UpdateBar(QFrame):
         self.pop.toggle_at(self, width=470, align="left")
         super().mousePressEvent(e)
 
+    def close_pop(self) -> None:
+        """⛔ 丙-10 P1（切界面闪小窗）：主题切换 `_rebuild` 会 deleteLater 掉旧胶囊，
+        而 Qt.Popup 面板是**独立顶层窗**——父销毁的同一帧里它还在屏幕上闪一下。
+        ⇒ Shell._rebuild 开头先挨个收回（本方法），再拆旧控件。"""
+        try:
+            if self.pop.isVisible():
+                self.pop.close()
+        except Exception:  # noqa: BLE001
+            pass
+
     # ------------------------------------------------------------ 样式
 
     def _style(self, warn: bool, visible: bool) -> None:

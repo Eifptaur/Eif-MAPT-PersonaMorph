@@ -24,6 +24,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 from pathlib import Path
@@ -409,16 +410,50 @@ class Shell(QWidget):
             try:
                 import ctypes.wintypes as wt  # noqa: PLC0415
 
-                from PySide6.QtCore import QCursor  # noqa: PLC0415
+                # ⛔ 丙-10 P0-4 真机实锤根因（_c10_real.py 真窗口跑出来）：
+                #   `QCursor` 属于 **QtGui**，不在 QtCore —— 原写法
+                #   `from PySide6.QtCore import QCursor` 每次都 ImportError，
+                #   被本函数外层 except 吞掉 → 直接 return False,0（HTCLIENT）
+                #   ⇒ **真机上 WM_NCHITTEST 永远走不到命中判定**，拖拽/缩放全失效。
+                #   丙-8 的 offscreen 单测直接调 _hit_test() 绕过了 nativeEvent，
+                #   所以「逻辑对、真机废」。修：正确模块 + 把导入提到 try 外，
+                #   避免它与命中判定共享的 except 互相掩盖。
+                from PySide6.QtGui import QCursor  # noqa: PLC0415
 
                 msg = wt.MSG.from_address(int(message))
                 if msg.message == 0x0084:            # WM_NCHITTEST
                     gp = self.mapFromGlobal(QCursor.pos())   # 全程 Qt 逻辑坐标，免 DPI 换算
                     r = self._hit_test(gp)
+                    # 丙-10 P0-4：真机诊断开关（QT_HITTEST_LOG=1 时逐次落日志）。
+                    # 丙-8 的 offscreen 单测证明了 _hit_test **逻辑**对，但真机复验仍失效
+                    # ⇒ 必须看清真机上到底有没有走到这里、etype/message 是什么。
+                    if os.environ.get("QT_HITTEST_LOG"):
+                        try:
+                            with open(Path(__file__).resolve().parents[1] / "logs" / "hittest.log", "a",
+                                      encoding="utf-8") as _f:
+                                _f.write("WM_NCHITTEST gp=(%d,%d) hit=%s -> %s\n"
+                                         % (gp.x(), gp.y(),
+                                            type(self.childAt(gp)).__name__, r))
+                        except Exception:  # noqa: BLE001
+                            pass
                     if r is None:                    # 放行：默认处理（HTCLIENT）
                         return False, 0
-                    return True, self._HT[r[0]]
+                    # ⛔ 丙-10 P0-4 真机实锤的第 2 个根因（同一次真机跑出来）：
+                    #   `_hit_test` 返回的是 **_HT 的键名字符串**（"top"/"left"…），
+                    #   原写法 `self._HT[r[0]]` 把它当成元组取首元素 ⇒ 得到 't' ⇒
+                    #   KeyError，被外层 except 吞掉 → return False,0（HTCLIENT）
+                    #   ⇒ 真机拖拽/缩放**永远失效**。正确写法是 `self._HT[r]`。
+                    return True, self._HT[r]
             except Exception:  # noqa: BLE001   命中测试失败绝不能拖垮窗口
+                if os.environ.get("QT_HITTEST_LOG"):
+                    try:
+                        import traceback  # noqa: PLC0415
+
+                        with open(Path(__file__).resolve().parents[1] / "logs" / "hittest.log", "a",
+                                  encoding="utf-8") as _f:
+                            _f.write("nativeEvent 异常（etype=%r）：\n%s\n" % (etype, traceback.format_exc()))
+                    except Exception:  # noqa: BLE001
+                        pass
                 return False, 0
         return super().nativeEvent(etype, message)
 
@@ -441,13 +476,27 @@ class Shell(QWidget):
         bar = getattr(self, "titlebar", None)
         hit = self.childAt(gp)
         # ① 四边四角热区（比控件命中优先 —— 见上，内容铺满后
-        #    「先放行控件」会让边缘永远 HTCLIENT）。例外：右缘的
-        #    页面滚动条（QAbstractSlider，宽 6px 恰在热区内）
-        #    放回 HTCLIENT —— 缩放热区不能吃掉滚动交互。
+        #    「先放行控件」会让边缘永远 HTCLIENT）。
+        # ⛔ 丙-10 P0-4 真机实锤第 3 处（team-lead 独立扫描复现，6/8 命中）：
+        #   原例外是 `near_r and isinstance(hit, QAbstractSlider)` —— **整条右缘
+        #   无条件豁免**。但页面滚动条只有 6px 宽、且只覆盖内容区高度；顶栏段的
+        #   右缘、滚动条上下的右缘本该给 right/bottomright，全被这一条吞掉 ⇒
+        #   「拉右边界/右下角没反应」。⇒ 例外收窄为「光标真落在那个滚动条**自己
+        #   的几何范围**内」才放行（gp.x() 在 slider 的 x 区间 + 同属右缘一列）。
         near_l, near_r = gp.x() <= m, gp.x() >= w - m
         near_t, near_b = gp.y() <= m, gp.y() >= h - m
-        if (near_l or near_r or near_t or near_b) and not (
-                near_r and isinstance(hit, QAbstractSlider)):
+
+        def _on_scrollbar() -> bool:
+            if not isinstance(hit, QAbstractSlider):
+                return False
+            try:
+                # slider 用父坐标；gp 是窗口坐标 ⇒ 换算后判包含
+                local = hit.mapFrom(self, gp)
+                return hit.rect().contains(local)
+            except Exception:  # noqa: BLE001
+                return False
+
+        if (near_l or near_r or near_t or near_b) and not (near_r and _on_scrollbar()):
             if near_t and near_l:
                 return "topleft"
             if near_t and near_r:
@@ -1085,6 +1134,37 @@ class Shell(QWidget):
                 seen.append(g)
         return seen
 
+    def _close_transient_popups(self) -> None:
+        """收回全部临时浮层（丙-10 P1：切主题时 Qt.Popup 独立顶层窗闪一下）。
+
+        浮层两类：
+          · 壳自己的 `self._look_pop`（外观选择）；
+          · 顶栏更新胶囊 UpdPill 内嵌的 `self.pop`（遍历对象名 UpdPill 找）。
+        只 close 不 delete —— 由随后的 `_rebuild` 统一随父销毁，这里仅保证
+        「销毁前屏幕上没有悬浮窗」。
+        """
+        cands: list = []
+        for attr in ("_look_pop",):
+            w = getattr(self, attr, None)
+            if w is not None:
+                cands.append(w)
+        try:
+            for pill in self.findChildren(QFrame, "UpdPill"):
+                p = getattr(pill, "pop", None)
+                if p is not None:
+                    cands.append(p)
+        except Exception:  # noqa: BLE001
+            pass
+        for w in cands:
+            try:
+                cp = getattr(w, "close_pop", None)
+                if callable(cp):
+                    cp()                      # UpdPill.pop 的自收起（带 try 守卫）
+                elif w.isVisible():
+                    w.close()
+            except Exception:  # noqa: BLE001
+                pass
+
     def _rebuild(self) -> None:
         """整窗重建（原型做法，够用且诚实）。
 
@@ -1093,6 +1173,11 @@ class Shell(QWidget):
            就多积几百个控件。这里补上第二层：布局里的子布局也逐 widget
            deleteLater（Qt 父删子递归，页栈整棵随之销毁）。
         """
+        # ⛔ 丙-10 P1（切界面闪小窗）：Qt.Popup 浮层（外观选择 / 更新胶囊）
+        #   是**独立顶层窗**，deleteLater 销毁父控件要等到下一轮事件循环才生效，
+        #   而顶层窗在这中间仍画在屏幕上 ⇒ 切主题时肉眼看到「闪一下小窗」。
+        #   ⇒ 拆旧控件之前先把所有可见浮层收回（父还在，close 稳）。
+        self._close_transient_popups()
         lay = self.layout()
         while lay.count():
             it = lay.takeAt(0)
@@ -1107,9 +1192,16 @@ class Shell(QWidget):
         # 注：顶层布局对象本身卸不掉（QWidget 没有公开的卸载 API，QObject setParent
         # 动不了 d->layout 指针）—— 所以 _build 改为「有布局就复用」，不再新建。
         self._build()
-        self._restyle()
-        # 主题换轴 ⇒ 画卷开关/光标底图都可能变：重判 backdrop + 全控件重刷鱼光标
+        # ⛔ 丙-10 P0-1（真机复验：鲸鱼→浅色后导航/顶栏仍深灰）：**顺序错了**——
+        #   `_restyle` 按 `self._backdrop_on` 选样式表（True 套写死的深蓝玻璃
+        #   `rgba(8,24,46,178)`/`rgba(12,34,62,219)`），而 `_backdrop_on` 只在
+        #   `_refresh_backdrop()` 里更新 ⇒ 原来「先 _restyle 再 _refresh_backdrop」时，
+        #   whale→light 这一趟 `_restyle` 读到的是 whale 时代的 True ⇒ 套完深色、标志位
+        #   才变 False，却没人再重刷样式 ⇒ 顶栏/侧栏永远深灰（dark→light 看不出，因为
+        #   dark 本来就深）。⇒ 把 `_refresh_backdrop()` 提到 `_restyle()` 之前。
         self._refresh_backdrop()
+        self._restyle()
+        # 主题换轴 ⇒ 光标底图也可能变：全控件重刷鱼光标
         self._cursor.reapply()
         # 重建后控件是新的：鲸语缓存清掉；若正处鲸语态，对新城控件重放
         self._orig_texts = {}
