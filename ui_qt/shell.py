@@ -188,6 +188,15 @@ class Shell(QWidget):
         # 视觉本体与鱼光标：建在 _restyle 之前（_restyle 要按 backdrop 分支）
         self._ocean = OceanWaves(self)
         self._cursor = WhaleCursor(Path(__file__).resolve().parents[1], parent=self)
+        # 丙-6 #12：中键滚轮模式（web PM_WHEEL 完整迁移）—— 注入 WhaleCursor，
+        # 事件委托见 cursor_fx.eventFilter；fallback = 当前页 QScrollArea（web scrollerAt 兜底）。
+        from pm_wheel import WheelMode  # noqa: PLC0415
+
+        self._cursor.wheel = WheelMode(
+            self._cursor, self.t,
+            fallback=lambda: self.stack.currentWidget() if self.stack is not None else None,
+            parent=self,
+        )
         self._load_wallpaper()
         self._refresh_backdrop()
         self._restyle()

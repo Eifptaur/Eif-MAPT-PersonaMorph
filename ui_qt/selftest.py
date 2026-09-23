@@ -758,6 +758,113 @@ def t_dpi_motion() -> None:
        'page.setGraphicsEffect(None)' in ssrc)
 
 
+# ---------------------------------------------------------------- 丙-6 #11+#12：点头定因 + 滚轮模式
+
+def t_wheel_nod() -> None:
+    """#11 NOD_MS 可感知性修复（320ms）+ PM_CURSOR_NOD_DEBUG 定因开关（1500ms）；
+    #12 PM_WHEEL 完整迁移：参数锁 web 真值、速度纯函数、中键直接进滚轮模式（不播转一圈）、
+    五条件退出、光标 spin_to/restore 相位分帧、徽标不画第二条鱼。"""
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QLabel, QWidget  # noqa: PLC0415
+
+    QApplication.instance() or QApplication([])
+
+    # ① #11 定因开关：默认 320（300-400 区间），debug=1 → 1500
+    import cursor_fx  # noqa: PLC0415
+
+    old = os.environ.get("PM_CURSOR_NOD_DEBUG")
+    try:
+        os.environ.pop("PM_CURSOR_NOD_DEBUG", None)
+        ck("nod 默认 320ms（可感知性修复，300-400 区间）", cursor_fx._nod_ms() == 320,
+           str(cursor_fx._nod_ms()))
+        os.environ["PM_CURSOR_NOD_DEBUG"] = "1"
+        ck("nod 定因开关 PM_CURSOR_NOD_DEBUG=1 → 1500ms", cursor_fx._nod_ms() == 1500,
+           str(cursor_fx._nod_ms()))
+        os.environ["PM_CURSOR_NOD_DEBUG"] = "0"
+        ck("nod 定因开关非 1 值不触发", cursor_fx._nod_ms() == 320)
+    finally:
+        if old is None:
+            os.environ.pop("PM_CURSOR_NOD_DEBUG", None)
+        else:
+            os.environ["PM_CURSOR_NOD_DEBUG"] = old
+
+    # ② #12 参数锁 + 速度纯函数（pm_wheel 模块自检 13 条）
+    import pm_wheel  # noqa: PLC0415
+
+    for name, ok, extra in pm_wheel._selftest():
+        ck("wheel · " + name, ok, extra)
+
+    # ③ cursor_fx 委托（源码级）：中键直接进滚轮模式不播转一圈；活水事件全程喂
+    csrc = (HERE / "cursor_fx.py").read_text(encoding="utf-8")
+    ck("中键委托 WheelMode.toggle（裁决：不播转一圈）",
+       "w.toggle(int(ev.globalPosition().x())" in csrc
+       and 'self._mode != "spin"' in csrc)
+    ck("无 WheelMode 时中键回退旧 spin()（兜底保留）", "if self._spin():" in csrc)
+    ck("滚轮模式左键 = 退出 + 点头（web「按任意其它键退出」）",
+       "elif w is not None and w.on:" in csrc and "w.stop()" in csrc)
+    ck("MouseMove 全程喂 WheelMode（调速生命线）",
+       "QEvent.Type.MouseMove and w is not None" in csrc and "w.on_move(" in csrc)
+    ck("滚真实滚轮退出", "QEvent.Type.Wheel and w is not None" in csrc and "w.on_wheel()" in csrc)
+    ck("Esc 退出", "Key_Escape" in csrc and "w.on_esc()" in csrc)
+    ck("应用失焦退出（web window blur）",
+       "QEvent.Type.ApplicationDeactivate" in csrc and "w.on_blur()" in csrc)
+    ck("光标关了不接管（web enabled 边界）",
+       'getattr(self._cursor, "enabled", False)' in (HERE / "pm_wheel.py").read_text(encoding="utf-8"))
+    ck("光标关闭时滚轮模式一并退（干净语义）",
+       "getattr(w, \"on\", False)" in csrc and "w.stop()" in csrc)
+
+    # ④ 行为级：进场即滚 + 二次中键退出 + fallback 目标
+    from stylekit_qt import WHALE  # noqa: PLC0415
+    from PySide6.QtWidgets import QScrollArea  # noqa: PLC0415
+
+    wc = cursor_fx.WhaleCursor(HERE.parents[0])
+    page = QScrollArea()
+    inner = QWidget()
+    inner.setMinimumSize(200, 2000)              # 内容超一屏 ⇒ maximum>0 真可滚
+    page.setWidget(inner)
+    page.resize(200, 400)
+    wm = pm_wheel.WheelMode(wc, WHALE, fallback=lambda: page)
+    wm.start(50, 50)
+    ck("滚轮模式进场即激活", wm.on is True)
+    ck("widgetAt 不可用时回退主页面滚动区（web scrollerAt 兜底）", wm._target is page)
+    wm._scroll(pm_wheel.BASE)
+    ck("一 tick 即按 BASE 前进（一按就滚，不等鼠标动）",
+       page.verticalScrollBar().value() >= 3,
+       "value=%d" % page.verticalScrollBar().value())
+    wm.toggle(50, 50)                            # 再按中键 = 退出
+    ck("二次中键退出滚轮模式", wm.on is False)
+    ck("退出后滚动目标清空（不残留半滚）", wm._target is None)
+    ck("退出光标 restore 回底图（不残留半帧）",
+       hasattr(cursor_fx.WhaleCursor, "restore") and hasattr(cursor_fx.WhaleCursor, "spin_to"))
+    wm.on = True
+    wm.on_wheel()
+    ck("on_wheel 消费并退出", wm.on is False)
+    wm.on = True
+    wm.on_esc()
+    ck("Esc 消费并退出", wm.on is False)
+    wm.on = True
+    wm.on_blur()
+    ck("失焦退出", wm.on is False)
+
+    # ⑤ 徽标：只标锚点+方向，不画第二条鱼（用户点单）
+    bsrc = (HERE / "pm_wheel.py").read_text(encoding="utf-8")
+    ck("徽标自绘圆盘 + 上下三角（web show 同款）",
+       "drawEllipse" in bsrc and bsrc.count("drawPolygon") >= 2)
+    ck("徽标不画第二条鱼（无 drawPixmap）", "drawPixmap" not in bsrc)
+    ck("徽标颜色 token 派生（禁硬编码色值）",
+       'self.t.q("blue")' in bsrc and 'self.t.q("bg")' in bsrc)
+    ck("Shell 接线注入 WheelMode", "self._cursor.wheel = WheelMode(" in ssrc_shell())
+
+    wc.set(False, custom=False)
+    QLabel()  # 保持 import 不被裁
+
+
+def ssrc_shell() -> str:
+    return (HERE / "shell.py").read_text(encoding="utf-8")
+
+
 # ---------------------------------------------------------------- 5. 纪律：不碰产品代码
 
 def t_no_touch() -> None:
@@ -776,7 +883,8 @@ def t_no_touch() -> None:
 
 def main() -> int:
     for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
-               t_visual, t_status_chain, t_bot_controls, t_window_chrome, t_dpi_motion, t_no_touch):
+               t_visual, t_status_chain, t_bot_controls, t_window_chrome, t_dpi_motion,
+               t_wheel_nod, t_no_touch):
         try:
             fn()
         except Exception as e:  # noqa: BLE001

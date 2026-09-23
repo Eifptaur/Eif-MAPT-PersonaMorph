@@ -21,6 +21,7 @@ Qt 实现注记：点头/旋转用 `QApplication` 覆盖光标栈（set/change/r
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer
@@ -29,9 +30,29 @@ from PySide6.QtWidgets import QApplication
 
 SPIN_FRAMES = 24          # web SPIN_FRAMES（console_html.py L2912）
 SPIN_MS = 22              # web SPIN_MS（24 × 22 ≈ 530ms 一圈）
-NOD_MS = 180              # web mousedown → 180ms 换回
+NOD_MS_DEFAULT = 320      # 丙-6 #11 可感知性修复：web 真值 180ms 真机看不见（用户复验反馈）
+NOD_MS_DEBUG = 1500       # PM_CURSOR_NOD_DEBUG=1 → 真机定因开关（肉眼必见，机制通不通一锤定音）
+NOD_MS = NOD_MS_DEFAULT   # 兼容旧引用；实际取值走 _nod_ms()
 HOTSPOT = (8, 8)          # web cursor:url() 8 8
 _MAX_CUR = 128            # webui 服务端同款上限（图片已 resize ≤128）
+
+
+def _nod_ms(env: str | None = None) -> int:
+    """点头帧时长（毫秒）。
+
+    丙-6 #11 两步走：
+    · 默认 320ms —— 可感知性修复。web 真值 180ms 单帧在真机上肉眼确认不了
+      （总调度取证：机制活着、帧文件 OK，用户中键能转 = 同链路可用，
+      唯一差异就是 nod 只有 180ms）。300~400 区间取下段 320：
+      比 180 长 78% 保证"看见"，短于 400 避免拖沓。
+    · 环境变量 PM_CURSOR_NOD_DEBUG=1 → 1500ms —— 真机定因开关：
+      延长到肉眼必见，用户点一下就能判「机制通还是不通」。
+      通 ⇒ 320ms 收尾；不通 ⇒ 加日志定位（取证结论后补进丙-6 回执）。
+    """
+    v = os.environ.get("PM_CURSOR_NOD_DEBUG") if env is None else env
+    if str(v or "").strip() == "1":
+        return NOD_MS_DEBUG
+    return NOD_MS_DEFAULT
 
 _DEFAULT = "cursor.png"
 _DEFAULT_NOD = "cursor-nod.png"
@@ -66,12 +87,14 @@ class WhaleCursor(QObject):
         self._frames: list[QCursor] = []
         self._mode = ""                          # "" | "nod" | "spin"
         self._spin_i = 0
+        self._last_spin_idx = -1                 # spinTo 相位分帧记忆（web lastSpinIdx）
+        self.wheel = None                        # pm_wheel.WheelMode —— Shell 注入（丙-6 #12）
         self._spin_timer = QTimer(self)
         self._spin_timer.setInterval(SPIN_MS)
         self._spin_timer.timeout.connect(self._spin_step)
         self._nod_timer = QTimer(self)
         self._nod_timer.setSingleShot(True)
-        self._nod_timer.setInterval(NOD_MS)
+        self._nod_timer.setInterval(_nod_ms())
         self._nod_timer.timeout.connect(self._nod_end)
         app = QApplication.instance()
         if app is not None:
@@ -171,10 +194,37 @@ class WhaleCursor(QObject):
     # ------------------------------------------------------------ 点头 / 中键旋转
 
     def eventFilter(self, obj: QObject, ev: QEvent) -> bool:  # noqa: N802
-        if ev.type() == QEvent.Type.MouseButtonPress and self.enabled:
+        if not self.enabled:
+            return False
+        t = ev.type()
+        w = self.wheel                                # pm_wheel.WheelMode（Shell 注入；丙-6 #12）
+        # ── 滚轮模式的"活水"事件：移动/滚轮/键盘/失焦全程喂给 WheelMode ──
+        if t == QEvent.Type.MouseMove and w is not None:
+            try:
+                w.on_move(int(ev.globalPosition().y()))
+            except Exception:  # noqa: BLE001
+                pass
+        elif t == QEvent.Type.Wheel and w is not None:
+            if w.on_wheel():
+                return False                          # 只观察不吃事件（web passive wheel）
+        elif t == QEvent.Type.KeyPress and w is not None:
+            if getattr(ev, "key", lambda: 0)() == Qt.Key.Key_Escape and w.on_esc():
+                return False
+        elif t == QEvent.Type.ApplicationDeactivate and w is not None:
+            w.on_blur()                               # web window blur = 退出滚轮模式
+        elif t == QEvent.Type.MouseButtonPress:
             btn = ev.button()
-            if btn == Qt.MouseButton.MiddleButton and self._spin():
-                return False                                 # 只观察不吃事件
+            if btn == Qt.MouseButton.MiddleButton:
+                if w is not None:
+                    # 丙-6 #12 裁决：中键**直接进滚轮模式**，不再播"原地转一圈"
+                    # （web 侧两个 listener 并存有打架嫌疑，Qt 取干净语义）。
+                    w.toggle(int(ev.globalPosition().x()), int(ev.globalPosition().y()))
+                    return False                      # 只观察不吃事件
+                if self._spin():
+                    return False
+            elif w is not None and w.on:
+                # web mousedown 非 1 键 = 退出滚轮模式（本键自己的行为继续——左键接着点头）
+                w.stop()
             if btn == Qt.MouseButton.LeftButton and self._mode != "spin":
                 self._nod()
         return False
@@ -207,12 +257,41 @@ class WhaleCursor(QObject):
         self._pop()
         self._mode = ""
 
+    def stop_transient(self) -> None:
+        """停掉点头/转圈这类瞬时特效（滚轮模式进场前清场用，公开给 pm_wheel）。"""
+        self._nod_timer.stop()
+        if self._mode == "nod":
+            self._pop()
+            self._mode = ""
+
+    def spin_to(self, deg: float) -> None:
+        """相位驱动换帧（web spinTo 同款，console_html.py L2950-2956）：
+        帧号变了才换，帧没备好/光标关了不动。滚轮模式专用路径，不动 _mode。"""
+        if not self._frames:
+            return
+        n = len(self._frames)
+        idx = int((((deg % 360.0) + 360.0) % 360.0) // (360.0 / n)) % n
+        if idx == self._last_spin_idx:
+            return
+        self._last_spin_idx = idx
+        self._push(self._frames[idx])
+
+    def restore(self) -> None:
+        """光标回底图（web restore 同款）—— 滚轮模式退出时调；覆盖栈 pop 即回控件底图。"""
+        self._last_spin_idx = -1
+        if self._mode:
+            self._pop()
+            self._mode = ""
+        elif QApplication.instance() is not None and QApplication.overrideCursor() is not None:
+            self._pop()
+
     def _spin(self) -> bool:
         if not self._frames:                                 # 帧没备好 ⇒ 退点头（web spin() 同款）
             return False
         if self._mode == "nod":
             self._nod_timer.stop()
         self._spin_i = 0
+        self._last_spin_idx = -1                             # 相位记忆复位（滚轮模式共用帧表）
         self._push(self._frames[0])
         self._spin_timer.start()
         self._mode = "spin"
@@ -230,6 +309,9 @@ class WhaleCursor(QObject):
     def _cancel_fx(self) -> None:
         self._nod_timer.stop()
         self._spin_timer.stop()
+        w = self.wheel
+        if w is not None and getattr(w, "on", False):
+            w.stop()                                 # 光标关了 ⇒ 滚轮模式一并退（干净语义）
         if self._mode:
             self._pop()
         self._mode = ""
