@@ -472,6 +472,72 @@ def t_visual() -> None:
     w2.close()
 
 
+# ---------------------------------------------------------------- 4.6 状态链路（丙-5 #0）
+
+def t_status_chain() -> None:
+    """真机首跑「全界面状态不明」的根因钉死在这里：
+    base 自带 ?token= 时，path 必须**落在 query 之前**（rstrip 直拼会把
+    /api/status 塞进 query → 服务端 401）。含真 socket 全真跑。"""
+    import threading  # noqa: PLC0415
+    from http.server import BaseHTTPRequestHandler, HTTPServer  # noqa: PLC0415
+
+    from addr import join_url, resolve_base_url  # noqa: PLC0415
+    import heal as heal_mod  # noqa: PLC0415
+
+    # ① join_url 本体
+    j = join_url("http://127.0.0.1:3210/?token=abc", "/api/status")
+    ck("join_url: 带 token base → path 在 query 之前",
+       j == "http://127.0.0.1:3210/api/status?token=abc", j)
+    j2 = join_url("http://127.0.0.1:3210", "/api/status")
+    ck("join_url: 无 token base 照常拼接",
+       j2 == "http://127.0.0.1:3210/api/status", j2)
+
+    # ② 两个真实拼接点都换用了 join_url；全 ui_qt 不许再留 rstrip 直拼
+    hsrc = (HERE / "heal.py").read_text(encoding="utf-8")
+    csrc = (HERE / "config_io.py").read_text(encoding="utf-8")
+    ck("heal.probe_backend 走 join_url", "join_url(base, path)" in hsrc)
+    ck("config_io.get_json 走 join_url", "join_url(base, api)" in csrc)
+    bad = [p.name for p in HERE.glob("*.py")
+           if re.search(r'rstrip\("/"\)\s*\+', p.read_text(encoding="utf-8", errors="replace"))]
+    ck("ui_qt 全目录无 rstrip 直拼 URL 残留", not bad, ",".join(bad))
+
+    # ③ 真 socket 全真跑：起真 HTTP 服务，probe_backend 用带 token 的 base 探它；
+    #    服务端必须收到 path=/api/status、query=token=…（path 掉进 query 就是 401 现场）
+    seen: dict = {}
+
+    class _H(BaseHTTPRequestHandler):
+        def do_GET(self):
+            seen["path"] = self.path
+            body = b'{"ok": true}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):  # 静音
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), _H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        base = f"http://127.0.0.1:{srv.server_address[1]}/?token=tk"
+        pr = heal_mod.probe_backend(base, timeout=2.0)
+        ck("真 socket: probe_backend 判 OK（path 正确落位）",
+           pr.health.value == "ok", f"{pr.health.value} seen={seen.get('path')}")
+        ck("真 socket: 服务端收到 /api/status?token=tk",
+           seen.get("path") == "/api/status?token=tk", str(seen.get("path")))
+    finally:
+        srv.shutdown()
+
+    # ④ resolve → join 链路：真 base（可能带 token）拼出的 URL，path 不进 query
+    b, _src = resolve_base_url()
+    j3 = join_url(b, "/api/status")
+    ppos, qpos = j3.find("/api/status"), j3.find("?")
+    ck("resolve→join 链路: path 在 query 之前",
+       ppos != -1 and (qpos == -1 or ppos < qpos), j3)
+
+
 # ---------------------------------------------------------------- 5. 纪律：不碰产品代码
 
 def t_no_touch() -> None:
@@ -490,7 +556,7 @@ def t_no_touch() -> None:
 
 def main() -> int:
     for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
-               t_visual, t_no_touch):
+               t_visual, t_status_chain, t_no_touch):
         try:
             fn()
         except Exception as e:  # noqa: BLE001

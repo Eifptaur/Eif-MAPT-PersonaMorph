@@ -114,10 +114,14 @@ def write_full(raw_text: str) -> tuple[bool, str]:
 def get_json(api: str, timeout: float = 1.5) -> dict | None:
     """GET 后端接口（/api/status 等）；连不上返回 None（调用方如实展示）。"""
     try:
+        from addr import join_url  # noqa: PLC0415
         from agent_bridge import current_url  # noqa: PLC0415
 
         base = current_url()[0] if isinstance(current_url(), tuple) else current_url()
-        req = urllib.request.Request(base.rstrip("/") + api, headers={"Accept": "application/json"})
+        # base 可能自带 ?token= —— 必须 join_url 让 api 落在 query 之前
+        # （老写法 rstrip+"/" 会把 /api/status 塞进 query → 401「状态不明」，丙-5 #0）
+        req = urllib.request.Request(join_url(base, api),
+                                     headers={"Accept": "application/json"})
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # 绕代理（heal 同款）
         with opener.open(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8", "replace"))

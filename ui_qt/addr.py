@@ -29,12 +29,49 @@ from __future__ import annotations
 import json
 import os
 import socket
+import sys
 import urllib.parse
 from pathlib import Path
+
+# 嵌入式运行时（python310._pth）不把脚本目录放进 sys.path —— 自检直跑必需
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 # 项目根 = 本文件的上级（ui_qt → persona-morph；落位自 _scratch/qt_proto，层级浅一级）
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_BASE = "http://127.0.0.1:3210/"
+
+
+def join_url(base: str, path: str = "", q: str = "") -> str:
+    """统一 URL 拼接 —— **path 必须落在 query 之前**（丙-5 #0）。
+
+    本模块拼出的 base 自带 `?token=…` 查询（_config_base / logs/console.url）。
+    老写法「base 去尾斜杠后直接接路径」会把路径塞进 query ——
+    实测 `/?token=x/api/status` → 401（token 连同后面的 /api/status 一起被
+    当成 query 解析），这就是真机首跑全界面「状态不明」的根因。
+    2026-09-23 真后台对照：错误拼法 HTTP 401 / 正确拼法 HTTP 200。
+
+    全 Qt 侧访问后端 URL 一律走本函数：
+        join_url(base, "/api/status")            # GET/POST 接口
+        join_url(base, "/api/config", "k=v")     # 追加额外查询参数
+    口径：摘掉 base 自带 query 得 root → root 去尾斜杠 → 拼 path →
+    拼 query（base 自带在前、调用方追加在后，& 连接）。
+    """
+    b = (base or "").strip()
+    if "?" in b:
+        root, base_q = b.split("?", 1)
+    else:
+        root, base_q = b, ""
+    root = root.rstrip("/")
+    p = (path or "").strip()
+    if p and not p.startswith("/"):
+        p = "/" + p
+    url = root + p
+    qs = base_q
+    if q:
+        qs = (base_q + "&" + q) if base_q else q
+    if qs:
+        url += "?" + qs
+    return url
 
 
 def url_live(u: str, timeout: float = 0.4) -> bool:
@@ -168,6 +205,29 @@ def _selftest() -> list[tuple[str, bool, str]]:
         url, _src = resolve_base_url(troot)
         out.append(("空 token 不拼 ?token=（401 事故教训）",
                     "?token=" not in url, url))
+
+    # 丙-5 #0：join_url —— base 带 query 时 path 必须落在 query 之前
+    j = join_url("http://127.0.0.1:3210/?token=abc", "/api/status")
+    out.append(("join_url: 带 token base 的 path 落在 query 之前",
+                j == "http://127.0.0.1:3210/api/status?token=abc", j))
+    j = join_url("http://127.0.0.1:3210", "/api/status")
+    out.append(("join_url: 无 query base 照常拼接",
+                j == "http://127.0.0.1:3210/api/status", j))
+    j = join_url("http://127.0.0.1:3210/", "api/status")
+    out.append(("join_url: 容忍尾斜杠与裸路径",
+                j == "http://127.0.0.1:3210/api/status", j))
+    j = join_url("http://127.0.0.1:3210/?token=abc", "/api/config", "k=1")
+    out.append(("join_url: 追加 query 与自带 token 用 & 连接",
+                j == "http://127.0.0.1:3210/api/config?token=abc&k=1", j))
+    j = join_url("http://127.0.0.1:3210/?token=abc", "")
+    out.append(("join_url: 空 path 只留 root+query",
+                j == "http://127.0.0.1:3210?token=abc", j))
+    # 链路防回归：resolve 出来的真 base 喂 join_url，path 必须不进 query
+    b, _src = resolve_base_url()
+    j = join_url(b, "/api/status")
+    qpos, ppos = j.find("?"), j.find("/api/status")
+    out.append(("join_url: 真实 resolve base → path 在 ? 之前",
+                ppos != -1 and (qpos == -1 or ppos < qpos), j))
     return out
 
 

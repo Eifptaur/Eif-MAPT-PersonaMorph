@@ -149,10 +149,15 @@ def overview_panel(t: Tokens) -> QWidget:
         wx_on = bool(st.get("wechat_connected"))
         lis = st.get("listen") or {}
         n = lis.get("groups", 0) + lis.get("privates", 0) if isinstance(lis, dict) else 0
-        mo = st.get("model") or {}
+        mo = st.get("model")
+        if isinstance(mo, dict):
+            # 有些版本给对象 {name, configured}；真后台给的是纯字符串模型名 —— 都接住
+            model_txt = str(mo.get("name") or ("已配置" if mo.get("configured") else "没填密钥"))
+        else:
+            model_txt = (str(mo).strip() if mo else "") or "—"
         cells["run"].setText("运行中" if wx_on and not paused else ("已暂停" if paused else "微信没连上"))
         cells["listen"].setText(str(n))
-        cells["model"].setText(str(mo.get("name") or ("已配置" if mo.get("configured") else "没填密钥")))
+        cells["model"].setText(model_txt)
         cells["paused"].setText("是" if paused else "否")
         cells["wechat"].setText("已连接" if wx_on else "没连上")
         up = st.get("uptime_s") or st.get("uptime")

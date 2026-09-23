@@ -23,11 +23,18 @@ from __future__ import annotations
 
 import json
 import socket
+import sys
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
+
+# 嵌入式运行时（python310._pth）不把脚本目录放进 sys.path —— 兄弟模块 import 必需
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from addr import join_url
 
 
 # =====================================================================
@@ -94,7 +101,9 @@ def probe_backend(
     expect_marker: str = "",
 ) -> Probe:
     """探一次后台。**必须绕代理**，否则会把代理的 502 当成服务故障。"""
-    url = base.rstrip("/") + path
+    # base 可能自带 ?token= 查询（addr.resolve_base_url 口径）——
+    # 必须走 join_url 让 path 落在 query 之前，老写法 rstrip+"/" 会 401（丙-5 #0）
+    url = join_url(base, path)
     op = _opener_no_proxy()
     t0 = time.time()
     try:
