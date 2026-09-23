@@ -577,6 +577,106 @@ namespace WxLauncher
         }
     }
 
+    /// <summary>
+    /// 丙-3（2026-09-23）：PySide6 首启自动装的**提前告知窗**（BusyForm 同族骨架）。
+    /// 自动装的唯一通路在 Python 侧 `qt_bootstrap.py`（工单 2.1 硬钉子：launcher.exe
+    /// 有「旧版仍在跑」的窗口期，不能依赖它做安装）；本窗只是把「首启要多下载
+    /// 约 100MB 界面组件」提前公告给用户（对齐「任何包换入都必须经过用户可见的
+    /// 公告与选择」），自己不装任何东西、不拦启动流程——点「继续」照常走 LauncherForm。
+    /// 文案口径与 qt_bootstrap 一致：叫「界面组件」、讲清约 100MB、讲清网页控制台
+    /// 不受影响、讲清失败重开再试（工单四钉子第 4 条「失败讲人话」的告知面）。
+    /// </summary>
+    public class QtBootForm : Form
+    {
+        /// <summary>缺界面组件时返回弹窗理由；不缺 / 无法判断返回 null（启动器不拦路）。
+        /// 版本核对钉在 Python 侧 qt_bootstrap.PYSIDE_PIN（单一来源，绝不两边各写一个版本号）；
+        /// 这里只做目录存在性检测——版本不符的场景由 Python 侧幂等重装，启动器不重复判。</summary>
+        public static string MissingReason(string root)
+        {
+            try
+            {
+                if (!File.Exists(Path.Combine(root, "runtime", "python", "python.exe")))
+                    return null;                       // 没有内置 Python ⇒ Python 侧自举自己处理
+                string sp = Path.Combine(root, "runtime", "python", "Lib", "site-packages");
+                if (!Directory.Exists(Path.Combine(sp, "PySide6")))
+                    return "首次启动需要下载界面组件（约 100MB）";
+                return null;
+            }
+            catch { return null; }                     // 探测本身出错 ⇒ 不拦路（不是新故障面）
+        }
+
+        public QtBootForm(string reason)
+        {
+            string root = Path.GetDirectoryName(Application.ExecutablePath);
+            Text = "群相 一键启动";
+            StartPosition = FormStartPosition.CenterScreen;
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = false; MinimizeBox = false;
+            BackColor = Color.FromArgb(246, 248, 252);
+            // 设计宽度 480（同 BusyForm）；高度最后由按钮底边反推
+            ClientSize = new Size(480, 322);
+            try { string ico = Path.Combine(root, "assets", "app.ico"); if (File.Exists(ico)) Icon = Icon.ExtractAssociatedIcon(ico); } catch { }
+
+            // 统一图标 + 标题 + 副标（同 BusyForm 的骨架：图标 56 / 卡片化 / 高度收口交给实测）
+            StyleKit.MakeIcon(this, root, new Point(StyleKit.Space.x6, StyleKit.Space.x5));
+
+            Label t = new Label();
+            t.Text = "要先把界面组件装好";
+            t.Font = StyleKit.Ui(StyleKit.TextScale.Title, FontStyle.Bold);
+            t.ForeColor = StyleKit.Ink;
+            t.Location = new Point(StyleKit.Space.x6 + StyleKit.IconSize + StyleKit.Space.x4, StyleKit.Space.x5 + 2);
+            t.AutoSize = true;
+            Controls.Add(t);
+
+            Label s = new Label();
+            s.Text = "只此一次 · 不影响数据";
+            s.Font = StyleKit.Ui(StyleKit.TextScale.Head, FontStyle.Bold);
+            s.ForeColor = StyleKit.Ok;      // 不是错误 ⇒ 用"正常"绿
+            s.Location = new Point(StyleKit.Space.x6 + StyleKit.IconSize + StyleKit.Space.x4, StyleKit.Space.x5 + 30);
+            s.AutoSize = true;
+            Controls.Add(s);
+
+            // 卡片：发生了什么（reason 由 MissingReason 给：首启下载 / 组件缺失）+ 你可以怎么做
+            int cardW = 480 - StyleKit.Space.x6 * 2;
+            CardPanel card = StyleKit.MakeCard(this, new Point(StyleKit.Space.x6, StyleKit.CardTopY), cardW);
+
+            Label m1 = new Label();
+            m1.Text = reason + " 这次更新后，控制台界面换成了更稳的原生窗口，"
+              + "它会自动从国内下载源装好，装完自己继续，不用你操作。";
+            m1.Font = StyleKit.Ui(StyleKit.TextScale.Body, FontStyle.Regular);
+            m1.ForeColor = StyleKit.Ink;
+            m1.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4);
+            m1.Size = new Size(cardW - StyleKit.Space.x5 * 2, 22);
+            card.Controls.Add(m1);
+
+            Label m2 = new Label();
+            m2.Text =
+                "接下来可以这样做：\n"
+              + "  · 什么都不用做 —— 下载和安装自动进行，大约 1~3 分钟（看网速）；\n"
+              + "  · 急着用控制台 —— 网页控制台照常能用，不受这次安装影响；\n"
+              + "  · 如果最后提示没装上 —— 检查一下网络，重新打开程序会自动再试。";
+            m2.Font = StyleKit.Ui(StyleKit.TextScale.Para, FontStyle.Regular);
+            m2.ForeColor = StyleKit.InkBody;
+            m2.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4 + 30);
+            // 高度不手写（BusyForm 实测教训：手写会被裁），交给 FitLabel 实测落回
+            m2.Size = new Size(cardW - StyleKit.Space.x5 * 2, 1);
+            card.Controls.Add(m2);
+            StyleKit.FitLabel(m2);
+            StyleKit.SealCard(card);
+
+            Button ok = StyleKit.MakeButton("知道了，继续");
+            ok.Location = new Point(480 - StyleKit.Space.x6 - ok.Width, card.Bottom + StyleKit.CardGapY);
+            ok.FlatStyle = FlatStyle.Flat;
+            ok.BackColor = Color.FromArgb(64, 140, 255);
+            ok.ForeColor = Color.White;
+            ok.DialogResult = DialogResult.OK;
+            Controls.Add(ok);
+            ClientSize = new Size(480, ok.Bottom + StyleKit.Space.x6);
+            AcceptButton = ok;
+            StyleKit.Apply(this, "群相 界面组件");   // 必须最后调（同 BusyForm 注释）
+        }
+    }
+
     internal static class PortHelper
     {
         internal static int ReadPort()
@@ -1142,6 +1242,18 @@ static class Program
             }
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
+            // ── 丙-3（2026-09-23）：PySide6 首启自动装的「提前介入」告知 ──
+            //   自动装的**唯一通路**在 Python 侧 qt_bootstrap.py（工单 2.1 硬钉子：
+            //   launcher.exe 有「旧版仍在跑」的窗口期，不能依赖它做安装）；这里只是
+            //   在启动器开跑之前，把「首启要多下载约 100MB 界面组件」公告给用户
+            //   （对齐「任何包换入都必须经过用户可见的公告与选择」）。
+            //   检测不到（没有 runtime / 目录判断出错）就一言不发地跳过——拦路反而不是优化；
+            //   走到这里说明控制台没在跑、互斥锁也拿到了 ⇒ 是一次真正的全新启动，才值得公告。
+            string qtBootWhy = QtBootForm.MissingReason(Path.GetDirectoryName(Application.ExecutablePath));
+            if (qtBootWhy != null)
+            {
+                Application.Run(new QtBootForm(qtBootWhy));
+            }
             Application.Run(new LauncherForm());
         }
     }
@@ -1278,6 +1390,14 @@ static class Program
     // ================= W6：统一外观（StyleKit）=================
 
     /// WebView2 内嵌控制台：自带标题栏（无边框 + 圆角 + 可拖动 + **可拉伸**），WebView2 不可用时回退到浏览器
+    ///
+    /// ⛔⛔⛔ 2026-09-23 总调度标记：**`ConsoleForm` 待删，丙-3 之后不再需要。**
+    ///     路线已拍板走丙（见 `docs\Qt自绘UI-验证结论与路线.md`，用户原话「我要选丙，就是两个都要」）：
+    ///       丙-1 合进程止血 → 丙-2 把 27 个面板换成 PySide6/Qt 真原生 → **丙-3 删掉 WebView2 依赖 + 打包**。
+    ///     控制台一旦是本地原生控件，就不再经过 WebView2 ⇒ 本窗体与 `webview2guide.cs` 整份一起作废。
+    ///     ⚠️ 丙-3 落地前它**仍在生效**，但**任何"为了更好看/更好用"的新投入一律不做**，只允许修阻断性缺陷。
+    ///     （本窗体在丙-1 里承担的健康度判定 `HealHealth` 是另一回事 —— 那段逻辑丙-2 的 `heal.py` 会接手，
+    ///       不是随窗体一起删，删窗前先确认 `HealHealth` / `ResolveLiveUrl` 已被 Qt 侧接管。）
     /// 丙-1（2026-09-23）：后台健康度的判定 —— **移植** `_scratch/qt_proto/heal.py` 的
     /// `Health`（那个原型是真跑过的），这里不另发明状态机，只把六态搬成 C# 枚举。
     internal enum HealHealth
