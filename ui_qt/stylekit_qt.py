@@ -28,6 +28,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -161,7 +162,8 @@ WHALE = Tokens(
     # 2026-09-23（丙-4 视觉本体）：对齐 web 真值 —— 画卷（ocean1.jpg+tint）透出后，
     # 玻璃卡必须用 web 的浅蓝调才读得对（console_html.py L35 --card / L36 --bd）。
     # 旧值 rgba(255,255,255,.055) 在纯深底上够用，垫在实拍海浪上会发灰。
-    card="rgba(150,206,255,0.10)",          # web --card:rgba(150,206,255,.10)
+    # 丙-8 I：波浪动效砍掉后卡片仍偏透（用户原话「稍微提高一点点」）→ .10 → .14
+    card="rgba(150,206,255,0.14)",          # web --card:rgba(150,206,255,.10) 的 Qt 增档
     bd="rgba(170,215,255,0.26)",            # web --bd:rgba(170,215,255,.26)
     tx="#E8F3FF",
     tx2="rgba(200,224,245,0.78)",
@@ -205,8 +207,8 @@ LIGHT = Tokens(
     card="#FFFFFF",
     bd="#E4E6EB",
     tx="#1C1E21",
-    tx2="#65676B",
-    tx3="#8A8D91",
+    tx2="#565A5F",   # 丙-8 G：#65676B 真机图标/次文字看不清 → 加深一档（对比度达标）
+    tx3="#5F6368",   # 丙-8 G：组名/弱文字 #8A8D91 太浅 → 加深到 Google 灰档
     blue="#0866FF",
     blue2="#0455D6",
     blue_soft="#E7F0FF",
@@ -319,10 +321,12 @@ _FONT_SIZES = {8, 9, 10, 10.5, 11, 11.5, 12, 13, 14, 15, 16, 17, 18, 20, 22, 24}
 #   - Segoe UI Emoji（系统自带）挂回退链第二位，管 🐋 这类 emoji 字形
 #     （offscreen 取证环境扫不到系统字体，必须显式注册，同 shoot.py 纪律）。
 
+#   emoji 兜底路径走 WINDIR（兼容性审计·丙8：别假设系统盘是 C:；
+#   非标准盘上 _fam_of 返回空串 → 只影响 🐋 字形，不崩 —— 但一行就能不假设）。
 _FONT_DIR = Path(__file__).resolve().parent / "assets" / "fonts"
 _FONT_DISPLAY_FILE = _FONT_DIR / "ZhaoHuaBiaoTiA.ttf"
 _FONT_BODY_FILE = _FONT_DIR / "PingXianZhenSong.ttf"
-_FONT_EMOJI_FILE = Path("C:/Windows/Fonts/seguiemj.ttf")
+_FONT_EMOJI_FILE = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts" / "seguiemj.ttf"
 
 _DISPLAY_FAMILY = ""
 _BODY_FAMILY = ""
