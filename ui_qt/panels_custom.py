@@ -678,10 +678,177 @@ def json_panel(t: Tokens, on_save=None) -> QWidget:
 
 # ---------------------------------------------------------------- 分发表（panels_qt.build_panel 查这里）
 
+def vermat_panel(t: Tokens, on_save=None) -> QWidget:
+    """丙-10 P0-3：版本能力矩阵（web `sec-vermat` 真值）+ 顶部「版本与更新」卡。
+
+    两件事：
+      3a. **矩阵三态**（allowed / 实测 / 严格档拦停，web console_html.py:3346 口径）——
+          从 `/api/status` 的 `version_gate` + `version` 取真值，绝不显示「检测中」占位。
+      3b. **版本与更新卡**（用户要求：更新入口挪到「版本」页）—— 顶栏胶囊点「稍后」
+          只关 popover、不等于不再提示；这一张卡**常驻**，显示当前版本 / 有无新版 /
+          「立即更新」入口，复用 `updbar` 的判定与动作，不重写一套。
+    """
+    s = sec_meta.get("vermat")
+    page, lay, badge = _page(t, s.title)
+    lay.addWidget(desc(t, s.desc or "当前「微信版本 × 适配层版本」下每个能力的实测状态。"))
+
+    # ── 3b. 版本与更新（常驻卡；用户点名：更新入口放这里）──
+    upd = Card(t)
+    upd.body.addWidget(h2(t, "版本与更新"))
+    vline = desc(t, "读取中…")
+    upd.body.addWidget(vline)
+    urow = QHBoxLayout()
+    btn_go = Btn("立即更新", t, "primary")
+    btn_check = Btn("检查更新", t, "ghost")
+    urow.addWidget(btn_go)
+    urow.addWidget(btn_check)
+    urow.addStretch(1)
+    upd.body.addLayout(urow)
+    upd.body.addWidget(desc(t, "「稍后」只关掉顶栏提示、不等于不再提示；要彻底不再提示这个版本，"
+                               "用顶栏胶囊里的「不再提醒这个版本」。入口常驻在本卡，随时能回来点。"))
+    lay.addWidget(upd)
+
+    def _fetch(cb) -> None:
+        import threading  # noqa: PLC0415
+
+        box: dict = {}
+
+        def _work() -> None:
+            try:
+                from agent_bridge import get_json  # noqa: PLC0415
+
+                box["v"] = get_json("/api/update", timeout=8.0)
+            except Exception:  # noqa: BLE001
+                box["v"] = None
+
+        threading.Thread(target=_work, daemon=True, name="vermat-upd").start()
+
+        def _poll() -> None:
+            if "v" in box:
+                tim.stop()
+                cb(box["v"])
+
+        tim = QTimer(page)
+        tim.setInterval(150)
+        tim.timeout.connect(_poll)
+        tim.start()
+
+    def _render_upd(v) -> None:
+        try:
+            import updbar  # noqa: PLC0415
+
+            txt, warn = updbar.decide(v)
+        except Exception:  # noqa: BLE001
+            txt, warn = "", False
+        vd = (v or {}) if isinstance(v, dict) else {}
+        mine = str(vd.get("mine") or "").strip()
+        cur = ("当前版本 " + mine) if mine else "当前版本未记录"
+        if txt:
+            vline.setText(cur + " —— " + txt)
+            vline.setStyleSheet(f"color:{t.warn if warn else t.tx2};background:transparent;")
+        else:
+            vline.setText(cur + " —— 已是最新（或更新提醒已关）")
+            vline.setStyleSheet(f"color:{t.tx3};background:transparent;")
+
+    def _on_go() -> None:
+        # 复用顶栏同一条动作链（/api/update_apply）；这里只做「有没有可更新」的前置说明
+        def _work() -> None:
+            try:
+                from agent_bridge import post_json  # noqa: PLC0415
+
+                post_json("/api/update_apply", {}, timeout=20.0)
+            except Exception:  # noqa: BLE001
+                pass
+
+        import threading  # noqa: PLC0415
+
+        threading.Thread(target=_work, daemon=True, name="vermat-apply").start()
+        vline.setText("已发起更新；进度看顶栏胶囊（失败会在这里如实说明）。")
+
+    def _on_check() -> None:
+        vline.setText("检查中…")
+        _fetch(_render_upd)
+
+    btn_go.clicked.connect(_on_go)
+    btn_check.clicked.connect(_on_check)
+    page._c10_update_refresh = _fetch   # Shell 探活可复用（卡内自足也能跑）
+
+    # ── 3a. 矩阵三态（web L2194/L2196/L2201 的真值行）──
+    mtx = Card(t)
+    mtx.body.addWidget(h2(t, "能力矩阵"))
+    ver_lb = QLabel("读取中…")
+    ver_lb.setFont(qfont(t, t.body_size - 0.5))
+    ver_lb.setWordWrap(True)
+    mtx.body.addWidget(ver_lb)
+    gate_lb = QLabel("读取中…")
+    gate_lb.setFont(qfont(t, t.body_size - 0.5))
+    gate_lb.setWordWrap(True)
+    mtx.body.addWidget(gate_lb)
+    row_allow = QHBoxLayout()
+    btn_allow = Btn("本次允许发送", t, "ghost")
+    row_allow.addWidget(btn_allow)
+    row_allow.addStretch(1)
+    mtx.body.addLayout(row_allow)
+    mtx.body.addWidget(desc(t, "只对本次运行有效（重启后重新拦），我们不会把「放行」写进配置。"))
+    lay.addWidget(mtx)
+
+    def _render_mtx() -> None:
+        try:
+            import panels_qt  # noqa: PLC0415
+
+            st = panels_qt._load_status()
+        except Exception:  # noqa: BLE001
+            st = {}
+        vm = (st.get("version") or {}) if isinstance(st, dict) else {}
+        vg = (st.get("version_gate") or {}) if isinstance(st, dict) else {}
+        wv = str(vm.get("wechat") or "").strip()
+        ad = str(vm.get("adapter") or "").strip()
+        ver_lb.setText(("当前版本对：微信 %s × 适配层 %s" % (wv, ad or "-"))
+                       if wv and wv != "unknown" else "当前版本对：微信版本读不到")
+        allow = vg.get("allow") if isinstance(vg.get("allow"), bool) else None
+        if allow is None:
+            gate_lb.setText("版本门：读不到（不影响发送）")
+            badge.set("idle", "读不到")
+        elif allow:
+            if vg.get("level") == "ok":
+                gate_lb.setText("版本门：这一版有实测记录，照常发送")
+                badge.set("ok", "已实测")
+            else:
+                gate_lb.setText("版本门：这一版没实测记录，但照常发送（不影响使用）")
+                badge.set("info", "能发")
+        else:
+            gate_lb.setText("版本门：按严格档暂停发送。可在本页关掉 version_gate.strict")
+            badge.set("err", "拦停")
+
+    def _on_allow() -> None:
+        # web vmAllow：写「本次允许发送」的会话期放行（重启失效，不落配置）
+        def _work() -> None:
+            try:
+                from agent_bridge import post_json  # noqa: PLC0415
+
+                post_json("/api/version_allow", {}, timeout=15.0)
+            except Exception:  # noqa: BLE001
+                pass
+
+        import threading  # noqa: PLC0415
+
+        threading.Thread(target=_work, daemon=True, name="vermat-allow").start()
+        gate_lb.setText("已按「仅本次允许」放行（重启后重新拦）。")
+
+    btn_allow.clicked.connect(_on_allow)
+    page._c10_mtx_refresh = _render_mtx
+    _render_mtx()
+
+    # 更新卡异步拉一次（不阻塞面板构建）
+    _fetch(_render_upd)
+    return page
+
+
 MANUAL = {
     "overview": overview_panel,
     "check": check_panel,
     "sessions": sessions_panel,
     "log": log_panel,
     "json": json_panel,
+    "vermat": vermat_panel,
 }

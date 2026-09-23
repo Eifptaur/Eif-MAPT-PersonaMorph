@@ -320,11 +320,149 @@ def _row(t: Tokens, r: "sec_meta.Row", card: Card, binds: list | None = None) ->
         c = _area(t, _as_text(default), rows=3, placeholder=r.placeholder)
     elif r.kind in ("text", "password", "number", "range"):
         c = _line(t, _as_text(default), password=r.kind == "password", placeholder=r.placeholder)
+    # 丙-10 P0-2：三新类型（web 里确有按钮组/状态行/表格，原来一律降级 info ⇒ 蒸发）
+    elif r.kind == "buttons":
+        c = _btn_group(t, r.actions)
+    elif r.kind == "status":
+        c = _status_chip(t, r.status_id)
+    elif r.kind == "table":
+        return _table_row(t, r, card)
     # info / chips → 纯说明行（不伪造一个接不了后台的控件）
     f = Field(t, r.label, r.hint, c, card)
-    if c is not None and binds is not None:
+    # 只有**带 cfg 的可写控件**才进 binds（status/buttons 无 cfg ⇒ 不参与保存；
+    # 它们不是 QLineEdit，混进 binds 会在保存时被当输入框调 editingFinished）。
+    if c is not None and binds is not None and r.cfg:
         binds.append((r, c))
     return f
+
+
+def _btn_group(t: Tokens, actions: list[tuple[str, str]]) -> QWidget:
+    """web `.row-btns` / 行内 `<button>` → 一串按钮（动作 id 挂 property 留取证）。
+
+    ⚠️ 原型边界（如实）：这些按钮的动作原语在 web 侧（`onclick` JS），Qt 壳
+    不冒充「点了会真跑」——点击走 `_btn_stub`，只做**可见反馈**（灰一档 + tooltip
+    说明），绝不静默无反应（可用性要点：不存在"点了没反应"）。
+    """
+    box = QWidget()
+    h = QHBoxLayout(box)
+    h.setContentsMargins(0, 0, 0, 0)
+    h.setSpacing(8)
+    for txt, aid in actions:
+        b = Btn(txt, t, role="ghost")
+        b.setProperty("web_action", aid or "")
+        b.setToolTip(("web 动作：" + aid) if aid else "web 侧按钮")
+        b.clicked.connect(lambda _=False, _b=b: _btn_stub(_b))
+        h.addWidget(b)
+    return box
+
+
+def _btn_stub(b) -> None:
+    """Qt 壳里 web 动作按钮的点击反馈（原型边界：不假跑 web JS）。"""
+    b.setEnabled(False)
+    b.setText(b.text() + "（web 侧动作）")
+    b.setToolTip("这个动作在 web 控制台执行；Qt 壳只做版式还原，不冒充已执行。")
+
+
+def _status_chip(t: Tokens, status_id: str) -> QWidget:
+    """web `<b id="…">` 状态位 → 只读状态标签（口径对齐丙-8 badge_for）。
+
+    Qt 壳不接实时 /api/status 时就地读一次；读不到如实写「读不到」，绝不编数。
+    """
+    lab = QLabel("读取中")
+    lab.setFont(qfont(t, t.body_size - 0.5))
+    lab.setStyleSheet(f"color:{t.tx2};background:transparent;")
+    lab.setProperty("web_status_id", status_id or "")
+    try:
+        st = _load_status()
+        tip = _status_text_for(status_id, st)
+    except Exception:  # noqa: BLE001
+        tip = "读不到（控制台状态未就绪）"
+    lab.setText(tip)
+    return lab
+
+
+def _table_row(t: Tokens, r: "sec_meta.Row", card: Card) -> QWidget:
+    """web `<table>` → 表头 + 数据行（只读）。行标题在上，表体在下。"""
+    from PySide6.QtWidgets import QGridLayout  # noqa: PLC0415
+
+    wrap = QWidget(card)
+    v = QVBoxLayout(wrap)
+    v.setContentsMargins(0, 4, 0, 8)
+    v.setSpacing(4)
+    if r.label:
+        lb = QLabel(r.label)
+        lb.setFont(qfont(t, t.body_size, 500))
+        lb.setStyleSheet(f"color:{t.tx};background:transparent;")
+        v.addWidget(lb)
+    if r.hint:
+        v.addWidget(desc(t, r.hint))
+    grid = QGridLayout()
+    grid.setContentsMargins(0, 2, 0, 0)
+    grid.setHorizontalSpacing(14)
+    grid.setVerticalSpacing(3)
+    for j, htxt in enumerate(r.headers):
+        c = QLabel(htxt)
+        c.setFont(qfont(t, t.body_size - 1.5, 500))
+        c.setStyleSheet(f"color:{t.tx3};background:transparent;")
+        grid.addWidget(c, 0, j)
+    for i, row in enumerate(r.rows, start=1):
+        for j, cell in enumerate(row):
+            c = QLabel(cell)
+            c.setFont(qfont(t, t.body_size - 1))
+            c.setStyleSheet(f"color:{t.tx2};background:transparent;")
+            c.setWordWrap(True)
+            grid.addWidget(c, i, j)
+    v.addLayout(grid)
+    return wrap
+
+
+_STATUS_CACHE: dict = { }
+
+
+def _load_status() -> dict:
+    """/api/status 快照（进程内缓存 3 秒，避免每行打一次网络）。"""
+    now = time.time()
+    if _STATUS_CACHE.get("t") and now - _STATUS_CACHE["t"] < 3.0:
+        return _STATUS_CACHE.get("st") or {}
+    st = {}
+    try:
+        import urllib.request  # noqa: PLC0415
+
+        from console_html import PORT as _PORT  # noqa: PLC0415
+    except Exception:  # noqa: BLE001
+        _PORT = 3210
+    for p in (_PORT, 3210, 3211):
+        try:
+            with urllib.request.urlopen("http://127.0.0.1:%d/api/status" % int(p), timeout=1.2) as r:
+                st = json.loads(r.read().decode("utf-8", "replace"))
+            break
+        except Exception:  # noqa: BLE001
+            continue
+    _STATUS_CACHE["t"], _STATUS_CACHE["st"] = now, st
+    return st
+
+
+def _status_text_for(status_id: str, st: dict) -> str:
+    """把 web 状态位 id 映射成本地可见的一行文字（读不到就如实说读不到）。"""
+    if not st:
+        return "读不到（控制台未就绪）"
+    sid = status_id or ""
+    if sid in ("wxver",):
+        vm = st.get("version") or {}
+        v = str(vm.get("wechat") or "").strip()
+        return ("微信 " + v) if v and v != "unknown" else "微信版本读不到"
+    if sid in ("vmVer",):
+        vm = st.get("version") or {}
+        v = str(vm.get("wechat") or "").strip()
+        a = str(vm.get("adapter") or "").strip()
+        return (("微信 %s × 适配层 %s" % (v, a or "-")) if v and v != "unknown" else "微信版本读不到")
+    if sid in ("vsWhy", "ttsWhy"):
+        for k in ("tts", "voice", "voice_models"):
+            d = st.get(k)
+            if isinstance(d, dict) and d.get("ready") is not None:
+                return ("可用" if d.get("ready") else "不可用")
+        return "读不到"
+    return "读不到"
 
 
 def _cursor_extras(t: Tokens, on_save) -> Card:

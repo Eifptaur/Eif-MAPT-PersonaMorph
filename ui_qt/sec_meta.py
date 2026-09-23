@@ -44,6 +44,13 @@ class Row:
 
     kind ∈ text | password | number | range | checkbox | select |
            textarea | chips | info（纯说明行，无控件）
+    丙-10 P0-2 新增（真机复验「按钮和选单都不见了」的根因）：
+           buttons（按钮组）| status（状态行）| table（表格/矩阵）
+    —— 此前无 input/select/textarea 的块一律降级成 info 纯文字，web 真实存在的
+       按钮组/状态行/矩阵全蒸发。新增三类型把它们如实还原。
+
+    `buttons`：`actions` 存 `[(文案, 动作id)]`；`status`：`status_id` 存 web 的 `<b id>`；
+    `table`：`headers` 表头 + `rows` 数据行（list[list[str]]）。
     """
 
     kind: str
@@ -53,6 +60,10 @@ class Row:
     hint: str = ""
     options: list[tuple[str, str]] = field(default_factory=list)  # (value, 文案)
     default: object = None
+    actions: list[tuple[str, str]] = field(default_factory=list)  # buttons：(文案, 动作id)
+    status_id: str = ""                                           # status：web <b id>
+    headers: list[str] = field(default_factory=list)               # table：表头
+    rows: list[list[str]] = field(default_factory=list)            # table：数据行
 
 
 @dataclass
@@ -118,8 +129,10 @@ def _hint_of(chunk: str) -> str:
 def _parse_row(chunk: str, label: str) -> Row:
     tag_m = re.search(r"<input[^>]*>|<select[^>]*>|<textarea[^>]*>|<div class=\"chips\"", chunk, re.S)
     if tag_m is None:
-        # 纯说明 / 纯状态行（web 里是 <b id=…> 检测中 / 按钮组等）—— info 行
-        return Row(kind="info", label=label, hint=_hint_of(chunk))
+        # ⛔ 丙-10 P0-2：无控件 ≠ 纯说明。web 侧这里常是**按钮组 / 状态行 / 表格**，
+        #   原来一律 info ⇒ 按钮与表格蒸发（真机复验「按钮和选单都不见了」）。
+        #   ⇒ 按内含 DOM 分三档还原；都不命中的才是真「纯说明」。
+        return _parse_nonwidget_row(chunk, label)
     tag = tag_m.group(0)
     cfg_m = re.search(r'data-cfg="([\w.]+)"', chunk)
     cfg = cfg_m.group(1) if cfg_m else ""
@@ -149,6 +162,56 @@ def _parse_row(chunk: str, label: str) -> Row:
     if tag.startswith("<textarea"):
         return Row("textarea", label, cfg, _placeholder(tag), hint, default=_default_of(cfg))
     return Row("chips", label, cfg, hint=hint, default=_default_of(cfg))
+
+
+def _parse_nonwidget_row(chunk: str, label: str) -> Row:
+    """无 input/select/textarea 的块 → buttons / status / table / info 四档判定。
+
+    ⛔ 丙-10 P0-2：这是「按钮与选单蒸发」的修复点。优先级 = table > buttons > status
+    （块里同时有表格和状态行时，表格是主体；按钮组同理）。
+       · `<table>`                        → table（表头 thead/th 或首行，数据行 td）
+       · `<button …>`（≥1 个）             → buttons，动作 id 取 `id=` / `data-act=`
+       · `<b id="stXxx">`（状态行）        → status，status_id = 那个 id（配丙-8 badge_for 口径）
+       · 其余                              → info（真·纯说明行）
+    """
+    hint = _hint_of(chunk)
+    # ① 表格 / 矩阵
+    tm = re.search(r"<table[^>]*>(.*?)</table>", chunk, re.S)
+    if tm:
+        body = tm.group(1)
+        headers = [_clean(x) for x in re.findall(r"<th[^>]*>(.*?)</th>", body, re.S) if _clean(x)]
+        rows = []
+        for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", body, re.S):
+            cells = [_clean(x) for x in re.findall(r"<td[^>]*>(.*?)</td>", tr, re.S)]
+            if cells and any(cells):
+                rows.append(cells)
+        return Row("table", label, hint=hint, headers=headers, rows=rows)
+    # ② 按钮组
+    btns = re.findall(r"<button[^>]*>(.*?)</button>", chunk, re.S)
+    if btns:
+        acts = []
+        for bm in re.finditer(r"<button([^>]*)>(.*?)</button>", chunk, re.S):
+            attrs, txt = bm.group(1), _clean(bm.group(2))
+            if not txt:
+                continue
+            aid = ""
+            idm = re.search(r'id="([\w-]+)"', attrs)
+            if idm:
+                aid = idm.group(1)
+            else:
+                dam = re.search(r'data-(?:act|action|id)="([\w-]+)"', attrs)
+                if dam:
+                    aid = dam.group(1)
+            acts.append((txt, aid))
+        if acts:
+            return Row("buttons", label, hint=hint, actions=acts)
+    # ③ 状态行：块内任何 `<b id="…">`（web 状态位 id 无统一前缀——实测有
+    #   `stXxx`（丙-8 badge 口径）、`wxver` / `vsWhy` / `ttsWhy` / `vmVer` 等）。
+    #   判据 = 「有 id 的 <b>」即可，因为它就是「一个由 JS 填字的状态位」。
+    sm = re.search(r'<b id="([\w-]+)"', chunk)
+    if sm:
+        return Row("status", label, hint=hint, status_id=sm.group(1))
+    return Row("info", label, hint=hint)
 
 
 _CACHE: dict[str, Sec] = {}
