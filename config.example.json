@@ -409,6 +409,11 @@
     "max_seconds": 60,
     "download_timeout": 300
   },
+  "meme": {
+    "enabled": true,
+    "max_results": 5,
+    "cache_ttl_s": 21600
+  },
   "memory": {
   "consolidate_enabled": true,
   "consolidate_min_interval_ms": 21600000,

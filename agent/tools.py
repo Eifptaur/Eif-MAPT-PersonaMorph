@@ -398,6 +398,22 @@ def _builtin_tool_defs() -> list:
             "execute": _exec_web_fetch,
         },
         {
+            "name": "search_meme",
+            "description": ("查「近期网络热梗」（承担『梗指南 / 哏周报』的职能）。群友问「最近什么梗火」"
+                            "「XX 是什么梗」时用它：它返回**带来源的检索结果**（标题/链接/摘要），"
+                            "你再据它们总结「这是什么梗、怎么用、现在还流行吗」，**写清来源**；"
+                            "搜不到或不确定就如实说，**绝不编释义、绝不假装知道**。"
+                            "同一话题短期内会走缓存（不重复出网）。"),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "topic": {"type": "string", "description": "想查的梗或话题（留空＝查近期最火的梗）"},
+                    "max_results": {"type": "integer", "description": "最多要几条结果（默认 5，最多 10）"},
+                },
+            },
+            "execute": _exec_search_meme,
+        },
+        {
             "name": "read_bilibili",
             "description": ("解析 B 站视频（BV 号 / av 号 / b23.tv 短链 / 视频页地址）：给出标题、UP、时长、"
                             "简介、分P 与字幕。群友丢 B 站链接问「这视频讲什么」时用它，**不要凭链接瞎猜内容**；"
@@ -1470,6 +1486,28 @@ def _exec_web_search(ctx, args):
         return _ok(result)
     except Exception as e:
         return _err("搜索失败：%s" % e)
+
+
+def _exec_search_meme(ctx, args):
+    """查近期网络热梗（丙-11 D）：返回**带来源的检索结果**，由模型自己总结释义。
+
+    三条口径（与项目既有网络模块一致）：
+      · 只读公开搜索、不带任何凭据；出网只在模型真调这个工具时发生（不做后台定时抓）；
+      · 搜不到 / 搜索失败 ⇒ 如实说原因（`_err`），**绝不编造梗、绝不假装搜过**；
+      · 同一话题走缓存（`meme_search` 内部），避免刷屏式搜索烧 token。
+    """
+    try:
+        from . import meme_search as _ms
+        r = _ms.search_meme(str(args.get("topic") or ""),
+                            max_results=int(args.get("max_results") or 5))
+        if not r.get("ok"):
+            return _err("没搜到「%s」相关的热梗：%s（如实转达即可，别自己编一个）"
+                        % (r.get("topic") or "近期热梗", r.get("why") or "搜索无结果"))
+        data = {"topic": r.get("topic"), "cached": bool(r.get("cached")),
+                "results": r.get("results"), "note": r.get("note")}
+        return _ok(data)
+    except Exception as e:
+        return _err("查热梗失败：%s" % e)
 
 
 def _exec_web_fetch(ctx, args):
