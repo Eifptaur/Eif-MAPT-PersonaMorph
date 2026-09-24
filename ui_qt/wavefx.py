@@ -48,7 +48,7 @@ import time
 import numpy as np
 from PySide6.QtCore import QObject, QPoint, QPointF, QRect, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
-from PySide6.QtWidgets import QGraphicsEffect
+from PySide6.QtWidgets import QGraphicsEffect, QWidget
 
 # 动画帧间隔（≈30fps，与 ocean.py 同档；web setInterval(33)）
 _FRAME_MS = 33
@@ -146,6 +146,51 @@ class _WaveLensEffect(QGraphicsEffect):
         painter.restore()
 
 
+class WaveOverlay(QWidget):
+    """波纹覆盖层（丙-30 重做——QGraphicsEffect 对**顶层窗口不生效**的替代架构）。
+
+    全窗透明子控件（WA_TransparentForMouseEvents：不挡任何点击/拖动），paintEvent 里
+    grab 父窗透镜 bbox 的**真实像素** → `_displace_region` 位移 → drawImage 贴回。
+    对齐 web `backdrop-filter: url(#cardWave2)` 的「取背后真实像素做位移重采样」语义。
+    """
+
+    def __init__(self, wavefx):
+        super().__init__(wavefx._shell)
+        self._wf = wavefx
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setStyleSheet("background:transparent;")
+
+    def paintEvent(self, ev):  # noqa: N802
+        wf = self._wf
+        if not wf._enabled or wf._grabbing:
+            return
+        try:
+            center = wf._lens_center()
+            rect = wf._lens_rect(center)
+            rect = rect.intersected(QRect(0, 0, wf._shell.width(), wf._shell.height()))
+            if rect.width() < 8 or rect.height() < 8:
+                return
+            wf._grabbing = True
+            try:
+                pm = wf._shell.grab(QRect(rect))      # 透镜区域真实像素（部分重绘）
+            finally:
+                wf._grabbing = False
+            if pm.isNull():
+                return
+            out = wf._displace_region(pm, rect, center,
+                                      wf._norm_radius(center, rect), wf._mask_phase())
+            if out is None:
+                return
+            p = QPainter(self)
+            p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+            if wf._blank_mode(center):
+                p.setClipPath(QPainterPath_safe_circle(center, float(wf._cfg["radius"])))
+            p.drawImage(rect, out)                    # 缩采扭曲图拉伸贴回（对齐 0.5x 护栏）
+            p.end()
+        except Exception:  # noqa: BLE001 — 波纹绘制失败绝不能拖垮窗口
+            return
+
+
 def QPainterPath_safe_circle(center, r):
     from PySide6.QtGui import QPainterPath
     p = QPainterPath()
@@ -167,7 +212,9 @@ class WaveFX(QObject):
         self._timer.setInterval(_FRAME_MS)
         self._timer.timeout.connect(self._tick)
         self._enabled = False
-        self._fx = _WaveLensEffect(self)
+        self._fx = None                     # 丙-30：QGraphicsEffect 对顶层窗口不生效，弃用
+        self._overlay = None                # WaveOverlay 子控件（set_enabled 懒建）
+        self._grabbing = False              # grab 防递归守卫（overlay.paintEvent ↔ shell.grab）
         self._pos = QPointF(float(shell.width()) / 2.0, float(shell.height()) / 2.0)
         # 鼠标速度 EMA（web `_mouseSpeed` 同款，喂 gain）
         self._speed_ema = 0.0
@@ -224,17 +271,19 @@ class WaveFX(QObject):
         self._enabled = bool(on)
         try:
             if self._enabled:
-                # ⛔ 丙-14 止血：effect 挂载默认禁用（_LENS_MOUNT_OK，见模块头注释）——
-                #   半成品 effect 挂在 Shell 根窗上曾致「卡死/黑屏」；波纹正式重做完成并
-                #   真机验收通过前不挂。timer 与参数链路照常，仅不再接管整窗绘制。
-                if (_LENS_MOUNT_OK
-                        and self._shell.graphicsEffect() is not self._fx):
-                    self._shell.setGraphicsEffect(self._fx)
+                # 丙-30：WaveOverlay 子控件（懒建 + 跟随 shell 几何 + raise_ 置顶）。
+                #   QGraphicsEffect 对顶层窗口不生效 ⇒ 弃用 effect 路线（作者真机：
+                #   开关已开、effect 已挂、画面纹丝不动 = 此根因）。QT_NO_WAVE=1 逃生门。
+                if _LENS_MOUNT_OK and self._overlay is None:
+                    self._overlay = WaveOverlay(self)
+                    self._overlay.setGeometry(self._shell.rect())
+                    self._overlay.show()
+                    self._overlay.raise_()
+                if self._overlay is not None:
+                    self._overlay.setGeometry(self._shell.rect())
                 if not self._timer.isActive():
                     self._timer.start()
             else:
-                if self._shell.graphicsEffect() is self._fx:
-                    self._shell.setGraphicsEffect(None)
                 if self._timer.isActive():
                     self._timer.stop()
         except Exception:  # noqa: BLE001
@@ -450,7 +499,10 @@ class WaveFX(QObject):
         ph_speed = self._phase_speed()
         self._ph += ph_speed * _DT
         try:
-            self._shell.update()
+            if self._overlay is not None:
+                self._overlay.update()      # 丙-30：只重绘覆盖层（effect 路线弃用）
+            else:
+                self._shell.update()
         except Exception:  # noqa: BLE001
             pass
 

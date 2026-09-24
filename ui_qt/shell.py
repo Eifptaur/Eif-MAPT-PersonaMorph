@@ -395,6 +395,10 @@ class Shell(QWidget):
         super().resizeEvent(ev)
         self._rescale_wp()
         self._ocean.invalidate()
+        try:
+            self._wavefx.sync_overlay()   # 丙-30：波纹覆盖层跟随窗口几何
+        except Exception:  # noqa: BLE001
+            pass
         # 丙-7 #17：最大化/还原的画法随窗口态切换（双击顶栏的原生最大化
         # 不走 _toggle_max，挂在 resize 上才盖得住所有进入最大化的路径）
         btn = getattr(self, "btn_max", None)
@@ -905,13 +909,27 @@ class Shell(QWidget):
         wl.addWidget(self.find)
         lay.addWidget(wrap)
 
-        # 丙-29：顶部状态框（web .status :929 对齐——「运行状态」框在侧栏**最顶上**，
-        # 丙-18 初版错放在导航底部，作者真机纠正）。内容由 _apply_side_status 每 8s 刷新。
+        # 丙-30：顶部「运行状态」框（web .status :929 + CSS :517-519 全对齐——
+        #   蓝底/蓝边/圆角10 + 标题「运行状态」13px 蓝字 + 内容 12px；初版裸字被作者退回）。
+        sbox = QFrame()
+        sbox.setObjectName("SideStatusBox")
+        sbox.setStyleSheet(
+            "QFrame#SideStatusBox{background:%s;border:1px solid %s;border-radius:10px;}"
+            "QFrame#SideStatusBox QLabel{background:transparent;border:none;}"
+            % (self.t.blue_soft, self.t.blue))
+        sv = QVBoxLayout(sbox)
+        sv.setContentsMargins(12, 10, 12, 10)
+        sv.setSpacing(4)
+        t_cap = QLabel("运行状态")
+        t_cap.setFont(qfont(self.t, 13, 600))
+        t_cap.setStyleSheet(f"color:{self.t.blue};")
+        sv.addWidget(t_cap)
         self.side_status = QLabel("微信：读取中…")
-        self.side_status.setFont(qfont(self.t, self.t.body_size - 1.5))
-        self.side_status.setStyleSheet(f"color:{self.t.tx2};background:transparent;")
+        self.side_status.setFont(qfont(self.t, self.t.body_size - 1))
+        self.side_status.setStyleSheet(f"color:{self.t.tx2};")
         self.side_status.setWordWrap(True)
-        lay.addWidget(self.side_status)
+        sv.addWidget(self.side_status)
+        lay.addWidget(sbox)
 
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)

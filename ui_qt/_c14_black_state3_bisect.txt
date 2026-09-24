@@ -1,0 +1,41 @@
+[丙-14 黑屏二分 · 态③ 二分结论（根因实锤）]
+
+复刻对象：丙-12 半成品波纹 bc37525 的 _WaveLensEffect.draw() 错签名
+  - 错签名：sourcePixmap(QGraphicsEffect.PixmapPadMode.NoPad)  ← 正确应为
+    sourcePixmap(system, offset, mode) 三参
+  - 通过进程内 monkeypatch 强制挂载（设 wavefx._LENS_MOUNT_OK=True 且 setGraphicsEffect），
+    模拟作者 config ui.wave_fx.enabled=true 的挂载态。
+
+对照（生产同款线程环境：start_qt_shell 子线程 + 主线程忙碌；真屏截图判黑）：
+
+  变体 t3 / t6 —— 错签名 draw + effect 强制开 + THICKFRAME 开
+    结果：**纯黑** mean_bright=0.0，frac_dark=1.0
+    日志：每帧 TypeError: sourcePixmap() called with wrong argument types
+    截图：ui_qt/shots/c14-t3-brokenwave.png、c14-t6-brokenwave2.png
+
+  变体 t4 / t5 —— 错签名 draw + effect 强制开 + **THICKFRAME 关**（≈QT_NO_THICKFRAME）
+    结果：**崩 0xC000041D**（STATUS_FATAL_USER_CALLBACK_EXCEPTION），两跑一致
+
+  变体 t7 —— 修复版 draw（HEAD）+ 挂载（PM_WAVE_LENS=1）+ THICKFRAME 开
+    结果：正常 mean=63.6，first_paint 1764ms
+    截图：c14-t7-fixedwave.png
+
+  变体 t8 —— 修复版 + QT_NO_THICKFRAME=1
+    结果：正常（逃生门有效）
+
+机制链（实测 + 日志旁证）：
+  1. effect 挂 Shell 根窗 ⇒ 整窗绘制被 draw() 接管；
+  2. 错签名 ⇒ 每帧 TypeError 取源失败 ⇒ 整窗无内容可合成 ⇒ 纯黑（进程活着、DWM 圆角在）；
+  3. 异常反复穿越 Qt C++→Python 回调边界累计 ⇒ 0xC000041D ⇒ 进程卡死；
+  4. 看门狗重拉 ⇒ 同 effect 再挂 ⇒ 秒穿黑屏，循环（"再启动仍黑"）。
+
+结论：
+  - 黑/崩只随波纹 draw 状态翻转、不随 THICKFRAME 翻转 ⇒ **二分闭合**。
+  - 根因实锤：丙-12 半成品 _WaveLensEffect.draw() 错签名（bc37525 引入）。
+  - c13 THICKFRAME 注入无罪；HEAD 444c4d9 止血有效。
+
+修法 diff（供总监裁，未落盘，未改 shell.py/wavefx.py）：
+  - wavefx._WaveLensEffect.draw 已修复签名为 sourcePixmap(system, offset, mode)；
+  - 建议加 fail-safe：draw 内 try/except 失败则 setGraphicsEffect(None) 降级；
+  - 建议 selftest 加静态断言：QGraphicsEffect 覆写必须有 try/except 或走包装器，
+    防同类"半成品 effect 打断整窗绘制"复发。

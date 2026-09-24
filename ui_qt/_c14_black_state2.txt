@@ -1,0 +1,18 @@
+[丙-14 黑屏二分 · 态② 结论]
+
+运行：现状 HEAD = 444c4d9 + 设 QT_NO_THICKFRAME=1（完全跳过 WS_THICKFRAME 注入）
+命令：QT_NO_THICKFRAME=1 python ui_qt/shell.py [theme]
+截图：ui_qt/shots/c14-t8-escape.png（生产线程 escape 变体，对应 t8）
+判黑指标：mean_bright、frac_dark（真屏 ImageGrab.grab(bbox)）
+
+结果：不黑 —— 窗口正常渲染，圆角/边框在，内容可见。
+  - thickframe_ok 经环境变量门控为 False，_ensure_resize_style 跳过 WS_THICKFRAME 注入、
+    nativeEvent 的 WM_NCCALCSIZE 不接管（head 注释已声明）。
+  - 逃生门有效：关掉 c13 注入后窗照样正常。
+
+结论：
+  - c13 THICKFRAME 注入无罪（态①开、态②关，两态窗都正常；黑/崩只随波纹 draw 翻转）。
+  - QT_NO_THICKFRAME 是有效的自救通道，建议保留作逃生门。
+
+下一步：进态③ —— 若态②仍黑则根因在启动链路；但态②正常，故态③直接复刻
+"坏波纹 draw + 强制挂载"以实锤根因。
