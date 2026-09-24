@@ -1485,9 +1485,7 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
 
         def _work() -> None:
             try:
-                from agent_bridge import get_json # noqa: PLC0415
-
-                box["v"] = get_json("/api/update", timeout=8.0)
+                box["v"] = config_io.get_json("/api/update", timeout=8.0)
             except Exception: # noqa: BLE001
                 box["v"] = None
 
@@ -1562,6 +1560,106 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
     mtx.body.addWidget(desc(t, "只对本次运行有效（重启后重新拦），我们不会把「放行」写进配置。"))
     lay.addWidget(mtx)
 
+    # ── 接管与指纹（web vermat sec：图标指纹取/丢 + 版本不匹配拍板入口 + 一键修复）──
+    tk_card = Card(t)
+    tk_card.body.addWidget(h2(t, "接管与指纹"))
+    tk_card.body.addWidget(desc(t, "图标指纹帮机器人点准微信的菜单和按钮；微信窗口大小/主题变了就重新取一次。"
+                                   "丢掉旧指纹后只剩「放行但留痕」（不会再拦「点错」），要重新取才有新指纹。"))
+    tk_note = QLabel("")
+    tk_note.setFont(qfont(t, t.body_size - 1))
+    tk_note.setWordWrap(True)
+    tk_note.setStyleSheet(f"color:{t.tx3};background:transparent;")
+    tk_row = QHBoxLayout()
+    btn_take = Btn("重新取指纹", t, "ghost")
+    btn_forget = Btn("丢掉旧指纹", t, "ghost")
+    btn_pd = Btn("版本不匹配怎么办", t, "ghost")
+    btn_heal = Btn("依赖自愈", t, "ghost")
+    btn_up = Btn("升级适配层", t, "ghost")
+    for b in (btn_take, btn_forget, btn_pd):
+        tk_row.addWidget(b)
+    tk_row.addStretch(1)
+    tk_row2 = QHBoxLayout()
+    tk_row2.addWidget(btn_heal)
+    tk_row2.addWidget(btn_up)
+    tk_row2.addStretch(1)
+    tk_card.body.addLayout(tk_row)
+    tk_card.body.addLayout(tk_row2)
+    tk_card.body.addWidget(tk_note)
+    lay.addWidget(tk_card)
+
+    def _on_take() -> None:
+        from agent_bridge import post_json # noqa: PLC0415
+
+        btn_take.setEnabled(False)
+        btn_take.setText("取指纹中…")
+
+        def _run() -> str:
+            r = post_json("/api/ui_fingerprint/take", {}, timeout=60.0) or {}
+            res = r.get("result") or {}
+            ok_n = len(res.get("ok") or [])
+            fail_n = len(res.get("failed") or [])
+            if ok_n:
+                return ("取到 %d 条指纹" % ok_n) + (("，%d 条没取到" % fail_n) if fail_n else "")
+            return ("一条也没取到：%s（微信窗口可能被最小化/遮住）"
+                    % ((res.get("failed") or [""])[0] or ""))
+
+        _post_action_raw(btn_take, tk_note, _run, "取指纹中…",
+                         done=lambda: (btn_take.setEnabled(True),
+                                       btn_take.setText("重新取指纹")))
+
+    def _on_forget() -> None:
+        from agent_bridge import post_json # noqa: PLC0415
+
+        dlg = ConfirmDialog(t, page, "丢掉旧指纹", "丢掉全部旧指纹？",
+                            ["丢完就只剩「放行但留痕」（不会再拦「点错」）",
+                             "要重新点「重新取指纹」才有新指纹"],
+                            "丢掉旧指纹", "先不丢", dangerous=True)
+        if not dlg.exec():
+            return
+
+        def _run() -> str:
+            post_json("/api/ui_fingerprint/forget", {}, timeout=30.0)
+            return "旧指纹已丢掉"
+
+        _post_action_raw(btn_forget, tk_note, _run, "丢掉中…")
+
+    def _on_pd() -> None:
+        def _run() -> str:
+            r = config_io.get_json("/api/status", timeout=15.0) or {}
+            pd = r.get("pending_decisions") or {}
+            item = pd.get("item")
+            if item:
+                return ("有待拍板的事：%s——微信 %s × 适配层 %s（可到网页控制台按提示四选一）"
+                        % (item.get("title") or item.get("reason") or "版本适配",
+                           item.get("wechat") or "?", item.get("adapter") or "?"))
+            return "现在没有待拍板的事。"
+
+        _post_action_raw(btn_pd, tk_note, _run, "读取待决台账…")
+
+    def _on_heal() -> None:
+        from agent_bridge import post_json # noqa: PLC0415
+
+        def _run() -> str:
+            r = post_json("/api/version/action", {"choice": "update_host"}, timeout=30.0) or {}
+            return str(r.get("message") or "依赖自愈已发出")
+
+        _post_action_raw(btn_heal, tk_note, _run, "请求发送中…")
+
+    def _on_up() -> None:
+        from agent_bridge import post_json # noqa: PLC0415
+
+        def _run() -> str:
+            r = post_json("/api/version/action", {"choice": "upgrade_adapter"}, timeout=30.0) or {}
+            return str(r.get("message") or "升级适配层已发出")
+
+        _post_action_raw(btn_up, tk_note, _run, "请求发送中…")
+
+    btn_take.clicked.connect(_on_take)
+    btn_forget.clicked.connect(_on_forget)
+    btn_pd.clicked.connect(_on_pd)
+    btn_heal.clicked.connect(_on_heal)
+    btn_up.clicked.connect(_on_up)
+
     def _render_mtx() -> None:
         try:
             import panels_qt # noqa: PLC0415
@@ -1591,19 +1689,36 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
             badge.set("err", "拦停")
 
     def _on_allow() -> None:
-        # web vmAllow：写「本次允许发送」的会话期放行（重启失效，不落配置）
+        # web vmAllow（:7594-7601）：GET /api/version/allow 写「本次允许发送」的
+        # 会话期放行（重启失效，不落配置）；成败都如实回显，不假成功。
+        bx: dict = {"done": False, "r": None, "err": None}
+
         def _work() -> None:
             try:
-                from agent_bridge import post_json # noqa: PLC0415
-
-                post_json("/api/version_allow", {}, timeout=15.0)
-            except Exception: # noqa: BLE001
-                pass
+                bx["r"] = config_io.get_json("/api/version/allow", timeout=15.0)
+            except Exception as e: # noqa: BLE001
+                bx["err"] = str(e)
+            bx["done"] = True
 
         import threading # noqa: PLC0415
 
         threading.Thread(target=_work, daemon=True, name="vermat-allow").start()
-        gate_lb.setText("已按「仅本次允许」放行（重启后重新拦）。")
+        gate_lb.setText("放行请求发送中…")
+        gate_lb.setStyleSheet(f"color:{t.tx3};background:transparent;")
+
+        def _apply() -> None:
+            if not bx["done"]:
+                QTimer.singleShot(150, _apply)
+                return
+            if bx["err"]:
+                gate_lb.setText("放行失败：%s" % bx["err"])
+                gate_lb.setStyleSheet(f"color:{t.err};background:transparent;")
+                return
+            gate_lb.setText("已放行（只对本次运行有效）：发送会按未验证版本对继续，"
+                            "出问题就在本页点「升级适配层」（产品后台自己装）。")
+            gate_lb.setStyleSheet(f"color:{t.ok};background:transparent;")
+
+        QTimer.singleShot(150, _apply)
 
     btn_allow.clicked.connect(_on_allow)
     page._c10_mtx_refresh = _render_mtx
@@ -3847,6 +3962,213 @@ def _seed_import_file(btn, note) -> None:
     _seed_import_post(btn, note, text, "从文件导入")
 
 
+def _post_action_raw(btn, note, run, busy: str = "执行中…", done=None) -> None:
+    """按钮动作的公共发送段：run() 在后台线程跑（成功返回回显文案，失败抛异常）；
+    busy/结果回显 note（主线程落地）；done 在落定后回调（恢复按钮文字等）。"""
+    import threading as _th # noqa: PLC0415
+
+    t = getattr(btn, "t", None)
+    if note is None or t is None:
+        return
+    btn.setEnabled(False)
+    _c8_say(note, t, busy)
+    box: dict = {"done": False, "msg": None, "err": None}
+
+    def _work() -> None:
+        try:
+            box["msg"] = run()
+        except Exception as e: # noqa: BLE001
+            box["err"] = str(e)
+        box["done"] = True
+
+    _th.Thread(target=_work, daemon=True, name="act-custom").start()
+
+    def _apply() -> None:
+        if not box["done"]:
+            QTimer.singleShot(150, _apply)
+            return
+        btn.setEnabled(True)
+        if done is not None:
+            done()
+        if box["err"]:
+            _c8_say(note, t, "失败：%s" % box["err"], "err")
+            return
+        _c8_say(note, t, str(box["msg"]), "ok")
+
+    QTimer.singleShot(150, _apply)
+
+
+def _act_ui_layout_reload(btn, note) -> None:
+    """刷新 UI 布局状态（web uiLayoutReload :6429 附近对齐——web 整页刷新，
+    Qt 壳重读一次标定状态回显）。"""
+    def _run() -> str:
+        r = config_io.get_json("/api/ui-layout", timeout=15.0) or {}
+        it = r.get("layout") or {}
+        items = it.get("sidebar_items") or []
+        names = ",".join(str(x) for x in items)
+        return ("已标定 %d 个侧栏图标" % len(items)) + (("（%s）" % names) if names else "")
+
+    _post_action_raw(btn, note, _run, "读取布局状态…")
+
+
+def _act_ui_recalibrate(btn, note) -> None:
+    """重新标定（web uiRecalibrate 对齐）：后台接管微信窗口标定图标位置，
+    期间按钮禁用变「标定中…（微信前台）」，完成回显检测到的图标数。"""
+    from agent_bridge import post_json # noqa: PLC0415
+
+    btn.setText("标定中…（微信前台）")
+
+    def _run() -> str:
+        r = post_json("/api/ui/recalibrate", {}, timeout=120.0) or {}
+        if r.get("ok"):
+            return "标定完成：检测到 %s 个侧栏图标" % r.get("count")
+        raise RuntimeError(str(r.get("error") or "标定失败"))
+
+    _post_action_raw(btn, note, _run, "标定中…（微信前台）",
+                     done=lambda: btn.setText("重新标定（接管鼠标）"))
+
+
+def _act_seed_reload(btn, note) -> None:
+    """种子库状态刷新（web loadSeedStats :7904-7912 对齐）。"""
+    from agent_bridge import post_json # noqa: PLC0415
+
+    def _run() -> str:
+        r = post_json("/api/scoring/stats", {}, timeout=30.0) or {}
+        d = r.get("data") or {}
+        return "种子库 %s 条 · 已学反应 %s 条 · 高分参考 %s 条" % (
+            d.get("seed_count") or 0, d.get("reaction_count") or 0, len(d.get("top") or []))
+
+    _post_action_raw(btn, note, _run, "读取种子库状态…")
+
+
+def _act_learn_apply(btn, note) -> None:
+    """确定学习（web learnApply :7958-7964 对齐）：开启学习机制。"""
+    from agent_bridge import post_json # noqa: PLC0415
+
+    def _run() -> str:
+        r = post_json("/api/learning/start", {}, timeout=30.0) or {}
+        if r.get("ok"):
+            return str(r.get("note") or "已开启")
+        raise RuntimeError(str(r.get("error") or r.get("note") or "开启失败"))
+
+    _post_action_raw(btn, note, _run, "正在确认学习机制…")
+
+
+def _act_learn_eval(btn, note) -> None:
+    """学习评估（web learnEval :7965-7971 对齐）：模型按评分细则打分，可能要一会儿。"""
+    from agent_bridge import post_json # noqa: PLC0415
+
+    def _run() -> str:
+        r = post_json("/api/learning/evaluate", {}, timeout=180.0) or {}
+        if r.get("eval"):
+            return "评估：%s" % r.get("eval")
+        raise RuntimeError(str(r.get("error") or r.get("note") or "评估完成"))
+
+    _post_action_raw(btn, note, _run, "正在让模型评估学习效果（按评分细则）…")
+
+
+_BG_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+            ".webp": "image/webp", ".gif": "image/gif", ".bmp": "image/bmp"}
+
+
+def _act_bg_upload(btn, note) -> None:
+    """上传背景（web bgUpload :3176-3191 对齐）：选图 → dataURL → POST ui/background。"""
+    import base64 as _b64 # noqa: PLC0415
+
+    from PySide6.QtWidgets import QFileDialog # noqa: PLC0415
+
+    path, _fl = QFileDialog.getOpenFileName(
+        btn.window(), "选择背景图片", "", "图片 (*.png *.jpg *.jpeg *.webp *.gif *.bmp)")
+    if not path:
+        return
+    t = getattr(btn, "t", None)
+    ext = Path(path).suffix.lower()
+    mime = _BG_MIME.get(ext)
+    if mime is None:
+        if note is not None and t is not None:
+            _c8_say(note, t, "先选一张 png/jpg/webp/gif/bmp 图片", "warn")
+        return
+    try:
+        data = _b64.b64encode(Path(path).read_bytes()).decode("ascii")
+    except Exception as e: # noqa: BLE001
+        if note is not None and t is not None:
+            _c8_say(note, t, "读取文件失败：%s" % e, "err")
+        return
+
+    from agent_bridge import post_json # noqa: PLC0415
+
+    def _run() -> str:
+        r = post_json("/api/ui/background", {"data": "data:%s;base64,%s" % (mime, data)},
+                      timeout=60.0) or {}
+        if r.get("ok"):
+            return str(r.get("note") or "背景已应用")
+        raise RuntimeError(str(r.get("error") or "上传失败"))
+
+    _post_action_raw(btn, note, _run, "上传中…")
+
+
+def _act_bg_clear(btn, note) -> None:
+    """恢复默认背景（web bgClear :3193-3198 对齐）。"""
+    from agent_bridge import post_json # noqa: PLC0415
+
+    def _run() -> str:
+        r = post_json("/api/ui/background", {"clear": True}, timeout=30.0) or {}
+        if r.get("ok"):
+            return "已恢复默认背景"
+        raise RuntimeError(str(r.get("error") or "操作失败"))
+
+    _post_action_raw(btn, note, _run, "恢复中…")
+
+
+def _act_cursor_reset(btn, note) -> None:
+    """重置光标（web cursorReset :3108-3120 对齐）：POST reset 清残留文件
+    → 写回默认配置（whale_cursor 开、自定义清空）。"""
+    from agent_bridge import post_json # noqa: PLC0415
+
+    def _run() -> str:
+        post_json("/api/cursor/reset", {}, timeout=30.0)
+        config_io.write_patch({"ui": {"whale_cursor": True, "cursor_image": ""}})
+        return "已重置为默认鲸鱼（马上生效）"
+
+    _post_action_raw(btn, note, _run, "重置中…")
+
+
+def _act_cursor_save(btn, note) -> None:
+    """保存光标设置（web cursorSaveBtn :3123-3137 对齐）：选图 → POST upload
+    → 写配置 cursor_image=custom → 光标生效。"""
+    import base64 as _b64 # noqa: PLC0415
+
+    from PySide6.QtWidgets import QFileDialog # noqa: PLC0415
+
+    from agent_bridge import post_json # noqa: PLC0415
+
+    path, _fl = QFileDialog.getOpenFileName(
+        btn.window(), "选择光标图片", "", "图片 (*.png *.jpg *.jpeg *.webp)")
+    if not path:
+        return
+    t = getattr(btn, "t", None)
+    ext = Path(path).suffix.lower()
+    mime = _BG_MIME.get(ext)
+    if mime is None:
+        if note is not None and t is not None:
+            _c8_say(note, t, "先选一张 png/jpg/webp 图片", "warn")
+        return
+    try:
+        data = _b64.b64encode(Path(path).read_bytes()).decode("ascii")
+    except Exception as e: # noqa: BLE001
+        if note is not None and t is not None:
+            _c8_say(note, t, "读取文件失败：%s" % e, "err")
+        return
+
+    def _run() -> str:
+        post_json("/api/cursor/upload", {"image": "data:%s;base64,%s" % (mime, data)},
+                  timeout=30.0)
+        config_io.write_patch({"ui": {"whale_cursor": True, "cursor_image": "custom"}})
+        return "自定义光标已保存并生效"
+
+    _post_action_raw(btn, note, _run, "保存中…")
+
+
 ACT_CUSTOM = {
     "fbSubmit": (_fb_submit,
                  "真接后端：/api/feedback/submit（校验内容/邮箱；被限流时不清空输入框）"),
@@ -3858,6 +4180,24 @@ ACT_CUSTOM = {
                       "真接后端：/api/scoring/import（读上方文本框，服务端查重合并后生效）"),
     "seedImportFile": (_seed_import_file,
                        "真接后端：/api/scoring/import（选 txt/json 文件导入，自动查重）"),
+    "uiLayoutReload": (_act_ui_layout_reload,
+                       "真接后端：/api/ui-layout（重读侧栏图标标定状态）"),
+    "uiRecalibrate": (_act_ui_recalibrate,
+                      "真接后端：/api/ui/recalibrate（后台接管微信窗口标定图标位置，约几十秒）"),
+    "seedReload": (_act_seed_reload,
+                   "真接后端：/api/scoring/stats（刷新种子库统计）"),
+    "learnApply": (_act_learn_apply,
+                   "真接后端：/api/learning/start（开启学习机制，有群友回应时学习）"),
+    "learnEval": (_act_learn_eval,
+                  "真接后端：/api/learning/evaluate（模型按评分细则评估学习效果，可能要一会儿）"),
+    "bgUpload": (_act_bg_upload,
+                 "真接后端：/api/ui/background（选图上传为控制台背景）"),
+    "bgClear": (_act_bg_clear,
+                "真接后端：/api/ui/background clear（恢复默认背景）"),
+    "cursorReset": (_act_cursor_reset,
+                    "真接后端：/api/cursor/reset（清自定义残留文件并写回默认配置）"),
+    "cursorSaveBtn": (_act_cursor_save,
+                      "真接后端：/api/cursor/upload（选图后保存并生效）"),
 }
 
 

@@ -1545,11 +1545,14 @@ def t_c10() -> None:
     ck("c10P3: 含「能力矩阵」卡", 'h2(t, "能力矩阵")' in vp)
     ck("c10P3: 矩阵读 /api/status 真值（version_gate + version）",
        "_load_status()" in vp and "version_gate" in vp and "version" in vp)
-    ck("c10P3: 三态口径（allowed/已实测/拦停）+ 本次允许发送入口",
-       "已实测" in vp and "拦停" in vp and "/api/version_allow" in vp)
+    ck("c10P3: 三态口径（allowed/已实测/拦停）+ 本次允许发送入口（真 GET /api/version/allow）",
+       "已实测" in vp and "拦停" in vp and "/api/version/allow" in vp)
     ck("c10P3: 更新卡复用 updbar.decide（不重写一套判定）", "updbar.decide" in vp)
-    ck("c10P3: L2 缺陷已除——本地 get_json/post_json 不再裸用（走 agent_bridge）",
-       "from agent_bridge import get_json" in vp and vp.count("post_json(") <= vp.count("from agent_bridge import post_json"))
+    # 教训：agent_bridge 从未有 get_json——旧断言锁「from agent_bridge import get_json」，
+    # 等于把静默失败的错误写法锁成了规范（断言与 bug 互相锁死）。现口径：GET 走 config_io。
+    ck("c10P3: L2 缺陷已除——GET 走 config_io.get_json / POST 走 agent_bridge.post_json",
+       "config_io.get_json" in vp and "from agent_bridge import get_json" not in vp
+       and vp.count("post_json(") <= vp.count("from agent_bridge import post_json"))
     ck("c10P3: 无死代码（空 desc 占位已删）", 'empty = desc(t, "")' not in vp)
 
     # ── P0-5：波纹模块存在且**与背景海浪解耦**（不共用 Timer / 不碰 OceanWaves）
@@ -2622,11 +2625,338 @@ def t_commfb() -> None:
             pass
 
 
+def t_veradv() -> None:
+    """批4第四组全链路真跑：vermat（放行修复/指纹取丢/拍板入口/一键修复）
+    + advanced（布局/标定/种子/学习）+ ui（背景）+ cursor（重置/保存）。
+
+    手法同 t_commfb：假后端 + patch current_url/QDialog.exec/QFileDialog/
+    config_io.write_patch（防测试真写本机 config.json）。
+    """
+    import json as _json # noqa: PLC0415
+    import os # noqa: PLC0415
+    import tempfile as _tf # noqa: PLC0415
+    import threading as _th # noqa: PLC0415
+    import time as _time # noqa: PLC0415
+    from http.server import BaseHTTPRequestHandler, HTTPServer # noqa: PLC0415
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QLabel) # noqa: PLC0415
+
+    import config_io # noqa: PLC0415
+    import panels_qt # noqa: PLC0415
+    from panels_custom import vermat_panel # noqa: PLC0415
+    from stylekit_qt import THEMES # noqa: PLC0415
+    from widgets import Btn # noqa: PLC0415
+
+    QApplication.instance() or QApplication([])
+
+    calls: list = []
+    st_state: dict = {"with_item": True}
+    patch_calls: list = []
+
+    class _H(BaseHTTPRequestHandler):
+        def _send(self, obj): # noqa: N802
+            body = _json.dumps(obj).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self): # noqa: N802
+            calls.append(self.path)
+            if "/api/version/allow" in self.path:
+                self._send({"ok": True})
+            elif "/api/ui-layout" in self.path:
+                self._send({"ok": True, "layout": {"sidebar_items": ["聊天", "通讯录"]}})
+            elif "/api/status" in self.path:
+                pd = {"open": True,
+                      "item": {"title": "微信版本不匹配", "reason": "能力矩阵有拦停项",
+                               "wechat": "3.9.12", "adapter": "4.9.0"}} if st_state["with_item"] else {"open": False}
+                self._send({"ok": True, "version": {"wechat": "3.9.12", "adapter": "4.9.0"},
+                            "version_gate": {"allow": False, "level": "strict"},
+                            "pending_decisions": pd})
+            elif "/api/update" in self.path:
+                self._send({"mine": "3.2.0"})
+            else:
+                self._send({"ok": True})
+
+        def do_POST(self): # noqa: N802
+            n = int(self.headers.get("Content-Length") or 0)
+            try:
+                body = _json.loads(self.rfile.read(n).decode("utf-8", "replace")) if n else {}
+            except Exception: # noqa: BLE001
+                body = {}
+            calls.append(self.path + "#" + _json.dumps(body, ensure_ascii=False))
+            if "/api/ui_fingerprint/take" in self.path:
+                self._send({"ok": True, "result": {"ok": ["a", "b", "c"], "failed": []}})
+            elif "/api/ui_fingerprint/forget" in self.path:
+                self._send({"ok": True})
+            elif "/api/version/action" in self.path:
+                self._send({"ok": True, "message": "后台作业已发起"})
+            elif "/api/scoring/stats" in self.path:
+                self._send({"ok": True, "data": {"seed_count": 9, "reaction_count": 2, "top": [1, 2]}})
+            elif "/api/learning/start" in self.path:
+                self._send({"ok": True, "note": "学习机制已开启"})
+            elif "/api/learning/evaluate" in self.path:
+                self._send({"ok": True, "eval": "提升 12.3 分"})
+            elif "/api/ui/recalibrate" in self.path:
+                self._send({"ok": True, "count": 8})
+            elif "/api/ui/background" in self.path:
+                self._send({"ok": True, "note": "背景已应用"})
+            elif "/api/cursor/reset" in self.path:
+                self._send({"ok": True})
+            elif "/api/cursor/upload" in self.path:
+                self._send({"ok": True})
+            else:
+                self._send({"ok": True})
+
+        def log_message(self, *a): # noqa: N802
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), _H)
+    port = srv.server_address[1]
+    _th.Thread(target=srv.serve_forever, daemon=True, name="fake-be-veradv").start()
+
+    import agent_bridge # noqa: PLC0415
+
+    _orig_url = agent_bridge.current_url
+    agent_bridge.current_url = lambda: "http://127.0.0.1:%d/?token=tk" % port
+    exec_dlgs: list = []
+    mode = {"ok": False}
+    _orig_exec = QDialog.exec
+
+    def _fake_exec(self, *a, **k):
+        exec_dlgs.append(self)
+        if mode["ok"] and hasattr(self, "btn_ok"):
+            self.btn_ok.click()
+        return self.result()
+
+    QDialog.exec = _fake_exec
+
+    _orig_gofn = QFileDialog.getOpenFileName
+    _orig_wpatch = config_io.write_patch
+    config_io.write_patch = lambda patch: patch_calls.append(patch) # 防测试真写本机 config
+    tmp_fd, tmp_path = _tf.mkstemp(suffix=".png")
+    os.write(tmp_fd, b"\x89PNG\r\n\x1a\nfakepng")
+    os.close(tmp_fd)
+    QFileDialog.getOpenFileName = staticmethod(lambda *a, **k: (tmp_path, ""))
+
+    def _btext(page, txt):
+        return [b for b in page.findChildren(Btn) if b.text() == txt]
+
+    def _wait(pred, timeout=4.0):
+        end = _time.time() + timeout
+        while _time.time() < end:
+            QApplication.processEvents()
+            if pred():
+                return True
+            _time.sleep(0.03)
+        QApplication.processEvents()
+        return pred()
+
+    try:
+        t = THEMES["whale"]
+        # ── vermat 手写面板：新卡 + 放行修复 ──
+        vp = vermat_panel(t)
+        vp.show()
+        QApplication.processEvents()
+        ck("vermat 新增「接管与指纹」卡五钮（取/丢指纹、拍板入口、依赖自愈、升级适配层）",
+           all(_btext(vp, x) for x in ("重新取指纹", "丢掉旧指纹", "版本不匹配怎么办",
+                                       "依赖自愈", "升级适配层")),
+           str([b.text() for b in vp.findChildren(Btn)]))
+
+        calls.clear()
+        allow_btn = _btext(vp, "本次允许发送")[0]
+        allow_btn.click()
+        _wait(lambda: any("/api/version/allow" in c for c in calls))
+        gate_lb = next(l for l in vp.findChildren(QLabel)
+                       if "放行" in l.text() or "版本门" in l.text())
+        _wait(lambda: "已放行" in gate_lb.text())
+        ck("vmAllow 修复：GET /api/version/allow 真发（原 POST /api/version_allow 假成功），回显放行文案",
+           any(c.startswith("/api/version/allow") for c in calls)
+           and "已放行（只对本次运行有效）" in gate_lb.text(),
+           str([c for c in calls if "allow" in c]) + " lb=" + gate_lb.text())
+
+        calls.clear()
+        take_btn = _btext(vp, "重新取指纹")[0]
+        take_btn.click()
+        QApplication.processEvents()
+        note_lb = [l for l in vp.findChildren(QLabel) if l.text() == "取指纹中…"]
+        _wait(lambda: any("/api/ui_fingerprint/take" in c for c in calls))
+        _wait(lambda: note_lb and "取到 3 条指纹" in note_lb[0].text())
+        ck("重新取指纹：POST ui_fingerprint/take，回显「取到 3 条指纹」，按钮文字恢复",
+           any("/api/ui_fingerprint/take" in c for c in calls)
+           and take_btn.text() == "重新取指纹",
+           note_lb[0].text() + " btn=" + take_btn.text())
+
+        mode["ok"] = False
+        exec_dlgs.clear()
+        calls.clear()
+        _btext(vp, "丢掉旧指纹")[0].click()
+        QApplication.processEvents()
+        ck("丢掉旧指纹先弹确认框，点取消 ⇒ 不发请求",
+           len(exec_dlgs) == 1 and not any("/api/ui_fingerprint/forget" in c for c in calls),
+           "dlg=%d posts=%s" % (len(exec_dlgs), [c for c in calls if "forget" in c]))
+        mode["ok"] = True
+        _btext(vp, "丢掉旧指纹")[0].click()
+        _wait(lambda: any("/api/ui_fingerprint/forget" in c for c in calls))
+        _wait(lambda: "旧指纹已丢掉" in note_lb[0].text())
+        ck("确认后 POST ui_fingerprint/forget，回显「旧指纹已丢掉」",
+           any("/api/ui_fingerprint/forget" in c for c in calls) and "旧指纹已丢掉" in note_lb[0].text(),
+           note_lb[0].text())
+
+        calls.clear()
+        _btext(vp, "版本不匹配怎么办")[0].click()
+        _wait(lambda: "有待拍板的事" in note_lb[0].text())
+        ck("拍板入口：GET /api/status 读 pending_decisions，有待决 → 回显标题与版本对",
+           any(c.startswith("/api/status") for c in calls)
+           and "微信版本不匹配" in note_lb[0].text() and "3.9.12" in note_lb[0].text(),
+           note_lb[0].text())
+        st_state["with_item"] = False
+        calls.clear()
+        _btext(vp, "版本不匹配怎么办")[0].click()
+        _wait(lambda: "现在没有待拍板的事" in note_lb[0].text())
+        ck("拍板入口：无待决 → 回显「现在没有待拍板的事」",
+           "现在没有待拍板的事" in note_lb[0].text(), note_lb[0].text())
+        st_state["with_item"] = True
+
+        calls.clear()
+        _btext(vp, "依赖自愈")[0].click()
+        _wait(lambda: any("/api/version/action" in c and "update_host" in c for c in calls))
+        _wait(lambda: "后台作业已发起" in note_lb[0].text())
+        ck("依赖自愈：POST /api/version/action {choice:update_host}，回显服务端 message",
+           any("/api/version/action" in c and "update_host" in c for c in calls)
+           and "后台作业已发起" in note_lb[0].text(),
+           note_lb[0].text())
+        calls.clear()
+        _btext(vp, "升级适配层")[0].click()
+        _wait(lambda: any("/api/version/action" in c and "upgrade_adapter" in c for c in calls))
+        ck("升级适配层：POST /api/version/action {choice:upgrade_adapter}",
+           any("/api/version/action" in c and "upgrade_adapter" in c for c in calls),
+           str([c for c in calls if "version/action" in c]))
+
+        # ── advanced 页：布局/标定/种子/学习 ──
+        wrap_a = panels_qt.build_panel(t, "advanced")
+        adv = wrap_a.widget()
+        adv.show()
+        QApplication.processEvents()
+        calls.clear()
+        _btext(adv, "刷新")[0].click() # advanced 页第一个「刷新」= uiLayoutReload
+        _wait(lambda: any("/api/ui-layout" in c for c in calls))
+        _wait(lambda: "已标定 2 个侧栏图标" in _btext(adv, "刷新")[0].property("c8_note").text())
+        ck("UI 布局刷新：GET /api/ui-layout，回显「已标定 2 个侧栏图标（聊天,通讯录）」",
+           any("/api/ui-layout" in c for c in calls)
+           and "已标定 2 个侧栏图标（聊天,通讯录）" in _btext(adv, "刷新")[0].property("c8_note").text(),
+           _btext(adv, "刷新")[0].property("c8_note").text())
+
+        cal_btn = [b for b in adv.findChildren(Btn) if b.property("web_action") == "uiRecalibrate"][0]
+        calls.clear()
+        cal_btn.click()
+        _wait(lambda: any("/api/ui/recalibrate" in c for c in calls))
+        _wait(lambda: "标定完成：检测到 8 个侧栏图标" in cal_btn.property("c8_note").text())
+        ck("重新标定：按钮态「标定中…（微信前台）」→ POST ui/recalibrate → 回显图标数并恢复文字",
+           cal_btn.text() == "重新标定（接管鼠标）"
+           and "标定完成：检测到 8 个侧栏图标" in cal_btn.property("c8_note").text(),
+           cal_btn.property("c8_note").text() + " btn=" + cal_btn.text())
+
+        sr_btn = [b for b in adv.findChildren(Btn) if b.property("web_action") == "seedReload"][0]
+        calls.clear()
+        sr_btn.click()
+        _wait(lambda: any("/api/scoring/stats" in c for c in calls))
+        _wait(lambda: "种子库 9 条" in sr_btn.property("c8_note").text())
+        ck("种子库刷新：POST scoring/stats，回显「种子库 9 条 · 已学反应 2 条 · 高分参考 2 条」",
+           "种子库 9 条 · 已学反应 2 条 · 高分参考 2 条" in sr_btn.property("c8_note").text(),
+           sr_btn.property("c8_note").text())
+
+        la_btn = [b for b in adv.findChildren(Btn) if b.property("web_action") == "learnApply"][0]
+        calls.clear()
+        la_btn.click()
+        _wait(lambda: any("/api/learning/start" in c for c in calls))
+        _wait(lambda: "学习机制已开启" in la_btn.property("c8_note").text())
+        ck("确定学习：POST learning/start，回显服务端 note",
+           "学习机制已开启" in la_btn.property("c8_note").text(),
+           la_btn.property("c8_note").text())
+
+        le_btn = [b for b in adv.findChildren(Btn) if b.property("web_action") == "learnEval"][0]
+        calls.clear()
+        le_btn.click()
+        _wait(lambda: any("/api/learning/evaluate" in c for c in calls))
+        _wait(lambda: "评估：" in le_btn.property("c8_note").text())
+        ck("学习评估：POST learning/evaluate，回显「评估：提升 12.3 分」",
+           "评估：提升 12.3 分" in le_btn.property("c8_note").text(),
+           le_btn.property("c8_note").text())
+
+        # ── ui 页：背景上传/恢复 ──
+        wrap_u = panels_qt.build_panel(t, "ui")
+        uip = wrap_u.widget()
+        uip.show()
+        QApplication.processEvents()
+        bc_btn = [b for b in uip.findChildren(Btn) if b.property("web_action") == "bgClear"][0]
+        calls.clear()
+        bc_btn.click()
+        _wait(lambda: any("/api/ui/background" in c and "clear" in c for c in calls))
+        _wait(lambda: "已恢复默认背景" in bc_btn.property("c8_note").text())
+        ck("恢复默认背景：POST ui/background {clear:true}，回显「已恢复默认背景」",
+           any("/api/ui/background" in c and '"clear": true' in c for c in calls)
+           and "已恢复默认背景" in bc_btn.property("c8_note").text(),
+           str([c for c in calls if "background" in c]))
+
+        bu_btn = [b for b in uip.findChildren(Btn) if b.property("web_action") == "bgUpload"][0]
+        calls.clear()
+        bu_btn.click()
+        _wait(lambda: any("/api/ui/background" in c for c in calls))
+        _wait(lambda: "背景已应用" in bu_btn.property("c8_note").text())
+        ck("上传背景：假对话框选临时 png → POST 带 dataURL（data:image/png;base64,…）→ 回显",
+           any("/api/ui/background" in c and "data:image/png;base64," in c for c in calls)
+           and "背景已应用" in bu_btn.property("c8_note").text(),
+           str([c[:120] for c in calls if "background" in c]))
+
+        # ── cursor 页：重置/保存 ──
+        wrap_c = panels_qt.build_panel(t, "cursor")
+        cup = wrap_c.widget()
+        cup.show()
+        QApplication.processEvents()
+        cr_btn = [b for b in cup.findChildren(Btn) if b.property("web_action") == "cursorReset"][0]
+        calls.clear()
+        patch_calls.clear()
+        cr_btn.click()
+        _wait(lambda: any("/api/cursor/reset" in c for c in calls))
+        _wait(lambda: "已重置为默认鲸鱼" in cr_btn.property("c8_note").text())
+        ck("重置光标：POST cursor/reset + 写配置 {whale_cursor:true, cursor_image:''}（patch 拦截）",
+           any("/api/cursor/reset" in c for c in calls)
+           and patch_calls == [{"ui": {"whale_cursor": True, "cursor_image": ""}}]
+           and "已重置为默认鲸鱼" in cr_btn.property("c8_note").text(),
+           str(patch_calls))
+
+        cs_btn = [b for b in cup.findChildren(Btn) if b.property("web_action") == "cursorSaveBtn"][0]
+        calls.clear()
+        patch_calls.clear()
+        cs_btn.click()
+        _wait(lambda: any("/api/cursor/upload" in c for c in calls))
+        _wait(lambda: "自定义光标已保存并生效" in cs_btn.property("c8_note").text())
+        ck("保存光标设置：POST cursor/upload（dataURL）+ 写配置 cursor_image=custom",
+           any("/api/cursor/upload" in c and "data:image/png;base64," in c for c in calls)
+           and patch_calls == [{"ui": {"whale_cursor": True, "cursor_image": "custom"}}],
+           str(patch_calls))
+    finally:
+        QFileDialog.getOpenFileName = _orig_gofn
+        config_io.write_patch = _orig_wpatch
+        agent_bridge.current_url = _orig_url
+        QDialog.exec = _orig_exec
+        srv.shutdown()
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+
+
 def main() -> int:
     for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
                t_visual, t_badges, t_status_chain, t_bot_controls, t_window_chrome, t_dpi_motion,
                t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch, t_bootstrap32, t_ocr9,
-               t_c10, t_c13, t_hotfix1, t_hotfix2, t_catmgr, t_medialocal, t_commfb):
+               t_c10, t_c13, t_hotfix1, t_hotfix2, t_catmgr, t_medialocal, t_commfb,
+               t_veradv):
         try:
             fn()
         except Exception as e: # noqa: BLE001
