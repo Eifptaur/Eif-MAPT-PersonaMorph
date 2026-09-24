@@ -1723,10 +1723,17 @@ def _persona_card(t: Tokens, p: dict, handlers: dict) -> QWidget:
     h = QHBoxLayout(w)
     h.setContentsMargins(6, 4, 6, 4)
     h.setSpacing(8)
-    # 丙-15：对齐 web 星标（★/☆ 小图标，收藏置顶）—— 原来用「已收藏/收藏」两个汉字
-    #   按钮（56px），又大又挤爆卡片（作者真机点名「用一个星号，比较小」）。
-    fav = Btn("★" if p.get("fav") else "☆", t, "ghost")
+    # 丙-17：星标改项目图标库 SVG（正文字体渲染 ★ 字符是黑块——作者真机实锤）；
+    #   收藏=实心金星，未收藏=灰描边星；按钮窄条 34px。
+    from PySide6.QtGui import QIcon  # noqa: PLC0415
+
+    from icons import INNER, svg_pixmap  # noqa: PLC0415
+
+    fav = Btn("", t, role="ghost")
     fav.setFixedWidth(34)
+    fav.setIcon(QIcon(svg_pixmap(
+        INNER["star-filled"] if p.get("fav") else INNER["star"],
+        t.warn if p.get("fav") else t.tx3, 14)))
     fav.setToolTip("已收藏（置顶；点击取消）" if p.get("fav") else "收藏置顶")
     fav.clicked.connect(lambda _=False, _p=p: handlers["fav"](_p))
     name = QLabel(p.get("name") or "(未命名)")
@@ -1747,10 +1754,16 @@ def _persona_card(t: Tokens, p: dict, handlers: dict) -> QWidget:
     txt.setFont(qfont(t, 11.5))
     txt.setStyleSheet(f"color:{t.tx3};background:transparent;")
     txt.setWordWrap(True)
+    # 丙-17：摘要限宽 + 按钮区右移留白 —— 原来 txt 无限拉伸把「使用/删」挤到重叠
+    #   （作者真机实锤）。卡最小高度保证 itemWidget 不压扁。
+    txt.setMaximumWidth(300)
+    w.setMinimumHeight(44)
+    h.setContentsMargins(6, 4, 12, 4)
     h.addWidget(fav)
     h.addWidget(name)
     h.addWidget(sc_lb)
     h.addWidget(txt, 1)
+    h.addSpacing(6)
     h.addWidget(use)
     h.addWidget(delete)
     return w

@@ -49,6 +49,9 @@ INNER: dict[str, str] = {
     "json": '<path d="M6.4 2.6C4.8 2.6 5 4.4 5 5.6s-.6 1.8-1.6 2.4c1 .6 1.6 1.2 1.6 2.4s-.2 3 1.4 3M9.6 2.6c1.6 0 1.4 1.8 1.4 3s.6 1.8 1.6 2.4c-1 .6-1.6 1.2-1.6 2.4s.2 3-1.4 3" fill="none" stroke="currentColor" stroke-width="1.4"/>',
     "cursor": '<path d="M4 2l8.2 6.1-3.4.5 2 3.6-1.8 1-2-3.7L4.6 12z" fill="none" stroke="currentColor" stroke-width="1.4"/>',
     "wavefx": '<path d="M1.6 9.2c1.6-3.2 3.2-3.2 4.8 0s3.2 3.2 4.8 0 3.2-3.2 4.8 0" fill="none" stroke="currentColor" stroke-width="1.4"/>',
+    # 丙-17：人设收藏星标（描边=未收藏 / 实心=已收藏）——项目字体渲染 ★ 是黑块（真机实锤）
+    "star": '<path d="M8 1.9l1.9 3.9 4.3.6-3.1 3 .7 4.2L8 11.6l-3.8 2 .7-4.2-3.1-3 4.3-.6z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>',
+    "star-filled": '<path d="M8 1.9l1.9 3.9 4.3.6-3.1 3 .7 4.2L8 11.6l-3.8 2 .7-4.2-3.1-3 4.3-.6z" fill="currentColor"/>',
 }
 
 #: 组头折叠 chevron（web 侧 .nav-grp-hd .gc 同一条 path）

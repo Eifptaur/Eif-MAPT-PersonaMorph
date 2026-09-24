@@ -363,7 +363,10 @@ def _row_of(body: str, row_start: int, row_close: int, mid_spans: list[tuple[int
     span = next((s for s in mid_spans if s[0] <= row_start < s[1]), None)
     if span is not None:
         sub, group = True, _mid_group(body, span[0])
-    if out[0].kind != "buttons":           # buttons 档自身已抽干，不重复
+    # ⛔ 丙-17：buttons/chips 档自身已把行内 .btns 抽干（chips 丙-15 起也收进 actions）
+    #   —— 原来只排除 buttons，chips 行的按钮组又额外产出一条独立 buttons 子行
+    #   ⇒ 「微信页出现两个群白名单」（作者真机实锤：一份 chips 编辑+真弹窗，一份 stub 按钮）。
+    if out[0].kind not in ("buttons", "chips"):
         for acts in _btns_groups(inner):
             br = Row("buttons", label, actions=acts, hint=out[0].hint)
             out.append(br)
