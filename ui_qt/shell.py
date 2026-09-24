@@ -905,6 +905,14 @@ class Shell(QWidget):
         wl.addWidget(self.find)
         lay.addWidget(wrap)
 
+        # 丙-29：顶部状态框（web .status :929 对齐——「运行状态」框在侧栏**最顶上**，
+        # 丙-18 初版错放在导航底部，作者真机纠正）。内容由 _apply_side_status 每 8s 刷新。
+        self.side_status = QLabel("微信：读取中…")
+        self.side_status.setFont(qfont(self.t, self.t.body_size - 1.5))
+        self.side_status.setStyleSheet(f"color:{self.t.tx2};background:transparent;")
+        self.side_status.setWordWrap(True)
+        lay.addWidget(self.side_status)
+
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -923,14 +931,6 @@ class Shell(QWidget):
                 self.items.append((it, g, sec, label))
             self.nav_lay.addWidget(g)
         self.nav_lay.addStretch(1)
-
-        # 侧栏微信连接状态（丙-18 批1 收尾；web #sideStatus :3476-3491 同款语义）：
-        # 连接态 + 失败短原因 + 监听目标 0 警告 + 启动时间；tooltip = 全文原因 + 逐步诊断。
-        self.side_status = QLabel("微信：读取中…")
-        self.side_status.setFont(qfont(self.t, self.t.body_size - 1.5))
-        self.side_status.setStyleSheet(f"color:{self.t.tx2};background:transparent;")
-        self.side_status.setWordWrap(True)
-        self.nav_lay.addWidget(self.side_status)
 
         self.scroll.setWidget(inner)
         lay.addWidget(self.scroll, 1)
