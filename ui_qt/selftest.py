@@ -3800,9 +3800,9 @@ def t_g6() -> None:
         cp.show()
         QApplication.processEvents()
         list_cks = [c for c in cp.findChildren(QCheckBox)
-                    if c.toolTip() == "勾选=这项测过了（会话内状态；web 侧用 localStorage 记忆）"]
+                    if c.objectName().startswith("ckItem")] # 批5 起有 objectName + QSettings 持久化
         cnt0 = [l for l in cp.findChildren(QLabel) if l.text() == "已完成 0 / 11"]
-        ck("g6 清单计数：11 个勾选行（tooltip 同源）+ 计数标签「已完成 0 / 11」初始",
+        ck("g6 清单计数：11 个勾选行（objectName 同源）+ 计数标签「已完成 0 / 11」初始",
            len(list_cks) == 11 and bool(cnt0), "n=%d cnt=%s" % (len(list_cks), bool(cnt0)))
         for c in list_cks[:3]:
             c.setChecked(True)
@@ -4818,12 +4818,126 @@ def t_g10() -> None:
         srv.shutdown()
 
 
+def t_g11() -> None:
+    """批5第一组：余额徽章（纯函数）+ 自检勾选持久化（QSettings）+ 日志自动刷新。
+
+    余额走 _balance_text 纯函数逐 case（web loadBalance :3208-3221 + balMask 口径）；
+    勾选持久化对齐 web wxAgent.checklist localStorage（Qt 用 QSettings 跨会话记忆）；
+    autolog 对齐 web :7420 4s 轮询（默认开）。
+    """
+    import json as _json # noqa: PLC0415
+    import os # noqa: PLC0415
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import QSettings # noqa: PLC0415
+    from PySide6.QtWidgets import QApplication, QCheckBox # noqa: PLC0415
+
+    import config_io # noqa: PLC0415
+    import panels_custom # noqa: PLC0415
+    import panels_qt # noqa: PLC0415
+    from stylekit_qt import THEMES # noqa: PLC0415
+
+    QApplication.instance() or QApplication([])
+    t = THEMES["whale"]
+    bt = panels_custom._balance_text
+
+    # ── ① 余额文本纯函数 ──
+    ck("g11 余额：连接异常 → 查询失败", bt(None) == "查询失败", repr(bt(None)))
+    ck("g11 余额：服务端 ok:false → 如实回显 error",
+       bt({"ok": False, "error": "没配 Key"}) == "没配 Key", repr(bt({"ok": False, "error": "没配 Key"})))
+    ck("g11 余额：real 照实 + 充值额（¥）",
+       bt({"total_balance": 12.5, "topped_up_balance": 100, "currency": "CNY"})
+       == "余额 ¥12.50（充值 ¥100.00）",
+       repr(bt({"total_balance": 12.5, "topped_up_balance": 100, "currency": "CNY"})))
+    ck("g11 余额：hide 隐藏 / fake 改数字 / USD 符号",
+       bt({"total_balance": 12.5, "currency": "CNY"}, "hide") == "余额 已隐藏"
+       and bt({"total_balance": 12.5, "currency": "CNY"}, "fake", "8888.88") == "余额 ¥8888.88"
+       and bt({"total_balance": 1.2, "currency": "USD"}) == "余额 $1.20",
+       "%r|%r|%r" % (bt({"total_balance": 12.5, "currency": "CNY"}, "hide"),
+                     bt({"total_balance": 12.5, "currency": "CNY"}, "fake", "8888.88"),
+                     bt({"total_balance": 1.2, "currency": "USD"})))
+    ck("g11 余额：拿不到数字如实说未配置（绝不拼 undefined）+ fake 非法回落照实",
+       bt({"total_balance": None, "currency": "CNY"}) == "余额 未配置"
+       and bt({"total_balance": 12.5, "currency": "CNY"}, "fake", "abc") == "余额 ¥12.50",
+       "%r|%r" % (bt({"total_balance": None, "currency": "CNY"}),
+                  bt({"total_balance": 12.5, "currency": "CNY"}, "fake", "abc")))
+
+    # ── ② 自检清单勾选持久化（QSettings）──
+    st = QSettings("WXAgent", "persona-morph-ui")
+    st.setValue("checklist", "") # 清残留，测试从零开始
+    QApplication.processEvents()
+
+    def _build_check():
+        wrap = panels_qt.build_panel(t, "check")
+        pp = wrap.widget()
+        pp.show()
+        QApplication.processEvents()
+        return wrap, pp
+
+    wrap1, p1 = _build_check()
+    keep = [wrap1]
+    cbs = [p1.findChild(QCheckBox, "ckItem%d" % i) for i in range(11)]
+    cbs = [c for c in cbs if c is not None]
+    # check 手写页的清单勾选框 = 11 行（objectName 定位，绕开页面零散勾选控件）
+    ck("g11 自检清单 11 个勾选框在场", len(cbs) == 11, "n=%d" % len(cbs))
+    if len(cbs) == 11:
+        cbs[0].setChecked(True)
+        cbs[3].setChecked(True)
+        QApplication.processEvents()
+        saved = str(st.value("checklist") or "[]")
+        arr = _json.loads(saved) if saved else []
+        ck("g11 勾选即写 QSettings（index 0/3=true）",
+           len(arr) == 11 and arr[0] is True and arr[3] is True,
+           "arr=%s" % saved[:60])
+        # 重建页面 → 勾选跨会话恢复
+        wrap2, p2 = _build_check()
+        keep.append(wrap2)
+        cbs2 = [p2.findChild(QCheckBox, "ckItem%d" % i) for i in range(11)]
+        cbs2 = [c for c in cbs2 if c is not None]
+        ck("g11 重建页面后勾选恢复（跨会话记忆）",
+           len(cbs2) == 11 and cbs2[0].isChecked() and cbs2[3].isChecked()
+           and not cbs2[1].isChecked(),
+           "c0=%s c3=%s" % (cbs2[0].isChecked() if len(cbs2) > 3 else None,
+                            cbs2[3].isChecked() if len(cbs2) > 3 else None))
+        # 重置勾选 → 持久化同步清空
+        b_rs = _btn_by_text_local(p2, "重置勾选")
+        if b_rs is not None:
+            b_rs.click()
+        QApplication.processEvents()
+        saved2 = str(st.value("checklist") or "[]")
+        arr2 = _json.loads(saved2) if saved2 else []
+        ck("g11 重置勾选 → 全清且持久化同步",
+           all(not c.isChecked() for c in cbs2)
+           and (not arr2 or not any(arr2)),
+           "saved=%s" % saved2[:60])
+    else:
+        ck("g11 自检清单 11 个勾选框在场", False, "跳过持久化链")
+
+    # ── ③ 日志页 autolog ──
+    wrap = panels_qt.build_panel(t, "log")
+    lp = wrap.widget()
+    keep.append(wrap)
+    lp.show()
+    QApplication.processEvents()
+    auto = lp.findChild(QCheckBox, "autolog")
+    ck("g11 日志页「自动刷新」勾选在场且默认开（web :7420 4s 轮询）",
+       auto is not None and auto.isChecked(),
+       "auto=%s checked=%s" % (auto is not None, auto.isChecked() if auto else None))
+
+
+def _btn_by_text_local(root, txt):
+    from widgets import Btn # noqa: PLC0415
+
+    hits = [b for b in root.findChildren(Btn) if b.text() == txt]
+    return hits[0] if hits else None
+
+
 def main() -> int:
     for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
                t_visual, t_badges, t_status_chain, t_bot_controls, t_window_chrome, t_dpi_motion,
                t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch, t_bootstrap32, t_ocr9,
                t_c10, t_c13, t_hotfix1, t_hotfix2, t_catmgr, t_medialocal, t_commfb,
-               t_veradv, t_g5, t_g6, t_g7, t_g8, t_g9, t_g10):
+               t_veradv, t_g5, t_g6, t_g7, t_g8, t_g9, t_g10, t_g11):
         try:
             fn()
         except Exception as e: # noqa: BLE001

@@ -801,6 +801,36 @@ class Shell(QWidget):
         self.updbar.apply_state(getattr(self, "_upd_state", None))
         lay.addWidget(self.updbar)
 
+        # ── 余额徽章（web balance-badge :703 + loadBalance :3208-3221 + 30s 轮询 :7419）──
+        #    显示模式（照实/隐藏/改数字）存 config 的 ui.balance_*，只改显示不动真实余额。
+        import config_io as _cio # noqa: PLC0415
+        from panels_custom import _balance_text # noqa: PLC0415
+
+        self.bal_badge = QLabel("余额 查询中…")
+        self.bal_badge.setObjectName("balanceBadge")
+        self.bal_badge.setFont(qfont(self.t, 11.5))
+        self.bal_badge.setStyleSheet(f"color:{self.t.tx2};background:transparent;")
+        self.bal_badge.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.bal_badge.setToolTip("点击刷新余额（只读查询）")
+        self.bal_badge.mousePressEvent = lambda _e: self._load_balance()
+        self.bal_mask = QPushButton("显示", bar)
+        self.bal_mask.setObjectName("balMask")
+        self.bal_mask.setFixedHeight(26)
+        self.bal_mask.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.bal_mask.setToolTip("余额显示（只改界面上的数字，不动真实余额）")
+        self.bal_mask.setStyleSheet(
+            "QPushButton{background:transparent;border:none;border-radius:8px;"
+            f"color:{self.t.tx3};padding:0 6px;}}"
+            f"QPushButton:hover{{background:{rgba(self.t.q('tx'), 14).name(QColor.NameFormat.HexArgb)};}}"
+        )
+        self.bal_mask.clicked.connect(self._balance_mask)
+        self.bal_timer = QTimer(self)
+        self.bal_timer.setInterval(30000) # web :7419 同款 30s
+        self.bal_timer.timeout.connect(self._load_balance)
+        self.bal_timer.start()
+        lay.addWidget(self.bal_badge)
+        lay.addWidget(self.bal_mask)
+
         lay.addStretch(1)
 
         # ── 外观切换图标（ #15，用户点单：文案 + 主题「本质上都属于一种界面
@@ -889,6 +919,72 @@ class Shell(QWidget):
         lay.addWidget(self.btn_max)
 
         return bar
+
+    def _load_balance(self) -> None:
+        """余额徽章数据（web loadBalance :3208-3221）：GET /api/balance 一次，
+        按显示模式出文本；失败如实说，绝不拼 undefined。"""
+        import config_io as _cio # noqa: PLC0415
+        from panels_custom import _balance_text # noqa: PLC0415
+
+        try:
+            b = _cio.get_json("/api/balance", timeout=6.0)
+        except Exception: # noqa: BLE001
+            b = None
+        display = str(_cio.read_path("ui.balance_display") or "real")
+        fake = str(_cio.read_path("ui.balance_fake") or "")
+        self.bal_badge.setText(_balance_text(b, display, fake))
+        self.bal_mask.setText({"real": "显示", "hide": "已隐藏"}.get(display, "已改"))
+
+    def _balance_mask(self) -> None:
+        """余额显示三选一（web balMask :5564-5610）：照实 / 隐藏 / 改成指定数字。
+        只改 config 的 ui.balance_*，真实余额与查询、账目一点都不动。"""
+        from panels_custom import _card_dialog # noqa: PLC0415
+
+        import config_io as _cio # noqa: PLC0415
+
+        t = self.t
+        cur = str(_cio.read_path("ui.balance_display") or "real")
+        cur_fake = str(_cio.read_path("ui.balance_fake") or "")
+        dlg, v = _card_dialog(t, self, "余额显示", width=460)
+        dlg.resize(460, 320)
+        tip = QLabel("只改界面上的数字，真实余额一点都不动（查询与账目照旧）。")
+        tip.setFont(qfont(t, 12))
+        tip.setWordWrap(True)
+        tip.setStyleSheet(f"color:{t.tx2};background:transparent;")
+        v.addWidget(tip)
+        from widgets import Btn as _Btn # noqa: PLC0415
+
+        b_real = _Btn("照实显示", t, "primary" if cur == "real" else "ghost")
+        v.addWidget(b_real)
+        b_hide = _Btn("隐藏（不显示金额）", t, "primary" if cur == "hide" else "ghost")
+        v.addWidget(b_hide)
+        ed = QLineEdit(cur_fake)
+        ed.setPlaceholderText("改成这个数字，例如 8888.88")
+        ed.setFont(qfont(t, 12.5))
+        v.addWidget(ed)
+        b_fake = _Btn("用这个数字显示", t, "primary" if cur == "fake" else "ghost")
+        v.addWidget(b_fake)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        b_cancel = _Btn("取消", t, "ghost")
+        row.addWidget(b_cancel)
+        v.addLayout(row)
+
+        def _save(mode: str, fake: str) -> None:
+            ok, why = _cio.write_patch({"ui.balance_display": mode,
+                                        "ui.balance_fake": fake})
+            if not ok:
+                tip.setText(f"保存失败：{why}")
+                return
+            self._load_balance()
+            dlg.accept()
+
+        b_real.clicked.connect(lambda: _save("real", ""))
+        b_hide.clicked.connect(lambda: _save("hide", ""))
+        b_fake.clicked.connect(lambda: _save("fake", ed.text().strip()) if ed.text().strip()
+                               else tip.setText("先填一个数字"))
+        b_cancel.clicked.connect(dlg.reject)
+        dlg.exec()
 
     def _build_side(self) -> QWidget:
         side = QFrame()

@@ -1222,7 +1222,24 @@ def check_panel(t: Tokens) -> QWidget:
     #   会把名字变局部变量 ⇒ 本函数前段（症状检验器/拍一拍区）用到时还没绑定 ⇒
     #   UnboundLocalError（worker 二轮踩过、c34 又踩一次，中段 import 已除）。
     ck_boxes: list[QCheckBox] = []
+    # web :6784-6797「wxAgent.checklist」localStorage 的 Qt 等价：QSettings 跨会话记忆
+    from PySide6.QtCore import QSettings as _QSet # noqa: PLC0415
 
+    _ck_settings = _QSet("WXAgent", "persona-morph-ui")
+
+    def _ck_save() -> None:
+        _ck_settings.setValue("checklist", json.dumps([c.isChecked() for c in ck_boxes]))
+
+    def _ck_load() -> None:
+        try:
+            arr = json.loads(str(_ck_settings.value("checklist") or "[]"))
+        except Exception: # noqa: BLE001
+            arr = []
+        for c, v in zip(ck_boxes, arr if isinstance(arr, list) else []):
+            if isinstance(v, bool):
+                c.setChecked(v)
+
+    _i_ck = 0
     for it in items:
         roww = QWidget()
         roww.setStyleSheet("background:transparent;")
@@ -1230,7 +1247,9 @@ def check_panel(t: Tokens) -> QWidget:
         rh.setContentsMargins(2, 1, 2, 1)
         rh.setSpacing(8)
         ck = QCheckBox()
-        ck.setToolTip("勾选=这项测过了（会话内状态；web 侧用 localStorage 记忆）")
+        ck.setObjectName("ckItem%d" % _i_ck) # 测试定位用（页面另有零散勾选控件）
+        _i_ck += 1
+        ck.setToolTip("勾选=这项测过了（跨会话记忆）")
         rh.addWidget(ck)
         ck_boxes.append(ck)
         head, _, rest = it.partition(" · ")
@@ -1267,7 +1286,9 @@ def check_panel(t: Tokens) -> QWidget:
 
     for c in ck_boxes:
         c.toggled.connect(_ck_recount)
+        c.toggled.connect(lambda _=False: _ck_save())
     b_ckreset.clicked.connect(_ck_reset)
+    _ck_load() # 跨会话恢复（web localStorage 同语义）；恢复触发 toggled → 计数同步
     lay.addWidget(card2)
 
     # ── 视频通路：三态徽章，数据来自 /api/status 的 media.video ──
@@ -1698,7 +1719,14 @@ def log_panel(t: Tokens) -> QWidget:
     lay.addWidget(desc(t, s.desc or "动作与失败原因，出问题先看这一屏。"))
     log_path = ROOT / "logs" / "persona_morph.log"
     card = Card(t)
-    card.body.addWidget(h2(t, "persona_morph.log 尾部 200 行"))
+    head_row = QHBoxLayout()
+    head_row.addWidget(h2(t, "persona_morph.log 尾部 200 行"))
+    head_row.addStretch(1)
+    autolog = QCheckBox("自动刷新")
+    autolog.setObjectName("autolog")
+    autolog.setChecked(True) # web autolog :2137 同款默认开
+    head_row.addWidget(autolog)
+    card.body.addLayout(head_row)
     area = _plain_area(t, "", placeholder="日志内容", height=300)
     card.body.addWidget(area)
     note = desc(t, "")
@@ -1727,7 +1755,19 @@ def log_panel(t: Tokens) -> QWidget:
     # （日志由后端按大小滚动），残壳按钮点了永远没反应；真要看历史用「打开日志目录」。
     hooks = [_refresh, lambda: _open_dir(ROOT / "logs")]
     lay.addLayout(_btn_row(t, [("刷新", "primary"), ("打开日志目录", "ghost")], hooks))
-    lay.addWidget(desc(t, "日志由产品按大小自动滚动清理；要翻完整历史用「打开日志目录」。"))
+    # web autolog :7420 同款：勾选开启时每 4s 重读尾部并贴底（关掉回到手动）
+    def _tick() -> None:
+        if autolog.isChecked():
+            _refresh()
+            sb = area.verticalScrollBar()
+            sb.setValue(sb.maximum())
+
+    log_timer = QTimer(page)
+    log_timer.setInterval(4000)
+    log_timer.timeout.connect(_tick)
+    log_timer.start()
+    lay.addWidget(desc(t, "「自动刷新」开着时每 4 秒重读并贴底；日志由产品按大小自动滚动清理，"
+                          "要翻完整历史用「打开日志目录」。"))
     lay.addStretch(1)
     return page
 
@@ -3242,6 +3282,39 @@ def _persona_card(t: Tokens, p: dict, handlers: dict) -> QWidget:
     h.addWidget(move)
     h.addWidget(delete)
     return w
+
+
+def _balance_text(b: dict | None, display: str = "real", fake: str = "") -> str:
+    """/api/balance 响应 → 顶栏徽章文本（web loadBalance :3208-3221 + balMask 模式口径）。
+
+    display：real 照实 / hide 隐藏 / fake 显示指定数字（fake 值不合法时回落照实）。
+    拿不到数字时如实说「未配置」，绝不拼出「余额 ¥undefined」。"""
+    if not isinstance(b, dict):
+        return "查询失败"
+    if b.get("ok") is False:
+        return str(b.get("error") or "未配置")
+
+    def _num(v): # noqa: ANN001
+        try:
+            if v is None or v == "":
+                return None
+            f = float(v)
+            return f if f == f else None # NaN 防御
+        except (TypeError, ValueError):
+            return None
+
+    cur = "$" if b.get("currency") == "USD" else "¥"
+    if display == "hide":
+        return "余额 已隐藏"
+    if display == "fake":
+        fv = _num(fake)
+        if fv is not None:
+            return "余额 " + cur + ("%.2f" % fv)
+    total = _num(b.get("total_balance"))
+    if total is None:
+        return "余额 未配置"
+    top = _num(b.get("topped_up_balance"))
+    return "余额 " + cur + ("%.2f" % total) + ("" if top is None else "（充值 " + cur + ("%.2f" % top) + "）")
 
 
 def _wf_head(r: dict) -> str:
