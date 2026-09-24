@@ -359,7 +359,9 @@ def _chips_editor(t: Tokens, r: "sec_meta.Row") -> QWidget:
     """web chips 勾选组（群白名单等）→ 可编辑输入 + 行内按钮（丙-15）。
 
     值语义对齐 web：list[str]（编辑框里逗号分隔展示，保存时 split 回 list）。
-    行内按钮（检测群聊并勾选 / 刷新群列表）走 `_btn_group`；「一键选群」真弹窗列下一单。
+    「检测群聊并勾选 / 刷新群列表」按 web 原版真接线（console_html.py:2806-2842）：
+    点检测 → 拉 /api/wechat-groups → 弹窗勾选 → 确定 = 写回 + **当场保存**
+    （GET /api/config → 改 wechat.group_name_white_list → POST 全量，web L2827 同款）。
     """
     box = QWidget()
     v = QVBoxLayout(box)
@@ -372,10 +374,171 @@ def _chips_editor(t: Tokens, r: "sec_meta.Row") -> QWidget:
         txt = str(cur)
     else:
         txt = ""
-    v.addWidget(_line(t, txt, placeholder=r.placeholder or "群 wxid / 群名，逗号分隔；留空=全部监听"))
+    line = _line(t, txt, placeholder=r.placeholder or "群 wxid / 群名，逗号分隔；留空=全部监听")
+    v.addWidget(line)
+    note = QLabel("")
+    note.setFont(qfont(t, t.body_size - 1))
+    note.setStyleSheet(f"color:{t.tx3};background:transparent;")
+    note.setWordWrap(True)
+    note.hide()
     if r.actions:
-        v.addWidget(_btn_group(t, r.actions))
+        hb = QWidget()
+        hh = QHBoxLayout(hb)
+        hh.setContentsMargins(0, 0, 0, 0)
+        hh.setSpacing(8)
+        for txt2, aid in r.actions:
+            b = Btn(txt2, t, role="ghost")
+            b.setProperty("web_action", aid or "")
+            if aid in ("pickGroups", "refreshGroups") and (r.cfg or "").endswith("group_name_white_list"):
+                b.clicked.connect(lambda _=False, a=aid, _ln=line, _nt=note: _chips_group_action(a, _ln, _nt))
+                b.setToolTip("对齐 web：弹窗列出检测到的群，勾选后确定即保存"
+                             if aid == "pickGroups" else "重新读一次群列表（新加群/改群名/换号后用，不用重启）")
+            else:
+                b.setToolTip(("web 动作：" + aid) if aid else "web 侧按钮")
+                b.clicked.connect(lambda _=False, _b=b: _btn_stub(_b))
+            hh.addWidget(b)
+        hh.addStretch(1)
+        v.addWidget(hb)
+    v.addWidget(note)
     return box
+
+
+def _chips_group_action(aid: str, line, note) -> None:
+    """群白名单「检测群聊并勾选 / 刷新群列表」真实现（web 2806/2798 同款）。
+
+    网络在后台线程（不冻 UI），弹窗与落地在主线程。失败/0 群如实说（web 同款三选一口径）。
+    """
+    note.show()
+    note.setText("检测群聊中…")
+    box: dict = {"done": False, "val": None, "err": None}
+
+    def _work() -> None:
+        try:
+            box["val"] = config_io.get_json(
+                "/api/wechat-groups" + ("?refresh=1" if aid == "refreshGroups" else ""),
+                timeout=8.0)
+        except Exception as e:  # noqa: BLE001
+            box["err"] = str(e)
+        box["done"] = True
+
+    import threading as _th  # noqa: PLC0415
+
+    _th.Thread(target=_work, daemon=True, name="chips-groups").start()
+
+    from PySide6.QtCore import QTimer  # noqa: PLC0415
+
+    def _apply() -> None:
+        if not box["done"]:
+            QTimer.singleShot(150, _apply)
+            return
+        rsp = box["val"]
+        if not isinstance(rsp, dict):
+            note.setText("检测失败：" + (box["err"] or "后台没连上"))
+            return
+        if rsp.get("ok") is False:
+            note.setText(str(rsp.get("error") or "读不到群列表（微信可能还没接上）"))
+            return
+        groups = rsp.get("groups") or []
+        if aid == "refreshGroups":
+            note.setText("已重读：这台机器上读到 %d 个群聊" % len(groups)
+                         + ("" if groups else "（确认微信登录的是你要的那个号、且那个号里有群）"))
+            return
+        if not groups:
+            note.setText("这台机器上读到 0 个群聊。请依次确认：①微信登录的是你要用的那个号 "
+                         "②那个号里确实有群 ③「运行状态」那行写的是「已连接」")
+            return
+        _open_group_pick(line, note, groups)
+
+    QTimer.singleShot(150, _apply)
+
+
+def _open_group_pick(line, note, groups: list) -> None:
+    """web「选择监听的群」弹窗的 Qt 版（console_html.py:2821-2840 同款交互）。"""
+    from PySide6.QtCore import QTimer  # noqa: PLC0415
+    from PySide6.QtWidgets import (  # noqa: PLC0415
+        QDialog, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout,
+    )
+
+    cur = {x.strip() for x in line.text().replace("，", ",").split(",") if x.strip()}
+
+    def _gid(g) -> tuple[str, str]:
+        """群项 → (显示文案, 唯一 id)。兼容 str 与 {name, wxid/id} 两种结构。"""
+        if isinstance(g, dict):
+            name = str(g.get("name") or g.get("nick") or "")
+            wid = str(g.get("wxid") or g.get("id") or g.get("username") or name)
+            return ("%s（%s）" % (name, wid) if name and wid != name else (name or wid)), wid
+        s = str(g)
+        return s, s
+
+    dlg = QDialog(line.window())
+    dlg.setWindowTitle("选择监听的群")
+    dlg.setModal(True)
+    dlg.resize(460, 520)
+    v = QVBoxLayout(dlg)
+    head = QLabel("检测到 %d 个群聊，勾选机器人需要监听的群（全不勾=监听所有群）。" % len(groups))
+    head.setWordWrap(True)
+    v.addWidget(head)
+    lst = QListWidget(dlg)
+    for g in groups:
+        text, wid = _gid(g)
+        it = QListWidgetItem(text)
+        it.setData(0x0100, wid)            # Qt.ItemDataRole.UserRole
+        it.setFlags(it.flags() | 0x0001)   # Qt.ItemFlag.ItemIsUserCheckable
+        it.setCheckState(2 if (wid in cur or text in cur) else 0)  # Checked=2/Unchecked=0
+        lst.addItem(it)
+    v.addWidget(lst, 1)
+    from PySide6.QtWidgets import QWidget as _QW, QHBoxLayout as _QH  # noqa: PLC0415
+
+    hb = _QW()
+    hh = _QH(hb)
+    hh.setContentsMargins(0, 0, 0, 0)
+    ok = QPushButton("确定")
+    cancel = QPushButton("取消")
+    hh.addStretch(1)
+    hh.addWidget(ok)
+    hh.addWidget(cancel)
+    v.addWidget(hb)
+    cancel.clicked.connect(dlg.reject)
+
+    def _ok() -> None:
+        picked = []
+        for i in range(lst.count()):
+            it = lst.item(i)
+            if it.checkState() != 0:
+                picked.append(str(it.data(0x0100)))
+        line.setText(", ".join(picked))
+        note.show()
+        note.setText("保存群白名单中…（%d 个群）" % len(picked))
+        dlg.accept()
+
+        def _work(bx: dict) -> None:
+            try:
+                cfg = config_io.get_json("/api/config", timeout=8.0) or {}
+                if isinstance(cfg, dict):
+                    cfg.setdefault("wechat", {})["group_name_white_list"] = list(picked)
+                    from agent_bridge import post_json  # noqa: PLC0415
+
+                    bx["rsp"] = post_json("/api/config", cfg, timeout=10.0)
+            except Exception as e:  # noqa: BLE001
+                bx["err"] = str(e)
+            bx["done"] = True
+
+        bx: dict = {"done": False, "rsp": None, "err": None}
+        import threading as _th  # noqa: PLC0415
+
+        _th.Thread(target=_work, daemon=True, args=(bx,), name="chips-save").start()
+
+        def _apply_save() -> None:
+            if not bx["done"]:
+                QTimer.singleShot(150, _apply_save)
+                return
+            note.setText("已保存群白名单（%d 个群）" % len(picked)
+                         if bx["err"] is None else "群白名单保存失败：" + bx["err"])
+
+        QTimer.singleShot(150, _apply_save)
+
+    ok.clicked.connect(_ok)
+    dlg.show()
 
 
 def _btn_group(t: Tokens, actions: list[tuple[str, str]]) -> QWidget:

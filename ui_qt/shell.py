@@ -1501,12 +1501,44 @@ class Shell(QWidget):
             self._animate_page_in(self.stack.currentWidget())   # 丙-5 #9 轻淡入
 
     def _probe(self) -> None:
-        """探一次后台，把结果翻译成界面上该说的话。"""
+        """探一次后台，把结果翻译成界面上该说的话。
+
+        ⛔ 丙-15 卡顿根治：原写法在 **UI 线程**同步跑 `probe_backend`
+        （timeout=1.2s，_probe_timer 每 4 秒一次）—— 后端慢/刚重启/抖动时，
+        用户切面板的动作正好撞上探活窗口 ⇒ 「每切一项卡 1 秒」（作者真机复述）。
+        改与 _poll_paused/_poll_badges 同款 box+thread 模式：后台线程拉，
+        主线程落地；busy 守卫防止慢响应时堆线程。
+        """
         from agent_bridge import current_url  # noqa: PLC0415
 
-        p = probe_backend(current_url())
-        self._show_probe(p)
-        self._watch_config()   # 顺跳：光标/壁纸跟随 config（web 面板改了 4 秒内生效）
+        if getattr(self, "_probe_busy", False):
+            return
+        self._probe_busy = True
+        url = current_url()
+        box: dict = {"done": False, "val": None}
+
+        def _work() -> None:
+            try:
+                box["val"] = probe_backend(url)
+            except Exception:  # noqa: BLE001
+                box["val"] = None
+            finally:
+                self._probe_busy = False
+                box["done"] = True
+
+        import threading as _th  # noqa: PLC0415
+
+        _th.Thread(target=_work, daemon=True, name="probe").start()
+
+        def _apply() -> None:
+            if not box["done"]:
+                QTimer.singleShot(120, _apply)
+                return
+            if box["val"] is not None:
+                self._show_probe(box["val"])
+            self._watch_config()   # 顺跳：光标/壁纸跟随 config（web 面板改了 4 秒内生效）
+
+        QTimer.singleShot(120, _apply)
 
     def _upd_first_check(self) -> None:
         """丙-6 #13：更新公告条首拉。web updbar = 页面加载时拉一次（不做周期轮询）；
