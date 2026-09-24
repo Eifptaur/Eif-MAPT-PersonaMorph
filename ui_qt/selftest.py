@@ -1795,6 +1795,14 @@ def t_hotfix1() -> None:
        j2.count("?") == 1 and join_url("http://127.0.0.1:3210/?token=abc",
                                        "/api/sessions?limit=30").count("?") == 1, j2)
 
+    # 真机「检测群聊并勾选」弹窗不出：_open_group_pick 必须模态 exec()（原 show()
+    # 非模态 + 局部 dlg 失引用被回收 → 弹窗闪现即销毁，note 停在「检测群聊中…」像无休止的卡）
+    k = pq_src.find("def _open_group_pick(")
+    k2 = pq_src.find("\ndef ", k + 1)
+    seg_pick = pq_src[k:k2 if k2 > 0 else len(pq_src)]
+    ck("群勾选弹窗模态 exec()（原 show() 非模态被回收 → 弹窗不出、检测行永远卡住）",
+       "dlg.exec()" in seg_pick and "dlg.show()" not in seg_pick, "")
+
 
 def main() -> int:
     for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,

@@ -559,7 +559,10 @@ def _open_group_pick(line, note, groups: list) -> None:
         QTimer.singleShot(150, _apply_save)
 
     ok.clicked.connect(_ok)
-    dlg.show()
+    # 必须模态 exec()：web 同款勾选层挂到用户点确定/取消为止；
+    #   show() 是非模态——函数立即返回、局部 dlg 失引用被回收，弹窗闪现即销毁，
+    #   且 note 停在「检测群聊中…」→ 表现为「点了没反应、无休止的卡」。
+    dlg.exec()
 
 
 # ── 按钮动作分发器（web onclick 的 Qt 等价）──
