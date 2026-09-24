@@ -16,21 +16,29 @@
 - 常驻透镜：静止也有微动（setInterval 恒跑，相位由绝对时间驱动）。
 - 9 参数：enabled/scale/speed/mouse_gain/max_gain/radius/falloff/rings/ring_speed。
 
-## Qt 实现（对齐 web 语义，非 1:1 bit 级）
+## Qt 实现（丙-33：对齐 web 真值观感——「光标周围一团翻滚的大漩涡 + 一圈环带荡开」）
 Qt 无 feTurbulence/feDisplacementMap，也无 backdrop-filter。采用：
 - 给 Shell 根窗挂自定义 `QGraphicsEffect`：`draw()` 内 `sourcePixmap()` 取**未扭曲的真实
   像素**（sourcePixmap 不含自身 effect ⇒ 无递归），整窗画回（UI 正常显示），再仅在
   **透镜 bbox**（裁剪到模块边界）内做位移重采样后盖回 ⇒ 内容扭曲，等价于 web 的
   backdrop-filter 取背后像素做 displacement。
-- 噪声：`feTurbulence` 分形噪声无等价 → 用**多八度正弦叠加**近似（视觉是「水面折射起伏」，
-  不要求噪声分布与浏览器 bit 级一致）。
+- 噪声（丙-33 重写）：`feTurbulence fractalNoise(numOctaves=2)` 的 CPU 等价 = **平滑
+  value noise**（格点随机 seed 固定 + smoothstep 双线性插值）2 八度叠加（f、2f，幅
+  1:0.5）。旧「3 八度 sin/cos + 逐帧 min/max 归一化」的病灶：归一化把噪声压成近均匀
+  随机 ⇒ 逐点不相干的细碎颗粒（作者描述「布满细小刮痕的偏光透镜」），而 web 是低频
+  连贯的大漩涡。baseFrequency 按 web 同款公式逐帧呼吸（fx=0.008+0.004·sin(0.9φ)）。
 - 位移数学严格对齐 `feDisplacementMap`：`out = in[x + scale*(R-0.5), y + scale*(G-0.5)]`。
-- mask：径向环带（对齐 `waveMaskAt`）——透镜边缘衰减到 0，**绝不越出模块边界**。
+  **位移场不乘 mask**（web 同款：扭曲全区域存在，mask 只管显示混合）——旧版把 mask 乘进
+  位移幅度 ⇒ 只有细环带在动、中心没有持续翻滚 ⇒ 「扭得狠但没水感」。
+- mask（对齐 `waveMaskAt`）：环带·(1-phase)⁴ + 中心辉光 (1-r)⁸·0.35，r=到光标距离/最远角
+  距离。**maskImage 语义合成**：final = 原图·(1-m) + 位移图·m，**全分辨率**做（丙-32D）——
+  m==0 处逐像素等于真原图（不是缩采回拉的近似原图）⇒ 模块边缘/环带外零差异、无缝。
 - 常驻：定时器每 ~33ms 推进相位并重绘 ⇒ 静止也有微动。
 
-## 性能（实测见 _c12_wave_bench.txt）
-- 仅处理透镜 bbox（模块内 ≤ 模块矩形，空白 ≤ radius 圆盘），不整窗位移（整窗 120ms 爆）。
-- 处理分辨率 0.5x 缩采：520x520 区域实测 ≈ 4ms，稳过 30fps。
+## 性能
+- 仅处理透镜 bbox（模块内 ≤ 模块矩形，空白 ≤ radius 圆盘），不整窗位移。
+- 最贵的噪声插值在 0.5x 网格生成（_PROC_SCALE）后 repeat 上采样（噪声低频，块状不可见）；
+  位移采样与 mask 合成在**设备全分辨率**做（1080×440 区域 ≈ 25ms，30fps 可达）。
 
 ## 解耦纪律
 - 本模块**不碰** `OceanWaves`：自己的 `QTimer`、自己的 `set_enabled`、自己的绘制层。
@@ -47,7 +55,7 @@ import time
 
 import numpy as np
 from PySide6.QtCore import QObject, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer
-from PySide6.QtGui import QColor, QImage, QPainter, QPixmap, QRegion
+from PySide6.QtGui import QImage, QPainter
 from PySide6.QtWidgets import QGraphicsEffect, QWidget
 
 # 动画帧间隔（≈30fps，与 ocean.py 同档；web setInterval(33)）
@@ -69,13 +77,20 @@ _DEFAULTS = {
     "max_gain": 8.0, "radius": 260, "falloff": 4.0, "rings": 1, "ring_speed": 0.40,
 }
 
-# 处理分辨率（相对设备像素的缩采比例）：实测 0.5x 稳过 30fps
+# 噪声场生成网格（相对设备像素的缩采比例）：feTurbulence 等价的 value noise 在 0.5x
+# 网格生成后 repeat 上采样——噪声波长 ≥60 逻辑 px，2 设备 px 的块状完全不可见；
+# 位移采样与 mask 合成仍走设备全分辨率（丙-33：全分辨率合成是「无缝」的根）。
 _PROC_SCALE = 0.5
 
 # 丙-31：透镜 bbox 性能上限（逻辑 px，最长边）。模块矩形特别大（如接近全窗的容器）时
 # 降级为「光标为中心、_MAX_LENS 见方」的裁剪盘——波纹仍困在模块内语义上等价于 web 的
 # 模块透镜，但 render+位移的每帧成本有硬上界（全窗位移 120ms/帧 会拖死 30fps）。
 _MAX_LENS = 720
+
+# 丙-32：位移在抓源 bbox 四边的渐隐带宽（逻辑 px）。web 是全屏连续位移场（backdrop-filter
+# 层没有边界概念）；Qt 的透镜 bbox 是有限矩形，环带扫到 bbox 边缘时若位移仍在、盘外为零
+# ⇒ 作者真机看到的「方形区域 + 明显分界线」。边缘 mask 归零后过渡自然，方形感消失。
+_EDGE_FADE = 48.0
 
 # ⛔ 丙-26 批2.5：挂载恢复默认启用 —— draw() 已有签名修正 + 双层 fail-safe
 #   （取源失败整帧放弃；_draw_lens 异常吞掉），最坏情况是「无波纹」而非崩溃。
@@ -169,10 +184,10 @@ class WaveOverlay(QWidget):
        被 shell 的 except 吞掉 ⇒ overlay 几何只在创建那一刻对，窗口变化后全错。
 
     ## 丙-31 架构
-    - `_tick`（事件循环态，非 paint 期间）：`_grab_src()` 用 `shell.render(painter_on_qimage,
-      offset, QRegion(透镜bbox))` 只渲染透镜区域到 **QImage**（带 dpr）——抓源与绘制解耦，
-      无重入；render 期间 `_grabbing` 守卫防 overlay 在 DrawChildren 时自绘。
-    - `paintEvent`：读 `_src_img` → `_displace_region`（纯 QImage 链路）→ drawImage 贴回。
+    - `_tick`（事件循环态，非 paint 期间）：`_grab_src()` 抓透镜区域到 **无 DPR 的 QImage**
+      （丙-33 起走 `shell.grab(QRect)` 官方路径；抓源与绘制解耦、无重入；抓取期间
+      `_grabbing` 守卫防 overlay 在 DrawChildren 时自绘旧帧造成自反馈）。
+    - `paintEvent`：读 `_src_img` → `_displace_region`（纯 QImage 链路）→ drawImage 1:1 贴回。
     - `_hit_deep(x, y)`：模拟 childAt 的「最深可见子控件」下钻，**排除 overlay 自身**，
       `_blank_mode`/`_lens_rect` 改用它 ⇒ 模块语义恢复、空白圆盘模式恢复。
     - `sync_overlay()`：补上缺失方法，shell.resizeEvent 每跳同步 overlay 几何。
@@ -195,14 +210,14 @@ class WaveOverlay(QWidget):
         try:
             center = wf._lens_center()
             out = wf._displace_region(pm, rect, center,
-                                      wf._norm_radius(center, rect), wf._mask_phase())
+                                      wf._src_rnorm, wf._mask_phase())
             if out is None:
                 return
+            # 丙-32：不再需要圆盘 clip——_displace_region 已按 mask 与原图合成，
+            # m==0 处逐像素等于原图（无缝），空白圆盘外天然无位移。
             p = QPainter(self)
             p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
-            if wf._blank_mode(center):
-                p.setClipPath(QPainterPath_safe_circle(center, float(wf._cfg["radius"])))
-            p.drawImage(rect, out)                # 缩采扭曲图拉伸贴回（对齐 0.5x 护栏）
+            p.drawImage(rect, out)                # 丙-33：out 与 src 同为设备分辨率，1:1 贴回
             p.end()
         except Exception:  # noqa: BLE001 — 波纹绘制失败绝不能拖垮窗口
             return
@@ -233,7 +248,8 @@ class WaveFX(QObject):
         self._overlay = None                # WaveOverlay 子控件（set_enabled 懒建）
         self._grabbing = False              # render/paint 防重入守卫（_grab_src ↔ overlay.paintEvent）
         self._src_img = None                # 丙-31：_grab_src 产的透镜区域 QImage（paint 只读）
-        self._src_rect = QRect()            # 对应逻辑矩形（空矩形 = 尚无有效源）
+        self._src_rect = QRectF()           # 对应逻辑矩形（设备像素对齐，丙-32C；空=尚无有效源）
+        self._src_rnorm = 1.0               # 丙-32：按模块矩形取的 mask 归一化半径（web 最远角）
         self._pos = QPointF(float(shell.width()) / 2.0, float(shell.height()) / 2.0)
         # 鼠标速度 EMA（web `_mouseSpeed` 同款，喂 gain）
         self._speed_ema = 0.0
@@ -329,42 +345,82 @@ class WaveFX(QObject):
     # ------------------------------------------------------------ 抓源（事件循环态，与绘制解耦）
 
     def _grab_src(self) -> None:
-        """把透镜 bbox 的真实像素 render 到 QImage（丙-31 核心）。
+        """把透镜 bbox 的真实像素抓到 QImage（丙-31 核心，丙-33 改抓取路径）。
 
-        在 `_tick`（timer timeout，事件循环态）调用——**不在 paintEvent 里**，彻底消除
-        「paint 期间同步 render 父窗」的重入。产物存 `_src_img/_src_rect`，overlay 的
-        paintEvent 只读。只 render 透镜 bbox（QRegion 限制），不整窗。
+        在 `_tick`（timer timeout，事件循环态）调用——**不在 paintEvent 里**。产物存
+        `_src_img/_src_rect`，overlay 的 paintEvent 只读。
+
+        丙-33 抓源路径改 `shell.grab(QRect)`（Qt 官方 QWidget::grab，DPR/坐标语义有
+        保证）。此前 `shell.render(painter+scale+translate, QRegion)` 在真机 DPR=1.5
+        下产物**整块错乱**：大片未初始化黑 + 内容错位（_c33_srcprobe 贴图铁证——
+        render 版 vs grab 版 interior 平均差 201/255）——作者看到的「方形玻璃+
+        细小刮痕」正是这块错乱内容的贴回；丙-31 探针的「可见」大半也是它贡献的
+        假阳性。当年弃用 grab 的理由是「paint 期间抓父窗=重入」——丙-31 已把抓源
+        挪到 _tick（事件循环态），重入前提不复存在，grab 安全。
+        （grab 仍以 `_grabbing` 包住：render(DrawChildren) 会重入 overlay.paintEvent，
+        不挡的话旧波纹帧会被画进新源里造成自反馈。）
+
+        丙-32：模块矩形超 `_MAX_LENS` 降级时，裁剪盘**与模块矩形求交**（不是只与窗口求交）
+        ——波纹绝不越出模块边界（web `fitLensToHost` 语义）；`_src_rnorm` 也按**模块矩形**
+        取归一化半径（web 径向渐变的 r=1=模块最远角），降级不改变波纹的空间尺度感。
         """
         try:
             shell = self._shell
             center = self._lens_center()
-            rect = self._lens_rect(center).intersected(QRect(0, 0, shell.width(), shell.height()))
-            # 大模块降级：光标为中心的 _MAX_LENS 见方（护栏见 _MAX_LENS 注释）
+            mod = self._lens_rect(center)           # 模块矩形 / 空白圆盘 bbox（语义边界）
+            rect = QRectF(mod)
+            rect = rect.intersected(QRectF(0, 0, shell.width(), shell.height()))
             if rect.width() > _MAX_LENS or rect.height() > _MAX_LENS:
                 half = _MAX_LENS // 2
-                rect = QRect(int(center.x()) - half, int(center.y()) - half,
-                             _MAX_LENS, _MAX_LENS).intersected(
-                    QRect(0, 0, shell.width(), shell.height()))
+                disk = QRectF(center.x() - half, center.y() - half,
+                              float(_MAX_LENS), float(_MAX_LENS))
+                # 丙-32：裁剪盘**与模块矩形求交**——波纹绝不越出模块边界（fitLensToHost）
+                rect = disk.intersected(QRectF(mod)).intersected(
+                    QRectF(0, 0, shell.width(), shell.height()))
+            # 丙-32C：rect 对齐到**设备像素网格**。逻辑整点 ×1.5 = 半设备像素（如 y=155 →
+            # 232.5），drawImage 落在半像素上 ⇒ 整块内容亚像素重采样模糊 ⇒ 卡片边线/
+            # 锐利细节沿 rect 顶/左缘发糊成「分界线」。
+            dpr = shell.devicePixelRatioF() or 1.0
+            x2 = math.floor(rect.x() * dpr)
+            y2 = math.floor(rect.y() * dpr)
+            w2 = int(round(rect.width() * dpr))
+            h2 = int(round(rect.height() * dpr))
+            rect = QRectF(x2 / dpr, y2 / dpr, w2 / dpr, h2 / dpr)
             if rect.width() < 8 or rect.height() < 8:
                 self._src_img = None
-                self._src_rect = QRect()
+                self._src_rect = QRectF()
                 return
-            dpr = shell.devicePixelRatioF() or 1.0
-            img = QImage(int(round(rect.width() * dpr)), int(round(rect.height() * dpr)),
-                         QImage.Format.Format_ARGB32_Premultiplied)
-            img.setDevicePixelRatio(dpr)
-            p = QPainter(img)
-            self._grabbing = True               # DrawChildren 会重入 overlay.paintEvent → 挡住
+            # grab 用整数逻辑矩形（外扩 ≤1 逻辑px），随后在结果里按**设备坐标**裁回
+            # 对齐 rect——grab(QRect) 只吃整数逻辑坐标，直接取整会重新引入半像素。
+            gx = math.floor(rect.x())
+            gy = math.floor(rect.y())
+            gw = math.ceil(rect.x() + rect.width()) - gx
+            gh = math.ceil(rect.y() + rect.height()) - gy
+            self._grabbing = True
             try:
-                shell.render(p, QPoint(-rect.x(), -rect.y()), QRegion(rect))
+                pm = shell.grab(QRect(gx, gy, gw, gh))
             finally:
                 self._grabbing = False
-                p.end()
+            if pm.isNull():
+                self._src_img = None
+                self._src_rect = QRectF()
+                return
+            # ⛔ 丙-32 根因纪律：处理用 QImage **不带 DPR**（raw=设备像素）。
+            #   带 DPR 的图会把毒性带进 numpy 管线——Qt 规定 scaled() 的入参出参都是
+            #   设备无关像素 ⇒ 缓冲尺寸与 frombuffer 的 count 不一致 ⇒ 剪切+错位。
+            img = pm.toImage().convertToFormat(
+                QImage.Format.Format_ARGB32_Premultiplied)
+            img.setDevicePixelRatio(1.0)
+            dx = x2 - int(round(gx * dpr))
+            dy = y2 - int(round(gy * dpr))
+            if dx != 0 or dy != 0 or img.width() != w2 or img.height() != h2:
+                img = img.copy(dx, dy, w2, h2)     # 精确设备对齐，零半像素
             self._src_img = img
-            self._src_rect = QRect(rect)
+            self._src_rect = QRectF(rect)
+            self._src_rnorm = self._norm_radius(center, mod)
         except Exception:  # noqa: BLE001 — 抓源失败宁可这帧没波纹，也不拖垮 UI
             self._src_img = None
-            self._src_rect = QRect()
+            self._src_rect = QRectF()
 
     @property
     def active(self) -> bool:
@@ -451,30 +507,26 @@ class WaveFX(QObject):
         return self._module_rect_of(hit)
 
     def _module_rect_of(self, w) -> QRect:
-        """向上找光标所在「模块」（卡片/面板/容器），裁剪到其矩形。"""
+        """光标所在「模块」矩形 —— 对齐 web `closest('.card,.side,.topbar')` 语义（丙-32）。
+
+        规则（旧「关键词+尺寸」启发式的两大翻车，作者真机实测）：
+        ① 顶栏内布局 wrapper（类名含 Widget/Frame）被误判成模块 ⇒ 透镜停在中途小容器，
+          顶栏右段吃不到特效；②启发式可预测性差。改为确定性爬树：
+        - 向上遇 **Card/Panel/Box 卡片级类名 → 取它**（web 卡片优先）；
+        - 否则一路爬到 **shell 的直接子控件**（顶栏/侧栏/内容区等顶层模块）→ 取它；
+        - 兜底 = 控件自身矩形。
+        """
         shell = self._shell
         cur = w
-        chosen = None
         while cur is not None and cur is not shell:
-            if cur.parentWidget() is shell:
-                g = cur.geometry()
-            else:
-                g = QRect(cur.mapTo(shell, QPoint(0, 0)), cur.size())
+            parent = cur.parentWidget()
             nm = type(cur).__name__
-            is_container = any(k in nm for k in
-                              ("Card", "Panel", "Box", "Frame", "Widget",
-                               "Scroll", "Stack", "Area", "View"))
-            big_enough = g.width() >= 140 and g.height() >= 90
-            inside = g.width() <= shell.width() and g.height() <= shell.height()
-            if (is_container or big_enough) and inside:
-                chosen = g
-                if any(k in nm for k in ("Card", "Panel", "Box")):
-                    break
-            cur = cur.parentWidget()
-        if chosen is None:
-            chosen = (w.geometry() if w.parentWidget() is shell
-                      else QRect(w.mapTo(shell, QPoint(0, 0)), w.size()))
-        return chosen
+            if parent is shell:
+                return cur.geometry()
+            if any(k in nm for k in ("Card", "Panel", "Box")):
+                return QRect(cur.mapTo(shell, QPoint(0, 0)), cur.size())
+            cur = parent
+        return QRect(w.mapTo(shell, QPoint(0, 0)), w.size())
 
     def _norm_radius(self, center: QPointF, rect: QRect) -> float:
         """掩蔽归一化半径（逻辑）：模块内=中心到四角最远距离；空白=radius。"""
@@ -526,68 +578,118 @@ class WaveFX(QObject):
 
     def _displace_region(self, region_img, rect_logical, center_logical,
                          Rnorm_logical, phase):
-        """对一块设备像素区域做位移重采样，返回缩采后的扭曲图（供 drawImage 拉伸贴回）。
+        """对一块**设备分辨率**区域做「fractalNoise 位移 + maskImage 合成」（丙-33 重写）。
 
-        位移数学对齐 feDisplacementMap：out = in[x + scale*(R-0.5), y + scale*(G-0.5)]。
-        处理分辨率 0.5x 缩采（实测稳过 30fps）。
+        ⛔ 入参必须是 **无 DPR** 的 QImage（raw=设备像素）——带 DPR 的图会让 scaled()
+        产出更大的原始缓冲、bits() 按逻辑数读 ⇒ 剪切+半块处理（丙-32 根因，见 _grab_src）。
+
+        对齐 web 真值三件套（console_html.py #cardWave2 / waveMaskAt / #waveLens）：
+        1. 位移场 = fractalNoise 等价的平滑 value noise（2 八度、seed 固定），
+           baseFrequency 逐帧呼吸（fx=0.008+0.004·sin(0.9φ)，cycles/逻辑px，web 同款）；
+        2. feDisplacementMap 语义 out = in + scale·(R−0.5)（scale=17·(1+0.38·sin(1.3φ))
+           逻辑 px，转设备 px 乘 dpr）——**不乘 mask**（web 的位移全区域存在，mask 只管
+           显示混合；旧版乘 mask ⇒ 只有细环带在动、中心无持续翻滚 =「没水感」）；
+        3. maskImage 语义 final = 原图·(1−m) + 位移图·m，m=环带·(1−phase)⁴+辉光(1−r)⁸·0.35
+           （r=到光标距离/最远角距离），**设备全分辨率合成**——m==0 处逐像素等于真原图
+           （丙-32D：旧版合成在 0.5x 缩采图上做 ⇒ 贴回 2x 上采样 ⇒ 边缘一圈「缩采模糊带」
+           与盘外清晰区形成方形分界线；seamcheck border top/left max 133/129、bottom/right 0，
+           差异严格跟随内容锐利度即缩采模糊铁证）。
         """
         dev_w = region_img.width()
         dev_h = region_img.height()
         if dev_w < 1 or dev_h < 1:
             return None
-        proc_scale = _PROC_SCALE
-        pw = max(1, int(dev_w * proc_scale))
-        phh = max(1, int(dev_h * proc_scale))
-        small = region_img.scaled(pw, phh, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
-        small = small.convertToFormat(QImage.Format.Format_RGBA8888)
-        arr = np.frombuffer(small.bits(), dtype=np.uint8,
-                            count=pw * phh * 4).reshape(phh, pw, 4).copy()
+        src = region_img.convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
+        src_a = np.frombuffer(bytes(src.constBits()), dtype=np.uint8,
+                              count=dev_w * dev_h * 4).reshape(dev_h, dev_w, 4)
 
+        # ---- 设备→逻辑换算（img 是 rect 的设备像素快照 ⇒ dev/逻辑 = dpr）----
+        dprx = dev_w / max(1e-6, rect_logical.width())
+        dpry = dev_h / max(1e-6, rect_logical.height())
+        xs_row = np.arange(dev_w, dtype=np.float32)[None, :]    # (1,W) 广播用
+        ys_col = np.arange(dev_h, dtype=np.float32)[:, None]    # (H,1)
+        lxs = xs_row / dprx                                     # 设备 px → 逻辑 px
+        lys = ys_col / dpry
+
+        # ---- mask（web waveMaskAt：环带 + 中心辉光，r=最远角归一）----
         lx0 = center_logical.x() - rect_logical.x()
         ly0 = center_logical.y() - rect_logical.y()
-        sx_log = rect_logical.width() / pw
-        sy_log = rect_logical.height() / phh
-        ys, xs = np.mgrid[0:phh, 0:pw].astype(np.float32)
-        lxs = xs * sx_log
-        lys = ys * sy_log
         dxc = lxs - lx0
         dyc = lys - ly0
         dist = np.sqrt(dxc * dxc + dyc * dyc)
         r = np.clip(dist / max(1.0, Rnorm_logical), 0.0, 1.5)
         m = self._mask_at_v(r, phase, self._cfg["falloff"], int(self._cfg["rings"]))
 
-        # 多八度正弦近似分形噪声（feTurbulence 无等价），随 _ph 流动
-        t = self._ph
-        sc = float(self._cfg["scale"])
-        # 对齐 web 面板语义：scale=0 ⇒ 完全无扭曲；否则在 scale 附近脉动。
-        # 不取下限（web 的 max(0.5,…) 会让 scale=0 仍微扭曲，与「0=无扭曲」相悖）。
-        scale_pulse = sc * (1.0 + 0.38 * math.sin(t * 1.3))
-        Rn = np.zeros((phh, pw), np.float32)
-        Gn = np.zeros((phh, pw), np.float32)
-        amp = 1.0
-        f = 0.02
-        for _ in range(3):
-            ph = t * (0.6 + 0.2 * _)
-            Rn += amp * np.sin(lxs * f + ph) * np.cos(lys * f * 1.3 - ph * 0.7)
-            Gn += amp * np.cos(lys * f * 1.1 - ph * 1.2) * np.sin(lxs * f * 0.9 + ph)
-            amp *= 0.5
-            f *= 2.0
-        rmin, rmax = Rn.min(), Rn.max()
-        Rn = (Rn - rmin) / (rmax - rmin + 1e-6)
-        gmin, gmax = Gn.min(), Gn.max()
-        Gn = (Gn - gmin) / (gmax - gmin + 1e-6)
+        # 丙-32A：边缘渐隐 —— 位移在抓源 bbox 四边 smoothstep 归零（带宽 _EDGE_FADE）。
+        # web 的环带相位到模块边缘时 (1-phase)⁴ 已归零、天然无边界；这是等价保险。
+        d_edge = np.minimum(np.minimum(lxs, rect_logical.width() - 1.0 - lxs),
+                            np.minimum(lys, rect_logical.height() - 1.0 - lys))
+        ef = np.clip(d_edge / _EDGE_FADE, 0.0, 1.0)
+        ef = ef * ef * (3.0 - 2.0 * ef)           # smoothstep
+        m = m * ef
 
-        # 位移换算：逻辑位移 = scale_pulse*(noise-0.5)*m；再转成 small 像素位移
-        k = scale_pulse * (pw / max(1e-6, rect_logical.width()))
-        sx = np.clip(xs + k * (Rn - 0.5) * m, 0, pw - 1).astype(np.float32)
-        sy = np.clip(ys + k * (Gn - 0.5) * m, 0, phh - 1).astype(np.float32)
-        ix = sx.astype(np.int32)
-        iy = sy.astype(np.int32)
-        out = arr[iy, ix].copy()
+        # ---- 噪声（fractalNoise 等价；0.5x 网格生成 → repeat 上采样）----
+        ph = self._ph
+        fx = 0.008 + 0.004 * math.sin(ph * 0.9)   # web console_html.py:6646 同款
+        fy = 0.011 + 0.005 * math.cos(ph * 0.7)   # web console_html.py:6647 同款
+        pw = max(1, int(dev_w * _PROC_SCALE))
+        phh = max(1, int(dev_h * _PROC_SCALE))
+        plxs = np.arange(pw, dtype=np.float32)[None, :] * (rect_logical.width() / pw)
+        plys = np.arange(phh, dtype=np.float32)[:, None] * (rect_logical.height() / phh)
+        Rn = self._fractal_noise(plxs, plys, fx, fy, 5)          # xChannelSelector=R
+        Gn = self._fractal_noise(plxs, plys, fx, fy, 9)          # yChannelSelector=G
+        Rn = np.repeat(np.repeat(Rn, 2, axis=0), 2, axis=1)[:dev_h, :dev_w]
+        Gn = np.repeat(np.repeat(Gn, 2, axis=0), 2, axis=1)[:dev_h, :dev_w]
 
-        out_img = QImage(out.tobytes(), pw, phh, 4 * pw,
-                         QImage.Format.Format_RGBA8888)
-        return out_img
+        # ---- feDisplacementMap 位移（设备全分辨率最近邻 gather）----
+        scale_pulse = max(0.5, float(self._cfg["scale"])
+                          * (1.0 + 0.38 * math.sin(ph * 1.3)))   # web :6649 同款
+        sx = np.clip(xs_row + scale_pulse * dprx * (Rn - 0.5),
+                     0, dev_w - 1).astype(np.int32)
+        sy = np.clip(ys_col + scale_pulse * dpry * (Gn - 0.5),
+                     0, dev_h - 1).astype(np.int32)
+        out = src_a[sy, sx]
+
+        # 丙-32B：mask 合成（web `maskImage` 的语义）—— final = 原图*(1-m) + 位移图*m。
+        # m==0 处逐像素等于**真原图** ⇒ 任何边界无缝，可见区域只剩径向 mask 圈（圆形观感）。
+        a16 = src_a.astype(np.uint16)
+        o16 = out.astype(np.uint16)
+        mf = (m * 255.0).astype(np.uint16)[..., None]
+        final = ((a16 * (255 - mf) + o16 * mf + 127) // 255).astype(np.uint8)
+
+        return QImage(final.tobytes(), dev_w, dev_h, 4 * dev_w,
+                      QImage.Format.Format_ARGB32_Premultiplied)
+
+    @staticmethod
+    def _fractal_noise(lxs, lys, fx, fy, seed):
+        """feTurbulence fractalNoise(numOctaves=2) 的 CPU 等价：平滑 value noise。
+
+        格点随机（RandomState seed 固定 ⇒ 图案逐帧连续呼吸而非闪烁）+ smoothstep
+        双线性插值；第二八度频率×2、幅度×0.5（SVG 分形叠加标准）。fx/fy 单位 =
+        cycles/逻辑px（= web baseFrequency）。值域 [0,1]、分布中心 0.5——与
+        fractalNoise 的 R/G 通道分布同型，displacement 的 (R−0.5) 语义直接对齐。
+        旧版（3 八度 sin/cos + 逐帧 min/max 归一化）的病灶：归一化把值压成近均匀
+        随机 ⇒ 位移逐点不相干 =「细碎刮痕」，且高频八度权重被放大。
+        """
+
+        def octave(fx_, fy_, sd):
+            gw = max(2, int(math.ceil(float(lxs.max()) * fx_)) + 2)
+            gh = max(2, int(math.ceil(float(lys.max()) * fy_)) + 2)
+            lat = np.random.RandomState(sd).rand(gh, gw).astype(np.float32)
+            gx = lxs * fx_
+            gy = lys * fy_
+            x0 = np.clip(gx.astype(np.int32), 0, gw - 2)
+            y0 = np.clip(gy.astype(np.int32), 0, gh - 2)
+            tx = gx - x0
+            ty = gy - y0
+            tx = tx * tx * (3.0 - 2.0 * tx)          # smoothstep 权重（Perlin 风）
+            ty = ty * ty * (3.0 - 2.0 * ty)
+            top = lat[y0, x0] * (1.0 - tx) + lat[y0, x0 + 1] * tx
+            bot = lat[y0 + 1, x0] * (1.0 - tx) + lat[y0 + 1, x0 + 1] * tx
+            return top * (1.0 - ty) + bot * ty
+
+        n = octave(fx, fy, seed) + 0.5 * octave(fx * 2.0, fy * 2.0, seed + 1)
+        return (n / 1.5).astype(np.float32)
 
     # ------------------------------------------------------------ 绘制（空操作，保留签名）
 

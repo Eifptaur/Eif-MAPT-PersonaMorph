@@ -1605,7 +1605,8 @@ def t_c10() -> None:
     w._wavefx.on_mouse_move(QPointF(420, 90))   # 一次大步（≈6000px/s）
     e_fast = w._wavefx._energy
     ck("c10P5: 快速移动能量真上去（不再恒锁地板 0.25）", e_fast > 0.5, f"energy={e_fast:.3f}")
-    # 相位由绝对时间驱动 → 位移核心真跑：真实 QImage 进 _displace_region，产出 0.5x 缩采扭曲图。
+    # 相位由绝对时间驱动 → 位移核心真跑：真实 QImage 进 _displace_region，产出**同尺寸**
+    # 全分辨率扭曲图（丙-33：噪声 0.5x 生成但采样/合成全分辨率——m==0 处逐像素真原图）。
     # （丙-25：绘制已改走 QGraphicsEffect.draw，paint() 不再画环——旧 max_alpha 采样断言随之改写。）
     from PySide6.QtCore import QRect  # noqa: PLC0415
     from PySide6.QtGui import QImage  # noqa: PLC0415
@@ -1618,8 +1619,8 @@ def t_c10() -> None:
         _src_img, _rect, w._wavefx._pos,
         w._wavefx._norm_radius(w._wavefx._pos, _rect),
         w._wavefx._mask_phase())
-    ck("c10P5(丙-25): 位移核心真跑产出扭曲图（0.5x 缩采尺寸正确、非空）",
-       _out is not None and _out.width() == 100 and _out.height() == 80,
+    ck("c10P5(丙-25→33): 位移核心真跑产出扭曲图（与入图同尺寸、非空——全分辨率合成）",
+       _out is not None and _out.width() == 200 and _out.height() == 160,
        f"out={None if _out is None else (_out.width(), _out.height())}")
     # ── 丙-31：波纹「一点动静都没有」三连根因的形态防回归（_c31_waveprobe2 像素实锤
     #    diff_lens=39.6万/相位间 4.4万 ⇒ 修后真可见。任一断言复发 = 回到零视觉）
@@ -1642,6 +1643,44 @@ def t_c10() -> None:
     ck("c31: 状态正文恒 tx2 灰（web .status p 不上色；ok/warn 换色=作者批的「绿字太丑」）",
        "color:{self.t.tx2}" in _body(ssrc, "_apply_side_status")
        and "self.t.ok if" not in _body(ssrc, "_apply_side_status"))
+    # ── 丙-32：波纹「顶栏右段无特效 + 方形分界线」二连根因防回归（作者红线截图取证）
+    ck("c32: 模块矩形=确定性爬树（卡片优先→shell 直接子兜底；旧「关键词+尺寸」启发式"
+      "让顶栏内 wrapper 截胡透镜 ⇒ 连接徽章左沿以右整条没特效）",
+       "big_enough" not in _body(wsrc, "_module_rect_of")
+       and "is_container" not in _body(wsrc, "_module_rect_of")
+       and "Card" in _body(wsrc, "_module_rect_of")
+       and "parent is shell" in _body(wsrc, "_module_rect_of"))
+    ck("c32: 降级裁剪盘与模块矩形求交（波纹绝不越出模块边界——web fitLensToHost 语义）",
+       "intersected(QRectF(mod))" in _body(wsrc, "_grab_src"))
+    ck("c32: 位移在 bbox 边缘 smoothstep 渐隐归零（_EDGE_FADE——环带扫边=硬分界线根因）",
+       "_EDGE_FADE" in wsrc and "3.0 - 2.0 * ef" in _body(wsrc, "_displace_region"))
+    ck("c32: mask 与原图按 web maskImage 语义合成（m==0 处逐像素原图——缩采回拉的"
+      "重采样差异沿 rect 边一圈「方形接缝」的根因）",
+       "a16 * (255 - mf)" in _body(wsrc, "_displace_region"))
+    ck("c32: 侧栏状态框左右各缩 10px（作者：顶着导航栏左右过犹不及）",
+       "swl.setContentsMargins(10, 0, 10, 0)" in _body(ssrc, "_build_side"))
+    # ── 丙-33：波纹观感对齐 web 真值（作者：「细刮痕偏光透镜」→ 要「滚水沸腾冒泡翻滚」）──
+    ck("c33: 噪声=fractalNoise 等价的平滑 value noise（格点 seed 固定+smoothstep 插值；"
+      "旧 3 八度 sin/cos+逐帧 min/max 归一化 ⇒ 近均匀随机 ⇒ 细碎刮痕）",
+       "def _fractal_noise(" in wsrc and "RandomState" in _body(wsrc, "_fractal_noise")
+       and "_fractal_noise(" in _body(wsrc, "_displace_region"))
+    ck("c33: baseFrequency 逐帧呼吸（web :6646-6647 同款公式；feTurbulence 每帧重算=图案呼吸）",
+       "0.008 + 0.004 * math.sin" in _body(wsrc, "_displace_region")
+       and "0.011 + 0.005 * math.cos" in _body(wsrc, "_displace_region"))
+    ck("c33: 位移场不乘 mask（web feDisplacementMap 全区域扭曲、mask 只管显示混合；"
+      "旧版乘 mask ⇒ 只有细环带在动、中心无持续翻滚）",
+       "scale_pulse * dprx * (Rn - 0.5)" in _body(wsrc, "_displace_region")
+       and "(Rn - 0.5) * m" not in _body(wsrc, "_displace_region"))
+    ck("c33: mask 合成在设备全分辨率（0.5x 缩采图上合成 ⇒ 贴回 2x 上采样 ⇒ 边缘一圈"
+      "「缩采模糊带」=方形分界线；seamcheck border max 133/129 vs bottom/right 0 铁证）",
+       "np.repeat" in _body(wsrc, "_displace_region")
+       and "final.tobytes(), dev_w, dev_h" in _body(wsrc, "_displace_region"))
+    ck("c33: 抓源走 shell.grab(QRect)（Qt 官方路径，DPR 语义正确；旧 render(painter+"
+      "scale+translate, QRegion) 真机 DPR=1.5 产物整块错乱=大片黑+内容错位=「方形玻璃+"
+      "细刮痕」真身——srcprobe 贴图铁证 interior 均差 201/255；grab 后 setDevicePixelRatio(1.0)）",
+       "shell.grab(QRect(" in _body(wsrc, "_grab_src")
+       and "setDevicePixelRatio(1.0)" in _body(wsrc, "_grab_src")
+       and "QRegion(w2r)" not in _body(wsrc, "_grab_src"))
     w._wavefx.set_enabled(False)
     w.close()
 

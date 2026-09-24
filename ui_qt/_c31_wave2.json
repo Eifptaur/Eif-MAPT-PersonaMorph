@@ -1,7 +1,11 @@
 {
  "sync_overlay_exists": true,
+ "win": [
+  1120,
+  720
+ ],
  "cfg": {
-  "enabled": true,
+  "enabled": false,
   "scale": 17.0,
   "speed": 5.2,
   "max_gain": 8.0,
@@ -23,20 +27,20 @@
  "src_img_ok": true,
  "src_size": [
   1080,
-  1080
+  440
  ],
- "src_dpr": 1.5,
+ "src_dpr": 1.0,
  "src_rect": [
-  340,
-  0,
-  720,
-  720
+  340.0,
+  154.66666666666666,
+  720.0,
+  293.3333333333333
  ],
- "paint_calls_first": 27,
- "paint_calls_total": 59,
- "diff_on_vs_off_full": 616317,
- "diff_on2_vs_on1_full": 53496,
- "diff_on_vs_off_lens": 395686,
- "diff_on2_vs_on1_lens": 44365,
+ "paint_calls_first": 13,
+ "paint_calls_total": 45,
+ "diff_on_vs_off_full": 5992,
+ "diff_on2_vs_on1_full": 11993,
+ "diff_on_vs_off_lens": 5992,
+ "diff_on2_vs_on1_lens": 7096,
  "VERDICT": "可见"
 }

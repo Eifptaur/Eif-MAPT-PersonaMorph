@@ -78,6 +78,7 @@ def main():
     wfx.WaveOverlay.paintEvent = _pe
 
     RES["sync_overlay_exists"] = hasattr(wfx.WaveFX, "sync_overlay")
+    RES["win"] = [w.width(), w.height()]
     RES["cfg"] = {k: w._wavefx._cfg.get(k) for k in
                   ("enabled", "scale", "speed", "max_gain", "radius", "ring_speed")}
 
@@ -134,7 +135,10 @@ def main():
             RES["diff_on_vs_off_full"] = _diff_px(img_on1, img_off)      # 波纹贡献的扭曲
             RES["diff_on2_vs_on1_full"] = _diff_px(img_on2, img_on1)     # 环带随相位移动
             # 透镜 bbox 内的差异（更聚焦）
-            lr = QRect(r)
+            # r 是逻辑 QRectF；PNG 来自 grab()，是设备像素 ⇒ 乘 dpr 换算
+            dpr = w.devicePixelRatioF()
+            lr = QRect(round(r.x() * dpr), round(r.y() * dpr),
+                       round(r.width() * dpr), round(r.height() * dpr))
             if lr.isValid():
                 RES["diff_on_vs_off_lens"] = _diff_px(img_on1.copy(lr), img_off.copy(lr))
                 RES["diff_on2_vs_on1_lens"] = _diff_px(img_on2.copy(lr), img_on1.copy(lr))

@@ -1,0 +1,24 @@
+{
+ "png_size": [
+  1680,
+  1080
+ ],
+ "dpr": 1.5,
+ "rect_dev": [
+  510,
+  232,
+  1080,
+  440
+ ],
+ "outside_left": 0.0,
+ "outside_right": 0.0,
+ "outside_above": 0.0,
+ "outside_below": 0.0,
+ "border_max_top": 1,
+ "border_max_bottom": 1,
+ "border_max_left": 1,
+ "border_max_right": 1,
+ "interior": 0.39392397204897206,
+ "interior_max": 12,
+ "seam_free": true
+}

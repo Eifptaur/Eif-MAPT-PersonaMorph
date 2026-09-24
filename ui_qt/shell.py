@@ -930,7 +930,13 @@ class Shell(QWidget):
         self.side_status.setStyleSheet(f"color:{self.t.tx2};")
         self.side_status.setWordWrap(True)
         sv.addWidget(self.side_status)
-        lay.addWidget(sbox)
+        # 丙-32：左右各缩 10px（作者：顶着导航栏左右「过犹不及」，只要一点点）——
+        #   搜索框同款做法（wrap+margins），视觉上与下方导航对齐但略收。
+        swrap = QWidget()
+        swl = QHBoxLayout(swrap)
+        swl.setContentsMargins(10, 0, 10, 0)
+        swl.addWidget(sbox)
+        lay.addWidget(swrap)
 
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
