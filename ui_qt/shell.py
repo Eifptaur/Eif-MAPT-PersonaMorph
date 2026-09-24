@@ -779,6 +779,15 @@ class Shell(QWidget):
             vp.setAutoFillBackground(False)
         self.stack.setStyleSheet("background:transparent;")
 
+        # 侧栏收起状态恢复（web navTight localStorage 等价；items 已齐才能应用）
+        try:
+            from PySide6.QtCore import QSettings # noqa: PLC0415
+
+            if QSettings("WXAgent", "persona-morph-ui").value("nav_tight", False, type=bool):
+                self._set_tight(True)
+        except Exception: # noqa: BLE001
+            pass
+
     def _build_titlebar(self) -> QWidget:
         bar = QFrame()
         bar.setObjectName("TitleBar")
@@ -1587,22 +1596,34 @@ class Shell(QWidget):
         )
 
     def _toggle_tight(self) -> None:
-        """ #8 → E：收起=**纯图标侧栏**——
-        按钮只显示 » 图标（点了=展开）；分组头整行隐藏（不留首字）；
-        导航项清文字只留图标、图标放大一档 16→20、行距加宽。展开全部还原。"""
+        cur = self.btn_tight.text().startswith("‹")
+        self._set_tight(cur)
+        # 跨会话记忆（web navTight localStorage 的 QSettings 等价）
+        try:
+            from PySide6.QtCore import QSettings # noqa: PLC0415
+
+            QSettings("WXAgent", "persona-morph-ui").setValue("nav_tight", bool(cur))
+        except Exception: # noqa: BLE001
+            pass
+
+    def _set_tight(self, on: bool) -> None:
+        """按指定状态应用侧栏收起（on=True 收起）——_toggle_tight 与构建时恢复共用。
+
+        #8 → E：收起=**纯图标侧栏**——按钮只显示 » 图标（点了=展开）；
+        分组头整行隐藏（不留首字）；导航项清文字只留图标、图标放大一档 16→20、
+        行距加宽。展开全部还原。"""
         import icons as _icons # noqa: PLC0415
 
-        cur = self.btn_tight.text().startswith("‹")
         side = self.find.parentWidget().parentWidget()
-        side.setFixedWidth(76 if cur else 232)
+        side.setFixedWidth(76 if on else 232)
         for _it, g, _sec, _label in self.items:
-            g.set_tight(cur)
-            _it.set_tight(cur)
-        if cur: # 将收起
+            g.set_tight(on)
+            _it.set_tight(on)
+        if on: # 收起态
             self.btn_tight.setText("")
             self.btn_tight.setIcon(QIcon(_icons.chevs_pixmap(self.t.tx2, collapsed=True)))
             self.btn_tight.setToolTip("展开侧栏")
-        else: # 将展开
+        else: # 展开态
             self.btn_tight.setIcon(QIcon())
             self.btn_tight.setText("‹ 收起")
             self.btn_tight.setToolTip("")

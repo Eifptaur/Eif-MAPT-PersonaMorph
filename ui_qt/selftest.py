@@ -5262,12 +5262,228 @@ def t_g13() -> None:
         srv.shutdown()
 
 
+def t_g14() -> None:
+    """系统性漏点清算：GUIDES actions（5 种 kind）+ 云测试连通 + 微信重检 + 侧栏记忆。
+
+    手法同 t_g9：假后端 + patch current_url/QDialog.exec/QDesktopServices.openUrl。
+    """
+    import json as _json # noqa: PLC0415
+    import os # noqa: PLC0415
+    import threading as _th # noqa: PLC0415
+    import time as _time # noqa: PLC0415
+    import types # noqa: PLC0415
+    from http.server import BaseHTTPRequestHandler, HTTPServer # noqa: PLC0415
+    from pathlib import Path as _P # noqa: PLC0415
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtGui import QDesktopServices # noqa: PLC0415
+    from PySide6.QtWidgets import (QApplication, QDialog, QLabel, QWidget) # noqa: PLC0415
+
+    import agent_bridge # noqa: PLC0415
+    import panels_custom # noqa: PLC0415
+    import panels_qt # noqa: PLC0415
+    from stylekit_qt import THEMES # noqa: PLC0415
+    from widgets import Btn # noqa: PLC0415
+
+    QApplication.instance() or QApplication([])
+
+    calls: list = []
+    opened: list = []
+
+    class _H(BaseHTTPRequestHandler):
+        def _send(self, obj): # noqa: N802
+            body = _json.dumps(obj).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self): # noqa: N802
+            calls.append(self.path)
+            if "/api/voice/test" in self.path:
+                self._send({"ok": True, "note": "识别链路可用"})
+            elif "/api/wechat/recheck" in self.path:
+                self._send({"ok": True, "install": {"state": "installed_not_running"}})
+            elif "/api/status" in self.path:
+                self._send({"ok": True, "paused": False, "wechat_connected": True,
+                            "listen": {"groups": 1, "privates": 0},
+                            "model": "deepseek-chat", "uptime_s": 5, "groups": []})
+            else:
+                self._send({"ok": True})
+
+        def do_POST(self): # noqa: N802
+            n = int(self.headers.get("Content-Length") or 0)
+            try:
+                body = _json.loads(self.rfile.read(n).decode("utf-8", "replace")) if n else {}
+            except Exception: # noqa: BLE001
+                body = {}
+            calls.append(self.path + "#" + _json.dumps(body, ensure_ascii=False))
+            if "/api/tools/new_manifest" in self.path:
+                self._send({"ok": True, "path": "tools.d/my_tool.json"})
+            elif "/api/cloud/test" in self.path:
+                self._send({"ok": True, "stage": "连接", "status": 200, "ms": 88})
+            else:
+                self._send({"ok": True})
+
+        def log_message(self, *a): # noqa: N802
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), _H)
+    port = srv.server_address[1]
+    _th.Thread(target=srv.serve_forever, daemon=True, name="fake-be-g14").start()
+
+    _orig_url = agent_bridge.current_url
+    agent_bridge.current_url = lambda: "http://127.0.0.1:%d/?token=tk" % port
+    exec_dlgs: list = []
+    _orig_exec = QDialog.exec
+    QDialog.exec = lambda self, *a, **k: (exec_dlgs.append(self), 0)[1]
+    _orig_open = QDesktopServices.openUrl
+    QDesktopServices.openUrl = staticmethod(lambda url: opened.append(url.toString()))
+
+    t = THEMES["whale"]
+
+    def _posts(prefix):
+        return [_json.loads(c.split("#", 1)[1]) for c in calls
+                if "#" in c and c.split("#", 1)[0].startswith(prefix)]
+
+    def _wait(pred, timeout=8.0):
+        end = _time.time() + timeout
+        while _time.time() < end:
+            QApplication.processEvents()
+            if pred():
+                return True
+            _time.sleep(0.03)
+        QApplication.processEvents()
+        return pred()
+
+    keep: list = []
+    try:
+        # ① GUIDES 全量 actions 解析（10 条 / 5 种 kind）
+        gs = panels_custom._web_guides()
+        total = sum(len(g.get("actions") or []) for g in gs.values())
+        kinds = {a.get("kind") for g in gs.values() for a in (g.get("actions") or [])}
+        ck("g14 GUIDES 全量 actions 解析（10 条 / gen·open·test·goto·openUrl 五类）",
+           total == 10 and kinds == {"gen", "open", "test", "goto", "openUrl"},
+           "n=%d kinds=%s" % (total, sorted(kinds)))
+
+        # ② 引导弹窗动作按钮 + gen / open
+        b = Btn("trigger", t, "ghost")
+        keep.append(b)
+        got: list = []
+        fake_win = QWidget() # 真 QWidget 当「假壳」：_card_dialog 拿它当 parent、goto 找它的 _go
+        keep.append(fake_win)
+        fake_win._go = lambda sec, lab: got.append((sec, lab))
+        b.window = lambda: fake_win
+        note = QLabel("")
+        panels_custom._guide_open("tools", b, note)
+        dlg = exec_dlgs[-1]
+        labs = [x.text() for x in dlg.findChildren(Btn)]
+        ck("g14 引导弹窗动作按钮在场（tools：生成模板 / 打开目录）",
+           "生成模板清单到 tools.d/" in labs and "打开 tools.d 目录" in labs,
+           str(labs))
+        genb = next(x for x in dlg.findChildren(Btn)
+                    if x.text() == "生成模板清单到 tools.d/")
+        genb.click()
+        _wait(lambda: bool(_posts("/api/tools/new_manifest"))
+              and "已生成模板：tools.d/my_tool.json" in note.text())
+        ck("g14 gen 动作：POST /api/tools/new_manifest + 回显模板路径",
+           bool(_posts("/api/tools/new_manifest"))
+           and "已生成模板：tools.d/my_tool.json" in note.text(),
+           "note=%r" % note.text())
+        openb = next(x for x in dlg.findChildren(Btn) if x.text() == "打开 tools.d 目录")
+        openb.click()
+        _wait(lambda: bool(_posts("/api/open-path")))
+        ck("g14 open 动作：POST /api/open-path {path}",
+           _posts("/api/open-path")[-1] == {"path": "tools.d"},
+           str(_posts("/api/open-path")[-1:]))
+
+        # ③ test 动作（voice → GET /api/voice/test）
+        panels_custom._guide_open("voice", b, note)
+        dlg2 = exec_dlgs[-1]
+        tb = [x for x in dlg2.findChildren(Btn) if x.objectName() == "guideAct"][0]
+        tb.click()
+        _wait(lambda: "识别链路可用" in note.text())
+        ck("g14 test 动作：GET /api/voice/test + 回显 note",
+           "识别链路可用" in note.text(), "note=%r" % note.text())
+
+        # ④ goto 动作（video → window()._go('videogen')）
+        panels_custom._guide_open("video", b, note)
+        dlg3 = exec_dlgs[-1]
+        gb = [x for x in dlg3.findChildren(Btn) if x.objectName() == "guideAct"][0]
+        gb.click()
+        ck("g14 goto 动作：切到对应面板（videogen）+ 状态回显",
+           ("videogen", "") in got and "已跳到对应面板" in note.text(),
+           "got=%s note=%r" % (got, note.text()))
+
+        # ⑤ openUrl 动作（wechat → 微信官网）
+        panels_custom._guide_open("wechat", b, note)
+        dlg4 = exec_dlgs[-1]
+        ob = next(x for x in dlg4.findChildren(Btn) if x.text() == "打开官网下载")
+        ob.click()
+        ck("g14 openUrl 动作：打开微信官网",
+           any("weixin.qq.com" in u for u in opened), str(opened[-1:]))
+
+        # ⑥ 云测试两钮（community 页）
+        wrap = panels_qt.build_panel(t, "community")
+        keep.append(wrap)
+        cp = wrap.widget()
+        cp.show()
+        QApplication.processEvents()
+        url_w = panels_custom._c8_find_row(cp, lambda r: r.cfg == "cloud.persona_url")
+        if url_w is not None and hasattr(url_w, "setText"):
+            url_w.setText("https://x/hook/persona")
+        b1 = cp.findChild(Btn, "cloudTestPersona")
+        ck("g14 云测试两钮在场（人设/名单接收端）",
+           b1 is not None and cp.findChild(Btn, "cloudTestBlocklist") is not None,
+           "p=%s" % (b1 is not None))
+        if b1 is not None:
+            b1.click()
+        _wait(lambda: bool(_posts("/api/cloud/test"))
+              and any("人设：可达" in l.text() for l in cp.findChildren(QLabel)))
+        ck("g14 云测试：POST {which,url} + 回显「可达（… HTTP 200 …）」",
+           _posts("/api/cloud/test")[-1] == {"which": "persona",
+                                             "url": "https://x/hook/persona"}
+           and any("人设：可达" in l.text() and "HTTP 200" in l.text()
+                   for l in cp.findChildren(QLabel)),
+           "body=%s" % (_posts("/api/cloud/test")[-1:],))
+
+        # ⑦ 微信重检（wechat 页）
+        wrap = panels_qt.build_panel(t, "wechat")
+        keep.append(wrap)
+        wp = wrap.widget()
+        wp.show()
+        QApplication.processEvents()
+        rb = wp.findChild(Btn, "wxRecheck")
+        ck("g14 微信重检钮在场（我装好了，重新检测）", rb is not None, "btn=%s" % rb)
+        if rb is not None:
+            rb.click()
+        _wait(lambda: any("/api/wechat/recheck" in c for c in calls)
+              and any("微信已安装，登录后即可用" in l.text() for l in wp.findChildren(QLabel)))
+        ck("g14 微信重检：GET /api/wechat/recheck + 三态回显",
+           any("/api/wechat/recheck" in c for c in calls)
+           and any("微信已安装，登录后即可用" in l.text() for l in wp.findChildren(QLabel)),
+           str([l.text() for l in wp.findChildren(QLabel) if "微信" in l.text()][:3]))
+
+        # ⑧ 侧栏收起跨会话记忆（源码级：QSettings 读写俱在；真机复验 UI）
+        ssrc = _P(__file__).resolve().parent.joinpath("shell.py").read_text(encoding="utf-8")
+        ck("g14 侧栏收起跨会话记忆（QSettings nav_tight 读+写）",
+           'setValue("nav_tight"' in ssrc and 'value("nav_tight"' in ssrc,
+           "write=%s read=%s" % ('setValue("nav_tight"' in ssrc,
+                                 'value("nav_tight"' in ssrc))
+    finally:
+        QDialog.exec = _orig_exec
+        QDesktopServices.openUrl = _orig_open
+        agent_bridge.current_url = _orig_url
+        srv.shutdown()
+
+
 def main() -> int:
     for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
                t_visual, t_badges, t_status_chain, t_bot_controls, t_window_chrome, t_dpi_motion,
                t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch, t_bootstrap32, t_ocr9,
                t_c10, t_c13, t_hotfix1, t_hotfix2, t_catmgr, t_medialocal, t_commfb,
-               t_veradv, t_g5, t_g6, t_g7, t_g8, t_g9, t_g10, t_g11, t_g12, t_g13):
+               t_veradv, t_g5, t_g6, t_g7, t_g8, t_g9, t_g10, t_g11, t_g12, t_g13, t_g14):
         try:
             fn()
         except Exception as e: # noqa: BLE001

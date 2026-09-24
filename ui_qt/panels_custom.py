@@ -5221,7 +5221,7 @@ def _web_guides() -> dict:
         marks = [(m.group(1), m.start()) for m in _re.finditer(r"\n  (\w+): \{", seg)]
         for n, (k, s) in enumerate(marks):
             blk = seg[s:marks[n + 1][1] if n + 1 < len(marks) else len(seg)]
-            g: dict = {"title": "", "intro": "", "steps": [], "copy": []}
+            g: dict = {"title": "", "intro": "", "steps": [], "copy": [], "actions": []}
             m = _re.search(r"title: '((?:[^'\\]|\\.)*)'", blk)
             if m:
                 g["title"] = _js_unescape(m.group(1))
@@ -5237,6 +5237,19 @@ def _web_guides() -> dict:
                 labels = _re.findall(r"label: '((?:[^'\\]|\\.)*)'", cspan)
                 texts = _re.findall(r"text: '((?:[^'\\]|\\.)*)'", cspan)
                 g["copy"] = [(_js_unescape(a), _js_unescape(b)) for a, b in zip(labels, texts)]
+            # actions（web :5155 起，全量 5 种 kind：gen/open/test/goto/openUrl）
+            aspan = _js_array_span(blk, "actions")
+            if aspan:
+                acts: list = []
+                for am in _re.finditer(r"\{([^}]*)\}", aspan):
+                    seg2 = am.group(1)
+                    ml = _re.search(r"label: '((?:[^'\\]|\\.)*)'", seg2)
+                    mk = _re.search(r"kind: '(\w+)'", seg2)
+                    ma = _re.search(r"arg: '((?:[^'\\]|\\.)*)'", seg2)
+                    acts.append({"label": _js_unescape(ml.group(1)) if ml else "执行",
+                                 "kind": mk.group(1) if mk else "",
+                                 "arg": _js_unescape(ma.group(1)) if ma else ""})
+                g["actions"] = acts
             out[k] = g
     except Exception: # noqa: BLE001
         out = {}
@@ -5336,6 +5349,14 @@ def _guide_open(key: str, btn, note) -> None:
         cp.clicked.connect(_copy)
         row.addWidget(cp)
         v.addLayout(row)
+    for a in (g.get("actions") or []):
+        ab = Btn(str(a.get("label") or "执行"), t, role="ghost")
+        ab.setObjectName("guideAct")
+        # ⛔ 透传**来源按钮**（页面上的引导钮）而不是弹窗内按钮：goto 要靠
+        #    btn.window() 找主壳（Shell）；弹窗内按钮的 window() 是 QDialog，
+        #    拿不到 _go ⇒ 会永远走「请到左侧点…」降级分支（t_g14 抓出）。
+        ab.clicked.connect(lambda _=False, _a=a: _guide_action(t, btn, _a, note))
+        v.addWidget(ab)
     rowh = QHBoxLayout()
     rowh.addStretch(1)
     okb = Btn("知道了", t, role="primary")
@@ -5344,6 +5365,80 @@ def _guide_open(key: str, btn, note) -> None:
     rowh.addWidget(okb)
     v.addLayout(rowh)
     dlg.exec()
+
+
+def _guide_action(t: Tokens, btn, a: dict, note) -> None: # noqa: ANN001
+    """引导弹窗里的动作按钮（web guideAction :5389-5410 同款，全量 5 种 kind）：
+    open=打开路径（/api/open-path）｜gen=生成模板（/api/tools/new_manifest）｜
+    test=跑一次对应测试（voice/tts/wechat 重检）｜goto=跳到对应面板（分页栈）｜
+    openUrl=打开微信官网。结果回显到来源面板的状态行。"""
+    kind = str(a.get("kind") or "")
+    arg = str(a.get("arg") or "")
+    page = _c8_page_of(btn)
+
+    def _say(msg: str, tone: str = "") -> None:
+        if note is not None:
+            _c8_say(note, t, msg, tone)
+
+    if kind == "open":
+        _say("打开「%s」中…" % arg)
+
+        def _od(r, e): # noqa: ANN001
+            bad = bool(e) or (isinstance(r, dict) and r.get("ok") is False)
+            _say("打开失败：%s" % (e or (r or {}).get("error") or "后台没连上") if bad
+                 else "已打开「%s」" % arg, "err" if bad else "")
+
+        _async_post(None, "/api/open-path", {"path": arg}, _od)
+    elif kind == "gen":
+        _say("正在生成模板到 tools.d/…")
+
+        def _gd(r, e): # noqa: ANN001
+            if e or (isinstance(r, dict) and r.get("ok") is False):
+                _say("生成失败：%s" % (e or (r or {}).get("error") or "后台没连上"), "err")
+                return
+            _say("已生成模板：%s（改完点「重新加载清单」）"
+                 % ((r or {}).get("path") or "tools.d/"))
+            fn = getattr(page, "_ut_reload", None)
+            if callable(fn):
+                fn()
+
+        _async_post(None, "/api/tools/new_manifest", {}, _gd)
+    elif kind == "test":
+        api = {"voice": "/api/voice/test", "tts": "/api/tts/test"}.get(
+            arg, "/api/wechat/recheck")
+        _say("正在跑一次测试…")
+
+        def _td(r, e): # noqa: ANN001
+            if e or (isinstance(r, dict) and r.get("ok") is False):
+                _say("测试失败：%s" % (e or (r or {}).get("error") or "后台没连上"), "err")
+                return
+            inst = (r or {}).get("install") if isinstance(r, dict) else None
+            if isinstance(inst, dict):
+                st = inst.get("state")
+                _say("检测到微信在运行" if st == "running"
+                     else ("微信已安装，登录后即可用" if st == "installed_not_running"
+                           else "仍未检测到微信"))
+            else:
+                _say(str((r or {}).get("note") or (r or {}).get("reply") or "测试完成"))
+
+        _async_get(api, _td)
+    elif kind == "goto":
+        sec = arg.lstrip("#")
+        if sec.startswith("sec-"):
+            sec = sec[4:]
+        win = btn.window() if hasattr(btn, "window") else None
+        go = getattr(win, "_go", None) if win is not None else None
+        if callable(go):
+            go(sec, "")
+            _say("已跳到对应面板")
+        else:
+            _say("请到左侧点「%s」面板" % sec)
+    elif kind == "openUrl":
+        from PySide6.QtCore import QUrl # noqa: PLC0415
+        from PySide6.QtGui import QDesktopServices # noqa: PLC0415
+
+        QDesktopServices.openUrl(QUrl("https://weixin.qq.com/"))
+        _say("已尝试打开微信官网（打不开就手动复制 https://weixin.qq.com/ 到浏览器）")
 
 
 def _act_guide(key: str):
@@ -5873,6 +5968,52 @@ def _community_appendix(t: Tokens, page: QWidget) -> None:
         url_f.textChanged.connect(lambda _=False: _sync())
     _sync()
 
+    # ── 上云（预留）· 测试连通（web sec-community :1640-1657 的 data-cloud-test 两钮）──
+    #    只探测、不上传；探测不带口令（web :1652 口径）。结果区文案同 web :4604/:4607。
+    ocard = Card(t)
+    ocard.body.addWidget(h2(t, "上云（预留）· 测试连通"))
+    ocard.body.addWidget(desc(t, "总开关关着时一个字节都不会上传；这里只探测接收端通不通（不带口令）。"))
+    ct_row = QHBoxLayout()
+    b_ct1 = Btn("测试人设接收端", t, "ghost")
+    b_ct1.setObjectName("cloudTestPersona")
+    b_ct2 = Btn("测试名单接收端", t, "ghost")
+    b_ct2.setObjectName("cloudTestBlocklist")
+    ct_row.addWidget(b_ct1)
+    ct_row.addWidget(b_ct2)
+    ct_row.addStretch(1)
+    ocard.body.addLayout(ct_row)
+    ct_note = desc(t, "")
+    ct_note.setWordWrap(True)
+    ocard.body.addWidget(ct_note)
+    page.layout().addWidget(ocard)
+
+    def _cloud_test(which: str) -> None:
+        cfg_key = "cloud.persona_url" if which == "persona" else "cloud.blocklist_url"
+        url_w = _c8_find_row(page, lambda r, _k=cfg_key: r.cfg == _k)
+        url = ""
+        if url_w is not None and hasattr(url_w, "text"):
+            url = str(url_w.text() or "").strip()
+        name = "人设" if which == "persona" else "名单"
+        ct_note.setText("%s：正在探测 %s …" % (name, url or "（未配置）"))
+
+        def _done(r, e): # noqa: ANN001
+            if e:
+                ct_note.setText("%s：探测失败 ｜ %s" % (name, e))
+                return
+            r = r if isinstance(r, dict) else {}
+            if r.get("ok"):
+                ct_note.setText("%s：可达（%s · HTTP %s · %sms）%s" % (
+                    name, r.get("stage") or "", r.get("status") or "?", r.get("ms") or 0,
+                    (" ｜ " + str(r.get("why"))) if r.get("why") else ""))
+            else:
+                ct_note.setText("%s：不通 ｜ 卡在「%s」段 · %s" % (
+                    name, r.get("stage") or "?", r.get("why") or "未知原因"))
+
+        _async_post(None, "/api/cloud/test", {"which": which, "url": url}, _done)
+
+    b_ct1.clicked.connect(lambda: _cloud_test("persona"))
+    b_ct2.clicked.connect(lambda: _cloud_test("blocklist"))
+
 
 def _feedback_appendix(t: Tokens, page: QWidget) -> None:
     """反馈状态卡（web fbLoad 对齐）：can_send / pending 警示 + 最近提交一览；
@@ -6289,8 +6430,45 @@ def _briefs_appendix(t: Tokens, page: QWidget) -> None:
     _bf_chats() # web :1183 同款：进页自动加载（web 延时 1.2s，这里直接同步）
 
 
+def _wechat_recheck_appendix(t: Tokens, page: QWidget) -> None:
+    """微信安装重检（web sec-wechat :1006「我装好了，重新检测」+ :7627-7633）：
+    GET /api/wechat/recheck → 回显三态（运行中 / 已安装未运行 / 仍未检测到）。"""
+    card = Card(t)
+    card.body.addWidget(h2(t, "微信安装检测"))
+    card.body.addWidget(desc(t, "装好或登录微信后点「我装好了，重新检测」——重新扫安装态，不用重启机器人。"))
+    row = QHBoxLayout()
+    b = Btn("我装好了，重新检测", t, "primary")
+    b.setObjectName("wxRecheck")
+    row.addWidget(b)
+    row.addStretch(1)
+    card.body.addLayout(row)
+    note = desc(t, "")
+    card.body.addWidget(note)
+    page.layout().addWidget(card)
+
+    def _recheck() -> None:
+        note.setText("正在重新检测微信…")
+
+        def _done(r, e): # noqa: ANN001
+            if e:
+                note.setText("检测失败：%s" % e)
+                return
+            inst = (r or {}).get("install") if isinstance(r, dict) else None
+            if isinstance(inst, dict):
+                st = inst.get("state")
+                note.setText("检测到微信在运行" if st == "running"
+                             else ("微信已安装，登录后即可用" if st == "installed_not_running"
+                                   else "仍未检测到微信"))
+            else:
+                note.setText(str((r or {}).get("note") or "已重新检测"))
+
+        _async_get("/api/wechat/recheck", _done)
+
+    b.clicked.connect(_recheck)
+
+
 APPENDIX = {
-    "wechat": (_wechat_emoji_appendix, _briefs_appendix),
+    "wechat": (_wechat_emoji_appendix, _briefs_appendix, _wechat_recheck_appendix),
     "tools": _tools_utlist_appendix,
     "model": (_model_local_appendix, _model_provider_linkup),
     "imggen": _sd_local_appendix,
