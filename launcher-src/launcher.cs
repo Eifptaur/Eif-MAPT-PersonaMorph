@@ -1185,6 +1185,16 @@ static class Program
                 Console.WriteLine("shortcut=" + (yes ? "yes" : "no"));
                 return;
             }
+            if (args != null && args.Length > 0 && args[0] == "--whois")
+            {
+                // 机械判据用：`--whois [端口]` ⇒ 打印 ours=yes/no（认这个口上跑的是不是本产品控制台）。
+                //   真机复验「上游占同口」就靠它：QQ agent 开着时应打 no，本产品控制台开着时应打 yes。
+                int wp = 0;
+                if (args.Length > 1) int.TryParse(args[1], out wp);
+                try { Console.OutputEncoding = System.Text.Encoding.UTF8; } catch { }
+                Console.WriteLine("ours=" + (Ui.IsOurConsole(wp) ? "yes" : "no"));
+                return;
+            }
             if (args != null && args.Length > 0 && args[0] == "--ask")
             {
                 // 快捷方式询问窗（独立进程）：监控 3210 控制台，控制台关闭时自动关闭
@@ -1208,36 +1218,58 @@ static class Program
             //   只有确实已经开着一个「群相 控制台」窗口时才只提示、不重复开。
             try
             {
+                int prePort = PortHelper.ReadPort();
                 using (var c = new System.Net.Sockets.TcpClient())
                 {
-                    c.Connect("127.0.0.1", PortHelper.ReadPort());
+                    c.Connect("127.0.0.1", prePort);
                 }
-                Application.EnableVisualStyles();
-                Application.SetCompatibleTextRenderingDefault(false);
-                if (!Ui.ConsoleWindowAlive())
+                // ⛔ 端口有人听 ≠ 是我们的控制台 —— **先认人再开窗**。
+                //    同源的上游产品（QQ agent）默认端口同为 3210（它也是"本地 HTTP 服务 +
+                //    网页控制台"这套架构），它开着而本产品没起时，原写法会直接 OpenConsole
+                //    ⇒ 把用户的「一键启动」导去别人的页面（用户实测踩过）。认人判据见
+                //    IsOurConsole：主判据是免认证版本口 /api/version（上游没有），正文指纹
+                //    只是兜底（鲸语模式会把页面可见文案连 <title> 一起换掉，正文靠不住）。
+                //    认不出 ⇒ 当它不存在：**不开别人的窗，也不拦正常启动** —— 落到下面的
+                //    正常启动流程，本产品后台会自动顺延端口，照常拉起。
+                if (!Ui.IsOurConsole(prePort))
                 {
-                    string dir0 = Path.GetDirectoryName(Application.ExecutablePath);
-                    string why0 = "";
-                    string url0 = Ui.ConsoleUrl(dir0, out why0);
-                    // ⛔ **只有真有人在听才开窗** —— 地址文件是"上一次"跑控制台时写下的，
-                    //   机器人停掉之后它仍在；老写法无条件拿配置端口兜底，而那个端口多半也没人听
-                    //   ⇒ 用户看到一屏 ERR_CONNECTION_REFUSED（＝网友报的「打不开控制台」）。
-                    //   现在两个候选地址都**探活**，都不通就不开窗，让下面的正常启动流程把控制台拉起来。
-                    if (url0 == null || !url0.StartsWith("http"))
+                    try
                     {
-                        string urlCfg = "http://127.0.0.1:" + PortHelper.ReadPort() + "/";
-                        url0 = Ui.PortAlive(urlCfg) ? urlCfg : null;
+                        Ui.NoteFallback(Path.GetDirectoryName(Application.ExecutablePath),
+                            "端口 " + prePort + " 上跑的不是本产品控制台（可能是同源上游产品）"
+                            + " ⇒ 不代开它的页面，继续正常启动流程（本产品会自动换端口）");
                     }
-                    if (url0 != null && url0.StartsWith("http")) Ui.OpenConsole(url0);
-                    else Ui.NoteFallback(dir0, (why0 == "" ? "没有可用地址" : why0)
-                        + "；两个候选地址都没人应答 ⇒ 这次**不开空窗**（避免一屏 ERR_CONNECTION_REFUSED），"
-                        + "由下面的正常启动流程把控制台拉起来");
+                    catch { }
                 }
                 else
                 {
-                    Application.Run(new NoticeForm());
+                    Application.EnableVisualStyles();
+                    Application.SetCompatibleTextRenderingDefault(false);
+                    if (!Ui.ConsoleWindowAlive())
+                    {
+                        string dir0 = Path.GetDirectoryName(Application.ExecutablePath);
+                        string why0 = "";
+                        string url0 = Ui.ConsoleUrl(dir0, out why0);
+                        // ⛔ **只有真有人在听才开窗** —— 地址文件是"上一次"跑控制台时写下的，
+                        //   机器人停掉之后它仍在；老写法无条件拿配置端口兜底，而那个端口多半也没人听
+                        //   ⇒ 用户看到一屏 ERR_CONNECTION_REFUSED（＝网友报的「打不开控制台」）。
+                        //   现在两个候选地址都**探活**，都不通就不开窗，让下面的正常启动流程把控制台拉起来。
+                        if (url0 == null || !url0.StartsWith("http"))
+                        {
+                            string urlCfg = "http://127.0.0.1:" + prePort + "/";
+                            url0 = Ui.PortAlive(urlCfg) ? urlCfg : null;
+                        }
+                        if (url0 != null && url0.StartsWith("http")) Ui.OpenConsole(url0);
+                        else Ui.NoteFallback(dir0, (why0 == "" ? "没有可用地址" : why0)
+                            + "；两个候选地址都没人应答 ⇒ 这次**不开空窗**（避免一屏 ERR_CONNECTION_REFUSED），"
+                            + "由下面的正常启动流程把控制台拉起来");
+                    }
+                    else
+                    {
+                        Application.Run(new NoticeForm());
+                    }
+                    return;
                 }
-                return;
             }
             catch
             {
@@ -2871,6 +2903,56 @@ static class Program
                 || body.IndexOf("persona_morph", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
+        /// 从控制台地址里取端口（解析不动给 0 —— IsOurConsole 对 0 直接判否）。
+        public static int PortOfUrl(string url)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(url) || !url.StartsWith("http")) return 0;
+                string rest = url.Substring(url.IndexOf("://") + 3);
+                int slash = rest.IndexOf('/');
+                if (slash >= 0) rest = rest.Substring(0, slash);
+                int colon = rest.LastIndexOf(':');
+                if (colon <= 0) return 0;
+                int v = 0;
+                if (int.TryParse(rest.Substring(colon + 1), out v)) return v;
+            }
+            catch { }
+            return 0;
+        }
+
+        /// 这个口上跑的是不是**本产品**的控制台 —— 给「开窗/开浏览器」前的最后一道闸。
+        ///
+        /// ⛔ 为什么必须有：端口活着只说明「有人听」，不代表「是我们的」。同源上游产品
+        ///    （QQ agent）默认端口同为 3210，它开着而本产品没起时，把地址直接递给
+        ///    WebView2/浏览器，用户看到的就是别人的页面（实测踩过）。
+        /// 判据（从硬到软）：
+        ///   ① GET /api/version —— 本产品 webui 专为「启动器/新实例探测旧实例」留的
+        ///      **免认证**路由，200 且正文带 "ver" 字段 ⇒ 是我们（上游没有这个口）；
+        ///   ② 兜底 GET / 首页正文 —— 非空正文且像我们。鲸语模式会把页面可见文案
+        ///      （含 <title>）整段换成鲸语，正文指纹只是兜底，别当主判据用。
+        /// 与 LooksLikeOurs 的哲学相反：这里**宁可错杀** —— 判不出的代价只是走正常
+        /// 启动流程（本产品会自动顺延端口），错认的代价却是把用户导去别的程序。
+        public static bool IsOurConsole(int port)
+        {
+            if (port <= 0 || port >= 65536) return false;
+            int code; string raw, body;
+            if (HttpProbe(port, "/api/version", out code, out raw, out body))
+            {
+                if (code == 200 && body.IndexOf("\"ver\"", StringComparison.Ordinal) >= 0) return true;
+                if (code == 200) return false; // 200 却没有 ver 字段 ⇒ 不是本产品在应答
+                // 404/401/403 ⇒ 这个口上没有版本路由，退回正文兜底再认一次
+            }
+            if (HttpProbe(port, "/", out code, out raw, out body)
+                && code == 200 && !string.IsNullOrEmpty(body))
+            {
+                return body.IndexOf("群相", StringComparison.Ordinal) >= 0
+                    || body.IndexOf("PersonaMorph", StringComparison.OrdinalIgnoreCase) >= 0
+                    || body.IndexOf("persona_morph", StringComparison.OrdinalIgnoreCase) >= 0;
+            }
+            return false;
+        }
+
         /// 这个口上**是不是我们的控制台**（两步：先 TCP 快探，再 HTTP 认人）。
         ///
         /// ⛔ 必须两步：E4（端口顺延）现场里 3210 被别的程序占着 —— 只做 TCP 的话它也"活着"，
@@ -2890,7 +2972,25 @@ static class Program
                 return HealHealth.Unknown;
             }
             if (code == 502 || code == 503 || code == 504) { raw = r1; return HealHealth.Hijacked; }
-            if (code != 404) { raw = r1; return HealHealth.Ok; } // 200 / 401 / 403 …… 都是"我们在应答"
+            if (code != 404)
+            {
+                // ⛔ 收紧（原：非 404 即 Ok）：/api/status 有应答只说明「是个 HTTP 服务」——
+                //    同源上游产品（QQ agent，默认端口同为 3210）也可能有同名路由，
+                //    光看状态码分不出谁是谁，自愈链就会把控制台窗导去别人的页面。
+                //    复核免认证版本口 /api/version：200 且正文带 "ver" 才认（本产品 webui
+                //    专为启动器探测留的路由，上游没有）。认不出再退回首页正文认人
+                //    （正文非空且像我们 —— 鲸语模式会换掉可见文案，所以这只是兜底）。
+                int vCode; string vRaw, vBody;
+                if (HttpProbe(port, "/api/version", out vCode, out vRaw, out vBody)
+                    && vCode == 200 && vBody.IndexOf("\"ver\"", StringComparison.Ordinal) >= 0)
+                { raw = r1; return HealHealth.Ok; }
+                int hCode; string hRaw, hBody;
+                if (!HttpProbe(port, "/", out hCode, out hRaw, out hBody)) { raw = hRaw; return HealHealth.Unknown; }
+                if (hCode == 502 || hCode == 503 || hCode == 504) { raw = hRaw; return HealHealth.Hijacked; }
+                raw = hRaw;
+                if (hCode == 200 && !string.IsNullOrEmpty(hBody) && LooksLikeOurs(hBody)) return HealHealth.Ok;
+                return HealHealth.Unknown;
+            }
             // `/api/status` 不存在 ⇒ 再问一次首页，并且**认正文**：别把别的 HTTP 服务当成我们
             // （E4 现场里占着 3210 的若是另一个 HTTP 服务，光看状态码是分不出来的）。
             int c2; string r2, b2;
@@ -3153,6 +3253,14 @@ static class Program
                 try { using (DeadLinkForm f = new DeadLinkForm(url)) { f.ShowDialog(); } } catch { }
                 return;
             }
+            // ⛔ 端口活着 ≠ 是我们的：同源上游产品（QQ agent）默认端口同为 3210，
+            //    它占着口时若照开浏览器，用户看到的就是别人的页面（实测踩过）。
+            if (!IsOurConsole(PortOfUrl(url)))
+            {
+                NoteFallback(dir, "端口上跑的不是本产品控制台（可能是同源上游产品）⇒ 不代开别人的页面，改弹自家提示窗");
+                try { using (DeadLinkForm f = new DeadLinkForm(url, "occupied")) { f.ShowDialog(); } } catch { }
+                return;
+            }
             try { System.Diagnostics.Process.Start(url); } catch { }
         }
 
@@ -3160,9 +3268,13 @@ static class Program
         /// 零系统 MessageBox（红线），按钮＝重试 / 关闭；重试就再探一次活、活着才开窗。
         public class DeadLinkForm : Form
         {
-            public DeadLinkForm(string url)
+            public DeadLinkForm(string url, string variant = null)
             {
                 string root = Path.GetDirectoryName(Application.ExecutablePath);
+                // variant = "occupied"：端口被别的程序占着（跑的不是本产品）的提示形态。
+                //   复用同一座窗、只换文案 —— 布局/窗高全走既有实测链（FitLabel + retry.Bottom
+                //   反推 ClientSize），两版文案行数不同也不会叠字/被裁。
+                bool occupied = (variant == "occupied");
                 Text = "群相 控制台";
                 StartPosition = FormStartPosition.CenterScreen;
                 // 原来**没设**边框 ⇒ 默认 `Sizable`，而 `StyleKit.Apply` 对
@@ -3182,7 +3294,7 @@ static class Program
                 StyleKit.MakeIcon(this, root, new Point(StyleKit.Space.x6, StyleKit.Space.x5));
 
                 Label t = new Label();
-                t.Text = "控制台还没就绪";
+                t.Text = occupied ? "这个端口被别的程序占了" : "控制台还没就绪";
                 t.Font = StyleKit.Ui(StyleKit.TextScale.Title, FontStyle.Bold);
                 t.ForeColor = StyleKit.Ink;
                 t.Location = new Point(StyleKit.Space.x6 + StyleKit.IconSize + StyleKit.Space.x4, StyleKit.Space.x5 + 2);
@@ -3190,7 +3302,7 @@ static class Program
                 Controls.Add(t);
 
                 Label s = new Label();
-                s.Text = "现在打开只会是一屏错误页";
+                s.Text = occupied ? "没替它开窗 —— 那不是本产品" : "现在打开只会是一屏错误页";
                 s.Font = StyleKit.Ui(StyleKit.TextScale.Head, FontStyle.Bold);
                 s.ForeColor = StyleKit.Warn; // 提醒（不是错误、也不是正常）⇒ 用中间那一档
                 // ⚠️ （#18 叠字根治）：跟着标题实测底边走（原写死 +30，150% 下叠 12px）——BusyForm 同款
@@ -3205,7 +3317,9 @@ static class Program
                 CardPanel card = StyleKit.MakeCard(this, new Point(StyleKit.Space.x6, StyleKit.CardTopY), cardW);
 
                 Label m = new Label();
-                m.Text = "机器人还没起来（或刚刚被关掉），所以这个控制台地址现在没人应答。";
+                m.Text = occupied
+                    ? "这个端口上跑着另一个程序（常见是同源的上游产品），它不是本产品的控制台。"
+                    : "机器人还没起来（或刚刚被关掉），所以这个控制台地址现在没人应答。";
                 m.Font = StyleKit.Ui(StyleKit.TextScale.Body, FontStyle.Regular);
                 m.ForeColor = StyleKit.Ink;
                 m.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4);
@@ -3215,11 +3329,15 @@ static class Program
                 int mh = StyleKit.FitLabel(m);
 
                 Label m2 = new Label();
-                m2.Text =
-                    "可以这样做：\n"
-                  + "  · 点「重试」—— 如果机器人刚好起来了，这里会直接接上去；\n"
-                  + "  · 还没起来就双击「一键启动.exe」把控制台拉起来，再回来点「重试」；\n"
-                  + "  · 反复不行的话，看 logs\\persona_morph.log 与 logs\\onestart.log 里的最后几行。";
+                m2.Text = occupied
+                    ? "可以这样做：\n"
+                      + "  · 把那个程序关掉（或在它自己的设置里换个端口），再回来点「重试」；\n"
+                      + "  · 或把本产品 config.json 里 server 段的 port 改成别的端口，"
+                      + "再双击「一键启动.exe」（本产品会自动顺延到空着的端口）。"
+                    : "可以这样做：\n"
+                      + "  · 点「重试」—— 如果机器人刚好起来了，这里会直接接上去；\n"
+                      + "  · 还没起来就双击「一键启动.exe」把控制台拉起来，再回来点「重试」；\n"
+                      + "  · 反复不行的话，看 logs\\persona_morph.log 与 logs\\onestart.log 里的最后几行。";
                 m2.Font = StyleKit.Ui(StyleKit.TextScale.Para, FontStyle.Regular);
                 m2.ForeColor = StyleKit.InkBody;
                 // ⚠️ （#18）：y 改跟 m 实测底边走（原写死 `Space.x4 + 30`）
@@ -3260,7 +3378,9 @@ static class Program
                     {
                         string _why2 = "";
                         string u = Ui.ConsoleUrl(root, out _why2);
-                        if (!string.IsNullOrEmpty(u) && Ui.PortAlive(u)) { Ui.OpenConsole(u); }
+                        // ⛔ 认人再加一道：端口活着 ≠ 是我们的（同源上游占同口时别把用户导走）。
+                        if (!string.IsNullOrEmpty(u) && Ui.PortAlive(u)
+                            && Ui.IsOurConsole(Ui.PortOfUrl(u))) { Ui.OpenConsole(u); }
                     }
                     catch { }
                     Close();
@@ -3291,6 +3411,7 @@ static class Program
             // 这两个原来**没有截图入口**（诊断 §1 表里的第 5、6 个弹窗），
             //   于是"所有弹窗一并处理"就少了取证；现在补齐，加上关闭器的结果窗（在 close.cs 里另跑）。
             TryShot(dir, sb, "deadlink", delegate { return new DeadLinkForm("http://127.0.0.1:3210/?token=abcdef123456"); });
+            TryShot(dir, sb, "deadlink-occupied", delegate { return new DeadLinkForm("http://127.0.0.1:3210/?token=abcdef123456", "occupied"); });
             TryShot(dir, sb, "console", delegate { return new ConsoleForm("about:blank"); });
             // （B 批）：`WebView2MissingForm` 原来**零覆盖** —— 既不在 `--shot` 也不在
             //   `--dlgprobe`，于是它的按钮行溢出（4 颗挤一行 ⇒ 主按钮 x=-12、左边 12px 落在客户区外）
