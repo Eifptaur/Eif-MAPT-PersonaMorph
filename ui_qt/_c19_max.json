@@ -1,0 +1,47 @@
+{
+ "thickframe_ok": true,
+ "normal": {
+  "frame": [
+   80,
+   80,
+   1120,
+   720
+  ],
+  "client": [
+   80,
+   80,
+   1120,
+   720
+  ],
+  "shot": "C:\\Users\\ptmou\\Desktop\\WX-chatbot\\persona-morph\\ui_qt\\shots\\c19-normal.png"
+ },
+ "max": {
+  "isMaximized": true,
+  "frame": [
+   0,
+   0,
+   1707,
+   1067
+  ],
+  "client": [
+   0,
+   0,
+   1707,
+   1067
+  ],
+  "avail": [
+   0,
+   0,
+   1707,
+   1067
+  ],
+  "native": [
+   0,
+   0,
+   1707,
+   1067
+  ],
+  "dpr": 1.5,
+  "shot": "C:\\Users\\ptmou\\Desktop\\WX-chatbot\\persona-morph\\ui_qt\\shots\\c19-max.png"
+ }
+}

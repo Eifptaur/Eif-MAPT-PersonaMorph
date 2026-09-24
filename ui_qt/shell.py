@@ -519,25 +519,16 @@ class Shell(QWidget):
 
                 msg = wt.MSG.from_address(int(message))
                 if msg.message == 0x0083 and Shell._thickframe_ok:
-                    # WM_NCCALCSIZE —— 丙-13/丙-14：仅 THICKFRAME 注入成功后才接管；
+                    # WM_NCCALCSIZE —— 丙-13/丙-19：仅 THICKFRAME 注入成功后才接管；
                     # 逃生门（QT_NO_THICKFRAME）或注入失败时完全放行 Qt 默认处理。
+                    # ⛔ 丙-19（作者真机「全屏顶部白条、三边露桌面」根因实锤，_c19_maxprobe）：
+                    #   本机实测 THICKFRAME 窗口最大化时 **窗口 rect = 屏幕原生尺寸**
+                    #   （frame=[0,0,1707,1067] == native，系统**不做**边框外扩）；
+                    #   此前按「系统会外扩一圈」的假设在最大化时把客户区 RECT 内缩 dx
+                    #   ⇒ 客户区变成 [7,8,1693,1052] —— 四周那圈 7-8px 就是白条+漏边。
+                    #   ⇒ 最大化**不做任何内缩**：客户区 = 窗口 rect = 铺满屏幕。
+                    #     （若个别机器真有外扩行为，代价只是内容贴边，也好过白条。）
                     if msg.wParam:                   # wParam=TRUE ⇒ 系统要画 non-client 边框区
-                        if self.isMaximized():
-                            # 最大化时系统按「有边框窗口」给一圈 padding，客户区会四周各溢出
-                            # 一个边框宽（盖任务栏/出屏）⇒ 把 lParam 指向的 RECT 内缩掉。
-                            try:
-                                import ctypes as _ct2  # noqa: PLC0415
-
-                                _u = _ct2.windll.user32
-                                _dx = (_u.GetSystemMetrics(32)       # SM_CXSIZEFRAME
-                                       + _u.GetSystemMetrics(92))    # SM_CXPADDEDBORDER
-                                _rc = wt.RECT.from_address(int(msg.lParam))
-                                _rc.left += _dx
-                                _rc.top += _dx
-                                _rc.right -= _dx
-                                _rc.bottom -= _dx
-                            except Exception:  # noqa: BLE001
-                                pass
                         return True, 0               # 0 = 客户区=整个窗口（无边框视觉保住）
                     return False, 0
                 if msg.message == 0x0084:            # WM_NCHITTEST

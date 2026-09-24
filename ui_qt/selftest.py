@@ -1654,9 +1654,8 @@ def t_c13() -> None:
     _nat_code = "\n".join(ln for ln in nat.splitlines() if not ln.strip().startswith("#"))
     ck("c13: nativeEvent 吃掉 WM_NCCALCSIZE 边框区（wParam=TRUE ⇒ return True,0 保无边框视觉）",
        "0x0083" in _nat_code and "return True, 0" in _nat_code)
-    ck("c13: 最大化时内缩系统边框 padding（否则客户区四周溢出、盖任务栏）",
-       "isMaximized" in _nat_code and "GetSystemMetrics(32)" in _nat_code
-       and "GetSystemMetrics(92)" in _nat_code)
+    ck("c19: 最大化**不做内缩**（本机实测最大化 rect=屏幕尺寸，内缩=白条根因；_c19_maxprobe 实锤）",
+       "isMaximized" not in _nat_code and "GetSystemMetrics(32)" not in _nat_code)
     ck("c13: 逃生门 QT_NO_THICKFRAME（真机黑屏时秒级回退安全态）与 NCCALCSIZE 接管守卫",
        "QT_NO_THICKFRAME" in _body(ssrc, "_ensure_resize_style")
        and "Shell._thickframe_ok" in _nat_code)
