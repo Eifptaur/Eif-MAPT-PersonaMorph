@@ -559,7 +559,7 @@ def _open_group_pick(line, note, groups: list) -> None:
 _ACT_API: dict[str, tuple[str, str, dict]] = {
     "testApi": ("POST", "/api/test-api", {}), # web L2741/L5882：后端自测当前 api 配置
     "wmReset": ("POST", "/api/watermark/reset", {}), # web L2709：监听水位重对齐
-    "pokeTest": ("POST", "/api/poke-test", {}), # web L6028：拍一拍检测
+    "pokeTest": ("POST", "/api/poke-test", {"verify_only": True}), # web 默认勾「简易检测」：只验证菜单可弹，不真拍（完整执行走检测中心页）
     "igTest": ("GET", "/api/image_gen/test", {}), # web L7675：生图链条只跑不发
     "ttsTest": ("GET", "/api/tts/test", {}), # web L7691：按当前档合成试听
     "vsTest": ("GET", "/api/voice/test", {}), # web L7707：语音链路（合成→SILK→识别）
@@ -607,8 +607,17 @@ def _act_run(aid: str, note) -> None:
             note.setText(("测试连通成功（%sms）" % rsp.get("latency_ms")) if rsp.get("ok")
                          else ("测试失败：%s" % (rsp.get("error") or "未知原因")))
         elif aid == "pokeTest":
-            note.setText(str(rsp.get("summary") or rsp.get("detail") or "")
-                         or json.dumps(rsp, ensure_ascii=False)[:160])
+            if rsp.get("ok"):
+                msg = str(rsp.get("message") or "完成")
+                tgt = rsp.get("target") or {}
+                if isinstance(tgt, dict) and tgt.get("name"):
+                    msg += "（%s / %s）" % (tgt.get("name"), tgt.get("id"))
+                steps = [str(s) for s in (rsp.get("steps") or []) if s]
+                if steps:
+                    msg += " ｜ " + " -> ".join(steps[:6])
+                note.setText(msg)
+            else:
+                note.setText("拍一拍检测失败：%s" % (rsp.get("error") or "未知"))
         elif aid == "igTest":
             res = rsp.get("result") or {}
             note.setText(str(res.get("why") or "链条跑通") if rsp.get("ok")
@@ -638,13 +647,19 @@ def _act_run(aid: str, note) -> None:
                          + (" ｜ 识别到：" + str(res.get("text")) if res.get("text")
                             else (" ｜ " + str(res.get("err")) if res.get("err") else "")))
         elif aid == "selfCheck":
-            checks = rsp.get("checks") or []
-            bad = [c for c in checks if isinstance(c, dict) and c.get("ok") is False]
-            note.setText(("共 %d 项，通过 %d，失败 %d —— %s"
-                          % (len(checks), len(checks) - len(bad), len(bad),
-                             "；".join("%s：%s" % (c.get("item"), c.get("detail")) for c in bad[:3])
-                             if bad else (rsp.get("summary") or "全部通过 ✔")))
-                         if checks else str(rsp.get("summary") or "完成"))
+            # selfcheck 返回项是 {status: ok/warn/fail, name, detail, hint} 形状 ——
+            # 旧写法按 c.get("ok") is False 统计 ⇒ 恒「失败 0」误导；按 status 口径改。
+            checks = [c for c in (rsp.get("checks") or []) if isinstance(c, dict)]
+            if not checks:
+                note.setText(str(rsp.get("summary") or "完成"))
+            else:
+                fails = [c for c in checks if c.get("status") == "fail"]
+                warns = [c for c in checks if c.get("status") == "warn"]
+                head = "共 %d 项，未通过 %d，注意 %d" % (len(checks), len(fails), len(warns))
+                det = "；".join("%s：%s" % (c.get("name"), c.get("detail")) for c in fails[:3])
+                tail = str(rsp.get("summary") or "")
+                note.setText(head + ((" —— " + det) if det else "")
+                             + ((" ｜ " + tail) if tail else ""))
         else:
             note.setText(str(rsp.get("note") or rsp.get("summary") or "完成"))
 
@@ -976,6 +991,8 @@ def _cfg_panel(t: Tokens, s: "sec_meta.Sec", on_save=None) -> QWidget:
         if f is not None:
             card.body.addWidget(f)
     lay.addWidget(card)
+    # 行控件索引（Row, 控件）挂 page —— APPENDIX 追加区（本机模型探测「用这个」）按 cfg 回填
+    page._c8_binds = binds
 
     # 徽章本地语义：行初值来自真 config（_row 里 read_path），
     # 面板建好 = 配置已加载；保存成败在保存行如实反馈的同时同步到徽章。

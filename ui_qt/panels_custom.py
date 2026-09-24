@@ -35,6 +35,8 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPlainTextEdit,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
     QWidget,
@@ -42,7 +44,7 @@ from PySide6.QtWidgets import (
 
 import config_io
 import sec_meta
-from stylekit_qt import Tokens, qfont, rgba
+from stylekit_qt import Tokens, qfont, rgba, status_colors
 from widgets import Badge, Btn, Card, Field, Switch, desc, h2
 
 HERE = Path(__file__).resolve().parent
@@ -146,6 +148,190 @@ def overview_panel(t: Tokens) -> QWidget:
     lay.addWidget(card)
     lay.addWidget(desc(t, "其余统计（累计用量/成本等）在网页控制台的概览里看；这里只显示 /api/status 确认给到的字段，不编数。"))
 
+    # ── 监听群明细（web #group-table 同款：群名 | 监听/忽略，数据来自 /api/status.groups）──
+    card_g = Card(t)
+    card_g.body.addWidget(h2(t, "监听群明细"))
+    gtable = QTableWidget(0, 2)
+    gtable.setHorizontalHeaderLabels(["群名", "目标"])
+    gtable.verticalHeader().setVisible(False)
+    gtable.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+    gtable.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+    gtable.setFixedHeight(200)
+    gtable.setStyleSheet(
+        f"QTableWidget{{background:transparent;color:{t.tx};border:1px solid {t.bd};"
+        f"border-radius:{t.radius_btn}px;gridline-color:{t.bd};}}"
+        f"QHeaderView::section{{background:transparent;color:{t.tx2};"
+        f"border:none;border-bottom:1px solid {t.bd};padding:4px;}}")
+    card_g.body.addWidget(gtable)
+    lay.addWidget(card_g)
+
+    # ── 费用计算器（web #feeCalc 同款：POST /api/prices 官方价目 · 全厂商分区）──
+    card_f = Card(t)
+    card_f.body.addWidget(h2(t, "费用计算器（官方价目 · 全厂商分区）"))
+    card_f.body.addWidget(desc(
+        t, "选厂商与模型自动带出官方单价；高峰=工作日 9:00-12:00 / 14:00-18:00（×2），"
+           "周末/夜间空闲价；缓存命中按 cached 价。"))
+    _FC_VENDORS = {"deepseek": "DeepSeek", "glm": "智谱 GLM", "kimi": "月之暗面 Kimi",
+                   "minimax": "MiniMax", "qwen": "阿里百炼", "hunyuan": "腾讯混元",
+                   "doubao": "火山方舟", "ernie": "百度千帆", "oai": "OpenAI",
+                   "gpt": "OpenAI", "claude": "Anthropic", "gemini": "Google",
+                   "grok": "xAI", "mi": "小米 MiMo", "mimo": "小米 MiMo",
+                   "openrouter": "OpenRouter"}
+    fc_box: dict = {"prices": None}
+    f_row1 = QHBoxLayout()
+    lb_v = desc(t, "厂商")
+    lb_v.setMinimumWidth(120)
+    fc_vendor = QComboBox()
+    fc_vendor.addItem("加载中…", "")
+    fc_model = QComboBox()
+    fc_note = desc(t, "")
+    fc_note.setWordWrap(True)
+    f_row1.addWidget(lb_v)
+    f_row1.addWidget(fc_vendor)
+    f_row1.addWidget(fc_model, 1)
+    card_f.body.addLayout(f_row1)
+    card_f.body.addWidget(fc_note)
+    f_inputs: dict[str, QLineEdit] = {}
+    for key, label, dft in (("msgs", "每日消息数", "200"), ("tin", "每消息输入用量", "800"),
+                            ("tout", "每消息输出用量", "800")):
+        r = QHBoxLayout()
+        lb = desc(t, label)
+        lb.setMinimumWidth(120)
+        e = QLineEdit(dft)
+        e.setMaximumWidth(140)
+        f_inputs[key] = e
+        r.addWidget(lb)
+        r.addWidget(e)
+        r.addStretch(1)
+        card_f.body.addLayout(r)
+    f_row2 = QHBoxLayout()
+    lb_p = desc(t, "时段")
+    lb_p.setMinimumWidth(120)
+    fc_peak = QComboBox()
+    fc_peak.addItem("空闲（夜间/周末）", "0")
+    fc_peak.addItem("高峰（工作日 9-12 / 14-18）", "1")
+    f_row2.addWidget(lb_p)
+    f_row2.addWidget(fc_peak)
+    f_row2.addStretch(1)
+    card_f.body.addLayout(f_row2)
+    f_row3 = QHBoxLayout()
+    b_calc = Btn("计算", t, "primary")
+    b_calc.setMinimumWidth(160)
+    f_row3.addStretch(1)
+    f_row3.addWidget(b_calc)
+    f_row3.addStretch(1)
+    card_f.body.addLayout(f_row3)
+    fc_result = QLabel("—")
+    fc_result.setFont(qfont(t, 12.5))
+    fc_result.setWordWrap(True)
+    fc_result.setStyleSheet(
+        f"color:{t.tx};background:{_hex(rgba(t.q('tx'), 0 if t.glass else 8))};"
+        f"border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:10px 12px;")
+    card_f.body.addWidget(fc_result)
+    lay.addWidget(card_f)
+
+    def _fc_group(k: str) -> str:
+        for pre, name in _FC_VENDORS.items():
+            if k.startswith(pre):
+                return name
+        return "其他"
+
+    def _fc_fill_models() -> None:
+        pr = fc_box.get("prices") or {}
+        g = fc_vendor.currentData() or ""
+        fc_model.blockSignals(True)
+        fc_model.clear()
+        for k in sorted(k for k in pr if _fc_group(k) == g):
+            fc_model.addItem(k, k)
+        fc_model.blockSignals(False)
+        _fc_note()
+
+    def _fc_note() -> None:
+        k = fc_model.currentData() or ""
+        p = (fc_box.get("prices") or {}).get(k)
+        fc_note.setText(("输入 %s / 输出 %s / 缓存 %s 元·百万 Token%s" % (
+            p.get("in"), p.get("out"),
+            p.get("cached") if p.get("cached") is not None else "—",
+            ("；" + str(p.get("note"))) if p.get("note") else "")) if p else "")
+
+    def _fc_load() -> None:
+        import threading # noqa: PLC0415 — overview_panel 内自用（check_panel 的函数级 import 不跨函数）
+
+        box: dict = {"done": False, "r": None}
+
+        def _work() -> None:
+            from agent_bridge import post_json # noqa: PLC0415
+
+            box["r"] = post_json("/api/prices", {}, timeout=12.0)
+            box["done"] = True
+
+        threading.Thread(target=_work, daemon=True, name="ov-prices").start()
+
+        def _apply() -> None:
+            if not box["done"]:
+                QTimer.singleShot(300, _apply)
+                return
+            P = box.get("r")
+            if not P or P.get("__err"):
+                fc_note.setText("价目加载失败（请重启机器人在控制台重试）")
+                return
+            fc_box["prices"] = P
+            fc_vendor.blockSignals(True)
+            fc_vendor.clear()
+            for g in sorted({_fc_group(k) for k in P}):
+                fc_vendor.addItem(g, g)
+            fc_vendor.blockSignals(False)
+            _fc_fill_models()
+
+        QTimer.singleShot(300, _apply)
+
+    fc_vendor.currentIndexChanged.connect(lambda _i: _fc_fill_models())
+    fc_model.currentIndexChanged.connect(lambda _i: _fc_note())
+    _fc_load()
+
+    def _fc_calc() -> None:
+        pr = fc_box.get("prices") or {}
+        k = fc_model.currentData() or ""
+        p = pr.get(k)
+        if not p:
+            fc_result.setText("请先选择模型")
+            return
+
+        def _num(key: str) -> float:
+            try:
+                return max(0.0, float(f_inputs[key].text()))
+            except Exception: # noqa: BLE001
+                return 0.0
+
+        msgs, ti, to = _num("msgs"), _num("tin"), _num("tout")
+        peak = (fc_peak.currentData() or "0") == "1"
+        p_in = float(p.get("in") or 0)
+        p_out = float(p.get("out") or 0)
+        pr_in = p_in * 2 if peak else p_in
+        pr_out = p_out * 2 if peak else p_out
+        has_cache = p.get("cached") is not None
+        pr_cached = float(p["cached"]) * 2 if (peak and has_cache) else (
+            float(p["cached"]) if has_cache else pr_in)
+        per = (ti * pr_in + to * pr_out) / 1e6
+        per_hit = (ti * pr_cached + to * pr_out) / 1e6
+
+        def fmt(n: float) -> str:
+            return ("¥%.2f" % n) if n >= 0.01 else ("¥%.4f" % n)
+
+        lines = ["模型：%s　|　单价：输入 %g 元/百万%s，输出 %g 元/百万" % (
+            k, pr_in, ("（缓存 %g）" % pr_cached) if has_cache else "", pr_out),
+            "──────────────────────────",
+            "每消息 ≈ %s" % fmt(per)]
+        if has_cache and pr_cached < pr_in:
+            lines[-1] += "（输入全缓存命中 ≈ %s）" % fmt(per_hit)
+        lines += ["每日 %g 条 ≈ %s" % (msgs, fmt(msgs * per)),
+                  "月成本 ≈ %s" % fmt(msgs * per * 30)]
+        if k.startswith("deepseek") and not peak:
+            lines[-1] += "　（若全高峰月 %s）" % fmt(msgs * per * 60)
+        fc_result.setText("\n".join(lines))
+
+    b_calc.clicked.connect(_fc_calc)
+
     def _refresh() -> None:
         st = config_io.get_json("/api/status") or {}
         if not st:
@@ -172,6 +358,16 @@ def overview_panel(t: Tokens) -> QWidget:
         cells["uptime"].setText(f"{round(up)} 秒" if isinstance(up, (int, float)) else "—")
         badge.set("warn" if (paused or not wx_on) else "ok",
                   "已暂停" if paused else ("运行中" if wx_on else "微信没连上"))
+        # 监听群明细（web group-table 同款：白名单群 + 监听/忽略 pill）
+        gs = st.get("groups") or []
+        gtable.setRowCount(len(gs))
+        for i, g in enumerate(gs):
+            if not isinstance(g, dict):
+                continue
+            gtable.setItem(i, 0, QTableWidgetItem(str(g.get("name") or g.get("wxid") or "")))
+            on = bool(g.get("target"))
+            it = QTableWidgetItem("监听" if on else "忽略")
+            gtable.setItem(i, 1, it)
 
     _refresh()
     timer = QTimer(page)
@@ -348,6 +544,118 @@ def check_panel(t: Tokens) -> QWidget:
     row1.addStretch(1)
     lay.addLayout(row1)
 
+    # ── 症状检验器（web vfBtns/vfState/vfResult/vfCopy 同款：只读检查，四档判决，
+    #    按钮跑完变色 绿=通过 黄=部分通过 红=卡住）──
+    card_vf = Card(t)
+    card_vf.body.addWidget(h2(t, "症状检验器（出了问题自己对症查）"))
+    card_vf.body.addWidget(desc(
+        t, "不用你点它 —— 出问题时产品自己会把这些（原因码 + 调用点 + 兼容性摘要）记进本机记录，"
+           "你点一下「反馈」就一起带走了。这里留着是给你自己想看的时候点的："
+           "**只读检查**（不动窗口、不发消息、不改配置），点完出一段可直接粘贴的报告。"))
+    card_vf.body.addWidget(desc(
+        t, "怎么看报告（判决分四档）：**通过** · **卡住**（证据说就是它）· "
+           "**部分通过**（有项目没测到）· **没测到**（这一格这次验不了：不算通过也不算失败 —— "
+           "别把它当「没问题」）。点完之后症状按钮自己会变色：绿＝通过 · 黄＝部分通过 · 红＝卡住。"))
+    vf_host = QWidget()
+    vf_host.setStyleSheet("background:transparent;")
+    vf_grid = QGridLayout(vf_host)
+    vf_grid.setContentsMargins(0, 0, 0, 0)
+    vf_grid.setHorizontalSpacing(8)
+    vf_grid.setVerticalSpacing(6)
+    card_vf.body.addWidget(vf_host)
+    vf_state = desc(t, "检验器清单读取中…")
+    card_vf.body.addWidget(vf_state)
+    vf_area = _plain_area(t, "", placeholder="点上面的症状按钮，报告显示在这里（每个 1~3 秒）", height=190)
+    vf_area.setReadOnly(True)
+    card_vf.body.addWidget(vf_area)
+    vf_row = QHBoxLayout()
+    b_vfcopy = Btn("复制报告", t, "ghost")
+    b_vfcopy.setEnabled(False)
+    vf_row.addWidget(b_vfcopy)
+    vf_row.addStretch(1)
+    card_vf.body.addLayout(vf_row)
+    lay.addWidget(card_vf)
+
+    vf_box: dict = {"report": ""}
+
+    def _vf_load() -> None:
+        box: dict = {"done": False, "r": None}
+
+        def _work() -> None:
+            box["r"] = post_json("/api/verifiers", {}, timeout=10.0)
+            box["done"] = True
+
+        threading.Thread(target=_work, daemon=True, name="c8-verifiers").start()
+
+        def _apply() -> None:
+            if not box["done"]:
+                QTimer.singleShot(300, _apply)
+                return
+            lst = (box.get("r") or {}).get("verifiers") or []
+            if not lst:
+                vf_state.setText("检验器清单读不到")
+                return
+            vf_state.setText("")
+            for i, v in enumerate(lst):
+                vid = str(v.get("id") or "")
+                b = Btn(str(v.get("name") or vid), t, "ghost")
+                b.setToolTip("只读检查：不动窗口、不发消息、不改配置")
+                b.clicked.connect(lambda _ch=False, _vid=vid, _b=b: _vf_run(_vid, _b))
+                vf_grid.addWidget(b, i // 3, i % 3)
+
+        QTimer.singleShot(300, _apply)
+
+    def _vf_run(vid: str, btn) -> None:
+        vf_state.setText("正在检查：%s…" % btn.text())
+        vf_area.setPlainText("正在检查：%s…" % btn.text())
+        b_vfcopy.setEnabled(False)
+        box: dict = {"done": False, "r": None}
+
+        def _work() -> None:
+            box["r"] = post_json("/api/verify?id=%s" % vid, {}, timeout=60.0)
+            box["done"] = True
+
+        threading.Thread(target=_work, daemon=True, name="c8-verify").start()
+
+        def _apply() -> None:
+            if not box["done"]:
+                QTimer.singleShot(300, _apply)
+                return
+            r = box.get("r") or {}
+            # web 同款四档判决映射：ok===false→卡住 / partial→部分通过 / ok===true→通过 / 其余→没测到
+            st = ("fail" if r.get("ok") is False else
+                  "partial" if r.get("partial") else
+                  "ok" if r.get("ok") is True else "unknown")
+            vf_state.setText({
+                "fail": "这一次：卡住（证据说就是它 —— 照报告里的「下一步」做）",
+                "partial": "这一次：部分通过（有项目没测到：不算通过也不算失败）",
+                "ok": "这一次：通过（这一页的判据这次都验到了）",
+                "unknown": "这一次：没测到（这次验不了 —— 别当成「没问题」）",
+            }.get(st, ""))
+            report = str(r.get("report") or "")
+            vf_box["report"] = report
+            vf_area.setPlainText(report or json.dumps(r, ensure_ascii=False, indent=1)[:4000])
+            b_vfcopy.setEnabled(bool(report))
+            lv = {"fail": "err", "partial": "warn", "ok": "ok"}.get(st)
+            if lv:
+                bg, bd, fg = status_colors(t, lv)
+                btn.setStyleSheet(
+                    f"QPushButton{{background:{_hex(bg)};color:{_hex(fg)};"
+                    f"border:1px solid {_hex(bd)};border-radius:{t.radius_btn}px;padding:4px 12px;}}")
+
+        QTimer.singleShot(300, _apply)
+
+    def _vf_copy() -> None:
+        from PySide6.QtWidgets import QApplication # noqa: PLC0415
+
+        if vf_box.get("report"):
+            QApplication.clipboard().setText(vf_box["report"])
+            b_vfcopy.setText("已复制")
+            QTimer.singleShot(1200, lambda: b_vfcopy.setText("复制报告"))
+
+    b_vfcopy.clicked.connect(_vf_copy)
+    _vf_load()
+
     row2 = QHBoxLayout()
     b_self = Btn("点击测试", t, "primary")
     b_stop = Btn("停止检测", t, "ghost")
@@ -498,6 +806,98 @@ def check_panel(t: Tokens) -> QWidget:
     b_self.clicked.connect(_run_self)
     b_stop.clicked.connect(_stop)
 
+    # ── 拍一拍检测（web pokeGroup/pokeVerifyOnly/pokeTest/uiTestResult/uiTestDetail 同款）──
+    card_pk = Card(t)
+    card_pk.body.addWidget(h2(t, "拍一拍检测"))
+    pk_row1 = QHBoxLayout()
+    lb_g = desc(t, "目标群")
+    lb_g.setMinimumWidth(120)
+    pk_group = QComboBox()
+    pk_group.addItem("自动（最近有人发言的群）", "")
+    pk_group.setMinimumWidth(260)
+    pk_row1.addWidget(lb_g)
+    pk_row1.addWidget(pk_group)
+    pk_row1.addStretch(1)
+    card_pk.body.addLayout(pk_row1)
+    pk_row2 = QHBoxLayout()
+    pk_only = QCheckBox("简易检测（只验证右键头像能弹出「拍一拍」菜单，不点击、不拍任何人）")
+    pk_only.setChecked(True) # web 默认勾选同款
+    pk_row2.addWidget(pk_only)
+    pk_row2.addStretch(1)
+    card_pk.body.addLayout(pk_row2)
+    pk_row3 = QHBoxLayout()
+    b_poke = Btn("拍一拍检测", t, "primary")
+    pk_note = desc(t, "")
+    pk_row3.addWidget(b_poke)
+    pk_row3.addWidget(pk_note, 1)
+    card_pk.body.addLayout(pk_row3)
+    pk_detail = desc(t, "")
+    pk_detail.setWordWrap(True)
+    card_pk.body.addWidget(pk_detail)
+    card_pk.body.addWidget(desc(
+        t, "注意：拍一拍是右键「对方头像」触发：头像由程序识别，若群内同名/头像辨识不清，"
+           "理论上有拍到其他群友的风险 —— 所以默认用「简易检测」，确认无误后再取消勾选完整执行。"))
+    lay.addWidget(card_pk)
+
+    def _pk_load_groups() -> None:
+        """目标群下拉填充（web loadPokeGroups 同源：/api/wechat-groups）。"""
+        box: dict = {"done": False, "r": None}
+
+        def _work() -> None:
+            box["r"] = post_json("/api/wechat-groups", {}, timeout=10.0)
+            box["done"] = True
+
+        threading.Thread(target=_work, daemon=True, name="c8-pokegroups").start()
+
+        def _apply() -> None:
+            if not box["done"]:
+                QTimer.singleShot(300, _apply)
+                return
+            for g in ((box.get("r") or {}).get("groups") or []):
+                if isinstance(g, dict) and g.get("wxid"):
+                    pk_group.addItem(str(g.get("name") or g.get("wxid")), str(g.get("wxid")))
+
+        QTimer.singleShot(300, _apply)
+
+    _pk_load_groups()
+
+    def _run_poke() -> None:
+        b_poke.setEnabled(False)
+        pk_note.setText(("简易检测中" if pk_only.isChecked() else "完整执行中")
+                        + "（约 10~25 秒，请勿动鼠标）…")
+        pk_detail.setText("")
+        body = {"group_wxid": str(pk_group.currentData() or ""),
+                "verify_only": bool(pk_only.isChecked())}
+        box: dict = {"done": False, "r": None}
+
+        def _work() -> None:
+            box["r"] = post_json("/api/poke-test", body, timeout=60.0)
+            box["done"] = True
+
+        threading.Thread(target=_work, daemon=True, name="c8-poketest").start()
+
+        def _apply() -> None:
+            if not box["done"]:
+                QTimer.singleShot(300, _apply)
+                return
+            r = box.get("r") or {}
+            pk_note.setText(str(r.get("message") or r.get("error") or "(无结果)"))
+            tgt = r.get("target") or {}
+            lines = ["目标：%s" % (("%s / %s 在群「%s」" % (tgt.get("name"), tgt.get("id"), r.get("group")))
+                                  if isinstance(tgt, dict) and tgt.get("name") else "未解析")]
+            if r.get("verify_only"):
+                lines.append("（简易模式：仅验证菜单可弹，未实际拍）")
+            steps = r.get("steps") or []
+            if steps:
+                lines.append("步骤：")
+                lines.extend(str(s) for s in steps)
+            pk_detail.setText("\n".join(lines))
+            b_poke.setEnabled(True)
+
+        QTimer.singleShot(300, _apply)
+
+    b_poke.clicked.connect(_run_poke)
+
     card2 = Card(t)
     card2.body.addWidget(h2(t, "功能自检清单（按重要性排序）"))
     items = ["环境体检 · 点上方「点击测试」", "发消息 · 群里 @机器人 说句话",
@@ -508,9 +908,9 @@ def check_panel(t: Tokens) -> QWidget:
              "多厂商切换 · 换厂商保存后测试连通"]
     # 对齐 web 真值（checkList 表：结果=勾选框 + 项目 + 怎么测 + 预期）——
     # 原来整表降级成纯文字 desc，「结果」勾选列蒸发。
-    #   ⚠️ 只导 QCheckBox：本函数前面已用模块级 QLabel/QHBoxLayout，函数内再 import
-    #   会把它们变局部变量 ⇒ UnboundLocalError（worker 二轮踩过的同款坑，别再踩）。
-    from PySide6.QtWidgets import QCheckBox # noqa: PLC0415
+    #   ⚠️ QCheckBox/QComboBox 只用模块级名，函数内**不许**再 import：函数内 import
+    #   会把名字变局部变量 ⇒ 本函数前段（症状检验器/拍一拍区）用到时还没绑定 ⇒
+    #   UnboundLocalError（worker 二轮踩过、c34 又踩一次，中段 import 已除）。
 
     for it in items:
         roww = QWidget()
@@ -2245,6 +2645,262 @@ def _wechat_emoji_appendix(t: Tokens, page: QWidget) -> None:
     QTimer.singleShot(400, _load) # 面板建好后后台拉一次（不冻建页）
 
 
+def _tools_utlist_appendix(t: Tokens, page: QWidget) -> None:
+    """工具清单（web sec-tools 的 utGlobals/utProblems/utList :3826-3935 对齐）——批3 动态列表。
+
+    数据源 = /api/status 的 user_tools 快照（tools/enabled/dir/ticked/counts_total/problems/error）；
+    勾选切换 = GET /api/tools/toggle?name=&on=（routes 只注册 GET）。只读展示 + 勾选，不改配置文件。
+    """
+    card = Card(t)
+    card.body.addWidget(h2(t, "自定义工具清单（勾选后模型才能用）"))
+    ut_stat = desc(t, "清单现状读取中…")
+    ut_stat.setWordWrap(True)
+    card.body.addWidget(ut_stat)
+    ut_prob = desc(t, "")
+    ut_prob.setWordWrap(True)
+    card.body.addWidget(ut_prob)
+    host = QWidget()
+    host.setStyleSheet("background:transparent;")
+    v = QVBoxLayout(host)
+    v.setContentsMargins(0, 0, 0, 0)
+    v.setSpacing(6)
+    card.body.addWidget(host)
+    page.layout().addWidget(card)
+
+    from PySide6.QtWidgets import QCheckBox as _QCB # noqa: PLC0415 — 局部别名不遮蔽模块级名
+
+    box: dict = {"done": False, "ut": None}
+
+    def _load() -> None:
+        def _work() -> None:
+            box["ut"] = (config_io.get_json("/api/status", timeout=8.0) or {}).get("user_tools")
+            box["done"] = True
+
+        _th.Thread(target=_work, daemon=True, name="ut-list").start()
+
+        def _apply() -> None:
+            if not box["done"]:
+                QTimer.singleShot(300, _apply)
+                return
+            ut = box.get("ut")
+            if not isinstance(ut, dict):
+                ut_stat.setText("清单现状读取失败（后台没连上）")
+                return
+            if ut.get("error"):
+                ut_stat.setText("读取失败：%s" % ut["error"])
+                return
+            tools = ut.get("tools") or []
+            ut_stat.setText("总开关：%s ｜ 目录：%s ｜ 已装 %d 个 ｜ 已勾选 %d 个 ｜ 累计调用 %d 次" % (
+                "开" if ut.get("enabled") else "关（清单不加载）",
+                ut.get("dir") or "-", len(tools), int(ut.get("ticked") or 0),
+                int(ut.get("counts_total") or 0)))
+            ps = ut.get("problems") or []
+            if not ps:
+                ut_prob.setText("清单没有问题。")
+            else:
+                ut_prob.setText("\n".join(
+                    "注意：%s：%s%s%s" % (
+                        p.get("file") or "", p.get("why") or "",
+                        (" ［%s%s］" % (p.get("code_label"), ("·" + str(p.get("code"))) if p.get("code") else ""))
+                        if p.get("code_label") else "",
+                        ("  → %s" % p.get("fix")) if p.get("fix") else "")
+                    for p in ps if isinstance(p, dict)))
+
+            def _mk_toggle(cb, name: str):
+                def _flip() -> None:
+                    on = 1 if cb.isChecked() else 0
+                    r = config_io.get_json(
+                        "/api/tools/toggle?name=%s&on=%d" % (_up.quote(str(name)), on),
+                        timeout=8.0)
+                    if not isinstance(r, dict) or r.get("ok") is False:
+                        cb.setChecked(not cb.isChecked()) # 失败回滚勾选态，不骗人
+                return _flip
+
+            if not tools:
+                empty = desc(t, "还没有自定义工具：点上方「怎么加工具」——它能在 tools.d/ 里直接生成一份可编辑的模板。")
+                v.addWidget(empty)
+                return
+            for tl in tools:
+                if not isinstance(tl, dict):
+                    continue
+                roww = QWidget()
+                roww.setStyleSheet("background:transparent;")
+                rh = QVBoxLayout(roww)
+                rh.setContentsMargins(2, 2, 2, 2)
+                rh.setSpacing(2)
+                cb = _QCB(str(tl.get("name") or ""))
+                cb.setChecked(bool(tl.get("enabled")))
+                cb.clicked.connect(_mk_toggle(cb, tl.get("name") or ""))
+                rh.addWidget(cb)
+                info = desc(t, "[%s%s] %s · %s ｜ 调用 %d 次%s ｜ 最近 %s" % (
+                    tl.get("source") or "第三方",
+                    ("：" + str(tl["author"])) if tl.get("author") else "",
+                    ("v" + str(tl["version"])) if tl.get("version") else "",
+                    tl.get("host") or "-", int(tl.get("calls") or 0),
+                    ("（失败 %d）" % int(tl["errors"])) if tl.get("errors") else "",
+                    time.strftime("%Y-%m-%d %H:%M", time.localtime(tl["last"]))
+                    if isinstance(tl.get("last"), (int, float)) and tl.get("last") else "-"))
+                rh.addWidget(info)
+                if tl.get("usage"):
+                    uh = desc(t, "用法：" + str(tl["usage"]))
+                    rh.addWidget(uh)
+                v.addWidget(roww)
+
+    import threading as _th # noqa: PLC0415
+    import urllib.parse as _up # noqa: PLC0415
+
+    QTimer.singleShot(400, _load)
+
+
+def _model_local_appendix(t: Tokens, page: QWidget) -> None:
+    """本机模型端点探测（web localProbe/localList :1444-1495 对齐）——批3 本地模型探测。
+
+    GET /api/local-models → {meta:{all:[{id,name,base_url,reachable,ms,models,error}],checked,
+    elapsed_ms}, found, capability}；连通测试 = GET /api/local-models?test=1&base_url=&model=。
+    探测本身不改任何配置（本机模型零成本、不出网）；「用这个」只回填接口地址行，仍需点保存。
+    """
+    card = Card(t)
+    card.body.addWidget(h2(t, "本机模型端点探测（Ollama / LM Studio / vLLM…）"))
+    card.body.addWidget(desc(
+        t, "探测只能证明端点活着、有哪些模型、多快；工具与视觉是否支持一律「未声明」——"
+           "要判定请用本页的「测试 API」真跑一轮。探测本身不改任何配置。"))
+    probe_row = QHBoxLayout()
+    b_probe = Btn("探测本机端点", t, "primary")
+    probe_hint = desc(t, "没发现本机端点（没装或没启动都算正常）")
+    probe_hint.setWordWrap(True)
+    probe_row.addWidget(b_probe)
+    probe_row.addWidget(probe_hint, 1)
+    card.body.addLayout(probe_row)
+    list_host = QWidget()
+    list_host.setStyleSheet("background:transparent;")
+    lv = QVBoxLayout(list_host)
+    lv.setContentsMargins(0, 0, 0, 0)
+    lv.setSpacing(8)
+    card.body.addWidget(list_host)
+    page.layout().addWidget(card)
+
+    def _use_local(base_url: str, model: str) -> None:
+        """「用这个」：只把地址与模型名填进上方输入框，仍需用户点保存（web 同款语义）。"""
+        filled_url = False
+        filled_model = False
+        for r, w in (getattr(page, "_c8_binds", None) or []):
+            cfg = str(getattr(r, "cfg", "") or "")
+            if cfg == "api.base_url" and hasattr(w, "setText"):
+                w.setText(base_url)
+                filled_url = True
+            elif "model" in cfg and getattr(r, "kind", "") == "text" and hasattr(w, "setText") \
+                    and not filled_model:
+                w.setText(model)
+                filled_model = True
+        probe_hint.setText(
+            ("已填入接口地址%s —— 记得点上方「保存设置」" % ("与模型名" if filled_model else ""))
+            if filled_url else "没找到接口地址输入框（请手动填）")
+
+    def _test_local(base_url: str, model: str, out) -> None:
+        out.setText("测试中……")
+        box: dict = {"done": False, "r": None}
+
+        def _work() -> None:
+            box["r"] = config_io.get_json(
+                "/api/local-models?test=1&base_url=%s&model=%s"
+                % (_up2.quote(base_url), _up2.quote(model)), timeout=20.0)
+            box["done"] = True
+
+        _th2.Thread(target=_work, daemon=True, name="local-test").start()
+
+        def _apply() -> None:
+            if not box["done"]:
+                QTimer.singleShot(300, _apply)
+                return
+            d = box.get("r") or {}
+            out.setText(("能对话 · %sms · 回显「%s」 · %s" % (d.get("ms"), d.get("reply") or "", d.get("note") or ""))
+                        if d.get("ok") else ("失败：%s" % (d.get("error") or "未知")))
+
+        QTimer.singleShot(300, _apply)
+
+    def _probe() -> None:
+        b_probe.setEnabled(False)
+        probe_hint.setText("探测中（每端点 1.2s 超时，并发）…")
+        box: dict = {"done": False, "d": None}
+
+        def _work() -> None:
+            box["d"] = config_io.get_json("/api/local-models", timeout=25.0)
+            box["done"] = True
+
+        _th2.Thread(target=_work, daemon=True, name="local-probe").start()
+
+        def _apply() -> None:
+            if not box["done"]:
+                QTimer.singleShot(300, _apply)
+                return
+            b_probe.setEnabled(True)
+            d = box.get("d") or {}
+            meta = d.get("meta") or {}
+            while lv.count():
+                it = lv.takeAt(0)
+                if it.widget():
+                    it.widget().deleteLater()
+            for ep in (meta.get("all") or []):
+                if not isinstance(ep, dict):
+                    continue
+                ok = bool(ep.get("reachable"))
+                ms = ep.get("models") or []
+                fr = QFrame()
+                fr.setStyleSheet(
+                    f"QFrame{{background:{_hex(rgba(t.q('tx'), 0 if t.glass else 8))};"
+                    f"border:1px solid {t.bd};border-radius:{t.radius_btn}px;}}")
+                fv = QVBoxLayout(fr)
+                fv.setContentsMargins(10, 8, 10, 8)
+                fv.setSpacing(4)
+                name = QLabel("%s　%s" % (ep.get("name") or ep.get("id") or "", ep.get("base_url") or ""))
+                name.setFont(qfont(t, 12.5, 600))
+                name.setStyleSheet(f"color:{t.tx};background:transparent;border:none;")
+                name.setWordWrap(True)
+                fv.addWidget(name)
+                stx = desc(t, ("可用 · %sms · 模型 %d 个" % (ep.get("ms"), len(ms))) if ok
+                           else ("未发现 · %s" % (ep.get("error") or "超时/未响应")))
+                fv.addWidget(stx)
+                if ms:
+                    chips = desc(t, "  ".join(str(m) for m in ms[:12])
+                                 + ("…" if len(ms) > 12 else ""))
+                    fv.addWidget(chips)
+                btn_row = QHBoxLayout()
+                if ok and ms:
+                    bu = Btn("用这个", t, "ghost")
+                    bu.clicked.connect(lambda _ch=False, u=str(ep.get("base_url")), m=str(ms[0]):
+                                       _use_local(u, m))
+                    bt = Btn("连通测试", t, "ghost")
+                    out = desc(t, "")
+                    out.setWordWrap(True)
+                    bt.clicked.connect(lambda _ch=False, u=str(ep.get("base_url")), m=str(ms[0]), o=out:
+                                       _test_local(u, m, o))
+                    btn_row.addWidget(bu)
+                    btn_row.addWidget(bt)
+                    btn_row.addWidget(out, 1)
+                else:
+                    btn_row.addStretch(1)
+                fv.addLayout(btn_row)
+                lv.addWidget(fr)
+                if ok and ms:
+                    # fr 内控件引用保留在布局树即可；无额外状态
+                    pass
+            tail = desc(t, "共探 %s 个端点，用时 %sms。能力口径：%s" % (
+                meta.get("checked", 0), meta.get("elapsed_ms", 0), d.get("capability") or "—"))
+            lv.addWidget(tail)
+            found = d.get("found") or []
+            probe_hint.setText(("发现 %d 个可用端点" % len(found)) if found
+                               else "没发现本机端点（没装或没启动都算正常）")
+
+        QTimer.singleShot(300, _apply)
+
+    import threading as _th2 # noqa: PLC0415
+    import urllib.parse as _up2 # noqa: PLC0415
+
+    b_probe.clicked.connect(_probe)
+
+
 APPENDIX = {
     "wechat": _wechat_emoji_appendix,
+    "tools": _tools_utlist_appendix,
+    "model": _model_local_appendix,
 }

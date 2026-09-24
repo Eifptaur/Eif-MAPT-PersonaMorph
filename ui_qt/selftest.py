@@ -564,6 +564,26 @@ def t_badges() -> None:
                                "/api/selfcheck", "/api/selfcheck-stop")))
     ck("体检页停止钮初始禁用（对齐 web selfCheckStop disabled）",
        'b_stop.setEnabled(False)' in csrc)
+    ck("检测中心并入症状检验器（verifiers/verify/四档判决/复制报告，web vfBtns 同款）",
+       all(k in csrc for k in ("/api/verifiers", "/api/verify?id=",
+                               "复制报告", "部分通过", "没测到")))
+    ck("检测中心并入拍一拍完整版（目标群下拉/简易检测默认勾/误拍警示）",
+       all(k in csrc for k in ("/api/wechat-groups", "verify_only", "简易检测",
+                               "拍到其他群友的风险")))
+    ck("表内 pokeTest 默认简易检测（verify_only=True 防误拍，对齐 web 默认勾选）",
+       '"pokeTest": ("POST", "/api/poke-test", {"verify_only": True})' in psrc)
+    ck("表内 selfCheck 按 status 统计（返回是 status 非 ok 字段，旧口径恒显失败 0）",
+       'c.get("status") == "fail"' in psrc and 'c.get("status") == "warn"' in psrc)
+    ck("概览补监听群明细+费用计算器（/api/status.groups 表格 + /api/prices 官方价目计算）",
+       all(k in csrc for k in ("监听群明细", "QTableWidget", "/api/prices",
+                               "月成本", "fc_peak")) or
+       all(k in csrc for k in ("监听群明细", "/api/prices", "月成本")))
+    ck("APPENDIX 注册 tools/model 追加区（工具清单 + 本机模型探测）",
+       '"tools": _tools_utlist_appendix' in csrc and '"model": _model_local_appendix' in csrc)
+    ck("工具清单契约（/api/tools/toggle GET 勾选切换 + problems 坏清单 + counts_total 统计行）",
+       all(k in csrc for k in ("/api/tools/toggle", "problems", "counts_total")))
+    ck("本机模型探测契约（/api/local-models + 用这个回填 api.base_url + 连通测试）",
+       all(k in csrc for k in ("/api/local-models", "api.base_url", "连通测试", "_c8_binds")))
     import re as _re # noqa: PLC0415
     _gaps = _re.findall(r"hooks\s*=\s*\[[^\]]*\bNone\b[^\]]*\]", csrc)
     ck("按钮 hooks 无 None 残留（「点了没反应」缺口=0；移除的按钮已删）",
