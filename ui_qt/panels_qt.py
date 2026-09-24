@@ -503,9 +503,13 @@ def _open_group_pick(line, note, groups: list) -> None:
     for g in groups:
         text, wid = _gid(g)
         it = QListWidgetItem(text)
-        it.setData(0x0100, wid) # Qt.ItemDataRole.UserRole
-        it.setFlags(it.flags() | 0x0001) # Qt.ItemFlag.ItemIsUserCheckable
-        it.setCheckState(2 if (wid in cur or text in cur) else 0) # Checked=2/Unchecked=0
+        # 枚举必须显式：产品运行时的 PySide6 对 `QFlags | int` / int 传枚举槽
+        # 直接 TypeError（原 0x0100/0x0001/2/0 写法在 QTimer 回调里抛异常被吞
+        # → 弹窗建不出来、note 永远停在「检测群聊中…」＝真机「无休止的卡」）。
+        it.setData(Qt.ItemDataRole.UserRole, wid)
+        it.setFlags(it.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+        it.setCheckState(Qt.CheckState.Checked
+                         if (wid in cur or text in cur) else Qt.CheckState.Unchecked)
         lst.addItem(it)
     v.addWidget(lst, 1)
     from PySide6.QtWidgets import QWidget as _QW, QHBoxLayout as _QH # noqa: PLC0415
@@ -525,8 +529,8 @@ def _open_group_pick(line, note, groups: list) -> None:
         picked = []
         for i in range(lst.count()):
             it = lst.item(i)
-            if it.checkState() != 0:
-                picked.append(str(it.data(0x0100)))
+            if it.checkState() != Qt.CheckState.Unchecked:
+                picked.append(str(it.data(Qt.ItemDataRole.UserRole)))
         line.setText(", ".join(picked))
         note.show()
         note.setText("保存群白名单中…（%d 个群）" % len(picked))

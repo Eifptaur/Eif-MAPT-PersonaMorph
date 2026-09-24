@@ -1804,11 +1804,83 @@ def t_hotfix1() -> None:
        "dlg.exec()" in seg_pick and "dlg.show()" not in seg_pick, "")
 
 
+# ------------------------------------------------ 4.x 群勾选弹窗全链路真跑
+
+def t_hotfix2() -> None:
+    """群白名单「检测群聊并勾选」全链路真跑：假后端 + patch QDialog.exec 驱动到弹窗。
+
+    教训：t_hotfix1 的「源码含 dlg.exec()」源码断言骗了人 —— 弹窗构建第 3 行
+    （QFlags | int → TypeError）就炸在 QTimer 回调里被吞，根本走不到 exec，
+    note 永远停在「检测群聊中…」＝真机「无休止的卡」。弹窗类断言必须真跑。
+    """
+    import json as _json # noqa: PLC0415
+    import os # noqa: PLC0415
+    import threading as _th # noqa: PLC0415
+    import time as _time # noqa: PLC0415
+    from http.server import BaseHTTPRequestHandler, HTTPServer # noqa: PLC0415
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QDialog, QLabel, QLineEdit # noqa: PLC0415
+
+    QApplication.instance() or QApplication([])
+
+    calls = []
+
+    class _H(BaseHTTPRequestHandler):
+        def do_GET(self): # noqa: N802
+            calls.append(self.path)
+            body = _json.dumps({"ok": True, "attach_ok": True, "groups": [
+                {"name": "演示群", "wxid": "wxid_demo"},
+                {"name": "测试二号群", "wxid": "wxid_2"},
+            ]}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a): # noqa: N802
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), _H)
+    port = srv.server_address[1]
+    _th.Thread(target=srv.serve_forever, daemon=True, name="fake-be-selftest").start()
+
+    import agent_bridge # noqa: PLC0415
+    import panels_qt as _pqmod # noqa: PLC0415
+
+    _orig_url = agent_bridge.current_url
+    agent_bridge.current_url = lambda: "http://127.0.0.1:%d/?token=tk" % port
+    exec_calls = []
+    _orig_exec = QDialog.exec
+    QDialog.exec = lambda self, *a, **k: (exec_calls.append(self.windowTitle()), 0)[1]
+
+    try:
+        line = QLineEdit("演示") # 预填已勾选词（真机形态：白名单非空）
+        note = QLabel("")
+        note.show()
+        _pqmod._chips_group_action("pickGroups", line, note)
+        deadline = _time.time() + 3.0
+        while _time.time() < deadline and not exec_calls:
+            QApplication.processEvents() # 驱动 150ms 轮询到弹窗
+            _time.sleep(0.05)
+    finally:
+        agent_bridge.current_url = _orig_url
+        QDialog.exec = _orig_exec
+        srv.shutdown()
+
+    ck("群勾选全链路真跑：请求带 token 到达后端（QFlags|int 真凶回归锁）",
+       any(("/api/wechat-groups?token=tk") in c and "refresh" not in c for c in calls),
+       str(calls))
+    ck("群勾选全链路真跑：模态弹窗被触发（标题「选择监听的群」；构建期任何 TypeError 都会走不到这）",
+       exec_calls == ["选择监听的群"], str(exec_calls))
+
+
 def main() -> int:
     for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
                t_visual, t_badges, t_status_chain, t_bot_controls, t_window_chrome, t_dpi_motion,
                t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch, t_bootstrap32, t_ocr9,
-               t_c10, t_c13, t_hotfix1):
+               t_c10, t_c13, t_hotfix1, t_hotfix2):
         try:
             fn()
         except Exception as e: # noqa: BLE001
