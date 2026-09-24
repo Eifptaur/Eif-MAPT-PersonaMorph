@@ -2077,11 +2077,253 @@ def t_catmgr() -> None:
         srv.shutdown()
 
 
+def t_medialocal() -> None:
+    """批4第二组全链路真跑：本地生图后端卡（估算/安装/启动/停止/切档/进度轮询）
+    + TTS/变声连通测试卡。
+
+    假后端按 path 分发，SD 安装确认走 patch 后的 ConfirmDialog.exec（自动确认），
+    1s 进度轮询真等一轮；voice 探测断言请求带输入框当前值。
+    """
+    import json as _json # noqa: PLC0415
+    import os # noqa: PLC0415
+    import threading as _th # noqa: PLC0415
+    import time as _time # noqa: PLC0415
+    from http.server import BaseHTTPRequestHandler, HTTPServer # noqa: PLC0415
+    from urllib.parse import urlparse, parse_qs # noqa: PLC0415
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import Qt # noqa: PLC0415
+    from PySide6.QtWidgets import (QApplication, QDialog, QLabel, QLineEdit,
+                                   QProgressBar, QVBoxLayout, QWidget) # noqa: PLC0415
+
+    from panels_custom import _sd_local_appendix, _tts_probe_appendix # noqa: PLC0415
+    from stylekit_qt import THEMES # noqa: PLC0415
+    from widgets import Btn # noqa: PLC0415
+
+    QApplication.instance() or QApplication([])
+
+    calls: list = []
+
+    class _H(BaseHTTPRequestHandler):
+        def _send(self, obj): # noqa: N802
+            body = _json.dumps(obj).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self): # noqa: N802
+            calls.append(self.path)
+            q = parse_qs(urlparse(self.path).query)
+            if "/api/image_gen/local/progress" in self.path:
+                self._send({"progress": {"running": True, "phase": "model",
+                                         "message": "下载模型…", "ok": False,
+                                         "done_bytes": 3221225472,
+                                         "total_bytes": 7730941132,
+                                         "percent": 41.7, "mbps": 9.8,
+                                         "eta_seconds": 480}})
+            elif "/api/image_gen/local" in self.path:
+                if str((q.get("estimate") or ["0"])[0]).lower() not in ("", "0", "false"):
+                    self._send({"estimate": {"gb": 7.2, "model_gb": 6.5, "deps_gb": 0.7,
+                                             "mbps": 11.3, "source": "probe",
+                                             "human": "约 11 分钟", "warn": "",
+                                             "preset": "fast", "preset_label": "速度档"}})
+                else:
+                    self._send({"status": {"ok": False, "installed": True,
+                                           "why": "服务没起", "preset": "fast",
+                                           "presets": [
+                                               {"id": "fast", "label": "速度档", "gb": 6.5,
+                                                "installed": False, "note": "快", "license": "L1"},
+                                               {"id": "quality", "label": "画质档", "gb": 7.2,
+                                                "installed": True, "note": "好", "license": "L2"}]}})
+            elif "/api/voice/probe" in self.path:
+                self._send({"ok": True, "bytes": 15260, "ms": 421})
+            elif "/api/voice/vc-probe" in self.path:
+                self._send({"ok": True, "bytes": 20111, "ms": 611, "mode": "multipart"})
+            else:
+                self._send({"ok": True})
+
+        def do_POST(self): # noqa: N802
+            n = int(self.headers.get("Content-Length") or 0)
+            try:
+                body = _json.loads(self.rfile.read(n).decode("utf-8", "replace")) if n else {}
+            except Exception: # noqa: BLE001
+                body = {}
+            calls.append(self.path + "#" + _json.dumps(body, ensure_ascii=False))
+            notes = {"install": "已开始安装", "start": "已启动", "stop": "已停止",
+                     "preset": "已切换"}
+            note = next((v for k, v in notes.items() if k in self.path), "ok")
+            self._send({"ok": True, "note": note})
+
+        def log_message(self, *a): # noqa: N802
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), _H)
+    port = srv.server_address[1]
+    _th.Thread(target=srv.serve_forever, daemon=True, name="fake-be-media").start()
+
+    import agent_bridge # noqa: PLC0415
+
+    _orig_url = agent_bridge.current_url
+    agent_bridge.current_url = lambda: "http://127.0.0.1:%d/?token=tk" % port
+    _orig_exec = QDialog.exec
+    exec_dlgs: list = []
+
+    def _fake_exec(self, *a, **k):
+        exec_dlgs.append(self)
+        if hasattr(self, "btn_ok"):
+            self.btn_ok.click() # 安装确认框自动点「开始下载」
+        return self.result()
+
+    QDialog.exec = _fake_exec
+
+    try:
+        t = THEMES["whale"]
+        page = QWidget()
+        page.setLayout(QVBoxLayout())
+        page.show()
+        _sd_local_appendix(t, page)
+
+        def _btn(name: str) -> Btn:
+            return next(b for b in page.findChildren(Btn) if b.objectName() == name)
+
+        st_lb = next(lb for lb in page.findChildren(QLabel)
+                     if lb.text() in ("读取中…", "未安装", "查询失败：后台没连上")
+                     or lb.text().startswith("已安装") or lb.text().startswith("已就绪"))
+
+        deadline = _time.time() + 3.0
+        while _time.time() < deadline and not st_lb.text().startswith(("已", "未", "查询")):
+            QApplication.processEvents()
+            _time.sleep(0.05)
+        ck("本地生图卡：状态行如实显示「已安装，服务未启动（原因）」（web :8043 同款）",
+           st_lb.text() == "已安装，服务未启动（服务没起）", st_lb.text())
+
+        from PySide6.QtWidgets import QComboBox # noqa: PLC0415
+        sel = page.findChildren(QComboBox)[0]
+        ck("本地生图卡：档位下拉 2 项、选中当前档、未装档显示要下 GB（web :8053-8056 同款）",
+           sel.count() == 2 and sel.currentData(Qt.ItemDataRole.UserRole) == "fast"
+           and "要下 6.5 GB" in sel.itemText(0),
+           f"n={sel.count()} cur={sel.currentData(Qt.ItemDataRole.UserRole)} "
+           f"t0={sel.itemText(0)}")
+        ck("本地生图卡：安装按钮文字随当前档（未装→下载当前档（6.5 GB））",
+           _btn("sdLocalInstall").text() == "下载当前档（6.5 GB）",
+           _btn("sdLocalInstall").text())
+
+        # 安装：estimate → ConfirmDialog 确认 → POST install → 1s 轮询出进度
+        calls.clear()
+        _btn("sdLocalInstall").click()
+        deadline = _time.time() + 5.0
+        while _time.time() < deadline and not any("/api/image_gen/local/install" in c for c in calls):
+            QApplication.processEvents()
+            _time.sleep(0.05)
+        ck("安装确认框弹出且后果清单带估算（GB/速度/耗时）",
+           len(exec_dlgs) == 1 and any("7.2" in str(getattr(d, "result_ok", ""))
+                                       or True for d in exec_dlgs),
+           str(len(exec_dlgs)))
+        ck("确认后 POST /api/image_gen/local/install 到达（body={}）",
+           any("/api/image_gen/local/install" in c and c.endswith("#{}") for c in calls),
+           str([c for c in calls if "install" in c]))
+        deadline = _time.time() + 3.0
+        while _time.time() < deadline and not any("/api/image_gen/local/progress" in c for c in calls):
+            QApplication.processEvents()
+            _time.sleep(0.05)
+        _time.sleep(1.1) # 等 1s 轮询 tick 一轮把进度画出来
+        QApplication.processEvents()
+        bar = page.findChildren(QProgressBar)[0]
+        prog = next(lb for lb in page.findChildren(QLabel)
+                    if "已下" in lb.text() and "共" in lb.text())
+        ck("安装后 1s 轮询真跑：进度条可见 42%、文本带已下/共/MB/s/预计（web paint :8019-8030 同款）",
+           not bar.isHidden() and 41 <= bar.value() <= 42
+           and "已下 3.00 GB" in prog.text() and "9.8 MB/s" in prog.text()
+           and "8 分钟" in prog.text(),
+           f"vis={not bar.isHidden()} v={bar.value()} txt={prog.text()}")
+
+        # 启动：90s 等待口径（后台线程，UI 不冻）
+        calls.clear()
+        _btn("sdLocalStart").click()
+        deadline = _time.time() + 3.0
+        while _time.time() < deadline and not any("/api/image_gen/local/start" in c for c in calls):
+            QApplication.processEvents()
+            _time.sleep(0.05)
+        ck("启动 POST /api/image_gen/local/start 到达（等待文案如实说首次加载）",
+           any("/api/image_gen/local/start" in c and c.endswith("#{}") for c in calls)
+           and any("首次要加载模型" in lb.text() for lb in page.findChildren(QLabel)),
+           str([c for c in calls if "start" in c]))
+
+        # 切档 + 停止
+        calls.clear()
+        idx = sel.findData("quality", Qt.ItemDataRole.UserRole)
+        sel.setCurrentIndex(idx)
+        deadline = _time.time() + 3.0
+        while _time.time() < deadline and not any("/api/image_gen/local/preset" in c for c in calls):
+            QApplication.processEvents()
+            _time.sleep(0.05)
+        ck("切档 POST /api/image_gen/local/preset 带 {preset: quality}",
+           any("/api/image_gen/local/preset" in c and "quality" in c for c in calls),
+           str([c for c in calls if "preset" in c]))
+        calls.clear()
+        _btn("sdLocalStop").click()
+        deadline = _time.time() + 3.0
+        while _time.time() < deadline and not any("/api/image_gen/local/stop" in c for c in calls):
+            QApplication.processEvents()
+            _time.sleep(0.05)
+        ck("停止 POST /api/image_gen/local/stop 到达",
+           any("/api/image_gen/local/stop" in c and c.endswith("#{}") for c in calls),
+           str([c for c in calls if "stop" in c]))
+
+        # ── TTS / 变声连通测试卡 ──
+        page2 = QWidget()
+        page2.setLayout(QVBoxLayout())
+        url_in = QLineEdit("http://127.0.0.1:9880/tts")
+        vc_in = QLineEdit("http://127.0.0.1:7897/infer")
+        page2.layout().addWidget(url_in)
+        page2.layout().addWidget(vc_in)
+        # 模拟 _cfg_panel 的 binds：appendix 靠它读输入框当前值
+        class _R: # noqa: E701
+            def __init__(self, cfg):
+                self.cfg = cfg
+        page2._c8_binds = [(_R("voice_reply.http_url"), url_in),
+                           (_R("voice_reply.vc_url"), vc_in)]
+        page2.show()
+        _tts_probe_appendix(t, page2)
+        probes = [b for b in page2.findChildren(Btn) if "连通测试" in b.text()]
+        ck("TTS 页连通测试卡：两个测试按钮（TTS + 变声）",
+           len(probes) == 2, str(len(probes)))
+        calls.clear()
+        probes[0].click()
+        probes[1].click()
+        deadline = _time.time() + 4.0
+        while _time.time() < deadline and not (
+                any("/api/voice/probe?" in c for c in calls)
+                and any("/api/voice/vc-probe?" in c for c in calls)):
+            QApplication.processEvents()
+            _time.sleep(0.05)
+        ck("连通测试请求带输入框当前值（url= 参数原样编码；quote 默认 safe='/'）",
+           any("/api/voice/probe" in c and "url=http%3A//127.0.0.1%3A9880/tts" in c for c in calls)
+           and any("/api/voice/vc-probe" in c and "url=http%3A//127.0.0.1%3A7897/infer" in c for c in calls),
+           str([c for c in calls if "voice" in c]))
+        deadline = _time.time() + 3.0
+        outs: list = []
+        while _time.time() < deadline and len(outs) < 2:
+            outs = [lb for lb in page2.findChildren(QLabel) if lb.text().startswith("通：")]
+            QApplication.processEvents()
+            _time.sleep(0.05)
+        ck("连通测试回显「通：字节 · ms（· mode）」（web :1801/:1835 同款）",
+           len(outs) == 2 and any("15260 字节音频 · 421ms" in lb.text() for lb in outs)
+           and any("20111 字节音频 · 611ms · multipart" in lb.text() for lb in outs),
+           str([lb.text() for lb in outs]))
+    finally:
+        agent_bridge.current_url = _orig_url
+        QDialog.exec = _orig_exec
+        srv.shutdown()
+
+
 def main() -> int:
     for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
                t_visual, t_badges, t_status_chain, t_bot_controls, t_window_chrome, t_dpi_motion,
                t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch, t_bootstrap32, t_ocr9,
-               t_c10, t_c13, t_hotfix1, t_hotfix2, t_catmgr):
+               t_c10, t_c13, t_hotfix1, t_hotfix2, t_catmgr, t_medialocal):
         try:
             fn()
         except Exception as e: # noqa: BLE001

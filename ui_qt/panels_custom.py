@@ -3238,8 +3238,379 @@ def _model_local_appendix(t: Tokens, page: QWidget) -> None:
     b_probe.clicked.connect(_probe)
 
 
+def _sd_local_appendix(t: Tokens, page: QWidget) -> None:
+    """本地生图后端卡（web sdLocal* :8015-8107 全套对齐）——批4 media local。
+
+    GET /api/image_gen/local → {status:{ok,installed,why,preset,presets:[…]}}；
+    ?estimate=1 → {estimate:{gb,model_gb,deps_gb,mbps,source,human,warn}}；
+    /progress → {progress:{running,done_bytes,total_bytes,percent,mbps,eta_seconds,message,ok}}；
+    install/start/stop/preset POST → {ok, note}。安装确认后 1s 轮询进度，
+    空闲每 8s 刷新状态（web setInterval 8000 同款）。
+    """
+    import threading as _th # noqa: PLC0415
+    import urllib.parse as _up # noqa: PLC0415
+
+    from PySide6.QtWidgets import QComboBox, QProgressBar # noqa: PLC0415
+
+    def _fmt_gb(b) -> str:
+        try:
+            return "%.2f GB" % (float(b) / 1073741824.0)
+        except Exception: # noqa: BLE001
+            return "?"
+
+    card = Card(t)
+    card.body.addWidget(h2(t, "本地生图后端（可选；装完全在本机跑、不出网）"))
+    card.body.addWidget(desc(t, "速度档 / 画质档都能装、能切，装哪个用哪个由你挑；"
+                                "安装在后台进行，进度在这张卡里能看到。"))
+    st_lb = QLabel("读取中…")
+    st_lb.setFont(qfont(t, 13, 600))
+    st_lb.setStyleSheet(f"color:{t.tx};background:transparent;")
+    why_lb = desc(t, "")
+    why_lb.setWordWrap(True)
+    card.body.addWidget(st_lb)
+    card.body.addWidget(why_lb)
+
+    preset_row = QHBoxLayout()
+    preset_row.addWidget(QLabel("档位"))
+    preset_sel = QComboBox()
+    preset_sel.setMinimumWidth(260)
+    preset_sel.setFixedHeight(30)
+    preset_sel.setFont(qfont(t, t.body_size))
+    preset_sel.setStyleSheet(
+        f"QComboBox{{background:{rgba(t.q('tx'), 0 if t.glass else 16).name(QColor.NameFormat.HexArgb)};"
+        f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:0 10px;}}"
+        f"QComboBox::drop-down{{border:none;width:22px;}}"
+        f"QComboBox QAbstractItemView{{background:{'#0E2136' if t.glass else t.card};"
+        f"color:{t.tx};border:1px solid {t.bd};}}")
+    preset_row.addWidget(preset_sel, 1)
+    card.body.addLayout(preset_row)
+    preset_note = desc(t, "")
+    preset_note.setWordWrap(True)
+    card.body.addWidget(preset_note)
+
+    bar = QProgressBar()
+    bar.setObjectName("sdLocalBar")
+    bar.setTextVisible(False)
+    bar.setFixedHeight(8)
+    bar.setStyleSheet(
+        f"QProgressBar{{background:{rgba(t.q('tx'), 24).name(QColor.NameFormat.HexArgb)};"
+        f"border:none;border-radius:4px;}}"
+        f"QProgressBar::chunk{{background:{t.blue};border-radius:4px;}}")
+    bar.hide()
+    prog_txt = QLabel("")
+    prog_txt.setFont(qfont(t, 12))
+    prog_txt.setWordWrap(True)
+    prog_txt.setStyleSheet(f"color:{t.tx2};background:transparent;")
+    prog_txt.hide()
+    card.body.addWidget(bar)
+    card.body.addWidget(prog_txt)
+
+    btn_row = QHBoxLayout()
+    b_inst = Btn("下载当前档", t, "primary")
+    b_inst.setObjectName("sdLocalInstall")
+    b_start = Btn("启动本地服务", t, "ghost")
+    b_start.setObjectName("sdLocalStart")
+    b_stop = Btn("停止", t, "ghost")
+    b_stop.setObjectName("sdLocalStop")
+    for b in (b_inst, b_start, b_stop):
+        btn_row.addWidget(b)
+    btn_row.addStretch(1)
+    card.body.addLayout(btn_row)
+    page.layout().addWidget(card)
+
+    state: dict = {"presets": [], "preset": "", "polling": False, "filling": False}
+    poll_timer = QTimer(card)
+    poll_timer.setInterval(1000)
+    idle_timer = QTimer(card)
+    idle_timer.setInterval(8000)
+
+    def _get(api: str, on_done, timeout: float = 8.0) -> None:
+        box: dict = {"done": False, "r": None}
+
+        def _work() -> None:
+            box["r"] = config_io.get_json(api, timeout=timeout)
+            box["done"] = True
+
+        _th.Thread(target=_work, daemon=True, name="sd-local-get").start()
+
+        def _apply() -> None:
+            if not box["done"]:
+                QTimer.singleShot(300, _apply)
+                return
+            on_done(box.get("r"))
+
+        QTimer.singleShot(300, _apply)
+
+    def _post(api: str, on_done, timeout: float = 30.0, body: dict | None = None) -> None:
+        box: dict = {"done": False, "r": None, "err": None}
+
+        def _work() -> None:
+            try:
+                from agent_bridge import post_json # noqa: PLC0415
+                box["r"] = post_json(api, body or {}, timeout=timeout)
+            except Exception as e: # noqa: BLE001
+                box["err"] = str(e)
+            box["done"] = True
+
+        _th.Thread(target=_work, daemon=True, name="sd-local-post").start()
+
+        def _apply() -> None:
+            if not box["done"]:
+                QTimer.singleShot(300, _apply)
+                return
+            on_done(box.get("r"), box.get("err"))
+
+        QTimer.singleShot(300, _apply)
+
+    def paint(p: dict | None) -> None:
+        # web paint :8019-8030 同款：没在跑也没下载量 → 收起进度条
+        if not p or (not p.get("running") and not p.get("total_bytes")):
+            bar.hide()
+            prog_txt.hide()
+            return
+        bar.show()
+        prog_txt.show()
+        total = p.get("total_bytes") or 0
+        done = p.get("done_bytes") or 0
+        pct = min(100.0, 100.0 * done / total) if total else 0.0
+        bar.setValue(int(pct))
+        eta = p.get("eta_seconds") or 0
+        eta_s = ("，预计还需 %.1f 小时" % (eta / 3600.0)) if eta > 3600 \
+            else ("，预计还需 %d 分钟" % max(1, int(eta / 60))) if eta else ""
+        tail = "" if p.get("running") else (" ｜ ✅ 完成" if p.get("ok") else " ｜ ❌ 失败")
+        mbps_s = " ｜ %.1f MB/s" % p["mbps"] if p.get("mbps") else ""
+        prog_txt.setText("%s ｜ 已下 %s / 共 %s ｜ %.1f%%%s%s%s" % (
+            p.get("message") or "", _fmt_gb(done), _fmt_gb(total), pct, mbps_s, eta_s, tail))
+
+    def tick() -> None:
+        _get("/api/image_gen/local/progress", lambda r: _tick_done((r or {}).get("progress")))
+
+    def _tick_done(p: dict | None) -> None:
+        paint(p)
+        if p is not None and not p.get("running") and state["polling"]:
+            state["polling"] = False
+            poll_timer.stop()
+            refresh()
+
+    def _fill_presets(st: dict) -> None:
+        # web :8048-8062 同款：填充防回环；当前档说明+许可；安装按钮文字随档位
+        state["presets"] = list(st.get("presets") or [])
+        state["preset"] = st.get("preset") or ""
+        state["filling"] = True
+        try:
+            preset_sel.clear()
+            for p in state["presets"]:
+                preset_sel.addItem(
+                    "%s（%s）" % (p.get("label") or p.get("id"),
+                                  "已装" if p.get("installed") else "要下 %s GB" % (p.get("gb") or "?")),
+                    p.get("id"))
+            i = preset_sel.findData(state["preset"], Qt.ItemDataRole.UserRole)
+            if i >= 0:
+                preset_sel.setCurrentIndex(i)
+        finally:
+            state["filling"] = False
+        cur = next((p for p in state["presets"] if p.get("id") == state["preset"]), {})
+        preset_note.setText("%s%s" % (cur.get("note") or "",
+                                      ("｜许可：" + cur["license"]) if cur.get("license") else ""))
+        b_inst.setText("重新下载当前档" if cur.get("installed")
+                       else "下载当前档（%s GB）" % (cur.get("gb") or "?"))
+
+    def refresh() -> None:
+        _get("/api/image_gen/local", _refresh_done)
+
+    def _refresh_done(r) -> None:
+        if r is None:
+            st_lb.setText("查询失败：后台没连上")
+            return
+        st = (r or {}).get("status") or {}
+        if st.get("ok"):
+            st_lb.setText("已就绪（本地跑，不出网）")
+            st_lb.setStyleSheet(f"color:{t.ok};background:transparent;")
+            paint(None)
+        elif st.get("installed"):
+            st_lb.setText("已安装，服务未启动（%s）" % (st.get("why") or ""))
+            st_lb.setStyleSheet(f"color:{t.warn};background:transparent;")
+        else:
+            st_lb.setText("未安装")
+            st_lb.setStyleSheet(f"color:{t.tx2};background:transparent;")
+        why_lb.setText(st.get("why") or "")
+        _fill_presets(st)
+
+    def _install() -> None:
+        # web :8068-8084 同款：先拿估算，确认后后台安装 + 开轮询
+        st_lb.setText("拿安装信息中…")
+
+        def _est_done(r) -> None:
+            est = (r or {}).get("estimate") if isinstance(r, dict) else None
+            if not est:
+                st_lb.setText("拿不到安装信息，稍后再试")
+                return
+            cons = ["要下载：约 %s GB（模型 %s GB + 运行库 %s GB）"
+                    % (est.get("gb"), est.get("model_gb"), est.get("deps_gb")),
+                    "现在实测速度：%s MB/s（源：%s）" % (est.get("mbps"), est.get("source")),
+                    "预计耗时：%s" % (est.get("human") or "?")]
+            if est.get("warn"):
+                cons.append(str(est["warn"]))
+            cons.append("点「开始下载」就在后台进行，你可以去办别的事，进度在这张卡里看")
+            dlg = ConfirmDialog(t, card, "安装本地生图后端？",
+                                "装完生图全在本机跑、不出网。", cons,
+                                confirm_label="开始下载", dangerous=False)
+            if not dlg.exec():
+                st_lb.setText("未安装")
+                return
+            _post("/api/image_gen/local/install", _install_done, timeout=60.0)
+
+        _get("/api/image_gen/local?estimate=1", _est_done, timeout=20.0)
+
+    def _install_done(r, e) -> None:
+        if e or not isinstance(r, dict) or r.get("ok") is False:
+            prog_txt.setText("安装没起来：%s" % (e or (r or {}).get("error") or "后台没连上"))
+            prog_txt.show()
+            return
+        prog_txt.setText(r.get("note") or "已开始安装")
+        prog_txt.show()
+        if not state["polling"]:
+            state["polling"] = True
+            poll_timer.start()
+
+    def _start() -> None:
+        # 服务端等模型加载最多 60 秒 ⇒ 前端给 90 秒（web :8086-8092 假失败教训同款）
+        prog_txt.setText("正在启动本地服务…（首次要加载模型，最多约 1 分钟）")
+        prog_txt.show()
+        _post("/api/image_gen/local/start", _start_done, timeout=90.0)
+
+    def _start_done(r, e) -> None:
+        if e or not isinstance(r, dict) or r.get("ok") is False:
+            prog_txt.setText("启动失败：%s" % (e or (r or {}).get("error") or "后台没连上"))
+            return
+        prog_txt.setText(r.get("note") or "已启动")
+        refresh()
+
+    def _preset_apply(r, e) -> None:
+        if e or not isinstance(r, dict) or r.get("ok") is False:
+            prog_txt.setText("切换失败：%s" % (e or (r or {}).get("error") or "后台没连上"))
+        else:
+            prog_txt.setText(r.get("note") or "已切换")
+        prog_txt.show()
+        refresh()
+
+    def _preset_changed(idx: int) -> None:
+        if state["filling"] or idx < 0:
+            return
+        pid = preset_sel.itemData(idx, Qt.ItemDataRole.UserRole)
+        _post("/api/image_gen/local/preset", _preset_apply, body={"preset": pid})
+
+    def _stop_done(r, e) -> None:
+        if e:
+            prog_txt.setText("停止失败：%s" % e)
+        else:
+            prog_txt.setText(r.get("note") or "已停止" if isinstance(r, dict) else "已停止")
+        prog_txt.show()
+        refresh()
+
+    def _stop() -> None:
+        _post("/api/image_gen/local/stop", _stop_done)
+
+    def _idle() -> None:
+        if page.isVisible() and not state["polling"]:
+            refresh()
+
+    poll_timer.timeout.connect(tick)
+    idle_timer.timeout.connect(_idle)
+    preset_sel.currentIndexChanged.connect(_preset_changed)
+    b_inst.clicked.connect(_install)
+    b_start.clicked.connect(_start)
+    b_stop.clicked.connect(_stop)
+    idle_timer.start()
+    refresh()
+
+
+def _tts_probe_appendix(t: Tokens, page: QWidget) -> None:
+    """TTS / 变声服务连通测试卡（web ttsProbe :1790-1807、vcProbe :1823-1841 对齐）。
+
+    读上方输入框当前值（page._c8_binds 找 voice_reply.http_url / voice_reply.vc_url，
+    找不到回退 config 现值）→ GET /api/voice/probe?url= / /api/voice/vc-probe?url=，
+    回显 通/不通/失败；测试中按钮禁用（web disabled 同款）。
+    """
+    import threading as _th # noqa: PLC0415
+    import urllib.parse as _up # noqa: PLC0415
+
+    card = Card(t)
+    card.body.addWidget(h2(t, "连通测试"))
+    card.body.addWidget(desc(t, "这是你自己电脑上跑起来的服务（GPT-SoVITS 文字→音频；"
+                                "RVC 音频→音频变声要另填第二段地址）。测试只证明端点通不通、"
+                                "返回的是不是音频；变声测试会送一段 0.4 秒测试音进去。"))
+    rows: list[tuple[Btn, QLabel]] = []
+
+    def _make_row(label: str, btn_text: str, api: str, cfg: str) -> None:
+        row = QHBoxLayout()
+        lb = QLabel(label)
+        lb.setFont(qfont(t, 12.5))
+        lb.setStyleSheet(f"color:{t.tx2};background:transparent;")
+        b = Btn(btn_text, t, "ghost")
+        out = QLabel("")
+        out.setFont(qfont(t, 12))
+        out.setWordWrap(True)
+        out.setStyleSheet(f"color:{t.tx3};background:transparent;")
+        row.addWidget(lb)
+        row.addWidget(b)
+        row.addWidget(out, 1)
+        card.body.addLayout(row)
+        rows.append((b, out))
+
+        def _url() -> str:
+            for r, w in (getattr(page, "_c8_binds", None) or []):
+                if str(getattr(r, "cfg", "") or "") == cfg and hasattr(w, "text"):
+                    return str(w.text()).strip()
+            return str(config_io.read_path(cfg) or "").strip()
+
+        def _run() -> None:
+            b.setEnabled(False)
+            out.setText("测试中…")
+            box: dict = {"done": False, "r": None, "err": None}
+
+            def _work() -> None:
+                try:
+                    box["r"] = config_io.get_json(
+                        "%s?url=%s" % (api, _up.quote(_url())), timeout=30.0)
+                except Exception as e: # noqa: BLE001
+                    box["err"] = str(e)
+                box["done"] = True
+
+            _th.Thread(target=_work, daemon=True, name="voice-probe").start()
+
+            def _apply() -> None:
+                if not box["done"]:
+                    QTimer.singleShot(300, _apply)
+                    return
+                b.setEnabled(True)
+                d = box.get("r") if isinstance(box.get("r"), dict) else {}
+                if box.get("err"):
+                    out.setText("失败：%s" % box["err"])
+                    out.setStyleSheet(f"color:{t.err};background:transparent;")
+                elif d.get("ok"):
+                    msg = "通：%s 字节音频 · %sms" % (d.get("bytes") or 0, d.get("ms") or 0)
+                    if d.get("mode"):
+                        msg += " · %s" % d["mode"]
+                    out.setText(msg)
+                    out.setStyleSheet(f"color:{t.ok};background:transparent;")
+                else:
+                    out.setText("不通：%s" % (d.get("why") or "未知原因"))
+                    out.setStyleSheet(f"color:{t.err};background:transparent;")
+
+            QTimer.singleShot(300, _apply)
+
+        b.clicked.connect(_run)
+
+    _make_row("TTS 服务", "连通测试", "/api/voice/probe", "voice_reply.http_url")
+    _make_row("变声服务", "变声连通测试", "/api/voice/vc-probe", "voice_reply.vc_url")
+    page.layout().addWidget(card)
+
+
 APPENDIX = {
     "wechat": _wechat_emoji_appendix,
     "tools": _tools_utlist_appendix,
     "model": _model_local_appendix,
+    "imggen": _sd_local_appendix,
+    "tts": _tts_probe_appendix,
 }
