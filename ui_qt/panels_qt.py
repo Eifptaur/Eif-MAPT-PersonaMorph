@@ -557,27 +557,35 @@ def _open_group_pick(line, note, groups: list) -> None:
 # ── 丙-24 批2：按钮动作分发器（web onclick 的 Qt 等价）──
 # aid → POST 端点。命中 = 真执行（后台线程 + 结果回显行内 note）；
 # 未命中 = 沿 _btn_stub 原型边界。web 62 个按钮按批次逐步接线进这张表。
-_ACT_POST: dict[str, str] = {
-    "testApi": "/api/test-api",          # web L2741/L5882：空体 POST，后端自测当前 api 配置
-    "wmReset": "/api/watermark/reset",   # web L2709：监听水位重对齐
-    "pokeTest": "/api/poke-test",        # web L6028：拍一拍检测
+_ACT_API: dict[str, tuple[str, str, dict]] = {
+    "testApi": ("POST", "/api/test-api", {}),            # web L2741/L5882：后端自测当前 api 配置
+    "wmReset": ("POST", "/api/watermark/reset", {}),     # web L2709：监听水位重对齐
+    "pokeTest": ("POST", "/api/poke-test", {}),          # web L6028：拍一拍检测
+    "igTest": ("GET", "/api/image_gen/test", {}),        # web L7675：生图链条只跑不发
+    "ttsTest": ("GET", "/api/tts/test", {}),             # web L7691：按当前档合成试听
+    "vsTest": ("GET", "/api/voice/test", {}),            # web L7707：语音链路（合成→SILK→识别）
+    "selfCheck": ("POST", "/api/selfcheck", {"mode": "full"}),  # web L6004：61 项环境体检
 }
 
 
 def _act_run(aid: str, note) -> None:
-    """真执行 aid（后台线程 POST），结果回显 note（主线程落地）。"""
-    api = _ACT_POST.get(aid)
-    if not api or note is None:
+    """真执行 aid（后台线程，按表内方法 GET/POST），结果回显 note（主线程落地）。"""
+    spec = _ACT_API.get(aid)
+    if not spec or note is None:
         return
+    method, api, body = spec
     note.show()
-    note.setText("执行中…")
+    note.setText("执行中…（环境体检/链路测试可能要十几秒）")
     bx: dict = {"done": False, "rsp": None, "err": None}
 
     def _work() -> None:
         try:
-            from agent_bridge import post_json  # noqa: PLC0415
+            if method == "POST":
+                from agent_bridge import post_json  # noqa: PLC0415
 
-            bx["rsp"] = post_json(api, {}, timeout=30.0)
+                bx["rsp"] = post_json(api, body, timeout=90.0)
+            else:
+                bx["rsp"] = config_io.get_json(api, timeout=60.0)
         except Exception as e:  # noqa: BLE001
             bx["err"] = str(e)
         bx["done"] = True
@@ -602,6 +610,32 @@ def _act_run(aid: str, note) -> None:
         elif aid == "pokeTest":
             note.setText(str(rsp.get("summary") or rsp.get("detail") or "")
                          or json.dumps(rsp, ensure_ascii=False)[:160])
+        elif aid == "igTest":
+            res = rsp.get("result") or {}
+            note.setText(str(res.get("why") or "链条跑通") if rsp.get("ok")
+                         else str(res.get("why") or rsp.get("error") or rsp.get("err") or "未知原因"))
+        elif aid == "ttsTest":
+            info = rsp.get("info") or {}
+            note.setText(("合成成功：%s（%s / %s 字节 / 档位：%s / 声音：%s）"
+                          % (rsp.get("path"), info.get("fmt") or "-", rsp.get("size"),
+                             rsp.get("engine") or info.get("engine") or "-", info.get("voice") or "-"))
+                         if rsp.get("ok")
+                         else ("合成失败：%s" % (rsp.get("err") or rsp.get("error") or "未知原因")))
+        elif aid == "vsTest":
+            res = rsp.get("result") or {}
+            lines = " ｜ ".join("%s：%s" % (st.get("name"), st.get("detail"))
+                                for st in (res.get("steps") or []) if isinstance(st, dict))
+            note.setText(("链路可用。" if rsp.get("ok") else "链路跑不通。") + lines
+                         + (" ｜ 识别到：" + str(res.get("text")) if res.get("text")
+                            else (" ｜ " + str(res.get("err")) if res.get("err") else "")))
+        elif aid == "selfCheck":
+            checks = rsp.get("checks") or []
+            bad = [c for c in checks if isinstance(c, dict) and c.get("ok") is False]
+            note.setText(("共 %d 项，通过 %d，失败 %d —— %s"
+                          % (len(checks), len(checks) - len(bad), len(bad),
+                             "；".join("%s：%s" % (c.get("item"), c.get("detail")) for c in bad[:3])
+                             if bad else (rsp.get("summary") or "全部通过 ✔")))
+                         if checks else str(rsp.get("summary") or "完成"))
         else:
             note.setText(str(rsp.get("note") or rsp.get("summary") or "完成"))
 
@@ -621,9 +655,9 @@ def _btn_group(t: Tokens, actions: list[tuple[str, str]], note=None) -> QWidget:
     for txt, aid in actions:
         b = Btn(txt, t, role="ghost")
         b.setProperty("web_action", aid or "")
-        if note is not None and aid in _ACT_POST:
+        if note is not None and aid in _ACT_API:
             b.clicked.connect(lambda _=False, a=aid: _act_run(a, note))
-            b.setToolTip("真接后端：" + _ACT_POST[aid])
+            b.setToolTip("真接后端：" + _ACT_API[aid][1])
         else:
             b.setToolTip(("web 动作：" + aid) if aid else "web 侧按钮")
             b.clicked.connect(lambda _=False, _b=b: _btn_stub(_b))
