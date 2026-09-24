@@ -72,10 +72,10 @@ _DEFAULTS = {
 # 处理分辨率（相对设备像素的缩采比例）：实测 0.5x 稳过 30fps
 _PROC_SCALE = 0.5
 
-# ⛔ 丙-14 止血开关：真窗口的 lens effect 挂载默认禁用 —— 半成品 effect 曾把作者控制台
-#   打断成「卡死→拉起黑屏」（draw 每帧 TypeError → PySide6 段错误 0xC0000005，见 draw 注释）。
-#   PM_WAVE_LENS=1 为实验性显式开启（供波纹重做完成后的真机试验）。
-_LENS_MOUNT_OK = os.environ.get("PM_WAVE_LENS") == "1"
+# ⛔ 丙-26 批2.5：挂载恢复默认启用 —— draw() 已有签名修正 + 双层 fail-safe
+#   （取源失败整帧放弃；_draw_lens 异常吞掉），最坏情况是「无波纹」而非崩溃。
+#   QT_NO_WAVE=1 为逃生门（禁用挂载）；波纹效果真机验收由作者对照 web 完成。
+_LENS_MOUNT_OK = os.environ.get("QT_NO_WAVE") != "1"
 
 
 class _WaveLensEffect(QGraphicsEffect):

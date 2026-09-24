@@ -1544,17 +1544,18 @@ def t_c10() -> None:
     # 两个实锤 bug 的形态防回归（_c10_wave_diag / _c10_verify2 取证）
     ck("c10P5: _last_move_t 初值取当前时刻（0.0 会让首次 dt 巨大→能量恒锁地板）",
        "self._last_move_t = time.monotonic()" in wsrc)
-    ck("c10P5: 相位用绝对时间驱动（_t0 每次移动都重置会让环长不出来）",
-       "phase0 = ((time.monotonic() * ring_speed))" in wsrc)
-    ck("c10P5: shimmer 永不为 0（原来 sin=-1 时整帧全暗=肉眼当没画；返工后下限抬到 0.78，暗相帧 alpha 不再掉到人眼阈值下）",
-       "0.78 + 0.22 * math.sin(" in wsrc)
+    ck("c10P5(丙-25): 相位用绝对时间驱动（epoch 起、%1.0 环形推进——位移扭曲的时间轴）",
+       "(time.monotonic() - self._epoch)" in wsrc and "% 1.0" in wsrc)
+    # 位移版没有「shimmer/环半径」概念（那是画圆环时代的）——对应护栏换成了这两条：
+    ck("c10P5(丙-25): 位移 mask 幅度恒夹 [0,1]（np.clip）且带 0.35 底噪（空白处也有可见起伏）",
+       "np.clip(a, 0.0, 1.0)" in wsrc and "(1.0 - r) ** falloff * 0.35" in wsrc)
     # 能量归一不再借 max_gain 当分母（那会让 667px/s 就饱和 ⇒ 慢手/快手无差别）
     ck("c10P5: energy 归一用参考速度 _V_REF（不是 max_gain 当分母→不再恒满档）",
        "_V_REF = 400.0" in wsrc and "self._speed_ema / _V_REF" in wsrc)
     ck("c10P5: 速度过 EMA 平滑（对齐 web _mouseSpeed*0.7+v*0.3）",
        "_EMA_KEEP = 0.7" in wsrc and "self._speed_ema * _EMA_KEEP" in wsrc)
-    ck("c10P5: 环从 24px 起（不等 0，停下瞬间就有可见波前）",
-       "r = 24.0 + ph * (radius - 24.0)" in wsrc)
+    ck("c10P5(丙-25): 位移版无环半径概念——性能护栏是缩采 _PROC_SCALE=0.5（全窗位移会掉帧，实测 0.5x 稳 30fps）",
+       "_PROC_SCALE = 0.5" in wsrc)
     # 解耦硬判据看**代码**（剥掉 docstring）——docstring 里提 OceanWaves 是解释性说明，
     #  "提到过" ≠ "依赖它"；真依赖会出现 `import ocean` / `OceanWaves(` 调用。
     _wsrc_code = re.sub(r'""".*?"""', "", wsrc, flags=re.S)
@@ -1604,19 +1605,22 @@ def t_c10() -> None:
     w._wavefx.on_mouse_move(QPointF(420, 90))   # 一次大步（≈6000px/s）
     e_fast = w._wavefx._energy
     ck("c10P5: 快速移动能量真上去（不再恒锁地板 0.25）", e_fast > 0.5, f"energy={e_fast:.3f}")
-    # 相位由绝对时间驱动 → 立刻能画出可见环（不等一整圈）
-    from PySide6.QtGui import QPainter, QPixmap  # noqa: PLC0415
+    # 相位由绝对时间驱动 → 位移核心真跑：真实 QImage 进 _displace_region，产出 0.5x 缩采扭曲图。
+    # （丙-25：绘制已改走 QGraphicsEffect.draw，paint() 不再画环——旧 max_alpha 采样断言随之改写。）
+    from PySide6.QtCore import QRect  # noqa: PLC0415
+    from PySide6.QtGui import QImage  # noqa: PLC0415
 
-    _pm = QPixmap(400, 300)
-    _pm.fill(Qt.GlobalColor.transparent)
-    _p = QPainter(_pm)
-    w._wavefx.paint(_p, 400, 300, 1.0)
-    _p.end()
-    _img = _pm.toImage()
-    _mx = max(_img.pixelColor(x, y).alpha()
-              for x in range(0, 400, 3) for y in range(0, 300, 3))
-    ck("c10P5: 停下瞬间就能画出可见环（绝对时间相位，不等整圈）", _mx >= 8,
-       f"max_alpha={_mx}")
+    _src_img = QImage(200, 160, QImage.Format.Format_RGBA8888)
+    _src_img.fill(Qt.GlobalColor.darkGray)
+    _rect = QRect(0, 0, 200, 160)
+    w._wavefx._pos = QPointF(100.0, 80.0)
+    _out = w._wavefx._displace_region(
+        _src_img, _rect, w._wavefx._pos,
+        w._wavefx._norm_radius(w._wavefx._pos, _rect),
+        w._wavefx._mask_phase())
+    ck("c10P5(丙-25): 位移核心真跑产出扭曲图（0.5x 缩采尺寸正确、非空）",
+       _out is not None and _out.width() == 100 and _out.height() == 80,
+       f"out={None if _out is None else (_out.width(), _out.height())}")
     w._wavefx.set_enabled(False)
     w.close()
 
