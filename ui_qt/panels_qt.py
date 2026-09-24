@@ -688,9 +688,19 @@ def _status_text_for(status_id: str, st: dict) -> str:
         return "读不到（控制台未就绪）"
     sid = status_id or ""
     if sid in ("wxver",):
-        vm = st.get("version") or {}
-        v = str(vm.get("wechat") or "").strip()
-        return ("微信 " + v) if v and v != "unknown" else "微信版本读不到"
+        # 丙-18：对齐 web L3506-3511 —— 微信版本行真值 = /api/status 的
+        #   `wechat_version` 段（version/adapter/supported）；原读 vermat 的
+        #   version.wechat ⇒ 恒「微信版本读不到」（作者真机实锤）。
+        wv = st.get("wechat_version") or {}
+        v = str(wv.get("version") or "").strip()
+        if not v:
+            vm = st.get("version") or {}
+            v = str(vm.get("wechat") or "").strip()
+            return ("微信 " + v) if (v and v != "unknown") else "未检测到"
+        out = "微信 " + v + (" · 适配层 " + str(wv.get("adapter") or "-") if wv.get("adapter") else "")
+        if wv.get("supported") is False:
+            out += "（注意：低于 4.0，请升级微信）"
+        return out
     if sid in ("vmVer",):
         vm = st.get("version") or {}
         v = str(vm.get("wechat") or "").strip()
