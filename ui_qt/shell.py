@@ -923,6 +923,15 @@ class Shell(QWidget):
                 self.items.append((it, g, sec, label))
             self.nav_lay.addWidget(g)
         self.nav_lay.addStretch(1)
+
+        # 侧栏微信连接状态（丙-18 批1 收尾；web #sideStatus :3476-3491 同款语义）：
+        # 连接态 + 失败短原因 + 监听目标 0 警告 + 启动时间；tooltip = 全文原因 + 逐步诊断。
+        self.side_status = QLabel("微信：读取中…")
+        self.side_status.setFont(qfont(self.t, self.t.body_size - 1.5))
+        self.side_status.setStyleSheet(f"color:{self.t.tx2};background:transparent;")
+        self.side_status.setWordWrap(True)
+        self.nav_lay.addWidget(self.side_status)
+
         self.scroll.setWidget(inner)
         lay.addWidget(self.scroll, 1)
 
@@ -1630,6 +1639,39 @@ class Shell(QWidget):
 
         QTimer.singleShot(150, _apply)
 
+    def _apply_side_status(self, s: dict) -> None:
+        """侧栏微信连接状态（丙-18 批1 收尾；web #sideStatus :3476-3491 同款语义）。
+
+        连接态 / 失败短原因 / 监听目标 0 警告 / 启动时间；tooltip = 全文原因 +
+        重试次数 + 逐步诊断（web 把逐步诊断同时铺进微信面板，Qt 后续对齐）。
+        """
+        lab = getattr(self, "side_status", None)
+        if lab is None or not isinstance(s, dict):
+            return
+        wa = s.get("wechat_attach") or {}
+        if s.get("wechat_connected"):
+            txt = "微信已连接"
+        else:
+            short = wa.get("short")
+            txt = "微信未连接" + ((" · 原因：" + str(short)) if short else "")
+        if wa.get("targets_zero"):
+            txt += " · 监听目标 0 个（去「微信」面板勾群）"
+        started = str(s.get("started_at") or "")
+        if started:
+            txt += " · 启动于 " + started
+        lab.setText(txt)
+        lab.setStyleSheet(
+            f"color:{self.t.ok if s.get('wechat_connected') else self.t.warn};background:transparent;")
+        tip = ("已接上微信客户端" if s.get("wechat_connected")
+               else str(wa.get("reason") or "还没拿到失败原因（等一次接入尝试，或看日志）")
+               + "\n自动重试：已试 %s 次（每 10 秒一次，接上就自动开始工作）" % (wa.get("tries") or 0))
+        steps = wa.get("steps") or []
+        if steps:
+            tip += "\n\n逐步诊断：\n" + "\n".join(
+                ("[通过] " if x.get("ok") else "[卡住] ") + str(x.get("name")) + "：" + str(x.get("detail"))
+                for x in steps if isinstance(x, dict))
+        lab.setToolTip(tip)
+
     def _apply_badges(self, s: dict, personas_n: int | None = None) -> None:
         """把一份 /api/status 真值分发到各面板徽章（web refreshBadges 的 Qt 版）。
 
@@ -1641,6 +1683,7 @@ class Shell(QWidget):
         import panels_qt as pq  # noqa: PLC0415
 
         pq.refresh_status_rows(s)   # 丙-18 批1：面板内状态位跟随 8s 轮询刷新（「读不到」主治）
+        self._apply_side_status(s)  # 丙-18 批1 收尾：侧栏微信连接状态（web #sideStatus 同款）
 
         bot_badge = getattr(self, "st_panel", None)
         if bot_badge is not None:
