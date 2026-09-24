@@ -5116,12 +5116,158 @@ def t_g12() -> None:
         srv.shutdown()
 
 
+def t_g13() -> None:
+    """批5补：右下角鲸鱼挂件（上游 DeepSeek-Balance-Whale-Widget 的 Qt 等价物）。
+
+    假后端 /dsh-whale/balance.json + last-turn.json（可切 ok:false）。断言：
+    数据逐字（余额/今日已用/上轮消耗/高峰标）、点击刷新（无位移 release 触发再拉）、
+    拖拽移动并写位置记忆（QSettings）、30s 轮询、位置跨实例恢复、失败态如实。
+    """
+    import json as _json # noqa: PLC0415
+    import os # noqa: PLC0415
+    import threading as _th # noqa: PLC0415
+    import time as _time # noqa: PLC0415
+    from http.server import BaseHTTPRequestHandler, HTTPServer # noqa: PLC0415
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import QEvent, QPointF, QSettings # noqa: PLC0415
+    from PySide6.QtGui import QMouseEvent # noqa: PLC0415
+    from PySide6.QtWidgets import QApplication # noqa: PLC0415
+
+    import agent_bridge # noqa: PLC0415
+    import whale_widget as ww # noqa: PLC0415
+    from stylekit_qt import THEMES # noqa: PLC0415
+
+    QApplication.instance() or QApplication([])
+    t = THEMES["whale"]
+
+    calls: list = []
+    bal_state = {"bad": False}
+
+    class _H(BaseHTTPRequestHandler):
+        def _send(self, obj): # noqa: N802
+            body = _json.dumps(obj).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self): # noqa: N802
+            calls.append(self.path)
+            if "/dsh-whale/balance.json" in self.path:
+                if bal_state["bad"]:
+                    self._send({"ok": False, "error": "没配模型 Key"})
+                else:
+                    self._send({"ok": True, "totalBalance": 123.45, "currency": "CNY",
+                                "todayUsage": 0.0234, "isPeak": True})
+            elif "/dsh-whale/last-turn.json" in self.path:
+                self._send({"ok": True, "seq": 3, "turn": "t3",
+                            "amount": 0.0012, "tokens": 1500})
+            else:
+                self._send({"ok": True})
+
+        def log_message(self, *a): # noqa: N802
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), _H)
+    port = srv.server_address[1]
+    _th.Thread(target=srv.serve_forever, daemon=True, name="fake-be-g13").start()
+
+    _orig_url = agent_bridge.current_url
+    agent_bridge.current_url = lambda: "http://127.0.0.1:%d/?token=tk" % port
+    st = QSettings("WXAgent", "persona-morph-ui")
+    st.setValue("whale_pos", "") # 清位置残留
+
+    def _bal_n():
+        return sum(1 for c in calls if "balance.json" in c)
+
+    def _wait(pred, timeout=8.0):
+        end = _time.time() + timeout
+        while _time.time() < end:
+            QApplication.processEvents()
+            if pred():
+                return True
+            _time.sleep(0.03)
+        QApplication.processEvents()
+        return pred()
+
+    def _mouse(w, kind, gx, gy, buttons=None): # noqa: ANN001
+        btns = buttons if buttons is not None else Qt_Left
+        ev = QMouseEvent(kind, QPointF(10, 10), QPointF(gx, gy),
+                         Qt_Left, btns, _NoMod)
+        return ev
+
+    from PySide6.QtCore import Qt # noqa: PLC0415
+
+    Qt_Left = Qt.MouseButton.LeftButton
+    _NoMod = Qt.KeyboardModifier.NoModifier
+
+    keep: list = []
+    try:
+        w = ww.WhaleWidget(t)
+        keep.append(w)
+        ck("g13 挂件构建：卡片在场 + 30s 轮询已启动",
+           w.findChild(type(w.card), "WhaleCard") is not None
+           and w._timer.isActive() and w._timer.interval() == 30000,
+           "card=%s iv=%s active=%s" % (w.findChild(type(w.card), "WhaleCard") is not None,
+                                        w._timer.interval(), w._timer.isActive()))
+        _wait(lambda: w.bal_lb.text() == "¥123.45")
+        ck("g13 数据逐字：余额/今日已用/上轮消耗/高峰标（/dsh-whale/* 两接口）",
+           w.bal_lb.text() == "¥123.45"
+           and w.today_lb.text() == "今日已用 ¥0.0234"
+           and w.last_lb.text() == "上轮 ¥0.0012 · 1500 tok"
+           and w.peak_lb.text() == "高峰时段（价贵）",
+           "bal=%r today=%r last=%r peak=%r" % (w.bal_lb.text(), w.today_lb.text(),
+                                                w.last_lb.text(), w.peak_lb.text()))
+
+        # 点击（无位移 release）= 刷新
+        n0 = _bal_n()
+        w.mousePressEvent(_mouse(w, QEvent.Type.MouseButtonPress, w.x() + 10, w.y() + 10))
+        w.mouseReleaseEvent(_mouse(w, QEvent.Type.MouseButtonRelease, w.x() + 10, w.y() + 10))
+        _wait(lambda: _bal_n() > n0)
+        ck("g13 点击（无位移）触发刷新：再拉一次 balance.json",
+           _bal_n() > n0, "n0=%d now=%d" % (n0, _bal_n()))
+
+        # 拖拽（位移 > 阈值）= 移动窗口 + 位置记忆
+        pos0 = w.pos()
+        w.mousePressEvent(_mouse(w, QEvent.Type.MouseButtonPress, w.x() + 10, w.y() + 10))
+        w.mouseMoveEvent(_mouse(w, QEvent.Type.MouseMove, w.x() + 70, w.y() + 60, Qt_Left))
+        w.mouseReleaseEvent(_mouse(w, QEvent.Type.MouseButtonRelease, w.x() + 70, w.y() + 60))
+        QApplication.processEvents()
+        saved = st.value("whale_pos")
+        ck("g13 拖拽移动：窗口位移 + 位置写 QSettings",
+           w.pos() != pos0 and isinstance(saved, list) and len(saved) == 2
+           and [int(saved[0]), int(saved[1])] == [w.x(), w.y()],
+           "pos0=%s now=%s saved=%s" % (pos0, w.pos(), saved))
+
+        # 位置跨实例恢复
+        w2 = ww.WhaleWidget(t)
+        keep.append(w2)
+        ck("g13 位置跨实例恢复（重开还原上次拖到的位置）",
+           (w2.x(), w2.y()) == (w.x(), w.y()),
+           "w2=(%d,%d) w=(%d,%d)" % (w2.x(), w2.y(), w.x(), w.y()))
+
+        # 失败态如实（先等上一轮回调完成把 _busy 放开——_busy 守卫会挡住并发刷新）
+        _wait(lambda: not w._busy)
+        bal_state["bad"] = True
+        w.refresh()
+        _wait(lambda: w.bal_lb.text() == "余额 未取到")
+        ck("g13 取数失败如实回显（余额 未取到 + 服务端 error）",
+           w.bal_lb.text() == "余额 未取到" and "没配模型 Key" in w.today_lb.text(),
+           "bal=%r today=%r" % (w.bal_lb.text(), w.today_lb.text()))
+        bal_state["bad"] = False
+    finally:
+        agent_bridge.current_url = _orig_url
+        srv.shutdown()
+
+
 def main() -> int:
     for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
                t_visual, t_badges, t_status_chain, t_bot_controls, t_window_chrome, t_dpi_motion,
                t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch, t_bootstrap32, t_ocr9,
                t_c10, t_c13, t_hotfix1, t_hotfix2, t_catmgr, t_medialocal, t_commfb,
-               t_veradv, t_g5, t_g6, t_g7, t_g8, t_g9, t_g10, t_g11, t_g12):
+               t_veradv, t_g5, t_g6, t_g7, t_g8, t_g9, t_g10, t_g11, t_g12, t_g13):
         try:
             fn()
         except Exception as e: # noqa: BLE001

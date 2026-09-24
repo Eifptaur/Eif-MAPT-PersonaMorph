@@ -232,6 +232,12 @@ class Shell(QWidget):
         )
         self._load_wallpaper()
         self._refresh_backdrop()
+        # 右下角鲸鱼挂件（上游 DeepSeek-Balance-Whale-Widget 的 Qt 等价物：
+        # 余额/今日已用/每轮消耗，点击刷新、可拖拽；数据与位置自持，随 Shell 显隐）
+        from whale_widget import WhaleWidget # noqa: PLC0415
+
+        self.whale = WhaleWidget(self.t, parent=self)
+        self.whale.show()
         self._restyle()
         self._cursor.refresh_from_config()
 
@@ -409,6 +415,9 @@ class Shell(QWidget):
         self._ocean.set_active(False) # 波浪动效已砍，show 也不再转
         self._apply_round_corners() # M：Win11 圆角 / Win10 方角回退
         self._ensure_resize_style() # 注入 WS_THICKFRAME（能拖不能缩的真根因）
+        w = getattr(self, "whale", None)
+        if w is not None:
+            w.show() # 从托盘/最小化回来时挂件跟着回来
 
     def _apply_round_corners(self) -> None:
         """ M：Win11 走 DWM 圆角（DWMWA_WINDOW_CORNER_PREFERENCE = 33，ROUND = 2）。
@@ -474,6 +483,9 @@ class Shell(QWidget):
     def hideEvent(self, ev) -> None: # noqa: N802
         super().hideEvent(ev)
         self._ocean.set_active(False) # CPU 纪律：看不见就不转
+        w = getattr(self, "whale", None)
+        if w is not None:
+            w.hide() # 收托盘/最小化时挂件一起藏（不留幽灵浮层）
 
     # ------------------------------------------------------------ 窗口壳
 
@@ -1394,6 +1406,9 @@ class Shell(QWidget):
         for it, _g, s, _l in self.items:
             it.set_active(s == cur) # 重建后 items 全新，active 高亮要手动还回去
         apply_font_to_app(QApplication.instance(), self.t)
+        w = getattr(self, "whale", None)
+        if w is not None:
+            w.restyle(self.t) # 挂件是独立顶层窗，不走 QSS 重建，自己换皮
         self._crossfade_play() # 新 UI 就位后旧帧淡出
 
     def _groups(self) -> list[NavGroup]:
