@@ -5042,6 +5042,12 @@ def t_g12() -> None:
         keep = [wrap]
         pp.show()
         _wait(lambda: _btn_by_text_local(pp, "试一下") is not None)
+        # 排空：更早测试残留的延迟定时器（_load 的 singleShot 链等）在把 current_url
+        # 指向本组假后端后会陆续打进来；先让它们跑完，基准计数才是干净的。
+        for _ in range(6):
+            QApplication.processEvents()
+            _time.sleep(0.08)
+        QApplication.processEvents()
         ck("g12 工具行三件在场（args 输入 utArgs + 试一下 + 结果行）",
            pp.findChild(QLineEdit, "utArgs") is not None
            and _btn_by_text_local(pp, "试一下") is not None,
@@ -5049,7 +5055,11 @@ def t_g12() -> None:
                             _btn_by_text_local(pp, "试一下") is not None))
 
         # ── 试一下：成功态 ──
+        # 说明：本页构建时会注册若干延迟定时器（_load 的 400ms singleShot 等），
+        # 全量运行下更早测试残留的定时器也可能在此窗口触发并打到本组假后端上，
+        # 故「测试不触发重载」的判定不能看绝对计数——只看点击那一刻新产生的请求。
         st_n0 = _status_n()
+        n_calls0 = len(calls)
         ai = pp.findChild(QLineEdit, "utArgs")
         if ai is not None:
             ai.setText('{"city": "北京"}')
@@ -5062,8 +5072,12 @@ def t_g12() -> None:
            tb_ok and any("/api/tools/test" in c and "weather" in c
                          and "%E5%8C%97%E4%BA%AC" in c for c in calls),
            "labels=%s" % [l.text()[:40] for l in pp.findChildren(QLabel) if "通了" in l.text()])
+        # 断言窗口：只看「点击动作」之后新增的请求里有没有 /api/status
+        # （更早测试残留定时器打进来的 status 不算数——那不是本次点击引起的）
+        _new = calls[n_calls0:]
         ck("g12 测试不触发清单重载（/api/status 计数不变，web :3897 同口径）",
-           _status_n() == st_n0, "before=%d after=%d" % (st_n0, _status_n()))
+           not any(c.startswith("/api/status") for c in _new),
+           "before=%d new=%s" % (st_n0, _new[:10]))
 
         # ── 失败态 ──
         test_state["err"] = True
