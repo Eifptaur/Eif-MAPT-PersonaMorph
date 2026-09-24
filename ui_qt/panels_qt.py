@@ -295,12 +295,53 @@ def _ctrl_value(r: "sec_meta.Row", ctrl: QWidget | None):
     if r.kind == "select":
         return str(ctrl.currentData())
     if r.kind == "textarea":
-        return ctrl.toPlainText()
+        return _textish(r.cfg, ctrl.toPlainText())
     if r.kind == "chips":
         # web chips 存 list（如 group_name_white_list）—— 逗号/中文逗号分隔还原
         parts = [x.strip() for x in ctrl.text().replace("，", ",").split(",")]
         return [x for x in parts if x]
-    return ctrl.text()
+    return _textish(r.cfg, ctrl.text())
+
+
+# 文本控件的「键级类型化」——与 web syncFromForm 的 path 特判**逐条对齐**。
+# 不特判就会把「逗号分隔文本」或「JSON 文本」原样存成字符串：数组键存成字符串后，
+# 读取方（如 risk.py 对 quiet_hours 判 isinstance(list,tuple)）静默失效。
+_LIST_KEYS = (
+    "store.keywords", "store.archive_block_chats", "store.tier_cmd_admins",
+    "holiday.greet_chats", "api.fallback_models",
+    "risk.block_keywords", "risk.watch_keywords",
+)
+_JSON_DICT_KEYS = ("api.model_prices", "store.group_blocklist")
+_JSON_LIST_KEYS = ("store.tier_schedule.table",)
+
+
+def _textish(cfg: str, raw: str):
+    """文本 → 按 web 同款规则类型化（逗号切数组 / JSON 解析 / 原样字符串）。"""
+    s = str(raw or "")
+    if cfg in _LIST_KEYS:
+        return [x.strip() for x in s.replace("，", ",").replace("\n", ",").split(",") if x.strip()]
+    if cfg == "risk.quiet_hours":
+        # 夜间静默时段 = 两个 0~23 的整数（起止小时）；不合规一律当"不启用"（与 web 同）
+        try:
+            parts = [int(x.strip()) for x in s.replace("，", ",").replace("；", ",").split(",") if x.strip()]
+        except ValueError:
+            return []
+        return parts if len(parts) == 2 and all(0 <= x <= 23 for x in parts) else []
+    if cfg in _JSON_LIST_KEYS or cfg in _JSON_DICT_KEYS:
+        import json as _json # noqa: PLC0415
+
+        want_list = cfg in _JSON_LIST_KEYS
+        empty = [] if want_list else {}
+        if not s.strip():
+            return empty
+        try:
+            v = _json.loads(s)
+        except ValueError:
+            return empty # 非法 JSON 不改语义，退化为空（保存反馈会显示跳过的行数）
+        if want_list:
+            return v if isinstance(v, list) else empty
+        return v if isinstance(v, dict) else empty
+    return s
 
 
 # ---------------------------------------------------------------- 行生成

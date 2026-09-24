@@ -1608,6 +1608,11 @@ th{color:var(--tx2);font-weight:500}
       <div class="row"><label>种子库</label><input type="checkbox" data-cfg="scoring.seed_library" checked><span class="hint">内置有趣开场/接梗 small-sample 参考</span></div>
       <div class="row"><label>在线评分</label><input type="checkbox" data-cfg="scoring.online_scoring"><span class="hint">每次 reaction 后调 LLM 打分（费用量，默认关）</span></div>
       <div class="row"><label>热度衰减</label><input type="checkbox" data-cfg="scoring.heat_decay" checked><span class="hint">老梗降权，防饱和</span></div>
+      <div class="row"><label>梗搜索</label><input type="checkbox" data-cfg="meme.enabled" checked><span class="hint">不懂群里的新梗时，机器人可联网查它的来龙去脉（只在真不懂时才查，默认开）</span></div>
+      <div class="mid">
+        <div class="row"><label>每次最多几条</label><input type="number" min="1" max="10" data-cfg="meme.max_results"><span class="hint">1~10 条，默认 5</span></div>
+        <div class="row"><label>查询缓存(秒)</label><input type="number" min="0" data-cfg="meme.cache_ttl_s"><span class="hint">同一话题在这段时间内只真查一次，省流量；默认 21600（6 小时）</span></div>
+      </div>
       <div class="row"><label>导入金句种子</label><div class="grow"><textarea id="seedImport" rows="2" placeholder="粘贴金句墙导出的文本，每行一条…"></textarea>
         <div class="row"><label>自定义金句(选单)</label><div class="grow"><input type="text" id="seedCustomTxt" placeholder="输入一句你的自定义金句，点「添加」进库（学习/接梗参考）" style="flex:1"><button id="seedCustomAdd" class="ghost">添加</button><span id="seedCustomRst" class="hint"></span></div></div>
         <div class="btns"><button id="seedImportBtn" class="ghost">导入种子库</button><button id="seedImportFile" class="ghost">选择文件导入</button><input type="file" id="seedFile" accept=".txt,.json,text/plain,application/json" style="display:none"><span class="hint" id="seedImportRst"></span></div>
@@ -2282,6 +2287,10 @@ th{color:var(--tx2);font-weight:500}
         <div class="row"><label>重复内容窗口(秒)</label><input type="number" min="0" data-cfg="risk.dup_window_seconds"></div>
         <div class="row"><label>重复判定最短字数</label><input type="number" min="0" data-cfg="risk.dup_min_len"></div>
       </div>
+      <div class="mid">
+        <div class="row"><label>夜间静默时段</label><div class="grow"><input data-cfg="risk.quiet_hours" placeholder="如 22，7（起止小时，跨零点自动处理）；留空＝不启用"><div class="hint">这段小时数内一条都不发；填两个 0~23 的整数，用逗号分隔</div></div></div>
+        <div class="row"><label>连续被拦升级</label><input type="number" min="0" data-cfg="risk.escalate_after"><span class="hint">连续拦下 N 条就自动暂停发送；0＝不自动暂停</span></div>
+      </div>
       <div class="row"><label>禁止词</label><div class="grow"><input data-cfg="risk.block_keywords" placeholder="逗号分隔，命中即拦下；留空＝不启用"></div></div>
       <div class="row"><label>观察词</label><div class="grow"><input data-cfg="risk.watch_keywords" placeholder="逗号分隔，命中只记录不拦"></div></div>
       <div class="desc">微信 UI 图标库（一次性标定；自动检测侧栏图标序列，坐标按窗口尺寸换算）：</div>
@@ -2586,6 +2595,11 @@ function syncFromForm(){
       else if(path === 'risk.block_keywords' || path === 'risk.watch_keywords'){
  // 风险闸门的关键词是数组：这里按中文/英文逗号切（不切就会存成字符串 ⇒ 闸门逐字符当关键词，满屏误拦）
         v = v.split(/[,，]/).map(s=>s.trim()).filter(Boolean);
+      }
+      else if(path === 'risk.quiet_hours'){
+ // 夜间静默时段是**两个整数**（起止小时）：逗号切后转数字；不是恰好两个 0~23 的整数就当没填（清空＝不启用）
+        const _qh = String(v||'').split(/[,，;；\s]+/).map(s=>s.trim()).filter(Boolean).map(Number);
+        v = (_qh.length === 2 && _qh.every(x=>Number.isInteger(x) && x >= 0 && x <= 23)) ? _qh : [];
       }
       else if(path === 'api.model_prices'){ // JSON 文本 → dict（非法 JSON 时给空对象，前台提示）
         try{ v = v.trim() ? JSON.parse(v) : {}; }

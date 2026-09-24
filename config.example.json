@@ -55,11 +55,20 @@
   "google_first": true,
   "search_url": "https://cn.bing.com/search",
   "max_results": 6,
+  "bing": {
+   "api_key": "",
+   "base_url": "",
+   "model": "",
+   "engine": "",
+   "count": 6
+  },
   "deepseek": {
    "api_key": "",
    "base_url": "https://api.deepseek.com/responses",
    "model": "deepseek-flash",
-   "timeout_ms": 60000
+   "timeout_ms": 60000,
+   "engine": "",
+   "count": 6
   },
   "zhipu": {
    "api_key": "",
@@ -121,6 +130,9 @@
   "fallback_autosend": true,
   "fallback_max_chars": 60,
   "fallback_block_selfref": true,
+  "quote_on_new_talk": false,
+  "quote_reply_probability": 0.7,
+  "quote_new_talk_gap_s": 300,
   "uia_setvalue": true,
   "image_compress": {
    "enabled": true,
@@ -193,6 +205,8 @@
   "vc_json_field": "",
   "vc_fail_open": false,
   "vc_timeout_ms": 60000,
+  "http_url": "",
+  "http_json_field": "",
   "run_boost": 25,
   "form": "strip",
   "fallback_file": true,
@@ -230,6 +244,7 @@
   },
   "local_sd": {
    "enabled": true,
+   "preset": "quality",
    "port": 7860,
    "model_dir": "data/sd_model",
    "allow_online_install": false,
@@ -336,6 +351,9 @@
   "idle_threshold_ms": 1800000,
   "probability": 0.25
  },
+ "stats": {
+  "period": "weekly"
+ },
  "store": {
   "max_messages_per_chat": 0,
   "context_tier": 2,
@@ -366,6 +384,7 @@
    "window_sec": 180,
    "heuristic": true
   },
+   "video_min_tier": 4,
   "briefs": {
    "enabled": true,
    "inject_max": 5
@@ -422,7 +441,8 @@
   "discover_min_messages": 20,
   "discover_max_members": 3,
   "share_across_groups": false,
-  "shared_groups": []
+  "shared_groups": [],
+  "summarize_on_exit": false
  },
  "scoring": {
   "enabled": true,
@@ -463,6 +483,7 @@
   "restore_window_after_use": true,
   "allow_foreground": false,
   "theme": "whale",
+  "text_style": "normal",
   "background": "",
   "bg_type": "image",
   "whale_cursor": true,

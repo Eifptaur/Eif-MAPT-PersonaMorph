@@ -239,7 +239,7 @@ def block(chat_key, incoming_text, now=None) -> str:
     try:
         try:
             from .config import get_config
-            _bf = ((get_config() or {}).get("briefs") or {})
+            _bf = (((get_config() or {}).get("store") or {}).get("briefs") or {})
         except Exception:
             _bf = {}
         if _bf.get("enabled") is False:

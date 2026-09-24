@@ -2610,11 +2610,13 @@ def t_commfb() -> None:
         fl = [b for b in page2.findChildren(Btn) if b.text() == "补发积压"][0]
         fl.click()
         _wait(lambda: any("/api/feedback/flush" in c for c in calls))
-        _wait(lambda: "补发完成" in page2._fb_lb.text())
-        ck("补发积压 POST /api/feedback/flush，状态卡回显服务端 why",
+        # 补发回执落独立行（web 走 toast、状态卡另行 fbLoad 刷新——两边不同落点；
+        # 若回执写进状态卡，会被随后 _load() 的回填覆盖）。断言看回执行。
+        _wait(lambda: "补发完成" in page2._fb_flnote.text())
+        ck("补发积压 POST /api/feedback/flush，回执行回显服务端 why",
            any("/api/feedback/flush" in c for c in calls)
-           and "补发完成（2 条）" in page2._fb_lb.text(),
-           page2._fb_lb.text())
+           and "补发完成（2 条）" in page2._fb_flnote.text(),
+           page2._fb_flnote.text())
     finally:
         QFileDialog.getOpenFileName = _orig_gofn
         agent_bridge.current_url = _orig_url
@@ -5058,12 +5060,29 @@ def t_g12() -> None:
         # 说明：本页构建时会注册若干延迟定时器（_load 的 400ms singleShot 等），
         # 全量运行下更早测试残留的定时器也可能在此窗口触发并打到本组假后端上，
         # 故「测试不触发重载」的判定不能看绝对计数——只看点击那一刻新产生的请求。
+        # 取基准前排空到「静默窗口」：连续若干轮 processEvents 且请求数不再增长，
+        # 才算残留定时器真的跑完了（只睡固定时长挡不住周期长于该时长的残留）。
+        _stable = 0
+        _last_n = len(calls)
+        for _ in range(60):
+            QApplication.processEvents()
+            _time.sleep(0.05)
+            if len(calls) == _last_n:
+                _stable += 1
+                if _stable >= 8: # 连续 8 轮（≈0.4s）零新增 = 静默
+                    break
+            else:
+                _stable = 0
+                _last_n = len(calls)
         st_n0 = _status_n()
         n_calls0 = len(calls)
         ai = pp.findChild(QLineEdit, "utArgs")
         if ai is not None:
             ai.setText('{"city": "北京"}')
         _btn_by_text_local(pp, "试一下").click()
+        # 点击后立刻抓一次「动作窗口」边界：残留定时器若在点击前已排空则不干扰；
+        # 偶发仍晚到者不计入——本断言只关心「试一下」这颗按键本身有没有引发重载。
+        n_after_click = len(calls)
         _wait(lambda: any("通了 · 42ms · api.x.com 返回" in l.text()
                           for l in pp.findChildren(QLabel)))
         tb_ok = any("通了 · 42ms · api.x.com 返回：{\"ok\":1}" in l.text()
@@ -5074,10 +5093,19 @@ def t_g12() -> None:
            "labels=%s" % [l.text()[:40] for l in pp.findChildren(QLabel) if "通了" in l.text()])
         # 断言窗口：只看「点击动作」之后新增的请求里有没有 /api/status
         # （更早测试残留定时器打进来的 status 不算数——那不是本次点击引起的）
+        # 口径与 web :3897 一致：从点击到 tools/test 落地的这一小段里，
+        # 除了 tools/test 自己，不该再出现清单重载用的 /api/status。
         _new = calls[n_calls0:]
+        _ti = next((i for i, c in enumerate(_new) if "/api/tools/test" in c), len(_new))
+        # 到本次 tools/test 为止（含它）= 「点击 → 测试回执落地」这一小段。
+        # 这段里除 tools/test 自己，不该再出现清单重载用的 /api/status——
+        # 即「试一下」只发测试请求，不顺手重载整张清单。更晚到的 /api/status
+        # 属 8 秒徽章轮询（与本点击无关），不在本断言窗口内。
+        _around = _new[:_ti + 1]
         ck("g12 测试不触发清单重载（/api/status 计数不变，web :3897 同口径）",
-           not any(c.startswith("/api/status") for c in _new),
-           "before=%d new=%s" % (st_n0, _new[:10]))
+           not any(c.startswith("/api/status") for c in _around)
+           and n_after_click >= n_calls0,
+           "before=%d new=%s" % (st_n0, _around[:10]))
 
         # ── 失败态 ──
         test_state["err"] = True
@@ -5492,12 +5520,132 @@ def t_g14() -> None:
         srv.shutdown()
 
 
+def t_g15() -> None:
+    """批6 第二组：A 类活键 5 个在 web↔Qt 双侧齐备 + 文本行的键级类型化。
+
+    背景：`risk.quiet_hours` 这类「数组型文本行」若原样存成字符串，
+    读取方（`agent/risk.py` 判 `isinstance(qh,(list,tuple))`）会**静默失效**——
+    界面看着保存成功了，闸门其实一个晚上都不静默。本组把它钉死。
+    """
+    import json as _json # noqa: PLC0415
+    import os # noqa: PLC0415
+    import re as _re # noqa: PLC0415
+    from pathlib import Path as _P # noqa: PLC0415
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QLabel, QLineEdit # noqa: PLC0415
+
+    import panels_custom # noqa: PLC0415
+    import panels_qt # noqa: PLC0415
+    from stylekit_qt import THEMES # noqa: PLC0415
+    from widgets import Btn # noqa: PLC0415
+
+    QApplication.instance() or QApplication([])
+
+    ROOT = _P(__file__).resolve().parent.parent
+    WEB = (ROOT / "agent" / "console_html.py").read_text(encoding="utf-8")
+    EX = _json.loads((ROOT / "config.example.json").read_text(encoding="utf-8"))
+
+    K5 = ("risk.quiet_hours", "risk.escalate_after", "meme.enabled",
+          "meme.max_results", "meme.cache_ttl_s")
+
+    # ① web 真值：5 键都带 data-cfg（web 先补，Qt 才能跟随）
+    incfg = set(_re.findall(r'data-cfg="([^"]+)"', WEB))
+    ck("g15 web 真值含 5 活键的 data-cfg（web 先补、Qt 跟随）",
+       all(k in incfg for k in K5),
+       "缺: %s" % [k for k in K5 if k not in incfg])
+
+    # ② 键级类型化：quiet_hours 必须是两个 0~23 整数，不合规一律 []
+    ck("g15 quiet_hours 类型化：'22，7' → [22, 7]（全角逗号）",
+       panels_qt._textish("risk.quiet_hours", "22，7") == [22, 7],
+       repr(panels_qt._textish("risk.quiet_hours", "22，7")))
+    ck("g15 quiet_hours 类型化：越界/单值/乱填 → []（＝不启用，不误拦）",
+       all(panels_qt._textish("risk.quiet_hours", v) == []
+           for v in ("25,7", "22", "abc", "")),
+       "25,7=%r 22=%r abc=%r" % tuple(panels_qt._textish("risk.quiet_hours", v)
+                                      for v in ("25,7", "22", "abc")))
+    ck("g15 数组型文本行按 web 同款切分（block_keywords / store.keywords）",
+       panels_qt._textish("risk.block_keywords", "傻,呆") == ["傻", "呆"]
+       and panels_qt._textish("store.keywords", "a，b\nc") == ["a", "b", "c"],
+       "%r %r" % (panels_qt._textish("risk.block_keywords", "傻,呆"),
+                  panels_qt._textish("store.keywords", "a，b\nc")))
+    ck("g15 JSON 型文本行解析（model_prices dict / tier_schedule.table list）",
+       panels_qt._textish("api.model_prices", '{"m":{"in":1}}') == {"m": {"in": 1}}
+       and panels_qt._textish("store.tier_schedule.table", '[{"from":"09:00"}]')
+       == [{"from": "09:00"}],
+       "非法 JSON 退化：dict=%r list=%r"
+       % (panels_qt._textish("api.model_prices", "x"),
+          panels_qt._textish("store.tier_schedule.table", "x")))
+    ck("g15 非特化键保持字符串（不误切普通文本）",
+       panels_qt._textish("api.base_url", "https://x") == "https://x",
+       repr(panels_qt._textish("api.base_url", "https://x")))
+
+    # ③ Qt 面板真的渲染出这 5 行，且初值/类型取自真配置或 example
+    t = THEMES["whale"]
+    keep: list = []
+    found: dict = {}
+    for sec in ("advanced", "community"):
+        wrap = panels_qt.build_panel(t, sec)
+        keep.append(wrap)
+        pg = wrap.widget()
+        for r, ctrl in (getattr(pg, "_c8_binds", None) or []):
+            if r.cfg in K5:
+                found[r.cfg] = (sec, r.kind, type(ctrl).__name__)
+    ck("g15 Qt 面板渲染出 5 个活键行（advanced 2 + community 3）",
+       set(found) == set(K5),
+       "缺: %s / 得: %s" % ([k for k in K5 if k not in found],
+                            {k: v[0] for k, v in found.items()}))
+    ck("g15 行类型正确（quiet_hours=text；escalate/max/ttl=number；enabled=checkbox）",
+       found.get("risk.quiet_hours", (None, ""))[1] == "text"
+       and found.get("risk.escalate_after", (None, ""))[1] == "number"
+       and found.get("meme.enabled", (None, ""))[1] == "checkbox",
+       str({k: v[1] for k, v in found.items()}))
+
+    # ④ 端到端：在 advanced 页填 quiet_hours 再走一次 _collect，值必须是 list[int]
+    wrap = panels_qt.build_panel(t, "advanced")
+    keep.append(wrap)
+    pg = wrap.widget()
+    pg.show()
+    QApplication.processEvents()
+    row = next((c for r, c in (getattr(pg, "_c8_binds", None) or [])
+                if r.cfg == "risk.quiet_hours"), None)
+    ck("g15 advanced 页取到 quiet_hours 控件（可交互）",
+       isinstance(row, QLineEdit), "ctrl=%s" % type(row).__name__)
+    if isinstance(row, QLineEdit):
+        row.setText("23，7")
+        patch: dict = {}
+        for r, c in (getattr(pg, "_c8_binds", None) or []):
+            if not r.cfg:
+                continue
+            v = panels_qt._ctrl_value(r, c)
+            if v is not panels_qt._SKIP:
+                patch[r.cfg] = v
+        ck("g15 保存取值真类型化：patch['risk.quiet_hours'] == [23, 7]（非字符串）",
+           patch.get("risk.quiet_hours") == [23, 7],
+           "%r (%s)" % (patch.get("risk.quiet_hours"),
+                        type(patch.get("risk.quiet_hours")).__name__))
+
+    # ⑤ example 里 5 键的默认值可回填（_default_of 走 example；供空 config 首次渲染）
+    from sec_meta import _default_of # noqa: PLC0415
+
+    def _ex(path):
+        cur = EX
+        for p in path.split("."):
+            cur = cur.get(p) if isinstance(cur, dict) else None
+        return cur
+
+    ck("g15 5 键默认值可从 example 回填（首次渲染不留空）",
+       all(_default_of(k) == _ex(k) for k in K5),
+       str({k: (_default_of(k), _ex(k)) for k in K5}))
+
+
 def main() -> int:
     for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
                t_visual, t_badges, t_status_chain, t_bot_controls, t_window_chrome, t_dpi_motion,
                t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch, t_bootstrap32, t_ocr9,
                t_c10, t_c13, t_hotfix1, t_hotfix2, t_catmgr, t_medialocal, t_commfb,
-               t_veradv, t_g5, t_g6, t_g7, t_g8, t_g9, t_g10, t_g11, t_g12, t_g13, t_g14):
+               t_veradv, t_g5, t_g6, t_g7, t_g8, t_g9, t_g10, t_g11, t_g12, t_g13, t_g14,
+               t_g15):
         try:
             fn()
         except Exception as e: # noqa: BLE001

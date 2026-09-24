@@ -6030,6 +6030,10 @@ def _feedback_appendix(t: Tokens, page: QWidget) -> None:
     lb.setFont(qfont(t, 12))
     lb.setWordWrap(True)
     lb.setStyleSheet(f"color:{t.tx3};background:transparent;")
+    fl_note = QLabel("") # 补发回执独立落点（web toast 的 Qt 等价：与状态卡分开，互不覆盖）
+    fl_note.setFont(qfont(t, 12))
+    fl_note.setWordWrap(True)
+    fl_note.setStyleSheet(f"color:{t.tx3};background:transparent;")
     row = QHBoxLayout()
     b_rf = Btn("刷新", t, "ghost")
     b_fl = Btn("补发积压", t, "ghost")
@@ -6037,6 +6041,7 @@ def _feedback_appendix(t: Tokens, page: QWidget) -> None:
     row.addWidget(b_fl)
     row.addStretch(1)
     card.body.addLayout(row)
+    card.body.addWidget(fl_note)
     card.body.addWidget(lb)
     page.layout().addWidget(card)
 
@@ -6086,14 +6091,35 @@ def _feedback_appendix(t: Tokens, page: QWidget) -> None:
         QTimer.singleShot(300, _apply)
 
     def _flush() -> None:
+        """补发积压（web fbFlush 对齐）。
+
+        web 侧把回执走 toast、状态卡另行 fbLoad() 刷新——两边是**不同的落点**。
+        Qt 若把回执写进状态卡，会被随后的 _load() 回填覆盖（谁后到谁赢），
+        故回执写独立的 fl_note 行，状态卡只由 _load() 独占。
+        """
         from panels_qt import _act_run # noqa: PLC0415
 
-        _act_run("fbFlush", lb)
+        _act_run("fbFlush", fl_note)
+
+        def _after(left: int = 40) -> None:
+            # 等 _act_run 的 150ms 轮询把回执落下来（上限约 8s，绝不无限重排——
+            # 控件在测试拆窗时会被销毁，无界重试会把事件循环拖住）。
+            try:
+                pending = fl_note.text().startswith("执行中")
+            except RuntimeError: # 控件已销毁（拆窗），放弃刷新
+                return
+            if pending and left > 0:
+                QTimer.singleShot(200, lambda: _after(left - 1))
+                return
+            _load() # 回执已落，再刷新状态卡（web：toast 后 fbLoad()）
+
+        QTimer.singleShot(200, _after)
 
     b_rf.clicked.connect(_load)
     b_fl.clicked.connect(_flush)
     page._fb_reload = _load # 提交成功后联动刷新（_fb_submit 读）
     page._fb_lb = lb # 状态行引用（自检断言用）
+    page._fb_flnote = fl_note # 补发回执行引用（自检断言用）
     _load()
 
 
