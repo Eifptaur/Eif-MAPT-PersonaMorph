@@ -3169,7 +3169,9 @@ def memory_panel(t: Tokens) -> QWidget:
         for m in members:
             it = QListWidgetItem()
             mem_table.addItem(it)
-            mem_table.setItemWidget(it, _member_card(t, m, state["chat_key"], _render_members, _sync_sel_btn))
+            mem_table.setItemWidget(it, _member_card(
+                t, m, state["chat_key"], _render_members, _sync_sel_btn,
+                note=mnote, refresh_fn=lambda: load_memory(state["chat_key"])))
             it.setSizeHint(mem_table.itemWidget(it).sizeHint())
         badge.set("info", f"{len(members)} 人" if members else "暂无印象")
         _sync_sel_btn()
@@ -3313,7 +3315,8 @@ def memory_panel(t: Tokens) -> QWidget:
     return page
 
 
-def _member_card(t: Tokens, m: dict, chat_key: str, reload_fn, sync_fn) -> QWidget:
+def _member_card(t: Tokens, m: dict, chat_key: str, reload_fn, sync_fn,
+                 note=None, refresh_fn=None) -> QWidget:
     w = QWidget()
     w.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
     w.setStyleSheet("background:transparent;")
@@ -3334,6 +3337,13 @@ def _member_card(t: Tokens, m: dict, chat_key: str, reload_fn, sync_fn) -> QWidg
     upd = QLabel(str(m.get("updatedAt") or ""))
     upd.setFont(qfont(t, 11.5))
     upd.setStyleSheet(f"color:{t.tx3};background:transparent;")
+    edit_btn = Btn("编辑", t, "ghost")
+    edit_btn.setFixedWidth(54)
+    edit_btn.clicked.connect(
+        lambda _=False: _mem_edit_dlg(t, edit_btn, m, chat_key, refresh_fn, note))
+    deep_btn = Btn("深度印象", t, "ghost")
+    deep_btn.clicked.connect(
+        lambda _=False: _mem_deep_dlg(t, deep_btn, m, chat_key, refresh_fn, note))
     del_btn = Btn("删除", t, "ghost")
     del_btn.setFixedWidth(54)
     del_btn.clicked.connect(lambda _=False: _del_member(chat_key, m, reload_fn))
@@ -3342,6 +3352,8 @@ def _member_card(t: Tokens, m: dict, chat_key: str, reload_fn, sync_fn) -> QWidg
     h.addWidget(cnt)
     h.addWidget(upd)
     h.addStretch(1)
+    h.addWidget(edit_btn)
+    h.addWidget(deep_btn)
     h.addWidget(del_btn)
     return w
 
@@ -3350,6 +3362,150 @@ def _del_member(chat_key: str, m: dict, reload_fn) -> None:
     _async_post(None, "/api/memory",
                 {"chat_key": chat_key, "user_id": m.get("userId")},
                 lambda r, e: reload_fn())
+
+
+def _mem_membrs(m: dict) -> list:
+    """一条成员记录里的印象文本列表（web :6908 同口径：逐条 content，缺失补空串）。"""
+    imps = m.get("impressions")
+    if not isinstance(imps, list):
+        return []
+    return [(e.get("content") or "") if isinstance(e, dict) else "" for e in imps]
+
+
+def _mem_edit_dlg(t: Tokens, btn, m: dict, chat_key: str, refresh_fn, note) -> None:
+    """编辑印象弹窗（web memEdit :6906-6924）：
+    textarea 预填现有印象（每行一条）→ 保存=按行拆、trim、滤空后**整份覆盖**
+    POST /api/memory action:update —— 清空=删除全部（web 同语义，无护栏）；
+    取消不发包。失败在弹窗内回显原因、弹窗不关。"""
+    name = m.get("name") or m.get("userId") or "某人"
+    dlg, v = _card_dialog(t, btn, f"编辑「{name}」的印象", width=640)
+    dlg.resize(640, 380)
+    tip = QLabel("每行一条印象；清空=删除全部。")
+    tip.setFont(qfont(t, 12))
+    tip.setStyleSheet(f"color:{t.tx2};background:transparent;")
+    v.addWidget(tip)
+    ta = _plain_area(t, "\n".join(_mem_membrs(m)), "", 130)
+    ta.setObjectName("memEditText")
+    v.addWidget(ta, 1)
+    st = QLabel("")
+    st.setFont(qfont(t, 11.5))
+    st.setStyleSheet(f"color:{t.tx2};background:transparent;")
+    v.addWidget(st)
+    row = QHBoxLayout()
+    row.addStretch(1)
+    b_cancel = Btn("取消", t, "ghost")
+    b_ok = Btn("保存", t, "primary")
+    row.addWidget(b_cancel)
+    row.addWidget(b_ok)
+    v.addLayout(row)
+
+    def _do_save() -> None:
+        lines = [s.strip() for s in ta.toPlainText().splitlines() if s.strip()]
+        st.setText("保存中…")
+        b_ok.setEnabled(False)
+
+        def _done(r, e): # noqa: ANN001
+            err = e or ((r or {}).get("error") if isinstance(r, dict) else None)
+            if err:
+                st.setText(f"更新失败：{err}")
+                b_ok.setEnabled(True)
+                return
+            dlg.accept()
+            if refresh_fn is not None:
+                refresh_fn()
+            if note is not None:
+                note.setText("已更新")
+
+        _async_post(None, "/api/memory",
+                    {"action": "update", "chat_key": chat_key,
+                     "user_id": m.get("userId"), "name": m.get("name"),
+                     "contents": lines},
+                    _done)
+
+    b_ok.clicked.connect(_do_save)
+    b_cancel.clicked.connect(dlg.reject)
+    dlg.exec()
+
+
+def _mem_deep_dlg(t: Tokens, btn, m: dict, chat_key: str, refresh_fn, note) -> None:
+    """深度印象（web deepBtn :6926-6951）：先 POST /api/memory/deep-profile
+    {user_id, name} 拿整理稿；ok 才弹窗（说明行=note + 稿件预填），
+    「追加为印象」= 旧印象 + 稿件按行 合并整份覆盖；不 ok / 出错只更新状态行、不弹窗。"""
+    name = m.get("name") or m.get("userId") or "某人"
+    if note is not None:
+        note.setText(f"正在整理「{name}」的全部历史印象…")
+
+    def _fetched(r, e): # noqa: ANN001
+        err = e or ((r or {}).get("error") if isinstance(r, dict) else None)
+        if err:
+            if note is not None:
+                note.setText(f"整理失败：{err}")
+            return
+        if not (isinstance(r, dict) and r.get("ok")):
+            if note is not None:
+                note.setText("暂无可整理的记录："
+                             + str((r or {}).get("note") or (r or {}).get("error") or "无返回"))
+            return
+        _mem_deep_show(t, btn, m, chat_key, refresh_fn, note,
+                       str(r.get("note") or ""), str(r.get("text") or ""))
+
+    _async_post(None, "/api/memory/deep-profile",
+                {"user_id": m.get("userId") or "", "name": m.get("name") or ""},
+                _fetched)
+
+
+def _mem_deep_show(t: Tokens, btn, m: dict, chat_key: str, refresh_fn, note,
+                   dnote: str, dtext: str) -> None:
+    """深挖结果弹窗（web :6933-6948）：稿件可改，「追加为印象」合并旧印象整份覆盖。"""
+    name = m.get("name") or m.get("userId") or "某人"
+    dlg, v = _card_dialog(t, btn, f"「{name}」深度印象", width=640)
+    dlg.resize(640, 460)
+    head = QLabel(dnote)
+    head.setFont(qfont(t, 12))
+    head.setWordWrap(True)
+    head.setStyleSheet(f"color:{t.tx2};background:transparent;")
+    v.addWidget(head)
+    ta = _plain_area(t, dtext, "", 200)
+    ta.setObjectName("memDeepText")
+    v.addWidget(ta, 1)
+    st = QLabel("")
+    st.setFont(qfont(t, 11.5))
+    st.setStyleSheet(f"color:{t.tx2};background:transparent;")
+    v.addWidget(st)
+    row = QHBoxLayout()
+    row.addStretch(1)
+    b_cancel = Btn("取消", t, "ghost")
+    b_ok = Btn("追加为印象", t, "primary")
+    row.addWidget(b_cancel)
+    row.addWidget(b_ok)
+    v.addLayout(row)
+
+    def _do_append() -> None:
+        lines = [s.strip() for s in ta.toPlainText().splitlines() if s.strip()]
+        st.setText("追加中…")
+        b_ok.setEnabled(False)
+
+        def _done(r, e): # noqa: ANN001
+            err = e or ((r or {}).get("error") if isinstance(r, dict) else None)
+            if err:
+                st.setText(f"保存失败：{err}")
+                b_ok.setEnabled(True)
+                return
+            dlg.accept()
+            if refresh_fn is not None:
+                refresh_fn()
+            if note is not None:
+                note.setText("已追加印象")
+
+        _async_post(None, "/api/memory",
+                    {"action": "update", "chat_key": chat_key,
+                     "user_id": m.get("userId"), "name": m.get("name"),
+                     "contents": _mem_membrs(m) + lines},
+                    _done)
+
+    b_ok.clicked.connect(_do_append)
+    b_cancel.clicked.connect(dlg.reject)
+    dlg.exec()
 
 
 # ---------------------------------------------------------------- 分发表（panels_qt.build_panel 查这里）

@@ -3857,12 +3857,271 @@ def t_g6() -> None:
         srv.shutdown()
 
 
+def t_g7() -> None:
+    """批4第七组全链路真跑：memory 编辑/深挖弹窗（memEdit/deep-profile）。
+
+    手法同 t_g6：假后端 + patch current_url/QDialog.exec（exec 打开即返回、
+    控件树留内存供驱动）。断言：编辑弹窗预填与整份覆盖（按行 trim 滤空）、
+    清空=删除全部、失败弹窗不关；深挖请求/结果弹窗/追加合并旧印象、不可整理路径。
+    """
+    import json as _json # noqa: PLC0415
+    import os # noqa: PLC0415
+    import threading as _th # noqa: PLC0415
+    import time as _time # noqa: PLC0415
+    from http.server import BaseHTTPRequestHandler, HTTPServer # noqa: PLC0415
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QLabel, # noqa: PLC0415
+                                   QListWidget, QPlainTextEdit)
+
+    import agent_bridge # noqa: PLC0415
+    import panels_qt # noqa: PLC0415
+    from stylekit_qt import THEMES # noqa: PLC0415
+    from widgets import Btn # noqa: PLC0415
+
+    QApplication.instance() or QApplication([])
+
+    calls: list = []
+    post_state = {"err": False}
+    deep_state = {"ok": True}
+    M1 = {"userId": "U1", "name": "阿明", "updatedAt": "09-25 01:02",
+          "impressions": [{"content": "印象一"}, {"content": "印象二"}]}
+
+    class _H(BaseHTTPRequestHandler):
+        def _send(self, obj): # noqa: N802
+            body = _json.dumps(obj).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self): # noqa: N802
+            calls.append(self.path)
+            self._send({"chat_key": "CK",
+                        "chats": [{"chat_key": "CK", "name": "测试群", "count": 2}],
+                        "members": [dict(M1)]})
+
+        def do_POST(self): # noqa: N802
+            n = int(self.headers.get("Content-Length") or 0)
+            try:
+                body = _json.loads(self.rfile.read(n).decode("utf-8", "replace")) if n else {}
+            except Exception: # noqa: BLE001
+                body = {}
+            calls.append(self.path + "#" + _json.dumps(body, ensure_ascii=False))
+            if "/api/memory/deep-profile" in self.path:
+                if deep_state["ok"]:
+                    self._send({"ok": True, "note": "由 3 条历史整理", "text": "深度A\n深度B"})
+                else:
+                    self._send({"ok": False, "note": "没有可整理的历史"})
+            elif "/api/memory" in self.path:
+                if post_state["err"]:
+                    self._send({"ok": False, "error": "后台炸了"})
+                else:
+                    self._send({"ok": True})
+            else:
+                self._send({"ok": True})
+
+        def log_message(self, *a): # noqa: N802
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), _H)
+    port = srv.server_address[1]
+    _th.Thread(target=srv.serve_forever, daemon=True, name="fake-be-g7").start()
+
+    _orig_url = agent_bridge.current_url
+    agent_bridge.current_url = lambda: "http://127.0.0.1:%d/?token=tk" % port
+    exec_dlgs: list = []
+    _orig_exec = QDialog.exec
+
+    def _fake_exec(self, *a, **k):
+        exec_dlgs.append(self)
+        return self.result()
+
+    QDialog.exec = _fake_exec
+
+    t = THEMES["whale"]
+
+    def _btn_by_text(root, txt):
+        hits = [b for b in root.findChildren(Btn) if b.text() == txt]
+        return hits[0] if hits else None
+
+    def _row_btn(pp, txt):
+        """只在 memTable **当前**行的 itemWidget 里找按钮——绕开 clear() 后
+        尚未销毁的旧行幽灵（旧闭包 chat_key 停留在选群前）。"""
+        lst = pp.findChild(QListWidget, "memTable")
+        if lst is None:
+            return None
+        for i in range(lst.count()):
+            w = lst.itemWidget(lst.item(i))
+            if w is None:
+                continue
+            for b in w.findChildren(Btn):
+                if b.text() == txt:
+                    return b
+        return None
+
+    def _posts(prefix):
+        return [_json.loads(c.split("#", 1)[1]) for c in calls
+                if "#" in c and c.split("#", 1)[0].startswith(prefix)]
+
+    def _gets_ck():
+        return [c for c in calls if c.startswith("/api/memory?token=tk&chat_key=CK")]
+
+    def _gets(path):
+        return [c for c in calls if c == path]
+
+    def _notes(pp):
+        return [l.text() for l in pp.findChildren(QLabel)]
+
+    def _wait(pred, timeout=6.0):
+        end = _time.time() + timeout
+        while _time.time() < end:
+            QApplication.processEvents()
+            if pred():
+                return True
+            _time.sleep(0.03)
+        QApplication.processEvents()
+        return pred()
+
+    try:
+        wrap = panels_qt.build_panel(t, "memory")
+        pp = wrap.widget()
+        pp.show()
+        QApplication.processEvents()
+
+        b_rf = _btn_by_text(pp, "刷新")
+        ck("g7 刷新钮在场", b_rf is not None, "rf=%s" % b_rf)
+        b_rf.click()
+        _wait(lambda: _row_btn(pp, "编辑") is not None)
+        ck("g7 行内三钮在场（编辑/深度印象/删除）",
+           _row_btn(pp, "编辑") is not None
+           and _row_btn(pp, "深度印象") is not None
+           and _row_btn(pp, "删除") is not None,
+           "edit=%s deep=%s del=%s" % (_row_btn(pp, "编辑"),
+                                       _row_btn(pp, "深度印象"),
+                                       _row_btn(pp, "删除")))
+
+        chat_sel = pp.findChild(QComboBox, "memChats")
+        ck("g7 群选下拉存在且已填充", chat_sel is not None and chat_sel.count() >= 2,
+           "sel=%s n=%s" % (chat_sel is not None, chat_sel.count() if chat_sel else -1))
+        chat_sel.setCurrentIndex(1) # data="CK" → 按群加载
+        _wait(lambda: len(_gets_ck()) >= 1)
+        ck("g7 选群触发按群加载 GET /api/memory?chat_key=CK",
+           len(_gets_ck()) >= 1, str(calls[-3:]))
+
+        # ── 编辑弹窗：预填 → 整份覆盖（滤空行）→ 刷新联动 ──
+        n_dlgs = len(exec_dlgs)
+        _row_btn(pp, "编辑").click()
+        _wait(lambda: len(exec_dlgs) > n_dlgs)
+        dlg1 = exec_dlgs[-1]
+        ta1 = dlg1.findChild(QPlainTextEdit)
+        ck("g7 编辑弹窗：标题+说明+预填两行",
+           dlg1.windowTitle() == "编辑「阿明」的印象"
+           and ta1 is not None
+           and ta1.toPlainText() == "印象一\n印象二"
+           and any(l.text() == "每行一条印象；清空=删除全部。"
+                   for l in dlg1.findChildren(QLabel)),
+           "title=%r ta=%r" % (dlg1.windowTitle(),
+                               ta1.toPlainText() if ta1 else None))
+
+        ta1.setPlainText("  新A  \n\n新B")
+        n_posts = len(_posts("/api/memory"))
+        _btn_by_text(dlg1, "保存").click()
+        _wait(lambda: len(_posts("/api/memory")) > n_posts
+              and "已更新" in _notes(pp))
+        bodies = _posts("/api/memory")
+        ck("g7 编辑保存：action:update 整份覆盖（trim+滤空行）+ 弹窗关 + 刷新联动",
+           bodies and bodies[-1] == {"action": "update", "chat_key": "CK",
+                                     "user_id": "U1", "name": "阿明",
+                                     "contents": ["新A", "新B"]}
+           and dlg1.result() == 1
+           and len(_gets_ck()) >= 2
+           and "已更新" in _notes(pp),
+           "body=%s result=%s gets=%d" % (bodies[-1] if bodies else None,
+                                          dlg1.result(),
+                                          len(_gets_ck())))
+
+        # ── 清空=删除全部（web 同语义）──
+        _row_btn(pp, "编辑").click()
+        _wait(lambda: len(exec_dlgs) > n_dlgs + 1)
+        dlg2 = exec_dlgs[-1]
+        dlg2.findChild(QPlainTextEdit).setPlainText("")
+        n_posts = len(_posts("/api/memory"))
+        _btn_by_text(dlg2, "保存").click()
+        _wait(lambda: len(_posts("/api/memory")) > n_posts)
+        ck("g7 清空保存 → contents=[]（删除全部）",
+           _posts("/api/memory")[-1]["contents"] == [],
+           str(_posts("/api/memory")[-1]))
+
+        # ── 编辑保存失败：弹窗不关、弹窗内回显原因 ──
+        post_state["err"] = True
+        _row_btn(pp, "编辑").click()
+        _wait(lambda: len(exec_dlgs) > n_dlgs + 2)
+        dlg3 = exec_dlgs[-1]
+        _btn_by_text(dlg3, "保存").click()
+        _wait(lambda: any("更新失败：后台炸了" in l.text()
+                          for l in dlg3.findChildren(QLabel)))
+        ck("g7 编辑失败：弹窗不关（result 未置位）+ 弹窗内回显「更新失败：后台炸了」",
+           dlg3.result() == 0
+           and any("更新失败：后台炸了" in l.text()
+                   for l in dlg3.findChildren(QLabel)),
+           "result=%s" % dlg3.result())
+        dlg3.reject()
+        post_state["err"] = False
+
+        # ── 深度印象：请求 → 结果弹窗 → 追加合并 ──
+        n_dlgs = len(exec_dlgs)
+        _row_btn(pp, "深度印象").click()
+        _wait(lambda: len(_posts("/api/memory/deep-profile")) >= 1)
+        ck("g7 深挖请求体 {user_id, name}",
+           _posts("/api/memory/deep-profile")[-1]
+           == {"user_id": "U1", "name": "阿明"},
+           str(_posts("/api/memory/deep-profile")[-1]))
+        _wait(lambda: len(exec_dlgs) > n_dlgs)
+        dlg4 = exec_dlgs[-1]
+        ta4 = dlg4.findChild(QPlainTextEdit)
+        ck("g7 深挖弹窗：标题+整理说明+稿件预填",
+           dlg4.windowTitle() == "「阿明」深度印象"
+           and ta4 is not None and ta4.toPlainText() == "深度A\n深度B"
+           and any(l.text() == "由 3 条历史整理" for l in dlg4.findChildren(QLabel)),
+           "title=%r ta=%r" % (dlg4.windowTitle(),
+                               ta4.toPlainText() if ta4 else None))
+
+        n_posts = len(_posts("/api/memory"))
+        _btn_by_text(dlg4, "追加为印象").click()
+        _wait(lambda: len(_posts("/api/memory")) > n_posts
+              and "已追加印象" in _notes(pp))
+        bodies = _posts("/api/memory")
+        ck("g7 追加=旧印象+稿件合并整份覆盖 + 弹窗关",
+           bodies and bodies[-1] == {"action": "update", "chat_key": "CK",
+                                     "user_id": "U1", "name": "阿明",
+                                     "contents": ["印象一", "印象二", "深度A", "深度B"]}
+           and dlg4.result() == 1
+           and "已追加印象" in _notes(pp),
+           "body=%s result=%s" % (bodies[-1] if bodies else None, dlg4.result()))
+
+        # ── 不可整理路径：note 回显、不弹窗 ──
+        deep_state["ok"] = False
+        n_dlgs = len(exec_dlgs)
+        _btn_by_text(pp, "深度印象").click()
+        _wait(lambda: "暂无可整理的记录：没有可整理的历史" in _notes(pp))
+        ck("g7 深挖不可整理：note 回显原因、不弹窗",
+           "暂无可整理的记录：没有可整理的历史" in _notes(pp)
+           and len(exec_dlgs) == n_dlgs,
+           str([x for x in _notes(pp) if "暂无" in x]))
+    finally:
+        QDialog.exec = _orig_exec
+        agent_bridge.current_url = _orig_url
+        srv.shutdown()
+
+
 def main() -> int:
     for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
                t_visual, t_badges, t_status_chain, t_bot_controls, t_window_chrome, t_dpi_motion,
                t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch, t_bootstrap32, t_ocr9,
                t_c10, t_c13, t_hotfix1, t_hotfix2, t_catmgr, t_medialocal, t_commfb,
-               t_veradv, t_g5, t_g6):
+               t_veradv, t_g5, t_g6, t_g7):
         try:
             fn()
         except Exception as e: # noqa: BLE001
