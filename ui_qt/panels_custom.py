@@ -2933,7 +2933,8 @@ def persona_panel(t: Tokens) -> QWidget:
     ccard.body.addWidget(Field(t, "人设名", "机器人以谁的身份说话", name_ctrl))
     binds.append(("persona.bot_name", name_ctrl, "text"))
 
-    part = Combo(t, [("安静型", "low"), ("普通群友", "medium"), ("活跃型", "high")],
+    # ⛔ Combo 契约：options=(value, label)——此处原传反过（真机显示英文值），顺修
+    part = Combo(t, [("low", "安静型"), ("medium", "普通群友"), ("high", "活跃型")],
                  config_io.read_path("persona.participation") or "medium")
     part.setObjectName("personaPart")
     ccard.body.addWidget(Field(t, "参与度", "在群里多话还是少话", part))
@@ -2944,6 +2945,93 @@ def persona_panel(t: Tokens) -> QWidget:
     role_text_ctrl.setObjectName("personaRoleText")
     ccard.body.addWidget(Field(t, "自定义角色文本", "留空=内置；填了=完全替换（可参考 agent/persona.py）", role_text_ctrl))
     binds.append(("persona.role_text", role_text_ctrl, "textarea"))
+
+    # ── 行为档推荐（web roleHintBtn :6379-6415）：按角色卡让模型评估参与度/表情包档，
+    #    弹窗里可改推荐值，「应用」写 persona.participation + store.sticker_level。──
+    def _role_hint() -> None:
+        rt = role_text_ctrl.toPlainText()[:2400]
+        pnote.setText("正在按角色卡评估行为档（模型多维度）…")
+
+        def _done(r, e): # noqa: ANN001
+            if e:
+                pnote.setText(f"评估失败：{e}")
+                return
+            if isinstance(r, dict) and r.get("error"):
+                pnote.setText(f"评估失败：{r.get('error')}")
+                return
+            r = r or {}
+            part_v = str(r.get("participation") or "medium")
+            st = int(r.get("sticker") or 0)
+            via = ("（模型评估" + (("：" + str(r.get("reason"))) if r.get("reason") else "") + "）"
+                   if r.get("via") == "llm" else "（本地规则）")
+            extra = ""
+            if isinstance(r.get("marks"), dict):
+                extra = " [活跃m×%s 安静m×%s]" % (r["marks"].get("active"), r["marks"].get("passive"))
+            pnote.setText("推荐：参与度 %s · 表情包 %d 级 %s%s"
+                          % ({"high": "活跃", "low": "安静"}.get(part_v, "普通"), st, via, extra))
+            _role_hint_dlg(part_v, st, pnote.text())
+
+        _async_post(None, "/api/persona/behavior-recommend", {"text": rt}, _done)
+
+    def _role_hint_dlg(part_v: str, st: int, rc_text: str = "") -> None:
+        from panels_qt import Combo # noqa: PLC0415
+
+        dlg, v = _card_dialog(t, page, "推荐行为档", width=520)
+        dlg.resize(520, 340)
+        tip = QLabel("模型按角色卡给出了推荐，可改。点「应用」写入参与度与表情包积极度（保存后生效）。")
+        tip.setFont(qfont(t, 12))
+        tip.setWordWrap(True)
+        tip.setStyleSheet(f"color:{t.tx2};background:transparent;")
+        v.addWidget(tip)
+        if rc_text:
+            rc = QLabel(rc_text)
+            rc.setFont(qfont(t, 12))
+            rc.setWordWrap(True)
+            rc.setStyleSheet(f"color:{t.tx};background:transparent;")
+            v.addWidget(rc)
+        c_part = Combo(t, [("low", "安静型"), ("medium", "普通群友"), ("high", "活跃型")], part_v)
+        c_part.setObjectName("roleHintPart")
+        v.addWidget(Field(t, "参与度", "在群里多话还是少话", c_part))
+        c_stk = Combo(t, [("0", "0 级 · 少"), ("1", "1 级 · 偶尔"),
+                          ("2", "2 级 · 较多"), ("3", "3 级 · 爱好者")], str(st))
+        c_stk.setObjectName("roleHintSticker")
+        v.addWidget(Field(t, "表情包积极度", "发表情包的频率档", c_stk))
+        row = QHBoxLayout()
+        row.addStretch(1)
+        b_cancel = Btn("取消", t, "ghost")
+        b_ok = Btn("应用", t, "primary")
+        row.addWidget(b_cancel)
+        row.addWidget(b_ok)
+        v.addLayout(row)
+
+        def _apply() -> None:
+            pv = str(c_part.currentData() or "medium")
+            try:
+                sv = int(c_stk.currentData() or 0)
+            except ValueError: # noqa: PERF203
+                sv = 0
+            ok, why = config_io.write_patch({"persona.participation": pv,
+                                             "store.sticker_level": sv})
+            if not ok:
+                pnote.setText(f"应用失败：{why}")
+                return
+            i = part.findData(pv)
+            if i >= 0:
+                part.setCurrentIndex(i) # 参与度下拉同步显示新值（web syncToForm 同款）
+            pnote.setText("已应用行为档（参与度/表情包积极度）并保存")
+            dlg.accept()
+
+        b_ok.clicked.connect(_apply)
+        b_cancel.clicked.connect(dlg.reject)
+        dlg.exec()
+
+    hint_row = QHBoxLayout()
+    b_hint = Btn("根据角色卡推荐行为档", t, "ghost")
+    b_hint.setObjectName("roleHintBtn")
+    b_hint.clicked.connect(_role_hint)
+    hint_row.addWidget(b_hint)
+    hint_row.addStretch(1)
+    ccard.body.addLayout(hint_row)
 
     custom_rules = _area(t, _as_text(config_io.read_path("persona.custom_rules")),
                          rows=2, placeholder="如：回复永远不超过 5 个字")
@@ -5830,8 +5918,169 @@ def _prov_key_dlg(t: Tokens, page: QWidget, prov: str, p: dict,
     dlg.exec()
 
 
+def _briefs_appendix(t: Tokens, page: QWidget) -> None:
+    """简报卡（web bf* :1090-1184，sec-wechat 尾）：给指定会话注入预设信息——
+    选群（或手填会话 key）→ 列出在用/已到期条目 → 添加（内容/截止/每次都用）/删除。
+    代价在卡内说明行讲清（随该会话请求发给模型；相关性判断是字面匹配）。"""
+    from panels_qt import _line as _bf_line # noqa: PLC0415
+
+    card = Card(t)
+    card.body.addWidget(h2(t, "简报（给指定会话注入预设信息，/api/briefs）"))
+    prow = QHBoxLayout()
+    bf_chat = QComboBox()
+    bf_chat.setObjectName("bfChat")
+    bf_chat.setMinimumWidth(220)
+    bf_chat.setFixedHeight(32)
+    bf_chat.setFont(qfont(t, t.body_size))
+    bf_chat.setStyleSheet(
+        f"QComboBox{{background:{rgba(t.q('tx'), 0 if t.glass else 16).name(QColor.NameFormat.HexArgb)};"
+        f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:0 10px;}}"
+        f"QComboBox::drop-down{{border:none;width:22px;}}"
+        f"QComboBox QAbstractItemView{{background:{'#0E2136' if t.glass else t.card};"
+        f"color:{t.tx};border:1px solid {t.bd};}}")
+    b_bf_rf = Btn("刷新会话", t, "ghost")
+    b_bf_rf.setObjectName("bfRefresh")
+    prow.addWidget(QLabel("会话"))
+    prow.addWidget(bf_chat, 1)
+    prow.addWidget(b_bf_rf)
+    card.body.addLayout(prow)
+    bf_key = _bf_line(t, "", placeholder="也可以直接填会话 key（私聊形如 private:wxid_xxx）")
+    bf_key.setObjectName("bfChatKey")
+    card.body.addWidget(Field(t, "会话 key", "手填优先于上面的下拉", bf_key))
+    bf_text = _bf_line(t, "", placeholder="例：这个群周六下午社庆，地点在 3 号工作室")
+    bf_text.setObjectName("bfText")
+    card.body.addWidget(Field(t, "内容", "", bf_text))
+    row2 = QHBoxLayout()
+    bf_until = _bf_line(t, "", placeholder="YYYY-MM-DD（留空＝永久）")
+    bf_until.setObjectName("bfUntil")
+    bf_always = QCheckBox("每次都用（不做相关性判断）")
+    b_add = Btn("添加", t, "primary")
+    b_add.setObjectName("bfAdd")
+    row2.addWidget(bf_until, 1)
+    row2.addWidget(bf_always)
+    row2.addWidget(b_add)
+    card.body.addLayout(row2)
+    bf_rows_host = QWidget()
+    bf_rows_host.setStyleSheet("background:transparent;")
+    bf_rows = QVBoxLayout(bf_rows_host)
+    bf_rows.setContentsMargins(0, 0, 0, 0)
+    bf_rows.setSpacing(4)
+    card.body.addWidget(bf_rows_host)
+    card.body.addWidget(desc(t, "代价说清：这段文字会随该会话的请求一起发给模型（用本机模型则不出本机）；"
+                                "相关性判断是字面匹配——换个说法可能匹配不上，那这一次就不注入。"))
+    page.layout().addWidget(card)
+
+    def _bf_key() -> str:
+        return (bf_key.text() or "").strip() or str(bf_chat.currentData() or "")
+
+    def _bf_render(active: list, expired: list, head_text: str = "") -> None:
+        while bf_rows.count():
+            it = bf_rows.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.deleteLater()
+        chat = _bf_key()
+        head = QLabel(head_text or
+                      (f"{chat}：{len(active)} 条在用"
+                       + (f"，{len(expired)} 条已到期（下次用到时自动舍弃）" if expired else "")))
+        head.setFont(qfont(t, 12, 500))
+        head.setStyleSheet(f"color:{t.tx};background:transparent;")
+        bf_rows.addWidget(head)
+        for it, done in [(x, False) for x in active] + [(x, True) for x in expired]:
+            rid = str(it.get("id") or "")
+            line = QWidget()
+            lh = QHBoxLayout(line)
+            lh.setContentsMargins(0, 0, 0, 0)
+            lh.setSpacing(8)
+            lb = QLabel("· %s（%s）" % (it.get("text") or "",
+                                        "已到期" if done else
+                                        ("%s · %s" % ("每次都用" if it.get("always") else "相关才用",
+                                                      it.get("until_text") or ""))))
+            lb.setFont(qfont(t, 12))
+            lb.setStyleSheet(f"color:{t.tx3 if done else t.tx};background:transparent;")
+            lh.addWidget(lb, 1)
+            b = Btn("删除", t, "ghost")
+            b.setObjectName("bfDel")
+            b.setFixedWidth(54)
+            b.clicked.connect(lambda _=False, _rid=rid: _bf_del(_rid))
+            lh.addWidget(b)
+            bf_rows.addWidget(line)
+        if not active and not expired and not head_text:
+            empty = QLabel("这个会话还没设过预设信息。")
+            empty.setFont(qfont(t, 12))
+            empty.setStyleSheet(f"color:{t.tx3};background:transparent;")
+            bf_rows.addWidget(empty)
+
+    def _bf_load() -> None:
+        chat = _bf_key()
+        if not chat:
+            _bf_render([], [], "先选一个会话（或在上面填会话 key）。")
+            return
+        import urllib.parse as _up # noqa: PLC0415
+
+        r = config_io.get_json("/api/briefs?chat=" + _up.quote(chat), timeout=6.0)
+        if not isinstance(r, dict):
+            _bf_render([], [], "读不到：后台没连上")
+            return
+        if r.get("ok") is False:
+            _bf_render([], [], "读不到：" + str(r.get("error") or r.get("why") or ""))
+            return
+        _bf_render(r.get("active") or [], r.get("expired") or [])
+
+    def _bf_del(rid: str) -> None:
+        _async_post(None, "/api/briefs", {"action": "del", "chat": _bf_key(), "id": rid},
+                    lambda r, e: _bf_load())
+
+    def _bf_add() -> None:
+        chat = _bf_key()
+        text = (bf_text.text() or "").strip()
+        if not chat:
+            bf_text.setPlaceholderText("先选会话（或填会话 key）")
+            return
+        if not text:
+            bf_text.setPlaceholderText("先写内容")
+            return
+        _async_post(None, "/api/briefs",
+                    {"action": "add", "chat": chat, "text": text,
+                     "until": (bf_until.text() or "").strip(),
+                     "always": bf_always.isChecked()},
+                    lambda r, e: _bf_add_done(r, e))
+
+    def _bf_add_done(r, e): # noqa: ANN001
+        if e or (isinstance(r, dict) and r.get("ok") is False):
+            bf_text.setPlaceholderText("没加上：%s" % (e or (r or {}).get("why") or "后台没连上"))
+            return
+        bf_text.clear()
+        bf_until.clear()
+        bf_always.setChecked(False)
+        bf_text.setPlaceholderText("例：这个群周六下午社庆，地点在 3 号工作室")
+        _bf_load()
+
+    def _bf_chats() -> None:
+        r = config_io.get_json("/api/wechat-groups", timeout=5.0) or {}
+        groups = r.get("groups") or []
+        cur = str(bf_chat.currentData() or "")
+        bf_chat.clear()
+        if not groups:
+            bf_chat.addItem("（没读到群聊，可在下面手填 key）", "")
+        for g in groups:
+            wxid = str(g.get("wxid") or "")
+            bf_chat.addItem(str(g.get("name") or g.get("wxid") or ""), "group:" + wxid)
+        if cur:
+            i = bf_chat.findData(cur)
+            if i >= 0:
+                bf_chat.setCurrentIndex(i)
+        _bf_load()
+
+    b_bf_rf.clicked.connect(_bf_chats)
+    bf_chat.currentIndexChanged.connect(lambda _i: _bf_load())
+    bf_key.editingFinished.connect(_bf_load)
+    b_add.clicked.connect(_bf_add)
+    _bf_chats() # web :1183 同款：进页自动加载（web 延时 1.2s，这里直接同步）
+
+
 APPENDIX = {
-    "wechat": _wechat_emoji_appendix,
+    "wechat": (_wechat_emoji_appendix, _briefs_appendix),
     "tools": _tools_utlist_appendix,
     "model": (_model_local_appendix, _model_provider_linkup),
     "imggen": _sd_local_appendix,

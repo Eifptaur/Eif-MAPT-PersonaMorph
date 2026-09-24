@@ -4593,12 +4593,237 @@ def t_g9() -> None:
         srv.shutdown()
 
 
+def t_g10() -> None:
+    """批4第十组（批4 收官）：roleHint 行为档推荐 + briefs 简报卡。
+
+    手法同 t_g9：假后端 + patch current_url/read_path/write_patch/QDialog.exec。
+    断言：roleHint 评估请求（text 截 2400）/推荐弹窗两下拉默认值/应用写两键
+    （write_patch）+ 参与度下拉同步；briefs 进页自动加载（群下拉+列表 head）、
+    添加 POST {action:add,...}、删除 POST {action:del}。
+    """
+    import json as _json # noqa: PLC0415
+    import os # noqa: PLC0415
+    import threading as _th # noqa: PLC0415
+    import time as _time # noqa: PLC0415
+    from http.server import BaseHTTPRequestHandler, HTTPServer # noqa: PLC0415
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, # noqa: PLC0415
+                                   QPlainTextEdit, QLineEdit, QLabel)
+
+    import agent_bridge # noqa: PLC0415
+    import config_io # noqa: PLC0415
+    import panels_qt # noqa: PLC0415
+    from stylekit_qt import THEMES # noqa: PLC0415
+    from widgets import Btn # noqa: PLC0415
+
+    QApplication.instance() or QApplication([])
+
+    calls: list = []
+    brief_state = {"n": 0} # 添加后列表条数变化
+
+    class _H(BaseHTTPRequestHandler):
+        def _send(self, obj): # noqa: N802
+            body = _json.dumps(obj).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self): # noqa: N802
+            calls.append(self.path)
+            if "/api/briefs" in self.path:
+                n = brief_state["n"]
+                rows = [{"id": "b%d" % (i + 1), "text": "预设 %d" % (i + 1),
+                         "always": i % 2 == 0, "until_text": "永久"} for i in range(n)]
+                self._send({"active": rows, "expired": []})
+            elif "/api/wechat-groups" in self.path:
+                self._send({"groups": [{"name": "测试群", "wxid": "g1"}]})
+            elif "/api/persona/behavior" in self.path: # 不会 GET，占位
+                self._send({"ok": True})
+            elif "/api/personas" in self.path:
+                self._send({"personas": [], "custom": [], "rows": []})
+            elif "/api/status" in self.path:
+                self._send({"ok": True, "paused": False, "wechat_connected": True,
+                            "listen": {"groups": 1, "privates": 0},
+                            "model": "deepseek-chat", "uptime_s": 5, "groups": []})
+            elif "/api/prices" in self.path:
+                self._send({"deepseek-chat": {"in": 2.0, "out": 8.0, "cached": 1.0}})
+            elif "/api/config" in self.path:
+                self._send({"persona": {"bot_name": "x", "role_text": "y"}, "api": {}})
+            else:
+                self._send({"ok": True})
+
+        def do_POST(self): # noqa: N802
+            n = int(self.headers.get("Content-Length") or 0)
+            try:
+                body = _json.loads(self.rfile.read(n).decode("utf-8", "replace")) if n else {}
+            except Exception: # noqa: BLE001
+                body = {}
+            calls.append(self.path + "#" + _json.dumps(body, ensure_ascii=False))
+            if "/api/persona/behavior-recommend" in self.path:
+                self._send({"participation": "high", "sticker": 2, "via": "llm",
+                            "reason": "角色很外向", "marks": {"active": 3, "passive": 1}})
+            elif "/api/briefs" in self.path:
+                if body.get("action") == "add":
+                    brief_state["n"] += 1
+                elif body.get("action") == "del":
+                    brief_state["n"] = max(0, brief_state["n"] - 1)
+                self._send({"ok": True})
+            else:
+                self._send({"ok": True})
+
+        def log_message(self, *a): # noqa: N802
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), _H)
+    port = srv.server_address[1]
+    _th.Thread(target=srv.serve_forever, daemon=True, name="fake-be-g10").start()
+
+    _orig_url = agent_bridge.current_url
+    agent_bridge.current_url = lambda: "http://127.0.0.1:%d/?token=tk" % port
+    exec_dlgs: list = []
+    _orig_exec = QDialog.exec
+    QDialog.exec = lambda self, *a, **k: (exec_dlgs.append(self), 0)[1]
+
+    patches: list = []
+    _orig_wpatch = config_io.write_patch
+
+    def _fake_wpatch(patch):
+        patches.append(patch)
+        return True, "已保存并生效（测试拦截）"
+
+    config_io.write_patch = _fake_wpatch
+
+    t = THEMES["whale"]
+
+    def _btn_by_text(root, txt):
+        hits = [b for b in root.findChildren(Btn) if b.text() == txt]
+        return hits[0] if hits else None
+
+    def _posts(prefix):
+        return [_json.loads(c.split("#", 1)[1]) for c in calls
+                if "#" in c and c.split("#", 1)[0].startswith(prefix)]
+
+    def _wait(pred, timeout=6.0):
+        end = _time.time() + timeout
+        while _time.time() < end:
+            QApplication.processEvents()
+            if pred():
+                return True
+            _time.sleep(0.03)
+        QApplication.processEvents()
+        return pred()
+
+    try:
+        # ── ① roleHint：评估 → 推荐弹窗 → 应用写两键 + 参与度下拉同步 ──
+        wrap = panels_qt.build_panel(t, "persona")
+        pp = wrap.widget()
+        keep = [wrap]
+        pp.show()
+        QApplication.processEvents()
+        ta = pp.findChild(QPlainTextEdit, "personaRoleText")
+        ck("g10 personaRoleText 在场", ta is not None, "ta=%s" % ta)
+        b_hint = pp.findChild(Btn, "roleHintBtn")
+        ck("g10 roleHintBtn 在场", b_hint is not None, "btn=%s" % b_hint)
+        if ta is not None:
+            ta.setPlainText("你是老王，群里的热心大哥。") # 请求体断言用
+        nd0 = len(exec_dlgs)
+        if b_hint is not None:
+            b_hint.click()
+        _wait(lambda: len(exec_dlgs) > nd0)
+        dlg1 = exec_dlgs[-1]
+        combos = dlg1.findChildren(QComboBox)
+        c_part = next((c for c in combos if c.objectName() == "roleHintPart"), None)
+        c_stk = next((c for c in combos if c.objectName() == "roleHintSticker"), None)
+        labels = [l.text() for l in dlg1.findChildren(QLabel)]
+        ck("g10 推荐弹窗：请求体 text + 两下拉默认值=推荐（high/2）+ 推荐文案回显",
+           any("/api/persona/behavior-recommend" in c and "老王" in c for c in calls)
+           and c_part is not None and c_stk is not None
+           and str(c_part.currentData()) == "high" and str(c_stk.currentData()) == "2"
+           and any("推荐：参与度 活跃 · 表情包 2 级 （模型评估：角色很外向） [活跃m×3 安静m×1]" in x
+                   for x in labels),
+           "part=%s stk=%s labels=%s" % (
+               c_part.currentData() if c_part else None,
+               c_stk.currentData() if c_stk else None,
+               [x for x in labels if "推荐" in x]))
+        # 改推荐值再应用
+        if c_part is not None:
+            i = c_part.findData("low")
+            if i >= 0:
+                c_part.setCurrentIndex(i)
+        n_patch = len(patches)
+        b_apply = _btn_by_text(dlg1, "应用")
+        if b_apply is not None:
+            b_apply.click()
+        _wait(lambda: len(patches) > n_patch)
+        ck("g10 应用 → write_patch {persona.participation, store.sticker_level} + 参与度下拉同步",
+           patches and patches[-1] == {"persona.participation": "low", "store.sticker_level": 2}
+           and dlg1.result() == 1,
+           "patch=%s result=%s" % (patches[-1] if patches else None, dlg1.result()))
+
+        # ── ② briefs：进页自动加载 → 添加 → 删除 ──
+        wrap = panels_qt.build_panel(t, "wechat")
+        wp = wrap.widget()
+        keep.append(wrap)
+        wp.show()
+        QApplication.processEvents()
+        bf_chat = wp.findChild(QComboBox, "bfChat")
+        b_add = wp.findChild(Btn, "bfAdd")
+        ck("g10 简报卡在场（群下拉自动填充 + 添加钮）",
+           bf_chat is not None and bf_chat.count() >= 1
+           and str(bf_chat.itemData(0) or "") == "group:g1" and b_add is not None,
+           "chat=%s n=%s add=%s" % (bf_chat is not None,
+                                    bf_chat.count() if bf_chat else -1, b_add is not None))
+        bf_text = wp.findChild(QLineEdit, "bfText")
+        bf_until = wp.findChild(QLineEdit, "bfUntil")
+        n0 = _n_posts_g10 = len([c for c in calls if "/api/briefs" in c and "#" in c])
+        if bf_text is not None:
+            bf_text.setText("周六社庆")
+        if bf_until is not None:
+            bf_until.setText("2026-10-01")
+        if b_add is not None:
+            b_add.click()
+        _wait(lambda: len([c for c in calls if "/api/briefs" in c and "#" in c]) > n0
+              and any('"action": "add"' in c for c in calls))
+        addb = [_json.loads(c.split("#", 1)[1]) for c in calls
+                if "/api/briefs" in c and "#" in c and '"action": "add"' in c]
+        ck("g10 添加：POST {action:add, chat:group:g1, text, until, always}",
+           addb and addb[-1] == {"action": "add", "chat": "group:g1", "text": "周六社庆",
+                                 "until": "2026-10-01", "always": False},
+           "body=%s" % (addb[-1:] or [None],))
+        # 添加后列表重载（brief_state.n=1 → head「1 条在用」）+ 行内删除
+        #   （_bf_load 重建行走 deleteLater ⇒ 先让事件循环跑几轮再找，避开幽灵行按钮）
+        for _ in range(8):
+            QApplication.processEvents()
+            _time.sleep(0.05)
+        b_del = wp.findChild(Btn, "bfDel")
+        ck("g10 添加后列表刷新（在用条目 + 删除钮在场）",
+           b_del is not None and brief_state["n"] == 1,
+           "del=%s n=%d" % (b_del is not None, brief_state["n"]))
+        nd1 = len(exec_dlgs)
+        if b_del is not None:
+            b_del.click()
+        _wait(lambda: any('"action": "del"' in c for c in calls))
+        delb = [_json.loads(c.split("#", 1)[1]) for c in calls
+                if "/api/briefs" in c and "#" in c and '"action": "del"' in c]
+        ck("g10 删除：POST {action:del, chat, id}",
+           delb and delb[-1].get("action") == "del" and delb[-1].get("chat") == "group:g1",
+           "body=%s" % (delb[-1:] or [None],))
+    finally:
+        QDialog.exec = _orig_exec
+        agent_bridge.current_url = _orig_url
+        config_io.write_patch = _orig_wpatch
+        srv.shutdown()
+
+
 def main() -> int:
     for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
                t_visual, t_badges, t_status_chain, t_bot_controls, t_window_chrome, t_dpi_motion,
                t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch, t_bootstrap32, t_ocr9,
                t_c10, t_c13, t_hotfix1, t_hotfix2, t_catmgr, t_medialocal, t_commfb,
-               t_veradv, t_g5, t_g6, t_g7, t_g8, t_g9):
+               t_veradv, t_g5, t_g6, t_g7, t_g8, t_g9, t_g10):
         try:
             fn()
         except Exception as e: # noqa: BLE001
