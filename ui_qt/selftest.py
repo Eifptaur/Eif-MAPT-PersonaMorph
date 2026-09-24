@@ -3456,12 +3456,413 @@ def t_g5() -> None:
                 pass
 
 
+def t_g6() -> None:
+    """批4第六组全链路真跑：MANUAL 面板剩余裸奔清零。
+
+    persona（prompt 预览/清空）+ overview（计费日历渲染/翻月跨年/loadDay/年份弹层、
+    勾选删弹窗全流程）+ check（重置勾选+计数、查看进度条切页）+ json（新窗口查看配置）。
+
+    手法同 t_g5：假后端 + patch current_url/QDialog.exec/QDesktopServices.openUrl/
+    config_io.write_patch（防测试真写本机 config.json）。
+    """
+    import json as _json # noqa: PLC0415
+    import os # noqa: PLC0415
+    import threading as _th # noqa: PLC0415
+    import time as _time # noqa: PLC0415
+    from http.server import BaseHTTPRequestHandler, HTTPServer # noqa: PLC0415
+
+    import calendar as _cal_mod
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtGui import QDesktopServices # noqa: PLC0415
+    from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, # noqa: PLC0415
+                                   QLabel, QPlainTextEdit)
+
+    import agent_bridge # noqa: PLC0415
+    import config_io # noqa: PLC0415
+    import panels_qt # noqa: PLC0415
+    import panels_custom # noqa: PLC0415
+    from stylekit_qt import THEMES # noqa: PLC0415
+    from widgets import Btn # noqa: PLC0415
+
+    QApplication.instance() or QApplication([])
+
+    # ── 假后端 ──
+    calls: list = []
+    patch_calls: list = []
+    opened: list = []
+    preview_state = {"err": False}
+    list_state = {"empty": False}
+    PREVIEW = {"system": "SYS-TEXT-ABC 全文", "chars": 1234,
+               "modules": [{"name": "微信场景规则", "enabled": True},
+                           {"name": "记忆使用规则", "enabled": False}],
+               "custom_chars": 56}
+    TDY = _time.strftime("%Y-%m-%d")
+
+    class _H(BaseHTTPRequestHandler):
+        def _send(self, obj): # noqa: N802
+            body = _json.dumps(obj).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self): # noqa: N802
+            calls.append(self.path)
+            if "/api/prompt/preview" in self.path:
+                if preview_state["err"]:
+                    self._send({"ok": False, "error": "后台炸了"})
+                else:
+                    self._send(dict(PREVIEW))
+            elif "/api/status" in self.path:
+                self._send({"ok": True, "paused": False, "wechat_connected": True,
+                            "listen": {"groups": 1, "privates": 1},
+                            "model": "deepseek-chat", "uptime_s": 5, "groups": []})
+            else:
+                self._send({"ok": True})
+
+        def do_POST(self): # noqa: N802
+            n = int(self.headers.get("Content-Length") or 0)
+            try:
+                body = _json.loads(self.rfile.read(n).decode("utf-8", "replace")) if n else {}
+            except Exception: # noqa: BLE001
+                body = {}
+            calls.append(self.path + "#" + _json.dumps(body, ensure_ascii=False))
+            if "/api/prices" in self.path: # 价目 dict 形态（key=模型名），不是 {"ok":...} 壳
+                self._send({"deepseek-chat": {"in": 2.0, "out": 8.0, "cached": 1.0}})
+            elif "/api/stats/cal?" in self.path: # cal 本体（cal_list/cal_delete 前缀不同）
+                self._send({"ok": True, "sessions": 3, "tokens": 456,
+                            "cost": 0.1234, "sent": 12})
+            elif "/api/stats/cal_list" in self.path:
+                self._send({"ok": True, "bills": [] if list_state["empty"] else [
+                    {"day": "2026-09-23", "tokens": 100, "cost": 0.5, "calls": 2, "sessions": 1},
+                    {"day": TDY, "tokens": 200, "cost": 1.5, "calls": 4, "sessions": 2}]})
+            elif "/api/stats/cal_delete" in self.path:
+                self._send({"ok": True, "removed": list(body.get("days") or [])})
+            else:
+                self._send({"ok": True})
+
+        def log_message(self, *a): # noqa: N802
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), _H)
+    port = srv.server_address[1]
+    _th.Thread(target=srv.serve_forever, daemon=True, name="fake-be-g6").start()
+
+    _orig_url = agent_bridge.current_url
+    agent_bridge.current_url = lambda: "http://127.0.0.1:%d/?token=tk" % port
+    exec_dlgs: list = []
+    mode = {"ok": True}
+    _orig_exec = QDialog.exec
+
+    def _fake_exec(self, *a, **k):
+        exec_dlgs.append(self)
+        if mode["ok"] and hasattr(self, "btn_ok"):
+            self.btn_ok.click()
+        return self.result()
+
+    QDialog.exec = _fake_exec
+    _orig_open = QDesktopServices.openUrl
+    QDesktopServices.openUrl = staticmethod(lambda url: opened.append(url.toString()))
+
+    def _fake_wpatch(patch):
+        patch_calls.append(patch)
+        return True, "已保存并生效（测试拦截）"
+
+    _orig_wpatch = config_io.write_patch
+    config_io.write_patch = _fake_wpatch
+
+    t = THEMES["whale"]
+
+    def _btn_by_text(page, txt):
+        hits = [b for b in page.findChildren(Btn) if b.text() == txt]
+        return hits[0] if hits else None
+
+    def _posts(prefix):
+        return [_json.loads(c.split("#", 1)[1]) for c in calls
+                if "#" in c and c.split("#", 1)[0].startswith(prefix)]
+
+    def _has_post(prefix):
+        return any("#" in c and c.split("#", 1)[0].startswith(prefix) for c in calls)
+
+    def _wait(pred, timeout=6.0):
+        end = _time.time() + timeout
+        while _time.time() < end:
+            QApplication.processEvents()
+            if pred():
+                return True
+            _time.sleep(0.03)
+        QApplication.processEvents()
+        return pred()
+
+    try:
+        # ── persona 页：prompt 预览 / 清空 ──
+        wrap_p = panels_qt.build_panel(t, "persona")
+        pp = wrap_p.widget()
+        pp.show()
+        QApplication.processEvents()
+        b_prev = _btn_by_text(pp, "预览当前系统提示词")
+        b_pclr = _btn_by_text(pp, "清空补充")
+        ck("g6 persona 两钮在场（预览当前系统提示词 / 清空补充）",
+           b_prev is not None and b_pclr is not None, "prev=%s clr=%s" % (b_prev, b_pclr))
+
+        b_prev.click()
+        _wait(lambda: bool(exec_dlgs) and exec_dlgs[-1].windowTitle() == "当前系统提示词（服务端现算）")
+        dlg0 = exec_dlgs[-1]
+        ta0 = dlg0.findChildren(QPlainTextEdit)[0]
+        labels0 = [l.text() for l in dlg0.findChildren(QLabel)]
+        ck("g6 prompt 预览：GET /api/prompt/preview，弹窗回显服务端全文 + info 行（字符/启用模块/补充字符）",
+           any("/api/prompt/preview" in c for c in calls)
+           and ta0.toPlainText() == "SYS-TEXT-ABC 全文"
+           and "1234 字符 ｜ 已启用模块：微信场景规则 ｜ 自定义补充 56 字符" in labels0
+           and _btn_by_text(dlg0, "知道了") is not None,
+           "ta=%r labels=%s" % (ta0.toPlainText()[:40], [x for x in labels0 if "字符" in x]))
+
+        preview_state["err"] = True
+        n_dlgs = len(exec_dlgs)
+        b_prev.click()
+        _wait(lambda: any(l.text().startswith("预览失败：后台炸了") for l in pp.findChildren(QLabel)))
+        ck("g6 prompt 预览失败路径：note 回显服务端 error，不弹窗",
+           len(exec_dlgs) == n_dlgs,
+           str([l.text() for l in pp.findChildren(QLabel) if "预览失败" in l.text()]))
+        preview_state["err"] = False
+
+        sys_area = [e for e in pp.findChildren(QPlainTextEdit)
+                    if e.placeholderText() == "追加到系统提示词末尾（管理员补充，最高优先级）"][0]
+        n_dlgs = len(exec_dlgs)
+        b_pclr.click()
+        QApplication.processEvents()
+        ck("g6 清空护栏：补充本来就空 → note「本来就是空的」，不弹确认不发落盘",
+           len(exec_dlgs) == n_dlgs and not patch_calls
+           and any(l.text() == "本来就是空的" for l in pp.findChildren(QLabel)),
+           str([l.text() for l in pp.findChildren(QLabel) if "空" in l.text()][:4]))
+
+        sys_area.setPlainText("临时补充文字")
+        patch_calls.clear()
+        b_pclr.click()
+        _wait(lambda: bool(exec_dlgs) and exec_dlgs[-1].windowTitle() == "清空「系统提示词补充」？")
+        QApplication.processEvents()
+        _wait(lambda: sys_area.toPlainText() == "" and bool(patch_calls))
+        _wait(lambda: any(l.text() == "已清空系统提示词补充（下一轮生效）" for l in pp.findChildren(QLabel)))
+        ck("g6 清空真发：确认弹窗 → textarea 清空 + write_patch 含 {system_prompt.custom: ''} + note 回显"
+           "（可能再混一条 binds 全量 = 「改完即生效」600ms 防抖，真产品行为）",
+           sys_area.toPlainText() == ""
+           and {"system_prompt.custom": ""} in patch_calls
+           and any(l.text() == "已清空系统提示词补充（下一轮生效）" for l in pp.findChildren(QLabel)),
+           "ta=%r patches=%s" % (sys_area.toPlainText(), str(patch_calls)[:120]))
+
+        # ── overview 页：计费日历 + 勾选删 ──
+        wrap_o = panels_qt.build_panel(t, "overview")
+        op = wrap_o.widget()
+        op.show()
+        QApplication.processEvents()
+        ym_txt = "%d年%d月" % (_time.localtime().tm_year, _time.localtime().tm_mon)
+        b_ym = _btn_by_text(op, ym_txt)
+        n_days = _cal_mod.monthrange(_time.localtime().tm_year, _time.localtime().tm_mon)[1]
+        day_btns = [b for b in op.findChildren(Btn) if b.text().isdigit() and len(b.text()) <= 2]
+        today_btn = [b for b in day_btns if b.text() == str(_time.localtime().tm_mday)]
+        ck("g6 日历静态：年月标签 = 当前月，数字按钮 = 当月天数，今天描蓝边",
+           b_ym is not None and len(day_btns) == n_days and today_btn
+           and "border:1px solid" in today_btn[0].styleSheet(),
+           "ym=%s days=%d/%d today=%s" % (ym_txt, len(day_btns), n_days,
+                                          bool(today_btn) and today_btn[0].styleSheet()[:40]))
+
+        for _ in range(3):
+            _btn_by_text(op, "›").click()
+            QApplication.processEvents()
+        ym_after_next = "%d年%d月" % (_time.localtime().tm_year, 12)
+        ck("g6 翻月 next：9 月 → 12 月（标签同步）",
+           _btn_by_text(op, ym_after_next) is not None, ym_after_next)
+        _btn_by_text(op, "›").click()
+        QApplication.processEvents()
+        ck("g6 翻月跨年进位：12 月 → 次年 1 月",
+           _btn_by_text(op, "%d年1月" % (_time.localtime().tm_year + 1)) is not None,
+           "%d年1月" % (_time.localtime().tm_year + 1))
+        for _ in range(4):
+            _btn_by_text(op, "‹").click()
+            QApplication.processEvents()
+        ck("g6 翻月 prev 回起点：跨年后 4 次 ‹ 回到当前月",
+           _btn_by_text(op, ym_txt) is not None, ym_txt)
+
+        calls.clear()
+        d15 = [b for b in op.findChildren(Btn) if b.text() == "15"][0]
+        d15.click()
+        _wait(lambda: _has_post("/api/stats/cal?"))
+        _wait(lambda: any(l.text().startswith(TDY[:8] + "15：") and "会话" in l.text()
+                          for l in op.findChildren(QLabel)))
+        cal_body = _posts("/api/stats/cal?")
+        detail = [l.text() for l in op.findChildren(QLabel)
+                  if l.text().startswith(TDY[:8] + "15：")]
+        ck("g6 loadDay：点 15 号 → POST {d: 当月15日}，明细行「X 会话 · Y tok · ¥Z · N 条」",
+           bool(cal_body) and cal_body[-1] == {"d": "%s-15" % TDY[:7]}
+           and bool(detail) and detail[0] == "%s15：3 会话 · 456 tok · ¥0.1234 · 12 条" % TDY[:8],
+           "body=%s detail=%s" % (cal_body[-1:] and cal_body[-1], detail))
+
+        b_ym2 = _btn_by_text(op, ym_txt)
+        n_dlgs = len(exec_dlgs)
+        b_ym2.click()
+        QApplication.processEvents()
+        dlg_y = exec_dlgs[-1] if len(exec_dlgs) > n_dlgs else None
+        ybtns = ([b for b in dlg_y.findChildren(Btn) if b.text().isdigit()] if dlg_y else [])
+        cur_y = _time.localtime().tm_year
+        y2024 = [b for b in ybtns if b.text() == str(cur_y - 2)]
+        ck("g6 年份弹层：标题「跳到年份」，11 个年份按钮，点前年跳转保持当前月",
+           dlg_y is not None and dlg_y.windowTitle() == "跳到年份" and len(ybtns) == 11
+           and y2024 is not None and bool(y2024), "n=%d" % len(ybtns))
+        if y2024:
+            y2024[0].click()
+            QApplication.processEvents()
+            ck("g6 年份跳转后标签 = 2024年9月（当前年 -2）",
+               _btn_by_text(op, "%d年%d月" % (cur_y - 2, _time.localtime().tm_mon)) is not None,
+               "%d年%d月" % (cur_y - 2, _time.localtime().tm_mon))
+            for _ in range(40): # 翻月回当前月（ym 编码是月进位，跨年要逐月翻）
+                if _btn_by_text(op, ym_txt) is not None:
+                    break
+                _btn_by_text(op, "›").click()
+                QApplication.processEvents()
+            ck("g6 年份跳转后翻月回到当前月",
+               _btn_by_text(op, ym_txt) is not None, ym_txt)
+
+        list_state["empty"] = True
+        n_dlgs = len(exec_dlgs)
+        _btn_by_text(op, "勾选删").click()
+        _wait(lambda: any(l.text() == "当前没有可删除的计费日志" for l in op.findChildren(QLabel)))
+        ck("g6 勾选删空护栏：cal_list 空 → note 如实提示，不弹窗",
+           len(exec_dlgs) == n_dlgs
+           and any(l.text() == "当前没有可删除的计费日志" for l in op.findChildren(QLabel)),
+           "n_dlgs=%d" % len(exec_dlgs))
+
+        list_state["empty"] = False
+        n_dlgs = len(exec_dlgs)
+        _btn_by_text(op, "勾选删").click()
+        _wait(lambda: len(exec_dlgs) > n_dlgs and exec_dlgs[-1].windowTitle() == "勾选删除计费日志")
+        bd = exec_dlgs[-1]
+        bd_cks = bd.findChildren(QCheckBox)
+        ck("g6 勾选删弹窗：列表 2 行（day · tok · ¥cost · 次 · 会话），hint 共 2 天",
+           len(bd_cks) == 2
+           and bd_cks[0].text().startswith(TDY)
+           and bd_cks[1].text().startswith("2026-09-23")
+           and "¥1.5000" in bd_cks[0].text() and "¥0.5000" in bd_cks[1].text()
+           and any("共 2 天" in l.text() for l in bd.findChildren(QLabel)),
+           "n=%d texts=%s" % (len(bd_cks), [c.text()[:24] for c in bd_cks]))
+
+        _btn_by_text(bd, "全选").click()
+        QApplication.processEvents()
+        bsum = [l for l in bd.findChildren(QLabel) if l.text().startswith("已选 ")]
+        ck("g6 全选 → 汇总「已选 2 天 · 300 tok · ¥2.0000（全部选中）」",
+           bool(bsum) and bsum[0].text() == "已选 2 天 · 300 tok · ¥2.0000（全部选中）",
+           bsum[0].text() if bsum else "")
+        _btn_by_text(bd, "勾选今日").click()
+        QApplication.processEvents()
+        bsum = [l for l in bd.findChildren(QLabel) if l.text().startswith("已选 ")]
+        ck("g6 勾选今日：只勾今天的行，汇总 1 天 · 200 tok · ¥1.5000",
+           bool(bsum) and bsum[0].text() == "已选 1 天 · 200 tok · ¥1.5000"
+           and bd_cks[0].isChecked() and not bd_cks[1].isChecked(),
+           bsum[0].text() if bsum else "")
+        _btn_by_text(bd, "勾选本月").click()
+        QApplication.processEvents()
+        ck("g6 勾选本月：两条 2026-09 记录都勾上（汇总回到 2 天）",
+           bd_cks[0].isChecked() and bd_cks[1].isChecked()
+           and any(l.text().startswith("已选 2 天") for l in bd.findChildren(QLabel)), "")
+
+        _btn_by_text(bd, "清空勾选").click()
+        QApplication.processEvents()
+        n_dlgs2 = len(exec_dlgs)
+        _btn_by_text(bd, "确认删除").click()
+        QApplication.processEvents()
+        ck("g6 空选护栏：确认删除提示「请先勾选要删除的天」，不进二次确认不发请求",
+           len(exec_dlgs) == n_dlgs2
+           and any(l.text() == "请先勾选要删除的天" for l in bd.findChildren(QLabel))
+           and not _has_post("/api/stats/cal_delete"),
+           str([l.text() for l in bd.findChildren(QLabel) if "勾选" in l.text()][:3]))
+
+        _btn_by_text(bd, "全选").click()
+        QApplication.processEvents()
+        calls.clear()
+        _btn_by_text(bd, "确认删除").click()
+        _wait(lambda: _has_post("/api/stats/cal_delete"))
+        _wait(lambda: not bd.isVisible())
+        _wait(lambda: any(l.text() == "已删除 2 天计费日志" for l in op.findChildren(QLabel)))
+        QApplication.processEvents()
+        del_posts = _posts("/api/stats/cal_delete")
+        ck("g6 真删：二次确认 → POST {days: [两日]} → 弹窗关 + note「已删除 2 天计费日志」+ 概览刷新",
+           bool(del_posts) and sorted(del_posts[-1].get("days") or []) == ["2026-09-23", TDY]
+           and not bd.isVisible()
+           and any(l.text() == "已删除 2 天计费日志" for l in op.findChildren(QLabel))
+           and any("/api/status" in c for c in calls),
+           "body=%s visible=%s" % (del_posts[-1] if del_posts else None, bd.isVisible()))
+
+        # ── check 页：重置勾选 + 查看进度条 ──
+        wrap_c = panels_qt.build_panel(t, "check")
+        cp = wrap_c.widget()
+        cp.show()
+        QApplication.processEvents()
+        list_cks = [c for c in cp.findChildren(QCheckBox)
+                    if c.toolTip() == "勾选=这项测过了（会话内状态；web 侧用 localStorage 记忆）"]
+        cnt0 = [l for l in cp.findChildren(QLabel) if l.text() == "已完成 0 / 11"]
+        ck("g6 清单计数：11 个勾选行（tooltip 同源）+ 计数标签「已完成 0 / 11」初始",
+           len(list_cks) == 11 and bool(cnt0), "n=%d cnt=%s" % (len(list_cks), bool(cnt0)))
+        for c in list_cks[:3]:
+            c.setChecked(True)
+        QApplication.processEvents()
+        cnt3 = [l for l in cp.findChildren(QLabel) if l.text() == "已完成 3 / 11"]
+        _btn_by_text(cp, "重置勾选").click()
+        QApplication.processEvents()
+        cnt_reset = [l for l in cp.findChildren(QLabel) if l.text() == "已完成 0 / 11"]
+        ck("g6 重置勾选：勾 3 项计数 3/11 → 重置全部清零回到 0/11",
+           bool(cnt3) and not any(c.isChecked() for c in list_cks) and bool(cnt_reset),
+           "cnt3=%s reset=%s" % (bool(cnt3), bool(cnt_reset)))
+
+        b_tip2 = _btn_by_text(cp, "查看进度条")
+        ck("g6 查看进度条钮在场（web codeCheckTip2 同名）",
+           b_tip2 is not None, str(b_tip2))
+        if b_tip2 is not None:
+            n_dlgs = len(exec_dlgs)
+            b_tip2.click()
+            QApplication.processEvents()
+            fb = [l.text() for l in cp.findChildren(QLabel)
+                  if "常驻状态条" in l.text() and "概览" in l.text()]
+            ck("g6 查看进度条无壳护栏：page 无 _go → fallback 提示指路概览，不崩",
+               len(exec_dlgs) == n_dlgs and bool(fb),
+               str(fb[:1]))
+            jumps: list = []
+            b_tip2.window()._go = lambda sec, label: jumps.append((sec, label)) # 模拟 Shell 切页
+            b_tip2.click()
+            QApplication.processEvents()
+            ck("g6 查看进度条切页：_go('overview') 恰一次",
+               jumps == [("overview", panels_custom.sec_meta.get("overview").title)],
+               str(jumps))
+
+        # ── json 页：新窗口查看配置 ──
+        if str(panels_custom.ROOT) not in sys.path:
+            sys.path.insert(0, str(panels_custom.ROOT)) # json 页 import agent.config 需要产品根
+        wrap_j = panels_qt.build_panel(t, "json")
+        jp = wrap_j.widget()
+        jp.show()
+        QApplication.processEvents()
+        opened.clear()
+        b_raw = _btn_by_text(jp, "新窗口查看配置")
+        if b_raw is not None:
+            b_raw.click()
+            QApplication.processEvents()
+        ck("g6 新窗口查看配置：openUrl(join_url(current, /api/config))（web rawJsonBtn 等效）",
+           b_raw is not None and len(opened) == 1 and "/api/config" in opened[0],
+           "opened=%s" % opened)
+    finally:
+        QDesktopServices.openUrl = _orig_open
+        config_io.write_patch = _orig_wpatch
+        agent_bridge.current_url = _orig_url
+        QDialog.exec = _orig_exec
+        srv.shutdown()
+
+
 def main() -> int:
     for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
                t_visual, t_badges, t_status_chain, t_bot_controls, t_window_chrome, t_dpi_motion,
                t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch, t_bootstrap32, t_ocr9,
                t_c10, t_c13, t_hotfix1, t_hotfix2, t_catmgr, t_medialocal, t_commfb,
-               t_veradv, t_g5):
+               t_veradv, t_g5, t_g6):
         try:
             fn()
         except Exception as e: # noqa: BLE001

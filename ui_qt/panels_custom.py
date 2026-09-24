@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -484,9 +485,282 @@ def overview_panel(t: Tokens) -> QWidget:
                           f"失败：{r.get('error') or box.get('err') or '后台没连上'}")
         QTimer.singleShot(300, _apply)
 
-    hooks = [lambda: _refresh(), _test_api, _export, _import, _clear_cost]
+    # ── 计费日历（web renderCal/loadDay/calPrev/calNext/年份弹层 真值 :4016-4101）──
+    # 周一起始 + 当月天数 + 今天描边 + 翻月跨年进位；点日期 POST /api/stats/cal {d}。
+    card_cal = Card(t)
+    card_cal.body.addWidget(h2(t, "计费日历"))
+    cal_head = QHBoxLayout()
+    b_calprev = Btn("‹", t, "ghost")
+    b_calprev.setFixedWidth(40)
+    b_calym = Btn("…", t, "ghost")
+    b_calnext = Btn("›", t, "ghost")
+    b_calnext.setFixedWidth(40)
+    cal_head.addWidget(b_calprev)
+    cal_head.addWidget(b_calym)
+    cal_head.addWidget(b_calnext)
+    cal_head.addStretch(1)
+    card_cal.body.addLayout(cal_head)
+    cal_host = QWidget()
+    cal_host.setStyleSheet("background:transparent;")
+    cal_lay = QVBoxLayout(cal_host)
+    cal_lay.setContentsMargins(0, 0, 0, 0)
+    cal_lay.setSpacing(6)
+    card_cal.body.addWidget(cal_host)
+    cal_detail = desc(t, "点一个日期看当天用量；删除计费日志用下方「勾选删」。")
+    card_cal.body.addWidget(cal_detail)
+    lay.addWidget(card_cal)
+
+    cal_state = {"ym": time.localtime().tm_year * 100 + time.localtime().tm_mon, "sel": None}
+    cal_today = time.strftime("%Y-%m-%d")
+
+    def _cal_render() -> None:
+        while cal_lay.count():
+            it = cal_lay.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.deleteLater()
+        y, m = cal_state["ym"] // 100, cal_state["ym"] % 100
+        b_calym.setText("%d年%d月" % (y, m))
+        import calendar as _cal # noqa: PLC0415
+
+        first, days = _cal.monthrange(y, m) # first: 0=周一（与 web (getDay()+6)%7 同口径）
+        inner = QWidget()
+        inner.setStyleSheet("background:transparent;")
+        g = QGridLayout(inner)
+        g.setContentsMargins(0, 0, 0, 0)
+        g.setHorizontalSpacing(4)
+        g.setVerticalSpacing(4)
+        for i, wd in enumerate(("一", "二", "三", "四", "五", "六", "日")):
+            lb = QLabel(wd)
+            lb.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lb.setFont(qfont(t, 11.5))
+            lb.setStyleSheet(f"color:{t.tx3};background:transparent;")
+            g.addWidget(lb, 0, i)
+        for day in range(1, days + 1):
+            ds = "%04d-%02d-%02d" % (y, m, day)
+            bt = Btn(str(day), t, "primary" if ds == cal_state["sel"] else "ghost")
+            bt.setFixedHeight(26)
+            if ds == cal_today: # web :4057 outline 同款：ghost 底上描蓝边
+                bt.setStyleSheet(bt._qss() + f"QPushButton{{border:1px solid {t.blue};}}")
+            bt.clicked.connect(lambda _=False, ds=ds: _cal_load_day(ds))
+            g.addWidget(bt, (first + day - 1) // 7, (first + day - 1) % 7)
+        cal_lay.addWidget(inner)
+
+    def _cal_apply_day(r: dict | None, e: str | None, d: str) -> None:
+        if e or not r or r.get("ok") is False:
+            cal_detail.setText("加载失败：" + (e or (r or {}).get("error") or "后台没连上"))
+            return
+        cal_detail.setText("%s：%s 会话 · %s tok · ¥%.4f · %s 条" % (
+            d, r.get("sessions", 0), r.get("tokens", 0),
+            float(r.get("cost") or 0), r.get("sent", 0)))
+        _cal_render()
+
+    def _cal_load_day(d: str) -> None:
+        cal_state["sel"] = d
+        cal_detail.setText("加载中 %s…" % d)
+        _async_post(None, "/api/stats/cal", {"d": d}, lambda r, e: _cal_apply_day(r, e, d))
+
+    def _cal_prev() -> None:
+        ym = cal_state["ym"]
+        cal_state["ym"] = (ym // 100 - 1) * 100 + 12 if ym % 100 == 1 else ym - 1
+        _cal_render()
+
+    def _cal_next() -> None:
+        ym = cal_state["ym"]
+        cal_state["ym"] = (ym // 100 + 1) * 100 + 1 if ym % 100 == 12 else ym + 1
+        _cal_render()
+
+    def _cal_jump_year(yy: int, dlg) -> None:
+        ym = cal_state["ym"]
+        cal_state["ym"] = yy * 100 + (ym % 100 or 1)
+        dlg.reject()
+        _cal_render()
+
+    def _cal_pick_year() -> None:
+        # web :4076-4099 年份弹层同款：当前年 -4 ~ +6 共 11 年网格
+        dlg, v = _card_dialog(t, b_calym, "跳到年份", 420)
+        cur_y = cal_state["ym"] // 100
+        host = QWidget()
+        host.setStyleSheet("background:transparent;")
+        g = QGridLayout(host)
+        g.setContentsMargins(0, 0, 0, 0)
+        g.setHorizontalSpacing(6)
+        g.setVerticalSpacing(6)
+        for i, yy in enumerate(range(cur_y - 4, cur_y + 7)):
+            yb = Btn(str(yy), t, "primary" if yy == cur_y else "ghost")
+            yb.clicked.connect(lambda _=False, yy=yy: _cal_jump_year(yy, dlg))
+            g.addWidget(yb, i // 6, i % 6)
+        v.addWidget(host)
+        foot = QHBoxLayout()
+        cb = Btn("关闭", t, "ghost")
+        cb.clicked.connect(dlg.reject)
+        foot.addStretch(1)
+        foot.addWidget(cb)
+        v.addLayout(foot)
+        dlg.exec()
+
+    b_calprev.clicked.connect(_cal_prev)
+    b_calnext.clicked.connect(_cal_next)
+    b_calym.clicked.connect(_cal_pick_year)
+    _cal_render()
+
+    # ── 勾选删（web costClearSel → openBillDlg 真值 :4140-4264）──
+    def _open_bill_dlg(bills: list) -> None:
+        dlg, v = _card_dialog(t, page, "勾选删除计费日志", 640)
+        hint = _dlg_note(t)
+        hint.setText("共 %d 天，精确到年月日；删除后概览自动刷新。勾选要删除的天"
+                     "（可一键勾今日/本月）；操作不可恢复。" % len(bills))
+        v.addWidget(hint)
+        quick = QHBoxLayout()
+        b_all = Btn("全选", t, "ghost")
+        b_none = Btn("清空勾选", t, "ghost")
+        b_day = Btn("勾选今日", t, "ghost")
+        b_mon = Btn("勾选本月", t, "ghost")
+        for b in (b_all, b_none, b_day, b_mon):
+            quick.addWidget(b)
+        v.addLayout(quick)
+        loc_row = QHBoxLayout()
+        lb_loc = _dlg_note(t)
+        lb_loc.setText("按日期定位")
+        loc_cb = QComboBox()
+        for d in sorted((str(b.get("day")) for b in bills if b.get("day")), reverse=True):
+            loc_cb.addItem(d, d)
+        loc_btn = Btn("定位", t, "ghost")
+        loc_btn.setFixedWidth(64)
+        loc_row.addWidget(lb_loc)
+        loc_row.addWidget(loc_cb)
+        loc_row.addWidget(loc_btn)
+        loc_row.addStretch(1)
+        v.addLayout(loc_row)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet("QScrollArea{background:transparent;border:none;}")
+        rows_host = QWidget()
+        rows_host.setStyleSheet("background:transparent;")
+        rows_lay = QVBoxLayout(rows_host)
+        rows_lay.setContentsMargins(0, 0, 0, 0)
+        rows_lay.setSpacing(2)
+        checks: dict[str, QCheckBox] = {}
+        by_day = {str(b.get("day")): b for b in bills if b.get("day")}
+        for d in sorted(by_day, reverse=True):
+            b = by_day[d]
+            cb = QCheckBox("%s · %s tok · ¥%.4f · %s 次 · %s 会话" % (
+                d, b.get("tokens", 0), float(b.get("cost") or 0),
+                b.get("calls", 0), b.get("sessions", 0)))
+            cb.setStyleSheet(f"background:transparent;color:{t.tx};")
+            checks[d] = cb
+            rows_lay.addWidget(cb)
+        rows_lay.addStretch(1)
+        scroll.setWidget(rows_host)
+        scroll.setFixedHeight(min(300, 36 * max(1, len(checks)) + 14))
+        v.addWidget(scroll)
+        bsum = _dlg_note(t)
+        v.addWidget(bsum)
+        foot = QHBoxLayout()
+        foot.addStretch(1)
+        b_cancel = Btn("取消", t, "ghost")
+        b_ok = Btn("确认删除", t, "primary")
+        foot.addWidget(b_cancel)
+        foot.addWidget(b_ok)
+        v.addLayout(foot)
+
+        def _sel_days() -> list:
+            return [d for d in sorted(checks) if checks[d].isChecked()]
+
+        def _sum() -> None:
+            days = _sel_days()
+            tok = sum(int(by_day[d].get("tokens") or 0) for d in days)
+            cost = sum(float(by_day[d].get("cost") or 0) for d in days)
+            bsum.setText("已选 %d 天 · %d tok · ¥%.4f%s" % (
+                len(days), tok, cost,
+                "（全部选中）" if days and len(days) == len(checks) else ""))
+
+        def _set_all(on: bool) -> None:
+            for cb in checks.values():
+                cb.setChecked(on)
+
+        def _sel_today() -> None:
+            _set_all(False)
+            tdy = time.strftime("%Y-%m-%d")
+            if tdy in checks:
+                checks[tdy].setChecked(True)
+
+        def _sel_month() -> None:
+            _set_all(False)
+            pre = time.strftime("%Y-%m")
+            for d, cb in checks.items():
+                if d.startswith(pre):
+                    cb.setChecked(True)
+
+        def _locate() -> None:
+            d = str(loc_cb.currentData() or "")
+            cb = checks.get(d)
+            if cb is not None:
+                scroll.ensureWidgetVisible(cb)
+                b = by_day[d]
+                lb_loc.setText("%s：%s tok · ¥%.4f · %s 次 · %s 会话（已在列表定位）" % (
+                    d, b.get("tokens", 0), float(b.get("cost") or 0),
+                    b.get("calls", 0), b.get("sessions", 0)))
+
+        def _do_delete() -> None:
+            days = _sel_days()
+            if not days:
+                bsum.setText("请先勾选要删除的天")
+                return
+            d2 = ConfirmDialog(
+                t, dlg, "确认删除", "确认删除所选 %d 天的计费日志？删除后不可恢复。" % len(days),
+                ["这些天的计费日志会删除", "这个动作不能撤销"],
+                confirm_label="确认删除", cancel_label="取消", dangerous=True)
+            if not d2.exec():
+                return
+            b_ok.setEnabled(False)
+            b_ok.setText("删除中…")
+            _async_post(None, "/api/stats/cal_delete", {"days": days},
+                        lambda r, e: _del_done(r, e, days, dlg))
+
+        def _del_done(r: dict | None, e: str | None, days: list, dlg) -> None:
+            b_ok.setEnabled(True)
+            b_ok.setText("确认删除")
+            if e or not r or not r.get("ok"):
+                bsum.setText("删除失败：" + (e or (r or {}).get("error") or "后台没连上"))
+                return
+            dlg.accept()
+            note2.setText("已删除 %d 天计费日志" % len(r.get("removed") or days))
+            _refresh()
+
+        for cb in checks.values():
+            cb.toggled.connect(_sum)
+        b_all.clicked.connect(lambda: _set_all(True))
+        b_none.clicked.connect(lambda: _set_all(False))
+        b_day.clicked.connect(_sel_today)
+        b_mon.clicked.connect(_sel_month)
+        loc_btn.clicked.connect(_locate)
+        b_cancel.clicked.connect(dlg.reject)
+        b_ok.clicked.connect(_do_delete)
+        _sum()
+        dlg.exec()
+
+    def _clear_cost_sel() -> None:
+        note2.setText("读取计费日志中…")
+        _async_post(None, "/api/stats/cal_list", {},
+                    lambda r, e: _cal_list_done(r, e))
+
+    def _cal_list_done(r: dict | None, e: str | None) -> None:
+        if e or not r:
+            note2.setText("加载计费日志失败：" + (e or "后台没连上"))
+            return
+        bills = r.get("bills") or []
+        if not bills:
+            note2.setText("当前没有可删除的计费日志")
+            return
+        note2.setText("")
+        _open_bill_dlg(bills)
+
+    hooks = [lambda: _refresh(), _test_api, _export, _import, _clear_cost_sel, _clear_cost]
     lay.addLayout(_btn_row(t, [("立即刷新", "primary"), ("测试 API 连通", "ghost"),
-                               ("导出记录", "ghost"), ("迁移数据", "ghost"), ("一键删", "danger")], hooks))
+                               ("导出记录", "ghost"), ("迁移数据", "ghost"),
+                               ("勾选删", "ghost"), ("一键删", "danger")], hooks))
     lay.addStretch(1)
     return page
 
@@ -541,10 +815,24 @@ def check_panel(t: Tokens) -> QWidget:
     b_code = Btn("代码检测", t, "primary")
     b_deps = Btn("代码检测＋依赖核对", t, "ghost")
     b_deps.setToolTip("额外跑依赖版本详细核对（55 项，稍慢）")
+    b_tip2 = Btn("查看进度条", t, "ghost")
+    b_tip2.setToolTip("点击切换到概览查看常驻状态条（web codeCheckTip2 同款语义）")
     row1.addWidget(b_code)
     row1.addWidget(b_deps)
+    row1.addWidget(b_tip2)
     row1.addStretch(1)
     lay.addLayout(row1)
+
+    def _goto_overview() -> None:
+        # web :1342 = sec-overview.scrollIntoView；原生壳是分页栈，等效 = 切到概览页
+        w = b_tip2.window()
+        go = getattr(w, "_go", None)
+        if callable(go):
+            go("overview", sec_meta.get("overview").title)
+        else:
+            tip.setText("常驻状态条在「概览」页顶部（导航切过去即可看）")
+
+    b_tip2.clicked.connect(_goto_overview)
 
     # ── 症状检验器（web vfBtns/vfState/vfResult/vfCopy 同款：只读检查，四档判决，
     #    按钮跑完变色 绿=通过 黄=部分通过 红=卡住）──
@@ -932,6 +1220,7 @@ def check_panel(t: Tokens) -> QWidget:
     #   ⚠️ QCheckBox/QComboBox 只用模块级名，函数内**不许**再 import：函数内 import
     #   会把名字变局部变量 ⇒ 本函数前段（症状检验器/拍一拍区）用到时还没绑定 ⇒
     #   UnboundLocalError（worker 二轮踩过、c34 又踩一次，中段 import 已除）。
+    ck_boxes: list[QCheckBox] = []
 
     for it in items:
         roww = QWidget()
@@ -942,6 +1231,7 @@ def check_panel(t: Tokens) -> QWidget:
         ck = QCheckBox()
         ck.setToolTip("勾选=这项测过了（会话内状态；web 侧用 localStorage 记忆）")
         rh.addWidget(ck)
+        ck_boxes.append(ck)
         head, _, rest = it.partition(" · ")
         t1 = QLabel(head)
         t1.setFont(qfont(t, 12.5, 600))
@@ -954,6 +1244,29 @@ def check_panel(t: Tokens) -> QWidget:
         rh.addWidget(t1)
         rh.addWidget(t2, 1)
         card2.body.addWidget(roww)
+
+    # web :1396 同款：重置钮 + 已完成计数（ckReset/ckCount）放清单下方
+    ck_foot = QHBoxLayout()
+    b_ckreset = Btn("重置勾选", t, "ghost")
+    ck_count = QLabel("已完成 0 / %d" % len(items))
+    ck_count.setFont(qfont(t, 12))
+    ck_count.setStyleSheet(f"color:{t.tx3};background:transparent;")
+    ck_foot.addWidget(b_ckreset)
+    ck_foot.addWidget(ck_count)
+    ck_foot.addStretch(1)
+    card2.body.addLayout(ck_foot)
+
+    def _ck_recount() -> None:
+        n = sum(1 for c in ck_boxes if c.isChecked())
+        ck_count.setText("已完成 %d / %d" % (n, len(ck_boxes)))
+
+    def _ck_reset() -> None:
+        for c in ck_boxes:
+            c.setChecked(False)
+
+    for c in ck_boxes:
+        c.toggled.connect(_ck_recount)
+    b_ckreset.clicked.connect(_ck_reset)
     lay.addWidget(card2)
 
     # ── 视频通路：三态徽章，数据来自 /api/status 的 media.video ──
@@ -1438,9 +1751,20 @@ def json_panel(t: Tokens, on_save=None) -> QWidget:
     card.body.addWidget(note)
     card.body.addWidget(desc(t, "保存时自动把原文件备份成 .bak-qt-时间戳 放同目录；改坏(JSON 不合法)会拒绝写入。"))
     lay.addWidget(card)
-    hooks = [_save, _load, lambda: _open_dir(cfg_path.parent)]
+
+    def _view_raw() -> None:
+        # web rawJsonBtn :5614 = window.open('/api/config'+token) —— 桌面等效 = 系统默认浏览器打开
+        from PySide6.QtCore import QUrl # noqa: PLC0415
+        from PySide6.QtGui import QDesktopServices # noqa: PLC0415
+        from addr import join_url # noqa: PLC0415
+        from agent_bridge import current_url # noqa: PLC0415
+
+        QDesktopServices.openUrl(QUrl(join_url(current_url(), "/api/config")))
+        note.setText("已在浏览器打开后台当前生效的配置（/api/config）· " + time.strftime("%H:%M:%S"))
+
+    hooks = [_save, _load, lambda: _open_dir(cfg_path.parent), _view_raw]
     lay.addLayout(_btn_row(t, [("保存全部设置", "primary"), ("重新读取", "ghost"),
-                               ("打开配置目录", "ghost")], hooks))
+                               ("打开配置目录", "ghost"), ("新窗口查看配置", "ghost")], hooks))
     lay.addWidget(desc(t, "保存后需重启才能完全生效的部分：模型/人设/白名单等；界面与光标类即时生效。"))
     lay.addStretch(1)
     return page
@@ -1769,6 +2093,30 @@ def _async_post(page: QWidget, api: str, body: dict, on_done, timeout: float = 1
         box["done"] = True
 
     threading.Thread(target=_work, daemon=True, name="c12-post").start()
+
+    def _apply() -> None:
+        if not box["done"]:
+            QTimer.singleShot(300, _apply)
+            return
+        on_done(box.get("r"), box.get("err"))
+
+    QTimer.singleShot(300, _apply)
+
+
+def _async_get(api: str, on_done, timeout: float = 30.0) -> None:
+    """后台线程 GET（_async_post 同款 box 模式）——预览类只读接口用。"""
+    import threading # noqa: PLC0415
+
+    box: dict = {"done": False, "r": None, "err": None}
+
+    def _work() -> None:
+        try:
+            box["r"] = config_io.get_json(api, timeout=timeout)
+        except Exception as e: # noqa: BLE001
+            box["err"] = str(e)
+        box["done"] = True
+
+    threading.Thread(target=_work, daemon=True, name="c12-get").start()
 
     def _apply() -> None:
         if not box["done"]:
@@ -2531,6 +2879,64 @@ def persona_panel(t: Tokens) -> QWidget:
                        rows=3, placeholder="追加到系统提示词末尾（管理员补充，最高优先级）")
     ccard.body.addWidget(Field(t, "系统提示词补充", "写在这里的文字追加到系统提示词末尾；保存后下一轮生效", sys_custom))
     binds.append(("system_prompt.custom", sys_custom, "textarea"))
+
+    # ── prompt 预览/清空（web promptPreviewBtn/promptClearBtn 真值 :1303-1304/:4615-4640）──
+    # 预览走服务端现算（/api/prompt/preview = 真 build_system_prompt），不是前端拼的。
+    # ⚠️ pp_note 别用 pnote（:1987 人设列表回显行已占用；重名会把那批闭包的回显劫到这来）。
+    pp_note = desc(t, "")
+    ccard.body.addWidget(pp_note)
+    p_row = QHBoxLayout()
+    b_preview = Btn("预览当前系统提示词", t, "ghost")
+    b_pclear = Btn("清空补充", t, "ghost")
+    p_row.addWidget(b_preview)
+    p_row.addWidget(b_pclear)
+    p_row.addStretch(1)
+    ccard.body.addLayout(p_row)
+
+    def _prompt_preview() -> None:
+        pp_note.setText("预览生成中…")
+        _async_get("/api/prompt/preview", lambda r, e: _prompt_preview_show(r, e))
+
+    def _prompt_preview_show(r: dict | None, e: str | None) -> None:
+        if e or not r or r.get("error"):
+            pp_note.setText("预览失败：" + (e or (r or {}).get("error") or "后台没连上"))
+            return
+        dlg, v = _card_dialog(t, b_preview, "当前系统提示词（服务端现算）", 780)
+        ta = _plain_area(t, str(r.get("system") or "") or "（空）", "系统提示词全文", height=380)
+        ta.setReadOnly(True)
+        v.addWidget(ta)
+        mods = [str(m.get("name")) for m in (r.get("modules") or []) if isinstance(m, dict) and m.get("enabled")]
+        info = _dlg_note(t)
+        info.setText("%s 字符 ｜ 已启用模块：%s ｜ 自定义补充 %s 字符" % (
+            r.get("chars", 0), "、".join(mods) or "无", r.get("custom_chars", 0)))
+        v.addWidget(info)
+        foot = QHBoxLayout()
+        okb = Btn("知道了", t, "primary")
+        okb.clicked.connect(dlg.accept)
+        foot.addStretch(1)
+        foot.addWidget(okb)
+        v.addLayout(foot)
+        dlg.exec()
+        pp_note.setText("")
+
+    def _prompt_clear() -> None:
+        if not sys_custom.toPlainText().strip():
+            pp_note.setText("本来就是空的")
+            return
+        from confirm import ConfirmDialog # noqa: PLC0415
+        d = ConfirmDialog(
+            t, page, "清空「系统提示词补充」？", "清空后立即生效（安全规则不受影响）。",
+            ["「系统提示词补充」会清空", "清空后下一轮对话立即生效"],
+            confirm_label="确认清空", cancel_label="算了")
+        if not d.exec():
+            return
+        sys_custom.setPlainText("")
+        ok, msg = config_io.write_patch({"system_prompt.custom": ""})
+        pp_note.setText("已清空系统提示词补充（下一轮生效）" if ok
+                        else "清空失败：" + msg)
+
+    b_preview.clicked.connect(_prompt_preview)
+    b_pclear.clicked.connect(_prompt_clear)
 
     ccard.body.addWidget(_divider_local(t))
     ccard.body.addWidget(h2(t, "模块开关（三个全要，对齐 web :1366-1369）"))
