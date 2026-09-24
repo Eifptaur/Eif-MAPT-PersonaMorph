@@ -505,8 +505,33 @@ def check_panel(t: Tokens) -> QWidget:
              "联网搜索 · @机器人 今天的天气/新闻", "记忆 · 让机器人记住一件事后到「记忆」页看",
              "挂件 · 看右下角鲸鱼挂件的数据与拖拽", "启停重启 · 顶部停止/重启后能接管",
              "多厂商切换 · 换厂商保存后测试连通"]
+    # 丙-15：对齐 web 真值（checkList 表：结果=勾选框 + 项目 + 怎么测 + 预期）——
+    #   原来整表降级成纯文字 desc，「结果」勾选列蒸发（作者真机点名「连按钮都没有」）。
+    #   ⚠️ 只导 QCheckBox：本函数前面已用模块级 QLabel/QHBoxLayout，函数内再 import
+    #   会把它们变局部变量 ⇒ UnboundLocalError（worker 二轮踩过的同款坑，别再踩）。
+    from PySide6.QtWidgets import QCheckBox  # noqa: PLC0415
+
     for it in items:
-        card2.body.addWidget(desc(t, it))
+        roww = QWidget()
+        roww.setStyleSheet("background:transparent;")
+        rh = QHBoxLayout(roww)
+        rh.setContentsMargins(2, 1, 2, 1)
+        rh.setSpacing(8)
+        ck = QCheckBox()
+        ck.setToolTip("勾选=这项测过了（会话内状态；web 侧用 localStorage 记忆）")
+        rh.addWidget(ck)
+        head, _, rest = it.partition(" · ")
+        t1 = QLabel(head)
+        t1.setFont(qfont(t, 12.5, 600))
+        t1.setStyleSheet(f"color:{t.tx};background:transparent;")
+        t1.setMinimumWidth(92)
+        t2 = QLabel(rest)
+        t2.setFont(qfont(t, 11.5))
+        t2.setStyleSheet(f"color:{t.tx2};background:transparent;")
+        t2.setWordWrap(True)
+        rh.addWidget(t1)
+        rh.addWidget(t2, 1)
+        card2.body.addWidget(roww)
     lay.addWidget(card2)
 
     # ── 视频通路（丙-11 C2）：三态徽章，数据来自 /api/status 的 media.video ──
@@ -1698,8 +1723,11 @@ def _persona_card(t: Tokens, p: dict, handlers: dict) -> QWidget:
     h = QHBoxLayout(w)
     h.setContentsMargins(6, 4, 6, 4)
     h.setSpacing(8)
-    fav = Btn("已收藏" if p.get("fav") else "收藏", t, "ghost")
-    fav.setFixedWidth(56)
+    # 丙-15：对齐 web 星标（★/☆ 小图标，收藏置顶）—— 原来用「已收藏/收藏」两个汉字
+    #   按钮（56px），又大又挤爆卡片（作者真机点名「用一个星号，比较小」）。
+    fav = Btn("★" if p.get("fav") else "☆", t, "ghost")
+    fav.setFixedWidth(34)
+    fav.setToolTip("已收藏（置顶；点击取消）" if p.get("fav") else "收藏置顶")
     fav.clicked.connect(lambda _=False, _p=p: handlers["fav"](_p))
     name = QLabel(p.get("name") or "(未命名)")
     name.setFont(qfont(t, 13, 600))

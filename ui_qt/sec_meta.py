@@ -68,6 +68,9 @@ class Row:
     sub: bool = False          # True = 位于某个 <div class="mid"> 块内（mid 子行）
     group: str = ""            # 所属 mid 块的标题（取最近前置 <div class="desc"> 或顶层 row 标签）
     indent: int = 0            # 渲染缩进档位（mid 子行 = 1，顶层 = 0）
+    # 丙-15：table 每行首列是否为勾选框（功能自检清单「结果」列等）——
+    #   原 _clean 把 <input type=checkbox> 剥成空文本 ⇒ Qt 渲染纯文字清单、勾选列蒸发。
+    cell_checks: list[bool] = field(default_factory=list)
 
 
 @dataclass
@@ -165,6 +168,25 @@ def _parse_row(chunk: str, label: str) -> Row:
         return Row("select", label, cfg, hint=hint, options=opts, default=d)
     if tag.startswith("<textarea"):
         return Row("textarea", label, cfg, _placeholder(tag), hint, default=_default_of(cfg))
+    if tag.startswith("<div class=\"chips\""):
+        # ⛔ 丙-15：chips 行在 web 里常是「chips 勾选组 + 行内按钮 + 自定义添加输入」
+        #   的组合（如 wechat 群白名单：wlChips + 检测/刷新按钮 + customGroup 输入）。
+        #   原来只认 chips 本体 ⇒ 按钮与输入全蒸发（作者真机：「选单都没有，用户怎么选」）。
+        acts: list[tuple[str, str]] = []
+        for bm in re.finditer(r"<button([^>]*)>(.*?)</button>", chunk, re.S):
+            attrs, txt = bm.group(1), _clean(bm.group(2))
+            if not txt:
+                continue
+            idm = re.search(r'id="([\w-]+)"', attrs)
+            aid = idm.group(1) if idm else ""
+            if not aid:
+                dam = re.search(r'data-(?:act|action|id)="([\w-]+)"', attrs)
+                aid = dam.group(1) if dam else ""
+            acts.append((txt, aid))
+        im = re.search(r'<input[^>]*type="text"[^>]*/?>', chunk)
+        ph = _placeholder(im.group(0)) if im else ""
+        return Row("chips", label, cfg, placeholder=ph, hint=hint,
+                   default=_default_of(cfg), actions=acts)
     return Row("chips", label, cfg, hint=hint, default=_default_of(cfg))
 
 
@@ -185,11 +207,16 @@ def _parse_nonwidget_row(chunk: str, label: str) -> Row:
         body = tm.group(1)
         headers = [_clean(x) for x in re.findall(r"<th[^>]*>(.*?)</th>", body, re.S) if _clean(x)]
         rows = []
+        checks: list[bool] = []
         for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", body, re.S):
+            # 丙-15：web 清单表（功能自检清单等）首列常是勾选框 —— 原来被 _clean
+            #   剥成空文本 ⇒ Qt 渲染成纯文字清单，「结果」勾选列蒸发（作者点名）。
+            has_ck = bool(re.search(r'<input[^>]*type="checkbox"', tr))
             cells = [_clean(x) for x in re.findall(r"<td[^>]*>(.*?)</td>", tr, re.S)]
             if cells and any(cells):
                 rows.append(cells)
-        return Row("table", label, hint=hint, headers=headers, rows=rows)
+                checks.append(has_ck)
+        return Row("table", label, hint=hint, headers=headers, rows=rows, cell_checks=checks)
     # ② 按钮组
     btns = re.findall(r"<button[^>]*>(.*?)</button>", chunk, re.S)
     if btns:
@@ -225,7 +252,11 @@ def _div_close(body: str, open_gt: int) -> int:
     """open_gt = 某个 <div ...> 右尖括号 '>' 的索引；返回与之匹配的 </div> 起始索引。
 
     用 div 深度计数做括号匹配，使每个 <div class="row"> 都能取到它「自己」的闭合，
-    而不会在碰到 <div class="mid"> / <div class="btns"> 时提前停（这正是旧前瞻截断的根因）。
+    而不会在碰到 `<div class="mid">` / `<div class="btns">` 时提前停（这正是旧前瞻截断的根因）。
+
+    丙-12 修：正文里存在**未转义的裸 `<`**（persona「评分补足」的 hint 写着「否则一律<95」），
+    把它当标签起点会让 `.find('>')` 一口吞掉后面真正的 `</div>`，深度计数彻底错位、返回 -1。
+    ⇒ 只认「`<` 后紧跟字母 / `/` / `!`」才是标签起点，裸 `<` 一律跳过。
     """
     depth = 1
     i = open_gt + 1
@@ -234,12 +265,16 @@ def _div_close(body: str, open_gt: int) -> int:
         lt = body.find('<', i)
         if lt < 0:
             break
+        nxt = body[lt + 1:lt + 2]
+        if not (nxt.isalpha() or nxt in ("/", "!")):
+            i = lt + 1                    # 裸 '<'（正文）——不是标签，跳过重找
+            continue
         if body.startswith('</div>', lt):
             depth -= 1
             if depth == 0:
                 return lt
             i = lt + 6
-        elif body.startswith('<div', lt):
+        elif body.startswith('<div', lt) and body[lt + 4:lt + 5] in ("", " ", ">", "\t", "\n", "/"):
             depth += 1
             gt = body.find('>', lt)
             i = gt + 1 if gt >= 0 else n
@@ -275,6 +310,164 @@ def _mid_ranges(body: str) -> list:
     return out
 
 
+def _row_ranges(body: str) -> list[tuple[int, int]]:
+    """每个 `<div class="row">` 的 (open_start, close_start) —— 用 div 深度取自身闭合。
+
+    ⛔ 这就是「按钮和选单蒸发」的修复点（旧前瞻截断的根因）：
+    旧写法用 `re.finditer(r'… (.*?)(?=<div class="row"|<div class="btns"|… )')`，结束前瞻
+    一碰到**同一个 row 内部**的 `<div class="btns">` 就提前停 ⇒ row 后半截（按钮组、
+    row 内联的 `<select>`/`<input>`、hint 段落）整段丢失：人设「选单」行只剩 1 个按钮、
+    「评分补足」行只有文本输入框而没有三枚按钮 + 补足轮数下拉 + 允许模型处理勾选。
+    改用 `_div_close`（div 深度计数）取每个 row 它自己的闭合，行内任何嵌套 div 都不再截断。
+    """
+    out: list[tuple[int, int]] = []
+    i = 0
+    n = len(body)
+    while i < n:
+        rm = re.search(r'<div class="row"[^>]*><label>([^<]+)</label>', body[i:])
+        if rm is None:
+            break
+        start = i + rm.start()
+        gt = body.find('>', start)
+        if gt < 0:
+            break
+        close = _div_close(body, gt)
+        if close < 0:
+            break
+        out.append((start, close))
+        i = close + 6  # 跳过本次 </div>（长度 6），从下一个 row 继续找
+    return out
+
+
+def _row_of(body: str, row_start: int, row_close: int, mid_spans: list[tuple[int, int]]) -> list[Row]:
+    """把一段 row 自身区间变成 Row 列表（含 mid 标记 + 行内按钮组回收）。
+
+    三件事，都不改 HTML（web 源码是唯一真值、一个字不动）：
+
+    · **mid 子行标记**：起点落在某个 `.mid` 区间内 ⇒ 标记 sub/group/indent=1
+      （渲染层据此缩进；对顶层行是恒等，对 mid 行才加标记）。
+
+    · **行内按钮组回收**：一行里同时有 `<input>`/`<select>` 与 `<div class="btns">`
+      时，`_parse_row` 只认控件 ⇒ 按钮组整组蒸发（真机「按钮都不见了」的另一半）。
+      这里把该 row 内每个 `.btns` 组额外产出一条 `buttons` 子行，接在控件行之后。
+
+    · **级联包含裁剪**：row 区间把后续 row 也包进去时（浏览器对游离 `</div>` 的 dom
+      修正所致），取**标签 `</label>` 之后第一个自己开始的子级 `<div>`** 的闭合作为
+      真正终点，多包进来的兄弟行交回外层 while 各自认领 —— 否则它们会整块消失。
+    """
+    inner = _row_inner(body, row_start, row_close)
+    label = _row_label(body, row_start)
+    out = [_parse_row(inner, label)]
+    sub = False
+    group = ""
+    span = next((s for s in mid_spans if s[0] <= row_start < s[1]), None)
+    if span is not None:
+        sub, group = True, _mid_group(body, span[0])
+    if out[0].kind != "buttons":           # buttons 档自身已抽干，不重复
+        for acts in _btns_groups(inner):
+            br = Row("buttons", label, actions=acts, hint=out[0].hint)
+            out.append(br)
+    for r in out:
+        r.sub, r.group, r.indent = sub, group, (1 if sub else 0)
+    return out
+
+
+def _row_label(body: str, row_start: int) -> str:
+    lm = re.search(r'<label>([^<]+)</label>', body[row_start:])
+    return _clean(lm.group(1)) if lm else ""
+
+
+def _row_inner(body: str, row_start: int, row_close: int) -> str:
+    """row 内部 HTML（<label> 闭合之后 ~ 该 row 自身闭合），并做级联包含裁剪。"""
+    lm = re.search(r'<label>([^<]+)</label>', body[row_start:])
+    if lm is None:
+        return ""
+    content_from = row_start + lm.end()
+    end = row_close
+    cm = re.search(r"<div", body[content_from:])
+    if cm is not None:
+        child_start = content_from + cm.start()
+        gt = body.find('>', child_start)
+        if gt >= 0:
+            c_close = _div_close(body, gt)
+            # 子级闭合早于 row 自身闭合 ⇒ 那才是内容终点（后面的兄弟 row 交回外层）
+            if 0 <= c_close < row_close:
+                end = c_close
+    return body[content_from:end]
+
+
+def _btns_groups(chunk: str) -> list[list[tuple[str, str]]]:
+    """chunk 内所有 `<div class="btns">…</div>` 各抽一组动作（组内无 button 则跳过）。
+
+    ⚠️ 只认同级 `.btns` 组 —— 组内还可能嵌别的 div（label 包裹的 select/checkbox），
+    `_div_close` 取的是该组自己的闭合，所以「补足轮数」这种夹在按钮之间的下拉也照收。
+    """
+    out: list[list[tuple[str, str]]] = []
+    for bm in re.finditer(r'<div class="btns"', chunk):
+        gt = chunk.find('>', bm.start())
+        if gt < 0:
+            continue
+        b_close = _div_close(chunk, gt)
+        body_end = b_close if b_close >= 0 else len(chunk)
+        acts = _extract_btns(chunk[bm.start():body_end])
+        if acts:
+            out.append(acts)
+    return out
+
+
+def _sweep_orphan_btns(body: str, covered: list[tuple[int, int]]) -> list[list[tuple[str, str]]]:
+    """兜底：把**没有被任何 row 认领**的 `<button>` 组也捞成 buttons 行。
+
+    web 里有按钮挂在「有行号的 row」与「`.btns` 组」之外的裸容器上 —— 例如 advanced 的
+    「确定学习 / 学习评估」。它们既不在任何 row 区间内，也不是 `<div class="btns">`，
+    只靠上面两条路径会整组蒸发（真机「按钮都不见了」的第三半）。判据 = 按出现顺序把
+    未认领的 `<button>` 归组：同层级连续按钮（中间只夹 span/em 等内联元素）算一组。
+    """
+    claimed = [i for a, b in covered for i in (a, b)]
+    out: list[list[tuple[str, str]]] = []
+    cur: list[tuple[str, str]] = []
+    for bm in re.finditer(r"<button([^>]*)>(.*?)</button>", body, re.S):
+        inside = any(a <= bm.start() < b for a, b in covered)
+        txt = _clean(bm.group(2))
+        if inside or not txt:
+            if cur:
+                out.append(cur)
+                cur = []
+            continue
+        attrs = bm.group(1)
+        aid = ""
+        idm = re.search(r'id="([\w-]+)"', attrs)
+        if idm:
+            aid = idm.group(1)
+        else:
+            dam = re.search(r'data-(?:act|action|id)="([\w-]+)"', attrs)
+            if dam:
+                aid = dam.group(1)
+        cur.append((txt, aid))
+    if cur:
+        out.append(cur)
+    return out
+
+
+def _extract_btns(chunk: str) -> list[tuple[str, str]]:
+    """`<button>` → [(文案, 动作id)]；id 取 `id=`，退到 `data-act/action/id=`。"""
+    acts: list[tuple[str, str]] = []
+    for bm in re.finditer(r"<button([^>]*)>(.*?)</button>", chunk, re.S):
+        attrs, txt = bm.group(1), _clean(bm.group(2))
+        if not txt:
+            continue
+        aid = ""
+        idm = re.search(r'id="([\w-]+)"', attrs)
+        if idm:
+            aid = idm.group(1)
+        else:
+            dam = re.search(r'data-(?:act|action|id)="([\w-]+)"', attrs)
+            if dam:
+                aid = dam.group(1)
+        acts.append((txt, aid))
+    return acts
+
+
 def secs() -> dict[str, Sec]:
     """解析一次，全进程共享。web 源码变了重启即跟（原型的"诚实"边界）。"""
     global _CACHE
@@ -287,11 +480,12 @@ def secs() -> dict[str, Sec]:
         dsc = re.search(r'<div class="desc">(.{0,400}?)</div>', body, re.S)
         sec = Sec(key=key, title=_clean(hd.group(1)) if hd else key,
                   desc=_first_sentence(dsc.group(1), 150) if dsc else "")
-        for rm in re.finditer(
-            r'<div class="row"[^>]*>\s*<label>([^<]+)</label>(.*?)(?=<div class="row"|<div class="btns"|</section>|<div class="mid"|<hr)',
-            body, re.S,
-        ):
-            sec.rows.append(_parse_row(rm.group(2), _clean(rm.group(1))))
+        mid_spans = [(a, b) for a, b, _g in _mid_ranges(body)]
+        covered = _row_ranges(body)
+        for a, b in covered:
+            sec.rows.extend(_row_of(body, a, b, mid_spans))
+        for acts in _sweep_orphan_btns(body, covered):
+            sec.rows.append(Row("buttons", "操作", actions=acts))
         _CACHE[key] = sec
     return _CACHE
 

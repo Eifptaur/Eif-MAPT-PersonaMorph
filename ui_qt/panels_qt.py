@@ -297,6 +297,10 @@ def _ctrl_value(r: "sec_meta.Row", ctrl: QWidget | None):
         return str(ctrl.currentData())
     if r.kind == "textarea":
         return ctrl.toPlainText()
+    if r.kind == "chips":
+        # 丙-15：web chips 存 list（如 group_name_white_list）—— 逗号/中文逗号分隔还原
+        parts = [x.strip() for x in ctrl.text().replace("，", ",").split(",")]
+        return [x for x in parts if x]
     return ctrl.text()
 
 
@@ -327,13 +331,51 @@ def _row(t: Tokens, r: "sec_meta.Row", card: Card, binds: list | None = None) ->
         c = _status_chip(t, r.status_id)
     elif r.kind == "table":
         return _table_row(t, r, card)
-    # info / chips → 纯说明行（不伪造一个接不了后台的控件）
+    elif r.kind == "chips":
+        # ⛔ 丙-15：chips 行（群白名单等）在 web 是「chips 组 + 行内按钮 + 添加输入」
+        #   组合，原来不渲染任何控件 ⇒ 「选单都没有，用户怎么选」（作者真机点名）。
+        #   ⇒ 可编辑文本（逗号分隔列表，保存时转 list）+ 行内按钮。
+        c = _chips_editor(t, r)
+    # info → 纯说明行（无控件语义）
     f = Field(t, r.label, r.hint, c, card)
     # 只有**带 cfg 的可写控件**才进 binds（status/buttons 无 cfg ⇒ 不参与保存；
     # 它们不是 QLineEdit，混进 binds 会在保存时被当输入框调 editingFinished）。
-    if c is not None and binds is not None and r.cfg:
+    # ⚠️ 丙-12 修：光看 `r.cfg` 不够 —— `chips` 与 status/buttons 一样可能带 cfg
+    #    （sec_meta._parse_row 的兜底分支 `Row("chips", label, cfg, ...)` 就传了 cfg），
+    #    混进 binds 后会走保存侧的 else 分支调 `editingFinished` ⇒ AttributeError。
+    #    故必须同时限制 `r.kind` 为**真正可写**的类型白名单。
+    if c is not None and binds is not None and r.cfg and r.kind in _WRITABLE_KINDS:
         binds.append((r, c))
     return f
+
+
+# 丙-12：**真正可写**的 row 类型白名单 —— 只有这几种的控件才进 binds、
+# 才参与「改完即生效」的变更监听。其余（info/chips/status/buttons/table）
+# 一律是**展示型**，既没有可写语义，其控件也不保证具备 `editingFinished` 等信号。
+_WRITABLE_KINDS = frozenset({"text", "password", "number", "range", "checkbox", "select", "textarea", "chips"})
+
+
+def _chips_editor(t: Tokens, r: "sec_meta.Row") -> QWidget:
+    """web chips 勾选组（群白名单等）→ 可编辑输入 + 行内按钮（丙-15）。
+
+    值语义对齐 web：list[str]（编辑框里逗号分隔展示，保存时 split 回 list）。
+    行内按钮（检测群聊并勾选 / 刷新群列表）走 `_btn_group`；「一键选群」真弹窗列下一单。
+    """
+    box = QWidget()
+    v = QVBoxLayout(box)
+    v.setContentsMargins(0, 0, 0, 0)
+    v.setSpacing(6)
+    cur = config_io.read_path(r.cfg) if r.cfg else None
+    if isinstance(cur, list):
+        txt = ", ".join(str(x) for x in cur)
+    elif cur:
+        txt = str(cur)
+    else:
+        txt = ""
+    v.addWidget(_line(t, txt, placeholder=r.placeholder or "群 wxid / 群名，逗号分隔；留空=全部监听"))
+    if r.actions:
+        v.addWidget(_btn_group(t, r.actions))
+    return box
 
 
 def _btn_group(t: Tokens, actions: list[tuple[str, str]]) -> QWidget:
@@ -407,10 +449,18 @@ def _table_row(t: Tokens, r: "sec_meta.Row", card: Card) -> QWidget:
         grid.addWidget(c, 0, j)
     for i, row in enumerate(r.rows, start=1):
         for j, cell in enumerate(row):
-            c = QLabel(cell)
-            c.setFont(qfont(t, t.body_size - 1))
-            c.setStyleSheet(f"color:{t.tx2};background:transparent;")
-            c.setWordWrap(True)
+            # 丙-15：web 清单表首列是勾选框（结果列）—— 原来渲染空文本 ⇒ 勾选列蒸发。
+            if (j == 0 and i - 1 < len(r.cell_checks) and r.cell_checks[i - 1]
+                    and not cell.strip()):
+                from PySide6.QtWidgets import QCheckBox  # noqa: PLC0415
+
+                c: QWidget = QCheckBox()
+                c.setToolTip("勾选=这项测过了（对齐 web 的记忆勾选；Qt 侧暂为会话内状态）")
+            else:
+                c = QLabel(cell)
+                c.setFont(qfont(t, t.body_size - 1))
+                c.setStyleSheet(f"color:{t.tx2};background:transparent;")
+                c.setWordWrap(True)
             grid.addWidget(c, i, j)
     v.addLayout(grid)
     return wrap
@@ -678,8 +728,13 @@ def _cfg_panel(t: Tokens, s: "sec_meta.Sec", on_save=None) -> QWidget:
             ctrl.currentIndexChanged.connect(_mark_dirty)
         elif r.kind == "textarea":
             ctrl.textChanged.connect(_mark_dirty)
-        else:                                    # text/password/number/range
-            ctrl.editingFinished.connect(_mark_dirty)
+        elif r.kind in ("text", "password", "number", "range"):
+            # ⚠️ 丙-12 修：不再用裸 `else` 兜底 —— 那样任何漏网类型都会撞到这里。
+            #   具名判定 + hasattr 防御，缺信号就跳过（宁可少监听，不可崩面板）。
+            sig = getattr(ctrl, "editingFinished", None)
+            if sig is not None:
+                sig.connect(_mark_dirty)
+        # 其余类型（info/chips/status/buttons/table）:展示型，不监听变更。
 
     def _on_auto(on: bool) -> None:
         QSettings("WXAgent", "persona-morph-ui").setValue("auto_apply", bool(on))
