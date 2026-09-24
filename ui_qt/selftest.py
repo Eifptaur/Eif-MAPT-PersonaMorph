@@ -1739,11 +1739,57 @@ def t_c13() -> None:
        and "Shell._thickframe_ok" in _nat_code)
 
 
+# ------------------------------------------------ 4.x 真机三连首修（人设卡窄窗 / 群检测超时）
+
+def t_hotfix1() -> None:
+    """真机反馈三连：①评分列固定不浮动 ②窄窗下「使用/删」不再被裁 ③群检测超时对齐 web 30s。
+
+    布局契约摸真实控件（构造超长名+长摘要的卡，量最小宽）；口径类走源码断言。
+    """
+    import os # noqa: PLC0415
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QLabel # noqa: PLC0415
+
+    from panels_custom import _persona_card # noqa: PLC0415
+    from stylekit_qt import THEMES # noqa: PLC0415
+
+    QApplication.instance() or QApplication([])
+    t = THEMES["light"]
+    handlers = {"fav": lambda p: None, "use": lambda p: None, "del": lambda p: None}
+
+    long_p = {"name": "超长人设名称测试" * 8, "text": "很长的摘要内容" * 12,
+              "__score": 9.12, "fav": False}
+    card = _persona_card(t, long_p, handlers)
+    min_w = card.minimumSizeHint().width()
+    ck("人设卡窄窗契约：超长名+长摘要时卡片最小宽 < 520（按钮不再被裁出视口）",
+       min_w < 520, f"min_w={min_w}")
+    lbs = card.findChildren(QLabel)
+    name_lb = next(lb for lb in lbs if lb.text().endswith("…"))
+    sc_lb = next(lb for lb in lbs if lb.text().startswith("模型"))
+    ck("人设名超长时省略号截断（固定宽 122，不撑宽卡片）",
+       name_lb.minimumWidth() == 122 and name_lb.maximumWidth() == 122,
+       f"{name_lb.minimumWidth()}/{name_lb.maximumWidth()}")
+    ck("评分列固定宽 78（所有卡位置一致，不再随人设名浮动偏右）",
+       sc_lb.minimumWidth() == 78 and sc_lb.maximumWidth() == 78,
+       f"{sc_lb.minimumWidth()}/{sc_lb.maximumWidth()}")
+
+    pq_src = (HERE / "panels_qt.py").read_text(encoding="utf-8")
+    i = pq_src.find("def _chips_group_action(")
+    j = pq_src.find("\ndef ", i + 1) # 下一模块级 def（嵌套 def _work/_apply 是 4 空格缩进，不匹配）
+    seg = pq_src[i:j if j > 0 else len(pq_src)]
+    ck("群检测超时对齐 web getJSON 默认 30s（原 8s 会先于后端掐断 → 像挂不上）",
+       "timeout=30.0" in seg and "timeout=8.0" not in seg, "")
+    io_src = (HERE / "config_io.py").read_text(encoding="utf-8")
+    ck("config_io.get_json 支持 err_box 错误透出（超时/连不上可区分，不再一律「后台没连上」）",
+       "err_box" in io_src and 'err_box["err"]' in io_src, "")
+
+
 def main() -> int:
     for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
                t_visual, t_badges, t_status_chain, t_bot_controls, t_window_chrome, t_dpi_motion,
                t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch, t_bootstrap32, t_ocr9,
-               t_c10, t_c13):
+               t_c10, t_c13, t_hotfix1):
         try:
             fn()
         except Exception as e: # noqa: BLE001

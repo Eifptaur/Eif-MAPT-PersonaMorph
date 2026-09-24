@@ -111,21 +111,27 @@ def write_full(raw_text: str) -> tuple[bool, str]:
         return False, f"保存失败：{e}"
 
 
-def get_json(api: str, timeout: float = 1.5) -> dict | None:
-    """GET 后端接口（/api/status 等）；连不上返回 None（调用方如实展示）。"""
+def get_json(api: str, timeout: float = 1.5, err_box: dict | None = None) -> dict | None:
+    """GET 后端接口（/api/status 等）；连不上返回 None（调用方如实展示）。
+
+    err_box 传 dict 时，异常原文写入 err_box["err"]（超时/拒绝连接可区分）；
+    默认 None 保持旧行为：静默返回 None。
+    """
     try:
         from addr import join_url # noqa: PLC0415
         from agent_bridge import current_url # noqa: PLC0415
 
         base = current_url()[0] if isinstance(current_url(), tuple) else current_url()
         # base 可能自带 ?token= —— 必须 join_url 让 api 落在 query 之前
-        # 
+        #
         req = urllib.request.Request(join_url(base, api),
                                      headers={"Accept": "application/json"})
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({})) # 绕代理（heal 同款）
         with opener.open(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8", "replace"))
-    except Exception: # noqa: BLE001
+    except Exception as e: # noqa: BLE001
+        if err_box is not None:
+            err_box["err"] = str(e)
         return None
 
 

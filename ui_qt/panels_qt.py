@@ -419,16 +419,19 @@ def _chips_group_action(aid: str, line, note) -> None:
     """群白名单「检测群聊并勾选 / 刷新群列表」真实现（web 2806/2798 同款）。
 
     网络在后台线程（不冻 UI），弹窗与落地在主线程。失败/0 群如实说（web 同款三选一口径）。
+    超时对齐 web getJSON 默认 30s：refresh 要重读微信联系人库（微信占用时会慢），
+    原 8s 会在后端还没回话时先被掐断 → 看起来像「挂不上控制台」。
     """
     note.show()
-    note.setText("检测群聊中…")
+    note.setText("正在刷新群列表（重读联系人库，微信占用时会慢，最长等 30 秒）…"
+                 if aid == "refreshGroups" else "检测群聊中…")
     box: dict = {"done": False, "val": None, "err": None}
 
     def _work() -> None:
         try:
             box["val"] = config_io.get_json(
                 "/api/wechat-groups" + ("?refresh=1" if aid == "refreshGroups" else ""),
-                timeout=8.0)
+                timeout=30.0, err_box=box)
         except Exception as e: # noqa: BLE001
             box["err"] = str(e)
         box["done"] = True
@@ -445,7 +448,13 @@ def _chips_group_action(aid: str, line, note) -> None:
             return
         rsp = box["val"]
         if not isinstance(rsp, dict):
-            note.setText("检测失败：" + (box["err"] or "后台没连上"))
+            err = box["err"] or ""
+            if "timed out" in err or "timeout" in err.lower():
+                note.setText("等结果超时（30 秒）。微信正占着联系人库或群太多时会这样，"
+                             "稍等再点一次；反复出现就重启微信/控制台再试。")
+            else:
+                note.setText("检测失败：" + (err or "后台没连上（控制台没起来？"
+                                         "先看「运行状态」那行是不是「已连接」）"))
             return
         if rsp.get("ok") is False:
             note.setText(str(rsp.get("error") or "读不到群列表（微信可能还没接上）"))

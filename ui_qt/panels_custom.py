@@ -2182,14 +2182,22 @@ def _persona_card(t: Tokens, p: dict, handlers: dict) -> QWidget:
         t.warn if p.get("fav") else t.tx3, 14)))
     fav.setToolTip("已收藏（置顶；点击取消）" if p.get("fav") else "收藏置顶")
     fav.clicked.connect(lambda _=False, _p=p: handlers["fav"](_p))
+    # 窄窗契约：name/sc 固定宽 → 评分列紧跟人设名、位置稳定不浮动；
+    #   txt 最小宽 0 可被布局压缩；卡片最小宽压到 ~400px，
+    #   列表视口再窄「使用/删」也不会被裁出视口（不用拉宽窗口）。
+    from PySide6.QtGui import QFontMetrics # noqa: PLC0415
+
     name = QLabel(p.get("name") or "(未命名)")
     name.setFont(qfont(t, 13, 600))
     name.setStyleSheet(f"color:{t.tx};background:transparent;")
-    name.setMinimumWidth(110)
+    name.setText(QFontMetrics(name.font()).elidedText(
+        name.text(), Qt.ElideRight, 110))
+    name.setFixedWidth(122)
     sc = p.get("__score")
     sc_lb = QLabel(f"模型 {sc:.2f}" if isinstance(sc, (int, float)) else "")
     sc_lb.setFont(qfont(t, 12))
     sc_lb.setStyleSheet(f"color:{t.warn};background:transparent;")
+    sc_lb.setFixedWidth(78)
     use = Btn("使用", t, "ghost")
     use.setFixedWidth(54)
     use.clicked.connect(lambda _=False, _p=p: handlers["use"](_p))
@@ -2200,9 +2208,10 @@ def _persona_card(t: Tokens, p: dict, handlers: dict) -> QWidget:
     txt.setFont(qfont(t, 11.5))
     txt.setStyleSheet(f"color:{t.tx3};background:transparent;")
     txt.setWordWrap(True)
-    # 摘要限宽 + 按钮区右移留白 —— 原来 txt 无限拉伸把「使用/删」挤到重叠
+    # 摘要限宽 + 最小宽 0（窄窗时先牺牲摘要、保右侧按钮完整可见）
     # 。卡最小高度保证 itemWidget 不压扁。
     txt.setMaximumWidth(300)
+    txt.setMinimumWidth(0)
     w.setMinimumHeight(44)
     h.setContentsMargins(6, 4, 12, 4)
     h.addWidget(fav)
