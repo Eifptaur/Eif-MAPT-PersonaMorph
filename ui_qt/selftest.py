@@ -1452,8 +1452,9 @@ def t_c10() -> None:
        all(k in lsrc for k in ('r.kind == "buttons"', 'r.kind == "status"', 'r.kind == "table"')))
     ck("c10P2: 渲染层三构造器存在（_btn_group/_status_chip/_table_row）",
        all(("def " + n + "(") in lsrc for n in ("_btn_group", "_status_chip", "_table_row")))
-    ck("c10P2: 无 cfg 的 status/buttons 不进 binds（不被当输入框调 editingFinished）",
-       "and r.cfg" in _body(lsrc, "_row"))
+    ck("c10P2: 展示型仍挡在 binds 外（_WRITABLE_KINDS 门槛）；无 cfg 可写行进 binds 但保存侧跳过（_collect: if not r.cfg）",
+       "r.kind in _WRITABLE_KINDS" in _body(lsrc, "_row")
+       and "if not r.cfg:" in _body(lsrc, "_collect"))
 
     # 真跑 P0-4：直调 _hit_test 验「右缘中段能缩放」+「滚动条本体留滚动」两立
     # 
@@ -2319,11 +2320,313 @@ def t_medialocal() -> None:
         srv.shutdown()
 
 
+def t_commfb() -> None:
+    """批4第三组全链路真跑：community（导出/上传/种子导入）+ feedback（三态提交/补发/状态卡）。
+
+    手法同 t_catmgr / t_medialocal：假后端 + patch current_url + patch QDialog.exec
+    （自动点确认）+ patch QFileDialog（假文件路径）；断言请求 payload 与行内回显。
+    """
+    import json as _json # noqa: PLC0415
+    import os # noqa: PLC0415
+    import tempfile as _tf # noqa: PLC0415
+    import threading as _th # noqa: PLC0415
+    import time as _time # noqa: PLC0415
+    from http.server import BaseHTTPRequestHandler, HTTPServer # noqa: PLC0415
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QLabel,
+                                   QLineEdit, QPlainTextEdit) # noqa: PLC0415
+
+    import panels_qt # noqa: PLC0415
+    from stylekit_qt import THEMES # noqa: PLC0415
+    from widgets import Btn, Switch # noqa: PLC0415
+
+    QApplication.instance() or QApplication([])
+
+    calls: list = []
+    fb_state: dict = {"can_send": False, "pending": 2,
+                      "recent": [{"at_h": "14:00", "kind": "问题", "sent_h": None}]}
+
+    class _H(BaseHTTPRequestHandler):
+        def _send(self, obj): # noqa: N802
+            body = _json.dumps(obj).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self): # noqa: N802
+            calls.append(self.path)
+            if "/api/feedback" in self.path:
+                self._send({"ok": True, "enabled": True, **fb_state})
+            else:
+                self._send({"ok": True})
+
+        def do_POST(self): # noqa: N802
+            n = int(self.headers.get("Content-Length") or 0)
+            try:
+                body = _json.loads(self.rfile.read(n).decode("utf-8", "replace")) if n else {}
+            except Exception: # noqa: BLE001
+                body = {}
+            calls.append(self.path + "#" + _json.dumps(body, ensure_ascii=False))
+            if "/api/feedback/submit" in self.path:
+                text = str(body.get("text") or "")
+                if "限流" in text:
+                    self._send({"ok": True, "state": "blocked", "why": "发得太频繁了"})
+                elif "积压" in text:
+                    self._send({"ok": True, "state": "queued", "why": "邮件没配好",
+                                "pending": 2, "via": "smtp"})
+                else:
+                    self._send({"ok": True, "state": "sent", "via": "smtp", "files": 0})
+            elif "/api/feedback/flush" in self.path:
+                self._send({"ok": True, "why": "补发完成（2 条）"})
+            elif "/api/community/export" in self.path:
+                self._send({"ok": True, "count": 5, "path": "exports/holyshits.json"})
+            elif "/api/community/upload" in self.path:
+                self._send({"ok": True, "count": 3})
+            elif "/api/scoring/import" in self.path:
+                self._send({"ok": True, "imported": 4})
+            elif "/api/open-path" in self.path:
+                self._send({"ok": True})
+            else:
+                self._send({"ok": True})
+
+        def log_message(self, *a): # noqa: N802
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), _H)
+    port = srv.server_address[1]
+    _th.Thread(target=srv.serve_forever, daemon=True, name="fake-be-commfb").start()
+
+    import agent_bridge # noqa: PLC0415
+
+    _orig_url = agent_bridge.current_url
+    agent_bridge.current_url = lambda: "http://127.0.0.1:%d/?token=tk" % port
+    exec_dlgs: list = []
+    mode = {"ok": False} # False=一律取消；True=ConfirmDialog 自动点确认
+    _orig_exec = QDialog.exec
+
+    def _fake_exec(self, *a, **k):
+        exec_dlgs.append(self)
+        if mode["ok"] and hasattr(self, "btn_ok"):
+            self.btn_ok.click() # accept() 后 result() 变 1
+        return self.result()
+
+    QDialog.exec = _fake_exec
+
+    _orig_gofn = QFileDialog.getOpenFileName
+    tmp_fd, tmp_path = _tf.mkstemp(suffix=".txt")
+    os.write(tmp_fd, "金句甲\n金句乙\n".encode("utf-8"))
+    os.close(tmp_fd)
+    QFileDialog.getOpenFileName = staticmethod(lambda *a, **k: (tmp_path, ""))
+
+    def _btn(page, action):
+        return [b for b in page.findChildren(Btn) if b.property("web_action") == action]
+
+    def _wait(pred, timeout=4.0):
+        end = _time.time() + timeout
+        while _time.time() < end:
+            QApplication.processEvents()
+            if pred():
+                return True
+            _time.sleep(0.03)
+        QApplication.processEvents()
+        return pred()
+
+    try:
+        t = THEMES["whale"]
+        # ── community 页：按钮接线 / 上传联动 / 确认上传 / 导出 / 种子导入 ──
+        wrap_c = panels_qt.build_panel(t, "community") # wrap 必须持有引用：
+        page = wrap_c.widget() #   QScrollArea 被回收会连带删掉 inner（C++ 父子所有权）
+        page.show()
+        QApplication.processEvents()
+        acts = [b.property("web_action") for b in page.findChildren(Btn)
+                if b.property("web_action")]
+        ck("community 页九个动作按钮全部接上（ACT_CUSTOM/_ACT_API 路由，不再 stub）",
+           all(a in acts for a in ("seedImportBtn", "seedImportFile", "exportHolyshits",
+                                   "exportFeedback", "exportMessages", "openExportDir",
+                                   "openSeedBtn", "uploadSeeds", "uploadFeedback")),
+           str(acts))
+
+        chk = next(w for r, w in page._c8_binds if (r.cfg or "") == "community.upload_enabled")
+        url_h = next(w for r, w in page._c8_binds if (r.cfg or "") == "community.holyshits_upload_url")
+        url_f = next(w for r, w in page._c8_binds if (r.cfg or "") == "community.feedback_upload_url")
+        ub = _btn(page, "uploadSeeds")[0]
+        fbb = _btn(page, "uploadFeedback")[0]
+        chk.setChecked(False)
+        url_h.setText("")
+        url_f.setText("")
+        QApplication.processEvents()
+        ck("上传联动①：未勾「社区上传」/ URL 空 ⇒ 两上传钮禁用（web syncState 口径）",
+           not ub.isEnabled() and not fbb.isEnabled(),
+           "ub=%s fb=%s" % (ub.isEnabled(), fbb.isEnabled()))
+        chk.setChecked(True)
+        url_h.setText("http://127.0.0.1:9001/seeds")
+        url_f.setText("http://127.0.0.1:9001/fb")
+        QApplication.processEvents()
+        ck("上传联动②：勾上 + 两个 URL 填好 ⇒ 两上传钮启用",
+           ub.isEnabled() and fbb.isEnabled(),
+           "ub=%s fb=%s" % (ub.isEnabled(), fbb.isEnabled()))
+
+        mode["ok"] = False
+        exec_dlgs.clear()
+        calls.clear()
+        ub.click()
+        QApplication.processEvents()
+        ck("确认上传金句先弹确认框，点取消 ⇒ 不发请求",
+           len(exec_dlgs) == 1 and not any("/api/community/upload" in c for c in calls),
+           "dlg=%d posts=%s" % (len(exec_dlgs), [c for c in calls if "upload" in c]))
+        mode["ok"] = True
+        ub.click()
+        _wait(lambda: any("/api/community/upload" in c for c in calls))
+        _wait(lambda: ub.property("c8_note").text() not in ("上传中…", ""))
+        ck("确认后 POST /api/community/upload {kind:holyshits}，回显「已上传 3 条」",
+           any("/api/community/upload" in c and "holyshits" in c for c in calls)
+           and "已上传 3 条" in ub.property("c8_note").text(),
+           str([c for c in calls if "upload" in c])
+           + " note=" + ub.property("c8_note").text())
+
+        calls.clear()
+        eb = _btn(page, "exportHolyshits")[0]
+        eb.click()
+        _wait(lambda: any("/api/community/export" in c for c in calls))
+        _wait(lambda: eb.property("c8_note").text() not in ("执行中…（环境体检/链路测试可能要十几秒）", ""))
+        ck("导出金句 POST /api/community/export {kind:holyshits}，回显「已导出 5 条 → path」",
+           any("/api/community/export" in c and "holyshits" in c for c in calls)
+           and "已导出 5 条 → exports/holyshits.json" in eb.property("c8_note").text(),
+           str([c for c in calls if "export" in c]))
+
+        calls.clear()
+        _btn(page, "openSeedBtn")[0].click()
+        _wait(lambda: any("/api/open-path" in c for c in calls))
+        ck("打开种子库 POST /api/open-path {path: data/seed_library.json}",
+           any("/api/open-path" in c and "data/seed_library.json" in c for c in calls),
+           str([c for c in calls if "open-path" in c]))
+
+        si = _btn(page, "seedImportBtn")[0]
+        ta = next(w for r, w in page._c8_binds
+                  if r.kind == "textarea" and r.label == "导入金句种子")
+        calls.clear()
+        ta.setPlainText("")
+        si.click()
+        QApplication.processEvents()
+        ck("种子导入：文本框为空 ⇒ 提示「请先粘贴要导入的金句文本」，不发请求",
+           "请先粘贴" in si.property("c8_note").text()
+           and not any("/api/scoring/import" in c for c in calls),
+           si.property("c8_note").text())
+        ta.setPlainText("用户贴的金句一段")
+        si.click()
+        _wait(lambda: any("/api/scoring/import" in c for c in calls))
+        _wait(lambda: "导入" in si.property("c8_note").text()
+              and "中…" not in si.property("c8_note").text())
+        ck("种子导入 POST /api/scoring/import {text}，回显「已导入 4 条」",
+           any("/api/scoring/import" in c and "用户贴的金句一段" in c for c in calls)
+           and "已导入 4 条" in si.property("c8_note").text(),
+           str([c for c in calls if "import" in c])
+           + " note=" + si.property("c8_note").text())
+
+        calls.clear()
+        sif = _btn(page, "seedImportFile")[0]
+        sif.click()
+        _wait(lambda: any("/api/scoring/import" in c for c in calls))
+        _wait(lambda: "导入" in sif.property("c8_note").text()
+              and "中…" not in sif.property("c8_note").text())
+        ck("文件导入：假对话框选中临时 txt ⇒ POST 带文件内容，回显「从文件导入 4 条（查重后）」",
+           any("/api/scoring/import" in c and "金句甲" in c for c in calls)
+           and "从文件导入 4 条（查重后）" in sif.property("c8_note").text(),
+           str([c for c in calls if "import" in c])
+           + " note=" + sif.property("c8_note").text())
+
+        # ── feedback 页：状态卡 / 校验 / 三态提交 / 补发 ──
+        wrap_f = panels_qt.build_panel(t, "feedback")
+        page2 = wrap_f.widget()
+        page2.show()
+        QApplication.processEvents()
+        sb = _btn(page2, "fbSubmit")[0]
+        fbn = sb.property("c8_note")
+        ck("feedback 页状态卡初载：警示（发不出去/积压 2 条）+ 最近提交一览",
+           _wait(lambda: hasattr(page2, "_fb_lb")
+                 and "有 2 条还没发出去" in page2._fb_lb.text()
+                 and "最近提交：14:00 问题（待发）" in page2._fb_lb.text()),
+           page2._fb_lb.text() if hasattr(page2, "_fb_lb") else "(no lb)")
+
+        text_w = next(w for r, w in page2._c8_binds
+                      if r.kind == "textarea" and r.label == "内容")
+        mail_w = next(w for r, w in page2._c8_binds
+                      if r.kind == "text" and r.label == "联系邮箱")
+        calls.clear()
+        text_w.setPlainText("")
+        sb.click()
+        QApplication.processEvents()
+        ck("提交反馈：内容为空 ⇒ 「先写点内容吧」，不发请求",
+           "先写点内容吧" in fbn.text()
+           and not any("/api/feedback/submit" in c for c in calls),
+           fbn.text())
+        text_w.setPlainText("请修一个 bug")
+        mail_w.setText("bad-email")
+        sb.click()
+        QApplication.processEvents()
+        ck("提交反馈：邮箱格式不对 ⇒ 「联系邮箱写得不太对…」，不发请求",
+           "联系邮箱写得不太对" in fbn.text()
+           and not any("/api/feedback/submit" in c for c in calls),
+           fbn.text())
+
+        mail_w.setText("me@qq.com")
+        calls.clear()
+        sb.click()
+        _wait(lambda: any("/api/feedback/submit" in c for c in calls))
+        _wait(lambda: fbn.text() not in ("提交中…", ""))
+        ck("提交反馈 POST /api/feedback/submit {kind,text,contact,files:[]}，"
+           "回显「已发出（邮件…）」并清空输入框",
+           any("/api/feedback/submit" in c and "me@qq.com" in c and "请修一个 bug" in c
+               for c in calls)
+           and "已发出（邮件" in fbn.text() and text_w.toPlainText() == "",
+           str([c for c in calls if "submit" in c]) + " note=" + fbn.text())
+
+        calls.clear()
+        text_w.setPlainText("积压邮件内容")
+        sb.click()
+        _wait(lambda: "注意：已存在本机" in fbn.text())
+        ck("排队（queued）⇒ 回显「注意：已存在本机…待发 2 条」，输入框清空",
+           "邮件没配好" in fbn.text() and "待发 2 条" in fbn.text()
+           and text_w.toPlainText() == "",
+           fbn.text())
+
+        calls.clear()
+        text_w.setPlainText("限流测试内容")
+        sb.click()
+        _wait(lambda: "还在框里" in fbn.text())
+        ck("被限流（blocked）⇒ 回显原因，输入框内容保留（不清空）",
+           "发得太频繁了" in fbn.text() and "还在框里" in fbn.text()
+           and text_w.toPlainText() == "限流测试内容",
+           fbn.text())
+
+        calls.clear()
+        fl = [b for b in page2.findChildren(Btn) if b.text() == "补发积压"][0]
+        fl.click()
+        _wait(lambda: any("/api/feedback/flush" in c for c in calls))
+        _wait(lambda: "补发完成" in page2._fb_lb.text())
+        ck("补发积压 POST /api/feedback/flush，状态卡回显服务端 why",
+           any("/api/feedback/flush" in c for c in calls)
+           and "补发完成（2 条）" in page2._fb_lb.text(),
+           page2._fb_lb.text())
+    finally:
+        QFileDialog.getOpenFileName = _orig_gofn
+        agent_bridge.current_url = _orig_url
+        QDialog.exec = _orig_exec
+        srv.shutdown()
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+
+
 def main() -> int:
     for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
                t_visual, t_badges, t_status_chain, t_bot_controls, t_window_chrome, t_dpi_motion,
                t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch, t_bootstrap32, t_ocr9,
-               t_c10, t_c13, t_hotfix1, t_hotfix2, t_catmgr, t_medialocal):
+               t_c10, t_c13, t_hotfix1, t_hotfix2, t_catmgr, t_medialocal, t_commfb):
         try:
             fn()
         except Exception as e: # noqa: BLE001

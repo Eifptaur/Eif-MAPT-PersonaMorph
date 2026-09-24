@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPlainTextEdit,
+    QPushButton,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -3607,10 +3608,378 @@ def _tts_probe_appendix(t: Tokens, page: QWidget) -> None:
     page.layout().addWidget(card)
 
 
+# ── community / feedback 动作接线 ──
+#
+# 分工：纯 POST、无上下文依赖的动作进 panels_qt._ACT_API（导出/打开目录/补发）；
+# 要读同页表单、带确认框、多态回显的（提交反馈、上传确认、种子导入）注册进
+# ACT_CUSTOM —— (handler, tooltip)，handler 签名 (btn, note)，note 是按钮组
+# 行内回显 QLabel（btn.property("c8_note") 同一引用），随语义色如实回显。
+
+
+def _c8_page_of(w) -> QWidget | None:
+    """沿父链爬到面板页（挂着 _c8_binds 控件索引的那个 page）。"""
+    p = w.parentWidget()
+    while p is not None:
+        if hasattr(p, "_c8_binds"):
+            return p
+        p = p.parentWidget()
+    return None
+
+
+def _c8_find_row(page, want):
+    """page._c8_binds 按 Row 谓词找控件 —— 无 cfg 的表单行（feedback 全套、
+    community 导入 textarea）只能按 label/kind 匹配。"""
+    for r, w in (getattr(page, "_c8_binds", None) or []):
+        if want(r):
+            return w
+    return None
+
+
+def _c8_say(note, t: Tokens, text: str, tone: str = "") -> None:
+    """行内回显（web fbRst / uploadRst / exportRst 的 Qt 等价）：tone → 语义色。"""
+    color = {"ok": t.ok, "warn": t.warn, "err": t.err}.get(tone, t.tx3)
+    note.setStyleSheet(f"color:{color};background:transparent;")
+    note.setText(text)
+
+
+def _fb_submit(btn, note) -> None:
+    """提交反馈（web fbSubmit 全对齐）：校验（内容必有 / 邮箱格式）→
+    POST /api/feedback/submit → sent / queued / blocked 三态回显；
+    blocked（限流）不清空输入框——内容还给用户，改改或等会儿再发。
+    Qt 壳暂不做附件选择，files 恒空（附件在网页控制台里添加）。
+    """
+    import re as _re # noqa: PLC0415
+    import threading as _th # noqa: PLC0415
+
+    from agent_bridge import post_json # noqa: PLC0415
+
+    t = getattr(btn, "t", None)
+    if note is None or t is None:
+        return
+    page = _c8_page_of(btn)
+    kind_w = _c8_find_row(page, lambda r: r.kind == "select" and r.label == "类型")
+    text_w = _c8_find_row(page, lambda r: r.kind == "textarea" and r.label == "内容")
+    mail_w = _c8_find_row(page, lambda r: r.kind == "text" and r.label == "联系邮箱")
+    kind = str((kind_w.currentData() if kind_w is not None else None) or "其他")
+    text = text_w.toPlainText() if text_w is not None else ""
+    contact = mail_w.text() if mail_w is not None else ""
+    if not text.strip():
+        _c8_say(note, t, "先写点内容吧", "err")
+        return
+    if contact.strip() and not _re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$", contact.strip()):
+        _c8_say(note, t, "联系邮箱写得不太对（像这样：xxx@qq.com），不想留就清空它", "err")
+        return
+    btn.setEnabled(False)
+    _c8_say(note, t, "提交中…")
+    box: dict = {"done": False, "r": None, "err": None}
+
+    def _work() -> None:
+        try:
+            box["r"] = post_json("/api/feedback/submit",
+                                 {"kind": kind, "text": text, "contact": contact, "files": []},
+                                 timeout=30.0)
+        except Exception as e: # noqa: BLE001
+            box["err"] = str(e)
+        box["done"] = True
+
+    _th.Thread(target=_work, daemon=True, name="fb-submit").start()
+
+    def _apply() -> None:
+        if not box["done"]:
+            QTimer.singleShot(150, _apply)
+            return
+        btn.setEnabled(True)
+        if box["err"]:
+            _c8_say(note, t, str(box["err"]), "err")
+            return
+        d = box["r"] if isinstance(box["r"], dict) else {}
+        via = {"smtp": "邮件", "webhook": "推送到你的群/设备", "upload_url": "网址"}.get(
+            d.get("via"), "已送出")
+        n = ("，带 %s 个附件" % d.get("files")) if d.get("files") else ""
+        if d.get("state") == "sent":
+            _c8_say(note, t, "已发出（%s%s）" % (via, n), "ok")
+        elif d.get("state") == "queued":
+            _c8_say(note, t, "注意：已存在本机，但还没发出去：%s（待发 %s 条）"
+                    % (d.get("why") or "", d.get("pending") or 0), "warn")
+        elif d.get("state") == "blocked":
+            _c8_say(note, t, "%s——这条没有发出，也没保存，内容还在框里。"
+                    % (d.get("why") or "发得太频繁了"), "warn")
+        else:
+            _c8_say(note, t, str(d.get("why") or "提交失败"), "err")
+        if d.get("state") != "blocked" and text_w is not None:
+            text_w.setPlainText("")
+        rl = getattr(page, "_fb_reload", None)
+        if rl is not None:
+            rl()
+
+    QTimer.singleShot(150, _apply)
+
+
+def _upload(kind: str, btn, note) -> None:
+    """确认上传（web uploadSeeds / uploadFeedback 对齐）：确认框 →
+    POST /api/community/upload {kind} → 已上传 X 条 / 上传失败。"""
+    import threading as _th # noqa: PLC0415
+
+    from agent_bridge import post_json # noqa: PLC0415
+
+    t = getattr(btn, "t", None)
+    if note is None or t is None:
+        return
+    ask = ("确认把当前种子库上传到配置的服务器？" if kind == "holyshits"
+           else "确认把意见反馈上传到配置的服务器？")
+    dlg = ConfirmDialog(t, btn.window(), "上传确认", ask,
+                        ["数据会 POST 到你配置的上传 URL（自己的服务器，不是官方）",
+                         "上传内容：" + ("当前种子库" if kind == "holyshits" else "已记录的意见反馈")],
+                        "确认上传", "先不上传", dangerous=False)
+    if not dlg.exec():
+        return
+    btn.setEnabled(False)
+    _c8_say(note, t, "上传中…")
+    box: dict = {"done": False, "r": None, "err": None}
+
+    def _work() -> None:
+        try:
+            box["r"] = post_json("/api/community/upload", {"kind": kind}, timeout=30.0)
+        except Exception as e: # noqa: BLE001
+            box["err"] = str(e)
+        box["done"] = True
+
+    _th.Thread(target=_work, daemon=True, name="community-upload").start()
+
+    def _apply() -> None:
+        if not box["done"]:
+            QTimer.singleShot(150, _apply)
+            return
+        btn.setEnabled(True)
+        if box["err"]:
+            _c8_say(note, t, "上传失败：%s" % box["err"], "err")
+            return
+        d = box["r"] if isinstance(box["r"], dict) else {}
+        if d.get("ok"):
+            head = "意见已上传" if kind == "feedback" else "已上传"
+            _c8_say(note, t, "%s %s 条" % (head, d.get("count") or d.get("uploaded") or 0), "ok")
+        else:
+            _c8_say(note, t, "上传失败：%s" % (d.get("error") or "未配置"), "err")
+
+    QTimer.singleShot(150, _apply)
+
+
+def _upload_seeds(btn, note) -> None:
+    _upload("holyshits", btn, note)
+
+
+def _upload_feedback(btn, note) -> None:
+    _upload("feedback", btn, note)
+
+
+def _seed_import_post(btn, note, text: str, ok_prefix: str) -> None:
+    """导入种子库的公共发送段：POST /api/scoring/import {text} → 计数回显。"""
+    import threading as _th # noqa: PLC0415
+
+    from agent_bridge import post_json # noqa: PLC0415
+
+    t = getattr(btn, "t", None)
+    if note is None or t is None:
+        return
+    btn.setEnabled(False)
+    _c8_say(note, t, "导入中…")
+    box: dict = {"done": False, "r": None, "err": None}
+
+    def _work() -> None:
+        try:
+            box["r"] = post_json("/api/scoring/import", {"text": text}, timeout=30.0)
+        except Exception as e: # noqa: BLE001
+            box["err"] = str(e)
+        box["done"] = True
+
+    _th.Thread(target=_work, daemon=True, name="seed-import").start()
+
+    def _apply() -> None:
+        if not box["done"]:
+            QTimer.singleShot(150, _apply)
+            return
+        btn.setEnabled(True)
+        if box["err"]:
+            _c8_say(note, t, "导入失败：%s" % box["err"], "err")
+            return
+        d = box["r"] if isinstance(box["r"], dict) else {}
+        if d.get("ok"):
+            suffix = "（查重后）" if ok_prefix.startswith("从文件") else ""
+            _c8_say(note, t, "%s %s 条%s" % (ok_prefix, d.get("imported"), suffix), "ok")
+        else:
+            _c8_say(note, t, "失败：%s" % (d.get("error") or ""), "err")
+
+    QTimer.singleShot(150, _apply)
+
+
+def _seed_import(btn, note) -> None:
+    """粘贴导入（web seedImportBtn 对齐）：读同页「导入金句种子」textarea。"""
+    page = _c8_page_of(btn)
+    ta = _c8_find_row(page, lambda r: r.kind == "textarea" and r.label == "导入金句种子")
+    text = ta.toPlainText() if ta is not None else ""
+    t = getattr(btn, "t", None)
+    if not text.strip():
+        if note is not None and t is not None:
+            _c8_say(note, t, "请先粘贴要导入的金句文本", "warn")
+        return
+    _seed_import_post(btn, note, text, "已导入")
+
+
+def _seed_import_file(btn, note) -> None:
+    """选择文件导入（web seedImportFile 对齐）：txt/json → 读文本 → 服务端查重合并。"""
+    from PySide6.QtWidgets import QFileDialog # noqa: PLC0415
+
+    path, _fl = QFileDialog.getOpenFileName(btn.window(), "选择要导入的文件", "",
+                                            "文本/JSON (*.txt *.json)")
+    if not path:
+        return
+    t = getattr(btn, "t", None)
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+    except Exception as e: # noqa: BLE001
+        if note is not None and t is not None:
+            _c8_say(note, t, "读文件失败：%s" % e, "err")
+        return
+    if not text.strip():
+        if note is not None and t is not None:
+            _c8_say(note, t, "文件为空", "warn")
+        return
+    _seed_import_post(btn, note, text, "从文件导入")
+
+
+ACT_CUSTOM = {
+    "fbSubmit": (_fb_submit,
+                 "真接后端：/api/feedback/submit（校验内容/邮箱；被限流时不清空输入框）"),
+    "uploadSeeds": (_upload_seeds,
+                    "真接后端：/api/community/upload kind=holyshits（先勾「社区上传」并填金句上传 URL）"),
+    "uploadFeedback": (_upload_feedback,
+                       "真接后端：/api/community/upload kind=feedback（先勾「社区上传」并填意见反馈上传 URL）"),
+    "seedImportBtn": (_seed_import,
+                      "真接后端：/api/scoring/import（读上方文本框，服务端查重合并后生效）"),
+    "seedImportFile": (_seed_import_file,
+                       "真接后端：/api/scoring/import（选 txt/json 文件导入，自动查重）"),
+}
+
+
+def _community_appendix(t: Tokens, page: QWidget) -> None:
+    """社区上传两钮的可用性联动（web syncState 对齐）：勾「社区上传」+
+    对应 URL 非空才可用；开关/两个 URL 任一变化即时重算。
+    上传/导出/导入动作本体走 ACT_CUSTOM 与 _ACT_API，这里只补 disabled 联动。
+    """
+    chk = _c8_find_row(page, lambda r: (r.cfg or "") == "community.upload_enabled")
+    url_h = _c8_find_row(page, lambda r: (r.cfg or "") == "community.holyshits_upload_url")
+    url_f = _c8_find_row(page, lambda r: (r.cfg or "") == "community.feedback_upload_url")
+    ub = fb = None
+    for b in page.findChildren(QPushButton):
+        aid = b.property("web_action")
+        if aid == "uploadSeeds":
+            ub = b
+        elif aid == "uploadFeedback":
+            fb = b
+    if ub is None or fb is None or chk is None:
+        return
+
+    def _sync() -> None:
+        on = chk.isChecked()
+        ub.setEnabled(on and url_h is not None and bool(url_h.text().strip()))
+        fb.setEnabled(on and url_f is not None and bool(url_f.text().strip()))
+
+    chk.toggled.connect(lambda _=False: _sync())
+    if url_h is not None:
+        url_h.textChanged.connect(lambda _=False: _sync())
+    if url_f is not None:
+        url_f.textChanged.connect(lambda _=False: _sync())
+    _sync()
+
+
+def _feedback_appendix(t: Tokens, page: QWidget) -> None:
+    """反馈状态卡（web fbLoad 对齐）：can_send / pending 警示 + 最近提交一览；
+    「补发积压」走 _ACT_API 的 fbFlush（后台线程 + 卡内回显）。提交按钮的
+    三态回显在按钮行内 note（ACT_CUSTOM._fb_submit），提交成功会联动刷新本卡。
+    """
+    import threading as _th # noqa: PLC0415
+
+    card = Card(t)
+    card.body.addWidget(h2(t, "反馈状态"))
+    card.body.addWidget(desc(t, "反馈发不出去时只存在本机，网络/邮箱修好后点「补发积压」再试；"
+                                "附件暂时要在网页控制台里添加（这里提交不带附件）。"))
+    lb = QLabel("")
+    lb.setFont(qfont(t, 12))
+    lb.setWordWrap(True)
+    lb.setStyleSheet(f"color:{t.tx3};background:transparent;")
+    row = QHBoxLayout()
+    b_rf = Btn("刷新", t, "ghost")
+    b_fl = Btn("补发积压", t, "ghost")
+    row.addWidget(b_rf)
+    row.addWidget(b_fl)
+    row.addStretch(1)
+    card.body.addLayout(row)
+    card.body.addWidget(lb)
+    page.layout().addWidget(card)
+
+    def _load() -> None:
+        box: dict = {"done": False, "r": None, "err": None}
+
+        def _work() -> None:
+            try:
+                box["r"] = config_io.get_json("/api/feedback", timeout=15.0)
+            except Exception as e: # noqa: BLE001
+                box["err"] = str(e)
+            box["done"] = True
+
+        _th.Thread(target=_work, daemon=True, name="fb-status").start()
+
+        def _apply() -> None:
+            if not box["done"]:
+                QTimer.singleShot(300, _apply)
+                return
+            if box["err"]:
+                lb.setText("读不到反馈状态：%s" % box["err"])
+                lb.setStyleSheet(f"color:{t.err};background:transparent;")
+                return
+            d = box["r"] if isinstance(box["r"], dict) else {}
+            if d.get("ok") is False:
+                lb.setText("读不到反馈状态：%s" % (d.get("error") or ""))
+                lb.setStyleSheet(f"color:{t.err};background:transparent;")
+                return
+            if d.get("enabled") is False:
+                lb.setText("反馈栏已关闭（config：feedback.enabled=false）。")
+                lb.setStyleSheet(f"color:{t.tx3};background:transparent;")
+                return
+            bad = (not d.get("can_send", True)) or (d.get("pending") or 0) > 0
+            msg = ""
+            if not d.get("can_send", True):
+                msg += "这条只会存在本机，暂时发不出去。"
+            if (d.get("pending") or 0) > 0:
+                msg += (("；" if msg else "") + "有 %s 条还没发出去" % d.get("pending"))
+            recent = d.get("recent") or []
+            rec = ("最近提交：" + " ｜ ".join(
+                "%s %s（%s）" % (x.get("at_h"), x.get("kind"),
+                                 "已发" if x.get("sent_h") else "待发")
+                for x in recent)) if recent else "还没有提交过反馈。"
+            lb.setText((msg + ("\n" if msg else "") + rec))
+            lb.setStyleSheet(f"color:{t.warn if bad else t.tx3};background:transparent;")
+
+        QTimer.singleShot(300, _apply)
+
+    def _flush() -> None:
+        from panels_qt import _act_run # noqa: PLC0415
+
+        _act_run("fbFlush", lb)
+
+    b_rf.clicked.connect(_load)
+    b_fl.clicked.connect(_flush)
+    page._fb_reload = _load # 提交成功后联动刷新（_fb_submit 读）
+    page._fb_lb = lb # 状态行引用（自检断言用）
+    _load()
+
+
 APPENDIX = {
     "wechat": _wechat_emoji_appendix,
     "tools": _tools_utlist_appendix,
     "model": _model_local_appendix,
     "imggen": _sd_local_appendix,
     "tts": _tts_probe_appendix,
+    "community": _community_appendix,
+    "feedback": _feedback_appendix,
 }

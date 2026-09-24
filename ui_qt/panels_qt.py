@@ -350,13 +350,13 @@ def _row(t: Tokens, r: "sec_meta.Row", card: Card, binds: list | None = None) ->
         c = _chips_editor(t, r)
     # info → 纯说明行（无控件语义）
     f = Field(t, r.label, r.hint, c, card)
-    # 只有**带 cfg 的可写控件**才进 binds（status/buttons 无 cfg ⇒ 不参与保存；
-    # 它们不是 QLineEdit，混进 binds 会在保存时被当输入框调 editingFinished）。
-    # ⚠️ 修：光看 `r.cfg` 不够 —— `chips` 与 status/buttons 一样可能带 cfg
-    #    （sec_meta._parse_row 的兜底分支 `Row("chips", label, cfg, ...)` 就传了 cfg），
-    #    混进 binds 后会走保存侧的 else 分支调 `editingFinished` ⇒ AttributeError。
-    #    故必须同时限制 `r.kind` 为**真正可写**的类型白名单。
-    if c is not None and binds is not None and r.cfg and r.kind in _WRITABLE_KINDS:
+    # 可写类型的控件都进 binds —— 带 cfg 的参与保存；无 cfg 的表单行
+    # （feedback 的类型/内容/邮箱、community 导入 textarea 等）不参与保存
+    # （_collect 侧按 r.cfg 跳过），进 binds 是给动作接线按 label 读同页值用。
+    # ⚠️ 不能只看 `r.cfg` 判断可写：`chips` 可能带 cfg 却不是可编辑控件
+    #    （混进保存会调 `editingFinished` ⇒ AttributeError），
+    #    故仍须限制 `r.kind` 为**真正可写**的类型白名单。
+    if c is not None and binds is not None and r.kind in _WRITABLE_KINDS:
         binds.append((r, c))
     return f
 
@@ -621,10 +621,17 @@ def _open_group_pick(t: Tokens, line, note, groups: list) -> None:
     dlg.exec()
 
 
+def _open_export_dir_body() -> dict:
+    """openExportDir 的请求体：路径取当前 community.export_dir（空回退 exports）。"""
+    d = config_io.read_path("community.export_dir")
+    d = str(d).strip() if d else ""
+    return {"path": d or "exports"}
+
+
 # ── 按钮动作分发器（web onclick 的 Qt 等价）──
 # aid → POST 端点。命中 = 真执行（后台线程 + 结果回显行内 note）；
 # 未命中 = 沿 _btn_stub 原型边界。web 62 个按钮按批次逐步接线进这张表。
-_ACT_API: dict[str, tuple[str, str, dict]] = {
+_ACT_API: dict[str, tuple] = {
     "testApi": ("POST", "/api/test-api", {}), # web L2741/L5882：后端自测当前 api 配置
     "wmReset": ("POST", "/api/watermark/reset", {}), # web L2709：监听水位重对齐
     "pokeTest": ("POST", "/api/poke-test", {"verify_only": True}), # web 默认勾「简易检测」：只验证菜单可弹，不真拍（完整执行走检测中心页）
@@ -632,6 +639,13 @@ _ACT_API: dict[str, tuple[str, str, dict]] = {
     "ttsTest": ("GET", "/api/tts/test", {}), # web L7691：按当前档合成试听
     "vsTest": ("GET", "/api/voice/test", {}), # web L7707：语音链路（合成→SILK→识别）
     "selfCheck": ("POST", "/api/selfcheck", {"mode": "full"}), # web L6004：61 项环境体检
+    # ── community / feedback（批4）──
+    "exportHolyshits": ("POST", "/api/community/export", {"kind": "holyshits"}), # web L7993：导出金句
+    "exportFeedback": ("POST", "/api/community/export", {"kind": "feedback"}), # web L8007：导出意见反馈
+    "exportMessages": ("POST", "/api/community/export", {"kind": "messages"}), # web L8008：导出聊天记录
+    "openSeedBtn": ("POST", "/api/open-path", {"path": "data/seed_library.json"}), # web L7676：资源管理器打开种子库
+    "openExportDir": ("POST", "/api/open-path", _open_export_dir_body), # web L8000：打开导出目录（callable body 读当前配置）
+    "fbFlush": ("POST", "/api/feedback/flush", {}), # web L7361：补发积压的反馈
 }
 
 
@@ -650,7 +664,8 @@ def _act_run(aid: str, note) -> None:
             if method == "POST":
                 from agent_bridge import post_json # noqa: PLC0415
 
-                bx["rsp"] = post_json(api, body, timeout=90.0)
+                # body 允许是 callable（如 openExportDir：点击时才读当前配置拼路径）
+                bx["rsp"] = post_json(api, body() if callable(body) else body, timeout=90.0)
             else:
                 bx["rsp"] = config_io.get_json(api, timeout=60.0)
         except Exception as e: # noqa: BLE001
@@ -728,6 +743,19 @@ def _act_run(aid: str, note) -> None:
                 tail = str(rsp.get("summary") or "")
                 note.setText(head + ((" —— " + det) if det else "")
                              + ((" ｜ " + tail) if tail else ""))
+        elif aid in ("exportHolyshits", "exportFeedback", "exportMessages"):
+            if rsp.get("ok"):
+                note.setText("已导出 %s 条 → %s" % (rsp.get("count"), rsp.get("path")))
+            else:
+                note.setText("失败：%s" % (rsp.get("error") or ""))
+        elif aid == "openSeedBtn":
+            note.setText("已打开种子库（编辑后保存即可生效）" if rsp.get("ok")
+                         else "打开失败：%s" % (rsp.get("error") or ""))
+        elif aid == "openExportDir":
+            note.setText("已打开导出文件夹" if rsp.get("ok")
+                         else "打开失败：%s" % ((rsp.get("error") or "") + (rsp.get("note") or "")))
+        elif aid == "fbFlush":
+            note.setText(str(rsp.get("why") or "补发完成"))
         else:
             note.setText(str(rsp.get("note") or rsp.get("summary") or "完成"))
 
@@ -802,10 +830,19 @@ def _btn_group(t: Tokens, actions: list[tuple[str, str]], note=None) -> QWidget:
     h = QHBoxLayout(box)
     h.setContentsMargins(0, 0, 0, 0)
     h.setSpacing(8)
+    # 自定义动作（panels_custom.ACT_CUSTOM：要读同页表单/带确认框/多态回显的按钮）
+    custom = getattr(panels_custom, "ACT_CUSTOM", {}) or {}
     for txt, aid in actions:
         b = Btn(txt, t, role="ghost")
         b.setProperty("web_action", aid or "")
-        if note is not None and aid in ("codeCheck", "codeCheckDeps"):
+        if note is not None:
+            b.setProperty("c8_note", note) # 行内回显引用（custom 动作与自检断言共用）
+        fn = custom.get(aid)
+        if fn is not None:
+            handler, tip = fn
+            b.clicked.connect(lambda _=False, f=handler, bb=b, nn=note: f(bb, nn))
+            b.setToolTip(tip)
+        elif note is not None and aid in ("codeCheck", "codeCheckDeps"):
             b.clicked.connect(lambda _=False, a=aid: _code_check_run(note, a == "codeCheckDeps"))
             b.setToolTip("真接后端：/api/code-check（启动 → 轮询进度 → 逐项结果 + 建议）")
         elif note is not None and aid in _ACT_API:
@@ -1095,6 +1132,8 @@ def _cfg_panel(t: Tokens, s: "sec_meta.Sec", on_save=None) -> QWidget:
         patch: dict[str, object] = {}
         skipped = 0
         for r, ctrl in binds:
+            if not r.cfg:
+                continue # 无 cfg 的表单行只供动作接线读值，不参与保存
             v = _ctrl_value(r, ctrl)
             if v is _SKIP:
                 if ctrl is not None:
