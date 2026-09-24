@@ -2254,6 +2254,17 @@ def _append_save(t: Tokens, lay, binds: list, badge: Badge) -> None:
                     patch[cfg] = str(ctrl.currentData())
                 elif kind == "textarea":
                     patch[cfg] = ctrl.toPlainText()
+                elif kind == "groups":
+                    # 多选勾选容器（共享群）：勾中的群名列表，对齐 web
+                    # syncMemGroupsToCfg（console_html.py:5993）——只收选中项，
+                    # 全不勾 = 空列表（= 用上方「共享记忆池」总开关）。
+                    names: list[str] = []
+                    for cb in ctrl.findChildren(QCheckBox):
+                        if cb.isChecked():
+                            nm = cb.property("gname")
+                            if nm:
+                                names.append(str(nm))
+                    patch[cfg] = names
                 else:
                     patch[cfg] = ctrl.text()
             except Exception: # noqa: BLE001
@@ -2299,6 +2310,13 @@ def _append_save(t: Tokens, lay, binds: list, badge: Badge) -> None:
         if auto_chk.isChecked():
             debounce.start()
 
+    # 把防抖钩子暴露给宿主页面 —— 追加区/手写控件（如共享群勾选框 memGroupsBox）
+    # 不在 binds 里，靠这个钩子并入同一条「改完即生效」链。
+    _host = lay.parentWidget() if lay is not None else None
+    if _host is not None:
+        _host._c12_mark_dirty = _mark_dirty
+        _host._c12_auto_on = lambda: bool(auto_chk.isChecked()) # noqa: PLW0108
+
     for _cfg, ctrl, kind in binds:
         if ctrl is None:
             continue
@@ -2308,6 +2326,11 @@ def _append_save(t: Tokens, lay, binds: list, badge: Badge) -> None:
             ctrl.currentIndexChanged.connect(_mark_dirty)
         elif kind == "textarea":
             ctrl.textChanged.connect(_mark_dirty)
+        elif kind == "groups":
+            # 多选勾选容器：勾选框由 load_groups 在后台返回后动态增删，
+            # 建面板时容器里还是占位 ⇒ 不走这里的静态遍历，改由 load_groups
+            # 在创建每个勾选框时就地挂 _mark_dirty（经 _mg_box 晚绑定转发）。
+            pass
         else:
             ctrl.editingFinished.connect(_mark_dirty)
 
@@ -3454,20 +3477,45 @@ def memory_panel(t: Tokens) -> QWidget:
         mnote.setText(f"读取成功 · {time.strftime('%H:%M:%S')} · {len(state['members'])} 位成员")
         _render_members()
 
-    # 共享群（memGroupsBox）：GET /api/wechat-groups（web :6043）
+    # 共享群（memGroupsBox）：GET /api/wechat-groups + memory.shared_groups 回填
+    # （对齐 web loadMemGroups，console_html.py:5949）——每个群一个勾选框，
+    # 勾选状态按已存 shared_groups 匹配（兼容存「群名」或「wxid」，web :5961 同款）。
+    # 「改完即生效」防抖钩子在下方 _append_save 里建好后才可挂 → 用可变引用晚绑定。
+    _mg_box: dict = {"dirty": None}
+
+    def _mg_dirty() -> None:
+        fn = _mg_box.get("dirty")
+        if callable(fn):
+            fn()
+
     def load_groups() -> None:
         try:
             r = config_io.get_json("/api/wechat-groups", timeout=5.0)
         except Exception: # noqa: BLE001
             r = None
         groups = (r or {}).get("groups") or []
-        mem_groups.clear()
+        saved = config_io.read_path("memory.shared_groups", [])
+        saved = [str(x) for x in saved] if isinstance(saved, list) else []
+        # 清空重填（含占位提示）
+        while mem_flow.count():
+            item = mem_flow.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
         if not groups:
-            mem_groups.addItem("未检测到群（启动机器人并检测群后这里会列出）")
+            mem_flow.addWidget(desc(t, "未检测到群（启动机器人并检测群后这里会列出）"))
             return
         for g in groups:
-            mem_groups.addItem(g.get("name") or g.get("nick") or g.get("wxid") or "",
-                               g.get("wxid") or g.get("name") or "")
+            nm = g.get("name") or g.get("nick") or g.get("wxid") or ""
+            wxid = g.get("wxid") or ""
+            cb = QCheckBox(nm)
+            cb.setFont(qfont(t, t.body_size))
+            cb.setStyleSheet(f"color:{t.tx};background:transparent;")
+            cb.setProperty("gname", nm)
+            cb.setProperty("gwxid", wxid)
+            cb.setChecked(any(s == nm or (wxid and s == wxid) for s in saved))
+            cb.toggled.connect(_mg_dirty)  # 挂「改完即生效」防抖（经 _mg_box 晚绑定）
+            mem_flow.addWidget(cb)
 
     chat_sel.currentIndexChanged.connect(_on_chat)
     mem_search.textChanged.connect(lambda: _fill_chats(mem_search.text()))
@@ -3534,21 +3582,22 @@ def memory_panel(t: Tokens) -> QWidget:
 
     ccard.body.addWidget(_divider_local(t))
     ccard.body.addWidget(h2(t, "共享群（可选，memGroupsBox）"))
-    mem_groups = QComboBox()
+    # 多选勾选组 —— 对齐 web #memGroupsBox（console_html.py:1573-1576 / 5949-6001）：
+    # 每个检测到的群一个勾选框，勾中的群名写回 memory.shared_groups（list[str]）。
+    mem_groups = QWidget()
     mem_groups.setObjectName("memGroupsBox")
-    mem_groups.setMinimumWidth(240)
-    mem_groups.setFixedHeight(32)
-    mem_groups.setFont(qfont(t, t.body_size))
-    mem_groups.setStyleSheet(
-        f"QComboBox{{background:{rgba(t.q('tx'), 0 if t.glass else 16).name(QColor.NameFormat.HexArgb)};"
-        f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:0 10px;}}"
-        f"QComboBox::drop-down{{border:none;width:22px;}}"
-        f"QComboBox QAbstractItemView{{background:{'#0E2136' if t.glass else t.card};"
-        f"color:{t.tx};border:1px solid {t.bd};}}")
-    ccard.body.addWidget(Field(t, "共享群（选好后保存写入 memory.shared_group_names）",
-                               "与这些群共享记忆；与 web syncMemGroupsToCfg 同义", mem_groups))
-    ccard.body.addWidget(desc(t, "web 用一组勾选框管理共享群；Qt 侧这里用下拉列出已检测到的群，"
-                                "保存时把当前选中的群名写入 memory.shared_group_names。"))
+    mem_flow = QVBoxLayout(mem_groups)
+    mem_flow.setContentsMargins(0, 0, 0, 0)
+    mem_flow.setSpacing(6)
+    _mg_placeholder = desc(t, "加载中…")
+    mem_flow.addWidget(_mg_placeholder)
+    ccard.body.addWidget(Field(t, "共享群（勾选后保存写入 memory.shared_groups）",
+                               "只有勾中的这些群之间互相共享记忆（比全共享更精准）；"
+                               "不勾 = 用上方「共享记忆池」总开关", mem_groups))
+    ccard.body.addWidget(desc(t, "web 用一组勾选框管理共享群（#memGroupsBox）；这里同样按"
+                                "「检测到的群」逐群勾选，保存时把勾中的群名写入 "
+                                "memory.shared_groups。"))
+    binds.append(("memory.shared_groups", mem_groups, "groups"))
     lay.addWidget(ccard)
 
     # memScope（删除范围，web :1614）
@@ -3562,10 +3611,15 @@ def memory_panel(t: Tokens) -> QWidget:
 
     _append_save(t, lay, binds, badge)
 
+    # 共享群勾选框接入「改完即生效」防抖（与页面其它可写控件同一条链）
+    _mg_box["dirty"] = getattr(page, "_c12_mark_dirty", None)
+
     # 自检钩子
     page.c12_load = lambda: (load_memory(chat_sel.currentData() or ""), load_groups())
     page.c12_table = mem_table
     page.c12_chats = chat_sel
+    page.c12_groups = mem_groups
+    page.c12_binds = binds
 
     load_memory("")
     load_groups()
@@ -6149,6 +6203,175 @@ def _providers_from_web() -> dict:
     return out
 
 
+def _ws_options_from_web() -> list[tuple[str, str]]:
+    """解析联网搜索引擎选择器的选项（value, 文案）——web sec-search 的静态
+    `<option>` 清单（#wsProvider），选项序与文案随 web 源码走。解析失败返回空。"""
+    try:
+        src = (ROOT / "agent" / "console_html.py").read_text(encoding="utf-8")
+        i = src.find('<select data-cfg="web_search.provider" id="wsProvider">')
+        j = src.find("</select>", i) if i >= 0 else -1
+        if i < 0 or j < 0:
+            return []
+        return [(m.group(1), m.group(2)) for m in
+                re.finditer(r'<option value="([^"]+)">([^<]+)</option>', src[i:j])]
+    except Exception: # noqa: BLE001
+        return []
+
+
+def _web_search_appendix(t: Tokens, page: QWidget) -> None:
+    """联网搜索「当前引擎参数」卡（对齐 web sec-search :1595-1601 的 wsKey/wsUrl/
+    wsModel/wsEngine/wsCount + :4362-4391 的三个专用函数）。
+
+    为什么手写：这五个控件在 web 里**没有 data-cfg**（是 `web_search.<provider>`
+    动态下钻的 JS 控件），元数据渲染取不到 —— 与模型页 providerSel 同类盲区。
+
+    逐条对齐 web 机制：
+    · 引擎下拉 = `web_search.provider`（等价 id="wsProvider"），选项照 web 源码解析；
+    · **载入时** `wsSyncToForm()`：按当前 provider 取 `web_search.<prov>` 小节回填五控件；
+    · **切引擎** `change → wsShowRows(prov)`：只做「模型/engine」两行的显隐（`.row[data-ws]`），
+      不回填（web 真实行为；回填发生在后续 syncToForm）；
+    · **保存** `wsSyncFromForm()`：把五控件写回 `web_search[prov]`，随「保存设置」一并落盘
+      （count 走 parseInt 语义：空/非数 → 6）。
+    读取与落盘走页面的统一保存链（page._ws_collect 由 build_panel 的保存动作并入），
+    不另起一份写盘路径。
+    """
+    opts = _ws_options_from_web()
+    if not opts:
+        return
+    from panels_qt import _line # noqa: PLC0415
+    from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel # noqa: PLC0415
+
+    card = Card(t)
+    card.body.addWidget(h2(t, "当前引擎参数"))
+    card.body.addWidget(desc(t, "按当前联网搜索引擎分别保存密钥与地址（换引擎时各自独立，"
+                                "互不覆盖）；保存随本页「保存设置」一并写入 config.json。"))
+
+    def _mk_line():
+        e = _line(t)
+        e.setFixedHeight(32)
+        return e
+
+    # 引擎下拉（provider 本身也是 web_search.provider，元数据页已渲染同一键的行；
+    # 这里再放一个是 web 的真实双层结构——上面选择器、下面参数区，保持同一份取值）
+    prow = QHBoxLayout()
+    lbl = QLabel("引擎")
+    lbl.setFont(qfont(t, t.body_size))
+    lbl.setStyleSheet(f"color:{t.tx};background:transparent;")
+    combo = QComboBox()
+    combo.setObjectName("wsProvider")
+    combo.setFixedHeight(32)
+    combo.setFont(qfont(t, t.body_size))
+    combo.setStyleSheet(
+        f"QComboBox{{background:{rgba(t.q('tx'), 0 if t.glass else 16).name(QColor.NameFormat.HexArgb)};"
+        f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:0 10px;}}"
+        f"QComboBox::drop-down{{border:none;width:22px;}}"
+        f"QComboBox QAbstractItemView{{background:{'#0E2136' if t.glass else t.card};"
+        f"color:{t.tx};border:1px solid {t.bd};}}")
+    for val, txt in opts:
+        combo.addItem(txt, val)
+    prow.addWidget(lbl)
+    prow.addWidget(combo, 1)
+    card.body.addLayout(prow)
+
+    # 五个 provider 下钻控件（Key/地址/模型/engine/请求数）
+    def _row(label: str, w):
+        r = QHBoxLayout()
+        lb = QLabel(label)
+        lb.setFont(qfont(t, t.body_size))
+        lb.setStyleSheet(f"color:{t.tx2};background:transparent;")
+        lb.setFixedWidth(74)
+        r.addWidget(lb)
+        r.addWidget(w, 1)
+        return r, lb
+
+    key_w = _line(t, password=True, placeholder="贴该引擎的密钥")
+    url_w = _line(t, placeholder="留空=官方默认")
+    model_w = _line(t, placeholder="deepseek-chat")
+    engine_w = _line(t, placeholder="search_std")
+    count_w = _line(t, placeholder="6") # 文本输入 + parseInt 语义（对齐 web，非 number 控件）
+    r1, _l1 = _row("引擎 Key", key_w)
+    r2, _l2 = _row("接口地址", url_w)
+    r3, model_lb = _row("模型", model_w)
+    r4, engine_lb = _row("engine", engine_w)
+    r5, _l5 = _row("请求数", count_w)
+    card.body.addLayout(r1)
+    card.body.addLayout(r2)
+    card.body.addLayout(r3)
+    card.body.addLayout(r4)
+    card.body.addLayout(r5)
+    hint = desc(t, "Bing 免 Key；其余引擎填「引擎 Key」与「接口地址」（留空=官方默认；"
+                   "DeepSeek 另有模型、智谱另有 engine）。")
+    card.body.addWidget(hint)
+    page.layout().addWidget(card)
+    page._ws_card = card
+    page._ws_provider = combo
+    page._ws_widgets = {"api_key": key_w, "base_url": url_w, "model": model_w,
+                        "engine": engine_w, "count": count_w}
+    page._ws_model_row = (model_w, model_lb)
+    page._ws_engine_row = (engine_w, engine_lb)
+
+    def _show_rows(prov: str) -> None:
+        """web wsShowRows：只显隐带 data-ws 的行（.=仅当前 provider 可见）。"""
+        for w, lb in (page._ws_model_row,):
+            vis = prov == "deepseek"
+            w.setVisible(vis)
+            lb.setVisible(vis)
+        for w, lb in (page._ws_engine_row,):
+            vis = prov == "zhipu"
+            w.setVisible(vis)
+            lb.setVisible(vis)
+
+    def _sync_to_form() -> None:
+        """web wsSyncToForm：按当前 provider 取小节回填五控件 + 显隐。"""
+        prov = str(combo.currentData() or "") or "bing"
+        cur = config_io.read_path("web_search.%s" % prov, {})
+        sec = cur if isinstance(cur, dict) else {}
+        key_w.setText(str(sec.get("api_key") or ""))
+        url_w.setText(str(sec.get("base_url") or ""))
+        model_w.setText(str(sec.get("model") or ""))
+        engine_w.setText(str(sec.get("engine") or ""))
+        # web `sec.count || 6`：缺省/0/空串一律显示 6（非留空）
+        count_w.setText(str(sec.get("count") or 6))
+        _show_rows(prov)
+
+    def _sync_from_form() -> None:
+        """web wsSyncFromForm：五控件写回 web_search[prov]（count 空/非数→6）。"""
+        prov = str(combo.currentData() or "") or "bing"
+        try:
+            c = int(str(count_w.text() or "").strip())
+        except ValueError:
+            c = 6
+        if c <= 0:
+            c = 6
+        page._ws_patch = {"web_search.%s.api_key" % prov: key_w.text(),
+                          "web_search.%s.base_url" % prov: url_w.text(),
+                          "web_search.%s.model" % prov: model_w.text(),
+                          "web_search.%s.engine" % prov: engine_w.text(),
+                          "web_search.%s.count" % prov: c}
+
+    def _on_prov_changed(idx: int) -> None:
+        _show_rows(str(combo.itemData(idx) or ""))
+
+    combo.activated.connect(_on_prov_changed)
+    page._ws_sync_to_form = _sync_to_form
+    page._ws_sync_from_form = _sync_from_form
+
+    # 手写控件与元数据行共用同一条「改完即生效」防抖（page._c8_mark_dirty）
+    _dirty = getattr(page, "_c8_mark_dirty", None)
+    if callable(_dirty):
+        for w in (key_w, url_w, model_w, engine_w, count_w):
+            w.editingFinished.connect(_dirty)
+        combo.currentIndexChanged.connect(_dirty)
+
+    # 初值：以 web_search.provider 为准选下拉，再回填（= 载入后 wsSyncToForm）
+    cur_prov = str(config_io.read_path("web_search.provider", "") or "").strip() or "bing"
+    for i in range(combo.count()):
+        if str(combo.itemData(i)) == cur_prov:
+            combo.setCurrentIndex(i)
+            break
+    _sync_to_form()
+
+
 def _provider_options_from_web() -> list[tuple[str, str]]:
     """解析 web 厂商选择器的选项（value, 文案）——web :1412-1421 的静态
     <option> 清单，选项序与文案随 web 源码走。解析失败返回空（行不建）。"""
@@ -6497,6 +6720,7 @@ APPENDIX = {
     "wechat": (_wechat_emoji_appendix, _briefs_appendix, _wechat_recheck_appendix),
     "tools": _tools_utlist_appendix,
     "model": (_model_local_appendix, _model_provider_linkup),
+    "search": _web_search_appendix,
     "imggen": _sd_local_appendix,
     "tts": _tts_probe_appendix,
     "community": _community_appendix,

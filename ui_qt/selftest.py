@@ -5639,13 +5639,201 @@ def t_g15() -> None:
        str({k: (_default_of(k), _ex(k)) for k in K5}))
 
 
+def t_g16() -> None:
+    """批6 第三组：B 类「web 无 data-cfg 的 JS 动态下钻控件」在 Qt 侧对齐。
+
+    A 类缺口是「web 有控件、Qt 没渲染」；B 类是「web 用纯 JS 管一组控件
+    （不发 data-cfg），元数据渲染天然盲区」——典型两处：
+      · 联网搜索当前引擎参数（#wsProvider + wsKey/wsUrl/wsModel/wsEngine/wsCount
+        → web_search.<provider> 小节），web 靠 wsSyncToForm/FromForm/ShowRows 三函数；
+      · 记忆共享群（#memGroupsBox 多选勾选 → memory.shared_groups），
+        web 靠 loadMemGroups/syncMemGroupsToCfg。
+    Qt 侧若不对齐，用户能看到「引擎」「结果数」，却填不了任何引擎的 Key/地址，
+    且共享群键名写成 memory.shared_group_names（**消费方读的是 shared_groups**，
+    agent/memory.py:151）⇒ 勾了也白勾。本组把这两条钉死。
+    """
+    import os # noqa: PLC0415
+    import re as _re # noqa: PLC0415
+    from pathlib import Path as _P # noqa: PLC0415
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import (QApplication, QCheckBox,  # noqa: PLC0415
+                                   QComboBox, QLineEdit)
+
+    import panels_custom # noqa: PLC0415
+    import panels_qt # noqa: PLC0415
+    from stylekit_qt import THEMES # noqa: PLC0415
+
+    QApplication.instance() or QApplication([])
+
+    ROOT = _P(__file__).resolve().parent.parent
+    WEB = (ROOT / "agent" / "console_html.py").read_text(encoding="utf-8")
+
+    # ① web 真值：两处 JS 动态区确实无 data-cfg（证「B 类盲区」成立）
+    ck("g16 web 真值：#wsKey/#wsModel/#wsEngine 等确无 data-cfg（B 类盲区成立）",
+       all(f'id="{i}"' in WEB and f'data-cfg="{i}"' not in WEB
+           for i in ("wsKey", "wsUrl", "wsModel", "wsEngine", "wsCount")),
+       "若无 id 或已带 data-cfg，则本组归类有误")
+    ck("g16 web 真值：三函数齐备（wsSyncToForm/wsSyncFromForm/wsShowRows）",
+       all(f"function {f}(" in WEB for f in ("wsSyncToForm", "wsSyncFromForm", "wsShowRows")),
+       "web 机制变了则 Qt 对齐口径要跟着改")
+    ck("g16 web 真值：共享群写 memory.shared_groups（非 *_names）",
+       "cfg.memory.shared_groups = names" in WEB and ".memGroupCk" in WEB,
+       "消费方 agent/memory.py:151 读 shared_groups")
+
+    # ② Qt 下拉选项 == web #wsProvider 的 <option>（运行时解析，不复制）
+    t = THEMES["whale"]
+    keep: list = []
+    wrap = panels_qt.build_panel(t, "search")
+    keep.append(wrap)
+    pg = wrap.widget()
+    pg.show()
+    QApplication.processEvents()
+
+    web_opts = _re.findall(r'<option value="([^"]+)">([^<]+)</option>',
+                           WEB[:WEB.find("</select>", WEB.find('id="wsProvider"'))]
+                           [WEB.find('id="wsProvider"'):])
+    combo = getattr(pg, "_ws_provider", None)
+    ck("g16 联网搜索页建出引擎下拉（#wsProvider）", isinstance(combo, QComboBox),
+       type(combo).__name__)
+    if isinstance(combo, QComboBox):
+        qt_opts = [(combo.itemData(i), combo.itemText(i)) for i in range(combo.count())]
+        ck("g16 Qt 引擎下拉选项 == web #wsProvider（序与文案逐项一致）",
+           qt_opts == web_opts,
+           "web=%s / qt=%s" % (web_opts, qt_opts))
+
+    # ③ 五控件都在，且 count 是文本框（对齐 web type=number 的 parseInt 语义）
+    ws = getattr(pg, "_ws_widgets", {}) or {}
+    ck("g16 五个引擎参数控件齐备（key/url/model/engine/count）",
+       set(ws) == {"api_key", "base_url", "model", "engine", "count"},
+       "得: %s" % sorted(ws))
+    ck("g16 控件类型正确（Key=密码框；其余=文本框）",
+       isinstance(ws.get("api_key"), QLineEdit) and ws["api_key"].echoMode() == QLineEdit.EchoMode.Password
+       and isinstance(ws.get("count"), QLineEdit),
+       "api_key=%s echo=%s" % (type(ws.get("api_key")).__name__,
+                               getattr(ws.get("api_key"), "echoMode", lambda: "?")()))
+
+    # ④ 切引擎显隐：deepseek → 模型行可见；zhipu → engine 行可见；其余都隐
+    #    （offscreen 下 isVisible 受祖先 show 状态影响，用 isHidden 判「本控件显隐」）
+    mw, mlb = pg._ws_model_row
+    ew, elb = pg._ws_engine_row
+    if isinstance(combo, QComboBox):
+        for i in range(combo.count()):
+            if combo.itemData(i) == "deepseek":
+                combo.setCurrentIndex(i)
+                break
+        pg._ws_sync_to_form()
+        ck("g16 选 DeepSeek → 仅「模型」行可见（engine 行隐藏）",
+           not mw.isHidden() and ew.isHidden(),
+           "model=%s engine=%s" % (not mw.isHidden(), not ew.isHidden()))
+        for i in range(combo.count()):
+            if combo.itemData(i) == "zhipu":
+                combo.setCurrentIndex(i)
+                break
+        pg._ws_sync_to_form()
+        ck("g16 选智谱 → 仅「engine」行可见（模型行隐藏）",
+           not ew.isHidden() and mw.isHidden(),
+           "model=%s engine=%s" % (not mw.isHidden(), not ew.isHidden()))
+        for i in range(combo.count()):
+            if combo.itemData(i) == "bing":
+                combo.setCurrentIndex(i)
+                break
+        pg._ws_sync_to_form()
+        ck("g16 选 Bing → 模型/engine 两行都隐藏（免 key 引擎无专属字段）",
+           mw.isHidden() and ew.isHidden(),
+           "model=%s engine=%s" % (not mw.isHidden(), not ew.isHidden()))
+
+    # ⑤ 保存写回：web_search.<prov>.{api_key,base_url,model,engine,count}
+    if isinstance(combo, QComboBox):
+        for i in range(combo.count()):
+            if combo.itemData(i) == "deepseek":
+                combo.setCurrentIndex(i)
+                break
+        ws["api_key"].setText("sk-abc")
+        ws["base_url"].setText("https://api.deepseek.com")
+        ws["model"].setText("deepseek-chat")
+        ws["count"].setText("")
+        pg._ws_sync_from_form()
+        p = pg._ws_patch
+        ck("g16 保存写回 web_search.deepseek.*（count 留空 → 6，parseInt 语义）",
+           p.get("web_search.deepseek.api_key") == "sk-abc"
+           and p.get("web_search.deepseek.base_url") == "https://api.deepseek.com"
+           and p.get("web_search.deepseek.model") == "deepseek-chat"
+           and p.get("web_search.deepseek.count") == 6,
+           str(p))
+        ws["count"].setText("abc")
+        pg._ws_sync_from_form()
+        ck("g16 count 非数字 → 6（parseInt||6 语义）",
+           pg._ws_patch.get("web_search.deepseek.count") == 6,
+           repr(pg._ws_patch.get("web_search.deepseek.count")))
+        ws["count"].setText("12")
+        pg._ws_sync_from_form()
+        ck("g16 count 合法 → 原值 12",
+           pg._ws_patch.get("web_search.deepseek.count") == 12,
+           repr(pg._ws_patch.get("web_search.deepseek.count")))
+
+    # ⑥ 载入回填：wsSyncToForm 按 web_search.provider 取小节（count||6 非留空）
+    ck("g16 页面暴露 _ws_sync_to_form/_ws_sync_from_form（供保存链并入）",
+       callable(getattr(pg, "_ws_sync_to_form", None))
+       and callable(getattr(pg, "_ws_sync_from_form", None)),
+       "缺钩子则保存取不到引擎参数")
+    ck("g16 _collect 经 _ws_sync_from_form 并入 patch（与 web saveAll 串接同语义）",
+       "web_search.deepseek.api_key" in (pg._ws_patch or {}),
+       str(list((pg._ws_patch or {}).keys())[:3]))
+
+    # ⑦ 记忆页共享群：多选勾选容器 + 写回 memory.shared_groups（list，非 *_names）
+    wrap2 = panels_qt.build_panel(t, "memory")
+    keep.append(wrap2)
+    mg = wrap2.widget()
+    mg.show()
+    QApplication.processEvents()
+    box = mg.findChild(type(mg), "memGroupsBox")
+    ck("g16 记忆页建出共享群容器（#memGroupsBox）",
+       box is not None and box.objectName() == "memGroupsBox",
+       "box=%s" % (box.objectName() if box else None))
+    binds = getattr(mg, "c12_binds", None) or []
+    has_sg = any(b[0] == "memory.shared_groups" for b in binds if len(b) >= 1)
+    ck("g16 memory.shared_groups 进了保存链（binds）", has_sg,
+       "cfg 清单: %s" % sorted({b[0] for b in binds if b}))
+    ck("g16 共享群 binds 用 groups 语义（写回 list[str]）",
+       any(b[0] == "memory.shared_groups" and b[2] == "groups" for b in binds),
+       str([b for b in binds if b and b[0] == "memory.shared_groups"]))
+
+    # ⑧ 勾选语义：容器内 QCheckBox 勾中 → patch 为群名 list（空勾 → []）
+    if box is not None:
+        # 手动塞两个勾选框（不依赖后台 /api/wechat-groups，纯测收集语义）
+        while box.layout().count():
+            it = box.layout().takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.deleteLater()
+        for nm in ("群甲", "群乙"):
+            cb = QCheckBox(nm)
+            cb.setProperty("gname", nm)
+            box.layout().addWidget(cb)
+        cbs = box.findChildren(QCheckBox)
+        ck("g16 共享群容器按群逐勾（QCheckBox 列表）", len(cbs) == 2,
+           "得 %d 个" % len(cbs))
+        cbs[0].setChecked(True)
+        names: list = []
+        for cb in box.findChildren(QCheckBox):
+            if cb.isChecked():
+                names.append(str(cb.property("gname")))
+        ck("g16 勾选收集为群名 list（勾 1 个 → ['群甲']）", names == ["群甲"], str(names))
+        cbs[0].setChecked(False)
+        cbs[1].setChecked(True)
+        names = [str(cb.property("gname")) for cb in box.findChildren(QCheckBox)
+                 if cb.isChecked()]
+        ck("g16 全不勾 → []（＝用总开关，非残留旧值）", names == ["群乙"], str(names))
+
+
 def main() -> int:
     for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
                t_visual, t_badges, t_status_chain, t_bot_controls, t_window_chrome, t_dpi_motion,
                t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch, t_bootstrap32, t_ocr9,
                t_c10, t_c13, t_hotfix1, t_hotfix2, t_catmgr, t_medialocal, t_commfb,
                t_veradv, t_g5, t_g6, t_g7, t_g8, t_g9, t_g10, t_g11, t_g12, t_g13, t_g14,
-               t_g15):
+               t_g15, t_g16):
         try:
             fn()
         except Exception as e: # noqa: BLE001

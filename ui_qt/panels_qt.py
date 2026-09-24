@@ -1181,6 +1181,17 @@ def _cfg_panel(t: Tokens, s: "sec_meta.Sec", on_save=None) -> QWidget:
                     skipped += 1 # 有控件但留空/格式不对 → 计数如实说
                 continue
             patch[r.cfg] = v
+        # 追加区（APPENDIX）里手写的动态下钻控件（如联网搜索的 web_search.<prov>.*）
+        # 不在 binds 里，靠它们自己暴露的 sync_from_form 钩子并入同一份 patch
+        # —— 与 web「saveAll 里串 wsSyncFromForm()」同语义，共用同一条落盘链。
+        _ws_sync = getattr(page, "_ws_sync_from_form", None)
+        if callable(_ws_sync):
+            try:
+                _ws_sync()
+                page._ws_collected = True
+                patch.update(getattr(page, "_ws_patch", None) or {})
+            except Exception: # noqa: BLE001 — 追加区取不到值不拖垮主保存
+                pass
         return patch, skipped
 
     def _save_feedback(ok: bool, msg: str, skipped: int) -> None:
@@ -1257,6 +1268,9 @@ def _cfg_panel(t: Tokens, s: "sec_meta.Sec", on_save=None) -> QWidget:
     def _mark_dirty() -> None:
         if auto_chk.isChecked():
             debounce.start()
+
+    page._c8_mark_dirty = _mark_dirty # 追加区手写控件（如联网搜索下钻行）挂同一防抖
+    page._c8_auto_on = auto_chk # 追加区查询「改完即生效」当前开关态
 
     for r, ctrl in binds:
         if ctrl is None:
