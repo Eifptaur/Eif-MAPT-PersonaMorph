@@ -326,7 +326,20 @@ def _row(t: Tokens, r: "sec_meta.Row", card: Card, binds: list | None = None) ->
         c = _line(t, _as_text(default), password=r.kind == "password", placeholder=r.placeholder)
     # 丙-10 P0-2：三新类型（web 里确有按钮组/状态行/表格，原来一律降级 info ⇒ 蒸发）
     elif r.kind == "buttons":
-        c = _btn_group(t, r.actions)
+        # 丙-24 批2：按钮组带行内 note —— 表内动作（testApi/wmReset/pokeTest…）真执行，
+        # 结果回显；表外仍 stub。note 藏于按钮组下方，有结果才显示。
+        wrap = QWidget()
+        v = QVBoxLayout(wrap)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(4)
+        bnote = QLabel("")
+        bnote.setFont(qfont(t, t.body_size - 1))
+        bnote.setStyleSheet(f"color:{t.tx3};background:transparent;")
+        bnote.setWordWrap(True)
+        bnote.hide()
+        v.addWidget(_btn_group(t, r.actions, bnote))
+        v.addWidget(bnote)
+        return wrap
     elif r.kind == "status":
         c = _status_chip(t, r.status_id)
     elif r.kind == "table":
@@ -541,12 +554,65 @@ def _open_group_pick(line, note, groups: list) -> None:
     dlg.show()
 
 
-def _btn_group(t: Tokens, actions: list[tuple[str, str]]) -> QWidget:
+# ── 丙-24 批2：按钮动作分发器（web onclick 的 Qt 等价）──
+# aid → POST 端点。命中 = 真执行（后台线程 + 结果回显行内 note）；
+# 未命中 = 沿 _btn_stub 原型边界。web 62 个按钮按批次逐步接线进这张表。
+_ACT_POST: dict[str, str] = {
+    "testApi": "/api/test-api",          # web L2741/L5882：空体 POST，后端自测当前 api 配置
+    "wmReset": "/api/watermark/reset",   # web L2709：监听水位重对齐
+    "pokeTest": "/api/poke-test",        # web L6028：拍一拍检测
+}
+
+
+def _act_run(aid: str, note) -> None:
+    """真执行 aid（后台线程 POST），结果回显 note（主线程落地）。"""
+    api = _ACT_POST.get(aid)
+    if not api or note is None:
+        return
+    note.show()
+    note.setText("执行中…")
+    bx: dict = {"done": False, "rsp": None, "err": None}
+
+    def _work() -> None:
+        try:
+            from agent_bridge import post_json  # noqa: PLC0415
+
+            bx["rsp"] = post_json(api, {}, timeout=30.0)
+        except Exception as e:  # noqa: BLE001
+            bx["err"] = str(e)
+        bx["done"] = True
+
+    import threading as _th  # noqa: PLC0415
+
+    _th.Thread(target=_work, daemon=True, name="act-" + aid).start()
+
+    from PySide6.QtCore import QTimer  # noqa: PLC0415
+
+    def _apply() -> None:
+        if not bx["done"]:
+            QTimer.singleShot(150, _apply)
+            return
+        if bx["err"]:
+            note.setText("%s 失败：%s" % (aid, bx["err"]))
+            return
+        rsp = bx["rsp"] if isinstance(bx["rsp"], dict) else {}
+        if aid == "testApi":
+            note.setText(("测试连通成功（%sms）" % rsp.get("latency_ms")) if rsp.get("ok")
+                         else ("测试失败：%s" % (rsp.get("error") or "未知原因")))
+        elif aid == "pokeTest":
+            note.setText(str(rsp.get("summary") or rsp.get("detail") or "")
+                         or json.dumps(rsp, ensure_ascii=False)[:160])
+        else:
+            note.setText(str(rsp.get("note") or rsp.get("summary") or "完成"))
+
+    QTimer.singleShot(150, _apply)
+
+
+def _btn_group(t: Tokens, actions: list[tuple[str, str]], note=None) -> QWidget:
     """web `.row-btns` / 行内 `<button>` → 一串按钮（动作 id 挂 property 留取证）。
 
-    ⚠️ 原型边界（如实）：这些按钮的动作原语在 web 侧（`onclick` JS），Qt 壳
-    不冒充「点了会真跑」——点击走 `_btn_stub`，只做**可见反馈**（灰一档 + tooltip
-    说明），绝不静默无反应（可用性要点：不存在"点了没反应"）。
+    ⚠️ 原型边界（丙-24 更新）：在 `_ACT_POST` 表里的动作**真接后端**（后台线程，
+    结果回显行内 note）；表外的仍走 `_btn_stub`（可见反馈 + tooltip，绝不静默无反应）。
     """
     box = QWidget()
     h = QHBoxLayout(box)
@@ -555,8 +621,12 @@ def _btn_group(t: Tokens, actions: list[tuple[str, str]]) -> QWidget:
     for txt, aid in actions:
         b = Btn(txt, t, role="ghost")
         b.setProperty("web_action", aid or "")
-        b.setToolTip(("web 动作：" + aid) if aid else "web 侧按钮")
-        b.clicked.connect(lambda _=False, _b=b: _btn_stub(_b))
+        if note is not None and aid in _ACT_POST:
+            b.clicked.connect(lambda _=False, a=aid: _act_run(a, note))
+            b.setToolTip("真接后端：" + _ACT_POST[aid])
+        else:
+            b.setToolTip(("web 动作：" + aid) if aid else "web 侧按钮")
+            b.clicked.connect(lambda _=False, _b=b: _btn_stub(_b))
         h.addWidget(b)
     return box
 
