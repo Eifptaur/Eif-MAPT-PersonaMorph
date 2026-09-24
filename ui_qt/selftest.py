@@ -1621,6 +1621,27 @@ def t_c10() -> None:
     ck("c10P5(丙-25): 位移核心真跑产出扭曲图（0.5x 缩采尺寸正确、非空）",
        _out is not None and _out.width() == 100 and _out.height() == 80,
        f"out={None if _out is None else (_out.width(), _out.height())}")
+    # ── 丙-31：波纹「一点动静都没有」三连根因的形态防回归（_c31_waveprobe2 像素实锤
+    #    diff_lens=39.6万/相位间 4.4万 ⇒ 修后真可见。任一断言复发 = 回到零视觉）
+    ck("c31: paintEvent 内禁 .grab(（paint 期间抓父窗=重入；且 grab 产 QPixmap 混进 "
+      "QImage 链路 convertToFormat/bits 每帧 AttributeError 被吞 ⇒ 零视觉）",
+       ".grab(" not in _body(wsrc, "paintEvent"))
+    ck("c31: paintEvent 消费 _src_img（抓源在 _tick 事件循环态 render 进 QImage）",
+       "wf._src_img" in _body(wsrc, "paintEvent") and "_grab_src()" in _body(wsrc, "_tick")
+       and "def _grab_src(" in wsrc)
+    ck("c31: sync_overlay 已定义且被 shell.resizeEvent 调（丙-30 忘写 ⇒ AttributeError "
+      "被吞 ⇒ overlay 几何只对创建那一刻）",
+       "def sync_overlay(" in wsrc and "sync_overlay()" in _body(ssrc, "resizeEvent"))
+    ck("c31: 透镜命中走 _hit_deep（排除 overlay 自身；childAt 恒返全窗 overlay ⇒ "
+      "_blank_mode 恒 False、透镜恒全窗）",
+       "def _hit_deep(" in wsrc and "_hit_deep(" in _body(wsrc, "_blank_mode")
+       and "_hit_deep(" in _body(wsrc, "_lens_rect"))
+    # ── 丙-31：侧栏状态框 1:1 复刻（web .side .status，console_html.py L517-519/L929）
+    ck("c31: 状态框描边用 blue_line token（web --blue-line；此前拿 blue 当边框⇒一圈亮蓝）",
+       "self.t.blue_line" in _body(ssrc, "_build_side"))
+    ck("c31: 状态正文恒 tx2 灰（web .status p 不上色；ok/warn 换色=作者批的「绿字太丑」）",
+       "color:{self.t.tx2}" in _body(ssrc, "_apply_side_status")
+       and "self.t.ok if" not in _body(ssrc, "_apply_side_status"))
     w._wavefx.set_enabled(False)
     w.close()
 

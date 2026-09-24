@@ -46,8 +46,8 @@ import os
 import time
 
 import numpy as np
-from PySide6.QtCore import QObject, QPoint, QPointF, QRect, QRectF, Qt, QTimer
-from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
+from PySide6.QtCore import QObject, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer
+from PySide6.QtGui import QColor, QImage, QPainter, QPixmap, QRegion
 from PySide6.QtWidgets import QGraphicsEffect, QWidget
 
 # 动画帧间隔（≈30fps，与 ocean.py 同档；web setInterval(33)）
@@ -71,6 +71,11 @@ _DEFAULTS = {
 
 # 处理分辨率（相对设备像素的缩采比例）：实测 0.5x 稳过 30fps
 _PROC_SCALE = 0.5
+
+# 丙-31：透镜 bbox 性能上限（逻辑 px，最长边）。模块矩形特别大（如接近全窗的容器）时
+# 降级为「光标为中心、_MAX_LENS 见方」的裁剪盘——波纹仍困在模块内语义上等价于 web 的
+# 模块透镜，但 render+位移的每帧成本有硬上界（全窗位移 120ms/帧 会拖死 30fps）。
+_MAX_LENS = 720
 
 # ⛔ 丙-26 批2.5：挂载恢复默认启用 —— draw() 已有签名修正 + 双层 fail-safe
 #   （取源失败整帧放弃；_draw_lens 异常吞掉），最坏情况是「无波纹」而非崩溃。
@@ -147,11 +152,30 @@ class _WaveLensEffect(QGraphicsEffect):
 
 
 class WaveOverlay(QWidget):
-    """波纹覆盖层（丙-30 重做——QGraphicsEffect 对**顶层窗口不生效**的替代架构）。
+    """波纹覆盖层（丙-30 重做；丙-31 修正三连硬伤）。
 
-    全窗透明子控件（WA_TransparentForMouseEvents：不挡任何点击/拖动），paintEvent 里
-    grab 父窗透镜 bbox 的**真实像素** → `_displace_region` 位移 → drawImage 贴回。
-    对齐 web `backdrop-filter: url(#cardWave2)` 的「取背后真实像素做位移重采样」语义。
+    全窗透明子控件（WA_TransparentForMouseEvents：不挡任何点击/拖动），paintEvent 只做
+    「位移 + 贴回」——**抓源已移到 _tick（事件循环态）的 `_grab_src()`**。
+
+    ## 丙-31 根因记录（「一点动静都没有」的真根，三处叠加）
+    1. **QPixmap 混进 QImage 链路**：丙-30 paintEvent 里 `shell.grab()` 产 QPixmap 直接传
+       `_displace_region`，其中 `convertToFormat(QImage.Format...)` / `bits()` 都是 QImage
+       独有方法 ⇒ 每帧 AttributeError ⇒ 被 paintEvent 的 try/except **静默吞掉** ⇒ 零视觉。
+       （selftest 只用 QImage 直测 _displace_region，没覆盖这条真链路。）
+    2. **paint 内 grab 父窗的重入**：paintEvent 执行期间同步 render 整棵父窗——脆弱且贵。
+    3. **childAt 被 overlay 自己截胡**：全窗 overlay 是 shell 最顶子控件 ⇒ `childAt()` 恒返
+       overlay ⇒ `_blank_mode` 恒 False、`_module_rect_of(overlay)` 恒返回全窗矩形。
+    4. **shell.resizeEvent 调用的 `sync_overlay()` 在本模块根本不存在** ⇒ AttributeError
+       被 shell 的 except 吞掉 ⇒ overlay 几何只在创建那一刻对，窗口变化后全错。
+
+    ## 丙-31 架构
+    - `_tick`（事件循环态，非 paint 期间）：`_grab_src()` 用 `shell.render(painter_on_qimage,
+      offset, QRegion(透镜bbox))` 只渲染透镜区域到 **QImage**（带 dpr）——抓源与绘制解耦，
+      无重入；render 期间 `_grabbing` 守卫防 overlay 在 DrawChildren 时自绘。
+    - `paintEvent`：读 `_src_img` → `_displace_region`（纯 QImage 链路）→ drawImage 贴回。
+    - `_hit_deep(x, y)`：模拟 childAt 的「最深可见子控件」下钻，**排除 overlay 自身**，
+      `_blank_mode`/`_lens_rect` 改用它 ⇒ 模块语义恢复、空白圆盘模式恢复。
+    - `sync_overlay()`：补上缺失方法，shell.resizeEvent 每跳同步 overlay 几何。
     """
 
     def __init__(self, wavefx):
@@ -164,19 +188,12 @@ class WaveOverlay(QWidget):
         wf = self._wf
         if not wf._enabled or wf._grabbing:
             return
+        pm = wf._src_img
+        rect = wf._src_rect
+        if pm is None or pm.isNull() or rect.width() < 8 or rect.height() < 8:
+            return
         try:
             center = wf._lens_center()
-            rect = wf._lens_rect(center)
-            rect = rect.intersected(QRect(0, 0, wf._shell.width(), wf._shell.height()))
-            if rect.width() < 8 or rect.height() < 8:
-                return
-            wf._grabbing = True
-            try:
-                pm = wf._shell.grab(QRect(rect))      # 透镜区域真实像素（部分重绘）
-            finally:
-                wf._grabbing = False
-            if pm.isNull():
-                return
             out = wf._displace_region(pm, rect, center,
                                       wf._norm_radius(center, rect), wf._mask_phase())
             if out is None:
@@ -185,7 +202,7 @@ class WaveOverlay(QWidget):
             p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
             if wf._blank_mode(center):
                 p.setClipPath(QPainterPath_safe_circle(center, float(wf._cfg["radius"])))
-            p.drawImage(rect, out)                    # 缩采扭曲图拉伸贴回（对齐 0.5x 护栏）
+            p.drawImage(rect, out)                # 缩采扭曲图拉伸贴回（对齐 0.5x 护栏）
             p.end()
         except Exception:  # noqa: BLE001 — 波纹绘制失败绝不能拖垮窗口
             return
@@ -214,7 +231,9 @@ class WaveFX(QObject):
         self._enabled = False
         self._fx = None                     # 丙-30：QGraphicsEffect 对顶层窗口不生效，弃用
         self._overlay = None                # WaveOverlay 子控件（set_enabled 懒建）
-        self._grabbing = False              # grab 防递归守卫（overlay.paintEvent ↔ shell.grab）
+        self._grabbing = False              # render/paint 防重入守卫（_grab_src ↔ overlay.paintEvent）
+        self._src_img = None                # 丙-31：_grab_src 产的透镜区域 QImage（paint 只读）
+        self._src_rect = QRect()            # 对应逻辑矩形（空矩形 = 尚无有效源）
         self._pos = QPointF(float(shell.width()) / 2.0, float(shell.height()) / 2.0)
         # 鼠标速度 EMA（web `_mouseSpeed` 同款，喂 gain）
         self._speed_ema = 0.0
@@ -279,8 +298,7 @@ class WaveFX(QObject):
                     self._overlay.setGeometry(self._shell.rect())
                     self._overlay.show()
                     self._overlay.raise_()
-                if self._overlay is not None:
-                    self._overlay.setGeometry(self._shell.rect())
+                self.sync_overlay()             # 丙-31：几何同步收敛到一个方法
                 if not self._timer.isActive():
                     self._timer.start()
             else:
@@ -292,6 +310,61 @@ class WaveFX(QObject):
             self._shell.update()
         except Exception:  # noqa: BLE001
             pass
+
+    def sync_overlay(self) -> None:
+        """overlay 几何跟随 shell（shell.resizeEvent 每跳转发）。
+
+        丙-31 硬伤补漏：shell.py:resizeEvent 一直调 `self._wavefx.sync_overlay()`，
+        但丙-30 忘了在本模块定义这个方法 ⇒ AttributeError 被 shell 的 except 吞掉 ⇒
+        overlay 几何只在创建那一刻对、窗口变化后全错。
+        """
+        ov = self._overlay
+        if ov is None:
+            return
+        try:
+            ov.setGeometry(self._shell.rect())
+        except Exception:  # noqa: BLE001
+            pass
+
+    # ------------------------------------------------------------ 抓源（事件循环态，与绘制解耦）
+
+    def _grab_src(self) -> None:
+        """把透镜 bbox 的真实像素 render 到 QImage（丙-31 核心）。
+
+        在 `_tick`（timer timeout，事件循环态）调用——**不在 paintEvent 里**，彻底消除
+        「paint 期间同步 render 父窗」的重入。产物存 `_src_img/_src_rect`，overlay 的
+        paintEvent 只读。只 render 透镜 bbox（QRegion 限制），不整窗。
+        """
+        try:
+            shell = self._shell
+            center = self._lens_center()
+            rect = self._lens_rect(center).intersected(QRect(0, 0, shell.width(), shell.height()))
+            # 大模块降级：光标为中心的 _MAX_LENS 见方（护栏见 _MAX_LENS 注释）
+            if rect.width() > _MAX_LENS or rect.height() > _MAX_LENS:
+                half = _MAX_LENS // 2
+                rect = QRect(int(center.x()) - half, int(center.y()) - half,
+                             _MAX_LENS, _MAX_LENS).intersected(
+                    QRect(0, 0, shell.width(), shell.height()))
+            if rect.width() < 8 or rect.height() < 8:
+                self._src_img = None
+                self._src_rect = QRect()
+                return
+            dpr = shell.devicePixelRatioF() or 1.0
+            img = QImage(int(round(rect.width() * dpr)), int(round(rect.height() * dpr)),
+                         QImage.Format.Format_ARGB32_Premultiplied)
+            img.setDevicePixelRatio(dpr)
+            p = QPainter(img)
+            self._grabbing = True               # DrawChildren 会重入 overlay.paintEvent → 挡住
+            try:
+                shell.render(p, QPoint(-rect.x(), -rect.y()), QRegion(rect))
+            finally:
+                self._grabbing = False
+                p.end()
+            self._src_img = img
+            self._src_rect = QRect(rect)
+        except Exception:  # noqa: BLE001 — 抓源失败宁可这帧没波纹，也不拖垮 UI
+            self._src_img = None
+            self._src_rect = QRect()
 
     @property
     def active(self) -> bool:
@@ -325,21 +398,57 @@ class WaveFX(QObject):
 
     # ------------------------------------------------------------ 透镜几何（裁剪到模块边界）
 
+    def _hit_deep(self, x: int, y: int):
+        """shell 逻辑坐标 → 该点下**最深的可见子控件**（childAt 的 overlay-排除版）。
+
+        childAt 不能用：全窗 overlay 是 shell 最顶子控件 ⇒ 恒返 overlay 自己（丙-31 硬伤 3）。
+        这里逐层下钻：每层在直接子控件里找含该点者（children() 顺序=z 序 ⇒ 取最后一个命中），
+        命中后把坐标换成相对新层，继续下钻；overlay 自身跳过。无命中 ⇒ None（=空白画卷）。
+        """
+        cur = self._shell
+        ov = self._overlay
+        veil = getattr(self._shell, "_fade_veil", None)   # 切页 180ms 全窗渐隐 veil 同样排除
+        lx, ly = x, y
+        hit = None
+        while True:
+            nxt = None
+            ngx = ngy = 0
+            for ch in cur.children():
+                if ch is ov or ch is veil or not isinstance(ch, QWidget):
+                    continue
+                if not ch.isVisible():
+                    continue
+                g = ch.geometry()
+                if g.contains(lx, ly):
+                    nxt = ch                     # 不 break：z 序最上（最后命中）优先
+                    ngx, ngy = g.x(), g.y()
+            if nxt is None:
+                return hit
+            hit = nxt
+            cur = nxt
+            lx -= ngx
+            ly -= ngy
+
     def _lens_center(self) -> QPointF:
         return self._pos
 
     def _blank_mode(self, center: QPointF) -> bool:
-        """光标下无模块（空白）⇒ 用 radius 圆盘；有模块 ⇒ False。"""
-        return self._shell.childAt(int(center.x()), int(center.y())) in (None, self._shell)
+        """光标下无模块（落在 shell 背景画卷上）⇒ 用 radius 圆盘；有模块 ⇒ False。
+
+        （丙-31：childAt 换 _hit_deep——overlay 全窗覆盖后 childAt 恒返 overlay，
+        此分支此前永不触发、透镜恒为全窗矩形。）
+        """
+        hit = self._hit_deep(int(center.x()), int(center.y()))
+        return hit is None or hit is self._shell
 
     def _lens_rect(self, center: QPointF) -> QRect:
         """透镜 bbox：模块内=模块矩形（绝不越界）；空白=radius 圆盘 bbox。"""
-        if self._blank_mode(center):
+        hit = self._hit_deep(int(center.x()), int(center.y()))
+        if hit is None or hit is self._shell:
             r = float(self._cfg["radius"])
             return QRect(int(center.x() - r), int(center.y() - r),
-                        int(2 * r), int(2 * r))
-        return self._module_rect_of(
-            self._shell.childAt(int(center.x()), int(center.y())))
+                         int(2 * r), int(2 * r))
+        return self._module_rect_of(hit)
 
     def _module_rect_of(self, w) -> QRect:
         """向上找光标所在「模块」（卡片/面板/容器），裁剪到其矩形。"""
@@ -493,14 +602,19 @@ class WaveFX(QObject):
     # ------------------------------------------------------------ 动画循环
 
     def _tick(self) -> None:
-        """推进相位并触发重绘（常驻透镜：静止也有微动）。"""
+        """推进相位 → 抓源 → 触发重绘（常驻透镜：静止也有微动）。
+
+        丙-31：抓源（render 透镜 bbox 到 QImage）在这里做——事件循环态，非 paint 期间，
+        无重入。overlay.paintEvent 只消费 `_src_img/_src_rect` 做位移+贴回。
+        """
         if not self._enabled:
             return
         ph_speed = self._phase_speed()
         self._ph += ph_speed * _DT
         try:
             if self._overlay is not None:
-                self._overlay.update()      # 丙-30：只重绘覆盖层（effect 路线弃用）
+                self._grab_src()                # 丙-31：事件循环态抓最新像素
+                self._overlay.update()
             else:
                 self._shell.update()
         except Exception:  # noqa: BLE001

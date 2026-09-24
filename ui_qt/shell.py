@@ -909,14 +909,15 @@ class Shell(QWidget):
         wl.addWidget(self.find)
         lay.addWidget(wrap)
 
-        # 丙-30：顶部「运行状态」框（web .status :929 + CSS :517-519 全对齐——
-        #   蓝底/蓝边/圆角10 + 标题「运行状态」13px 蓝字 + 内容 12px；初版裸字被作者退回）。
+        # 丙-31：状态框 1:1 复刻 web `.side .status`（console_html.py L517-519）——
+        #   background=blue-soft / border=**blue-line**（此前拿 blue 当边框 ⇒ 一圈亮蓝，
+        #   作者批「丑陋」）/ radius 10 / padding 10 12；标题 b 13px 蓝；正文 p 12px。
         sbox = QFrame()
         sbox.setObjectName("SideStatusBox")
         sbox.setStyleSheet(
             "QFrame#SideStatusBox{background:%s;border:1px solid %s;border-radius:10px;}"
             "QFrame#SideStatusBox QLabel{background:transparent;border:none;}"
-            % (self.t.blue_soft, self.t.blue))
+            % (self.t.blue_soft, self.t.blue_line))
         sv = QVBoxLayout(sbox)
         sv.setContentsMargins(12, 10, 12, 10)
         sv.setSpacing(4)
@@ -924,7 +925,7 @@ class Shell(QWidget):
         t_cap.setFont(qfont(self.t, 13, 600))
         t_cap.setStyleSheet(f"color:{self.t.blue};")
         sv.addWidget(t_cap)
-        self.side_status = QLabel("微信：读取中…")
+        self.side_status = QLabel("未连接")   # web 真值初值（console_html.py L929）
         self.side_status.setFont(qfont(self.t, self.t.body_size - 1))
         self.side_status.setStyleSheet(f"color:{self.t.tx2};")
         self.side_status.setWordWrap(True)
@@ -1678,8 +1679,9 @@ class Shell(QWidget):
         if started:
             txt += " · 启动于 " + started
         lab.setText(txt)
-        lab.setStyleSheet(
-            f"color:{self.t.ok if s.get('wechat_connected') else self.t.warn};background:transparent;")
+        # 丙-31：web 真值不给状态行上色——`.side .status p{font-size:12px;color:var(--tx2)}`
+        #   恒为灰字（console_html.py L519）。此前按连接态换 ok/warn ⇒ 绿/黄字，作者批「太丑」。
+        lab.setStyleSheet(f"color:{self.t.tx2};background:transparent;")
         tip = ("已接上微信客户端" if s.get("wechat_connected")
                else str(wa.get("reason") or "还没拿到失败原因（等一次接入尝试，或看日志）")
                + "\n自动重试：已试 %s 次（每 10 秒一次，接上就自动开始工作）" % (wa.get("tries") or 0))

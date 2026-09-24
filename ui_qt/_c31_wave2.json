@@ -1,0 +1,42 @@
+{
+ "sync_overlay_exists": true,
+ "cfg": {
+  "enabled": true,
+  "scale": 17.0,
+  "speed": 5.2,
+  "max_gain": 8.0,
+  "radius": 260.0,
+  "ring_speed": 0.4
+ },
+ "overlay_created": true,
+ "overlay_geom_eq_shell": true,
+ "overlay_visible": true,
+ "hit_deep_panel": "Card",
+ "hit_deep_not_overlay": true,
+ "lens_rect": [
+  260,
+  155,
+  826,
+  293
+ ],
+ "blank_mode_panel_pt": false,
+ "src_img_ok": true,
+ "src_size": [
+  1080,
+  1080
+ ],
+ "src_dpr": 1.5,
+ "src_rect": [
+  340,
+  0,
+  720,
+  720
+ ],
+ "paint_calls_first": 27,
+ "paint_calls_total": 59,
+ "diff_on_vs_off_full": 616317,
+ "diff_on2_vs_on1_full": 53496,
+ "diff_on_vs_off_lens": 395686,
+ "diff_on2_vs_on1_lens": 44365,
+ "VERDICT": "可见"
+}

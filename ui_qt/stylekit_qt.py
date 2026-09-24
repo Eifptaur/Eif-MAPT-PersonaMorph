@@ -111,6 +111,10 @@ class Tokens:
     blue: str
     blue2: str
     blue_soft: str
+    # 丙-31：web --blue-line（console_html.py L32/68/95 三主题各值）——侧栏状态框描边、
+    # chips 描边等「蓝系弱描边」专用。此前 Qt 缺这个 token，shell 拿 blue 当边框 ⇒
+    # 状态框一圈亮蓝，作者批「丑陋、绿字」的复刻走样其一。
+    blue_line: str
 
     # 语义（状态徽章六态里用到的四态）
     ok: str
@@ -171,6 +175,7 @@ WHALE = Tokens(
     blue="#6FCFFF",
     blue2="#3FA9E8",
     blue_soft="rgba(111,207,255,0.14)",
+    blue_line="rgba(120,190,255,0.32)",     # web --blue-line（默认深色主题）
     ok="#5FE0A8",
     warn="#FFC773",
     err="#FF8A8A",
@@ -212,6 +217,7 @@ LIGHT = Tokens(
     blue="#0866FF",
     blue2="#0455D6",
     blue_soft="#E7F0FF",
+    blue_line="#D6E4FF",                    # web --blue-line（light）
     ok="#00A36C",
     warn="#E5A100",
     err="#E41E3F",
@@ -252,6 +258,7 @@ DARK = Tokens(
     blue="#8B93FF",
     blue2="#6E78E8",
     blue_soft="rgba(139,147,255,0.12)",
+    blue_line="#262A44",                    # web --blue-line（dark/Linear）
     ok="#4CC38A",
     warn="#D9A054",
     err="#E5484D",
