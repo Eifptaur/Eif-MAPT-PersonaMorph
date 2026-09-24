@@ -1368,7 +1368,9 @@ def persona_panel(t: Tokens) -> QWidget:
     page, lay, badge = _page(t, s.title, "idle", "读取中")
     lay.addWidget(desc(t, s.desc or "机器人以谁的身份在群里说话、怎么参与。改完保存即生效。"))
 
-    state: dict = {"items": [], "sort": 0}
+    from PySide6.QtWidgets import QHBoxLayout, QWidget  # noqa: PLC0415
+
+    state: dict = {"items": [], "sort": 0, "cat": ""}   # 丙-20：cat=当前分区过滤（空=全部）
 
     # ── 人设库卡 ──
     pcard = Card(t)
@@ -1388,6 +1390,15 @@ def persona_panel(t: Tokens) -> QWidget:
     btn_row.addStretch(1)
     pcard.body.addLayout(btn_row)
 
+    # 分区 chips（web #personaCats :1308，allCats/renderChips :6199-6231 同款）——
+    # 丙-20：人设按分区过滤（内置默认「网络热门」，自定义默认「自定义」）；
+    # 分区管理（新建/删除，/api/persona/cats*）列批4。
+    cat_row_w = QWidget()
+    cat_row = QHBoxLayout(cat_row_w)
+    cat_row.setContentsMargins(0, 0, 0, 0)
+    cat_row.setSpacing(6)
+    pcard.body.addWidget(cat_row_w)
+
     # 搜索框（personaSearch :1317）
     from panels_qt import _line  # noqa: PLC0415
     search = _line(t, "", placeholder="搜索人设（如 傲娇/毒舌/猫/程序员）…")
@@ -1405,10 +1416,17 @@ def persona_panel(t: Tokens) -> QWidget:
     def _render() -> None:
         items = state["items"]
         q = (search.text() or "").strip().lower()
+        cat = state.get("cat", "")
+
+        def _pcat(p: dict) -> str:
+            # 对齐 web allCats（L6201-6202）：内置默认「网络热门」，custom 默认「自定义」
+            return p.get("cat") or ("自定义" if str(p.get("key") or "").startswith("custom") else "网络热门")
+
         show = [p for p in items
-                if not q or q in (p.get("name") or "").lower()
-                or q in (p.get("key") or "").lower()
-                or q in (p.get("text") or "").lower()]
+                if (not cat or _pcat(p) == cat)
+                and (not q or q in (p.get("name") or "").lower()
+                     or q in (p.get("key") or "").lower()
+                     or q in (p.get("text") or "").lower())]
         if state["sort"] == 1:                       # 高→低
             show = sorted(show, key=lambda p: -(p.get("__score") or 0))
         elif state["sort"] == 2:                     # 低→高
@@ -1424,6 +1442,7 @@ def persona_panel(t: Tokens) -> QWidget:
 
     def set_personas(items: list) -> None:
         state["items"] = list(items or [])
+        _render_cats()
         _render()
 
     def apply_sort() -> None:
@@ -1431,6 +1450,33 @@ def persona_panel(t: Tokens) -> QWidget:
         lbl = {0: "↓ 按评估分数排序", 1: "↑ 按评估分数排序（高→低）",
                2: "↑ 按评估分数排序（低→高）"}.get(state["sort"], "↓ 按评估分数排序")
         b_sort.setText(lbl)
+        _render()
+
+    def _render_cats() -> None:
+        """分区 chips（web renderChips :6206 同款）：「全部」+ 各分区，点击过滤。"""
+        while cat_row.count():
+            it = cat_row.takeAt(0)
+            wdg = it.widget()
+            if wdg is not None:
+                wdg.deleteLater()
+        cats: list = []
+        for p in state["items"]:
+            c = p.get("cat") or ("自定义" if str(p.get("key") or "").startswith("custom") else "网络热门")
+            if c not in cats:
+                cats.append(c)
+        for name in ["全部"] + cats:
+            b = Btn(name, t, "ghost")
+            cur = state.get("cat", "")
+            active = (name == "全部" and not cur) or (name == cur and name != "全部")
+            b.setStyleSheet("border-radius:14px;padding:2px 12px;"
+                            + ("font-weight:700;" if active else ""))
+            b.clicked.connect(lambda _=False, n=name: _pick_cat(n))
+            cat_row.addWidget(b)
+        cat_row.addStretch(1)
+
+    def _pick_cat(n: str) -> None:
+        state["cat"] = "" if n == "全部" else n
+        _render_cats()
         _render()
 
     def _restore_prev() -> None:
