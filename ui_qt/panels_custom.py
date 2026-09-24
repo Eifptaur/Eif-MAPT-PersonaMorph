@@ -44,6 +44,7 @@ from PySide6.QtWidgets import (
 
 import config_io
 import sec_meta
+from confirm import ConfirmDialog
 from stylekit_qt import Tokens, qfont, rgba, status_colors
 from widgets import Badge, Btn, Card, Field, Switch, desc, h2
 
@@ -1662,6 +1663,42 @@ def _async_post(page: QWidget, api: str, body: dict, on_done, timeout: float = 1
     QTimer.singleShot(300, _apply)
 
 
+def _post_chain(seq: list, on_done, timeout: float = 15.0) -> None:
+    """后台线程按序 POST 多个请求，UI 只在主线程落地（box 模式，_async_post 同款）。
+
+    用途：「添加角色到新分区」=先落分区再落角色（web :6356-6361 两连跳同款）；
+    任一步失败即停，全部完成后回调 on_done(最后响应, 错误)。
+    """
+    import threading # noqa: PLC0415
+
+    from agent_bridge import post_json # noqa: PLC0415
+
+    box: dict = {"r": None, "err": None, "done": False}
+
+    def _work() -> None:
+        for api, body in seq:
+            try:
+                r = post_json(api, body, timeout=timeout)
+            except Exception as e: # noqa: BLE001
+                box["err"] = str(e)
+                break
+            box["r"] = r
+            if isinstance(r, dict) and r.get("ok") is False:
+                box["err"] = r.get("error") or "请求被拒绝"
+                break
+        box["done"] = True
+
+    threading.Thread(target=_work, daemon=True, name="c12-post-chain").start()
+
+    def _apply() -> None:
+        if not box["done"]:
+            QTimer.singleShot(300, _apply)
+            return
+        on_done(box.get("r"), box.get("err"))
+
+    QTimer.singleShot(300, _apply)
+
+
 def _append_save(t: Tokens, lay, binds: list, badge: Badge) -> None:
     """保存行：收集 {点路径:值}
     → config_io.write_patch；并带「改完即生效」开关（防抖 600ms 自动写）。"""
@@ -1789,7 +1826,9 @@ def persona_panel(t: Tokens) -> QWidget:
 
     from PySide6.QtWidgets import QHBoxLayout, QWidget # noqa: PLC0415
 
-    state: dict = {"items": [], "sort": 0, "cat": ""} # cat=当前分区过滤（空=全部）
+    # cat=当前分区过滤（空=全部）；built=内置分区名（/api/persona/cats 的 built）；
+    # user_cats=用户自建分区 {name: desc}（同接口的 user 列，web :6084-6088 同款）
+    state: dict = {"items": [], "sort": 0, "cat": "", "built": [], "user_cats": {}}
 
     # ── 人设库卡 ──
     pcard = Card(t)
@@ -1872,7 +1911,9 @@ def persona_panel(t: Tokens) -> QWidget:
         _render()
 
     def _render_cats() -> None:
-        """分区 chips（web renderChips :6206 同款）：「全部」+ 各分区，点击过滤。"""
+        """分区 chips（web renderChips :6101 同款）：「全部」+ 各分区，点击过滤。
+        用户分区（非内置、非「自定义」）chip 右侧带红 × 删除（web :6111-6130）；
+        行尾「＋ 新建/添加」开新建分区/添加角色弹窗（web pCatAdd :1252）。"""
         while cat_row.count():
             it = cat_row.takeAt(0)
             wdg = it.widget()
@@ -1883,20 +1924,264 @@ def persona_panel(t: Tokens) -> QWidget:
             c = p.get("cat") or ("自定义" if str(p.get("key") or "").startswith("custom") else "网络热门")
             if c not in cats:
                 cats.append(c)
+        for c in list(state.get("user_cats", {}).keys()):
+            if c not in cats:
+                cats.append(c)
+        built = state.get("built") or []
         for name in ["全部"] + cats:
-            b = Btn(name, t, "ghost")
+            chip = Btn(name, t, "ghost")
             cur = state.get("cat", "")
             active = (name == "全部" and not cur) or (name == cur and name != "全部")
-            b.setStyleSheet("border-radius:14px;padding:2px 12px;"
-                            + ("font-weight:700;" if active else ""))
-            b.clicked.connect(lambda _=False, n=name: _pick_cat(n))
-            cat_row.addWidget(b)
+            chip.setStyleSheet("border-radius:14px;padding:2px 12px;"
+                               + ("font-weight:700;" if active else ""))
+            chip.clicked.connect(lambda _=False, n=name: _pick_cat(n))
+            # 与 web 同判据：非内置且名字不含「自定义」的分区才给 ×
+            if name != "全部" and name not in built and "自定义" not in name:
+                cell = QWidget()
+                cell_l = QHBoxLayout(cell)
+                cell_l.setContentsMargins(0, 0, 0, 0)
+                cell_l.setSpacing(0)
+                cell_l.addWidget(chip)
+                x = Btn("×", t, "ghost")
+                x.setObjectName("pCatDel")
+                x.setStyleSheet(f"color:{t.err};border:none;background:transparent;padding:0 2px;")
+                x.setFixedWidth(18)
+                x.setToolTip(f"删除分区「{name}」（分区下的自定义卡会移回 自定义）")
+                x.clicked.connect(lambda _=False, n=name: _del_cat(n))
+                cell_l.addWidget(x)
+                cat_row.addWidget(cell)
+            else:
+                cat_row.addWidget(chip)
+        b_add = Btn("＋ 新建/添加", t, "ghost")
+        b_add.setObjectName("pCatAdd")
+        b_add.setToolTip("新建分区，或添加角色到分区")
+        b_add.clicked.connect(_open_add_dialog)
+        cat_row.addWidget(b_add)
         cat_row.addStretch(1)
 
     def _pick_cat(n: str) -> None:
         state["cat"] = "" if n == "全部" else n
         _render_cats()
         _render()
+
+    def _del_cat(name: str) -> None:
+        """删除用户分区（web :6119-6128 同款链路）——先主题化二次确认，再 POST。"""
+        dlg = ConfirmDialog(
+            t, page, "删除分区", f"删除分区「{name}」？",
+            ["其中的自定义角色会自动移回「自定义」", "分区本身会被移除（不能撤销）"],
+            confirm_label="删除")
+        if not dlg.exec():
+            return
+        pnote.setText(f"删除分区「{name}」中…")
+        _async_post(None, "/api/persona/cats/del", {"name": name},
+                    lambda r, e: _del_cat_done(name, r, e))
+
+    def _del_cat_done(name: str, r, e) -> None:
+        if e or not isinstance(r, dict) or r.get("ok") is False:
+            pnote.setText(f"删除失败：{e or (r or {}).get('error') or '后台没连上'}")
+            return
+        state.get("user_cats", {}).pop(name, None)
+        if state.get("cat") == name:
+            state["cat"] = ""
+        pnote.setText(f"分区「{name}」已删除")
+        load_personas()
+
+    def _rate_persona(p: dict) -> None:
+        """为模型打星（web ⋯ 菜单「为模型打星」:6191 同款：score 固定 5）。"""
+        nm = p.get("name") or ""
+        pnote.setText(f"为「{nm}」打星中…")
+        _async_post(None, "/api/personas/rate", {"key": p.get("key"), "score": 5},
+                    lambda r, e: pnote.setText(
+                        f"已为「{nm}」打星" if not e and (not isinstance(r, dict) or r.get("ok") is not False)
+                        else f"打星失败：{e or (r or {}).get('error') or '后台没连上'}"))
+
+    def _open_add_dialog() -> None:
+        """新建分区 / 添加角色（web pCatAdd 弹窗 :6286-6372 的主题化移植）。
+        分区下拉=已有分区+「自定义…」；添加角色到新分区时先落分区再落角色。"""
+        from PySide6.QtWidgets import QDialog # noqa: PLC0415
+
+        dlg = QDialog(page)
+        dlg.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
+        dlg.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        dlg.setModal(True)
+        outer = QVBoxLayout(dlg)
+        outer.setContentsMargins(0, 0, 0, 0)
+        shell = QFrame()
+        shell.setObjectName("PAddCard")
+        shell.setStyleSheet(f"#PAddCard{{background:{t.card};border:1px solid {t.bd};"
+                            f"border-radius:{t.radius_card + 2}px;}}")
+        outer.addWidget(shell)
+        box = QVBoxLayout(shell)
+        box.setContentsMargins(24, 22, 24, 18)
+        box.setSpacing(10)
+
+        tl = QLabel("新建分区 / 添加到分区")
+        tl.setFont(qfont(t, 16, 600))
+        tl.setStyleSheet(f"color:{t.tx};background:transparent;")
+        box.addWidget(tl)
+
+        combo_style = (
+            f"QComboBox{{background:{rgba(t.q('tx'), 0 if t.glass else 16).name(QColor.NameFormat.HexArgb)};"
+            f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:0 10px;}}"
+            f"QComboBox::drop-down{{border:none;width:22px;}}"
+            f"QComboBox QAbstractItemView{{background:{'#0E2136' if t.glass else t.card};"
+            f"color:{t.tx};border:1px solid {t.bd};}}")
+        line_style = (
+            f"QLineEdit{{background:{rgba(t.q('tx'), 0 if t.glass else 16).name(QColor.NameFormat.HexArgb)};"
+            f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:0 10px;}}"
+            f"QLineEdit:focus{{border:1px solid {t.blue};}}")
+
+        def _fl(txt: str) -> QLabel:
+            lb = QLabel(txt)
+            lb.setFont(qfont(t, 12.5))
+            lb.setStyleSheet(f"color:{t.tx2};background:transparent;")
+            return lb
+
+        def _le(ph: str) -> QLineEdit:
+            e = QLineEdit()
+            e.setPlaceholderText(ph)
+            e.setFixedHeight(32)
+            e.setFont(qfont(t, t.body_size))
+            e.setStyleSheet(line_style)
+            return e
+
+        box.addWidget(_fl("类型"))
+        type_sel = QComboBox()
+        type_sel.addItems(["新建分区", "添加角色到分区"])
+        type_sel.setFixedHeight(32)
+        type_sel.setFont(qfont(t, t.body_size))
+        type_sel.setStyleSheet(combo_style)
+        box.addWidget(type_sel)
+
+        box.addWidget(_fl("分区名"))
+        cat_sel = QComboBox()
+        cat_sel.setFixedHeight(32)
+        cat_sel.setFont(qfont(t, t.body_size))
+        cat_sel.setStyleSheet(combo_style)
+        cat_in = _le("自定义分区名（如 我的游戏）")
+        cat_wrap = QWidget()
+        cat_wrap_l = QHBoxLayout(cat_wrap)
+        cat_wrap_l.setContentsMargins(0, 0, 0, 0)
+        cat_wrap_l.setSpacing(6)
+        cat_wrap_l.addWidget(cat_sel, 1)
+        cat_wrap_l.addWidget(cat_in, 1)
+        box.addWidget(cat_wrap)
+
+        box.addWidget(_fl("分区描述（可选）"))
+        desc_in = _le("这分区的角色都是什么")
+        box.addWidget(desc_in)
+
+        name_lb = _fl("角色名")
+        name_in = _le("角色名")
+        text_lb = _fl("角色文本")
+        text_in = QPlainTextEdit()
+        text_in.setPlaceholderText("角色设定（会交补足引擎+评分）")
+        text_in.setMinimumHeight(90)
+        text_in.setFont(qfont(t, t.body_size))
+        text_in.setStyleSheet(
+            f"QPlainTextEdit{{background:{rgba(t.q('tx'), 0 if t.glass else 16).name(QColor.NameFormat.HexArgb)};"
+            f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:4px 10px;}}")
+        for w in (name_lb, name_in, text_lb, text_in):
+            w.setVisible(False)
+            box.addWidget(w)
+
+        built0 = list(state.get("built") or [])
+        user0 = [n for n in state.get("user_cats", {}).keys() if n not in built0]
+        known = built0 + user0
+        if known:
+            box.addWidget(_fl("已有分区：" + "、".join(known)))
+
+        brow = QHBoxLayout()
+        brow.addStretch(1)
+        b_cancel = Btn("取消", t, "ghost")
+        b_ok = Btn("创建", t, "primary")
+        b_ok.setObjectName("pAddOk")
+        brow.addWidget(b_cancel)
+        brow.addWidget(b_ok)
+        box.addLayout(brow)
+
+        def _cat_opts() -> None:
+            cat_sel.clear()
+            for c in known:
+                cat_sel.addItem(c)
+            cat_sel.addItem("自定义…")
+            cat_sel.setItemData(cat_sel.count() - 1, "__custom__", Qt.ItemDataRole.UserRole)
+
+        def _pick_type() -> None:
+            is_p = type_sel.currentIndex() == 1
+            for w in (name_lb, name_in, text_lb, text_in):
+                w.setVisible(is_p)
+            if not is_p: # 新建分区：固定走自定义输入（web :6340 初始态同款）
+                cat_sel.setEnabled(False)
+                cat_sel.setCurrentIndex(cat_sel.count() - 1)
+                cat_in.setVisible(True)
+                desc_in.setEnabled(True)
+            else:
+                cat_sel.setEnabled(True)
+                _on_cat_changed()
+
+        def _on_cat_changed() -> None:
+            custom = cat_sel.currentData(Qt.ItemDataRole.UserRole) == "__custom__"
+            cat_in.setVisible(custom)
+            if not custom:
+                desc_in.setText(state.get("user_cats", {}).get(cat_sel.currentText(), ""))
+                desc_in.setEnabled(False)
+            else:
+                desc_in.setEnabled(True)
+
+        def _cat_value() -> str:
+            if cat_sel.currentData(Qt.ItemDataRole.UserRole) == "__custom__":
+                return (cat_in.text() or "").strip()
+            return cat_sel.currentText()
+
+        def _add_done(r, e, done_msg: str) -> None:
+            if e or not isinstance(r, dict) or r.get("ok") is False:
+                pnote.setText(f"创建失败：{e or (r or {}).get('error') or '后台没连上'}")
+                return
+            pnote.setText(done_msg)
+            dlg.accept()
+            load_personas()
+
+        def _ok() -> None:
+            cat = _cat_value()
+            if not cat:
+                pnote.setText("分区名不能为空")
+                return
+            if type_sel.currentIndex() == 0:
+                seq = [("/api/persona/cats/save",
+                        {"name": cat, "desc": (desc_in.text() or "").strip()})]
+                done_msg = f"分区「{cat}」已创建（在分区栏可看/删除）"
+            else:
+                nm = (name_in.text() or "").strip()
+                txt = (text_in.toPlainText() or "").strip()
+                if not nm or not txt:
+                    pnote.setText("角色名和文本都要填")
+                    return
+                seq = []
+                if (cat_sel.currentData(Qt.ItemDataRole.UserRole) == "__custom__"
+                        and cat not in known):
+                    # 自定义新分区名时先落盘（web :6356-6361 同款两连跳）
+                    seq.append(("/api/persona/cats/save",
+                                {"name": cat, "desc": (desc_in.text() or "").strip()}))
+                seq.append(("/api/personas/custom", {"name": nm, "text": txt, "cat": cat}))
+                done_msg = f"角色「{nm}」已加入分区「{cat}」"
+            pnote.setText("创建中…")
+            _post_chain(seq, lambda r, e: _add_done(r, e, done_msg))
+
+        type_sel.currentIndexChanged.connect(_pick_type)
+        cat_sel.currentIndexChanged.connect(_on_cat_changed)
+        b_ok.clicked.connect(_ok)
+        b_cancel.clicked.connect(dlg.reject)
+        _cat_opts()
+        _pick_type()
+        dlg.adjustSize()
+        win = page.window()
+        if win.isVisible():
+            g = win.frameGeometry()
+            dlg.move(g.center() - dlg.rect().center())
+        else:
+            dlg.move(320, 260)
+        dlg.exec()
 
     def _restore_prev() -> None:
         prev = config_io.read_path("persona.last_used") or {}
@@ -1926,6 +2211,12 @@ def persona_panel(t: Tokens) -> QWidget:
         if not (p.get("key") or "").startswith("custom"):
             pnote.setText("仅自定义角色可删除（内置/默认角色不可删）")
             return
+        # 对齐 web uiConfirm 口径（console_html.py:6195）：删除自定义角色前二次确认
+        dlg = ConfirmDialog(
+            t, page, "删除自定义角色", f"删除自定义角色「{p.get('name') or ''}」？",
+            ["该角色会从人设列表移除（不能撤销）"], confirm_label="删除")
+        if not dlg.exec():
+            return
         pnote.setText(f"删除「{p.get('name') or ''}」中…")
         _async_post(None, "/api/personas/custom/del", {"key": p.get("key")},
                     lambda r, e: (load_personas() or pnote.setText(
@@ -1940,7 +2231,8 @@ def persona_panel(t: Tokens) -> QWidget:
                     {"key": p.get("key"), "fav": new_fav}, lambda r, e: None)
         _render()
 
-    handlers = {"use": _apply_persona, "del": _del_persona, "fav": _fav_persona}
+    handlers = {"use": _apply_persona, "del": _del_persona, "fav": _fav_persona,
+                "rate": _rate_persona}
 
     def load_personas() -> None:
         try:
@@ -1968,6 +2260,17 @@ def persona_panel(t: Tokens) -> QWidget:
             favs = rf.get("favs") or {}
         except Exception: # noqa: BLE001
             pass
+        # 分区元数据：内置分区名 + 用户自建分区（web :6084-6088 同款）——
+        # 用户分区 chip 的红 × 删除与「＋ 新建/添加」弹窗都靠它判定
+        try:
+            rc2 = config_io.get_json("/api/persona/cats", timeout=5.0) or {}
+            if isinstance(rc2, dict):
+                state["built"] = list(rc2.get("built") or [])
+                state["user_cats"] = {c.get("name"): (c.get("desc") or "")
+                                      for c in (rc2.get("user") or [])
+                                      if isinstance(c, dict) and c.get("name")}
+        except Exception: # noqa: BLE001
+            pass
         for p in items:
             sc = scores.get(p.get("key")) or {}
             p["__score"] = sc.get("model")
@@ -1981,6 +2284,8 @@ def persona_panel(t: Tokens) -> QWidget:
     page.c12_list = listw
     page.c12_search = search
     page.c12_load = load_personas
+    page.c12_handlers = handlers
+    page.c12_cats_state = lambda: (list(state["built"]), dict(state["user_cats"]))
 
     search.textChanged.connect(_render)
     b_sort.clicked.connect(apply_sort)
@@ -2220,6 +2525,11 @@ def _persona_card(t: Tokens, p: dict, handlers: dict) -> QWidget:
     use = Btn("使用", t, "ghost")
     use.setFixedWidth(54)
     use.clicked.connect(lambda _=False, _p=p: handlers["use"](_p))
+    # 打星=为模型评估打分（web ⋯ 菜单「为模型打星」:6191 的卡片直达版）
+    rate = Btn("打星", t, "ghost")
+    rate.setFixedWidth(50)
+    rate.setToolTip("让模型为这条人设打一次评估分")
+    rate.clicked.connect(lambda _=False, _p=p: handlers["rate"](_p))
     delete = Btn("删", t, "ghost")
     delete.setFixedWidth(40)
     delete.clicked.connect(lambda _=False, _p=p: handlers["del"](_p))
@@ -2239,6 +2549,7 @@ def _persona_card(t: Tokens, p: dict, handlers: dict) -> QWidget:
     h.addWidget(txt, 1)
     h.addSpacing(6)
     h.addWidget(use)
+    h.addWidget(rate)
     h.addWidget(delete)
     return w
 

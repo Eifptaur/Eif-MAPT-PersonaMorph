@@ -1890,11 +1890,198 @@ def t_hotfix2() -> None:
            str(bool(cards)))
 
 
+def t_catmgr() -> None:
+    """批4第一组全链路真跑：人设分区管理（× 删除/＋新建）+ 打星 + 删除确认框。
+
+    手法沿用 t_hotfix2 的教训：弹窗/请求类断言必须真跑（假后端 + patch
+    current_url + patch QDialog.exec 驱动），源码断言只做辅助。
+    """
+    import json as _json # noqa: PLC0415
+    import os # noqa: PLC0415
+    import threading as _th # noqa: PLC0415
+    import time as _time # noqa: PLC0415
+    from http.server import BaseHTTPRequestHandler, HTTPServer # noqa: PLC0415
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import (QApplication, QDialog, QFrame, QLabel,
+                                   QLineEdit) # noqa: PLC0415
+
+    from panels_custom import persona_panel # noqa: PLC0415
+    from stylekit_qt import THEMES # noqa: PLC0415
+    from widgets import Btn # noqa: PLC0415
+
+    QApplication.instance() or QApplication([])
+
+    calls: list = []
+
+    class _H(BaseHTTPRequestHandler):
+        def _send(self, obj): # noqa: N802
+            body = _json.dumps(obj).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self): # noqa: N802
+            calls.append(self.path)
+            if "/api/personas/custom" in self.path:
+                self._send({"custom": [{"key": "custom:demo", "name": "小恶魔",
+                                        "text": "捣蛋人设", "cat": "用户分区A"}]})
+            elif "/api/personas/scores" in self.path:
+                self._send({"rows": []})
+            elif "/api/personas/favs" in self.path:
+                self._send({"favs": {}})
+            elif "/api/persona/cats" in self.path:
+                self._send({"built": ["网络热门"],
+                            "user": [{"name": "用户分区A", "desc": "自定义分区测试"}]})
+            elif "/api/personas" in self.path:
+                self._send({"personas": [{"key": "p1", "name": "傲娇",
+                                          "text": "口是心非", "cat": "网络热门"}]})
+            else:
+                self._send({"ok": True})
+
+        def do_POST(self): # noqa: N802
+            n = int(self.headers.get("Content-Length") or 0)
+            try:
+                body = _json.loads(self.rfile.read(n).decode("utf-8", "replace")) if n else {}
+            except Exception: # noqa: BLE001
+                body = {}
+            calls.append(self.path + "?" + _json.dumps(body, ensure_ascii=False))
+            self._send({"ok": True})
+
+        def log_message(self, *a): # noqa: N802
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), _H)
+    port = srv.server_address[1]
+    _th.Thread(target=srv.serve_forever, daemon=True, name="fake-be-catmgr").start()
+
+    import agent_bridge # noqa: PLC0415
+
+    _orig_url = agent_bridge.current_url
+    agent_bridge.current_url = lambda: "http://127.0.0.1:%d/?token=tk" % port
+    exec_dlgs: list = []
+    mode = {"ok": False} # False=一律取消；True=ConfirmDialog 自动点确认
+    _orig_exec = QDialog.exec
+
+    def _fake_exec(self, *a, **k):
+        exec_dlgs.append(self)
+        if mode["ok"] and hasattr(self, "btn_ok"):
+            self.btn_ok.click() # accept() 后 result() 变 1
+        return self.result()
+
+    QDialog.exec = _fake_exec
+
+    try:
+        page = persona_panel(THEMES["whale"])
+        page.show()
+        built, user_cats = page.c12_cats_state()
+        ck("分区元数据入 state：built/user 来自 /api/persona/cats（web :6084-6088 同款）",
+           built == ["网络热门"] and user_cats.get("用户分区A") == "自定义分区测试",
+           f"built={built} user={user_cats}")
+
+        adds = [b for b in page.findChildren(Btn) if b.objectName() == "pCatAdd"]
+        ck("分区行有「＋ 新建/添加」入口（web pCatAdd :1252 对应）",
+           len(adds) == 1, str(len(adds)))
+        dels = [b for b in page.findChildren(Btn) if b.objectName() == "pCatDel"]
+        ck("用户分区 chip 带红 × 删除钮、内置分区没有（web :6111-6130 同判据）",
+           len(dels) == 1 and dels[0].toolTip().startswith("删除分区「用户分区A」"),
+           f"x={len(dels)} tip={dels[0].toolTip() if dels else ''}")
+
+        # ① 删自定义角色：先弹确认框，取消 → 不发请求
+        h = page.c12_handlers
+        exec_dlgs.clear()
+        h["del"]({"key": "custom:demo", "name": "小恶魔"})
+        QApplication.processEvents()
+        ck("「删」按钮先弹主题化确认框（ConfirmDialog），不再一击即删",
+           len(exec_dlgs) == 1, str(len(exec_dlgs)))
+        posts = [c for c in calls if "/api/personas/custom/del" in c]
+        ck("确认框点「取消」→ 删除请求不发出（web uiConfirm 口径）",
+           not posts, str(posts))
+
+        # ② 确认 → POST /api/personas/custom/del
+        mode["ok"] = True
+        calls.clear()
+        h["del"]({"key": "custom:demo", "name": "小恶魔"})
+        deadline = _time.time() + 3.0
+        while _time.time() < deadline and not any("/api/personas/custom/del" in c for c in calls):
+            QApplication.processEvents()
+            _time.sleep(0.05)
+        ck("确认后删除请求带 key 到达 /api/personas/custom/del",
+           any("/api/personas/custom/del" in c and "custom:demo" in c for c in calls),
+           str([c for c in calls if "custom/del" in c]))
+
+        # ③ × 删分区：确认 → POST /api/persona/cats/del
+        exec_dlgs.clear()
+        calls.clear()
+        dels[0].click()
+        QApplication.processEvents()
+        ck("× 钮触发「删除分区」确认框（后果清单：角色移回「自定义」）",
+           len(exec_dlgs) == 1, str(len(exec_dlgs)))
+        deadline = _time.time() + 3.0
+        while _time.time() < deadline and not any("/api/persona/cats/del" in c for c in calls):
+            QApplication.processEvents()
+            _time.sleep(0.05)
+        ck("确认后 /api/persona/cats/del 带 name 到达",
+           any("/api/persona/cats/del" in c and "用户分区A" in c for c in calls),
+           str([c for c in calls if "cats/del" in c]))
+
+        # ④ 打星：POST /api/personas/rate {key, score:5}（web :6191 同款）
+        calls.clear()
+        h["rate"]({"key": "p1", "name": "傲娇"})
+        deadline = _time.time() + 3.0
+        while _time.time() < deadline and not any("/api/personas/rate" in c for c in calls):
+            QApplication.processEvents()
+            _time.sleep(0.05)
+        ck("打星请求 /api/personas/rate {key, score:5} 真发（卡片「打星」钮）",
+           any("/api/personas/rate" in c and "score" in c and "p1" in c for c in calls),
+           str([c for c in calls if "rate" in c]))
+
+        # ⑤ ＋ 新建分区：弹窗构建 + 创建 → POST /api/persona/cats/save
+        mode["ok"] = False
+        exec_dlgs.clear()
+        calls.clear()
+        adds[0].click()
+        QApplication.processEvents()
+        ck("「＋ 新建/添加」弹出主题化弹窗（PAddCard 壳 + pAddOk 创建钮）",
+           len(exec_dlgs) == 1 and bool(exec_dlgs[0].findChildren(QFrame))
+           and bool([b for b in exec_dlgs[0].findChildren(Btn) if b.objectName() == "pAddOk"]),
+           str(len(exec_dlgs)))
+        if exec_dlgs:
+            ad = exec_dlgs[0]
+            cat_in = next((e for e in ad.findChildren(QLineEdit)
+                           if "自定义分区名" in (e.placeholderText() or "")), None)
+            ok_btn = next(b for b in ad.findChildren(Btn) if b.objectName() == "pAddOk")
+            if cat_in is not None:
+                cat_in.setText("测试分区X")
+            ok_btn.click()
+            deadline = _time.time() + 3.0
+            while _time.time() < deadline and not any("/api/persona/cats/save" in c for c in calls):
+                QApplication.processEvents()
+                _time.sleep(0.05)
+        ck("新建分区弹窗点「创建」→ /api/persona/cats/save {name} 到达（web :6348 同款）",
+           any("/api/persona/cats/save" in c and "测试分区X" in c for c in calls),
+           str([c for c in calls if "cats/save" in c]))
+
+        # ⑥ 源码口径：删角色=先确认后请求（顺序不能反）
+        pc_src = (HERE / "panels_custom.py").read_text(encoding="utf-8")
+        i = pc_src.find("def _del_persona(")
+        j = pc_src.find("\n    def ", i + 1)
+        seg = pc_src[i:j if j > 0 else len(pc_src)]
+        ck("删除自定义角色：ConfirmDialog 确认在 POST 之前（源码顺序锁）",
+           0 < seg.find("ConfirmDialog") < seg.find("_async_post"), "")
+    finally:
+        agent_bridge.current_url = _orig_url
+        QDialog.exec = _orig_exec
+        srv.shutdown()
+
+
 def main() -> int:
     for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
                t_visual, t_badges, t_status_chain, t_bot_controls, t_window_chrome, t_dpi_motion,
                t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch, t_bootstrap32, t_ocr9,
-               t_c10, t_c13, t_hotfix1, t_hotfix2):
+               t_c10, t_c13, t_hotfix1, t_hotfix2, t_catmgr):
         try:
             fn()
         except Exception as e: # noqa: BLE001
