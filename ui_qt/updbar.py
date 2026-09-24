@@ -158,6 +158,10 @@ class UpdateBar(QFrame):
         self.btn_skip = Btn("不再提醒这个版本", t, "ghost")
         self.btn_skip.clicked.connect(self._on_skip)
         row.addWidget(self.btn_skip)
+        self.btn_reset = Btn("重置更新状态", t, "ghost")
+        self.btn_reset.setToolTip("更新闸门卡死时的出口：只清本机记的「见过的最高版本」")
+        self.btn_reset.clicked.connect(self._on_reset)
+        row.addWidget(self.btn_reset)
 
     # ------------------------------------------------------------ 交互
 
@@ -270,6 +274,49 @@ class UpdateBar(QFrame):
                 return
             self.pop.close()
             self._style(warn=False, visible=False) # web .then(hide).catch(hide)
+
+        QTimer.singleShot(150, _poll)
+
+    def _on_reset(self) -> None:
+        """「更新闸门卡死」出口（web updReset console_html.py:794-807）：被镜像
+        改过的清单会把本机记的「见过的最高版本」顶上天，此后真版本全判回滚
+        ⇒ 这个按钮只清这一个键；结果如实回显，绝不假装成功。"""
+        d = ConfirmDialog(
+            self.t,
+            self.window(),
+            "重置更新状态？",
+            "只会清掉本机记的「见过的最高版本」（更新状态快照里的一个键），别的什么都不动。",
+            ["什么时候用：明明有新版本、它却说「更新源给的版本更旧 ⇒ 判为回滚」"],
+            confirm_label="重置",
+            dangerous=False,
+        )
+        d.exec()
+        if not d.result_ok:
+            return
+        box: dict = {"done": False, "r": None}
+
+        def _work() -> None:
+            from agent_bridge import post_json # noqa: PLC0415
+
+            try:
+                box["r"] = post_json("/api/update_reset", {}, timeout=15.0)
+            except Exception as e: # noqa: BLE001
+                box["r"] = {"ok": False, "error": str(e)}
+            box["done"] = True
+
+        threading.Thread(target=_work, daemon=True, name="upd-reset").start()
+
+        def _poll() -> None:
+            if not box["done"]:
+                QTimer.singleShot(150, _poll)
+                return
+            r = box.get("r") or {}
+            if r.get("ok"):
+                self.detail.setText("已重置（原记录 %s ⇒ 现在 %s）"
+                                    % (r.get("before") or "无", r.get("after") or "清空"))
+            else:
+                self.detail.setText("重置失败：%s"
+                                    % (r.get("why") or r.get("error") or "未说明"))
 
         QTimer.singleShot(150, _poll)
 

@@ -4283,12 +4283,322 @@ def t_g8() -> None:
         config_io.read_path = _orig_rp
 
 
+def t_g9() -> None:
+    """批4第九组：uiConfirm 调用点集中补（确认补齐 8 处 + 缺失动作 2 处）。
+
+    手法同 t_g7：假后端 + patch current_url/QDialog.exec（auto-click btn_ok，
+    ConfirmDialog 确认自动通过）。断言九条主链：sessions 勾选删、存档真删
+    （含屏蔽无确认对照）、memory 删成员/清勾选/清全部、persona 恢复上一
+    （新增确认）与移分区（uiPrompt 等价弹窗）、emoji 删除、updbar 重置更新状态。
+    """
+    import json as _json # noqa: PLC0415
+    import os # noqa: PLC0415
+    import threading as _th # noqa: PLC0415
+    import time as _time # noqa: PLC0415
+    from http.server import BaseHTTPRequestHandler, HTTPServer # noqa: PLC0415
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, # noqa: PLC0415
+                                   QListWidget, QLineEdit, QPushButton)
+
+    import agent_bridge # noqa: PLC0415
+    import config_io # noqa: PLC0415
+    import panels_qt # noqa: PLC0415
+    import panels_custom # noqa: PLC0415
+    import updbar as updbar_mod # noqa: PLC0415
+    from stylekit_qt import THEMES # noqa: PLC0415
+    from widgets import Btn # noqa: PLC0415
+
+    QApplication.instance() or QApplication([])
+
+    calls: list = []
+    M1 = {"userId": "U1", "name": "阿明", "impressions": [{"content": "印象一"}]}
+
+    class _H(BaseHTTPRequestHandler):
+        def _send(self, obj): # noqa: N802
+            body = _json.dumps(obj).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self): # noqa: N802
+            calls.append(self.path)
+            if "/api/emojis" in self.path:
+                self._send({"emojis": [{"name": "e1.png"}]})
+            elif "/api/persona/cats" in self.path:
+                self._send({"built": ["自定义"], "user": []})
+            elif "/api/personas/custom" in self.path:
+                self._send({"custom": []})
+            elif "/api/personas/scores" in self.path:
+                self._send({"rows": []})
+            elif "/api/personas/favs" in self.path:
+                self._send({})
+            elif "/api/personas" in self.path:
+                self._send({"personas": [{"key": "custom:c1", "name": "老王",
+                                          "text": "你是老王", "cat": "自定义"}]})
+            elif "/api/sessions" in self.path:
+                self._send({"sessions": [{"ts": "2026-09-25T10:00:00", "text": "a"},
+                                         {"ts": "2026-09-25T11:00:00", "text": "b"}]})
+            elif "/api/memory" in self.path:
+                self._send({"chat_key": "CK",
+                            "chats": [{"chat_key": "CK", "name": "测试群", "count": 2}],
+                            "members": [dict(M1)]})
+            elif "/api/config" in self.path:
+                self._send({"persona": {"bot_name": "x", "role_text": "y"}, "api": {}})
+            elif "/api/wechat-groups" in self.path:
+                self._send({"groups": [{"name": "g1", "wxid": "g1"}]})
+            else:
+                self._send({"ok": True})
+
+        def do_POST(self): # noqa: N802
+            n = int(self.headers.get("Content-Length") or 0)
+            try:
+                body = _json.loads(self.rfile.read(n).decode("utf-8", "replace")) if n else {}
+            except Exception: # noqa: BLE001
+                body = {}
+            calls.append(self.path + "#" + _json.dumps(body, ensure_ascii=False))
+            if "/api/update_reset" in self.path:
+                self._send({"ok": True, "before": "9.9.9", "after": "清空"})
+            else:
+                self._send({"ok": True})
+
+        def log_message(self, *a): # noqa: N802
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), _H)
+    port = srv.server_address[1]
+    _th.Thread(target=srv.serve_forever, daemon=True, name="fake-be-g9").start()
+
+    _orig_url = agent_bridge.current_url
+    agent_bridge.current_url = lambda: "http://127.0.0.1:%d/?token=tk" % port
+    exec_dlgs: list = []
+    _orig_exec = QDialog.exec
+
+    def _fake_exec(self, *a, **k):
+        exec_dlgs.append(self)
+        if hasattr(self, "btn_ok"): # ConfirmDialog 确认钮 → 自动「确定」
+            self.btn_ok.click()
+        return self.result()
+
+    QDialog.exec = _fake_exec
+
+    _orig_rp = config_io.read_path
+
+    def _fake_rp(path, default=None): # noqa: ANN001
+        if str(path) == "persona.last_used":
+            return {"name": "旧人设", "text": "旧设定"}
+        return _orig_rp(path, default)
+
+    config_io.read_path = _fake_rp
+
+    t = THEMES["whale"]
+
+    def _btn_by_text(root, txt):
+        hits = [b for b in root.findChildren(Btn) if b.text() == txt]
+        return hits[0] if hits else None
+
+    def _posts(prefix):
+        return [_json.loads(c.split("#", 1)[1]) for c in calls
+                if "#" in c and c.split("#", 1)[0].startswith(prefix)]
+
+    def _n_posts(prefix):
+        return len(_posts(prefix))
+
+    def _row_check(root, list_name):
+        """从指定 QListWidget 当前行的 itemWidget 里找勾选框——绕开页面上
+        其他 QCheckBox（Switch 等）与已清空行的幽灵控件（t_g7 同款教训）。"""
+        lst = root.findChild(QListWidget, list_name)
+        if lst is None:
+            return None
+        for i in range(lst.count()):
+            w = lst.itemWidget(lst.item(i))
+            if w is not None:
+                cb = w.findChild(QCheckBox)
+                if cb is not None:
+                    return cb
+        return None
+
+    keep: list = [] # 页面引用防 GC：异步回调（_async_post 的 QTimer _apply）
+                    # 触发时旧 page 若已被 Python 回收，C++ 对象已删会 RuntimeError
+
+    def _wait(pred, timeout=6.0):
+        end = _time.time() + timeout
+        while _time.time() < end:
+            QApplication.processEvents()
+            if pred():
+                return True
+            _time.sleep(0.03)
+        QApplication.processEvents()
+        return pred()
+
+    try:
+        # ── ① sessions 勾选删：确认后真发 ──
+        wrap = panels_qt.build_panel(t, "sessions")
+        sp = wrap.widget()
+        keep.append(wrap)
+        sp.show()
+        QApplication.processEvents()
+        b_rf = _btn_by_text(sp, "刷新")
+        if b_rf is not None:
+            b_rf.click()
+        _wait(lambda: _row_check(sp, "sessList") is not None)
+        n0 = _n_posts("/api/sessions/delete")
+        nd0 = len(exec_dlgs)
+        cb = _row_check(sp, "sessList")
+        if cb is not None:
+            cb.setChecked(True)
+        b_del = _btn_by_text(sp, "删除选中")
+        ck("g9 sessions 删除选中钮在场（勾选后启用）", b_del is not None, "btn=%s" % b_del)
+        if b_del is not None:
+            b_del.click()
+        _wait(lambda: _n_posts("/api/sessions/delete") > n0)
+        ck("g9 sessions 勾选删：确认后 POST /api/sessions/delete {items:[date,ts]}",
+           _n_posts("/api/sessions/delete") > n0
+           and all("date" in it and "ts" in it for it in _posts("/api/sessions/delete")[-1]["items"])
+           and len(exec_dlgs) > nd0,
+           "posts=%s dlgs=%d" % (_posts("/api/sessions/delete")[-1:] or [None], len(exec_dlgs)))
+
+        # ── ② 存档：真删有确认、屏蔽无确认（函数级驱动，行内按钮接线已核） ──
+        nd1 = len(exec_dlgs)
+        panels_custom._arc_action(t, sp, "CK", 7, "delete", lambda: None)
+        _wait(lambda: _n_posts("/api/archive/delete") >= 1)
+        ck("g9 存档清除：确认后 POST /api/archive/delete {chat_key, ids}",
+           _n_posts("/api/archive/delete") >= 1
+           and _posts("/api/archive/delete")[-1] == {"chat_key": "CK", "ids": [7]}
+           and len(exec_dlgs) > nd1,
+           "posts=%s dlgs=%d" % (_posts("/api/archive/delete")[-1:], len(exec_dlgs)))
+        nd2 = len(exec_dlgs)
+        panels_custom._arc_action(t, sp, "CK", 7, "block", lambda: None)
+        _wait(lambda: _n_posts("/api/archive/block") >= 1)
+        ck("g9 存档屏蔽（可逆）：无确认直接发",
+           _n_posts("/api/archive/block") >= 1 and len(exec_dlgs) == nd2,
+           "dlgs=%d" % len(exec_dlgs))
+
+        # ── ③ memory 三处 ──
+        wrap = panels_qt.build_panel(t, "memory")
+        mp = wrap.widget()
+        keep.append(wrap)
+        mp.show()
+        QApplication.processEvents()
+        b_rf = _btn_by_text(mp, "刷新")
+        if b_rf is not None:
+            b_rf.click()
+        _wait(lambda: _btn_by_text(mp, "删除") is not None)
+        # 删成员
+        n0 = _n_posts("/api/memory")
+        _btn_by_text(mp, "删除").click()
+        _wait(lambda: _n_posts("/api/memory") > n0)
+        ck("g9 memory 删成员：确认后 POST {chat_key, user_id}",
+           _posts("/api/memory")[-1].get("user_id") == "U1"
+           and len(exec_dlgs) > 0,
+           "body=%s" % (_posts("/api/memory")[-1:],))
+        # 清勾选（重建后的行重新找勾选框）
+        cb = _row_check(mp, "memTable")
+        if cb is not None:
+            cb.setChecked(True)
+        n0 = _n_posts("/api/memory")
+        b_sel = _btn_by_text(mp, "清除勾选的印象")
+        if b_sel is not None:
+            b_sel.click()
+        _wait(lambda: _n_posts("/api/memory") > n0
+              and isinstance(_posts("/api/memory")[-1], dict)
+              and "user_ids" in _posts("/api/memory")[-1])
+        ck("g9 memory 清勾选：确认后 POST {user_ids, scope}",
+           isinstance(_posts("/api/memory")[-1], dict)
+           and _posts("/api/memory")[-1].get("user_ids") == ["U1"],
+           "body=%s" % (_posts("/api/memory")[-1:],))
+        # 清全部
+        n0 = _n_posts("/api/memory")
+        b_all = _btn_by_text(mp, "清除全部")
+        if b_all is not None:
+            b_all.click()
+        _wait(lambda: _n_posts("/api/memory") > n0)
+        ck("g9 memory 清全部：确认后 POST {action:clear_all}",
+           _posts("/api/memory")[-1] == {"action": "clear_all"},
+           "body=%s" % (_posts("/api/memory")[-1:],))
+
+        # ── ④ persona：恢复上一（确认）+ 移分区（prompt 弹窗） ──
+        wrap = panels_qt.build_panel(t, "persona")
+        pp = wrap.widget()
+        keep.append(wrap)
+        pp.show()
+        QApplication.processEvents()
+        n0 = _n_posts("/api/config")
+        b_rs = pp.findChild(Btn, "pRestorePrev")
+        if b_rs is None:
+            b_rs = _btn_by_text(pp, "恢复上个人设")
+        ck("g9 恢复上个人设钮在场", b_rs is not None, "btn=%s" % b_rs)
+        if b_rs is not None:
+            b_rs.click()
+        _wait(lambda: _n_posts("/api/config") > n0)
+        ck("g9 persona 恢复上一：确认后 POST /api/config",
+           _n_posts("/api/config") > n0 and len(exec_dlgs) > 0,
+           "posts=%d dlgs=%d" % (_n_posts("/api/config"), len(exec_dlgs)))
+        # 移分区：行内「移」→ prompt 弹窗（_card_dialog 无 btn_ok，不会自动确认）
+        b_mv = _btn_by_text(pp, "移")
+        ck("g9 persona 行内「移」钮在场", b_mv is not None, "btn=%s" % b_mv)
+        nd3 = len(exec_dlgs)
+        if b_mv is not None:
+            b_mv.click()
+        _wait(lambda: len(exec_dlgs) > nd3)
+        dlg_mv = exec_dlgs[-1]
+        ed_mv = dlg_mv.findChild(QLineEdit)
+        ok_mv = _btn_by_text(dlg_mv, "移过去")
+        if ed_mv is not None and ok_mv is not None:
+            ed_mv.setText("新分区")
+            ok_mv.click()
+        _wait(lambda: _n_posts("/api/personas/custom") >= 1)
+        mvb = _posts("/api/personas/custom")[-1] if _posts("/api/personas/custom") else {}
+        ck("g9 persona 移分区：输入分区名后 POST {key,name,text,cat}",
+           mvb.get("cat") == "新分区" and mvb.get("key") == "custom:c1"
+           and dlg_mv.result() == 1,
+           "body=%s" % (mvb,))
+
+        # ── ⑤ emoji 删除 ──
+        wrap = panels_qt.build_panel(t, "wechat")
+        wp = wrap.widget()
+        keep.append(wrap)
+        wp.show()
+        QApplication.processEvents()
+        xbtn = [b for b in wp.findChildren(QPushButton) if b.text() == "×"]
+        _wait(lambda: bool([b for b in wp.findChildren(QPushButton) if b.text() == "×"]))
+        xbtn = [b for b in wp.findChildren(QPushButton) if b.text() == "×"]
+        ck("g9 emoji 网格 × 钮在场（加载后）", bool(xbtn), "n=%d" % len(xbtn))
+        n0 = _n_posts("/api/emojis/delete")
+        if xbtn:
+            xbtn[0].click()
+        _wait(lambda: _n_posts("/api/emojis/delete") > n0)
+        ck("g9 emoji 删除：确认后 POST /api/emojis/delete {name}",
+           _posts("/api/emojis/delete")[-1].get("name") == "e1.png",
+           "body=%s" % (_posts("/api/emojis/delete")[-1:],))
+
+        # ── ⑥ updbar 重置更新状态 ──
+        bar = updbar_mod.UpdateBar(t)
+        keep.append(bar)
+        bar.show()
+        QApplication.processEvents()
+        n0 = _n_posts("/api/update_reset")
+        bar.btn_reset.click()
+        _wait(lambda: "已重置（原记录 9.9.9 ⇒ 现在 清空）" in bar.detail.text())
+        ck("g9 updbar 重置更新状态：确认后 POST /api/update_reset + 回显原记录",
+           _n_posts("/api/update_reset") > n0
+           and "已重置（原记录 9.9.9 ⇒ 现在 清空）" in bar.detail.text(),
+           "detail=%r posts=%d" % (bar.detail.text(), _n_posts("/api/update_reset")))
+    finally:
+        QDialog.exec = _orig_exec
+        agent_bridge.current_url = _orig_url
+        config_io.read_path = _orig_rp
+        srv.shutdown()
+
+
 def main() -> int:
     for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
                t_visual, t_badges, t_status_chain, t_bot_controls, t_window_chrome, t_dpi_motion,
                t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch, t_bootstrap32, t_ocr9,
                t_c10, t_c13, t_hotfix1, t_hotfix2, t_catmgr, t_medialocal, t_commfb,
-               t_veradv, t_g5, t_g6, t_g7, t_g8):
+               t_veradv, t_g5, t_g6, t_g7, t_g8, t_g9):
         try:
             fn()
         except Exception as e: # noqa: BLE001

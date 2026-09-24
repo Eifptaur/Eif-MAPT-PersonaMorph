@@ -1459,6 +1459,16 @@ def sessions_panel(t: Tokens) -> QWidget:
         if not sel:
             snote.setText("请先勾选要删除的记录")
             return
+        # 对齐 web uiConfirm 口径（console_html.py:4280）：删除运行记录前二次确认
+        from confirm import ConfirmDialog # noqa: PLC0415
+        d = ConfirmDialog(
+            t, page, "删除选中的运行记录",
+            f"删除选中的 {len(sel)} 条运行记录？",
+            [f"只删这 {len(sel)} 条，同一天的其他记录不受影响",
+             "删错了点旁边的「撤销」就能还原"],
+            confirm_label="删除")
+        if not d.exec():
+            return
         snote.setText(f"删除 {len(sel)} 条中…")
         _async_post(page, "/api/sessions/delete", {"items": sel}, lambda r, e: (
             state.__setitem__("undo", (r or {}).get("undo", "")) if (r and r.get("ok")) else None,
@@ -1653,17 +1663,28 @@ def _archive_card(t: Tokens, chat_key: str, m: dict, reload_fn) -> QWidget:
                                                         "unblock" if m.get("blocked") else "block", reload_fn))
     b_del = Btn("清除", t, "ghost")
     b_del.setFixedWidth(54)
-    b_del.clicked.connect(lambda _=False: _arc_action(chat_key, m.get("id"), "delete", reload_fn))
+    b_del.clicked.connect(lambda _=False: _arc_action(t, b_del, chat_key, m.get("id"),
+                                                      "delete", reload_fn))
     h.addWidget(b_block)
     h.addWidget(b_del)
     return w
 
 
-def _arc_action(chat_key: str, mid, action: str, reload_fn) -> None:
+def _arc_action(t: Tokens, parent: QWidget, chat_key: str, mid, action: str,
+                reload_fn) -> None:
     api = {"block": "/api/archive/block", "unblock": "/api/archive/unblock",
            "delete": "/api/archive/delete"}.get(action)
     if not api:
         return
+    # 对齐 web uiConfirm 口径（console_html.py:4570）：真删存档前二次确认
+    #   （屏蔽/解除可逆，web 也不确认，直接发）。
+    if action == "delete":
+        from confirm import ConfirmDialog # noqa: PLC0415
+        d = ConfirmDialog(
+            t, parent, "真删这条存档？", f"真删第 #{mid} 条存档？不可恢复。",
+            ["删除后这条记录不会留在任何回收处"], confirm_label="真删")
+        if not d.exec():
+            return
     _async_post(None, api, {"chat_key": chat_key, "ids": [mid]},
                 lambda r, e: reload_fn())
 
@@ -2653,6 +2674,14 @@ def persona_panel(t: Tokens) -> QWidget:
         if not (prev.get("name") or prev.get("text")):
             pnote.setText("还没有可恢复的人设（先「使用」过一次）")
             return
+        # 对齐 web uiConfirm 口径（console_html.py:6271）：恢复上个人设前二次确认
+        from confirm import ConfirmDialog # noqa: PLC0415
+        d = ConfirmDialog(
+            t, page, "恢复上一个人设",
+            f"恢复上个人设「{prev.get('name') or '未命名'}」？",
+            ["当前人设将被替换（保存后重启机器人生效）"], confirm_label="恢复")
+        if not d.exec():
+            return
         pnote.setText(f"恢复上个人设「{prev.get('name') or '未命名'}」中…")
         _async_post(None, "/api/config", {
             "persona": {"bot_name": prev.get("name", ""), "role_text": prev.get("text", "")}
@@ -2696,8 +2725,53 @@ def persona_panel(t: Tokens) -> QWidget:
                     {"key": p.get("key"), "fav": new_fav}, lambda r, e: None)
         _render()
 
+    def _move_persona(p: dict) -> None:
+        # web mvBtn（console_html.py:6237-6247，uiPrompt「移到哪个分区」）：
+        # 输入已有分区名或新名字自动新建 → POST /api/personas/custom 带 cat。
+        cats = sorted(set(list(state.get("built") or [])
+                          + list((state.get("user_cats") or {}).keys())))
+        dlg, v = _card_dialog(t, page, "移到哪个分区", width=520)
+        dlg.resize(520, 250)
+        tip = QLabel("可填已有分区（%s）或输入新名字自动新建"
+                     % ("、".join(cats) if cats else "暂无，直接输入新名字"))
+        tip.setFont(qfont(t, 12))
+        tip.setWordWrap(True)
+        tip.setStyleSheet(f"color:{t.tx2};background:transparent;")
+        v.addWidget(tip)
+        ed = QLineEdit(str(p.get("cat") or ""))
+        ed.setFont(qfont(t, 12.5))
+        ed.setStyleSheet(
+            f"QLineEdit{{background:{rgba(t.q('tx'), 0 if t.glass else 16).name(QColor.NameFormat.HexArgb)};"
+            f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:6px 10px;}}")
+        v.addWidget(ed)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        b_cancel = Btn("取消", t, "ghost")
+        b_ok = Btn("移过去", t, "primary")
+        row.addWidget(b_cancel)
+        row.addWidget(b_ok)
+        v.addLayout(row)
+
+        def _go() -> None:
+            cat = ed.text().strip()
+            if not cat:
+                tip.setText("分区名不能为空")
+                return
+            dlg.accept()
+            pnote.setText(f"移到「{cat}」中…")
+            _async_post(None, "/api/personas/custom",
+                        {"key": p.get("key"), "name": p.get("name"),
+                         "text": p.get("text"), "cat": cat},
+                        lambda r, e: (load_personas() or pnote.setText(
+                            f"已移到「{cat}」" if (r and r.get("ok") is not False)
+                            else f"移动失败：{e or (r or {}).get('error') or '后台没连上'}")))
+
+        b_ok.clicked.connect(_go)
+        b_cancel.clicked.connect(dlg.reject)
+        dlg.exec()
+
     handlers = {"use": _apply_persona, "del": _del_persona, "fav": _fav_persona,
-                "rate": _rate_persona}
+                "rate": _rate_persona, "move": _move_persona}
 
     def load_personas() -> None:
         try:
@@ -3056,6 +3130,10 @@ def _persona_card(t: Tokens, p: dict, handlers: dict) -> QWidget:
     delete = Btn("删", t, "ghost")
     delete.setFixedWidth(40)
     delete.clicked.connect(lambda _=False, _p=p: handlers["del"](_p))
+    move = Btn("移", t, "ghost")
+    move.setFixedWidth(40)
+    move.setToolTip("移到其他分区（可输入新分区名自动新建）")
+    move.clicked.connect(lambda _=False, _p=p: handlers["move"](_p))
     txt = QLabel((p.get("text") or "").replace("\n", " ")[:60])
     txt.setFont(qfont(t, 11.5))
     txt.setStyleSheet(f"color:{t.tx3};background:transparent;")
@@ -3073,6 +3151,7 @@ def _persona_card(t: Tokens, p: dict, handlers: dict) -> QWidget:
     h.addSpacing(6)
     h.addWidget(use)
     h.addWidget(rate)
+    h.addWidget(move)
     h.addWidget(delete)
     return w
 
@@ -3244,6 +3323,15 @@ def memory_panel(t: Tokens) -> QWidget:
             mnote.setText("请先勾选要清除的成员")
             return
         scope = "this" if mem_scope.currentData() == "this" else "all"
+        # 对齐 web uiConfirm 口径（console_html.py:6968）：批量清除前二次确认
+        from confirm import ConfirmDialog # noqa: PLC0415
+        d = ConfirmDialog(
+            t, page, "清除勾选的成员印象",
+            f"清除勾选的 {len(picked)} 位成员全部印象？"
+            + ("（只删当前这个群，别的群那份会留着）" if scope == "this" else "（所有群一起删）"),
+            ["共 %d 位成员的印象会被清掉" % len(picked)], confirm_label="清除")
+        if not d.exec():
+            return
         mnote.setText(f"清除 {len(picked)} 位成员印象中…")
         _async_post(None, "/api/memory",
                     {"chat_key": state["chat_key"], "user_ids": picked, "scope": scope},
@@ -3252,6 +3340,14 @@ def memory_panel(t: Tokens) -> QWidget:
                         else f"清除失败：{e or (r or {}).get('error') or '后台没连上'}")))
 
     def _clear_all() -> None:
+        # 对齐 web uiConfirm 口径（console_html.py:6983）：清全部记忆前二次确认
+        from confirm import ConfirmDialog # noqa: PLC0415
+        d = ConfirmDialog(
+            t, page, "清除全部记忆",
+            "注意：清除全部记忆（所有群所有成员印象+共享记忆）？",
+            ["所有群、所有成员的印象一起清空", "这个动作不可恢复"], confirm_label="全部清除")
+        if not d.exec():
+            return
         mnote.setText("清除全部记忆中…")
         _async_post(None, "/api/memory", {"action": "clear_all"},
                     lambda r, e: (load_memory(state["chat_key"]) or mnote.setText(
@@ -3347,7 +3443,8 @@ def _member_card(t: Tokens, m: dict, chat_key: str, reload_fn, sync_fn,
         lambda _=False: _mem_deep_dlg(t, deep_btn, m, chat_key, refresh_fn, note))
     del_btn = Btn("删除", t, "ghost")
     del_btn.setFixedWidth(54)
-    del_btn.clicked.connect(lambda _=False: _del_member(chat_key, m, reload_fn))
+    del_btn.clicked.connect(
+        lambda _=False: _del_member(t, del_btn, chat_key, m, reload_fn))
     h.addWidget(pick)
     h.addWidget(name)
     h.addWidget(cnt)
@@ -3359,7 +3456,15 @@ def _member_card(t: Tokens, m: dict, chat_key: str, reload_fn, sync_fn,
     return w
 
 
-def _del_member(chat_key: str, m: dict, reload_fn) -> None:
+def _del_member(t: Tokens, parent: QWidget, chat_key: str, m: dict, reload_fn) -> None:
+    # 对齐 web uiConfirm 口径（console_html.py:6895）：删成员全部印象前二次确认
+    from confirm import ConfirmDialog # noqa: PLC0415
+    d = ConfirmDialog(
+        t, parent, "删除成员印象",
+        f"删除「{m.get('name') or m.get('userId') or '某人'}」的全部印象？",
+        ["这位成员在该群的全部印象一次清空"], confirm_label="删除")
+    if not d.exec():
+        return
     _async_post(None, "/api/memory",
                 {"chat_key": chat_key, "user_id": m.get("userId")},
                 lambda r, e: reload_fn())
@@ -3614,6 +3719,14 @@ def _wechat_emoji_appendix(t: Tokens, page: QWidget) -> None:
         _set_grid(lst[:60])
 
     def _del(name: str) -> None:
+        # 对齐 web uiConfirm 口径（console_html.py:6755）：删表情前二次确认
+        from confirm import ConfirmDialog # noqa: PLC0415
+        d = ConfirmDialog(
+            t, page, "删除表情", f"删除表情「{name}」？",
+            ["会从收藏夹移除（机器人不再能发送它）"], confirm_label="删除")
+        if not d.exec():
+            return
+
         def _work(bx: dict) -> None:
             try:
                 from agent_bridge import post_json # noqa: PLC0415
