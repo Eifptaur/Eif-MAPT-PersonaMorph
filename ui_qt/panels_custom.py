@@ -797,11 +797,30 @@ def check_panel(t: Tokens) -> QWidget:
         QTimer.singleShot(300, _apply)
 
     def _stop() -> None:
-        try:
-            post_json("/api/selfcheck-stop", {}, timeout=10.0)
-            tip.setText("已发出停止请求（当前检测项跑完即停）")
-        except Exception as e: # noqa: BLE001
-            tip.setText(f"停止失败：{e}")
+        # 停止请求走后台线程 —— 原来主线程直连 post_json(timeout=10)，
+        # 后端慢时整窗冻结最长十秒（全项目扫描出的唯一主线程网络点）。
+        tip.setText("正在发送停止请求…")
+        st_box: dict = {"done": False, "err": None}
+
+        def _work() -> None:
+            try:
+                post_json("/api/selfcheck-stop", {}, timeout=10.0)
+            except Exception as e: # noqa: BLE001
+                st_box["err"] = str(e)
+            st_box["done"] = True
+
+        import threading as _thst # noqa: PLC0415
+
+        _thst.Thread(target=_work, daemon=True, name="selfcheck-stop").start()
+
+        def _ap() -> None:
+            if not st_box["done"]:
+                QTimer.singleShot(150, _ap)
+                return
+            tip.setText("已发出停止请求（当前检测项跑完即停）" if st_box["err"] is None
+                        else f"停止失败：{st_box['err']}")
+
+        QTimer.singleShot(150, _ap)
 
     b_self.clicked.connect(_run_self)
     b_stop.clicked.connect(_stop)

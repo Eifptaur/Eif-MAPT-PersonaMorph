@@ -402,7 +402,7 @@ def _chips_editor(t: Tokens, r: "sec_meta.Row") -> QWidget:
             b = Btn(txt2, t, role="ghost")
             b.setProperty("web_action", aid or "")
             if aid in ("pickGroups", "refreshGroups") and (r.cfg or "").endswith("group_name_white_list"):
-                b.clicked.connect(lambda _=False, a=aid, _ln=line, _nt=note: _chips_group_action(a, _ln, _nt))
+                b.clicked.connect(lambda _=False, a=aid, _ln=line, _nt=note: _chips_group_action(a, _ln, _nt, t))
                 b.setToolTip("对齐 web：弹窗列出检测到的群，勾选后确定即保存"
                              if aid == "pickGroups" else "重新读一次群列表（新加群/改群名/换号后用，不用重启）")
             else:
@@ -415,7 +415,7 @@ def _chips_editor(t: Tokens, r: "sec_meta.Row") -> QWidget:
     return box
 
 
-def _chips_group_action(aid: str, line, note) -> None:
+def _chips_group_action(aid: str, line, note, t: Tokens) -> None:
     """群白名单「检测群聊并勾选 / 刷新群列表」真实现（web 2806/2798 同款）。
 
     网络在后台线程（不冻 UI），弹窗与落地在主线程。失败/0 群如实说（web 同款三选一口径）。
@@ -468,16 +468,20 @@ def _chips_group_action(aid: str, line, note) -> None:
             note.setText("这台机器上读到 0 个群聊。请依次确认：①微信登录的是你要用的那个号 "
                          "②那个号里确实有群 ③「运行状态」那行写的是「已连接」")
             return
-        _open_group_pick(line, note, groups)
+        _open_group_pick(t, line, note, groups)
 
     QTimer.singleShot(150, _apply)
 
 
-def _open_group_pick(line, note, groups: list) -> None:
-    """web「选择监听的群」弹窗的 Qt 版（console_html.py:2821-2840 同款交互）。"""
+def _open_group_pick(t: Tokens, line, note, groups: list) -> None:
+    """web「选择监听的群」弹窗的 Qt 版 —— 主题化（confirm.ConfirmDialog 同款设计语言）。
+
+    无边框卡片壳 + 半透明背景 + 项目 Btn/Switch 组件 + 父窗口居中；
+    必须模态 exec()（web 勾选层挂到用户点确定/取消为止）。
+    """
     from PySide6.QtCore import QTimer # noqa: PLC0415
     from PySide6.QtWidgets import ( # noqa: PLC0415
-        QDialog, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout,
+        QDialog, QFrame, QHBoxLayout, QListWidget, QListWidgetItem, QVBoxLayout,
     )
 
     cur = {x.strip() for x in line.text().replace("，", ",").split(",") if x.strip()}
@@ -491,46 +495,87 @@ def _open_group_pick(line, note, groups: list) -> None:
         s = str(g)
         return s, s
 
+    def _preset(wid: str, text: str) -> bool:
+        """预开判定：已存词精确命中 wxid，或词是「群名（wxid）」显示串的子串
+        （兼容手填群名/部分名 —— 原来只整串匹配，手填词永远预开不了）。"""
+        if wid in cur:
+            return True
+        return any(w and (w in text) for w in cur)
+
+    # ── 壳：无边框 + 半透明 + 卡片 QFrame（confirm.py 同款三件套）
     dlg = QDialog(line.window())
     dlg.setWindowTitle("选择监听的群")
+    dlg.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
+    dlg.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
     dlg.setModal(True)
     dlg.resize(460, 520)
-    v = QVBoxLayout(dlg)
-    head = QLabel("检测到 %d 个群聊，勾选机器人需要监听的群（全不勾=监听所有群）。" % len(groups))
-    head.setWordWrap(True)
+
+    outer = QVBoxLayout(dlg)
+    outer.setContentsMargins(0, 0, 0, 0)
+    card = QFrame()
+    card.setObjectName("GpCard")
+    card.setStyleSheet(
+        f"#GpCard{{background:{t.card};border:1px solid {t.bd};"
+        f"border-radius:{t.radius_card + 2}px;}}")
+    outer.addWidget(card)
+
+    v = QVBoxLayout(card)
+    v.setContentsMargins(24, 22, 24, 18)
+    v.setSpacing(12)
+
+    head = QLabel("选择监听的群")
+    head.setFont(qfont(t, 16, 600))
+    head.setStyleSheet(f"color:{t.tx};background:transparent;")
     v.addWidget(head)
-    lst = QListWidget(dlg)
+
+    sub = QLabel("检测到 %d 个群聊，打开右侧开关选择机器人要监听的群"
+                 "（全关=监听所有群）。" % len(groups))
+    sub.setFont(qfont(t, t.body_size))
+    sub.setWordWrap(True)
+    sub.setStyleSheet(f"color:{t.tx2};background:transparent;")
+    v.addWidget(sub)
+
+    lst = QListWidget()
+    lst.setStyleSheet(
+        f"QListWidget{{background:{rgba(t.q('tx'), 0 if t.glass else 10).name(QColor.NameFormat.HexArgb)};"
+        f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_card}px;padding:4px;}}"
+        f"QListWidget::item{{border-radius:{t.radius_btn}px;}}"
+        f"QListWidget::item:selected{{background:{rgba(t.q('blue'), 30).name(QColor.NameFormat.HexArgb)};}}")
+    v.addWidget(lst, 1)
+
+    # 每行：群名 + 自绘开关（Switch 是项目自绘组件，状态色随主题）
+    rows: list[tuple[str, Switch]] = []
     for g in groups:
         text, wid = _gid(g)
-        it = QListWidgetItem(text)
-        # 枚举必须显式：产品运行时的 PySide6 对 `QFlags | int` / int 传枚举槽
-        # 直接 TypeError（原 0x0100/0x0001/2/0 写法在 QTimer 回调里抛异常被吞
-        # → 弹窗建不出来、note 永远停在「检测群聊中…」＝真机「无休止的卡」）。
-        it.setData(Qt.ItemDataRole.UserRole, wid)
-        it.setFlags(it.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-        it.setCheckState(Qt.CheckState.Checked
-                         if (wid in cur or text in cur) else Qt.CheckState.Unchecked)
+        row = QWidget()
+        rh = QHBoxLayout(row)
+        rh.setContentsMargins(10, 8, 12, 8)
+        rh.setSpacing(10)
+        nm = QLabel(text)
+        nm.setFont(qfont(t, t.body_size))
+        nm.setStyleSheet(f"color:{t.tx};background:transparent;")
+        rh.addWidget(nm, 1)
+        sw = Switch(t, on=_preset(wid, text))
+        rh.addWidget(sw)
+        it = QListWidgetItem()
+        it.setSizeHint(row.sizeHint())
         lst.addItem(it)
-    v.addWidget(lst, 1)
-    from PySide6.QtWidgets import QWidget as _QW, QHBoxLayout as _QH # noqa: PLC0415
+        lst.setItemWidget(it, row)
+        rows.append((wid, sw))
 
-    hb = _QW()
-    hh = _QH(hb)
-    hh.setContentsMargins(0, 0, 0, 0)
-    ok = QPushButton("确定")
-    cancel = QPushButton("取消")
-    hh.addStretch(1)
-    hh.addWidget(ok)
-    hh.addWidget(cancel)
-    v.addWidget(hb)
+    brow = QHBoxLayout()
+    brow.setContentsMargins(0, 2, 0, 0)
+    brow.setSpacing(10)
+    brow.addStretch(1)
+    cancel = Btn("算了", t, "ghost")
+    ok = Btn("确定", t, "primary")
+    brow.addWidget(cancel)
+    brow.addWidget(ok)
+    v.addLayout(brow)
     cancel.clicked.connect(dlg.reject)
 
     def _ok() -> None:
-        picked = []
-        for i in range(lst.count()):
-            it = lst.item(i)
-            if it.checkState() != Qt.CheckState.Unchecked:
-                picked.append(str(it.data(Qt.ItemDataRole.UserRole)))
+        picked = [wid for wid, sw in rows if sw.isChecked()]
         line.setText(", ".join(picked))
         note.show()
         note.setText("保存群白名单中…（%d 个群）" % len(picked))
@@ -563,6 +608,13 @@ def _open_group_pick(line, note, groups: list) -> None:
         QTimer.singleShot(150, _apply_save)
 
     ok.clicked.connect(_ok)
+
+    # 居中于父窗口（confirm.ConfirmDialog 同款；Frameless 无系统标题栏不会自动居中）
+    par = line.window()
+    if par is not None and par.isVisible():
+        g2 = par.frameGeometry()
+        dlg.move(g2.center() - dlg.rect().center())
+
     # 必须模态 exec()：web 同款勾选层挂到用户点确定/取消为止；
     #   show() 是非模态——函数立即返回、局部 dlg 失引用被回收，弹窗闪现即销毁，
     #   且 note 停在「检测群聊中…」→ 表现为「点了没反应、无休止的卡」。

@@ -1820,7 +1820,10 @@ def t_hotfix2() -> None:
     from http.server import BaseHTTPRequestHandler, HTTPServer # noqa: PLC0415
 
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PySide6.QtWidgets import QApplication, QDialog, QLabel, QLineEdit # noqa: PLC0415
+    from PySide6.QtWidgets import (QApplication, QDialog, QFrame, QLabel,
+                                   QLineEdit) # noqa: PLC0415
+
+    from stylekit_qt import THEMES # noqa: PLC0415
 
     QApplication.instance() or QApplication([])
 
@@ -1830,8 +1833,8 @@ def t_hotfix2() -> None:
         def do_GET(self): # noqa: N802
             calls.append(self.path)
             body = _json.dumps({"ok": True, "attach_ok": True, "groups": [
-                {"name": "演示群", "wxid": "wxid_demo"},
-                {"name": "测试二号群", "wxid": "wxid_2"},
+                {"name": "海绵宝宝の吸 🚫 课堂", "wxid": "50090367428@chatroom"},
+                {"name": "演示", "wxid": "58471307405@chatroom"},
             ]}).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -1848,20 +1851,21 @@ def t_hotfix2() -> None:
 
     import agent_bridge # noqa: PLC0415
     import panels_qt as _pqmod # noqa: PLC0415
+    from widgets import Switch # noqa: PLC0415
 
     _orig_url = agent_bridge.current_url
     agent_bridge.current_url = lambda: "http://127.0.0.1:%d/?token=tk" % port
-    exec_calls = []
+    exec_dlgs = []
     _orig_exec = QDialog.exec
-    QDialog.exec = lambda self, *a, **k: (exec_calls.append(self.windowTitle()), 0)[1]
+    QDialog.exec = lambda self, *a, **k: (exec_dlgs.append(self), 0)[1]
 
     try:
         line = QLineEdit("演示") # 预填已勾选词（真机形态：白名单非空）
         note = QLabel("")
         note.show()
-        _pqmod._chips_group_action("pickGroups", line, note)
+        _pqmod._chips_group_action("pickGroups", line, note, THEMES["whale"])
         deadline = _time.time() + 3.0
-        while _time.time() < deadline and not exec_calls:
+        while _time.time() < deadline and not exec_dlgs:
             QApplication.processEvents() # 驱动 150ms 轮询到弹窗
             _time.sleep(0.05)
     finally:
@@ -1872,8 +1876,18 @@ def t_hotfix2() -> None:
     ck("群勾选全链路真跑：请求带 token 到达后端（QFlags|int 真凶回归锁）",
        any(("/api/wechat-groups?token=tk") in c and "refresh" not in c for c in calls),
        str(calls))
-    ck("群勾选全链路真跑：模态弹窗被触发（标题「选择监听的群」；构建期任何 TypeError 都会走不到这）",
-       exec_calls == ["选择监听的群"], str(exec_calls))
+    ck("群勾选全链路真跑：模态弹窗被触发（构建期任何 TypeError 都会走不到这）",
+       len(exec_dlgs) == 1, str([d.windowTitle() for d in exec_dlgs]))
+    if exec_dlgs:
+        dlg = exec_dlgs[0]
+        sws = dlg.findChildren(Switch)
+        on = [sw.isChecked() for sw in sws]
+        ck("群勾选弹窗主题化：每群一行自绘 Switch，且预开态匹配白名单词（子串宽容匹配）",
+           len(sws) == 2 and on == [False, True], f"switches={len(sws)} on={on}")
+        cards = [f for f in dlg.findChildren(QFrame) if f.objectName() == "GpCard"]
+        ck("群勾选弹窗主题化：卡片壳用主题 token（t.card/bd/radius，confirm.py 同款语言）",
+           bool(cards) and THEMES["whale"].card in cards[0].styleSheet(),
+           str(bool(cards)))
 
 
 def main() -> int:
