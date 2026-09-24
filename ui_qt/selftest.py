@@ -578,8 +578,9 @@ def t_badges() -> None:
        all(k in csrc for k in ("监听群明细", "QTableWidget", "/api/prices",
                                "月成本", "fc_peak")) or
        all(k in csrc for k in ("监听群明细", "/api/prices", "月成本")))
-    ck("APPENDIX 注册 tools/model 追加区（工具清单 + 本机模型探测）",
-       '"tools": _tools_utlist_appendix' in csrc and '"model": _model_local_appendix' in csrc)
+    ck("APPENDIX 注册 tools/model 追加区（工具清单 + 本机模型探测+厂商联动）",
+       '"tools": _tools_utlist_appendix' in csrc
+       and '"model": (_model_local_appendix, _model_provider_linkup)' in csrc)
     ck("工具清单契约（/api/tools/toggle GET 勾选切换 + problems 坏清单 + counts_total 统计行）",
        all(k in csrc for k in ("/api/tools/toggle", "problems", "counts_total")))
     ck("本机模型探测契约（/api/local-models + 用这个回填 api.base_url + 连通测试）",
@@ -4116,12 +4117,178 @@ def t_g7() -> None:
         srv.shutdown()
 
 
+def t_g8() -> None:
+    """批4第八组：模型厂商下拉联动（web applyProvider :4799-4828 移植）。
+
+    手法：model 页真构建（sec_meta 运行时解析真 web 源码，厂商下拉由元数据
+    自动生成）+ patch config_io.read_path（隔离本机 provider_keys）+ patch
+    QDialog.exec。断言：activated 触发接口地址回填、已存 Key 回填（打码不回填）、
+    弹窗条件三分支（空 Key 弹/非打码非 deepseek 不弹/deepseek 无已存必弹）、三钮行为。
+    """
+    import os # noqa: PLC0415
+    import time as _time # noqa: PLC0415
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, # noqa: PLC0415
+                                   QLabel, QLineEdit)
+
+    import config_io # noqa: PLC0415
+    import panels_qt # noqa: PLC0415
+    from stylekit_qt import THEMES # noqa: PLC0415
+    from widgets import Btn # noqa: PLC0415
+
+    QApplication.instance() or QApplication([])
+    t = THEMES["whale"]
+
+    _orig_rp = config_io.read_path
+    state = {"keys": {}}
+
+    def _fake_rp(path, default=None): # noqa: ANN001
+        if str(path) == "api.provider_keys":
+            return state["keys"]
+        return _orig_rp(path, default)
+
+    config_io.read_path = _fake_rp
+
+    exec_dlgs: list = []
+    _orig_exec = QDialog.exec
+    QDialog.exec = lambda self, *a, **k: (exec_dlgs.append(self), 0)[1]
+
+    def _btn_by_text(root, txt):
+        hits = [b for b in root.findChildren(Btn) if b.text() == txt]
+        return hits[0] if hits else None
+
+    def _wait(pred, timeout=6.0):
+        end = _time.time() + timeout
+        while _time.time() < end:
+            QApplication.processEvents()
+            if pred():
+                return True
+            _time.sleep(0.03)
+        QApplication.processEvents()
+        return pred()
+
+    try:
+        wrap = panels_qt.build_panel(t, "model")
+        page = wrap.widget()
+        page.show()
+        QApplication.processEvents()
+
+        base_w = key_w = None
+        for r, w in (getattr(page, "_c8_binds", None) or []):
+            cfg = str(getattr(r, "cfg", "") or "")
+            if cfg == "api.base_url":
+                base_w = w
+            elif cfg == "api.api_key":
+                key_w = w
+        # 厂商选择器是追加卡手写行（web 无 data-cfg，元数据不覆盖）
+        prov_w = page.findChild(QComboBox, "providerSel")
+        ck("g8 厂商选择行 + 接口地址/密钥行在场",
+           isinstance(prov_w, QComboBox) and prov_w.count() >= 5
+           and base_w is not None and key_w is not None,
+           "prov=%s n=%s base=%s key=%s" % (isinstance(prov_w, QComboBox),
+                                            prov_w.count() if prov_w else -1,
+                                            base_w is not None, key_w is not None))
+
+        def _act(key):
+            for i in range(prov_w.count()):
+                if str(prov_w.itemData(i)) == key:
+                    return i
+            return -1
+
+        # ① 切智谱（无已存 Key、密钥行空 → 弹）：base 回填 + 弹窗结构
+        state["keys"] = {}
+        key_w.setText("")
+        n0 = len(exec_dlgs)
+        prov_w.activated.emit(_act("zhipu"))
+        QApplication.processEvents()
+        _wait(lambda: len(exec_dlgs) > n0)
+        dlg1 = exec_dlgs[-1]
+        ed1 = dlg1.findChild(QLineEdit)
+        ck("g8 切厂商回填接口地址 + 密钥弹窗（标题/说明/密码框/三钮）",
+           base_w.text() == "https://open.bigmodel.cn/api/paas/v4"
+           and dlg1.windowTitle() == "智谱 GLM 密钥"
+           and any("open.bigmodel.cn" in l.text() for l in dlg1.findChildren(QLabel))
+           and ed1 is not None
+           and _btn_by_text(dlg1, "保存 Key") is not None
+           and _btn_by_text(dlg1, "沿用现有 Key") is not None
+           and _btn_by_text(dlg1, "暂不填") is not None,
+           "base=%r title=%r ed=%s" % (base_w.text(), dlg1.windowTitle(),
+                                       ed1 is not None))
+
+        # ② 保存 Key = 填入密钥行（落盘仍走「保存 Key/保存设置」）
+        ed1.setText("sk-g8-test-9")
+        _btn_by_text(dlg1, "保存 Key").click()
+        QApplication.processEvents()
+        ck("g8 保存 Key → 填入密钥行 + 弹窗关",
+           key_w.text() == "sk-g8-test-9" and dlg1.result() == 1,
+           "key=%r result=%s" % (key_w.text(), dlg1.result()))
+
+        # ③ 非打码且非 deepseek → 只回填 base，不弹窗
+        n1 = len(exec_dlgs)
+        prov_w.activated.emit(_act("minimax"))
+        QApplication.processEvents()
+        ck("g8 非打码且非 deepseek：base 回填但不弹窗",
+           base_w.text().startswith("https://api.minimaxi.com")
+           and len(exec_dlgs) == n1,
+           "base=%r dlgs=%d" % (base_w.text(), len(exec_dlgs)))
+
+        # ④ deepseek 无已存 Key → 即使密钥行有值也必弹（首次必问口径）
+        prov_w.activated.emit(_act("deepseek"))
+        _wait(lambda: len(exec_dlgs) > n1)
+        dlg2 = exec_dlgs[-1]
+        ck("g8 deepseek 无已存 Key：非打码也必弹",
+           dlg2.windowTitle() == "DeepSeek 密钥"
+           and len(exec_dlgs) == n1 + 1,
+           "title=%r dlgs=%d" % (dlg2.windowTitle(), len(exec_dlgs)))
+
+        # ⑤ 已存真实 Key 自动回填且不再弹窗
+        _btn_by_text(dlg2, "暂不填").click()
+        state["keys"] = {"zhipu": "sk-saved-z-7"}
+        key_w.setText("sk-***abc") # 打码形态（模拟页面显示值）
+        n2 = len(exec_dlgs)
+        prov_w.activated.emit(_act("zhipu"))
+        QApplication.processEvents()
+        ck("g8 已存真实 Key 自动回填且不再弹窗",
+           key_w.text() == "sk-saved-z-7"
+           and base_w.text() == "https://open.bigmodel.cn/api/paas/v4"
+           and len(exec_dlgs) == n2,
+           "key=%r base=%r dlgs=%d" % (key_w.text(), base_w.text(), len(exec_dlgs)))
+
+        # ⑥ 打码的已存 Key 不回填（防误存），按空 Key 弹窗
+        state["keys"] = {"moonshot": "sk-***xyz"}
+        key_w.setText("")
+        n3 = len(exec_dlgs)
+        prov_w.activated.emit(_act("moonshot"))
+        QApplication.processEvents()
+        _wait(lambda: len(exec_dlgs) > n3)
+        dlg3 = exec_dlgs[-1]
+        ed3 = dlg3.findChild(QLineEdit)
+        ck("g8 打码 saved 不回填、按空 Key 弹窗（密码框预填空）",
+           key_w.text() == "" and dlg3.windowTitle() == "Moonshot Kimi 密钥"
+           and ed3 is not None and ed3.text() == "",
+           "key=%r title=%r ed=%r" % (key_w.text(), dlg3.windowTitle(),
+                                      ed3.text() if ed3 else None))
+
+        # ⑦ 「暂不填」= 关窗不动
+        n4 = len(exec_dlgs)
+        _btn_by_text(dlg3, "暂不填").click()
+        QApplication.processEvents()
+        ck("g8 暂不填 = 关窗、密钥行不动",
+           key_w.text() == "" and dlg3.result() == 0
+           and len(exec_dlgs) == n4,
+           "key=%r result=%s" % (key_w.text(), dlg3.result()))
+    finally:
+        QDialog.exec = _orig_exec
+        config_io.read_path = _orig_rp
+
+
 def main() -> int:
     for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
                t_visual, t_badges, t_status_chain, t_bot_controls, t_window_chrome, t_dpi_motion,
                t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch, t_bootstrap32, t_ocr9,
                t_c10, t_c13, t_hotfix1, t_hotfix2, t_catmgr, t_medialocal, t_commfb,
-               t_veradv, t_g5, t_g6, t_g7):
+               t_veradv, t_g5, t_g6, t_g7, t_g8):
         try:
             fn()
         except Exception as e: # noqa: BLE001

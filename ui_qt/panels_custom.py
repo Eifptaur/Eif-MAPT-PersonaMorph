@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from pathlib import Path
 
@@ -5544,10 +5545,182 @@ def _feedback_appendix(t: Tokens, page: QWidget) -> None:
     _load()
 
 
+_PROVIDERS_CACHE: dict = {}
+
+
+def _providers_from_web() -> dict:
+    """从 web 源码运行时解析 PROVIDERS 表（label/base/keyHint）——
+    sec_meta 同款「web 源码是唯一真值」思路：web 改厂商清单，Qt 联动跟着变。
+    解析失败返回空 dict（联动静默跳过，不拖垮 model 页）。"""
+    if _PROVIDERS_CACHE:
+        return _PROVIDERS_CACHE
+    out: dict = {}
+    try:
+        src = (ROOT / "agent" / "console_html.py").read_text(encoding="utf-8")
+        i = src.find("const PROVIDERS = {")
+        j = src.find("};", i) if i >= 0 else -1
+        if i >= 0 and j > i:
+            for m in re.finditer(
+                    r"(\w+):\{label:'([^']*)',\s*base:'([^']*)',\s*keyHint:'([^']*)'",
+                    src[i:j]):
+                out[m.group(1)] = {"label": m.group(2), "base": m.group(3),
+                                   "keyHint": m.group(4)}
+    except Exception: # noqa: BLE001
+        out = {}
+    _PROVIDERS_CACHE.update(out)
+    return out
+
+
+def _provider_options_from_web() -> list[tuple[str, str]]:
+    """解析 web 厂商选择器的选项（value, 文案）——web :1412-1421 的静态
+    <option> 清单，选项序与文案随 web 源码走。解析失败返回空（行不建）。"""
+    try:
+        src = (ROOT / "agent" / "console_html.py").read_text(encoding="utf-8")
+        i = src.find('<select id="providerSel">')
+        j = src.find("</select>", i) if i >= 0 else -1
+        if i < 0 or j < 0:
+            return []
+        return [(m.group(1), m.group(2)) for m in
+                re.finditer(r'<option value="([^"]+)">([^<]+)</option>', src[i:j])]
+    except Exception: # noqa: BLE001
+        return []
+
+
+def _model_provider_linkup(t: Tokens, page: QWidget) -> None:
+    """模型厂商选择行（web :1411-1421 providerSel）+ 联动（applyProvider :4799-4828）。
+
+    ⛔ 厂商选择器在 web 是**纯 JS 交互控件（无 data-cfg）**——元数据渲染不覆盖，
+    这里手写补位（选项照 web 源码解析）。联动：用户切厂商 → 回填接口地址 +
+    回填已存密钥（打码值不回填，防误存）→ 按需弹密钥弹窗。
+    触发用 activated（仅用户选择才发，对齐 web change 事件语义）——
+    初始渲染与程序回填不弹窗；初始选中按接口地址反推（web providerFromBase）。
+    """
+    provs = _providers_from_web()
+    opts = _provider_options_from_web()
+    if not opts:
+        return
+    base_w = key_w = None
+    for r, w in (getattr(page, "_c8_binds", None) or []):
+        cfg = str(getattr(r, "cfg", "") or "")
+        if cfg == "api.base_url":
+            base_w = w
+        elif cfg == "api.api_key":
+            key_w = w
+    if base_w is None:
+        return
+
+    card = Card(t)
+    card.body.addWidget(h2(t, "模型厂商"))
+    prow = QHBoxLayout()
+    combo = QComboBox()
+    combo.setObjectName("providerSel")
+    combo.setFixedHeight(32)
+    combo.setFont(qfont(t, t.body_size))
+    combo.setStyleSheet(
+        f"QComboBox{{background:{rgba(t.q('tx'), 0 if t.glass else 16).name(QColor.NameFormat.HexArgb)};"
+        f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:0 10px;}}"
+        f"QComboBox::drop-down{{border:none;width:22px;}}"
+        f"QComboBox QAbstractItemView{{background:{'#0E2136' if t.glass else t.card};"
+        f"color:{t.tx};border:1px solid {t.bd};}}")
+    for val, txt in opts:
+        combo.addItem(txt, val)
+    prow.addWidget(combo, 1)
+    card.body.addLayout(prow)
+    page.layout().addWidget(card)
+
+    # 初始选中：按接口地址反推（web providerFromBase :4788-4798 同款——
+    # 前缀匹配先到先得，匹配不上给 custom 语义位（无该选项则落第一个），空地址默认首个）
+    b = str(base_w.text() or "").strip()
+    pick = ""
+    for k, p in provs.items():
+        if k != "custom" and p.get("base") and b.startswith(str(p["base"])):
+            pick = k
+            break
+    if not pick and not b:
+        pick = "deepseek"
+    if pick:
+        for i in range(combo.count()):
+            if str(combo.itemData(i)) == pick:
+                combo.setCurrentIndex(i)
+                break
+
+    combo.activated.connect(lambda idx: _prov_changed(t, page, combo, idx, base_w, key_w))
+
+
+def _prov_changed(t: Tokens, page: QWidget, prov_w: QComboBox, idx: int,
+                  base_w, key_w) -> None: # noqa: ANN001
+    prov = str(prov_w.itemData(idx) or "")
+    p = _providers_from_web().get(prov)
+    if not p:
+        return
+    if p.get("base") and hasattr(base_w, "setText"):
+        base_w.setText(str(p["base"]))
+    saved = ""
+    try:
+        kv = config_io.read_path("api.provider_keys")
+        if isinstance(kv, dict):
+            saved = str(kv.get(prov) or "")
+    except Exception: # noqa: BLE001
+        saved = ""
+    if (saved and key_w is not None and hasattr(key_w, "setText")
+            and "••••" not in saved and not saved.startswith("sk-***")):
+        key_w.setText(saved)
+    have = str(key_w.text()).strip() if key_w is not None and hasattr(key_w, "text") else ""
+    is_masked = (not have) or ("••••" in have) or have.startswith("sk-***")
+    # web 同口径：非打码且（非 deepseek 或已有已存 Key）→ 不打扰；
+    # deepseek 首次（无已存 Key）即使输入框有值也必问一次。
+    if not is_masked and not (prov == "deepseek" and not saved):
+        return
+    _prov_key_dlg(t, page, prov, p, have, key_w)
+
+
+def _prov_key_dlg(t: Tokens, page: QWidget, prov: str, p: dict,
+                  have: str, key_w) -> None: # noqa: ANN001
+    """密钥弹窗（web :4820-4825）：密码框预填当前值；「保存 Key」= 填入密钥行
+    （落盘仍走「保存 Key/保存设置」按钮，web 同语义）；沿用/暂不填=关窗不动。"""
+    label = str(p.get("label") or prov)
+    dlg, v = _card_dialog(t, page, f"{label} 密钥", width=560)
+    dlg.resize(560, 300)
+    tip = QLabel(f"已切换到 {label}（接口地址：{p.get('base') or ''}）。"
+                 f"请填写该公司的 密钥（{p.get('keyHint') or '见官网'} 开头）。")
+    tip.setFont(qfont(t, 12.5))
+    tip.setWordWrap(True)
+    tip.setStyleSheet(f"color:{t.tx};background:transparent;")
+    v.addWidget(tip)
+    ed = QLineEdit(have.replace('"', ""))
+    ed.setEchoMode(QLineEdit.EchoMode.Password)
+    ed.setFont(qfont(t, 12.5))
+    ed.setPlaceholderText((str(p.get("keyHint")) if p.get("keyHint") else "") + "...")
+    ed.setStyleSheet(
+        f"QLineEdit{{background:{rgba(t.q('tx'), 0 if t.glass else 16).name(QColor.NameFormat.HexArgb)};"
+        f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:6px 10px;}}")
+    v.addWidget(ed)
+    row = QHBoxLayout()
+    row.addStretch(1)
+    b_no = Btn("暂不填", t, "ghost")
+    b_same = Btn("沿用现有 Key", t, "ghost")
+    b_ok = Btn("保存 Key", t, "primary")
+    row.addWidget(b_no)
+    row.addWidget(b_same)
+    row.addWidget(b_ok)
+    v.addLayout(row)
+
+    def _fill() -> None:
+        val = ed.text().strip()
+        if val and key_w is not None and hasattr(key_w, "setText"):
+            key_w.setText(val)
+        dlg.accept()
+
+    b_ok.clicked.connect(_fill)
+    b_same.clicked.connect(dlg.reject)
+    b_no.clicked.connect(dlg.reject)
+    dlg.exec()
+
+
 APPENDIX = {
     "wechat": _wechat_emoji_appendix,
     "tools": _tools_utlist_appendix,
-    "model": _model_local_appendix,
+    "model": (_model_local_appendix, _model_provider_linkup),
     "imggen": _sd_local_appendix,
     "tts": _tts_probe_appendix,
     "community": _community_appendix,

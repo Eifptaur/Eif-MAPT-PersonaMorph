@@ -1270,14 +1270,16 @@ def build_panel(t: Tokens, sec: str, on_save=None) -> QWidget:
         inner = fn(t, on_save) if sec == "json" else fn(t)
     else:
         inner = _cfg_panel(t, sec_meta.get(sec), on_save)
-    # 面板追加区（元数据页 + 动态列表卡共存）——如 wechat 的表情收藏夹
-    # （web 的 emojiBox 挂在微信卡下方；元数据驱动做不了动态列表，APPENDIX 补位）。
+    # 面板追加区（元数据页 + 动态列表卡共存）——如 wechat 的表情收藏夹。
+    #   值可为单函数或函数列表（一页多张追加卡：model 的探测卡 + 厂商联动）。
     append_fn = getattr(panels_custom, "APPENDIX", {}).get(sec)
     if append_fn is not None:
-        try:
-            append_fn(t, inner)
-        except Exception: # noqa: BLE001 — 追加区失败不拖垮整页
-            pass
+        fns = append_fn if isinstance(append_fn, (list, tuple)) else (append_fn,)
+        for af in fns:
+            try:
+                af(t, inner)
+            except Exception: # noqa: BLE001 — 追加区失败不拖垮整页
+                pass
     wrap = QScrollArea()
     wrap.setWidgetResizable(True)
     wrap.setFrameShape(QFrame.Shape.NoFrame)
