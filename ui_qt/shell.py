@@ -1649,6 +1649,8 @@ class Shell(QWidget):
         """
         import panels_qt as pq  # noqa: PLC0415
 
+        pq.refresh_status_rows(s)   # 丙-18 批1：面板内状态位跟随 8s 轮询刷新（「读不到」主治）
+
         bot_badge = getattr(self, "st_panel", None)
         if bot_badge is not None:
             r = pq.badge_for("bot", s)

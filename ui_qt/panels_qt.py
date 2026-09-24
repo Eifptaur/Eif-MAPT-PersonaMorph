@@ -568,10 +568,30 @@ def _btn_stub(b) -> None:
     b.setToolTip("这个动作在 web 控制台执行；Qt 壳只做版式还原，不冒充已执行。")
 
 
+_STATUS_ROWS: list = []   # 丙-18 批1：面板内 status 行注册表 [(label, status_id)]——跟随全局轮询刷新
+
+
+def refresh_status_rows(st) -> None:
+    """全局状态刷新时同步刷新面板内 status 行（批1 核心：「一堆读不到」主治）。
+
+    原来 `_status_chip` 只在构建那一刻读一次 ⇒ 之后永远停在「读不到/未检测/检测中」。
+    现在注册进表，由 shell._poll_badges 的 8 秒轮询携带最新 /api/status 调用本函数；
+    st 拿不到就不动（不编数）。
+    """
+    if not isinstance(st, dict) or not st:
+        return
+    for lab, sid in list(_STATUS_ROWS):
+        try:
+            lab.setText(_status_text_for(sid, st))
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def _status_chip(t: Tokens, status_id: str) -> QWidget:
     """web `<b id="…">` 状态位 → 只读状态标签（口径对齐丙-8 badge_for）。
 
-    Qt 壳不接实时 /api/status 时就地读一次；读不到如实写「读不到」，绝不编数。
+    构建时就地读一次（后端活着即刻有值）；并注册进 `_STATUS_ROWS`，
+    之后跟随 8 秒全局轮询持续刷新（丙-18 批1）。
     """
     lab = QLabel("未检测")
     lab.setFont(qfont(t, t.body_size - 0.5))
@@ -579,10 +599,11 @@ def _status_chip(t: Tokens, status_id: str) -> QWidget:
     lab.setProperty("web_status_id", status_id or "")
     try:
         st = _load_status()
-        tip = _status_text_for(status_id, st)
+        tip = _status_text_for(status_id, st) if st else "读取中…"
     except Exception:  # noqa: BLE001
         tip = "读不到（控制台状态未就绪）"
     lab.setText(tip)
+    _STATUS_ROWS.append((lab, status_id or ""))
     return lab
 
 
@@ -629,14 +650,18 @@ def _table_row(t: Tokens, r: "sec_meta.Row", card: Card) -> QWidget:
     return wrap
 
 
-_STATUS_CACHE: dict = { }
+_STATUS_CACHE: dict = {}
+_STATUS_FAIL_TS: float = 0.0   # 丙-18：后端连不上时 30s 内不再重试（否则每次惰性建页同步卡 3 端口×超时）
 
 
 def _load_status() -> dict:
-    """/api/status 快照（进程内缓存 3 秒，避免每行打一次网络）。"""
+    """/api/status 快照（进程内缓存 3 秒，避免每行打一次网络；失败缓存 30 秒）。"""
+    global _STATUS_FAIL_TS
     now = time.time()
     if _STATUS_CACHE.get("t") and now - _STATUS_CACHE["t"] < 3.0:
         return _STATUS_CACHE.get("st") or {}
+    if now - _STATUS_FAIL_TS < 30.0:
+        return {}
     st = {}
     try:
         import urllib.request  # noqa: PLC0415
@@ -646,11 +671,13 @@ def _load_status() -> dict:
         _PORT = 3210
     for p in (_PORT, 3210, 3211):
         try:
-            with urllib.request.urlopen("http://127.0.0.1:%d/api/status" % int(p), timeout=1.2) as r:
+            with urllib.request.urlopen("http://127.0.0.1:%d/api/status" % int(p), timeout=0.8) as r:
                 st = json.loads(r.read().decode("utf-8", "replace"))
             break
         except Exception:  # noqa: BLE001
             continue
+    if not st:
+        _STATUS_FAIL_TS = now
     _STATUS_CACHE["t"], _STATUS_CACHE["st"] = now, st
     return st
 
