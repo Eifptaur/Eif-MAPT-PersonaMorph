@@ -616,11 +616,21 @@ def _act_run(aid: str, note) -> None:
                          else str(res.get("why") or rsp.get("error") or rsp.get("err") or "未知原因"))
         elif aid == "ttsTest":
             info = rsp.get("info") or {}
-            note.setText(("合成成功：%s（%s / %s 字节 / 档位：%s / 声音：%s）"
-                          % (rsp.get("path"), info.get("fmt") or "-", rsp.get("size"),
-                             rsp.get("engine") or info.get("engine") or "-", info.get("voice") or "-"))
-                         if rsp.get("ok")
-                         else ("合成失败：%s" % (rsp.get("err") or rsp.get("error") or "未知原因")))
+            if rsp.get("ok"):
+                # 丙-24 体验增强（web 只显示路径）：拿到产物后用系统默认播放器自动播放——
+                #   作者问「在哪儿听」；合成文件就在磁盘上，一键可听。播放失败不影响结果回显。
+                try:
+                    import os as _os  # noqa: PLC0415
+
+                    if rsp.get("path"):
+                        _os.startfile(str(rsp.get("path")))
+                except Exception:  # noqa: BLE001
+                    pass
+                note.setText("合成成功（已调用系统播放器试听）：%s（%s / %s 字节 / 档位：%s / 声音：%s）"
+                             % (rsp.get("path"), info.get("fmt") or "-", rsp.get("size"),
+                                rsp.get("engine") or info.get("engine") or "-", info.get("voice") or "-"))
+            else:
+                note.setText("合成失败：%s" % (rsp.get("err") or rsp.get("error") or "未知原因"))
         elif aid == "vsTest":
             res = rsp.get("result") or {}
             lines = " ｜ ".join("%s：%s" % (st.get("name"), st.get("detail"))
@@ -642,6 +652,64 @@ def _act_run(aid: str, note) -> None:
     QTimer.singleShot(150, _apply)
 
 
+def _code_check_run(note, deps: bool) -> None:
+    """代码检测（web runCodeCheck :5893-5945 同款）：POST 启动 → 轮询 progress → 逐项落地。
+
+    轮询在后台线程（300 次×间隔，约 45s 上限）；note 只在主线程读共享 dict，不冻 UI。
+    """
+    note.show()
+    note.setText("代码检测启动中…")
+    bx: dict = {"done": False, "err": None, "line": "代码检测启动中…"}
+
+    def _work() -> None:
+        try:
+            from agent_bridge import post_json  # noqa: PLC0415
+
+            post_json("/api/code-check", {"deps": bool(deps)}, timeout=20.0)
+            for _i in range(300):
+                pr = post_json("/api/code-check/progress", {}, timeout=10.0)
+                if not isinstance(pr, dict):
+                    continue
+                if pr.get("done"):
+                    r = pr.get("result") or {}
+                    lines = [r.get("summary") or "代码检测完成"]
+                    for c in (r.get("checks") or []):
+                        mark = {"ok": "通过", "warn": "注意", "fail": "未通过"}.get(c.get("status"), "信息")
+                        lines.append("%s %s：%s" % (mark, c.get("name"), c.get("detail")))
+                        if c.get("hint"):
+                            lines.append("    建议：" + str(c.get("hint")))
+                    bx["line"] = "\n".join(lines)[:600]
+                    return
+                prg = pr.get("progress") or {}
+                d, tt = prg.get("done") or 0, prg.get("total") or 0
+                cur = prg.get("current") or ""
+                items = pr.get("items") or []
+                line = "检测中 %d%% · %s" % (round(d / tt * 100) if tt else 0, cur)
+                if items and isinstance(items[-1], dict):
+                    line += " ｜ 最新：" + str(items[-1].get("name"))
+                bx["line"] = line
+        except Exception as e:  # noqa: BLE001
+            bx["err"] = str(e)
+        finally:
+            bx["done"] = True
+
+    import threading as _th  # noqa: PLC0415
+
+    _th.Thread(target=_work, daemon=True, name="code-check").start()
+
+    from PySide6.QtCore import QTimer  # noqa: PLC0415
+
+    def _apply() -> None:
+        note.setText(bx["line"])
+        if bx["done"]:
+            if bx["err"]:
+                note.setText("代码检测失败：" + bx["err"])
+            return
+        QTimer.singleShot(300, _apply)
+
+    QTimer.singleShot(300, _apply)
+
+
 def _btn_group(t: Tokens, actions: list[tuple[str, str]], note=None) -> QWidget:
     """web `.row-btns` / 行内 `<button>` → 一串按钮（动作 id 挂 property 留取证）。
 
@@ -655,7 +723,10 @@ def _btn_group(t: Tokens, actions: list[tuple[str, str]], note=None) -> QWidget:
     for txt, aid in actions:
         b = Btn(txt, t, role="ghost")
         b.setProperty("web_action", aid or "")
-        if note is not None and aid in _ACT_API:
+        if note is not None and aid in ("codeCheck", "codeCheckDeps"):
+            b.clicked.connect(lambda _=False, a=aid: _code_check_run(note, a == "codeCheckDeps"))
+            b.setToolTip("真接后端：/api/code-check（启动 → 轮询进度 → 逐项结果 + 建议）")
+        elif note is not None and aid in _ACT_API:
             b.clicked.connect(lambda _=False, a=aid: _act_run(a, note))
             b.setToolTip("真接后端：" + _ACT_API[aid][1])
         else:
