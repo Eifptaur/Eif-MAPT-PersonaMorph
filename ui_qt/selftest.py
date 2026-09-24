@@ -4932,12 +4932,196 @@ def _btn_by_text_local(root, txt):
     return hits[0] if hits else None
 
 
+def t_g12() -> None:
+    """批5第二组：tools 每行「试一下」+ 可搜目录行（打开/移除）。
+
+    手法同 t_g9：假后端 + patch current_url。断言：试一下真发 GET /api/tools/test
+    （通了/没通两态如实回显）、测试不触发清单重载（/api/status 计数不变）、
+    args 跨清单重载保留（UT_KEEP 等价）；可搜目录两行（有文件数/目录不存在）、
+    打开 POST /api/open-path、移除 POST /api/file_search/del 并回显 note。
+    """
+    import json as _json # noqa: PLC0415
+    import os # noqa: PLC0415
+    import threading as _th # noqa: PLC0415
+    import time as _time # noqa: PLC0415
+    from http.server import BaseHTTPRequestHandler, HTTPServer # noqa: PLC0415
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QLabel, QLineEdit # noqa: PLC0415
+
+    import agent_bridge # noqa: PLC0415
+    import panels_qt # noqa: PLC0415
+    from stylekit_qt import THEMES # noqa: PLC0415
+    from widgets import Btn # noqa: PLC0415
+
+    QApplication.instance() or QApplication([])
+
+    calls: list = []
+    test_state = {"err": False}
+
+    class _H(BaseHTTPRequestHandler):
+        def _send(self, obj): # noqa: N802
+            body = _json.dumps(obj).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self): # noqa: N802
+            calls.append(self.path)
+            if "/api/tools/test" in self.path:
+                if test_state["err"]:
+                    self._send({"ok": False, "error": "连接超时", "content": ""})
+                else:
+                    self._send({"ok": True, "ms": 42, "host": "api.x.com",
+                                "content": '{"ok":1}'})
+            elif "/api/status" in self.path:
+                self._send({
+                    "ok": True, "paused": False, "wechat_connected": True,
+                    "listen": {"groups": 1, "privates": 0}, "model": "deepseek-chat",
+                    "uptime_s": 5, "groups": [],
+                    "user_tools": {"enabled": True, "dir": "tools.d", "ticked": 1,
+                                   "counts_total": 5, "tools": [{
+                                       "name": "weather", "enabled": True,
+                                       "source": "内置", "host": "api.w.com",
+                                       "description": "天气", "calls": 3,
+                                       "last": 1758700000}],
+                                   "problems": []},
+                    "file_search": {"dirs": [
+                        {"dir": "D:/下载", "exists": True, "count": 12},
+                        {"dir": "D:/没了", "exists": False, "count": -1}]},
+                })
+            else:
+                self._send({"ok": True})
+
+        def do_POST(self): # noqa: N802
+            n = int(self.headers.get("Content-Length") or 0)
+            try:
+                body = _json.loads(self.rfile.read(n).decode("utf-8", "replace")) if n else {}
+            except Exception: # noqa: BLE001
+                body = {}
+            calls.append(self.path + "#" + _json.dumps(body, ensure_ascii=False))
+            if "/api/file_search/del" in self.path:
+                self._send({"ok": True, "note": "已从可搜目录移除"})
+            else:
+                self._send({"ok": True})
+
+        def log_message(self, *a): # noqa: N802
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), _H)
+    port = srv.server_address[1]
+    _th.Thread(target=srv.serve_forever, daemon=True, name="fake-be-g12").start()
+
+    _orig_url = agent_bridge.current_url
+    agent_bridge.current_url = lambda: "http://127.0.0.1:%d/?token=tk" % port
+
+    t = THEMES["whale"]
+
+    def _posts(prefix):
+        return [_json.loads(c.split("#", 1)[1]) for c in calls
+                if "#" in c and c.split("#", 1)[0].startswith(prefix)]
+
+    def _status_n():
+        return sum(1 for c in calls if c.startswith("/api/status"))
+
+    def _wait(pred, timeout=8.0):
+        end = _time.time() + timeout
+        while _time.time() < end:
+            QApplication.processEvents()
+            if pred():
+                return True
+            _time.sleep(0.03)
+        QApplication.processEvents()
+        return pred()
+
+    try:
+        wrap = panels_qt.build_panel(t, "tools")
+        pp = wrap.widget()
+        keep = [wrap]
+        pp.show()
+        _wait(lambda: _btn_by_text_local(pp, "试一下") is not None)
+        ck("g12 工具行三件在场（args 输入 utArgs + 试一下 + 结果行）",
+           pp.findChild(QLineEdit, "utArgs") is not None
+           and _btn_by_text_local(pp, "试一下") is not None,
+           "ai=%s tb=%s" % (pp.findChild(QLineEdit, "utArgs") is not None,
+                            _btn_by_text_local(pp, "试一下") is not None))
+
+        # ── 试一下：成功态 ──
+        st_n0 = _status_n()
+        ai = pp.findChild(QLineEdit, "utArgs")
+        if ai is not None:
+            ai.setText('{"city": "北京"}')
+        _btn_by_text_local(pp, "试一下").click()
+        _wait(lambda: any("通了 · 42ms · api.x.com 返回" in l.text()
+                          for l in pp.findChildren(QLabel)))
+        tb_ok = any("通了 · 42ms · api.x.com 返回：{\"ok\":1}" in l.text()
+                    for l in pp.findChildren(QLabel))
+        ck("g12 试一下（成功）：GET /api/tools/test 带 name+args，回显「通了 · Nms · host 返回」",
+           tb_ok and any("/api/tools/test" in c and "weather" in c
+                         and "%E5%8C%97%E4%BA%AC" in c for c in calls),
+           "labels=%s" % [l.text()[:40] for l in pp.findChildren(QLabel) if "通了" in l.text()])
+        ck("g12 测试不触发清单重载（/api/status 计数不变，web :3897 同口径）",
+           _status_n() == st_n0, "before=%d after=%d" % (st_n0, _status_n()))
+
+        # ── 失败态 ──
+        test_state["err"] = True
+        _btn_by_text_local(pp, "试一下").click()
+        _wait(lambda: any("没通 · 连接超时" in l.text() for l in pp.findChildren(QLabel)))
+        ck("g12 试一下（失败）：如实回显「没通 · error」",
+           any("没通 · 连接超时" in l.text() for l in pp.findChildren(QLabel)),
+           str([l.text()[:30] for l in pp.findChildren(QLabel) if "没通" in l.text()]))
+        test_state["err"] = False
+
+        # ── args 跨清单重载保留（UT_KEEP 等价）──
+        if ai is not None:
+            ai.setText('{"q": "1"}')
+        QApplication.processEvents()
+        pp._ut_reload()
+        _wait(lambda: pp.findChild(QLineEdit, "utArgs") is not None
+              and pp.findChild(QLineEdit, "utArgs").text() == '{"q": "1"}')
+        ai2 = pp.findChild(QLineEdit, "utArgs")
+        ck("g12 args 与结果跨清单重载保留（web UT_KEEP :3875 同款）",
+           ai2 is not None and ai2.text() == '{"q": "1"}'
+           and any("没通 · 连接超时" in l.text() for l in pp.findChildren(QLabel)),
+           "args=%r" % (ai2.text() if ai2 else None))
+
+        # ── 可搜目录行：文本 + 打开 + 移除 ──
+        ck("g12 可搜目录两行在场（N 个文件 / 目录不存在）",
+           any("D:/下载" in l.text() and "12 个文件" in l.text()
+               for l in pp.findChildren(QLabel))
+           and any("D:/没了" in l.text() and "目录不存在" in l.text()
+                   for l in pp.findChildren(QLabel)),
+           str([l.text() for l in pp.findChildren(QLabel) if "D:/" in l.text()]))
+        b_open = _btn_by_text_local(pp, "打开")
+        if b_open is not None:
+            b_open.click()
+        _wait(lambda: len(_posts("/api/open-path")) >= 1)
+        ck("g12 目录「打开」：POST /api/open-path {path}",
+           _posts("/api/open-path")[-1] == {"path": "D:/下载"}
+           if _posts("/api/open-path") else False,
+           str(_posts("/api/open-path")[-1:] or [None]))
+        b_rm = _btn_by_text_local(pp, "移除")
+        if b_rm is not None:
+            b_rm.click()
+        _wait(lambda: len(_posts("/api/file_search/del")) >= 1
+              and any("已从可搜目录移除" in l.text() for l in pp.findChildren(QLabel)))
+        ck("g12 目录「移除」：POST /api/file_search/del {dir} + 回显服务端 note",
+           _posts("/api/file_search/del")[-1] == {"dir": "D:/下载"}
+           and any("已从可搜目录移除" in l.text() for l in pp.findChildren(QLabel)),
+           str(_posts("/api/file_search/del")[-1:] or [None]))
+    finally:
+        agent_bridge.current_url = _orig_url
+        srv.shutdown()
+
+
 def main() -> int:
     for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
                t_visual, t_badges, t_status_chain, t_bot_controls, t_window_chrome, t_dpi_motion,
                t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch, t_bootstrap32, t_ocr9,
                t_c10, t_c13, t_hotfix1, t_hotfix2, t_catmgr, t_medialocal, t_commfb,
-               t_veradv, t_g5, t_g6, t_g7, t_g8, t_g9, t_g10, t_g11):
+               t_veradv, t_g5, t_g6, t_g7, t_g8, t_g9, t_g10, t_g11, t_g12):
         try:
             fn()
         except Exception as e: # noqa: BLE001

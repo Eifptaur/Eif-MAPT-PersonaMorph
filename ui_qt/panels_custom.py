@@ -3958,15 +3958,84 @@ def _tools_utlist_appendix(t: Tokens, page: QWidget) -> None:
     v.setContentsMargins(0, 0, 0, 0)
     v.setSpacing(6)
     card.body.addWidget(host)
+    # ── 可搜目录（web fileSearch 卡 :3940-3975 对齐）：逐目录 打开/移除 ──
+    card.body.addWidget(_divider_local(t))
+    card.body.addWidget(h2(t, "可搜目录（文件搜索）"))
+    fs_host = QWidget()
+    fs_host.setStyleSheet("background:transparent;")
+    fs_v = QVBoxLayout(fs_host)
+    fs_v.setContentsMargins(0, 0, 0, 0)
+    fs_v.setSpacing(4)
+    card.body.addWidget(fs_host)
+    fs_note = desc(t, "")
+    card.body.addWidget(fs_note)
     page.layout().addWidget(card)
 
     from PySide6.QtWidgets import QCheckBox as _QCB # noqa: PLC0415 — 局部别名不遮蔽模块级名
 
-    box: dict = {"done": False, "ut": None}
+    box: dict = {"done": False, "ut": None, "fs": None}
+    _ut_keep: dict = {} # 每工具「试一下」的参数与结果（跨清单重载保留，web UT_KEEP :3875 同款）
+
+    def _ut_test(name: str, ai, keep: dict, res_lb, tb) -> None:
+        """web :3879-3900 同款：GET /api/tools/test?name=&args=——通了/没通都如实回显；
+        测试不改清单 ⇒ 绝不触发重载（web :3897 注释同口径）。"""
+        keep["args"] = ai.text()
+        tb.setEnabled(False)
+        tb.setText("发请求…")
+        keep["err"] = False
+        keep["text"] = "正在真发一次 HTTP 请求（最多等到这个工具的超时设置）…"
+        res_lb.setStyleSheet(f"color:{t.tx3};background:transparent;")
+        res_lb.setText(keep["text"])
+
+        def _work(bx: dict) -> None:
+            try:
+                bx["r"] = config_io.get_json(
+                    "/api/tools/test?name=%s&args=%s"
+                    % (_up.quote(name), _up.quote(ai.text() or "{}")), timeout=90.0)
+            except Exception as e: # noqa: BLE001
+                bx["err"] = str(e)
+            bx["done"] = True
+
+        bx: dict = {"done": False, "r": None, "err": None}
+        _th.Thread(target=_work, daemon=True, args=(bx,), name="ut-test").start()
+
+        def _apply_test() -> None:
+            if not bx["done"]:
+                QTimer.singleShot(300, _apply_test)
+                return
+            r = bx.get("r") if isinstance(bx.get("r"), dict) else {}
+            if bx.get("err"):
+                keep["err"] = True
+                keep["text"] = "没通 · " + str(bx["err"])
+            elif r.get("ok"):
+                keep["text"] = "通了 · %sms · %s 返回：%s" % (
+                    r.get("ms") or 0, r.get("host") or "", r.get("content") or "（空）")
+            else:
+                keep["err"] = True
+                keep["text"] = "没通 · " + str(r.get("error") or r.get("content") or "未知错误")
+            res_lb.setStyleSheet(
+                f"color:{t.err if keep['err'] else t.tx3};background:transparent;")
+            res_lb.setText(keep["text"])
+            tb.setEnabled(True)
+            tb.setText("试一下")
+
+        QTimer.singleShot(300, _apply_test)
+
+    def _fs_del(dir_path: str) -> None:
+        """web :3961-3967：POST /api/file_search/del {dir} → 回显服务端 note + 重载清单。"""
+        fs_note.setText("移除「%s」中…" % dir_path)
+        _async_post(None, "/api/file_search/del", {"dir": dir_path},
+                    lambda r, e: (fs_note.setText(
+                        "移除失败：%s" % (e or (r or {}).get("error") or "后台没连上")
+                        if (e or (isinstance(r, dict) and r.get("ok") is False))
+                        else str((r or {}).get("note") or "已移除")),
+                        _load()))
 
     def _load() -> None:
         def _work() -> None:
-            box["ut"] = (config_io.get_json("/api/status", timeout=8.0) or {}).get("user_tools")
+            st = config_io.get_json("/api/status", timeout=8.0) or {}
+            box["ut"] = st.get("user_tools")
+            box["fs"] = st.get("file_search")
             box["done"] = True
 
         _th.Thread(target=_work, daemon=True, name="ut-list").start()
@@ -3980,6 +4049,44 @@ def _tools_utlist_appendix(t: Tokens, page: QWidget) -> None:
                 w = it.widget()
                 if w is not None:
                     w.deleteLater()
+            # ── 可搜目录行（web :3950-3969 同款：文本 + 打开 + 移除）──
+            while fs_v.count():
+                it = fs_v.takeAt(0)
+                w = it.widget()
+                if w is not None:
+                    w.deleteLater()
+            fs = box.get("fs") or {}
+            ds = fs.get("dirs") or []
+            if not ds:
+                fs_v.addWidget(desc(t, "还没有可搜目录：在上方「可搜目录」输入框填一个目录点「加入目录」。"))
+            for d in ds:
+                if not isinstance(d, dict):
+                    continue
+                drow = QWidget()
+                drow.setStyleSheet("background:transparent;")
+                dh = QHBoxLayout(drow)
+                dh.setContentsMargins(2, 1, 2, 1)
+                dh.setSpacing(8)
+                exists = d.get("exists")
+                lb = QLabel("%s%s" % (d.get("dir") or "",
+                                      ("　（%s 个文件）" % d.get("count")) if exists
+                                      else "　（目录不存在）"))
+                lb.setFont(qfont(t, 12))
+                lb.setStyleSheet(
+                    f"color:{t.err if not exists else t.tx};background:transparent;")
+                dh.addWidget(lb, 1)
+                b_open = Btn("打开", t, "ghost")
+                b_open.setFixedWidth(54)
+                b_open.clicked.connect(
+                    lambda _=False, _d=str(d.get("dir") or ""): _async_post(
+                        None, "/api/open-path", {"path": _d}, lambda r, e: None))
+                b_rm = Btn("移除", t, "ghost")
+                b_rm.setFixedWidth(54)
+                b_rm.clicked.connect(
+                    lambda _=False, _d=str(d.get("dir") or ""): _fs_del(_d))
+                dh.addWidget(b_open)
+                dh.addWidget(b_rm)
+                fs_v.addWidget(drow)
             ut = box.get("ut")
             if not isinstance(ut, dict):
                 ut_stat.setText("清单现状读取失败（后台没连上）")
@@ -4042,6 +4149,36 @@ def _tools_utlist_appendix(t: Tokens, page: QWidget) -> None:
                 if tl.get("usage"):
                     uh = desc(t, "用法：" + str(tl["usage"]))
                     rh.addWidget(uh)
+                # 每行「试一下」（web :3866-3900）：args 输入 + 结果行；
+                #   参数与结果存 _ut_keep（跨清单重载保留，web UT_KEEP :3875 同款）
+                _nm = str(tl.get("name") or "")
+                keep = _ut_keep.setdefault(_nm, {})
+                hrow = QHBoxLayout()
+                hrow.setContentsMargins(0, 0, 0, 0)
+                hrow.setSpacing(6)
+                ai = QLineEdit(str(keep.get("args") or "{}"))
+                ai.setObjectName("utArgs")
+                ai.setFixedWidth(170)
+                ai.setFont(qfont(t, 11.5))
+                ai.setToolTip('给这个工具的参数（JSON 对象，例：{"city": "北京"}）；'
+                              "它会替换 url/query/body 里的 {占位}")
+                ai.setStyleSheet(
+                    f"QLineEdit{{background:{rgba(t.q('tx'), 0 if t.glass else 16).name(QColor.NameFormat.HexArgb)};"
+                    f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:4px 8px;}}")
+                ai.textChanged.connect(lambda txt, _k=keep: _k.__setitem__("args", txt))
+                tb = Btn("试一下", t, "ghost")
+                tb.setObjectName("utTest")
+                res_lb = desc(t, str(keep.get("text") or ""))
+                res_lb.setWordWrap(True)
+                if keep.get("err"):
+                    res_lb.setStyleSheet(f"color:{t.err};background:transparent;")
+                hrow.addWidget(ai)
+                hrow.addWidget(tb)
+                hrow.addWidget(res_lb, 1)
+                rh.addLayout(hrow)
+                tb.clicked.connect(
+                    lambda _=False, _n=_nm, _ai=ai, _k=keep, _r=res_lb, _t=tb:
+                    _ut_test(_n, _ai, _k, _r, _t))
                 v.addWidget(roww)
 
         QTimer.singleShot(300, _apply) # 首次调度：此前只有 done=false 的重试链，_apply 从未启动（清单卡永远「读取中」）
