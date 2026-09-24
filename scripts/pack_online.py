@@ -5,18 +5,18 @@
   py -3 scripts/pack_online.py            # 打包 + 扫描（命中即拒绝出包 exit 3）
   py -3 scripts/pack_online.py --check    # 只扫描仓库（不出包）
 
-口径（用户 2026-09-13 定）：
+口径：
   ① 只有"在线包"：不含 `offline/`（运行时 + wheel），第一次运行由 `scripts/setup_python.ps1` 联网准备；
   ② 包里**不许有他的个人信息与开发资料**——家目录路径 / 密钥 / token / 聊天数据 /
      开发文档（AGENTS.md、docs/ 下的任务清单与 changelog 归档）；
   ③ 打包源＝`git ls-files`（未跟踪的草稿、报告、日志一律进不来）；
   ④ 扫描命中一律拒绝出包（要放行必须显式加进 ALLOW 并写明理由）。
 
-⚠️ 2026-09-19 改（小鲸鱼挂件）：`whale-widget/` 原先**整目录排除**，理由是"另一个项目的素材"。
+⚠️ （小鲸鱼挂件）：`whale-widget/` 原先**整目录排除**，理由是"另一个项目的素材"。
   但控制台右下角那个挂件**就是靠这个目录跑的**（`webui._whale_js_injected()` 读
   `whale-widget/client/widget.js`，`image.png`/`rua.gif`/音效走 `assets/`）⇒ 整目录排除等于
   **装上以后挂件是死的**（脚本 0 字节、图片取不到，界面上什么都没有 —— 只有侧栏那个徽章还在）。
-  现在按"只发程序真正要用的那几样"收窄排除，并且**已获原作者同意**随包分发（上游 `PROVENANCE.md`：
+  现在按"只发程序真正要用的那几样"收窄排除，并且**已获原
   代码 MIT，`assets/**` 不在 MIT 范围内、原文是"不授予再许可"；同意记录见 `whale-widget/PORT-NOTES.md`）。
 """
 import os
@@ -27,29 +27,29 @@ import zipfile
 from datetime import datetime
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT_DIR = os.path.dirname(ROOT)                      # 仓库的上一级目录（例：C:\Users\<你>\Desktop\WX-chatbot）
+OUT_DIR = os.path.dirname(ROOT) # 仓库的上一级目录（例：C:\Users\<你>\Desktop\WX-chatbot）
 PKG_PREFIX = "群相-在线包-"
-# 解压出来的**顶层文件夹名**（用户 2026-09-15 定：他要用户在压缩包里看到的就是这个名字）
+# 解压出来的**顶层文件夹名**
 # ⚠️ 只影响压缩包的目录布局，不动任何程序逻辑：程序内部一律用"自己所在目录"定位（ROOT=文件位置），
 #    仓库里也没有别处硬编码过仓库目录名（打包器自己那条注释除外）。
 ZIP_TOP = "persona morph"
 
 # 不进包（相对仓库根的 posix 路径前缀 / 精确名）
 EXCLUDE = (
-    "AGENTS.md",          # 开发守则：含红线自述与既有口径：，不随包发
-    "docs/",              # 开发资料：任务清单 / changelog 归档
-    "whale-widget/upstream-0.3.9/",       # 上游原文留档（README/PROVENANCE/package.json）＝开发资料，不随包发
-    "whale-widget/assets/DSniang02.png",  # 备用整图：我们的路由用不到（image.png 走 DSniang1.png）
-    "whale-widget/assets/DSH2.png",       # 上游 README 展示图：程序不用（1.1MB，别白占包体积）
-    # ⛔ 2026-09-21 加（第六轮 **V-R6-23**）：这四件**只被上游留档文档引用**，`agent/whale.py` 已把同族
+    "AGENTS.md", # 开发守则：含红线自述与既有口径：，不随包发
+    "docs/", # 开发资料：任务清单 / changelog 归档
+    "whale-widget/upstream-0.3.9/", # 上游原文留档（README/PROVENANCE/package.json）＝开发资料，不随包发
+    "whale-widget/assets/DSniang02.png", # 备用整图：我们的路由用不到（image.png 走 DSniang1.png）
+    "whale-widget/assets/DSH2.png", # 上游 README 展示图：程序不用（1.1MB，别白占包体积）
+    # ⛔ 这四件**只被上游留档文档引用**，`agent/whale.py` 已把同族
     #   资源声明为不支持 ⇒ 死重约 **3.2MB ≈ 包体 22%**（挂件判据只查"仓库里在不在"，不查"包里在不在"）。
     "whale-widget/assets/bubble-money1.gif",
     "whale-widget/assets/bubble-petpet.gif",
     "whale-widget/assets/minecraft-exp-orb.wav",
     "whale-widget/assets/task-end-a.wav",
-    "scripts/pack_online.py",   # 打包器自身：里面有扫描规则字面量（含用户名样本），不进包
-    "persona-morph-manifest.json",  # 更新清单：它给的是"包内文件的哈希"，自己进包会**哈希自指**死循环
-    "offline/",           # 离线运行时与 wheel（在线包不需要）
+    "scripts/pack_online.py", # 打包器自身：里面有扫描规则字面量（含用户名样本），不进包
+    "persona-morph-manifest.json", # 更新清单：它给的是"包内文件的哈希"，自己进包会**哈希自指**死循环
+    "offline/", # 离线运行时与 wheel（在线包不需要）
     "_scratch/", "报告/", "wechatauto_logs/", "data/", "runtime/", "logs/",
 )
 
@@ -61,7 +61,7 @@ SCAN = [
     ("API 密钥", r"sk-[A-Za-z0-9_\-]{10,}", True),
     ("Bearer 头", r"[Bb]earer\s+[A-Za-z0-9._\-]{12,}", True),
     ("token 值", r"token[\"'\s:=]{1,4}[A-Za-z0-9]{16,}", True),
-    # ⛔ 2026-09-21 加（第九轮 **V-R9-28**）：企微/钉钉 webhook 的 key **也是一种凭据** ——
+    # ⛔ 企微/钉钉 webhook 的 key **也是一种凭据** ——
     #   当时 `agent\config.py:566` 内置了产品自带的企业微信机器人 webhook（带 key）随包发布，
     #   而这三条规则都不认它（出包闸门实测"致命 0"）＋控制台把它打码 ⇒ 谁都看不见、一直留着。
     #   规则写**真实形态**（企微 key 是 UUID、钉钉 access_token 是长 hex）⇒ 判据里的假 fixtures
@@ -70,7 +70,7 @@ SCAN = [
     ("钉钉 webhook token", r"robot/send\?access_token=[0-9a-fA-F]{32,}", True),
     ("长密钥参数", r"(?:key|access_token|secret)=[0-9a-fA-F]{32,}", True),
     ("微信账号/数据", r"wxid_[A-Za-z0-9]{6,}|MsgAttach|WeChat Files[/\\]", True),
-    ("开发资料引用", r"_scratch[/\\]", False),   # 注：`wechatauto_logs/` 是本产品自己的运行日志目录，不算开发资料
+    ("开发资料引用", r"_scratch[/\\]", False), # 注：`wechatauto_logs/` 是本产品自己的运行日志目录，不算开发资料
     ("署名/仓库名", r"Eifptaur|Eif-MAPT", False),
 ]
 
@@ -83,14 +83,14 @@ ALLOW = (
     # 同上：`wechat_dir_selftest` 用 `wxid_judge0001` 造**假账号目录**（`tmp/.../db_storage/...`）来验
     # "微信数据目录"的校验与回落，是合成夹具，不含任何真实账号 ⇒ 显式放行并写明理由。
     ("scripts/wechat_dir_selftest.py", "微信账号/数据"),
-    # 同上：`db_discovery_selftest`（2026-09-19 加）用**同一套合成夹具**（`wxid_judge0001` +
+    # 同上：`db_discovery_selftest`用**同一套合成夹具**（`wxid_judge0001` +
     # 临时目录里的假 `xwechat_files/db_storage`）验"有界深扫能不能找到嵌套的自定义数据目录"
     # ⇒ 合成夹具、不含任何真实账号 ⇒ 显式放行并写明理由。
     ("scripts/db_discovery_selftest.py", "微信账号/数据"),
     # 同上：`compat_selftest` 的 F8 **反向锚**往状态文件里塞「群名 + 用户目录」，用来断言
     # `compat.attach_text()` 会把它们脱敏掉；那条 `C:\Users\某个人\Documents\xwechat_files`
     # 是**故意造的假路径**（连用户名都是占位词「某个人」），不是任何真实用户的目录
-    # ⇒ 合成夹具 ⇒ 显式放行并写明理由（2026-09-22 v2.1.64 出包时被这道闸拦下，按规矩办）。
+    # ⇒ 合成夹具 ⇒ 显式放行并写明理由。
     ("scripts/compat_selftest.py", "Windows 绝对路径"),
 )
 
@@ -130,7 +130,7 @@ def scan_file(abs_path, rel):
 
 def main():
     try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")   # 控制台是 GBK：中文/符号别炸
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace") # 控制台是 GBK：中文/符号别炸
     except Exception:
         pass
     check_only = "--check" in sys.argv
@@ -145,8 +145,7 @@ def main():
             fatal_total += 1 if fatal else 0
             warn_total += 0 if fatal else 1
 
-    # ── 入口脚本行尾闸（2026-09-15 跨机实测加的，**致命**）─────────────────
-    #   背景：两个 `.cmd` 曾经是 **UTF-8 无 BOM + 纯 LF**。跨机那台（ACP/OEMCP=936）上
+    # ── 入口脚本行尾闸─────────────────
     #   双击**一行都跑不动** —— cmd.exe 解析不了 LF 行尾的 `if ... goto` / `for /f` /
     #   括号块（对照实验：LF 三种编码全断、CRLF 三种全通），而包本身看着完全正常。
     #   ⇒ 出包前必检：随包的 `.cmd` 一律 CRLF（`.gitattributes` 也钉了 `*.cmd eol=crlf`）。
@@ -173,7 +172,7 @@ def main():
 
     stamp = datetime.now().strftime("%Y%m%d")
     out = os.path.join(OUT_DIR, f"{PKG_PREFIX}{stamp}.zip")
-    # ⚡ 2026-09-18 晚：**打包前把内容指纹写进 `agent/version.py`**（清单里带 `base.build`，
+    # ⚡ **打包前把内容指纹写进 `agent/version.py`**（清单里带 `base.build`，
     #   用户侧才能在"同一个版本号换了包"时看出来）。指纹只跟"进包的那些文件"有关，且算
     #   `agent/version.py` 时会先抹掉 BUILD 行 ⇒ 不会自指。开发树里 BUILD 留空，只有出包才写。
     try:
@@ -192,7 +191,7 @@ def main():
             z.write(os.path.join(ROOT, rel), "%s/%s" % (ZIP_TOP, rel))
     size = os.path.getsize(out) / 1024 / 1024
 
-    # ── ⑥ 出厂初始状态断言（2026-09-15 既有口径：）────────────────────────
+    # ── ⑥ 出厂初始状态断言────────────────────────
     #   把包里**实际写进去的条目**读回来核对三件事：①没有运行期数据（会话/记忆/日志/配置）
     #   ②没有个人痕迹（家目录、密钥、微信账号 —— 与 PII 扫描互为双保险）
     #   ③必需文件都在、且全部在顶层目录下。任一不满足 ⇒ 拒绝出包（exit 4）。
@@ -226,7 +225,7 @@ def main():
                 bad_trace.append(n)
     need = ["agent/__init__.py", "scripts/persona_morph.py", "config.example.json",
             "README.md", "一键启动.exe", "requirements.txt",
-            # ⑤（2026-09-15）：控制台窗口靠 WebView2 显示。这四样缺任何一样，用户那台机器上
+            # ⑤：控制台窗口靠 WebView2 显示。这四样缺任何一样，用户那台机器上
             # 要么窗口起不来（缺 DLL），要么"缺运行库又没浏览器"时**没有引导器可装**——
             # 只能看到"点了按钮没反应"。引导器是微软官方 Evergreen Bootstrapper（允许随应用分发）。
             "WebView2Loader.dll", "lib/Microsoft.Web.WebView2.Core.dll",
@@ -234,13 +233,13 @@ def main():
             "assets/webview2/MicrosoftEdgeWebview2Setup.exe",
             # 小鲸鱼挂件（控制台右下角那个）：宿主代码 `agent/whale.py` 一直在包里，但**前端脚本与
             # 素材**原先被整目录排除 ⇒ 装上以后挂件是死的（脚本 0 字节、图片取不到）。
-            # 2026-09-19 起按"只发程序真正要用的那几样"收窄排除；这五样缺任何一样，挂件就起不来。
+            # 起按"只发程序真正要用的那几样"收窄排除；这五样缺任何一样，挂件就起不来。
             "whale-widget/client/widget.js", "whale-widget/assets/DSniang1.png",
             "whale-widget/assets/rua.gif", "whale-widget/assets/Ya1.mp3",
             "whale-widget/LICENSE-原版.txt"]
     missing = [n for n in need if n not in rel_names]
     outside = [n for n in names if not n.startswith(ZIP_TOP + "/")]
-    # ③ **依赖与运行期数据不随版本变**（2026-09-22 立约；来源＝`research\更新机制-增量与实际做法.md` §五 4）：
+    # ③ **依赖与运行期数据不随版本变**：
     #    包里不许有 `runtime/`（便携 Python 与用户装好的依赖）、`data/`、`config.json`。
     #    以前这是"包里碰巧没有"（靠排除），现在**写成断言**——改一次打包规则就不会悄悄把
     #    用户装好的依赖覆盖掉（那正是用户抱怨"更新完又装一遍"的来源）。

@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""微信窗口「借用 → 归还」（2026-09-15 用户拍板：方案 A 用完还原）。
+"""微信窗口「借用 → 归还」。
 
 **要解决的矛盾**：`wechat._limit_wechat_window()` 为了不让驱动库的布局校准失效（窗口尺寸与校准
 差 >15% 时库会忽略校准、坐标漂移），每次取 GUI 都把主窗钉到 1160×900 —— 于是用户手动拉过的尺寸
-会被我们改掉。他问：「不是说要限位吗，为什么我的微信窗口还是被改了」。方案 A＝**借来用、用完还**。
+会被我们改掉。他问。方案 A＝**借来用、用完还**。
 
 三条硬规矩（与最高目标「不打扰」一致）：
   · 归还只撤销**我们自己那一次**改动：当前 rect 已经不等于「我们钉的那一版」（用户中途又动过）⇒
@@ -31,10 +31,10 @@ from . import persist
 
 log = logging.getLogger("persona-morph")
 
-IDLE_S = 60.0        # 空闲多久算「用完了」（这期间没有任何输入动作就归还）
+IDLE_S = 60.0 # 空闲多久算「用完了」（这期间没有任何输入动作就归还）
 _POLL_S = 1.0
 
-_test_api = None     # 自检用的替身（None ⇒ 用真 user32）
+_test_api = None # 自检用的替身（None ⇒ 用真 user32）
 _lock = threading.Lock()
 _state = {"borrowed": False, "hwnd": 0, "rect": None, "forced": None,
           "at": 0.0, "last_touch": 0.0, "restored": 0, "skipped": 0,
@@ -80,7 +80,7 @@ def _persist_path() -> str:
 def _persist() -> None:
     """把当前借用状态落盘（没借用 ⇒ 删掉记录）。**调用点必须在 `_lock` 之外**。
 
-    V-R9-22：改走 `persist.atomic_write_json`（tmp 名带 pid + 随机后缀 + `os.replace`）。
+    改走 `persist.atomic_write_json`（tmp 名带 pid + 随机后缀 + `os.replace`）。
     老写法是就地覆盖 ⇒ 写一半被强杀/崩溃时留下半截 JSON，而 `recover()` 读到坏档是**删掉放弃**
     ⇒ 用户的窗口再也还不回去（审计 `window_borrow.recover:111-119`）。
     """
@@ -105,7 +105,7 @@ def _persist() -> None:
 def recover(reason: str = "上次进程留下的借用") -> bool:
     """进程侧兜底：上次被**强杀/崩溃**留下的借用记录 ⇒ 现在还回去（只还我们自己那一版）。
 
-    为什么需要（2026-09-15 跨机 P16② 实测）：`一键关闭.exe` 强杀时 `atexit` 跑不到，
+    为什么需要：`一键关闭.exe` 强杀时 `atexit` 跑不到，
     窗口就停在「钉住」状态 ⇒ 下次谁先碰到这个模块，就先还一次。
     """
     p = _persist_path()
@@ -133,7 +133,7 @@ def recover(reason: str = "上次进程留下的借用") -> bool:
         except Exception:
             pass
         return False
-    # ⛔ 2026-09-17 用户第二次投诉「**启动的时候就调，这么大**」⇒ 陈旧记录不许再往用户窗口上套。
+    # ⛔ 用户第二次投诉「**启动的时候就调，这么大**」⇒ 陈旧记录不许再往用户窗口上套。
     #   这条记录只有在「窗口此刻仍停在我们钉的那一版」时才算"上次被强杀留下的借用"；
     #   一旦用户/微信自己动过窗口（cur ≠ forced），或我们根本没钉过（forced 为空），
     #   它就是陈旧记录 ⇒ 删掉、**一个字都不改用户的窗口**。
@@ -178,13 +178,13 @@ def note_original(hwnd: int, rect=None) -> bool:
     """**改窗口之前**记下原始 rect（同一次借用期间不覆盖）。返回是否新借了一次。"""
     if not enabled():
         return False
-    recover()                       # 先还掉上次进程留下的借用（强杀/崩溃的场景，见 P16②）
-    rect = rect_of(hwnd) or rect    # ⚠️ 以**当下**的 rect 为准：recover 之后窗口可能已经变了
+    recover() # 先还掉上次进程留下的借用（强杀/崩溃的场景，见 P16②）
+    rect = rect_of(hwnd) or rect # ⚠️ 以**当下**的 rect 为准：recover 之后窗口可能已经变了
     if not rect:
         return False
     with _lock:
         if _state["borrowed"] and int(_state["hwnd"]) == int(hwnd):
-            _state["last_touch"] = time.time()          # 同一次借用：只刷新活动时间
+            _state["last_touch"] = time.time() # 同一次借用：只刷新活动时间
             return False
         _state.update({"borrowed": True, "hwnd": int(hwnd), "rect": tuple(rect),
                        "forced": None, "at": time.time(), "last_touch": time.time()})
@@ -239,7 +239,7 @@ def restore(reason: str = "idle") -> bool:
                 u.SetWindowPos(ctypes.c_void_p(hwnd), None, int(orig[0]), int(orig[1]),
                                int(orig[2] - orig[0]), int(orig[3] - orig[1]), 0x0004 | 0x0010)
                 log.info("已还原微信窗口几何：hwnd=%s → %s（%s）", hwnd, orig, reason)
-    except Exception as e:                                   # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         skipped = "还原失败：%s" % str(e)[:120]
     with _lock:
         _state.update({"borrowed": False, "hwnd": 0, "rect": None, "forced": None,

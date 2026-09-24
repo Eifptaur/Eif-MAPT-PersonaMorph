@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""判据：**时间类的身份档必须能分辨"两个会话同一分钟都在说话"**（2026-09-21 网友 v0919 真机定案）。
+"""判据：**时间类的身份档必须能分辨"两个会话同一分钟都在说话"**。
 
 跑法： runtime\\python\\python.exe scripts\\identity_minute_selftest.py   退出码 0=全过 / 1=有失败
 
@@ -28,7 +28,7 @@ import sys
 import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))     # 同目录的 `_srcmatch`
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # 同目录的 `_srcmatch`
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 try:
@@ -36,9 +36,9 @@ try:
 except Exception:
     pass
 
-from agent import chat_header as CH                                             # noqa: E402
-from agent import chat_ocr as CO                                                # noqa: E402
-from agent.wechat import WeChatAdapter                                          # noqa: E402
+from agent import chat_header as CH # noqa: E402
+from agent import chat_ocr as CO # noqa: E402
+from agent.wechat import WeChatAdapter # noqa: E402
 
 PASS, FAIL = [], []
 
@@ -55,7 +55,7 @@ FP_A = [0, 0, 146, 243, 182, 243, 162, 255, 109, 101, 121, 182, 101,
 FP_B = [0, 0, 255, 173, 207, 80, 27, 191, 143, 93, 175, 80, 186,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-FP_BAD = [0] * 63 + [255]              # 他库里 49615732107@chatroom / 1716x900 那条（退化参照）
+FP_BAD = [0] * 63 + [255] # 他库里 49615732107@chatroom / 1716x900 那条（退化参照）
 FP_HELPER = [0, 0, 102, 162, 133, 112, 110, 173, 82, 178, 143, 82, 136, 255, 173, 144, 163, 153,
              92, 102, 143, 61, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
              0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
@@ -158,7 +158,7 @@ def main():
        "if _ccmp and not _cdec:\n                                return False" not in _WT)
 
     print("── D. 收口：三档都走同一道门（别再各写一份）──")
-    import _srcmatch as _sm                                                      # noqa: E402
+    import _srcmatch as _sm # noqa: E402
     _TEXT_W = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
     ok("D1 `_same_minute_rivals` 有单一实现", _sm.has(_TEXT_W, "def _same_minute_rivals("))
     ok("D2 三处时间档都调用了它", _TEXT_W.count("self._same_minute_rivals(") >= 3,
@@ -210,8 +210,8 @@ def _fake_adapter():
     ad = WeChatAdapter.__new__(WeChatAdapter)
     ad._db = _FakeDB({
         A_ID: [now],
-        B_ID: [now],                     # 同一分钟（真机是差 13 秒）
-        "wxid_solo": [now - 7 * 60],     # 另一个分钟 ⇒ 不算"同分钟"
+        B_ID: [now], # 同一分钟（真机是差 13 秒）
+        "wxid_solo": [now - 7 * 60], # 另一个分钟 ⇒ 不算"同分钟"
     }, texts={
         A_ID: ["甲群刚才说的那句话内容"],
         B_ID: ["乙群说的是完全不同的一句"],

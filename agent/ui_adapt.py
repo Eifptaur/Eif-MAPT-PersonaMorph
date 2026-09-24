@@ -41,8 +41,8 @@ _user32 = ctypes.windll.user32
 
 # 系统叠层窗口的类名（全屏置顶、吃点击，需要清理）
 _OVERLAY_CLASSES = (
-    "ShellHandwritingCanvas",   # Windows 手写输入画布（TabTip 宿主）
-    "Windows.UI.Core.CoreWindow",  # Windows 输入体验
+    "ShellHandwritingCanvas", # Windows 手写输入画布（TabTip 宿主）
+    "Windows.UI.Core.CoreWindow", # Windows 输入体验
 )
 
 # 永远不动的窗口类
@@ -139,7 +139,7 @@ def find_cover(x: int, y: int, wechat_hwnds: tuple = ()):
         h = _user32.WindowFromPoint(int(x), int(y))
         if not h:
             return None
-        root = _user32.GetAncestor(h, 2)  # GA_ROOT
+        root = _user32.GetAncestor(h, 2) # GA_ROOT
         if root and wechat_hwnds and root in wechat_hwnds:
             return None
         cls, title, pid, rect = _window_info(root or h)
@@ -186,11 +186,11 @@ def dismiss_overlays(wechat_hwnds: tuple = ()) -> list:
         if cls in _OVERLAY_CLASSES:
             handled.append(("overlay", cls, title[:50], pid))
             try:
-                _user32.PostMessageW(h, 0x0010, 0, 0)  # WM_CLOSE
+                _user32.PostMessageW(h, 0x0010, 0, 0) # WM_CLOSE
             except Exception:
                 pass
             try:
-                _user32.ShowWindow(h, 0)  # SW_HIDE
+                _user32.ShowWindow(h, 0) # SW_HIDE
             except Exception:
                 pass
             cleaned += 1
@@ -215,9 +215,9 @@ def dismiss_overlays(wechat_hwnds: tuple = ()) -> list:
             if cls in _SKIP_CLASSES or cls in _OVERLAY_CLASSES:
                 continue
             if pid == wx_pid:
-                continue  # 微信自身不动
+                continue # 微信自身不动
             if pid in (0,) or not title.strip():
-                continue  # 系统无标题窗口（如桌面相关的空壳）不动
+                continue # 系统无标题窗口（如桌面相关的空壳）不动
             # 浏览器窗口绝不碰（用户正在用浏览器/控制台；最小化会误以为被关掉）
             _cls_l = (cls or "").lower()
             _tit_l = (title or "").lower()
@@ -236,12 +236,12 @@ def dismiss_overlays(wechat_hwnds: tuple = ()) -> list:
             if overlap:
                 try:
                     # 置于下层（HWND_BOTTOM）而不是最小化：最小化会把用户窗口"收起"（体验突兀）
-                    # 🔴 2026-09-17 修（用户「佬」报「那个控制台有时候会强制锁定在最上面，点其他
+                    # 🔴 （报「那个控制台有时候会强制锁定在最上面，点其他
                     #    窗口也不会显示其他的」）：这里的第二实参原来写的是 **-1**，
                     #    而 -1 是 **HWND_TOPMOST**（HWND_BOTTOM 才是 1）⇒ 注释说"置于下层"，
                     #    实际把这个"挡路的窗口"**永久钉在了最上层**；挡路的那个又常常就是我们的
                     #    控制台窗口（它跟微信重叠时）⇒ 用户怎么点别的窗口都压不下去。
-                    _user32.SetWindowPos(h, 1, 0, 0, 0, 0, 0x0001 | 0x0002)   # 1 = HWND_BOTTOM
+                    _user32.SetWindowPos(h, 1, 0, 0, 0, 0, 0x0001 | 0x0002) # 1 = HWND_BOTTOM
                     handled.append(("window", cls, title[:50], pid))
                 except Exception:
                     pass
@@ -285,7 +285,7 @@ def ensure_point(x: int, y: int, wechat_hwnds: tuple = (), retries: int = 3, gui
 def real_guard(x: int, y: int, gui=None, extra_hwnds: tuple = ()) -> tuple:
     """**真鼠标动作前的最后一道闸**：先确认 (x, y) 这点真属于微信，再把光标移过去。
 
-    为什么必须有它（2026-09-16 用户当面问：「照理来说，不是应该投递到微信的窗口上吗？
+    为什么必须有它（用户当面问
     为什么还会划我的控制台」）：
       · **投递档**（`PostMessageW` 把消息发进微信自己的消息队列）**永远不会**点到别的窗口
         —— 他这句判断是对的，那 3 条全投递路径确实不碰光标；
@@ -325,7 +325,7 @@ def real_guard(x: int, y: int, gui=None, extra_hwnds: tuple = ()) -> tuple:
             _e = ctypes.windll.kernel32.GetLastError()
             if int(_e) == 5:
                 # ERROR_ACCESS_DENIED：**UIPI** —— 最前面的窗口属于更高完整性级别（提权）进程时，
-                # 系统不允许我们挪光标（2026-09-17 A/B 实测：控制台在最前 ⇒ 连续失败；微信置前 ⇒ 成功）。
+                # 系统不允许我们挪光标。
                 return False, ("系统不让挪光标（ACCESS_DENIED，最前面的窗口是管理员权限的——"
                                "多半是我们的控制台或任务管理器）⇒ 已放弃这一枪")
             return False, ("SetCursorPos(%d,%d) 返回 0，光标没到位（多半是你正在用鼠标，err=%s）"
@@ -339,7 +339,7 @@ def click_real_hold(gui, x: int, y: int, right: bool = False, settle_ms: int = 1
                     hold_ms: int = 120, extra_hwnds: tuple = ()) -> tuple:
     """真鼠标**按住一会儿再松开**（给"只认真点"的自绘控件用），且**点完把光标放回原处**。
 
-    为什么单独一个（2026-09-17 真语音条实机取证）：微信输入区那两个控件——"进录音态的圆圈"和
+    为什么单独一个：微信输入区那两个控件——"进录音态的圆圈"和
     "录音态里的绿色发送"——**对投递点击只出悬停高亮**（四种投递变体实测都不进录音态），
     只能真点；而"不动用户鼠标"是硬口径 ⇒ 这一枪必须：①先过 `real_guard`（确认这点真属于微信；
     用户正在动鼠标导致 `SetCursorPos` 失败就**不打**）；②自己控节奏（移到位→等 `settle_ms`→按下→
@@ -361,7 +361,7 @@ def click_real_hold(gui, x: int, y: int, right: bool = False, settle_ms: int = 1
         if not ok:
             return False, why
         time.sleep(max(0, int(settle_ms)) / 1000.0)
-        # ★ 开枪前**再确认一次**（2026-09-17 用户实测「我之前在操作控制台，他好像点在控制台上了」后加）：
+        # ★ 开枪前**再确认一次**：
         #   `real_guard` 检查落点 → 真正 `mouse_event` 之间隔着 settle_ms，这几百毫秒里用户点到别的窗口
         #   （控制台/浏览器）就会把落点抢走 —— 而 `mouse_event` 是**全局输入**，打给"开枪那一刻最上面那个窗口"，
         #   它根本不知道微信在哪 ⇒ 必须重确一次：落点或光标变了，这一枪就**不打**。
@@ -387,7 +387,6 @@ def click_real_hold(gui, x: int, y: int, right: bool = False, settle_ms: int = 1
 def _restore_wechat_window(gui) -> bool:
     """按进程枚举找「微信」主窗并恢复（窗口最小化/隐藏/移出屏时自愈）。
 
-    ⚠️ 这一步会**把微信弹出来并抢前台**——按用户口径（2026-09-14「我一打开它就把我的微信窗口切出来」）
     只有显式打开 `ui.allow_foreground` 才做；默认关时返回 False，让调用方如实报"需要前台的路径已跳过"。
     """
     if not _cfg_bool("allow_foreground", False):
@@ -440,10 +439,10 @@ def _cfg_bool(key: str, default: bool = False) -> bool:
 
 
 def _force_geometry(gui) -> None:
-    """把微信主窗移到固定位置/大小（**默认开**：`ui.lock_window_pos`，2026-09-16 用户口径
+    """把微信主窗移到固定位置/大小（**默认开**：`ui.lock_window_pos`
     「你把限位设成默认吧…也能防止点错」；**关掉就一行都不碰用户的窗口**）。
 
-    2026-09-14 用户实测：「我一打开它，它会把我的微信窗口切出来」——真凶就是这里原来那句
+    用户实测——真凶就是这里原来那句
     `ShowWindow(hwnd, 9)`（SW_RESTORE：**把最小化的微信强行弹出来**）＋ 一对自相矛盾的
     `SWP_SHOWWINDOW|SWP_HIDEWINDOW`。原实现的坐标其实被 `SWP_NOMOVE|SWP_NOSIZE` 抵消掉了，
     所以它的实际效果只剩"把用户的微信窗口抬出来"——正是最高目标（不打扰）明令禁止的事。
@@ -484,16 +483,14 @@ def _force_geometry(gui) -> None:
         pass
 
 
-# ══ 置前/置顶的**唯一闸门**（2026-09-18 作者发火后立，importance 最高）══════════════
+# ══ 置前/置顶的**唯一闸门**══════════════
 #
-# 事故经过：作者用浏览器把微信盖住，明确要求"不要让窗口到前台"，结果我开的探针
 # 把微信**顶到了所有窗口之上**——链路是
 #   `_send_poke_locate` → `gui.get_input_box()`（库 guia.py:1367）
 #   → 探针连失 6 次 → `calibrate_layout()`（:1388→617）→ **`bring_to_front()`（:641）**
 #   → `SetWindowPos(HWND_TOPMOST)`（:807）+ SetForegroundWindow/SetActiveWindow/SetFocus，
 #     还先把系统前台锁 `SPI_SETFOREGROUNDLOCKTIMEOUT` 清成 0。
 # 走的是**置顶**，所以用户拿浏览器"盖住"根本盖不住；而他做这个产品的最高目标就是
-# 「全程后台、不抢鼠标、不打扰用户」——**投递链一处都不需要前台**。
 # ⇒ 从此：凡"置前/置顶/最小化别人的窗"的调用，全部走这道闸；投递档（默认）一律拒绝。
 _FG_REFUSED = {"n": 0, "why": "", "who": ""}
 
@@ -534,7 +531,7 @@ def _guarded(name: str, fail_value):
                 _FG_REFUSED["n"] += 1
                 _FG_REFUSED["why"] = why
                 _FG_REFUSED["who"] = name
-                if _FG_REFUSED["n"] <= 5:          # 只打前几条，避免刷屏
+                if _FG_REFUSED["n"] <= 5: # 只打前几条，避免刷屏
                     try:
                         from .wechat import log as _log
                     except Exception:
@@ -550,19 +547,18 @@ def _guarded(name: str, fail_value):
 _HARDEN_TARGETS = (("bring_to_front", False), ("calibrate_layout", False),
                    ("ensure_visible", False), ("_minimize_blockers", None),
                    ("restore_zorder", None),
-                   # ⭐ 2026-09-18 **逐步前台追踪抓到的真凶**：`_get_uia()` 一旦被调，就会
+                   # ⭐ **逐步前台追踪抓到的真凶**：`_get_uia()` 一旦被调，就会
                    #   `WeChatUIA() → ensure_window() → _activate(w)` ⇒ `ShowWindow(SW_RESTORE/SW_SHOW)`
                    #   + **`SetForegroundWindow`**（`wechatauto/uia_driver.py:651-670`）——**把微信顶到最前**。
                    #   它由 `_uia_target_row_rect` 触发（拍一拍/引用定位都会调）⇒ 这就是"上完类闸后
                    #   还有一次置前"的那一跳。而且物化 UIA 要**往 Weixin.dll 写 gate 字节**（红线项，
-                   #   AGENTS §3.1 写着"拍板前默认关"）⇒ 后台档直接返回 None，让调用方降级 OCR（本机本来也物化不了）。
                    ("_get_uia", None))
 
 
 def harden_gui_class(cls=None) -> bool:
     """把库里那几个"会置前/置顶/最小化别人窗口"的方法**在类上**换成带闸门的版本。
 
-    ⛔ 为什么必须上在**类**上（2026-09-18 第二次被作者骂「你又在那儿把窗口往前放」后才想明白）：
+    ⛔ 为什么必须上在**类**上：
       `WeChatGUI.__init__` 里就有 `if calibrate: self.calibrate_layout()`（guia.py:417），
       而 `_load_layout()` 在**窗口尺寸与上次校准差 >15% 时拒绝采用**（guia.py:705）——
       限位一改尺寸就会触发 ⇒ **每次新进程构造 GUI 都可能直接在 `__init__` 里走到
@@ -617,7 +613,7 @@ def harden_gui(gui):
 def prepare_screen(gui) -> bool:
     """点击操作前的整备：把微信置前 + 清理叠加层/遮挡窗口 + 窗口出屏自动还原。
 
-    ⚠️ 2026-09-14 用户实测：「我一打开它，它会把我的微信窗口切出来」＋「它还会导致微信卡死，
+    ⚠️ 用户实测＋「它还会导致微信卡死，
     我操作都操作不了」——本函数原来那几段 `ShowWindow(hwnd, 9)`（SW_RESTORE）＋
     `gui.bring_to_front(keep_topmost=True)`（**把微信钉到最上层**）就是真凶：
     最小化的微信被强行弹出来，而且置顶窗口会一直压在所有窗口之上（用户当然点不动自己其它窗口）。
@@ -639,7 +635,7 @@ def prepare_screen(gui) -> bool:
             hwnd = getattr(gui, "main_hwnd", 0)
             if hwnd:
                 cfg = __import__("agent.config", fromlist=["get_config"]).get_config()
-                # ⚠️ 2026-09-16 修：这里的默认值原来写成 `True`（＝键缺失时按"要限位"办），
+                # ⚠️ 这里的默认值原来写成 `True`（＝键缺失时按"要限位"办），
                 #    与 `ui.lock_window_pos` 的配置默认值 `False`（＝不动用户的窗口）**打架**——
                 #    同一个开关两处默认相反，读代码的人会得到完全不同的结论。统一成 False。
                 if (cfg.get("ui") or {}).get("lock_window_pos", False) is not False:
@@ -677,7 +673,7 @@ def prepare_screen(gui) -> bool:
                 vw = int(_user32.GetSystemMetrics(0))
                 vh = int(_user32.GetSystemMetrics(1))
                 if r.left > vw - 60 or r.top > vh - 60 or r.right < 20 or r.bottom < 20:
-                    _user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                    _user32.ShowWindow(hwnd, 9) # SW_RESTORE
                     _user32.SetWindowPos(hwnd, 0, 90, 90, 0, 0, 0x0001 | 0x0020 | 0x0040)
                     time.sleep(0.6)
                     gui._update_render_rect()
@@ -722,7 +718,7 @@ def heal_input():
     注意：不做 WM_CANCELMODE 广播（会让无辜窗口闪动）。
     """
     try:
-        for flag in (0x0004, 0x0010, 0x0040):  # LEFTUP / RIGHTUP / MIDDLEUP
+        for flag in (0x0004, 0x0010, 0x0040): # LEFTUP / RIGHTUP / MIDDLEUP
             _user32.mouse_event(flag, 0, 0, 0, 0)
             time.sleep(0.05)
         pt = wintypes.POINT()
@@ -741,7 +737,7 @@ def _cursor_now():
         pt = wintypes.POINT()
         if _user32.GetCursorPos(ctypes.byref(pt)):
             return (int(pt.x), int(pt.y))
-    except Exception:                                            # noqa: BLE001
+    except Exception: # noqa: BLE001
         pass
     return None
 
@@ -758,10 +754,10 @@ def _cursor_restore(pos, why: str = "") -> bool:
             log.warning("真鼠标档：光标没能还原（%s → %s）%s", pos, back, why)
             return False
         return True
-    except Exception as e:                                       # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         try:
             log.warning("真鼠标档：还原光标异常（%s）：%s", why, e)
-        except Exception:                                        # noqa: BLE001
+        except Exception: # noqa: BLE001
             pass
         return False
 
@@ -776,21 +772,21 @@ def _real_mouse_allowed() -> bool:
     try:
         if str(os.environ.get("WXAGENT_REAL_FALLBACK", "")).strip() == "0":
             return False
-    except Exception:                                            # noqa: BLE001
+    except Exception: # noqa: BLE001
         pass
     try:
         return bool((get_config().get("input") or {}).get("allow_real_fallback", False))
-    except Exception:                                            # noqa: BLE001
+    except Exception: # noqa: BLE001
         return False
 
 
 def click(gui, x: int, y: int, right: bool = False, scale=None, extra_hwnds: tuple = (), heal: bool = True) -> tuple:
     """统一点击入口（wx_click 的适配层）。
 
-    ⛔ 2026-09-22 修（**真机四项复测第一枪就抓到的红线违例**）：这里原来是**无条件** `gui.wx_click()`
+    ⛔ （**真机四项复测第一枪就抓到的红线违例**）：这里原来是**无条件** `gui.wx_click()`
     —— 那是库自己的真实鼠标（`SetCursorPos` + `mouse_event`），于是两件事同时错：
       ① 它**绕过了输入档位**（`input.backend` / `input.allow_real_fallback` / `WXAGENT_REAL_FALLBACK`）
-         —— 而 `wechat.py` 自己的切会话分支是**认这道闸**的（日志原话：「不切会话：open_chat 是真鼠标
+         —— 而 `wechat.py` 自己的切会话分支是**认这道闸**的（日志
          路径（会动你的光标）⇒ 按最高目标拒绝」）⇒ 同一份红线、两个入口两套标准；
       ② 点完**不还原光标**（现场原始读数：打开表情面板把光标从 (233,1599) 移到 **(1564,1144)** 并留在那儿；
          落点日志 `笑脸落点 (374,994)` + 渲染原点 (1190,150) 正好等于那个光标位置）。
@@ -817,12 +813,12 @@ def click(gui, x: int, y: int, right: bool = False, scale=None, extra_hwnds: tup
         try:
             from . import input_backend as _ib
             backend = _ib.select_backend(gui=gui)
-        except Exception as _e:                                  # noqa: BLE001
+        except Exception as _e: # noqa: BLE001
             log.info("取输入档位失败（按严口径继续判）：%s", _e)
         if backend is not None and not bool(getattr(backend, "touches_cursor", True)):
             try:
                 _ok2, _why2 = backend.click(int(getattr(gui, "main_hwnd", 0) or 0), (sx, sy), right=right)
-            except Exception as _e2:                             # noqa: BLE001
+            except Exception as _e2: # noqa: BLE001
                 _ok2, _why2 = False, str(_e2)
             if _ok2:
                 return True, ""
@@ -839,7 +835,7 @@ def click(gui, x: int, y: int, right: bool = False, scale=None, extra_hwnds: tup
         # 而设的：光标没到位就发 `mouse_event` 会点到用户正在用的窗口）。
         try:
             _okg, _whyg = real_guard(sx, sy, gui=gui, extra_hwnds=tuple(extra_hwnds))
-        except Exception as _e3:                                 # noqa: BLE001
+        except Exception as _e3: # noqa: BLE001
             _okg, _whyg = False, str(_e3)
         if not _okg:
             _cursor_restore(_cur, why="ui_adapt.click 真鼠标档（守卫拒绝）")

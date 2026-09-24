@@ -20,9 +20,9 @@ try:
 except Exception:
     pass
 
-from agent import model_routes as mr          # noqa: E402
-from agent import video_read as vr            # noqa: E402
-from agent import llm                         # noqa: E402
+from agent import model_routes as mr # noqa: E402
+from agent import video_read as vr # noqa: E402
+from agent import llm # noqa: E402
 
 PASS, FAIL = [], []
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -93,7 +93,7 @@ def main():
     ok("探测结果齐全（ffmpeg 路径/识别可用性/就绪）",
        set(p.keys()) >= {"ffmpeg", "asr", "ready", "why"})
     if not p["ready"]:
-        # V-R7-10：原来是 `ok(..., True)`（恒真白拿一条绿）⇒ 改成 SKIP：明确"这条没验到"，不计入通过数
+        # 原来是 `ok(..., True)`（恒真白拿一条绿）⇒ 改成 SKIP：明确"这条没验到"，不计入通过数
         print("SKIP  本机没有 ffmpeg ⇒ 只验诚实路径（跳过真读）：%s" % p.get("why"))
     else:
         vid = os.path.join(tmp, "clip.mp4")
@@ -114,7 +114,7 @@ def main():
            and bool(res2["audio_why"]), res2.get("audio_why"))
         vr.cleanup(res["dir"])
         ok("临时目录被清掉（不留垃圾）", not os.path.isdir(res["dir"]))
-        vr.cleanup(res2["dir"])          # 自测不留垃圾：每一个 read 的临时目录都要收掉
+        vr.cleanup(res2["dir"]) # 自测不留垃圾：每一个 read 的临时目录都要收掉
 
         def _capped():
             r = vr.read(vid, max_frames=99, max_seconds=5)
@@ -126,7 +126,7 @@ def main():
 
     print("== E. 诚实路径（做不到就说做不到）==")
     bad = vr.read(os.path.join(tmp, "根本没有这个文件.mp4"))
-    vr.cleanup(bad.get("dir") or "")     # 失败路径也照样收（真 bug 就出在这条路上）
+    vr.cleanup(bad.get("dir") or "") # 失败路径也照样收（真 bug 就出在这条路上）
     ok("文件不存在 ⇒ ok=False 且给出原因（不是空帧假成功）",
        (not bad["ok"]) and bad["error"] and not bad["frames"], bad["error"])
     junk = os.path.join(tmp, "notvideo.mp4")
@@ -167,7 +167,7 @@ def main():
     ok("阴性对照：没配分流时 image 也不会冒出分流模型",
        llm.candidates(dict(base), kind="image") == ["cheap-text", "fb1"])
 
-    # ── H. 音频识别的返回约定（2026-09-15 抓出的真 bug 的回归守卫）──────────────
+    # ── H. 音频识别的返回约定──────────────
     # `voice.recognize_wav()` 的约定是 **(文本, 错误说明)**；`video_read.read()` 一度写成
     # `ok_flag, text = ...`（顺序反了）⇒ 识别到的文本被当成功标志、错误说明被当文本，
     # 结果 **微信视频的音频识别结果永远传不出来**（audio_text 恒为空）。这里用替身把它钉住。
@@ -181,7 +181,7 @@ def main():
         vr.extract_audio = lambda p, w, max_seconds=60: True
         _voice.recognize_wav = lambda w, max_seconds=60: ("这是一条测试语音", "")
         r = vr.read("fake.mp4", max_frames=1, max_seconds=5)
-        vr.cleanup(r.get("dir") or "")        # 自测也不许往系统临时目录里留东西
+        vr.cleanup(r.get("dir") or "") # 自测也不许往系统临时目录里留东西
         ok("替身：识别到文本时 audio_text 要真的带出来（顺序写反就带不出来）",
            r.get("audio_text") == "这是一条测试语音", repr(r.get("audio_text"))[:40])
         ok("替身：audio_ok 为真", r.get("audio_ok") is True)

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""「模型评分 / 模型补足」判据（2026-09-14 · 用户点名要测）。
+"""「模型评分 / 模型补足」判据。
 
-用户原话：「顺便也可以测测那个模型打分和模型补正的功能正不正常，**是不是真的按照贴合人设的方向做的**」。
+。
 
 静态部分（默认跑，零成本）守的是"这套机制在不在、往哪使劲"：
   ① 评分用的是唯一权威细则 RULES_TEXT（五维权重、0.01 精度、禁整分）；
@@ -74,7 +74,6 @@ ok("禁止自编台词冒充原话（不确定要标注（拟））",
    "禁止自编台词冒充原话" in _enrich_blk and "（拟）" in _enrich_blk)
 ok("明确禁当代网络梗（V我50/6/草/yyds…）", "V我50" in _enrich_blk and "任何流行语都不行" in _enrich_blk)
 ok("目标是「就是本人！」而不是「分数好看」", "就是本人" in _enrich_blk and "不要围绕夸奖/评分" in _enrich_blk)
-# 用户 2026-09-14：「补正…除非你确定补正是完全按照贴合人设的方向去走的，而且你也要尽量把这个功能导向那个方向」
 ok("补足只许加固辨识度：已确认的真实台词/口癖必须保留（不许替换成自造内容）",
    "已经确认的真实台词/口癖/称呼方式都必须保留原样" in _enrich_blk and "指纹" in _enrich_blk)
 ok("补足后有「盖住名字还认得出是谁吗」的自检", "把名字盖住" in _enrich_blk)
@@ -93,11 +92,11 @@ else:
     print("── D. 真机对照：本人卡 vs 通用卡（方向性）──")
     try:
         from agent import web_search as WS
-        from agent.webui import WHALE_DICT  # noqa: F401  (顺手确认 webui 可导入)
+        from agent.webui import WHALE_DICT # noqa: F401  (顺手确认 webui 可导入)
         import importlib.util
         spec = importlib.util.spec_from_file_location("pm_mod", os.path.join(ROOT, "scripts", "persona_morph.py"))
         pm = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(pm)          # 只加载模块级定义（main 不会被调用）
+        spec.loader.exec_module(pm) # 只加载模块级定义（main 不会被调用）
         NAME = "戈登·弗里曼"
         FAITHFUL = (
             "# 角色卡：戈登·弗里曼\n## 身份\n《半条命》主角，黑山研究所理论物理学家，沉默寡言，靠撬棍与物理直觉活着。\n"

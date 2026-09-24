@@ -47,7 +47,7 @@ _RGBA_RE = re.compile(
 def _c(hexstr: str) -> QColor:
     """`#RRGGBB` / `#RRGGBBAA` / `rgba(...)` 统一 QColor。
 
-    坑⑥（2026-09-23 实锤）：QColor 不认 CSS 的 rgba(r,g,b,a) 串
+    坑⑥：QColor 不认 CSS 的 rgba(r,g,b,a) 串
     （valid=False，后续 .name() 静默出 #000000 纯黑）——
     「读取中」徽章深底黑字、whale 导航图标发灰，根子都是它。
     而 QSS 原串路径里 rgba() 能被 Qt 样式表自己解析，只有走 QColor
@@ -63,7 +63,7 @@ def _c(hexstr: str) -> QColor:
     if m:
         r, g, b = int(m.group(1)), int(m.group(2)), int(m.group(3))
         a = float(m.group(4))
-        if m.group(5):  # "78%" 百分比写法
+        if m.group(5): # "78%" 百分比写法
             a /= 100.0
         return QColor(r, g, b, round(a * 255))
     return QColor(s)
@@ -111,9 +111,9 @@ class Tokens:
     blue: str
     blue2: str
     blue_soft: str
-    # 丙-31：web --blue-line（console_html.py L32/68/95 三主题各值）——侧栏状态框描边、
+    # web --blue-line（console_html.py L32/68/95 三主题各值）——侧栏状态框描边、
     # chips 描边等「蓝系弱描边」专用。此前 Qt 缺这个 token，shell 拿 blue 当边框 ⇒
-    # 状态框一圈亮蓝，作者批「丑陋、绿字」的复刻走样其一。
+    # 状态框一圈亮蓝，的复刻走样其一。
     blue_line: str
 
     # 语义（状态徽章六态里用到的四态）
@@ -126,8 +126,8 @@ class Tokens:
     radius_card: int
     radius_btn: int
     radius_pill: int
-    card_border: int          # 卡片描边宽度（whale 0 / light 1 / dark 1）
-    shadow: str               # QSS 不支持 box-shadow，这里只做记账，实际用 QGraphicsDropShadowEffect
+    card_border: int # 卡片描边宽度（whale 0 / light 1 / dark 1）
+    shadow: str # QSS 不支持 box-shadow，这里只做记账，实际用 QGraphicsDropShadowEffect
 
     # 字体级差（三套主题的"语气"差异，靠字号/字距/字重体现）
     font_family: str
@@ -140,14 +140,14 @@ class Tokens:
     nav_size: int
     nav_weight: int
     nav_active_weight: int
-    letter_extra: float       # 整窗字距微调（dark 走负值更"紧"）
+    letter_extra: float # 整窗字距微调（dark 走负值更"紧"）
 
     # 主题专属外观开关
-    glass: bool = False       # whale：玻璃质感（半透明卡片 + 发光）
-    glow: str = ""            # whale：强调色外发光
+    glass: bool = False # whale：玻璃质感（半透明卡片 + 发光）
+    glow: str = "" # whale：强调色外发光
     scrollbar_alpha: int = 60
     # ⚠️ err_tx ≠ err：危险按钮/错误**文字**用的亮色档（web 侧 --err-tx，三主题各有其值）。
-    #   2026-09-23 实锤：dark 上拿主 err 色(#E5484D)当字色，深红沉进深底 ⇒ 用户看到"黑色跟背景混在一起"。
+    # dark 上拿主 err 色(#E5484D)当字色，深红沉进深底 ⇒ 用户看到"黑色跟背景混在一起"。
     #   （放字段表末尾：dataclass 有默认值的字段后不能再挂无默认字段。）
     err_tx: str = ""
 
@@ -163,37 +163,37 @@ WHALE = Tokens(
     key="whale",
     label="鲸落（默认）",
     bg="#0A1B2E",
-    # 2026-09-23（丙-4 视觉本体）：对齐 web 真值 —— 画卷（ocean1.jpg+tint）透出后，
+    # 对齐 web 真值 —— 画卷（ocean1.jpg+tint）透出后，
     # 玻璃卡必须用 web 的浅蓝调才读得对（console_html.py L35 --card / L36 --bd）。
     # 旧值 rgba(255,255,255,.055) 在纯深底上够用，垫在实拍海浪上会发灰。
-    # 丙-8 I：波浪动效砍掉后卡片仍偏透（用户原话「稍微提高一点点」）→ .10 → .14
-    card="rgba(150,206,255,0.14)",          # web --card:rgba(150,206,255,.10) 的 Qt 增档
-    bd="rgba(170,215,255,0.26)",            # web --bd:rgba(170,215,255,.26)
+    # I：波浪动效砍掉后卡片仍偏透→ .10 → .14
+    card="rgba(150,206,255,0.14)", # web --card:rgba(150,206,255,.10) 的 Qt 增档
+    bd="rgba(170,215,255,0.26)", # web --bd:rgba(170,215,255,.26)
     tx="#E8F3FF",
     tx2="rgba(200,224,245,0.78)",
     tx3="rgba(169,209,236,0.72)",
     blue="#6FCFFF",
     blue2="#3FA9E8",
     blue_soft="rgba(111,207,255,0.14)",
-    blue_line="rgba(120,190,255,0.32)",     # web --blue-line（默认深色主题）
+    blue_line="rgba(120,190,255,0.32)", # web --blue-line（默认深色主题）
     ok="#5FE0A8",
     warn="#FFC773",
     err="#FF8A8A",
-    err_tx="#FFB0B0",   # web --err-tx：危险按钮字色（比主 err 亮一档，深底可读）
+    err_tx="#FFB0B0", # web --err-tx：危险按钮字色（比主 err 亮一档，深底可读）
     info="#6FCFFF",
-    radius_card=18,   # 控制台 .card{border-radius:18px}
+    radius_card=18, # 控制台 .card{border-radius:18px}
     radius_btn=10,
     radius_pill=999,
     card_border=0,
     shadow="0 8px 24px rgba(0,10,25,0.45)",
     font_family="Microsoft YaHei UI",
-    h2_size=15,       # 控制台 .card h2{font-size:15px}
+    h2_size=15, # 控制台 .card h2{font-size:15px}
     h2_weight=600,
     grp_size=11,
     grp_spacing=0.10,
-    body_size=14,     # 控制台 body{font:14px/1.6}
+    body_size=14, # 控制台 body{font:14px/1.6}
     body_weight=400,
-    nav_size=14,      # whale 未覆盖 nav 字号，继承 body 14
+    nav_size=14, # whale 未覆盖 nav 字号，继承 body 14
     nav_weight=400,
     nav_active_weight=600,
     letter_extra=0.0,
@@ -212,30 +212,30 @@ LIGHT = Tokens(
     card="#FFFFFF",
     bd="#E4E6EB",
     tx="#1C1E21",
-    tx2="#565A5F",   # 丙-8 G：#65676B 真机图标/次文字看不清 → 加深一档（对比度达标）
-    tx3="#5F6368",   # 丙-8 G：组名/弱文字 #8A8D91 太浅 → 加深到 Google 灰档
+    tx2="#565A5F", # G：#65676B 真机图标/次文字看不清 → 加深一档（对比度达标）
+    tx3="#5F6368", # G：组名/弱文字 #8A8D91 太浅 → 加深到 Google 灰档
     blue="#0866FF",
     blue2="#0455D6",
     blue_soft="#E7F0FF",
-    blue_line="#D6E4FF",                    # web --blue-line（light）
+    blue_line="#D6E4FF", # web --blue-line（light）
     ok="#00A36C",
     warn="#E5A100",
     err="#E41E3F",
-    err_tx="#B3122C",   # web --err-tx（light）
+    err_tx="#B3122C", # web --err-tx（light）
     info="#0866FF",
-    radius_card=12,   # 控制台 light --radius-card:12px
+    radius_card=12, # 控制台 light --radius-card:12px
     radius_btn=8,
     radius_pill=999,
     card_border=1,
     shadow="0 1px 2px rgba(0,0,0,0.06)",
     font_family="Microsoft YaHei UI",
-    h2_size=15,       # 控制台 .card h2{font-size:15px}（light 未覆盖）
+    h2_size=15, # 控制台 .card h2{font-size:15px}（light 未覆盖）
     h2_weight=600,
     grp_size=11,
     grp_spacing=0.02,
-    body_size=14,     # 控制台 body{font:14px}（light 未覆盖）
+    body_size=14, # 控制台 body{font:14px}（light 未覆盖）
     body_weight=400,
-    nav_size=14,      # 控制台 light .nav a{font-size:14px}
+    nav_size=14, # 控制台 light .nav a{font-size:14px}
     nav_weight=400,
     nav_active_weight=600,
     letter_extra=0.0,
@@ -258,25 +258,25 @@ DARK = Tokens(
     blue="#8B93FF",
     blue2="#6E78E8",
     blue_soft="rgba(139,147,255,0.12)",
-    blue_line="#262A44",                    # web --blue-line（dark/Linear）
+    blue_line="#262A44", # web --blue-line（dark/Linear）
     ok="#4CC38A",
     warn="#D9A054",
     err="#E5484D",
-    err_tx="#F08A8A",   # web --err-tx（dark）：亮粉，深底可读（主 err 太暗会沉进背景）
+    err_tx="#F08A8A", # web --err-tx（dark）：亮粉，深底可读（主 err 太暗会沉进背景）
     info="#8B93FF",
-    radius_card=10,   # 控制台 dark --radius-card:10px
+    radius_card=10, # 控制台 dark --radius-card:10px
     radius_btn=7,
     radius_pill=999,
     card_border=1,
     shadow="none",
     font_family="Microsoft YaHei UI",
-    h2_size=15,       # 控制台 .card h2{font-size:15px}（dark 未覆盖）
+    h2_size=15, # 控制台 .card h2{font-size:15px}（dark 未覆盖）
     h2_weight=600,
     grp_size=10,
     grp_spacing=0.09,
-    body_size=14,     # 控制台 body{font:14px}（dark 未覆盖）
+    body_size=14, # 控制台 body{font:14px}（dark 未覆盖）
     body_weight=400,
-    nav_size=14,      # 控制台 dark .nav a{13.5px}；字号档位表无 13.5，取 14
+    nav_size=14, # 控制台 dark .nav a{13.5px}；字号档位表无 13.5，取 14
     nav_weight=400,
     nav_active_weight=500,
     letter_extra=0.1,
@@ -305,7 +305,7 @@ def status_colors(t: Tokens, level: str) -> tuple[QColor, QColor, QColor]:
         c = t.q("err")
     elif level == "info":
         c = t.q("info")
-    else:  # idle
+    else: # idle
         c = t.q("tx2")
     bg = rgba(c, 26 if not t.glass else 34)
     bd = rgba(c, 70 if not t.glass else 90)
@@ -318,7 +318,7 @@ def status_colors(t: Tokens, level: str) -> tuple[QColor, QColor, QColor]:
 _FONT_SIZES = {8, 9, 10, 10.5, 11, 11.5, 12, 13, 14, 15, 16, 17, 18, 20, 22, 24}
 
 
-# ---- 项目双字体（2026-09-23 用户拍板：大字=朝華標題A，小字=屏显臻宋）----
+# ---- 项目双字体----
 #
 # 两个 TTF 已复制进 assets/fonts/（桌面原件不动，复制非移动）。
 #   - 朝華標題A family 名 = ZhaohuaMinA（TTF name 表实探，Qt 探测一致）
@@ -350,7 +350,7 @@ def ensure_fonts() -> tuple[str, str, str]:
     global _FONTS_READY, _DISPLAY_FAMILY, _BODY_FAMILY, _EMOJI_FAMILY
     if _FONTS_READY:
         return _DISPLAY_FAMILY, _BODY_FAMILY, _EMOJI_FAMILY
-    from PySide6.QtWidgets import QApplication  # noqa: PLC0415
+    from PySide6.QtWidgets import QApplication # noqa: PLC0415
 
     if QApplication.instance() is None:
         return "", "", ""
@@ -378,12 +378,12 @@ def qfont(t: Tokens, size: float, weight: int = 400, extra_spacing: float | None
           display: bool = False) -> QFont:
     """造一个字体。Qt 的 QFont 不认 10.5 这类半点字号（会取整），这里显式保留。
 
-    display=True → 标题字体（朝華標題A，用户拍板"大字用前者"）；
+    display=True → 标题字体；
     默认 → 正文字体（屏显臻宋，"小字用后者"）。没注册成功时回退 t.font_family。
     回退链第二位挂 emoji 字体 —— 🐋 这类字形正文里没有，Qt 逐字形回退去取。
     """
     if not _FONTS_READY:
-        ensure_fonts()  # 没注册过就试一次；app 未建时优雅返回空，走回退
+        ensure_fonts() # 没注册过就试一次；app 未建时优雅返回空，走回退
     primary = (_DISPLAY_FAMILY if display else _BODY_FAMILY) or t.font_family
     chain = [x for x in (primary, _EMOJI_FAMILY, t.font_family) if x]
     f = QFont()
@@ -410,14 +410,14 @@ def apply_font_to_app(app, t: Tokens) -> None:
 def available_ui_families() -> list[str]:
     """本机字体探测 —— 用来验证 'Microsoft YaHei UI' 到底在不在。
 
-    ⚠️ **必须先有 QApplication**。实测（2026-09-22）：在任何 QApplication 之前
+    ⚠️ **必须先有 QApplication**。实测：在任何 QApplication 之前
        调 `QFontDatabase.families()` 会让进程**硬崩且无 traceback**
        （rc=127、stdout/stderr 双空，看起来像"命令找不到"）。
        ⇒ 这个坑在 GUI 里会让"字体降级"这条逻辑整个不生效，而且在无 GUI 的
          CI/sandbox 里表现为"脚本神秘消失"。必须在这里挡住，不能靠调用方自觉。
     """
     try:
-        from PySide6.QtWidgets import QApplication  # noqa: PLC0415
+        from PySide6.QtWidgets import QApplication # noqa: PLC0415
         if QApplication.instance() is None:
             return []
     except Exception:

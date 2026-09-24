@@ -5,7 +5,7 @@
 守的东西：
   ① **三闸如实报**：虚拟声卡 / sounddevice / 合成引擎，缺哪道就说哪道，不假装能发；
   ② **位置运行时现算**：那个"进录音态"的圆圈会随右侧栏开关左右漂（实测 0.745 ↔ 0.878），
-     所以每次发送前扫输入条图标行现算，配置值只当兜底（2026-09-17 改：不再要用户标定）；
+     所以每次发送前扫输入条图标行现算，配置值只当兜底；
   ③ **只认 DB 回读 `type=语音`**（不信 GUI 返回值——这是当年实验链最值钱的一条）；
   ④ **两道自检**：会话闸（发错人不可逆）+ 音量点闸（不发静音语音条）；
   ⑤ **形态选项**：用户选"真语音条/音频文件"，**默认真语音条**；前提不齐时如实回退并说明；
@@ -21,7 +21,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from agent import voice_strip as VS          # noqa: E402
+from agent import voice_strip as VS # noqa: E402
 
 PASS = FAIL = 0
 
@@ -51,7 +51,7 @@ ok("A3 位置不再是前置条件（不再因为「没标定」把能用的人�
 
 print("── B. 位置扫描（纯函数，造图谱判）──")
 prof = [0] * 1000
-# ⛔ V-R7-15：夹具里**必须**有一个落在 `[RECORD_X_MIN, RECORD_X_MAX]` 窗内、且在圆圈右侧的干扰簇。
+# ⛔ 夹具里**必须**有一个落在 `[RECORD_X_MIN, RECORD_X_MAX]` 窗内、且在圆圈右侧的干扰簇。
 #   原来只放 0.878（圆圈）与 0.935（发送），而 `RECORD_X_MAX=0.92` 把后一簇**事先滤掉**
 #   ⇒ 窗内恒只有 1 个簇，`voice_strip.py:166` 的 `good[0] → good[-1]`（挑到「发送」那一键）就没判据了。
 #   现在：圆圈 0.878 · **窗内干扰簇 0.905** · 「发送」0.94（宽度收到 20 ⇒ 与干扰簇之间留出 >14px，
@@ -136,7 +136,7 @@ ok("D8 控制台有「念法纠正」入口（多音字例外表）",
 print("── E. 依赖 ──")
 ok("E1 requirements 里有 sounddevice（装依赖时装得上）", "sounddevice" in src("requirements.txt"))
 try:
-    import sounddevice  # noqa: F401
+    import sounddevice # noqa: F401
     ok("E2 本机运行时装了 sounddevice", True)
 except Exception as e:
     ok("E2 本机运行时装了 sounddevice", False, "%s（演示前先装：pip install sounddevice）" % e)

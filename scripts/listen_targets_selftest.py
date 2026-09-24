@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""判据：监听目标**按 wxid 认群**，同名群不许"勾一个监听两个"（第四轮审计候选 W-1）。
+"""判据：监听目标**按 wxid 认群**，同名群不许"勾一个监听两个"。
 
 跑法： runtime\\python\\python.exe scripts\\listen_targets_selftest.py   退出码 0=全过 / 1=有失败
 
@@ -27,7 +27,7 @@ try:
 except Exception:
     pass
 
-from agent import listen_targets as LT                                          # noqa: E402
+from agent import listen_targets as LT # noqa: E402
 
 PASS, FAIL = [], []
 
@@ -118,8 +118,8 @@ def main():
     ok("E8 每群档位两把都认（群名 或 wxid）——同名群下按名字找档位会串到另一间",
        "_gwxid = chat_key.split" in _pr and "for _gk in (" in _pr)
 
-    print("── F. 同名群在**档位 / 屏蔽名单 / 归因文案**三条路上的残留（第五轮回执 V-R5B-6 / V-R5B-9）──")
-    from agent import prompt as _P                                                  # noqa: E402
+    print("── F. 同名群在**档位 / 屏蔽名单 / 归因文案**三条路上的残留──")
+    from agent import prompt as _P # noqa: E402
     _cfg_store = {"store": {"unified_tier": False, "group_tier": {"测试": 1, "KC1": 4}}}
     _keep_gc = _P.get_config
     _P.get_config = lambda: _cfg_store
@@ -130,9 +130,9 @@ def main():
         _P.get_config = _keep_gc
     ok("F1 同名群的两把档位键同时存在时，**wxid 键优先**（否则给两间同名群各设档位永远只能生效第一间）",
        int(_r_t.get("tier") or 0) == 4, _r_t)
-    # ⛔ 2026-09-21 修（第六轮 **V-R6-31**）：这条原来是 `ok(..., 1 != 4)` —— 一句**常真话**，
+    # ⛔ 这条原来是 `ok(..., 1 != 4)` —— 一句**常真话**，
     #   等于没验。改成**真按老口径算一遍**：老写法（群名键在前）取到的是 1，与 wxid 键取到的 4 不同。
-    _old_pick = lambda _g: int((_cfg_store["store"]["group_tier"] or {}).get(_g) or 0)   # noqa: E731
+    _old_pick = lambda _g: int((_cfg_store["store"]["group_tier"] or {}).get(_g) or 0) # noqa: E731
     ok("F2 反例锚：老写法（群名键在前）会取到 1 ⇒ 与本判据取到的 4 **确实不同**（这条判据正是盯这个）",
        _old_pick("测试") == 1 and int(_r_t.get("tier") or 0) == 4 and _old_pick("测试") != int(_r_t.get("tier") or 0),
        "老=%s 新=%s" % (_old_pick("测试"), _r_t.get("tier")))
@@ -150,29 +150,29 @@ def main():
     ok("F6 屏蔽名单也读 wxid 键（同名群里才能只屏蔽指定那间的人）",
        'blist.get(_key)' in _pr_txt or ('_gwxid' in _pr_txt and 'group_blocklist' in _pr_txt))
 
-    print("── G. 第十轮 V-R10-13/14/15/31：群列表链的四条修复各自要有守备 ──")
-    # G1（V-R10-13）：`targets_zero` **不再单向闩锁** —— 现在是"现算"（`bool(not _t)`），
+    print("── G. /15/31：群列表链的四条修复各自要有守备 ──")
+    # G1：`targets_zero` **不再单向闩锁** —— 现在是"现算"（`bool(not _t)`），
     #   所以群列表恢复之后它会自己变回 False（旧写法只写 True、全仓无处置 False ⇒ 侧栏永久报警）。
     ok("G1 `targets_zero` 是**现算**的（`bool(not _t)`），不是单向闩锁",
        "bool(not _t)" in _pm_txt, "见 persona_morph._collect_targets")
     _old_latch_src = 'if not targets:\n        _ATTACH["targets_zero"] = True'
     ok("G1b 反例锚：老写法（只写 `= True`、没有 False 处置）过不了 G1",
        "bool(not _t)" not in _old_latch_src)
-    # G2（V-R10-14）：刷新群列表之后要**重算监听目标**（webui 调 parent 的回调；persona_morph 提供它）
+    # G2：刷新群列表之后要**重算监听目标**（webui 调 parent 的回调；persona_morph 提供它）
     _web = open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
     ok("G2 「刷新群列表」会触发一次监听目标重算（`refresh_targets_fn` 两头都在）",
        "refresh_targets_fn" in _web and "refresh_targets_fn=lambda" in _pm_txt)
-    #   ⚠️ 2026-09-23 补（E2 根因）：**"字符串在里面" ≠ "构造函数真收"**。原判据两头都命中，
+    # ⚠️ 补（E2 根因）：**"字符串在里面" ≠ "构造函数真收"**。原判据两头都命中，
     #   而 `WebUI.__init__` 根本没这个形参 ⇒ 后端走到 `WebUI(...)` 那行就 TypeError，
     #   控制台永远起不来（而这条自检一直是绿的）。⇒ 现在改成**结构判据**：先 reflect 签名，
     #   reflect 不了（环境缺依赖）就退到 AST 读形参表 —— 都不再拿 grep 冒充"接线正确"。
     _sig_ok = False
     try:
-        import inspect as _insp                                                 # noqa: E402
-        import agent.webui as _wm                                               # noqa: E402
+        import inspect as _insp # noqa: E402
+        import agent.webui as _wm # noqa: E402
         _sig_ok = "refresh_targets_fn" in _insp.signature(_wm.WebUI.__init__).parameters
     except Exception:
-        import ast as _ast                                                      # noqa: E402
+        import ast as _ast # noqa: E402
         for _cls in [n for n in _ast.parse(_web).body
                      if isinstance(n, _ast.ClassDef) and n.name == "WebUI"]:
             for _fn in [n for n in _cls.body
@@ -181,22 +181,22 @@ def main():
                                                    + [a.arg for a in _fn.args.kwonlyargs])
     ok("G2b `WebUI.__init__` 必须**真的收** `refresh_targets_fn`（否则后端 TypeError、控制台起不来）",
        _sig_ok)
-    # G3（V-R10-15）：归因一致性 —— `_collect_targets` 里也要传真因给 describe（不只启动那一次）
+    # G3：归因一致性 —— `_collect_targets` 里也要传真因给 describe（不只启动那一次）
     _ct = _pm_txt.split("def _collect_targets(")[1][:2600]
     ok("G3 晚接入/配置保存这条路上，`describe(read_failed=…)` 也带**真因**",
        "read_failed=_read_failed" in _ct and "groups_read_error" in _ct)
-    # G4（V-R10-15）：向导的重试按钮带 `?refresh=1`（原来是假重试：走内存缓存）
+    # G4：向导的重试按钮带 `?refresh=1`（原来是假重试：走内存缓存）
     _con = open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
-    ok("G4 向导「重试读取」带 `?refresh=1`（第十轮点名的假重试）",
+    ok("G4 向导「重试读取」带 `?refresh=1`",
        "_obForceRefresh" in _con and "?refresh=1" in _con)
-    # G5（V-R9-7 / V-R10-31）：昵称表的三类失败要**如实抛**（不再静默 `{}`）
-    import sqlite3                                                              # noqa: E402
-    import tempfile                                                             # noqa: E402
-    from agent import replica_adapter as RA                                     # noqa: E402
+    # G5：昵称表的三类失败要**如实抛**（不再静默 `{}`）
+    import sqlite3 # noqa: E402
+    import tempfile # noqa: E402
+    from agent import replica_adapter as RA # noqa: E402
     _td = tempfile.mkdtemp(prefix="pm-lt-")
     _bad = os.path.join(_td, "contact.db")
     with sqlite3.connect(_bad) as _c:
-        _c.execute("CREATE TABLE other (a TEXT)")                               # 缺 contact 表
+        _c.execute("CREATE TABLE other (a TEXT)") # 缺 contact 表
         _c.commit()
 
     class _Db(object):
@@ -218,7 +218,7 @@ def main():
         RA.load_groups(_Db(_bad))
     except Exception:
         _raised_g = True
-    ok("G5b 对照：`load_groups` 对同一份坏库也抛（三条路同一口径，V-R9-7 的收口才算完整）", _raised_g)
+    ok("G5b 对照：`load_groups` 对同一份坏库也抛", _raised_g)
 
     print("\n== 汇总：%d 通过 / %d 失败 ==" % (len(PASS), len(FAIL)))
     if FAIL:

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """记忆删除判据（离线，不需要微信、不需要真数据）。
 
-起因（用户反馈 2026-09-16）：「**记忆那里也是删除了还能读取**」——
+起因——
 根因是**口径不对称**：`MemoryStore.members()`（列表 / 读取）在"互通"时是
 `for key in self._chat_keys(chat_key)` **把所有相关群合并**后展示的，而 `remove()` 原来
 只删 `chat_key` **一个群**的那一份 ⇒ 同一个人在别的群（共享池）还留着一份
@@ -70,7 +70,7 @@ print("\n── C. 用户看得懂（别让人以为只删本群那份）──"
 ok("UI 文案点明「全部印象」", "的全部印象" in page)
 ok("删除按钮在记忆面板里", "loadMemory(sel.value)" in page)
 
-print("\n── D. 删除范围做成可选档位（用户口径：不替他二选一，映射到 UI 上）──")
+print("\n── D. 删除范围做成可选档位──")
 pm = io.open(os.path.join(ROOT, "scripts", "persona_morph.py"), encoding="utf-8").read()
 wu = io.open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
 ok("remove 有 scope 参数且默认 all（默认＝与读取口径一致的安全侧）",

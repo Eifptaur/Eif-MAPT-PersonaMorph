@@ -44,7 +44,7 @@ def evaluate(key, card):
         score += 15
     # C 示例质量
     if any(p in t for p in PLACEHOLDER):
-        score -= 10               # 示例是占位 = 不具体
+        score -= 10 # 示例是占位 = 不具体
     else:
         score += 15
     # D 表达纯粹（无 AI 模板腔；注意黑名单/禁令列表里出现这些词=禁止使用，不扣分）

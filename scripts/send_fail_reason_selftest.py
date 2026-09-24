@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""「发送失败的原因必须透传出来」判据（2026-09-16 用户转述报障后立）。
+"""「发送失败的原因必须透传出来」判据。
 
-**报障原话**：「然后就是发送消息可能会失败 不清楚什么情况 **看思维链说是工具没有发送成功**，用户反馈啥情况」
+**报障原话**
 
 **查到的事实**：`agent/tools.py::_exec_send_message` 在"部分成功、部分失败"时，
 只把**条数**写进给模型的 note（"另有 N 条发送失败，请稍后再试或减少条数"），
@@ -25,7 +25,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
-from agent import tools as T          # noqa: E402
+from agent import tools as T # noqa: E402
 
 PASS = FAIL = 0
 

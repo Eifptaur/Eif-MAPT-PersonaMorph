@@ -20,9 +20,9 @@ try:
 except Exception:
     pass
 
-from agent import recall as rc            # noqa: E402
-from agent import store as store_mod      # noqa: E402
-from agent.store import ChatStore         # noqa: E402
+from agent import recall as rc # noqa: E402
+from agent import store as store_mod # noqa: E402
+from agent.store import ChatStore # noqa: E402
 
 PASS, FAIL = [], []
 
@@ -56,7 +56,7 @@ def main():
     rc.STATS_PATH = os.path.join(tmp, "recall_stats.json")
     rc.UNMATCHED_PATH = os.path.join(tmp, "recall_unmatched.jsonl")
     log_lines = []
-    log = lambda lvl, fmt, *a: log_lines.append(fmt % a if a else fmt)   # noqa: E731
+    log = lambda lvl, fmt, *a: log_lines.append(fmt % a if a else fmt) # noqa: E731
 
     print("== A. 形态识别（认得出，且不误判）==")
     a1 = rc.parse_recall(XML_PEER)

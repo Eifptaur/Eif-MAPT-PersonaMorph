@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""edge 神经语音音源判据（2026-09-15）
+"""edge 神经语音音源判据
 
 背景：群相原来只有两档音源——SAPI（开箱可用但机械音）与「用户自带模型」（要自己跑服务）。
 本轮加第三档 **edge-tts**（免费神经语音、无需 Key、需联网），并把它设为**默认**。
@@ -32,7 +32,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
-from agent import voice_models as VM          # noqa: E402
+from agent import voice_models as VM # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -54,7 +54,7 @@ def sect(t):
 
 # ── A. 默认档 ────────────────────────────────────────────────────────────────
 sect("A. 出厂默认＝edge 神经语音")
-from agent.config import get_config           # noqa: E402
+from agent.config import get_config # noqa: E402
 rc = dict((get_config().get("voice_reply") or {}))
 names = [n for n, _ in VM.EDGE_VOICES]
 ok("voice_reply.backend 默认 edge", rc.get("backend") == "edge", repr(rc.get("backend")))
@@ -113,7 +113,7 @@ after = sorted(os.listdir(VM._out_dir())) if os.path.isdir(VM._out_dir()) else [
 ok("空文本 ⇒ None + 原因", p is None and "文本为空" in (why or ""), (why or "")[:30])
 ok("空文本不落任何文件（前后目录一致）", before == after, "%d→%d 个文件" % (len(before), len(after)))
 _saved = sys.modules.get("edge_tts")
-sys.modules["edge_tts"] = None                      # 替身：import edge_tts 会抛
+sys.modules["edge_tts"] = None # 替身：import edge_tts 会抛
 try:
     import builtins
     _ri = builtins.__import__
@@ -138,7 +138,7 @@ ok("_make_raw 空文本也不落文件", _p is None and "文本为空" in (_w or
 
 # ── E. 控制台三档互斥且不漂 ──────────────────────────────────────────────────
 sect("E. 控制台：选项不许与 EDGE_VOICES 漂开 + 三档互斥")
-from agent import console_html as CH          # noqa: E402
+from agent import console_html as CH # noqa: E402
 H = CH.HTML
 
 
@@ -185,7 +185,7 @@ ok("JS 的引擎状态跟着当前选的档走（读 ttsBackend）", "_beNow ===
 
 # ── F. 快照接线 ──────────────────────────────────────────────────────────────
 sect("F. /api/status 快照接线")
-from agent import media_status as MS           # noqa: E402
+from agent import media_status as MS # noqa: E402
 snap = MS.snapshot()
 tts = snap.get("tts") or {}
 ok("快照 tts 块里有 models 段", "models" in tts)
@@ -200,7 +200,7 @@ ok("反证：models 段报的档不是靠猜——与 voice_models.status() 一�
 # ── G. 试听按钮与出网披露（加第三档时一并收口的两处真缺陷） ───────────────────
 sect("G. 试听要跟着档走 + 出网如实披露")
 WU = open(os.path.join("agent", "webui.py"), encoding="utf-8").read()
-# ⛔ 2026-09-22（Phase B）：这条路由的分支体已搬成 `_rapi_tts_test`（`agent/routes.py` 里登记）
+# ⛔ （Phase B）：这条路由的分支体已搬成 `_rapi_tts_test`（`agent/routes.py` 里登记）
 #   ⇒ 段落要从**方法**取；没搬时才回退旧日的 `elif`。
 _i = WU.find("def _rapi_tts_test(")
 if _i > 0:
@@ -220,20 +220,20 @@ ok("试听按钮文案已改成「按当前音源合成」", "按当前音源合
 ok("试听输出文案写明不发送", "不会发到任何会话" in H)
 ok("试听 JS 结果里会报档位", "档位：" in H and "r.engine || info.engine" in H)
 ok("试听 JS 提示 edge 档要联网", "edge 档要联网" in H)
-# 2026-09-15 用户改口径：「关于"全程不出网"的条款，你可以写成"绝大部分不出网"，就是出不出网是可选项」
-_AG = open(os.path.join("AGENTS.md"), encoding="utf-8").read()
+# 用户改口径
+_AG = open(os.path.join(os.path.dirname(ROOT), "dev-workspace", "persona-morph", "handover", "AGENTS.md"), encoding="utf-8").read()  # 文档区已迁出产品根
 ok("AGENTS.md 记下「绝大部分不出网 + 出网是可选项」这条产品口径",
    "绝大部分不出网" in _AG and "出网是可选项" in _AG)
 ok("AGENTS.md 写明每处出网都要配一条不出网的替代档", "不出网的替代档" in _AG)
-ok("语音引导文案告诉用户「想全程不出网就选系统声音那一档」",
+ok("语音引导文案告诉",
    "想全程不出网就选系统声音" in H)
 ok("反证：引导文案里不再有「合成全程在本机，内容不出网」这句一刀切的话",
    "合成全程在本机，内容不出网" not in H)
 
 # ── H. 兜底分支（离线自检：替身掉网络那一段） ────────────────────────────────
 sect("H. edge 失败时的两条路（兜底 / 如实报错）")
-import importlib                              # noqa: E402
-from agent import tts as _T                   # noqa: E402
+import importlib # noqa: E402
+from agent import tts as _T # noqa: E402
 _save_edge, _save_tts = VM._edge_make, _T.make
 try:
     VM._edge_make = lambda text, cfg, timeout: (None, "替身：假装 edge 挂了", {})

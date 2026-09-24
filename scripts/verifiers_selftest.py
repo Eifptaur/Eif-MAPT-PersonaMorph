@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""症状检验器判据（2026-09-18 立，作者口径：「用户有哪方面的问题，就点那个检验器，把报告发给我」）。
+"""症状检验器判据。
 
 好的检验器长什么样（检索到的共识 + 本项目既有形状）：
   ① **原子化二值检查**：一条检查只问一件事，`ok` + **自带证据**，不做分数聚合；
@@ -29,12 +29,12 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
-from agent import verifiers as V          # noqa: E402
-from agent import update_check as _uc     # noqa: E402
+from agent import verifiers as V # noqa: E402
+from agent import update_check as _uc # noqa: E402
 sys.path.insert(0, HERE)
-import _srcmatch as _sm                   # noqa: E402  空白容忍的源码断言（V-R4-13 第三条）
+import _srcmatch as _sm # noqa: E402 空白容忍的源码断言
 
-# ⛔ V-R7-4：判据**不写产品** `data/update_state.json`（本判据会跑 `update_check.state()` ⇒ 落盘）。
+# ⛔ 判据**不写产品** `data/update_state.json`（本判据会跑 `update_check.state()` ⇒ 落盘）。
 #   `_state_path()` 是唯一落点函数，指到临时目录即可；产品默认行为不变（默认仍写生产路径）。
 _state_dir = tempfile.mkdtemp(prefix="pm-vf-state-")
 _uc._state_path = lambda: os.path.join(_state_dir, "update_state.json")
@@ -55,7 +55,7 @@ def ok(name, cond, extra=""):
 print("── A. 清单与形状 ──")
 cat = V.catalog()
 ok("清单非空且每项有 id/name", bool(cat) and all(x.get("id") and x.get("name") for x in cat), str(cat[:2]))
-ok("覆盖作者点名的几类症状",
+ok("覆盖点名的几类症状",
    {"send_blocked", "self_echo", "no_reply", "emoji_blank", "fg_disturb", "update_stuck",
     "console_dead"} <= {x["id"] for x in cat}, str([x["id"] for x in cat]))
 
@@ -75,7 +75,7 @@ for item in cat:
 print("── C. 判决逻辑：第一条不通过的检查＝卡点（**三态**：True/False/None=没测到）──")
 _r = V.run("send_blocked")
 if _r["checks"]:
-    bad = [c for c in _r["checks"] if c["ok"] is False]      # ⛔ V-R4-11：None 不算"坏"
+    bad = [c for c in _r["checks"] if c["ok"] is False] # ⛔ None 不算"坏"
     if bad:
         ok("有卡点时 verdict 点名第一条坏检查",
            bad[0]["name"] in _r["verdict"] and _r["ok"] is False, _r["verdict"][:90])
@@ -84,7 +84,7 @@ if _r["checks"]:
         ok("全通过时 verdict 给正向结论 + 不催动作",
            _r["ok"] is True and ("正常" in _r["verdict"] or "成立" in _r["verdict"]), _r["verdict"][:90])
 
-print("\n── C2. 第三态「没测到」：既不算通过也不算失败，且必须**说出来**（V-R4-11）──")
+print("\n── C2. 第三态「没测到」：既不算通过也不算失败，且必须**说出来**──")
 _c_none = V._check("某格没测到", None, "读不到（夹具）")
 ok("C2a `_check(..., None, ...)` 真的存成 `None`（不许被 bool() 吞成 False）", _c_none["ok"] is None, _c_none)
 ok("C2b `_check(..., True/False, ...)` 仍是布尔",
@@ -102,8 +102,8 @@ ok("C2e 报告逐项里没测到的画 `○`（不是 ✅ 也不是 ❌）",
 ok("C2f 报告顶部有「○ 没测到」的计数警示", "○ 没测到" in _f["report"] and "承诺成立" in _f["report"])
 
 print("\n── C3. 静态：`_check` 的条件位不许是字面量（恒真/恒假都不行）──")
-import io as _io                                                                # noqa: E402
-import re as _re2                                                               # noqa: E402
+import io as _io # noqa: E402
+import re as _re2 # noqa: E402
 _vsrc = _io.open(os.path.join(ROOT, "agent", "verifiers.py"), encoding="utf-8").read()
 _lit = []
 _lit_false = []
@@ -127,10 +127,10 @@ ok("C3c 该改的那几处已经是「没测到」（None）",
 ok("C3d 两处真恒真已改成真判据（台账证据 > 0；闸门拦下过才算数）",
    _sm.has(_vsrc, "_ev_n > 0", "True if n > 0 else None", "True if deny > 0 else None"))
 
-print("\n── C4. 更新快照的**新鲜度**：旧快照只能当历史（V-R4-12c）──")
+print("\n── C4. 更新快照的**新鲜度**：旧快照只能当历史──")
 _tmp4 = tempfile.mkdtemp(prefix="pm-vf-")
 _keep_p = V._p
-V._p = lambda *parts: os.path.join(_tmp4, *parts)          # 夹具：全部读数指到临时目录，不碰真 data/
+V._p = lambda *parts: os.path.join(_tmp4, *parts) # 夹具：全部读数指到临时目录，不碰真 data/
 try:
     os.makedirs(os.path.join(_tmp4, "data"), exist_ok=True)
     _sp = os.path.join(_tmp4, "data", "update_state.json")
@@ -156,12 +156,12 @@ finally:
     V._p = _keep_p
     shutil.rmtree(_tmp4, ignore_errors=True)
 
-print("\n── C5. 第五轮回执三条：未来时间 / 全项没测到 / 坏身份（V-R5A-3 · V-R5A-4 · V-R5B-5）──")
+print("\n── C5. 回执三条：未来时间 / 全项没测到 / 坏身份──")
 ok("C5a `_fresh_age` 四段口径：读不到=None · 未来=False · 区间内=True · 太旧=None",
    V._fresh_age(None, 0, 1800) is None and V._fresh_age(-5000, 0, 1800) is False
    and V._fresh_age(60, 0, 1800) is True and V._fresh_age(99999, 0, 1800) is None,
    (V._fresh_age(None, 0, 1800), V._fresh_age(-5000, 0, 1800), V._fresh_age(60, 0, 1800)))
-ok("C5b 反例锚：老口径（只看上界 `<= 30`）**会把未来时间算成「刚写过」**（这就是 V-R5A-3 的现场）",
+ok("C5b 反例锚：老口径（只看上界 `<= 30`）**会把未来时间算成「刚写过」**",
    (-4320.0 <= 30) is True)
 _tmp5 = tempfile.mkdtemp(prefix="pm-vf5-")
 _keep_p5 = V._p
@@ -207,9 +207,9 @@ _tmp6 = tempfile.mkdtemp(prefix="pm-vf6-")
 _keep_p6 = V._p
 V._p = lambda *parts: os.path.join(_tmp6, *parts)
 os.makedirs(os.path.join(_tmp6, "data"), exist_ok=True)
-from agent import wechat as _wxL                                          # noqa: E402
+from agent import wechat as _wxL # noqa: E402
 _saved_led = list(_wxL._SWITCH_FAILS)
-# ⛔ 判据**不许写产品 `data/`**：台账现在会落盘（V-R9-12），所以把路径打到临时目录
+# ⛔ 判据**不许写产品 `data/`**：台账现在会落盘，所以把路径打到临时目录
 _saved_led_path = _wxL._switch_fails_path
 _wxL._switch_fails_path = lambda: os.path.join(_tmp6, "switch_fails.jsonl")
 try:
@@ -248,12 +248,12 @@ finally:
     V._p = _keep_p6
     shutil.rmtree(_tmp6, ignore_errors=True)
 
-print("\n── C6-L. 台账**写不进磁盘**时必须说出来（V-R10-12：老写法 `except: pass` ⇒ 重启回到假绿）──")
+print("\n── C6-L. 台账**写不进磁盘**时必须说出来──")
 _tmpL = tempfile.mkdtemp(prefix="pm-vfL-")
 _savedL = dict(_wxL.LEDGER_WRITE_ERR)
 _blockerL = os.path.join(_tmpL, "blocker")
 with open(_blockerL, "w", encoding="utf-8") as _fhL:
-    _fhL.write("x")          # 拿它当"目录"用 ⇒ 下面的路径必然建不出来/写不进去
+    _fhL.write("x") # 拿它当"目录"用 ⇒ 下面的路径必然建不出来/写不进去
 try:
     _wxL.LEDGER_WRITE_ERR.update({"err": "", "n": 0, "at": 0.0})
     _wxL._switch_fails_path = lambda: os.path.join(_blockerL, "switch_fails.jsonl")
@@ -292,8 +292,8 @@ finally:
     _wxL.LEDGER_WRITE_ERR["err"] = _savedL.get("err", "")
     shutil.rmtree(_tmpL, ignore_errors=True)
 
-print("\n── C11. 检验器的**前端映射**（第十一轮：作者问「这个检验器需要前端的，映射好没有」）──")
-# ⛔ 现场：第十轮我把后端做完了（六环 db_unreadable / 三态 / 说明格 / partial），但**前端一字未动**——
+print("\n── C11. 检验器的**前端映射**──")
+# ⛔ 现场：我把后端做完了（六环 db_unreadable / 三态 / 说明格 / partial），但**前端一字未动**——
 #   症状按钮是从 `/api/verifiers`（`catalog()`）动态建的，所以新条目会自己出现（这半是通的）；
 #   可「◐ 部分通过 / ○ 没测到」的含义、以及**后端判决到界面状态的映射**（哪一格卡住）**完全没有**，
 #   用户点完十个症状，界面上全是同一个样子。这一节把"通的"和"该有的"一起钉住。
@@ -313,16 +313,16 @@ ok("C11d 四档各有自己的样式（通过/部分通过/卡住/**没测到** 
    _ch11.count("button.ghost[data-vstate=") == 4, "%d 条" % _ch11.count("button.ghost[data-vstate="))
 ok("C11e 映射的取值来自**同一次结果**的 ok/partial（不另算一套）",
    _sm.has(_ch11, "r.partial") and _sm.has(_ch11, "r.ok === false"))
-# ⛔ 2026-09-22 加（第十二轮 **V-R12-3** · P2）：**行为级**锚 —— 把前端那段判决映射**抽出来在 node 里跑**
+# ⛔ **行为级**锚 —— 把前端那段判决映射**抽出来在 node 里跑**
 #   四种输入，断言 `没测到 ⇒ unknown`（老写法把最后的 `'unknown'` 改成 `'ok'` 时，这条必红；
 #   而它此前**任何判据都抓不住** —— 一次改动就能把"没测到"重新变成绿按钮）。
 try:
-    import json as _json11                                          # noqa: E402
+    import json as _json11 # noqa: E402
     _st_i = _ch11.index("const st = (r && r.ok === false)")
     _st_end = "'unknown'));"
-    _st_j = _ch11.index(_st_end, _st_i) + len(_st_end)      # ⚠️ 只切到这条 const 语句结尾
+    _st_j = _ch11.index(_st_end, _st_i) + len(_st_end) # ⚠️ 只切到这条 const 语句结尾
     _js11 = _ch11[_st_i:_st_j]
-    # ⛔ 2026-09-22 修（第十三轮 **V-R13-9** · P3）：把"**抠不到**"与"**语义错**"分成两条 ——
+    # ⛔ 把"**抠不到**"与"**语义错**"分成两条 ——
     #   老写法一旦 `console_html.py` 那段换了写法（缩进/引号/换行），C11e2 会以"四档映射错了"的
     #   面目变红（把人引到错方向）。现在先报"夹具失效，请更新抠取锚"。
     ok("C11e2a 夹具：能从 `console_html.py` 里**抠到**那段判决映射（抠不到＝夹具失效，不是产品错）",
@@ -330,7 +330,7 @@ try:
     _node11 = os.path.join(tempfile.mkdtemp(prefix="pm-vfjs-"), "m.js")
     with io.open(_node11, "w", encoding="utf-8") as _f:
         _f.write("const r = JSON.parse(process.argv[2]);\n" + _js11 + "\nconsole.log(st);\n")
-    import subprocess as _sp                                              # noqa: E402
+    import subprocess as _sp # noqa: E402
     _cases11 = [({"ok": None}, "unknown"), ({"ok": True, "partial": True}, "partial"),
                 ({"ok": False}, "fail"), ({"ok": True}, "ok")]
     _got11 = []
@@ -347,7 +347,7 @@ _OLDUI11 = ("pre.textContent=(r&&r.report)||JSON.stringify(r,null,1);\n"
 ok("C11f 反例锚：老写法（只塞 report、无图例、无状态映射）**过不了** C11b/C11c 这两条",
    (not _sm.has(_OLDUI11, "dataset.vstate")) and (not _sm.has(_OLDUI11, "判决分四档")))
 
-print("\n── C8. 第九轮 V-R9-12/13/14：台账落盘 · 读不到日志＝没测到 · 报告头不许画 ✅ ──")
+print("\n── C8. /14：台账落盘 · 读不到日志＝没测到 · 报告头不许画 ✅ ──")
 _tmp8 = tempfile.mkdtemp(prefix="pm-vf8-")
 _saved8 = (_wxL._switch_fails_path, list(_wxL._SWITCH_FAILS), V._p)
 _wxL._switch_fails_path = lambda: os.path.join(_tmp8, "switch_fails.jsonl")
@@ -358,19 +358,19 @@ try:
     _wxL.note_switch_fail("单测落盘", "这条要被写进文件")
     ok("C8a 台账落盘了（文件存在且能读回）", os.path.exists(_wxL._switch_fails_path()),
        _wxL._switch_fails_path())
-    _wxL._SWITCH_FAILS[:] = []                      # 模拟重启：内存台账清空
+    _wxL._SWITCH_FAILS[:] = [] # 模拟重启：内存台账清空
     _r8 = _wxL.recent_switch_fails(3)
-    ok("C8b **重启（内存清空）后仍读得到**（这就是 V-R9-12 的那半条修复）",
+    ok("C8b **重启（内存清空）后仍读得到**",
        bool(_r8) and "这条要被写进文件" in str((_r8[-1] or {}).get("why") or ""), str(_r8))
     ok("C8c `_tail2` 语义：文件不存在 ⇒ 空表；读不到（目录）⇒ **None（没测到）**",
        V._tail2(os.path.join(_tmp8, "no_such.log")) == []
        and V._tail2(_tmp8) is None, (V._tail2(os.path.join(_tmp8, "no_such.log")), V._tail2(_tmp8)))
     _emoji_src = io.open(os.path.join(ROOT, "agent", "verifiers.py"), encoding="utf-8").read()
     ok("C8e 源码级：那一格是 `(files > 0) and key_ok`", _sm.has(_emoji_src, "(files > 0) and key_ok"))
-    from agent import emoticon as _emo                                     # noqa: E402
+    from agent import emoticon as _emo # noqa: E402
     _o1, _o2, _o3 = _emo.any_sticker_files, _emo.load_cached_key, _emo.verify_key
-    _emo.any_sticker_files = lambda limit=200: ["x"] * 3                   # 有本地表情文件
-    _emo.load_cached_key = lambda *a, **k: ""                              # 但没有可用 key
+    _emo.any_sticker_files = lambda limit=200: ["x"] * 3 # 有本地表情文件
+    _emo.load_cached_key = lambda *a, **k: "" # 但没有可用 key
     try:
         _ce = [c for c in V.run("emoji_blank")["checks"] if c["name"] == "表情能离线解出原图"]
         ok("C8e′ **行为锚**：有表情文件但 key 不可用 ⇒ 那一格判 False（老的恒真写法会判 True）",
@@ -399,8 +399,8 @@ finally:
     shutil.rmtree(_tmp8, ignore_errors=True)
 
 print("\n── C7. 反馈「艾特它 它不会回复」：报告里要能看见「群里 @ 的是谁」（说明格，不误判）──")
-from agent import thought_trace as _ttJ                                      # noqa: E402
-from agent import prompt as _prJ                                             # noqa: E402
+from agent import thought_trace as _ttJ # noqa: E402
+from agent import prompt as _prJ # noqa: E402
 _keep_ttf = _ttJ.FILE
 _tmp7 = tempfile.mkdtemp(prefix="pm-vf7-")
 _ttJ.FILE = os.path.join(_tmp7, "thoughts.jsonl")
@@ -429,21 +429,21 @@ finally:
     _ttJ.FILE = _keep_ttf
     shutil.rmtree(_tmp7, ignore_errors=True)
 
-print("\n── C9. 第十轮 V-R10-8/10/39：说明格分档 · partial 同源 · 「读不到日志就不许给 ✅」全量性质锚 ──")
-ok("C9a 新入口「消息库读不到」在清单里（作者点名的反复症状终于有了专门入口）",
+print("\n── C9. /39：说明格分档 · partial 同源 · 「读不到日志就不许给 ✅」全量性质锚 ──")
+ok("C9a 新入口「消息库读不到」在清单里",
    "db_unreadable" in {x["id"] for x in V.catalog()}, str([x["id"] for x in V.catalog()]))
 _f_info = V._check("说明书格", None, "顺便告诉你一件事", info=True)
 _f_unk = V._check("真没测到格", None, "读不到")
 _r_info = V._finish("t9", "测试", "症状", True, "全绿口径", "", [V._check("甲", True, "过了"), _f_info])
 _r_unk = V._finish("t9b", "测试", "症状", True, "全绿口径", "", [V._check("甲", True, "过了"), _f_unk])
-ok("C9b **说明格不算「没测到」** ⇒ 报告头仍是 ✅（第十轮 V-R10-10：以前会恒 ◐、永不给 ✅）",
+ok("C9b **说明格不算「没测到」** ⇒ 报告头仍是 ✅",
    _sm.has(_r_info["report"], "✅ 通过") and _r_info.get("partial") is False, _r_info["report"][:60])
 ok("C9c 反例锚：同样的 None 但**不是说明格** ⇒ 头变 ◐（证明分档真的在起作用）",
    _sm.has(_r_unk["report"], "◐") and _r_unk.get("partial") is True, _r_unk["report"][:60])
 ok("C9d `partial` 与报告头**同源**（都来自同一次 _n_unk 计算）",
    (_r_unk.get("partial") is True) == _sm.has(_r_unk["report"], "◐")
    and (_r_info.get("partial") is False) == _sm.has(_r_info["report"], "✅ 通过"))
-# ⛔ V-R10-39：**性质锚** —— 对每一个检验器，"日志读不到"时**不许**给出 ✅（一次性覆盖剩下那几格）。
+# ⛔ **性质锚** —— 对每一个检验器，"日志读不到"时**不许**给出 ✅（一次性覆盖剩下那几格）。
 #   做法：把 `_tail2` 打成"永远返回 None 并记录被调用"。若某个检验器读了日志、拿不到内容，
 #   却在结果里给 `ok=True` 且 `partial=False`，就说明"读不到 ⇒ ✅"这条假绿又回来了。
 _calls = {"n": 0}
@@ -466,25 +466,25 @@ try:
             continue
         if _calls["n"] and _rr.get("ok") is True and not _rr.get("partial"):
             _liars.append(_item["id"])
-    ok("C9e **性质锚**：日志读不到时，任何检验器都不许给「✅ 通过」（V-R10-8 那两格的同类）",
+    ok("C9e **性质锚**：日志读不到时，任何检验器都不许给「✅ 通过」",
        not _liars, "仍然假绿的：" + "、".join(_liars))
 finally:
     V._tail2 = _saved_t2
 
-print("\n── C10. 第十轮 V-R10-39：三态契约那 4 格（账号 / 档位 / set_runtime_how / 配置错原因）补齐反例锚 ──")
+print("\n── C10. 三态契约那 4 格（账号 / 档位 / set_runtime_how / 配置错原因）补齐反例锚 ──")
 # 这四条是审计点名的"变异把『没测到 ⇒ None』改回『⇒ True』，判据照样全绿"：
 #   它们都属"证据缺失时必须认怂"这一族，各配一条锚。
 _saved_how = dict(getattr(V, "_RUNTIME_HOW", {}) or {})
 _saved_cfg = V._cfg
 try:
-    # ⛔ 2026-09-22：原来只靠 `set_runtime_how(None)` —— 而验证器在拿不到实例时会去调
-    #   `wechat_dir.status()`（不带 how）；作者本机**切了号**之后那一条真的能给出结论
+    # ⛔ 原来只靠 `set_runtime_how(None)` —— 而验证器在拿不到实例时会去调
+    # `wechat_dir.status()`（不带 how）；
     #   （读着旧号 / 另一个号在写）⇒ 这两条判据就变成"看真机当时状态"。⇒ 把 status 打桩，
     #   两条各自固定一种输入（C10a＝什么都读不到；C10b＝明确的"正在写的就是我"）。
     import agent.wechat_dir as _WDV
     _sv_status = _WDV.status
     _WDV.status = lambda how=None: {}
-    V.set_runtime_how(None)                                   # G407 / G405：没有运行中实例
+    V.set_runtime_how(None) # G407 / G405：没有运行中实例
     _c_acc = [c for c in V.run("no_reply")["checks"] if c["name"] == "读的是**正在用的那个微信号**"]
     ok("C10a（G405/G407）拿不到运行中实例 ⇒ 账号格**必须是 None（没测到）**，不许判 True",
        len(_c_acc) == 1 and _c_acc[0]["ok"] is None, str(_c_acc))
@@ -496,11 +496,11 @@ try:
        len(_c_acc2) == 1 and _c_acc2[0]["ok"] is True, str(_c_acc2))
 
     def _cfg_empty():
-        # 忠实模拟"配置读不到 ⇒ 内部回落到内置默认值"那条路（第十轮 G406/G408 就是在这条路上变异）：
+        # 忠实模拟"配置读不到 ⇒ 内部回落到内置默认值"那条路：
         # 返回空配置，同时把 `_CFG_ERR` 置上（真实现里由 `_cfg()` 自己设）。
         V._CFG_ERR = "夹具：配置读不到"
         return {}
-    V._cfg = _cfg_empty                                        # G406 / G408
+    V._cfg = _cfg_empty # G406 / G408
     try:
         _r_cfg = V.run("no_reply")
         _c_tier = [c for c in _r_cfg["checks"] if c["name"] == "回复档位不是『只回艾特』却指望它搭话"]
@@ -522,12 +522,12 @@ ok("C10e 接线：`webui` 的 `/api/verify` 每次把 `_db_how` + `_cap` 喂进�
    and "getattr(_wo" in open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
    or "getattr(_wo2" in open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read())
 
-print("\n── C12. 第十一轮 V-R11-4/6：`db_unreadable` 的「拿不到证据」与「整环消失」两档 ──")
+print("\n── C12. `db_unreadable` 的「拿不到证据」与「整环消失」两档 ──")
 # ⛔ 审计原话：这两档原来**没有夹具**（第④格只在"有 how / 没 how"两头被覆盖；`status()` 永远返回非空）
 #   ⇒ 第④格在多账号+无证据时给 ✅（detail 自己写着"拿不到写入证据"）、`status()` 返回空对象时**整环消失**。
 _saved_how12 = dict(getattr(V, "_RUNTIME_HOW", {}) or {})
 try:
-    from agent import wechat_dir as _wd12                              # noqa: E402
+    from agent import wechat_dir as _wd12 # noqa: E402
     _saved_status12 = _wd12.status
     V.set_runtime_how({"dir": r"D:\wxdata", "account": "wxid_a"}, {"messages": "ok"})
 
@@ -552,7 +552,7 @@ try:
     _c12c = _cell12(V.run("db_unreadable"), "读的是**正在写的那个号**")
     ok("C12c 阳性对照：**单账号**机器不需要写入证据 ⇒ 照旧判 True（别把正常路也判没测到）",
        len(_c12c) == 1 and _c12c[0]["ok"] is True, str(_c12c))
-    _wd12.status = lambda *a, **k: {}                     # 空对象（不抛异常）
+    _wd12.status = lambda *a, **k: {} # 空对象（不抛异常）
     _r12d = V.run("db_unreadable")
     _c12d = _cell12(_r12d, "读的是**实际在用**的数据目录")
     ok("C12d `status()` 返回**空对象** ⇒ 那一环**仍要有一格**（不许整环消失）且 = None",
@@ -561,7 +561,7 @@ try:
        bool(_c12d) and "空对象" in _c12d[0]["detail"], _c12d[0]["detail"][:100] if _c12d else "")
     # 反例锚：老写法（第④格 `True if (len(_ns) < 2 or _live is not False) else False` + 没有空对象分支）
     # ⚠️ 老写法本身**不能用 `True if X else False` 的形状写出来**（判据卫生 ⑥ 会把它当恒真伪装 ——
-    #    2026-09-22 实测就是这么红的）⇒ 拆成 if/return，语义一样。
+    # 就是这么红的）⇒ 拆成 if/return，语义一样。
     def _old_live12(_ns, _live):
         if len(_ns) < 2:
             return True
@@ -611,7 +611,7 @@ _bad = [x for x in ("send_text(", "send_image", "backend.click", "click_real", "
                     "bring_to_front", "SetCursorPos") if x in _V]
 ok("源码里没有会改变状态的调用（%s）" % (_bad or "无"), not _bad, str(_bad))
 
-# ⛔ 2026-09-20（网友 v0920-0824 的报告里「监听水位有记录」这一格被判 ✅，而明细写着
+# ⛔ （网友 v0920-0824 的报告里「监听水位有记录」这一格被判 ✅，而明细写着
 #   「水位条目 2 个，**最近：0**」）：只看"有没有条目"是太弱的判据 —— 水位停在 0 说明监听
 #   **从没读到过目标群的消息**，它比"最近有过一轮响应"更靠前，必须在这里就把卡点拦住，
 #   别让判决把用户指到后面那一格去。

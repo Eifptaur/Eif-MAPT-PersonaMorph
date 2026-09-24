@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""「没装微信就带他去装」判据（2026-09-13 用户要求）
+"""「没装微信就带他去装」判据
 
-用户原话：「Persona morph 加上一个功能：检测到用户没有微信时帮他安装，离线包就不需要了」
 口径（刻意的边界）：**只做只读检测 + 带他去官网 + 一键重测，不做静默安装**（静默装要下安装包 + UAC，
 且我们不该替用户动系统）。
 
@@ -42,7 +41,7 @@ seg = SRC[i:i + 6000] if i >= 0 else ""
 
 print("── A. 函数与三态映射 ──")
 ok("wechat_install_state 在位", i >= 0 and len(seg) > 1500, "片段 %d 字符" % len(seg))
-from agent.wechat import wechat_install_state, wechat_version_info  # noqa: E402
+from agent.wechat import wechat_install_state, wechat_version_info # noqa: E402
 
 r = wechat_install_state(proc_found=True, proc_path=r"C:\Program Files\Tencent\Weixin\Weixin.exe")
 ok("进程在跑 ⇒ running / action=none", r["state"] == "running" and r["action"] == "none" and r["installed"], str(r["state"]))
@@ -66,8 +65,8 @@ ok("installed_not_running 文案说清不用重装", "不用重装" in seg)
 
 print("── D. 接线（API + 控制台）──")
 WEB = open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8", errors="replace").read()
-from agent import console_html as _ch  # noqa: E402
-CH = _ch.HTML                          # 直接用"真正会被服务出去的页面字符串"，不是读源码文件
+from agent import console_html as _ch # noqa: E402
+CH = _ch.HTML # 直接用"真正会被服务出去的页面字符串"，不是读源码文件
 ok("/api/status 带 wechat_install", "wechat_install" in WEB)
 ok("/api/wechat/recheck 端点在位", "/api/wechat/recheck" in WEB)
 ok("控制台页面里有提示卡与两个按钮", all(k in CH for k in ("wxInstall", "wxOpenSite", "wxRecheck")), "HTML %d 字符" % len(CH))

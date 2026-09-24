@@ -4,7 +4,7 @@
 
 跑法： runtime\\python\\python.exe scripts\\send_retry_selftest.py   退出码 0=全过 / 1=有失败
 
-为什么（用户 2026-09-21 原话：「现在还是会影响用户体验的，**宁可不发也不发错，但用户本身是想发的**」
+为什么（
 ＋ 业界调研：TOCTOU 的正解是"让动作发生在已绑定的句柄上"，判不了的那条应进**失败可见的重试队列**
 而不是直接丢）：
 
@@ -31,7 +31,7 @@ try:
 except Exception:
     pass
 
-from agent import send_retry as SR                                             # noqa: E402
+from agent import send_retry as SR # noqa: E402
 
 PASS, FAIL = [], []
 
@@ -54,9 +54,9 @@ def main():
         ok("A1 发送层打的 `【可重试】` 前缀 ⇒ 收", SR.retryable("【可重试】会话头不匹配，拒绝投递（防发错会话）") is True)
         ok("A2 普通失败（内容为空 / 图源挂了）⇒ **不收**", SR.retryable("消息内容为空") is False
            and SR.retryable("图片下载失败：TimeoutError") is False)
-        # ⛔ 2026-09-21 修（第六轮 **V-R6-31**）：原来第一段是 `"会话" in "会话里没有…"`（两个字面量
+        # ⛔ 原来第一段是 `"会话" in "会话里没有…"`（两个字面量
         #   ⇒ 恒真）。改成**显式建模老做法**，这样它验的是"新老口径真的不同"，而不是一句常真话。
-        _old_guess = lambda _w: "会话" in _w            # noqa: E731  老做法：见「会话」就收（已废弃）
+        _old_guess = lambda _w: "会话" in _w # noqa: E731  老做法：见「会话」就收（已废弃）
         ok("A3 反例锚：老做法（按关键词猜）会把**不可重试**的也收进来",
            _old_guess("会话里没有这条消息（内容为空）") is True
            and SR.retryable("会话里没有这条消息（内容为空）") is False)
@@ -133,7 +133,7 @@ def main():
         _bad = SR.enqueue("group:E", "写不进去", "【可重试】原因", now=_T + 80)
         ok("F2 路径不可写时也不抛（`ok=True` + `saveError` 带原因）",
            _bad.get("ok") is True and isinstance(_bad.get("saveError"), str), _bad)
-        # ⛔ 2026-09-21 加（第六轮 **V-R6-16**）：三条"静默面"各一条断言
+        # ⛔ 三条"静默面"各一条断言
         SR.clear("判据重置")
         SR._cache = None
         for _i in range(SR.MAX_ITEMS + 3):
@@ -143,11 +143,11 @@ def main():
         SR.clear("判据重置")
         SR._cache = None
         SR.enqueue("group:P", "反复入队", "【可重试】原因", now=_T + 300)
-        SR.enqueue("group:P", "反复入队", "【可重试】原因", now=_T + 310)     # 反复入队不得把到点推走
+        SR.enqueue("group:P", "反复入队", "【可重试】原因", now=_T + 310) # 反复入队不得把到点推走
         ok("F4 反复入队**不重置到点时间**（防饥饿）",
            len(SR.due(now=_T + 300 + SR.BACKOFF[0] + 0.2)) == 1,
            str(len(SR.due(now=_T + 300 + SR.BACKOFF[0] + 0.2))))
-        # ⛔ 2026-09-21 加（第六轮 **V-R6-4/5**）：年龄闸提前 + 停机不是失败
+        # ⛔ 年龄闸提前 + 停机不是失败
         SR.clear("判据重置")
         SR._cache = None
         _e = SR.enqueue("group:Q", "隔夜那条", "【可重试】原因", now=_T + 400)
@@ -174,7 +174,7 @@ def main():
            _r_hold == "held" and SR.stats()["pending"] == 1, "%s pending=%d" % (_r_hold, SR.stats()["pending"]))
 
         # ── G. **接线**（跨模块）：工具层的失败真的会入队 ──────────────────────────────
-        # ⛔ 2026-09-21 加（第六轮 **V-R6-9**，这是本轮最贵的漏检）：原来的判据只测 `send_retry` 模块自己，
+        # ⛔ 原来的判据只测 `send_retry` 模块自己，
         #   **不 import `tools.py`** ⇒ 接线断掉（`str.get` on str ⇒ 异常被吞成 DEBUG）时判据照样全绿，
         #   而生产里"判不了就晚点补发"从来没生效过。这里用假 sender 造一条失败，断言真入了队。
         SR.clear("判据重置")

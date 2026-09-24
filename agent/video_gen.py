@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-"""AI 视频生成（用户 2026-09-15 提："能让模型自己选取工具并生成 AI 视频"）。
+"""AI 视频生成。
 
 形制**照抄 `agent/image_gen.py`**（那条链已经把"开关 → 触发条件 → 后端 → 出网闸 → 过滤链 →
 落盘 → 发送 → 只读快照 → 面板 → 引导"整套跑通了），VIDEO 版把"图"换成"短视频"，并按视频的
 特殊性多两条：**时长上限**与**异步生成**（视频要几十秒到几分钟，不能让聊天卡在那儿）。
 
-七条"相关事宜"的落点（用户点名要检查的）：
+七条"相关事宜"的落点：
   ① 后端选型——本模块不写死：支持"用户自填 HTTP 端点"（`generic`）与"本机自动发现"；
      真后端（本地 ComfyUI / 在线 API）由用户在控制台填，**默认不配 ⇒ 默认关**。
   ② 异步——`submit()` 起后台线程生成，工具**立刻**回"已在做"，做完再发；不阻塞对话。
@@ -31,9 +31,9 @@ import urllib.parse
 import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEFAULT_TIMEOUT = 300                      # 视频比图慢得多，默认给 5 分钟
-MAX_SECONDS = 30                          # 单条时长上限（秒）——超过就拒
-MAX_MB = 30.0                             # 单条体积上限
+DEFAULT_TIMEOUT = 300 # 视频比图慢得多，默认给 5 分钟
+MAX_SECONDS = 30 # 单条时长上限（秒）——超过就拒
+MAX_MB = 30.0 # 单条体积上限
 PROMPT_MAX = 500
 
 #: 红线（与生图同一套口径）：真人换脸这类不做
@@ -73,7 +73,6 @@ def _as_list(v) -> list:
 def backends() -> list:
     """把配置里的后端列表规范化成 dict：`{id, url, proto, timeout, workflow}`。
 
-    **不二择一**（用户 2026-09-15 原话："后端肯定是让用户自己选啊，我们给他提供最多的选项，
     要求就是这样的，不是非得二择一的"）⇒ 支持**一行一个、填多少个都行**，程序按顺序挨个试。
 
     写法（控制台里一行一个，逗号/换行分隔；`协议:` 前缀可省，省了就是 generic）：
@@ -151,7 +150,7 @@ def _save_bytes(data: bytes, tag: str) -> str:
 
 
 def _capped(resp, max_bytes: int, what: str) -> bytes:
-    """V-R9-26：带上限读响应体（拿不到 safe_fetch 就退回"读上限+1 再截断"，绝不 `read()` 一把梭）。"""
+    """带上限读响应体（拿不到 safe_fetch 就退回"读上限+1 再截断"，绝不 `read()` 一把梭）。"""
     try:
         from .safe_fetch import read_capped
         return read_capped(resp, max_bytes, what)
@@ -160,10 +159,10 @@ def _capped(resp, max_bytes: int, what: str) -> bytes:
 
 
 def _get(url: str, timeout: int, allow_private: bool = None) -> bytes:
-    """下载一段字节。V-R9-26：**带 64MB 上限**——单条视频按 `MAX_MB=30` 早就该被过滤链拒掉，
+    """下载一段字节。**带 64MB 上限**——单条视频按 `MAX_MB=30` 早就该被过滤链拒掉，
     64MB 只是"对面无限灌数据"时的兜底，正常业务碰不到。
 
-    V-R10-32：走 `safe_fetch.fetch_pinned_stream`（**一次解析、钉 IP**）。老写法是
+    走 `safe_fetch.fetch_pinned_stream`（**一次解析、钉 IP**）。老写法是
     `urllib.urlopen(url)` —— 连接时自己再解析一次域名，闸门校验的那次解析跟真正连接的那次
     可以不同（DNS rebinding 实测能落到环回）。
     `allow_private`：不给则按调用点判（本机 ComfyUI 的 `/view` 走本机，后端回链走公网口径）。
@@ -191,9 +190,9 @@ def _get(url: str, timeout: int, allow_private: bool = None) -> bytes:
 
 
 def _guard_reply_url(url: str, base_url: str = "") -> None:
-    """后端回包里的 url：下手前先过 `safe_fetch` 的**统一闸门**（V-R9-24 唯一入口）。
+    """后端回包里的 url：下手前先过 `safe_fetch` 的**统一闸门**。
 
-    V-R10-32：闸门只负责"这个地址可信吗"；**连接**必须用 `_get` 的钉 IP 传输
+    闸门只负责"这个地址可信吗"；**连接**必须用 `_get` 的钉 IP 传输
     （`guard_remote_url` 只回字符串，拿它配 `urllib.urlopen` 就是二次解析）。
     """
     from .safe_fetch import guard_remote_url
@@ -212,7 +211,7 @@ def _is_local_url(url: str) -> bool:
 def _same_origin(a: str, b: str) -> bool:
     """两个地址是不是**同一个源**（scheme + host + 端口，逐项相等）。
 
-    V-R10-34 用：后端回包里的下载地址只有与"用户自己配的那个后端"同源时，
+     用：后端回包里的下载地址只有与"用户自己配的那个后端"同源时，
     才允许它连私网（私网放行**不由回包里的地址**说了算）。
     """
     try:
@@ -319,10 +318,10 @@ def call_backend(backend: dict, prompt: str, seconds: int = 5):
                 u = j[k].strip()
                 break
         if u.startswith("http"):
-            # V-R9-24：这个地址是**后端回包**给的 ⇒ 二次 GET 之前先过 SSRF 闸门
+            # 这个地址是**后端回包**给的 ⇒ 二次 GET 之前先过 SSRF 闸门
             # （E 线实测：假后端把 `url` 指向 `127.0.0.1` ⇒ 产品真去打内网/环回）
-            # V-R10-32：过闸门不够——`_get` 现在整条走 `fetch_pinned_stream`（一次解析、钉 IP）。
-            # ⛔ 2026-09-21（V-R10-34 复核）：`allow_private` **不能一律 False** ——
+            # 过闸门不够——`_get` 现在整条走 `fetch_pinned_stream`（一次解析、钉 IP）。
+            # ⛔ `allow_private` **不能一律 False** ——
             #   用户配的本机后端（ComfyUI / 本地中转）回的下载地址**本来就在本机**，
             #   一律禁私网等于"本机后端这条链一个文件都收不回来"（判据 D② 当场变红）。
             #   正确口径＝**同源才放行私网**：只有当"用户自己配的那个后端"就是本机地址、
@@ -372,7 +371,7 @@ def probe_seconds(path: str):
         r = subprocess.run([exe, "-v", "error", "-show_entries", "format=duration",
                             "-of", "default=nw=1:nk=1", path],
                            capture_output=True, text=True, timeout=30,
-                           creationflags=0x08000000 if os.name == "nt" else 0)   # 不许闪控制台窗
+                           creationflags=0x08000000 if os.name == "nt" else 0) # 不许闪控制台窗
         return (float((r.stdout or "").strip()), "") if r.returncode == 0 else (None, "ffprobe rc=%s" % r.returncode)
     except Exception as e:
         return None, "ffprobe 跑不动：%s" % type(e).__name__
@@ -381,7 +380,7 @@ def probe_seconds(path: str):
 def _f_duration(path: str, meta: dict):
     sec, why = probe_seconds(path)
     if sec is None:
-        return True, why or "时长未验"          # 读不到时长**不当成不过**，但要如实写出来
+        return True, why or "时长未验" # 读不到时长**不当成不过**，但要如实写出来
     if sec > MAX_SECONDS + 0.5:
         return False, "时长 %.1fs 超过上限 %ds" % (sec, MAX_SECONDS)
     return True, "%.1fs" % sec
@@ -520,7 +519,7 @@ def generate(request_text: str, prompt: str = None):
             kept.append(f)
         else:
             try:
-                os.remove(f)                 # 不过就删掉，绝不留在盘上
+                os.remove(f) # 不过就删掉，绝不留在盘上
             except Exception:
                 pass
     if not kept:
@@ -530,7 +529,7 @@ def generate(request_text: str, prompt: str = None):
 
 # ── 异步：不让聊天卡住 ──────────────────────────────────────────────────────
 _LOCK = threading.Lock()
-_JOBS = {}                                  # job_id -> {state, files, why, started, prompt}
+_JOBS = {} # job_id -> {state, files, why, started, prompt}
 
 
 def submit(request_text: str, prompt: str = None) -> dict:

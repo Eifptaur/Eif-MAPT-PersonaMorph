@@ -30,7 +30,7 @@ def ck(name: str, cond: bool, extra: str = "") -> None:
 # ---------------------------------------------------------------- 1. 导入与语法
 
 def t_syntax() -> None:
-    import py_compile  # noqa: PLC0415
+    import py_compile # noqa: PLC0415
 
     for f in ("stylekit_qt.py", "widgets.py", "confirm.py", "heal.py", "shell.py", "agent_bridge.py",
               "panels_qt.py", "sec_meta.py"):
@@ -38,7 +38,7 @@ def t_syntax() -> None:
         try:
             py_compile.compile(str(p), doraise=True, cfile=str(HERE / "__pycache__" / (f + "c")))
             ck(f"{f} 语法通过", True)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e: # noqa: BLE001
             ck(f"{f} 语法通过", False, str(e)[:90])
 
 
@@ -49,7 +49,7 @@ def _nav_truth_from_web() -> list[tuple[str, str, list[tuple[str, str]]]]:
 
     这是「与 web 侧一致」的唯一权威来源。旧版判据把组名手抄在 selftest 里
     （want_groups = ["天天用", ...]），原型自己编一套比喻命名也能绿 —— 假对齐。
-    2026-09-23 改版：组名/组序/项名/项序/sec 锚点全部以 web 源码为准全等比对。
+    组名/组序/项名/项序/sec 锚点全部以 web 源码为准全等比对。
     """
     web_path = HERE.parents[0] / "agent" / "console_html.py"
     text = web_path.read_text(encoding="utf-8")
@@ -69,7 +69,7 @@ def _nav_truth_from_web() -> list[tuple[str, str, list[tuple[str, str]]]]:
 
 
 def t_nav() -> None:
-    from shell import NAV  # noqa: PLC0415
+    from shell import NAV # noqa: PLC0415
 
     src = (HERE / "shell.py").read_text(encoding="utf-8")
     wid = (HERE / "widgets.py").read_text(encoding="utf-8")
@@ -77,7 +77,7 @@ def t_nav() -> None:
     flat = [e[0] for _t, _k, es in NAV for e in es]
     ck("导航项数 = 27", len(flat) == 27, f"实际 {len(flat)}")
 
-    # ★ 真对齐（2026-09-23 改版）：以 web 源码解析结果为唯一真值，全等比对。
+    # ★ 真对齐：以 web 源码解析结果为唯一真值，全等比对。
     web = _nav_truth_from_web()
     mine = [(t, k, [e[0] for e in es], [e[2] for e in es]) for t, k, es in NAV]
     theirs = [(t, k, [lb for _s, lb in es], [s for s, _lb in es]) for t, k, es in web]
@@ -97,7 +97,7 @@ def t_nav() -> None:
     ck("sec 锚点与 web 侧一致", not bad_secs,
        "; ".join(f"{b[0]}: {b[1]} ≠ {b[2]}" for b in bad_secs))
 
-    # 「机器人」必须排在第 3 位 —— web 侧 ui_arch_selftest 有同一条硬断言（用户点名要放前面）
+    # 「机器人」必须排在第 3 位 —— web 侧 ui_arch_selftest 有同一条硬断言
     ck("「机器人」排在第 3 位（同 ui_arch 硬断言）", flat.index("机器人") + 1 == 3,
        f"实际第 {flat.index('机器人') + 1} 位")
     ck("首项是「概览」", flat[0] == "概览", flat[0])
@@ -129,7 +129,7 @@ def t_nav() -> None:
     ck("搜索三路匹配（名字/分组/说明）",
        "it.text() + \" \" + g.title" in src and "it.hint or" in src)
 
-    # ★ 导航图标（2026-09-23 用户观察："每个分区还有功能项都做了图标设计，预览图里没有"）
+    # ★ 导航图标
     #   判据一：icons.INNER 覆盖全部 27 个 sec 锚点（与 web 同一份 path 数据）
     ico_src = (HERE / "icons.py").read_text(encoding="utf-8")
     secs = [e[2] for _t, _k, es in NAV for e in es]
@@ -141,7 +141,7 @@ def t_nav() -> None:
     ck("组头折叠 chevron 已接线（不再用文字箭头）",
        "chevron_pixmap(" in wid and '"▾' not in wid and '"▸' not in wid)
 
-    # ★ 机器人主面板接真配置（丙-4）：原型硬编码值（群DeepSeek/开机自启摆设行）退役
+    # ★ 机器人主面板接真配置：原型硬编码值（群DeepSeek/开机自启摆设行）退役
     ck("机器人主面板四行接真键位（bot_nickname/self_nickname/context_tier/text_style）",
        all(k in src for k in (
            "wechat.bot_nickname", "persona.self_nickname",
@@ -158,7 +158,7 @@ def t_nav() -> None:
     ck("演示按钮 = 假装后台挂了（不用「模拟『服务死掉』」）",
        "假装后台挂了" in src and "模拟『服务死掉』" not in src)
 
-    # ★ 顶栏（2026-09-23 用户观察四条）
+    # ★ 顶栏
     ck("顶栏鲸鱼徽章用真图（assets/icon-whale.png）",
        "icon-whale.png" in wid and "class WhaleBadge" in wid)
     ck("顶栏主题/文案两轴都是滑槽分段切换器（Segmented）",
@@ -173,7 +173,7 @@ def t_nav() -> None:
 # ---------------------------------------------------------------- 3. 三套主题的差异是"结构级"的
 
 def t_themes() -> None:
-    from stylekit_qt import THEMES  # noqa: PLC0415
+    from stylekit_qt import THEMES # noqa: PLC0415
 
     ck("三套主题齐全", set(THEMES) == {"whale", "light", "dark"}, ",".join(THEMES))
     w, l, d = THEMES["whale"], THEMES["light"], THEMES["dark"]
@@ -199,7 +199,7 @@ def t_themes() -> None:
     # 字号/字距语气差异
     ck("dark 的字距比 light 更开（精密仪器感）", d.grp_spacing > l.grp_spacing,
        f"dark={d.grp_spacing} light={l.grp_spacing}")
-    # ⚠️ 判据改版（2026-09-23 总调度定夺）：
+    # ⚠️ 判据改版：
     # 旧判据 "dark 正文比 whale 小" 是原型自己发明的差异化，不是控制台事实。
     # 控制台 body{font:14px/1.6}(L443) 三主题共用，button{font:inherit}(L660) 继承它 ⇒ 三主题正文都是 14。
     # dark 的"精密仪器感"靠字距(grp_spacing)体现，不靠字号 —— 上面那条字距断言已经覆盖了这个语气差异。
@@ -212,7 +212,7 @@ def t_themes() -> None:
         for lvl in ("ok", "warn", "err", "info"):
             ck(f"{k} 有 {lvl} 状态色", bool(getattr(t, lvl, "")))
 
-    # ★ 危险按钮字色 err_tx（2026-09-23 用户观察："危险操作那里，黑色跟深色背景混在一起"）
+    # ★ 危险按钮字色 err_tx
     #   dark 上主 err(#E5484D) 当字色对比不足 ⇒ 必须有更亮的 err_tx 档（web --err-tx 口径）。
     no_tx = [k for k, t in THEMES.items() if not getattr(t, "err_tx", "")]
     ck("err_tx（危险字色亮档）三主题齐备", not no_tx, ",".join(no_tx))
@@ -229,21 +229,21 @@ def t_themes() -> None:
 # ---------------------------------------------------------------- 3.5 运行时渲染取证
 
 def t_runtime_render() -> None:
-    """渲染产物级断言 —— 源码级断言会骗人（2026-09-23 实锤两案）：
+    """渲染产物级断言 —— 源码级断言会骗人：
 
     · danger 按钮源码写了 err_tx，但 rgba() 返回的 QColor 对象插进 QSS
       f-string 变成垃圾值 → 整条规则解析失败 → 黑字沉底，源码断言照样绿；
     · whale tx2/tx3 是 rgba() 串，QtSvg 不认 → 整套导航图标"隐形"，同上。
     ⇒ 对这类缺陷，只有"摸渲染结果"的断言作数。
     """
-    import os  # noqa: PLC0415
+    import os # noqa: PLC0415
 
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PySide6.QtWidgets import QApplication  # noqa: PLC0415
+    from PySide6.QtWidgets import QApplication # noqa: PLC0415
 
-    from icons import INNER, svg_pixmap  # noqa: PLC0415
-    from stylekit_qt import THEMES  # noqa: PLC0415
-    from widgets import Btn, NavItem  # noqa: PLC0415
+    from icons import INNER, svg_pixmap # noqa: PLC0415
+    from stylekit_qt import THEMES # noqa: PLC0415
+    from widgets import Btn, NavItem # noqa: PLC0415
 
     QApplication.instance() or QApplication([])
 
@@ -281,14 +281,14 @@ def t_runtime_render() -> None:
 # ---------------------------------------------------------------- 3.7 双字体 + 坑⑥修复
 
 def t_fonts_rgba() -> None:
-    """2026-09-23 用户拍板的双字体（大字=朝華標題A / 小字=屏显臻宋）
+    """用户的双字体（大字=朝華標題A / 小字=屏显臻宋）
     + 坑⑥（QColor 不认 CSS rgba() 串）的修复断言 —— 「读取中」黑字的根。"""
-    from PySide6.QtGui import QColor  # noqa: PLC0415
-    from PySide6.QtWidgets import QApplication  # noqa: PLC0415
+    from PySide6.QtGui import QColor # noqa: PLC0415
+    from PySide6.QtWidgets import QApplication # noqa: PLC0415
 
-    from stylekit_qt import THEMES, _c, ensure_fonts, qfont, status_colors  # noqa: PLC0415
+    from stylekit_qt import THEMES, _c, ensure_fonts, qfont, status_colors # noqa: PLC0415
 
-    QApplication.instance() or QApplication([])  # 坑④同族：字体操作前必须有 app
+    QApplication.instance() or QApplication([]) # 坑④同族：字体操作前必须有 app
 
     d, b, e = ensure_fonts()
     ck("朝華標題A 注册成功（display 字体）", d == "ZhaohuaMinA", repr(d))
@@ -357,22 +357,22 @@ def t_usability() -> None:
 # ---------------------------------------------------------------- 4.5 面板组（日常/智能）
 
 def t_panels() -> None:
-    """丙-2 第 2 棒的纪律：9 张新面板真建出来、真接进切换、真跟鲸语。
+    """ 第 2 棒的纪律：9 张新面板真建出来、真接进切换、真跟鲸语。
 
     与 web 侧 ui_arch_selftest 同一条硬判据 —— 面板↔导航一一对应；
     并且对"源码级断言会骗人"的教训照单全收：这里全部**摸真实控件**。
     """
-    import os  # noqa: PLC0415
+    import os # noqa: PLC0415
 
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PySide6.QtCore import Qt  # noqa: PLC0415
-    from PySide6.QtWidgets import QApplication, QLabel  # noqa: PLC0415
+    from PySide6.QtCore import Qt # noqa: PLC0415
+    from PySide6.QtWidgets import QApplication, QLabel # noqa: PLC0415
 
-    from panels_custom import MANUAL  # noqa: PLC0415
-    from panels_qt import BATCH_SECS, build_panel  # noqa: PLC0415
-    from sec_meta import secs  # noqa: PLC0415
-    from shell import NAV, Shell  # noqa: PLC0415
-    from stylekit_qt import THEMES  # noqa: PLC0415
+    from panels_custom import MANUAL # noqa: PLC0415
+    from panels_qt import BATCH_SECS, build_panel # noqa: PLC0415
+    from sec_meta import secs # noqa: PLC0415
+    from shell import NAV, Shell # noqa: PLC0415
+    from stylekit_qt import THEMES # noqa: PLC0415
 
     QApplication.instance() or QApplication([])
 
@@ -395,13 +395,12 @@ def t_panels() -> None:
             empty.append(sec)
     ck("26 个 sec 都能构建出非空 QWidget（标题/行控件真实存在）", not empty, ",".join(empty))
 
-    # ★ 生成器零手抄：配置键只许来自 sec_meta 的运行时解析（交接件硬规矩）
     pq = (HERE / "panels_qt.py").read_text(encoding="utf-8")
     leaked = [k for k in ("owner_accounts", "bot_nickname", "context_tier",
                           "max_results", "consolidate_enabled", "holyshits_upload_url") if k in pq]
     ck("面板生成器零手抄配置键（元数据驱动，不手抄几百个配置项）", not leaked, ",".join(leaked))
 
-    # ② 切换：点导航真正换页，旧页不残留（丙-8 J：惰性构建口径）
+    # ② 切换：点导航真正换页，旧页不残留
     w = Shell(THEMES["light"])
     w.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
     w.show()
@@ -412,7 +411,7 @@ def t_panels() -> None:
        w._lazy == set(BATCH_SECS) - {"bot"}, str(sorted(w._lazy)[:4]) + "…")
     ck("bot 已入 _page_of 映射", w._page_of == {"bot": 0}, str(w._page_of))
     n_before = st.count()
-    w._go("overview", "概览")   # 首访：现场构建
+    w._go("overview", "概览") # 首访：现场构建
     QApplication.processEvents()
     ck("首访 sec 现场构建（页数 1 → 2）", st.count() == n_before + 1, str(st.count()))
     ck("已建 sec 出 _lazy 入 _page_of",
@@ -428,7 +427,7 @@ def t_panels() -> None:
     ck("导航点击真正换页（当前页变为目标页）",
        p2 is st.widget(w._page_of["model"]) and p2 is not p1)
     ck("旧页不残留（切换后旧页隐藏）", p1.isHidden())
-    for s in BATCH_SECS:   # 全量走一遍：27 页全部就位（一次性预建等价语义）
+    for s in BATCH_SECS: # 全量走一遍：27 页全部就位（一次性预建等价语义）
         w._go(s, s)
     QApplication.processEvents()
     ck("遍历全部 sec 后页栈页数 = 27（惰性预建闭环）",
@@ -449,15 +448,15 @@ def t_panels() -> None:
     w.close()
 
 
-# ---------------------------------------------------------------- 4.5 视觉本体（丙-4）
+# ---------------------------------------------------------------- 4.5 视觉本体
 
 def t_visual() -> None:
     """鲸落视觉本体：画卷（ocean1+tint+三层波浪）与鱼光标 —— 参数对齐 web 真值。"""
-    import ocean  # noqa: PLC0415
-    import cursor_fx  # noqa: PLC0415
+    import ocean # noqa: PLC0415
+    import cursor_fx # noqa: PLC0415
 
     # 模块级自检（参数真值 + 瓦片渲染 + 帧旋转）整批并入
-    # ⚠️ 丙-8 I：波浪动效已砍（用户拍板），OceanWaves/瓦片仅作为设计资产与
+    # ⚠️ I：波浪动效已砍，OceanWaves/瓦片仅作为设计资产与
     #    取证对象存在 —— 参数对齐断言保留，产品渲染路径不再经过它。
     for name, ok, extra in ocean._selftest():
         ck("ocean · " + name, ok, extra)
@@ -465,20 +464,20 @@ def t_visual() -> None:
         ck("cursor · " + name, ok, extra)
 
     # Shell 集成：whale 开画卷（静底图）、波浪永停、light 不启用
-    from shell import Shell  # noqa: PLC0415
-    from stylekit_qt import THEMES  # noqa: PLC0415
+    from shell import Shell # noqa: PLC0415
+    from stylekit_qt import THEMES # noqa: PLC0415
 
     w = Shell(THEMES["whale"])
     w.show()
     ck("画卷: whale 主题自动开启", w._backdrop_on is True)
     ck("画卷: 默认底图真实可读（ocean1.jpg）", w._wp_src is not None)
-    ck("波浪: 动效已砍——QTimer 永不转（丙-8 I 用户拍板）",
+    ck("波浪: 动效已砍——QTimer 永不转",
        not w._ocean.active, f"active={w._ocean.active}")
     ssrc = (HERE / "shell.py").read_text(encoding="utf-8")
     osrc = (HERE / "ocean.py").read_text(encoding="utf-8")
     ck("波浪: 产品路径全部硬关（refresh/show 都是 set_active(False)）",
-       "self._ocean.set_active(False)   # 波浪动效已砍" in ssrc
-       and "self._ocean.set_active(False)   # 丙-8 I" in ssrc)
+       "self._ocean.set_active(False) # 波浪动效已砍：任何主题都不再转" in ssrc
+       and "self._ocean.set_active(False) # 波浪动效已砍，show 也不再转" in ssrc)
     body = re.sub(r'""".*?"""', "",
                   osrc.split("def paint_backdrop")[1].split("def _selftest")[0],
                   flags=re.S)
@@ -500,15 +499,15 @@ def t_visual() -> None:
     w2.close()
 
 
-# ---------------------------------------------------------------- 4.6 状态链路（丙-5 #0）
+# ---------------------------------------------------------------- 4.6 状态链路
 
 def t_badges() -> None:
-    """丙-8 P0-A①⑤：面板徽章全量接线。
+    """ P0-A①⑤：面板徽章全量接线。
     旧病根：Badge 建出来后全文件无 set 调用 —— 用户永远看到「读取中」。
     现在 badge_for = web refreshBadges（console_html.py L3302-3427）的 Qt
     口径，同一份 /api/status 推导；Shell._poll_badges 8 秒分发。
     这里断言状态机核心分支 + 接线源码（端到端取证另有 _c8_badgeprobe.py）。"""
-    import panels_qt as pq  # noqa: PLC0415
+    import panels_qt as pq # noqa: PLC0415
 
     bf = pq.badge_for
     # ① 状态机（web refreshBadges 分支逐一对照；绝不编数：拿不到→idle）
@@ -565,7 +564,7 @@ def t_badges() -> None:
                                "/api/selfcheck", "/api/selfcheck-stop")))
     ck("体检页停止钮初始禁用（对齐 web selfCheckStop disabled）",
        'b_stop.setEnabled(False)' in csrc)
-    import re as _re  # noqa: PLC0415
+    import re as _re # noqa: PLC0415
     _gaps = _re.findall(r"hooks\s*=\s*\[[^\]]*\bNone\b[^\]]*\]", csrc)
     ck("按钮 hooks 无 None 残留（「点了没反应」缺口=0；移除的按钮已删）",
        not _gaps, "; ".join(g[:60] for g in _gaps)[:110])
@@ -584,11 +583,11 @@ def t_status_chain() -> None:
     """真机首跑「全界面状态不明」的根因钉死在这里：
     base 自带 ?token= 时，path 必须**落在 query 之前**（rstrip 直拼会把
     /api/status 塞进 query → 服务端 401）。含真 socket 全真跑。"""
-    import threading  # noqa: PLC0415
-    from http.server import BaseHTTPRequestHandler, HTTPServer  # noqa: PLC0415
+    import threading # noqa: PLC0415
+    from http.server import BaseHTTPRequestHandler, HTTPServer # noqa: PLC0415
 
-    from addr import join_url, resolve_base_url  # noqa: PLC0415
-    import heal as heal_mod  # noqa: PLC0415
+    from addr import join_url, resolve_base_url # noqa: PLC0415
+    import heal as heal_mod # noqa: PLC0415
 
     # ① join_url 本体
     j = join_url("http://127.0.0.1:3210/?token=abc", "/api/status")
@@ -621,7 +620,7 @@ def t_status_chain() -> None:
             self.end_headers()
             self.wfile.write(body)
 
-        def log_message(self, *a):  # 静音
+        def log_message(self, *a): # 静音
             pass
 
     srv = HTTPServer(("127.0.0.1", 0), _H)
@@ -644,16 +643,16 @@ def t_status_chain() -> None:
        ppos != -1 and (qpos == -1 or ppos < qpos), j3)
 
 
-# ---------------------------------------------------------------- 4.7 顶栏机器人控制（丙-5 #3）
+# ---------------------------------------------------------------- 4.7 顶栏机器人控制
 
 def t_bot_controls() -> None:
     """顶栏「重启」「停止」：走 agent_bridge.post_api（join_url 口径，agent/ 零改动）；
     停止不可反悔 → 打字门槛 + 后果如实；「响应被急退切断也算送达」用真 socket 钉死。"""
-    import socket as _sock  # noqa: PLC0415
-    import threading  # noqa: PLC0415
-    from http.server import BaseHTTPRequestHandler, HTTPServer  # noqa: PLC0415
+    import socket as _sock # noqa: PLC0415
+    import threading # noqa: PLC0415
+    from http.server import BaseHTTPRequestHandler, HTTPServer # noqa: PLC0415
 
-    import agent_bridge  # noqa: PLC0415
+    import agent_bridge # noqa: PLC0415
 
     ssrc = (HERE / "shell.py").read_text(encoding="utf-8")
     bsrc = (HERE / "agent_bridge.py").read_text(encoding="utf-8")
@@ -678,7 +677,7 @@ def t_bot_controls() -> None:
        "ConfirmDialog(" in rst and "result_ok" in rst)
     ck("停止动作过 ConfirmDialog 且等 result_ok",
        "ConfirmDialog(" in pst and "result_ok" in pst)
-    ck("停止无打字门槛（丙-8 D 用户拍板：一键确认）",
+    ck("停止无打字门槛",
        'typed_word' not in pst and '"确定停止"' in pst)
     ck("重启不是危险确认（动作可逆）", "dangerous=False" in rst)
     ck("停止是 danger 红钮", 'Btn("停止", self.t, "danger")' in ssrc)
@@ -689,7 +688,7 @@ def t_bot_controls() -> None:
     # ③ bridge 助手口径
     ck("post_api 存在且绕代理（ProxyHandler 空）",
        "def post_api(" in bsrc and "ProxyHandler({})" in bsrc)
-    ck("post_api 拼接走 join_url（丙-5 #0 口径）", "join_url(base or current_url(), api)" in bsrc)
+    ck("post_api 拼接走 join_url", "join_url(base or current_url(), api)" in bsrc)
     ck("post_api 容忍急退断连（RemoteDisconnected 一族）", "RemoteDisconnected" in bsrc)
 
     # ④ 真 socket A：正常 200 —— 且用带 token 的 base 验 path 落位（401 现场）
@@ -704,7 +703,7 @@ def t_bot_controls() -> None:
             self.end_headers()
             self.wfile.write(b"ok")
 
-        def log_message(self, *a):  # 静音
+        def log_message(self, *a): # 静音
             pass
 
     srv = HTTPServer(("127.0.0.1", 0), _H)
@@ -725,7 +724,7 @@ def t_bot_controls() -> None:
             self.send_header("Content-Length", "0")
             self.end_headers()
 
-        def log_message(self, *a):  # 静音
+        def log_message(self, *a): # 静音
             pass
 
     srv401 = HTTPServer(("127.0.0.1", 0), _H401)
@@ -750,7 +749,7 @@ def t_bot_controls() -> None:
             conn, _ = lst.accept()
             data = conn.recv(65536)
             got.append(bool(data) and data.startswith(b"POST /api/shutdown"))
-            conn.close()   # 不回一个字节 —— os._exit(0) 的形态
+            conn.close() # 不回一个字节 —— os._exit(0) 的形态
         except Exception:
             got.append(False)
 
@@ -773,7 +772,7 @@ def t_bot_controls() -> None:
     ck("拒绝连接 → 判失败并说明『没连上』", ok3 is False and "没连上" in note3, note3)
 
 
-# ---------------------------------------------------------------- 4.8 窗口壳：无边框/托盘/图标（丙-5 #5 #6）
+# ---------------------------------------------------------------- 4.8 窗口壳：无边框/托盘/图标
 
 def t_window_chrome() -> None:
     """无边框窗口（对齐微信）：拖拽/resize/贴边走 WM_NCHITTEST 原生；
@@ -789,22 +788,22 @@ def t_window_chrome() -> None:
     ck("四边四角热区（原生 resize）", all(k in ssrc for k in
        ('"topleft"', '"topright"', '"bottomleft"', '"bottomright"')))
     ck("最小化/最大化钮已接线", "showMinimized" in ssrc and "def _toggle_max" in ssrc)
-    ck("圆角窗口：Win11 DWM 属性（CORNER_PREFERENCE=33 + ROUND=2，丙-8 M）",
+    ck("圆角窗口：Win11 DWM 属性",
        "def _apply_round_corners" in ssrc
        and "DwmSetWindowAttribute" in ssrc
-       and "ctypes.c_int(2)" in ssrc          # DWMWCP_ROUND
+       and "ctypes.c_int(2)" in ssrc # DWMWCP_ROUND
        and "ctypes.c_void_p(hwnd), 33" in ssrc)
     ck("圆角窗口：Win10/非 Windows 优雅回退（try 包裹，不引 region 锯齿方案）",
-       "SetWindowRgn(" not in ssrc   # 只许 docstring 提及，不许真调用（带括号）
+       "SetWindowRgn(" not in ssrc # 只许 docstring 提及，不许真调用（带括号）
        and "方角即回退" in ssrc.split("def _apply_round_corners")[1])
     ck("圆角窗口：接进 showEvent（窗口句柄就绪后生效）",
        "self._apply_round_corners()" in ssrc.split("def showEvent")[1]
        .split("def ")[0])
 
     # ② 删叉号：顶栏不许出现关闭钮；关窗语义在「停止」+ 托盘
-    import re  # noqa: PLC0415
+    import re # noqa: PLC0415
     close_btn = re.findall(r'Btn\(\s*"[×✕✖Xx]"', ssrc)
-    ck("顶栏没有关闭叉钮（用户原话）", not close_btn, ",".join(close_btn))
+    ck("顶栏没有关闭叉钮", not close_btn, ",".join(close_btn))
     ck("停止钮存在（承担关停语义）", 'Btn("停止", self.t, "danger")' in ssrc)
 
     # ③ 关窗 ≠ 停机：closeEvent 拦截 → 托盘
@@ -829,7 +828,7 @@ def t_window_chrome() -> None:
     ck("页面栈显式透明加固", 'self.stack.setStyleSheet("background:transparent;")' in ssrc)
 
 
-# ---------------------------------------------------------------- 4.9 叠字/收起语义/动效（丙-5 #7 #8 #9）
+# ---------------------------------------------------------------- 4.9 叠字/收起语义/动效
 
 def t_dpi_motion() -> None:
     """#7 叠字根治 = 页面级滚动容器 + 行级 QFontMetrics 最小高；
@@ -854,12 +853,12 @@ def t_dpi_motion() -> None:
     ck("Segmented 高度自适应行高（不写死 28）", "fm_sel.height() + 12" in wsrc)
     ck("Segmented knob 高随容器（不写死 24）", "self.height() - 4" in wsrc)
 
-    # ③ #8 → 丙-8 E 收起语义：纯图标（不留首字）
+    # ③ #8 → E 收起语义：纯图标（不留首字）
     ck("双箭头自绘 SVG 存在（禁 emoji）", "CHEVS_R" in isrc and "CHEVS_L" in isrc
        and "def chevs_pixmap" in isrc)
     ck("收起态按钮只显示图标（清文字 +setIcon）",
        'self.btn_tight.setText("")' in ssrc and "self.btn_tight.setIcon(" in ssrc)
-    ck("组头窄栏整行隐藏（不留首字，丙-8 E）",
+    ck("组头窄栏整行隐藏",
        "def set_tight" in wsrc and "self.hd.setVisible(not tight)" in wsrc
        and "self.title[0]" not in wsrc)
     ck("导航项窄栏纯图标（清文字+图标放大 16→20）",
@@ -868,24 +867,22 @@ def t_dpi_motion() -> None:
     ck("窄栏行距加宽（间隔稍微变大）",
        "self.bl.setSpacing(4 if tight else 1)" in wsrc)
 
-    # ③b 丙-8 L：按钮按压态「一眼可辨」（底色压一档 + 描边同步加深 + 压字 1px）
+    # ③b L：按钮按压态「一眼可辨」（底色压一档 + 描边同步加深 + 压字 1px）
     ck("Btn pressed 底色往字色轴压一档（primary mix blue2→tx 0.22）",
        "QPushButton:pressed{" in wsrc
        and "bg_p = mix(t.q(\"blue2\"), t.q(\"tx\"), 0.22)" in wsrc
        and "press_border = mix(t.q(\"blue2\"), t.q(\"tx\"), 0.45)" in wsrc)
     ck("Btn pressed 三角色都有独立按压描边（ghost/primary/danger）",
-       wsrc.count("QPushButton:pressed{") >= 1          # Btn._qss 三角色共用模板
+       wsrc.count("QPushButton:pressed{") >= 1 # Btn._qss 三角色共用模板
        and "press_border = rgba(t.q(\"err\"), 170)" in wsrc
        and "press_border = mix(t.q(\"blue\"), t.q(\"tx\"), 0.30)" in wsrc)
     ck("Btn pressed 保留压字 1px（padding 上+1 下-1，QSS 无 transform 的等价物）",
        "padding-top:8px;padding-bottom:6px" in wsrc)
     ck("NavItem 非 active 按压加深（tx 14→26 两档）",
-       wsrc.count("QPushButton:pressed{") >= 3          # Btn + NavItem + Segmented×2
+       wsrc.count("QPushButton:pressed{") >= 3 # Btn + NavItem + Segmented×2
        and "rgba(t.q('tx'), 0 if t.glass else 26)" in wsrc)
     ck("Segmented 按压给色反馈（off→blue）",
        wsrc.count("QPushButton:pressed{{color:{t.blue};}}") >= 2)
-    ck("按压态像素取证探针在库（_c8_pressprobe.py）",
-       (HERE / "_c8_pressprobe.py").exists())
 
     # ④ #9 动效纪律
     ck("页面淡入 150ms", "setDuration(150)" in ssrc)
@@ -901,33 +898,33 @@ def t_dpi_motion() -> None:
        'page.setGraphicsEffect(None)' in ssrc)
 
 
-# ---------------------------------------------------------------- 丙-6 #11+#12：点头定因 + 滚轮模式
+# ---------------------------------------------------------------- #11+#12：点头定因 + 滚轮模式
 
 def t_wheel_nod() -> None:
-    """#11→丙-8 K NOD_MS 定因（默认 400ms + 帧 1.3x）；PM_CURSOR_NOD_DEBUG 定因开关（1500ms）；
+    """#11→ K NOD_MS 定因（默认 400ms + 帧 1.3x）；PM_CURSOR_NOD_DEBUG 定因开关（1500ms）；
     #12 PM_WHEEL 完整迁移：参数锁 web 真值、速度纯函数、中键直接进滚轮模式（不播转一圈）、
     五条件退出、光标 spin_to/restore 相位分帧、徽标不画第二条鱼。"""
     import os
 
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PySide6.QtWidgets import QApplication, QLabel, QWidget  # noqa: PLC0415
+    from PySide6.QtWidgets import QApplication, QLabel, QWidget # noqa: PLC0415
 
     QApplication.instance() or QApplication([])
 
-    # ① #11→丙-8 K 定因开关：默认 400（工单拍板顶满区间上限）+ 帧 1.3x，debug=1 → 1500
-    import cursor_fx  # noqa: PLC0415
+    # ① #11→ K 定因开关：默认 400+ 帧 1.3x，debug=1 → 1500
+    import cursor_fx # noqa: PLC0415
 
     old = os.environ.get("PM_CURSOR_NOD_DEBUG")
     try:
         os.environ.pop("PM_CURSOR_NOD_DEBUG", None)
-        ck("nod 默认 400ms（丙-8 K：320 仍无感 → 顶满 300-400 区间上限）",
+        ck("nod 默认 400ms",
            cursor_fx._nod_ms() == 400, str(cursor_fx._nod_ms()))
         os.environ["PM_CURSOR_NOD_DEBUG"] = "1"
         ck("nod 定因开关 PM_CURSOR_NOD_DEBUG=1 → 1500ms", cursor_fx._nod_ms() == 1500,
            str(cursor_fx._nod_ms()))
         os.environ["PM_CURSOR_NOD_DEBUG"] = "0"
         ck("nod 定因开关非 1 值不触发", cursor_fx._nod_ms() == 400)
-        ck("nod 歪头帧放大 1.3x（强调做足，工单规格 ≤1.3x）",
+        ck("nod 歪头帧放大 1.3x",
            cursor_fx.NOD_SCALE == 1.3 and "_to_nod_cursor" in
            (HERE / "cursor_fx.py").read_text(encoding="utf-8"))
     finally:
@@ -937,7 +934,7 @@ def t_wheel_nod() -> None:
             os.environ["PM_CURSOR_NOD_DEBUG"] = old
 
     # ② #12 参数锁 + 速度纯函数（pm_wheel 模块自检 13 条）
-    import pm_wheel  # noqa: PLC0415
+    import pm_wheel # noqa: PLC0415
 
     for name, ok, extra in pm_wheel._selftest():
         ck("wheel · " + name, ok, extra)
@@ -962,13 +959,13 @@ def t_wheel_nod() -> None:
        "getattr(w, \"on\", False)" in csrc and "w.stop()" in csrc)
 
     # ④ 行为级：进场即滚 + 二次中键退出 + fallback 目标
-    from stylekit_qt import WHALE  # noqa: PLC0415
-    from PySide6.QtWidgets import QScrollArea  # noqa: PLC0415
+    from stylekit_qt import WHALE # noqa: PLC0415
+    from PySide6.QtWidgets import QScrollArea # noqa: PLC0415
 
     wc = cursor_fx.WhaleCursor(HERE.parents[0])
     page = QScrollArea()
     inner = QWidget()
-    inner.setMinimumSize(200, 2000)              # 内容超一屏 ⇒ maximum>0 真可滚
+    inner.setMinimumSize(200, 2000) # 内容超一屏 ⇒ maximum>0 真可滚
     page.setWidget(inner)
     page.resize(200, 400)
     wm = pm_wheel.WheelMode(wc, WHALE, fallback=lambda: page)
@@ -979,7 +976,7 @@ def t_wheel_nod() -> None:
     ck("一 tick 即按 BASE 前进（一按就滚，不等鼠标动）",
        page.verticalScrollBar().value() >= 3,
        "value=%d" % page.verticalScrollBar().value())
-    wm.toggle(50, 50)                            # 再按中键 = 退出
+    wm.toggle(50, 50) # 再按中键 = 退出
     ck("二次中键退出滚轮模式", wm.on is False)
     ck("退出后滚动目标清空（不残留半滚）", wm._target is None)
     ck("退出光标 restore 回底图（不残留半帧）",
@@ -1004,23 +1001,23 @@ def t_wheel_nod() -> None:
     ck("Shell 接线注入 WheelMode", "self._cursor.wheel = WheelMode(" in ssrc_shell())
 
     wc.set(False, custom=False)
-    QLabel()  # 保持 import 不被裁
+    QLabel() # 保持 import 不被裁
 
 
 def ssrc_shell() -> str:
     return (HERE / "shell.py").read_text(encoding="utf-8")
 
 
-# ---------------------------------------------------------------- 丙-6 #13：更新公告条拆假接真
+# ---------------------------------------------------------------- #13：更新公告条拆假接真
 
 def t_updbar() -> None:
     """#13 假条拆除 + /api/update 四态机 + 三按钮真接线（join_url 口径）；
-    #14 胶囊 + 下滑 popover 形态（丙-7）。"""
-    from PySide6.QtWidgets import QApplication  # noqa: PLC0415
+    #14 胶囊 + 下滑 popover 形态。"""
+    from PySide6.QtWidgets import QApplication # noqa: PLC0415
 
     QApplication.instance() or QApplication([])
 
-    import updbar  # noqa: PLC0415
+    import updbar # noqa: PLC0415
 
     # ① 四态机纯函数（web L817-837 逐条对照）
     n, w = updbar.decide({"status": "pending", "pending": ["a.py", "b.py", "c.py", "d.py"]})
@@ -1044,7 +1041,7 @@ def t_updbar() -> None:
     ck("updbar: 快照写失败独立追加（主态隐藏也出）",
        "没能写进快照" in n and "盘满" in n and w is True, n[:50])
 
-    # ①.5 胶囊短文案纯函数（丙-7 #14：顶栏只留胶囊，无新版无异常不出现）
+    # ①.5 胶囊短文案纯函数
     p = updbar.pill({"status": "newer", "theirs": "9.9"})
     ck("pill: newer（真版本号）", p is not None and p[0] == "有新版本 9.9" and p[1] is False)
     p = updbar.pill({"status": "pending", "pending": ["x"]})
@@ -1060,7 +1057,7 @@ def t_updbar() -> None:
        p is not None and "快照" in p[0] and p[1] is True)
 
     # ② 行为级：apply_state 落地 + 胶囊/面板填充 + skip 仅 newer + 稍后会话抑制
-    from stylekit_qt import WHALE  # noqa: PLC0415
+    from stylekit_qt import WHALE # noqa: PLC0415
 
     bar = updbar.UpdateBar(WHALE)
     bar.apply_state({"status": "newer", "theirs": "9.9", "mine": "1.0",
@@ -1069,7 +1066,7 @@ def t_updbar() -> None:
     ck("updbar: 面板正文短版 + notes 逐条（明细不重复）",
        "9.9" in bar.detail.text() and "修 A" not in bar.detail.text()
        and "· 修 A" in bar.notes.text() and "· 修 B" in bar.notes.text())
-    ck("updbar: 不再提醒仅 newer 允许（V-R4-1）", bar.btn_skip.isEnabled() is True)
+    ck("updbar: 不再提醒仅 newer 允许", bar.btn_skip.isEnabled() is True)
     bar.apply_state({"status": "pending", "pending": ["x"]})
     ck("updbar: pending 时不再提醒被禁用", bar.btn_skip.isEnabled() is False)
     bar._on_later()
@@ -1083,11 +1080,10 @@ def t_updbar() -> None:
     bar._set_progress("正在下载 42%")
     ck("updbar: 进度双写（胶囊 + 面板同步）",
        bar.txt.text() == "正在下载 42%" and bar.prog.text() == "正在下载 42%"
-       and not bar.prog.isHidden())   # isHidden：显式隐藏标志（面板未 show 时 isVisible 恒 False）
-    # Popover 容器语义（工单 #14：220ms OutCubic 可打断；外点/Esc 收回由 Qt.Popup 白拿）
+       and not bar.prog.isHidden()) # isHidden：显式隐藏标志（面板未 show 时 isVisible 恒 False）
     psrc = (HERE / "popover.py").read_text(encoding="utf-8")
     ck("popover: Qt.Popup 旗标（点外/Esc 收回白拿）", "Qt.WindowType.Popup" in psrc)
-    ck("popover: 220ms OutCubic（工单规格）", "DUR_MS = 220" in psrc
+    ck("popover: 220ms OutCubic", "DUR_MS = 220" in psrc
        and "OutCubic" in psrc and "QPropertyAnimation" in psrc)
     ck("popover: 动画可打断（重入 stop 旧动画，不叠两层透明度）",
        ".stop()" in psrc and "_op_anim" in psrc)
@@ -1109,31 +1105,31 @@ def t_updbar() -> None:
     ck("updbar: 确认弹窗明说数据不动（可取消不破坏后台）",
        "ConfirmDialog" in usrc and "dangerous=False" in usrc and "not d.result_ok" in usrc)
     bsrc2 = (HERE / "agent_bridge.py").read_text(encoding="utf-8")
-    ck("updbar: post_json 走 join_url 口径（丙-5 #0 教训，不手拼 base+path）",
+    ck("updbar: post_json 走 join_url 口径",
        "def post_json" in bsrc2 and "join_url(base or current_url(), api)" in bsrc2)
 
 
-# ---------------------------------------------------------------- 丙-7 #14+#15：外观图标收纳
+# ---------------------------------------------------------------- #14+#15：外观图标收纳
 
 def t_pop_look() -> None:
     """#15 外观切换图标 + popover 收纳（文案/主题两轴搬出顶栏）。"""
-    from PySide6.QtWidgets import QApplication  # noqa: PLC0415
+    from PySide6.QtWidgets import QApplication # noqa: PLC0415
 
     QApplication.instance() or QApplication([])
 
-    import icons  # noqa: PLC0415
+    import icons # noqa: PLC0415
 
     # ① 新图标：三条横向调节滑杆 + 圆点钮（中条偏右 = 经典「调节」语义）
     ap = icons.APPEARANCE
     ck("icons: APPEARANCE 三条横滑杆 + 三圆点",
        ap.count("M2.4") == 3 and ap.count("<circle") == 3 and 'cx="10.6"' in ap)
     ck("icons: 中条圆点偏右（调节语义）", 'cx="10.6" cy="8"' in ap)
-    ck("icons: 圆头描边 2.0（丙-8 F 提亮；20px 档 ≈2.5px 物理）",
+    ck("icons: 圆头描边 2.0",
        'stroke-width="2.0"' in ap and 'stroke-linecap="round"' in ap)
     pm = icons.appearance_pixmap("#65676B", 20)
-    ck("icons: 20px 渲染非空", not pm.isNull() and pm.width() == 40)   # dpr=2
+    ck("icons: 20px 渲染非空", not pm.isNull() and pm.width() == 40) # dpr=2
 
-    # ①b 丙-8 F：顶栏外观图标用全亮字色（tx2 太灰看不清，用户原话）
+    # ①b F：顶栏外观图标用全亮字色
     ck("icons: 外观图标色调=tx（与最小化/全屏同亮档）",
        "appearance_pixmap(self.t.tx, 20)" in (HERE / "shell.py").read_text(encoding="utf-8"))
 
@@ -1151,13 +1147,13 @@ def t_pop_look() -> None:
        and 'self.theme_seg.changed.connect(self._switch_theme)' in ssrc)
 
 
-# ---------------------------------------------------------------- 丙-7 #16+#17：暂停回归 + 窗口按钮重绘
+# ---------------------------------------------------------------- #16+#17：暂停回归 + 窗口按钮重绘
 
 def t_pause_win() -> None:
     """#16 暂停/恢复（web 真值 L755/L4180/L5714 全语义）+ #17 窗口控制重绘。"""
     ssrc = ssrc_shell()
 
-    # ① 暂停按钮归位（web pauseBtn 一直在顶栏，丙-3~6 漏了）
+    # ① 暂停按钮归位
     ck("pause: 按钮在顶栏（ghost 档，暂停≠停止不需要危险确认）",
        'self.btn_pause = Btn("暂停", self.t, "ghost")' in ssrc)
     ck("pause: 顺序 = 状态徽章 → 暂停 → 重启 → 停止（用户目标形态）",
@@ -1172,7 +1168,7 @@ def t_pause_win() -> None:
     ck("pause: busy 防重入 + 「暂停中…/恢复中…」",
        "self._pause_busy = True" in ssrc and "恢复中…" in ssrc and "暂停中…" in ssrc)
 
-    # ③ API 链路 + 恢复补刀（V-R10-24 两把钥匙一起清）
+    # ③ API 链路 + 恢复补刀
     ck("pause: POST /api/pause 与 /api/resume 二选一",
        '"/api/pause" if want else "/api/resume"' in ssrc)
     ck("pause: 恢复路径补刀 /api/risk recover（web L5719-5721 同款）",
@@ -1195,7 +1191,7 @@ def t_pause_win() -> None:
     wsrc = (HERE / "widgets.py").read_text(encoding="utf-8")
     ck("win: IconBtn 自绘（QAbstractButton 基类 + paintEvent）",
        "class IconBtn(QAbstractButton)" in wsrc and "def paintEvent" in wsrc)
-    ck("win: 笔画 2px 圆头（工单规格）",
+    ck("win: 笔画 2px 圆头",
        "setWidthF(2.0)" in wsrc and "RoundCap" in wsrc)
     ck("win: hover 浅底圆角 + token 化（tx2 常态 / tx hover）",
        'rgba(self.t.q("tx"), 16)' in wsrc
@@ -1225,22 +1221,22 @@ def t_no_touch() -> None:
     ck("PySide6 没被塞进 offline/wheels（不进打包）", not has_pyside)
 
 
-# ---------------------------------------------------------------- 6. 自举收口：32 位判别（丙-8 补单）
+# ---------------------------------------------------------------- 6. 自举收口：32 位判别
 
 def t_bootstrap32() -> None:
     """qt_bootstrap._selftest 全量收录（真跑，不 mock 网络）。
 
     核心：32 位 Python 在任何 pip 动作之前被拒（PySide6 wheel 只有 win_amd64，
-    丙-8 兼容性审计第③项实锤）—— 判据 struct.calcsize("P")==4（指针字节数）。
+     兼容性审计第③项实锤）—— 判据 struct.calcsize("P")==4（指针字节数）。
     """
     root = HERE.parents[0]
     sys.path.insert(0, str(root))
     try:
-        import qt_bootstrap  # noqa: PLC0415
+        import qt_bootstrap # noqa: PLC0415
 
         for name, ok, extra in qt_bootstrap._selftest():
             ck(f"bootstrap: {name}", ok, extra[:90])
-    except Exception as e:  # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         ck("bootstrap 自检可执行", False,
            "【本段未跑完，其后断言全部未执行】" + f"{type(e).__name__}: {e}"[:110])
     finally:
@@ -1250,7 +1246,7 @@ def t_bootstrap32() -> None:
 # ---------------------------------------------------------------- 主
 
 def t_ocr9() -> None:
-    """丙-9 A 批（agent/chat_ocr）：双引擎封装 / 时间戳容错 / 预处理管线。
+    """ A 批（agent/chat_ocr）：双引擎封装 / 时间戳容错 / 预处理管线。
 
     纪律：只真跑**纯函数**（错字映射、编辑距离、行匹配、PIL 合成图管线），
     绝不碰 `_rapid_engine()` / `_rapid_bootstrap()` —— 那会在 RapidOCR 缺席时
@@ -1258,16 +1254,15 @@ def t_ocr9() -> None:
 
     ⛔ ADV-5（静默吞断言）：依赖导入一律提到 try **外面**。PIL 写进 try 里时，
     缺依赖会抛 ModuleNotFoundError 被 `except` 吞成一条 fail，**其后 15 条 `ck()`
-    整段不执行**（历史事故：托管解释器 423/1 vs 产品运行时 438/0，差额 15 全是
     被吞的断言），结论行看起来「只是少一条」而实际是「一大段没跑」= 伪装通过。
     提到外面 ⇒ 缺依赖**立刻硬失败**（tk 起不来、进程非 0 退出），不再伪装。
     """
-    from PIL import Image  # noqa: PLC0415  # ADV-5：必须在 try 之外，缺依赖要硬失败
+    from PIL import Image # noqa: PLC0415  # ADV-5：必须在 try 之外，缺依赖要硬失败
 
     root = HERE.parents[0]
     sys.path.insert(0, str(root))
     try:
-        import agent.chat_ocr as co  # noqa: PLC0415
+        import agent.chat_ocr as co # noqa: PLC0415
 
         src = (root / "agent" / "chat_ocr.py").read_text(encoding="utf-8")
 
@@ -1316,7 +1311,7 @@ def t_ocr9() -> None:
         ck("ocr: 管线真跑输出纯黑白", set(c[1] for c in bw.convert("L").getcolors()) <= {0, 255})
         ck("ocr: Otsu 阈值在合理区间", 40 <= co._otsu_thresh(gimg.convert("L")) <= 220)
 
-        # C 批：发送链去冗余（agent/wechat.py 丙-9 C1/C2，源码形态断言）
+        # C 批：发送链去冗余
         src_w = (root / "agent" / "wechat.py").read_text(encoding="utf-8")
 
         def wbody(name: str) -> str:
@@ -1339,7 +1334,7 @@ def t_ocr9() -> None:
         ck("ocr9C: 底线——no_ref 四档链与 mismatch 强档放行原样保留",
            "四档证据也都给不出" in sp and "强档证据成立" in sp)
 
-        # D2 批：真鼠标兜底——默认关未变 + 引导四件落位（丙-9 D2）
+        # D2 批：真鼠标兜底——默认关未变 + 引导四件落位
         import json as _json
 
         _cfgex = _json.loads((root / "config.example.json").read_text(encoding="utf-8"))
@@ -1356,22 +1351,22 @@ def t_ocr9() -> None:
         ck("ocr9D: 使用说明有「消息发不出去」自查小节", "消息发不出去" in _rd and "真鼠标兜底" in _rd)
         ck("ocr9D: config.py 默认值 false 未变",
            '"allow_real_fallback": False' in (root / "agent" / "config.py").read_text(encoding="utf-8"))
-    except Exception as e:  # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         ck("ocr9 自检可执行", False,
            "【本段未跑完，其后断言全部未执行】" + f"{type(e).__name__}: {e}"[:110])
     finally:
         sys.path.remove(str(root))
 
 
-# ---------------------------------------------------------------- 7. 真机第六批（丙-10）
+# ---------------------------------------------------------------- 7. 真机
 
 def t_c10() -> None:
-    """丙-10 真机第六批：五条 P0 + P1 的**可断言的形态**钉在这里。
+    """ 真机五条 P0 + P1 的**可断言的形态**钉在这里。
 
     真机证据（窗口拖动/波纹实拍）另有取证脚本 —— 自检只钉「代码形态与模块
     解耦」这类不依赖屏幕的东西，绝不冒充真机验收。
     """
-    import os  # noqa: PLC0415
+    import os # noqa: PLC0415
 
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -1399,7 +1394,7 @@ def t_c10() -> None:
 
     # ── P0-4：真机两个致命根因都钉住（offscreen 单测测不到，必须源码级防回归）
     #   ⚠️ 只在**代码行**上判（剥掉注释）——我特意把错误写法也写在注释里做说明，
-    #      直接对全文断言会「打脸自己」（丙-9 教训）。
+    # 直接对全文断言会「打脸自己」。
     nat = _body(ssrc, "nativeEvent")
     _nat_code = "\n".join(ln for ln in nat.splitlines() if not ln.strip().startswith("#"))
     ck("c10P4: QCursor 从 QtGui 导入（原来错写 QtCore → 真机每次 ImportError）",
@@ -1410,7 +1405,7 @@ def t_c10() -> None:
     ck("c10P4: _hit_test 明示返回 _HT 键名（调用方按键取值）",
        "返回 _HT 键名" in _body(ssrc, "_hit_test"))
     # 右缘滚动条例外：整条右缘豁免会让 right/bottomright 死区（team-lead 扫描 6/8）
-    # 返工第二轮：滚动条纵向覆盖整个内容区（高 660），按 childAt 判仍把热区吞掉 ⇒
+    # 返工滚动条纵向覆盖整个内容区（高 660），按 childAt 判仍把热区吞掉 ⇒
     # 改为「滚动条只让出自己那 6px 本体 + 右缘热区向左加宽 + 角点优先」。
     ht = _body(ssrc, "_hit_test")
     ck("c10P4: 右缘用 _sb_x_left() 几何反查滚动条（不用 childAt —— 它只在滚动条本体那 6px 才返回滚动条）",
@@ -1441,16 +1436,16 @@ def t_c10() -> None:
        "and r.cfg" in _body(lsrc, "_row"))
 
     # 真跑 P0-4：直调 _hit_test 验「右缘中段能缩放」+「滚动条本体留滚动」两立
-    # （返工第二轮，team-lead 亲验 6/8 后重做；零注入，读生产对象几何）
+    # 
     def _c10p4_real() -> tuple:
-        import os as _os  # noqa: PLC0415
+        import os as _os # noqa: PLC0415
 
         _os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-        from PySide6.QtCore import QPoint, Qt  # noqa: PLC0415
-        from PySide6.QtWidgets import QApplication, QScrollBar  # noqa: PLC0415
+        from PySide6.QtCore import QPoint, Qt # noqa: PLC0415
+        from PySide6.QtWidgets import QApplication, QScrollBar # noqa: PLC0415
 
-        from shell import Shell  # noqa: PLC0415
-        from stylekit_qt import THEMES, ensure_fonts  # noqa: PLC0415
+        from shell import Shell # noqa: PLC0415
+        from stylekit_qt import THEMES, ensure_fonts # noqa: PLC0415
 
         app = QApplication.instance() or QApplication([])
         ensure_fonts()
@@ -1495,7 +1490,7 @@ def t_c10() -> None:
        f"sb_left={_p4['_sb_left']} body={_p4['滚动条本体']} max={_p4['_sb_max']}")
 
     # 真跑：三类 web 样本块 → 解析出正确 kind（不靠读源码）
-    import sec_meta  # noqa: PLC0415
+    import sec_meta # noqa: PLC0415
 
     r_btn = sec_meta._parse_row(
         '<div class="row-btns"><button id="btnGo">开始</button>'
@@ -1544,17 +1539,17 @@ def t_c10() -> None:
     # 两个实锤 bug 的形态防回归（_c10_wave_diag / _c10_verify2 取证）
     ck("c10P5: _last_move_t 初值取当前时刻（0.0 会让首次 dt 巨大→能量恒锁地板）",
        "self._last_move_t = time.monotonic()" in wsrc)
-    ck("c10P5(丙-25): 相位用绝对时间驱动（epoch 起、%1.0 环形推进——位移扭曲的时间轴）",
+    ck("c10P5: 相位用绝对时间驱动（epoch 起、%1.0 环形推进——位移扭曲的时间轴）",
        "(time.monotonic() - self._epoch)" in wsrc and "% 1.0" in wsrc)
     # 位移版没有「shimmer/环半径」概念（那是画圆环时代的）——对应护栏换成了这两条：
-    ck("c10P5(丙-25): 位移 mask 幅度恒夹 [0,1]（np.clip）且带 0.35 底噪（空白处也有可见起伏）",
+    ck("c10P5: 位移 mask 幅度恒夹 [0,1]（np.clip）且带 0.35 底噪（空白处也有可见起伏）",
        "np.clip(a, 0.0, 1.0)" in wsrc and "(1.0 - r) ** falloff * 0.35" in wsrc)
     # 能量归一不再借 max_gain 当分母（那会让 667px/s 就饱和 ⇒ 慢手/快手无差别）
     ck("c10P5: energy 归一用参考速度 _V_REF（不是 max_gain 当分母→不再恒满档）",
        "_V_REF = 400.0" in wsrc and "self._speed_ema / _V_REF" in wsrc)
     ck("c10P5: 速度过 EMA 平滑（对齐 web _mouseSpeed*0.7+v*0.3）",
        "_EMA_KEEP = 0.7" in wsrc and "self._speed_ema * _EMA_KEEP" in wsrc)
-    ck("c10P5(丙-25): 位移版无环半径概念——性能护栏是缩采 _PROC_SCALE=0.5（全窗位移会掉帧，实测 0.5x 稳 30fps）",
+    ck("c10P5: 位移版无环半径概念——性能护栏是缩采 _PROC_SCALE=0.5（全窗位移会掉帧，实测 0.5x 稳 30fps）",
        "_PROC_SCALE = 0.5" in wsrc)
     # 解耦硬判据看**代码**（剥掉 docstring）——docstring 里提 OceanWaves 是解释性说明，
     #  "提到过" ≠ "依赖它"；真依赖会出现 `import ocean` / `OceanWaves(` 调用。
@@ -1575,12 +1570,12 @@ def t_c10() -> None:
     ck("c10P5: 参数即时生效（_watch_config 调 refresh_from_config）",
        "refresh_from_config()" in ssrc)
     # 真跑：开关只动自己，背景海浪（_ocean）与波纹互不牵连
-    from PySide6.QtCore import QPointF, Qt  # noqa: PLC0415
-    from PySide6.QtWidgets import QApplication  # noqa: PLC0415
+    from PySide6.QtCore import QPointF, Qt # noqa: PLC0415
+    from PySide6.QtWidgets import QApplication # noqa: PLC0415
 
     QApplication.instance() or QApplication([])
-    from shell import Shell  # noqa: PLC0415
-    from stylekit_qt import THEMES  # noqa: PLC0415
+    from shell import Shell # noqa: PLC0415
+    from stylekit_qt import THEMES # noqa: PLC0415
 
     w = Shell(THEMES["whale"])
     w.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
@@ -1599,17 +1594,17 @@ def t_c10() -> None:
        (round(w._wavefx._pos.x()), round(w._wavefx._pos.y())) == (120, 90),
        f"{w._wavefx._pos.x()},{w._wavefx._pos.y()}")
     # 能量必须**响应速度**（原 bug：恒被地板锁 0.25，快慢一个样）
-    import time as _tm  # noqa: PLC0415
+    import time as _tm # noqa: PLC0415
 
     _tm.sleep(0.05)
-    w._wavefx.on_mouse_move(QPointF(420, 90))   # 一次大步（≈6000px/s）
+    w._wavefx.on_mouse_move(QPointF(420, 90)) # 一次大步（≈6000px/s）
     e_fast = w._wavefx._energy
     ck("c10P5: 快速移动能量真上去（不再恒锁地板 0.25）", e_fast > 0.5, f"energy={e_fast:.3f}")
     # 相位由绝对时间驱动 → 位移核心真跑：真实 QImage 进 _displace_region，产出**同尺寸**
-    # 全分辨率扭曲图（丙-33：噪声 0.5x 生成但采样/合成全分辨率——m==0 处逐像素真原图）。
-    # （丙-25：绘制已改走 QGraphicsEffect.draw，paint() 不再画环——旧 max_alpha 采样断言随之改写。）
-    from PySide6.QtCore import QRect  # noqa: PLC0415
-    from PySide6.QtGui import QImage  # noqa: PLC0415
+    # 全分辨率扭曲图。
+    # （绘制已改走 QGraphicsEffect.draw，paint() 不再画环——旧 max_alpha 采样断言随之改写。）
+    from PySide6.QtCore import QRect # noqa: PLC0415
+    from PySide6.QtGui import QImage # noqa: PLC0415
 
     _src_img = QImage(200, 160, QImage.Format.Format_RGBA8888)
     _src_img.fill(Qt.GlobalColor.darkGray)
@@ -1619,10 +1614,10 @@ def t_c10() -> None:
         _src_img, _rect, w._wavefx._pos,
         w._wavefx._norm_radius(w._wavefx._pos, _rect),
         w._wavefx._mask_phase())
-    ck("c10P5(丙-25→33): 位移核心真跑产出扭曲图（与入图同尺寸、非空——全分辨率合成）",
+    ck("c10P5: 位移核心真跑产出扭曲图（与入图同尺寸、非空——全分辨率合成）",
        _out is not None and _out.width() == 200 and _out.height() == 160,
        f"out={None if _out is None else (_out.width(), _out.height())}")
-    # ── 丙-31：波纹「一点动静都没有」三连根因的形态防回归（_c31_waveprobe2 像素实锤
+    # ── 波纹「一点动静都没有」三连根因的形态防回归（_c31_waveprobe2 像素实锤
     #    diff_lens=39.6万/相位间 4.4万 ⇒ 修后真可见。任一断言复发 = 回到零视觉）
     ck("c31: paintEvent 内禁 .grab(（paint 期间抓父窗=重入；且 grab 产 QPixmap 混进 "
       "QImage 链路 convertToFormat/bits 每帧 AttributeError 被吞 ⇒ 零视觉）",
@@ -1630,20 +1625,19 @@ def t_c10() -> None:
     ck("c31: paintEvent 消费 _src_img（抓源在 _tick 事件循环态 render 进 QImage）",
        "wf._src_img" in _body(wsrc, "paintEvent") and "_grab_src()" in _body(wsrc, "_tick")
        and "def _grab_src(" in wsrc)
-    ck("c31: sync_overlay 已定义且被 shell.resizeEvent 调（丙-30 忘写 ⇒ AttributeError "
-      "被吞 ⇒ overlay 几何只对创建那一刻）",
+    ck("c31: sync_overlay 已定义且被 shell.resizeEvent 调（漏接线 ⇒ overlay 几何停在创建那一刻）",
        "def sync_overlay(" in wsrc and "sync_overlay()" in _body(ssrc, "resizeEvent"))
     ck("c31: 透镜命中走 _hit_deep（排除 overlay 自身；childAt 恒返全窗 overlay ⇒ "
       "_blank_mode 恒 False、透镜恒全窗）",
        "def _hit_deep(" in wsrc and "_hit_deep(" in _body(wsrc, "_blank_mode")
        and "_hit_deep(" in _body(wsrc, "_lens_rect"))
-    # ── 丙-31：侧栏状态框 1:1 复刻（web .side .status，console_html.py L517-519/L929）
+    # ── 侧栏状态框 1:1 复刻（web .side .status，console_html.py L517-519/L929）
     ck("c31: 状态框描边用 blue_line token（web --blue-line；此前拿 blue 当边框⇒一圈亮蓝）",
        "self.t.blue_line" in _body(ssrc, "_build_side"))
-    ck("c31: 状态正文恒 tx2 灰（web .status p 不上色；ok/warn 换色=作者批的「绿字太丑」）",
+    ck("c31: 状态正文恒 tx2 灰",
        "color:{self.t.tx2}" in _body(ssrc, "_apply_side_status")
        and "self.t.ok if" not in _body(ssrc, "_apply_side_status"))
-    # ── 丙-32：波纹「顶栏右段无特效 + 方形分界线」二连根因防回归（作者红线截图取证）
+    # ── 波纹「顶栏右段无特效 + 方形分界线」二连根因防回归
     ck("c32: 模块矩形=确定性爬树（卡片优先→shell 直接子兜底；旧「关键词+尺寸」启发式"
       "让顶栏内 wrapper 截胡透镜 ⇒ 连接徽章左沿以右整条没特效）",
        "big_enough" not in _body(wsrc, "_module_rect_of")
@@ -1657,9 +1651,9 @@ def t_c10() -> None:
     ck("c32: mask 与原图按 web maskImage 语义合成（m==0 处逐像素原图——缩采回拉的"
       "重采样差异沿 rect 边一圈「方形接缝」的根因）",
        "a16 * (255 - mf)" in _body(wsrc, "_displace_region"))
-    ck("c32: 侧栏状态框左右各缩 10px（作者：顶着导航栏左右过犹不及）",
+    ck("c32: 侧栏状态框左右各缩 10px",
        "swl.setContentsMargins(10, 0, 10, 0)" in _body(ssrc, "_build_side"))
-    # ── 丙-33：波纹观感对齐 web 真值（作者：「细刮痕偏光透镜」→ 要「滚水沸腾冒泡翻滚」）──
+    # ── 波纹观感对齐 web 真值──
     ck("c33: 噪声=fractalNoise 等价的平滑 value noise（格点 seed 固定+smoothstep 插值；"
       "旧 3 八度 sin/cos+逐帧 min/max 归一化 ⇒ 近均匀随机 ⇒ 细碎刮痕）",
        "def _fractal_noise(" in wsrc and "RandomState" in _body(wsrc, "_fractal_noise")
@@ -1694,9 +1688,9 @@ def t_c10() -> None:
 
 
 def t_c13() -> None:
-    """丙-13（真机反馈「面板能拖动、不能缩放」）：窗口缩放的 **Windows 样式层**配方钉死。
+    """（真机反馈「面板能拖动、不能缩放」）：窗口缩放的 **Windows 样式层**配方钉死。
 
-    根因与丙-10 P0-4 同型：_hit_test/nativeEvent 的 Python 层全对（selftest 八方向全绿），
+    根因与 P0-4 同型：_hit_test/nativeEvent 的 Python 层全对（selftest 八方向全绿），
     但 FramelessWindowHint=WS_POPUP 没有 WS_THICKFRAME —— Windows 对没有 THICKFRAME 的
     窗口**忽略一切 HT* 缩放请求**（HTCAPTION 拖动不需要它 ⇒ 「能拖、不能缩」）。
     本组断言只钉「配方在源码里」；真机缩放手感仍需真人验证，不冒充。
@@ -1732,7 +1726,7 @@ def main() -> int:
                t_c10, t_c13):
         try:
             fn()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e: # noqa: BLE001
             ck(f"{fn.__name__} 执行未抛异常", False, f"{type(e).__name__}: {e}"[:110])
 
     bad = [r for r in ROWS if not r[1]]

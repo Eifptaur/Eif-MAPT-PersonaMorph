@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""左侧导航判据（用户 2026-09-13 定稿方向 B 的四条要求）。
+"""左侧导航判据。
 
-用户原话：「方案 B · 左导航 + 右工作区（密度最高），**左边的导航每个图标都要自己设计一遍**，
 而且**也要能滚动**，**像 DeepSeek 一样，可以展开看到全部名字，或者收起那些名字**。
-导航的名字尽量起得简短，**4 个字或者 5 个字内**，做完这个，准备交接吧，115 轮了」
 
 判据：①每个导航项都是自绘 inline SVG（不是 emoji、不是字体图标、不是图片）；
 ②名字 ≤5 字且没有 emoji；③导航可滚动（CSS overflow-y:auto + max-height）；
@@ -23,7 +21,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
-import agent.console_html as H  # noqa: E402
+import agent.console_html as H # noqa: E402
 
 HTML = H.HTML
 PASS = 0
@@ -70,8 +68,8 @@ ok("收起时隐藏名字（.side.tight .nav .lb{display:none}）",
    re.search(r"\.side\.tight \.nav a \.lb\{display:none\}", HTML) is not None)
 ok("收起时导航变窄（.side.tight{width:...}）", re.search(r"\.side\.tight\{width:", HTML) is not None)
 ok("状态持久化（localStorage）", "localStorage.setItem('navTight'" in HTML and "localStorage.getItem('navTight')" in HTML)
-# 口径沿革（改这节前先看）：2026-09-14 要求「右收起、靠近功能栏」⇒ 贴右缘小把手（88px）；
-# **2026-09-15 用户当面又点了两条**（「收起位置错——收起后导航要贴住功能栏，不许留空档」＋
+# 口径沿革（改这节前先看）：要求「右收起、靠近功能栏」⇒ 贴右缘小把手（88px）；
+# **用户当面又点了两条**（「收起位置错——收起后导航要贴住功能栏，不许留空档」＋
 # 「收起按钮太小，在导航里单开一栏写收起/展开、整行可点」）⇒ 小把手被换成**整行按钮**，
 # 栅格列宽也跟着收（.shell.tight 64px）。下面三条按**新口径**写，旧的 88px / absolute 断言已作废。
 ok("收起按钮是整行（不是贴右缘的小把手）", ".side .nav-tg{position:static;width:100%" in HTML)

@@ -48,7 +48,7 @@ if IS_WIN:
     _k32.QueryFullProcessImageNameW.restype = ctypes.c_int
     _k32.QueryFullProcessImageNameW.argtypes = [
         ctypes.c_void_p, ctypes.c_uint32, ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_uint32)]
-else:  # pragma: no cover - 本机是 Windows，非 Windows 分支按文档口径实现、不声称实测过
+else: # pragma: no cover - 本机是 Windows，非 Windows 分支按文档口径实现、不声称实测过
     _k32 = None
 
 

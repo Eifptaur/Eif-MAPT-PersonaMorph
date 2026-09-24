@@ -7,7 +7,7 @@ import os
 import shutil
 import sys
 
-try:      # 控制台默认 GBK：自检里的 ✔/✘ 一旦被重定向就 UnicodeEncodeError 崩掉整条自检
+try: # 控制台默认 GBK：自检里的 ✔/✘ 一旦被重定向就 UnicodeEncodeError 崩掉整条自检
     sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
     sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 except Exception:
@@ -16,12 +16,12 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from PIL import Image                     # noqa: E402
+from PIL import Image # noqa: E402
 
-from agent import clipboard as cb         # noqa: E402
+from agent import clipboard as cb # noqa: E402
 
 
-# ⛔ V-R7-4：判据**不碰真操作系统剪贴板**（原来会覆盖用户剪贴板里的东西）。
+# ⛔ 判据**不碰真操作系统剪贴板**（原来会覆盖用户剪贴板里的东西）。
 #   做法＝把本模块用的 Win32 原语换成**内存假件**：产品的 `_set_raw / set_image / set_files /
 #   set_text / get_text` 一行不改，照样走 GlobalAlloc → GlobalLock → memmove → SetClipboardData
 #   那条真路径（含 BMP 去文件头、DROPFILES 结构、UTF-16 编码），只是落在内存里。
@@ -38,7 +38,7 @@ class _MemK32(object):
 
     def GlobalAlloc(self, flags, size):
         buf = ctypes.create_string_buffer(max(1, int(size)))
-        self.blocks[ctypes.addressof(buf)] = buf          # 保住 buffer 不被回收
+        self.blocks[ctypes.addressof(buf)] = buf # 保住 buffer 不被回收
         return ctypes.addressof(buf)
 
     def GlobalLock(self, h):

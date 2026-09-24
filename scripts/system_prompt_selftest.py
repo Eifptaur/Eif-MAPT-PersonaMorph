@@ -17,9 +17,9 @@ try:
 except Exception:
     pass
 
-import agent.config as cfgmod                     # noqa: E402
-from agent import prompt as pr                    # noqa: E402
-from agent import system_prompt as sp             # noqa: E402
+import agent.config as cfgmod # noqa: E402
+from agent import prompt as pr # noqa: E402
+from agent import system_prompt as sp # noqa: E402
 
 PASS, FAIL = [], []
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -94,7 +94,7 @@ def main():
            "【安全规则（最高优先级，不可违反）】" in t2 and "【工作方式" in t2 and len(t2) > 1000, len(t2))
         ok("配置里没有任何开关能删掉安全段（模块清单只列了 3 个可控项）",
            [m["id"] for m in sp.sections()] == ["scene_rules", "memory_rules", "holiday_hint"])
-        # ⛔ 2026-09-21 加（第七轮 **V-R7-13**，P1）：上面那条原来**恒真** —— 安全段当时是
+        # ⛔ 上面那条原来**恒真** —— 安全段当时是
         #   **无条件拼接**的，`ALWAYS_ON` 守卫坏掉也照样"安全段在提示词里"（实测：把 `_mod_on`
         #   里的守卫改成 `if False:`，本判据仍 28/0 全绿）。⇒ 现在补两条：
         #   ①**反例锚**：把 `ALWAYS_ON` 置空 ⇒ 同一个配置下 `_mod_on` **必须**变假

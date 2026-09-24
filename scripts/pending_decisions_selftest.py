@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""版本不匹配「四选一」待决台账 判据（2026-09-14，测机报告 ⑦）。
+"""版本不匹配「四选一」待决台账 判据。
 
-背景（用户口径）：「弹窗按你推荐的做」+「把弹窗切出来的那一秒，就应该立刻让它到后台」。
+背景：「弹窗按你推荐的做」+「把弹窗切出来的那一秒，就应该立刻让它到后台」。
 落地要守住四件事（本判据逐条钉）：①决策落 `data/pending_decisions.json`（原子写，关掉弹窗≠没发生）；
 ②**同一对版本只问一次**；③**✕＝什么都不做**（记 dismissed，仍留痕、仍算问过）；
 ④表态要能**写回能力矩阵**，且「升级适配层/更新本体/微信要处理」这三项**不许在本模块里真去装/降级**。
@@ -19,9 +19,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
-from agent import pending_decisions as PD      # noqa: E402
-from agent import version_gate as VG           # noqa: E402
-from agent import version_matrix as VM         # noqa: E402
+from agent import pending_decisions as PD # noqa: E402
+from agent import version_gate as VG # noqa: E402
+from agent import version_matrix as VM # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -60,14 +60,14 @@ try:
     it2, new2 = PD.ensure_version_decision("4.1.13.65", "1.2.2.2", reason="重复问一次", p=DEC)
     ok("第一次新建", new1 is True, it1["id"])
     ok("第二次不再新建、返回同一条", new2 is False and it2["id"] == it1["id"], it2["id"])
-    ok("待拍板只有 1 件", len(PD.open_items(DEC)) == 1, str(len(PD.open_items(DEC))))
+    ok("待只有 1 件", len(PD.open_items(DEC)) == 1, str(len(PD.open_items(DEC))))
     ok("id 里带版本对（可读）", it1["id"] == "version_mismatch|4.1.13.65|1.2.2.2", it1["id"])
     ok("条目带四个选项与版本信息",
        len(it1["options"]) == 4 and it1["wechat"] == "4.1.13.65" and it1["adapter"] == "1.2.2.2")
 
     print("── C. ✕＝什么都不做（记 dismissed，不删）──")
     got, created = PD.ensure_version_decision("4.1.13.65", "1.2.2.2", p=DEC)
-    r = VG.decide(got["id"], "", decisions_path=DEC, matrix_path=MAT)   # 空串＝✕
+    r = VG.decide(got["id"], "", decisions_path=DEC, matrix_path=MAT) # 空串＝✕
     ok("状态＝dismissed", r["item"]["status"] == "dismissed", r["item"]["status"])
     ok("choice 为空（什么都没选）", r["item"]["choice"] == "", repr(r["item"]["choice"]))
     ok("动作＝none", r["action"]["action"] == "none", r["action"]["action"])
@@ -75,7 +75,7 @@ try:
     ok("仍算「问过了」", PD.asked("version_mismatch", "4.1.13.65|1.2.2.2", DEC) is True)
     ok("不再重复问（第三次 ensure 仍不新建）",
        PD.ensure_version_decision("4.1.13.65", "1.2.2.2", p=DEC)[1] is False)
-    ok("待拍板清零", len(PD.open_items(DEC)) == 0, str(len(PD.open_items(DEC))))
+    ok("待清零", len(PD.open_items(DEC)) == 0, str(len(PD.open_items(DEC))))
     ok("✕ 也写回了矩阵（choice=none）",
        any(str(d.get("choice")) == "none" for d in VM.decisions(VM.load(MAT))),
        str(len(VM.decisions(VM.load(MAT)))) + " 条")
@@ -134,7 +134,7 @@ try:
     got_bad = PD.load(bad)
     ok("坏台账被当成空台账（不抛、不删文件）",
        got_bad.get("items") == [] and os.path.exists(bad))
-    ok("✕ / 已表态的单子不占「待拍板」名额",
+    ok("✕ / 已表态的单子不占「待」名额",
        all(str(x.get("status")) == "open" for x in PD.open_items(DEC)))
 
     print("── H. 接线：版本门 + 能力矩阵 ──")
@@ -144,7 +144,7 @@ try:
        "def decide(" in G and "note_decision" in G and "allow_session" in G)
     M = open(os.path.join(ROOT, "agent", "version_matrix.py"), encoding="utf-8").read()
     ok("能力矩阵有写回/读取表态的入口", "def note_decision(" in M and "def decisions(" in M)
-    _seg = M.split("def note_decision(")[1].split("\ndef ")[0]        # 只看这一个函数体
+    _seg = M.split("def note_decision(")[1].split("\ndef ")[0] # 只看这一个函数体
     ok("写回用的是原子写（复用 save）", "save(data, path)" in _seg, "%d 字节" % len(_seg))
     print("\n通过 %d / 失败 %d" % (PASS, FAIL))
 finally:

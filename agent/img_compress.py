@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """发送前的大图自动压缩（对账清单第 22 条）。
 
-用户 2026-09-13 发来的第三方待办里有一条「对较大的图片进行自动压缩」——我们原来没有：
+用户 发来的第三方待办里有一条「对较大的图片进行自动压缩」——我们原来没有：
 群里发大图既慢又容易被网络掐断。这里做"发送前压一压"：
 
   · 双阈值：**最长边**超 `max_px` 或**文件大小**超 `max_mb` ⇒ 等比缩放 + 重编码；
@@ -17,10 +17,10 @@ import os
 from . import config as _config
 
 DEFAULTS = {
-    "enabled": True,      # 发送前压缩（默认开：这是"省事"型能力，不改语义）
-    "max_mb": 8.0,        # 超过这个大小就压
-    "max_px": 1600,       # 最长边上限
-    "quality": 82,        # JPEG 质量（PNG 走 optimize）
+    "enabled": True, # 发送前压缩（默认开：这是"省事"型能力，不改语义）
+    "max_mb": 8.0, # 超过这个大小就压
+    "max_px": 1600, # 最长边上限
+    "quality": 82, # JPEG 质量（PNG 走 optimize）
 }
 
 
@@ -69,13 +69,13 @@ def compress_if_needed(path: str, out_dir: str = None) -> tuple:
             q = int(c.get("quality"))
             im.save(target, "JPEG", quality=q, optimize=True)
         new_mb = os.path.getsize(target) / 1048576.0
-        if new_mb > float(c.get("max_mb")) and q > 55:          # 还超 ⇒ 再降一档（只降一次）
+        if new_mb > float(c.get("max_mb")) and q > 55: # 还超 ⇒ 再降一档（只降一次）
             with Image.open(path) as im2:
                 im2 = im2.convert("RGB")
                 im2 = im2.resize((nw, nh), Image.LANCZOS)
                 im2.save(target, "JPEG", quality=max(55, q - 25), optimize=True)
             new_mb = os.path.getsize(target) / 1048576.0
-        if new_mb >= size_mb:                     # 压了反而更大 ⇒ 不折腾
+        if new_mb >= size_mb: # 压了反而更大 ⇒ 不折腾
             return path, "压缩后反而更大（%.2fMB→%.2fMB），原样发送" % (size_mb, new_mb)
         return target, "已压缩：%.2fMB→%.2fMB · %dx%d→%dx%d" % (size_mb, new_mb, w, h, nw, nh)
     except Exception as e:

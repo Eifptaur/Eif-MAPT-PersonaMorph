@@ -78,7 +78,7 @@ class Overlay(QDialog):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setModal(True)
 
-    def paintEvent(self, _e):  # noqa: N802
+    def paintEvent(self, _e): # noqa: N802
         p = QPainter(self)
         p.fillRect(self.rect(), QColor(0, 0, 0, 110 if self.t.key != "dark" else 150))
         p.end()
@@ -178,7 +178,7 @@ class ConfirmDialog(QDialog):
 
         # 打字确认（可选门槛）
         if typed_word:
-            from PySide6.QtWidgets import QLineEdit  # noqa: PLC0415
+            from PySide6.QtWidgets import QLineEdit # noqa: PLC0415
 
             hint = QLabel(f"如果确定，请把下面这个词打一遍：{typed_word}")
             hint.setFont(qfont(t, t.body_size - 1))
@@ -256,7 +256,7 @@ class ConfirmDialog(QDialog):
         self.decided.emit(False)
         self.reject()
 
-    def keyPressEvent(self, e):  # noqa: N802
+    def keyPressEvent(self, e): # noqa: N802
         # Esc 一定是取消 —— 危险操作不许用 Esc 确认
         if e.key() == Qt.Key.Key_Escape:
             self._cancel()
@@ -272,9 +272,9 @@ def _selftest() -> list[tuple[str, bool, str]]:
 
     真弹窗的观感要靠截图（本目录的 `shoot.py`），这里只防"纪律被改掉"。
     """
-    import inspect  # noqa: PLC0415
+    import inspect # noqa: PLC0415
 
-    from stylekit_qt import THEMES  # noqa: PLC0415
+    from stylekit_qt import THEMES # noqa: PLC0415
 
     src = inspect.getsource(inspect.getmodule(_selftest))
     rows: list[tuple[str, bool, str]] = []

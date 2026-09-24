@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""**唯一路由表**的对账判据（2026-09-22 立，第 ④ 项 Phase A）。
+"""**唯一路由表**的对账判据。
 
 `agent/routes.py` 声明了"每个 `/api/…` 路径允许哪些方法"，而代码仍是 `webui.py` 里那两条互相独立的
 分派链（`do_GET` / `_handle_body_request`）。**表与代码必须逐条一致**：
@@ -21,11 +21,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
-except Exception:                                                # noqa: BLE001
+except Exception: # noqa: BLE001
     pass
 
-import _srcmatch as _sm                                          # noqa: E402
-from agent.routes import ROUTES, PATTERNS                        # noqa: E402
+import _srcmatch as _sm # noqa: E402
+from agent.routes import ROUTES, PATTERNS # noqa: E402
 
 PASS, FAIL = [0], [0]
 
@@ -110,12 +110,12 @@ def code_routes():
                     if seg and not seg.startswith("path.startswith(\"/assets") \
                             and "_dispatch(" not in seg:
                         npatt += 1
-    # ⛔ 2026-09-22（Phase B 第一批）：已搬到路由表的那些路径**不在链里了** ⇒
+    # ⛔ 已搬到路由表的那些路径**不在链里了** ⇒
     #   "能不能应答"要算上 `agent/routes.py::HANDLERS`；另外 `elif self._dispatch(...)` 那一支
     #   是**搬迁本身**留下的，不算"非字面路由分支"。
     try:
         from agent.routes import HANDLERS as _H
-    except Exception:                                            # noqa: BLE001
+    except Exception: # noqa: BLE001
         _H = {}
     for _p2, _row in _H.items():
         for _m2 in _row:

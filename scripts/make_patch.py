@@ -24,7 +24,7 @@ import zipfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
-import pack_online as po          # noqa: E402  复用 ZIP_TOP（包内顶层目录名要与在线包一致）
+import pack_online as po # noqa: E402  复用 ZIP_TOP（包内顶层目录名要与在线包一致）
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 

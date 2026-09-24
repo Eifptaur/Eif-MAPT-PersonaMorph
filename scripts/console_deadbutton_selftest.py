@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""控制台「死按钮」判据（2026-09-17 立，起因＝用户报障）。
+"""控制台「死按钮」判据。
 
-用户原话：「我要勾选删除记录的时候，**删除选中勾选的日志，它是没有亮起来，又按不了，也删不掉**」。
+。
 真因：`agent/console_html.py` 里 `<button id="sessSelDel" class="danger" disabled>` **出生就带 `disabled`**，
 而**全文件没有任何一行设置过 `sessSelDel.disabled`** —— 勾选谁也不亮，按钮一辈子按不了、功能等于不存在。
 

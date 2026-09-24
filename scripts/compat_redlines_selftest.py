@@ -1,4 +1,4 @@
-"""兼容性红线 + 原因码铺开的判据（2026-09-22 立，来自业界调研的两条硬结论）。
+"""兼容性红线 + 原因码铺开的判据。
 
 守两件事：
 A. **跨进程窗口亲缘是红线**：微软官方明文——跨进程 `SetParent` 会把**对方进程**（微信）的
@@ -19,9 +19,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import _srcmatch as _sm          # noqa: E402
+import _srcmatch as _sm # noqa: E402
 
-from agent import reason_codes as RC   # noqa: E402
+from agent import reason_codes as RC # noqa: E402
 
 PASS, FAIL = [0], [0]
 

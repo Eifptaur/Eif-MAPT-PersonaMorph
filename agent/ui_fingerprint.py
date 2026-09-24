@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """按「微信版本 × 渲染区尺寸 × DPI」存的**图标指纹表** —— 点之前先自校验（W7c）。
 
-为什么要有它（AGENTS §2.3 / 用户 2026-09-14 点名的"点击正确性"那一项）：
+为什么要有它：
   现在的坐标是「渲染区尺寸 × 比例」算出来的，**比例对不对没人验**：
   · `data/ui_layout.json` 里的标定尺寸（237）和当前窗口（1139）差一个量级，
     驱动库自己打了"忽略本次校准"——也就是说那套比例早已过期，没人知道点的是哪儿；
@@ -26,9 +26,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(ROOT, "data")
 FP_FILE = os.path.join(DATA_DIR, "ui_fingerprints.json")
 
-CROP = 48            # 目标点周围取多大一块（像素，渲染区坐标系）
+CROP = 48 # 目标点周围取多大一块（像素，渲染区坐标系）
 HASH_W, HASH_H = 9, 8
-MAX_DIST = 10        # 64 位 dHash 的汉明距离阈值（超过即判"不是同一个图标"）
+MAX_DIST = 10 # 64 位 dHash 的汉明距离阈值（超过即判"不是同一个图标"）
 
 
 # ── 基础 ────────────────────────────────────────────────────────────────
@@ -43,7 +43,7 @@ def _dpi_of(hwnd) -> int:
 def adapter_version() -> str:
     """适配层版本（**装着的那个**，不是最低要求）：拿不到就记 unknown，绝不编。
 
-    踩过的坑（2026-09-15）：先去找 `wechat.ADAPTER_VERSION` 之类的常量会拿到 **MIN_VERSION
+    踩过的坑：先去找 `wechat.ADAPTER_VERSION` 之类的常量会拿到 **MIN_VERSION
     （1.1.5.1）**——那是"最低要求"，不是"当前安装"，用它当钥匙会把指纹挂到错误的环境上。
     正路只有 `replica_adapter.installed_version()`（唯一收口点）。
     """
@@ -124,7 +124,7 @@ def dhash(img_or_pixels, size=(HASH_W, HASH_H)) -> str:
         from PIL import Image
         img = img_or_pixels
         if not hasattr(img, "convert"):
-            return ""      # 不是图像（None/坏输入）⇒ 空指纹，绝不编一个"看起来像"的哈希出来
+            return "" # 不是图像（None/坏输入）⇒ 空指纹，绝不编一个"看起来像"的哈希出来
         g = img.convert("L").resize(size)
         px = g.load()
         bits = 0

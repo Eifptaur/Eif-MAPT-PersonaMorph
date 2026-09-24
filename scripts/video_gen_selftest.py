@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""AI 视频生成判据（2026-09-15）。
+"""AI 视频生成判据。
 
 守用户点的七件事（"相关的一切事宜"）：
   A. **默认关**：没配后端时不假装能做——`generate()`/`submit()` 都如实拒绝。
@@ -27,7 +27,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
-from agent import video_gen as VG          # noqa: E402
+from agent import video_gen as VG # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -48,7 +48,7 @@ def sect(t):
 
 
 # ── 假后端：三种响应形态 + 计数（用来验"红线时根本没调用"）────────────────────
-MP4 = (b"\x00\x00\x00\x20ftypisom" + b"\x00" * 9000)          # 够长，能过体积下限
+MP4 = (b"\x00\x00\x00\x20ftypisom" + b"\x00" * 9000) # 够长，能过体积下限
 HITS = {"bytes": 0, "url": 0, "path": 0}
 
 
@@ -115,7 +115,7 @@ _real_cfg = VG.cfg
 _real_seen = VG._seen_path
 # 自检不污染真数据：去重用的"见过指纹"文件指到临时目录（否则跑一次自检就把真库塞满测试指纹）
 VG._seen_path = lambda: os.path.join(TMP, "seen.json")
-# ⛔ V-R7-4：成品目录也指到临时目录 —— 原来往用户**生产媒体目录** `data/gen_videos/` 落
+# ⛔ 成品目录也指到临时目录 —— 原来往用户**生产媒体目录** `data/gen_videos/` 落
 #   `gen_generic-*.mp4`（用户看得见）。产品默认行为不变：`out_dir()` 本身没改，只是这里打桩。
 VG.out_dir = lambda: TMP
 
@@ -183,7 +183,7 @@ try:
 
     sect("E. 过滤链 fail-closed：不过的当场删掉")
     set_cfg(backends=BASE + "/bytes")
-    VG.MAX_MB = 0.0001                                  # 让它必然超体积
+    VG.MAX_MB = 0.0001 # 让它必然超体积
     e1 = VG.generate("一条很短的猫")
     ok("体积超限 ⇒ 不过", (not e1["ok"]) and "过滤链" in e1["why"], e1["why"][:40])
     VG.MAX_MB = 30.0

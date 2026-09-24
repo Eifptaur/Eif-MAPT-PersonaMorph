@@ -4,7 +4,6 @@
 =====================================================================
 为什么单独写这个文件
 =====================================================================
-用户报的原话是：
 
     「无法访问此页面 127.0.0.1 拒绝连接。
       请尝试: 检查连接 检查代理和防火墙 ERR_CONNECTION_REFUSED 刷新」
@@ -45,11 +44,11 @@ from addr import join_url
 class Health(str, Enum):
     """我们对"后台到底怎么样"的判定。六态，比 web 侧多两态。"""
 
-    OK = "ok"                    # 连上了，后端在跑
-    STARTING = "starting"         # 连不上，但我们知道它正在起来（刚点过启动）
-    DEAD = "dead"                 # 连不上，且没有进程在撑 → **可以自愈**
-    HIJACKED = "hijacked"         # 连上了，但对面不是我们的服务 → 代理/端口占用
-    REFUSED = "refused"           # 连不上，无从判断原因
+    OK = "ok" # 连上了，后端在跑
+    STARTING = "starting" # 连不上，但我们知道它正在起来（刚点过启动）
+    DEAD = "dead" # 连不上，且没有进程在撑 → **可以自愈**
+    HIJACKED = "hijacked" # 连上了，但对面不是我们的服务 → 代理/端口占用
+    REFUSED = "refused" # 连不上，无从判断原因
     UNKNOWN = "unknown"
 
 
@@ -58,10 +57,10 @@ class Probe:
     """一次探测的完整记录。全部字段都要能在界面上讲成人话。"""
 
     health: Health
-    detail: str                  # 给用户看的一句话（中文、无术语）
-    fix_hint: str = ""            # 可操作提示（没有就给空串）
-    can_self_heal: bool = False   # 我们能不能自己修好
-    raw: str = ""                 # 原始异常，只进日志不进界面
+    detail: str # 给用户看的一句话（中文、无术语）
+    fix_hint: str = "" # 可操作提示（没有就给空串）
+    can_self_heal: bool = False # 我们能不能自己修好
+    raw: str = "" # 原始异常，只进日志不进界面
 
     @property
     def level(self) -> str:
@@ -102,7 +101,7 @@ def probe_backend(
 ) -> Probe:
     """探一次后台。**必须绕代理**，否则会把代理的 502 当成服务故障。"""
     # base 可能自带 ?token= 查询（addr.resolve_base_url 口径）——
-    # 必须走 join_url 让 path 落在 query 之前，老写法 rstrip+"/" 会 401（丙-5 #0）
+    # 必须走 join_url 让 path 落在 query 之前，老写法 rstrip+"/" 会 401
     url = join_url(base, path)
     op = _opener_no_proxy()
     t0 = time.time()
@@ -168,7 +167,7 @@ def probe_backend(
                 raw=rs,
             )
         return Probe(Health.REFUSED, "连不上后台", fix_hint="等一下，或点『重启后台』", can_self_heal=True, raw=rs)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         return Probe(Health.UNKNOWN, "探测时出了点意外", fix_hint="点『重连』", can_self_heal=True, raw=repr(e))
 
     # 连上了 —— 但要确认**对面确实是我们**。
@@ -235,7 +234,6 @@ def pick_free_port(prefer: int = 0, lo: int = 8760, hi: int = 8799) -> int:
 #
 #  ③ 代理 / 防火墙 / 端口占用
 #     ⇒ **只能讲清，不能自愈**。这些在系统层面，不在我们进程里。
-#       但原生壳至少能告诉用户"是代理拦的，不是群相挂了"，
 #       并且**换个端口重开**这一招能绕开绝大多数代理配置。
 #
 # ⇒ 结论：原生壳把"看不懂的错误页"变成"三种可区分的状态 + 两种能自己修"。
@@ -324,7 +322,7 @@ def _selftest() -> list[tuple[str, bool, str]]:
         def _p(base, path="/api/status", timeout=1.2, expect_marker=""):
             try:
                 raise exc
-            except Exception as e:  # noqa: BLE001
+            except Exception as e: # noqa: BLE001
                 if hasattr(e, "reason"):
                     return real_probe("http://127.0.0.1:1", path, 0.05, expect_marker) if False else _map(e)
             return None
@@ -350,7 +348,7 @@ def _selftest() -> list[tuple[str, bool, str]]:
                 _map(urllib.error.URLError(ConnectionRefusedError(10061, "refused"))).health is Health.REFUSED, ""))
 
     # 2) 空闲端口挑选：占一个口，再要它，必须让开
-    import threading  # noqa: PLC0415
+    import threading # noqa: PLC0415
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("127.0.0.1", 8777))

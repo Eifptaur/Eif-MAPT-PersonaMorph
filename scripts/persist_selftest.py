@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""持久化统一招式判据（审计第九轮 **V-R9-18 / V-R9-19 / V-R9-20 / V-R9-22**）。
+"""持久化统一招式判据。
 
 跑法：`runtime\\python\\python.exe scripts\\persist_selftest.py`   （退出码 0=全过 / 1=有失败）
 
@@ -13,9 +13,9 @@
   ③`atomic_write_json` 写的东西能被 `json.load` 读回、**不留 `.tmp`**；失败路径不静默、原档不动
   ④并发写（20 线程 × 10 次 + 边写边读）之后文件**始终**是可解析 JSON（审计里 memory 46/200 的那个场景）
   ⑤`risk_state.json` 坏掉 ⇒ 停机开关 **fail-closed**（坏档不许变成"没暂停"）
-  ⑥V-R9-19：节日状态写失败 **留日志** + 内存标记 ⇒ 20 秒一轮的巡检**不再重发**
-  ⑦V-R9-20：迁移记录坏掉 ⇒ **一条迁移都不跑**（不许静默重放去覆盖用户 config.json）
-  ⑧V-R9-18：watermark 一条坏值**只丢那一条**（老写法会把整表归零）
+  ⑥节日状态写失败 **留日志** + 内存标记 ⇒ 20 秒一轮的巡检**不再重发**
+  ⑦迁移记录坏掉 ⇒ **一条迁移都不跑**（不许静默重放去覆盖用户 config.json）
+  ⑧watermark 一条坏值**只丢那一条**（老写法会把整表归零）
   ⑨源码级锚：五个落盘点真的走了统一招式（防以后被顺手改回去）
 """
 from __future__ import annotations
@@ -37,25 +37,25 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 if HERE not in sys.path:
-    sys.path.insert(0, HERE)          # `_srcmatch`：源码级锚一律走它（空白容忍，别写脆断言）
+    sys.path.insert(0, HERE) # `_srcmatch`：源码级锚一律走它（空白容忍，别写脆断言）
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 except Exception:
     pass
 
-# ⛔ V-R14-1 隔离：判据不许写产品 data/ 与 logs/。
+# ⛔ 隔离：判据不许写产品 data/ 与 logs/。
 #   本判据的 ⑬ 段会调 `risk.recover()`，它顺带 `control.set_paused_flag(False)`（不带 path）
 #   ⇒ 老写法**把用户真的 `data\paused.flag` 删掉了**（产品目录对账当场抓到）。收口到 `_iso14`。
-import _iso14                                   # noqa: E402
+import _iso14 # noqa: E402
 _iso14.control()
 
-import _srcmatch as SM                 # noqa: E402
-from agent import config as C          # noqa: E402
-from agent import holidays as H        # noqa: E402
-from agent import listener_watermark as LW   # noqa: E402
-from agent import persist as P         # noqa: E402
-from agent import risk as R            # noqa: E402
-from agent import timers as T          # noqa: E402
+import _srcmatch as SM # noqa: E402
+from agent import config as C # noqa: E402
+from agent import holidays as H # noqa: E402
+from agent import listener_watermark as LW # noqa: E402
+from agent import persist as P # noqa: E402
+from agent import risk as R # noqa: E402
+from agent import timers as T # noqa: E402
 
 PASS = FAIL = 0
 
@@ -126,7 +126,7 @@ class _FailQuarantine:
     """上下文管理器：让"读这个档"必失败、且 `persist.quarantine` 对它**也必失败**。
 
     为什么用打桩而不是抢 Windows 独占句柄：判据要**确定、快、可无人运行**（抢句柄的做法
-    在别的机器上时灵时不灵）。V-R10-23 要考的是"留证失败时下游怎么办"，
+    在别的机器上时灵时不灵）。 要考的是"留证失败时下游怎么办"，
     打桩正好精确定位到那两行（读失败 + 改名失败），而且能给出反例锚。
     """
 
@@ -166,7 +166,7 @@ class _FailQuarantine:
 def _s1_quarantine(TMP):
     print("== ① 坏 JSON ⇒ 默认值 + `.bad.<ts>` 留证（不删、不丢） ==")
     p = os.path.join(TMP, "bad.json")
-    raw = '{"a": 1,'                       # 半截 JSON（这就是"写一半崩掉"的样子）
+    raw = '{"a": 1,' # 半截 JSON（这就是"写一半崩掉"的样子）
     with io.open(p, "w", encoding="utf-8") as f:
         f.write(raw)
     dflt = {"k": "默认"}
@@ -207,7 +207,7 @@ def _s2_missing(TMP):
 # ── ③ 原子写 ────────────────────────────────────────────────────────────
 def _s3_atomic(TMP):
     print("== ③ atomic_write_json：能读回 / 不留 .tmp / 失败不静默 ==")
-    p = os.path.join(TMP, "deep", "w.json")          # 目录不存在 ⇒ 要能自己建
+    p = os.path.join(TMP, "deep", "w.json") # 目录不存在 ⇒ 要能自己建
     data = {"中文": "值", "n": [1, 2], "nested": {"a": True}}
     check("③ 写入成功返回 True", P.atomic_write_json(p, data, indent=1) is True)
     check("③ 能被 json.load 读回（内容一致）",
@@ -268,14 +268,14 @@ def _s4_concurrent(TMP):
                 with io.open(p, "r", encoding="utf-8") as f:
                     txt = f.read()
             except FileNotFoundError:
-                continue                   # 还没写第一版，正常
+                continue # 还没写第一版，正常
             except (PermissionError, OSError):
                 # ⚠️ Windows 上 `os.replace` 与"另一个句柄正打开着"会撞出**短暂的 EACCES**
                 #    （连打开都没打开）——这不是"读到了坏内容"，不计入坏档。
                 continue
             opened.append(1)
             try:
-                json.loads(txt)            # 只把"真的读到了内容、但解析不了"算坏档
+                json.loads(txt) # 只把"真的读到了内容、但解析不了"算坏档
             except Exception as e:
                 read_err.append("%s: %s" % (type(e).__name__, e))
             time.sleep(0.001)
@@ -306,7 +306,7 @@ def _s4_concurrent(TMP):
     # 「写一半失败 ⇒ 文件 167B → 1B、读方静默 {}」的那一幕，同一组判据必须抓得住。
     p2 = os.path.join(TMP, "old.json")
     with io.open(p2, "w", encoding="utf-8") as f:
-        f.write('{"i": 0, "r": 0, "pad": "')          # 写到一半，进程没了
+        f.write('{"i": 0, "r": 0, "pad": "') # 写到一半，进程没了
     try:
         json.load(io.open(p2, encoding="utf-8"))
         old_ok = True
@@ -331,7 +331,7 @@ def _s5_risk_failclosed(TMP):
     os.makedirs(d, exist_ok=True)
     st = os.path.join(d, "risk_state.json")
     with io.open(st, "w", encoding="utf-8") as f:
-        f.write('{ "paused": true, "paused_reas')      # 坏档（半截，读不出来）
+        f.write('{ "paused": true, "paused_reas') # 坏档（半截，读不出来）
     g = R.RiskGate(path=st, event_path=os.path.join(d, "risk_events.jsonl"))
     check("⑤ 坏档 ⇒ `paused=True`（fail-closed，老写法这里是 False＝静默解除停机）",
           g.is_paused() is True, "paused=%s" % g.is_paused())
@@ -357,11 +357,11 @@ def _s5_risk_failclosed(TMP):
 
 # ── ⑥ 节日问候：写失败留日志 + 不重发 ───────────────────────────────────
 def _s6_holiday_no_resend(TMP):
-    print("== ⑥ V-R9-19：状态写失败 ⇒ 留日志 + 内存标记 ⇒ 不再重发 ==")
+    print("== ⑥ 状态写失败 ⇒ 留日志 + 内存标记 ⇒ 不再重发 ==")
     groups = [{"name": "群deepseek", "wxid": "wxid_a"}]
     hcfg = {"holiday": {"mode": "active", "greet_chats": ["群deepseek"]}}
-    day_ts = time.mktime((2026, 10, 1, 10, 0, 0, 0, 0, -1))       # 国庆节 · 10:00（时段内）
-    H.custom_path = lambda: os.path.join(TMP, "no_such_holidays.json")   # 不读产品 data
+    day_ts = time.mktime((2026, 10, 1, 10, 0, 0, 0, 0, -1)) # 国庆节 · 10:00（时段内）
+    H.custom_path = lambda: os.path.join(TMP, "no_such_holidays.json") # 不读产品 data
 
     # 正向：正常落盘 ⇒ 不再重发、返回 True
     H.state_path = lambda: os.path.join(TMP, "holiday_state_ok.json")
@@ -395,7 +395,7 @@ def _s6_holiday_no_resend(TMP):
 
 # ── ⑦ 迁移记录坏掉不许重放 ──────────────────────────────────────────────
 def _s7_migrations(TMP):
-    print("== ⑦ V-R9-20：迁移记录坏掉 ⇒ 一条迁移都不跑（不覆盖用户 config.json） ==")
+    print("== ⑦ 迁移记录坏掉 ⇒ 一条迁移都不跑（不覆盖用户 config.json） ==")
     mark = os.path.join(TMP, "config_migrations.json")
     saved = []
     real_mark, real_save = C.MIGRATIONS_MARK, C.save_config
@@ -404,7 +404,7 @@ def _s7_migrations(TMP):
     try:
         # (a) 坏档 ⇒ 不跑、不写盘、留证
         with io.open(mark, "w", encoding="utf-8") as f:
-            f.write('["safe_defaults_2026_09_16",')          # 半截
+            f.write('["safe_defaults_2026_09_16",') # 半截
         cfg = {"wechat": {"background_only": False}}
         out = C._migrate_once(cfg)
         check("⑦(a) 坏档 ⇒ 一条迁移都不跑（用户显式关掉的没被改回去）",
@@ -416,7 +416,7 @@ def _s7_migrations(TMP):
               any("跳过全部一次性迁移" in m for m in CAP.msgs), str(CAP.msgs[-2:]))
 
         # (b) 第一次运行（文件本来就不在）⇒ 照常全跑（别把正常首启也堵了）
-        for f in glob.glob(mark + ".bad.*"):          # 清掉 (a) 留下的留证，本条只看本次
+        for f in glob.glob(mark + ".bad.*"): # 清掉 (a) 留下的留证，本条只看本次
             os.remove(f)
         if os.path.exists(mark):
             os.remove(mark)
@@ -452,9 +452,9 @@ def _s7_migrations(TMP):
 
 # ── ⑧ watermark 逐条校验 ────────────────────────────────────────────────
 def _s8_watermark_entries(TMP):
-    print("== ⑧ V-R9-18：水位表一条坏值 ⇒ 只丢那一条（不整表归零） ==")
+    print("== ⑧ 水位表一条坏值 ⇒ 只丢那一条（不整表归零） ==")
     p = os.path.join(TMP, "listener_watermark.json")
-    # ⛔ 第十一轮 V-R11-5 之后：**水位表永远带账号前缀**（认不出账号时用保留名 `?`）——
+    # ⛔ 之后：**水位表永远带账号前缀**（认不出账号时用保留名 `?`）——
     #   所以这里用带前缀的键做夹具；另留一个无前缀老键，专门验"升级不丢数据、但也不越权继承"。
     with io.open(p, "w", encoding="utf-8") as f:
         json.dump({"acctA|group:a": 100, "acctA|group:b": "坏值", "acctA|group:c": 55,
@@ -466,7 +466,7 @@ def _s8_watermark_entries(TMP):
     check("⑧ 坏条目本身回 0", wm.get("group:b") == 0, str(wm.data))
     check("⑧ 反例锚：老写法（整表推导式）会把好的那几条一起归零",
           wm.data.get("acctA|group:a") == 100 and wm.data.get("acctA|group:b") is None, str(wm.data))
-    check("⑧ 无前缀老键：**保留在表里、但不参与读写**（V-R11-5：不许当成本账号的水位）",
+    check("⑧ 无前缀老键：**保留在表里、但不参与读写**",
           wm.data.get("group:legacy") == 7 and wm.get("group:legacy") == 0, str(wm.data))
     check("⑧ 日志里**如实说了丢几条**",
           len(_hits("坏条目")) > n_before
@@ -519,14 +519,14 @@ def _s9_source_anchors():
     check("⑨ holidays 的 `_save_state` 不再吞异常（返回 bool + 写失败必留日志）",
           SM.has(files["holidays"], "def _save_state(st: dict) -> bool")
           and SM.has(files["holidays"], "节日问候状态落盘失败"))
-    check("⑨ memory / window_borrow / wechat_ui 三处就地重写也改了（V-R9-22 点名）",
+    check("⑨ memory / window_borrow / wechat_ui 三处就地重写也改了",
           all(SM.has(files[n], "atomic_write_json") for n in ("memory", "window_borrow", "wechat_ui")))
-    # ⛔ 2026-09-22 加（第十四轮 **V-R14-3** · P3）：**棘轮** —— 全仓固定 `<path>.tmp` 的处数只许下降。
+    # ⛔ **棘轮** —— 全仓固定 `<path>.tmp` 的处数只许下降。
     #   审计口径（`agent\*.py` 的**代码行**含 `.tmp"`，**排除 `persist.py`** —— 它就是那个正确的
     #   统一实现本身）：本轮实测 **33 处**（与审计独立数出来的 33 完全一致）。
     #   审计结论是"不必一次全换"（现场 0 次 `.bad.*` 证据、一次全换风险大于收益），但**不许再涨**：
     #   新写的落盘点一律走 `persist.atomic_write_json/text`；谁加回一处固定临时名，这条立刻红。
-    #   ⛔ 2026-09-22 下调 33 → **32**：`config.save_config` 那一处换成了 `persist.atomic_write_json`
+    # ⛔ 下调 33 → **32**：`config.save_config` 那一处换成了 `persist.atomic_write_json`
     #   （`config.json` 坏了就是"全部能力一起回默认值"，是最不能赌的那一个档；判据见
     #   `scripts\config_writeback_selftest.py`）⇒ 基线跟着降到实测值，锁住这次的收益。
     _TMP_RATCHET = 32
@@ -537,7 +537,7 @@ def _s9_source_anchors():
         for _i, _l in enumerate(_code_lines(_read(os.path.join(ROOT, "agent", _fn))), 1):
             if '.tmp"' in _l:
                 _tmp_hits.append("%s:%d" % (_fn, _i))
-    check("⑰ 固定 `<path>.tmp` 的处数**只许下降**（V-R14-3 棘轮：基线 %d 处，实测 %d 处 ⇒ %s）"
+    check("⑰ 固定 `<path>.tmp` 的处数**只许下降**（棘轮：基线 %d 处，实测 %d 处 ⇒ %s）"
           % (_TMP_RATCHET, len(_tmp_hits),
              "没涨" if len(_tmp_hits) <= _TMP_RATCHET else "**涨了**"),
           len(_tmp_hits) <= _TMP_RATCHET,
@@ -548,9 +548,9 @@ def _s9_source_anchors():
           and not any('.tmp"' in _l for _l in _code_lines('# tmp = p + ".tmp"\n')))
 
 
-# ── ⑩ 并发写：不许"返回 False 却当成功"（V-R10-22）──────────────────────
+# ── ⑩ 并发写：不许"返回 False 却当成功"──────────────────────
 def _s10_concurrent_no_loss(TMP):
-    print("== ⑩ V-R10-22：竞争下不许静默丢写（老写法实测 71% 返回 False） ==")
+    print("== ⑩ 竞争下不许静默丢写（老写法实测 71% 返回 False） ==")
     p = os.path.join(TMP, "loss.json")
     stop = threading.Event()
     fails = []
@@ -636,9 +636,9 @@ def _repro_old_write_fails(TMP, rounds=200) -> int:
     return n[0]
 
 
-# ── ⑪ 留证失败 ⇒ 禁止覆盖（V-R10-23，V-R9-18 的回归）───────────────────
+# ── ⑪ 留证失败 ⇒ 禁止覆盖───────────────────
 def _s11_quarantine_fail_no_overwrite(TMP):
-    print("== ⑪ V-R10-23：坏档**留证失败** ⇒ 必须拒绝覆盖（原档一个字节不许动） ==")
+    print("== ⑪ 坏档**留证失败** ⇒ 必须拒绝覆盖（原档一个字节不许动） ==")
     # (a) 纯 persist 层：`load_checked` 要把"原档还在"如实回出来
     p = os.path.join(TMP, "keep17.json")
     raw = '{"items": [1, 2, 3]}   <<< 坏在半截'
@@ -725,9 +725,9 @@ def _s11_quarantine_fail_no_overwrite(TMP):
           "ok=%s bads=%s" % (ok_over3, glob.glob(p2 + ".bad.*")))
 
 
-# ── ⑫ risk 形状洞必须 fail-closed（V-R10-25）────────────────────────────
+# ── ⑫ risk 形状洞必须 fail-closed────────────────────────────
 def _s12_risk_shape_hole(TMP):
-    print("== ⑫ V-R10-25：risk 顶层形状不对（list/str/null/空 dict）⇒ 必须 fail-closed ==")
+    print("== ⑫ risk 顶层形状不对（list/str/null/空 dict）⇒ 必须 fail-closed ==")
     cases = [("[]", "list"), ('"hello"', "str"), ("null", "null"), ("{}", "空 dict"), ("123", "数字")]
     for payload, label in cases:
         p = os.path.join(TMP, "shape_%s.json" % label)
@@ -772,9 +772,9 @@ def _s12_risk_shape_hole(TMP):
           and glob.glob(p3 + ".bad.*") == [], str(glob.glob(p3 + ".bad.*")))
 
 
-# ── ⑬ fail-closed 之后的一键恢复（V-R10-24）─────────────────────────────
+# ── ⑬ fail-closed 之后的一键恢复─────────────────────────────
 def _s13_risk_oneclick_recover(TMP):
-    print("== ⑬ V-R10-24：fail-closed 不许把用户锁死——要有一键恢复路径 ==")
+    print("== ⑬ fail-closed 不许把用户锁死——要有一键恢复路径 ==")
     p = os.path.join(TMP, "rec13.json")
     with io.open(p, "w", encoding="utf-8") as f:
         f.write("{ 半截")
@@ -797,13 +797,13 @@ def _s13_risk_oneclick_recover(TMP):
           g2.is_paused() is True and g2.recover().get("paused") is False
           and g2.check("group:x", "你好").allowed)
 
-    # 两套停机开关的同步（V-R10-24 的另一半：控制台的勾选框/按钮不再是"另一套"）
+    # 两套停机开关的同步
     check("⑬ 源码级锚：risk 会去读控制台的暂停标记（`control.is_paused`）",
           SM.has(_read(os.path.join(ROOT, "agent", "risk.py")), "control"))
     check("⑬ 源码级锚：`recover()` 同时清两套开关（写回 `set_paused_flag(False)`）",
           SM.has(_read(os.path.join(ROOT, "agent", "risk.py")), "set_paused_flag"))
 
-    print("\n== ⑭ V-R10-26：文本也能原子写 · webui 不再就地重写 ==")
+    print("\n== ⑭ 文本也能原子写 · webui 不再就地重写 ==")
     _t14 = tempfile.mkdtemp(prefix="pm-persist14-")
     _t14p = os.path.join(_t14, "log.jsonl")
     check("⑭ `atomic_write_text` 写入正确且返回 True",
@@ -823,7 +823,7 @@ def _s13_risk_oneclick_recover(TMP):
     _p14src = _read(os.path.join(ROOT, "agent", "persist.py"))
     check("⑭ 两个原子写都用**唯一临时名**（pid + 随机段），不是共用的 `<path>.tmp`",
           _p14src.count("secrets.token_hex(4)") >= 2)
-    # webui：这一族"就地重写"是老毛病（写一半断电/并发 ⇒ 半截 JSON；V-R10-26 点名 8 处）
+    # webui：这一族"就地重写"是老毛病
     _w14 = _read(os.path.join(ROOT, "agent", "webui.py"))
     check("⑭ webui 里**没有**就地重写（`open(<数据档>, \"w\")` ⇒ 0 处）",
           not re.search(r'with open\((_p|cats_p|pers_p), "w"', _w14))
@@ -838,8 +838,8 @@ def _s13_risk_oneclick_recover(TMP):
                          'with open(_p, "w", encoding="utf-8") as f:\n    _json.dump(x, f, indent=1)\n')))
     shutil.rmtree(_t14, ignore_errors=True)
 
-    print("\n== ⑯ V-R11-7：顶栏『恢复』解开坏档 fail-closed 的锁 ⇒ 必须**落盘 + 留痕** ==")
-    # ⛔ 现场（第十一轮 P2）：`risk._sync_operator` 的恢复分支**只改内存不落盘** ⇒ 重启又粘上暂停
+    print("\n== ⑯ 顶栏『恢复』解开坏档 fail-closed 的锁 ⇒ 必须**落盘 + 留痕** ==")
+    # ⛔ 现场：`risk._sync_operator` 的恢复分支**只改内存不落盘** ⇒ 重启又粘上暂停
     #   （用户看到"恢复了又自己停了"却查不出原因）；而且它解开的是坏档 fail-closed 的锁，
     #   解开了却**不留痕** ⇒ 事后无从判断"这个暂停本来是坏档引起的、被人顶开了"。
     _t16 = tempfile.mkdtemp(prefix="pm-persist16-")
@@ -847,24 +847,24 @@ def _s13_risk_oneclick_recover(TMP):
     _ev16 = os.path.join(_t16, "risk_events.jsonl")
     _saved_state16 = R.STATE_PATH
     try:
-        from agent import control as _ctl16                            # noqa: E402
+        from agent import control as _ctl16 # noqa: E402
         _saved_ip16, _saved_spf16 = _ctl16.is_paused, _ctl16.set_paused_flag
         R.STATE_PATH = _st16
-        _ctl16.is_paused = lambda: False          # 顶栏此刻已回到「恢复」态（＝跳变的另一半）
+        _ctl16.is_paused = lambda: False # 顶栏此刻已回到「恢复」态（＝跳变的另一半）
         _ctl16.set_paused_flag = lambda *a, **k: None
         _n_cap16 = len(CAP.msgs)
         _g16 = R.RiskGate(path=_st16, event_path=_ev16)
-        _g16._fail_closed("夹具：风险状态文件读不出来")     # 造出"坏档 fail-closed 的暂停"
+        _g16._fail_closed("夹具：风险状态文件读不出来") # 造出"坏档 fail-closed 的暂停"
         check("⑯a 夹具到位：坏档 ⇒ paused=True 且标记 fail_closed（这次暂停的**来源**是可读的）",
            _g16.snapshot().get("paused") is True and _g16.snapshot().get("fail_closed") is True,
            str(_g16.snapshot())[:120])
-        _g16._flag_seen = True                    # 上一轮看到的标记是「暂停」⇒ 现在消失＝有人按了恢复
-        _g16.is_paused()                          # 触发 _sync_operator
+        _g16._flag_seen = True # 上一轮看到的标记是「暂停」⇒ 现在消失＝有人按了恢复
+        _g16.is_paused() # 触发 _sync_operator
         _on_disk16 = json.load(io.open(_st16, encoding="utf-8"))
         check("⑯b 一键恢复**落盘**（老写法：内存变了、盘上还是 paused=True ⇒ 重启又粘住）",
            _on_disk16.get("paused") is False and _on_disk16.get("fail_closed") is False,
            str({k: _on_disk16.get(k) for k in ("paused", "fail_closed", "recovered_by_operator")}))
-        check("⑯c 留痕：盘上记下「被操作者解开过」（`recovered_by_operator` 计数 ≥1）",
+        check("⑯c 留痕：盘上记下「被操解开过」（`recovered_by_operator` 计数 ≥1）",
            int(_on_disk16.get("recovered_by_operator") or 0) >= 1,
            str(_on_disk16.get("recovered_by_operator")))
         _msgs16 = " ".join(CAP.msgs[_n_cap16:])
@@ -879,24 +879,24 @@ def _s13_risk_oneclick_recover(TMP):
                        "min": [], "hour": [], "day": [], "day_key": "", "chats": {},
                        "events": [], "recent": [], "fail_closed": True}, _f16)
         _old_st16 = json.load(io.open(_st16b, encoding="utf-8"))
-        _old_st16["paused"] = False                    # ⬅ 老写法：只改内存
+        _old_st16["paused"] = False # ⬅ 老写法：只改内存
         _old_st16["paused_reason"] = ""
         _after16 = json.load(io.open(_st16b, encoding="utf-8"))
         check("⑯f 反例锚：老写法（只改内存、不落盘）⇒ 盘上仍是 paused=True（重启就粘回来）",
            _after16.get("paused") is True)
-        # ⛔ 第十二轮 **V-R12-5**（P2）：**暂停方向也要落盘**（第十一轮只给恢复方向补了 `_save()`）
+        # ⛔ （P2）：**暂停方向也要落盘**（只给恢复方向补了 `_save()`）
         _g16b = R.RiskGate(path=_st16, event_path=_ev16)
         _g16b._st["paused"] = False
-        _ctl16.is_paused = lambda: True        # 顶栏按了「暂停」⇒ 标记出现
-        _g16b._flag_seen = False               # 上一轮看到的是"没暂停"（这是跳变）
+        _ctl16.is_paused = lambda: True # 顶栏按了「暂停」⇒ 标记出现
+        _g16b._flag_seen = False # 上一轮看到的是"没暂停"（这是跳变）
         _g16b.is_paused()
         _disk16b = json.load(io.open(_st16, encoding="utf-8"))
         check("⑯g 跟随『暂停』也要**落盘**（老写法只改内存 ⇒ 盘上还是 paused=false，重启即无声恢复）",
               _g16b.snapshot().get("paused") is True and _disk16b.get("paused") is True
               and int(_disk16b.get("paused_by_operator") or 0) >= 1,
               str({k: _disk16b.get(k) for k in ("paused", "paused_by_operator")}))
-        # ⛔ 第十三轮 **V-R13-7**（P3）：新计数必须**进快照**（否则控制台/检验器看不到它）
-        check("⑯h `snapshot()` 里能看到 `paused_by_operator`（第十二轮加了字段忘了露出来）",
+        # ⛔ （P3）：新计数必须**进快照**（否则控制台/检验器看不到它）
+        check("⑯h `snapshot()` 里能看到 `paused_by_operator`",
               int(_g16b.snapshot().get("paused_by_operator") or 0) >= 1,
               str({k: _g16b.snapshot().get(k) for k in ("paused", "paused_by_operator")}))
     finally:
@@ -907,15 +907,15 @@ def _s13_risk_oneclick_recover(TMP):
             pass
         shutil.rmtree(_t16, ignore_errors=True)
 
-    print("\n== ⑮ V-R10-24 收尾：`recover()` 必须有真调用者（一键恢复） ==")
+    print("\n== ⑮ 收尾：`recover()` 必须有真调用者（一键恢复） ==")
     _ui15 = _read(os.path.join(ROOT, "agent", "webui.py"))
     _ch15 = _read(os.path.join(ROOT, "agent", "console_html.py"))
     check("⑮ `POST /api/risk` 支持 `action=recover`（不再只是模块里的死函数）",
           SM.has(_ui15, 'act == "recover"') and SM.has(_ui15, "_risk.recover()"))
     check("⑮ 控制台点「恢复」时补一发 recover（两套停机开关一起清）",
           SM.has(_ch15, "postJSON('/api/risk', {action: 'recover'})"))
-    _OLDCH15 = "await getJSON('/api/resume', {method:'POST'});"        # 老写法：控制台只打 resume
-    _OLDU15 = 'elif act == "resume":\n            _risk.resume()'       # 老写法：/api/risk 没有 recover 档
+    _OLDCH15 = "await getJSON('/api/resume', {method:'POST'});" # 老写法：控制台只打 resume
+    _OLDU15 = 'elif act == "resume":\n            _risk.resume()' # 老写法：/api/risk 没有 recover 档
     check("⑮ 反例锚：老写法（控制台只打 /api/resume、`/api/risk` 只有 pause/resume）"
           "用**同一条判据**判不合格",
           (not SM.has(_OLDCH15, "postJSON('/api/risk'")) and (not SM.has(_OLDU15, 'act == "recover"')))
@@ -923,5 +923,5 @@ def _s13_risk_oneclick_recover(TMP):
 
 if __name__ == "__main__":
     main()
-    print("\n== 持久化判据（V-R9-18/19/20/22 · V-R10-22/23/24/25）：%d 通过 / %d 失败 ==" % (PASS, FAIL))
+    print("\n== 持久化判据：%d 通过 / %d 失败 ==" % (PASS, FAIL))
     sys.exit(1 if FAIL else 0)

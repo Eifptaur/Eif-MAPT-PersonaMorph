@@ -9,7 +9,7 @@ import re
 import shutil
 import sys
 
-try:      # 控制台默认 GBK：自检里的 ✔/✘ 一旦被重定向就 UnicodeEncodeError 崩掉整条自检
+try: # 控制台默认 GBK：自检里的 ✔/✘ 一旦被重定向就 UnicodeEncodeError 崩掉整条自检
     sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
     sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 except Exception:
@@ -18,7 +18,7 @@ import tempfile
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from agent import log_housekeeping as lh        # noqa: E402
+from agent import log_housekeeping as lh # noqa: E402
 
 PASS = FAIL = 0
 
@@ -45,7 +45,7 @@ mkdirs()
 print("① 超限文件：只保尾部，且头一行写明裁过")
 big = os.path.join(tmp, "logs", "onestart.log")
 with open(big, "w", encoding="utf-8") as f:
-    f.write("旧" * 80000)                       # ~720KB（UTF-8 每字 3 字节）
+    f.write("旧" * 80000) # ~720KB（UTF-8 每字 3 字节）
     f.write("TAIL_MARKER_20260913")
 n = lh.trim_file(big, max_bytes=50 * 1024, keep_bytes=20 * 1024)
 size = os.path.getsize(big)
@@ -83,7 +83,7 @@ empty = tempfile.mkdtemp(prefix="loghouse_empty_")
 try:
     r3 = lh.sweep(empty, keep_days=14)
     ck("空目录不抛异常", r3["freed"] == 0)
-except Exception as e:      # noqa: BLE001
+except Exception as e: # noqa: BLE001
     ck("空目录不抛异常", False, repr(e))
 shutil.rmtree(empty, ignore_errors=True)
 
@@ -115,7 +115,7 @@ ck("日志治理的新名在册", '("data/runtime.log"' in _lim)
 ck("旧名仍在册（清用户机器上的残留）", '("data/bot_crash.log"' in _lim)
 ck("启动提示不再把人指向旧名", "runtime.log" in _os_ and "bot_crash.log" not in _os_)
 
-print("⑦ V-R1-5：V-R1-5 补的三处「只增不减」")
+print("⑦ 补的三处「只增不减」")
 # ① 真实厂造三个超限文件（真写盘，不伪造任何状态）⇒ sweep 后必须都被裁到上限内
 _for_trim = (("data/input_audit.log", 1 * 1024 * 1024),
              ("logs/sd_local.log", 2 * 1024 * 1024),
@@ -124,7 +124,7 @@ for _rel, _limb in _for_trim:
     _p = os.path.join(tmp, _rel.replace("/", os.sep))
     os.makedirs(os.path.dirname(_p), exist_ok=True)
     with open(_p, "wb") as f:
-        f.write(b"z" * (_limb + 400 * 1024))                # 真超限
+        f.write(b"z" * (_limb + 400 * 1024)) # 真超限
     ck("V1 造出超限的 %s（%d 字节）" % (_rel, os.path.getsize(_p)), os.path.getsize(_p) > _limb)
 _res7 = lh.sweep(tmp, keep_days=14)
 for _rel, _limb in _for_trim:
@@ -158,11 +158,11 @@ ck("V2d 释放字节数是真算的（≥ shot.png 的 4096）",
    str(_res7b["trimmed"].get("wechatauto_logs/fail/20260101-000000_old")))
 
 # ③ GLOB_DAILY：要么真被用、要么不存在（不许留死代码）
-ck("V3 GLOB_DAILY 要么被引用、要么已删（V-R1-5：定义后全仓无人使用＝死代码）",
+ck("V3 GLOB_DAILY 要么被引用、要么已删",
    _lim.count("GLOB_DAILY") == 0 or _lim.count("GLOB_DAILY") >= 2, "出现 %d 次" % _lim.count("GLOB_DAILY"))
 
 # ④ 名单必须覆盖源码里真的会追加写的日志路径（机械集合差，差不为空即红）
-print("⑧ V-R1-5：名单覆盖度（源码里出现的 logs/data 日志路径必须都在册）")
+print("⑧ 名单覆盖度（源码里出现的 logs/data 日志路径必须都在册）")
 _known = [r for r, _b, _k in lh.LOG_LIMITS]
 _NAMED = ["logs/persona_morph.log", "logs/onestart.log", "logs/wx_agent.log", "logs/sd_local.log",
           "logs/installer.log", "data/runtime.log", "data/bot_crash.log", "data/input_audit.log",
@@ -174,7 +174,7 @@ _found = set()
 for _sub in ("agent", "scripts"):
     for _fn in os.listdir(os.path.join(_scan_root, _sub)):
         if not _fn.endswith(".py") or "selftest" in _fn:
-            continue                                # 判据自己的临时目录不算产品的日志
+            continue # 判据自己的临时目录不算产品的日志
         _txt = open(os.path.join(_scan_root, _sub, _fn), encoding="utf-8", errors="replace").read()
         for _m in re.finditer(r"""["'](logs|data)["']\s*,\s*["']([^"']+\.log)["']""", _txt):
             _found.add("%s/%s" % (_m.group(1), _m.group(2)))
@@ -183,7 +183,7 @@ for _sub in ("agent", "scripts"):
 _missing = sorted(p for p in _found
                   if p not in _known and p.split("/", 1)[1] not in ("console.url", "browser_opened.txt",
                                                                     "browser_opened.lock", "python_path.txt"))
-ck("V5 源码里追加写的**日志**路径没有漏在名单外（漏了就是下一个 V-R1-5）",
+ck("V5 源码里追加写的**日志**路径没有漏在名单外",
    not _missing, "扫到=%s 漏=%s" % (sorted(_found), _missing))
 # ⚠️ `.jsonl` 那些是**记录存储**（台账/风险事件/模型思考），不是日志：它们由各自的模块按"条数/天数"
 #    治理（`history_prune.py` 等），**不许**塞进 LOG_LIMITS —— 那会把台账当成日志截尾，等于丢证据。

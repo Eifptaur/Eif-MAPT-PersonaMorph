@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""「反馈」栏判据（2026-09-14 · 用户：「反馈功能需要在左导航单开一栏…让用户直接在控制台里面填，
+"""「反馈」栏判据（· 
 然后自动提交就好，没必要让用户去邮箱那儿填，程序自动整理并把用户的诉求发邮件」）。
 
 守四件事：
@@ -23,17 +23,17 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
-from agent import feedback as FB            # noqa: E402
+from agent import feedback as FB # noqa: E402
 
-# ⛔ V-R14-7 隔离：本判据的四个夹具（`feedback_selftest*.jsonl` / `feedback_rejected_selftest.jsonl` /
+# ⛔ 隔离：本判据的四个夹具（`feedback_selftest*.jsonl` / `feedback_rejected_selftest.jsonl` /
 #   附件目录）原来都写在**产品 `data\` 里**，用完即删 ⇒ 跑前跑后对账的净变化是 0、判据看着"干净"，
 #   而那一瞬间真机器人（或用户）在 `data\` 里看到的是我们的夹具。改到 %TEMP%（持续采样闸当场抓到的）。
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # scripts\（见 `_iso14` 文件头）
-import _iso14                               # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # scripts\（见 `_iso14` 文件头）
+import _iso14 # noqa: E402
 _FB_ISO = _iso14.ISO
 
 # 收件邮箱只用于「断言它不在代码里」⇒ **拼出来**：把真实地址写进仓库会命中打包器的
-# 个人信息闸门（2026-09-15 实测被拦，这段注释本身就是修法）。
+# 个人信息闸门。
 MAIL_A = "ptmo" + "urning@qq.com"
 MAIL_B = "gaster" + "hhh@gmail.com"
 
@@ -73,7 +73,7 @@ for key in ("feedback.to", "feedback.upload_url", "feedback.smtp.user",
             "feedback.webhook_url", "feedback.webhook_token"):
     ok("界面里没有 %s（不把配置摆给用户）" % key, ('data-cfg="%s"' % key) not in _seg)
 ok("也没有「保存设置（反馈）」这种把配置摆给用户的按钮", "保存设置（反馈）" not in _seg)
-ok("这些键在 config.json 里仍然存在（运维/作者可配）",
+ok("这些键在 config.json 里仍然存在",
    all(('"%s"' % k) in src("agent/config.py")
        for k in ("upload_url", "webhook_url", "webhook_token")), "")
 
@@ -88,8 +88,8 @@ try:
         pass
     _real_cfg = FB._cfg
     _real_lim = dict(FB.LIMIT)
-    FB.LIMIT.update({"per_minute": 999, "per_hour": 999, "per_day": 999})   # 本节只验三态；限流见 E 节
-    FB._cfg = lambda: {}                      # 模拟"什么都没配"
+    FB.LIMIT.update({"per_minute": 999, "per_hour": 999, "per_day": 999}) # 本节只验三态；限流见 E 节
+    FB._cfg = lambda: {} # 模拟"什么都没配"
     r1 = FB.submit("建议", "判据用的假反馈：希望它更好用", "tester@example.com", {"wechat": "4.1.15.8"})
     ok("没配通道 ⇒ state=queued（不是假的 sent）", r1.get("state") == "queued", str(r1.get("state")))
     ok("并如实说清原因", bool(r1.get("why")), str(r1.get("why"))[:50])
@@ -120,9 +120,9 @@ try:
     r2 = FB.submit("问题", "判据用的假反馈：这样能发出去吗")
     ok("配了中转网址 ⇒ state=sent", r2.get("state") == "sent", str(r2.get("state")))
     ok("对方真的收到了（POST 命中）", "text" in (got.get("body") or ""), (got.get("body") or "")[:60])
-    # 2026-09-15 口径更新（已知现象：「没必要让程序帮我整理，反正他只要用邮箱发到我的邮箱就行」）：
+    # 口径更新（已知现象）：
     #   正文＝**既有口径：原样** + 一行元信息 ⇒ 断言"原话一字不差在正文里、有元信息行、没有那套改写"。
-    ok("正文＝用户原话原样（只加一行元信息：类型/时间/版本/联系方式）",
+    ok("正文＝原样（只加一行元信息：类型/时间/版本/联系方式）",
        "判据用的假反馈：这样能发出去吗" in (got.get("body") or "")
        and "群相反馈" in (got.get("body") or "")
        and "诉求：" not in (got.get("body") or ""), (got.get("body") or "")[:80])
@@ -197,7 +197,7 @@ def _raw(rel):
         return ""
 
 
-# ⛔ V-R8-7 **行为级锚**（第八轮）：这条原来自称「全仓源码」，实际只查了**写死的 3 个文件**
+# ⛔ **行为级锚**：这条原来自称「全仓源码」，实际只查了**写死的 3 个文件**
 #   （`agent/config.py` / `agent/webui.py` / `config.example.json`）。改成**真出包清单** ——
 #   `pack_online.tracked() − excluded()` ＝"真会发给用户的那批文件"（322 个量级）。
 #   ⚠️ 打包器自己的 `SCAN` 规则里**没有邮箱类规则** ⇒ 这一条是邮箱泄密的**唯一把关**。
@@ -219,8 +219,8 @@ ok("示例配置里 feedback 段是空的（不给真实地址）",
    MAIL_A not in _raw("config.example.json") and MAIL_B not in _raw("config.example.json"))
 _c = FB.compose({"kind": "建议", "text": "一句原话", "at_h": "2026-09-14 10:00:00", "ver": "b.x",
                  "contact": "c", "env": {}})
-# 口径 2026-09-15：正文＝原话原样（只加一行元信息）⇒ 断言"元信息在头一行 + 原话原样在后"
-ok("正文＝用户原话原样（只加一行元信息：类型/时间/版本/联系方式）",
+# 口径 正文＝原话原样（只加一行元信息）⇒ 断言"元信息在头一行 + 原话原样在后"
+ok("正文＝原样（只加一行元信息：类型/时间/版本/联系方式）",
    all(k in _c.splitlines()[0] for k in ("建议", "2026-09-14 10:00:00", "b.x", "c"))
    and _c.splitlines()[-1].strip() == "一句原话"
    and "诉求：" not in _c, _c.replace("\n", "⏎")[:100])
@@ -264,8 +264,8 @@ finally:
         except Exception:
             pass
 
-print("── F. 凭据不原样回到浏览器（2026-09-16 用户点名：「我邮箱的 SMTP 码加密了吗」）──")
-from agent import webui as WU            # noqa: E402
+print("── F. 凭据不原样回到浏览器──")
+from agent import webui as WU # noqa: E402
 
 _real_get_cfg = WU.get_config
 try:
@@ -302,7 +302,7 @@ try:
 finally:
     WU.get_config = _real_get_cfg
 
-print("\n── G. 反馈栏只给用户看该看的（2026-09-17 用户：「你把 GitHub 当成我了，还是把用户当成我了」）──")
+print("\n── G. 反馈栏只给用户看该看的──")
 _ui = src("agent/console_html.py")
 ok("简单区只有 类型 / 内容 / 提交",
    'id="fbKind"' in _ui and 'id="fbText"' in _ui and 'id="fbSubmit"' in _ui, "")
@@ -311,12 +311,12 @@ ok("联系方式与提交记录在「更多」折叠区之后",
    _ui.find('id="fbContact"') > _i_adv and _ui.find('id="fbRecent"') > _i_adv, "")
 ok("顶部提示默认隐藏（只在发不出去 / 有积压时出现）",
    'id="fbWarn"' in _ui and 'id="fbWarn" style="display:none' in _ui, "")
-ok("**用户界面里没有任何通道配置**（那些是作者侧的事，只留在 config.json）",
+ok("**用户界面里没有任何通道配置**",
    'data-cfg="feedback.' not in _ui, "")
 for _k in ("在线提交密钥", "推送地址", "推送口令", "发信服务器", "邮箱授权码", "中转网址", "Web3Forms"):
-    ok("界面文案里不该出现作者侧词汇「%s」" % _k, _k not in _ui, "")
+    ok("界面文案里不该出现侧词汇「%s」" % _k, _k not in _ui, "")
 _cfg_src = src("agent/config.py")
-ok("通道键仍在配置里（作者可配）：webhook_url / webhook_token",
+ok("通道键仍在配置里：webhook_url / webhook_token",
    '"webhook_url"' in _cfg_src and '"webhook_token"' in _cfg_src, "")
 ok("Web3Forms 那条已整条删掉（配置、实现、界面文案都不再有）",
    "web3forms" not in _cfg_src.lower() and "web3forms" not in src("agent/feedback.py").lower()
@@ -393,10 +393,10 @@ try:
 finally:
     FB._cfg, FB._post = _saved_cfg, _saved_post
 
-print("\n── I. 附件与联系邮箱（2026-09-17 用户：「我们的反馈提交能不能提交图片和文件」·「可以让用户选填一个联系邮箱」）──")
+print("\n── I. 附件与联系邮箱──")
 
-import base64 as _b64                       # noqa: E402
-import shutil as _shutil                    # noqa: E402
+import base64 as _b64 # noqa: E402
+import shutil as _shutil # noqa: E402
 
 _ui2 = src("agent/console_html.py")
 ok("界面有「图片/文件」这一行与选择按钮",
@@ -504,7 +504,7 @@ try:
     ok("既没字也没附件 ⇒ 明确拒绝（别收空条）",
        _r_e2.get("state") == "error" and "内容" in str(_r_e2.get("why")), str(_r_e2.get("why"))[:40])
 
-    import smtplib as _sm2                # noqa: E402
+    import smtplib as _sm2 # noqa: E402
     _box2 = {}
 
     class _FS:
@@ -558,7 +558,7 @@ finally:
             pass
     _shutil.rmtree(_mdir, ignore_errors=True)
 
-print("\n── J. 常驻公告 + 「不用你测」（2026-09-17 挂公告；**2026-09-22 改口径**：作者原话\n"
+print("\n── J. 常驻公告 + 「不用你测」（**原话\n"
       "     「**我更想让用户不用测这测那的就能搞好**」⇒ 以前公告让人附「检验报告」，现在不要求了）──")
 _ji = _ui2.find('id="noticeBar"')
 ok("界面上有常驻公告条 #noticeBar", _ji > 0, "")

@@ -18,8 +18,8 @@ try:
 except Exception:
     pass
 
-from agent import dep_heal as dh      # noqa: E402
-from agent import version_matrix as vm  # noqa: E402
+from agent import dep_heal as dh # noqa: E402
+from agent import version_matrix as vm # noqa: E402
 
 OK, BAD = [], []
 
@@ -53,7 +53,7 @@ ck("V5 版本门：未实测 ⇒ measured=False 且给降级建议",
    g_bad["measured"] is False and "没有实测记录" in g_bad["advice"])
 ck("V6 版本门：实测过 ⇒ measured=True", vm.gate(data, "4.1.15.8", "1.2.2.2")["measured"] is True)
 
-# V-R7-11：`gate()` 的**中间那条 partial 路径**原先一条断言都没有（把 `if missing:` 写成
+# `gate()` 的**中间那条 partial 路径**原先一条断言都没有（把 `if missing:` 写成
 # `if missing and False:` 判据仍全绿）——而这条正是"只实测了一项的版本会被判成可自动发送"的老 bug。
 _pcaps = {"emoji_send": {"status": "ok"}}
 _pdata = vm.merge_runs({"runs": []}, {"wechat": "4.1.15.8", "adapter": "1.2.2.2",

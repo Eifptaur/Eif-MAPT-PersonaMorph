@@ -32,8 +32,8 @@ def ok(name, cond, detail=""):
     print("  {} {}{}".format("OK  " if cond else "FAIL", name, "  [{}]".format(detail) if detail else ""))
 
 
-from agent import tts as T  # noqa: E402
-from agent import tools as TL  # noqa: E402
+from agent import tts as T # noqa: E402
+from agent import tools as TL # noqa: E402
 
 print("── A. 引擎状态 ──")
 st = T.status()
@@ -51,9 +51,9 @@ finally:
     T.voices = _real_voices
 
 print("── B. 合成真出文件 ──")
-# ⛔ V-R7-4：判据**不写产品媒体目录** `media/tts/`。`tts.out_dir()` 是唯一落点函数，
+# ⛔ 判据**不写产品媒体目录** `media/tts/`。`tts.out_dir()` 是唯一落点函数，
 #   指到临时目录即可（wav 与 to_playable 的 mp3 都在它下面）；产品默认行为不变。
-import tempfile as _tf                                          # noqa: E402
+import tempfile as _tf # noqa: E402
 _T_OUT = _tf.mkdtemp(prefix="pm-tts-")
 T.out_dir = lambda: _T_OUT
 if not st["ok"]:
@@ -92,7 +92,7 @@ ok("描述里提到功能没开会返回原因", "返回原因" in str(d.get("se
 
 # 功能默认关 ⇒ 一次都不许发送
 # ⚠️ 判据必须**自带夹具**：这两条原来直接吃真实 `config.json` ⇒ 一旦把语音回复打开（演示/自用都要开），
-#    判据就假红（2026-09-17 实际踩到，出包前全场判据当场红）。这里显式钉住"关着"。
+# 判据就假红。这里显式钉住"关着"。
 _saved_get_gate = TL.get_config
 TL.get_config = lambda: {"voice_reply": {"enabled": False}}
 try:

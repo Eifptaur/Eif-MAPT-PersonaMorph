@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """「微信数据目录」的唯一权威：**校验 / 探测 / 决策 / 暴露**。
 
-用户反馈（2026-09-18 22:23，控制台「反馈」面板原文）：
     「能不能让我自己选微信的地址，自己自定义的地址他检测不到，移动回默认地址后好了，
       但是监听后没反应，重启后又连接不上了，通过文件夹中的脚本检查出来的报告显示，
       他回我之前自定义的地址里去看文件了」
@@ -88,7 +87,7 @@ def scan(p: str) -> dict:
         if base not in roots:
             roots.insert(0, base)
     if not roots:
-        roots = [base]                     # 兜底：整棵树找（带预算）
+        roots = [base] # 兜底：整棵树找（带预算）
     seen = 0
     newest = 0.0
     stop = False
@@ -122,7 +121,7 @@ def scan(p: str) -> dict:
 def _acct_layer(p: str) -> dict:
     """`p` 是不是**账号层**（填到了一个具体的微信号那一层）+ 该建议改填的**上一级**。
 
-    为什么单独做这一件事（2026-09-19，网友反馈「大号能连、小号连不上」的行业口径）：填到账号层
+    为什么单独做这一件事：填到账号层
     ＝**把某个号钉死**（`pick_account` 里 `pinned` 那条），微信切号之后它还照着这个号读 ⇒ 新消息
     一条都进不来。系统不报错、其它检查全绿，用户只能看到"连不上/不回复"。
     只读，代价＝一次 `isdir`；真判成账号层时才多一次 `listdir` 数同级账号。
@@ -251,7 +250,7 @@ def probe(extra: str = "") -> dict:
 
 
 # ── 多账号（切换微信号 / 多开）：**哪个账号目录正在被用** ─────────────────────────────
-# 网友反馈（2026-09-19，附检验报告）：「切换微信号使用后，提示寻找不到库，还要求给予相同的权限」
+# 网友反馈
 #   「只有前几句话会正常回复，后面不再回复」。
 # 现场（`wechatauto/db.py::_pick_account`）：驱动库按**账号目录里最新 `.db` 的 mtime** 挑账号，
 #   而**切走的那一刻微信会把旧账号的库 checkpoint 一遍** ⇒ 旧账号的 `.db` 反而最新
@@ -265,8 +264,8 @@ def probe(extra: str = "") -> dict:
 #   `.db` 主库可能几小时不 checkpoint（微信平时只写 -wal），所以 mtime 会骗人；
 #   `-wal/-shm` 的写入时间才是"这个账号现在被用着"的直接证据。
 # ⚠️ 只读：这里**不碰**驱动库、不写配置（配置那条仍由 `check`/`save` 把关）。
-_LIVE_WINDOW_S = 180.0     # -wal 在这个窗口内被写过 ⇒ 判"这个账号正在被用"
-_ACCT_WALK_BUDGET = 20000  # 防网络盘/超大目录把控制台轮询拖住
+_LIVE_WINDOW_S = 180.0 # -wal 在这个窗口内被写过 ⇒ 判"这个账号正在被用"
+_ACCT_WALK_BUDGET = 20000 # 防网络盘/超大目录把控制台轮询拖住
 
 
 def accounts(parent: str) -> list:
@@ -402,7 +401,7 @@ def _fmt_ts(ts) -> str:
 
 
 def configured_path() -> str:
-    """配置里那条「数据库目录」（**现读、不缓存** —— 2026-09-18 用户那句「他回我之前自定义的地址里去看
+    """配置里那条「数据库目录」（**现读、不缓存** —— 用户那句「他回我之前自定义的地址里去看
     文件了」要的就是"旧值立刻失效"）。拿不到配置就返回空串。"""
     try:
         from .config import get_config
@@ -418,7 +417,7 @@ def switched(mine: str, parent: str, window_s: float = _LIVE_WINDOW_S, pin=None)
       ① 只有一个账号目录 ⇒ 永不切；
       ② 我正在读的那个号**自己的 -wal 还新鲜** ⇒ 不切；
       ③ **你把某个账号目录钉死了** ⇒ 不切（切了还是它 ⇒ 会变成每 15 秒重连一次的循环）；
-      ④ 目标号＝**`pick_account()` 挑出来的那一个**（唯一来源，V-R10-28）——"别的号明显在写、
+      ④ 目标号＝**`pick_account()` 挑出来的那一个**——"别的号明显在写、
          我这个已经静默"与"两个号都没在写"都走它；只有"全机器都没有 -wal 证据"时才不动。
     返回 `{"stale":bool, "mine","live","why","accounts"}`；`mine` 为空（不知道在读哪个）时不切。
     `pin`：显式配置那条路径（不传就现读配置）。
@@ -447,8 +446,8 @@ def switched(mine: str, parent: str, window_s: float = _LIVE_WINDOW_S, pin=None)
         return out
     now = time.time()
     if me[0]["wal"] and (now - me[0]["wal"]) <= window_s:
-        return out                      # ② 我自己还活着 ⇒ 不动（多开时不许来回抖）
-    # ⛔ 2026-09-22 修 **V-R10-28（P1）**：这里原来是「别的号里 -wal 新鲜的」列表 + `if not others: return out`
+        return out # ② 我自己还活着 ⇒ 不动（多开时不许来回抖）
+    # ⛔ （P1）**：这里原来是「别的号里 -wal 新鲜的」列表 + `if not others: return out`
     #   ⇒ **两个号都没在写时永不跟切**；而同一夹具下 `pick_account()` 能挑对号 ⇒ **同一事实两条路相反**。
     #   用户故事：切到 B 号后 B 号短期没收到消息 ⇒ 我们继续读 A 号旧库、**无任何异常**，非得"新号先收到
     #   一条消息"才自愈 —— 而它盯的正是"读不到消息的那个库"（自指）。
@@ -509,7 +508,7 @@ def decide(explicit=None, probe_all: bool = True) -> dict:
         out["effective"] = ex
         out["src"] = "config"
         out["source_text"] = "你填的目录"
-        # ⚠️ 配置可用但**填到了账号层**：不拦，但必须当场说出来（切号后不跟随的真凶，网友 2026-09-19）
+        # ⚠️ 配置可用但**填到了账号层**：不拦，但必须当场说出来
         out["hint"] = str(c_ex.get("hint") or "")
         out["note"] = out["hint"]
         return out
@@ -567,7 +566,7 @@ def status(how: dict = None, explicit=None, dir_info: dict = None) -> dict:
                          % (d["configured"], d["configured_why"] or "用不了", d["effective"] or "驱动库自探测"))
     d["now"] = d["effective"] or "驱动库自探测到的目录"
     d["ok"] = bool(d["effective"]) and (d["configured_ok"] or not d["configured"])
-    # ── 账号这一维（2026-09-19 加，网友反馈「切换微信号后找不到库 / 后面不回复」）──────────
+    # ── 账号这一维──────────
     # 只在"运行中的 adapter 告诉了我们它在读哪个账号"或"本次真的去盘上算了"时才给；
     # /api/status 每 4 秒轮询，**绝不能在这里走盘**（那是把控制台拖住的写法）。
     _acct = str((how or {}).get("account") or "") if _has_how else ""
@@ -611,7 +610,7 @@ def line(info: dict) -> str:
     src = str((info or {}).get("source_text") or "未知来源")
     note = str((info or {}).get("note") or "")
     base = "当前在读 %s，来源：%s" % (eff, src)
-    # 账号这一维（2026-09-19）：多账号机器上"读的是哪个号"和"读的是哪个目录"一样要命
+    # 账号这一维：多账号机器上"读的是哪个号"和"读的是哪个目录"一样要命
     # —— 切号后读旧号＝新消息一条都看不到（网友反馈「后面不回复」就是这么来的）。
     _a = str((info or {}).get("account") or "")
     if _a:
@@ -622,10 +621,10 @@ def line(info: dict) -> str:
 
 
 def remember_scanned(picked: str, configured: str = "") -> dict:
-    """**扫盘探到的目录自动记住**（2026-09-22 作者口径：「我更想让用户不用测这测那的就能搞好」）。
+    """**扫盘探到的目录自动记住**。
 
-    为什么要有它：原来扫盘成功只**打一句提示**「建议在控制台「数据库目录」里保存它」（2026-09-16
-    定的口径：不写用户 config）—— 但对**从没填过**的机器，这句话等于每次都让用户去点一下；作者本机
+    为什么要有它：原来扫盘成功只**打一句提示**「建议在控制台「数据库目录」里保存它」（
+    定的口径：不写用户 config）—— 但对**从没填过**的机器，这句话等于每次都让用户去点一下；
     就是这种（库在自定义路径 `M:\\WX\\talk\\xwechat_files`，每次启动都扫盘 + 每次都提醒）。
     ⇒ 只在**用户从没填过**（`configured` 为空）时自动记住；填过就先不动（填错了另有提示，不替他改）。
     写盘走 `save()` 的**校验**：校验不过/写不进去都只返回原因，**绝不影响继续用扫盘结果**。
@@ -637,7 +636,7 @@ def remember_scanned(picked: str, configured: str = "") -> dict:
     try:
         if str(os.environ.get("PM_JUDGE_NO_PROC", "")).strip() == "1":
             return {"ok": False, "saved": False, "why": "判据/自检环境 ⇒ 不写产品配置"}
-    except Exception:                                        # noqa: BLE001
+    except Exception: # noqa: BLE001
         pass
     p = expand(picked)
     if not p:
@@ -646,7 +645,7 @@ def remember_scanned(picked: str, configured: str = "") -> dict:
         return {"ok": False, "saved": False, "why": "「数据库目录」本来就有值 ⇒ 不替你改"}
     try:
         r = save(p)
-    except Exception as e:                                       # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         return {"ok": False, "saved": False, "why": "写配置失败：%s" % str(e)[:80]}
     if r.get("ok"):
         return {"ok": True, "saved": True, "why": ""}

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""ffmpeg 可执行文件的**唯一解析入口**（2026-09-16 立）。
+"""ffmpeg 可执行文件的**唯一解析入口**。
 
 为什么要有它：以前四处各写各的（`tts.py` / `video_read.py` / `voice_models.py` / `voice.py`），
 而且**全都只查 `PATH`** ⇒ 干净机器上就是"没找到 ffmpeg"，于是语音合成转 wav、视频抽帧、

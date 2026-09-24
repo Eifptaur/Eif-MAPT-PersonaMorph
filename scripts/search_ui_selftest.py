@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""「搜索入口」判据：**两套 UI 都要认**（用户 2026-09-13 口径）。
+"""「搜索入口」判据：**两套 UI 都要认**。
 
-用户原话：「没有搜索框了，只有搜索的一个图标，摁了之后才有搜索框」+
++
         「不同的 UI 可能不一样，我另外一台电脑是有搜索框的，你要把两套 UI 的兼容做好」
 
 判据：
@@ -21,11 +21,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import _srcmatch as _sm          # noqa: E402  空白容忍的源码断言（V-R4-13 第三条）
+import _srcmatch as _sm # noqa: E402 空白容忍的源码断言
 
-from PIL import Image, ImageDraw  # noqa: E402
-from agent import chat_ocr as CO  # noqa: E402
-from agent import chat_header as CH  # noqa: E402
+from PIL import Image, ImageDraw # noqa: E402
+from agent import chat_ocr as CO # noqa: E402
+from agent import chat_header as CH # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -34,7 +34,7 @@ FAIL = 0
 def skip(name, why=""):
     """**环境不可用**的断言：显式 SKIP，不计入通过也不判失败。
 
-    ⛔ 2026-09-21 加（第六轮 **V-R6-15**）：产品自己的口径是"自检不可用 ⇒ 不算证据"
+    ⛔ 产品自己的口径是"自检不可用 ⇒ 不算证据"
     （`chat_ocr.blocked()` 明确给出熔断/预算用尽的信号），而本判据原来把"OCR 读不出"当成**失败**
     ⇒ 并发跑套件时 OCR 争用会偶发 80/1（单跑 81/0），把"环境抖动"报成"回归"。
     """
@@ -60,17 +60,17 @@ def ok(name, cond, detail=""):
 
 # —— 合成一张"看起来像微信"的图：左导航栏（通高深色）+ 会话列表 + 聊天面板 ——
 W, H = 1139, 890
-RAIL, PANE = 89, 328          # 实测本机比例：导轨 0..89、列表 89..328、聊天区 328..1139
-TITLE = 45                    # 实测：PrintWindow 抓到的一些帧**带窗口标题栏**（通宽深灰 y<45），
+RAIL, PANE = 89, 328 # 实测本机比例：导轨 0..89、列表 89..328、聊天区 328..1139
+TITLE = 45 # 实测：PrintWindow 抓到的一些帧**带窗口标题栏**（通宽深灰 y<45），
                               # 有的不带 —— 标题带必须"现算"，不能写死 y=30..135（会被并成一个大块）
 
 
 def base_img():
     im = Image.new("RGB", (W, H), (255, 255, 255))
     d = ImageDraw.Draw(im)
-    d.rectangle((0, 0, W, TITLE - 1), fill=(117, 117, 117))     # 窗口标题栏（通宽深灰）
-    d.rectangle((0, TITLE, RAIL - 1, H), fill=(58, 58, 58))     # 导航栏
-    d.rectangle((RAIL, TITLE, PANE - 1, H), fill=(247, 247, 247))  # 会话列表
+    d.rectangle((0, 0, W, TITLE - 1), fill=(117, 117, 117)) # 窗口标题栏（通宽深灰）
+    d.rectangle((0, TITLE, RAIL - 1, H), fill=(58, 58, 58)) # 导航栏
+    d.rectangle((RAIL, TITLE, PANE - 1, H), fill=(247, 247, 247)) # 会话列表
     return im, d
 
 
@@ -111,7 +111,7 @@ _px = CO._panel_top(im, 92, 322)
 ok("_panel_top 跳过标题栏（回到面板上沿）", abs(_px - TITLE) <= 3, "panel_top=%s 期望≈%s" % (_px, TITLE))
 _b0, _b1 = CO._search_band(im, 92, 322)
 ok("标题带避开标题栏且罩住图标中心(85)", _b0 >= TITLE - 2 and _b0 <= 85 <= _b1, "band=(%d,%d)" % (_b0, _b1))
-_blocks = CO._dark_blocks(im, 92, TITLE - 10, 325, 140)   # 故意把范围放宽到标题栏里（模拟"没现算"的写法）
+_blocks = CO._dark_blocks(im, 92, TITLE - 10, 325, 140) # 故意把范围放宽到标题栏里（模拟"没现算"的写法）
 _bad = [b for b in _blocks if b[3] > 60 or b[2] > 60]
 ok("放宽范围会出现超宽深块（正是写死 y 范围的坑）", _bad != [], str(_blocks))
 ok("但落点不会落在标题栏里（深条没被当入口）", bool(ent) and int(ent["y"]) > TITLE + 5,
@@ -136,7 +136,7 @@ def _fake_rec(img, *_a, **_k):
     return [("搜索", 60.0, 32.0, 60.0, 26.0)]
 
 
-CO.recognize = _fake_rec                       # 白盒：单测"认字优先"的判定顺序
+CO.recognize = _fake_rec # 白盒：单测"认字优先"的判定顺序
 ent2 = CO.find_search_entry(im2)
 CO.recognize = _orig_rec
 ok("读到占位文本时判 box（优先于图标）", bool(ent2) and ent2.get("variant") == "box", str(ent2))
@@ -147,14 +147,14 @@ ok("box 落点落在会话列表列内",
 if f:
     real = _orig_rec(im2.crop((89, 30, 328, 135)).resize((478, 210)))
     txt = " ".join(str(t) for t, *_ in real)
-    # ⛔ V-R6-15：OCR 不可用（并发争用/熔断）时按 SKIP 记，不当失败——产品口径就是"自检不可用 ⇒ 不算证据"
+    # ⛔ OCR 不可用（并发争用/熔断）时按 SKIP 记，不当失败——产品口径就是"自检不可用 ⇒ 不算证据"
     if (not txt.strip()) and _ocr_blocked():
         skip("真字体合成的「搜索」WinRT OCR 读得出来（box 形态可实测）", _ocr_blocked()[:70])
     else:
         ok("真字体合成的「搜索」WinRT OCR 读得出来（box 形态可实测）", "搜索" in txt, "OCR=%r" % txt[:40])
 
 print("③ 导航栏通高深色竖条不许当图标")
-im3, d3 = base_img()                            # 只留导轨，标题带里没有任何图标
+im3, d3 = base_img() # 只留导轨，标题带里没有任何图标
 ok("空标题带 ⇒ None（fail-closed）", CO.find_search_entry(im3) is None,
    str(CO.find_search_entry(im3)))
 
@@ -165,7 +165,7 @@ print("⑤ 标题带指纹（判「搜索框有没有展开」）")
 sig_a = CO.band_signature(im)
 sig_a2 = CO.band_signature(im)
 d4 = ImageDraw.Draw(im)
-d4.rectangle((95, 62, 330, 112), fill=(255, 255, 255))     # 标题带被改了一块
+d4.rectangle((95, 62, 330, 112), fill=(255, 255, 255)) # 标题带被改了一块
 sig_b = CO.band_signature(im)
 ok("同一带 diff=0.000", abs(CO.band_diff(sig_a, sig_a2)) < 1e-9, "%.4f" % CO.band_diff(sig_a, sig_a2))
 ok("变了的带 diff>0.01", CO.band_diff(sig_a, sig_b) > 0.01, "%.4f" % CO.band_diff(sig_a, sig_b))
@@ -176,7 +176,7 @@ src = open(os.path.join(ROOT, "agent", "chat_header.py"), encoding="utf-8").read
 ok("grab_render 会试渲染子窗", "find_render_child" in src and "渲染子窗" in src)
 ok("grab_render 有重试（tries）", "tries: int = 12" in src and "for _round in range(max(1, int(tries)))" in src)
 ok("帧质量闸（既不太暗也不是纯色帧）", "_frame_ok" in src and "stddev" in src)
-ok("退回抓屏前先过遮挡校验（且**拿不到主窗 PID 时不许退**，第九轮 V-R9-4）",
+ok("退回抓屏前先过遮挡校验",
    "_region_occluded" in src and src.index("_region_occluded(render, main_pid)") < src.index("return ImageGrab.grab(")
    and "if not main_pid:" in src)
 ok("退回抓屏只作最后手段（PrintWindow 优先）",
@@ -186,7 +186,7 @@ ok("open_chat_by_search 用 find_search_entry（两套 UI 都走这条路）", "
 ok("图标形态下先确认搜索框展开再打字", "不往下打字" in w_src)
 ok("打字投主窗（键盘），点图标投渲染子窗（鼠标）", _sm.has(w_src, "backend.send_text(main, name)"))
 
-print("⑦ 图标候选块里挑搜索入口：**形状判据**（跨机 r11 实测：对面那台点到了导航栏那块）")
+print("⑦ 图标候选块里挑搜索入口：**形状判据**")
 # 对面 r11 的现场（原样搬来当回归）：
 #   cand_txt = "#0(47,76,24x45) · #1(242,71,21x21) · #2(242,71,11x11) · #3(48,136,25x28)"
 #   why      = "最上一排最靠左的图标块 24x45（该排 3 块 / 共 4 块，导航栏右沿 0）"
@@ -201,11 +201,10 @@ _p2 = CO.pick_search_icon(_our_cands)
 ok("本机组：仍是 (236,84) 22×21（我们这边本来就没挑错，别改坏）",
    bool(_p2) and (_p2[0], _p2[1]) == (236, 84), str(_p2))
 ok("候选为空 ⇒ None（fail-closed，不瞎点）", CO.pick_search_icon([]) is None and CO.pick_search_icon(None) is None)
-_ps = CO.pick_search_icon([(47, 76, 24, 45)])          # 只剩竖长条 ⇒ 退回原口径，不许 None
+_ps = CO.pick_search_icon([(47, 76, 24, 45)]) # 只剩竖长条 ⇒ 退回原口径，不许 None
 ok("只剩竖长条时退回原口径（不做成「永远找不到」）", bool(_ps) and _ps[0] == 47, str(_ps))
 ok("find_search_entry 用上了这个挑选函数",
    "pick_search_icon(cands)" in open(os.path.join(ROOT, "agent", "chat_ocr.py"), encoding="utf-8").read())
-# 跨机 r12 报的潜在坑 D：放大镜与「＋」**同 x**（实测 242,71 上叠 21×21 与 11×11），若连通域给出的
 # 顺序颠倒，"最靠左"就会选中 11×11 的碎片 ⇒ 排序键必须是 (x 升序, 面积降序)。
 _d1 = CO.pick_search_icon([(47, 76, 24, 45), (242, 71, 11, 11), (242, 71, 21, 21)])
 ok("同 x 的两个块**顺序颠倒**时仍取大的（21×21）",
@@ -223,19 +222,19 @@ ok("进去先 stash 前台（在点搜索入口之前）",
 ok("出去一律还前台（finally，异常路径也走）",
    "finally:" in _seg_s and '_restore_fg_until("切会话·搜索路线"' in _seg_s)
 
-print("⑨ 几何判据：搜索框要认得出（跨机 r12/r13：对面那台占位文本读成「…」、放大镜是浅灰细线）")
+print("⑨ 几何判据：搜索框要认得出")
 try:
     from PIL import Image as _I9, ImageDraw as _D9, ImageFont as _F9
     im9 = _I9.new("RGB", (1143, 891), (237, 237, 239))
     _d9 = _D9.Draw(im9)
-    _d9.rectangle([91, 55, 213, 82], fill=(255, 255, 255), outline=(200, 200, 200))   # 白底搜索框
-    _d9.ellipse([103, 62, 115, 74], outline=(150, 150, 150))                          # 浅灰放大镜
+    _d9.rectangle([91, 55, 213, 82], fill=(255, 255, 255), outline=(200, 200, 200)) # 白底搜索框
+    _d9.ellipse([103, 62, 115, 74], outline=(150, 150, 150)) # 浅灰放大镜
     try:
         _f9 = _F9.truetype(r"C:\Windows\Fonts\msyh.ttc", 12)
     except Exception:
         _f9 = _F9.load_default()
-    _d9.text((124, 64), "…", font=_f9, fill=(160, 160, 160))                          # 占位文本不是「搜索」
-    _d9.rectangle([278, 0, 1143, 891], fill=(255, 255, 255))                          # 右侧聊天区（白）
+    _d9.text((124, 64), "…", font=_f9, fill=(160, 160, 160)) # 占位文本不是「搜索」
+    _d9.rectangle([278, 0, 1143, 891], fill=(255, 255, 255)) # 右侧聊天区（白）
     _r9 = CO.search_box_rect(im9)
     ok("白底框能被量出来（x≈91~213）", bool(_r9) and 80 <= _r9[0] <= 100 and 205 <= _r9[2] <= 225, str(_r9))
     _e9 = CO.find_search_entry(im9)
@@ -247,7 +246,7 @@ try:
 except Exception as _e9b:
     ok("几何判据可测", False, str(_e9b)[:80])
 
-print("⑩ 「＋」菜单不许被当成搜索浮层（跨机 r12 的 205×205 帧就是它）")
+print("⑩ 「＋」菜单不许被当成搜索浮层")
 try:
     from PIL import Image as _I10, ImageDraw as _D10, ImageFont as _F10
     im10 = _I10.new("RGB", (205, 205), (255, 255, 255))
@@ -264,7 +263,7 @@ try:
 except Exception as _e10:
     ok("「＋」菜单判据可测", False, str(_e10)[:80])
 
-print("⑪ 搜索框路线的结果也要走浮层（跨机 r18 最值钱发现：结果常常是独立浮层）")
+print("⑪ 搜索框路线的结果也要走浮层")
 _w3 = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
 _seg_box = _w3[_w3.index("def open_chat_by_search"):]
 _seg_box = _seg_box[:_seg_box.find("\n    def ", 10)]
@@ -300,7 +299,7 @@ def _searchwin_frame():
     f = font(26)
     if f:
         d.text((420, 8), "搜索聊天记录", fill=(60, 60, 60), font=f)
-    d.rectangle((100, 60, 120, 78), fill=(60, 60, 60))          # 诱惑：21×19 的深块（像图标）
+    d.rectangle((100, 60, 120, 78), fill=(60, 60, 60)) # 诱惑：21×19 的深块（像图标）
     return im
 
 
@@ -329,9 +328,9 @@ ok("全是自家允许窗口（主窗/渲染子窗）⇒ 不算遮挡",
    _ov([(100, True)] * 4, 100) is False)
 ok("别的进程盖住 ⇒ 判遮挡（旧口径不许丢）",
    _ov([(200, False)] * 4, 100) is True)
-# ⛔ 2026-09-21 改口径（第九轮 **V-R9-4**）：采样全落空（pid=0）＝**未知** ⇒ 按"遮挡"处理（fail-closed），
+# ⛔ 采样全落空（pid=0）＝**未知** ⇒ 按"遮挡"处理（fail-closed），
 #   旧口径判 False（"没遮挡"＝可以退回抓屏）会让抓屏读到别人家的像素。
-ok("采样点全落空（pid=0）⇒ **判遮挡**（未知一律 fail-closed，V-R9-4）", _ov([(0, False)] * 4, 100) is True)
+ok("采样点全落空（pid=0）⇒ **判遮挡**", _ov([(0, False)] * 4, 100) is True)
 ok("只有零星盖住（<1/4，9 个采样点里 1 个）⇒ 不判遮挡",
    _ov([(200, False)] + [(100, True)] * 8, 100) is False)
 ok("4 个采样点里 1 个被盖住 ⇒ 判遮挡（旧口径如此，不许悄悄改松）",
@@ -366,7 +365,7 @@ print("⑬ 「搜了两遍」的根因不许回归（2026-09-18 现场：第一�
 # 日志原文（22:06:57 → 22:07:02 → 22:07:05）：
 #   ①「点了搜索浮层的『演示』行…但内容级复核没过：聊天区里没有目标会话最近的任何一条文本（试过 6 条）」
 #   ②5 秒后又走一遍搜索路线（用户看到的就是「搜了两遍」）
-#   ③再 3 秒：「切会话不需要：强档证据说当前就是目标会话（会话头标题带 OCR='演示（3）'）」
+# ③再 3 秒
 #   ⇒ 根因＝**只认内容级复核**（浮层还盖着聊天区，读不到内容），强档证据（会话头）就在旁边却没用。
 _w13 = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
 _icon_seg = _w13[_w13.index('if variant == "icon":'):]
@@ -389,9 +388,9 @@ print("⑭ 笑脸落点必须**帧内现量**（现场：窗口改成 947×972 �
 # 而笑脸实际在 374；笑脸与输入框左沿的距离基本恒定（331→374 ≈ 43px），"占整幅的比例"却随窗口变。
 _tb = Image.new("RGB", (947, 972), (255, 255, 255))
 _dtb = ImageDraw.Draw(_tb)
-_dtb.line((341, 890, 341, 950), fill=(150, 150, 150), width=2)          # 输入框左边框（2px 细线）
-_dtb.ellipse((362, 906, 387, 930), outline=(60, 60, 60), width=3)       # 笑脸字形
-_dtb.rounded_rectangle((841, 896, 909, 936), radius=6, fill=(200, 200, 200))   # 「发送」大块
+_dtb.line((341, 890, 341, 950), fill=(150, 150, 150), width=2) # 输入框左边框（2px 细线）
+_dtb.ellipse((362, 906, 387, 930), outline=(60, 60, 60), width=3) # 笑脸字形
+_dtb.rounded_rectangle((841, 896, 909, 936), radius=6, fill=(200, 200, 200)) # 「发送」大块
 _h = CO.toolbar_first_icon(_tb, pane_left=331)
 ok("帧内量到的笑脸落点 ≈ (374,918)，且**没被输入框边框线带偏**",
    bool(_h) and abs(_h[0] - 374) <= 6 and abs(_h[1] - 918) <= 8, str(_h))

@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""「干完活要把用户收起来的微信还给他收着」的判据（2026-09-22 立，真机复测缺陷的守备）。
+"""「干完活要把用户收起来的微信还给他收着」的判据。
 
 **缺陷现场**：整链会发伪激活（`WM_ACTIVATE`）⇒ **微信被我们自己顶到前台**；而链尾那条
-"前台==主窗 ⇒ 你在用它 ⇒ 不动"就把**放回**整个吃掉了 ⇒ 作者自己收起来的微信机器人干完活
+"前台==主窗 ⇒ 你在用它 ⇒ 不动"就把**放回**整个吃掉了 ⇒ 
 **留在前台**（实测末态 `IsIconic=False`、登记还挂着、整链微信占前台 16.15s/22.3s ＝ 72%）。
 修法＝把第③条从"它在不在前台"换成"**你最近 1.2 秒内有真实键鼠输入吗**"（与 `_restore_fg_until`
 同一门槛），并把这条策略抽成**纯函数** `_put_back_decision` 让判据直接测它。
@@ -23,11 +23,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
-except Exception:                                                # noqa: BLE001
+except Exception: # noqa: BLE001
     pass
 
-import _srcmatch as _sm                                          # noqa: E402
-from agent import wechat as W                                    # noqa: E402
+import _srcmatch as _sm # noqa: E402
+from agent import wechat as W # noqa: E402
 
 PASS, FAIL = [0], [0]
 

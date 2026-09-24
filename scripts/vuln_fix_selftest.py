@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""漏洞修复的回归判据（2026-09-20 立，对应只读审计清单 `漏洞清单-20260920.md` 的 V1~V5 / V8）。
+"""漏洞修复的回归判据。
 
 为什么单开一个文件：这五条的现场都在**真机状态**上（HTTP 路由、临时包、慢网、配置脱敏），
 必须用**临时目录 + 打桩**把它们封闭起来才可复跑；散进各自的 selftest 会污染那些既有判据的语义。
@@ -8,10 +8,9 @@
   V1  免认证路径穿越：`/assets/emoji/..%2F..%2Fconfig.json` 与 `/wallpaper/…` 必须 404
   V2  同版本号换包：版本相同但内容指纹不同 ⇒ `run_once` 必须继续装（不许回"已是最新"）
   V3  只读文件按真故障回滚；被占用(winerror=32) ⇒ 记 pendingFiles、版本不推进、解锁后能补换
-  V4  `run_once(dry=True)` 不许交接（不调 `_relaunch_after_update`、needRestart=False）
   V5  慢源的"耐心阶段"要真的等（打桩 fetch 睡 5 秒 ⇒ 必须拿到清单）；复核拿到清单就直接用
   V8  `masked_config()` 必须掩掉 `feedback.webhook_token`，且 `_protect_secrets()` 不许用掩码值覆盖真值
-  V-R10-27（P0）  更新链的两道闸（版本回退 / `expires` 过期）必须在**真装那一刻**也生效：
+  （P0） 更新链的两道闸（版本回退 / `expires` 过期）必须在**真装那一刻**也生效：
                   走真路径 `run_once()` ⇒ 拒装且一个文件都不动；`state()` 与 `run_once()` 同一结论
 
 用法：`runtime\\python\\python.exe scripts\\vuln_fix_selftest.py`
@@ -35,11 +34,11 @@ try:
 except Exception:
     pass
 
-from agent import update_apply as U        # noqa: E402
-from agent import update_check as uc       # noqa: E402
-from agent import webui as W               # noqa: E402
+from agent import update_apply as U # noqa: E402
+from agent import update_check as uc # noqa: E402
+from agent import webui as W # noqa: E402
 
-# ⛔ V-R10-27：`run_once()` 现在会**单调记** `maxSeenVersion`，而本判据要给它喂 9999.x 这种假版本
+# ⛔ `run_once()` 现在会**单调记** `maxSeenVersion`，而本判据要给它喂 9999.x 这种假版本
 #   ⇒ 状态文件必须指到临时目录：判据**绝不许写用户真的 `data/update_state.json`**
 #   （否则跑一次自检就把他那边的回滚闸顶到 9999 —— 真清单会被判"回滚"而永远更新不了）。
 _STATE_TMP = tempfile.mkdtemp(prefix="pm_vf_state_")
@@ -136,10 +135,10 @@ f3 = os.path.join(d3, "agent", "c.py")
 io.open(f3, "w").write("OLD")
 zp3, tree3 = mk_pkg(d3, body="NEW")
 man3 = {"base": {"version": "9999.9.9", "sha256": tree3, "url": ""}}
-# ⛔ 2026-09-20 二次修 **V-R3-1**：这里原来**手工给异常贴一个假的占用码** —— 那是典型假绿
+# ⛔ 二次修 这里原来**手工给异常贴一个假的占用码** —— 那是典型假绿
 #    （测的是"我自己伪造的占用"）。真实共享冲突走 CRT `open()` 报的是 `errno=13 / winerror=None`
 #    （实测：真独占句柄 + 真 `share=READ|DELETE` 两种都是这个形状）⇒ 现在改为**真句柄占住文件**。
-import ctypes                                                            # noqa: E402
+import ctypes # noqa: E402
 
 
 def _hold(path):
@@ -170,8 +169,8 @@ _rc4, _m4, _d4 = U.apply_full(man3, zp3, d3)
 ok("解锁后重跑 ⇒ 真的补换（V3 的核心回归）", io.open(f3).read() == "NEW",
    "文件内容=%s" % io.open(f3).read()[:12])
 
-print("── V3c `pendingFiles` 非空 ⇒ 不许短路成「已是最新」（第六轮 V-R6-30）──")
-# ⛔ 2026-09-21 加：这一条原来**是空的** —— 判据里没有任何东西覆盖 `if _same_tree and not _pending:`
+print("── V3c `pendingFiles` 非空 ⇒ 不许短路成「已是最新」──")
+# ⛔ 这一条原来**是空的** —— 判据里没有任何东西覆盖 `if _same_tree and not _pending:`
 #   里那个 `not _pending`（A 面实测：把 `not _pending` 摘掉，5 个判据全绿，变红 0）。
 #   而"版本相同 + 树相同 + 有待补文件"恰恰是真实场景（上一趟有文件被占用）⇒ 判 current 就永远补不回来。
 d6 = tempfile.mkdtemp(prefix="pm_vf_v3c_")
@@ -195,7 +194,7 @@ zp5, tree5 = mk_pkg(d5, rel="agent/x.py", body="x=1")
 hits5 = []
 U._relaunch_after_update = lambda v="": hits5.append(v)
 try:
-    # ⚠️ 第十一轮 V-R11-2 之后：`run_once()` 会拦"超前本机一年以上"的清单（far_ahead）⇒
+    # ⚠️ 之后：`run_once()` 会拦"超前本机一年以上"的清单（far_ahead）⇒
     #    这里当"合法新版本"的夹具必须是**同年的真实未来版本**，不能再拿 `9999.9.9` 当正常版本。
     r5 = U.run_once(manifest={"base": {"version": "2026.10.1.1", "sha256": tree5, "url": ""}},
                     zip_path=zp5, target=d5, dry=True)
@@ -209,7 +208,7 @@ print("── V5 慢源的耐心阶段要真的等 ──")
 _real_fetch = uc.fetch
 # ⚠️ 打桩必须返回 **2 元组** `(man, why)`（写成 dict 会让线程里 unpack 失败 ⇒ 判据假红）；
 #    另外 URL 必须用**官方域**——`_ranked()` 现在只在"官方域（或内嵌官方地址的镜像）"里选版本
-#    （V-R1-2），拿 `http://a.invalid` 当源会被正确地全部忽略。
+# ，拿 `http://a.invalid` 当源会被正确地全部忽略。
 uc.fetch = lambda u, t=8.0: (time.sleep(5.0), ({"base": {"version": "1.0.0"}}, ""))[1]
 try:
     t0 = time.time()
@@ -223,7 +222,7 @@ finally:
 ok("源 5 秒才答 ⇒ 必须拿到清单（老代码 t≈3s 就放弃）",
    man5 is not None, "man=%s why=%s" % (bool(man5), str(why5)[:50]))
 ok("…且确实等了 ≥4.5 秒（不是 50 毫秒）", el >= 4.5, "耗时=%.1fs" % el)
-# 第二半（**V-R3-2**）：上面那个桩**无视 timeout 参数**，所以看不出"真实慢源"这一层 ——
+# 第二半：上面那个桩**无视 timeout 参数**，所以看不出"真实慢源"这一层 ——
 #   这里换一个**尊重超时**的慢源（首遍 2 秒超时必失败、给够时间才答）：
 _SLOW_A = "https://raw.githubusercontent.com/Eifptaur/Eif-MAPT-PersonaMorph/main/slow-a.json"
 _SLOW_B = "https://ghfast.top/" + _SLOW_A
@@ -244,7 +243,7 @@ try:
     el6 = time.time() - t2
 finally:
     uc.fetch = _real_fetch
-ok("真实慢源（首遍 2 秒超时、给够时间才答）⇒ 耐心阶段必须拿到清单（V-R3-2）",
+ok("真实慢源（首遍 2 秒超时、给够时间才答）⇒ 耐心阶段必须拿到清单",
    man6 is not None, "man=%s why=%s 耗时=%.1fs" % (bool(man6), str(why6)[:40], el6))
 
 print("── V8 凭据脱敏：webhook_token 也要掩 + 掩码值不许覆盖真值 ──")
@@ -269,7 +268,7 @@ try:
 finally:
     W.get_config = _real_cfg
 
-print("── V-R1-2 更新源必须「可信」：镜像不许决定版本与下载地址 ──")
+print("── 更新源必须「可信」：镜像不许决定版本与下载地址 ──")
 _OFF = "https://raw.githubusercontent.com/Eifptaur/Eif-MAPT-PersonaMorph/main/persona-morph-manifest.json"
 _MIRROR = "https://ghfast.top/" + _OFF
 _ok1, why1 = uc.manifest_origin_ok(_MIRROR)
@@ -282,7 +281,7 @@ _fake = {"base": {"version": "2099.1.1", "sha256": "b" * 64, "url": "https://evi
 _real = {"base": {"version": "2026.9.20.1", "sha256": "a" * 64, "url": "https://github.com/real/p.zip"}}
 _got = {_OFF: (_real, ""), "https://evil.example/m.json": (_fake, "")}
 _man, _used = uc._ranked(_got, [_OFF, "https://evil.example/m.json"])
-ok("**镜像/陌生源的高版本不许赢过官方源**（V-R1-2 核心）",
+ok("**镜像/陌生源的高版本不许赢过官方源**",
    _man is _real and _used == _OFF, "选中=%s" % _used)
 _bad, _whyb = uc._base_url_ok("https://evil.example/p.zip")
 ok("清单给的下载地址跨域 ⇒ 拒", not _bad, _whyb)
@@ -300,23 +299,23 @@ _fm, _fw = uc.fetch("C:/tmp/whatever.json")
 ok("生产路径下本地文件当更新源 ⇒ 明确拒绝（不是静默当清单读）",
    _fm is None and "本地" in str(_fw), str(_fw)[:60])
 
-print("── V-R2-2 / V-R3-4：apply_full 那一半也要有判据，且异常不许带病出栏 ──")
-# V-R2-2：变异测试暴露的盲区 —— "同版本 + 旧树哈希"这一半（apply_full 的短路）以前没有判据，
+print("── / apply_full 那一半也要有判据，且异常不许带病出栏 ──")
+# 变异测试暴露的盲区 —— "同版本 + 旧树哈希"这一半（apply_full 的短路）以前没有判据，
 #         把短路改回"只看版本"照样全绿。这里补上：预置 installed.json（版本相同、树哈希不同）⇒ 必须真换。
 d7 = tempfile.mkdtemp(prefix="pm_vf_v2b_")
 os.makedirs(os.path.join(d7, "agent"))
 f7 = os.path.join(d7, "agent", "c.py")
 io.open(f7, "w").write("OLD")
 zp7, tree7 = mk_pkg(d7, body="NEW")
-U.write_local_state(d7, uc.current_version(), "0" * 64, {"from": "x", "files": 1})   # 同版本 + 旧树哈希
+U.write_local_state(d7, uc.current_version(), "0" * 64, {"from": "x", "files": 1}) # 同版本 + 旧树哈希
 _rc7, _m7, _det7 = U.apply_full({"base": {"version": uc.current_version(), "sha256": tree7, "url": ""}}, zp7, d7)
-ok("**同版本 + 旧树哈希 ⇒ apply_full 必须真换**（V-R2-2：这一半原来没有判据）",
+ok("**同版本 + 旧树哈希 ⇒ apply_full 必须真换**",
    io.open(f7).read() == "NEW", "rc=%s msg=%s" % (_rc7, str(_m7)[:60]))
 _rc7b, _m7b, _det7b = U.apply_full({"base": {"version": uc.current_version(), "sha256": tree7, "url": ""}}, zp7, d7)
 ok("…再跑一次（此时树哈希已一致）⇒ 才是「已是最新」（阴性对照）",
    str(_m7b).startswith("已是最新"), str(_m7b)[:50])
 
-# V-R3-4：组合校验抛异常 ⇒ 必须回滚，不许"报失败但文件已全换、不回滚不写状态"
+# 组合校验抛异常 ⇒ 必须回滚，不许"报失败但文件已全换、不回滚不写状态"
 d8 = tempfile.mkdtemp(prefix="pm_vf_v34_")
 os.makedirs(os.path.join(d8, "agent"))
 f8 = os.path.join(d8, "agent", "c.py")
@@ -339,15 +338,15 @@ try:
     _rc8, _m8, _det8 = U.apply_full({"base": {"version": "9999.9.9", "sha256": tree8, "url": ""}}, zp8, d8)
 finally:
     U.sha256_file = _real_sha
-ok("组合校验抛异常 ⇒ rc=1 且**回滚**（V-R3-4）", _rc8 == 1 and "组合校验" in str(_m8),
+ok("组合校验抛异常 ⇒ rc=1 且**回滚**", _rc8 == 1 and "组合校验" in str(_m8),
    "rc=%s msg=%s" % (_rc8, str(_m8)[:70]))
 ok("…文件被还原成旧内容（不是「报了失败其实已全换」）", io.open(f8).read() == "OLD",
    io.open(f8).read()[:12])
 ok("…状态文件没被写成新版本", str(U.read_local_state(d8).get("version") or "") != "9999.9.9",
    str(U.read_local_state(d8).get("version")))
 
-print("── V-R1-3（另一半）进程判定：不属于本安装的同名进程，一个都不许杀 ──")
-from agent.proc_match import is_our_install as _is_ours      # noqa: E402
+print("── （另一半）进程判定：不属于本安装的同名进程，一个都不许杀 ──")
+from agent.proc_match import is_our_install as _is_ours # noqa: E402
 _root_abs = os.path.abspath(ROOT)
 ok("本安装目录下的 persona_morph.py ⇒ 属于我们",
    _is_ours('pythonw.exe "%s\\scripts\\persona_morph.py"' % _root_abs, _root_abs))
@@ -364,8 +363,8 @@ _os_src = io.open(os.path.join(ROOT, "scripts", "onestart.py"), encoding="utf-8"
 ok("onestart 的实现已下沉到 agent.proc_match（一处实现、两处调用）",
    "from agent.proc_match import" in _os_src)
 
-print("── V-R3-5（P0）来源信任：域对了还要**是本仓库** ──")
-# 第三轮审计：投毒任一第三方镜像 ⇒ 回一份版本更高的清单，把 base.url 指到**攻击者自己的仓库**。
+print("── （P0）来源信任：域对了还要**是本仓库** ──")
+# 审计：投毒任一第三方镜像 ⇒ 回一份版本更高的清单，把 base.url 指到**攻击者自己的仓库**。
 # 上一版只把"已知镜像的裸路径"分支要求了本仓库，**官方域分支只看 host** ⇒ 上面那条链全部放行。
 _att_man = "https://raw.githubusercontent.com/attacker/anything/main/persona-morph-manifest.json"
 ok("攻击者仓库的清单（官方域）⇒ 拒（上一版放行）", uc.manifest_origin_ok(_att_man)[0] is False)
@@ -395,7 +394,7 @@ _uc_src = io.open(os.path.join(ROOT, "agent", "update_check.py"), encoding="utf-
 ok("「必须是本仓库」只有一份实现（清单源与下载地址共用 _path_has_repo）",
    _uc_src.count("_path_has_repo(") >= 3, "_path_has_repo 出现 %d 次" % _uc_src.count("_path_has_repo("))
 
-# ⛔ 2026-09-20 **第四轮开审前自查又抓到一层**：上一版用的是"路径里**出现** slug"这种**子串判据**
+# ⛔ **开审前自查又抓到一层**：上一版用的是"路径里**出现** slug"这种**子串判据**
 #   ⇒ 攻击者只要**在自己的仓库里造一层同名目录**就能冒充官方域（实测 7 种形状全部绕过）。
 #   现在改成**按 host 的结构化判定**（owner/repo 必须在该 host 约定的段位置上）。
 #   下面这 8 条就是那 7 种绕过形状 + 1 条本仓库正面样本 —— 判据要钉到"位置"，不是"包含"。
@@ -426,9 +425,9 @@ ok("…而本仓库的正当形状仍然放行（别把自家的路也堵了）"
 ok("判定是**结构化**的（按 host 的段位置），不是子串包含",
    "_path_segments" in _uc_src and "REPO_SLUG in" not in _uc_src)
 
-print("── V-R4-2（P0，第四轮审计）点段穿越：判据侧先归一化、下载侧同一个判据（判的就是取的）──")
-import urllib.parse as _up                                                      # noqa: E402
-import shutil as _sh                                                            # noqa: E402
+print("── 点段穿越：判据侧先归一化、下载侧同一个判据（判的就是取的）──")
+import urllib.parse as _up # noqa: E402
+import shutil as _sh # noqa: E402
 
 _TRAV = [
     ("头两段是本仓库、后面用 `../..` 拐到别人仓库",
@@ -478,15 +477,15 @@ finally:
     U.urllib.request.urlopen = _orig_open2
 ok("下载侧（`_dl_once`）对含点段的地址**拒取且零网络请求**（判的就是取的）",
    _dok is False and not _calls and "点段" in str(_dwhy), "ok=%s calls=%d why=%s" % (_dok, len(_calls), str(_dwhy)[:60]))
-# ⛔ 2026-09-21（第五轮审计 **V-R5A-2**，P1·判据自身）：这里原来是一句**恒真**
+# ⛔ 这里原来是一句**恒真**
 #   （`True if _orig_open2 else False`）。审计把 `_dl_once` 改成"一律拒取"后跑全套：
 #   **133 脚本 / 4072 断言 / 0 失败 / 全绿** ⇒ 整个下载功能被堵死都没人发现。
-#   ⇒ 现在真起本机 HTTP 服务：①正当地址**真的下得动**；②V-R5A-1：302 之后必须再判一次最终地址。
-import http.server as _hs                                                      # noqa: E402
-import threading as _th                                                        # noqa: E402
-from agent import update_check as _ucq                                         # noqa: E402
+# ⇒ 现在真起本机 HTTP 服务：①正当地址**真的下得动**；②302 之后必须再判一次最终地址。
+import http.server as _hs # noqa: E402
+import threading as _th # noqa: E402
+from agent import update_check as _ucq # noqa: E402
 
-_PAYLOAD = b'{"version": "9999.9.9", "notes": ["attacker manifest"]}'   # 既是"字节"也是合法清单
+_PAYLOAD = b'{"version": "9999.9.9", "notes": ["attacker manifest"]}' # 既是"字节"也是合法清单
 _ucq_allow_local = _ucq.allow_local_update
 
 
@@ -517,7 +516,7 @@ def _serve(redir=""):
 
 _s2, _p2 = _serve()
 _s1, _p1 = _serve(redir="http://127.0.0.1:%d/good.bin" % _p2)
-_ucq.allow_local_update = lambda: False        # 判据里不许因为"允许本机源"把这道门的测试放过去
+_ucq.allow_local_update = lambda: False # 判据里不许因为"允许本机源"把这道门的测试放过去
 _dl_dir = tempfile.mkdtemp(prefix="pm_vf_dl_")
 try:
     _good = "http://127.0.0.1:%d/good.bin" % _p2
@@ -526,10 +525,10 @@ try:
     _got = open(_tmp_a, "rb").read() if os.path.exists(_tmp_a) else b""
     ok("下载侧对正当地址**真的把字节下下来**（不是一刀切把下载堵死）",
        _ok_a is True and _got == _PAYLOAD, str((_ok_a, str(_why_a)[:50], _got[:20])))
-    _bad = "http://localhost:%d/x" % _p1        # 302 → 127.0.0.1（**另一种主机写法** ⇒ 不是同一个主机）
+    _bad = "http://localhost:%d/x" % _p1 # 302 → 127.0.0.1（**另一种主机写法** ⇒ 不是同一个主机）
     _tmp_b = os.path.join(_dl_dir, "bad.bin")
     _ok_b, _why_b = U._dl_once(_bad, _tmp_b, 3.0)
-    ok("V-R5A-1：跟随 302 之后落到**别的主机** ⇒ 拒取（判据看的是最终取到的那个地址）",
+    ok("跟随 302 之后落到**别的主机** ⇒ 拒取（判据看的是最终取到的那个地址）",
        _ok_b is False and ("允许名单" in str(_why_b) or "主机" in str(_why_b)) and not os.path.exists(_tmp_b),
        str((_ok_b, str(_why_b)[:80], os.path.exists(_tmp_b))))
     _keep_final = U._final_url_ok
@@ -539,7 +538,7 @@ try:
         _got_c = open(_tmp_b, "rb").read() if os.path.exists(_tmp_b) else b""
     finally:
         U._final_url_ok = _keep_final
-    ok("V-R5A-1 反例锚：把这道判定摘掉（＝修之前），同一夹具**真会把跳转目标的字节写下来**",
+    ok("反例锚：把这道判定摘掉（＝修之前），同一夹具**真会把跳转目标的字节写下来**",
        _ok_c is True and _got_c == _PAYLOAD, str((_ok_c, str(_why_c)[:40], _got_c[:20])))
     _keep_dl = U._dl_once
     U._dl_once = lambda *a, **k: (False, "堵死（变异）")
@@ -547,7 +546,7 @@ try:
         _ok_d, _ = U._dl_once(_good, _tmp_a, 3.0)
     finally:
         U._dl_once = _keep_dl
-    ok("V-R5A-2 反例锚：把 `_dl_once` 改成一律拒取 ⇒ 这一条会红（老写法恒真，抓不到「整个功能被堵死」）",
+    ok("反例锚：把 `_dl_once` 改成一律拒取 ⇒ 这一条会红（老写法恒真，抓不到「整个功能被堵死」）",
        _ok_d is False)
 finally:
     _ucq.allow_local_update = _ucq_allow_local
@@ -565,9 +564,9 @@ try:
 except Exception:
     pass
 
-print("── V-R3-9（P1）目标不存在 ⇒ 真故障回滚（不许「永久只装一半」）──")
+print("── （P1）目标不存在 ⇒ 真故障回滚（不许「永久只装一半」）──")
 # 真 icacls 拒写目标目录（测完立刻移除）——**不手工造异常**。
-import subprocess                                                              # noqa: E402
+import subprocess # noqa: E402
 
 d9 = tempfile.mkdtemp(prefix="pm_vf_v39_")
 a9 = os.path.join(d9, "agent")
@@ -577,7 +576,7 @@ z9 = os.path.join(d9, "p.zip")
 with zipfile.ZipFile(z9, "w") as _zz9:
     _zz9.writestr("persona morph/agent/c.py", "NEW")
 _t9 = U.zip_tree(z9)[0]
-_NO_WIN = getattr(subprocess, "CREATE_NO_WINDOW", 0)          # 不许闪控制台窗（proc_window_selftest 看着她）
+_NO_WIN = getattr(subprocess, "CREATE_NO_WINDOW", 0) # 不许闪控制台窗（proc_window_selftest 看着她）
 subprocess.run(["icacls", a9, "/deny", _u9 + ":(W)"], capture_output=True, text=True, errors="replace",
                creationflags=_NO_WIN)
 try:
@@ -594,15 +593,15 @@ ok("…不许报「只装了一半」、不许记 pendingFiles（否则用户每
 ok("…版本号不许推进", str(st9.get("version") or "") != "9999.9.9", str(st9.get("version")))
 ok("…文案把方向指对（目录写不进去），不是让用户去找一个不存在的占用者",
    ("写不进去" in str(msg9)) or ("权限" in str(msg9)), str(msg9)[:90])
-ok("阴性对照：真句柄占用**已存在**的文件 ⇒ 仍然是 partial（V-R3-9 没把 V3 修坏）",
+ok("阴性对照：真句柄占用**已存在**的文件 ⇒ 仍然是 partial",
    rc3 == 0 and det3.get("status") == "partial" and det3.get("pending") == ["agent/c.py"])
 
-# ── ⛔ 2026-09-21（第四轮审计 **V-R4-9，P2**）：**文件级 ACL 拒写**（`icacls <文件> /deny …:(WD,AD)`）
+# ── ⛔ **文件级 ACL 拒写**（`icacls <文件> /deny …:(WD,AD)`）
 #    不改"只读属性位"⇒ 老口径（`st_mode & 0o200`）把它判成"被别的进程占用"跳过 ⇒
 #    `rc=0 status=partial` ⇒ 受保护目录里的用户**永久半装**，文案还把他引去"找占用者"。
 #    ⇒ 现在改成**真探写权限**（`_probe_write`：CreateFileW GENERIC_WRITE + SHARE_ALL），
 #      `denied(5)` / `unknown` 一律当**真故障**。 ──
-print("── V-R4-9（P2）文件级 ACL 拒写 ≠ 被占用（真 icacls /deny 在**文件**上）──")
+print("── （P2）文件级 ACL 拒写 ≠ 被占用（真 icacls /deny 在**文件**上）──")
 _f9 = os.path.join(d9, "locked_by_acl.py")
 with open(_f9, "w", encoding="utf-8") as _fh9:
     _fh9.write("OLD\n")
@@ -615,20 +614,20 @@ try:
 finally:
     subprocess.run(["icacls", _f9, "/remove:d", _u9], capture_output=True, text=True, errors="replace",
                    creationflags=_NO_WIN)
-ok("V-R4-9a 探针认得出是**拒写**（不是「被别人占着」）", _probe in ("denied", "unknown"),
+ok("a 探针认得出是**拒写**（不是「被别人占着」）", _probe in ("denied", "unknown"),
    "probe=%s" % _probe)
-ok("V-R4-9b 文件级 ACL 拒写 ⇒ `_is_locked` 判**假**（真故障 ⇒ 必须回滚，不许跳过）",
+ok("b 文件级 ACL 拒写 ⇒ `_is_locked` 判**假**（真故障 ⇒ 必须回滚，不许跳过）",
    _locked9 is False, "locked=%s" % _locked9)
-ok("V-R4-9c 反例锚：老口径（只读属性位）**确实**会把它当成被占用（属性位没变）",
+ok("c 反例锚：老口径（只读属性位）**确实**会把它当成被占用（属性位没变）",
    bool(os.stat(_f9).st_mode & 0o200) is True)
 # 阳性对照：普通可写文件 + 同一个错误码 ⇒ 探针说 ok ⇒ 仍按"被占用"（可跳过）
 _f9b = os.path.join(d9, "normal_writable.py")
 with open(_f9b, "w", encoding="utf-8") as _fh9b:
     _fh9b.write("OLD\n")
-ok("V-R4-9d 阳性对照：普通可写文件 ⇒ 探针 ok + `_is_locked` 仍判真（可跳过，别把 V3 修坏）",
+ok("d 阳性对照：普通可写文件 ⇒ 探针 ok + `_is_locked` 仍判真（可跳过，别把 V3 修坏）",
    U._probe_write(_f9b) == "ok" and U._is_locked(PermissionError(13, "sharing"), _f9b) is True)
 
-print("── V-R3-6（P1）回滚按「实际还原成功数」报数，不再谎报 ──")
+print("── （P1）回滚按「实际还原成功数」报数，不再谎报 ──")
 _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
 _k32.CreateFileW.restype = ctypes.c_void_p
 _k32.CreateFileW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p,
@@ -659,7 +658,7 @@ def _run36(hold_b):
         #              ②**被测的那件事（还原失败）是真句柄** —— 被测条件不伪造。
         if os.path.basename(str(p)) == "b.py":
             seen["b"] += 1
-            if seen["b"] >= 2:                     # 第 2 次＝组合校验那一次（第 1 次是快照）
+            if seen["b"] >= 2: # 第 2 次＝组合校验那一次（第 1 次是快照）
                 if hold_b and not state["h"]:
                     state["h"] = _hold_no_write(p)
                 raise OSError(13, "Permission denied (trigger)")
@@ -696,15 +695,15 @@ ok("阳性对照：没被占用 ⇒ 报「已回滚 2/2 件」且 rollbackFailed
 ok("…两件都真还原（判据对「能不能还原」是敏感的）",
    _gotn["a.py"] == "A_OLD" and _gotn["b.py"] == "B_OLD", str(_gotn))
 
-print("── V-R3-8（P2）第二个监听面：Host 校验 + 口令（与控制台共用一份实现）──")
+print("── （P2）第二个监听面：Host 校验 + 口令（与控制台共用一份实现）──")
 _imports_ok = True
 try:
-    import http.client                                                         # noqa: E402
-    import http.server                                                         # noqa: E402
-    import threading                                                           # noqa: E402
+    import http.client # noqa: E402
+    import http.server # noqa: E402
+    import threading # noqa: E402
 
-    from agent import local_guard as lg                                        # noqa: E402
-    # ⛔ V-R8-7（第八轮）：口令落**临时根**，别碰生产 `logs\sd_local.token` ——
+    from agent import local_guard as lg # noqa: E402
+    # ⛔ 口令落**临时根**，别碰生产 `logs\sd_local.token` ——
     #   原来 `lg.token()` 会经 `_tighten_acl` 真跑一遍 `icacls /inheritance:r`，把生产口令文件的
     #   ACL 收紧掉；`Length`/`mtime` 一点没变 ⇒「mtime + 清单」这类监视面**看不见**这次写入。
     #   ⚠️ 打桩要排在 `import sd_local_server` **之前**（import 期任何一次取口令都会落到真口令上）。
@@ -722,24 +721,24 @@ try:
     lg.token = lambda root="", create=True: _tok8
     os.environ[lg.ENV_KEY] = _tok8
     sys.modules.setdefault("local_guard", lg)
-    from agent import sd_local_server as SDS                                   # noqa: E402
-except Exception as _e:                                                        # noqa: BLE001
+    from agent import sd_local_server as SDS # noqa: E402
+except Exception as _e: # noqa: BLE001
     _imports_ok = False
     ok("能 import local_guard / sd_local_server", False, str(_e)[:90])
 else:
-    _tok8 = lg.token()                    # 走上面那个 lambda ⇒ 同一个临时口令（不再碰生产文件）
+    _tok8 = lg.token() # 走上面那个 lambda ⇒ 同一个临时口令（不再碰生产文件）
     ok("本机口令已建立（logs/sd_local.token，随机 url-safe）", bool(_tok8) and len(_tok8) >= 16,
        "len=%d" % len(_tok8))
-    # ⛔ 2026-09-21 加（第九轮 **V-R9-29** · P3）：**把 V-R8-7 那条修复本身钉住** ——
+    # ⛔ **把 那条修复本身钉住** ——
     #   它的唯一可观测差异是**生产文件的 ACL**（内容/大小/mtime 全不变）⇒ 任何人重构这段打桩
     #   都会**无声地**把副作用带回来（审计实测：只摘掉上面那 6 行，本判据仍 123/0 全绿，而
     #   `logs\sd_local.token` 的继承条目 3 → 0）。⇒ 这里加**正向断言**：打桩真的生效了。
-    ok("V-R8-7 正向锚：口令取自**临时根**（`lg.token` 已被替换成桩）",
+    ok("正向锚：口令取自**临时根**（`lg.token` 已被替换成桩）",
        getattr(lg.token, "__name__", "") == "<lambda>", str(getattr(lg.token, "__name__", "?")))
-    ok("V-R8-7 正向锚：共享开关 `PM_LOCAL_TOKEN` 已设成同一串（服务端那份模块也读它）",
+    ok("正向锚：共享开关 `PM_LOCAL_TOKEN` 已设成同一串（服务端那份模块也读它）",
        str(os.environ.get(lg.ENV_KEY) or "") == _tok8 and bool(_tok8),
        "env 长度=%d" % len(str(os.environ.get(lg.ENV_KEY) or "")))
-    ok("V-R8-7 正向锚：`local_guard` 这个名字预先指向**同一份模块**（别再加载第二份）",
+    ok("正向锚：`local_guard` 这个名字预先指向**同一份模块**（别再加载第二份）",
        sys.modules.get("local_guard") is lg)
     ok("Host 判据：回环三种写法放行、外域拒",
        lg.host_ok("127.0.0.1:7860") and lg.host_ok("localhost:7860") and lg.host_ok("[::1]:7860")
@@ -748,16 +747,16 @@ else:
        "X-PM-Token" in lg.client_headers("http://127.0.0.1:7860/x")
        and "X-PM-Token" not in lg.client_headers("https://api.example.com/x"))
 
-    # ⛔ 2026-09-21（第四轮审计 **V-R4-13**）：口令文件在 Windows 上 `0o600` **不改 ACL**
+    # ⛔ 口令文件在 Windows 上 `0o600` **不改 ACL**
     #   （实测：文件照样继承父目录的 `BUILTIN\Users`）⇒ 同机其它用户能读到口令。
     #   ⇒ 修法＝建完/读到既有文件时都真用 `icacls` 收紧（断继承 + 只授本人/系统账号），
     #     并且**收紧失败要如实说**（不许假装成功）。这里用**真 icacls** 复核。
-    import subprocess as _sp2                                                  # noqa: E402
+    import subprocess as _sp2 # noqa: E402
     _NO_WIN2 = getattr(_sp2, "CREATE_NO_WINDOW", 0)
     _acl_dir = tempfile.mkdtemp(prefix="pm_acl_judge_")
     _acl_p = os.path.join(_acl_dir, "tok")
     lg._new_token_file(_acl_p, "TOKENJUDGE")
-    # ⛔ 2026-09-21（发版卡住时挖到的真根因）：`text=True` **没给 encoding/errors** 时按
+    # ⛔ （发版卡住时挖到的真根因）：`text=True` **没给 encoding/errors** 时按
     #   `locale.getpreferredencoding()` 解 —— 而我们从带 `PYTHONIOENCODING=utf-8` 的环境里起这个判据
     #   （发版脚本就是），子进程按 UTF-8 去解**中文的 icacls 输出**（GBK 字节）⇒ reader 线程抛
     #   `UnicodeDecodeError` ⇒ `stdout` 变 **None** ⇒ 下面 `"(I)" not in None` 抛 TypeError ⇒
@@ -768,16 +767,16 @@ else:
     _why_acl = lg._tighten_acl(_acl_p)
     _after = _sp2.run(["icacls", _acl_p], capture_output=True, text=True, errors="replace",
                       creationflags=_NO_WIN2).stdout or ""
-    ok("V-R4-13 口令文件 ACL 能收紧（`icacls` 真跑通）", _why_acl == "", _why_acl[:80])
-    ok("V-R4-13 收紧后**继承已断**（不再出现 `(I)` 继承标记）", "(I)" not in _after, _after[:80])
-    ok("V-R4-13 收紧后没有 `BUILTIN\\Users` / `Everyone` 这类「人人可读」",
+    ok("口令文件 ACL 能收紧（`icacls` 真跑通）", _why_acl == "", _why_acl[:80])
+    ok("收紧后**继承已断**（不再出现 `(I)` 继承标记）", "(I)" not in _after, _after[:80])
+    ok("收紧后没有 `BUILTIN\\Users` / `Everyone` 这类「人人可读」",
        ("BUILTIN\\Users" not in _after) and ("Everyone" not in _after), _after[:80])
-    ok("V-R4-13 收紧后**自己仍读得到**（别把口令锁死）",
+    ok("收紧后**自己仍读得到**（别把口令锁死）",
        bool(open(_acl_p, encoding="utf-8").read().strip()))
-    ok("V-R4-13 反例锚：**不收紧**时确实是继承来的宽 ACL（`(I)` 在）",
+    ok("反例锚：**不收紧**时确实是继承来的宽 ACL（`(I)` 在）",
        "(I)" in _before, _before[:80])
     _lg2 = io.open(os.path.join(ROOT, "agent", "local_guard.py"), encoding="utf-8").read()
-    ok("V-R4-13 源码级：`token()` 里**建完收紧 + 读到既有也补收紧**",
+    ok("源码级：`token()` 里**建完收紧 + 读到既有也补收紧**",
        _lg2.count("_tighten_acl(p)") >= 2 and "acl_ok" in _lg2)
     try:
         import shutil as _sh2
@@ -785,7 +784,7 @@ else:
     except Exception:
         pass
 
-    # ⚠️ 2026-09-20：**用单线程 HTTPServer**（不是 ThreadingHTTPServer）——请求是**串行**发的，
+    # ⚠️ **用单线程 HTTPServer**（不是 ThreadingHTTPServer）——请求是**串行**发的，
     #   多线程只会多出"收尾期 handler 线程还在读套接字"的竞态（并发套跑时偶发把 traceback
     #   打进 stderr，而 `run_all_selftests` 见到 Traceback 就判本脚本红）。
     #   单线程 + join ⇒ 收尾完全确定；`handle_error` 仍然收成一张表并**当一条显式断言**验。
@@ -795,7 +794,7 @@ else:
         def handle_error(self, request, client_address):
             _hdl_err.append(repr(client_address))
 
-    _httpd = _QuietHTTP(("127.0.0.1", 0), SDS.H)      # 随机空闲口，不碰用户在跑的 7860
+    _httpd = _QuietHTTP(("127.0.0.1", 0), SDS.H) # 随机空闲口，不碰用户在跑的 7860
     _p8 = _httpd.server_address[1]
     _thr8 = threading.Thread(target=_httpd.serve_forever, kwargs={"poll_interval": 0.05})
     _thr8.daemon = True
@@ -803,7 +802,7 @@ else:
 
     def _req8(method, path, tok=None, host=None):
         c = http.client.HTTPConnection("127.0.0.1", _p8, timeout=5)
-        h = {"Connection": "close"}                   # 别让 handler 线程挂着等下一个请求
+        h = {"Connection": "close"} # 别让 handler 线程挂着等下一个请求
         if host:
             h["Host"] = host
         if tok:
@@ -832,21 +831,21 @@ else:
         _httpd.shutdown()
         _httpd.server_close()
         try:
-            _thr8.join(timeout=3)                         # 单线程：join 完就彻底收干净，不留半个线程
+            _thr8.join(timeout=3) # 单线程：join 完就彻底收干净，不留半个线程
         except Exception:
             pass
     ok("服务端一个 handler 异常都没有（真出错要看得见，不是被框架当 traceback 吃掉）",
        not _hdl_err, str(_hdl_err[:3]))
     try:
-        import shutil as _sh8                                                  # noqa: E402
-        _sh8.rmtree(_ROOT8, ignore_errors=True)     # 临时口令（含被收紧 ACL 的文件）不留在 %TEMP%
+        import shutil as _sh8 # noqa: E402
+        _sh8.rmtree(_ROOT8, ignore_errors=True) # 临时口令（含被收紧 ACL 的文件）不留在 %TEMP%
     except Exception:
         pass
 
-    # ⛔ V-R3-8 的**竞态回归**（我自己留下的）：口令文件并发首建时不许互相覆盖。
+    # ⛔ 的**竞态回归**（我自己留下的）：口令文件并发首建时不许互相覆盖。
     #   两个进程同时进"读不到就生成" ⇒ 原来的 tmp+os.replace 会让各自 `_CACHE` 住不同口令，
     #   同一台机器上出现两个口令 ⇒ 本地生图服务拒掉产品自己的请求。
-    import tempfile as _tf                                                      # noqa: E402
+    import tempfile as _tf # noqa: E402
     _rt = _tf.mkdtemp(prefix="pm_tokrace_")
     _tp = lg.token_path(_rt)
     os.makedirs(os.path.dirname(_tp), exist_ok=True)
@@ -863,14 +862,14 @@ else:
     ok("再叫一次（别人已建）⇒ 仍然读回既有的那个，不改成 OTHER",
        lg._new_token_file(_tp, "OTHER") == "MINE")
     _lg_src = io.open(os.path.join(ROOT, "agent", "local_guard.py"), encoding="utf-8").read()
-    # ⛔ 2026-09-21（V-R4-4 修完这 4 条实参之后，这条才第一次**真的在判**）：原来扫的是**整个文件**
+    # ⛔ 原来扫的是**整个文件**
     #   有没有 os.replace —— 而 local_guard 里别处（别的文件的原子写）本来就用它 ⇒ 口径过宽。
     #   原本该判的是"**口令文件首建**"那一段，所以只切 `_new_token_file` 的函数体来判。
     _ntf = _lg_src[_lg_src.find("def _new_token_file("):]
     _ntf = _ntf[:_ntf.find("\ndef ", 10)]
     # ⚠️ 判据只看**代码**：docstring/注释里写着"原来是先写临时文件再 os.replace"（解释历史），
     #    不剥掉就会把这段解释当成实现 ⇒ 假红（同 `poke_locate_selftest.code_of` 的教训）。
-    import re as _re2                                                            # noqa: E402
+    import re as _re2 # noqa: E402
     _ntf_code = _re2.sub(r'"""[\s\S]*?"""', '""', _ntf)
     _ntf_code = "\n".join(_l for _l in _ntf_code.splitlines() if not _l.strip().startswith("#"))
     ok("口令文件首建用的是**独占创建**（不是先写临时文件再 replace）",
@@ -892,8 +891,8 @@ _sdl_src = io.open(os.path.join(ROOT, "agent", "sd_local.py"), encoding="utf-8")
 ok("探活（server_alive）与起服务（把口令传给子进程）两侧都改了",
    "client_headers(" in _sdl_src and "ENV_KEY" in _sdl_src)
 
-print("── V-R3-7（P2）新开关：有默认值、有文档、拒绝时**指路** ──")
-import json                                                                    # noqa: E402
+print("── （P2）新开关：有默认值、有文档、拒绝时**指路** ──")
+import json # noqa: E402
 
 _why7 = uc.manifest_origin_ok("https://my-mirror.example/x.json")[1]
 ok("自定义源被拒时 why 里点名开关（上一版只写「非官方域」）", "trust_custom_url" in _why7, _why7[:76])
@@ -904,7 +903,7 @@ ok("自定义源 + 显式信任 ⇒ 放行（开关真的有效，不是摆设�
 _r7, _w7 = uc.fetch("C:/tmp/persona-morph-manifest.json")
 ok("本地源被拒时也指路（update.allow_local / PM_ALLOW_LOCAL_UPDATE）",
    (not _r7) and ("allow_local" in _w7), _w7[:76])
-from agent import config as C                                                  # noqa: E402
+from agent import config as C # noqa: E402
 _upd = (C.DEFAULT_CONFIG.get("update") or {})
 ok("config.py 默认值里有这两个键（跟机制一起交付）",
    "trust_custom_url" in _upd and "allow_local" in _upd, str(sorted(_upd.keys())))
@@ -913,7 +912,7 @@ ok("config.example.json 里也有这两个键（新用户能照着改）",
    "trust_custom_url" in (_ex7.get("update") or {}) and "allow_local" in (_ex7.get("update") or {}),
    str(sorted((_ex7.get("update") or {}).keys())))
 
-print("── V-R4-1（P1）半装必须看得见：pendingFiles 非空时不许报「已是最新」──")
+print("── （P1）半装必须看得见：pendingFiles 非空时不许报「已是最新」──")
 # 真因：`agent/version.py` **本身也在换入清单里** ⇒ 最常见的半装（一键启动.exe / 一键关闭.exe 正在运行
 # 被占用 ⇒ 跳过，而 version.py 已换成功）会让 `state()` 算出 theirs==mine 且指纹相同 ⇒ 报 current
 # ⇒ 用户再也不会点第二次 ⇒ 那几件永远是旧的，界面上完全看不出来。
@@ -922,7 +921,7 @@ _real_installed = uc._read_installed
 _real_fetch2 = uc.fetch_any
 _real_rs, _real_ws = uc._read_state, uc._write_state
 try:
-    from agent.version import BUILD as _MYBUILD                                # noqa: E402
+    from agent.version import BUILD as _MYBUILD # noqa: E402
 except Exception:
     _MYBUILD = ""
 _MAN_SAME = {"base": {"version": uc.current_version(), "build": _MYBUILD, "url": "", "sha256": ""},
@@ -963,21 +962,21 @@ ok("控制台也认这个新状态（前端后端一体，否则后端说了界�
    "s.status === 'pending'" in _ch_src, "见 console_html.py 更新条")
 ok("…半装时**禁止**「不再提醒这个版本」（否则会把这条提醒永久消音）",
    "cur.status !== 'newer'" in _ch_src)
-# ⛔ V-R5B-10：`stateSaveError` / `stateSaved` 以前**全仓没有消费者**（写快照失败只有日志知道）
-ok("V-R5B-10 控制台真的**消费** `stateSaveError`（后端说有字段、界面不读＝等于没接线）",
+# ⛔ `stateSaveError` / `stateSaved` 以前**全仓没有消费者**（写快照失败只有日志知道）
+ok("控制台真的**消费** `stateSaveError`（后端说有字段、界面不读＝等于没接线）",
    "s.stateSaveError" in _ch_src and "s.stateSaved === false" in _ch_src)
 
-print("\n── 第五轮回执 V-R5R-1 / V-R5R-3：**取清单那条**也必须看最终地址（同一条修复的另一半）──")
+print("\n── 回执 / **取清单那条**也必须看最终地址（同一条修复的另一半）──")
 # ⛔ 现场（回执实测）：`_dl_once` 补上了"回读最终地址"，而 `fetch()`（取清单那条）没补 ⇒
 #   A 源 302 到攻击者的域，产品把**别人的清单**（版本 9999.9.9）当官方收下，而清单决定"去下哪个包"。
 _s2b, _p2b = _serve()
 _s1b, _p1b = _serve(redir="http://127.0.0.1:%d/manifest.json" % _p2b)
-_ucq.allow_local_update = lambda: False                 # 再确认一次：判据里不许被"允许本机源"放过去
+_ucq.allow_local_update = lambda: False # 再确认一次：判据里不许被"允许本机源"放过去
 try:
     _plain = uc.fetch("http://127.0.0.1:%d/manifest.json" % _p2b, timeout=3.0)
     ok("正当地址取清单**照常成功**（别把正常路堵了）", isinstance(_plain[0], dict), str(_plain)[:80])
     _jump = uc.fetch("http://localhost:%d/manifest.json" % _p1b, timeout=3.0)
-    ok("V-R5R-1 取清单跟随 302 到**别的主机** ⇒ 拒收（判据看的是最终取到的那个地址）",
+    ok("取清单跟随 302 到**别的主机** ⇒ 拒收（判据看的是最终取到的那个地址）",
        _jump[0] is None and ("跳转" in str(_jump[1]) or "主机" in str(_jump[1])), str(_jump)[:110])
     _keep_fu = uc.final_url_ok
     uc.final_url_ok = lambda *a, **k: ""
@@ -985,12 +984,12 @@ try:
         _jump2 = uc.fetch("http://localhost:%d/manifest.json" % _p1b, timeout=3.0)
     finally:
         uc.final_url_ok = _keep_fu
-    ok("V-R5R-1 反例锚：把最终地址判定摘掉（＝补这半之前），同一夹具**真会把跳转目标的清单收下**",
+    ok("反例锚：把最终地址判定摘掉（＝补这半之前），同一夹具**真会把跳转目标的清单收下**",
        isinstance(_jump2[0], dict), str(_jump2)[:80])
-    ok("V-R5R-3 允许名单里**没有 `github.io`**（任意用户都能托管的页面域，放了等于自己开后门）",
+    ok("允许名单里**没有 `github.io`**（任意用户都能托管的页面域，放了等于自己开后门）",
        not any(str(s).endswith("github.io") for s in getattr(uc, "FINAL_HOST_SUFFIXES", ())),
        str(getattr(uc, "FINAL_HOST_SUFFIXES", ())))
-    # ⛔ V-R8-7 **行为级锚**（第八轮）：原来这条是"`update_apply` 源码里没有 `FINAL_HOST_SUFFIXES`
+    # ⛔ **行为级锚**：原来这条是"`update_apply` 源码里没有 `FINAL_HOST_SUFFIXES`
     #   这个常量名"—— **文本＝假保证**：把那份名单重抄成一个字面量/别的变量名照样过。
     #   现在改成**打桩唯一实现**，看它是不是真转调、且实参顺序是 `(final, requested)`。
     #   ⚠️ 顺序写反会拿到「放行」（`github.com` 正在允许名单里）⇒ 第三条就是给这个陷阱做的对照。
@@ -1006,11 +1005,11 @@ try:
         _ua_why = U._final_url_ok("https://evil.github.io/m.json", "https://github.com/o/r")
     finally:
         uc.final_url_ok = _keep_fuo
-    ok("V-R5R-3 行为级：`update_apply._final_url_ok` 真**转调** `update_check.final_url_ok`（唯一实现）",
+    ok("行为级：`update_apply._final_url_ok` 真**转调** `update_check.final_url_ok`（唯一实现）",
        _ua_why == "桩：拒取", "返回 %r" % (_ua_why,))
-    ok("V-R5R-3 实参顺序是 `(final, requested)`（打桩记到的两个实参必须原样透传）",
+    ok("实参顺序是 `(final, requested)`（打桩记到的两个实参必须原样透传）",
        _seen8 == [("https://evil.github.io/m.json", "https://github.com/o/r")], str(_seen8))
-    ok("V-R5R-3 对照：同一对地址**顺序写反**时真实现确实返回「放行」（证明上一条不是在测空气）",
+    ok("对照：同一对地址**顺序写反**时真实现确实返回「放行」（证明上一条不是在测空气）",
        uc.final_url_ok("https://github.com/o/r", "https://evil.github.io/m.json") == "",
        "github.com 在允许名单里 ⇒ 写反就会放行")
 finally:
@@ -1020,15 +1019,15 @@ finally:
     except Exception:
         pass
 
-ok("V-R5R-4 折叠层有**行为级**判据：反斜杠/多重编码的点段也得认出来（不只是「函数存在」）",
+ok("折叠层有**行为级**判据：反斜杠/多重编码的点段也得认出来（不只是「函数存在」）",
    uc.has_dot_segments("a\\..\\b") is True and uc.has_dot_segments("%252e%252e/x") is True
    and uc.has_dot_segments("a/../b") is True and uc.has_dot_segments("a/b") is False,
    str((uc.has_dot_segments("a\\..\\b"), uc.has_dot_segments("%252e%252e/x"))))
 
-print("── V-R10-27（P0）更新链：两道闸必须在**真装那一刻**也生效（版本回退 / expires 过期）──")
+print("── （P0）更新链：两道闸必须在**真装那一刻**也生效（版本回退 / expires 过期）──")
 # 现场（审计假源实测）：`state()` 对低版本判 `older`、对过期清单判 `error`，而**真正动盘的**
 #   `update_apply.run_once()` 完全绕过这两道闸 ⇒ 照样真装（version.py 变 OLD）。这一节**只走真路径**。
-import shutil as _sh10                                                            # noqa: E402
+import shutil as _sh10 # noqa: E402
 _d10 = tempfile.mkdtemp(prefix="pm_vf_v10_")
 os.makedirs(os.path.join(_d10, "agent"), exist_ok=True)
 _z10, _t10 = mk_pkg(_d10, rel="agent/z10.py", body="Z10")
@@ -1044,7 +1043,7 @@ _z10file = os.path.join(_d10, "agent", "z10.py")
 _sf10 = os.path.join(_d10, "update_state.json")
 _sp10, _fa10, _ri10 = uc._state_path, uc.fetch_any, uc._read_installed
 _rl10 = U._relaunch_after_update
-uc._state_path = lambda: _sf10                # 判据绝不动真 data/update_state.json
+uc._state_path = lambda: _sf10 # 判据绝不动真 data/update_state.json
 uc._read_installed = lambda: {}
 U._relaunch_after_update = lambda *a, **k: None
 try:
@@ -1057,9 +1056,9 @@ try:
             os.remove(_sf10)
         _before10 = sorted(os.listdir(os.path.join(_d10, "agent")))
         _r10 = U.run_once(manifest=dict(_m10), zip_path=_z10, target=_d10)
-        ok("V-R10-27 %s ⇒ `run_once()` **拒装**（gate=%s）" % (_nm10, _r10.get("gate")),
+        ok("%s ⇒ `run_once()` **拒装**（gate=%s）" % (_nm10, _r10.get("gate")),
            _r10.get("ok") is False and _r10.get("gate") == _kind10, str(_r10)[:130])
-        ok("V-R10-27 …同一个夹具里**一个文件都没落地**（走的是真路径，不是只报了个错）",
+        ok("…同一个夹具里**一个文件都没落地**（走的是真路径，不是只报了个错）",
            (not os.path.exists(_z10file))
            and sorted(os.listdir(os.path.join(_d10, "agent"))) == _before10)
     # ⭐ P0 的本质：**同一份清单，`state()` 与 `run_once()` 必须同一结论**
@@ -1072,13 +1071,13 @@ try:
         _r10b = U.run_once(manifest=dict(_m10), zip_path=_z10, target=_d10)
         _conc10.append((_nm10, _st10.get("status"), _st10.get("status") in ("older", "error"),
                         not _r10b.get("ok")))
-    ok("V-R10-27 **同一份清单 `state()` 与 `run_once()` 结论一致**（逐份对）",
+    ok("**同一份清单 `state()` 与 `run_once()` 结论一致**（逐份对）",
        all(a == b for _n, _s, a, b in _conc10),
        "；".join("%s：state=%s 拒绝=%s/装=%s" % x for x in _conc10))
-    ok("V-R10-27 …三份里被拒的**正是那两份**（不是恒真：第三份是放行的阳性对照）",
+    ok("…三份里被拒的**正是那两份**（不是恒真：第三份是放行的阳性对照）",
        sorted(_n for _n, _s, a, b in _conc10 if b) == ["回退", "过期"],
        str([(n, s) for n, s, a, b in _conc10]))
-    ok("V-R10-27 …阳性对照：正常新清单 state=newer **且真装进去了**（闸门没把正常路堵死）",
+    ok("…阳性对照：正常新清单 state=newer **且真装进去了**（闸门没把正常路堵死）",
        _conc10[2][1] == "newer" and os.path.exists(_z10file), str(_conc10[2]))
     # 反例锚：把这道闸摘掉（＝修之前的样子）⇒ 同一份回退清单**真的会装进去**
     _keep_g10 = uc.manifest_gates
@@ -1092,7 +1091,7 @@ try:
         _r10c = U.run_once(manifest=dict(_low10), zip_path=_z10, target=_d10)
     finally:
         uc.manifest_gates = _keep_g10
-    ok("V-R10-27 反例锚：**摘掉这道闸**（＝修之前）同一份回退清单**真会装进去** ⇒ 上面那些断言抓得住回归",
+    ok("反例锚：**摘掉这道闸**（＝修之前）同一份回退清单**真会装进去** ⇒ 上面那些断言抓得住回归",
        _r10c.get("ok") is True and os.path.exists(_z10file), str(_r10c)[:90])
 finally:
     uc._state_path, uc.fetch_any, uc._read_installed = _sp10, _fa10, _ri10
@@ -1109,6 +1108,6 @@ for _p in sorted(glob.glob(os.path.join(ROOT, "scripts", "*selftest*.py"))):
         _bad_files.append(os.path.basename(_p))
 ok("没有判据在手工给异常贴 winerror（那是假绿）", not _bad_files, str(_bad_files))
 
-print("\n==== 漏洞修复回归判据（V1~V5 / V8 / V-R1-2 / V-R3-5·6·7·8·9 / V-R4-0·1）：%d 通过 / %d 失败 ===="
+print("\n==== 漏洞修复回归判据：%d 通过 / %d 失败 ===="
       % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

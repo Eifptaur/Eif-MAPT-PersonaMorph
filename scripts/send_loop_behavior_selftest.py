@@ -17,9 +17,9 @@ import sys
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agent import wechat as W                    # noqa: E402
-from agent import input_backend as ib            # noqa: E402
-from agent import chat_header as ch              # noqa: E402
+from agent import wechat as W # noqa: E402
+from agent import input_backend as ib # noqa: E402
+from agent import chat_header as ch # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -53,16 +53,16 @@ class _Clock(object):
 # ── 剧本：一次"发送动作"取一条 (投递调用成功吗, 消息真的落库了吗) ──
 class _Scenario(object):
     def __init__(self, script, alive=(True, "读得到（假库）")):
-        self.script = list(script)      # [("keys"|"sendbtn", post_ok, lands), ...]
+        self.script = list(script) # [("keys"|"sendbtn", post_ok, lands), ...]
         self.i = 0
         self.alive = alive
-        self.calls = []                 # 后端调用顺序（含聚焦点击与打字）
-        self.kinds = []                 # 只记发送动作的种类
+        self.calls = [] # 后端调用顺序（含聚焦点击与打字）
+        self.kinds = [] # 只记发送动作的种类
         self.rows = [{"local_id": 100, "content": "旧消息", "type": "文本"}]
         self.text = "SELFTEST-TOKEN-三枪"
         self.fg_restores = 0
         self.learned = 0
-        self.ibox = (101, 690, 1240, 900)      # 假"实测输入框"（渲染相对），上半部分够放落点
+        self.ibox = (101, 690, 1240, 900) # 假"实测输入框"（渲染相对），上半部分够放落点
 
     def _mk_row(self):
         self.rows = [{"local_id": 100 + len(self.rows) + 1, "content": self.text, "type": "文本"}] + self.rows
@@ -88,7 +88,7 @@ class _FakeBackend(ib.MessageBackend):
         super().__init__(press_ms=0, activate=False)
         self.scn = scn
 
-    def _wake(self, hwnd):          # 真实现会发 WM_ACTIVATE（这步在本测试里没有意义）
+    def _wake(self, hwnd): # 真实现会发 WM_ACTIVATE（这步在本测试里没有意义）
         return None
 
     def click(self, hwnd, screen_pt, right=False, hover_ms=0, press_ms=None):
@@ -118,7 +118,7 @@ class _FakeDB(object):
 
 class _FakeGui(object):
     main_hwnd = 4242
-    render_rect = (101, 90, 1240, 980)     # 1139×890，本机 150% DPI 的实测值
+    render_rect = (101, 90, 1240, 980) # 1139×890，本机 150% DPI 的实测值
 
     def _update_render_rect(self):
         return None
@@ -144,10 +144,10 @@ class _Stub(object):
     def chat_identity_ok(self, chat_id, gui=None, name=""):
         return True, "假证据：内容级判据（本测试打桩）"
 
-    # ── 2026-09-18 新增契约：点击咽喉点（真方法借过来用，判据要能过）──
+    # ── 点击咽喉点（真方法借过来用，判据要能过）──
     _wx_toplevel_windows = lambda self, *a, **k: {}
     _click_posted = W.WeChatAdapter._click_posted
-    # ⚡ 2026-09-18 深夜："用户在忙（全屏游戏/演示）⇒ 不动窗"这条闸也要打桩：
+    # ⚡ "用户在忙（全屏游戏/演示）⇒ 不动窗"这条闸也要打桩：
     #   桩对象永远比产品少方法（本判据因此整段崩过一次：rc=1 / None/None），
     #   主路径新增调用一律先探测再调用，判据这边同步补桩。
     _busy_reason = lambda self, *a, **k: ""
@@ -160,7 +160,7 @@ class _Stub(object):
         return self._scn.alive
 
     def chat_is_open(self, chat_id, gui=None, name=None, allow_weak=False):
-        """⛔ 2026-09-21 补桩（V-R4-5 之后）：指纹说 ok 时，发送闸会**再要一档有区分力的证据**
+        """⛔ 指纹说 ok 时，发送闸会**再要一档有区分力的证据**
         （`chat_is_open`）。桩对象少了它 ⇒ 抛 AttributeError ⇒ 新口径下 fail-closed 拒发
         ⇒ 本判据整段崩（实测 IndexError: `calls` 空）。本判据只测"发送循环的次序与落点"，
         身份闸用这一行桩表示"强档通过"。"""
@@ -170,20 +170,20 @@ class _Stub(object):
 def run(script, alive=(True, "读得到（假库）"), mode="measured", ink=None, halted=False):
     """跑一遍真函数，返回 (result, why, scn)。
 
-    `mode`（2026-09-18 起聚焦落点改为**运行时现算**，见 `_input_top_band`）：
+    `mode`：
       · `measured`＝量得到输入框（正常）；· `nobody`＝量不到（拿不到窗口自身画面）；
       · `toolbar`＝量出来的落点掉进工具栏带（0.92·h 那排图标，含 ✂ 截图）。
     `ink`＝阳性对照读到的深色点数（None ⇒ 用 12＝正常；给 0 ⇒ 演"字没进框"）。
     `halted`＝盘上有 `data/stopped.flag` 时的行为（**必须打桩**：这条判据原来会读**真机器**上的
-      停止标记 ⇒ 只要机器人是停着的，本判据就整段假红，2026-09-18 实测就是它把发布门卡住的）。
+      停止标记 ⇒ 只要机器人是停着的，本判据就整段假红，就是它把发布门卡住的）。
     """
     scn = _Scenario(script, alive=alive)
-    # ⛔ 2026-09-17：聚焦落点从 `0.945·h`（输入框下沿再往下那排工具图标，含 ✂ 截图）抬进正文区；
-    # 🔴 2026-09-18：再改成**现算输入框上半部分**（`_input_top_band`）—— 按比例猜点在"引用长消息"
+    # ⛔ 聚焦落点从 `0.945·h`（输入框下沿再往下那排工具图标，含 ✂ 截图）抬进正文区；
+    # 🔴 再改成**现算输入框上半部分**（`_input_top_band`）—— 按比例猜点在"引用长消息"
     #   时正好落到引用条/✕ 上。⇒ 本测试改成**打桩那个现算函数**，judge 只钉"顺序 + 不许猜"。
-    scn.focus_pt = (int(101 + 1139 * 0.45), 780)                       # (613, 780) 上半部分
+    scn.focus_pt = (int(101 + 1139 * 0.45), 780) # (613, 780) 上半部分
     if mode == "toolbar":
-        scn.focus_pt = (int(101 + 1139 * 0.45), int(90 + 890 * 0.95))  # 掉进工具栏带
+        scn.focus_pt = (int(101 + 1139 * 0.45), int(90 + 890 * 0.95)) # 掉进工具栏带
     stub = _Stub(scn)
     backend = _FakeBackend(scn)
 
@@ -193,7 +193,7 @@ def run(script, alive=(True, "读得到（假库）"), mode="measured", ink=None
              W._control_halt)
     W.time = _Clock()
     # ⛔ 暂停/停止标记**必须打桩**：真跑时它读的是盘上的 `data/stopped.flag`（本机确实存在）⇒
-    #    不打桩的话，只要机器人是停着的，本判据整段假红（2026-09-18 实测：它把发布门卡住了）。
+    # 不打桩的话，只要机器人是停着的，本判据整段假红。
     W._control_halt = (lambda: "机器人已停止 ⇒ 这条不发") if halted else (lambda: "")
 
     def _restore(tag, timeout=2.5, keep=False):
@@ -224,7 +224,7 @@ def run(script, alive=(True, "读得到（假库）"), mode="measured", ink=None
 print("── A. 前三步顺序：先投递点输入栏聚焦 → 投递打字 → 才谈提交 ──")
 _s1 = [("keys", True, True)]
 _r1, _w1, _c1 = run(_s1)
-# ⛔ 2026-09-21（V-R4-5）：**这一条是那次真缺陷的兜网** —— 老代码在"指纹判 ok"那一档引用了
+# ⛔ **这一条是那次真缺陷的兜网** —— 老代码在"指纹判 ok"那一档引用了
 #   未定义的 `name` ⇒ 每次都抛 NameError 被 except 吞掉 ⇒ 强档复核从没跑过、发送照旧。
 #   现在只要回执里出现「校验本身出错」就说明**闸里的代码又炸了**（新口径下还会拒发 ⇒ 一条都发不出去）。
 ok("身份闸在 status=ok 这一档真的跑完、没有把自己炸掉（否则回执会写「校验本身出错」）",
@@ -234,12 +234,12 @@ ok("顺序＝click(聚焦) → send_text(打字) → keys(回车)",
    _front == ["click", "send_text", "keys"], str(_front))
 ok("聚焦点＝**现算出来的**输入框上半部分（不是按比例猜）",
    _c1.calls[0][1] == _c1.focus_pt, "%s vs %s" % (_c1.calls[0][1], _c1.focus_pt))
-ok("聚焦落点**必须在工具栏带（0.92·h）之上**（那排图标里有 ✂ 截图，2026-09-17 的事故点）",
+ok("聚焦落点**必须在工具栏带（0.92·h）之上**",
    _c1.calls[0][1][1] < int(90 + 890 * 0.92),
    "y=%s 上限=%d" % (_c1.calls[0][1][1], int(90 + 890 * 0.92)))
 ok("打字用的就是本次文本", _c1.calls[1][1] == _c1.text, str(_c1.calls[1][1])[:24])
 
-print("── A2. 量不到输入框 ⇒ **一枪都不下**（作者口径：不许按比例猜点），发送照走 ──")
+print("── A2. 量不到输入框 ⇒ **一枪都不下**，发送照走 ──")
 _rA, _wA, _cA = run(_s1, mode="nobody")
 ok("量不到 ⇒ 直接打字，没有那一次 click",
    [c[0] for c in _cA.calls[:2]] == ["send_text", "keys"], str([c[0] for c in _cA.calls[:2]]))
@@ -267,7 +267,6 @@ ok("成功后补学了该尺寸的会话头参照", _c1.learned >= 1, "learned=%
 ok("每枪之后都还了一次前台", _c1.fg_restores == 1, "fg_restores=%d" % _c1.fg_restores)
 
 print("── C. 前两枪不生效、第三枪（回车）成功：三枪都走投递回车（兜底不再点按钮） ──")
-# ⛔ 2026-09-17：兜底那枪**不再点「发送」按钮**（那一排里有 ✂ 截图，用户报过"微信自己弹截图"）
 _s2 = [("keys", True, False), ("keys", True, False), ("keys", True, True)]
 _r2, _w2, _c2 = run(_s2)
 ok("判 V_OK", _r2 == W.V_OK, "result=%r" % (str(_r2),))
@@ -332,14 +331,14 @@ finally:
 ok("回读打的就是传进来的 chat_id", _seen.get("chat_id") == "filehelper", str(_seen))
 
 print("── H. 盘上有停止标记（真跑时的 `data/stopped.flag`）⇒ **一枪都不下**、如实说已停止 ──")
-# 这条是 2026-09-18 补的：本判据原来会读**真机器**上的停止标记（本机确实有 `data/stopped.flag`）
+# 这条是 本判据原来会读**真机器**上的停止标记（本机确实有 `data/stopped.flag`）
 # ⇒ 只要机器人是停着的，A 段整段假红（calls=[]），把"发布前全绿"这道门卡死。现在标记一律打桩，
-# 并**把这条行为本身写成断言**（作者口径：暂停/停止必须是硬冻结，任何路径都不许再动手）。
+# 并**把这条行为本身写成断言**。
 _rH, _wH, _cH = run(_s1, halted=True)
 ok("停止中 ⇒ 一枪都不下", _cH.calls == [], str(_cH.calls))
 ok("判失败且说明写清是「已停止」", (not bool(_rH)) and ("已停止" in _wH), "%r %s" % (str(_rH), str(_wH)[:90]))
 
-print("── I. 快路径：输入那一跳压到最短、输完立刻回后台（作者 2026-09-19 口径）──")
+print("── I. 快路径：输入那一跳压到最短、输完立刻回后台──")
 _src_w = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                            "agent", "wechat.py"), encoding="utf-8").read()
 ok("`_send_text_fast` 存在", "def _send_text_fast(" in _src_w)
@@ -355,7 +354,7 @@ ok("成功**只认 DB 回读**，没等到就 `return None`（回退老链，不
    "get_messages(chat_id, limit=3)" in _seg_f and "return None" in _seg_f)
 ok("快路径失败后**原样回退老链**（多枪兜底还在）", "回退老链" in _src_w)
 
-print("── I2. 快路径超时后**不许立刻重复打字**（第十五轮 V-R15-4 · 网友报「有时会重复回复」）──")
+print("── I2. 快路径超时后**不许立刻重复打字**──")
 # ⛔ 为什么：快路径只等一小会儿 DB 新行；等不到就回退老链，而老链是**重新投一遍同样的字**再开枪。
 #   只要"其实已经发出去了、只是回读慢"（本文件自述写库 ~1.6s、图片 30~60s），群里同一句就出现两遍。
 #   三道去重（`_dedup_send` 3s / `SendQueue` 20s / `wake` 批次指纹）都锁不住它——它们认的是

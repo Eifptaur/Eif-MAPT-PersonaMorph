@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """日志体积治理（Persona Morph）：①主日志按体积轮转 ②启动时把"只追加"的日志裁到上限 ③清过期日志。
 
-为什么需要（2026-09-13 实测）：主日志 `logs/persona_morph.log` 用的是"每行 flush 的普通 FileHandler"，
+为什么需要：主日志 `logs/persona_morph.log` 用的是"每行 flush 的普通 FileHandler"，
 **没有任何轮转/上限**；`logs/onestart.log`（442KB）、`data/runtime.log`（当时叫 `bot_crash.log`，360KB）、
 `data/listener_failed.jsonl`、`wechatauto_logs/app_YYYYMMDD.log` 全是**只增不减**。
 长期挂着跑（本项目就是"上班时也挂着"的用法）会几十 MB~几百 MB 地涨。
@@ -12,7 +12,7 @@
   · `wechatauto_logs/fail/<时间戳>_<原因>/`（失败现场：`shot.png`/`probe.json`）**整目录**按 mtime 清；
   · 每次启动跑一次，只在真的裁了/删了的时候打一行日志。
 
-⛔ 名单是**手写枚举**这件事本身就是隐患（V-R1-5）：2026-09-20 补齐了 `data/input_audit.log`、
+⛔ 名单是**手写枚举**这件事本身就是隐患：补齐了 `data/input_audit.log`、
 `logs/sd_local.log`、`logs/installer.log`（那份是 `scripts/installer.ps1` 追加写的），并处理了
 死代码 `GLOB_DAILY`。**新增日志时请回到 `LOG_LIMITS` 加一行** —— `log_housekeeping_selftest.py`
 有一条"名单必须覆盖源码里出现的日志路径"的机械断言盯着它。
@@ -26,21 +26,21 @@ LOG_LIMITS = [
     ("logs/persona_morph.log", 5 * 1024 * 1024, 1 * 1024 * 1024),
     ("logs/onestart.log", 2 * 1024 * 1024, 512 * 1024),
     ("logs/wx_agent.log", 2 * 1024 * 1024, 512 * 1024),
-    # ⭐ V-R1-5 补：本机语音/生图的日志（`agent/sd_local.py` 追加写），原来不在名单里、无上限增长
+    # ⭐ 补：本机语音/生图的日志（`agent/sd_local.py` 追加写），原来不在名单里、无上限增长
     ("logs/sd_local.log", 2 * 1024 * 1024, 512 * 1024),
-    # ⭐ V-R1-5 补：安装器日志（`scripts/installer.ps1` 用 AppendAllText 一直追加）
+    # ⭐ 补：安装器日志（`scripts/installer.ps1` 用 AppendAllText 一直追加）
     ("logs/installer.log", 2 * 1024 * 1024, 512 * 1024),
     ("data/runtime.log", 1 * 1024 * 1024, 256 * 1024),
-    # 旧名：2026-09-16 把 `bot_crash.log` 改名成 `runtime.log`（它本来就是主运行日志，
+    # 旧名：把 `bot_crash.log` 改名成 `runtime.log`（它本来就是主运行日志，
     # 名字让人找错文件）。这一条只为清用户机器上可能残留的旧文件。
     ("data/bot_crash.log", 1 * 1024 * 1024, 256 * 1024),
     ("data/listener_failed.jsonl", 2 * 1024 * 1024, 512 * 1024),
-    # ⭐ V-R1-5 补：输入审计日志（`agent/input_audit.py` 打开 `WXAGENT_INPUT_AUDIT=1` 时**只 append**，
+    # ⭐ 补：输入审计日志（`agent/input_audit.py` 打开 `WXAGENT_INPUT_AUDIT=1` 时**只 append**，
     #    排障时正是它被打开 —— 无上限增长最典型的一处）
     ("data/input_audit.log", 1 * 1024 * 1024, 256 * 1024),
 ]
-KEEP_DAYS = 14                      # wechatauto_logs 的按天文件与失败现场目录的保留天数
-# ⛔ 2026-09-20 删掉死代码 `GLOB_DAILY`（V-R1-5）：那个正则（`^(app|ui_probe)?_?\d{8}\.log$`）定义后
+KEEP_DAYS = 14 # wechatauto_logs 的按天文件与失败现场目录的保留天数
+# ⛔ 删掉死代码 `GLOB_DAILY`：那个正则（`^(app|ui_probe)?_?\d{8}\.log$`）定义后
 #    **全仓没有一处使用**，而它想表达的"只删按天文件"和实际行为（删 `wechatauto_logs/` 里所有
 #    KEEP_DAYS 天没动过的 `*.log`）并不一致。按名字白名单删文件正是本条漏洞的病根（手写名单会漏），
 #    ⇒ 这里明确取"**按年龄删，不按名字删**"这一条口径：`wechatauto_logs/` 下的 `*.log` 只要过期就删，
@@ -103,7 +103,7 @@ def sweep(root: str, keep_days: int = KEEP_DAYS, log=None) -> dict:
                     trimmed["wechatauto_logs/" + name] = sz
             except OSError:
                 pass
-    # ⭐ V-R1-5 补：失败现场 `wechatauto_logs/fail/<时间戳>_<原因>/` **整目录**清（原来是"只删 *.log
+    # ⭐ 补：失败现场 `wechatauto_logs/fail/<时间戳>_<原因>/` **整目录**清（原来是"只删 *.log
     #    且不进子目录"⇒ 15 个目录里的 shot.png/probe.json 一直在，比 .log 更占地方）。
     fail_dir = os.path.join(root, "wechatauto_logs", "fail")
     if os.path.isdir(fail_dir):
@@ -113,7 +113,7 @@ def sweep(root: str, keep_days: int = KEEP_DAYS, log=None) -> dict:
                 if os.path.isdir(p) and os.path.getmtime(p) < cutoff:
                     sz = _dir_size(p)
                     shutil.rmtree(p, ignore_errors=True)
-                    if not os.path.exists(p):          # 真删掉了才记账（rmtree 失败不许谎报释放）
+                    if not os.path.exists(p): # 真删掉了才记账（rmtree 失败不许谎报释放）
                         deleted.append("fail/" + name)
                         trimmed["wechatauto_logs/fail/" + name] = sz
             except OSError:

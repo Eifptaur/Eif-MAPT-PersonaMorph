@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
-"""丙-12：水光波纹 —— 真正的「界面波动」（内容像素位移扭曲，非画圆环）。
+"""水光波纹 —— 真正的「界面波动」（内容像素位移扭曲，非画圆环）。
 
-## 用户原话（必须解决）
 「那个波纹特效不理想……你做的这个确实是涟漪了，但是我想要的那个效果好像没有
 （指的是界面波动）」+「再看看页面设置的各种效果强度啊，各种调节项是否能真正生效」。
 
@@ -9,29 +8,28 @@
 - `#cardWave2` = `feTurbulence`(分形噪声) + `feDisplacementMap`(按噪声位移像素)：
   `out = in[x + scale*(R-0.5), y + scale*(G-0.5)]`，xChannelSelector=R, yChannelSelector=G。
 - `#waveLens` 是 fixed 层，`backdrop-filter: url(#cardWave2)` 取**背后真实像素**做位移
-  重采样 ⇒ **内容本身被扭曲变形**（这就是用户要的「界面波动」），不是叠加圆环。
 - `waveMaskAt(now)`：径向高斯环带 `exp(-((r-phase)/0.028)^2)` + 衰减 `pow(1-phase,4)`
   + 中心辉光 `pow(1-r,8)*0.35`；`phase = (now/1000*ring_speed)%1` 环带随时间推进。
 - 透镜范围 = 光标所在的**整个模块**（卡片/侧栏/顶栏），波纹绝不越出模块边界。
 - 常驻透镜：静止也有微动（setInterval 恒跑，相位由绝对时间驱动）。
 - 9 参数：enabled/scale/speed/mouse_gain/max_gain/radius/falloff/rings/ring_speed。
 
-## Qt 实现（丙-33：对齐 web 真值观感——「光标周围一团翻滚的大漩涡 + 一圈环带荡开」）
+## Qt 实现
 Qt 无 feTurbulence/feDisplacementMap，也无 backdrop-filter。采用：
 - 给 Shell 根窗挂自定义 `QGraphicsEffect`：`draw()` 内 `sourcePixmap()` 取**未扭曲的真实
   像素**（sourcePixmap 不含自身 effect ⇒ 无递归），整窗画回（UI 正常显示），再仅在
   **透镜 bbox**（裁剪到模块边界）内做位移重采样后盖回 ⇒ 内容扭曲，等价于 web 的
   backdrop-filter 取背后像素做 displacement。
-- 噪声（丙-33 重写）：`feTurbulence fractalNoise(numOctaves=2)` 的 CPU 等价 = **平滑
+- 噪声：`feTurbulence fractalNoise(numOctaves=2)` 的 CPU 等价 = **平滑
   value noise**（格点随机 seed 固定 + smoothstep 双线性插值）2 八度叠加（f、2f，幅
   1:0.5）。旧「3 八度 sin/cos + 逐帧 min/max 归一化」的病灶：归一化把噪声压成近均匀
-  随机 ⇒ 逐点不相干的细碎颗粒（作者描述「布满细小刮痕的偏光透镜」），而 web 是低频
+  随机 ⇒ 逐点不相干的细碎颗粒，而 web 是低频
   连贯的大漩涡。baseFrequency 按 web 同款公式逐帧呼吸（fx=0.008+0.004·sin(0.9φ)）。
 - 位移数学严格对齐 `feDisplacementMap`：`out = in[x + scale*(R-0.5), y + scale*(G-0.5)]`。
   **位移场不乘 mask**（web 同款：扭曲全区域存在，mask 只管显示混合）——旧版把 mask 乘进
   位移幅度 ⇒ 只有细环带在动、中心没有持续翻滚 ⇒ 「扭得狠但没水感」。
 - mask（对齐 `waveMaskAt`）：环带·(1-phase)⁴ + 中心辉光 (1-r)⁸·0.35，r=到光标距离/最远角
-  距离。**maskImage 语义合成**：final = 原图·(1-m) + 位移图·m，**全分辨率**做（丙-32D）——
+  距离。**maskImage 语义合成**：final = 原图·(1-m) + 位移图·m，**全分辨率**做——
   m==0 处逐像素等于真原图（不是缩采回拉的近似原图）⇒ 模块边缘/环带外零差异、无缝。
 - 常驻：定时器每 ~33ms 推进相位并重绘 ⇒ 静止也有微动。
 
@@ -79,27 +77,27 @@ _DEFAULTS = {
 
 # 噪声场生成网格（相对设备像素的缩采比例）：feTurbulence 等价的 value noise 在 0.5x
 # 网格生成后 repeat 上采样——噪声波长 ≥60 逻辑 px，2 设备 px 的块状完全不可见；
-# 位移采样与 mask 合成仍走设备全分辨率（丙-33：全分辨率合成是「无缝」的根）。
+# 位移采样与 mask 合成仍走设备全分辨率。
 _PROC_SCALE = 0.5
 
-# 丙-31：透镜 bbox 性能上限（逻辑 px，最长边）。模块矩形特别大（如接近全窗的容器）时
+# 透镜 bbox 性能上限（逻辑 px，最长边）。模块矩形特别大（如接近全窗的容器）时
 # 降级为「光标为中心、_MAX_LENS 见方」的裁剪盘——波纹仍困在模块内语义上等价于 web 的
 # 模块透镜，但 render+位移的每帧成本有硬上界（全窗位移 120ms/帧 会拖死 30fps）。
 _MAX_LENS = 720
 
-# 丙-32：位移在抓源 bbox 四边的渐隐带宽（逻辑 px）。web 是全屏连续位移场（backdrop-filter
+# 位移在抓源 bbox 四边的渐隐带宽（逻辑 px）。web 是全屏连续位移场（backdrop-filter
 # 层没有边界概念）；Qt 的透镜 bbox 是有限矩形，环带扫到 bbox 边缘时若位移仍在、盘外为零
-# ⇒ 作者真机看到的「方形区域 + 明显分界线」。边缘 mask 归零后过渡自然，方形感消失。
+# ⇒ 。边缘 mask 归零后过渡自然，方形感消失。
 _EDGE_FADE = 48.0
 
-# ⛔ 丙-26 批2.5：挂载恢复默认启用 —— draw() 已有签名修正 + 双层 fail-safe
+# ⛔ 挂载恢复默认启用 —— draw() 已有签名修正 + 双层 fail-safe
 #   （取源失败整帧放弃；_draw_lens 异常吞掉），最坏情况是「无波纹」而非崩溃。
-#   QT_NO_WAVE=1 为逃生门（禁用挂载）；波纹效果真机验收由作者对照 web 完成。
+# QT_NO_WAVE=1 为逃生门（禁用挂载）；波纹效果真机验收由
 _LENS_MOUNT_OK = os.environ.get("QT_NO_WAVE") != "1"
 
 
 class _WaveLensEffect(QGraphicsEffect):
-    """挂在 Shell 根窗的取源-位移效果（丙-12 核心）。
+    """挂在 Shell 根窗的取源-位移效果。
 
     draw()：取未扭曲真实像素 → 整窗画回 → 仅在透镜 bbox 内做位移重采样后盖回。
     """
@@ -109,16 +107,15 @@ class _WaveLensEffect(QGraphicsEffect):
         self._wf = wavefx
 
     def draw(self, painter):
-        # ⛔ 丙-14 止血：原写法 `sourcePixmap(PixmapPadMode.NoPad)` 把 mode 当第一个参数
         #   （正确签名：sourcePixmap(system, offset, mode)）⇒ **每帧 TypeError**。
         #   该异常发生在 Qt C++ 层调 Python 覆写的边界上，累计触发 PySide6 段错误
-        #   （0xC0000005）—— 作者真机「卡死→自动拉起黑屏→再启动仍黑」即此所致
+        # （0xC0000005）—— 即此所致
         #   （effect 挂在 Shell 根窗上，draw 一炸整窗绘制全断）。
         #   修：签名对齐 + fail-safe —— 取源失败就整帧放弃，绝不让波纹拖垮窗口绘制。
         try:
             src = self.sourcePixmap(Qt.CoordinateSystem.DeviceCoordinates,
                                     None, QGraphicsEffect.PixmapPadMode.NoPad)
-        except Exception:  # noqa: BLE001
+        except Exception: # noqa: BLE001
             return
         if src.isNull():
             return
@@ -129,7 +126,7 @@ class _WaveLensEffect(QGraphicsEffect):
             return
         try:
             self._draw_lens(painter, src)
-        except Exception:  # noqa: BLE001  波纹绘制失败绝不能拖垮窗口
+        except Exception: # noqa: BLE001  波纹绘制失败绝不能拖垮窗口
             pass
 
     def _draw_lens(self, painter, src):
@@ -138,8 +135,8 @@ class _WaveLensEffect(QGraphicsEffect):
         W, H = shell.width(), shell.height()
         if W < 4 or H < 4:
             return
-        center = wf._lens_center()            # 逻辑坐标
-        rect = wf._lens_rect(center)          # 逻辑矩形（模块矩形或空白圆盘 bbox）
+        center = wf._lens_center() # 逻辑坐标
+        rect = wf._lens_rect(center) # 逻辑矩形（模块矩形或空白圆盘 bbox）
         if rect.isNull():
             return
         rect = rect.intersected(QRect(0, 0, W, H))
@@ -148,12 +145,12 @@ class _WaveLensEffect(QGraphicsEffect):
         dpr = src.devicePixelRatioF() or 1.0
         dev = QRectF(rect.x() * dpr, rect.y() * dpr,
                      rect.width() * dpr, rect.height() * dpr).toRect()
-        region = src.copy(dev)                # 设备像素区域
+        region = src.copy(dev) # 设备像素区域
         if region.isNull():
             return
         # 掩蔽半径（逻辑）：模块内 = 中心到模块四角的最远距离；空白 = radius
         Rnorm = wf._norm_radius(center, rect)
-        phase = wf._mask_phase()              # 环带相位（绝对时间驱动）
+        phase = wf._mask_phase() # 环带相位（绝对时间驱动）
         out_img = wf._displace_region(region, rect, center, Rnorm, phase)
         if out_img is None:
             return
@@ -162,18 +159,18 @@ class _WaveLensEffect(QGraphicsEffect):
         if wf._blank_mode(center):
             path = QPainterPath_safe_circle(center, float(wf._cfg["radius"]))
             painter.setClipPath(path)
-        painter.drawImage(rect, out_img)      # 把缩采后的扭曲贴回（拉伸对齐）
+        painter.drawImage(rect, out_img) # 把缩采后的扭曲贴回（拉伸对齐）
         painter.restore()
 
 
 class WaveOverlay(QWidget):
-    """波纹覆盖层（丙-30 重做；丙-31 修正三连硬伤）。
+    """波纹覆盖层。
 
     全窗透明子控件（WA_TransparentForMouseEvents：不挡任何点击/拖动），paintEvent 只做
     「位移 + 贴回」——**抓源已移到 _tick（事件循环态）的 `_grab_src()`**。
 
-    ## 丙-31 根因记录（「一点动静都没有」的真根，三处叠加）
-    1. **QPixmap 混进 QImage 链路**：丙-30 paintEvent 里 `shell.grab()` 产 QPixmap 直接传
+    ## 根因记录（「一点动静都没有」的真根，三处叠加）
+    1. **QPixmap 混进 QImage 链路**： paintEvent 里 `shell.grab()` 产 QPixmap 直接传
        `_displace_region`，其中 `convertToFormat(QImage.Format...)` / `bits()` 都是 QImage
        独有方法 ⇒ 每帧 AttributeError ⇒ 被 paintEvent 的 try/except **静默吞掉** ⇒ 零视觉。
        （selftest 只用 QImage 直测 _displace_region，没覆盖这条真链路。）
@@ -183,9 +180,9 @@ class WaveOverlay(QWidget):
     4. **shell.resizeEvent 调用的 `sync_overlay()` 在本模块根本不存在** ⇒ AttributeError
        被 shell 的 except 吞掉 ⇒ overlay 几何只在创建那一刻对，窗口变化后全错。
 
-    ## 丙-31 架构
+    ## 架构
     - `_tick`（事件循环态，非 paint 期间）：`_grab_src()` 抓透镜区域到 **无 DPR 的 QImage**
-      （丙-33 起走 `shell.grab(QRect)` 官方路径；抓源与绘制解耦、无重入；抓取期间
+      （ 起走 `shell.grab(QRect)` 官方路径；抓源与绘制解耦、无重入；抓取期间
       `_grabbing` 守卫防 overlay 在 DrawChildren 时自绘旧帧造成自反馈）。
     - `paintEvent`：读 `_src_img` → `_displace_region`（纯 QImage 链路）→ drawImage 1:1 贴回。
     - `_hit_deep(x, y)`：模拟 childAt 的「最深可见子控件」下钻，**排除 overlay 自身**，
@@ -199,7 +196,7 @@ class WaveOverlay(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.setStyleSheet("background:transparent;")
 
-    def paintEvent(self, ev):  # noqa: N802
+    def paintEvent(self, ev): # noqa: N802
         wf = self._wf
         if not wf._enabled or wf._grabbing:
             return
@@ -213,13 +210,13 @@ class WaveOverlay(QWidget):
                                       wf._src_rnorm, wf._mask_phase())
             if out is None:
                 return
-            # 丙-32：不再需要圆盘 clip——_displace_region 已按 mask 与原图合成，
+            # 不再需要圆盘 clip——_displace_region 已按 mask 与原图合成，
             # m==0 处逐像素等于原图（无缝），空白圆盘外天然无位移。
             p = QPainter(self)
             p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
-            p.drawImage(rect, out)                # 丙-33：out 与 src 同为设备分辨率，1:1 贴回
+            p.drawImage(rect, out) # out 与 src 同为设备分辨率，1:1 贴回
             p.end()
-        except Exception:  # noqa: BLE001 — 波纹绘制失败绝不能拖垮窗口
+        except Exception: # noqa: BLE001 — 波纹绘制失败绝不能拖垮窗口
             return
 
 
@@ -238,25 +235,25 @@ class WaveFX(QObject):
     """
 
     def __init__(self, shell):
-        super().__init__()              # 不挂 QObject 父：shell 侧持引用保活即可
+        super().__init__() # 不挂 QObject 父：shell 侧持引用保活即可
         self._shell = shell
         self._timer = QTimer(self)
         self._timer.setInterval(_FRAME_MS)
         self._timer.timeout.connect(self._tick)
         self._enabled = False
-        self._fx = None                     # 丙-30：QGraphicsEffect 对顶层窗口不生效，弃用
-        self._overlay = None                # WaveOverlay 子控件（set_enabled 懒建）
-        self._grabbing = False              # render/paint 防重入守卫（_grab_src ↔ overlay.paintEvent）
-        self._src_img = None                # 丙-31：_grab_src 产的透镜区域 QImage（paint 只读）
-        self._src_rect = QRectF()           # 对应逻辑矩形（设备像素对齐，丙-32C；空=尚无有效源）
-        self._src_rnorm = 1.0               # 丙-32：按模块矩形取的 mask 归一化半径（web 最远角）
+        self._fx = None # QGraphicsEffect 对顶层窗口不生效，弃用
+        self._overlay = None # WaveOverlay 子控件（set_enabled 懒建）
+        self._grabbing = False # render/paint 防重入守卫（_grab_src ↔ overlay.paintEvent）
+        self._src_img = None # _grab_src 产的透镜区域 QImage（paint 只读）
+        self._src_rect = QRectF() # 对应逻辑矩形
+        self._src_rnorm = 1.0 # 按模块矩形取的 mask 归一化半径（web 最远角）
         self._pos = QPointF(float(shell.width()) / 2.0, float(shell.height()) / 2.0)
         # 鼠标速度 EMA（web `_mouseSpeed` 同款，喂 gain）
         self._speed_ema = 0.0
         self._last_move_t = time.monotonic()
         # 相位累计（rad）：驱动噪声流动 + scale 脉动（web `_ph`）
         self._ph = 0.0
-        self._epoch = time.monotonic()      # 掩蔽相位用绝对时间（web `now/1000`）
+        self._epoch = time.monotonic() # 掩蔽相位用绝对时间（web `now/1000`）
         self._cfg = self._read_cfg()
         # 初始即开（web 默认 enabled=false 但面板可调；这里按 config 当前值）
         # 注意：set_enabled 由 shell.py 调，不用这里重复启动以免重复安装 effect。
@@ -267,13 +264,13 @@ class WaveFX(QObject):
         """读 `ui.wave_fx.*`（与 web 同一份 config 键；缺键用 web 同款默认）。"""
         d = dict(_DEFAULTS)
         try:
-            import config_io  # noqa: PLC0415
+            import config_io # noqa: PLC0415
 
             for k in list(d.keys()):
                 v = config_io.read_path("ui.wave_fx.%s" % k, None)
                 if v is not None:
                     d[k] = v
-        except Exception:  # noqa: BLE001
+        except Exception: # noqa: BLE001
             pass
         return self._clamp(d)
 
@@ -306,32 +303,32 @@ class WaveFX(QObject):
         self._enabled = bool(on)
         try:
             if self._enabled:
-                # 丙-30：WaveOverlay 子控件（懒建 + 跟随 shell 几何 + raise_ 置顶）。
-                #   QGraphicsEffect 对顶层窗口不生效 ⇒ 弃用 effect 路线（作者真机：
+                # WaveOverlay 子控件（懒建 + 跟随 shell 几何 + raise_ 置顶）。
+                # QGraphicsEffect 对顶层窗口不生效 ⇒ 弃用 effect 路线（
                 #   开关已开、effect 已挂、画面纹丝不动 = 此根因）。QT_NO_WAVE=1 逃生门。
                 if _LENS_MOUNT_OK and self._overlay is None:
                     self._overlay = WaveOverlay(self)
                     self._overlay.setGeometry(self._shell.rect())
                     self._overlay.show()
                     self._overlay.raise_()
-                self.sync_overlay()             # 丙-31：几何同步收敛到一个方法
+                self.sync_overlay() # 几何同步收敛到一个方法
                 if not self._timer.isActive():
                     self._timer.start()
             else:
                 if self._timer.isActive():
                     self._timer.stop()
-        except Exception:  # noqa: BLE001
+        except Exception: # noqa: BLE001
             pass
         try:
             self._shell.update()
-        except Exception:  # noqa: BLE001
+        except Exception: # noqa: BLE001
             pass
 
     def sync_overlay(self) -> None:
         """overlay 几何跟随 shell（shell.resizeEvent 每跳转发）。
 
-        丙-31 硬伤补漏：shell.py:resizeEvent 一直调 `self._wavefx.sync_overlay()`，
-        但丙-30 忘了在本模块定义这个方法 ⇒ AttributeError 被 shell 的 except 吞掉 ⇒
+         硬伤补漏：shell.py:resizeEvent 一直调 `self._wavefx.sync_overlay()`，
+        但 忘了在本模块定义这个方法 ⇒ AttributeError 被 shell 的 except 吞掉 ⇒
         overlay 几何只在创建那一刻对、窗口变化后全错。
         """
         ov = self._overlay
@@ -339,45 +336,45 @@ class WaveFX(QObject):
             return
         try:
             ov.setGeometry(self._shell.rect())
-        except Exception:  # noqa: BLE001
+        except Exception: # noqa: BLE001
             pass
 
     # ------------------------------------------------------------ 抓源（事件循环态，与绘制解耦）
 
     def _grab_src(self) -> None:
-        """把透镜 bbox 的真实像素抓到 QImage（丙-31 核心，丙-33 改抓取路径）。
+        """把透镜 bbox 的真实像素抓到 QImage。
 
         在 `_tick`（timer timeout，事件循环态）调用——**不在 paintEvent 里**。产物存
         `_src_img/_src_rect`，overlay 的 paintEvent 只读。
 
-        丙-33 抓源路径改 `shell.grab(QRect)`（Qt 官方 QWidget::grab，DPR/坐标语义有
+         抓源路径改 `shell.grab(QRect)`（Qt 官方 QWidget::grab，DPR/坐标语义有
         保证）。此前 `shell.render(painter+scale+translate, QRegion)` 在真机 DPR=1.5
         下产物**整块错乱**：大片未初始化黑 + 内容错位（_c33_srcprobe 贴图铁证——
-        render 版 vs grab 版 interior 平均差 201/255）——作者看到的「方形玻璃+
-        细小刮痕」正是这块错乱内容的贴回；丙-31 探针的「可见」大半也是它贡献的
-        假阳性。当年弃用 grab 的理由是「paint 期间抓父窗=重入」——丙-31 已把抓源
+        render 版 vs grab 版 interior 平均差 201/255）——
+        细小刮痕」正是这块错乱内容的贴回； 探针的「可见」大半也是它贡献的
+        假阳性。当年弃用 grab 的理由是「paint 期间抓父窗=重入」—— 已把抓源
         挪到 _tick（事件循环态），重入前提不复存在，grab 安全。
         （grab 仍以 `_grabbing` 包住：render(DrawChildren) 会重入 overlay.paintEvent，
         不挡的话旧波纹帧会被画进新源里造成自反馈。）
 
-        丙-32：模块矩形超 `_MAX_LENS` 降级时，裁剪盘**与模块矩形求交**（不是只与窗口求交）
+        模块矩形超 `_MAX_LENS` 降级时，裁剪盘**与模块矩形求交**（不是只与窗口求交）
         ——波纹绝不越出模块边界（web `fitLensToHost` 语义）；`_src_rnorm` 也按**模块矩形**
         取归一化半径（web 径向渐变的 r=1=模块最远角），降级不改变波纹的空间尺度感。
         """
         try:
             shell = self._shell
             center = self._lens_center()
-            mod = self._lens_rect(center)           # 模块矩形 / 空白圆盘 bbox（语义边界）
+            mod = self._lens_rect(center) # 模块矩形 / 空白圆盘 bbox（语义边界）
             rect = QRectF(mod)
             rect = rect.intersected(QRectF(0, 0, shell.width(), shell.height()))
             if rect.width() > _MAX_LENS or rect.height() > _MAX_LENS:
                 half = _MAX_LENS // 2
                 disk = QRectF(center.x() - half, center.y() - half,
                               float(_MAX_LENS), float(_MAX_LENS))
-                # 丙-32：裁剪盘**与模块矩形求交**——波纹绝不越出模块边界（fitLensToHost）
+                # 裁剪盘**与模块矩形求交**——波纹绝不越出模块边界（fitLensToHost）
                 rect = disk.intersected(QRectF(mod)).intersected(
                     QRectF(0, 0, shell.width(), shell.height()))
-            # 丙-32C：rect 对齐到**设备像素网格**。逻辑整点 ×1.5 = 半设备像素（如 y=155 →
+            # C：rect 对齐到**设备像素网格**。逻辑整点 ×1.5 = 半设备像素（如 y=155 →
             # 232.5），drawImage 落在半像素上 ⇒ 整块内容亚像素重采样模糊 ⇒ 卡片边线/
             # 锐利细节沿 rect 顶/左缘发糊成「分界线」。
             dpr = shell.devicePixelRatioF() or 1.0
@@ -405,7 +402,7 @@ class WaveFX(QObject):
                 self._src_img = None
                 self._src_rect = QRectF()
                 return
-            # ⛔ 丙-32 根因纪律：处理用 QImage **不带 DPR**（raw=设备像素）。
+            # ⛔ 根因纪律：处理用 QImage **不带 DPR**（raw=设备像素）。
             #   带 DPR 的图会把毒性带进 numpy 管线——Qt 规定 scaled() 的入参出参都是
             #   设备无关像素 ⇒ 缓冲尺寸与 frombuffer 的 count 不一致 ⇒ 剪切+错位。
             img = pm.toImage().convertToFormat(
@@ -414,11 +411,11 @@ class WaveFX(QObject):
             dx = x2 - int(round(gx * dpr))
             dy = y2 - int(round(gy * dpr))
             if dx != 0 or dy != 0 or img.width() != w2 or img.height() != h2:
-                img = img.copy(dx, dy, w2, h2)     # 精确设备对齐，零半像素
+                img = img.copy(dx, dy, w2, h2) # 精确设备对齐，零半像素
             self._src_img = img
             self._src_rect = QRectF(rect)
             self._src_rnorm = self._norm_radius(center, mod)
-        except Exception:  # noqa: BLE001 — 抓源失败宁可这帧没波纹，也不拖垮 UI
+        except Exception: # noqa: BLE001 — 抓源失败宁可这帧没波纹，也不拖垮 UI
             self._src_img = None
             self._src_rect = QRectF()
 
@@ -446,7 +443,7 @@ class WaveFX(QObject):
         dt = max(1e-3, now - self._last_move_t)
         self._last_move_t = now
         dist = math.hypot(gp.x() - self._pos.x(), gp.y() - self._pos.y())
-        speed = dist / dt                       # px/s（瞬时）
+        speed = dist / dt # px/s（瞬时）
         self._speed_ema = self._speed_ema * _EMA_KEEP + speed * (1.0 - _EMA_KEEP)
         self._energy = min(1.0, max(_E_MIN, self._speed_ema / _V_REF))
         self._pos = QPointF(gp)
@@ -457,13 +454,13 @@ class WaveFX(QObject):
     def _hit_deep(self, x: int, y: int):
         """shell 逻辑坐标 → 该点下**最深的可见子控件**（childAt 的 overlay-排除版）。
 
-        childAt 不能用：全窗 overlay 是 shell 最顶子控件 ⇒ 恒返 overlay 自己（丙-31 硬伤 3）。
+        childAt 不能用：全窗 overlay 是 shell 最顶子控件 ⇒ 恒返 overlay 自己。
         这里逐层下钻：每层在直接子控件里找含该点者（children() 顺序=z 序 ⇒ 取最后一个命中），
         命中后把坐标换成相对新层，继续下钻；overlay 自身跳过。无命中 ⇒ None（=空白画卷）。
         """
         cur = self._shell
         ov = self._overlay
-        veil = getattr(self._shell, "_fade_veil", None)   # 切页 180ms 全窗渐隐 veil 同样排除
+        veil = getattr(self._shell, "_fade_veil", None) # 切页 180ms 全窗渐隐 veil 同样排除
         lx, ly = x, y
         hit = None
         while True:
@@ -476,7 +473,7 @@ class WaveFX(QObject):
                     continue
                 g = ch.geometry()
                 if g.contains(lx, ly):
-                    nxt = ch                     # 不 break：z 序最上（最后命中）优先
+                    nxt = ch # 不 break：z 序最上（最后命中）优先
                     ngx, ngy = g.x(), g.y()
             if nxt is None:
                 return hit
@@ -491,7 +488,7 @@ class WaveFX(QObject):
     def _blank_mode(self, center: QPointF) -> bool:
         """光标下无模块（落在 shell 背景画卷上）⇒ 用 radius 圆盘；有模块 ⇒ False。
 
-        （丙-31：childAt 换 _hit_deep——overlay 全窗覆盖后 childAt 恒返 overlay，
+        （childAt 换 _hit_deep——overlay 全窗覆盖后 childAt 恒返 overlay，
         此分支此前永不触发、透镜恒为全窗矩形。）
         """
         hit = self._hit_deep(int(center.x()), int(center.y()))
@@ -507,9 +504,9 @@ class WaveFX(QObject):
         return self._module_rect_of(hit)
 
     def _module_rect_of(self, w) -> QRect:
-        """光标所在「模块」矩形 —— 对齐 web `closest('.card,.side,.topbar')` 语义（丙-32）。
+        """光标所在「模块」矩形 —— 对齐 web `closest('.card,.side,.topbar')` 语义。
 
-        规则（旧「关键词+尺寸」启发式的两大翻车，作者真机实测）：
+        规则：
         ① 顶栏内布局 wrapper（类名含 Widget/Frame）被误判成模块 ⇒ 透镜停在中途小容器，
           顶栏右段吃不到特效；②启发式可预测性差。改为确定性爬树：
         - 向上遇 **Card/Panel/Box 卡片级类名 → 取它**（web 卡片优先）；
@@ -578,10 +575,10 @@ class WaveFX(QObject):
 
     def _displace_region(self, region_img, rect_logical, center_logical,
                          Rnorm_logical, phase):
-        """对一块**设备分辨率**区域做「fractalNoise 位移 + maskImage 合成」（丙-33 重写）。
+        """对一块**设备分辨率**区域做「fractalNoise 位移 + maskImage 合成」。
 
         ⛔ 入参必须是 **无 DPR** 的 QImage（raw=设备像素）——带 DPR 的图会让 scaled()
-        产出更大的原始缓冲、bits() 按逻辑数读 ⇒ 剪切+半块处理（丙-32 根因，见 _grab_src）。
+        产出更大的原始缓冲、bits() 按逻辑数读 ⇒ 剪切+半块处理。
 
         对齐 web 真值三件套（console_html.py #cardWave2 / waveMaskAt / #waveLens）：
         1. 位移场 = fractalNoise 等价的平滑 value noise（2 八度、seed 固定），
@@ -591,7 +588,7 @@ class WaveFX(QObject):
            显示混合；旧版乘 mask ⇒ 只有细环带在动、中心无持续翻滚 =「没水感」）；
         3. maskImage 语义 final = 原图·(1−m) + 位移图·m，m=环带·(1−phase)⁴+辉光(1−r)⁸·0.35
            （r=到光标距离/最远角距离），**设备全分辨率合成**——m==0 处逐像素等于真原图
-           （丙-32D：旧版合成在 0.5x 缩采图上做 ⇒ 贴回 2x 上采样 ⇒ 边缘一圈「缩采模糊带」
+           （D：旧版合成在 0.5x 缩采图上做 ⇒ 贴回 2x 上采样 ⇒ 边缘一圈「缩采模糊带」
            与盘外清晰区形成方形分界线；seamcheck border top/left max 133/129、bottom/right 0，
            差异严格跟随内容锐利度即缩采模糊铁证）。
         """
@@ -606,9 +603,9 @@ class WaveFX(QObject):
         # ---- 设备→逻辑换算（img 是 rect 的设备像素快照 ⇒ dev/逻辑 = dpr）----
         dprx = dev_w / max(1e-6, rect_logical.width())
         dpry = dev_h / max(1e-6, rect_logical.height())
-        xs_row = np.arange(dev_w, dtype=np.float32)[None, :]    # (1,W) 广播用
-        ys_col = np.arange(dev_h, dtype=np.float32)[:, None]    # (H,1)
-        lxs = xs_row / dprx                                     # 设备 px → 逻辑 px
+        xs_row = np.arange(dev_w, dtype=np.float32)[None, :] # (1,W) 广播用
+        ys_col = np.arange(dev_h, dtype=np.float32)[:, None] # (H,1)
+        lxs = xs_row / dprx # 设备 px → 逻辑 px
         lys = ys_col / dpry
 
         # ---- mask（web waveMaskAt：环带 + 中心辉光，r=最远角归一）----
@@ -620,37 +617,37 @@ class WaveFX(QObject):
         r = np.clip(dist / max(1.0, Rnorm_logical), 0.0, 1.5)
         m = self._mask_at_v(r, phase, self._cfg["falloff"], int(self._cfg["rings"]))
 
-        # 丙-32A：边缘渐隐 —— 位移在抓源 bbox 四边 smoothstep 归零（带宽 _EDGE_FADE）。
+        # A：边缘渐隐 —— 位移在抓源 bbox 四边 smoothstep 归零（带宽 _EDGE_FADE）。
         # web 的环带相位到模块边缘时 (1-phase)⁴ 已归零、天然无边界；这是等价保险。
         d_edge = np.minimum(np.minimum(lxs, rect_logical.width() - 1.0 - lxs),
                             np.minimum(lys, rect_logical.height() - 1.0 - lys))
         ef = np.clip(d_edge / _EDGE_FADE, 0.0, 1.0)
-        ef = ef * ef * (3.0 - 2.0 * ef)           # smoothstep
+        ef = ef * ef * (3.0 - 2.0 * ef) # smoothstep
         m = m * ef
 
         # ---- 噪声（fractalNoise 等价；0.5x 网格生成 → repeat 上采样）----
         ph = self._ph
-        fx = 0.008 + 0.004 * math.sin(ph * 0.9)   # web console_html.py:6646 同款
-        fy = 0.011 + 0.005 * math.cos(ph * 0.7)   # web console_html.py:6647 同款
+        fx = 0.008 + 0.004 * math.sin(ph * 0.9) # web console_html.py:6646 同款
+        fy = 0.011 + 0.005 * math.cos(ph * 0.7) # web console_html.py:6647 同款
         pw = max(1, int(dev_w * _PROC_SCALE))
         phh = max(1, int(dev_h * _PROC_SCALE))
         plxs = np.arange(pw, dtype=np.float32)[None, :] * (rect_logical.width() / pw)
         plys = np.arange(phh, dtype=np.float32)[:, None] * (rect_logical.height() / phh)
-        Rn = self._fractal_noise(plxs, plys, fx, fy, 5)          # xChannelSelector=R
-        Gn = self._fractal_noise(plxs, plys, fx, fy, 9)          # yChannelSelector=G
+        Rn = self._fractal_noise(plxs, plys, fx, fy, 5) # xChannelSelector=R
+        Gn = self._fractal_noise(plxs, plys, fx, fy, 9) # yChannelSelector=G
         Rn = np.repeat(np.repeat(Rn, 2, axis=0), 2, axis=1)[:dev_h, :dev_w]
         Gn = np.repeat(np.repeat(Gn, 2, axis=0), 2, axis=1)[:dev_h, :dev_w]
 
         # ---- feDisplacementMap 位移（设备全分辨率最近邻 gather）----
         scale_pulse = max(0.5, float(self._cfg["scale"])
-                          * (1.0 + 0.38 * math.sin(ph * 1.3)))   # web :6649 同款
+                          * (1.0 + 0.38 * math.sin(ph * 1.3))) # web :6649 同款
         sx = np.clip(xs_row + scale_pulse * dprx * (Rn - 0.5),
                      0, dev_w - 1).astype(np.int32)
         sy = np.clip(ys_col + scale_pulse * dpry * (Gn - 0.5),
                      0, dev_h - 1).astype(np.int32)
         out = src_a[sy, sx]
 
-        # 丙-32B：mask 合成（web `maskImage` 的语义）—— final = 原图*(1-m) + 位移图*m。
+        # B：mask 合成（web `maskImage` 的语义）—— final = 原图*(1-m) + 位移图*m。
         # m==0 处逐像素等于**真原图** ⇒ 任何边界无缝，可见区域只剩径向 mask 圈（圆形观感）。
         a16 = src_a.astype(np.uint16)
         o16 = out.astype(np.uint16)
@@ -682,7 +679,7 @@ class WaveFX(QObject):
             y0 = np.clip(gy.astype(np.int32), 0, gh - 2)
             tx = gx - x0
             ty = gy - y0
-            tx = tx * tx * (3.0 - 2.0 * tx)          # smoothstep 权重（Perlin 风）
+            tx = tx * tx * (3.0 - 2.0 * tx) # smoothstep 权重（Perlin 风）
             ty = ty * ty * (3.0 - 2.0 * ty)
             top = lat[y0, x0] * (1.0 - tx) + lat[y0, x0 + 1] * tx
             bot = lat[y0 + 1, x0] * (1.0 - tx) + lat[y0 + 1, x0 + 1] * tx
@@ -706,7 +703,7 @@ class WaveFX(QObject):
     def _tick(self) -> None:
         """推进相位 → 抓源 → 触发重绘（常驻透镜：静止也有微动）。
 
-        丙-31：抓源（render 透镜 bbox 到 QImage）在这里做——事件循环态，非 paint 期间，
+        抓源（render 透镜 bbox 到 QImage）在这里做——事件循环态，非 paint 期间，
         无重入。overlay.paintEvent 只消费 `_src_img/_src_rect` 做位移+贴回。
         """
         if not self._enabled:
@@ -715,11 +712,11 @@ class WaveFX(QObject):
         self._ph += ph_speed * _DT
         try:
             if self._overlay is not None:
-                self._grab_src()                # 丙-31：事件循环态抓最新像素
+                self._grab_src() # 事件循环态抓最新像素
                 self._overlay.update()
             else:
                 self._shell.update()
-        except Exception:  # noqa: BLE001
+        except Exception: # noqa: BLE001
             pass
 
     # ------------------------------------------------------------ 参数取证辅助（真实读取路径）

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """V7 判据：一键启动的「踢掉旧实例」不许再只靠 `wmic`，也不许静默失败。
-V-R1-3 判据：只许踢**本安装目录（ROOT）下**的脚本，且 `taskkill` 的退出码要纳入结果。
+ 判据：只许踢**本安装目录（ROOT）下**的脚本，且 `taskkill` 的退出码要纳入结果。
 
 跑法： runtime\\python\\python.exe scripts\\onestart_kick_selftest.py     退出码 0=全过 / 1=有失败
 
@@ -9,7 +9,7 @@ V-R1-3 判据：只许踢**本安装目录（ROOT）下**的脚本，且 `taskki
   B 兜底：PowerShell 挂掉 ⇒ 退到 wmic，仍然要踢；
   C 留痕：两条都失败 ⇒ **必须写日志 + 返回值带原因**（V7 原缺陷就是 `except Exception: pass` 全吞）；
   D 判据自身的纪律（不写产品状态）；
-  E **V-R1-3（本安装目录判定 + 退出码）**：
+  E （本安装目录判定 + 退出码）**：
      E1 阴：命令行含 `watchdog.py`/`onestart.py`/`persona_morph.py` 但**路径不在 ROOT 下**
              ⇒ 一个都不许杀（原来"文件名像就杀"会误伤别人项目/另一份解压目录）；
      E2 阳：命令行里的脚本路径**在 ROOT 下**（含带引号、`/` 与 `\\` 混写）⇒ 必须被踢；
@@ -54,7 +54,7 @@ def load_onestart(tmpdir):
     spec = importlib.util.spec_from_file_location("onestart_under_test", os.path.join(HERE, "onestart.py"))
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    mod.LOG_PATH = os.path.join(tmpdir, "onestart.log")     # 判据自己的日志，别写进 logs\
+    mod.LOG_PATH = os.path.join(tmpdir, "onestart.log") # 判据自己的日志，别写进 logs\
     return mod
 
 
@@ -120,13 +120,13 @@ def main():
 
     try:
         print("== A. 阳性：wmic 不在（本机常态）⇒ 必须走 PowerShell，且老实例真被踢 ==")
-        # ⚠️ 2026-09-20（V-R1-3 修）后判据**必须喂本安装目录（ROOT）下的路径**：
+        # ⚠️ 后判据**必须喂本安装目录（ROOT）下的路径**：
         #    "文件名像就杀"正是那条漏洞，现在只认 ROOT 前缀 ⇒ 夹具也要照真实命令行造。
         ps_out = ("4242\tpython.exe %s\\scripts\\watchdog.py --delay=3\r\n"
                   "4243\tpython.exe \"%s/scripts/persona_morph.py\"\r\n"
                   "4244\tpython.exe C:\\x\\tools\\plugin_helper.py\r\n"
                   % (ROOT, ROOT.replace("\\", "/"))).encode("utf-8")
-        sub = FakeSub(ps=ps_out, wmic=None)          # wmic 一律失败（真机就是没有它）
+        sub = FakeSub(ps=ps_out, wmic=None) # wmic 一律失败（真机就是没有它）
         mod.subprocess = sub
         mod.time.sleep = lambda *a: None
         rep = mod._kick_old_instance()
@@ -178,7 +178,7 @@ def main():
         ok("产品 logs/onestart.log 字节数不变（判据不写产品日志）", _before == _after, "%s -> %s" % (_before, _after))
         ok("判据的日志写在临时目录（LOG_PATH 已被指向 tmp）", mod.LOG_PATH.startswith(tmp), mod.LOG_PATH)
 
-        print("\n== E. V-R1-3：只许杀本安装目录里的脚本 + 看 taskkill 退出码 ==")
+        print("\n== E. 只许杀本安装目录里的脚本 + 看 taskkill 退出码 ==")
         _foreign = ("4711\tpython.exe X:\\demo\\someone\\myproj\\watchdog.py --serve\r\n"
                     "4712\tpython.exe D:\\tools\\onestart.py\r\n"
                     "4713\tpython.exe C:\\backup\\persona-morph-old\\scripts\\persona_morph.py\r\n"
@@ -186,7 +186,7 @@ def main():
         sub_neg = FakeSub(ps=_foreign.encode("utf-8"))
         mod.subprocess = sub_neg
         rep_neg = mod._kick_old_instance()
-        ok("E1 阴：命令行**含同名脚本但不在本安装目录** ⇒ 一个都不许杀（V-R1-3 本体）",
+        ok("E1 阴：命令行**含同名脚本但不在本安装目录** ⇒ 一个都不许杀",
            rep_neg["killed"] == [], "killed=%s calls=%s" % (rep_neg["killed"], sub_neg.calls))
         ok("E1b 连 taskkill 都不该对它发起（不是「杀了但失败」，是「根本不许碰」）",
            not any(str(c[0]).lower() == "taskkill" for c in sub_neg.calls), sub_neg.calls)

@@ -8,7 +8,7 @@
   1. **开箱可用优先**：`voice_reply.backend` 默认 `sapi`；自带模型是用户显式选择后才走。
   2. **能力如实标注**：本模块只能证明「端点通不通 / 返回的字节是不是音频 / 多快」。
      **证明不了**它是不是某个角色的音色；更不改变这个事实——**微信 PC 发不出"真语音条"**
-     （要虚拟声卡 + 录音按钮，属待拍板项），发出去的仍然是**音频文件**。
+     ，发出去的仍然是**音频文件**。
   3. **绝不假装**：端点不通、返回不是音频、文件写不出来 ⇒ **明确报错**（返回 `None` + 原因），
      绝不返回空文件或编造的音频（"没引擎却装作合成过"是本项目反复钉的红线）。
 
@@ -71,19 +71,19 @@ def _out_dir() -> str:
 
 
 def _harden_redirects() -> None:
-    """V-R9-23：跨主机 302 时不许把自定义头带过去（实现只有 `safe_fetch` 那一处，这里只负责装）。
+    """跨主机 302 时不许把自定义头带过去（实现只有 `safe_fetch` 那一处，这里只负责装）。
 
     ⚠️ 本模块发的请求只有 Content-Type/Accept（无凭据头）——这是"端点自己 302 到别处"时的兜底。
     """
     try:
         from .safe_fetch import harden_urllib
         harden_urllib()
-    except Exception as e:                                   # pragma: no cover - 极端环境
-        log.warning("安全层不可用，重定向凭据剥离没装上（V-R9-23）：%s", e)
+    except Exception as e: # pragma: no cover - 极端环境
+        log.warning("安全层不可用，重定向凭据剥离没装上：%s", e)
 
 
 def _read_capped(resp, what: str = "语音回包") -> bytes:
-    """V-R9-26：带上限读回包。32MB 的取值理由：TTS/变声回的是**一整段音频**，
+    """带上限读回包。32MB 的取值理由：TTS/变声回的是**一整段音频**，
     1 分钟 44.1kHz wav ≈ 5MB、常见 mp3 只有几百 KB ⇒ 32MB 覆盖正常业务，
     同时把"对面无限灌数据"的峰值内存钉住（原来 `r.read()` 是无上限的）。"""
     cap = 32 * 1024 * 1024
@@ -102,7 +102,7 @@ def _post(url: str, text: str, timeout: int, cfg: dict):
     data = json.dumps(body, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(url, data=data, method="POST",
                                  headers={"Content-Type": "application/json", "Accept": "*/*"})
-    _harden_redirects()                    # V-R9-23
+    _harden_redirects()
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return _read_capped(r, "TTS 回包"), (r.headers.get("Content-Type") or ""), getattr(r, "status", 200)
 
@@ -139,7 +139,7 @@ def _extract(raw: bytes, ctype: str, cfg: dict):
         return base64.b64decode(val, validate=False), ""
     except Exception:
         pass
-    if os.path.exists(val):                      # 有的后端回"落盘路径"
+    if os.path.exists(val): # 有的后端回"落盘路径"
         try:
             with open(val, "rb") as f:
                 return f.read(), ""
@@ -149,7 +149,6 @@ def _extract(raw: bytes, ctype: str, cfg: dict):
 
 
 # ── 变声段（音频 → 音频）：兼容用户本地的 RVC / GPT-SoVITS 变声 / 任意同形态端点 ──────
-# 用户 2026-09-15 原话：「**最主要是要兼容那些用户本地的，比方说 GPT-SoVITS 的、RVC 的**」。
 # 这两家**形态不同**，所以必须两段串起来：
 #   · GPT-SoVITS 是「文本 → 音频」（上面已支持，`api_v2` 直回 wav）
 #   · **RVC 是「音频 → 音频」的变声** ⇒ 文本 →(TTS)→ 音频 →(**变声**)→ 音频
@@ -217,7 +216,7 @@ def _post_audio(url: str, audio: bytes, cfg: dict, timeout: int, filename: str =
         req = urllib.request.Request(url, data=b"".join(chunks), method="POST",
                                      headers={"Content-Type": "multipart/form-data; boundary=%s" % bd,
                                               "Accept": "*/*"})
-    _harden_redirects()                    # V-R9-23
+    _harden_redirects()
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return _read_capped(r, "变声回包"), (r.headers.get("Content-Type") or ""), getattr(r, "status", 200)
 
@@ -293,7 +292,7 @@ def probe_vc(url: str = "", timeout: int = DEFAULT_TIMEOUT, cfg: dict | None = N
 def make(text: str, cfg: dict | None = None, timeout: int = DEFAULT_TIMEOUT):
     """`make` = TTS 合成（+ 可选的**变声段**）。返回契约与 `tts.make()` 完全相同。"""
     c = cfg if isinstance(cfg, dict) else _cfg()
-    # 念之前先**整形**（断句 + 多音字，2026-09-17 用户：「行行行」被念成「行行hang行」）。
+    # 念之前先**整形**。
     # 放在这里＝所有后端（edge/sapi/http）与所有调用方（含控制台「试听」）都吃到同一条规则。
     _notes = []
     try:
@@ -311,7 +310,7 @@ def make(text: str, cfg: dict | None = None, timeout: int = DEFAULT_TIMEOUT):
                 % len(_phones)]
         if _notes:
             log.info("TTS 文本整形：%s ｜ %s", "；".join(_notes), text[:80])
-    except Exception as _e:                                             # noqa: BLE001
+    except Exception as _e: # noqa: BLE001
         log.warning("TTS 文本整形失败（按原文念）：%s", str(_e)[:80])
     path, why, info = _make_raw(text, c, timeout)
     if isinstance(info, dict) and _notes:
@@ -321,7 +320,7 @@ def make(text: str, cfg: dict | None = None, timeout: int = DEFAULT_TIMEOUT):
         return path, why, info
     if not vc_url(c):
         return path, why, info
-    try:                                  # 变声（本地模型推理/检索）通常比合成慢 ⇒ 单独给时间
+    try: # 变声（本地模型推理/检索）通常比合成慢 ⇒ 单独给时间
         _vto = max(int(timeout), int(c.get("vc_timeout_ms") or 0) // 1000)
     except Exception:
         _vto = timeout
@@ -352,7 +351,7 @@ def status(cfg: dict | None = None) -> dict:
         out["voice"] = edge_voice(c)
         out["voices"] = [{"name": v, "label": lab} for v, lab in EDGE_VOICES]
         try:
-            import edge_tts            # noqa: F401
+            import edge_tts # noqa: F401
             out["ok"] = True
             out["why"] = "edge-tts（免费神经语音，需要联网；失败会%s）" % (
                 "按 edge_fallback 退回系统声音" if c.get("edge_fallback", True) else "如实报错、不静默")
@@ -414,7 +413,7 @@ def probe(url: str = "", timeout: int = DEFAULT_TIMEOUT, cfg: dict | None = None
     return out
 
 
-# ── edge-tts 音源（2026-09-15 新增）：**免费、无需 key**的神经语音，中文 8 个音色 ─────────
+# ── edge-tts 音源：**免费、无需 key**的神经语音，中文 8 个音色 ─────────
 # 为什么加它：群相原来只有 SAPI（机械音）与"用户自带模型"（要自己跑服务）两档；
 # edge-tts 是中间那一档——开箱可用、音质接近真人、不要凭据，适合做**默认音源**。
 # 口径：失败**如实报错**，并按 voice_reply.edge_fallback（默认开）退回系统声音，绝不静默出空音频。
@@ -520,7 +519,7 @@ def _concat_wavs(paths, timeout: int, fast_flags=None):
 def _make_segmented(text: str, c: dict, timeout: int):
     """**语气段处理**：句子里有"连续同字"（语气偏快的连读）时，分段合成 + **快段加速** + 无停顿拼接。
 
-    为什么这么做（用户 2026-09-17 纠正）：他说的「行行行」是**一口气快连读**，不是三个字一顿。
+    为什么这么做：他说的「行行行」是**一口气快连读**，不是三个字一顿。
     插标点＝一字一顿（我上一版的错法）；而 edge 档**没有音素/停顿入口**（官方定论）⇒ 我们唯一能控的
     就是**语速**：把快段单独合成、语速加 `voice_reply.run_boost`（默认 +25%），其余照常，再拼回一句。
     返回 `(路径 或 None, 说明, info)`；`None` 表示"这条路没走成，交给原来的单段路径"（绝不半途而废）。
@@ -553,7 +552,7 @@ def _make_segmented(text: str, c: dict, timeout: int):
             except Exception as e:
                 p, why, info = None, "系统声音分段合成失败：%s" % str(e)[:60], {}
         else:
-            return None, "", {}          # 自带模型：整句交给用户的服务，不擅自切
+            return None, "", {} # 自带模型：整句交给用户的服务，不擅自切
         if not p:
             return None, why or "分段合成失败", {}
         paths.append(p)
@@ -588,7 +587,7 @@ def _edge_make(text: str, cfg: dict, timeout: int, rate_pct: int = None):
     wav = os.path.join(d, "tts_edge_%s.wav" % stamp)
 
     async def _go():
-        # ⚠️ 2026-09-17 修：原来这里没传 rate ⇒ `voice_reply.rate`（语速）**在默认的 edge 档是死键**
+        # ⚠️ 原来这里没传 rate ⇒ `voice_reply.rate`（语速）**在默认的 edge 档是死键**
         #    （只有 SAPI 档读它）。现在接上：rate(-10~10) × 5 = 百分比。
         rp = _rate_pct(cfg) if rate_pct is None else int(rate_pct)
         if rp:
@@ -614,7 +613,7 @@ def _edge_make(text: str, cfg: dict, timeout: int, rate_pct: int = None):
         r = subprocess.run([ff, "-y", "-loglevel", "error", "-i", mp3, "-ar", "22050", "-ac", "1", wav],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                            timeout=max(30, int(timeout)),
-                           creationflags=0x08000000 if os.name == "nt" else 0)   # 不许闪控制台窗
+                           creationflags=0x08000000 if os.name == "nt" else 0) # 不许闪控制台窗
     except Exception as e:
         return None, "ffmpeg 转换失败：%s" % str(e)[:70], {}
     if r.returncode != 0 or not os.path.exists(wav) or os.path.getsize(wav) < 1000:
@@ -635,7 +634,7 @@ def _make_raw(text: str, cfg: dict | None = None, timeout: int = DEFAULT_TIMEOUT
     # 语气段优先：句子里有"连续同字"（快连读）时走分段合成 + 快段加速；不成则落回单段老路
     try:
         _sp, _swhy, _sinfo = _make_segmented(text, c, timeout)
-    except Exception as _e:                                             # noqa: BLE001
+    except Exception as _e: # noqa: BLE001
         _sp, _swhy, _sinfo = None, "分段合成异常：%s" % str(_e)[:60], {}
     if _sp:
         return _sp, "", _sinfo

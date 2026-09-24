@@ -3,8 +3,8 @@
 
 跑法： py -3 scripts\\fg_guard_selftest.py      退出码 0=全过 / 1=有失败
 
-为什么有这条（2026-09-18 作者发火）：
-  作者用浏览器把微信**盖住**、明确要求"不要让窗口到前台"，结果我开的探针把微信**顶到最上面**。
+为什么有这条：
+  "不要让窗口到前台"，结果我开的探针把微信**顶到最上面**。
   链路：`_send_poke_locate → gui.get_input_box()` → 探针连失 → `calibrate_layout()`
   → **`bring_to_front()`** → `SetWindowPos(HWND_TOPMOST)` + SetForegroundWindow + SetFocus
   （还先清掉系统前台锁）。走的是**置顶**，所以"盖住"防不住。
@@ -25,13 +25,13 @@ try:
 except Exception:
     pass
 
-from agent import config as cfg_mod       # noqa: E402
-# ⛔ V-R14-7 隔离：本判据会走**真**发送准备链（假 GUI），那条链会登记/归还窗口借用 ⇒
+from agent import config as cfg_mod # noqa: E402
+# ⛔ 隔离：本判据会走**真**发送准备链（假 GUI），那条链会登记/归还窗口借用 ⇒
 #   产品的 `data\window_borrow.json` 会被建出来又删掉（净变化 0，只有持续采样才看得见）。
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # scripts\（见 `_iso14` 文件头）
-import _iso14                             # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # scripts\（见 `_iso14` 文件头）
+import _iso14 # noqa: E402
 _iso14.window_borrow()
-from agent import ui_adapt as ua          # noqa: E402
+from agent import ui_adapt as ua # noqa: E402
 
 WECHAT_PY = os.path.join(ROOT, "agent", "wechat.py")
 UI_PY = os.path.join(ROOT, "agent", "ui_adapt.py")
@@ -141,7 +141,7 @@ def main():
         # ⑦ ⭐ 回归：复现当时的链路 —— 库的 get_input_box 内部自己触发置顶
         cfg_mod.get_config = lambda: _cfg(True, False)
         g3 = ua.harden_gui(ExplodingGUI())
-        g3.get_input_box()                       # ＝`_send_poke_locate` 当年那一跳
+        g3.get_input_box() # ＝`_send_poke_locate` 当年那一跳
         ok("⑦ 回归：库内 `get_input_box → calibrate_layout → bring_to_front` 链被彻底掐断",
            g3.calls == [], g3.calls)
 
@@ -172,8 +172,7 @@ def main():
            _wrapped)
 
         # ⑨ ⭐ 行为回归：走一遍 `_limit_wechat_window`（**每次取 GUI 都会跑**的那条）
-        #    事故：`u.MoveWindow(hwnd, ..., True)` **会激活顶层窗** ⇒ 每次取 GUI 都把微信顶到浏览器前面
-        #    （作者原话：「我一直在把浏览器往上放」）。修后＝只改几何、绝不激活。
+        # 。修后＝只改几何、绝不激活。
         import ctypes as _ct
         from agent.wechat import WeChatAdapter
 
@@ -186,7 +185,7 @@ def main():
                             ("right", _ct.c_long), ("bottom", _ct.c_long)]
 
             r = _R()
-            r.left, r.top, r.right, r.bottom = 100, 100, 1460, 1100        # 1360x1000 > 1160x900
+            r.left, r.top, r.right, r.bottom = 100, 100, 1460, 1100 # 1360x1000 > 1160x900
             return r
 
         class _FakeU32:
@@ -237,7 +236,7 @@ def main():
         _old_windll, _old_rect = _ct.windll, _ct.wintypes.RECT
         cfg_mod.get_config = lambda: {"ui": {"lock_window_pos": True},
                                       "wechat": {"limit_window": "shrink_only"}}
-        ad = WeChatAdapter.__new__(WeChatAdapter)          # 不跑 __init__（它会连微信库）
+        ad = WeChatAdapter.__new__(WeChatAdapter) # 不跑 __init__（它会连微信库）
         ad.cfg = cfg_mod.get_config()
         _ct.windll = _FakeWinDll()
         _ct.wintypes.RECT = _make_rect
@@ -276,7 +275,7 @@ def main():
             calls = []
 
             def __init__(self):
-                self.calibrate_layout()               # 复现库里 __init__ 的行为
+                self.calibrate_layout() # 复现库里 __init__ 的行为
 
             def bring_to_front(self, **k):
                 _InitGUI.calls.append("bring_to_front")
@@ -295,12 +294,12 @@ def main():
 
         cfg_mod.get_config = lambda: _cfg(True, False)
         _InitGUI.calls = []
-        _InitGUI()                                    # 上闸前：应当记到一次 calibrate_layout
+        _InitGUI() # 上闸前：应当记到一次 calibrate_layout
         ok("⑩ 前置对照：未上闸时构造期确实会调 calibrate_layout",
            _InitGUI.calls == ["calibrate_layout"], _InitGUI.calls)
-        ua.harden_gui_class(_InitGUI)                 # 类级上闸
+        ua.harden_gui_class(_InitGUI) # 类级上闸
         _InitGUI.calls = []
-        _InitGUI()                                    # 上闸后：一次都不许调到原方法
+        _InitGUI() # 上闸后：一次都不许调到原方法
         ok("⑩ **构造期**的校准被挡住（类级闸：`__init__` 里那条路）",
            _InitGUI.calls == [], _InitGUI.calls)
 
@@ -323,7 +322,7 @@ def main():
             _orig_btf = _cls.bring_to_front
             _orig_cal = _cls.calibrate_layout
             if getattr(_cls, "_pm_fg_hardened_class", False):
-                delattr(_cls, "_pm_fg_hardened_class")          # 允许本判据重跑
+                delattr(_cls, "_pm_fg_hardened_class") # 允许本判据重跑
             ua.harden_gui_class(_cls)
             ok("⑩b 真实 WeChatGUI 的 bring_to_front / calibrate_layout 已被换成带闸门的版本",
                _cls.bring_to_front is not _orig_btf and _cls.calibrate_layout is not _orig_cal)
@@ -365,10 +364,9 @@ def main():
            "WeChatUIA(" not in wsrc)
 
         # ⑫ ⭐⭐ `WM_CLOSE` 的**唯一咽喉点**：绝不关微信主窗 / 渲染子窗
-        #     事故（作者原话：「应该算是那种直接点击"叉号"级别的收回…就在你右键点击到我头像的
         #     那一刻的下一刻」）：`_reattach_if_floating()` 只跳过**当时记下的** main 句柄，
         #     Qt 一重建主窗，新 hwnd 就不在白名单里 ⇒ **主窗被当浮动窗 WM_CLOSE 掉**
-        #     （2026-09-16 同型事故第二次）。
+        # 。
         import win32gui as _w32
         import agent.input_backend as _ib2
         from agent import wechat as _wx2

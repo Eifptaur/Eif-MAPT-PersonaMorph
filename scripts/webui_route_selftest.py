@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""判据：`do_GET` 里读的请求体变量必须**在执行路径上真的存在**（第四轮审计 V-R4-15，P2）。
+"""判据：`do_GET` 里读的请求体变量必须**在执行路径上真的存在**。
 
 跑法： runtime\\python\\python.exe scripts\\webui_route_selftest.py   退出码 0=全过 / 1=有失败
 
@@ -86,16 +86,16 @@ def main():
     src = open(WEBUI, encoding="utf-8").read()
     tree = ast.parse(src)
     _a, _l, _n = _rule(tree, "do_GET", "data")
-    # ⛔ 2026-09-22（Phase B）：GET 的分支体已搬成 `_r_*` 方法（读 `data` 的代码跟着过去了）
+    # ⛔ （Phase B）：GET 的分支体已搬成 `_r_*` 方法（读 `data` 的代码跟着过去了）
     #   ⇒ 数"真在读 data"要把**路由表里那些提供 GET 的方法**一并算上，否则这条锚变成假红。
     try:
         from agent.routes import HANDLERS as _HH
         for _hm in {v for row in _HH.values() for k, v in row.items() if k == "GET"}:
             try:
                 _n += _rule(tree, _hm, "data")[2]
-            except Exception:                                    # noqa: BLE001
+            except Exception: # noqa: BLE001
                 pass
-    except Exception:                                            # noqa: BLE001
+    except Exception: # noqa: BLE001
         pass
     ok("① GET 侧（do_GET 与路由表里的方法）确实在读 `data`（说明这条判据扫的是真现场，不是空转）", _n >= 3, "读了 %d 次" % _n)
     ok("② `do_GET` 里第一次读 `data` 之前**必须先赋值**（否则 NameError 被 except 吞成 ok:false）",
@@ -108,7 +108,7 @@ def main():
        "def _truthy(" in src and "_truthy(data.get(" in src)
     ok("④ `_truthy` 把 \"false\"/\"0\"/\"off\"/\"no\"/空串都判假",
        all(k in src[src.find("def _truthy("):][:600] for k in ('"false"', '"0"', '"off"', '"no"', '""')))
-    # ⛔ V-R4-13：真值表**只能有一处实现** —— webui 这层只多"保留 None"
+    # ⛔ 真值表**只能有一处实现** —— webui 这层只多"保留 None"
     ok("④ 真值表是**一处实现**（`_truthy` 转发到 `config.as_bool`，不各写一套）",
        "from .config import as_bool" in src and "return as_bool(v)" in src)
 

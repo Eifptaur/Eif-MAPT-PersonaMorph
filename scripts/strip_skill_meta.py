@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""strip_skill_meta.py —— 删掉技能描述里"关于包本身"的括号说明（用户口径：不要解释性文本）。
+"""strip_skill_meta.py —— 删掉技能描述里"关于包本身"的括号说明。
 
 只动 `description:` 一行的**开头那类元信息括号**：
   · `（聚合 16 个技能）` / `（聚合三个自研技能）` / `（聚合 2 个技能）` …
@@ -20,9 +20,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HOME = os.environ.get("USERPROFILE") or os.path.expanduser("~")
 
 TREES = [
-    os.path.join(HOME, ".dsh", "skills"),                                    # 活库（运行时直接读）
-    os.path.join(HOME, ".dsh", "packages", "Eif-MAPT-skills-src", "skills"),  # 源包
-    os.path.join(HOME, ".dsh", "profiles", "web", "node_modules", "Eif-MAPT-skills", "skills"),  # 装好的包
+    os.path.join(HOME, ".dsh", "skills"), # 活库（运行时直接读）
+    os.path.join(HOME, ".dsh", "packages", "Eif-MAPT-skills-src", "skills"), # 源包
+    os.path.join(HOME, ".dsh", "profiles", "web", "node_modules", "Eif-MAPT-skills", "skills"), # 装好的包
 ]
 
 # 只匹配 description 开头紧跟在名字后面的元信息括号，两种形态

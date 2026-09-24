@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""OCR 硬超时 / 熔断 / 时间窗 判据（2026-09-14，测机手册 ④）。
+"""OCR 硬超时 / 熔断 / 时间窗 判据。
 
 背景：本机某次 OCR 步骤卡了 **8 分 19 秒**（不是 8 秒）。根因在驱动库
 `wechatauto.guia.ScreenOCR.recognize`：`asyncio.run(asyncio.wait_for(_run(), timeout=8))` 的 8 秒是**软**的
@@ -26,8 +26,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
-os.environ["WXAGENT_OCR_TIMEOUT"] = "1"      # 单次硬上限 1 秒（clamp 下限就是 1s）
-os.environ["WXAGENT_OCR_COOLDOWN"] = "1"     # 熔断只持续 1 秒，自检不等待
+os.environ["WXAGENT_OCR_TIMEOUT"] = "1" # 单次硬上限 1 秒（clamp 下限就是 1s）
+os.environ["WXAGENT_OCR_COOLDOWN"] = "1" # 熔断只持续 1 秒，自检不等待
 
 # —— 假 OCR 引擎：必须在 import chat_ocr 之前塞进 sys.modules，让 recognize 的局部 import 拿到它 ——
 _hang = {"on": True, "sleep": 30.0, "calls": 0}
@@ -38,7 +38,7 @@ class _FakeOCR:
     def recognize(image):
         _hang["calls"] += 1
         if _hang["on"]:
-            time.sleep(float(_hang["sleep"]))        # 模拟"取消不掉的 WinRT 原生调用"
+            time.sleep(float(_hang["sleep"])) # 模拟"取消不掉的 WinRT 原生调用"
         return [("文件传输助手", 10, 10, 80, 20)]
 
 
@@ -49,8 +49,8 @@ _fake_pkg.guia = _fake_guia
 sys.modules.setdefault("wechatauto", _fake_pkg)
 sys.modules["wechatauto.guia"] = _fake_guia
 
-from agent import chat_ocr as co              # noqa: E402
-from PIL import Image                         # noqa: E402
+from agent import chat_ocr as co # noqa: E402
+from PIL import Image # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -88,8 +88,8 @@ ok("健康快照带 open/timeout_s 字段", co.health()["open"] is False and co.
 
 print("── B. 熔断：连续超时后不再硬等 ──")
 _fresh()
-co.recognize(IMG)                              # 第 1 次超时
-co.recognize(IMG)                              # 第 2 次超时 ⇒ 达 BREAK_AFTER ⇒ 熔断
+co.recognize(IMG) # 第 1 次超时
+co.recognize(IMG) # 第 2 次超时 ⇒ 达 BREAK_AFTER ⇒ 熔断
 h = co.health()
 ok("熔断已拉起", h["open"] is True, str(h["open_until"]))
 ok("熔断计数 =1", h["breaks"] == 1, str(h["breaks"]))
@@ -107,13 +107,13 @@ _hang["on"] = False
 _hang["sleep"] = 0.0
 tok = co.begin_window(0.4)
 ok("窗内 window_left 有值", co.window_left() is not None and co.window_left() <= 0.4 + 1e-6,
-   # ⚠️ 2026-09-16：原来写死 `<= 0.4`，而 `window_left()` ＝ `tok - time.monotonic()`，两个量都在
+   # ⚠️ 原来写死 `<= 0.4`，而 `window_left()` ＝ `tok - time.monotonic()`，两个量都在
    #    1e6 量级（Windows 单调钟从开机算起）⇒ 浮点相减有 ~1e-10 误差，实测真报过
    #    `0.40000000002328306 > 0.4` 的**假红**。自检守的是"窗内剩余不超过开窗时长"这个**性质**，
    #    容差 1e-6 比浮点误差大 4 个量级、比真实的 0.1s 越界小 5 个量级。
    str(co.window_left()))
 ok("窗还没过期时 budget_out=False", co.budget_out(tok) is False)
-time.sleep(0.5)                                # 等窗过期
+time.sleep(0.5) # 等窗过期
 ok("窗过期 ⇒ budget_out=True（开窗的人据此收手）", co.budget_out(tok) is True)
 ok("窗过期即被清掉（window_left() is None）", co.window_left() is None)
 r2 = co.recognize(IMG)
@@ -126,7 +126,7 @@ r3 = co.recognize(IMG)
 ok("窗过期后紧接着的那一次 OCR 也照常", bool(r3), repr(r3[:2]))
 _fresh()
 _hang["on"] = True
-co.begin_window(1.0)                           # 窗里只剩不到一片（< WINDOW_MIN_SLICE_S=2s）
+co.begin_window(1.0) # 窗里只剩不到一片（< WINDOW_MIN_SLICE_S=2s）
 t0 = time.monotonic()
 r4 = co.recognize(IMG)
 el4 = time.monotonic() - t0
@@ -181,11 +181,11 @@ _fresh()
 _s, _d, _h = co.health_line()
 ok("没用过时是正常态", _s == "ok" and "从没卡住" in _d, "%s / %s" % (_s, _d))
 _hang["on"] = True
-co.recognize(IMG)                              # 一次超时（未到熔断）
+co.recognize(IMG) # 一次超时（未到熔断）
 _s2, _d2, _h2 = co.health_line()
 ok("有超时 ⇒ warn 且给出原因", _s2 == "warn" and "卡住过 1 次" in _d2, "%s / %s" % (_s2, _d2))
 ok("超时态提示「判据不可用 / 不发送」", "判据不可用" in _h2 and "不发送" in _h2, _h2)
-co.recognize(IMG)                              # 第 2 次 ⇒ 熔断
+co.recognize(IMG) # 第 2 次 ⇒ 熔断
 _s3, _d3, _h3 = co.health_line()
 ok("熔断 ⇒ warn 且写清多久自恢复", _s3 == "warn" and "正在熔断" in _d3 and "秒后自动恢复" in _d3, "%s / %s" % (_s3, _d3))
 ok("health_line 三态文案都能格式化（不抛异常）", all(x for x in (_d, _d2, _d3)))

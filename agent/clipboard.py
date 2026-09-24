@@ -37,7 +37,7 @@ def _open_clipboard(retries: int = 6) -> bool:
     for _ in range(max(1, retries)):
         if _u32.OpenClipboard(None):
             return True
-        time.sleep(0.15)                       # 别的程序占着剪贴板：等一下再试
+        time.sleep(0.15) # 别的程序占着剪贴板：等一下再试
     return False
 
 
@@ -58,7 +58,7 @@ def _set_raw(fmt: int, data: bytes) -> tuple:
         _k32.GlobalUnlock(h)
         if not _u32.SetClipboardData(fmt, ctypes.c_void_p(h)):
             return False, "SetClipboardData 失败"
-        h = None                               # 所有权移交系统，不能再 free
+        h = None # 所有权移交系统，不能再 free
         return True, ""
     except Exception as e:
         return False, "写剪贴板异常：%s: %s" % (type(e).__name__, e)
@@ -81,10 +81,10 @@ def set_image(path: str) -> tuple:
     try:
         from PIL import Image
         with Image.open(path) as im:
-            im = im.convert("RGB")             # DIB 用 24 位真彩最稳
+            im = im.convert("RGB") # DIB 用 24 位真彩最稳
             buf = io.BytesIO()
             im.save(buf, "BMP")
-        data = buf.getvalue()[14:]              # 去掉 BMP 的 14 字节文件头 ＝ CF_DIB
+        data = buf.getvalue()[14:] # 去掉 BMP 的 14 字节文件头 ＝ CF_DIB
         return _set_raw(CF_DIB, data)
     except Exception as e:
         return False, "准备图片数据失败：%s: %s" % (type(e).__name__, e)

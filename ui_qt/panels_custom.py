@@ -5,7 +5,7 @@
 编辑器，没有行元数据可解析；但版式仍逐块对齐 web。
 其余 22 个 sec 全部由 `panels_qt.py` 元数据驱动生成，本文件只装"手写特例"。
 
-丙-4 接线口径（真实数据，不许"点了没反应"）：
+ 接线口径（真实数据，不许"点了没反应"）：
   · 配置格式：真读 config.json 全文 + 校验写回（写前自动备份，config_io.write_full）
   · 日志：    真读 logs/persona_morph.log 尾部 200 行 + 刷新/打开目录
   · 概览：    GET /api/status 真数据填格（运行状态/监听目标/模型），8 秒自动刷新
@@ -56,7 +56,7 @@ def _hex(c) -> str:
 def _page(t: Tokens, title: str, level: str = "idle", badge: str = "读取中"):
     """面板公共骨架：页 + 标题行 + Badge。返回 (page, lay, badge)。
 
-    badge 引用必须交回 —— 丙-8 P0-A① 的病根就是「徽章建出来没人再碰」
+    badge 引用必须交回 —— P0-A① 的病根就是「徽章建出来没人再碰」
     （panels_qt 旧 _cfg_panel：Badge 创建后全文件无 set 调用）。"""
     page = QWidget()
     page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -64,7 +64,7 @@ def _page(t: Tokens, title: str, level: str = "idle", badge: str = "读取中"):
     lay.setContentsMargins(28, 24, 28, 24)
     lay.setSpacing(14)
     bd = Badge(t, level, badge)
-    page._c8_badge = bd               # build_panel 转挂到 wrap，Shell 分发取用
+    page._c8_badge = bd # build_panel 转挂到 wrap，Shell 分发取用
     lay.addWidget(h2(t, title, bd))
     return page, lay, bd
 
@@ -98,8 +98,8 @@ def _btn_row(t: Tokens, pairs: list[tuple[str, str]], hooks: list | None = None)
 def _open_dir(p: Path) -> None:
     try:
         if p.exists():
-            os.startfile(str(p))  # noqa: S606  （Windows 桌面语义；失败静默不崩）
-    except Exception:  # noqa: BLE001
+            os.startfile(str(p)) # noqa: S606  （Windows 桌面语义；失败静默不崩）
+    except Exception: # noqa: BLE001
         pass
 
 
@@ -175,11 +175,11 @@ def overview_panel(t: Tokens) -> QWidget:
 
     _refresh()
     timer = QTimer(page)
-    timer.setInterval(8000)          # web loadStatus 同款 8 秒
+    timer.setInterval(8000) # web loadStatus 同款 8 秒
     timer.timeout.connect(_refresh)
     timer.start()
 
-    # ── 其余四钮真接线（丙-8 P0-A②：用户报「点了没反应」的缺口全补）──
+    # ── 其余四钮真接线──
     # web 同款 API：test-api / data/export / data/import / stats/cal_clear
     note2 = desc(t, "")
     lay.addWidget(note2)
@@ -189,14 +189,14 @@ def overview_panel(t: Tokens) -> QWidget:
         box: dict = {"done": False, "r": None, "err": None}
 
         def _work() -> None:
-            from agent_bridge import post_json  # noqa: PLC0415
+            from agent_bridge import post_json # noqa: PLC0415
             try:
                 box["r"] = post_json("/api/test-api", {}, timeout=60.0)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e: # noqa: BLE001
                 box["err"] = str(e)
             box["done"] = True
 
-        import threading as _th  # noqa: PLC0415
+        import threading as _th # noqa: PLC0415
         _th.Thread(target=_work, daemon=True, name="c8-test-api").start()
 
         def _apply() -> None:
@@ -212,18 +212,18 @@ def overview_panel(t: Tokens) -> QWidget:
 
     def _raw_post(path: str, data: bytes | None, ctype: str, timeout: float) -> bytes:
         """二进制 POST（导出 zip / 导入上传）—— post_json 只回 dict，这里走 urllib。"""
-        import urllib.request as ur  # noqa: PLC0415
-        from addr import join_url  # noqa: PLC0415
-        from agent_bridge import current_url  # noqa: PLC0415
+        import urllib.request as ur # noqa: PLC0415
+        from addr import join_url # noqa: PLC0415
+        from agent_bridge import current_url # noqa: PLC0415
 
         url = join_url(current_url(), path)
-        opener = ur.build_opener(ur.ProxyHandler({}))   # 绕代理（全 ui_qt 口径）
+        opener = ur.build_opener(ur.ProxyHandler({})) # 绕代理（全 ui_qt 口径）
         req = ur.Request(url, data=data, headers={"Content-Type": ctype} if data else {})
         with opener.open(req, timeout=timeout) as resp:
             return resp.read()
 
     def _export() -> None:
-        from PySide6.QtWidgets import QFileDialog  # noqa: PLC0415
+        from PySide6.QtWidgets import QFileDialog # noqa: PLC0415
         ds = time.strftime("%Y-%m-%d")
         p, _f = QFileDialog.getSaveFileName(page, "导出记录", f"Persona Morph-数据迁移-{ds}.zip",
                                             "迁移包 (*.zip)")
@@ -234,28 +234,28 @@ def overview_panel(t: Tokens) -> QWidget:
             blob = _raw_post("/api/data/export", None, "", 120.0)
             Path(p).write_bytes(blob)
             note2.setText(f"已导出记录（计费+对话）→ {p}")
-        except Exception as e:  # noqa: BLE001
+        except Exception as e: # noqa: BLE001
             note2.setText(f"导出失败：{e}")
 
     def _import() -> None:
-        from PySide6.QtWidgets import QFileDialog  # noqa: PLC0415
+        from PySide6.QtWidgets import QFileDialog # noqa: PLC0415
         p, _f = QFileDialog.getOpenFileName(page, "选迁移包", "", "迁移包 (*.zip)")
         if not p:
             return
         note2.setText("迁移中（合并到当前数据，按内容去重）…")
         try:
-            import json as _j  # noqa: PLC0415
+            import json as _j # noqa: PLC0415
             blob = Path(p).read_bytes()
             resp = _raw_post("/api/data/import", blob, "application/zip", 180.0)
             j = _j.loads(resp.decode("utf-8", errors="replace"))
             note2.setText(f"迁移完成：{j.get('note') or 'ok'}" if j.get("ok")
                           else f"迁移失败：{j.get('error') or '未知'}")
             _refresh()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e: # noqa: BLE001
             note2.setText(f"迁移失败：{e}")
 
     def _clear_cost() -> None:
-        from confirm import ConfirmDialog  # noqa: PLC0415
+        from confirm import ConfirmDialog # noqa: PLC0415
         d = ConfirmDialog(
             t, page, "一键删除全部计费历史？",
             "删的是「今日/周期/累计用量」的历史记录，机器人本体不受影响。",
@@ -267,14 +267,14 @@ def overview_panel(t: Tokens) -> QWidget:
         box: dict = {"done": False, "r": None, "err": None}
 
         def _work() -> None:
-            from agent_bridge import post_json  # noqa: PLC0415
+            from agent_bridge import post_json # noqa: PLC0415
             try:
                 box["r"] = post_json("/api/stats/cal_clear", {}, timeout=30.0)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e: # noqa: BLE001
                 box["err"] = str(e)
             box["done"] = True
 
-        import threading as _th  # noqa: PLC0415
+        import threading as _th # noqa: PLC0415
         _th.Thread(target=_work, daemon=True, name="c8-cal-clear").start()
 
         def _apply() -> None:
@@ -312,7 +312,7 @@ def _fmt_checks(title: str, summary: str, checks: list, cancelled: bool = False)
 
 
 def check_panel(t: Tokens) -> QWidget:
-    """检测中心 —— 丙-8 P0-A③ 把「入口说明页」升级为真检测：
+    """检测中心 —— P0-A③ 把「入口说明页」升级为真检测：
       · 代码检测：POST /api/code-check {deps} → 150ms 轮询 /api/code-check/progress
         （progress{done,total,current} + items 逐项实时 + done→result{summary,checks}），
         上限 300 轮（web 同款）；
@@ -326,9 +326,9 @@ def check_panel(t: Tokens) -> QWidget:
                            "零风险，实测约 0.5~3 秒；「点击测试」＝环境/配置/界面自动化共 55 项，"
                            "全程序内完成，不碰鼠标，进行中约 40~70 秒，可随时停止。"))
 
-    import threading  # noqa: PLC0415
+    import threading # noqa: PLC0415
 
-    from agent_bridge import post_json  # noqa: PLC0415
+    from agent_bridge import post_json # noqa: PLC0415
 
     card = Card(t)
     card.body.addWidget(h2(t, "检测结果"))
@@ -376,14 +376,14 @@ def check_panel(t: Tokens) -> QWidget:
             try:
                 post_json("/api/code-check", {"deps": bool(deps)}, timeout=15.0)
                 box["started"] = True
-            except Exception as e:  # noqa: BLE001
+            except Exception as e: # noqa: BLE001
                 box["err"] = f"启动失败：{e}"
                 box["done"] = True
                 return
-            for _i in range(300):            # web 同款上限 300 轮
+            for _i in range(300): # web 同款上限 300 轮
                 try:
                     pr = post_json("/api/code-check/progress", {}, timeout=10.0)
-                except Exception as e:  # noqa: BLE001
+                except Exception as e: # noqa: BLE001
                     box["err"] = f"进度查询失败：{e}"
                     break
                 if pr:
@@ -393,7 +393,7 @@ def check_panel(t: Tokens) -> QWidget:
                     if pr.get("done"):
                         box["result"] = pr.get("result")
                         break
-                time.sleep(0.15)             # web 150ms 同款
+                time.sleep(0.15) # web 150ms 同款
             box["done"] = True
 
         threading.Thread(target=_work, daemon=True, name="c8-code-check").start()
@@ -416,7 +416,7 @@ def check_panel(t: Tokens) -> QWidget:
                     pct = f"{round(d / tt * 100)}%" if tt else "0%"
                     tip.setText(f"检测中 {pct} · {cur}" if cur else f"检测中 {pct}")
                     _render_running()
-                QTimer.singleShot(300, _apply)   # web 150ms 轮询，UI 300ms 足够顺
+                QTimer.singleShot(300, _apply) # web 150ms 轮询，UI 300ms 足够顺
                 return
             if box.get("err"):
                 area.setPlainText("代码检测失败：" + box["err"])
@@ -458,7 +458,7 @@ def check_panel(t: Tokens) -> QWidget:
         def _work() -> None:
             try:
                 box["r"] = post_json("/api/selfcheck", {}, timeout=185.0)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e: # noqa: BLE001
                 box["err"] = str(e)
             box["done"] = True
 
@@ -492,7 +492,7 @@ def check_panel(t: Tokens) -> QWidget:
         try:
             post_json("/api/selfcheck-stop", {}, timeout=10.0)
             tip.setText("已发出停止请求（当前检测项跑完即停）")
-        except Exception as e:  # noqa: BLE001
+        except Exception as e: # noqa: BLE001
             tip.setText(f"停止失败：{e}")
 
     b_self.clicked.connect(_run_self)
@@ -506,11 +506,11 @@ def check_panel(t: Tokens) -> QWidget:
              "联网搜索 · @机器人 今天的天气/新闻", "记忆 · 让机器人记住一件事后到「记忆」页看",
              "挂件 · 看右下角鲸鱼挂件的数据与拖拽", "启停重启 · 顶部停止/重启后能接管",
              "多厂商切换 · 换厂商保存后测试连通"]
-    # 丙-15：对齐 web 真值（checkList 表：结果=勾选框 + 项目 + 怎么测 + 预期）——
-    #   原来整表降级成纯文字 desc，「结果」勾选列蒸发（作者真机点名「连按钮都没有」）。
+    # 对齐 web 真值（checkList 表：结果=勾选框 + 项目 + 怎么测 + 预期）——
+    # 原来整表降级成纯文字 desc，「结果」勾选列蒸发。
     #   ⚠️ 只导 QCheckBox：本函数前面已用模块级 QLabel/QHBoxLayout，函数内再 import
     #   会把它们变局部变量 ⇒ UnboundLocalError（worker 二轮踩过的同款坑，别再踩）。
-    from PySide6.QtWidgets import QCheckBox  # noqa: PLC0415
+    from PySide6.QtWidgets import QCheckBox # noqa: PLC0415
 
     for it in items:
         roww = QWidget()
@@ -535,8 +535,7 @@ def check_panel(t: Tokens) -> QWidget:
         card2.body.addWidget(roww)
     lay.addWidget(card2)
 
-    # ── 视频通路（丙-11 C2）：三态徽章，数据来自 /api/status 的 media.video ──
-    # 工单 R2：控制台原来**看不到视频死活**（ffmpeg/ASR/yt-dlp），这里补上。
+    # ── 视频通路：三态徽章，数据来自 /api/status 的 media.video ──
     # 数据源与网页控制台同一份快照（media_status.snapshot()["video"]），不另造一份。
     # ⚠️ 禁 emoji：图标取项目锁定图标库（icons INNER），徽章用 widgets.Badge。
     card3 = Card(t)
@@ -572,7 +571,7 @@ def check_panel(t: Tokens) -> QWidget:
         """读 /api/status 的 media.video（拿不到就全部落 idle，**绝不默认写 ok**）。"""
         try:
             st = config_io.get_json("/api/status") or {}
-        except Exception:  # noqa: BLE001
+        except Exception: # noqa: BLE001
             st = {}
         vid = ((st.get("media") or {}).get("video") or {}) if isinstance(st, dict) else {}
         if not vid:
@@ -633,7 +632,7 @@ def _row_btn_refresh(t: Tokens, hook) -> QWidget:
 
 
 def sessions_panel(t: Tokens) -> QWidget:
-    """运行明细 —— 丙-12 P0-C：web 的 #sessList / #arcList 两块动态列表原本全失，这里补齐：
+    """运行明细 —— P0-C：web 的 #sessList / #arcList 两块动态列表原本全失，这里补齐：
       · sessList（web :2107）：GET /api/sessions?limit=30 拿运行明细，逐条渲染
         （勾选框 + 群名 + 状态 + 时间 + token/费用），支持**按条勾选删除**；
       · 四钮（:2096-2104）：刷新(sessRefresh) / 删除选中(sessSelDel) / 撤销(sessUndo)
@@ -642,13 +641,13 @@ def sessions_panel(t: Tokens) -> QWidget:
       · 存档 arcList（web :2121）：arcChat 群选 + arcLimit + 读取该会话存档(arcLoad) +
         刷新会话列表(arcReload)，逐条渲染 #arcList 并支持 屏蔽/解除/清除
         （POST /api/archive/block、/unblock、/delete）。
-    说明（回执用）：原 sessions_panel 只渲染了一个**纯文本 JSON 阅读框**（见丙-8 时期
+    说明（回执用）：原 sessions_panel 只渲染了一个**纯文本 JSON 阅读框**（见 时期
     实现，没有列表/勾选/撤销），本次在保留「原始 JSON 折叠查看」的同时，新增上面两组
     真动态列表与完整按钮语义。"""
     s = sec_meta.get("sessions")
     page, lay, badge = _page(t, s.title)
     lay.addWidget(desc(t, s.desc or "发了什么、多少用量、耗时，按天落盘可勾选删除。"))
-    from panels_qt import _line  # noqa: PLC0415
+    from panels_qt import _line # noqa: PLC0415
 
     state: dict = {"sessions": [], "undo": ""}
 
@@ -704,7 +703,7 @@ def sessions_panel(t: Tokens) -> QWidget:
     def load_sessions() -> None:
         try:
             r = config_io.get_json("/api/sessions?limit=30", timeout=5.0)
-        except Exception:  # noqa: BLE001
+        except Exception: # noqa: BLE001
             r = None
         if not isinstance(r, dict):
             snote.setText("后台没连上（或该接口未提供）。顶部状态灯恢复绿色后点「刷新」再试。")
@@ -743,7 +742,7 @@ def sessions_panel(t: Tokens) -> QWidget:
             snote.setText("已撤销" if (r and r.get("ok")) else f"撤销失败：{e or (r or {}).get('error') or '后台没连上'}")))
 
     def _clear_sessions() -> None:
-        from confirm import ConfirmDialog  # noqa: PLC0415
+        from confirm import ConfirmDialog # noqa: PLC0415
         d = ConfirmDialog(
             t, page, "清空全部运行明细？",
             "删的是运行明细里的会话日志与对话历史。",
@@ -804,7 +803,7 @@ def sessions_panel(t: Tokens) -> QWidget:
     def load_arc_chats() -> None:
         try:
             r = config_io.get_json("/api/archive", timeout=5.0)
-        except Exception:  # noqa: BLE001
+        except Exception: # noqa: BLE001
             r = None
         chats = (r or {}).get("chats") or []
         arc_chat.clear()
@@ -825,7 +824,7 @@ def sessions_panel(t: Tokens) -> QWidget:
         anote.setText("读取中…")
         try:
             r = config_io.get_json(f"/api/archive?chat_key={ck}&limit={lim}", timeout=5.0)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e: # noqa: BLE001
             r = None
         if not isinstance(r, dict):
             anote.setText(f"读存档失败：{e}")
@@ -843,7 +842,7 @@ def sessions_panel(t: Tokens) -> QWidget:
     b_arc_reload.clicked.connect(load_arc_chats)
     load_arc_chats()
 
-    # 原始 JSON 折叠查看（保留丙-8 时期的原始数据透视，便于排障）
+    # 原始 JSON 折叠查看
     jcard = Card(t)
     jcard.body.addWidget(h2(t, "原始返回（/api/sessions 透视）"))
     area = _plain_area(t, "", placeholder="连上后台后显示明细数据", height=160)
@@ -961,14 +960,14 @@ def log_panel(t: Tokens) -> QWidget:
             note.setText(f"共 {len(lines)} 行 · 显示尾部 {len(tail)} 行 · {time.strftime('%H:%M:%S')}")
             # web stLog 口径：idle 中性态 + 行数（N 行）
             badge.set("idle", f"{len(lines)} 行" if lines else "还没输出")
-        except Exception as e:  # noqa: BLE001
+        except Exception as e: # noqa: BLE001
             note.setText(f"读取失败：{e}")
             badge.set("err", "读不到")
 
     _refresh()
     card.body.addWidget(note)
     lay.addWidget(card)
-    # 丙-8 P0-A②：原「清空日志」按钮移除 —— web「运行日志」区根本没有清空 API
+    # P0-A②：原「清空日志」按钮移除 —— web「运行日志」区根本没有清空 API
     # （日志由后端按大小滚动），残壳按钮点了永远没反应；真要看历史用「打开日志目录」。
     hooks = [_refresh, lambda: _open_dir(ROOT / "logs")]
     lay.addLayout(_btn_row(t, [("刷新", "primary"), ("打开日志目录", "ghost")], hooks))
@@ -984,7 +983,7 @@ def json_panel(t: Tokens, on_save=None) -> QWidget:
     s = sec_meta.get("json")
     page, lay, badge = _page(t, s.title)
     lay.addWidget(desc(t, s.desc or "全部配置的配置文件。只在面板里找不到对应开关时才动它，保存前先备份。"))
-    from agent.config import CONFIG_FILE  # noqa: PLC0415  同进程直连（语义与网页控制台一致）
+    from agent.config import CONFIG_FILE # noqa: PLC0415  同进程直连（语义与网页控制台一致）
 
     cfg_path = Path(CONFIG_FILE)
     card = Card(t)
@@ -997,7 +996,7 @@ def json_panel(t: Tokens, on_save=None) -> QWidget:
             area.setPlainText(cfg_path.read_text(encoding="utf-8"))
             note.setText(f"已读取 {cfg_path.name} · {time.strftime('%H:%M:%S')}")
             badge.set("info", "已加载")
-        except Exception as e:  # noqa: BLE001
+        except Exception as e: # noqa: BLE001
             note.setText(f"读取失败：{e}")
             badge.set("err", "读不到")
 
@@ -1011,7 +1010,7 @@ def json_panel(t: Tokens, on_save=None) -> QWidget:
         if ok and callable(on_save):
             try:
                 on_save()
-            except Exception:  # noqa: BLE001
+            except Exception: # noqa: BLE001
                 pass
 
     _load()
@@ -1029,12 +1028,12 @@ def json_panel(t: Tokens, on_save=None) -> QWidget:
 # ---------------------------------------------------------------- 分发表（panels_qt.build_panel 查这里）
 
 def vermat_panel(t: Tokens, on_save=None) -> QWidget:
-    """丙-10 P0-3：版本能力矩阵（web `sec-vermat` 真值）+ 顶部「版本与更新」卡。
+    """ P0-3：版本能力矩阵（web `sec-vermat` 真值）+ 顶部「版本与更新」卡。
 
     两件事：
       3a. **矩阵三态**（allowed / 实测 / 严格档拦停，web console_html.py:3346 口径）——
           从 `/api/status` 的 `version_gate` + `version` 取真值，绝不显示「检测中」占位。
-      3b. **版本与更新卡**（用户要求：更新入口挪到「版本」页）—— 顶栏胶囊点「稍后」
+      3b. **版本与更新卡**—— 顶栏胶囊点「稍后」
           只关 popover、不等于不再提示；这一张卡**常驻**，显示当前版本 / 有无新版 /
           「立即更新」入口，复用 `updbar` 的判定与动作，不重写一套。
     """
@@ -1042,7 +1041,7 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
     page, lay, badge = _page(t, s.title)
     lay.addWidget(desc(t, s.desc or "当前「微信版本 × 适配层版本」下每个能力的实测状态。"))
 
-    # ── 3b. 版本与更新（常驻卡；用户点名：更新入口放这里）──
+    # ── 3b. 版本与更新──
     upd = Card(t)
     upd.body.addWidget(h2(t, "版本与更新"))
     vline = desc(t, "读取中…")
@@ -1059,16 +1058,16 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
     lay.addWidget(upd)
 
     def _fetch(cb) -> None:
-        import threading  # noqa: PLC0415
+        import threading # noqa: PLC0415
 
         box: dict = {}
 
         def _work() -> None:
             try:
-                from agent_bridge import get_json  # noqa: PLC0415
+                from agent_bridge import get_json # noqa: PLC0415
 
                 box["v"] = get_json("/api/update", timeout=8.0)
-            except Exception:  # noqa: BLE001
+            except Exception: # noqa: BLE001
                 box["v"] = None
 
         threading.Thread(target=_work, daemon=True, name="vermat-upd").start()
@@ -1085,10 +1084,10 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
 
     def _render_upd(v) -> None:
         try:
-            import updbar  # noqa: PLC0415
+            import updbar # noqa: PLC0415
 
             txt, warn = updbar.decide(v)
-        except Exception:  # noqa: BLE001
+        except Exception: # noqa: BLE001
             txt, warn = "", False
         vd = (v or {}) if isinstance(v, dict) else {}
         mine = str(vd.get("mine") or "").strip()
@@ -1104,13 +1103,13 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
         # 复用顶栏同一条动作链（/api/update_apply）；这里只做「有没有可更新」的前置说明
         def _work() -> None:
             try:
-                from agent_bridge import post_json  # noqa: PLC0415
+                from agent_bridge import post_json # noqa: PLC0415
 
                 post_json("/api/update_apply", {}, timeout=20.0)
-            except Exception:  # noqa: BLE001
+            except Exception: # noqa: BLE001
                 pass
 
-        import threading  # noqa: PLC0415
+        import threading # noqa: PLC0415
 
         threading.Thread(target=_work, daemon=True, name="vermat-apply").start()
         vline.setText("已发起更新；进度看顶栏胶囊（失败会在这里如实说明）。")
@@ -1121,7 +1120,7 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
 
     btn_go.clicked.connect(_on_go)
     btn_check.clicked.connect(_on_check)
-    page._c10_update_refresh = _fetch   # Shell 探活可复用（卡内自足也能跑）
+    page._c10_update_refresh = _fetch # Shell 探活可复用（卡内自足也能跑）
 
     # ── 3a. 矩阵三态（web L2194/L2196/L2201 的真值行）──
     mtx = Card(t)
@@ -1144,10 +1143,10 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
 
     def _render_mtx() -> None:
         try:
-            import panels_qt  # noqa: PLC0415
+            import panels_qt # noqa: PLC0415
 
             st = panels_qt._load_status()
-        except Exception:  # noqa: BLE001
+        except Exception: # noqa: BLE001
             st = {}
         vm = (st.get("version") or {}) if isinstance(st, dict) else {}
         vg = (st.get("version_gate") or {}) if isinstance(st, dict) else {}
@@ -1174,13 +1173,13 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
         # web vmAllow：写「本次允许发送」的会话期放行（重启失效，不落配置）
         def _work() -> None:
             try:
-                from agent_bridge import post_json  # noqa: PLC0415
+                from agent_bridge import post_json # noqa: PLC0415
 
                 post_json("/api/version_allow", {}, timeout=15.0)
-            except Exception:  # noqa: BLE001
+            except Exception: # noqa: BLE001
                 pass
 
-        import threading  # noqa: PLC0415
+        import threading # noqa: PLC0415
 
         threading.Thread(target=_work, daemon=True, name="vermat-allow").start()
         gate_lb.setText("已按「仅本次允许」放行（重启后重新拦）。")
@@ -1194,7 +1193,7 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
     return page
 
 
-# ================================================================ 丙-12：人设 / 记忆 / 运行明细
+# ================================================================ 人设 / 记忆 / 运行明细
 #
 # 这三个面板在 web 侧核心是「动态列表」——由 JS 从 /api/personas / /api/memory
 # / /api/sessions 拉取后再渲染进 #personaList / #memTable / #sessList，静态 HTML
@@ -1220,16 +1219,16 @@ def _bordered_list(t: Tokens, name: str, min_h: int = 200) -> QListWidget:
 
 def _async_post(page: QWidget, api: str, body: dict, on_done, timeout: float = 120.0) -> None:
     """后台线程 POST（对齐 web 同款接口），UI 只在主线程落地（box 模式）。"""
-    import threading  # noqa: PLC0415
+    import threading # noqa: PLC0415
 
-    from agent_bridge import post_json  # noqa: PLC0415
+    from agent_bridge import post_json # noqa: PLC0415
 
     box: dict = {"done": False, "r": None, "err": None}
 
     def _work() -> None:
         try:
             box["r"] = post_json(api, body, timeout=timeout)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e: # noqa: BLE001
             box["err"] = str(e)
         box["done"] = True
 
@@ -1245,9 +1244,9 @@ def _async_post(page: QWidget, api: str, body: dict, on_done, timeout: float = 1
 
 
 def _append_save(t: Tokens, lay, binds: list, badge: Badge) -> None:
-    """保存行（丙-4 接线口径，复用 /api/config 深合并落盘）：收集 {点路径:值}
+    """保存行：收集 {点路径:值}
     → config_io.write_patch；并带「改完即生效」开关（防抖 600ms 自动写）。"""
-    from PySide6.QtCore import QSettings, QTimer as _QTimer  # noqa: PLC0415
+    from PySide6.QtCore import QSettings, QTimer as _QTimer # noqa: PLC0415
 
     brow = QHBoxLayout()
     btn = Btn("保存设置", t, "primary")
@@ -1275,7 +1274,7 @@ def _append_save(t: Tokens, lay, binds: list, badge: Badge) -> None:
                     patch[cfg] = ctrl.toPlainText()
                 else:
                     patch[cfg] = ctrl.text()
-            except Exception:  # noqa: BLE001
+            except Exception: # noqa: BLE001
                 pass
         return patch
 
@@ -1353,7 +1352,7 @@ def _append_save(t: Tokens, lay, binds: list, badge: Badge) -> None:
 
 
 def persona_panel(t: Tokens) -> QWidget:
-    """人设与响应 —— 丙-12 一次解掉用户点名的四件事：
+    """人设与响应 —— 一次解掉的四件事
       · 人设列表：读 /api/personas（照 console_html.py:6180 同款接口，合并 custom/scores），
         逐张卡：星标 / 人设名 / 模型分 / 使用 / 删除（web #personaList :1318）。
       · 搜索框：personaSearch（:1317）—— textChanged 实时过滤列表（对齐 web L6259）。
@@ -1369,9 +1368,9 @@ def persona_panel(t: Tokens) -> QWidget:
     page, lay, badge = _page(t, s.title, "idle", "读取中")
     lay.addWidget(desc(t, s.desc or "机器人以谁的身份在群里说话、怎么参与。改完保存即生效。"))
 
-    from PySide6.QtWidgets import QHBoxLayout, QWidget  # noqa: PLC0415
+    from PySide6.QtWidgets import QHBoxLayout, QWidget # noqa: PLC0415
 
-    state: dict = {"items": [], "sort": 0, "cat": ""}   # 丙-20：cat=当前分区过滤（空=全部）
+    state: dict = {"items": [], "sort": 0, "cat": ""} # cat=当前分区过滤（空=全部）
 
     # ── 人设库卡 ──
     pcard = Card(t)
@@ -1392,8 +1391,8 @@ def persona_panel(t: Tokens) -> QWidget:
     pcard.body.addLayout(btn_row)
 
     # 分区 chips（web #personaCats :1308，allCats/renderChips :6199-6231 同款）——
-    # 丙-20：人设按分区过滤（内置默认「网络热门」，自定义默认「自定义」）；
-    # 分区管理（新建/删除，/api/persona/cats*）列批4。
+    # 人设按分区过滤（内置默认「网络热门」，自定义默认「自定义」）；
+    # 分区管理（新建/删除，/api/persona/cats*）列。
     cat_row_w = QWidget()
     cat_row = QHBoxLayout(cat_row_w)
     cat_row.setContentsMargins(0, 0, 0, 0)
@@ -1401,7 +1400,7 @@ def persona_panel(t: Tokens) -> QWidget:
     pcard.body.addWidget(cat_row_w)
 
     # 搜索框（personaSearch :1317）
-    from panels_qt import _line  # noqa: PLC0415
+    from panels_qt import _line # noqa: PLC0415
     search = _line(t, "", placeholder="搜索人设（如 傲娇/毒舌/猫/程序员）…")
     search.setObjectName("personaSearch")
     pcard.body.addWidget(search)
@@ -1428,11 +1427,11 @@ def persona_panel(t: Tokens) -> QWidget:
                 and (not q or q in (p.get("name") or "").lower()
                      or q in (p.get("key") or "").lower()
                      or q in (p.get("text") or "").lower())]
-        if state["sort"] == 1:                       # 高→低
+        if state["sort"] == 1: # 高→低
             show = sorted(show, key=lambda p: -(p.get("__score") or 0))
-        elif state["sort"] == 2:                     # 低→高
+        elif state["sort"] == 2: # 低→高
             show = sorted(show, key=lambda p: (p.get("__score") or 0))
-        show = sorted(show, key=lambda p: 0 if p.get("fav") else 1)   # 星标置顶
+        show = sorted(show, key=lambda p: 0 if p.get("fav") else 1) # 星标置顶
         listw.clear()
         for p in show:
             it = QListWidgetItem()
@@ -1527,7 +1526,7 @@ def persona_panel(t: Tokens) -> QWidget:
     def load_personas() -> None:
         try:
             r = config_io.get_json("/api/personas", timeout=5.0)
-        except Exception:  # noqa: BLE001
+        except Exception: # noqa: BLE001
             r = None
         items = (r or {}).get("personas") or [] if isinstance(r, dict) else []
         try:
@@ -1535,20 +1534,20 @@ def persona_panel(t: Tokens) -> QWidget:
             for c in (rc.get("custom") or []):
                 items.append({"name": c.get("name"), "key": c.get("key"),
                               "text": c.get("text"), "cat": c.get("cat") or "自定义"})
-        except Exception:  # noqa: BLE001
+        except Exception: # noqa: BLE001
             pass
         scores = {}
         try:
             rs = config_io.get_json("/api/personas/scores", timeout=5.0) or {}
             for x in (rs.get("rows") or []):
                 scores[x.get("key")] = x
-        except Exception:  # noqa: BLE001
+        except Exception: # noqa: BLE001
             pass
         favs = {}
         try:
             rf = config_io.get_json("/api/personas/favs", timeout=5.0) or {}
             favs = rf.get("favs") or {}
-        except Exception:  # noqa: BLE001
+        except Exception: # noqa: BLE001
             pass
         for p in items:
             sc = scores.get(p.get("key")) or {}
@@ -1581,7 +1580,7 @@ def persona_panel(t: Tokens) -> QWidget:
     b_enrich.setObjectName("pEnrich")
     b_wf = Btn("联网收集真实资料", t, "ghost")
     b_wf.setObjectName("pWebFetch")
-    from panels_qt import Combo  # noqa: PLC0415
+    from panels_qt import Combo # noqa: PLC0415
     rounds = Combo(t, [("1 轮", "1"), ("2 轮", "2"), ("3 轮", "3")], "1")
     rounds.setObjectName("pRounds")
     use_llm = Switch(t, True)
@@ -1663,7 +1662,7 @@ def persona_panel(t: Tokens) -> QWidget:
     ccard = Card(t)
     ccard.body.addWidget(h2(t, "人设与响应配置"))
     binds: list = []
-    from panels_qt import _area  # noqa: PLC0415
+    from panels_qt import _area # noqa: PLC0415
 
     name_ctrl = _line(t, _as_text(config_io.read_path("persona.bot_name")),
                       placeholder="留空=内置小鲸鱼角色卡")
@@ -1751,7 +1750,7 @@ def _as_text(v) -> str:
     if isinstance(v, (list, dict)):
         try:
             return json.dumps(v, ensure_ascii=False)
-        except Exception:  # noqa: BLE001
+        except Exception: # noqa: BLE001
             return ""
     return str(v)
 
@@ -1770,11 +1769,11 @@ def _persona_card(t: Tokens, p: dict, handlers: dict) -> QWidget:
     h = QHBoxLayout(w)
     h.setContentsMargins(6, 4, 6, 4)
     h.setSpacing(8)
-    # 丙-17：星标改项目图标库 SVG（正文字体渲染 ★ 字符是黑块——作者真机实锤）；
+    # 星标改项目图标库 SVG；
     #   收藏=实心金星，未收藏=灰描边星；按钮窄条 34px。
-    from PySide6.QtGui import QIcon  # noqa: PLC0415
+    from PySide6.QtGui import QIcon # noqa: PLC0415
 
-    from icons import INNER, svg_pixmap  # noqa: PLC0415
+    from icons import INNER, svg_pixmap # noqa: PLC0415
 
     fav = Btn("", t, role="ghost")
     fav.setFixedWidth(34)
@@ -1801,8 +1800,8 @@ def _persona_card(t: Tokens, p: dict, handlers: dict) -> QWidget:
     txt.setFont(qfont(t, 11.5))
     txt.setStyleSheet(f"color:{t.tx3};background:transparent;")
     txt.setWordWrap(True)
-    # 丙-17：摘要限宽 + 按钮区右移留白 —— 原来 txt 无限拉伸把「使用/删」挤到重叠
-    #   （作者真机实锤）。卡最小高度保证 itemWidget 不压扁。
+    # 摘要限宽 + 按钮区右移留白 —— 原来 txt 无限拉伸把「使用/删」挤到重叠
+    # 。卡最小高度保证 itemWidget 不压扁。
     txt.setMaximumWidth(300)
     w.setMinimumHeight(44)
     h.setContentsMargins(6, 4, 12, 4)
@@ -1835,7 +1834,7 @@ def _wf_head(r: dict) -> str:
 
 
 def memory_panel(t: Tokens) -> QWidget:
-    """记忆（群友印象）—— 丙-12 P0-B：web 核心动态列表全失，这里补齐：
+    """记忆（群友印象）—— P0-B：web 核心动态列表全失，这里补齐：
       · memChats 群选下拉（:1598）：GET /api/memory 拿 chats 列表填充；
       · memTable 印象列表（:1619）：成员 / 印象数 / 更新时间 / 删除勾选，逐行渲染；
       · memRefresh（:1599）/ memClearSel（清除勾选的印象）/ memClearAll（清除全部）；
@@ -1845,7 +1844,7 @@ def memory_panel(t: Tokens) -> QWidget:
     s = sec_meta.get("memory")
     page, lay, badge = _page(t, s.title, "idle", "读取中")
     lay.addWidget(desc(t, s.desc or "每个群友的长期印象，机器人回复时会参考。"))
-    from panels_qt import _line, Combo  # noqa: PLC0415
+    from panels_qt import _line, Combo # noqa: PLC0415
 
     state: dict = {"members": [], "chat_key": "", "chats": [], "filling": False}
 
@@ -1939,7 +1938,7 @@ def memory_panel(t: Tokens) -> QWidget:
         state["chat_key"] = chat_key
         try:
             r = config_io.get_json("/api/memory" + (f"?chat_key={chat_key}" if chat_key else ""), timeout=5.0)
-        except Exception:  # noqa: BLE001
+        except Exception: # noqa: BLE001
             r = None
         if not isinstance(r, dict):
             mnote.setText("后台没连上（或该接口未提供）。顶部状态灯恢复绿色后点「刷新」再试。")
@@ -1955,7 +1954,7 @@ def memory_panel(t: Tokens) -> QWidget:
     def load_groups() -> None:
         try:
             r = config_io.get_json("/api/wechat-groups", timeout=5.0)
-        except Exception:  # noqa: BLE001
+        except Exception: # noqa: BLE001
             r = None
         groups = (r or {}).get("groups") or []
         mem_groups.clear()
@@ -2105,7 +2104,7 @@ MANUAL = {
     "vermat": vermat_panel,
 }
 
-# 丙-28 批3：面板追加区（build_panel 在元数据页构建后调用）——动态列表卡挂进元数据面板
+# 面板追加区（build_panel 在元数据页构建后调用）——动态列表卡挂进元数据面板
 # （APPENDIX 定义在 _wechat_emoji_appendix 之后，避免前向引用）
 
 
@@ -2117,7 +2116,7 @@ def _wechat_emoji_appendix(t: Tokens, page: QWidget) -> None:
     """
     card = Card(t)
     card.body.addWidget(h2(t, "表情包收藏夹（机器人 send_emoji 用）"))
-    from panels_qt import _line  # noqa: PLC0415
+    from panels_qt import _line # noqa: PLC0415
 
     search = _line(t, "", placeholder="搜索表情…")
     search.setObjectName("emojiSearch")
@@ -2125,9 +2124,9 @@ def _wechat_emoji_appendix(t: Tokens, page: QWidget) -> None:
     count_lb = desc(t, "读取中…")
     card.body.addWidget(count_lb)
 
-    from PySide6.QtCore import Qt as _Qt, QTimer  # noqa: PLC0415
-    from PySide6.QtGui import QPixmap  # noqa: PLC0415
-    from PySide6.QtWidgets import QGridLayout, QLabel  # noqa: PLC0415
+    from PySide6.QtCore import Qt as _Qt, QTimer # noqa: PLC0415
+    from PySide6.QtGui import QPixmap # noqa: PLC0415
+    from PySide6.QtWidgets import QGridLayout, QLabel # noqa: PLC0415
 
     grid_w = QWidget()
     grid = QGridLayout(grid_w)
@@ -2147,14 +2146,14 @@ def _wechat_emoji_appendix(t: Tokens, page: QWidget) -> None:
             wdg = it.widget()
             if wdg is not None:
                 wdg.deleteLater()
-        import urllib.parse as _up  # noqa: PLC0415
-        import urllib.request as _uq  # noqa: PLC0415
+        import urllib.parse as _up # noqa: PLC0415
+        import urllib.request as _uq # noqa: PLC0415
 
         try:
-            from agent_bridge import current_url  # noqa: PLC0415
+            from agent_bridge import current_url # noqa: PLC0415
 
             base = current_url().split("?")[0].rstrip("/")
-        except Exception:  # noqa: BLE001
+        except Exception: # noqa: BLE001
             base = "http://127.0.0.1:3210"
         for i, e in enumerate(rows):
             cell = QWidget()
@@ -2177,7 +2176,7 @@ def _wechat_emoji_appendix(t: Tokens, page: QWidget) -> None:
                         img.setPixmap(pm.scaled(42, 42, _Qt.KeepAspectRatio, _Qt.SmoothTransformation))
                     else:
                         raise ValueError("pm")
-            except Exception:  # noqa: BLE001 — 拉图失败降级为名称块（收藏夹仍可用）
+            except Exception: # noqa: BLE001 — 拉图失败降级为名称块（收藏夹仍可用）
                 img.setText(name[:4])
                 img.setToolTip(name)
             cv.addWidget(img)
@@ -2199,14 +2198,14 @@ def _wechat_emoji_appendix(t: Tokens, page: QWidget) -> None:
     def _del(name: str) -> None:
         def _work(bx: dict) -> None:
             try:
-                from agent_bridge import post_json  # noqa: PLC0415
+                from agent_bridge import post_json # noqa: PLC0415
 
                 bx["rsp"] = post_json("/api/emojis/delete", {"name": name}, timeout=8.0)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e: # noqa: BLE001
                 bx["err"] = str(e)
             bx["done"] = True
 
-        import threading as _th  # noqa: PLC0415
+        import threading as _th # noqa: PLC0415
 
         bx: dict = {"done": False, "rsp": None, "err": None}
         _th.Thread(target=_work, daemon=True, args=(bx,), name="emoji-del").start()
@@ -2224,11 +2223,11 @@ def _wechat_emoji_appendix(t: Tokens, page: QWidget) -> None:
         def _work(bx: dict) -> None:
             try:
                 bx["rsp"] = config_io.get_json("/api/emojis", timeout=6.0)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e: # noqa: BLE001
                 bx["err"] = str(e)
             bx["done"] = True
 
-        import threading as _th  # noqa: PLC0415
+        import threading as _th # noqa: PLC0415
 
         bx: dict = {"done": False, "rsp": None, "err": None}
         _th.Thread(target=_work, daemon=True, args=(bx,), name="emoji-load").start()
@@ -2243,7 +2242,7 @@ def _wechat_emoji_appendix(t: Tokens, page: QWidget) -> None:
         QTimer.singleShot(150, _apply)
 
     search.textChanged.connect(_render)
-    QTimer.singleShot(400, _load)   # 面板建好后后台拉一次（不冻建页）
+    QTimer.singleShot(400, _load) # 面板建好后后台拉一次（不冻建页）
 
 
 APPENDIX = {

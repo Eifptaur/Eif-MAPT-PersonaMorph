@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """一键关闭（`launcher-src/close.cs` → `一键关闭.exe`）判据。
 
-立案原因（2026-09-16）：用户报「**一键关闭又关不掉一键启动了**」；我第一版改法把匹配放宽成
 "命令行里出现我们的目录 / 出现「一键启动」" ⇒ **probe 会把正在跑它的 pwsh、甚至 DSH 的 node
 一起列进"会结束"名单**（那不是关不掉，那是误杀）。本判据把这两件事一起钉住。
 
@@ -42,7 +41,7 @@ print("── A. 源码级：两轮收 · 精确闸门 · 如实汇报 ──")
 _s = _src()
 ok("先收看门狗/入口、再收本体（两轮）",
    "string[] first" in _s and "string[] second" in _s and _s.count("Sweep(rootLower") >= 2)
-ok("第二轮里有关键本体（persona_morph.py / wx_app 旧名 / stop_bot.py）",
+ok("里有关键本体（persona_morph.py / wx_app 旧名 / stop_bot.py）",
    "persona_morph.py" in _s and "wx_agent.py" in _s and "stop_bot.py" in _s)
 ok("有「装在我们目录里」的闸门（exeUnderRoot）", "exeUnderRoot" in _s)
 ok("系统宿主进程必须**同时**带我们的目录与我们的脚本名（scriptOurs）",

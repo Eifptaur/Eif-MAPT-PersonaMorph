@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
-"""控制台「弹窗/关窗」判据（2026-09-15 用户报「屏幕上一直在闪弹窗」+「点停止弹窗不自动关」）
+"""控制台「弹窗/关窗」判据
 
-背景（真事故）：控制台页在"机器人已停止"这条路径上**自己关自己的窗口**——
 `window.open('', '_self')` → `window.close()` → `location.replace('about:blank')`。
 在 WebView2 里 `window.open` 会**真的开一个新窗口**再被关掉 ⇒ 用户看到窗口一闪一闪，
 只有把整个应用关掉才停；而"点停止后弹窗不自动关"是因为停止分支又补了第二个模态、
@@ -68,7 +67,7 @@ ok("没有 window.open('', '_self')（会真开一个新窗口）", "window.open
 ok("没有「拿空窗口名去抢同名窗口」的写法（WebView2 里会真开窗）", "window.open('', 'Persona" not in code)
 ok("没有 location.replace('about:blank')", "about:blank" not in code)
 # 允许 window.open(某网址) 打开新页面；只禁"用来关自己"的那种。
-# ⚠️ 2026-09-16 口径更新（已知现象：「我点停止机器人窗口怎么不会自己关掉」）：
+# ⚠️ 口径更新（已知现象）：
 #   **用户主动点「停止」之后**把控制台窗口一起关掉是**允许的**（那是用户自己的意图，
 #   而且宿主侧已接 `WindowCloseRequested`）。所以这里不再"全文禁定时关窗"，
 #   只禁**停止分支之外**的自动/定时关窗——后端意外断线那条路径仍然只挂横幅、不许关窗。
@@ -88,7 +87,7 @@ print("\n── C. 停止分支：不补第二个模态、可由用户意图关�
 blk = code[code.index("$('stopBtn').onclick"):]
 blk = blk[:blk.index("$('restartBtn').onclick")] if "$('restartBtn').onclick" in blk else blk
 ok("停止分支里没有第二个 confirmBox('机器人已停止'…)", "confirmBox('机器人已停止'" not in blk)
-# 2026-09-16 口径再更新（用户实测「点停止关不掉窗口」，根因就在这里）：
+# 口径再更新（用户实测「点停止关不掉窗口」，根因就在这里）：
 #   原来要求"关窗必须挂在成功分支（catch 之前）"—— 但 `/api/shutdown` 一执行**后端自己就关了**，
 #   响应很可能没读完连接就断 ⇒ `getJSON` 抛错 ⇒ 流程走 catch ⇒ 放在 `try` 里的关窗**永远执行不到**。
 #   新口径＝**用户点了「确认停止」就无条件关窗**（成功失败都关）⇒ 关窗必须在 `finally` 里，且只允许一处。
@@ -115,7 +114,7 @@ try:
     W.get_config = lambda: base
     w = W.WebUI(lambda: {}, [])
     import tempfile as _tf
-    w.console_url_root = _tf.mkdtemp(prefix="cuj-")   # ⚠️ 判据不写产品那份 logs/console.url（2026-09-18）
+    w.console_url_root = _tf.mkdtemp(prefix="cuj-") # ⚠️ 判据不写产品那份 logs/console.url
     port = w.start()
     try:
         with urllib.request.urlopen("http://127.0.0.1:%d/?token=popup-judge" % port, timeout=8) as r:

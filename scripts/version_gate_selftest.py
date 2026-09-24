@@ -33,10 +33,10 @@ def ok(name, cond, detail=""):
     print("  {} {}{}".format("OK  " if cond else "FAIL", name, "  [{}]".format(detail) if detail else ""))
 
 
-from agent import version_gate as vg  # noqa: E402
+from agent import version_gate as vg # noqa: E402
 
 print("── A. 三级行为（先把版本强制成「读不到」，这样在哪台机器上结论都一样）──")
-# 🔴 2026-09-18 改口径（两位网友报障 + 作者「保险加多了，能发出去的也变成发不出去」）：
+# 🔴 
 #   **默认不拦发送** —— 读不到版本＝环境态；未实测版本＝告警但照发。只有用户显式开
 #   `version_gate.strict=true` 时，原来的"暂停自动发送 + 点本次允许发送"才生效。
 _REAL_LOOKUP = vg.current_wechat_version
@@ -45,7 +45,7 @@ vg.clear_allow()
 a = vg.check()
 ok("默认（非 strict）：读不到版本 ⇒ **不拦**（allow=True）", a["allow"] is True, "level=%s allow=%s" % (a["level"], a["allow"]))
 ok("告警的 level=warn（不是 ok）", a["level"] == "warn", a["level"])
-ok("理由里写明「不拦发送/照常发」+ 让用户反馈", ("不拦发送" in a["reason"]) or ("照常发" in a["reason"]), a["reason"][:60])
+ok("理由里写明「不拦发送/照常发」+ 让", ("不拦发送" in a["reason"]) or ("照常发" in a["reason"]), a["reason"][:60])
 _r_real = vg.wechat_running
 vg.wechat_running = lambda: True
 _r_running = vg.check()["reason"]
@@ -123,7 +123,7 @@ for sig in ("def send_text(", "def send_image(", "def send_file_posted("):
 
 print("── D. 控制台与端点 ──")
 WEB = open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8", errors="replace").read()
-from agent import console_html as _ch  # noqa: E402
+from agent import console_html as _ch # noqa: E402
 H = _ch.HTML
 ok("/api/version/allow 端点在位", "/api/version/allow" in WEB)
 ok("status 带 version_gate", "version_gate" in WEB and "st[\"version_gate\"]" in WEB)
@@ -133,10 +133,10 @@ ok("按钮接的是放行端点", "getJSON('/api/version/allow')" in H)
 ok("横幅文案说清「只对本次运行有效」", "只对本次运行有效" in H)
 ok("能力矩阵读的是 status.version（不是另拉一份）", "const vm = s.version || {}" in H)
 
-# ── ⛔ 2026-09-21（第四轮审计 **V-R4-10，P2**）：富化段被吞 ⇒ 前端把"读不到"画成
+# ── ⛔ 富化段被吞 ⇒ 前端把"读不到"画成
 #    「版本未实测：按严格档暂停发送（可在配置里关掉 version_gate.strict）」= 把用户指去改一个
 #    根本没拦他的开关。口径：**读数读不到 ≠ 不许发**，两侧都要如实表达。 ──
-print("── D2. 读不到 ≠ 不许发（V-R4-10） ──")
+print("── D2. 读不到 ≠ 不许发 ──")
 ok("D2a status 里 version_gate **单独一层 try**（别的富化段炸了也不许把它一起丢掉）",
    'st["version_gate"] = _vg2.status()' in WEB
    and '{"allow": None, "level": "unknown",' in WEB)

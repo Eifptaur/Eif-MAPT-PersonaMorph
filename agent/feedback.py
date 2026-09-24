@@ -1,12 +1,9 @@
 # -*- coding: utf-8 -*-
-"""反馈收集与投递（2026-09-14 用户要求「左导航单开一栏 + 自动提交 + 发邮件」）。
+"""反馈收集与投递。
 
-用户原话：「反馈功能需要在左导航单开一栏…**让用户直接在控制台里面填，然后自动提交就好，
 没必要让用户去邮箱那儿填，程序自动整理并把用户的诉求发邮件**。所有添加上的功能，你要自己测一测」
-  ⚠️ 2026-09-15 口径更新：「没必要让程序帮我整理，反正他只要用邮箱发到我的邮箱就行」⇒ 正文＝用户原话原样，只留一行元信息（见 `compose()`）。
 
 设计三条硬口径：
-  ① **三态如实**：`sent`（真的发出去了）/ `queued`（没配通道 ⇒ 落盘排队，明确告诉用户"还没发出去"）
      / `error`；**绝不留假成功**（这条是本项目反复踩过的坑：假成功比报错更糟）。
   ② **不把个人信息写进代码**：收件人邮箱、SMTP 授权码只存在 `config.json`（已 gitignore），
      代码与示例配置里一律留空——外发包扫描闸门也会拦 PII。
@@ -42,7 +39,7 @@ FEEDBACK_FILE = os.path.join(ROOT, "data", "feedback.jsonl")
 #: 反馈类型（前端下拉与后端校验共用同一份，避免"界面能填、后端不认"）
 KINDS = ("问题", "建议", "想法", "其他")
 
-#: 防刷限流默认值（2026-09-15 用户要求：「要是有人一瞬间给我发 100 封怎么办」）。
+#: 防刷限流默认值。
 #: 数值依据：正常用户一天写 2~3 条反馈 ⇒ 留约 6 倍余量；真被刷时收件箱最多被灌 20 封/天。
 #: ⚠️ 这是**咽喉点**：控制台表单、HTTP 接口、机器人工具都走 `submit()`，改这里一处全生效。
 LIMIT = {"per_minute": 3, "per_hour": 10, "per_day": 20, "dup_window_s": 600}
@@ -53,7 +50,7 @@ REJECT_FILE = os.path.join(ROOT, "data", "feedback_rejected.jsonl")
 MEDIA_DIR = os.path.join(ROOT, "data", "feedback_media")
 #: 附件上限——**数字来自接收端的硬限制**，不是随手定的：
 #: 企业微信群机器人的 image 消息要求 `base64 + md5`、原图 **≤ 2MB**；`webhook/upload_media` 的 file **≤ 20MB**。
-#: `keep_*` 是"会写盘就必须有上限"（用户口径）：附件目录超过 200 个文件或 200MB 就从最旧的删起。
+#: `keep_*` 是"会写盘就必须有上限"：附件目录超过 200 个文件或 200MB 就从最旧的删起。
 ATTACH = {"max_files": 4, "image_max": 2 * 1024 * 1024, "file_max": 20 * 1024 * 1024,
           "total_max": 20 * 1024 * 1024, "keep_files": 200, "keep_bytes": 200 * 1024 * 1024}
 #: 认得出是图片的扩展名（决定走 base64 图片消息还是 upload_media 文件消息）
@@ -313,9 +310,9 @@ def rate_check(text: str, now: float = None, names=None) -> tuple:
 
 
 def compose(item: dict) -> str:
-    """邮件正文＝**用户原话，一字不改**。
+    """邮件正文＝**一字不改**。
 
-    口径变化（用户 2026-09-15 原话）：「没必要让程序帮我整理，反正他只要用邮箱发到我的邮箱就行」
+    口径变化
     ⇒ 不再"把诉求改写成人类可读正文"，只在最上面留一行元信息（类型/时间/版本/联系方式）方便定位；
     正文原样贴用户写的内容。末尾照旧附环境摘要——那是**排障用的机器信息**，不是替他改话。
     """
@@ -325,7 +322,6 @@ def compose(item: dict) -> str:
     out = head + "\n\n" + str(item.get("text") or "").strip()
     _fs = [f for f in (item.get("files") or []) if isinstance(f, dict)]
     if _fs:
-        # 附件清单一定进正文：**没配推送通道时，至少收信的人知道该找用户要哪几个文件**
         out += "\n\n--- 附件（%d 个）\n" % len(_fs) + "\n".join(
             "- %s（%s）" % (f.get("name"), human_size(f.get("size"))) for f in _fs)
     if item.get("env"):
@@ -333,13 +329,13 @@ def compose(item: dict) -> str:
         _cp = str(_env.pop("compat", "") or "")
         out += "\n\n--- 环境（自动附带，便于定位）\n" + json.dumps(_env, ensure_ascii=False)
         if _cp:
-            # ⛔ 2026-09-22：兼容性那一段**原样贴文本**（它本来就是给人读的），不要 JSON 转义
+            # ⛔ 兼容性那一段**原样贴文本**（它本来就是给人读的），不要 JSON 转义
             out += "\n\n" + _cp
     return out
 
 
 def _harden_redirects() -> None:
-    """V-R9-23：跨主机 302 时不许把自定义头带过去（实现只有 `safe_fetch` 那一处，这里只负责装）。
+    """跨主机 302 时不许把自定义头带过去（实现只有 `safe_fetch` 那一处，这里只负责装）。
 
     ⚠️ 本模块现在发的都是无凭据头（只有 Content-Type）——这道闸是"以后谁加了 Cookie/自定义 key
     头，也自动被剥"的兜底；装不上只记一条 warning，不静默。
@@ -347,13 +343,13 @@ def _harden_redirects() -> None:
     try:
         from .safe_fetch import harden_urllib
         harden_urllib()
-    except Exception as e:                                   # pragma: no cover - 极端环境
+    except Exception as e: # pragma: no cover - 极端环境
         logging.getLogger("persona-morph").warning(
-            "安全层不可用，重定向凭据剥离没装上（V-R9-23）：%s", e)
+            "安全层不可用，重定向凭据剥离没装上：%s", e)
 
 
 def _read_cap(resp, max_bytes: int, what: str = "回包") -> bytes:
-    """V-R9-26：带上限读回包（原来 `r.read()` 收完再 `[:300]` 切片＝**事后**截断，白吃内存）。"""
+    """带上限读回包（原来 `r.read()` 收完再 `[:300]` 切片＝**事后**截断，白吃内存）。"""
     try:
         from .safe_fetch import read_capped
         return read_capped(resp, max_bytes, what)
@@ -368,7 +364,7 @@ def _post(url: str, payload: dict, timeout: int = 10) -> dict:
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(url, data=body,
                                  headers={"Content-Type": "application/json; charset=utf-8"})
-    _harden_redirects()                    # V-R9-23
+    _harden_redirects()
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             txt = _read_cap(r, 64 * 1024, "反馈通道回包").decode("utf-8", "replace")[:300]
@@ -430,7 +426,7 @@ def _mail(item: dict, to_list: list, smtp_cfg: dict) -> dict:
 
 
 def _dingtalk_sign(url: str, secret: str) -> str:
-    """钉钉「加签」：`timestamp` + `HMAC-SHA256(secret)` 拼回地址（2026-09-16 补）。
+    """钉钉「加签」：`timestamp` + `HMAC-SHA256(secret)` 拼回地址。
 
     钉钉群机器人的安全设置里若选的是**加签**，请求必须带这两个参数；选**自定义关键词**则不用
     （我们的标题里固定带「群相反馈」四个字，所以关键词填它即可 —— 更省事，不用给密钥）。
@@ -473,7 +469,7 @@ def _wecom_upload(url: str, key: str, name: str, raw: bytes, timeout: int = 30) 
         ("--%s--\r\n" % bound).encode()])
     req = urllib.request.Request(up, data=body, headers={
         "Content-Type": "multipart/form-data; boundary=%s" % bound})
-    _harden_redirects()                    # V-R9-23
+    _harden_redirects()
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             txt = _read_cap(r, 64 * 1024, "企微上传回包").decode("utf-8", "replace")[:400]
@@ -527,7 +523,7 @@ def _wecom_media(url: str, files) -> dict:
 
 
 def _post_webhook(url: str, item: dict, token: str = "", timeout: int = 15) -> dict:
-    """按 URL 自动选请求体，把反馈**推到作者自己的设备/群里**。
+    """按 URL 自动选请求体，把反馈**推到
 
     为什么加它：以前只有"自建中转"和"自己邮箱+授权码"两条路，**两条都要用户自己配**，而收件凭据
     又不能进包（PII 闸门）⇒ 普通用户点了提交只能存在本机。群机器人这条**国内可达、URL 即凭据**。
@@ -544,7 +540,7 @@ def _post_webhook(url: str, item: dict, token: str = "", timeout: int = 15) -> d
     elif "dingtalk" in u:
         body = {"msgtype": "text", "text": {"content": title + "\n" + txt}}
         if token:
-            url = _dingtalk_sign(url, token)      # 安全设置选了「加签」时才需要
+            url = _dingtalk_sign(url, token) # 安全设置选了「加签」时才需要
     elif "feishu" in u or "larksuite" in u:
         body = {"msg_type": "text", "content": {"text": title + "\n" + txt}}
     elif "qyapi.weixin" in u or "wecom" in u:
@@ -562,7 +558,7 @@ def _post_webhook(url: str, item: dict, token: str = "", timeout: int = 15) -> d
             or ('"success":true' in low)
         if not _good:
             return {"ok": False, "why": "推送被对方拒了：%s" % low[:80]}
-    # 附件（2026-09-17 用户问「我们的反馈提交能不能提交图片和文件」⇒ 能）：企业微信群机器人这条
+    # 附件：企业微信群机器人这条
     # 支持图片与文件，签完字顺手把附件也推过去；其它通道（钉钉/飞书/PushPlus/自建）**没有文件形态**，
     # 正文里已经列了附件清单，这里不假装送过。
     _fs = item.get("files") or []
@@ -651,7 +647,7 @@ def submit(kind: str, text: str, contact: str = "", env: dict | None = None, fil
                 "note": "被限流的反馈不会发出去、也不会存本机；内容还在你手上，稍后再发即可"}
     if not _append(item):
         return {"ok": False, "state": "error", "why": "本地保存失败（data/ 可写？）"}
-    prune_media()                      # 会写盘就得有上限，每收一条顺手收拾一次
+    prune_media() # 会写盘就得有上限，每收一条顺手收拾一次
     rep = deliver(item)
     _extra = ("；" + "；".join(_notes[:2])) if _notes else ""
     if rep.get("ok"):

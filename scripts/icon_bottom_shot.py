@@ -19,8 +19,8 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
-from agent import chat_header as ch          # noqa: E402
-from agent import input_bar as ib            # noqa: E402
+from agent import chat_header as ch # noqa: E402
+from agent import input_bar as ib # noqa: E402
 
 
 def main():

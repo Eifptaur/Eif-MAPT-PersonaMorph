@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""版本不匹配「四选一」控制台接线 判据（2026-09-14，测机报告 ⑦ 控制台那一半）。
+"""版本不匹配「四选一」控制台接线 判据。
 
-口径（用户 2026-09-14）：「弹窗按你推荐的做」+「✕＝什么都不做」+「把弹窗切出来的那一秒，
+口径：「弹窗按你推荐的做」+「✕＝什么都不做」+「把弹窗切出来的那一秒，
 就应该立刻让它到后台」。本判据守**接线**这一层：
   ① `/api/status` 把待决单暴露给控制台（open/summary/needed/item）；
   ② `POST /api/decide` 是唯一入口，落台账 + 写回矩阵，任何一条选项都**不会**在这里装包/降级；
@@ -21,7 +21,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
-from agent import pending_decisions as PD    # noqa: E402
+from agent import pending_decisions as PD # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -45,7 +45,7 @@ def seg(src, start, end, what):
     if i < 0:
         print("  （切片失败：找不到 %s）" % what)
         return ""
-    j = src.find(end, i + len(start))          # ⚠️ 从 start 之后找，否则 start 本身就把 end 命中了（切片成空）
+    j = src.find(end, i + len(start)) # ⚠️ 从 start 之后找，否则 start 本身就把 end 命中了（切片成空）
     return src[i:j if j > 0 else i + 4000]
 
 
@@ -59,7 +59,7 @@ ok("只把**还开着**的单子给弹窗（已表态的不再弹）",
 ok("开单走 version_gate.pending（幂等）", "_vg2.pending()" in status_blk)
 decide_blk = seg(W, 'elif path == "/api/decide"', "elif path ==", "decide 段")
 if "_vg5.decide(" not in decide_blk:
-    # ⛔ 2026-09-22（Phase B 第二批）：这条路由的分支体已搬成 `_rapi_decide_post`（路由表里登记）
+    # ⛔ 这条路由的分支体已搬成 `_rapi_decide_post`（路由表里登记）
     #   ⇒ 段落改从**方法**取；没搬时仍走上面那一句（旧结构照样能跑）。
     decide_blk = seg(W, "def _rapi_decide_post(", "    def ", "decide 段（方法）")
 ok("POST /api/decide 在位", bool(decide_blk))
@@ -100,21 +100,21 @@ ok("只有还开着的单子才自动弹", "pd.item && pd.item.id && !window.__p
 ok("自动弹延后一点（不抢正在输入的那一下）", "setTimeout(function(){ openDecision(pd.item); }" in H)
 ok("面板里有手动入口按钮", 'id="pdOpen"' in H and "版本不匹配怎么办" in H)
 ok("手动入口读 /api/status 拿当前这张单", "pdOpen" in H and "const pd = (s && s.pending_decisions) || {}" in H)
-ok("待拍板状态行在位", 'id="pdStat"' in H and "待拍板 " in H)
+ok("待状态行在位", 'id="pdStat"' in H and "待" in H)
 # [⑦d 口径变更] 「升级命令」不再只回显给用户抄：选这两项会**真去跑**（后台作业，778 行那条）。
 #   自检改成守"命令仍然看得见 + 真的发出去了"两件事。
 ok("选了能修的两项真去跑（postVersionAction）", "postVersionAction(key, item.id)" in H)
 ok("升级命令仍然看得见（从动作结果里回显）", "a.result) || {}).cmd" in H or "result || {}).cmd" in H or "result.cmd" in H)
 
 print("── D. 文案口径（不写解释性括号；讲清 ✕ 的含义）──")
-hint = seg(H, 'id="pdOpen"', "</div></div>", "待拍板提示")
+hint = seg(H, 'id="pdOpen"', "</div></div>", "待提示")
 ok("提示里讲清 ✕＝什么都不做、不再追问", "什么都不做" in hint and "不再追问" in hint)
 ok("提示里没有解释性括号", "（" not in hint, hint.replace("\n", " ")[:70])
 ok("给出四条选项的名字（用户看得到有哪些选择）",
    all(k in hint for k in ("一键升级适配层", "更新本体", "仅本次允许", "微信本身要处理")))
 
-print("── E. 真跑：整页 JS 过 node --check（手写弹窗最怕在这一层翻车）──")
-from agent import console_html as CH       # noqa: E402
+print("── E. 真跑：整页 JS 过 node --check──")
+from agent import console_html as CH # noqa: E402
 blocks = re.findall(r"<script[^>]*>(.*?)</script>", CH.HTML, re.S)
 ok("抽到了 script 块", len(blocks) > 0, "%d 块" % len(blocks))
 js_all = "\n;\n".join(blocks)

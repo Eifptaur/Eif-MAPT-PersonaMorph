@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""表情包**离线解密**（2026-09-18 落地；算法来自开源项目 CN-Grace/Wechat-Emoticon-Parser 的
+"""表情包**离线解密**（算法来自开源项目 CN-Grace/Wechat-Emoticon-Parser 的
 `v4.0-plus` 分支 README_CN.md §1 与脚本 `derive_key/verify_key`，MIT 许可）。
 
 **为什么值得**：微信 4.x 的表情在库里是加密数据、驱动库只认 3/34/43/49 ⇒ 47 号"动画表情"一直下不来，
@@ -35,7 +35,7 @@ log = logging.getLogger("persona-morph")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MAGICS = (b"GIF8", b"\x89PNG", b"\xff\xd8\xff", b"wxgf")
 _RE_MD5 = re.compile(r'md5\s*=\s*"([0-9a-fA-F]{32})"')
-_NO_WINDOW = getattr(__import__("subprocess"), "CREATE_NO_WINDOW", 0)   # ⛔ 不许闪控制台窗
+_NO_WINDOW = getattr(__import__("subprocess"), "CREATE_NO_WINDOW", 0) # ⛔ 不许闪控制台窗
 _RE_SEED = re.compile(rb"(?<![0-9])(\d{8,12})(?![0-9])")
 
 
@@ -53,7 +53,7 @@ def _auto_db():
     try:
         from wechatauto import WeChatDB
         _AUTO_DB["db"] = WeChatDB()
-    except Exception as e:                                     # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         log.debug("自建 WeChatDB 失败（表情解密不可用）：%s", e)
         _AUTO_DB["db"] = None
     return _AUTO_DB["db"]
@@ -84,7 +84,7 @@ def decrypt_bytes(key: bytes, data: bytes) -> bytes:
     """AES-128-CBC（key＝IV）解到最后一个完整块，并去 PKCS7 填充。"""
     try:
         from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-    except Exception as e:                                     # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         raise RuntimeError("没有 cryptography，解不了表情：%s" % e)
     n = (len(data) // 16) * 16
     if n <= 0:
@@ -158,7 +158,7 @@ def find_sticker_file(md5: str, acct: str = "", db=None) -> str:
         if not cands:
             cands = glob.glob(os.path.join(acct, "cache", "*", "Emoticon", p2, md5 + ".thumb"))
         if cands:
-            cands.sort(reverse=True)                 # 月份倒序 ⇒ 取最近的
+            cands.sort(reverse=True) # 月份倒序 ⇒ 取最近的
             return cands[0]
     return ""
 
@@ -170,7 +170,7 @@ def md5_of_message(db, chat_id: str, local_id) -> str:
         xml = ra.message_text(db, chat_id, local_id)
         m = _RE_MD5.search(str(xml or ""))
         return m.group(1).lower() if m else ""
-    except Exception as e:                                     # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         log.debug("取表情 md5 失败：%s", e)
         return ""
 
@@ -200,7 +200,7 @@ def save_cached_key(wxid: str, seed, key: bytes) -> None:
             json.dump({"wxid": str(wxid or ""), "seed": str(seed), "key": key.hex(),
                        "at": int(time.time())}, fh, ensure_ascii=False)
         os.replace(tmp, p)
-    except Exception as e:                                     # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         log.debug("表情 key 落盘失败（本次进程内仍生效）：%s", e)
 
 
@@ -306,7 +306,7 @@ def to_viewable(plain: bytes, out_dir: str, stem: str) -> str:
         p = os.path.join(out_dir, "%s.gif" % stem)
         with open(p, "wb") as fh:
             fh.write(plain)
-        try:                                    # 动图取首帧（多数视觉接口不吃 GIF）
+        try: # 动图取首帧（多数视觉接口不吃 GIF）
             from PIL import Image
             im = Image.open(io.BytesIO(plain))
             if getattr(im, "is_animated", False):
@@ -393,7 +393,7 @@ def sticker_image(db, chat_id: str, local_id, out_dir: str = "", allow_scan: boo
     try:
         with open(path, "rb") as fh:
             plain = decrypt_bytes(key, fh.read())
-    except Exception as e:                                     # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         log.debug("表情解密失败（%s）：%s", os.path.basename(path), e)
         return ""
     if not sniff(plain):

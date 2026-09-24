@@ -33,7 +33,7 @@ _MIGRATED = False
 
 
 def chat_file(chat_key: str) -> str:
-    """⛔ 2026-09-21 修（第四轮审计候选 **S-1**）：老实现只做字符替换 ⇒ **不同 chat_key 会撞同一个文件**。
+    """⛔ 老实现只做字符替换 ⇒ **不同 chat_key 会撞同一个文件**。
 
     实测：`group:wxid_a-b` 与 `group:wxid_a_b` 都归一成 `group_wxid_a_b.json` ⇒ 两个会话共用一个档案，
     互相覆盖（用户视角＝"两个群的消息串了 / 有一个群的记录莫名少了一半"）。
@@ -60,7 +60,7 @@ def chat_file_legacy(chat_key: str) -> str:
 def chat_file_existing(chat_key: str) -> str:
     """该会话**实际在用**的文件路径：新命名优先，没有就退回老命名（老档案不搬家、不丢）。
 
-    ⛔ 2026-09-21 修（第六轮 **V-R6-25**）：老命名是**无哈希**的（`_safe_name` 对 `:` 等字符做替换），
+    ⛔ 老命名是**无哈希**的（`_safe_name` 对 `:` 等字符做替换），
     ⇒ 磁盘上残留的老档案有可能**不是这个会话的**（不同 chat_key 被 `_safe_name` 归并，或用户手改名）。
     原来只要文件在就当成"这个会话的档案"直接读 ⇒ **读到别人的档案（串群）**。
     ⇒ 退回老命名之前先**核一眼文件里的 `chat_key`**：与请求的不一致就当它不存在（并留一行日志）。
@@ -100,7 +100,7 @@ def _read_key_of(path: str) -> str:
 def _filename_key(fn: str) -> str:
     """老命名 `group_xxx.json` → `group:xxx`。
 
-    ⛔ 2026-09-21（第五轮回执 **V-R5A-6 / V-R5B-2**）：哈希尾巴**只有在确实等于 md5(前面那段) 时才剥**
+    ⛔ 哈希尾巴**只有在确实等于 md5(前面那段) 时才剥**
     —— 老实现无脑 `re.sub(r"_[0-9a-f]{8}$", "")`，会把**合法 wxid** 的尾巴削掉
     （带 8 位十六进制尾巴的**合法 wxid** 会被削掉尾巴 ⇒ 与另一个会话撞车、还把真会话弄丢）。
     """
@@ -109,7 +109,7 @@ def _filename_key(fn: str) -> str:
     if m:
         _prefix, _rest, _tail = m.group(1), m.group(2), m.group(3)
         if _key_hash("%s:%s" % (_prefix, _rest)) == _tail:
-            base = "%s_%s" % (_prefix, _rest)          # 真是我们加的那条尾巴 ⇒ 剥掉
+            base = "%s_%s" % (_prefix, _rest) # 真是我们加的那条尾巴 ⇒ 剥掉
     for pre in ("group_", "private_"):
         if base.startswith(pre):
             return "%s:%s" % (pre[:-1], base[len(pre):])
@@ -119,7 +119,7 @@ def _filename_key(fn: str) -> str:
 def _repair_state(parsed: dict, chat_key: str, path: str) -> dict:
     """结构**缺件就补齐**（不缺就不动它）。
 
-    ⛔ 2026-09-21（第五轮回执 **V-R5A-7 / V-R5B-3**）：`_load_chat` 的"结构不对"原来只查 `messages`，
+    ⛔ `_load_chat` 的"结构不对"原来只查 `messages`，
     而它自己的文档说必须三件套 ⇒ 缺 `next_local_id` / `chat_key` 的档案被当成**正常**返回，
     下一次 `append_incoming` 直接 `KeyError`（那个会话**从此入不了档**，而且只在日志里留一行）。
     ⇒ 现在：能修的就修（补默认值 + 从文件名补 chat_key），确实修不了的（`messages` 不是列表）才隔离。
@@ -148,7 +148,7 @@ def _repair_state(parsed: dict, chat_key: str, path: str) -> dict:
 def migrate_legacy_files() -> dict:
     """把**老命名**的档案一次性迁到新命名（带哈希），返回 `{"moved": [...], "kept": [...], "dup": [...]}`。
 
-    ⛔ 2026-09-21（第五轮回执 **V-R5A-5，P1**）：S-1 的"文件名加哈希"只对**新写**生效 ⇒ 已经撞名的
+    ⛔ S-1 的"文件名加哈希"只对**新写**生效 ⇒ 已经撞名的
     老档案照旧串群（回执实测：B 的历史读成 A 的、**B 的新消息被写进 A 的档案**、B 从 `list_chats` 消失）。
     ⇒ 启动/首次列会话时迁一次：按**档案内容里的 `chat_key`** 决定它该叫什么名。
       · 新名字没人占 ⇒ `os.replace` 改名（幂等，失败只记日志，绝不删数据）；
@@ -166,9 +166,9 @@ def migrate_legacy_files() -> dict:
         try:
             _ck = _read_key_of(p)
             if not _ck:
-                continue                                    # 连 chat_key 都读不出来 ⇒ 不猜，留着
+                continue # 连 chat_key 都读不出来 ⇒ 不猜，留着
             if os.path.normcase(p) == os.path.normcase(chat_file(_ck)):
-                continue                                    # 已经是新命名
+                continue # 已经是新命名
             dst = chat_file(_ck)
             if os.path.exists(dst):
                 res["dup"].append(fn)
@@ -190,7 +190,7 @@ def migrate_legacy_files() -> dict:
 def _load_chat(chat_key: str) -> dict:
     """读某会话的档案。**读失败不再悄悄返回空壳**。
 
-    ⛔ 2026-09-21 修（第四轮审计 **V-R4-6，P1**）：老实现无论什么失败都返回空壳，
+    ⛔ 老实现无论什么失败都返回空壳，
     而调用方随后一保存就**用"空壳 + 新条目"覆盖掉原文件** —— 审计实测：8 条历史 165B → 1 条 279B，
     等于**静默丢数据**（用户只会觉得"它把我之前的记录清了"）。⇒ 分三种情况：
       · 文件**不存在** ＝ 新会话 ⇒ 正常空壳（合法路径，别拦）；
@@ -237,7 +237,7 @@ def _load_chat(chat_key: str) -> dict:
 
 
 def _save_chat(state: dict) -> None:
-    # ⛔ V-R4-6：读失败（`_loadFailed`）时**拒绝写回** —— 否则空壳会把原档案覆盖掉。
+    # ⛔ 读失败（`_loadFailed`）时**拒绝写回** —— 否则空壳会把原档案覆盖掉。
     if state.get("_loadFailed"):
         log.warning("会话档案先前读失败（%s：%s）⇒ 本次**不写盘**（保原文件）",
                     state.get("chat_key"), str(state.get("_loadFailed"))[:80])
@@ -270,7 +270,7 @@ class ChatStore:
             del st["messages"][: len(st["messages"]) - self.max_per_chat]
 
     def list_chats(self):
-        # ⛔ V-R5A-5：先迁一次老命名档案（按内容 chat_key 改名；同名不搬）。只在本进程第一次列会话时做。
+        # ⛔ 先迁一次老命名档案（按内容 chat_key 改名；同名不搬）。只在本进程第一次列会话时做。
         global _MIGRATED
         if not _MIGRATED:
             _MIGRATED = True
@@ -283,7 +283,7 @@ class ChatStore:
             for fn in os.listdir(MESSAGES_DIR):
                 if not re.match(r"^(group|private)_.+\.json$", fn):
                     continue
-                # ⛔ V-R5A-6 / V-R5B-2：**隔离档不许当会话**（`x.json.corrupt-<ts>.json` 也匹配上面那条
+                # ⛔ / **隔离档不许当会话**（`x.json.corrupt-<ts>.json` 也匹配上面那条
                 #   正则 ⇒ 老实现会把每次都新建的隔离档当成一个"幽灵会话"，而真正的会话反而消失）。
                 if ".corrupt-" in fn:
                     continue
@@ -306,7 +306,7 @@ class ChatStore:
     def append_incoming(self, chat_key: str, mid, ts, sender_id, sender_name, text, reply=None, media=None):
         with self._lock:
             st = self._state(chat_key)
-            # ⛔ 2026-09-22 加（第十五轮 **V-R15-4** · 网友报「有时会重复回复」）：**同一条入站消息只许有一份**。
+            # ⛔ **同一条入站消息只许有一份**。
             #   起因：监听水位**落盘失败只 warning**（内存前进、盘上落后），而硬杀/更新接管走
             #   `taskkill /F`（不走退出前 flush）⇒ 重启后从旧水位重读整批 ⇒ 同一行又变成"新未读"
             #   ⇒ **同一个问题回两遍**。去重键用 `mid`（微信自己的消息 id，重放时不变；
@@ -389,7 +389,7 @@ class ChatStore:
     def mark_read(self, chat_key: str, ids) -> int:
         """只把**点名的**那几条标已读（返回条数）。
 
-        ⛔ 2026-09-21 加（第九轮 **V-R9-16**）：`mark_all_read` 与 `drain_unread` 都是"整批标读" ——
+        ⛔ `mark_all_read` 与 `drain_unread` 都是"整批标读" ——
         而新的喂模型口径要能"**只标这次真看过的**"，把超上限的那些**退回未读**（下轮还能处理）。
         """
         want = {str(x) for x in (ids or []) if str(x) != ""}
@@ -409,12 +409,12 @@ class ChatStore:
     def peek_unread(self, chat_key: str, limit: int = 3, newest: bool = True):
         """未读列表。**默认取最新的 `limit` 条**（保持时间顺序）。
 
-        ⛔ 2026-09-21 修（第九轮 **V-R9-15** · P1）：原来是 `[...][:limit]` ＝ 取**最旧**的 N 条 ——
+        ⛔ 原来是 `[...][:limit]` ＝ 取**最旧**的 N 条 ——
         积压 >200 条时，**最新那条 @ 它的话**落在窗口外 ⇒ 档位判成"没触发" ⇒ 连同整批被标已读
         ⇒ 永久吞掉（用户看到的就是"有时候一句话不回"）。
         `newest=False` 保留旧语义（只有判据/兼容路径会用）。
 
-        ⛔ 2026-09-21 再修（第十轮 **V-R10-18** · P1）：`limit <= 0` ⇒ **返回全部未读** ——
+        ⛔ `limit <= 0` ⇒ **返回全部未读** ——
         原来 `wake` 固定要 200 条，**超出那一截的未读既不喂也不标读**（审计叫它"第二道黑洞"：
         400 条里永远有 200 条谁都不管）。切分交给 `feed_window.pick_feed`（纯函数，它才决定
         喂哪些、跳哪些、退哪些）。

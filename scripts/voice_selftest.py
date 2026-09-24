@@ -39,7 +39,7 @@ def skip(name, detail=""):
     print("  SKIP {}  [{}]".format(name, detail))
 
 
-from agent import voice  # noqa: E402
+from agent import voice # noqa: E402
 
 print("── A. 引擎检测不撒谎 ──")
 st = voice.status()
@@ -79,7 +79,7 @@ try:
     ok("垃圾 SILK ⇒ 不崩、不编造文本", t2 == "", "err=%s" % (err2[:60] or "(空)"))
 except Exception as e:
     ok("垃圾 SILK ⇒ 不崩、不编造文本", False, "抛了 %s: %s" % (type(e).__name__, e))
-_audit = os.path.join(ROOT, "_scratch", "音" + "频")     # 不存在的目录，确认不抛异常
+_audit = os.path.join(ROOT, "_scratch", "音" + "频") # 不存在的目录，确认不抛异常
 try:
     os.remove(junk)
 except OSError:
@@ -100,8 +100,8 @@ finally:
     voice.decoders, voice.recognizers = _real_dec, _real_rec
 
 print("── E. 接线：适配器 download_media ──")
-import inspect  # noqa: E402
-from agent import wechat as W  # noqa: E402
+import inspect # noqa: E402
+from agent import wechat as W # noqa: E402
 src = inspect.getsource(W.WeChatAdapter.download_media)
 ok("download_media 存在且支持三种 kind",
    all(k in src for k in ('"voice"', '"video"', '"file"')))

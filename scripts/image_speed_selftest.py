@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""「要图」速度纪律判据（2026-09-17 立）。
+"""「要图」速度纪律判据。
 
 起因（用户实测）：在拍摄现场，说一句要图到停下来**过了一分多钟**。查下来三个独立病因：
   ① `_get()` 用一次阻塞 `read()` —— `urlopen(timeout=)` 只管**单次 recv**，慢速代理能涓流几分钟
@@ -29,8 +29,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
-from agent import image_lib as IL      # noqa: E402
-from agent import image_sources as IS  # noqa: E402
+from agent import image_lib as IL # noqa: E402
+from agent import image_sources as IS # noqa: E402
 
 PASS = FAIL = 0
 
@@ -55,7 +55,7 @@ class _Slow(BaseHTTPRequestHandler):
         if self.path.startswith("/big"):
             self.send_response(200)
             self.send_header("Content-Type", "image/jpeg")
-            self.send_header("Content-Length", str(9 * 1024 * 1024))     # 声明 9MB，也确实吐 9MB
+            self.send_header("Content-Length", str(9 * 1024 * 1024)) # 声明 9MB，也确实吐 9MB
             self.end_headers()
             try:
                 left = 9 * 1024 * 1024
@@ -69,13 +69,13 @@ class _Slow(BaseHTTPRequestHandler):
             return
         self.send_response(200)
         self.send_header("Content-Type", "image/jpeg")
-        self.send_header("Content-Length", str(50 * 1024 * 1024))        # 声明 50MB，但只慢慢吐
+        self.send_header("Content-Length", str(50 * 1024 * 1024)) # 声明 50MB，但只慢慢吐
         self.end_headers()
         try:
             for _ in range(400):
                 self.wfile.write(b"x" * 4096)
                 self.wfile.flush()
-                time.sleep(0.05)                                         # 合计约 20 秒，每块都不慢
+                time.sleep(0.05) # 合计约 20 秒，每块都不慢
         except Exception:
             pass
 
@@ -152,8 +152,7 @@ open(old_img, "wb").write(b"\xff\xd8\xff" + b"y" * 500)
 _real_ff = IL.fetch_filtered
 IL.fetch_filtered = lambda *a, **k: (None, "试了 4 个图源都没通过过滤")
 try:
-    # ⚠️ 旧口径是"在线全失败就从旧图里挑一张、不空手" —— 2026-09-18 拍摄现场推翻它：
-    #   用户要「鲸鱼」，在线没取到，程序拿旧缓存里一张动漫图冒充，工具回执还写「已找到并发出一张
+    # ⚠️ 旧口径是"在线全失败就从旧图里挑一张、不空手" —— 拍摄现场推翻它：
     #   「鲸鱼」的图」⇒ **对外可见的错**（比"如实说没找到"更糟）。⇒ 默认**不兜底**。
     p4, why4 = IL.search_image({"image_reply": {"enabled": True, "allow_search": True}}, "猫", root=tmp)
     ok("默认：在线全失败 ⇒ 如实说没找到（**不拿旧图冒充**）",
@@ -165,7 +164,7 @@ try:
 finally:
     IL.fetch_filtered = _real_ff
 
-# 兜底池的上限：超过 keep 张要清掉老的（用户口径：会写盘就要有上限）
+# 兜底池的上限：超过 keep 张要清掉老的
 for i in range(60):
     open(os.path.join(cache, "src_%06d_x.jpg" % i), "wb").write(b"\xff\xd8\xff" + b"z" * 200)
 IL._cache_pick(cache, keep=40)
@@ -173,7 +172,7 @@ ok("兜底池有上限（不会无限长胖）", len([f for f in os.listdir(cach
    "%d 张" % len([f for f in os.listdir(cache) if f.endswith(".jpg")]))
 
 _srv.shutdown()
-import shutil  # noqa: E402
+import shutil # noqa: E402
 shutil.rmtree(tmp, ignore_errors=True)
 print("\n要图速度纪律判据：%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

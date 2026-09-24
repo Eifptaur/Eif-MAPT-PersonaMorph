@@ -3,7 +3,7 @@
 
 跑法： runtime\\python\\python.exe scripts\\judge_hygiene_selftest.py   退出码 0=全过 / 1=有违规
 
-为什么要这条（2026-09-21，第四轮审计 **V-R4-4（P1）**）：
+为什么要这条（审计 （P1）**）：
   `vuln_fix_selftest.py` 里有 4 条调用把 `ok(name, cond, detail)` 的前两个实参写反了 ——
   条件位塞了一段**非空描述文本**（永远为真）⇒ 这 4 条**恒真**，
   而它们守的正是"口令文件并发首建不许互相覆盖"那条修复：
@@ -39,11 +39,11 @@ def ok(name, cond, detail=""):
 _NAME_WORDS = {"name", "title", "label", "desc", "what", "case", "why", "msg"}
 _SELF = os.path.basename(os.path.abspath(__file__))
 #: 脆断言（`"带空白的整段源码" in SRC_xxx`）的**基线**。
-#   ⛔ 2026-09-21 改口径（第六轮 **V-R6-14**）：原来只看"右边变量名匹配 `src|web|html|body|code|h$`"，
+# ⛔ 原来只看"右边变量名匹配 `src|web|html|body|code|h$`"，
 #   实测有 **102 条**针在源码变量上却被变量名漏掉（盲区）。现在**不看变量名** ⇒ 基线按新口径重测为
 #   **851**（旧口径下是 383；两者不可比，别拿新旧数字对账）。
 #   **只许降不许升**：新写的这类断言请优先用 `scripts/_srcmatch.py::has()`（空白容忍）就会降。
-#   ⬇ 2026-09-21（第七轮 **V-R7-7**）：最脆的五个文件共 **246 条**机械换成 `_srcmatch.has()`
+# ⬇ 最脆的五个文件共 **246 条**机械换成 `_srcmatch.has()`
 #   （background 100 + console_chrome 44 + send_file_posted 39 + session_pick 38 + console_open 25）
 #   ⇒ 851 → **605**（实测 605）。
 BRITTLE_BASELINE = 605
@@ -110,7 +110,7 @@ def main():
             if ni is not None and len(args) > ni and _is_bool_const(args[ni]):
                 bad.append("%s:%d %s() 的名字位是**布尔字面量**（打印出来是 True/False，没有人话）⇒ 实参写反了"
                            % (fn, getattr(node, "lineno", 0), node.func.id))
-    # ⛔ V-R5R-4：`skipped` 门不严 —— 只要有文件"认不出签名"被跳过，那个门就等于没有。
+    # ⛔ `skipped` 门不严 —— 只要有文件"认不出签名"被跳过，那个门就等于没有。
     #   口径：**跳过只许来自白名单**（现在只有跑全套的 runner 一个），白名单只许降。
     _SKIP_ALLOW = {"run_all_selftests.py"}
     _unexpected = [x for x in skipped if x not in _SKIP_ALLOW]
@@ -118,7 +118,7 @@ def main():
        scanned >= 100 and not _unexpected, "有签名的 %d 个 / 共 %d 个；跳过 %s%s"
        % (scanned, len(files), skipped or "无",
           ("（⚠️ 白名单外的跳过：%s ⇒ 先收掉它）" % "、".join(_unexpected)) if _unexpected else ""))
-    ok("② **零**违规：条件位不许是字符串、名字位不许是布尔（V-R4-4 这一类）",
+    ok("② **零**违规：条件位不许是字符串、名字位不许是布尔",
        not bad, bad[:8] if bad else "")
     if skipped:
         print("   （没认出击签名、按规矩跳过的：%s）" % ("、".join(skipped[:12]) + ("…" if len(skipped) > 12 else "")))
@@ -141,7 +141,7 @@ def main():
     ok("③ 负例：写反的两条（条件位放描述文本 / 名字位放 True）都被同一判定器抓出",
        len(_hits) == 3 and "条件位是字符串" in _hits and "名字位是布尔" in _hits, _hits)
 
-    # ── ④ 源码文本的**脆断言**普查（第四轮审计 V-R4-13 第三条）────────────────────────
+    # ── ④ 源码文本的**脆断言**普查────────────────────────
     #   定义：`"带空白的整段源码" in SRC_xxx` —— 源码一改缩进/换行就红（行为没变）。
     #   审计实测 80/129 个判据文件都有这类写法（前 26 个文件共 379 条）。
     #   处置：①新写判据**优先用 `scripts/_srcmatch.py::has()`**（空白容忍、不计数）；
@@ -165,10 +165,10 @@ def main():
             left = node.left
             if not (isinstance(left, _ast.Constant) and isinstance(left.value, str)):
                 continue
-            if not _re3.search(r"\s", left.value):          # 单token 的针（没有空白）不算脆
+            if not _re3.search(r"\s", left.value): # 单token 的针（没有空白）不算脆
                 continue
             names = [s.id for c in node.comparators for s in _ast.walk(c) if isinstance(s, _ast.Name)]
-            # ⛔ 2026-09-21 改（第六轮 **V-R6-14**）：原来还要求 `any(_SRCISH.search(n) for n in names)`
+            # ⛔ 原来还要求 `any(_SRCISH.search(n) for n in names)`
             #   —— "针在源码变量上、但变量名不符合 `src|web|html|body|code|h$`"的那些塌进盲区
             #   （审计独立复算：这类有 **102 条**）。⇒ **不再看变量名**：只要"左边是带空白的字符串常量、
             #   右边取了某个变量"，就算这类脆断言（右边完全没有变量名的纯字面量比较不算）。
@@ -201,7 +201,7 @@ def main():
         import _srcmatch as _sm2
         _has_ok = _sm2.has("def f(a, b):\n    return a + b\n",
                            "def f(a, b):", "return a + b")
-        _old_style = ("def f(a, b):\n        return a + b\n"          # 换个缩进
+        _old_style = ("def f(a, b):\n        return a + b\n" # 换个缩进
                       .find("def f(a, b):\n    return a + b\n") >= 0)
     except Exception as _e4:
         _has_ok, _old_style = False, True
@@ -210,7 +210,7 @@ def main():
     ok("④ 反例锚：老写法（整段带缩进一起比）**换个缩进就找不到** ⇒ 这就是「脆」的来历",
        _old_style is False)
 
-    # ── ⑤ 判据不许碰**用户正在跑的服务**（2026-09-21 真机事故后立的规矩）───────────────
+    # ── ⑤ 判据不许碰**用户正在跑的服务**───────────────
     #   现场：本机 7860 上跑着用户的本地生图服务，我跑了一次全量套件（`image_gen_selftest` 的
     #   后端选择段会调真 `pick_backend()`）⇒ 它内部 `sd_local.status()` 探不到（服务正忙着加载
     #   CUDA 模型）⇒ 调 `ensure_running()` ⇒ **把用户正在用的实例杀掉重启**（pidfile 4848 → 40232，
@@ -230,7 +230,7 @@ def main():
     ok("⑤ 反例锚：老写法（只关在线后端、不打桩 `ensure_running`）确实会被这条扫出来",
        ("pick_backend(" in "_x = IG.pick_backend()") and ("ensure_running = lambda" not in "_x = IG.pick_backend()"))
 
-    # ── ⑥ 恒真的"三目伪装"：`True if X else False`（第五轮审计 **V-R5A-2** 的形态）─────────
+    # ── ⑥ 恒真的"三目伪装"：`True if X else False`─────────
     #   现场：`vuln_fix_selftest.py:451` 那句 `True if _orig_open2 else False` —— 它本质是 `bool(X)`，
     #   判的是"urlopen 这个名字存在"，跟被测行为毫无关系。审计把 `_dl_once` 改成"一律拒取"后跑全套：
     #   **133 脚本 / 4072 断言 / 0 失败 / 全绿** ⇒ 整个下载功能被堵死也没人发现。
@@ -254,7 +254,7 @@ def main():
        bool([n for n in _ast.walk(_ast.parse("ok('x', True if _orig else False)"))
              if isinstance(n, _ast.IfExp) and _is_bool_const(n.body) and _is_bool_const(n.orelse)]))
 
-    # ⛔ 2026-09-21 加（第六轮 **V-R6-31**）：上一轮那 4 条是**逐点修**的，网子只扫 `True if X else False`
+    # ⛔ 上一轮那 4 条是**逐点修**的，网子只扫 `True if X else False`
     #   一种写法 ⇒ `X or True` / 自比较 `x == x` / 常量可折叠 三族全在盲区（本轮实测各有命中）。
     #   ⚠️ **只看"判据辅助函数的实参"**：`lambda …: (lst.append(x) or True)` 这类**打桩**是正当写法，
     #   不该被判据卫生网误伤（第一版就是这么误报的）。

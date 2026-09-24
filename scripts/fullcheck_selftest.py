@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""把 `scripts/fullcheck.py` 纳入自检套件（审计第七轮 **V-R7-2**）。
+"""把 `scripts/fullcheck.py` 纳入自检套件。
 
 背景（审计实测）：`fullcheck.py` 有 126 项检查、自称"每次修改后必跑"，但它的文件名不含
 `selftest` ⇒ `run_all_selftests.py` 的收集条件**永远收不到它**；于是它自己红着 3 项（夹具缺预热 /
@@ -24,7 +24,7 @@ except Exception:
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FULLCHECK = os.path.join(ROOT, "scripts", "fullcheck.py")
-MIN_ITEMS = 100                      # 实测 126；掉到 100 以下说明检查被删空了
+MIN_ITEMS = 100 # 实测 126；掉到 100 以下说明检查被删空了
 
 PASS, FAIL = [], []
 
@@ -35,10 +35,10 @@ def ok(name, cond, detail=""):
 
 
 env = dict(os.environ)
-env["PYTHONIOENCODING"] = "utf-8"    # 重定向下按 UTF-8 编码，否则中文汇总行会被 GBK 编崩
-env["PM_JUDGE_NO_PROC"] = "1"        # 判据环境：不许起进程/开端口
+env["PYTHONIOENCODING"] = "utf-8" # 重定向下按 UTF-8 编码，否则中文汇总行会被 GBK 编崩
+env["PM_JUDGE_NO_PROC"] = "1" # 判据环境：不许起进程/开端口
 
-_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0   # 不许闪控制台窗
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0 # 不许闪控制台窗
 _r = subprocess.run([sys.executable, FULLCHECK], cwd=ROOT, env=env, creationflags=_NO_WINDOW,
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 _out = _r.stdout.decode("utf-8", "replace")

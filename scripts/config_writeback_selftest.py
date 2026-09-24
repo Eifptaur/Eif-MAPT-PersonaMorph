@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """「配置读/写回失败**只许告警、不许停用能力**」的判据（对标 CowAgent 教训 ③，第 ⑥ 项）。
 
-**为什么要它**：对标 CowAgent 时读到一条它的真实事故 —— *配置写回失败曾导致插件被**永久停用***
 （它 commit `198247c` 才修）。同一条口径映射到我们身上，`config.json` 恰好是最要命的那个档：
 **版本门 / 后台档 / 口令 / 微信数据目录 / 各项功能开关全在里面** ⇒ 它一旦读不到或写不成，
 "用户什么都没改、能力却全回到默认"这件事就发生了。而本项目原来的实现正好各自踩一脚：
@@ -38,14 +37,14 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import _srcmatch as _sm          # noqa: E402
+import _srcmatch as _sm # noqa: E402
 
-from agent import config as C    # noqa: E402
-from agent import persist as PS  # noqa: E402
+from agent import config as C # noqa: E402
+from agent import persist as PS # noqa: E402
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
-except Exception:                                                # noqa: BLE001
+except Exception: # noqa: BLE001
     pass
 
 PASS, FAIL = [0], [0]
@@ -70,7 +69,7 @@ def _judge_file(path):
     try:
         with open(path, "r", encoding="utf-8") as f:
             obj = json.load(f)
-    except Exception as e:                                       # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         return False, "坏档（%s: %s）" % (type(e).__name__, str(e)[:40])
     if not isinstance(obj, dict):
         return False, "顶层不是对象"
@@ -85,8 +84,8 @@ def _old_style_shared_tmp(p, long_obj, short_obj):
     tmp = p + ".tmp"
     fa = open(tmp, "w", encoding="utf-8")
     fb = open(tmp, "w", encoding="utf-8")
-    json.dump(long_obj, fa, ensure_ascii=False, indent=2)     # 先写的（长）
-    json.dump(short_obj, fb, ensure_ascii=False, indent=2)    # 后写的（短）⇒ 盖住头部、留下前者的尾巴
+    json.dump(long_obj, fa, ensure_ascii=False, indent=2) # 先写的（长）
+    json.dump(short_obj, fb, ensure_ascii=False, indent=2) # 后写的（短）⇒ 盖住头部、留下前者的尾巴
     fa.close()
     fb.close()
     os.replace(tmp, p)
@@ -97,7 +96,7 @@ def _old_load(path):
     try:
         with open(path, "r", encoding="utf-8-sig") as f:
             return json.load(f)
-    except Exception:                                            # noqa: BLE001
+    except Exception: # noqa: BLE001
         return None
 
 
@@ -158,7 +157,7 @@ def main():
             for j in range(15):
                 try:
                     C.save_config(_payload("t%02d-%03d" % (i, j)), path=p)
-                except Exception as e:                           # noqa: BLE001
+                except Exception as e: # noqa: BLE001
                     with lock:
                         bad.append("写异常:%s" % type(e).__name__)
 
@@ -188,7 +187,7 @@ def main():
         p3 = os.path.join(tmpdir, "new.json")
         C.save_config(_payload("seed", 200), path=p3)
         _bad3 = []
-        _owner = {}                  # 临时档名 → 用它落盘的写者（线程）集合
+        _owner = {} # 临时档名 → 用它落盘的写者（线程）集合
         _orig_replace = PS.os.replace
 
         def _spy(src, dst):
@@ -223,12 +222,12 @@ def main():
         C.save_config({"tag": "原件", "sum": "x"}, path=p4)
         _before = io.open(p4, "rb").read()
         _orig_retry = PS._replace_retry
-        PS._replace_retry = lambda a, b: False          # 逼 os.replace 这一步失败（不睡退避）
+        PS._replace_retry = lambda a, b: False # 逼 os.replace 这一步失败（不睡退避）
         _raised = None
         try:
             try:
                 C.save_config({"tag": "新值", "sum": "y"}, path=p4)
-            except Exception as e:                               # noqa: BLE001
+            except Exception as e: # noqa: BLE001
                 _raised = e
         finally:
             PS._replace_retry = _orig_retry
@@ -257,8 +256,8 @@ def main():
         builtins.open = _flaky
         try:
             _got = C.load_config(p5)
-            _n_e1 = _calls["n"]           # 记下来：下面反向锚要**重新从 0 开始**数
-            _calls["n"] = 0               # 反向锚要**重新从 0 开始**：老写法第一次就会撞上占用
+            _n_e1 = _calls["n"] # 记下来：下面反向锚要**重新从 0 开始**数
+            _calls["n"] = 0 # 反向锚要**重新从 0 开始**：老写法第一次就会撞上占用
             _old = _old_load(p5)
         finally:
             builtins.open = builtins._pm_real_open
@@ -270,7 +269,7 @@ def main():
            _old is None, "老写法竟然也读到了：%r" % _old)
 
         _dir = os.path.join(tmpdir, "cfg-as-dir")
-        os.makedirs(_dir, exist_ok=True)      # open(目录) 在 Windows 上必失败 ⇒ 稳定的「永久读不到」
+        os.makedirs(_dir, exist_ok=True) # open(目录) 在 Windows 上必失败 ⇒ 稳定的「永久读不到」
         C.CONFIG_FILE = _dir
         C.set_config({"marker": "内存里这份", "api": {"model": "judge-model"}})
         _kept = C.reload_config()
@@ -283,7 +282,7 @@ def main():
 
         print("== F. 接线（活体）：/api/config 落盘失败时内存那份不许被换掉 ==")
         _webui_src = io.open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
-        # ⛔ 2026-09-22（Phase B）：原来按"固定缩进的那一行"找 —— 分支体搬进方法后缩进变了。
+        # ⛔ （Phase B）：原来按"固定缩进的那一行"找 —— 分支体搬进方法后缩进变了。
         #   改成**AST**：两个调用在**同一个函数**里，且 `save_config` 在 `set_config` **之前**。
         import ast as _ast3
         _tree3 = _ast3.parse(_webui_src)
@@ -342,14 +341,14 @@ def main():
             try:
                 if _w is not None:
                     _w.stop()
-            except Exception:                                    # noqa: BLE001
+            except Exception: # noqa: BLE001
                 pass
     finally:
         C.CONFIG_FILE = _orig_cfgfile
         try:
             import shutil
             shutil.rmtree(tmpdir, ignore_errors=True)
-        except Exception:                                        # noqa: BLE001
+        except Exception: # noqa: BLE001
             pass
 
     print("== 配置写回判据：%d 通过 / %d 失败 ==" % (PASS[0], FAIL[0]))

@@ -2,9 +2,9 @@
 # -*- coding: utf-8 -*-
 """判据：出网面安全层（`agent/safe_fetch.py`）——**全离线**，一条公网请求都不发。
 
-为什么要有它（第九轮审计 **V-R9-31**）：这个模块原来**一条判据都没有**
+为什么要有它：这个模块原来**一条判据都没有**
 （全仓 `validate_url` 一次都没被调用过）⇒ 把整个安全闸门删掉，138 条判据一条都不会红。
-本轮把它的四个调用面接进产品（V-R9-23~26），这里逐条守住：
+本轮把它的四个调用面接进产品，这里逐条守住：
 
   A. `validate_url` 拦住七种"看起来像内网"的形态（**逐条**，都是 E 线实测能绕过旧字符串表的）
   B. DNS 解析到环回/内网 ⇒ 拒（打桩 `getaddrinfo`；多结果里只要有一个内网也拒）
@@ -13,8 +13,8 @@
   D. 响应体超上限 ⇒ 拒，且**内存不随远端大小增长**（tracemalloc 峰值 + 服务端实发字节）
   E. `cloud.normalize_url` 与 `validate_url` **同口径**（同样七种形态逐条）
   F. 边角：`read_capped` 边界、`harden_urllib` 装上了、CGNAT 之类特殊段也算内网
-  G. `guard_remote_url`：远端回包里的地址先过闸（V-R9-24）
-  L. **连接层**（第十轮 V-R10-32/33/36/38）：可控 DNS（第 N 次翻转）+ 把 `socket`/连接类打桩，
+  G. `guard_remote_url`：远端回包里的地址先过闸
+  L. **连接层**：可控 DNS（第 N 次翻转）+ 把 `socket`/连接类打桩，
      断言 **连接用的 IP == 闸门校验通过的 IP**、DNS 翻脸后**不采纳**、
      **证书校验开着（check_hostname + CERT_REQUIRED）**、**Host 头不可被调用方覆盖**、
      调用方 timeout 真的到连接层、超限 `truncated` 如实报、
@@ -43,7 +43,7 @@ try:
 except Exception:
     pass
 
-from agent import safe_fetch as SF                    # noqa: E402
+from agent import safe_fetch as SF # noqa: E402
 
 PASS, FAIL = 0, 0
 
@@ -64,7 +64,7 @@ def _blocked(url, allow_private=False):
         return False, ""
     except SF.FetchError as e:
         return True, str(e)
-    except Exception as e:                                   # 别的异常也算"没放行"，但要说清
+    except Exception as e: # 别的异常也算"没放行"，但要说清
         return True, "%s: %s" % (type(e).__name__, e)
 
 
@@ -74,7 +74,7 @@ _DNS_TABLE = {
     "localhost.": "127.0.0.1",
     "loopback.example": "127.0.0.1",
     "lan.example": "192.168.1.10",
-    "mixed.example": "93.184.216.34",          # 见 B4：这个名字另有内网 A 记录
+    "mixed.example": "93.184.216.34", # 见 B4：这个名字另有内网 A 记录
     "ok.example": "93.184.216.34",
     "first.example": "93.184.216.34",
     "second.example": "93.184.216.34",
@@ -101,27 +101,27 @@ def _install_offline_dns():
         h = str(host or "").strip().lower()
         _DNS_HITS[h] = int(_DNS_HITS.get(h) or 0) + 1
         rule = _DNS_FLIP.get(h)
-        if rule:                                             # L 段：第 N 次起换答案
+        if rule: # L 段：第 N 次起换答案
             for from_n, addr in rule:
                 if _DNS_HITS[h] >= from_n:
                     return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (addr, int(port or 0)))]
         ip = _DNS_TABLE.get(h)
         if ip is None:
             try:
-                ipaddress.ip_address(h.strip("[]"))          # 字面 IP：纯本地解析
+                ipaddress.ip_address(h.strip("[]")) # 字面 IP：纯本地解析
                 ip = h.strip("[]")
             except ValueError:
                 raise socket.gaierror(-2, "Name or service not known")
         addrs = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, int(port or 0)))]
-        if h == "mixed.example":                             # B4 专用：两个 A 记录，一个内网
+        if h == "mixed.example": # B4 专用：两个 A 记录，一个内网
             addrs.append((socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.1.2.3", int(port or 0))))
         return addrs
 
     socket.getaddrinfo = fake_gai
-    socket.getfqdn = lambda *a: "localhost"                  # 建本地服务时别去反查 DNS
+    socket.getfqdn = lambda *a: "localhost" # 建本地服务时别去反查 DNS
 
 
-# ── L 段：**连接层**替身（V-R10-32/33/36/38 的修法）───────────────────────
+# ── L 段：**连接层**替身───────────────────────
 # 为什么要这一段：C/D/E/F/G 全都只守到"字符串/黑名单层"——`_pinned_exchange` 被整体打桩，
 # 于是"闸门校验过的那个 IP 到底有没有钉进 socket"**从来没被验证过**。审计的 7 个同族变异
 # （G014 连接时重解析域名、G015 不校验证书、G023 允许覆盖 Host…）在这套判据下**全绿**。
@@ -149,7 +149,7 @@ class _FakeSock:
     def settimeout(self, t):
         pass
 
-    def __enter__(self):                 # `cloud.probe` 那段是 `with create_connection(...)`
+    def __enter__(self): # `cloud.probe` 那段是 `with create_connection(...)`
         return self
 
     def __exit__(self, *exc):
@@ -164,7 +164,7 @@ class _FakeResp:
 
     def __init__(self, status=200, headers=None, body=b"ok", location=""):
         self.status = int(status)
-        self.reads = []                  # `read(n)` 的实参（判"有没有一把梭读"）
+        self.reads = [] # `read(n)` 的实参（判"有没有一把梭读"）
         self._h = list((headers or {}).items())
         if location:
             self._h.append(("Location", location))
@@ -202,7 +202,7 @@ class _ExchangeForTest:
                  max_bytes=0, timeout=None, out_path=None):
         self.calls.append({"host": host, "ip": ip, "path": path,
                            "headers": dict(headers or {}), "timeout": timeout, "out": out_path})
-        if len(self.calls) == 1:                 # 只有第一跳回 302（第二跳要真落盘）
+        if len(self.calls) == 1: # 只有第一跳回 302（第二跳要真落盘）
             return {"status": 302, "headers": {}, "location": self.location, "content_type": "",
                     "body": b"", "truncated": False}
         if out_path:
@@ -414,7 +414,7 @@ def main() -> int:
     blocked, why = _blocked("http://mixed.example/x")
     ok("B4 多个解析结果里有一个内网 ⇒ 也拒（不能只看第一个）", blocked, why[:44])
 
-    print("== C. 302 到新主机：凭据不许带过去（V-R9-23）==")
+    print("== C. 302 到新主机：凭据不许带过去==")
     handler = SF.CredentialStrippingRedirectHandler()
     src = "http://first.example/api"
     creds = {"Authorization": "Bearer tok-a1b2", "X-Api-Key": "K2",
@@ -502,7 +502,7 @@ def main() -> int:
         SF._pinned_exchange = real_exch
     ok("C11 重定向落点跳出自名单 ⇒ 拒（白名单每跳都过）", "不在允许清单" in _w, _w[:50])
 
-    print("== D. 响应体上限 + 内存不随远端增长（V-R9-26）==")
+    print("== D. 响应体上限 + 内存不随远端增长==")
     rr = _FakeStreamResp(b"y" * (1024 * 1024 + 10))
     try:
         SF.read_capped(rr, 1024 * 1024, "判据用回包")
@@ -540,8 +540,8 @@ def main() -> int:
        abs(peaks["big"][0] - peaks["small"][0]) < 3 * 1024 * 1024,
        "small=%.2fMB big=%.2fMB" % (peaks["small"][0] / 1048576.0, peaks["big"][0] / 1048576.0))
 
-    print("== E. cloud.normalize_url 与 validate_url 同口径（V-R9-25）==")
-    from agent import cloud                            # noqa: E402
+    print("== E. cloud.normalize_url 与 validate_url 同口径==")
+    from agent import cloud # noqa: E402
     real_cfg = cloud.cfg
     cloud.cfg = lambda: dict(cloud.DEFAULTS)
     try:
@@ -577,8 +577,8 @@ def main() -> int:
             _sys.modules["agent.safe_fetch"] = _saved
     ok("F6 安全层不可用 ⇒ normalize_url fail-closed（不放行）", not oky and "fail-closed" in why, why[:48])
 
-    print("== G. guard_remote_url：远端回包里的地址先过闸（V-R9-24）==")
-    base_local = "http://127.0.0.1:41010/v1/images/generations"      # E 线复现里的"假出图后端"
+    print("== G. guard_remote_url：远端回包里的地址先过闸==")
+    base_local = "http://127.0.0.1:41010/v1/images/generations" # E 线复现里的"假出图后端"
 
     def _guard(u, base=""):
         try:
@@ -610,9 +610,9 @@ def main() -> int:
     return 1 if FAIL else 0
 
 
-# ── L. 连接层（V-R10-32/33/36/38）───────────────────────────────────────
+# ── L. 连接层───────────────────────────────────────
 def _section_L27():
-    """**调用点级**的钉 IP 守备（第十一轮 **V-R11-3** · P1）。
+    """**调用点级**的钉 IP 守备。
 
     审计原话：L18 只是"源码里有没有这个词"的子串检查，把老写法**加回来**（而不是删掉新写法）时
     照样绿；L23 的 DNS 翻转打在**第 1 次**解析上（两种实现都会先被闸门拒）⇒ 三处调用点**没有行为守备**。
@@ -623,9 +623,9 @@ def _section_L27():
       · `urlopen` 二次解析的老写法 ⇒ 连第 2 次那个地址 ⇒ **失败**（红）。
     `_is_private_ip` 在本段内被打成"永远 False"（否则环回地址会被闸门直接拒，测不到连接层）。
     """
-    print("== L27. 调用点级行为守备：钉 IP ⇒ 连的是**校验过的那一次解析**（V-R11-2/3）==")
-    import http.server as _hs                                              # noqa: E402
-    import threading as _th                                                # noqa: E402
+    print("== L27. 调用点级行为守备：钉 IP ⇒ 连的是**校验过的那一次解析**==")
+    import http.server as _hs # noqa: E402
+    import threading as _th # noqa: E402
 
     _body27 = b"PM-R11-PINNED-BODY" * 200
     _REQ27 = {"n": 0}
@@ -650,7 +650,7 @@ def _section_L27():
     _real_conn27 = socket.create_connection
     _real_priv27 = SF._is_private_ip
     _calls27 = {"n": 0}
-    # ⛔ 2026-09-22 修（第十二轮 **V-R12-2** · P1）：**判据钉在"连接的目标是谁"上，而不是"解析了几次"**。
+    # ⛔ **判据钉在"连接的目标是谁"上，而不是"解析了几次"**。
     #   旧写法（DNS 翻转 + 预置计数）被审计实测否掉：真实调用点退回 `urlopen` 后，老写法只消耗
     #   **2 次解析**（闸门 1 次 + 连接 1 次）⇒ 落在我的"第 3 次起才坏"之外 ⇒ L27a/L27b 全绿
     #   （"灵敏度是造出来的"）。现在改成**连接层直接取证**：
@@ -682,11 +682,11 @@ def _section_L27():
     try:
         socket.getaddrinfo = _flip27
         socket.create_connection = _spy_conn27
-        SF._is_private_ip = lambda *a, **k: False      # 只在本段里放私网（否则闸门先拒，测不到连接层）
+        SF._is_private_ip = lambda *a, **k: False # 只在本段里放私网（否则闸门先拒，测不到连接层）
         # ① bilibili._download
-        from agent import bilibili as _b27                              # noqa: E402
+        from agent import bilibili as _b27 # noqa: E402
         _dest27 = os.path.join(_tmp27, "a.mp3")
-        # ⛔ 2026-09-22 修（第十三轮 **V-R13-4** · P3）：三个调用点**逐个包 try/except** ——
+        # ⛔ 三个调用点**逐个包 try/except** ——
         #   老写法下 L27b 会抛 `URLError` 逃出判据（rc=1 但没有 FAIL 行、后面的 M 段全没跑，
         #   读日志的人只会看到"判据崩了"而不是"守备没生效"）。
         try:
@@ -697,7 +697,7 @@ def _section_L27():
            int(_bytes27 or 0) == len(_body27) and _conn27 and all(_ip_literal(a[0]) for a in _conn27),
            "bytes=%s why=%s 连接目标=%s" % (_bytes27, _why27, _conn27[:3]))
         # ② video_gen._get（URL → bytes 的那条）
-        from agent import video_gen as _v27                             # noqa: E402
+        from agent import video_gen as _v27 # noqa: E402
         _conn27.clear()
         try:
             _got27 = _v27._get("http://pinned.test:%d/v.mp4" % _port27, 10, allow_private=True)
@@ -722,7 +722,7 @@ def _section_L27():
             _req = urllib.request.Request("http://pinned.test:%d/a.mp3" % _port27)
             urllib.request.urlopen(_req, timeout=5).read()
         except Exception:
-            _old_ok27 = False          # 连接层拿到的是 "pinned.test" ⇒ 夹具拒 ⇒ 老写法必失败
+            _old_ok27 = False # 连接层拿到的是 "pinned.test" ⇒ 夹具拒 ⇒ 老写法必失败
         _old_targets = [str(a[0]) for a in _conn27]
         ok("L27d 反例锚（灵敏度）：**同一判据**下老写法连的是域名 ⇒ 必红（不靠预置计数）",
            _old_ok27 is False and bool(_old_targets) and not all(_ip_literal(t) for t in _old_targets),
@@ -740,13 +740,13 @@ def _section_L27():
 
 
 def _section_M():
-    """**V-R10-34 第 4 条**：`read_stream` 的墙钟预算必须**落在 socket 超时上**。
+    """** 第 4 条**：`read_stream` 的墙钟预算必须**落在 socket 超时上**。
 
     审计实测：对面"连上就不吐字节"时，老写法（只在两块之间核墙钟）**一点都拦不住** ——
     `budget_s=2` 却 10 秒才返回、0 字节。这里用假 socket 复刻同一现象：
     假 socket 的 `read` **遵守自己的超时**（超时到就抛），于是"预算有没有落下去"可被观察。
     """
-    import time as _time                                                    # noqa: E402
+    import time as _time # noqa: E402
 
     class _Sock(object):
         def __init__(self, t=30.0):
@@ -777,7 +777,7 @@ def _section_M():
             self.reads += 1
             _t = self.fp._sock.gettimeout()
             if _t is not None and float(_t) < self._stall:
-                _time.sleep(float(_t))          # 按真 socket 的语义：等到超时就抛
+                _time.sleep(float(_t)) # 按真 socket 的语义：等到超时就抛
                 raise TimeoutError("fake socket timeout（%.2fs）" % float(_t))
             _time.sleep(self._stall)
             return b""
@@ -791,7 +791,7 @@ def _section_M():
     _t_a = _time.monotonic()
     _raised1 = ""
     try:
-        SF.read_stream(_r1, budget_s=0.4, what="V-R10-34 夹具")
+        SF.read_stream(_r1, budget_s=0.4, what="夹具")
     except Exception as _e1:
         _raised1 = type(_e1).__name__
     _cost1 = _time.monotonic() - _t_a
@@ -807,7 +807,7 @@ def _section_M():
     _old_out, _old_raised = None, ""
     try:
         _got = bytearray()
-        for _buf in SF.iter_response(_r2):          # 老写法：循环体里根本没有"动手前核预算"
+        for _buf in SF.iter_response(_r2): # 老写法：循环体里根本没有"动手前核预算"
             if not _buf:
                 continue
             _got += _buf
@@ -821,7 +821,7 @@ def _section_M():
     # ③ 不给预算 ⇒ 一个超时都不许动（别把正常读流也套上紧箍）
     _s3 = _Sock(30.0)
     _r3 = _Stall(_s3, 0.05)
-    SF.read_stream(_r3, budget_s=0, what="V-R10-34 夹具")
+    SF.read_stream(_r3, budget_s=0, what="夹具")
     ok("M5 不给预算（budget_s=0）⇒ **不动** socket 超时（老行为保持）",
        _s3.timeout == 30.0 and not _s3.set_calls, "timeout=%s calls=%s" % (_s3.timeout, _s3.set_calls))
 
@@ -831,7 +831,7 @@ def _section_L():
 
     每一条都有**反例锚**：把产品侧对应那一句改坏（见每条 docstring 里的"反例"），断言必红。
     """
-    print("== L. 连接层：校验过的 IP 真的钉进 socket 了吗（V-R10-36/38）==")
+    print("== L. 连接层：校验过的 IP 真的钉进 socket 了吗==")
     real_cc = socket.create_connection
     real_exch = SF._pinned_exchange
 
@@ -854,7 +854,7 @@ def _section_L():
             _err = "%s: %s" % (type(e).__name__, str(e)[:40])
         dials_after = list(dial.dials)
         hits_after = _DNS_HITS.get("pin-a.example")
-    third = socket.getaddrinfo("pin-a.example", 80)[0][4][0]     # 现在再解析会给什么
+    third = socket.getaddrinfo("pin-a.example", 80)[0][4][0] # 现在再解析会给什么
     ok("L1 闸门解出的 IP 与**真正拨号**的 IP 是同一个（%s）" % pinned,
        dials_after == [(pinned, 80)], str(dials_after) + " err=" + _err)
     ok("L2 反例锚：此刻 DNS 已经翻脸（再解析就是环回）——说明 L1/L3 不是恒真",
@@ -880,7 +880,7 @@ def _section_L():
     # ══ L7/L8：HTTPS 的 SNI 是域名、证书上下文是**默认（校验开着）**那个 ══
     #  反例：把 `ssl._create_default_https_context()` 换成 `ssl._create_unverified_context()`
     #       （= G015）⇒ L7 必红；把 `server_hostname=self.host` 换成 `self._pinned_ip` ⇒ L8 必红。
-    # ⚠️ 为什么**两条都断言**（V-R10-38 的 G015 变异实测教训）：`HTTPSConnection.__init__` 自己
+    # ⚠️ 为什么**两条都断言**：`HTTPSConnection.__init__` 自己
     #  就已经把 `self._context` 设成默认上下文了 ⇒ 产品 `connect()` 里的
     #  `if self._context is None:` 那一行**根本不会执行**（快路径，实测："把 connect 里那行换成
     #  `_create_unverified_context()`"是**死变异**，只断言握手参数抓不到）。
@@ -930,7 +930,7 @@ def _section_L():
     ok("L8b HTTPS 那一跳也是钉 IP（同一套 connect 逻辑）",
        tls_dials == [("93.184.216.34", 443)], str(tls_dials))
 
-    # ══ L9：调用方给的 timeout 真的到了连接层（V-R10-34）══
+    # ══ L9：调用方给的 timeout 真的到了连接层══
     #  反例：把 `float(timeout or PINNED_TIMEOUT_S)` 写回常量 20 ⇒ L9 必红。
     with _PinDialRecorder() as dial9:
         try:
@@ -999,7 +999,7 @@ def _section_L():
     ok("L15 闸门拒了就抛 FetchError，且**不留下半截文件**",
        bool(_e) and not os.path.exists(dest2), "%s exists=%s" % (_e[:40], os.path.exists(dest2)))
 
-    # ══ L16/L17：`validate_remote_url` 把**同一次解析**的 IP 一起交出来（V-R10-32 的修法本体）══
+    # ══ L16/L17：`validate_remote_url` 把**同一次解析**的 IP 一起交出来══
     #  反例：把 `validate_remote_url` 改成"只回字符串"（= 老 `guard_remote_url`）
     #       ⇒ 调用方只能再解析一次 ⇒ 调用点就只能拿 `guard_remote_url` ⇒ 产品侧连接层断言必红。
     _DNS_FLIP.clear()
@@ -1015,11 +1015,11 @@ def _section_L():
         _g = str(e)
     ok("L17 带 IP 版照样拦内网（不是绕开闸门的旁路）", bool(_g), _g[:40])
 
-    # ══ L18：三处"二次解析"调用点必须已经改走钉 IP 传输（V-R10-32）══
-    #  ⚠️ 诚实说明（第十一轮 **V-R11-3**）：**光靠 L18 守不住** —— 它只是"源码里有没有这个词"的
+    # ══ L18：三处"二次解析"调用点必须已经改走钉 IP 传输══
+    # ⚠️ 诚实说明：**光靠 L18 守不住** —— 它只是"源码里有没有这个词"的
     #     子串检查，把老写法**加回来**（而不是删掉新写法）时它照样绿（审计实测：三处全退回老写法，
     #     本判据 89/0 全绿）。真正的**行为级**守备在 L24~L26（打桩连接层，断言"连的是哪个 IP"）。
-    print("== L2x. 三处「校验一次、连接再解析」的调用点（V-R10-32/33）==")
+    print("== L2x. 三处「校验一次、连接再解析」的调用点==")
     for _f, _tag, _must in (
             ("bilibili.py", "bilibili._download", "fetch_pinned_stream"),
             ("image_gen.py", "image_gen 二次 GET", "fetch_pinned_stream"),
@@ -1028,15 +1028,15 @@ def _section_L():
         _src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                  "agent", _f), encoding="utf-8").read()
         _hit = _must in _src
-        # 通过时**不许**再打印"找不到"（第十一轮 V-R11-11 第 2 条：那句恒打印的详情会骗读日志的人）
+        # 通过时**不许**再打印"找不到"
         ok("L18 %s 走钉 IP 传输（%s）" % (_tag, _must), _hit,
            ("在 agent/%s 里找不到 %s" % (_f, _must)) if not _hit else "命中 %s" % _must)
 
-    # ══ L19~L22：`cloud.probe` 的 HEAD 段（V-R10-33）——第 3 次解析必须打不到 ══
+    # ══ L19~L22：`cloud.probe` 的 HEAD 段——第 3 次解析必须打不到 ══
     #  反例：把 `pinned_head` 换回 `urllib.request.Request(fixed, method="HEAD")` + `urlopen`
     #       ⇒ L20/L21 必红（urlopen 自己解析 —— 在判据里会连到真网络或解析到环回）。
-    print("== L19~L22. cloud.probe 的 HEAD 段：第 3 次解析不许被采纳（V-R10-33）==")
-    from agent import cloud as _cloud                        # noqa: E402
+    print("== L19~L22. cloud.probe 的 HEAD 段：第 3 次解析不许被采纳==")
+    from agent import cloud as _cloud # noqa: E402
     _real_cc2 = socket.create_connection
     _real_exch_head = SF._exchange_head
     _DNS_FLIP.clear()
@@ -1083,15 +1083,15 @@ def _section_L():
     ok("L22 连接段没有多解析（probe 的 HEAD 只在闸门里解一次域名）",
        _hits <= 4, "hits=%s（闸门内 2 次 + 钉 IP 那一跳 1 次 + 探测路径 1 次；再多就是连接段又解了一次）" % _hits)
 
-    # ══ L23：`bilibili._download` 的**功能**锚（V-R10-32 的真实回归会被抓住）══
+    # ══ L23：`bilibili._download` 的**功能**锚══
     #  反例：把 `fetch_pinned_stream(...)` 换回 `urllib.request.urlopen(url)` ⇒ L23 必红
     #       （DNS 那时已翻脸 ⇒ 直连会打到"环回"那个 IP）。
     print("== L23. bilibili._download：一次解析、钉 IP（功能锚，不是只 grep 源码）==")
-    from agent import bilibili as _bili                     # noqa: E402
+    from agent import bilibili as _bili # noqa: E402
     _real_open = urllib.request.urlopen
     _cap_u = {"n": 0}
 
-    class _LegacyResp:            # 老写法（urlopen）在这里会拿到的响应
+    class _LegacyResp: # 老写法（urlopen）在这里会拿到的响应
         def __init__(self, body=b"x" * 60):
             self._b = body
             self._o = 0
@@ -1120,7 +1120,7 @@ def _section_L():
 
     _DNS_FLIP.clear()
     _DNS_HITS.clear()
-    _DNS_FLIP["pin-a.example"] = [(1, "127.0.0.1")]        # 这个域名的解析**永远是环回**
+    _DNS_FLIP["pin-a.example"] = [(1, "127.0.0.1")] # 这个域名的解析**永远是环回**
     _dest23 = os.path.join(tempfile.gettempdir(), "pm-sf-bili-%d.m4a" % os.getpid())
     urllib.request.urlopen = _legacy_open
     try:

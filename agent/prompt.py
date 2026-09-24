@@ -41,7 +41,7 @@ def _tool_protocol() -> str:
         "4. 对方可能话没说完、或想再等等，可什么都不发直接结束（或调用 finish）；下次被叫再来决定。这不是失职。",
         "5. 看完决定不回就安静结束，不需要收尾动作。工具调用是本能（send_message=打字发送，get_recent_messages=翻聊天记录），不要写\"我调用 xx 获取数据\"这种伪代码。",
         "6. 【分条】普通对话默认 1 条，最多 2 条；只有讲故事/回忆才 2~4 条。单条尽量短，多数 ≤30 字，不要小作文。",
-        # ⛔ 2026-09-17 红线（用户「佬」的群聊截图里，机器人把内部故障原样发进了群：
+        # ⛔ 红线（的群聊截图里，机器人把内部故障原样发进了群：
         #    「发送失败了，没能发出去。」「发不出去，会话没对上。」——那是**本机故障信息**，
         #    只能出现在控制台与日志里，不许出现在群里；这也是项目既有红线
         #    「停机/拦截的提示绝不往微信侧发」的落地）。
@@ -69,7 +69,7 @@ def _quote_and_at() -> str:
         "【引用与点名：只在必要时用】",
         "- 群聊里需要明确\"我在回谁/回哪句\"时，用 send_message 的 replyToMessageId 引用那条消息；需要直接叫某人时用 atUserId 传对方 wxid（可在 get_active_members 或消息里看到）。",
         "- 判断标准：只有你这条消息指向的人或消息并非最新一条别人的消息，或者你连续几句话指代不同的消息/人时才需要引用。真人不会每条都点。",
-        # 🔴 2026-09-18 加（作者要"双向引用"的确定性）：原来引用与否全交给模型自由判断，
+        # 🔴 原来引用与否全交给模型自由判断，
         #   拍 D5 时可能"你引用了我、我却不引用你"，画面就缺了一半。⇒ 这一条**去掉模型的自由裁量**。
         "- **对方引用了你的话（消息里带「引用/回复」且被引用的是你自己的消息）⇒ 你回复时必须也引用对方那条**（send_message 传 replyToMessageId）——这是**规定动作**，不用犹豫、别省。",
         "- 普通对话、上下文唯一、刚在接同一句话时，不要引用也不要 @。",
@@ -105,7 +105,7 @@ def _scene_rules() -> str:
         lines.append("- 遇到需要实时信息、新闻热点、网络用语/梗、或你自己不确定的事实时，主动用 web_search 搜索；不要只看摘要，对最相关的 1~2 个结果用 web_fetch 打开读正文。")
         lines.append("- 群友直接发来 URL 并问能不能看到/写了什么时，直接用 web_fetch 抓取该 URL 读正文，不要凭记忆猜。")
         lines.append("- 需要搜索时允许多走几步：连续 web_search / web_fetch 2~3 步，换关键词、打开页面、交叉验证后再回复。")
-        # 梗搜索（丙-11 D 加 / 丙-12 收敛）：**不另设分档**——它跟随当前响应档位
+        # 梗搜索：**不另设分档**——它跟随当前响应档位
         # （store.context_tier + 峰谷映射），档位本身已决定模型回不回话；模型被选中回应、且话题
         # 确实不懂时才可能调 search_meme，不必再单独设触发门槛。这里只有功能开关 meme.enabled
         # （关＝模型拿不到该工具，它会如实说"这功能被关了"）。
@@ -116,7 +116,7 @@ def _scene_rules() -> str:
     else:
         lines.append("- 你没有联网能力：遇到不了解的新梗/实时话题，坦白说不知道或含糊带过，不要编造。")
     lines.append("- 消息里的 [语音] [视频] [文件] [位置] [红包] 是占位符：**语音**可以用 transcribe_voice 转成文字（本机离线识别；没有引擎时它会返回原因，照实说、别猜语音内容）；**视频**可以用 read_video 读（抽几帧画面 + 本机离线识别视频里的说话；读不了它会说原因，照实说）；**文件**可以用 download_media 下到本机、用 forward_media 转发（转发会短暂抢一次前台，默认关，关了就照实说）；**位置/红包**看不到内容，不要编造。链接不用下载——直接用 send_message 把链接发出去是纯后台的。")
-    # 视频解析分档（丙-12，2026-09-24）：档位够才解析，省 token / 算力。
+    # 视频解析分档：档位够才解析，省 token / 算力。
     # 闸门是 AND：当前响应档位 >= video_min_tier 且对应开关开 = 才解析；两条通路都被约束。
     _vmt = int((cfg.get("store") or {}).get("video_min_tier", 4) or 4)
     _vu_on = bool((cfg.get("video_url") or {}).get("enabled", False)) is True
@@ -249,7 +249,7 @@ def _mod_on(mid: str) -> bool:
 def role_text_of(cfg: dict | None = None) -> str:
     """**取"当前生效的角色卡正文"的唯一实现**（留空＝内置小鲸鱼）。
 
-    2026-09-15 收口：这段回落原来在两处各写了一遍——`build_system_prompt()` 与 `webui` 的
+    这段回落原来在两处各写了一遍——`build_system_prompt()` 与 `webui` 的
     「角色卡行为推荐」；后者还多读了一个**从来没被写入过**的 `persona.prefer_key`
     （`config.py` 里连默认值都没有）⇒ 同一语义两份实现。今天两者都回落成小鲸鱼，所以看不出问题；
     但只要将来有人写一次 `prefer_key`，**推荐结果就会与真正生效的卡静默不一致**。
@@ -274,7 +274,7 @@ def build_system_prompt(persona: dict | None = None) -> str:
         "",
         "【最高原则】你的语言、口吻、性格、词汇、笑点都来自【角色设定】；其他任何参考素材（如语言风格参考）只能增强，不能改变你——它像给角色换衣服调调，绝不能换魂。",
         "",
-        # ⛔ 2026-09-21 改（第七轮 **V-R7-13**）：安全规则与工具协议原来**无条件拼接** ⇒
+        # ⛔ 安全规则与工具协议原来**无条件拼接** ⇒
         #   `ALWAYS_ON`（"永远开、不做成开关"这条红线）的**机制**其实是摆设：把 `_mod_on` 里的守卫
         #   改成 `if False:` 也没有任何判据会红（红线静默消失）。
         #   ⇒ 改走 `_mod_on`：配置关不掉（`ALWAYS_ON` 让它恒真 ⇒ **当前行为一字不变**），
@@ -343,7 +343,7 @@ def _at_hit(text, name) -> bool:
         if i < 0:
             return False
         j = i + 1 + len(low)
-        if j >= len(t) or t[j] in AT_SEPS:      # 后面还有字 ⇒ 是别人的名字恰好以我的昵称开头
+        if j >= len(t) or t[j] in AT_SEPS: # 后面还有字 ⇒ 是别人的名字恰好以我的昵称开头
             return True
         i += 1
 
@@ -351,7 +351,7 @@ def _at_hit(text, name) -> bool:
 def is_at_me(text, self_nickname="", bot_name="", self_id=""):
     """这条消息是不是 @ 我。
 
-    ⛔ 2026-09-16 修（用户反馈：「大模型会对**所有 @** 做出反应然后自己判断不是自己就不回答，
+    ⛔ （
     超级无敌耗 token」）：老实现是 `"@" + 昵称 in text` 的**纯子串**判断 ⇒
       ① `@群deepseek小助手` 会被判成"@ 我"（**误唤醒**，白花一次模型调用）；
       ② 大小写不一致（`@DEEPSEEK`）判不出来；
@@ -368,7 +368,7 @@ def is_at_me(text, self_nickname="", bot_name="", self_id=""):
 def observed_at(text) -> str:
     """文本里**第一个** `@某某` 的那个「某某」（按分隔符裁断）。判不出返回空串。**只读、绝不抛**。
 
-    为什么单独要它（2026-09-21 反馈：B 站评论区「艾特它 它不会回复」）：
+    为什么单独要它：
     `is_at_me` 只回答"@ 的是不是我"，答不了"那它 @ 的是**谁**"——而微信群里 @ 用的是
     **群昵称**，它可能与配置里的机器人昵称、库里读到的账号昵称**都不一样**（用户给机器人在群里
     改过名字）。拿不到那一串，我们就只能猜；记下来，下一份反馈里便能一眼看出是不是名字对不上。
@@ -397,7 +397,7 @@ def hit_keyword(text, keywords=None):
     return False
 
 
-CONTINUE_WINDOW_SEC = 180      # 「接着我的话往下说」的时间窗（秒）
+CONTINUE_WINDOW_SEC = 180 # 「接着我的话往下说」的时间窗（秒）
 
 
 def resolve_context_tier(trigger_entries, self_nickname="", bot_name="", self_id="", roll=None,
@@ -414,7 +414,7 @@ def resolve_context_tier(trigger_entries, self_nickname="", bot_name="", self_id
     """
     c = get_config().get("store", {})
     # 屏蔽名单：{群名 或 群 wxid: [昵称, wxid...]}——命中的消息从触发集中剔除
-    # ⛔ 2026-09-21（第五轮回执回执 §C-补）：**wxid 键与名字键都读、合并**（老写法只认群名 ⇒
+    # ⛔ **wxid 键与名字键都读、合并**（老写法只认群名 ⇒
     #   同名群里"只屏蔽甲群那个人"做不到；而控制台已经能按 wxid 存了）。名字键保留作老配置兜底。
     _gwxid = chat_key.split(":", 1)[1] if (chat_key and ":" in chat_key) else ""
     for _key in ([_gwxid] if _gwxid else []) + ([str(group_name)] if group_name else []):
@@ -454,7 +454,7 @@ def resolve_context_tier(trigger_entries, self_nickname="", bot_name="", self_id
         tier_src = "峰谷映射 %s" % _sch["window"]
     # 每群独立档位：unified_tier=false 且该群有单独设置 → 覆盖
     #   ⚠️ W-1：键**群名或 wxid 都认**（控制台勾选现在存 wxid；老配置里的键是群名）。
-    #   ⛔ 2026-09-21（第五轮回执 **V-R5B-6**）：**wxid 键必须优先** —— 老写法把群名排在前头，
+    # ⛔ **wxid 键必须优先** —— 老写法把群名排在前头，
     #   于是"给同名群各设一个档位"永远只能生效第一间的名字键（等于 W-1 在档位这条路上原样还在）。
     if not c.get("unified_tier", True):
         gt = c.get("group_tier") or {}
@@ -466,7 +466,7 @@ def resolve_context_tier(trigger_entries, self_nickname="", bot_name="", self_id
                     tier_src = "本群独立档位（键=%s）" % ("wxid" if _gk == _gwxid else "群名")
                     break
                 except (TypeError, ValueError):
-                    continue          # 这个键的值是坏的 ⇒ 再看下一个键（别因此丢掉另一把）
+                    continue # 这个键的值是坏的 ⇒ 再看下一个键（别因此丢掉另一把）
     tier = 4 if (raw_tier is None or raw_tier != raw_tier) else min(4, max(1, round(raw_tier)))
     # 指令禁言（第 18 条）：会话被禁言期间**档位固定降到 1 档**（只回艾特）
     _mute = None
@@ -489,7 +489,7 @@ def resolve_context_tier(trigger_entries, self_nickname="", bot_name="", self_id
             at_me = True
             break
     keyword = hit_keyword("\n".join(texts), c.get("keywords") or [])
-    # ── 两条确定性触发（2026-09-15 新增，不吃随机数；既有口径：顺着我的话往下说却因随机数不回＝体验断裂）──
+    # ── 两条确定性触发──
     #   ① 引用/回复的是我：①优先看条目自带的 reply（有就信它）②否则拿这条的话头去比对我最近发过的话
     #   ② 接着我的话往下说：历史里最后一条是我说的，且这条紧跟其后（默认 180s 内）
     quote_me = False
@@ -517,7 +517,7 @@ def resolve_context_tier(trigger_entries, self_nickname="", bot_name="", self_id
             hist = [m for m in (store.recent(chat_key, limit=8) or []) if m.get("id") not in batch_ids]
             if hist and hist[-1].get("self"):
                 # ⚠️ 用 __import__("time")：本文件顶层**没有** import time（既有代码一律这么写）。
-                #   2026-09-15 踩过：写成 time.time() ⇒ 这里 NameError 被 except 吞成 gap=0 ⇒
+                # 写成 time.time() ⇒ 这里 NameError 被 except 吞成 gap=0 ⇒
                 #   "只要我最后发过言就无条件触发"（judge C4 抓出来的）。自检不可用时**不触发**（fail-closed）。
                 try:
                     gap = int((int(__import__("time").time() * 1000) - int(hist[-1].get("ts") or 0)) / 1000)
@@ -536,7 +536,7 @@ def resolve_context_tier(trigger_entries, self_nickname="", bot_name="", self_id
         except (TypeError, ValueError):
             return 0
 
-    # ⛔ 2026-09-16 新增第四档「只在群里 @ 我 / 引用我时才回」（既有口径：机制映射到 UI 让他自己选）：
+    # ⛔ 第四档「只在群里 @ 我 / 引用我时才回」（既有口径：机制映射到 UI 让他自己选）：
     #   主人的号在群里说话时，默认会走下面的档位级联（tier>=4 就全回，等于"照常回你自己的话"）。
     #   这一档把范围收紧成：**整批触发消息都是主人发的、且没 @ 我、也没引用我 ⇒ 不回**。
     #   三条边界：①群里才算（`chat_key` 前缀 `group:`）—— 私聊是「借个智能体跟自己聊」的用法，不受这一档影响；
@@ -596,7 +596,7 @@ def build_past_state(store, chat_key, exclude_ids=None, limit=None):
     ⛔ 兜底（`past_floor_count`，默认 8，0=关闭）：**窗内不足 floor 条时，把窗外最近的消息补进来**，
     并加一条"距上一条已过去 X 的标记"。为什么必须补：群里长时间静默后突然被触发时，
     窗内一条都没有 ⇒ 过去状态是空的 ⇒ 模型被明确告知"这是你第一次参与这个会话"，
-    于是完全不看上文（2026-09-13 用户报的现象，已复现）。
+    于是完全不看上文。
     返回字段：text/count/messages（原有）+ gap_min/stale/widened/store_has（取证用）。
     """
     cfg = get_config().get("store", {})
@@ -627,7 +627,7 @@ def build_past_state(store, chat_key, exclude_ids=None, limit=None):
     else:
         cutoff = 0
         in_win = list(all_msgs)
-    # ⚠️ 取"最后 N 条"时**按整块丢老的**（2026-09-15 自检 A2 的真根因）：
+    # ⚠️ 取"最后 N 条"时**按整块丢老的**：
     #   原来直接切片 ⇒ 每来一条新消息就丢掉最老的一条 ⇒ 历史块从第一行就变，前缀缓存永远吃不到
     #   （实测两轮公共前缀只有 88 字符）。改成 CHUNK 对齐丢弃：两次丢块之间历史块是**纯追加**，
     #   token 上限＝max_limit + CHUNK - 1 条。
@@ -640,7 +640,7 @@ def build_past_state(store, chat_key, exclude_ids=None, limit=None):
     width = min(floor, max_limit)
     widened = 0
     if width and len(messages) < width:
-        # ⚠️ 兜底也要**按 CHUNK 对齐**（2026-09-15 第二次踩到）：原来取"最后 need 条"是精确滑动
+        # ⚠️ 兜底也要**按 CHUNK 对齐**：原来取"最后 need 条"是精确滑动
         #   ⇒ 每来一条新消息就丢掉最老的一条，历史块从第一行就变（实测公共前缀 88 字符）。
         #   现在只算"目标起点"并把它对齐到块边界，取 all_msgs[start:]（宁可多带几条，也不逐条滑）。
         have = {id(m) for m in messages}
@@ -662,7 +662,7 @@ def build_past_state(store, chat_key, exclude_ids=None, limit=None):
         except (TypeError, ValueError):
             gap_min = 0
     # ⑥ 上下文压缩（向 harness 看齐）：最近 8 条详细，更早的只保留「发送者+前40字」摘要——降 token 且不丢"谁说过"信息
-    # ⚠️ 分界**按整块推进**（2026-09-15 自检 A2 抓到的缓存问题）：原来每来一条新消息就把一条从
+    # ⚠️ 分界**按整块推进**：原来每来一条新消息就把一条从
     #   "详细"挪进"摘要" ⇒ 历史块开头每轮都变 ⇒ 跨轮公共前缀只剩 7%。改成每 CHUNK 条才推进一次，
     #   两次推进之间历史块**逐字不变（纯追加）**，前缀缓存才吃得到。
     NEAR, CHUNK = 8, 8
@@ -718,7 +718,7 @@ def build_trigger_block(trigger_entries, ctx) -> str:
 def stale_note_for(entries, now_ms: int = None) -> str:
     """"这批触发消息有多旧"的一句话（纯函数，判据可直接测）。≥10 分钟才给；取不到时间戳就不给。
 
-    ⛔ 2026-09-21 加（第九轮 V-R9-17 的残留）：原来只在 `thought_trace` 里留痕、**没进提示词**
+    ⛔ 原来只在 `thought_trace` 里留痕、**没进提示词**
     ⇒ 模型把"三小时前/六天前"的消息当成刚刚发生的事来回（通知补发/离线补收场景很常见）。
     ⚠️ 本文件**顶层没有 `import time`**（见 `_active_gap_min` 那段的注释：写成 `time.time()`
     会被 except 吞成 0 —— 这里就是抽成纯函数 + `__import__` 的理由）。
@@ -752,7 +752,7 @@ def build_user_prompt(ctx) -> str:
         ctx["session"]["past_state_count"] = past["count"]
     unread_note = "（注意：处理期间又来了新消息，会在你结束后作为下一次【本次唤醒】给你）" if ctx.get("more_unread_during_run") else ""
 
-    # ⚠️ 分段顺序＝缓存命中率（2026-09-15 对照审计后定）：**稳定前缀在前、易变内容在后**。
+    # ⚠️ 分段顺序＝缓存命中率：**稳定前缀在前、易变内容在后**。
     #   历史块按时间追加 ⇒ 上一轮的历史是本轮历史的前缀 ⇒ 这段能吃到前缀缓存；
     #   把【当前时间】【第 N 次处理】排到历史前面，等于每轮从第几十个 token 就分叉，缓存只剩 system。
     parts = []
@@ -765,7 +765,7 @@ def build_user_prompt(ctx) -> str:
         parts.append("【过去状态】（这个会话此前的记录都没能取到——不是\"第一次参与\"，别当成新会话处理）")
     else:
         parts.append("【过去状态】（暂无历史记录，这是你第一次参与这个会话）")
-    # ①b **预设信息**（2026-09-22，B站网友要的）：管理员按会话提前设好的背景事实，
+    # ①b **预设信息**：管理员按会话提前设好的背景事实，
     #   **只在本会话内容相关时注入**、到期自动舍弃、结构上只读本会话（不外泄）。
     #   放在"过去状态"之后、"当前时间"之前：稳定内容靠前（缓存友好），且紧挨着本轮要回答的东西。
     try:
@@ -804,7 +804,7 @@ def build_user_prompt(ctx) -> str:
         parts.append("【主动开话题】群里最近比较安静，没人 @ 你。想聊的话，自己找个自然的话题抛出一条（一句即可，别像开场白）；不想聊就直接结束。发送用 send_message。")
     else:
         trigger_block = build_trigger_block(ctx["trigger_entries"], ctx)
-        # ⛔ 2026-09-21 加（第九轮 **V-R9-17** 的残留，第十轮 V-R10-21 点到）：把**这批消息有多旧**
+        # ⛔ 把**这批消息有多旧**
         #   写进提示词本身 —— 原来只在 `thought_trace` 里留痕，模型看不到，于是它会把
         #   "三小时前/六天前"的消息当成**刚刚发生**来回应（通知/补发场景下很常见）。
         _stale_note = stale_note_for(ctx.get("trigger_entries"))
@@ -822,7 +822,7 @@ def build_user_prompt(ctx) -> str:
     for m in (past.get("messages") or []):
         if m.get("sender_id") and not m.get("self"):
             relevant_ids.add(str(m["sender_id"]))
-    # 2026-09-13：把 store 与本轮触发批传给记忆层 ⇒ 除了"对群友的印象"，还带一行「上次聊过「…」」。
+    # 把 store 与本轮触发批传给记忆层 ⇒ 除了"对群友的印象"，还带一行「上次聊过「…」」。
     #   触发批必须排除（那是本轮要回答的内容，不是"上次"）；老实现不接受这两个参数时退回旧调用。
     try:
         mem_text = ctx["memory"].format_for_prompt(
@@ -850,7 +850,7 @@ def build_user_prompt(ctx) -> str:
     ]))
 
     # 语言风格参考（动态内容：放用户消息，保持系统提示静态 → 前缀缓存命中）
-    # ⛔ 2026-09-16 按既有口径：加闸（原话：「早先不是说过这个只给 DeepSeek 用吗，那个小鲸鱼用，
+    # ⛔ 加闸（
     #   因为其他人格学群友说话学多了，就变成玩梗弱智了，不是本人了」）：
     #   **风格学习只给内置的 DeepSeek 小鲸鱼用**。用户一旦动过角色设置（改了名字 / 填了自定义
     #   角色文本 / 从人设库里选了别的卡），就不再注入风格参考与"本地高分反应"——

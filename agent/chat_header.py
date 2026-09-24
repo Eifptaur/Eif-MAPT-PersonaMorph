@@ -2,7 +2,6 @@
 """会话头指纹：判断"当前打开的会话是不是 X" —— 投递类能力的**前置条件检查**。
 
 为什么必须有它：投递（`send_text_posted`、发收藏表情、朋友圈操作）**都不会切会话**，
-发错会话就是对外可见的事故。而现有判据都不好使：
   · 窗口标题不可靠（实测：标题一直是 `群deepseek`，实际打开的却是文件传输助手）；
   · 会话头文本走 OCR 要截图 + 识别，慢且易错；
   · UIA 树在本机微信 4.1.15.8 上没有物化（只有 2 个节点）。
@@ -28,25 +27,25 @@ log = logging.getLogger("persona-morph")
 
 STORE_PATH = os.path.join(ROOT, "data", "chat_headers.json")
 # 会话名区域（**渲染区相对比例**）：避开左侧会话列表（<0.26）、右侧按钮与窗口按钮
-PANE_LEFT_REL = 0.26          # 会话列表面板右边界（**兜底**比例；优先用 detect_pane_left 实测）
-#: 面板左沿扫描的**固定像素下界**（V-R10-1）。见 `detect_pane_left`：会话列表是**固定像素宽**，
+PANE_LEFT_REL = 0.26 # 会话列表面板右边界（**兜底**比例；优先用 detect_pane_left 实测）
+#: 面板左沿扫描的**固定像素下界**。见 `detect_pane_left`：会话列表是**固定像素宽**，
 #: 扫描窗口没有理由随窗口宽度线性放大 —— 原来纯用 `0.15×宽`，最大化（渲染 2538×1589）时下界
 #: 变成 380 > 真实左沿 331 ⇒ 探测器在报警范围内找不到白列 ⇒ 返回 0 ⇒ 兜底比例把标题带甩到
 #: 聊天区中部 ⇒ **空指纹** ⇒ `check()` 恒 `no_capture`（最大化窗口下整条会话头闸失效）。
 PANE_SCAN_MIN_PX = 100
-BAND_PX = (10, 38, 340, 56)   # 文字带：(距面板左边界 dx, y, 宽, 高) —— **兜底固定像素**（自适应见 detect_band_y0）
+BAND_PX = (10, 38, 340, 56) # 文字带：(距面板左边界 dx, y, 宽, 高) —— **兜底固定像素**（自适应见 detect_band_y0）
 #: 「整行都是深色」的判定：用来找那条**自绘标题条**（`detect_band_y0`）。
 BAND_FULL_DARK = 0.85
 #: 文字带算法版本。**改了带子算法就 +1** —— 旧参照按"没有参照"处理（`no_ref` ⇒ 不拦发送、下次成功
 #: 自动重学），而不是按 `mismatch` 处理：否则老用户升级后第一枪会被自己的旧参照拦下来。
-#: ⛔ 2026-09-21 由 **2 升到 3**（第十轮 **V-R10-1**）：扫描下界改固定像素（`PANE_SCAN_MIN_PX`）
+#: ⛔ 由 **2 升到 3**：扫描下界改固定像素（`PANE_SCAN_MIN_PX`）
 #: ⇒ **所有尺寸档的指纹都会变** ⇒ 旧参照必须按 `no_ref` 重学（产品自带这条机制，只改这一个常量）。
 BAND_VERSION = 3
                               # ⇒ 与窗口尺寸无关（实测：会话列表是"固定像素宽"，不是按窗口比例缩放）
-BINS = 64                     # 逐列暗点密度剖面维数
-DARK = 165                    # 暗点阈值（会话名是深色字，背景近白）
-WHITE = 250                   # 判定"聊天面板底色"（浅色主题下会话列表是浅灰、聊天区是纯白）
-DEFAULT_THRESHOLD = 0.90      # 相似度阈值（1.0=完全一致）
+BINS = 64 # 逐列暗点密度剖面维数
+DARK = 165 # 暗点阈值（会话名是深色字，背景近白）
+WHITE = 250 # 判定"聊天面板底色"（浅色主题下会话列表是浅灰、聊天区是纯白）
+DEFAULT_THRESHOLD = 0.90 # 相似度阈值（1.0=完全一致）
 
 
 # ── 纯函数（可用合成图单测，不需要微信）──────────────────────────────────
@@ -57,7 +56,7 @@ def detect_pane_left(img, lo_rel: float = 0.15, hi_rel: float = 0.60, need: int 
     `0.26×宽` 就漂进会话列表里，指纹跟着错（相似度掉到 0.70~0.90）。
     找不到（深色主题/特殊皮肤）就返回 0，由调用方退回比例兜底。
 
-    ⛔ 2026-09-21 修（第十轮 **V-R10-1 · P1**）：**下界必须"固定像素优先"**，不能纯按宽度比例。
+    ⛔ **下界必须"固定像素优先"**，不能纯按宽度比例。
       真机实测（本机 2560×1600 工作区 ⇒ 渲染 2538×1589）：会话列表左沿仍是 **331**（固定像素宽），
       而 `0.15×2538 = 380` > 331 ⇒ 扫描从"左沿右边"起步 ⇒ 白列在报警范围之外 ⇒ 返回 0
       ⇒ `fingerprint` 退回 `0.26×宽=661` 的兜底比例 ⇒ 带子落到聊天区中部 ⇒ 空指纹 ⇒
@@ -95,7 +94,7 @@ def detect_pane_left(img, lo_rel: float = 0.15, hi_rel: float = 0.60, need: int 
 def detect_pane_left_alt(img, rail_max_rel: float = 0.12, list_w: int = 300) -> int:
     """**结构锚**版的面板左沿：竖导航栏右沿 + 会话列表**固定像素宽**（≈300px），认不出给 0。
 
-    为什么另开一条（2026-09-21 真机实测，代价＝切会话整条第③路失效）：老口径
+    为什么另开一条：老口径
     （从 `0.15w` 起找连续 24 列"近纯白"）在**聊天区左列被消息气泡占满**时，会话列表右沿那里
     根本找不到白列 ⇒ 一路扫到气泡右边，实测报 **660**（真值 384）⇒ 会话列裁剪框跟着偏进聊天区
     （`left-240 .. left-6`）⇒ `find_row_info` 把聊天气泡当会话行读 ⇒ "列表里没看到「×××」那一行"。
@@ -103,7 +102,7 @@ def detect_pane_left_alt(img, rail_max_rel: float = 0.12, list_w: int = 300) -> 
     微信的会话列表是**固定像素宽、不随窗口变**（老口径的注释里也写了这一条），
     所以"竖栏右沿 + 固定宽"是更稳的结构锚。竖栏是深色底 ⇒ 从 0 往右第一个"不再深色"的列就是栏右沿。
     ⚠️ **它能工作的前提是"竖栏是深色底"**：真机实测**浅色/系统皮肤下才认得出**，而**深色主题下竖栏与列表
-    全暗 ⇒ 恒返回 0**（第六轮 **V-R6-13** 更正了早先写反的 docstring）；不激活还原窗口的**过渡帧**
+    全暗 ⇒ 恒返回 0**；不激活还原窗口的**过渡帧**
     里竖栏也还不是深色 ⇒ 同样返回 0。调用方必须按"没有兜底"处理（不要拿 0 当"左沿在 0"）。
     另：`list_w=300` 是从两条真机读数（276 / 329）取的中间值 ⇒ **本身带 ±25px 偏差**，
     只适合用来**修"过冲"**（老口径扫进聊天区那种量级），不适合当精确左沿。
@@ -120,7 +119,7 @@ def detect_pane_left_alt(img, rail_max_rel: float = 0.12, list_w: int = 300) -> 
             if not vals:
                 continue
             mean = sum(vals) / len(vals)
-            if mean >= 150:                     # 不再是深色底 ⇒ 竖栏在这一列结束了
+            if mean >= 150: # 不再是深色底 ⇒ 竖栏在这一列结束了
                 rail_right = x
                 break
         if not rail_right:
@@ -136,7 +135,7 @@ def detect_pane_left_alt(img, rail_max_rel: float = 0.12, list_w: int = 300) -> 
 def pane_left_for(img, cross_check: bool = True) -> int:
     """**本帧的面板左沿（唯一入口）**：老口径与结构锚交叉校验，结果挂在图像对象上只算一次。
 
-    为什么要有这个入口（第六轮 **V-R6-11**）：老口径（连续白列）单用时，聊天区左列被气泡占满
+    为什么要有这个入口：老口径（连续白列）单用时，聊天区左列被气泡占满
     就会**过冲**进聊天区（实测 660 / 真值 384），而 "谁在量左沿" 分散在 `chat_ocr` 的十几处
     （`_green_x` / `green_bands` / `green_row_ratio` / `highlight(_wide)` / `_name_box` / `find_row`…）
     ⇒ 只修一处不解决问题。⇒ 收敛到本函数，所有消费者都走它。
@@ -183,7 +182,7 @@ def pane_left_for(img, cross_check: bool = True) -> int:
         except Exception:
             val = 0
     try:
-        img._pm_pane_left = int(val)            # 同一帧只算一次（同一对象被十几个函数各调一遍）
+        img._pm_pane_left = int(val) # 同一帧只算一次（同一对象被十几个函数各调一遍）
     except Exception:
         pass
     return int(val)
@@ -208,7 +207,7 @@ def detect_band_y0(img, x0: int, x1: int, default_y0: int = None, max_scan: int 
                    max_y0: int = None) -> int:
     """在渲染区顶部找那条**全宽深色横条**（微信自绘标题条），把文字带放到它**下方**。
 
-    ⛔ 2026-09-21 加（第九轮 **V-R9-3 · P1**，真机实测）：`BAND_PX` 的 `y0=38` 是**固定物理像素**，
+    ⛔ `BAND_PX` 的 `y0=38` 是**固定物理像素**，
     而新版微信在会话区顶部有一条**自绘深色标题条**（本机实测：渲染区 1076×1046 时它压在 y≈38~50）
     ⇒ 文字带大半落在标题条上 ⇒ 指纹变成「**64 列全有墨**」的退化帧 ⇒ `is_blank`/`degenerate_reason`
     两道闸都拒收 ⇒ **这个尺寸档永远学不到参照**（`check()` 永远 `no_ref`、永不 `mismatch`）⇒ 只剩
@@ -218,8 +217,8 @@ def detect_band_y0(img, x0: int, x1: int, default_y0: int = None, max_scan: int 
     ⇒ 现在：扫顶部若干行，找**连续 ≥4 行「整行都是深色」**的那条横条，带子落到它下方 +3px；
       找不到（老版微信没这条、本来就是白底）就退回原来的固定 y0。返回的是**绝对像素** y0。
 
-    ⛔ 2026-09-21 修（第十轮 **V-R10-5 · P2**）：两个上限**原来是写死的 96 / 72**，于是
-      · 横条**底边在 72..103** ⇒ `y0` 被钳回 72 ⇒ 带子仍压在条子上 ⇒ 指纹 **64/64**（＝V-R9-3 原症状）；
+    ⛔ 两个上限**原来是写死的 96 / 72**，于是
+      · 横条**底边在 72..103** ⇒ `y0` 被钳回 72 ⇒ 带子仍压在条子上 ⇒ 指纹 **64/64**；
       · 横条**上边 ≥96** ⇒ 超出 `max_scan` ⇒ 根本没扫到 ⇒ 退回 38 ⇒ **空指纹**。
       ⇒ 改成**按渲染高度比例**（`max_scan = max(96, 0.12h)`、`max_y0 = max(72, 0.10h)`，宽高窗都留出
         余量），并且 `fingerprint` 在第一次自适应仍拿不到可用指纹时会**一次性**用更宽的窗口再试一次
@@ -250,11 +249,11 @@ def detect_band_y0(img, x0: int, x1: int, default_y0: int = None, max_scan: int 
                 run += 1
                 run_end = y
                 continue
-            if run >= 4:                      # 那条横条结束了
+            if run >= 4: # 那条横条结束了
                 break
             run, run_end = 0, None
         if run_end is None or run < 4:
-            return int(default_y0)             # 没有这种横条 ⇒ 维持原样
+            return int(default_y0) # 没有这种横条 ⇒ 维持原样
         y0 = int(run_end) + 3
         return int(max(int(default_y0), min(y0, int(max_y0))))
     except Exception:
@@ -265,10 +264,10 @@ def band_box(img, pane_left_rel=None, band_px=None, pane_left_px: int = 0,
              wide: bool = False) -> tuple:
     """会话头"文字带"的像素框 —— **唯一实现**（指纹与 OCR 两条链都走这里）。
 
-    ⛔ 2026-09-22 加（第十五轮 **V-R15-2** · 网友报「经常读不到窗口 / 认不对群名」）：
+    ⛔ 
       `chat_ocr.header_box` 原来是**第二份实现**，而且 `y0` 直接吃固定 `BAND_PX[1]=38`、
       **完全不过 `detect_band_y0`** ⇒ 微信那条自绘深色标题条压在 y≈38~50 时：
-        · 指纹那一半第九轮已修（V-R9-3：把带子推到标题条下方）；
+        · 指纹那一半已修；
         · **OCR 那一半照旧去读标题条** ⇒ `matches_strict` 判否 ⇒ 「认不对群名」、
           该尺寸档永远学不到参照、`send_text` 只能退回"投递切会话 + 内容级复核"、兜不住就整条拒发。
       ⇒ 现在两条链共用这一个函数：**同一块带子、同一套自适应 y0**。
@@ -304,11 +303,11 @@ def fingerprint(img, pane_left_rel=None, band_px=None, bins: int = BINS, pane_le
       ③ **锚点要实测面板左沿**（`detect_pane_left`）——会话列表是固定像素宽、不按窗口比例，
          只按比例放带会在换尺寸时漂进会话列表（实测相似度掉到 0.70~0.90）。
 
-    ⛔ 2026-09-21 两处修（第十轮）：
-      · **V-R10-1**：锚点改走**唯一入口 `pane_left_for`**（老口径 → 结构锚交叉校验 → 比例兜底
+    ⛔ 
+      · 锚点改走**唯一入口 `pane_left_for`**（老口径 → 结构锚交叉校验 → 比例兜底
         三层都写好了），不再只调老口径那一层 —— 老口径返回 0 时（最大化窗口的现场）过去会
         直接掉进 `0.26×宽` 的兜底比例，而结构锚本来能给出 390（越过单字标题、但远好于 661）。
-      · **V-R10-5**：带子第一次自适应失败（空指纹 / 退化 / **每列都有墨**）时**一次性**用更宽的
+      · 带子第一次自适应失败（空指纹 / 退化 / **每列都有墨**）时**一次性**用更宽的
         扫描窗口再试一次（不引入循环）—— 有些几何下那条深色标题条的底边落在 `max_scan`/`max_y0`
         之外，只做比例钳位仍然够不着（详见 `detect_band_y0`）。
 
@@ -349,8 +348,8 @@ def fingerprint(img, pane_left_rel=None, band_px=None, bins: int = BINS, pane_le
             mx = max(raw) if raw else 0.0
             mn = min(raw) if raw else 0.0
             if mx <= 0.0:
-                return []                 # 一点墨都没有 ⇒ 视为无效指纹（不许当"匹配"）
-            # ⛔ 2026-09-21 加（第九轮 **V-R9-6**）：**整幅近单色** ⇒ 逐列密度几乎相同 —— 最典型的是
+                return [] # 一点墨都没有 ⇒ 视为无效指纹（不许当"匹配"）
+            # ⛔ **整幅近单色** ⇒ 逐列密度几乎相同 —— 最典型的是
             #   纯黑帧（每列都满墨 ⇒ 归一化后 `[255]*64`）。那**不是指纹，是"没内容"**：旧代码在这里
             #   照样返回 64 维非空指纹 ⇒ 上层把本该 `no_capture` 的一帧变成 `no_ref`/`mismatch`
             #   （看着"有依据"，其实什么也没看到）。⇒ 剖面近乎平坦（最强列与最弱列差 < 6%）就返回空。
@@ -359,16 +358,16 @@ def fingerprint(img, pane_left_rel=None, band_px=None, bins: int = BINS, pane_le
             return [int(round(255.0 * v / mx)) for v in raw]
 
         box = band_box(img, pane_left_rel, band_px, pane_left_px=pl)
-        # ⛔ 2026-09-21 加（第九轮 **V-R9-3**）：生产路径（自动锚点）下先**自适应**把文字带挪到
+        # ⛔ 生产路径（自动锚点）下先**自适应**把文字带挪到
         #   那条自绘深色标题条**下方** —— 固定 y0 在真机上会压在标题条上 ⇒ 指纹退化 ⇒ 该尺寸档
-        #   永远学不到参照（详见 `detect_band_y0`）。V-R15-2 起见 `band_box`（唯一实现）。
+        # 永远学不到参照（详见 `detect_band_y0`）。 起见 `band_box`（唯一实现）。
         _y0 = int(box[1])
         fp = _norm(_raw(box))
         if not _auto:
             return fp
         if fp and not degenerate_reason(fp) and min(fp) == 0:
             return fp
-        # ⛔ 2026-09-21 加（第十轮 **V-R10-5**）：**一次性**更宽窗口回退。触发条件＝这条自适应带子
+        # ⛔ **一次性**更宽窗口回退。触发条件＝这条自适应带子
         #   没能拿到**干净**的指纹：空 / 退化 / **每一列都有墨**（`min(fp) > 0` ＝ 带子里压着一条
         #   通栏的深色元素，比如那条自绘标题条没被推下去）。这三种都说明那条横条多半落在上面那次
         #   扫描窗口**之外**（底边 > max_y0、或上边 > max_scan）⇒ 用"整幅上部三成"再扫一次；
@@ -398,7 +397,7 @@ DEFAULT_COSINE = 0.95
 def pattern_score(a, b) -> float:
     """两边归一化后的**余弦** —— 只看"暗点分布的形状"，不看整体幅度。
 
-    ⛔ 为什么必须加第二条件（2026-09-21 由网友 v0919 的真机 `chat_headers.json` 定案）：
+    ⛔ 为什么必须加第二条件：
       `similarity` 是 `1 − 平均绝对差/255`，而会话头指纹绝大多数维是 0、只有中间十几维有值
       ⇒ 值域被压在 0.85~1.0 这条窄带里 ⇒ **两个不同的短群名**能拿到很高的分。真机实测
       （他的两个群「KC」/「测试」，1160x900 与 1562x1324 两档）：
@@ -455,7 +454,7 @@ def size_key(img_or_size) -> str:
 def remember(chat_id: str, fp, note: str = "", path: str = None, size: str = "*") -> dict:
     """记住某会话**某个窗口尺寸下**的会话头指纹（覆盖式）。**空白图一律不记**（见 `is_blank`）。
 
-    ⛔ 2026-09-21 加**退化指纹**这一关（`degenerate_reason`）：网友真机库里那条
+    ⛔ **退化指纹**这一关（`degenerate_reason`）：网友真机库里那条
     `[0]*63 + [255]` 就是被这里放进来的，进库以后那个尺寸档长期误判 ⇒ 学之前在门口拦掉。
     """
     data = load(path)
@@ -468,13 +467,13 @@ def remember(chat_id: str, fp, note: str = "", path: str = None, size: str = "*"
         log.warning("拒绝记住**退化**的会话头指纹：%s（尺寸 %s）—— %s（这条指纹没抓到名字那条带子；"
                     "记进去会让这个尺寸档长期误判）", chat_id, size, _deg)
         return data
-    # ⛔ 2026-09-21 加（第八轮 **V-R8-2/3**）：**墨列太少的帧也不许入库**。
+    # ⛔ **墨列太少的帧也不许入库**。
     #   现场：真造帧「标题带只有两条竖线、无字」（S05/S12/S19/S20）⇒ `is_blank` 与
     #   `degenerate_reason` **两道都放行** ⇒ 参照进库 ⇒ 之后同一尺寸档的正常帧跟它比只有
     #   sim≈0.81 ⇒ `check()` 判 `mismatch` ⇒ **该会话在这个尺寸下长期漏发**。
     #   收口故意放在**入库入口**（而不是把 `is_blank` 的阈值全局抬高）：`is_blank` 在别的调用点
     #   也被用，全局收紧会顺带改掉别的行为；只在门口拦"学不到好参照"这一件事，代价最小。
-    _ink = [i for i, v in enumerate(list(fp or [])) if v]      # 有墨的列（逐列暗点密度，0＝无墨、255＝满墨）
+    _ink = [i for i, v in enumerate(list(fp or [])) if v] # 有墨的列（逐列暗点密度，0＝无墨、255＝满墨）
     if len(_ink) < 4:
         log.warning("拒绝记住**墨列太少**的会话头指纹：%s（尺寸 %s）—— 只有 %d 个有墨的列"
                     "（第 %s 维）⇒ 这条多半没抓到名字那条带子；记进去会让这个尺寸档此后一直判 "
@@ -483,7 +482,7 @@ def remember(chat_id: str, fp, note: str = "", path: str = None, size: str = "*"
         return data
     ent = data.get(str(chat_id)) or {}
     sizes = ent.get("sizes") or {}
-    if ent.get("fp") and "*" not in sizes:          # 兼容旧格式（无尺寸键）
+    if ent.get("fp") and "*" not in sizes: # 兼容旧格式（无尺寸键）
         sizes["*"] = {"fp": list(ent.get("fp") or []), "when": ent.get("when", "")}
     sizes[str(size or "*")] = {"fp": list(fp or []), "when": time.strftime("%Y-%m-%d %H:%M:%S"),
                                "note": note or "", "band": BAND_VERSION}
@@ -498,7 +497,7 @@ def reference(chat_id: str, path: str = None, size: str = None, strict: bool = F
     为什么校验必须 strict：实测指纹**不可跨窗口尺寸复用**（微信按尺寸重排表头，
     同会话在 1000×760 下相似度只有 0.65）⇒ 拿错尺寸的参照去比会**误拦正常发送**。
 
-    ⛔ 2026-09-21 加（第九轮 **V-R9-3**）：**带子算法版本对不上的参照一律当"没有"** ——
+    ⛔ **带子算法版本对不上的参照一律当"没有"** ——
     旧参照是用固定 y0 学的（可能学的是压在标题条上的退化帧），拿它比会得出 `mismatch` 去拦发送；
     当"没有参照"则只是 `no_ref`（不拦、下次成功发送自动重学）⇒ 升级不会把老用户堵在门口。
     """
@@ -597,7 +596,7 @@ def _crop_render(img, main, render):
 def _blocky(img) -> bool:
     """整幅是**两大块纯色拼起来的**（左右 或 上下 半幅各自近单色）⇒ True（＝不是画面）。
 
-    ⛔ 2026-09-21 加（第十轮 **V-R10-6** · P3）：V-R9-6 那条"至少有一行是有结构的"只看**行**方向，
+    ⛔ 那条"至少有一行是有结构的"只看**行**方向，
     于是「**左半深、右半浅**」的帧每一行都不平 ⇒ 蒙混过关（侦察线实测：`_frame_ok=True`、
     指纹 33/64、`is_blank=False`、`degenerate_reason=''` ⇒ **参照进了库** ⇒ 之后同尺寸档判 mismatch）。
     ⇒ 口径改成"**行、列两个方向都得有结构**"：真画面（文字/图标/头像）两个方向都有起伏，
@@ -627,14 +626,14 @@ def _blocky(img) -> bool:
 def _frame_ok(img) -> bool:
     """判"这幅图是不是真画面"：既不能近乎全黑，也不能是**纯色 / 色块**（黑屏/白屏/没画完的帧）。
 
-    实测依据（2026-09-13）：好帧 mean≈198~236、std≈75；PrintWindow 失败帧 mean 0~6.6、std≈0。
+    实测依据：好帧 mean≈198~236、std≈75；PrintWindow 失败帧 mean 0~6.6、std≈0。
     只看 mean 会把"半黑半白/没画完"的帧放进来，所以**同时要求 std > 12**。
 
-    ⛔ 2026-09-21 加（第九轮 **V-R9-6** · P3）：上面两条还是太松 —— 侦察线实测「**半黑半白**」帧
+    ⛔ 上面两条还是太松 —— 侦察线实测「**半黑半白**」帧
     （mean 140 / std 126.9）会被当**好帧**返回。⇒ 再补两条：①**极差** `hi-lo >= 40`（真画面必有明暗差）；
     ②**至少有一行是有结构的**（逐行 std 最大值 ≥ 3）—— 半黑半白那种"两大块纯色"帧**每一行都是平的**，
     而真画面里总有文字/图标/头像那几行是有结构的。两条都是"确认它像画面"，不是"确认它好看"。
-    ⛔ 第十轮 **V-R10-6**：第②条只看行 ⇒ 左右分块的帧漏过 ⇒ 改由 `_blocky()` 统一判"两个方向都得有结构"。
+    ⛔ 第②条只看行 ⇒ 左右分块的帧漏过 ⇒ 改由 `_blocky()` 统一判"两个方向都得有结构"。
     """
     try:
         from PIL import ImageStat
@@ -654,10 +653,10 @@ def _mono(img, span: float = 8.0) -> bool:
     与 `_frame_ok` 的分工：`_frame_ok` 是"可用帧"的**严格**判据（还要求不太暗 + std>12）；
     `_mono` 只判"有没有内容"，用在**兜底帧**的准入上（严格判据不过、但不许是纯色）。
 
-    为什么要补它（2026-09-15 跨机实测抓到的真缺陷）：微信**最小化**时 `PrintWindow` 会返回
+    为什么要补它：微信**最小化**时 `PrintWindow` 会返回
     **纯白帧**（实测 mean=255 / std=0，指纹 [255,255,255,…]），而 `grab_render` 原来把
     "质量可疑但有内容"的帧无条件留作兜底 ⇒ 上层拿到全白图、报告还写"会话头指纹：可抓"。
-    ⛔ 第十轮 **V-R10-6**：这里也要认"**两大块纯色拼起来**"那一类（否则它只是被 `_frame_ok` 拒收，
+    ⛔ 这里也要认"**两大块纯色拼起来**"那一类（否则它只是被 `_frame_ok` 拒收，
     却仍以"兜底帧"的身份回到整条链上 ⇒ 缝还在，见 `_blocky`）。
     """
     try:
@@ -672,16 +671,15 @@ def _mono(img, span: float = 8.0) -> bool:
 def is_blank(fp) -> bool:
     """指纹是不是"空白图"、或者**里面其实没有字**的帧。
 
-    实测（2026-09-15 跨机同一台机器两次跑的对照）：正常画面 = `[0, 14, 83, 185, 97, 153]`
+    实测：正常画面 = `[0, 14, 83, 185, 97, 153]`
     （极差 191）；微信最小化时 = 64 维全 `255`（极差 0）⇒ 判据一＝极差 < 8。
 
-    ⛔ 2026-09-17 **补判据二：一个暗列都没有 ＝ 那条带子里没有字**。起因＝用户报「机器人有时不回话」，
     真因是**自动学习把一帧"标题带里一个字都没有"的画面学了进去**（实测那版指纹
     `min=139 / max=255`，极差 116 ⇒ 老的"极差<8"判据照样放行），此后该尺寸档**永远判"不匹配"**
     ⇒ **打好的回复被整条丢掉**。实测好帧 `min=0`（标题文字必然产生全暗列）。
     ⇒ 判据二：**最暗列 > 110 就当作没字**（0 与 139 之间取的安全分界）。
 
-    ⚠️ 2026-09-21（第八轮审计 **V-R8-3**）：**查过、决定保留判据二**，别再删它。两条理由：
+    ⚠️ **查过、决定保留判据二**，别再删它。两条理由：
       · 事实（审计实测）：它在**当前**判分链里确实是冗余的 —— `min > 110` ⇒ 64 列全有墨 ⇒
         `degenerate_reason` 的判据③（有墨列 ≥ 总数−8）必然命中；20 个现场里它**唯一承重 0 次**。
       · 但仍保留：①它是 `is_blank()` 的**返回值**，而 `is_blank()` 在别处**单独使用**
@@ -697,15 +695,15 @@ def is_blank(fp) -> bool:
         return True
     if not v:
         return True
-    if (max(v) - min(v)) < 8:          # 全平：最小化 / 抓不到画面
+    if (max(v) - min(v)) < 8: # 全平：最小化 / 抓不到画面
         return True
-    return min(v) > 110                 # 有起伏，但整条带子里一个暗列都没有 ⇒ 没有字（见上文 V-R8-3）
+    return min(v) > 110 # 有起伏，但整条带子里一个暗列都没有 ⇒ 没有字
 
 
 def degenerate_reason(fp, bins: int = BINS) -> str:
     """指纹是不是**退化的**（不是"没字"，而是"根本没抓到名字那条带"）——返回人话原因，空串＝正常。
 
-    ⛔ 真机证据（2026-09-21，网友 v0919 的 `data/chat_headers.json`）：
+    ⛔ 真机证据：
     `49615732107@chatroom` 的 `1716x900` 参照 ＝ `[0]*63 + [255]`：**63 维是"没有墨"、只有最右边一维满墨**
     （本文件的指纹是"逐列暗点密度"，`0`＝这一列没有字、`255`＝这一列满墨；正常一帧＝中间十几列有墨）。
     同一会话其它四个尺寸（1562x1324 / 1160x900 / 1107x1324 / 1107x900）**逐字节完全相同且正常**
@@ -752,12 +750,12 @@ def _window_belongs_to(hwnd, allow) -> bool:
 def _occlusion_verdict(seen, main_pid: int) -> bool:
     """纯函数：`seen` = [(命中窗口的 pid, 这个窗口是不是"我们允许的")] ⇒ 渲染区算不算被遮挡。
 
-    口径（2026-09-18 改）：**不是我们允许的窗口**都算遮挡——既含别的进程，也含**同进程的兄弟窗**
+    口径：**不是我们允许的窗口**都算遮挡——既含别的进程，也含**同进程的兄弟窗**
     （搜索窗 / 表情面板 / 朋友圈编辑窗）。旧口径只看 pid，兄弟窗盖上来会被判"没遮挡"。
     """
     hits = [s for s in seen if int(s[0])]
     if not hits:
-        # ⛔ 2026-09-21 修（第九轮 **V-R9-4** · P2）：**一个点都没采到**（`WindowFromPoint` 全给 0，
+        # ⛔ **一个点都没采到**（`WindowFromPoint` 全给 0，
         #   或边界太窄）以前判"没遮挡" ⇒ 退回抓屏 ⇒ 可能读到别人家的像素。采样失败＝**未知**，
         #   未知一律按"遮挡"处理（fail-closed：宁可这次抓不到、返回 None，也不许把别人的画面
         #   当微信的画面往下传）。
@@ -766,7 +764,7 @@ def _occlusion_verdict(seen, main_pid: int) -> bool:
     return bad >= max(1, len(hits) // 4)
 
 
-# ⚡ 2026-09-18 晚（**真缺陷，有现场图**）：本次抓图"允许盖在渲染区上"的自家窗口集合
+# ⚡ 晚（**真缺陷，有现场图**）：本次抓图"允许盖在渲染区上"的自家窗口集合
 #   （＝主窗 + 渲染子窗；由 `grab_render` 每次填）。
 #   取证：`wechatauto_logs\fail\20260918-220433_search_entry\shot.png` —— 这张号称"主窗渲染区"的帧，
 #   画面其实是**微信自己的「搜索聊天记录」独立窗**（带标题栏，搜索框里还留着上次查询「E」）。
@@ -779,11 +777,11 @@ _OCCLUDE_ALLOW = set()
 def _region_occluded(render, main_pid: int, samples: int = 3) -> bool:
     """渲染区是不是被**别的窗口**盖着（盖着时不许退回抓屏——那读到的是别人家的像素）。
 
-    实测（2026-09-13）：用户的浏览器盖在微信上时，退回 `ImageGrab` 会拿到 Chrome 的画面，
+    实测：用户的浏览器盖在微信上时，退回 `ImageGrab` 会拿到 Chrome 的画面，
     下游 OCR 于是"读到"浏览器内容（会话列表 0~1 行、搜索框区域被污染），**全程不报错**。
-    2026-09-18 扩到**同进程兄弟窗**（见 `_OCCLUDE_ALLOW` 的现场取证）：没设允许集时退回旧口径（只比 pid）。
+    扩到**同进程兄弟窗**（见 `_OCCLUDE_ALLOW` 的现场取证）：没设允许集时退回旧口径（只比 pid）。
 
-    ⛔ 2026-09-21 修（第十轮 **V-R10-6** · P3）：**退化矩形**（宽或高 < 8px）过去 `return False`
+    ⛔ **退化矩形**（宽或高 < 8px）过去 `return False`
     ＝"没遮挡" ⇒ 调用方照旧退回抓屏（侦察线实测：真调了一次 `ImageGrab` 抓 4×4 的屏）。
     影响有界（帧宽 <64 ⇒ 指纹必空 ⇒ 只会 `no_capture`、不会发错人），但口径是错的：**矩形退化 ＝
     我们没量到渲染区 ＝ 未知**，未知一律按"遮挡"处理（同 `_occlusion_verdict` 的全落空口径）⇒
@@ -821,7 +819,7 @@ def _region_occluded(render, main_pid: int, samples: int = 3) -> bool:
 def grab_render(gui=None, render=None, tries: int = 12):
     """取"渲染区"图像：**优先 PrintWindow（遮挡也能拿）**，失败才退回抓屏（且**遮挡时不退**）。
 
-    2026-09-13 实测四条（"抓图不可靠"的真因，别再回退）：
+    四条（"抓图不可靠"的真因，别再回退）：
       ① **渲染子窗 `MMUIRenderSubWindowHW` 整幅就是渲染区**（实测 1139×890 ＝ render_rect 的尺寸）
          ⇒ 对它 PrintWindow 得到的图**坐标＝渲染区相对**，省掉"按窗口原点裁剪"的换算。
       ② **PrintWindow 对微信是"冷启动会连失几枪"**：实测同一窗口，连打 4~6 枪全是 None，之后
@@ -836,7 +834,7 @@ def grab_render(gui=None, render=None, tries: int = 12):
     best = None
     if main:
         cands = []
-        try:                                   # 渲染子窗优先：省换算、1:1 对齐渲染区
+        try: # 渲染子窗优先：省换算、1:1 对齐渲染区
             from . import input_backend as _ib
             ch = _ib.find_render_child(main)
             if ch:
@@ -854,17 +852,17 @@ def grab_render(gui=None, render=None, tries: int = 12):
                     continue
                 if not _frame_ok(img):
                     # 兜底帧也必须是"有内容"的：纯色帧（最小化时的全白 / 没画完的黑）一律不留，
-                    # 否则上层会把它当"抓到了"（2026-09-15 跨机实测的真缺陷，见 _mono 注释）。
+                    # 否则上层会把它当"抓到了"。
                     if best is None and not _mono(img):
-                        best = img            # 留一帧"质量可疑但有内容"的兜底
+                        best = img # 留一帧"质量可疑但有内容"的兜底
                     continue
                 if hwnd != main:
-                    return img                # 渲染子窗的图就是渲染区，零换算
+                    return img # 渲染子窗的图就是渲染区，零换算
                 sub = _crop_render(img, main, render) if render else img
                 if sub is not None and _frame_ok(sub):
                     return sub
             time.sleep(0.08)
-        # ⚡ 2026-09-18 晚：把"允许盖在渲染区上的自家窗口"告诉遮挡校验（否则同进程的搜索窗/表情面板
+        # ⚡ 把"允许盖在渲染区上的自家窗口"告诉遮挡校验（否则同进程的搜索窗/表情面板
         #    盖上来会被判"没遮挡" ⇒ 退回抓屏抓到的是**它们**的画面，见 `_OCCLUDE_ALLOW` 的现场取证）。
         _OCCLUDE_ALLOW.clear()
         _OCCLUDE_ALLOW.update(int(c) for c in cands)
@@ -881,7 +879,7 @@ def grab_render(gui=None, render=None, tries: int = 12):
             _p = wintypes.DWORD()
             ctypes.windll.user32.GetWindowThreadProcessId(main, ctypes.byref(_p))
             main_pid = int(_p.value)
-        # ⛔ 2026-09-21 修（第九轮 **V-R9-4**）：拿不到主窗 PID ⇒ **不许退** —— 旧代码写的是
+        # ⛔ 拿不到主窗 PID ⇒ **不许退** —— 旧代码写的是
         #   `if main_pid and _region_occluded(...)`，`main_hwnd=0`（或取不到 PID）时**整段遮挡校验
         #   被跳过**、直接抓屏（侦察线 A 打桩实测：真调了 `ImageGrab.grab` 并拿到哨兵图＝别人家像素）。
         if not main_pid:
@@ -892,7 +890,7 @@ def grab_render(gui=None, render=None, tries: int = 12):
                         "抓屏会读到别人家的像素，返回 None 更诚实")
             return None
         return ImageGrab.grab((int(render[0]), int(render[1]), int(render[2]), int(render[3])),
-                              all_screens=True)     # V-R9-6：副屏/负坐标下不带它只抓到主屏的空白
+                              all_screens=True) # 副屏/负坐标下不带它只抓到主屏的空白
     except Exception as e:
         log.warning("渲染区抓取失败：%s", e)
         return None
@@ -939,7 +937,7 @@ def check(chat_id: str, gui=None, path: str = None,
     为什么需要三态而不是布尔：实测**指纹不可跨窗口尺寸复用**（微信会按尺寸重排表头：
     同一会话在 1000×760 / 1400×1000 下相似度掉到 0.65）。所以设计成：
       · 当前尺寸**有**参照且不匹配 ⇒ `mismatch`（**拦投递档**，这是"用户在同一个布局里切了会话"的常见风险。
-        ⚠️ 2026-09-21 逐行核实（第八轮 **V-R8-2 后半**）：`mismatch` **不会**让消息发不出去 ——
+        ⚠️ `mismatch` **不会**让消息发不出去 ——
         调用方 `wechat.send_text`（`wechat.py:2996-3048`）在投递档被拒后还会走「投递切会话 +
         OCR/内容级复核」，再不成才落到**真实档**（`wechat.py:3073` 的 `gui.send_msg(who=名字)`
         按名字开会话再发）；真实档由 `input.allow_real_fallback` 统一把关（默认关＝按最高目标
@@ -960,9 +958,8 @@ def check(chat_id: str, gui=None, path: str = None,
         return {"status": "no_ref", "sim": 0.0, "size": key,
                 "note": "该尺寸（%s）没有参照；本次不拦，成功发送后会自动补一条" % key}
     if is_blank(ref):
-        # ⛔ 2026-09-17：**参照自身是学歪的**（那一帧的标题带里没有字）⇒ 按 `no_ref` 放行。
+        # ⛔ **参照自身是学歪的**（那一帧的标题带里没有字）⇒ 按 `no_ref` 放行。
         #   否则这个尺寸档会**永远**判 mismatch，把打好的每一条回复都丢掉
-        #   （用户报「机器人有时不回话」的真因；日志长相＝"投递切会话后发送失败：会话头不匹配…
         #   相似度 0.530 < 0.90"）。这条只是"不拦"，不是"放行错会话"——发送前另有
         #   切会话 / OCR 名字确认两道独立证据（见 `wechat.send_text`）。
         log.warning("该尺寸（%s）的会话头参照本身学歪了（没有字）⇒ 按 no_ref 放行，不再拦发：%s",
@@ -971,7 +968,7 @@ def check(chat_id: str, gui=None, path: str = None,
                 "note": "参照学歪了（那条带子里没有字）⇒ 本次不拦，成功发送后会重学"}
     _deg = degenerate_reason(ref)
     if _deg:
-        # ⛔ 2026-09-21：**退化参照**也按 no_ref 放行（同"学歪了"的道理）——
+        # ⛔ **退化参照**也按 no_ref 放行（同"学歪了"的道理）——
         #   网友真机库里那条 `[0]*63+[255]` 就属于这一类，拿它比会长期误判（好帧只有 0.8713）。
         log.warning("该尺寸（%s）的会话头参照是**退化**的（%s）⇒ 按 no_ref 放行、不再拦发：%s",
                     key, _deg, chat_id)

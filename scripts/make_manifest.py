@@ -23,11 +23,11 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import pack_online as po          # noqa: E402  复用它的 tracked()/excluded()/ROOT/OUT_DIR，不重造排除规则
-import release_notes as rn        # noqa: E402  发布说明写法（作者 2026-09-20 定的规矩，唯一实现）
+import pack_online as po # noqa: E402  复用它的 tracked()/excluded()/ROOT/OUT_DIR，不重造排除规则
+import release_notes as rn # noqa: E402 发布说明写法
 
 sys.path.insert(0, po.ROOT)
-from agent.version import VERSION as CODE_VERSION   # noqa: E402
+from agent.version import VERSION as CODE_VERSION # noqa: E402
 
 MANIFEST = "persona-morph-manifest.json"
 FILES = "persona-morph-files.json"
@@ -35,7 +35,7 @@ SCHEMA = "persona-morph/1"
 
 # 群相的 DLC 清单（本体＝Python 代码 + 一键启动.exe + launcher-src；**驱动微信那层锁在本体**，不许 DLC 化）
 #
-# ⛔ 2026-09-20 修 V9（选"先降级、但不骗人"这条路）：下面这些条目**当前未接线** ——
+# ⛔ V9（选"先降级、但不骗人"这条路）：下面这些条目**当前未接线** ——
 #    `sha256`/`url` 留空、并显式标 `"placeholder": true`，语义＝**未实现，客户端目前不读**：
 #    ① `agent/` 下**没有任何代码**读 `dlc[]` / `requiresBase`（更新链只消费 base / announce）；
 #    ② 所以硬规矩①（每个包都带 sha256）在这些条目上**暂不成立**；标 placeholder 是为了把"空哈希"
@@ -129,7 +129,7 @@ def main():
     tree_sha = h.hexdigest()
 
     notes = [s.strip() for s in a.notes.split(";") if s.strip()]
-    # ⛔ 说明写法闸门（作者 2026-09-20 定）：纯修 bug 只许一句「修复了一些 bug」，
+    # ⛔ 说明写法闸门：纯修 bug 只许一句「修复了一些 bug」，
     #    有「新增」字样才允许详细写。判据实现见 scripts/release_notes.py（与发版脚本共用同一份）。
     _notes_bad = rn.note_problems(notes)
     if _notes_bad:
@@ -138,7 +138,7 @@ def main():
             print("   · " + _b)
         print("   ⇒ 纯修 bug 就写：--notes \"%s\"" % rn.FIX_ONLY_LINE)
         return 4
-    # ⚠️ 内容指纹**直接读文件**（不走 import：BUILD 改写前后同尺寸，字节码缓存会给出旧值 —— 2026-09-18 实测
+    # ⚠️ 内容指纹**直接读文件**（不走 import：BUILD 改写前后同尺寸，字节码缓存会给出旧值 —— 
     #    造成"清单里的 build 与包里实际 BUILD 不一致"，用户侧会一直提示有新包）。发布链更该用 `--build`
     #    把**包内**那个值传进来（唯一事实来源＝即将发出去的那个包）。
     _BUILD = str(a.build or "")
@@ -148,7 +148,7 @@ def main():
             _BUILD = _rbf()
         except Exception:
             _BUILD = ""
-    # ⛔ V-R6-27①：清单有效期（UTC，`YYYY-MM-DDTHH:MM:SSZ`）。客户端过期即拒（freeze 防护）。
+    # ⛔ ①：清单有效期（UTC，`YYYY-MM-DDTHH:MM:SSZ`）。客户端过期即拒（freeze 防护）。
     _exp_days = int(getattr(a, "expires_days", 30) or 30)
     _expires_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + _exp_days * 86400))
     manifest = {
@@ -156,7 +156,7 @@ def main():
         "base": {"version": a.version, "sha256": tree_sha, "url": a.url,
                  "build": str(_BUILD or ""),
                  "size": total, "files": len(files),
-                 # ⛔ 2026-09-21 加（第六轮 **V-R6-27①**，TUF 的 freeze 面）：清单**带有效期**，
+                 # ⛔ 清单**带有效期**，
                  #   客户端（`update_check.state()`）过期就拒。默认 30 天，可用 `--expires-days` 调。
                  "expires": _expires_at},
         "dlc": DLC,

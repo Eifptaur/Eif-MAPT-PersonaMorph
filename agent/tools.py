@@ -582,7 +582,7 @@ def _exec_read_video(ctx, args):
         cfg = {}
     if (cfg.get("video_read") or {}).get("enabled") is False:
         return _err("视频读取功能已在控制台关闭（video_read.enabled=false）")
-    # 视频解析分档（丙-12）：当前响应档位低于门槛 ⇒ 不解析（AND 关系：档位够 + 开关开 = 才解析）。
+    # 视频解析分档：当前响应档位低于门槛 ⇒ 不解析（AND 关系：档位够 + 开关开 = 才解析）。
     # 这条覆盖**本地视频卡**（type=43，群友转发进来的视频，走 local_id，不下载），同样受视频分档约束。
     _vmin = int((cfg.get("store") or {}).get("video_min_tier", 4) or 4)
     _cur_tier = _effective_response_tier(ctx)
@@ -602,7 +602,7 @@ def _exec_read_video(ctx, args):
     secs = int(lim.get("max_seconds") or video_read.DEFAULT_MAX_SECONDS)
     res = video_read.read_message(ctx["wechat"], ctx["chat_id"], items[0]["local_id"],
                                   max_frames=n, max_seconds=secs)
-    # ⚠️ 临时目录（帧图 + 抽出来的音频）**必须在所有分支都删掉**。2026-09-15 审计发现：
+    # ⚠️ 临时目录（帧图 + 抽出来的音频）**必须在所有分支都删掉**。
     # 原来只在"读成功"那条路上 `cleanup()`，**读失败就直接 return 走人** ⇒ 每个读不出来的
     # 视频都在系统临时目录里留一个目录（实测积了 177 个 `pm-video-*`、4.46 MB）。用 finally 收口。
     try:
@@ -636,7 +636,7 @@ def _effective_response_tier(ctx):
     复用 `prompt.resolve_context_tier` 的同一套判定（喂空触发集 ⇒ 只取配置档位，不做逐条触发判定）。
     **只有「取不到」（tier 为 None / 抛异常）才 fail-open 到最高档 4**；`tier==0` 是**合法的静默档**
     （峰谷映射返回 0 = 该时段完全不回应），必须原样返回、绝不能抬成 4 —— 否则「夜间静默」会被绕过。
-    ⚠️ 不能用 `int(tier or 4)`：Python 里 0 是 falsy，会把静默档误抬成 4（丙-12 修）。
+    ⚠️ 不能用 `int(tier or 4)`：Python 里 0 是 falsy，会把静默档误抬成 4。
     """
     try:
         from .prompt import resolve_context_tier
@@ -650,7 +650,7 @@ def _effective_response_tier(ctx):
 
 
 def _exec_read_video_url(ctx, args):
-    """读**非 B 站**视频外链（丙-11 A3 工具化）：识别 → 下载 → 抽帧 → 视觉模型。
+    """读**非 B 站**视频外链：识别 → 下载 → 抽帧 → 视觉模型。
 
     与 `_exec_read_video`（读微信本地视频）的区别：
       · 入口吃的是**链接文本**，不是消息里的媒体；
@@ -669,7 +669,7 @@ def _exec_read_video_url(ctx, args):
     vcfg = cfg.get("video_url") or {}
     if vcfg.get("enabled") is False:
         return _err("外链视频解析已在控制台关闭（video_url.enabled=false）")
-    # 视频解析分档（丙-12）：当前响应档位低于门槛 ⇒ 不解析（AND 关系：档位够 + 开关开 = 才解析）
+    # 视频解析分档：当前响应档位低于门槛 ⇒ 不解析（AND 关系：档位够 + 开关开 = 才解析）
     _vmin = int((cfg.get("store") or {}).get("video_min_tier", 4) or 4)
     _cur_tier = _effective_response_tier(ctx)
     if _cur_tier < _vmin:
@@ -689,7 +689,7 @@ def _exec_read_video_url(ctx, args):
         # 原因由 read_external 如实产出（含「请走 read_bilibili」的指路文案），原样转达
         return _ok("%s（别假装看过；可以把这句如实告诉对方）" % why)
     # ⚠️ 临时目录（帧图 + 音频）在所有分支都必须删 —— 照 _exec_read_video 的 finally 收口纪律
-    #    （2026-09-15 审计：曾在失败分支漏 cleanup，积了 177 个 pm-video-* 目录）。
+    # 。
     from . import video_read
     try:
         data_urls = []
@@ -738,7 +738,7 @@ def _exec_send_message(ctx, args):
         ctx["session"]["sent"].extend([{"type": "text", "text": s["text"], "at": s.get("at")} for s in result["sent"]])
         note = "已发送。不要输出\"已发送\"类汇报，继续思考下一步或直接结束。"
         if result["failed"]:
-            # ⛔ 2026-09-16（用户转述报障：「发送消息可能会失败…**看思维链说是工具没有发送成功**」）：
+            # ⛔ （用户转述报障）：
             #   以前这里**只给条数**（"另有 N 条发送失败，请稍后再试"），把每条的真实原因**原样丢掉**
             #   ⇒ 模型不知道为什么失败（只能瞎重试）、用户看运行明细也只看到一句"发送失败"，
             #   报障连原因都带不出来。原因必须**一路透传**：进工具返回值（模型看得见）+ 进日志。
@@ -749,12 +749,12 @@ def _exec_send_message(ctx, args):
             _queued = 0
             for _idx, _f in enumerate(_why):
                 log.warning("发送失败（第 %d 条「%s」）：%s", _f["index"], _f["text"], _f["error"])
-                # ⛔ 2026-09-21（业界调研：判不了的消息进**失败可见的重试队列**，别直接丢）：
+                # ⛔ 判不了的消息进**失败可见的重试队列**，别直接丢）：
                 #   身份类拒发（"当前开着的很可能不是目标会话"这类）往往是**瞬态**（两个群同一分钟
                 #   都有消息）⇒ 排进重试队列，等现场清楚了自动再发一次，把"这次不回"变成"晚点回"。
                 try:
                     from . import send_retry as _sr
-                    # ⛔ 2026-09-21 修（第六轮 **V-R6-6/7**）：原来这里写的是
+                    # ⛔ 原来这里写的是
                     #   `str(m.get("text") or "")` —— 而 `messages` 的元素是**字符串**
                     #   （`util.normalize_message_list` 返回 str 列表）⇒ `AttributeError` 被下面的
                     #   `except` 吞成 DEBUG ⇒ **send_retry 在生产里一条都没进过**（整套"判不了就晚点补发"
@@ -848,7 +848,7 @@ def _exec_get_images(ctx, args):
                 if cached and _os.path.exists(cached):
                     path = cached
                 else:
-                    # ① **离线解原图**（2026-09-18 落地）：按 md5 找文件 + AES-128-CBC(key=IV) 解密 ⇒
+                    # ① **离线解原图**：按 md5 找文件 + AES-128-CBC(key=IV) 解密 ⇒
                     #    原图直出，不受"必须是最新一条""窗口可不可见"限制，也不碰前台。
                     path = ctx["wechat"].decode_emoji(ctx["chat_id"], img["local_id"])
                     if not path:
@@ -955,32 +955,32 @@ def _exec_forward_media(ctx, args):
         ok_flag, msg = ctx["wechat"].send_file_posted(ctx["chat_id"], path)
         if not ok_flag:
             return _ok("转发没成功：%s" % msg)
-        # ⛔ 2026-09-22 加（第十五轮 **V-R15-4** · 网友报「有时会重复回复」）：**转发成功也要记账**。
+        # ⛔ **转发成功也要记账**。
         #   兜底补发（`persona_morph.py` 那条"模型一条都没发、而最终文本写成要对群友说的话就替它发出去"）
         #   只认 `session["sent"]` 是否为空 —— 这条链过去**发完不记账** ⇒ 那一轮再以纯文本收尾
         #   就会被兜底**再发一遍**（同一件事对外出现两次）。这里的记账形状与 `send_message` 一致。
         try:
             ctx["session"]["sent"].append({"type": kind, "text": "[%s]" % ("视频" if kind == "video" else "文件"),
                                            "at": None})
-        except Exception as _e_sent:                                  # noqa: BLE001
+        except Exception as _e_sent: # noqa: BLE001
             log.warning("转发后记账失败（不影响本次转发）：%s", _e_sent)
         return _ok({"sent": True, "note": "已转发（这一步短暂用过前台）。不要输出\"已发送\"类汇报。"})
     except Exception as e:
         return _err(str(e))
 
 
-_VOICE_LAST = {}          # chat_key -> (ts, text)：同会话同内容的最小间隔（防刷屏）
+_VOICE_LAST = {} # chat_key -> (ts, text)：同会话同内容的最小间隔（防刷屏）
 
 
 def _exec_send_voice_reply(ctx, args):
-    """文字 → 本机合成 → 发到当前会话。**形态由用户在控制台选**（2026-09-17 用户原话：
+    """文字 → 本机合成 → 发到当前会话。**形态由用户在控制台选**（
     「最好就是给个选项，让用户选是发音频文件还是真发一个语音条，**默认就是发语音条**」）：
       · `voice_reply.form == "strip"`（默认）：走真语音条（虚拟声卡 + 微信自己录）；
         三闸不齐时——**默认如实回退成音频文件并说明**（`fallback_file=false` 就拒发）。
       · `voice_reply.form == "file"`：发音频文件（老形态，谁都能用）。
     """
     try:
-        from . import voice_models as _vm      # ③：合成通道统一走这层（默认系统声音，可选自带模型）
+        from . import voice_models as _vm # ③：合成通道统一走这层（默认系统声音，可选自带模型）
         vcfg = get_config().get("voice_reply") or {}
         if not vcfg.get("enabled"):
             return _ok("语音回复默认关闭（控制台「语音回复」里打开才允许发）。")
@@ -1090,13 +1090,13 @@ def _exec_send_random_image(ctx, args):
         return _err(str(e))
 
 
-_IMG_SEARCH_LAST = {}     # chat_key -> ts：按关键词找图的会话级冷却（防连发）
+_IMG_SEARCH_LAST = {} # chat_key -> ts：按关键词找图的会话级冷却（防连发）
 
 
 def _exec_gen_image(ctx, args):
     """群友要图 → 生图链条（`agent/image_gen.py`）：意图解析 → 红线 → 挑后端 → 生成 → 过滤链 → 发送。
 
-    ⚠️ 本机**还没配生图后端**（接本地 ComfyUI 还是在线 API 待用户拍板）⇒ 现在的默认行为是
+    ⚠️ 本机**还没配生图后端**⇒ 现在的默认行为是
     "明确说没后端"，**绝不许假装生成过**。红色请求（真人换脸/成人内容）连尝试都不尝试。
     """
     try:
@@ -1149,7 +1149,7 @@ def _exec_send_image_search(ctx, args):
             ctx["session"]["sent"].append({"type": "image", "text": "[图片]"})
         except Exception:
             pass
-        # 🔴 2026-09-18：回执**不许再撒谎**。老实现不管取到的是什么，都回「已找到并发出一张「鲸鱼」的图」
+        # 🔴 回执**不许再撒谎**。老实现不管取到的是什么，都回「已找到并发出一张「鲸鱼」的图」
         #   —— 而当时其实走了"旧图缓存兜底"，发出去的是一张毫不相干的图，用户当场发现「跟我要的
         #   完全不一样」。⇒ 兜底来的图必须明说"与关键词无关"，让模型别把它当命中关键词的图去说嘴。
         if "与关键词无关" in str(why):
@@ -1193,7 +1193,7 @@ def _exec_send_local_file(ctx, args):
         path, why = _fs.resolve(args.get("name_or_path"))
         if not path:
             if "不在允许目录内" in str(why):
-                return _err("安全闸：%s" % why)     # 安全类拒绝标成 error，防模型反复试
+                return _err("安全闸：%s" % why) # 安全类拒绝标成 error，防模型反复试
             return _ok("没能确定要发哪个文件：%s" % why)
         if not _fs.is_inside(path):
             return _err("安全闸：文件不在允许目录内，拒绝发送（%s）" % path)
@@ -1271,9 +1271,9 @@ def _exec_list_emojis(ctx, args):
 
 
 def _exec_send_emoji(ctx, args):
-    """发一张收藏表情。**面板优先**（2026-09-18 按作者口径改）。
+    """发一张收藏表情。**面板优先**。
 
-    为什么倒过来（作者现场：「那个用户的AI收藏了这些，但是完全发不出去，是不是把他们当图片来发了？
+    为什么倒过来（
     压根不是走发表情包那个路径的」）：老实现是"**优先本地收藏夹发图**"，而本地收藏夹里是早期
     `collect_emoji` 用截图存下来的气泡图 ⇒ 发出去是**图片**、还可能被内容闸拦；`send_image` 投递
     不成时还会**退回真鼠标**（动光标 + 选择文件对话框）⇒ 用户看到的"抢鼠标 + 卡很久"。
@@ -1281,7 +1281,7 @@ def _exec_send_emoji(ctx, args):
        面板走不通才退回本地收藏夹发图，且**后台档下不许退回真鼠标**（如实拒绝并说明）。"""
     import os as _os
     from agent import emoji_lib as _el
-    # ⚡ 2026-09-19：**发表情方式**可选项（作者要求"让他自己收藏表情还是发图片，把代价也写清楚"）：
+    # ⚡ **发表情方式**可选项：
     #   auto=先真表情面板、不通就发图片 · real=只用真表情（不走图片兜底）· image=只用图片（压根不开面板）
     _mode = "auto"
     try:
@@ -1317,7 +1317,7 @@ def _exec_send_emoji(ctx, args):
     _panel_why = ""
     try:
         _cid0 = str(ctx.get("chat_id") or "")
-        if _cid0 and _mode != "image":          # 「只用图片」⇒ 压根不开面板（它要激活、会闪前台）
+        if _cid0 and _mode != "image": # 「只用图片」⇒ 压根不开面板（它要激活、会闪前台）
             _gname0 = ""
             try:
                 _gname0 = ctx["wechat"].group_name(_cid0) or ""
@@ -1342,7 +1342,7 @@ def _exec_send_emoji(ctx, args):
         log.info("表情面板这条路异常（%s）⇒ 才考虑退回本地发图", _panel_why)
     # ── ② 退回：本地收藏夹发图（**后台档下不许动真鼠标**）──────────────────────────
     if target is not None and _mode == "real":
-        # 「只用真表情」：作者口径是"他自己选"——那就不改发图片，如实说明并让他改设置
+        # 「只用真表情」："他自己选"——那就不改发图片，如实说明并让他改设置
         return _err("发表情方式选了「只用真表情」，而表情面板这次没发出去（%s）。"
                     "想让它在这个群里也能发出去：把控制台「微信 → 发表情方式」改成"
                     "「自动」或「只用图片」（后者发出去是图片、但全程不打扰你）。" % (_panel_why or "面板没成"))
@@ -1362,13 +1362,13 @@ def _exec_send_emoji(ctx, args):
             return _err("本地收藏夹里这张是**图片**（截图收藏），发它要走真鼠标（会动你的光标、还要开"
                         "「选择文件」对话框）；「只走后台」开着 ⇒ 这条不发。建议先用 collect_emoji 把它"
                         "收进**微信表情库**，再从面板发（那条路全程后台）。")
-        # ⚡ 2026-09-19 凌晨（作者选"第②条" + 本机实测通过）：**优先走投递「粘贴图片」通道** ——
+        # ⚡ **优先走投递「粘贴图片」通道** ——
         #   剪贴板放图（CF_DIB）→ 输入框右键「粘贴」→ 回车，**不需要表情面板**，所以能和"摁住微信"共存。
         #   实测（演示群，离线解密出的表情图）：7.2s、**微信占前台 0.05s**、DB 回读 local_id=18 type=图片。
         _ok_img, _why_img = False, "未尝试"
         try:
             _ok_img, _why_img = ctx["wechat"].send_image_posted(str(ctx.get("chat_id") or ""), target["path"])
-        except Exception as _e_img:                                     # noqa: BLE001
+        except Exception as _e_img: # noqa: BLE001
             _why_img = "投递粘贴异常：%s" % str(_e_img)[:60]
         if not _ok_img:
             log.info("投递粘贴发图没成（%s）⇒ 退回原来的真鼠标发图", str(_why_img)[:70])
@@ -1380,8 +1380,7 @@ def _exec_send_emoji(ctx, args):
                              "已发送本地收藏夹里的图片（它是图片不是微信表情）。")})
     # 本地收藏夹无匹配 → 微信真实表情面板兜底（面板格序号仅对纯本地收藏序列有效）
     try:
-        # 🔴 2026-09-18：两条都要带 chat_id —— 开面板前先确认"当前会话＝目标会话"（投递优先），
-        #   点完必须回读确认（现场事故：面板开了、表情没发出去、还报成功、日志一字不留）
+        # 🔴 两条都要带 chat_id —— 开面板前先确认"当前会话＝目标会话"（投递优先），
         _cid = str(ctx.get("chat_id") or "")
         _gname = ""
         try:
@@ -1597,7 +1596,7 @@ def _exec_web_search(ctx, args):
 
 
 def _exec_search_meme(ctx, args):
-    """查近期网络热梗（丙-11 D）：返回**带来源的检索结果**，由模型自己总结释义。
+    """查近期网络热梗：返回**带来源的检索结果**，由模型自己总结释义。
 
     三条口径（与项目既有网络模块一致）：
       · 只读公开搜索、不带任何凭据；出网只在模型真调这个工具时发生（不做后台定时抓）；
@@ -1635,7 +1634,7 @@ def _exec_web_fetch(ctx, args):
 def _exec_read_bilibili(ctx, args):
     """解析 B 站视频（BV/av/b23 短链）⇒ 标题/UP/时长/简介/分P/字幕。
 
-    2026-09-15 用户重新点名「解析B站视频」这件丢掉的活。三条口径：只读公开接口、不带凭据；
+    用户重新点名「解析B站视频」这件丢掉的活。三条口径：只读公开接口、不带凭据；
     拿不到就如实说原因（视频没了 / 没字幕 / 接口不通），**绝不编造标题或视频内容**。
     """
     try:
@@ -1647,7 +1646,7 @@ def _exec_read_bilibili(ctx, args):
             _bcfg = {}
         if _bcfg.get("enabled") is False:
             return _err("看懂 B 站链接这个功能已在控制台关闭（bilibili.enabled）")
-        # 视频解析分档（丙-12）：当前响应档位低于门槛 ⇒ 不解析（AND 关系：档位够 + 开关开 = 才解析）
+        # 视频解析分档：当前响应档位低于门槛 ⇒ 不解析（AND 关系：档位够 + 开关开 = 才解析）
         _vmin = int(((_gc2() or {}).get("store") or {}).get("video_min_tier", 4) or 4)
         _cur_tier = _effective_response_tier(ctx)
         if _cur_tier < _vmin:
@@ -1701,7 +1700,7 @@ def _exec_gen_video(ctx, args):
                 if j.get("state") == "done" and files and sender is not None:
                     for p in files:
                         try:
-                            sender.send_file_posted(chat_key, p)      # 投递档：不动鼠标、不打扰你（可能短暂置前约 1~3 秒后自动还回）
+                            sender.send_file_posted(chat_key, p) # 投递档：不动鼠标、不打扰你（可能短暂置前约 1~3 秒后自动还回）
                             if isinstance(session, dict):
                                 session.setdefault("sent", []).append({"type": "video", "text": "[生成视频]"})
                         except Exception as e:
@@ -1741,7 +1740,6 @@ def to_openai_tools(defs: list) -> list:
 
 
 # ── 按「能力是否存在」裁剪工具表（省 token，且不让模型白调一轮）──────────────
-# 用户 2026-09-15：「**省 token 不仅是你的事，也是群相的事。所有要用模型的地方都要省 token，
 #   尽量给用户省钱**（当然还是在不影响效果的前提下）」。
 # 实测体积（`_scratch/tools_size.py`）：37 个工具 = 11626 字符 ≈ **7324 token**，
 #   比整份系统提示（6256 字符 / 3941 token）还大 —— 是每次请求最大的单块。
@@ -1838,7 +1836,7 @@ def execute_tool(defs: list, ctx, name: str, args_json: str):
         _ts.note(name, ok=not (isinstance(res, dict) and res.get("is_error")))
     except Exception:
         pass
-    # ⛔ 2026-09-22 加：失败结果附一个**机器可读的原因码**（唯一分发点 ⇒ 一处即全覆盖）。
+    # ⛔ 失败结果附一个**机器可读的原因码**（唯一分发点 ⇒ 一处即全覆盖）。
     #   取自官方 `winapp ui` 的做法（target_moved / foreground_not_target / no_interactive_desktop…）。
     #   ⚠️ 只 `setdefault` 一个 `code` 字段：**content 原文一个字都不改**（模型看到的还是原文，
     #      码只给日志/判据/统计用），也**不许拿码当"能不能发"的判据**（判据仍是现场证据）。
@@ -1847,7 +1845,7 @@ def execute_tool(defs: list, ctx, name: str, args_json: str):
             from . import reason_codes as _rc
             _code = _rc.classify(res.get("content") or "")
             res.setdefault("code", _code)
-            # ⛔ 2026-09-22 加（作者口径「**我更想让用户不用测这测那的就能搞好**」）：
+            # ⛔ 
             #   失败**顺手记一笔**（只记 原因码 + 调用点 + 时间，**不记参数、不记消息内容**），
             #   用户点「反馈」时这份记录自动带上 ⇒ 他不用复现、不用跑检验器、不用翻日志。
             #   这里同样是**唯一分发点**（内置与自定义工具全覆盖）。
@@ -1855,7 +1853,7 @@ def execute_tool(defs: list, ctx, name: str, args_json: str):
             _cp.note_failure(_code, name)
     except Exception:
         pass
-    # ⚠️ 「借来的窗口用完就还」的**操作边界**（2026-09-15 跨机 P16①）：这一层是**所有工具调用的
+    # ⚠️ 「借来的窗口用完就还」的**操作边界**：这一层是**所有工具调用的
     #    唯一分发点**，在这里还窗口 ⇒ 机器人持续活动时也不会把用户的窗口长期钉在 1160×900
     #    （空闲看门线程仍作兜底）。失败一律吞掉：还窗口不该影响任何工具的结果。
     try:

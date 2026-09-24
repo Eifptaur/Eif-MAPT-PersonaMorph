@@ -20,9 +20,9 @@ try:
 except Exception:
     pass
 
-from agent import holidays                         # noqa: E402
-from agent import timers                           # noqa: E402
-from agent import tools as T                       # noqa: E402
+from agent import holidays # noqa: E402
+from agent import timers # noqa: E402
+from agent import tools as T # noqa: E402
 
 PASS, FAIL = [], []
 
@@ -41,7 +41,7 @@ def main():
     timers.path = lambda: os.path.join(tmp, "timers.json")
     holidays.state_path = lambda: os.path.join(tmp, "holiday_state.json")
     holidays.custom_path = lambda: os.path.join(tmp, "holidays.json")
-    now = 1_800_000_000.0            # 固定"现在"，避免依赖真实时间
+    now = 1_800_000_000.0 # 固定"现在"，避免依赖真实时间
 
     print("== A. 计时提醒：计量 / 夹断 / 上限 ==")
     r = timers.add("group:g1", "喝水", seconds=300, by="我", now=now)
@@ -80,7 +80,7 @@ def main():
     _good_path = timers.path
     _rodir = tempfile.mkdtemp(prefix="timer-ro-")
     _blocker = os.path.join(_rodir, "blocker")
-    open(_blocker, "w", encoding="utf-8").write("x")          # 父级是普通文件 ⇒ 必然写不进去
+    open(_blocker, "w", encoding="utf-8").write("x") # 父级是普通文件 ⇒ 必然写不进去
     timers.path = lambda: os.path.join(_blocker, "timers.json")
     ro = timers.add("group:ro", "写不进去的一条", seconds=60, now=now)
     ok("阴性对照：写盘失败 ⇒ ok:False 且给出原因（不再说「定好了」）",
@@ -98,7 +98,7 @@ def main():
     timers.add("group:fin", "状态写不下去", seconds=30, now=now)
     _real_save = timers._save
     _logs = []
-    timers._save = lambda st: False                      # 打桩：落盘一律失败
+    timers._save = lambda st: False # 打桩：落盘一律失败
     try:
         st_fin = timers.run_once(lambda ck, tx: True, now=now + 31,
                                  log=lambda lvl, fmt, *a: _logs.append((lvl, fmt % a)))
@@ -139,7 +139,7 @@ def main():
     _real_now_ms = timers._now_ms
     _now_base = now
 
-    def _fake_now_ms(now=None):                       # 钉住"现在"＝now+50（fire_at 已过、退避还没到）
+    def _fake_now_ms(now=None): # 钉住"现在"＝now+50（fire_at 已过、退避还没到）
         return int(((now if now is not None else _now_base) + 50) * 1000)
 
     timers._now_ms = _fake_now_ms
@@ -227,7 +227,7 @@ def main():
     wui = open(os.path.join(root, "agent", "webui.py"), encoding="utf-8").read()
     cfg_py = open(os.path.join(root, "agent", "config.py"), encoding="utf-8").read()
     cex = open(os.path.join(root, "config.example.json"), encoding="utf-8").read()
-    # ⚠️ 2026-09-16 改口径：句柄必须**每跳现取**（`lambda: wechat_box[0]`）——
+    # ⚠️ 句柄必须**每跳现取**（`lambda: wechat_box[0]`）——
     #    启动那一刻微信没开时传进去的是 None，传死了就永远不会做节日问候。
     #    断言跟着改成认这个"活句柄"形态（旧形态=把 None 传死，是缺陷不是特性）。
     ok("巡检线程在（计时 + 节日一起跑，且句柄现取）",

@@ -64,7 +64,7 @@ def route(api: dict | None = None, kind: str = "text") -> str:
         r = {k: str(raw.get(k) or r.get(k) or "").strip() for k, _n, _d in KINDS}
     kind = str(kind or "text")
     if kind == "video" and not r.get("video"):
-        kind = "image"                     # 视频没单独配 ⇒ 跟带图共用（默认语义，写进文档）
+        kind = "image" # 视频没单独配 ⇒ 跟带图共用（默认语义，写进文档）
     return r.get(kind) or ""
 
 

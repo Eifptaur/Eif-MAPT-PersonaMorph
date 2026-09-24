@@ -24,7 +24,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 # 离屏渲染。
-# ⚠️ 实测坑（2026-09-22）：sandbox 里 `QT_QPA_PLATFORM=windows` 会让 Python
+# ⚠️ 实测坑：sandbox 里 `QT_QPA_PLATFORM=windows` 会让 Python
 #    进程在启动 Qt 前就被回收（rc=127、stdout/stderr 双空 —— 连报错都写不出来）。
 #    改 `offscreen` 平台后一切正常，而且更合"不许闪窗"的初衷：
 #    根本不建原生窗口，`grab()` 直接对控件树做离屏栅格化。
@@ -38,25 +38,25 @@ os.environ.setdefault(
     str(Path(os.environ.get("TEMP", os.environ.get("TMP", "/tmp"))) / "qt-shoot-config.json"),
 )
 
-from PySide6.QtCore import QSize, Qt  # noqa: E402
-from PySide6.QtGui import QGuiApplication  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtCore import QSize, Qt # noqa: E402
+from PySide6.QtGui import QGuiApplication # noqa: E402
+from PySide6.QtWidgets import QApplication # noqa: E402
 
 OUT = HERE / "shots"
 
 
 _FONT_CANDIDATES = (
-    "C:/Windows/Fonts/msyh.ttc",      # Microsoft YaHei / YaHei UI（Regular）
-    "C:/Windows/Fonts/msyhbd.ttc",    # 同上 Bold
-    "C:/Windows/Fonts/simhei.ttf",    # SimHei（兜底）
-    "C:/Windows/Fonts/simsun.ttc",    # SimSun（再兜底）
+    "C:/Windows/Fonts/msyh.ttc", # Microsoft YaHei / YaHei UI（Regular）
+    "C:/Windows/Fonts/msyhbd.ttc", # 同上 Bold
+    "C:/Windows/Fonts/simhei.ttf", # SimHei（兜底）
+    "C:/Windows/Fonts/simsun.ttc", # SimSun（再兜底）
 )
 
 
 def register_fonts() -> int:
     """把中文字体**显式注册**进 Qt。
 
-    ⚠️ 为什么要这一步（2026-09-22 实测）：
+    ⚠️ 为什么要这一步：
        本 sandbox 里 `offscreen` 平台下 `QFontDatabase.families()` 返回 **0 个字体族** ——
        Qt 没有扫到系统字体目录。后果是**每个汉字都渲染成豆腐块（□）**，
        看起来像"排版全错"，其实是**环境问题不是代码问题**。
@@ -66,7 +66,7 @@ def register_fonts() -> int:
          否则拍出来的图没法用于判断，也没法给用户看。
     返回成功注册的字体数。
     """
-    from PySide6.QtGui import QFontDatabase  # noqa: PLC0415
+    from PySide6.QtGui import QFontDatabase # noqa: PLC0415
 
     n = 0
     for p in _FONT_CANDIDATES:
@@ -82,7 +82,7 @@ def register_fonts() -> int:
 
 def _mk(key: str):
     """建一次窗口。**顺序有讲究**：QApplication 必须最先建，字体探测才敢调。"""
-    from stylekit_qt import THEMES, apply_font_to_app, ensure_fonts, resolve_family  # noqa: PLC0415
+    from stylekit_qt import THEMES, apply_font_to_app, ensure_fonts, resolve_family # noqa: PLC0415
 
     # ① 先有 app —— 见 `available_ui_families()` 里记的那个硬崩坑
     app = QApplication.instance() or QApplication(sys.argv)
@@ -91,7 +91,6 @@ def _mk(key: str):
     nf = register_fonts()
     print(f"[字体] 注册 {nf} 个字体文件；可见字体族 {len(__import__('PySide6.QtGui', fromlist=['QFontDatabase']).QFontDatabase.families())} 个")
 
-    # ②½ 项目双字体（朝華標題A/屏显臻宋）+ emoji 兜底 —— 2026-09-23 用户拍板的字体对
     dfam, bfam, efam = ensure_fonts()
     print(f"[字体] 项目字体 display={dfam!r} body={bfam!r} emoji={efam!r}")
 
@@ -105,7 +104,7 @@ def _mk(key: str):
     apply_font_to_app(app, t)
 
     # ④ 最后建窗口
-    from shell import Shell  # noqa: PLC0415
+    from shell import Shell # noqa: PLC0415
     w = Shell(t)
     # 关键：不进屏幕。
     # ⚠️ 用 offscreen 平台时本来就无原生窗口；这里再钉一层 WA_DontShowOnScreen，
@@ -122,7 +121,7 @@ def _save(w, name: str) -> str:
     p = OUT / f"{name}.png"
     pm = w.grab()
     pm.save(str(p), "PNG")
-    return str(p)  # 大小由调用方读
+    return str(p) # 大小由调用方读
 
 
 def shot_overview(key: str) -> str:
@@ -136,9 +135,9 @@ def shot_overview(key: str) -> str:
 def shot_nav(key: str) -> str:
     """镜头 2：导航 + 搜索（可用性主战场）。"""
     w, t = _mk(key)
-    w.find.setText("发消息")          # 触发三路匹配，让候选状态可见
+    w.find.setText("发消息") # 触发三路匹配，让候选状态可见
     w._on_find("发消息")
-    from PySide6.QtWidgets import QApplication as A  # noqa: PLC0415
+    from PySide6.QtWidgets import QApplication as A # noqa: PLC0415
     A.processEvents()
     p = _save(w, f"{key}-2-导航搜索")
     w.close()
@@ -148,8 +147,8 @@ def shot_nav(key: str) -> str:
 def shot_confirm(key: str) -> str:
     """镜头 3：二次确认弹窗（原生真模态 —— web 侧做不到的那块）。"""
     w, t = _mk(key)
-    from confirm import ConfirmDialog  # noqa: PLC0415
-    from PySide6.QtWidgets import QApplication as A  # noqa: PLC0415
+    from confirm import ConfirmDialog # noqa: PLC0415
+    from PySide6.QtWidgets import QApplication as A # noqa: PLC0415
 
     d = ConfirmDialog(
         t, w,
@@ -176,8 +175,8 @@ def shot_confirm(key: str) -> str:
 def shot_heal(key: str) -> str:
     """镜头 4：把"服务死掉"现场设出来 —— 直击用户报的那个症状。"""
     w, t = _mk(key)
-    from heal import Health, Probe  # noqa: PLC0415
-    from PySide6.QtWidgets import QApplication as A  # noqa: PLC0415
+    from heal import Health, Probe # noqa: PLC0415
+    from PySide6.QtWidgets import QApplication as A # noqa: PLC0415
 
     w._show_probe(Probe(
         Health.DEAD,
@@ -191,14 +190,14 @@ def shot_heal(key: str) -> str:
 
 
 def shot_botpanel(key: str) -> str:
-    """镜头 5：机器人主面板真配置（丙-4）—— 新四行 + 保存回执 + 鲸语立即生效。
+    """镜头 5：机器人主面板真配置—— 新四行 + 保存回执 + 鲸语立即生效。
 
     填三行 → 点保存（真写盘，隔离配置路径）→ 截「已保存」回执。
     鲸语开关保存在 `_save_bot_panel` 里走顶栏同一条 `_pick` 路径 ⇒
     截图里整窗文案已换鲸语 —— 一张图同时证明「保存→写盘→立即应用」。
     """
     w, _t = _mk(key)
-    from PySide6.QtWidgets import QApplication as A  # noqa: PLC0415
+    from PySide6.QtWidgets import QApplication as A # noqa: PLC0415
 
     w.nick.setText("群小鲸")
     w.self_nick.setText("朕")
@@ -221,8 +220,8 @@ SHOTS = [
 
 
 def main() -> int:
-    from shell import set_per_monitor_dpi  # noqa: PLC0415
-    from stylekit_qt import THEMES  # noqa: PLC0415
+    from shell import set_per_monitor_dpi # noqa: PLC0415
+    from stylekit_qt import THEMES # noqa: PLC0415
 
     set_per_monitor_dpi()
     keys = list(THEMES.values()) and list(THEMES)
@@ -237,7 +236,7 @@ def main() -> int:
                 # 每次都要重新 mk 一个 app 上下文；这里不复用是为了隔离（原型够用）
                 sz = os.path.getsize(p) if os.path.exists(p) else 0
                 made.append((f"{k} · {label}", f"{p}  ({sz // 1024} KB)"))
-            except Exception as e:  # noqa: BLE001
+            except Exception as e: # noqa: BLE001
                 made.append((f"{k} · {label}", f"失败 {type(e).__name__}: {e}"))
 
     for n, info in made:

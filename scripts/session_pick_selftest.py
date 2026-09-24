@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """后台"选到正确的会话"判据：**平滑下滚找行 + 点击后用绿底高亮自洽复核**（不需要微信、不出网）。
 
-用户 2026-09-13 反馈：「你滚得太不顺滑了，**一下一下地滚，导致没有看到**」+「**先保证后台它能选到正确的会话**，
++「**先保证后台它能选到正确的会话**，
 一切的问题都要解决，原则还是那个**全程后台、低风险**」⇒ 这条判据守住三件事：
   ① 找行会**下滚重试**（截图只覆盖露出来的几行，目标在下面时以前永远找不到）
   ② 点击后的复核是**自洽证据**：我们按名字点的那一行，现在是不是绿底高亮行（不依赖读出会话标题）
@@ -15,8 +15,8 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # 同目录的 `_srcmatch`
-import _srcmatch as _sm                                          # noqa: E402  空白容忍的源码断言（V-R4-13 第三条）
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # 同目录的 `_srcmatch`
+import _srcmatch as _sm # noqa: E402 空白容忍的源码断言
 
 PASS = 0
 FAIL = 0
@@ -31,9 +31,9 @@ def ok(name, cond, detail=""):
     print("  {} {}{}".format("OK  " if cond else "FAIL", name, "  [{}]".format(detail) if detail else ""))
 
 
-from agent import chat_ocr as CO  # noqa: E402
-from agent import input_backend as IB  # noqa: E402
-from agent import wechat as W  # noqa: E402
+from agent import chat_ocr as CO # noqa: E402
+from agent import input_backend as IB # noqa: E402
+from agent import wechat as W # noqa: E402
 
 print("── A2. 名字切分：单字母会话名（E）以前永远配不上 ──")
 ok("OCR 行「E:提交信息还．“」切成名字 E", CO.split_name("E:提交信息还．“") == "E", repr(CO.split_name("E:提交信息还．“")))
@@ -56,7 +56,7 @@ ok("原有清洗不被破坏：时间/日期/省略号", CO.clean("文件传，1
    and CO.clean("微信团队09/06") == "微信团队"
    and CO.clean("日本爆发梅毒．．．") == "日本爆发梅毒")
 ok("星期词不在名字里时不受影响", CO.clean("星期六下午茶") == "下午茶", repr(CO.clean("星期六下午茶")))
-# ⛔ 2026-09-21（作者追问「那这样不会又导致该发的发不出去吗」）：**整条就是时间词的名字**不许被洗没
+# ⛔ **整条就是时间词的名字**不许被洗没
 ok("整条就是时间词 ⇒ 退回原文（真有会话叫「星期六」也不许洗空）",
    CO.clean("星期六") == "星期六" and CO.clean("昨天") == "昨天", repr(CO.clean("星期六")))
 ok("这类名字照样能配上（matches 不被 strip 破坏）", CO.matches("星期六", "星期六") is True)
@@ -125,7 +125,7 @@ try:
 
     img_plain = _Im.new("RGB", (400, 300), (250, 250, 250))
     img_green = _Im.new("RGB", (400, 300), (250, 250, 250))
-    for yy in range(150, 172):                      # 画一条 22px 高的"绿底行"
+    for yy in range(150, 172): # 画一条 22px 高的"绿底行"
         for xx in range(20, 380):
             img_green.putpixel((xx, yy), CO.GREEN)
     _real_rows = CO.session_rows
@@ -145,7 +145,7 @@ print("── C. 滚轮是投递的（不碰真实鼠标）──")
 posted = []
 _real_post, _real_toclient = IB._post, IB.to_client
 try:
-    IB.to_client = lambda hwnd, pt: (int(pt[0]), int(pt[1]))     # 脱机：不查真实窗口
+    IB.to_client = lambda hwnd, pt: (int(pt[0]), int(pt[1])) # 脱机：不查真实窗口
     IB._post = lambda hwnd, msg, wp, lp: posted.append((msg, wp, lp))
     be = IB.MessageBackend(activate=False)
     ok("MessageBackend 有 wheel 方法", hasattr(be, "wheel"))
@@ -189,7 +189,7 @@ class _FakeSelf:
 
     def __init__(self, hits):
         self.clicks = []
-        self.hits = int(hits)          # 第几枪之后 chat_is_open 才算 True
+        self.hits = int(hits) # 第几枪之后 chat_is_open 才算 True
 
     def _click_posted(self, backend, hwnd, pt, tag=""):
         self.clicks.append((int(hwnd), tuple(pt)))
@@ -216,10 +216,10 @@ try:
     from agent import chat_header as _CH
     from agent import click_pref as _CP
     # ⛔ 判据必须**无副作用**：`_click_visible_session` 成功后会写"点击目标偏好"（`data/click_targets.json`）
-    #    ——不隔离的话，第一条子用例记下的偏好会改掉后几条的目标顺序（2026-09-21 实测：断言拿到 [888,777]）。
+    # ——不隔离的话，第一条子用例记下的偏好会改掉后几条的目标顺序。
     #    ⇒ 整段指到临时文件，跑完删掉并还原路径。
     _cp_path_keep = _CP.PATH
-    # ⛔ 2026-09-21 修（第六轮 **V-R6-22**）：原来写的是**仓库内固定路径** `ROOT/_scratch/...`
+    # ⛔ 原来写的是**仓库内固定路径** `ROOT/_scratch/...`
     #   ⇒ 并发跑两套判据互踩、而且会在真仓库留痕（`_scratch` 是 gitignore 的，`git status` 看不出来）。
     #   `click_pref_selftest` 早就正确地用了 `tempfile`，这里跟它对齐。
     import tempfile as _tf
@@ -235,13 +235,13 @@ try:
 
     _cp_reset()
     # 下面这几条考的是"换窗顺序"本身 ⇒ 把写偏好**置空**，免得前一条子用例记下的偏好改掉后一条的顺序
-    # （2026-09-21 实测：不置空时后几条拿到 [888,777]，四条假红）。偏好本身的读写另在下面专测。
+    # 。偏好本身的读写另在下面专测。
     _rook, _rfail = _CP.record_ok, _CP.record_fail
     _CP.record_ok = lambda *a, **k: None
     _CP.record_fail = lambda *a, **k: None
     _slp, _sel, _cap, _fri = _t.sleep, IB.select_backend, _CH.capture_image, CO.find_row_info
     try:
-        _t.sleep = lambda s: None                     # 脱机：不等那 1.35s
+        _t.sleep = lambda s: None # 脱机：不等那 1.35s
         IB.select_backend = lambda cfg=None, gui=None: IB.MessageBackend(activate=False)
         _CH.capture_image = lambda gui=None, render=None: "FAKE_IMG"
         CO.find_row_info = lambda img, name, **kw: {"pos": (10, 20), "y_abs": 100, "name": name}
@@ -255,7 +255,7 @@ try:
                                                           gui=None, main=777)
         ok("第一枪就生效 ⇒ 只点一枪（不补、不双击）",
            _o2 is True and [c[0] for c in _f2.clicks] == [777], str([c[0] for c in _f2.clicks]))
-        _f3 = _FakeSelf(hits=99)                      # 三枪都没生效 ⇒ 必须失败（fail-closed）
+        _f3 = _FakeSelf(hits=99) # 三枪都没生效 ⇒ 必须失败（fail-closed）
         _o3, _w3 = W.WeChatAdapter._click_visible_session(_f3, "filehelper", "文件传输助手",
                                                           gui=None, main=777)
         ok("三枪都没拿到正面证据 ⇒ 判失败（不硬说成功）",
@@ -280,7 +280,7 @@ try:
         finally:
             CO.highlight_wide = _hw2
 
-        # ⛔ 2026-09-21：**点已经开着的那一行会把会话点关**（同一行连投 4 枪：绿底带有→无→有→无）
+        # ⛔ **点已经开着的那一行会把会话点关**（同一行连投 4 枪：绿底带有→无→有→无）
         #    ⇒ 目标行已是高亮行时**一枪都不许点**（纯像素判据 `highlight_wide`，只看横跨整行的绿底）。
         _hw_keep = CO.highlight_wide
         try:
@@ -299,18 +299,18 @@ try:
         finally:
             CO.highlight_wide = _hw_keep
 
-        # ⛔ 2026-09-21 真机实测：`detect_pane_left` 在聊天区左列被气泡占满时会扫到气泡右边
+        # ⛔ `detect_pane_left` 在聊天区左列被气泡占满时会扫到气泡右边
         #    （报 660、真值 384）⇒ 会话列裁剪框偏进聊天区 ⇒ "列表里没看到×××那一行"。
         #    ⇒ 退到**结构锚**（竖栏右沿 + 固定列表宽）再找一次。
         from agent import chat_header as CHD
         from PIL import Image as _IM
-        _syn = _IM.new("L", (800, 400), 250)                 # 聊天区：白
+        _syn = _IM.new("L", (800, 400), 250) # 聊天区：白
         for _x in range(0, 60):
             for _y in range(400):
-                _syn.putpixel((_x, _y), 70)                  # 竖栏：深
+                _syn.putpixel((_x, _y), 70) # 竖栏：深
         for _x in range(60, 360):
             for _y in range(400):
-                _syn.putpixel((_x, _y), 237)                 # 会话列表：浅灰
+                _syn.putpixel((_x, _y), 237) # 会话列表：浅灰
         ok("结构锚＝栏右沿 60 + 固定列表宽 300 ⇒ 360", CHD.detect_pane_left_alt(_syn) == 360,
            str(CHD.detect_pane_left_alt(_syn)))
         ok("全是浅色（认不出竖栏）⇒ 返回 0（fail-safe，调用方忽略）",
@@ -332,7 +332,7 @@ try:
             CHD.detect_pane_left_alt, CO.find_row_info = _alt_keep, _fri2
 
         # ── 学习型偏好（`agent/click_pref`）：只改"先试哪个"，不改授权 ──
-        _CP.record_ok, _CP.record_fail = _rook, _rfail          # 放真实现回来跑这几条
+        _CP.record_ok, _CP.record_fail = _rook, _rfail # 放真实现回来跑这几条
         _cp_reset()
         _CP.record_ok("k1", "render")
         ok("偏好：记过 render ⇒ 排序把 render 提到最前",
@@ -356,7 +356,7 @@ try:
     finally:
         _t.sleep, IB.select_backend, _CH.capture_image, CO.find_row_info = _slp, _sel, _cap, _fri
         _CP.record_ok, _CP.record_fail = _rook, _rfail
-        _CP.PATH = _cp_path_keep                     # 偏好文件路径还原 + 临时件删掉（判据不留痕）
+        _CP.PATH = _cp_path_keep # 偏好文件路径还原 + 临时件删掉（判据不留痕）
         try:
             if os.path.exists(_cp_tmp):
                 os.remove(_cp_tmp)
@@ -374,16 +374,16 @@ try:
     CO.green_row_ratio = lambda im, y, half=6: 0.69 if y == 200 else 0.01
     hl_rel, why_rel = CO.highlight_relative("img")
     ok("相对判据能挑出最高的那一行", bool(hl_rel) and hl_rel["y_abs"] == 200 and hl_rel["name"] == "E", why_rel)
-    CO.green_row_ratio = lambda im, y, half=6: 0.10          # 两行都差不多 ⇒ 不够突出，必须判 None
+    CO.green_row_ratio = lambda im, y, half=6: 0.10 # 两行都差不多 ⇒ 不够突出，必须判 None
     ok("区分度不够时返回 None（fail-closed）", CO.highlight_relative("img")[0] is None)
     CO.green_row_ratio = lambda im, y, half=6: 0.0
     ok("全都没有绿底 ⇒ None", CO.highlight_relative("img")[0] is None)
-    # ⛔ 2026-09-16 修（真缺陷）：`_green_at` 的取样窗**含头像列**，微信那种**绿色头像**给 0.18 的假绿 ⇒
+    # ⛔ （真缺陷）：`_green_at` 的取样窗**含头像列**，微信那种**绿色头像**给 0.18 的假绿 ⇒
     #    高亮行被认成头像绿的那一行（实测当前开的是「宋孟」、`chat_is_open` 报「微信…」）。
     #    现在两条路都改用"不含头像的右半段"（`green_row_ratio`）⇒ 头像绿必须不再被当成高亮行。
     CO.session_rows = lambda im, zoom=2: [{"name": "微信团队", "y_abs": 100}]
     _ga_keep = CO._green_at
-    CO._green_at = lambda im, y, half=6: 0.18               # 老口径（含头像列）会认这一行
+    CO._green_at = lambda im, y, half=6: 0.18 # 老口径（含头像列）会认这一行
     ok("头像绿（老口径 0.18）不再被当成高亮行",
        CO.highlight_relative("img")[0] is None and CO.highlight("img") is None)
     CO._green_at = _ga_keep
@@ -417,7 +417,7 @@ finally:
     CO.capture_best, CO.pane_text = _real_cb, _real_pt
 ok("send_file_posted 接了内容级闸", _sm.has(_src, "chat_identity_ok(chat_id, gui=gui)"))
 
-# ⛔ 单字母名字的会话行（2026-09-13 实测 bug）：E 的行 OCR 成 `[草稿]EE`（草稿标记＋名字＋草稿内容），
+# ⛔ 单字母名字的会话行：E 的行 OCR 成 `[草稿]EE`（草稿标记＋名字＋草稿内容），
 #    老 matches 要求 len(name)>=2 才走包含判断 ⇒ 名字一个字母的会话永远定位不到。
 ok("单字母名字：`[草稿]EE` 能匹配上 E", CO.matches("[草稿]EE", "E") is True, str(CO.matches("[草稿]EE", "E")))
 ok("单字母名字：纯 `E` 也能匹配", CO.matches("E", "E") is True)
@@ -425,7 +425,7 @@ ok("单字母名字：不误配到别的会话（`群里的人`）", CO.matches(
 ok("单字母名字：`[草稿]` 之外的前缀也会被剥掉（Draft）", CO.matches("[Draft]EE", "E") is True)
 ok("多字名字不受影响（仍是包含判断）", CO.matches("海绵宝宝课堂19：29", "海绵宝宝") is True)
 
-# ⛔ 2026-09-14 修（⑤ 重发时实测出来）：`find_row_info` 对单字名字的**名字行复核**原来写的是
+# ⛔ （⑤ 重发时实测出来）：`find_row_info` 对单字名字的**名字行复核**原来写的是
 #    `norm(got) == norm(name)` **裸全等**，而 E 那种行的名字行会被 OCR 成 `[草稿]EE`
 #    （草稿标记＋名字＋草稿内容）⇒ 裸全等永远不等 ⇒ 列表里明明有 `[草稿]EE`，
 #    `find_row_info` 却全否、`switch_chat_posted` 报"没定位到 E"（白滚 6 轮）。
@@ -433,7 +433,7 @@ ok("多字名字不受影响（仍是包含判断）", CO.matches("海绵宝宝�
 _fr_src = open(os.path.join(ROOT, "agent", "chat_ocr.py"), encoding="utf-8").read()
 ok("单字复核走 matches（不再裸全等，草稿标记会剥掉）", _sm.has(_fr_src, "if not matches(got, name):"))
 
-# ⛔ 2026-09-14 既有口径："明明一直是 E 的会话，你却扫不到，这是不是个 bug" ⇒ 查实是**四个**真缺陷，逐条钉住：
+# ⛔ "明明一直是 E 的会话，你却扫不到，这是不是个 bug" ⇒ 查实是**四个**真缺陷，逐条钉住：
 #   ① 身份闸的"针"里混进了**类型占位符**（`[文件/链接/卡片]`/`[文本]`）—— 拿它去聊天区找永远找不到，
 #      还会把真短 token 挤出名额 ⇒ 针必须是真内容；
 #   ② 聊天区**一个字都读不到**时老实现返回 False（"证据说不是"）—— 该说"自检不可用"（None）；
@@ -444,14 +444,14 @@ ok("② 聊天区读不到 ⇒ 返回 None（判据不可用），不是 False",
    _sm.has(_src, "if not pane_n:") and "判据不可用，不是「不是这个会话」" in _src)
 ok("③ pane_text 放大 + 分段重读", _sm.has(_fr_src, "def pane_text(img, limit: int = 200, zoom: int = 2)")
    and "分三段" in _fr_src)
-# ⚠️ 2026-09-16 r26 对面指出：日志写"用户当面确认"会让读的人以为有真人点头 —— 实际来源只是
+# ⚠️ r26 对面指出：日志写"用户当面确认"会让读的人以为有真人点头 —— 实际来源只是
 #    调用方传了 confirm_open=True ⇒ 文案统一改成"调用方声明确认"，这条断言跟着改。
 ok("④ 调用方声明确认（confirm_open）能压过内容档的否定（默认仍 fail-closed）",
    _sm.has(_src, "if not confirm_open:") and "按声明放行" in _src)
 ok("放宽的只是草稿标记形态（名字行是别的名字仍然否）",
    CO.matches("[草稿]EE", "E") is True and CO.matches("宋孟", "E") is False)
 
-# ⛔ 按"最后一条消息的时间"定位行（2026-09-13 实测：E 的名字行 OCR 给空串 ⇒ 名字这条路根本走不通；
+# ⛔ 按"最后一条消息的时间"定位行（E 的名字行 OCR 给空串 ⇒ 名字这条路根本走不通；
 #    而 21：41 这种时间戳 OCR 读得准，实测按时间一次命中 y=246 那一行）
 _co_src = open(os.path.join(ROOT, "agent", "chat_ocr.py"), encoding="utf-8").read()
 _w_src = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
@@ -464,14 +464,14 @@ ok("时间命中但名字明显是别的会话 ⇒ 不算（宁可不点）",
 ok("switch_chat_posted 会把目标会话的最后消息时间传进去",
    "want_time=_want_time" in _w_src and _sm.has(_w_src, "_want_time = time.strftime(\"%H:%M\", _lt)"))
 
-# ⛔ 会话行必须用**慢节奏**点击（2026-09-13 A/B：快节奏投渲染子窗高亮不动；悬停 300 + 按住 150 高亮立刻跳）
+# ⛔ 会话行必须用**慢节奏**点击
 _ib_src = open(os.path.join(ROOT, "agent", "input_backend.py"), encoding="utf-8").read()
 ok("MessageBackend.click 支持 hover_ms / press_ms",
    _sm.has(_ib_src, "def click(self, hwnd: int, screen_pt, right: bool = False, hover_ms: int = 0, press_ms: int = None)"))
 ok("会话行点击用的是慢节奏（hover_ms=300, press_ms=150）",
    _sm.has(_w_src, "hover_ms=300, press_ms=150"))
 ok("身份闸有「高亮行时间」这一档", "highlight_time" in _w_src and _sm.has(_co_src, "def highlight_time(img)"))
-# [2026-09-14 改向] 原来这里要求"聊天区里必须也出现同一时间"。实测：E 最近一条（01:35）的时刻**在聊天区里没渲染出来**
+# [向] 原来这里要求"聊天区里必须也出现同一时间"。实测：E 最近一条（01:35）的时刻**在聊天区里没渲染出来**
 #   （新消息不带时间分隔）⇒ 会话明明开着，闸门仍判否、文件发不出去。改成：
 #   两个独立来源＝**屏幕（高亮行时间 OCR）× DB（目标会话最后一条消息时间）**；第二道证据二选一——
 #   ①聊天区里也出现同一时刻 ②该时刻在会话列表里**唯一**（只有这一个会话是它）。
@@ -483,7 +483,7 @@ ok("第二道证据二选一：聊天区出现同一时间 **或** 该时刻在�
    and _sm.has(_w_src, "def _active_row_time_ok"))
 
 print("\n── F. 时间口径：10 点以前的时刻也要能按时间定位（r11 实测根因）──")
-# ⛔ 2026-09-16 根因（r11 两次 ABORT 的直接原因）：`find_row_info` 把**目标时间**（`strftime('%H:%M')`
+# ⛔ 根因（r11 两次 ABORT 的直接原因）：`find_row_info` 把**目标时间**（`strftime('%H:%M')`
 #    ＝`01:03`）与**读到的**时间（归一成 `'%d:%02d'`＝`1:03`）**直接比字符串** ⇒ 上午 0~9 点永不相等。
 #    E 那种单字母会话名字读不出来、**时间档是唯一信号** ⇒ 表现成"列表里明明有 E，滚 6 轮也定位不到"。
 ok("hhmm：01:03 / 1：03 / 01：03 归一成同一个 1:03",
@@ -502,7 +502,7 @@ ok("find_row_info 的时间比较走同一个口径（源码断言）",
 ok("wechat 侧的 _norm_hhmm 只有一处实现（委托 chat_ocr.hhmm）", _sm.has(_w_src, "return _co.hhmm(s)"))
 
 print("── G. 绿底行按像素找：高亮行是白字绿底、OCR 读不出它（r11 实测根因）──")
-# ⛔ 2026-09-16 根因：`highlight` / `highlight_relative` / `current_chat_name` 都在**OCR 行**里挑绿最多的，
+# ⛔ `highlight` / `highlight_relative` / `current_chat_name` 都在**OCR 行**里挑绿最多的，
 #    而当前打开的那一行是**白字绿底**——整幅 OCR 里根本没有这一行（实测 8 行独缺高亮行）⇒
 #    只能挑到"头像绿"的行（实测把「宋孟」认成「微信…」）。现在主路改成**纯像素扫绿底带**。
 try:
@@ -510,8 +510,8 @@ try:
 
     _W2, _H2 = 1139, 890
     _im2 = _I2.new("RGB", (_W2, _H2), (237, 237, 239))
-    _im2.paste(CO.GREEN, (60, 494, 320, 590))       # 一整条绿底行（96px 高，横跨列表）
-    _im2.paste(CO.GREEN, (100, 180, 150, 230))      # 另一行上的**绿色头像**（50×50，老口径的假绿来源）
+    _im2.paste(CO.GREEN, (60, 494, 320, 590)) # 一整条绿底行（96px 高，横跨列表）
+    _im2.paste(CO.GREEN, (100, 180, 150, 230)) # 另一行上的**绿色头像**（50×50，老口径的假绿来源）
     _bands = CO.green_bands(_im2)
     ok("像素法找到绿底带（y≈494~590，占比高）",
        len(_bands) == 1 and abs(_bands[0]["y_abs"] - 542) <= 4 and _bands[0]["score"] > 0.8, str(_bands))
@@ -527,7 +527,7 @@ except Exception as _e:
     ok("绿底带判据可跑", False, "%s: %s" % (type(_e).__name__, _e))
 
 print("── H. 单字母名字被 OCR 读成别的字时，仍要能定位那一行（r11 实测根因③）──")
-# ⛔ 2026-09-16 真帧实测：E 是当前打开的那一行，整行 OCR＝『巷01：03』——名字被读成「巷」，
+# ⛔ E 是当前打开的那一行，整行 OCR＝『巷01：03』——名字被读成「巷」，
 #    "名字明显不是它 ⇒ 不算"这条防误配守卫于是把**唯一正确的行**否掉 ⇒ 报"没定位到 E"。
 #    修法：目标名 ≤2 字（短到 OCR 认不准）且**该时刻在整张列表里唯一**时放行。
 try:
@@ -557,7 +557,7 @@ except Exception as _e:
     ok("短名 + 时间唯一 判据可跑", False, "%s: %s" % (type(_e).__name__, _e))
 
 print("── I. 「当前开着的会话就是目标」的第三条独立证据（高亮行时间 × DB）──")
-# ⛔ 2026-09-16 实测：搜索框路线已经把 E 切过来了，`chat_is_open` 仍报 False（名字读不出、指纹档也没参照）
+# ⛔ 搜索框路线已经把 E 切过来了，`chat_is_open` 仍报 False（名字读不出、指纹档也没参照）
 #    ⇒ 闸门判否、后面每一步都在"没有正面证据"里打转。补第三档＝高亮行时间（屏幕）× DB。
 _ok3_hit = {"v": True}
 _ad4 = W.WeChatAdapter.__new__(W.WeChatAdapter)
@@ -574,7 +574,7 @@ ok("源码断言：chat_is_open 接了第三档、且与 chat_identity_ok 同源
    and _sm.has(_w_src, "_ok_t, _why_t = self._active_row_time_ok(chat_id, pane=pane, gui=gui)"))
 
 print("── J. 点前等列表停稳（投递滚轮是平滑滚动，惯性期间点击会点空）──")
-from agent import chat_header as CH                              # noqa: E402
+from agent import chat_header as CH # noqa: E402
 try:
     from PIL import Image as _I4
 
@@ -600,7 +600,7 @@ try:
 finally:
     CH.capture_image = _cap_real
 
-print("── K. 失败留全现场（跨机需求⑤：对面报的现象我这边要能看到现场）──")
+print("── K. 失败留全现场──")
 try:
     import json as _json
     import shutil as _sh
@@ -631,10 +631,9 @@ try:
 except Exception as _e:
     ok("失败取证判据可跑", False, "%s: %s" % (type(_e).__name__, _e))
 
-print("── L2. 活动行底色判据要认「绿占优」而不是写死色值（跨机 r14 最值钱一条）──")
+print("── L2. 活动行底色判据要认「绿占优」而不是写死色值──")
 # 对面实测：活动行底色是 (21,172,112) / (1,194,96) / 浅绿 (169,212,196) 三种都出现过，而老自检只认本机
 # 的 (81,167,116)±34 ⇒ 命中 0 ⇒ 绿底读不到 ⇒ chat_is_open 永远 False ⇒ 投递前置掉到 no_ref
-# （r12 那次 16 秒真鼠标事故的触发链里就有这一环）。自检改成"g 明显大于 r 且大于 b"这条与色值无关的性质。
 for _nm, _c, _want in [("本机深绿 81,167,116", (81, 167, 116), True),
                        ("对面库值 21,172,112", (21, 172, 112), True),
                        ("对面高亮 1,194,96", (1, 194, 96), True),
@@ -647,14 +646,14 @@ try:
     from PIL import Image as _I5b
 
     _img5 = _I5b.new("RGB", (1139, 890), (237, 237, 239))
-    _img5.paste((169, 212, 196), (60, 494, 320, 590))          # 对面那种**浅绿**活动行
+    _img5.paste((169, 212, 196), (60, 494, 320, 590)) # 对面那种**浅绿**活动行
     _hl5 = CO.highlight(_img5)
     ok("浅绿活动行也要被认成高亮行（修复前是红的）",
        bool(_hl5) and abs(int(_hl5["y_abs"]) - 541) <= 4, str(_hl5))
 except Exception as _e5b:
     ok("浅绿活动行判据可测", False, str(_e5b)[:80])
 
-print("── L3. 短窗口要逐字扫（跨机 r14 报的「8 字/相似度 1.00 却判 False」）──")
+print("── L3. 短窗口要逐字扫──")
 _pane5 = "……前面别的内容 句一句话说完就跑 后面还有……"
 _needle5 = "甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥" + "一句话说完就跑" + "后面还有很长很长的正文"
 ok("针里第 3 字起的那 8~10 个字命中 ⇒ 必须放行（旧步长 4 会跳过）",
@@ -662,7 +661,7 @@ ok("针里第 3 字起的那 8~10 个字命中 ⇒ 必须放行（旧步长 4 �
 ok("低熵片段仍不算命中（120 位数字那种）",
    CO.content_match("序号 123456789012 在这", _needle5.replace("甲乙", "123456789012")) is False)
 
-print("── L4. 活动行时间戳要能『按坐标直接读』（跨机 r16/r17：可读性只有 1/2~1/4 ⇒ 红线一收紧就常态拦）──")
+print("── L4. 活动行时间戳要能『按坐标直接读』──")
 ok("有 row_time_read（正读 + 反相两遍，专治白字绿底）",
    hasattr(CO, "row_time_read") and _sm.has(open(os.path.join(ROOT, "agent", "chat_ocr.py"), encoding="utf-8").read(), "def row_time_read"))
 ok("row_time_at 在 OCR 行取不到时会退到它（源码断言）",
@@ -670,18 +669,18 @@ ok("row_time_at 在 OCR 行取不到时会退到它（源码断言）",
 try:
     from PIL import Image as _I4, ImageDraw as _D4, ImageFont as _F4
     _im4 = _I4.new("RGB", (1139, 890), (237, 237, 239))
-    _im4.paste((169, 212, 196), (60, 494, 320, 590))          # 对面那种浅绿活动行
+    _im4.paste((169, 212, 196), (60, 494, 320, 590)) # 对面那种浅绿活动行
     _d4 = _D4.Draw(_im4)
     try:
         _f4 = _F4.truetype(r"C:\Windows\Fonts\msyh.ttc", 16)
     except Exception:
         _f4 = _F4.load_default()
-    _d4.text((232, 528), "03:28", font=_f4, fill=(30, 30, 30))      # 深字（正常行那种）
+    _d4.text((232, 528), "03:28", font=_f4, fill=(30, 30, 30)) # 深字（正常行那种）
     _got4 = CO.row_time_read(_im4, 542, left=296)
     ok("按坐标直接读时间戳（正常行）拿得到", _got4 == "3:28", repr(_got4))
     ok("row_time_at 走兜底也拿得到", CO.row_time_at(_im4, 542) == "3:28", repr(CO.row_time_at(_im4, 542)))
     # ⚠️ 如实记一条局限：**白字绿底**那种（活动行）在合成图上正读+反相都读不出 ⇒ `row_time_read`
-    #    只是"多试一次"，不能保证解决可用性（跨机 r16/r17 的可读性 1/2~1/4 就是这一条造成的）。
+    # 只是"多试一次"，不能保证解决可用性。
     _d4.rectangle([228, 520, 292, 556], fill=(169, 212, 196))
     _d4.text((232, 528), "03:28", font=_f4, fill=(255, 255, 255))
     ok("白字绿底这条**不承诺**能读（read 函数存在即可，别把它当可用性保证）",
@@ -689,7 +688,7 @@ try:
 except Exception as _e4:
     ok("按坐标读时间戳判据可跑", False, str(_e4)[:80])
 
-print("── L5. 第四条独立证据：会话头标题带 OCR（跨机 r20：白字绿底行**持续**读不出 ⇒ 前三档全空）──")
+print("── L5. 第四条独立证据：会话头标题带 OCR──")
 _w5 = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
 _seg5 = _w5[_w5.index("def chat_is_open"):]
 _seg5 = _seg5[:_seg5.find("\n    def ", 10)]
@@ -712,7 +711,7 @@ try:
     ok("标题带读不出 ⇒ 不误判（仍判否）", _ad5.chat_is_open("x", gui=object(), name="某会话")[0] is False)
     _co5.header_text = lambda img=None, gui=None, zoom=2: "O别人"
     ok("标题带是别的会话 ⇒ 判否", _ad5.chat_is_open("x", gui=object(), name="某会话")[0] is False)
-    # ⛔ 2026-09-21：标题带这一档也是**授权档** ⇒ 只认"完全相等（容忍 1 个前导 OCR 噪声字符）"，
+    # ⛔ 标题带这一档也是**授权档** ⇒ 只认"完全相等（容忍 1 个前导 OCR 噪声字符）"，
     #   不许"互相包含"——否则名字互为子串的两个群（`KC测试` 与 `测试`）会被判成同一个，回复发错群。
     ok("标题带是另一群、名字互为子串 ⇒ 判否（防串群）",
        _co5.matches_strict("O某会话测试", "某会话") is False

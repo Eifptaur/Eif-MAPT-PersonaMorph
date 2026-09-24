@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """本机监听面的**统一门禁**：回环 Host 校验 + 一条只在本机共享的口令。
 
-为什么要有它（2026-09-20，第三轮审计 **V-R3-8**）：产品里不止一个监听面 —— 控制台
+为什么要有它：产品里不止一个监听面 —— 控制台
 `agent/webui.py`（有口令）与本地生图 `agent/sd_local_server.py`（**原来什么都没有**）。
 "只绑 127.0.0.1" **不等于安全**：
   ① 浏览器里的任何页面都能向本机端口**发起**请求（CORS 只挡"读"，不挡"发"）；
@@ -45,7 +45,7 @@ def token_path(root: str = "") -> str:
 def _new_token_file(p: str, gen: str) -> str:
     """竞态安全地建立口令文件：**独占创建**（`O_CREAT|O_EXCL`）。
 
-    ⛔ 2026-09-20 修（我自己在 V-R3-8 里留下的竞态）：原来是"读不到就生成一个再 `os.replace`"
+    ⛔ 原来是"读不到就生成一个再 `os.replace`"
     —— 两个进程**同时**首建时会互相覆盖，各自 `_CACHE` 住自己那份 ⇒ **同一台机器上出现两个口令**，
     于是本地生图服务拒掉产品自己的请求（表现成"本地生图突然不可用"）。
     现在：独占创建成功 ⇒ 用我这份；已经存在（别人刚建好）⇒ **读回它**，绝不覆盖。
@@ -53,7 +53,7 @@ def _new_token_file(p: str, gen: str) -> str:
     d = os.path.dirname(p)
     if d:
         try:
-            os.makedirs(d, exist_ok=True)          # `logs/` 在全新解压出来的包里可能还没有
+            os.makedirs(d, exist_ok=True) # `logs/` 在全新解压出来的包里可能还没有
         except Exception:
             return ""
     try:
@@ -79,7 +79,7 @@ def _new_token_file(p: str, gen: str) -> str:
 def _tighten_acl(p: str) -> str:
     """把口令文件收紧成「只有本人（＋SYSTEM/管理员）能读写」。返回空串＝成功，否则回**为什么**。
 
-    ⛔ 2026-09-21（第四轮审计 **V-R4-13**）：`os.open(..., 0o600)` 的 mode 在 NTFS 上**不改 ACL**
+    ⛔ `os.open(..., 0o600)` 的 mode 在 NTFS 上**不改 ACL**
     （实测：文件照样继承父目录的 `BUILTIN\\Users` 等）⇒ 同机其它用户/进程能读到本机口令。
     ⇒ 真用 `icacls` 收紧：**断继承**（`/inheritance:r`）+ 只授本人与系统账号；
     然后**复核**（读回 ACL，只要还有"人人可读"那类主体就报失败）。
@@ -105,7 +105,7 @@ def _tighten_acl(p: str) -> str:
         # 复核：`icacls` 每行形如 `<路径> <主体>:(权限)`（第一行带路径、后面只给主体）。
         # ⚠️ 主体名**可能带空格**（`NT AUTHORITY\SYSTEM`）⇒ 不能按空白切词、也不能只截冒号前一段，
         #   否则会把 `NT AUTHORITY\SYSTEM` 截成 `AUTHORITY\SYSTEM` ⇒ 假失败（第一版就踩了）。
-        allowed = {str(_user).lower(), "system", "administrators"}          # 只比**末段**（域前缀不算）
+        allowed = {str(_user).lower(), "system", "administrators"} # 只比**末段**（域前缀不算）
         for _line in out.splitlines():
             _i = _line.find(":(")
             if _i < 0:
@@ -134,7 +134,7 @@ def token(root: str = "", create: bool = True) -> str:
         with open(p, encoding="utf-8") as fh:
             t = fh.read().strip()
         if t:
-            # ⛔ V-R4-13：**读到的既有文件也补一次收紧**（老装机留下的文件 ACL 是宽的）——
+            # ⛔ **读到的既有文件也补一次收紧**（老装机留下的文件 ACL 是宽的）——
             #   每进程只做一次，别在热路径上反复跑 icacls。
             if not _CACHE.get("acl_ok"):
                 _why = _tighten_acl(p)
@@ -149,7 +149,7 @@ def token(root: str = "", create: bool = True) -> str:
     if not create:
         return ""
     t = _new_token_file(p, secrets.token_urlsafe(24))
-    _why = _tighten_acl(p)                       # ⛔ V-R4-13：建完立刻收紧
+    _why = _tighten_acl(p) # ⛔ 建完立刻收紧
     if _why:
         _warn_once("新建口令文件的 ACL 没能收紧：%s" % _why)
     else:
@@ -164,7 +164,7 @@ def host_ok(host_header: str, port: int = 0) -> bool:
     h = str(host_header or "").strip().lower()
     if not h:
         return False
-    if h.startswith("["):                       # IPv6 形式：`[::1]:7860`
+    if h.startswith("["): # IPv6 形式：`[::1]:7860`
         h = h.split("]")[0].lstrip("[")
     elif ":" in h:
         h = h.split(":")[0]

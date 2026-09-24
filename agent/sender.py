@@ -32,19 +32,19 @@ _INTERNAL_FAIL_PHRASES = (
     "这轮先不说", "本轮先不说", "这轮不说了", "本轮不说了",
     "工具报错", "工具调用失败", "接口报错", "系统错误", "内部错误",
     "没有拿到会话", "抓不到会话", "获取会话失败",
-    # ⛔ 2026-09-21 加（第六轮 **V-R6-17**）：`send_retry` 接线修好后，工具回执里会出现
+    # ⛔ `send_retry` 接线修好后，工具回执里会出现
     #   "我已经排进重试队列 / 自动补发一次 / 现场没认准" 这类**内部机制话术**，模型一旦转述就进群。
     #   实测原来 3/3 放行（只有带"没发出去"的那种才被拦）⇒ 补进词表。
     "重试队列", "排进队列", "排进重试", "补发", "没认准", "现场没认准",
 )
-# 结构性判据（2026-09-18 加，现场新变体「（发送没成功，这轮先不说了）」靠词表漏了）：
+# 结构性判据（现场新变体「（发送没成功，这轮先不说了）」靠词表漏了）：
 #   一句**被括号整体包起来**（或很短）的话，同时带 A 组（动作/系统词）和 B 组（失败态词）
 #   ⇒ 判为内部故障话术。词表只能覆盖见过的写法，这条兜"没见过的写法"。
 _FAIL_A = ("发送", "发出", "投递", "回复", "发言", "会话", "本机", "系统", "工具", "接口", "链路")
 _FAIL_B = ("失败", "没成功", "不成功", "没发", "未发", "发不出", "报错", "异常", "超时",
            "拦下", "拦截", "卡住", "先不说", "不说了", "没能")
 _FAIL_WRAP_RE = re.compile(r"^[\s（(【\[]+.*[\s）)】\]]+$")
-_blocked_internal: list = []          # 最近被拦下的内部故障话术（诊断用，控制台可读）
+_blocked_internal: list = [] # 最近被拦下的内部故障话术（诊断用，控制台可读）
 
 
 def _is_internal_failure(text: str) -> str:
@@ -78,7 +78,7 @@ class SendQueue:
         self.store = store
         self.on_sent = on_sent
         self._lock = threading.Lock()
-        self.minute_times: dict = {}   # chatKey -> [ts]
+        self.minute_times: dict = {} # chatKey -> [ts]
         self.hour_times: dict = {}
 
     def _check_rate(self, chat_key: str) -> None:
@@ -126,9 +126,9 @@ class SendQueue:
             msgs = self.store.recent(chat_key, limit=60)
             my_last = max((int(m.get("ts") or 0) for m in msgs if m.get("self")), default=0)
             if my_last and (time.time() * 1000 - my_last) < gap_s * 1000:
-                return None  # 还在连续对话中，不重复开引用
+                return None # 还在连续对话中，不重复开引用
             if random.random() >= prob:
-                return None  # 概率未触发
+                return None # 概率未触发
             for m in reversed(msgs):
                 txt = str(m.get("text") or "").strip()
                 sid = str(m.get("sender_id") or "")
@@ -154,7 +154,7 @@ class SendQueue:
             raise RuntimeError("消息列表为空")
         hard_split = int(get_config().get("send", {}).get("hard_split_at") or 0)
         parts = []
-        # ⛔ 2026-09-21 加（第六轮 **V-R6-7**）：`parts` 是"过 md_to_plain + 可能被 hard_split"之后的产物，
+        # ⛔ `parts` 是"过 md_to_plain + 可能被 hard_split"之后的产物，
         #   **下标与调用方的 `messages` 不对应**（还有内部话术闸/去重会删条目）⇒ 失败回执里必须带上
         #   **原始那条文本**，否则调用方只能拿前 20 字去 `messages` 里盲找（会入队"已发成功"那条 ⇒ 补发＝重复发）。
         part_src = []
@@ -173,7 +173,7 @@ class SendQueue:
         if not parts:
             raise RuntimeError("消息内容为空")
 
-        # 🔴 2026-09-18 加（用户现场截图：群里出现了「（会话投递失败，本轮未发言。）」「发送失败了，没能发出去。」）：
+        # 🔴 （用户现场截图：群里出现了「（会话投递失败，本轮未发言。）」「发送失败了，没能发出去。」）：
         #   **内部故障话术的机械拦网** —— 以前只写在提示词里（`prompt.py` 第 7 条），模型不听话时照样发进群。
         #   这是项目红线（故障只许出现在本机控制台与日志），所以在这里**发之前**逐条筛掉。
         _kept = []
@@ -191,7 +191,7 @@ class SendQueue:
         if not parts:
             raise RuntimeError("这一批全被内部故障话术闸拦下（故障只留本机日志，不发群）")
 
-        # 🔴 2026-09-18 加（用户现场截图：同一条消息「早上好呀！」连发两次）：
+        # 🔴 （用户现场截图：同一条消息「早上好呀！」连发两次）：
         #   **同会话短窗去重** —— 同一段文本在过去 `_DEDUP_WINDOW_S` 秒内已经给自己发过，就不再发一遍。
         #   兜的是"同一轮被重跑/重试后重复发送"这类路径（模型自己的 send 与兜底补发都走这里）。
         _dedup_since = time.time() - _DEDUP_WINDOW_S
@@ -265,7 +265,7 @@ class SendQueue:
                         raise RuntimeError(msg or "发送失败")
                     ts = int(time.time() * 1000)
                     self.store.append_self(chat_key, text, ts=ts)
-                    _risk.note_sent(chat_key, text)   # 记账（闸门的窗口计数只认机器人出站路径）
+                    _risk.note_sent(chat_key, text) # 记账（闸门的窗口计数只认机器人出站路径）
                     if self.on_sent:
                         self.on_sent(chat_key, text)
                     # 反应评分：记录这条 reaction（群友后续回应会在 on_incoming 里加分）

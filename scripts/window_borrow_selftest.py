@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
-"""窗口「借用 → 归还」判据（2026-09-15，用户拍板方案 A 后的验收标准）。
+"""窗口「借用 → 归还」判据。
 
 背景：`wechat._limit_wechat_window()` 为了不让驱动库的布局校准失效，每次取 GUI 都把微信主窗钉到
-1160×900，把用户手动拉过的尺寸改掉；用户问「不是说要限位吗，为什么我的窗口还是被改了」⇒
-拍板方案 A＝**用完还原**。这条判据守方案 A 的六条规矩（**全部用替身，不碰真窗口、不动真微信**）：
+1160×900，把用户手动拉过的尺寸改掉；⇒
 
   A. 默认开、可关（`ui.restore_window_after_use=False` ⇒ 借了不还，回旧行为）。
   B. 借之前记下原 rect；同一次借用期间**不覆盖**（用户中途改过也不覆盖）。
@@ -24,12 +23,12 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
-from agent import window_borrow as WB        # noqa: E402
-from agent import config as CFG              # noqa: E402
-# ⛔ V-R14-7 隔离：本判据里有**打桩不来**的几段（真 `touch()` / 真看门线程归还）⇒ 产品
+from agent import window_borrow as WB # noqa: E402
+from agent import config as CFG # noqa: E402
+# ⛔ 隔离：本判据里有**打桩不来**的几段（真 `touch()` / 真看门线程归还）⇒ 产品
 #   `data\window_borrow.json` 会被建出来又删掉（净变化 0，只有持续采样才看得见）。
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # scripts\（见 `_iso14` 文件头）
-import _iso14                                # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # scripts\（见 `_iso14` 文件头）
+import _iso14 # noqa: E402
 _iso14.window_borrow()
 
 PASS = 0
@@ -93,18 +92,18 @@ snap = WB.snapshot()
 ok("snapshot 里 borrowed=True 且 rect 是原值", snap["borrowed"] and snap["rect"] == (100, 50, 1260, 950),
    str(snap.get("rect")))
 ok("同一次借用里再 note 不覆盖（返回 False）", WB.note_original(777) is False)
-f.rect = (200, 60, 1360, 960)          # 模拟"被我们钉成了别的尺寸"
+f.rect = (200, 60, 1360, 960) # 模拟"被我们钉成了别的尺寸"
 ok("用户/我们中途改了 rect，也不覆盖原始记账", WB.note_original(777) is False
    and WB.snapshot()["rect"] == (100, 50, 1260, 950))
-# ⛔ V-R5R-4：`(WB.note_forced(...) or True)` 把返回值抹掉了 ⇒ 先调用、再断言真正的结果
-WB.note_forced((200, 60, 1360, 960))      # 返回值不承载证据，证据看下面的 snapshot
+# ⛔ `(WB.note_forced(...) or True)` 把返回值抹掉了 ⇒ 先调用、再断言真正的结果
+WB.note_forced((200, 60, 1360, 960)) # 返回值不承载证据，证据看下面的 snapshot
 ok("note_forced() 记下我们钉的那一版", WB.snapshot()["forced"] == (200, 60, 1360, 960))
 
 print("\n[二] 归还的规矩（C/D/E）")
 f = fresh()
 WB.note_original(777)
 WB.note_forced((200, 60, 1360, 960))
-f.rect = (200, 60, 1360, 960)          # 当前正是我们钉的那版 ⇒ 应该还
+f.rect = (200, 60, 1360, 960) # 当前正是我们钉的那版 ⇒ 应该还
 ok("当前 rect ＝ 我们钉的那版 ⇒ 归还", WB.restore("t1") is True and len(f.calls) == 1,
    "calls=%s snap=%s" % (f.calls, WB.snapshot()))
 ok("归还目标＝原始 rect", f.calls[0][1:5] == (100, 50, 1160, 900), str(f.calls[0]))
@@ -115,14 +114,14 @@ ok("归还后状态清空", WB.snapshot()["borrowed"] is False)
 f = fresh()
 WB.note_original(777)
 WB.note_forced((200, 60, 1360, 960))
-f.rect = (0, 0, 800, 600)              # 用户在借用期间自己动过窗口
+f.rect = (0, 0, 800, 600) # 用户在借用期间自己动过窗口
 WB.restore("t2")
 ok("用户中途自己改过窗口 ⇒ **不还**（不调用 SetWindowPos）", len(f.calls) == 0, str(f.calls))
 ok("不还也要清状态（不留悬挂借用）", WB.snapshot()["borrowed"] is False)
 
 f = fresh()
 WB.note_original(777)
-f.alive = False                        # 窗口没了
+f.alive = False # 窗口没了
 WB.restore("t3")
 ok("窗口已经没了 ⇒ 静默清状态、不调用 SetWindowPos", len(f.calls) == 0 and WB.snapshot()["borrowed"] is False)
 
@@ -178,7 +177,7 @@ _ex = open(os.path.join(ROOT, "config.example.json"), encoding="utf-8").read()
 ok("config.example.json 同步了这个键（示例与默认必须同键）",
    '"restore_window_after_use"' in _ex)
 
-# ── [五之二] 2026-09-16 已知现象：「他都找不到微信，还得我切出来」挖出的真缺陷 ──────────
+# ── [五之二] 已知现象挖出的真缺陷 ──────────
 #    `_limit_wechat_window` **从来不读 `ui.lock_window_pos`** —— 那开关的界面文案是
 #    「固定微信窗口位置」、注释写着「默认关：不动用户的窗口」，可代码**每次取 GUI 都把用户的
 #    微信钉到 1160×900 并下移到 y≥40**（他 config.json 里就是 `false`，窗口照样被改）。
@@ -196,8 +195,8 @@ ok("ui_adapt 里同一开关的默认值也是 False（两处默认不许打架�
    and 'get("lock_window_pos", True)' not in _ua)
 
 print("\n[六] 更强兜底：落盘 + 下次进程 recover（P16②）· 工具边界（P16①）")
-import json as _json          # noqa: E402
-import tempfile as _tf        # noqa: E402
+import json as _json # noqa: E402
+import tempfile as _tf # noqa: E402
 _tmp = os.path.join(_tf.mkdtemp(prefix="pm-wb-"), "wb.json")
 _orig_pp = WB._persist_path
 WB._persist_path = lambda: _tmp
@@ -213,26 +212,26 @@ f.rect = (200, 60, 1360, 960)
 WB.restore("t6")
 ok("归还后落盘记录被删掉（不留悬挂）", not os.path.exists(_tmp))
 
-with open(_tmp, "w", encoding="utf-8") as _fh:      # 模拟"上次被强杀，记录留在盘上"
+with open(_tmp, "w", encoding="utf-8") as _fh: # 模拟"上次被强杀，记录留在盘上"
     _json.dump({"hwnd": 777, "rect": [80, 50, 1500, 850],
                 "forced": [80, 50, 1240, 950], "at": 1.0}, _fh)
-f = fresh(rect=(80, 50, 1240, 950))                 # 窗口正好还停在我们钉的那版
+f = fresh(rect=(80, 50, 1240, 950)) # 窗口正好还停在我们钉的那版
 _ok_rec = WB.recover("判据")
 ok("recover() 把上次留下的借用还回去", _ok_rec is True and len(f.calls) == 1, "calls=%s" % f.calls)
 ok("还原目标＝记录里的原 rect", bool(f.calls) and f.calls[0][1:5] == (80, 50, 1420, 800), str(f.calls))
 ok("recover() 之后记录被删", not os.path.exists(_tmp))
 
-# ⛔ 2026-09-17「启动的时候就调，这么大」的判据：陈旧记录一个像素都不许动用户窗口
-with open(_tmp, "w", encoding="utf-8") as _fh:      # 陈旧记录：窗口早被用户改过
+# ⛔ 「启动的时候就调，这么大」的判据：陈旧记录一个像素都不许动用户窗口
+with open(_tmp, "w", encoding="utf-8") as _fh: # 陈旧记录：窗口早被用户改过
     _json.dump({"hwnd": 777, "rect": [80, 50, 1500, 850],
                 "forced": [80, 50, 1240, 950], "at": 1.0}, _fh)
-f = fresh(rect=(300, 200, 900, 700))                 # 用户自己把窗口改成了别的样子
+f = fresh(rect=(300, 200, 900, 700)) # 用户自己把窗口改成了别的样子
 _ok_stale = WB.recover("判据-陈旧")
 ok("陈旧记录（cur≠forced）不套回用户窗口：不还原、不落任何一次 SetWindowPos",
    _ok_stale is False and len(f.calls) == 0 and not os.path.exists(_tmp),
    "ok=%s calls=%s exists=%s" % (_ok_stale, f.calls, os.path.exists(_tmp)))
 
-with open(_tmp, "w", encoding="utf-8") as _fh:      # 只记了原样、从没钉过
+with open(_tmp, "w", encoding="utf-8") as _fh: # 只记了原样、从没钉过
     _json.dump({"hwnd": 777, "rect": [80, 50, 1500, 850], "at": 1.0}, _fh)
 f = fresh(rect=(80, 50, 1240, 950))
 _ok_nof = WB.recover("判据-无forced")
@@ -240,7 +239,7 @@ ok("记录里没有 forced（我们没钉过）⇒ 也不动用户窗口",
    _ok_nof is False and len(f.calls) == 0 and not os.path.exists(_tmp),
    "ok=%s calls=%s" % (_ok_nof, f.calls))
 
-with open(_tmp, "w", encoding="utf-8") as _fh:      # 直接测 restore：forced 为空不许还原
+with open(_tmp, "w", encoding="utf-8") as _fh: # 直接测 restore：forced 为空不许还原
     _json.dump({"hwnd": 777, "rect": [80, 50, 1500, 850], "at": 1.0}, _fh)
 f = fresh(rect=(80, 50, 1240, 950))
 with WB._lock:
@@ -250,17 +249,17 @@ _ok_r = WB.restore("判据-restore无forced")
 ok("restore() 在 forced 为空时也不许 SetWindowPos（关掉窗口限位反而打开了这条路）",
    _ok_r is True and len(f.calls) == 0, "calls=%s" % (f.calls,))
 
-with open(_tmp, "w", encoding="utf-8") as _fh:      # 再放一份陈旧记录
+with open(_tmp, "w", encoding="utf-8") as _fh: # 再放一份陈旧记录
     _json.dump({"hwnd": 777, "rect": [80, 50, 1500, 850],
                 "forced": [80, 50, 1240, 950], "at": 1.0}, _fh)
 f = fresh(rect=(80, 50, 1240, 950))
-WB.note_original(777, (80, 50, 1240, 950))          # 传进来的 rect 是"被钉住的那版"
+WB.note_original(777, (80, 50, 1240, 950)) # 传进来的 rect 是"被钉住的那版"
 ok("note_original 会先 recover，再以**当下**的 rect 记账（否则会把钉住那版当成原样）",
    WB.snapshot()["rect"] == (80, 50, 1500, 850), str(WB.snapshot().get("rect")))
 
 with WB._lock:
     WB._state.update({"borrowed": False, "hwnd": 0, "rect": None, "forced": None})
-WB._persist()                                        # 顺手把真目录里的记录也清掉（自检不留下影响）
+WB._persist() # 顺手把真目录里的记录也清掉（自检不留下影响）
 WB._persist_path = _orig_pp
 _tools = open(os.path.join(ROOT, "agent", "tools.py"), encoding="utf-8").read()
 _tseg = _tools[_tools.index("def execute_tool"):]

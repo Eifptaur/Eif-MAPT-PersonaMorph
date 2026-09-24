@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
-"""待决台账：把「要用户拍板的事」落成**可排队、可追溯、不重复问**的数据。
+"""待决台账：把「要用户的事」落成**可排队、可追溯、不重复问**的数据。
 
-为什么需要它（2026-09-14 用户口径「弹窗按你推荐的做」+「把弹窗切出来的那一秒，就应该立刻让它到后台」）：
+为什么需要它：
   版本不匹配这类事**不能只在屏幕上闪一下**——用户当时可能不在电脑前、控制台可能根本没开；
   **关掉弹窗也不等于这件事没发生**。所以三条：
-    ① 每一次要拍板的事都落 `data/pending_decisions.json`（原子写，temp + os.replace）；
     ② **同一件事已经问过、用户已表过态 ⇒ 不再重复问**（`asked()` 查得到）；
     ③ **✕＝什么都不做**：状态记 `dismissed`，条目**留着**（仍然算"问过了"），不是删掉。
 
@@ -24,7 +23,7 @@ log = logging.getLogger("persona-morph")
 
 DECISIONS_PATH = os.path.join(ROOT, "data", "pending_decisions.json")
 SCHEMA = 1
-KEEP_MAX = 200                      # 台账上限（按时间保留最近的；防无限膨胀）
+KEEP_MAX = 200 # 台账上限（按时间保留最近的；防无限膨胀）
 
 # ── 四选一：版本不匹配时的固定选项（既有口径：✕＝什么都不做）────────────────
 # 为什么把"动作"和"文案"分开存：动作是机器判读用的（控制台据此决定按钮干什么），
@@ -77,11 +76,11 @@ def load(p: str | None = None) -> dict:
 
 
 def save(data: dict, p: str | None = None) -> str:
-    """原子写（temp + fsync + os.replace）——半个 JSON 会让"要用户拍板的事"整批消失。"""
+    """原子写（temp + fsync + os.replace）——半个 JSON 会让"要用户的事"整批消失。"""
     fp = path(p)
     os.makedirs(os.path.dirname(fp), exist_ok=True)
     items = list((data or {}).get("items") or [])
-    if len(items) > KEEP_MAX:                       # 只留最近的，防膨胀
+    if len(items) > KEEP_MAX: # 只留最近的，防膨胀
         items = sorted(items, key=lambda it: str(it.get("created_at") or ""))[-KEEP_MAX:]
     out = {"schema": SCHEMA, "items": items}
     tmp = fp + ".tmp"
@@ -120,7 +119,7 @@ def asked(kind: str, key: str, p: str | None = None) -> bool:
 
 
 def open_items(p: str | None = None) -> list:
-    """还等着用户拍板的条目（控制台据此弹模态）。"""
+    """还等着用户的条目（控制台据此弹模态）。"""
     return [it for it in (load(p).get("items") or []) if str(it.get("status")) == "open"]
 
 
@@ -200,7 +199,7 @@ def apply_choice(item: dict | None) -> dict:
         return {"action": "none", "label": "", "cmd": "", "message": "按「什么都不做」处理：不发送、不改配置"}
     opt = next((o for o in (it.get("options") or []) if str(o.get("key")) == ch), {})
     act = str(opt.get("action") or "none")
-    # ⛔ 2026-09-22 修（作者口径「我更想让用户不用测这测那的就能搞好」）：这里原来硬写着
+    # ⛔ 这里原来硬写着
     #   `检查微信版本` + `.bat` 那个名字 —— 而**那个文件在包里根本不存在**（全仓找不到；用户按指引
     #   去找只会找不到文件）。而且"这条选择要跑什么命令"在 `version_gate.action_cmd()` 里
     #   **已经有唯一实现**（返回真实的 runtime python + scripts\wechat_check.py --update）⇒

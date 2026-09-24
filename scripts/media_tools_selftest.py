@@ -16,10 +16,10 @@ import sys
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# ⛔ V-R14-1 隔离：判据不许写产品 data/ 与 logs/（台账指到临时区）。
+# ⛔ 隔离：判据不许写产品 data/ 与 logs/（台账指到临时区）。
 #   ⚠️ 见 `scripts\_iso14.py` 文件头：手抄的隔离段若写在 `sys.path.insert` 之前会**静默失效**。
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # scripts\（见 `_iso14` 文件头）
-import _iso14                                   # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # scripts\（见 `_iso14` 文件头）
+import _iso14 # noqa: E402
 _iso14.wechat()
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
@@ -37,14 +37,14 @@ def ok(name, cond, detail=""):
     print("  {} {}{}".format("OK  " if cond else "FAIL", name, "  [{}]".format(detail) if detail else ""))
 
 
-import json  # noqa: E402
+import json # noqa: E402
 
-from agent import tools as T  # noqa: E402
-from agent import wechat as W  # noqa: E402
-from agent.wechat import WeChatAdapter  # noqa: E402
+from agent import tools as T # noqa: E402
+from agent import wechat as W # noqa: E402
+from agent.wechat import WeChatAdapter # noqa: E402
 
 print("── A. 消息管线带 media ──")
-ad = WeChatAdapter.__new__(WeChatAdapter)          # 不走 __init__，只测纯函数
+ad = WeChatAdapter.__new__(WeChatAdapter) # 不走 __init__，只测纯函数
 ad._self_wxid = "wxid_me"
 ad._nick_map = {}
 ad._recent_sent = []
@@ -103,7 +103,7 @@ ENTRY_VOICE = {"mid": 4321, "media": [{"kind": "voice", "local_id": 888}], "text
 ENTRY_TEXT = {"mid": 4321, "media": [], "text": "普通文本"}
 
 print("── C. 转发默认关（红线）──")
-from agent.config import get_config  # noqa: E402
+from agent.config import get_config # noqa: E402
 ok("默认 file_forward_optin=False", not bool((get_config().get("send") or {}).get("file_forward_optin")))
 fw = FakeWeChat()
 r = T._exec_forward_media(mkctx(ENTRY_VIDEO, fw), {"message_id": 4321, "kind": "video"})
@@ -113,7 +113,7 @@ ok("默认关时一次都没碰发送（也没下载）", fw.calls == [], str(fw
 ok("拒绝时提示链接不受影响", "链接" in body)
 
 print("── D. 引擎缺失不编造 ──")
-from agent import voice as V  # noqa: E402
+from agent import voice as V # noqa: E402
 _real_status = V.status
 try:
     V.status = lambda: {"ok": False, "why": "缺 SILK 解码器（可 pip install pilk）"}
@@ -133,7 +133,7 @@ fw2 = FakeWeChat()
 r5 = T._exec_download_media(mkctx(ENTRY_VIDEO, fw2), {"message_id": 4321, "kind": "video"})
 ok("正常下载：只调 download_media，不发送", fw2.calls == [("download_media", "video", 777)], str(fw2.calls))
 
-print("── F. 表情包看图：[表情] 也要能看（用户反馈「识别不了表情包」）──")
+print("── F. 表情包看图：[表情] 也要能看──")
 _SRC_W = open(os.path.join("agent", "wechat.py"), encoding="utf-8").read()
 _SRC_T = open(os.path.join("agent", "tools.py"), encoding="utf-8").read()
 _SRC_P = open(os.path.join("agent", "prompt.py"), encoding="utf-8").read()

@@ -3,7 +3,7 @@
 
 跑法： runtime\\python\\python.exe scripts\\search_clear_selftest.py   退出码 0=全过 / 1=有失败
 
-为什么要这条判据（2026-09-21，网友 v0919 追加反馈 ②③）：
+为什么要这条判据：
   老实现清空搜索框＝往浮层**盲发 8 个退格**，是个猜数、而且**不验证**。框里超过 8 个字就清不干净
   ⇒ 下一次的查询词＝「旧词＋新词」⇒ **累积**（现场截图：框里是「KCKCKC」；微信搜索历史里堆着
   「测试测试」「测试测试测试」「KC测试测试」一条比一条长）⇒ 结果行永远匹配不上 ⇒ 切会话永远失败
@@ -17,10 +17,10 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# ⛔ V-R14-1 隔离：判据不许写产品 data/ 与 logs/（台账指到临时区）。
+# ⛔ 隔离：判据不许写产品 data/ 与 logs/（台账指到临时区）。
 #   ⚠️ 见 `scripts\_iso14.py` 文件头：手抄的隔离段若写在 `sys.path.insert` 之前会**静默失效**。
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # scripts\（见 `_iso14` 文件头）
-import _iso14                                   # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # scripts\（见 `_iso14` 文件头）
+import _iso14 # noqa: E402
 _iso14.wechat()
 sys.path.insert(0, ROOT)
 try:

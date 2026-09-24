@@ -18,8 +18,8 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, ROOT)
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
-import pack_online as po          # noqa: E402
-import make_patch as mp           # noqa: E402
+import pack_online as po # noqa: E402
+import make_patch as mp # noqa: E402
 
 PASS = FAIL = 0
 
@@ -52,13 +52,13 @@ try:
 
     # ---- 1) 派生假旧表 ----
     keys = sorted(nf)
-    drop = keys[:2]                     # ⇒ 新版里它们算 add
-    change = keys[2]                    # ⇒ 改哈希算 replace
+    drop = keys[:2] # ⇒ 新版里它们算 add
+    change = keys[2] # ⇒ 改哈希算 replace
     old = {k: dict(v) for k, v in nf.items()}
     for k in drop:
         old.pop(k)
-    old[change] = {"sha256": "0" * 64, "size": 123}      # 故意改掉 ⇒ replace
-    old["__ghost__/never.py"] = {"sha256": "1" * 64, "size": 1}   # 新版没有 ⇒ del
+    old[change] = {"sha256": "0" * 64, "size": 123} # 故意改掉 ⇒ replace
+    old["__ghost__/never.py"] = {"sha256": "1" * 64, "size": 1} # 新版没有 ⇒ del
     oldp = os.path.join(tmp, "old-files.json")
     with open(oldp, "w", encoding="utf-8") as fh:
         json.dump({"version": "0.0.0-old", "files": old}, fh, ensure_ascii=False)
@@ -116,7 +116,7 @@ try:
     # ---- 4) 负向：plan 指向不存在的文件必须明确报错（不许在错的源上打载荷） ----
     print("\n[P4] 负向：源里缺文件 ⇒ 拒绝打包")
     bad = dict(old)
-    bad["__ghost__/never.py"] = {"sha256": "2" * 64, "size": 1}   # 仍在旧表里
+    bad["__ghost__/never.py"] = {"sha256": "2" * 64, "size": 1} # 仍在旧表里
     badp = os.path.join(tmp, "bad-old.json")
     with open(badp, "w", encoding="utf-8") as fh:
         json.dump({"version": "0.0.0-old", "files": bad}, fh, ensure_ascii=False)

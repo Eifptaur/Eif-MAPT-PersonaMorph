@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
-"""人设库结构/来源判据（2026-09-14 · 配合「加三个新分区 + 尽量全地补卡」这条队列）。
+"""人设库结构/来源判据。
 
-用户口径两条（都要机器守住）：
   ① 「先加分区，再加人设」——新卡必须挂在**目标分区**上，且分区名要有；
   ② 「尽量贴合原人设，去网上找第一手资源，不要自己胡编乱造」——每张新卡都要能在
      `docs/人设来源台账.md` 里找到出处；**没有一手出处的台词必须标 `（按其口吻）`**。
@@ -23,7 +22,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
-from agent.persona import PERSONAS, PERSONA_CATS     # noqa: E402
+from agent.persona import PERSONAS, PERSONA_CATS # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -89,7 +88,7 @@ for cat, keys in NEW_BATCHES.items():
        any(PERSONA_CATS.get(k) == cat for k in PERSONAS))
 
 print("── C. 第一手来源与「不许编」──")
-_ledger = src("docs/人设来源台账.md")
+_ledger = src(os.path.join(os.path.dirname(ROOT), "dev-workspace", "persona-morph", "docs", "人设来源台账.md"))  # 文档区已迁出产品根
 for cat, keys in NEW_BATCHES.items():
     for k in keys:
         nm = (PERSONAS.get(k) or {}).get("name", k)
@@ -99,8 +98,8 @@ for cat, keys in NEW_BATCHES.items():
 _rimi = str(PERSONAS.get("rimi_bd", {}).get("text", ""))
 ok("没有一手台词的卡标了「（按其口吻）」（rimi_bd）", "按其口吻" in _rimi)
 
-print("── C2. 每张卡都要有评分可显示（用户：「人设卡没有评分显示的，记得补上」）──")
-import json as _json                                  # noqa: E402
+print("── C2. 每张卡都要有评分可显示──")
+import json as _json # noqa: E402
 _RATINGS = os.path.join(ROOT, "data", "persona_ratings.json")
 try:
     with io.open(_RATINGS, encoding="utf-8") as f:

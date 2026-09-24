@@ -35,9 +35,9 @@ def ok(name, cond, detail=""):
     print("  {} {}{}".format("OK  " if cond else "FAIL", name, "  [{}]".format(detail) if detail else ""))
 
 
-from agent import user_tools as UT  # noqa: E402
-from agent import tool_stats as TS  # noqa: E402
-from agent import tools as TL  # noqa: E402
+from agent import user_tools as UT # noqa: E402
+from agent import tool_stats as TS # noqa: E402
+from agent import tools as TL # noqa: E402
 
 GOOD = {
     "name": "get_weather", "description": "查某城市天气",
@@ -48,7 +48,7 @@ GOOD = {
 
 print("── A. 清单校验 ──")
 ok("好清单通过", UT.validate(GOOD)[0] is not None)
-# V-R7-10：这里原有 `ok("坏 JSON 不在这里管（load 里报）", True)`——恒真、什么都没验，故作废删除；
+# 这里原有 `ok("坏 JSON 不在这里管（load 里报）", True)`——恒真、什么都没验，故作废删除；
 # 该行为（坏 JSON 进 problems、好清单照常加载、坏文件不阻断后续文件）由下面 B 段那条真断言覆盖。
 
 cases = [
@@ -112,7 +112,7 @@ def fake_fetch(req, timeout=None):
 
 
 t = [x for x in tools if x["name"] == "get_weather"][0]
-t = dict(t, response_path="data.answer")           # 清单里没写 response_path，这里显式加上再测
+t = dict(t, response_path="data.answer") # 清单里没写 response_path，这里显式加上再测
 res = UT.call(t, {"city": "上海"}, _fetch=fake_fetch)
 ok("正常调用：参数进了 query", "city=%E4%B8%8A%E6%B5%B7" in seen.get("url", ""), seen.get("url", "")[:60])
 ok("response_path 取到想要的字段", res.get("content") == "晴 26 度", str(res.get("content"))[:30])

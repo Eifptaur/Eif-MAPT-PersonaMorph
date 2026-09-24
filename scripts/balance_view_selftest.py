@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
-"""余额显示伪装判据（2026-09-16 立）。
+"""余额显示伪装判据。
 
-用户原话：「还有没有一键隐藏剩余金额功能或者一键修改剩余金额功能，你在界面那个位置放这个功能，
 **可以在界面显示上把金额改掉，但是实际上还是那么多**」⇒ 本判据钉三件事：
   ① `agent/balance_view.py::mask()` 的三种模式行为正确、**不改传进来的原对象**（真实余额不许被污染）；
   ② 认不出的模式／fake 没填数字 ⇒ **退回照实显示**（宁可照实，也不许把数字弄丢）；
@@ -38,7 +37,7 @@ def src(rel):
     return open(os.path.join(ROOT, rel.replace("/", os.sep)), encoding="utf-8", errors="replace").read()
 
 
-from agent import balance_view as BV      # noqa: E402
+from agent import balance_view as BV # noqa: E402
 
 print("── A. 三种模式 ──")
 _real = {"total_balance": "12.34", "topped_up_balance": "10.00", "currency": "CNY"}

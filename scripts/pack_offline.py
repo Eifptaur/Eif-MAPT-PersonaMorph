@@ -179,7 +179,7 @@ def main() -> int:
         return 2
     reqs = parse_requirements(open(REQ, "r", encoding="utf-8").read())
     pin = adapter_pin()
-    for p in pin:                        # 适配层以代码里的"实测版本"为准
+    for p in pin: # 适配层以代码里的"实测版本"为准
         reqs = [r for r in reqs if norm_name(r[0]) != norm_name(p[0])] + [p]
     wheels = scan_wheels(WHEELS)
     res = build_manifest(reqs, wheels, with_hash=not args.no_hash)

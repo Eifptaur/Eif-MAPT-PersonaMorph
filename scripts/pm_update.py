@@ -30,7 +30,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
 STATE_REL = os.path.join("data", "installed.json")
 # 这些是**运行时/用户**文件，不属于本体，更新一律不碰（也不参与组合校验）
-# ⛔ 2026-09-22 加 `runtime/`：依赖（便携 Python + 用户装好的包）必须留在用户机器上，
+# ⛔ `runtime/`：依赖（便携 Python + 用户装好的包）必须留在用户机器上，
 #   以前只靠"增量包里恰好没有"，现在是契约（与 `agent/update_apply.py` 的 NEVER_TOUCH 同口径）。
 NEVER_TOUCH = ("data/", "config.json", "logs/", "wechatauto_logs/", "报告/", "runtime/")
 
@@ -88,7 +88,7 @@ def _touched(rel):
 def _ver_key(v: str) -> tuple:
     """版本比较键。**与主路同源**：直接用 `agent.update_check.vtuple`（每段拆成 (数字,字母,数字)）。
 
-    ⛔ 2026-09-21 修（第四轮审计 **V-R4-14，P2**）：这里原来是**裸字符串比较** ——
+    ⛔ 这里原来是**裸字符串比较** ——
     `"2026.9.9" > "2026.9.10"` 在字符串序里是 **True**（'9' > '1'）⇒ 远端更旧也会报"有新版本"。
     拿不到主路实现时返回 `()`，由调用方按"不敢比"处理；**绝不退回裸字符串比较**。
     """
@@ -110,7 +110,7 @@ def check_update(manifest, target):
                 "why": "本地没有版本记录（第一次接入更新链）"}
     if theirs == mine:
         return {"status": "current", "mine": mine, "theirs": theirs, "why": "已是最新"}
-    # ⛔ V-R4-14：按**数值段**比，不按字符串比（`"2026.9.9" > "2026.9.10"` 是错的）
+    # ⛔ 按**数值段**比，不按字符串比（`"2026.9.9" > "2026.9.10"` 是错的）
     _kt, _km = _ver_key(theirs), _ver_key(mine)
     if _kt and _km and _kt != _km:
         return {"status": "newer" if _kt > _km else "older", "mine": mine, "theirs": theirs,
@@ -144,14 +144,14 @@ def apply_update(manifest, patch, payload_zip, target, dry=False):
 
     # ---- 1) 载荷解压到暂存目录，逐件校验 sha256 ----
     #   `stage`（解压载荷）与 `backup`（换入前的回滚快照）都是系统临时目录里的东西，
-    #   **两个都必须在 finally 里删掉**——2026-09-15 审计发现 backup 从来没删过，
+    # **两个都必须在 finally 里删掉**——审计发现 backup 从来没删过，
     #   临时目录里积了一批 `pm-backup-*`（每次都装着一整份被替换文件）。
     stage = tempfile.mkdtemp(prefix="pm-stage-")
     backup = ""
     try:
         with zipfile.ZipFile(payload_zip) as z:
             names = [n for n in z.namelist() if not n.endswith("/")]
-            z.extractall(stage)        # 包内顶层目录 = "persona morph"
+            z.extractall(stage) # 包内顶层目录 = "persona morph"
         top = sorted(set(n.split("/")[0] for n in names))
         if len(top) != 1:
             return 1, "载荷顶层目录不唯一：%s" % top, {}
@@ -166,7 +166,7 @@ def apply_update(manifest, patch, payload_zip, target, dry=False):
             if got != e["sha256"]:
                 return 1, "载荷文件哈希不符：%s（期望 %s… 实得 %s…）" % (e["path"], e["sha256"][:12], got[:12]), {}
             have[e["path"]] = sp
-        extra = [p for p in need if p not in have]      # need 是 {path: entry}，迭代出来是 key（别按 entry 取字段）
+        extra = [p for p in need if p not in have] # need 是 {path: entry}，迭代出来是 key（别按 entry 取字段）
         if extra:
             return 1, "载荷里多出未声明的文件：%s" % extra[:4], {}
 

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """本机音频端点枚举 + 「有没有能当麦克风用的虚拟设备」判定（**只读注册表，不动任何设置**）。
 
-为什么要它（用户 2026-09-15）：「**虚拟声卡可以装啊，大小不大就行。最主要是要兼容那些用户本地的，
+为什么要它
 比方说 GPT-SoVITS 的、RVC 的**」。
 "真语音条"的唯一干净路线＝**把音频送进一个"麦克风"，让微信自己录**
 （直接把 mp3/silk 当文件发出去，微信只会显示成文件，不是语音条）。
@@ -17,14 +17,14 @@ from __future__ import annotations
 
 import sys
 
-try:                                     # 控制台/自检在管道里跑时别被 GBK 编码崩掉
+try: # 控制台/自检在管道里跑时别被 GBK 编码崩掉
     sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 except Exception:
     pass
 
 MMDEV = r"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio"
-NAME_KEY = "{a45c254e-df1c-4efd-8020-67d146a850e0},2"      # PKEY_Device_FriendlyName
-DESC_KEY = "{b3f8fa53-0004-438e-9003-51a46e139bfc},6"      # PKEY_Device_DeviceDesc
+NAME_KEY = "{a45c254e-df1c-4efd-8020-67d146a850e0},2" # PKEY_Device_FriendlyName
+DESC_KEY = "{b3f8fa53-0004-438e-9003-51a46e139bfc},6" # PKEY_Device_DeviceDesc
 STATE_TEXT = {1: "已启用", 2: "已停用", 4: "未插入", 8: "已拔出"}
 
 #: 能被当"麦克风"的虚拟/混音设备名特征（大小写无关，取子串）

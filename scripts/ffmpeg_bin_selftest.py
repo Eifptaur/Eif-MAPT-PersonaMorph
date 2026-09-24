@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""ffmpeg 解析入口判据（2026-09-16 立）。
+"""ffmpeg 解析入口判据。
 
 为什么要有它：用户朋友那份环境检验报告里写着「ffmpeg：**没找到**（合成要转 wav，必需）」，
 而 `requirements.txt` 里的 **`imageio-ffmpeg` 本来就自带一份 ffmpeg 二进制**（随 pip 包分发、
@@ -37,7 +37,7 @@ def ok(name, cond, detail=""):
 
 
 print("── A. 唯一入口 ──")
-from agent import ffmpeg_bin as FB      # noqa: E402
+from agent import ffmpeg_bin as FB # noqa: E402
 
 ok("path()/bundled()/source() 三个接口都在",
    all(callable(getattr(FB, x, None)) for x in ("path", "bundled", "source")),
@@ -52,7 +52,7 @@ _b = FB.bundled()
 ok("imageio-ffmpeg 自带那份能取到（依赖里已有它）", bool(_b) and os.path.exists(_b), _b)
 _saved_which = shutil.which
 try:
-    shutil.which = lambda *a, **k: None          # 把 PATH 那条路打断
+    shutil.which = lambda *a, **k: None # 把 PATH 那条路打断
     _p2 = FB.path(refresh=True)
 finally:
     shutil.which = _saved_which

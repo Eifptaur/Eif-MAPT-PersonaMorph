@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""`send_text` 投递分支的**画面准备次序**行为判据（2026-09-21 立，来自网友反馈 v0921-1613）。
+"""`send_text` 投递分支的**画面准备次序**行为判据。
 
 为什么要有它：那位网友的检验器写着「它**读得到消息、只是发不出去**」，切会话失败台账里那条的
 why 只有 `no_capture` 一个英文词。真因是**抓图类判据先要有画面** —— 微信收在任务栏（最小化/隐藏）时
@@ -26,18 +26,18 @@ import threading
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# ⛔ V-R14-1 隔离：判据不许写产品 data/ 与 logs/（台账指到临时区）。
+# ⛔ 隔离：判据不许写产品 data/ 与 logs/（台账指到临时区）。
 #   ⚠️ 第一版这段是在 `from agent import wechat as W` **之前**用 `W.…` 打桩的（名字还没定义 ⇒
 #   NameError 被 `except: pass` 静默吞掉）⇒ 一次都没生效。现在收口到 `scripts\_iso14.py` 一处，
 #   并且**先 import 再打桩**。
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # scripts\（见 `_iso14` 文件头）
-import _iso14                                   # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # scripts\（见 `_iso14` 文件头）
+import _iso14 # noqa: E402
 _iso14.wechat()
 
-from agent import wechat as W              # noqa: E402
-from agent import chat_header as ch        # noqa: E402
-from agent import version_gate as vg       # noqa: E402
-from agent import chat_ocr as co           # noqa: E402
+from agent import wechat as W # noqa: E402
+from agent import chat_header as ch # noqa: E402
+from agent import version_gate as vg # noqa: E402
+from agent import chat_ocr as co # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -195,7 +195,7 @@ ok("拿得到句柄 ⇒ 三态之一（最小化 / 在屏幕上 / 未知），�
 _h2 = W._main_iconic_hint(None)
 ok("传 None 也不抛", isinstance(_h2, str) and _h2, _h2)
 
-print("── A6. 还原与放回**必须成对**（第九轮 V-R9-1：v2.1.52 的早退路径不放回，用户微信被摊在桌面上）──")
+print("── A6. 还原与放回**必须成对**──")
 
 
 def _pair(events):
@@ -204,9 +204,9 @@ def _pair(events):
 
 ok("A6a 成功路径成对：prepare 一次 + putback 一次", _pair(_s1.events) == ["prepare", "putback"],
    str(_s1.events))
-ok("A6b **早退路径（拒发）也成对** —— 这条就是 V-R9-1 的回归锚",
+ok("A6b **早退路径（拒发）也成对** —— 这条就是 的回归锚",
    _pair(_s4.events) == ["prepare", "putback"], str(_s4.events))
-_old_events = ["prepare"]          # 老写法：早退路径只有 prepare、没有 putback
+_old_events = ["prepare"] # 老写法：早退路径只有 prepare、没有 putback
 ok("A6c 反例锚：老写法（只剩 prepare）过不了 A6b", _pair(_old_events) != ["prepare", "putback"],
    str(_pair(_old_events)))
 ok("A6d 放回挂在 finally 上（源码形态）",
@@ -215,7 +215,7 @@ ok("A6d 放回挂在 finally 上（源码形态）",
    .split("def send_text(")[1].split("\n    def ", 2)[0])
 
 # ══════════════════════════════════════════════════════════════════════════════
-# B 段（第十轮 V-R10-2 / V-R10-3 / V-R10-4）：**别的还原链也要成对**
+# B 段：**别的还原链也要成对**
 #
 # A 段只覆盖 `send_text`；而 `send_text_at`（@某人）/ `send_image`（发图）/ `_get_gui` 的自愈
 # 分支同样会"不激活地还原"用户收起来的主窗，却**没有一句放回**（侦察线打桩实测：返回 blocked、
@@ -228,9 +228,9 @@ ok("A6d 放回挂在 finally 上（源码形态）",
 # ══════════════════════════════════════════════════════════════════════════════
 print("── B. `send_text_at` / `send_image` / `_get_gui` 自愈：还原与放回**成对** ──")
 
-import ctypes as _ct_b                                                            # noqa: E402
-import collections as _coll_b                                                     # noqa: E402
-import importlib as _il_b                                                        # noqa: E402
+import ctypes as _ct_b # noqa: E402
+import collections as _coll_b # noqa: E402
+import importlib as _il_b # noqa: E402
 
 BTN_MAIN = 4242
 _FAKE_NAMES_B = ("IsWindow", "IsIconic", "IsWindowVisible", "GetForegroundWindow",
@@ -247,7 +247,7 @@ class _U32(object):
     def __init__(self, iconic=True, fg=777):
         self.iconic = bool(iconic)
         self.fg = int(fg)
-        self.acts = []                      # [("ShowWindow", 4/6), ("SetWindowPos", ...)]
+        self.acts = [] # [("ShowWindow", 4/6), ("SetWindowPos", ...)]
         self.cls = {}
 
     def IsWindow(self, h):
@@ -272,9 +272,9 @@ class _U32(object):
 
     def ShowWindow(self, h, cmd):
         self.acts.append(("ShowWindow", int(cmd)))
-        if int(cmd) == 4:                   # SW_SHOWNOACTIVATE
+        if int(cmd) == 4: # SW_SHOWNOACTIVATE
             self.iconic = False
-        elif int(cmd) == 6:                 # SW_MINIMIZE
+        elif int(cmd) == 6: # SW_MINIMIZE
             self.iconic = True
         return True
 
@@ -294,7 +294,7 @@ class _U32(object):
         return True
 
     def EnumChildWindows(self, h, cb, l):
-        cb(999, l)                          # 主窗的渲染子窗（`_has_render_child` 的判据）
+        cb(999, l) # 主窗的渲染子窗（`_has_render_child` 的判据）
         return True
 
 
@@ -412,7 +412,7 @@ def _run_chain(kind, allow_real=False, no_putback=False):
         _restore_u32(u, saved)
 
 
-import tempfile as _tf_b                                                          # noqa: E402
+import tempfile as _tf_b # noqa: E402
 
 for _kind, _label in (("at", "`send_text_at`（@某人）"), ("image", "`send_image`（发图）")):
     _rb, _fb, _ab = _run_chain(_kind)
@@ -441,10 +441,10 @@ ok("B6 ⚡2026-09-24 真鼠标档（**显式允许**时走真链）：成功路�
    "acts=%s · 登记=%s · %s" % (_fb2.acts, W._MINIMIZED_BY_US, str(_rb2)[:80]))
 _reset_state()
 
-print("── B7. `_get_gui` 自愈分支：还原后必须放回（V-R10-3：只读调用点也会把微信摊在桌面上）──")
+print("── B7. `_get_gui` 自愈分支：还原后必须放回──")
 _GUA = None
 try:
-    import wechatauto.guia as _guia_b                                             # noqa: E402
+    import wechatauto.guia as _guia_b # noqa: E402
     _GUA = _guia_b
 except Exception:
     _guia_b = None
@@ -505,12 +505,12 @@ else:
        and int(W._MINIMIZED_BY_US or 0) == 0,
        "acts=%s · iconic=%s · 登记=%s" % (_f7.acts, _f7.iconic, W._MINIMIZED_BY_US))
     _g7n, _f7n = _run_get_gui(no_putback=True)
-    ok("B7c 反例锚（摘掉放回）⇒ `_get_gui` 返回时窗口仍摊着 + 登记残留（V-R10-3 的现场）",
+    ok("B7c 反例锚（摘掉放回）⇒ `_get_gui` 返回时窗口仍摊着 + 登记残留",
        _f7n.iconic is False and int(W._MINIMIZED_BY_US or 0) == BTN_MAIN,
        "acts=%s · iconic=%s · 登记=%s" % (_f7n.acts, _f7n.iconic, W._MINIMIZED_BY_US))
     _reset_state()
 
-print("── B8. V-R10-4 + 2026-09-22 收紧：前台态**不许注销这笔债**；而「你根本没在动」时**必须照还** ──")
+print("── B8. + 前台态**不许注销这笔债**；而「你根本没在动」时**必须照还** ──")
 _f8 = _U32(iconic=True, fg=777)
 _u8, _s8 = _patch_u32(_f8)
 _idle_real = W._user_idle_seconds
@@ -518,14 +518,14 @@ try:
     W._MINIMIZED_BY_US = BTN_MAIN
     W._WAS_ICONIC_BY_US = BTN_MAIN
     _f8.iconic = False
-    _f8.fg = BTN_MAIN                       # 微信此刻是前台
-    # ⛔ 2026-09-22 改口径：第③条从"它在不在前台"收紧成"**你最近 1.2 秒内有没有键鼠输入**"。
+    _f8.fg = BTN_MAIN # 微信此刻是前台
+    # ⛔ 第③条从"它在不在前台"收紧成"**你最近 1.2 秒内有没有键鼠输入**"。
     #   现场：整链会发伪激活 ⇒ **微信被我们自己顶到前台**，老口径于是把"放回"整个吃掉
     #   （实测末态 IsIconic=False、整链微信占前台 72%）⇒ 这里先把"你刚刚动过鼠标"喂进去。
     W._user_idle_seconds = lambda: 0.2
     W._minimize_back_if_needed("自检：前台态（你刚动过鼠标）")
     _kept = int(W._MINIMIZED_BY_US or 0)
-    ok("B8a 前台 + **你刚动过鼠标** ⇒ 一枪不动（安全线③），但**登记保留**（V-R10-4：这笔债还没还）",
+    ok("B8a 前台 + **你刚动过鼠标** ⇒ 一枪不动（安全线③），但**登记保留**",
        _kept == BTN_MAIN and _f8.acts == [], "登记=%s · acts=%s" % (_kept, _f8.acts))
     # 新口径的正向锚：前台但**你已经 5 秒没动** ⇒ 那是伪激活招来的，必须照还
     W._user_idle_seconds = lambda: 5.0
@@ -544,7 +544,7 @@ try:
     W._user_idle_seconds = lambda: 0.2
     W._minimize_back_if_needed("自检：前台态（第二次）")
     _kept = int(W._MINIMIZED_BY_US or 0)
-    _f8.fg = 777                            # 用户切走了 ⇒ 下一次链尾该真动手
+    _f8.fg = 777 # 用户切走了 ⇒ 下一次链尾该真动手
     W._user_idle_seconds = _idle_real
     W._minimize_back_if_needed("自检：下一次链尾")
     ok("B8b ⚡2026-09-24 用户切走之后的下一次链尾：**真放回**（SetWindowPos 压底层）且登记清零",
@@ -557,13 +557,13 @@ finally:
     _restore_u32(_u8, _s8)
     _reset_state()
 
-print("── B10. `send_text` 的**三道 `try` 前早退**也要结清上一笔债（V-R10-6c）──")
-_f10 = _U32(iconic=False, fg=777)          # 窗口在屏幕上（我们还原出来的）、现在不是前台
+print("── B10. `send_text` 的**三道 `try` 前早退**也要结清上一笔债──")
+_f10 = _U32(iconic=False, fg=777) # 窗口在屏幕上（我们还原出来的）、现在不是前台
 _u10, _s10 = _patch_u32(_f10)
 _h10 = W._control_halt
 W._control_halt = lambda: "机器人已停止（自检假件）"
 try:
-    W._MINIMIZED_BY_US = BTN_MAIN          # 上一笔链留下的登记（这就是"没人还"的那一笔）
+    W._MINIMIZED_BY_US = BTN_MAIN # 上一笔链留下的登记（这就是"没人还"的那一笔）
     W._WAS_ICONIC_BY_US = BTN_MAIN
     _r10 = W.WeChatAdapter.send_text(object(), "filehelper", "SELFTEST-B10")
     ok("B10a 停机闸早退：如实返回（这一步本来就在 `try` 之前，`finally` 罩不到）",

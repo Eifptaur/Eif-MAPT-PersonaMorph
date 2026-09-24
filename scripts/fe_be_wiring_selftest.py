@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-"""前后端连接判据（第十五轮 **V-R15-1**）—— 网友报「点了没反应」那类问题的守备。
+"""前后端连接判据—— 网友报「点了没反应」那类问题的守备。
 
 **为什么要它**：`agent/webui.py` 里有两套独立的 `/api/...` 分派链 —— `do_GET`（读）与
 `_handle_body_request`（POST/PUT，动）。同一个能力若**只注册在其中一条**，而前端用的是另一条，
 请求就会落到那条链末尾的 `else: 404`；前端 `getJSON` 在 `!r.ok` 时抛，接住的地方弹一句
 `{"error": "not found"}` 或干脆什么都不弹 ⇒ 用户看到的是「点了没反应」。
-这个毛病**第十二轮就修过一次**（`/api/archive`：原先只有 POST 链、前端用 GET ⇒ 整个「屏蔽存档」面板是死的），
-第十五轮又实测抓到 **6 处**（方向相反：五条只有 GET、前端发 POST；一条只有 POST、前端发 GET）。
+这个毛病**就修过一次**（`/api/archive`：原先只有 POST 链、前端用 GET ⇒ 整个「屏蔽存档」面板是死的），
+又实测抓到 **6 处**（方向相反：五条只有 GET、前端发 POST；一条只有 POST、前端发 GET）。
 
 判据两条腿：
   A. **静态对账**（全量、机械）：把 `agent/console_html.py` 里每个 API 调用的**真方法**
@@ -58,7 +58,7 @@ CALLSELF = re.compile(r"self\.(_[A-Za-z_][A-Za-z0-9_]*)\s*\(")
 def _func_ranges(src):
     """按**缩进**切出每个 `def` 的行区间（嵌套 def 也要正确收尾，这是上一版审计脚本的坑）。"""
     lines = src.splitlines()
-    stack = []                      # [(indent, name, start_idx)]
+    stack = [] # [(indent, name, start_idx)]
     out = {}
     for i, ln in enumerate(lines):
         m = FUNC.match(ln)
@@ -104,11 +104,11 @@ def _reachable(chain):
 
 GET_PATHS = _reachable("do_GET")
 BODY_PATHS = _reachable("_handle_body_request")
-# ⛔ 2026-09-22（第 ④ 项 Phase B 第一批）：`do_GET` 里那些字面 `/api/…` 分支已经**搬到
+# ⛔ `do_GET` 里那些字面 `/api/…` 分支已经**搬到
 #   `agent/routes.py` 的 `HANDLERS`**（按路由表分派），所以"能不能应答"= 链里的字面量 ∪ 表里已搬过去的。
 try:
     from agent.routes import HANDLERS as _H
-except Exception:                                                # noqa: BLE001
+except Exception: # noqa: BLE001
     _H = {}
 GET_PATHS = GET_PATHS | {p for p, row in _H.items() if "GET" in row}
 BODY_PATHS = BODY_PATHS | {p for p, row in _H.items() if ("POST" in row or "PUT" in row)}
@@ -146,10 +146,10 @@ SHARED = ("/api/file_search/add", "/api/file_search/del", "/api/tools/new_manife
           "/api/ui_fingerprint/take", "/api/ui_fingerprint/forget", "/api/prompt/preview",
           "/api/personas/favs")
 _both = [p for p in SHARED if p in GET_PATHS and p in BODY_PATHS]
-ok("A2 六条「两条链都接」的动作确实两侧都可应答（V-R15-1 的修法）", len(_both) == len(SHARED),
+ok("A2 六条「两条链都接」的动作确实两侧都可应答", len(_both) == len(SHARED),
    "只在一侧的：%s" % [p for p in SHARED if p not in _both])
 ok("A3 反向锚就位：把 `_handle_body_request` 里的共用方法调用删掉，A1 会红（判据真读调用关系）",
-   # ⛔ 2026-09-22（Phase B）：这两个共用方法的调用点已**跟着分支体搬进了方法**（`_rapi_file_search_add_post` 等）
+   # ⛔ （Phase B）：这两个共用方法的调用点已**跟着分支体搬进了方法**（`_rapi_file_search_add_post` 等）
    #   ⇒ 锚改成"在**整个 webui.py** 里找"；它的用意（证明 A1 真读调用关系）不变：把调用整个删掉，这条照样红。
    "self._file_search_dirs(" in WEBUI
    and "self._ui_fingerprint_take(" in WEBUI)
@@ -179,7 +179,6 @@ try:
     # ⛔ 这里必须把 `wechat.WeChatAdapter` 也打桩 —— 第一次跑这条判据时忘了它，
     #   结果 `_ui_fingerprint_take` 真去构造了驱动库的 GUI，**真的借用并还原了用户微信窗口的几何**
     #   （实测日志：`借用了微信窗口几何：hwnd=447223716 …`）⇒ 判据碰了用户的微信、还写了
-    #   `data/window_borrow.json`。判据不许有这种副作用（本项目的"不许打扰用户"红线）。
     class _FakeWx(object):
         def _get_gui(self):
             return None
@@ -196,7 +195,7 @@ try:
     _stub(UFP, "digest", lambda: "0" * 12)
     _stub(SP, "preview", lambda: {"ok": True, "system": "判据用假提示词"})
 
-    # ③b（2026-09-22）：`/api/tools/test`（控制台「试一下」）——清单目录指到临时区，
+    # ③b：`/api/tools/test`（控制台「试一下」）——清单目录指到临时区，
     # 执行点打桩成记录器（**判据不出网**）；B7 再把真实现还原回来验内网守卫。
     _tools_dir = os.path.join(_tmp, "tools.d")
     os.makedirs(_tools_dir, exist_ok=True)

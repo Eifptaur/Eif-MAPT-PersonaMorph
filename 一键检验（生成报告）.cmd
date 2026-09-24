@@ -1,7 +1,6 @@
 @echo off
-rem  规则（2026-09-15 两轮跨机实测定的，改前先读）： 
+rem 规则： 
 rem   ① 本文件必须 CRLF + UTF-8 无 BOM，且**每一行都以 ASCII 字节结尾**（LF 会让 cmd 一行都跑不动； 
-rem      多字节字符紧贴 CR 还有解析事故的风险）。 
 rem   ② **不许读 logs\python_path.txt**：那个文件是 ANSI 写的（一键启动.exe 按 936 读它）， 
 rem      在本窗口 chcp 65001 下读会变乱码 ⇒ if exist 判否 ⇒ 静默掉到系统 Python 3.14 去编译源码。 
 rem      正解＝先直接试包内 runtime\python\python.exe，试不到才退系统 py。 
@@ -49,7 +48,7 @@ if defined PYARG (
   "%PYCMD%" -X utf8 scripts\setup_deps.py
 )
 echo   [3/3] 正在收集环境信息… 
-rem [r13] 此处不再加 --open: 它会让资源管理器弹到前台 (跨机实测 t=27.4s 前台被切到「报告」窗口),
+rem [r13] 此处不再加 --open: 它会让资源管理器弹到前台 ,
 rem        自检工具不许打扰用户. 报告路径下面会打印, 要自动打开请手动加 --open.
 if defined PYARG (
   %PYCMD% %PYARG% scripts\collect_report.py --send-test --allow-send

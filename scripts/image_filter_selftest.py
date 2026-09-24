@@ -7,7 +7,7 @@ import os
 import shutil
 import sys
 
-try:      # 控制台默认 GBK：自检里的 ✔/✘ 一旦被重定向就 UnicodeEncodeError 崩掉整条自检
+try: # 控制台默认 GBK：自检里的 ✔/✘ 一旦被重定向就 UnicodeEncodeError 崩掉整条自检
     sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
     sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 except Exception:
@@ -16,9 +16,9 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from PIL import Image, ImageDraw                  # noqa: E402
+from PIL import Image, ImageDraw # noqa: E402
 
-from agent import image_filter as fl              # noqa: E402
+from agent import image_filter as fl # noqa: E402
 
 PASS = FAIL = 0
 
@@ -41,7 +41,7 @@ os.makedirs(img_dir, exist_ok=True)
 def mk(name, color=(120, 160, 210), size=(600, 600), skin=False):
     p = os.path.join(img_dir, name)
     im = Image.new("RGB", size, color)
-    if skin:                                   # 大面积肤色（触发肤色比过滤器）
+    if skin: # 大面积肤色（触发肤色比过滤器）
         d = ImageDraw.Draw(im)
         d.rectangle([0, 0, size[0], size[1]], fill=(226, 178, 152))
     im.save(p)

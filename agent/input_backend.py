@@ -7,7 +7,7 @@
 
 两档实现（判据全部来自本项目实测，不是外推）：
   · `MessageBackend`（L5，默认）：`PostMessage` 发 `WM_ACTIVATE`/`WM_NCACTIVATE` 伪激活 + 鼠标/键盘消息。
-    实测（2026-09-13）：①投递 `WM_CHAR` + 投递点「发送」按钮 ⇒ **3/3 DB 回读命中**，光标与前台未变；
+    实测：①投递 `WM_CHAR` + 投递点「发送」按钮 ⇒ **3/3 DB 回读命中**，光标与前台未变；
     ②投递点笑脸 ⇒ 表情面板弹出（新顶层窗 `Qt51514QWindowToolSaveBits`）；③投递点面板里的收藏格
     ⇒ **DB 回读 `type=动画表情`**（`local_id 550→551`）⇒ 发送与表情两条链都能纯后台走完。
   · `RealInputBackend`（L0，兜底）：走 `ui_adapt.click` 的真鼠标路径；用完 `heal_input()` 恢复光标。
@@ -28,7 +28,7 @@ from ctypes import wintypes
 
 from .config import get_config
 
-# ⚠️ 2026-09-18 补：**这个模块一直在用 `log` 却从没定义过它**。
+# ⚠️ **这个模块一直在用 `log` 却从没定义过它**。
 #   为什么以前没炸：唯一的调用位于 `menu_click` 的"items 非空"分支（"菜单 OCR 明细…"），
 #   而修复前菜单 OCR **永远读不出 items**（原尺寸读不出的那个真因）⇒ 那行**从没被执行到**。
 #   我的"原尺寸读不出就放大重读"修复让它第一次执行 ⇒ `NameError: name 'log' is not defined`
@@ -44,14 +44,14 @@ _user32 = ctypes.windll.user32
 
 def _lock_dpi() -> str:
     """锁 DPI 上下文 —— **必须检查返回值**：这些 API 失败时只返回 0、不抛异常
-    （2026-09-13 实测：老写法"以为锁上了"，实际进程仍读虚拟坐标）。"""
+    。"""
     try:
-        if _user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)):   # PerMonitorV2
+        if _user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)): # PerMonitorV2
             return "PerMonitorV2"
     except Exception:
         pass
     try:
-        if int(ctypes.windll.shcore.SetProcessDpiAwareness(2)) == 0:     # S_OK
+        if int(ctypes.windll.shcore.SetProcessDpiAwareness(2)) == 0: # S_OK
             return "shcore/2"
     except Exception:
         pass
@@ -73,7 +73,7 @@ _user32.WindowFromPoint.restype = wintypes.HWND
 # ── 消息常量（投递序列用到的全部）────────────────────────────────────────
 WM_ACTIVATE, WM_NCACTIVATE, WM_MOUSEACTIVATE = 0x0006, 0x0086, 0x0021
 WM_MOUSEMOVE, WM_LBUTTONDOWN, WM_LBUTTONUP = 0x0200, 0x0201, 0x0202
-# 右键（2026-09-16 起可用：投递右键有效，但**必须投主窗**，见 `MessageBackend.click`）
+# 右键
 WM_RBUTTONDOWN, WM_RBUTTONUP = 0x0204, 0x0205
 # 微信的菜单/弹层顶层窗类名（投递右键弹出的菜单就是它；表情面板也用同一个类名 ⇒ 必须差分）
 MENU_CLASS = "Qt51514QWindowToolSaveBits"
@@ -81,16 +81,16 @@ WM_CHAR, WM_KEYDOWN, WM_KEYUP = 0x0102, 0x0100, 0x0101
 WM_PASTE, WM_DROPFILES, WM_MOUSEWHEEL = 0x0302, 0x0233, 0x020A
 VK_CONTROL, VK_V, VK_RETURN = 0x11, 0x56, 0x0D
 
-MAIN_CLASS = "Qt51514QWindowIcon"        # 微信主窗
-PANEL_CLASS = "Qt51514QWindowToolSaveBits"   # 表情面板等弹层
-LEVEL_MESSAGE = "message"                # L5
-LEVEL_REAL = "real"                      # L0
+MAIN_CLASS = "Qt51514QWindowIcon" # 微信主窗
+PANEL_CLASS = "Qt51514QWindowToolSaveBits" # 表情面板等弹层
+LEVEL_MESSAGE = "message" # L5
+LEVEL_REAL = "real" # L0
 
 _user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, ctypes.c_ssize_t, ctypes.c_ssize_t]
 _user32.PostMessageW.restype = wintypes.BOOL
-_post = _user32.PostMessageW             # 单点可替换，供自检做无微信单测
+_post = _user32.PostMessageW # 单点可替换，供自检做无微信单测
 # ⚠️ 上面两行必须声明 argtypes/restype：不声明时 64 位下的 WPARAM/LPARAM 会被当 32 位，
-#    传 HDROP 句柄（64 位整数）直接 `OverflowError: int too long to convert`（2026-09-13 实测踩过）。
+# 传 HDROP 句柄（64 位整数）直接 `OverflowError: int too long to convert`。
 #    同类坑还有 clipboard.py 里的 GlobalLock —— 那边更狠，会直接崩进程。
 
 
@@ -141,7 +141,7 @@ def _child_classes(hwnd: int) -> set:
     return out
 
 
-RENDER_CHILD = "MMUIRenderSubWindowHW"     # 主窗特有的渲染子窗
+RENDER_CHILD = "MMUIRenderSubWindowHW" # 主窗特有的渲染子窗
 
 
 def pick_main_window(cands) -> int:
@@ -150,7 +150,7 @@ def pick_main_window(cands) -> int:
     cands: [(hwnd, has_render_child, area, visible)]
     规则：①优先"带渲染子窗"的（朋友圈编辑窗也同类名，但它没有渲染子窗）②同分取面积最大
     ③**不看可见性** —— 窗口被隐藏/最小化时也要认得出主窗，否则 auto 会静默降级成真鼠标档
-    （2026-09-13 实测就是这个降级：窗口一 SW_HIDE，投递档就悄悄换成 L0 了）。
+    。
     """
     best, best_key = 0, None
     for hwnd, has_child, area, _vis in (cands or []):
@@ -164,8 +164,8 @@ def find_render_child(main_hwnd: int) -> int:
     """主窗里的**渲染子窗**（`MMUIRenderSubWindowHW`）：Qt 自绘界面真正绘制的那一层。
 
     ⚠️ 它**能不能收投递鼠标消息，跟着微信版本变**，所以**别再拿它当会话行点击的唯一目标**：
-      · 2026-09-13（微信 4.1.15.8）：投渲染子窗能切换会话、投主窗不行；
-      · 2026-09-21（本机实测，A/B 同落点同节奏）：**反过来了** —— 投主窗 5/5 生效（绿底高亮带
+      · （微信 4.1.15.8）：投渲染子窗能切换会话、投主窗不行；
+      · A/B 同落点同节奏）：**反过来了** —— 投主窗 5/5 生效（绿底高亮带
         落到目标行、聊天区像素变化），投渲染子窗 0/5（毫无反应）。
     ⇒ 会话行点击一律用 `row_click_targets()` **按序试 + 每枪自检**。
     """
@@ -193,9 +193,9 @@ def find_render_child(main_hwnd: int) -> int:
 def row_click_targets(main_hwnd: int) -> list:
     """**会话行点击**的目标窗候选顺序（按序试，每枪自检是否生效）。
 
-    为什么不再硬编码单一目标（2026-09-21 真机 A/B）：同一个落点、同一套节奏，
+    为什么不再硬编码单一目标：同一个落点、同一套节奏，
     **投主窗 5/5 生效**（绿底高亮带移到目标行、聊天区像素变化率 0.03~0.18），
-    **投渲染子窗 0/5**（毫无反应）——而 2026-09-13 的实测结论**正好相反**。
+    **投渲染子窗 0/5**（毫无反应）——而 的实测结论**正好相反**。
     这就是"哪个窗收鼠标消息"随微信版本变（Qt 自绘层的命中测试实现变过），
     ⇒ 顺序＝**主窗优先**（当前版本有效），不成再换渲染子窗（老版本有效）。
 
@@ -230,7 +230,7 @@ def find_main_window() -> int:
     """微信**主窗**（投递键盘消息、点笑脸都发它）。
 
     ⚠️ 不能用 `FindWindow(类名)`：表情面板之外的**朋友圈纯文字编辑窗也是
-    `Qt51514QWindowIcon`**，`FindWindow` 返回的是第一个命中的那个（2026-09-13 实测踩到——
+    `Qt51514QWindowIcon`**，`FindWindow` 返回的是第一个命中的那个（踩到——
     投递全打到编辑窗上，发送自然失败）。
     ⚠️ **也不能只认"可见"的窗口**：主窗被收进托盘/隐藏时，按可见性过滤会返回 0，
     于是 `auto` 档悄悄降级成真鼠标档（会动用户光标）——这正是最高目标里"不许悄悄降级"的场景。
@@ -307,13 +307,13 @@ class MessageBackend(InputBackend):
         """投递点击。`hover_ms`＝按下前**先悬停**多久（默认 0 ⇒ 沿用 50ms 落点稳定），
         `press_ms`＝按住多久（默认 self.press_ms）。
 
-        ⚠️ 微信**会话列表行**必须要"慢节奏"才认（2026-09-13 A/B 实测，判据＝高亮行 y 有没有移到我点的那一行）：
+        ⚠️ 微信**会话列表行**必须要"慢节奏"才认：
           ① 只投主窗 ✗；② 投渲染子窗但用快节奏（悬停 50ms + 按住 60ms）**✗ 高亮不动**；
           ③ 投渲染子窗 + **悬停 300ms + 按住 150ms** ✓ 高亮立刻跳到目标行。⇒ 会话行点击一律用慢节奏。
         """
         if not hwnd:
             return False, "窗口句柄为空"
-        # ⚠️ 2026-09-16 实测（两靶点各有真实右键阳性对照，见 `_scratch/rclick_avatar.py`）：
+        # ⚠️ （两靶点各有真实右键阳性对照，见 `_scratch/rclick_avatar.py`）：
         #   **右键投渲染子窗不弹菜单（新顶层窗 0 / 像素差 0.000），投「主窗」才弹**
         #   （弹出 `Qt51514QWindowToolSaveBits`，像素差 0.026~0.035）；
         #   而**左键**点会话行恰恰相反、必须投渲染子窗。⇒ 右键一律**自动换成主窗**，
@@ -340,7 +340,7 @@ class MessageBackend(InputBackend):
     def wheel(self, hwnd: int, screen_pt, delta: int = -120, times: int = 1, gap_ms: int = 60) -> tuple:
         """投递滚轮（`WM_MOUSEWHEEL`）：`delta` 一格＝±120（负＝向下滚），`times` 可一次发多格。
 
-        为什么带 `times` 和间隔：用户 2026-09-13 反馈「你滚得太不顺滑了，**一下一下地滚，导致没有看到**」
+        为什么带 `times` 和间隔：
         －－单发一格、中间不歇，自绘列表容易处理不过来或只滚一点点；连续多格 + 每格 60ms 才像人滚。
         ⚠️ `WM_MOUSEWHEEL` 的 lParam 是**屏幕坐标**（与 `WM_LBUTTONDOWN` 用客户区坐标不同）。
         """
@@ -379,7 +379,7 @@ class MessageBackend(InputBackend):
     def keys(self, hwnd: int, vks, hold_ms: int = 30) -> tuple:
         """投递一组**组合键**（例：`[VK_CONTROL, VK_V]` ＝ Ctrl+V）。
 
-        ⚠️ 实测（2026-09-13）：**发图要投给渲染子窗 `MMUIRenderSubWindowHW`** —— 投给主窗完全无效；
+        ⚠️ 实测：**发图要投给渲染子窗 `MMUIRenderSubWindowHW`** —— 投给主窗完全无效；
         且正因如此，"剪贴板 + 投递 Ctrl+V" 成了**纯后台发图**的通路（不动光标、不打扰你（可能短暂置前约 1~3 秒后自动还回））。
         """
         if not hwnd:
@@ -477,7 +477,7 @@ def menu_new_windows(pid: int, before_ids) -> list:
 def menu_item_score(read: str, want: str) -> float:
     """菜单项匹配打分（0 / 0.8 / 1.0）——**容忍 OCR 噪声**。
 
-    为什么要有它（2026-09-18 现场：**引用链在本机一直失灵**，作者看到的"反复点气泡、也不引用"就是它）：
+    为什么要有它：
       微信自绘菜单项的 OCR 常被噪声字符污染，实测：
         「引用」→ **`@引`** · 「转发」→ `转发．．．` · 「删除」→ `U删除` · 「撤销」→ `軀制` · 「拍一拍」→ `拍一拍`
       原来的判据只做 `chat_ocr.matches()` 与"原文包含"，遇到 `@引` 就判不中 ⇒ **不点** ⇒ 换候选点重试
@@ -502,12 +502,12 @@ def menu_item_score(read: str, want: str) -> float:
 def menu_click(hwnd_menu: int, item_text: str, zoom: int = 2, allow_top_fallback: bool = False) -> tuple:
     """在菜单窗里找含 `item_text` 的项，并**投递左键**点它。返回 `(ok, 说明)`。
 
-    ⚠️ 实测两处坑（2026-09-16）：
+    ⚠️ 实测两处坑：
       ① **OCR 会把「复制」读成「軀制」**（第一版按精确匹配 ⇒ 匹配不到、白跑一轮）⇒ 先用
          `chat_ocr.matches` 模糊匹配；
       ② 菜单是**独立顶层窗**、客户区坐标＝窗口矩形坐标（实测投递 (102,68) 命中）⇒ 直接投。
 
-    ⛔ 2026-09-18 改（真缺陷，现场抓到）：原来"匹配不到就**点最上面那一项**"（给「复制」兜底用的），
+    ⛔ 现场抓到）：原来"匹配不到就**点最上面那一项**"（给「复制」兜底用的），
     但对「拍一拍」「引用」这类**必须精确命中**的菜单项，这一动作会**去点一个我们根本不知道是什么的项**
     —— 现场日志原文：`投递右键菜单：已投递点击菜单项（兜底取最上面一项「ek.」，落点 299,47）`，
     而且随后还被 `_verify_poke` 的假验证判成"已拍成功"。⇒ **兜底改成显式 opt-in（默认关）**：
@@ -533,7 +533,7 @@ def menu_click(hwnd_menu: int, item_text: str, zoom: int = 2, allow_top_fallback
         items = _co.recognize(img, timeout=4.0) or []
     except Exception as e:
         return False, "菜单 OCR 失败：%s" % str(e)[:60]
-    # ⭐ 2026-09-18 **"拍不上"的最后一环**：微信这个自绘菜单**原尺寸 OCR 读不出任何项**
+    # ⭐ **"拍不上"的最后一环**：微信这个自绘菜单**原尺寸 OCR 读不出任何项**
     #   （离线实测同一张图：`ScreenOCR.recognize(原图)=[]`，**放大 2x/3x 后 = `[('拍一拍',...)]`**）。
     #   原代码只读原尺寸 ⇒ 永远 `items=[]` ⇒ 永远"判据不可用，不点" ⇒ 表现为"菜单弹了但拍不上"。
     #   ⇒ 原尺寸读不出就**放大再读一次**，坐标按比例还原（与项目里 `ocr_zoomed` 同一套经验：
@@ -541,7 +541,7 @@ def menu_click(hwnd_menu: int, item_text: str, zoom: int = 2, allow_top_fallback
     if not items:
         _z = max(3, int(zoom or 2))
         try:
-            from PIL import Image as _PILImage          # ⚠️ 本模块 PIL 是懒加载的，别用裸 `Image`
+            from PIL import Image as _PILImage # ⚠️ 本模块 PIL 是懒加载的，别用裸 `Image`
             _big = img.resize((img.width * _z, img.height * _z), _PILImage.LANCZOS)
             _it2 = _co.recognize(_big, timeout=6.0) or []
             items = [(t, int(x) // _z, int(y) // _z, int(w) // _z, int(h) // _z)
@@ -553,7 +553,7 @@ def menu_click(hwnd_menu: int, item_text: str, zoom: int = 2, allow_top_fallback
             log.info("菜单 OCR 放大重读失败：%s", e)
     if not items:
         return False, "菜单 OCR 读不到任何项（原尺寸与放大后都读不出，判据不可用，不点）"
-    # 🔴 2026-09-18 加（作者当场问「他的鼠标似乎够不上，悬停在"引用"那一栏了。你是不是只把工具栏往上调了
+    # 🔴 （悬停在"引用"那一栏了。你是不是只把工具栏往上调了
     #   一点点？」）：**把菜单里读到的每一项都写进日志**（文本 + 中心 y），这样"菜单里到底有什么、我们点的是
     #   哪一项、纵向差多少"一眼可见，不用再靠猜。自绘菜单的项是等高的，y 就是判"点没点偏"的唯一依据。
     try:
@@ -623,13 +623,13 @@ class RealInputBackend(InputBackend):
 def select_backend(cfg: dict | None = None, gui=None) -> InputBackend:
     """按 `config.input.backend` 选档：auto（默认，有主窗就用投递）/ message / real。
 
-    `config.input.press_ms` 与 `config.input.activate` 也在这里生效（2026-09-15 接线）：
+    `config.input.press_ms` 与 `config.input.activate` 也在这里生效：
     这两个键以前是**死键**——`MessageBackend(press_ms=60, activate=True)` 把默认值写死在
     构造函数里，全仓没有一处读配置 ⇒ 用户在 config.json 里改它们完全没用。现在从这里读进去，
     默认值仍是 60 / True（不改默认行为）。
     """
     c = cfg if cfg is not None else get_config()
-    try:                       # 活动信号：每次取后端＝马上要做一次输入动作（窗口借用会因此延后归还）
+    try: # 活动信号：每次取后端＝马上要做一次输入动作（窗口借用会因此延后归还）
         from . import window_borrow as _wb
         _wb.touch()
     except Exception:
@@ -640,7 +640,7 @@ def select_backend(cfg: dict | None = None, gui=None) -> InputBackend:
         _press = int(icfg.get("press_ms", 60))
     except Exception:
         _press = 60
-    _press = max(1, min(2000, _press))                      # 夹在合理区间：1ms~2s
+    _press = max(1, min(2000, _press)) # 夹在合理区间：1ms~2s
     _activate = bool(icfg.get("activate", True))
     if want == LEVEL_REAL:
         return RealInputBackend(gui)
@@ -658,7 +658,7 @@ _BACKEND: InputBackend | None = None
 def active(gui=None, refresh: bool = False) -> InputBackend:
     """取当前生效的后端（进程内缓存；控制台改配置后传 refresh=True 重选）。"""
     global _BACKEND
-    try:                       # 活动信号（与 select_backend 同一目的：有输入动作就别急着还窗口）
+    try: # 活动信号（与 select_backend 同一目的：有输入动作就别急着还窗口）
         from . import window_borrow as _wb
         _wb.touch()
     except Exception:

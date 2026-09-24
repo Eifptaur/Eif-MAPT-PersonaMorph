@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""对照审计三条修复的判据（2026-09-15）——不需要微信、不需要起服务。
+"""对照审计三条修复的判据——不需要微信、不需要起服务。
 
 背景：用户拿他朋友 QQ Agent 的三个毛病问"我们也会有类似的问题吗"。查证结果：**三条我们都有**，
 本条判据就是把这三次修法钉住，防止回退：
@@ -33,8 +33,8 @@ def ck(name, cond, extra=""):
     print("  %s %s%s" % ("PASS" if cond else "FAIL", name, (" · " + extra) if extra else ""))
 
 
-from agent import prompt as P            # noqa: E402
-from agent import thought_trace as TT    # noqa: E402
+from agent import prompt as P # noqa: E402
+from agent import thought_trace as TT # noqa: E402
 
 # ── A 缓存：分段顺序 + 前缀复用率 ────────────────────────────────────────
 print("[A] 缓存命中率（历史在前、易变在后；前缀能复用）")
@@ -148,14 +148,14 @@ def tier(msgs, trigger, roll=99, **kw):
 
 
 _base = [mk(1, "别人说的话"), mk(2, "我上次说的那句很有用", self_=True)]
-r_quote = tier(_base, [mk(9, "我上次说的那句很有用")])            # 引用我的原话（文本比对）
+r_quote = tier(_base, [mk(9, "我上次说的那句很有用")]) # 引用我的原话（文本比对）
 ck("C1 引用/回复的是我 ⇒ 必回（roll=99 也没用）",
    r_quote["should_respond"] is True and "引用" in r_quote["reason"], r_quote["reason"])
 r_quote2 = tier(_base, [{"id": 9, "sender_id": "u9", "sender_name": "群友", "text": "那你说呢",
                          "self": False, "reply": {"sender_id": "me", "sender_name": "小鲸鱼"}}])
 ck("C2 条目自带 reply 指向我 ⇒ 也必回", r_quote2["should_respond"] is True, r_quote2["reason"])
 _just_now = dict(mk(2, "我先抛个话题", self_=True))
-_just_now["ts"] = int(time.time() * 1000) - 1000          # ⚠️ 必须"刚刚"：接话头的时间窗是 180s
+_just_now["ts"] = int(time.time() * 1000) - 1000 # ⚠️ 必须"刚刚"：接话头的时间窗是 180s
 r_cont = tier([mk(1, "别人"), _just_now],
               [{"id": 9, "mid": 9, "ts": int(time.time() * 1000), "sender_id": "u9", "sender_name": "群友",
                 "text": "那我接着说", "self": False, "reply": None, "media": []}])
@@ -177,7 +177,7 @@ ck("D3 调用点传了 store", "store=self.store" in SRC_PM)
 ck("D4 注释里记了这次修的是什么（防后人再删）", "从来没生效" in SRC_PM)
 
 # ── E 左右脑互搏：系统提示里"文本会不会发出去"必须只有一个口径 ─────────────
-# 2026-09-15 抓到的一处真矛盾：【工作方式】2 断言"文本不会发送到微信"，而【发送与汇报禁令】4 说
+# 抓到的一处真矛盾：【工作方式】2 断言"文本不会发送到微信"，而【发送与汇报禁令】4 说
 # "没调发送工具时系统会把最终文本自动发出去" —— 同一份提示里两句互相打脸，而 persona_morph.py:678-689
 # 的兜底**真的存在**。危害：模型若信前一句，会把"内心分析/我不打算说话"这类念头当思考写出来，
 # 结果被兜底原样发进群里。⇒ 两份提示必须同口径，且都要警告"别把内心戏写进最终文本"。
@@ -194,7 +194,7 @@ ck("E5 系统提示描述的兜底在代码里真的存在（文案不许描述�
    '_final and not session["sent"]' in _PM_SRC)
 ck("E6 兜底只在「本轮一条都没发」时才触发（有 sent 守卫）", 'not session["sent"]' in _PM_SRC)
 
-# 2026-09-15 追加：兜底**必须带过滤**（用户点头「对用户有好处就加」）。
+# 兜底**必须带过滤**（用户点头「对用户有好处就加」）。
 # 不过滤时，"内心分析"会被原样发进群；过滤还要 fail-closed（过滤器自己出问题 ⇒ 不发）。
 print("[E2] 兜底补发的过滤（把内心戏拦在门外）")
 ck("E7 过滤函数存在且在兜底**之前**被调用",
@@ -211,20 +211,20 @@ try:
     _j = _PM_SRC.index("def _parse_inline_calls(")
     _code = _PM_SRC[_i:_j]
     _ns = {}
-    exec(_code, _ns)                                    # 只含一个常量与一个纯函数（不碰全局）
+    exec(_code, _ns) # 只含一个常量与一个纯函数（不碰全局）
     _fn = _ns["_fallback_send_ok"]
     _c = {"send": {"fallback_autosend": True, "fallback_max_chars": 60, "fallback_block_selfref": True}}
     _ok1, _ = _fn("好呀，那咱们周末去爬山", _c)
     _ok2, _w2 = _fn("我不打算回复这条，看着就好", _c)
     _ok3, _w3 = _fn("这段话很长" * 20, _c)
     _ok4, _ = _fn("随你", {"send": {"fallback_autosend": False}})
-    _ok5, _ = _fn("好呀", {"send": {}})                  # 缺键 ⇒ 用默认（要发）
+    _ok5, _ = _fn("好呀", {"send": {}}) # 缺键 ⇒ 用默认（要发）
     ck("E11 短话放行 / 自我指涉拦下 / 超长拦下 / 开关关掉不放 / 缺键走默认",
        _ok1 and (not _ok2) and "自我指涉" in _w2 and (not _ok3) and "太长" in _w3 and (not _ok4) and _ok5,
        "短话=%s 内心=%s 超长=%s 关掉=%s 缺键=%s" % (_ok1, _ok2, _ok3, _ok4, _ok5))
     ck("E12 过滤不吃异常之外的东西（返回值恒为二元组）",
        isinstance(_fn("x", _c), tuple) and len(_fn("x", _c)) == 2)
-    # E13（2026-09-18 拍摄事故）：群里真出现过这条 —— 「(本轮无法发出发言，保持安静。)」
+    # E13：群里真出现过这条 —— 「(本轮无法发出发言，保持安静。)」
     #   那是**内部失败结论**被兜底链原样发进群（比"回自己"更难看）⇒ 失败/无法发送/保持安静
     #   这一类词必须一并拦；首尾括号也不能成为绕过手段。
     _bad_txts = ["(本轮无法发出发言，保持安静。)", "本轮无法发出发言", "发送失败，稍后再试",

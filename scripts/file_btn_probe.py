@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""「发文件」图标行的定位探针（2026-09-15，为跨机 P15「点不到」用）。
+"""「发文件」图标行的定位探针。
 
 **默认不动鼠标**：截渲染区 → 找出输入栏那一行的图标中心 → 把「我们代码算的坐标」和「实测中心」
 并排打出来，直接看差多少像素、差在哪个轴。
@@ -20,10 +20,9 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
-from agent import chat_header as ch                                     # noqa: E402
-from agent.input_backend import _lock_dpi, find_main_window, find_render_child, window_rect  # noqa: E402
+from agent import chat_header as ch # noqa: E402
+from agent.input_backend import _lock_dpi, find_main_window, find_render_child, window_rect # noqa: E402
 
-# ⛔ 2026-09-16 删掉常量表（`ICONS_X` / `ICON_ROW_UP`）：跨机 r8 实测点名它"方向反、误导人"。
 #    图标位置一律由共用实现 `agent/input_bar.py` 算（本探针只 import，不许自己再算一套）。
 
 
@@ -52,7 +51,6 @@ def find_dialog(timeout=3.0):
 def row_clusters(img, y, gray=140, gap=24):
     """（薄壳）扫一行 ⇒ [(中心x, 宽度, 暗像素数)]。
 
-    ⚠️ **唯一实现在 `agent/input_bar.py`**：跨机 r7 实测，同一台机器同一屏，产品数出 4 簇、
     探针数出 5 簇（漏了最左那个 😊）⇒ 产品按"第 3 簇"取就取到 ✂️截图（全档错位）。
     两份实现必然各测各的 ⇒ 探针与产品都只许 import 那一份。
     """
@@ -90,7 +88,7 @@ def main():
     if img is None:
         print("抓不到渲染区画面（窗口不可见/被遮挡）⇒ 后面的定位跳过")
     elif iconic or not u32.IsWindowVisible(ctypes.c_void_p(int(hwnd))):
-        # ⚠️ 2026-09-15 本机首跑就撞上：微信**最小化**时 PrintWindow 拿到的是"假帧"
+        # ⚠️ 本机首跑就撞上：微信**最小化**时 PrintWindow 拿到的是"假帧"
         #    （底部一片 250 的纯色），拿它找图标行必然找不到 —— 不是坐标错，是画面不可信。
         print("⚠️ 微信主窗当前**最小化/不可见**（IsIconic=%s）⇒ 抓到的画面不可信，定位结果一律不采信。"
               % iconic)
@@ -101,7 +99,7 @@ def main():
         pane = ch.detect_pane_left(img)
         print("检测到的聊天面板左沿 =", pane, "（代码兜底值会用它算 x）")
         band_top = max(0, h - 200)
-        # ⚠️ 别拿"整行暗像素最多"当图标行（2026-09-15 首跑就踩了）：图像最底下常有一条窗口边线，
+        # ⚠️ 别拿"整行暗像素最多"当图标行：图像最底下常有一条窗口边线，
         #    整行全暗 ⇒ 一定赢。图标行的特征是「一行里有很多**小簇**」⇒ 用"宽度 4~60px 的簇个数"评分，
         #    并且跳过最底下 15 行。
         from agent import input_bar as _ib
@@ -120,7 +118,7 @@ def main():
             print("\n[该行按列聚类]（渲染区相对 x；间距>24px 算新簇）宽度 4~60px 的簇 %d 个" % len(good))
             for cx, span, ndark in good[:14]:
                 print("   x=%4d  跨度=%3d  含暗像素列=%d" % (cx, span, ndark))
-            # ⛔ 2026-09-16 删掉旧的「常量偏移 vs 最近邻命名」那一段（跨机 r8 实测点名）：
+            # ⛔ 删掉旧的「常量偏移 vs 最近邻命名」那一段：
             #    它按 `pane + 固定的 43/97/151/…` 去比最近簇，输出形如「文件 期望 427｜最近簇 446
             #    ⇒ +19」——**方向是反的、还误导人**（真值 402）。现在真值由共用实现
             #    `agent/input_bar.py` 给出（上面那三行），不再自己算一套。
@@ -157,7 +155,7 @@ def main():
 
     try:
         from agent import window_borrow as _wb
-        _wb.restore("探针结束")               # 别把借来的窗口留着
+        _wb.restore("探针结束") # 别把借来的窗口留着
     except Exception:
         pass
 

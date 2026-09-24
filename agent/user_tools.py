@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """用户自定义工具（**声明式 HTTP 工具**）：让用户往 `tools.d/*.json` 里丢清单，勾选后给模型用。
 
-用户 2026-09-13（看了对方控制台的「工具与插件」后）：「**用户可以自己加工具进去，要给模型用就勾选**」
+用户 （看了对方控制台的「工具与插件」后）
 ⇒ 我们做同一件事，但**先做最安全的那一档**：
 
     · 只发 **HTTP**（GET/POST），**绝不执行本地代码**（本模块里没有 eval/exec/import 第三方）
@@ -119,7 +119,7 @@ def validate(mf: dict, builtin_names=(), seen=()) -> tuple:
     props = params.get("properties")
     if props is not None and not isinstance(props, dict):
         return None, "params.properties 必须是对象"
-    if isinstance(props, dict) and name in props:                   # 参数名当工具名那种乱象，直接掐掉
+    if isinstance(props, dict) and name in props: # 参数名当工具名那种乱象，直接掐掉
         return None, "params 里出现了与工具同名的字段「%s」，像是把参数名当工具名了" % name
     # 展示用字段（对标 nonebot2 / koishi：这些**只用于显示**，我们不解析、不拉取、不校验签名）
     version = str(mf.get("version") or "").strip()[:20]
@@ -267,7 +267,7 @@ def _finish(tool: dict, raw: bytes) -> dict:
 def call(tool: dict, args: dict, _fetch=None) -> dict:
     """执行一个自定义工具（**只发 HTTP**）。返回 `{content, is_error}`。
 
-    ⛔ 2026-09-21（第九轮审计 **V-R9-25**）：原来这里是"`safe_fetch.validate_url()` 判一下过不过
+    ⛔ 原来这里是"`safe_fetch.validate_url()` 判一下过不过
     ⇒ 真正连接时 `urllib` **再解析一次域名**"，校验到的 IP 被丢掉 —— E 线实测把
     `getaddrinfo` 做成"首次给公网、二次给环回"就能绕过（返回成功、环回服务收到请求＝典型 TOCTOU）。
     现在**校验与连接是同一个 IP**：走 `safe_fetch.fetch_pinned()`（钉 IP + 逐跳复校 + 跨主机剥凭据头）。
@@ -313,7 +313,7 @@ def call(tool: dict, args: dict, _fetch=None) -> dict:
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
         with _fetch(req, timeout=timeout) as r:
-            raw = r.read(max_chars * 4 + 1)          # V-R9-26：读取带上限
+            raw = r.read(max_chars * 4 + 1) # 读取带上限
     except Exception as e:
         return {"content": "错误：请求失败（%s: %s）" % (type(e).__name__, str(e)[:120]), "is_error": True}
     return _finish(tool, raw)
@@ -366,7 +366,7 @@ def write_template(name: str = "") -> tuple:
     base = str(name or "my-tool").strip() or "my-tool"
     p = os.path.join(d, base + ".json")
     i = 2
-    while os.path.exists(p):                        # 不覆盖已有清单
+    while os.path.exists(p): # 不覆盖已有清单
         p = os.path.join(d, "%s-%d.json" % (base, i))
         i += 1
     tmpl = dict(TEMPLATE)
@@ -410,7 +410,7 @@ def _builtin_names() -> tuple:
     """内置工具名（导入时用来拦"覆盖内置"）。拿不到就退回空表——**不许因此让导入失败**。
 
     ⚠️ 名字来源是 `tools._builtin_tool_defs()`（不是 `tools.defs`：**那个名字不存在**，
-    2026-09-22 判据里踩过一次——写成 `from .tools import defs` 会静默退回空表，
+    判据里踩过一次——写成 `from .tools import defs` 会静默退回空表，
     于是"与内置重名"这条拦不住）。
     """
     try:

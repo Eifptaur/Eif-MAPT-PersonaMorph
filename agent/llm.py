@@ -17,7 +17,7 @@ import time
 import requests
 
 from .config import DATA_DIR, get_config, resolve_api_key
-# 价目表唯一来源（2026-09-19）：见 `agent/model_prices.py` —— 本文件的 DeepSeek 段与挂件同源，
+# 价目表唯一来源：见 `agent/model_prices.py` —— 本文件的 DeepSeek 段与挂件同源，
 # 「按输出价计费的输出 token」也统一走它（reasoning ⊆ completion，不许重复计费）。
 from .model_prices import (BASE_PRICE as _DS_FLASH, PRO_PRICE as _DS_PRO,
                            usage_parts as _usage_parts)
@@ -309,7 +309,7 @@ def chat_completion_with_retry(args, retries=2):
             info = {"used": ret.get("model") or rest[0], "from": primary,
                     "tried": [primary] + list(inner.get("tried") or [])}
             ret["fallback"] = info
-            if not inner:                      # 链内已经记过一次就不重复记（免得控制台计数翻倍）
+            if not inner: # 链内已经记过一次就不重复记（免得控制台计数翻倍）
                 _note_fallback(info, last_error)
         return ret
     raise last_error
@@ -344,16 +344,16 @@ def add_usage(target: dict, usage) -> dict:
 
 
 # 内置官方/公开参考单价表（元 / 百万 token；cached 为缓存命中价，缺省按输入价近似）
-# 139 条来自 QQ-agent 同源价目（2026-09-03 采集），其余为控制台预设目录历史型号的补充行。
+# 139 条来自 QQ-agent 同源价目，其余为控制台预设目录历史型号的补充行。
 _OFFICIAL_PRICES = {
-    # ── DeepSeek 当前在售（2026-09-14 联网核对官方 Models & Pricing 页 + 本机 API /models 实测）──
+    # ── DeepSeek 当前在售──
     # 官方只有两个名字：`deepseek-flash`（DeepSeek-V4.1-Flash，**支持视觉**、1M 上下文、默认思考模式）
     # 与 `deepseek-v4-pro`（DeepSeek-V4-Pro-0813，不支持视觉）。闲时价 = 高峰价 ÷ 2；
     # 高峰＝北京时间工作日 09:00-12:00 与 14:00-18:00。美元价 ×7.2 折成元/百万。
-    # ⛔ 2026-09-19：**下面这些行不许再手写数字** —— 一律从 `agent/model_prices.py` 取
+    # ⛔ **下面这些行不许再手写数字** —— 一律从 `agent/model_prices.py` 取
     #    （价目表唯一来源，照抄上游 dsh-whale-widget@0.3.5）。起因：把挂件升到 0.3.5 时对账发现
     #    本表 pro 那行写的是 2/8/0.04，而挂件（＝我们认定的权威口径）是 4.5/13.5/0.15
-    #    （Pro 保持 Flash 的 3 倍价；官方 2026-09-14 公告"计费方式不变"）⇒ 同一个 usage 在控制台
+    # ⇒ 同一个 usage 在控制台
     #    的「今日已用」与统计里会算出两个数。
     'deepseek-flash': { 'in': _DS_FLASH["miss"][0], 'out': _DS_FLASH["out"][0],
                         'cached': _DS_FLASH["hit"][0],
@@ -573,13 +573,13 @@ def estimate_cost(usage: dict, model: str | None = None) -> dict:
     model = model or str(api.get("model") or "")
 
     prompt = int(usage.get("prompt_tokens") or 0)
-    # ⛔ 2026-09-19：**拆数与"按输出价计费的输出"都走唯一口径** `model_prices.usage_parts` ——
+    # ⛔ **拆数与"按输出价计费的输出"都走唯一口径** `model_prices.usage_parts` ——
     #    原来这里只读**顶层** `cached_tokens`，喂进来的若是**原始 API usage**（缓存命中在
     #    `prompt_tokens_details.cached_tokens` 里）就会把缓存命中当成未命中算 ⇒ 成本虚高
     #    （我们这边缓存读占总 token 九成以上，差得不是一点点）。现在两种写法都认。
     _parts = _usage_parts(usage)
     cached, fresh = _parts["cached"], _parts["fresh"]
-    completion = _parts["billable_out"]     # reasoning ⊆ completion（唯一口径，不许重复计费）
+    completion = _parts["billable_out"] # reasoning ⊆ completion（唯一口径，不许重复计费）
 
     # 单价来源优先级：按模型自定义价 > 内置官方表 > 全局兜底
     in_price = float(api.get("price_input_per_m") or 0)

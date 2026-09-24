@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""发布前静态审计判据：**产品路径里不许有"没过闸就动前台/置顶/光标"的调用**（2026-09-18 立）。
+"""发布前静态审计判据：**产品路径里不许有"没过闸就动前台/置顶/光标"的调用**。
 
-起因（作者口径，原话）：「发布前你要再查一遍，会不会有本来可以全后台的代码，结果由于某些疏忽，
+起因
 导致它在某一环会把窗口带到前台。」
 
 做法＝AST 扫 `agent/**` + `scripts/persona_morph.py|watchdog.py` 里所有会动前台/置顶/光标/窗口几何的
@@ -54,7 +54,7 @@ ALLOW = {
     ("voice_strip.py", "_send_alt"), ("voice_strip.py", "_cancel_alt"),
     ("window_borrow.py", "restore"),
     ("wechat.py", "_restore_after_send"),
-    # ⚡ 2026-09-19：「摁住微信」的循环（作者口径「就把它摁在后台…他想不想无所谓，就摁住他」）——
+    # ⚡ 「摁住微信」的循环——
     #   它**不是**"把微信带到前台"，而是**反着来**：微信一到前台就立刻把用户原窗口还回去 + 把微信压到
     #   Z 序底层（NOACTIVATE、不动几何、不改可见性）。实测切会话/发消息期间微信占前台 0.00 秒。
     ("wechat.py", "_hold_loop"),
@@ -120,7 +120,7 @@ for rel in ("agent", "scripts"):
             if r.startswith("scripts/") and ("selftest" not in r):
                 continue
             if "selftest" in r:
-                continue          # 判据里的假对象不算产品路径（要真跑真窗口的判据另有背景自检管）
+                continue # 判据里的假对象不算产品路径（要真跑真窗口的判据另有背景自检管）
             hits += scan(p, r)
 
 bad = [h for h in hits if not (h["gated"] or h["allowed"])]

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """群相 · **整包自更新**判据（`agent/update_apply.py`）—— 点了「立即更新」真的会更新。
 
-背景（2026-09-16 用户当场发火）：「做出来居然不给用户用，你是什么意思」——
+背景——
 引擎（`scripts/pm_update.py` 的增量 patch）早就做好了，但控制台那个「立即更新」按钮
 只打印一句指路文案，而且指向的启动器按钮根本不存在。本判据守的就是"这条链真的通"：
 
@@ -12,7 +12,7 @@
   ④ **绝不碰运行时/用户文件**（`data/`、`config.json`、日志）——连包里夹带的 `data/` 也不许落地
   ⑤ 接线：`POST /api/update_apply` 在 do_POST 段、控制台点按钮会轮询进度并调重启、
      **旧的指路文案必须已经消失**（它就是"做出来不给用户用"的原罪）
-  ⑥ **L 段（V-R10-27，P0）**：两道闸在**真装那一刻**也生效 —— 走真路径 `run_once()`：
+  ⑥ **L 段**：两道闸在**真装那一刻**也生效 —— 走真路径 `run_once()`：
      版本回退清单 / `expires` 过期清单 / 低于 `maxSeenVersion` ⇒ 一律**拒装且一个文件都不动**；
      并断言"同一份清单 `state()` 与 `run_once()` 同一结论"＋反例锚（摘掉闸就必须真装进去）。
 
@@ -31,11 +31,11 @@ import zipfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
-sys.path.insert(0, HERE)                       # 同目录的 `_srcmatch`
-import _srcmatch as _sm                        # noqa: E402  空白容忍的源码断言（V-R4-13 第三条）
+sys.path.insert(0, HERE) # 同目录的 `_srcmatch`
+import _srcmatch as _sm # noqa: E402 空白容忍的源码断言
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
-from agent import update_apply as UA        # noqa: E402
+from agent import update_apply as UA # noqa: E402
 
 PASS = FAIL = 0
 
@@ -85,9 +85,9 @@ def snap(root):
 
 
 tmp = tempfile.mkdtemp(prefix="pm-selfup-")
-# ⛔ V-R10-27：`run_once()` 现在会（单调）记 `maxSeenVersion`，而本判据喂的是 9999.x 这种假版本
+# ⛔ `run_once()` 现在会（单调）记 `maxSeenVersion`，而本判据喂的是 9999.x 这种假版本
 #   ⇒ 状态文件指到临时目录，**别写用户真的 `data/update_state.json`**（跑一次自检就把他的回滚闸顶高）。
-from agent import update_check as _uc_top                                       # noqa: E402
+from agent import update_check as _uc_top # noqa: E402
 _uc_top._state_path = lambda: os.path.join(tmp, "update_state.json")
 try:
     target = os.path.join(tmp, "install")
@@ -179,7 +179,7 @@ try:
     ok(not os.path.exists(os.path.join(target, "agent", "c.py")), "新增的已撤掉")
 
     print("── G. 文件被占用 ⇒ 跳过并如实报告（不许假装成功）——含 V3 回归 ──")
-    # ⛔ 2026-09-20 修 **V-R3-9（第三轮）**：这条夹具原来拿一个**目标里还不存在**的文件当"被占用"样本
+    # ⛔ 这条夹具原来拿一个**目标里还不存在**的文件当"被占用"样本
     #   —— 可"拒绝访问 + 目标不存在"恰恰是**目录权限/路径问题**（真故障回滚），不是被占用。
     #   ⇒ 先把 c.py 造成"已存在"的文件，这条夹具才真正在测"占用"（新判据会正确区分两者）。
     write(os.path.join(target, "agent", "c.py"), "C=1\n")
@@ -189,7 +189,7 @@ try:
 
     def locked(src, dst, *a, **k):
         if _into_target(dst) and str(dst).replace("\\", "/").endswith("agent/c.py"):
-            # ⚠️ 2026-09-20 二次修（V-R3-1）：**不许手工给异常贴 `winerror`** —— 那是假绿
+            # ⚠️ **不许手工给异常贴 `winerror`** —— 那是假绿
             #   （测的是"我自己伪造的占用"）。真实共享冲突走 CRT `open()` 报的就是这个形状：
             #   `PermissionError: [Errno 13] …`（errno=13、**winerror 被丢掉**）；而目标文件
             #   本身**可写**（不是只读）⇒ `_is_locked` 必须判"被占用"。
@@ -241,12 +241,12 @@ try:
     man_i["base"]["version"] = "2026.10.1.1"
     # 走**下载**这条路（base.url 指向本地包），才能顺带验"装完清缓存"
     man_i["base"]["url"] = pkg
-    # ⚠️ 2026-09-20（V-R1-2）：更新链现在**只认官方域的下载地址**（非官方要显式开关）——
+    # ⚠️ 更新链现在**只认官方域的下载地址**（非官方要显式开关）——
     #   这条判据是"离线一条龙"，用本地包当下载地址 ⇒ 显式开这个**测试专用**开关
     #   （生产路径不设它：`allow_local_update()` 只认环境变量或配置里的显式开关）。
     os.environ["PM_ALLOW_LOCAL_UPDATE"] = "1"
     _relaunch_keep = getattr(UA, "_relaunch_after_update", None)
-    UA._relaunch_after_update = lambda *a, **k: None       # ⛔ 判据绝不做真交接（V-R6-28/29）
+    UA._relaunch_after_update = lambda *a, **k: None
     try:
         r = UA.run_once(manifest=man_i, zip_path=None, target=target)
     finally:
@@ -260,18 +260,18 @@ try:
     j = UA.job()
     ok(j["state"] == "done" and j["msg"], "作业状态可被控制台读到（state=%s）" % j["state"], str(j)[:110])
 
-    print("── L. P0（V-R10-27）：版本回退 / expires 过期 ⇒ `run_once()` 必须**拒装**（不许真降级）──")
+    print("── L. P0：版本回退 / expires 过期 ⇒ `run_once()` 必须**拒装**（不许真降级）──")
     # 现场（审计用假源实测）：`run_once()` **完全绕过** `state()` 的两道闸 ——
     #   · 远端 `2026.9.1.1`（< 本机 `2026.9.21.11`）：`state()` 判 `older`，`run_once()` **照样真装**；
-    #   · `expires=2020-01-01`：`state()` 报「清单已过期」，`run_once()` **照装**；
+    # · `expires=`state()` 报「清单已过期」，`run_once()` **照装**；
     #   · `maxSeenVersion` 是**死代码**（只有检查侧写、没有任何一侧读）。
     # ⇒ 这一节全部走**真路径** `run_once()`，并断言"同一份清单 `state()` 与 `run_once()` 同一结论"。
-    from agent import update_check as _uc2                                    # noqa: E402
+    from agent import update_check as _uc2 # noqa: E402
     _sf = os.path.join(tmp, "p0_update_state.json")
     _keep_sp, _keep_fa, _keep_ri = _uc2._state_path, _uc2.fetch_any, _uc2._read_installed
     _keep_gate, _keep_rel2 = _uc2.manifest_gates, UA._relaunch_after_update
     _uc2._state_path = lambda: _sf
-    _uc2._read_installed = lambda: {}          # 别去读真的 data/installed.json
+    _uc2._read_installed = lambda: {} # 别去读真的 data/installed.json
     UA._relaunch_after_update = lambda *a, **k: None
 
     def _reset_tree():
@@ -327,10 +327,10 @@ try:
         _pairs = []
         for _nm, _m in (("回退", _LOW), ("过期", _EXPIRED), ("正常新清单", _FINE)):
             _st = _state_of(_m)
-            _by_state = _st.get("status") in ("older", "error")      # 检查侧：不许据它更新
+            _by_state = _st.get("status") in ("older", "error") # 检查侧：不许据它更新
             _reset_tree()
             _r = UA.run_once(manifest=dict(_m), zip_path=pkg, target=target)
-            _by_apply = not _r.get("ok")                             # 安装侧：拒装
+            _by_apply = not _r.get("ok") # 安装侧：拒装
             _pairs.append((_nm, _st.get("status"), _by_state, _by_apply))
         ok(all(a == b for _n, _s, a, b in _pairs),
            "**同一份清单 `state()` 与 `run_once()` 结论一致**（三份清单逐个对）",
@@ -405,7 +405,7 @@ try:
 finally:
     shutil.rmtree(tmp, ignore_errors=True)
 
-# ── 2026-09-17：用户转述「控制台上面的更新用不了，卡在 0% 不动，我都是直接去原地址下载覆盖的」 ──
+# ── 用户转述「控制台上面的更新用不了，卡在 0% 不动，我都是直接去原地址下载覆盖的」 ──
 #    根因＝老下载链是 120 秒/源 × 4 个源（最坏 8 分钟界面钉在 0%），而且**换源是静默的**
 #    ⇒ 界面只有「0%」一个信息，用户只能判断它死了。这里把三条钉住。
 _UA_SRC = open(os.path.join(ROOT, "agent", "update_apply.py"), encoding="utf-8").read()
@@ -441,8 +441,8 @@ ok(len(_prog) >= _n_src and _prog.count((0, 0)) >= _n_src,
 ok("手动下载覆盖" in _why and "github.com" in _why,
    "失败原因里带官方地址（用户能照着手动下载覆盖）")
 
-print("\n── V-R11-2：`maxSeenVersion` 的上界与**复位出口**（P1：一次异常回包不许把更新链永久砖死）──")
-# ⛔ 现场（第十一轮）：`maxSeenVersion` 单调、无上界、产品内无复位口 —— 源给一次 `9999.9.9`
+print("\n── `maxSeenVersion` 的上界与**复位出口**（P1：一次异常回包不许把更新链永久砖死）──")
+# ⛔ 现场：`maxSeenVersion` 单调、无上界、产品内无复位口 —— 源给一次 `9999.9.9`
 #   就把**真清单与所有未来版本**全判成 rollback ⇒ 那台机器再也装不了任何更新。
 _V11_MAN = {"base": {"version": "9999.9.9", "url": "https://github.com/x/y.zip"}, "announce": {}}
 _g11 = _uc_top.manifest_gates(_V11_MAN, mine="2026.9.21.13", max_seen="2026.9.21.13", now=time.time())
@@ -454,7 +454,7 @@ _MAN_REAL = json.load(io.open(os.path.join(ROOT, "persona-morph-manifest.json"),
 _mine11 = _uc_top.current_version()
 ok(str(((_MAN_REAL.get("base") or {}).get("version")) or "") == _mine11,
    "夹具到位：真清单版本 == 本机版本（所以它本身不该被拦）", _mine11)
-_tmp11 = tempfile.mkdtemp(prefix="pm-r11-maxseen-")     # ⚠️ 上面那个 `tmp` 已在 finally 里删了
+_tmp11 = tempfile.mkdtemp(prefix="pm-r11-maxseen-") # ⚠️ 上面那个 `tmp` 已在 finally 里删了
 _state11 = os.path.join(_tmp11, "poison_state.json")
 with io.open(_state11, "w", encoding="utf-8") as _f11:
     json.dump({"maxSeenVersion": "9999.9.9", "lastStatus": "current", "other": 1}, _f11)
@@ -480,7 +480,7 @@ finally:
 _src_uc11 = io.open(os.path.join(ROOT, "agent", "update_check.py"), encoding="utf-8").read()
 _src_w11 = io.open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
 _src_c11 = io.open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
-# ⛔ 2026-09-22 修（第十二轮 **V-R12-1 / V-R12-10**）：源码子串断言**抓不住**"那道守卫永不成立"
+# ⛔ 源码子串断言**抓不住**"那道守卫永不成立"
 #   （`state()` 不把 `kind` 抄进 `out` ⇒ `out.get("kind")` 恒 None ⇒ `not ...` 恒真）。换成**行为锚**。
 _far_r12 = {"base": {"version": "2099.9.9", "url": "https://github.com/x/y.zip"}, "announce": {}}
 _saved_fa12 = _uc_top.fetch_any
@@ -497,14 +497,14 @@ finally:
     _uc_top._state_path = _saved_sp12
 ok(_st_r12.get("status") == "error" and _st_r12.get("kind") == "far_ahead"
    and str(_after_r12.get("maxSeenVersion") or "") == "2026.1.1.1",
-   "行为锚：`state()` 对超前清单**报 error 且不入账**（第十一轮只有源码子串断言 ⇒ 守卫是死代码）",
+   "行为锚：`state()` 对超前清单**报 error 且不入账**",
    "%s / after=%s" % (str(_st_r12)[:90], _after_r12.get("maxSeenVersion")))
 ok(_sm.has(_src_w11, '"/api/update_reset"') and _sm.has(_src_c11, 'id="updReset"')
    and _sm.has(_src_c11, "'/api/update_reset'"),
    "接线：webui 有 `/api/update_reset`，控制台横幅上有「重置更新状态」按钮且真打这个接口")
 ok(_g11.get("kind") == "far_ahead",
    "反例锚：老写法（无条件写 `maxSeenVersion`）遇上越界版本 ⇒ 判据里那条 `far_ahead` 会红")
-# ⛔ 2026-09-22 加（第十三轮 **V-R13-2** · P2）：**入账时机的行为锚** ——
+# ⛔ **入账时机的行为锚** ——
 #   `_note_seen` 现在只在"真装成功之后"；老写法（放在"过了下载地址检查"）会让**装失败的清单也入账**。
 #   夹具：清单合法 + 本地包是坏的（`zip_path` 指向一个不是 zip 的文件）⇒ 装失败 ⇒ 盘上不许动。
 _state13 = os.path.join(_tmp11, "note_seen13.json")
@@ -531,8 +531,8 @@ try:
        "ok=%s after=%s" % (_r13.get("ok"), _after13.get("maxSeenVersion")))
 finally:
     _uc_top._state_path = _saved_sp13
-# ⛔ 2026-09-22 加（第十四轮 **V-R14-2** · P2）：上面那条锚走的是「**显式给包**」那条路
-#   （`zip_path=_badzip13`），而 V-R12-8 真正修掉的是**下载分支**那处入账 —— 一份"地址可信、
+# ⛔ 上面那条锚走的是「**显式给包**」那条路
+# （`zip_path=_badzip13`），而 真正修掉的是**下载分支**那处入账 —— 一份"地址可信、
 #   下载失败"的清单照样会被记进 `maxSeenVersion`。审计实测：把 `_note_seen` 挪回下载分支那处，
 #   上面那条锚**全绿**（抓不住）。这条补上：合法清单 + `zip_path=None` + 打桩下载函数必失败（不出网）。
 _state14 = os.path.join(_tmp11, "note_seen14.json")
@@ -551,7 +551,7 @@ try:
     _after14 = json.load(io.open(_state14, encoding="utf-8"))
     ok(_r14b.get("ok") is False and _r14b.get("phase") == "download"
        and str(_after14.get("maxSeenVersion") or "") == "2026.1.1.1",
-       "行为锚（V-R14-2）：**下载分支**失败也不许入账（老写法在「过了地址检查」时就记 ⇒ "
+       "行为锚：**下载分支**失败也不许入账（老写法在「过了地址检查」时就记 ⇒"
        "备份/镜像不通也白白顶高回滚闸）",
        "ok=%s phase=%s after=%s" % (_r14b.get("ok"), _r14b.get("phase"),
                                     _after14.get("maxSeenVersion")))

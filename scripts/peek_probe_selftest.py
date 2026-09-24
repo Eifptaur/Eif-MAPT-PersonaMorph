@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""全屏顶栏「贴顶滑出」判据（群相）——作者报的「点不到最小化」这条不许回归。
+"""全屏顶栏「贴顶滑出」判据（群相）——这条不许回归。
 
-背景（作者 2026-09-20 原话）：「**最大化后，上边栏碰触之后维持的时间太短，导致点不到最小化**」。
+背景。
 真因：全屏时顶栏的显示判据只有"光标贴屏幕顶端 4px 内"——而三个按钮在顶栏 y=8~34 那一带，
 **鼠标一往下挪去点按钮就离开了那 4px** ⇒ 顶栏立刻收起 ⇒ 永远点不到。
 修法：判据拆成 进入（贴顶 4px）/ 保持（还在顶栏那块区域内）/ 宽限（离开后 0.7 秒），
@@ -47,11 +47,11 @@ for line in out.splitlines():
     if not line.startswith("PEEK "):
         continue
     rest = line[5:].strip()
-    m = re.match(r"^([A-Za-z_]+)\s*=\s*(\S+)$", rest)          # PEEK GRACE_MS=700
+    m = re.match(r"^([A-Za-z_]+)\s*=\s*(\S+)$", rest) # PEEK GRACE_MS=700
     if m:
         kv[m.group(1)] = m.group(2)
         continue
-    m = re.match(r"^([A-Za-z_]+)\s+.*=\s*(\S+)$", rest)        # PEEK A over_button_visible=1
+    m = re.match(r"^([A-Za-z_]+)\s+.*=\s*(\S+)$", rest) # PEEK A over_button_visible=1
     if m:
         kv[m.group(1)] = m.group(2)
 ok(bool(kv), "exe 打出了 PEEK 标记（老 exe 不会有 ⇒ 顺带证明跑的是新编出来的那个）", out.strip().splitlines()[-1][:60] if out.strip() else "无输出")
@@ -93,7 +93,7 @@ ok("_barPeek = false; _barLeaveAt = 0; SyncBarVisible();" in src,
 _i = src.find('args[0] == "--peekprobe"')
 ok(_i > 0, "--peekprobe 分支存在")
 if _i > 0:
-    _j = src.find('args[0] == "--', _i + 10)          # 截到**下一个**探针分支为止（别把别人的 Application.Run 算进来）
+    _j = src.find('args[0] == "--', _i + 10) # 截到**下一个**探针分支为止（别把别人的 Application.Run 算进来）
     seg = src[_i:_j] if _j > _i else src[_i:_i + 700]
     ok(("return;" in seg) and ("Application.Run(" not in seg),
        "…该分支**不起窗**（不调 Application.Run）且立刻 return", "段长 %d" % len(seg))

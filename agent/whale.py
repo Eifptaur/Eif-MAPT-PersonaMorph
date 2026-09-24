@@ -31,16 +31,16 @@ import threading
 import time
 
 from .llm import query_balance
-from .model_prices import (          # noqa: F401  （价目表唯一来源，见该模块抬头）
+from .model_prices import ( # noqa: F401  （价目表唯一来源，见该模块抬头）
     BASE_PRICE, PRO_PRICE, PRICING, PEAK_HOURS,
     price_for, is_peak_time, cost_of, usage_parts, billable_output,
 )
 
 # ── 峰谷定价 / 计费口径 ─────────────────────────────────────────────────────
-# ⛔ 2026-09-19：价目表**不再写在本文件**，全部来自 `agent/model_prices.py`（照抄上游
+# ⛔ 价目表**不再写在本文件**，全部来自 `agent/model_prices.py`（照抄上游
 #    dsh-whale-widget@0.3.5）。本文件只保留导入，避免"三份表互相打架"（同一个 usage 在控制台
 #    的「今日已用」与统计里算出两个数）。上游 0.3.5 的两处变更都在那个模块的抬头里写明了：
-#      ①Flash 系列 2026-09-10 降价（0.05/1.5/4.5 → 0.02/1/4）；②reasoning ⊆ output ⇒ 输出只算一次。
+# ①Flash 系列 降价（0.05/1.5/4.5 → 0.02/1/4）；②reasoning ⊆ output ⇒ 输出只算一次。
 
 
 def _today_key() -> str:
@@ -90,7 +90,7 @@ class WhaleWidget:
     def _usage_cost(self, usage: dict, model: str, ts: float) -> tuple:
         """按峰谷定价折算一次调用的 (成本, token 数)。
 
-        ⛔ 2026-09-19：公式搬到 `agent/model_prices.py::cost_of`（**唯一实现**，与上游 0.3.5 一致）：
+        ⛔ 公式搬到 `agent/model_prices.py::cost_of`（**唯一实现**，与上游 0.3.5 一致）：
         输出侧只按 completion 计费 —— `reasoningTokens ⊆ outputTokens`，旧写法
         `(completion + reasoning)` 会把思考**重复计费**（上游 issue #89 / PR #83 实测偏高约一倍）。
         """
@@ -176,7 +176,7 @@ class WhaleWidget:
                     "bubble-img.png", "bubble-img-upload.json", "audio-fragment.wav",
                     "sound/")
     _CFG_KEYS = {"bubble.json": ("bubble", "config"), "audio.json": ("audio", "settings")}
-    _CFG_MAX = 256 * 1024          # 配置上限（防一个前端 bug 把 state 撑爆）
+    _CFG_MAX = 256 * 1024 # 配置上限（防一个前端 bug 把 state 撑爆）
 
     def unsupported(self, name: str) -> dict:
         """上游 0.3.x 有、本移植版没有的那批接口 —— 如实说不支持（客户端会保留默认值）。"""

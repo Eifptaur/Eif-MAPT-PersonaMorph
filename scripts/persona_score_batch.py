@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""给「没有模型评分」的人设卡补分（用户 2026-09-14：「人设卡没有评分显示的，记得补上啊」）。
+"""给「没有模型评分」的人设卡补分。
 
 口径：
   · 用的是**产品同一把尺子**——模块级 `persona_llm_score()`（RULES_TEXT 唯一权威细则 + 真实资料比对），
@@ -26,7 +26,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
-from agent.persona import PERSONAS                     # noqa: E402
+from agent.persona import PERSONAS # noqa: E402
 
 RATINGS = os.path.join(ROOT, "data", "persona_ratings.json")
 

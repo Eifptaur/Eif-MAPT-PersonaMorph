@@ -13,7 +13,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agent.llm import _OFFICIAL_PRICES  # noqa: E402
+from agent.llm import _OFFICIAL_PRICES # noqa: E402
 
 # 厂商分组（按前缀，顺序即文档章节顺序；前缀匹配任一命中即归组）
 GROUPS = [
@@ -36,8 +36,8 @@ GROUPS = [
                      "granite-4.0-h-micro", "inkling-with-ai"]),
 ]
 
-IN_PER_ROUND = 0.024   # 24000 输入 token / 1e6
-OUT_PER_ROUND = 0.006  # 6000 输出 token / 1e6
+IN_PER_ROUND = 0.024 # 24000 输入 token / 1e6
+OUT_PER_ROUND = 0.006 # 6000 输出 token / 1e6
 
 
 def fmt_num(v) -> str:

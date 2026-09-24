@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""V-R2-1 判据：看门狗对「机器人立刻退出」必须退避 + 有上限（不许永远 5 秒一圈）。
+""" 判据：看门狗对「机器人立刻退出」必须退避 + 有上限（不许永远 5 秒一圈）。
 
 复现（改前，一行；跑 22 秒即见 5 次拉起）：
     $wd = 临时目录 ; 复制 scripts\\watchdog.py 进去 ; 造一个 `sys.exit(3)` 的 stub 机器人 ;
@@ -34,7 +34,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-import watchdog as WD          # noqa: E402
+import watchdog as WD # noqa: E402
 
 PASS, FAIL = [], []
 
@@ -172,7 +172,7 @@ def main():
         print("\n== D. 单元：_backoff_delay 的形状（递增 / 封顶 / 抖动有界）==")
         _d = [WD._backoff_delay(n) for n in range(1, 12)]
         _exp = [min(WD.BACKOFF_CAP_S, WD.BACKOFF_BASE_S * (2 ** (n - 1))) for n in range(1, 12)]
-        _ncap = len([e for e in _exp if e < WD.BACKOFF_CAP_S])      # 还没封顶的档位数
+        _ncap = len([e for e in _exp if e < WD.BACKOFF_CAP_S]) # 还没封顶的档位数
         _dpre, _dpost = _d[:_ncap], _d[_ncap:]
         ok("D1 封顶之前递增（每项 ≥ 前一项 ×1.3）",
            len(_dpre) >= 2 and all(_dpre[i] >= _dpre[i - 1] * 1.3 for i in range(1, len(_dpre))),
@@ -192,7 +192,7 @@ def main():
 
         print("\n== E. 真机端到端：临时副本里真起一个看门狗（stub 机器人 exit 3）==")
         if os.environ.get("PM_JUDGE_NO_PROC") == "1":
-            # ⛔ V-R7-12：判据环境（`run_all_selftests.py` 会带这个开关）⇒ **只跑静态/内存那半**，
+            # ⛔ 判据环境（`run_all_selftests.py` 会带这个开关）⇒ **只跑静态/内存那半**，
             #   本段"真 Popen 一个看门狗进程"整段跳过，并**明确打一行 SKIP**（不冒充通过）。
             #   单跑（不带这个环境变量）时，这一段照旧真起真收 —— 那是有价值的证据。
             print("  SKIP E. 真机端到端：PM_JUDGE_NO_PROC=1 ⇒ 不真起看门狗进程（E1~E4 不判）")
@@ -209,7 +209,7 @@ def main():
                               cwd=wd, creationflags=getattr(_sp, "CREATE_NO_WINDOW", 0),
                               stdin=_sp.DEVNULL, stdout=_sp.PIPE, stderr=_sp.PIPE)
                 try:
-                    rc4 = p.wait(timeout=60)                  # ⛔ 必须带超时，别把判据挂死
+                    rc4 = p.wait(timeout=60) # ⛔ 必须带超时，别把判据挂死
                 except _sp.TimeoutExpired:
                     p.kill()
                     rc4 = "TIMEOUT"
@@ -232,7 +232,7 @@ def main():
         WD.time = time
         shutil.rmtree(tmp, ignore_errors=True)
 
-    # ── 窗口限流（第五轮回执 · 业界对账第 ⑤ 条）────────────────────────────────
+    # ── 窗口限流────────────────────────────────
     #   老口径：只有"活不足 EARLY_EXIT_S"才算失败，跑够时长了就 `fails = 0` ⇒ **"每次都在第 61 秒崩"
     #   会无限重启**（退避永远从头开始）。⇒ 再加一个滑动窗口闸：WINDOW_S 内重启 ≥ WINDOW_MAX ⇒ 停手。
     _wsrc = open(os.path.join(ROOT, "scripts", "watchdog.py"), encoding="utf-8").read()
@@ -242,7 +242,7 @@ def main():
     ok("⑤ 反例锚：窗口必须比「秒退阈值」宽得多，否则它跟老口径没区别（这就是老口径的漏洞）",
        float(WD.WINDOW_S) > float(WD.EARLY_EXIT_S) * 10, str((WD.WINDOW_S, WD.EARLY_EXIT_S)))
 
-    print("\n==== 看门狗退避判据（V-R2-1）：%d 通过 / %d 失败 ====" % (len(PASS), len(FAIL)))
+    print("\n==== 看门狗退避判据：%d 通过 / %d 失败 ====" % (len(PASS), len(FAIL)))
     if FAIL:
         print("失败项：")
         for f in FAIL:

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """计时/闹钟（第三方 v0.4 对账清单第 12 条）。
 
-**红线（用户口径：只允许被动或显式开启）**——定时消息天然是"主动发消息"，所以这一层做了四道收紧：
+**红线**——定时消息天然是"主动发消息"，所以这一层做了四道收紧：
 1. **只能定时到"当前会话"**：工具参数里没有"群列表/多会话"这种东西，调用方上下文决定唯一目标；
 2. **到点仍要过风险闸门**：发送统一走 `sender.send_text_batch()`（内容/频率/群发特征闸门都在那儿），
    另加"暂停中不发"和"会话被指令禁言期间不发"两道；
@@ -30,7 +30,7 @@ MAX_SECONDS = 7 * 24 * 3600
 MAX_PENDING_PER_CHAT = 3
 MAX_PENDING_TOTAL = 20
 MAX_ATTEMPTS = 3
-RETRY_BACKOFF_SECONDS = 60        # 第 N 次重试的等待＝该秒数 × N（V10：以前一失败就立刻重排，1 分钟用光 3 次）
+RETRY_BACKOFF_SECONDS = 60 # 第 N 次重试的等待＝该秒数 × N（V10：以前一失败就立刻重排，1 分钟用光 3 次）
 HISTORY_KEEP = 20
 
 
@@ -47,16 +47,16 @@ def _now_ms(now=None) -> int:
 def load() -> dict:
     """读状态；**坏档走统一招式 `persist.load_or_quarantine`**（改名 `.bad.<时间戳>` 留证 + 记一条 warn）。
 
-    V-R9-18：老写法是 `except: pass` ⇒ 坏档静默变默认值，紧接着 `_save()` **整体覆盖**
+    老写法是 `except: pass` ⇒ 坏档静默变默认值，紧接着 `_save()` **整体覆盖**
     ⇒ "坏文件 + 一次写入 = 旧提醒全没"，而 `add()` 还照旧回 `ok=True`（模型据此对用户说"已定好"）。
     改成留证后，坏档一个字节都不丢、还能人工修回来。
 
-    V-R10-23（V-R9-18 的回归）：**留证本身也会失败**（ACL 拒读 / 另一进程独占句柄）
+    **留证本身也会失败**（ACL 拒读 / 另一进程独占句柄）
     ⇒ 原档留在原地，而下游拿默认值写一次就把它盖了（审计实测 20 条提醒只剩 2 条）。
     所以这里用 `load_checked()` 拿到"原档是否还在"，在返回的 dict 上打 `_refuse_overwrite`
     标记；`_save()` 见到它就**拒绝写盘**（宁可登记失败报错，也不静默丢用户数据）。
     """
-    _BAD = object()                      # 哨兵：分得清"读到的东西"与"走的默认值"
+    _BAD = object() # 哨兵：分得清"读到的东西"与"走的默认值"
     d, ok_overwrite = persist.load_checked(path(), _BAD)
     if isinstance(d, dict) and isinstance(d.get("items"), list):
         d.setdefault("history", [])
@@ -66,7 +66,7 @@ def load() -> dict:
         return d
     if d is not _BAD:
         # 能解析但**形状不对**（顶层不是 dict / items 不是列表）同样是坏档：留证再回默认值，
-        # 否则下一次 `_save` 会把它整体盖掉（同一个 V-R9-18 的后果）。
+        # 否则下一次 `_save` 会把它整体盖掉。
         kept = persist.quarantine(path())
         if not kept:
             log.warning("定时提醒状态形状不对，且**留证失败** ⇒ 原档保持原样、禁止覆盖：%s", path())
@@ -85,9 +85,9 @@ def load() -> dict:
 def _save(st: dict) -> bool:
     """原子写。**返回是否真的落盘成功**（V10：写失败不许吞成 `pass`——调用方要据它如实回报）。
 
-    V-R9-22：改走 `persist.atomic_write_json`（tmp 名带 pid + 随机后缀 + `os.replace`），
+    改走 `persist.atomic_write_json`（tmp 名带 pid + 随机后缀 + `os.replace`），
     不再共用 `timers.json.tmp` 这个名字。
-    V-R10-23：`st` 带 `_refuse_overwrite`（坏档还在原地、留证失败）时**拒绝写**——
+    `st` 带 `_refuse_overwrite`（坏档还在原地、留证失败）时**拒绝写**——
     这一枪打出去就是"旧提醒全没"，宁可让 `add()` 回 `ok:False` 让用户看见。
     落盘时把 `_` 开头的内部键摘掉（不许写进用户态文件）。
     """
@@ -135,7 +135,7 @@ def add(chat_key: str, note: str, seconds=None, minutes=None, by: str = "", now=
         item = {"id": tid, "chat": str(chat_key), "note": text, "by": str(by or ""),
                 "fire_at": _now_ms(now) + secs * 1000, "seconds": secs, "status": "pending",
                 "attempts": 0, "created": _now_ms(now), "clamped": clamped, "error": "",
-                "next_try_at": 0}      # 0＝未设退避（只看 fire_at）；失败重试后写 fire_at + 退避秒数
+                "next_try_at": 0} # 0＝未设退避（只看 fire_at）；失败重试后写 fire_at + 退避秒数
         st.setdefault("items", []).append(item)
         saved = _save(st)
     if not saved:

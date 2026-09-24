@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""应用内引导判据：**"怎么办"都在弹窗里，不叫用户去读文件**（用户 2026-09-13 的要求）。
+"""应用内引导判据：**"怎么办"都在弹窗里，不叫用户去读文件**。
 
-用户原话：「不要每次都让用户去读那个什么文本啊，你要做引导就做好引导，直接全部在应用用弹窗，把引导全部都做好。
 查查哪些地方需要引导，你做好弹窗」
 
 判据：
@@ -40,8 +39,8 @@ def ok(name, cond, detail=""):
     print("  {} {}{}".format("OK  " if cond else "FAIL", name, "  [{}]".format(detail) if detail else ""))
 
 
-from agent import console_html as CH  # noqa: E402
-from agent import user_tools as UT  # noqa: E402
+from agent import console_html as CH # noqa: E402
+from agent import user_tools as UT # noqa: E402
 
 HTML = CH.HTML
 print("── A. 引导基建 ──")

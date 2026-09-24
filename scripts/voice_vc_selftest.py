@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """「兼容用户本地语音模型」第二段 = 变声（音频→音频）+ 虚拟麦克风检测的判据。
 
-背景（用户 2026-09-15 原话）：「**虚拟声卡可以装啊，大小不大就行。最主要是要兼容那些用户本地的，
+背景
 比方说 GPT-SoVITS 的、RVC 的。我不是一直说吗？效果至上，用户至上，对用户有好处就加**」
 ⇒ 两件事：① **RVC 是「音频→音频」**（GPT-SoVITS 是「文字→音频」，早已支持）⇒ 必须两段串起来；
 ② 真语音条要一个"虚拟麦克风"，我们**只检测 + 引导**，不替用户装驱动（守「四不」第 ④ 条）。
@@ -43,9 +43,9 @@ def ck(name, cond, extra=""):
     print("  %s %s%s" % ("PASS" if cond else "FAIL", name, (" · " + extra) if extra else ""))
 
 
-from agent import voice_models as V            # noqa: E402
-from agent import audio_devices as AD          # noqa: E402
-from agent.config import DEFAULT_CONFIG as D   # noqa: E402
+from agent import voice_models as V # noqa: E402
+from agent import audio_devices as AD # noqa: E402
+from agent.config import DEFAULT_CONFIG as D # noqa: E402
 
 TMP = tempfile.mkdtemp(prefix="vvc_")
 V._out_dir = lambda: TMP
@@ -65,7 +65,7 @@ class _Resp:
         self._raw, self.headers, self.status = raw, {"Content-Type": ctype}, status
 
     def read(self, n=-1):
-        # V-R9-26：产品改成 `read(上限+1)` 的带限读取 ⇒ 替身要认这个形参（否则 TypeError 假红）
+        # 产品改成 `read(上限+1)` 的带限读取 ⇒ 替身要认这个形参（否则 TypeError 假红）
         return self._raw if (n is None or int(n) < 0) else self._raw[:int(n)]
 
     def __enter__(self):

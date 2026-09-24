@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """上云接口（第 10 条排期里"上云三件"的**预留接口层**）。
 
-用户口径（2026-09-13/14）：**上云三件先不做**，但①**留"可以输网址"的接口** ②**UI 里做完整的交互设计**
 （未配置 / 已配置 / 测不通 三态 + 中文文案）③顺带把"能不能真传到那个网址、怎么传、被墙 / 需要对方有接收端怎么办"讲清楚。
 
 本模块只做三件事，**一条数据都不上传**：
@@ -26,12 +25,12 @@ import urllib.parse
 import urllib.request
 
 DEFAULTS = {
-    "enabled": False,          # ⛔ 总开关：默认关＝永不真上传（既有口径："先不做"）
-    "persona_url": "",         # 人设上云的接收端（留空＝未配置）
-    "blocklist_url": "",       # 屏蔽名单上云的接收端（留空＝未配置）
-    "token": "",               # 接收端要求时的 Bearer Token（打码回显、只存本机）
+    "enabled": False, # ⛔ 总开关：默认关＝永不真上传（既有口径："先不做"）
+    "persona_url": "", # 人设上云的接收端（留空＝未配置）
+    "blocklist_url": "", # 屏蔽名单上云的接收端（留空＝未配置）
+    "token": "", # 接收端要求时的 Bearer Token（打码回显、只存本机）
     "timeout_ms": 8000,
-    "allow_private": False,    # 允许环回/内网地址（默认拒：防止误把私人接口当公网接收端）
+    "allow_private": False, # 允许环回/内网地址（默认拒：防止误把私人接口当公网接收端）
 }
 
 KINDS = [("persona", "人设", "persona_url"), ("blocklist", "屏蔽名单", "blocklist_url")]
@@ -48,7 +47,7 @@ def cfg() -> dict:
 
 
 def _harden_redirects() -> bool:
-    """V-R9-23：确保 urllib 跟 302 时**不把 `Bearer cloud.token` 带到新主机**。
+    """确保 urllib 跟 302 时**不把 `Bearer cloud.token` 带到新主机**。
 
     实现只有一处（`safe_fetch.CredentialStrippingRedirectHandler`）——这里只负责"装上去"。
     装不上就如实记日志（不静默）：安全层不可用时至少留下痕迹。
@@ -56,16 +55,16 @@ def _harden_redirects() -> bool:
     try:
         from .safe_fetch import harden_urllib
         return bool(harden_urllib())
-    except Exception as e:                                   # pragma: no cover - 极端环境
+    except Exception as e: # pragma: no cover - 极端环境
         logging.getLogger("persona-morph").warning(
-            "安全层不可用，重定向凭据剥离没装上（V-R9-23）：%s", e)
+            "安全层不可用，重定向凭据剥离没装上：%s", e)
         return False
 
 
 def normalize_url(raw: str) -> tuple:
     """URL 校验 → (ok, 规范化后的 url, 原因)。空串＝未配置（不算错）。
 
-    ⛔ 2026-09-21（第九轮审计 **V-R9-25**）：这里原来是一张**字符串表**（`localhost` / `127.0.0.1`
+    ⛔ 这里原来是一张**字符串表**（`localhost` / `127.0.0.1`
     / `::1` / `0.0.0.0` / `.local` / 三个私有段）。E 线实测 `localhost.`（尾点）、
     `169.254.169.254`、`[::ffff:127.0.0.1]`、`127.1`、`0x7f000001`、`2130706433`、`100.64.0.1`
     **七种形态全部放行**，而且 `probe()` 会**真连过去**（`stage=tcp/http` 就是回包）
@@ -122,16 +121,16 @@ def probe(which: str = "", url: str = "", timeout_ms: int = 0) -> dict:
         url = str(c.get(key) or "")
     ok, fixed, why = normalize_url(url)
     if not ok:
-        # `normalize_url` 现在也做 DNS 校验（V-R9-25）⇒ 解析失败这一种仍要如实报 `stage=dns`
+        # `normalize_url` 现在也做 DNS 校验⇒ 解析失败这一种仍要如实报 `stage=dns`
         # （探测器的意义就是"告诉用户卡在哪一段"："URL 解析失败"不算 DNS，"域名解析失败"才算）
         _stage = "dns" if "域名解析" in str(why) else "config"
         return {"ok": False, "stage": _stage, "why": why, "status": 0, "ms": 0, "url": url}
     if not fixed:
         return {"ok": False, "stage": "config", "why": "未配置接收端网址", "status": 0, "ms": 0, "url": ""}
     t0 = time.time()
-    ms = lambda: int((time.time() - t0) * 1000)  # noqa: E731
+    ms = lambda: int((time.time() - t0) * 1000) # noqa: E731
     host, port, scheme = _split_host(fixed)
-    # V-R9-25（TOCTOU）：**校验时解析到哪个 IP，就用哪个 IP 连** —— 原来这里是
+    # （TOCTOU）：**校验时解析到哪个 IP，就用哪个 IP 连** —— 原来这里是
     # `getaddrinfo()` 看一眼、`create_connection((host, port))` 再解析一次，两次结果可以不同
     # （DNS rebinding 实测能让第二次解析落到环回）。
     try:
@@ -157,7 +156,7 @@ def probe(which: str = "", url: str = "", timeout_ms: int = 0) -> dict:
             return {"ok": False, "stage": "tls", "why": "TLS 握手失败（%s）——证书/中间人/需要信任链" % str(e)[:60],
                     "status": 0, "ms": ms(), "url": fixed}
     # HTTP 段：只发 HEAD，不带 Authorization、不带 body
-    # ⛔ V-R10-33（第十轮）：老写法是"上面 TCP/TLS 两段钉了 IP，这一段却**按域名**发" ⇒
+    # ⛔ 老写法是"上面 TCP/TLS 两段钉了 IP，这一段却**按域名**发" ⇒
     #    `urllib` 自己**第 3 次解析**域名，审计实测第 3 次给环回 ⇒ HEAD 真打到 `127.0.0.1`，
     #    而面板报 `ok=true / stage=http / 200`（把内网当成了"可达"）。
     #    ⇒ 改用 `safe_fetch.pinned_head()`：**校验用的 IP 与连接用的 IP 是同一次解析**。
@@ -231,7 +230,7 @@ def upload(which: str, payload: dict, dry: bool = True) -> dict:
         headers["authorization"] = "Bearer " + tok
     body = json.dumps(out_obj, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(fixed, data=body, headers=headers, method="POST")
-    _harden_redirects()                    # V-R9-23：跨主机跳转时剥掉 Bearer
+    _harden_redirects() # 跨主机跳转时剥掉 Bearer
     try:
         with urllib.request.urlopen(req, timeout=max(2.0, c["timeout_ms"] / 1000.0)) as r:
             status = int(getattr(r, "status", 0) or 0)
@@ -240,7 +239,7 @@ def upload(which: str, payload: dict, dry: bool = True) -> dict:
             if style != "body_key":
                 return dict(base, ok=True)
             # body_key 形态：必须**回包确认** ok:true，否则如实说"没接住"
-            # V-R9-26：读取带上限（接收端回包正常只有几百字节；1MB 足够，超了就是异常 ⇒ 判"没接住"）
+            # 读取带上限（接收端回包正常只有几百字节；1MB 足够，超了就是异常 ⇒ 判"没接住"）
             try:
                 from .safe_fetch import read_capped
                 raw = read_capped(r, 1024 * 1024, "接收端回包") if hasattr(r, "read") else b""

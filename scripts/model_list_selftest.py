@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
-"""模型清单与价目一致性判据（2026-09-14 · 用户口径「牵一发动全身，一改全改」）。
+"""模型清单与价目一致性判据。
 
-用户原话：「还有模型的更新，同步一下。现在都出到 V41 flash 了，模型栏里面没有。
 牵一发动全身，一改全改啊。你要看好它联系了哪些东西，**这是最高准则**。
 要是它会影响到别的东西的正常运作，就要把那个也修好」。
 
-第一手事实（2026-09-14 现场取证，不是转述）：
+第一手事实：
   · 本机 API `GET /v1/models` → 只有 `deepseek-flash` / `deepseek-v4-pro` 两个名字；
   · 官方 Models & Pricing 页 → `deepseek-flash` = DeepSeek-V4.1-Flash（**支持视觉**、1M 上下文）、
     `deepseek-v4-pro` = V4-Pro-0813（不支持视觉）；旧名 `deepseek-v4-flash` /
@@ -32,8 +31,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
-from agent.llm import _OFFICIAL_PRICES, match_official_price   # noqa: E402
-from agent import whale as WH                                   # noqa: E402
+from agent.llm import _OFFICIAL_PRICES, match_official_price # noqa: E402
+from agent import whale as WH # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -52,7 +51,7 @@ def src(rel):
     return io.open(os.path.join(ROOT, rel), encoding="utf-8").read()
 
 
-#: 官方现售（2026-09-14 现场取证）
+#: 官方现售
 CURRENT = ("deepseek-flash", "deepseek-v4-pro")
 #: 已退役但官方仍接受的旧名（本机实测会被路由到 V4.1-Flash）
 LEGACY = ("deepseek-v4-flash-vision-exp", "deepseek-v4-flash", "deepseek-v4-flash-0731",

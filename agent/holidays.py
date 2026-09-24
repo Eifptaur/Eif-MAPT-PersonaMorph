@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """节假日问候（第三方 v0.4 对账清单第 13 条）。
 
-**红线（用户口径：只允许被动或显式开启）**——这里刻意分成两个模式：
+**红线**——这里刻意分成两个模式：
 · `passive`（**默认**）：只往提示词里加一句「今天是 X 节」+ 一条"别硬凑"的规则；
   **一条消息都不会主动发**，问候只在群友本来就在说话时自然带出。
 · `active`（**必须显式开启**）：到点主动问候，但受四道收紧——①必须配 `holiday.greet_chats` 白名单（空＝不主动）
@@ -9,7 +9,7 @@
 这样"节日问候"永远不可能变成"定时群发"。
 
 节日表：公历固定节日 + **预置的农历节日日期**（不做农历换算——换算容易错，宁可逐年补表；用户也能在
-`data/holidays.json` 里自己加/改，格式 `{"2027-02-06": "春节"}`）。
+`data/holidays.json` 里自己加/改，格式 `{""春节"}`）。
 """
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ log = logging.getLogger("persona-morph")
 _lock = threading.RLock()
 
 # 本进程内「已经问候过」的 (day, chat_key)：**不管状态有没有写进盘**都算——
-# V-R9-19：巡检 20 秒一轮、去重只靠 `holiday_state.json`，写盘一失败就会同一个节日同一个会话
+# 巡检 20 秒一轮、去重只靠 `holiday_state.json`，写盘一失败就会同一个节日同一个会话
 # 每 20 秒重发一次（审计实测一个节日最多 2160 次）。这张内存表就是"本轮不再重试"的标记。
 _MEM_GREETED: set = set()
 
@@ -117,14 +117,14 @@ def greeting(name: str, nickname: str = "") -> str:
 def load_state() -> dict:
     """读问候状态；**坏档走统一招式 `persist.load_or_quarantine`**（改名 `.bad.<时间戳>` 留证 + 记 warn）。
 
-    V-R9-19 的放大器：坏档原先静默回 `{"greeted": {}}` ⇒ 今天已经问候过的会话全成了"没发过"
+     的放大器：坏档原先静默回 `{"greeted": {}}` ⇒ 今天已经问候过的会话全成了"没发过"
     ⇒ 20 秒一轮的巡检接着重发。留证之后至少能一眼看出「是状态丢了，不是没发过」。
     """
-    _BAD = object()                      # 哨兵：分得清"读到的东西"与"走的默认值"
+    _BAD = object() # 哨兵：分得清"读到的东西"与"走的默认值"
     d, ok_overwrite = persist.load_checked(state_path(), _BAD)
     if isinstance(d, dict) and isinstance(d.get("greeted"), dict):
         if not ok_overwrite:
-            d["_refuse_overwrite"] = True          # V-R10-23：原档还在 ⇒ 禁止覆盖
+            d["_refuse_overwrite"] = True # 原档还在 ⇒ 禁止覆盖
         return d
     if d is not _BAD:
         # 形状不对（greeted 不是对象）同样是坏档：留证再回默认值，别让它被下一次写盘盖掉
@@ -142,12 +142,12 @@ def load_state() -> dict:
 
 
 def _save_state(st: dict) -> bool:
-    """原子写状态，**返回是否真的落盘**；失败**必须留日志**（V-R9-19）。
+    """原子写状态，**返回是否真的落盘**；失败**必须留日志**。
 
     老写法是 `except: pass`（`agent/holidays.py:119` 旧版）——连一行日志都没有，于是
     "状态没写成功 ⇒ 每 20 秒重发一次"这件事**没人看得出来**。现在：走 `persist.atomic_write_json`
-    （tmp 名带 pid+随机后缀，V-R9-22），失败记一条 warn，调用方据此在内存里打"已问候"标记。
-    V-R10-23：`st` 带 `_refuse_overwrite`（坏档还在原地、留证失败）时**拒绝写**——
+    ，失败记一条 warn，调用方据此在内存里打"已问候"标记。
+    `st` 带 `_refuse_overwrite`（坏档还在原地、留证失败）时**拒绝写**——
     盖掉它就是"今天已问候的会话全变没发过"，接着 20 秒一轮地重发。
     """
     with _lock:
@@ -167,7 +167,7 @@ def _save_state(st: dict) -> bool:
 def mark_greeted(day: str, chat_key: str) -> bool:
     """记账（返回状态是否真的落盘）。
 
-    V-R9-19：**无论落盘成不成，先在内存里打标记** —— 巡检是 20 秒一轮，去重只靠这个状态文件，
+    **无论落盘成不成，先在内存里打标记** —— 巡检是 20 秒一轮，去重只靠这个状态文件，
     写不进去就等于"下一轮再发一次"，一个节日能刷到 2160 次。
     """
     with _lock:
@@ -179,7 +179,7 @@ def mark_greeted(day: str, chat_key: str) -> bool:
         keys = sorted(st["greeted"].keys())
         for k in keys[:-7]:
             st["greeted"].pop(k, None)
-        _MEM_GREETED.add((str(day), str(chat_key)))      # 先打内存标记，再看落盘成不成
+        _MEM_GREETED.add((str(day), str(chat_key))) # 先打内存标记，再看落盘成不成
         return _save_state(st)
 
 
@@ -193,7 +193,7 @@ def due_greetings(cfg: dict, groups: list, now=None) -> list:
         return []
     names = [str(x).strip() for x in (h.get("greet_chats") or []) if str(x).strip()]
     if not names:
-        return []                      # 没白名单 ⇒ 一律不主动（防"节日变群发"）
+        return [] # 没白名单 ⇒ 一律不主动（防"节日变群发"）
     t = time.localtime() if now is None else time.localtime(now)
     day = "%04d-%02d-%02d" % (t.tm_year, t.tm_mon, t.tm_mday)
     fest = named(day=day)
@@ -208,7 +208,7 @@ def due_greetings(cfg: dict, groups: list, now=None) -> list:
     st = load_state()
     done = set(st.get("greeted", {}).get(day) or [])
     with _lock:
-        # V-R9-19：本进程内发过、但状态**没写进盘**的那些也要算"已问候"，
+        # 本进程内发过、但状态**没写进盘**的那些也要算"已问候"，
         # 否则写盘一失败就变成每 20 秒重发一次（一个节日最多 2160 次）。
         done |= {k for (d0, k) in _MEM_GREETED if d0 == day}
     out = []

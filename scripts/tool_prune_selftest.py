@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """工具表「按能力裁剪」的判据（不需要微信、不需要起服务）。
 
-背景（用户 2026-09-15）：「**省 token 不仅是你的事，也是群相的事。所有要用模型的地方都要省
+背景
 token，尽量给用户省钱**（仍以不影响效果为前提）」。
 实测：37 个工具 = 11626 字符 ≈ **7324 token**，比整份系统提示（3941 token）还大 ⇒ 每次请求最大的单块。
 本轮落地：**只裁"当前配置/场景下调用必然失败"的工具**（裁掉不损失任何可达效果）。
@@ -40,8 +40,8 @@ def ck(name, cond, extra=""):
     print("  %s %s%s" % ("PASS" if cond else "FAIL", name, (" · " + extra) if extra else ""))
 
 
-from agent import tools as T                       # noqa: E402
-from agent.config import DEFAULT_CONFIG as D       # noqa: E402
+from agent import tools as T # noqa: E402
+from agent.config import DEFAULT_CONFIG as D # noqa: E402
 
 BASE = T.build_tool_defs()
 NAMES = [d["name"] for d in BASE]
@@ -81,7 +81,7 @@ CASES = [
     ("behavior.moments_surf.enabled", True, "moments_surf"),
 ]
 for path, val, tool in CASES:
-    cfg = json.loads(json.dumps(D))       # 深拷贝，别污染 DEFAULT_CONFIG
+    cfg = json.loads(json.dumps(D)) # 深拷贝，别污染 DEFAULT_CONFIG
     cur = cfg
     ks = path.split(".")
     for k in ks[:-1]:

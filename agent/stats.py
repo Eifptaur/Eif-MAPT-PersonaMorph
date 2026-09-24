@@ -24,7 +24,7 @@ def _period_start(t: float | None = None, period: str = "weekly") -> str:
         start = dt.replace(hour=0, minute=0, second=0, microsecond=0)
     elif period == "monthly":
         start = dt.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    else:  # weekly：周一 0 点
+    else: # weekly：周一 0 点
         start = dt.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=dt.weekday())
     return start.isoformat()
 
@@ -35,7 +35,7 @@ def _day_start() -> str:
 
 
 def _empty() -> dict:
-    # 三分口径（2026-09-15）：只记"总 token"看不出钱花在哪——缓存读/未命中/输出的单价差 30~90 倍
+    # 三分口径：只记"总 token"看不出钱花在哪——缓存读/未命中/输出的单价差 30~90 倍
     # （0.05 / 1.5 / 4.5 元每百万）。缺省为 0 ⇒ 老账本（没有这三个字段）读进来自动补 0，不会崩。
     return {"sessions": 0, "calls": 0, "tokens": 0, "sent": 0, "cost": 0.0,
             "fresh_tokens": 0, "cached_tokens": 0, "output_tokens": 0}

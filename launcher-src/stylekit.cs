@@ -19,22 +19,22 @@ namespace WxLauncher
         public static readonly Color Line = Color.FromArgb(222, 230, 241);
         public static readonly Color ConsoleBg = Color.FromArgb(15, 23, 35);
         public static readonly Color ConsoleInk = Color.FromArgb(206, 220, 236);
-        public static readonly Color Ok = Color.FromArgb(52, 150, 90);            // 已完成
-        public static readonly Color Muted = Color.FromArgb(150, 158, 172);       // 未开始
-        public static readonly Color AccentHi = Color.FromArgb(72, 148, 252);     // 主按钮悬停
-        public static readonly Color AccentDown = Color.FromArgb(38, 110, 214);   // 主按钮**按下**（2026-09-23 补四态）
-        public static readonly Color AccentSoft = Color.FromArgb(232, 240, 254);  // 当前步高亮底
+        public static readonly Color Ok = Color.FromArgb(52, 150, 90); // 已完成
+        public static readonly Color Muted = Color.FromArgb(150, 158, 172); // 未开始
+        public static readonly Color AccentHi = Color.FromArgb(72, 148, 252); // 主按钮悬停
+        public static readonly Color AccentDown = Color.FromArgb(38, 110, 214); // 主按钮**按下**
+        public static readonly Color AccentSoft = Color.FromArgb(232, 240, 254); // 当前步高亮底
 
-        // ── 2026-09-23 补：**层级层**（用户：「我感觉这样还是太简陋了，就根据 Meta 的设计风格优化」）──
+        // ── **层级层**──
         // 诊断（_scratch/qt_proto/弹窗族诊断.md §2 原因 1）：原来 StyleKit 只管了"颜色"，
         //   **没管"什么比什么重要"** —— 没有卡片概念、没有间距阶梯、没有字号阶梯，
         //   于是内容是"一片字直接铺在浅底上"，眼睛无处落脚。
         // ⇒ 下面补三样**加法**（不动上面 13 个既有 token，六个窗体的既有配色全部照旧）：
         //   ① 间距阶梯（4 的倍数）② 字号阶梯（填上 15 → 10.5 之间缺掉的那一档）
         //   ③ 卡片（`CardPanel`）——白底 + 1px Line 描边 + 圆角 + 内边距，让内容有落脚处
-        public static readonly Color Warn = Color.FromArgb(198, 128, 32);         // 提醒（比 Sub 重、比 Accent 稳）
-        public static readonly Color Danger = Color.FromArgb(206, 74, 74);        // 危险（"不能撤销"那类）
-        public static readonly Color CardLine = Color.FromArgb(230, 237, 246);    // 卡片描边（比 Line 更浅一档）
+        public static readonly Color Warn = Color.FromArgb(198, 128, 32); // 提醒（比 Sub 重、比 Accent 稳）
+        public static readonly Color Danger = Color.FromArgb(206, 74, 74); // 危险（"不能撤销"那类）
+        public static readonly Color CardLine = Color.FromArgb(230, 237, 246); // 卡片描边（比 Line 更浅一档）
 
         /// 间距阶梯（4 的倍数）。用法：`new Point(Space.x4, Space.x5)` 这种读起来像意思的写法，
         /// 替代散落的 22 / 24 / 26 / 50 / 104 / 106 / 188 / 202 / 290 / 346…
@@ -49,21 +49,20 @@ namespace WxLauncher
         /// 比它俩与正文的差值还大 ⇒ 层级是"两段式"而不是"阶梯式"，看起来就扁平。
         /// 同时把"同一角色在不同窗体里字号不同"（正文 10.5 / 9.5 / 9.5）收口到一套。
         ///
-        /// ⚠️ **2026-09-23 改名 `Size` → `TextScale`**（用户报 CS0721 后拍板）。
+        /// ⚠️ **名 `Size` → `TextScale`**。
         ///   原因：`Size` 与 BCL 的 `System.Drawing.Size` **同名**，是持续踩雷源：
         ///     · 表达式位置裸写 ⇒ CS0118（静态类当值用）—— 已修 9 处；
         ///     · **类型位置**裸写 ⇒ **CS0721（静态类不能当参数类型）** —— `MakeCard` 两处签名，
         ///       而 `MakeCard` 是 9 个卡片的**唯一入口** ⇒ 它编不过，后面什么都编不过。
         ///   留着同名嵌套类，"侥幸安全"只依赖"实例方法里裸 `Size` 优先取 `Control.Size` 属性"
-        ///   这个**易碎前提**（一次重构就翻车，这次已经翻了 11 处）
         ///   ⇒ 按"改名一次性消灭歧义"的同一口径改名，**不再补全名**。
         public static class TextScale
         {
-            public const float Title = 15f;    // 窗体主标题（唯一一处 15）
-            public const float Head = 12.5f;   // ★ 新档：区块标题/状态行（原缺）
-            public const float Body = 10f;     // 正文（六个窗体统一到这一档，原为 9.5 / 10.5 混用）
-            public const float Small = 8.5f;   // 辅助说明（口径、路径、日志）
-            /// 2026-09-23 补：**长段落正文档**。
+            public const float Title = 15f; // 窗体主标题（唯一一处 15）
+            public const float Head = 12.5f; // ★ 新档：区块标题/状态行（原缺）
+            public const float Body = 10f; // 正文（六个窗体统一到这一档，原为 9.5 / 10.5 混用）
+            public const float Small = 8.5f; // 辅助说明（口径、路径、日志）
+            /// **长段落正文档**。
             /// 实测问题：`Body`(10f) 用在卡片里**多行长文**（口径说明、路径提示）时，
             ///   一屏塞得下太多字 ⇒ 段落"糊成一片"、眼睛找不到换行点。
             ///   Meta 的做法是正文用大一点、行距拉开 ⇒ 这里给长文单独一档。
@@ -78,7 +77,7 @@ namespace WxLauncher
 
         /// 按字体算一行的高度（含行距）。多行自绘文本用这个推进 y，别用 `Font.Height`。
         ///
-        /// ⚠️ 2026-09-23（#18 叠字根治）：行高必须跟**像素**（`f.Height`，随 DPI 放大）走，
+        /// ⚠️ （#18 叠字根治）：行高必须跟**像素**（`f.Height`，随 DPI 放大）走，
         ///   不能跟**磅值**（`f.Size`，不随 DPI）走 —— 原公式 `f.Size * LineGap * 1.34 + 2`
         ///   在任何 DPI 下都给出同一个像素数（Para 10.5 → 22），而 150% DPI 下 Para 的实际
         ///   字高是 **28px**（实测 `_scratch/c7_probe_out.log`：本机 system_dpi=144）
@@ -92,11 +91,11 @@ namespace WxLauncher
         }
 
         /// 三种语义字色（按"重要程度"选，不要按"好不好看"选）
-        public static Color Ink2 { get { return Ink; } }        // 主信息
-        public static Color Ink3 { get { return Sub; } }        // 次要信息
-        public static Color Ink4 { get { return Muted; } }      // 辅助/占位
+        public static Color Ink2 { get { return Ink; } } // 主信息
+        public static Color Ink3 { get { return Sub; } } // 次要信息
+        public static Color Ink4 { get { return Muted; } } // 辅助/占位
 
-        // ── 2026-09-23 补：**字色语义色阶**（用户：「文字颜色还有优化空间」）──
+        // ── **字色语义色阶**──
         //
         // 诊断（实测，不是感觉）：原来全窗只有 3 档字色可用 —— Ink(26,38,61) / Sub(108,122,145)
         //   / Muted(150,158,172)，而 3 档之间的**对比度是断崖式**的：
@@ -126,8 +125,8 @@ namespace WxLauncher
         //     六个窗体里既有代码大量直接引用它们，改值会牵动整个既有配色。
         //     这里做的是**加法**：新增 `InkStrong` / `InkBody` / `Ink3ok`，并把 `Restyle`
         //     的"正文兜底色"从"继承"改成显式落 `InkBody`（这样"正文太淡"才有解）。
-        public static readonly Color InkStrong = Color.FromArgb(17, 26, 44);      // 主标题（16.8:1）
-        public static readonly Color InkBody = Color.FromArgb(55, 70, 96);        // 长段落正文（9.9:1）
+        public static readonly Color InkStrong = Color.FromArgb(17, 26, 44); // 主标题（16.8:1）
+        public static readonly Color InkBody = Color.FromArgb(55, 70, 96); // 长段落正文（9.9:1）
         /// 次要信息**达标档**（5.6:1）。`Sub` 保留原值不动（既有引用多），
         /// 新写的"次要说明"文字请用这个；`Restyle` 里也用它覆盖掉原来"继承窗体色"的做法。
         public static readonly Color Ink3ok = Color.FromArgb(98, 112, 135);
@@ -141,31 +140,28 @@ namespace WxLauncher
         /// 图标统一尺寸（诊断 §2 原因 3：实测六个窗体是 66 / 64 / 60 / 58 四个不同值）
         /// ⇒ 收口到一处，六个窗体全走 `RoundIcon`。
         public const int IconSize = 56;
-        public const int IconRadius = 14;   // 圆角半径（56 的 1/4）：消掉"贴上去的黑方块"感
+        public const int IconRadius = 14; // 圆角半径（56 的 1/4）：消掉"贴上去的黑方块"感
 
-        // ── 2026-09-23（#12 卡片构造器 / #13 按钮留白）：几何量的**唯一来源** ──────
+        // ── （#12 卡片构造器 / #13 按钮留白）：几何量的**唯一来源** ──────
         //
         // 为什么要这一坨常量：原先它们是**抄在 9 张卡、8 种高度、8 种按钮宽里的字面量**。
-        //   "手抄"这件事本身就是 2026-09-23 三处正文被裁的真根因 —— 值抄错/抄旧了没人发现，
+        // "手抄"这件事本身就是 三处正文被裁的真根因 —— 值抄错/抄旧了没人发现，
         //   而 `FitLabel` 当时只长不缩 ⇒ 抄大了看不出、抄小了直接切字。
         //   ⇒ 收口到这里之后，卡片高度与按钮宽度都变成**算出来的**，不再有"抄哪个数"这个问题。
         //
         //   ⚠️ 卡片左右内边距**本来就对称**（子控件 `x = CardPadX`、宽 `= cardW - CardPadX*2`）。
         //     "左 24 右 8"是误记：那个 8 是"按钮与按钮之间的间隙"，不是内边距
-        //     （见 `docs\裁定-丙1回执与1213取舍.md` 裁定 2）⇒ 本轮**不**改左右留白。
-        public const int CardPadX = Space.x5;    // 20：卡片左右内边距
-        public const int CardPadY = Space.x4;    // 16：卡片上内边距
-        public const int CardPadB = Space.x4;    // 16：卡片下内边距（`SealCard` 用它收口）
-        public const int CardGapY = Space.x3;    // 12：卡片与卡片之间的间隙
+        public const int CardPadX = Space.x5; // 20：卡片左右内边距
+        public const int CardPadY = Space.x4; // 16：卡片上内边距
+        public const int CardPadB = Space.x4; // 16：卡片下内边距（`SealCard` 用它收口）
+        public const int CardGapY = Space.x3; // 12：卡片与卡片之间的间隙
 
         /// 卡顶 y 的**唯一来源**（原先是两个值：主窗手写 108，其余 104）。
-        /// 定义按裁定口径 —— **图标底边 + 间距**：
         ///   `Space.x5`(图标顶 y=20) + `IconSize`(56) + `Space.x7`(28) = **104**。
         /// ⇒ 主窗那个 108 判定为**手滑**（见回执：卡顶以下没有多出任何一行可解释这 4px）。
         public const int CardTopY = Space.x5 + IconSize + Space.x7;
 
         /// chrome 按钮（标题栏最小化 / 最大化 / 关闭那几颗）的**宽度**。
-        /// 它们**没有文字** ⇒ 不适用"文字实宽 + 36"（无文字则实宽无从谈起，见裁定 1）；
         /// 但"尺寸不许手写"这条对它们一样成立 ⇒ 收口到这一个常量。
         public const int TitleBarBtnW = 34;
 
@@ -201,7 +197,7 @@ namespace WxLauncher
             catch { return new Font(FontFamily.GenericMonospace, size); }
         }
 
-        // ── 2026-09-23 补：**西文优先回落链**（用户：「字体…还有优化空间」）──
+        // ── **西文优先回落链**──
         //
         // 问题（实测）：`Microsoft YaHei UI` 的**西文字面是按中文方块设计的** ——
         //   ① 字腔偏窄、`i/l/1` 难分（不像 `Segoe UI` 那种为西文优化的字形）；
@@ -263,7 +259,7 @@ namespace WxLauncher
             FontStyle style = (fallback != null) ? fallback.Style : FontStyle.Regular;
             if (HasCjk(text)) return fallback ?? Ui(size, style);
             // 纯西文 ⇒ 用 Segoe UI（缓存：同一 size+style 复用，避免 DrawText 热路径反复 new Font）
-            // ⚠️ 2026-09-23（#18）：这里也要乘 `FontScale` —— Segoe UI 分支是唯一绕过 `Ui()` 的字体出口
+            // ⚠️ （#18）：这里也要乘 `FontScale` —— Segoe UI 分支是唯一绕过 `Ui()` 的字体出口
             if (_uiFontCache == null || _uiFontSize != size * FontScale || _uiFontStyle != style)
             {
                 try { _uiFontCache = new Font("Segoe UI", size * FontScale, style); }
@@ -287,7 +283,7 @@ namespace WxLauncher
         internal static extern IntPtr GetForegroundWindow();
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         internal static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
-        // 2026-09-23 加：`ShowWindow(h, SW_SHOWNOACTIVATE)` —— 离屏出图"不激活地显示"
+        // `ShowWindow(h, SW_SHOWNOACTIVATE)` —— 离屏出图"不激活地显示"
         //   的唯一手段（`Form.Show()` 一定会激活，`WS_EX_NOACTIVATE` 挡不住程序自己调它）。
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         internal static extern bool ShowWindow(IntPtr h, int cmd);
@@ -331,7 +327,7 @@ namespace WxLauncher
             {
                 f.Text = title;
                 f.BackColor = Bg;
-                // 2026-09-23：正文字号从 9.5 提到 TextScale.Body(10)。诊断 §2 原因 2 实测——
+                // 正文字号从 9.5 提到 TextScale.Body(10)。诊断 §2 原因 2 实测——
                 //   正文在六个窗体里是 10.5 / 9.5 / 9.5 **三套**（同一角色不同字号 ⇒ 像六个人做的）；
                 //   且在浅底上 9.5 + Regular 偏"淡"，正是用户说的"清晰度"那一层观感来源（C5）。
                 f.Font = Ui(TextScale.Body, FontStyle.Regular);
@@ -348,10 +344,9 @@ namespace WxLauncher
                     {
                         if (c != bar) c.Top += BarH;
                     }
-                    // (2026-09-23：原来这里是 `System.Drawing.Size` 全名，因 StyleKit 内有同名嵌套类
+                    // (原来这里是 `System.Drawing.Size` 全名，因 StyleKit 内有同名嵌套类
                     //  `Size`；该嵌套类已改名 `TextScale` ⇒ 遮蔽源消除，回退裸名。)
                     //
-                    // ⚠️ 2026-09-23 修（用户报「--dlgprobe 的 CLIP 计数 = 19，且弹窗内容被裁」）：
                     //   **这里原来写 `+ BarH`，是错的方向。**
                     //
                     //   错在哪：各窗体是在 `Apply` **之前**设的 `ClientSize`（那是"加自绘标题栏
@@ -369,7 +364,7 @@ namespace WxLauncher
                 }
                 f.HandleCreated += delegate { Decorate(f); };
                 if (f.IsHandleCreated) Decorate(f);
-                f.Resize += delegate { Reclip(f); };   // 圆角裁剪随尺寸重算（可拉伸的窗口必须挂这一条）
+                f.Resize += delegate { Reclip(f); }; // 圆角裁剪随尺寸重算（可拉伸的窗口必须挂这一条）
                 Restyle(f);
                 // 有些窗体在构造函数里靠后还会再设一遍颜色/字体 ⇒ Load 时统一再落一次（幂等）
                 f.Load += delegate
@@ -390,9 +385,9 @@ namespace WxLauncher
         static void Decorate(Form f)
         {
             int v;
-            try { v = 2; DwmSetWindowAttribute(f.Handle, 33, ref v, 4); } catch { }   // 圆角：DWMWCP_ROUND
-            try { v = ColorTranslator.ToWin32(Bg); DwmSetWindowAttribute(f.Handle, 35, ref v, 4); } catch { }  // 标题栏底色
-            try { v = ColorTranslator.ToWin32(Ink); DwmSetWindowAttribute(f.Handle, 36, ref v, 4); } catch { }  // 标题文字色
+            try { v = 2; DwmSetWindowAttribute(f.Handle, 33, ref v, 4); } catch { } // 圆角：DWMWCP_ROUND
+            try { v = ColorTranslator.ToWin32(Bg); DwmSetWindowAttribute(f.Handle, 35, ref v, 4); } catch { } // 标题栏底色
+            try { v = ColorTranslator.ToWin32(Ink); DwmSetWindowAttribute(f.Handle, 36, ref v, 4); } catch { } // 标题文字色
             if (f.FormBorderStyle == FormBorderStyle.None)
             {
                 Reclip(f);
@@ -416,7 +411,7 @@ namespace WxLauncher
 
         /// 标题栏按钮的**统一高度**。
         ///
-        /// ⚠️ 2026-09-23 加（接手方第五轮回执：CLIP 回归 = 3，全在 `ConsoleForm` 顶栏那三颗
+        /// ⚠️ （接手方回执：CLIP 回归 = 3，全在 `ConsoleForm` 顶栏那三颗
         ///   `GlyphButton` 上，`need` 分别是 48×27 / 52×27 / 60×27 而高度写的是 26
         ///   ⇒ `h=26->26 CLIP`，差 1px）。
         ///
@@ -441,14 +436,14 @@ namespace WxLauncher
             t.MouseDown += delegate { Drag(f.Handle); };
             bar.Controls.Add(t);
             Button cls = new RoundButton();
-            // ⚠️ 2026-09-23：高度原写 26 —— 这里 `Dock = Right` 会让高度被 Dock 覆盖成整条 `BarH`(38)，
+            // ⚠️ 高度原写 26 —— 这里 `Dock = Right` 会让高度被 Dock 覆盖成整条 `BarH`(38)，
             //   所以 26 是个**从来没生效**的值（看起来像"设计高度"，实则误导）。改成"标题栏按钮的统一高度"
-            //   `TitleBarBtnH`，与 `GlyphButton` 那三颗对齐（接手方第五轮：那三颗 need=27 ⇒ 高度必须 ≥27）。
+            // `TitleBarBtnH`，与 `GlyphButton` 那三颗对齐。
             //   注意：Dock 生效时这句话仍不改变外观，它的作用是把**意图**写对，防以后有人把 Dock 去掉。
             //   ⇒ 宽 / 高两个字面量都不许留 —— 走 `TitleBarBtnW` / `TitleBarBtnH` 两个常量（#13 收口）。
             cls.Text = "✕"; cls.Size = new Size(TitleBarBtnW, TitleBarBtnH); cls.FlatStyle = FlatStyle.Flat;
-            cls.FlatAppearance.BorderSize = 0; cls.BackColor = Bg; cls.ForeColor = Ink3ok;   // 2026-09-23: Sub(4.35:1)→Ink3ok(5.02:1)，✕ 是要认的符号
-            cls.Dock = DockStyle.Right;   // 用 Dock 而不是 Anchor：Anchor 在 Dock 重排后会二次位移
+            cls.FlatAppearance.BorderSize = 0; cls.BackColor = Bg; cls.ForeColor = Ink3ok; // Sub(4.35:1)→Ink3ok(5.02:1)，✕ 是要认的符号
+            cls.Dock = DockStyle.Right; // 用 Dock 而不是 Anchor：Anchor 在 Dock 重排后会二次位移
             cls.Click += delegate { f.Close(); };
             bar.Controls.Add(cls);
             return bar;
@@ -460,7 +455,7 @@ namespace WxLauncher
             try { ReleaseCapture(); SendMessage(h, 0xA1, (IntPtr)2, IntPtr.Zero); } catch { }
         }
 
-        // ── 2026-09-23 加：卡片与图标的**唯一构造入口** ────────────────────────
+        // ── 卡片与图标的**唯一构造入口** ────────────────────────
         /// 造一张卡片并挂到窗体上（位置/尺寸按窗体坐标给）。六个弹窗全走这里 ⇒ 形态必然一致。
         /// 参数里的 `System.Drawing.Size` 写全名（**类型位置**，不能省）：嵌套类已改名 `TextScale`，
         /// 但这里保持显式，防以后有人再塞一个同名嵌套类进来。
@@ -479,7 +474,7 @@ namespace WxLauncher
             return p;
         }
 
-        // ── 2026-09-23（#12 F1）：**高度由内容算出**，不再是手抄的固定值 ──────────
+        // ── （#12 F1）：**高度由内容算出**，不再是手抄的固定值 ──────────
         /// 先造一张"只给了宽度、等收口"的卡片（高度暂按上内边距占位，看不出来）。
         ///
         /// 为什么要分两步而不是一步传高度：卡里的子控件多半是**按上一块的实测高度往下排**的
@@ -508,7 +503,7 @@ namespace WxLauncher
             return p.Height;
         }
 
-        // ── 2026-09-23（#13 F2）：按钮宽度 = **文字实际渲染宽度 + 36** ─────────────
+        // ── （#13 F2）：按钮宽度 = **文字实际渲染宽度 + 36** ─────────────
         /// 只负责"尺寸"，**不碰配色**（调用方照旧自己上 `BackColor` / `ForeColor`）
         ///   ⇒ 主按钮 / 次按钮 / 禁用态各写各的，不因为收口宽度而互相牵连。
         ///
@@ -517,7 +512,6 @@ namespace WxLauncher
         /// ⚠️ 字体取按钮**自己的**（`RoundButton` 构造里定为 `TextScale.Body`），不抄常量
         ///    ⇒ 以后动字号，宽度自己跟着走，不需要有人回来改这里的数。
         /// ⚠️ chrome 按钮（min / max / close）**不走这里** —— 它们没有文字，
-        ///    尺寸走 `TitleBarBtnW` / `TitleBarBtnH`（裁定 1）。
         public static RoundButton MakeButton(string text)
         {
             RoundButton b = new RoundButton();
@@ -543,7 +537,7 @@ namespace WxLauncher
         }
         public static Image RoundIcon(string path, int size, int radius)
         {
-            // ⚠️ 2026-09-23 修（接手方第五轮回执，真根因）：
+            // ⚠️ 
             //   原来这里是
             //       using (Image src = Image.FromFile(path))
             //       using (Bitmap bmp = new Bitmap(size, size))
@@ -551,8 +545,8 @@ namespace WxLauncher
             //   ⇒ 调用方（`MakeIcon`）拿到的是一个**已释放**的 Image；它被塞进 `PictureBox.Image` 后，
             //     在 paint / show 那一刻才炸 ——
             //     栈：`PictureBox.Animate` → `ImageAnimator.CanAnimate` → `get_FrameDimensionsList`
-            //     报文：**「参数无效。」**（就是第四轮那条"跑 0.4 秒弹一次"的系统错误窗的真身；
-            //     第四轮我只是把异常**接住并落盘**了，缺陷本身还在 ⇒ 每张图 2 条 `[Boot/ThreadException]`）。
+            // 报文：**「参数无效。」**（就是那条"跑 0.4 秒弹一次"的系统错误窗的真身；
+            // 我只是把异常**接住并落盘**了，缺陷本身还在 ⇒ 每张图 2 条 `[Boot/ThreadException]`）。
             //
             //   为什么"接住"不等于"修好"：全局钩子只能把栈写下来，用户看到的仍是"图标没画出来"。
             //   ⇒ 本条的判据从"不许弹系统窗"升级为"**不许抛异常**"（接手方：改完这条 14 条日志应一起消失）。
@@ -579,7 +573,7 @@ namespace WxLauncher
                             g.FillPath(tb, pth);
                     }
                 }
-                return bmp;   // ⚠️ 刻意不回填原文件、不返回 src：调用方持有的是独立位图（且**必须活着**）
+                return bmp; // ⚠️ 刻意不回填原文件、不返回 src：调用方持有的是独立位图（且**必须活着**）
             }
             catch
             {
@@ -590,7 +584,7 @@ namespace WxLauncher
         }
 
         /// 造一个统一尺寸的图标控件并挂到窗体上。找不到图就返回 null（调用方自行决定留不留白）。
-        /// ⛔ 丙-5 #2（2026-09-23，真机首跑用户报「图标黑色块」）：
+        /// ⛔ #2：
         ///   原来统一用 `app-icon.png` —— 它是**深色圆角方块底**上的鲸鱼，在启动器这种
         ///   极浅底(246,248,252)上就是一个高对比的黑方块（视觉层级倒置，诊断 §2 原因 3
         ///   早有记录，用户真机首跑坐实）。现在**优先取 `icon-whale.png`（透明底的完整
@@ -619,10 +613,10 @@ namespace WxLauncher
                             g.Clear(Color.Transparent);
                             g.DrawImage(src, new Rectangle(0, 0, size, size));
                         }
-                    }   // src 到此释放（像素已拷进 whaleBmp，同 RoundIcon 的所有权口径）
+                    } // src 到此释放（像素已拷进 whaleBmp，同 RoundIcon 的所有权口径）
                     PictureBox pic = new PictureBox();
-                    pic.Image = whaleBmp;                  // 所有权转移给 PictureBox（必须活着）
-                    whaleBmp = null;                       // 成功路不再由 catch 兜底处置
+                    pic.Image = whaleBmp; // 所有权转移给 PictureBox（必须活着）
+                    whaleBmp = null; // 成功路不再由 catch 兜底处置
                     pic.SizeMode = PictureBoxSizeMode.Zoom;
                     pic.Location = at;
                     pic.Size = new Size(size, size);
@@ -638,9 +632,9 @@ namespace WxLauncher
             }
             Image img = RoundIcon(Path.Combine(root, "assets", "app-icon.png"), size);
             if (img == null) return null;
-            // ⛔ 2026-09-23（#18 顺手修编译阻断，行为零变更）：这里原来也叫 `pic`，
+            // ⛔ （#18 顺手修编译阻断，行为零变更）：这里原来也叫 `pic`，
             //   与上面 if 块里的 `pic` 构成 CS0136（子级作用域已用过这个名字）——
-            //   实测 HEAD（03c2ba7）就编不过（丙-6 门禁没覆盖 C# 编译所以漏了）。
+            // 实测 HEAD（03c2ba7）就编不过。
             //   改名 `fbPic`（fallback 的意思），其余一字不动。
             PictureBox fbPic = new PictureBox();
             fbPic.Image = img;
@@ -653,7 +647,7 @@ namespace WxLauncher
         }
 
         /// 统一正文标签（省得每个窗体各写各的 Font/ForeColor）。
-        /// ⚠️ 2026-09-23：`ink` 参数允许传 `Color.Empty` ⇒ 落 `InkBody`（9.9:1 的正文档）。
+        /// ⚠️ `ink` 参数允许传 `Color.Empty` ⇒ 落 `InkBody`（9.9:1 的正文档）。
         ///   这样调用方不必在每个 Label 上都写一遍 `StyleKit.InkBody`（写漏了就退化成"继承"）。
         public static Label MakeLabel(string text, float size, Color ink, int width)
         {
@@ -671,12 +665,12 @@ namespace WxLauncher
         /// 诊断 §4 P1-6：三处 `Size` 里的高度原来是**手写的魔法数 + 注释里记着 need 值**，
         /// 那是"注释里记着"而不是"结构上不会发生"。这里改成当场量。
         ///
-        /// ⚠️ 2026-09-23 加固（CLIP=19 那一轮）：原来只撑 `Height`，漏了两件事——
+        /// ⚠️ 固（CLIP=19 那一轮）：原来只撑 `Height`，漏了两件事——
         ///   ①`lb.Width` 可能是 0 或未被设过（`MeasureText` 的宽度参数会退化）⇒ 按 `MinimumSize`/父宽兜底；
         ///   ②多行文字实测出来的是**宽 × 高**的组合，只改高不改宽时换行点会变 ⇒ 两轴都按证据落回。
         ///   `AutoSize=true` 的标签不吃这套（它会自己长），直接跳过。
         ///
-        /// ⛔ 2026-09-23 **第三次修（真 bug：三处正文正在被裁）**
+        /// ⛔ **第三次修（真 bug：三处正文正在被裁）**
         ///   老实现是 `lb.Height = Math.Max(lb.Height, h);` —— **只长不缩**。
         ///   当时的理由是「缩会把调用方算好的间距弄乱」。但那个理由只对**一半**的情形成立：
         ///     · 手写高度**偏小**时，`Math.Max` 会把它撑到实测值 —— 这半边是работ的；
@@ -693,12 +687,12 @@ namespace WxLauncher
         public static int FitLabel(Label lb)
         {
             if (lb == null) return 0;
-            if (lb.AutoSize) return lb.Height;          // 自适应的不用我们管
+            if (lb.AutoSize) return lb.Height; // 自适应的不用我们管
             int w = lb.Width;
             if (w <= 0 && lb.Parent != null) w = Math.Max(8, lb.Parent.ClientSize.Width - lb.Left);
             w = Math.Max(8, w);
             int h = MeasureFitHeight(lb.Text, lb.Font, w);
-            if (h > 0) lb.Height = h;                    // ★ 双向：实测值说了算（h<=0 时不动，免得把控件抹成 0 高）
+            if (h > 0) lb.Height = h; // ★ 双向：实测值说了算（h<=0 时不动，免得把控件抹成 0 高）
             return h;
         }
 
@@ -706,7 +700,7 @@ namespace WxLauncher
         public static int MeasureFitHeight(string text, Font f, int width)
         {
             if (string.IsNullOrEmpty(text) || f == null) return 0;
-            // 2026-09-23：这里原来是 `System.Drawing.Size` 全名 —— 因为当时 StyleKit 里有个
+            // 这里原来是 `System.Drawing.Size` 全名 —— 因为当时 StyleKit 里有个
             //   **同名嵌套类** `Size`（字号阶梯），按 C# 名字查找"就近优先"，裸写 `Size` 会解析到
             //   那个 class ⇒ CS0118。**嵌套类已改名 `TextScale`**，遮蔽源消除 ⇒ 已回退为裸 `Size`。
             //   （守备：`_scratch/_cs_precompile.py` 判据 5 + `_cs_shadow_audit.py` 判据 B）
@@ -717,13 +711,13 @@ namespace WxLauncher
         }
 
         /// 离屏取证：把窗体真实画面写成 PNG —— 显示但**抢不到前台**、且不像素判据自欺。
-        /// 姿势（2026-09-13 四组对照实测得出）：
+        /// 姿势：
         ///   ①先 `CreateControl()` 建句柄 → ②给窗口加 `WS_EX_NOACTIVATE` → ③`ShowWithCtx`（不激活地显示）
         ///   → ④`DrawToBitmap`（**只有它在无边框+Region 的窗体上出得来像素**）。
         /// ⚠️ 两条被实测证否的老路：`CreateControl`+`SWP_SHOWWINDOW`（WinForms 不认为窗口 Visible ⇒ 子控件不画，全白图，
         ///    6 张"渲染成功"的截图其实是空白）；`PrintWindow(PW_RENDERFULLCONTENT)` 在这类窗体上也只有底色。
         ///
-        /// ⚠️ 2026-09-23 第二次修（接手方报：`--shot` 的 6 张图在真 exe 下 **0/6 True**，
+        /// ⚠️ 第二次修（接手方报：`--shot` 的 6 张图在真 exe 下 **0/6 True**，
         ///   而在控制台宿主里是 **5/6 True**，且只有 `DeadLinkForm` 两种宿主下都 False）。
         ///   这条线索一步锁定了根因 —— **问题不是"标记丢了"，而是"标记本来就没生效"**：
         ///
@@ -750,7 +744,7 @@ namespace WxLauncher
             string prep = PrepareForShot(f);
             MarkNoActivate(f);
             ShowNoActivate(f);
-            MarkNoActivate(f);                       // 显示过程可能重建句柄 ⇒ 复核一遍（幂等）
+            MarkNoActivate(f); // 显示过程可能重建句柄 ⇒ 复核一遍（幂等）
             for (int i = 0; i < 16; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(20); }
             int colors;
             using (Bitmap bmp = new Bitmap(Math.Max(1, f.Width), Math.Max(1, f.Height)))
@@ -782,7 +776,7 @@ namespace WxLauncher
             try
             {
                 f.StartPosition = FormStartPosition.Manual;
-                f.Location = new Point(-4000, -4000);   // 屏外：用户看不到窗口开关
+                f.Location = new Point(-4000, -4000); // 屏外：用户看不到窗口开关
                 if (f.ShowInTaskbar) { f.ShowInTaskbar = false; }
                 if (f.AcceptButton != null) { f.AcceptButton = null; notes.Append(" 卸Accept"); }
                 if (f.CancelButton != null) { f.CancelButton = null; notes.Append(" 卸Cancel"); }
@@ -800,16 +794,16 @@ namespace WxLauncher
         /// "显示"和"不激活"由同一个调用保证，不存在中间被激活的窗口。
         ///
         /// ⚠️ 显示之前必须 `f.CreateControl()`：`DrawToBitmap` 要的是"WinForms 认为控件已创建"，
-        ///   否则子控件一个都不画（全白图，2026-09-13 已实测踩过）。
+        /// 否则子控件一个都不画。
         ///
-        /// ⚠️ 2026-09-23：改成 `public` —— `--dlgprobe`（`Ui.DlgProbe`）里也有一句 `f.Show()`，
+        /// ⚠️ 改成 `public` —— `--dlgprobe`（`Ui.DlgProbe`）里也有一句 `f.Show()`，
         ///   是**同一个抢前台的根因**（那里也只是"读一遍控件树"的取证动作，没有任何理由抢前台）。
         ///   两处共用这一份实现 ⇒ 以后不会再各修各的。
         public static void ShowNoActivate(Form f)
         {
             try
             {
-                f.CreateControl();                     // 建句柄 + 让 WinForms 认可"已创建"
+                f.CreateControl(); // 建句柄 + 让 WinForms 认可"已创建"
                 IntPtr h = f.Handle;
                 // SW_SHOWNOACTIVATE(4)：显示窗口但**不激活**它（哪怕它当前未激活）
                 ShowWindow(h, 4);
@@ -829,14 +823,14 @@ namespace WxLauncher
         /// 幂等：重复调用只在"确实没置位"时才动 `SetWindowLong`。
         ///
         /// ⚠️ 但它**只管鼠标点击**，挡不住 `Show()` 自带的激活 —— 那件事由 `ShowNoActivate` 解决。
-        /// ⚠️ 2026-09-23：改成 `public`（同 `ShowNoActivate`，`--dlgprobe` 复用）。
+        /// ⚠️ 改成 `public`（同 `ShowNoActivate`，`--dlgprobe` 复用）。
         public static void MarkNoActivate(Form f)
         {
             try
             {
-                IntPtr h = f.Handle;                   // 可能触发建句柄，正是我们要的
+                IntPtr h = f.Handle; // 可能触发建句柄，正是我们要的
                 int lex = GetWindowLong(h, GWL_EXSTYLE);
-                if ((lex & WS_EX_NOACTIVATE) != 0) return;   // 已生效 ⇒ 什么都不做
+                if ((lex & WS_EX_NOACTIVATE) != 0) return; // 已生效 ⇒ 什么都不做
                 SetWindowLong(h, GWL_EXSTYLE, lex | WS_EX_NOACTIVATE);
                 // SWP_FRAMECHANGED(0x20) | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
                 SetWindowPos(h, IntPtr.Zero, 0, 0, 0, 0, 0x20 | 0x2 | 0x1 | 0x4 | 0x10);
@@ -863,7 +857,7 @@ namespace WxLauncher
             if (root == null) return;
             foreach (Control c in root.Controls)
             {
-                // ⚠️ 2026-09-23：**卡片自己管自己的外观，这里不许覆盖它** ——
+                // ⚠️ **卡片自己管自己的外观，这里不许覆盖它** ——
                 //   CardPanel 是自绘的（白底 + 描边 + 圆角），原来 Restyle 会把 BackColor 改回 Bg
                 //   ⇒ 卡片和窗体底色糊在一起，"有落脚处"这件事就白做了。
                 if (c is CardPanel) { if (c.HasChildren) Restyle(c); continue; }
@@ -876,7 +870,7 @@ namespace WxLauncher
                     // ⚠️ 这里判的是"按钮是否长在**自绘标题栏**上"（标题栏按钮要透明底、只留字），
                     //   而标题栏本身是 `BuildTitleBar` 造的自绘卡片 ⇒ 必须判 `CardPanel`。
                     //
-                    //   2026-09-23 修（编译报错 `CS0146 循环基类依赖`带出来的第二处隐患）：
+                    // （编译报错 `CS0146 循环基类依赖`带出来的第二处隐患）：
                     //   老写法裸写 `Panel`，原本解析到 `System.Windows.Forms.Panel`（所有控件都满足），
                     //   一旦新类叫 `Panel` 就会被**静默改绑**到自绘卡片上 ⇒ 判据含义整个变掉。
                     //   现在新类统一叫 `CardPanel` 且基类写全名，这里显式写 `CardPanel` ⇒ 语义明确、不会再被遮蔽。
@@ -886,7 +880,7 @@ namespace WxLauncher
                     b.FlatAppearance.BorderColor = Line;
                     b.BackColor = Card;
                     b.ForeColor = Ink;
-                    // 2026-09-23：按钮字号跟正文同档（原来写死 9.5，与正文 10.5/9.5 三套并存）
+                    // 按钮字号跟正文同档（原来写死 9.5，与正文 10.5/9.5 三套并存）
                     b.Font = Ui(TextScale.Body, accentSet ? FontStyle.Bold : FontStyle.Regular);
                     RoundButton rb = b as RoundButton;
                     if (rb != null) { rb.Primary = accentSet && !titlebar; rb.FlatAppearance.BorderSize = 0; }
@@ -894,7 +888,7 @@ namespace WxLauncher
                     if (titlebar)
                     {
                         // 标题栏上的最小化/关闭：无边框、跟标题栏同底色，悬停由 RoundButton 自己画
-                        b.FlatAppearance.BorderSize = 0; b.BackColor = Bg; b.ForeColor = Ink3ok;   // 2026-09-23: 与下面 OnPaint 的 ink 同档，防"设了不生效"
+                        b.FlatAppearance.BorderSize = 0; b.BackColor = Bg; b.ForeColor = Ink3ok; // 与下面 OnPaint 的 ink 同档，防"设了不生效"
                         if (rb != null) rb.Primary = false;
                     }
                     else b.Height = Math.Max(b.Height, 34);
@@ -908,10 +902,10 @@ namespace WxLauncher
                         if (tb.Multiline)
                         {
                             tb.BorderStyle = BorderStyle.FixedSingle;
-                            // 2026-09-23：9 → 9.5（诊断 §3 C6：8.5f 等宽在小字号下"挤"），
+                            // 9 → 9.5（诊断 §3 C6：8.5f 等宽在小字号下"挤"），
                             //   且**日志框的字体由调用方决定**——自绘日志改用 UI 字体（见 LogView）
                             tb.Font = Mono(9.5f);
-                            // 2026-09-14 用户："这个日志栏怎么是黑的？好丑，你换成浅蓝的、白的都行"
+                            // "这个日志栏怎么是黑的？好丑，你换成浅蓝的、白的都行"
                             // ⇒ 启动器的日志区**跟窗体同色系**（浅底深字），深色控制台底色只留给真正的终端
                             tb.BackColor = Color.FromArgb(244, 248, 254);
                             tb.ForeColor = Ink;
@@ -925,7 +919,7 @@ namespace WxLauncher
                             // 原来只在 >= 13f 时才设 Ink，于是 12.5 的区块标题会保持窗体继承色（偏浅）
                             // ⇒ 现在按**语义档位**给色：标题类用 Ink，正文交给调用方（它才知道自己是主还是次）
                             if (lb.Font.Size >= TextScale.Head - 0.6f) lb.ForeColor = Ink;
-                            // ⚠️ 2026-09-23 补（用户：「文字颜色还有优化空间」）：
+                            // ⚠️ 
                             //   原来大于正文档位的**什么都不做** ⇒ 正文"继承窗体默认色"。
                             //   实测后果：窗体色一路继承下去，遇到深底/卡片底就会"淡到看不清"，
                             //   而调用方又没法区分"我是没设"还是"我刻意设成这个色"。
@@ -947,7 +941,7 @@ namespace WxLauncher
 
     /// **卡片**：白底 + 1px 描边 + 圆角 10 + 内边距 —— 弹窗族"内容有落脚处"的那一层。
     ///
-    /// 为什么要有它（2026-09-23 加，用户：「我感觉这样还是太简陋了，就根据 Meta 的设计风格优化」）：
+    /// 为什么要有它：
     ///   诊断 `弹窗族诊断.md` §2 原因 1 —— 六个弹窗的内容原来都是**直接铺在 `#F7F9FC` 底上的一片字**，
     ///   与底色只差一点点，眼睛无处落脚 ⇒ 再好的文案也显得"没做完"。
     ///   加一层白卡是**加法**：不动流程、不动既有子控件的绝对坐标语义（往里加的子控件坐标相对卡片算）。
@@ -980,7 +974,7 @@ namespace WxLauncher
             Rectangle r = new Rectangle(0, 0, Width - 1, Height - 1);
             Color fill = Danger ? Color.FromArgb(253, 246, 246) : StyleKit.Card;
             Color edge = Danger ? Color.FromArgb(240, 208, 208) : StyleKit.CardLine;
-            // ── 2026-09-23 补**升起**（用户：「按钮的质感…还有优化空间」的同一诉求）──
+            // ── 补**升起**──
             // 上一版卡片只有"填充 + 描边"，与背景的差只有那 1px 描边 ⇒ 卡片像"画上去的框"
             //   而不是"浮在底上的一片纸"。Meta 的卡片有极淡的一层 `0 1px 2px` 投影。
             // 这里用与按钮同一套手法：描边近似软阴影（1px 偏移 + α=16 的黑），仅在**非危险**卡上画
@@ -1010,7 +1004,7 @@ namespace WxLauncher
     /// 对外仍暴露 `Lines` / `BeginUpdate` / `EndUpdate` 之外的最小面：
     ///   `Append(string)` / `Clear()` / `LineCount`。**保留自动滚到底**（原来 TextBox 用 AppendText 就有）。
     ///
-    /// ── 2026-09-23 重写滚动条（用户：「滚动条…还有优化空间」）──
+    /// ── 重写滚动条──
     /// 上一版的三个问题（自评，截图比对得出）：
     ///   ① **没有轨道**：只有一根 3px 的竖条"贴"在右边，看不出"这里可以拖/可以点"⇒ 不像控件、像装饰线；
     ///   ② **恒定 3px、无 hover / 按下反馈**：鼠标移上去毫无变化 ⇒ 光标到位了也不知道点得中；
@@ -1026,21 +1020,21 @@ namespace WxLauncher
     {
         readonly System.Collections.Generic.List<string> _lines =
             new System.Collections.Generic.List<string>();
-        int _maxKeep = 400;          // 只留尾部若干行（原来窗体侧截到 50，这里放宽、由窗体决定）
-        int _top;                    // 第一行可见索引（由滚动条控制）
-        // ⚠️ 2026-09-23（#18 叠字根治）：`_rowH = 17` 写死已删 —— 行高一律走 `StyleKit.LineHeight(Font)`。
+        int _maxKeep = 400; // 只留尾部若干行（原来窗体侧截到 50，这里放宽、由窗体决定）
+        int _top; // 第一行可见索引（由滚动条控制）
+        // ⚠️ （#18 叠字根治）：`_rowH = 17` 写死已删 —— 行高一律走 `StyleKit.LineHeight(Font)`。
         //   原来它作为"地板"出现在 VisibleRows / OnPaint 两处 `Math.Max(_rowH, LineHeight(Font))` 里，
         //   而 LineHeight 改成 DPI 感知（像素口径）后，它只会把高 DPI 的行高**往小拉** ⇒ 没有存在意义了。
-        bool _stick = true;          // 是否"粘在底部"（用户在底部时新行自动滚出来）
+        bool _stick = true; // 是否"粘在底部"（用户在底部时新行自动滚出来）
 
-        // ── 滚动条状态（2026-09-23 加：可悬停、可拖动） ──
-        bool _sbHover;               // 鼠标进到滚动条热区（右侧 14px 竖条）
-        bool _sbDrag;                // 正在拖滑块
-        int _sbGrabY;                // 按下时鼠标相对滑块顶部的偏移（保证"跟手"、不跳）
-        bool _overSb;                // 鼠标是否落在**滑块**上（与"落在热区"不同：热区含轨道）
+        // ── 滚动条状态 ──
+        bool _sbHover; // 鼠标进到滚动条热区（右侧 14px 竖条）
+        bool _sbDrag; // 正在拖滑块
+        int _sbGrabY; // 按下时鼠标相对滑块顶部的偏移（保证"跟手"、不跳）
+        bool _overSb; // 鼠标是否落在**滑块**上（与"落在热区"不同：热区含轨道）
 
-        static readonly Color SbTrack = Color.FromArgb(150, 226, 236, 245);   // 轨道（半透明，压在浅底上）
-        static readonly Color SbThumb = Color.FromArgb(255, 199, 212, 228);   // 滑块常态
+        static readonly Color SbTrack = Color.FromArgb(150, 226, 236, 245); // 轨道（半透明，压在浅底上）
+        static readonly Color SbThumb = Color.FromArgb(255, 199, 212, 228); // 滑块常态
         static readonly Color SbThumbHi = Color.FromArgb(255, 166, 184, 206); // 滑块悬停/按下（变深）
 
         public LogView()
@@ -1048,7 +1042,7 @@ namespace WxLauncher
             SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint
                      | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
             BackColor = StyleKit.Card;
-            Font = StyleKit.Ui(StyleKit.TextScale.Para, FontStyle.Regular);   // 2026-09-23: 日志是要读的内容，不是脚注
+            Font = StyleKit.Ui(StyleKit.TextScale.Para, FontStyle.Regular); // 日志是要读的内容，不是脚注
             // 自绘控件要自己接滚轮。**只在内容超出时才处理**：否则把事件交回父容器，
             // 免得"日志没几行却把整窗的滚动吃掉了"。
             MouseWheel += delegate(object s, MouseEventArgs e)
@@ -1071,7 +1065,7 @@ namespace WxLauncher
         const int SbHot = 14;
         /// 滑块视觉宽度（常态 / 悬停）。悬停时从 6 变 10，靠**右对齐**生长（左边不越过内容区）
         const int SbW = 6, SbWHi = 10;
-        int SbRight { get { return Width - 6; } }                       // 滑块右边缘距控件右边 6px
+        int SbRight { get { return Width - 6; } } // 滑块右边缘距控件右边 6px
         int TrackTop { get { return Pad; } }
         int TrackH { get { return Math.Max(1, Height - 2 * Pad); } }
         int ThumbH
@@ -1190,7 +1184,7 @@ namespace WxLauncher
         /// 供窗体侧读回（`--dlgprobe` 的机械判据要用到行数/末行）
         public string Tail() { return _lines.Count == 0 ? "" : _lines[_lines.Count - 1]; }
 
-        /// 可见行数。⚠️ 2026-09-23（#18 再修）：`LineHeight` 已改成**像素口径**（随 DPI 缩放），
+        /// 可见行数。⚠️ （#18 再修）：`LineHeight` 已改成**像素口径**（随 DPI 缩放），
         ///   这里与 `OnPaint` 用同一个函数 ⇒ "行高多少"只有一把尺子，高 DPI 下不再叠字。
         int VisibleRows
         {
@@ -1208,7 +1202,7 @@ namespace WxLauncher
         }
 
         /// 按像素宽度折行（中文≈字号宽、ASCII≈0.55 倍）。自绘控件没有 WordWrap，得自己算。
-        /// ⚠️ 2026-09-23：右侧要扣掉**滚动条热区**（`SbHot`）—— 否则折行按满宽算，
+        /// ⚠️ 右侧要扣掉**滚动条热区**（`SbHot`）—— 否则折行按满宽算，
         ///   画的时候又被滚动条压掉右边 ⇒ 每行末尾被切（上一版就少扣了那 14px）。
         System.Collections.Generic.IEnumerable<string> Wrap(string s, int width)
         {
@@ -1242,7 +1236,7 @@ namespace WxLauncher
             int rows = VisibleRows;
             int maxTop = Math.Max(0, _lines.Count - rows);
             if (_top > maxTop) _top = maxTop;
-            // ⚠️ 2026-09-23：右边留 14px 给滚动条（原来是 2px）——
+            // ⚠️ 右边留 14px 给滚动条（原来是 2px）——
             //   否则日志文字会**压在滑块底下**（上一版 3px 滑块压在字的右边就是这个问题）。
             int textRight = Width - SbHot;
             int y = Pad;
@@ -1251,7 +1245,7 @@ namespace WxLauncher
             for (int i = _top; i < _lines.Count && i < _top + rows; i++)
             {
                 // 末行（最新一行）用主色加重，其余用**达标**的次要色 ⇒ 一眼看到"刚发生了什么"
-                // （2026-09-23：原来用 `Sub`(4.35:1) 不达标 ⇒ 换成 `Ink3ok`(5.6:1)）
+                // （原来用 `Sub`(4.35:1) 不达标 ⇒ 换成 `Ink3ok`(5.6:1)）
                 bool latest = (i == _lines.Count - 1);
                 Color ink = latest ? StyleKit.Ink : StyleKit.Ink3ok;
                 StyleKit.DrawText(g, _lines[i],
@@ -1260,14 +1254,14 @@ namespace WxLauncher
                     TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
                 y += rowH;
             }
-            // ── 自绘滚动条（2026-09-23 重写）──
+            // ── 自绘滚动条──
             // 只在内容超出时出现（原来系统滚动条是**常驻**的，空的时候也杵在那儿）。
             // 三层结构：轨道（淡）→ 滑块（常态 6px / 悬停 10px）→ 拖动时再深一档。
             if (NeedScroll)
             {
                 int tbH = ThumbH, tbY = ThumbY;
                 int w = (_sbHover || _sbDrag) ? SbWHi : SbW;
-                int x = SbRight - w;                 // 右对齐生长（向左变宽，不越过内容区）
+                int x = SbRight - w; // 右对齐生长（向左变宽，不越过内容区）
 
                 // ① 轨道：整条（比滑块更淡、更宽一点点的"槽"，暗示"这里可以拖")
                 using (var tk = new SolidBrush(SbTrack))
@@ -1321,7 +1315,7 @@ namespace WxLauncher
     /// 自绘圆角按钮：主按钮＝强调色填充（悬停变亮）· 次按钮＝卡片底+描边 · 标题栏按钮＝无边框（悬停淡灰）
     /// ⚠️ 主按钮身份由 StyleKit.Restyle 在覆盖底色之前判定并写进 Primary，别在窗体里手设颜色来"表示主按钮"
     ///
-    /// 2026-09-23 补**按下态**（用户：「你能不能做按钮的点击特效」）：
+    /// 补**按下态**：
     ///   四态齐全 = 常态 / 悬停 / **按下** / 禁用。按下时下沉 1px（`_press` 影响整个绘制矩形 Y+1）
     ///   且底色压暗一档（主按钮 `AccentDown`、次按钮淡灰底、标题栏更深的灰）。
     ///   与网页侧 `button:active{transform:translateY(var(--btn-lift)) scale(...)}` 是**同一套语言**
@@ -1329,7 +1323,7 @@ namespace WxLauncher
     ///   另加**键盘可达的按下反馈**：空格/回车按住时 Button 会置 `Capture`+`_press` 由 OnMouseDown 覆盖，
     ///   键盘路径见 `OnKeyDown/OnKeyUp`（否则纯键盘用户永远看不到按下态）。
     ///
-    /// ── 2026-09-23 第二轮补**质感**（用户：「按钮的质感…还有优化空间」）──
+    /// ── 补**质感**──
     /// 上一版的三个"平"（自评，与 Meta 的按钮逐项对比得出）：
     ///   ① **圆角 8 偏方**：Meta 按钮的圆角≈高度的 **1/3 ~ 1/2**（34 高 ⇒ 10~12）。
     ///      8px 在 34 高的按钮上只占 24%，看起来还是"圆角矩形"而不是"胶囊"。
@@ -1455,7 +1449,7 @@ namespace WxLauncher
     public class StepList : Control
     {
         string[] _steps = new string[0];
-        int _idx = -1;   // -1 = 还没开始
+        int _idx = -1; // -1 = 还没开始
         public StepList()
         {
             SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
@@ -1482,13 +1476,13 @@ namespace WxLauncher
             g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
             int n = _steps.Length;
             if (n == 0 || Height < 8) return;
-            // ⚠️ 2026-09-23（#18 叠字根治）：行高下限从写死 24 改为 `LineHeight(Font)`（随 DPI 缩放）——
+            // ⚠️ （#18 叠字根治）：行高下限从写死 24 改为 `LineHeight(Font)`（随 DPI 缩放）——
             //   150% 下 Body 字高 27px，原 24px 下限会让相邻两行的文字几乎贴上；
             //   控件高度由窗体侧按行数 × LineHeight 给足（launcher.cs），这里只是防御性下限。
             int rowH = Math.Max(StyleKit.LineHeight(Font), Math.Max(24, Height / n));
             // 圆圈尺寸同样不能写死 20：150% 下 Micro(8f) 数字高 23px 会戳出圆圈 ⇒ 跟着字高走
             int boxS = Math.Max(20, StyleKit.LineHeight(StyleKit.Ui(StyleKit.TextScale.Micro, FontStyle.Bold)) + 1);
-            float k = boxS / 20f;   // 圆内对勾等小形状按圆圈等比缩放
+            float k = boxS / 20f; // 圆内对勾等小形状按圆圈等比缩放
             int cx = boxS / 2 + 5;
             using (var linePen = new Pen(StyleKit.Line, 2f))
             using (var okBrush = new SolidBrush(StyleKit.Ok))
@@ -1523,7 +1517,7 @@ namespace WxLauncher
                             cur ? Color.White : StyleKit.Ink3ok,
                             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
                     }
-                    // 语义字色（2026-09-23 修）：原来"已完成"用 `Ink`、"进行中"用 `Accent`(3.6:1 不达标)、
+                    // 语义字色：原来"已完成"用 `Ink`、"进行中"用 `Accent`(3.6:1 不达标)、
                     //   "待办"用 `Muted`(2.78:1)。三档里有两档不达标 —— 而步骤文字恰恰是**最需要看清**的。
                     //   ⇒ 已完成 `Ink`(13.9) · 进行中 `Link`(4.6 达标且仍是蓝色语义) · 待办 `Ink3ok`(5.6 达标)。
                     //     待办不再用 Muted：那是"占位"的档位，步骤名不是占位信息，只是"还没轮到"。

@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 try:
     from agent.wechat import wechat_version_info, dep_check
 except Exception:
-    wechat_version_info = None  # 项目目录异常时给出提示，不影响本脚本其他检查
+    wechat_version_info = None # 项目目录异常时给出提示，不影响本脚本其他检查
 
 # 关键依赖最低版本（与 requirements.txt 一致；wechatauto-replica 精确锁定）
 def main():

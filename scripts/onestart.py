@@ -97,7 +97,7 @@ def run_stream(cmd, timeout=900, on_line=None):
         return False, str(e)
     parts = []
     done = threading.Event()
-    last_out = [time.time()]        # 读者线程负责刷新 ⇒ 主循环按"空闲"判超时
+    last_out = [time.time()] # 读者线程负责刷新 ⇒ 主循环按"空闲"判超时
 
     def _reader():
         try:
@@ -132,7 +132,7 @@ def run_stream(cmd, timeout=900, on_line=None):
         if proc.poll() is not None and done.is_set():
             rc = proc.poll()
             break
-        # 2026-09-16 改：**按"空闲"判超时，不设总时长上限**。慢网装依赖十几分钟是正常的，
+        # **按"空闲"判超时，不设总时长上限**。慢网装依赖十几分钟是正常的，
         # 原来按起始时刻算总时长（默认 900 秒）会把正常等待直接杀成"一键启动失败"。
         if time.time() - last_out[0] > timeout:
             proc.kill()
@@ -283,13 +283,12 @@ def _bot_opens_console():
 
 
 def _probe_console_window():
-    """**屏幕上真的已经有一个控制台窗口了吗**——是则返回句柄，否则 0（2026-09-18 改口径：不再只信锁）。
+    """**屏幕上真的已经有一个控制台窗口了吗**——是则返回句柄，否则 0。
 
     ⛔ 原实现读 `console_lock_fresh(90)` —— 那是"90 秒内有人开过"，**不代表窗口还在**。
-    作者在另一台机器实测：「更新之后，一键启动不弹窗口，还得再点一次」：更新完新机器人起来时开过一次窗
     并落锁，紧接着点一键启动 ⇒ 这里判"机器人侧已打开" ⇒ 启动器不开、而窗口其实没影 ⇒ 一屏空白；
     等 90 秒锁过期再点才出来。⇒ 现在**以真窗口为准**（`find_console_window()` + `IsWindow`）。
-    ⛔ 2026-09-19 再修：判据本身（`notify_ui.classify_console_window`）原来按标题子串认窗，
+    ⛔ 判据本身（`notify_ui.classify_console_window`）原来按标题子串认窗，
     会把启动器自己的窗「群相 一键启动」当成控制台 ⇒ 同一个症状复发。现已收紧到唯一标题「群相 控制台」，
     并在这里**把看到的窗口标题一起带出去**，写在日志里当证据（函数返回句柄，标题由调用方取）。
     """
@@ -330,7 +329,7 @@ def _probe_running_instance(timeout=2):
 def _enum_old_procs_ps():
     """主路：PowerShell `Get-CimInstance Win32_Process` 枚举 python/cscript 进程 → [(pid, 命令行)]。
 
-    ⛔ 2026-09-20 修 V7：`wmic` 在 Win11 24H2 起**已被系统移除**（本机就没有），原先只靠 wmic +
+    ⛔ `wmic` 在 Win11 24H2 起**已被系统移除**（本机就没有），原先只靠 wmic +
     `except Exception: pass` ⇒ 在这台机器上"踢旧实例"等于没做、连一行日志都没有。写法照
     `scripts/watchdog.py:183-189` 那份已跑通的。
     """
@@ -386,10 +385,10 @@ _OWN_SCRIPT_NAMES = ("persona_morph.py", "watchdog.py", "onestart.py")
 def _cmd_script_paths(cmd):
     """从一条命令行里抽出"指我们的那三个脚本"的**路径 token**（单一实现见 `agent/proc_match.py`）。
 
-    为什么要回溯（V-R1-3）：原来的判据是"整条命令行里含子串 `persona_morph.py`"，于是
+    为什么要回溯：原来的判据是"整条命令行里含子串 `persona_morph.py`"，于是
     `D:\\tools\\onestart.py`、**别人项目**里的 `watchdog.py`、另一份解压目录里的群相副本
     **统统会被 `taskkill /F` 强杀**（用户正在写的文件可能当场损坏）。
-    ⚠️ 2026-09-20：实现**下沉到 `agent/proc_match`**，与 `scripts/stop_bot.py`（一键关闭）共用一份 ——
+    ⚠️ 实现**下沉到 `agent/proc_match`**，与 `scripts/stop_bot.py`（一键关闭）共用一份 ——
     两处各写一套必然漂移（"踢旧实例"修了、"一键关闭"还在同名就杀）。
     """
     from agent.proc_match import script_paths
@@ -399,7 +398,7 @@ def _cmd_script_paths(cmd):
 def _is_our_install(cmd):
     """这条命令行的**脚本完整路径**是否落在本安装目录（ROOT）下、且文件名是那三个之一。
 
-    ⛔ 这是 V-R1-3 的正解：`taskkill /F` 是强制终止，判据必须是"这个进程属于本次安装"，
+    ⛔ 这是 的正解：`taskkill /F` 是强制终止，判据必须是"这个进程属于本次安装"，
     而不是"它的命令行里有几个像样的字"。实现见 `agent/proc_match.is_our_install`（单一来源）。
     """
     from agent.proc_match import is_our_install
@@ -424,7 +423,7 @@ def _kick_old_instance():
     返回 {"killed": [pid…], "failed": [{pid,rc,why}…], "skipped": [{pid,why}…],
           "how": 枚举方式, "error": 原因}：
       · **枚举失败时 error 非空且必写日志**——"这台机器没有这个能力"不许被吞成"没有旧实例要踢"（V7）；
-      · V-R1-3 两条：①只杀**命令行里出现本安装 ROOT 路径**的进程（原来"文件名像就杀"⇒ 误伤别人项目）；
+      · 两条：①只杀**命令行里出现本安装 ROOT 路径**的进程（原来"文件名像就杀"⇒ 误伤别人项目）；
         ②`taskkill` 的**退出码纳入结果**（原来丢弃返回值、一律 append ⇒ 没杀掉也说"已踢"）。
     """
     procs, how, err = _enum_old_procs()
@@ -439,10 +438,10 @@ def _kick_old_instance():
             skipped.append({"pid": pid, "why": "命令行含 plugin（插件/别的入口）"})
             continue
         if not _is_our_install(cmd):
-            skipped.append({"pid": pid, "why": "脚本路径不在本安装目录（别人的同名脚本，按 V-R1-3 不许杀）"})
+            skipped.append({"pid": pid, "why": "脚本路径不在本安装目录（别人的同名脚本，不许杀）"})
             continue
         if pid == os.getpid():
-            continue            # ⛔ 自己的命令行里也有 onestart.py ⇒ 不加这条会把启动器自己踢掉
+            continue # ⛔ 自己的命令行里也有 onestart.py ⇒ 不加这条会把启动器自己踢掉
         try:
             res = subprocess.run(["taskkill", "/F", "/PID", str(pid)],
                                  capture_output=True, creationflags=0x08000000)
@@ -470,16 +469,16 @@ def _kick_old_instance():
 def _open_current_console():
     """同版本已在运行 ⇒ 打开控制台。
 
-    ⛔ 2026-09-22 修（第十五轮 **V-R15-3** · 网友报「打不开控制台」）：老实现是
+    ⛔ 老实现是
       **"抢不到开窗锁就直接 return True"** —— 于是"锁在（90 秒新鲜期内）但其实一个控制台窗口都没有"
       时，这一跳**什么都不开也不说**（用户主观就是"点了一次没反应，等一分多钟再点一下才出来"）。
-      正确的收口 2026-09-18 已经做在 `notify_ui.open_console` 里（先看真窗口 → 在就复用；
+      正确的收口 已经做在 `notify_ui.open_console` 里（先看真窗口 → 在就复用；
       不在才谈锁，锁抢不到也等窗口、等不到照开）。⇒ 这里**不再自己判**，一律交给它。
     """
     try:
         from agent.config import get_config
         sc = get_config().get("server", {})
-        # ⛔ 2026-09-22 修（**第三个"打不开控制台"的入口**）：老实现**手拼配置端口**——
+        # ⛔ （**第三个"打不开控制台"的入口**）：老实现**手拼配置端口**——
         #   而 webui 在端口被占时会**静默顺延**（3210→3211…），`logs/console.url` 里才是真端口
         #   ⇒ 拼出来的地址没人听，用户点了「打开控制台」就是一屏 ERR_CONNECTION_REFUSED。
         #   ⇒ 地址一律交给唯一实现（`notify_ui.console_url`：先读带口令的 console.url 并**探活**，
@@ -496,7 +495,7 @@ def _open_console(url, browser_path=""):
 
     唯一实现是 `agent/notify_ui.open_console`（优先级＝自家 WebView2 窗口 → 浏览器，
     并且**所有入口共用一把锁**）。本函数只做进度日志，不再自己判断/自己开——
-    2026-09-14 修"自家窗口 + 浏览器同时弹"：原先启动器与机器人各开一处、各拿一把锁 ⇒ 双窗。
+    "自家窗口 + 浏览器同时弹"：原先启动器与机器人各开一处、各拿一把锁 ⇒ 双窗。
     """
     try:
         from agent.notify_ui import open_console as _oc
@@ -549,7 +548,7 @@ def main():
                         log("旧实例已清理（踢掉 PID=%s），继续一键启动。"
                             % ",".join(str(x) for x in _rep_kick["killed"]))
                     elif _rep_kick.get("skipped"):
-                        # V-R1-3 的取舍必须说出来：旧版本进程存在、但它的脚本**不在本安装目录**
+                        # 的取舍必须说出来：旧版本进程存在、但它的脚本**不在本安装目录**
                         # ⇒ 我们不碰它（不然就回到"文件名像就强杀"那条误伤路）。它若占着端口，
                         # 用户需要自己收掉（「一键关闭」/任务管理器），所以这里给出可照着做的动作。
                         log("⚠ 检测到被跳过的候选进程（PID=%s）——它们的脚本不在本安装目录，"
@@ -560,7 +559,7 @@ def main():
                         log("旧实例已清理（本次没有需要踢的进程），继续一键启动。")
                 _bad_kick = _rep_kick.get("failed") or []
                 if _bad_kick:
-                    # V-R1-3：踢失败也是**结果**（原来丢弃 taskkill 退出码 ⇒ 没杀掉也报"已踢"）
+                    # 踢失败也是**结果**（原来丢弃 taskkill 退出码 ⇒ 没杀掉也报"已踢"）
                     log("⚠ 有 %d 个旧实例**没能踢掉**（%s）⇒ 它们可能仍占着端口/单实例锁。"
                         % (len(_bad_kick),
                            "、".join("PID=%s rc=%s" % (x.get("pid"), x.get("rc")) for x in _bad_kick)))
@@ -584,7 +583,7 @@ def main():
     deps_install = [0]
 
     def _deps_progress(ln):
-        _s = str(ln or "").strip()          # pip 的行是缩进的（"  Downloading …"）⇒ 必须先 strip
+        _s = str(ln or "").strip() # pip 的行是缩进的（"  Downloading …"）⇒ 必须先 strip
         if _s.startswith("OK"):
             deps_done[0] += 1
             _prog("依赖检查", min(deps_done[0], 14), 14)
@@ -644,9 +643,9 @@ def main():
         existing = ((_hpid or -1) if _held else (_si_legacy(_lk) or None))
     except Exception:
         existing = None
-    # ⛔ 2026-09-18（作者：「不许覆盖解压，一定要直接更新」）：**残留的旧包实例不算"已在运行"**。
+    # ⛔ **残留的旧包实例不算"已在运行"**。
     #    旧包更新完可能没人接替（旧看门狗还在、机器人已死），这时如果这里直接 return 0，
-    #    用户看到的就是"点了一键启动没反应"，于是只能手工覆盖解压 —— 那条路被作者否掉了。
+    # 用户看到的就是"点了一键启动没反应"，于是只能手工覆盖解压 —— 那条路被
     #    ⇒ 先比 `watchdog.pid` 第二行记的**包版本**：一致才是真在跑；不一致（含旧包写的 "2" 这种）
     #      就照常拉起 watchdog，让新看门狗按"整包版本不一致"接管（杀旧 + 清证据 + 拉起新机器人）。
     _stale = False
@@ -665,7 +664,7 @@ def main():
                 % (_rec or "(读不出，多半是旧版格式)", _cur))
     except Exception:
         _stale = False
-    # ⛔ 2026-09-23 修：「已在运行」不能只信单实例互斥体 —— 互斥体只证明「有进程持锁」，
+    # ⛔ 「已在运行」不能只信单实例互斥体 —— 互斥体只证明「有进程持锁」，
     #    不证明「控制台起来了」。真机出现过：互斥体被半死不活的机器人/看门狗占着，
     #    `data\bot.lock` 里留着一个早就退出的 pid（67776），这儿就当成"已在运行"直接 return 0
     #    ⇒ 控制台 webui 根本没人拉起，端口全程没人听，用户点「现在就拉起来」毫无反应。
@@ -737,7 +736,7 @@ def main():
     except Exception as e:
         log("启动失败: %s" % e)
         return 1
-    # ⛔ 2026-09-23 加：**「拉起来了」不等于「跑起来了」**。子进程 stdio 全走 DEVNULL
+    # ⛔ **「拉起来了」不等于「跑起来了」**。子进程 stdio 全走 DEVNULL
     #   （`persona_morph.py` 入口的 `_auto_pythonw()` 还会把自己用 pythonw 重起一份、stdio 全关），
     #   它一旦崩，外面一点痕迹都没有。今天那个 P0「控制台永远起不来」真因是后端一行 TypeError，
     #   就是因为没落退出码，才只能看到「机器人已启动 ✔」、看不到它其实立刻就死了。
@@ -780,7 +779,7 @@ def main():
         while time.time() - t0 < 120:
             try:
                 import socket as _sock
-                # ⛔ 2026-09-22 修：老实现**只探配置端口** —— 而 webui 在端口被占时会静默顺延
+                # ⛔ 老实现**只探配置端口** —— 而 webui 在端口被占时会静默顺延
                 #   （3210→3211…）⇒ 明明已经就绪，这里却一直判"没就绪"，白等 120 秒、最后
                 #   再开一次窗（用户看到的就是"等了很久才出来/一屏拒绝连接"）。
                 #   ⇒ 两个端口都探：配置端口 + `logs\console.url` 里那个**真端口**。
@@ -807,14 +806,14 @@ def main():
                 if _up:
                     # 单点打开策略：优先由机器人侧（webui 就绪后、原子锁保护）打开；
                     # 启动器只等待就绪，不抢开（避免双开）。
-                    # ⛔ 2026-09-16 修：原来这里有一句 `if not _bot_opens_console(): pass`——
+                    # ⛔ 原来这里有一句 `if not _bot_opens_console(): pass`——
                     #   **空分支死逻辑**，看着像"兜底触发"其实什么都不做；真正决定开不开的是下面
                     #   这句 `_probe_browser_was_opened()`。而它读的是 `console_lock_fresh(90)`，
                     #   写锁的机器人若已退出（用户关窗+关进程后重开），旧锁仍"新鲜" ⇒ 判成
                     #   "机器人侧已打开" ⇒ 启动器不开、新机器人又抢不到锁 ⇒ **两边都不开**。
                     #   修法在 `agent/util.py`：锁文件带 pid，**写锁进程已死即视为过期**，
                     #   于是这里会正确地走到下面的兜底 `_open_console()`。
-                    # ⛔ 2026-09-23 加（丙-5#1 竞态守卫）：**端口通 ≠ 窗已显示**。Qt 壳在
+                    # ⛔ **端口通 ≠ 窗已显示**。Qt 壳在
                     #   persona_morph.py 里要等 PySide6 自举完才 show，快则 2~3 秒、慢则十来秒；
                     #   老逻辑端口一通就 `_probe_console_window()`，此刻「群相 控制台」窗还没出来
                     #   ⇒ 误判"机器人侧没开" ⇒ 启动器抢开网页窗 ⇒ **真机首跑双窗**（用户问题②）。
@@ -834,12 +833,11 @@ def main():
                     if not _opened_by_bot:
                         log("控制台端口通了但 15 秒内没等到窗口 ⇒ 走启动器后备开窗。")
                         try:
-                            _open_console("", _bpath)     # 地址为空 ⇒ 由 open_console 取权威地址（此刻已落盘）
+                            _open_console("", _bpath) # 地址为空 ⇒ 由 open_console 取权威地址（此刻已落盘）
                         except Exception as e:
                             log("控制台已就绪但打不开窗口：%s" % e)
                     else:
-                        # ⛔ 2026-09-19：这句"机器人侧已打开"必须**带证据**。上一版就是这样一句
-                        #   无凭据的结论酿成事故——窗口判据把启动器自己的窗（「群相 一键启动」）
+                        # ⛔ 这句"机器人侧已打开"必须**带证据**。上一版就是这样一句
                         #   当成了控制台 ⇒ 两边都不开、屏幕上什么都没有、用户得再点一次。
                         #   现在把"我到底看到了哪个窗口"写进日志（判据唯一源＝notify_ui.classify_console_window）。
                         _seen = ""

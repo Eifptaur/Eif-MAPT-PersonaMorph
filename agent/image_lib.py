@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """随机图图库（本地优先，零出网）：扫描目录 → 随机挑一张（尽量不重复）→ 交给 send_image 本地直发。
 
-设计口径（用户 2026-09-13："没有的话，加上"）：
+设计口径：
   · **本地优先**：`image_reply.dir` 里放你自己的图（默认 `assets/anime/`），全程不联网；
   · **可选在线图源**：`mode=api` 时从 `api_url` 取一张（要联网，默认留空＝不联网）；
   · **不许发错/发大**：超过 `max_mb` 的跳过；同一会话 `min_gap_seconds` 内不允许再发；
@@ -21,7 +21,7 @@ import urllib.request
 
 IMAGE_EXT = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")
 
-_recent_path = None          # 由 ROOT 决定（便于单测注入）
+_recent_path = None # 由 ROOT 决定（便于单测注入）
 
 
 def _root() -> str:
@@ -48,7 +48,7 @@ def _save_recent(d: dict, root: str = None) -> None:
         tmp = p + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(d, fh, ensure_ascii=False)
-        os.replace(tmp, p)                      # 原子替换，避免半截文件
+        os.replace(tmp, p) # 原子替换，避免半截文件
     except Exception:
         pass
 
@@ -57,7 +57,7 @@ def _cache_pick(cache_dir: str, chat_id: str = "", keep: int = 40) -> str:
     """在线图源没取到时，从**以前要到的图**里挑一张（秒回）。
 
     这些图本来就留在 `media/images/`，所以零额外下载。顺手只保留最近 `keep` 张
-    （用户口径：凡会往磁盘写东西的功能，都要有上限与清理）。
+    。
     """
     try:
         files = [os.path.join(cache_dir, f) for f in os.listdir(cache_dir)
@@ -68,7 +68,7 @@ def _cache_pick(cache_dir: str, chat_id: str = "", keep: int = 40) -> str:
     if not files:
         return ""
     files.sort(key=lambda p: os.path.getmtime(p), reverse=True)
-    for old in files[keep:]:                      # 超出上限的老图删掉（只删我们自己下载的 src_*）
+    for old in files[keep:]: # 超出上限的老图删掉（只删我们自己下载的 src_*）
         if os.path.basename(old).startswith("src_"):
             try:
                 os.remove(old)
@@ -187,7 +187,7 @@ def fetch_api(cfg: dict, root: str = None) -> tuple:
         p = os.path.join(d, "api_%d%s" % (int(time.time()), ext))
         with open(p, "wb") as fh:
             fh.write(data)
-        try:                                    # 能打开才算真图片
+        try: # 能打开才算真图片
             from PIL import Image
             Image.open(p).verify()
         except Exception:
@@ -234,7 +234,7 @@ def _filter_or_reject(path: str, meta: dict, cfg: dict, root: str, why: str) -> 
 
 
 # ── 图源健康（短冷却）：失败过的图源短时间内不再白等 ──────────────────────────────
-#   2026-09-17 实测：本机 safebooru（SSL 握手失败）白等 9.3 秒、yande 超时 8.0 秒、
+# 本机 safebooru（SSL 握手失败）白等 9.3 秒、yande 超时 8.0 秒、
 #   konachan 403、waifu 域名解析失败 —— 四个死源合计 **27 秒**，而用户看到的就是"发张图一分多钟"。
 _FAIL_UNTIL = {}
 _FAIL_LOCK = _threading.Lock()
@@ -272,7 +272,7 @@ def fetch_filtered(cfg: dict, root: str = None, chat_id: str = "", tag: str = ""
 
     `tag`：本次请求的**关键词覆盖**（用户/模型说"找张猫的图"时用），留空则用配置里的 `image_reply.tag`。
 
-    速度纪律（2026-09-17 重做，起因＝用户实测"发张图一分多钟"）：
+    速度纪律：
       ① 图源元数据**并行**问（原来按顺序一个个等，四个死源就 27 秒）；
       ② 失败过的图源**短冷却**（默认 600 秒内直接跳过，不再每次白等）；
       ③ 下载**有整张图的总时长上限**（原来 socket 超时只管单次 recv，慢速代理能涓流几分钟）；
@@ -284,7 +284,7 @@ def fetch_filtered(cfg: dict, root: str = None, chat_id: str = "", tag: str = ""
         from . import image_sources as _src
     except Exception as e:
         return None, "图源模块不可用：%s" % e
-    # 🔴 2026-09-18：**关键词要翻成图源认的标签再查**（中文直接丢进去多半无匹配 ⇒ 以前就退化成随机图）
+    # 🔴 **关键词要翻成图源认的标签再查**（中文直接丢进去多半无匹配 ⇒ 以前就退化成随机图）
     if use_tag:
         _cands = _src.tag_candidates(use_tag)
         if _cands:
@@ -316,7 +316,7 @@ def fetch_filtered(cfg: dict, root: str = None, chat_id: str = "", tag: str = ""
         if cooled:
             e.append("冷却中跳过：%s" % "、".join(cooled))
             if not cand:
-                cand = pool                      # 全在冷却里 ⇒ 还是试一轮，别把功能锁死
+                cand = pool # 全在冷却里 ⇒ 还是试一轮，别把功能锁死
         if not cand:
             return [], ["没有可用的图源（配置里的 sources 都不认识）"]
         out = []
@@ -350,23 +350,23 @@ def fetch_filtered(cfg: dict, root: str = None, chat_id: str = "", tag: str = ""
                     else:
                         e.append(err or ("图源 %s 失败" % s))
                         # 只对**真错误**（403/SSL/DNS/格式）上冷却；"慢/超时"是环境问题，
-                        # 冷却它反而把好源冤枉掉（2026-09-17 实测：pixiv 一次超时被冤 10 分钟）
+                        # 冷却它反而把好源冤枉掉
                         if not any(k in str(err or "") for k in ("TimeoutError", "timed out", "超时", "未在")):
                             _fail_note(s, cooldown)
             for fu in pending:
                 e.append("图源 %s 未在 %dms 内返回" % (jobs[fu], meta_ms))
             try:
-                ex.shutdown(wait=False, cancel_futures=True)     # 不等落后线程（受 socket 超时兜底）
+                ex.shutdown(wait=False, cancel_futures=True) # 不等落后线程（受 socket 超时兜底）
             except TypeError:
                 ex.shutdown(wait=False)
         except Exception as ex3:
             return [], ["并发取图失败：%s: %s" % (type(ex3).__name__, ex3)]
-        order = {s: i for i, s in enumerate(cand)}       # 按配置顺序排（顺序＝用户心里的优先级）
+        order = {s: i for i, s in enumerate(cand)} # 按配置顺序排（顺序＝用户心里的优先级）
         out.sort(key=lambda x: order.get(x[0], 99))
         return out, e
 
     # ② 候选图**并发下载赛跑**：谁先下完并通过过滤链就用谁
-    #    起因（2026-09-17 实测）：i.pixiv.re 今晚只有 6~8 KB/s，一张 master1200 下 11 秒还没完；
+    # 起因：i.pixiv.re 今晚只有 6~8 KB/s，一张 master1200 下 11 秒还没完；
     #    按顺序等它就会把整段预算吃光，后面的快图源一张也轮不上。
     def _race(picks: list, soft_mb: float) -> tuple:
         """并发下一轮：返回 (赢家路径, 说明, 本轮错误)。第一个下完且过过滤链的赢。"""
@@ -374,14 +374,14 @@ def fetch_filtered(cfg: dict, root: str = None, chat_id: str = "", tag: str = ""
         q = _queue.Queue()
 
         def _worker(src: str, meta: dict, budget_ms: int) -> None:
-            # ⚠️ 线程里必须自己兜住异常：2026-09-17 判据暴露过一个真坑 —— 图源函数签名不匹配抛
+            # ⚠️ 线程里必须自己兜住异常：判据暴露过一个真坑 —— 图源函数签名不匹配抛
             #   TypeError，线程静默死掉、队列永远等不到结果 ⇒ **整件事只能等到预算耗尽**。
             try:
                 if stop.is_set():
                     return
                 path, derr = _src.download(meta["url"], dest, max_mb=conf.get("max_mb", 8),
                                            timeout_ms=budget_ms, soft_max_mb=soft_mb)
-                if stop.is_set():                    # 已经有赢家了 ⇒ 别留自己的半成品
+                if stop.is_set(): # 已经有赢家了 ⇒ 别留自己的半成品
                     if path:
                         try:
                             os.remove(path)
@@ -389,7 +389,7 @@ def fetch_filtered(cfg: dict, root: str = None, chat_id: str = "", tag: str = ""
                             pass
                     return
                 if derr:
-                    if "TimeoutError" in derr:       # 慢源别每次都来占位（短冷却，不是判死刑）
+                    if "TimeoutError" in derr: # 慢源别每次都来占位（短冷却，不是判死刑）
                         _fail_note(src, int(conf.get("slow_cooldown_s") or 120))
                     q.put(("err", src, derr))
                     return
@@ -398,7 +398,7 @@ def fetch_filtered(cfg: dict, root: str = None, chat_id: str = "", tag: str = ""
                     q.put(("ok", src, "%s（%s）" % (why, meta.get("page") or ""), got))
                     return
                 try:
-                    os.remove(path)                  # 被拒的临时文件不留
+                    os.remove(path) # 被拒的临时文件不留
                 except OSError:
                     pass
                 q.put(("err", src, why))
@@ -427,7 +427,7 @@ def fetch_filtered(cfg: dict, root: str = None, chat_id: str = "", tag: str = ""
                     return item[3], item[2], errs2
                 errs2.append("图源 %s：%s" % (item[1], item[2]))
         finally:
-            stop.set()                               # 收工：还在下的线程自己删半成品
+            stop.set() # 收工：还在下的线程自己删半成品
         return None, "", errs2
 
     for attempt in range(attempts):
@@ -470,7 +470,6 @@ def search_image(cfg: dict, keyword: str, root: str = None, chat_id: str = "") -
     if got:
         return got, why
     # 兜底：在线图源整体不可用时（外网图站夜里经常抽风），从"以前要到的图"里挑一张。
-    # 🔴 2026-09-18 改口径（现场翻车）：**"有人点名要图"时默认不走这条兜底** ——
     #   以前它不仅兜底，工具回执照样写「已找到并发出一张「鲸鱼」的图」⇒ 实际发出去的是旧缓存里
     #   一张毫不相干的动漫图，用户和模型都被骗了（"拿旧图冒充"比"如实说没找到"更糟，因为对外可见）。
     #   要恢复旧行为：配置 `image_reply.cache_fallback: true`（那也只用于"随机图"场景）。

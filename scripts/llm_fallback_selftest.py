@@ -21,8 +21,8 @@ try:
 except Exception:
     pass
 
-import requests                       # noqa: E402
-from agent import llm                 # noqa: E402
+import requests # noqa: E402
+from agent import llm # noqa: E402
 
 PASS, FAIL = [], []
 
@@ -77,7 +77,7 @@ def main():
     msgs = [{"role": "user", "content": "hi"}]
     real_session = llm._session
     real_effective = llm.effective_api
-    llm.effective_api = lambda cfg=None: api()      # 备选清单从"测试配置"里读，不碰用户的 config.json
+    llm.effective_api = lambda cfg=None: api() # 备选清单从"测试配置"里读，不碰用户的 config.json
 
     print("== A. 候选清单：解析 / 去重 / 上限 ==")
     ok("数组形态按顺序保留", llm.fallback_models({"fallback_models": ["a", "b"]}) == ["a", "b"])
@@ -153,7 +153,7 @@ def main():
     r = llm.chat_completion(msgs, overrides=api())
     ok("模型名下线（404）⇒ 会换备选", r.get("fallback", {}).get("used") == "m2" and len(s.calls) == 2)
 
-    s = FakeSession([FakeResp(200, None)])            # 200 但 body 不是 JSON
+    s = FakeSession([FakeResp(200, None)]) # 200 但 body 不是 JSON
     llm._session = s
     try:
         llm.chat_completion(msgs, overrides={"base_url": "http://fake.local/v1", "model": "m1",

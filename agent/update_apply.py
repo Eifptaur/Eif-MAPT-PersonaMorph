@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """群相 · **整包自更新**（在线包路径）—— 下载 → 校验 → 换入 → 组合校验 → 失败回滚。
 
-为什么单独一个模块（2026-09-16，用户当场问「做出来居然不给用户用，你是什么意思」）：
+为什么单独一个模块：
   `scripts/pm_update.py` 是**增量 patch** 引擎（契约见 `docs/设计-本体与DLC.md` §四），
   但我们对外发布的只有**整包** `persona-morph-vX.Y.Z.zip` + 清单（**没有** patch.json）
   ⇒ 用户今天要更新，只能自己去 GitHub 下载整包、手动解压覆盖。
@@ -39,7 +39,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # 本体更新**一律不碰**的东西（在线包里也没有它们，这里是第二道闸）
 NEVER_TOUCH = ("data/", "config.json", "logs/", "wechatauto_logs/", "报告/", "_scratch/", "offline/",
-               # ⛔ 2026-09-22：`runtime/` 原来**只靠"包里恰好没有"**（不是契约）⇒ 改一次打包规则
+               # ⛔ `runtime/` 原来**只靠"包里恰好没有"**（不是契约）⇒ 改一次打包规则
                #   就可能把用户装好的依赖覆盖掉（用户抱怨的"更新完又装一遍"就是这一类）。
                #    来源＝`research\更新机制-增量与实际做法.md` §五 4（Velopack 同口径：程序目录只放程序）。
                "runtime/")
@@ -103,15 +103,15 @@ def zip_tree(zip_path: str):
     return th.hexdigest(), files, top, len(files)
 
 
-#: 下载资产走不通时的镜像前缀（2026-09-16，与「更新源异常」同源的问题）：
+#: 下载资产走不通时的镜像前缀：
 #: 国内直连 `github.com/.../releases/download/...` 经常超时 ⇒ 依次套前缀重试
 DL_MIRRORS = ("https://ghfast.top/", "https://ghproxy.net/", "https://gh-proxy.com/", "https://gh.llkk.cc/")
 
 #: 单个源的**卡死**判据（秒）——**不是总时长上限**：urllib 的 timeout 是"两次数据之间的间隔"，
 #: 只要还有数据就一直下；**45 秒一个字节都没来**就判这个源不行、换下一个。
-#: ⚠️ 2026-09-18 由 20 → 45（作者另一台机器实测延迟 ~1900ms）：2 秒 RTT 下，
+#: ⚠️ 由 20 → 45：2 秒 RTT 下，
 #:    连接 + TLS 握手 + 首个数据块本身就可能 10 秒以上，20 秒会把"慢但在跑"的源误判成死了。
-#: 为什么（2026-09-17 用户转述：「控制台上面的更新用不了，卡在 0% 不动，我都是直接去原地址下载覆盖的」）：
+#: 为什么：
 #: 老值是 120 秒 × 4 个源 ⇒ 最坏 8 分钟界面钉在 0%，任何人都会以为它死了。
 STALL_S = 45.0
 
@@ -119,13 +119,13 @@ STALL_S = 45.0
 def _final_url_ok(final: str, requested: str) -> str:
     """**转调** `update_check.final_url_ok`（唯一实现在那里）。
 
-    ⛔ 2026-09-21（回执 V-R5R-1）：同一条判据原来只写在这一侧 ⇒ 取清单那条 `fetch()` 没有它
+    ⛔ 同一条判据原来只写在这一侧 ⇒ 取清单那条 `fetch()` 没有它
     ⇒ "判 A 取 B"只修了一半。⇒ 现在两侧共用一份实现，别在这里再抄一遍。
     """
     try:
         from . import update_check as _uc3
         return _uc3.final_url_ok(final, requested)
-    except Exception as e:                                  # 判据实现取不到时只留痕，不额外拦
+    except Exception as e: # 判据实现取不到时只留痕，不额外拦
         log.debug("最终地址判据不可用（%s）", e)
         return ""
 
@@ -137,7 +137,7 @@ def _dl_once(url: str, dest: str, timeout: float, progress=None):
         if not str(url).lower().startswith(("http://", "https://")):
             shutil.copy2(url, dest)
             return True, ""
-        # ⛔ 2026-09-21（V-R4-2，P0）：**判的就是取的** —— 地址里带点段一律拒取。
+        # ⛔ **判的就是取的** —— 地址里带点段一律拒取。
         #   审计实测：`…/Eifptaur/Eif-MAPT-PersonaMorph/../../attacker/x/…` 能过当时的信任判据，
         #   而 urllib 会归一化后去取**另一个仓库**的文件（用本函数跑通了 octocat/Hello-World 的 README）。
         try:
@@ -148,7 +148,7 @@ def _dl_once(url: str, dest: str, timeout: float, progress=None):
             pass
         req = urllib.request.Request(url, headers={"User-Agent": UA})
         with urllib.request.urlopen(req, timeout=timeout) as r, open(dest + ".part", "wb") as fh:
-            # ⛔ V-R5A-1：**取之前再看一眼真正取到的是哪个地址**（302/镜像跳转都在这一步之后才现形）
+            # ⛔ **取之前再看一眼真正取到的是哪个地址**（302/镜像跳转都在这一步之后才现形）
             _fwhy = _final_url_ok(str(r.geturl() or url), url)
             if _fwhy:
                 raise ValueError(_fwhy)
@@ -165,7 +165,7 @@ def _dl_once(url: str, dest: str, timeout: float, progress=None):
                         progress(got, total)
                     except Exception:
                         pass
-        os.replace(dest + ".part", dest)      # 半截文件不许冒充成品
+        os.replace(dest + ".part", dest) # 半截文件不许冒充成品
         return True, ""
     except Exception as e:
         try:
@@ -205,11 +205,10 @@ def _src_name(u: str) -> str:
 def download(url: str, dest: str, timeout: float = STALL_S, progress=None, on_try=None):
     """下载在线包（流式写盘 + 进度回调）。**支持本地路径**（离线自测用，与 `update_check.fetch` 同口径）。
 
-    2026-09-16：直连失败时**依次套国内镜像前缀重试**（只对 `github.com` 的地址套），全部失败才如实报原因。
-    2026-09-17：镜像顺序不再是死的 `DL_MIRRORS`——**上次清单能用的那个镜像排第一**。
-    2026-09-17（用户报「更新卡在 0% 不动、只能自己去原地址下载覆盖」）三处改：
+    直连失败时**依次套国内镜像前缀重试**（只对 `github.com` 的地址套），全部失败才如实报原因。
+    镜像顺序不再是死的 `DL_MIRRORS`——**上次清单能用的那个镜像排第一**。
       ① `timeout` 改成**卡死判据**（默认 `STALL_S`＝45 秒没数据就换源；老值 120 秒 × 4 源＝最坏 8 分钟不动。
-         ⚠️ 2026-09-18 由 20 秒调到 45 秒：连接 + TLS + 首个数据块本身就可能 10 秒以上，20 秒会把"慢但在跑"的源误判成死的）；
+         ⚠️ 由 20 秒调到 45 秒：连接 + TLS + 首个数据块本身就可能 10 秒以上，20 秒会把"慢但在跑"的源误判成死的）；
       ② 每换一个源**先把进度归零**并回调 `on_try(i, n, url)` ⇒ 界面看得见"在换源重试"，不是一个僵住的百分比；
       ③ 全失败时把**官方地址**带回去，用户至少能手上下载覆盖。
     """
@@ -221,7 +220,7 @@ def download(url: str, dest: str, timeout: float = STALL_S, progress=None, on_tr
             urls.append(m + str(url))
     last = ""
     for i, u in enumerate(urls, 1):
-        if progress:                       # 换源要归零，否则界面还挂着上一个源的百分比 ⇒ 看着像卡死
+        if progress: # 换源要归零，否则界面还挂着上一个源的百分比 ⇒ 看着像卡死
             try:
                 progress(0, 0)
             except Exception:
@@ -237,7 +236,7 @@ def download(url: str, dest: str, timeout: float = STALL_S, progress=None, on_tr
         last = why
         if on_try:
             try:
-                on_try(0, len(urls), u, why)          # i=0 ⇒ "这个源不通，要换下一个了"
+                on_try(0, len(urls), u, why) # i=0 ⇒ "这个源不通，要换下一个了"
             except Exception:
                 pass
     return False, ("下载失败（含 %d 个源的重试）：%s ⇒ 也可以直接到发布页手动下载覆盖：%s"
@@ -289,7 +288,7 @@ def _dir_writable(p: str) -> bool:
 
 
 def _perm_hint(e, tp: str) -> str:
-    """权限类错误 ⇒ 给一句**指对方向**的话（V-R3-9：老文案把用户引去"找占用者"）。"""
+    """权限类错误 ⇒ 给一句**指对方向**的话。"""
     if getattr(e, "errno", None) == 13 or getattr(e, "winerror", None) == 5:
         if not _dir_writable(tp):
             return ("；而且这个目录**写不进去**（%s）⇒ 请把程序装到你有写权限的目录，"
@@ -334,7 +333,7 @@ def _probe_write(path: str) -> str:
 def _is_locked(e, path: str = "") -> bool:
     """这个异常是不是"文件正被别的进程使用"（共享冲突）。只有这一种才允许"跳过并继续"。
 
-    ⛔ 2026-09-20 **二次修（V-R3-1，上一版是"假修"）**：上一版把它收窄成 `winerror in (32,33)`，
+    ⛔ **二次修**：上一版把它收窄成 `winerror in (32,33)`，
     可**真实**共享冲突走的是 CRT `open()`（`shutil.copy2`）——Windows 把它映射成 `EACCES(13)`、
     **winerror 直接丢掉**。实测（真独占句柄 + 真 `share=READ|DELETE`）：
         copy2  ⇒ PermissionError errno=13 winerror=None
@@ -344,14 +343,14 @@ def _is_locked(e, path: str = "") -> bool:
     现在按"**错误码 + 文件本身可不可写**"组合判：winerror ∈ (32,33) ⇒ 占用；
     errno==13 或 winerror==5 ⇒ 再看文件是不是**只读属性**（只读＝真故障 ⇒ 回滚，否则＝被持有 ⇒ 跳过）。
 
-    ⛔ 2026-09-20 **三次修（V-R3-9，第三轮审计）**：上面那条还漏了一支 —— **目标文件还不存在**时
+    ⛔ **三次修**：上面那条还漏了一支 —— **目标文件还不存在**时
     （＝本次是"新建文件"），`os.path.exists(path)` 为假 ⇒ 老实现直接 `return True` 当成"被占用"。
     可"拒绝访问 + 目标不存在"的常态恰恰是**目录 ACL 拒写 / 只读介质 / 路径非法**，那是**真故障**：
     实测（真 `icacls /deny` ）老行为给出 `rc=0 status=partial pending=['agent/c.py']`、文件没落地、
     版本不推进 ⇒ 受保护目录里的用户**永久停在"只装了一半"**，而文案还把他引去"找占用者"。
     ⇒ 现在：**目标不存在 ⇒ 一律判真故障**（回滚）；`stat` 失败也判真故障。
 
-    ⛔ 2026-09-21 **四次修（V-R4-9，第四轮审计）**：上一版对"文件已存在"的情形靠
+    ⛔ **四次修**：上一版对"文件已存在"的情形靠
     `st_mode & 0o200`（只读属性位）判死活 —— 可**文件级 ACL 拒写**（实测 `icacls <文件> /deny …:(WD,AD)`）
     **不改属性位** ⇒ 被判成"被占用"跳过 ⇒ `rc=0 status=partial`，受保护目录里的用户**永久半装**、
     文案还把他引去"找占用者"（方向是错的）。
@@ -365,21 +364,21 @@ def _is_locked(e, path: str = "") -> bool:
         return True
     if we == 5 or err == 13:
         if not path:
-            return True                      # 没给路径 ⇒ 无从判断，保持旧行为（调用点都给了）
+            return True # 没给路径 ⇒ 无从判断，保持旧行为（调用点都给了）
         try:
             if not os.path.exists(path):
-                return False        # 新建文件却写不进去 ⇒ 目录权限/路径问题，真故障
+                return False # 新建文件却写不进去 ⇒ 目录权限/路径问题，真故障
         except Exception:
-            return False            # 连 exists 都失败 ⇒ 更可能是权限/路径问题 ⇒ 真故障
-        # ⛔ V-R4-9：**真探写权限**（只读属性位判不出 ACL）
+            return False # 连 exists 都失败 ⇒ 更可能是权限/路径问题 ⇒ 真故障
+        # ⛔ **真探写权限**（只读属性位判不出 ACL）
         _p = _probe_write(path)
         if _p == "ok" or _p == "sharing":
             return True
         if _p == "denied":
-            return False            # ACL 拒写 ⇒ 真故障，必须回滚（不许降级成"部分成功"）
+            return False # ACL 拒写 ⇒ 真故障，必须回滚（不许降级成"部分成功"）
         # 探针给不出结论（非 Windows / API 不可用）⇒ 退回旧口径（只读属性位）
         try:
-            if not (os.stat(path).st_mode & 0o200):   # 0o200 = S_IWRITE
+            if not (os.stat(path).st_mode & 0o200): # 0o200 = S_IWRITE
                 return False
         except Exception:
             return False
@@ -404,12 +403,12 @@ def apply_full(manifest: dict, zip_path: str, target: str = ROOT, dry: bool = Fa
 
     cur = read_local_state(target)
     if str(cur.get("version") or "") == want_ver:
-        # ⛔ 2026-09-20 修 **V2/V3**：以前这里只比版本号 ⇒ ①"同版本号换包"（只修 bug 不改版本，
+        # ⛔ **V2/V3**：以前这里只比版本号 ⇒ ①"同版本号换包"（只修 bug 不改版本，
         #    内容指纹/树哈希不同）会被短路成"已是最新"，控制台一直提示有新包、点更新却什么都不做；
         #    ②上次"有文件被占用没换"留下的待办也一并被吞掉，**被跳过的文件永远不会补换**。
         #    现在：版本相同还要**树哈希相同**、且**没有待补文件**，才算真"已是最新"。
         _same_tree = str(cur.get("sha256") or "") == want_tree
-        # ⛔ V-R4-13：`pendingFiles` 脏数据是**字符串**时不许按字符算（见 `uc.pending_list`）
+        # ⛔ `pendingFiles` 脏数据是**字符串**时不许按字符算（见 `uc.pending_list`）
         from . import update_check as _uc_p
         _pending = _uc_p.pending_list(cur.get("pendingFiles"))
         if _same_tree and not _pending:
@@ -452,7 +451,7 @@ def apply_full(manifest: dict, zip_path: str, target: str = ROOT, dry: bool = Fa
         src_root = os.path.join(stage, top)
 
         # ---- ③ 快照"将被覆盖或新增"的每一件 ----
-        # ⛔ 2026-09-20 修 **V-R3-4**：这一步（以及下面的组合校验）原来**没有异常保护**——
+        # ⛔ 这一步（以及下面的组合校验）原来**没有异常保护**——
         #   ①快照读失败会带出裸异常（用户看到的是 traceback，而不是"哪个文件读不了"）；
         #   ②**组合校验**里 `sha256_file(tp)` 一旦抛（文件被占用/被删/权限），异常会穿出去 ⇒
         #     **报失败但文件已经全换完、既不回滚也不写状态**（最坏的一种"半成功"）。
@@ -465,14 +464,14 @@ def apply_full(manifest: dict, zip_path: str, target: str = ROOT, dry: bool = Fa
                     bp = os.path.join(backup, rel.replace("/", os.sep))
                     os.makedirs(os.path.dirname(bp), exist_ok=True)
                     shutil.copy2(tp, bp)
-        except Exception as e:                                      # noqa: BLE001
+        except Exception as e: # noqa: BLE001
             return 1, "更新前快照失败（一个文件都没动）：%s（%s）" % (
                 str(e)[:80] or type(e).__name__, rel), {"phase": "snapshot"}
 
         def rollback(why):
             """把已换入的件还原回去，**并按"实际还原成功了几件"报数**。
 
-            ⛔ 2026-09-20 修 **V-R3-6（P1，第三轮审计）**：老实现 `for rel in placed: … except: pass`
+            ⛔ 老实现 `for rel in placed: … except: pass`
             然后 `"（已回滚 %d 件）" % len(placed)` —— 报的是**尝试数**。实测（用真进程持有 b.py）：
             文案写"已回滚 2 件"，实际只还原 1 件、`b.py` 停在新内容 ⇒ **半新半旧 + 谎报已回滚**：
             用户以为还在旧版（下次排障会以"已经回滚了"为前提），而且 Python 侧可能直接 ImportError。
@@ -487,10 +486,10 @@ def apply_full(manifest: dict, zip_path: str, target: str = ROOT, dry: bool = Fa
                         bp = os.path.join(backup, rel.replace("/", os.sep))
                         os.makedirs(os.path.dirname(tp), exist_ok=True)
                         shutil.copy2(bp, tp)
-                    elif os.path.exists(tp):          # 原来是"新增"的 ⇒ 撤掉（本来就不存在＝无需撤）
+                    elif os.path.exists(tp): # 原来是"新增"的 ⇒ 撤掉（本来就不存在＝无需撤）
                         os.remove(tp)
                     okr.append(rel)
-                except Exception as e:                # noqa: BLE001
+                except Exception as e: # noqa: BLE001
                     bad.append("%s（%s）" % (rel, str(e)[:50] or type(e).__name__))
             tail = "（已回滚 %d/%d 件）" % (len(okr), len(placed))
             if bad:
@@ -508,28 +507,28 @@ def apply_full(manifest: dict, zip_path: str, target: str = ROOT, dry: bool = Fa
                 shutil.copy2(sp, tp)
                 placed.append(rel)
             except Exception as e:
-                # ⚠️ 2026-09-16：第一版把**任何** OSError 都当"文件被占用"跳过 ⇒ 磁盘满/权限不对
+                # ⚠️ 第一版把**任何** OSError 都当"文件被占用"跳过 ⇒ 磁盘满/权限不对
                 #    这类真故障会被降级成"部分成功"，用户以为更新好了、其实没换。
                 #    自检 self_update_selftest 的 F 段就是拿这个当反面证据（模拟磁盘错误必须回滚）。
                 if _is_locked(e, tp):
                     locked.append("%s（%s）" % (rel, str(e)[:60]))
                     continue
-                # V-R3-9：权限类真故障要**指对方向**（别让用户去找一个不存在的"占用者"）
+                # 权限类真故障要**指对方向**（别让用户去找一个不存在的"占用者"）
                 return rollback("换入失败：%s（%s）%s" % (rel, str(e)[:80], _perm_hint(e, tp)))
 
         # ---- ⑤ 组合校验：逐件重算（换入件必须与清单哈希逐一对上）----
-        # ⛔ V-R3-4：这一步抛异常（文件被占用/被删/读不了）**必须回滚**，不许"报失败但已经全换完"。
+        # ⛔ 这一步抛异常（文件被占用/被删/读不了）**必须回滚**，不许"报失败但已经全换完"。
         try:
             for rel in placed:
                 tp = os.path.join(target, rel.replace("/", os.sep))
                 if sha256_file(tp) != files[rel]:
                     return rollback("组合校验失败：%s 哈希不符" % rel)
-        except Exception as e:                                      # noqa: BLE001
+        except Exception as e: # noqa: BLE001
             return rollback("组合校验时出错（%s）：%s" % (rel, str(e)[:70] or type(e).__name__))
 
         extra = {"from": cur.get("version") or "", "files": len(placed)}
         if locked:
-            # ⛔ 2026-09-20 修 **V3**：**不许**把 installed.json 的 version 推到位 —— 否则"再点一次更新"
+            # ⛔ **V3**：**不许**把 installed.json 的 version 推到位 —— 否则"再点一次更新"
             #    会被上面的短路判据吞成"已是最新、什么都没做"，被跳过的文件永远补不回来（实测过）。
             #    改成：版本留在旧的、把没换成的记进 `pendingFiles`（下次一进来就接着补换）。
             extra["locked"] = locked[:20]
@@ -569,7 +568,7 @@ def job() -> dict:
 def _note_seen(version: str) -> None:
     """把「见过的最高版本」**单调**记进更新状态快照（与 `update_check.state()` 同一个键）。
 
-    为什么安装侧也要记（V-R10-27 的另一半）：`maxSeenVersion` 以前**只有检查侧写、没有任何一侧读**
+    为什么安装侧也要记：`maxSeenVersion` 以前**只有检查侧写、没有任何一侧读**
     （审计判它"死代码"）⇒ "只看过「立即更新」、从没点过检查更新"的机器上，那道回滚闸一直是空的。
     写失败不影响本次更新（只记一笔，绝不让它挡住装包）。
     """
@@ -583,7 +582,7 @@ def _note_seen(version: str) -> None:
         if not old or not uc.vtuple(old) or uc.vtuple(old) < uc.vtuple(v):
             st = dict(st or {})
             st["maxSeenVersion"] = v
-            # ⛔ 2026-09-22（第十一轮 **V-R11-9** · P3）：写失败**不许静默**（老写法丢返回值）——
+            # ⛔ 写失败**不许静默**（老写法丢返回值）——
             #   吞掉的话用户/我们无从知道"这道闸其实没记上"，下次就会被同一份旧清单再拦一次。
             _err = uc._write_state(st)
             if _err:
@@ -594,12 +593,11 @@ def _note_seen(version: str) -> None:
 
 def run_once(manifest=None, zip_path=None, target=ROOT, dry=False, progress=None):
     """一条龙：拉清单 → 下载（可给现成包）→ 整包换入。返回 dict（CLI/自测/控制台共用）。"""
-    from . import update_check as uc          # 延迟导入：控制台只要读状态时不拉起这条链
+    from . import update_check as uc # 延迟导入：控制台只要读状态时不拉起这条链
     if progress is None:
-        progress = lambda got, total: _set(got=int(got), total=int(total))   # noqa: E731
+        progress = lambda got, total: _set(got=int(got), total=int(total)) # noqa: E731
     if manifest is None:
         _set(state="running", phase="probe", why="", msg="", got=0, total=0)
-        # ⚠️ 2026-09-17 修（用户报：「立刻更新第一次一定拉不到更新源，第二次才能成功」）：
         # 这里过去只试 `manifest_url()` **一个**地址——默认是 `raw.githubusercontent.com`，
         # 国内常年超时；而"检查更新"那条路早就是**并行多源 + 记住上次能用的源**。
         # 两条路不一致 ⇒ 第一下必失败、第二下（换个源/重连）才成。现在与检查共用同一份候选表。
@@ -607,7 +605,7 @@ def run_once(manifest=None, zip_path=None, target=ROOT, dry=False, progress=None
         if man is None:
             return {"ok": False, "rc": 2, "why": why, "phase": "probe"}
         if used:
-            try:                                     # 记住这个源：下载镜像的顺序也用它（见 _mirror_prefixes）
+            try: # 记住这个源：下载镜像的顺序也用它（见 _mirror_prefixes）
                 _st = uc._read_state()
                 _st["lastGoodUrl"] = used
                 uc._write_state(_st)
@@ -621,10 +619,10 @@ def run_once(manifest=None, zip_path=None, target=ROOT, dry=False, progress=None
          why="本机 %s / 远端 %s" % (mine or "未记录", theirs or "?"))
     if not theirs:
         return {"ok": False, "rc": 2, "why": "清单里没有版本号", "phase": "probe"}
-    # ⛔ 2026-09-22 修 **V-R10-27（P0）**：`state()` 的两道闸（`expires` 过期 / 单调版本回滚）以前
+    # ⛔ （P0）**：`state()` 的两道闸（`expires` 过期 / 单调版本回滚）以前
     #   **只装在检查侧**，而这里——**真正动盘的那条路**——对它们 **0 命中**。审计用假源实测：
     #   「远端 2026.9.1.1（< 本机 2026.9.21.11）⇒ `state()` 判 older，`run_once()` 照样装、
-    #     version.py 变 OLD；`expires=2020-01-01` ⇒ `state()` 报错，`run_once()` 照装」。
+    # version.py 变 OLD；`expires=` ⇒ `state()` 报错，`run_once()` 照装」。
     #   后果＝被控的源/坏镜像只要让清单变旧或过期，就能把用户**降级**到有漏洞的旧版。
     #   ⇒ 安装入口复检**同一个纯函数** `update_check.manifest_gates`（唯一实现，"检查说不许"≡"装的时候不许"）。
     _gate = uc.manifest_gates(manifest, mine=mine)
@@ -633,10 +631,10 @@ def run_once(manifest=None, zip_path=None, target=ROOT, dry=False, progress=None
         return {"ok": False, "rc": 2, "why": _gate["why"], "phase": "probe",
                 "version": theirs, "gate": _gate.get("kind"), "needRestart": False}
     if zip_path:
-        # ⛔ 2026-09-22（第十二轮 **V-R12-8**）：入账挪到**真装成功之后**（见下面唯一的 `_note_seen` 调用点）
+        # ⛔ 入账挪到**真装成功之后**（见下面唯一的 `_note_seen` 调用点）
         #   —— 明确给了包也不在这里记：干跑/失败都不许顶高回滚闸。
         pass
-    # ⛔ 2026-09-20 修 **V2**：同版本号换包（"只修 bug 不改版本"这条路，`make_manifest --build` 就是
+    # ⛔ **V2**：同版本号换包（"只修 bug 不改版本"这条路，`make_manifest --build` 就是
     #   为它准备的）以前**只比版本号** ⇒ 控制台侧比了内容指纹判 `newer`、这里却回"已是最新"，
     #   于是横幅永远消不掉、点「立即更新」静默什么都不做。现在两边都比：版本 ≤ 我的 **且** 指纹相同
     #   （任一侧没有指纹时按"没有更新"处理，避免老清单误报）。
@@ -654,8 +652,8 @@ def run_once(manifest=None, zip_path=None, target=ROOT, dry=False, progress=None
         return {"ok": True, "rc": 0, "phase": "current", "version": theirs, "needRestart": False,
                 "msg": "已是最新"}
     if not _same_build:
-        # ⛔ 2026-09-22：这句话原来**恒说「版本号相同」**，而版本真的前进/回退时也照样这么打
-        #   （排障时按它读会读错方向 —— 我修 V-R10-27 时就先被它骗过一次）。改成如实说版本去哪了。
+        # ⛔ 这句话原来**恒说「版本号相同」**，而版本真的前进/回退时也照样这么打
+        # 。改成如实说版本去哪了。
         _vnote = ("版本号相同（%s）" % theirs) if str(theirs) == str(mine) \
             else ("版本号 %s → %s" % (mine or "未记录", theirs))
         print("[update] %s 但内容指纹不同（本机 %s / 远端 %s）⇒ 继续换入"
@@ -665,20 +663,19 @@ def run_once(manifest=None, zip_path=None, target=ROOT, dry=False, progress=None
         durl = str(base.get("url") or "")
         if not durl:
             return {"ok": False, "rc": 2, "why": "清单里没给下载地址（base.url 为空）", "phase": "probe"}
-        # ⛔ 2026-09-20 修 **V-R1-2（P0）**：**清单里的下载地址也必须落在官方域**（跨域即拒）——
+        # ⛔ （P0）**：**清单里的下载地址也必须落在官方域**（跨域即拒）——
         #   否则"清单里写哪个 URL 就下哪个 URL"，把"哈希校验"变成"自洽即通过"。
         _u_ok, _u_why = uc._base_url_ok(durl)
         _local_ok = uc.allow_local_update() and os.path.exists(durl)
         if not _u_ok and not _local_ok:
             _set(state="error", phase="probe", why=_u_why)
             return {"ok": False, "rc": 2, "why": "清单给的下载地址不可信：%s" % _u_why, "phase": "probe"}
-        # ⛔ 2026-09-22 修（第十二轮 **V-R12-8** · P3）：这里**不再入账** —— 老写法在"地址可信"
+        # ⛔ 这里**不再入账** —— 老写法在"地址可信"
         #   之后就记 `maxSeenVersion`，而下载/哈希/换入都还没发生（失败、干跑都算"见过"）⇒
         #   会留下"见过但没装上"的版本号白白顶高回滚闸。现在唯一的入账点在**真装成功之后**。
         #   （地址可信性检查本身当然仍必须在下载之前。）
         zip_path = os.path.join(target, CACHE_REL, "persona-morph-%s.zip" % (theirs or "new"))
         _set(state="running", phase="download", why="正在下载 %s" % theirs, got=0, total=0)
-        # 2026-09-17（用户报「卡在 0% 不动」）：把**换源重试**暴露到作业状态里 —— 老实现只在换源时
         #   静默重试，界面于是只有"0%"这一个信息，用户只能判断"它死了"。
         _try_no = [0]
 
@@ -700,7 +697,7 @@ def run_once(manifest=None, zip_path=None, target=ROOT, dry=False, progress=None
 
     _set(state="running", phase="verify", why="正在校验包内容")
     rc, msg, detail = apply_full(manifest, zip_path, target, dry=dry, progress=progress)
-    # 装完就把下载缓存删掉（用户红线：**凡往磁盘写东西的功能都要有清理措施**）——
+    # 装完就把下载缓存删掉——
     # 暂存/备份目录在 apply_full 的 finally 里已经清了，这里只剩这个 zip（每版一个、4.5MB 量级）。
     # 失败时**留着**，方便重试与排障；下次成功后再清。
     if rc == 0 and zip_path and os.path.dirname(os.path.abspath(zip_path)) == \
@@ -709,13 +706,13 @@ def run_once(manifest=None, zip_path=None, target=ROOT, dry=False, progress=None
             os.remove(zip_path)
         except Exception:
             pass
-    # ⛔ 2026-09-20 修 **V4**：`apply_full(dry=True)` 返回的 detail 是 `{"dry": True}`（**没有** status
+    # ⛔ **V4**：`apply_full(dry=True)` 返回的 detail 是 `{"dry": True}`（**没有** status
     #   键），而下面原来只判 `detail.get("status") != "current"` ⇒ `None != "current"` 成立 ⇒
     #   **干跑也被当成"真装成功"** ⇒ 拉起新看门狗 + `os._exit(0)` **把正在跑的机器人杀掉**
     #   （而模块 docstring 给的示例用法正是 `run_once(dry=True)`）。干跑必须"只说不做"。
     _real = bool(rc == 0) and (not dry) and (not detail.get("dry")) \
         and (detail.get("status") != "current")
-    # ⛔ 2026-09-22 修（第十二轮 **V-R12-8** · P3）：`_note_seen` **挪到"真装成功"之后** ——
+    # ⛔ `_note_seen` **挪到"真装成功"之后** ——
     #   老写法在"过了下载地址检查"就入账（下载/哈希/换入都还没发生），干跑也会入账 ⇒
     #   留下一堆"见过但没装上"的版本号，白白顶高回滚闸（干跑/失败都不该记）。
     if rc == 0 and not dry and not detail.get("dry") and detail.get("status") != "current":
@@ -733,7 +730,7 @@ def run_once(manifest=None, zip_path=None, target=ROOT, dry=False, progress=None
 def _relaunch_after_update(version: str = "") -> None:
     """更新成功后**由我们自己做交接**：拉起"新代码的看门狗"（`--takeover --delay=3`）再立刻退出。
 
-    ⛔ 为什么不能让"更新装完 + 等用户点重启"（2026-09-18 作者实测：「点完更新之后…变『无法访问』、
+    ⛔ 为什么不能让"更新装完 + 等用户点重启"（
     窗口也不关掉；我手动叉掉、点了一键关闭、再点一键启动，它仍然不起窗口」）：
       · 旧版本的进程内重启链是坏的（`watchdog.pid` 变两行 ⇒ `_kill_watchdog()` 静默失效 ⇒
         新旧看门狗互抢实例锁）⇒ **更新装上了、却没人接替** ⇒ 用户被迫自己下新包；
@@ -741,11 +738,11 @@ def _relaunch_after_update(version: str = "") -> None:
     ⇒ 所以更新这条链**不依赖旧的进程内重启**：直接 spawn 新看门狗（新文件、带 `--takeover`，
       它自己收旧看门狗 + 清实例证据 + 开机器人），然后本进程 `os._exit(0)`。
 
-    ⛔ **2026-09-22 修掉的一个 P0（对标调研顺带实测出来的，作者问「这个更新是否真的起效」时定的案）**：
+    ⛔ **掉的一个 P0**：
       这个模块原来**只 import 到 `zipfile`**（没有 `sys` / `subprocess` / `log`），而下面用的是
       `sys.executable` 与 `subprocess.Popen` ⇒ 两个 `NameError` 被 `except Exception: pass` 吞掉，
       随后**照旧 `os._exit(0)`** ⇒ 现象就是"更新装好了、没人接替、机器人被自己杀掉、控制台变无法访问"
-      （作者 2026-09-18 报的那次，根因一直以为是收尾策略，其实是这两行 import 缺失）。
+      。
       现在的纪律：**拉不起新看门狗就不许退场**——把原因报到作业状态上（控制台还在，用户看得见、点得动）。
     """
     try:
@@ -781,10 +778,10 @@ def _relaunch_after_update(version: str = "") -> None:
         return
     try:
         import time as _t2
-        _t2.sleep(0.4)                        # 让 spawn 落地（Popen 已返回，这里只是给文件系统一点时间）
+        _t2.sleep(0.4) # 让 spawn 落地（Popen 已返回，这里只是给文件系统一点时间）
     except Exception:
         pass
-    os._exit(0)                               # 更新＝换新代码跑，本进程必须让位
+    os._exit(0) # 更新＝换新代码跑，本进程必须让位
 
 
 def start_async(target=ROOT):

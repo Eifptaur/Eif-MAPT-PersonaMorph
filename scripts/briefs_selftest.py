@@ -1,6 +1,6 @@
 """预设信息（`agent/briefs.py` + 控制台面板 + `/api/briefs`）的判据。
 
-来源＝B站网友原话：「提前设定信息，当遇到和设定信息有关的内容就好已经提前注入的信息思考，
+来源＝B站网友
 **设置截止日期**，截止后**自动舍弃**注入的信息，信息**针对每个单独群聊不外泄**」。
 ⇒ 四条要求各配判据，另加"绝不把这一轮搞崩"与"接线在两条链上"：
   ① 按会话隔离（**结构上**只读本会话；拿别的会话的 id 删不动）
@@ -20,9 +20,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import _srcmatch as _sm          # noqa: E402
+import _srcmatch as _sm # noqa: E402
 
-from agent import briefs as BR   # noqa: E402
+from agent import briefs as BR # noqa: E402
 
 PASS, FAIL = [0], [0]
 
@@ -71,7 +71,7 @@ def main():
         ok("填错/留空一律当永久（宁可留着，也不因解析失败丢内容）",
            BR.parse_until("随便写") == 0.0 and BR.parse_until("") == 0.0)
         _before = len(BR.list_for("group:A", now=now)["active"])
-        _after = BR.list_for("group:A", now=_u + 10)          # 过了截止日
+        _after = BR.list_for("group:A", now=_u + 10) # 过了截止日
         ok("到期后不再算「在用」", len(_after["active"]) == _before - 1,
            "before=%d after=%d" % (_before, len(_after["active"])))
         ok("到期的那条进 expired 列表（界面上看得见「已到期」，不是凭空消失）",

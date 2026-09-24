@@ -29,7 +29,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import _srcmatch as _sm  # noqa: E402  空白容忍的源码断言（脆断言只许降不许升）
+import _srcmatch as _sm # noqa: E402  空白容忍的源码断言（脆断言只许降不许升）
 
 PASS = 0
 FAIL = 0
@@ -44,10 +44,10 @@ def ok(name, cond, detail=""):
     print("  {} {}{}".format("OK  " if cond else "FAIL", name, "  [{}]".format(detail) if detail else ""))
 
 
-from agent import console_html as CH  # noqa: E402
-from agent import reason_codes as RC  # noqa: E402
-from agent import tool_stats as TS  # noqa: E402
-from agent import user_tools as UT  # noqa: E402
+from agent import console_html as CH # noqa: E402
+from agent import reason_codes as RC # noqa: E402
+from agent import tool_stats as TS # noqa: E402
+from agent import user_tools as UT # noqa: E402
 
 HTML = CH.HTML
 _SRC = io.open(os.path.join(ROOT, "agent", "user_tools.py"), encoding="utf-8").read()
@@ -91,7 +91,7 @@ try:
        UT.snapshot()["next_step"] == {"code": "gen_template", "step": 1}, str(UT.snapshot()["next_step"]))
     _p = os.path.join(tmp, "demo.json")
     with io.open(_p, "w", encoding="utf-8") as fh:
-        json.dump(dict(_base, allow_hosts=["other.example.com"]), fh, ensure_ascii=False)   # 故意制造坏清单
+        json.dump(dict(_base, allow_hosts=["other.example.com"]), fh, ensure_ascii=False) # 故意制造坏清单
     _s = UT.snapshot()
     ok("有坏清单 ⇒ fix_manifest（第 2 步：改字段）",
        _s["next_step"] == {"code": "fix_manifest", "step": 2}, str(_s["next_step"]))
@@ -212,7 +212,7 @@ ok("导入只写 JSON：不执行代码、不下载、不碰 data/",
 ok("导入走原子写（persist.atomic_write_json），不自己造 .tmp",
    _sm.has(_seg_imp, "persist.atomic_write_json"))
 _wu2 = io.open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
-from agent.routes import ROUTES as _R2, HANDLERS as _HD2  # noqa: E402
+from agent.routes import ROUTES as _R2, HANDLERS as _HD2 # noqa: E402
 ok("路由表：/api/tools/export = GET → _rapi_tools_export",
    _R2.get("/api/tools/export") == ("GET",) and (_HD2.get("/api/tools/export") or {}).get("GET") == "_rapi_tools_export")
 ok("路由表：/api/tools/import = POST → _rapi_tools_import_post",

@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
-"""托盘气泡兜底 判据（2026-09-14，测机报告 ⑦d）。
+"""托盘气泡兜底 判据。
 
 口径：控制台**开不出来**时（WebView2 起不来 / 没有桌面会话 / 被策略挡住），至少让任务栏气泡说一句
-「有件事等你拍板」，点气泡才去开控制台 —— 不抢前台、不弹窗。
 
 ⚠️ 屏幕纪律（第 7 条教训）：托盘图标与气泡**都是用户可见的**，所以本判据**默认只在 WX_NO_UI_POP=1
 下跑**（验开关与降级路径，一个像素都不上屏）；真建档/真出气泡那一段必须显式加 `--real`，
@@ -21,9 +20,9 @@ sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
 REAL = "--real" in sys.argv
-os.environ["WX_NO_UI_POP"] = "1"          # 默认全程不让它上屏
+os.environ["WX_NO_UI_POP"] = "1" # 默认全程不让它上屏
 
-from agent import tray as T               # noqa: E402
+from agent import tray as T # noqa: E402
 
 PASS = 0
 FAIL = 0

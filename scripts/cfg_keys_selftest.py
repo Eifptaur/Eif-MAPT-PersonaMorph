@@ -3,7 +3,7 @@
 """死键判据（队列 ③ 收口）：默认配置里**声明了却没有任何地方执行**的开关，必须是 0 个。
 
 为什么要有这条：配置里写着一个开关、代码里从来不读，用户以为关了/开了有用 —— 这是"配置撒谎"。
-2026-09-13 全量审计（229 个叶子键）抓出 6 个真死键，处置＝1 接线 + 5 删除；本判据守住"不再长回来"。
+全量审计（229 个叶子键）抓出 6 个真死键，处置＝1 接线 + 5 删除；本判据守住"不再长回来"。
 
 判据（不需要微信、不起服务、不出网）：
   ① 扫描：默认配置叶子键里，**服务端没读、全仓也找不到任何引用**的键 ⇒ 必须为空（逐条打印）
@@ -34,7 +34,7 @@ def ok(name, cond, detail=""):
     print("  {} {}{}".format("OK  " if cond else "FAIL", name, "  [{}]".format(detail) if detail else ""))
 
 
-from agent import config as C  # noqa: E402
+from agent import config as C # noqa: E402
 
 SCAN_DIRS = ("agent", "scripts", "launcher-src")
 SCAN_ROOT_FILES = ("persona_morph.py", "onestart.py")
@@ -121,8 +121,8 @@ for k in REMOVED:
     ok("config.example.json 不含 %s" % k, not has_path(example_json, k))
 
 print("── C. 接线有效：security.allow_private_image_hosts ──")
-from agent import image_sources as IS  # noqa: E402
-from agent import config as _cfgmod  # noqa: E402
+from agent import image_sources as IS # noqa: E402
+from agent import config as _cfgmod # noqa: E402
 
 _real_get = _cfgmod.get_config
 try:
@@ -146,7 +146,7 @@ try:
     except RuntimeError as e:
         opened = "安全策略拒绝" not in str(e)
     except urllib.error.URLError:
-        opened = True          # 过了闸门、卡在"连不上"就是我们要的证据
+        opened = True # 过了闸门、卡在"连不上"就是我们要的证据
     except Exception:
         opened = True
     ok("显式开：放行到连接阶段（不再被闸门拦）", opened)
@@ -162,11 +162,11 @@ fake["__probe__"] = {_probe: 1}
 found = dead_keys(fake, BLOBS)
 ok("塞进假死键能被抓到", any(k.endswith(_probe) for k in found), str(found[:3]))
 
-# ── ⛔ 2026-09-21（第四轮审计 **V-R4-13**）：开关写成字符串时**不许反向打开** ──
+# ── ⛔ 开关写成字符串时**不许反向打开** ──
 #    `bool("false")` 是 **True** ⇒ 全项目几十处 `bool(cfg.get("开关"))` 会把本该关掉的红线开关
 #    **反着打开**。修法＝`get_config()` 载入时**一处归一化** + 新代码用 `as_bool()`。
-print("\n── J. 开关真值：\"false\" 不许被理解成开（V-R4-13）──")
-import tempfile as _tmp2                                                       # noqa: E402
+print("\n── J. 开关真值：\"false\" 不许被理解成开──")
+import tempfile as _tmp2 # noqa: E402
 
 _p2 = os.path.join(_tmp2.mkdtemp(prefix="pm_cfg_j_"), "c.json")
 with open(_p2, "w", encoding="utf-8") as _fh2:
@@ -188,7 +188,7 @@ ok("J5 `as_bool()`：false/FALSE/' no '/off/0 ⇒ 假；true/1 ⇒ 真；None �
    and C.as_bool("off") is False and C.as_bool("0") is False
    and C.as_bool("true") is True and C.as_bool(1) is True and C.as_bool(None, True) is True
    and C.as_bool(None) is False
-   # ⛔ 2026-09-21（第五轮回执 V-R5B-8）：这几条以前是 `bool(s)` ⇒ `[]` / `{}` / `"null"` 全变 True
+   # ⛔ 这几条以前是 `bool(s)` ⇒ `[]` / `{}` / `"null"` 全变 True
    and C.as_bool([]) is False and C.as_bool({}) is False and C.as_bool("null") is False
    and C.as_bool("maybe") is False and C.as_bool("maybe", True) is True)
 ok("J5b 反例锚：`bool([])` / `bool(\"null\")` 在裸 bool 下**都是真值** ⇒ 老写法就是这么把开关打开的",
@@ -199,13 +199,13 @@ ok("J6 载入路径真的调了归一化（源码级：`load_config` 里有 `_co
 ok("J7 反例锚：老写法 `bool(\"false\")` **确实是 True**（这就是「反向打开」的来历）",
    bool("false") is True and C.as_bool("false") is False)
 
-# ── ⛔ 2026-09-24（丙-12 falsy-zero 回归）：`_effective_response_tier` 在 tier=0 必须返回 0 ──
+# ── ⛔ `_effective_response_tier` 在 tier=0 必须返回 0 ──
 #    为什么：峰谷映射的**静默档 tier=0** 是合法档位；老写法 `int(info.get("tier") or 4)` 里
 #    `0 or 4` ⇒ 4（Python 数字 0 是 falsy）⇒ 「夜间静默」会被视频解析分档闸门**绕过**（按最高档放行）。
 #    这里钉住边界：0 原样返回、None 才 fail-open 到 4、异常也回 4。
-print("\n── K. 视频分档闸门：tier=0 不许被抬成 4（丙-12 falsy-zero）──")
-from agent import tools as _tools  # noqa: E402
-from agent import prompt as _prompt  # noqa: E402
+print("\n── K. 视频分档闸门：tier=0 不许被抬成 4──")
+from agent import tools as _tools # noqa: E402
+from agent import prompt as _prompt # noqa: E402
 
 _real_rct = _prompt.resolve_context_tier
 

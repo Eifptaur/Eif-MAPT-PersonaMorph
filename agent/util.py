@@ -49,7 +49,7 @@ def pick_browser(exe_path: str = "") -> str:
 
 
 # ── 控制台地址与"谁去开窗"的唯一来源 ────────────────────────────────────
-# 2026-09-14 定：地址（含 token）只由**拥有 token 的那一方**写出来，别的人一律读文件。
+# 地址（含 token）只由**拥有 token 的那一方**写出来，别的人一律读文件。
 # 起因（另一台机器实测）：启动器用 IndexOf("\"token\"") 在 config.json 里瞎找口令，
 # 结果抓到的是**排在前面的 `cloud.token`（空串）**，于是打开 `/?token=` ⇒ 控制台回
 # `{"error":"unauthorized"}`。凡是"手写字符串找 JSON 字段"的路子都会这样踩序问题。
@@ -72,7 +72,7 @@ _ACL_ONCE = {"console_url": False}
 
 
 def _tighten_console_url_acl(p: str) -> None:
-    """V-R9-27：`logs/console.url` 里是**带口令的完整地址**（明文），只许本人读。
+    """`logs/console.url` 里是**带口令的完整地址**（明文），只许本人读。
 
     与 `local_guard` 对 `sd_local.token` 的做法同一套（`icacls` 断继承 + 只授本人/SYSTEM/管理员）——
     复用那个实现，不再写第二份。每进程只做一次（`icacls` 要起两个进程，别挂在热路径上）。
@@ -88,7 +88,7 @@ def _tighten_console_url_acl(p: str) -> None:
         if why:
             logging.getLogger("persona-morph").warning(
                 "logs/console.url 的 ACL 没能收紧：%s（口令仍可用，但同机其它账号可能读得到）", why)
-    except Exception as e:                                   # pragma: no cover - 极端环境
+    except Exception as e: # pragma: no cover - 极端环境
         try:
             import logging
             logging.getLogger("persona-morph").warning("收紧 console.url ACL 时异常：%s", e)
@@ -105,7 +105,7 @@ def write_console_url(url: str, root: str = "") -> bool:
         with open(tmp, "w", encoding="utf-8") as f:
             f.write(str(url or ""))
         os.replace(tmp, p)
-        _tighten_console_url_acl(p)      # V-R9-27：口令文件只许本人读
+        _tighten_console_url_acl(p) # 口令文件只许本人读
         return True
     except Exception:
         return False
@@ -142,14 +142,14 @@ def _pid_alive(pid: int) -> bool:
     try:
         import ctypes
         k = ctypes.windll.kernel32
-        h = k.OpenProcess(0x1000, False, int(pid))     # PROCESS_QUERY_LIMITED_INFORMATION
+        h = k.OpenProcess(0x1000, False, int(pid)) # PROCESS_QUERY_LIMITED_INFORMATION
         if not h:
             return False
         try:
             code = ctypes.c_ulong(0)
             if not k.GetExitCodeProcess(h, ctypes.byref(code)):
-                return True                            # 查不到 ⇒ 保守当活着
-            return code.value == 259                   # STILL_ACTIVE
+                return True # 查不到 ⇒ 保守当活着
+            return code.value == 259 # STILL_ACTIVE
         finally:
             k.CloseHandle(h)
     except Exception:
@@ -173,7 +173,7 @@ def take_console_lock(seconds: float = CONSOLE_LOCK_SECONDS, root: str = "") -> 
 
     这是"双窗口"那个 bug 的收口点——所有开窗入口都必须先拿这把锁。
 
-    ⛔ 2026-09-16 修（用户实测："第一次有窗口，我关掉之后第二次点连窗口都不弹了"）：
+    ⛔ "第一次有窗口，我关掉之后第二次点连窗口都不弹了"）：
     锁原来只记时间、新鲜期 90 秒 ⇒ **写锁的那个机器人早已退出**（用户手动关窗 + 关进程）之后，
     启动器仍判"机器人会开窗"（`console_lock_fresh` 为真），而新拉起的机器人
     `take_console_lock()` 又拿不到这把锁 ⇒ **两边都不开窗**，用户永远看不到窗口。
@@ -184,9 +184,9 @@ def take_console_lock(seconds: float = CONSOLE_LOCK_SECONDS, root: str = "") -> 
         os.makedirs(os.path.dirname(mk), exist_ok=True)
         if os.path.exists(mk):
             if console_lock_fresh(seconds, root):
-                return False                       # 别人刚开过，且那一方还活着
+                return False # 别人刚开过，且那一方还活着
             try:
-                os.remove(mk)                      # 过期锁：清掉再抢
+                os.remove(mk) # 过期锁：清掉再抢
             except Exception:
                 pass
         fd = os.open(mk, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
@@ -196,7 +196,7 @@ def take_console_lock(seconds: float = CONSOLE_LOCK_SECONDS, root: str = "") -> 
     except FileExistsError:
         return False
     except Exception:
-        return True                                # 极端情况放开，避免"谁都不开"
+        return True # 极端情况放开，避免"谁都不开"
 
 
 def console_lock_fresh(seconds: float = CONSOLE_LOCK_SECONDS, root: str = "") -> bool:
@@ -207,12 +207,12 @@ def console_lock_fresh(seconds: float = CONSOLE_LOCK_SECONDS, root: str = "") ->
     if (time.time() - t) >= float(seconds):
         return False
     if pid != 0 and not _pid_alive(pid):
-        return False                               # 写锁的进程已经退出（或 pid 本身非法）⇒ 它不会再开窗
+        return False # 写锁的进程已经退出（或 pid 本身非法）⇒ 它不会再开窗
     return True
 
 
 # ── 密钥脱敏（控制台/日志不暴露完整 API Key）─────────────────────────────
-# ⛔ 2026-09-21（第九轮审计 **V-R9-27**）：原来只认 `sk-`（`if "sk-" not in t: return t`），
+# ⛔ 原来只认 `sk-`（`if "sk-" not in t: return t`），
 #   E 线实测**智谱 / 火山方舟 uuid / 百度千帆 / 企微 webhook key / 钉钉 access_token 全部原样漏出**。
 #   现在四类都认：①各家 key 的字面形态 ②`键=值`形态（key/access_token/api_key/token/secret/
 #   password/authorization）③UUID 形态（企微 webhook 与火山都用它）④`Bearer xxx`。
@@ -220,9 +220,9 @@ _BEARER_RE = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-]{6,}")
 _SECRET_RES = (
     (re.compile(r"sk-[A-Za-z0-9_\-]{8,}"), lambda m: m.group(0)[:3] + "***"),
     (re.compile(r"bce-v3/ALTAK-[A-Za-z0-9]+/[0-9a-f]+", re.I), lambda m: "bce-v3/ALTAK-***"),
-    (re.compile(r"[0-9a-f]{32}\.[A-Za-z0-9]{12,}"), lambda m: m.group(0)[:6] + "***"),      # 智谱
+    (re.compile(r"[0-9a-f]{32}\.[A-Za-z0-9]{12,}"), lambda m: m.group(0)[:6] + "***"), # 智谱
     (re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.I),
-     lambda m: m.group(0)[:8] + "-****-****-****-************"),                          # 企微 key / 火山
+     lambda m: m.group(0)[:8] + "-****-****-****-************"), # 企微 key / 火山
     (_BEARER_RE, lambda m: "Bearer ***"),
     (re.compile(r"(?i)\b(key|access_token|api[-_]?key|token|secret|password|passwd|pwd|authorization)"
                 r"(\s*[:=]\s*)(?![Bb]earer\b)([A-Za-z0-9._\-]{6,})"),
@@ -269,7 +269,7 @@ def pad2(n: int) -> str:
 
 
 def format_full_time(ts: float | None = None) -> str:
-    """2026-08-30 21:33:05（周六）"""
+    """33:05（周六）"""
     if ts is None:
         ts = time.time()
     lt = time.localtime(ts / 1000.0 if ts > 1e12 else ts)

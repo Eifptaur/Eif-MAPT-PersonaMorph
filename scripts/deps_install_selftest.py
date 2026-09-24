@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""依赖安装链判据（2026-09-16 立，起因＝用户报「安装依赖十几分钟，然后一键启动失败」）。
+"""依赖安装链判据。
 
 钉四件事：
   ① pip 输出必须**实时流式**（以前 `subprocess.run(capture_output=True)` ⇒ 十几分钟界面上
@@ -44,7 +44,7 @@ def src(rel):
                 encoding="utf-8", errors="replace").read()
 
 
-import setup_deps as SD          # noqa: E402   （scripts/ 已在 sys.path 上）
+import setup_deps as SD # noqa: E402   （scripts/ 已在 sys.path 上）
 
 print("── A. 判定口径：必需齐就算过，可选缺不阻断 ──")
 _r1, _m1 = SD.verdict([("wechatauto-replica", "", "1.1.5.1", False)],
@@ -59,7 +59,7 @@ _r3, _m3 = SD.verdict([("a", "1", ">=1", True)], [("a", "1", ">=1", True)])
 ok("全齐 ⇒ 通过并报总数", _r3 == 0 and "全部" in _m3, _m3[:64])
 
 print("── B. 行为级：流式 · 无总时长上限 · 空闲判卡死 ──")
-# ⛔ V-R8-7（第八轮）：这里原有三条**源码级**判据（`"def _run_stream(" in _sd`、
+# ⛔ 这里原有三条**源码级**判据（`"def _run_stream(" in _sd`、
 #   `"capture_output=True" not in _sd`、`"IDLE_LIMIT" in _sd`）—— 它们只证明"名字在文件里"，
 #   把 `_run_stream` 改成整段缓存、或把空闲上限真删掉，照样绿。**已按审计建议删掉**：
 #   下面 C 段是**行为级**覆盖（真跑一条会打字的命令看输出是否当场拿到 = 流式；

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """W7 版本能力矩阵：把"某个微信版本 × 某个适配层版本"到底能做什么，记成**可查的数据**。
 
-为什么需要它：微信会自动更新（本机 2026-09-13 就从 4.1.13.65 跳到 4.1.15.8，驱动库的 UIA 当场
+为什么需要它：微信会自动更新（本机 就从 4.1.13.65 跳到 4.1.15.8，驱动库的 UIA 当场
 退化成 OCR）。版本一换，"我们到底还能做什么"必须有据可查，而不是靠记性或外推。
 
 **铁律（写进代码，不只是文档）：没实测过的版本对，一律返回 `unknown`，绝不拿相近版本外推。**
@@ -45,7 +45,7 @@ CAPS = {
     "uia_tree":         {"label": "UIA 控件树可用（L2 档）", "level": "L2"},
 }
 
-# 2026-09-13 本机实测落库（证据写在开发笔记里，不随包发布）
+# 本机实测落库（证据写在开发笔记里，不随包发布）
 SEED_RUNS = [{
     "wechat": "4.1.15.8",
     "adapter": "1.2.2.2",
@@ -57,7 +57,7 @@ SEED_RUNS = [{
         "moments_open": {"status": "ok", "evidence": "投递点侧栏 ◎（发现）→ 朋友圈行，主窗内嵌，像素差 0.437"},
         "moments_scroll": {"status": "ok", "evidence": "投递 WM_MOUSEWHEEL -120：下滚差 0.389、反向回滚差 0.000"},
         "moments_composer": {"status": "ok", "evidence": "长按相机 2.5s → 弹「朋友圈」编辑窗，投递 WM_CHAR 草稿入框"},
-        "moments_publish": {"status": "user_gated", "evidence": "编辑窗与「发表」(210,568) 已定位，按用户口径未点"},
+        "moments_publish": {"status": "user_gated", "evidence": "编辑窗与「发表」(210,568) 已定位，未自动点击（人工触发）"},
         "moments_like": {"status": "user_gated", "evidence": "库里有真鼠标实现，投递版未测（对外可见动作）"},
         "moments_comment": {"status": "user_gated", "evidence": "同上"},
         "switch_chat": {"status": "unknown", "evidence": "用户目视确认切成功过，但第二枪把界面点乱 ⇒ 换判据重测"},
@@ -70,7 +70,7 @@ SEED_RUNS = [{
 
 
 # ── 纯函数 ──────────────────────────────────────────────────────────────
-# ── 版本门的"必需能力集"（2026-09-14 由测机报告推动）──────────────────────
+# ── 版本门的"必需能力集"──────────────────────
 # 为什么需要：原来 `gate()` 只要看到这个版本对**有 run** 就判 `measured=True` ⇒
 # 只实测了 1 项（而且那一项还是失败的）也会把**整对**点亮，安全门从此不再提示、不再等用户放行
 # ——这是"安全门失效"级的问题。口径：**必需能力集里每一项都要有非 unknown 的结论**，
@@ -85,7 +85,7 @@ def _key(run: dict) -> tuple:
 def merge_runs(old: dict, new_run: dict) -> dict:
     """把一次 run 并进矩阵（同版本对**按能力逐项合并**，不整对覆盖），返回新矩阵。
 
-    为什么按能力合并（2026-09-14 测机报告）：原来同版本对是**整体覆盖** —— 第二次只实测了
+    为什么按能力合并：原来同版本对是**整体覆盖** —— 第二次只实测了
     `send_image`，第一次 `send_text` 的结论就被**丢掉**了。现在只更新本次真测到的能力，
     其余保留；`scope` 记"这一对到底测过哪些能力"，供 `gate()` 判断必需能力是否齐。
     """
@@ -95,7 +95,7 @@ def merge_runs(old: dict, new_run: dict) -> dict:
     k = _key(new_run)
     prev = find_run(data, k[0], k[1]) or {}
     merged_caps = dict(prev.get("caps") or {})
-    merged_caps.update(new_run.get("caps") or {})            # 本次测到的覆盖，没测到的保留
+    merged_caps.update(new_run.get("caps") or {}) # 本次测到的覆盖，没测到的保留
     scope = list(dict.fromkeys(list(prev.get("scope") or prev.get("caps") or {}) +
                                list(new_run.get("caps") or {})))
     new_run["caps"] = merged_caps
@@ -116,7 +116,7 @@ def find_run(data: dict, wechat: str, adapter: str) -> dict | None:
 def fact_key(adapter: str = "") -> str:
     """**事实键**：把"这台机器此刻长什么样"压成一个键（主窗类名 | DPI 感知 | 适配层）。
 
-    为什么要有它（2026-09-22，兼容性落地第 ⑦ 项；业界调研结论：**探测能力、别按版本分支**）：
+    为什么要有它：
       · 同一个版本号的微信，因 UI 代 / 主题 / 缩放不同，**吃不吃投递都可能不一样**
         （我们实测过一次反例：同一台机器两次测"会话行该投哪个窗"，结论正好相反）；
       · 而版本号本身会撒谎（官方承认 Win11 的 UA 里仍写 `Windows NT 10.0`）。
@@ -176,11 +176,11 @@ def capabilities(data: dict, wechat: str, adapter: str) -> dict:
 def gate(data: dict, wechat: str, adapter: str, facts: str = "") -> dict:
     """版本门：当前这对版本的**必需能力集**（`REQUIRED_CAPS`）都实测过没有？
 
-    三态（2026-09-14 由测机报告改）：
+    三态：
       · `measured=True`  —— 必需能力都有非 unknown 的结论 ⇒ 可自动发送
       · `partial=True`   —— 有 run，但必需能力还缺/还是 unknown ⇒ **仍按未实测处理**（安全门不许被"只测一项"点亮）
       · 两者皆 False     —— 这对版本完全没有实测记录
-    ⛔ 2026-09-22 加 `facts`（**事实键**，兼容性落地第 ⑦ 项）：**同一台机器的 UI 指纹**优先于版本号 ——
+    ⛔ `facts`（**事实键**，兼容性落地第 ⑦ 项）：**同一台机器的 UI 指纹**优先于版本号 ——
        有事实记录就用它（`basis="facts"`），没有才退回版本键（`basis="version"`，UI 可能已经变了），
        都没有则 `basis="none"`。**判据仍是实测记录本身**，`basis` 只是"这条结论的依据有多贴"。
     """
@@ -258,7 +258,7 @@ def save(data: dict, path: str | None = None) -> str:
 def record(wechat: str, adapter: str, caps: dict, path: str | None = None) -> dict:
     """记一次实测（caps: {能力id: {"status":…, "evidence":…}}），返回新矩阵。
 
-    ⛔ 2026-09-22：每条记录同时写 **`facts` 事实键**（主窗类名/DPI/适配层）—— 以后 `gate()` 先用它、
+    ⛔ 每条记录同时写 **`facts` 事实键**（主窗类名/DPI/适配层）—— 以后 `gate()` 先用它、
     版本号只当参考（同版本号的 UI 可能已经变了；版本号本身也会撒谎）。
     """
     data = merge_runs(load(path), {"wechat": wechat, "adapter": adapter, "caps": caps,
@@ -268,7 +268,7 @@ def record(wechat: str, adapter: str, caps: dict, path: str | None = None) -> di
 
 
 # ── 用户表态（版本不匹配四选一）写回矩阵 ────────────────────────────────
-# 为什么写回矩阵（2026-09-14 既有口径：）：控制台「版本能力矩阵」页要能回答"这一对当初是
+# 为什么写回矩阵：控制台「版本能力矩阵」页要能回答"这一对当初是
 # 用户点了**仅本次允许**、还是去**升了适配层**、还是按**微信本身要处理**放着"——否则决策
 # 只活在弹窗里，重启后没人知道发生过什么。
 # ⚠️ 存成矩阵文件顶层的 `decisions` 列表，**不动 runs**：决策不是实测结论，混进 runs 会让
@@ -304,7 +304,7 @@ def decisions(data: dict, wechat: str = "", adapter: str = "") -> list:
 def adapter_version() -> str:
     """适配层（驱动库）版本：**只认运行时实测装的那一个**。
 
-    坑（2026-09-13 实测）：`wechat_version_info()` 在没有驱动库的解释器里会回落到 `MIN_VER`
+    坑：`wechat_version_info()` 在没有驱动库的解释器里会回落到 `MIN_VER`
     常量（读到 1.1.5.1），照它查矩阵会得到"14 项全部未实测"的假结论 ⇒ 必须问 `dep_heal`
     （它读的是运行时的 `*.dist-info`）。
     """

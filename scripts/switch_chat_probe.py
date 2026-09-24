@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""**切会话 / 发文件的自检探针**（跨机测试用；只读默认，不动鼠标、不抢前台）。
+"""**切会话 / 发文件的自检探针**。
 
-为什么有这个脚本（2026-09-16 跨机 r11 报告）：上一轮要求对面跑的 `_scratch\\send_to_e.py` **不在包里**
+为什么有这个脚本：上一轮要求对面跑的 `_scratch\\send_to_e.py` **不在包里**
 （`_scratch` 整个目录都不进包）⇒ 对面没法按原样复现。这个脚本就是补上的**随包入口**：它只依赖 `agent/`
 与 `scripts/`，任何一台机器解包后都能直接跑。
 
@@ -27,11 +27,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
-from agent import version_gate as vg                     # noqa: E402
-from agent.config import get_config                      # noqa: E402
-from agent.wechat import WeChatAdapter                   # noqa: E402
-from agent import chat_ocr as co                         # noqa: E402
-from agent import chat_header as ch                      # noqa: E402
+from agent import version_gate as vg # noqa: E402
+from agent.config import get_config # noqa: E402
+from agent.wechat import WeChatAdapter # noqa: E402
+from agent import chat_ocr as co # noqa: E402
+from agent import chat_header as ch # noqa: E402
 
 
 def main() -> int:
@@ -68,7 +68,6 @@ def main() -> int:
         print("   绿底高亮行 = %s" % (co.highlight(im),))
         print("   高亮行时间 = %s" % (co.highlight_time(im),))
         print("   current_chat_name = %s" % (co.current_chat_name(im),))
-        # ⚠️ 跨机 r13 §5 需要的证据：**当前这一屏的聊天区到底写了什么**（只读）。
         #    那台机器上 filehelper 与「E」的首条 DB 内容逐字相同 ⇒ 要看"屏幕能不能区分它们"。
         print("   聊天区 OCR（前 160 字）= %r" % co.pane_text(im, limit=160)[:160])
         print("   会话行 OCR：")

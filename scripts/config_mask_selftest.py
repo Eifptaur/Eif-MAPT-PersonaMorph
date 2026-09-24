@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""V-R3-3 判据：控制台「原始 JSON」（`GET /api/config`）里**不许有明文凭据**。
+""" 判据：控制台「原始 JSON」（`GET /api/config`）里**不许有明文凭据**。
 
 复现（改前，一行；只打印长度与布尔，不回显 URL 本体）：
     runtime\\python\\python.exe -c "import sys;sys.path.insert(0,'.');from agent import webui as W;
@@ -9,7 +9,7 @@
     print('长度=%d 原样回显=%s'%(len(u),v==u))"
   ⇒ 改前：`长度=89 原样回显=True`（URL 里带 `?key=`，**URL 即凭据**）。
 
-本判据是**扫描式**的（不是照着固定名单逐条断言 —— V8/V-R3-3 两次漏都是因为名单是人手写的）：
+本判据是**扫描式**的：
   A 通用：把一份"塞满各种形态凭据"的假配置递归展开，凡
     「键名像凭据（key/token/secret/password/sign…）」或「值是带凭据参数的 URL」的字段，
     断言 `masked_config()` 的对应值**不等于原值**（且打码串含 `••••`，恢复侧认得）；
@@ -34,7 +34,7 @@ try:
 except Exception:
     pass
 
-from agent import webui as W          # noqa: E402
+from agent import webui as W # noqa: E402
 
 PASS, FAIL = [], []
 
@@ -86,7 +86,7 @@ def main():
             for k in path:
                 _got = (_got or {}).get(k) if isinstance(_got, dict) else None
             if path[-1] == "server" or (path and path[0] == "server"):
-                continue                          # server.token 是**有意不掩**的（控制台自己的钥匙）
+                continue # server.token 是**有意不掩**的（控制台自己的钥匙）
             ok("A1 %s 被打了码（改前 webhook_url 原样回显）" % ".".join(path),
                str(_got or "") != s, "长度 %d→%d" % (len(s), len(str(_got or ""))))
             ok("A1b %s 的打码串含 ••••（恢复侧认得出）" % ".".join(path),
@@ -131,7 +131,7 @@ def main():
 
         print("\n== D. 表驱动：掩码侧与恢复侧共用一份 CRED_FIELDS ==")
         _src = open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
-        ok("D1 表里有 feedback.webhook_url（V-R3-3 本体）",
+        ok("D1 表里有 feedback.webhook_url",
            (("feedback", "webhook_url"), "url") in W.CRED_FIELDS, str(W.CRED_FIELDS))
         ok("D2 masked_config 遍历表（不再逐字段手写）",
            "for path, kind in CRED_FIELDS" in _src and "_mask_path(cfg, path, kind)" in _src, "")
@@ -157,13 +157,13 @@ def main():
         try:
             W._protect_secrets({})
             _e3 = True
-        except Exception as e:                     # noqa: BLE001
+        except Exception as e: # noqa: BLE001
             _e3 = "抛了：%r" % (e,)
         ok("E3 空配置不抛", _e3 is True, str(_e3))
     finally:
         W.get_config = _real
 
-    print("\n==== 配置凭据脱敏判据（V-R3-3）：%d 通过 / %d 失败 ====" % (len(PASS), len(FAIL)))
+    print("\n==== 配置凭据脱敏判据：%d 通过 / %d 失败 ====" % (len(PASS), len(FAIL)))
     if FAIL:
         print("失败项：")
         for f in FAIL:

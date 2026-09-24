@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """人设卡「评分体检」：覆盖 + 区分度 + 与客观标记的交叉表。
 
-为什么要有它（2026-09-15 用户问「检查模型评分和模型补正是真的按贴合原人设做的」）：
+为什么要有它：
   细则 `agent/persona_rating.py` 自己写着「严禁把每张卡都塞进 85~92 的窄带，好的就是好、差的要敢打 5x/6x」。
   ⇒ 光看"有没有分"不够，要能一眼看出**这把尺子有没有区分度**，否则它只是"看起来在评分"。
 判定口径：
@@ -24,7 +24,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
-from agent.persona import PERSONAS, PERSONA_CATS  # noqa: E402
+from agent.persona import PERSONAS, PERSONA_CATS # noqa: E402
 
 RATINGS = os.path.join(ROOT, "data", "persona_ratings.json")
 BUCKETS = [(0, 60, "<60"), (60, 70, "60~69"), (70, 80, "70~79"),

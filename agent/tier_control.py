@@ -26,7 +26,7 @@ _lock = threading.RLock()
 
 TIER_MIN, TIER_MAX = 1, 4
 MUTE_DEFAULT_MIN = 30
-MUTE_MAX_MIN = 1440           # 最长 24 小时（再长就是配置错误，夹断并如实说明）
+MUTE_MAX_MIN = 1440 # 最长 24 小时（再长就是配置错误，夹断并如实说明）
 
 _MUTE_WORDS = ("禁言", "闭嘴", "闭麦", "静一静", "安静")
 _UNMUTE_WORDS = ("解除禁言", "取消禁言", "解除静默", "解禁", "恢复")
@@ -143,7 +143,7 @@ def parse_table(table) -> list:
             continue
         a, b = _parse_time(row.get("from")), _parse_time(row.get("to"))
         if a is None or b is None or a == b:
-            continue                      # 时间非法或区间为空：跳过（宁可不生效，也不乱改档位）
+            continue # 时间非法或区间为空：跳过（宁可不生效，也不乱改档位）
         try:
             tier = int(row.get("tier"))
         except (TypeError, ValueError):

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""⑦ 联动判据：四选一接进**版本门 / 能力矩阵 / 依赖自愈 / 控制台 / 更新链**（2026-09-14）。
+"""⑦ 联动判据：四选一接进**版本门 / 能力矩阵 / 依赖自愈 / 控制台 / 更新链**。
 
 为什么单独一条：四选一不是一个弹窗，它是**五处联动**——弹出来要有人弹（控制台/自己开）、
 选了要有人记（台账 + 能力矩阵）、能修的要有真动作（依赖自愈 / 升级适配层）、
@@ -19,12 +19,12 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
-os.environ["WX_NO_UI_POP"] = "1"        # 自检不许弹窗（第七条教训）
+os.environ["WX_NO_UI_POP"] = "1" # 自检不许弹窗（第七条教训）
 
-from agent import version_gate as VG      # noqa: E402
-from agent import version_matrix as VM    # noqa: E402
-from agent import dep_heal as DH          # noqa: E402
-from agent import jobs as J               # noqa: E402
+from agent import version_gate as VG # noqa: E402
+from agent import version_matrix as VM # noqa: E402
+from agent import dep_heal as DH # noqa: E402
+from agent import jobs as J # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -106,7 +106,7 @@ ok("自动弹一次 + 手动入口", "__pdShown" in H and 'id="pdOpen"' in H)
 ok("作业状态行在面板里", 'id="actStat"' in H and "没有在跑的事" in H)
 ok("状态暴露 jobs（控制台读这个）", 'st["jobs"] = _jobs.status()' in W)
 ok("无人值守能关弹窗", 'os.environ.get("WX_NO_UI_POP") == "1"' in G)
-ok("待拍板空态文案是「没有待拍板的事」", "没有待拍板的事" in H)
+ok("待空态文案是「没有待的事」", "没有待的事" in H)
 
 print("── F. 后台作业（jobs）真跑 ──")
 J.reset()
@@ -131,7 +131,7 @@ J.reset()
 ok("reset 清干净", J.status().get("jobs") == {})
 
 print("── G. 真跑：整页 JS 语法 ──")
-from agent import console_html as CH        # noqa: E402
+from agent import console_html as CH # noqa: E402
 blocks = re.findall(r"<script[^>]*>(.*?)</script>", CH.HTML, re.S)
 tmp = os.path.join(tempfile.gettempdir(), "pm_console_link_check.js")
 with open(tmp, "w", encoding="utf-8") as fh:

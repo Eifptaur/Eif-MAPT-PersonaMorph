@@ -41,7 +41,7 @@ MATERIALIZED = [
     {"type": "EditControl", "class": "mmui::ChatInputField", "name": "", "aid": ""},
     {"type": "ButtonControl", "class": "", "name": "发送(S)", "aid": ""},
 ]
-BARE = [  # 本机 4.1.15.8 实测形态：只有两层原生窗口
+BARE = [ # 本机 4.1.15.8 实测形态：只有两层原生窗口
     {"type": "PaneControl", "class": "Qt51514QWindowIcon", "name": "微信", "aid": ""},
     {"type": "PaneControl", "class": "MMUIRenderSubWindowHW", "name": "", "aid": ""},
 ]

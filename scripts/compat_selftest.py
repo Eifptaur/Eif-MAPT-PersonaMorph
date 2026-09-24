@@ -1,6 +1,6 @@
 """兼容性指纹（`agent/compat.py` + 检验报告第七节）的判据。
 
-为什么值得一条判据（2026-09-22 立）：
+为什么值得一条判据：
   这一节的全部价值就是"**贴出来就能定位差异**"，所以它必须满足三条：
     ① **永不抛异常**（一台机器上某条探测失败，不许把整份报告带崩）；
     ② **只读**（不许写任何产品文件——它是给用户跑的体检，不是又一个污染源）；
@@ -17,9 +17,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import _srcmatch as _sm      # noqa: E402
+import _srcmatch as _sm # noqa: E402
 
-from agent import compat as CP   # noqa: E402
+from agent import compat as CP # noqa: E402
 
 
 def ok(name, cond, detail=""):
@@ -102,7 +102,7 @@ def main():
        _sm.has(io.open(os.path.join(ROOT, "agent", "compat.py"), encoding="utf-8").read(), "def fingerprint()"))
 
     # ══════════════════════════════════════════════════════════════════════════
-    # F. 自动化那一半（2026-09-22，作者：「**我更想让用户不用测这测那的就能搞好**」）
+    # F. 自动化那一半
     #    口径：数据由**产品自己**采（启动时 auto_run）与记（失败时 note_failure），
     #    用户点一下「反馈」就自动带走 ⇒ 本段既查"真能采到/记到"，也查**脱敏**（两向锚）。
     #    ⚠️ 全部写盘都打桩到临时目录：判据绝不许碰产品 data\（总闸会对账）。
@@ -129,7 +129,7 @@ def main():
            r2.get("ran") is False, str(r2)[:60])
 
         CP.note_failure("db_unreadable", "read_messages")
-        CP.note_failure("db_unreadable", "read_messages")          # 5 秒内重复 ⇒ 去重
+        CP.note_failure("db_unreadable", "read_messages") # 5 秒内重复 ⇒ 去重
         CP.note_failure("target_moved", "click_row")
         _fl = CP.failures()
         ok("F4 失败记了两条（同码同点 5 秒内**去重**，不刷屏）", len(_fl) == 2, str([f.get("code") for f in _fl]))
@@ -141,7 +141,7 @@ def main():
         ok("F6 失败记录有上限（不会无限长）", len(CP.failures()) <= CP.FAIL_KEEP,
            "%d 条" % len(CP.failures()))
 
-        CP.note_failure("identity_unconfirmed", "judge_probe")     # 一条**新鲜**的，用来验它会出现在文本里
+        CP.note_failure("identity_unconfirmed", "judge_probe") # 一条**新鲜**的，用来验它会出现在文本里
         _t = CP.attach_text()
         ok("F7 `attach_text` 是一段能直接发出去的文本（含系统/轴值/最近失败码三样）",
            ("系统:" in _t) and ("轴值:" in _t) and ("最近失败" in _t) and ("identity_unconfirmed" in _t),
@@ -177,7 +177,7 @@ def main():
         try:
             import shutil as _sh
             _sh.rmtree(_tmp, ignore_errors=True)
-        except Exception:                                        # noqa: BLE001
+        except Exception: # noqa: BLE001
             pass
 
     print("== 兼容性指纹判据：%d 通过 / %d 失败 ==" % (PASS[0], FAIL[0]))
@@ -188,7 +188,7 @@ PASS, FAIL = [0], [0]
 _ok_real = ok
 
 
-def ok(name, cond, detail=""):        # noqa: F811
+def ok(name, cond, detail=""): # noqa: F811
     if _ok_real(name, cond, detail):
         PASS[0] += 1
     else:

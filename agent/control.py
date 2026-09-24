@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""控制信号：**暂停/停止的文件级真相**（2026-09-18 加）。
+"""控制信号：**暂停/停止的文件级真相**。
 
-背景（作者现场）：「说机器已暂停的那一刻，后面一秒他又引用了一下我的消息」——日志实证：`机器人已暂停`
+背景——日志实证：`机器人已暂停`
 之后 54 秒它仍跑完了一整轮（引用 → 菜单 → 回车 → 退普通发送）。真因＝**暂停原来只在内存里**
 （`orch.paused`），`wechat`/`sender` 等模块拿不到 ⇒ 已开工的链中途不检查它。
 
@@ -21,7 +21,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 #: 判据/探针请用 `set_paths(...)` 或直接改这两个模块级变量指到 `%TEMP%`。
 PAUSED_PATH = os.path.join(_ROOT, "data", "paused.flag")
 STOPPED_PATH = os.path.join(_ROOT, "data", "stopped.flag")
-_CACHE = {"at": 0.0, "paused": False, "stopped": False, "ttl": 0.4}   # 0.4s 缓存：避免每条都摸盘
+_CACHE = {"at": 0.0, "paused": False, "stopped": False, "ttl": 0.4} # 0.4s 缓存：避免每条都摸盘
 
 
 def set_paths(paused: str = "", stopped: str = "") -> dict:
@@ -32,7 +32,7 @@ def set_paths(paused: str = "", stopped: str = "") -> dict:
         PAUSED_PATH = str(paused)
     if stopped:
         STOPPED_PATH = str(stopped)
-    _CACHE["at"] = 0.0                      # 换路径必须让缓存立刻失效
+    _CACHE["at"] = 0.0 # 换路径必须让缓存立刻失效
     return old
 
 

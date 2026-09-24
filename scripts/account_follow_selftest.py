@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""「多账号 / 切换微信号」判据（2026-09-19 立，起因＝网友反馈 + 环境检验报告）。
+"""「多账号 / 切换微信号」判据。
 
-反馈原文（2026-09-19 02:19 那份检验报告的网友）：
+反馈原文：
     「切换微信号使用后，提示寻找不到库，还要求给予相同的权限」
     「只有前几句话会正常回复，后面不再回复」
 现场（他附的报告）：微信 4.1.13.65 · 消息库在 `D:\\xwechat_files\\<账号目录>`（来源=scanned）
@@ -48,8 +48,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
-from agent import wechat as W          # noqa: E402
-from agent import wechat_dir as D      # noqa: E402
+from agent import wechat as W # noqa: E402
+from agent import wechat_dir as D # noqa: E402
 
 PASS = FAIL = 0
 NOW = time.time()
@@ -140,8 +140,8 @@ try:
 
     print("── A3. 两个号**都不「新鲜」**时照样按 -wal 比（本机实测踩到的坑：微信闲置 6 分钟）──")
     _p2 = os.path.join(TMP, "idle_two")
-    mk_acct(_p2, "wxid_IDLE_old", db_age_h=0.05, wal_age_h=0.5)     # 旧号：-wal 停在 30 分钟前，.db 刚刚
-    mk_acct(_p2, "wxid_IDLE_live", db_age_h=50.0, wal_age_h=0.2)    # 在用的号：-wal 12 分钟前，.db 是 50 小时前
+    mk_acct(_p2, "wxid_IDLE_old", db_age_h=0.05, wal_age_h=0.5) # 旧号：-wal 停在 30 分钟前，.db 刚刚
+    mk_acct(_p2, "wxid_IDLE_live", db_age_h=50.0, wal_age_h=0.2) # 在用的号：-wal 12 分钟前，.db 是 50 小时前
     _pk3 = D.pick_account(_p2)
     ok("都超出 180 秒窗口时，挑的是 **-wal 更晚**的那个（不是 .db 更新的那个）",
        _pk3.get("name") == "wxid_IDLE_live", str(_pk3.get("why"))[:120])
@@ -187,7 +187,7 @@ try:
     ok("你把账号目录**钉死**了 ⇒ 不切（切了还是它，否则会变成每 15 秒重连一次的循环）",
        _sw_pin.get("stale") is False and "钉死" in str(_sw_pin.get("why")), str(_sw_pin.get("why"))[:100])
 
-    print("── C2. **两个号都没在写**时也得跟切（V-R10-28：旧规则④在这里永不跟切，与 pick_account 相反）──")
+    print("── C2. **两个号都没在写**时也得跟切──")
     # 现场：切到 B 号之后 B 号**短期没收到消息** ⇒ 旧实现的 `others`（别的号 -wal 新鲜）是空集
     #   ⇒ `return out` **永不跟切**：继续读 A 号旧库、一点异常都没有；要"新号先收到一条消息"才自愈
     #   —— 而它盯的正是"读不到消息的那个库"（自指）。修法＝两条路走同一个判定（pick_account 是唯一来源）。
@@ -271,7 +271,7 @@ try:
     ok("同一个账号 ⇒ 正常读回（闸门没把正常路堵死）", b2._self_wxid == "wxid_a", b2._self_wxid)
     _idf2 = os.path.join(TMP, "self_identity_legacy.json")
     with open(_idf2, "w", encoding="utf-8") as f:
-        json.dump({"wxid": "wxid_a", "from": "echo"}, f)      # 老格式：没有 acct，只能靠 wxid 对
+        json.dump({"wxid": "wxid_a", "from": "echo"}, f) # 老格式：没有 acct，只能靠 wxid 对
     b3 = bare("wxid_B_2222", db_dir=parent, wxid="wxid_b")
     b3._self_id_file = lambda: _idf2
     b3.load_self_identity()
@@ -299,24 +299,24 @@ try:
        '_ACCT_CHK["at"] = time.time() + 45.0' in _pm)
     ok("旧的「启动时微信没开 ⇒ 10 秒重试」那条仍在（没被这次改动挤掉）",
        'wechat_box[0] is None and (time.time() - float(_ATTACH.get("at") or 0)) >= 10' in _pm)
-    # ⛔ 第十二轮 **V-R12-6**（P3）：水位表的账号维**不许**因为 adapter 说"我不知道我是谁"就塌回
+    # ⛔ （P3）：水位表的账号维**不许**因为 adapter 说"我不知道我是谁"就塌回
     #   `?` 那个共用格子 —— 必须先去 `wechat_dir` 问一次（它按"哪个账号目录在写"判断）。
     _seg_acct = _pm[_pm.index("def _wm_account_of("):]
     _seg_acct = _seg_acct[:_seg_acct.index("def _release_adapter(")]
-    ok("V-R12-6：`_wm_account_of` 认不出账号时**回落到 `wechat_dir`**（少用一次那个共用的 `?` 格子）",
+    ok("`_wm_account_of` 认不出账号时**回落到 `wechat_dir`**（少用一次那个共用的 `?` 格子）",
        "db_account" in _seg_acct and "wechat_dir" in _seg_acct
        and ("status()" in _seg_acct or "pick_account" in _seg_acct), _seg_acct[:120].replace("\n", " "))
-    # ⛔ 2026-09-22 加（第十三轮 **V-R13-1** · P2）：**行为锚**（源码锚抓不住"回落的下一半是死代码"）。
+    # ⛔ **行为锚**（源码锚抓不住"回落的下一半是死代码"）。
     #   现场：`pick_account(parent, prefer="")` 的 `parent` 是**必填**，上一版不传 ⇒ TypeError 被吞；
     #   且 `pick_account()` 回的是**字典**、`status()` 不带 `how` 时本机没有 `account` 键 ⇒
     #   整条回落等于没写（`?` 共用格子没收窄），而 account_follow_selftest 照样全绿。
-    import importlib.util as _ilu                                          # noqa: E402
-    # ⛔ V-R14-1：import 之前把日志目录指到临时区（否则 import 期的 logging 会挂在产品日志上）
+    import importlib.util as _ilu # noqa: E402
+    # ⛔ import 之前把日志目录指到临时区（否则 import 期的 logging 会挂在产品日志上）
     os.environ["PM_LOG_DIR"] = os.path.join(tempfile.mkdtemp(prefix="pm-acct-log-"), "logs")
     _spec = _ilu.spec_from_file_location("pm_r13_acct", os.path.join(ROOT, "scripts", "persona_morph.py"))
     _pmmod = _ilu.module_from_spec(_spec)
     _spec.loader.exec_module(_pmmod)
-    from agent import wechat_dir as _W13                                   # noqa: E402
+    from agent import wechat_dir as _W13 # noqa: E402
     _saved13 = (_W13.status, _W13.pick_account, _W13.configured_path)
 
     class _NoAcct13(object):
@@ -328,10 +328,10 @@ try:
             return "wxid_A"
 
     try:
-        ok("V-R13-1① adapter 说得出账号 ⇒ 直接用它（阳性对照）",
+        ok("① adapter 说得出账号 ⇒ 直接用它（阳性对照）",
            _pmmod._wm_account_of(_HasAcct13()) == "wxid_A")
         _W13.status = lambda *a, **k: {"account": "wxid_FROM_STATUS", "effective": r"D:\wx"}
-        ok("V-R13-1② `status()` 给出 account ⇒ 回落生效",
+        ok("② `status()` 给出 account ⇒ 回落生效",
            _pmmod._wm_account_of(_NoAcct13()) == "wxid_FROM_STATUS")
         _W13.status = lambda *a, **k: {"effective": r"D:\wx", "now": r"D:\wx"}
         _W13.configured_path = lambda: r"D:\wx"
@@ -342,12 +342,12 @@ try:
             return {"name": "wxid_FROM_PICK", "dir": r"D:\wx\wxid_FROM_PICK"}
         _W13.pick_account = _pick13
         _got13 = _pmmod._wm_account_of(_NoAcct13())
-        ok("V-R13-1③ `status()` 不给账号 ⇒ 用 `pick_account(parent, prefer)` **带 parent** 挑（且取字典的 name）",
+        ok("③ `status()` 不给账号 ⇒ 用 `pick_account(parent, prefer)` **带 parent** 挑（且取字典的 name）",
            _got13 == "wxid_FROM_PICK" and bool(_calls13) and bool(_calls13[0][0]),
            "拿到 %r 调用参数 %s" % (_got13, _calls13))
         _W13.status = lambda *a, **k: {}
         _W13.configured_path = lambda: ""
-        ok("V-R13-1④ 全都说不出 ⇒ 回空串（那时才用保留命名空间 `?`）",
+        ok("④ 全都说不出 ⇒ 回空串（那时才用保留命名空间 `?`）",
            _pmmod._wm_account_of(_NoAcct13()) == "")
     finally:
         _W13.status, _W13.pick_account, _W13.configured_path = _saved13

@@ -3,7 +3,7 @@
 
 跑法： py -3 scripts\\poke_locate_selftest.py      退出码 0=全过 / 1=有失败
 
-为什么要这条判据（2026-09-18 现场）：
+为什么要这条判据：
   机器人右键落在渲染 (434,423)，而真头像方块是 x 360..413 ⇒ 落进**气泡** ⇒ 弹的是消息菜单
   （实测读到 撤销/放大阅读/翻译/转发/收藏，**没有「拍一拍」**）⇒ 回拍一直失败。
   434 的来源＝公式 `right_pane_left(262) + 0.185×931`——即"彩色饱和度"头像判据认不出深色头像后
@@ -11,7 +11,7 @@
   ③代码里不许再出现"认不出就猜点"的路（气泡兜底 / 0.185 公式落点）。
 
 夹具： scripts/fixtures/poke_render_1193x891.png（本机真窗口实拍一帧，1193×891，渲染区相对）。
-      ⛔ 作者口径（记忆 0mu60w7k）：夹具只当**回归夹具**，**不许把里面的坐标写死进产品代码**。
+      ⛔ ：夹具只当**回归夹具**，**不许把里面的坐标写死进产品代码**。
 """
 from __future__ import annotations
 
@@ -26,9 +26,9 @@ try:
 except Exception:
     pass
 
-from PIL import Image                          # noqa: E402
+from PIL import Image # noqa: E402
 
-from agent.wechat import WeChatAdapter         # noqa: E402
+from agent.wechat import WeChatAdapter # noqa: E402
 
 FIX = os.path.join(ROOT, "scripts", "fixtures", "poke_render_1193x891.png")
 WECHAT_PY = os.path.join(ROOT, "agent", "wechat.py")
@@ -168,9 +168,9 @@ def main():
     _IH = img.size[1]
     _TOP = max(80, (_IH - 6) - 720)
     _PL = 262
-    STUB = [("@#deepseek说讠舌！", 455 - _PL, 243 - _TOP, 137, 22),   # E 的消息（真帧实测）
-            ("「E」拍拍*deepseek」", 656 - _PL, 517 - _TOP, 6, 17),   # 居中拍拍提示（无头像）
-            ("05：05", 274 - _PL, 149 - _TOP, 16, 11)]                # 会话列表时间（该被 x 过滤掉）
+    STUB = [("@#deepseek说讠舌！", 455 - _PL, 243 - _TOP, 137, 22), # E 的消息（真帧实测）
+            ("「E」拍拍*deepseek」", 656 - _PL, 517 - _TOP, 6, 17), # 居中拍拍提示（无头像）
+            ("05：05", 274 - _PL, 149 - _TOP, 16, 11)] # 会话列表时间（该被 x 过滤掉）
     _old_grab, _old_rec, _old_blk = _ch_mod.grab_render, _co_mod.recognize, _co_mod.blocked
     _ch_mod.grab_render = lambda gui=None, render=None, tries=12: img
     _co_mod.recognize = lambda image, timeout=None: list(STUB)
@@ -239,7 +239,7 @@ def main():
             _raw = []
         _z = 3
         _big = _im.resize((_im.width * _z, _im.height * _z), Image.LANCZOS)
-        # ⚠️ 2026-09-18 晚：这条是**OCR 依赖**的判据 —— 跑全套时（别的脚本也在打 OCR）实测偶发读不出
+        # ⚠️ 这条是**OCR 依赖**的判据 —— 跑全套时（别的脚本也在打 OCR）实测偶发读不出
         #    ⇒ 判据自己会假红（同一条断言单独跑 50/0、套跑里 49/1）。⇒ 重试 3 次（产品侧本来就是
         #    "读不出就重读"），并把"OCR 整段时间不可用"如实标成跳过而不是失败。
         _zoom, _ztxt = [], []
@@ -254,7 +254,7 @@ def main():
             time.sleep(0.4)
         print("  夹具菜单 %s：原尺寸 OCR %d 项；放大 %dx 后 %s"
               % (_im.size, len(_raw), _z, _ztxt))
-        # ⛔ 2026-09-21 修（第六轮 **V-R6-15**）：这条原来**钉死"原尺寸读不出"**——那是"这台机器当时
+        # ⛔ 这条原来**钉死"原尺寸读不出"**——那是"这台机器当时
         #   OCR 认不出这张夹具"的**环境事实**，换台机器/换个 OCR 组件就会变成红（产品自己的口径是
         #   "自检不可用 ⇒ 不算证据"，判据却把它算成失败）。⇒ 改成**两种都接受**：
         #   读得出 ⇒ 说明本机 OCR 更强，跳过这条（显式打 SKIP，不当失败）；读不出 ⇒ 保持原断言。
@@ -276,7 +276,7 @@ def main():
         ok("⑨ 静态：`menu_click` 里有「原尺寸读不出就放大重读」的兜底",
            "放大 %dx 后读出" in open(os.path.join(ROOT, "agent", "input_backend.py"),
                                   encoding="utf-8").read())
-        # ⭐ 2026-09-18 真拍成功后补的三条（都是"真机才发现"的雷）
+        # ⭐ 真拍成功后补的三条（都是"真机才发现"的雷）
         _ibsrc = open(os.path.join(ROOT, "agent", "input_backend.py"), encoding="utf-8").read()
         _wsrc2 = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
         ok("⑨ `input_backend` 定义了 `log`（原来一直在用却没定义；放大修复第一次执行到那行就 NameError）",
@@ -288,7 +288,7 @@ def main():
            '"我拍拍" in t' in _wsrc2)
 
     # ⑩ 方向判据：**真机原文 + 自定义后缀**都要判对
-    #    作者口径（原话）：「可以写，如果有"我拍拍"这个部分的，就可以算是自己拍的，
+    # 
     #    **因为有些人可能自定义拍一拍信息**」⇒ 认**方向词**，不认"拍了拍"这个固定串。
     from agent.wechat import poke_text_is_mine as _ptm
     _N = "群deepseek"
@@ -309,19 +309,19 @@ def main():
     print("  方向判据 %d 个用例" % len(_cases))
     ok("⑩ 方向判据：真机原文与自定义后缀全判对（认方向词，不认固定串）", not _bad, _bad)
 
-    # ⑪ ⭐ "这条 [拍一拍] 是不是我们自己拍出去的回执"——作者抓到的真缺陷现场是**机器人回了「谁拍我」**
+    # ⑪ ⭐ "这条 [拍一拍] 是不是我们自己拍出去的回执"——**
     #    （session 实锤：`trigger="[拍一拍]"`（**没有名字**）→ `send_message("谁拍我")`）。
     #    根因：解析侧"我拍别人"的 title 是 `我拍拍「E」`，抠不出名字 ⇒ 文本就是光秃秃 `[拍一拍]`；
     #    而监听分支原来**不分方向**，一律 `orch.on_incoming` ⇒ 回执被当成"别人拍我"喂给模型。
     from agent.wechat import poke_event_is_ours as _ours
-    _SELF = "wxid_" + "ukl2ti5eyhu029"       # 运行时拼：字面量 wxid_ 会被打包隐私闸当成真账号
+    _SELF = "wxid_" + "ukl2ti5eyhu029" # 运行时拼：字面量 wxid_ 会被打包隐私闸当成真账号
     _ocases = [
         ({"text": "[拍一拍]（E）", "poker_wxid": "wxid_" + "ctkh6fu5iuri22"}, False, "别人拍我（有名字有 wxid）"),
         ({"text": "[拍一拍]", "poker_wxid": _SELF}, True, "我拍别人（patinfo=自己）"),
         ({"text": "[拍一拍]", "poker_wxid": ""}, True, "我拍别人（名字与 wxid 都抠不出）"),
         ({"text": "[拍一拍]（E）", "poker_wxid": ""}, False, "别人拍我但没带 patinfo（有名字）"),
         ({"text": "[拍一拍]（E）", "poker_wxid": _SELF}, True, "带名字但 patinfo 是自己（以 wxid 为准）"),
-        # 🔴 2026-09-18 二修的真机形态：我们自己那条回执带的是**数字槽位号**（现场＝"3"），
+        # 🔴 二修的真机形态：我们自己那条回执带的是**数字槽位号**（现场＝"3"），
         #    旧条件 `(not name) and (not wid)` 当场失效 ⇒ 回执被当成"成员 3 拍了我"喂给模型。
         ({"text": "[拍一拍]", "poker_wxid": "3"}, True, "真机：自家回执带数字槽位号 3"),
         ({"text": "[拍一拍]", "poker_wxid": "wxid_" + "ctkh6fu5iuri22"}, False,
@@ -360,9 +360,9 @@ def main():
                                  encoding="utf-8").read())
 
     # ⑬ ⭐ 「点击测试」里那格必须与实操**同一条链**，且**绝不点菜单项**（不真拍人）
-    #    起因（作者 2026-09-21 截图）：那格一直「未通过」，他的判断是
+    # 起因：那格一直「未通过」，他的判断是
     #    「**感觉检验和实操不是一条链路的**」—— 判对了：它还在用公式落点（按会话区宽度
-    #    乘比例 + 固定偏移）和**会点菜单项**的旧函数，而实操早在 2026-09-18 就换成
+    # 乘比例 + 固定偏移）和**会点菜单项**的旧函数，而实操早在 就换成
     #    "运行时检测头像方块 + 只验菜单"了 ⇒ 公式点落进气泡、弹的是消息菜单（没有「拍一拍」）
     #    ⇒ 永远红；更糟的是万一公式点正好落在某人头像上，"点击测试"会**真的拍那个人**。
     import re as _re

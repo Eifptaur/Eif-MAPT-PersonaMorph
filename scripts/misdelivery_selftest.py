@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""「发错会话」判据（2026-09-18 用户反馈后立）。
+"""「发错会话」判据。
 
-**报障原话**：「**他把我在实验群发的消息回到大群了**」（最严重的一条；转述自网友）。
+**报障原话**（最严重的一条；转述自网友）。
 
 **查到的事实**：`send_text_posted` **不会切会话** —— 它靠会话头指纹/四档屏幕证据证明
 "当前打开的就是目标"。证据一旦误判（指纹假阳性、OCR 读错名字、活动行时间恰好撞上），
 文字就会被打进**当时打开的另一个会话**并真的发出去；而我们的成功判据是"在**目标会话**里
 回读到新行"，查不到 ⇒ 表观症状只是"发送未生效"，**发错会话这件事被完全掩盖**
-（这条风险 2026-09-13 就写在 `send_text_posted` 的注释里，一直没第二道网）。
+。
 更糟的是**重试**：每多打一枪，就往那个错会话**再发一遍**同一句话。
 
 本判据守四件事：
@@ -25,7 +25,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
-from agent.wechat import WeChatAdapter          # noqa: E402
+from agent.wechat import WeChatAdapter # noqa: E402
 
 PASS = FAIL = 0
 
@@ -42,7 +42,7 @@ def ok(name, cond, extra=""):
 
 class _FakeDB(object):
     def __init__(self, rows):
-        self.rows = rows                      # {chat_id: [ {content, create_time}, … ]}
+        self.rows = rows # {chat_id: [ {content, create_time}, … ]}
         self.asked = []
 
     def get_messages(self, chat_id, limit=4):
@@ -51,7 +51,7 @@ class _FakeDB(object):
 
 
 def _adapter(rows, groups=None, privates=None):
-    ad = WeChatAdapter.__new__(WeChatAdapter)      # 不走 __init__：只测这一个纯函数
+    ad = WeChatAdapter.__new__(WeChatAdapter) # 不走 __init__：只测这一个纯函数
     ad._db = _FakeDB(rows)
     ad._groups = groups if groups is not None else [{"wxid": "群A@chatroom", "nickname": "实验群"},
                                                     {"wxid": "群B@chatroom", "nickname": "大群"}]
@@ -63,7 +63,7 @@ def _adapter(rows, groups=None, privates=None):
     return ad
 
 
-import time                                    # noqa: E402
+import time # noqa: E402
 
 NOW = int(time.time())
 

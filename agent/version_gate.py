@@ -20,13 +20,13 @@ log = logging.getLogger("persona-morph")
 
 _allowed = set()
 _lock = threading.Lock()
-_ver_cache = {"at": 0.0, "wechat": ""}      # current_wechat_version() 的小缓存（见它的注释）
+_ver_cache = {"at": 0.0, "wechat": ""} # current_wechat_version() 的小缓存（见它的注释）
 
 
 def current_wechat_version(ttl: float = 60.0) -> str:
     """当前微信版本号（读不到返回空串）。**给所有调用方兜底用**。
 
-    为什么要在这里自己查（2026-09-15 用户看到控制台写着「微信 unknown × 适配层 1.2.2.2」）。
+    为什么要在这里自己查。
     三处**发送**入口都老老实实传了 `wechat=wx_version_for_gate()`，但**展示侧**——控制台
     `status()`、随包 `collect_report.py`——调的是 `check()` **不带参数**，而 `check()` 内部原来
     是 `w = wechat or "unknown"` ⇒ 面板/报告永远显示「微信 unknown × 适配层 x」并说
@@ -71,8 +71,8 @@ def clear_allow() -> None:
         _allowed.clear()
 
 
-# ── 「发送被门拦下」的记账（2026-09-17 加）───────────────────────────────────────
-#   起因（用户「佬」报「能识别群，但发不了消息；概览多了 3 条累计会话，两个群都没收到」）：
+# ── 「发送被门拦下」的记账───────────────────────────────────────
+# 起因（报「能识别群，但发不了消息；概览多了 3 条累计会话，两个群都没收到」）：
 #   他的微信是 **4.1.15.9**（我们只实测到 4.1.15.8）⇒ 版本门按"未实测"**暂停了每一次自动发送**。
 #   门的行为本身是对的（fail-closed 是红线），错在**用户看不见**：他只看到"机器人不回话"。
 #   ⇒ 每一次被拦都要记账 + 给一句能照做的话，并让控制台能一眼看到（横幅 + 一键放行）。
@@ -89,7 +89,7 @@ def note_blocked(capability: str, reason: str) -> None:
             _blocked["capability"] = str(capability or "")
     except Exception:
         pass
-    try:                                            # 日志里也要有一行（用户报障时我们就看它）
+    try:
         from .util import get_logger
         get_logger().warning("版本门拦下一次「%s」：%s", capability, reason)
     except Exception:
@@ -109,7 +109,7 @@ def blocked_reset() -> None:
 def _strict() -> bool:
     """是否要"未实测版本就暂停发送"。**默认 False**。
 
-    🔴 2026-09-18 改（两位网友的报障 + 作者口径「**有可能你保险加多了，最后能发出去的消息也变成发不出去**」）：
+    🔴 
       现场①「一直卡在【未通过 会话投递失败】，聊天记录生成了就是发不出去」（截图里那行就是版本门：
       `微信版本读不到（微信没在跑）⇒ 按未验证处理，已暂停自动发送`）；现场②「昨天把微信删了重下，
       它找到消息库了，但是一直不回复」——**重装后版本号/矩阵对不上 ⇒ 版本门把每一次发送都拦掉**。
@@ -127,7 +127,7 @@ def _strict() -> bool:
 def _gate_facts(vm, adapter: str) -> str:
     """给版本门算**事实键**（主窗类名 / DPI 感知 / 适配层）；算不出来就返回空串 ⇒ 退回版本键。
 
-    ⛔ 2026-09-22（兼容性落地第 ⑦ 项）：判定依据从"按版本号查表"改成**优先按这台机器的事实查**
+    ⛔ （兼容性落地第 ⑦ 项）：判定依据从"按版本号查表"改成**优先按这台机器的事实查**
     （同一个版本号的 UI 可能已经变了；而版本号本身也会撒谎）。只读探测、绝不抛。
     """
     try:
@@ -139,7 +139,7 @@ def _gate_facts(vm, adapter: str) -> str:
 def check(capability: str = "send", wechat: str = "", adapter: str = "") -> dict:
     """发送前查一次。返回 {level, allow, reason, wechat, adapter}。
 
-    ⚠️ 2026-09-18 起**默认不拦发送**（见 `_strict()` 的说明）：只有用户显式开了 `version_gate.strict`
+    ⚠️ 起**默认不拦发送**（见 `_strict()` 的说明）：只有用户显式开了 `version_gate.strict`
     才会因为"未实测版本/读不到版本"暂停自动发送。
     """
     try:
@@ -166,7 +166,7 @@ def check(capability: str = "send", wechat: str = "", adapter: str = "") -> dict
             return {"level": "warn", "allow": True, "wechat": w, "adapter": a,
                     "reason": "版本对未实测（或读不到微信版本），但已在本次会话中放行"}
         if not w or w == "unknown":
-            # ⚠️ 别再把两种原因混成一句「微信没在跑？」（2026-09-15）：微信跑着但读不到版本号，
+            # ⚠️ 别再把两种原因混成一句「微信没在跑？」：微信跑着但读不到版本号，
             #    和微信根本没开，是完全不同的处置（前者点「重新检测」、后者去登录微信）。
             return {"level": "warn", "allow": False, "wechat": "unknown", "adapter": a,
                     "reason": "版本门拦下了（version_gate.strict 开着）：微信版本读不到（%s）⇒ 已暂停自动发送；"
@@ -184,7 +184,7 @@ def check(capability: str = "send", wechat: str = "", adapter: str = "") -> dict
 def status() -> dict:
     st = check()
     st["allowed_session"] = is_allowed()
-    st["blocked"] = blocked_stat()          # 被拦了几次 + 最后一次为什么（控制台横幅读它）
+    st["blocked"] = blocked_stat() # 被拦了几次 + 最后一次为什么（控制台横幅读它）
     return st
 
 
@@ -262,13 +262,13 @@ def run_action(choice: str, decision_id: str = "") -> dict:
 
 
 # ── 版本不匹配：待决单（四选一）─────────────────────────────────────────────
-# 既有口径：（2026-09-14）：「弹窗按你推荐的做」+「把弹窗切出来的那一秒，就应该立刻让它到后台」。
+# 既有口径：：「弹窗按你推荐的做」+「把弹窗切出来的那一秒，就应该立刻让它到后台」。
 # 落点：门判「未实测」时**开一张待决单**（`agent/pending_decisions.py`，落 data/pending_decisions.json）；
 #   控制台据此弹四选一模态（一键升级适配层/更新本体/仅本次允许/微信本身要处理，✕＝什么都不做），
 #   用户表态后由 `decide()` 落台账 + 写回能力矩阵 + 执行本进程内的副作用。
 # **同一对版本只问一次**：开单是幂等的（已开过/已表过态的版本对直接复用旧条目）。
 def _pop_ui(item: dict) -> dict:
-    """新开一张单子时，**Persona Morph 自己把弹窗切出来**（⑦ 用户口径）。
+    """新开一张单子时，**Persona Morph 自己把弹窗切出来**。
 
     三条纪律：①只在"新开单"时弹（同一对版本只问一次，所以不会反复弹）；
     ②**不打扰你（可能短暂置前约 1~3 秒后自动还回）**（`notify_ui` 抬起后立刻把前台还给原窗口）；
@@ -286,13 +286,13 @@ def _pop_ui(item: dict) -> dict:
                     from . import tray as _tray
                     rep["tray"] = _tray.notify(str(item.get("title") or "有件事要你拍板"),
                                                str(item.get("reason") or "")[:180])
-                except Exception as _te:                           # noqa: BLE001
+                except Exception as _te: # noqa: BLE001
                     rep["tray"] = {"ok": False, "why": str(_te)}
             log.info("待决单已弹窗：%s", _nu.brief(rep))
-        except Exception as e:                                     # noqa: BLE001
+        except Exception as e: # noqa: BLE001
             log.warning("待决单弹窗失败（不影响开单）：%s", e)
 
-    # ⛔ 自检/无人值守必须能关掉弹窗（2026-09-14 教训）：我第一次跑 ⑦c 自检时，`pending()` 走了
+    # ⛔ 自检/无人值守必须能关掉弹窗：我第一次跑 ⑦c 自检时，`pending()` 走了
     #   created=True 分支，**真的把控制台往屏幕上弹了一次**（开子进程）。自检不许动用户的屏幕
     #   ⇒ 环境变量一关，`pop` 只回报"被关掉"，其它行为不变。
     if os.environ.get("WX_NO_UI_POP") == "1":
@@ -301,7 +301,7 @@ def _pop_ui(item: dict) -> dict:
         t = threading.Thread(target=_run, daemon=True, name="decide-pop")
         t.start()
         return {"ok": True, "async": True}
-    except Exception as e:                                         # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         log.warning("待决单弹窗线程起不来：%s", e)
         return {"ok": False, "why": str(e)}
 
@@ -338,19 +338,19 @@ def decide(decision_id: str, choice: str, note: str = "",
     from . import version_matrix as vm
     item = pd.resolve(decision_id, choice, note=note, p=decisions_path)
     act = pd.apply_choice(item)
-    # ⛔ 2026-09-22：`cmd` **只由这里（`action_cmd` 唯一实现）填** —— 原来 `pending_decisions`
+    # ⛔ `cmd` **只由这里（`action_cmd` 唯一实现）填** —— 原来 `pending_decisions`
     #   自己硬写了一句「跑根目录那个版本检查 bat」，而那个文件包里不存在（死指引）。
     #   `pending_decisions` 那边已改成留空，命令一律在这里按真实路径生成。
     try:
         act["cmd"] = action_cmd(str(item.get("choice") or "")) or act.get("cmd") or ""
-    except Exception:                                            # noqa: BLE001
+    except Exception: # noqa: BLE001
         pass
     w = str(item.get("wechat") or wechat or "unknown")
     a = str(item.get("adapter") or adapter or vm.adapter_version())
     try:
         vm.note_decision(w, a, str(item.get("choice") or "none"),
                          note=str(act.get("message") or note), path=matrix_path)
-    except Exception as e:                                     # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         act["writeback_error"] = str(e)
     if act.get("action") == "allow_session":
         allow_session(str(act.get("message") or ""))

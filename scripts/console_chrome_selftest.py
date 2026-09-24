@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""窗口/控制台「外观统一」判据（2026-09-15 用户当面点的六条）
+"""窗口/控制台「外观统一」判据
 
-守的东西（都是**用户原话对应的可机械核对项**）：
+守的东西：
   ① 边框太大 → `_ring` 必须是 3（不是 6），全屏时内边距必须为 0；
   ② 全屏 + ESC → 必须有 `ApplyChrome()`（最大化 ⇒ Padding(0)）与 `EscFilter`（WM_KEYDOWN+VK_ESCAPE
      退出全屏，用 IMessageFilter 而不是 KeyPreview——WebView2 是原生子窗）；
@@ -25,8 +25,8 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # 同目录的 `_srcmatch`
-import _srcmatch as _sm                                          # noqa: E402  空白容忍的源码断言（V-R4-13 第三条）
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # 同目录的 `_srcmatch`
+import _srcmatch as _sm # noqa: E402 空白容忍的源码断言
 
 PASS = 0
 FAIL = 0
@@ -114,7 +114,7 @@ ok("JS 同步切换 .shell.tight（不是只切 .side）",
 print("\n── ⑦ 真起控制台抓页面复核 ──")
 _p = None
 if os.environ.get("PM_JUDGE_NO_PROC") == "1":
-    # ⛔ V-R7-12：判据环境（`run_all_selftests.py` 会带这个开关）⇒ **只跑静态/内存那半**，
+    # ⛔ 判据环境（`run_all_selftests.py` 会带这个开关）⇒ **只跑静态/内存那半**，
     #   本段"真起产品 WebUI 服务"整段跳过，并**明确打一行 SKIP**（不冒充通过；单跑仍然跑全）。
     skip("⑦ 真起控制台抓页面复核", "PM_JUDGE_NO_PROC=1 ⇒ 跳过起服务那半（页面复核 4 条不判）")
     _noproc = True
@@ -133,7 +133,7 @@ else:
         W.get_config = lambda: base
         w = W.WebUI(lambda: {}, [])
         import tempfile as _tf
-        w.console_url_root = _tf.mkdtemp(prefix="cuj-")   # ⚠️ 判据不写产品那份 logs/console.url（2026-09-18）
+        w.console_url_root = _tf.mkdtemp(prefix="cuj-") # ⚠️ 判据不写产品那份 logs/console.url
         port = w.start()
         try:
             with urllib.request.urlopen("http://127.0.0.1:%d/?token=chrome-judge" % port, timeout=8) as r:
@@ -158,7 +158,7 @@ else:
     ok("页面里余额是 <b> 且无「余额：」硬编码", _sm.has(_p, '余额 <b id="balance-badge"') and "余额：" not in _p)
     ok("收起按钮文案在页面里", _sm.has(_p, "‹ 收起"))
 
-print("\n── ⑧ 鲸鱼光标：图片 URL 必须稳定（2026-09-16 用户报「点击就直接变回普通的」）──")
+print("\n── ⑧ 鲸鱼光标：图片 URL 必须稳定──")
 ok("不再每次点击都拼 ?v=Date.now()（那会强制重新下载，加载期间回退系统箭头）",
    not _sm.has(page, "setStyle(url + '?v=' + Date.now())")
    and not _sm.has(page, "setStyle(nodUrl + '?v=' + Date.now())"))
@@ -167,7 +167,7 @@ ok("启用时预加载两张光标图", _sm.has(page, "function preload()") and 
 ok("mousedown 仍然切点头帧、180ms 后换回",
    "applyNod();" in page and _sm.has(page, "nodTimer = setTimeout(apply, 180)"))
 
-print("\n── ⑨ 暂停/恢复：不许靠按钮文字决定接口，且**方向不能反**（2026-09-16 用户报「很不灵敏」+「点暂停显示已恢复」）──")
+print("\n── ⑨ 暂停/恢复：不许靠按钮文字决定接口，且**方向不能反**──")
 ok("不再用按钮文字判断该调哪个接口（文字是轮询刷新的，会调反）",
    "textContent.includes('暂停')?'/api/pause'" not in page)
 ok("有状态变量作唯一依据", "window.__pausedNow" in page)
@@ -201,7 +201,7 @@ ok("真值表：暂停中点一下 ⇒ 恢复（调 resume、状态变运行中�
    _t1["call"] == "/api/resume" and _t1["afterPaused"] is False
    and _t1["btn"] == "暂停" and _t1["run"] == "运行中", _t1)
 
-print("\n── 顶栏状态行（2026-09-16 待拍板三件之一：暂停态 / 监听 N 个会话 / 主人登记 N 项）──")
+print("\n── 顶栏状态行──")
 _page = open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
 _pm = open(os.path.join(ROOT, "scripts", "persona_morph.py"), encoding="utf-8").read()
 ok("后台真的给了监听数（listen.groups / listen.privates）",
@@ -218,7 +218,7 @@ ok("主人数取自 /api/status 的 owner.count（与「微信」面板同一份
    "s.owner.count" in _page and 'st["owner"]' in open(
        os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read())
 
-# ── 2026-09-17（网友报「我把群勾选了，然后保存设置刷新之后又没了」）──
+# ── （网友报「我把群勾选了，然后保存设置刷新之后又没了」）──
 ok("群白名单 chips 容器带 `data-cfg`（否则各分区「保存设置」收集不到它、刷新就丢）",
    _sm.has(_page, 'id="wlChips" data-cfg="wechat.group_name_white_list"'))
 ok("「检测群聊并勾选」的确定按钮**当场落盘**（POST /api/config），不再只改页面变量",
@@ -226,7 +226,7 @@ ok("「检测群聊并勾选」的确定按钮**当场落盘**（POST /api/confi
    and _page.count("wechat.group_name_white_list") >= 4)
 ok("群白名单保存失败会如实报（不许静默丢）", "群白名单保存失败" in _page)
 
-# ── 2026-09-17（用户要求把新手引导从三步扩成五步：①昵称＝你自己微信原名 ②点「恢复」才开始工作）──
+# ── ──
 ok("向导标题与总步数已是五步", "五步上手" in _page and _sm.has(_page, "第 1 步/共 5 步") and _sm.has(_page, "第 5 步/共 5 步"))
 ok("第 2 步是「机器人昵称＝你自己微信的原名」（有输入框、并写明默认值只是占位）",
    'id="obNick"' in _page and "你自己微信的原名" in _page and "群deepseek" in _page

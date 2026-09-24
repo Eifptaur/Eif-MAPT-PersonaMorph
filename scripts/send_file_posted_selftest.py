@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""`send_file_posted` 的纯逻辑判据（不需要微信；真机链路由 2026-09-13 实测背书）
+"""`send_file_posted` 的纯逻辑判据
 
 背景：微信 4.1.15.8 **不收**剪贴板投递（CF_HDROP + 投递 Ctrl+V / WM_PASTE / WM_DROPFILES 六条变体实测全否），
 但「投递点工具栏文件图标 → UIA 驱动系统「选择文件」对话框 → 投递点发送」这条**实测成功**
@@ -16,10 +16,10 @@ import sys
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # 同目录的 `_srcmatch`
-import _srcmatch as _sm                                          # noqa: E402  空白容忍的源码断言（V-R4-13 第三条）
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # 同目录的 `_srcmatch`
+import _srcmatch as _sm # noqa: E402 空白容忍的源码断言
 
-from agent.wechat import WeChatAdapter  # noqa: E402
+from agent.wechat import WeChatAdapter # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -55,7 +55,7 @@ print("── C. 源码层：三处关键动作都在（且没有退回剪贴板
 SRC = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "agent", "wechat.py"),
            "r", encoding="utf-8", errors="replace").read()
 i = SRC.find("def send_file_posted")
-# ⚠️ 2026-09-16：原来是写死的 `SRC[i:i + 11000]` 切片——函数里多加十几行（本轮加"写完文件名立刻还前台"）
+# ⚠️ 原来是写死的 `SRC[i:i + 11000]` 切片——函数里多加十几行（本轮加"写完文件名立刻还前台"）
 #   就把后面的断言挪出窗外、变成**假红**。自检要守的性质是"这些步骤都在这个函数里"，不是"函数恰好
 #    不超过 11000 字符" ⇒ 改成**切到下一个同级 def 为止**。
 _j = SRC.find("\n    def ", i + 10)
@@ -66,7 +66,7 @@ ok("点「打开」（或回车兜底）", "打开" in seg and "SendKeys(\"{Ente
 ok("最后投递点「发送」", "send_pt" in seg and _sm.has(seg, "backend.click(main_hwnd, send_pt)"))
 ok("只认 DB 回读判成功", "_looks_like_file_msg" in seg)
 ok("注释里写明剪贴板那条无效、别再试", "剪贴板那条" in seg and "别再往那条路上试" in seg)
-# 2026-09-14 新增的"台账档"（当天实测：DB content 是压缩占位符 + 会话行 OCR 只剩 `[图片]` ⇒ 前几档全失效）：
+# 的"台账档"（当天实测：DB content 是压缩占位符 + 会话行 OCR 只剩 `[图片]` ⇒ 前几档全失效）：
 ok("身份闸有「我们发给该会话的文件名」这一档（屏幕 × 本机发送台账两个独立来源）",
    "_sent_file_names(" in SRC and "_file_fingerprints(" in SRC and "版本指纹" in SRC)
 ok("刚发完的文件卡有「截断兜底」：按文件名开头 3 字认，但**必须**带「文件」前缀（否则正文提到文件名会假阳性 ⇒ 发错会话）",
@@ -78,11 +78,11 @@ ok("文件指纹＝文件名里那串「日期+构建号」数字，并给出去
 _fps = A._file_fingerprints("Agent启动器-2026.09.14.383.zip")
 ok("运行时：从真实文件名提出指纹 20260914383（含 2026914383 变体）",
    "20260914383" in _fps and "2026914383" in _fps, str(_fps))
-ok("运行时：没有版本号的文件名不硬凑指纹（返回空，交给别的档）", # ⛔ V-R5R-4：`== [] or True` 恒真 ⇒ 去掉 `or True`
+ok("运行时：没有版本号的文件名不硬凑指纹（返回空，交给别的档）", # ⛔ `== [] or True` 恒真 ⇒ 去掉 `or True`
    A._file_fingerprints("Eif-MAPT-console-0.1.4.zip") == [],
    str(A._file_fingerprints("note.md")))
-# 2026-09-14 修的两个真缺陷（E 明明开着、闸门却判否）——自检钉住，别让它回来：
-# ⚠️ 2026-09-16：这两档**抽成了 `_active_row_time_ok()`**（`chat_identity_ok` 与 `chat_is_open`
+# 的两个真缺陷（E 明明开着、闸门却判否）——自检钉住，别让它回来：
+# ⚠️ 这两档**抽成了 `_active_row_time_ok()`**（`chat_identity_ok` 与 `chat_is_open`
 #    共用同一条证据链），所以断言改成钉"抽出来的那一处"，并要求两条闸都真的接上了它。
 ok("身份闸时间档做了时间归一化（列表读到的 1:35 与 DB 的 01:35 视为同一时刻）",
    _sm.has(SRC, "def _active_row_time_ok") and _sm.has(SRC, "self._norm_hhmm(_ht) != self._norm_hhmm(_lt)")
@@ -92,17 +92,17 @@ ok("时间档第二道证据有「该时刻在会话列表里唯一」这一档�
    _sm.has(SRC, "_uniq = (_n == 1)") and _sm.has(SRC, "if _pane_hit or _uniq:"))
 
 print("── D. 防重复发送闸（2026-09-13 用户当场发现『你发了两个文件给我，一模一样的』）──")
-import tempfile          # noqa: E402
+import tempfile # noqa: E402
 
 tmp = os.path.join(tempfile.mkdtemp(prefix="sfp_"), "sent_files.json")
-A._sent_file_log_path = staticmethod(lambda: tmp)      # 只换台账路径，守卫逻辑用真代码
-inst = A.__new__(A)                                    # 不跑 __init__（那会连微信）
+A._sent_file_log_path = staticmethod(lambda: tmp) # 只换台账路径，守卫逻辑用真代码
+inst = A.__new__(A) # 不跑 __init__（那会连微信）
 fake = os.path.join(tempfile.mkdtemp(prefix="sfp_"), "same_file.zip")
 with open(fake, "wb") as f:
     f.write(b"x" * 1024)
 ok1, why1 = inst._repeat_guard("filehelper", fake)
 ok("第一次发送：只读检查放行", ok1 is True, why1 or "ok")
-# ⚠ 自检更新（2026-09-14）：原来这里直接再调一次就期望"拦下"，但 2026-09-13 已经把默认调用改成
+# ⚠ 自检更新：原来这里直接再调一次就期望"拦下"，但 已经把默认调用改成
 #   **只读、不记账**（原实现"检查时就写台账"，于是一次因为别的原因失败的尝试也会写脏台账，
 #   之后 10 分钟内的真重试全被判"已经发过了" ⇒ 永远发不出去）。记账改到"DB 回读确认发出之后"，
 #   由调用方传 note=True 那一次完成。⇒ 自检必须照这个语义走：先只读、再 note=True 记账、然后才拦。
@@ -150,7 +150,7 @@ ok("判否时先试着切回目标会话（open_chat_by_search）", "open_chat_b
 ok("失败信息里会带上「可能不是聊天视图」的提示（别再只说按钮位置变了）", "_bar_hint" in seg)
 
 print("── F. 从实测图标行取坐标（换机器/换 DPI 不再整档错位）──")
-# 已知现象：「实测投递是成功的，但是他老是点错位置，不是点到截图，就是点到收藏，还有点到语音，很难调」
+# 已知现象
 # 根因＝固定偏移（pane+43/97/151/205/280）是按本机 150% 的簇间距 ≈54px 标的；125% 下间距≈45px，
 # 固定偏移会**错一档**（正好落到收藏/截图上）⇒ 正解＝按顺序取第 3 个簇。
 try:
@@ -198,12 +198,12 @@ print("── G. r7 跨机实测的回归：第一枚图标紧贴 pane_left 时�
 try:
     from agent import input_bar as _ib
     from agent.wechat import WeChatAdapter as _WA3
-    _pane2 = 320                      # 检测到的面板左沿（第一枚图标 312 在它左边）
+    _pane2 = 320 # 检测到的面板左沿（第一枚图标 312 在它左边）
     _im = _Im.new("L", (1139, 890), 250)
     _d = _Dr.Draw(_im)
-    for x in (312, 357, 402, 446, 509):          # 工具栏 5 簇
+    for x in (312, 357, 402, 446, 509): # 工具栏 5 簇
         _d.rectangle([x - 8, 843, x + 8, 863], fill=60)
-    for x in (700, 760, 820, 880):               # 同一行另外 4 个簇（"整行 9 簇"）
+    for x in (700, 760, 820, 880): # 同一行另外 4 个簇（"整行 9 簇"）
         _d.rectangle([x - 8, 843, x + 8, 863], fill=60)
     _g = _im.convert("L")
     _y, _cl, _total = _ib.best_row(_g)
@@ -238,11 +238,11 @@ try:
     from agent import input_bar as _ib2
     _im2 = _Im.new("L", (1139, 890), 250)
     _d2 = _Dr.Draw(_im2)
-    for x in (247, 312, 357, 402, 446, 509):      # 多了 247（探针当时多收的那一簇）
+    for x in (247, 312, 357, 402, 446, 509): # 多了 247（探针当时多收的那一簇）
         _d2.rectangle([x - 8, 843, x + 8, 863], fill=60)
     _g2 = _im2.convert("L")
     _y2, _cl2, _tot2 = _ib2.best_row(_g2)
-    _run2 = _ib2.toolbar_run(_cl2, pane_left=300)   # 故意给个"会把 247 放进门槛内"的 pane_left
+    _run2 = _ib2.toolbar_run(_cl2, pane_left=300) # 故意给个"会把 247 放进门槛内"的 pane_left
     _xs2 = [c[0] for c in _run2]
     ok("r8 回归：多收的 247 不许进工具栏那组（必须只有 312..509 这 5 簇）",
        _xs2[:1] == [312] and len(_run2) == 5, "工具栏 %s" % _xs2)
@@ -258,7 +258,7 @@ try:
 except Exception as _e4:
     ok("r8 回归（合成图）能跑", False, str(_e4)[:100])
 
-print("── J. 内容级闸的观测口径（跨机需求②：分清「没信号」与「信号被阈值判掉」）──")
+print("── J. 内容级闸的观测口径──")
 try:
     from agent import chat_ocr as _co3
     _pane = "落空，责任在我这一侧的落占，你手点就能弹系统「选择文件」，我们这轮把定位统一了"
@@ -284,7 +284,7 @@ try:
 except Exception as _e5:
     ok("观测口径（合成文本）能跑", False, str(_e5)[:100])
 
-print("── K. 内容级闸的 fail-open 修复（跨机 r10 实测：目标没开却判 True）──")
+print("── K. 内容级闸的 fail-open 修复──")
 # 他们的现场：目标会话根本没开，闸门却被一条 **6 字日期串 `202609`（相似度 1.000）** 满足 ⇒ 判 True。
 # 放行必须要求**强信号**：最短命中 8 字（或占针长 30%）＋ 低熵串（纯数字/日期）不算命中。
 try:
@@ -303,19 +303,19 @@ try:
     ok("短指纹档也加了两道下界（低熵不算 + <4 不算）",
        "low_entropy(nn)" in _segid4 and _sm.has(_segid4, "len(nn) >= 4"))
 
-    # ⛔⛔ 2026-09-16 晚：**过修成反向问题**（跨机 r11 报告 ①③）——对面那台聊天区里是**上千字的报告**、
+    # ⛔⛔ **过修成反向问题**——对面那台聊天区里是**上千字的报告**、
     #   屏幕只可见 142~334 字，而原来的片段下界是 `针长 × 30%`＝300 字 ⇒ **永远凑不出** ⇒
     #   「12 字 / 相似度 1.000」的真信号被**误杀**。下面三组就是他们的回归现场（①③ 必须放行、② 必须拦）。
     _long_needle = ("r11 四条都跑了。先说最重要的：fail-open 修好了，但过修成了反向问题。"
                     "一、fail-open 验收矩阵（四组现场）①目标开着读到一百四十二字最长命中十二字相似度一比零"
                     "闸门 False 误杀真信号；②目标没开读到一百四十二字最长命中六字日期巧合闸门 False 正确；"
                     "三、只截底图成功一百二十五的模板到手；四、WGC 本机复核与你的结论完全一致。")
-    _pane_r11 = "r11 四条都跑了。先说最重要的"          # 屏幕只可见这一小段（142~334 字的模拟）
+    _pane_r11 = "r11 四条都跑了。先说最重要的" # 屏幕只可见这一小段（142~334 字的模拟）
     ok("① 长针 + 只有一小段可见（12 字/相似度 1.00）⇒ **必须放行**（修复前是红的）",
        _co4.content_match(_pane_r11, _long_needle) is True)
     ok("③ 长针 + 可见段更长（两处片段）⇒ 也放行",
        _co4.content_match(_pane_r11 + "…" + "四、WGC 本机复核与你的结论完全一致", _long_needle) is True)
-    _pane_date = "版本 20260916 构建 379 · 文件卡档：同一文件名也出现过"   # 只有日期巧合
+    _pane_date = "版本 20260916 构建 379 · 文件卡档：同一文件名也出现过" # 只有日期巧合
     ok("② 长针 + 只有 6 字日期串巧合 ⇒ **必须拦**（fail-open 不许回来）",
        _co4.content_match(_pane_date, _long_needle) is False)
     ok("长针里的**纯数字片段**仍然不算命中（低熵豁免）",
@@ -329,7 +329,7 @@ except Exception as _e6:
     ok("fail-open 回归（合成文本）能跑", False, str(_e6)[:100])
 
 print("── L. 关「选择文件」对话框不许把微信顶到前台（2026-09-16 实测定位到这一步）──")
-# 已知现象：「你老是把微信切到前台，然后发文件，这不能后台做吗…那个发文件框本身也可以被放在后台的，
+# 已知现象
 # 它不是锁定前台的」⇒ 探针实测：投递点 📁 不抢前台 ✅、对话框弹出时前台也没变 ✅、
 # **关掉对话框之后**前台变成微信主窗 ✗ ⇒ 处置＝关前后各记一次前台，关完还回去。
 _wxsrc5 = open(os.path.join(_ROOT, "agent", "wechat.py"), encoding="utf-8").read()
@@ -375,7 +375,7 @@ ok("_wait_dialog_gone 返回「真的没了」（调用方靠它决定走哪条�
 #   实测证据：修复后 `还前台（对话框关闭后）：25692654 → 134730（结果=True）`，之前一条日志都没有。
 ok("模块级 import ctypes（缺了 ⇒ 还前台/等框消失全部静默失效）",
    __import__("re").search(r"^import ctypes\b", _wxsrc5, __import__("re").M) is not None)
-ok("还前台的日志带 note 与前后 hwnd（跨机报告能核对到步）",
+ok("还前台的日志带 note 与前后 hwnd",
    _sm.has(_wxsrc5, 'log.info("还前台（%s）：%s → %s（结果=%s，AttachThreadInput 绕法）"'))
 try:
     from agent import wechat as _W5
@@ -387,7 +387,7 @@ try:
     _r2 = _W5._click_dialog_open(0)
     ok("_click_dialog_open 拿不到按钮时给 (False, 说明)，不抛",
        isinstance(_r2, tuple) and _r2[0] is False and bool(_r2[1]))
-    _W5._FG_STASH.update({"hwnd": 0, "at": 3.0})          # hwnd=0 ⇒ 函数会在"前台没变"处早退，不碰真窗口
+    _W5._FG_STASH.update({"hwnd": 0, "at": 3.0}) # hwnd=0 ⇒ 函数会在"前台没变"处早退，不碰真窗口
     _W5._restore_fg(0, "selftest-keep", keep=True)
     ok("keep=True ⇒ 不动 stash（stash 还在，后面几步还能用）", float(_W5._FG_STASH.get("at") or 0) == 3.0)
     _W5._restore_fg(0, "selftest-clear", keep=False)
@@ -396,7 +396,7 @@ try:
 except Exception as _e8:
     ok("_restore_fg 的 keep/clear 语义可测", False, str(_e8)[:80])
 
-print("── N. 发送/自检路径**不许悄悄退回真鼠标**（跨机 r12 事故：一动检工具动了 16 秒光标）──")
+print("── N. 发送/自检路径**不许悄悄退回真鼠标**──")
 # 对面 r12 原话："你自己那条 一键检验（生成报告） 在我这儿掉了真实路径、动过光标"（37.4s 一发、
 # 光标动了 16s，日志 '投递切会话：False → 改走真实路径'）。⇒ 真鼠标兜底改成**显式 opt-in**（默认关）。
 _segN = open(os.path.join(_ROOT, "agent", "wechat.py"), encoding="utf-8").read()
@@ -407,7 +407,7 @@ _cfgN = open(os.path.join(_ROOT, "agent", "config.py"), encoding="utf-8").read()
 ok("config 默认值＝False，并把事故写在注释里",
    _sm.has(_cfgN, '"allow_real_fallback": False') and _sm.has(_cfgN, "动了 16 秒光标"))
 _segS = _segN[_segN.index("def send_text("):]
-_segS = _segS[:_segS.find("\n    def ", 10)]          # 只在 `send_text` 这一个函数体里比顺序
+_segS = _segS[:_segS.find("\n    def ", 10)] # 只在 `send_text` 这一个函数体里比顺序
 ok("这道闸压在**真实路径之前**（同一函数内的顺序）",
    _sm.has(_segS, "if not self._real_fallback_allowed():")
    and _segS.index("if not self._real_fallback_allowed():") < _segS.index("_send_with_foreground"))
@@ -437,13 +437,13 @@ try:
 except Exception as _eN:
     ok("_real_fallback_allowed 行为可测", False, str(_eN)[:80])
 
-print("── O. 内容像还不够：**活动行时间**要跟目标对得上（跨机 r14：两个会话内容逐字相同时会双放行）──")
+print("── O. 内容像还不够：**活动行时间**要跟目标对得上──")
 _segO = open(os.path.join(_ROOT, "agent", "wechat.py"), encoding="utf-8").read()
 ok("有 _row_time_conflict 实现（活动行时间 vs 目标最后一条消息时间）",
    _sm.has(_segO, "def _row_time_conflict") and "活动行时间对不上" in _segO)
 ok("内容级闸放行前会先查它（源码顺序：content_match 之后立刻查）",
    _segO.index("if _co.content_match(pane, nd):") < _segO.index("_cf, _cfwhy, _cdec, _ccmp = self._row_time_conflict"))
-# ⛔ 2026-09-21 改口径（业界调研 🥈 + 我们自己的残留口子）：时间档给不出结论时**不再一律判否**，
+# ⛔ 口径（业界调研 🥈 + 我们自己的残留口子）：时间档给不出结论时**不再一律判否**，
 #   改成"**内容 + 排他**"定论：看得到目标的正文、且**看不到别的监听会话的正文** ⇒ 放行；
 #   看到别家正文 ⇒ 判否。所以这条断言盯的是**排他性核对在位**（`_pane_excludes_others`），
 #   而不是旧的 `if _ccmp and not _cdec:` 那个"一律拦"的字面量。
@@ -478,12 +478,11 @@ try:
     ok("目标是昨天的消息（没有 HH:MM）⇒ decided=False（无从比对）",
        _adO._row_time_conflict("x", gui=object())[2] is False)
     _coO.capture_best, _coO.highlight_time = _cap_o, _hlt_o
-    # ⛔ 跨机 r16 的红线发现：活动行时间戳**读不出**时，内容像对同屏两个会话同时成立 ⇒ 双放行复现。
     #    内容级闸因此必须要求 decided（判得了）——"内容像"不再单独放行。
     _segCI = open(os.path.join(_ROOT, "agent", "wechat.py"), encoding="utf-8").read()
     _segCI = _segCI[_segCI.index("def chat_identity_ok"):]
     _segCI = _segCI[:_segCI.find("\n    def ", 10)]
-    # ⛔ 2026-09-21 改口径：`chat_identity_ok` 里时间档给不出结论时**不再一律判否**，
+    # ⛔ `chat_identity_ok` 里时间档给不出结论时**不再一律判否**，
     #   改成"内容 + 排他"定论（见 K 段那两条）。这里盯的是**新口径在位**：
     #   排他性核对被调用、且"读不出时间戳"这条理由仍在（只是不再单独作为拦的充分条件）。
     ok("内容级闸：时间档给不出结论时**必须过排他性核对**（`_pane_excludes_others`）",
@@ -492,7 +491,7 @@ try:
 except Exception as _eO:
     ok("_row_time_conflict 行为可测", False, str(_eO)[:80])
 
-print("── P. 活动行时间戳是间歇可读的 ⇒ 判不了之前要**连试几帧**（跨机 r19 live：单帧读不出就把 zip 挡住了）──")
+print("── P. 活动行时间戳是间歇可读的 ⇒ 判不了之前要**连试几帧**──")
 _segP = open(os.path.join(_ROOT, "agent", "wechat.py"), encoding="utf-8").read()
 _segP = _segP[_segP.index("def _row_time_conflict"):]
 _segP = _segP[:_segP.find("\n    def ", 10)]

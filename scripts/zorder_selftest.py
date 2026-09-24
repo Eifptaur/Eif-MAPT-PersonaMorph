@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""窗口 Z 序纪律判据（2026-09-17 立，起因＝用户「佬」报「控制台有时候强制锁定在最上面」）。
+"""窗口 Z 序纪律判据。
 
 真因（一次参数笔误，注释与实参相反）：`agent/ui_adapt.py::dismiss_overlays()` 里那句
 `SetWindowPos(h, -1, …)` 注释写着"置于下层（HWND_BOTTOM）"，可 **-1 是 HWND_TOPMOST**
@@ -67,7 +67,7 @@ for d in ("scripts", "launcher-src"):
         if not (f.endswith(".py") or f.endswith(".cs")):
             continue
         p = os.path.join(base, f)
-        if f == "zorder_selftest.py":                 # 判据文件自己会提到这个写法，别自命中
+        if f == "zorder_selftest.py": # 判据文件自己会提到这个写法，别自命中
             continue
         for i, line in enumerate(_read(p).splitlines(), 1):
             if line.lstrip().startswith("//") or line.lstrip().startswith("#") or "re.search" in line:

@@ -16,12 +16,12 @@ from .safe_fetch import safe_fetch, read_stream
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 
-# ── V-R9-26 / V-R9-27 的两个数：**回包上限**与**整轮墙钟预算** ────────────────────
+# ── / 的两个数：**回包上限**与**整轮墙钟预算** ────────────────────
 # HTML_MAX_BYTES＝2MB：搜索结果页正常 100~500KB（Bing/Google 都塞内联样式），2MB 是宽裕上限。
 # JSON_MAX_BYTES＝4MB：各搜索 API 的 JSON（前 6~10 条结果）正常几十 KB。
 # WALL_S＝20s：一次搜索的**总耗时**上限（含连接）。为什么不是 requests 的 `timeout=`：
 #   它只管**单次 recv**，对面每 6 秒吐 1 字节就能把"声明 15 秒"的请求拖到 **63 秒**
-#   （审计 V-R9E-6 实测），而 `web_search` 是在唤醒链路上被模型调的 ⇒ 等于把主流程挂住。
+# ，而 `web_search` 是在唤醒链路上被模型调的 ⇒ 等于把主流程挂住。
 HTML_MAX_BYTES = 2 * 1024 * 1024
 JSON_MAX_BYTES = 4 * 1024 * 1024
 CONNECT_TIMEOUT = 5
@@ -30,7 +30,7 @@ WALL_S = 20.0
 
 
 def _get_capped(resp, max_bytes: int, what: str, t0: float = None) -> bytes:
-    """V-R9-26/27：带上限 + 整轮墙钟预算地读回包（超限/超时**抛**，不整包收进内存）。"""
+    """带上限 + 整轮墙钟预算地读回包（超限/超时**抛**，不整包收进内存）。"""
     return read_stream(resp, max_bytes, budget_s=WALL_S, t0=t0, what=what)
 
 
@@ -143,7 +143,7 @@ def web_search(query: str) -> dict:
         try:
             return _deepseek_search(clean)
         except Exception:
-            pass  # 无 key/服务不可用 → 下方免费引擎回退
+            pass # 无 key/服务不可用 → 下方免费引擎回退
     if provider == "zhipu":
         return _zhipu_search(clean)
     if provider == "bocha":
@@ -159,7 +159,7 @@ def web_search(query: str) -> dict:
         try:
             return google_search(clean)
         except Exception:
-            pass  # Google 不可达（无代理/超时/反爬）→ 回退
+            pass # Google 不可达（无代理/超时/反爬）→ 回退
     return bing_search(clean)
 
 

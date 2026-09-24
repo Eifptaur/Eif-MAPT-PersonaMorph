@@ -22,7 +22,7 @@ import tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 fails = []
-TOTAL = [0]           # 实际执行的检查数（2026-09-14 改成计数器：原来那行是**写死的分组加总**，
+TOTAL = [0] # 实际执行的检查数（原来那行是**写死的分组加总**，
                       # 加了检查项却忘改数字 ⇒ 报告里的"112 项"和实际条数会悄悄对不上）
 
 
@@ -105,14 +105,14 @@ finally:
 from agent.llm import match_official_price, _OFFICIAL_PRICES
 check("价目表有规模（≥150 条）", len(_OFFICIAL_PRICES) >= 150,
       "当前 %d 条" % len(_OFFICIAL_PRICES))
-# ⛔ 2026-09-15 改口径：原来写死 `== 172`。加一条新模型（gpt-6-astra）就假红——**数字一变就要改自检，
-#   是自检在制造维护负担**（同 2026-09-14 那条"官方价数字不写死"的口径）。改成守两件真事实：
+# ⛔ 原来写死 `== 172`。加一条新模型（gpt-6-astra）就假红——**数字一变就要改自检，
+# 是自检在制造维护负担**。改成守两件真事实：
 #   ①表里有规模（≥150，防被误删空）②每条都有 in/out 两个数字（防塞半条进去）。
 _bad_rows = [k for k, v in _OFFICIAL_PRICES.items()
              if not isinstance(v.get("in"), (int, float)) or not isinstance(v.get("out"), (int, float))]
 check("价目表每条都带 in/out 两个数字", not _bad_rows, "缺字段的：%s" % (_bad_rows[:5] or "无"))
 check("GPT-6 旗舰（gpt-6-astra）已进价目表", "gpt-6-astra" in _OFFICIAL_PRICES)
-# 2026-09-15 补：`join_url(base, path)` 只是 `base.rstrip("/") + path`，**不补斜杠** ⇒
+# `join_url(base, path)` 只是 `base.rstrip("/") + path`，**不补斜杠** ⇒
 # path 必须自己带前导斜杠。我在交付面自检里写成 `join_url(base, "models")`，
 # 拼出 `https://api.deepseek.com/v1models` 直接 404（还差点当成"端点不支持 /models"报上去）。
 from agent.llm import join_url as _join_url
@@ -124,7 +124,7 @@ _cr = io.open(os.path.join(ROOT, "scripts", "collect_report.py"), encoding="utf-
 check("交付面自检拉模型列表时带了前导斜杠", 'join_url(base, "/models")' in _cr)
 check("交付面自检已经接进报告主流程（第六节）", "sec_delivery" in _cr and "六、投递发送实测" in _cr)
 check("MiniMax-M3 命中", match_official_price("MiniMax-M3")["in"] == 2.1)
-# ⛔ 2026-09-14 改口径：原来写死 `out == 4.5`，而价目表已按官方 2026-09-10 **闲时价**更新为 4.0
+# ⛔ 原来写死 `out == 4.5`，而价目表已按官方 **闲时价**更新为 4.0
 #   ⇒ 断言跟不上就假红。这里改成守"**有官方价映射且带出处**"这件事实，具体数字由价目表自己负责
 #   （数字一变就要改自检，是自检在制造维护负担）。
 _ds_price = match_official_price("deepseek-flash")
@@ -141,7 +141,7 @@ for _old in ("deepseek-v4-flash", "deepseek-v4-flash-vision-exp", "deepseek-chat
 from agent.prompt import resolve_context_tier
 cfg2 = {"store": {"context_tier": 2, "unified_tier": True, "group_tier": {},
                   "group_blocklist": {}, "keywords": ["鲸鱼"], "random_percent": 60}}
-# ⛔ V-R7-2 ①：注入之前**必须先 prime `get_config()`** —— 否则 `_current_config` 会被
+# ⛔ ①：注入之前**必须先 prime `get_config()`** —— 否则 `_current_config` 会被
 #   `get_config()` 的重载覆盖，判据读到的是真配置（context_tier=1）⇒ "默认2档关键词触发" 假红。
 try:
     config.get_config()
@@ -202,7 +202,7 @@ check("icon-whale 有透明（眼睛）", trans > 10, "trans=%d" % trans)
 cur = Image.open(os.path.join(ROOT, "assets", "cursor.png")).convert("RGBA")
 cw, ch = cur.size
 cpx = cur.load()
-# ⛔ 2026-09-14 改口径：原来是 `range(0,w,8)` 采样 + `blue>50`。cursor.png 只有 **64×64**
+# ⛔ 原来是 `range(0,w,8)` 采样 + `blue>50`。cursor.png 只有 **64×64**
 #   ⇒ 每 8 像素一采只剩 64 个样本，"blue>50" 等于要求 78% 的样本是蓝的（几乎不可能），实测 blue=11
 #   被误判成"光标不是蓝鲸"。改成**按比例**判（步长 2、阈值 2%），并把数字打出来便于对账。
 _samp = 0
@@ -216,8 +216,8 @@ for y in range(0, ch, 2):
 check("cursor 蓝色鲸鱼（蓝像素占比>2%）", _blue > max(1, int(_samp * 0.02)),
       "blue=%d/%d（%.1f%%）" % (_blue, _samp, 100.0 * _blue / max(1, _samp)))
 
-# ═══════════ E. 一键启动链（2026-09-14 改口径：vbs 已收进 scripts/）═══════════
-# 为什么改：原来断言 `一键启动.vbs` 在**根目录**，而 2026-09-13 收口时把三个 vbs 全挪进了 `scripts\`
+# ═══════════ E. 一键启动链═══════════
+# 为什么改：原来断言 `一键启动.vbs` 在**根目录**，而 收口时把三个 vbs 全挪进了 `scripts\`
 # （根目录只留 `一键启动.exe`/`一键关闭.exe`）⇒ 四条断言长期假红，是自检没跟上目录收口。
 check("scripts\\一键启动.vbs 存在", os.path.exists(os.path.join(ROOT, "scripts", "一键启动.vbs")))
 check("scripts\\一键关闭.vbs 存在", os.path.exists(os.path.join(ROOT, "scripts", "一键关闭.vbs")))
@@ -272,8 +272,7 @@ try:
 except Exception as e:
     check("行为引擎", False, str(e))
 
-# ═══════════ J. 「点击测试」必须全程后台（真鼠标一键检验已按用户要求删除）═══════════
-# 用户 2026-09-14 原话：「那个程序鼠标检验怎么还在那儿呢？而且它又抢我鼠标…我要的是点击测试，全程后台测」
+# ═══════════ J. 「点击测试」必须全程后台═══════════
 # ⇒ 自检改成"守删除"：面板/JS/后端入口/路由若任何一个回来，这里立刻变红。
 try:
     _wx_src = io.open(os.path.join(ROOT, "scripts", "persona_morph.py"), encoding="utf-8").read()
@@ -305,7 +304,7 @@ except Exception as e:
     check("代码检测", False, str(e))
 
 # ── config.example.json 必须与 config.DEFAULT_CONFIG 同键（否则示例会静默漂） ──
-# 2026-09-15：示例文件曾经只覆盖 20 个顶层键（真实默认 35 个），缺 voice_reply / feedback.limit /
+# 示例文件曾经只覆盖 20 个顶层键（真实默认 35 个），缺 voice_reply / feedback.limit /
 # wechat.restore_minimized 等 ⇒ 拿示例当参照的人会以为这些功能不存在。现在由脚本生成 + 这条断言守着。
 def _kp(d, pre=""):
     out = set()
@@ -325,7 +324,7 @@ try:
           "示例 %d 键 / 默认 %d 键；缺=%s 多=%s"
           % (len(_ek), len(_dk), sorted(_dk - _ek)[:5], sorted(_ek - _dk)[:5]))
     # ⚠️ 断言里**不许写出真实的用户名/邮箱字面量**——否则自检自己就成了 PII 泄露源，
-    #    打包闸门当场 FATAL（2026-09-15 实测：早先把用户名写进这条正则，出包被拒）。
+    # 打包闸门当场 FATAL。
     #    用"形状"判：任何 email 形状、任何 sk- 形状的密钥。
     _ex_txt = io.open(os.path.join(ROOT, "config.example.json"), encoding="utf-8").read()
     _hit = re.search(r"[\w.+-]+@[\w-]+\.[\w.]{2,}|sk-[A-Za-z0-9]{8,}", _ex_txt)
@@ -334,7 +333,7 @@ try:
 except Exception as e:
     check("config.example.json 与默认配置同键", False, str(e)[:80])
 
-# ── 用量三分口径（2026-09-15）：只记"总 token"看不出钱花在哪，缓存/未命中/输出单价差 30~90 倍 ──
+# ── 用量三分口径：只记"总 token"看不出钱花在哪，缓存/未命中/输出单价差 30~90 倍 ──
 try:
     _st = io.open(os.path.join(ROOT, "agent", "stats.py"), encoding="utf-8").read()
     _pm = io.open(os.path.join(ROOT, "scripts", "persona_morph.py"), encoding="utf-8").read()
@@ -346,7 +345,7 @@ try:
 except Exception as e:
     check("用量账本记三分（fresh / cached / output）", False, str(e)[:60])
 
-# ── 自检自身的可执行性（2026-09-15）：自检崩掉和自检红掉是两件事 ──
+# ── 自检自身的可执行性：自检崩掉和自检红掉是两件事 ──
 # 产品链走 `py -X utf8 onestart.py`（launcher.cs:285）所以产品侧没事；但自检脚本没这层——
 # 一旦输出被重定向（`> out.txt` / 管道），Python 退回 locale 编码（本机 GBK），
 # `print("  ✔ %s")` 直接 UnicodeEncodeError，**整条自检崩在第一个 PASS 上**（rc=1、只跑半截）。
@@ -361,7 +360,7 @@ try:
         _t = io.open(os.path.join(_sdir, _n), encoding="utf-8").read()
         if "\u2714" in _t or "\u2718" in _t:
             _risky.append(_n)
-            # ⛔ V-R7-2 ③：垫片有两种**等价**写法 —— ① 直接 `sys.stdout.reconfigure(...)`；
+            # ⛔ ③：垫片有两种**等价**写法 —— ① 直接 `sys.stdout.reconfigure(...)`；
             #   ② `for _s in (sys.stdout, sys.stderr): _s.reconfigure(...)`（本项目多条用这种）。
             #   老判据只认 ① ⇒ 把 ② 误报成"缺垫片"（假红：那两条实测在 GBK 子进程里不崩）。
             _shim = ("sys.stdout.reconfigure" in _t
@@ -378,7 +377,7 @@ except Exception as e:
     check("打印 ✔/✘ 的判据都带 UTF-8 垫片（重定向下不崩）", False, str(e)[:80])
 
 print("\n==== %d 项检查，%d 项失败 ====" % (TOTAL[0], len(fails)))
-# 2026-09-15 补：失败时把**名字**打出来。以前只打数量，而这份检查器的输出在重定向/管道下
+# 失败时把**名字**打出来。以前只打数量，而这份检查器的输出在重定向/管道下
 # 会被截断（只留最后几行）⇒ 数字说"1 项失败"却找不到是哪一项，白查一轮。
 if fails:
     print("失败项：")

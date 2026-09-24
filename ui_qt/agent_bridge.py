@@ -17,7 +17,7 @@ import os
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]   # ui_qt → 项目根（落位自 _scratch/qt_proto，层级浅一级）
+ROOT = Path(__file__).resolve().parents[1] # ui_qt → 项目根（落位自 _scratch/qt_proto，层级浅一级）
 
 
 def _ensure_path() -> None:
@@ -34,7 +34,7 @@ def current_url() -> str:
     """
     _ensure_path()
     try:
-        from agent.notify_ui import console_url  # noqa: PLC0415
+        from agent.notify_ui import console_url # noqa: PLC0415
         u = console_url()
         if u:
             return u
@@ -54,7 +54,7 @@ def current_url() -> str:
     # 兜底 2：配置里的端口
     port = 3210
     try:
-        import json  # noqa: PLC0415
+        import json # noqa: PLC0415
         cfg = json.loads((ROOT / "config.json").read_text(encoding="utf-8", errors="replace"))
         port = int((cfg.get("server") or {}).get("port") or 3210)
     except Exception:
@@ -66,25 +66,25 @@ def post_api(api: str, timeout: float = 5.0, base: str = "") -> tuple[bool, str]
     """POST 一个后台 API（顶栏「重启」「停止」用：/api/restart、/api/shutdown）。
 
     地址走 current_url() 的权威口径（base 参数留给自测/复用注入），
-    拼接走 addr.join_url（丙-5 #0 的教训：
+    拼接走 addr.join_url（ #0 的教训：
     base 自带 ?token= 时手拼 `rstrip+"/"+path` 会把路径塞进 query → 401）。
 
     返回 (ok, 说明)。**连接在响应读完前被切断也算送达** ——
     /api/shutdown 的实现是响应一发出就写 stopped.flag + `os._exit(0)`，
     客户端几乎必然读不到完整响应（web 侧 console_html.py 对同款行为
-    早有注释：「响应很可能还没读完连接就断」）。所以按异常类型细分：
+    早有注释）。所以按异常类型细分：
     远端主动断开（RemoteDisconnected 一族）= 请求已被后台处理，算成功；
     拒绝连接 = 服务没在跑，算失败。任何路径都不抛异常 ——
     按钮点了必须给个说法，不能无声无息。
     """
-    from addr import join_url  # noqa: PLC0415
+    from addr import join_url # noqa: PLC0415
 
     url = join_url(base or current_url(), api)
     try:
-        import urllib.error  # noqa: PLC0415
-        import urllib.request as ur  # noqa: PLC0415
+        import urllib.error # noqa: PLC0415
+        import urllib.request as ur # noqa: PLC0415
 
-        opener = ur.build_opener(ur.ProxyHandler({}))   # 必须绕代理（同 heal 口径）
+        opener = ur.build_opener(ur.ProxyHandler({})) # 必须绕代理（同 heal 口径）
         req = ur.Request(
             url,
             data=b"",
@@ -95,9 +95,9 @@ def post_api(api: str, timeout: float = 5.0, base: str = "") -> tuple[bool, str]
             return True, "HTTP %d" % getattr(r, "status", 200)
     except urllib.error.HTTPError as e:
         # 4xx/5xx = 请求被拒/处理失败，动作没有执行 —— 一律不算送达
-        # （尤其 401：token 不对，restart/shutdown 根本没发生，别骗用户「已送达」）
+        # （尤其 401：token 不对，restart/shutdown 根本没发生，别骗）
         return False, "HTTP %d（被拒绝）" % e.code
-    except Exception as e:  # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         # urllib 会把多数网络错包进 URLError（.reason 是根因）；握手前的
         # ConnectionResetError 等则直接抛。先拿两头的类型名再归类。
         reason = getattr(e, "reason", e)
@@ -118,24 +118,24 @@ def post_api(api: str, timeout: float = 5.0, base: str = "") -> tuple[bool, str]
 
 def post_json(api: str, body: dict | None = None, timeout: float = 8.0,
               base: str = "") -> dict | None:
-    """POST 一个后台 API 并读回 JSON 响应（丙-6 #13 更新条用：/api/update_apply、
+    """POST 一个后台 API 并读回 JSON 响应（ #13 更新条用：/api/update_apply、
     /api/update_skip）。与 post_api 的差别：需要**响应体** —— update_apply 的
     {"ok": false, "why": …}、update_skip 的回执都要逐字给用户看，不能只给"送达"。
 
-    地址与拼接口径同 post_api（current_url + addr.join_url，丙-5 #0 教训）。
+    地址与拼接口径同 post_api。
     返回 dict；连接层失败（没连上/超时）返回 None —— 调用方如实显示，别骗人。
     HTTPError 时尝试解析错误响应体（后端 500 也带 {"ok":false,"why"}）。
     """
-    from addr import join_url  # noqa: PLC0415
+    from addr import join_url # noqa: PLC0415
 
     url = join_url(base or current_url(), api)
     try:
-        import json as _j  # noqa: PLC0415
-        import urllib.error  # noqa: PLC0415
-        import urllib.request as ur  # noqa: PLC0415
+        import json as _j # noqa: PLC0415
+        import urllib.error # noqa: PLC0415
+        import urllib.request as ur # noqa: PLC0415
 
         payload = _j.dumps(body or {}).encode("utf-8")
-        opener = ur.build_opener(ur.ProxyHandler({}))   # 必须绕代理（heal/post_api 同款）
+        opener = ur.build_opener(ur.ProxyHandler({})) # 必须绕代理（heal/post_api 同款）
         req = ur.Request(
             url,
             data=payload,
@@ -146,12 +146,12 @@ def post_json(api: str, body: dict | None = None, timeout: float = 8.0,
             return _j.loads(r.read().decode("utf-8", "replace"))
     except urllib.error.HTTPError as e:
         try:
-            import json as _j2  # noqa: PLC0415
+            import json as _j2 # noqa: PLC0415
 
             return _j2.loads(e.read().decode("utf-8", "replace"))
-        except Exception:  # noqa: BLE001
+        except Exception: # noqa: BLE001
             return {"ok": False, "why": "HTTP %d（被拒绝）" % e.code}
-    except Exception as e:  # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         reason = getattr(e, "reason", e)
         return None if "ConnectionRefusedError" in {
             type(e).__name__, type(reason).__name__} else {
@@ -167,13 +167,13 @@ def console_process_alive() -> tuple[bool, str]:
     两种都是 `ConnectionRefused`，只有进程表能分开。
     """
     try:
-        import subprocess  # noqa: PLC0415
+        import subprocess # noqa: PLC0415
         out = subprocess.run(
             ["wmic", "process", "where", "name='python.exe'", "get", "CommandLine"],
             capture_output=True, text=True, timeout=4,
             creationflags=0x08000000,
         ).stdout or ""
-    except Exception as e:  # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         return False, "查不到进程（%s）" % type(e).__name__
     # 判据：命令行里同时出现 persona_morph 与 .py —— 避免把无关 python 进程算进来
     hits = [ln for ln in out.splitlines() if "persona_morph" in ln and ".py" in ln]

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""「这个进程属于本安装吗」的**唯一判据**（2026-09-20 立，V-R1-3）。
+"""「这个进程属于本安装吗」的**唯一判据**。
 
 为什么单开一个模块：`taskkill /F` 是强制终止，判据错了会**杀掉别人的进程** —— 实测过三种：
 别人项目里的 `watchdog.py`、另一份解压目录里的群相副本、`D:\\tools\\onestart.py`。
@@ -55,7 +55,7 @@ def is_our_install(cmd: str, root: str = "") -> bool:
         except Exception:
             continue
         if not p.startswith(r + os.sep):
-            continue                      # ← 不在本安装目录下：**别人的进程，一个都不许碰**
+            continue # ← 不在本安装目录下：**别人的进程，一个都不许碰**
         if os.path.basename(p) in OWN_SCRIPT_NAMES:
             return True
     return False

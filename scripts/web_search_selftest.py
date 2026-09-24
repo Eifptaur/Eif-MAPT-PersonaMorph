@@ -2,10 +2,10 @@
 # -*- coding: utf-8 -*-
 """判据：联网搜索（`agent/web_search.py`）——**全离线**：把 `requests` 整个替身掉，一条真请求都不发。
 
-为什么要有它（第九轮审计 **V-R9-31**）：这个模块原来**没有行为判据**
+为什么要有它：这个模块原来**没有行为判据**
 （唯一真调用在 `persona_model_selftest` 的 `--live` 分支里，标准套件从不执行）
 ⇒ `sanitize_query` 的长度上限 / 请求超时 / 无结果回退 / 引擎顺序 / 响应体上限**零断言**。
-本轮修的是 V-R9-26（读完才截断 ⇒ 实测收完 200MB、峰值 601MB）与 V-R9-27（超时是"每 recv"）。
+本轮修的是 （读完才截断 ⇒ 实测收完 200MB、峰值 601MB）与 （超时是"每 recv"）。
 
   ① `sanitize_query` 的长度上限与清洗（CQ 码 / NUL）
   ② 每个请求都带超时，且读取有**整轮墙钟预算**
@@ -27,8 +27,8 @@ try:
 except Exception:
     pass
 
-from agent import web_search as WS                    # noqa: E402
-from agent import safe_fetch as SF                    # noqa: E402
+from agent import web_search as WS # noqa: E402
+from agent import safe_fetch as SF # noqa: E402
 
 PASS, FAIL = 0, 0
 
@@ -118,7 +118,7 @@ def main() -> int:
             if "bing.com" in url:
                 return resp_bing
             if "deepseek" in url:
-                return _FakeResp(body=b'{"output":[]}')          # 无 key 分支之外的兜底：没文本 ⇒ 回退
+                return _FakeResp(body=b'{"output":[]}') # 无 key 分支之外的兜底：没文本 ⇒ 回退
             raise AssertionError("判据不该请求这个地址：%s" % url)
 
         WS.requests = _FakeRequests(route_ok)
@@ -150,7 +150,7 @@ def main() -> int:
             if "deepseek" in url:
                 return _FakeResp(body=b'{"output":[]}')
             if "google.com" in url:
-                return _FakeResp(body=GOOGLE_EMPTY)               # 解析不到 ⇒ 抛 ⇒ 该回退
+                return _FakeResp(body=GOOGLE_EMPTY) # 解析不到 ⇒ 抛 ⇒ 该回退
             if "bing.com" in url:
                 return _FakeResp(body=BING_HTML)
             raise AssertionError(url)

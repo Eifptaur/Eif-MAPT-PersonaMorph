@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""「这条库行是不是我自己发的」判据（2026-09-18 用户两次反馈后立）。
+"""「这条库行是不是我自己发的」判据。
 
-**报障原话**：「**他有时候还是会把自己识别成别人**」。
+**报障原话**。
 
 **查到的事实**：判自己原来只有三档证据 —— ① `self_wxid` 命中 ② 昵称一致 + 我刚发过
 ③ 文本回声窗（默认 120 秒）。三条**都不是"行号"**，所以两处必然漏判：
@@ -17,7 +17,7 @@
 本判据守四件事（顺序＝优先级）：
   ① **命中就是自己**：行号 + 时间都对得上 ⇒ 判自己（不依赖文本、不依赖回声窗）；
   ② **绝不把别人的话丢掉**（比漏判回声更糟）—— 只有"行号命中 **且** 时间接近"才算；
-     用户「清空聊天记录」会把消息表整张删掉、`local_id` 从 1 重新开始 ⇒ 撞号必须靠时间挡掉；
+     会把消息表整张删掉、`local_id` 从 1 重新开始 ⇒ 撞号必须靠时间挡掉；
   ③ **只在 DB 回读确认之后登记**（登记错＝把别人的消息登记成自己的 ⇒ 漏回）；
   ④ **覆盖无语义文本**：发图登记要求回读那行**确实是图片**、发文件要求**确实是文件类**。
 """
@@ -30,7 +30,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
-from agent import wechat as W          # noqa: E402
+from agent import wechat as W # noqa: E402
 
 PASS = FAIL = 0
 
@@ -62,10 +62,10 @@ class _Shim(object):
         self._path = path
         self._self_local = {}
         self._self_local_loaded = False
-        # 账号（2026-09-19）：台账按账号隔离，夹具要像真 adapter 一样报得出"在读哪个号"
+        # 账号：台账按账号隔离，夹具要像真 adapter 一样报得出"在读哪个号"
         self._db = type("D", (), {"account": acct})()
 
-    def _self_local_file(self):           # 覆盖掉类方法（它指向产品 data/ 目录）
+    def _self_local_file(self): # 覆盖掉类方法（它指向产品 data/ 目录）
         return self._path
 
 
@@ -157,7 +157,7 @@ s7 = _Shim(os.path.join(TMP, "不存在的盘符Z", "x.json"))
 try:
     s7.remember_self_local("群F", 400, 1758600000)
     ok("坏路径 ⇒ 不抛异常、进程内仍然生效", s7.is_self_local("群F", 400, 1758600000) is True)
-except Exception as e:                     # noqa: BLE001
+except Exception as e: # noqa: BLE001
     ok("坏路径 ⇒ 不抛异常、进程内仍然生效", False, repr(e))
 
 print("── I. 回读那行「确实是图片 / 确实是文件类」才登记（登记错＝丢别人的话）──")
@@ -190,7 +190,7 @@ ok("判据异常时**按未命中继续**（不许因为判自己崩掉监听）
 
 _seg = _SRC[_SRC.index("def send_text_posted("):]
 _seg = _seg[:_seg.index("def send_image_posted(")]
-# ⛔ 2026-09-22 改口径（第十五轮 **V-R15-4**）：原判据钉的是"**只有一处** `_self_local_note`，
+# ⛔ 原判据钉的是"**只有一处** `_self_local_note`，
 #   且在『内容与本次一致』那句之后"。现在这一版**多了一处**登记（快路径超时后的复核：确认最近几行里
 #   已有本次文本才登记自我行号 ⇒ 不重复打字），所以按"**总数 == 1**"判会误红。
 #   ⇒ 口径改成**不变量的形态**：①登记次数 ≤ "内容确认"守卫数（每一处登记都有一次内容核对）；

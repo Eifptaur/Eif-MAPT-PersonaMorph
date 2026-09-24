@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """**发送重试队列**：把"身份判不了 ⇒ 这次不发"变成"晚点再发一次"。
 
-背景（2026-09-21，用户原话：「现在还是会影响用户体验的，**宁可不发也不发错，但用户本身是想发的**」）
+背景
 ＋ 业界调研结论（TOCTOU：不要在 use 之前做 check；判不了的消息应进**失败可见的重试队列**，
 而不是直接丢掉；出处：CWE-367 + SQS DLQ 模式）。
 
@@ -39,9 +39,9 @@ MAX_ITEMS = 50
 
 _lock = threading.RLock()
 _cache = None
-_DROPPED = {"n": 0}                       # 因队列满被丢掉的条数（stats 里给人看）
+_DROPPED = {"n": 0} # 因队列满被丢掉的条数（stats 里给人看）
 # 停机/暂停的话术（`agent/control.halt_reason()` 给的原文）——它们**不是失败**，
-# 而是"现在不能发"：条目要**留着**，等解禁再补发（第六轮 V-R6-5）。
+# 而是"现在不能发"：条目要**留着**，等解禁再补发。
 _HALT_WORDS = ("机器人已暂停", "机器人已停止", "已暂停", "已停止")
 
 
@@ -62,7 +62,7 @@ def _load() -> list:
     except FileNotFoundError:
         _cache = []
     except Exception as e:
-        # ⛔ 2026-09-21 修（第六轮 **V-R6-16②**）：docstring 说"原文件不动，人工可查"，
+        # ⛔ docstring 说"原文件不动，人工可查"，
         #   但 `enqueue` 第一次 `_save` 就会 `os.replace` 把它覆盖掉。⇒ 读坏时先把坏文件
         #   **改名留证**（`.bad.<ts>`），这样"人工可查"才是真的。
         log.warning("发送重试队列读不动（%s）⇒ 按空队列起（坏文件改名留证，人工可查）", str(e)[:60])
@@ -97,23 +97,23 @@ def enqueue(chat_key: str, text: str, why: str = "", now: float = None) -> dict:
         for it in items:
             if it.get("chat_key") == chat_key and it.get("text") == text:
                 it["why"] = str(why or it.get("why") or "")[:200]
-                try:                        # 原因码同步（2026-09-22）：去重更新时也要跟着刷新
+                try: # 原因码同步：去重更新时也要跟着刷新
                     from . import reason_codes as _rc
                     it["code"] = _rc.classify(it["why"])
                 except Exception:
                     pass
-                # ⛔ 2026-09-21 修（第六轮 **V-R6-16③**）：原来每次都把 `next_at` 重置成 `now+15`
+                # ⛔ 原来每次都把 `next_at` 重置成 `now+15`
                 #   ⇒ 反复入队会让本该到点的条目**永远到不了点**（饥饿），饿到 MAX_AGE_S 后一失败就丢。
                 #   ⇒ 只允许**往早提**（min），且不许超过 `created + MAX_AGE_S`。
                 _cap = float(it.get("created") or _now) + MAX_AGE_S
                 it["next_at"] = min(float(it.get("next_at") or 0) or (_now + BACKOFF[0]),
                                     _now + BACKOFF[0], _cap)
-                if it["next_at"] < _now:                 # 已经过点了 ⇒ 立刻可试，别再往后压
+                if it["next_at"] < _now: # 已经过点了 ⇒ 立刻可试，别再往后压
                     it["next_at"] = _now
                 _save(items)
                 return {"ok": True, "deduped": True, "pending": len(items)}
         if len(items) >= MAX_ITEMS:
-            # ⛔ 2026-09-21 修（第六轮 **V-R6-16①**）：原来静默丢最旧（与 docstring"绝不静默"相悖）
+            # ⛔ 原来静默丢最旧（与 docstring"绝不静默"相悖）
             #   ⇒ 记一条 warning，并把丢弃次数留在 stats() 里给人看。
             _drop = len(items) - MAX_ITEMS + 1
             log.warning("重试队列已满（%d）⇒ 丢掉最旧的 %d 条（%s）",
@@ -122,8 +122,8 @@ def enqueue(chat_key: str, text: str, why: str = "", now: float = None) -> dict:
             _DROPPED["n"] = int(_DROPPED.get("n") or 0) + _drop
         _id = "r%d.%d" % (int(_now * 1000), len(items))
         _code = ""
-        try:                                # 原因码（2026-09-22，照官方 winapp ui 的做法）：
-            from . import reason_codes as _rc   # 让"为什么没发出去"可统计、判据钉得住
+        try: # 原因码：
+            from . import reason_codes as _rc # 让"为什么没发出去"可统计、判据钉得住
             _code = _rc.classify(why)
         except Exception:
             _code = ""
@@ -151,7 +151,7 @@ def stats() -> dict:
 def due(now: float = None) -> list:
     """到点该重试的条目（**不改队列**）。
 
-    ⚠️ 2026-09-21（第六轮 **V-R6-4**）：**超龄条目不算"到点"** —— 它们只会被 `tick` 清掉并记账，
+    ⚠️ **超龄条目不算"到点"** —— 它们只会被 `tick` 清掉并记账，
     **绝不给它们发出去的机会**（原来只看 `next_at` ⇒ 停机一夜后早上第一跳把昨天的补发进群）。
     """
     _now = float(now if now is not None else time.time())
@@ -178,7 +178,7 @@ def resolve(item_id: str, ok: bool, why: str = "", now: float = None) -> str:
             if it.get("id") != item_id:
                 continue
             it["last"] = "%s %s" % (time.strftime("%H:%M:%S"), str(why or "ok")[:120])
-            # ⛔ 2026-09-21 修（第六轮 **V-R6-4**）：**年龄闸在最前** —— 原来 `if ok:` 排在它前面，
+            # ⛔ **年龄闸在最前** —— 原来 `if ok:` 排在它前面，
             #   于是"停机一夜的超龄条目"早上照样被真发出去（"过期就丢弃并记账"的 docstring 是假的）。
             if (_now - float(it.get("created") or _now)) >= MAX_AGE_S:
                 items.remove(it)
@@ -191,7 +191,7 @@ def resolve(item_id: str, ok: bool, why: str = "", now: float = None) -> str:
                 _save(items)
                 log.info("重试成功，已出队（%s）：%s", item_id, it.get("chat_key"))
                 return "done"
-            # ⛔ 2026-09-21 修（第六轮 **V-R6-4/5**）：
+            # ⛔ 
             #   ①**年龄闸提到最前**：原来 `if ok:` 在年龄闸之前 ⇒ 停机一夜的超龄条目早上照样被真发出去
             #     （"过期就丢弃并记账"的 docstring 是假的）。
             #   ②**停机/暂停不算失败**：那种话术原来落进"不可重试"⇒ `items.remove` **永久销毁**条目
@@ -205,7 +205,7 @@ def resolve(item_id: str, ok: bool, why: str = "", now: float = None) -> str:
                 return "expired"
             if any(w in str(why or "") for w in _HALT_WORDS):
                 it["why"] = str(why or it.get("why") or "")[:200]
-                it["next_at"] = _now + BACKOFF[0]          # 解禁后下一轮再来；**不销毁、不计次**
+                it["next_at"] = _now + BACKOFF[0] # 解禁后下一轮再来；**不销毁、不计次**
                 _save(items)
                 log.info("现在不能发（%s）⇒ 这条留着，等解禁再补发：%s",
                          str(why)[:60], it.get("chat_key"))
@@ -237,20 +237,20 @@ def tick(send_fn, now: float = None, limit: int = 3, halt_fn=None) -> dict:
 
     只试前 `limit` 条（一轮别把窗口操作堆满）；返回计数给人看。
 
-    ⛔ 2026-09-21 加 `halt_fn`（第六轮 **V-R6-5**）：机器人被暂停/停止时**一条都不许试**
+    ⛔ `halt_fn`：机器人被暂停/停止时**一条都不许试**
     （原来 tick 不看闸门 ⇒ 停机一夜后一开机就把队列烧空）。`halt_fn()` 返回非空字符串＝现在不能发。
     """
     out = {"tried": 0, "done": 0, "again": 0, "dropped": 0, "expired": 0, "held": 0}
     try:
         _halt = str(halt_fn() or "") if callable(halt_fn) else ""
-    except Exception:                                             # noqa: BLE001
+    except Exception: # noqa: BLE001
         _halt = ""
     if _halt:
         out["held"] = len(due(now)[:max(1, int(limit))])
         if out["held"]:
             log.info("发送重试：现在不能发（%s）⇒ 本轮一条都不试，%d 条留着等解禁", _halt[:60], out["held"])
         return out
-    # ⚠️ 先把**超龄**的清掉并记账（第六轮 V-R6-4）：它们**不许**有任何被发出去的机会。
+    # ⚠️ 先把**超龄**的清掉并记账：它们**不许**有任何被发出去的机会。
     for _it in expired(now)[:max(1, int(limit))]:
         if resolve(str(_it.get("id")), False, "超过 %.0f 秒 ⇒ 过期丢弃" % MAX_AGE_S, now=now) == "expired":
             out["expired"] += 1
@@ -258,7 +258,7 @@ def tick(send_fn, now: float = None, limit: int = 3, halt_fn=None) -> dict:
         out["tried"] += 1
         try:
             ok, why = send_fn(str(it.get("chat_key") or "").split(":", 1)[-1], str(it.get("text") or ""))
-        except Exception as e:                                   # noqa: BLE001
+        except Exception as e: # noqa: BLE001
             ok, why = False, "%s: %s" % (type(e).__name__, str(e)[:60])
         _act = resolve(str(it.get("id")), bool(ok), str(why), now=now)
         out[{"done": "done", "again": "again", "dropped": "dropped",

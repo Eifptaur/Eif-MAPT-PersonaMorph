@@ -1,17 +1,16 @@
 # -*- coding: utf-8 -*-
-"""第 24 条判据：「删运行明细」必须**同时删掉那一段对话历史**（作者 2026-09-18 定的口径）。
+"""第 24 条判据：「删运行明细」必须**同时删掉那一段对话历史**。
 
 跑法： py -3 scripts\\history_prune_selftest.py      退出码 0=全过 / 1=有失败
 
-作者原话：「**就应该删的是历史啊**，因为我删运行明细那个地方，就是删他回了什么。也就是说，
 我删明细就等于我想要删历史，就等于我想删掉『**我说什么而他回什么**』的这一段。怎么能只能删明细呢？
 这就是错的，**从根上就是错的**，赶紧修啊」
 · 事实：模型的上下文来自 `data/messages/<会话>.json`（`store.recent()`），而控制台原来删的
-  `data/sessions/*.jsonl` **只是运行日志** ⇒ 只删它等于没删（现场：作者把运行明细删光，
+  `data/sessions/*.jsonl` **只是运行日志** ⇒ 只删它等于没删（现场：
   机器人照样叫他"复读机"）。
 本判据钉四件：①窗口算得对（老口径，保留）②**归属法**：只删"归属于被删轮次"的存档条（且**不做清空**）
 ③撤销能把存档还原 ④控制台两条路都接了它。
-⭐ 第二版关键回归（2026-09-18 真机场景）：**留下来的那一轮的回复不许被删**——
+⭐ 第二版关键回归：**留下来的那一轮的回复不许被删**——
    轮 07:00:00 留下 · 轮 07:00:38 被删，而"轮 07:00:00 的回复"落在 07:00:36（在两轮之间）⇒
    老窗口法会把它一起删掉（出现"只有我问、没有他答"），归属法按"谁发的"判，正确留下。
 """
@@ -28,7 +27,7 @@ try:
 except Exception:
     pass
 
-from agent import history_prune as hp          # noqa: E402
+from agent import history_prune as hp # noqa: E402
 
 PASS, FAIL = [], []
 
@@ -75,10 +74,10 @@ def main():
     # ② 归属法：只删"归属于被删轮次"的存档条（窗口外一条都不许动；空 ids 不做清空）
     base = hp.iso_to_ms("2026-09-18T07:10:00")
     store = _FakeStore({"g1": [
-        {"id": "kept-reply", "ts": str(base - 40_000), "self": True},    # 07:09:20 上一轮（留下）的回复
-        {"id": "trig", "ts": str(base - 10_000), "self": False},         # 07:09:50 这一轮的触发语
-        {"id": "reply", "ts": str(base + 20_000), "self": True},         # 07:10:20 这一轮的回复
-        {"id": "later", "ts": str(base + 600_000), "self": False},       # 07:20:00 这一轮之后
+        {"id": "kept-reply", "ts": str(base - 40_000), "self": True}, # 07:09:20 上一轮（留下）的回复
+        {"id": "trig", "ts": str(base - 10_000), "self": False}, # 07:09:50 这一轮的触发语
+        {"id": "reply", "ts": str(base + 20_000), "self": True}, # 07:10:20 这一轮的回复
+        {"id": "later", "ts": str(base + 600_000), "self": False}, # 07:20:00 这一轮之后
     ]})
     res = hp.prune_for_deleted_runs(store, all_e, [all_e[2]], trash_root="")
     ok("② 只删归属于被删那轮的 3 条，上一轮（留下）的回复一条不动",
@@ -93,16 +92,16 @@ def main():
 
     # ②c ⭐ 第二版关键回归：留下的那轮的回复不许被删（老窗口法在这里是错的）
     runs = [{"chat_key": "g1", "ts": "2026-09-18T07:00:00"},
-            {"chat_key": "g1", "ts": "2026-09-18T07:00:38"},     # 被删
-            {"chat_key": "g1", "ts": "2026-09-18T07:01:30"},     # 被删
+            {"chat_key": "g1", "ts": "2026-09-18T07:00:38"}, # 被删
+            {"chat_key": "g1", "ts": "2026-09-18T07:01:30"}, # 被删
             {"chat_key": "g1", "ts": "2026-09-18T07:15:00"}]
     _b = hp.iso_to_ms("2026-09-18T07:00:00")
     store3 = _FakeStore({"g1": [
-        {"id": "t0", "ts": str(_b - 1_000), "self": False},          # 06:59:59 留下的那轮触发语
-        {"id": "r0", "ts": str(_b + 36_000), "self": True},          # 07:00:36 留下的那轮回复 ⭐
-        {"id": "pat", "ts": str(_b + 74_000), "self": False},        # 07:01:14 拍一拍（近下一轮）
-        {"id": "r1", "ts": str(_b + 111_000), "self": True},         # 07:01:51 被删轮的回复
-        {"id": "old", "ts": "2026-09-18T05:00:00", "self": False},   # 两小时前、离第一轮太远 ⇒ 不归任何轮
+        {"id": "t0", "ts": str(_b - 1_000), "self": False}, # 06:59:59 留下的那轮触发语
+        {"id": "r0", "ts": str(_b + 36_000), "self": True}, # 07:00:36 留下的那轮回复 ⭐
+        {"id": "pat", "ts": str(_b + 74_000), "self": False}, # 07:01:14 拍一拍（近下一轮）
+        {"id": "r1", "ts": str(_b + 111_000), "self": True}, # 07:01:51 被删轮的回复
+        {"id": "old", "ts": "2026-09-18T05:00:00", "self": False}, # 两小时前、离太远 ⇒ 不归任何轮
     ]})
     hp.prune_for_deleted_runs(store3, runs, [runs[1], runs[2]], trash_root="")
     ok("②c 留下的那轮的回复（07:00:36）不许被删", "r0" not in store3.deleted, store3.deleted)
@@ -114,7 +113,7 @@ def main():
     ok("②c 对照：老窗口法确实会覆盖 07:00:36（＝这次改口径的原因）",
        _w[0] <= _b + 36_000 <= _w[1], _w)
 
-    # ③ 撤销：**真跑一遍生产者 → 消费者**（不许再手写夹具 —— 第五轮审计 V-R5B-1 正是被手写夹具漏掉的：
+    # ③ 撤销：**真跑一遍生产者 → 消费者**（不许再手写夹具 —— 审计 正是被手写夹具漏掉的：
     #    生产者写 `x.json.json.<stamp>`、消费者只剥 `.stamp` ⇒ 撤销"报成功"但档案一个字节都没回来）
     tmp = tempfile.mkdtemp(prefix="hp-judge-")
     from agent import store as _st
@@ -137,7 +136,7 @@ def main():
            bool(_res4.get("backed")) and "我说什么" in open(_res4["backed"][0], encoding="utf-8").read(),
            _res4.get("backed"))
         with open(os.path.join(_st.MESSAGES_DIR, fn), "w", encoding="utf-8") as f:
-            f.write('{"chat_key":"g1","next_local_id":1,"messages":[]}')      # 模拟删完之后档案被重写
+            f.write('{"chat_key":"g1","next_local_id":1,"messages":[]}') # 模拟删完之后档案被重写
         n = hp.restore_history(trash, stamp)
         _txt = open(os.path.join(_st.MESSAGES_DIR, fn), encoding="utf-8").read()
         ok("③ 撤销**真的把档案还原回来**（端到端；内容回来了，不是只把「撤销成功」写在界面上）",
@@ -153,18 +152,18 @@ def main():
         ok("③ 换个 stamp 撤不到东西（不会误还原）", hp.restore_history(trash, "19700101-000000") == 0)
         ok("③ 反例锚：老生产者的名字（多一个 `.json`）确实不是现在备份出来的名字",
            (fn + ".json." + stamp) != (fn + "." + stamp))
-        # ⛔ V-R5R-2（第五轮回执）：备份是老名字、而档案已经用上新命名 ⇒ 还原必须写回**当前在用的**名字，
+        # ⛔ 备份是老名字、而档案已经用上新命名 ⇒ 还原必须写回**当前在用的**名字，
         #   否则界面报"已恢复了 1 个会话的对话历史"，模型读到的**一条都没回来**。
         os.makedirs(trash, exist_ok=True)
         with open(os.path.join(trash, "g1.json." + stamp), "w", encoding="utf-8") as f:
             f.write('{"chat_key":"g1","next_local_id":9,"messages":[{"id":"1","text":"老名字备份","ts":"1"}]}')
         with open(os.path.join(_st.MESSAGES_DIR, fn), "w", encoding="utf-8") as f:
-            f.write('{"chat_key":"g1","next_local_id":1,"messages":[]}')      # 新命名档案先清空
+            f.write('{"chat_key":"g1","next_local_id":1,"messages":[]}') # 新命名档案先清空
         n3 = hp.restore_history(trash, stamp)
         _txt3 = open(os.path.join(_st.MESSAGES_DIR, fn), encoding="utf-8").read()
-        ok("V-R5R-2 老名字的备份也还原到**当前在用的档案**（新命名优先 ⇒ 模型读得到）",
+        ok("老名字的备份也还原到**当前在用的档案**（新命名优先 ⇒ 模型读得到）",
            n3 == 1 and "老名字备份" in _txt3, (n3, _txt3[:60]))
-        ok("V-R5R-2 反例锚：老名字路径与新命名路径**确实是两个文件**（写错就没人读）",
+        ok("反例锚：老名字路径与新命名路径**确实是两个文件**（写错就没人读）",
            os.path.join(_st.MESSAGES_DIR, "g1.json") != _st.chat_file("g1"))
     finally:
         _st.MESSAGES_DIR = old_dir
@@ -172,18 +171,18 @@ def main():
         shutil.rmtree(tmp, ignore_errors=True)
 
     # ④ 静态：控制台的删/撤销两条路都接了 history_prune
-    # ⛔ 2026-09-21（第五轮回执 **V-R5B-11**）：备份失败以前被吞掉、**照样删** ⇒ 用户删完点「撤销」
+    # ⛔ 备份失败以前被吞掉、**照样删** ⇒ 用户删完点「撤销」
     #   才发现什么都没备份回来。⇒ 口径：**没备份成功就不删**，并把原因带出去。
     _bakdir = tempfile.mkdtemp(prefix="hp-bak-")
     _blocked = os.path.join(_bakdir, "不是目录")
     with open(_blocked, "w", encoding="utf-8") as f:
-        f.write("x")                                     # 把"回收站"位置占成一个文件 ⇒ 备份必失败
+        f.write("x") # 把"回收站"位置占成一个文件 ⇒ 备份必失败
     try:
         _st4 = _FakeStore({"g1": [{"id": "reply", "ts": str(base + 20_000), "self": True}]})
         _r4b = hp.prune_for_deleted_runs(_st4, all_e, [all_e[2]], trash_root=_blocked, stamp="20260921-000000")
-        ok("V-R5B-11 备份失败 ⇒ **一条都不删**（宁可这次不删，也不做不可撤销的删除）",
+        ok("备份失败 ⇒ **一条都不删**（宁可这次不删，也不做不可撤销的删除）",
            not _st4.deleted and _r4b.get("removed") == 0, (_st4.deleted, _r4b.get("removed")))
-        ok("V-R5B-11 备份失败要**记账报出来**（界面/日志能区分「没历史可还原」与「没备份成功」）",
+        ok("备份失败要**记账报出来**（界面/日志能区分「没历史可还原」与「没备份成功」）",
            bool(_r4b.get("backupFailed")) and "g1" == _r4b["backupFailed"][0].get("chat"),
            _r4b.get("backupFailed"))
     finally:

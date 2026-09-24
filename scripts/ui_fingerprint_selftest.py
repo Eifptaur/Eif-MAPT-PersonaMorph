@@ -31,9 +31,9 @@ def ck(name, cond, extra=""):
     print("  %s %s%s" % ("PASS" if cond else "FAIL", name, (" · " + extra) if extra else ""))
 
 
-from PIL import Image, ImageDraw        # noqa: E402
+from PIL import Image, ImageDraw # noqa: E402
 
-from agent import ui_fingerprint as UFP  # noqa: E402
+from agent import ui_fingerprint as UFP # noqa: E402
 
 # ── A dHash 数学 ─────────────────────────────────────────────────────────
 print("[A] dHash（位移稳、异图拉得开）")
@@ -144,9 +144,9 @@ finally:
 
 # ── D 接线与诚实 ─────────────────────────────────────────────────────────
 print("[D] 接线：指纹对不上时**不许盲点**")
-from agent import ui_adapt as UA           # noqa: E402
-from agent import wechat_ui as WU          # noqa: E402
-from agent import ui_fingerprint as UFP2   # noqa: E402
+from agent import ui_adapt as UA # noqa: E402
+from agent import wechat_ui as WU # noqa: E402
+from agent import ui_fingerprint as UFP2 # noqa: E402
 
 CLICKED = []
 _o_icon_pos, _o_click, _o_prepare = WU.icon_pos, UA.click, UA.prepare_screen

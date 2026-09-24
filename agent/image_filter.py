@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """随机图"过滤插件链"（纵深防御）：任何一道说不行，就**不发**。
 
-用户口径（2026-09-13）："**做好插件过滤，反正能过滤的都做好，以免涉黄之类的**"
 ⇒ 把"过滤"做成**可插拔的流水线**（每个过滤器一个函数，可单独开关、可看到它说了什么），
    顺序＝**先便宜后昂贵**（元数据 → 本地像素 → 视觉模型），命中即刻短路；被拒的图**只记录、绝不发送**。
 
@@ -197,7 +196,7 @@ PIPELINE = [
     ("source_allow", f_source_allow, False),
     ("geometry", f_geometry, False),
     ("skin_ratio", f_skin_ratio, False),
-    ("vision", f_vision, True),        # True＝会花 token，可关
+    ("vision", f_vision, True), # True＝会花 token，可关
 ]
 
 
@@ -238,7 +237,7 @@ def _log_reject(path, meta, cfg, name, why, ctx, root=None) -> None:
         p = os.path.join(root or _root(), REJECT_LOG_REL)
         os.makedirs(os.path.dirname(p), exist_ok=True)
         keep = []
-        try:                                    # 只留最近 200 条，避免日志无限涨
+        try: # 只留最近 200 条，避免日志无限涨
             if os.path.exists(p):
                 with open(p, encoding="utf-8") as fh:
                     keep = fh.readlines()[-200:]

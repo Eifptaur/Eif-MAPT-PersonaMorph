@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """失败原因码：把"为什么没做/没发出去"变成**机器可读的稳定码**。
 
-⛔ 为什么要有它（2026-09-22，作者「那开始做吧」后落地的第一件；依据 `WX-chatbot\research\
+⛔ 为什么要有它（后落地的第一件；依据 `WX-chatbot\research\
   兼容性-业界做法调研.md` 附 C）：微软自家的 `winapp ui`（给 agent 用的 Windows UI 自动化 CLI）
    对失败给的是**稳定码**（`target_moved` / `foreground_not_target` / `no_interactive_desktop` /
    `no_target`），而我们全仓的拒发/拒点原因是**中文散文**（"会话没对上"、"抓不到微信画面"…）——

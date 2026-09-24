@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""发布说明写法判据（群相）——作者 2026-09-20 定的规矩，机械守住。
+"""发布说明写法判据（群相）——机械守住。
 
 规矩（原话）：修 Bug 就只用说「修复了一些 bug」这句话，最多也就一句话，简单描述，
 不要把什么东西都全部列出来了；新增功能倒是可以详细说说。
@@ -21,7 +21,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
-import release_notes as rn   # noqa: E402
+import release_notes as rn # noqa: E402
 
 PASS = FAIL = 0
 

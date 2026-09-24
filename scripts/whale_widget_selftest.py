@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""小鲸鱼挂件（移植版）判据（2026-09-19 立）。
+"""小鲸鱼挂件（移植版）判据。
 
-起因：把上游 `dsh-whale-widget` 从 **0.2.10 升到 0.3.5**（2026-09-21 再升到 **0.3.9**）时对账，发现两件必须守死的事 ——
+起因：把上游 `dsh-whale-widget` 从 **0.2.10 升到 0.3.5**时对账，发现两件必须守死的事 ——
   ① **价目表唯一来源**：仓里原本三份（`agent/whale.py` 挂件那份、`agent/llm.py::_OFFICIAL_PRICES`
      成本估算那份、`agent/stats.py` 注释那份）且互相打架 —— 挂件 pro 行是 4.5/13.5/0.15（Pro 保持
      Flash 3 倍价），而 llm.py 那份写的是 2/8/0.04 ⇒ **同一个 usage 在控制台会算出两个数**。
@@ -21,11 +21,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
-import tempfile  # noqa: E402
+import tempfile # noqa: E402
 
-from agent import llm as L             # noqa: E402
-from agent import model_prices as P    # noqa: E402
-from agent import whale as WH          # noqa: E402
+from agent import llm as L # noqa: E402
+from agent import model_prices as P # noqa: E402
+from agent import whale as WH # noqa: E402
 
 PASS = FAIL = 0
 
@@ -97,7 +97,7 @@ _usage_flat = {"prompt_tokens": 1000, "completion_tokens": 200, "reasoning_token
                "cached_tokens": 800}
 _tmp = tempfile.mkdtemp(prefix="pm_whale_judge_")
 w = WH.WhaleWidget(_tmp)
-_w_cost, _w_tok = w._usage_cost(_usage_nested, "deepseek-flash", 0)     # 0 = 谷时
+_w_cost, _w_tok = w._usage_cost(_usage_nested, "deepseek-flash", 0) # 0 = 谷时
 _e_nested = L.estimate_cost(_usage_nested, "deepseek-flash")["cost"]
 _e_flat = L.estimate_cost(_usage_flat, "deepseek-flash")["cost"]
 ok("挂件口径 == 统计口径（同一 usage、谷时）", abs(_w_cost - _e_nested) < 1e-12,
@@ -109,15 +109,15 @@ ok("缓存命中确实按命中价算（0.8M 命中 + 0.2M 新输入 + 200 输�
 ok("token 总数 = prompt + completion", _w_tok == 1200, str(_w_tok))
 
 print("── E. 峰谷判定（含周末全天谷价）──")
-import datetime as _d  # noqa: E402
+import datetime as _d # noqa: E402
 _BJ = _d.timezone(_d.timedelta(hours=8))
 # 日期**算出来**别手写星期几（手写容易错一天，判据就假红）：
-# 以 2026-09-14 那周为基准取"工作日"与"周六"
+# 以 那周为基准取"工作日"与"周六"
 _anchor = _d.datetime(2026, 9, 14, 10, 0, tzinfo=_BJ)
-_wed = _anchor + _d.timedelta(days=(2 - _anchor.weekday()) % 7)          # 工作日
-_sat = _anchor + _d.timedelta(days=(5 - _anchor.weekday()) % 7)          # 周末（分界之后）
+_wed = _anchor + _d.timedelta(days=(2 - _anchor.weekday()) % 7) # 工作日
+_sat = _anchor + _d.timedelta(days=(5 - _anchor.weekday()) % 7) # 周末（分界之后）
 _anchor2 = _d.datetime(2026, 8, 10, 10, 0, tzinfo=_BJ)
-_sat_old = _anchor2 + _d.timedelta(days=(5 - _anchor2.weekday()) % 7)    # 周末（2026-08-23 分界之前）
+_sat_old = _anchor2 + _d.timedelta(days=(5 - _anchor2.weekday()) % 7) # 周末
 ok("（判据前提）挑出来的那天确实是工作日", _wed.weekday() < 5, _wed.strftime("%Y-%m-%d"))
 ok("（判据前提）挑出来的那天确实是周六", _sat.weekday() == 5 and _sat_old.weekday() == 5)
 _peak = _wed.replace(hour=10).timestamp()

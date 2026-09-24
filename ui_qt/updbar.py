@@ -1,22 +1,21 @@
 # -*- coding: utf-8 -*-
 """更新公告 —— web updbar（agent/console_html.py L806-880）的 Qt 复刻。
 
-丙-6 #13：拆掉 shell.py:473 的假条，接真值四态机 + 三按钮（join_url 口径）。
-丙-7 #14：**形态改造** —— 丙-6 把三按钮塞进 60px 顶栏是总调度自认的设计缺陷
+ #13：拆掉 shell.py:473 的假条，接真值四态机 + 三按钮（join_url 口径）。
+ #14：**形态改造** —— 把三按钮塞进 60px 顶栏是总调度自认的设计缺陷
 （web 真值里 updBar 本是顶栏下方独立一行，console_html.py L760-767 全屏宽度；
 用户截图里三按钮挤成墨块）。按用户点单改为「胶囊 + 下滑 popover」：
 
   · 顶栏常态只留一个胶囊：`有新版本 {theirs}` / `更新源异常` /
     `上次更新只装了一半`（warn 底色区分）；**无新版且无异常时胶囊不出现**
-    （维持丙-6 口径：没有新版就不出条，绝不放占位）
   · 点胶囊 → 顶栏下方滑出 Popover 面板（popover.py，220ms OutCubic 可打断）：
     正文 = notes 逐条（「这版本更了啥」）/ pending 明细 / error 原因；
-    三按钮 = 立即更新（primary）/ 稍后 / 不再提醒这个版本（仅 newer，V-R4-1）
+    三按钮 = 立即更新（primary）/ 稍后 / 不再提醒这个版本
   · 更新中 = 进度态就地显示（胶囊 + 面板同步刷：download % / verify /
     done→重启 / error→可重试）
   · 面板外点 / Esc / 再点胶囊 → 收回（Qt.Popup 白拿）；stateSaved===false
     附加提示保留
-  · API 链路全沿用丙-6：/api/update /api/update_apply /api/update_skip
+  · API 链路全沿用/api/update /api/update_apply /api/update_skip
 
 「稍后」的会话抑制语义对齐 web：同版本不再打扰，出**新**版本照常弹。
 """
@@ -38,7 +37,7 @@ from widgets import Btn
 def _mb(n) -> str:
     try:
         return "%.1f MB" % (float(n) / 1048576.0)
-    except Exception:  # noqa: BLE001
+    except Exception: # noqa: BLE001
         return "?"
 
 
@@ -80,7 +79,7 @@ def decide(s: dict | None) -> tuple[str, bool]:
 
 
 def pill(s: dict | None) -> tuple[str, bool] | None:
-    """胶囊短文案纯函数（丙-7 #14）。返回 None = 胶囊不出现（无新版无异常）。"""
+    """胶囊短文案纯函数。返回 None = 胶囊不出现（无新版无异常）。"""
     if not isinstance(s, dict):
         return None
     st = str(s.get("status") or "")
@@ -107,21 +106,21 @@ def _notes_text(s: dict | None) -> str:
 
 
 class UpdateBar(QFrame):
-    """顶栏更新胶囊（丙-7 #14）。数据入口 apply_state(s)；动作自含。"""
+    """顶栏更新胶囊。数据入口 apply_state(s)；动作自含。"""
 
     def __init__(self, t: Tokens, parent=None):
         super().__init__(parent)
         self.t = t
         self.setObjectName("UpdPill")
-        from PySide6.QtCore import Qt  # noqa: PLC0415
+        from PySide6.QtCore import Qt # noqa: PLC0415
 
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip("点击查看这版本更了啥")
-        self._cur: dict | None = None          # 最近一次 /api/update 真值
-        self._dismissed: tuple | None = None   # 「稍后」会话抑制（status, theirs）
-        self._polling = False                  # 更新作业轮询中（主态机让位）
+        self._cur: dict | None = None # 最近一次 /api/update 真值
+        self._dismissed: tuple | None = None # 「稍后」会话抑制（status, theirs）
+        self._polling = False # 更新作业轮询中（主态机让位）
         self._poll_iv = QTimer(self)
-        self._poll_iv.setInterval(900)         # web setInterval(pollJob, 900)
+        self._poll_iv.setInterval(900) # web setInterval(pollJob, 900)
         self._poll_iv.timeout.connect(self._poll_once)
 
         lay = QHBoxLayout(self)
@@ -162,18 +161,18 @@ class UpdateBar(QFrame):
 
     # ------------------------------------------------------------ 交互
 
-    def mousePressEvent(self, e):  # noqa: N802
+    def mousePressEvent(self, e): # noqa: N802
         self.pop.toggle_at(self, width=470, align="left")
         super().mousePressEvent(e)
 
     def close_pop(self) -> None:
-        """⛔ 丙-10 P1（切界面闪小窗）：主题切换 `_rebuild` 会 deleteLater 掉旧胶囊，
+        """⛔ P1（切界面闪小窗）：主题切换 `_rebuild` 会 deleteLater 掉旧胶囊，
         而 Qt.Popup 面板是**独立顶层窗**——父销毁的同一帧里它还在屏幕上闪一下。
         ⇒ Shell._rebuild 开头先挨个收回（本方法），再拆旧控件。"""
         try:
             if self.pop.isVisible():
                 self.pop.close()
-        except Exception:  # noqa: BLE001
+        except Exception: # noqa: BLE001
             pass
 
     # ------------------------------------------------------------ 样式
@@ -203,7 +202,7 @@ class UpdateBar(QFrame):
         """线程拉回的 /api/update 真值落地（主线程）。None = 拉取失败 = 隐藏。"""
         self._cur = s if isinstance(s, dict) else None
         if self._polling:
-            return                              # 更新作业轮询中，主态机不抢（web 同款）
+            return # 更新作业轮询中，主态机不抢（web 同款）
         self._render_main()
 
     def _render_main(self) -> None:
@@ -212,7 +211,7 @@ class UpdateBar(QFrame):
         st = str((cur or {}).get("status") or "")
         theirs = str((cur or {}).get("theirs") or "")
         if cur is None or (self._dismissed == (st, theirs) and st != ""):
-            self._style(warn=False, visible=False)   # 同版本「稍后」过了 → 本会话不再弹
+            self._style(warn=False, visible=False) # 同版本「稍后」过了 → 本会话不再弹
             self._fill_pop()
             return
         p = pill(cur)
@@ -236,7 +235,7 @@ class UpdateBar(QFrame):
         self.detail.setText(text or "没有待处理的更新事项。")
         self.notes.setText(_notes_text(cur))
         self.notes.setVisible(bool(self.notes.text()))
-        self.btn_skip.setEnabled(st == "newer")      # V-R4-1：只有真有新版才允许消音
+        self.btn_skip.setEnabled(st == "newer") # 只有真有新版才允许消音
         self.btn_skip.setToolTip(
             "" if st == "newer" else "只有「确实有新版本」时才能不再提醒（半装状态下按了会把提醒永久消音）")
 
@@ -252,13 +251,13 @@ class UpdateBar(QFrame):
     def _on_skip(self) -> None:
         cur = self._cur
         if not cur or str(cur.get("status") or "") != "newer" or not cur.get("theirs"):
-            self._style(warn=False, visible=False)   # web 同款守卫（按钮已禁用，双保险）
+            self._style(warn=False, visible=False) # web 同款守卫（按钮已禁用，双保险）
             return
         ver = str(cur.get("theirs"))
         box: dict = {"done": False}
 
         def _work() -> None:
-            from agent_bridge import post_json  # noqa: PLC0415
+            from agent_bridge import post_json # noqa: PLC0415
 
             post_json("/api/update_skip", {"version": ver})
             box["done"] = True
@@ -270,7 +269,7 @@ class UpdateBar(QFrame):
                 QTimer.singleShot(150, _poll)
                 return
             self.pop.close()
-            self._style(warn=False, visible=False)   # web .then(hide).catch(hide)
+            self._style(warn=False, visible=False) # web .then(hide).catch(hide)
 
         QTimer.singleShot(150, _poll)
 
@@ -293,13 +292,13 @@ class UpdateBar(QFrame):
         )
         d.exec()
         if not d.result_ok:
-            return                                   # 可打断/取消，后台零影响
+            return # 可打断/取消，后台零影响
         self._set_progress("正在更新到 %s：准备中…" % ver)
         self._style(warn=False, visible=True)
         box: dict = {"done": False, "r": None}
 
         def _work() -> None:
-            from agent_bridge import post_json  # noqa: PLC0415
+            from agent_bridge import post_json # noqa: PLC0415
 
             box["r"] = post_json("/api/update_apply", {})
             box["done"] = True
@@ -337,7 +336,7 @@ class UpdateBar(QFrame):
         box: dict = {"done": False, "val": None}
 
         def _work() -> None:
-            from config_io import get_json  # noqa: PLC0415
+            from config_io import get_json # noqa: PLC0415
 
             box["val"] = get_json("/api/update", timeout=8.0)
             box["done"] = True
@@ -346,10 +345,10 @@ class UpdateBar(QFrame):
 
         def _apply() -> None:
             if not box["done"]:
-                return                                # 还没回来 → 下个 tick（900ms）再收
+                return # 还没回来 → 下个 tick（900ms）再收
             s = box["val"]
             if not isinstance(s, dict):
-                return                                # 拉取失败：跳过本轮（web catch return）
+                return # 拉取失败：跳过本轮（web catch return）
             j = s.get("job") or {}
             state = str(j.get("state") or "")
             if state == "running":
@@ -362,7 +361,7 @@ class UpdateBar(QFrame):
                                    + " · 正在重启，页面稍后会自己连回来")
 
                 def _rs() -> None:
-                    from agent_bridge import post_api  # noqa: PLC0415
+                    from agent_bridge import post_api # noqa: PLC0415
 
                     post_api("/api/restart")
 

@@ -15,8 +15,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
-from PIL import Image  # noqa: E402
-from agent import img_compress as IC  # noqa: E402
+from PIL import Image # noqa: E402
+from agent import img_compress as IC # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -44,7 +44,7 @@ def set_cfg(**kw):
 
 tmp = tempfile.mkdtemp(prefix="imgc_")
 # 造一张"大图"：4000×2000 的噪点图（压缩率低 ⇒ 文件真的大）
-import random  # noqa: E402
+import random # noqa: E402
 big = os.path.join(tmp, "big.png")
 im = Image.new("RGB", (4000, 2000))
 px = im.load()

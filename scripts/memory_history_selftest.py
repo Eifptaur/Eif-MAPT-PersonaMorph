@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """记忆覆盖审计判据（对标 mem0 的 `history` 表）：**整份覆盖前必须留痕**。
 
-起因（2026-09-22，对标 mem0 研究 §五 L1）：`MemoryStore.replace_member()` 是**整份覆盖**，
+起因：`MemoryStore.replace_member()` 是**整份覆盖**，
 唯一守门是调用方的长度比较 ⇒ 模型整理时"顺手少写一条"就是**静默丢**：旧条目没了、
 没有任何痕迹、也捞不回来。本判据钉住：
 
@@ -28,7 +28,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import _srcmatch as _sm  # noqa: E402  空白容忍的源码断言（脆断言只许降不许升）
+import _srcmatch as _sm # noqa: E402  空白容忍的源码断言（脆断言只许降不许升）
 
 PASS = 0
 FAIL = 0
@@ -43,7 +43,7 @@ def ok(name, cond, detail=""):
     print("  {} {}{}".format("OK  " if cond else "FAIL", name, "  [{}]".format(detail) if detail else ""))
 
 
-from agent import memory as MEM  # noqa: E402
+from agent import memory as MEM # noqa: E402
 
 print("── A. 源码：覆盖前先留痕，且审计不在记忆目录里 ──")
 _src = io.open(os.path.join(ROOT, "agent", "memory.py"), encoding="utf-8").read()
@@ -95,7 +95,7 @@ try:
     ok("② 内容没变的覆盖**不写审计**（不产生噪音）", len(MEM.history(CK)) == 1, str(len(MEM.history(CK))))
     # ⑤ 审计写不下去时，主流程必须照常
     MEM.HISTORY_DIR = os.path.join(tmp, "blocker", "memory_history")
-    with io.open(os.path.join(tmp, "blocker"), "w", encoding="utf-8") as fh:   # 占位文件 ⇒ makedirs 必失败
+    with io.open(os.path.join(tmp, "blocker"), "w", encoding="utf-8") as fh: # 占位文件 ⇒ makedirs 必失败
         fh.write("x")
     store.replace_member(CK, UID, "判据组友", ["爱吃辣", "养了只猫"])
     _arch2 = json.load(io.open(MEM._member_file(CK, UID, "判据组友"), encoding="utf-8"))

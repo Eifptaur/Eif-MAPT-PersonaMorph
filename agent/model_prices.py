@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 """DeepSeek 峰谷价目表 —— **唯一来源**（照抄上游 `dsh-whale-widget@0.3.5` lib/index.js L436-495）。
 
-为什么要单开一个模块（2026-09-19，起因＝把挂件从 0.2.10 升到 0.3.5）：
+为什么要单开一个模块：
   仓里原本**有三份**价目表 —— `agent/whale.py`（挂件移植那份）、`agent/llm.py::_OFFICIAL_PRICES`
   （成本估算那份）、`agent/stats.py` 注释里那份。三份互相打架，后果是**同一个 usage 会算出两个数**：
   控制台的「今日已用／每轮消耗」（挂件口径，峰谷定价）与统计里的 cost（平铺单价）不一致。
   上游 0.3.5 同时改了两件事，两份表就更容易对不上：
-    ① **价目表**：2026-09-10 起 Flash 系列降价（缓存命中 0.05→0.02、未命中 1.5→1、输出 4.5→4；
-       高峰＝空闲×2）。**Pro 没跟着降** —— 上游注释引官方 2026-09-14 公告：「此前『9/14 12:00 起
+    ① **价目表**：起 Flash 系列降价（缓存命中 0.05→0.02、未命中 1.5→1、输出 4.5→4；
+       高峰＝空闲×2）。**Pro 没跟着降** —— 上游注释引官方 公告
        pro 请求路由到 V4.1 Flash 并按 Flash 价计费』的安排已取消，因此这里不做按日期的降级切换」。
-       ⚠️ 所以口头常说的「Pro = Flash 的 3 倍」**今天已经不成立**（那是 2026-08-17 时对**旧 Flash 价**
+       ⚠️ 所以口头常说的「Pro = Flash 的 3 倍」**今天已经不成立**（那是 时对**旧 Flash 价**
        0.05/1.5/4.5 说的；现在按 miss 算 Pro 是 Flash 的 4.5 倍、按 out 是 3.375 倍、按 hit 是 7.5 倍）。
        ⚠️ 我们 `llm.py` 里 pro 那两行原本写的是 2 / 8 / 0.04（≈ 新 Flash 的 2 倍），与挂件差 2.25 倍
        —— 按「挂件＝权威口径」统一到挂件。
@@ -20,7 +20,7 @@
 
 来源：`https://github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget`（npm 包名 `dsh-whale-widget`）。
 素材许可见上游 `PROVENANCE.md`：代码 MIT，`assets/**` 不在 MIT 范围内（自 0.3.1 起随包 PNG 已剥离
-eXIf/iTXt/tEXt/zTXt 元数据块）；本项目移植该挂件已获原作者同意。
+eXIf/iTXt/tEXt/zTXt 元数据块）；本项目移植该挂件已获原
 """
 from __future__ import annotations
 
@@ -30,25 +30,25 @@ import time
 # ── 峰谷时段（北京时间；工作日 09:00-12:00 与 14:00-18:00 为高峰）──────────────────
 PEAK_HOURS = ((9, 12), (14, 18))
 # 元 / 百万 token，格式 [空闲时段价, 高峰时段价]
-BASE_PRICE = {"hit": [0.02, 0.04], "miss": [1.0, 2.0], "out": [4.0, 8.0]}    # Flash（V4.1-Flash）
-PRO_PRICE = {"hit": [0.15, 0.3], "miss": [4.5, 9.0], "out": [13.5, 27.0]}    # Pro（V4-Pro-0813）
+BASE_PRICE = {"hit": [0.02, 0.04], "miss": [1.0, 2.0], "out": [4.0, 8.0]} # Flash（V4.1-Flash）
+PRO_PRICE = {"hit": [0.15, 0.3], "miss": [4.5, 9.0], "out": [13.5, 27.0]} # Pro（V4-Pro-0813）
 # 模型名 → 价档。**顺序有讲究**：先比对"更具体"的名字，别让 `deepseek-v4-pro` 被前缀误判。
 _ALIASES = (
     ("deepseek-v4-pro", PRO_PRICE),
-    ("deepseek-reasoner", PRO_PRICE),            # 老别名 ⇒ 按 V4-Pro 价近似（llm.py 既有口径）
-    ("deepseek-flash", BASE_PRICE),              # 现行正名（V4.1-Flash，2026-09-14 官方页 + /models 实测）
-    ("deepseek-v4-flash-vision-exp", BASE_PRICE),  # 已退役旧名 ⇒ 由 V4.1-Flash 服务
-    ("deepseek-v4-flash", BASE_PRICE),           # 已退役旧名
-    ("deepseek-chat", BASE_PRICE),               # 老别名 ⇒ 实测由 V4.1-Flash 服务
+    ("deepseek-reasoner", PRO_PRICE), # 老别名 ⇒ 按 V4-Pro 价近似（llm.py 既有口径）
+    ("deepseek-flash", BASE_PRICE), # 现行正名
+    ("deepseek-v4-flash-vision-exp", BASE_PRICE), # 已退役旧名 ⇒ 由 V4.1-Flash 服务
+    ("deepseek-v4-flash", BASE_PRICE), # 已退役旧名
+    ("deepseek-chat", BASE_PRICE), # 老别名 ⇒ 实测由 V4.1-Flash 服务
 )
 # 兼容既有代码/判据里的 `PRICING` 字典写法（`agent/whale.py` 曾导出过它）
 PRICING = dict(_ALIASES)
 PRICING["_default"] = BASE_PRICE
 
-# 北京时间 2026-08-23 00:00 的 epoch 秒（周末全天谷价生效分界）
+# 北京时间 00 的 epoch 秒（周末全天谷价生效分界）
 WEEKEND_VALLEY_FROM_SEC = _dt.datetime(
     2026, 8, 23, tzinfo=_dt.timezone(_dt.timedelta(hours=8))).timestamp()
-_BJ_OFFSET = 8 * 3600      # 本项目与 DSH 环境的时区不同 ⇒ 统一按 UTC+8 换算北京日历
+_BJ_OFFSET = 8 * 3600 # 本项目与 DSH 环境的时区不同 ⇒ 统一按 UTC+8 换算北京日历
 
 
 def price_for(model: str) -> dict:
@@ -61,14 +61,14 @@ def price_for(model: str) -> dict:
 
 
 def is_peak_time(time_sec: float) -> bool:
-    """按北京时间判断是否高峰时段（含 2026-08-23 起的"周末全天谷价"）。"""
+    """按北京时间判断是否高峰时段。"""
     try:
         n = float(time_sec)
     except (TypeError, ValueError):
         return False
-    bj = time.gmtime(n + _BJ_OFFSET)          # gmtime + 偏移 = 北京时间日历
+    bj = time.gmtime(n + _BJ_OFFSET) # gmtime + 偏移 = 北京时间日历
     if n >= WEEKEND_VALLEY_FROM_SEC:
-        if bj.tm_wday in (5, 6):              # 5=周六 6=周日
+        if bj.tm_wday in (5, 6): # 5=周六 6=周日
             return False
     for start, end in PEAK_HOURS:
         if start <= bj.tm_hour < end:

@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
-"""判据隔离区（第十四轮 **V-R14-1**）——**一条判据绝不许改产品的 `data/` 与 `logs/`**。
+"""判据隔离区——**一条判据绝不许改产品的 `data/` 与 `logs/`**。
 
 为什么要有这个文件（这不是洁癖，是真的出过事）：
-  第九轮为止，"判据卫生"只在几个已知点上做过（`update_state` / `risk_events` / `logs\\sd_local.token`），
-  **从没做过全目录对账**。第十四轮审计把 `data/` 与 `logs/` 的顶层文件跑前跑后对了一遍，发现
+  为止，"判据卫生"只在几个已知点上做过（`update_state` / `risk_events` / `logs\\sd_local.token`），
+  **从没做过全目录对账**。审计把 `data/` 与 `logs/` 的顶层文件跑前跑后对了一遍，发现
   `risk_selftest` 每跑一次就在**产品目录**里创建 `data\\paused.flag` —— 而**每个发送链的每一步都查它**
   ⇒ **我们跑一次复核，就把用户的机器人暂停了**（审计自己有 `data/paused.flag` 的 mtime 为证）。
 
 ⚠️ 第一版修法（各判据里手抄一段 `try: from agent import control … except: pass`）**本身是坏的**：
   那些判据把隔离段写在 `sys.path.insert(0, ROOT)` **之前**（脚本模式下 `sys.path[0]` 是 `scripts\\`，
   工作目录**不在** `sys.path` 里）⇒ `from agent import control` 抛 ImportError ⇒ 被 `except: pass`
-  **静默吞掉** ⇒ 隔离一次都没生效，而每个判据看上去都"加了隔离"。第十四轮的**全目录对账**当场抓到
+  **静默吞掉** ⇒ 隔离一次都没生效，而每个判据看上去都"加了隔离"。**全目录对账**当场抓到
   （单跑 `risk_selftest` 仍然改 `data/paused.flag`）。⇒ 结论：**隔离不许手抄**，收口到本文件一处，
   且必须在 `sys.path` 就绪之后才可能 import —— 见本文件头顶的 `ROOT` 注入。
 
@@ -55,7 +55,7 @@ def _run(tag: str, fn) -> bool:
     try:
         fn()
         return True
-    except Exception as e:                              # noqa: BLE001 —— 记下来，不静默
+    except Exception as e: # noqa: BLE001 —— 记下来，不静默
         MISSED[tag] = "%s: %s" % (type(e).__name__, str(e)[:120])
         return False
 
@@ -104,7 +104,7 @@ def window_borrow() -> bool:
 def console_lock() -> bool:
     """控制台开窗锁（`logs/browser_opened.lock`）。
 
-    ⚠️ 这条是**瞬时**发现的（V-R14-7 的持续采样闸）：`console_open_selftest` 的 D2 段要"真锁的行为"
+    ⚠️ 这条是**瞬时**发现的：`console_open_selftest` 的 D2 段要"真锁的行为"
     （不 mock），它自己会建锁再删掉 ⇒ 跑前跑后对账看**净变化是 0**、判据看着"干净"，而那一刻产品的
     `logs/` 里确实躺着我们的锁文件 —— 真机器人正在开窗时，这把锁会让它**判定"别人刚开过"而不开窗**。
     """

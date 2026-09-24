@@ -23,7 +23,7 @@ import time
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agent.wechat import dep_check          # noqa: E402
+from agent.wechat import dep_check # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -40,7 +40,7 @@ MIRRORS = ["https://pypi.tuna.tsinghua.edu.cn/simple",
 def pick_fastest_mirror(timeout: float = 3.5):
     """并行探每个镜像的 `/simple/`，挑**响应最快**的那个（探不到就按原顺序兜底）。
 
-    为什么（2026-09-18 作者那台机器延迟 ~1900ms）：「下载依赖十几分钟」**慢在往返次数**，
+    为什么：「下载依赖十几分钟」**慢在往返次数**，
     不是字节数 —— 先花 3 秒把最快的源量出来，后面每一轮往返都省。
     """
     import threading
@@ -78,7 +78,7 @@ def _short(u: str) -> str:
 def _run_stream(cmd, idle_limit=IDLE_LIMIT):
     """跑命令并**实时**把输出转发出来。返回 (rc, 尾部文本)。
 
-    为什么用读者线程 + 队列（2026-09-16 判据抓出来的坑）：直接 `p.stdout.readline()` 会**阻塞**，
+    为什么用读者线程 + 队列：直接 `p.stdout.readline()` 会**阻塞**，
     主循环根本没机会判"空闲超时"（实测：子进程睡 30 秒，判据就真的等满 30 秒）。
     """
     try:
@@ -180,7 +180,7 @@ def main():
         last = _run_stream([py_exe, "-m", "pip", "install", "--no-index",
                             "--find-links", wheels, "-r", req])
     else:
-        # ── 2026-09-18 提速（作者：「下载依赖十几分钟，也就 1 点多 MB」）──────────────
+        # ── 提速──────────────
         #    慢在**往返次数**：默认会对着二十多个包做依赖解析，每个包好几轮；1.9s 延迟下就是十几分钟。
         #    ⇒ ① 先并行测速挑最快的源；② 先 `--no-deps` 把**钉死版本的主包**快速拉下来（省掉绝大部分往返）；
         #      ③ 再用一次普通安装补齐传递依赖（此时大部分已装好，很快）；④ 还不行就逐个源兜底。

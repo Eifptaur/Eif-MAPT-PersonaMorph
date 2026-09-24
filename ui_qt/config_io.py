@@ -35,7 +35,7 @@ def read_path(dotpath: str, default=None):
     if not dotpath:
         return default
     try:
-        from agent.config import get_config  # noqa: PLC0415
+        from agent.config import get_config # noqa: PLC0415
 
         cur = get_config()
         for part in dotpath.split("."):
@@ -44,7 +44,7 @@ def read_path(dotpath: str, default=None):
             else:
                 return default
         return cur
-    except Exception:  # noqa: BLE001
+    except Exception: # noqa: BLE001
         return default
 
 
@@ -56,7 +56,7 @@ def _nest(patch: dict[str, object]) -> dict:
         cur = out
         for p in parts[:-1]:
             cur = cur.setdefault(p, {})
-            if not isinstance(cur, dict):  # 键冲突（理论不该发生）→ 丢弃这段
+            if not isinstance(cur, dict): # 键冲突（理论不该发生）→ 丢弃这段
                 break
         else:
             cur[parts[-1]] = val
@@ -75,13 +75,13 @@ def write_patch(patch: dict[str, object]) -> tuple[bool, str]:
         from agent.config import deep_merge, get_config, save_config, set_config
 
         new_cfg = deep_merge(get_config(), _nest(clean))
-        save_config(new_cfg)       # 先落盘（原子写；失败抛异常 → 如实报）
-        set_config(new_cfg)        # 落盘成功才换内存（webui L1906-1907 同款顺序）
+        save_config(new_cfg) # 先落盘（原子写；失败抛异常 → 如实报）
+        set_config(new_cfg) # 落盘成功才换内存（webui L1906-1907 同款顺序）
         note = "已保存并生效"
         if blocked:
             note += "（未保存「微信数据目录」——该项请在网页控制台改）"
         return True, note
-    except Exception as e:  # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         return False, f"保存失败：{e}"
 
 
@@ -89,11 +89,11 @@ def write_full(raw_text: str) -> tuple[bool, str]:
     """配置格式面板：整份 JSON 校验 → 备份 → 落盘（"改前先备份"的承诺真兑现）。"""
     try:
         parsed = json.loads(raw_text)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         return False, f"JSON 解析失败，未写入：{e}"
     if not isinstance(parsed, dict):
         return False, "配置文件顶层必须是对象（{…}），未写入"
-    from agent.config import CONFIG_FILE, set_config  # noqa: PLC0415
+    from agent.config import CONFIG_FILE, set_config # noqa: PLC0415
 
     target = Path(CONFIG_FILE)
     try:
@@ -102,38 +102,38 @@ def write_full(raw_text: str) -> tuple[bool, str]:
                 f"{target.stem}.bak-qt-{__import__('time').strftime('%Y%m%d-%H%M%S')}{target.suffix}"
             )
             bak.write_text(target.read_text(encoding="utf-8"), encoding="utf-8")
-        from agent.config import save_config  # noqa: PLC0415
+        from agent.config import save_config # noqa: PLC0415
 
         save_config(parsed)
         set_config(parsed)
         return True, "已保存（原文件已备份在同目录）"
-    except Exception as e:  # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         return False, f"保存失败：{e}"
 
 
 def get_json(api: str, timeout: float = 1.5) -> dict | None:
     """GET 后端接口（/api/status 等）；连不上返回 None（调用方如实展示）。"""
     try:
-        from addr import join_url  # noqa: PLC0415
-        from agent_bridge import current_url  # noqa: PLC0415
+        from addr import join_url # noqa: PLC0415
+        from agent_bridge import current_url # noqa: PLC0415
 
         base = current_url()[0] if isinstance(current_url(), tuple) else current_url()
         # base 可能自带 ?token= —— 必须 join_url 让 api 落在 query 之前
-        # （老写法 rstrip+"/" 会把 /api/status 塞进 query → 401「状态不明」，丙-5 #0）
+        # 
         req = urllib.request.Request(join_url(base, api),
                                      headers={"Accept": "application/json"})
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # 绕代理（heal 同款）
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({})) # 绕代理（heal 同款）
         with opener.open(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8", "replace"))
-    except Exception:  # noqa: BLE001
+    except Exception: # noqa: BLE001
         return None
 
 
 def _selftest() -> list[tuple[str, bool, str]]:
     """模块自检：nest 组装 / 点路径读 / 阻断键 / 全量写校验（不真写盘）。"""
-    import sys  # noqa: PLC0415
+    import sys # noqa: PLC0415
 
-    sys.path.insert(0, str(ROOT))          # agent.config 需要项目根在 path
+    sys.path.insert(0, str(ROOT)) # agent.config 需要项目根在 path
 
     out: list[tuple[str, bool, str]] = []
 

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""④ 界面文案判据（2026-09-15，任务书 ④「界面文案通俗化」）
+"""④ 界面文案判据
 
 三条要守住的（都从"用户看得见的那一面"出发，不看源码注释、不看 JS 逻辑）：
   A. **无 emoji**：去掉 `<script>` / `<style>` 之后，可见文本与 title/placeholder/alt 属性里
@@ -79,7 +79,7 @@ try:
     W.get_config = lambda: base
     w = W.WebUI(lambda: {}, [])
     import tempfile as _tf
-    w.console_url_root = _tf.mkdtemp(prefix="cuj-")   # ⚠️ 判据不写产品那份 logs/console.url（2026-09-18）
+    w.console_url_root = _tf.mkdtemp(prefix="cuj-") # ⚠️ 判据不写产品那份 logs/console.url
     port = w.start()
     try:
         with urllib.request.urlopen("http://127.0.0.1:%d/?token=copy-judge" % port, timeout=8) as r:
@@ -127,7 +127,6 @@ for w0, seg in fake_hits[:8]:
     print("      %s：…%s…" % (w0, seg))
 
 print("\n── D. 不许对一般用户说「开发黑话」（模块名 / 判据名 / 下划线键名）──")
-# 用户 2026-09-15 原话：「注意你新加的这些功能文案，尽量能让一般用户也能看懂啊」
 # 起因：我给 edge 音色写的说明里出现了 voice_models.EDGE_VOICES / edge_tts_selftest.py 这类
 # 只有开发者看得懂的东西（已改成「晓晓、云希…挑一个顺耳的」）。
 DEV_WORDS = ["voice_models", "EDGE_VOICES", "edge_tts_selftest", "_selftest", ".py 会",

@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""群友印象加强判据：除了「他是谁」，还要记得「上次聊过什么」（2026-09-13 用户需求）
+"""群友印象加强判据：除了「他是谁」，还要记得「上次聊过什么」
 
-用户原话：「需不需要加强群友印象的功能，让他不仅能记得群友是什么人，而且记得上次聊过的话题？」
 做法（纯读消息库，不花 token、不凭空编）：`MemoryStore.format_for_prompt(..., store=, exclude_ids=)`
 额外给每位群友带一行 `- 小明：上次聊过「周末去哪玩」（2 小时前）`。
 
@@ -20,7 +19,7 @@ import time
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agent import memory as M  # noqa: E402
+from agent import memory as M # noqa: E402
 
 PASS = 0
 FAIL = 0

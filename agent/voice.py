@@ -27,7 +27,7 @@ import threading
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_LOCK = threading.RLock()          # SAPI 进程内识别器一次只服务一个请求
+_LOCK = threading.RLock() # SAPI 进程内识别器一次只服务一个请求
 
 
 def _cfg() -> dict:
@@ -54,7 +54,7 @@ def _which(name: str) -> str:
 
 def _pilK_ok() -> tuple:
     try:
-        import pilk                                   # noqa: F401
+        import pilk # noqa: F401
         return True, "已装（pip pilk）"
     except Exception as e:
         return False, "未装：%s（pip install pilk）" % type(e).__name__
@@ -75,7 +75,7 @@ def _ffmpeg_silk_ok() -> tuple:
     if not p:
         return False, "没找到 ffmpeg"
     try:
-        # ⛔ 2026-09-16（已知现象：「运行的时候极短时间内闪一个透明小窗」；探针抓到 4 个
+        # ⛔ 探针抓到 4 个
         #   `PseudoConsoleWindow`、其中两个明确是 ffmpeg）：ffmpeg 是**控制台程序**，
         #   父进程不给 `CREATE_NO_WINDOW` 的话，每次调用都会新建一个控制台窗一闪而过。
         out = subprocess.run([p, "-hide_banner", "-decoders"], capture_output=True, timeout=20,
@@ -102,8 +102,8 @@ def decoders() -> list:
     return out
 
 
-SILK_RATE = 24000            # 微信 SILK 解出来是 24kHz 单声道 16bit
-WAV_RATE = 16000             # 给 SAPI 吃之前降到 16kHz（SAPI 听写对 8/11/16/22.05kHz 最稳）
+SILK_RATE = 24000 # 微信 SILK 解出来是 24kHz 单声道 16bit
+WAV_RATE = 16000 # 给 SAPI 吃之前降到 16kHz（SAPI 听写对 8/11/16/22.05kHz 最稳）
 
 
 def _pcm_to_wav(pcm_path: str, wav_path: str, rate: int = SILK_RATE, out_rate: int = WAV_RATE) -> tuple:
@@ -115,7 +115,7 @@ def _pcm_to_wav(pcm_path: str, wav_path: str, rate: int = SILK_RATE, out_rate: i
         return False, "解码出来的 PCM 是空的"
     if out_rate and int(out_rate) != int(rate):
         try:
-            import audioop                              # Python ≥3.13 已移除；没有就按原采样率写
+            import audioop # Python ≥3.13 已移除；没有就按原采样率写
             raw, _ = audioop.ratecv(raw, 2, 1, int(rate), int(out_rate), None)
             rate = int(out_rate)
         except Exception:
@@ -138,7 +138,7 @@ def decode_silk(silk_path: str, wav_path: str = "") -> tuple:
         try:
             import pilk
             pcm = os.path.join(tempfile.gettempdir(), "pm_voice_%d.pcm" % int(time.time() * 1000))
-            pilk.decode(silk_path, pcm, pcm_rate=SILK_RATE)      # 注意：pilk 写出的是**裸 PCM**，不是 WAV
+            pilk.decode(silk_path, pcm, pcm_rate=SILK_RATE) # 注意：pilk 写出的是**裸 PCM**，不是 WAV
             good, err = _pcm_to_wav(pcm, wav_path)
             try:
                 os.remove(pcm)
@@ -269,11 +269,11 @@ def recognize_wav(wav_path: str, max_seconds: int = 60) -> tuple:
         try:
             ctx = win32com.client.Dispatch("SAPI.SpInProcRecoContext")
             g = ctx.CreateGrammar()
-            g.DictationSetState(1)                     # 1 = SGDSActive（听写模式）
+            g.DictationSetState(1) # 1 = SGDSActive（听写模式）
             fs = win32com.client.Dispatch("SAPI.SpFileStream")
-            fs.Open(wav_path, 0, False)                # 0 = SSFRead
+            fs.Open(wav_path, 0, False) # 0 = SSFRead
             ctx.Recognizer.AudioInputStream = fs
-            ev = win32com.client.WithEvents(ctx, _H)   # ⚠ 传**类**，传实例会 metaclass conflict
+            ev = win32com.client.WithEvents(ctx, _H) # ⚠ 传**类**，传实例会 metaclass conflict
             deadline = time.time() + max(5, min(int(max_seconds or 60), 180))
             while time.time() < deadline and not ev.ended:
                 pythoncom.PumpWaitingMessages()
@@ -324,7 +324,7 @@ def status() -> dict:
 def transcribe_silk(silk_path: str, keep_wav: bool = False) -> tuple:
     """SILK → 文本。返回 (文本, 错误说明, 过程信息 dict)。"""
     info = {"decoder": "", "engine": "", "wav": ""}
-    # 先看文件在不在（2026-09-14 修正顺序）：本机没有 SILK 解码器时，老顺序会先报「没有可用引擎」，
+    # 先看文件在不在：本机没有 SILK 解码器时，老顺序会先报「没有可用引擎」，
     # 把「文件根本不存在」这个更具体、更可操作的原因盖掉 —— `voice_selftest` 的 C 段因此在缺引擎的
     # 机器上长期假红（脚本 10/11、exit 1，看着像功能坏了，其实是自检被引擎前置条件挡了）。
     if not silk_path or not os.path.exists(str(silk_path)):
@@ -395,7 +395,7 @@ def selftest_loop(text: str = "今天天气不错，我们出去走走吧") -> d
                 picked = d
                 break
         st = win32com.client.Dispatch("SAPI.SpFileStream")
-        st.Open(wav1, 3, True)                        # 3 = SSFMCreateForWrite
+        st.Open(wav1, 3, True) # 3 = SSFMCreateForWrite
         v.AudioOutputStream = st
         v.Speak(text)
         st.Close()
@@ -443,7 +443,7 @@ def _similar(a: str, b: str) -> float:
     return difflib.SequenceMatcher(None, ka, kb).ratio()
 
 
-if __name__ == "__main__":                                # 手动看一眼
+if __name__ == "__main__": # 手动看一眼
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     import json
     print(json.dumps(status(), ensure_ascii=False, indent=2))

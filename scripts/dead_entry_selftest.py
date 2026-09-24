@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""「让用户去跑的入口文件必须真实存在」的判据（2026-09-22 立）。
+"""「让用户去跑的入口文件必须真实存在」的判据。
 
-**为什么要它**：作者口径「**我更想让用户不用测这测那的就能搞好**」。而这一轮实测抓到最刺眼的一条：
-产品里有**多处**让用户「跑一次那个版本检查 bat」，可**这个文件在包里根本不存在**
+**为什么要它**：。而这一轮实测抓到最刺眼的一条：
+产品里有**多处**让，可**这个文件在包里根本不存在**
 （`Get-ChildItem -Recurse -Filter '检查微信版本*'` ⇒ 0 命中；全仓 `git ls-files` 也没有它）——
 用户按指引去找，只会找不到文件，然后来报「用不了」。这类**死指引**比功能缺陷更伤：
 它把我们的问题变成用户的困惑。
@@ -28,7 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
-except Exception:                                                # noqa: BLE001
+except Exception: # noqa: BLE001
     pass
 
 PASS, FAIL = [0], [0]
@@ -43,7 +43,7 @@ def ok(name, cond, detail=""):
     return bool(cond)
 
 
-EXT = r"(?:cmd|bat|exe|ps1)(?![A-Za-z0-9_])"          # ⛔ 不加这个前瞻：`sys.executable` 会被当成 `sys.exe`
+EXT = r"(?:cmd|bat|exe|ps1)(?![A-Za-z0-9_])" # ⛔ 不加这个前瞻：`sys.executable` 会被当成 `sys.exe`
 #: 三类"让人去找文件"的写法
 PATS = (
     re.compile(r"[\"'`「]([^\"'`「」\s]{1,60}\." + EXT + r")[\"'`」]"),
@@ -119,7 +119,7 @@ def tracked():
         r = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=True,
                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         return set(x.decode("utf-8", "replace").replace("\\", "/") for x in r.stdout.split(b"\0") if x)
-    except Exception:                                            # noqa: BLE001
+    except Exception: # noqa: BLE001
         out = set()
         for base, _dirs, files in os.walk(ROOT):
             for f in files:
@@ -174,7 +174,7 @@ def main():
     for f in FILES:
         try:
             txt = io.open(f, encoding="utf-8", errors="replace").read()
-        except Exception:                                        # noqa: BLE001
+        except Exception: # noqa: BLE001
             continue
         b = missing_in(txt)
         if b:

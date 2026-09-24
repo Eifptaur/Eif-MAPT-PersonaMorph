@@ -43,7 +43,7 @@ def start_qt_shell(log=None, theme: str = "whale") -> bool:
         if log is not None:
             try:
                 getattr(log, level)("Qt 控制台：%s", msg)
-            except Exception:  # noqa: BLE001
+            except Exception: # noqa: BLE001
                 pass
 
     def _run() -> None:
@@ -51,19 +51,19 @@ def start_qt_shell(log=None, theme: str = "whale") -> bool:
             if HERE not in [Path(p) for p in sys.path]:
                 sys.path.insert(0, str(HERE))
             # 离屏兜底仅在取证环境需要；真桌面跑 windows 平台（不设 = Qt 自选）
-            from PySide6.QtWidgets import QApplication  # noqa: PLC0415
+            from PySide6.QtWidgets import QApplication # noqa: PLC0415
 
-            from shell import Shell, set_per_monitor_dpi  # noqa: PLC0417
-            from stylekit_qt import THEMES, apply_font_to_app, ensure_fonts, resolve_family  # noqa: PLC0415
+            from shell import Shell, set_per_monitor_dpi # noqa: PLC0417
+            from stylekit_qt import THEMES, apply_font_to_app, ensure_fonts, resolve_family # noqa: PLC0415
 
             set_per_monitor_dpi()
             # 空参数表：Qt 不该解析机器人自己的命令行（--foreground 等）
             app = QApplication.instance() or QApplication([])
             app.setApplicationName("Persona Morph 控制台")
-            # 丙-5 #6：任务栏/窗口图标用透明底完整鲸鱼（真机问题⑨）
+            # #6：任务栏/窗口图标用透明底完整鲸鱼（真机问题⑨）
             _icon_path = HERE.parent / "assets" / "icon-whale.png"
             if _icon_path.exists():
-                from PySide6.QtGui import QIcon  # noqa: PLC0415
+                from PySide6.QtGui import QIcon # noqa: PLC0415
 
                 app.setWindowIcon(QIcon(str(_icon_path)))
 
@@ -83,7 +83,7 @@ def start_qt_shell(log=None, theme: str = "whale") -> bool:
             _log("info", "原生界面已打开（与网页控制台并存）")
             app.exec()
             _log("info", "原生界面已退出")
-        except Exception:  # noqa: BLE001
+        except Exception: # noqa: BLE001
             _log("warning", "界面线程异常退出：\n" + traceback.format_exc(limit=6))
 
     th = threading.Thread(target=_run, daemon=True, name="qt-shell")

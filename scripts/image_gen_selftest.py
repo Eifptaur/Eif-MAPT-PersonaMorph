@@ -15,26 +15,25 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
-from PIL import Image  # noqa: E402
-from agent import image_gen as IG  # noqa: E402
-from agent import config as CFG  # noqa: E402
-from agent.config import DEFAULT_CONFIG  # noqa: E402
+from PIL import Image # noqa: E402
+from agent import image_gen as IG # noqa: E402
+from agent import config as CFG # noqa: E402
+from agent.config import DEFAULT_CONFIG # noqa: E402
 
-# ⛔ 本判据**全程不出网**（文件头写明"不需要真实生图后端、不出网"）。2026-09-18 产品改成"默认出网 +
+# ⛔ 本判据**全程不出网**（文件头写明"不需要真实生图后端、不出网"）。产品改成"默认出网 +
 #   在线优先"之后，只要哪一节忘了把出网关掉，`pick_backend()` 就会选到 pollinations ⇒ `generate()`
 #   真去联网出图（实测把判据从 1 秒拖到 121 秒，还让判据结果依赖外网）。⇒ 这里**统一把在线后端封掉**，
 #   各节要测"在线路径"时自己用假后端（`backends=[{...online...}]`）或断言预设表本身。
 _orig_online_backend = IG.online_backend
 IG.online_backend = lambda: {}
 
-# ⛔ 2026-09-21：**判据不许碰用户正在跑的服务**（真机实测后果）。
+# ⛔ **判据不许碰用户正在跑的服务**（真机实测后果）。
 #   `pick_backend()` 在"装过、但这次没探到"时会真的调 `sd_local.ensure_running()` —— 那是产品行为
 #   （换掉没门禁的旧实例）。而 `sd_local.server_alive()` 是**机器级端口探针**：判据即使跑在
 #   `%TEMP%` 副本里，探的也是**本机 7860**。服务正忙时探针会超时（实测它加载 CUDA 模型要 22 秒，
 #   日志尾部就是"模型就绪…出图"）⇒ 判据会把**用户正在用的生图服务杀掉并重启**
-#   （本机 2026-09-21 03:40:59 实测发生过一次：pidfile 4848 → 40232）。
 #   ⇒ 判据里一律打桩；要测"错误路径"的段自己再包一层（见下面的 12b 段）。
-from agent import sd_local as _sdl                                               # noqa: E402
+from agent import sd_local as _sdl # noqa: E402
 _sdl.ensure_running = lambda *a, **k: (False, "判据环境：不许起/换真服务")
 _sdl.status = lambda *a, **k: {"ok": False, "installed": False, "server_alive": False, "gated": False,
                                "gate_why": "", "why": "判据环境：不打探真端口"}
@@ -88,7 +87,7 @@ ok("默认一张、默认方形", i5["count"] == 1 and i5["size"] == "square", s
 
 print("③ 后端选择（没配后端 ⇒ 明确失败，不假装）")
 set_cfg(enabled=True)
-# ⚠️ 2026-09-18：这一段判的是**"用户一个后端都没配"**时的行为，可 `pick_backend()` 还会
+# ⚠️ 这一段判的是**"用户一个后端都没配"**时的行为，可 `pick_backend()` 还会
 #   **自动探测本机跑着的本地服务**（那是产品特性）。本机恰好开着自带的 7860 ⇒ 探到了就不算"没配"，
 #   于是这三条假红。⇒ 判据必须自己控制环境：这一节先把探测关掉，测的是"配置为空"这条路径。
 _orig_detect = IG.detect_local
@@ -101,9 +100,9 @@ try:
 finally:
     IG.detect_local = _orig_detect
 
-# ⛔ 第四轮审计 V-R4-12b：**探后端时抛异常**不许被说成「你没装」——那是方向错的提示
+# ⛔ 审计 b：**探后端时抛异常**不许被说成「你没装」——那是方向错的提示
 #   （用户会去装一个已经装好的东西）。异常原文必须带出去。
-import agent.sd_local as _sdl                                              # noqa: E402
+import agent.sd_local as _sdl # noqa: E402
 
 _orig_status = _sdl.status
 _orig_detect2 = IG.detect_local
@@ -123,7 +122,7 @@ ok("反例锚：这条错误路径上**不许**出现「本机没探到常见生
 set_cfg(enabled=True, online_allowed=True, online_preset="custom",
         online_api={"url": "", "key": "", "model": ""},
         backends=[{"id": "online-x", "kind": "online", "url": "http://127.0.0.1:9/x"}])
-# ⚠️ 2026-09-18 口径：**预设优先于手填的 backends**（预设就是用户在面板上选的那一家）。
+# ⚠️ **预设优先于手填的 backends**（预设就是用户在面板上选的那一家）。
 #    所以这一条要先把预设设成 custom 且不填地址（=没选预设），才轮到 backends 里的在线后端。
 ok("允许出网后，配置里的在线后端能被选到（预设未选时才轮到它）",
    (IG.pick_backend()[0] or {}).get("id") == "online-x", str(IG.pick_backend()[0]))
@@ -157,7 +156,7 @@ ok("白名单非空且不在白名单 ⇒ 判否", okal is False)
 print("⑤ 入口：红线与状态")
 set_cfg(enabled=False)
 ok("总开关关 ⇒ 直接拒绝", IG.generate("x", "画只猫")["ok"] is False)
-# ⚠️ 2026-09-18：本判据**必须不出网**（文件头就写着"不需要真实后端、不出网"）。默认出网之后，
+# ⚠️ 本判据**必须不出网**（文件头就写着"不需要真实后端、不出网"）。默认出网之后，
 #   `set_cfg(enabled=True)` 会让 pick_backend() 选到 pollinations ⇒ `generate()` **真的去联网出图**
 #   （实测把这条判据从 1 秒拖到 121 秒）。⇒ 这一节一律把出网关掉（专测红线与"没后端"两条路径）。
 set_cfg(enabled=True, online_allowed=False)
@@ -178,9 +177,9 @@ ok("快照里写明红线状态", snap["red_line"]["allow_real_face"] is False a
    json.dumps(snap["red_line"], ensure_ascii=False))
 
 print("⑦ 接线：工具 / 状态 / 提示词（这三处缺一处，模型就用不上这条链）")
-from agent import tools as T  # noqa: E402
-from agent import media_status as MS  # noqa: E402
-from agent import prompt as P  # noqa: E402
+from agent import tools as T # noqa: E402
+from agent import media_status as MS # noqa: E402
+from agent import prompt as P # noqa: E402
 _defs = {d["name"]: d for d in T._builtin_tool_defs()}
 ok("工具表里有 gen_image", "gen_image" in _defs)
 ok("工具参数是 request（必填）", _defs.get("gen_image", {}).get("parameters", {}).get("required") == ["request"])
@@ -195,7 +194,7 @@ _orig_cfg = IG.cfg
 IG.cfg = lambda: dict(IG.DEFAULTS, enabled=True, trigger_mode="on_request")
 # ⚠️ prompt.py 是**自己直接读配置**的（不走 image_gen.cfg）⇒ 必须连它读配置的入口一起打桩，
 #    否则"能力已打开"这个前提在提示词那边根本不成立（第一次就是这么假红的）。
-from agent import config as C  # noqa: E402
+from agent import config as C # noqa: E402
 _orig_get = C.get_config
 _pget = getattr(P, "get_config", None)
 
@@ -232,8 +231,8 @@ ok("有应用内引导按钮 + GUIDES 条目（不叫用户去读文件）",
 ok("有「试一次」按钮 + 端点（只跑链条、不发消息）",
    'id="igTest"' in _html and '/api/image_gen/test' in _web and '/api/image_gen/test' in _html)
 
-print("⑨ 在线后端扩展 + 去水印 + 提示词整理（2026-09-18 用户口径：默认出网、多找几家让用户自己切、去水印、加说明文本）")
-ok("默认**出网**（用户拍板：在线出图明显更好）",
+print("⑨ 在线后端扩展 + 去水印 + 提示词整理")
+ok("默认**出网**",
    DEFAULT_CONFIG["image_gen"]["online_allowed"] is True)
 ok("默认**在线优先**", DEFAULT_CONFIG["image_gen"]["online_first"] is True)
 _pres = IG.online_presets()
@@ -255,14 +254,14 @@ ok("call_backend 支持 openai_image 协议（一个协议覆盖三家兼容接�
 ok("pollinations 协议会带 token（官方：nologo 要有账号 ⇒ 带 Bearer 才免水印）",
    "Authorization" in open(os.path.join(ROOT, "agent", "image_gen.py"), encoding="utf-8").read())
 
-# ⛔ 第十轮 **V-R10-34** 第 6 条（第九轮未闭合项）：pollinations 的**提示词不许进 URL**。
+# ⛔ 第 6 条：pollinations 的**提示词不许进 URL**。
 #   老写法 `GET /prompt/<urlencode(prompt)>` 把私聊原文塞进**请求行**（审计实测 2750 字 → 24.7KB）。
 #   当天一手取证（4 组对照探针）：`POST {base}/?query` + JSON body
 #   `{"prompt": …}` 回的是同一张图（HTTP 200 / image/jpeg）⇒ 内容放 body、非内容参数留查询串。
-import io as _io_poll                                                                    # noqa: E402
-import shutil as _sh_poll                                                                # noqa: E402
-import urllib.parse as _up_poll                                                          # noqa: E402
-import urllib.request as _ur_poll                                                        # noqa: E402
+import io as _io_poll # noqa: E402
+import shutil as _sh_poll # noqa: E402
+import urllib.parse as _up_poll # noqa: E402
+import urllib.request as _ur_poll # noqa: E402
 
 _POLL_PROMPT = "私聊原文：张三手机号13800000000，画只猫"
 _seen_poll = {}
@@ -344,13 +343,13 @@ ok("① 反例锚：老写法（提示词拼进 URL 路径）用**同一条判�
    _prompt_leaks("https://image.pollinations.ai/prompt/" + _up_poll.quote(_POLL_PROMPT)
                  + "?width=1024&height=1024", ""))
 
-# ⛔ 2026-09-22 加（第十三轮 **V-R13-3** · P2）：image_gen 的回链**换成行为锚**（段内子串换种写法就绕过）。
+# ⛔ image_gen 的回链**换成行为锚**（段内子串换种写法就绕过）。
 #   手法与 `safe_fetch_selftest` L27 同一套：本地假后端 + **连接层取证**（连的必须是 IP 字面量）。
-print("\n② 回链（backend 回包里的 data[].url）连的是 IP 字面量（V-R13-3 行为锚）")
-import http.server as _hs13                                                              # noqa: E402
-import socket as _sock13                                                                 # noqa: E402
-import threading as _th13                                                                # noqa: E402
-from agent import safe_fetch as _SF13                                                    # noqa: E402
+print("\n② 回链（backend 回包里的 data[].url）连的是 IP 字面量")
+import http.server as _hs13 # noqa: E402
+import socket as _sock13 # noqa: E402
+import threading as _th13 # noqa: E402
+from agent import safe_fetch as _SF13 # noqa: E402
 
 _PORT13 = [0]
 
@@ -476,10 +475,10 @@ _ig_src8 = open(os.path.join(ROOT, "agent", "image_gen.py"), encoding="utf-8").r
 ok("控制台能接受'列表写成字符串'（省掉自定义增删端点）", "def _as_list" in _ig_src8 and "def _as_backends" in _ig_src8)
 
 print("⑨ 真后端协议适配 + 本地自动发现（用**本地假服务**跑，不出网）")
-import base64  # noqa: E402
-import io  # noqa: E402
-import threading  # noqa: E402
-import http.server  # noqa: E402
+import base64 # noqa: E402
+import io # noqa: E402
+import threading # noqa: E402
+import http.server # noqa: E402
 
 _buf = io.BytesIO()
 # ⚠️ 每次跑都用**不同**的像素值：假服务每次返回同一张图会让"去重层"在第二次跑时就把第一张也判成重复
@@ -519,7 +518,7 @@ class _FakeGen(http.server.BaseHTTPRequestHandler):
 _srv = http.server.HTTPServer(("127.0.0.1", 0), _FakeGen)
 _port = _srv.server_address[1]
 threading.Thread(target=_srv.serve_forever, daemon=True).start()
-# ⛔ V-R7-4：判据**不写产品媒体目录** `data/gen_images/`（`_save_image_bytes`/`_note_generated`
+# ⛔ 判据**不写产品媒体目录** `data/gen_images/`（`_save_image_bytes`/`_note_generated`
 #   用的是**相对路径** `data/gen_images/...`）⇒ 本节把 cwd 切到临时目录，跑完切回。
 #   产品默认行为不变（相对路径写法没动，只是判据期间 cwd 不同）。
 _cwd0 = os.getcwd()
@@ -572,7 +571,7 @@ try:
     ok("允许出网时 pollinations 出现在可用后端里（免密钥、不用用户配）",
        any(b["id"] == "pollinations" for b in IG.backends()), str([b["id"] for b in IG.backends()]))
 
-    # ⛔ 第九轮 V-R9-24：远端回包里的 `data[].url` 原来是**无校验二次 GET**（假出图服务把它指向
+    # ⛔ 远端回包里的 `data[].url` 原来是**无校验二次 GET**（假出图服务把它指向
     #   127.0.0.1 ⇒ 产品真去打内网/环回）。这里用两个假后端守：①回链指向别处的内网地址 ⇒ 必须拒；
     #   ②回链指向**后端自己**（本地部署的常态）⇒ 照常取回（证明不是一刀切误伤本地后端）。
     class _FakeOpenAI(http.server.BaseHTTPRequestHandler):
@@ -605,14 +604,14 @@ try:
     threading.Thread(target=_srv2.serve_forever, daemon=True).start()
     _online = {"id": "fake-online", "kind": "online", "proto": "openai_image",
                "url": "http://127.0.0.1:%d/v1" % _port2, "model": "fake-model"}
-    _FakeOpenAI.url_to_return = "http://127.0.0.1:41011/png"       # 别处的内网地址（E 线复现形态）
+    _FakeOpenAI.url_to_return = "http://127.0.0.1:41011/png" # 别处的内网地址（E 线复现形态）
     try:
         IG.call_backend(_online, "两只猫")
         _refused, _why = False, ""
     except Exception as e:
         _refused, _why = True, "%s: %s" % (type(e).__name__, str(e)[:60])
-    ok("V-R9-24：回包里的 url 指向内网 ⇒ **拒**（不二次 GET）", _refused and "不可信" in _why, _why)
-    _FakeOpenAI.url_to_return = "http://127.0.0.1:%d/img" % _port2   # 同源（本地后端自己的静态资源）
+    ok("回包里的 url 指向内网 ⇒ **拒**（不二次 GET）", _refused and "不可信" in _why, _why)
+    _FakeOpenAI.url_to_return = "http://127.0.0.1:%d/img" % _port2 # 同源（本地后端自己的静态资源）
     try:
         _rr = IG.call_backend(_online, "两只猫")
         _same_ok = len(_rr.get("files") or []) == 1 and os.path.exists(_rr["files"][0])
@@ -620,7 +619,7 @@ try:
     except Exception as e:
         _same_ok, _same_why = False, "%s: %s" % (type(e).__name__, str(e)[:60])
     ok("阳性对照：同源回链照常取回（本地后端不被误伤）", _same_ok, _same_why)
-    ok("V-R9-24：二次 GET 之前调的是 safe_fetch 的统一闸门（源码断言）",
+    ok("二次 GET 之前调的是 safe_fetch 的统一闸门（源码断言）",
        "guard_remote_url" in open(os.path.join(ROOT, "agent", "image_gen.py"), encoding="utf-8").read())
     try:
         _srv2.shutdown()

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """「我的其他账号（大号）」判据（离线，不需要微信在跑）。
 
-起因（用户 2026-09-16 原话）：「这个是用的我的小号 他无法识别我的大号 之前版本也有这个问题」
+起因
 —— 机器人跑在**小号**上，而主人的**大号**在群里说话时，程序原先把大号当**普通群友**（会回你自己的话）。
 
 本判据盯四件事：
@@ -35,7 +35,7 @@ def ok(name, cond, detail=""):
 print("「我的其他账号（大号）」判据")
 print("")
 
-from agent.wechat import WeChatAdapter       # noqa: E402
+from agent.wechat import WeChatAdapter # noqa: E402
 
 
 def fake(cfg_wechat, nicks=None):
@@ -92,7 +92,7 @@ ok("normalize 里打了 owner 标记", '"owner": _is_owner' in src)
 ok("mode=skip 时直接跳过", '"skip"' in src)
 ok("与「识别自己账号」是两件事（self_identity 仍在）", "self_identity" in src and "is_owner" in src)
 
-print("\n── F. 界面能看到（用户口径：机制要映射到 UI 上）──")
+print("\n── F. 界面能看到──")
 page = io.open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
 ok("有登记框", 'data-cfg="wechat.owner_accounts"' in page)
 ok("有反应档位下拉", 'data-cfg="wechat.owner_mode"' in page)
@@ -135,7 +135,7 @@ ok("UI 有私聊档位且三档齐", 'data-cfg="wechat.private_chat"' in page
    and all(('value="%s"' % m) in page for m in ("owner_only", "off", "all")))
 ok("config.example.json 有该项", '"private_chat"' in ex)
 
-print("\n── H. 长清单折叠：群白名单那排也要折叠（用户：「这个更需要折叠了」）──")
+print("\n── H. 长清单折叠：群白名单那排也要折叠──")
 ok("#wlChips 在 FOLD_TARGETS 里", '["#wlChips"' in page)
 ok("折叠框架在（__foldAll + fold-bar）", "__foldAll" in page and "fold-bar" in page)
 wt = io.open(os.path.join(ROOT, "agent", "whale_text.py"), encoding="utf-8").read()
@@ -184,7 +184,7 @@ try:
                                   chat_key="group:gA", group_name="甲群")
     ok("know 档下照常回（没把老行为改坏）", _g5.get("should_respond") is True, _g5.get("reason"))
     _P.get_config = _real_gc
-except Exception as e:      # noqa: BLE001
+except Exception as e: # noqa: BLE001
     ok("第四档运行时行为", False, e)
 
 print("")

@@ -81,7 +81,7 @@ def _load_layout() -> dict:
 def _save_layout(d: dict):
     """原子写布局标定（`persist.atomic_write_json`：tmp 名带 pid + 随机后缀 + `os.replace`）。
 
-    V-R9-22：老写法就地覆盖 ⇒ 写一半崩掉就留半截 JSON，下一次 `_load_layout()` 静默回 `{}`
+    老写法就地覆盖 ⇒ 写一半崩掉就留半截 JSON，下一次 `_load_layout()` 静默回 `{}`
     ⇒ 标定白做（还得再动一次用户的窗口重标）。失败留日志，不再 `except: pass`。
     """
     if not persist.atomic_write_json(_LAYOUT_FILE, d, indent=1):
@@ -306,7 +306,7 @@ def _wechat_subwindows(main_hwnd) -> list:
 def close_subwindow(gui, hwnd, retries: int = 3) -> bool:
     """关闭一个微信子窗口：**只走投递，绝不真鼠标真键盘**。
 
-    ⛔ 2026-09-17 **用户实测报障的红线修复**（原话：「刚刚又截屏了，就在他发消息的那一刻，
+    ⛔ **用户实测报障的红线修复**（
     而且是微信的那个截屏」）。录屏机械取证：每轮干完活那一刻**整屏被压暗 6.3 秒**
     （亮度中位数 172.9 → 123.8），正是微信截图选区界面。真因就是本函数原来的两条兜底路径：
 

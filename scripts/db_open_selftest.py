@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""「打不开消息库」两个失败模式的判据（2026-09-17 立，用户「佬」的报告）。
+"""「打不开消息库」两个失败模式的判据。
 
 现场原话（两个失败模式都在他那一行报错里）：
-  `RuntimeError: 未找到任何已登录账号的数据库（试过 3 条路：「…\\_ACCT\\db_storage」
+  `RuntimeError: 未找到任何已登录账号的数据库（试过 3 条路
    RuntimeError: 未找到任何已登录账号的数据库；「…\\xwechat_files」KeyError: 'message\\message_1.db'；…）`
   ⇒ ①**填到 db_storage 那一层**：驱动库只在 db_dir 底下找"带 db_storage 的账号目录"，一个都找不到；
     ②**认了账号目录之后**又 `KeyError: 'message\\message_1.db'`（密钥表里没有这个分片）。
@@ -13,8 +13,7 @@
   C. 摘掉的是坏分片，好分片一个都不动；
   D. 结论话术分得清 —— 密钥缺口不能说成"权限或占用"。
 
-2026-09-19 追加 E 段（第二位网友的 02:39 报告，**切到另一个微信号**之后）：
-  原话：「切换到另外一个账号他就会提示微信未连接原因是打不开消息库，**将微信和软件全部管理员启动
+追加 E 段（第二位网友的 02:39 报告，**切到另一个微信号**之后）：
   仍然是没有办法解决**」；报告里那行是 `打不开消息库：KeyError: 'message\\message_2.db'`。
   ⇒ 由头**不是权限**（管理员也不行就是反证）：驱动库 `_load_or_extract_keys` 会拿**密钥缓存里**
   每个 `rel` 去 `_key_works(rel)`，而 `_key_works → _db_path` 在当前账号文件表里找不到那条分片时
@@ -35,7 +34,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
-from agent import wechat as W  # noqa: E402
+from agent import wechat as W # noqa: E402
 
 # 判据里要用「像数据库目录那样」的路径，但**不许把真实机器路径或真实账号写进仓库**（隐私闸会拦，也确实该拦）
 # ⇒ 一律运行时拼出来：既练到「填到 db_storage 那一层也要能退回账号目录/上一级」这条逻辑，又不留任何真数据。
@@ -76,7 +75,7 @@ print("── B/C. 缺密钥的分片：补一次 → 摘掉 → 如实报 ─�
 cls = W._db_class()
 ok("拿到的是 WeChatDB 的**子类**（不是另起一套）",
    cls is not None and cls.__name__ == "_SafeDB" and cls.__mro__[1].__name__ == "WeChatDB", cls.__mro__[1].__name__)
-db = cls.__new__(cls)                       # 不走 __init__（不需要真微信）
+db = cls.__new__(cls) # 不走 __init__（不需要真微信）
 db._keys = {}
 db._db_files = {"message/message_1.db": "x", "message/message_2.db": "y"}
 calls = {"n": 0}
@@ -84,7 +83,7 @@ calls = {"n": 0}
 
 def _fake_load(master_key=None):
     calls["n"] += 1
-    db._keys["message/message_2.db"] = b"k"      # 只能补回一半 ⇒ 另一个仍是缺的
+    db._keys["message/message_2.db"] = b"k" # 只能补回一半 ⇒ 另一个仍是缺的
     return None
 
 
@@ -134,7 +133,7 @@ try:
 
         def _key_works(self, rel):
             if rel not in self._files:
-                raise KeyError(rel)                 # 与驱动库 `_db_path(rel)` 同型
+                raise KeyError(rel) # 与驱动库 `_db_path(rel)` 同型
             return True
 
         def _open(self, rel):
@@ -155,7 +154,7 @@ try:
         os.makedirs(os.path.dirname(_stable), exist_ok=True)
         with open(_stable, "w", encoding="utf-8") as f:
             json.dump({"message/message_2.db": "bb", "contact/contact.db": "cc"}, f)
-        _db = _cls(keys_file=_cache)               # 第一枪：缓存里有陈旧条目 ⇒ 自愈后应当成功
+        _db = _cls(keys_file=_cache) # 第一枪：缓存里有陈旧条目 ⇒ 自愈后应当成功
         ok("陈旧条目 ⇒ 构造**自愈**（不再当场抛 KeyError）", _db is not None)
         _after = json.load(open(_cache, encoding="utf-8"))
         ok("只摘掉那条**当前账号里不存在**的分片",
@@ -169,7 +168,7 @@ try:
            {"message/message_1.db": "aa", "message/message_2.db": "bb"})
         # 摘不动就照原样抛（不许吞）
         _write_cache({"message/message_2.db": "bb"})
-        _StubDB._files = {"message/message_1.db", "message/message_2.db"}   # 全都存在 ⇒ 没有陈旧条目
+        _StubDB._files = {"message/message_1.db", "message/message_2.db"} # 全都存在 ⇒ 没有陈旧条目
         _cls2 = W._db_class()
         W._SAFE_DB_CACHE.clear()
         W._SAFE_DB_CACHE[_StubDB] = _cls2
@@ -193,7 +192,7 @@ try:
         def _load3(master_key=None):
             _c3["n"] += 1
             if _c3["n"] == 1:
-                raise KeyError("message/message_2.db")     # 运行期撞上同一条陈旧缓存
+                raise KeyError("message/message_2.db") # 运行期撞上同一条陈旧缓存
             _db3._keys["message/message_1.db"] = b"k"
 
         _db3._load_or_extract_keys = _load3
@@ -213,7 +212,7 @@ try:
             json.dump({"message\\message_0.db": "aa", "message\\message_9.db": "bb",
                        "contact.db": "cc"}, _f2)
         _real_paths = W._key_cache_paths
-        W._key_cache_paths = lambda _db: [_cache2]      # 只认这份（不碰机器上真实的密钥缓存）
+        W._key_cache_paths = lambda _db: [_cache2] # 只认这份（不碰机器上真实的密钥缓存）
         try:
             _n_dropped = W._pm_prune_dead_key_entries(
                 os.path.join(TMP, "xwechat_files"), "acct_0001", log_it=False)

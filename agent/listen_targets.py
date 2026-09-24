@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """监听目标解析：**按 wxid 认群**，群名只当"给人看"和老配置的兼容入口。
 
-⛔ 第四轮审计候选 **W-1**（`console_html.py:2334/2336/2338/2380`、`scripts/persona_morph.py:1626`、
+⛔ 审计候选 **W-1**（`console_html.py:2334/2336/2338/2380`、`scripts/persona_morph.py:1626`、
 `persona_morph.py:642` 三处都拿**群名**当身份）：两个同名群 ⇒ **勾一个＝监听两个**；
 运行明细里两间群同名 ⇒ 「这条回复挂在群 X 名下」无法唯一确定是哪一间（网友的串群报障就卡在这一层）。
 
@@ -43,7 +43,7 @@ def resolve_groups(groups, whitelist, deny=None) -> dict:
     def _denied(g) -> bool:
         return str(g["wxid"]) in _deny or str(g.get("name") or "") in _deny
 
-    if not items:                                   # 白名单为空 = 所有群（老口径不变）
+    if not items: # 白名单为空 = 所有群（老口径不变）
         for g in gs:
             if not _denied(g):
                 _add(g)
@@ -57,7 +57,7 @@ def resolve_groups(groups, whitelist, deny=None) -> dict:
                     out["used_name"].append(it)
                 elif len(hits) > 1:
                     out["ambiguous"].append({"name": it, "wxids": [str(h["wxid"]) for h in hits]})
-                    continue                        # fail-closed：不猜
+                    continue # fail-closed：不猜
                 else:
                     out["missing"].append(it)
                     continue
@@ -72,7 +72,7 @@ def describe(groups, res, wxid_of=None, read_failed: str = "") -> str:
 
     `wxid_of`：可选，`gw -> 展示用 wxid 尾巴`；默认自动取。
     `read_failed`：群列表**这次没读到**的原因 —— 有它时不许把"没匹配上"说成"改名/退群了？"
-    （那是 2026-09-21 第五轮回执 **V-R5B-9** 点名的"归因与同一条日志里的真因矛盾"）。
+    。
     """
     res = res or {}
     names = ", ".join(str(g.get("name") or g.get("wxid")) for g in (groups or [])[:15])

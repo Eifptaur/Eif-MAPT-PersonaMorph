@@ -16,8 +16,8 @@ import re
 
 INDEX_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                           "data", "emoji_index.json")
-COLS = 5            # 微信表情面板：每行 5 列
-VISIBLE = 4         # 可见完整行数
+COLS = 5 # 微信表情面板：每行 5 列
+VISIBLE = 4 # 可见完整行数
 
 
 def _load() -> dict:

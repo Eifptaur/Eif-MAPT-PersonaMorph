@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""「鲸语」文案判据（2026-09-14，用户：「我这边切换鲸语，只有少数的几个变了」）。
+"""「鲸语」文案判据。
 
 三条要守住的东西：
   ① **覆盖**：控制台里可见的短文案（面板标题 / 行标签 / 按钮 / 表头）必须都在字典里，
@@ -23,9 +23,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
-from agent import console_html as CH              # noqa: E402
-from agent import webui as W                      # noqa: E402
-from agent.whale_text import DICT, SKIP, NAV       # noqa: E402
+from agent import console_html as CH # noqa: E402
+from agent import webui as W # noqa: E402
+from agent.whale_text import DICT, SKIP, NAV # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -95,7 +95,7 @@ try:
     ok("长键优先、各换各的（没有「停止」吃掉「停止检测」）",
        "停止检测（不测了，我摊牌）" in out and ">停止（打烊）<" in out, out[:90])
     ok("整节点才换：句子里的「模型 API」不乱换", "不通时先看这里" in out and out.count("模型 API") == 1, out)
-    # V-R7-10：这里原有 `ok("普通模式原样返回", W.WebUI._apply_whale.__doc__ is not None)`——只查了文档字符串存在，
+    # 这里原有 `ok("普通模式原样返回", W.WebUI._apply_whale.__doc__ is not None)`——只查了文档字符串存在，
     # 恒真且与"普通模式"无关；普通模式的行为已由下面第 105 行那条真断言（一个字都不改）覆盖，故作废删除。
 finally:
     W.get_config = _orig
@@ -121,7 +121,7 @@ ok("导航短表的**结果**不能再是总表的键（否则第二趟会把它
 
 print("── D. 直发页面实测：切鲸语后整页确实变了 ──")
 if os.environ.get("PM_JUDGE_NO_PROC") == "1":
-    # ⛔ V-R7-12：判据环境（`run_all_selftests.py` 会带这个开关）⇒ **只跑静态/内存那半**，
+    # ⛔ 判据环境（`run_all_selftests.py` 会带这个开关）⇒ **只跑静态/内存那半**，
     #   这一段的"真起 WebUI 服务"整段跳过，并**明确打一行 SKIP**（不冒充通过；单跑仍然跑全）。
     skip("D. 直发页面实测", "PM_JUDGE_NO_PROC=1 ⇒ 跳过真起控制台那半（D 段 2 条不判）")
 else:
@@ -140,7 +140,7 @@ else:
         W.get_config = lambda: base
         w3 = W.WebUI(lambda: {}, [])
         import tempfile as _tf
-        w3.console_url_root = _tf.mkdtemp(prefix="cuj-")   # ⚠️ 判据不写产品那份 logs/console.url（2026-09-18）
+        w3.console_url_root = _tf.mkdtemp(prefix="cuj-") # ⚠️ 判据不写产品那份 logs/console.url
         port = w3.start()
         try:
             with urllib.request.urlopen("http://127.0.0.1:%d/?token=whale-judge" % port, timeout=6) as r:
@@ -158,7 +158,7 @@ else:
 
 print("── E. 用量计数单点来源（token 调研 C9：calls 曾长期虚高一倍）──")
 try:
-    from agent.llm import add_usage                        # noqa: E402
+    from agent.llm import add_usage # noqa: E402
     _t = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
           "reasoning_tokens": 0, "cached_tokens": 0, "calls": 0}
     add_usage(_t, {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120})

@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """子进程窗口判据：起子进程必须带「不要窗口」，否则会闪控制台窗。
 
-背景（2026-09-16 用户报「运行的时候极短时间内闪一个弹窗，而且经常闪」）：
+背景：
   · `scripts/run_all_selftests.py` 拉 84 个子脚本时没带 ⇒ **连闪 84 次**（已修）；
   · 探针（`_scratch/win_watch.ps1`）抓到 4 个 `PseudoConsoleWindow`、其中两个明确是 ffmpeg
     ⇒ `voice.py` / `tts.py` / `voice_models.py` / `video_gen.py` / `bilibili.py` / `dep_heal.py`
     这些**起 ffmpeg / 第三方 exe** 的地方也没带（已修）。
-项目里早有这条约定：`agent/video_read.py` 注释原话「Windows 下 `CREATE_NO_WINDOW`，不许弹黑框」，
+项目里早有这条约定：`agent/video_read.py` 注释，
 生产代码 `persona_morph.py` 也一直带 `0x08000000`。
 
 本判据＝用 `ast` 扫 `agent/` 与 `scripts/` 里所有 `subprocess.run/Popen/call/check_output/check_call`

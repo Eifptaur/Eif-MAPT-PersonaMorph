@@ -18,13 +18,13 @@ try:
 except Exception:
     pass
 
-import agent.config as cfgmod                        # noqa: E402
-from agent import cloud                              # noqa: E402
+import agent.config as cfgmod # noqa: E402
+from agent import cloud # noqa: E402
 
 PASS, FAIL = [], []
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# ⛔ 2026-09-21（第九轮 V-R9-25 改动后）：`cloud.normalize_url` 现在**会做 DNS 解析**
+# ⛔ `cloud.normalize_url` 现在**会做 DNS 解析**
 #   （原来只比字符串表）⇒ 判据必须自己把解析钉住，否则 A/D/E 三段会去打真 DNS。
 _DNS_TABLE = {"a.com": "93.184.216.34", "example.com": "93.184.216.34", "hook.example": "93.184.216.34"}
 
@@ -70,7 +70,7 @@ def main():
 
     try:
         print("== A. URL 校验 ==")
-        _offline_gai = _install_offline_resolver()          # 离线：normalize_url 现在会解析
+        _offline_gai = _install_offline_resolver() # 离线：normalize_url 现在会解析
         use({})
         ok("空串 = 未配置（不算错）", cloud.normalize_url("") == (True, "", "未配置"))
         ok("http/https 都收", cloud.normalize_url("http://a.com/x")[0] and cloud.normalize_url("https://a.com/x")[0])
@@ -79,7 +79,7 @@ def main():
         ok("缺主机名拒", not cloud.normalize_url("https:///hook")[0])
         for bad in ("http://127.0.0.1:8080/hook", "http://localhost:8080", "http://192.168.1.9/hook", "http://10.0.0.5/x"):
             ok("环回/内网默认拒：" + bad, not cloud.normalize_url(bad)[0], cloud.normalize_url(bad)[2][:30])
-        # ⛔ 第九轮 V-R9-25：字符串表时代这 7 种形态**全部放行**（E 线实测），现在逐条守
+        # ⛔ 字符串表时代这 7 种形态**全部放行**（E 线实测），现在逐条守
         for bad2 in ("http://localhost.:8000/x", "http://169.254.169.254/latest/meta-data/",
                      "http://[::ffff:127.0.0.1]:8080/", "http://127.1:8080/x",
                      "http://0x7f000001:8080/x", "http://2130706433:8080/x", "http://100.64.0.1/x"):
@@ -100,7 +100,7 @@ def main():
         socket.getaddrinfo = raise_dns
         r = cloud.probe(url="https://no-such-host.invalid/hook")
         ok("DNS 失败 ⇒ stage=dns 且说明原因", r["stage"] == "dns" and not r["ok"], r["why"][:40])
-        _offline_gai = _install_offline_resolver()          # 装回离线替身（别落到真 DNS）
+        _offline_gai = _install_offline_resolver() # 装回离线替身（别落到真 DNS）
 
         def raise_tcp(*a, **k):
             raise TimeoutError("timed out")
@@ -121,10 +121,10 @@ def main():
         ok("https 且 TLS 不通 ⇒ stage=tls（离线可判、说明卡在 TLS）",
            r["stage"] == "tls" and not r["ok"], str(r.get("why"))[:44])
 
-        # ⛔ 第十轮 V-R10-33：HEAD 段**不再走 `urllib.urlopen`**（那会自己再解析一次域名），
+        # ⛔ HEAD 段**不再走 `urllib.urlopen`**（那会自己再解析一次域名），
         #   改走 `safe_fetch.pinned_head`（钉 IP）。⇒ 判据改成打桩**连接类**，
         #   这样既能守住"只发 HEAD / 不带凭据 / 不带数据"，也能守住"连的是已校验的 IP"。
-        from agent import safe_fetch as SF                      # noqa: E402
+        from agent import safe_fetch as SF # noqa: E402
         seen = []
         _head_status = {"v": 200}
         _real_http_cls = SF._PinnedHTTPConnection
@@ -183,7 +183,7 @@ def main():
             ok("**探测不带任何数据**（body 为空）", not req.get("data"), str(req.get("data"))[:40])
             ok("**探测不带凭据**（没有 authorization 头）",
                "authorization" not in (req.get("headers") or {}), list((req.get("headers") or {})))
-            # V-R10-33：HEAD 段必须连**闸门校验过的那个 IP**（不再按域名解析一次）
+            # HEAD 段必须连**闸门校验过的那个 IP**（不再按域名解析一次）
             ok("HEAD 段连的是已校验的 IP（钉 IP，不是再解析域名）",
                _dials == [("93.184.216.34", 80)], str(_dials))
 
@@ -227,7 +227,7 @@ def main():
                 self._raw = json.dumps(obj).encode("utf-8")
                 self.status = status
             def read(self, n=-1):
-                # V-R9-26：产品改成 `read(上限+1)` 的带限读取 ⇒ 替身要认这个形参
+                # 产品改成 `read(上限+1)` 的带限读取 ⇒ 替身要认这个形参
                 return self._raw if (n is None or int(n) < 0) else self._raw[:int(n)]
             def __enter__(self):
                 return self
@@ -274,7 +274,7 @@ def main():
         r = cloud.upload("persona", {"a": 1}, dry=False)
         ok("默认仍是 bearer（不写 auth_style 时行为不变）",
            sent[0]["headers"].get("authorization") == "Bearer T0KEN" and r["ok"], r.get("auth_style"))
-        # ⛔ 2026-09-21（第五轮回执 V-R5R-4）：原来写成 `not ...["ok"] or True` ⇒ **恒真**（改成什么都过）
+        # ⛔ 原来写成 `not ...["ok"] or True` ⇒ **恒真**（改成什么都过）
         ok("未知 which ⇒ 拒绝", cloud.upload("nope", {})["ok"] is False)
         cloud.urllib.request.urlopen = real_urlopen
 
@@ -288,7 +288,7 @@ def main():
         html = open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
         wui = open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
         cfg_py = open(os.path.join(ROOT, "agent", "config.py"), encoding="utf-8").read()
-        doc = os.path.join(ROOT, "docs", "上云接口契约.md")
+        doc = os.path.join(os.path.join(os.path.dirname(ROOT), "dev-workspace", "persona-morph"), "docs", "上云接口契约.md")  # 文档区已迁出产品根
         ok("控制台四个键 + 两个测试按钮 + 读数",
            all(k in html for k in ('data-cfg="cloud.enabled"', 'data-cfg="cloud.persona_url"',
                                    'data-cfg="cloud.blocklist_url"', 'data-cfg="cloud.token"',

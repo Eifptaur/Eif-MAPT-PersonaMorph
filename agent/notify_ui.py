@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""把「要用户拍板的事」弹到眼前：**不动光标、不要求可见；可能短暂置前约 1~3 秒后自动还回**（口径 2026-09-14）。
+"""把「要用户的事」弹到眼前：**不动光标、不要求可见；可能短暂置前约 1~3 秒后自动还回**。
 
-用户原话：「**把弹窗切出来的那一秒，就应该立刻让它到后台**」＋「persona morph 不能自己把弹窗切出来吗」
+＋「persona morph 不能自己把弹窗切出来吗」
 ⇒ 本模块只做三件事，且每一件都**不许把前台留在我们这边**：
 
   ① **找得到就复用、找不到就自己开**：控制台窗口（我们自己的 WebView2 窗口或浏览器）不在就
@@ -31,7 +31,7 @@ from .config import ROOT
 
 log = logging.getLogger("persona-morph")
 
-# ── 「哪个窗口是我们的控制台」的唯一判据（2026-09-19 收紧，起因见 classify_console_window）──
+# ── 「哪个窗口是我们的控制台」的唯一判据──
 # 唯一权威口径＝控制台窗口标题「群相 控制台」。这个串在三处同源：`agent/console_html.py` 的
 # `<title>群相 控制台</title>`、`launcher-src/launcher.cs:1165` 的 `StyleKit.Apply(this, "群相 控制台")`、
 # 以及 `launcher.cs:1250` 的 `Ui.ConsoleWindowAlive()`（它本来就按这个串判，exe 那边口径是对的）。
@@ -40,7 +40,7 @@ CONSOLE_CAPTION = "群相 控制台"
 # 「群相 一键启动」/「群相 正在启动」/「群相 启动完成」/「群相 已就绪」。
 LAUNCHER_CAPTIONS = ("一键启动", "正在启动", "启动完成", "已就绪", "已在运行", "正在关闭")
 EXE_HINTS = ("一键启动.exe", "Agent启动器.exe", "一键启动", "Agent启动器")
-FOREGROUND_HINT = ("控制台",)          # 兜底：前台不是控制台时才需要弹
+FOREGROUND_HINT = ("控制台",) # 兜底：前台不是控制台时才需要弹
 
 SW_SHOWNOACTIVATE = 4
 SW_RESTORE = 9
@@ -50,7 +50,7 @@ SWP_NOMOVE = 0x0002
 SWP_NOACTIVATE = 0x0010
 SWP_SHOWWINDOW = 0x0040
 FLASHW_TRAY = 2
-FLASHW_TIMERNOFG = 12          # 一直闪到窗口到前台为止
+FLASHW_TIMERNOFG = 12 # 一直闪到窗口到前台为止
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 
 _WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
@@ -171,7 +171,7 @@ def flash(hwnd, count: int = 6) -> bool:
 def classify_console_window(title: str, exe: str) -> int:
     """给一个顶层窗口打「是不是我们的控制台」的分（0＝不是）。**纯函数，判据可单测**。
 
-    ⛔ 2026-09-19 修（作者报「刚刚点了一下『一键启动』，怎么没有打开控制台呀？还得我再点一下」）：
+    ⛔ 
       旧判据是**标题子串** `TITLE_HINTS=("群相","控制台","Persona Morph",…)` + `EXE_HINTS`（含裸 "一键启动"）。
       但启动器自己的窗口就叫**「群相 一键启动」**、完成时叫**「群相 启动完成」**，而**控制台窗口与启动器窗口
       是同一个 exe**（一键启动.exe）⇒ 启动器窗口拿 3+2 分，被当成"控制台已经开着"。
@@ -221,7 +221,7 @@ def find_console_window() -> int:
     try:
         _u().EnumWindows(_WNDENUMPROC(_cb), 0)
     except Exception as e:
-        # ⚠️ 2026-09-17 实测踩坑：这里原来写的是 `_WNDUMPROC`（本模块里根本不存在），
+        # ⚠️ 这里原来写的是 `_WNDUMPROC`（本模块里根本不存在），
         #   `NameError` 被这句 `except` 吃掉 ⇒ **函数永远返回 0**（"找不到控制台窗口"），
         #   于是 `open_console()` 的复用分支从没生效过、每重启一次就多开一个窗口。
         #   教训：吞异常的兜底必须**至少留一条 warning 级痕迹**，否则一个拼写错误能静默半年。
@@ -251,13 +251,13 @@ def _url_live(u: str) -> bool:
 def console_url(anchor: str = "") -> str:
     """控制台地址（带 token 与锚点）。
 
-    地址来源**只有一个权威顺序**（2026-09-14 定，起因：另一台机器打开控制台报
+    地址来源**只有一个权威顺序**（起因：另一台机器打开控制台报
     `{"error":"unauthorized"}`——启动器自己用 `IndexOf("\\"token\\"")` 在 config.json 里找口令，
     但 config.json 里**排在前面的 `cloud.token` 是空串**，于是拼出 `/?token=` ⇒ 401）：
       ① `logs/console.url`（拥有 token 的进程写出来的**现成地址**，别人只读，不含解析）；
       ② 兜底：配置里的 `server.port` + `server.token`（结构化读取，绝不手写字符串找字段）。
-    🔴 2026-09-18 加**活性检查**：①那份文件可能被"起在随机端口上的实例/判据"写脏（实测被写成
-      `…:14675` 而没人听）⇒ 直接拿它开窗就是 `ERR_CONNECTION_REFUSED`（作者现场就撞上了）。
+    🔴 **活性检查**：①那份文件可能被"起在随机端口上的实例/判据"写脏（实测被写成
+      `…:14675` 而没人听）⇒ 直接拿它开窗就是 `ERR_CONNECTION_REFUSED`。
       ⇒ 文件里的端口**连不上就弃用**，回落配置地址并留 warning；两边都连不上才返回文件值。
     """
     base = ""
@@ -280,7 +280,7 @@ def console_url(anchor: str = "") -> str:
     except Exception:
         _fallback = ""
     if base and not _live(base) and _fallback:
-        # ⚠️ 2026-09-18 晚修（判据 `console_open_selftest` 那条"死链回落"一直红）：
+        # ⚠️ 晚修（判据 `console_open_selftest` 那条"死链回落"一直红）：
         #   老写法要求 **文件死 且 配置地址活** 才回落 ⇒ 控制台恰好没在跑时（配置地址也连不上）
         #   就把死链原样交出去，正是要防的那件事；而且判据结果取决于"本机此刻有没有在听的控制台"
         #   ⇒ **不可复跑**。改成：文件值连不上（复查一次，0.4s 在忙机器上会误判）⇒ 一律以**配置地址**
@@ -299,9 +299,9 @@ def console_url(anchor: str = "") -> str:
 # WebView2 运行时（常青版）注册表位置：任一命中且 pv 非空 ⇒ 系统装了运行时
 _WV2_GUID = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 _WV2_KEYS = (
-    (0x80000002, "SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\Clients\\" + _WV2_GUID),   # HKLM
+    (0x80000002, "SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\Clients\\" + _WV2_GUID), # HKLM
     (0x80000002, "SOFTWARE\\Microsoft\\EdgeUpdate\\Clients\\" + _WV2_GUID),
-    (0x80000001, "SOFTWARE\\Microsoft\\EdgeUpdate\\Clients\\" + _WV2_GUID),               # HKCU
+    (0x80000001, "SOFTWARE\\Microsoft\\EdgeUpdate\\Clients\\" + _WV2_GUID), # HKCU
 )
 
 
@@ -329,7 +329,7 @@ def webview_ready() -> dict:
         if not rep["runtime"]:
             rep["why"] = "系统没装 WebView2 运行时"
     except Exception:
-        rep["runtime"] = True          # 查不出来就按"可能就绪"（exe 自己还有一次回退），别把人挡在门外
+        rep["runtime"] = True # 查不出来就按"可能就绪"（exe 自己还有一次回退），别把人挡在门外
         rep["why"] = "运行时检测不可用（按就绪处理）"
     if not rep["exe"]:
         rep["why"] = "目录里没有 一键启动.exe"
@@ -342,9 +342,8 @@ def webview_ready() -> dict:
 def open_console(url: str = "", browser_path: str = "", take_lock: bool = True, mode: str = "") -> dict:
     """自己开一个控制台窗口（**单点**：所有入口共用一把锁 + 一个优先级）。
 
-    优先级（2026-09-13 口径：控制台不再依赖浏览器；2026-09-17 加"复用"）：
+    优先级：
       ⓪ **已经开着控制台窗口 ⇒ 复用那个窗口**（抬起来 + 闪任务栏，不新开）——
-         起因：用户报「重启几次就攒出 4 个控制台，互相抢」；原先这里是无条件新开，唯一的防双窗手段
          只是"90 秒内刚有人开过就跳过"，间隔一超就失效 ⇒ 越重启越多窗口。
       ① 我们自己的 WebView2 窗口（`一键启动.exe --console <url>`，前提 `webview_ready()`）；
       ② 只有①确实不成立（exe 缺 / 缺 DLL / 没装 WebView2 运行时 / 启动抛异常）才回退浏览器。
@@ -353,7 +352,7 @@ def open_console(url: str = "", browser_path: str = "", take_lock: bool = True, 
     url = url or console_url()
     if not url:
         return {"ok": False, "how": "", "why": "拿不到控制台地址（config.json 里没有 server.port）"}
-    # 🔴 2026-09-18 修（作者在另一台机器实测：「更新之后，一键启动不弹窗口，还得再点一次」）：
+    # 🔴 
     #   原来这里是**先抢锁、抢不到就 `skip` 返回**，而"锁新鲜"只证明"90 秒内有人开过"，
     #   **不证明屏幕上真的有一个控制台窗口**——更新完新机器人起来时会开一次窗并落锁；用户紧接着点
     #   「一键启动」，这一跳判"锁新鲜 ⇒ 机器人侧已打开" ⇒ **直接 skip、什么都不弹**；等 90 秒锁过期
@@ -372,7 +371,7 @@ def open_console(url: str = "", browser_path: str = "", take_lock: bool = True, 
         except Exception:
             _got = False
         if not _got:
-            for _ in range(int(_WAIT_WINDOW_TRIES)):     # 最多等 6 秒（可能别人正在开）
+            for _ in range(int(_WAIT_WINDOW_TRIES)): # 最多等 6 秒（可能别人正在开）
                 time.sleep(0.5)
                 try:
                     _w = int(find_console_window() or 0)
@@ -387,15 +386,14 @@ def open_console(url: str = "", browser_path: str = "", take_lock: bool = True, 
     ready = webview_ready()
     try:
         from .util import write_console_url
-        # 只把**活着的**地址落盘（2026-09-18）：判据/试验里传进来的死链（例：随机空闲端口
+        # 只把**活着的**地址落盘：判据/试验里传进来的死链（例：随机空闲端口
         # `…:39998`）一旦被记下，启动器下次就照它开窗 ⇒ 一屏 `ERR_CONNECTION_REFUSED`（实测踩过）。
         if url and _url_live(url):
-            write_console_url(url)             # 顺手把地址落盘：别的入口（启动器/托盘）直接读，别再自己拼
+            write_console_url(url) # 顺手把地址落盘：别的入口（启动器/托盘）直接读，别再自己拼
         elif url:
             log.warning("不落盘控制台地址（端口连不上，留着会害下次开窗）：%s", url.split("?")[0])
     except Exception:
         pass
-    # ⚠️ 2026-09-17 修（用户报「现在这里有 4 个控制台，它们可能相互抢」）：
     #   实测：4 个「群相 控制台」窗口**各由一个 `一键启动.exe` 托管**，来自 4 次**间隔 >90 秒**的重启——
     #   而这里原来是**无条件新开**（唯一防双窗手段是"90 秒内刚有人开过就跳过"，间隔一超就失效）⇒ 越重启越多窗。
     #   正解＝**先复用已经开着的那个窗口**（只抬起来 + 闪任务栏，不动光标、不要求可见；可能短暂置前约 1~3 秒后自动还回），找不到才新开。
@@ -403,10 +401,10 @@ def open_console(url: str = "", browser_path: str = "", take_lock: bool = True, 
         _ex = int(find_console_window() or 0)
     except Exception:
         _ex = 0
-    # ⛔ 2026-09-22 加（第十五轮 **V-R15-3** · 网友报「打不开控制台」）：**先把"死页"这件事说清楚**。
+    # ⛔ **先把"死页"这件事说清楚**。
     #   复用分支只 `flash`/抬起、**从不导航或刷新** ⇒ 窗口里若是 `ERR_CONNECTION_REFUSED` 或 401 的旧页，
     #   用户怎么点都是那一屏死页。这里**如实留痕**（要打开的那个地址连不上 ⇒ 很可能控制台服务没在跑）。
-    #   ⚠️ 这一版**不改复用语义**（窗口在就复用，2026-09-18 定的"不攒窗口"口径不放宽）——
+    # ⚠️ 这一版**不改复用语义**——
     #   真正"把死页刷回来"需要一个 `--console-reuse` 的导航口（C# 侧加 `CoreWebView2.Navigate`），
     #   属下一版的事；这里只保证用户/我们**看得见原因**（日志里有这一行）。
     if _ex and url:
@@ -420,7 +418,7 @@ def open_console(url: str = "", browser_path: str = "", take_lock: bool = True, 
     if _ex and _u().IsWindow(_ex):
         try:
             if str(mode or "") == "quiet":
-                # 🔴 2026-09-18（用户实测反馈：「我在打游戏，这玩意还是会跳出来」）：
+                # 🔴 （用户实测反馈）：
                 #   机器人**自己**在后台开的窗（启动时那一次、以及任何自动调用）**不许把控制台抬到前台** ——
                 #   只闪任务栏就够了：用户想看的自然会点任务栏，不想看的不该被顶出游戏。
                 #   要抬起来只有一种情况：**用户自己点了**「打开控制台」（调用方显式要求 attention）。
@@ -432,12 +430,11 @@ def open_console(url: str = "", browser_path: str = "", take_lock: bool = True, 
                     "hwnd": _ex, "ready": ready, "raise": _rp}
         except Exception as e:
             log.debug("复用控制台窗口失败，改为新开：%s", e)
-    # ⛔ 2026-09-22 加（**同一屏 ERR_CONNECTION_REFUSED 的第二个入口**）：地址**现在是死的**吗？
+    # ⛔ （**同一屏 ERR_CONNECTION_REFUSED 的第二个入口**）：地址**现在是死的**吗？
     #   机器人还没起来/刚被关掉时，`console_url()` 只能给出"配置文件里那个端口"——它没人听；
     #   老实现照样 `Process.Start(浏览器, 死地址)` ⇒ 用户看到的就是「无法访问此页面 / 127.0.0.1 拒绝连接」。
     #   ① 自家 WebView2 窗口：**照开**（C# 侧撞到导航失败会显示我们自己的"正在重试"页并在端口起来后自动接上，
     #      比一屏 Edge 错误页强得多，也不会把用户引到"程序坏了"）；② 浏览器兜底：**没人在听就不开**，
-    #      如实返回 `how=dead`，由调用方（启动器/一键启动）用自家面板告诉用户"控制台还没就绪"。
     _live = False
     try:
         _live = _url_live(url)
@@ -489,7 +486,7 @@ def raise_without_stealing(hwnd=None) -> dict:
             rep.update({"ok": True, "why": "控制台已经是前台，什么都不做"})
             return rep
         if u.IsIconic(hwnd):
-            u.ShowWindow(wintypes.HWND(hwnd), SW_RESTORE)          # 会激活 ⇒ 下面必须还前台
+            u.ShowWindow(wintypes.HWND(hwnd), SW_RESTORE) # 会激活 ⇒ 下面必须还前台
         u.ShowWindow(wintypes.HWND(hwnd), SW_SHOWNOACTIVATE)
         u.SetWindowPos(wintypes.HWND(hwnd), wintypes.HWND(HWND_TOP), 0, 0, 0, 0,
                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW)
@@ -504,7 +501,7 @@ def raise_without_stealing(hwnd=None) -> dict:
         rep["why"] = "已抬起并闪烁任务栏；前台已还给原窗口" if rep["restored"] else \
             "已抬起并闪烁任务栏；还前台没成功（可能被系统策略挡住）"
         return rep
-    except Exception as e:                                        # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         rep["why"] = "弹窗失败：%s: %s" % (type(e).__name__, e)
         return rep
 
@@ -529,7 +526,7 @@ def pop_decision_ui(url: str = "", anchor: str = "#sec-vermat", wait_s: float = 
             if not o.get("ok"):
                 rep["why"] = o.get("why") or "开不出控制台窗口"
                 return rep
-            deadline = time.monotonic() + max(0.0, float(wait_s))       # 等窗口起来（有上限）
+            deadline = time.monotonic() + max(0.0, float(wait_s)) # 等窗口起来（有上限）
             while time.monotonic() < deadline and not hwnd:
                 time.sleep(0.25)
                 hwnd = find_console_window()
@@ -538,7 +535,7 @@ def pop_decision_ui(url: str = "", anchor: str = "#sec-vermat", wait_s: float = 
         rep["action"] = "opened+raised" if rep["opened"] else "raised"
         rep["ok"] = bool(r.get("ok"))
         return rep
-    except Exception as e:                                             # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         rep["why"] = "弹出流程异常：%s: %s" % (type(e).__name__, e)
         return rep
 

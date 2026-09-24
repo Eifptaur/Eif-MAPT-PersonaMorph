@@ -270,7 +270,7 @@ def sweep(store, chat_key: str, fetch_row, memory=None, state: dict | None = Non
             continue
         ts = int(m.get("ts") or 0)
         if window_ms and ts and (now_ms - ts) > int(window_ms):
-            checked.add(key)          # 太老的消息不可能被撤回了 ⇒ 不再读库
+            checked.add(key) # 太老的消息不可能被撤回了 ⇒ 不再读库
             continue
         checked.add(key)
         out["checked"] += 1
@@ -280,7 +280,7 @@ def sweep(store, chat_key: str, fetch_row, memory=None, state: dict | None = Non
             _log(log, "debug", "撤回核对：读第 %s 条失败 %s", mid, e)
             continue
         if not content:
-            continue                  # 读不到 ⇒ 不动（宁可漏删，也不误删）
+            continue # 读不到 ⇒ 不动（宁可漏删，也不误删）
         info = parse_recall(content)
         if not info:
             continue

@@ -34,14 +34,14 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from agent import listener_watermark          # W2：持久化水位（成功才推进 / 重试留痕 / 每会话串行）
-from agent import recall                       # 第 14 条：撤回后把已进上下文的那条剔除
-from agent import tier_control                 # 第 15/16/18 条：固定 4 档 / 峰谷映射 / 指令禁言
-from agent import timers                       # 第 12 条：计时提醒（只对当前会话 + 过风险闸门 + 条数上限）
-from agent import holidays                     # 第 13 条：节假日问候（默认只在提示词里提一句）
-from agent import archive_filter               # 第 10 条：按会话/按条屏蔽存档消息
-from agent import send_retry                 # 发送重试队列（身份判不了 ⇒ 晚点再发一次）
-from agent import listen_targets               # W-1：监听目标**按 wxid 认群**（同名群不再"勾一个监听两个"）
+from agent import listener_watermark # W2：持久化水位（成功才推进 / 重试留痕 / 每会话串行）
+from agent import recall # 第 14 条：撤回后把已进上下文的那条剔除
+from agent import tier_control # 第 15/16/18 条：固定 4 档 / 峰谷映射 / 指令禁言
+from agent import timers # 第 12 条：计时提醒（只对当前会话 + 过风险闸门 + 条数上限）
+from agent import holidays # 第 13 条：节假日问候（默认只在提示词里提一句）
+from agent import archive_filter # 第 10 条：按会话/按条屏蔽存档消息
+from agent import send_retry # 发送重试队列（身份判不了 ⇒ 晚点再发一次）
+from agent import listen_targets # W-1：监听目标**按 wxid 认群**（同名群不再"勾一个监听两个"）
 from agent.config import DATA_DIR
 from agent.config import get_config, save_config
 from agent.llm import (add_usage, chat_completion, chat_completion_with_retry,
@@ -60,7 +60,7 @@ from agent.whale import WhaleWidget
 from agent.webui import WebUI
 from agent.util import mask_url_token, pick_browser, redact_secrets
 # 输入审计（**只记录、不改行为**，且只在 WXAGENT_INPUT_AUDIT=1 时安装；生产默认零开销）——
-# 2026-09-17 为定位「机器人发消息那一刻微信自己弹截图」而挂：它把 SendInput/keybd_event/mouse_event/
+# 为定位「机器人发消息那一刻微信自己弹截图」而挂：它把 SendInput/keybd_event/mouse_event/
 # SetCursorPos/PostMessageW 的每次调用连同**发起方的文件:行号**写进 data/input_audit.log。
 try:
     from agent import input_audit as _input_audit
@@ -83,7 +83,7 @@ class _SecretFormatter(logging.Formatter):
         except Exception:
             return super().format(record)
 
-#: ⛔ 第十四轮 **V-R14-1**：日志目录**可注入**（`PM_LOG_DIR`）—— 判据/探针只要 `import persona_morph`
+#: ⛔ 日志目录**可注入**（`PM_LOG_DIR`）—— 判据/探针只要 `import persona_morph`
 #:   就会在**产品** `logs/persona_morph.log` 上挂一个 FileHandler（实测 `feed_window_selftest` 因此
 #:   在产品日志里写了 680 字节）。判据在 import 之前设 `PM_LOG_DIR=%TEMP%` 即可隔离；产品不设＝原样。
 LOG_DIR = os.environ.get("PM_LOG_DIR") or os.path.join(ROOT, "logs")
@@ -93,7 +93,7 @@ class _FlushFileHandler(logging.handlers.RotatingFileHandler):
     """按体积轮转 + 每行立即落盘。
 
     · 轮转：单文件 5MB、保留 3 份 `.1/.2/.3`（此前是**没有任何上限的普通 FileHandler**，
-      挂着跑会一直涨 —— 2026-09-13 体检发现）；
+      挂着跑会一直涨 —— 体检发现）；
     · 每行 flush：pythonw 进程被强杀时缓冲不丢，日志文件始终完整。
     """
 
@@ -151,11 +151,11 @@ logging.getLogger().addHandler(_ring)
 try:
     from agent import log_housekeeping as _lh
     _lh.sweep(ROOT, log=log)
-except Exception as _e:      # 治理失败绝不能挡住启动
+except Exception as _e: # 治理失败绝不能挡住启动
     log.warning("日志治理跳过：%s", _e)
 
 
-# 兜底自动补发的过滤（2026-09-15 用户点头「对用户有好处就加」）：
+# 兜底自动补发的过滤：
 # 不加过滤时，模型把"内心分析"写进最终文本就会被**原样发进群**（提示词警告过，但不能只靠它自觉）。
 # 口径：默认只补发 ≤ `send.fallback_max_chars` 的短话，并拦掉自我指涉（那是内心判断，不是群发言）；
 #      过滤本身出异常 ⇒ **按不发处理**（fail-closed：宁可沉默，也不乱发）。
@@ -163,7 +163,7 @@ _FALLBACK_SELF_REF = ("我不打算", "不打算回", "不回复", "不打算说
                       "保持沉默", "不发言", "就不说话", "不用回", "不必回", "无需回",
                       "我在看", "我只是看", "内心", "分析一下", "从记录看", "从上下文看",
                       "评估下来", "判断下来", "本轮不需要", "这轮不回", "沉默更好", "安静就好",
-                      # —— 2026-09-18 补（现场事故：群里出现过这条）——
+                      # —— 群里出现过这条）——
                       # 实测发出去的原话是「(本轮无法发出发言，保持安静。)」：这是**内部失败结论**
                       # 被兜底链原样发进群（比"回自己"更难看）。⇒ 失败/无法发送这一类词必须一并拦。
                       "无法发出", "发不出", "没能发出", "没能发", "没发出去", "发送失败", "发图失败",
@@ -247,7 +247,7 @@ class Orchestrator:
         self.sender = sender
         self.wechat = wechat
         self.tool_defs = build_tool_defs()
-        # 🔴 2026-09-18：**启动时把「暂停」状态从文件读回来**（原来只看内存 `False`）。
+        # 🔴 **启动时把「暂停」状态从文件读回来**（原来只看内存 `False`）。
         #   为什么：暂停标记是文件级的（`agent/control.py` 读它，长链每步都查），若进程在暂停状态下
         #   被看门狗拉起，旧写法内存是 `False` ⇒ **控制台显示"在跑"但一条都不发**，排查起来像"机器人哑了"。
         #   现在读回来：状态一致，且**预先放好 `data/paused.flag` 就能让它"起来即暂停"**（安全重启用）。
@@ -259,12 +259,12 @@ class Orchestrator:
             log.info("启动即处于「暂停」状态（data/paused.flag 存在）——需要收信息请在控制台点「恢复」")
         self.stopped = False
         self._lock = threading.Lock()
-        self.wake_timers: dict = {}      # chatKey -> threading.Timer
+        self.wake_timers: dict = {} # chatKey -> threading.Timer
         self.running_chats: set = set()
         self._consolidating: set = set()
         self._executor = ThreadPoolExecutor(max_workers=max(1, int(get_config().get("max_concurrent_runs") or 2)))
         self._proactive_timer = None
-        self._last_trigger: dict = {}  # chat_key -> (触发消息指纹, 时间戳, 上次是否成功)
+        self._last_trigger: dict = {} # chat_key -> (触发消息指纹, 时间戳, 上次是否成功)
         # 用量统计（持久化 + 按周期重置）与运行明细（思考/token/工具）
         self.stats_store = UsageStats(os.path.join(ROOT, "data"),
                                       str(get_config().get("stats", {}).get("period") or "weekly"))
@@ -436,7 +436,7 @@ class Orchestrator:
     def _run_proactive_agent(self, chat_key: str):
         """主动开话题的一次运行：无未读触发，走 run_agent 但触发批为空（proactive 标记）。
 
-        ⛔ 2026-09-22 加（第十五轮 **V-R15-4** · 网友报「有时会重复回复」）：**先过 `running_chats` 闸**。
+        ⛔ **先过 `running_chats` 闸**。
           老实现既不看也不登记它，直接丢进同一个 executor ⇒ 它可以和 `wake` **并发**为同一个群跑两次
           `run_agent`（同一批上下文跑两遍、同一个群两次发言）——「重复回复」的第二条独立成因。
           闸门与 `_on_wake_timer` 完全同一套（进不去就不跑）；**出口放 finally**，中途 return / 抛异常
@@ -486,7 +486,7 @@ class Orchestrator:
         自定义角色卡不额外改频率（角色卡管"怎么说"，这里管"做不做"）。"""
         try:
             import random
-            # ⛔ 2026-09-18 修：这里原来是 `from . import behavior as bh`（**相对导入**）——
+            # ⛔ 这里原来是 `from . import behavior as bh`（**相对导入**）——
             #   本文件是被当**顶层脚本**跑起来的（`__package__ == ''`）⇒ 相对导入必然抛
             #   `attempted relative import with no known parent package` ⇒ 整段"人性化行为决策"
             #   被下面的兜底 `except` 静默吞掉（日志只有一行 debug），**功能一直没生效过**。
@@ -514,7 +514,7 @@ class Orchestrator:
                         self.session_log.append({
                             "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "chat_key": chat_key,
                             "chat_name": self.wechat.group_name(chat_id) or chat_id,
-                            "chat_wxid": chat_id,          # W-1：同名群下，名字不是唯一身份
+                            "chat_wxid": chat_id, # W-1：同名群下，名字不是唯一身份
                             "trigger": "人性化:收藏表情", "reasoning": "", "tools": [{"name": "collect_emoji", "args": {"path": path or "失败"}}],
                             "status": "ok" if path else "error", "ok": bool(path)})
                     except Exception:
@@ -536,7 +536,7 @@ class Orchestrator:
                             self.session_log.append({
                                 "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "chat_key": chat_key,
                                 "chat_name": self.wechat.group_name(chat_id) or chat_id,
-                                "chat_wxid": chat_id,      # W-1：同上
+                                "chat_wxid": chat_id, # W-1：同上
                                 "trigger": "人性化:回发表情", "reasoning": "", "tools": [{"name": "send_emoji", "args": {"name": pick["name"]}}],
                                 "status": "ok", "ok": True})
                         except Exception:
@@ -548,7 +548,7 @@ class Orchestrator:
                 try:
                     members = self.store.active_members(chat_key, 10)
                     if members and any(m.get("user_id") and m.get("user_id") != self.wechat.self_wxid for m in members):
-                        pass  # @ 的具体内容交给模型（在提示词里给 hint），这里不直接发
+                        pass # @ 的具体内容交给模型（在提示词里给 hint），这里不直接发
                 except Exception:
                     pass
         except Exception as e:
@@ -560,9 +560,9 @@ class Orchestrator:
         cfg = get_config()
         api = cfg.get("api", {})
         if not str(api.get("base_url") or "").strip() or not str(api.get("model") or "").strip():
-            return  # 模型未配置：消息保留未读，不产生报错会话
+            return # 模型未配置：消息保留未读，不产生报错会话
 
-        # ⛔ 2026-09-21 修（第十轮 **V-R10-18** · P1）：`limit=0` ⇒ **取全部未读**。原来固定 200 条，
+        # ⛔ `limit=0` ⇒ **取全部未读**。原来固定 200 条，
         #   超出那一截**既不喂也不标读**（审计叫它"第二道黑洞"：400 条里永远有 200 条谁都不管，
         #   把 cap 提到 300 也一样）。切分全交给下面的 `pick_feed`（纯函数）：
         #   喂哪些 / 跳哪些（陈旧，标已读）/ 退哪些（超限，保持未读）。
@@ -578,7 +578,7 @@ class Orchestrator:
             wechat_nick = self.wechat.self_nickname
         except Exception:
             wechat_nick = ""
-        # ⛔ 2026-09-21 加（第九轮 **V-R9-15/16/17** ＋ 作者原话「**给模型喂的前几分钟就够了**」）：
+        # ⛔ 
         #   停机/卡顿之后补进来的整批未读**不再一次性倒给模型**。切三桶（纯函数见
         #   `agent\feed_window.py`）：**keep** 喂模型 · **skip** 陈旧闲聊（标已读、不回）·
         #   **retry** 超上限（**退回未读**，下一轮还在窗口里就能处理）。
@@ -638,7 +638,7 @@ class Orchestrator:
             now = time.time()
             last = self._last_trigger.get(chat_key)
             if last and last[0] == fp and last[2] and (now - last[1]) < 300:
-                # ⛔ 2026-09-21 改（V-R9-16）：**不再 `mark_all_read`** —— 上面已经"点名标读"了
+                # ⛔ **不再 `mark_all_read`** —— 上面已经"点名标读"了
                 #   要喂的与陈旧的；这里再整批标读会把"超限退回未读"的那些一并吞掉。
                 log.info("%s 同一批消息 5 分钟内已处理过，跳过重复唤醒（本批 %d 条）",
                          chat_key, len(pending))
@@ -647,7 +647,7 @@ class Orchestrator:
         except Exception:
             pass
 
-        # ⚠️ 2026-09-15 修真 bug：这里原来**没传 chat_key/group_name** ⇒ 每群独立档位、
+        # ⚠️ 这里原来**没传 chat_key/group_name** ⇒ 每群独立档位、
         #   群屏蔽名单、指令禁言在生产路径里从来没生效（自检自己在测试里传了 chat_key，所以一直全绿）。
         try:
             _group_name = self.wechat.group_name(chat_key)
@@ -664,7 +664,7 @@ class Orchestrator:
                 _snip = str((pending[-1] or {}).get("text") or "")[:80]
             except Exception:
                 _snip = ""
-            # ⛔ 2026-09-21 加（反馈「艾特它 它不会回复」）：把**这批消息里出现的 @ 名字**与
+            # ⛔ （反馈「艾特它 它不会回复」）：把**这批消息里出现的 @ 名字**与
             #   **它以为自己的名字**一起留痕 —— 微信群里 @ 用的是「群昵称」，可能既不是配置里的
             #   机器人昵称、也不是库里的账号昵称 ⇒ `is_at_me` 认不出"这是 @ 我"（档位 2/3 下就等于
             #   没被唤醒）。留了这两串，下一份反馈就能直接定案，不必再猜。
@@ -681,7 +681,7 @@ class Orchestrator:
         except Exception:
             pass
         if not tier_result["should_respond"]:
-            # ⛔ 2026-09-21 改（第九轮 V-R9-16）：**不再 `mark_all_read`** —— 上面把"喂模型的"与
+            # ⛔ **不再 `mark_all_read`** —— 上面把"喂模型的"与
             #   "陈旧不回的"已经**点名标读**了；超上限的那些要**保持未读**（下一轮还在窗口里就能
             #   被处理）。原来这一句会把它们一并标掉＝静默丢。
             log.info("%s %d 条未命中触发条件（档位 %s），本次不响应（超限退回未读的 %d 条留到下一轮）",
@@ -689,13 +689,13 @@ class Orchestrator:
                      len((_feed or {}).get("retry") or []))
             return
 
-        trigger = list(pending)          # ⛔ 2026-09-21 改：不再 `drain_unread`（那会把"退回未读"的也标掉），
+        trigger = list(pending) # ⛔ 不再 `drain_unread`（那会把"退回未读"的也标掉），
                                          #   直接用上面切好的"要喂模型的那一批"（已点名标读）
         if not trigger:
             return
 
-        # ⛔ 2026-09-21 修（第十轮 **V-R10-20** · P1）：**"喂了模型"必须蕴含"已标读"** ——
-        #   第九轮我把 `mark_all_read/drain_unread` 换掉时**没补兜底**：`pick_feed` 抛异常（或
+        # ⛔ **"喂了模型"必须蕴含"已标读"** ——
+        # 我把 `mark_all_read/drain_unread` 换掉时**没补兜底**：`pick_feed` 抛异常（或
         #   `mark_read` 自己抛，Windows 上 `.tmp` Permission denied 就会）⇒ 那一批喂给模型却没人
         #   标读 ⇒ 5 分钟去重到期后**同一批再喂一次**（重复回复）+ 排空循环每 1.2s 空转。
         #   ⇒ 把"标读"放进 `finally`：只要这一批真喂出去了，无论中途怎么炸都标掉。
@@ -733,7 +733,7 @@ class Orchestrator:
                 _cn = self.wechat.group_name(chat_key.split(":", 1)[1]) if ":" in chat_key else chat_key
                 self.session_log.append({
                     "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "chat_key": chat_key, "chat_name": _cn,
-                    "chat_wxid": (chat_key.split(":", 1)[1] if ":" in chat_key else ""),   # W-1
+                    "chat_wxid": (chat_key.split(":", 1)[1] if ":" in chat_key else ""), # W-1
                     "trigger": "", "reasoning": "", "tools": [], "status": "error", "ok": False,
                     "error": str(getattr(last_error, "message", last_error))[:300]})
             except Exception:
@@ -753,7 +753,7 @@ class Orchestrator:
         # 运行明细：思考过程 / token / 工具调用（控制台「运行明细」）
         _t0 = time.time()
         _entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "chat_key": chat_key, "chat_name": chat_name,
-                  "chat_wxid": chat_id,          # W-1：明细里必须有唯一身份（同名群分得清是哪一间）
+                  "chat_wxid": chat_id, # W-1：明细里必须有唯一身份（同名群分得清是哪一间）
                   "trigger": ("[主动话题]" if proactive else "\n".join(str(t.get("text") or "")[:120] for t in (trigger or []))),
                   "reasoning": "", "tools": [], "status": "running", "ok": None}
         persona = cfg.get("persona", {})
@@ -787,7 +787,7 @@ class Orchestrator:
             {"role": "user", "content": user_prompt},
         ]
 
-        # 工具表按能力裁剪（2026-09-15 省 token：37 个工具 ≈ 7324 token/请求，是最大单块）——
+        # 工具表按能力裁剪——
         # 只裁"当前配置/场景下调用必然失败"的，规则与工具内部的可用性判定同源（agent/tools.py）。
         from agent.tools import visible_defs as _visible_defs
         tool_defs, _dropped_tools = _visible_defs(self.tool_defs, cfg, kind=kind)
@@ -808,13 +808,13 @@ class Orchestrator:
         }
 
         max_rounds = max(1, int(cfg.get("api", {}).get("max_rounds") or 12))
-        # ⭐ 2026-09-19（S1）：**一轮的时间预算**。以前只有"轮次上限"，而一次模型调用最坏 180s、
+        # ⭐ （S1）：**一轮的时间预算**。以前只有"轮次上限"，而一次模型调用最坏 180s、
         #   一次失败发送最坏 20~40s ⇒ 用户实测 76~152 秒一轮、还常落到 noreply。
         #   现在到点就不再发起新的模型调用，直接收口（`sent` 非空仍算 done）。
         _budget_ms = int(cfg.get("api", {}).get("round_budget_ms") or 45000)
         _t_deadline = time.time() + max(5.0, _budget_ms / 1000.0)
         finish = False
-        _seen_calls = {}          # ⭐ 2026-09-19：本轮内"同工具 + 同参数"的重复计数（见下面 S3）
+        _seen_calls = {} # ⭐ 本轮内"同工具 + 同参数"的重复计数（见下面 S3）
         for round_no in range(max_rounds):
             if self.stopped:
                 break
@@ -827,7 +827,7 @@ class Orchestrator:
             session["model"] = response.get("model") or session["model"]
             add_usage(session["usage"], response.get("usage"))
             # ⚠️ 不要在这里再 +1：add_usage() 内部已经 target["calls"] += 1（agent/llm.py:338）。
-            #    2026-09-15 修（token 调研第 1 轮 C9）：这一行让 calls 长期虚高一倍
+            # （token 调研第 1 轮 C9）：这一行让 calls 长期虚高一倍
             #    ⇒ usage_stats.json 的 "calls": 248 实际只有 ≈124 步，控制台"调用次数"看着是双倍。
             #    自检：scripts/whale_selftest.py 的「calls 单点来源」（连调两次 add_usage ⇒ calls==2，
             #    且本文件里不得再出现 usage["calls"] += 1）。
@@ -870,7 +870,7 @@ class Orchestrator:
                 if _final and not session["sent"]:
                     # 兜底：模型决定「说完就结束」但没调发送工具 → 把最终文本当作回复自动发出，
                     # 避免「想好了却没发出去」的沉默（noreply；曾实测：模型写完回复就结束）。
-                    # ⚠️ **必须过滤**：不过滤时"内心分析"会被原样发进群（2026-09-15 加，见 _fallback_send_ok）
+                    # ⚠️ **必须过滤**：不过滤时"内心分析"会被原样发进群
                     _ok_fb, _why_fb = _fallback_send_ok(_final, cfg)
                     if not _ok_fb:
                         log.info("[%s] 兜底没发（%s）：%s", chat_key, _why_fb, _final[:60])
@@ -884,7 +884,7 @@ class Orchestrator:
                                 log.info("[%s] 模型未调发送工具，按最终文本自动补发 %d 条", chat_key, len(res["sent"]))
                         except Exception as e:
                             log.warning("自动补发最终文本失败：%s", e)
-                break  # 模型结束思考（不会再调工具）
+                break # 模型结束思考（不会再调工具）
 
             tool_results = []
             image_user_msgs = []
@@ -895,10 +895,10 @@ class Orchestrator:
                 if name in ("web_search", "web_fetch"):
                     session["web_search_count"] += 1
                 if name == "send_message":
-                    # ⭐ 2026-09-19（S2）：记"这一轮动过发送"——跑完仍没发出去就判 `noreply_send_failed`
+                    # ⭐ （S2）：记"这一轮动过发送"——跑完仍没发出去就判 `noreply_send_failed`
                     session["send_attempts"] = int(session.get("send_attempts") or 0) + 1
                 session["activity"] = "正在调用 %s…" % name
-                # ⭐ 2026-09-19 修（S3，证据见 data/sessions/2026-09-18.jsonl 01:32:48 那条）：
+                # ⭐ 
                 #   模型遇到"发送通道判否"时会**同一工具同参数反复重试**（实测 send_message×3），
                 #   每次都白烧一次模型调用（≈8.6k token / 20~25s），最后仍是一条没发出去 ⇒
                 #   报障那三轮 76~152 秒、3.4~5.2 万 token、全是 noreply 就是这么来的。
@@ -939,24 +939,24 @@ class Orchestrator:
             messages.extend(tool_results)
             messages.extend(image_user_msgs)
             if finish:
-                # ⭐ 2026-09-19 修（死代码）：模型调 `finish` 就是在说"本轮到此为止"，而旧代码只写了
+                # ⭐ （死代码）：模型调 `finish` 就是在说"本轮到此为止"，而旧代码只写了
                 #   这个变量、**循环里从没读过**（全文 grep 只有 700/795/796 三处）⇒ 白白再多跑一次模型
                 #   调用（实测 ≈8.6k token / ≈20s），最后还常落到 noreply。
                 log.info("[%s] 模型调用了 finish ⇒ 本轮到此结束（第 %d 轮）", chat_key, round_no + 1)
                 break
 
-        # ⭐ 2026-09-19（S2）：以前"跑完一条没发"一律叫 `noreply`，报障时分不清是"模型不想说"
+        # ⭐ （S2）：以前"跑完一条没发"一律叫 `noreply`，报障时分不清是"模型不想说"
         #   还是"系统回不去"（用户只能报"它不回复"，我们只能猜）。现在拆成可判读的几种结局。
         if session["sent"]:
             status = "done"
         elif session.get("fallback_blocked"):
-            status = "noreply_blocked"            # 兜底文本被过滤（自我指涉 / 太长）
+            status = "noreply_blocked" # 兜底文本被过滤（自我指涉 / 太长）
         elif session.get("budget_hit"):
-            status = "noreply_budget"             # 到时间预算收口
+            status = "noreply_budget" # 到时间预算收口
         elif session.get("send_attempts"):
-            status = "noreply_send_failed"        # 调过发送工具但一条都没发出去（通道判否）
+            status = "noreply_send_failed" # 调过发送工具但一条都没发出去（通道判否）
         elif not finish and round_no >= max_rounds - 1:
-            status = "noreply_max_rounds"         # 打满轮次上限（模型没给结束信号）
+            status = "noreply_max_rounds" # 打满轮次上限（模型没给结束信号）
         else:
             status = "noreply"
         self.stats["sessions"] += 1
@@ -970,7 +970,7 @@ class Orchestrator:
         except Exception:
             pass
         # 持久化用量（累计保留 + 按周期重置）与运行明细
-        # 三分口径（2026-09-15）：`fresh`＝未命中（全价）、`cached`＝缓存读（1/30 价）、`output`＝输出。
+        # 三分口径：`fresh`＝未命中（全价）、`cached`＝缓存读（1/30 价）、`output`＝输出。
         # 只记总量会把"省 token"和"省钱"混为一谈（两者相差 30~90 倍），控制台要能分开看。
         _u = session["usage"]
         _cached = int(_u.get("cached_tokens") or 0)
@@ -1114,7 +1114,7 @@ class Orchestrator:
     def set_paused(self, paused: bool):
         self.paused = bool(paused)
         log.info("机器人已%s", "暂停" if self.paused else "恢复")
-        # 🔴 2026-09-18 修（作者现场：「说机器已暂停的那一刻，后面一秒他又引用了一下我的消息」+日志实证
+        # 🔴 （
         #   暂停后 54 秒它仍跑完了一整轮）：**暂停原来只存在内存里**（`orch.paused`），而 `wechat`/`sender`
         #   这些模块**看不到它** ⇒ 已经开工的链（引用/拍一拍/发送）中途没法检查暂停，延迟排队的回拍定时器
         #   更是不看 ⇒ "暂停了它还在动"。⇒ 落一个**文件标记**（与 `stopped.flag` 同一套做法），
@@ -1164,7 +1164,7 @@ def _kill_watchdog(fast: bool = False):
     控制台「停止/重启」必须连看门狗一起处理：否则机器人退出 5 秒后会被看门狗重新拉起，
     表现为「点了停止却又弹出一个新控制台」。
 
-    ⚠️ `fast=True`（2026-09-18 加，**重启路径专用**）：**只做"按 pid 文件 taskkill"这一件快事**，
+    ⚠️ `fast=True`：**只做"按 pid 文件 taskkill"这一件快事**，
     跳过 wmic / PowerShell 两条慢枚举 —— 重启路径上本进程 2 秒后就要强退，慢枚举会把
     `_spawn_watchdog()` 挤到强退之后 ⇒ **没人接替、机器人彻底没了**（我这次实测踩出来的回归）。
     """
@@ -1172,7 +1172,7 @@ def _kill_watchdog(fast: bool = False):
     try:
         if os.path.exists(wp):
             with open(wp, "r", encoding="utf-8") as f:
-                # 🔴 2026-09-18 修（作者报「现在重启不了」的**真因**）：`watchdog.py` 现在把 pid 文件写成
+                # 🔴 `watchdog.py` 现在把 pid 文件写成
                 #   **两行**（`<pid>\n<看门狗版本号>`，见 watchdog.py:120），而这里原来是
                 #   `int(f.read().strip())` ⇒ **ValueError** ⇒ 被下面的 `except: pass` 吞掉 ⇒
                 #   **旧看门狗根本没被杀掉**！接着重启又拉起一个新看门狗 ⇒ 两个看门狗各拉一个机器人
@@ -1191,7 +1191,7 @@ def _kill_watchdog(fast: bool = False):
     except Exception:
         pass
     if fast:
-        return                                   # 重启路径：慢枚举留给下一次启动/新看门狗，别挡住 spawn
+        return # 重启路径：慢枚举留给下一次启动/新看门狗，别挡住 spawn
     try:
         r = subprocess.run(
             ["wmic", "process", "where",
@@ -1212,7 +1212,7 @@ def _kill_watchdog(fast: bool = False):
     except Exception:
         pass
     # wmic 在新版 Windows（11 24H2 起）**已被移除**，上面那条会静默失败 ⇒ 再补一条 PowerShell 兜底
-    # （同样按"命令行里有 watchdog.py"筛；2026-09-18 加，配合"重启不了"那个真因一起修）
+    # 
     try:
         _ps = ("Get-CimInstance Win32_Process -Filter \"Name='pythonw.exe' or Name='python.exe'\" | "
                "Where-Object { $_.CommandLine -like '*watchdog.py*' } | "
@@ -1234,7 +1234,7 @@ def _kill_watchdog(fast: bool = False):
 def _spawn_bot_direct():
     """**直接**隐藏拉起一个机器人（不走看门狗）——重启路径的兜底。
 
-    为什么要它（2026-09-18 作者在另一台机器实测「现在重启不了」）：`restart_fn` 只做
+    为什么要它：`restart_fn` 只做
     「杀旧看门狗 → 拉新看门狗 → 2 秒后本进程强退」；一旦 `_spawn_watchdog` 抛异常、或新看门狗
     自己起不来（例如它读到的 `data/stopped.flag` 还没被清），**就再没有人接替** ⇒ 机器人彻底消失，
     表现就是"重启不了"。⇒ 现在拉起看门狗后会**自证**（看门狗 pid 文件 + 进程存在），
@@ -1247,7 +1247,7 @@ def _spawn_bot_direct():
             exe = pyw
     flags = 0
     if os.name == "nt":
-        flags = 0x00000008 | 0x00000200 | 0x08000000  # DETACHED|CREATE_NEW_PROCESS_GROUP|CREATE_NO_WINDOW
+        flags = 0x00000008 | 0x00000200 | 0x08000000 # DETACHED|CREATE_NEW_PROCESS_GROUP|CREATE_NO_WINDOW
     return subprocess.Popen([exe, os.path.join(ROOT, "scripts", "persona_morph.py")], cwd=ROOT,
                             creationflags=flags, stdin=subprocess.DEVNULL,
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -1257,9 +1257,8 @@ def _spawn_watchdog(delay: int = 0):
     """隐藏拉起新看门狗（pythonw 运行 scripts/watchdog.py，等价 启动机器人.vbs）。
 
     `delay`（秒）＝**让新看门狗晚一点再开机器人**。重启那一跳必须给（用 6 秒）：本进程还要 2 秒
-    才退，新机器人要是立刻起来就会撞**单实例锁**当场 `exit 3`（用户报「从来没见过它再起一个」）。
     ⚠️ 别想着"用 Timer 等 6 秒再拉看门狗"——本进程 2 秒后就 `os._exit` 了，**那个 Timer 永远不会触发**
-    （2026-09-17 我第一版就是这么错的，活体自检当场抓到"旧退了、新没接上"）。
+    。
     """
     exe = sys.executable
     if exe.lower().endswith("python.exe"):
@@ -1268,7 +1267,7 @@ def _spawn_watchdog(delay: int = 0):
             exe = pyw
     flags = 0
     if os.name == "nt":
-        flags = 0x00000008 | 0x00000200 | 0x08000000  # DETACHED|CREATE_NEW_PROCESS_GROUP|CREATE_NO_WINDOW
+        flags = 0x00000008 | 0x00000200 | 0x08000000 # DETACHED|CREATE_NEW_PROCESS_GROUP|CREATE_NO_WINDOW
     cmd = [exe, os.path.join(ROOT, "scripts", "watchdog.py")]
     if int(delay or 0) > 0:
         cmd.append("--delay=%d" % int(delay))
@@ -1310,7 +1309,7 @@ def _schedule_poke_back(wechat, store, chat_key: str, chat_id: str, group_name: 
             return
 
         def _do():
-            # 🔴 2026-09-18：**回拍是延迟 18 秒排的定时器，原来不看暂停** ⇒ 作者按下暂停后它照样开跑
+            # 🔴 **回拍是延迟 18 秒排的定时器，原来不看暂停** ⇒ 
             #   （日志：`机器人已暂停` 之后 54 秒仍跑完一整轮）。⇒ 回调一进门先查暂停/停止。
             try:
                 from agent import control as _ctl
@@ -1370,24 +1369,24 @@ def _maybe_auto_fix():
         log.warning("自动版本体检失效（不影响启动）：%s", e)
 
 
-# ── 「微信连不上」的原因要看得见（2026-09-16 已知现象：「微信连接不上」）───────────────
+# ── 「微信连不上」的原因要看得见───────────────
 #   老实现只有一个是/否（`wechat is not None`）：用户看到"微信未连接"却不知道**为什么**，
 #   我们也只能来回猜、来回问。⇒ 每次接入（成功或失败）都把**逐步诊断**记在这里，
 #   控制台侧栏显示一行短原因（悬停看全文），反馈诊断包带上完整 steps。
 _ATTACH = {"tries": 0, "at": 0.0, "err": "", "diag": None,
-           "wm_account": "", "wm_flush_fail": 0}      # V-R10-30：水位表挂在哪个账号 + 落盘失败次数
+           "wm_account": "", "wm_flush_fail": 0} # 水位表挂在哪个账号 + 落盘失败次数
 
 
 def _wm_account_of(_wc) -> str:
     """当前 adapter **正在读哪个账号**（`WeChatDB.account`）。
 
-    V-R10-30：水位表按账号分命名空间，切号时两个账号的序号格子互不污染。
-    ⛔ 2026-09-22 修（第十二轮 **V-R12-6** · P3）：adapter 说"我不知道我是谁"（新 adapter 还没开库 /
+    水位表按账号分命名空间，切号时两个账号的序号格子互不污染。
+    ⛔ adapter 说"我不知道我是谁"（新 adapter 还没开库 /
     旧 adapter 的 `_db` 被 `_release_adapter` 置空）时，**回落到 `wechat_dir` 的判断** ——
     它按"哪个账号目录的 `-wal` 在动"挑账号，是这台机器上**唯一**能在不依赖 adapter 的情况下
     说出账号名的地方。都不行才回空串（那就是 `listener_watermark` 里那个保留命名空间 `?`）。
     为什么必须有这一层：`?` 是所有"认不出账号的时刻"**共用**的格子 —— 用得越少，两号互相污染
-    的窗口越窄（这是 V-R11-5 的同族残留）。
+    的窗口越窄。
     """
     try:
         _a = str(getattr(_wc, "db_account", lambda: "")() or "")
@@ -1395,7 +1394,7 @@ def _wm_account_of(_wc) -> str:
         _a = ""
     if _a:
         return _a
-    # ⛔ 2026-09-22 修（第十三轮 **V-R13-1** · P2）：这一段原来是**死代码** ——
+    # ⛔ 这一段原来是**死代码** ——
     #   ①`pick_account(parent, prefer="")` 的 `parent` 是**必填**，我上一版不传参 ⇒ 必然 TypeError 被吞；
     #   ②`status()` **不带 `how`** 时在本机不返回 `account` 键 ⇒ 上面那半也拿不到东西；
     #   ③而且 `pick_account()` 回的是**字典**（`{"name","dir",…}`），我原来 `str(...)` 直接套了个 dict。
@@ -1419,7 +1418,7 @@ def _wm_account_of(_wc) -> str:
             _picked = _wd_acct.pick_account(_parent, _cfg_dir) or {}
             if isinstance(_picked, dict):
                 _a = str(_picked.get("name") or "")
-            else:                                  # 兼容"直接回名字"的老形态
+            else: # 兼容"直接回名字"的老形态
                 _a = str(_picked or "")
             if _a:
                 return _a
@@ -1429,9 +1428,9 @@ def _wm_account_of(_wc) -> str:
 
 
 def _release_adapter(_wc_old) -> None:
-    """切号/重连时**把旧 adapter 的句柄与解密缓存放掉**（V-R10-30 第三条）。
+    """切号/重连时**把旧 adapter 的句柄与解密缓存放掉**。
 
-    为什么必须做（审计原文：「`_adopt_wc` 不关旧 DB 句柄」）：
+    为什么必须做（审计原文）：
       · 旧 `WeChatDB` 的解密缓存（`workdir` 下 `.db/.stamp`）是**旧账号聊天记录的明文副本**
         —— 切号后没人再用它，却一直躺在临时目录里；
       · 旧 `WeChatGUI` 抓着的 UIA/窗口句柄 / 旧 `WeChatDB` 抓着的库文件表都是**过期引用**，
@@ -1461,7 +1460,7 @@ def _release_adapter(_wc_old) -> None:
                     log.debug("切号：旧句柄 %s() 释放失败（忽略）：%s", _n, e)
                 break
     try:
-        _wc_old._db = None                      # 断开引用 ⇒ 不让过期句柄继续活到下一轮
+        _wc_old._db = None # 断开引用 ⇒ 不让过期句柄继续活到下一轮
         _wc_old._gui = None
     except Exception:
         pass
@@ -1525,11 +1524,11 @@ def _wechat_watchdog(get_wc):
             wechat = get_wc() if callable(get_wc) else get_wc
             if wechat is None:
                 continue
-            # ⛔ 2026-09-21：**到点的发送重试**（每 30 秒看一次，一轮最多 3 条）。
+            # ⛔ **到点的发送重试**（每 30 秒看一次，一轮最多 3 条）。
             #   来源＝工具发消息时"现场没认准"被 fail-closed 拦下的那些（两群同一分钟都有消息）。
             #   放在这个线程里：它本来就在跑、已经有 wechat 句柄，且与监听主循环互不阻塞。
             try:
-                # ⛔ 2026-09-21 修（第六轮 **V-R6-5/21**）：原来这里套着 `if True:`（本轮唯一新增的
+                # ⛔ 原来这里套着 `if True:`（本轮唯一新增的
                 #   "永远为真"形态），而且 **tick 不看停机/暂停闸** —— 机器人暂停/停止时，
                 #   `wechat.send_text` 返回"机器人已暂停 ⇒ 这条不发"（不带 `【可重试】`），
                 #   `resolve()` 于是判"不可重试"⇒ **条目被 dropped 永久销毁**（config 默认 `start_paused`
@@ -1553,9 +1552,9 @@ def _wechat_watchdog(get_wc):
             gui = wechat._get_gui()
             hwnd = int(getattr(gui, "main_hwnd", 0) or 0) if gui else 0
             if not hwnd or not _user32_is_visible(hwnd):
-                hung = 0  # 窗口不可见/未登录属于正常态，不判卡死
+                hung = 0 # 窗口不可见/未登录属于正常态，不判卡死
                 continue
-            # ⛔ 2026-09-17 **红线修复**：必须声明 argtypes 并传第 7 个参数 `lpdwResult`。
+            # ⛔ **红线修复**：必须声明 argtypes 并传第 7 个参数 `lpdwResult`。
             #   原来只传 6 个参数（少一个出参指针），也没声明 argtypes ⇒ ctypes 把 HWND/LPARAM
             #   当 32 位 int 传、把出参指针当 NULL 传。实测后果：机器人在**启动后第 31 秒**
             #   （＝本守护第一跳）**原生崩溃退出**，退出码 **0xC0000409**
@@ -1677,7 +1676,6 @@ def main():
     import atexit
     from agent.single_instance import InstanceLock, legacy_holder
     _bot_lock_path = os.path.join(ROOT, "data", "bot.lock")
-    # ⛔ 2026-09-17（用户报「更新后的重启，从来没见过它再起一个新的」）：给"接手"留一点时间 ——
     #   更新/重启那一跳里旧实例可能**正在退出**（单实例锁与 bot.lock 都还没放开），老实现一撞上就
     #   `sys.exit(3)`，于是看门狗每 5 秒起一次、次次报"已有实例在运行"，永远换不上新的那一版。
     #   现在最多等 12 秒：真有人正经在跑，也只是多等这一下再报冲突（照旧拒启动，不会双开）。
@@ -1700,7 +1698,7 @@ def main():
         time.sleep(1.5)
         _lock_res = _bot_lock.acquire()
 
-    # ⛔ 2026-09-17（用户拍板：「**不要让用户担风险啊，还要删这删那的、还要试这试那的，不行**」）：
+    # ⛔ 
     #   旧版本"更新完卡住 / 起不来"那种局面**不许留给用户收尾**。他唯一会做的自然动作是"再双击
     #   一次一键启动" ⇒ 就把那一下做成自愈：占着锁的那个**还是活的、但控制台端口一直没人应答、
     #   而且它已经跑了一段时间（锁文件的 mtime > 90 秒）** ⇒ 判定卡死，替它收尾（连看门狗一起）再接手。
@@ -1745,7 +1743,7 @@ def main():
     if _lock_res.note:
         log.warning("单实例锁：%s", _lock_res.note)
 
-    # ── 磁盘收尾：清系统临时目录里我们自己的残留 + 收 TTS 产物（用户 2026-09-15 问
+    # ── 磁盘收尾：清系统临时目录里我们自己的残留 + 收 TTS 产物（用户 问
     #    「下载下来不占用户存储空间吗？有没有做好删除措施」后落地；只清 `pm-` 前缀，
     #    十分钟内的文件一律不动，删了几个/回收多少 MB 都记日志）。失败不影响启动。──
     try:
@@ -1802,7 +1800,7 @@ def main():
         if not wechat:
             _groups_read_failed = "微信还没接上"
         else:
-            # ⛔ 2026-09-21 加（第九轮 **V-R9-8**）：**真信号在 `_cap` 里**，不是"抛没抛异常" ——
+            # ⛔ **真信号在 `_cap` 里**，不是"抛没抛异常" ——
             #   `list_groups()` 只是 return 内存里的列表、永不抛 ⇒ 老写法在"读库失败"时
             #   `read_failed=''` ⇒ describe 把"没匹配上"说成「改名/退群了？」（归因矛盾）。
             try:
@@ -1828,9 +1826,9 @@ def main():
     #   同名群 + 白名单写名字 ⇒ 跳过并报出来（fail-closed），不许"勾一个监听两个"。
     _res0 = listen_targets.resolve_groups(groups, whitelist, deny)
     targets = _res0["groups"]
-    # ⛔ V-R5B-9：群列表这次没读到（`groups` 是异常分支给的 []）时，别把"没匹配上"说成"改名/退群了？"
+    # ⛔ 群列表这次没读到（`groups` 是异常分支给的 []）时，别把"没匹配上"说成"改名/退群了？"
     log.info("%s", listen_targets.describe(targets, _res0, read_failed=(_groups_read_failed or "")))
-    # ⛔ 2026-09-21 加（第九轮 **V-R9-9** · P1）：**监听目标为 0 ⇒ 主循环零轮次**（`for g in targets:`
+    # ⛔ **监听目标为 0 ⇒ 主循环零轮次**（`for g in targets:`
     #   一条都不进）⇒ **群里 @ 它一条都不回**，而老代码只有一行 info 计数 ⇒ 用户完全看不到卡点
     #   （B站两条「检测不到群聊」就是这条链的出口）。⇒ 给一次**可见告警**（日志 warn + 控制台那份
     #   接入状态里带一个 `targets_zero`）。
@@ -1843,7 +1841,7 @@ def main():
             _ATTACH["targets_zero"] = True
         except Exception:
             pass
-    # 私聊目标（2026-09-16 用户：「大号跟小号对谈，相当于借一个智能体进来跟自己聊天」）：
+    # 私聊目标：
     # 群那份逻辑一个字不动，这里是**追加**；档位见 config 的 wechat.private_chat。
     _pt = []
     try:
@@ -1866,7 +1864,7 @@ def main():
     def _collect_targets(wc):
         """按**当前配置**重算 (全部群, 监听目标)。启动、晚接入、配置保存后共用一份，避免三处漂移。
 
-        ⚠️ 2026-09-17 修（网友报「我把群勾选了…概览的状态改变不了」）：这里原来读的是**启动时**的
+        ⚠️ （网友报「我把群勾选了…概览的状态改变不了」）：这里原来读的是**启动时**的
         闭包变量 `whitelist` / `deny` / `_pmode` ⇒ 保存配置后即使重算也还是老口径（等于白算）。
         现在一律现读配置 —— 改了勾选就能立刻生效，不用重启。
         """
@@ -1891,9 +1889,9 @@ def main():
         except Exception as _e:
             log.warning("取群列表失败：%s", _e)
             _gs, _cap_g = [], "%s: %s" % (type(_e).__name__, str(_e)[:60])
-        _res = listen_targets.resolve_groups(_gs, _wl, _deny)                  # W-1：按 wxid 认群（同上）
+        _res = listen_targets.resolve_groups(_gs, _wl, _deny) # W-1：按 wxid 认群（同上）
         _t = _res["groups"]
-        # ⛔ 2026-09-21 加（第十轮 **V-R10-13/14/15**）：
+        # ⛔ 
         #   ①**目标为 0 这件事在这里现算**（原来只在启动那一次写 `_ATTACH["targets_zero"]=True`，
         #     是个**单向闩锁**：启动时微信没开（最常见）就永久报警，即便群列表后来恢复了 ——
         #     归因与事实矛盾）；
@@ -1929,7 +1927,7 @@ def main():
     def _reset_watermark():
         """把每个监听群的「已处理水位」对齐到当前最新（**用户零操作版**：不删文件、不用重启）。
 
-        为什么（用户 2026-09-17 拍板：「**不要让用户担风险啊，还要删这删那的、还要试这试那的，不行**」）：
+        为什么：
         清空微信聊天记录后序号可能回落，而水位只前进不回退 ⇒ 新消息被判成"处理过了" ⇒ 它不回。
         老办法是"停机器人 → 删 `data\\listener_watermark.json` → 启动"（**要用户动手删文件**）——
         这条现在给成控制台上的一个按钮：一键对齐、当场生效。
@@ -1940,9 +1938,9 @@ def main():
             wxid = g.get("wxid")
             if not wxid:
                 continue
-            # ⛔ 2026-09-22 修（第十一轮 **V-R11-13** · P3）：这里原来用**不带 `ok`** 的
+            # ⛔ 这里原来用**不带 `ok`** 的
             #   `latest_seq()`，而它读失败也回 0，配上 `forward_only=False` ⇒ **0 真写进水位数**
-            #   —— 与同一文件里那条铁律（V-R4-12a：「读失败绝不许把 0 写进水位」）口径相反。
+            # —— 与同一文件里那条铁律口径相反。
             #   现在改调 `latest_seq_ex`：读失败就**不动这个群的水位**，把原因回给按钮。
             try:
                 _ok13, _seq13, _why13 = _wc.latest_seq_ex(wxid) if _wc else (False, 0, "微信还没接上")
@@ -1962,7 +1960,7 @@ def main():
     def _refresh_targets(why=""):
         """按当前配置**就地刷新**监听目标（配置保存后也走这里）。
 
-        为什么（2026-09-17 网友报「改了群勾选，概览那个状态改变不了」）：`status_provider` 是按
+        为什么：`status_provider` 是按
         `groups` + `target_wxids` 算「这个群是不是监听目标」的，而这两样原来只在启动/晚接入时算过
         ⇒ 保存新白名单后，概览与推送目标都还是老的（看着像"锁在那个状态"）。
         """
@@ -2099,7 +2097,7 @@ def main():
             "dep_ok": len(_version_issues()) == 0,
             "model": _cfg_live.get("api", {}).get("model", ""),
             "groups": gs,
-            # ── 顶栏状态行要的三样（2026-09-16 待拍板三件之一：做成"看得见"，不替他拍板）──
+            # ── 顶栏状态行要的三样──
             #   既有口径：机制/状态要映射到界面。只读统计，不产生任何动作。
             "listen": {"groups": sum(1 for _g in gs if _g.get("target")),
                        "privates": (len(wechat.list_private_targets()) if wechat is not None else 0)},
@@ -2107,7 +2105,7 @@ def main():
             "stats": st,
             "usage": orch.stats_store.snapshot(),
             "tools": _tools_status(),
-            # 2026-09-16 修（用户看到「启动于 21:13」其实是**状态刷新时间**，被当成进程启动时间误解）：
+            # （用户看到「启动于 21:13」其实是**状态刷新时间**，被当成进程启动时间误解）：
             # 用模块导入时记下的真启动时刻。
             "started_at": _BOOT_AT,
         }
@@ -2115,7 +2113,6 @@ def main():
     def _tools_status():
         """当前会给模型的工具表 + 按能力省掉了哪几个（省 token 要看得见）。
 
-        用户口径（2026-09-15）：省 token 不只是我的事，也是群相的事 ⇒ 用户要能看见
         "给了我几个工具、省了哪些、凭什么省"，才谈得上自己把控开销。
         """
         try:
@@ -2137,7 +2134,6 @@ def main():
     def balance_fn():
         """余额查询（叠一层**显示伪装**）。
 
-        2026-09-16 用户要求：「有没有一键隐藏剩余金额功能或者一键修改剩余金额功能…可以在界面显示上
         把金额改掉，但是实际上还是那么多」⇒ 只改返回给界面的数字（`ui.balance_display`：
         real / hide / fake），**真实余额与账目一律不动**。逻辑在 `agent/balance_view.py`（可单测）。
         """
@@ -2166,7 +2162,7 @@ def main():
             from agent.persona import PERSONAS
             import sys as _sys
             _sys.path.insert(0, ROOT)
-            from scripts import persona_check  # 保证算法单一来源
+            from scripts import persona_check # 保证算法单一来源
             ratings = {}
             try:
                 import json as _json
@@ -2308,7 +2304,7 @@ def main():
                     "① 口头禅/台词改用【第一步的原话】为骨架（能精确引用就精确引用，含翻译+原语）；\n"
                     "② 按该角色的说话习惯重写「说话规则」（短句/分条/被@必回/不用Markdown）；\n"
                     "③ 重写 3 个对话示例（群友在吗/今天好累/再来一句），每句像本人原话口吻。\n"
-                    # 2026-09-14 已知现象：「补正…除非你确定补正是完全按照贴合人设的方向去走的，
+                    # 已知现象
                     # 而且你也要尽量把这个功能导向那个方向」⇒ 补足只许"加固辨识度"，不许把角色改成通用人格。
                     "【第三步·守住原卡的辨识度（硬要求）】当前卡里**任何已经确认的真实台词/口癖/称呼方式都必须保留原样**"
                     "（那是这个角色的指纹）；补充可以，替换成自造内容不行。改完之后逐条自检："
@@ -2370,7 +2366,7 @@ def main():
         每项返回 ok/warn/fail + 说明 + 建议。
         """
         checks = []
-        _selfcheck_cancel[0] = False   # 重新开始体检：清除「停止」标记
+        _selfcheck_cancel[0] = False # 重新开始体检：清除「停止」标记
 
         def add(name, status, detail, hint=""):
             checks.append({"name": name, "status": status, "detail": detail, "hint": hint})
@@ -2422,7 +2418,7 @@ def main():
                 if seq:
                     add("微信·消息库可读", "ok", "目标群 %s 最新序号=%s" % (targets[0]["name"], seq), "")
                 else:
-                    # ⛔ 2026-09-20（网友 v0920-0824 的截图：这条是「最新序号=0」，而提示只说
+                    # ⛔ （网友 v0920-0824 的截图：这条是「最新序号=0」，而提示只说
                     #   "可能是微信数据库位置不对"）：两种完全不同的成因必须分开说 ——
                     #   ①**读库失败**（`_cap` 里有原因，多半是微信正在写库）②读库成功但
                     #   **这个群确实没有可读消息**（群名/账号对不上，或群里还没有消息）。
@@ -2466,7 +2462,7 @@ def main():
                 ("发现 %d 个输入叠加层（手写画布/输入体验）" % overlays["n"]) if overlays["n"] else "无（正常）",
                 "点击前会自动清理；若反复出现请关闭触控键盘（Win+Ctrl+O）")
             if gui is not None and mode != "code":
-                # 点击自检（2026-09-21 重做）：**与拍一拍实操同源**——取帧 → 检测头像方块 →
+                # 点击自检：**与拍一拍实操同源**——取帧 → 检测头像方块 →
                 # 右键 → 只识别菜单（绝不点菜单项、绝不拍人）。仅报告，不写状态
                 # （不再自动进入低功率——曾导致拍一拍被长期禁用）。
                 #   三态分开：ok=通过；skip=**当前会话没有可拍的对象**（条件不具备，算「注意」，
@@ -2544,7 +2540,7 @@ def main():
 
     def groups_fn():
         # 群聊列表（控制台「检测群聊并勾选」用）
-        # 2026-09-16（已知现象：「选了群、点保存之后显示读取会话失败」）：以前**微信没接上也返回 ok:True +
+        # （已知现象）：以前**微信没接上也返回 ok:True +
         # 空列表** ⇒ 控制台只会显示"检测到 0 个群"，真正的原因（微信未接入）被吞掉。
         # 现在：接不上就把**原因**如实带回去（原因由 `wechat_attach_status()` 提供 = 卡在哪一步）。
         if wechat is None:
@@ -2554,7 +2550,7 @@ def main():
                 _why = "微信未接入"
             return {"ok": False, "attach_ok": False,
                     "error": "微信还没接上 ⇒ 读不到群列表。原因：%s" % _why, "groups": []}
-        # ⭐ 2026-09-19 分层（网友报障：控制台写「微信还没接上 ⇒ 读不到群列表」，而那台机器微信在跑、
+        # ⭐ 分层（网友报障：控制台写「微信还没接上 ⇒ 读不到群列表」，而那台机器微信在跑、
         #   消息库能开、密钥可用）：真实失败往往只是**读 contact.db 时微信在并发写**，
         #   消息收发完全正常 ⇒ 不许再把"某一路读取失败"说成"微信没接上"。
         _cap_g = ""
@@ -2782,14 +2778,13 @@ def main():
         except Exception:
             pass
         try:
-            threading.Timer(0.1, lambda: (orch.shutdown() if orch else None)).start()   # 后台尽力登出，不阻塞退出
+            threading.Timer(0.1, lambda: (orch.shutdown() if orch else None)).start() # 后台尽力登出，不阻塞退出
         except Exception:
             pass
         os._exit(0)
 
     def restart_fn():
         # 后台无窗口重启：**先把强退装上**，再杀旧看门狗、再拉新的，本进程退出。
-        # ⛔ 2026-09-17 修（用户报「你更新后的重启又关不掉自己了；不是说会再起一个新的吗，我从来没见过
         #   这个再起一个；之前杀掉就没了，现在更是杀都杀不掉」）——老顺序是：
         #     先 `_spawn_watchdog()`（新看门狗**立刻** Popen 新 bot）→ 再**同步** `orch.shutdown()`
         #     （下面那句注释自己写着"微信登出可能一直阻塞"）→ 最后才装 1.5 秒强退 Timer。两个后果：
@@ -2797,14 +2792,14 @@ def main():
         #        再从任务管理器杀掉，5 秒内被旧看门狗拉起来 ⇒ 看着就是"杀都杀不掉"。
         #     ② 新 bot 起来时旧实例还活着、端口与**单实例锁**都没放开 ⇒ 新实例在启动闸门处 `sys.exit(3)`，
         #        看门狗每 5 秒重试一次、次次撞锁 ⇒ 永远看不到"新的那个"。
-        #   与 `shutdown_fn` 同一口径（那条 2026-09-16 已经这么修过）：**先保命退出，再做慢活**。
+        # 与 `shutdown_fn` 同一口径：**先保命退出，再做慢活**。
         log.info("收到重启指令，正在后台拉起新实例…")
 
         def _exit_now():
             # 退出前把"我是谁"的证据文件一起收掉：`bot.lock`（pid 证据）留着会让**下一个实例**
             # 在启动闸门处把死掉的 pid 当成"旧实例还在"（pid 复用时会一直等，日志刷
             # "旧实例像是正在退出，等它放开锁再接手…"，最后报"已有实例在运行"退出）——
-            # 2026-09-18 实测就是这么卡住的。互斥体本身随进程退出自动释放，这两个文件只是证据。
+            # 就是这么卡住的。互斥体本身随进程退出自动释放，这两个文件只是证据。
             for _f in ("bot.pid", "bot.lock"):
                 try:
                     _p = os.path.join(ROOT, "data", _f)
@@ -2816,7 +2811,7 @@ def main():
 
         # ① 先装强退：**6 秒**后无论如何都退（后面几件慢活挡不住它）。
         #    ⚠️ 原来是 2 秒 —— 实测会被"慢活"顶掉：`_kill_watchdog()` 里那条 PowerShell 兜底最慢 25 秒，
-        #    2 秒强退会在 `_spawn_watchdog()` **之前**发生 ⇒ 没人接替（2026-09-18 我实测踩出来的回归）。
+        # 2 秒强退会在 `_spawn_watchdog()` **之前**发生 ⇒ 没人接替。
         #    现在：快杀（`fast=True`）+ 先 spawn + 自证都在 6 秒内跑完，慢活一律不进这条路。
         threading.Timer(6.0, _exit_now).start()
         try:
@@ -2827,7 +2822,7 @@ def main():
         except Exception:
             pass
         try:
-            _kill_watchdog(fast=True)             # ② 只做快杀：按 pid 文件结束旧看门狗
+            _kill_watchdog(fast=True) # ② 只做快杀：按 pid 文件结束旧看门狗
         except Exception:
             pass
         try:
@@ -2837,7 +2832,7 @@ def main():
             log.info("已拉起新看门狗（它会在 8 秒后接管机器人）")
         except Exception as e:
             log.error("重启拉起看门狗失败：%s", e)
-        # ③b 2026-09-18 加（作者报「现在重启不了」）：**自证 + 兜底**。
+        # ③b **自证 + 兜底**。
         #    光"发出去了"不算接替成功：看门狗可能起不来（阻断在单实例锁 / 读到的 stopped.flag 没清），
         #    而本进程 2 秒后就强退 ⇒ 没人接替 ⇒ 用户看到的就是"重启不了、机器人没了"。
         #    ⚠️ 判据要保守：**只在"看门狗 pid 文件根本没写出来"时才兜底直起**。第一版拿
@@ -2873,7 +2868,7 @@ def main():
     server_cfg = cfg.get("server", {})
     _tok = str(server_cfg.get("token") or "").strip()
     if len(_tok) < 16:
-        server_cfg["token"] = secrets.token_urlsafe(24)  # 32 位强随机（字母数字-_）
+        server_cfg["token"] = secrets.token_urlsafe(24) # 32 位强随机（字母数字-_）
         save_config(cfg)
         log.info("已自动生成控制台访问口令（%d 位，保存在 config.json 的 server.token）", len(server_cfg["token"]))
 
@@ -3035,7 +3030,7 @@ def main():
                   shutdown_fn=shutdown_fn, whale=orch.whale,
                   poke_test_fn=poke_test_fn, selfcheck_fn=selfcheck_fn, restart_fn=restart_fn,
                   groups_fn=groups_fn, memory_fn=memory_fn,
-                  # ⛔ 第十轮 **V-R10-14**：「刷新群列表」只换 `wechat._groups` 是不够的 ——
+                  # ⛔ 「刷新群列表」只换 `wechat._groups` 是不够的 ——
                   #   监听侧的 targets 也得重算（否则界面同时出现"读到 N 个群"与"监听目标 0 个"
                   #   两个矛盾结论，且新群的显示名一直是 wxid）。
                   refresh_targets_fn=lambda why="刷新群列表": _refresh_targets(why),
@@ -3052,14 +3047,13 @@ def main():
                   persona_rate_fn=persona_rate_fn,
                   persona_score_custom_fn=persona_score_custom_fn,
                   persona_ai_enrich_fn=persona_ai_enrich_fn)
-    # ── 控制台启动编排（丙-5 #1 双窗收口，2026-09-23）────────────────────
+    # ── 控制台启动编排────────────────────
     # 顺序：① webui 起服务（快，秒级——"控制台永远先启动"口径不变，微信校准不挡它）
     #       ② Qt 原生壳自举（唯一通路 qt_bootstrap.ensure_pyside6；已装则秒回）
     #       ③ **开窗决策押到自举之后**：Qt 正常 ⇒ 原生界面就是控制台，
     #          ConsoleForm 绝不打开（真机首跑双窗根因＝旧顺序先 open_console
     #          开出 WebView2 窗、紧接着 start_qt_shell 又开一窗 ⇒ 两窗并存抢主）；
-    #          Qt 自举失败 ⇒ 照旧 open_console（丙-3 网页后备逻辑原样保留）。
-    #   注意：网页控制台**服务**（webui）与网页版可达性一个字不动（工单第 2 节第 3
+    # Qt 自举失败 ⇒ 照旧 open_console。
     #   条"随时可回退"），收口的只是"启动时再自动弹一个网页窗"这件事。
     _qt_ok = False
     url = ""
@@ -3095,12 +3089,12 @@ def main():
     elif url and server_cfg.get("auto_open_browser", True) is not False:
         # 开窗只走一处（`agent/notify_ui.open_console`）：优先级＝自家 WebView2 窗口 → 浏览器，
         # 并且**所有入口共用同一把锁**（logs/browser_opened.lock）。
-        # 2026-09-14 修"自家窗口 + 浏览器同时弹"：原先这里自己拿锁开浏览器、启动器那边另拿一次，
+        # "自家窗口 + 浏览器同时弹"：原先这里自己拿锁开浏览器、启动器那边另拿一次，
         # 两个入口各开一个 ⇒ 双窗。
         try:
             from agent.notify_ui import open_console as _open_console
             _rep = _open_console(url, browser_path=str(server_cfg.get("browser_path") or ""),
-                                 mode="quiet")   # 机器人自己开窗 ⇒ 后台开（只闪任务栏，绝不抬到前台顶掉用户）
+                                 mode="quiet") # 机器人自己开窗 ⇒ 后台开（只闪任务栏，绝不抬到前台顶掉用户）
             _how = str(_rep.get("how") or "")
             if _how == "webview":
                 log.info("已在我们自己的窗口里打开控制台（不依赖浏览器）")
@@ -3134,7 +3128,7 @@ def main():
     for g in targets:
         _key0 = "group:" + g["wxid"]
         if wm.get(_key0, 0) <= 0:
-            # ⛔ 2026-09-21（V-R4-12a，P1，第四轮审计）：**读失败绝不许把 0 写进水位** ——
+            # ⛔ **读失败绝不许把 0 写进水位** ——
             #   0 就是"从最旧历史重放"（审计实测：首捞竟是 14.1 天前那 50 条）。
             #   读不到就先**不给这个群定起点**（下一轮再试），并如实留痕；
             #   循环里有一段专门把"水位 0"对齐到现有最新（或这一轮跳过这个群）。
@@ -3147,7 +3141,7 @@ def main():
                             g["name"], str(_why0)[:120])
     listener_watermark.flush_checked(wm, log=log, why="启动时把各群起点写盘")
     log.info("监听水位已载入：%s（重启不丢、不重放；账号维=%s）", _wm_path, wm.account or "（认不出账号⇒沿用老键名）")
-    # ⛔ 2026-09-22 加（作者口径「**我更想让用户不用测这测那的就能搞好**」）：启动时**产品自己**采一次
+    # ⛔ 启动时**产品自己**采一次
     #   兼容性体检（11 条轴的行为断言，全部只读、不碰微信进程、不动窗口），落 `data/compat_last.json`
     #   ⇒ 以后用户点「反馈」时这份东西自动带上，他不用跑体检、不用点检验器、不用找报告文件。
     #   放后台线程：`smoke()` 里有一条要真起一次回环监听，不许拖慢启动。半小时内有记录就自动跳过。
@@ -3157,12 +3151,12 @@ def main():
                 from agent import compat as _cpm
                 _r = _cpm.auto_run("启动自动体检")
                 log.info("兼容性自动体检：%s", _r.get("summary") or _r.get("why") or _r)
-            except Exception as _e:                              # noqa: BLE001
+            except Exception as _e: # noqa: BLE001
                 log.warning("兼容性自动体检跳过（不影响运行）：%s", _e)
         threading.Thread(target=_compat_boot, daemon=True, name="compat-boot").start()
-    except Exception as _e:                                      # noqa: BLE001
+    except Exception as _e: # noqa: BLE001
         log.warning("兼容性自动体检线程没起起来（不影响运行）：%s", _e)
-    _rd_last = {}          # wxid -> 上次"读不到"告警时间（限频 60 秒，别刷屏）
+    _rd_last = {} # wxid -> 上次"读不到"告警时间（限频 60 秒，别刷屏）
 
     def _warn_rl(wxid, msg):
         """限频 warning（读库失败会在每轮循环里复现，不许刷屏）。"""
@@ -3185,7 +3179,7 @@ def main():
         pass
 
     log.info("开始监听群消息（目标群 %d 个）… Ctrl+C 退出（轮询间隔在控制台修改保存即生效）", len(targets))
-    _recall_state = {}   # 第 14 条：每会话的撤回核对去重/限频状态（内存即可，重启重扫一遍无害）
+    _recall_state = {} # 第 14 条：每会话的撤回核对去重/限频状态（内存即可，重启重扫一遍无害）
     # 主动开话题（默认关；控制台开启后循环启动，暂停/停止时跳 tick）
     try:
         orch.start_proactive_loop()
@@ -3196,7 +3190,7 @@ def main():
 
     # 水位自愈的限频表（每个群最多 10 秒查一次"最新序号"，别每跳都多打一次库）
     _wm_heal = {}
-    # 切号跟随的限频表（2026-09-19）：每 15 秒只 stat 一下 -wal，别每跳都走盘
+    # 切号跟随的限频表：每 15 秒只 stat 一下 -wal，别每跳都走盘
     _ACCT_CHK = {"at": 0.0}
 
     def _adopt_wc(_wc_new, _why=""):
@@ -3206,7 +3200,7 @@ def main():
         `wechat_box[0]` 的话发送链还拿着旧账号那个对象 ⇒ 表面"接上了"，其实一条都发不出去
         （旧号的库/窗口句柄都过期了）。
 
-        V-R10-30（2026-09-21）补齐三件**原来三条接入路径各做各的、实际只有这一条做全**的事：
+        补齐三件**原来三条接入路径各做各的、实际只有这一条做全**的事：
           ① 旧 adapter 的句柄与旧账号的解密缓存**先放掉**（`_release_adapter`）；
           ② 水位表**切到新账号的命名空间**（`wm.set_account`）——切号后两号水位不再互相污染；
           ③ 水位落盘**看返回值**（`flush_checked`）并把失败次数记进 `_ATTACH`，不再静默。
@@ -3233,7 +3227,7 @@ def main():
         for _g in targets:
             _k = "group:" + _g["wxid"]
             if wm.get(_k, 0) <= 0:
-                # ⛔ 同上（V-R4-12a）：切号后重定起点，**读失败不许写 0**。
+                # ⛔ 同上：切号后重定起点，**读失败不许写 0**。
                 _okn, _seqn, _whyn = _wc_new.latest_seq_ex(_g["wxid"])
                 if _okn:
                     wm.set(_k, _seqn)
@@ -3250,7 +3244,7 @@ def main():
             log.warning("%s：现在读的是账号 %s，监听目标 %d 个", _why, _acct, len(targets))
     while not orch.stopped:
         poll_interval = max(1.0, float(get_config().get("wechat", {}).get("poll_interval") or 3))
-        # ── 微信接入重试（2026-09-16：老代码注释里承诺过、实际**从未实现**的那一句）──────
+        # ── 微信接入重试──────
         #   症状（已知现象：「微信连接不上」）：启动那一刻微信没开（或还没登录）⇒ `wechat is None`
         #   ⇒ 目标群为空 ⇒ 整个监听循环什么都不做，而且**没有任何重试** ⇒ 控制台永远显示
         #   "微信未连接"，用户只能重启。这里：每 10 秒再试一次；接上以后把群/目标/发送队列/
@@ -3263,7 +3257,7 @@ def main():
             else:
                 log.info("微信仍未接入（第 %d 次尝试）：%s", _ATTACH["tries"],
                          wechat_attach_status()["reason"])
-        # ── 切号跟随（2026-09-19，网友反馈：「切换微信号使用后…只有前几句话会正常回复，
+        # ── 切号跟随（网友反馈
         #    后面不再回复」）────────────────────────────────────────────────────────
         #    微信切号后我们如果继续读**旧号**的库：新消息全在新号里，而界面上**没有任何异常**
         #    （机器人就像死了）——用户只能报"后面不回复"。这里每 15 秒只 stat 一遍 `-wal`
@@ -3300,7 +3294,7 @@ def main():
                     except Exception:
                         _replay = False
                     if not _replay:
-                        # ⛔ V-R4-12a：**读失败不许把 0 写进水位**（0 会变成"从最旧历史重放"）。
+                        # ⛔ a：**读失败不许把 0 写进水位**（0 会变成"从最旧历史重放"）。
                         #   读不到就**不动水位**——暂停期间的消息宁可留着，也不拿两周前的老话当新消息。
                         try:
                             _okp, _seqp, _whyp = wechat.latest_seq_ex(wxid)
@@ -3313,7 +3307,7 @@ def main():
                         except Exception:
                             pass
                     continue
-                # ⛔ 2026-09-21（V-R4-12a，P1，第四轮审计）：**水位 0 ＝ 从最旧历史重放** ——
+                # ⛔ **水位 0 ＝ 从最旧历史重放** ——
                 #   首次运行 / 切号 / 读库失败都可能留下 0（审计实测"首捞竟是 14.1 天前那 50 条"，
                 #   而且 0 水位**永不自愈**）⇒ 能读到最新就**对齐到最新**（绝不清空重放），
                 #   读不到就**这一轮跳过这个群**（宁可不回，也不拿两周前的老话当新消息回）。
@@ -3328,7 +3322,7 @@ def main():
                         _warn_rl(wxid, "群[%s] 水位是 0 且现在读不出最新序号 ⇒ 这一轮跳过它"
                                        "（不重放历史）：%s" % (g["name"], str(_whyA)[:100]))
                         continue
-                # ⛔ 2026-09-17（用户问「我把聊天记录清空了，它会不会学不会、从而不发」）：
+                # ⛔ ：
                 #   水位**只前进不回退**（防重复处理），而**微信清空聊天记录后序号可能回落 / 换库**
                 #   ⇒ 新消息的 sort_seq 小于旧水位 ⇒ 全被判成"处理过了" ⇒ **它真的不回**（而且重启
                 #   也救不回来：水位是从文件读回来的）。这里自愈：库里的**最新序号低于水位** ⇒ 这个
@@ -3337,7 +3331,7 @@ def main():
                     _now2 = time.time()
                     if (_now2 - float(_wm_heal.get(wxid, 0) or 0)) >= 10.0:
                         _wm_heal[wxid] = _now2
-                        # ⛔ V-R4-12a：**读失败不许当成"库里最新是 0"** —— 必须看 `ok`，
+                        # ⛔ a：**读失败不许当成"库里最新是 0"** —— 必须看 `ok`，
                         #   否则"读不到"既触发不了回落自愈、又什么都看不出来（一直静默）。
                         _okH, _latest, _whyH = wechat.latest_seq_ex(wxid)
                         _cur = int(wm.get(chat_key, 0) or 0)
@@ -3355,7 +3349,7 @@ def main():
                     log.debug("读取群[%s]异常：%s", g["name"], e)
                     continue
                 if new is None:
-                    # ⛔ 2026-09-21（V-R4-7，P1）：读失败**不是**"没有新消息" ——
+                    # ⛔ 读失败**不是**"没有新消息" ——
                     #   老实现返回 []，这里 `if not new: continue` 无声空转，
                     #   用户看到的就是"它不回话、日志里什么都没有"。
                     _warn_rl(wxid, "群[%s] 读新消息失败（**不是**「没有新消息」）⇒ 这一轮跳过它：%s"
@@ -3382,7 +3376,7 @@ def main():
 
                 def _handle_one(nm, _chat_key=chat_key, _g=g, _wxid=wxid, _blocked=blocked):
                     """W2：返回真值＝这条已被下游接受（append_incoming 落盘成功后返回 entry）。"""
-                    # 🔴 2026-09-18：**归一化阶段被丢掉的行**（自己发的/系统/空内容）只带个 seq 进来 ——
+                    # 🔴 **归一化阶段被丢掉的行**（自己发的/系统/空内容）只带个 seq 进来 ——
                     #   必须在这里**算"已处理"**，否则水位推不过它 ⇒ 同一行被反复重读，
                     #   等它超过回声窗就被当成"别人的话"⇒ 机器人回自己（现场就是这么吵起来的）。
                     if nm.get("skip"):
@@ -3438,15 +3432,15 @@ def main():
                         return {"command": _cmd}
                     entry = store.append_incoming(_chat_key, nm["mid"], nm["ts"], nm["sender_id"],
                                                   nm["sender_name"], nm["text"], media=nm["media"],
-                                                  # ⛔ 2026-09-24（丙-11 B3）：补传 `reply`（被引用内容
+                                                  # ⛔ 补传 `reply`（被引用内容
                                                   #   与发送者）。`wechat` 侧已产出（B1/B2），落档由
                                                   #   `store.append_incoming` 的 `reply` 形参收（store.py:331）。
                                                   #   无引用时为 None —— 与既有行为完全一致（原来恒 None）。
                                                   reply=nm.get("reply"))
                     if not entry:
-                        return None                     # 没落库 ⇒ 判失败，交给 process_batch 重试
+                        return None # 没落库 ⇒ 判失败，交给 process_batch 重试
                     # ── 系统自动回拍：别人拍一拍机器人 → 延迟 ~18 秒后按概率回拍（90%）──
-                    # ⛔ 2026-09-18 修（作者抓到的真缺陷：机器人回了一句**「谁拍我」**）：
+                    # ⛔ 
                     #   **"我们自己拍出去"的拍一拍回执也是 `[拍一拍]`**（解析侧抠不出名字），
                     #   原来这里不分方向、一律 `orch.on_incoming` ⇒ **回执被当成"别人拍我"喂给模型**
                     #   ⇒ 模型看不到主语，只能反问「谁拍我」（session 里实锤：
@@ -3555,11 +3549,11 @@ def _auto_pythonw():
         return
     exe = sys.executable or ""
     if not exe.lower().endswith("python.exe"):
-        return  # 已是 pythonw / pyw / 其他解释器
+        return # 已是 pythonw / pyw / 其他解释器
     try:
         pyw = exe[:-10] + "pythonw.exe"
         if os.path.exists(pyw):
-            flags = 0x00000008 | 0x00000200 | 0x08000000  # DETACHED|CREATE_NEW_PROCESS_GROUP|CREATE_NO_WINDOW
+            flags = 0x00000008 | 0x00000200 | 0x08000000 # DETACHED|CREATE_NEW_PROCESS_GROUP|CREATE_NO_WINDOW
             subprocess.Popen([pyw, os.path.abspath(__file__)] + sys.argv[1:],
                              creationflags=flags,
                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -3570,5 +3564,5 @@ def _auto_pythonw():
 
 
 if __name__ == "__main__":
-    _auto_pythonw()  # 无窗口兜底（调试用 --foreground 保留窗口）
+    _auto_pythonw() # 无窗口兜底（调试用 --foreground 保留窗口）
     sys.exit(main() or 0)

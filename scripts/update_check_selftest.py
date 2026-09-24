@@ -16,13 +16,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
-# ⚠️ 2026-09-20（V-R1-2）：更新源现在**只认 http(s) + 官方域**；本地清单文件必须显式开这个
+# ⚠️ 更新源现在**只认 http(s) + 官方域**；本地清单文件必须显式开这个
 #   **测试专用**开关（生产路径不设它 —— 见 `update_check.allow_local_update()`）。
 #   本判据的 U 段全部用 `tempfile` 造的**本地清单**，所以在这里显式打开。
 os.environ.setdefault("PM_ALLOW_LOCAL_UPDATE", "1")
 
-from agent import update_check as UC      # noqa: E402
-from agent.version import VERSION         # noqa: E402
+from agent import update_check as UC # noqa: E402
+from agent.version import VERSION # noqa: E402
 
 PASS = FAIL = 0
 
@@ -48,7 +48,7 @@ tmp = tempfile.mkdtemp(prefix="pm-updchk-")
 try:
     # 把状态文件指到临时目录：自检**不许写用户的 data/**
     UC._state_path = lambda: os.path.join(tmp, "update_state.json")
-    # ⛔ 2026-09-21（第六轮 **V-R6-27**）：`state()` 现在会把"见过的最高版本"记进状态（rollback 防护），
+    # ⛔ `state()` 现在会把"见过的最高版本"记进状态（rollback 防护），
     #   而本判据前面的小节用的是 2099 那种假版本 ⇒ 若不清，后面的真版本会被判成"回滚"（自造假红）。
     #   ⇒ 包一层：每次调用前把 `maxSeenVersion` 清掉（U10 那一节需要真值，它直接调 `_orig_state`）。
     _orig_state = UC.state
@@ -87,7 +87,7 @@ try:
     open(badp, "w", encoding="utf-8").write("{ 这不是 JSON ")
 
     print("[U1] 更新源：显式填了用填的；**空值回落到内置默认**（老 config 里那个空 url 不许盖掉新默认值）")
-    # 2026-09-16 口径更新：原来"空 url ⇒ off"。但老用户的 config.json 是"默认值为空"那阵子存的，
+    # 原来"空 url ⇒ off"。但老用户的 config.json 是"默认值为空"那阵子存的，
     # 里面那个空 update.url 会把新默认值盖掉 ⇒ 他们永远接不到更新通知。现在空＝没配过 ⇒ 用默认。
     ok(UC.manifest_url({"url": ""}) == UC.DEFAULT_URL, "空 url 回落内置默认")
     ok(UC.manifest_url({}) == UC.DEFAULT_URL, "连这个键都没有也回落默认")
@@ -135,7 +135,7 @@ try:
     ok(_f1 == _f2 and len(_f1) == 12, "同输入两次算出来一样（%s）" % _f1)
     _old_build = VER.BUILD
     _vpath = os.path.join(ROOT, "agent", "version.py")
-    # ⛔ 2026-09-22：读的时候也必须 `newline=""` —— 文本模式会把 CRLF 翻成 LF，写完（`newline=""` 不翻译）
+    # ⛔ 读的时候也必须 `newline=""` —— 文本模式会把 CRLF 翻成 LF，写完（`newline=""` 不翻译）
     #   文件就变成 LF 结尾 ⇒ `git status` 里 `agent/version.py` 永远是"已修改"（判据把工作树弄脏了）。
     _src = open(_vpath, encoding="utf-8", newline="").read()
     try:
@@ -145,7 +145,7 @@ try:
         open(_vpath, "w", encoding="utf-8", newline="").write(_src)
         VER.BUILD = _old_build
     ok(_f3 == _f1, "改了 `agent/version.py` 里的 BUILD 行 ⇒ 指纹**不变**（防自指死循环）")
-    # ⚠️ 2026-09-18 深夜真坑：BUILD 改写前后**同尺寸**，同一秒改写时 `__pycache__` 的 (mtime,size)
+    # ⚠️ BUILD 改写前后**同尺寸**，同一秒改写时 `__pycache__` 的 (mtime,size)
     #   校验认为缓存有效 ⇒ `from agent.version import BUILD` 读到**旧值**，把清单写成了上一版的指纹
     #   （用户侧会一直提示"有新包"）。⇒ 打包/发布链一律用**读文件**的 `read_build_from()`。
     _rb = getattr(VER, "read_build_from", None)
@@ -192,18 +192,18 @@ finally:
     shutil.rmtree(tmp, ignore_errors=True)
 
 print("\n[U9] 控制台「更新公告」条：分支齐、按钮各有各的行为、不弹窗")
-# 2026-09-15 补：以前这条公告**一条自检都没有**（后端五态有自检，前端公告条全靠肉眼）。
+# 以前这条公告**一条自检都没有**（后端五态有自检，前端公告条全靠肉眼）。
 _H = open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
 _W = open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
 _i = _H.find('id="updBar"')
-# ⚠️ 2026-09-20 **第二次栽在"固定字数窗口"上**（上一版是 2600 字，注释就写在下面）：
-#   给更新条加一个 `pending` 分支（V-R4-1）之后，2600 字窗口正好把 `newer/older/error` 全挤出去
+# ⚠️ **第二次栽在"固定字数窗口"上**（上一版是 2600 字，注释就写在下面）：
+# 给更新条加一个 `pending` 分支之后，2600 字窗口正好把 `newer/older/error` 全挤出去
 #   ⇒ 一连 6 条假红（代码本身没问题）。⇒ 改成**跟着代码走的边界**：从 `#updBar` 一直取到这段更新条
 #   IIFE 的收尾 `})();` —— 别处插入多少都与这里无关，针对性还在。
 _s0 = _H.find("(function () {", _i)
 _e0 = _H.find("})();", _s0) if _s0 > 0 else -1
 _seg = _H[_i:(_e0 + 5)] if (_s0 > _i and _e0 > _s0) else _H[_i:_i + 2600]
-# ⚠️ 2026-09-17 教训：**固定长度的窗口很脆** —— 在 `#updBar` 下面新增一个横幅（版本门「发送已被暂停」）
+# ⚠️ **固定长度的窗口很脆** —— 在 `#updBar` 下面新增一个横幅（版本门「发送已被暂停」）
 #   就把「不再提醒」那段 JS 挤出了窗口 ⇒ 这条断言假红（代码本身没毛病）。
 #   改成"先在窗口里找，找不到就退回整个文件找"：保住"看的是更新条那一块"的针对性，又不被无关插入绊倒。
 def _has(*needles):
@@ -217,7 +217,7 @@ for st in ("'newer'", "'older'", "'error'", "'pending'"):
 ok("有新版本" in _seg and "s.notes" in _seg, "newer 分支写「有新版本」并把公告要点拼上")
 ok(_seg.count("'warn'") >= 3, "older / error / **pending** 都走 warn 样式（不是静默）")
 ok("hide()" in _seg and "else { hide(); }" in _seg, "其余状态（current / off）走隐藏")
-# ⛔ V-R4-1（2026-09-20）：半装必须**看得见**，而且不许被「不再提醒」永久消音 ——
+# ⛔ 半装必须**看得见**，而且不许被「不再提醒」永久消音 ——
 #   后端已把 current 降级成 pending，前端不认这个状态的话用户还是什么都看不到。
 ok("s.status === 'pending'" in _seg and "再点一次" in _seg,
    "半装（pending）在界面上如实显示，并给出「再点一次即可补换」的下一步")
@@ -227,7 +227,7 @@ ok(_has("getElementById('updLater').onclick = hide"), "「稍后」＝只隐藏�
 ok(_has("fetch('/api/update')"), "取数只打 /api/update")
 ok(_has("/api/update_skip", "cur.theirs"), "「不再提醒」＝POST /api/update_skip 且带上版本号")
 ok("立即更新" in _H and "alert(" not in _seg, "「立即更新」＝就地给指引，**不弹窗**")
-# 2026-09-16 补（给用户看公告条时当场发现的真缺陷）：条子的描边原来写 `var(--line,…)`，
+# 补（给用户看公告条时当场发现的真缺陷）：条子的描边原来写 `var(--line,…)`，
 #   而四套主题里**只有 `--bd` 没有 `--line`** ⇒ 描边永远落到硬编码的深灰 `#2a2f37`，
 #   浅色主题下就是"白卡配深灰边"、不跟主题走。断言：描边必须优先取主题变量。
 ok("var(--bd" in _seg, "公告条描边跟主题走（`--bd`，不是硬编码 `--line`）")
@@ -236,7 +236,7 @@ ok("min-width:0" in _seg and "white-space:nowrap" in _seg,
    "公告条正文可换行、按钮不被压成竖排（flex:none + nowrap）")
 ok('"/api/update"' in _W and '"/api/update_skip"' in _W, "后端路由都在：GET /api/update + POST /api/update_skip")
 
-print("\n[U10] 更新源拉不到 ⇒ 并行试备用源（2026-09-16 用户报「更新源异常：拉不到更新源：The read operation timed out」）")
+print("\n[U10] 更新源拉不到 ⇒ 并行试备用源")
 ok(len(UC.DEFAULT_URLS) >= 3 and UC.DEFAULT_URLS[0] == UC.DEFAULT_URL, "内置多个源且 raw 排第一")
 ok(all(str(u).startswith("https://") for u in UC.DEFAULT_URLS), "备用源都是 https")
 ok(all("/Eifptaur/Eif-MAPT-PersonaMorph" in u and "persona-morph-manifest.json" in u
@@ -310,9 +310,9 @@ _UA = open(os.path.join(ROOT, "agent", "update_apply.py"), encoding="utf-8").rea
 ok("DL_MIRRORS" in _UA and 'if "github.com" in str(url).lower()' in _UA,
    "下载资产也有镜像兜底（DL_MIRRORS，且只对 github.com 套前缀）")
 
-print("\n[U12] 「立即更新」第一下就要走得通（2026-09-17 用户报：「第一次一定拉不到更新源，第二次才能成功」）")
+print("\n[U12] 「立即更新」第一下就要走得通")
 # 假网络＝**只有备用源（镜像）通**，raw 与自填源一律超时 —— 这正是他那边的网络情况。
-from agent import update_apply as UA                    # noqa: E402
+from agent import update_apply as UA # noqa: E402
 _UC_SRC = open(os.path.join(ROOT, "agent", "update_check.py"), encoding="utf-8").read()
 ok("def candidate_urls" in _UC_SRC and "candidate_urls" in _UA,
    "两条路共用同一份候选源（检查与更新不再各写一套）")
@@ -348,11 +348,11 @@ _dl_urls = []
 _real_dl = UA._dl_once
 UA._dl_once = lambda u, dest, timeout, progress=None: (_dl_urls.append(u) or (False, "boom"))
 try:
-    UC._write_state({"lastGoodUrl": UC.DEFAULT_URLS[2]})            # 上次清单走的是 ghfast.top
+    UC._write_state({"lastGoodUrl": UC.DEFAULT_URLS[2]}) # 上次清单走的是 ghfast.top
     UA.download("https://github.com/x/y/releases/download/v1/a.zip", os.path.join(tmp, "a.zip"))
     _first_with_memo = list(_dl_urls)
     _dl_urls[:] = []
-    UC._write_state({"lastGoodUrl": UC.DEFAULT_URLS[1]})            # jsDelivr：不是下载镜像 ⇒ 回默认顺序
+    UC._write_state({"lastGoodUrl": UC.DEFAULT_URLS[1]}) # jsDelivr：不是下载镜像 ⇒ 回默认顺序
     UA.download("https://github.com/x/y/releases/download/v1/a.zip", os.path.join(tmp, "a.zip"))
     _first_default = list(_dl_urls)
 finally:
@@ -434,7 +434,7 @@ _el13b = time.time() - _t13b
 ok(_m13b is not None and _u13b == UC.DEFAULT_URLS[1],
    "只有缓存源能通 ⇒ 照用（兜底不丢）", str(_u13b)[:48])
 ok(_el13b < 5.0 - 0.6,
-   # ⚠️ 上限原来是 `GRACE_S + 1.2`（3.2s）—— 机器一忙就**假红**（2026-09-18 套跑实测 3.4s）。
+   # ⚠️ 上限原来是 `GRACE_S + 1.2`（3.2s）—— 机器一忙就**假红**。
    #    真正的契约是"**不等慢源**"（那个假慢源睡 5.0s）⇒ 上限按慢源时长留 0.6s 余量，
    #    这样它验的还是同一件事（宽限窗替我们踩了刹车），但不会再被调度抖动判红。
    "宽限窗有界：不等慢源、也不等超时（%.1fs < 5.0s-0.6s；宽限窗 %.1fs）" % (_el13b, UC.GRACE_S))
@@ -456,8 +456,8 @@ finally:
 ok(_u13c == UC.DEFAULT_URLS[1],
    "版本相同 ⇒ 按候选顺序取先者（不因改动乱跳源）", str(_u13c)[:48])
 
-# ── ⛔ 2026-09-21（第四轮审计 **V-R4-13**）：两处"读数/真值"小瑕疵 ──
-print("\n── V-R4-13：pendingFiles 脏数据按**条目**算 ＋ trust_custom_url 的真值判断 ──")
+# ── ⛔ 两处"读数/真值"小瑕疵 ──
+print("\n── pendingFiles 脏数据按**条目**算 ＋ trust_custom_url 的真值判断 ──")
 ok(UC.pending_list("一键启动.exe,一键关闭.exe") == ["一键启动.exe", "一键关闭.exe"],
    "pendingFiles 是字符串时按**条目**拆（不许按字符 ⇒ 别报「还有 8 件（一、键、启、动…）」）",
    UC.pending_list("一键启动.exe,一键关闭.exe"))
@@ -483,10 +483,10 @@ ok("as_bool((c or {}).get(\"trust_custom_url\"))" in _ucsrc2,
 ok(bool("false") is True and UC.pending_list("一") == ["一"],
    "反例锚：裸 `bool(\"false\")` **确实是 True** —— 这就是「写 false 反而开启」的来历")
 
-# ── ⛔ 2026-09-21（第四轮审计 **V-R4-12c**）：状态快照写失败**不许吞** ──
+# ── ⛔ 状态快照写失败**不许吞** ──
 #    原来 `except: pass` ⇒ `data/update_state.json` 留的是**旧快照**，而检验器把它当"现在的更新结论"
 #    报给用户。⇒ 写失败必须返回原因，`state()` 也得把它带出去。
-print("\n── V-R4-12c：`_write_state` 写失败要留下原因（旧快照 ≠ 现在的结论）──")
+print("\n── c：`_write_state` 写失败要留下原因（旧快照 ≠ 现在的结论）──")
 ok(UC._write_state({"k": 1}) == "", "写成功 ⇒ 返回空串（正常路没被堵）")
 _block = os.path.join(tmp, "blocker")
 io.open(_block, "w", encoding="utf-8").write("我是文件，不是目录")
@@ -504,8 +504,8 @@ ok("except Exception:\n        pass" not in _frag,
 ok('out["stateSaved"]' in _ucsrc3 and "stateSaveError" in _ucsrc3,
    "源码级：`state()` 把写失败带出去（`stateSaved` / `stateSaveError`）")
 
-print("\n[U10] TUF 廉价两面：清单 `expires`（freeze）+ 单调版本（rollback）——第六轮 V-R6-27")
-import json as _j27                                                            # noqa: E402
+print("\n[U10] TUF 廉价两面：清单 `expires`（freeze）+ 单调版本（rollback）——")
+import json as _j27 # noqa: E402
 _exp_man = mk_manifest(os.path.join(tmp, "expired.json"), "2026.10.1.1", ["要点"])
 _jd = _j27.load(open(_exp_man, encoding="utf-8"))
 _jd.setdefault("base", {})["expires"] = "2000-01-01T00:00:00Z"
@@ -529,27 +529,27 @@ _st_now = _j27.load(open(UC._state_path(), encoding="utf-8"))
 ok(_o_hi.get("status") == "newer" and str(_st_now.get("maxSeenVersion") or "") == "2026.10.1.1",
    "③ 见过的最高版本**落盘**（下次才能识别回滚）", str(_st_now)[:110])
 
-print("\n[U11] 第十二轮 V-R12-1/4：上界闸门要**真的拦住**、把结论说对、且不入账（不是源码子串）")
+print("\n[U11] 上界闸门要**真的拦住**、把结论说对、且不入账（不是源码子串）")
 _man_far = mk_manifest(os.path.join(tmp, "far.json"), "2099.9.9", ["超前"])
 open(UC._state_path(), "w", encoding="utf-8").write(_j27.dumps({"maxSeenVersion": "2026.1.1.1"}))
 _o_far = _orig_state({"url": _man_far})
 _st_far = _j27.load(open(UC._state_path(), encoding="utf-8"))
 ok(_o_far.get("status") == "error" and _o_far.get("kind") == "far_ahead",
-   "④ 超前半年以上的清单 ⇒ `state()` 报 **error + kind=far_ahead**（第十一轮这里曾报 `newer`）",
+   "④ 超前半年以上的清单 ⇒ `state()` 报 **error + kind=far_ahead**",
    str(_o_far)[:140])
 ok(str(_st_far.get("maxSeenVersion") or "") == "2026.1.1.1",
-   "④ …而且**没有入账**（`state()` 必须把 `kind` 抄进 `out`，否则那道守卫永不成立 —— V-R12-1）",
+   "④ …而且**没有入账**（`state()` 必须把 `kind` 抄进 `out`，否则那道守卫永不成立 —— ）",
    str(_st_far)[:110])
-# ⛔ 2026-09-22 修（第十三轮 **V-R13-5** · P3）：**版本号相对"今天"动态生成** ——
-#   老写法写死 `2027.9.22`，那是一次**日期炸弹**：约 2027-03-25 起（今天+180 天 ≥ 该日）
+# ⛔ **版本号相对"今天"动态生成** ——
+# 老写法写死 `2027.9.22`，那是一次**日期炸弹**：约 起（今天+180 天 ≥ 该日）
 #   这条断言必然变红，而红的原因与代码无关。
 _typo_v = time.strftime("%Y.%m.%d", time.localtime(time.time() + 240 * 86400))
 _man_typo = mk_manifest(os.path.join(tmp, "typo.json"), _typo_v, ["手误版本号（今天+240 天）"])
 open(UC._state_path(), "w", encoding="utf-8").write(_j27.dumps({"maxSeenVersion": "2026.1.1.1"}))
 _o_typo = _orig_state({"url": _man_typo})
 ok(_o_typo.get("status") == "error" and _o_typo.get("kind") == "far_ahead",
-   "④b 判据是**时间跨度**（超前 > 180 天）而不是「只看年」⇒ 手误版本号也拦得住（V-R12-4；"
-   "样本＝今天+240 天 ⇒ 不会变成日期炸弹，V-R13-5）",
+   "④b 判据是**时间跨度**（超前 > 180 天）而不是「只看年」⇒ 手误版本号也拦得住（"
+   "样本＝今天+240 天 ⇒ 不会变成日期炸弹，）",
    str(_o_typo)[:130])
 _man_ok11 = mk_manifest(os.path.join(tmp, "ok11.json"), "2026.10.1.1", ["正常"])
 ok(_orig_state({"url": _man_ok11}).get("status") == "newer",

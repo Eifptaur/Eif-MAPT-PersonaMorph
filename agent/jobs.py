@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """一键动作的后台作业（⑦ 四选一里"一键升级适配层 / 更新本体"的执行层）。
 
-为什么单独做一层（用户口径「弹窗按你推荐的做」＋项目现状）：
+为什么单独做一层：
   · 「升级适配层」＝`scripts/wechat_check.py --update`（实测**非交互**，直接 pip install -U）；
   · 「更新本体」＝`dep_heal` 的安装命令（`--no-index` 离线优先、其次镜像）；
   两条都是**分钟级**的动作，绝不能塞在 HTTP 请求里跑（会把控制台卡住）⇒ 统一在这里：
@@ -28,10 +28,10 @@ _lock = threading.Lock()
 def _decode(b) -> str:
     """把子进程输出字节解成字符串（**不许硬编码 UTF-8**）。
 
-    ⛔ 2026-09-16 修：`start()` 起的是 `shell=True`（＝`cmd.exe`），它按**系统 ANSI 代码页**
+    ⛔ `start()` 起的是 `shell=True`（＝`cmd.exe`），它按**系统 ANSI 代码页**
     （中文机器＝GBK/cp936）输出 ⇒ 原来那句 `encoding="utf-8"` 会让所有中文变成乱码
     （`decide_link_selftest` 里"保留尾部输出"那条就是这么红的）。
-    🔴 2026-09-18 再修：兜底编码**不许用 `locale.getpreferredencoding()`** —— Python 开了 UTF-8 模式
+    🔴 兜底编码**不许用 `locale.getpreferredencoding()`** —— Python 开了 UTF-8 模式
     （`PYTHONUTF8=1` / `-X utf8`）时它返回的就是 utf-8，于是"utf-8 解不出来 ⇒ 再拿 utf-8 解一遍"，
     中文照样乱码。⇒ 兜底改成 Windows 的 **`mbcs`（真 ANSI 代码页，与 Python 模式无关）**。
     ⇒ 先试 UTF-8，失败退回系统 ANSI 代码页，最后 replace 兜底（绝不抛）。
@@ -87,7 +87,7 @@ def start(name: str, cmd: str, timeout: int = 900) -> dict:
             r = subprocess.run(cmd, shell=True, timeout=int(timeout), capture_output=True,
                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             rc, out, err = r.returncode, _decode(r.stdout), _decode(r.stderr)
-        except Exception as e:                                     # noqa: BLE001
+        except Exception as e: # noqa: BLE001
             rc, err = -1, "%s: %s" % (type(e).__name__, e)
         with _lock:
             j = _jobs.get(name) or _empty()
@@ -98,7 +98,7 @@ def start(name: str, cmd: str, timeout: int = 900) -> dict:
 
     try:
         threading.Thread(target=_run, daemon=True, name="job-%s" % name).start()
-    except Exception as e:                                         # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         with _lock:
             j = _jobs.get(name) or _empty()
             j.update({"running": False, "returncode": -1, "err": str(e)})

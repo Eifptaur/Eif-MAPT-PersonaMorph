@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 """本地文件"找 + 发"判据（含 UI 映射）：**能力必须有 UI 面，没有就把那个面做出来**。
 
-用户 2026-09-13 原话：「帮用户找文件的触发方法呢，找完文件发群里的那些呢，**所有功能以及可自定义的东西
 都要映射到 UI 上。如果没有可以映射的对象，就要把那个对象做出来**」
 
 判据：
@@ -38,9 +37,9 @@ def ok(name, cond, detail=""):
     print("  {} {}{}".format("OK  " if cond else "FAIL", name, "  [{}]".format(detail) if detail else ""))
 
 
-from agent import file_search as FS  # noqa: E402
-from agent import tools as TL  # noqa: E402
-from agent import console_html as CH  # noqa: E402
+from agent import file_search as FS # noqa: E402
+from agent import tools as TL # noqa: E402
+from agent import console_html as CH # noqa: E402
 
 tmp = tempfile.mkdtemp(prefix="pm_fs_")
 d1 = os.path.join(tmp, "下载")
@@ -106,7 +105,7 @@ def mkctx(w):
 print("── C. 发送闸 ──")
 _real_cfg = TL.get_config
 _real_note = FS.note_sent
-FS.note_sent = lambda path, chat_id="": None        # 测试不写真实台账（data/sent_local_files.json）
+FS.note_sent = lambda path, chat_id="": None # 测试不写真实台账（data/sent_local_files.json）
 try:
     TL.get_config = lambda: {"file_search": {"enabled": False}, "send": {"file_forward_optin": True}}
     fw = FakeWeChat()
@@ -137,8 +136,8 @@ d = {x["name"]: x for x in TL.build_tool_defs()}
 for nm in ("find_local_file", "send_local_file"):
     ok("注册了 %s" % nm, nm in d and callable(d[nm].get("execute")))
     ok("  %s 描述里写了触发场景" % nm, len(str(d[nm].get("description") or "")) > 30)
-from agent import prompt as PR  # noqa: E402
-from agent import config as CFG  # noqa: E402
+from agent import prompt as PR # noqa: E402
+from agent import config as CFG # noqa: E402
 _rc = CFG.get_config
 try:
     CFG.get_config = lambda: {"file_search": {"trigger_mode": "on_request"},

@@ -6,7 +6,6 @@ Qt 侧用 QtSvg 渲染**同一份 path**，渲染前把 currentColor 替换成�
 同一份数据在任意主题/状态下重着色，不手画、不复刻第二份。
 web 侧改图标 ⇒ 改这里同一条 path（反过来也一样）。
 
-用户观察（2026-09-23）：「控制台左导航每一个分区还有功能项，都是做了一个图标设计的，
 现在在预览图里面完全没有看到」 ⇒ 本文件 + widgets.NavItem/NavGroup 接线补齐。
 """
 from __future__ import annotations
@@ -49,7 +48,7 @@ INNER: dict[str, str] = {
     "json": '<path d="M6.4 2.6C4.8 2.6 5 4.4 5 5.6s-.6 1.8-1.6 2.4c1 .6 1.6 1.2 1.6 2.4s-.2 3 1.4 3M9.6 2.6c1.6 0 1.4 1.8 1.4 3s.6 1.8 1.6 2.4c-1 .6-1.6 1.2-1.6 2.4s.2 3-1.4 3" fill="none" stroke="currentColor" stroke-width="1.4"/>',
     "cursor": '<path d="M4 2l8.2 6.1-3.4.5 2 3.6-1.8 1-2-3.7L4.6 12z" fill="none" stroke="currentColor" stroke-width="1.4"/>',
     "wavefx": '<path d="M1.6 9.2c1.6-3.2 3.2-3.2 4.8 0s3.2 3.2 4.8 0 3.2-3.2 4.8 0" fill="none" stroke="currentColor" stroke-width="1.4"/>',
-    # 丙-17：人设收藏星标（描边=未收藏 / 实心=已收藏）——项目字体渲染 ★ 是黑块（真机实锤）
+    # 人设收藏星标（描边=未收藏 / 实心=已收藏）——项目字体渲染 ★ 是黑块（真机实锤）
     "star": '<path d="M8 1.9l1.9 3.9 4.3.6-3.1 3 .7 4.2L8 11.6l-3.8 2 .7-4.2-3.1-3 4.3-.6z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>',
     "star-filled": '<path d="M8 1.9l1.9 3.9 4.3.6-3.1 3 .7 4.2L8 11.6l-3.8 2 .7-4.2-3.1-3 4.3-.6z" fill="currentColor"/>',
 }
@@ -58,9 +57,9 @@ INNER: dict[str, str] = {
 CHEVRON = '<path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>'
 
 
-#: 外观切换图标（丙-7 #15 新设计）：三条横向调节滑杆 + 圆点钮（中条圆点偏右
+#: 外观切换图标：三条横向调节滑杆 + 圆点钮（中条圆点偏右
 #: —— 经典「调节」语义）。涵盖「文案体系 + 主题」= 外观调节。
-#: 描边 2.0（16 视框 → 20px 顶栏档渲染 ≈2.5px 物理）—— 丙-8 F：1.6 太灰看不清，
+#: 描边 2.0（16 视框 → 20px 顶栏档渲染 ≈2.5px 物理）—— F：1.6 太灰看不清，
 #: 与最小化/全屏（IconBtn 笔画 2px）同规格提亮；圆头。
 APPEARANCE = (
     '<path d="M2.4 4h11.2M2.4 8h11.2M2.4 12h11.2" fill="none" stroke="currentColor" '
@@ -76,7 +75,7 @@ def appearance_pixmap(color: str, size: int = 20) -> QPixmap:
     return svg_pixmap(APPEARANCE, color, size)
 
 
-#: 侧栏收起/展开双箭头（丙-5 #8：收起态按钮**只显示图标**，禁 emoji/文字箭头）
+#: 侧栏收起/展开双箭头
 CHEVS_R = ('<path d="M4.2 4.5L8 8l-3.8 3.5M9.2 4.5L13 8l-3.8 3.5" fill="none" '
            'stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>')
 CHEVS_L = ('<path d="M11.8 4.5L8 8l3.8 3.5M6.8 4.5L3 8l3.8 3.5" fill="none" '
@@ -98,7 +97,7 @@ def _ink(color: str) -> str:
     ⚠️ QtSvg 只认 SVG 色值（#hex / rgb() / 色名），**不认 CSS 的 rgba()**：
     非法 stroke 色退回 none（描边整体消失），非法 fill 色退回黑（实心点变黑点）。
     whale 主题 tx2/tx3 正是 rgba() 串 —— 直接替换会让整套导航图标"隐形"
-    （2026-09-23 截图取证：whale 下导航只剩几个黑点，light/dark 正常）。
+    。
     半透明色 → hex + 注入 fill-opacity/stroke-opacity（QtSvg 支持）；
     非法输入退 #808080 —— 坏 token 也不能把图标变没。
     """

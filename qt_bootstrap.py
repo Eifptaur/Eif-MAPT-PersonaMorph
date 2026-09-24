@@ -1,22 +1,21 @@
 # -*- coding: utf-8 -*-
-"""PySide6 自举 —— import PySide6 之前的唯一通路（工单·丙-3 第一步，工单 2.1 硬钉子）。
+"""PySide6 自举 —— import PySide6 之前的唯一通路。
 
 =====================================================================
 为什么必须有这个模块
 =====================================================================
-2026-09-23 用户拍板「PySide6 首启自动装、不进包」⇒ 老用户一键更新后，机器上
+⇒ 老用户一键更新后，机器上
 很可能还没有界面组件。而 launcher.exe 存在「旧版仍在跑」的窗口期（占用 →
 半装 → 重启补换），旧 launcher 不会帮装 PySide6 ⇒ 自动装逻辑必须做在
 **Python 侧入口**（本模块）；launcher 侧检测只是提前介入优化体验，
 不是唯一通路。过渡期网页控制台并存，Qt 壳自举失败也不至于两眼一抹黑。
 
-四个钉子（违反任一 = 退回，工单第 2 节）：
   1. 只装 Essentials      —— PySide6-Essentials==6.11.2（界面只用 Core/Gui/
                              Widgets/Svg；完整版 633MB 里 Addons 234MB 用不上）；
   2. 钉版本 ==6.11.2      —— 与原型一致；已装 6.11.2 直接跳过（幂等），
                              版本不符才重装，绝不悄悄换版本；
   3. 国内镜像 + 并行探测竞速  —— 借鉴 agent/update_check.py::fetch_any 的成熟机制
-                             （2026-09-23 工单·丙-4 第三步）：pip 一次只能指一个源 ⇒
+                             ：pip 一次只能指一个源 ⇒
                              先并发 GET 各镜像 /simple/<包>/ 页（单源 ~2s 超时），选**最快通的**
                              再 pip install；全败放慢（5s）整轮重试一次；403 视为该源失败
                              立即换下一个，不当终态（清华对 cp310 wheel 返回 403 的教训，
@@ -73,20 +72,19 @@ _PIP_TIMEOUT = 900
 _PROBE_TIMEOUT = 2.0
 _PROBE_PATIENT = 5.0
 
-# ── 丙-11 F：分块并发下载（把单连接 1MB/s 拉到近带宽上限）──
-# 分块线程数（收益最大项按工单建议 4~8；默认 6，兼顾老机器与镜像限流）
+# ── F：分块并发下载（把单连接 1MB/s 拉到近带宽上限）──
 _CHUNK_WORKERS = 6
 # 单块的探测/下载超时：块不大（~几 MB），给 60s 足够；卡住就整体回退单连接
 _CHUNK_TIMEOUT = 60.0
 # 测速：拿 wheel 头几 MB 比吞吐（比"通不通"更能反映真实下载速度）
-_SPEED_SAMPLE_BYTES = 1 << 20        # 1 MiB 采样
-_SPEED_TIMEOUT = 6.0                 # 采样单源超时
+_SPEED_SAMPLE_BYTES = 1 << 20 # 1 MiB 采样
+_SPEED_TIMEOUT = 6.0 # 采样单源超时
 # 低于这个大小不值得分块（分块起线程的开销会盖过收益）——100MB 的 wheel 远超之
-_CHUNK_MIN_BYTES = 4 << 20           # 4 MiB
-# 自适应闸门（丙-11 F 实测结论）：**本机实测**单连接已达 34~37MB/s 时，分块并发因
+_CHUNK_MIN_BYTES = 4 << 20 # 4 MiB
+# 自适应闸门：**本机实测**单连接已达 34~37MB/s 时，分块并发因
 # 每段各做一次 TLS 握手反而更慢（实测 21MB/s）⇒ 只有**单连接确实慢**（< 此阈值）才分块。
 # 用户现场是 1MB/s，远低于阈值 ⇒ 会走分块；快机器不受影响（少一次并发开销）。
-_CHUNK_SLOW_MBPS = 8.0               # 单连接低于此 MB/s 才值得并发分块
+_CHUNK_SLOW_MBPS = 8.0 # 单连接低于此 MB/s 才值得并发分块
 # 本地 wheel 下载目录名（装在 %TEMP% 下；断点续传靠它复用已下的 .part）
 _FETCH_DIR_NAME = "pm-pyside6-wheel"
 
@@ -149,7 +147,7 @@ def _probe_once(mirror: str, timeout: float) -> tuple[bool, float, str]:
             return False, elapsed, f"HTTP {code}"
     except urllib.error.HTTPError as e:
         return False, _t.perf_counter() - t0, f"HTTP {e.code}（源拒绝）"
-    except Exception as e:  # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         return False, _t.perf_counter() - t0, f"{type(e).__name__}"
 
 
@@ -182,12 +180,11 @@ def _pick_mirror(probe: dict) -> list[str]:
 
 
 def _diag_lines(pairs: list[tuple[str, str]]) -> str:
-    """逐源诊断行：「清华→HTTP 403（源拒绝）；阿里→超时」——用户粘出来一眼可排障。"""
+    """逐源诊断行——用户粘出来一眼可排障。"""
     return "；".join(f"{tag}→{(reason or 'ok')[:80]}" for tag, reason in pairs)
 
 
-# ─────────────────────────── 丙-11 F：下载提速 ───────────────────────────
-# 病根（工单 1.4 / F 根因）：pip 对 ~100MB 的大 wheel **单连接**下载、无分块无续传，
+# ─────────────────────────── F：下载提速 ───────────────────────────
 # 用户实测 1MB/s。下面这套 = ① 测速选最快镜像 ② Range 分块并发下 wheel 到本地
 # ③ pip install --no-index 本地装 ④ 进度可见 ⑤ 断点续传；每步失败都**回退**既有
 # 单连接 pip 通路，绝不把"没下成"当"下成了"（fail-closed）。
@@ -208,7 +205,7 @@ def _make_progress(_log, mirror: str):
     def _progress(done: int, total: int) -> None:
         try:
             pct = int(done * 100 / total) if total else 0
-        except Exception:  # noqa: BLE001
+        except Exception: # noqa: BLE001
             return
         now = time.time()
         if pct - state["last_p"] >= 10 or (now - state["last_t"] >= 2.0 and pct != state["last_p"]):
@@ -226,9 +223,8 @@ def _wheel_url(mirror: str, timeout: float = _SPEED_TIMEOUT) -> tuple[str, str]:
     返回 `(url, 原因)`；拿不到 url 时 `url == ""`，原因是人话（供回退诊断）。
     只认 win_amd64 cp310/cp3x wheel —— 与钉子 2（钉版本）一致。
     """
-    url = _probe_url(mirror)                    # <mirror>/pyside6-essentials/
+    url = _probe_url(mirror) # <mirror>/pyside6-essentials/
     # 包名里可能出现 - 或 _（PEP 503 归一化）⇒ 用 [_-] 类；**先 escape 再拼类**
-    # （踩坑：re.escape("[-_]") 会把 [] 转义成字面量 ⇒ 类失效，永远匹配不到）
     m = re.escape(PYSIDE_PKG.split("-")[0].lower()) + r"[-_]" + \
         re.escape(PYSIDE_PKG.split("-", 1)[1].lower() if "-" in PYSIDE_PKG else "")
     pat = re.compile(r'href\s*=\s*["\']([^"\']+\.whl)(?:#[^"\']*)?["\']', re.I)
@@ -237,7 +233,7 @@ def _wheel_url(mirror: str, timeout: float = _SPEED_TIMEOUT) -> tuple[str, str]:
         req = urllib.request.Request(url, headers={"User-Agent": _UA})
         with urllib.request.urlopen(req, timeout=timeout) as r:
             html = r.read().decode("utf-8", "replace")
-    except Exception as e:  # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         return "", f"{type(e).__name__}"
     cands = []
     for href in pat.findall(html):
@@ -268,7 +264,7 @@ def _speed_of_mirror(mirror: str, timeout: float = _SPEED_TIMEOUT) -> tuple[bool
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             data = r.read(_SPEED_SAMPLE_BYTES)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         return False, 0.0, wu, f"{type(e).__name__}"
     el = max(time.perf_counter() - t0, 1e-3)
     n = len(data or b"")
@@ -325,7 +321,7 @@ def _http_get_range(url: str, start: int, end: int, timeout: float = _CHUNK_TIME
             if data is not None and len(data) == want:
                 return data
             last = "分块长度不符（要 %d 得 %d）" % (want, len(data or b""))
-        except Exception as e:  # noqa: BLE001
+        except Exception as e: # noqa: BLE001
             last = "%s" % type(e).__name__
     raise RuntimeError(last or "分块下载失败")
 
@@ -354,7 +350,7 @@ def _wheel_total_size(url: str, timeout: float = _SPEED_TIMEOUT) -> tuple[int, b
             total = int(cl) if (cl or "").isdigit() else 0
             ar = str(r.headers.get("Accept-Ranges") or "").lower()
             accept = "bytes" in ar
-    except Exception:  # noqa: BLE001
+    except Exception: # noqa: BLE001
         pass
     if total <= 0:
         # HEAD 不通/无 CL ⇒ 用一次 ranged GET 的 Content-Range 兜底探总长与 206 支持
@@ -369,7 +365,7 @@ def _wheel_total_size(url: str, timeout: float = _SPEED_TIMEOUT) -> tuple[int, b
                     total = int(m.group(1))
                 if code == 206 or "bytes" in str(r.headers.get("Accept-Ranges") or "").lower():
                     accept = True
-        except Exception:  # noqa: BLE001
+        except Exception: # noqa: BLE001
             pass
     if total <= 0:
         return 0, False
@@ -388,9 +384,9 @@ def _fetch_wheel_chunked(url: str, dest: str, total: int, workers: int = _CHUNK_
     part = dest + ".part"
     have = 0
     if os.path.exists(part):
-        have = os.path.getsize(part)      # 断点：上次下到哪
+        have = os.path.getsize(part) # 断点：上次下到哪
         if have >= total:
-            have = 0                      # 已有 part 至少和 total 一样大 ⇒ 不可信，重下
+            have = 0 # 已有 part 至少和 total 一样大 ⇒ 不可信，重下
             try:
                 os.remove(part)
             except OSError:
@@ -402,7 +398,6 @@ def _fetch_wheel_chunked(url: str, dest: str, total: int, workers: int = _CHUNK_
             pass
 
     # 断点续传要能**按偏移改写**已下的 .part ⇒ 必须 r+b（"ab" 会忽略 seek、永远追加到末尾，
-    # 踩坑：续传后长度对但内容错位）。首次下载用 wb 建文件。
     if have and os.path.exists(part):
         fh = open(part, "r+b")
     else:
@@ -414,7 +409,7 @@ def _fetch_wheel_chunked(url: str, dest: str, total: int, workers: int = _CHUNK_
     def _seg(s: int, e: int) -> None:
         try:
             data = _http_get_range(url, s, e)
-        except Exception as ex:  # noqa: BLE001
+        except Exception as ex: # noqa: BLE001
             with lock:
                 errs.append(str(ex))
             return
@@ -425,7 +420,7 @@ def _fetch_wheel_chunked(url: str, dest: str, total: int, workers: int = _CHUNK_
             if progress is not None:
                 try:
                     progress(done["n"], total)
-                except Exception:  # noqa: BLE001
+                except Exception: # noqa: BLE001
                     pass
 
     try:
@@ -447,7 +442,7 @@ def _fetch_wheel_chunked(url: str, dest: str, total: int, workers: int = _CHUNK_
     finally:
         try:
             fh.close()
-        except Exception:  # noqa: BLE001
+        except Exception: # noqa: BLE001
             pass
 
     if errs:
@@ -472,7 +467,7 @@ def _fetch_wheel(mirror: str, cache_dir: str, progress=None, bps: float = 0.0) -
     """把钉版本的 wheel 下到 cache_dir。返回 `(本地whl路径, 说明, 下载方式)`。
 
     下载方式 ∈ {"chunked", "single"}；失败时路径为 ""。
-    **自适应**（丙-11 F 实测）：先探总长 + Range 支持；只有当单连接实测吞吐
+    **自适应**：先探总长 + Range 支持；只有当单连接实测吞吐
     `bps` 慢到 `_should_chunk()` 判定"值得并发"时，才走 Range 分块并发；
     否则走单连接（快机器上并发反而更慢）。分块失败一律回退单连接。
     """
@@ -485,7 +480,7 @@ def _fetch_wheel(mirror: str, cache_dir: str, progress=None, bps: float = 0.0) -
     fname = wu.rsplit("/", 1)[-1].split("?")[0] or (PYSIDE_PKG + ".whl")
     dest = os.path.join(cache_dir, fname)
     if os.path.exists(dest) and os.path.getsize(dest) == total:
-        return dest, "", "chunked"        # 已有完整本地文件 ⇒ 命中断点
+        return dest, "", "chunked" # 已有完整本地文件 ⇒ 命中断点
     os.makedirs(cache_dir, exist_ok=True)
     why_chunk = ""
     if accept and total >= _CHUNK_MIN_BYTES and _should_chunk(bps):
@@ -514,7 +509,7 @@ def _fetch_wheel_single(url: str, dest: str, total: int, progress=None) -> tuple
         with urllib.request.urlopen(req, timeout=_CHUNK_TIMEOUT) as r:
             code = getattr(r, "status", 200)
             if have > 0 and code != 206:
-                have = 0                  # 源不吃续传 ⇒ 从头来（截断已下的）
+                have = 0 # 源不吃续传 ⇒ 从头来（截断已下的）
             mode = "ab" if have else "wb"
             n = have
             with open(part, mode) as fh:
@@ -527,9 +522,9 @@ def _fetch_wheel_single(url: str, dest: str, total: int, progress=None) -> tuple
                     if progress is not None:
                         try:
                             progress(n, total)
-                        except Exception:  # noqa: BLE001
+                        except Exception: # noqa: BLE001
                             pass
-    except Exception as e:  # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         return False, "单连接下载失败：%s" % type(e).__name__
     try:
         size = os.path.getsize(part)
@@ -568,7 +563,7 @@ def _pip_install_local(python_exe: str, wheel_path: str) -> tuple[bool, str]:
         )
     except subprocess.TimeoutExpired:
         return False, f"本地 pip 安装超时（>{_PIP_TIMEOUT}s）"
-    except Exception as e:  # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         return False, f"{type(e).__name__}: {e}"
     tail = ((r.stdout or "") + (r.stderr or "")).strip()[-400:]
     return r.returncode == 0, tail
@@ -578,11 +573,11 @@ def _pip_install(python_exe: str, mirror: str) -> tuple[bool, str]:
     """对一个镜像跑一次 pip（**兜底通路**：分块下载不可用/失败时用它）。返回 (成功?, 输出尾)。"""
     cmd = [
         python_exe, "-m", "pip", "install",
-        f"{PYSIDE_PKG}=={PYSIDE_PIN}",       # 钉子 1+2：只装 Essentials、钉版本
-        "-i", mirror,                        # 钉子 3：国内镜像
+        f"{PYSIDE_PKG}=={PYSIDE_PIN}", # 钉子 1+2：只装 Essentials、钉版本
+        "-i", mirror, # 钉子 3：国内镜像
         "--no-warn-script-location",
         "--disable-pip-version-check",
-        # 丙-11 F3：弱网加固 —— 别卡死重下、别写缓存占盘
+        # F3：弱网加固 —— 别卡死重下、别写缓存占盘
         "--retries", "3", "--timeout", "30", "--no-cache-dir",
     ]
     try:
@@ -592,7 +587,7 @@ def _pip_install(python_exe: str, mirror: str) -> tuple[bool, str]:
         )
     except subprocess.TimeoutExpired:
         return False, f"pip 超时（>{_PIP_TIMEOUT}s）{mirror}"
-    except Exception as e:  # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         return False, f"{type(e).__name__}: {e}"
     tail = ((r.stdout or "") + (r.stderr or "")).strip()[-400:]
     return r.returncode == 0, tail
@@ -628,15 +623,15 @@ def ensure_pyside6(log=None) -> tuple[bool, str]:
         if log is not None:
             try:
                 getattr(log, level)("界面组件：%s", msg)
-            except Exception:  # noqa: BLE001
+            except Exception: # noqa: BLE001
                 pass
 
-    # 丙-8 收尾（team-lead 批复）：32 位判别放最前、任何 pip 动作之前 ——
-    # PySide6 官方 wheel 只有 win_amd64（丙-8 兼容性审计第③项实锤），
+    # 收尾（team-lead 批复）：32 位判别放最前、任何 pip 动作之前 ——
+    # PySide6 官方 wheel 只有 win_amd64，
     # 32 位 Python 上怎么装都是失败，不如一开始就讲人话，别让用户白等三镜像竞速。
-    import struct  # noqa: PLC0415
+    import struct # noqa: PLC0415
 
-    if struct.calcsize("P") == 4:   # 指针 4 字节 = 32 位进程（64 位是 8）
+    if struct.calcsize("P") == 4: # 指针 4 字节 = 32 位进程（64 位是 8）
         _log("error", "当前 Python 是 32 位，本产品不支持")
         return (False,
                 "当前 Python 为 32 位，本产品仅支持 64 位 Windows"
@@ -674,7 +669,7 @@ def ensure_pyside6(log=None) -> tuple[bool, str]:
         _log("warning", "全部镜像都没探通：" + diag)
         return False, _humanize_fail([]) + "逐源情况：" + diag + "。"
 
-    # ── 丙-11 F：快通路 —— 测速选最快源 → 自己分块并发下 wheel → 本地 pip 装 ──
+    # ── F：快通路 —— 测速选最快源 → 自己分块并发下 wheel → 本地 pip 装 ──
     # 不通则 **完整回退** 既有单连接 pip 通路（下面那段），绝不半途而废。
     if _fast_download_enabled():
         _log("info", "正在为各镜像测速（挑最快的源）…")
@@ -740,17 +735,17 @@ def _selftest() -> list[tuple[str, bool, str]]:
     ok, why = ensure_pyside6()
     out.append(("已装环境 ensure_pyside6 幂等通过（不下载）", ok and why == "ok", why))
 
-    # 1b) 丙-8 收尾：32 位判别 —— wheel 只有 win_amd64（审计第③项），
+    # 1b) 收尾：32 位判别 —— wheel 只有 win_amd64（审计第③项），
     #     32 位 Python 在任何 pip 动作之前就拒掉；64 位放行走正常流程
-    import struct  # noqa: PLC0415
+    import struct # noqa: PLC0415
 
     _real_calcsize = struct.calcsize
     try:
-        struct.calcsize = lambda _fmt: 4   # mock：32 位进程
+        struct.calcsize = lambda _fmt: 4 # mock：32 位进程
         ok32, why32 = ensure_pyside6()
         out.append(("32 位 Python 入口即拒（不碰 pip/镜像，讲人话）",
                     ok32 is False and "32 位" in why32 and "64 位" in why32, why32))
-        struct.calcsize = lambda _fmt: 8   # mock：64 位进程
+        struct.calcsize = lambda _fmt: 8 # mock：64 位进程
         ok64, why64 = ensure_pyside6()
         out.append(("64 位 Python 正常放行（不触发 32 位拒绝分支）",
                     ok64 is True and why64 == "ok", why64))

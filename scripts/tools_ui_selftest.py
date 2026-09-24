@@ -38,16 +38,16 @@ def ok(name, cond, detail=""):
     print("  {} {}{}".format("OK  " if cond else "FAIL", name, "  [{}]".format(detail) if detail else ""))
 
 
-from agent import console_html as CH  # noqa: E402
-from agent import user_tools as UT  # noqa: E402
-import _srcmatch as _sm  # noqa: E402  空白容忍的源码断言（V-R4-13 第三条；脆断言只许降不许升）
+from agent import console_html as CH # noqa: E402
+from agent import user_tools as UT # noqa: E402
+import _srcmatch as _sm # noqa: E402 空白容忍的源码断言
 
 HTML = CH.HTML
 print("── A. 分区与导航 ──")
 ok("导航有 #sec-tools 链接", 'href="#sec-tools"' in HTML and "工具与插件" in HTML)
 ok("有 sec-tools 分区且带 data-sec", 'id="sec-tools" class="card" data-sec' in HTML)
 _i = HTML.find('id="sec-tools"')
-# ⚠️ 2026-09-16 改口径：不再拿 `sec-wechat` 当"下一个分区"的哨兵（分区顺序已按左导航重排），
+# ⚠️ 不再拿 `sec-wechat` 当"下一个分区"的哨兵（分区顺序已按左导航重排），
 #    改成切到**本分区自己的** </section> 为止 —— 自检与顺序解耦。
 _j = HTML.find("</section>", _i)
 _seg = HTML[_i:_j] if (_i > 0 and _j > _i) else ""
@@ -73,7 +73,7 @@ for el in ("utGlobals", "utList", "utProblems"):
     ok("JS 会填 #%s" % el, ("$('%s')" % el) in HTML)
 ok("勾选框打到 /api/tools/toggle", "/api/tools/toggle" in HTML)
 ok("重新加载打到 /api/tools/reload", "/api/tools/reload" in HTML)
-# ③b（2026-09-22）：「怎么加工具」引导的最后一环 —— 勾选前能当场验一次（否则只能等聊天时才发现写错）
+# ③b：「怎么加工具」引导的最后一环 —— 勾选前能当场验一次（否则只能等聊天时才发现写错）
 ok("每行有「试一下」按钮，打到 /api/tools/test", "试一下" in HTML and "/api/tools/test" in HTML)
 ok("「试一下」请求带上参数（&args=，JSON 对象）",
    _sm.has(HTML, "&args=") and _sm.has(HTML, "JSON 对象"))
@@ -86,8 +86,8 @@ ok("/api/tools/reload 端点存在", 'elif path == "/api/tools/reload"' in _wu)
 ok("/api/tools/toggle 端点存在", 'elif path == "/api/tools/toggle"' in _wu)
 
 print("── E2. 「试一下」＝ Phase B 之后新增路由的标准动作（方法 + 路由表两行）──")
-import ast  # noqa: E402
-from agent.routes import ROUTES as _R, HANDLERS as _HD  # noqa: E402
+import ast # noqa: E402
+from agent.routes import ROUTES as _R, HANDLERS as _HD # noqa: E402
 ok("路由表声明了 /api/tools/test = GET", _R.get("/api/tools/test") == ("GET",), str(_R.get("/api/tools/test")))
 ok("路由表把 GET 指到 _rapi_tools_test",
    (_HD.get("/api/tools/test") or {}).get("GET") == "_rapi_tools_test",
@@ -135,8 +135,8 @@ finally:
     shutil.rmtree(tmp, ignore_errors=True)
 
 print("── G. 前端 JS 语法（node --check）──")
-import re  # noqa: E402
-import subprocess  # noqa: E402
+import re # noqa: E402
+import subprocess # noqa: E402
 blocks = re.findall(r"<script[^>]*>(.*?)</script>", HTML, re.S)
 js = "\n;\n".join(blocks)
 tp = os.path.join(tempfile.gettempdir(), "pm_console_tools_check.js")

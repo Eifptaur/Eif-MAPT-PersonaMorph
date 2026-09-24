@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """真语音条：**合成 → 播进虚拟声卡 → 让微信自己录 → 点发送**（发出去是微信语音条，不是文件）。
 
-为什么单开一个模块（用户 2026-09-17 原话：「我让他发语音条，**不是发音频文件**」）：
+为什么单开一个模块：
 `tools.send_voice_reply` 走的是"发文件"那条路（微信里显示成文件）；真语音条要靠**成对的虚拟声卡**
-（VB-CABLE 之类）+ 微信自己在录音态里录。这条链 2026-09-15 在实验脚本里跑通过，但**产品里一直没接**
+（VB-CABLE 之类）+ 微信自己在录音态里录。这条链 在实验脚本里跑通过，但**产品里一直没接**
 （实验脚本后来清掉了）。这个模块就是那次实验的产品化。
 
 三道闸（缺哪道就如实说，绝不假装发过）：
@@ -27,18 +27,18 @@ DEFAULT_SEND = (0.932, 0.945)
 #: 试标定时沿这一行扫的候选 x 比例（y 取 DEFAULT_SEND 同一带）
 CALIB_XS = (0.86, 0.89, 0.92, 0.95)
 
-#: 输入条图标行的机械定位（2026-09-17 实机取证）：右侧那个圆圈＝"按住说话"入口。
+#: 输入条图标行的机械定位：右侧那个圆圈＝"按住说话"入口。
 #: ⚠️ 它的比例**会漂**——右侧栏（聊天信息）开着时实测 0.745，关着时 0.878
 #: （同一台机器、同一个窗口尺寸，差 0.13＝155px，足够点到空白处）⇒ **不许硬编码**：
 #: 每次发送前扫一遍图标行现算（扫不到才退回配置值/兜底候选）。
-RECORD_X_MIN = 0.60     # 圆圈一定在输入条右半（左半是表情/盒子/文件夹/剪刀/麦克风）
-RECORD_X_MAX = 0.92     # 别撞上最右边那个「发送」按钮
-RECORD_FALLBACKS = (0.878, 0.90, 0.86)   # 兜底候选：全 ≥0.8，绝不会点到文件夹/表情那些"会弹窗"的图标
-METER_X = (0.56, 0.82)  # 录音态里那串绿色**音量点**的横带（用来判"音频有没有真进微信的麦克风"）
+RECORD_X_MIN = 0.60 # 圆圈一定在输入条右半（左半是表情/盒子/文件夹/剪刀/麦克风）
+RECORD_X_MAX = 0.92 # 别撞上最右边那个「发送」按钮
+RECORD_FALLBACKS = (0.878, 0.90, 0.86) # 兜底候选：全 ≥0.8，绝不会点到文件夹/表情那些"会弹窗"的图标
+METER_X = (0.56, 0.82) # 录音态里那串绿色**音量点**的横带（用来判"音频有没有真进微信的麦克风"）
 METER_Y = (0.86, 0.98)
-GREEN_X_MIN = 0.78      # 「绿色发送 ↑」一定在这一带右侧（音量点在它左边，别把均值带偏）
-CANCEL_X = 0.588        # 录音态里那个 ✕（实测 1400/2382；只在前一轮没退干净时用来救场）
-#: 右 Alt（VK_RMENU）＝微信 PC 发语音的键盘入口（用户 2026-09-17 亲口确认，实测成立）：
+GREEN_X_MIN = 0.78 # 「绿色发送 ↑」一定在这一带右侧（音量点在它左边，别把均值带偏）
+CANCEL_X = 0.588 # 录音态里那个 ✕（实测 1400/2382；只在前一轮没退干净时用来救场）
+#: 右 Alt（VK_RMENU）＝微信 PC 发语音的键盘入口：
 #: **按住录音、松开发送**，走 `SendInput` 注入（不动鼠标）；投递键盘消息**不认**（实测 A 段失败）。
 VK_RMENU = 0xA5
 KEYEVENTF_KEYUP = 0x0002
@@ -109,7 +109,7 @@ def _enter_record_alt(wechat, gui, cfg=None, wait_s: float = 4.0) -> tuple:
         time.sleep(1.0)
         if _green_cluster(gui):
             return True, "按住右 Alt 进录音态（第 %d 次）" % shot, "alt"
-        _send_alt(False)                      # 没进态：先松开，免得误触发
+        _send_alt(False) # 没进态：先松开，免得误触发
         time.sleep(0.5)
     return False, "按住右 Alt 也没进录音态（试了 %d 次）" % shot, "alt"
 
@@ -118,7 +118,7 @@ def _cancel_alt(gui) -> None:
     """Alt 路中途要放弃：**先发 Esc 取消**再松开 Alt（直接松开会把这段录进去发出去）。"""
     try:
         pw = ctypes.windll.user32
-        for vk in (0x1B,):                    # VK_ESCAPE
+        for vk in (0x1B,): # VK_ESCAPE
             inp = _INPUT(1, _INPUTUNION(ki=_KEYBDINPUT(vk, 0, 0, 0, None)))
             pw.SendInput(1, ctypes.byref(inp), ctypes.sizeof(_INPUT))
             inp = _INPUT(1, _INPUTUNION(ki=_KEYBDINPUT(vk, 0, KEYEVENTF_KEYUP, 0, None)))
@@ -283,7 +283,7 @@ def status(cfg=None) -> dict:
         why = why_out
     elif not eng.get("ok"):
         why = "没有可用的合成引擎：%s" % (eng.get("why") or "未知")
-    # ⚠️ 位置**不再是前置条件**（2026-09-17）：`_enter_record` 每次发送前都会扫输入条图标行现算，
+    # ⚠️ 位置**不再是前置条件**：`_enter_record` 每次发送前都会扫输入条图标行现算，
     #   配置里的 record_btn 只当兜底 ⇒ 这里不再因为"没标定"而拒发（那条老提示会把能用的人挡在门外）。
     return {"ok": not why, "why": why, "mic": mic, "out_dev": name, "out_idx": idx,
             "engine": (eng.get("engine") or eng.get("backend") or ""), "calibrated": calibrated,
@@ -349,7 +349,7 @@ def play_to_cable(wav_path: str, out_name: str = "") -> tuple:
 def _real_click(wechat, gui, rel_x: int, rel_y: int) -> tuple:
     """**真鼠标**点一下就回来（用完立刻把光标还原到原位）。
 
-    ⛔ 为什么必须真点（2026-09-17 实测 A/B）：微信输入区那两个控件（"进录音态的圆圈"和录音态里的
+    ⛔ 为什么必须真点：微信输入区那两个控件（"进录音态的圆圈"和录音态里的
     绿色发送）**对投递点击只出悬停高亮、不进录音态**；同一位置改用真鼠标点一下就进了（绿簇出现）。
     ⇒ 真语音条这条路**必然要动两下光标**，所以它：
       ① 必须显式开启（`voice_strip.real_click`，默认 true 但控制台写明"会动两下光标"）；
@@ -360,7 +360,7 @@ def _real_click(wechat, gui, rel_x: int, rel_y: int) -> tuple:
     """
     try:
         from . import ui_adapt
-    except Exception as e:                                    # pragma: no cover
+    except Exception as e: # pragma: no cover
         return False, "拿不到 ui_adapt：%s" % e
     return ui_adapt.click_real_hold(gui, int(rel_x), int(rel_y))
 
@@ -426,7 +426,7 @@ def _green_cluster(gui) -> bool:
 def _meter_level(gui) -> int:
     """录音态里那串**绿色音量点**亮了多少像素 ⇒ 判"音频到底有没有进微信的麦克风"。
 
-    为什么要有它（2026-09-17）：整条链能"发出一个语音条"，但**没人能保证条里有声音**——
+    为什么要有它：整条链能"发出一个语音条"，但**没人能保证条里有声音**——
     虚拟声卡没被微信选成麦克风时，发出去的就是一条静音语音条（比文件更糟：对方点开什么都听不到，
     而我们自己还报"成功"）。这条读数让产品能**在发之前**发现并如实拒发。
     """
@@ -507,9 +507,9 @@ def _enter_record(wechat, gui, cfg=None, rw: int = 0, rh: int = 0, wait_s: float
 
     候选顺序＝扫图标行现算 → 兜底表（全 ≥0.8，点空/点发送都无害）。
 
-    ⚠️ 2026-09-17 实测的关键一环（用户问「怎么又在发音频文件，是不是没改代码」时钉死）：
+    ⚠️ 的关键一环（时钉死）：
     `ui_adapt.click_real_hold` 动手前要过 `real_guard`，而**用户正在用鼠标时 `SetCursorPos`
-    会返回 0**（Windows 层面拒绝）⇒ guard 按红线**不打这一枪**（原话：「已放弃这一枪，不打扰你」）。
+    会返回 0**（Windows 层面拒绝）⇒ guard 按红线**不打这一枪**。
     于是"点了却没反应"的真实原因往往是"**那一枪压根没打出去**"。⇒ 这里**等一等再试**：
     被 guard 拦下时每隔 0.6s 重试一次，最多等 `wait_s` 秒（用户手一离开鼠标，下一枪就能中）；
     只有"打出去了但没进态"才换下一个候选位置。
@@ -619,7 +619,7 @@ def calibrate(wechat, save: bool = True, log=None) -> dict:
 def _give_back(stashed_fg: int):
     """把借走的前台还给用户原来的那个窗口（盯着还，最多 2.5 秒）——标定/试发之后必调。
 
-    ⚠️ 2026-09-18：`_restore_fg_until` **不再顺手**把"为干活还原出来的主窗"放回收起状态
+    ⚠️ `_restore_fg_until` **不再顺手**把"为干活还原出来的主窗"放回收起状态
     （那会在一条链里被调很多次 ⇒ 收→放→收→放，用户看到微信在抽风）。⇒ 收尾动作**必须由调用方
     自己补一句**（文本链/文件链就是这么做的：`_minimize_back_if_needed("投递文本链收尾")`）。
     这条链（语音条标定/试发）也是一条会 `_ensure_main_visible` 还原主窗的链，所以同样要补。
@@ -638,7 +638,7 @@ def _give_back(stashed_fg: int):
 def _borrow_foreground(gui) -> int:
     """**借一下前台**（把微信主窗置前），返回原来那个前台窗口句柄（给 `_give_back` 还回去）。
 
-    为什么非借不可（2026-09-17 A/B 实测，`_scratch/uipi_probe.py`）：真点要 `SetCursorPos`，而
+    为什么非借不可：真点要 `SetCursorPos`，而
     **最前面的窗口是提权进程时 Windows 直接拒绝**（`GetLastError=5` ACCESS_DENIED）——本机最常见的就是
     **我们自己的控制台**（`一键启动.exe` 带提权 manifest 起的 WebView2 窗）。实测：控制台在前 ⇒ 三处候选
     连 30 秒全失败；把微信置前 ⇒ 立刻成功。⇒ 发之前借、发完还（与 `calibrate()` 同一套借还机制）。
@@ -664,9 +664,8 @@ def send(wechat, chat_id: str, text: str, cfg=None, timeout: float = 60.0) -> tu
     c = _cfg(cfg)
     if not c.get("enabled"):
         return False, "真语音条默认关（控制台「语音回复」里打开「发真语音条」）——关了就不发，不假装。", {}
-    # ⛔ 2026-09-18 加闸（发布前静态审计发现）：真语音条＝**真鼠标（`ui_adapt.click_real_hold`）
+    # ⛔ 闸（发布前静态审计发现）：真语音条＝**真鼠标（`ui_adapt.click_real_hold`）
     #   + 真键盘（`SendInput` 右 Alt）**，天然需要"微信在前台"且会动用户光标；而它原来只查
-    #   `voice_strip.enabled`，**不查"只走后台"** ⇒ 默认配置下用户要一条语音，我们会动他的光标。
     #   ⇒ 与朋友圈那条同口径：`background_only=开`（默认）时**如实拒绝**，并把替代路写清楚。
     try:
         _cfg_all = (cfg if isinstance(cfg, dict) else None)
@@ -678,7 +677,7 @@ def send(wechat, chat_id: str, text: str, cfg=None, timeout: float = 60.0) -> tu
             return False, (_bg.background_only_reason("发真语音条") +
                            "（真语音条是真鼠标+真键盘的路：会点到录音按钮、还要靠右 Alt 注入。）"
                            "替代：关掉「只走后台」再发语音条，或改发文字/文件。"), {}
-    except Exception as _e:                                      # noqa: BLE001
+    except Exception as _e: # noqa: BLE001
         return False, "读「只走后台」开关失败（按拒绝处理）：%s" % str(_e)[:60], {}
     st = status(cfg)
     if not st["ok"]:
@@ -704,8 +703,7 @@ def send(wechat, chat_id: str, text: str, cfg=None, timeout: float = 60.0) -> tu
     r = gui.render_rect or (0, 0, 0, 0)
     rw, rh = int(r[2] - r[0]), int(r[3] - r[1])
     rb = c.get("record_btn") or [0.878, 0.943]
-    # ⓿ 会话闸（2026-09-17 补）：录音只会进**当前打开**的会话 ⇒ 目标不对就先投递切过去，
-    #   切不过去就**不发**。为什么要这道闸：把语音发到错的人那里是不可逆的社交事故，
+    # ⓿ 会话闸：录音只会进**当前打开**的会话 ⇒ 目标不对就先投递切过去，
     #   而投递切会话本来就有 OCR 确认（`switch_chat_posted`），成本很低。
     try:
         name = ""
@@ -735,7 +733,7 @@ def send(wechat, chat_id: str, text: str, cfg=None, timeout: float = 60.0) -> tu
         # ⓵ 开录前先确保**不在**录音态：上一轮若没退干净，再点那个圆圈就变成"结束/取消"（实测踩过）
         try:
             if _green_cluster(gui):
-                _click(wechat, gui, int(rw * CANCEL_X), int(rh * rb[1]), c)   # 点 ✕ 退出来
+                _click(wechat, gui, int(rw * CANCEL_X), int(rh * rb[1]), c) # 点 ✕ 退出来
                 time.sleep(0.8)
         except Exception:
             pass
@@ -759,7 +757,7 @@ def send(wechat, chat_id: str, text: str, cfg=None, timeout: float = 60.0) -> tu
         if not ok_in:
             return False, ("没能进录音态（%s）——按住右 Alt 与真点两条路都试过了。"
                            "Alt 路的前提：**微信在前台的那几秒别切窗口**。" % why_in), info or {}
-        (okp, whyp), base, peak = _play_with_meter(gui, wav)                 # ⓷ 边录边播
+        (okp, whyp), base, peak = _play_with_meter(gui, wav) # ⓷ 边录边播
         if not okp:
             if via == "alt":
                 _cancel_alt(gui)
@@ -782,9 +780,9 @@ def send(wechat, chat_id: str, text: str, cfg=None, timeout: float = 60.0) -> tu
                            "「CABLE Output」（关掉这道校验：voice_strip.meter_guard）" % (base, peak)), info or {}
         time.sleep(0.5)
         if via == "alt":
-            _send_alt(False)                                                # ⓸ 松开右 Alt＝发送
+            _send_alt(False) # ⓸ 松开右 Alt＝发送
         else:
-            g = _green_send(gui) or _green_center(gui)                      # ⓸ 点绿色发送 ↑
+            g = _green_send(gui) or _green_center(gui) # ⓸ 点绿色发送 ↑
             if not g:
                 try:
                     _click(wechat, gui, int(rw * CANCEL_X), int(rh * rb[1]), c)
@@ -824,7 +822,7 @@ def _latest_voice_seq(wechat, chat_id: str):
 def _wait_voice(wechat, chat_id: str, before, timeout: float = 12.0) -> tuple:
     """等 DB 里出现**新的**语音行（只认回读，不信 GUI）。
 
-    ⚠️ 2026-09-17 修（差点造成"明明发出去了却报失败，然后按回退设置又发一个文件"）：
+    ⚠️ （差点造成"明明发出去了却报失败，然后按回退设置又发一个文件"）：
     旧写法在第一次查库时**只要第一条语音行还是旧的就直接 return False** —— 而微信**写库有延迟**，
     松手那一刻库里通常还是上一条 ⇒ 假阴性。现在改成：看到旧的就**继续轮询**，直到超时。
     """
@@ -839,7 +837,7 @@ def _wait_voice(wechat, chat_id: str, before, timeout: float = 12.0) -> tuple:
                     last = cur
                     if before in (None, 0) or (cur and str(cur) != str(before)):
                         return True, "DB 回读确认：新语音条 local_id=%s" % cur
-                    break            # 最新那条还是旧的 ⇒ 继续等（微信写库要几秒）
+                    break # 最新那条还是旧的 ⇒ 继续等（微信写库要几秒）
         except Exception:
             pass
         time.sleep(1.0)

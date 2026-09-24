@@ -17,7 +17,7 @@ except Exception:
     pass
 
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
-import pack_offline as P   # noqa: E402
+import pack_offline as P # noqa: E402
 
 PASS = FAIL = 0
 
@@ -90,7 +90,7 @@ check("清单含缺失清单", "缺失" in man["text"] and "requests" in man["te
 check("清单含补齐命令", "pip download" in man["text"])
 check("清单含安装方式", "--no-index --find-links" in man["text"])
 man2 = P.build_manifest([("numpy", ">=2.2.6")], w)
-import re as _re  # noqa: E402
+import re as _re # noqa: E402
 check("清单列出哈希（16 位十六进制）", bool(_re.search(r"[0-9a-f]{16}", man2["text"])), man2["text"][:120])
 check("清单行含文件名与大小", "numpy-2.2.6" in man2["text"])
 check("额外包以注释列出", "额外带的包" in man2["text"])

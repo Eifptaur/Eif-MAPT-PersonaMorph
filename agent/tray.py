@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""托盘气泡兜底：控制台开不出来时，至少让「要你拍板的事」在任务栏上说一句话（⑦d）。
+"""托盘气泡兜底：控制台开不出来时，至少让「要你的事」在任务栏上说一句话（⑦d）。
 
-为什么还要它（用户口径「弹窗按你推荐的做」＋ 最高目标"不打扰"）：
+为什么还要它：
   `notify_ui` 能自己开控制台、能闪任务栏；但**开不出来**的时候（WebView2 起不来、浏览器被策略挡住、
   没有桌面会话）用户就完全不知道有件事在等他。托盘气泡是最低成本的兜底：不打扰你（可能短暂置前约 1~3 秒后自动还回）、不弹窗、
   点一下才去开控制台。
@@ -62,7 +62,7 @@ _WNDPROC = ctypes.WINFUNCTYPE(ctypes.c_longlong, wintypes.HWND, ctypes.c_uint,
 _state = {"hwnd": 0, "icon": False, "thread": None, "ready": False, "last": "", "count": 0,
           "click": 0, "err": "", "class": ""}
 _lock = threading.Lock()
-_wndproc_ref = []          # ⚠️ 必须留引用：回调被 GC 掉后窗口过程就没了（窗口会收到野指针）
+_wndproc_ref = [] # ⚠️ 必须留引用：回调被 GC 掉后窗口过程就没了（窗口会收到野指针）
 _click_handler = None
 
 
@@ -148,7 +148,7 @@ def _wnd_proc(hwnd, msg, wparam, lparam):
         if msg == WM_DESTROY:
             _u().PostQuitMessage(0)
             return 0
-    except Exception as e:                                     # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         log.debug("托盘窗口过程异常：%s", e)
     return _u().DefWindowProcW(hwnd, msg, ctypes.c_ulonglong(wparam), ctypes.c_longlong(lparam))
 
@@ -161,7 +161,7 @@ def _run(cls_name: str) -> None:
         wc.lpfnWndProc = ctypes.cast(_WNDPROC(_wnd_proc), ctypes.c_void_p)
         wc.hInstance = ctypes.windll.kernel32.GetModuleHandleW(None)
         wc.lpszClassName = cls_name
-        _wndproc_ref.append(wc)                                # 留引用，防 GC
+        _wndproc_ref.append(wc) # 留引用，防 GC
         if not u.RegisterClassW(ctypes.byref(wc)):
             with _lock:
                 _state["err"] = "RegisterClass 失败（err=%s）" % ctypes.get_last_error()
@@ -179,7 +179,7 @@ def _run(cls_name: str) -> None:
         while u.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
             u.TranslateMessage(ctypes.byref(msg))
             u.DispatchMessageW(ctypes.byref(msg))
-    except Exception as e:                                     # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         with _lock:
             _state["err"] = "%s: %s" % (type(e).__name__, e)
     finally:
@@ -257,7 +257,7 @@ def notify(title: str, text: str, tip: str = "群相", click=None) -> dict:
         rep["ok"] = True
         rep["why"] = "已出气泡" if rep["balloon_shown"] else "图标已在，气泡没弹出来（系统可能关了通知）"
         return rep
-    except Exception as e:                                     # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         rep["why"] = "%s: %s" % (type(e).__name__, e)
         return rep
 
@@ -267,7 +267,7 @@ def _default_click():
     try:
         from . import notify_ui as _nu
         _nu.open_console()
-    except Exception as e:                                     # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         log.warning("点托盘气泡后开控制台失败：%s", e)
 
 
@@ -287,7 +287,7 @@ def shutdown() -> dict:
             _u().PostMessageW(wintypes.HWND(hwnd), WM_CLOSE, 0, 0)
         rep["ok"] = True
         return rep
-    except Exception as e:                                     # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         rep["why"] = "%s: %s" % (type(e).__name__, e)
         return rep
 

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """输入审计：给 Win32 的输入/投递 API 包一层记录（只在 `WXAGENT_INPUT_AUDIT=1` 时生效）。
 
-为什么需要它（2026-09-17）：用户连续四次报「机器人发消息那一刻，微信自己弹了截图（整屏压暗）」。
+为什么需要它：用户连续四次报「机器人发消息那一刻，微信自己弹了截图（整屏压暗）」。
 真因候选横跨三个来源，读代码已经区分不开：
   ① 我们产品的真键鼠（`wechat.py` 里 10 处 `gui._input.key(...)` / `SendKeys`）；
   ② 第三方驱动库 `wechatauto` 自己的真键鼠（`guia.py` 的 SendInput/keybd_event、`moment.py` 的 pyautogui）；

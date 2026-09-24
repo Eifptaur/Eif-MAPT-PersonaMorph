@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """判据：会话行点击目标的**学习型偏好**（`agent/click_pref.py`）——不需要微信、不出网。
 
-要守住的三件（2026-09-21 定，起因＝"版本→方法"写死表在版本一变时静默失效）：
+要守住的三件：
   ① 偏好**只改顺序、不改授权**：它只能决定"先试哪个窗"，发不发仍由每枪之后的现场复核说了算；
   ② 记错了要能自愈：**连续失败 ≥2 次就丢掉偏好**，退回默认顺序（主窗优先）；
   ③ 坏数据不许挡路：文件坏了/不存在/字段缺失 ⇒ 一律按"没有偏好"处理，**永不抛**。
@@ -18,7 +18,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
-from agent import click_pref as CP          # noqa: E402
+from agent import click_pref as CP # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -92,7 +92,7 @@ ok("某条记录不是字典 ⇒ 不抛", CP.order_named([M, R], "k0", NAMED) ==
 os.remove(TMP)
 ok("文件不存在 ⇒ 默认顺序", CP.order_named([M, R], "k0", NAMED) == [M, R])
 ok("stats() 不抛且带路径", isinstance(CP.stats().get("path"), str))
-CP.record_ok(None, "main")                      # 故意塞个 None 键
+CP.record_ok(None, "main") # 故意塞个 None 键
 ok("键传 None ⇒ 不抛（记了也无所谓）", isinstance(CP.stats().get("keys"), dict))
 
 print("── E. 原子写 + 上限 ──")
@@ -100,9 +100,9 @@ CP.PATH = TMP
 CP.record_ok("kok", "main")
 ok("落盘的是合法 JSON", isinstance(json.load(open(TMP, encoding="utf-8")).get("keys"), dict))
 ok("没有残留 .tmp（temp + os.replace）", not os.path.exists(TMP + ".tmp"))
-# ⛔ 2026-09-21 加（第六轮 **V-R6-8/24**）：并发写**丢更新**是这个模块上一条真缺陷（实测 3 线程×150 次只剩 6 次）。
+# ⛔ 并发写**丢更新**是这个模块上一条真缺陷（实测 3 线程×150 次只剩 6 次）。
 #   单线程写一遍是"空判"——这里真的并发写，断言"次数不丢、文件不坏"。
-import threading as _th                                                          # noqa: E402
+import threading as _th # noqa: E402
 CP.clear("并发前清空") if hasattr(CP, "clear") else None
 if os.path.exists(TMP):
     os.remove(TMP)

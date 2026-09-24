@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""发送三态 + 判据可用性自检 判据（2026-09-14，由测机报告推动）。
+"""发送三态 + 判据可用性自检 判据。
 
 背景（新机器 微信 4.1.13.65 × 适配层 1.2.2.2 实测）：投递**真的发出去了**（用户截图 + 4.x 活库 -wal 写入为证），
 但 `WeChatDB.master_key is None` ⇒ `get_messages()` **不报错、静默返回旧数据**（filehelper 反复给同一条
@@ -21,7 +21,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
-from agent.wechat import WeChatAdapter, Verdict, V_OK, V_UNVERIFIED, V_NOT_SENT  # noqa: E402
+from agent.wechat import WeChatAdapter, Verdict, V_OK, V_UNVERIFIED, V_NOT_SENT # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -64,14 +64,14 @@ class _FakeDB:
 
 
 def _mk(rows=None, err=None, master_key="k", wal=None, keys=None, bad_keys=()):
-    ad = WeChatAdapter.__new__(WeChatAdapter)      # 不跑 __init__（那会连微信）
+    ad = WeChatAdapter.__new__(WeChatAdapter) # 不跑 __init__（那会连微信）
     ad._db = _FakeDB(rows=rows, err=err, master_key=master_key, keys=keys, bad_keys=bad_keys)
     ad._newest_wal_mtime = (lambda: wal) if wal is not None else (lambda: 0.0)
     return ad
 
 
 print("── B. db_alive：判据可用性自检 ──")
-# 2026-09-16 改口径：`master_key=None` **不再是**判不可用的理由——它是**常态**（库只在"内存扫描"
+# `master_key=None` **不再是**判不可用的理由——它是**常态**（库只在"内存扫描"
 # 那层成功时才给 master_key 赋值，走缓存密钥时一直是 None），只要缓存密钥能过页1 HMAC 校验，
 # 回读就是可信的（本机实测：None + 20 把密钥全过 + 真读到最新消息）。对面 r22 核心②的"未证实"
 # 正是老口径（`if mk is None: return False`）造成的。

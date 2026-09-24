@@ -8,7 +8,6 @@
   ③ 文案三类都在：**未配置/缺失态**（没有可用引擎 + 补齐办法含 `pip install pilk`）· **空状态**（图库是空的）· **红线**（转发会抢一次前台、音频不出网）
   ④ 渲染与交互：JS 会渲染 vsWhy/vsList/irState/fwState，`测试引擎`按钮打到 `/api/voice/test`
   ⑤ 后端接线：`/api/status` 里带 `media` 段；`/api/voice/test` 路由存在
-  ⑥ **JS 语法**：把 console_html 里的 `<script>` 全抽出来交给 `node --check`（手写 JS 最容易在这翻车）
 """
 import os
 import re
@@ -34,15 +33,14 @@ def ok(name, cond, detail=""):
     print("  {} {}{}".format("OK  " if cond else "FAIL", name, "  [{}]".format(detail) if detail else ""))
 
 
-from agent import console_html as CH  # noqa: E402
-from agent import webui as WU  # noqa: E402
+from agent import console_html as CH # noqa: E402
+from agent import webui as WU # noqa: E402
 
 HTML = CH.HTML
 print("── A. 导航与分区 ──")
 ok("导航有 #sec-media 链接", 'href="#sec-media"' in HTML and "媒体与语音" in HTML)
 ok("有 sec-media 分区且带 data-sec", 'id="sec-media" class="card" data-sec' in HTML)
 i_media = HTML.find('id="sec-media"')
-# ⚠️ 2026-09-16 改口径：以前拿 `sec-wechat` 当"下一个分区"的哨兵，而用户要求分区顺序改成
 #    与左导航完全一致（微信挪到第 7 位）⇒ 哨兵失效。改成"切到**本分区自己的** </section> 为止"
 #    （分区不嵌套）——自检从此与分区顺序无关，只守"这一块存在且闭合"。
 _i_media_end = HTML.find("</section>", i_media)
@@ -76,7 +74,7 @@ ok("/api/status 里带 media 段（走 media_status 快照）", 'st["media"] = _
 ok("/api/voice/test 路由存在", 'elif path == "/api/voice/test"' in src_wu)
 
 print("── F. 数据契约（面板读的字段必须真的存在）──")
-from agent import media_status as MS  # noqa: E402
+from agent import media_status as MS # noqa: E402
 snap = MS.snapshot()
 ok("快照有 voice / voice_cfg / image / forward 四块",
    all(k in snap for k in ("voice", "voice_cfg", "image", "forward")))
@@ -108,7 +106,7 @@ print("── H. 语音回复（TTS）面板 ──")
 _HTML = CH.HTML
 ok("导航有 #sec-tts 链接", 'href="#sec-tts"' in _HTML and "语音回复" in _HTML)
 ok("有 sec-tts 分区且带 data-sec", 'id="sec-tts" class="card" data-sec' in _HTML)
-_i2 = _HTML.find('id="sec-tts"')          # 同样改口径：切到本分区自己的 </section>（不再拿 sec-wechat 当哨兵）
+_i2 = _HTML.find('id="sec-tts"') # 同样改口径：切到本分区自己的 </section>（不再拿 sec-wechat 当哨兵）
 _i3 = _HTML.find("</section>", _i2)
 _seg2 = _HTML[_i2:_i3] if (_i2 > 0 and _i3 > _i2) else ""
 ok("分区 sec-tts 存在且已闭合", bool(_seg2))
@@ -131,7 +129,7 @@ ok("tts.status 有 ok/why/voices/ffmpeg", all(k in (_snap2["tts"]["status"]) for
 ok("voice_reply 的配置键都在默认配置里",
    all(k in (__import__("agent.config", fromlist=["get_config"]).get_config().get("voice_reply") or {})
        for k in ("enabled", "voice", "rate", "format", "max_chars", "min_gap_seconds")))
-# 2026-09-15 新加第三档音源 edge-tts ⇒ 面板与快照都要跟着长出来（详见 scripts/edge_tts_selftest.py）
+# 新加第三档音源 edge-tts ⇒ 面板与快照都要跟着长出来（详见 scripts/edge_tts_selftest.py）
 ok("语音回复分区里有「声音来源」三档下拉", 'data-cfg="voice_reply.backend"' in _seg2)
 ok("语音回复分区里有 edge 音色下拉", 'data-cfg="voice_reply.edge_voice"' in _seg2)
 ok("edge 音色行有独立 id（便于按档互斥显示）", 'id="edgeVoiceRow"' in _seg2 and 'id="sapiVoiceRow"' in _seg2)

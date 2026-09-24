@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """通用面板构建器 —— 输入 sec 键，产出对齐 web 版式的 QWidget。
 
-生成思路与 web 侧同源（交接件硬规矩）：
   web 侧控制台的配置行带 `data-cfg="点.path"`、控件类型写在 HTML 标签上；
   本文件不手抄任何配置项 —— 运行时从 `sec_meta.py`（解析 console_html.py）
   拿行元数据，按「键类型 → 控件类型」映射批量生成：
@@ -45,7 +44,7 @@ from widgets import Badge, Btn, Card, Field, Switch, desc, h2
 BATCH_SECS = sec_meta.SECS_OF_THIS_BATCH
 
 
-# ---------------------------------------------------------------- 徽章口径（丙-8 P0-A①）
+# ---------------------------------------------------------------- 徽章口径
 
 
 def badge_for(sec: str, st: dict) -> tuple[str, str, str] | None:
@@ -189,13 +188,13 @@ def badge_for(sec: str, st: dict) -> tuple[str, str, str] | None:
 
     if sec == "server":
         # web stServer：info「本机 端口」（web 用 location.port）
-        from agent_bridge import current_url  # noqa: PLC0415
+        from agent_bridge import current_url # noqa: PLC0415
         u = current_url() or ""
         port = u.rsplit(":", 1)[-1].rstrip("/") if ":" in u else ""
         return ("info", f"本机 {port or '?'}",
                 f"控制台只听本机（端口 {port or '?'}）；改监听地址或口令要重启控制台才生效。")
 
-    return None   # overview/log/sessions/persona/memory 等：面板本地语义自己管
+    return None # overview/log/sessions/persona/memory 等：面板本地语义自己管
 
 
 # ---------------------------------------------------------------- 基础控件
@@ -212,7 +211,7 @@ class Combo(QComboBox):
         super().__init__(parent)
         self.t = t
         for v, label in options:
-            self.addItem(label, v)      # userData=option 的真 value（web data-cfg 口径）
+            self.addItem(label, v) # userData=option 的真 value（web data-cfg 口径）
         values = [v for v, _l in options]
         if default is not None and str(default) in values:
             self.setCurrentIndex(values.index(str(default)))
@@ -287,18 +286,18 @@ def _ctrl_value(r: "sec_meta.Row", ctrl: QWidget | None):
     if r.kind in ("number", "range"):
         s = ctrl.text().strip()
         if not s:
-            return _SKIP                      # 留空 = 不改这一项
+            return _SKIP # 留空 = 不改这一项
         try:
             f = float(s)
         except ValueError:
-            return _SKIP                      # 格式不对不改，保存反馈里如实说
+            return _SKIP # 格式不对不改，保存反馈里如实说
         return int(f) if f == int(f) else f
     if r.kind == "select":
         return str(ctrl.currentData())
     if r.kind == "textarea":
         return ctrl.toPlainText()
     if r.kind == "chips":
-        # 丙-15：web chips 存 list（如 group_name_white_list）—— 逗号/中文逗号分隔还原
+        # web chips 存 list（如 group_name_white_list）—— 逗号/中文逗号分隔还原
         parts = [x.strip() for x in ctrl.text().replace("，", ",").split(",")]
         return [x for x in parts if x]
     return ctrl.text()
@@ -310,7 +309,7 @@ def _ctrl_value(r: "sec_meta.Row", ctrl: QWidget | None):
 def _row(t: Tokens, r: "sec_meta.Row", card: Card, binds: list | None = None) -> QWidget | None:
     """一行元数据 → 一行 Field。键类型 → 控件类型的唯一映射点。
 
-    初值口径（丙-4 接线）：**真 config 当前值优先**（同进程 get_config，网页侧
+    初值口径：**真 config 当前值优先**（同进程 get_config，网页侧
     改过即拿到新值），键缺失才回 config.example.json 默认（sec_meta 解析层）。
     """
     cur = config_io.read_path(r.cfg) if r.cfg else None
@@ -324,9 +323,9 @@ def _row(t: Tokens, r: "sec_meta.Row", card: Card, binds: list | None = None) ->
         c = _area(t, _as_text(default), rows=3, placeholder=r.placeholder)
     elif r.kind in ("text", "password", "number", "range"):
         c = _line(t, _as_text(default), password=r.kind == "password", placeholder=r.placeholder)
-    # 丙-10 P0-2：三新类型（web 里确有按钮组/状态行/表格，原来一律降级 info ⇒ 蒸发）
+    # P0-2：三新类型（web 里确有按钮组/状态行/表格，原来一律降级 info ⇒ 蒸发）
     elif r.kind == "buttons":
-        # 丙-24 批2：按钮组带行内 note —— 表内动作（testApi/wmReset/pokeTest…）真执行，
+        # 按钮组带行内 note —— 表内动作（testApi/wmReset/pokeTest…）真执行，
         # 结果回显；表外仍 stub。note 藏于按钮组下方，有结果才显示。
         wrap = QWidget()
         v = QVBoxLayout(wrap)
@@ -345,15 +344,15 @@ def _row(t: Tokens, r: "sec_meta.Row", card: Card, binds: list | None = None) ->
     elif r.kind == "table":
         return _table_row(t, r, card)
     elif r.kind == "chips":
-        # ⛔ 丙-15：chips 行（群白名单等）在 web 是「chips 组 + 行内按钮 + 添加输入」
-        #   组合，原来不渲染任何控件 ⇒ 「选单都没有，用户怎么选」（作者真机点名）。
+        # ⛔ chips 行（群白名单等）在 web 是「chips 组 + 行内按钮 + 添加输入」
+        # 组合，原来不渲染任何控件 ⇒ 「选单都没有，用户怎么选」。
         #   ⇒ 可编辑文本（逗号分隔列表，保存时转 list）+ 行内按钮。
         c = _chips_editor(t, r)
     # info → 纯说明行（无控件语义）
     f = Field(t, r.label, r.hint, c, card)
     # 只有**带 cfg 的可写控件**才进 binds（status/buttons 无 cfg ⇒ 不参与保存；
     # 它们不是 QLineEdit，混进 binds 会在保存时被当输入框调 editingFinished）。
-    # ⚠️ 丙-12 修：光看 `r.cfg` 不够 —— `chips` 与 status/buttons 一样可能带 cfg
+    # ⚠️ 修：光看 `r.cfg` 不够 —— `chips` 与 status/buttons 一样可能带 cfg
     #    （sec_meta._parse_row 的兜底分支 `Row("chips", label, cfg, ...)` 就传了 cfg），
     #    混进 binds 后会走保存侧的 else 分支调 `editingFinished` ⇒ AttributeError。
     #    故必须同时限制 `r.kind` 为**真正可写**的类型白名单。
@@ -362,14 +361,14 @@ def _row(t: Tokens, r: "sec_meta.Row", card: Card, binds: list | None = None) ->
     return f
 
 
-# 丙-12：**真正可写**的 row 类型白名单 —— 只有这几种的控件才进 binds、
+# **真正可写**的 row 类型白名单 —— 只有这几种的控件才进 binds、
 # 才参与「改完即生效」的变更监听。其余（info/chips/status/buttons/table）
 # 一律是**展示型**，既没有可写语义，其控件也不保证具备 `editingFinished` 等信号。
 _WRITABLE_KINDS = frozenset({"text", "password", "number", "range", "checkbox", "select", "textarea", "chips"})
 
 
 def _chips_editor(t: Tokens, r: "sec_meta.Row") -> QWidget:
-    """web chips 勾选组（群白名单等）→ 可编辑输入 + 行内按钮（丙-15）。
+    """web chips 勾选组（群白名单等）→ 可编辑输入 + 行内按钮。
 
     值语义对齐 web：list[str]（编辑框里逗号分隔展示，保存时 split 回 list）。
     「检测群聊并勾选 / 刷新群列表」按 web 原版真接线（console_html.py:2806-2842）：
@@ -430,15 +429,15 @@ def _chips_group_action(aid: str, line, note) -> None:
             box["val"] = config_io.get_json(
                 "/api/wechat-groups" + ("?refresh=1" if aid == "refreshGroups" else ""),
                 timeout=8.0)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e: # noqa: BLE001
             box["err"] = str(e)
         box["done"] = True
 
-    import threading as _th  # noqa: PLC0415
+    import threading as _th # noqa: PLC0415
 
     _th.Thread(target=_work, daemon=True, name="chips-groups").start()
 
-    from PySide6.QtCore import QTimer  # noqa: PLC0415
+    from PySide6.QtCore import QTimer # noqa: PLC0415
 
     def _apply() -> None:
         if not box["done"]:
@@ -467,8 +466,8 @@ def _chips_group_action(aid: str, line, note) -> None:
 
 def _open_group_pick(line, note, groups: list) -> None:
     """web「选择监听的群」弹窗的 Qt 版（console_html.py:2821-2840 同款交互）。"""
-    from PySide6.QtCore import QTimer  # noqa: PLC0415
-    from PySide6.QtWidgets import (  # noqa: PLC0415
+    from PySide6.QtCore import QTimer # noqa: PLC0415
+    from PySide6.QtWidgets import ( # noqa: PLC0415
         QDialog, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout,
     )
 
@@ -495,12 +494,12 @@ def _open_group_pick(line, note, groups: list) -> None:
     for g in groups:
         text, wid = _gid(g)
         it = QListWidgetItem(text)
-        it.setData(0x0100, wid)            # Qt.ItemDataRole.UserRole
-        it.setFlags(it.flags() | 0x0001)   # Qt.ItemFlag.ItemIsUserCheckable
-        it.setCheckState(2 if (wid in cur or text in cur) else 0)  # Checked=2/Unchecked=0
+        it.setData(0x0100, wid) # Qt.ItemDataRole.UserRole
+        it.setFlags(it.flags() | 0x0001) # Qt.ItemFlag.ItemIsUserCheckable
+        it.setCheckState(2 if (wid in cur or text in cur) else 0) # Checked=2/Unchecked=0
         lst.addItem(it)
     v.addWidget(lst, 1)
-    from PySide6.QtWidgets import QWidget as _QW, QHBoxLayout as _QH  # noqa: PLC0415
+    from PySide6.QtWidgets import QWidget as _QW, QHBoxLayout as _QH # noqa: PLC0415
 
     hb = _QW()
     hh = _QH(hb)
@@ -529,15 +528,15 @@ def _open_group_pick(line, note, groups: list) -> None:
                 cfg = config_io.get_json("/api/config", timeout=8.0) or {}
                 if isinstance(cfg, dict):
                     cfg.setdefault("wechat", {})["group_name_white_list"] = list(picked)
-                    from agent_bridge import post_json  # noqa: PLC0415
+                    from agent_bridge import post_json # noqa: PLC0415
 
                     bx["rsp"] = post_json("/api/config", cfg, timeout=10.0)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e: # noqa: BLE001
                 bx["err"] = str(e)
             bx["done"] = True
 
         bx: dict = {"done": False, "rsp": None, "err": None}
-        import threading as _th  # noqa: PLC0415
+        import threading as _th # noqa: PLC0415
 
         _th.Thread(target=_work, daemon=True, args=(bx,), name="chips-save").start()
 
@@ -554,17 +553,17 @@ def _open_group_pick(line, note, groups: list) -> None:
     dlg.show()
 
 
-# ── 丙-24 批2：按钮动作分发器（web onclick 的 Qt 等价）──
+# ── 按钮动作分发器（web onclick 的 Qt 等价）──
 # aid → POST 端点。命中 = 真执行（后台线程 + 结果回显行内 note）；
 # 未命中 = 沿 _btn_stub 原型边界。web 62 个按钮按批次逐步接线进这张表。
 _ACT_API: dict[str, tuple[str, str, dict]] = {
-    "testApi": ("POST", "/api/test-api", {}),            # web L2741/L5882：后端自测当前 api 配置
-    "wmReset": ("POST", "/api/watermark/reset", {}),     # web L2709：监听水位重对齐
-    "pokeTest": ("POST", "/api/poke-test", {}),          # web L6028：拍一拍检测
-    "igTest": ("GET", "/api/image_gen/test", {}),        # web L7675：生图链条只跑不发
-    "ttsTest": ("GET", "/api/tts/test", {}),             # web L7691：按当前档合成试听
-    "vsTest": ("GET", "/api/voice/test", {}),            # web L7707：语音链路（合成→SILK→识别）
-    "selfCheck": ("POST", "/api/selfcheck", {"mode": "full"}),  # web L6004：61 项环境体检
+    "testApi": ("POST", "/api/test-api", {}), # web L2741/L5882：后端自测当前 api 配置
+    "wmReset": ("POST", "/api/watermark/reset", {}), # web L2709：监听水位重对齐
+    "pokeTest": ("POST", "/api/poke-test", {}), # web L6028：拍一拍检测
+    "igTest": ("GET", "/api/image_gen/test", {}), # web L7675：生图链条只跑不发
+    "ttsTest": ("GET", "/api/tts/test", {}), # web L7691：按当前档合成试听
+    "vsTest": ("GET", "/api/voice/test", {}), # web L7707：语音链路（合成→SILK→识别）
+    "selfCheck": ("POST", "/api/selfcheck", {"mode": "full"}), # web L6004：61 项环境体检
 }
 
 
@@ -581,20 +580,20 @@ def _act_run(aid: str, note) -> None:
     def _work() -> None:
         try:
             if method == "POST":
-                from agent_bridge import post_json  # noqa: PLC0415
+                from agent_bridge import post_json # noqa: PLC0415
 
                 bx["rsp"] = post_json(api, body, timeout=90.0)
             else:
                 bx["rsp"] = config_io.get_json(api, timeout=60.0)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e: # noqa: BLE001
             bx["err"] = str(e)
         bx["done"] = True
 
-    import threading as _th  # noqa: PLC0415
+    import threading as _th # noqa: PLC0415
 
     _th.Thread(target=_work, daemon=True, name="act-" + aid).start()
 
-    from PySide6.QtCore import QTimer  # noqa: PLC0415
+    from PySide6.QtCore import QTimer # noqa: PLC0415
 
     def _apply() -> None:
         if not bx["done"]:
@@ -617,14 +616,14 @@ def _act_run(aid: str, note) -> None:
         elif aid == "ttsTest":
             info = rsp.get("info") or {}
             if rsp.get("ok"):
-                # 丙-24 体验增强（web 只显示路径）：拿到产物后用系统默认播放器自动播放——
-                #   作者问「在哪儿听」；合成文件就在磁盘上，一键可听。播放失败不影响结果回显。
+                # 体验增强（web 只显示路径）：拿到产物后用系统默认播放器自动播放——
+                # ；合成文件就在磁盘上，一键可听。播放失败不影响结果回显。
                 try:
-                    import os as _os  # noqa: PLC0415
+                    import os as _os # noqa: PLC0415
 
                     if rsp.get("path"):
                         _os.startfile(str(rsp.get("path")))
-                except Exception:  # noqa: BLE001
+                except Exception: # noqa: BLE001
                     pass
                 note.setText("合成成功（已调用系统播放器试听）：%s（%s / %s 字节 / 档位：%s / 声音：%s）"
                              % (rsp.get("path"), info.get("fmt") or "-", rsp.get("size"),
@@ -663,7 +662,7 @@ def _code_check_run(note, deps: bool) -> None:
 
     def _work() -> None:
         try:
-            from agent_bridge import post_json  # noqa: PLC0415
+            from agent_bridge import post_json # noqa: PLC0415
 
             post_json("/api/code-check", {"deps": bool(deps)}, timeout=20.0)
             for _i in range(300):
@@ -688,16 +687,16 @@ def _code_check_run(note, deps: bool) -> None:
                 if items and isinstance(items[-1], dict):
                     line += " ｜ 最新：" + str(items[-1].get("name"))
                 bx["line"] = line
-        except Exception as e:  # noqa: BLE001
+        except Exception as e: # noqa: BLE001
             bx["err"] = str(e)
         finally:
             bx["done"] = True
 
-    import threading as _th  # noqa: PLC0415
+    import threading as _th # noqa: PLC0415
 
     _th.Thread(target=_work, daemon=True, name="code-check").start()
 
-    from PySide6.QtCore import QTimer  # noqa: PLC0415
+    from PySide6.QtCore import QTimer # noqa: PLC0415
 
     def _apply() -> None:
         note.setText(bx["line"])
@@ -713,7 +712,7 @@ def _code_check_run(note, deps: bool) -> None:
 def _btn_group(t: Tokens, actions: list[tuple[str, str]], note=None) -> QWidget:
     """web `.row-btns` / 行内 `<button>` → 一串按钮（动作 id 挂 property 留取证）。
 
-    ⚠️ 原型边界（丙-24 更新）：在 `_ACT_POST` 表里的动作**真接后端**（后台线程，
+    ⚠️ 原型边界：在 `_ACT_POST` 表里的动作**真接后端**（后台线程，
     结果回显行内 note）；表外的仍走 `_btn_stub`（可见反馈 + tooltip，绝不静默无反应）。
     """
     box = QWidget()
@@ -743,11 +742,11 @@ def _btn_stub(b) -> None:
     b.setToolTip("这个动作在 web 控制台执行；Qt 壳只做版式还原，不冒充已执行。")
 
 
-_STATUS_ROWS: list = []   # 丙-18 批1：面板内 status 行注册表 [(label, status_id)]——跟随全局轮询刷新
+_STATUS_ROWS: list = [] # 面板内 status 行注册表 [(label, status_id)]——跟随全局轮询刷新
 
 
 def refresh_status_rows(st) -> None:
-    """全局状态刷新时同步刷新面板内 status 行（批1 核心：「一堆读不到」主治）。
+    """全局状态刷新时同步刷新面板内 status 行。
 
     原来 `_status_chip` 只在构建那一刻读一次 ⇒ 之后永远停在「读不到/未检测/检测中」。
     现在注册进表，由 shell._poll_badges 的 8 秒轮询携带最新 /api/status 调用本函数；
@@ -758,15 +757,15 @@ def refresh_status_rows(st) -> None:
     for lab, sid in list(_STATUS_ROWS):
         try:
             lab.setText(_status_text_for(sid, st))
-        except Exception:  # noqa: BLE001
+        except Exception: # noqa: BLE001
             pass
 
 
 def _status_chip(t: Tokens, status_id: str) -> QWidget:
-    """web `<b id="…">` 状态位 → 只读状态标签（口径对齐丙-8 badge_for）。
+    """web `<b id="…">` 状态位 → 只读状态标签。
 
     构建时就地读一次（后端活着即刻有值）；并注册进 `_STATUS_ROWS`，
-    之后跟随 8 秒全局轮询持续刷新（丙-18 批1）。
+    之后跟随 8 秒全局轮询持续刷新。
     """
     lab = QLabel("未检测")
     lab.setFont(qfont(t, t.body_size - 0.5))
@@ -775,7 +774,7 @@ def _status_chip(t: Tokens, status_id: str) -> QWidget:
     try:
         st = _load_status()
         tip = _status_text_for(status_id, st) if st else "读取中…"
-    except Exception:  # noqa: BLE001
+    except Exception: # noqa: BLE001
         tip = "读不到（控制台状态未就绪）"
     lab.setText(tip)
     _STATUS_ROWS.append((lab, status_id or ""))
@@ -784,7 +783,7 @@ def _status_chip(t: Tokens, status_id: str) -> QWidget:
 
 def _table_row(t: Tokens, r: "sec_meta.Row", card: Card) -> QWidget:
     """web `<table>` → 表头 + 数据行（只读）。行标题在上，表体在下。"""
-    from PySide6.QtWidgets import QGridLayout  # noqa: PLC0415
+    from PySide6.QtWidgets import QGridLayout # noqa: PLC0415
 
     wrap = QWidget(card)
     v = QVBoxLayout(wrap)
@@ -808,10 +807,10 @@ def _table_row(t: Tokens, r: "sec_meta.Row", card: Card) -> QWidget:
         grid.addWidget(c, 0, j)
     for i, row in enumerate(r.rows, start=1):
         for j, cell in enumerate(row):
-            # 丙-15：web 清单表首列是勾选框（结果列）—— 原来渲染空文本 ⇒ 勾选列蒸发。
+            # web 清单表首列是勾选框（结果列）—— 原来渲染空文本 ⇒ 勾选列蒸发。
             if (j == 0 and i - 1 < len(r.cell_checks) and r.cell_checks[i - 1]
                     and not cell.strip()):
-                from PySide6.QtWidgets import QCheckBox  # noqa: PLC0415
+                from PySide6.QtWidgets import QCheckBox # noqa: PLC0415
 
                 c: QWidget = QCheckBox()
                 c.setToolTip("勾选=这项测过了（对齐 web 的记忆勾选；Qt 侧暂为会话内状态）")
@@ -826,7 +825,7 @@ def _table_row(t: Tokens, r: "sec_meta.Row", card: Card) -> QWidget:
 
 
 _STATUS_CACHE: dict = {}
-_STATUS_FAIL_TS: float = 0.0   # 丙-18：后端连不上时 30s 内不再重试（否则每次惰性建页同步卡 3 端口×超时）
+_STATUS_FAIL_TS: float = 0.0 # 后端连不上时 30s 内不再重试（否则每次惰性建页同步卡 3 端口×超时）
 
 
 def _load_status() -> dict:
@@ -839,17 +838,17 @@ def _load_status() -> dict:
         return {}
     st = {}
     try:
-        import urllib.request  # noqa: PLC0415
+        import urllib.request # noqa: PLC0415
 
-        from console_html import PORT as _PORT  # noqa: PLC0415
-    except Exception:  # noqa: BLE001
+        from console_html import PORT as _PORT # noqa: PLC0415
+    except Exception: # noqa: BLE001
         _PORT = 3210
     for p in (_PORT, 3210, 3211):
         try:
             with urllib.request.urlopen("http://127.0.0.1:%d/api/status" % int(p), timeout=0.8) as r:
                 st = json.loads(r.read().decode("utf-8", "replace"))
             break
-        except Exception:  # noqa: BLE001
+        except Exception: # noqa: BLE001
             continue
     if not st:
         _STATUS_FAIL_TS = now
@@ -863,9 +862,9 @@ def _status_text_for(status_id: str, st: dict) -> str:
         return "读不到（控制台未就绪）"
     sid = status_id or ""
     if sid in ("wxver",):
-        # 丙-18：对齐 web L3506-3511 —— 微信版本行真值 = /api/status 的
+        # 对齐 web L3506-3511 —— 微信版本行真值 = /api/status 的
         #   `wechat_version` 段（version/adapter/supported）；原读 vermat 的
-        #   version.wechat ⇒ 恒「微信版本读不到」（作者真机实锤）。
+        # version.wechat ⇒ 恒「微信版本读不到」。
         wv = st.get("wechat_version") or {}
         v = str(wv.get("version") or "").strip()
         if not v:
@@ -892,10 +891,10 @@ def _status_text_for(status_id: str, st: dict) -> str:
 
 def _cursor_extras(t: Tokens, on_save) -> Card:
     """光标面板的「上传自定义图 / 重置默认」卡（web 同款文件语义）。"""
-    import shutil  # noqa: PLC0415
-    from pathlib import Path  # noqa: PLC0415
+    import shutil # noqa: PLC0415
+    from pathlib import Path # noqa: PLC0415
 
-    from PySide6.QtWidgets import QFileDialog  # noqa: PLC0415
+    from PySide6.QtWidgets import QFileDialog # noqa: PLC0415
 
     root = Path(__file__).resolve().parents[1]
     card = Card(t)
@@ -910,7 +909,7 @@ def _cursor_extras(t: Tokens, on_save) -> Card:
         if ok and callable(on_save):
             try:
                 on_save()
-            except Exception:  # noqa: BLE001
+            except Exception: # noqa: BLE001
                 pass
 
     def _upload() -> None:
@@ -924,7 +923,7 @@ def _cursor_extras(t: Tokens, on_save) -> Card:
             shutil.copyfile(p, root / "assets" / "custom-cursor.png")
             ok, msg = config_io.write_patch({"ui.cursor_image": "custom", "ui.whale_cursor": True})
             _after(ok, msg + "（新光标立即生效，点头/中键旋转同样可用）")
-        except Exception as e:  # noqa: BLE001
+        except Exception as e: # noqa: BLE001
             _after(False, str(e))
 
     def _reset() -> None:
@@ -933,7 +932,7 @@ def _cursor_extras(t: Tokens, on_save) -> Card:
                 (root / "assets" / name).unlink(missing_ok=True)
             ok, msg = config_io.write_patch({"ui.cursor_image": ""})
             _after(ok, (msg + "，已重置为默认鲸鱼") if ok else msg)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e: # noqa: BLE001
             _after(False, str(e))
 
     row = QHBoxLayout()
@@ -953,7 +952,7 @@ def _cursor_extras(t: Tokens, on_save) -> Card:
 def _cfg_panel(t: Tokens, s: "sec_meta.Sec", on_save=None) -> QWidget:
     """配置型面板：头部 + 一张设置卡（行 × 分隔线）+ 保存行。
 
-    保存口径（丙-4 接线）：收集本卡全部可编辑行的 {点路径: 值}，走
+    保存口径：收集本卡全部可编辑行的 {点路径: 值}，走
     `config_io.write_patch`（与网页控制台 /api/config 同款深合并落盘），
     成败都在行内如实反馈；on_save 供 Shell 做即时联动（光标/主题/画卷）。
     """
@@ -963,7 +962,7 @@ def _cfg_panel(t: Tokens, s: "sec_meta.Sec", on_save=None) -> QWidget:
     lay.setContentsMargins(28, 24, 28, 24)
     lay.setSpacing(14)
     badge = Badge(t, "info", "未检测")
-    page._c8_badge = badge          # Shell._apply_badges 按此引用分发（P0-A①）
+    page._c8_badge = badge # Shell._apply_badges 按此引用分发（P0-A①）
     lay.addWidget(h2(t, s.title, badge))
     if s.desc:
         lay.addWidget(desc(t, s.desc))
@@ -978,7 +977,7 @@ def _cfg_panel(t: Tokens, s: "sec_meta.Sec", on_save=None) -> QWidget:
             card.body.addWidget(f)
     lay.addWidget(card)
 
-    # 徽章本地语义（丙-8 P0-A①）：行初值来自真 config（_row 里 read_path），
+    # 徽章本地语义：行初值来自真 config（_row 里 read_path），
     # 面板建好 = 配置已加载；保存成败在保存行如实反馈的同时同步到徽章。
     # 有后台口径的 sec（badge_for 返回非 None）会被 Shell 的 8s 轮询覆盖。
     badge.set("info", "已加载")
@@ -995,10 +994,10 @@ def _cfg_panel(t: Tokens, s: "sec_meta.Sec", on_save=None) -> QWidget:
     note.setFont(qfont(t, 12.5))
     note.setStyleSheet(f"color:{t.tx3};background:transparent;")
 
-    # ── 改完即生效（丙-8 P0-A④）── web 顶栏 autoApplyChk（console_html.py L753，
+    # ── 改完即生效── web 顶栏 autoApplyChk（console_html.py L753，
     # 默认勾选、状态记本机）的 Qt 等价：勾上后本面板任何控件改动，防抖 600ms
     # 自动 write_patch（与手动保存同一条深合并落盘链路），不用再点「保存设置」。
-    from PySide6.QtCore import QSettings, QTimer as _QTimer  # noqa: PLC0415
+    from PySide6.QtCore import QSettings, QTimer as _QTimer # noqa: PLC0415
 
     auto_chk = Switch(t, bool(QSettings("WXAgent", "persona-morph-ui")
                               .value("auto_apply", True, type=bool)))
@@ -1014,7 +1013,7 @@ def _cfg_panel(t: Tokens, s: "sec_meta.Sec", on_save=None) -> QWidget:
             v = _ctrl_value(r, ctrl)
             if v is _SKIP:
                 if ctrl is not None:
-                    skipped += 1          # 有控件但留空/格式不对 → 计数如实说
+                    skipped += 1 # 有控件但留空/格式不对 → 计数如实说
                 continue
             patch[r.cfg] = v
         return patch, skipped
@@ -1033,20 +1032,20 @@ def _cfg_panel(t: Tokens, s: "sec_meta.Sec", on_save=None) -> QWidget:
         patch, skipped = _collect()
         ok, msg = config_io.write_patch(patch)
         if ok:
-            ok, msg = _verify_on_disk(patch, msg)   # 真读回 config.json 验证（非 mock）
+            ok, msg = _verify_on_disk(patch, msg) # 真读回 config.json 验证（非 mock）
         _save_feedback(ok, msg, skipped)
         if ok and callable(on_save):
             try:
                 on_save()
-            except Exception:  # noqa: BLE001
+            except Exception: # noqa: BLE001
                 pass
 
     def _verify_on_disk(patch: dict[str, object], msg: str) -> tuple[bool, str]:
-        """丙-8 P0-A④ 落盘真验证：保存后重新打开 config.json 逐键比对，
+        """ P0-A④ 落盘真验证：保存后重新打开 config.json 逐键比对，
         写进去了才算成功（write_patch 返回 ok 只代表「没报错」）。"""
-        from pathlib import Path  # noqa: PLC0415
+        from pathlib import Path # noqa: PLC0415
 
-        from agent.config import CONFIG_FILE  # noqa: PLC0415
+        from agent.config import CONFIG_FILE # noqa: PLC0415
 
         try:
             disk = json.loads(Path(CONFIG_FILE).read_text(encoding="utf-8"))
@@ -1064,7 +1063,7 @@ def _cfg_panel(t: Tokens, s: "sec_meta.Sec", on_save=None) -> QWidget:
             if miss:
                 return False, msg + f"（落盘验证没过：{','.join(miss[:3])} 未出现在 config.json）"
             return True, msg + "（已验证落盘）"
-        except Exception as e:  # noqa: BLE001
+        except Exception as e: # noqa: BLE001
             return False, msg + f"（落盘验证失败：{e}）"
 
     btn.clicked.connect(_do_save)
@@ -1104,7 +1103,7 @@ def _cfg_panel(t: Tokens, s: "sec_meta.Sec", on_save=None) -> QWidget:
         elif r.kind == "textarea":
             ctrl.textChanged.connect(_mark_dirty)
         elif r.kind in ("text", "password", "number", "range"):
-            # ⚠️ 丙-12 修：不再用裸 `else` 兜底 —— 那样任何漏网类型都会撞到这里。
+            # ⚠️ 修：不再用裸 `else` 兜底 —— 那样任何漏网类型都会撞到这里。
             #   具名判定 + hasattr 防御，缺信号就跳过（宁可少监听，不可崩面板）。
             sig = getattr(ctrl, "editingFinished", None)
             if sig is not None:
@@ -1115,7 +1114,7 @@ def _cfg_panel(t: Tokens, s: "sec_meta.Sec", on_save=None) -> QWidget:
         QSettings("WXAgent", "persona-morph-ui").setValue("auto_apply", bool(on))
         if on:
             note.setText("改完即生效：已开启（改动自动写入 config.json）")
-            debounce.start()                 # 打开瞬间把当前面板值落一次
+            debounce.start() # 打开瞬间把当前面板值落一次
         else:
             note.setText("已关闭自动生效：改完请点「保存设置」")
             note.setStyleSheet(f"color:{t.tx3};background:transparent;")
@@ -1147,18 +1146,18 @@ def build_panel(t: Tokens, sec: str, on_save=None) -> QWidget:
         inner = fn(t, on_save) if sec == "json" else fn(t)
     else:
         inner = _cfg_panel(t, sec_meta.get(sec), on_save)
-    # 丙-28 批3：面板追加区（元数据页 + 动态列表卡共存）——如 wechat 的表情收藏夹
+    # 面板追加区（元数据页 + 动态列表卡共存）——如 wechat 的表情收藏夹
     # （web 的 emojiBox 挂在微信卡下方；元数据驱动做不了动态列表，APPENDIX 补位）。
     append_fn = getattr(panels_custom, "APPENDIX", {}).get(sec)
     if append_fn is not None:
         try:
             append_fn(t, inner)
-        except Exception:  # noqa: BLE001 — 追加区失败不拖垮整页
+        except Exception: # noqa: BLE001 — 追加区失败不拖垮整页
             pass
     wrap = QScrollArea()
     wrap.setWidgetResizable(True)
     wrap.setFrameShape(QFrame.Shape.NoFrame)
     wrap.setStyleSheet("QScrollArea{background:transparent;border:none;}")
     wrap.setWidget(inner)
-    wrap._c8_badge = getattr(inner, "_c8_badge", None)   # Shell._apply_badges 取用
+    wrap._c8_badge = getattr(inner, "_c8_badge", None) # Shell._apply_badges 取用
     return wrap

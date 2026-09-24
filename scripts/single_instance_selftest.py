@@ -25,7 +25,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
-from agent import single_instance as SI  # noqa: E402
+from agent import single_instance as SI # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -224,7 +224,7 @@ ok("C12 互斥体名与证据文件名是模块常量（两处共用同一份）
    (SI.MUTEX_NAME == r"Local\PersonaMorphBot.singleinstance") and (SI.LOCK_FILE == os.path.join("data", "bot.lock")))
 
 print("\n── D. 卡死旧实例的**自动收尾**（用户只做「再双击一次一键启动」这个自然动作）──")
-# ── 2026-09-17 用户拍板：「不要让用户担风险啊，还要删这删那的、还要试这试那的，不行」 ──
+# ── ──
 #    旧版「更新完卡住」那种局面不许留给用户收尾 ⇒ 新实例自己接管：
 #    占用者还在 + 控制台端口没人应答 + 它已经跑了一会儿（锁文件 mtime > 90 秒）⇒ 判卡死、替它收尾。
 ok("D1 有接管分支（判卡死 → 结束它 + 结束看门狗 → 重新取锁）",

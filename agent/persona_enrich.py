@@ -44,7 +44,7 @@ def enrich(text: str, silent: bool = False) -> str:
     if not t:
         return t
     if "说话规则（群聊通用）" in t:
-        return t  # 已补足
+        return t # 已补足
     # 已有完整"说话+示例"结构（如内置默认小鲸鱼卡：说话铁律/节奏习惯/对话示例齐全）
     # → 不再重复追加通用段（否则系统提示出现两份说话规则/示例，浪费 token 且干扰）
     if "## 说话" in t and ("## 对话示例" in t or "## 会话示例" in t):

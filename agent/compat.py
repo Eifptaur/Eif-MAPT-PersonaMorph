@@ -1,9 +1,9 @@
 """兼容性指纹：一台机器上"可能各不相同、而且真会把功能搞坏"的那些事实。
 
-⛔ 为什么要有这个模块（2026-09-22 立；作者原话：「其实最重要的就是兼容性，你们有什么方案能解决
+⛔ 为什么要有这个模块（
   兼容性问题？你看，好多人的电脑跟好多人的情况都不一样」）：
   我们已经被"**从版本推出行为**"这种写死表打过至少两次 ——
-    ① 会话行点击到底要投主窗还是渲染子窗（同机同落点，2026-09-13 与 09-21 结论**正好相反**）；
+    ① 会话行点击到底要投主窗还是渲染子窗；
     ② 适配层 `wechatauto/db.py` 对"页 1 是不是明文头"的**模式判断**（有人机器上是明文头、有人
        机器上是全加密；判错就解密出坏页、报成"数据库合并失败(文件被微信并发改写)"，而其实与
        并发无关 —— 另一位维护者在**别人机器上**实测出来的）。
@@ -11,10 +11,10 @@
      本模块的**探测**（`fingerprint` / `axes` / `smoke`）一律**只读**：不碰微信进程内存、
      不动任何窗口、不写任何文件（`compat_smoke_selftest` / `compat_selftest` 跑前跑后比对
      `data/` 顶层一字未变，守着这条）。
-     ⚠️ 2026-09-22 追加：文件里**下半部分**那几个自动化入口（`auto_run` / `note_failure`）
+     ⚠️ 文件里**下半部分**那几个自动化入口（`auto_run` / `note_failure`）
      会写**两个**文件（`data/compat_last.json`、`data/compat_failures.json`）—— 但**只有产品
      显式调用它们时才写**（启动时采一次、失败时记一笔），探测函数本身仍然一个字节不落盘。
-     为什么要有那一半：作者口径「**我更想让用户不用测这测那的就能搞好**」—— 数据由产品自己采、
+     为什么要有那一半：—— 数据由产品自己采、
      失败由产品自己记，用户只要点一下「反馈」，这份东西自动带上（`attach_text`，白名单脱敏）。
 """
 
@@ -70,7 +70,7 @@ def _display() -> dict:
         import ctypes
         u = ctypes.windll.user32
         try:
-            u.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))     # PerMonitorV2；失败也无妨
+            u.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)) # PerMonitorV2；失败也无妨
         except Exception:
             pass
         rep["primary"] = "%dx%d" % (int(u.GetSystemMetrics(0)), int(u.GetSystemMetrics(1)))
@@ -80,7 +80,7 @@ def _display() -> dict:
         except Exception:
             dc = u.GetDC(0)
             try:
-                dpi = int(ctypes.windll.gdi32.GetDeviceCaps(dc, 88))   # LOGPIXELSX
+                dpi = int(ctypes.windll.gdi32.GetDeviceCaps(dc, 88)) # LOGPIXELSX
                 rep["scale"] = "%d%%" % round(dpi / 96.0 * 100)
             finally:
                 u.ReleaseDC(0, dc)
@@ -220,13 +220,13 @@ def fingerprint() -> dict:
                     ("data_dir", _data_dir), ("runtime", _runtime)):
         try:
             out[key] = fn()
-        except Exception as e:                                    # noqa: BLE001
+        except Exception as e: # noqa: BLE001
             out[key] = {"error": "%s: %s" % (type(e).__name__, str(e)[:60])}
     return out
 
 
 def lines() -> list:
-    """给人看 / 给作者粘贴的几行（**不含口令、不含 wxid 全名、不含账号目录名**）。"""
+    """给人看 / 给。"""
     f = fingerprint()
     w, d, c = f.get("windows", {}) or {}, f.get("display", {}) or {}, f.get("wechat_window", {}) or {}
     g, r = f.get("data_dir", {}) or {}, f.get("runtime", {}) or {}
@@ -290,7 +290,7 @@ def _update_state() -> str:
 def axes(how: dict | None = None) -> list:
     """**机器可读的兼容性矩阵**：11 条"我们真踩过"的差异轴 → 此刻探测到的事实。
 
-    为什么是"事实"而不是"支持/不支持"（2026-09-22，依据业界调研）：
+    为什么是"事实"而不是"支持/不支持"：
       官方口径统一＝**探测能力，别按版本分支**（MDN / 微软 Edge 文档）；微软自家的 `winapp ui`
       也是拿一张"框架 × 能力"矩阵说话。⇒ 我们这张表的每一行都必须是**这台机器上现测到的值**，
       测不到就如实写"未知"，**绝不允许按版本外推**。
@@ -344,7 +344,7 @@ def _dpi_awareness() -> str:
         aw = int(u.GetAwarenessFromDpiAwarenessContext(ctx))
         return {0: "不感知（UNAWARE，坐标要按 DPI 换算）", 1: "系统级（SYSTEM）",
                 2: "每显示器（PER_MONITOR）"}.get(aw, "未知值 %s" % aw)
-    except Exception as e:                                        # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         return "读不到（%s）" % type(e).__name__
 
 
@@ -358,7 +358,7 @@ def _can_listen() -> str:
         s.listen(1)
         s.close()
         return "可以（临时端口 %d 起得来又立刻关掉）" % port
-    except Exception as e:                                        # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         return "不行：%s: %s" % (type(e).__name__, str(e)[:40])
 
 
@@ -450,9 +450,9 @@ def smoke_lines() -> list:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 自动化那一半（2026-09-22，作者口径：「**我更想让用户不用测这测那的就能搞好**」）
+# 自动化那一半
 #
-# 以前的口径是"让用户点体检/点检验器、再把报告发回来"。作者的判断是**那不该是用户的事**：
+# 以前的口径是"让用户点体检/点检验器、再把报告发回来"。
 #   · 兼容性数据由**产品自己**在启动时采一次（`auto_run`），落 `data/compat_last.json`；
 #   · 每次**失败**自动记一笔（`note_failure`：只记原因码 + 调用点 + 时间，不记消息内容）；
 #   · 用户点「反馈」时，这份东西**自动带上**（`attach_text`）—— 他不用跑检查、不用点检验器、
@@ -462,15 +462,15 @@ def smoke_lines() -> list:
 # ══════════════════════════════════════════════════════════════════════════════
 STATE_NAME = "compat_last.json"
 FAIL_NAME = "compat_failures.json"
-AUTO_GAP_S = 1800          # 启动时自动跑的间隔（半小时内有记录就不重复采）
-FAIL_KEEP = 20             # 失败记录最多留多少条
+AUTO_GAP_S = 1800 # 启动时自动跑的间隔（半小时内有记录就不重复采）
+FAIL_KEEP = 20 # 失败记录最多留多少条
 
 
 def _state_path() -> str:
     try:
         from .config import DATA_DIR
         return os.path.join(DATA_DIR, STATE_NAME)
-    except Exception:                                            # noqa: BLE001
+    except Exception: # noqa: BLE001
         return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "data", STATE_NAME)
 
@@ -483,7 +483,7 @@ def _read_json(path: str):
     try:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
-    except Exception:                                            # noqa: BLE001
+    except Exception: # noqa: BLE001
         return None
 
 
@@ -510,7 +510,7 @@ def auto_run(reason: str = "startup", force: bool = False) -> dict:
             try:
                 if prev and (time.time() - float(prev.get("at") or 0)) < AUTO_GAP_S:
                     return {"ran": False, "why": "半小时内已经采过", "at": prev.get("at")}
-            except Exception:                                    # noqa: BLE001
+            except Exception: # noqa: BLE001
                 pass
         data = {"at": time.time(), "at_text": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "reason": str(reason or ""), "fingerprint": fingerprint(),
@@ -518,13 +518,13 @@ def auto_run(reason: str = "startup", force: bool = False) -> dict:
         try:
             from . import persist as _ps
             _ps.atomic_write_json(_state_path(), data, indent=1)
-        except Exception:                                        # noqa: BLE001
+        except Exception: # noqa: BLE001
             pass
         return {"ran": True, "at": data["at"], "summary": summary_line(data)}
-    except Exception as e:                                       # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         try:
             log.warning("兼容性自动体检跳过（不影响运行）：%s", e)
-        except Exception:                                        # noqa: BLE001
+        except Exception: # noqa: BLE001
             pass
         return {"ran": False, "why": "采集中出错", "error": "%s: %s" % (type(e).__name__, str(e)[:80])}
 
@@ -545,16 +545,16 @@ def note_failure(code: str, where: str, detail: str = "") -> None:
                 if top.get("code") == code and top.get("where") == where \
                         and (now - float(top.get("at") or 0)) < 5:
                     return
-            except Exception:                                    # noqa: BLE001
+            except Exception: # noqa: BLE001
                 pass
         cur.append({"at": now, "at_text": time.strftime("%Y-%m-%d %H:%M:%S"),
                     "code": code, "where": where, "detail": str(detail or "")[:60]})
         try:
             from . import persist as _ps
             _ps.atomic_write_json(_fail_path(), cur[-FAIL_KEEP:], indent=0)
-        except Exception:                                        # noqa: BLE001
+        except Exception: # noqa: BLE001
             pass
-    except Exception:                                            # noqa: BLE001
+    except Exception: # noqa: BLE001
         pass
 
 

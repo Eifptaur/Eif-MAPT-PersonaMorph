@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""控制台「重启」按钮判据（2026-09-16 用户报「我点了重启，咋没动静啊」之后立）。
+"""控制台「重启」按钮判据。
 
-**事故**：`agent/webui.py::_handle_body_request` 里 `/api/code-check` 分支写了 `import threading`，
 而 Python 的规则是"函数体内只要有 import 该名字，整个函数里它就是局部变量" ⇒ 同函数更早的
 `/api/restart` 分支（`threading.Timer(0.5, parent.restart_fn)`）在赋值前引用 ⇒ `UnboundLocalError`
 ⇒ **按钮点了没反应**。更坑的是 HTTP 仍回 200「正在后台重启机器人…」（`self._json` 在崩之前就发了）
@@ -12,7 +11,6 @@
   A **行为**：真起一个控制台（随机端口 + 口令），真 POST `/api/restart`，断言
     「HTTP 200」+「restart_fn 真的被调用了」——这就是用户按下去那一刻发生的事；
   B **静态**：扫出"函数体内重复 import 模块级名字，且该名字在 import 之前已被引用"的地方 ——
-    这正是本事故的形态，必须是 0 处（同类隐患一次收干净，不留残余）。
 """
 import ast
 import io
@@ -30,8 +28,8 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
-from agent import webui as W          # noqa: E402
-from agent.config import get_config   # noqa: E402
+from agent import webui as W # noqa: E402
+from agent.config import get_config # noqa: E402
 
 PASS = FAIL = 0
 
@@ -69,7 +67,7 @@ try:
     W.get_config = lambda: base
     w = W.WebUI(lambda: {}, [], restart_fn=_stub_restart)
     import tempfile as _tf
-    w.console_url_root = _tf.mkdtemp(prefix="cuj-")   # ⚠️ 判据不写产品那份 logs/console.url（2026-09-18）
+    w.console_url_root = _tf.mkdtemp(prefix="cuj-") # ⚠️ 判据不写产品那份 logs/console.url
     port = w.start()
     req = urllib.request.Request("http://127.0.0.1:%d/api/restart?token=%s" % (port, TOK),
                                  data=b"{}", headers={"Content-Type": "application/json"},
@@ -80,13 +78,13 @@ try:
     ok("POST /api/restart 返回 200", code == 200, "code=%s body=%s" % (code, body[:80]))
     ok("响应体是 {ok: true, note: 正在后台重启机器人…}",
        '"ok": true' in body or '"ok":true' in body, body[:100])
-    for _ in range(30):                     # 定时器 0.5 秒后触发，最多等 3 秒
+    for _ in range(30): # 定时器 0.5 秒后触发，最多等 3 秒
         if _called["n"]:
             break
         time.sleep(0.1)
     ok("**restart_fn 真的被调用了**（按钮背后的那一跳通了）", _called["n"] >= 1,
        "被调用 %d 次" % _called["n"])
-    ok("不是「回了 200 但什么都没发生」（本事故的形态）", _called["n"] >= 1)
+    ok("不是「回了 200 但什么都没发生」", _called["n"] >= 1)
 except Exception as e:
     ok("控制台能起来且能收 POST", False, str(e)[:160])
 finally:
@@ -121,7 +119,7 @@ for root, dirs, files in os.walk(os.path.join(ROOT, "agent")):
             if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             local = []
-            for n in fn.body:               # ⚠️ 只看**直接挂在函数体**上的 import；
+            for n in fn.body: # ⚠️ 只看**直接挂在函数体**上的 import；
                 #                            嵌套 def 里的 import 属于另一个作用域、不构成这个坑
                 if isinstance(n, ast.Import):
                     for a in n.names:
@@ -141,7 +139,7 @@ for root, dirs, files in os.walk(os.path.join(ROOT, "agent")):
                     first_use.setdefault(n.id, n.lineno)
             for nm, ln in local:
                 u = first_use.get(nm, 10 ** 9)
-                if u < ln:                  # 先用后导 ⇒ 精确命中本事故的形态
+                if u < ln:
                     _hits.append((os.path.relpath(p, ROOT), fn.name, u, ln, nm))
 ok("没有“先用后导”的函数内重复 import", not _hits,
    "；".join("%s::%s 第%d行用/第%d行导 %s" % h for h in _hits[:4]))
@@ -158,8 +156,7 @@ ok("webui.py 顶部保留 `import threading`（模块级一处就够）", "\nimp
 ok("`/api/restart` 仍走 restart_fn（没被顺手改成别的）",
    "threading.Timer(0.5, parent.restart_fn).start()" in _src)
 
-print("── D. 重启那一跳的**顺序**（2026-09-17 用户报「你更新后的重启又关不掉自己了；不是说会再起一个新的"
-      "吗，我从来没见过这个再起一个；之前杀掉就没了，现在更是杀都杀不掉」）──")
+print("── D. 重启那一跳的**顺序**（重启后必须再起一个新实例；旧窗必须能正常关闭）──")
 _pm = io.open(os.path.join(ROOT, "scripts", "persona_morph.py"), encoding="utf-8").read()
 _i_rf = _pm.index("def restart_fn():")
 _rf = _pm[_i_rf:_pm.index("def community_export_fn", _i_rf)]
@@ -192,7 +189,7 @@ ok("启动闸门会**等旧实例放开锁**（最多 12 秒）才报冲突",
    "while _legacy_pid and (time.time() - _gate_t0) < 12.0" in _pm
    and "while (not _lock_res.ok) and (time.time() - _gate_t0) < 12.0" in _pm)
 ok("等锁期间有日志（不是静默重试，用户/我们事后能查到）", "等它放开锁再接手" in _pm)
-# ── 2026-09-18 加（作者在另一台机器实测「现在重启不了」）──────────────────────
+# ── ──────────────────────
 ok("重启会**清掉手动停止标记**（重启＝用户要它跑；留着 stopped.flag 会让新看门狗/启动器判「停着」）",
    "stopped.flag" in _rf_code and "_sf" in _rf_code
    and _rf_code.index("stopped.flag") < _rf_code.index("_spawn_watchdog("))
@@ -204,7 +201,7 @@ ok("兜底拉起的是机器人本体（pythonw scripts/persona_morph.py），�
    "_spawn_bot_direct" in _pm and '"persona_morph.py"' in _pm.split("def _spawn_bot_direct")[1][:900])
 
 
-# ── 2026-09-18 加（作者：「更新就做到更新成功，不能让用户还得去下新包」）──
+# ── ──
 _ua = io.open(os.path.join(ROOT, "agent", "update_apply.py"), encoding="utf-8").read()
 _wd2 = io.open(os.path.join(ROOT, "scripts", "watchdog.py"), encoding="utf-8").read()
 ok("更新成功后**由自己完成交接**：spawn 新看门狗（--takeover）再 os._exit",

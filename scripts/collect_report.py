@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """随包检验工具：在**任意一台电脑**上跑一次，生成一份"能发回来直接定位问题"的报告。
 
-用途（用户口径）：他把包拷到另一台电脑，双击 `一键检验（生成报告）.cmd` 跑一遍；
+用途：他把包拷到另一台电脑，双击 `一键检验（生成报告）.cmd` 跑一遍；
 遇到任何问题，**把生成的报告文件发回来**，我据此改进。
-⚠️ 2026-09-22：这里原来写的是一个**短名**（包里没有那个名字）—— 真实入口就两个：
+⚠️ 这里原来写的是一个**短名**（包里没有那个名字）—— 真实入口就两个：
 `一键检验（生成报告）.cmd`（会跑一份完整报告）与 `一键体检（只读，不发消息）.cmd`（更快、只读）。
 判据 `scripts\dead_entry_selftest.py` 现在会盯着这类"指名道姓让用户去找的文件"。
 
@@ -37,12 +37,12 @@ except Exception:
     pass
 
 OUT_DIR = os.path.join(ROOT, "报告")
-SECTIONS = []       # [(标题, 行列表, 原始dict)]
+SECTIONS = [] # [(标题, 行列表, 原始dict)]
 
 
 def redact(s):
     """打码：家目录 → %USERPROFILE% · 主机名 → %COMPUTERNAME%。
-    用户口径（2026-09-13）：发回来的报告里不许带他的个人信息。"""
+    发回来的报告里不许带他的个人信息。"""
     try:
         home = os.path.expanduser("~")
         if home:
@@ -75,7 +75,7 @@ def safe(fn, title, fallback="这一节失败（不影响其它节）"):
 def _os_registry():
     """系统口径（注册表）。
 
-    为什么不能只信 `platform.version()`（2026-09-15 跨机报告实测）：它读的是**进程 manifest**，
+    为什么不能只信 `platform.version()`：它读的是**进程 manifest**，
     Win10 上会报 `10.0.19041`，而那台机器真值是 **19045 / 22H2** ⇒ 报告报错了版本。
     """
     try:
@@ -119,7 +119,7 @@ def sec_system():
     try:
         # 自包含的 DPI 自查（不依赖任何开发期模块）
         u32 = ctypes.windll.user32
-        # ⚠️ 缩放必须**按 DPI 算**，不能拿分辨率相除（2026-09-15 跨机报告抓到假值，本机复现过）：
+        # ⚠️ 缩放必须**按 DPI 算**，不能拿分辨率相除：
         #    · 锁了 PerMonitorV2 之后 `HORZRES` 与 `DESKTOPHORZRES` **都是物理值**
         #      （本机实测 2560/2560）⇒ 两者相除必然得「1.0×」，而真值是 150%；
         #    · 不锁（进程 DPI-unaware）时 `GetDpiForSystem()` 返回 **96**、`HORZRES` 给逻辑值
@@ -134,9 +134,9 @@ def sec_system():
         gdi = ctypes.windll.gdi32
         gdi.GetDeviceCaps.restype = ctypes.c_int
         hdc0 = u32.GetDC(0)
-        dpi = int(gdi.GetDeviceCaps(hdc0, 88))                                         # LOGPIXELSX
-        phys_w, phys_h = gdi.GetDeviceCaps(hdc0, 118), gdi.GetDeviceCaps(hdc0, 117)   # DESKTOPHORZRES/VERTRES
-        seen_w, seen_h = gdi.GetDeviceCaps(hdc0, 8), gdi.GetDeviceCaps(hdc0, 10)       # HORZRES/VERTRES
+        dpi = int(gdi.GetDeviceCaps(hdc0, 88)) # LOGPIXELSX
+        phys_w, phys_h = gdi.GetDeviceCaps(hdc0, 118), gdi.GetDeviceCaps(hdc0, 117) # DESKTOPHORZRES/VERTRES
+        seen_w, seen_h = gdi.GetDeviceCaps(hdc0, 8), gdi.GetDeviceCaps(hdc0, 10) # HORZRES/VERTRES
         u32.ReleaseDC(0, hdc0)
         if not dpi:
             dpi = 96
@@ -177,10 +177,10 @@ def sec_system():
 def sec_wechat():
     lines, raw = [], {}
     try:
-        from agent import wechat_version_info  # type: ignore
+        from agent import wechat_version_info # type: ignore
     except Exception:
         try:
-            from agent.wechat import wechat_version_info   # type: ignore
+            from agent.wechat import wechat_version_info # type: ignore
         except Exception:
             wechat_version_info = None
     if wechat_version_info:
@@ -273,9 +273,8 @@ def sec_deps_and_caps():
 # ── 4 会话头可读性 / 面板探测 ──────────────────────────────────────────
 def sec_visual():
     lines, raw = [], {}
-    # ⚠️ 2026-09-17（网友那份检验报告）：**先把"消息库用的哪个目录"写进报告**——这行原来缺着，
+    # ⚠️ （网友那份检验报告）：**先把"消息库用的哪个目录"写进报告**——这行原来缺着，
     #    于是"配置里填的目录用不了、产品死在那条路上"谁也看不出来（同一份报告里诊断却说六步全过）。
-    # ⛔ 2026-09-18（用户反馈原文：「通过文件夹中的脚本检查出来的报告显示，他回我之前自定义的地址里
     #    去看文件了」）：这里原来为了拿 `_db_how` 去 **new 一个 WeChatAdapter**，库打不开时构造函数
     #    直接抛 ⇒ 整段退化成"消息库: 取不到"，那句"你填的用不了、实际回落到了 X"根本印不出来。
     #    现在分两步：① 运行中的那条路（`account_dir`）**试探、抛了也继续**；
@@ -308,7 +307,7 @@ def sec_visual():
         elif _info.get("note"):
             lines.append("  ⚠️ %s" % _info.get("note"))
         if _how:
-            # 账号这一维（2026-09-19 加，网友反馈：「切换微信号使用后提示寻找不到库、还要求相同的权限」
+            # 账号这一维（网友反馈
             # 「只有前几句话会正常回复，后面不再回复」）：多账号机器上**读的是哪个号**是看不见的第一杀手
             # ——读到旧号时新消息一条都进不来，而暂停/水位/key 全是好的 ⇒ 报告里必须留下这个证据。
             _alv = _info.get("account_live")
@@ -333,7 +332,6 @@ def sec_visual():
         fp = ch.capture()
         raw["header_len"] = len(fp)
         if fp and ch.is_blank(fp):
-            # 2026-09-15 跨机实测抓到的误报：微信**最小化**时 PrintWindow 返回全白帧（64 维全 255），
             # 而旧版报告照样写「可抓」⇒ 缺的正是这条"空白图不算抓到"的自检。
             raw["header_blank"] = True
             lines.append("  会话头指纹: **无效（空白图）** —— 抓到的整幅是纯色帧（样例 %s），不是真画面；"
@@ -364,19 +362,18 @@ def sec_visual():
 def sec_send_test():
     lines, raw = [], {}
     token = "检验%05d" % (int(time.time()) % 100000)
-    # ⛔ **自检工具绝不许动用户的鼠标**（2026-09-16 跨机 r12 事故：对面那台跑本工具时投递档切不过去 ⇒
     #    自动退回真实路径 ⇒ 动了 16 秒光标）。⇒ 这里强制关掉真鼠标兜底（环境变量优先级最高，无视 config）。
     os.environ["WXAGENT_REAL_FALLBACK"] = "0"
     try:
         from agent.chat_header import check, reference, ref_sizes
         from agent.wechat import WeChatAdapter
         wx = WeChatAdapter()
-        # 版本门状态（2026-09-15 跨机实测：这一环会把"发送实测"整条拦下 ⇒ 报告必须自己说清楚，
+        # 版本门状态（这一环会把"发送实测"整条拦下 ⇒ 报告必须自己说清楚，
         # 别让对面看着"False · 0.0s"猜；末尾还要给出放行的确切办法）。
         try:
             from agent import version_gate as _vg
             gt = _vg.check("send")
-        except Exception as _e:                      # noqa: BLE001
+        except Exception as _e: # noqa: BLE001
             gt = {"level": "?", "allow": True, "reason": "版本门查不了：%s" % _e}
         raw["gate"] = gt
         lines.append("  版本门: level=%s · 本次放行=%s · %s"
@@ -386,7 +383,7 @@ def sec_send_test():
         lines.append("  发送前会话头三态: %s · %s" % (st.get("status"), st.get("note")))
         # ⚠️ 一律走**生产路径** `send_text`：会话头判 ok 才投递，否则真实路径（按名字打开会话 +
         #    顺手学该尺寸的参照，下次即可投递）。**不允许"没参照就直接投递"**——
-        #    2026-09-13 自测事故：no_ref 照发 ⇒ 消息被打进当时打开的另一个会话（发给了联系人 E）。
+        # no_ref 照发 ⇒ 消息被打进当时打开的另一个会话（发给了联系人 E）。
         t0 = time.time()
         # ⚠️ 发送必须带**硬超时**：真实路径兜底可能长时间不返回（实测 >120s 未回），
         #    没有这道闸会让整份报告卡死 ⇒ 违反本工具"永不卡住"的设计原则。
@@ -395,7 +392,7 @@ def sec_send_test():
         def _do_send():
             try:
                 _box["r"] = wx.send_text("filehelper", token)
-            except Exception as _e:      # noqa: BLE001
+            except Exception as _e: # noqa: BLE001
                 _box["e"] = "%s: %s" % (type(_e).__name__, str(_e)[:150])
 
         _th = threading.Thread(target=_do_send, daemon=True)
@@ -410,7 +407,7 @@ def sec_send_test():
         lines.append("  发送结果: %s · %s · %.1fs · token=%s" % (ok, msg, time.time() - t0, token))
         raw.update({"token": token, "ok": bool(ok), "msg": str(msg),
                     "header_status": st.get("status"), "gate_allow": gt.get("allow")})
-        # ⚠️ 「走了哪条路」必须**据实**说（2026-09-15 跨机实测抓到的误报）：旧版只要消息里没出现
+        # ⚠️ 「走了哪条路」必须**据实**说：旧版只要消息里没出现
         #    「投递档」就写「用了真实路径兜底」，可实际是**被版本门拦在发送之前**（0.0s、一条都
         #    没发、光标没动）⇒ 那句话会让人以为"真鼠标兜底跑过了但失败了"。
         if "投递档" in str(msg):
@@ -433,7 +430,7 @@ def sec_send_test():
 
 
 def sec_delivery():
-    """2026-09-15 新增：**交付面**自检——新加的那些功能在这台机器上到底能不能用。
+    """**交付面**自检——新加的那些功能在这台机器上到底能不能用。
 
     为什么单独一节：原来的检验报告只覆盖"环境 + 微信窗口 + 依赖/UIA + 会话头 + 投递发送"，
     而这一年新加的音源（edge 三档）、B 站解析、模型端点、更新链、磁盘占用**一条都没进**，
@@ -471,7 +468,7 @@ def sec_delivery():
     except Exception as e:
         lines.append("  语音音源: 读不到（%s）" % type(e).__name__)
     try:
-        # ⚠️ 2026-09-17：这里原来只 `which("ffmpeg")`（只查 PATH）⇒ 干净机器上报告写着"没找到"，
+        # ⚠️ 这里原来只 `which("ffmpeg")`（只查 PATH）⇒ 干净机器上报告写着"没找到"，
         #    而 `requirements.txt` 里的 imageio-ffmpeg **本来就自带一份**（`agent/ffmpeg_bin.py`
         #    是唯一解析入口：配置 → PATH → 自带）⇒ 那条结论是假的，会把人指向"去装 ffmpeg"。
         from agent import ffmpeg_bin as _FB
@@ -493,7 +490,7 @@ def sec_delivery():
         if not base:
             lines.append("  模型端点: 没填地址")
         else:
-            u = join_url(base, "/models")      # ⚠️ 必须带前导斜杠：join_url 只 rstrip("/") 再拼，不补斜杠
+            u = join_url(base, "/models") # ⚠️ 必须带前导斜杠：join_url 只 rstrip("/") 再拼，不补斜杠
             req = _ur.Request(u, headers=_auth_headers(str(api.get("api_key") or "")))
             with _ur.urlopen(req, timeout=10) as r:
                 d = json.loads(r.read().decode("utf-8", "replace"))
@@ -526,7 +523,7 @@ def sec_delivery():
         from agent import housekeeping as HK
         f = HK.footprint()
         _dirs = f["dirs"]
-        # ⛔ V-R14-4（第十四轮，P3）：①把**占用最大的目录**也报出来（原来只报临时残留与语音产物，
+        # ⛔ ①把**占用最大的目录**也报出来（原来只报临时残留与语音产物，
         #   而 `data/gen_images` 实测 665MB＝`data/` 的 99%，用户看不到）；②写明**删除不可恢复**
         #   （`housekeeping_pruned.jsonl` 是审计记录、不是回收站）——"清得掉多少"与"删了能不能回来"
         #   是两件事，用户有权先知道再决定。
@@ -549,24 +546,24 @@ def sec_delivery():
 def sec_compat():
     """七、兼容性指纹：**每台机器都不一样**的那些事实（只读，任何一节失败都不影响其它节）。
 
-    ⛔ 为什么要单独一节（2026-09-22；作者原话「其实最重要的就是兼容性，好多人的电脑跟好多人
+    ⛔ 为什么要单独一节（
       的情况都不一样」）：报障里最常见的对不上，就是"我这台是那样、你那台是这样"——
       Windows 版本/DPI/微信主窗类名/Python/端口/WebView2/消息库目录与分片/库页1 是明文头还是全加密。
-      这几行**一贴出来，多半不用再问第二轮**。同一份口径也在 `agent\\compat.py`（唯一实现）。
+      这几行**一贴出来，多半不用再问**。同一份口径也在 `agent\\compat.py`（唯一实现）。
     """
     lines = []
     try:
         from agent import compat as _cp
         lines.extend(["  " + x for x in _cp.lines()])
-        # ⛔ 2026-09-22：再加**11 条轴**的现测事实（＝机器可读的兼容性矩阵；业界口径统一是
+        # ⛔ 再加**11 条轴**的现测事实（＝机器可读的兼容性矩阵；业界口径统一是
         #   "探测能力、别按版本分支"，所以每行都必须是这台机器上量出来的值，量不到写"未知"）。
         lines.append("  —— 兼容性矩阵（11 条轴，全部现测；不是「支持/不支持」）——")
         lines.extend([x for x in _cp.axis_lines()])
-        # ⛔ 2026-09-22：再给**最小冒烟矩阵** —— 11 条轴各一条**行为断言**（ok/skip/fail + 证据）。
+        # ⛔ 再给**最小冒烟矩阵** —— 11 条轴各一条**行为断言**（ok/skip/fail + 证据）。
         #   目的＝"换一台机器先跑一遍就知道哪条能力在这台机器上成立"，比"读了几个值"更能定位。
         lines.append("  —— 最小冒烟矩阵（11 条轴，逐条行为断言；skip 都写清了为什么测不了）——")
         lines.extend([x for x in _cp.smoke_lines()])
-    except Exception as e:                                        # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         lines.append("  兼容性指纹采集失败：%s: %s" % (type(e).__name__, str(e)[:80]))
     lines.append("  （把这一节连同前几节一起发回来即可；里面不含口令、不含账号目录名）")
     return lines, {}
@@ -583,13 +580,13 @@ def main():
     args = ap.parse_args()
 
     if args.allow_send:
-        # 解「鸡生蛋」（2026-09-15 跨机实测）：在没实测过的版本对上，发送会被版本门拦下，
+        # 解「鸡生蛋」：在没实测过的版本对上，发送会被版本门拦下，
         # 而"报告想测的正是发送" ⇒ 报告工具必须自带一条显式放行路。**只在本次进程内有效**。
         try:
             from agent import version_gate as _vg
             _vg.allow_session("collect_report --allow-send")
             print("已临时放行版本门（仅本次运行，重启后重新拦）")
-        except Exception as _e:                      # noqa: BLE001
+        except Exception as _e: # noqa: BLE001
             print("放行版本门失败：%s" % _e)
 
     t0 = time.time()
@@ -605,7 +602,6 @@ def main():
         add("六、投递发送实测", lines, raw)
     else:
         add("六、投递发送实测", ["  未执行（加 --send-test 才会真发一条测试消息）"], {})
-    # 七、兼容性指纹（2026-09-22 加）：**永远排在最后**，用户报障时连它一起发回来
     lines, raw = safe(sec_compat, "七、兼容性指纹") or ([], {})
     add("七、兼容性指纹（报障时请带上这一节）", lines, raw)
 
@@ -633,7 +629,7 @@ def main():
     print("  " + base + ".json")
     if args.open:
         try:
-            os.startfile(OUT_DIR)      # noqa: S606  打开报告目录
+            os.startfile(OUT_DIR) # noqa: S606  打开报告目录
         except Exception:
             pass
     return 0

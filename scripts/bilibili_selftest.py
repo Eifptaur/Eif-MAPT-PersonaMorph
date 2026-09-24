@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""B 站解析判据（2026-09-15，对应用户重新点名的「解析B站视频」）。
+"""B 站解析判据。
 
 守的东西：
   A. **认得出来**：BV 号（纯/混在中文里/带标点/大小写）、完整视频页链接、旧式 av 号、b23.tv 短链。
@@ -20,7 +20,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
-from agent import bilibili as B            # noqa: E402
+from agent import bilibili as B # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -94,7 +94,7 @@ try:
     v3, why3 = B.view("BV1xx411c7mD")
     ok("data 缺 bvid ⇒ None + 原因", v3 is None and "bvid" in why3, why3[:40])
 
-    # AI 标识：只认后台字段 argue_info.argue_msg（2026-09-15 实测手机端不渲染这一行）
+    # AI 标识：只认后台字段 argue_info.argue_msg
     B._get_json = lambda url, timeout=12: ({
         "code": 0, "data": {"bvid": "BV1xx411c7mD", "title": "T", "cid": 1,
                             "argue_info": {"argue_msg": "含AI生成内容", "argue_type": 0}}}, "")
@@ -163,7 +163,7 @@ finally:
 # ── G. 下载：要么真下到、要么如实说没装 ─────────────────────────────────────
 sect("G. 下载：没有 yt-dlp 就如实说，且不落文件")
 _saved_bin = B.ytdlp_bin
-import tempfile                                          # noqa: E402
+import tempfile # noqa: E402
 _d = tempfile.mkdtemp(prefix="pm_bili_")
 try:
     B.ytdlp_bin = lambda: ""
@@ -178,8 +178,8 @@ _real = B.ytdlp_bin()
 print("  （本机 yt-dlp：%s）" % (_real or "未安装 ⇒ 下载那两件要先解决依赖"))
 
 # ── H. 接线：真注册进工具表，且走的是本模块 ─────────────────────────────────
-sect("H. 接线（用户口径：「别和链条断联」）")
-from agent import tools as T                             # noqa: E402
+sect("H. 接线")
+from agent import tools as T # noqa: E402
 _defs = T.build_tool_defs()
 _bd = [t for t in _defs if t.get("name") == "read_bilibili"]
 ok("工具表里有 read_bilibili", len(_bd) == 1, "共 %d 个工具" % len(_defs))
@@ -192,10 +192,10 @@ ok("执行体走 bilibili.info（不是另写一套）", "_bili.info(" in _src a
 ok("执行体在拿不到时返回错误而不是空数据", 'return _err("解析不了这条 B 站链接' in _src)
 ok("反证：没有出现「解析失败就当成功」的兜底", "解析不了这条 B 站链接" in _src and "return _ok({" in _src)
 
-# ── J. 功能映射与连接（用户 2026-09-15：「在UI上做好功能映射和功能连接」）──────────
+# ── J. 功能映射与连接──────────
 sect("J. 功能映射：配置键 / 控制台开关 / 关掉真的拒绝 / 文案不说黑话")
-import json as _json                                     # noqa: E402
-from agent.config import DEFAULT_CONFIG as _DC            # noqa: E402
+import json as _json # noqa: E402
+from agent.config import DEFAULT_CONFIG as _DC # noqa: E402
 
 _bc = (_DC.get("bilibili") or {})
 _H2 = __import__("agent.console_html", fromlist=["HTML"]).HTML
@@ -210,8 +210,8 @@ ok("控制台有「看懂B站链接」开关", 'data-cfg="bilibili.enabled"' in 
 ok("控制台有「听B站视频(秒)」上限", 'data-cfg="bilibili.listen_max_seconds"' in H)
 
 # 关掉时工具必须如实拒绝（不是静默、也不是照做）
-from agent import tools as _T2                            # noqa: E402
-from agent import config as _C2                           # noqa: E402
+from agent import tools as _T2 # noqa: E402
+from agent import config as _C2 # noqa: E402
 _real_gc = _C2.get_config
 try:
     _C2.get_config = lambda: {"bilibili": {"enabled": False}}
@@ -222,8 +222,8 @@ try:
 finally:
     _C2.get_config = _real_gc
 
-# 文案不许对一般用户说黑话（这一条是被用户点名后加的）
-import re as _re2                                         # noqa: E402
+# 文案不许对一般用户说黑话
+import re as _re2 # noqa: E402
 _bad_words = ["EDGE_VOICES", "edge_tts_selftest", "voice_models", "bilibili.enabled",
               "判据", "_selftest", "config.json 里改"]
 _seg_bili = H[H.find('data-cfg="bilibili.enabled"'): H.find('data-cfg="bilibili.enabled"') + 700]
@@ -261,7 +261,7 @@ try:
     ok("下载失败 ⇒ None + 原因", pa is None and "403" in wa, wa[:40])
     ok("反证：下载失败不落文件", os.listdir(_d2) == [], str(os.listdir(_d2)))
 
-    B._download = lambda url, dest, timeout=180: (200, "")      # 小于 10KB 的门槛
+    B._download = lambda url, dest, timeout=180: (200, "") # 小于 10KB 的门槛
     open(os.path.join(_d2, "junk"), "w").close()
     pb, wb = B.download_audio("BV1xx411c7mD", 999, _d2)
     ok("反证：下回来的音频太小也当失败（200 字节不算下到）", pb is None and "太小" in wb, wb[:40])
@@ -272,11 +272,11 @@ try:
 finally:
     B._get_json, B._download = _sg, _sd
 
-# ⛔ 第十轮 V-R10-34 第 5 条：音频流上限是 **384MB**（不是 128MB）—— 128MB 会误伤
+# ⛔ 第 5 条：音频流上限是 **384MB**（不是 128MB）—— 128MB 会误伤
 #   2 小时高码率音频（192kbps ≈ 173MB / 320kbps ≈ 288MB）。这条断言是为了**别被改回去**：
 #   比 256MB 小就是回退，比 1GB 大等于上限名存实亡。
 _lim = B._download.__defaults__[1]
-ok("音频流上限 ≥ 256MB 且 ≤ 1GB（V-R10-34 第 5 条：128MB 会误伤长音频）",
+ok("音频流上限 ≥ 256MB 且 ≤ 1GB",
    256 * 1024 * 1024 <= int(_lim) <= 1024 * 1024 * 1024, "%d 字节" % int(_lim))
 ok("音频流**不再**用整轮墙钟当超时（改成逐 recv 的 socket 超时：稳定推进的流不许被掐）",
    "墙钟换成" in (B._download.__doc__ or ""), (B._download.__doc__ or "")[:60])

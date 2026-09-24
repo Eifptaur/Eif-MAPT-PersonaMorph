@@ -21,7 +21,7 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, ROOT)
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
-import pm_update as U          # noqa: E402
+import pm_update as U # noqa: E402
 
 PASS = FAIL = 0
 
@@ -101,13 +101,13 @@ try:
     man_old["base"]["version"] = "0.9.0"
     ok(U.check_update(man_old, target)["status"] == "older", "远端更旧 ⇒ older")
 
-    # ⛔ 2026-09-21 加（第四轮审计 **V-R4-14，P2**）：版本比较原来是**裸字符串** ——
+    # ⛔ 版本比较原来是**裸字符串** ——
     #   `"2026.9.9" > "2026.9.10"` 在字符串序里是 **True**（'9' > '1'）⇒ 远端更旧也报"有新版本"。
     #   注意本文件的 helper 是 `ok(cond, msg)`（**条件在前**），别按别的文件那套写反。
     print("\n[U1b] 版本比较必须按**数值段**（不是字符串序）")
-    _man = lambda v: {"base": {"version": v}}                                    # noqa: E731
+    _man = lambda v: {"base": {"version": v}} # noqa: E731
     _t2 = os.path.join(tmp, "v2")
-    _st2 = os.path.join(_t2, U.STATE_REL)          # 用模块自己的常量，别猜路径（`data/installed.json`）
+    _st2 = os.path.join(_t2, U.STATE_REL) # 用模块自己的常量，别猜路径（`data/installed.json`）
     os.makedirs(os.path.dirname(_st2), exist_ok=True)
     with open(_st2, "w", encoding="utf-8") as _f:
         json.dump({"version": "2026.9.9", "sha256": "x"}, _f)
@@ -156,7 +156,7 @@ try:
             os.remove(os.path.join(target, "agent", "c.py"))
         write(os.path.join(target, "data", "installed.json"), json.dumps({"version": "1.0.0", "sha256": "x" * 64}))
     reset_old()
-    # V-R7-5 #1：U4 的失败点其实在**载荷校验**（这一步在换入之前，一个文件都还没动过），所以原来那句
+    # #1：U4 的失败点其实在**载荷校验**（这一步在换入之前，一个文件都还没动过），所以原来那句
     # "内容已回滚"只证明了"没被改"——把 `rollback()` 换成 no-op 也照样绿。起手把 a.py 写成
     # **既非老版也非新版**的哨兵：只要失败前真换入过文件，判据就能看出"没还原"。
     _SENT = "A=2 SENTINEL-既非老版也非新版\n"
@@ -174,9 +174,9 @@ try:
 
     print("\n[U5] 负向：载荷缺件（＝下载中断）⇒ 必须失败且回滚")
     reset_old()
-    write(os.path.join(target, "agent", "a.py"), _SENT)      # V-R7-5 #1：同 U4，先放哨兵再验"没被碰"
+    write(os.path.join(target, "agent", "a.py"), _SENT) # #1：同 U4，先放哨兵再验"没被碰"
     short_payload = os.path.join(tmp, "payload-short.zip")
-    make_zip(short_payload, {"agent/a.py": new["agent/a.py"]})          # 少了 c.py
+    make_zip(short_payload, {"agent/a.py": new["agent/a.py"]}) # 少了 c.py
     rc, msg, _ = U.apply_update(manifest, patch, short_payload, target)
     ok(rc == 1 and "缺 plan 要求的文件" in msg, "载荷不完整 ⇒ rc=1（%s）" % msg[:40])
     ok(open(os.path.join(target, "agent", "a.py"), encoding="utf-8").read() == _SENT,
@@ -195,7 +195,7 @@ try:
 
     print("\n[U8] 负向：组合校验（换完后整棵树对不上）必须能红")
     reset_old()
-    # V-R7-5 #1：这条是全班**唯一真走到 rollback** 的用例 ⇒ 这里放哨兵当反向锚：
+    # #1：这条是全班**唯一真走到 rollback** 的用例 ⇒ 这里放哨兵当反向锚：
     # 真回滚 ⇒ a.py 回到哨兵；`rollback()` 变 no-op ⇒ a.py 会停在新版内容（判据必红）。
     _SENT8 = "A=2 ROLLBACK-PROBE-既非老版也非新版\n"
     write(os.path.join(target, "agent", "a.py"), _SENT8)

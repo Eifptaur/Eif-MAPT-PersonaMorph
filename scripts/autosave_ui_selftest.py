@@ -24,9 +24,9 @@ try:
 except Exception:
     pass
 
-from agent import console_html as CH          # noqa: E402
-from agent import webui                       # noqa: E402
-from agent.config import deep_merge           # noqa: E402
+from agent import console_html as CH # noqa: E402
+from agent import webui # noqa: E402
+from agent.config import deep_merge # noqa: E402
 
 PASS, FAIL = [], []
 HTML = CH.HTML
@@ -97,7 +97,7 @@ def main():
        "new Event('change', {bubbles:true})" in SRC)
     ok("省 token 卡片的监听器只接一次（老毛病：反复 syncToForm 会越积越多）",
        "if(!tb._wired)" in SRC and "tb._wired = true" in SRC)
-    # 2026-09-15 口径变更（④ 界面文案通俗化：可见区去 emoji）⇒ 撤销提示从「↩ 已撤销：」改成「已撤销：」。
+    # 口径变更（④ 界面文案通俗化：可见区去 emoji）⇒ 撤销提示从「↩ 已撤销：」改成「已撤销：」。
     ok("中文文案齐（生效/撤销/兜底提示）",
        all(t in SRC for t in ("已生效：", "已撤销：", "没有可撤销的修改", "自动生效失败：")))
 

@@ -1,4 +1,4 @@
-// wingliphs.cs —— 窗口顶栏三个按钮的**自绘字形**（2026-09-15 用户：「减号、全屏、叉号的样子很奇怪呀，不统一」）
+// wingliphs.cs —— 窗口顶栏三个按钮的**自绘字形**
 //
 // 为什么不能继续用文本按钮：`—` / `□` / `❐` / `✕` 来自不同字形簇，笔画粗细、基线、视觉重心都不一样，
 // 摆在同一排必然"看着怪"。自研显示层口径也要求图标自己画（不用系统/字体字形）。
@@ -58,7 +58,7 @@ namespace WxLauncher
             }
             // 同一支笔：粗细按控件高矮等比（DPI 无关），颜色取同一档
             float pen = Math.Max(1.2f, Height / 18f);
-            Color ink = _kind == GlyphKind.Close ? Color.FromArgb(232, 120, 120) : StyleKit.ConsoleInk;   // 控制台顶栏是深底 ⇒ 用深底专用字形色（原来的 Sub 太暗）
+            Color ink = _kind == GlyphKind.Close ? Color.FromArgb(232, 120, 120) : StyleKit.ConsoleInk; // 控制台顶栏是深底 ⇒ 用深底专用字形色（原来的 Sub 太暗）
             using (Pen p = new Pen(ink, pen))
             {
                 p.StartCap = LineCap.Round; p.EndCap = LineCap.Round;
@@ -68,18 +68,18 @@ namespace WxLauncher
                 float half = s / 2f;
                 switch (_kind)
                 {
-                    case GlyphKind.Min:      // 一条横线（与叉号/方框同宽）
+                    case GlyphKind.Min: // 一条横线（与叉号/方框同宽）
                         g.DrawLine(p, cx - half, cy, cx + half, cy);
                         break;
-                    case GlyphKind.Max:      // 一个方框
+                    case GlyphKind.Max: // 一个方框
                         g.DrawRectangle(p, cx - half, cy - half, s, s);
                         break;
-                    case GlyphKind.Restore:  // 叠两层方框（还原）
+                    case GlyphKind.Restore: // 叠两层方框（还原）
                         g.DrawRectangle(p, cx - half, cy - half + 2, s - 2, s - 2);
                         g.DrawLine(p, cx - half + 2, cy - half, cx + half, cy - half);
                         g.DrawLine(p, cx + half, cy - half, cx + half, cy + half - 2);
                         break;
-                    case GlyphKind.Close:    // 一个叉（与方框同边长、同笔宽）
+                    case GlyphKind.Close: // 一个叉（与方框同边长、同笔宽）
                         g.DrawLine(p, cx - half, cy - half, cx + half, cy + half);
                         g.DrawLine(p, cx + half, cy - half, cx - half, cy + half);
                         break;

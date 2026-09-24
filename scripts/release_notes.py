@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """群相 · 发布说明写法（**单一事实源**）。
 
-作者 2026-09-20 定的规矩（原话，逐字）：
+逐字）：
 
     「现在去把 GitHub 上的所有说明改了，以后也是如此，之前的也要改。
       修 Bug 就只用说『修复了一些 bug』这句话，最多也就一句话，简单描述，
@@ -44,9 +44,9 @@ def _judge(text: str, count: int, label: str) -> list:
     """count＝这一版说明的"句/条"数（公告要点条数，或正文行数）。返回问题清单。"""
     t = (text or "").strip()
     if not t:
-        return []                      # 空由调用方各自决定是否算问题（发版脚本要求非空）
+        return [] # 空由调用方各自决定是否算问题（发版脚本要求非空）
     if has_feature(t):
-        return []                      # 有新增功能 ⇒ 可以详细写，不设检查
+        return [] # 有新增功能 ⇒ 可以详细写，不设检查
     bad = []
     if count > 1:
         bad.append("%s 没有新增功能，只许一句（现在 %d 句）" % (label, count))

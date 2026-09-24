@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
-"""「不抢前台的自动弹窗」判据（2026-09-14，测机报告 ⑦ 第三批：前台纪律 + 托盘兜底）。
+"""「不抢前台的自动弹窗」判据。
 
-用户口径原话：「**把弹窗切出来的那一秒，就应该立刻让它到后台**」＋「persona morph 不能自己把弹窗切出来吗」。
 本判据守四条：
   ① **窗口 API 都带 argtypes**（不声明时 HWND 会按 32 位 int 传 ⇒ `SetWindowPos` 报 1400 无效句柄）；
   ② **抬起 ≠ 抢前台**：真拿一个真窗口抬起来，事后 `GetForegroundWindow()` 必须与抬起前**完全一致**；
@@ -20,10 +19,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
-os.environ["WX_NO_UI_POP"] = "1"          # 本自检全程不许弹任何窗口（后面还会单独验这条）
+os.environ["WX_NO_UI_POP"] = "1" # 本自检全程不许弹任何窗口（后面还会单独验这条）
 
-from agent import notify_ui as NU         # noqa: E402
-from agent import version_gate as VG      # noqa: E402
+from agent import notify_ui as NU # noqa: E402
+from agent import version_gate as VG # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -61,12 +60,11 @@ ok("不弹系统 MessageBox、不动鼠标键盘",
 ok("不装包/不改配置", all(k not in SRC for k in ("pip install", "SaveKey", "uninstall")))
 
 print("── A2. 静态：不留 NameError 类暗雷（每个 LOAD_GLOBAL 都能解析）──")
-# ⚠️ 2026-09-17 立这条判据的起因（真事故，用户报「每重启一次就多一个控制台」）：
 #   `find_console_window()` 里把回调类型写成了 `_WNDUMPROC`，而本模块只定义了 `_WNDENUMPROC`
 #   ⇒ `NameError` 被紧邻的 `except Exception` 吃掉 ⇒ **函数永远返回 0**，
 #   `open_console()` 的"复用已开的窗口"分支从没生效过。**拼写错误的全局名必须能被静态抓到**。
-import builtins                                             # noqa: E402
-import dis                                                  # noqa: E402
+import builtins # noqa: E402
+import dis # noqa: E402
 
 
 def _code_objs(code):
@@ -122,9 +120,9 @@ if _live:
 else:
     skip("开着的控制台窗口能被找到", "本机当前没有开着的控制台窗口")
 
-# ⚠️ 2026-09-17 更正：`raise_without_stealing(0)` 的语义是「**自己去找**控制台窗口」（`hwnd or find(...)`），
+# ⚠️ `raise_without_stealing(0)` 的语义是「**自己去找**控制台窗口」（`hwnd or find(...)`），
 #   不是"没有窗口"。这条判据原先是**靠 bug 才绿的**（当时 find 永远返回 0）。要测"没有窗口"必须显式钉住它。
-gw = int(ctypes.windll.kernel32.GetConsoleWindow() or 0)      # 自检进程自己的控制台窗（真窗口）
+gw = int(ctypes.windll.kernel32.GetConsoleWindow() or 0) # 自检进程自己的控制台窗（真窗口）
 _keep_find = NU.find_console_window
 try:
     NU.find_console_window = lambda: 0
@@ -143,7 +141,7 @@ if gw:
         NU.find_console_window = _keep_find
     ok("传 0 的语义＝自己去找控制台窗口（找到就用它）", r_auto.get("hwnd") == gw, "hwnd=%s" % r_auto.get("hwnd"))
 
-gw = int(ctypes.windll.kernel32.GetConsoleWindow() or 0)      # 自检进程自己的控制台窗（真窗口）
+gw = int(ctypes.windll.kernel32.GetConsoleWindow() or 0) # 自检进程自己的控制台窗（真窗口）
 if gw:
     before = NU.foreground()
     r = NU.raise_without_stealing(gw)
@@ -156,26 +154,26 @@ if gw:
 else:
     skip("抬起真窗口", "本会话没有控制台窗口（无桌面/无控制台）")
 
-print("── B3. 窗口判据：只有「群相 控制台」才算控制台（2026-09-19 钉住那次事故）──")
-# ⛔ 起因（作者当场报）：点一下「一键启动」没打开控制台、**还得再点一下**。
+print("── B3. 窗口判据：只有「群相 控制台」才算控制台──")
+# ⛔ 起因：点一下「一键启动」没打开控制台、**还得再点一下**。
 #   根因＝旧判据按**标题子串**认窗（"群相" / "控制台" / 裸 "一键启动"），而启动器自己的窗口就叫
 #   「群相 一键启动」「群相 启动完成」，且**控制台窗与启动器窗是同一个 exe**（一键启动.exe）
 #   ⇒ 机器人侧判"已经开着 ⇒ 复用"（不开）、2 秒后启动器侧判"机器人侧已打开"（也不开）⇒ **两边都不开**。
 #   下面这几条样本＋两扇真窗，就是钉住这个回归的判据。窗一律建在**屏幕外**（不打扰用户）。
 _CASES = [
     ("群相 控制台", "一键启动.exe", True),
-    ("群相 控制台 - Google Chrome", "chrome.exe", True),        # 回退浏览器打开时是标签页
-    ("群相 一键启动", "一键启动.exe", False),                    # ← 事故主犯
+    ("群相 控制台 - Google Chrome", "chrome.exe", True), # 回退浏览器打开时是标签页
+    ("群相 一键启动", "一键启动.exe", False),
     ("群相 启动完成", "一键启动.exe", False),
     ("群相 正在启动", "一键启动.exe", False),
     ("群相 已就绪", "一键启动.exe", False),
-    ("接手群相拍一拍落点修复 — DeepSeek Harness - Google Chrome", "chrome.exe", False),   # 只是标题里有"群相"
+    ("接手群相拍一拍落点修复 — DeepSeek Harness - Google Chrome", "chrome.exe", False), # 只是标题里有"群相"
     ("命令提示符", "cmd.exe", False),
     ("", "一键启动.exe", False),
 ]
 _bad = [("%s/%s→%s(期望%s)" % (_t[:14], _e, _g, "算" if _w else "不算"))
         for _t, _e, _w in _CASES for _g in [NU.classify_console_window(_t, _e)] if bool(_g) != _w]
-ok("9 个标题样本判对（含事故主犯「群相 一键启动」）", not _bad, "；".join(_bad) if _bad else "全对")
+ok("9 个标题样本判对", not _bad, "；".join(_bad) if _bad else "全对")
 ok("自家 exe 的控制台窗排在同名浏览器页之前（EXE_HINTS 只做排序加分、不再能单独成立）",
    NU.classify_console_window("群相 控制台", "一键启动.exe") > NU.classify_console_window("群相 控制台", "chrome.exe"))
 ok("裸「群相」不再能单独认成控制台（浏览器标签页/文档窗会撞）",
@@ -224,13 +222,13 @@ print("── C. 弹窗流程：能弹/不重复弹/弹不出来也要如实报 
 _real_find, _real_fg, _real_open = NU.find_console_window, NU.foreground, NU.open_console
 try:
     NU.find_console_window = lambda: 4242
-    NU.foreground = lambda: 4242                              # 控制台已经在前台
+    NU.foreground = lambda: 4242 # 控制台已经在前台
     r1 = NU.pop_decision_ui(wait_s=0.1)
     ok("控制台已在前台 ⇒ 不再弹（skip-visible）", r1.get("action") == "skip-visible", str(r1.get("action")))
 
     if gw:
         NU.find_console_window = lambda: gw
-        NU.foreground = lambda: 999                           # 用户在别处 ⇒ 要弹
+        NU.foreground = lambda: 999 # 用户在别处 ⇒ 要弹
         r2 = NU.pop_decision_ui(wait_s=0.1)
         # ⚠️ 只锚"试过闪烁"（确定），不锚 FlashWindowEx 的回值：窗口已经在闪 / 被系统接管时它给 FALSE
         ok("用户在别处 ⇒ 走抬起+闪烁", r2.get("action") == "raised" and r2.get("flash_tried") is True,
@@ -241,7 +239,7 @@ try:
 
         def _fake_open(url=""):
             calls["open"] += 1
-            _state["hwnd"] = gw                               # 开完之后窗口就有了
+            _state["hwnd"] = gw # 开完之后窗口就有了
             return {"ok": True, "how": "假窗口"}
 
         NU.open_console = _fake_open
@@ -267,19 +265,19 @@ ok("弹窗在后台线程里跑（不挡住 /api/status）",
    "threading.Thread(target=_run, daemon=True" in GSRC)
 ok("失败只写日志、不影响开单", "待决单弹窗失败（不影响开单）" in GSRC)
 ok("WX_NO_UI_POP=1 能关掉弹窗", 'os.environ.get("WX_NO_UI_POP") == "1"' in GSRC)
-import tempfile                                            # noqa: E402
-from agent import pending_decisions as PD                  # noqa: E402
+import tempfile # noqa: E402
+from agent import pending_decisions as PD # noqa: E402
 _tmp = tempfile.mkdtemp(prefix="nu-judge-")
 try:
     PD.DECISIONS_PATH = os.path.join(_tmp, "pd.json")
-    r5 = VG.pending(wechat="9.9.9", adapter="1.1.1")       # 新开单（弹窗被 WX_NO_UI_POP 关掉）
+    r5 = VG.pending(wechat="9.9.9", adapter="1.1.1") # 新开单（弹窗被 WX_NO_UI_POP 关掉）
     ok("新开单时报「已按 WX_NO_UI_POP 关掉弹窗」",
        isinstance(r5.get("pop"), dict) and "WX_NO_UI_POP" in str(r5["pop"].get("skipped") or ""), str(r5.get("pop")))
-    r6 = VG.pending(wechat="9.9.9", adapter="1.1.1")       # 第二遍：同一对版本不再开单、也不弹
+    r6 = VG.pending(wechat="9.9.9", adapter="1.1.1") # 第二遍：同一对版本不再开单、也不弹
     ok("同一对版本第二次不再弹", r6.get("created") is False and bool((r6.get("pop") or {}).get("skipped")),
        str(r6.get("pop")))
 finally:
-    import shutil                                          # noqa: E402
+    import shutil # noqa: E402
     shutil.rmtree(_tmp, ignore_errors=True)
 
 print("\n通过 %d / 失败 %d（跳过 %d）" % (PASS, FAIL, SKIP))

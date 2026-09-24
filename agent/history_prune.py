@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
 """删「运行明细」时，把那一轮对应的**对话历史**一并删掉。
 
-⛔ 为什么要有它（作者 2026-09-18 原话）：
+⛔ 为什么要有它：
   「**就应该删的是历史啊**，因为我删运行明细那个地方，就是删他回了什么。也就是说，我删明细就等于
    我想要删历史，就等于我想删掉『**我说什么而他回什么**』的这一段。怎么能只能删明细呢？
    这就是错的，**从根上就是错的**，赶紧修啊」
   · 事实：模型的上下文来自 `agent/store.py`（`data/messages/<会话>.json`，`store.recent()`），
     而控制台删的 `data/sessions/*.jsonl` **只是运行日志**（计费/复盘用）⇒ **只删它等于什么都没删**
-    （现场表现：作者把运行明细删光，机器人照样叫他"复读机"，因为它还看得见那些一模一样的旧消息）。
+    。
 
 做法（可解释、可单测）：
-  · **归属**（第二版，2026-09-18 改）：每条存档消息**归它所属的那一轮**，只删"归属于被删轮次"的条目。
+  · **归属**：每条存档消息**归它所属的那一轮**，只删"归属于被删轮次"的条目。
     · 我们自己发的（`self=True`，＝那一轮的回复）⇒ 归**此前最近的一轮**；
     · 别人发的（触发语 / 拍一拍 / 系统提示）⇒ 若**紧邻其后**的一轮在 60 秒内，归**那一轮**（它就是触发语），
       否则归此前最近的一轮。
@@ -39,12 +39,12 @@ _LEAD_MS = 60 * 1000
 
 
 def iso_to_ms(ts) -> int:
-    """`2026-09-18T07:06:02` → epoch 毫秒（失败返回 0）。"""
+    """`06:02` → epoch 毫秒（失败返回 0）。"""
     try:
         s = str(ts or "").strip().replace("Z", "")
         if not s:
             return 0
-        if s.isdigit():                       # 已经是毫秒戳
+        if s.isdigit(): # 已经是毫秒戳
             return int(s)
         return int(datetime.datetime.fromisoformat(s).timestamp() * 1000)
     except Exception:
@@ -99,7 +99,7 @@ def entry_owner(ts: int, is_self, times, lead_ms: int = _LEAD_MS,
 
     · `self=True`（我们自己发的＝那一轮的回复）⇒ 归**此前最近的一轮**；
     · 别人发的（触发语 / 拍一拍事件 / 系统提示）⇒ 紧邻其后的一轮在 `lead_ms` 内就归它，否则归此前最近的一轮；
-    · 早于该会话第一轮的内容：只在 `lookback_ms` 内才归第一轮，否则不归任何一轮（不去动它）。
+    · 早于该会话内容：只在 `lookback_ms` 内才归否则不归任何一轮（不去动它）。
     """
     times = list(times or [])
     if not times:
@@ -176,7 +176,7 @@ def prune_for_deleted_runs(store, all_entries, deleted, trash_root: str = "", st
                     _why_bak = "取档案路径失败：%s" % str(e)[:60]
                 if src and os.path.exists(src):
                     os.makedirs(trash_root, exist_ok=True)
-                    # ⛔ 2026-09-21（第五轮审计 **V-R5B-1，P1**）：这里原来写成 `"%s.json.%s"`，
+                    # ⛔ 这里原来写成 `"%s.json.%s"`，
                     #   而 `src` 本身就以 `.json` 结尾 ⇒ 备份名变成 `x.json.json.<stamp>`；
                     #   消费者（`restore_history`）只剥 `.stamp` ⇒ 还原出个 `x.json.json`，
                     #   真档案**一个字节都没回来**，而界面照样报"已撤销，恢复了…"（静默失败）。
@@ -187,9 +187,9 @@ def prune_for_deleted_runs(store, all_entries, deleted, trash_root: str = "", st
                     _backed = True
                 else:
                     _why_bak = "找不到该会话的档案（%s）" % (os.path.basename(str(src)) if src else "路径取不到")
-            except Exception as e:                                   # noqa: BLE001
+            except Exception as e: # noqa: BLE001
                 _why_bak = "%s: %s" % (type(e).__name__, str(e)[:60])
-            # ⛔ 2026-09-21（第五轮回执 **V-R5B-11**）：备份失败以前被**吞掉、照样删** —— 用户删完点
+            # ⛔ 备份失败以前被**吞掉、照样删** —— 用户删完点
             #   「撤销」才发现什么都没备份回来（而提示还不区分"没有历史可还原"与"没备份成功"）。
             #   ⇒ 口径：**没备份成功就不删**（宁可这次不删，也不做不可撤销的删除），并如实记账。
             if not _backed:
@@ -218,8 +218,8 @@ def restore_history(trash_root: str, stamp: str) -> int:
             if not name.endswith("." + stamp):
                 continue
             src = os.path.join(trash_root, name)
-            base = name[: -len("." + stamp)]                 # group_xxx_chatroom.json
-            # ⛔ 2026-09-21（V-R5B-1）：老实现把备份写成 `x.json.json.<stamp>`（多一个 `.json`）
+            base = name[: -len("." + stamp)] # group_xxx_chatroom.json
+            # ⛔ 老实现把备份写成 `x.json.json.<stamp>`（多一个 `.json`）
             #   ⇒ 这里必须认得**老名字**并把它纠正回 `x.json`，否则用户升级前存下的那几份
             #   **永远撤不回来**（数据在盘上，但谁也不知道它该叫什么）。新名字走正常分支。
             if base.endswith(".json.json"):
@@ -229,7 +229,7 @@ def restore_history(trash_root: str, stamp: str) -> int:
             try:
                 from . import store as _st
                 dst = os.path.join(_st.MESSAGES_DIR, base)
-                # ⛔ 2026-09-21（第五轮回执 **V-R5R-2**）：备份名带的是**当年的**文件名；而
+                # ⛔ 备份名带的是**当年的**文件名；而
                 #   `store.chat_file_existing` 现在是**新命名（带哈希）优先** ⇒ 把内容写回老名字
                 #   等于写进一个没人读的文件：界面报"已恢复了 1 个会话的对话历史"，模型读到的
                 #   **一条都没回来**。⇒ 从备份**内容里的 `chat_key`** 解析出"当前在用的档案名"，

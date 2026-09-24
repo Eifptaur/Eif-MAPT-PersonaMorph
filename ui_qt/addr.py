@@ -1,20 +1,19 @@
 # -*- coding: utf-8 -*-
 """控制台地址解析 —— Qt 侧唯一权威实现（照抄 agent/notify_ui.py 的口径）。
 
-为什么必须有这个模块（2026-09-23 探活核对结论）：
+为什么必须有这个模块：
   heal.py 的 probe_backend(base) 只管「探一个给定地址」，不管「地址从哪来」。
-  而 agent 侧的地址来源有**一个权威顺序**（2026-09-14 定，2026-09-18 补活性检查，
+  而 agent 侧的地址来源有**一个权威顺序**（
   起因与教训全记录在 agent/notify_ui.py:251-296 的 console_url()）：
 
     1. logs/console.url —— 拥有 token 的进程写出来的现成地址（带口令，只读）
        但它可能被「起在随机端口上的实例/判据」写脏（实测被写成 :14675 而没人听）
        所以必须做**活性检查**（TCP 连通 0.4s）：连不上复查一次仍死 ⇒ 弃用；
     2. 回落 config：server.port（默认 3210）+ server.token（结构化读取，
-       绝不手写字符串找字段——那是 2026-09-14 那次 401 事故的根因）；
     3. 两边都拿不到 ⇒ http://127.0.0.1:3210/（文档化默认值）。
     文件值**活着**则照旧以它为准（随机端口实例仍优先——先到先得口径）。
 
-  丙-1 的 C# ResolveLiveUrl 迁 Qt、丙-2 正式壳启动时的首次探活，都用本模块。
+   的 C# ResolveLiveUrl 迁 Qt、 正式壳启动时的首次探活，都用本模块。
   本模块对 agent/** 只读（logs/console.url 与 config.json），守硬约束。
 
 用法：
@@ -42,13 +41,13 @@ DEFAULT_BASE = "http://127.0.0.1:3210/"
 
 
 def join_url(base: str, path: str = "", q: str = "") -> str:
-    """统一 URL 拼接 —— **path 必须落在 query 之前**（丙-5 #0）。
+    """统一 URL 拼接 —— **path 必须落在 query 之前**。
 
     本模块拼出的 base 自带 `?token=…` 查询（_config_base / logs/console.url）。
     老写法「base 去尾斜杠后直接接路径」会把路径塞进 query ——
     实测 `/?token=x/api/status` → 401（token 连同后面的 /api/status 一起被
     当成 query 解析），这就是真机首跑全界面「状态不明」的根因。
-    2026-09-23 真后台对照：错误拼法 HTTP 401 / 正确拼法 HTTP 200。
+    错误拼法 HTTP 401 / 正确拼法 HTTP 200。
 
     全 Qt 侧访问后端 URL 一律走本函数：
         join_url(base, "/api/status")            # GET/POST 接口
@@ -149,7 +148,7 @@ def resolve_base_url(root: str | Path = "") -> tuple[str, str]:
 
 def _selftest() -> list[tuple[str, bool, str]]:
     """三种现场全真跑：脏文件回落 / 活文件优先 / 空目录默认。"""
-    import tempfile  # noqa: PLC0415
+    import tempfile # noqa: PLC0415
 
     out: list[tuple[str, bool, str]] = []
 
@@ -165,7 +164,7 @@ def _selftest() -> list[tuple[str, bool, str]]:
                     f"{src} {url}"))
 
     # 现场二：文件指向真活端口（本机临时起一个）⇒ 以文件为准
-    import threading  # noqa: PLC0415
+    import threading # noqa: PLC0415
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.bind(("127.0.0.1", 0))
     srv.listen(1)
@@ -191,13 +190,13 @@ def _selftest() -> list[tuple[str, bool, str]]:
                     src == "config" and url == DEFAULT_BASE, f"{src} {url}"))
 
     # 链路串接：resolve 出来的地址直接能喂给 heal.probe_backend（类型/口径流转）
-    from heal import probe_backend  # noqa: PLC0415
+    from heal import probe_backend # noqa: PLC0415
     url, _src = resolve_base_url()
     probe = probe_backend("http://127.0.0.1:1", timeout=0.2)
     out.append(("resolve → probe 链路串通（不可达口判 REFUSED）",
                 probe.health.value in ("refused", "unknown"), probe.health.value))
 
-    # 口径防回归：config 里 token 为空时不得拼出 "?token="（2026-09-14 事故的空 token 变体）
+    # 口径防回归：config 里 token 为空时不得拼出 "?token="
     with tempfile.TemporaryDirectory() as td:
         troot = Path(td)
         (troot / "config.json").write_text(
@@ -206,7 +205,7 @@ def _selftest() -> list[tuple[str, bool, str]]:
         out.append(("空 token 不拼 ?token=（401 事故教训）",
                     "?token=" not in url, url))
 
-    # 丙-5 #0：join_url —— base 带 query 时 path 必须落在 query 之前
+    # #0：join_url —— base 带 query 时 path 必须落在 query 之前
     j = join_url("http://127.0.0.1:3210/?token=abc", "/api/status")
     out.append(("join_url: 带 token base 的 path 落在 query 之前",
                 j == "http://127.0.0.1:3210/api/status?token=abc", j))

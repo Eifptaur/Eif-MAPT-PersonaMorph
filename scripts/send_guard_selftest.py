@@ -1,12 +1,9 @@
 # -*- coding: utf-8 -*-
 """发送侧三道「别再自己搞自己」闸的行为判据 —— **不需要微信在跑**。
 
-2026-09-18 拍摄现场的两起事故逼出这三道闸，这份判据是它们的尺子：
 
-  · 事故一「机器人跟自己吵了 8 条」：用户**每次拍完都用微信「清空聊天记录」** ⇒ 该会话的
     `Msg_<md5>` 表**整张消失** ⇒ 回读/身份/回声三处全瞎。本文件 B 段量**回声窗**（文本归一化
     + 时间窗），A 段量**纯屏幕身份档**（会话头标题带 OCR，不依赖数据库）。
-  · 事故二「图片他拿到了，但是又没有发给我」：清空后 `recent_texts()` 为空 ⇒
     `chat_identity_ok` 在**第一条守卫**就返回 `None` ⇒ 发文件链把 `None` 当无条件拒绝。
 
 A 纯屏幕身份档 `_screen_only_identity`（假 OCR，真函数）
@@ -38,8 +35,8 @@ def ck(name, cond, extra=""):
 
 SRC = io.open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
 
-from agent import chat_ocr as CO          # noqa: E402
-from agent import wechat as WC            # noqa: E402
+from agent import chat_ocr as CO # noqa: E402
+from agent import wechat as WC # noqa: E402
 
 
 def _bare_adapter():
@@ -152,7 +149,7 @@ ck("C4 发文件链：拿不到内容证据但名字档已过 ⇒ 放行并记�
 ck("C5 发图：DB 回读看不见时用**屏幕兜底确认**（输入框清空＝已发出），并写明是屏幕证据不是回读",
    "按屏幕证据判已发出" in SRC and "输入框已清空" in SRC)
 
-# ── D 发图链：右键「粘贴」+ 进框自检 + 三枪提交（2026-09-18 现场两轮取证后定型）────
+# ── D 发图链：右键「粘贴」+ 进框自检 + 三枪提交────
 print("[D] 发图链：右键「粘贴」进框（不用投递组合键）、进框才打枪、提交三枪")
 _SI = SRC.split("def send_image_posted(")[1]
 _SI = _SI[:_SI.index("def _file_panel_point_live(")]
@@ -188,7 +185,7 @@ ck("D10 判据＝「发送」按钮的颜色（空框灰 / 有内容绿），且
 ck("D11 自检量不出来时按「有内容」放行（前置自检不许把发送链一刀切死；最终仍认 DB 回读）",
    "颜色自检不可用" in _HC and "按有内容继续" in _HC)
 
-# ── E 身份复核：双档互证不许被"活动行时间读不出"翻案（2026-09-18 现场：文字回复连拒三次）──
+# ── E 身份复核：双档互证不许被"活动行时间读不出"翻案──
 print("[E] 身份复核：内容 × 会话头标题带 双档命中 ⇒ 直接放行")
 _IDN = SRC.split("def chat_identity_ok(")[1][:16000]
 _PM_SRC = io.open(os.path.join(ROOT, "scripts", "persona_morph.py"), encoding="utf-8").read()
@@ -201,7 +198,7 @@ _bad_rel = [l.strip()[:40] for l in _PM_SRC.splitlines() if l.strip().startswith
 ck("E3 相对导入修掉：人性化行为决策改走绝对导入（脚本跑时 `from .` 必抛、功能静默失效）",
    not _bad_rel and "from agent import behavior as bh" in _PM_SRC, str(_bad_rel[:2]))
 
-# ── F 回声表要在**开枪那一刻**就写（2026-09-18 现场：机器人回了自己刚发的图与话）──────────
+# ── F 回声表要在**开枪那一刻**就写──────────
 print("[F] 回声表：开枪前就记（否则回读那几秒会被监听器读成「别人的话」⇒ 回自己）")
 _SI2 = SRC.split("def send_text_posted(")[1]
 _SI2 = _SI2[:_SI2.index("def send_image_posted(")]
@@ -223,11 +220,11 @@ try:
     _ad._self_nickname = ""
     _ad._recent_sent = WC.deque(maxlen=200)
     _ad._LEDGER = WC.deque(maxlen=10)
-    # ⛔ V-R7-4：判据**不写产品** `data/message_ledger.jsonl`（normalize → _note_ledger 会落盘）。
+    # ⛔ 判据**不写产品** `data/message_ledger.jsonl`（normalize → _note_ledger 会落盘）。
     #   台账路径已抽成模块级 `WC._ledger_path()`，指到临时目录即可；产品默认行为不变。
-    import tempfile as _tf4                                        # noqa: E402
+    import tempfile as _tf4 # noqa: E402
     _ad_ledger_tmp = os.path.join(_tf4.mkdtemp(prefix="pm-sg-ledger-"), "ledger.jsonl")
-    WC._ledger_path = lambda: _ad_ledger_tmp       # 本判据全程用它（产品那份一字不动）
+    WC._ledger_path = lambda: _ad_ledger_tmp # 本判据全程用它（产品那份一字不动）
     _IMG_ROW = {"local_id": 9, "type": "图片", "sender_id": 3, "create_time": int(time.time()),
                 "content": '<?xml version="1.0"?><msg><img hdlength="28592"/></msg>'}
     _TXT_ROW = {"local_id": 10, "type": "文本", "sender_id": 3, "create_time": int(time.time()),
@@ -246,7 +243,7 @@ try:
 except Exception as e:
     ck("F3/F4 回声行为级", False, repr(e)[:90])
 
-# ── G. 2026-09-18 加：两条"现场截图"级别的出站闸门 ────────────────────────────
+# ── G. 两条"现场截图"级别的出站闸门 ────────────────────────────
 #   ①群里出现了内部故障话术（「（会话投递失败，本轮未发言。）」「发送失败了，没能发出去。」）；
 #   ②同一条消息连发两次（「早上好呀！」×2）。
 print("[G] 出站闸门：内部故障话术 + 同会话短窗去重")
@@ -267,7 +264,6 @@ try:
        and _ssrc.index("_is_internal_failure(_t)") < _ssrc.index("for _t in parts:\n            _v = _risk.check"))
     ck("G4 同会话短窗去重在位（_DEDUP_WINDOW_S + 与最近自己发过的文本比对）",
        "_DEDUP_WINDOW_S" in _ssrc and "跳过重复发送" in _ssrc and "include_self=True" in _ssrc)
-    # G5 前后端一体（作者 2026-09-18 原则）：闸门拦了什么，用户要在控制台看得见
     _wsrc = io.open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
     _csrc = io.open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
     ck("G5 后端把闸门读数暴露给前端（/api/status 的 outbound_gate）",
@@ -290,7 +286,7 @@ try:
        _SEG.index('if _st["status"] == "ok":') < _SEG.index('if _st["status"] == "mismatch":'))
     ck("H3 强档给不出时**先按名字切会话**再发（按名字选行，比『当前开着的恰好是它』可靠）",
        "_sw2_ok, _sw2_why = self.switch_chat_posted(chat_id, gui=gui)" in _SEG)
-    # ⛔ 2026-09-21（V-R4-5 掀出来的真缺陷）：原来这两处写的是 `name=name`，而本函数里**没有 `name`**
+    # ⛔ 原来这两处写的是 `name=name`，而本函数里**没有 `name`**
     #   ⇒ 每次指纹判 ok 都抛 NameError、被 except 吞掉继续发送 ⇒ **强档复核从来没跑过**。
     #   ⇒ 这条断言钉住"不许再引用未定义的名字"（`name=name` 这种写法不许回来）。
     # ⚠️ 静态判据只看**代码**（本段新写的注释里为解释历史引用了老的 `name=name`）
@@ -303,7 +299,7 @@ try:
        "不直接发，先按名字切会话再试" in _SEG)
     ck("H6 与 `chat_is_open` 既有口径一致（那里早就写明授权闸默认不接指纹）",
        "allow_weak" in SRC and "授权写动作的最后一道闸绝不接它" in SRC)
-    # ⛔ 2026-09-21 加（第四轮审计 **V-R4-5（P1）**）：**闸门自己出错 ≠ 闸门放行**。
+    # ⛔ （审计 （P1）**）：**闸门自己出错 ≠ 闸门放行**。
     #   老写法是 `except Exception: log.warning("会话头校验跳过")` 之后**继续往下发送** ⇒
     #   一遇到异常（指纹/抓图/OCR 任一抛错）就回到"没有闸"的状态 —— 恰好是最该拦的时候不拦。
     # ⚠️ 静态判据只看**代码**：新写的注释里为了解释历史引用了旧文案（"会话头校验跳过"），

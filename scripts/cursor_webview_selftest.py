@@ -21,10 +21,10 @@ import socket
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# ⛔ V-R14-1 隔离：判据不许写产品 data/ 与 logs/（更新状态快照 / 暂停标记 / 探针的窗口几何）。
+# ⛔ 隔离：判据不许写产品 data/ 与 logs/（更新状态快照 / 暂停标记 / 探针的窗口几何）。
 #   ⚠️ 第一版这段写在 `sys.path.insert(0, ROOT)` **之前** ⇒ ImportError 被静默吞掉、隔离没生效。
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # scripts\（见 `_iso14` 文件头）
-import _iso14                                   # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # scripts\（见 `_iso14` 文件头）
+import _iso14 # noqa: E402
 _iso14.update_state()
 _iso14.control()
 sys.path.insert(0, ROOT)
@@ -65,9 +65,9 @@ ck("A7 启动器有 --cursorprobe 入口", '"--cursorprobe"' in SRC_L and "publi
 ck("A8 探针窗口屏外 + 不激活（不抢前台、屏幕上看不见）",
    "-4000, -4000" in SRC_L and "WS_EX_NOACTIVATE" in SRC_L)
 ck("A9 探针读回「前台是否未变」当作判据", "foreground_unchanged=" in SRC_L)
-# ── 中键（滚轮键）特效：鲸鱼转一圈 360°（2026-09-17 用户点单）──
+# ── 中键（滚轮键）特效：鲸鱼转一圈 360°──
 # ⚠️ 取样窗口**必须收紧到 spin() 函数体**（原来取"后面 900 字符"，越界扫进 setCustom() 里那句
-#    合法换版本号的 `ver = '?v=' + Date.now()` ⇒ 判据假红；2026-09-17 修）
+# 合法换版本号的 `ver = '?v=' + Date.now()` ⇒ 判据假红；）
 _i_spin, _i_spin_end = SRC_C.find("function spin()"), SRC_C.find("// 点击时点头")
 _SPIN = SRC_C[_i_spin:_i_spin_end] if (_i_spin >= 0 and _i_spin_end > _i_spin) else ""
 ck("A10 中键会转一圈：12 帧 canvas 预转（不新增素材文件）",
@@ -80,7 +80,7 @@ ck("A14 中键**吃掉浏览器原生自动滚动**（否则光标被浏览器�
    "ev.preventDefault()" in SRC_C and "原生自动滚动" in SRC_C)
 ck("A15 帧备好没有对外可读（判据/探针要能等到它，否则假红）",
    "framesReady: ()=>frames.length > 0" in SRC_C and "frameIdx: ()=>lastSpinIdx" in SRC_C)
-# ── 自研「滚轮模式」：中键要**真的滚**（用户 2026-09-17 第二次澄清：「我要的是滚轮…均匀平滑的速度往下滚动」；
+# ── 自研「滚轮模式」：中键要**真的滚**（
 #    上一版只做了"转"、把原生滚动 preventDefault 掉了 ⇒ 用户实测「它是旋转了，但是也滚不动啊」）──
 ck("A16 中键＝**自研滚轮**（基础匀速 + rAF 持续滚 + 自绘徽标），不是只转一下",
    "PM_WHEEL" in SRC_C and "requestAnimationFrame(tick)" in SRC_C and "BASE + (off - DEAD) * GAIN" in SRC_C)
@@ -104,7 +104,7 @@ ck("A21 左导航跟着指示条滚（激活项滚出可视区就滚回来：平
    and "const top = navEl.scrollTop, vh = navEl.clientHeight, PAD = 8;" in SRC_C)
 
 _EXE = os.path.join(ROOT, "一键启动.exe")
-# ⛔ V-R14-1：`--cursorprobe` 会走 `GeoFile()`＝**exe 同级目录 + data/**，也就是产品的
+# ⛔ `--cursorprobe` 会走 `GeoFile()`＝**exe 同级目录 + data/**，也就是产品的
 #   `data\console_window.txt`（用户存好的控制台位置与大小）⇒ 判据每跑一次就改掉它。
 #   修法（与 `console_open_selftest` 的 `--winprobe` 同一招）：把 exe 与它要用的 DLL **复制到临时目录再跑**，
 #   产物落在副本里；exe 与产品行为一字未改，下面所有断言不变。
@@ -139,9 +139,9 @@ else:
     try:
         w3 = W.WebUI(lambda: {}, [])
         import tempfile as _tf
-        w3.console_url_root = _tf.mkdtemp(prefix="cuj-")   # ⚠️ 判据不写产品那份 logs/console.url（2026-09-18）
+        w3.console_url_root = _tf.mkdtemp(prefix="cuj-") # ⚠️ 判据不写产品那份 logs/console.url
         port = w3.start()
-        # ⚠️ 2026-09-18：探针进程（一键启动.exe --cursorprobe）抓完就退出，会让 WebUI 那条连接被 Reset
+        # ⚠️ 探针进程（一键启动.exe --cursorprobe）抓完就退出，会让 WebUI 那条连接被 Reset
         #   ⇒ socketserver 默认把 traceback 打到 stderr；全套跑下来它看起来像"红"，可这条判据 rc=0、断言全过。
         #   判据要的是断言结果，不是服务器的异常栈 ⇒ 把这个已知无害的噪音静音掉。
         try:
@@ -184,7 +184,7 @@ else:
             ck("B10 旋转帧已备好（异步造帧，探针要等到它）", field("spin_frames_ready") == "True")
             ck("B11 **按中键换成旋转帧**（dataURL，不是原图）", field("spin_applied") == "True",
                field("style_after_middle"))
-            # ⚠️ 2026-09-17 改口径：中键**不再是"转一圈就收"**（老版 0.9 秒自动回默认帧），而是
+            # ⚠️ 中键**不再是"转一圈就收"**（老版 0.9 秒自动回默认帧），而是
             #   进入滚轮模式、**光标就停在旋转帧上**（退出时才回默认——那条由 B18 的 `cursorFrameIdx == -1` 守）
             #   ⇒ 老断言「约 0.9 秒后回到默认鲸鱼帧」已成假红，这里改成守"它确实停在旋转帧"。
             ck("B12 中键后光标**停在旋转帧**（不是转一圈就收；回默认帧由退出路径守，见 B18）",
@@ -211,13 +211,13 @@ else:
             ck("B18b 徽标里**没有第二条鱼**（鱼在光标上，用户点出来的）", _w1[4:5] == ["no"], str(_w1))
             ck("B18 左键退出：模式关、徽标撤、不再滚",
                _w3[:1] == ["false"] and _w3[2:3] == ["false"] and _d4 < 5, "Δ=%.0fpx · %s" % (_d4, field("wheel_3")))
-            # ── ① 左导航跟着指示条滚（用户 2026-09-17 追加：「……左栏又显示不下的时候，蓝色指示条就看不见了」）──
+            # ── ① 左导航跟着指示条滚──
             _nav = field("nav_1")
             _nm = dict(re.findall(r"(\w+)=(-?\d+)", _nav))
             ck("B19 左栏被滚到底之后**自己把激活项跟回来**（蓝色指示条不会再看不见）",
                _nav.startswith("visible") and int(_nm.get("max", 0)) > 50
                and float(_nm.get("scrollTop", 1e9)) < int(_nm.get("max", 0)) - 5, _nav)
-            # ── ② 鱼的转速跟着滚动速度（用户 2026-09-17 追加）· 且滚的是**光标上那只鱼** ──
+            # ── ② 鱼的转速跟着滚动速度· 且滚的是**光标上那只鱼** ──
 
             def _spin_of(k):
                 p = (field(k) or "").split("|")

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""WGC（Windows.Graphics.Capture）**可行性探针**（2026-09-16，跨机建议④）——只读，不点不发。
+"""WGC（Windows.Graphics.Capture）**可行性探针**——只读，不点不发。
 
 为什么要它：Python 的 `PrintWindow` 在**窗口被遮挡/最小化**时会给"假帧"（整片纯色），
 这让"抓图判据"在那些场景下不可信。WGC 是官方那条路（读 DWM 表面），但**它能不能用取决于
@@ -45,7 +45,7 @@ def main():
     print("② Python %s · 32 位=%s" % (platform.python_version(), sys.maxsize <= 2 ** 32))
     try:
         import winsdk
-        from winsdk.windows.graphics.capture import GraphicsCaptureSession      # noqa: F401
+        from winsdk.windows.graphics.capture import GraphicsCaptureSession # noqa: F401
         print("   winsdk 可用，winsdk.windows.graphics.capture 导得出来 ✅")
     except Exception as e:
         print("   ❌ winsdk / capture 命名空间不可用：%s: %s" % (type(e).__name__, str(e)[:80]))

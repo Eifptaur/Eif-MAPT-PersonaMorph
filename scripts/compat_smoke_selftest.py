@@ -1,6 +1,6 @@
 """最小冒烟矩阵（`agent/compat.py::smoke`）的判据。
 
-为什么值得一条判据（2026-09-22，兼容性落地第 ⑥ 项）：
+为什么值得一条判据：
   这张表是"**换一台机器，先跑一遍就知道哪条能力在这台机器上成立**"的入口，
   所以它必须满足四条硬性质，任一条坏了这张表就没意义：
     ① **11 条轴一条不少**，每条都有"做了什么(probe)"与"证据(evidence)"；
@@ -17,9 +17,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import _srcmatch as _sm          # noqa: E402
+import _srcmatch as _sm # noqa: E402
 
-from agent import compat as CP   # noqa: E402
+from agent import compat as CP # noqa: E402
 
 PASS, FAIL = [0], [0]
 

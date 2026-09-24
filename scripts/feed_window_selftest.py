@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""未读批切分判据（第九轮 V-R9-15/16/17 ＋ 作者口径「给模型喂的前几分钟就够了」）。
+"""未读批切分判据。
 
 守四件事：
   A **纯函数**：`feed_window.pick_feed` 的三桶（keep/skip/retry）、@ 与引用的**时间窗豁免**、
@@ -26,9 +26,9 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, HERE)
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
-from agent import feed_window as FW          # noqa: E402
-from agent import store as ST                # noqa: E402
-import _srcmatch as _sm                      # noqa: E402  空白容忍的源码断言（V-R4-13 第三条）
+from agent import feed_window as FW # noqa: E402
+from agent import store as ST # noqa: E402
+import _srcmatch as _sm # noqa: E402 空白容忍的源码断言
 
 PASS, FAIL = [], []
 
@@ -38,7 +38,7 @@ def ok(name, cond, extra=""):
     print(("  OK   " if cond else "  FAIL ") + name + (("  [" + str(extra) + "]") if extra else ""))
 
 
-NOW = 1_800_000_000_000          # 固定"现在"（毫秒）
+NOW = 1_800_000_000_000 # 固定"现在"（毫秒）
 
 
 def _m(mid, age_min, text="", ts=None):
@@ -59,14 +59,14 @@ ok("A3 **@ 我 / 引用我的消息不受时间窗限制**（200 分钟前的也
 _r3 = FW.pick_feed([_m(i, 0.5, "第 %d 条" % i) for i in range(1, 8)], now_ms=NOW,
                    window_min=10, max_n=3)
 ok("A4 超上限 ⇒ 喂**最旧**那几条（FIFO）、其余进 **retry（退回未读）**"
-   "（第十轮 V-R10-17：原来只留「最新」 ⇒ 到货 ≥ 上限时最旧的永远排不上）",
+   "…",
    [m["id"] for m in _r3["keep"]] == [1, 2, 3] and [m["id"] for m in _r3["retry"]] == [4, 5, 6, 7],
    (_r3["keep"], _r3["retry"]))
 _r4 = FW.pick_feed([_m(1, 99, "旧 @我"), _m(2, 0.1, "新"), _m(3, 0.2, "新2"), _m(4, 0.3, "新3")],
                    now_ms=NOW, window_min=10, max_n=3, directed=lambda m: m["id"] == 1)
 ok("A5 上限之下**优先保「指向它」的**，其余按 FIFO 补足名额",
    [m["id"] for m in _r4["keep"]] == [1, 2, 3] and [m["id"] for m in _r4["retry"]] == [4], _r4)
-# ⛔ 第十轮 V-R10-19：**directed 洪泛不许把上限废掉**（原来 `keep == _dir` ⇒ 1000 条全 @ 就是 1000 条）
+# ⛔ **directed 洪泛不许把上限废掉**（原来 `keep == _dir` ⇒ 1000 条全 @ 就是 1000 条）
 _r5b = FW.pick_feed([_m(i, 0.1, "@我 第%d条" % i) for i in range(1, 41)], now_ms=NOW, window_min=10,
                     max_n=10, directed=lambda m: True)
 ok("A5b **全 @ 洪泛也夹上限**（40 条全 directed + cap 10 ⇒ 只喂 10 条，其余退回未读）",
@@ -102,11 +102,11 @@ try:
        st.mark_read("group:g", []) == 0 and st.unread_count("group:g") == 3)
 
     print("── C. wake 端到端：只喂「该喂的那一批」 ──")
-    # ⛔ 第十四轮 **V-R14-1**：import 之前先把日志目录指到临时区 —— 否则 `persona_morph` 的
+    # ⛔ import 之前先把日志目录指到临时区 —— 否则 `persona_morph` 的
     #   import 期 logging 会把 FileHandler 挂到**产品** `logs/persona_morph.log` 上（实测 +680B）。
     os.environ["PM_LOG_DIR"] = os.path.join(_tmp, "logs")
-    import persona_morph as pm                                              # noqa: E402
-    from agent import thought_trace as TT                                   # noqa: E402
+    import persona_morph as pm # noqa: E402
+    from agent import thought_trace as TT # noqa: E402
 
     _saved = (pm.get_config, pm.resolve_context_tier, TT.note, ST.MESSAGES_DIR)
     _calls = []
@@ -177,12 +177,12 @@ try:
         for i in range(1, 6):
             _s4.append_incoming("group:g", "n%d" % i, REAL - (10 - i) * 1000, "u1", "甲", "第%d条" % i)
         pm.Orchestrator.wake(_Self(_s4), "group:g")
-        ok("C5 上限 2 ⇒ 喂**最旧** 2 条（FIFO；第十轮 V-R10-17）", _calls and _calls[-1] == ["第1条", "第2条"],
+        ok("C5 上限 2 ⇒ 喂**最旧** 2 条", _calls and _calls[-1] == ["第1条", "第2条"],
            _calls)
         ok("C6 被挤出来的 3 条**仍在未读**（退回下一轮，不丢）", _s4.unread_count("group:g") == 3,
            _s4.unread_count("group:g"))
 
-        # C7：**多轮收敛 / 不饥饿**（第十轮 V-R10-17 的核心：不许有人永远排不上）——
+        # C7：**多轮收敛 / 不饥饿**——
         #   到货 200/上限 150：物理上追不上，但 FIFO 保证「最早那条一定被喂过」；旧口径（留最新）里它永远排不上。
         _nid = [0]
 
@@ -196,19 +196,19 @@ try:
                                   "ts": _now - 1000})
                 _rr = FW.pick_feed(_back, now_ms=_now, window_min=10, max_n=cap, directed=lambda m: False)
                 _fed.update(m["id"] for m in _rr["keep"])
-                _back = list(_rr["retry"])          # keep 被标读、skip 也被标读 ⇒ 都离开未读集合
+                _back = list(_rr["retry"]) # keep 被标读、skip 也被标读 ⇒ 都离开未读集合
             return _back, _fed
 
         _back7, _fed7 = _sim(6, 200, 150)
         ok("C7 **FIFO 不饥饿**：到货 200 > 上限 150 时，最早那条（id=1）**仍然被喂过**"
-           "（旧口径「只留最新」里它永远排不上 ⇒ 这就是 V-R10-17 的活锁）",
+           "…",
            1 in _fed7, "喂过的最小 id=%s" % (min(_fed7) if _fed7 else None))
         _nid[0] = 0
         _back8, _fed8 = _sim(8, 140, 150)
         ok("C8 到货 140 < 上限 150 ⇒ 几轮之后 backlog **收敛**（不会线性发散）",
            len(_back8) < 140, "8 轮后仍剩 %d 条" % len(_back8))
 
-        # C9：**第二道黑洞**（第十轮 V-R10-18）—— 未读 260 > 老的 peek(200) 上限时，多出来的 60 条
+        # C9：**第二道黑洞**—— 未读 260 > 老的 peek(200) 上限时，多出来的 60 条
         #   以前既不喂也不标读、不进任何桶（永远躺在那）。现在 peek(0) 取全部 ⇒ 喂 + 退回 = 总数。
         _calls[:] = []
         _s9 = ST.ChatStore()
@@ -220,7 +220,7 @@ try:
         ok("C9 **没有黑洞**：260 条未读 ⇒ 喂掉 + 退回未读 == 260（老口径会永远剩 60 条没人管）",
            _fedn + _left == 260 and _left > 0, "喂 %d · 剩 %d" % (_fedn, _left))
 
-        # C10：**异常路径也要标读**（第十轮 V-R10-20：`pick_feed` 抛 ⇒ 喂了模型却没人标读 ⇒
+        # C10：**异常路径也要标读**（ `pick_feed` 抛 ⇒ 喂了模型却没人标读 ⇒
         #   5 分钟去重到期后同一批再喂一次）。把 pick_feed 打成抛异常，看未读是否被清掉。
         _calls[:] = []
         _s10 = ST.ChatStore()
@@ -247,11 +247,11 @@ try:
     ok("D3 喂给模型的就是切出来的那一批（`trigger = list(pending)`）", _sm.has(_wake, "trigger = list(pending)"))
 finally:
     ST.MESSAGES_DIR = _ST_MSG_DIR
-    import shutil                                                            # noqa: E402
+    import shutil # noqa: E402
     shutil.rmtree(_tmp, ignore_errors=True)
 
-print("── E. 陈旧标记**进提示词**（第九轮 V-R9-17 的残留：原来只落 thought_trace，模型看不到）──")
-from agent import prompt as _P                                              # noqa: E402
+print("── E. 陈旧标记**进提示词**──")
+from agent import prompt as _P # noqa: E402
 _NOWP = 1_800_000_000_000
 ok("E1 新鲜的批 ⇒ 不加陈旧提示",
    _P.stale_note_for([{"ts": _NOWP - 60_000}], now_ms=_NOWP) == "")

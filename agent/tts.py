@@ -4,10 +4,9 @@
 **合成侧**用 Windows 内置 SAPI（零下载：本机实测有中文女声 `Microsoft Huihui Desktop`），
 合成时**顺便**告诉我们有没有 ffmpeg（有就转成 mp3，体积小、对方点开就能播；没有就发 wav）。
 
-⚠️ 边界（用户 2026-09-13 问"能不能在群里以语音形式回复"）：
+⚠️ 边界：
    本模块只解决**合成**；**发出去**是另一件事——驱动库只有 `ForwardVoiceMessage`（转发别人的语音条），
    **没有"把任意音频发成语音条"的接口**。所以当前产品形态是 **A 档：把音频当文件发**（对方收到文件卡片，
-   点开能听）；**B 档真语音条**需要虚拟麦克风 + 微信录音按钮，属待拍板项（见 AGENTS/交接件）。
 """
 from __future__ import annotations
 
@@ -46,7 +45,7 @@ def voices() -> list:
     try:
         import pythoncom
         import win32com.client
-        pythoncom.CoInitialize()                       # ⚠️ 只初始化、**不配对去初始化**（否则后续 Dispatch 报"没有注册类"）
+        pythoncom.CoInitialize() # ⚠️ 只初始化、**不配对去初始化**（否则后续 Dispatch 报"没有注册类"）
         v = win32com.client.Dispatch("SAPI.SpVoice")
         toks = v.GetVoices()
         return [str(toks.Item(i).GetDescription()) for i in range(toks.Count)]
@@ -87,7 +86,7 @@ def synthesize(text: str, out_wav: str = "", rate: int = None) -> tuple:
     """文字 → WAV（SAPI）。返回 `(wav 路径 或 None, 错误说明)`。空文本直接拒。
 
     `rate`＝**本次**语速（-10~10，SAPI 刻度）；不传就用配置 `voice_reply.rate`。
-    为什么要能逐段给（2026-09-17）：语气段（「行行行」这种快连读）要单独加速合成再拼回去。
+    为什么要能逐段给：语气段（「行行行」这种快连读）要单独加速合成再拼回去。
     """
     t = str(text or "").strip()
     if not t:
@@ -111,7 +110,7 @@ def synthesize(text: str, out_wav: str = "", rate: int = None) -> tuple:
         except Exception:
             pass
         st = win32com.client.Dispatch("SAPI.SpFileStream")
-        st.Open(out_wav, 3, True)                     # 3 = SSFMCreateForWrite
+        st.Open(out_wav, 3, True) # 3 = SSFMCreateForWrite
         v.AudioOutputStream = st
         v.Speak(t)
         st.Close()
@@ -132,12 +131,12 @@ def to_playable(wav_path: str, fmt: str = "") -> tuple:
         return wav_path, "", "wav"
     ff = ffmpeg_path()
     if not ff:
-        return wav_path, "", "wav"                        # 没 ffmpeg 就发 wav（不是错误，只是大一点）
+        return wav_path, "", "wav" # 没 ffmpeg 就发 wav（不是错误，只是大一点）
     mp3 = os.path.splitext(wav_path)[0] + ".mp3"
     try:
         r = subprocess.run([ff, "-y", "-loglevel", "error", "-i", wav_path, "-b:a", "64k", mp3],
                            capture_output=True, timeout=60,
-                           creationflags=0x08000000 if os.name == "nt" else 0)   # 不许闪控制台窗
+                           creationflags=0x08000000 if os.name == "nt" else 0) # 不许闪控制台窗
         if r.returncode == 0 and os.path.exists(mp3) and os.path.getsize(mp3) > 200:
             return mp3, "", "mp3"
         return wav_path, "ffmpeg 转 mp3 失败，改用 wav", "wav"
@@ -162,7 +161,7 @@ def make(text: str, rate: int = None) -> tuple:
     return path, (warn or ""), info
 
 
-if __name__ == "__main__":                             # 手动看一眼
+if __name__ == "__main__": # 手动看一眼
     import json
     import sys
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""「直接更新」判据（2026-09-18 作者纠偏后立，原话：「**为啥你又搞这个什么覆盖解压？不许覆盖解压，
+"""「直接更新」判据（
 一定要直接更新**」）。
 
 要守的三件事：
@@ -22,7 +22,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
-import _srcmatch as _sm  # noqa: E402  空白容忍的源码断言（脆断言只许降不许升）
+import _srcmatch as _sm # noqa: E402  空白容忍的源码断言（脆断言只许降不许升）
 
 PASS = FAIL = 0
 
@@ -52,13 +52,13 @@ ok("takeover 的 taskkill 不带 /T（不加树杀，避免把机器人一起杀
 
 print("── B. 实际取值：pkg_version() == agent/version.py 的 VERSION ──")
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
-import importlib.util                                    # noqa: E402
+import importlib.util # noqa: E402
 _spec = importlib.util.spec_from_file_location("_wd_probe", os.path.join(ROOT, "scripts", "watchdog.py"))
 _wd = importlib.util.module_from_spec(_spec)
 try:
-    _spec.loader.exec_module(_wd)                          # 该模块只定义函数、不跑主流程
+    _spec.loader.exec_module(_wd) # 该模块只定义函数、不跑主流程
     _pv = _wd.pkg_version()
-except Exception as e:                                     # noqa: BLE001
+except Exception as e: # noqa: BLE001
     _pv = "导入失败：%s" % e
 _vs = io.open(os.path.join(ROOT, "agent", "version.py"), encoding="utf-8").read()
 _m = re.search(r"VERSION\s*=\s*['\"]([^'\"]+)['\"]", _vs)
@@ -73,8 +73,8 @@ ok("日志说清是旧包残留", "旧包残留实例" in OS_)
 print("── D. 文案：用户不可见处不许出现「覆盖解压」这类『让用户手动解压』的说法 ──")
 _files = ["README.md", "agent/console_html.py", "launcher-src/launcher.cs", "launcher-src/close.cs",
           "AGENTS.md",
-          # ⭐ 2026-09-19 扩：这两处也是**用户能看到的** —— installer.ps1 的 Set-State 文案会原样显示在
-          #   「一键启动」窗口里（作者截图那句「不存在，请重新解压完整包」就是从 L349 漏出去的 ✗）。
+          # ⭐ 这两处也是**用户能看到的** —— installer.ps1 的 Set-State 文案会原样显示在
+          # 「一键启动」窗口里。
           "scripts/installer.ps1", "scripts/setup_python.ps1", "scripts/onestart.py"]
 _bad = []
 for rel in _files:
@@ -83,7 +83,7 @@ for rel in _files:
         continue
     _txt = io.open(p, encoding="utf-8", errors="ignore").read()
     # ⭐ 只查"指令式"说法，且**跳过注释行**：
-    #   · onestart.py 里那句「不许覆盖解压…」是**注释里引用作者原话**（不是给用户看的）⇒ 误报 ✗
+    # · onestart.py 里那句「不许覆盖解压…」是**注释里引用⇒ 误报 ✗
     #   · installer.ps1 新文案里的「不用手动解压」是否定式说明 ⇒ 不该被当成违规 ✗
     _lines = [l for l in _txt.splitlines()
               if not l.strip().startswith(("#", "//", "<!--", "*", ">"))]
@@ -98,14 +98,14 @@ print("── E. 更新后的接管：**必须真 spawn 才退场**（2026-09-22
 # 背景（对标调研顺带实测出来的）：`agent/update_apply.py` 原来**没有 import sys/subprocess/log**，
 # 而 `_relaunch_after_update()` 用 `sys.executable` + `subprocess.Popen` ⇒ NameError 被
 # `except Exception: pass` 吞掉，随后**照旧 os._exit(0)** ⇒ "更新装好了、没人接替、机器人被杀、
-# 控制台无法访问"（作者 2026-09-18 报的正是这个）。⇒ 这里改**行为断言**，并带一条反例锚。
-import tempfile                                                # noqa: E402
-import types                                                   # noqa: E402
-import importlib.util                                          # noqa: E402
+# 控制台无法访问"。⇒ 这里改**行为断言**，并带一条反例锚。
+import tempfile # noqa: E402
+import types # noqa: E402
+import importlib.util # noqa: E402
 
 _spec_u = importlib.util.spec_from_file_location("_ua_probe", os.path.join(ROOT, "agent", "update_apply.py"))
 _ua = importlib.util.module_from_spec(_spec_u)
-_spec_u.loader.exec_module(_ua)                                # 只定义函数与常量，不跑主流程
+_spec_u.loader.exec_module(_ua) # 只定义函数与常量，不跑主流程
 
 ok("反例锚：模块里**真的有** sys / subprocess / log（缺一个就退化成「静默不退场／静默无人接替」）",
    hasattr(_ua, "sys") and hasattr(_ua, "subprocess") and hasattr(_ua, "log"),
@@ -127,7 +127,7 @@ class _BoomPopen(object):
 
 
 try:
-    _ua.ROOT = _tmpu                                        # ⛔ 判据绝不写产品 data/
+    _ua.ROOT = _tmpu # ⛔ 判据绝不写产品 data/
     _ua.subprocess.Popen = _FakePopen
     _ua.os._exit = lambda code: _events.append(("exit", code))
     _ua._relaunch_after_update("9.9.9")

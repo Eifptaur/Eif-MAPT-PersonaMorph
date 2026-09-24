@@ -367,7 +367,7 @@ function Invoke-PyVer([string]$exe, [string]$pre) {
 function Resolve-PyCmd([string]$raw) {
     $t = ([string]$raw).Trim().TrimStart([char]0xFEFF).Trim().Trim('"').Trim()
     if (-not $t) { return $null }
-    # ⛔ 2026-09-20 修 V-R1-1（P0）：**整串先当路径试** —— 安装路径含空格时（默认包顶层就叫
+    # ⛔ **整串先当路径试** —— 安装路径含空格时（默认包顶层就叫
     #   `persona morph`），下面按"首个空格切分"会把路径切成 `...\persona` ⇒ 判"路径不存在"
     #   ⇒ 全新机器（没装过 Python、正是绿色版存在的理由）完全起不来。与 `launcher.cs::TryPy`
     #   **两侧同源**：先整串当路径，命不中再按"命令 + 参数"切分（`py -3` 那种）。

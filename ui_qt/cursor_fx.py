@@ -28,22 +28,22 @@ from PySide6.QtCore import QEvent, QObject, Qt, QTimer
 from PySide6.QtGui import QCursor, QPixmap, QTransform
 from PySide6.QtWidgets import QApplication
 
-SPIN_FRAMES = 24          # web SPIN_FRAMES（console_html.py L2912）
-SPIN_MS = 22              # web SPIN_MS（24 × 22 ≈ 530ms 一圈）
-NOD_MS_DEFAULT = 400      # 丙-8 K：用户复验 320ms 仍无感 → 工单拍板直接做足 400ms（上限）
-NOD_MS_DEBUG = 1500       # PM_CURSOR_NOD_DEBUG=1 → 真机定因开关（肉眼必见，机制通不通一锤定音）
-NOD_MS = NOD_MS_DEFAULT   # 兼容旧引用；实际取值走 _nod_ms()
-NOD_SCALE = 1.3           # 丙-8 K：歪头帧放大上限（工单规格 ≤1.3x）——「看得见」不再依赖调试开关
-HOTSPOT = (8, 8)          # web cursor:url() 8 8
-_MAX_CUR = 128            # webui 服务端同款上限（图片已 resize ≤128）
+SPIN_FRAMES = 24 # web SPIN_FRAMES（console_html.py L2912）
+SPIN_MS = 22 # web SPIN_MS（24 × 22 ≈ 530ms 一圈）
+NOD_MS_DEFAULT = 400
+NOD_MS_DEBUG = 1500 # PM_CURSOR_NOD_DEBUG=1 → 真机定因开关（肉眼必见，机制通不通一锤定音）
+NOD_MS = NOD_MS_DEFAULT # 兼容旧引用；实际取值走 _nod_ms()
+NOD_SCALE = 1.3
+HOTSPOT = (8, 8) # web cursor:url() 8 8
+_MAX_CUR = 128 # webui 服务端同款上限（图片已 resize ≤128）
 
 
 def _nod_ms(env: str | None = None) -> int:
     """点头帧时长（毫秒）。
 
-    丙-6 #11 → 丙-8 K 两步走：
-    · 默认 400ms —— 丙-6 曾从 web 真值 180ms 提到 320ms，用户复验**仍然无感**
-      （丙-8 工单原话「点击没有点头特效」）⇒ 机制取证 + 强调做足双管齐下：
+     #11 → K 两步走：
+    · 默认 400ms —— 曾从 web 真值 180ms 提到 320ms，用户复验**仍然无感**
+      ⇒ 机制取证 + 强调做足双管齐下：
       时长顶满 400ms 区间上限 + 歪头帧放大 1.3x（见 NOD_SCALE），
       让「看得见」不再依赖用户跑 PM_CURSOR_NOD_DEBUG。
     · 环境变量 PM_CURSOR_NOD_DEBUG=1 → 1500ms —— 真机定因开关：
@@ -66,10 +66,10 @@ def _read_ui() -> dict:
     读不到（异常/未启动完整后端）一律回空表 —— 光标按默认开、自定义按没传处理。
     """
     try:
-        from agent.config import get_config  # noqa: PLC0415
+        from agent.config import get_config # noqa: PLC0415
 
         return dict(get_config().get("ui") or {})
-    except Exception:  # noqa: BLE001
+    except Exception: # noqa: BLE001
         return {}
 
 
@@ -81,14 +81,14 @@ class WhaleCursor(QObject):
         self._root = Path(root)
         self.enabled = False
         self._custom = False
-        self._sig: tuple | None = None          # (on, custom) 重建判据
+        self._sig: tuple | None = None # (on, custom) 重建判据
         self._base: QCursor | None = None
         self._nod: QCursor | None = None
         self._frames: list[QCursor] = []
-        self._mode = ""                          # "" | "nod" | "spin"
+        self._mode = "" # "" | "nod" | "spin"
         self._spin_i = 0
-        self._last_spin_idx = -1                 # spinTo 相位分帧记忆（web lastSpinIdx）
-        self.wheel = None                        # pm_wheel.WheelMode —— Shell 注入（丙-6 #12）
+        self._last_spin_idx = -1 # spinTo 相位分帧记忆（web lastSpinIdx）
+        self.wheel = None # pm_wheel.WheelMode —— Shell 注入
         self._spin_timer = QTimer(self)
         self._spin_timer.setInterval(SPIN_MS)
         self._spin_timer.timeout.connect(self._spin_step)
@@ -123,7 +123,7 @@ class WhaleCursor(QObject):
             if not base.isNull():
                 nod = QPixmap(str(self._asset(_CUSTOM_NOD)))
                 if nod.isNull():
-                    nod = QPixmap(str(self._asset(_DEFAULT_NOD)))   # web setCustom 链
+                    nod = QPixmap(str(self._asset(_DEFAULT_NOD))) # web setCustom 链
                 return base, nod
         return QPixmap(str(self._asset(_DEFAULT))), QPixmap(str(self._asset(_DEFAULT_NOD)))
 
@@ -136,7 +136,7 @@ class WhaleCursor(QObject):
 
     @staticmethod
     def _to_nod_cursor(pm: QPixmap) -> QCursor | None:
-        """歪头帧 cursor —— 丙-8 K：放大 NOD_SCALE(1.3x) 强调「点头看得见」，
+        """歪头帧 cursor —— K：放大 NOD_SCALE(1.3x) 强调「点头看得见」，
         hotspot 同步 ×1.3 保持指向不变；超 _MAX_CUR 上限就退回原尺寸（不炸）。"""
         if pm.isNull():
             return None
@@ -171,7 +171,7 @@ class WhaleCursor(QObject):
     def refresh_from_config(self) -> None:
         """按 config 现值刷新（Shell 的 4s 探活定时器顺带轮询；web 面板改了即跟）。"""
         ui = _read_ui()
-        on = ui.get("whale_cursor", True) is not False      # web `!== false` 口径
+        on = ui.get("whale_cursor", True) is not False # web `!== false` 口径
         custom = ui.get("cursor_image") == "custom" and self._asset(_CUSTOM).exists()
         if (on, custom) != self._sig:
             self._sig = (on, custom)
@@ -208,33 +208,32 @@ class WhaleCursor(QObject):
 
     # ------------------------------------------------------------ 点头 / 中键旋转
 
-    def eventFilter(self, obj: QObject, ev: QEvent) -> bool:  # noqa: N802
+    def eventFilter(self, obj: QObject, ev: QEvent) -> bool: # noqa: N802
         if not self.enabled:
             return False
         t = ev.type()
-        w = self.wheel                                # pm_wheel.WheelMode（Shell 注入；丙-6 #12）
+        w = self.wheel # pm_wheel.WheelMode
         # ── 滚轮模式的"活水"事件：移动/滚轮/键盘/失焦全程喂给 WheelMode ──
         if t == QEvent.Type.MouseMove and w is not None:
             try:
                 w.on_move(int(ev.globalPosition().y()))
-            except Exception:  # noqa: BLE001
+            except Exception: # noqa: BLE001
                 pass
         elif t == QEvent.Type.Wheel and w is not None:
             if w.on_wheel():
-                return False                          # 只观察不吃事件（web passive wheel）
+                return False # 只观察不吃事件（web passive wheel）
         elif t == QEvent.Type.KeyPress and w is not None:
             if getattr(ev, "key", lambda: 0)() == Qt.Key.Key_Escape and w.on_esc():
                 return False
         elif t == QEvent.Type.ApplicationDeactivate and w is not None:
-            w.on_blur()                               # web window blur = 退出滚轮模式
+            w.on_blur() # web window blur = 退出滚轮模式
         elif t == QEvent.Type.MouseButtonPress:
             btn = ev.button()
             if btn == Qt.MouseButton.MiddleButton:
                 if w is not None:
-                    # 丙-6 #12 裁决：中键**直接进滚轮模式**，不再播"原地转一圈"
                     # （web 侧两个 listener 并存有打架嫌疑，Qt 取干净语义）。
                     w.toggle(int(ev.globalPosition().x()), int(ev.globalPosition().y()))
-                    return False                      # 只观察不吃事件
+                    return False # 只观察不吃事件
                 if self._spin():
                     return False
             elif w is not None and w.on:
@@ -251,7 +250,7 @@ class WhaleCursor(QObject):
         if app.overrideCursor() is None:
             app.setOverrideCursor(cur)
         else:
-            app.changeOverrideCursor(cur)                    # 换帧不压栈
+            app.changeOverrideCursor(cur) # 换帧不压栈
 
     @staticmethod
     def _pop() -> None:
@@ -260,10 +259,10 @@ class WhaleCursor(QObject):
             app.restoreOverrideCursor()
 
     def _nod(self) -> None:
-        if self._nod is None:                                # 歪头帧没备好 → 不动（不闪系统箭头）
+        if self._nod is None: # 歪头帧没备好 → 不动（不闪系统箭头）
             return
         self._push(self._nod)
-        self._nod_timer.start()                              # 连点 = 重置 180ms（web clearTimeout 同款）
+        self._nod_timer.start() # 连点 = 重置 180ms（web clearTimeout 同款）
         self._mode = "nod"
 
     def _nod_end(self) -> None:
@@ -301,12 +300,12 @@ class WhaleCursor(QObject):
             self._pop()
 
     def _spin(self) -> bool:
-        if not self._frames:                                 # 帧没备好 ⇒ 退点头（web spin() 同款）
+        if not self._frames: # 帧没备好 ⇒ 退点头（web spin() 同款）
             return False
         if self._mode == "nod":
             self._nod_timer.stop()
         self._spin_i = 0
-        self._last_spin_idx = -1                             # 相位记忆复位（滚轮模式共用帧表）
+        self._last_spin_idx = -1 # 相位记忆复位（滚轮模式共用帧表）
         self._push(self._frames[0])
         self._spin_timer.start()
         self._mode = "spin"
@@ -326,7 +325,7 @@ class WhaleCursor(QObject):
         self._spin_timer.stop()
         w = self.wheel
         if w is not None and getattr(w, "on", False):
-            w.stop()                                 # 光标关了 ⇒ 滚轮模式一并退（干净语义）
+            w.stop() # 光标关了 ⇒ 滚轮模式一并退（干净语义）
         if self._mode:
             self._pop()
         self._mode = ""
@@ -352,11 +351,11 @@ def _selftest() -> list[tuple[str, bool, str]]:
     ck("cursor: 旋转帧 24 帧", len(frames) == SPIN_FRAMES, str(len(frames)))
 
     wc_custom = WhaleCursor(root)
-    b2, n2 = wc_custom._pick_pair(True)   # 仓库此刻没有 custom-cursor.png ⇒ 回默认
+    b2, n2 = wc_custom._pick_pair(True) # 仓库此刻没有 custom-cursor.png ⇒ 回默认
     ck("cursor: 自定义缺失回退默认", not b2.isNull() and not n2.isNull())
 
     wc.set(True, custom=False)
-    from PySide6.QtWidgets import QWidget  # noqa: PLC0415
+    from PySide6.QtWidgets import QWidget # noqa: PLC0415
 
     dummy = QWidget()
     wc._apply_all()

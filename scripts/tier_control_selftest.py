@@ -20,9 +20,9 @@ try:
 except Exception:
     pass
 
-import agent.config as cfgmod                    # noqa: E402
-from agent import prompt as pr                   # noqa: E402
-from agent import tier_control as tc             # noqa: E402
+import agent.config as cfgmod # noqa: E402
+from agent import prompt as pr # noqa: E402
+from agent import tier_control as tc # noqa: E402
 
 PASS, FAIL = [], []
 
@@ -67,9 +67,9 @@ def main():
     ok("开关关掉 ⇒ 一律 None", tc.scheduled_tier(now=hm(9, 30), cfg=cfg_with(tier_schedule=dict(sched, enabled=False))) is None)
     ok("空表 ⇒ None", tc.scheduled_tier(now=hm(9, 30), cfg=cfg_with(tier_schedule={"enabled": True, "table": []})) is None)
 
-    bad = {"enabled": True, "table": [{"from": "x", "to": "12:00", "tier": 2},      # 时间非法
-                                      {"from": "09:00", "to": "09:00", "tier": 3},  # 空区间
-                                      {"from": "08:00", "to": "10:00", "tier": 9},  # 档位越界
+    bad = {"enabled": True, "table": [{"from": "x", "to": "12:00", "tier": 2}, # 时间非法
+                                      {"from": "09:00", "to": "09:00", "tier": 3}, # 空区间
+                                      {"from": "08:00", "to": "10:00", "tier": 9}, # 档位越界
                                       {"from": "08:00", "to": "10:00", "tier": -1}, # 档位越界
                                       {"from": "08:00", "to": "10:00", "tier": 3}]} # 唯一好行
     ok("坏行跳过、好行照常生效（不吃异常）",
@@ -106,7 +106,7 @@ def main():
     ok("非白名单发指令 ⇒ handled 但**不生效**", bad_cmd["handled"] and bad_cmd["action"] == "denied")
     ok("非白名单的指令不落盘（防有人喊一句就把机器人按住）",
        tc.is_muted("group:g1") is None and not os.path.exists(st_file))
-    # V-R7-5 #4：原来的"阴性对照"用的是**非空**白名单（["群主"]）⇒ 与"空白名单 fail-closed"正交。
+    # #4：原来的"阴性对照"用的是**非空**白名单（["群主"]）⇒ 与"空白名单 fail-closed"正交。
     # 这里补一条真·空白名单对照：连群主本人发指令都必须不生效。
     empty_cmd = tc.handle_command("group:g4", {"text": "@bot 禁言", "sender_name": "群主", "sender_id": "wxid_a"},
                                  at_me=True, cfg=cfg_with(tier_cmd_admins=[]))

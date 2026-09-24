@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""**第六轮修复的行为级守卫**（第七轮 **V-R7-3**：那 5 组修复当时"没有任何判据守"）。
+"""**修复的行为级守卫**。
 
-背景：把产品文件退回 `v2.1.48`（＝第六轮修复全撤），20 次候选判据**全部仍绿** —— 因为那些判据
+背景：把产品文件退回 `v2.1.48`，20 次候选判据**全部仍绿** —— 因为那些判据
 要么测的是老行为（`clean()` 的剥除量），要么把被测函数整体 stub 掉，要么只做**源码文本**断言。
 ⇒ 本判据只做**行为级**：调真函数、喂真夹具、断言真结果，每一条都配**反例锚**
 （证明"把守卫撤掉，这条会红"）。
@@ -16,15 +16,15 @@ import types
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-sys.path.insert(0, os.path.join(ROOT, "scripts"))   # `_srcmatch` 在 scripts 里（判据卫生网要求用它的 has()）
+sys.path.insert(0, os.path.join(ROOT, "scripts")) # `_srcmatch` 在 scripts 里（判据卫生网要求用它的 has()）
 os.chdir(ROOT)
 
-import _srcmatch as _SM                    # noqa: E402
-from agent import chat_header as CH        # noqa: E402
-from agent import chat_ocr as CO           # noqa: E402
-from agent import input_backend as IB      # noqa: E402
-from agent import sender as SD             # noqa: E402
-from agent import wechat as W              # noqa: E402
+import _srcmatch as _SM # noqa: E402
+from agent import chat_header as CH # noqa: E402
+from agent import chat_ocr as CO # noqa: E402
+from agent import input_backend as IB # noqa: E402
+from agent import sender as SD # noqa: E402
+from agent import wechat as W # noqa: E402
 
 PASS, FAIL = [], []
 
@@ -34,8 +34,8 @@ def ok(name, cond, detail=""):
     print(("  PASS " if cond else "  FAIL ") + name + (("  [" + str(detail) + "]") if detail else ""))
 
 
-# ── V-R6-1（P0）：逐字雷同**不构成排他证据** ───────────────────────────────────────
-print("\n== A. V-R6-1 逐字雷同 ⇒ 不排他（P0，退回 v2.1.48 后当时 0 条判据能抓） ==")
+# ── （P0）：逐字雷同**不构成排他证据** ───────────────────────────────────────
+print("\n== A. 逐字雷同 ⇒ 不排他（P0，退回 v2.1.48 后当时 0 条判据能抓） ==")
 ad = W.WeChatAdapter.__new__(W.WeChatAdapter)
 _TARGET, _OTHER = "group:目标群", "group:别的群"
 _SAME = "早上好呀，今天几点开会？"
@@ -45,29 +45,29 @@ def _recent(self, ck):
     return [_SAME] if str(ck) in ("目标群", "别的群") else []
 
 
-ad.recent_texts = types.MethodType(_recent, ad)          # type: ignore[attr-defined]
-ad._monitored_chat_ids = types.MethodType(lambda self: [_TARGET, _OTHER], ad)   # type: ignore[attr-defined]
+ad.recent_texts = types.MethodType(_recent, ad) # type: ignore[attr-defined]
+ad._monitored_chat_ids = types.MethodType(lambda self: [_TARGET, _OTHER], ad) # type: ignore[attr-defined]
 _ex, _why = ad._pane_excludes_others(_TARGET, "有人说话：%s" % _SAME)
 ok("别家正文与目标**逐字雷同**且出现在聊天区 ⇒ 判**不排他**（判不了就不放行）",
    _ex is False, str(_why)[:110])
 _ex2, _why2 = ad._pane_excludes_others(_TARGET, "聊天区里只有别的话，两边的正文都没出现")
 ok("反例锚：两边正文都没出现 ⇒ 仍判排他（证明上面那条不是恒 False）",
    _ex2 is True, str(_why2)[:90])
-ad._monitored_chat_ids = types.MethodType(lambda self: [_TARGET], ad)           # type: ignore[attr-defined]
+ad._monitored_chat_ids = types.MethodType(lambda self: [_TARGET], ad) # type: ignore[attr-defined]
 _ex3, _why3 = ad._pane_excludes_others(_TARGET, "有人说话：%s" % _SAME)
 ok("没有别的监听会话 ⇒ 排他（阳性对照，别把正常情形也判死）", _ex3 is True, str(_why3)[:80])
 
-# ── V-R6-2：授权档不许把两个不同的名字归一成同一个 ────────────────────────────────
-print("\n== B. V-R6-2 授权档：星期/相对日指纹守恒 ==")
+# ── 授权档不许把两个不同的名字归一成同一个 ────────────────────────────────
+print("\n== B. 授权档：星期/相对日指纹守恒 ==")
 ok("`matches_strict('星期六播报','星期天播报')` 必须 False（展示用 norm 会把两者洗成同一个）",
    CO.matches_strict("星期六播报", "星期天播报") is False)
 ok("反例锚：同名仍判 True（上面那条不是恒 False）", CO.matches_strict("星期六播报", "星期六播报") is True)
 ok("带时间戳的行文本照样能比（`文件传，17：01` vs `文件传输助手` 不受影响）",
    CO.matches_strict("文件传，17：01", "文件传，17：01") is True)
 
-# ── V-R6-11/12：面板左沿只有入口 + 绿判据只有一套 ────────────────────────────────
-print("\n== C. V-R6-11/12 面板左沿交叉校验 + 共用绿判据 ==")
-from PIL import Image as _I                                                      # noqa: E402
+# ── 面板左沿只有入口 + 绿判据只有一套 ────────────────────────────────
+print("\n== C. 面板左沿交叉校验 + 共用绿判据 ==")
+from PIL import Image as _I # noqa: E402
 
 
 def _frame(bubble_left: bool) -> _I.Image:
@@ -99,38 +99,37 @@ ok("干净帧：左沿≈384（老口径与结构锚都说得通）", 340 <= _pl
 ok("聊天区左列被气泡占满时，左沿**不许被顶进聊天区**（≤ 420）", _pl_bub <= 420, _pl_bub)
 _real_dpl = CH.detect_pane_left
 try:
-    CH.detect_pane_left = lambda im, *a, **k: 660        # 真机实测过的"过冲"读数
-    _pl_forced = CH.pane_left_for(_frame(False))         # 新对象 ⇒ 不吃上一帧的缓存
+    CH.detect_pane_left = lambda im, *a, **k: 660 # 真机实测过的"过冲"读数
+    _pl_forced = CH.pane_left_for(_frame(False)) # 新对象 ⇒ 不吃上一帧的缓存
 finally:
     CH.detect_pane_left = _real_dpl
 ok("反例锚：老口径报 **660**（真机实测过的过冲值）时，入口改用结构锚（≤420）",
    0 < _pl_forced <= 420, _pl_forced)
 ok("`find_row_info/session_rows` 都走同一个入口（源码级：`detect_pane_left` 只剩两处显式引用）",
    open(os.path.join("agent", "chat_ocr.py"), encoding="utf-8").read().count("ch.detect_pane_left(") <= 1)
-# 绿判据统一：跨机实测的**浅绿**活动行底色也要认（老写法 g>r+25 会判否）
 _light = _I.new("RGB", (400, 400), (237, 237, 239))
 lp = _light.load()
 for x in range(120, 360):
     for y in range(150, 220):
-        lp[x, y] = (169, 212, 196)          # 跨机实测的浅绿活动行
+        lp[x, y] = (169, 212, 196)
 _hw_light = CO.highlight_wide(_light, pane_left=384)
 ok("浅绿主题（169,212,196）也能量到高亮行（`highlight_wide` 与 `_is_green` 共用一套判据）",
    bool(_hw_light) and abs(int(_hw_light["y_abs"]) - 185) <= 40, str(_hw_light))
 
-# ── V-R6-16：出站闸门词表覆盖本轮新加的内部话术 ────────────────────────────────
-print("\n== D. V-R6-16 出站闸门：新话术要拦得住 ==")
+# ── 出站闸门词表覆盖本轮新加的内部话术 ────────────────────────────────
+print("\n== D. 出站闸门：新话术要拦得住 ==")
 _NEW = ["我已经排进重试队列了，等现场清楚会自动补发一次", "这条我先排进重试队列了", "刚才那条现场没认准"]
 _hits = [SD._is_internal_failure(x) for x in _NEW]
 ok("三条新内部话术都被拦下（退回 v2.1.48 时 3/3 全部放行）", all(_hits), str(_hits))
 ok("反例锚：正常聊天内容不许被误拦",
    SD._is_internal_failure("今天天气不错，晚上一起吃饭？") == "", repr(SD._is_internal_failure("今天天气不错")))
 
-print("\n== E. V-R7-3 · V-R6-3：量不到绿底带 ⇒ **不许补枪**（真跑产品源码，不是 grep） ==")
+print("\n== E. · 量不到绿底带 ⇒ **不许补枪**（真跑产品源码，不是 grep） ==")
 # `_band_on_row()` 是嵌在 `wechat._click_visible_session()` 里的闭包 —— 外层调不动它，
-# 但"能不能测量"这个 fail-closed 语义正是 V-R6-3 的核心。这里把**产品源码里那段闭包**原样
+# 但"能不能测量"这个 fail-closed 语义正是 的核心。这里把**产品源码里那段闭包**原样
 # 取出来 exec 到一个受控命名空间里跑（不复制、不改写代码 ⇒ 源码一旦回退成 fail-open，本条必红）。
-import ast          # noqa: E402
-import textwrap     # noqa: E402
+import ast # noqa: E402
+import textwrap # noqa: E402
 
 _w_src = open(os.path.join("agent", "wechat.py"), encoding="utf-8").read()
 _bn_node = None
@@ -138,7 +137,7 @@ for _n in ast.walk(ast.parse(_w_src)):
     if isinstance(_n, ast.FunctionDef) and _n.name == "_band_on_row":
         _bn_node = _n
         break
-ok("能在产品源码里找到 `_band_on_row`（V-R6-3 的 fail-closed 闭包）", _bn_node is not None)
+ok("能在产品源码里找到 `_band_on_row`", _bn_node is not None)
 
 
 def _run_band(capture_fn, row_y=200, pane_left=384):
@@ -152,11 +151,11 @@ def _run_band(capture_fn, row_y=200, pane_left=384):
 
 
 if _bn_node is not None:
-    _none_shot = lambda **k: None                                     # 截图永远拿不到
+    _none_shot = lambda **k: None # 截图永远拿不到
     _band_none, _meas_none = _run_band(_none_shot)
     ok("截图拿不到（连试两帧都 None）⇒ **measurable=False**（老写法 fail-open 会返回 None 被当成「可补枪」）",
        _band_none is None and _meas_none is False, "%r/%r" % (_band_none, _meas_none))
-    _dark = _I.new("RGB", (600, 600), (237, 237, 239))                # 截到了、但这行没有绿底带
+    _dark = _I.new("RGB", (600, 600), (237, 237, 239)) # 截到了、但这行没有绿底带
     _band_dark, _meas_dark = _run_band(lambda **k: _dark)
     ok("截到了但没有绿底带 ⇒ measurable=True（这是「能测量、只是不在目标行」⇒ 允许补枪）",
        _band_dark is None and _meas_dark is True, "%r/%r" % (_band_dark, _meas_dark))
@@ -164,7 +163,7 @@ if _bn_node is not None:
     _gp = _green.load()
     for _x in range(200, 560):
         for _y in range(180, 230):
-            _gp[_x, _y] = (169, 212, 196)                             # 浅绿活动行，落在目标行附近
+            _gp[_x, _y] = (169, 212, 196) # 浅绿活动行，落在目标行附近
     _band_ok, _meas_ok = _run_band(lambda **k: _green)
     ok("绿底带已在目标行 ⇒ 返回 band 且 measurable=True（调用方据此**绝不补枪**、直接算成功）",
        bool(_band_ok) and _meas_ok is True, str(_band_ok))
@@ -180,9 +179,9 @@ if _bn_node is not None:
     ok("反例锚：把 `return None, _seen` 改成 `return None, True`（＝退回 fail-open）⇒ 上面第一条必红",
        _run_band(lambda **k: None)[1] is False)
 
-print("\n== F. V-R7-3 · V-R6-26：webui 三处加固的行为级锚（免认证路由 / 口令 / 日期） ==")
-from agent import local_guard as LG        # noqa: E402
-from agent import webui as WU              # noqa: E402
+print("\n== F. · webui 三处加固的行为级锚（免认证路由 / 口令 / 日期） ==")
+from agent import local_guard as LG # noqa: E402
+from agent import webui as WU # noqa: E402
 
 ok("Host 闸：回环（带端口 / 不带端口 / IPv6）放行",
    LG.host_ok("127.0.0.1:7860") and LG.host_ok("localhost") and LG.host_ok("[::1]:7860"))
@@ -201,7 +200,7 @@ class _FakeHandler:
 
 
 _keep_tok = LG.token
-LG.token = lambda *a, **k: "JUDGE-TOKEN"          # 打桩：不碰 logs/ 里的真口令文件
+LG.token = lambda *a, **k: "JUDGE-TOKEN" # 打桩：不碰 logs/ 里的真口令文件
 try:
     ok("check()：陌生 Host ⇒ 403（Host 闸**先于**口令闸 ⇒ 免认证路由也进不来）",
        LG.check(_FakeHandler({"Host": "evil.example.com"}))[0] is False

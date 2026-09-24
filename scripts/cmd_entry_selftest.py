@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
-"""入口脚本（.cmd）判据（2026-09-15，两轮跨机实测逼出来的）。
+"""入口脚本（.cmd）判据。
 
-**第一轮**：跨机那台（Win10 22H2 · ACP=OEMCP=936）上，包里的两个 `.cmd` **双击一行都跑不动**。
 6 格对照（同内容只改编码/行尾）：**LF 三种编码全断、CRLF 三种全通** ⇒ 打包缺陷（UTF-8 无 BOM
 + 纯 LF），根因是 cmd.exe 解析不了 LF 行尾的 `if ... goto` / `for /f` / 括号块。
 
-**第二轮**：`.cmd` 能跑了，但**安装路径含中文**时又踩一个：`setup_python.ps1` 用
+：`.cmd` 能跑了，但**安装路径含中文**时又踩一个：`setup_python.ps1` 用
 `-Encoding Default`（中文机＝GBK）写 `logs\\python_path.txt`，`.cmd` 在 `chcp 65001` 下用
 `for /f` 读 ⇒ 路径里的中文变乱码 ⇒ `if exist` 判否 ⇒ 静默回落到**系统 Python 3.14** 去跑
 pip 源码编译（卡几分钟、多半失败）。修法＝setup 之后**先直接试 `runtime\\python\\python.exe`**，
@@ -62,7 +61,7 @@ def text(name):
 
 
 # ── A 行尾 / 编码 ──────────────────────────────────────────────────────
-print("\n[一] 行尾与编码（跨机双击跑不动的直接原因）")
+print("\n[一] 行尾与编码")
 for nm in (CHECK, ONLY):
     b = raw(nm)
     crlf = b.count(b"\r\n")
@@ -80,7 +79,7 @@ for nm in (CHECK, ONLY):
     ok("%s：含 cd /d \"%%~dp0\"（切到包目录）" % nm, 'cd /d "%~dp0"' in text(nm))
 
 # ── B 两个入口该有的步骤 ────────────────────────────────────────────────
-print("\n[二] 入口步骤（两轮跨机实测抓到的缺口）")
+print("\n[二] 入口步骤")
 for nm in (CHECK, ONLY):
     t = text(nm)
     ok("%s：会准备 Python（setup_python.ps1）" % nm, "setup_python.ps1" in t)
@@ -100,7 +99,6 @@ for nm in (CHECK, ONLY):
 t_check, t_only = text(CHECK), text(ONLY)
 ok("只读版：**不带** --send-test", "--send-test" not in t_only)
 ok("只读版：**不带** --allow-send", "--allow-send" not in t_only)
-# ⛔ 跨机 r13 ①-1（r1 老账）：两个 .cmd 都硬编码了 `--open` ⇒ 跑完**资源管理器被弹到前台**
 #    （他们实测 t=27.4s 前台切到 CabinetWClass「报告」）——自检工具不许打扰用户（与 r12 的 16s 光标同一条红线）。
 # ⚠️ 按代码判必须**先剥 rem 注释**（我上面那两行注释里就写着 `--open`，不剥必然假红）。
 def _no_rem(_t):
@@ -173,11 +171,11 @@ ok("CRLF 版：能走完 goto 链到 :deps（打出 MARKER-DEPS）", "MARKER-DEP
 ok("CRLF 版：能走到最后一步（打出 MARKER-REPORT）", "MARKER-REPORT" in out_ok, "rc=%s" % rc_ok)
 
 rc_lf, out_lf = run_script(base, d1, "\n", name="t_lf.cmd")
-# 不断言 LF 必失败：本机控制台代码页可能是 65001（跨机那台是 936）。只把事实记下来。
+# 不断言 LF 必失败：本机控制台代码页可能是 65001。只把事实记下来。
 print("  · 参考（不断言）：LF 版 rc=%s · 打出 MARKER-REPORT=%s" % (
     rc_lf, "MARKER-REPORT" in out_lf))
 if "MARKER-REPORT" not in out_lf:
-    print("    ⇒ 本机也复现了「LF 版一行都跑不动」（与跨机那台一致）")
+    print("⇒ 本机也复现了「LF 版一行都跑不动」")
 
 # ── D P8 回归：非 ASCII 路径 ────────────────────────────────────────────
 print("\n[四] 非 ASCII 路径回归（P8：中文路径下不许静默回落到系统 Python）")
@@ -208,7 +206,7 @@ with open(os.path.join(cn3, "realpy", "python.exe"), "wb") as f:
 real = os.path.join(cn3, "realpy", "python.exe")
 try:
     with open(os.path.join(cn3, "logs", "python_path.txt"), "w", encoding="gbk") as f:
-        f.write(real)                       # 模拟 setup_python.ps1 的 -Encoding Default
+        f.write(real) # 模拟 setup_python.ps1 的 -Encoding Default
     rc_old, out_old = run_script(OLD_STYLE, cn3, "\r\n")
     ok("反面：老写法（GBK 写 + chcp 65001 读）在中文路径下**读不出真路径**（所以必须去掉这一步）",
        "MARKER-OLD-RESOLVED" not in out_old, "rc=%s 输出末尾=%r" % (rc_old, out_old[-200:]))
@@ -219,7 +217,7 @@ except Exception as e:
 print("\n[五] 跨文件耦合（.ps1 的 BOM · python_path.txt 的读写两侧）")
 
 # ① 随包 `.ps1` 必须是 **UTF-8 带 BOM**：PowerShell 5.1 把无 BOM 的 UTF-8 当 ANSI 解，
-#    中文注释里的字节会把语法读崩（2026-09-15 本会话实测：编辑工具改一次就掉了 BOM，
+# 中文注释里的字节会把语法读崩（编辑工具改一次就掉了 BOM，
 #    `setup_python.ps1` 当场 **5 处语法错误**、脚本根本跑不起来 —— 而它在 HEAD 里本来是好的）。
 try:
     _r = subprocess.run(["git", "ls-files", "*.ps1"], capture_output=True, text=True,
@@ -241,23 +239,23 @@ ok("随包 .ps1 都是 UTF-8 **带 BOM**（无 BOM ⇒ PS 5.1 按 ANSI 解、中
 
 # ② `setup_python.ps1` 必须继续按 ANSI 写 python_path.txt —— 产物 `一键启动.exe` 读它时
 #    **936 与 UTF-8 都试、去 BOM，取第一个真的存在的那个**（launcher.cs::ReadPyPath）。
-#    ⚠️ 2026-09-19 修：以前只有 936 一条路，而那个文件是**上一次安装留下的** ⇒ 换过目录/移动过文件夹
-#    之后它指向旧位置 ⇒ exe 报「Python 环境异常 · …不存在」（作者截图），而文件明明在。
+# ⚠️ 以前只有 936 一条路，而那个文件是**上一次安装留下的** ⇒ 换过目录/移动过文件夹
+# 之后它指向旧位置 ⇒ exe 报「Python 环境异常 · …不存在」，而文件明明在。
 _ps1 = text(os.path.join("scripts", "setup_python.ps1"))
 ok("setup_python.ps1 仍按 ANSI 写 python_path.txt（一键启动.exe 那一侧也读了 936）",
    "Set-Content -Path $pathTxt -Value $cmd -Encoding Default" in _ps1)
 
 # ③ `一键启动.exe` 这一侧与 `installer.ps1` **同源**（同一个文件、同一个坑，两边别各写一套）：
 #    先按约定找 runtime\python\python.exe；读 txt 时 936/UTF-8 都试；找不到就说人话（不教用户解压）。
-#    ⭐ 2026-09-19 修**真根因**：那一行可能是**命令**（`py -3` / `python`）而不是路径
+# ⭐ **真根因**：那一行可能是**命令**（`py -3` / `python`）而不是路径
 #    —— 两侧都必须"命令与路径都认"，并且**真跑一次报出版本号**才算数（`pack_online.py` 的 EXCLUDE
 #    含 `runtime/`，绿色 Python 不进包 ⇒ "没有 runtime\python 但有系统 Python"是常态）。
 _lc = text(os.path.join("launcher-src", "launcher.cs"))
 ok("一键启动.exe 先按约定找 runtime\\python\\python.exe（不靠那个 txt）",
    'Path.Combine(Root, "runtime", "python", "python.exe")' in _lc)
-# ⭐ 2026-09-20 修 V-R1-1（P0）：**整串先当路径试**（安装路径含空格时唯一能救回来的分支；
+# ⭐ （P0）：**整串先当路径试**（安装路径含空格时唯一能救回来的分支；
 #    默认包顶层就叫 `persona morph`）。两侧同源：launcher.cs 的 TryPy 与 installer.ps1 的 Resolve-PyCmd。
-_ps_inst = text(os.path.join("scripts", "installer.ps1"))     # 本段要用的 installer 源码
+_ps_inst = text(os.path.join("scripts", "installer.ps1")) # 本段要用的 installer 源码
 ok("exe：切分之前先判「整串是不是一个存在的文件」（含空格路径）",
    "if (File.Exists(cmd))" in _lc and "先判" in _lc)
 ok("installer.ps1：同样「整串先当路径试」",
@@ -294,7 +292,7 @@ for nm in (CHECK, ONLY):
     ok("%s：有 nopy 守卫（PYCMD 不存在时给人话，而不是天书报错）" % nm,
        ":nopy" in _t and 'if not defined PYARG if not exist "%PYCMD%"' in _t)
     _bad_end = [i + 1 for i, l in enumerate(_t.split("\r\n")) if l and ord(l[-1]) > 127]
-    ok("%s：每行都以 ASCII 字节结尾（防多字节字符紧贴 CR 的解析事故）" % nm,
+    ok("%s：每行都以 ASCII 字节结尾" % nm,
        not _bad_end, "行：%s" % _bad_end)
 
 print("\n%d 通过 / %d 失败" % (PASS, FAIL))

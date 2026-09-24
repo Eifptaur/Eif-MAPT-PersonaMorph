@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """本机模型端点探测（Ollama / LM Studio / vLLM / llama.cpp / text-generation-webui…）
 
-用户口径（2026-09-15 ②）：探测本机 OpenAI 兼容端点 + 一键连通测试 + **能力如实标注** + 界面画在「模型」面板。
 
 三条纪律（写死在代码里，别在界面层再解释一遍）：
   1. **一律不自动启用**：本模块只探测与展示；切换模型要用户自己点（写 `api.base_url` / `api.model`）。
@@ -69,7 +68,7 @@ def _safe_cfg():
 
 
 # ── 两个网络出口（自检里替身它们；不改这两处就没法离线测）────────────────────
-# ⛔ 2026-09-21 修（第十轮 **V-R10-34**）：这两个出口原来 `r.read()` **没有上限** ——
+# ⛔ 这两个出口原来 `r.read()` **没有上限** ——
 #   本机模型服务（或伪装的端点）回 64MB 时 tracemalloc 峰值 128MB，而 `discover()` 还会**并发 5 个**。
 #   探端点只需要一小段 JSON ⇒ 8MB 足够，超了当失败（宁可探测失败，也不要被一个端点吃光内存）。
 _MAX_JSON = 8 * 1024 * 1024
@@ -133,7 +132,7 @@ def probe_models(base_url, timeout=DEFAULT_TIMEOUT):
         reason = getattr(e, "reason", e)
         out["error"] = "连不上：%s" % ("连接被拒绝" if "refused" in str(reason).lower() else str(reason)[:80])
         return out
-    except Exception as e:                                    # 含 JSON 解析失败
+    except Exception as e: # 含 JSON 解析失败
         out["ms"] = int((time.time() - t0) * 1000)
         out["error"] = "应答无法解析：%s" % str(e)[:80]
         return out

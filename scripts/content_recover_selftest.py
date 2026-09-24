@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""正文还原 判据（2026-09-14，用户报障「把你的话复制到微信发过来之后你就不太能正常识别了」）。
+"""正文还原 判据。
 
 **实测机制**（本判据钉的就是它）：
   · 微信 4.x 把**长文本与文件卡**的 content 以 **zstd** 压缩存库（实测 local_id=703 是 1791 字节的
@@ -20,7 +20,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
-from agent import replica_adapter as RA        # noqa: E402
+from agent import replica_adapter as RA # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -94,10 +94,10 @@ ok("适配层只用公开方法 get_message_row（不碰私有）",
 
 print("── D. 真数据（有微信在跑才有意义）：最近的长消息能不能读出来 ──")
 try:
-    from agent.config import get_config            # noqa: E402
-    from agent.wechat import WeChatAdapter         # noqa: E402
+    from agent.config import get_config # noqa: E402
+    from agent.wechat import WeChatAdapter # noqa: E402
     ad = WeChatAdapter(get_config())
-    # ⚠️ 这里**不许写死会话 id**（2026-09-15）：原来写的是用户的真实 wxid，被外发包的
+    # ⚠️ 这里**不许写死会话 id**：原来写的是用户的真实 wxid，被外发包的
     # 个人信息闸门当场拦下（"微信账号/数据"致命命中）；换成假 id 又会让这一节恒假红。
     # 正路＝**从库里现取候选会话**（群列表 + 自己），谁读得出文本就用谁；都读不出就如实 SKIP。
     cands = []
@@ -112,7 +112,7 @@ try:
         pass
     cands = [c for c in dict.fromkeys(cands) if c]
     try:
-        cands.append("filehelper")     # 文件传输助手：名字固定、不涉及任何人
+        cands.append("filehelper") # 文件传输助手：名字固定、不涉及任何人
     except Exception:
         pass
     hit = ("", [])
@@ -129,7 +129,7 @@ try:
         cid, nt = hit
         longs = [t for t in nt if len(t) > 60]
         tags = [t for t in nt if t.startswith("[") and t.endswith("]")]
-        # 自检分工（2026-09-15 定）：**"还有没有纯类型标签"才是回归自检**（旧 bug 会把压缩正文
+        # 自检分工：**"还有没有纯类型标签"才是回归自检**（旧 bug 会把压缩正文
         # 读成 `[文本]` 这种标签，长度必然 ≤60、必被这条抓到）；"能不能看到长正文"是**证据**——
         # 库里这段窗口没有长消息时它天然为假，那不是红，是"这会儿没得比"，如实 SKIP。
         ok("真数据里不再出现纯类型标签（压缩正文没被读成 `[文本]`）", not tags, str(tags[:3]))

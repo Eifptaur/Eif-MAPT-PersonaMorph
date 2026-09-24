@@ -19,8 +19,8 @@ try:
 except Exception:
     pass
 
-from agent import listener_watermark as lw  # noqa: E402
-import _srcmatch as _sm                      # noqa: E402  空白容忍的源码断言（V-R4-13 第三条）
+from agent import listener_watermark as lw # noqa: E402
+import _srcmatch as _sm # noqa: E402 空白容忍的源码断言
 
 PASS, FAIL = [], []
 
@@ -60,7 +60,7 @@ def main():
 
     def ok_handler(it):
         seen.append(it["sort_seq"])
-        return {"id": it["sort_seq"]}          # 非空 dict ＝ 成功（对齐 store.append_incoming 的返回）
+        return {"id": it["sort_seq"]} # 非空 dict ＝ 成功（对齐 store.append_incoming 的返回）
 
     st = lw.process_batch("group:b", items(1, 2, 3), ok_handler, wm2, log=log, deadletter_path=dl_path, sleep=lambda s: None)
     ok("三条全成功 ⇒ processed=3 且水位推进到最后一条", st["processed"] == 3 and st["advanced_to"] == 3, st)
@@ -126,7 +126,7 @@ def main():
     ok("同一会话同一时刻只有一个处理者（peak=1）", peak["n"] == 1, "peak=%d" % peak["n"])
     ok("并发下水位仍单调到最后", wm5.get("group:f") == 3, wm5.get("group:f"))
 
-    # == G. 「自己发的/系统消息」这类被丢弃的行必须能推过水位（2026-09-18 现场：机器人每两分钟自己念一句）==
+    # == G. 「自己发的/系统消息」这类被丢弃的行必须能推过水位==
     #    根因：`poll_new_messages` 把归一化阶段被丢掉的行**直接排除在批次外** ⇒ 水位推不过它
     #    ⇒ 同一行每 1.5 秒被重读（台账实测同一条连着 24 行 echo=True keep=False），
     #    等它超过 120 秒回声窗就被当成"别人的话"⇒ 机器人回自己。
@@ -154,7 +154,7 @@ def main():
     ok("末尾那条是被丢弃的行 ⇒ 水位仍推到 2（不再卡住重读）",
        wm6.get("group:g") == 2 and st_g.get("processed") == 2, (wm6.get("group:g"), st_g))
 
-    # ── 2026-09-17（用户问「我把聊天记录清空了，它会不会学不会、从而不发」）──
+    # ── ──
     #    水位只前进不回退是对的（防重复处理），但**微信清空记录后序号可能回落/换库** ⇒ 新消息会被
     #    判成"处理过"而永远跳过，而且**重启也救不回**（水位是从文件读回来的）⇒ 监听循环里必须有自愈。
     print("\n-- G. 记录被清空后的水位自愈（源码级，防以后被顺手删掉） --")
@@ -166,14 +166,14 @@ def main():
     ok("回退走显式 `forward_only=False`（默认只前进，不许悄悄退）",
        "wm.set(chat_key, _latest, forward_only=False)" in _pm)
     ok("自愈要落盘 + 留日志（否则用户永远不知道为什么它不回）；"
-       "**落盘看返回值**（V-R10-30：`wm.flush()` 裸调用一处都不许剩）",
+       "**落盘看返回值**（`wm.flush()` 裸调用一处都不许剩）",
        _sm.has(_pm, "flush_checked(wm") and not _sm.has(_pm, "wm.flush()")
        and "记录像是被清过" in _pm)
-    # ── 用户拍板（2026-09-17）：「不要让用户担风险啊，还要删这删那的、还要试这试那的，不行」 ──
+    # ── ──
     #    ⇒ 老办法"删 data\listener_watermark.json"不许留给用户，必须变成控制台上的一个按钮。
     print("\n-- H. 用户零操作：控制台一键「重新对齐监听水位」（不删文件、不重启） --")
     ok("主程序里有 _reset_watermark（按当前最新对齐、显式 forward_only=False；"
-       "V-R11-13 起改调带 `ok` 的 `latest_seq_ex`，读失败**不动水位**）",
+       "起改调带 `ok` 的 `latest_seq_ex`，读失败**不动水位**）",
        "def _reset_watermark()" in _pm
        and _sm.has(_pm, 'wm.set("group:" + wxid, int(_seq13), forward_only=False)')
        and _sm.has(_pm, "_ok13, _seq13, _why13 = _wc.latest_seq_ex(wxid)")
@@ -189,13 +189,13 @@ def main():
     ok("控制台有按钮并打这个接口（含二次确认）",
        'id="wmReset"' in _ch and "getJSON('/api/watermark/reset'" in _ch and "uiConfirm('重新对齐监听水位？" in _ch)
 
-    # ── 第四轮审计 V-R4-12a / V-R4-7（P1）：**"读失败"与"0 / 没消息"必须分开** ──
+    # ── 审计 a / （P1）：**"读失败"与"0 / 没消息"必须分开** ──
     #   实测现场：`latest_seq` 读失败返回 0，而监听侧把它当起点写进水位 ⇒ 水位 0 ⇒ **从最旧历史重放**
     #   （审计实测群 A 441 条、首捞竟是 14.1 天前那 50 条），而且 0 水位**永不自愈**；
     #   `poll_new_messages` 读失败返回 []，与"确实没有新消息"不可区分 ⇒ `if not new: continue`
     #   无声空转（用户看到的就是"它不回话、日志什么都没有"）。
-    print("\n-- I. 读失败 ≠ 0 / 没消息（V-R4-12a / V-R4-7） --")
-    from agent import wechat as _wx                                              # noqa: E402
+    print("\n-- I. 读失败 ≠ 0 / 没消息 --")
+    from agent import wechat as _wx # noqa: E402
 
     class _BoomDB(object):
         def get_messages(self, *a, **k):
@@ -259,10 +259,10 @@ def main():
                 and "wm.set(\"group:\" + g[\"wxid\"], 0)" in _OLD_PM)
     ok("⑦ 反例锚：老写法（吞成 0 当起点 + [] 当没消息）**确实**会被判不合格", _old_bad is True)
 
-    # ── 第十轮 V-R10-30（P2）：**水位表账号维** · **flush 看返回值** · 切号放掉旧句柄 ──
+    # ── （P2）：**水位表账号维** · **flush 看返回值** · 切号放掉旧句柄 ──
     #   症状：切号后两号水位互相污染（A 号推到 900 ⇒ B 号 1~900 被判"处理过了"⇒ 静默不回）；
     #   `persist.atomic_write_json` 在目标被占用/真并发时必然 WinError 5，而 8 个调用点全丢返回值。
-    print("\n-- J. 账号维 / flush 返回值 / 切号释放旧句柄（V-R10-30） --")
+    print("\n-- J. 账号维 / flush 返回值 / 切号释放旧句柄 --")
     _p_acct = os.path.join(tmp, "wm_acct.json")
     _wa = lw.Watermark(_p_acct, "acctA")
     _wa.set("group:x", 900)
@@ -278,16 +278,16 @@ def main():
     ok("② 两个账号的格子**同时留在文件里**，切回来各读各的",
        _wa2.get("group:x") == 900 and _wb2.get("group:x") == 7,
        (_wa2.get("group:x"), _wb2.get("group:x")))
-    ok("③ 空账号（认不出账号）⇒ 走**保留命名空间 `?`**，绝不回退到无前缀的老键名（V-R11-5）",
+    ok("③ 空账号（认不出账号）⇒ 走**保留命名空间 `?`**，绝不回退到无前缀的老键名",
        lw.Watermark(_p_acct).data.get("group:x") is None
        and lw.Watermark(_p_acct, "acctB")._ns("group:x") == "acctB|group:x"
        and lw.Watermark(_p_acct)._ns("group:x") == "?|group:x")
-    # ⛔ V-R11-5：老档里躺着一个**无前缀**的键（＝升级前"两个号共用的那一格"）——
+    # ⛔ 老档里躺着一个**无前缀**的键（＝升级前"两个号共用的那一格"）——
     #   认不出账号时**不许**直接继承它（要么读 0 走"对齐到最新"，要么按 `?` 各自记账）。
     _p_legacy = os.path.join(tmp, "wm_legacy.json")
     with open(_p_legacy, "w", encoding="utf-8") as _f11:
-        json.dump({"group:x": 900}, _f11)                 # 模拟升级前的老档（无账号维）
-    _w_unknown = lw.Watermark(_p_legacy)                  # 认不出账号（account = ''）
+        json.dump({"group:x": 900}, _f11) # 模拟升级前的老档（无账号维）
+    _w_unknown = lw.Watermark(_p_legacy) # 认不出账号（account = ''）
     ok("③b 老档（无前缀的共用格）+ 认不出账号 ⇒ 读到的是 **0**（不许继承那 900）",
        _w_unknown.get("group:x") == 0, "读到 %s" % _w_unknown.get("group:x"))
     _w_unknown.set("group:x", 42)
@@ -297,13 +297,13 @@ def main():
        _legacy_data.get("?|group:x") == 42 and _legacy_data.get("group:x") == 900,
        str(_legacy_data)[:140])
 
-    def _old_ns11(acct, k):                              # 老写法：空账号 ⇒ 不加前缀
+    def _old_ns11(acct, k): # 老写法：空账号 ⇒ 不加前缀
         return ("%s|%s" % (acct, k)) if acct else str(k)
     ok("③d 反例锚：老写法（空账号不加前缀）会**直接读到**那个 900（＝别号的水位）",
        _legacy_data.get(_old_ns11("", "group:x"), 0) == 900,
        str(_legacy_data)[:120])
     _wa2.set_account("")
-    ok("④ `set_account('')` ⇒ 走**保留命名空间 `?`**（V-R11-5：不再回退到无前缀老键）",
+    ok("④ `set_account('')` ⇒ 走**保留命名空间 `?`**",
        _wa2.get("group:x") == 0 and _wa2._ns("k") == "?|k")
     _wa2.set_account("acctA")
     ok("④ 切回去仍读得到（set_account 只换命名空间、不丢数据）", _wa2.get("group:x") == 900)
@@ -365,7 +365,7 @@ def main():
                  and "def flush(self):\n        persist" in _OLD_WM.replace("\r", ""))
     ok("⑧ 反例锚：老写法（无账号维 + flush 不看返回值）**确实**会被判不合格", _old_bad2 is True)
 
-    # ── 第十一轮 V-R11-1（P1）：**带账号时「只前进」必须照样成立** ──
+    # ── （P1）：**带账号时「只前进」必须照样成立** ──
     #   老写法 `k = self._ns(chat_key)` 之后又 `cur = self.get(k)`，而 `get()` 内部**再套一次** `_ns`
     #   ⇒ `cur` 恒 0 ⇒ 任何更小的值都能写进去（水位倒退＝从旧位置重放）。J 段 18 条全绿也抓不住它，
     #   因为那些夹具都只测"隔离/共存/回退/返回值"，**没有一条**去测"带账号写一个更小的值"。
@@ -392,11 +392,11 @@ def main():
             return "acctA|" + str(k)
 
         def get(self, k, default=0):
-            return self.data.get(self._ns(k), default)      # ⬅ 又套一次
+            return self.data.get(self._ns(k), default) # ⬅ 又套一次
 
         def set(self, chat_key, seq, forward_only=True):
             k = self._ns(chat_key)
-            cur = self.get(k)                               # ⬅ 老写法：cur 恒 0
+            cur = self.get(k) # ⬅ 老写法：cur 恒 0
             if forward_only and seq <= cur:
                 return cur
             self.data[k] = seq
@@ -409,16 +409,16 @@ def main():
 
     shutil.rmtree(tmp, ignore_errors=True)
 
-    # ── V-R15-4：同一 mid 只许有一份（重放不许变成"第二条未读"）────────────────────────
+    # ── 同一 mid 只许有一份（重放不许变成"第二条未读"）────────────────────────
     # ⛔ 网友报「有时会重复回复」的第二条独立成因：水位**落盘失败只 warning**（内存前进、盘上落后），
     #   而硬杀/更新接管走 `taskkill /F`（不走退出前 flush）⇒ 重启后从旧水位重读整批 ⇒ 同一行
     #   又变成"新未读"再喂模型一次。这里钉住"去重键＝mid"（本地 id 每轮重排，当不了键）。
-    print("\n── V-R15-4：同一条入站消息（同一 mid）只许有一份 ──")
+    print("\n── 同一条入站消息（同一 mid）只许有一份 ──")
     try:
         from agent import store as _st
         _sd = tempfile.mkdtemp(prefix="pm-mid-judge-")
         _saved_dir = _st.MESSAGES_DIR
-        _st.MESSAGES_DIR = _sd                      # 判据绝不写产品的 data/messages/
+        _st.MESSAGES_DIR = _sd # 判据绝不写产品的 data/messages/
         try:
             _cs = _st.ChatStore()
             _e1 = _cs.append_incoming("group:judge", "mid-AAA", 1700000000000, "u1", "甲", "你好")

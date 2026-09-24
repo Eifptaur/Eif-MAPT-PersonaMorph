@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """磁盘占用的「收尾」：临时目录清理、产物目录上限、占用体检。
 
-**为什么有这个模块**（用户 2026-09-15 问：「下载下来不占用户存储空间吗？所有这种下载写入的
+**为什么有这个模块**（
 功能有没有做好删除措施或者限制写入措施」）：审计后发现确实有缺口——最刺眼的是系统临时目录里
 躺着 **352 个条目 / 1192 个文件 / 22.8 MB** 我们自己的残留，而 `media/tts` 的合成产物
 **221 个文件 / 12.6 MB 且只增不减**。
@@ -13,14 +13,14 @@
   3. **有账可查**：`footprint()` 只读、给控制台/日志看；`tick()` 每次返回"删了几个、回收了多少"，
      **不返回值就不算做过**（本项目的老规矩）。
 
-⛔ 2026-09-22 修 **V-R10-29（P1，数据安全）**：上面第 1 条以前**只管临时目录**，媒体目录那条路
+⛔ （P1，数据安全）**：上面第 1 条以前**只管临时目录**，媒体目录那条路
    （`prune_dir`）是"按策略删**目录里所有**文件"⇒ 审计夹具里把**用户自己的文件**（`我的会议录音.mp3`、
    `DSC_0042.JPG`）一起删了；而且 `tick()` 清的是**硬编码** `ROOT\media\tts`，产物却落在**用户可配**的
    `voice_reply.dir` ⇒ 配了绝对路径的用户那边"产物永不清理、配到自己目录则启动时清它"。现在：
    · `prune_dir` 加**文件名前缀白名单**（与 `sweep_temp` 同口径）：不是我们造的名字，一个都不碰；
    · `tick()` 与 `known_dirs()` 都改用 `tts_dir()`（真值来自 `tts.out_dir()`，唯一来源）；
    · 删除**之前**先写清单（`data/housekeeping_pruned.jsonl`，逐行可复核）。
-     ⛔ **V-R14-4（第十四轮，P3，按设计确认）**：这份清单是**审计记录、不是回收站** —— 它只记
+     ⛔ 这份清单是**审计记录、不是回收站** —— 它只记
      「删了什么」，**不备份内容** ⇒ **删掉的产物不可恢复**（要找回只能靠用户自己的备份）。
      这条口径以前只写在 `known_dirs()` 的报数里，没在用户看得见的地方写明 ⇒ 现在检验报告里会带一句。
      另：`data/gen_images`（实测 365 个文件 / 665 MB，占 `data/` 的 99%）**只报数不清理** ——
@@ -43,7 +43,7 @@ TEMP_PREFIXES = ("pm-",)
 #: `tts_seg_*.wav` / `vc_*.wav` / `seg_*.txt`，见 `tts.py` / `voice_models.py`）。
 #: ⛔ 只删这些 —— 用户自己丢进同一目录的文件（录音、照片…）一个都不许碰。
 MEDIA_PREFIXES = ("tts_", "vc_", "seg_")
-#: ⛔ 2026-09-22 加（第十一轮 **V-R11-12** · P3）：`voice_reply.dir` / `tts.out_dir()` 都是**用户可配**的，
+#: ⛔ `voice_reply.dir` / `tts.out_dir()` 都是**用户可配**的，
 #:   一旦指到"用户自己的目录"，那里任何以 `tts_`/`vc_`/`seg_` 开头的**非产品**文件
 #:   （`seg_1.txt`、`vc_notes.md`、`tts_backup.zip` 这类名字并不稀罕）仍会被删。
 #:   ⇒ 光看前缀不够：**必须长得像我们真会产出的那个形状**才算我们的东西（正则逐族钉死，
@@ -58,7 +58,7 @@ _MEDIA_NAME_RES = (
 
 
 def is_our_media_name(name: str) -> bool:
-    """`True` ⇒ 这个文件名**确实长得像我们造的产物**（V-R11-12：正则钉形状，不是只看前缀）。
+    """`True` ⇒ 这个文件名**确实长得像我们造的产物**。
 
     只在"删除"这条路上用；不匹配就**不删**（宁可留一点垃圾，也绝不动用户的文件）。
     """
@@ -98,7 +98,7 @@ def dir_footprint(path: str) -> dict:
 def tts_dir() -> str:
     """媒体产物目录的**实际值**（用户可配 `voice_reply.dir`）—— 唯一来源 `tts.out_dir()`。
 
-    ⛔ V-R10-29：`tick()` 原来硬编码 `ROOT\\media\\tts`，而产物落在这个可配目录里 ⇒ 用户配了
+    ⛔ `tick()` 原来硬编码 `ROOT\\media\\tts`，而产物落在这个可配目录里 ⇒ 用户配了
     绝对路径时"该清的没清、不该清的反而被清"（配置指到自己目录 ⇒ 启动时清他的目录）。
     """
     try:
@@ -114,7 +114,7 @@ def tts_dir() -> str:
 def known_dirs() -> dict:
     """我们会写的目录清单（只读体检用）。**用户自己的图库不在清理范围内，只报数。**"""
     return {
-        "media/tts": tts_dir(),                     # 实际生效的产物目录（可配）
+        "media/tts": tts_dir(), # 实际生效的产物目录（可配）
         "media/img": os.path.join(ROOT, "media", "img"),
         "data/gen_images": os.path.join(ROOT, "data", "gen_images"),
         "logs": os.path.join(ROOT, "logs"),
@@ -198,15 +198,15 @@ def prune_dir(path: str, keep_newest: int = 0, max_age_days: float = 0.0, max_mb
       · 目录总量超过 `max_mb` MB 时，从最旧的开始删到不超。
     `min_age_s` 内的文件**一律不动**（可能正被发送）。
 
-    ⛔ 2026-09-22 修 **V-R10-29（P1，数据安全）**：**只删自己造的** —— 文件名必须以 `prefixes` 里的前缀
+    ⛔ （P1，数据安全）**：**只删自己造的** —— 文件名必须以 `prefixes` 里的前缀
     开头（与 `sweep_temp` 同一套口径）。审计夹具实测的旧行为：把 `我的会议录音.mp3` / `DSC_0042.JPG`
     和我们的产物放在同一目录里跑清理，**用户自己的文件被删掉了**（无回收站、不可逆）。
 
-    ⛔ 2026-09-22 再加 **V-R11-12（P3）**：光看前缀还不够 —— 这个目录是**用户可配**的
+    ⛔ 再加 （P3）**：光看前缀还不够 —— 这个目录是**用户可配**的
     （`voice_reply.dir`），`seg_1.txt` / `vc_notes.md` 这类"用户自己起的名"照样会被误删。
     ⇒ 默认走**双条件**（前缀 **且** 形状（正则）对得上我们真会产出的名字，见 `is_our_media_name`）。
 
-    ⛔ 第十二轮 **V-R12-9（P3）**：形状检查**默认一律开**，只有显式 `shape_check=False` 才关
+    ⛔ （P3）**：形状检查**默认一律开**，只有显式 `shape_check=False` 才关
     （老写法 `_strict = (prefixes == MEDIA_PREFIXES)` ⇒ 调用方传**别的**前缀元组时会**静默**
     把形状检查关掉，语义与 docstring 相反）。`prefixes=None / ()` ＝ **不按前缀筛**（"我自己造的
     临时目录"这类调用方用），但**形状检查照旧**——两条互不牵连。
@@ -223,7 +223,7 @@ def prune_dir(path: str, keep_newest: int = 0, max_age_days: float = 0.0, max_mb
         if not os.path.isfile(p):
             continue
         if _pref and not nm.startswith(_pref):
-            res["skipped"] += 1                # 不是我们造的名字 ⇒ 一律不碰（哪怕它最老、最大）
+            res["skipped"] += 1 # 不是我们造的名字 ⇒ 一律不碰（哪怕它最老、最大）
             continue
         if _strict and not is_our_media_name(nm):
             # 前缀对上了，但扩展名不是我们产出的那几种 ⇒ 仍然当成"用户的文件"
@@ -234,13 +234,13 @@ def prune_dir(path: str, keep_newest: int = 0, max_age_days: float = 0.0, max_mb
         except Exception:
             continue
         items.append((p, st.st_size, st.st_mtime))
-    items.sort(key=lambda x: x[2], reverse=True)          # 新的在前
+    items.sort(key=lambda x: x[2], reverse=True) # 新的在前
     total = sum(x[1] for x in items)
     keep_bytes_cut = max(0.0, float(max_mb)) * 1048576.0
     doomed = set()
     for idx, (p, sz, mt) in enumerate(items):
         if (now - mt) < max(0.0, float(min_age_s)):
-            continue                                       # 刚出炉的不动
+            continue # 刚出炉的不动
         too_old = max_age_days > 0 and (now - mt) > float(max_age_days) * 86400.0
         beyond = keep_newest > 0 and idx >= int(keep_newest)
         if too_old or beyond:
@@ -319,7 +319,7 @@ def tick(dry: bool = False, root: str | None = None, now: float | None = None,
          media_dir: str = "", ledger: str = "") -> dict:
     """一次收尾：清临时残留 + 收**实际的**产物目录。启动时调一次，也可以随时手动调。
 
-    ⛔ V-R10-29：产物目录用 `tts_dir()`（用户可配 `voice_reply.dir`），不再硬编码 `ROOT\\media\\tts`；
+    ⛔ 产物目录用 `tts_dir()`（用户可配 `voice_reply.dir`），不再硬编码 `ROOT\\media\\tts`；
     删之前写清单（`data/housekeeping_pruned.jsonl`）；只删 `MEDIA_PREFIXES` 里那些**我们造的**文件名。
     `media_dir` / `ledger` 是**给判据用的显式入口**（不传就走生产默认值），免得自检去碰真的
     `data/` 与用户配置的那个目录。

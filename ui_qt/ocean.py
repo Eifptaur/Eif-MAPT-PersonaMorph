@@ -7,7 +7,7 @@
   · 波浪    `.ocean-wave` 三层 SVG（L729-731 路径逐值抄入；L316-321 动画参数）：
             w1 9s 正向 / w2 14s 逆向 · 整层 opacity .7 / w3 20s 正向 · opacity .45；
             高度 40vh、整体 opacity .95；w1 另有浪尖高光描边（白 .9、宽 5）。
-  · 帧率    QTimer 33ms ≈ 30fps 上限（丙-4 工单钉死）；只在 whale 主题启用。
+  · 帧率 QTimer 33ms ≈ 30fps 上限；只在 whale 主题启用。
 
 Qt 实现与 web 的唯一行为差别（有意为之，写进回执）：
   web 的 waveMove 平移 25%（=半周期）后瞬移回 0 —— 波形点对称所以每轮有一次
@@ -32,14 +32,14 @@ from PySide6.QtGui import (
 # 绘制顺序 = web DOM 顺序（w3 最先 = 最底层）。元组：
 # (baseline_y, ctrl1_y, ctrl2_y, fill_rgba, layer_opacity, duration_s, reverse)
 _WAVE_LAYERS: tuple[tuple[int, int, int, tuple[int, int, int, int], float, float, bool], ...] = (
-    (230, 150, 290, (120, 200, 255, 102), 0.45, 20.0, False),  # w3 后排 fill rgba(120,200,255,.40)
-    (200, 120, 280, (160, 222, 255, 140), 0.70, 14.0, True),   # w2 中排 fill rgba(160,222,255,.55)
-    (160, 80, 240, (235, 250, 255, 204), 1.00, 9.0, False),    # w1 前排 fill rgba(235,250,255,.80)
+    (230, 150, 290, (120, 200, 255, 102), 0.45, 20.0, False), # w3 后排 fill rgba(120,200,255,.40)
+    (200, 120, 280, (160, 222, 255, 140), 0.70, 14.0, True), # w2 中排 fill rgba(160,222,255,.55)
+    (160, 80, 240, (235, 250, 255, 204), 1.00, 9.0, False), # w1 前排 fill rgba(235,250,255,.80)
 )
-_VIEW_W, _VIEW_H = 1440.0, 320.0   # web svg viewBox
-_PERIOD_U = 720.0                  # 波形周期：1440 里恰好两轮 ⇒ 一个周期 = 可视视口宽
-_FRAME_MS = 33                     # 30fps 上限（工单钉死）
-_WAVE_OPACITY = 0.95               # web .ocean-wave{opacity:.95}
+_VIEW_W, _VIEW_H = 1440.0, 320.0 # web svg viewBox
+_PERIOD_U = 720.0 # 波形周期：1440 里恰好两轮 ⇒ 一个周期 = 可视视口宽
+_FRAME_MS = 33
+_WAVE_OPACITY = 0.95 # web .ocean-wave{opacity:.95}
 
 
 def tint_gradient(w: float, h: float) -> QLinearGradient:
@@ -49,15 +49,15 @@ def tint_gradient(w: float, h: float) -> QLinearGradient:
     （屏幕坐标 y 向下：方向 = (sin160°, -cos160°) = (0.342, 0.940)）。
     """
     dx, dy = 0.342, 0.940
-    line = abs(dx) * w + abs(dy) * h          # CSS 渐变线长度
+    line = abs(dx) * w + abs(dy) * h # CSS 渐变线长度
     cx, cy = w / 2.0, h / 2.0
     g = QLinearGradient(
         cx - dx * line / 2.0, cy - dy * line / 2.0,
         cx + dx * line / 2.0, cy + dy * line / 2.0,
     )
-    g.setColorAt(0.00, QColor(8, 30, 58, 158))    # rgba(8,30,58,.62)
-    g.setColorAt(0.45, QColor(12, 44, 84, 115))   # rgba(12,44,84,.45)
-    g.setColorAt(1.00, QColor(18, 48, 96, 140))   # rgba(18,48,96,.55)
+    g.setColorAt(0.00, QColor(8, 30, 58, 158)) # rgba(8,30,58,.62)
+    g.setColorAt(0.45, QColor(12, 44, 84, 115)) # rgba(12,44,84,.45)
+    g.setColorAt(1.00, QColor(18, 48, 96, 140)) # rgba(18,48,96,.55)
     return g
 
 
@@ -84,14 +84,14 @@ class OceanWaves(QObject):
     """
 
     def __init__(self, shell):
-        super().__init__()          # 不挂 QObject 父：shell 侧持引用保活即可
+        super().__init__() # 不挂 QObject 父：shell 侧持引用保活即可
         self._shell = shell
         self._timer = QTimer(self)
         self._timer.setInterval(_FRAME_MS)
         self._timer.timeout.connect(self._tick)
         self._t0 = 0.0
-        self._tiles: tuple = ()          # (QPixmap, period_px, reverse, speed_px_s)
-        self._tiles_for = (0, 0, 0.0)    # (w, h, dpr) 重建判据
+        self._tiles: tuple = () # (QPixmap, period_px, reverse, speed_px_s)
+        self._tiles_for = (0, 0, 0.0) # (w, h, dpr) 重建判据
 
     # ------------------------------------------------------------ 生命周期
 
@@ -125,8 +125,8 @@ class OceanWaves(QObject):
         坐标换算与 web 完全一致：svg 宽 200% ⇒ 1440 单位铺满两倍视口，
         即 720 单位（一个波形周期）= 一个视口宽；y 方向 320 单位 = 40vh。
         """
-        wave_h = max(1.0, h * 0.40)                 # .ocean-wave{height:40vh}
-        sx, sy = w / _PERIOD_U, wave_h / _VIEW_H    # x/y 各自拉伸（preserveAspectRatio=none）
+        wave_h = max(1.0, h * 0.40) # .ocean-wave{height:40vh}
+        sx, sy = w / _PERIOD_U, wave_h / _VIEW_H # x/y 各自拉伸（preserveAspectRatio=none）
         pw, ph = max(2, round(w * dpr)), max(2, round(wave_h * dpr))
         tiles = []
         for base_y, c1_y, c2_y, (fr, fg, fb, fa), lop, dur, rev in _WAVE_LAYERS:
@@ -143,11 +143,11 @@ class OceanWaves(QObject):
             fill.lineTo(0.0, _VIEW_H * sy)
             fill.closeSubpath()
             g.fillPath(fill, QColor(fr, fg, fb, round(fa * lop)))
-            if base_y == 160:                        # w1 浪尖高光线（web L731 第二条 path）
+            if base_y == 160: # w1 浪尖高光线（web L731 第二条 path）
                 pen_w = max(2.0, min(6.0, 5.0 * sy))
                 g.strokePath(path, _pen_rgba(255, 255, 255, round(255 * 0.9), pen_w))
             g.end()
-            tiles.append((pm, float(w), rev, (0.5 * w) / dur))  # web：半个周期/时长 的线速度
+            tiles.append((pm, float(w), rev, (0.5 * w) / dur)) # web：半个周期/时长 的线速度
         self._tiles = tuple(tiles)
         self._tiles_for = (w, h, dpr)
 
@@ -171,7 +171,7 @@ class OceanWaves(QObject):
 
 
 def _pen_rgba(r: int, g_: int, b: int, a: int, width: float):
-    from PySide6.QtGui import QPen  # noqa: PLC0415
+    from PySide6.QtGui import QPen # noqa: PLC0415
 
     pen = QPen(QColor(r, g_, b, a))
     pen.setWidthF(width)
@@ -181,7 +181,7 @@ def _pen_rgba(r: int, g_: int, b: int, a: int, width: float):
 def paint_backdrop(p: QPainter, w: int, h: int, wp: QPixmap) -> None:
     """海底画卷（静底版）—— 底图 → tint（Shell.paintEvent 专用）。
 
-    丙-8 I（2026-09-24 用户拍板）：**三层波浪动画砍掉**，只留 ocean.jpg 静底图。
+     I：**三层波浪动画砍掉**，只留 ocean.jpg 静底图。
     旧签名里的 `ocean: OceanWaves` 参数与末尾的 `ocean.paint(...)` 一并移除——
     调用点只剩本函数，波浪从此不进产品渲染路径。"""
     if not wp.isNull():
@@ -222,7 +222,7 @@ def _selftest() -> list[tuple[str, bool, str]]:
     ow._build_tiles(1120, 720, 2.0)
     ck("ocean: 三块瓦片已渲染", len(ow._tiles) == 3)
     ck("ocean: 瓦片非空且周期=宽", all(not t[0].isNull() and t[1] == 1120 for t in ow._tiles))
-    img = ow._tiles[2][0].toImage()  # w1（前排）
+    img = ow._tiles[2][0].toImage() # w1（前排）
     ck("ocean: 瓦片有像素（非全透明）",
        img.pixelColor(100, 500).alpha() > 0 and img.pixelColor(1120, 550).alpha() > 0,
        f"a={img.pixelColor(100, 500).alpha()} b={img.pixelColor(1120, 550).alpha()}")

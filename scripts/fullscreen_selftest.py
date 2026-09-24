@@ -2,7 +2,7 @@
 """全屏无边框的**源码级判据**（不需要 Windows、不需要起窗口，纯文本断言）。
 
 为什么要有它：`WM_NCCALCSIZE` / `WM_GETMINMAXINFO` 这两处的写法**改错一次就是用户可见的
-缺陷**，而且改错之后"编译过、别的判据全绿"——2026-09-16 我连错两轮（先内缩 8px ⇒ 四周露
+缺陷**，而且改错之后"编译过、别的判据全绿"——我连错两轮（先内缩 8px ⇒ 四周露
 一圈底色；后干脆不缩 ⇒ 顶栏被切）。所以把"必须怎么算"钉死在判据里，谁改回去就红。
 
 判据（全部读 `launcher-src\\launcher.cs` 源码）：
@@ -82,7 +82,7 @@ ok("顶栏显隐由 SyncBarVisible 决定", "_bar.Visible = show" in src)
 ok("有贴顶检测（只读光标位置，不动鼠标）",
    "Cursor.Position" in src and "hitEdge" in src and "BarPeek.Next" in src,
    "WebView2 会吃掉 MouseMove，只能用定时器读全局光标")
-# ⛔ 2026-09-20 修（作者报「最大化后上边栏维持时间太短、点不到最小化」）：显隐判据从"只有贴顶 4px"
+# ⛔ 显隐判据从"只有贴顶 4px"
 #   升级成 `BarPeek`（进入 / 保持 / 宽限三段）。**行为**由 `scripts/peek_probe_selftest.py` 守着
 #   （跑 `一键启动.exe --peekprobe` 的四条仿真路径 + 老判据灵敏度对照）；这里只钉住"接线对不对"。
 ok("顶栏显隐走 BarPeek 三段判据（进入 / 保持 / 宽限），不是只看顶端那几个像素",

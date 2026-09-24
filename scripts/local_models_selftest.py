@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""本机模型探测判据（2026-09-15，任务书 ②）。
+"""本机模型探测判据。
 
 守四条（对应 agent/local_models.py 的三条纪律 + 一条界面契约）：
   ① **探测永不抛异常**：连不上 / 超时 / 不是 OpenAI 结构 / 空模型列表 —— 都要**如实**出原因，
@@ -22,7 +22,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
-from agent import local_models as LM                      # noqa: E402
+from agent import local_models as LM # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -80,8 +80,8 @@ try:
         "11434/v1/models": {"data": [{"id": "qwen2.5:7b"}, {"id": "llama3.1:8b"}]},
         "1234/v1/models": ("raise", urllib.error.URLError("[WinError 10061] connection refused")),
         "8000/v1/models": ("raise", TimeoutError("timed out")),
-        "8080/v1/models": {"models": [{"name": "x"}]},                     # 不是 OpenAI 结构
-        "5000/v1/models": {"data": []},                                    # 端点活但没装模型
+        "8080/v1/models": {"models": [{"name": "x"}]}, # 不是 OpenAI 结构
+        "5000/v1/models": {"data": []}, # 端点活但没装模型
     })
     r_ok = LM.probe_models("http://127.0.0.1:11434/v1")
     ok("Ollama 形态：解析出模型清单", r_ok["reachable"] and r_ok["models"] == ["qwen2.5:7b", "llama3.1:8b"], r_ok["models"])
@@ -113,7 +113,7 @@ try:
     LM._http_get_json = fake_get_factory({"/11434/v1/models": {"data": [{"id": "m"}]}})
     before = json.dumps(LM._safe_cfg() or {}, ensure_ascii=False)
     LM.discover({"api": {"base_url": "https://api.deepseek.com/v1"}})
-    os.system("")  # 占位：确保没有副作用路径
+    os.system("") # 占位：确保没有副作用路径
     after = json.dumps(LM._safe_cfg() or {}, ensure_ascii=False)
     ok("探测前后配置完全没变", before == after)
     ok("被测配置里的 base_url 不被改（discover 只读 cfg）",
@@ -195,7 +195,7 @@ try:
     W.get_config = lambda: base
     w = W.WebUI(lambda: {}, [])
     import tempfile as _tf
-    w.console_url_root = _tf.mkdtemp(prefix="cuj-")   # ⚠️ 判据不写产品那份 logs/console.url（2026-09-18）
+    w.console_url_root = _tf.mkdtemp(prefix="cuj-") # ⚠️ 判据不写产品那份 logs/console.url
     port = w.start()
     try:
         with urllib.request.urlopen("http://127.0.0.1:%d/?token=local-judge" % port, timeout=8) as r:
@@ -226,7 +226,7 @@ finally:
         pass
 
 print("")
-print("── I. 第十轮 V-R10-34：探测出口的**响应体上限** ──")
+print("── I. 探测出口的**响应体上限** ──")
 
 
 class _BigResp(object):
@@ -252,7 +252,7 @@ try:
         LM._read_json(_BigResp(LM._MAX_JSON + 10))
     except Exception:
         _raised = True
-    ok("I2 **超过上限**的响应体 ⇒ 抛（不当成正常 JSON 收完；第十轮实测 64MB ⇒ 峰值 128MB，且并发 5 个）",
+    ok("I2 **超过上限**的响应体 ⇒ 抛",
        _raised)
     ok("I3 上限是个可读常量（判据与实现同源，改一处即可）",
        isinstance(LM._MAX_JSON, int) and LM._MAX_JSON >= 1024 * 1024, str(getattr(LM, "_MAX_JSON", None)))

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""③ 语音「自带模型」判据（2026-09-15）
+"""③ 语音「自带模型」判据
 
 守的东西（对应任务书 ③「语音转文字开箱可用＋自带模型（RVC/GPT-SoVITS）」的第二半）：
   A. **开箱可用是默认**：`voice_models.backend()` 默认 `sapi`；契约与 `tts` 对齐
@@ -26,7 +26,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
-from agent import voice_models as VM       # noqa: E402
+from agent import voice_models as VM # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -49,13 +49,13 @@ def skip(name, why=""):
 
 
 REAL_POST = VM._post
-# ⛔ V-R7-4：判据**不写产品媒体目录**（原来落 `media/selftest_voice/` 与 `media/tts/tts_custom_*.wav`）。
+# ⛔ 判据**不写产品媒体目录**（原来落 `media/selftest_voice/` 与 `media/tts/tts_custom_*.wav`）。
 #   `VM._out_dir()` 一路走到 `tts.out_dir()`，把这个函数指到临时目录即可；产品默认行为不变。
-import tempfile as _tf_TMP                                      # noqa: E402
+import tempfile as _tf_TMP # noqa: E402
 TMP = _tf_TMP.mkdtemp(prefix="pm-vm-judge-")
-from agent import tts as _tts_mod                               # noqa: E402
+from agent import tts as _tts_mod # noqa: E402
 _tts_mod.out_dir = lambda: TMP
-WAV = b"RIFF" + b"\x00" * 60 + b"WAVE" + b"\x00" * 40          # 够像 wav 头就行
+WAV = b"RIFF" + b"\x00" * 60 + b"WAVE" + b"\x00" * 40 # 够像 wav 头就行
 
 
 def files_now():
@@ -160,7 +160,7 @@ ok("/api/voice/probe 路由在", '"/api/voice/probe"' in wui and "voice_models" 
 print("\n── F. 真起控制台：路由与面板都在（不联网）──")
 _p = None
 if os.environ.get("PM_JUDGE_NO_PROC") == "1":
-    # ⛔ V-R7-12：判据环境（`run_all_selftests.py` 会带这个开关）⇒ **只跑静态/内存那半**，
+    # ⛔ 判据环境（`run_all_selftests.py` 会带这个开关）⇒ **只跑静态/内存那半**，
     #   这一段的"真起产品 WebUI"整段跳过，并**明确打一行 SKIP**（不冒充通过；单跑仍然跑全）。
     skip("F. 真起控制台", "PM_JUDGE_NO_PROC=1 ⇒ 跳过起服务那半（F 段 2 条不判）")
 else:
@@ -177,7 +177,7 @@ else:
         W.get_config = lambda: base
         w = W.WebUI(lambda: {}, [])
         import tempfile as _tf
-        w.console_url_root = _tf.mkdtemp(prefix="cuj-")   # ⚠️ 判据不写产品那份 logs/console.url（2026-09-18）
+        w.console_url_root = _tf.mkdtemp(prefix="cuj-") # ⚠️ 判据不写产品那份 logs/console.url
         port = w.start()
         try:
             with urllib.request.urlopen("http://127.0.0.1:%d/?token=vm-judge" % port, timeout=8) as r:

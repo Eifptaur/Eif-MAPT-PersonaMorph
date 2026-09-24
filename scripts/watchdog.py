@@ -15,7 +15,7 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA = os.path.join(ROOT, "data")
 PID_FILE = os.path.join(DATA, "watchdog.pid")
-# ⛔ 2026-09-16 改名（名字误导排查）：这个文件**不是"崩溃日志"，它是主运行日志** ——
+# ⛔ 名（名字误导排查）：这个文件**不是"崩溃日志"，它是主运行日志** ——
 #    机器人跑起来后绝大多数日志（带 `persona_morph.py:<行号>`）都写在这里，
 #    而 `logs/persona_morph.log` 反而只记启动与收尾。旧名 `bot_crash.log` 让人不止一次找错文件
 #    ⇒ 改成 `runtime.log`；启动时做一次性改名，老文件内容不丢。
@@ -50,7 +50,6 @@ WATCHDOG_VER = "2"
 def pkg_version() -> str:
     """整包版本号（`agent/version.py` 里的 VERSION）——**接管判据用它，不再只看看门狗版本**。
 
-    为什么（作者 2026-09-18：「不许覆盖解压，一定要直接更新」）：旧包里的更新链可能换完文件却交接失败，
     用户点「一键启动」时新看门狗读到**还活着的旧看门狗**，而两者 `WATCHDOG_VER` 都是 "2" ⇒
     误判成"同版本、自己退出" ⇒ 什么都没发生。改成比**包版本**后：只要包变了就接管，
     旧包写的 `"2"` 这种也天然算"不一致" ⇒ 一定会继续把更新做完。
@@ -77,7 +76,7 @@ def find_pythonw():
             pyw = sys.executable[:-10] + "pythonw.exe"
             if os.path.exists(pyw):
                 return pyw
-            return sys.executable  # 无 pythonw（便携 embed）→ 用 python.exe，DETACHED 保证无窗口
+            return sys.executable # 无 pythonw（便携 embed）→ 用 python.exe，DETACHED 保证无窗口
         return sys.executable
     return "pythonw"
 
@@ -94,7 +93,7 @@ def _read_watchdog_pid():
         return 0, ""
 
 
-# ── 重启策略（V-R2-1，2026-09-20）：不再"无脑每 5 秒拉一次" ─────────────────────────────
+# ── 重启策略：不再"无脑每 5 秒拉一次" ─────────────────────────────
 # 病：双开（单实例锁 ⇒ exit 3）、依赖装错、配置坏掉这类"起不来"的情形下，机器人**每次都秒退**，
 #     看门狗照样每 5 秒再拉一次（实测 22 秒 5 次）⇒ 一夜上千次：CPU/句柄持续消耗、日志持续涨、
 #     反复抢单实例锁与端口；用户侧只看到"控制台连不上、日志在长"，没有任何"它其实一直在失败"的提示。
@@ -103,16 +102,16 @@ def _read_watchdog_pid():
 #   ② 存活不足 EARLY_EXIT_S ⇒ 判"启动失败"，按 base*2^(n-1) **指数退避 + 抖动**（上限 10 分钟）；
 #   ③ 连续失败 MAX_EARLY_FAILS 次 ⇒ **停手并留痕**（写 data/runtime.log + stdout），别无声拉到天亮；
 #   ④ 跑够时长的（≥ EARLY_EXIT_S，含正常收尾退出）⇒ 仍然 5 秒重拉（正常重启语义不许改坏）。
-EARLY_EXIT_S = 10.0                 # 存活不足这个秒数 ⇒ 算"启动失败"（不是"跑完一轮"）
-BACKOFF_BASE_S = 5.0                # 退避基数
-BACKOFF_CAP_S = 600.0               # 退避上限（10 分钟）
-MAX_EARLY_FAILS = 5                 # 连续启动失败到这个次数就停手留痕
+EARLY_EXIT_S = 10.0 # 存活不足这个秒数 ⇒ 算"启动失败"（不是"跑完一轮"）
+BACKOFF_BASE_S = 5.0 # 退避基数
+BACKOFF_CAP_S = 600.0 # 退避上限（10 分钟）
+MAX_EARLY_FAILS = 5 # 连续启动失败到这个次数就停手留痕
 #: 窗口限流（业界对账第 ⑤ 条）：`WINDOW_S` 秒内重启 `WINDOW_MAX` 次 ⇒ 判「反复崩溃」、停手留痕。
 #: 为什么单列：老口径「跑够 10 秒就清零」，于是「每次都在第 61 秒崩」会无限重启。
-WINDOW_S = 600.0                    # 观察窗（10 分钟）
-WINDOW_MAX = 6                      # 窗口内最多重启次数（给正常重启语义留足余量）
-RESTART_GAP_S = 5.0                 # 正常退出后的重拉间隔（老口径，保持不变）
-EXIT_ALREADY_RUNNING = 3            # `persona_morph.py` 的单实例闸门退出码
+WINDOW_S = 600.0 # 观察窗（10 分钟）
+WINDOW_MAX = 6 # 窗口内最多重启次数（给正常重启语义留足余量）
+RESTART_GAP_S = 5.0 # 正常退出后的重拉间隔（老口径，保持不变）
+EXIT_ALREADY_RUNNING = 3 # `persona_morph.py` 的单实例闸门退出码
 
 
 def _note(msg: str) -> None:
@@ -150,7 +149,7 @@ def _backoff_delay(fails: int) -> float:
 def _drop_own_pid_file() -> None:
     """退场前把 `watchdog.pid` 收掉 —— **但只在自己那条还在里面时**收。
 
-    为什么非要判（V-R2-1 的邻居坑）：`watchdog.pid` 是全安装共享的；接管场景下这里可能是
+    为什么非要判：`watchdog.pid` 是全安装共享的；接管场景下这里可能是
     **别人的 pid**，无脑删会把「停止机器人」的把手一起删掉。
     """
     try:
@@ -163,10 +162,10 @@ def _drop_own_pid_file() -> None:
 
 
 def main():
-    # ⛔ 2026-09-17 修：**先读旧 pid、再写自己的**。原来这里一进来就把自己的 pid 写进 PID_FILE，
+    # ⛔ **先读旧 pid、再写自己的**。原来这里一进来就把自己的 pid 写进 PID_FILE，
     #   紧接着下面那句 `old == os.getpid()` 立刻成立 ⇒ **单实例检查从来没生效过**（死代码）。
     #   实测后果：每跑一次 onestart 就多一个看门狗，多个看门狗各自拉一个机器人 ⇒
-    #   抢窗口 + 每 37 秒冒一个新控制台（用户 2026-09-17 连报三次「又起 N 个控制台」）。
+    # 抢窗口 + 每 37 秒冒一个新控制台。
     _pre = _read_watchdog_pid()
     #   自己的 pid **等赢下单实例检查之后再写**（见下面赢家分支里的那次写）——否则重复实例
     #   退出时会把 watchpid 指向一个马上要死的进程，「停止机器人」就找不到真看门狗了。
@@ -197,11 +196,10 @@ def main():
                 print("已有看门狗在运行（pid=%d，包版本 %s），本实例退出" % (old, ver))
                 return 0
             # ⛔ 只要**包版本对不上**（含旧包写的 "2"）就接管：更新装完没人接替时，
-            #    用户"点一下一键启动"就能把这次更新接着做完（不再需要覆盖解压）。
             print("检测到旧实例（pid=%d，记录版本=%r ≠ 本包 %r），结束并由新版接管"
                   % (old, ver, _mine))
             try:
-                # ⛔ 不用 `/T`（2026-09-18 修，同一条红线）：看门狗是**机器人的父进程**，
+                # ⛔ 不用 `/T`：看门狗是**机器人的父进程**，
                 #    连树一起杀会把**正在干活的机器人本体**也杀掉（旧版看门狗被杀时，
                 #    它刚拉起的机器人会一起没）⇒ 只杀看门狗自己。
                 subprocess.run(["taskkill", "/F", "/PID", str(old)],
@@ -219,7 +217,7 @@ def main():
         pass
     exe = find_pythonw()
     flags = 0x08000000 | 0x00000008 if os.name == "nt" else 0
-    # ── `--delay=<秒>`：**晚一点再开机器人**（2026-09-17 加，给"重启"那一跳用）──
+    # ── `--delay=<秒>`：**晚一点再开机器人**──
     #    重启时本进程还要 2 秒才退，新机器人要是立刻起来就会撞**单实例锁**当场 exit 3
     #    ⇒ 用户看到的就是"启了但又没有新的"。看门狗自己先到、等几秒再开，最稳。
     _delay = 0
@@ -233,12 +231,11 @@ def main():
     except Exception:
         _delay = 0
     _delay = max(0, min(600, _delay))
-    # ── `--takeover`（2026-09-18 加，**更新/重启交接专用**）──────────────────────────────
+    # ── `--takeover`──────────────────────────────
     #    我是"新的那一个看门狗"：先把**残留的旧看门狗**收掉、清掉会挡住接管的实例证据，
     #    然后再按 `--delay` 开机器人。
-    #    为什么要它：作者实测「更新完控制台变『无法访问』、窗口不关、再点一键启动也不弹窗」——
+    # 为什么要它：——
     #    旧版本的进程内 `_kill_watchdog()` 因为 `watchdog.pid` 变两行而**静默失效**（ValueError 被吞），
-    #    更新装上了却没人接替。⇒ **更新这条链不再依赖旧的进程内重启**：磁盘上的新看门狗自己做交接。
     if any(str(_a) == "--takeover" for _a in sys.argv[1:]):
         _others = []
         try:
@@ -261,7 +258,7 @@ def main():
         for _p in sorted(set(_others)):
             if _p == os.getpid():
                 continue
-            try:                                   # ⛔ 不用 /T：看门狗是机器人的父进程，连树杀会把机器人一起杀掉
+            try: # ⛔ 不用 /T：看门狗是机器人的父进程，连树杀会把机器人一起杀掉
                 subprocess.run(["taskkill", "/F", "/PID", str(_p)],
                                capture_output=True, creationflags=0x08000000, timeout=10)
             except Exception:
@@ -284,8 +281,8 @@ def main():
             os.remove(STOP_FLAG)
     except Exception:
         pass
-    fails = 0                                    # 连续"启动失败"计数（V-R2-1）
-    _stamps = []                                 # 窗口限流用的重启时间戳（对账第 ⑤ 条）
+    fails = 0 # 连续"启动失败"计数
+    _stamps = [] # 窗口限流用的重启时间戳（对账第 ⑤ 条）
     while True:
         # 用户在 5 秒宽限期内的「停止」请求 → 不再拉起，直接退场
         if os.path.exists(STOP_FLAG):
@@ -310,10 +307,10 @@ def main():
                 crash.close()
             p.wait()
             rc = p.returncode
-            # ⛔ 2026-09-17 加：机器人 **静默死掉**（runtime.log 里一句遗言都没有）时必须能分清
+            # ⛔ 机器人 **静默死掉**（runtime.log 里一句遗言都没有）时必须能分清
             #   它是"自己干净退出"（0）还是"被系统/别人杀掉 / 原生崩溃"（0xC0000005、0xC0000409…）。
             #   之前这里丢掉退出码，导致只能靠猜（当晚为此白烧了半轮）。
-            # ⭐ 2026-09-20（V-R2-1）再加**存活时长**：判定"这算跑完一轮"还是"根本起不来"就靠它。
+            # ⭐ 再加**存活时长**：判定"这算跑完一轮"还是"根本起不来"就靠它。
             try:
                 with open(CRASH_LOG, "a", encoding="utf-8") as _c:
                     _c.write("[watchdog] persona_morph 退出：code=%s (0x%08X) · 存活 %.1fs\n"
@@ -347,8 +344,8 @@ def main():
                   % (fails, _alive, rc, _d))
             time.sleep(_d)
             continue
-        fails = 0                                # 跑够时长了 ⇒ 连续失败计数清零（正常重启语义）
-        # ⛔ 2026-09-21（第五轮回执 · 业界对账第 ⑤ 条）：**窗口限流** —— 老口径只在"活不足 10 秒"时
+        fails = 0 # 跑够时长了 ⇒ 连续失败计数清零（正常重启语义）
+        # ⛔ **窗口限流** —— 老口径只在"活不足 10 秒"时
         #   计数，跑够 61 秒就清零 ⇒ "每次都在第 61 秒崩"会**无限重启到天亮**（退避永远从头开始）。
         #   ⇒ 再记一个滑动窗口：WINDOW_S 秒内重启次数 ≥ WINDOW_MAX ⇒ 停手留痕（与"连续秒退"分开记）。
         _stamps.append(time.time())

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""版本能力矩阵 判据：**"只测了部分能力"不许把整对点亮**（2026-09-14 由测机报告推动）。
+"""版本能力矩阵 判据：**"只测了部分能力"不许把整对点亮**。
 
 原来的病（测机报告 §三 P1）：
   `merge_runs` 对同版本对**整体覆盖**，`gate()` 只要看到有 run 就 `measured=True`
@@ -18,7 +18,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
-from agent import version_matrix as VM  # noqa: E402
+from agent import version_matrix as VM # noqa: E402
 
 PASS = 0
 FAIL = 0

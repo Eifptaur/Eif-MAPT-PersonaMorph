@@ -1,16 +1,14 @@
-// webview2guide.cs —— ⑤ WebView2 引导器（2026-09-15）
+// webview2guide.cs —— ⑤ WebView2 引导器
 //
-// ⛔⛔⛔ 2026-09-23 总调度标记：**本文件整份待删，丙-3 之后不再需要。**
-//     路线已拍板走丙（见 `docs\Qt自绘UI-验证结论与路线.md`，用户原话「我要选丙，就是两个都要」）：
-//       丙-1 合进程止血 → 丙-2 把 27 个面板换成 PySide6/Qt 真原生 → **丙-3 删掉 WebView2 依赖 + 打包**。
+// ⛔⛔⛔ **本文件整份待删， 之后不再需要。**
 //     控制台一旦是本地原生控件，就不再经过 WebView2 ⇒
 //       · 本文件（引导安装 WebView2）
 //       · `launcher.cs` 里的 `WebView2MissingForm`（缺运行库的兜底提示）
 //       · `launcher.cs` 里的 `ConsoleForm`（用 WebView2 渲染控制台）
 //     三处**一起作废**，届时整块删除、不要再往里投入。
 //
-// ⚠️ 在丙-3 落地之前，本文件**仍在生效**（用户机器可能确实没装 WebView2），
-//    所以 2026-09-23 修的按钮行溢出（主按钮 x=-12 被切）不算白修：过渡期还在用。
+// ⚠️ 在 落地之前，本文件**仍在生效**（用户机器可能确实没装 WebView2），
+// 所以 的按钮行溢出（主按钮 x=-12 被切）不算白修：过渡期还在用。
 //    **但任何"为了更好看/更好用"的新投入，一律不做。** 只允许修阻断性缺陷。
 //
 // 补的缺口：**本机既没装 WebView2 运行库、又没可用浏览器** ⇒ 控制台根本打不开（旧实现只回退浏览器，
@@ -89,7 +87,7 @@ namespace WxLauncher
                 using (Process p = Process.Start(psi))
                 {
                     if (p == null) { why = "引导器没起来"; return false; }
-                    p.WaitForExit(300000);      // 联网下载 ≈2MB，给 5 分钟；超时也往下走，靠回读判断
+                    p.WaitForExit(300000); // 联网下载 ≈2MB，给 5 分钟；超时也往下走，靠回读判断
                 }
             }
             catch (Exception ex) { why = "引导器起不来：" + ex.Message; return false; }
@@ -143,14 +141,14 @@ namespace WxLauncher
 
     /// 「本机缺 WebView2 运行库」时给用户看的面板：自绘、按"能做什么"给按钮，**不用系统弹窗**。
     ///
-    /// 2026-09-23 并入弹窗族设计系统（用户：「并不是说只处理这一个弹窗，所有的弹窗都要一并处理」）：
+    /// 并入弹窗族设计系统：
     ///   原来它是**第 7 个弹窗、唯一没走 StyleKit 层级层**的一个 —— 没有图标、标题直接用
     ///   `new Font("Microsoft YaHei UI", 12F)`（既不在字号阶梯里，也没走 `Ui()` 那个"字体找不到就回退"的兜底），
     ///   正文是裸 `AutoSize` 标签、按钮手写 `Size(128,34)` 而**没有主次**（四个按钮长得一模一样）。
     ///   现在统一：图标 + 标题/状态分级 + 说明进卡片 + 主按钮（一键安装）用强调色、次按钮描边。
     internal class WebView2MissingForm : Form
     {
-        public string Action = "none";     // install / browser / copy / none
+        public string Action = "none"; // install / browser / copy / none
 
         public WebView2MissingForm(string dir, string url)
         {
@@ -180,7 +178,7 @@ namespace WxLauncher
             s.Text = hasBoot ? "可以一键装上" : "这次看不了控制台";
             s.Font = StyleKit.Ui(StyleKit.TextScale.Head, FontStyle.Bold);
             s.ForeColor = hasBoot ? StyleKit.Warn : StyleKit.Danger;
-            // ⚠️ 2026-09-23（#18 叠字根治）：y 原写死 `Space.x5 + 30`（100% 的标题字高配的）——
+            // ⚠️ （#18 叠字根治）：y 原写死 `Space.x5 + 30`（100% 的标题字高配的）——
             //   150% 下 Title 实高 40px ⇒ 副标题叠进标题。改**跟着标题的实测底边走**（close.cs 同款）。
             s.Location = new Point(StyleKit.Space.x6 + StyleKit.IconSize + StyleKit.Space.x4,
                                    t.Bottom + StyleKit.Space.x1);
@@ -188,7 +186,7 @@ namespace WxLauncher
             Controls.Add(s);
 
             int cardW = 540 - StyleKit.Space.x6 * 2;
-            // 2026-09-23（B 批）：高度**不再手写 168** —— 正文早就是内容驱动的（`FitLabel` 量 what/d，
+            // （B 批）：高度**不再手写 168** —— 正文早就是内容驱动的（`FitLabel` 量 what/d，
             //   地址行接在实测底边之后），卡高写死 ⇒ 内容被卡片的裁剪区切掉。
             //   修前实拍：卡内子控件排到 Y=289，而卡高 168 ⇒「怎么办」下半段与「控制台地址」整行都在裁剪区外。
             //   ⇒ 与 launcher.cs 的 7 张卡同构：只给宽度，排完内容 `SealCard` 收口。
@@ -200,13 +198,13 @@ namespace WxLauncher
             what.Font = StyleKit.Ui(StyleKit.TextScale.Body, FontStyle.Regular);
             what.ForeColor = StyleKit.Ink;
             what.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4);
-            // ⛔ 2026-09-23：手写 44 → 1（实测值说了算）
+            // ⛔ 手写 44 → 1（实测值说了算）
             what.Size = new Size(cardW - StyleKit.Space.x5 * 2, 1);
             card.Controls.Add(what);
             int whath = StyleKit.FitLabel(what);
 
             Label d = new Label();
-            // ⛔ 2026-09-23：改成跟着 what 的实测底边走（原写死 +52）
+            // ⛔ 改成跟着 what 的实测底边走（原写死 +52）
             d.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4 + Math.Max(1, whath) + StyleKit.Space.x3);
             d.Size = new Size(cardW - StyleKit.Space.x5 * 2, 1);
             d.Font = StyleKit.Ui(StyleKit.TextScale.Para, FontStyle.Regular);
@@ -228,19 +226,18 @@ namespace WxLauncher
 
             Label u = new Label();
             u.Font = StyleKit.Ui(StyleKit.TextScale.Para, FontStyle.Regular);
-            // ⛔ 2026-09-23 修（可达性）：Muted(150,158,172)=2.60:1 远低于 AA ⇒ 改 Ink3ok(5.0:1)。
-            //   这一行是用户要照着念/粘贴的控制台地址，属正文。
+            // ⛔ （可达性）：Muted(150,158,172)=2.60:1 远低于 AA ⇒ 改 Ink3ok(5.0:1)。
             u.ForeColor = StyleKit.Ink3ok;
-            // ⛔ 2026-09-23：改成跟着 d 的实测底边走（原写死 +122）
+            // ⛔ 改成跟着 d 的实测底边走（原写死 +122）
             u.Location = new Point(StyleKit.Space.x5,
                 StyleKit.Space.x4 + Math.Max(1, whath) + StyleKit.Space.x3 + Math.Max(1, dh) + StyleKit.Space.x3);
             u.Size = new Size(cardW - StyleKit.Space.x5 * 2, 1);
             u.Text = "控制台地址：" + NoticeForm.MaskToken(url);
             card.Controls.Add(u);
             StyleKit.FitLabel(u);
-            StyleKit.SealCard(card);     // #12 F1：高度到这里才定下来（按钮行跟着它的实测底边走）
+            StyleKit.SealCard(card); // #12 F1：高度到这里才定下来（按钮行跟着它的实测底边走）
 
-            // 按钮：**有主次 + 分两行**（2026-09-23 B 批修）。
+            // 按钮：**有主次 + 分两行**。
             //   修前：4 颗挤一行，`bx` 从 516 一路左推 ⇒ 主按钮 x=-12（左边 12px 落在客户区外，
             //   圆角与「一」字一起被切）；而 4 颗按合同宽加起来 ≈616 远超 540
             //   ⇒ **一行根本放不下**，这不是"换个算宽函数"能解决的 ⇒ 拆两行。
@@ -251,19 +248,19 @@ namespace WxLauncher
             RoundButton br = hasBrowser ? StyleKit.MakeButton("用浏览器打开") : null;
             RoundButton cp = StyleKit.MakeButton("复制网址");
             RoundButton no = StyleKit.MakeButton("知道了");
-            RoundButton pri = (ins != null) ? ins : br;      // 主按钮：能装就"一键安装"，否则"用浏览器"
-            RoundButton secBr = (pri == br) ? null : br;     // 浏览器当了主按钮，次行不再重复一颗
+            RoundButton pri = (ins != null) ? ins : br; // 主按钮：能装就"一键安装"，否则"用浏览器"
+            RoundButton secBr = (pri == br) ? null : br; // 浏览器当了主按钮，次行不再重复一颗
 
-            int right = 540 - StyleKit.Space.x6;             // 右对齐基准线 = 516
-            int secY = card.Bottom + StyleKit.CardGapY;      // 次按钮行：跟着卡片实测底边
+            int right = 540 - StyleKit.Space.x6; // 右对齐基准线 = 516
+            int secY = card.Bottom + StyleKit.CardGapY; // 次按钮行：跟着卡片实测底边
             int priY = secY + StyleKit.BtnH + StyleKit.Space.x2;
 
-            int x = right;                                   // 次行从右往左排
+            int x = right; // 次行从右往左排
             if (secBr != null) { secBr.Location = new Point(x - secBr.Width, secY); x -= secBr.Width + StyleKit.Space.x2; }
             cp.Location = new Point(x - cp.Width, secY); x -= cp.Width + StyleKit.Space.x2;
             no.Location = new Point(x - no.Width, secY); x -= no.Width + StyleKit.Space.x2;
 
-            int bottom = secY + StyleKit.BtnH;               // 没有主按钮时，窗高按次行算
+            int bottom = secY + StyleKit.BtnH; // 没有主按钮时，窗高按次行算
             if (pri != null)
             {
                 pri.Location = new Point(right - pri.Width, priY);
@@ -283,7 +280,7 @@ namespace WxLauncher
 
             // #12 F1：窗高由**最后一行的底边**反推（原来写死 360 —— 卡一长高内容就顶出去）
             ClientSize = new Size(540, bottom + StyleKit.Space.x6);
-            StyleKit.Apply(this, "群相 控制台窗口");   // ⚠️ 最后一句：Apply 之后不得再改边框
+            StyleKit.Apply(this, "群相 控制台窗口"); // ⚠️ 最后一句：Apply 之后不得再改边框
         }
 
     }

@@ -2,12 +2,12 @@
 # -*- coding: utf-8 -*-
 """本地生图后端（`agent/sd_local.py` + `agent/sd_local_server.py`）判据 —— 离线、不下载、不联网发请求。
 
-守的东西（用户 2026-09-17 的三条口径）：
+守的东西：
   ①「你帮用户装，做成一个**可选项**；用户选了就弹安装提示，帮他安装；**在线安装看用户开不开**」
      ⇒ 默认 `allow_online_install=False`，不开就**拒绝下载**并说明（绝不偷偷联网）；
   ②「要能让用户**实时看到下载进度**：一共多少 / 现在下了多少 / 百分比是多少」⇒ `progress()` 字段齐、百分比算得对；
   ③「还要加那个按键，也就是**后台加载** … 可以办点别的事情」⇒ 有 `install_async()`（后台线程）+ 控制台按钮；
-  另外：「**要提示用户需要下载，就必须写明时间可能会非常长**」⇒ `estimate()` 必须给"要下多少 GB + 预计多久"，
+  另外⇒ `estimate()` 必须给"要下多少 GB + 预计多久"，
   并对被限速的源（实测 0.02~0.06 MB/s）**如实劝退**。
 
 用法：`py -3 scripts/sd_local_selftest.py`
@@ -19,10 +19,10 @@ import sys
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # 同目录的 `_srcmatch`
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # 同目录的 `_srcmatch`
 sys.path.insert(0, ROOT)
 
-from agent import sd_local as S          # noqa: E402
+from agent import sd_local as S # noqa: E402
 
 PASS = FAIL = 0
 
@@ -47,7 +47,7 @@ _sv = src(os.path.join("agent", "sd_local_server.py"))
 ok("A·服务端实现了 a1111 两个端点（探测 + 生成）",
    "/sdapi/v1/sd-models" in _sv and "/sdapi/v1/txt2img" in _sv and '"images"' in _sv)
 
-print("── B. 默认不偷偷联网（用户：在线安装看用户开不开）──")
+print("── B. 默认不偷偷联网──")
 _cfg = src(os.path.join("agent", "config.py"))
 ok("B1 配置默认 allow_online_install=False", '"allow_online_install": False' in _cfg)
 r = S.install(allow_online=False)
@@ -55,12 +55,12 @@ ok("B2 没开开关时 install 拒绝并说明", r[0] is False and "不偷偷联
 ra = S.install_async(allow_online=False)
 ok("B3 后台安装同样受开关管", ra[0] is False and "不偷偷联网" in ra[1], ra[1][:40])
 
-print("── C. 「要下多少 + 预计多久」必须给足（用户要求写明可能很久）──")
+print("── C. 「要下多少 + 预计多久」必须给足──")
 est = S.estimate(do_probe=False)
-# 2026-09-17 多档后：总量＝**当前档**（模型 + 该档的加速件）+ 运行库；不再写死某一档的体积
+# 总量＝**当前档**（模型 + 该档的加速件）+ 运行库；不再写死某一档的体积
 ok("C1 给了总量（当前档 + 运行库）", abs(est["gb"] - (S.preset_gb() + S.DEPS_GB)) < 0.02,
    "%s GB = %s + %s（档=%s）" % (est["gb"], est["model_gb"], est["deps_gb"], est.get("preset")))
-ok("C1b 档位清单至少两档（速度 + 画质，用户口径「不二选一」）",
+ok("C1b 档位清单至少两档",
    len(S.presets()) >= 2 and any(p["id"] == "speed" for p in S.presets()) and any(p["id"] == "quality" for p in S.presets()),
    "、".join(p["id"] for p in S.presets()))
 ok("C1c 每档都带许可证与说明（发出去要讲清来源）",
@@ -80,7 +80,7 @@ p1 = S.progress()
 ok("D2 百分比算得对（3/12 GB ⇒ 25%）", abs(p1["percent"] - 25.0) < 0.2, str(p1["percent"]))
 S._set_prog(running=False, percent=0.0)
 
-print("── E. 后台安装 + 控制台按键（用户：别让用户盯着弹窗等）──")
+print("── E. 后台安装 + 控制台按键──")
 ok("E1 有后台线程入口", "threading.Thread" in src(os.path.join("agent", "sd_local.py"))
    and "daemon=True" in src(os.path.join("agent", "sd_local.py")))
 _web = src(os.path.join("agent", "webui.py"))
@@ -95,14 +95,14 @@ ok("E4 弹窗里写明了「后台进行」这件事（关掉弹窗也能继续�
    "后台进行" in _ch and "关掉弹窗" in _ch)
 ok("E5 弹窗里带了估时与来源（不是空口承诺）", "est.human" in _ch and "est.source" in _ch)
 
-# ── ⛔ 2026-09-21（第四轮审计 **V-R4-3，P1**）：**"有人答话" ≠ "是我们这一版的实例"** ──
+# ── ⛔ **"有人答话" ≠ "是我们这一版的实例"** ──
 #   现场：7860 上跑着 09-19 起的旧无门禁实例（无 Host / 错口令一律 200），而复用判据只看
 #   "它回不回"，于是**一直复用**、**更新产品也不换它** ⇒ 门禁代码"修好了"但活体从没生效。
 #   这里用**两个假服务**（真 HTTP、真请求）复现两种实例，验判据能分得开。
-print("\n── F. 无门禁旧实例必须被认出来（V-R4-3）──")
-import http.server as _hs                                                      # noqa: E402
-import threading as _th                                                       # noqa: E402
-from agent import local_guard as _lg                                          # noqa: E402
+print("\n── F. 无门禁旧实例必须被认出来──")
+import http.server as _hs # noqa: E402
+import threading as _th # noqa: E402
+from agent import local_guard as _lg # noqa: E402
 
 _JTOK = "JUDGE-TOKEN-123"
 _old_env = os.environ.get(_lg.ENV_KEY)
@@ -151,7 +151,7 @@ class _NewH(_hs.BaseHTTPRequestHandler):
 
 
 def _serve(cls):
-    srv = _hs.HTTPServer(("127.0.0.1", 0), cls)          # 单线程（同判据框架既有口径）
+    srv = _hs.HTTPServer(("127.0.0.1", 0), cls) # 单线程（同判据框架既有口径）
     t = _th.Thread(target=srv.serve_forever, daemon=True)
     t.start()
     return srv, int(srv.server_address[1])
@@ -174,7 +174,7 @@ try:
     ok("F3 服务端确实会声明 `gate`（源码级）", '"gate": "host+token"' in _sds)
     ok("F4 `start_server` 不再「看到有人答话就复用」（要先过 `service_gated`）",
        "service_gated(port)" in _sdc)
-    # ⛔ V-R5R-4：原来靠 `"pidfile 记的是" in _sdc` 这种**源码文本**断言（改个空格就红）
+    # ⛔ 原来靠 `"pidfile 记的是" in _sdc` 这种**源码文本**断言（改个空格就红）
     #   ⇒ 换成空白容忍的 `_srcmatch.has` + **行为级**判据（身份判据的纯函数矩阵，见 G 段）。
     import _srcmatch as _sm
     ok("F5 换掉旧实例有**证据链**（只杀 pidfile 记的那个 pid）",
@@ -194,9 +194,9 @@ finally:
     else:
         os.environ[_lg.ENV_KEY] = _old_env
 
-print("\n── G. V-R5B-4/M4：杀进程前必须验身份（pidfile 残留 + PID 复用＝会杀别人）──")
-import shutil as _sh2                                                          # noqa: E402
-import tempfile as _tf2                                                        # noqa: E402
+print("\n── G. /M4：杀进程前必须验身份（pidfile 残留 + PID 复用＝会杀别人）──")
+import shutil as _sh2 # noqa: E402
+import tempfile as _tf2 # noqa: E402
 
 ok("G1 身份判据（纯函数）：我们的服务命令行 ⇒ 认",
    S.cmdline_is_ours(r"C:\x\python.exe -u C:\y\agent\sd_local_server.py 7860", 7860) is True)
@@ -204,7 +204,7 @@ ok("G2 别的程序（PID 复用的现场）⇒ 不认",
    S.cmdline_is_ours(r"C:\gradio\python.exe app.py --port 7860", 7860) is False)
 ok("G3 是我们的服务但**端口对不上** ⇒ 不认",
    S.cmdline_is_ours(r"python -u agent\sd_local_server.py 8188", 7860) is False)
-# ⛔ 2026-09-21 加（第六轮 **V-R6-33**）：端口原来是子串匹配 ⇒ `17860` 里含 `7860` 会被误认，
+# ⛔ 端口原来是子串匹配 ⇒ `17860` 里含 `7860` 会被误认，
 #   拿它当身份证据去 stop/kill 就可能打到**别人的**进程。改成按词边界（数字前后不许再有数字）。
 ok("G3b 端口**子串**不许误认（`--port 17860` 对 7860 必须 False）",
    S.cmdline_is_ours(r"python -u agent\sd_local_server.py --port 17860", 7860) is False)
@@ -241,14 +241,14 @@ def _fake_run(*a, **k):
 S.subprocess.run = _fake_run
 try:
     with open(S._pidfile(), "w", encoding="utf-8") as f:
-        f.write(str(os.getpid()))                 # 指着**本判据自己**：命令行不是我们的服务
+        f.write(str(os.getpid())) # 指着**本判据自己**：命令行不是我们的服务
     _r5 = S.stop_server()
     ok("G5 `stop_server` 发现「记录里的 pid 不是我们的服务」⇒ **不杀**、只清过期记录",
        _r5[0] is True and not _calls and "没有杀任何进程" in str(_r5[1]), str((_r5, _calls)))
     ok("G6 过期 pidfile 被清掉（别留成下一次误杀的种子）", not os.path.exists(S._pidfile()))
     with open(S._pidfile(), "w", encoding="utf-8") as f:
         f.write(str(os.getpid()))
-    _r6 = S.kill_stale_owner(7860)             # 端口占用者不等于 pidfile 里的 pid ⇒ 早就该拒
+    _r6 = S.kill_stale_owner(7860) # 端口占用者不等于 pidfile 里的 pid ⇒ 早就该拒
     ok("G7 `kill_stale_owner` 端口占用者与 pidfile 不一致 ⇒ 拒（且没有真的 taskkill）",
        _r6[0] is False and not _calls, str((_r6, _calls)))
 finally:

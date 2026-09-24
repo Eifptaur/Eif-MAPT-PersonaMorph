@@ -20,7 +20,7 @@ from .config import DATA_DIR, get_config
 
 SCORE_FILE = os.path.join(DATA_DIR, "scoring.json")
 
-HEAT_HALF_LIFE_MS = 7 * 24 * 3600 * 1000  # 7 天热度半衰期
+HEAT_HALF_LIFE_MS = 7 * 24 * 3600 * 1000 # 7 天热度半衰期
 MAX_POOL = 2000
 
 
@@ -90,7 +90,7 @@ def _load_default_seeds() -> list:
 DEFAULT_SEEDS = _load_default_seeds()
 
 
-_RECENT_SAMPLED = []   # 最近取样过的金句（避免连续重复=稳定不饱和）
+_RECENT_SAMPLED = [] # 最近取样过的金句（避免连续重复=稳定不饱和）
 
 
 def seed_library(limit: int = 12) -> list:
@@ -115,7 +115,7 @@ def seed_library(limit: int = 12) -> list:
         return "".join(ch for ch in s if ch.strip() and ch not in "，。！？…—")
 
     def _near(a, b):
-        return _df.SequenceMatcher(None, _n(a), _n(b)).ratio() > 0.8   # 池内近重排除（防同质混淆）
+        return _df.SequenceMatcher(None, _n(a), _n(b)).ratio() > 0.8 # 池内近重排除（防同质混淆）
 
     pool = [s for s in seeds if s not in set(_RECENT_SAMPLED[-limit * 3:])]
     if len(pool) < limit:
@@ -212,5 +212,5 @@ def top_reactions(limit: int = 20) -> list:
 def stats() -> dict:
     data = _load()
     return {"reaction_count": len(data.get("reactions") or {}),
-            "seed_count": len(seed_library(None)),   # 全量(官方+导入)，不能 seed_library()(默认只取12条样本)
+            "seed_count": len(seed_library(None)), # 全量(官方+导入)，不能 seed_library()(默认只取12条样本)
             "top": top_reactions(5)}

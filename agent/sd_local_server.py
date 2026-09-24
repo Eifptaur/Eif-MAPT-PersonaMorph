@@ -23,13 +23,13 @@ try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 except Exception:
     pass
-os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")     # diffusers 取小配置走国内镜像
+os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com") # diffusers 取小配置走国内镜像
 
 DEFAULT_MODEL = os.path.join("data", "sd_model", "sd_xl_turbo_1.0_fp16.safetensors")
 MODEL = os.environ.get("SD_MODEL") or DEFAULT_MODEL
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else int(os.environ.get("SD_PORT") or 7860)
 DEFAULT_STEPS = int(os.environ.get("SD_STEPS") or 4)
-#: 档位参数（2026-09-17 加多档）：
+#: 档位参数：
 #:   SD_GUIDANCE＝引导强度（SDXL-Turbo 必须 0.0；配 4 步加速 LoRA 时用 1.5~2.0）
 #:   SD_LORA＝4 步加速 LoRA 的本地路径（画质档用它把 SDXL 精调压到 4 步）
 #:   SD_SPACING＝采样时间步间距（配 LoRA 时用 trailing，这是加速件官方推荐）
@@ -61,7 +61,7 @@ def get_pipe():
             pass
         dev = "cuda" if torch.cuda.is_available() else "cpu"
         p = p.to(dev)
-        # 显存纪律（2026-09-17 实测教训）：本机 12GB 卡上 SDXL fp16 跑 1024² 时显存 11.87/12.23 GB
+        # 显存纪律：本机 12GB 卡上 SDXL fp16 跑 1024² 时显存 11.87/12.23 GB
         #   几乎占满、GPU 利用率只有 2% ⇒ 已经在往内存里换页，单张从 24 秒掉到 186 秒。
         #   切片是"少占显存换一点速度"，慢十倍的时候这点代价完全值。
         for fn in ("enable_vae_slicing", "enable_attention_slicing", "enable_vae_tiling"):
@@ -73,7 +73,7 @@ def get_pipe():
             torch.backends.cuda.matmul.allow_tf32 = True
         except Exception:
             pass
-        if LORA and os.path.exists(LORA):                # 画质档：挂 4 步加速件（SDXL 精调也能 4 步出图）
+        if LORA and os.path.exists(LORA): # 画质档：挂 4 步加速件（SDXL 精调也能 4 步出图）
             try:
                 p.load_lora_weights(LORA, adapter_name="lightning")
                 p.set_adapters(["lightning"], adapter_weights=[1.0])
@@ -106,14 +106,14 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _deny(self):
-        """统一门禁（V-R3-8）：`Host` 必须是回环 + 必须带本机口令。**每条路由都过这一关**。
+        """统一门禁：`Host` 必须是回环 + 必须带本机口令。**每条路由都过这一关**。
 
         口径与实现见 `agent/local_guard.py`（与控制台共用同一份，别再各写一套）。
         客户端（`agent/image_gen.py` / `agent/sd_local.py`）对回环地址会自动带 `X-PM-Token`。
         """
         try:
             import local_guard as lg
-        except Exception:                                   # 直接以脚本方式跑（cwd=ROOT）
+        except Exception: # 直接以脚本方式跑（cwd=ROOT）
             sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
             import local_guard as lg
         _ok, code, why = lg.check(self, PORT)
@@ -132,7 +132,7 @@ class H(BaseHTTPRequestHandler):
             return self._send({"progress": 1.0 if _state["ready"] else 0.0,
                                "state": {"sampling_step": 0, "sampling_steps": 0}})
         if p in ("/", "/internal/ping") or p.startswith("/sdapi/v1/options"):
-            # ⛔ 2026-09-21（第四轮审计 **V-R4-3**）：**如实声明"门禁已开"** ——
+            # ⛔ **如实声明"门禁已开"** ——
             #   客户端靠这个字段区分"我们这一版（带 Host+口令门禁）的实例"与
             #   "09-19 起的旧无门禁实例"（后者只会回 `{"ok": true, ...}`，没有 `gate`）。
             return self._send({"ok": True, "gate": "host+token", **_state})
@@ -160,7 +160,7 @@ class H(BaseHTTPRequestHandler):
         try:
             kw = dict(prompt=prompt, num_inference_steps=steps, guidance_scale=GUIDANCE,
                       width=w, height=h, num_images_per_prompt=bs)
-            if SPACING:                                  # 加速件用 trailing（官方推荐）
+            if SPACING: # 加速件用 trailing（官方推荐）
                 kw["timestep_spacing"] = SPACING
             if neg:
                 kw["negative_prompt"] = neg
@@ -174,7 +174,7 @@ class H(BaseHTTPRequestHandler):
             buf = io.BytesIO()
             im.save(buf, "PNG")
             imgs.append(base64.b64encode(buf.getvalue()).decode("ascii"))
-        try:                                         # 出完图把显存还给系统（别一直攥着不放到爆）
+        try: # 出完图把显存还给系统（别一直攥着不放到爆）
             import torch
             torch.cuda.empty_cache()
         except Exception:

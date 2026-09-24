@@ -78,7 +78,7 @@ try:
     b = man.get("base") or {}
     for k in ("version", "sha256", "url", "size", "files"):
         ok(k in b, "base 有字段 %s" % k)
-    # 版本号两段式（2026-09-16 用户定）：`YYYY.M.D.N`＝功能版本 · `YYYY.M.D.N.M`＝该版本下的小更新
+    # 版本号两段式：`YYYY.M.D.N`＝功能版本 · `YYYY.M.D.N.M`＝该版本下的小更新
     ok(isinstance(b.get("version"), str)
        and re.match(r"^\d{4}\.\d{1,2}\.\d{1,2}\.\d+(\.\d+)?$", b.get("version") or ""),
        "base.version 形如 YYYY.M.D.N[.M]（实为 %s）" % b.get("version"))
@@ -87,7 +87,7 @@ try:
     ok(isinstance(b.get("files"), int) and b["files"] > 0, "base.files 是正整数（%s）" % b.get("files"))
 
     print("\n[M3] 版本号唯一来源（清单必须等于 agent/version.py）")
-    from agent.version import VERSION as CODE_VERSION   # noqa: E402
+    from agent.version import VERSION as CODE_VERSION # noqa: E402
     ok(b.get("version") == CODE_VERSION, "清单 version == agent/version.py（%s）" % CODE_VERSION)
 
     print("\n[M4] 组合哈希可复算（判据的核心：哈希不是摆设）")
@@ -115,7 +115,7 @@ try:
             ok(k in d, "dlc[%s] 有字段 %s" % (did, k))
         ok(req_base_ok(d.get("requiresBase")), "dlc[%s].requiresBase 是合法区间（%s）" % (did, d.get("requiresBase")))
         ok(isinstance(d.get("enabledByDefault"), bool), "dlc[%s].enabledByDefault 是布尔" % did)
-        # ⛔ 2026-09-20 修 V9（原来这里是"sha256 为空 ⇒ 只要有 note 就放行"，等于给空哈希开后门）：
+        # ⛔ V9（原来这里是"sha256 为空 ⇒ 只要有 note 就放行"，等于给空哈希开后门）：
         #    硬断言——每条 dlc[].sha256 必须是 ^[0-9a-f]{64}$，**或**该条显式 `placeholder is True`。
         ok(dlc_hash_ok(d), "dlc[%s] 哈希合规：真 sha256 或显式 placeholder=true（sha256=%r placeholder=%r）"
            % (did, d.get("sha256"), d.get("placeholder")))
@@ -146,7 +146,7 @@ try:
         # placeholder 的语义＝"客户端目前不读"；一旦有人接线了，清单必须同步摘掉 placeholder（否则就是骗人）
         ok(not agent_hits,
            "清单有 %d 条 placeholder ⇒ agent/ 下不应有 requiresBase 消费者（实命中 %s）" % (n_ph, agent_hits or "无"))
-        _docp = os.path.join(ROOT, "docs", "设计-本体与DLC.md")
+        _docp = os.path.join(os.path.join(os.path.dirname(ROOT), "dev-workspace", "persona-morph"), "docs", "设计-本体与DLC.md")  # 文档区已迁出产品根
         _doc = open(_docp, encoding="utf-8", errors="replace").read() if os.path.exists(_docp) else ""
         ok("未接线" in _doc, "docs/设计-本体与DLC.md 写明「当前未接线」（与 placeholder 口径一致）")
     else:
@@ -154,7 +154,7 @@ try:
            "清单没有任何 placeholder ⇒ 必须已经接线（agent/ 下 requiresBase 消费者：%s）" % (agent_hits or "无"))
 
     print("\n[M6c] 生成器那道闸**真的接线了**（不信源码，现场篡改 DLC 打一遍）")
-    _gatedir = os.path.join(tmp, "gate")            # 空目录：用来验"拒绝时一个文件都不写"
+    _gatedir = os.path.join(tmp, "gate") # 空目录：用来验"拒绝时一个文件都不写"
     os.makedirs(_gatedir, exist_ok=True)
     _probe = (
         "import importlib.util,sys,os;"

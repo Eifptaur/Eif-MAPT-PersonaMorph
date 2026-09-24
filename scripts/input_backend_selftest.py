@@ -20,7 +20,7 @@ try:
 except Exception:
     pass
 
-from agent import input_backend as ib   # noqa: E402  （import 即锁 DPI）
+from agent import input_backend as ib # noqa: E402  （import 即锁 DPI）
 
 OK, BAD = [], []
 
@@ -79,11 +79,11 @@ r = b.click(0, (500, 600))
 ck("B5 空句柄拒绝且不发消息", r[0] is False and not sent)
 sent[:] = []
 _saved_fm = ib.find_main_window
-ib.find_main_window = lambda: 4321          # 主窗桩：右键必须**改投它**
+ib.find_main_window = lambda: 4321 # 主窗桩：右键必须**改投它**
 r = b.click(1234, (500, 600), right=True)
 ib.find_main_window = _saved_fm
 _tg = {c[0] for c in sent}
-# 2026-09-16 改口径：**投递右键已实测可用**（投渲染子窗不弹菜单、**投主窗才弹**；再投递点菜单项能命中，
+# **投递右键已实测可用**（投渲染子窗不弹菜单、**投主窗才弹**；再投递点菜单项能命中，
 # 自检＝剪贴板被写成那条消息的正文）⇒ 不再"明确拒绝"，而是**明确改投主窗**并用 RBUTTON 消息。
 # 守的仍是"不许乱点"：目标窗必须只有主窗 4321，且必须发出 右键按下/抬起。
 ck("B6 投递右键＝改投主窗 + 发 RBUTTON 消息（不再拒绝）",
@@ -132,11 +132,11 @@ ib._post, ib.to_client, ib.time.sleep = orig_post, orig_to_client, _real_sleep
 print("[R] 棘轮（真实输入 API 的下沉点）")
 PAT = re.compile(r"\.\s*(mouse_event|SetCursorPos|SendInput|keybd_event)\s*\(")
 BASELINE = {
-    ROOT + os.sep + "agent" + os.sep + "ui_adapt.py",      # L0 唯一下沉点（heal_input / real_guard / click_real_hold）
-    ROOT + os.sep + "agent" + os.sep + "wechat.py",        # 待收口（21 处）
-    ROOT + os.sep + "agent" + os.sep + "wechat_ui.py",     # 待收口（7 处）
-    ROOT + os.sep + "scripts" + os.sep + "persona_morph.py",  # 待收口（1 处）
-    # 2026-09-17 登记：真语音条那条链**必须**用 SendInput 注入「真·右 Alt」——
+    ROOT + os.sep + "agent" + os.sep + "ui_adapt.py", # L0 唯一下沉点（heal_input / real_guard / click_real_hold）
+    ROOT + os.sep + "agent" + os.sep + "wechat.py", # 待收口（21 处）
+    ROOT + os.sep + "agent" + os.sep + "wechat_ui.py", # 待收口（7 处）
+    ROOT + os.sep + "scripts" + os.sep + "persona_morph.py", # 待收口（1 处）
+    # 真语音条那条链**必须**用 SendInput 注入「真·右 Alt」——
     #   实测投递键盘消息（PostMessage WM_KEY*）微信不认（绿簇毫无反应），只有 SendInput 才行；
     #   而它注入的是**键盘**、全程不动鼠标，这正是"不动鼠标发语音条"的实现方式本身。
     #   ⚠️ 该文件里**不许**出现 mouse_event / SetCursorPos；要真点必须走 ui_adapt.click_real_hold。
@@ -167,7 +167,7 @@ ck("R3 总数在下降而不是上升", sum(hits.values()) <= 36, "当前 %d 处
 print("\n[S] input.press_ms / input.activate 不再是死键（2026-09-15 接线）")
 # 改前：这两个键只在 config.py 定义，全仓没一处读 —— 用户改 config.json 完全没用
 # （MessageBackend 的默认值写死在构造函数签名里）。现在 select_backend 会读进去。
-from agent import input_backend as IB        # noqa: E402
+from agent import input_backend as IB # noqa: E402
 _b1 = IB.select_backend({"input": {"backend": "message"}})
 ck("S1 默认仍是 press_ms=60 / activate=True（没改默认行为）",
    getattr(_b1, "press_ms", None) == 60 and getattr(_b1, "activate", None) is True,

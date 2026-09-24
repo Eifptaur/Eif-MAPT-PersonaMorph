@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
-"""群相 Qt 正式壳（丙-3 第一步落位）。
+"""群相 Qt 正式壳。
 
 由 `_scratch/qt_proto/` 原型复制提升而来：
-  · stylekit_qt.py 三主题 token + ensure_fonts 双字体：原样（token 不改，工单钉子）；
   · shell.py / panels_qt.py / panels_custom.py 27 面板：目录层级适配（parents 浅一级）；
   · addr.py / heal.py / agent_bridge.py：探活口径一行未动，只改目录层级；
   · selftest.py / shoot.py：自检与取证随包提升（HERE 适配 ui_qt 层级）。

@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """sec 键元数据层 —— 从 web 控制台源码**运行时解析**出每个面板的行结构。
 
-为什么必须有这一层（交接件硬规矩：不许手抄几百个配置项）：
   `agent/console_html.py` 的每个 `<section id="sec-…">` 里，每行配置都带
   `data-cfg="点.path"`，控件类型就写在 HTML 标签上（input type / select /
   textarea / chips）。⇒ web 侧的「键元数据」就藏在这份 HTML 里，
@@ -44,7 +43,7 @@ class Row:
 
     kind ∈ text | password | number | range | checkbox | select |
            textarea | chips | info（纯说明行，无控件）
-    丙-10 P0-2 新增（真机复验「按钮和选单都不见了」的根因）：
+     P0-2 新增（真机复验「按钮和选单都不见了」的根因）：
            buttons（按钮组）| status（状态行）| table（表格/矩阵）
     —— 此前无 input/select/textarea 的块一律降级成 info 纯文字，web 真实存在的
        按钮组/状态行/矩阵全蒸发。新增三类型把它们如实还原。
@@ -58,17 +57,17 @@ class Row:
     cfg: str = ""
     placeholder: str = ""
     hint: str = ""
-    options: list[tuple[str, str]] = field(default_factory=list)  # (value, 文案)
+    options: list[tuple[str, str]] = field(default_factory=list) # (value, 文案)
     default: object = None
-    actions: list[tuple[str, str]] = field(default_factory=list)  # buttons：(文案, 动作id)
-    status_id: str = ""                                           # status：web <b id>
-    headers: list[str] = field(default_factory=list)               # table：表头
-    rows: list[list[str]] = field(default_factory=list)            # table：数据行
-    # 丙-12：mid 子行的可辨识标记（渲染层据此缩进/折叠，与顶层 row 区分）
-    sub: bool = False          # True = 位于某个 <div class="mid"> 块内（mid 子行）
-    group: str = ""            # 所属 mid 块的标题（取最近前置 <div class="desc"> 或顶层 row 标签）
-    indent: int = 0            # 渲染缩进档位（mid 子行 = 1，顶层 = 0）
-    # 丙-15：table 每行首列是否为勾选框（功能自检清单「结果」列等）——
+    actions: list[tuple[str, str]] = field(default_factory=list) # buttons：(文案, 动作id)
+    status_id: str = "" # status：web <b id>
+    headers: list[str] = field(default_factory=list) # table：表头
+    rows: list[list[str]] = field(default_factory=list) # table：数据行
+    # mid 子行的可辨识标记（渲染层据此缩进/折叠，与顶层 row 区分）
+    sub: bool = False # True = 位于某个 <div class="mid"> 块内（mid 子行）
+    group: str = "" # 所属 mid 块的标题（取最近前置 <div class="desc"> 或顶层 row 标签）
+    indent: int = 0 # 渲染缩进档位（mid 子行 = 1，顶层 = 0）
+    # table 每行首列是否为勾选框（功能自检清单「结果」列等）——
     #   原 _clean 把 <input type=checkbox> 剥成空文本 ⇒ Qt 渲染纯文字清单、勾选列蒸发。
     cell_checks: list[bool] = field(default_factory=list)
 
@@ -102,14 +101,14 @@ def _placeholder(tag: str) -> str:
     return _clean(m.group(1)) if m else ""
 
 
-def _default_of(cfg: str, _cache: list = []) -> object:  # noqa: B006
+def _default_of(cfg: str, _cache: list = []) -> object: # noqa: B006
     """按点路径从 config.example.json 取默认值（找不到就 None，由控件用空态）。"""
     if not cfg:
         return None
     if not _cache:
         try:
             _cache.append(json.loads(CFG_PATH.read_text(encoding="utf-8")))
-        except Exception:  # noqa: BLE001
+        except Exception: # noqa: BLE001
             _cache.append({})
     cur: object = _cache[0]
     for part in cfg.split("."):
@@ -124,7 +123,7 @@ def _hint_of(chunk: str) -> str:
     """行说明：优先取 web 侧真正的 `.hint` span。
 
     注意：不能直接对整段去标签 —— select 的 <option> 文本会被拼进说明里
-      （「模型厂商」行的说明里混出十几个厂商名，2026-09-23 拍图实锤）。
+      。
     """
     spans = re.findall(r'<span class="hint">(.*?)</span>', chunk, re.S)
     if spans:
@@ -136,7 +135,7 @@ def _hint_of(chunk: str) -> str:
 def _parse_row(chunk: str, label: str) -> Row:
     tag_m = re.search(r"<input[^>]*>|<select[^>]*>|<textarea[^>]*>|<div class=\"chips\"", chunk, re.S)
     if tag_m is None:
-        # ⛔ 丙-10 P0-2：无控件 ≠ 纯说明。web 侧这里常是**按钮组 / 状态行 / 表格**，
+        # ⛔ P0-2：无控件 ≠ 纯说明。web 侧这里常是**按钮组 / 状态行 / 表格**，
         #   原来一律 info ⇒ 按钮与表格蒸发（真机复验「按钮和选单都不见了」）。
         #   ⇒ 按内含 DOM 分三档还原；都不命中的才是真「纯说明」。
         return _parse_nonwidget_row(chunk, label)
@@ -162,16 +161,16 @@ def _parse_row(chunk: str, label: str) -> Row:
         body_m = re.search(r"<select[^>]*>(.*?)</select>", chunk, re.S)
         opts = re.findall(r'<option[^>]*value="([^"]*)"[^>]*>([^<]*)</option>', body_m.group(1)) if body_m else []
         opts = [(v, _clean(t)) for v, t in opts if _clean(t)]
-        if not opts and body_m:  # 个别 option 不带 value 属性
+        if not opts and body_m: # 个别 option 不带 value 属性
             opts = [("", _clean(t)) for t in re.findall(r"<option[^>]*>([^<]*)</option>", body_m.group(1)) if _clean(t)]
         d = _default_of(cfg)
         return Row("select", label, cfg, hint=hint, options=opts, default=d)
     if tag.startswith("<textarea"):
         return Row("textarea", label, cfg, _placeholder(tag), hint, default=_default_of(cfg))
     if tag.startswith("<div class=\"chips\""):
-        # ⛔ 丙-15：chips 行在 web 里常是「chips 勾选组 + 行内按钮 + 自定义添加输入」
+        # ⛔ chips 行在 web 里常是「chips 勾选组 + 行内按钮 + 自定义添加输入」
         #   的组合（如 wechat 群白名单：wlChips + 检测/刷新按钮 + customGroup 输入）。
-        #   原来只认 chips 本体 ⇒ 按钮与输入全蒸发（作者真机：「选单都没有，用户怎么选」）。
+        # 原来只认 chips 本体 ⇒ 按钮与输入全蒸发。
         acts: list[tuple[str, str]] = []
         for bm in re.finditer(r"<button([^>]*)>(.*?)</button>", chunk, re.S):
             attrs, txt = bm.group(1), _clean(bm.group(2))
@@ -193,11 +192,11 @@ def _parse_row(chunk: str, label: str) -> Row:
 def _parse_nonwidget_row(chunk: str, label: str) -> Row:
     """无 input/select/textarea 的块 → buttons / status / table / info 四档判定。
 
-    ⛔ 丙-10 P0-2：这是「按钮与选单蒸发」的修复点。优先级 = table > buttons > status
+    ⛔ P0-2：这是「按钮与选单蒸发」的修复点。优先级 = table > buttons > status
     （块里同时有表格和状态行时，表格是主体；按钮组同理）。
        · `<table>`                        → table（表头 thead/th 或首行，数据行 td）
        · `<button …>`（≥1 个）             → buttons，动作 id 取 `id=` / `data-act=`
-       · `<b id="stXxx">`（状态行）        → status，status_id = 那个 id（配丙-8 badge_for 口径）
+       · `<b id="stXxx">`（状态行） → status，status_id = 那个 id
        · 其余                              → info（真·纯说明行）
     """
     hint = _hint_of(chunk)
@@ -209,8 +208,8 @@ def _parse_nonwidget_row(chunk: str, label: str) -> Row:
         rows = []
         checks: list[bool] = []
         for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", body, re.S):
-            # 丙-15：web 清单表（功能自检清单等）首列常是勾选框 —— 原来被 _clean
-            #   剥成空文本 ⇒ Qt 渲染成纯文字清单，「结果」勾选列蒸发（作者点名）。
+            # web 清单表（功能自检清单等）首列常是勾选框 —— 原来被 _clean
+            # 剥成空文本 ⇒ Qt 渲染成纯文字清单，「结果」勾选列蒸发。
             has_ck = bool(re.search(r'<input[^>]*type="checkbox"', tr))
             cells = [_clean(x) for x in re.findall(r"<td[^>]*>(.*?)</td>", tr, re.S)]
             if cells and any(cells):
@@ -237,7 +236,7 @@ def _parse_nonwidget_row(chunk: str, label: str) -> Row:
         if acts:
             return Row("buttons", label, hint=hint, actions=acts)
     # ③ 状态行：块内任何 `<b id="…">`（web 状态位 id 无统一前缀——实测有
-    #   `stXxx`（丙-8 badge 口径）、`wxver` / `vsWhy` / `ttsWhy` / `vmVer` 等）。
+    # `stXxx`、`wxver` / `vsWhy` / `ttsWhy` / `vmVer` 等）。
     #   判据 = 「有 id 的 <b>」即可，因为它就是「一个由 JS 填字的状态位」。
     sm = re.search(r'<b id="([\w-]+)"', chunk)
     if sm:
@@ -254,7 +253,7 @@ def _div_close(body: str, open_gt: int) -> int:
     用 div 深度计数做括号匹配，使每个 <div class="row"> 都能取到它「自己」的闭合，
     而不会在碰到 `<div class="mid">` / `<div class="btns">` 时提前停（这正是旧前瞻截断的根因）。
 
-    丙-12 修：正文里存在**未转义的裸 `<`**（persona「评分补足」的 hint 写着「否则一律<95」），
+     修：正文里存在**未转义的裸 `<`**（persona「评分补足」的 hint 写着「否则一律<95」），
     把它当标签起点会让 `.find('>')` 一口吞掉后面真正的 `</div>`，深度计数彻底错位、返回 -1。
     ⇒ 只认「`<` 后紧跟字母 / `/` / `!`」才是标签起点，裸 `<` 一律跳过。
     """
@@ -267,7 +266,7 @@ def _div_close(body: str, open_gt: int) -> int:
             break
         nxt = body[lt + 1:lt + 2]
         if not (nxt.isalpha() or nxt in ("/", "!")):
-            i = lt + 1                    # 裸 '<'（正文）——不是标签，跳过重找
+            i = lt + 1 # 裸 '<'（正文）——不是标签，跳过重找
             continue
         if body.startswith('</div>', lt):
             depth -= 1
@@ -335,7 +334,7 @@ def _row_ranges(body: str) -> list[tuple[int, int]]:
         if close < 0:
             break
         out.append((start, close))
-        i = close + 6  # 跳过本次 </div>（长度 6），从下一个 row 继续找
+        i = close + 6 # 跳过本次 </div>（长度 6），从下一个 row 继续找
     return out
 
 
@@ -363,9 +362,9 @@ def _row_of(body: str, row_start: int, row_close: int, mid_spans: list[tuple[int
     span = next((s for s in mid_spans if s[0] <= row_start < s[1]), None)
     if span is not None:
         sub, group = True, _mid_group(body, span[0])
-    # ⛔ 丙-17：buttons/chips 档自身已把行内 .btns 抽干（chips 丙-15 起也收进 actions）
+    # ⛔ buttons/chips 档自身已把行内 .btns 抽干
     #   —— 原来只排除 buttons，chips 行的按钮组又额外产出一条独立 buttons 子行
-    #   ⇒ 「微信页出现两个群白名单」（作者真机实锤：一份 chips 编辑+真弹窗，一份 stub 按钮）。
+    # ⇒ 「微信页出现两个群白名单」。
     if out[0].kind not in ("buttons", "chips"):
         for acts in _btns_groups(inner):
             br = Row("buttons", label, actions=acts, hint=out[0].hint)

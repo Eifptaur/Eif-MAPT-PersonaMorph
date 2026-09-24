@@ -13,7 +13,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA = os.path.join(ROOT, "data")
 if ROOT not in sys.path:
-    sys.path.insert(0, ROOT)   # 支持脚本直接运行（py agent/code_check.py）
+    sys.path.insert(0, ROOT) # 支持脚本直接运行（py agent/code_check.py）
 
 
 def _run_py(args, timeout=120):
@@ -49,7 +49,7 @@ def run(verbose_deps: bool = False) -> dict:
     """执行全部代码层检查；返回 {"ok", "checks": [...]}。约 0.2~1 秒。"""
     checks = []
     run._prog = {"done": 0, "total": 0, "current": ""}
-    run._total = 0   # 待后面统计
+    run._total = 0 # 待后面统计
 
     def add(name, status, detail="", hint=""):
         checks.append({"name": name, "status": status, "detail": detail[:120], "hint": hint[:160]})
@@ -57,7 +57,7 @@ def run(verbose_deps: bool = False) -> dict:
         run._prog["current"] = name
         run._prog["total"] = max(run._prog["total"], run._prog["done"] + 1)
         run._check_count = len(checks)
-        run._checks = checks   # 实时进度项（前端逐项滚动显示，无需等报告结束）
+        run._checks = checks # 实时进度项（前端逐项滚动显示，无需等报告结束）
 
     # 1) Python 编译检查（内联全量）
     ok, detail = _compile_all()
@@ -66,9 +66,9 @@ def run(verbose_deps: bool = False) -> dict:
 
     # 2) 依赖可用性（wechatauto / PIL / 关键模块）
     try:
-        import wechatauto  # noqa
-        from PIL import Image, ImageGrab  # noqa
-        from agent import ui_adapt, wechat_ui, behavior, scoring, persona  # noqa
+        import wechatauto # noqa
+        from PIL import Image, ImageGrab # noqa
+        from agent import ui_adapt, wechat_ui, behavior, scoring, persona # noqa
         add("依赖与模块", "ok", "wechatauto / PIL / agent.* 全部可导入")
     except Exception as e:
         add("依赖与模块", "fail", str(e)[:120], "运行 setup_deps.py 安装依赖")
@@ -198,7 +198,7 @@ def run(verbose_deps: bool = False) -> dict:
     _cp = _src("agent/persona.py")
     _pr = _src("agent/persona_enrich.py")
 
-    def _has(s, *keys):  # 所有 key 都出现 → ok（阈值宽松：出现即为修复）
+    def _has(s, *keys): # 所有 key 都出现 → ok（阈值宽松：出现即为修复）
         return all(k in s for k in keys)
 
     def _code_check(name, cond, detail_ok, detail_bad="", hint=""):

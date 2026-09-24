@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """B 站视频解析（只读、免登录、只用公开接口）。
 
-为什么有这个模块：用户 2026-09-15 点名「我们感觉丢掉了好多目标啊：解析B站视频、转发B站视频、
+为什么有这个模块：
 看B站视频」。本模块负责第一件——**把群友丢进来的 B 站链接解析成人话**（标题 / UP / 时长 /
 简介 / 分P / 字幕）。第二件（下载后当文件转发）与第三件（下载后抽帧 + 本机 ASR）走
 `bilibili.download()`，不在这里。
@@ -41,7 +41,7 @@ RE_B23 = re.compile(r"https?://b23\.tv/[0-9A-Za-z]+", re.I)
 #: 完整视频页
 RE_PAGE = re.compile(r"https?://(?:www\.|m\.)?bilibili\.com/video/(BV[0-9A-Za-z]{10}|av\d{1,12})", re.I)
 
-# ── 多平台外链识别（丙-11 A1，2026-09-24）─────────────────────────────────────
+# ── 多平台外链识别─────────────────────────────────────
 # 为什么放在这里而不是独立模块：本模块已经是「视频外链」这件事的唯一落点（B 站之外全仓零识别），
 # 抽出去只会多一个 import 层、多一处要同步的常量表；而 B 站那段老识别（`parse`）**一个字节都不动**，
 # 新表只看域名、不碰 BV/av 正则 ⇒ 「B 站优先走老路」天然成立。
@@ -88,7 +88,7 @@ def identify_media_url(text: str):
     m = RE_URL.search(s)
     if not m:
         return None
-    url = m.group(0).rstrip(".,;，。；")            # 中文句末标点常被正则一起吃进来，切掉
+    url = m.group(0).rstrip(".,;，。；") # 中文句末标点常被正则一起吃进来，切掉
     host = _host_of(url)
     if not host:
         return None
@@ -132,7 +132,7 @@ def _get_json(url: str, timeout: int = TIMEOUT):
     })
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
-            # V-R9-26：带上限读（接口回包正常几 KB~几百 KB；4MB 是宽裕上限，超了当"回包异常"）
+            # 带上限读（接口回包正常几 KB~几百 KB；4MB 是宽裕上限，超了当"回包异常"）
             try:
                 from .safe_fetch import read_capped
                 raw = read_capped(r, 4 * 1024 * 1024, "B 站接口回包")
@@ -186,7 +186,7 @@ def view(bvid: str, aid: str | None = None, timeout: int = TIMEOUT):
     owner = d.get("owner") or {}
     stat = d.get("stat") or {}
     # AI 标识：**唯一可信来源是后台字段**（`argue_info.argue_msg`）。
-    # 2026-09-15 实测：**客户端显示不一致**——肇岁初十 BV1nkYV6oEMZ 后台写着「含AI生成内容」，
+    # **客户端显示不一致**——肇岁初十 BV1nkYV6oEMZ 后台写着「含AI生成内容」，
     # 用户实测**手机端看得见、电脑端看不见**；而破米库 BV1vTYC6AEPi 后台是空的（真没标）。
     # ⇒ 想判断有没有标识，只能读接口，别看界面（两个端会给出相反的印象）。
     _argue = d.get("argue_info")
@@ -261,7 +261,7 @@ def ytdlp_bin() -> str:
 
 
 # ── 「自己听视频」：只下音频轨 + 本机识别（**不需要 yt-dlp**）─────────────────────
-# 2026-09-15 用户问「不能自己听视频，总结视频内容吗」。整段视频动辄几十 MB，而识别只需要一条
+# 整段视频动辄几十 MB，而识别只需要一条
 # 几十 kbps 的音频轨（实测 1:19 的视频音频 659 KB）⇒ 走 playurl 的 DASH 音频流，比下整段视频
 # 便宜一个数量级，而且**不依赖 yt-dlp**。识别用项目既有的本机 SAPI 听写（离线、零下载）。
 
@@ -287,21 +287,21 @@ def audio_url(bvid: str, cid, timeout: int = TIMEOUT):
 def _download(url: str, dest: str, timeout: int = 180, max_bytes: int = 384 * 1024 * 1024):
     """把音频流落到文件 ⇒ `(字节数, 原因)`。B 站 CDN 要带 Referer，否则 403。
 
-    ⛔ 2026-09-21 第九轮审计（V-R9-24/26/27）：
+    ⛔ 
     · 这个地址来自 **B 站接口的回包**（`audio_url()`）⇒ 下手前先过 `safe_fetch` 闸门
       （拿不到安全层就 fail-closed，一个字节都不下）；
     · 体积上限：低码率音频轨（1:19 的视频约 659KB）正常远小于它，超了就是异常。
 
-    ⛔ 第十轮审计 **V-R10-34 第 5 条**（改了两处口径，都写在这里免得被改回去）：
+    ⛔ 审计 第 5 条**（改了两处口径，都写在这里免得被改回去）：
     · **上限从 128MB 抬到 384MB** —— 128MB 会**误伤正经内容**：2 小时 192kbps ≈ 173MB、
       320kbps ≈ 288MB（审计点名的"2 小时高码率音频"就是这么被拒的）。384MB 仍是有界上限，
       而且超限走 `truncated` ⇒ 上层如实报错、**不落半成品**（`download_audio` 会删小文件）。
-    · **整轮墙钟换成"逐 recv 的 socket 超时"**（V-R9-27 的老写法用整轮墙钟，审计实测会把
+    · **整轮墙钟换成"逐 recv 的 socket 超时"**（ 的老写法用整轮墙钟，审计实测会把
       **稳定推进**的流掐断：2.5 秒中止、已收 589824B）。现在超时是 `timeout=180s` 级别的
       **空闲超时**：对面涓流照旧被掐，但**只要在推进就一直下**（`_pinned_exchange` 逐块读、
       socket 超时由 `PINNED_TIMEOUT_S`/`timeout` 管）。
 
-    ⛔ 第十轮审计 **V-R10-32**：老写法是"`guard_remote_url` 校验一次 ⇒ `urllib.urlopen(url)`
+    ⛔ 审计 老写法是"`guard_remote_url` 校验一次 ⇒ `urllib.urlopen(url)`
     **再解析一次域名**"——闸门看的是第 1 次解析，真正连接用的是第 2 次解析，
     E 线实测**把环回服务的 190 字节落盘**。现在整条下载走 `safe_fetch.fetch_pinned_stream()`：
     **一次解析、钉进 socket**，顺带把"上限 / 超时 / 上限读体"三件事按统一口径一起收掉。
@@ -387,7 +387,7 @@ def download(url_or_bvid: str, out_dir: str, timeout: int = 300):
     **依赖外部 `yt-dlp`**（不随包分发，因为它是独立程序且版本更新频繁）。没有就如实报"没装 yt-dlp"，
     绝不假装下载过、也不生成空文件。
 
-    ⚠️ 2026-09-24（丙-11 A2）**泛化**：yt-dlp 本身就是通用抽取器（B 站 / 抖音 / 快手 /
+    ⚠️ yt-dlp 本身就是通用抽取器（B 站 / 抖音 / 快手 /
     小红书 / YouTube 都吃），所以这里**不再前置 B 站断言** —— 传什么 URL 就下什么。
     平台识别交给 `identify_media_url()`、拒绝不支持的平台由上层做（本函数只管"能不能下"）。
     """
@@ -401,7 +401,7 @@ def download(url_or_bvid: str, out_dir: str, timeout: int = 300):
     except Exception as e:
         return None, "下载目录建不出来：%s" % str(e)[:60]
     tmpl = os.path.join(out_dir, "%(id)s.%(ext)s")
-    # ⚠️ 丙-11 A2：yt-dlp 合并音视频轨要 ffmpeg ⇒ 把项目**唯一解析入口**的 ffmpeg 路径透传给它
+    # ⚠️ A2：yt-dlp 合并音视频轨要 ffmpeg ⇒ 把项目**唯一解析入口**的 ffmpeg 路径透传给它
     #   （`--ffmpeg-location`）。拿不到 ffmpeg 时**不传这一项**（让 yt-dlp 自己找 PATH），
     #   而不是传空串 —— 传空串会让 yt-dlp 直接报参数错，把"没有 ffmpeg"变成"参数非法"。
     args = [exe, "-f", "mp4/best", "--no-playlist", "-o", tmpl]
@@ -416,7 +416,7 @@ def download(url_or_bvid: str, out_dir: str, timeout: int = 300):
     args.append(str(url_or_bvid).strip())
     try:
         r = subprocess.run(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout,
-                           creationflags=0x08000000 if os.name == "nt" else 0)   # 不许闪控制台窗
+                           creationflags=0x08000000 if os.name == "nt" else 0) # 不许闪控制台窗
     except Exception as e:
         return None, "yt-dlp 跑挂了：%s" % (str(e)[:70] or type(e).__name__)
     if r.returncode != 0:
@@ -433,11 +433,10 @@ def download(url_or_bvid: str, out_dir: str, timeout: int = 300):
     return best, ""
 
 
-# ── 外链视频「看一遍」：下载 → 抽帧 → 视觉模型（丙-11 A3，2026-09-24）───────────
+# ── 外链视频「看一遍」：下载 → 抽帧 → 视觉模型───────────
 # 为什么要它：B 站那条路（`info()`）只能拿标题/UP/字幕，「没字幕就只剩标题」；而视频理解在本项目
 # 已有现成链路（`video_read.read()`：ffmpeg 抽帧 → `model_routes.image` 分流 → 视觉模型 + SAPI 听音频）。
 # 这里**只做搬运**：平台识别 → 下载（`download()` 泛化后已能吃任意 URL）→ 交给 `video_read.read()`。
-# **绝不在本模块重写抽帧**（工单明确不做，`video_read.py` 那套是唯一的抽帧实现）。
 #
 # fail-closed 三条：
 #   ① 不支持的平台 / 认不出 ⇒ 返回原因，**不硬试**；
@@ -468,7 +467,7 @@ def read_external(text: str, max_frames: int = 4, max_seconds: int = 60,
     exe = ytdlp_bin()
     if not exe:
         return None, "要下载视频得先有 yt-dlp（本机没找到：可 `py -3 -m pip install yt-dlp` 或用项目 runtime）"
-    tmp = tempfile.mkdtemp(prefix="pm-video-")            # pm-video- 前缀 ⇒ video_read.cleanup 认得
+    tmp = tempfile.mkdtemp(prefix="pm-video-") # pm-video- 前缀 ⇒ video_read.cleanup 认得
     path, why = download(url, tmp, timeout=int(download_timeout or 300))
     if not path:
         from . import housekeeping as HK

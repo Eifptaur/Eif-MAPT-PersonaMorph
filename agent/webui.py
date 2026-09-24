@@ -15,11 +15,11 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import persist        # V-R10-26：原子写（唯一临时名 + fsync + os.replace）
+from . import persist # 原子写（唯一临时名 + fsync + os.replace）
 from .config import as_bool, deep_merge, get_config, save_config, set_config
-from . import local_guard                # V-R3-8：回环 Host 校验（与本地生图服务共用同一份实现）
+from . import local_guard # 回环 Host 校验（与本地生图服务共用同一份实现）
 from .whale_text import DICT as WHALE_DICT, SKIP as WHALE_SKIP
-from .console_html import HTML  # 界面模板（蓝白设计，设置项全量，独立文件便于改版）
+from .console_html import HTML # 界面模板（蓝白设计，设置项全量，独立文件便于改版）
 from .util import mask_secret, redact_secrets
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -28,7 +28,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 def _truthy(v):
     """把「开关」读成布尔：字符串 `"false" / "0" / "off" / "no"` 都是假；**`None` 保持 `None`**。
 
-    ⛔ 2026-09-21（第四轮审计 V-R4-15 / V-R4-13）：`bool("false")` 是 **True** ⇒ 前端哪怕老实传
+    ⛔ `bool("false")` 是 **True** ⇒ 前端哪怕老实传
     `"false"`，开关也会被**反向打开**；GET 路由更严重（查询串里一切都是字符串）。
     ⚠️ **一处实现**：真值表在 `config.as_bool()`，这里只多一层"保留 None"（"没传"要和"传了假"分开）。
     """
@@ -40,10 +40,10 @@ def _truthy(v):
 # ── 数据迁移包（导出/导入：计费+对话记录 data/sessions/*.jsonl）────────────
 
 def cal_date_ok(d) -> bool:
-    """`/api/stats/cal` 的日期闸（第六轮 **V-R6-26c**）：只收严格 `YYYY-MM-DD`；空串＝「今天」，放行。
+    """`/api/stats/cal` 的日期闸：只收严格 `YYYY-MM-DD`；空串＝「今天」，放行。
 
     抽成模块级**纯函数**是为了能被行为判据直接调 —— 原来这段内联在 POST 处理里，
-    判据只能 grep 源码文本 ⇒ 分支被写死也看不出来（第七轮 V-R7-3 的要求）。
+    判据只能 grep 源码文本 ⇒ 分支被写死也看不出来。
     """
     s = str(d or "")
     return (not s) or bool(re.match(r"^\d{4}-\d{2}-\d{2}$", s))
@@ -122,7 +122,7 @@ def _is_masked(v) -> bool:
 
 
 # ── 凭据字段表（**掩码侧与恢复侧共用同一份**）─────────────────────────────────────────
-# 为什么抽成表而不是逐字段手写（V-R3-3，2026-09-20）：脱敏原来是**手写枚举**——V8 修完
+# 为什么抽成表而不是逐字段手写：脱敏原来是**手写枚举**——V8 修完
 # `webhook_token` 就收工，紧接着 `feedback.webhook_url` 又漏了（同一个函数、同一条威胁模型，
 # 只是它"看起来只是个网址"）。⇒ 现在 `masked_config()`（打码）与 `_protect_secrets()`（恢复）
 # **都遍历这张表**：加一个字段只加一处，两个方向一起生效，**不存在"只改了一侧"**。
@@ -133,7 +133,7 @@ CRED_FIELDS = (
     (("api", "api_key"), "secret"),
     (("cloud", "token"), "secret"),
     (("feedback", "webhook_token"), "secret"),
-    # ⭐ V-R3-3 本体：`agent/feedback.py:498-502` 原话「群机器人这条国内可达、**URL 即凭据**」
+    # ⭐ 本体：`agent/feedback.py:498-502` 
     #   ⇒ 它比 webhook_token 更隐蔽（看着只是个"网址"，其实 `?key=xxx` 就是那把钥匙）。
     (("feedback", "webhook_url"), "url"),
     (("feedback", "smtp", "password"), "secret"),
@@ -190,7 +190,7 @@ def _restore_path(new_cfg: dict, old: dict, path: tuple) -> None:
 def _protect_secrets(new_cfg: dict):
     """保存配置时：**表里任何"还是打码值"的字段都不覆盖真实值**（与 `masked_config` 同一张表）。
 
-    为什么要同一张表（V-R3-3）：脱敏侧补了字段而恢复侧忘了补，用户一点保存就把真值写成 `••••`
+    为什么要同一张表：脱敏侧补了字段而恢复侧忘了补，用户一点保存就把真值写成 `••••`
     串（原值当场丢）。两侧遍历同一份 `CRED_FIELDS` ⇒ "只改一侧"这类错**不可能**再发生。
     """
     old = get_config()
@@ -237,7 +237,7 @@ def _wechat_dir_conflict(new_cfg: dict) -> dict:
     只在**这一项真的变了**的时候拦 —— 改别的设置时，那条旧值不该把人挡在门外（旧值不可用
     由运行期回落 + 报告/控制台如实报出来兜）。不过关时把"原因 + 现在实际会回落到哪"一起给出。
 
-    用户反馈（2026-09-18 22:23）：「自己自定义的地址他检测不到」⇒ 手动指定必须**校验**
+    ⇒ 手动指定必须**校验**
     （存在 + 里面有 db_storage 或消息库文件），否则明确报错并回落自动检测，绝不静默写进去。
     """
     try:
@@ -250,7 +250,7 @@ def _wechat_dir_conflict(new_cfg: dict) -> dict:
     from . import wechat_dir as _wdir
     p = _wdir.expand(new)
     if not p:
-        return {}                       # 清空＝回到自动检测，永远合法
+        return {} # 清空＝回到自动检测，永远合法
     c = _wdir.check(p)
     if c.get("ok"):
         return {}
@@ -290,7 +290,7 @@ class WebUI:
         MARK = "鲸语版界面文案"
         idx = html.find(MARK)
         head, tail = (html[:idx], html[idx:]) if idx >= 0 else (html, "")
-        # ⛔ 只换"整个文本节点"（`>文案<`），**不做子串替换**（2026-09-14 重写）：
+        # ⛔ 只换"整个文本节点"（`>文案<`），**不做子串替换**：
         #    旧版是全局 replace —— 短键会吃掉长键（「停止」吞「停止检测」），还会改坏 JS 里的字符串；
         #    整节点匹配后，字典可以放心扩到几百条（行标签/按钮/表头全覆盖）。
         #    看起来不像文案的片段（含 {}()=; 或过长）一律跳过。
@@ -342,32 +342,32 @@ class WebUI:
                  community_export_fn=None, community_upload_fn=None, scoring_import_fn=None,
                  watermark_reset_fn=None,
                  store=None,
-                 # ⛔ V-R10-14 补（2026-09-23 E2 根因）：webui 内部是
+                 # ⛔ 补：webui 内部是
                  #   `getattr(parent, "refresh_targets_fn", None)` 取它的，但构造函数从没收过这个参数
                  #   ⇒ persona_morph.py:3041 一传参就 TypeError，**后端整条起不来**（控制台永远起不来）。
                  refresh_targets_fn=None):
-        self.status_provider = status_provider      # () -> dict
-        self.log_buffer = log_buffer                # collections.deque[str]
-        self.test_api_fn = test_api_fn              # () -> dict
-        self.on_save = on_save                      # (new_cfg) -> None（可选，用于通知运行中组件）
+        self.status_provider = status_provider # () -> dict
+        self.log_buffer = log_buffer # collections.deque[str]
+        self.test_api_fn = test_api_fn # () -> dict
+        self.on_save = on_save # (new_cfg) -> None（可选，用于通知运行中组件）
         self.watermark_reset_fn = watermark_reset_fn or (lambda: {"ok": False, "error": "未提供"})
-        self.pause_fn = pause_fn or (lambda: None)  # () -> None
-        self.resume_fn = resume_fn or (lambda: None)  # () -> None
-        self.balance_fn = balance_fn or (lambda: {"error": "未提供 balance_fn"})  # () -> dict
-        self.shutdown_fn = shutdown_fn or (lambda: None)  # () -> None
-        self.restart_fn = restart_fn or (lambda: None)    # () -> None（后台无窗口重启）
-        self.whale = whale                          # agent.whale.WhaleWidget（小鲸鱼挂件，可选）
-        self.poke_test_fn = poke_test_fn or (lambda: {"error": "未提供 poke_test_fn"})  # () -> dict
-        self.selfcheck_fn = selfcheck_fn or (lambda: {"ok": False, "error": "未提供 selfcheck_fn"})  # () -> dict
-        self.groups_fn = groups_fn or (lambda: {"ok": True, "groups": []})  # () -> dict（群列表）
-        # (why) -> None：刷完群列表要重算监听目标（V-R10-14）。原来是 getattr 取的"隐身属性"，
+        self.pause_fn = pause_fn or (lambda: None) # () -> None
+        self.resume_fn = resume_fn or (lambda: None) # () -> None
+        self.balance_fn = balance_fn or (lambda: {"error": "未提供 balance_fn"}) # () -> dict
+        self.shutdown_fn = shutdown_fn or (lambda: None) # () -> None
+        self.restart_fn = restart_fn or (lambda: None) # () -> None（后台无窗口重启）
+        self.whale = whale # agent.whale.WhaleWidget（小鲸鱼挂件，可选）
+        self.poke_test_fn = poke_test_fn or (lambda: {"error": "未提供 poke_test_fn"}) # () -> dict
+        self.selfcheck_fn = selfcheck_fn or (lambda: {"ok": False, "error": "未提供 selfcheck_fn"}) # () -> dict
+        self.groups_fn = groups_fn or (lambda: {"ok": True, "groups": []}) # () -> dict（群列表）
+        # (why) -> None：刷完群列表要重算监听目标。原来是 getattr 取的"隐身属性"，
         # 构造函数没收 ⇒ 谁传谁 TypeError。现在正式接住；没给就退化成 no-op（老调用点不受影响）。
         self.refresh_targets_fn = refresh_targets_fn or (lambda why="刷新群列表": None)
         self.memory_fn = memory_fn or (lambda action, chat_key="", user_id="": {"ok": True,
-                                                                               "chats": [], "members": []})  # (action, chat_key, user_id) -> dict
-        self.sessions_fn = sessions_fn or (lambda limit: [])  # (limit) -> list（运行明细）
-        self.store = store                                   # ChatStore（第 10 条：按会话/按条屏蔽存档）
-        self.emojis_fn = emojis_fn or (lambda: [])            # () -> list（表情包收藏夹）
+                                                                               "chats": [], "members": []}) # (action, chat_key, user_id) -> dict
+        self.sessions_fn = sessions_fn or (lambda limit: []) # (limit) -> list（运行明细）
+        self.store = store # ChatStore（第 10 条：按会话/按条屏蔽存档）
+        self.emojis_fn = emojis_fn or (lambda: []) # () -> list（表情包收藏夹）
         self.recalibrate_fn = recalibrate_fn or (lambda: {"ok": False, "error": "未提供"})
         self.open_path_fn = open_path_fn or (lambda path: {"ok": False, "error": "未提供"})
         self.selfcheck_stop_fn = selfcheck_stop_fn or (lambda: None)
@@ -375,13 +375,13 @@ class WebUI:
         self.persona_rate_fn = persona_rate_fn or (lambda k, s, n: {"ok": False, "error": "未提供"})
         self.persona_score_custom_fn = persona_score_custom_fn or (lambda t, l: {"ok": False, "error": "未提供"})
         self.persona_ai_enrich_fn = persona_ai_enrich_fn or (lambda n, t: {"ok": False, "error": "未提供"})
-        self.community_export_fn = community_export_fn    # (kind) -> dict 金句/意见/聊天记录导出
-        self.community_upload_fn = community_upload_fn    # (data) -> dict 上传到可配 URL
-        self.scoring_import_fn = scoring_import_fn        # (text) -> dict 导入种子库
+        self.community_export_fn = community_export_fn # (kind) -> dict 金句/意见/聊天记录导出
+        self.community_upload_fn = community_upload_fn # (data) -> dict 上传到可配 URL
+        self.scoring_import_fn = scoring_import_fn # (text) -> dict 导入种子库
         self._server = None
         self._thread = None
         self.port = 0
-        self._whale_js_cache = {}  # token -> bytes（注入口令后的挂件脚本缓存）
+        self._whale_js_cache = {} # token -> bytes（注入口令后的挂件脚本缓存）
         # 静态素材根目录（assets\，含 logo-bg / icon-whale / cursor / custom-cursor）
         self._asset_root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets")
         # 加载图标（assets/icon.png），用于 favicon
@@ -460,8 +460,8 @@ class WebUI:
     def masked_config(self) -> dict:
         """返回配置副本：**凭据字段表 `CRED_FIELDS` 里的每一项都打码**（真实值只存服务器 config.json）。
 
-        ⭐ 2026-09-20 改成**表驱动**（V-R3-3）：原先逐字段手写 —— 2026-09-16 掩了
-        `feedback.smtp.password` 与 `cloud.token`、2026-09-20 掩了 `feedback.webhook_token`，
+        ⭐ 成**表驱动**：原先逐字段手写 —— 掩了
+        `feedback.smtp.password` 与 `cloud.token`、掩了 `feedback.webhook_token`，
         可「原始 JSON」按钮（打的正是 `GET /api/config`）仍然把 `feedback.webhook_url`
         （`feedback.py` 自己写着"URL 即凭据"）明文铺在网页上，录屏/截图即外泄。
         ⇒ 掩码侧与恢复侧现在遍历**同一份表**，加字段只加一处。
@@ -481,7 +481,7 @@ class WebUI:
         """把 URL 里给的名字安全拼到 base 下：**先 unquote、再只取 basename**，最后用 realpath
         断言结果确实落在 base 内；任何一步可疑就返回空串（调用方一律 404）。
 
-        ⚠️ 2026-09-20 修 **V1（P0 免认证路径穿越）**：原来是 `os.path.basename(path)` **之后**才
+        ⚠️ **V1（P0 免认证路径穿越）**：原来是 `os.path.basename(path)` **之后**才
         `unquote()` —— 此时 `%2F` 还不是分隔符，basename 原样返回 `..%2F..%2Fconfig.json`；随后
         unquote 把 `%2F` 还原成 `/`，`..` 就生效了 ⇒ **不带口令**就能 GET
         `/assets/emoji/..%2F..%2Fconfig.json` 读走含 `api.api_key` 与控制台口令的 config.json
@@ -612,13 +612,13 @@ class WebUI:
                     "server.host=%s 不是回环地址，已强制改回 127.0.0.1（确需远程访问请显式设 server.allow_remote=true）", host)
                 host = "127.0.0.1"
         port = int(cfg.get("port") or 3210)
-        # 控制台地址（含 token）落盘：**token 的拥有者写，别人只读**（2026-09-14）。
+        # 控制台地址（含 token）落盘：**token 的拥有者写，别人只读**。
         # 起因：启动器/托盘各自拼地址，启动器在 config.json 里抓到排在前面的 cloud.token（空）⇒ 401。
         try:
             from .util import write_console_url
             _tok0 = str(cfg.get("token") or "").strip()
             # ⚠️ `console_url_root` 只给**判据/隔离实例**用：非空时地址落到那个根目录，绝不碰产品的
-            #   `logs/console.url`（2026-09-18 事故：console_open_selftest 的 E 段真起了一个 WebUI 在
+            # `logs/console.url`（console_open_selftest 的 E 段真起了一个 WebUI 在
             #   **随机空闲端口**上，`start()` 把产品那份地址文件覆写成 `…:14675/?token=…`，而那个端口
             #   随判据结束就没了 ⇒ 之后启动器照着它开窗 ⇒ 控制台一屏 `ERR_CONNECTION_REFUSED`）。
             write_console_url("http://127.0.0.1:%d/" % port + (("?token=" + _tok0) if _tok0 else ""),
@@ -633,7 +633,7 @@ class WebUI:
             server_version = "Persona Morph/1.0"
 
             def log_message(self, fmt, *args):
-                pass  # 静默，避免刷屏
+                pass # 静默，避免刷屏
 
             def _bytes(self, body, ctype="application/octet-stream", code=200):
                 if not body:
@@ -646,7 +646,7 @@ class WebUI:
                 self.wfile.write(body)
 
             def _auth_ok(self):
-                # ⛔ V-R3-8（2026-09-20 第三轮审计，两侧同源）：**光有口令还不够** ——
+                # ⛔ **光有口令还不够** ——
                 #    浏览器里的任何页面都能向本机端口"发"请求（CORS 只挡读不挡发），DNS rebinding
                 #    还能让外域解析到 127.0.0.1 后带着**外域 Host** 打进来 ⇒ Host 必须是回环。
                 #    判据实现见 agent/local_guard.py（本地生图服务用同一份，别再各写一套）。
@@ -669,7 +669,7 @@ class WebUI:
                 try:
                     import http.cookies as _hc
                     for m in re.findall(r"(?:^|;\s*)wxauth=([^;]+)", str(self.headers.get("Cookie") or "")):
-                        # ⛔ 2026-09-21 修（第六轮 **V-R6-26**）：口令比较原来是 `==`（逐字符早停）
+                        # ⛔ 口令比较原来是 `==`（逐字符早停）
                         #   ⇒ 理论上可被计时侧信道逐位猜出。改成**常数时间比较**。
                         if _hmac.compare_digest(str(m).strip(), token):
                             return True
@@ -700,14 +700,13 @@ class WebUI:
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
                 if code == 200:
-                    self._set_session_cookie()   # 成功响应才种 cookie（在状态行/Server/Date 之后）
+                    self._set_session_cookie() # 成功响应才种 cookie（在状态行/Server/Date 之后）
                 self.end_headers()
                 self.wfile.write(body)
 
             def _archive_view(self):
                 """存档屏蔽：列消息（带 recalled/blocked 标记）/ 屏蔽名单 / 读数。
 
-                ⛔ 2026-09-17 修（用户报「每次我一打开，右下角都是读取会话失败 error，但是又能连上」）：
                 **真因＝这条路由原来只注册在 POST 分支里**（它和 `/api/config`（保存配置）同一条
                 `elif` 链），而控制台前端用的是 **GET**（`getJSON('/api/archive')`）⇒ **每次都 404**
                 ⇒ 前端 catch 到就弹"读会话列表失败"。**整个「屏蔽存档」面板因此一直是死的**
@@ -725,7 +724,7 @@ class WebUI:
                 q = parse_qs(urlparse(self.path).query)
                 ck = str((q.get("chat_key") or [""])[0]).strip()
                 lim = int((q.get("limit") or ["30"])[0] or 30)
-                # ⛔ V-R5B-7：名单可能是按**群名**写的 ⇒ 把"会话名解析器"传进去，否则面板恒报"命中 0 个"
+                # ⛔ 名单可能是按**群名**写的 ⇒ 把"会话名解析器"传进去，否则面板恒报"命中 0 个"
                 def _name_of(_ck):
                     try:
                         _w = getattr(parent, "wechat", None)
@@ -742,8 +741,8 @@ class WebUI:
                     out.update(_af.list_chat(st, ck, limit=max(1, min(200, lim))))
                 self._json(out)
 
-            # ── 两条链共用的小动作（V-R15-1：一处实现、GET 与 POST 都接）──────────────────
-            # ⛔ 2026-09-22 加（第十五轮 · 网友报「点了没反应」）：这一批路由历史上**只注册在一条链里**，
+            # ── 两条链共用的小动作──────────────────
+            # ⛔ 这一批路由历史上**只注册在一条链里**，
             #   而控制台前端用的偏偏是另一条 ⇒ 每次都 **404**（前端 `getJSON` 在 `!r.ok` 时抛，
             #   只接住原始 JSON 的调用点就把 `{"error": "not found"}` 当文案弹出来，看着像"没反应"）。
             #   本轮实测踩到 **6 处**：
@@ -777,7 +776,7 @@ class WebUI:
                     _sc4(c4)
                     _scv4(c4)
                     self._json({"ok": True, "note": note, "file_search": _fsd.snapshot()})
-                except Exception as e:                                   # noqa: BLE001
+                except Exception as e: # noqa: BLE001
                     self._json({"ok": False, "error": str(e)})
 
             def _tools_new_manifest(self):
@@ -787,7 +786,7 @@ class WebUI:
                     p, why = _ut5.write_template()
                     self._json({"ok": bool(p), "path": p or "", "why": why,
                                 "note": "改完点「重新加载清单」，再勾选即可；坏清单会在面板里逐条列出"})
-                except Exception as e:                                   # noqa: BLE001
+                except Exception as e: # noqa: BLE001
                     self._json({"ok": False, "error": str(e)})
 
             def _ui_fingerprint_take(self, data=None, query=""):
@@ -804,7 +803,7 @@ class WebUI:
                     r = _ufp.take(gui, names or None)
                     self._json({"ok": True, "result": r, "status": _ufp.hits(),
                                 "digest": _ufp.digest()})
-                except Exception as e:                                   # noqa: BLE001
+                except Exception as e: # noqa: BLE001
                     self._json({"ok": False, "error": str(e)})
 
             def _ui_fingerprint_forget(self, data=None, query=""):
@@ -816,7 +815,7 @@ class WebUI:
                         _q6 = parse_qs(str(query or ""))
                         k = str((_q6.get("key") or [""])[0])
                     self._json({"ok": True, "result": _ufp2.forget(k or None), "status": _ufp2.hits()})
-                except Exception as e:                                   # noqa: BLE001
+                except Exception as e: # noqa: BLE001
                     self._json({"ok": False, "error": str(e)})
 
             def _prompt_preview(self):
@@ -824,7 +823,7 @@ class WebUI:
                 try:
                     from . import system_prompt as _spv
                     self._json(_spv.preview())
-                except Exception as e:                                   # noqa: BLE001
+                except Exception as e: # noqa: BLE001
                     self._json({"ok": False, "error": str(e)}, 500)
 
             def _briefs_api(self, data, method="GET"):
@@ -832,12 +831,12 @@ class WebUI:
 
                 GET `?chat=<key>` ⇒ 本会话的条目（**只读本会话**）；不带 chat ⇒ 只给"哪些会话设过 + 计数"。
                 POST `{action: add|del|prune, chat, text?, until?, always?, id?}`。
-                两条链共用这一份实现（V-R15-1：只注册在一条链里 = 另一条方法静默 404）。
+                两条链共用这一份实现。
                 文案与代价（会随该会话的请求发给模型；相关判断是字面匹配）写在控制台面板那一行。
                 """
                 try:
                     from . import briefs as _br
-                except Exception as e:                                   # noqa: BLE001
+                except Exception as e: # noqa: BLE001
                     return self._json({"ok": False, "error": "预设信息模块不可用：%s" % e})
                 _d = data if isinstance(data, dict) else {}
                 if str(method).upper() == "GET":
@@ -865,7 +864,7 @@ class WebUI:
                 return self._json(r)
 
             def _personas_favs(self):
-                """人设星标集合（读）。⛔ V-R15-1：前端用 **GET** 读它，而实现原先只在 POST 链里
+                """人设星标集合（读）。⛔ 前端用 **GET** 读它，而实现原先只在 POST 链里
                 ⇒ 每次都 404，而前端那处是 `try{…}catch(e){}` **静默失败** ⇒ 星标在面板上
                 **永远显示不出来**（点了收藏、刷新后还是没星）。两条链共用这一份。"""
                 try:
@@ -876,13 +875,13 @@ class WebUI:
                     except Exception:
                         favs = {}
                     self._json({"ok": True, "favs": favs})
-                except Exception as e:                                   # noqa: BLE001
+                except Exception as e: # noqa: BLE001
                     self._json({"ok": False, "error": str(e)})
 
             def do_GET(self):
                 parsed = urlparse(self.path)
                 path = parsed.path
-                # ⛔ 2026-09-21 修（第四轮审计 **V-R4-15，P2**）：`data` 原来**只在 `do_POST` 里定义**，
+                # ⛔ `data` 原来**只在 `do_POST` 里定义**，
                 #   而 do_GET 里有三处分支读 `data.get(...)`（本地生图的 `/api/image_gen/local/install`、
                 #   历史目录、打开路径）⇒ **必抛 NameError**，再被外层 `except` 吞成
                 #   `{ok:false, "error":"name 'data' is not defined"}` —— 4 条 GET 路由白坏，界面上还看不出来。
@@ -893,7 +892,7 @@ class WebUI:
                 except Exception:
                     data = {}
                 # 静态素材（图标/光标图）免认证：<img> 不带 token，但素材不含隐私
-                # ⛔ 2026-09-21 修（第六轮 **V-R6-26**）：这三条**免认证**路由原来**不校验 Host**
+                # ⛔ 这三条**免认证**路由原来**不校验 Host**
                 #   （`_auth_ok` 才校验）⇒ 外域页面/DNS rebinding 能带着外域 Host 读它们（版本号泄露 + 探测本机是否有本产品）。
                 #   ⇒ 免认证 ≠ 免 Host 校验：先过同一份回环校验再放行。
                 if path.startswith("/assets/") or path.startswith("/wallpaper/") or path == "/api/version":
@@ -916,17 +915,17 @@ class WebUI:
                         from . import update_check as _uc
                         from . import update_apply as _ua
                         _st = _uc.state()
-                        _st["job"] = _ua.job()      # 自更新作业的实时进度（控制台按钮轮询这里）
+                        _st["job"] = _ua.job() # 自更新作业的实时进度（控制台按钮轮询这里）
                         self._json(_st)
                     except Exception as _e:
                         self._json({"status": "error", "why": "更新检查不可用：%s" % str(_e)[:60]})
                     return
                 # 防窥视：地址栏乱码路径（单段 /aB3$xy…，无 API/静态前缀）也返回控制台页面
                 if path == "/" or path == "/index.html":
-                    pass  # 正常控制台页
+                    pass # 正常控制台页
                 elif path.startswith("/api/") or path.startswith("/dsh-whale/") \
                         or path.startswith("/assets/") or path.startswith("/wallpaper/"):
-                    pass  # 正常 API/静态路由（下方继续匹配）
+                    pass # 正常 API/静态路由（下方继续匹配）
                 elif "/" not in path[1:]:
                     # 单段乱码路径 → 当控制台页
                     import re as _repath
@@ -952,7 +951,7 @@ class WebUI:
                     self.send_header("Content-Type", "text/html; charset=utf-8")
                     self.send_header("Content-Length", str(len(body)))
                     self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
-                    self._set_session_cookie()   # 必须在 send_response 之后（Set-Cookie 排在状态行/Server/Date 后）
+                    self._set_session_cookie() # 必须在 send_response 之后（Set-Cookie 排在状态行/Server/Date 后）
                     self.end_headers()
                     self.wfile.write(body)
                 elif path.startswith("/dsh-whale/"):
@@ -1001,7 +1000,7 @@ class WebUI:
                 # 原：elif path == "/api/selfcheck-stop": ⇒ 已搬到 agent/routes.py → _rapi_selfcheck_stop（/api/selfcheck-stop）
                 # 原：elif path == "/api/archive": ⇒ 已搬到 agent/routes.py → _rapi_archive（/api/archive）
                 elif self._dispatch(path, data, parsed, "GET"):
-                    pass        # 路由表命中（唯一分派点，见 agent/routes.py）
+                    pass # 路由表命中（唯一分派点，见 agent/routes.py）
                 else:
                     self._json({"error": "not found"}, 404)
 
@@ -1017,9 +1016,9 @@ class WebUI:
                 self._handle_body_request()
 
             def _handle_body_request(self):
-                parsed = urlparse(self.path)   # 第二批补：与 do_GET 对称
+                parsed = urlparse(self.path) # 补：与 do_GET 对称
                 path = urlparse(self.path).path
-                # ⛔ 2026-09-21 修（第十轮 **V-R10-34**）：原来按 `Content-Length` **全收** ——
+                # ⛔ 原来按 `Content-Length` **全收** ——
                 #   实测 64MB 全读进内存；更糟的是"声明 200MB、只发 1MB"会把处理线程**卡死**
                 #   （守着一个永远读不满的体）。⇒ 加**上限**（超限直接 413，不再读了），
                 #   并把读取本身容错（客户端半途断开 ⇒ 当空体，交给各路由自己报错）。
@@ -1029,7 +1028,7 @@ class WebUI:
                 except Exception:
                     length = 0
                 if length < 0 or length > _MAX_BODY:
-                    # ⛔ 2026-09-22 修（第十一轮 **V-R11-10** · P3）：**负的 `Content-Length` 也要拒** ——
+                    # ⛔ **负的 `Content-Length` 也要拒** ——
                     #   老写法只挡"太大"，而 `self.rfile.read(-1)` 的语义是**读到底**
                     #   （本轮实测 `BufferedReader.read(-1)` 读满 100000 字节）⇒ 上限形同虚设。
                     #   （可达性诚实说明：`do_POST`/`do_PUT` 第一句就是口令校验，只有本机控制台
@@ -1129,7 +1128,7 @@ class WebUI:
                 # 原：elif path == "/api/selfcheck-stop": ⇒ 已搬到 agent/routes.py → _rapi_selfcheck_stop（/api/selfcheck-stop）
                 # 原：elif path == "/api/ui/recalibrate": ⇒ 已搬到 agent/routes.py → _rapi_ui_recalibrate（/api/ui/recalibrate）
                 # 原：elif path == "/api/open-path": ⇒ 已搬到 agent/routes.py → _rapi_open_path（/api/open-path）
-                # ⛔ V-R15-1（第十五轮）：这四条**后端原先只注册在 do_GET 链**，而控制台前端发的是
+                # ⛔ 这四条**后端原先只注册在 do_GET 链**，而控制台前端发的是
                 #   POST ⇒ 每次都 404（`_handle_body_request` 的末尾 else），界面上只弹一句
                 #   `{"error": "not found"}` 或者干脆没反应。现在两条链调同一份实现。
                 # 原：elif path in ("/api/file_search/add", "/api/file_search/del"): ⇒ 已搬到 agent/routes.py → _rapi_file_search_add（/api/file_search/add, /api/file_search/del）
@@ -1137,11 +1136,11 @@ class WebUI:
                 # 原：elif path == "/api/ui_fingerprint/take": ⇒ 已搬到 agent/routes.py → _rapi_ui_fingerprint_take（/api/ui_fingerprint/take）
                 # 原：elif path == "/api/ui_fingerprint/forget": ⇒ 已搬到 agent/routes.py → _rapi_ui_fingerprint_forget（/api/ui_fingerprint/forget）
                 elif self._dispatch(path, data, parsed, "POST"):
-                    pass        # 路由表命中（唯一分派点，见 agent/routes.py）
+                    pass # 路由表命中（唯一分派点，见 agent/routes.py）
                 else:
                     self._json({"error": "not found"}, 404)
 
-# ── 路由表分派（第一批：do_GET 的字面 /api 分支；见 agent/routes.py）──
+# ── 路由表分派──
 
             def _dispatch(self, path, data, parsed, method):
                 """**唯一分派点**：查 `agent/routes.ROUTES`（路径 → 方法 → 处理函数名）。
@@ -1150,8 +1149,8 @@ class WebUI:
                 否则返回 False，交回原来那条 `if/elif` 链（没搬的路由行为一个字不变）。
                 """
                 try:
-                    from .routes import HANDLERS as _R      # ⚠️ 是 HANDLERS（路径→方法→函数名），不是 ROUTES（声明）
-                except Exception:                                    # noqa: BLE001
+                    from .routes import HANDLERS as _R # ⚠️ 是 HANDLERS（路径→方法→函数名），不是 ROUTES（声明）
+                except Exception: # noqa: BLE001
                     return False
                 row = _R.get(path)
                 if not isinstance(row, dict):
@@ -1161,7 +1160,7 @@ class WebUI:
                     return False
                 try:
                     getattr(self, fn)(path, data, parsed, method)
-                except Exception as e:                               # noqa: BLE001
+                except Exception as e: # noqa: BLE001
                     self._json({"ok": False, "error": str(e)}, 500)
                 return True
 
@@ -1204,7 +1203,7 @@ class WebUI:
                 try:
                     from . import verifiers as _vf
                     self._json({"ok": True, "verifiers": _vf.catalog()})
-                except Exception as e:                                   # noqa: BLE001
+                except Exception as e: # noqa: BLE001
                     self._json({"ok": False, "error": str(e)})
 
             def _rapi_verify(self, path, data, parsed, method):
@@ -1213,7 +1212,7 @@ class WebUI:
                     from urllib.parse import urlparse as _up, parse_qs as _pq
                     from . import verifiers as _vf
                     _q = _pq(_up(self.path).query)
-                    # ⛔ 2026-09-21 加（第九轮 V-R9-11 / 第十轮 V-R10-8）：把**运行中实例**的
+                    # ⛔ 把**运行中实例**的
                     #   `_db_how` 与 `_cap` 喂给检验器 —— 否则"我读的是不是正在写的那个号"
                     #   与"哪张表读失败了"（「消息库读不到」那条链的核心）只能判假绿。
                     try:
@@ -1223,7 +1222,7 @@ class WebUI:
                     except Exception:
                         pass
                     self._json(_vf.run(str((_q.get("id") or [""])[0] or "")))
-                except Exception as e:                                   # noqa: BLE001
+                except Exception as e: # noqa: BLE001
                     self._json({"ok": False, "error": str(e)})
 
             def _rapi_config(self, path, data, parsed, method):
@@ -1268,7 +1267,7 @@ class WebUI:
                             st["bg"] = _bg.status()
                         except Exception as _be:
                             st["bg"] = {"paths": [], "error": str(_be)}
-                        # 「我自己是谁」（2026-09-16，已知现象：「无法识别大号用户 / 无法识别我的账号」）：
+                        # 「我自己是谁」：
                         # `wechat.py` 只从驱动库的 `get_self_info()` 拿自己的账号，**拿不到时那一串
                         # "这条是不是我发的"判断会静默失效**（会回自己/@ 自己不理）。这里如实暴露：
                         # `ok=False` ⇒ 控制台**写"没认出来"**，不许装没事。
@@ -1283,7 +1282,7 @@ class WebUI:
                                           else {"ok": False, "why": "还拿不到微信实例（机器人未启动？）"})
                         except Exception as _se:
                             st["self"] = {"ok": False, "why": str(_se)}
-                        # 「我的其他账号（大号）」（2026-09-16 已知现象：「无法识别我的大号」）：
+                        # 「我的其他账号（大号）」：
                         # 登记了几项、昵称有几项**真在群成员里匹配上了**、当前反应档位 —— 摆出来让用户核对。
                         try:
                             st["owner"] = (_wx.owner_status() if _wx is not None
@@ -1299,7 +1298,7 @@ class WebUI:
                         except Exception as _fe:
                             st["ui_fp"] = {"keys": {}, "error": str(_fe)}
                         # 版本能力矩阵 + 版本门（W7：版本变了要出横幅、按未验证处理）
-                        # ⛔ 2026-09-21 修（第四轮审计 **V-R4-10，P2**）：这两行原来跟其它富化段挤在
+                        # ⛔ 这两行原来跟其它富化段挤在
                         #   **同一个大 try** 里，任何别的段抛异常都会把它们**一起丢掉** ⇒ 前端拿到
                         #   `version/version_gate` 缺失 ⇒ 把"读不到"画成红字
                         #   「版本未实测：按严格档暂停发送（可在配置里关掉 version_gate.strict）」
@@ -1343,7 +1342,7 @@ class WebUI:
                             st["jobs"] = _jobs.status().get("jobs") or {}
                         except Exception as _je:
                             st["jobs"] = {"_error": str(_je)}
-                        # 微信装没装（2026-09-13：没装就带用户去官网，不做静默安装）
+                        # 微信装没装
                         try:
                             from .wechat import wechat_version_info as _wvi
                             _wi = _wvi() or {}
@@ -1358,7 +1357,7 @@ class WebUI:
                                                     "detail": "检测异常：" + str(_e),
                                                     "official_url": "https://weixin.qq.com/",
                                                     "action": "none"}
-                        # 微信数据目录（2026-09-18 用户反馈：「他回我之前自定义的地址里去看文件了」）：
+                        # 微信数据目录：
                         # 这一项报的是**当前实际在读的目录**（不是配置值），还带上"你填的那个为什么
                         # 没用、现在回落到哪"。控制台「微信数据目录」那一行直接显示它。
                         try:
@@ -1441,7 +1440,7 @@ class WebUI:
                         except Exception as _e3:
                             st["user_tools"] = {"error": str(_e3)}
                 except Exception as _se:
-                    # ⛔ V-R4-10：**富化段出错不许悄悄丢** —— 至少把"读不到"如实放进去，
+                    # ⛔ **富化段出错不许悄悄丢** —— 至少把"读不到"如实放进去，
                     #   让前端能区分「读数读不到」与「真的不许发」（`allow=None` vs `False`）。
                     try:
                         if isinstance(st, dict):
@@ -1489,7 +1488,7 @@ class WebUI:
                     self._json({"ok": False, "error": str(e)})
 
             def _rapi_tools_export(self, path, data, parsed, method):
-                # 2026-09-22 新增：把工具导出成**一份文档**（只生成文本：不写文件、不访问网络）
+                # 把工具导出成**一份文档**（只生成文本：不写文件、不访问网络）
                 try:
                     from . import user_tools as _ut6
                     q = parse_qs(urlparse(self.path).query)
@@ -1501,7 +1500,7 @@ class WebUI:
                     self._json({"ok": False, "error": str(e)})
 
             def _rapi_tools_test(self, path, data, parsed, method):
-                # 2026-09-22 新增（③b「插件加到软件里的引导」配套）：勾选之前先「试一下」。
+                # （③b「插件加到软件里的引导」配套）：勾选之前先「试一下」。
                 # 复用**唯一执行点** `user_tools.call()`（只发 HTTP、域名白名单、内网永远拒），
                 # 这里不另写一条出网路径——否则那条路不会被既有判据约束到。
                 try:
@@ -1814,7 +1813,7 @@ class WebUI:
                 except Exception as e:
                     self._json({"ok": False, "error": str(e)}, 500)
 
-# ── 路由表分派（第二批：_handle_body_request 的字面 /api 分支；见 agent/routes.py）──
+# ── 路由表分派──
 
             def _rapi_update_skip_post(self, path, data, parsed, method):
                 # 原 _handle_body_request:1038
@@ -1850,7 +1849,7 @@ class WebUI:
                     elif act == "resume":
                         _risk.resume()
                     elif act == "recover":
-                        # ⛔ 2026-09-21（第十轮 **V-R10-24** 的收尾）：`risk.recover()`
+                        # ⛔ `risk.recover()`
                         #   原来**全仓零调用者**（B 线复核时点出：它只活在模块里）——
                         #   而它干的事跟 `resume()` 不是一件：**两套停机开关一起清**
                         #   （config 的 `risk.paused` + 控制台横幅认的 `data/paused.flag`），
@@ -1891,14 +1890,14 @@ class WebUI:
                     # 注意：deep_merge 返回全新深拷贝，绝不能原地改 _current_config，
                     # 否则 _protect_secrets 拿到的"旧值"已被掩码写脏，真实 key 会丢失。
                     new_cfg = deep_merge(get_config(), new_cfg)
-                    _protect_secrets(new_cfg)  # 掩码值不覆盖真实密钥
-                    # 「微信数据目录」**手动指定必须过校验**（2026-09-18 用户反馈）：
+                    _protect_secrets(new_cfg) # 掩码值不覆盖真实密钥
+                    # 「微信数据目录」**手动指定必须过校验**：
                     # 不过关就不写盘，把原因与回落目标返回给控制台显示。
                     _bad_dir = _wechat_dir_conflict(new_cfg)
                     if _bad_dir:
                         self._json(_bad_dir)
                     else:
-                        # ⛔ 2026-09-22 修（对标 CowAgent 的"配置写回失败**只许告警、不许停用/改动能力**"）：
+                        # ⛔ （对标 CowAgent 的"配置写回失败**只许告警、不许停用/改动能力**"）：
                         #   原来是**先 `set_config` 再 `save_config`** ⇒ 落盘失败时抛异常、控制台如实报
                         #   `{ok:false}`，可**内存里那份已经被换掉了**——于是"这项能力实际上是开着的"，
                         #   用户却被告知没保存；重启后它又悄悄变回旧的（状态前后不一致，最难查）。
@@ -1917,7 +1916,7 @@ class WebUI:
                     from . import wechat_dir as _wdir3
                     _p3 = str((data or {}).get("path") or "")
                     _r3 = _wdir3.save(_p3, on_save=parent.on_save)
-                    # 保存后**立即重探一遍**并把候选回显（用户口径：保存后要看到结果，不靠刷新）
+                    # 保存后**立即重探一遍**并把候选回显
                     _st3 = _wdir3.status(_current_dir_how(parent))
                     _st3["candidates"] = _wdir3.probe(_p3).get("candidates") or []
                     _r3["wechat_dir"] = _st3
@@ -2066,7 +2065,7 @@ class WebUI:
                 try:
                     from . import verifiers as _vf
                     self._json({"ok": True, "verifiers": _vf.catalog()})
-                except Exception as e:                                   # noqa: BLE001
+                except Exception as e: # noqa: BLE001
                     self._json({"ok": False, "error": str(e)})
 
             def _rapi_verify_post(self, path, data, parsed, method):
@@ -2075,7 +2074,7 @@ class WebUI:
                     from urllib.parse import urlparse as _up, parse_qs as _pq
                     from . import verifiers as _vf
                     _q = _pq(_up(self.path).query)
-                    # ⛔ 2026-09-21 加（第九轮 V-R9-11 / 第十轮 V-R10-8）：同上一处 —— 把运行中
+                    # ⛔ 同上一处 —— 把运行中
                     #   实例的 `_db_how` 与 `_cap` 都喂给检验器，"我读的是不是正在写的那个号"
                     #   与"哪张表读失败了"才有铁证（否则只能判假绿）。
                     try:
@@ -2085,7 +2084,7 @@ class WebUI:
                     except Exception:
                         pass
                     self._json(_vf.run(str((_q.get("id") or [""])[0] or "")))
-                except Exception as e:                                   # noqa: BLE001
+                except Exception as e: # noqa: BLE001
                     self._json({"ok": False, "error": str(e)})
 
             def _rapi_selfcheck_post(self, path, data, parsed, method):
@@ -2141,7 +2140,7 @@ class WebUI:
                                                   "消息收发与监听不受影响；稍等几秒再点一次。（%s）"
                                                   % str(_e3)[:100]), "groups": []})
                             return
-                        # ⛔ 第十轮 **V-R10-14**：刷完必须**重算监听目标**（否则新群不进 targets、
+                        # ⛔ 刷完必须**重算监听目标**（否则新群不进 targets、
                         #   显示名还是 wxid，界面同时给出"读到 N 个群 / 监听目标 0 个"两个结论）。
                         try:
                             _rt = getattr(parent, "refresh_targets_fn", None)
@@ -2319,7 +2318,7 @@ X.XX
                 # 原 _handle_body_request:1527
                 self._json({"ok": True, "note": "正在停止机器人…"})
                 try:
-                    parent.shutdown_fn()   # 写 stopped.flag + 杀看门狗 + os._exit(0)
+                    parent.shutdown_fn() # 写 stopped.flag + 杀看门狗 + os._exit(0)
                 except Exception:
                     pass
                 try:
@@ -2423,7 +2422,7 @@ X.XX
                     _per_day = {}
                     for _d, _ts in _items:
                         _per_day.setdefault(_d, set()).add(_ts)
-                    # ⭐ 2026-09-18 修（作者原话：「我删明细就等于我想删历史，就等于我想删掉
+                    # ⭐ （
                     #   『我说什么而他回什么』的这一段…从根上就是错的」）：
                     #   在这上面删的是**这一轮对话**，所以**同时把对应的会话历史删掉**
                     #   （模型的上下文来自 `data/messages/<会话>.json`，只删 sessions 等于没删）。
@@ -2453,7 +2452,7 @@ X.XX
                                     continue
                                 _keep.append(_ln if _ln.endswith("\n") else _ln + "\n")
                             if _hit:
-                                # V-R10-26：自己拼 `<path>.tmp` 的话，两个写者会撞同一个临时档；
+                                # 自己拼 `<path>.tmp` 的话，两个写者会撞同一个临时档；
                                 #   崩溃留下的孤儿也没人清 ⇒ 走统一的原子写（唯一临时名 + fsync + replace）
                                 if not persist.atomic_write_text(_f, "".join(_keep), newline="\n"):
                                     raise IOError("日志重写没写进磁盘（原档未动）：%s" % _f)
@@ -2475,7 +2474,7 @@ X.XX
                     _note = ("已删除 %d 条记录" % _removed) if _removed else ("已删除 %d 天的记录" % len(_whole))
                     if _hres.get("removed"):
                         _note += "，并清掉对应的对话历史 %d 条（它之后不会再拿这些旧话当真）" % _hres["removed"]
-                    # ⛔ V-R5B-11：备份失败 ⇒ 那些会话**这次没删**（不可撤销的删除不做），如实说
+                    # ⛔ 备份失败 ⇒ 那些会话**这次没删**（不可撤销的删除不做），如实说
                     _bk_fail = _hres.get("backupFailed") or []
                     if _bk_fail:
                         _note += ("；有 %d 个会话**没备份成功** ⇒ 它们的历史这次**没删**"
@@ -2516,7 +2515,7 @@ X.XX
                             pass
                     if not _n:
                         return self._json({"ok": False, "error": "找不到可撤销的备份（可能已撤销过）"})
-                    # ⭐ 2026-09-18：撤销时**连对话历史一起还原**（同一次删除在 `_trash/messages/`
+                    # ⭐ 撤销时**连对话历史一起还原**（同一次删除在 `_trash/messages/`
                     #   里也备了整份存档；两份用一个 stamp 绑定）
                     _hn = 0
                     try:
@@ -2608,7 +2607,7 @@ X.XX
                             if not re.match(r"^\d{4}-\d{2}-\d{2}$", day):
                                 continue
                             if any(x["day"] == day for x in _out):
-                                continue   # 已有按天记录
+                                continue # 已有按天记录
                             _out.append({"day": day, "tokens": int(h.get("tokens") or 0),
                                          "cost": round(float(h.get("cost") or 0), 4),
                                          "calls": int(h.get("calls") or 0),
@@ -2629,7 +2628,7 @@ X.XX
                         return self._json({"ok": False, "error": "没有有效的日期"})
                     _sd = parent._data_path("sessions")
                     _gone = []
-                    _del_days = {}     # day -> sums（删除前算好，用于回补累计）
+                    _del_days = {} # day -> sums（删除前算好，用于回补累计）
                     for _f in _gl.glob(os.path.join(_sd, "????-??-??.jsonl")):
                         _day = os.path.basename(_f)[:10]
                         if _day not in _days:
@@ -2702,7 +2701,7 @@ X.XX
                 try:
                     import json as _j
                     d = str(data.get("d") or "")
-                    # ⛔ 2026-09-21 修（第六轮 **V-R6-26c**）：`d` 原来**不校验**就拼进文件名
+                    # ⛔ `d` 原来**不校验**就拼进文件名
                     #   （`d + ".jsonl"`）⇒ `d="../../config"` 这类能读到 data/ 之外的 .jsonl 形状的路径。
                     #   ⇒ 只收严格 `YYYY-MM-DD`（`cal_list` 那边早就这么判了，这里漏了）。
                     if not cal_date_ok(d):
@@ -2747,7 +2746,7 @@ X.XX
             def _rapi_code_check_post(self, path, data, parsed, method):
                 # 原 _handle_body_request:1951
                 try:
-                    # ⛔ 2026-09-16 删掉这里的 `import threading`（已知现象：「我点了重启，咋没动静啊」）：
+                    # ⛔ 删掉这里的 `import threading`（已知现象）：
                     #    Python 的规则是**函数体内只要有 import 该名字，整个函数里它就是局部变量**
                     #    ⇒ 本函数早得多的分支（`/api/restart`，第 1420 行那句 `threading.Timer`）
                     #    会在赋值前引用它，抛 `UnboundLocalError: local variable 'threading'
@@ -2800,7 +2799,7 @@ X.XX
                                       "tries": int(_att.get("tries") or 0),
                                       "detail": str(_att.get("reason") or "")[:400],
                                       "steps": list(_att.get("steps") or [])}}
-                    # ⛔ 2026-09-22 加（作者口径「**我更想让用户不用测这测那的就能搞好**」）：
+                    # ⛔ 
                     #   兼容性那段**自动带上** —— 用户点一下反馈就够了，不用跑体检、不用点
                     #   检验器、不用去「报告」文件夹找文件。内容是**白名单脱敏**的（见
                     #   `compat.attach_text`：不带群名/昵称/路径/消息内容）。
@@ -2811,7 +2810,7 @@ X.XX
                             env["compat"] = _cpfb.attach_text()
                     except Exception:
                         pass
-                    # 附件（2026-09-17 用户：「可以让用户选填一个联系邮箱」+ 图片/文件都要能提交）：
+                    # 附件：
                     # 前端把文件读成 base64 一起 POST 上来；这里只做**总量闸**，具体上限与落盘在 FB 里。
                     _files = data.get("files")
                     if not isinstance(_files, list):
@@ -3055,8 +3054,8 @@ X.XX
                         raw = str(data.get("data") or "")
                         if "base64," in raw[:60]:
                             raw = raw.split("base64,", 1)[1]
-                        raw = re.sub(r"[\s\r\n]", "", raw)       # 清洗空白
-                        raw += "=" * (-len(raw) % 4)             # padding 补全
+                        raw = re.sub(r"[\s\r\n]", "", raw) # 清洗空白
+                        raw += "=" * (-len(raw) % 4) # padding 补全
                         try:
                             img_bytes = _b64.b64decode(raw, validate=False)
                         except Exception:
@@ -3170,7 +3169,7 @@ X.XX
                 self._tools_new_manifest()
 
             def _rapi_tools_import_post(self, path, data, parsed, method):
-                # 2026-09-22 新增：**导入＝把文档变成插件**（只写 tools.d/*.json；校验走同一套 validate）
+                # **导入＝把文档变成插件**（只写 tools.d/*.json；校验走同一套 validate）
                 try:
                     from . import user_tools as _ut8
                     text = str((data or {}).get("text") or "")
@@ -3204,7 +3203,7 @@ X.XX
         if self._server is None:
             raise RuntimeError("无法启动 Web 控制台：端口 %d-%d 均被占用" % (port, port + 19))
 
-        # ⛔ 2026-09-22 修（第十五轮 **V-R15-3** · 网友报「打不开控制台」）：**上面那次写盘用的是
+        # ⛔ **上面那次写盘用的是
         #   `cfg.port`（配置端口），而真正 bind 的是 `port + offset`（`self.port`）** —— 配置端口被
         #   别的程序占用时 webui 会**静默顺延**到 3211/3212…，`logs/console.url` 里却还写着 3210
         #   ⇒ 启动器照着它开窗 = 一屏 `ERR_CONNECTION_REFUSED`（=用户说的"打不开控制台"）。

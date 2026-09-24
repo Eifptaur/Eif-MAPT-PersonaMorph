@@ -68,12 +68,11 @@ def snapshot() -> dict:
                         "min_gap_seconds": int(rcfg.get("min_gap_seconds") or 30)},
                 "note": "当前形态：把回复合成为音频**文件**发出去（不是微信语音条）"},
         # 群友要图（生图链条）：只暴露只读快照（开关/触发条件/后端数/过滤链/红线）——
-        # 真后端待用户拍板（本地 ComfyUI 还是在线 API），没配后端时 generate() 会明确说"没后端"
         "image_gen": _image_gen_snapshot(),
         "video_gen": _video_gen_snapshot(),
         # 大图自动压缩（对账清单第 22 条）：只读快照，面板上的键是 send.image_compress.*
         "img_compress": _img_compress_snapshot(),
-        # 视频通路（丙-11 C1，2026-09-24）：控制台原来看不到视频死活（ffmpeg/ASR/yt-dlp）。
+        # 视频通路：控制台原来看不到视频死活（ffmpeg/ASR/yt-dlp）。
         # 全部**现场探测**，不写死"可用"（本模块的开篇口径）。
         "video": _video_snapshot(),
     }
@@ -112,9 +111,8 @@ def _video_gen_snapshot() -> dict:
 
 
 def _video_snapshot() -> dict:
-    """视频通路只读快照（丙-11 C1）：本地视频读取 + B 站 + 外链解析三条腿的就绪状态。
+    """视频通路只读快照：本地视频读取 + B 站 + 外链解析三条腿的就绪状态。
 
-    为什么要它（工单 R2）：`snapshot()` 原来**完全没收视频这一块** ⇒ 控制台上 ffmpeg 有没有、
     本机识别能不能用、yt-dlp 装没装，用户全看不到（坏在哪只能猜）。这里**现场探测**，任一项
     取不到都如实写 why（`probe()` / `ytdlp_bin()` 自己就是 fail-closed 的如实返回）。
     三块任一 import 失败也不该把整个 status 拖挂 ⇒ 各自包一层。
@@ -124,7 +122,7 @@ def _video_snapshot() -> dict:
         "video_read": {"ok": False, "ready": False, "ffmpeg": "", "asr": None, "why": "取不到"},
         # B 站通路：开关 + 听视频上限
         "bilibili": {"enabled": False, "listen_max_seconds": 0},
-        # 外链通路（丙-11 A）：开关 + 下载器 + 抽帧上限
+        # 外链通路：开关 + 下载器 + 抽帧上限
         "video_url": {"enabled": False, "max_frames": 0, "max_seconds": 0,
                       "ytdlp": "", "ytdlp_ready": False, "why": ""},
     }
@@ -174,10 +172,10 @@ def _image_gen_snapshot() -> dict:
         return {"enabled": False, "error": type(e).__name__, "why": str(e)[:80]}
 
 
-if __name__ == "__main__":                     # 直接跑这个文件看一眼（相对导入要靠包路径）
+if __name__ == "__main__": # 直接跑这个文件看一眼（相对导入要靠包路径）
     import json
     import sys
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    sys.path.insert(0, ROOT)                   # 让 `agent` 包可导入（脚本方式跑时）
+    sys.path.insert(0, ROOT) # 让 `agent` 包可导入（脚本方式跑时）
     from agent.media_status import snapshot as _snap
     print(json.dumps(_snap(), ensure_ascii=False, indent=2))

@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """随机图"在线图源"层（可插拔）：每个图源自己负责"只取安全内容"的硬约束。
 
-用户口径（2026-09-13）："**从 pixiv 等各种图源发，做好插件过滤，反正能过滤的都做好，以免涉黄之类的**"
 ⇒ 本模块只解决"**从哪拿图**"，并且**每个图源在请求参数里就带上安全约束**（rating:sfw / r18=0 / 只走 SFW 端点），
    拿到图后再交给 `agent/image_filter.py` 做第二、第三道过滤（标签黑名单 / 肤色比 / 视觉模型审核）。
    两道叠加，取的是"**纵深防御**"：**任何一道说不行就不发**。
@@ -32,7 +31,7 @@ DEFAULT_TIMEOUT_MS = 9000
 
 # 图源注册表：name -> {label, kind, 说明}
 SOURCES = {
-    # ── 国内源（2026-09-18 加，用户口径：「国内的相对来说通路会比较好的吧，也不容易被 ban」）──
+    # ── 国内源──
     #    特点：**认中文关键词**（不用翻译）、国内直连快；代价＝返回的是网页图，没有标签元数据，
     #    所以"按标签校验"这一步对它们不适用（安全性靠后面的过滤链＋视觉审核兜底）。
     #    baidu/sogou 实测会被判爬虫（要 Cookie）⇒ 没放进默认列表，只留 360 与必应。
@@ -73,10 +72,10 @@ def allow_private_hosts() -> bool:
 def _open(url: str, timeout_ms: int = DEFAULT_TIMEOUT_MS, tag: str = "", headers: dict = None):
     """开一个带 SSRF 闸门的连接（返回 response，调用方负责按**总时长**读）。
 
-    ⚠️ 2026-09-17 实测教训：原来 `_get()` 里是 `r.read()` 一把梭。`urlopen(timeout=)` 只作用于
+    ⚠️ 原来 `_get()` 里是 `r.read()` 一把梭。`urlopen(timeout=)` 只作用于
     **单次 recv**，慢速代理只要不断涓流就永远不超时 —— 实测一张 4.26MB 的图在 `i.pixiv.re`
     上拖了 **160 秒**（发张图和生成一张图一样久）。所以读取必须由上层按墙钟切块。
-    `headers`：个别图源要 `Referer` 才不触发反爬（2026-09-18 加）。"""
+    `headers`：个别图源要 `Referer` 才不触发反爬。"""
     try:
         validate_url(url, allow_private=allow_private_hosts())
     except FetchError as e:
@@ -86,7 +85,7 @@ def _open(url: str, timeout_ms: int = DEFAULT_TIMEOUT_MS, tag: str = "", headers
         h.update({str(k): str(v) for k, v in headers.items()})
     req = urllib.request.Request(url, headers=h)
     if tag:
-        req.add_header("X-Tag", tag)          # 给单测/日志用，服务端会忽略
+        req.add_header("X-Tag", tag) # 给单测/日志用，服务端会忽略
     return urllib.request.urlopen(req, timeout=max(1.0, timeout_ms / 1000.0))
 
 
@@ -120,8 +119,8 @@ def _json(url: str, timeout_ms: int = DEFAULT_TIMEOUT_MS, headers: dict = None) 
     return json.loads(raw.decode("utf-8", "ignore"))
 
 
-# ── 关键词 → 图源标签（2026-09-18 加）────────────────────────────────────────────
-# 🔴 为什么必须加：用户说「来张鲸鱼图片」，机器人调 `send_image_search(keyword="鲸鱼")`，
+# ── 关键词 → 图源标签────────────────────────────────────────────
+# 🔴 为什么必须加：，机器人调 `send_image_search(keyword="鲸鱼")`，
 #   可真发出去的是一张动漫角色图（用户当场发现「跟我要的完全不一样」）。根因＝**关键词根本没进查询**：
 #   `_safebooru` 写死 `tags=rating:safe`、`_booru` 只用配置里的固定 tag ⇒ 所谓"要图"实际是
 #   "从图源随便抓一张全年龄图"。而且图源的标签体系是**英文**，中文关键词直接丢进去也多半无匹配。
@@ -171,7 +170,7 @@ def tag_candidates(keyword: str) -> list:
     return out
 
 
-# ── 国内图源（2026-09-18 加）：认中文关键词、国内直连 ─────────────────────────
+# ── 国内图源：认中文关键词、国内直连 ─────────────────────────
 #    它们返回的是网页图片搜索结果，**没有标签元数据** ⇒ 返回 tags=[]，"按标签校验"自动跳过
 #    （安全性交给后面的过滤链 + 视觉审核）。JSON 结构各站会变，所以用**键名白名单递归找图链**，
 #    找不到就报"格式不认识"，绝不猜。
@@ -206,7 +205,7 @@ def _pick_from(found: dict, prefer) -> str:
         urls = [u for u in (found.get(k) or []) if u]
         if urls:
             return random.choice(urls)
-    for k in _IMG_KEYS:                     # 兜底：任何认识键名里的图链
+    for k in _IMG_KEYS: # 兜底：任何认识键名里的图链
         urls = [u for u in (found.get(k) or []) if u]
         if urls:
             return random.choice(urls)
@@ -343,7 +342,7 @@ def _pixiv(cfg: dict) -> tuple:
 
 
 def _booru(host: str, cfg: dict = None, extra: str = "") -> tuple:
-    # 🔴 2026-09-18：**把请求关键词带进查询**（原来只用配置里的固定 tag ⇒ "要鲸鱼"会拿到随机图）
+    # 🔴 **把请求关键词带进查询**（原来只用配置里的固定 tag ⇒ "要鲸鱼"会拿到随机图）
     _t = str(((cfg or {}).get("tag") or extra or "")).strip()
     tags = "rating:safe order:random" + ((" " + _t) if _t else "")
     url = "%s/post.json?tags=%s&limit=20" % (host, urllib.parse.quote(tags))
@@ -351,10 +350,10 @@ def _booru(host: str, cfg: dict = None, extra: str = "") -> tuple:
     def parse(js):
         if not isinstance(js, list) or not js:
             return None
-        # 🔴 2026-09-18：`limit=1` ⇒ 同一标签**永远只拿同一张**（那张若被黑名单/过滤链拦掉，
+        # 🔴 `limit=1` ⇒ 同一标签**永远只拿同一张**（那张若被黑名单/过滤链拦掉，
         #   这个源就永远过不去 —— 实测「鲸鱼」在 safebooru 上就是这种情况）。⇒ 取一批、随机挑一张。
         it = random.choice(js)
-        # ⚠️ 2026-09-17：优先取 **sample/预览** 尺寸。原图动辄 3~8MB、下载慢，而聊天里发出去的
+        # ⚠️ 优先取 **sample/预览** 尺寸。原图动辄 3~8MB、下载慢，而聊天里发出去的
         #   还要先压到 ≤1600px（`img_compress.max_px`）⇒ 下原图纯属浪费用户时间。
         link = (it.get("sample_url") or it.get("jpeg_url") or it.get("file_url")
                 or it.get("preview_url"))
@@ -368,7 +367,7 @@ def _booru(host: str, cfg: dict = None, extra: str = "") -> tuple:
 
 
 def _safebooru(cfg: dict) -> tuple:
-    # 🔴 2026-09-18：同上 —— 原来写死 `tags=rating:safe`，关键词被丢掉
+    # 🔴 同上 —— 原来写死 `tags=rating:safe`，关键词被丢掉
     _t = str(((cfg or {}).get("tag") or "")).strip()
     _tags = "rating:safe" + ((" " + _t) if _t else "")
     url = ("https://safebooru.org/index.php?page=dapi&s=post&q=index&json=1"
@@ -400,7 +399,7 @@ def _waifu(cfg: dict) -> tuple:
     cat = str(cfg.get("category") or "waifu").strip().lower()
     if cat not in ("waifu", "neko", "shinobu", "megumin", "awoo", "smug", "wave", "blush", "dance", "happy", "kiss"):
         cat = "waifu"
-    url = "https://api.waifu.pics/sfw/%s" % cat          # **只走 /sfw/**，这是该站的硬边界
+    url = "https://api.waifu.pics/sfw/%s" % cat # **只走 /sfw/**，这是该站的硬边界
 
     def parse(js):
         link = (js or {}).get("url")
@@ -484,8 +483,7 @@ def fetch_meta(source: str, cfg: dict = None) -> tuple:
         return None, "图源 %s 返回格式不认识：%s" % (src, e)
     if not meta:
         return None, "图源 %s 这次没返回可用作品（可能被限流或没有匹配的标签）" % src
-    # 🔴 2026-09-18 加：**校验返回的图真的带这个标签** —— 否则图源悄悄忽略关键词时，
-    #   我们会把一张风马牛不相及的图当"你要的那张"发出去（今晚就是这么翻车的）。
+    # 🔴 **校验返回的图真的带这个标签** —— 否则图源悄悄忽略关键词时，
     #   只在"本次带了 tag"且"该源确实返回了 tags"时校验；tags 为空的源（waifu/nekos）不适用。
     _want = str((cfg or {}).get("tag") or "").strip().lower()
     _tags = [str(t).strip().lower() for t in (meta.get("tags") or []) if str(t).strip()]
@@ -517,7 +515,7 @@ def download(url: str, dest_dir: str, max_mb: float = 8.0, timeout_ms: int = DEF
             ext = ".jpg"
         suffix = ext + ".part"
         os.makedirs(dest_dir, exist_ok=True)
-        # ⚠️ 文件名必须唯一：并发赛跑时两个线程可能落在同一毫秒，撞名会 PermissionError（2026-09-17 实测）
+        # ⚠️ 文件名必须唯一：并发赛跑时两个线程可能落在同一毫秒，撞名会 PermissionError
         tag = uuid.uuid4().hex[:6]
         p = os.path.join(dest_dir, "src_%s_%s%s" % (time.strftime("%H%M%S"), tag, suffix))
         with _open(url, timeout_ms) as r:
@@ -540,7 +538,7 @@ def download(url: str, dest_dir: str, max_mb: float = 8.0, timeout_ms: int = DEF
                     if got > cap:
                         raise RuntimeError("图片超过 %.0fMB 上限，已放弃" % max_mb)
                     fh.write(buf)
-        final = p[:-5]                                   # 去掉 .part
+        final = p[:-5] # 去掉 .part
         os.replace(p, final)
         p = final
         try:
@@ -549,12 +547,12 @@ def download(url: str, dest_dir: str, max_mb: float = 8.0, timeout_ms: int = DEF
             im.verify()
         except Exception:
             return None, "下载到的内容不是有效图片"
-        return p, ""                           # 成功：第二项留空（调用方按"非空＝失败"判断）
+        return p, "" # 成功：第二项留空（调用方按"非空＝失败"判断）
     except Exception as e:
         for q in (p, p[:-5] if p.endswith(".part") else ""):
             if q:
                 try:
-                    os.remove(q)                 # 半截文件不留
+                    os.remove(q) # 半截文件不留
                 except OSError:
                     pass
         return None, "下载失败：%s: %s" % (type(e).__name__, str(e)[:110])

@@ -1,6 +1,6 @@
 """失败原因码（`agent/reason_codes.py` + `tools.execute_tool` 接线）的判据。
 
-为什么它值得一条判据（2026-09-22 立）：
+为什么它值得一条判据：
   原因码的全部价值是"**稳定、可统计、判据钉得住**"。它一旦漂了（分类错、码表漏、原文被改），
   后面所有基于它的统计与判据都会静默失真 —— 所以三条必须机械守着：
     ① 码表齐、无重复、每个码都有人话；
@@ -16,9 +16,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import _srcmatch as _sm          # noqa: E402
+import _srcmatch as _sm # noqa: E402
 
-from agent import reason_codes as RC   # noqa: E402
+from agent import reason_codes as RC # noqa: E402
 
 PASS, FAIL = [0], [0]
 

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """按关键词找图 + "触发条件可自定义" 判据（不需要联网、不需要微信）。
 
-为什么有这条（用户 2026-09-13 问）：「还有帮用户找图发群里，还有发语音，能做到不，这些功能，模型会怎么用？
+为什么有这条
 **触发条件你写好了吗？这些东西能不能交给用户自定义？**」
 
 判据：
@@ -36,11 +36,11 @@ def ok(name, cond, detail=""):
     print("  {} {}{}".format("OK  " if cond else "FAIL", name, "  [{}]".format(detail) if detail else ""))
 
 
-from agent import tools as TL  # noqa: E402
-from agent import image_lib as IL  # noqa: E402
-from agent import image_sources as IS  # noqa: E402
-from agent import prompt as PR  # noqa: E402
-from agent import config as CFG  # noqa: E402
+from agent import tools as TL # noqa: E402
+from agent import image_lib as IL # noqa: E402
+from agent import image_sources as IS # noqa: E402
+from agent import prompt as PR # noqa: E402
+from agent import config as CFG # noqa: E402
 
 print("── A. 工具注册 ──")
 d = {x["name"]: x for x in TL.build_tool_defs()}
@@ -90,13 +90,13 @@ try:
         return {"url": "https://x/y.jpg", "page": "p", "tags": []}, ""
 
     IS.fetch_meta = _fake_meta
-    # ⚠️ 假图源的签名要跟着真实现走（2026-09-17：真实现多了 `soft_max_mb`，这里的假函数没跟上
+    # ⚠️ 假图源的签名要跟着真实现走（真实现多了 `soft_max_mb`，这里的假函数没跟上
     #    ⇒ 线程里抛 TypeError ⇒ 判据变成假红。用 **kw 兜住，别再被签名变化绊倒）
     IS.download = lambda url, dest, max_mb=8, timeout_ms=9000, **kw: (fake_img, "")
     IL._filter_or_reject = lambda path, meta, cfg, root, why: (path, "过了过滤链")
     p, why = IL.search_image({"image_reply": {"enabled": True, "sources": ["pixiv"], "allow_search": True,
                                               "tag": "", "max_mb": 8}}, "赛博朋克")
-    # ⚠️ 2026-09-18 口径变更：关键词会**先翻成图源标签**再查（中文直接丢进去图源多半不认）
+    # ⚠️ 关键词会**先翻成图源标签**再查（中文直接丢进去图源多半不认）
     ok("关键词翻译后作为 tag 传到图源（赛博朋克→cyberpunk）", seen.get("tag") == "cyberpunk",
        str(seen.get("tag")))
     ok("过滤链通过后返回路径", bool(p) and "过滤链" in why, str(why)[:30])
@@ -166,8 +166,7 @@ ok("image_reply.allow_search 存在", "allow_search" in (_dflt.get("image_reply"
 ok("image_reply.trigger_mode 存在", "trigger_mode" in (_dflt.get("image_reply") or {}))
 ok("voice_reply.trigger_mode 存在", "trigger_mode" in (_dflt.get("voice_reply") or {}))
 
-print("── G. 关键词真的进查询 + 标签校验 + 不许拿旧图冒充（2026-09-18 拍摄现场翻车后加）──")
-# 现场：用户要「鲸鱼」，机器人调 `send_image_search(keyword="鲸鱼")` 参数没错，可发出去的是一张
+print("── G. 关键词真的进查询 + 标签校验 + 不许拿旧图冒充──")
 # 动漫角色图（用户当场发现「跟我要的完全不一样」）。两个真根因：
 #   ① 图源查询**根本没带关键词**（safebooru 写死 `tags=rating:safe`、booru 只用配置里的固定 tag）
 #      ⇒ "要图"实际是"从图源随便抓一张"；② 在线没取到时**拿旧缓存图冒充**，工具回执照样写

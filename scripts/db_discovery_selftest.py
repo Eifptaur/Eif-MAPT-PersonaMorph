@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""「微信数据目录找不到」判据（2026-09-19 立，起因＝网友反馈 v0919-2328）。
+"""「微信数据目录找不到」判据。
 
 反馈原文（检验器「消息发不出去」）：`打不开消息库：未找到微信数据库目录，请通过 db_dir 参数手动指定`
 —— 而我们的候选表只覆盖**默认位置 + 各盘根**，用户把微信「文件管理」位置改到
@@ -26,11 +26,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 try:
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")   # 名称里有「⇒」等非 GBK 字符
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace") # 名称里有「⇒」等非 GBK 字符
 except Exception:
     pass
 
-from agent import wechat as W      # noqa: E402
+from agent import wechat as W # noqa: E402
 
 PASS = FAIL = 0
 
@@ -67,7 +67,7 @@ try:
     os.makedirs(empty, exist_ok=True)
     ok("空目录 ⇒ 不命中", W._deep_scan_xwechat(roots=[empty], max_depth=6) == [])
     fake = os.path.join(TMP, "fake", "xwechat_files")
-    os.makedirs(os.path.join(fake, "wxid_judge0001"), exist_ok=True)   # 有 xwechat_files 但**没有 db_storage**
+    os.makedirs(os.path.join(fake, "wxid_judge0001"), exist_ok=True) # 有 xwechat_files 但**没有 db_storage**
     got = W._deep_scan_xwechat(roots=[os.path.join(TMP, "fake")], max_depth=6)
     ok("只有壳、没有 db_storage ⇒ 不命中（不误报）", fake not in got, str(got))
 
@@ -85,7 +85,7 @@ try:
     W._db_dir_candidates = lambda extra="": [os.path.join(TMP, "no_such_a"), os.path.join(TMP, "no_such_b")]
     W._fixed_drives = lambda: [TMP]
     p = W._probe_db_dirs("")
-    ok("深扫结果进了 hit（用户「未找到目录」的那一档被救回）", deep_dir in p["hit"], str(p["hit"])[:120])
+    ok("深扫结果进了 hit（的那一档被救回）", deep_dir in p["hit"], str(p["hit"])[:120])
     ok("如实标出这是深扫探到的", deep_dir in (p.get("deep") or []), str(p.get("deep"))[:120])
     ok("账号数与库文件数都数到了", int(p["accounts"]) >= 1 and int(p["dbs"]) >= 1,
        "accounts=%s dbs=%s" % (p["accounts"], p["dbs"]))
@@ -95,7 +95,7 @@ try:
     ok("resolve_db_dir 给出深扫到的那个目录 + 来源 scanned",
        os.path.normcase(str(d)) == os.path.normcase(deep_dir) and src == "scanned", "%s / %s" % (d, src))
 
-    print("── F. V-R1-4：多个候选时按「证据」选，不许再取第一个 ──")
+    print("── F. 多个候选时按「证据」选，不许再取第一个 ──")
     # 造两个候选（都真的落在盘上，不伪造 mtime 之外的任何条件）：
     #   ①「300 天前的残留」：1 个 .db，**文件与目录的 mtime 都是 300 天前**
     #   ②「正在用的」：42 个 .db，mtime 是现在，且有一个刚写过的 `-wal`
@@ -125,7 +125,7 @@ try:
                           wal_age_s=time.time() - 60)
         W._db_dir_candidates = lambda extra="": []
         W._fixed_drives = lambda: [TMP2]
-        W._self_identity_hint = lambda: ("", "")          # 先关掉身份这条，单看"旧/新"
+        W._self_identity_hint = lambda: ("", "") # 先关掉身份这条，单看"旧/新"
         _p = W._probe_db_dirs("")
         ok("F1 阴（本条回归判据）：旧/小 vs 新/大 ⇒ hit[0] 必须是**新的那个**（原来取深扫先撞见的）",
            (_p["hit"] or [None])[0] == _live, "hit=%s" % [_p["hit"][i][len(TMP2):] for i in range(len(_p["hit"]))])
@@ -197,7 +197,7 @@ try:
            "用时 %.1fs · tried=%d · hit=%d · deep=%d · 命中：%s" % (time.monotonic() - t1, len(real["tried"]),
                                                                    len(real["hit"]), len(real.get("deep") or []),
                                                                    (real["hit"][:1] or ["-"])[0]))
-    except Exception as e:                                              # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         ok("真机跑一遍不抛、且有界（<=12s）", False, str(e)[:80])
 finally:
     W._db_dir_candidates, W._fixed_drives = _orig_cands, _orig_drives

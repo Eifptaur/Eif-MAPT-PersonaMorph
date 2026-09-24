@@ -53,7 +53,7 @@ class BehaviorDecider:
     """纯本地行为决策（无 LLM）。调用方在事件时机询问 should_xxx()。"""
 
     def __init__(self):
-        self._state = {}   # action -> {"last": ts, "today": count, "day": yyyy-mm-dd}
+        self._state = {} # action -> {"last": ts, "today": count, "day": yyyy-mm-dd}
 
     def _cfg(self):
         return get_config().get("behavior", {}) or {}

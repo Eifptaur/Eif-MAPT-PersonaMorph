@@ -72,3 +72,6 @@ docs/设计-*.md
 # ── 配置备份（含 API Key，绝不入库；我改配置时会留）──
 config.json.bak*
 *.bak-*
+
+# 工作数据（本地助手缓存）
+.workbuddy/

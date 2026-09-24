@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""表情包**离线解密**判据（2026-09-18 落地，算法来自开源项目 CN-Grace/Wechat-Emoticon-Parser）。
+"""表情包**离线解密**判据。
 
 背景：微信 4.x 的表情在库里是加密数据、驱动库只认 3/34/43/49 ⇒ 47 号动画表情一直下不来，
 之前只能"截最新一条消息的图"兜（还必须是最新那条、还得窗口可见）。现在：
@@ -25,7 +25,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
-from agent import emoticon as em          # noqa: E402
+from agent import emoticon as em # noqa: E402
 
 PASS = FAIL = 0
 
@@ -90,11 +90,11 @@ key = em.derive_key("987654321", "wxid_test")
 sample = os.path.join(acct, "business", "emoticon", "Persist", "zz", "z" * 32)
 os.makedirs(os.path.dirname(sample), exist_ok=True)
 with open(sample, "wb") as fh:
-    fh.write(aes_cbc_enc(key, b"GIF89a" + b"\x00" * 32))     # 首块解开就是 GIF8
+    fh.write(aes_cbc_enc(key, b"GIF89a" + b"\x00" * 32)) # 首块解开就是 GIF8
 ok("verify_key 对正确的 key 判 True", em.verify_key(key, sample) is True)
 ok("verify_key 对错误的 key 判 False", em.verify_key(b"\x00" * 16, sample) is False)
 
-# ⛔ V-R7-4：判据**不写产品** `data/emoticon_key.json`。把 key 文件指到临时目录再跑同一段
+# ⛔ 判据**不写产品** `data/emoticon_key.json`。把 key 文件指到临时目录再跑同一段
 #   逻辑（产品默认行为不变：`_key_file()` 本身没动，只是这里打桩；下面的 backup/restore 照旧）。
 real_keyfile = os.path.join(tempfile.mkdtemp(prefix="emokey-"), "emoticon_key.json")
 em._key_file = lambda: real_keyfile
@@ -105,7 +105,7 @@ try:
     os.makedirs(os.path.dirname(real_keyfile), exist_ok=True)
     with open(real_keyfile, "w", encoding="utf-8") as fh:
         json.dump({"wxid": "wxid_test", "seed": "987654321", "key": key.hex()}, fh)
-    em._AUTO_DB["db"] = type("D", (), {"account_dir": acct})()      # 假账号目录
+    em._AUTO_DB["db"] = type("D", (), {"account_dir": acct})() # 假账号目录
     ok("缓存 key 通过首块校验 ⇒ 直接复用（不扫内存）",
        em.get_key(db=em._AUTO_DB["db"], sample=sample, allow_scan=False) == key)
     with open(real_keyfile, "w", encoding="utf-8") as fh:

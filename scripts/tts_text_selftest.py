@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """念之前的文本整形判据（`agent/tts_text.py`）—— 离线、纯字符串。
 
-守的东西（用户 2026-09-17 原话：「他说的明明是"行行行"，但是变成了"行行hang行"」）：
+守的东西：
   ① 连续同字 ≥3 ⇒ 断成「行，行，行」（这是那条 bug 的正解：切词才把中间那个念成 háng）；
   ② 用户念法表最高优先（用户永远能一票否决自动处理）；
   ③ 没标点的长句按呼吸断句，**有标点的地方不乱动**；
@@ -19,7 +19,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from agent import tts_text as TT          # noqa: E402
+from agent import tts_text as TT # noqa: E402
 
 PASS = FAIL = 0
 
@@ -131,19 +131,19 @@ ok("F9 分段不成要**落回单段**（绝不半途而废）",
    "交给原来的单段路径" in _vm and "_make_segmented(text, c, timeout)" in _vm)
 
 print("── G. 同音字表：按 pypinyin 数据机械复核（真实数据，不靠我记忆）──")
-# ⚠️ 2026-09-18 晚：`py -3`（开发解释器）没装 pypinyin，而**产品跑在 `runtime\python`**（requirements
+# ⚠️ `py -3`（开发解释器）没装 pypinyin，而**产品跑在 `runtime\python`**（requirements
 #   里有、那边确实装好了）⇒ 这条判据按"产品那个解释器"取模块：把运行时 site-packages 挂进 sys.path；
 #   两边都没有就**如实跳过**（不假红 —— 判据读不到真数据时，宁可标明没验，也不许签名说验过）。
 _pyy = None
 try:
-    from pypinyin import Style as _Style, pinyin as _pyy          # noqa: E402
+    from pypinyin import Style as _Style, pinyin as _pyy # noqa: E402
 except Exception:
     import glob as _glob
     for _sp in _glob.glob(os.path.join(ROOT, "runtime", "python", "Lib", "site-packages")):
         if _sp not in sys.path:
             sys.path.insert(0, _sp)
     try:
-        from pypinyin import Style as _Style, pinyin as _pyy      # noqa: E402
+        from pypinyin import Style as _Style, pinyin as _pyy # noqa: E402
     except Exception:
         _pyy = None
 if _pyy is None:
@@ -167,7 +167,7 @@ else:
         ok("G2 表里至少有 25 对（覆盖常见口语连读字）", len(TT.HOMOPHONE) >= 25, str(len(TT.HOMOPHONE)))
         ok("G3 「行→形」在表里且读音正确（那条 bug 的正主）",
            TT.HOMOPHONE.get("行") == "形" and _rd("形") == ["xing2"] == _rd("行")[:1])
-    except Exception as e:                                    # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         ok("G1 pypinyin 可用且数据读得出", False, str(e)[:70])
 
 print("\n== 语音文本整形判据：%d 通过 / %d 失败 ==" % (PASS, FAIL))

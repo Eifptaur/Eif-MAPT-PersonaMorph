@@ -52,7 +52,7 @@ def _read_json(file, fallback):
 def _write_json(file, value):
     """原子写（`persist.atomic_write_json`：tmp 名带 pid + 随机后缀 + `os.replace`），失败**抛异常**。
 
-    V-R9-22：老写法共用 `<file>.tmp` 这个名字 ⇒ 并发写同一个成员档（巡检线程/多开实例）会
+    老写法共用 `<file>.tmp` 这个名字 ⇒ 并发写同一个成员档（巡检线程/多开实例）会
     **打开同一个临时文件**互相穿插出半截 JSON（审计实测 200 次并发写坏 46 个），而读侧 `_read_json`
     又静默回 fallback ⇒ 印象全没了。失败仍然抛（不吞），调用方的既有语义不变。
     """
@@ -71,7 +71,7 @@ def _history_file(chat_key: str) -> str:
 def audit_overwrite(chat_key: str, user_id: str, before, after) -> dict:
     """整份覆盖**之前**记一笔（只追加）：丢了哪些旧印象、多了哪些新印象。
 
-    为什么要有（2026-09-22，对标 mem0 的 `history` 表）：`replace_member()` 是**整份覆盖**，
+    为什么要有：`replace_member()` 是**整份覆盖**，
     唯一守门是调用方的长度比较（`len(新) <= len(旧)`）⇒ 模型整理时"顺手少写一条"就是**静默丢**：
     旧条目直接没了，没有任何痕迹、也捞不回来。这里只做**机械集合差**（逐字比对，
     不做语义猜测、不改任何存储行为）；审计本身失败绝不打断主流程。
@@ -135,7 +135,7 @@ def _meta_file(chat_key: str) -> str:
 
 class MemoryStore:
     def __init__(self):
-        self.cache: dict = {}          # chat_key -> {user_id: member}
+        self.cache: dict = {} # chat_key -> {user_id: member}
         self._lock = threading.Lock()
 
     def _share_pool(self) -> bool:
@@ -302,10 +302,10 @@ class MemoryStore:
         return out
 
     def remove(self, chat_key: str, category: str, user_id="", target="", content="", scope="all"):
-        """删成员印象。`scope`＝**删除范围**（用户口径：不替他二选一，做成界面可选档）：
+        """删成员印象。`scope`＝**删除范围**：
 
         · `all` （默认）＝按 `_chat_keys()` 把**互通范围内的每一份都删掉** —— 与 `members()`
-          的读取口径一致（2026-09-16 修「删了还能读到」时定的，界面列的是合并视图，就删合并的那些）；
+          的读取口径一致；
         · `this`＝**只删 `chat_key` 这一个群**里那一份（别的群还留着 ⇒ 合并视图里仍会显示，
           所以调用方必须把这件事**如实告诉用户**，见 `elsewhere()`）。
         """
@@ -313,7 +313,7 @@ class MemoryStore:
             return False
         keys = [chat_key] if str(scope) == "this" else list(self._chat_keys(chat_key))
         removed = False
-        # ⛔ 2026-09-16 修（已知现象：「记忆那里也是删除了还能读取」）：
+        # ⛔ （已知现象）：
         #   根因是**口径不对称** —— `members()`（列表）在"互通"时是 `for key in self._chat_keys(chat_key)`
         #   **把所有群合并**后展示的，而这里原来只删 `chat_key` **一个群**的那一份 ⇒ 同一个人在别的群
         #   （或共享池）还留着一份 ⇒ **界面上删了、一刷新又合并出来**。
@@ -352,7 +352,7 @@ class MemoryStore:
         """除 `chat_key` 之外，还有几个群留着这个人的印象（给「只删本群」档做**如实提示**用）。
 
         为什么要它：`members()` 展示的是**互通范围内的合并视图**，所以用 `scope="this"` 只删本群时，
-        界面上**那条记忆还会在**（别的群那一份还在）—— 不说清楚，用户就会以为"删了没用"（他 2026-09-16
+        界面上**那条记忆还会在**（别的群那一份还在）—— 不说清楚，用户就会以为"删了没用"（他 
         报的那条 bug 就是这个观感）。⇒ 只读计数，不做任何写入。
         """
         n = 0
@@ -462,7 +462,6 @@ class MemoryStore:
         """给提示词用的一段"对群友的印象"。
 
         store/exclude_ids（可选）：传进来时，额外给每位群友带一行「上次聊过「…」（X 前）」——
-        用户 2026-09-13 的需求："让他不仅能记得群友是什么人，而且记得上次聊过的话题"。
         这条**只从消息库现读**（不花 token、不凭空编）；没传 store 时行为与以前完全一致。
         """
         notes = get_config().get("member_notes") or {}

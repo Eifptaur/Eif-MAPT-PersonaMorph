@@ -5,7 +5,7 @@
 import os
 import sys
 
-try:      # 控制台默认 GBK：自检里的 ✔/✘ 一旦被重定向就 UnicodeEncodeError 崩掉整条自检
+try: # 控制台默认 GBK：自检里的 ✔/✘ 一旦被重定向就 UnicodeEncodeError 崩掉整条自检
     sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
     sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 except Exception:
@@ -14,9 +14,9 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from PIL import Image                        # noqa: E402
+from PIL import Image # noqa: E402
 
-from agent import image_lib as il            # noqa: E402
+from agent import image_lib as il # noqa: E402
 
 PASS = FAIL = 0
 
@@ -82,7 +82,7 @@ q, why4 = il.next_image(cfg4, root, "chat1")
 ck("开关关着 ⇒ 明确说没开", q is None and "关闭" in why4, why4)
 cfg5 = dict(cfg)
 cfg5["image_reply"] = dict(cfg["image_reply"], enabled=True, min_gap_seconds=60)
-il.pick(cfg5, root, "chat1")                                   # 记一次 last
+il.pick(cfg5, root, "chat1") # 记一次 last
 ck("冷却中 ⇒ 剩余秒数 > 0", il.cooldown_left(cfg5, "chat1", root) > 0)
 ck("别的会话不受冷却影响", il.cooldown_left(cfg5, "chat2", root) == 0)
 q, why5 = il.next_image(cfg5, root, "chat1")
@@ -94,7 +94,7 @@ ck("api 模式未填地址 ⇒ 提示改用本地", q is None and "没配置" in
 q, why7 = il.fetch_api({"image_reply": {"api_url": "http://127.0.0.1:9/none", "api_timeout_ms": 1500}}, root)
 ck("图源不可达 ⇒ 返回原因不抛异常", q is None and "失败" in why7, why7)
 
-import shutil                                 # noqa: E402
+import shutil # noqa: E402
 shutil.rmtree(root, ignore_errors=True)
 print("\n== 结论：%d 通过 / %d 失败 ==" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

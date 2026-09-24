@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """「微信连不上」诊断与自动重试的判据（离线；不碰真微信、不动鼠标、不弹窗）。
 
-背景（2026-09-16 用户反馈「又有说微信连接不上的」）：产品以前对"连不上"只有一个是/否，
+背景：产品以前对"连不上"只有一个是/否，
 用户只能看到"微信未连接"，我们只能来回猜。本次两件事：
   ① `agent/wechat.py::attach_diagnosis()` —— 把接入拆成**逐步只读检查**（进程 / 装没装 /
      消息库 / 密钥 / 认出你自己的账号），每一步给证据与下一步动作；
@@ -22,7 +22,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from agent import wechat as W                    # noqa: E402
+from agent import wechat as W # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -120,7 +120,7 @@ ok("self 那一步仍在列表里（诊断走到底，不提前掐）", any(s["k
 print("── E. 只有缓存密钥、主密钥为空 ⇒ **照样算可用**（本机常态，别误报）──")
 _f = _diag(_VI_RUN, db=_DB(keys_ok=2, master=False, self_info={"username": "wxid_me"}))
 ok("ok=True（主密钥为空不算卡点）", _f["ok"] is True, _f["reason"])
-_key_step = next(s for s in _f["steps"] if s["key"] == "key")      # 按 key 找，别按序号（加了 version 步会错位）
+_key_step = next(s for s in _f["steps"] if s["key"] == "key") # 按 key 找，别按序号（加了 version 步会错位）
 ok("说明里交代了「主密钥为空但有 N 把缓存密钥可用」这回事",
    "缓存密钥" in str(_key_step["detail"]), _key_step["detail"])
 
@@ -136,7 +136,7 @@ def _raise(*a, **k):
 _boom.WeChatDB = _raise
 sys.modules["wechatauto"] = _boom
 try:
-    _g = _diag(_VI_RUN)          # 不传 db ⇒ 会去构造 WeChatDB（这里让它抛）
+    _g = _diag(_VI_RUN) # 不传 db ⇒ 会去构造 WeChatDB（这里让它抛）
 finally:
     if _saved_mod is not None:
         sys.modules["wechatauto"] = _saved_mod
@@ -186,7 +186,7 @@ ok("attach_diagnosis 里没有任何输入/改动窗口的调用", not _banned, 
 ok("诊断不写盘（没有 open(...'w')/json.dump 之类）",
    ("json.dump" not in _seg) and ("os.remove" not in _seg))
 
-print("── J2. 老版本微信＝「打不开消息库」的真因（2026-09-16 用户反馈「他说他是新版本」后补的一步）──")
+print("── J2. 老版本微信＝「打不开消息库」的真因──")
 _v3 = _diag({"found": True, "path": "C:\\x\\Weixin.exe", "version": "3.9.5.81", "supported": False}, db=_DB())
 ok("老版本 ⇒ 卡点是 version（不再含糊地只说 db_open）", _v3["step"] == "version", _v3["step"])
 ok("action=upgrade_wechat（给他一个能做的动作）", _v3["action"] == "upgrade_wechat", _v3["action"])
@@ -202,7 +202,7 @@ import shutil as _shutil
 import tempfile as _tempfile
 
 _root = _tempfile.mkdtemp(prefix="pm_dbprobe_")
-# ⚠️ 本段必须**封闭**（不读真机状态）：2026-09-19 给 `_probe_db_dirs` 加了「有界深扫」之后，
+# ⚠️ 本段必须**封闭**（不读真机状态）：给 `_probe_db_dirs` 加了「有界深扫」之后，
 #    这台机器上真的会被扫到 `M:\WX\talk\xwechat_files` ⇒ 第一档（"目录不在默认位置"）的结论
 #    会变成第三档（"目录与库都在 ⇒ 权限/占用"）⇒ 断言假红。判据要的是**语义**，所以这里把
 #    深扫打成"什么都没扫到"，深扫本身的行为由 `db_discovery_selftest.py` 专门验。
@@ -277,7 +277,7 @@ ok("侧栏短原因点明「依赖没装齐」", "依赖没装齐" in W.attach_s
 ok("原因里给出能照着做的动作（「一键启动」/「一键检验」）",
    ("一键启动" in _dj["reason"]) or ("一键检验" in _dj["reason"]), _dj["reason"][:110])
 _saved_wa2 = sys.modules.get("wechatauto")
-sys.modules["wechatauto"] = None          # None 在 sys.modules 里 ⇒ `import wechatauto` 抛 ImportError
+sys.modules["wechatauto"] = None # None 在 sys.modules 里 ⇒ `import wechatauto` 抛 ImportError
 try:
     _di = _diag(_VI_RUN)
 finally:
@@ -328,9 +328,9 @@ try:
                 sys.modules.pop("wechatauto", None)
         _db5 = [s for s in _d5["steps"] if s["key"] == "db_open"][0]
         ok("诊断**自动用扫到的目录**把消息库打开了（不再只让人手动填）", _db5["ok"] is True, _db5["detail"][:100])
-        # ⛔ 2026-09-22：本项新增「扫盘探到就自动记住」之后，**第一次**跑完配置就有值了 ⇒ 后面再跑就是「按配置走」，
+        # ⛔ 本项新增「扫盘探到就自动记住」之后，**第一次**跑完配置就有值了 ⇒ 后面再跑就是「按配置走」，
         #   报告里当然不再提扫盘 —— **那正是期望的终态**。所以：要么写明扫盘处置，要么配置里已经有目录。
-        # ⛔ 2026-09-22 改口径：扫盘探到的目录现在会被**自动记住**（且只记一次）⇒
+        # ⛔ 扫盘探到的目录现在会被**自动记住**（且只记一次）⇒
         #   "报告里还叫不叫用户去填"才是稳定的那一面；另配一条源码锚看新措辞在不在。
         ok("报告里**不再叫用户去「填进配置」**（旧措辞已消失；现在会自动记住或按配置走）",
            ("建议把它填进" not in _db5["detail"]), _db5["detail"][:120])
@@ -435,7 +435,7 @@ ok("看门狗与定时巡检不再被传死 None（每跳现取句柄）",
    "args=(lambda: wechat_box[0],)" in _pm and "_start_timer_holiday_loop(orch, lambda: wechat_box[0])" in _pm)
 ok("状态里下发 wechat_attach（控制台才看得到原因）",
    '"wechat_attach": wechat_attach_status(),' in _pm and "def wechat_attach_status()" in _pm)
-# ── 2026-09-17：改了群勾选要**立刻生效**（网友报「我勾选了一个群…概览的状态改变不了」）──
+# ── 改了群勾选要**立刻生效**（网友报「我勾选了一个群…概览的状态改变不了」）──
 ok("配置保存后会**就地重算监听目标**（on_save 接线，不再只有重启才生效）",
    "on_save=lambda _new_cfg: _refresh_targets(" in _pm and "def _refresh_targets(why=" in _pm)
 ok("重算会**就地更新** target_wxids（status_provider 按它算「这个群是不是监听目标」）",
@@ -447,8 +447,8 @@ _ct_parts = _ct_seg.split('"""')
 _ct_code = _ct_parts[0] + "".join(_ct_parts[2:])
 ok("重算读的是**当前配置**，不是启动时的闭包快照（否则重算也还是老口径）",
    '_wl = (_cfg_now.get("wechat") or {}).get("group_name_white_list")' in _ct_code
-   and "resolve_groups(_gs" in _ct_code          # W-1：选群收口到解析器（按 wxid 认群）
-   and 'g["name"]' not in _ct_code               # 旧的名字匹配不许再出现
+   and "resolve_groups(_gs" in _ct_code # W-1：选群收口到解析器（按 wxid 认群）
+   and 'g["name"]' not in _ct_code # 旧的名字匹配不许再出现
    and "whitelist" not in _ct_code)
 _ch = _src(os.path.join("agent", "console_html.py"))
 ok("控制台侧栏显示短原因 + 悬停看逐步诊断",

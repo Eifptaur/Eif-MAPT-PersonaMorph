@@ -17,7 +17,7 @@ HTML = r"""<!DOCTYPE html>
 <link rel="icon" href="/assets/icon.png" type="image/png">
 <style>
 :root{
-  /* 按钮交互（2026-09-23 加）：按下位移 / 焦点环 / 主按钮高光 三件，三主题各自取色。
+  /* 按钮交互：按下位移 / 焦点环 / 主按钮高光 三件，三主题各自取色。
      why 成对出现：`--btn-lift` 按下时是**正数**下沉、`--btn-press` 是缩放；
      焦点环必须用**半透明**色，否则在深色主题上会糊成一圈实心白边。 */
   --btn-press:.975; --btn-lift:1px;
@@ -39,7 +39,7 @@ HTML = r"""<!DOCTYPE html>
   --input-bg:rgba(255,255,255,.09); --hover-bg:rgba(255,255,255,.16); --input-bd:rgba(160,210,255,.35); --topbar:rgba(8,24,46,.7);
   --code-bg:rgba(4,16,32,.7); --code-tx:#BFE9FF; --ok-soft:rgba(53,240,192,.14); --ok-tx:#7AF9E2;
   --err-soft:rgba(255,138,138,.16); --err-tx:#FFB0B0; --menu-bg:#0C2440;
-  /* 三级文字（2026-09-22 三主题重构新增）：正文 / 次要 / 说明。
+  /* 三级文字：正文 / 次要 / 说明。
      原来只有 --tx2 一档，长说明与行标签同色 ⇒ 层级糊成一片。 */
   --tx3:rgba(169,209,236,.72);
   /* 可用性语义色（面板状态徽章用，三主题各自取色）*/
@@ -128,9 +128,6 @@ HTML = r"""<!DOCTYPE html>
     --radius-card:10px;
   }
 }
-/* 全局滚动条自绘（2026-09-16 用户：「又白又灰的，跟我们色调完全不搭」）——
-   原先只给侧栏做了自绘，页面主体那条一直是浏览器默认样式（白底灰滑块）。
-   这里统一成"细、透明底、蓝调半透明滑块"；侧栏原有的 6px 规则特异性更高，仍然生效。 */
 *{scrollbar-width:thin;scrollbar-color:rgba(148,196,255,.28) transparent}
 *::-webkit-scrollbar{width:6px;height:6px}
 *::-webkit-scrollbar-track{background:transparent}
@@ -152,7 +149,7 @@ body.whale-anim::after{content:"";position:fixed;inset:0;z-index:-1;pointer-even
     radial-gradient(240px 240px at 36% 26%,rgba(255,220,170,.10),transparent 65%),
     var(--bg)}
 /* ══════════════════════════════════════════════════════════════════════════
-   三套主题的「视觉语言」分层（2026-09-22 三主题重构）
+   三套主题的「视觉语言」分层
    上面 :root 只管色值；这里管**结构与质感**——同样是"卡片 + 分隔 + 阴影"，
    三套主题的取舍完全不同。改这里之前先读这一段，别只盯着配色。
 
@@ -212,7 +209,7 @@ body.whale-anim::after{content:"";position:fixed;inset:0;z-index:-1;pointer-even
 :root[data-theme=dark] .side .nav-find input{border-radius:7px;padding:7px 10px;background:#141517}
 :root[data-theme=light] .empty{border-style:solid;border-color:var(--bd);background:#FAFBFC}
 :root[data-theme=dark] .empty{background:#0C0D0F}
-/* 100 左侧导航（用户 2026-09-13 定稿方向 B）：图标自绘 + 可滚动 + 名字可收起（像 DeepSeek 那样） */
+/* 100 左侧导航：图标自绘 + 可滚动 + 名字可收起（像 DeepSeek 那样） */
 .side .nav{overflow-y:auto;overflow-x:hidden;max-height:calc(100vh - 210px);padding-right:2px;scrollbar-width:thin}
 .side .nav::-webkit-scrollbar{width:6px}
 .side .nav::-webkit-scrollbar-thumb{background:transparent;border-radius:3px}   /* 悬停才显形，与侧栏同口径 */
@@ -221,7 +218,7 @@ body.whale-anim::after{content:"";position:fixed;inset:0;z-index:-1;pointer-even
 .side .nav a{display:flex;align-items:center;gap:11px}
 .side .nav a svg{width:18px;height:18px;flex:none;opacity:.92}
 .side .nav a .lb{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-/* 收起态（只剩图标）：栏更宽、图标更大、间距更松——用户 2026-09-14 原话：
+/* 收起态（只剩图标）：栏更宽、图标更大、间距更松——
    「你看这个收起之后，这些图标靠得这么紧合适吗？散开一点，而且把这个栏做大一点啊，
    这样用户怎么看得清、点得到？」 */
 /* 长清单折叠的按钮条（默认收起＝只给这么多高度，其余滚动） */
@@ -232,21 +229,13 @@ body.whale-anim::after{content:"";position:fixed;inset:0;z-index:-1;pointer-even
 .side.tight .nav a svg{width:22px;height:22px}
 .side.tight .nav a .lb{display:none}
 .side.tight .status{display:none}
-/* 收起/展开：**在导航里单开一栏**（用户 2026-09-15：「这个收起按钮太小了，可以在功能栏单开一栏，
+/* 收起/展开：**在导航里单开一栏**（
    写的就是收起或者展开，就像之前那样」）——旧写法是绝对定位的 22×58 小把手。 */
 .side .nav-tg{position:static;width:100%;height:auto;margin:2px 0 8px;padding:9px 12px;
   display:flex;align-items:center;justify-content:center;gap:8px;font-size:12.5px;line-height:1;
   border-radius:8px;z-index:auto;opacity:.9}
 .side.tight .nav-tg{padding:9px 0}
 
-/* ── 左导航「分组 + 快速找功能」（2026-09-22 三主题重构；用户口径：
-      「25 条平铺 → 请分组、按使用频率排序、支持收起展开与快速定位，让新用户 3 秒内找到我要改什么」）──
-   两条硬约束（与既有判据对齐，改这里先看）：
-   ① `nav_ui_selftest` 只统计 `#nav a`（分组头是 <button>，不进导航项计数）；
-      且仍要求「每项 inline SVG + viewBox="0 0 16 16" + currentColor」⇒ 组头箭头也照此写。
-   ② `ui_arch_selftest` 要求「导航顺序 == 面板顺序」，分组只是**视觉包装**，
-      不改变 <a> 在 DOM 里的先后 ⇒ 重排必须同时改面板块的顺序。
-   收起态（.side.tight）只留图标：组名与搜索框要隐掉，否则 64px 的栏里塞不下。 */
 .side .nav-find{margin:0 0 8px;position:relative}
 .side .nav-find input{width:100%;box-sizing:border-box;padding:8px 10px;font-size:12.5px;line-height:1;
   border-radius:8px;border:1px solid var(--input-bd);background:var(--input-bg);color:var(--tx);
@@ -302,9 +291,6 @@ body.whale-anim::after{content:"";position:fixed;inset:0;z-index:-1;pointer-even
 .empty.err{border-color:var(--st-err-bd);background:var(--st-err-bg)}
 .empty.err svg,.empty.err .et{color:var(--st-err-tx)}
 .empty .eb{margin-top:2px}
-/* 顶部「机器人已停止」横幅（2026-09-15）：替掉原来那个"弹模态 + 自己关窗口"的做法。
-   用户报「屏幕上一直在闪弹窗」的根因就是旧做法里的 window.open('', '_self') → window.close()。
-   横幅本身可关（知道了），页面原地不动，状态灯置灰。 */
 .offline-bar{position:fixed;left:12px;right:12px;top:8px;z-index:60;display:flex;align-items:center;gap:10px;
   padding:9px 12px;border-radius:10px;background:var(--warn-bg,#3a2f1b);border:1px solid var(--warn-bd,#8a6d2f);
   color:var(--tx);font-size:12.5px;line-height:1.5;box-shadow:0 6px 18px rgba(0,0,0,.22)}
@@ -398,21 +384,17 @@ body.custom-bg::before{opacity:1!important}
   backdrop-filter:url(#cardWave2) saturate(1.02);
   transform:translate3d(-9999px,-9999px,0)}
 input,select,textarea{backdrop-filter:blur(8px)}
-/* 表单控件统一底色（2026-09-14，用户："这些输入框怎么全是白的？和我们的 UI 太不搭了"）。
-   原先只有 `.row input[type=text]` 那一族被染色 ⇒ **没写 type 属性的输入框**、以及 `.row` 之外的
-   输入框全部落到浏览器默认的白底（深色主题下最刺眼）。
-   下面这条用 `:where()` 写成**零特异性**：任何既有 class/类型规则照样盖过它，
-   但兜住了所有遗漏项——作者样式天然优先于浏览器默认样式，所以白底不会再回来。 */
 :where(input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]):not([type=color]):not([type=submit]):not([type=button]):not([type=image]),
        textarea,select){
   background:var(--input-bg);color:var(--tx);border:1px solid var(--input-bd);border-radius:10px;
   padding:8px 12px;font:inherit;outline:none}
 :where(input,textarea)::placeholder{color:var(--tx2);opacity:.75}
 :where(input[type=radio]){accent-color:var(--blue)}
-/* ── 自研勾选框（2026-09-15 用户："你可以做设计吗，现在还是那个白色的勾选框，我希望能好看一点"）──
+/* ── 自研勾选框 ──
    显示层自研：**不用浏览器默认的白方块**，选中的勾是 CSS 画的两段折线（不用字体字形/图片/emoji）。
    三态齐（悬停 / 选中 / 禁用）+ 键盘焦点环；勾与横杠用**百分比定位** ⇒ 控件被设成 16px 还是 20px
    都在正中心；颜色全走主题变量 ⇒ 三套主题自动跟着变。 */
+
 :where(input[type=checkbox]){
   -webkit-appearance:none;appearance:none;flex:none;position:relative;cursor:pointer;
   width:17px;height:17px;border-radius:6px;vertical-align:-3px;
@@ -442,7 +424,7 @@ input,select,textarea{backdrop-filter:blur(8px)}
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--bg);color:var(--tx);font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;min-height:100vh}
 a{color:var(--blue);text-decoration:none}
-a:hover,a:focus,a:visited,a:active{text-decoration:none}   /* 控制台所有字不带下划线（先生 2026-09-13 定调） */
+a:hover,a:focus,a:visited,a:active{text-decoration:none}   /* 控制台所有字不带下划线 */
 .icon{width:18px;height:18px;vertical-align:-3px;margin-right:6px}
 
 /* ── 顶栏 ── */
@@ -473,12 +455,6 @@ a:hover,a:focus,a:visited,a:active{text-decoration:none}   /* 控制台所有字
 .chip{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:16px;background:var(--bg-solid);
   height:26px;box-sizing:border-box;line-height:1;font-size:12px;white-space:nowrap;
   border:1px solid var(--bd);color:var(--tx2)}
-/* 三个状态胶囊统一（2026-09-15 用户：「右上角的三个标签没有统一化，长得都不一样」）：
-   旧情况＝「运行」有 dot、「模型」有 <b>、「余额」是纯文本、「改完即生效」里塞了个复选框（内边距被撑开）。
-   现在统一：同一高度/内边距/字号/边框，复选框尺寸固定，数值统一用 <b>。
-   ⚠️ 改这段别把声明拆到规则外面：`no_underline_selftest` 的「花括号配平」专抓孤儿声明行。
-   2026-09-15 实测踩过——上一轮 UI 批量改胶囊时，`#autoChip input{…}` 被插进了 `.chip{…}` 的声明中间，
-   尾部四行成了孤儿声明、被浏览器整段丢弃 ⇒ 胶囊其实一直没有边框与 12px 字号（肉眼不容易发现）。 */
 #autoChip input{width:14px;height:14px;margin:0;flex:0 0 auto;accent-color:var(--blue)}
 .chip b{color:var(--tx)}
 .chip .dot{width:8px;height:8px;border-radius:50%;background:var(--err)}
@@ -487,8 +463,6 @@ a:hover,a:focus,a:visited,a:active{text-decoration:none}   /* 控制台所有字
 
 /* ── 布局 ── */
 .shell{display:grid;grid-template-columns:252px 1fr;gap:16px;max-width:1280px;margin:16px auto;padding:0 16px}
-/* 收起态：**栅格列也要跟着收**（2026-09-15 用户：「收起都收到哪里去了？正确的收起位置应该跟功能栏贴一起」）。
-   旧写法只把 .side 缩到 88px，列宽却写死 252px ⇒ 中间白留 164px 空档，看着像"没收到位"。 */
 .shell.tight{grid-template-columns:64px 1fr;gap:8px}
 @media(max-width:900px){.shell{grid-template-columns:1fr}}
 /* 侧栏：完全不透明实色（滚动到底也无色差）+ sticky 让开顶栏 */
@@ -499,15 +473,10 @@ a:hover,a:focus,a:visited,a:active{text-decoration:none}   /* 控制台所有字
 .side::before,.side::after{content:none!important;display:none!important}
 .side::-webkit-scrollbar{width:6px}
 .side::-webkit-scrollbar-track{background:transparent}
-/* 滚动条口径（2026-09-15 用户：「这个滚动条太明显了，而且还丑」）：细、无底色、**悬停才显形** */
+/* 滚动条口径：细、无底色、**悬停才显形** */
 .side::-webkit-scrollbar-thumb{background:transparent;border-radius:3px;transition:background .15s}
 .side:hover::-webkit-scrollbar-thumb{background:rgba(148,196,255,.22)}
 .side::-webkit-scrollbar-thumb:hover{background:rgba(148,196,255,.38)}
-/* 左导航项：间距与字号在 2026-09-14 整体放大（用户原话：「左导航离得这么近合适吗？把左导航放大一点，
-   每个导航之间的距离拉开」）。
-   注意：历史坑：这两行原来是**未拼接进 CSS 的裸字符串字面量**（`.nav a{…padding:9px 12px…}` 那两行），
-   Python 里相邻字符串只是"算了一下就扔掉" ⇒ 浏览器**从来没收到过** padding/font-size，
-   所以导航一直是一行行贴着的纯文字。现在这些声明直接落在这条真规则里，不再有第二处。 */
 .side .nav a{color:var(--tx2);border-radius:10px;margin:4px 0;background:transparent;text-decoration:none;
   display:flex;align-items:center;gap:11px;padding:12px 14px;font-size:14.5px;
   transition:background .18s ease,color .18s ease}
@@ -527,17 +496,6 @@ a:hover,a:focus,a:visited,a:active{text-decoration:none}   /* 控制台所有字
 .nav a.on::before{content:"";position:absolute;left:0;top:12px;bottom:12px;width:3px;border-radius:2px;background:var(--blue)}
 .card{transition:box-shadow .2s ease,transform .2s ease}
 .card:hover{box-shadow:0 2px 6px rgba(31,41,55,.07),0 16px 40px rgba(77,107,254,.10)}
-/* ══ 按钮交互特效（2026-09-23 加，作者：「你能不能做按钮的点击特效」）══════════
-   以前这里只有一行 `button:active{transform:scale(.97)}` —— 点了有反馈，但
-   ① 悬停时主按钮**没有**任何变化（看不出"这个能点"）② 键盘 Tab 过来**没有焦点环**
-   （拿键盘的人不知道焦点在哪）③ 按下只有缩放、没有"沉下去"的位移，手感发飘。
-   下面按 悬停 → 按下 → 焦点 → 禁用 四态补齐，并把"能点得出来"当第一要务：
-     · 悬停  → 浮起 1px + 描边染强调色 + 极轻投影（`translateY(-1px)`）
-     · 按下  → **下沉 1px + 缩小 .97**，同时把悬停的浮起抵消掉 ⇒ 有真实的"按进去"感
-     · 焦点  → 2px 半透明焦点环（`:focus-visible`，鼠标点不触发，只有键盘触发）
-     · 主按钮 → 悬停时叠一道自上而下的**高光**（`linear-gradient` 走 `--btn-sheen`）
-   三套主题的 `--btn-*` 值各自取色（whale 青蓝 / light Meta 蓝 / dark Linear 紫蓝），
-   所以这条规则在三个主题下都成立，不需要为某个主题写特例。 */
 button{outline:none}
 button:not(:disabled){will-change:transform}
 button:hover:not(:disabled){transform:translateY(calc(-1 * var(--btn-lift)))}
@@ -570,8 +528,6 @@ button:disabled{transform:none}
 /* 群列表容器：固定高度滚动槽 + 顶部搜索框 */
 .group-box{max-height:340px;overflow-y:auto;overflow-x:hidden;max-width:100%;box-sizing:border-box;
   border:1px solid var(--bd);border-radius:10px;padding:6px;margin-top:6px}
-/* ⛔ 2026-09-18（作者：「展开的时候会直接把条拖出两边框，导致点不到取消」）：
-   长群名 / 长 wxid 不许把行撑宽 —— 行用 flex + min-width:0，群名与 wxid 都走省略号。 */
 .pick .opt{display:flex;align-items:center;gap:6px;min-width:0;max-width:100%}
 .pick .opt b{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pick .opt .hint{flex:0 1 auto;min-width:0;max-width:42%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -669,14 +625,9 @@ button.pri{background:var(--blue);color:#fff;box-shadow:0 4px 12px rgba(77,107,2
 button.pri:hover{background:var(--blue2)}
 button.ghost{background:var(--card);border:1px solid var(--bd);color:var(--tx)}
 button.ghost:hover{border-color:var(--blue);color:var(--blue)}
-/* ⛔ 2026-09-21 加（第十一轮 V-R11 · 作者问「检验器需要前端的，映射好没有」）：
-   症状按钮要把**后端判决**画出来（同一次结果里的 ok / partial ⇒ 按钮边框与字色三态），
-   否则用户点完只能自己从报告文字里读，界面上一片"都点过了"没有区别。 */
 button.ghost[data-vstate="ok"]{border-color:var(--ok);color:var(--ok)}
 button.ghost[data-vstate="partial"]{border-color:var(--warn);color:var(--warn)}
 button.ghost[data-vstate="fail"]{border-color:var(--err);color:var(--err)}
-/* ⛔ 2026-09-22 加（第十二轮 V-R12-3）：**「没测到」要有自己的样子** —— 老写法里 `unknown` 没有样式，
-   于是它和"从没点过"完全同形（用户看不出这一格这次没验成）。虚线边 + 略暗，与"没点过"区分开。 */
 button.ghost[data-vstate="unknown"]{border-style:dashed;opacity:.72}
 button.danger{background:var(--err-soft);color:var(--err-tx)}
 button.danger:hover{filter:brightness(1.12)}
@@ -765,20 +716,12 @@ th{color:var(--tx2);font-weight:500}
   <button id="updSkip" class="ghost">不再提醒这个版本</button>
   <button id="updReset" class="ghost" title="清掉本机记的「见过的最高版本」——更新被判成回滚/降级、明明有新版本却装不上时用它">重置更新状态</button>
 </div>
-<!-- 「发送已被暂停」横幅（2026-09-17 加）：用户「佬」报「能识别群，但发不了消息，试什么都不发」
-     —— 真因是**版本门**（微信版本 × 适配层没实测 ⇒ 每次发送被拦），而提示藏在「版本能力矩阵」里，
-     他没找到 ⇒ 现象看起来就是"机器人坏了"。横幅放在最上面。
-🔴 2026-09-18 改口径（两位网友报障「聊天记录生成了就是发不出去」「重装微信后一直不回复」＋作者
-"保险加多了，最后能发出去的消息也变成发不出去"）：**版本门默认不再拦发送** —— 读不到版本＝环境态、
-未实测版本＝告警但照发；横幅只做「告知」。要严格拦的用户自己开 `version_gate.strict=true`。 -->
 <div id="vgBar" class="updbar warn" style="display:none">
   <span id="vgText"></span>
   <span class="sp"></span>
   <button id="vgAllow" class="pri">本次允许发送</button>
   <button id="vgGo" class="ghost">看版本矩阵</button>
 </div>
-<!-- 常驻公告（2026-09-17 用户：「可以挂个常驻公告，说明有问题就点击导航栏的『反馈』，把问题进行反馈，最好是附上报告或者截图」）
-     ⇒ 不做弹窗、不自动消失：它就一直在那儿；点「去反馈」直接切到反馈栏。 -->
 <div id="noticeBar" class="updbar notice">
   <span id="noticeText">遇到问题就点「反馈」提交一下 —— <b>不用你跑任何检查</b>：这台机器的兼容性信息（系统/缩放/微信版本/最近失败）它自己会带上。</span>
   <span class="sp"></span>
@@ -789,7 +732,7 @@ th{color:var(--tx2);font-weight:500}
   background:var(--card,#1b1e24);border:1px solid var(--bd,var(--line,#2a2f37));color:var(--tx,#e6e8ec);font-size:13px}
 .updbar.warn{border-color:#8a7a3a}
 .updbar .sp{flex:1}
-/* 2026-09-16 修：消息要点一长，按钮会被压到"一个字一行"（直播实拍过的丑样子）。
+/* 消息要点一长，按钮会被压到"一个字一行"（直播实拍过的丑样子）。
    正文可换行、按钮不缩不长。 */
 .updbar #updText{flex:1 1 auto;min-width:0;line-height:1.5}
 .updbar button{flex:none;white-space:nowrap}
@@ -811,9 +754,9 @@ th{color:var(--tx2);font-weight:500}
   try {
     fetch('/api/update').then(function (r) { return r.json(); }).then(function (s) {
       cur = s;
-      // ⛔ 2026-09-20 加 `pending`（V-R4-1）：上次"只装了一半"必须**看得见**。
-      //   原来这条只认 newer / older / error，其余一律隐藏 —— 而半装时后端会算出"已是最新"，
-      //   于是用户既看不到提示、也没有理由去点第二次，那几件没换成的文件永远是旧的。
+ // ⛔ `pending`：上次"只装了一半"必须**看得见**。
+ //   原来这条只认 newer / older / error，其余一律隐藏 —— 而半装时后端会算出"已是最新"，
+ //   于是用户既看不到提示、也没有理由去点第二次，那几件没换成的文件永远是旧的。
       if (s.status === 'pending') {
         var pn = (s.pending && s.pending.length) ? s.pending.length : 0;
         show('上次更新只装了一半：有 ' + pn + ' 件没换成'
@@ -827,9 +770,9 @@ th{color:var(--tx2);font-weight:500}
       } else if (s.status === 'error') {
         show('更新源异常：' + (s.why || ''), 'warn');
       } else { hide(); }
-      // ⛔ 2026-09-21（第五轮回执 **V-R5B-10**）：`stateSaveError` 是后端新加的"快照没写进去"，
-      //   但全仓没有消费者 ⇒ 写失败仍然只有日志知道。这里接上用户可见面：无论上面显示了什么，
-      //   只要快照没落盘就补一句（下次打开控制台会退回**旧快照**，得让用户知道这个前提）。
+ // ⛔ `stateSaveError` 是后端新加的"快照没写进去"，
+ //   但全仓没有消费者 ⇒ 写失败仍然只有日志知道。这里接上用户可见面：无论上面显示了什么，
+ //   只要快照没落盘就补一句（下次打开控制台会退回**旧快照**，得让用户知道这个前提）。
       if (s.stateSaved === false || s.stateSaveError) {
         show((txt.textContent ? txt.textContent + ' · ' : '') +
              '（注意：这次的更新读数**没能写进快照**：' + (s.stateSaveError || '写盘失败') +
@@ -839,9 +782,9 @@ th{color:var(--tx2);font-weight:500}
   } catch (e) { hide(); }
   document.getElementById('updLater').onclick = hide;
   document.getElementById('updSkip').onclick = function () {
-    // ⛔ V-R4-1：只有"真有新版本"时才允许「不再提醒这个版本」——
-    //   半装（pending）时 theirs 往往等于本机版本，按下去会把这条提醒永久消音，
-    //   那几件没换成的文件就再也没人管了。
+ // ⛔ 只有"真有新版本"时才允许「不再提醒这个版本」——
+ //   半装（pending）时 theirs 往往等于本机版本，按下去会把这条提醒永久消音，
+ //   那几件没换成的文件就再也没人管了。
     if (!cur || !cur.theirs || cur.status !== 'newer') { hide(); return; }
     try {
       fetch('/api/update_skip', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ version: cur.theirs }) })
@@ -849,10 +792,10 @@ th{color:var(--tx2);font-weight:500}
     } catch (e) { hide(); }
   };
   document.getElementById('updReset').onclick = function () {
-    // ⛔ 2026-09-22 加（第十一轮 **V-R11-2** 第 3 条 · P1）：**"闸门卡死"要有个出口**。
-    //   现场：一份被镜像改过的清单（版本 9999.9.9）会把本机记的「见过的最高版本」顶到天上，
-    //   此后**真清单与所有未来版本**全被判"回滚/降级" ⇒ 那台机器再也装不了任何更新，
-    //   而产品里唯一的出路是手删 `data/update_state.json`。这个按钮＝那个出口（只清这一个键）。
+ // ⛔ **"闸门卡死"要有个出口**。
+ //   现场：一份被镜像改过的清单（版本 9999.9.9）会把本机记的「见过的最高版本」顶到天上，
+ //   此后**真清单与所有未来版本**全被判"回滚/降级" ⇒ 那台机器再也装不了任何更新，
+ //   而产品里唯一的出路是手删 `data/update_state.json`。这个按钮＝那个出口（只清这一个键）。
     uiConfirm('重置更新状态？', '只会清掉本机记的「见过的最高版本」（更新状态快照里的一个键），别的什么都不动。'
       + '什么时候用：明明有新版本、它却说「更新源给的版本更旧 ⇒ 判为回滚」。', function () {
       getJSON('/api/update_reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
@@ -863,12 +806,12 @@ th{color:var(--tx2);font-weight:500}
     });
   };
   document.getElementById('updGo').onclick = function () {
-    // 「立即更新」真干活（2026-09-16 用户：「做出来居然不给用户用」）：
-    // 二次确认 → POST /api/update_apply（后端下载+校验+换入）→ 轮询 /api/update 的 job 显示进度
-    // → 成功后调 /api/restart 让新代码生效。失败如实说原因，不假装成功。
+ // 「立即更新」真干活：
+ // 二次确认 → POST /api/update_apply（后端下载+校验+换入）→ 轮询 /api/update 的 job 显示进度
+ // → 成功后调 /api/restart 让新代码生效。失败如实说原因，不假装成功。
     (async function () {
       var ver = (cur && cur.theirs) || '新版本';
-      // 用 confirmBox 的多行形态：`uiConfirm` 只有一行，换行会被 HTML 折成空格（实测踩过）
+ // 用 confirmBox 的多行形态：`uiConfirm` 只有一行，换行会被 HTML 折成空格（实测踩过）
       var okGo = await new Promise(function (res) {
         var m = confirmBox('确认更新', ['现在就更新到 ' + ver + '？',
           '会从更新源下载整包、校验文件树哈希后替换本体文件；',
@@ -908,13 +851,13 @@ th{color:var(--tx2);font-weight:500}
         } else if (j.state === 'error') {
           show('更新失败：' + (j.why || '未知原因') + '（可以再点一次「立即更新」重试）', 'warn');
         } else {
-          // 后端没给作业状态（例如页面是旧的、后端还没重启）⇒ 如实说，不许停在"准备中"骗人
+ // 后端没给作业状态（例如页面是旧的、后端还没重启）⇒ 如实说，不许停在"准备中"骗人
           show('更新失败：后端没给作业状态' + (j.why ? ('（' + j.why + '）') : '') + '，请重启控制台后重试', 'warn');
         }
       }
     })();
   };
-  // 常驻公告的「去反馈」：直接点导航那一项（复用既有的切面板逻辑，别自己另写一套）
+ // 常驻公告的「去反馈」：直接点导航那一项（复用既有的切面板逻辑，别自己另写一套）
   var _ng = document.getElementById('noticeGo');
   if (_ng) _ng.onclick = function () {
     var a = document.querySelector('#nav a[href="#sec-feedback"]');
@@ -2481,11 +2424,6 @@ function toast(msg){const t=$('toast');t.textContent=msg;t.style.display='block'
 function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 
 const URL_TOKEN = new URLSearchParams(location.search).get('token') || '';
-/* 2026-09-15 删（用户报「屏幕上一直在闪弹窗」的真凶）：
-   旧写法用 `window.open('', 'Persona Morph-console')` 去抢"同名窗口"来互斥，
-   但在 WebView2 里**窗口名不存在时它会真的开一个新窗口**（随后又被 close）⇒ 每次加载页面闪一下。
-   而"唯一控制台"本来就由启动器负责（检测到已在运行就不再开第二个），网页这层既多余又有害
-   ⇒ 只保留 window.name 标记，不再 open。 */
 try{ window.name = 'Persona Morph-console'; }catch(e){}
 /* 内嵌原版 DeepSeek 蓝鲸 Logo（base64，服务挂了也能显示；渲染与粒子效果都在用） */
 const LOGO_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADoAAAA2CAYAAACWeYpTAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAATOSURBVGhD7ZhPUxpnHMe/xKXCgCPP2EedNIdCb8GT+wbc4itoFfoGTOw0uXXS9hAzxhwar3oweuilFwjTnjsD4gso9oI59EB6KDPClu466gRk0R5g191nd4FdcGoIn5mdWX6/h2W/z+/P8zx4ms3LK3wA3GENw8pI6LDhUUY1OlyMhA4bI6HDxkjobaBWv0StfsmaXfG/rKMVSUEuf9a+b0LgA5iL+Nhh2HpdReVfBRsPZ1iXY25EaEVSUCjWDLZpwuGoWEMuf46K1NDs0bDfVsgX3/8FAHj+YNZyIpwwMKGFYg1HxRqSGZl1dWTnu3uYJhxrBnRCp4kXAh9AYjHEDtGoSArWdsvY/vYuuDEP6x5MjT59Vcba7rFjkWhPkBUVSdHdN5DMyFh9WWLsrcxp+f42ZApLXxGtSAq2UlUcvX3HunqmU7Seviqbni3wExD4ANZ2jw12lV9+/JQ1Af1EdBAioYuWVTbMfTbOmnBUrNmKFPgJ1qThWuggROpJZmRsva4abAIfNHxGe2LsEPgAa9K4c3UFOL32fz8bqEiVXP4UD1+WtN+hIQ6Plj5mh1mSiIUQDftM76periKazJ6wpoEhSg2sbpa0zwIf7CiWEi/WV2YRt6hxPZ6G4rwZfflDq+3fJJR4sbEyA9peelY3SxB1aZuIhXA/4ut5fXUs9I8/3+HFT2VA92MAIEoKCm/rOMifMt9wDyVefD4fACUcttP/aPZo2I/nD6w3GXY4FvrrwQl+/k0CJV7sPPmEdUNsr3O5/Bn2D88NUbAjEQuBEg65/HlPtb/AT+Dx0hRr7oirGkW7llRReijhQAmH+GIIGyszWOjQ8vVQwuHx8hQSsc61BgBzYfOy0w3HQqWz69NE2UKoHko4fBWb7PryZbmJ7XRVm6Bu43utSz2OhZLg9Vfe2Gzf9Kgvv/PkHijxsm6gvQnQZ4jABxEN+9lhGmqDcoJjoaGJMe2+UKwbfJ2ghMPGinUDUetYzRBKONvFv9dSYHEsNHz3I+2+IpuPY52ghMP6yixr1thOV5HKyCi0j3NWCPPWE9ANx0Ing9cRFaUGcofWL2THXMRnW4Oi1EAyK+PZ3rFl942G/a7qE26EkokxQ/0cOYioSrcatCO+OMmaesaxUDCbZ1FqYCtt3Ix3Q11KnNBPNOFW6FzEZ+igB/lTpCyOWZ2gpPcNOwDHE8PiSiglHBIxYxrtH57bNqatdBWrmyWTX+CDtvWqR9059cOdKwBurgU+aGj1otTAdrqKZEY2jVX9z/Zaf7ewz+lUr9GwH8uLIdMznV6uIqqSiE0aUliUGkhlZVMa66Ofysr4erOkbQ4o4fBoecpWbDQybsoEN3guHG7qWURJwdpe2bR5p8QLYT6A+xEf3hRrSGWN4lW/eo4UJQXJ7Int6YcSL+KxSct/HXqhb6Fov2Quf2YS0wuUeBGN+BBtb9RT2RPTpKlEw36sOzyeqQxEqEoqI7sSq0KJF98sTWGGcFq66lPcbTQBwHPRaA5MKACIsoJc/tyx4HgshDjTyQfJwIWqiLKCQrHePpkoqEhNiHIrJWmo1cCikXFME+5GBapcC/W0+7Ad77nfc6HcTERvGzeWureNvjYM7xMjocPGSOiw8cEI9dRHy8twMRI6bPwHTfhdUJub1u0AAAAASUVORK5CYII=';
@@ -2510,7 +2448,7 @@ async function getJSON(url, opts){
   opts = opts || {};
   opts.headers = opts.headers || {};
   if(URL_TOKEN) opts.headers['Authorization'] = 'Bearer ' + URL_TOKEN;
-  // 超时保护：服务端卡死/旧进程无路由时 30s 内必须返回（避免"点了没反应"）
+ // 超时保护：服务端卡死/旧进程无路由时 30s 内必须返回（避免"点了没反应"）
   const ctrl = new AbortController();
   const tmr = setTimeout(()=>ctrl.abort(), opts.timeoutMs || 30000);
   opts.signal = ctrl.signal;
@@ -2528,7 +2466,7 @@ function setPath(obj, path, v){ const ks=String(path).split('.'); let o=obj; for
 
 function syncToForm(){
   if(!cfg) return;
-  window._applying = true;   // 程序性填表期间不让「改完即生效」的监听器误判成用户改动
+  window._applying = true; // 程序性填表期间不让「改完即生效」的监听器误判成用户改动
   document.querySelectorAll('[data-cfg]').forEach(el=>{
     const path = el.dataset.cfg;
     const isCheck = el.type==='checkbox';
@@ -2538,7 +2476,7 @@ function syncToForm(){
       return;
     }
     let v = getPath(cfg, path);
-    if(path === 'store.tier_schedule.table'){   // 表是「对象数组」，不能按关键词那样拼成字符串
+    if(path === 'store.tier_schedule.table'){ // 表是「对象数组」，不能按关键词那样拼成字符串
       el.value = JSON.stringify(Array.isArray(v) ? v : [], null, 1);
       return;
     }
@@ -2575,7 +2513,7 @@ function syncToForm(){
   /* 省 token 卡片视觉联动 */
   const tb = $('thinkOffChk');
   if(tb){
-    if(!tb._wired){            // 监听器只接一次：syncToForm 会被反复调用，重复 addEventListener 会越积越多
+    if(!tb._wired){ // 监听器只接一次：syncToForm 会被反复调用，重复 addEventListener 会越积越多
       tb._wired = true;
       tb.addEventListener('change', ()=>{
         const on = tb.checked;
@@ -2583,7 +2521,7 @@ function syncToForm(){
         $('thinkBadge').textContent = on ? '已开启省用量' : '已关闭（模型自由思考）';
       });
     }
-    const on0 = tb.checked;    // 视觉每次都按当前值同步（填表/撤销后也要跟着变）
+    const on0 = tb.checked; // 视觉每次都按当前值同步（填表/撤销后也要跟着变）
     $('thinkCard').classList.toggle('on', on0);
     $('thinkBadge').textContent = on0 ? '已开启省用量' : '已关闭（模型自由思考）';
   }
@@ -2625,42 +2563,42 @@ function syncFromForm(){
     if(path === 'wechat.group_name_white_list'){ setPath(cfg, path, wlList.slice()); return; }
     let v;
     if(el.type==='checkbox'){
-      if(path==='api.thinking') v = el.checked ? 'off' : 'auto';  // 勾选=off，取消=auto（跟随模型默认）
+      if(path==='api.thinking') v = el.checked ? 'off' : 'auto'; // 勾选=off，取消=auto（跟随模型默认）
       else v = el.checked;
     }
     else if(el.type==='number') v = parseFloat(el.value);
     else {
       v = el.value;
       if(path === 'store.keywords') v = v.split(/[,，]/).map(s=>s.trim()).filter(Boolean);
-      else if(path === 'store.archive_block_chats'){   // 屏蔽存档的会话：逗号/换行 → 数组
+      else if(path === 'store.archive_block_chats'){ // 屏蔽存档的会话：逗号/换行 → 数组
         v = String(v||'').split(/[,，\n]/).map(s=>s.trim()).filter(Boolean);
       }
-      else if(path === 'store.tier_cmd_admins' || path === 'holiday.greet_chats'){   // 名单类：逗号/换行 → 数组
+      else if(path === 'store.tier_cmd_admins' || path === 'holiday.greet_chats'){ // 名单类：逗号/换行 → 数组
         v = String(v||'').split(/[,，\n]/).map(s=>s.trim()).filter(Boolean);
       }
-      else if(path === 'store.tier_schedule.table'){   // 峰谷映射表：JSON 文本 → 数组
+      else if(path === 'store.tier_schedule.table'){ // 峰谷映射表：JSON 文本 → 数组
         try{ v = v.trim() ? JSON.parse(v) : []; }
         catch(e){ v = []; toast('峰谷映射表 JSON 格式有误，已忽略；示例：[{"from":"09:00","to":"12:00","tier":2}]'); }
       }
-      else if(path === 'api.fallback_models'){   // 备选模型：逗号/换行 → 数组（不切就会存成字符串）
+      else if(path === 'api.fallback_models'){ // 备选模型：逗号/换行 → 数组（不切就会存成字符串）
         v = String(v||'').split(/[,，\n]/).map(s=>s.trim()).filter(Boolean);
       }
       else if(path === 'risk.block_keywords' || path === 'risk.watch_keywords'){
-        // 风险闸门的关键词是数组：这里按中文/英文逗号切（不切就会存成字符串 ⇒ 闸门逐字符当关键词，满屏误拦）
+ // 风险闸门的关键词是数组：这里按中文/英文逗号切（不切就会存成字符串 ⇒ 闸门逐字符当关键词，满屏误拦）
         v = v.split(/[,，]/).map(s=>s.trim()).filter(Boolean);
       }
-      else if(path === 'api.model_prices'){        // JSON 文本 → dict（非法 JSON 时给空对象，前台提示）
+      else if(path === 'api.model_prices'){ // JSON 文本 → dict（非法 JSON 时给空对象，前台提示）
         try{ v = v.trim() ? JSON.parse(v) : {}; }
         catch(e){ v = {}; toast('按型号单价 JSON 格式有误，已忽略；示例：{"模型id": {"in":1.5,"out":4.5}}'); }
       }
-      else if(path === 'store.group_blocklist'){   // JSON 文本 → dict
+      else if(path === 'store.group_blocklist'){ // JSON 文本 → dict
         try{ v = v.trim() ? JSON.parse(v) : {}; }
         catch(e){ v = {}; toast('屏蔽名单 JSON 格式有误，已忽略；示例：{"群名":["昵称"]}'); }
       }
-      // 空字符串不覆盖已有值（防"保存全部设置"把用户没填的文本框冲成空）
+ // 空字符串不覆盖已有值（防"保存全部设置"把用户没填的文本框冲成空）
       else if(v !== undefined && String(v).trim() === '' && getPath(cfg,path) !== undefined
               && getPath(cfg,path) !== null && getPath(cfg,path) !== ''){
-        // 仍保留表单描述字段等非关键文本的可清空性：仅当原有值非空时跳过覆盖
+ // 仍保留表单描述字段等非关键文本的可清空性：仅当原有值非空时跳过覆盖
         return;
       }
     }
@@ -2673,7 +2611,7 @@ function syncFromForm(){
     const model = (p.models.length ? $('modelSel').value : '').trim() || $('modelCustom').value.trim();
     if(model) setPath(cfg, 'api.model', model);
     if(p.base) setPath(cfg, 'api.base_url', p.base);
-    // 按厂商存 Key（真实值才存；打码值不动）
+ // 按厂商存 Key（真实值才存；打码值不动）
     const pkv = ($('apiKeyInput') || {}).value || '';
     if(pkv && !pkv.includes('••••') && !pkv.startsWith('sk-***')){
       if(!cfg.api.provider_keys) cfg.api.provider_keys = {};
@@ -2684,11 +2622,11 @@ function syncFromForm(){
 
 /* ── 左上角小鲸鱼（Canvas 绘制 + 悬停粒子动效，参考 DSH 官网颗粒感）── */
 let wlList = [];
-let _lastGroups = [];                       // 最近一次读到的群列表（把白名单里的 wxid 显示成群名）
+let _lastGroups = []; // 最近一次读到的群列表（把白名单里的 wxid 显示成群名）
 function wlLabel(v){
   const s=String(v==null?'':v);
   const hit=(_lastGroups||[]).find(g=>String((g&&g.wxid)||'')===s);
-  return hit ? String(hit.name||s) : s;     // 认不出就原样显示（不猜）
+  return hit ? String(hit.name||s) : s; // 认不出就原样显示（不猜）
 }
 function renderChips(){
   const box=$('wlChips'); if(!box) return;
@@ -2696,13 +2634,13 @@ function renderChips(){
   if(!wlList.length){ box.innerHTML='<span class="hint">（未勾选=监听所有群）</span>'; return; }
   wlList.forEach(g=>{
     const s=document.createElement('span'); s.className='c'; s.textContent=wlLabel(g);
-    if(String(g)!==wlLabel(g)) s.title='wxid: '+String(g);      // 显示的是群名，真身份挂在 tooltip 上
+    if(String(g)!==wlLabel(g)) s.title='wxid: '+String(g); // 显示的是群名，真身份挂在 tooltip 上
     const x=document.createElement('b'); x.textContent='×'; x.title='移除';
     x.onclick=()=>{ wlList=wlList.filter(v=>v!==g); renderChips(); };
     s.appendChild(x); box.appendChild(s);
   });
 }
-/* ── 重新对齐监听水位（2026-09-17 用户拍板：不许让用户删文件/试来试去 ⇒ 做成一个按钮）── */
+/* ── 重新对齐监听水位── */
 $('wmReset').onclick = async ()=>{
   if(!await uiConfirm('重新对齐监听水位？把「已处理到哪一条」对齐到当前最新——不会重发旧消息，只是让它重新看见新消息。')) return;
   try{
@@ -2721,7 +2659,7 @@ $('customGroup').addEventListener('keydown',e=>{
 $('keyReset').onclick = ()=>{ const k=$('apiKeyInput'); k.value=''; k.focus(); };
 $('keySave').onclick = async ()=>{
   try{
-    // 只保存 Key（不覆盖其它字段），并与当前厂商关联
+ // 只保存 Key（不覆盖其它字段），并与当前厂商关联
     const k = ($('apiKeyInput')||{}).value || '';
     if(!k || k.includes('••••') || k.startsWith('sk-***')){
       toast('Key 为空或仍是打码值，未保存'); return;
@@ -2736,7 +2674,7 @@ $('keySave').onclick = async ()=>{
     await getJSON('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});
     toast('密钥 已保存（'+prov+'）');
     cfg = await getJSON('/api/config'); syncToForm();
-    // 保存后立即测试连通（可选，让用户看到能不能跑）
+ // 保存后立即测试连通（可选，让用户看到能不能跑）
     try{
       const t = await getJSON('/api/test-api',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
       toast(t.ok ? ('Key 已保存，测试连通成功（'+t.latency_ms+'ms）') : ('Key 已保存，但测试失败：'+(t.error||'')));
@@ -2748,7 +2686,7 @@ $('keySave').onclick = async ()=>{
 function renderGroupList(box, groups, pick, onPick){
   box.innerHTML='';
   box.className='group-box';
-  // 同名群检测（W-1）：名字重复时，勾选与显示都必须落到 wxid 上
+ // 同名群检测（W-1）：名字重复时，勾选与显示都必须落到 wxid 上
   const nameCount={};
   groups.forEach(g=>{ const n=String(g.name||''); nameCount[n]=(nameCount[n]||0)+1; });
   _lastGroups = groups.slice();
@@ -2761,23 +2699,23 @@ function renderGroupList(box, groups, pick, onPick){
     list.innerHTML='';
     const kw=(filter||'').trim().toLowerCase();
     let shown=0;
-    // ⛔ W-1（第四轮审计候选）：勾选**按 wxid 存**，名字只用来显示/搜索。
-    //   原来勾的是 `g.name` ⇒ 两个同名群「勾一个＝监听两个」（消息会回到别的群去）。
+ // ⛔ W-1：勾选**按 wxid 存**，名字只用来显示/搜索。
+ //   原来勾的是 `g.name` ⇒ 两个同名群「勾一个＝监听两个」（消息会回到别的群去）。
     groups.forEach(g=>{
       if(kw && !String(g.name||'').toLowerCase().includes(kw)) return;
       shown++;
       const key=String(g.wxid||'');
       const nm=String(g.name||'');
-      const dup=(nameCount[nm]||0)>1;          // 同名群 ⇒ 这行必须能分辨是哪一间
+      const dup=(nameCount[nm]||0)>1; // 同名群 ⇒ 这行必须能分辨是哪一间
       const lab=document.createElement('label'); lab.className='opt';
       const inp=document.createElement('input'); inp.type='checkbox';
-      inp.checked=pick.has(key) || (pick.has(nm) && !dup);   // 兼容老配置（里面存的是群名）
+      inp.checked=pick.has(key) || (pick.has(nm) && !dup); // 兼容老配置（里面存的是群名）
       lab.appendChild(inp);
       const b=document.createElement('b'); b.textContent=g.name; lab.appendChild(b);
       const h=document.createElement('span'); h.className='hint'; h.style.marginLeft='8px';
       h.textContent=key+(dup?' · ⚠ 有同名群（按 wxid 区分）':''); lab.appendChild(h);
       inp.onchange=()=>{
-        if(inp.checked){ pick.add(key); if(!dup) pick.delete(nm); }   // 勾上＝存 wxid，顺手清掉同一条老名字
+        if(inp.checked){ pick.add(key); if(!dup) pick.delete(nm); } // 勾上＝存 wxid，顺手清掉同一条老名字
         else { pick.delete(key); pick.delete(nm); }
         onPick(pick);
       };
@@ -2793,8 +2731,8 @@ function renderGroupList(box, groups, pick, onPick){
   draw('');
   return {search, list, draw};
 }
-// ⛔ 2026-09-21 加（第九轮 V-R9-11）：**刷新群列表** —— 群/昵称只在"接入那一跳"读一次，
-//   用户新加群 / 改群名 / 换了微信号之后，原来只能重启整个程序才认（界面上只会写"读到 0 个群聊"）。
+ // ⛔ **刷新群列表** —— 群/昵称只在"接入那一跳"读一次，
+ //   用户新加群 / 改群名 / 换了微信号之后，原来只能重启整个程序才认（界面上只会写"读到 0 个群聊"）。
 $('refreshGroups').onclick = async ()=>{
   try{
     const r = await getJSON('/api/wechat-groups?refresh=1');
@@ -2806,15 +2744,15 @@ $('refreshGroups').onclick = async ()=>{
 $('pickGroups').onclick = async ()=>{
   try{
     const r = await getJSON('/api/wechat-groups');
-    // 2026-09-16（用户报「选了群、点保存之后显示读取会话失败」）：微信没接上时后端读不到群列表，
-    // 以前这里只按 groups 长度显示 0 个、原因被吞掉 ⇒ 现在**如实把原因显示出来**，不再让用户猜。
+
+ // 以前这里只按 groups 长度显示 0 个、原因被吞掉 ⇒ 现在**如实把原因显示出来**，不再让用户猜。
     if(r && r.ok === false){ toast(r.error || '读不到群列表（微信可能还没接上）'); return; }
     const groups = r.groups||[];
     if(!groups.length){
-      // ⛔ 2026-09-20 修（网友 v0920-1227「微信已连接却找不到群聊」）：原来这里一律说
-      //   「请先在运行状态确认微信已连接」—— 可微信**明明连上了**（后端读库失败被吞成 0 个群，
-      //   见 replica_adapter.load_groups 那条注释）⇒ 把用户引向完全错误的方向。现在改成
-      //   中性、可自查、可反馈的三选一，不再断言"微信没连"。
+ // ⛔ （网友 v0920-1227「微信已连接却找不到群聊」）：原来这里一律说
+ //   「请先在运行状态确认微信已连接」—— 可微信**明明连上了**（后端读库失败被吞成 0 个群，
+ //   见 replica_adapter.load_groups 那条注释）⇒ 把用户引向完全错误的方向。现在改成
+ //   中性、可自查、可反馈的三选一，不再断言"微信没连"。
       toast('这台机器上读到 0 个群聊。请依次确认：①微信登录的是你要用的那个号 ②那个号里确实有群 ③「运行状态」那行写的是「已连接」。都正常的话点「反馈」把这条发我。');
       return;
     }
@@ -2826,10 +2764,10 @@ $('pickGroups').onclick = async ()=>{
     renderGroupList(box, groups, pick, ()=>{});
     $('gpOk').onclick=async ()=>{
       wlList=[...pick]; renderChips(); maskClose(m); m.remove();
-      // ⛔ 2026-09-17（网友报「我把群勾选了，然后保存设置刷新之后又没了」）：这个「确定」原来只改
-      //   页面变量 `wlList`，**一个字节都不落盘**；而 `#wlChips` 又没有 `data-cfg` ⇒ 各分区的
-      //   「保存设置」也收集不到这一项 ⇒ 勾完刷新就没了（两处都得补）。现在「确定」＝当场保存
-      //   （与首次向导那条路同一口径），成功/失败都如实说。
+ // ⛔ （网友报「我把群勾选了，然后保存设置刷新之后又没了」）：这个「确定」原来只改
+ //   页面变量 `wlList`，**一个字节都不落盘**；而 `#wlChips` 又没有 `data-cfg` ⇒ 各分区的
+ //   「保存设置」也收集不到这一项 ⇒ 勾完刷新就没了（两处都得补）。现在「确定」＝当场保存
+ //   （与首次向导那条路同一口径），成功/失败都如实说。
       try{
         if(!cfg) cfg = await getJSON('/api/config');
         setPath(cfg,'wechat.group_name_white_list', wlList.slice());
@@ -2843,7 +2781,7 @@ $('pickGroups').onclick = async ()=>{
 
 /* ── 主题：whale（默认鲸落）/ light / dark / system ── */
 function applyTheme(t){
-  // 默认 whale：出厂视觉；显式选 system 才跟随系统
+ // 默认 whale：出厂视觉；显式选 system 才跟随系统
   const theme = (['light','dark','whale','system'].includes(t) ? t : 'whale');
   document.documentElement.setAttribute('data-theme', theme==='system' ? '' : theme);
   document.body.classList.toggle('whale-anim', theme==='whale');
@@ -2856,7 +2794,7 @@ function bindThemeSelect(){
 }
 function syncThemeFromCfg(){
   bindThemeSelect();
-  // URL ?theme=light|dark|whale 可临时覆盖（用于预览/固定主题，URL 不带时用配置）
+ // URL ?theme=light|dark|whale 可临时覆盖（用于预览/固定主题，URL 不带时用配置）
   const qTheme = new URLSearchParams(location.search).get('theme');
   try{ applyTheme(qTheme || getPath(cfg,'ui.theme')); }catch(e){}
 }
@@ -2874,19 +2812,19 @@ const WHALE_CURSOR = (function(){
   const CUSTOM_URL = CURSOR_CUSTOM_URL;
   const CUSTOM_NOD = CURSOR_CUSTOM_NOD_URL;
   let url = DEFAULT_URL, nodUrl = DEFAULT_NOD, enabled = false, nodTimer = null;
-  // ⛔ 2026-09-16 修（用户：「光标依旧点击就直接变回普通的」）：
-  //   原来 `apply()` / `applyNod()` 每次都拼 `?v=Date.now()` ⇒ **每一次点击都是一个全新的图片 URL**
-  //   ⇒ 浏览器必须重新下载它才认这个光标，而**下载完成之前 CSS cursor 会回退到 fallback（auto）**
-  //     ⇒ 用户看到的就是"一点击就变成系统默认白色箭头"，180ms 后换回默认图时又要再白一次 ✗。
-  //   ⇒ 版本号只在"图真的换了"（上传自定义 / 重置）时才变一次，平时用稳定 URL ⇒ 命中缓存、立刻生效。
+ // ⛔
+ //   原来 `apply()` / `applyNod()` 每次都拼 `?v=Date.now()` ⇒ **每一次点击都是一个全新的图片 URL**
+ //   ⇒ 浏览器必须重新下载它才认这个光标，而**下载完成之前 CSS cursor 会回退到 fallback（auto）**
+ //     ⇒ 用户看到的就是"一点击就变成系统默认白色箭头"，180ms 后换回默认图时又要再白一次 ✗。
+ //   ⇒ 版本号只在"图真的换了"（上传自定义 / 重置）时才变一次，平时用稳定 URL ⇒ 命中缓存、立刻生效。
   let ver = '';
   function setStyle(u){
     let st = document.getElementById('whaleCursorStyle');
     if(!st){ st = document.createElement('style'); st.id = 'whaleCursorStyle'; document.head.appendChild(st); }
-    // 注意：cursor:url() 需同时覆盖 html 与所有元素；图片加载失败用 auto（系统默认）兜底
+ // 注意：cursor:url() 需同时覆盖 html 与所有元素；图片加载失败用 auto（系统默认）兜底
     st.textContent = 'html.whale-cursor,html.whale-cursor *{cursor:url("'+u+'") 8 8, auto!important}';
   }
-  // 挂件 iframe（widget.js 动态创建）CSS 无法穿透：向同源 iframe 文档注入光标样式（每 2 秒扫描，已注入跳过）
+ // 挂件 iframe（widget.js 动态创建）CSS 无法穿透：向同源 iframe 文档注入光标样式（每 2 秒扫描，已注入跳过）
   function injectFrames(){
     if(!enabled) return;
     try{
@@ -2903,7 +2841,7 @@ const WHALE_CURSOR = (function(){
       });
     }catch(e){}
   }
-  // 预加载两张光标图：保证 mousedown 那一刻浏览器**已经有缓存**，否则会先闪一下系统箭头（同上面那个 bug）
+ // 预加载两张光标图：保证 mousedown 那一刻浏览器**已经有缓存**，否则会先闪一下系统箭头（同上面那个 bug）
   function preload(){
     try{
       const a = new Image(); a.src = url + ver;
@@ -2913,12 +2851,11 @@ const WHALE_CURSOR = (function(){
   function apply(){ setStyle(url + ver); injectFrames(); lastSpinIdx = -1; if(!spinTimer) buildFrames(); }
   function applyNod(){ setStyle(nodUrl + ver); }
   /* ── 中键特效：把**当前光标图**在 canvas 里预转成 12 帧（每帧 30°），按中键时逐帧播一遍 ──
-     2026-09-17 用户点单：「给按鼠标中键出来的滚轮键加个特效，就是那只鱼 360° 旋转」。
      · 帧走 **dataURL** 当 cursor（同源图在 canvas 里转，不新增任何素材文件）；
      · **绝不拼 `?v=Date.now()`** —— 上面 setStyle 的注释就是这条血泪（每次换 URL 浏览器要重下载，
        下载完之前 cursor 回退成系统箭头 ⇒ 每点一下闪一次白箭头），判据 console_chrome_selftest 钉着它；
      · 默认鲸鱼图与用户自定义图都适用：帧在 apply() 里按当前 url 重建（换图即重建）。 ── */
-  const SPIN_FRAMES = 24, SPIN_MS = 22;              // 24 × 22ms ≈ 530ms 转完一圈（帧多一倍 ⇒ 连续旋转更顺）
+  const SPIN_FRAMES = 24, SPIN_MS = 22; // 24 × 22ms ≈ 530ms 转完一圈（帧多一倍 ⇒ 连续旋转更顺）
   let frames = [], spinTimer = null, lastSpinIdx = -1;
   function buildFrames(){
     try{
@@ -2941,7 +2878,7 @@ const WHALE_CURSOR = (function(){
     }catch(e){ frames = []; }
   }
   function spin(){
-    if(!frames.length) return false;                 // 帧还没备好 ⇒ 退回点头，不许"按了没反应"
+    if(!frames.length) return false; // 帧还没备好 ⇒ 退回点头，不许"按了没反应"
     clearTimeout(nodTimer); clearInterval(spinTimer);
     let i = 0;
     setStyle(frames[0]);
@@ -2952,9 +2889,6 @@ const WHALE_CURSOR = (function(){
     }, SPIN_MS);
     return true;
   }
-  /* 连续旋转（滚轮模式用）：按相位取帧，**只在帧号变化时才写 style**——省掉每帧重拼 ~10KB CSS 的开销。
-     用户口径（2026-09-17）：「为什么你是加个滚动的图标，而不是**我鼠标光标代表的那个鱼直接滚**」
-     ⇒ 滚的必须是**光标上这只鱼**，所以滚轮模式里驱动的是它，不是徽标里另外画一条。 */
   function spinTo(deg){
     if(!enabled || !frames.length) return;
     const n = frames.length;
@@ -2964,7 +2898,7 @@ const WHALE_CURSOR = (function(){
     setStyle(frames[idx]);
   }
   function restore(){ lastSpinIdx = -1; setStyle(url + ver); }
-  // 点击时点头：mousedown 换成歪头帧，180ms 后换回；**按中键（滚轮键）则原地转一圈**
+ // 点击时点头：mousedown 换成歪头帧，180ms 后换回；**按中键（滚轮键）则原地转一圈**
   document.addEventListener('mousedown', (ev)=>{
     if(!enabled) return;
     if(ev && ev.button === 1){
@@ -2977,7 +2911,7 @@ const WHALE_CURSOR = (function(){
   function setCustom(u){
     url = u || DEFAULT_URL;
     nodUrl = DEFAULT_NOD;
-    ver = '?v=' + Date.now();          // 唯一会换版本号的地方：图真的变了
+    ver = '?v=' + Date.now(); // 唯一会换版本号的地方：图真的变了
     if(u){
       const probe = new Image();
       probe.onload = ()=>{ nodUrl = CUSTOM_NOD; preload(); if(enabled) apply(); };
@@ -2996,23 +2930,13 @@ const WHALE_CURSOR = (function(){
     }
   }
   apply();
-  setInterval(injectFrames, 2000);   // 挂件 iframe 动态出现后自动注入光标
+  setInterval(injectFrames, 2000); // 挂件 iframe 动态出现后自动注入光标
   return { set, setCustom, url: ()=>url, imgSrc: ()=>url + ver, spin, spinTo, restore,
            frameIdx: ()=>lastSpinIdx, framesReady: ()=>frames.length > 0, enabled: ()=>enabled };
 })();
-/* ── 自研「滚轮模式」（中键）：**均匀平滑往下滚** + 那只鱼转圈（2026-09-17 用户第二次澄清后重做）──
-   用户原话：「**我要的是滚轮。滚轮顾名思义，就是我要用这个滚轮，让它以一个均匀平滑的速度往下滚动**，
-   它现在既不滚也不动」⇒ 鱼转圈是**加在滚轮上的特效**，不是替代滚轮。
-   ⛔ 上一版直接 `preventDefault` 把浏览器原生自动滚动整个吃掉 ⇒ 转是转了、**滚不动**（用户实测打脸）。
-   ⇒ 现在：原生那个（系统 UI，我们也改不了它的样子）让位给**自己实现的一套**：
-      · 中键按下＝进入滚轮模式（锚点＝按下那一点），**一按下就按基础速度往下滚**（不是"等你挪鼠标才动"）；
-      · 鼠标相对锚点的上下偏移 ⇒ 调速 / 反向（死区内保持基础速度，保证"一按就滚"）；
-      · 自绘滚轮徽标跟着锚点走：**那只鱼持续 360° 旋转** + 上下方向提示（显示层自研，不用系统圆盘）；
-      · 退出：再按一次中键 / 按任意其它键 / 滚真实滚轮 / Esc / 窗口失焦。
-   边界：**只在"鲸鱼光标开着"时接管**；光标关掉时一概不拦，把原生行为原样留给用户。 ── */
 const PM_WHEEL = (function(){
-  const BASE = 3.4, GAIN = 0.26, MAXV = 44, DEAD = 10;   // 基础速度 px/帧（≈200px/s）· 增益 · 上限 · 死区
-  const SPIN_K = 2.4, SPIN_CAP = 24;                     // 鱼的转速＝滚动速度 × K（度/帧），封顶防高速糊成一片
+  const BASE = 3.4, GAIN = 0.26, MAXV = 44, DEAD = 10; // 基础速度 px/帧（≈200px/s）· 增益 · 上限 · 死区
+  const SPIN_K = 2.4, SPIN_CAP = 24; // 鱼的转速＝滚动速度 × K（度/帧），封顶防高速糊成一片
   let on = false, ax = 0, ay = 0, my = 0, raf = 0, el = null, target = null, phase = 0, lastSp = 0;
   function injectCss(){
     if(document.getElementById('pmWheelCss')) return;
@@ -3024,14 +2948,14 @@ const PM_WHEEL = (function(){
       'border-left:5px solid transparent;border-right:5px solid transparent;opacity:.8}' +
       '#pmWheel i.u{top:5px;border-bottom:7px solid rgba(190,220,255,.9)}' +
       '#pmWheel i.d{bottom:5px;border-top:7px solid rgba(190,220,255,.9)}' +
-      // 滚轮模式期间**暂停装饰性背景动画**：body.whale-anim 的水波/漂移是两层整屏动画，
-      // 滚动时每帧都要重绘整屏 ⇒ 用户实测「往下滚的时候有种稳定的卡卡感」。滚动这几秒让它们静止，
-      // 观感几乎无差（本来就在动），平滑度实打实。（不想要这一条就删掉这行。）
+ // 滚轮模式期间**暂停装饰性背景动画**：body.whale-anim 的水波/漂移是两层整屏动画，
+ // 滚动时每帧都要重绘整屏 ⇒ 用户实测「往下滚的时候有种稳定的卡卡感」。滚动这几秒让它们静止，
+ // 观感几乎无差（本来就在动），平滑度实打实。（不想要这一条就删掉这行。）
       'html.pm-wheel-on body.whale-anim::before,html.pm-wheel-on body.whale-anim::after,' +
       'html.pm-wheel-on body.custom-bg::before{animation-play-state:paused!important}';
     document.head.appendChild(st);
   }
-  // 滚动目标：从落点往上找第一个"真的能滚"的祖先；找不到就当整页（文档）滚
+ // 滚动目标：从落点往上找第一个"真的能滚"的祖先；找不到就当整页（文档）滚
   function scrollerAt(px, py){
     try{
       let n = document.elementFromPoint(px, py);
@@ -3048,7 +2972,7 @@ const PM_WHEEL = (function(){
   function show(px, py){
     injectCss();
     el = document.createElement('div'); el.id = 'pmWheel';
-    // 徽标只标"锚点 + 上下方向"：**滚的是光标上那只鱼**，这里不再画第二条（用户 2026-09-17 点出来的）
+ // 徽标只标"锚点 + 上下方向"：**滚的是光标上那只鱼**，这里不再画第二条
     el.innerHTML = '<i class="u"></i><i class="d"></i>';
     el.style.left = px + 'px'; el.style.top = py + 'px';
     document.body.appendChild(el);
@@ -3056,20 +2980,20 @@ const PM_WHEEL = (function(){
   function hide(){ if(el){ try{ el.remove(); }catch(e){} el = null; } }
   function tick(){
     if(!on) return;
-    let v = BASE;                                   // 基础：**一进入就往下匀速滚**
+    let v = BASE; // 基础：**一进入就往下匀速滚**
     const off = my - ay;
     if(off > DEAD) v = Math.min(MAXV, BASE + (off - DEAD) * GAIN);
     else if(off < -DEAD) v = Math.max(-MAXV, -BASE + (off + DEAD) * GAIN);
-    // 鱼的转速**跟着滚动速度走**（用户 2026-09-17 追加：「能不能让这个鱼随着滚动速度的加快，它的动画速度也加快」），
-    // 而且滚的是**光标上那只鱼**（用户同日第二个追问）⇒ 驱动光标帧，不在徽标里另画一条。
-    // 用 JS 累加相位、不用 CSS animation：改 animation-duration 会让相位跳一下，速度也不好跟。
+ // 鱼的转速**跟着滚动速度走**，
+ // 而且滚的是**光标上那只鱼**（用户同日第二个追问）⇒ 驱动光标帧，不在徽标里另画一条。
+ // 用 JS 累加相位、不用 CSS animation：改 animation-duration 会让相位跳一下，速度也不好跟。
     const sp = Math.min(SPIN_CAP, Math.abs(v) * SPIN_K);
     lastSp = sp;
     phase = (phase + sp) % 360;
     WHALE_CURSOR.spinTo(phase);
     try{
-      target.scrollTop += v;            // 直接赋值（整页时 target 就是 scrollingElement）——比每帧 new 一个
-    }catch(e){}                          // scrollTo({top,behavior:'instant'}) 的 options 对象轻
+      target.scrollTop += v; // 直接赋值（整页时 target 就是 scrollingElement）——比每帧 new 一个
+    }catch(e){} // scrollTo({top,behavior:'instant'}) 的 options 对象轻
     raf = requestAnimationFrame(tick);
   }
   function stop(){
@@ -3077,7 +3001,7 @@ const PM_WHEEL = (function(){
     if(raf){ cancelAnimationFrame(raf); raf = 0; }
     hide();
     try{ document.documentElement.classList.remove('pm-wheel-on'); }catch(e){}
-    try{ WHALE_CURSOR.restore(); }catch(e){}          // 退出滚轮模式：光标回到默认帧（不然会停在某一帧上）
+    try{ WHALE_CURSOR.restore(); }catch(e){} // 退出滚轮模式：光标回到默认帧（不然会停在某一帧上）
   }
   function start(px, py){
     stop();
@@ -3088,10 +3012,10 @@ const PM_WHEEL = (function(){
   }
   document.addEventListener('mousemove', function(ev){ if(on) my = ev.clientY; }, true);
   document.addEventListener('mousedown', function(ev){
-    if(ev.button !== 1){ if(on) stop(); return; }        // 其它键＝退出
-    if(!WHALE_CURSOR.enabled()) return;                  // 光标关着 ⇒ 不接管，原生行为留给用户
-    try{ ev.preventDefault(); }catch(e){}                // 吃掉系统那个圆盘（我们自己的更听话、也更像我们的东西）
-    if(on){ stop(); return; }                            // 再按一次＝退出
+    if(ev.button !== 1){ if(on) stop(); return; } // 其它键＝退出
+    if(!WHALE_CURSOR.enabled()) return; // 光标关着 ⇒ 不接管，原生行为留给用户
+    try{ ev.preventDefault(); }catch(e){} // 吃掉系统那个圆盘（我们自己的更听话、也更像我们的东西）
+    if(on){ stop(); return; } // 再按一次＝退出
     start(ev.clientX, ev.clientY);
   }, true);
   document.addEventListener('wheel', function(){ if(on) stop(); }, {passive:true});
@@ -3100,7 +3024,7 @@ const PM_WHEEL = (function(){
   return { start, stop, active: ()=>on, top: ()=>(on && target) ? target.scrollTop : -1, hasPuck: ()=>!!el,
            spinDeg: ()=>lastSp };
 })();
-/* ── ESC 退出全屏（2026-09-16 加，用户实测「ESC退出不了全屏」）──
+/* ── ESC 退出全屏──
    宿主窗（WebView2）全屏时会收起自绘顶栏，而 WinForms 侧的 IMessageFilter（EscFilter）
    在 WebView2 是**原生子窗口**的情况下收不到按键 ⇒ 全屏时按 ESC 没反应，用户被困在全屏里。
    页面自己一定能收到 keydown ⇒ 由页面把意图 postMessage 给宿主，宿主再还原窗口。
@@ -3121,7 +3045,7 @@ function syncCursorFromCfg(){
   try{
     const on = getPath(cfg,'ui.whale_cursor') !== false;
     const custom = getPath(cfg,'ui.cursor_image');
-    // 默认先确认自定义图是否存在（custom-cursor.png 只有上传后才存在）；加 ?v= 防浏览器缓存旧 404
+ // 默认先确认自定义图是否存在（custom-cursor.png 只有上传后才存在）；加 ?v= 防浏览器缓存旧 404
     if(custom){
       const tus = CURSOR_CUSTOM_URL + '?v=' + Date.now();
       const probe = new Image();
@@ -3151,7 +3075,7 @@ function syncCursorFromCfg(){
     }
   }
   (function initPreview(){
-    preImg.onload = drawPreview;      // 换源后必重绘（重置立即恢复默认图）
+    preImg.onload = drawPreview; // 换源后必重绘（重置立即恢复默认图）
     const probe = new Image();
     probe.onload = ()=>{ preUrl = '/assets/custom-cursor.png'; preImg.src = preUrl; };
     probe.onerror = ()=>{ preUrl = '/assets/cursor.png'; preImg.src = preUrl; };
@@ -3159,7 +3083,7 @@ function syncCursorFromCfg(){
   })();
   if(cv){
     preImg.onload = drawPreview;
-    cv.addEventListener('pointerdown', ()=>{   // 点击预览也点头
+    cv.addEventListener('pointerdown', ()=>{ // 点击预览也点头
       cctx.save();
       cctx.translate(60,70); cctx.rotate(0.24); cctx.scale(0.8,0.86); cctx.translate(-60,-70);
       drawPreview(); cctx.restore();
@@ -3172,7 +3096,7 @@ function syncCursorFromCfg(){
         if(!/^image\/(png|jpeg)$/.test(f.type)){ toast('仅支持 PNG/JPEG 图片'); return; }
         const rd = new FileReader();
         rd.onload = function(){
-          preImg.src = rd.result;   // 本地预览
+          preImg.src = rd.result; // 本地预览
           const img2 = rd.result;
           $('cursorSaveBtn').disabled = false;
           $('cursorSaveBtn').dataset.preview = img2;
@@ -3185,7 +3109,7 @@ function syncCursorFromCfg(){
     if(reset){
       reset.onclick = async ()=>{
         try{
-          // 先删自定义光标残留文件（否则刷新后预览探测到旧文件仍显示——030538），再清配置
+ // 先删自定义光标残留文件（否则刷新后预览探测到旧文件仍显示——030538），再清配置
           await getJSON('/api/cursor/reset',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
           await getJSON('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},
             body:JSON.stringify({ui:{whale_cursor:true, cursor_image:''}})});
@@ -3210,7 +3134,7 @@ function syncCursorFromCfg(){
           preImg.src = '/assets/custom-cursor.png';
           save.disabled = true; delete save.dataset.preview;
           toast('自定义光标已保存并生效');
-          setTimeout(()=> location.reload(), 800);   // 强制刷新确保光标生效
+          setTimeout(()=> location.reload(), 800); // 强制刷新确保光标生效
         }catch(e){ toast('保存失败：'+e.message); }
       };
     }
@@ -3226,7 +3150,7 @@ function applyCustomBg(){
     const has = cfg && (getPath(cfg,'ui.background')||'') === 'custom';
     const vt = (cfg && getPath(cfg,'ui.bg_type')) || 'image';
     document.body.classList.toggle('custom-bg', !!has);
-    // 默认背景=海浪（assets/wallpaper/ocean1.jpg）；自定义后=ui-bg.*
+ // 默认背景=海浪（assets/wallpaper/ocean1.jpg）；自定义后=ui-bg.*
     if(has && vt === 'video'){
       document.body.classList.add('wall-video');
       document.body.classList.add('custom-video-bg');
@@ -3238,7 +3162,7 @@ function applyCustomBg(){
           const xhr = new XMLHttpRequest();
           xhr.open('HEAD', src, true);
           xhr.onreadystatechange = ()=>{ if(xhr.readyState===4 && xhr.status===200){ v.src = src; v.load(); v.play().catch(()=>{}); } };
-          xhr.send(); break;  // 由后端清旧ext保证唯一，mp4 优先
+          xhr.send(); break; // 由后端清旧ext保证唯一，mp4 优先
         }
       }
       return;
@@ -3274,11 +3198,8 @@ function applyCustomBg(){
     }catch(e){ rst.textContent = '操作失败：'+e.message; }
   };
 })();
-  syncThemeFromCfg(); syncCursorFromCfg(); applyWhale(); applyCustomBg();   // 关键：主加载后也套用文案/背景
+  syncThemeFromCfg(); syncCursorFromCfg(); applyWhale(); applyCustomBg(); // 关键：主加载后也套用文案/背景
   loadStatus(); loadLog(); loadBalance();
-  /* 🔴 2026-09-18 加：**状态周期轮询**（以前完全没有 ⇒ 外部重启/外部改状态后，页面永远停在旧状态：
-     用户报「窗口显示已停止，既不关掉也不弹出一个新的」）。4 秒一跳；`loadStatus` 自带 try/catch
-     与"重启后自己连回来"的自愈，所以这一跳永不会把页面打死。只启动一次。 */
   if(!window.__statusPoll){
     window.__statusPoll = setInterval(function(){ try{ loadStatus(); }catch(e){} }, 4000);
   }
@@ -3289,8 +3210,8 @@ async function loadBalance(){
   try{
     const b = await getJSON('/api/balance');
     if(b.ok===false){ el.textContent=b.error; return; }
-    // 注意：未配置 / 拿不到数字时**如实说"未配置"**，不要拼出「余额 ¥undefined（充值 undefined）」
-    //   （2026-09-15 用户看到顶栏那两个 undefined 报的；口径：界面文案要通俗、不做假数）
+ // 注意：未配置 / 拿不到数字时**如实说"未配置"**，不要拼出「余额 ¥undefined（充值 undefined）」
+ //
     const num = (v)=> (v===undefined || v===null || v==='' || isNaN(Number(v))) ? null : Number(v);
     const total = num(b.total_balance), top = num(b.topped_up_balance);
     if(total===null){ el.textContent = '未配置'; el.title='点这里配模型 Key（在「模型 API」区填）'; return; }
@@ -3299,15 +3220,6 @@ async function loadBalance(){
   }catch(e){ el.textContent='查询失败'; }
 }
 
-/* ── 面板状态徽章（2026-09-22 三主题重构 · 可用性）────────────────────────────
-   用户口径：「每个面板要有：一句话标题、**当前状态一眼可读**（在跑／没连上／待更新／已就绪）…
-   不许"点了没反应"」。
-   设计三条：
-   ① **单一数据源**：全部从 `/api/status` 那一份 `s` 推出来（与顶栏/侧栏同一份），
-      不另开接口、不猜——拿不到就写「读取中 / 读不到」，绝不显示成"正常"。
-   ② **一个函数管全部**：`setSt(id, level, text, tip)`，level ∈ ok/warn/err/info/idle。
-   ③ 徽章文案是**短状态词**（≤8 字），细节放 title 悬停——面板头一行扫过去就知道该不该点进去。
-   注意：这里新增的文案要同步进 `agent/whale_text.py` 的 DICT（whale_selftest 覆盖 ≥99%）。 */
 function setSt(id, level, text, tip){
   const el = document.getElementById(id);
   if(!el) return;
@@ -3436,9 +3348,9 @@ function refreshBadges(s){
 }
 async function loadStatus(){  try{
     const s = await getJSON('/api/status');
-    /* 🔴 2026-09-18 加：**服务器重启后页面自己连回来**。
+    /* 🔴 **服务器重启后页面自己连回来**。
        控制台文案一直写着"正在重启，页面稍后会自己连回来"，但以前**没有任何实现**（没有周期轮询、
-       也没有重载判断）⇒ 用户实测原话：「**每次都是这样，现在这个窗口就是显示被停止了，但是既没有
+       也没有重载判断）⇒ 用户实测
        关掉，也不弹出一个新的**」。两条自愈：
          ① `started_at` 变了 ＝ 换了个新进程 ⇒ 立刻重载页面（重新挂上、状态回到实时）；
          ② 连续 3 次取不到状态（服务正在重启/短暂不可用）⇒ 也重载一次（有次数上限，防风暴）。 */
@@ -3453,8 +3365,6 @@ async function loadStatus(){  try{
     try{ refreshBadges(s); }catch(e){}
     $('dot').className = 'dot ' + (s.wechat_connected ? 'on':'');
     $('runText').textContent = s.paused ? '已暂停' : '运行中';
-    /* 顶栏状态行（2026-09-16 待拍板三件之一）：暂停态 already 在上面那个 chip；这里补"监听几个会话"与"主人登记几项"。
-       ⚠️ 拿不到就显示 '?'——**不许猜**（猜成 0 会让人以为"没在监听"，那是误导）。 */
     try{
       const lb = $('listen-badge');
       if(lb){
@@ -3473,12 +3383,12 @@ async function loadStatus(){  try{
       }
     }catch(e){}
     try{
-      // 「微信连不上」要说清卡在哪一步（用户反馈「微信连接不上」）：侧栏放一行短原因，
-      // 悬停给全文 + 逐步诊断；每 10 秒会自动重试接入，接上后这里自己会变成"已连接"。
+ // 「微信连不上」要说清卡在哪一步：侧栏放一行短原因，
+ // 悬停给全文 + 逐步诊断；每 10 秒会自动重试接入，接上后这里自己会变成"已连接"。
       const _wa = s.wechat_attach || {};
       const _ss = $('sideStatus');
-      // ⛔ 2026-09-21 加（第九轮 V-R9-9）：**监听目标 0 个 ⇒ 群里 @ 它也不回** —— 这是"检测不到群聊"
-      // 那条反馈的出口，必须摆在侧栏上（而不是只在日志里一行 warn）。
+ // ⛔ **监听目标 0 个 ⇒ 群里 @ 它也不回** —— 这是"检测不到群聊"
+ // 那条反馈的出口，必须摆在侧栏上（而不是只在日志里一行 warn）。
       _ss.textContent = (s.wechat_connected ? '微信已连接'
                         : ('微信未连接' + (_wa.short ? (' · 原因：' + _wa.short) : '')))
                         + (_wa.targets_zero ? ' · ⚠️ 监听目标 0 个（去「微信」面板勾群）' : '')
@@ -3490,8 +3400,8 @@ async function loadStatus(){  try{
     }catch(e){}
     $('sideStatus').dataset.wechat = (s.wechat_connected?'1':'0');
     try{
-      // 逐步诊断**也铺在「微信」面板里**（2026-09-16 用户反馈：他只看到短原因"打不开消息库"，
-      // 悬停才有的全文没注意到 ⇒ 报障时带不出原因）。面板里直接列出来，截图一张就够。
+ // 逐步诊断**也铺在「微信」面板里**（他只看到短原因"打不开消息库"，
+ // 悬停才有的全文没注意到 ⇒ 报障时带不出原因）。面板里直接列出来，截图一张就够。
       const _row = $('wxAttachRow'), _box = $('wxAttachSteps'), _st = ((s.wechat_attach||{}).steps)||[];
       if(_row && _box){
         if(!s.wechat_connected && _st.length){
@@ -3519,12 +3429,12 @@ async function loadStatus(){  try{
           : ('微信版本：读不到' + (vm.adapter ? '（适配层 ' + vm.adapter + '，仍按未实测处理）' : ''));
         const v2 = $('vmGate');
         if(v2){
-          // 2026-09-18（作者：「版本能用就行…默认放行，没必要弹那个弹窗，有问题再说」）：
-          // 允许发送时就用**中性**说法与普通字色 —— 不再用"注意/临时放行"这种看着像故障的措辞。
-          // ⛔ 2026-09-21 修（第四轮审计 V-R4-10）：`allow` 缺失/非布尔时**不是**"禁止发送" ——
-          //   那是"读数读不到"（后端富化段出错时就是这个形状）。老写法 `vg.allow ? … : 红字`
-          //   会把"读不到"画成「版本未实测：按严格档暂停发送（可在配置里关掉 version_gate.strict）」，
-          //   把用户指去改一个根本没拦他的开关。⇒ 三态分开：true / false / 读不到。
+ //
+ // 允许发送时就用**中性**说法与普通字色 —— 不再用"注意/临时放行"这种看着像故障的措辞。
+ // ⛔ `allow` 缺失/非布尔时**不是**"禁止发送" ——
+ //   那是"读数读不到"（后端富化段出错时就是这个形状）。老写法 `vg.allow ? … : 红字`
+ //   会把"读不到"画成「版本未实测：按严格档暂停发送（可在配置里关掉 version_gate.strict）」，
+ //   把用户指去改一个根本没拦他的开关。⇒ 三态分开：true / false / 读不到。
           const _allow = (vg && typeof vg.allow === 'boolean') ? vg.allow : null;
           if(_allow === null){
             v2.textContent = '版本门读数读不到'
@@ -3539,7 +3449,7 @@ async function loadStatus(){  try{
             v2.style.color = 'var(--err-tx)';
           }
         }
-        // 「发送已暂停」横幅：只有真的会拦住发送时才显示（allow=false），并把"拦了几次"摆出来
+ // 「发送已暂停」横幅：只有真的会拦住发送时才显示（allow=false），并把"拦了几次"摆出来
         try{
           const vb = document.getElementById('vgBar'), vt = document.getElementById('vgText');
           if(vb && vt){
@@ -3590,9 +3500,6 @@ async function loadStatus(){  try{
                   }).join('<br>');
             }
           }
-        /* 「我自己是谁」——认不出来就如实说（2026-09-16 用户反馈「无法识别大号用户 / 无法识别我的账号」）：
-           程序只从驱动库拿自己的账号，拿不到时"这条是不是我发的"会静默失效（可能回你自己）。
-           这里把状态摆到「微信」面板上，认不出就用警示色写明后果与怎么办。 */
         try{
           const sf = s.self || {};
           let box = $('selfIdentBox');
@@ -3616,7 +3523,7 @@ async function loadStatus(){  try{
           }
         }catch(e){}
         }catch(e){}
-        /* 「我的其他账号（大号）」匹配结果 —— 让用户能核对有没有认错人（2026-09-16 用户反馈加） */
+        /* 「我的其他账号（大号）」匹配结果 —— 让用户能核对有没有认错人 */
         try{
           const ow = s.owner || {};
           const oh = $('ownerHit');
@@ -3723,7 +3630,7 @@ async function loadStatus(){  try{
           el.textContent = vr.ready
             ? ('可用：ffmpeg 已就绪 ｜ 音频识别' + (a.ok ? '可用' : ('不可用（' + (a.why || '') + '）')) + ' ｜ 默认抽 ' + ((vr.limits||{}).default_frames || 4) + ' 帧')
             : ('不可用：' + (vr.why || '缺 ffmpeg') + ' —— 群里发视频时会如实说读不了');
-          // 丙-11 C3：把「外链视频解析」与「下载器」也接到这一行（数据源 media.video，现场探测）
+ // C3：把「外链视频解析」与「下载器」也接到这一行（数据源 media.video，现场探测）
           try{
             const mv = ((s.media || {}).video || {});
             const ur = mv.video_url || {};
@@ -3874,8 +3781,8 @@ async function loadStatus(){  try{
           });
         }
         ttsSyncRows();
-        // 群友要图（生图链条）的状态：只读展示"有没有后端 / 过滤链哪几层没接"，
-        // 权威结论永远来自 /api/status 的 image_gen 段（不看本地猜测）
+ // 群友要图（生图链条）的状态：只读展示"有没有后端 / 过滤链哪几层没接"，
+ // 权威结论永远来自 /api/status 的 image_gen 段（不看本地猜测）
         const ig = md.image_gen || {};
         const g1 = $('igWhy');
         if(g1 && !md.error){
@@ -3920,7 +3827,7 @@ async function loadStatus(){  try{
         const g = $('utGlobals');
         const listBox = $('utList');
         if(g && !ut.error){
-          g.textContent = utStatLine(ut);   // 与顶部状态条同一份文本（utStatLine）
+          g.textContent = utStatLine(ut); // 与顶部状态条同一份文本（utStatLine）
         }else if(g && ut.error){ g.textContent = '读取失败：' + ut.error; g.style.color = 'var(--err-tx)'; }
         if(listBox && !ut.error){
           listBox.textContent = '';
@@ -3951,7 +3858,7 @@ async function loadStatus(){  try{
               (t.last ? (' ｜ 最近 ' + new Date(t.last * 1000).toLocaleString()) : '');
             row.appendChild(v);
             if(t.usage){
-              // 「怎么用」只在这里显示（**不进提示词**：省 token 的边界见 tools.py 的裁剪注释）
+ // 「怎么用」只在这里显示（**不进提示词**：省 token 的边界见 tools.py 的裁剪注释）
               const uh = document.createElement('div'); uh.className = 'hint';
               uh.textContent = '用法：' + t.usage;
               row.appendChild(uh);
@@ -3964,7 +3871,7 @@ async function loadStatus(){  try{
             const res = document.createElement('div'); res.className = 'hint';
             /* 状态栏每 8s 调一次 loadStatus()，会把整个清单**重画**一遍 ⇒
                手填的参数与上次的测试结果必须存在渲染之外，否则打字打到一半就被清空
-               （2026-09-22 真机点出来的缺陷）。*/
+               。*/
             const keep = UT_KEEP[t.name] = UT_KEEP[t.name] || {};
             ai.value = keep.args || '{}';
             ai.oninput = function(){ keep.args = ai.value; };
@@ -3988,7 +3895,7 @@ async function loadStatus(){  try{
               res.textContent = keep.text;
               tb.disabled = false; tb.textContent = '试一下';
               /* ⛔ 这里**不许**调 loadStatus()：那会把整个清单重画一遍，
-                 刚拿到的返回内容当场被抹掉（2026-09-22 真机点出来的缺陷）。
+                 刚拿到的返回内容当场被抹掉。
                  测试不改清单 ⇒ 本来就不需要重画。 */
             };
             row.appendChild(ai); row.appendChild(tb);
@@ -3998,7 +3905,7 @@ async function loadStatus(){  try{
             eb.onclick = function(){ utExportDlg(t.name); };
             row.appendChild(eb);
             if(t.examples && t.examples.length){
-              // 清单里写好的例子：点一下就填进参数框（不用手打 JSON）
+ // 清单里写好的例子：点一下就填进参数框（不用手打 JSON）
               const ch = document.createElement('span'); ch.className = 'hint';
               t.examples.forEach(function(ex, i){
                 const b = document.createElement('button');
@@ -4019,7 +3926,7 @@ async function loadStatus(){  try{
           if(!ps.length){ pr.textContent = '清单没有问题。'; }
           ps.forEach(function(p){
             const d = document.createElement('div');
-            // 人话在前、码在后（与 tools.py 的既有口径一致）；每条再给一句**怎么改**
+ // 人话在前、码在后（与 tools.py 的既有口径一致）；每条再给一句**怎么改**
             d.textContent = '注意：' + (p.file || '') + '：' + (p.why || '')
               + (p.code_label ? (' ［' + p.code_label + (p.code ? '·' + p.code : '') + '］') : '')
               + (p.fix ? ('  → ' + p.fix) : '');
@@ -4027,7 +3934,7 @@ async function loadStatus(){  try{
             pr.appendChild(d);
           });
         }
-        // ③b/③c（2026-09-22，对标 nonebot2/koishi）：顶部状态条 + 「本次没给模型的工具」
+ // ③b/③c：顶部状态条 + 「本次没给模型的工具」
         utRenderBar(ut);
         utRenderDropped(s.tools || {});
       }catch(e){}
@@ -4082,7 +3989,7 @@ async function loadStatus(){  try{
           }
         }
       }
-      // 微信数据目录：显示**当前实际在读的目录**（不是配置值）；配置那个用不了就把原因与回落目标写出来
+ // 微信数据目录：显示**当前实际在读的目录**（不是配置值）；配置那个用不了就把原因与回落目标写出来
       const wd = s.wechat_dir || null;
       if(wd){ renderWechatDir(wd); }
       const dh = $('depHint');
@@ -4091,7 +3998,7 @@ async function loadStatus(){  try{
         dh.style.color = s.dep_ok ? 'var(--ok-tx)' : 'var(--err-tx)';
       }
     }catch(e){}
-    if(window.__calSel && window.applyDay){ window.applyDay(window.__calDay, window.__calSel); return; }   // 选中日期：概览保持"选中日"数据，不覆盖回今日
+    if(window.__calSel && window.applyDay){ window.applyDay(window.__calDay, window.__calSel); return; } // 选中日期：概览保持"选中日"数据，不覆盖回今日
     $('st-sessions').textContent = s.stats.sessions;
     $('st-tokens').textContent = s.stats.tokens;
     $('st-sent').textContent = s.stats.sent;
@@ -4104,10 +4011,10 @@ async function loadStatus(){  try{
     $('st-pcost').textContent = fmt(u.period);
     $('st-plabel').textContent = (lbl[u.period_type]||'本周期') + '用量（' + (u.period?u.period.sent:0||0) + ' 条）';
     $('st-groups').textContent = s.groups.filter(g=>g.target).length;
-    // 成本明细（最近5条/平均/本次其他工具/累计其他工具——恒显示数值）
+ // 成本明细（最近5条/平均/本次其他工具/累计其他工具——恒显示数值）
     $('st-r5c').textContent = '¥' + (s.stats.recent5_cost||0).toFixed(4);
     (function(){
-      if(window.__calInit) return; window.__calInit=true;   // 日历只初始化一次（避免随每分钟刷新重置到当前月）
+      if(window.__calInit) return; window.__calInit=true; // 日历只初始化一次（避免随每分钟刷新重置到当前月）
       const grid=$('calGrid')||null, det=$('calDetail')||null, ymEl=$('calYM')||null;
       if(!grid||!det||!ymEl) return;
       const now=new Date(); let ym=now.getFullYear()*100+(now.getMonth()+1);
@@ -4122,7 +4029,7 @@ async function loadStatus(){  try{
         }
       }
       function applyDay(r,d){
-        window.__calSel=d; window.__calDay=r;    // 记录选中日（概览刷新时尊重）
+        window.__calSel=d; window.__calDay=r; // 记录选中日（概览刷新时尊重）
         const fmt=o=>('¥'+(o?parseFloat(o.cost||0):0).toFixed(4)+' · '+((o?parseInt(o.tokens||0):0))+' tok · '+((o?parseInt(o.sessions||0):0))+' 会话');
         $('st-sessions').textContent=r.sessions||0;
         $('st-tokens').textContent=r.tokens||0;
@@ -4135,7 +4042,7 @@ async function loadStatus(){  try{
         $('st-plabel').textContent='截止 '+d+' 用量';
       }
       window.applyDay = applyDay;
-      window.__renderCal = ()=>{ renderCal(); };   // 计费删除后重绘日历
+      window.__renderCal = ()=>{ renderCal(); }; // 计费删除后重绘日历
       function renderCal(){
         const y=Math.floor(ym/100), m=ym%100; ymEl.textContent=y+'年'+m+'月';
         const startDay=(new Date(y,m-1,1).getDay()+6)%7, days=new Date(y,m,0).getDate();
@@ -4165,7 +4072,7 @@ async function loadStatus(){  try{
       const prev=$('calPrev'), next=$('calNext'), ymBtn=$('calYM');
       if(prev) prev.onclick=()=>{ ym = ym%100===1 ? (Math.floor(ym/100)-1)*100+12 : ym-1; renderCal(); };
       if(next) next.onclick=()=>{ ym = ym%100===12 ? (Math.floor(ym/100)+1)*100+1 : ym+1; renderCal(); };
-      // 点击「年月」→ 年份选择弹层（带浮出特效）
+ // 点击「年月」→ 年份选择弹层（带浮出特效）
       if(ymBtn) ymBtn.onclick = ()=>{
         const curY = Math.floor(ym/100);
         const bx = document.createElement('div'); bx.className='box cal-year-dlg';
@@ -4178,7 +4085,7 @@ async function loadStatus(){  try{
           +'<div class="btns" style="margin-top:12px;justify-content:flex-end"><button class="ghost" id="cyCancel">关闭</button></div>';
         const mm=document.createElement('div'); mm.className='mask'; mm.style.background='rgba(8,14,26,.6)';
         mm.appendChild(bx); document.body.appendChild(mm); maskOpen(mm);
-        // 特效：弹层浮出
+ // 特效：弹层浮出
         bx.style.animation='calPop .3s cubic-bezier(.2,1.4,.4,1)';
         const st=document.createElement('style'); st.textContent='@keyframes calPop{from{opacity:0;transform:translateY(14px) scale(.96)}to{opacity:1;transform:none}}'; document.head.appendChild(st);
         const close=()=>{ maskClose(mm); mm.remove(); };
@@ -4195,10 +4102,10 @@ async function loadStatus(){  try{
     $('st-ac').textContent = '¥' + (s.stats.avg_cost||0).toFixed(4);
     $('st-extra').textContent = '¥' + (s.stats.extra_now_cost||0).toFixed(4) + (s.stats.extra_now_tokens?(' · ' + s.stats.extra_now_tokens + ' tok'):'');
     $('st-extra2').textContent = '¥' + (s.stats.extra_total_cost||0).toFixed(4) + (s.stats.extra_total_tokens?(' · ' + s.stats.extra_total_tokens + ' tok'):'');
-    window.__pausedNow = !!s.paused;      // 暂停/恢复按钮的唯一依据（不许再读按钮文字，见下面的注释）
+    window.__pausedNow = !!s.paused; // 暂停/恢复按钮的唯一依据（不许再读按钮文字，见下面的注释）
     $('pauseBtn').textContent = s.paused ? '恢复' : '暂停';
     const tb = $('group-table').querySelector('tbody'); tb.innerHTML='';
-    // W-1：白名单里现在存 wxid ⇒ 用状态里的群表把 chips 显示成群名（列表没变就不重画）
+ // W-1：白名单里现在存 wxid ⇒ 用状态里的群表把 chips 显示成群名（列表没变就不重画）
     if(Array.isArray(s.groups) && s.groups.length){
       const _sig = s.groups.map(g=>String(g.wxid||'')+'|'+String(g.name||'')).join(',');
       if(_sig !== window.__gsig){
@@ -4212,7 +4119,7 @@ async function loadStatus(){  try{
       tr.innerHTML='<td>'+esc(g.name)+'</td><td><span class="pill '+(g.target?'ok':'off')+'">'+(g.target?'监听':'忽略')+'</span></td>';
       tb.appendChild(tr);
     }
-    // 鲸语模式：动态刷新的文本（暂停/恢复等）重新套上鲸语文案
+ // 鲸语模式：动态刷新的文本（暂停/恢复等）重新套上鲸语文案
     if(typeof applyWhale==='function' && getPath(cfg,'ui.text_style')==='whale') applyWhale();
   }catch(e){
     /* 取不到状态（服务正在重启 / 短暂不可用）⇒ 记数，连续 3 次且以前成功过就重载一次（带上限）。
@@ -4246,7 +4153,7 @@ function openBillDlg(bills){
   const _now = new Date();
   const _pad = n=>String(n).padStart(2,'0');
   const _years = [];
-  // 可查年份 = 当前年往前 5 年 ~ 当前年 + 账单里出现的年份（更早/更晚也并入），降序
+ // 可查年份 = 当前年往前 5 年 ~ 当前年 + 账单里出现的年份（更早/更晚也并入），降序
   const _curY = _now.getFullYear();
   for(let y=_curY; y>=_curY-5; y--) _years.push(y);
   bills.forEach(b=>{ const y=parseInt(String(b.day||'').slice(0,4),10); if(y && _years.indexOf(y)<0) _years.push(y); });
@@ -4277,7 +4184,7 @@ function openBillDlg(bills){
       +'<button class="pri" id="bdOk">确认删除</button>'
       +'<button class="ghost" id="bdCancel">取消</button>'
     +'</div>';
-  const mm = document.createElement('div'); mm.className = 'mask'; mm.style.background = 'rgba(5,9,17,.88)';   // 更不透明
+  const mm = document.createElement('div'); mm.className = 'mask'; mm.style.background = 'rgba(5,9,17,.88)'; // 更不透明
   mm.appendChild(box); document.body.appendChild(mm); maskOpen(mm);
   box.style.animation = 'calPop .3s cubic-bezier(.2,1.4,.4,1)';
   const selDays = ()=>[...box.querySelectorAll('.billDay:checked')].map(c=>c.dataset.day);
@@ -4312,12 +4219,12 @@ function openBillDlg(bills){
     const cur=parseInt(selD.value,10)||_now.getDate();
     selD.innerHTML = Array.from({length:days},(_,i)=>'<option value="'+(i+1)+'">'+(i+1)+'日</option>').join('');
     selD.value = Math.min(cur, days);
-    if(selD._refresh) selD._refresh();   // 选项重建后刷按钮文字
+    if(selD._refresh) selD._refresh(); // 选项重建后刷按钮文字
   }
   selM.innerHTML = Array.from({length:12},(_,i)=>'<option value="'+(i+1)+'">'+(i+1)+'月</option>').join('');
   selM.value = _now.getMonth()+1;
   fillDays();
-  enhanceSelect(selY); enhanceSelect(selM); enhanceSelect(selD);   // 与功能栏同款自绘下拉
+  enhanceSelect(selY); enhanceSelect(selM); enhanceSelect(selD); // 与功能栏同款自绘下拉
   selY.addEventListener('change', fillDays);
   selM.addEventListener('change', fillDays);
   box.querySelector('#bdFind').onclick = ()=>{
@@ -4347,8 +4254,8 @@ function openBillDlg(bills){
       if(r.ok){
         close();
         toast('已删除 '+r.removed.length+' 天计费日志');
-        if(typeof loadStatus==='function') loadStatus();          // 概览自动刷新（含今日/累计/日历）
-        if(window.__renderCal) window.__renderCal();              // 日历重绘（删掉的天从日历与明细消失）
+        if(typeof loadStatus==='function') loadStatus(); // 概览自动刷新（含今日/累计/日历）
+        if(window.__renderCal) window.__renderCal(); // 日历重绘（删掉的天从日历与明细消失）
         if(window.applyDay && window.__calDay) window.applyDay({sessions:0,tokens:0,sent:0,cost:0}, window.__calDay);
       } else toast(r.error||'删除失败');
     }catch(e){ toast('删除失败：'+e.message); }
@@ -4356,9 +4263,6 @@ function openBillDlg(bills){
   sum();
 }
 
-/* 「删除选中」的点亮开关（⛔ 2026-09-17 修，用户原话：「我要勾选删除记录的时候，删除选中勾选的日志，
-   它是没有亮起来，又按不了，也删不掉」）。真因：这个按钮出生就带 `disabled`，而**全文件没有任何一行
-   设置过 `sessSelDel.disabled`** —— 勾选谁也不亮、永远按不了。修法：勾选框变化时重算一次。 */
 function syncSessSel(){
   const b=$('sessSelDel'); if(!b) return;
   const n=document.querySelectorAll('#sessList .sessSel:checked').length;
@@ -4371,8 +4275,8 @@ async function loadSessions(){
   if($('sessSelDel')) $('sessSelDel').onclick = async ()=>{
     const sel=[...document.querySelectorAll('#sessList .sessSel:checked')].map(x=>({date:x.dataset.date, ts:x.dataset.ts})).filter(x=>x.date&&x.ts);
     if(!sel.length){ return; }
-    // 2026-09-17 用户口径：「就不能改成删单条吗？用户本来就不希望全删，然后你还让他去回收站找」
-    // ⇒ 粒度＝**条**（勾哪条删哪条），删完面板上直接给「撤销」，不让他去翻 _trash。
+ //
+ // ⇒ 粒度＝**条**（勾哪条删哪条），删完面板上直接给「撤销」，不让他去翻 _trash。
     if(!await uiConfirm('删除选中的 '+sel.length+' 条运行记录？\n\n只删这 '+sel.length+' 条，同一天的其他记录不受影响；删错了点旁边的「撤销」就能还原。')) return;
     try{
       const r=await getJSON('/api/sessions/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:sel})});
@@ -4392,7 +4296,7 @@ async function loadSessions(){
     }catch(e){ toast('撤销失败：'+e.message); }
   };
   const el = $('sessList');
-  // 勾选框变化 → 重算「删除选中」的可用性（事件委托：列表每次重绘都不用重新绑）
+ // 勾选框变化 → 重算「删除选中」的可用性（事件委托：列表每次重绘都不用重新绑）
   if(el && !el.__sessSelWired){
     el.__sessSelWired = true;
     el.addEventListener('change', (ev)=>{
@@ -4402,13 +4306,13 @@ async function loadSessions(){
   try{
     const r = await getJSON('/api/sessions?limit=30');
     const list = (r && r.sessions) || [];
-    window.__sessLast = list;      // 给「删除选中」的确认框算"每天几条"用
+    window.__sessLast = list; // 给「删除选中」的确认框算"每天几条"用
     if(!list.length){
       el.innerHTML = '<div class="hint" style="padding:14px;text-align:center;color:var(--tx2)">还没有运行记录——群里 @ 机器人说句话后，这里会出现每一轮的思考过程 / token / 工具调用。</div>';
       return;
     }
     el.innerHTML='';
-    syncSessSel();          // 重绘即复位（删完/刷新后不该还亮着）
+    syncSessSel(); // 重绘即复位（删完/刷新后不该还亮着）
     const showDetail = $('sessExpand') ? $('sessExpand').checked : false;
     for(const e of list){
       const card=document.createElement('div');
@@ -4437,7 +4341,7 @@ async function loadSessions(){
       card.innerHTML=html;
       el.appendChild(card);
     }
-    $('sessBox').scrollTop = $('sessBox').scrollHeight;  // 始终滚到最新
+    $('sessBox').scrollTop = $('sessBox').scrollHeight; // 始终滚到最新
   }catch(e){ el.innerHTML='<div class="hint" style="padding:14px;text-align:center">加载失败：'+esc(String(e))+'</div>'; }
 }
 
@@ -4484,12 +4388,12 @@ async function saveAllBtn(btn){
   try{
     let raw = null;
     try{ raw = JSON.parse($('rawjson').value); }catch(e){}
-    // 优先用「界面表单」的改动（syncFromForm），避免 rawjson 旧值覆盖界面修改（如 text_style 切换丢失）。
-    // 仅当用户确实改了「原始JSON」且表单未改动时才用 rawjson——此处以界面为主。
-    const snapAll = cfg ? JSON.parse(JSON.stringify(cfg)) : null;   // 保存前的整份配置（供「撤销」写回）
+ // 优先用「界面表单」的改动（syncFromForm），避免 rawjson 旧值覆盖界面修改（如 text_style 切换丢失）。
+ // 仅当用户确实改了「原始JSON」且表单未改动时才用 rawjson——此处以界面为主。
+    const snapAll = cfg ? JSON.parse(JSON.stringify(cfg)) : null; // 保存前的整份配置（供「撤销」写回）
     syncFromForm(); wsSyncFromForm(); if(typeof syncMemGroupsToCfg==='function') syncMemGroupsToCfg();
     const rs = await getJSON('/api/config', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(cfg)});
-    // 「微信数据目录」这类**要过校验**的项被服务端拒了 ⇒ 不许说"已保存"（用户反馈的起点之一）
+ // 「微信数据目录」这类**要过校验**的项被服务端拒了 ⇒ 不许说"已保存"
     if(rs && rs.ok === false){
       if(rs.wechat_dir) renderWechatDir(rs.wechat_dir);
       throw new Error(rs.error || '有一项没通过校验');
@@ -4498,7 +4402,7 @@ async function saveAllBtn(btn){
     toast('已保存，刷新页面生效…');
     setTimeout(()=>{
       const u = new URL(location.href);
-      // 取消「地址栏乱码化」后保存 → 恢复正常路径再刷新（否则一直停在乱码地址）
+ // 取消「地址栏乱码化」后保存 → 恢复正常路径再刷新（否则一直停在乱码地址）
       if(!(cfg && getPath(cfg,'ui.obscure_url'))){
         u.pathname = '/';
         u.search = '';
@@ -4506,7 +4410,7 @@ async function saveAllBtn(btn){
         location.replace(u.toString());
         return;
       }
-      u.searchParams.set('v', Date.now());   // 带时间戳刷新=不读缓存（鲸语切换必生效）
+      u.searchParams.set('v', Date.now()); // 带时间戳刷新=不读缓存（鲸语切换必生效）
       location.replace(u.toString());
     }, 700);
   }catch(e){ toast('保存失败：'+e.message); if(btn){ btn.disabled = false; btn.textContent = cur; } }
@@ -4610,10 +4514,10 @@ async function arcLoadChats(silent){
     if(info) info.textContent = '屏蔽会话 ' + ((s.chats||[]).length) + ' 个 ｜ 已屏蔽条目 ' + (s.blocked_entries || 0) + ' 条';
   }catch(e){ if(!silent) toast('读会话列表失败：' + e.message); return false; }
 }
-// ⛔ 2026-09-17 修（用户报「每次我一打开，右下角都是读取会话失败 error，但是又能连上」）：
-//   真因＝启动竞态：控制台窗口比后端就绪早（实测开窗 06:21:26、微信 GUI 06:21:29 才绑定），
-//   页面加载时这一枪可能落空。⇒ **首次加载静默重试**（1.2s × 4），仍然失败才给一句人话，
-//   不再用刺眼的 "error" 字样；手动点「刷新」时照旧会提示（那时用户就是要一个明确结果）。
+
+ //   真因＝启动竞态：控制台窗口比后端就绪早（实测开窗 06:21:26、微信 GUI 06:21:29 才绑定），
+ //   页面加载时这一枪可能落空。⇒ **首次加载静默重试**（1.2s × 4），仍然失败才给一句人话，
+ //   不再用刺眼的 "error" 字样；手动点「刷新」时照旧会提示（那时用户就是要一个明确结果）。
 async function arcLoadChatsSoft(tries){
   const n = tries || 4;
   for(let i=0;i<n;i++){
@@ -4681,14 +4585,14 @@ async function arcLoadList(){
   if($('arcChat')) arcLoadChatsSoft();
 }
 
-/* ── 上云预留接口（2026-09-14）：只做"填网址 + 测连通"，上传默认关 ── */
+/* ── 上云预留接口：只做"填网址 + 测连通"，上传默认关 ── */
 document.querySelectorAll('[data-cloud-test]').forEach(btn => {
   btn.addEventListener('click', async () => {
     const which = btn.dataset.cloudTest;
     const el = document.querySelector('[data-cfg="cloud.' + which + '_url"]');
     const url = el ? el.value.trim() : '';
     const out = $('cloudStat');
-    // 先把界面上的值存下来（否则测的是磁盘上的旧值）
+ // 先把界面上的值存下来（否则测的是磁盘上的旧值）
     if(el){ el.dispatchEvent(new Event('change', {bubbles:true})); }
     btn.disabled = true; const old = btn.textContent; btn.textContent = '测试中…';
     if(out) out.textContent = '正在探测 ' + (url || '（未配置）') + ' …';
@@ -4731,7 +4635,7 @@ document.querySelectorAll('[data-cloud-test]').forEach(btn => {
     if(!el.value){ toast('本来就是空的'); return; }
     if(!await uiConfirm('清空「系统提示词补充」？清空后立即生效（安全规则不受影响）。')) return;
     el.value = '';
-    el.dispatchEvent(new Event('change', {bubbles:true}));   // 让「改完即生效」那条链把它落盘
+    el.dispatchEvent(new Event('change', {bubbles:true})); // 让「改完即生效」那条链把它落盘
     toast('已清空系统提示词补充（若开关是手动保存模式，请点该分区的「保存设置」）');
   });
   /* 一个委托监听器覆盖全部 data-cfg 字段（含动态生成的），比给每个元素挂 listener 稳 */
@@ -4740,7 +4644,7 @@ document.querySelectorAll('[data-cloud-test]').forEach(btn => {
     if(!el || !el.dataset || !el.dataset.cfg) return;
     if(!autoApplyOn || window._applying) return;
     const path = el.dataset.cfg;
-    if(path === 'api.api_key') return;           // Key 有自己的「保存 Key」按钮（打码回显）
+    if(path === 'api.api_key') return; // Key 有自己的「保存 Key」按钮（打码回显）
     const isText = el.tagName === 'TEXTAREA' || el.type === 'text' || el.type === 'password';
     scheduleAutoApply(path, isText ? 900 : 0);
   });
@@ -4762,7 +4666,7 @@ function enhanceSelect(sel){
     const o = sel2.options[sel2.selectedIndex];
     btn.querySelector('.txt').textContent = (o && o.textContent) || sel2.value || '—';
   }
-  sel2._refresh = refreshText;   // 程序改 value 后调用（只刷按钮文字，不触发业务 change）
+  sel2._refresh = refreshText; // 程序改 value 后调用（只刷按钮文字，不触发业务 change）
   function buildMenu(){
     menu.innerHTML='';
     Array.from(sel2.options).forEach((o,i)=>{
@@ -4771,8 +4675,8 @@ function enhanceSelect(sel){
       if(i===sel2.selectedIndex) li.classList.add('on');
       li.addEventListener('click',()=>{
         sel2.selectedIndex=i;
-        // bubbles:true —— 原生 <select> 的 change 本来就会冒泡；自绘下拉若不带冒泡，
-        // 挂在 document 上的委托监听（如「改完即生效」）就收不到这一下。
+ // bubbles:true —— 原生 <select> 的 change 本来就会冒泡；自绘下拉若不带冒泡，
+ // 挂在 document 上的委托监听（如「改完即生效」）就收不到这一下。
         sel2.dispatchEvent(new Event('change', {bubbles:true}));
         buildMenu(); refreshText(); menu.classList.add('dn');
       });
@@ -4787,8 +4691,8 @@ function enhanceSelect(sel){
     document.querySelectorAll('.card.fx-overflow,.box.fx-overflow,.bill-dlg.fx-overflow').forEach(c=>c.classList.remove('fx-overflow'));
     if(!open){
       buildMenu(); refreshText(); menu.classList.remove('dn');
-      // 关键：.dsel(z=70) 自身建立层叠上下文，菜单(220)在它内部——必须把本 wrap 提到 500，
-      // 否则后面的兄弟下拉（模型行等）会盖住菜单（"叠上"根因）
+ // 关键：.dsel(z=70) 自身建立层叠上下文，菜单(220)在它内部——必须把本 wrap 提到 500，
+ // 否则后面的兄弟下拉（模型行等）会盖住菜单（"叠上"根因）
       wrap.classList.add('open-z'); wrap.style.zIndex='500';
       let host = wrap.closest('.card, .box, .bill-dlg');
       if(host){ host.classList.add('fx-overflow'); }
@@ -4879,7 +4783,7 @@ function renderModelSel(provider){
   $('modelCustom').classList.toggle('dn', p.models.length>0);
 }
 function providerSavedKey(provider){
-  // 该厂商是否存过 Key（打码也算存过）
+ // 该厂商是否存过 Key（打码也算存过）
   try{
     if(cfg && cfg.api && cfg.api.provider_keys && cfg.api.provider_keys[provider]) return true;
   }catch(e){}
@@ -4899,19 +4803,19 @@ function applyProvider(provider, askKey){
     if(be) be.value = p.base;
   }
   renderModelSel(provider);
-  // 已存过该厂商 Key → 自动回填（打码值则不回填，防误存）
+ // 已存过该厂商 Key → 自动回填（打码值则不回填，防误存）
   const pk = document.querySelector('[data-cfg="api.api_key"]');
   try{
     const saved = cfg && cfg.api && cfg.api.provider_keys && cfg.api.provider_keys[provider];
     if(saved && pk && !String(saved).includes('••••') && !String(saved).startsWith('sk-***')) pk.value = saved;
   }catch(e){}
   if(askKey){
-    // 换厂商必弹（含 deepseek）：让用户确认该公司的 密钥（预填当前值，可覆盖/跳过）
-    // 例外：若该厂商已有真实 Key 且与输入框一致，则不打扰
+ // 换厂商必弹（含 deepseek）：让用户确认该公司的 密钥（预填当前值，可覆盖/跳过）
+ // 例外：若该厂商已有真实 Key 且与输入框一致，则不打扰
     const have = (pk && pk.value || '').trim();
     const isMasked = have.includes('••••') || have.startsWith('sk-***') || !have;
     const saved = cfg && cfg.api && cfg.api.provider_keys && cfg.api.provider_keys[provider];
-    // deepseek 默认：首次（无真实 Key 时）必须让用户知道要填 Key——非打码且已有值才跳过
+ // deepseek 默认：首次（无真实 Key 时）必须让用户知道要填 Key——非打码且已有值才跳过
     if(!isMasked && (provider!=='deepseek' || saved)) return;
     const m=document.createElement('div'); m.className='mask';
     m.innerHTML='<div class="box"><h1>'+p.label+' 密钥</h1><p>已切换到 '+p.label+'（接口地址：'+p.base+'）。请填写该公司的 密钥（'+(p.keyHint||'见官网')+' 开头）。</p><input type="password" id="pkCmd" placeholder="'+(p.keyHint||'')+'..." value="'+have.replace(/"/g,'')+'"><div class="btns" style="justify-content:center"><button class="pri" id="pkOk">保存 Key</button><button class="ghost" id="pkSame">沿用现有 Key</button><button class="ghost" id="pkNo">暂不填</button></div></div>';
@@ -4934,7 +4838,7 @@ $('providerSel').addEventListener('change', ()=>applyProvider($('providerSel').v
   if(!badge) return;
   const hero = badge.querySelector('img');
   const BADGE_W = 52, BADGE_H = 52;
-  let FLY = null;               // 飞行实例（游离的克隆鲸鱼）
+  let FLY = null; // 飞行实例（游离的克隆鲸鱼）
   const dragging = {on:false, dx:0, dy:0, vx:0, vy:0, tx:0, ty:0};
   let returnTimer = null;
 
@@ -4975,9 +4879,9 @@ $('providerSel').addEventListener('change', ()=>applyProvider($('providerSel').v
   }
 
   /* ── 拖拽：pointer 事件（鼠标+触屏） ── */
-  let wiggle = 0;   // 被抓扭动相位
+  let wiggle = 0; // 被抓扭动相位
   badge.addEventListener('pointerdown', (ev)=>{
-    if(FLY) return;                        // 正在飞行，忽略
+    if(FLY) return; // 正在飞行，忽略
     dragging.on = true;
     dragging.tx = dragging.dx = ev.clientX;
     dragging.ty = dragging.dy = ev.clientY;
@@ -4986,12 +4890,12 @@ $('providerSel').addEventListener('change', ()=>applyProvider($('providerSel').v
     wiggle = 0;
     idleJelly = false;
     hero.style.transition = 'none';
-    // 视觉连续：克隆一个游离鲸鱼跟手，本体淡出（返回动画用克隆体）
+ // 视觉连续：克隆一个游离鲸鱼跟手，本体淡出（返回动画用克隆体）
     hero.style.opacity = '0.12';
     const fly = makeFly();
     fly.style.left = ev.clientX + 'px'; fly.style.top = ev.clientY + 'px';
     hero.classList.add('whale-grabbing');
-    badge.classList.add('whale-open');     // 取消裁切
+    badge.classList.add('whale-open'); // 取消裁切
     try{ badge.setPointerCapture(ev.pointerId); }catch(e){}
     ev.preventDefault();
   });
@@ -5006,9 +4910,9 @@ $('providerSel').addEventListener('change', ()=>applyProvider($('providerSel').v
       const sx = 1 + dxc / 200, sy = 1 + dyc / 200;
       const ang = Math.atan2(dragging.vy, dragging.vx);
       const held = (performance.now() - (dragging.t0 || performance.now())) / 1000;
-      const amp = Math.max(0.08, 0.4 - held * 0.12);          // 挣扎幅度衰减（0.4→0.08）
+      const amp = Math.max(0.08, 0.4 - held * 0.12); // 挣扎幅度衰减（0.4→0.08）
       wiggle += 0.45;
-      const wig = Math.sin(wiggle) * amp;                      // 扭动（摆尾）
+      const wig = Math.sin(wiggle) * amp; // 扭动（摆尾）
       FLY.style.left = ev.clientX + 'px'; FLY.style.top = ev.clientY + 'px';
       FLY.style.transform = 'translate(-50%,-50%) scale(' + sx + ',' + sy + ')'
         + ' rotate(' + (ang * 0.22 + wig * 0.35) + 'rad) scaleX(' + (1 + wig * 0.12) + ')';
@@ -5023,7 +4927,7 @@ $('providerSel').addEventListener('change', ()=>applyProvider($('providerSel').v
     hero.style.transition = 'transform .25s cubic-bezier(.3,1.4,.6,1)';
     hero.style.transform = '';
     /* 选择返回方式：三次等概率随机；留在拖拽落点 → 从落点触发返回（距离决定时长） */
-    const mode = Math.floor(Math.random() * 3);   // 0=蠕动 1=纸飞机 2=扎入
+    const mode = Math.floor(Math.random() * 3); // 0=蠕动 1=纸飞机 2=扎入
     const from = {x: ev.clientX, y: ev.clientY};
     startReturn(mode, from);
   });
@@ -5068,7 +4972,7 @@ $('providerSel').addEventListener('change', ()=>applyProvider($('providerSel').v
     const dur  = mode === 0 ? clamp(260 * dist / 100 * km, 600, 2400) : 0;
     const flyD = mode === 1 ? clamp(170 * dist / 100 * km, 420, 1500) : 0;
     const zapD = mode === 2 ? clamp(90 * dist / 100 * km, 200, 720) : 0;
-    // 调试日志：每次返回记录（距离/方式/时长），控制台可查
+ // 调试日志：每次返回记录（距离/方式/时长），控制台可查
     try{
       const names = ['蠕动','纸飞机','扎入'];
       console.log('[whale-return] mode=' + names[mode] + ' dist=' + Math.round(dist) + 'px dur=' +
@@ -5099,7 +5003,7 @@ $('providerSel').addEventListener('change', ()=>applyProvider($('providerSel').v
   }
 
   function finishReturn(fly){
-    // 入框：从框中心回弹出现（0.14s 超弹）+ 气泡粒子
+ // 入框：从框中心回弹出现（0.14s 超弹）+ 气泡粒子
     const c = badgeCenter();
     fly.style.left = c.x + 'px'; fly.style.top = c.y + 'px';
     fly.style.transition = 'transform .14s cubic-bezier(.2,1.6,.5,1), opacity .2s';
@@ -5107,11 +5011,11 @@ $('providerSel').addEventListener('change', ()=>applyProvider($('providerSel').v
     fly.style.opacity = '1';
     requestAnimationFrame(()=>{ fly.style.transform = 'translate(-50%,-50%) scale(1.06)'; });
     spawnBubbles(c.x, c.y);
-    hero.style.opacity = '';             // 本体恢复可见
+    hero.style.opacity = ''; // 本体恢复可见
     setTimeout(()=>{ fly.style.opacity = '0'; }, 180);
     setTimeout(()=>{ removeFly(); }, 420);
     idleJelly = true;
-    // 徽章本体恢复过冲
+ // 徽章本体恢复过冲
     hero.style.transition = 'transform .18s cubic-bezier(.34,1.4,.64,1)';
     hero.style.transform = 'scaleY(1.12) scaleX(0.9)';
     setTimeout(()=>{ hero.style.transform = ''; }, 120);
@@ -5120,7 +5024,7 @@ $('providerSel').addEventListener('change', ()=>applyProvider($('providerSel').v
   /* 纸飞机：morph 白化 → 抛物线滑翔 → 入框翻回（自驱动 rAF；flyMs=滑翔时长） */
   function planePhase(fly, c, start, flyMs){
     flyMs = flyMs || 780;
-    // 初始化纸飞机
+ // 初始化纸飞机
     const p = document.createElement('div');
     p.className = 'paper-plane';
     p.innerHTML = '<svg viewBox="0 0 64 40" width="58" height="36"><path d="M2 20 L62 2 L38 24 L34 38 Z" fill="#F8FAFF" stroke="#9FC2DE" stroke-width="1.4" stroke-linejoin="round"/><path d="M2 20 L62 2 L34 28 Z" fill="#E8F0FF" opacity="0.85"/><path d="M34 38 L38 24 L34 28 Z" fill="#D8E4F8" opacity="0.9"/></svg>';
@@ -5176,10 +5080,10 @@ $('providerSel').addEventListener('change', ()=>applyProvider($('providerSel').v
       const st = zapState;
       const ET = performance.now() - st.t0;
       if(st.phase === 'dash'){
-        // 1) 冲刺（0~dashMs）：加速拉伸冲向右下，缩小透视
+ // 1) 冲刺（0~dashMs）：加速拉伸冲向右下，缩小透视
         const d = Math.min(1, ET / dashMs);
-        const e = 1 - Math.pow(1 - d, 3);               // easeOutCubic 冲刺
-        img.style.transform = 'scale(1,' + (1 - e * 0.8) + ')';  // 纵向拉长（冲刺拉伸）
+        const e = 1 - Math.pow(1 - d, 3); // easeOutCubic 冲刺
+        img.style.transform = 'scale(1,' + (1 - e * 0.8) + ')'; // 纵向拉长（冲刺拉伸）
         const x = start.x + (st.exit.x - start.x) * e;
         const y = start.y + (st.exit.y - start.y) * e;
         fly.style.left = x + 'px'; fly.style.top = y + 'px';
@@ -5189,7 +5093,7 @@ $('providerSel').addEventListener('change', ()=>applyProvider($('providerSel').v
         return;
       }
       if(st.phase === 'hole'){
-        // 2) 消失 0.5s（480ms），保持透明
+ // 2) 消失 0.5s（480ms），保持透明
         if(ET >= 480){
           st.phase = 'emit'; st.t0 = performance.now();
           img.style.display = 'block'; img.style.transform = '';
@@ -5198,7 +5102,7 @@ $('providerSel').addEventListener('change', ()=>applyProvider($('providerSel').v
         requestAnimationFrame(tick);
         return;
       }
-      // 3) 冒出（emit 0~300ms）：从框中心喷出，缩放超弹 + 回弹落稳
+ // 3) 冒出（emit 0~300ms）：从框中心喷出，缩放超弹 + 回弹落稳
       const e3 = Math.min(1, ET / 300);
       const pop = 1 - Math.pow(1 - e3, 3);
       const scale = Math.max(0.1, 0.2 + pop * 1.1 - Math.sin(e3 * Math.PI) * 0.15);
@@ -5232,7 +5136,7 @@ $('providerSel').addEventListener('change', ()=>applyProvider($('providerSel').v
 })();
 
 /* ── 首次运行向导：厂商/模型/Key → 检测微信+勾选群 → 点击测试 → 完成 ── */
-// 首次向导：页面生命周期内只弹一次（完成/跳过后不再弹，防止「完成→重载→又弹」循环）
+ // 首次向导：页面生命周期内只弹一次（完成/跳过后不再弹，防止「完成→重载→又弹」循环）
 let _onboardOnce = false;
 /* ── 应用内引导：所有"怎么办"都在弹窗里，不叫用户去读文件 ───────────────────────── */
 const GUIDES = {
@@ -5509,9 +5413,9 @@ async function guideAction(a){
 async function onboarding(){
   if(!cfg || _onboardOnce) return;
   const key = getPath(cfg,'api.api_key') || '';
-  // 已有真实 Key 或打码 Key（已配置）→ 不打扰；仅「无 Key/占位符」才显示向导
-  if(key && key !== '******' && !key.includes('在这里填') && key.includes('••••')) return;  // 打码=已配置
-  if(key && !key.includes('在这里填') && key !== '******' && !key.includes('••••')) return;  // 真实=已配置
+ // 已有真实 Key 或打码 Key（已配置）→ 不打扰；仅「无 Key/占位符」才显示向导
+  if(key && key !== '******' && !key.includes('在这里填') && key.includes('••••')) return; // 打码=已配置
+  if(key && !key.includes('在这里填') && key !== '******' && !key.includes('••••')) return; // 真实=已配置
   _onboardOnce = true;
   const m = document.createElement('div'); m.className='mask'; m.id='onboard';
   m.innerHTML='<div class="box" style="max-width:620px">'+ICON+'<h1>欢迎使用 Persona Morph · 五步上手</h1>'+
@@ -5536,7 +5440,7 @@ async function onboarding(){
   }
   $('obProvider').addEventListener('change', ()=>{ obRenderModels($('obProvider').value); });
   obRenderModels($('obProvider').value);
-  // 预填现有 Key（如果有）
+ // 预填现有 Key（如果有）
   const preKey = getPath(cfg,'api.api_key') || '';
   if(preKey && preKey !== '******' && !preKey.includes('••••') && !preKey.includes('在这里填')) $('obKey').value = preKey;
   $('obNext').onclick = async ()=>{
@@ -5553,10 +5457,10 @@ async function onboarding(){
         }
         setPath(cfg,'api.model',model);
         setPath(cfg,'api.base_url', p.base);
-        if(cfg.api.provider) cfg.api.provider = '';   // 走顶层 base_url/api_key（向导场景）
+        if(cfg.api.provider) cfg.api.provider = ''; // 走顶层 base_url/api_key（向导场景）
         await getJSON('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});
         toast('已保存 '+p.label+' 配置（'+model+'）');
-        // ── 第 2 步（2026-09-17 用户要求把三步扩成五步）：机器人昵称＝你自己微信的原名 ──
+ // ── 第 2 步：机器人昵称＝你自己微信的原名 ──
         $('obDesc').textContent='第 2 步/共 5 步：把「机器人昵称」改成**你自己微信的原名**——就是你那个号在微信里显示的名字。群里 @ 到这个名字，它才知道是在叫它。';
         $('obProvider').closest('.mid').style.display='none';
         const body=$('obBody');
@@ -5576,16 +5480,16 @@ async function onboarding(){
         }else{
           toast('昵称没填，先按默认的来——之后可在「微信」面板里改');
         }
-        // ⛔ 第十轮 **V-R10-15**：向导自己那颗「下一步」以前是**假重试**（不带 `?refresh=1`，
-        //   走的是内存缓存 ⇒ 重试不出变化），能真刷新的是「微信」面板那颗按钮、向导又没告诉他。
-        //   ⇒ 这里给两颗真按钮：重试＝带 `?refresh=1` 重走本步；跳过＝不勾（＝监听所有群）继续。
+ // ⛔ 向导自己那颗「下一步」以前是**假重试**（不带 `?refresh=1`，
+ //   走的是内存缓存 ⇒ 重试不出变化），能真刷新的是「微信」面板那颗按钮、向导又没告诉他。
+ //   ⇒ 这里给两颗真按钮：重试＝带 `?refresh=1` 重走本步；跳过＝不勾（＝监听所有群）继续。
         const r = await getJSON('/api/wechat-groups' + (window._obForceRefresh ? '?refresh=1' : ''));
         window._obForceRefresh = false;
-        // ⛔ 2026-09-21 修（第九轮 **V-R9-10** · P1）：向导这一步原来**完全不看 `r.ok`** ——
-        //   后端明确回了 `ok:false + error`（微信没接上 / contact.db 被占用）时，照样显示
-        //   「检测到 0 个群聊 / 请确认微信已登录」，把新用户推去查一个**无关方向**。
-        //   同一个接口的「选择监听的群」按钮 2026-09-20 已经判了 `r.ok`，向导这条被漏了。
-        //   ⇒ 现在：如实说原因 + 告诉他不勾也能先跑（不勾＝监听所有群），并让人点「下一步」重试。
+ // ⛔ 向导这一步原来**完全不看 `r.ok`** ——
+ //   后端明确回了 `ok:false + error`（微信没接上 / contact.db 被占用）时，照样显示
+ //   「检测到 0 个群聊 / 请确认微信已登录」，把新用户推去查一个**无关方向**。
+ // 同一个接口的「选择监听的群」按钮 已经判了 `r.ok`，向导这条被漏了。
+ //   ⇒ 现在：如实说原因 + 告诉他不勾也能先跑（不勾＝监听所有群），并让人点「下一步」重试。
         if(r && r.ok === false){
           $('obDesc').textContent = '第 3 步/共 5 步：这台机器上**暂时读不到群列表** —— ' + (r.error || '原因未明');
           $('obBody').innerHTML = '<div class="hint" style="line-height:2">读不到群列表时这一步勾不了，'
@@ -5602,7 +5506,7 @@ async function onboarding(){
         const groups = r.groups||[];
         $('obDesc').textContent = '第 3 步/共 5 步：勾选需要机器人监听的群（全不勾=监听所有群）。检测到 '+groups.length+' 个群聊。';
         const body=$('obBody'); body.innerHTML='';
-        picked = [];  // 重新开始（防重复调用残留）
+        picked = []; // 重新开始（防重复调用残留）
         const pickSet = new Set((wlList||[]));
         renderGroupList(body, groups, pickSet, (s)=>{ picked = [...s]; });
         picked = [...pickSet];
@@ -5611,7 +5515,7 @@ async function onboarding(){
       }
       if(step===3){
         if(picked.length){ wlList = picked.slice(); setPath(cfg,'wechat.group_name_white_list', wlList.slice()); await getJSON('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)}); renderChips(); }
-        // ── 第 4 步（2026-09-17 新增）：点「恢复」它才开始工作（默认是暂停的）──
+ // ── 第 4 步：点「恢复」它才开始工作（默认是暂停的）──
         $('obDesc').textContent='第 4 步/共 5 步：点下面的「恢复」——程序默认是**暂停**的，点了它才开始监听群消息。';
         $('obBody').innerHTML='<div class="btns" style="justify-content:flex-start;margin-top:6px">'+
           '<button class="pri" id="obResume">恢复（开始工作）</button>'+
@@ -5641,7 +5545,7 @@ async function onboarding(){
       }
       if(step===5){
         maskClose(m); m.remove();
-        _onboardOnce = true;  // 完成：不再弹（即便 Key 仍空也不再打扰）
+        _onboardOnce = true; // 完成：不再弹（即便 Key 仍空也不再打扰）
         loadStatus();
         try{ cfg = await getJSON('/api/config'); syncToForm(); }catch(e){}
         loadMemory(''); toast('部署完成！');
@@ -5657,8 +5561,6 @@ document.querySelectorAll('[data-save]').forEach(b=> b.addEventListener('click',
 $('saveAll').onclick = ()=>saveAllBtn();
 $('refreshLog').onclick = loadLog;
 $('balance-badge').onclick = loadBalance;
-/* 余额显示伪装（2026-09-16 用户：「一键隐藏剩余金额 / 一键修改剩余金额…界面显示上改掉，实际还是那么多」）
-   ⇒ 只写 ui.balance_display / ui.balance_fake 两个配置，真实余额与账目一点都不动。 */
 (function(){
   const btn = $('balMask'); if(!btn) return;
   let _tries = 0;
@@ -5710,35 +5612,28 @@ $('balance-badge').onclick = loadBalance;
   };
 })();
 $('rawJsonBtn').onclick = ()=>{ window.open('/api/config'+(URL_TOKEN?('?token='+URL_TOKEN):''),'_blank'); };
-/* ── 暂停 / 恢复（2026-09-16 修：用户报「这个暂停和恢复运行很不灵敏」）──
-   原实现是 `getJSON($('pauseBtn').textContent.includes('暂停') ? '/api/pause' : '/api/resume')` ——
-   靠**读按钮自己的文字**决定调哪个接口，而文字是轮询刷新的 ⇒ 文字没跟上时：
-     · 想恢复、但按钮还写着「暂停」⇒ 又调一次 pause（**越点越糟**）；
-     · 而且点下去**不禁用、不提示、不立刻变字** ⇒ 用户看到的就是「点了没反应」。
-   现在四条：①唯一依据是 `window.__pausedNow`（由 loadStatus 同步）；②点下去立刻禁用 + 改成「暂停中…/恢复中…」；
-   ③成功后**就地翻转**（不等轮询）并给 toast；④失败恢复原状并如实报错。 */
 $('pauseBtn').onclick = async ()=>{
   const btn = $('pauseBtn');
   if(!btn || btn.dataset.busy === '1') return;
   btn.dataset.busy = '1';
   const oldText = btn.textContent;
-  // ⚠️ 方向说明（2026-09-16 我自己踩过的坑）：`wantPaused` ＝ **用户这一下想要的结果状态**，
-  //    不是"当前状态"。我第一版把它当"想让它在跑"用，结果两个分支整个调反 ——
-  //    点「暂停」反而发 /api/resume、toast 还说"已恢复"。判据必须钉住这个方向。
-  const wantPaused = !window.__pausedNow;        // 当前在跑 ⇒ 这一下是想暂停
+ // ⚠️ 方向说明：`wantPaused` ＝ **用户这一下想要的结果状态**，
+ //    不是"当前状态"。我第一版把它当"想让它在跑"用，结果两个分支整个调反 ——
+ //    点「暂停」反而发 /api/resume、toast 还说"已恢复"。判据必须钉住这个方向。
+  const wantPaused = !window.__pausedNow; // 当前在跑 ⇒ 这一下是想暂停
   btn.disabled = true;
   btn.textContent = wantPaused ? '暂停中…' : '恢复中…';
   try{
     await getJSON(wantPaused ? '/api/pause' : '/api/resume', {method:'POST'});
-    // ⛔ 2026-09-21 加（第十轮 **V-R10-24** 的收尾）：**"恢复"要真能救回来** ——
-    //   坏档 fail-closed 时，`paused.flag`（控制台横幅认的那套）与 `risk.paused`（配置那套）
-    //   可能只剩一套被清掉 ⇒ 用户点「恢复」看着好了、实际还在停发。所以"想恢复"这一路
-    //   再补一发**两把钥匙一起清**的 `risk.recover()`；补刀失败**不影响**主路径的提示。
+ // ⛔ **"恢复"要真能救回来** ——
+ //   坏档 fail-closed 时，`paused.flag`（控制台横幅认的那套）与 `risk.paused`（配置那套）
+ //   可能只剩一套被清掉 ⇒ 用户点「恢复」看着好了、实际还在停发。所以"想恢复"这一路
+ //   再补一发**两把钥匙一起清**的 `risk.recover()`；补刀失败**不影响**主路径的提示。
     if(!wantPaused){
       try{ await postJSON('/api/risk', {action: 'recover'}); }catch(_e){ /* 补刀失败不遮主结果 */ }
     }
     window.__pausedNow = wantPaused;
-    btn.textContent = wantPaused ? '恢复' : '暂停';      // 按钮上写"下一步能做什么"
+    btn.textContent = wantPaused ? '恢复' : '暂停'; // 按钮上写"下一步能做什么"
     if($('runText')) $('runText').textContent = wantPaused ? '已暂停' : '运行中';
     toast(wantPaused ? '已暂停：它现在不会理任何消息' : '已恢复：它开始监听消息了');
     loadStatus();
@@ -5755,7 +5650,7 @@ function confirmBox(title, lines, okLabel, onOk, danger){
   const m = document.createElement('div'); m.className='mask';
   const lh = (lines||[]).map(s=>'<p style="text-align:left;margin:4px 0">'+s+'</p>').join('');
   m.innerHTML = '<div class="box">'
-    + ICON.replace('whale-badge big', 'whale-badge big')   // 果冻动画由 _iconCss 自动触发
+    + ICON.replace('whale-badge big', 'whale-badge big') // 果冻动画由 _iconCss 自动触发
     + '<h1>'+title+'</h1>'+lh
     + '<div class="btns" style="justify-content:center">'
     + '<button class="'+(danger?'danger':'pri')+'" id="cboxOk">'+okLabel+'</button>'
@@ -5767,7 +5662,7 @@ function confirmBox(title, lines, okLabel, onOk, danger){
 }
 
 /* ── 多选一弹窗（⑦ 版本不匹配四选一用）：mask + box + 果冻图标，每个选项一个按钮 ──
-   口径（用户 2026-09-14）：「弹窗按你推荐的做」+「×＝什么都不做」⇒ 最后一个按钮就是「什么都不做」，
+   口径：「弹窗按你推荐的做」+「×＝什么都不做」⇒ 最后一个按钮就是「什么都不做」，
    点遮罩也等于什么都不做；单子不会因此消失（落台账，同一对版本不再追问）。 */
 function choiceBox(title, lines, options, onPick, subtext){
   const m = document.createElement('div'); m.className='mask';
@@ -5789,7 +5684,7 @@ function choiceBox(title, lines, options, onPick, subtext){
   m.querySelectorAll('button[data-opt]').forEach(function(b){
     b.onclick = function(){ fire(b.getAttribute('data-opt')||''); };
   });
-  m.onclick = function(ev){ if(ev.target === m) fire(''); };   // 点遮罩＝什么都不做
+  m.onclick = function(ev){ if(ev.target === m) fire(''); }; // 点遮罩＝什么都不做
   return m;
 }
 
@@ -5836,27 +5731,27 @@ $('stopBtn').onclick = ()=>{
       await getJSON('/api/shutdown',{method:'POST'});
       toast('已停止：机器人 + 看门狗都结束了；想再跑双击根目录「启动机器人.vbs」，或点上方「重启」');
       $('dot').className='dot off';
-      // 2026-09-15 修（用户：「我点击那个停止按钮，为啥弹窗不自动关掉」）：
-      // 停止确认框内部本来就会自己关（confirmBox 里 maskClose + remove），这里**不再补第二个模态**。
-      // 兜底：万一还有别的遮罩挂着（例如「已经在后台跑了」那种），一并去掉，别把用户堵在弹窗里。
+ //
+ // 停止确认框内部本来就会自己关（confirmBox 里 maskClose + remove），这里**不再补第二个模态**。
+ // 兜底：万一还有别的遮罩挂着（例如「已经在后台跑了」那种），一并去掉，别把用户堵在弹窗里。
       try{ document.querySelectorAll('.mask').forEach(function(x){ x.remove(); }); }catch(_e){}
-      // ⛔ 2026-09-16 更新（用户：「我点停止机器人窗口怎么不会自己关掉」）：
-      //   **用户主动点了「停止」**，那就把控制台窗口一起关掉 —— 这不是"网页替用户关窗"，
-      //   而是用户自己的意图。宿主侧（`launcher.cs` 的 ConsoleForm）已经接上 `WindowCloseRequested`，
-      //   收到这个请求会真的关窗；在普通浏览器里打开时 `window.close()` 被忽略（无害）。
-      //   ⚠️ **只有这条路径关窗**：后端意外断线那条（`checkAlive`）仍然只挂横幅、不关窗。
-      //   （真正关窗在下面的 `finally` 里 —— 原因见那里的注释：`/api/shutdown` 一执行
-      //    后端就关了、响应可能直接断，关窗放 `try` 里会**永远执行不到**。）
+ // ⛔
+ //   **用户主动点了「停止」**，那就把控制台窗口一起关掉 —— 这不是"网页替用户关窗"，
+ //   而是用户自己的意图。宿主侧（`launcher.cs` 的 ConsoleForm）已经接上 `WindowCloseRequested`，
+ //   收到这个请求会真的关窗；在普通浏览器里打开时 `window.close()` 被忽略（无害）。
+ //   ⚠️ **只有这条路径关窗**：后端意外断线那条（`checkAlive`）仍然只挂横幅、不关窗。
+ //   （真正关窗在下面的 `finally` 里 —— 原因见那里的注释：`/api/shutdown` 一执行
+ //    后端就关了、响应可能直接断，关窗放 `try` 里会**永远执行不到**。）
     }catch(e){
       toast('停止指令未送达（机器人可能已经不在运行）——页面稍后会显示「机器人已停止」');
     }finally{
-      // ⛔ 2026-09-16 修（用户实测「点停止关不掉窗口」，根因在这一行）：
-      //   `/api/shutdown` 一执行，**后端自己就关了** ⇒ 响应很可能还没读完连接就断 ⇒
-      //   `getJSON` 抛错 ⇒ 流程走 catch ⇒ **关窗那句在 try 里、永远执行不到** ✗。
-      //   用户既然点了「确认停止」，就一定要关窗 ⇒ 挪到 `finally`：成功失败都关。
-      //   ⚠️ 二次修（用户实测「其他都行了，只有点停止关窗不行」）：光靠页面 `window.close()`
-      //   在这台机器上**没有触发宿主关窗**；而 `postMessage` 这条通道已被「ESC 退出全屏」验证可用
-      //   ⇒ 先走宿主通道（`pm-close-window`），再补一发 `window.close()`（浏览器里被忽略、无害）。
+ // ⛔ （用户实测「点停止关不掉窗口」，根因在这一行）：
+ //   `/api/shutdown` 一执行，**后端自己就关了** ⇒ 响应很可能还没读完连接就断 ⇒
+ //   `getJSON` 抛错 ⇒ 流程走 catch ⇒ **关窗那句在 try 里、永远执行不到** ✗。
+ //   用户既然点了「确认停止」，就一定要关窗 ⇒ 挪到 `finally`：成功失败都关。
+ //   ⚠️ 二次修（用户实测「其他都行了，只有点停止关窗不行」）：光靠页面 `window.close()`
+ //   在这台机器上**没有触发宿主关窗**；而 `postMessage` 这条通道已被「ESC 退出全屏」验证可用
+ //   ⇒ 先走宿主通道（`pm-close-window`），再补一发 `window.close()`（浏览器里被忽略、无害）。
       setTimeout(function(){
         try{
           if(window.chrome && window.chrome.webview && window.chrome.webview.postMessage){
@@ -5900,7 +5795,7 @@ async function runCodeCheck(deps){
   $('codeCheckTip').textContent='代码检测启动中…';
   try{
     await getJSON('/api/code-check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({deps:!!deps}),timeoutMs:15000});
-    // 轮询进度（实时逐项：概览状态条显示 百分比+当前项；结果面板逐项滚动）
+ // 轮询进度（实时逐项：概览状态条显示 百分比+当前项；结果面板逐项滚动）
     let done=false, r=null, lastItems='';
     for(let i=0;i<300 && !done;i++){
       const pr = await getJSON('/api/code-check/progress',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}',timeoutMs:10000});
@@ -5919,7 +5814,7 @@ async function runCodeCheck(deps){
             lines.push(mark+' '+c.name+'：'+c.detail);
           }
           pre.textContent = lines.join('\n');
-          pre.scrollTop = pre.scrollHeight;   // 逐项实时滚动
+          pre.scrollTop = pre.scrollHeight; // 逐项实时滚动
         }
       }
       await new Promise(res=>setTimeout(res,150));
@@ -5944,7 +5839,7 @@ async function runCodeCheck(deps){
 $('codeCheck').onclick = ()=>runCodeCheck(false);
 if($('codeCheckDeps')) $('codeCheckDeps').onclick = ()=>runCodeCheck(true);
 
-// ── 症状检验器（2026-09-18）：按钮按症状排，结果可一键复制 ──
+ // ── 症状检验器：按钮按症状排，结果可一键复制 ──
 (async()=>{
   const box=$('vfBtns'), pre=$('vfResult'), cp=$('vfCopy');
   if(!box||!pre) return;
@@ -5962,17 +5857,17 @@ if($('codeCheckDeps')) $('codeCheckDeps').onclick = ()=>runCodeCheck(true);
         const r=await getJSON('/api/verify?id='+encodeURIComponent(v.id));
         pre.textContent=(r&&r.report)||JSON.stringify(r,null,1);
         if(cp) cp.disabled=!(r&&r.report);
-        // ⛔ 2026-09-21 加（第十一轮 V-R11 · 作者：「检验器需要前端的，映射好没有」）：
-        //   把**后端的判决**映射到界面上 —— ①按钮三态（通过/部分通过/卡住）②一行判决摘要。
-        //   老写法只把 report 塞进 <pre>，用户点完十个症状，界面上全是同一个样子，
-        //   「哪一格卡住、哪一格没测到」只能自己从报告文字里读。
+ // ⛔
+ //   把**后端的判决**映射到界面上 —— ①按钮三态（通过/部分通过/卡住）②一行判决摘要。
+ //   老写法只把 report 塞进 <pre>，用户点完十个症状，界面上全是同一个样子，
+ //   「哪一格卡住、哪一格没测到」只能自己从报告文字里读。
         const st = (r && r.ok === false) ? 'fail'
                  : ((r && r.partial) ? 'partial'
                  : ((r && r.ok === true) ? 'ok' : 'unknown'));
         b.dataset.vstate = st;
         if($('vfState')){
-          // ⚠️ 这里**不许用 emoji**（显示层自研口径 · `console_copy_selftest` A 段会红）——
-          //    所以四档判决用文字说，不用勾/叉/圆那些符号（报告正文里的符号是服务端生成的，不在此限）。
+ // ⚠️ 这里**不许用 emoji**（显示层自研口径 · `console_copy_selftest` A 段会红）——
+ //    所以四档判决用文字说，不用勾/叉/圆那些符号（报告正文里的符号是服务端生成的，不在此限）。
           const txt = (st==='fail') ? '这一次：卡住（证据说就是它 —— 照报告里的「下一步」做）'
                     : (st==='partial') ? '这一次：部分通过（有项目没测到：不算通过也不算失败）'
                     : (st==='ok') ? '这一次：通过（这一页的判据这次都验到了）'
@@ -6092,7 +5987,7 @@ function syncMemGroupsToCfg(){
 }
 (function(){
   const saveBtn = document.querySelector('[data-save]');
-  // 所有数据保存前并入 shared_groups（追加在 saveAllBtn 内的 wsSyncFromForm 后）
+ // 所有数据保存前并入 shared_groups（追加在 saveAllBtn 内的 wsSyncFromForm 后）
   const _orig = window.syncMemGroupsToCfg;
   window.addEventListener('load', ()=>loadMemGroups());
 })();
@@ -6213,9 +6108,9 @@ function syncMemGroupsToCfg(){
       b.textContent = c;
       b.onclick = ()=>{ curCat = (curCat===c?'':c); renderChips(); render(); };
       wrap.insertBefore(b, document.getElementById('pCatAdd'));
-      // 用户分区：右键/小 × 删除
+ // 用户分区：右键/小 × 删除
       const isBuilt = builtCats.includes(c);
-      const isCustomDefault = c.indexOf('自定义') >= 0;   // 注意 与默认分区名同源：'自定义' 已按「显示层无 emoji」口径改成 '自定义'（2026-09-15）
+      const isCustomDefault = c.indexOf('自定义') >= 0; // 注意 与默认分区名同源：'自定义' 已按「显示层无 emoji」口径改成 '自定义'
       if(!isBuilt && !isCustomDefault){
         const x = document.createElement('span');
         x.textContent = ' ×';
@@ -6260,7 +6155,7 @@ function syncMemGroupsToCfg(){
     const all = list.concat(customs);
     let show = all.filter(p => !curCat || (p.cat||'网络热门') === curCat);
     show = show.filter(p => !q || p.name.includes(q) || (p.key||'').includes(q) || (p.text||'').includes(q));
-    // ① 星标置顶（始终最上） ② 按评估分排序（当前视图）
+ // ① 星标置顶（始终最上） ② 按评估分排序（当前视图）
     if(sortByScore){
       show = show.slice().sort((a,b)=> ((scores[b.key]||{}).model||0) - ((scores[a.key]||{}).model||0));
     }
@@ -6318,7 +6213,7 @@ function syncMemGroupsToCfg(){
         ev.stopPropagation();
         try{
           if(!cfg.persona) cfg.persona = {};
-          // 备份上一个应用的人设（一键恢复用）
+ // 备份上一个应用的人设（一键恢复用）
           const prev = {name: getPath(cfg,'persona.bot_name')||'', text: getPath(cfg,'persona.role_text')||''};
           cfg.persona.last_used = prev;
           cfg.persona.bot_name = p.name;
@@ -6358,7 +6253,7 @@ function syncMemGroupsToCfg(){
     const hint = document.getElementById('pSortHint');
     if(s){
       s.onclick = ()=>{ 
-        sortByScore = !sortByScore;         // 点一下正序，再点一下倒序
+        sortByScore = !sortByScore; // 点一下正序，再点一下倒序
         s.textContent = sortByScore ? '↑ 按评估分数排序' : '↓ 按评估分数排序';
         if(hint) hint.textContent = sortByScore ? '（切换为：低→高；再点恢复高→低）' : '（点一下正序，再点一下倒序）';
         render(); 
@@ -6367,7 +6262,7 @@ function syncMemGroupsToCfg(){
       if(sortByScore) s.textContent = '↑ 按评估分数排序';
     }
     if(so) so.onclick = ()=>{ sortByScore = false; if(s) s.textContent = '↓ 按评估分数排序'; if(hint) hint.textContent = '（点一下正序，再点一下倒序）'; render(); };
-    // 恢复上个人设：从 cfg.persona.last_used 读回（应用人设时自动备份）
+ // 恢复上个人设：从 cfg.persona.last_used 读回（应用人设时自动备份）
     const rp = document.getElementById('pRestorePrev');
     if(rp){
       rp.onclick = async ()=>{
@@ -6376,7 +6271,7 @@ function syncMemGroupsToCfg(){
         if(!await uiConfirm('恢复上个人设「'+ (prev.name||'未命名') +'」？当前人设将被替换。')) return;
         try{
           if(!cfg.persona) cfg.persona = {};
-          // 当前人设备份（再点恢复一次可回到它？不，保持单向：恢复后 last_used=当前，避免循环）
+ // 当前人设备份（再点恢复一次可回到它？不，保持单向：恢复后 last_used=当前，避免循环）
           cfg.persona.bot_name = prev.name || '';
           cfg.persona.role_text = prev.text || '';
           const r = await getJSON('/api/config', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(cfg)});
@@ -6392,7 +6287,7 @@ function syncMemGroupsToCfg(){
   if(addBtn) addBtn.onclick = ()=>{
     const box2 = document.createElement('div'); box2.className = 'box'; box2.style.textAlign = 'left';
     const cats = allCats();
-    // 下拉：已有分区（内置 + 用户自定义）最后一项=自定义
+ // 下拉：已有分区（内置 + 用户自定义）最后一项=自定义
     const catOpts = builtCats.concat(Object.keys(userCats));
     const allOpts = [];
     catOpts.forEach((c, i)=>{ allOpts.push('<option value="'+esc(c)+'">'+esc(c)+'</option>'); });
@@ -6424,15 +6319,15 @@ function syncMemGroupsToCfg(){
       const isP = typeSel.value === 'persona';
       box2.querySelector('#pAddNameRow').style.display = isP?'':'none';
       box2.querySelector('#pAddTextRow').style.display = isP?'':'none';
-      // 添加角色到分区时：分区名必须选已有/自定义；新建分区时固定「自定义」输入
+ // 添加角色到分区时：分区名必须选已有/自定义；新建分区时固定「自定义」输入
       if(isP){
         catSel.disabled = false;
-        // 恢复下拉（而不是强制自定义）
+ // 恢复下拉（而不是强制自定义）
       }else{
         catSel.value = '__custom__'; catInput.classList.remove('dn'); catSel.disabled = true;
       }
     };
-    // 选已有分区 → 自动带出分区描述；描述输入仅在新建分区时可用
+ // 选已有分区 → 自动带出分区描述；描述输入仅在新建分区时可用
     catSel.onchange = ()=>{
       const v = catSel.value;
       if(v === '__custom__'){ catInput.classList.remove('dn'); descInput.disabled = false; return; }
@@ -6441,7 +6336,7 @@ function syncMemGroupsToCfg(){
       descInput.value = d;
       descInput.disabled = true;
     };
-    // 初始：新建分区模式 → 自定义输入
+ // 初始：新建分区模式 → 自定义输入
     catSel.value = '__custom__'; catInput.classList.remove('dn'); catSel.disabled = true;
     box2.querySelector('#pAddCancel').onclick = ()=>{ maskClose(mm); mm.remove(); };
     box2.querySelector('#pAddOk').onclick = async ()=>{
@@ -6458,7 +6353,7 @@ function syncMemGroupsToCfg(){
           const name = (box2.querySelector('#pAddName').value||'').trim();
           const text = (box2.querySelector('#pAddText').value||'').trim();
           if(!name || !text){ toast('角色名和文本都要填'); return; }
-          // 自定义新分区名时先落盘（加入「自定义分区」列表）
+ // 自定义新分区名时先落盘（加入「自定义分区」列表）
           if(catSel.value === '__custom__' && cat && !catOpts.includes(cat)){
             const desc = (box2.querySelector('#pAddDesc').value||'').trim();
             await getJSON('/api/persona/cats/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:cat, desc})});
@@ -6492,7 +6387,7 @@ function syncMemGroupsToCfg(){
         body:JSON.stringify({text:rt.slice(0,2400)})});
       if(res && res.error){ $('roleHintRst').textContent = '评估失败：'+res.error; return; }
       const part = res.participation || 'medium', st = (res.sticker ?? 0);
-      // 关键：enhanceSelects 自绘下拉只监听原生 change，程序赋值需手动触发刷新按钮文字（否则显示旧值）
+ // 关键：enhanceSelects 自绘下拉只监听原生 change，程序赋值需手动触发刷新按钮文字（否则显示旧值）
       const pSel = $('roleHintPart'), sSel = $('roleHintSticker');
       pSel.value = part;   sSel.value = String(st);
       try{ pSel.dispatchEvent(new Event('change', {bubbles:true})); }catch(e){}
@@ -6583,7 +6478,7 @@ if($('uiRecalibrate')) $('uiRecalibrate').onclick = async ()=>{
         const v = wf[k];
         if(v!==undefined && v!==null && v!=='') W[k]= (typeof DEFAULTS[k]==='boolean') ? !!v : Number(v);
       }
-      // 防手改 config 出现非法值（控制台已限界；此处兜底防 NaN/负环）
+ // 防手改 config 出现非法值（控制台已限界；此处兜底防 NaN/负环）
       W.scale = Math.max(0, Math.min(40, W.scale));
       W.speed = Math.max(0.2, Math.min(20, W.speed));
       W.mouse_gain = Math.max(0, Math.min(0.1, W.mouse_gain));
@@ -6599,8 +6494,8 @@ if($('uiRecalibrate')) $('uiRecalibrate').onclick = async ()=>{
   document.addEventListener('DOMContentLoaded', readParams);
 
   /* ② 波光流动：相位累计 + 鼠标速度联动（更快的基础波速，随拖动大幅提速） */
-  const BASE = 17;                        // 兜底（实际用 W.scale）
-  let _ph = 0;                            // 累计相位（rad）
+  const BASE = 17; // 兜底（实际用 W.scale）
+  let _ph = 0; // 累计相位（rad）
   let _mouseSpeed = 0;
   let _lastEv = null, _lastEvT = 0;
   document.addEventListener('mousemove', (ev)=>{
@@ -6623,9 +6518,9 @@ if($('uiRecalibrate')) $('uiRecalibrate').onclick = async ()=>{
     const stops = [];
     for(let i=0;i<=N;i++){
       const r = i / N;
-      // 环带：高斯（低频噪波经位移后呈现为柔和的波前）
+ // 环带：高斯（低频噪波经位移后呈现为柔和的波前）
       const g = Math.exp(-Math.pow((r - phase) / 0.028, 2));
-      // 极强衰减：环带 + 与半径平方衰减；只有中心附近的环强，走远就淡出
+ // 极强衰减：环带 + 与半径平方衰减；只有中心附近的环强，走远就淡出
       let a = g * 1.0 * Math.pow(1 - phase, 4.0) + Math.pow(1 - r, 8.0) * 0.35;
       stops.push(Math.min(1, a).toFixed(3) + ' ' + (i*100/N).toFixed(1) + '%');
     }
@@ -6670,8 +6565,8 @@ if($('uiRecalibrate')) $('uiRecalibrate').onclick = async ()=>{
     let br = '0';
     try{ br = getComputedStyle(el).borderRadius || '0'; }catch(e){}
     lens.style.borderRadius = br;
-    // 顶栏置顶（40 < 顶栏50）：功能栏滚到顶栏下方的波纹不穿透顶栏；
-    // 但宿主本身是顶栏/弹层/遮罩时给 9999，保证宿主自身区域也能被扭曲。 */
+ // 顶栏置顶（40 < 顶栏50）：功能栏滚到顶栏下方的波纹不穿透顶栏；
+ // 但宿主本身是顶栏/弹层/遮罩时给 9999，保证宿主自身区域也能被扭曲。 */
     const isTop = el.classList.contains('topbar');
     lens.style.zIndex = (isTop || el.closest('.mask') || el.classList.contains('menu')) ? '9999' : '40';
     lens.style.transform = 'translate3d(' + r.left + 'px,' + r.top + 'px,0)';
@@ -6708,7 +6603,7 @@ if($('uiRecalibrate')) $('uiRecalibrate').onclick = async ()=>{
           body: JSON.stringify({ui:{wave_fx: patch}})});
         cfg = await getJSON('/api/config');
         readParams();
-        // 即时生效：透镜隐藏后重新显示即可
+ // 即时生效：透镜隐藏后重新显示即可
         lens.style.opacity = '0';
         setTimeout(()=>{ lens.style.opacity = '1'; }, 60);
         toast('水光波纹已应用');
@@ -6741,7 +6636,7 @@ if($('uiRecalibrate')) $('uiRecalibrate').onclick = async ()=>{
   function bindFloat(){
     document.querySelectorAll('.card:not(.float-a)').forEach((el, i)=>{
       el.classList.add('float-a');
-      el.style.animationDelay = (i % 7) * 0.7 + 's';   // 卡片轻柔浮沉（性能安全：仅 transform）
+      el.style.animationDelay = (i % 7) * 0.7 + 's'; // 卡片轻柔浮沉（性能安全：仅 transform）
     });
   }
   bindFloat();
@@ -6775,8 +6670,8 @@ const _EASTER_TXT = [
     e.stopPropagation();
     step += 1;
     if(step >= 3){
-      if(step === 3){ render(); return; }   // 第 3 次：文案变"一键揭秘"
-      // 第 4 次：弹出档案
+      if(step === 3){ render(); return; } // 第 3 次：文案变"一键揭秘"
+ // 第 4 次：弹出档案
       const box=document.createElement('div');
       box.className='box bill-dlg';
       box.style.cssText='width:min(560px,92vw);max-height:80vh;display:flex;flex-direction:column;text-align:left';
@@ -6807,7 +6702,7 @@ const WHALE_TXT = __WHALE_TXT__;function applyWhale(){
         n.nodeValue = n.nodeValue.replace(t, WHALE_TXT[t]);
       }
     }
-    // 顶栏徽标
+ // 顶栏徽标
     const lg = document.querySelector('.logo span');
     if(lg && lg.textContent.indexOf('鲸鲸号') < 0){
       lg.innerHTML = lg.innerHTML.replace('群相 控制台', '鲸鲸号 · 深度摸鱼');
@@ -6927,7 +6822,7 @@ function utRenderBar(ut){
   if(!ut || ut.error){ bar.style.display = 'none'; return; }
   const ns = ut.next_step || {};
   const untouched = !ut.enabled && !((ut.tools || []).length) && !(ut.counts_total || 0);
-  if(ns.code === 'done' && !untouched){ bar.style.display = 'none'; return; }   // 都齐了 ⇒ 收起
+  if(ns.code === 'done' && !untouched){ bar.style.display = 'none'; return; } // 都齐了 ⇒ 收起
   const stat = document.getElementById('utBarStat');
   const next = document.getElementById('utBarNext');
   const gb = document.getElementById('utBarGuide');
@@ -6950,10 +6845,10 @@ function utRenderDropped(tl){
   const box = document.getElementById('utDropped'); if(!box) return;
   const dd = (tl && tl.dropped) || [];
   const sig = JSON.stringify(dd);
-  if(box.dataset.sig === sig) return;          // 变化才重画（不然展开状态每 4 秒被收回去）
+  if(box.dataset.sig === sig) return; // 变化才重画（不然展开状态每 4 秒被收回去）
   box.dataset.sig = sig;
   box.textContent = '';
-  if(!dd.length) return;                       // 空就不渲染（不占位置）
+  if(!dd.length) return; // 空就不渲染（不占位置）
   const det = document.createElement('details');
   const sm = document.createElement('summary');
   sm.textContent = '本次没给模型的工具（' + dd.length + ' 个）';
@@ -6976,8 +6871,8 @@ async function loadMemory(chat_key){
     chats.forEach(c=>{ const o=document.createElement('option'); o.value=c.chat_key; o.textContent=c.name+'（'+c.count+' 人）'; sel.appendChild(o); });
     if(prev && chats.some(c=>c.chat_key===prev)) sel.value=prev; else sel.value = r.chat_key || '';
     memMembers = r.members||[];
-    // 整理是**整份覆盖**：模型顺手少写一条就是静默丢。后端把"最近一次真丢了东西"的记录带上来，
-    // 这里如实显示丢了哪几条、去哪儿捞（审计只追加，不改任何记忆内容）。
+ // 整理是**整份覆盖**：模型顺手少写一条就是静默丢。后端把"最近一次真丢了东西"的记录带上来，
+ // 这里如实显示丢了哪几条、去哪儿捞（审计只追加，不改任何记忆内容）。
     { const _au=$('memAudit'); if(_au){
         const a = r.audit||null;
         const ds = (a && Array.isArray(a.dropped)) ? a.dropped : [];
@@ -6989,7 +6884,7 @@ async function loadMemory(chat_key){
       } }
     const tb=$('memTable').querySelector('tbody'); tb.innerHTML='';
     $('memEmpty').style.display = memMembers.length?'none':'block';
-    // ⛔ 2026-09-17：重绘即复位 —— 否则上一轮勾选留下的"亮着"会被带进这一轮（点了却什么都没删）
+ // ⛔ 重绘即复位 —— 否则上一轮勾选留下的"亮着"会被带进这一轮（点了却什么都没删）
     { const _mb=$('memClearSel'); if(_mb){ _mb.disabled = true; _mb.textContent='清除勾选的印象'; } }
     for(const m of memMembers){
       const tr=document.createElement('tr');
@@ -7127,15 +7022,6 @@ $('memSearch').addEventListener('keydown', (e)=>{
   e.preventDefault();
 });
 
-/* ── 左导航「分组折叠 + 快速找功能」（2026-09-22 三主题重构新增）──────────────
-   用户口径：「25 条平铺 → 请分组、按使用频率排序、支持收起展开与快速定位，
-   让新用户 3 秒内找到我要改什么」。
-   两条设计约束：
-   ① 折叠状态要**跨刷新记住**（localStorage），且默认全展开——新用户第一眼要看到全貌；
-   ② 收起态（.side.tight，只剩图标）下**不许再折叠分组**（否则图标藏进折叠块里点不到），
-      所以 CSS 里 `.side.tight .nav-grp-bd` 强制 display:block，这里也只切类名不去动它。
-   搜索：按「导航名 + 所在分组名 + 面板一句话说明」三路匹配，面板说明从 DOM 里现取
-   （`#sec-* .desc`）⇒ 用户搜「发消息」也能命中「发送」页，不用记我们的命名。 */
 (function(){
   const navEl = document.querySelector('#nav');
   if(!navEl) return;
@@ -7157,7 +7043,7 @@ $('memSearch').addEventListener('keydown', (e)=>{
   navEl.addEventListener('click', (e)=>{
     const hd = e.target.closest ? e.target.closest('.nav-grp-hd') : null;
     if(!hd) return;
-    // 收起态只剩图标时不响应（CSS 里组头也藏了，这里是双保险）
+ // 收起态只剩图标时不响应（CSS 里组头也藏了，这里是双保险）
     if(sideEl && sideEl.classList.contains('tight')) return;
     const g = hd.parentNode;
     const key = g.getAttribute('data-grp') || '';
@@ -7165,7 +7051,7 @@ $('memSearch').addEventListener('keydown', (e)=>{
     if(i >= 0) closed.splice(i, 1); else closed.push(key);
     saveClosed();
     g.classList.toggle('collapsed', i < 0);
-    try{ window.dispatchEvent(new Event('resize')); }catch(err){}   // 折叠改了高度，指示条要让外层重算
+    try{ window.dispatchEvent(new Event('resize')); }catch(err){} // 折叠改了高度，指示条要让外层重算
     const on = navEl.querySelector('a.on');
     if(on) on.dispatchEvent(new Event('nav-recalc', {bubbles:true}));
   });
@@ -7209,7 +7095,7 @@ $('memSearch').addEventListener('keydown', (e)=>{
         return;
       }
       res.innerHTML = hits.slice(0, 12).map(it=>{
-        // 命中说明行时把说明里的关键词也标出来（用户才知道"为什么它被搜到"）
+ // 命中说明行时把说明里的关键词也标出来（用户才知道"为什么它被搜到"）
         const why = (it.name.toLowerCase().indexOf(kw) < 0 && it.desc.toLowerCase().indexOf(kw) >= 0)
           ? '<span style="display:block;font-size:11.5px;color:var(--tx3);margin-top:2px">' + mark(it.desc.slice(0, 46), kw) + '</span>' : '';
         return '<a href="' + esc(it.href) + '">' + mark(it.name, kw) +
@@ -7229,10 +7115,10 @@ $('memSearch').addEventListener('keydown', (e)=>{
     res.addEventListener('click', (e)=>{
       const a = e.target.closest ? e.target.closest('a') : null;
       if(!a) return;
-      // 命中被折叠的分组时先展开它（否则跳过去看不见高亮）
+ // 命中被折叠的分组时先展开它（否则跳过去看不见高亮）
       const sid = (a.getAttribute('href')||'').replace('#','');
       const tgt = document.getElementById(sid);
-      const g = tgt && tgt.closest ? tgt.closest('.nav-grp') : null;   // 面板不在导航里，得回导航找
+      const g = tgt && tgt.closest ? tgt.closest('.nav-grp') : null; // 面板不在导航里，得回导航找
       const navA = navEl.querySelector('a[href="#' + sid + '"]');
       const g2 = navA && navA.closest ? navA.closest('.nav-grp') : null;
       if(g2 && g2.classList.contains('collapsed')){
@@ -7265,7 +7151,7 @@ $('memSearch').addEventListener('keydown', (e)=>{
   navEl.insertBefore(ind, navEl.firstChild);
   const links = Array.from(document.querySelectorAll('#nav a'));
   function moveInd(a){ ind.style.opacity=1; ind.style.top = Math.round(a.offsetTop + a.offsetHeight/2 - 1.5)+'px'; }
-  /* 左栏跟着指示条走（用户 2026-09-17：「如果右边功能栏已经滚到一个比较下面的位置，而左边的栏又显示不下的时候，
+  /* 左栏跟着指示条走（
      蓝色的指示条就看不见了。所以，能不能让左边的栏跟着蓝色的指示条显露出来？如果有没显示出来的部分，
      就自动往下一格滚动」）⇒ 激活项被滚出左栏可视区就把它滚回来：在上面顶上对齐、在下面滚到刚露出来，
      平滑滑过去；左栏没有溢出（不需要滚）时永远不动。 */
@@ -7294,21 +7180,19 @@ $('memSearch').addEventListener('keydown', (e)=>{
   window.addEventListener('scroll', ()=>requestAnimationFrame(sync), {passive:true});
   window.addEventListener('resize', ()=>requestAnimationFrame(sync));
   document.addEventListener('nav-recalc', ()=>requestAnimationFrame(sync));
-  /* 点导航跳转后也要重算指示条：`scroll-behavior:smooth` 让 scroll 事件来得慢，
-     若只靠 scroll 监听，指示条会"慢半拍"地追上去（2026-09-17 用户报过）。 */
   navEl.addEventListener('click', (e)=>{
     const a = e.target.closest ? e.target.closest('a[href^="#sec-"]') : null;
     if(!a) return;
     setTimeout(()=>{ links.forEach(x=>x.classList.toggle('on', x===a)); moveInd(a); revealInd(a); }, 60);
   });
-  // 100 导航名字收起/展开（用户口径："像 DeepSeek 一样，可以展开看到全部名字，或者收起那些名字"）
+ // 100 导航名字收起/展开
   try{
     const sideEl = document.querySelector('.side'), tgEl = document.getElementById('navToggle');
     const shellEl = document.querySelector('.shell');
     const tight = (function(){ try{ return localStorage.getItem('navTight')==='1'; }catch(e){ return false; } })();
     function applyTight(on){
       if(sideEl) sideEl.classList.toggle('tight', on);
-      if(shellEl) shellEl.classList.toggle('tight', on);   // 栅格列宽也要跟着收，否则收完中间白留一截
+      if(shellEl) shellEl.classList.toggle('tight', on); // 栅格列宽也要跟着收，否则收完中间白留一截
       if(tgEl) tgEl.textContent = on ? '› 展开' : '‹ 收起';
     }
     applyTight(tight);
@@ -7317,25 +7201,20 @@ $('memSearch').addEventListener('keydown', (e)=>{
         const now = !(sideEl && sideEl.classList.contains('tight'));
         applyTight(now);
         try{ localStorage.setItem('navTight', now ? '1' : '0'); }catch(e){}
-        try{ sync(); }catch(e){}          // 收起后指示条位置要重算
+        try{ sync(); }catch(e){} // 收起后指示条位置要重算
       });
     }
   }catch(e){}
-  /* ── 长清单折叠（2026-09-14 用户："这个地方如果用户群太多，会显示得特别多。把功能栏拉长，
-        增加「收起」和「展开」功能，默认折叠只显示两行…还有没有其他用户过多、会把功能栏拉长的，
-        全部加上这个功能"）────────────────────────────────────────────
-     做法：容器给定高度（默认约两行）＋ 内部滚动，紧跟着一个「展开全部 / 收起」按钮；
-     容器被重新渲染（innerHTML）不影响折叠状态，按钮被父级重渲染带走时会自动补回来。 */
   const FOLD_TARGETS = [
-    ["#wlChips", 96],         // 群白名单那一排 chips（2026-09-16 用户：「注意显示问题，这个更需要折叠了」）
-    ["#groupPick", 96],       // 选择监听的群（群多的时候几十个格子）
-    ["#memGroupsBox", 96],    // 记忆共享：按群独立
-    ["#memTable", 150],       // 群友印象表（成员多）
-    ["#personaList", 150],    // 人设库
-    ["#sessBox", 150],        // 运行明细
-    ["#arcList", 150],        // 存档会话
-    ["#emojiBox", 150],       // 表情包收藏夹
-    [".bill-list", 150],      // 计费日志
+    ["#wlChips", 96], // 群白名单那一排 chips
+    ["#groupPick", 96], // 选择监听的群（群多的时候几十个格子）
+    ["#memGroupsBox", 96], // 记忆共享：按群独立
+    ["#memTable", 150], // 群友印象表（成员多）
+    ["#personaList", 150], // 人设库
+    ["#sessBox", 150], // 运行明细
+    ["#arcList", 150], // 存档会话
+    ["#emojiBox", 150], // 表情包收藏夹
+    [".bill-list", 150], // 计费日志
   ];
   window.__foldAll = function(){
     FOLD_TARGETS.forEach(function(pair){
@@ -7363,13 +7242,13 @@ $('memSearch').addEventListener('keydown', (e)=>{
     });
   };
   try{ window.__foldAll(); }catch(e){}
-  /* ── 反馈栏（2026-09-14 用户：左导航单开一栏、控制台里填完自动提交、程序整理后发邮件）── */
+  /* ── 反馈栏── */
   async function fbLoad(){
     const _warn = document.getElementById('fbWarn');
     try{
       const r = await getJSON('/api/feedback');
       if(!r || r.ok === false){ if(_warn){ _warn.style.display='block'; _warn.textContent = '读不到反馈状态：' + ((r&&r.error)||''); } return; }
-      // 关掉这一栏（feedback.enabled=false）：连导航入口一起藏起来（省得点进来是空的）
+ // 关掉这一栏（feedback.enabled=false）：连导航入口一起藏起来（省得点进来是空的）
       if(r.enabled === false){
         const _nv = document.querySelector('#nav a[href="#sec-feedback"]');
         if(_nv) _nv.style.display = 'none';
@@ -7377,8 +7256,8 @@ $('memSearch').addEventListener('keydown', (e)=>{
         if(_sc) _sc.style.display = 'none';
         return;
       }
-      // 反馈栏只留"类型 / 内容 / 提交"，其余收进「更多」；
-      // 只有确实发不出去或有积压时，顶部才提示一行。
+ // 反馈栏只留"类型 / 内容 / 提交"，其余收进「更多」；
+ // 只有确实发不出去或有积压时，顶部才提示一行。
       if(_warn){
         const _bad = (!r.can_send) || (r.pending > 0);
         _warn.style.display = _bad ? 'block' : 'none';
@@ -7396,16 +7275,13 @@ $('memSearch').addEventListener('keydown', (e)=>{
     }catch(e){ if(_warn){ _warn.style.display='block'; _warn.textContent = '读不到反馈状态：' + e.message; } }
   }
   (function(){
-    // 「更多」折叠（2026-09-16：用户只该看到 类型 + 内容 + 提交，其余收起来）
+ // 「更多」折叠
     const ab = document.getElementById('fbAdvBtn'), adv = document.getElementById('fbAdv');
     if(ab && adv) ab.onclick = function(){
       const sh = adv.style.display === 'none';
       adv.style.display = sh ? 'block' : 'none';
       ab.textContent = sh ? '收起' : '更多（联系邮箱 / 提交记录）';
     };
-    /* ── 附件（2026-09-17 用户：「我们的反馈提交能不能提交图片和文件」+「可以让用户选填一个联系邮箱」）──
-       图片与文件都走同一条路：前端读成 base64 → POST 给 /api/feedback/submit → 后端落盘并投递。
-       上限与后端一致（图片 2MB / 文件 20MB / 最多 4 个）：**前端先拦一次，说得清楚**，别等提交完才失败。 */
     const _fbMax = 4, _fbImgMB = 2, _fbFileMB = 20;
     const _fbSel = [];
     function fbFmt(n){ return n >= 1048576 ? ((n/1048576).toFixed(1)+' MB')
@@ -7473,7 +7349,7 @@ $('memSearch').addEventListener('keydown', (e)=>{
         else if(r && r.state === 'queued'){ rst.textContent = '注意：已存在本机，但还没发出去：' + (r.why||'') + '（待发 ' + (r.pending||0) + ' 条）'; rst.style.color='var(--warn)'; }
         else if(r && r.state === 'blocked'){ rst.textContent = (r.why||'发得太频繁了') + '——这条没有发出，也没保存，内容还在框里。'; rst.style.color='var(--warn)'; }
         else { rst.textContent = '' + ((r&&r.why)||'提交失败'); rst.style.color='var(--err-tx)'; }
-        // 被限流时**不清空输入框**：内容还给用户，改一改或等一会儿再发
+ // 被限流时**不清空输入框**：内容还给用户，改一改或等一会儿再发
         if(!(r && r.state === 'blocked')){
           document.getElementById('fbText').value = '';
           _fbSel.length = 0; fbRender();
@@ -7516,11 +7392,11 @@ async function checkAlive(){
     if(window.__offlineBar){ try{ window.__offlineBar.remove(); }catch(_e){} window.__offlineBar=null; }
   }catch(e){
     offlineShown=true;
-    // 2026-09-15 修（用户报「屏幕上一直在闪弹窗」「关掉这个应用才不闪」）：
-    // 旧实现分三步自己关窗口 —— window.open('', '_self') → window.close() → location.replace('about:blank')。
-    // 在 WebView2 里 window.open 会**真的开一个新窗口**再被关掉 ⇒ 用户看到窗口一闪一闪；
-    // 而且"关不关窗口"该由用户/宿主决定，网页替用户关窗口本身就是越界。
-    // 现在：只挂一条**顶部可关闭横幅** + 把状态灯置灰，页面原地不动。
+
+ // 旧实现分三步自己关窗口 —— window.open('', '_self') → window.close() → location.replace('about:blank')。
+ // 在 WebView2 里 window.open 会**真的开一个新窗口**再被关掉 ⇒ 用户看到窗口一闪一闪；
+ // 而且"关不关窗口"该由用户/宿主决定，网页替用户关窗口本身就是越界。
+ // 现在：只挂一条**顶部可关闭横幅** + 把状态灯置灰，页面原地不动。
     const bar=document.createElement('div');
     bar.className='offline-bar';
     bar.innerHTML='<b>机器人已停止</b>'
@@ -7545,9 +7421,6 @@ setInterval(()=>{ if($('autolog').checked) loadLog(); }, 4000);
 setInterval(checkAlive, 6000);
 $('sessRefresh').onclick = ()=>loadSessions();
 addEventListener('hashchange', ()=>{ if(location.hash==='#sec-sessions') loadSessions(); });
-/* 微信数据目录（2026-09-18 用户反馈：「能不能让我自己选微信的地址」）：
-   一行显示**当前实际在读的目录**（不是配置值），一颗「自动检测」探候选，一颗「保存并重探」写盘。
-   保存那条**先过服务端校验**（存在 + 有 db_storage 或库文件），不过关就不写、只把原因显示出来。 */
 function renderWechatDir(wd){
   const now = $('wxDirNow');
   if(now && wd){
@@ -7558,8 +7431,8 @@ function renderWechatDir(wd){
   const box = $('wxDirCands');
   const cs = (wd && wd.candidates) || null;
   if(box && Array.isArray(cs)){
-    // 只有**真带了清单**才动这张列表（/api/status 每 4 秒轮询一次，它不带清单；
-    // 若无条件清空，用户刚点「自动检测」探出来的结果会被下一次轮询擦掉）
+ // 只有**真带了清单**才动这张列表（/api/status 每 4 秒轮询一次，它不带清单；
+ // 若无条件清空，用户刚点「自动检测」探出来的结果会被下一次轮询擦掉）
     if(!cs.length){ box.textContent = ''; return; }
     box.innerHTML = '';
     cs.forEach(function(c){
@@ -7601,7 +7474,7 @@ async function probeWechatDir(){
     }catch(e){ toast('保存失败：' + e.message); }
   };
 })();
-/* 微信装没装：两个动作（2026-09-13） */
+/* 微信装没装：两个动作 */
 (function(){
   const openBtn = document.getElementById('wxOpenSite');
   const recheckBtn = document.getElementById('wxRecheck');
@@ -7771,12 +7644,12 @@ function renderGroupTierBox(){
   const gt = getPath(cfg,'store.group_tier') || {};
   box.innerHTML='';
   if(!groups.length){ box.innerHTML='<div class="hint">没有群白名单——群列表为空（在「微信」卡勾选群后此处自动列出）。</div>'; return; }
-  // ⚠️ W-1：白名单现在存 wxid ⇒ 这里显示群名（认不出就原样显示 wxid）。
-  //   档位键仍写**群名**（后端 `prompt.py` 两把都认，但群名是给人看/老配置在用的那个）。
+ // ⚠️ W-1：白名单现在存 wxid ⇒ 这里显示群名（认不出就原样显示 wxid）。
+ //   档位键仍写**群名**（后端 `prompt.py` 两把都认，但群名是给人看/老配置在用的那个）。
   const seen={};
   groups.forEach(g=>{
     const nm = wlLabel(g);
-    if(seen[nm]) return;                    // 同名群：档位按名只能设一个，别重复画两行
+    if(seen[nm]) return; // 同名群：档位按名只能设一个，别重复画两行
     seen[nm]=1;
     const row=document.createElement('div'); row.className='row';
     row.innerHTML='<label>'+esc(nm)+'</label><div class="grow"><select data-group-tier="'+esc(nm)+'">'+
@@ -7843,7 +7716,7 @@ $('unifiedTierChk').addEventListener('change', ()=>renderGroupTierBox());
     const i = document.querySelector('[data-cfg="server.port"]');
     if(i){ i.value = '3210'; setPath(cfg, 'server.port', 3210); toast('端口已改回 3210（保存设置 + 重启后生效）；请关闭旧端口标签'); }
   };
-  // 保存服务器设置时若端口变化 → 重启生效提示（旧端口标签需手动关闭——不同端口视为不同站点，JS 无法跨端口关闭）
+ // 保存服务器设置时若端口变化 → 重启生效提示（旧端口标签需手动关闭——不同端口视为不同站点，JS 无法跨端口关闭）
   const saveBtn = document.querySelector('[data-save="服务器"]') || document.querySelector('[data-save]');
   if(saveBtn){
     const orig = saveBtn.onclick;
@@ -8139,10 +8012,6 @@ const _ttsBeSel = document.querySelector('[data-cfg="voice_reply.backend"]');
 if(_ttsBeSel) _ttsBeSel.addEventListener('change', ()=>ttsSyncRows());
 ttsSyncRows();
 
-/* ── 本地生图后端：状态 / 安装（带实时进度 + 后台进行）/ 起停 ───────────────
-   用户口径（2026-09-17）：「你帮用户装，做成一个可选项…用户选了就弹安装提示，帮他安装；
-   在线安装看用户开不开」「要能让用户实时看到下载进度（一共多少/下了多少/百分比）」
-   「还要加那个按键，也就是后台加载，让用户可以不看着弹窗等它加载，去办点别的事」。 */
 (function(){
   const S = id => document.getElementById(id);
   let poll = null;
@@ -8175,7 +8044,7 @@ ttsSyncRows();
         : (st.installed ? ('已安装，服务未启动（' + (st.why||'') + '）') : '未安装');
       const why = S('sdLocalWhy');
       if(why) why.textContent = st.why || '';
-      // 档位选择器（用户口径「不二选一」）：速度档 / 画质档都能装、能切，装哪个用哪个由用户挑
+ // 档位选择器：速度档 / 画质档都能装、能切，装哪个用哪个由用户挑
       try{
         const sel = S('sdPreset');
         if(sel && Array.isArray(st.presets)){
@@ -8214,14 +8083,14 @@ ttsSyncRows();
     }catch(e){ toast('安装没起来：'+e.message); }
   };
   const bs = S('sdLocalStart');
-  // ⛔ 2026-09-21（第五轮回执 **V-R5A-8**，更正版）：服务端等模型加载最多 **60 秒**
-  //   （`sd_local.start_server`：首次要加载模型，实测 22 秒起），而 `getJSON` 的默认 abort 是 **30 秒**
-  //   ⇒ 前端先超时、抛"启动失败"，可服务其实还在起（几秒后就绪）——**假失败**。
-  //   ⇒ 这一条按服务端窗口给足（90 秒 > 60 秒窗口），并在等待期间如实说"首次要加载模型，最多 1 分钟"。
+ // ⛔ 服务端等模型加载最多 **60 秒**
+ //   （`sd_local.start_server`：首次要加载模型，实测 22 秒起），而 `getJSON` 的默认 abort 是 **30 秒**
+ //   ⇒ 前端先超时、抛"启动失败"，可服务其实还在起（几秒后就绪）——**假失败**。
+ //   ⇒ 这一条按服务端窗口给足（90 秒 > 60 秒窗口），并在等待期间如实说"首次要加载模型，最多 1 分钟"。
   if(bs) bs.onclick = async ()=>{ try{ toast('正在启动本地服务…（首次要加载模型，最多约 1 分钟）');
     const r = await getJSON('/api/image_gen/local/start',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}',timeoutMs:90000});
     toast(r.note||'已启动'); refresh(); }catch(e){ toast('启动失败：'+e.message); } };
-  // 切换档位：写配置 + 按新档重启本地服务
+ // 切换档位：写配置 + 按新档重启本地服务
   const selP = S('sdPreset');
   if(selP) selP.onchange = async ()=>{
     const id = selP.value;

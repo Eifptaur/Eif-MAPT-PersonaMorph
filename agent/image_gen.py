@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """群友要图 → 生图：**后端抽象 + 意图解析 + 可插拔过滤链**（设计稿见 docs/设计-群友要图-生图链条.md）。
 
-本模块只做"链条"，**不含真实生图后端**——接本地 ComfyUI 还是在线 API 待用户拍板（见设计稿 §5）。
 所以：没有配后端时，`generate()` **明确失败并说清原因**（绝不假装生成）。
 
 四条红线（硬编码，连开关都没有）：
@@ -19,20 +18,20 @@ import re
 import time
 
 from . import config as _config
-from . import local_guard          # V-R3-8：给回环地址的请求带上本机口令（唯一实现见 local_guard）
+from . import local_guard # 给回环地址的请求带上本机口令（唯一实现见 local_guard）
 log = logging.getLogger("persona-morph")
 
-ALLOW_REAL_FACE = False          # 恒 False：不做真人换脸/换身体（无开关可开）
+ALLOW_REAL_FACE = False # 恒 False：不做真人换脸/换身体（无开关可开）
 
 DEFAULTS = {
-    "enabled": False,            # 总开关默认关（同"随机图"的口径）
-    "trigger_mode": "on_request",  # on_request | sometimes | off
-    "max_count": 2,              # 单次最多生成几张
+    "enabled": False, # 总开关默认关（同"随机图"的口径）
+    "trigger_mode": "on_request", # on_request | sometimes | off
+    "max_count": 2, # 单次最多生成几张
     "size_default": "square",
-    "online_allowed": False,     # 是否允许出网到在线生图 API
-    "backends": [],              # [{"id","kind":"local|online","url","timeout"}...]（空＝没后端）
-    "style_allow": [],           # 用户自填的风格白名单关键词（空＝不限）
-    "style_block": [],           # 风格黑名单关键词
+    "online_allowed": False, # 是否允许出网到在线生图 API
+    "backends": [], # [{"id","kind":"local|online","url","timeout"}...]（空＝没后端）
+    "style_allow": [], # 用户自填的风格白名单关键词（空＝不限）
+    "style_block": [], # 风格黑名单关键词
     "filter_chain": {"size": True, "dup": True, "blacklist": True, "text": True, "classifier": True},
 }
 
@@ -68,10 +67,9 @@ def _as_list(v):
 def _as_backends(v):
     """后端列表：list[dict] 直接用；字符串按 `id|local|url[|proto]` 解析（格式不对的条目丢弃）。
 
-    为什么不给控制台单独做增删端点：照用户"低成本优先"的原则，一个输入框 + 一种人话格式就够用；
     解析不出来 ⇒ 后端列表为空 ⇒ `generate()` 会明确说"还没配生图后端"（不会静默当成功）。
 
-    ⚠️ 2026-09-17 加第 4 段 `proto`：不带它的条目会落到 `generic` 协议（POST 根路径）——
+    ⚠️ 第 4 段 `proto`：不带它的条目会落到 `generic` 协议（POST 根路径）——
     本机实测就是这么踩的：本地轻量后端写的是 `local-sd | local | http://127.0.0.1:7860`，
     结果按 generic 去 POST 根路径 ⇒ 404 ⇒ 生图直接失败。⇒ 支持显式写 `| a1111`。
     """
@@ -171,7 +169,7 @@ def parse_intent(text: str) -> dict:
 
 # ————————————————— ③ 后端选择 —————————————————
 def backends() -> list:
-    """可用后端＝**配置里填的** ∪ **本机探测到的**（用户口径：别等他选型，能用的先认出来）。
+    """可用后端＝**配置里填的** ∪ **本机探测到的**。
 
     去重按 id；在线后端（含免密钥的 pollinations）仍必须 `online_allowed=True` 才出现。
     """
@@ -181,7 +179,7 @@ def backends() -> list:
             if not isinstance(b, dict) or not b.get("id") or not b.get("url"):
                 continue
             if str(b.get("kind") or "local") == "online" and not cfg().get("online_allowed"):
-                continue                      # 在线后端必须显式允许出网
+                continue # 在线后端必须显式允许出网
             b = dict(b)
             b.setdefault("proto", "generic")
             b.setdefault("kind", "local")
@@ -198,8 +196,7 @@ def backends() -> list:
     except Exception:
         pass
     if cfg().get("online_allowed") and ONLINE_FREE["id"] not in seen:
-        out.append(dict(ONLINE_FREE))          # 免密钥在线（仍受"允许出网"这一档管）
-    # 🔴 2026-09-18：**默认在线优先**（用户拍板"默认出网"；理由见 config 注释：本地是动漫模型 + 8 步蒸馏，
+        out.append(dict(ONLINE_FREE)) # 免密钥在线（仍受"允许出网"这一档管）
     #   在线 3~4 秒出照片级）。`image_gen.online_first=False` 时保持"本地/自配优先"的老顺序。
     #   选中的在线后端（预设或自填接口）排最前 —— 用户填了 key 的那家优先于免密钥那条。
     try:
@@ -215,8 +212,7 @@ def backends() -> list:
 def pick_backend():
     """挑一个后端；没有 ⇒ (None, 人话原因)。
 
-    ⚠️ 2026-09-17 加：**装了「群相本地轻量后端」但服务没在跑时，顺手拉起来再探一次**——
-    用户口径是「不要让用户搞这搞那的操作」：装好了就该直接用，不该还要求他记得去启动服务。
+    ⚠️ **装了「群相本地轻量后端」但服务没在跑时，顺手拉起来再探一次**——
     """
     bs = backends()
     _probe_err = ""
@@ -228,7 +224,7 @@ def pick_backend():
                 _sd.ensure_running()
                 bs = backends()
         except Exception as e:
-            # ⛔ V-R4-12b：原来吞掉异常直接落到"本机没探到常见生图服务…把其中一个跑起来"，
+            # ⛔ b：原来吞掉异常直接落到"本机没探到常见生图服务…把其中一个跑起来"，
             #   把"检查本身出错"说成"你没装" ⇒ **方向错的提示**。现在如实带出原因。
             _probe_err = "%s: %s" % (type(e).__name__, str(e)[:80])
             log.warning("检查/拉起「群相本地生图后端」时出错（%s）⇒ 这次不当作『没装』", _probe_err)
@@ -265,7 +261,7 @@ LOCAL_PROBES = (
 ONLINE_FREE = {"id": "pollinations", "kind": "online", "proto": "pollinations",
                "url": "https://image.pollinations.ai/prompt/"}
 
-# ── 在线出图预设表（2026-09-18 加；用户口径：「在线后端能不能扩展几个…让用户自己切。然后 UI 上对应好了，
+# ── 在线出图预设表（
 #   记得加说明文本哈」）────────────────────────────────────────────────────────────
 # 一手事实（当天实测，不是凭印象）：
 #   · 三家付费/免费额度服务商的出图端点**路径都存在**（无 key POST 返回 401 而不是 404），且都是
@@ -331,7 +327,7 @@ def online_backend() -> dict:
         if b["need_key"]:
             key = str(api.get("key") or "").strip()
             if not key:
-                return {}                     # 要 key 的那家没填 key ⇒ 视为"没选它"
+                return {} # 要 key 的那家没填 key ⇒ 视为"没选它"
             b["key"] = key
             if str(api.get("model") or "").strip():
                 b["model"] = str(api["model"]).strip()
@@ -342,10 +338,10 @@ def online_backend() -> dict:
 def detect_local(timeout: float = 1.2, probes=None, ttl: float = 120.0) -> list:
     """探一遍常见本地生图服务（**只读 GET**，不动对方任何状态）⇒ 探到就返回可用的后端。
 
-    为什么要有它：用户 2026-09-13 明确说"生图，不能直接去找那些能生图的模型或者工具吗"——别让他先选型、
+    为什么要有它：用户 不能直接去找那些能生图的模型或者工具吗"——别让他先选型、
     再手工填地址；本机在跑 ComfyUI/A1111/Fooocus/InvokeAI 就自己认出来。
 
-    ⚡ 2026-09-18 加**短缓存**（默认 20 秒）：实测一次探测要 **3.6 秒**（四个端口里三个连不上时要等满
+    ⚡ **短缓存**（默认 20 秒）：实测一次探测要 **3.6 秒**（四个端口里三个连不上时要等满
     `timeout`）⇒ 控制台每次刷状态、`snapshot()`、`pick_backend()` 都各问一遍，面板会明显发木
     （判据也因此在 80 秒上下徘徊）。"本机有没有生图服务"20 秒内几乎不会变，缓存完全安全。
     传了 `probes` 的调用（测试）**不走缓存**，保证测试拿到的是即时结果。
@@ -359,7 +355,7 @@ def detect_local(timeout: float = 1.2, probes=None, ttl: float = 120.0) -> list:
     for p in (probes if probes is not None else LOCAL_PROBES):
         try:
             _u = "http://127.0.0.1:%d%s" % (p["port"], p["path"])
-            # V-R3-8：本机监听面现在要口令（Host 校验 + X-PM-Token）⇒ 探测也得带上，
+            # 本机监听面现在要口令（Host 校验 + X-PM-Token）⇒ 探测也得带上，
             # 否则我们自己的本地生图后端会被探测判成"没有服务"。
             req = urllib.request.Request(_u, method="GET",
                                          headers=local_guard.client_headers(_u, {"User-Agent": "PersonaMorph/probe"}))
@@ -388,7 +384,7 @@ def _save_image_bytes(data: bytes, backend_id: str = "gen") -> str:
 def _note_generated(path: str, backend_id: str = "gen") -> str:
     """**过滤通过之后**才把这张图记进台账（返回 sha256）。
 
-    ⚠️ 为什么不能在图一落盘就记（2026-09-13 自己踩的同类坑，和 wx-agent 的"重复发送台账写太早"一模一样）：
+    ⚠️ 为什么不能在图一落盘就记：
     落盘即记 ⇒ `dup` 层读到的是**自己**的 sha ⇒ **每张新图都被判成重复**、一张都发不出去。
     正确顺序：落盘 → 过滤链 → 全过 → 记账（下次生成才拿它去重）。
     """
@@ -406,16 +402,16 @@ def _note_generated(path: str, backend_id: str = "gen") -> str:
 
 
 def _harden_redirects() -> None:
-    """V-R9-23：确保 urllib 跟 302 时**不把出图 key 带到新主机**（实现只有 safe_fetch 那一处）。"""
+    """确保 urllib 跟 302 时**不把出图 key 带到新主机**（实现只有 safe_fetch 那一处）。"""
     try:
         from .safe_fetch import harden_urllib
         harden_urllib()
-    except Exception as e:                                   # pragma: no cover - 极端环境
-        log.warning("安全层不可用，重定向凭据剥离没装上（V-R9-23）：%s", e)
+    except Exception as e: # pragma: no cover - 极端环境
+        log.warning("安全层不可用，重定向凭据剥离没装上：%s", e)
 
 
 def _capped(resp, max_bytes: int, what: str) -> bytes:
-    """V-R9-26：带上限读响应体（拿不到 safe_fetch 就退回"读上限+1 再截断"，绝不 `read()` 一把梭）。"""
+    """带上限读响应体（拿不到 safe_fetch 就退回"读上限+1 再截断"，绝不 `read()` 一把梭）。"""
     try:
         from .safe_fetch import read_capped
         return read_capped(resp, max_bytes, what)
@@ -432,7 +428,7 @@ def call_backend(backend: dict, prompt: str, count: int = 1, size: str = "square
     `generic`（用户自己填的 HTTP 端点，POST {prompt,n,size}）。
     `comfyui` 目前只做**探测**：它要一份工作流 JSON，还没内置（探到会在面板里说明）。
 
-    ⛔ 2026-09-21 第九轮审计补的三处（V-R9-23/24/26）：①发请求前装"跨主机剥凭据"处理器
+    ⛔ 审计补的三处：①发请求前装"跨主机剥凭据"处理器
     （302 到新主机不许带 `Authorization`/`X-PM-Token`）；②`data[].url` 这回链**先过 SSRF 闸门再 GET**；
     ③每个 `resp.read()` 都有上限（超了判失败，不整包收进内存）。
     """
@@ -458,7 +454,7 @@ def call_backend(backend: dict, prompt: str, count: int = 1, size: str = "square
             files.append(_save_image_bytes(base64.b64decode(b64.split(",")[-1]),
                                            "%s_%d" % (backend.get("id") or "a1111", i)))
     elif proto == "pollinations":
-        # 🔴 2026-09-18：**带 token 就能去水印**（官方 APIDOCS 原话：`nologo` = Remove the Pollinations
+        # 🔴 **带 token 就能去水印**（官方 APIDOCS 原话：`nologo` = Remove the Pollinations
         #   watermark **(needs account)**）⇒ 控制台「出图密钥」里填 pollinations 的 token，这里带
         #   `Authorization: Bearer`，`nologo=true` 才真的生效。没 token 时水印去不掉（见 strip_watermark 兜底）。
         _tok = str(backend.get("key") or "").strip()
@@ -467,7 +463,7 @@ def call_backend(backend: dict, prompt: str, count: int = 1, size: str = "square
             _hdr["Authorization"] = "Bearer " + _tok
         for i in range(n):
             _m = str(backend.get("model") or "").strip()
-            # ⛔ 2026-09-21 修（第十轮 **V-R10-34** 第 6 条 · 第九轮未闭合项）：**提示词不许再进 URL**。
+            # ⛔ **提示词不许再进 URL**。
             #   老写法把 prompt 拼进路径（`/prompt/<urlencode(prompt)>`）⇒ 私聊原文出现在**请求行**里
             #   （审计实测 2750 字 → 24.7KB，无截断），中间任何代理/网关/日志都会把它捡走。
             #   一手取证（当天实跑 4 组对照探针）：
@@ -482,7 +478,7 @@ def call_backend(backend: dict, prompt: str, count: int = 1, size: str = "square
             try:
                 _resp = urllib.request.urlopen(req, timeout=int(backend.get("timeout") or 180))
             except Exception as e:
-                # V-R9-27：异常信息里**不许**原样带出请求地址（里面有过提示词的历史，
+                # 异常信息里**不许**原样带出请求地址（里面有过提示词的历史，
                 # 且将来也可能加参数）；只留类型与状态码。
                 _code = getattr(e, "code", "")
                 raise ValueError("在线生图请求失败（%s%s）——不回显请求地址（以免带出参数）"
@@ -494,7 +490,7 @@ def call_backend(backend: dict, prompt: str, count: int = 1, size: str = "square
                 raise ValueError("在线生图返回的数据太小（%d 字节）" % len(data or b""))
             files.append(_save_image_bytes(data, str(backend.get("id") or "pollinations")))
     elif proto == "openai_image":
-        # 🔴 2026-09-18 加：**OpenAI 兼容出图**（硅基流动 / 智谱 / 火山方舟 / 任何自建服务）。
+        # 🔴 **OpenAI 兼容出图**（硅基流动 / 智谱 / 火山方舟 / 任何自建服务）。
         #   三家端点的形状当天都验过（无 key POST → 401，说明路径对、只是缺鉴权）：
         #     https://api.siliconflow.cn/v1/images/generations
         #     https://open.bigmodel.cn/api/paas/v4/images/generations
@@ -525,9 +521,9 @@ def call_backend(backend: dict, prompt: str, count: int = 1, size: str = "square
                 continue
             link = (it or {}).get("url") if isinstance(it, dict) else None
             if link:
-                # V-R9-24：这个地址是**对方的回包**给的 ⇒ 一次未校验的二次 GET 就等于把产品当内网
+                # 这个地址是**对方的回包**给的 ⇒ 一次未校验的二次 GET 就等于把产品当内网
                 # 探测器（E 线实测假后端回 `http://127.0.0.1:41011/png`，产品真去 GET 并落盘）。
-                # V-R10-32：光过闸门不够——**老的 `urllib.urlopen` 连接时会再解析一次域名**，
+                # 光过闸门不够——**老的 `urllib.urlopen` 连接时会再解析一次域名**，
                 # 闸门看的是第 1 次解析、连接用的是第 2 次 ⇒ rebinding 直接穿透（实测落盘）。
                 # 现在走 `fetch_pinned_stream`：一次解析、钉 IP、上限 8MB（同 pollinations 口径）。
                 try:
@@ -535,7 +531,7 @@ def call_backend(backend: dict, prompt: str, count: int = 1, size: str = "square
                     from .safe_fetch import fetch_pinned_stream
                 except Exception:
                     raise ValueError("安全抓取层不可用：拒绝下载后端给的图片地址（fail-closed）")
-                # V-R9-24：**先过统一闸门**（远端回包里的地址在下手前一律校验）；
+                # **先过统一闸门**（远端回包里的地址在下手前一律校验）；
                 # 与 base 同源时保留"本地后端回本机地址"的既有口径（否则本地部署会被误伤）。
                 _same = bool(_so(str(link), base))
                 try:
@@ -547,7 +543,7 @@ def call_backend(backend: dict, prompt: str, count: int = 1, size: str = "square
                 os.close(_fd)
                 try:
                     try:
-                        # V-R10-32：连接走**钉 IP**（一次解析），不再 `urllib.urlopen` 二次解析
+                        # 连接走**钉 IP**（一次解析），不再 `urllib.urlopen` 二次解析
                         fr = fetch_pinned_stream(str(link), _tmp,
                                                  timeout=int(backend.get("timeout") or 180),
                                                  max_bytes=8 * 1024 * 1024,
@@ -568,7 +564,7 @@ def call_backend(backend: dict, prompt: str, count: int = 1, size: str = "square
                             os.remove(_tmp)
                     except Exception:
                         pass
-    else:                                     # generic：用户自填端点，约定返回 {"files":[...]}
+    else: # generic：用户自填端点，约定返回 {"files":[...]}
         body = json.dumps({"prompt": prompt, "n": n, "size": size}).encode("utf-8")
         req = urllib.request.Request(backend["url"], data=body,
                                      headers=local_guard.client_headers(
@@ -636,7 +632,7 @@ def _f_text(path: str, meta: dict):
 
 
 def _f_classifier(path: str, meta: dict):
-    """涉黄/涉政/暴力分类器**尚未接**（待拍板用哪个模型）⇒ 返回 None ⇒ 整链判否。"""
+    """涉黄/涉政/暴力分类器**尚未接**⇒ 返回 None ⇒ 整链判否。"""
     return None, "内容分类器未接（按 fail-closed 处理：不确定不发）"
 
 
@@ -644,7 +640,7 @@ CHAIN = (("size", _f_size), ("dup", _f_dup), ("blacklist", _f_blacklist),
          ("text", _f_text), ("classifier", _f_classifier))
 
 
-# 画质后缀（2026-09-18 加）：以前我们把**中文请求碎片**原样丢给模型（日志实录：`｜一 在窗台上看雨 猫`），
+# 画质后缀：以前我们把**中文请求碎片**原样丢给模型（日志实录：`｜一 在窗台上看雨 猫`），
 # 而多数文生图模型是英文语料训的、且没有风格/构图/光线提示 ⇒ 出来就是"写意抽象图"（用户当场吐槽）。
 # 这里只追加**中性**的质量词（不加"照片级"这种会和动漫风打架的定语，风格由用户/模型自己指定）。
 PROMPT_SUFFIX = ", highly detailed, sharp focus, well composed, natural lighting"
@@ -732,8 +728,8 @@ def generate(chat_id: str, request_text: str, out_dir: str = None):
     if not backend:
         return {"ok": False, "why": why, "intent": intent}
     try:
-        # 🔴 2026-09-18：提示词过 `build_prompt`（主体＋风格＋中性质量后缀）——以前是把中文碎片
-        #   原样喂给模型，出来的图像"写意抽象图"（用户原话「你觉得这是一个猫吗？…写实是完全不行的」）。
+        # 🔴 提示词过 `build_prompt`（主体＋风格＋中性质量后缀）——以前是把中文碎片
+        # 原样喂给模型，出来的图像"写意抽象图"。
         _pr = build_prompt(intent.get("subject"), intent.get("style") or intent.get("style_hint") or "")
         resp = call_backend(backend, _pr or intent["subject"], n, intent.get("size") or "square")
     except Exception as e:
@@ -741,7 +737,7 @@ def generate(chat_id: str, request_text: str, out_dir: str = None):
     files = [str(p) for p in (resp.get("files") or [])]
     if not files:
         return {"ok": False, "why": "后端没返回图片文件（原样返回：%s）" % str(resp)[:120], "intent": intent}
-    # 🔴 2026-09-18：**去水印**（用户口径「可以找找有没有去水印的，把它加到这条链里面」）。
+    # 🔴 **去水印**。
     #   优先级：①带 token / 要 key 的后端**本来就没水印** ⇒ 什么都不做；②免密钥那条（pollinations 无 token）
     #   的水印去不掉（官方要求有账号）⇒ 按 `image_gen.strip_watermark`（默认开）裁掉底部水印带。
     _wm_note = ""
@@ -757,7 +753,7 @@ def generate(chat_id: str, request_text: str, out_dir: str = None):
         ok, res = run_filters(p, {"prompt": intent["subject"], "chat_id": chat_id,
                                   "backend": backend["id"], "when": time.strftime("%Y-%m-%d %H:%M:%S")})
         if ok:
-            _note_generated(p, str(backend.get("id") or "gen"))     # ⚠️ 记账必须在过滤通过之后（见 _note_generated 注释）
+            _note_generated(p, str(backend.get("id") or "gen")) # ⚠️ 记账必须在过滤通过之后（见 _note_generated 注释）
         out.append({"path": p, "ok": ok, "filters": res})
     good = [x for x in out if x["ok"]]
     if not good:

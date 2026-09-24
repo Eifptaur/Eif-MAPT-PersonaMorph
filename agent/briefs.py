@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """**预设信息**：按会话提前设定的背景事实 —— 只在本会话相关时注入，到期自动丢弃。
 
-来源（B站网友原话，2026-09-22）：
+来源：
   「提前设定信息，当遇到和设定信息有关的内容就好已经提前注入的信息思考，**设置截止日期**，
    截止后**自动舍弃**注入的信息，信息**针对每个单独群聊不外泄**」
 ⇒ 四条要求逐条落地成本模块的硬口径：
@@ -32,9 +32,9 @@ log = logging.getLogger("persona-morph")
 
 PATH = os.path.join(DATA_DIR, "briefs.json")
 SCHEMA = 1
-MAX_PER_CHAT = 20          # 单会话最多几条（再多就该用记忆档了）
-MAX_CHARS = 200            # 单条最长字符（超了截断并如实告知）
-_inject_max = 5            # 单次最多注入几条（配置可调，见 config.briefs.inject_max）
+MAX_PER_CHAT = 20 # 单会话最多几条（再多就该用记忆档了）
+MAX_CHARS = 200 # 单条最长字符（超了截断并如实告知）
+_inject_max = 5 # 单次最多注入几条（配置可调，见 config.briefs.inject_max）
 _lock = threading.RLock()
 
 # 虚词表：2-gram 里含这些字的不算"实词重叠"（否则"这个""的话"就能把任何两句连上）
@@ -61,7 +61,7 @@ def _load() -> dict:
         return d
     except FileNotFoundError:
         return {"schema": SCHEMA, "chats": {}}
-    except Exception as e:                                        # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         try:
             p = _path()
             if os.path.exists(p):
@@ -77,14 +77,14 @@ def _save(d: dict) -> str:
     """原子写；返回空串＝成功，否则是要展示给用户的原因。
 
     ⚠️ 走**统一招式** `persist.atomic_write_json`（不再自己拼固定 `<path>.tmp`）——
-    固定 tmp 名在两个进程同时写时会互相覆盖（第十四轮 V-R14-3 的棘轮就是为这个立的）。
+    固定 tmp 名在两个进程同时写时会互相覆盖。
     """
     try:
         from . import persist as _ps
         if _ps.atomic_write_json(_path(), d):
             return ""
         return "落盘失败（详见日志；本次改动只在内存里有效）"
-    except Exception as e:                                        # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         return "%s: %s" % (type(e).__name__, str(e)[:80])
 
 
@@ -101,7 +101,7 @@ def parse_until(v, now=None) -> float:
         if m:
             y, mo, dd = (int(x) for x in m.groups())
             return time.mktime((y, mo, dd, 23, 59, 59, 0, 0, -1))
-        m2 = re.match(r"^(\d{1,2})[-/.](\d{1,2})$", s)      # 只填月-日 ⇒ 按今年
+        m2 = re.match(r"^(\d{1,2})[-/.](\d{1,2})$", s) # 只填月-日 ⇒ 按今年
         if m2:
             mo, dd = (int(x) for x in m2.groups())
             return time.mktime((time.localtime().tm_year, mo, dd, 23, 59, 59, 0, 0, -1))
@@ -246,7 +246,7 @@ def block(chat_key, incoming_text, now=None) -> str:
             return ""
         t = _now(now)
         try:
-            prune(str(chat_key or "").strip(), now=t)      # 到期自动舍弃（本会话）
+            prune(str(chat_key or "").strip(), now=t) # 到期自动舍弃（本会话）
         except Exception:
             pass
         items = list_for(chat_key, now=t)["active"]
@@ -266,5 +266,5 @@ def block(chat_key, incoming_text, now=None) -> str:
                                     ("（%s 到期）" % e.get("until_text")) if e.get("until") else ""))
         lines.append("（只当背景事实用，不要逐字复述；与本轮无关就别提。）")
         return "\n".join(lines)
-    except Exception:                                             # noqa: BLE001
-        return ""                                                 # 注入永远不许把这一轮搞崩
+    except Exception: # noqa: BLE001
+        return "" # 注入永远不许把这一轮搞崩

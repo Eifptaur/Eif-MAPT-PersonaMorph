@@ -1,6 +1,6 @@
 """监听水位（W2）：**落盘 + 成功才推进 + 失败重试留痕 + 每会话串行**。
 
-现状问题（2026-09-13 取证 `scripts/persona_morph.py:2374-2443`）：
+现状问题：
   - `since_seq` 只活在内存里 ⇒ **重启后水位丢失**，启动时又拿 `latest_seq` 当起点
     ⇒ 停机期间的新消息**既不补也不重放**（静默丢）；
   - `since_seq[wxid] = max_seq` 在批处理末尾**无条件推进** ⇒ 只要下游没真落库，消息就没了；
@@ -12,7 +12,7 @@
      仍失败则写 **dead-letter**（`listener_failed.jsonl`）**并把水位越过它**——绝不静默跳过、也绝不卡死队列；
   3. 每会话一把锁：同一 chat_key 的处理**串行**（并发调用者排队），保证顺序与水位单调。
 
-⛔ **假定：水位表只有一个写者（V-R14-5，第十四轮审计实测，P3，按设计确认）**
+⛔ **假定：水位表只有一个写者**
   落盘是"**整表** 覆盖写"（`persist.atomic_write_json` 写的是 `self.data` 全量快照）⇒ 两个进程各持一份内存态
   同时写，后写者会把先写者的键整个盖掉。审计实测（两个进程各写 7 个群 × 150 次 flush）：期望 14 个键、
   实测只剩 **8 个** —— 文件**永远合法**（唯一临时名 + `os.replace`，没有半截档、无遗留临时档），但**会丢键**
@@ -55,11 +55,11 @@ def chat_lock(chat_key: str) -> threading.RLock:
 class Watermark:
     """持久化水位：`{账号维|chat_key: int}`（账号维可为空）。原子写；默认只前进。
 
-    V-R10-30（2026-09-21）：老实现**只有 chat_key 一维** ⇒ 切号后两个账号的同一个群
+    老实现**只有 chat_key 一维** ⇒ 切号后两个账号的同一个群
     共用一个序号格子（`group:<wxid>`）：A 号把水位推到 900，切到 B 号后 B 号同一群的
     1~900 号消息会被判成"处理过了"⇒ **静默不回**；切回 A 号又被 B 号的低水位拖着重放。
     ⇒ 现在按**账号**分命名空间（`account|group:<wxid>`）：
-      · `account` 认不出来时用**保留名 `?`**（V-R11-5：绝不回退到"无前缀"的老键名 —— 那正是
+      · `account` 认不出来时用**保留名 `?`**（绝不回退到"无前缀"的老键名 —— 那正是
         升级前两个号共用的那一格）；
       · 老文件里的无前缀键**原样留着但不参与读写**，新命名空间从 0 起 ⇒ 上层"水位 0 就对齐到最新"
         （`persona_morph.py` 那段）保证**不重放历史、也不会漏掉新消息**；
@@ -70,8 +70,8 @@ class Watermark:
         self.path = str(path)
         self.account = str(account or "")
         self._dirty = False
-        self._refuse_overwrite = False      # V-R10-23：坏档留证失败 ⇒ 置 True，flush 拒绝写
-        self.fail_count = 0                 # V-R10-30：flush 真失败（或拒写）的累计次数
+        self._refuse_overwrite = False # 坏档留证失败 ⇒ 置 True，flush 拒绝写
+        self.fail_count = 0 # flush 真失败（或拒写）的累计次数
         self.last_error = ""
         self.data: dict = {}
         self.load()
@@ -84,12 +84,12 @@ class Watermark:
         return self.account
 
     def _ns(self, chat_key) -> str:
-        """给 chat_key 加上账号前缀。**认不出账号时用保留名 `?`**（见下面的 V-R11-5 说明）。
+        """给 chat_key 加上账号前缀。**认不出账号时用保留名 `?`**。
 
-        ⛔ 2026-09-21 修（第十一轮 **V-R11-5** · P2）：老写法"认不出账号 ⇒ 不加前缀、沿用老键名"，
+        ⛔ 老写法"认不出账号 ⇒ 不加前缀、沿用老键名"，
         而老键名在多账号机器上的语义恰好是「**升级前两个号共用的那一格**」——`db_account()` 拿不到
         账号（新 adapter 还没开库 / 旧 adapter 的 `_db` 被 `_release_adapter` 置空）时就会塌回老键，
-        把 V-R10-30 的原始症状（两号水位互相污染）重新拿出来用。
+        把 的原始症状（两号水位互相污染）重新拿出来用。
         ⇒ 现在**永远带前缀**，认不出账号就用保留名 `?`。代价是升级后第一枪（以及账号时有时无的
         机器）会走一次"水位 0 ⇒ 对齐到最新"（与账号可识别时的行为一致）——**不重放历史、不漏新消息**。
         """
@@ -100,7 +100,7 @@ class Watermark:
     def load(self) -> dict:
         """读水位表：**按条目校验**，一条坏值只丢那一条。
 
-        V-R9-18 的原始症状：老写法 `{str(k): int(v or 0) for k, v in d.items()}`
+         的原始症状：老写法 `{str(k): int(v or 0) for k, v in d.items()}`
         ——**只要有一个值不是能转 int 的东西**（手工改过、被第三方工具动过），`int()` 抛异常
         ⇒ 整表归零 ⇒ 下一次 `flush()` 只写回本次动过的那个键 ⇒ **别的会话的水位全没了**
         （要么重放、要么静默丢）。现在：坏条目单独丢、日志里如实说丢了几条，其余键原样保留。
@@ -108,9 +108,9 @@ class Watermark:
         整档读不出来（解析失败 / 顶层不是对象）时走 `persist.load_or_quarantine`：
         坏档改名 `.bad.<时间戳>` 留证，不让下一次 flush 把它静默覆盖掉。
         """
-        _BAD = object()                      # 哨兵：分得清"读到的东西"与"走的默认值"
+        _BAD = object() # 哨兵：分得清"读到的东西"与"走的默认值"
         d, ok_overwrite = persist.load_checked(self.path, _BAD)
-        # V-R10-23：原档读不出来**且留证失败** ⇒ 它还留在原地；这一次 flush 写出去就是
+        # 原档读不出来**且留证失败** ⇒ 它还留在原地；这一次 flush 写出去就是
         # "整表被空表覆盖"（水位全丢 ⇒ 要么重放、要么静默丢）。⇒ 把"禁止覆盖"顶到 flush 上。
         self._refuse_overwrite = not ok_overwrite
         if d is _BAD:
@@ -128,7 +128,7 @@ class Watermark:
                 try:
                     data[str(k)] = int(v)
                 except (TypeError, ValueError):
-                    dropped += 1             # 只丢这一条，**不**把整表归零
+                    dropped += 1 # 只丢这一条，**不**把整表归零
             if dropped:
                 log.warning("水位表有 %d 条坏条目（值不是整数）已丢弃、其余 %d 条保留：%s",
                             dropped, len(data), self.path)
@@ -145,7 +145,7 @@ class Watermark:
     def set(self, chat_key: str, seq, forward_only: bool = True) -> int:
         """写入水位。forward_only=True（默认）时不允许回退 —— 水位倒退会导致重复处理。
 
-        ⛔ 2026-09-21 修（第十一轮 **V-R11-1** · P1）：`k` 已经带过账号前缀，**不能再喂给
+        ⛔ `k` 已经带过账号前缀，**不能再喂给
         `get()`**（`get()` 内部还会套一次 `_ns`）——老写法 `cur = self.get(k)` 让 `cur` **恒为 0**
         ⇒ 账号维一旦开启，"默认只前进"这道闸**当场失效**（任何更小的值都能写进去＝水位倒退＝
         从旧位置重放）。现在直接查表（键就是 `k`），并把这个"自己写的键自己读"的语义写死在这里。
@@ -156,7 +156,7 @@ class Watermark:
             return self.get(chat_key)
         k = self._ns(chat_key)
         try:
-            cur = int(self.data.get(k, 0) or 0)      # ⬅ 键已带前缀，**直接查表**，别再走 get()
+            cur = int(self.data.get(k, 0) or 0) # ⬅ 键已带前缀，**直接查表**，别再走 get()
         except (TypeError, ValueError):
             cur = 0
         if forward_only and s <= cur:
@@ -168,9 +168,9 @@ class Watermark:
     def flush(self) -> bool:
         """原子落盘（`persist.atomic_write_json`：tmp 名带 pid+随机后缀 + `os.replace`）；没有变化就不写。
 
-        V-R9-22：老写法共用 `<path>.tmp` ⇒ 并发/多进程写会互相穿插出坏 JSON；失败返回 False（不吞）。
-        V-R10-23：坏档**留证失败**（原档还在原地）时**拒绝写**——写出去就是整表被覆盖。
-        ⚠️ V-R14-5（第十四轮，P3 按设计确认）：写的是**整表快照** ⇒ **本表假定单写者**（单实例锁保证）；
+        老写法共用 `<path>.tmp` ⇒ 并发/多进程写会互相穿插出坏 JSON；失败返回 False（不吞）。
+        坏档**留证失败**（原档还在原地）时**拒绝写**——写出去就是整表被覆盖。
+        ⚠️ 写的是**整表快照** ⇒ **本表假定单写者**（单实例锁保证）；
            真要两进程共享，得改成"读-改-写 + 跨进程锁"（详见文件头那段）。
         """
         if not self._dirty:
@@ -192,7 +192,7 @@ _FLUSH_WARN_AT: dict = {}
 
 
 def flush_checked(wm: "Watermark", log=None, why: str = "", warn_gap: float = 60.0) -> bool:
-    """**看返回值**地 flush 水位表（V-R10-30）。
+    """**看返回值**地 flush 水位表。
 
     为什么要有它：`persist.atomic_write_json` 在"目标被以不共享 DELETE 的方式占用"或
     真并发时**必然** `WinError 5`（审计实测：两进程同时 flush 双双失败）——老代码 8 个
@@ -204,7 +204,7 @@ def flush_checked(wm: "Watermark", log=None, why: str = "", warn_gap: float = 60
     """
     try:
         ok = bool(wm.flush())
-    except Exception as e:                  # flush 本身崩了也算失败，不许把异常抛给主循环
+    except Exception as e: # flush 本身崩了也算失败，不许把异常抛给主循环
         ok = False
         try:
             wm.fail_count += 1
@@ -221,9 +221,9 @@ def flush_checked(wm: "Watermark", log=None, why: str = "", warn_gap: float = 60
             _msg = ("水位表**没写进磁盘**（%s）—— 序号已在内存里，重启会从旧水位接着读"
                     "（可能重放/漏判）：%s") % (why or "flush 失败", getattr(wm, "last_error", "") or "?")
             if log is not None:
-                if hasattr(log, "warning"):          # logging.Logger
+                if hasattr(log, "warning"): # logging.Logger
                     log.warning("%s", _msg)
-                else:                                # process_batch 那种 (level, fmt, *args) 回调
+                else: # process_batch 那种 (level, fmt, *args) 回调
                     log("warn", "%s", _msg)
     except Exception:
         pass
@@ -271,11 +271,11 @@ def process_batch(chat_key: str, items, handler, wm: "Watermark", log=None,
         except Exception:
             return None
 
-    with chat_lock(chat_key):          # 同一会话串行：并发调用者在这里排队
+    with chat_lock(chat_key): # 同一会话串行：并发调用者在这里排队
         for it in list(items or []):
             seq = _seq(it)
             if seq and seq <= wm.get(chat_key):
-                stats["skipped"] += 1       # 已在处理过的范围内（重放保护）
+                stats["skipped"] += 1 # 已在处理过的范围内（重放保护）
                 continue
             ok, last_err = False, ""
             for attempt in range(1, max(1, int(max_retry)) + 1):
@@ -284,7 +284,7 @@ def process_batch(chat_key: str, items, handler, wm: "Watermark", log=None,
                     if ok:
                         break
                     last_err = "handler 返回假值"
-                except Exception as e:      # 单条失败不许打断整批
+                except Exception as e: # 单条失败不许打断整批
                     last_err = "%s: %s" % (type(e).__name__, e)
                 if attempt < max_retry:
                     stats["retried"] += 1

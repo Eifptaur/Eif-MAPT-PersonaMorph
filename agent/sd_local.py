@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """本地生图后端「一条龙」：**查状态 → 测速估时 → 下载安装 → 起服务 → 自动接进 image_gen**。
 
-用户口径（2026-09-17 原话）：「**你可以帮用户装，做成一个可选项。用户选了之后，就弹出一个安装提示，
 帮他安装。至于走在线安装，就看用户开不开吧**」＋「**不要让用户搞这搞那的操作**」＋
 「**如果要提示用户需要下载，你必须要写明时间可能会非常长**（按本次实测数字算）」。
 ⇒ 三条硬规矩：
@@ -10,10 +9,10 @@
      走到被限速的源只有 0.02~0.06 MB/s，那会变成几十小时 ⇒ 要如实劝退并说明可换源）；
   ③装完**自动配好**（写 `image_gen.backends` + 打开开关 + 起服务），用户不用再填任何地址。
 
-本次实测（2026-09-17，本机 RTX 5070 Ti Laptop）：
+本次实测：
   · 模型 `sd_xl_turbo_1.0_fp16.safetensors` **6.46 GB**（ModelScope 25 MB/s ≈ 4.5 分钟）
   · 运行库（torch 4.20 GB + torchvision/diffusers/transformers/safetensors ≈ 0.15 GB）**≈ 4.35 GB**（SJTU 4.5 MB/s ≈ 8 分钟）
-  · **合计约 10.8 GB；加上解压/安装/首次加载，整条链约 20 分钟**（这正是用户要求写进提示的数字）
+  · **合计约 10.8 GB；加上解压/安装/首次加载，整条链约 20 分钟**
   · 首次加载模型进显存 **14.7 秒**；出图 1024² 四步 **13~33 秒**
 """
 import json
@@ -41,8 +40,7 @@ DEPS_GB = 4.35
 #: 失败重试的最小可接受速度（MB/s）：低于它就别下了，如实劝退
 MIN_MBPS = 0.5
 
-# ——————————————— 模型档位（用户口径 2026-09-17：「**不二选一**」）———————————————
-#   用户原话：「搞半天，质量和速度不能都要啊…你就非得二选一是啥意思？」
+# ——————————————— 模型档位———————————————
 #   ⇒ 速度与画质**都给**，两个档并存：装哪个、用哪个由用户在控制台挑，不许替他砍掉一条路。
 #   关键事实（查证过）：画质来自"更大的模型/更好的精调"，速度来自"蒸馏加速（少步数）"，
 #   这两件在 2024-2026 已经能合在同一个组合里 —— 画质档＝SDXL 精调 checkpoint + 4 步加速 LoRA。
@@ -97,7 +95,7 @@ def active_id() -> str:
     return str(_cfg().get("preset") or DEFAULT_PRESET)
 
 # ——————————————— 实时进度（控制台要轮询它画进度条）———————————————
-#   ⚠️ 用户 2026-09-17 明确要求：「要能让用户实时看到下载进度啊，就是一共多少，现在下了多少？百分比是多少」
+# ⚠️ 用户 明确要求
 #   ⇒ 这里维护一份"当前在干什么 + 已下/总量/百分比/速度/预计剩余"，webui 用 `/api/image_gen/local/progress` 读它。
 _PROG = {
     "running": False, "phase": "idle", "message": "", "done_bytes": 0, "total_bytes": 0,
@@ -193,7 +191,7 @@ def set_preset(pid: str) -> tuple:
         sd["preset"] = p["id"]
         sd["steps"] = int(p.get("steps") or 4)
         save_config(cfg)
-    except Exception as e:                                   # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         return False, "写配置失败：%s" % str(e)[:80]
     if server_alive():
         stop_server()
@@ -213,15 +211,15 @@ def server_url(port: int = None) -> str:
 # ——————————————— 状态 ———————————————
 def _deps_ok() -> tuple:
     try:
-        import torch                                    # noqa: F401
-        import diffusers                                # noqa: F401
+        import torch # noqa: F401
+        import diffusers # noqa: F401
         return True, ""
-    except Exception as e:                              # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         return False, "运行库没装（torch/diffusers）：%s" % str(e)[:60]
 
 
 def server_alive(port: int = None) -> bool:
-    """探活：本机服务现在**要口令**（V-R3-8），所以这里也得带上它（与客户端同一份实现）。"""
+    """探活：本机服务现在**要口令**，所以这里也得带上它（与客户端同一份实现）。"""
     from . import local_guard as lg
     u = server_url(port) + "/internal/ping"
     try:
@@ -235,7 +233,7 @@ def server_alive(port: int = None) -> bool:
 def service_gated(port: int = None) -> tuple:
     """`7860` 上跑着的服务，**是"我们这一版（带门禁）"的吗**？返回 `(ok, why)`。
 
-    ⛔ 2026-09-21（第四轮审计 **V-R4-3，P1**）：原来只判"有人答话"（`server_alive`）⇒
+    ⛔ 原来只判"有人答话"（`server_alive`）⇒
     机器上 09-19 起的**旧无门禁实例**（无 Host / 错口令一律 200）会被**一直复用**，
     **更新产品也不会换掉它** ⇒ 门禁代码在仓库里"修好了"，**活体从来没生效**。
     ⇒ 发**两个真请求**（缺一不可）：
@@ -294,7 +292,7 @@ def cmdline_is_ours(cmd: str, port: int) -> bool:
 
     要求两件都成立：①命令行里有 `sd_local_server.py`；②带着**这个**端口号。
 
-    ⛔ 2026-09-21 修（第六轮 **V-R6-33**）：端口原来是**子串**匹配 —— `'… 17860'` 里含 `7860`、
+    ⛔ 端口原来是**子串**匹配 —— `'… 17860'` 里含 `7860`、
     `'… 78600'` 里含 `786`，都会误判成"是我们的进程" ⇒ 拿它当身份证据去 stop/kill 就可能打到别人。
     ⇒ 改成**按词边界匹配**（数字前后都不能再有数字），并优先认 `--port 7860` 这种显式写法。
     """
@@ -332,7 +330,7 @@ def _proc_cmdline(pid: int) -> str:
 def _is_our_server(pid: int, port: int) -> tuple:
     """那个 pid **是不是我们起的本地服务** ⇒ `(是/否, 说明)`。
 
-    ⛔ 2026-09-21（第五轮回执 **V-R5B-4 / M4**）：原来只比"pidfile 里的 pid == 端口占用者"，
+    ⛔ 原来只比"pidfile 里的 pid == 端口占用者"，
     **不验那个进程是谁** ⇒ pidfile 残留 + PID 复用（7860 恰是 Gradio / A1111 的默认口）就会
     `taskkill /F` 掉**别人的**进程。⇒ 杀之前必须能证明那是一条 `sd_local_server.py <port>` 命令行；
     取不到命令行 ⇒ **不杀**（宁可让用户手动处理）。
@@ -358,7 +356,7 @@ def kill_stale_owner(port: int) -> tuple:
     """把占用 `port` 的**我们自己旧实例**停掉；**只在我们能证明它是我们的时才动手**。
 
     证据链（三条都要成立）：①`data/sd_local.pid` 里记的 pid 就是**听这个端口的那个进程**；
-    ②该进程还在；③**它的命令行确实是一条 `sd_local_server.py <port>`**（回执 V-R5B-4：只有前两条时，
+    ②该进程还在；③**它的命令行确实是一条 `sd_local_server.py <port>`**（回执 只有前两条时，
     pidfile 残留 + PID 复用会误杀别人）。取不到证据 ⇒ **不杀**。
     """
     try:
@@ -380,7 +378,7 @@ def kill_stale_owner(port: int) -> tuple:
         time.sleep(0.6)
         _drop_pidfile()
         return True, "已停掉旧实例（PID %d）" % pid
-    except Exception as e:                                   # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         return False, "停旧实例失败：%s" % str(e)[:60]
 
 
@@ -392,7 +390,7 @@ def status() -> dict:
     dok, dwhy = _deps_ok()
     mok = os.path.exists(mp)
     alive = server_alive(c.get("port"))
-    # ⛔ V-R4-3：**"有人答话"不等于"是我们这一版的实例"** —— 旧无门禁实例必须被认出来
+    # ⛔ **"有人答话"不等于"是我们这一版的实例"** —— 旧无门禁实例必须被认出来
     gated, gwhy = (service_gated(c.get("port")) if alive else (False, ""))
     why = ""
     if not dok:
@@ -414,7 +412,7 @@ def status() -> dict:
             "presets": presets()}
 
 
-# ——————————————— 测速与估时（用户要求：必须写明"可能要很久"）———————————————
+# ——————————————— 测速与估时———————————————
 def probe_speed(url: str, bytes_to_read: int = 3 * 1024 * 1024, timeout: float = 20.0) -> float:
     """取前几 MB 估一下真实速度（MB/s）。失败返回 0。"""
     t0 = time.time()
@@ -477,7 +475,7 @@ def _download(url: str, dest: str, on_log=None, on_prog=None) -> tuple:
         req = urllib.request.Request(url, headers=hdr)
         with urllib.request.urlopen(req, timeout=60) as r:
             if have and int(getattr(r, "status", 200) or 200) == 200:
-                have = 0                                     # 服务器不支持续传
+                have = 0 # 服务器不支持续传
             total = int(r.headers.get("Content-Length") or 0) + have
             got, t0, last = have, time.time(), 0.0
             with open(dest, "ab" if have else "wb") as f:
@@ -499,7 +497,7 @@ def _download(url: str, dest: str, on_log=None, on_prog=None) -> tuple:
         if total and abs(got - total) > 2 * 1048576:
             return False, "没下全（%.2f GB / %.2f GB）" % (got / 1073741824.0, total / 1073741824.0)
         return True, "已下 %.2f GB" % (os.path.getsize(dest) / 1073741824.0)
-    except Exception as e:                                   # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         return False, "下载失败：%s" % str(e)[:80]
 
 
@@ -517,7 +515,7 @@ def _pip_install(args: list, on_log=None) -> tuple:
         if on_log:
             on_log(tail[0][:120])
         return True, tail[0][:120]
-    except Exception as e:                                   # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         return False, "pip 跑不动：%s" % str(e)[:80]
 
 
@@ -574,7 +572,7 @@ def install(allow_online: bool = None, on_log=None, skip_deps: bool = False, pid
         else:
             info["model_reused"] = True
             log("模型已存在，跳过下载")
-        if lp and not os.path.exists(lp):                       # 加速件（画质档要它才跑得动 4 步）
+        if lp and not os.path.exists(lp): # 加速件（画质档要它才跑得动 4 步）
             for name, url in (p.get("lora_sources") or ()):
                 _set_prog(phase="model", message="从 %s 下加速件（4 步）…" % name)
                 log("下加速件（%.2f GB）…" % float(p.get("lora_gb") or 0))
@@ -615,11 +613,11 @@ def install(allow_online: bool = None, on_log=None, skip_deps: bool = False, pid
             ls = ig.setdefault("local_sd", {})
             ls["enabled"] = True
             ls["allow_online_install"] = True
-            ls["preset"] = p["id"]                      # 当前档（速度/画质由用户挑）
+            ls["preset"] = p["id"] # 当前档（速度/画质由用户挑）
             ls["steps"] = int(p.get("steps") or 4)
             save_config(cfg)
             info["config"] = "已写入 image_gen.backends、档位＝%s、并打开开关" % p["label"]
-        except Exception as e:                               # noqa: BLE001
+        except Exception as e: # noqa: BLE001
             info["config"] = "配置写回失败（%s）" % str(e)[:60]
         _set_prog(phase="start", done_bytes=int(0.99 * total_all), message="正在启动本地生图服务（首次加载模型约 15 秒）…")
         ok4, why4 = start_server()
@@ -628,13 +626,13 @@ def install(allow_online: bool = None, on_log=None, skip_deps: bool = False, pid
                   done_bytes=total_all if ok4 else int(0.99 * total_all),
                   message=why4, finished_at=time.time(), error="" if ok4 else why4)
         return bool(ok4), ("装好了，本地服务已起：%s" % why4) if ok4 else why4, info
-    except Exception as e:                                   # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         _set_prog(running=False, ok=False, error=str(e)[:120], finished_at=time.time())
         return False, "安装中断：%s" % str(e)[:100], info
 
 
 def install_async(allow_online: bool = None, on_log=None, pid: str = "") -> tuple:
-    """**后台安装**（用户口径：「要加那个按键，也就是后台加载，让用户可以不看着弹窗等它加载」）。
+    """**后台安装**。
 
     起一条 daemon 线程跑 `install()`，立刻返回；进度用 `progress()` 轮询。
     已经在装 ⇒ 不重复起（返回 running=True 让界面继续显示那条进度）。
@@ -650,7 +648,7 @@ def install_async(allow_online: bool = None, on_log=None, pid: str = "") -> tupl
     def _run():
         try:
             install(allow_online=True, on_log=on_log, pid=p["id"])
-        except Exception as e:                               # noqa: BLE001
+        except Exception as e: # noqa: BLE001
             _set_prog(running=False, ok=False, error="安装线程异常：%s" % str(e)[:120], finished_at=time.time())
 
     t = threading.Thread(target=_run, name="sd_local_install", daemon=True)
@@ -664,7 +662,7 @@ def start_server(on_log=None) -> tuple:
     p = preset(active_id())
     port = int(c.get("port") or 7860)
     if server_alive(port):
-        # ⛔ V-R4-3：**先问"是不是我们这一版（带门禁）的实例"**，不是 ⇒ 换掉它（能证明是我们起的才动手）
+        # ⛔ **先问"是不是我们这一版（带门禁）的实例"**，不是 ⇒ 换掉它（能证明是我们起的才动手）
         _g_ok, _g_why = service_gated(port)
         if _g_ok:
             return True, "本地服务已经在跑（%s）" % server_url(port)
@@ -682,7 +680,7 @@ def start_server(on_log=None) -> tuple:
         exe = sys.executable
     srv = os.path.join(ROOT, "agent", "sd_local_server.py")
     env = dict(os.environ)
-    # V-R3-8：父进程先把口令定下来，**同一个值**通过环境变量交给子进程（两边读的也是同一个文件）
+    # 父进程先把口令定下来，**同一个值**通过环境变量交给子进程（两边读的也是同一个文件）
     from . import local_guard as _lg
     env[_lg.ENV_KEY] = _lg.token()
     env["SD_MODEL"] = model_path()
@@ -702,19 +700,19 @@ def start_server(on_log=None) -> tuple:
                              creationflags=0x08000000 if os.name == "nt" else 0)
         with open(_pidfile(), "w", encoding="utf-8") as f:
             f.write(str(p.pid))
-        for _ in range(60):                                  # 最多等 60 秒（首次要加载模型）
+        for _ in range(60): # 最多等 60 秒（首次要加载模型）
             time.sleep(1.0)
             if server_alive(port):
                 return True, "本地服务已就绪（%s）" % server_url(port)
         return False, "服务起了但 60 秒内没就绪（看 logs\\sd_local.log）"
-    except Exception as e:                                   # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         return False, "起服务失败：%s" % str(e)[:80]
 
 
 def stop_server() -> tuple:
     """停掉**我们自己的**本地服务。
 
-    ⛔ 2026-09-21（第五轮回执 **V-R5B-4 / M4**）：老实现拿到 pidfile 里的 pid 就 `taskkill /F`——
+    ⛔ 老实现拿到 pidfile 里的 pid 就 `taskkill /F`——
     连"这个 pid 还听不听那个端口""它到底是不是我们的进程"都不看，全仓**零判据**覆盖。pidfile 残留 +
     PID 复用（7860 恰是 Gradio / A1111 默认口）⇒ 会杀掉别人正在跑的东西。⇒ 先验身份；验不过就
     **只清掉过期记录、不杀任何进程**并说清原因。
@@ -734,7 +732,7 @@ def stop_server() -> tuple:
                        creationflags=0x08000000 if os.name == "nt" else 0)
         _drop_pidfile()
         return True, "已停止本地服务（PID %d）" % pid
-    except Exception as e:                                   # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         return False, "停止失败：%s" % str(e)[:60]
 
 
@@ -747,7 +745,7 @@ def ensure_running() -> tuple:
     if st["server_alive"] and st.get("gated"):
         return True, "已在跑"
     if st["server_alive"] and not st.get("gated"):
-        # ⛔ V-R4-3：端口被**旧的无门禁实例**占着 ⇒ 自愈（换掉它），别让它永久挡着
+        # ⛔ 端口被**旧的无门禁实例**占着 ⇒ 自愈（换掉它），别让它永久挡着
         return start_server()
     if not c.get("auto_start", True):
         return False, "本地服务没在跑，且自启关着"

@@ -15,13 +15,13 @@ import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# ⛔ V-R14-1 隔离：判据不许写产品 data/ 与 logs/。
+# ⛔ 隔离：判据不许写产品 data/ 与 logs/。
 #   ⚠️ 第一版这段手抄在这里（`try: from agent import control … except: pass`）**是坏的**：
 #   它写在 `sys.path.insert(0, ROOT)` **之前**（跑脚本时 `sys.path[0]` 是 `scripts\`，工作目录不在
 #   `sys.path` 里）⇒ ImportError 被静默吞掉 ⇒ 隔离一次都没生效，本条判据照样创建产品
 #   `data\paused.flag`（＝跑一次复核就把用户的机器人暂停了）。现在收口到 `scripts\_iso14.py` 一处。
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # scripts\（见 `_iso14` 文件头）
-import _iso14                                   # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # scripts\（见 `_iso14` 文件头）
+import _iso14 # noqa: E402
 _iso14.all_()
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -201,7 +201,7 @@ for d in TMPDIRS:
     shutil.rmtree(d, ignore_errors=True)
 
 # ── 18 默认（节奏不限）必须不拦：口径＝节奏交给用户，闸门重心在内容/任务层 ──
-C.set_config(copy.deepcopy(C.get_config()))     # 清掉前面 set_risk 的覆盖
+C.set_config(copy.deepcopy(C.get_config())) # 清掉前面 set_risk 的覆盖
 g14, d14 = new_gate(); TMPDIRS.append(d14)
 allowed_all = True
 for i in range(10):
@@ -264,17 +264,17 @@ check("字符串型禁止词：单字'单'不误拦（证明没逐字符）", v.
 v = g19.check("group:kw", "需要开发票吗", now=BASE)
 check("字符串型观察词命中 ⇒ 放行但记录", v.allowed and v.code == "watch_keyword", repr(v))
 
-# ⛔ 2026-09-22 加（第十三轮 **V-R13-8** · P3）：事件台账**默认跟随 `path` 所在目录** ——
+# ⛔ 事件台账**默认跟随 `path` 所在目录** ——
 #   老写法默认写死产品 `data/risk_events.jsonl` ⇒ 只把 state 指到临时档的判据/探针照样写**产品台账**
-#   （第十二轮我自己的探针就这么写进去 3 行）。这条锚：只给 `path` 时，事件必须落在它旁边。
+# 。这条锚：只给 `path` 时，事件必须落在它旁边。
 _d8 = tempfile.mkdtemp(prefix="risk_ev8_")
 TMPDIRS.append(_d8)
-_g8sep = R.RiskGate(path=os.path.join(_d8, "risk_state.json"))       # ⚠️ **不传** event_path
-check("V-R13-8 只给 `path` ⇒ 事件台账写在**它旁边**（不写产品 data/）",
+_g8sep = R.RiskGate(path=os.path.join(_d8, "risk_state.json")) # ⚠️ **不传** event_path
+check("只给 `path` ⇒ 事件台账写在**它旁边**（不写产品 data/）",
       os.path.abspath(_g8sep.event_path) == os.path.abspath(os.path.join(_d8, "risk_events.jsonl"))
       and os.path.abspath(_g8sep.event_path) != os.path.abspath(getattr(R, "EVENT_PATH", "")),
       _g8sep.event_path)
-check("V-R13-8 产品调用点（两个都不传）行为不变：仍然落在 `data/risk_events.jsonl`",
+check("产品调用点（两个都不传）行为不变：仍然落在 `data/risk_events.jsonl`",
       os.path.abspath(R.RiskGate().event_path) == os.path.abspath(getattr(R, "EVENT_PATH", "")),
       R.RiskGate().event_path)
 

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""控制台「信息架构」判据（2026-09-14，用户口径「功能映射在 UI 上区分做得够不够、分门别类好了吗」）。
+"""控制台「信息架构」判据。
 
 它守的是**归类**，不是"有没有"（有没有由 `fullcheck.py` 的 A 段管）：
   ① 每块面板（`<section id="sec-*">`）都要出现在左侧导航里（否则用户找不到）；
@@ -28,8 +28,8 @@ except Exception:
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 # ⚠️ 扫**渲染出来的页面**（`console_html.HTML`），不是扫源码：源码开头那段说明里就写着
-#   `data-cfg="点.path"` 当例子（2026-09-14 实测被自己误判成"孤儿配置"）⇒ 扫产物最忠实。
-from agent import console_html as CH            # noqa: E402
+# `data-cfg="点.path"` 当例子⇒ 扫产物最忠实。
+from agent import console_html as CH # noqa: E402
 SRC = CH.HTML
 
 PASS = 0
@@ -47,12 +47,12 @@ def ok(name, cond, detail=""):
 
 def scan(src: str) -> dict:
     """把一份 console HTML 的信息架构量出来（判据与阴性对照共用同一套口径）。"""
-    body = re.sub(r"<script[\s\S]*?</script>", "", src)          # 脚本段不是真实绑定
-    # ⛔ V-R7-15（大小写）：这两条正则**必须大小写不敏感**。老写法（无 `re.I`）遇到
+    body = re.sub(r"<script[\s\S]*?</script>", "", src) # 脚本段不是真实绑定
+    # ⛔ （大小写）：这两条正则**必须大小写不敏感**。老写法（无 `re.I`）遇到
     #   `href="#sec-wechat-TYPO"` 这类含大写的链接**整条匹配不上**（字符类停在 T，后面还要求紧跟 `"`）
     #   ⇒ 一条真死链既不进 `navs` 也不进 `navs_set` ⇒「导航无死链」白绿。id 与 href 用同一套口径。
     secs = re.findall(r'<section id="(sec-[a-z0-9\-]+)"', body, re.I)
-    # ⚠️ 2026-09-16：`navs` 以前是 **set**（顺序丢了）⇒ 没法判"分区顺序 == 导航顺序"。
+    # ⚠️ `navs` 以前是 **set**（顺序丢了）⇒ 没法判"分区顺序 == 导航顺序"。
     #    现在 list 保序（判顺序用），另存 `navs_set` 给"有没有/死链"用。两个都留着，别只留一个。
     navs = re.findall(r'href="#(sec-[a-z0-9\-]+)"', body, re.I)
     navs_set = set(navs)
@@ -108,8 +108,8 @@ ok("data-cfg 全在面板内", not m["outside"],
 print("── ⑤ 阴性对照：判据不是恒真 ──")
 syn = ('<section id="sec-a"><h2>甲</h2><div class="desc">x</div>'
        '<div data-cfg="a.b"></div></section>'
-       '<section id="sec-b"><h2>乙</h2></section>'      # 缺 desc（且没进导航）
-       '<div data-cfg="c.d"></div>'                      # 孤儿
+       '<section id="sec-b"><h2>乙</h2></section>' # 缺 desc（且没进导航）
+       '<div data-cfg="c.d"></div>' # 孤儿
        '<a href="#sec-gone">死链</a>'
        '<script>var x = \'data-cfg="\'+p+\'"\';</script>')
 sm = scan(syn)
@@ -120,7 +120,7 @@ ok("人造缺 desc 被抓出", sm["miss_desc"] == ["sec-b"], str(sm["miss_desc"]
 ok("脚本段里的假 data-cfg 被忽略（不误报）", "c.d" not in sm["outside"][1:], str(sm["outside"]))
 
 print("── ⑤b 大小写：`sec-*` 的 id 与 href 都必须被认出来（正则大小写不敏感）──")
-# ⛔ V-R7-15（次要项，alpha 发现）：老正则 `sec-[a-z0-9\-]+` 大小写敏感 ⇒ 带大写的
+# ⛔ （次要项，alpha 发现）：老正则 `sec-[a-z0-9\-]+` 大小写敏感 ⇒ 带大写的
 #   `href="#sec-xxx-TYPO"` 整条漏读（字符类停在 T、后面还要求紧跟 `"`）⇒ 真死链照样全绿。
 #   下面三条＝让这件事**能变红**：把 `re.I` 拿掉，它们立刻就红。
 sm_up = scan('<section id="sec-UP"><h2>甲</h2><div class="desc">x</div>'
@@ -138,7 +138,7 @@ ok("导航顺序 == 面板顺序", m["navs"] == m["secs"],
    _bad or ("长度不同：导航 %d / 面板 %d" % (len(m["navs"]), len(m["secs"]))))
 ok("两边数量一致（没有面板没入口 / 有入口没面板）", len(m["navs"]) == len(m["secs"]))
 _bot = m["secs"].index("sec-bot") + 1 if "sec-bot" in m["secs"] else 0
-ok("「机器人昵称 + 响应档位」这一块排在第 3 位（用户点名要放前面）", _bot == 3, "实际第 %d 位" % _bot)
+ok("「机器人昵称 + 响应档位」这一块排在第 3 位", _bot == 3, "实际第 %d 位" % _bot)
 
 print("\n通过 %d / 失败 %d（面板 %d · 导航 %d · 可调项 %d）"
       % (PASS, FAIL, len(m["secs"]), len(m["navs"]), len(set(m["keys"]))))

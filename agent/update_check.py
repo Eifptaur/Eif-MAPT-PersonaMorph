@@ -45,7 +45,7 @@ def _read_state() -> dict:
 
 
 def _write_state(d: dict) -> str:
-    """写更新状态快照。**成功返回 `""`，失败返回人话原因**（第四轮审计 V-R4-12c）。
+    """写更新状态快照。**成功返回 `""`，失败返回人话原因**。
 
     ⛔ 原来 `except: pass` ⇒ 写失败无声无息，而 `data/update_state.json` 会被
     `verifiers.v_update_stuck()` 当成"**现在**的更新结论"报给用户 —— 用户看到的其实是**旧快照**。
@@ -54,10 +54,10 @@ def _write_state(d: dict) -> str:
     p = _state_path()
     try:
         os.makedirs(os.path.dirname(p), exist_ok=True)
-        # ⛔ 2026-09-22 修（第十一轮 **V-R11-9** · P3）：老写法自己拼 `<path>.tmp` ——
+        # ⛔ 老写法自己拼 `<path>.tmp` ——
         #   控制台轮询 `state()` 与安装作业 `_note_seen` 是**两个写者**，撞同一个临时名时
         #   **双方都写不进去**（实测 WinError 32/13）⇒ "新装的那道回滚闸可能永远没被记上"，
-        #   而这道闸现在守着第十轮那条 P0。统一走 `persist.atomic_write_json`（唯一临时名 + fsync +
+        # 而这道闸现在守着那条 P0。统一走 `persist.atomic_write_json`（唯一临时名 + fsync +
         #   有界重试 + 孤儿清扫）。
         from . import persist as _persist
         if not _persist.atomic_write_json(p, d, indent=2, sort_keys=False):
@@ -89,14 +89,14 @@ def vtuple(v):
 
 
 DEFAULT_URL = "https://raw.githubusercontent.com/Eifptaur/Eif-MAPT-PersonaMorph/main/persona-morph-manifest.json"
-#: 备用源（2026-09-16 已知现象：「更新源异常：拉不到更新源：The read operation timed out」）：
+#: 备用源：
 #: `raw.githubusercontent.com` 在国内经常超时 ⇒ **并行**试这几个。
 #: ⚠️ jsDelivr 有 CDN 缓存（本机实测：新版本已发布，它还给着上一版）⇒ **不能按"先到的赢"挑**
-#: （2026-09-17 实测：它 0.8s 就答、镜像 0.7~0.9s 也有货 ⇒ 先到的恰好是旧的那份，新版在控制台里"消失"）；
+#: ；
 #: 现在由 `_ranked()` 按**版本最高者胜**挑，缓存旧的那份抢不赢，但仍然是可用的兜底源。
 API_URL = ("https://api.github.com/repos/Eifptaur/Eif-MAPT-PersonaMorph"
            "/contents/persona-morph-manifest.json?ref=main")
-#: ⚠️ 2026-09-18 作者另一台机器现场：「一直 timeout，拉取不到更新源，试几次都不行」
+#: ⚠️ 
 #:   ⇒ 原来只有 4 条源（raw / jsDelivr / ghfast / ghproxy），那台机器上**全都不通**。
 #:   这里按"**换网络路径**"而不是"多堆同域名"来扩容：
 #:     · `api.github.com` 的 contents 接口 —— 域名解析与路由跟 raw 完全不同（本机实测 api 一直通、
@@ -132,7 +132,7 @@ def _embedded_url(u: str) -> str:
     """取 `https://<镜像>/https://raw.githubusercontent.com/...` 里**内嵌的那个官方地址**。
 
     镜像的信任身份由内嵌地址决定：镜像只配当"同一份官方清单的传输通道"，
-    **不许**它自己决定"版本号与下载地址"（2026-09-20 V-R1-2）。
+    **不许**它自己决定"版本号与下载地址"。
     """
     s = str(u or "")
     i = s.find("://")
@@ -145,7 +145,7 @@ def _embedded_url(u: str) -> str:
     return ""
 
 
-_SLUG_SEGS = tuple(REPO_SLUG.split("/"))          # ("eifptaur", "eif-mapt-personamorph")
+_SLUG_SEGS = tuple(REPO_SLUG.split("/")) # ("eifptaur", "eif-mapt-personamorph")
 _CDN_HOSTS = ("cdn.jsdelivr.net", "fastly.jsdelivr.net", "gcore.jsdelivr.net", "cdn.statically.io")
 
 
@@ -174,7 +174,7 @@ def _decoded_segment(s: str) -> str:
 def has_dot_segments(u: str) -> bool:
     """URL 路径里有没有 `.` / `..` 段（含百分号编码与反斜杠变体）。
 
-    ⛔ 2026-09-21 加 **V-R4-2（P0，第四轮审计）**：判据原来只切**原始**段，而下载侧
+    ⛔ 判据原来只切**原始**段，而下载侧
     （`urllib`，RFC 3986）会**先归一化点段再发请求** ⇒
       `…/Eifptaur/Eif-MAPT-PersonaMorph/../../attacker/x/releases/download/v1/p.zip`
     在我们眼里"头两段就是本仓库"（判可信），**实际取回的是别人仓库的文件**
@@ -210,11 +210,11 @@ def _path_segments(u: str) -> list:
 def _path_has_repo(u: str) -> bool:
     """这个 URL 的路径**在正确的位置上**指向本仓库吗？（结构化判定，不是子串包含）
 
-    ⛔ 2026-09-20 修 **V-R3-5（P0，第三轮审计）**：上一版只把"已知镜像"分支要求了本仓库路径，
+    ⛔ 上一版只把"已知镜像"分支要求了本仓库路径，
     **官方域分支只看 host** —— 可 `raw.githubusercontent.com` / `github.com` 上有**无数别人的仓库**。
     ⇒ 修成"域 + 路径都要对"。
 
-    ⛔ 2026-09-20 **再修（第四轮开审前自查发现：上一版用的是"路径里出现 slug"这种子串判据）**：
+    ⛔ 
     实测**7 种形状都能绕过** —— 攻击者只要**在自己的仓库里造一层同名目录**即可：
         https://raw.githubusercontent.com/attacker/x/main/Eifptaur/Eif-MAPT-PersonaMorph/main/…  ⇒ 判"官方域"
         https://github.com/attacker/x/releases/download/v1/Eifptaur/Eif-MAPT-PersonaMorph.zip      ⇒ 判可信
@@ -226,7 +226,7 @@ def _path_has_repo(u: str) -> bool:
     注：`objects.githubusercontent.com`（带签名的资产直链）路径里没有仓库名 ⇒ 按最严规则**一律不认**
     —— 本产品从来不用它当清单源或下载地址，这是有意的"窄"。
 
-    ⛔ 2026-09-21 **再加一条（V-R4-2，P0，第四轮审计）**：路径里**含点段（`.`/`..`，含 `%2e` 各种编码）
+    ⛔ **再加一条**：路径里**含点段（`.`/`..`，含 `%2e` 各种编码）
     一律拒** —— 否则判据看的是"未归一化的原始段"、而下载侧会归一化后去取**另一个仓库**的文件
     （实测绕过成功）。见 `has_dot_segments()`。
     """
@@ -258,14 +258,14 @@ def _path_has_repo(u: str) -> bool:
 def manifest_origin_ok(u: str, cfg: dict = None) -> tuple:
     """这个源**能不能决定"版本与下载地址"**。返回 `(ok, why)`。
 
-    ⛔ 2026-09-20 修 **V-R1-2（P0）**：原来是"**版本最高者胜**"，而清单本身没有任何真实性
+    ⛔ （P0）**：原来是"**版本最高者胜**"，而清单本身没有任何真实性
     （9 条源里 6 条是第三方反代/CDN）⇒ 任一被投毒/被劫持的镜像回一份版本号更高的清单就能赢过
     官方源，用户点「立即更新」就会装上任意代码（而"哈希校验"只保证包与清单自洽，自洽即通过）。
     现在：①**只有官方域**（或内嵌官方地址的已知镜像）的清单才有资格参与"选版本"；
     ②用户自己填的 `update.url` 若不在官方/已知镜像里，需要显式 `update.trust_custom_url=true`
     才放行（否则拒绝并**告诉他开关名在哪**）；③第三方镜像从此只作传输通道，不作权威。
 
-    ⛔ 2026-09-20 再修 **V-R3-5（P0）**：**"域可信"不等于"内容可信"** —— 上面那条只到"域"，
+    ⛔ 再修 （P0）**：**"域可信"不等于"内容可信"** —— 上面那条只到"域"，
     官方域上同样有别人的仓库 ⇒ 域与路径（本仓库）**两头都要对**。
     """
     s = str(u or "").strip()
@@ -284,7 +284,7 @@ def manifest_origin_ok(u: str, cfg: dict = None) -> tuple:
     if host in OFFICIAL_HOSTS or host.endswith(".githubusercontent.com"):
         if not (outer in PROXY_HOSTS or outer == host or inner == ""):
             return False, "外层不是已知镜像：%s" % outer
-        # ⛔ V-R3-5：域对了还要**路径是本仓库**（否则任何人的仓库都能冒充我们的清单）
+        # ⛔ 域对了还要**路径是本仓库**（否则任何人的仓库都能冒充我们的清单）
         if not _path_has_repo(target):
             return False, "官方域但不是本仓库的路径：%s" % host
         return True, ("官方域" if inner == "" else "镜像内嵌官方地址（%s）" % host)
@@ -296,7 +296,7 @@ def manifest_origin_ok(u: str, cfg: dict = None) -> tuple:
     c = cfg if isinstance(cfg, dict) else _cfg()
     _cfg_url = str((c or {}).get("url") or "").strip()
     if _cfg_url and s == _cfg_url:
-        # ⛔ 2026-09-21（第四轮审计 **V-R4-13**）：这里原来是裸 `bool(...)` ——
+        # ⛔ 这里原来是裸 `bool(...)` ——
         #   写 `"false"` / `"0"`（字符串）反而**开启**信任。用统一真值判断（`config.as_bool`），
         #   这样即使配置没走 `load_config()` 的归一化（内存里 set 进来的那份）也不会反着理解。
         try:
@@ -305,7 +305,7 @@ def manifest_origin_ok(u: str, cfg: dict = None) -> tuple:
             _as_bool = bool
         if _as_bool((c or {}).get("trust_custom_url")):
             return True, "用户显式信任的自定义源（update.trust_custom_url=true）"
-    # ⛔ V-R3-7：拒绝时必须**指路**（说清开关叫什么、写在哪），否则用户只看到"非官方域"却查不到开关
+    # ⛔ 拒绝时必须**指路**（说清开关叫什么、写在哪），否则用户只看到"非官方域"却查不到开关
     return False, ("非官方域：%s（要用自建源/自选镜像，请在 config.json 里设 "
                    "update.trust_custom_url=true）" % (host or "?"))
 
@@ -313,12 +313,12 @@ def manifest_origin_ok(u: str, cfg: dict = None) -> tuple:
 def _base_url_ok(u: str) -> tuple:
     """清单里给的**下载地址**也必须落在官方域内，且**路径是本仓库**（跨域/跨仓库即拒）。
 
-    ⛔ V-R3-5：这里原来**只看 host** ⇒ 一份投毒清单可以把 `base.url` 指到
+    ⛔ 这里原来**只看 host** ⇒ 一份投毒清单可以把 `base.url` 指到
     `https://github.com/attacker/anything/releases/download/...`，客户端照装。
     """
     s = str(u or "").strip()
     if not s:
-        return True, ""                      # 没给地址 ⇒ 由调用方按"缺 base.url"处理
+        return True, "" # 没给地址 ⇒ 由调用方按"缺 base.url"处理
     try:
         from urllib.parse import urlparse
         host = (urlparse(s).hostname or "").lower()
@@ -333,7 +333,7 @@ def _base_url_ok(u: str) -> tuple:
 
 #: 允许"**跟随跳转之后**"落到的主机后缀 —— 发布资产会 302 到 `objects.githubusercontent.com`
 #: 这类 CDN，镜像前缀也会 302 回 `raw.githubusercontent.com`。
-#: ⛔ 2026-09-21（第五轮回执 **V-R5R-3**）：**不许放 `github.io`** —— 那是"任意用户都能托管的
+#: ⛔ **不许放 `github.io`** —— 那是"任意用户都能托管的
 #:   页面域"（`<user>.github.io`），放进允许名单等于自己开了一扇"判 A 取 B"的门。
 FINAL_HOST_SUFFIXES = ("githubusercontent.com", "githubassets.com", "github.com",
                        "jsdelivr.net", "ghfast.top", "ghproxy.net", "gh-proxy.com", "gh.llkk.cc")
@@ -342,7 +342,7 @@ FINAL_HOST_SUFFIXES = ("githubusercontent.com", "githubassets.com", "github.com"
 def final_url_ok(final: str, requested: str) -> str:
     """**唯一实现**：回读响应对象的 `geturl()` 之后的二次判定；空串＝放行，非空＝拒取原因。
 
-    ⛔ 为什么必须有（第五轮 A 面 **V-R5A-1** + 回执 **V-R5R-1**）：只判**请求**地址时，302 一跳
+    ⛔ 为什么必须有：只判**请求**地址时，302 一跳
     就变成「判的是 A、取的是 B」。回执实测：`_dl_once`（下包那条）补上"回读最终地址"之后，
     **取清单那条 `fetch()` 没补** ⇒ 攻击者源 302 到自己的域，产品把**别人的清单**（版本 9999.9.9）
     当官方清单收下（而清单决定"去下哪个包"）⇒ 两处必须走**同一个**判据。
@@ -363,7 +363,7 @@ def final_url_ok(final: str, requested: str) -> str:
         return "跟随跳转后地址含点段 ⇒ 拒取（判据与取件必须看同一个地址）"
     _allow_local = bool(allow_local_update())
     if _host and _host == _rhost:
-        return ""                                       # 同一主机（含本机/自建测试服务器）
+        return "" # 同一主机（含本机/自建测试服务器）
     if _allow_local:
         try:
             from . import local_guard as _lg
@@ -383,7 +383,7 @@ def allow_local_update() -> bool:
     """**本地路径当更新源**只在显式开关下可用（离线自测/内网中转）。
 
     生产路径（`state()` / `run_once()`）不设这个开关 ⇒ 任何"把 update.url 指向一个本地文件"
-    的注入都失效（2026-09-20 V-R1-2 的第二半）。
+    的注入都失效。
     """
     import os as _os
     v = str(_os.environ.get("PM_ALLOW_LOCAL_UPDATE") or "").strip().lower()
@@ -405,7 +405,7 @@ def _short_url(u: str) -> str:
 
 
 #: 拿到第一份清单后**再等这么久**，让"版本更高"的源也说上话（防 CDN 旧缓存抢先）。
-#: 取值依据（2026-09-17 本机实测）：jsDelivr 0.8s、ghfast 0.9s、ghproxy 0.7s ⇒ 1.5s 足够把它们都收进来，
+#: 取值依据：jsDelivr 0.8s、ghfast 0.9s、ghproxy 0.7s ⇒ 1.5s 足够把它们都收进来，
 #: 而控制台最坏等待仍是 `timeout + 1`（不变）。
 GRACE_S = 2.0
 
@@ -417,7 +417,7 @@ def _ranked(got: dict, urls: list):
     它常常答得最快 ⇒ 按先到挑，用户会**看不到刚发布的版本**、点「立即更新」还会照旧清单装。
     版本号是数值元组（`vtuple`），比较不会踩字符串比较的坑。
 
-    ⛔ 2026-09-20 修 **V-R1-2**：**只有"官方域（或内嵌官方地址的已知镜像）"的清单才有资格
+    ⛔ **只有"官方域（或内嵌官方地址的已知镜像）"的清单才有资格
     参与选版本** —— 否则"版本最高者胜"等于"谁被投毒谁说了算"（第三方反代回一份 2099.1.1 就赢）。
     被忽略的来源通过 `_ranked_rejected` 暴露给调用方写进原因里，方便排障时看见。
     """
@@ -446,10 +446,10 @@ _ranked_rejected = []
 def fetch_any(urls, timeout: float = 12.0, patient: float = None):
     """**并行**拉多个源，**版本最高的赢**。返回 `(清单或 None, 说明, 用到的 url)`。
 
-    为什么要并行（2026-09-16）：串行试 4 个源、每个超时 6 秒 = 最坏 24 秒，控制台一打开就卡住；
+    为什么要并行：串行试 4 个源、每个超时 6 秒 = 最坏 24 秒，控制台一打开就卡住；
     并行 ⇒ 最坏 ≈ 一个超时。
-    为什么按版本挑（2026-09-17）：见 `_ranked()` 的注释——先到的可能是 CDN 的旧缓存。
-    为什么有"耐心阶段"（2026-09-18 作者另一台机器实测**延迟 ~1900ms**）：
+    为什么按版本挑：见 `_ranked()` 的注释——先到的可能是 CDN 的旧缓存。
+    为什么有"耐心阶段"：
       老实现 `while time.time() - t0 < timeout + 1.0` 到点就收摊 —— 2 秒 RTT 的链路上，
       TCP+TLS 握手（好几轮）加首个响应字节很容易超过 9 秒 ⇒ **明明能通的源被我们自己掐掉**，
       报出来还是"所有源都拉不到"。⇒ 先按老窗口等（有货立刻返回、平时不卡），
@@ -470,7 +470,7 @@ def fetch_any(urls, timeout: float = 12.0, patient: float = None):
             got[u] = (man, why)
 
     def _one_to(u, to):
-        """耐心阶段专用：用**更大的超时**再打一次同一个源（V-R3-2）。"""
+        """耐心阶段专用：用**更大的超时**再打一次同一个源。"""
         man, why = fetch(u, to)
         with lock:
             got[u] = (man, why)
@@ -486,7 +486,7 @@ def fetch_any(urls, timeout: float = 12.0, patient: float = None):
         _el = time.time() - t0
         if not _waited_patient and _el >= timeout + 1.0:
             # 老窗口过了、一条都没成 ⇒ **进**耐心阶段（**慢网**：2s RTT 也够握手 + 取回）
-            # ⛔ 2026-09-20 修 **V5**：原来这里写成 `if _waited_patient or _el >= _patient: break`，
+            # ⛔ **V5**：原来这里写成 `if _waited_patient or _el >= _patient: break`，
             #    而 `_waited_patient` 刚被置 True ⇒ **下一轮立刻 break** ⇒ 实际只多等了 50 毫秒
             #    （注释承诺 10~30 秒，差三个数量级）。实测：源在 t=5.0s 交回合法清单，
             #    函数 t≈3.0s 就放弃，还报"所有源都拉不到"。
@@ -494,7 +494,7 @@ def fetch_any(urls, timeout: float = 12.0, patient: float = None):
             _waited_patient = True
             print("[update] 更新源很慢，继续等（最多 %.0f 秒）…" % _patient)
         elif _waited_patient and _el >= _patient:
-            break                      # 耐心也用完了 ⇒ 收摊（下面的逐源复核会把原因列出来）
+            break # 耐心也用完了 ⇒ 收摊（下面的逐源复核会把原因列出来）
         with lock:
             done_all = len(got) == len(urls)
             got_one = any((got.get(u) or (None, ""))[0] is not None for u in urls)
@@ -504,8 +504,8 @@ def fetch_any(urls, timeout: float = 12.0, patient: float = None):
             if done_all or time.time() - t_first >= GRACE_S:
                 break
         elif done_all:
-            # ⛔ 2026-09-20 修 **V-R3-2**（V5 只闭了一半）：全失败就收摊 —— 但真实慢网里
-            #   "第一遍超时"≠"源不可用"：源在 5~15 秒才答是实测存在的情况（作者那台机器 RTT ~1900ms），
+            # ⛔ （V5 只闭了一半）：全失败就收摊 —— 但真实慢网里
+            # "第一遍超时"≠"源不可用"：源在 5~15 秒才答是实测存在的情况，
             #   而首遍用的是 `timeout`（2~8 秒）⇒ 必然先失败。⇒ 只要还有耐心预算，就把失败的源
             #   **用「剩余预算」当新超时再打一遍**（这才是"耐心阶段"的本意），而不是让死线程白等。
             _left = _patient - _el
@@ -529,7 +529,7 @@ def fetch_any(urls, timeout: float = 12.0, patient: float = None):
             return man, "", used
         why = "；".join("%s→%s" % (_short_url(u), str((got.get(u) or ("", "超时"))[1])[:40])
                         for u in urls[:3])
-    # ⛔ 2026-09-18（那台机器"一直 timeout"的现场）：全失败时要**逐源列出**哪条挂了、错什么 ——
+    # ⛔ （那台机器"一直 timeout"的现场）：全失败时要**逐源列出**哪条挂了、错什么 ——
     #    用户把这段粘给我，我一眼就知道"他那台机器哪几条路能通"，不用再来回问。
     try:
         import threading as _th
@@ -559,7 +559,7 @@ def fetch_any(urls, timeout: float = 12.0, patient: float = None):
 
 
 def manifest_url(cfg: dict | None = None) -> str:
-    """更新源地址；**空值一律回落到内置默认**（2026-09-16）。
+    """更新源地址；**空值一律回落到内置默认**。
 
     为什么：老用户的 `config.json` 是"默认值为空"那阵子存下来的，里面很可能留着一个空的
     `update.url` ⇒ 它会**盖住新默认值**，让这些用户永远接不到更新通知。
@@ -570,7 +570,7 @@ def manifest_url(cfg: dict | None = None) -> str:
 
 
 def candidate_urls(cfg: dict | None = None) -> list:
-    """**该试哪几个清单源**——"检查更新"与"立即更新"必须用同一份（2026-09-17 修）。
+    """**该试哪几个清单源**——"检查更新"与"立即更新"必须用同一份。
 
     为什么单独立一个函数：以前"检查"走 `fetch_any`（并行多源 + 记住上次能用的源），
     而"立即更新"只试 `manifest_url()` **一个**地址（默认＝国内常年超时的
@@ -589,7 +589,7 @@ def candidate_urls(cfg: dict | None = None) -> list:
 def fetch(url: str, timeout: float = 8.0):
     """支持 http(s) 与**本地路径**（本地路径便于离线自测）。返回 (dict 或 None, 说明)。
 
-    ⛔ 2026-09-20 修 **V-R1-2 的第二半**：本地路径以前在生产路径上**照样可达**（把 `update.url`
+    ⛔ 的第二半**：本地路径以前在生产路径上**照样可达**（把 `update.url`
     或清单来源指向盘上一个文件就能当更新源）⇒ 现在要求显式开关（`PM_ALLOW_LOCAL_UPDATE=1`
     或配置 `update.allow_local=true`），否则直接拒绝并说明。
     """
@@ -603,7 +603,7 @@ def fetch(url: str, timeout: float = 8.0):
         if url.lower().startswith(("http://", "https://")):
             req = urllib.request.Request(url, headers={"User-Agent": "persona-morph-update/1"})
             with urllib.request.urlopen(req, timeout=timeout) as r:
-                # ⛔ V-R5R-1：**取清单这条也要看最终地址**（`_dl_once` 补上了，这里当时漏了）。
+                # ⛔ **取清单这条也要看最终地址**（`_dl_once` 补上了，这里当时漏了）。
                 #   回执实测：A 源 302 到攻击者的域 ⇒ 产品把别人的清单（版本 9999.9.9）当官方收下，
                 #   而清单决定"去下哪个包" ⇒ 后果等同于下到投毒包。判据用**同一个** `final_url_ok`。
                 _fwhy = final_url_ok(str(r.geturl() or url), url)
@@ -612,7 +612,7 @@ def fetch(url: str, timeout: float = 8.0):
                 raw = r.read(512 * 1024)
             # `api.github.com/.../contents/...` 返回 `{"content": "<base64>", ...}` ⇒ 特判解回来。
             # 加它的理由：它的**域名解析与路由跟 raw.githubusercontent 完全不同**——
-            # 2026-09-18 作者另一台机器"一直 timeout、拉不到更新源"，正是 raw/反代那条路全不通；
+            # "一直 timeout、拉不到更新源"，正是 raw/反代那条路全不通；
             # 换一条完全不同的网络路径才可能通。
             if "api.github.com" in str(url):
                 try:
@@ -636,7 +636,7 @@ def fetch(url: str, timeout: float = 8.0):
 def pending_list(v) -> list:
     """把 `pendingFiles` 归一成**条目列表**（一处实现，`update_apply` 直接用它）。
 
-    ⛔ 2026-09-21（第四轮审计 **V-R4-13**）：这个字段可能是**脏数据写成字符串**（手改 / 老版本落的）
+    ⛔ 这个字段可能是**脏数据写成字符串**（手改 / 老版本落的）
     —— 老代码对字符串直接 `len()` ⇒ **按字符计数**，控制台于是报出
     「还有 8 件（一、键、启、动…）」（把"一键启动.exe"一个一个字当成了不同文件）。
     ⇒ 字符串按 `,`/`、`/换行 拆开；列表原样；其它类型忽略。
@@ -653,7 +653,7 @@ def _read_installed() -> dict:
     """读 `data/installed.json`（`update_apply` 写的那份：版本 + 指纹 + **pendingFiles**）。
 
     为什么单开一个只读函数：`state()` 以前只认 `agent/version.py` 里的版本号，而**版本号文件自己也在
-    换入清单里** —— 于是"只装了一半"这件事在"检查更新"那条路上完全不可见（见 V-R4-1）。
+    换入清单里** —— 于是"只装了一半"这件事在"检查更新"那条路上完全不可见。
     """
     try:
         with open(os.path.join(ROOT, "data", "installed.json"), encoding="utf-8") as fh:
@@ -664,7 +664,7 @@ def _read_installed() -> dict:
 
 
 def _expires_ts(v) -> float:
-    """`2026-09-20T12:00:00Z` → 时间戳（空/非法 ⇒ 0.0，表示"没有这道闸"）。"""
+    """`00:00Z` → 时间戳（空/非法 ⇒ 0.0，表示"没有这道闸"）。"""
     s = str(v or "").strip()
     if not s:
         return 0.0
@@ -677,7 +677,7 @@ def _expires_ts(v) -> float:
 def _ver_ts(v) -> float:
     """版本号（`2026.9.22` / `2026.9.22.1`）→ 时间戳（解析不出年月日 ⇒ 0.0）。
 
-    ⛔ 第十二轮 **V-R12-4** 用：判断"这份清单的版本比今天超前多少天"。发版脚本写的是
+    ⛔ 用：判断"这份清单的版本比今天超前多少天"。发版脚本写的是
     `builtAt` 那一天（`scripts\\make_manifest.py`），所以它天然能当"日期"来比。
     """
     try:
@@ -693,9 +693,9 @@ def manifest_gates(man: dict, mine: str | None = None, max_seen: str | None = No
                    now: float | None = None) -> dict:
     """更新清单的两道闸（freeze＝`expires` 过期 / rollback＝单调版本）——**唯一实现**。
 
-    ⛔ 2026-09-22 修 **V-R10-27（P0）**：这两道闸原本**只装在检查侧**（`state()`），而**真正动盘的是
+    ⛔ （P0）**：这两道闸原本**只装在检查侧**（`state()`），而**真正动盘的是
     `agent/update_apply.py::run_once()`** —— 它对 `expires` / `maxSeenVersion` **0 命中**：审计用假源
-    实测"远端 2026.9.1.1（< 本机 2026.9.21.11）照样真装进去、`expires=2020-01-01` 照装"，
+    实测"远端 2026.9.1.1（< 本机 2026.9.21.11）照样真装进去、`expires=
     即用户会被**降级**到有漏洞的旧版。⇒ 判定下沉成这个纯函数，`state()` 与 `run_once()` 都调它：
     「检查说不行」与「真装的时候不行」必须是**同一个判定**（同一事实两条路不许相反）。
 
@@ -728,13 +728,13 @@ def manifest_gates(man: dict, mine: str | None = None, max_seen: str | None = No
     # ② rollback：单调版本（远端不许比"见过的最高版本"低，哪怕它比本机新）
     _vt = vtuple(theirs)
     if theirs and _vt:
-        # ⛔ 2026-09-22 加（第十一轮 **V-R11-2** · P1）：**离谱的超前版本要拦住、而且不许入账**。
+        # ⛔ **离谱的超前版本要拦住、而且不许入账**。
         #   现场：第三方反代/CDN 篡改回包体、或发版时版本号打错一位（`9999.9.9`）⇒ 旧代码无条件
         #   把它写进 `maxSeenVersion` ⇒ 之后**真清单与所有未来版本**全被判 `rollback` ⇒ 那台机器
         #   **再也装不了任何更新**（界面还把锅甩给更新源），产品里又没有复位入口。
         #   这里按"版本号第一段（年）超前 > 1 年"判**异常清单**：`ok=False` + `block_install=True`
         #   （`state()` 报 error、`run_once()` 拒装），并让调用方**不记** `maxSeenVersion`。
-        # ⛔ 2026-09-22 修（第十二轮 **V-R12-4** · P2）：把判据从"只看年"换成**时间跨度** ——
+        # ⛔ 把判据从"只看年"换成**时间跨度** ——
         #   只看年的话投毒面从"无界"缩到"≤1 年"（发版时手误把 2026 打成 2027 就够砖死那台机器）；
         #   而且"一年以内的高版本"完全没人管。现在：version 能解析出年月日时，
         #   **比今天超前 > 180 天** ⇒ 判异常清单（拒装且不入账）。
@@ -808,23 +808,23 @@ def state(cfg: dict | None = None, timeout: float = 12.0) -> dict:
     theirs = str(base.get("version") or an.get("version") or "")
     out["theirs"] = theirs
     out["notes"] = [str(x) for x in (an.get("notes") or [])][:8]
-    # ⛔ 2026-09-21 加（第六轮 **V-R6-27**，TUF 的两个"廉价面"，不做签名那一层）：
+    # ⛔ 
     #   ① **freeze 防护＝`expires` 过期判否**：清单里带 `base.expires`（发版脚本写 = builtAt + 30 天），
     #      过期就**拒绝据此更新**并如实说原因（否则一个被控的源可以永远喂同一份旧清单）；
     #   ② **rollback 防护＝单调版本**：把"见过的最高版本"记进状态，远端低于它就拒（哪怕它比本机新）。
-    # ⛔ 2026-09-22（**V-R10-27**）：这两道判定现在**只有一处实现**（`manifest_gates`），
+    # ⛔ 这两道判定现在**只有一处实现**（`manifest_gates`），
     #   安装侧 `update_apply.run_once()` 复检的就是同一个函数 —— 不许再各写一套（那正是这条 P0 的成因）。
     _gate = manifest_gates(man, mine=mine)
     out["expires"] = _gate["expires"]
     out["maxSeenVersion"] = _gate["maxSeenVersion"]
-    # ⛔ 2026-09-22 修（第十二轮 **V-R12-1** · P1）：**必须把 `kind` 抄进 `out`** ——
-    #   第十一轮加的那道"只有过闸的清单才配入账"守卫写的是 `if not out.get("kind")`，
+    # ⛔ **必须把 `kind` 抄进 `out`** ——
+    # 加的那道"只有过闸的清单才配入账"守卫写的是 `if not out.get("kind")`，
     #   而 `state()` 从来没往 `out` 里放过 `kind` ⇒ `out.get("kind")` 恒 `None` ⇒ 守卫**永不成立**
     #   （审计实测：源给 `2099.9.9` 照样被写进 `maxSeenVersion`，此后真清单全判 rollback 拒装，
     #    而同一个 `state()` 还报"有新版本" —— 同一份清单两条路相反）。
     out["kind"] = str(_gate.get("kind") or "")
     if out["kind"] in ("expired", "rollback", "far_ahead"):
-        # `far_ahead` 也必须在**这里**早退（第十一轮只加了闸门、忘了把这一档接进来）：
+        # `far_ahead` 也必须在**这里**早退：
         # 超前一年以上的清单要**如实报 error**，而不是"有新版本"。
         out["status"] = "error"
         out["why"] = _gate["why"]
@@ -836,10 +836,10 @@ def state(cfg: dict | None = None, timeout: float = 12.0) -> dict:
         if _ws0:
             out["stateSaveError"] = _ws0
         return out
-    # 自更新要用它俩（2026-09-16：控制台「立即更新」真正开始下载+换入，不再只打印指路文案）
+    # 自更新要用它俩
     out["baseUrl"] = str(base.get("url") or "")
     out["baseSha256"] = str(base.get("sha256") or "")
-    # ⚡ 2026-09-18 晚：**内容指纹**（见 `agent/version.py::BUILD` 的说明）——同名版本换包也能看出来
+    # ⚡ **内容指纹**（见 `agent/version.py::BUILD` 的说明）——同名版本换包也能看出来
     try:
         from .version import BUILD as _MINE_BUILD
     except Exception:
@@ -853,7 +853,7 @@ def state(cfg: dict | None = None, timeout: float = 12.0) -> dict:
         out["status"] = "error"
         out["why"] = "清单里没有版本号（清单坏了）"
     elif theirs == mine:
-        # ⚡ 2026-09-18 晚：**同名版本换包也要能看出来**（作者 2026-09-16 一问：「那就没有办法让他们
+        # ⚡ **同名版本换包也要能看出来**（
         #   也接到更新提示吗」）。两边都有指纹且不同 ⇒ 判"有新包"；任一侧缺指纹（老包/老清单）⇒ 按原口径
         #   判 current（**不误报**：没有指纹时我们无法区分"同一个包"和"换了包"）。
         _tb, _mb = str(out.get("build") or ""), str(out.get("mineBuild") or "")
@@ -874,7 +874,7 @@ def state(cfg: dict | None = None, timeout: float = 12.0) -> dict:
         out["status"] = "newer"
         out["why"] = "有新版本 %s（当前 %s）" % (theirs, mine or "未记录")
 
-    # ⛔ 2026-09-20 修 **V-R4-1**（准备第四轮材料时由第二轮调研点名、我实读确认）：
+    # ⛔ 
     #   `pendingFiles`（上次"只装了一半"的待补清单）**只有 update_apply 自己读**，`state()` 完全不看它。
     #   而 `agent/version.py` **本身也在换入清单里** ⇒ 最常见的半装场景（`一键启动.exe`／`一键关闭.exe`
     #   正在运行 ⇒ 那几件被占用 ⇒ 跳过，而 version.py 已经换成功）会让这里算出
@@ -883,7 +883,7 @@ def state(cfg: dict | None = None, timeout: float = 12.0) -> dict:
     #   ⇒ ①`pendingFiles` 非空时把 `current` 降级成新的 `pending` 状态，并写清"还差几件、怎么办"；
     #     ②**任何状态**都把 `pending` 带出去（公告条/检验器要看得见，不能只活在 update_apply 里）。
     _loc = _read_installed()
-    # ⛔ V-R4-13：脏数据（字符串）也要**按条目**算 —— 见 `pending_list`
+    # ⛔ 脏数据（字符串）也要**按条目**算 —— 见 `pending_list`
     _pend = pending_list((_loc or {}).get("pendingFiles"))[:50]
     if _pend:
         out["pending"] = _pend
@@ -898,9 +898,9 @@ def state(cfg: dict | None = None, timeout: float = 12.0) -> dict:
                                                    % (len(_pend), _tail))
     st = _read_state()
     st.update({"lastCheck": out["checkedAt"], "lastStatus": out["status"], "lastError": "",
-               "lastGoodUrl": out["url"]})          # 记住"哪个源能用"，下次先试它
-    # ⛔ V-R6-27②：**见过的最高版本**要落盘（单调，只升不降）——下一次就能识别"源给了更旧的版本"。
-    # ⛔ 2026-09-22 修（第十一轮 **V-R11-2** · P1）：**只有"两道闸都过"的清单才配入账** ——
+               "lastGoodUrl": out["url"]}) # 记住"哪个源能用"，下次先试它
+    # ⛔ ②：**见过的最高版本**要落盘（单调，只升不降）——下一次就能识别"源给了更旧的版本"。
+    # ⛔ **只有"两道闸都过"的清单才配入账** ——
     #   过期/回滚/**超前一年以上**（`far_ahead`）这些被拒的清单一律**不许**顶高这道闸，
     #   否则一次异常回包就能把用户的更新链**永久砖死**（真清单从此全被判 rollback）。
     try:
@@ -909,7 +909,7 @@ def state(cfg: dict | None = None, timeout: float = 12.0) -> dict:
             st["maxSeenVersion"] = theirs
     except Exception:
         pass
-    _wsw = _write_state(st)                         # V-R4-12c：写失败要让外面看得见（别当"已记下"）
+    _wsw = _write_state(st) # c：写失败要让外面看得见（别当"已记下"）
     out["stateSaved"] = (_wsw == "")
     if _wsw:
         out["stateSaveError"] = _wsw
@@ -917,7 +917,7 @@ def state(cfg: dict | None = None, timeout: float = 12.0) -> dict:
 
 
 def reset_seen_version() -> dict:
-    """**一键复位「见过的最高版本」**（第十一轮 **V-R11-2** 第 3 条 · P1）。
+    """**一键复位「见过的最高版本」**。
 
     为什么要有它：`maxSeenVersion` 是单调闸门，一旦被顶到天上（被改过的镜像清单给了
     `9999.9.9`、或发版时版本号打错一位），**真清单与所有未来版本**都会被判"回滚/降级" ⇒

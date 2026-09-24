@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""看门狗单实例判据（2026-09-17 立，起因＝用户当晚连报三次「又起 N 个控制台」）。
+"""看门狗单实例判据。
 
 守的是什么：`watchdog.py` 的「已有同版本看门狗 ⇒ 本实例退出，**绝不拉起任何子进程**」。
 
@@ -32,8 +32,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
-import subprocess as _sp          # noqa: E402  真 subprocess，只用来造一个"活着的进程"
-import watchdog as WD             # noqa: E402
+import subprocess as _sp # noqa: E402  真 subprocess，只用来造一个"活着的进程"
+import watchdog as WD # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -53,7 +53,7 @@ class _Rec(object):
     """替换掉 watchdog 的 subprocess：只记录，绝不起真进程。"""
     popen_calls = []
     run_calls = []
-    # ⛔ 2026-09-20 修 V6：桩缺 `DEVNULL` ⇒ 产品代码走到"拉起机器人"那条路时抛
+    # ⛔ 桩缺 `DEVNULL` ⇒ 产品代码走到"拉起机器人"那条路时抛
     #    `type object '_Rec' has no attribute 'DEVNULL'`，而它又被写进**产品**的 data/runtime.log。
     DEVNULL = _sp.DEVNULL
 
@@ -71,7 +71,7 @@ class _Rec(object):
 def main():
     tmp = tempfile.mkdtemp(prefix="pm-wd-")
     WD.PID_FILE = os.path.join(tmp, "watchdog.pid")
-    # ⛔ 2026-09-20 修 V6（实测污染产品日志 1996 行 / 32.3%）：判据原来只隔离了 `PID_FILE`，
+    # ⛔ V6（实测污染产品日志 1996 行 / 32.3%）：判据原来只隔离了 `PID_FILE`，
     #    而同一个模块的 `CRASH_LOG` **默认就指向产品的 `data/runtime.log`** ⇒ 判据跑一次的副作用
     #    会把"不是产品写的"异常灌进产品日志（真出故障时真假不分）。
     #    ⇒ 凡"模块里会写盘的产品路径"必须一起隔离；下面再加一条机械断言钉住它。
@@ -96,13 +96,13 @@ def main():
     print("\n[一] 已有同版本看门狗活着 ⇒ 本实例退出，一个子进程都不拉")
     try:
         with open(WD.PID_FILE, "w", encoding="utf-8") as f:
-            # 2026-09-18：`watchdog.pid` 第二行改记**整包版本**（接管判据从"看门狗版本"
+            # `watchdog.pid` 第二行改记**整包版本**（接管判据从"看门狗版本"
             # 升级成"包版本"）⇒ 判据这里也必须写包版本，否则会被判成"旧实例"而走接管分支（判据会挂住）。
             f.write("%d\n%s" % (sleeper.pid, WD.pkg_version()))
         WD.subprocess, WD.time.sleep = _Rec, _sleep
         try:
             rc = WD.main()
-        except Exception as e:                                   # noqa: BLE001
+        except Exception as e: # noqa: BLE001
             rc = "EXC:%r" % (e,)
         finally:
             WD.subprocess, WD.time.sleep = real_sub, real_sleep

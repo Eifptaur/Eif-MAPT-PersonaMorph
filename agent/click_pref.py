@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """会话行点击目标的**学习型偏好**（数据在 `data/click_targets.json`）。
 
-⛔ 为什么不做"版本 → 方法"的写死表（2026-09-21 的实测教训）：
-   2026-09-13 的结论是"会话行必须投**渲染子窗**、投主窗点不动"，这句话当年被写进了代码注释**和判据**；
-   2026-09-21 同一台机器、同一落点实测**正好反了**（主窗 5/5 生效、渲染子窗 0/5）⇒ 写死的表一遇到
+⛔ 为什么不做"版本 → 方法"的写死表：
+   的结论是"会话行必须投**渲染子窗**、投主窗点不动"，这句话当年被写进了代码注释**和判据**；
+   同一落点实测**正好反了**（主窗 5/5 生效、渲染子窗 0/5）⇒ 写死的表一遇到
    微信/适配层变化就**静默失效**——更糟的是注释和判据还会"证明"它是对的（那轮六次实验全白做）。
 
 ⇒ 本模块只做一件事：**记住"上一次哪个目标真的生效了"**，用来决定**先试哪个**。
@@ -26,15 +26,15 @@ from .config import DATA_DIR
 
 log = logging.getLogger("persona-morph")
 
-# ⛔ 2026-09-21 修（第六轮 **V-R6-20**）：原来写的是 `os.path.join("data", ...)`（吃 CWD）——
+# ⛔ 原来写的是 `os.path.join("data", ...)`（吃 CWD）——
 #   生产启动都钉了 `cwd=ROOT` 所以现网没炸，但换个启动方式就会写到别处、且和 `send_retry` 不同源。
 PATH = os.path.join(DATA_DIR, "click_targets.json")
-# ⛔ 2026-09-21 加（第六轮 **V-R6-8**）：模块里原来**一把锁都没有**，而写者确实并存
+# ⛔ 模块里原来**一把锁都没有**，而写者确实并存
 #   （30s 心跳线程经 `send_text`→切会话→`_click_visible_session` 调 `record_ok`，与监听线程并发）
 #   ⇒ 实测 3 线程×150 次只剩 6 次（丢 444 次）。这里给"读-改-写"整段加锁。
 _LOCK = threading.RLock()
-MAX_FAIL = 2                       # 连续失败到这个数 ⇒ 丢弃偏好
-MAX_KEYS = 40                      # 老版本/老尺寸的记录上限（防文件长胖）
+MAX_FAIL = 2 # 连续失败到这个数 ⇒ 丢弃偏好
+MAX_KEYS = 40 # 老版本/老尺寸的记录上限（防文件长胖）
 
 
 def _safe_int(v) -> int:
@@ -61,7 +61,7 @@ def _load() -> dict:
         if not isinstance(d.get("keys"), dict):
             d["keys"] = {}
         return d
-    except Exception as e:                                        # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         log.debug("点击目标偏好读失败（按空处理）：%s", e)
         return {"schema": 1, "keys": {}}
 
@@ -70,8 +70,8 @@ def _save(d: dict) -> None:
     """原子写；**永不抛**（偏好坏了不能挡住切会话）。"""
     try:
         ks = [(k, v) for k, v in (d.get("keys") or {}).items() if isinstance(v, dict)]
-        if len(ks) > MAX_KEYS:                                    # 只留最近的 MAX_KEYS 条
-            # ⛔ V-R6-18：排序键原来直接 `int(v.get("at"))` —— 一条脏条目（`at` 不是数字）
+        if len(ks) > MAX_KEYS: # 只留最近的 MAX_KEYS 条
+            # ⛔ 排序键原来直接 `int(v.get("at"))` —— 一条脏条目（`at` 不是数字）
             #   就会让**读整段**抛错，被本函数的 except 吞掉 ⇒ 之后每次记录都写不进盘。
             ks.sort(key=lambda t: _safe_int((t[1] or {}).get("at")), reverse=True)
             d["keys"] = dict(ks[:MAX_KEYS])
@@ -82,21 +82,21 @@ def _save(d: dict) -> None:
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, PATH)
-    except Exception as e:                                        # noqa: BLE001
-        # ⛔ V-R6-18：原来只有 DEBUG ⇒ "之后再也写不进盘"这件事在日志里看不见
+    except Exception as e: # noqa: BLE001
+        # ⛔ 原来只有 DEBUG ⇒ "之后再也写不进盘"这件事在日志里看不见
         log.warning("点击目标偏好写失败（忽略，不影响切会话）：%s", e)
 
 
 def peek(k: str) -> dict:
     """看这条键记住了什么（只读，给日志/控制台用）。
 
-    ⛔ V-R6-19：原来 `dict(...再解包)` 遇到"某条记录不是字典"会抛 `ValueError`
+    ⛔ 原来 `dict(...再解包)` 遇到"某条记录不是字典"会抛 `ValueError`
     （判据自己声称"坏数据不许挡路（永不抛）"，实际只测了会吞异常的那条路）⇒ 加类型判断。
     """
     try:
         v = (_load().get("keys") or {}).get(k)
         return dict(v) if isinstance(v, dict) else {}
-    except Exception:                                             # noqa: BLE001
+    except Exception: # noqa: BLE001
         return {}
 
 
@@ -115,7 +115,7 @@ def order_named(base, k: str, named: dict) -> list:
         #    偏好**不许往里加**它没有的目标（否则"偏好文件坏/被写脏"会变成"往未知窗口投鼠标"）。
         if h and any(int(x) == int(h) for x in seq):
             seq = [h] + [x for x in seq if int(x) != int(h)]
-    except Exception:                                             # noqa: BLE001
+    except Exception: # noqa: BLE001
         return list(base or [])
     return seq
 
@@ -123,7 +123,7 @@ def order_named(base, k: str, named: dict) -> list:
 def record_ok(k: str, kind: str) -> None:
     """记一次"这个目标真的生效了"（kind ∈ main/render/其它）。"""
     try:
-        with _LOCK:                                     # ⛔ V-R6-8：读-改-写整段加锁（丢更新实测 450→6）
+        with _LOCK: # ⛔ 读-改-写整段加锁（丢更新实测 450→6）
             d = _load()
             cur = dict((d["keys"] or {}).get(k) or {})
             cur["ok"] = str(kind)
@@ -132,7 +132,7 @@ def record_ok(k: str, kind: str) -> None:
             cur["at"] = int(time.time())
             d.setdefault("keys", {})[k] = cur
             _save(d)
-    except Exception as e:                                        # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         log.debug("点击目标偏好记录失败（忽略）：%s", e)
 
 
@@ -150,7 +150,7 @@ def record_fail(k: str) -> None:
             else:
                 d.setdefault("keys", {})[k] = cur
             _save(d)
-    except Exception as e:                                        # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         log.debug("点击目标偏好记录失败（忽略）：%s", e)
 
 
@@ -159,5 +159,5 @@ def stats() -> dict:
     try:
         d = _load()
         return {"path": PATH, "n": len(d.get("keys") or {}), "keys": d.get("keys") or {}}
-    except Exception:                                             # noqa: BLE001
+    except Exception: # noqa: BLE001
         return {"path": PATH, "n": 0, "keys": {}}

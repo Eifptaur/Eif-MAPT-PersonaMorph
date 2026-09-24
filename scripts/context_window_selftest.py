@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""上下文兜底判据：长时间静默后触发，bot 仍然看得到上文（2026-09-13）
+"""上下文兜底判据：长时间静默后触发，bot 仍然看得到上文
 
-用户报的现象：「机器人长时间不触发，突然触发一次时完全不看上文」。
 本机复现到的根因：`build_past_state` 只带 `past_window_min`（本机 30 分钟）窗内的消息，
 群里静默两小时后被触发 ⇒ 窗内一条都没有 ⇒ 过去状态为空 ⇒ 提示词里写「暂无历史记录，这是你第一次参与这个会话」。
 修法：新增 `store.past_floor_count`（默认 8，0=关闭）——窗内不足 N 条时把窗外最近的消息补进来，
@@ -23,7 +22,7 @@ import time
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agent import prompt as P  # noqa: E402
+from agent import prompt as P # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -73,7 +72,7 @@ print("── B. 混合（窗内 1 条 + 窗外 5 条）──")
 mixed = old5 + [mk("n1", 1, "@机器人 你还在吗")]
 rb = P.build_past_state(FakeStore(mixed), "group:x", limit=30)
 ok("窗外历史也在（不被丢）", "第 1 条" in rb["text"] and "你还在吗" in rb["text"], "count=%s" % rb["count"])
-# 2026-09-15 改自检口径：提醒句从**开头**挪到了**末尾**（为了前缀缓存：历史块开头不再每轮变），
+# 提醒句从**开头**挪到了**末尾**（为了前缀缓存：历史块开头不再每轮变），
 # 所以"新消息在末尾"要允许末尾挂着那句提醒——真正要守的性质是"旧的在前、新的在后"。
 _lines = [l for l in rb["text"].rstrip().splitlines() if l.strip()]
 _body = [l for l in _lines if not l.strip().startswith("（提醒：")]
@@ -120,7 +119,7 @@ def make_ctx(store):
                 "memory": FakeMemory(), "session": None, "self_nickname": "机器人", "more_unread_during_run": False})
 
 
-P.get_config = lambda: cfg(past_floor_count=0)   # 关掉兜底，制造"有消息但取不到"的极端场景
+P.get_config = lambda: cfg(past_floor_count=0) # 关掉兜底，制造"有消息但取不到"的极端场景
 up_stale = P.build_user_prompt(make_ctx(FakeStore(old5)))
 ok("store 有消息但取不到时，不再说『这是你第一次参与这个会话』",
    "这是你第一次参与这个会话" not in up_stale and "没能取到" in up_stale,

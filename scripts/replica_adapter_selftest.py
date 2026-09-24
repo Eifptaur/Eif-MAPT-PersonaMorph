@@ -13,12 +13,12 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-try:   # Windows 控制台默认 GBK：不切 UTF-8 的话，印中文/符号会 UnicodeEncodeError 崩掉
+try: # Windows 控制台默认 GBK：不切 UTF-8 的话，印中文/符号会 UnicodeEncodeError 崩掉
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 except Exception:
     pass
 
-from agent import replica_adapter as ra  # noqa: E402
+from agent import replica_adapter as ra # noqa: E402
 
 PASS, FAIL = [], []
 
@@ -52,10 +52,10 @@ class FakeConn:
         self.log.append((self.kind, sql.strip()[:40], params))
         rows = self.rows
         if "server_id=?" in sql:
-            pass          # 该分片有没有这条记录由 FakeDB 预置（真库由 SQL 过滤；行里只放 SELECT 出的列）
+            pass # 该分片有没有这条记录由 FakeDB 预置（真库由 SQL 过滤；行里只放 SELECT 出的列）
         elif "@chatroom" in sql:
             rows = [r for r in rows if str(r.get("username", "")).endswith("@chatroom")]
-            self.rows = rows   # 让 fetchall/fetchone 看到过滤后的结果
+            self.rows = rows # 让 fetchall/fetchone 看到过滤后的结果
         return self
 
     def fetchall(self):
@@ -137,7 +137,7 @@ def main():
     ok("昵称映射：备注优先、回退昵称", m.get("wxid_a") == "备注A" and m.get("wxid_b") == "昵称B", len(m))
 
     print("— C. 群列表：**两个来源取并集**（2026-09-22 修「只检测到一个群」）—")
-    dbg = FakeDB()                       # 用新实例：上一个用例已经查过 contact.db，日志里会带噪音
+    dbg = FakeDB() # 用新实例：上一个用例已经查过 contact.db，日志里会带噪音
     g = ra.load_groups(dbg)
     ok("两条来源都跑：`chat_room` 给出群一", g and g[0]["wxid"] == "12345@chatroom" and g[0]["name"] == "群一")
     ok("**不再被公开接口短路**（contact.db 也要查——老实现拿到非空就 return）",
@@ -185,7 +185,7 @@ def main():
         _orig_dec = ra.original_decrypt_page() or _wdb._decrypt_page
         _real_aes = _wdb._aes_cbc_decrypt
 
-        def _stub_aes(key, iv, data):        # 把"解密"换成可控桩：只测**页 1 头**的判断
+        def _stub_aes(key, iv, data): # 把"解密"换成可控桩：只测**页 1 头**的判断
             return b"\x01" * len(data)
 
         _wdb._aes_cbc_decrypt = _stub_aes
@@ -193,9 +193,9 @@ def main():
         ok("补丁装上（patched / 已装过）", _st in ("patched", "skip:already"), _st)
 
         _magic = b"SQLite format 3\x00"
-        _enc = bytearray(b"\x9f" * _wdb.PAGE_SZ)          # 首 16 字节是**密文 salt**（不是魔数）
+        _enc = bytearray(b"\x9f" * _wdb.PAGE_SZ) # 首 16 字节是**密文 salt**（不是魔数）
         _plain = bytearray(b"\x9f" * _wdb.PAGE_SZ)
-        _plain[0:16] = _magic                             # 真·明文头
+        _plain[0:16] = _magic # 真·明文头
         _k48 = b"k" * 48
         _r_enc = _wdb._decrypt_page(_k48, bytes(_enc), 1)
         ok("全加密库（48 字节密钥）⇒ 补出来必须是 SQLite 魔数开头",
@@ -206,15 +206,15 @@ def main():
         _old = _orig_dec(_k48, bytes(_enc), 1)
         ok("灵敏度：老实现会把**密文**当明文头（首 16 字节不是魔数）⇒ 这条判据真能红",
            bytes(_old[:16]) != _magic, repr(bytes(_old[:16])))
-    except Exception as _ce:                              # noqa: BLE001
+    except Exception as _ce: # noqa: BLE001
         ok("页 1 模式补丁可测（驱动库在不在）", False, "%s: %s" % (type(_ce).__name__, str(_ce)[:60]))
     finally:
         try:
             if _wdb is not None and _real_aes is not None:
-                _wdb._aes_cbc_decrypt = _real_aes                       # 桩件还原
-                _wdb._decrypt_page = _orig_dec                         # 原始实现还原
+                _wdb._aes_cbc_decrypt = _real_aes # 桩件还原
+                _wdb._decrypt_page = _orig_dec # 原始实现还原
                 ra._PATCHED["done"] = False
-                ra.fix_page1_plaintext_header()                        # 用真 AES 重新装上补丁
+                ra.fix_page1_plaintext_header() # 用真 AES 重新装上补丁
             ok("收尾：驱动库里没有留下我们的桩件（AES 仍是原来的那个）",
                (_wdb is None) or (_wdb._aes_cbc_decrypt is _real_aes))
         except Exception:
@@ -250,7 +250,7 @@ def main():
 
     class NoShardDB(FakeDB):
         """连 contact.db 都定位不到（顺便把公开接口也去掉 ⇒ 只能走"回退查库"那条路）。
-        V-R7-11：原来这个替身还留着可用的 `get_groups`，于是 `load_groups` 走公开接口就返回了、
+        原来这个替身还留着可用的 `get_groups`，于是 `load_groups` 走公开接口就返回了、
         永远碰不到 `if rel is None: raise` 那一行（把 raise 改成 `return []` 判据仍全绿）。"""
         def __init__(self):
             super().__init__(with_get_groups=False)
@@ -275,7 +275,7 @@ def main():
     except Exception:
         _p_raised = True
     ok("load_privates：定位不到 contact.db ⇒ **抛**（不许吞成「没有私聊联系人」）", _p_raised)
-    # V-R7-11：原先只有 load_privates 那条守着「定位不到 contact.db」这一路，
+    # 原先只有 load_privates 那条守着「定位不到 contact.db」这一路，
     # load_groups 里的同名守卫变异成 `return []` 时判据仍全绿 ⇒ 这里补上同一条守卫的断言（消息里要说出 contact.db）
     try:
         ra.load_groups(NoShardDB())
@@ -310,7 +310,7 @@ def main():
         def __init__(self, heal=True):
             self._db_files = [("contact.db", "C:/x/contact.db", 10),
                               ("message\\media 1.db", "C:/x/media 1.db", 20)]
-            self._keys = {"contact.db": b"k"}          # 故意缺 media 1.db
+            self._keys = {"contact.db": b"k"} # 故意缺 media 1.db
             self.heal = heal
             self.refreshed = 0
             self.extracted = 0
@@ -357,12 +357,12 @@ def main():
     ok("分片表里只剩拿得到密钥的那个（驱动库内部遍历不再撞 KeyError）",
        [r for r, _p in ra.iter_shards(_sd3)] == ["contact.db"], str(ra.iter_shards(_sd3)))
     _sd4 = _ShardDB(heal=False)
-    _sd4._keys = {}                       # 全部都没密钥 ⇒ **不许把分片表清空**
+    _sd4._keys = {} # 全部都没密钥 ⇒ **不许把分片表清空**
     _r4 = ra.refresh_shards(_sd4)
     ok("一个都补不到时**不清空**分片表（安全线）",
        _r4.get("dropped") == [] and len(ra.iter_shards(_sd4)) == 2, "%s / %d" % (_r4.get("dropped"), len(ra.iter_shards(_sd4))))
 
-    print("── V-R9-33：zstd 压缩正文还原（真 zstd 帧 ⇒ 真正文；这一族以前**零判据**）──")
+    print("── zstd 压缩正文还原（真 zstd 帧 ⇒ 真正文；这一族以前**零判据**）──")
     # 为什么要有它：微信 4.x 把**长文本/文件卡**的 content 用 zstd 压缩存库，还原走
     # `recover_text`/`message_text`/`fill_text`。审计实测：把这三个函数改坏，本判据
     # **31/0 全绿** ⇒ 用户粘来的长段落会被读成 `[文本]`、机器人"看不见"内容（正对反馈里的

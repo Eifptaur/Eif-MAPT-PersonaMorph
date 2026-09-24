@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """会话头 OCR（Windows 内置 WinRT OCR，离线、零下载）：回答"当前打开的会话到底是谁"。
 
-为什么需要它（2026-09-13）：
+为什么需要它：
   · 投递不切会话 ⇒ 发送前必须确认"当前会话＝目标会话"；
   · `agent/chat_header.py` 的**指纹**能判"像不像参照"，但**没有参照时它答不出"现在是谁"**；
   · 驱动库的只读判据 `gui._chat_is_open()` 实测**不稳定**（同一次调用里 True、紧接着外面查是 False），
@@ -33,7 +33,7 @@ def available() -> bool:
         return False
 
 
-# ————————————————— OCR 硬超时 / 熔断 / 预算（2026-09-14，测机手册 ④） —————————————————
+# ————————————————— OCR 硬超时 / 熔断 / 预算 —————————————————
 # 为什么必须自己再加一层：驱动库的 `ScreenOCR.recognize` 写的是
 # `asyncio.run(asyncio.wait_for(_run(), timeout=8))`——**那个 8 秒是"软"的**：`wait_for` 取消的是
 # asyncio 任务，而里面 await 的是 WinRT 的 `IAsyncOperation`；原生操作不响应取消时，`asyncio.run`
@@ -44,11 +44,11 @@ def available() -> bool:
 # 连续 `BREAK_AFTER` 次超时就**停止再试** `BREAK_COOLDOWN_S` 秒，直接返回空并给出原因。
 # ⚠️ 空返回只表示"**没拿到文字**"，不表示"画面上没有文字"：调用方必须按"自检不可用"处理
 #   （项目铁律：自检不可用 ⇒ 不发；绝不许当成"没证据也能发"）。
-DEFAULT_TIMEOUT_S = 25.0        # 单次 OCR 硬上限（秒）；环境变量 WXAGENT_OCR_TIMEOUT 可覆盖
-BREAK_AFTER = 2                 # 连续硬超时几次 ⇒ 熔断
-BREAK_COOLDOWN_S = 120.0        # 熔断时长（秒）；环境变量 WXAGENT_OCR_COOLDOWN 可覆盖
-SEND_WINDOW_S = 60.0            # **一笔发送链**允许花在 OCR 上的总时间（秒）；一次 OCR 正常 0.3~1s
-WINDOW_MIN_SLICE_S = 2.0        # 窗里只剩这么点时，不再开新的 OCR（那一次注定超时）
+DEFAULT_TIMEOUT_S = 25.0 # 单次 OCR 硬上限（秒）；环境变量 WXAGENT_OCR_TIMEOUT 可覆盖
+BREAK_AFTER = 2 # 连续硬超时几次 ⇒ 熔断
+BREAK_COOLDOWN_S = 120.0 # 熔断时长（秒）；环境变量 WXAGENT_OCR_COOLDOWN 可覆盖
+SEND_WINDOW_S = 60.0 # **一笔发送链**允许花在 OCR 上的总时间（秒）；一次 OCR 正常 0.3~1s
+WINDOW_MIN_SLICE_S = 2.0 # 窗里只剩这么点时，不再开新的 OCR（那一次注定超时）
 
 _local = threading.local()
 _lock = threading.RLock()
@@ -94,7 +94,7 @@ def begin_window(seconds=None) -> float:
     tok = time.monotonic() + max(0.0, w)
     st = _wins()
     st.append(tok)
-    if len(st) > 32:                     # 兜底：只留最近 8 个（正常每次 OCR 都会顺手清理过期项）
+    if len(st) > 32: # 兜底：只留最近 8 个（正常每次 OCR 都会顺手清理过期项）
         del st[:-8]
     return tok
 
@@ -194,7 +194,7 @@ def health_line() -> tuple:
     """
     try:
         h = health()
-    except Exception as e:                                   # noqa: BLE001
+    except Exception as e: # noqa: BLE001
         return "info", "读不到 OCR 健康度：%s" % e, ""
     if h.get("open"):
         return ("warn",
@@ -245,7 +245,7 @@ def _run_hard(fn, seconds: float, what: str):
     def _t():
         try:
             box["v"] = fn()
-        except Exception as e:                       # noqa: BLE001
+        except Exception as e: # noqa: BLE001
             box["e"] = "%s: %s" % (type(e).__name__, e)
 
     th = threading.Thread(target=_t, daemon=True, name="ocr-%s" % (what or "hard"))
@@ -261,7 +261,7 @@ def _run_hard(fn, seconds: float, what: str):
 def recognize(img, timeout=None) -> list:
     """对 PIL 图像跑 OCR，返回 [(text, x, y, w, h)]；不可用/失败/超时返回 []。
 
-    **硬超时**（2026-09-14 加）：单次最多 `timeout_s()`（默认 25 秒，环境变量可调），到点返回 `[]`
+    **硬超时**：单次最多 `timeout_s()`（默认 25 秒，环境变量可调），到点返回 `[]`
     并把原因记进 `health()`；连续超时达 `BREAK_AFTER` 次会熔断 `BREAK_COOLDOWN_S` 秒。
     """
     try:
@@ -287,16 +287,16 @@ def recognize(img, timeout=None) -> list:
     return list(val or [])
 
 
-# ————————————————— 丙-9 A1：第二引擎 RapidOCR（串联降级，调研 S1） —————————————————
+# ————————————————— A1：第二引擎 RapidOCR（串联降级，调研 S1） —————————————————
 # 为什么：WinRT OCR 精度差（asyncio 取消不响应缺陷 + 25s 硬超时 + 2 次熔断 120s 全哑），
 # 强档证据帧读空时整条身份闸 fail-closed。RapidOCR（rapidocr_onnxruntime，PP-OCRv4）
 # 纯本地离线推理，作为**补读引擎**：WinRT 先跑（快速路径），空/失败帧才用 RapidOCR
 # 对同一帧重试，任一引擎给出非空结果即算数。**不是每帧双跑**（控制耗时）。
 # fail-closed 铁律不变：两引擎全挂 ⇒ 仍按"自检不可用"拒发（绝不变成"没证据也能发"）。
 
-_RAPID_PKG = "rapidocr-onnxruntime"      # pip 包名（import 名是 rapidocr_onnxruntime）
-_RAPID_TIMEOUT_S = 20.0                  # RapidOCR 同步推理单帧上限（线程 join 硬超时）
-_RAPID_PIP_TIMEOUT = 900                 # 自举 pip 单镜像上限（依赖链 ≈ 百 MB）
+_RAPID_PKG = "rapidocr-onnxruntime" # pip 包名（import 名是 rapidocr_onnxruntime）
+_RAPID_TIMEOUT_S = 20.0 # RapidOCR 同步推理单帧上限（线程 join 硬超时）
+_RAPID_PIP_TIMEOUT = 900 # 自举 pip 单镜像上限（依赖链 ≈ 百 MB）
 _RAPID_MIRRORS = (
     "https://pypi.tuna.tsinghua.edu.cn/simple",
     "https://mirrors.aliyun.com/pypi/simple/",
@@ -360,7 +360,7 @@ def _rapid_bootstrap() -> tuple:
         why = "全部镜像都没探通（断网或源全挂）"
         _rapid_log("自举放弃：" + why)
         return False, why
-    flags = 0x08000000 if os.name == "nt" else 0     # pythonw 下不闪黑窗（与 qt_bootstrap 同款）
+    flags = 0x08000000 if os.name == "nt" else 0 # pythonw 下不闪黑窗（与 qt_bootstrap 同款）
     for mirror in order:
         try:
             _rapid_log("pip install 尝试源 %s" % mirror)
@@ -371,7 +371,7 @@ def _rapid_bootstrap() -> tuple:
         except subprocess.TimeoutExpired:
             _rapid_log("pip 超时（>%ds）%s" % (_RAPID_PIP_TIMEOUT, mirror))
             continue
-        except Exception as e:                       # noqa: BLE001
+        except Exception as e: # noqa: BLE001
             _rapid_log("pip 异常 %s: %s" % (type(e).__name__, e))
             continue
         if r.returncode == 0:
@@ -401,7 +401,7 @@ def _rapid_engine():
                 _rapid_state["engine"] = RapidOCR()
                 _rapid_state["ok"] = True
                 _rapid_state["why"] = ""
-            except Exception as ex:                  # noqa: BLE001
+            except Exception as ex: # noqa: BLE001
                 _rapid_state["ok"] = False
                 _rapid_state["why"] = "装上了但初始化失败 %s: %s" % (type(ex).__name__, ex)
                 _rapid_log(_rapid_state["why"])
@@ -432,7 +432,7 @@ def _rapid_recognize(img, timeout=None) -> list:
 
     def _run():
         import numpy as np
-        arr = np.asarray(img.convert("RGB"))[:, :, ::-1]      # PIL RGB → BGR（cv2 系模型口径）
+        arr = np.asarray(img.convert("RGB"))[:, :, ::-1] # PIL RGB → BGR（cv2 系模型口径）
         res, _elapse = eng(arr)
         out = []
         for item in (res or []):
@@ -442,7 +442,7 @@ def _rapid_recognize(img, timeout=None) -> list:
                 ys = [p[1] for p in box]
                 out.append((str(text), int(min(xs)), int(min(ys)),
                             int(max(xs) - min(xs)), int(max(ys) - min(ys))))
-            except Exception:                                # noqa: BLE001
+            except Exception: # noqa: BLE001
                 continue
         return out
 
@@ -454,7 +454,7 @@ def _rapid_recognize(img, timeout=None) -> list:
 
 
 def recognize_dual(img, timeout=None) -> list:
-    """丙-9 A1 串联降级：WinRT 先跑，**空/失败帧**才用 RapidOCR 对同一帧重试。
+    """ A1 串联降级：WinRT 先跑，**空/失败帧**才用 RapidOCR 对同一帧重试。
 
     「任一引擎给出非空结果即算数」；正常路径零额外开销（WinRT 读到就直接返回）。
     预算/熔断 fail-closed 与 `recognize` 完全同一套：熔断中或本笔预算用尽时
@@ -463,7 +463,7 @@ def recognize_dual(img, timeout=None) -> list:
     items = recognize(img, timeout=timeout)
     if items:
         return items
-    if blocked():                     # 熔断中 / 预算用尽：第二引擎也不许跑（fail-closed）
+    if blocked(): # 熔断中 / 预算用尽：第二引擎也不许跑（fail-closed）
         return []
     left = _left(_RAPID_TIMEOUT_S if timeout is None else float(timeout))
     if left <= 0.0:
@@ -474,13 +474,13 @@ def recognize_dual(img, timeout=None) -> list:
 def header_box(img) -> tuple:
     """会话头文字带的像素矩形 (x0,y0,x1,y1) —— **与指纹同源**（走 `chat_header.band_box`）。
 
-    ⛔ 2026-09-22 修（第十五轮 **V-R15-2** · 网友报「经常读不到窗口和认不对群名」）：
+    ⛔ 
       本函数原来是**第二份实现**：`y0` 直接吃固定 `BAND_PX[1]=38`、**完全不过 `detect_band_y0`**。
       而微信新版在会话区顶部有一条**自绘深色标题条**（本机实测压在 y≈38~50）⇒
-        · 指纹那一半第九轮已修（V-R9-3：把带子推到标题条下方）；
+        · 指纹那一半已修；
         · **这一半照旧去读那条标题条** ⇒ `matches_strict` 判否 ⇒「认不对群名」、
           该尺寸档永远学不到参照、`send_text` 只能退回投递切会话 + 内容级复核，兜不住就整条拒发。
-      第九轮那条修复只做了一半 —— 现在两条链共用 `chat_header.band_box`（一块带子、一套自适应 y0）。
+      那条修复只做了一半 —— 现在两条链共用 `chat_header.band_box`（一块带子、一套自适应 y0）。
     """
     try:
         return tuple(ch.band_box(img))
@@ -519,10 +519,10 @@ def _band_ink(im, dark: int = 190) -> float:
                     hit += 1
         return (hit / float(n or 1))
     except Exception:
-        return 1.0        # 量不出来就当有字（宁可多花一次 OCR，也别把"有字"当"空白"漏掉）
+        return 1.0 # 量不出来就当有字（宁可多花一次 OCR，也别把"有字"当"空白"漏掉）
 
 
-# ————————————————— 丙-9 B：反色二值化预处理管线（调研 S2） —————————————————
+# ————————————————— B：反色二值化预处理管线（调研 S2） —————————————————
 # 为什么：高亮行是**白字绿底**（反色底），直接识别基本必败（实测单字母 E → 「巷」）；
 # 标题带是浅灰细字，对比度也弱。管线 = 自动对比拉伸 → （可选）反色还原 → Otsu 二值化 → 放大。
 # 依赖纪律：**只用 PIL + numpy**（两者都已在 runtime site-packages），禁 opencv-python。
@@ -552,7 +552,7 @@ def _otsu_thresh(im) -> int:
 
 
 def preprocess_ink(crop, zoom: int = 2, invert: bool = False, thresh: int = None):
-    """丙-9 B：强档帧送 OCR 前的预处理管线 —— 自动对比 → （可选）反色还原 → Otsu 二值化 → 放大。
+    """ B：强档帧送 OCR 前的预处理管线 —— 自动对比 → （可选）反色还原 → Otsu 二值化 → 放大。
 
     `invert=True` 用于**白字绿底**的活动行/名字区（反色还原成"深字浅底"再识别）；
     标题带那种深字浅底给 `invert=False`（只做对比+二值化+放大）。任何异常退回原图。
@@ -566,7 +566,7 @@ def preprocess_ink(crop, zoom: int = 2, invert: bool = False, thresh: int = None
         bw = g.point(lambda v: 255 if v >= t else 0).convert("RGB")
         z = int(zoom or 0)
         if z > 1:
-            # ⛔ 探针实证（丙-9）：resize 默认 BICUBIC 会在**二值图**上插出中间灰值（0/255 之外的色阶），
+            # ⛔ 探针实证：resize 默认 BICUBIC 会在**二值图**上插出中间灰值（0/255 之外的色阶），
             # 把"二值化"这一步的努力打回去 ⇒ 显式最近邻（NEAREST），保住纯黑白。
             bw = bw.resize((bw.width * z, bw.height * z), Image.NEAREST)
         return bw
@@ -577,7 +577,7 @@ def preprocess_ink(crop, zoom: int = 2, invert: bool = False, thresh: int = None
 def header_text(img=None, gui=None, zoom: int = 2) -> str:
     """OCR 会话头，返回识别到的文字（读不到返回 ""）。zoom＝放大倍数（小字放大后识别率更高）。
 
-    ⛔ **2026-09-18 实测的真缺陷（拍摄现场「点对了会话却不发图」的根因）**：放大倍数决定成败——
+    ⛔ **的真缺陷（拍摄现场「点对了会话却不发图」的根因）**：放大倍数决定成败——
        同一张截图（本机 4.1.15.8，渲染区 1191×890，会话头 `演示(3)`）：
          `zoom=2`（老默认）⇒ **`''`（一个字都读不出）**；`zoom=3` ⇒ `'演示（3）'` 稳定命中；`zoom=4` ⇒ `''`。
        于是「会话头标题带」这条**强档证据**长期是哑的 ⇒ `chat_is_open` 判否 ⇒
@@ -595,14 +595,14 @@ def header_text(img=None, gui=None, zoom: int = 2) -> str:
         if box[2] - box[0] < 8 or box[3] - box[1] < 6:
             return ""
         crop = img.crop(box)
-        if _band_ink(crop) <= 0.004:            # 空白带（没有会话/标题没画出来）⇒ 别烧 OCR
+        if _band_ink(crop) <= 0.004: # 空白带（没有会话/标题没画出来）⇒ 别烧 OCR
             return ""
         zooms = []
         for z in (int(zoom or 0), 3, 4, 2, 5):
             if z and z > 1 and z not in zooms:
                 zooms.append(z)
         for z in zooms:
-            # 丙-9 B：标题带走预处理管线（对比+二值化+放大，替代裸 resize）；丙-9 A1：读空由 RapidOCR 补
+            # B：标题带走预处理管线（对比+二值化+放大，替代裸 resize）； A1：读空由 RapidOCR 补
             c = preprocess_ink(crop, zoom=z, invert=False)
             got = "".join(str(i[0]) for i in recognize_dual(c)).strip()
             if got:
@@ -614,13 +614,13 @@ def header_text(img=None, gui=None, zoom: int = 2) -> str:
 
 _time_re = re.compile(r"\d{1,2}\s*[:：]\s*\d{2}")
 _date_re = re.compile(r"\d{1,2}\s*[/月]\s*\d{1,2}\s*日?")
-# ⛔ 2026-09-21 加（真缺陷·真机复现）：微信列表里的时间还有**星期几 / 相对日**两种形态，
+# ⛔ （真缺陷·真机复现）：微信列表里的时间还有**星期几 / 相对日**两种形态，
 #    原来只剥 `HH:MM` 与 `M/D` ⇒ 行文本「文件传，“星期六」归一成「文件传星期六」，
 #    `matches()` 于是判不出「文件传输助手」那一行 ⇒ `find_row_info` 返回 None ⇒
 #    切会话第③条路（列表里直接点）整条失效（实测 6/6 全 MISS，随后只能走搜索路线、也失败）。
 #    这两条只用于**比对前清洗**：真有个群叫「星期六」时会被洗空 ⇒ 结果是"找不到这一行"（fail-closed），
 #    不会点错会话。
-_week_re = re.compile(r"(?:星期|周)[一二三四五六日天]")     # ⚠️ 用非捕获组：`findall` 要给**整词**
+_week_re = re.compile(r"(?:星期|周)[一二三四五六日天]") # ⚠️ 用非捕获组：`findall` 要给**整词**
 # 只收微信列表**确实会用**的相对日（今天显示 `HH:MM`、更早显示 `昨天/前天`）；
 # 不碰「上午/下午/中午/晚上」——那些词更容易是名字的一部分（「下午茶」），且本机列表用 24 小时制。
 _rel_re = re.compile(r"(?:昨天|前天)")
@@ -631,7 +631,7 @@ _hhmm_re = re.compile(r"^\s*(\d{1,2})\s*[:：]\s*(\d{2})\s*$")
 def hhmm(t: str) -> str:
     """把 `'01：03'` / `'1:03'` / `'01:03'` 一律归一成 `'1:03'`（**小时不补零**）；认不出给 `''`。
 
-    ⚠️ 2026-09-16 修（真缺陷·根因）：`find_row_info` 原来拿**目标时间**（`strftime('%H:%M')`＝`01:03`）
+    ⚠️ （真缺陷·根因）：`find_row_info` 原来拿**目标时间**（`strftime('%H:%M')`＝`01:03`）
     与**读到的**时间（归一成 `'%d:%02d'`＝`1:03`）**直接比字符串** ⇒ 上午 0~9 点这两个串永不相等 ⇒
     **"按最后消息时间定位会话行"在 10 点以前永远失败**。而单字母名字的会话（E）名字读不出来，
     时间档就是唯一信号 ⇒ 表现成"会话列表里明明有 E，滚了 6 轮也定位不到"（r11 实测两次）。
@@ -645,14 +645,14 @@ def row_time_match(blob: str, want: str) -> bool:
     """`blob`（一行/一屏的 OCR 文本）里是否有与目标时刻 `want` **同一个**时间戳。
 
     两侧都过 `hhmm()`（`'01：03'` / `'1:03'` / `'01:03'` 视为同一时刻）。
-    ⛔ 丙-9 A2（调研 S3）：OCR 错一个字（`O→0`）整个强档③就哑 ⇒ 候选先过错字容错映射，
+    ⛔ A2（调研 S3）：OCR 错一个字（`O→0`）整个强档③就哑 ⇒ 候选先过错字容错映射，
        再与 DB 时间做**编辑距离 ≤1** 的模糊匹配。边界：只放宽 **OCR 读数**容错——
        时间×DB 的判定结构不变、身份要求不放宽（fail-closed 口径不动）。
     """
     w = hhmm(want)
     if not w:
         return False
-    # ⛔ 探针实证（丙-9）：`O9:4O` 这类开头/结尾字母误读，正则 `\d…` 连候选都提不出来（先丢帧）
+    # ⛔ 探针实证：`O9:4O` 这类开头/结尾字母误读，正则 `\d…` 连候选都提不出来（先丢帧）
     # ⇒ 必须对**整段 blob 先过错字映射、再跑正则提取**；提取后的 `_hhmm_fuzzy_eq` 继续兜剩余形态。
     for m in _time_re.finditer(_fix_time_typo(str(blob or ""))):
         raw = m.group(0)
@@ -663,7 +663,7 @@ def row_time_match(blob: str, want: str) -> bool:
     return False
 
 
-# ————————————————— 丙-9 A2：时间戳读数的错字容错（调研 S3） —————————————————
+# ————————————————— A2：时间戳读数的错字容错（调研 S3） —————————————————
 # OCR 实测会把 `0` 读成 `O/o`、`1` 读成 `l/I`、`5` 读成 `S`、半角冒号变全角；
 # 这些映射**只作用于 OCR 读数侧**（DB 侧是从库里取的干净 HH:MM，不需要修）。
 _TYPO_TRANS = str.maketrans({"O": "0", "o": "0", "l": "1", "I": "1", "S": "5", "：": ":"})
@@ -681,7 +681,7 @@ def _edit_dist_le1(a: str, b: str) -> bool:
     if len(a) == len(b):
         return sum(1 for x, y in zip(a, b) if x != y) <= 1
     if len(a) > len(b):
-        a, b = b, a                      # 保证 a 短 b 长
+        a, b = b, a # 保证 a 短 b 长
     i = j = 0
     used = False
     while i < len(a) and j < len(b):
@@ -692,7 +692,7 @@ def _edit_dist_le1(a: str, b: str) -> bool:
         if used:
             return False
         used = True
-        j += 1                            # 在长串里跳过一个（插入/删除）
+        j += 1 # 在长串里跳过一个（插入/删除）
     return True
 
 
@@ -710,8 +710,8 @@ def _hhmm_fuzzy_eq(raw: str, want: str) -> bool:
 def clean(text: str) -> str:
     """清掉 OCR 常混进来的时间/日期/省略号（会话行是「名字 + 预览 + 时间」挤在一起）。
 
-    ⚠️ 2026-09-21 加一条**兜底**：如果这一行**整条都是时间词**（真有会话就叫「星期六」「昨天」这类），
-    剥完会剩空串 ⇒ 那等于把这一行从匹配里彻底抹掉（作者追问「那这样不会又导致该发的发不出去吗」
+    ⚠️ 一条**兜底**：如果这一行**整条都是时间词**（真有会话就叫「星期六」「昨天」这类），
+    剥完会剩空串 ⇒ 那等于把这一行从匹配里彻底抹掉（
     就是这一类）。⇒ **剥空就退回原文**：宁可多留一个时间词，也不许把名字洗没。
     """
     if not text:
@@ -733,12 +733,12 @@ def norm(text: str) -> str:
     t = clean(text)
     if not t:
         return ""
-    t = _count_re.sub("", t)          # 先去掉群名后的成员数「（8）」——必须在去括号之前做
+    t = _count_re.sub("", t) # 先去掉群名后的成员数「（8）」——必须在去括号之前做
     t = _norm_re.sub("", t)
     return t.lower()
 
 
-_JUNK_HEAD = ("o", "0", "〇", "○", "●", "•", "·")        # 实测到的"标题带前导噪声"字符
+_JUNK_HEAD = ("o", "0", "〇", "○", "●", "•", "·") # 实测到的"标题带前导噪声"字符
 _CNT_TAIL = re.compile(r"[（(]\s*(\d+)\s*[）)]\s*$")
 
 
@@ -751,17 +751,17 @@ def _count_tail(s: str) -> str:
 def matches_strict(text: str, name: str) -> bool:
     """**授权档**的名字判据：归一化后必须**完全相等**，不做包含。
 
-    为什么要单开这一条（2026-09-21，网友 v0919「串群」的真根因）：
+    为什么要单开这一条：
       `matches()` 是**互相包含即可**（为的是容忍"名字＋预览＋时间"这种整行文本）。
       于是**名字互为子串的两个群**会被判成同一个 —— 当前开着「KC测试」而目标是「测试」时
       `matches("KC测试", "测试")` → True ⇒ `chat_is_open` 说"就是它" ⇒ 投递把回复
-      直接发进了**另一个群**（表现＝作者转述的「第一个群触发、回答出现在第二个群」）。
+      直接发进了**另一个群**。
       ⇒ **凡"能不能发 / 是不是这个会话"的判定，只许用本函数**；`matches()` 继续只用于"找行"。
 
     归一化会剥掉时间/标点/群名后的成员数「（8）」等装饰（见 `norm()`），
     所以「演示（3）」与「演示」照样判相等。
 
-    ⛔ 2026-09-21 再收紧（第四轮审计 **V-R4-8**，两条残留）：
+    ⛔ 
       ① 前导噪声**只容忍实测到的那几个字符**（`o/0/〇/○/●/•/·`）—— 原来"任意一个 ASCII 字符"都容忍
          ⇒ 真有个群叫 `X测试` 时会跟 `测试` 撞上；
       ② **目标名自己带括号数字**时（如 `测试(2)`），屏幕上**必须带同一个数字**才算同一个 ——
@@ -771,7 +771,7 @@ def matches_strict(text: str, name: str) -> bool:
       才认得出人来）。根治要把群人数从库里取来核；在此之前这一侧宁可**漏发**也不乱发。
     """
     try:
-        # ⛔ 2026-09-21 修（第六轮 **V-R6-2**，可能发错人）：`norm()` 会剥掉「星期X/周X/昨天/前天」
+        # ⛔ `norm()` 会剥掉「星期X/周X/昨天/前天」
         #   ⇒ **两个完全不同的名字会被归一成同一个**（实测 `norm('星期六播报') == norm('星期天播报') == '播报'`）
         #   ⇒ 授权档判相等 ⇒ 可能发进另一个会话。⇒ 授权档额外要求**这类时间词的指纹守恒**：
         #   两边剥掉的星期/相对日**必须一致**（都没有，或都有同一批）。展示用清洗照旧（`matches()` 不受影响）。
@@ -780,7 +780,7 @@ def matches_strict(text: str, name: str) -> bool:
         if _fa != _fb:
             return False
         a, b = norm(text), norm(name)
-        for _p in ("草稿", "draft"):        # 行文本可能带草稿标记；它不是"另一个会话"
+        for _p in ("草稿", "draft"): # 行文本可能带草稿标记；它不是"另一个会话"
             if a.startswith(_p):
                 a = a[len(_p):]
             if b.startswith(_p):
@@ -806,7 +806,7 @@ def matches_strict(text: str, name: str) -> bool:
 def matches(text: str, name: str) -> bool:
     """OCR 文本与目标会话名是否算同一个（互相包含即可，容忍 OCR 漏字/多字/截断省略号）。
 
-    ⚠️ 单字/单字母名字要单独一条路（2026-09-13 实测 bug）：会话行文本是"名字＋预览＋时间"拼起来的
+    ⚠️ 单字/单字母名字要单独一条路：会话行文本是"名字＋预览＋时间"拼起来的
     （E 那一行 OCR 出来是 `[草稿]EE` ＝ 草稿标记 ＋ 名字 E ＋ 草稿内容 E），而老实现要求 `len(name) >= 2`
     才走包含判断 ⇒ **名字只有一个字母的会话永远定位不到**（E 明明在第一行，`find_row_info` 返回 None，
     `switch_chat_posted` 于是报"没定位到 E"）。⇒ 单字名字：去掉草稿标记后**要求以它开头**；
@@ -830,19 +830,19 @@ def matches(text: str, name: str) -> bool:
 
 
 # ── 会话列表：读名字 + 找绿色高亮行（两个独立信号 ⇒ 可用于"当前会话是谁"的可信自检）──
-# ⚠️ 实测（2026-09-13）：微信 4.1.15.8 的**会话标题文字**是浅灰细字，WinRT OCR 整幅都读不出来
+# ⚠️ 实测：微信 4.1.15.8 的**会话标题文字**是浅灰细字，WinRT OCR 整幅都读不出来
 #    （同一张图里会话列表的名字/预览/时间戳都能读出来）⇒ 不能靠"标题"确认，改靠**会话列表**
 #    ＋**绿色高亮行**：OCR 名字能读、高亮是可测的像素信号，两者对得上才认。
-GREEN = (81, 167, 116)          # 实测（2026-09-13 本机 4.1.15.8）：活动会话行背景色
-GREEN_TOL = 34                  # 颜色容差（每通道）——库里写的 (21,172,112) 在本机**量不到**，
+GREEN = (81, 167, 116) # 实测：活动会话行背景色
+GREEN_TOL = 34 # 颜色容差（每通道）——库里写的 (21,172,112) 在本机**量不到**，
                                 # 实测绿底是 (81,167,116)，容差 26 时判定为 0 ⇒ 这就是"找不到高亮行"的真因
-ROW_PITCH = 64                  # 会话行高（名字行 + 预览行 ≈ 64px，实测 144→241→338…）
+ROW_PITCH = 64 # 会话行高（名字行 + 预览行 ≈ 64px，实测 144→241→338…）
 
 
 def list_rows(img, zoom: int = 2, pane_left: int = 0) -> list:
     """OCR 会话列表并按行聚合，返回 [{'text','y','x0','x1'}...]（按 y 升序）。
 
-    `pane_left`＝**调用方指定的面板左沿**（0＝自己探测）。为什么要能指定（2026-09-21）：
+    `pane_left`＝**调用方指定的面板左沿**（0＝自己探测）。为什么要能指定：
     `detect_pane_left` 在"聊天区左列被气泡占满"时会一路扫到气泡右边（实测报 660、真值 384）
     ⇒ 裁剪框偏进聊天区 ⇒ 这里什么都读不到。调用方可以先用 `chat_header.detect_pane_left_alt`
     （竖栏右沿 + 固定列表宽）再试一次。
@@ -940,7 +940,7 @@ def session_rows(img, zoom: int = 2, pane_left: int = 0) -> list:
                 rows[-1]["preview"] += ln["text"]
         else:
             rows.append({"name": ln["text"], "preview": None, "y_abs": ln["y_abs"]})
-    for r in rows:                       # 名字里可能粘着预览（`E:提交信息…`）⇒ 统一切干净
+    for r in rows: # 名字里可能粘着预览（`E:提交信息…`）⇒ 统一切干净
         r["full"] = r["name"]
         r["name"] = split_name(r["name"])
     return rows
@@ -989,8 +989,8 @@ def _name_box(img, y_abs: int) -> tuple:
 def name_of_row(img, y_abs: int, text: str = "", zoom: int = 3) -> str:
     """只 OCR 该行的**名字区**（左侧、上半天），拿更干净的名字；失败退回整行文本。
 
-    ⛔ 丙-9 B：高亮行是白字绿底 ⇒ 反色还原+二值化（preprocess_ink invert=True）后识别；
-    ⛔ 丙-9 A1：读空时由 RapidOCR 对同一帧补读（current_chat_name 的高亮行名字走这里）。
+    ⛔ B：高亮行是白字绿底 ⇒ 反色还原+二值化（preprocess_ink invert=True）后识别；
+    ⛔ A1：读空时由 RapidOCR 对同一帧补读（current_chat_name 的高亮行名字走这里）。
     """
     try:
         w, h = img.size
@@ -1034,7 +1034,7 @@ _sep_re = re.compile(r"[:：]")
 def split_name(text: str) -> str:
     """从会话行文本里切出**名字**：先清时间/省略号，再取第一个 `:`/`：` 之前的部分。
 
-    为什么要切（2026-09-13 实测）：OCR 会把一行读成「名字 + 预览」连在一起，
+    为什么要切：OCR 会把一行读成「名字 + 预览」连在一起，
     例如 E 的那行读出来是 `E:提交信息还．“` —— 单字母名字在 `matches()` 里只走"完全相等"分支，
     带着预览就永远配不上 ⇒ **E 这类会话以前永远选不中**。切开之后名字就是 `E`。
     """
@@ -1048,7 +1048,7 @@ def split_name(text: str) -> str:
 def click_allowed(last_ts: float, now: float, cooldown_s: float = 3.0) -> tuple:
     """离"上一枪"不足 `cooldown_s` 秒就不许再点（返回 `(允许, 说明)`）。
 
-    用户 2026-09-13 当场定的规矩：「**点击不能点两下，不然聊天框都关掉了。之前不是有这个问题吗**」
+    用户 当场定的规矩
     —— 早前实验里那次"多点了会话框一下，把会话和聊天框全都点掉了"就是这么来的。
     ⇒ 冷却期内**只许重新读图复核，绝不补第二枪**；一次切会话最多一枪。
     """
@@ -1065,7 +1065,7 @@ def find_row_info(img, name: str, zoom: int = 2, want_time: str = "", pane_left:
     """同 `find_row`，但返回整条信息 `{'pos':(x,y),'y_abs':int,'name':str,'why':str}`。
 
     `want_time`＝目标会话**最后一条消息的时间**（`HH:MM`，由调用方从 DB 取）——给一条**不依赖名字**的路：
-    2026-09-13 实测，名字只有一个字母的会话（E）靠 OCR 认不稳（认不出、或被别的行的草稿文本骗到），
+    名字只有一个字母的会话（E）靠 OCR 认不稳（认不出、或被别的行的草稿文本骗到），
     而每行右侧那个时间戳 OCR 读得很准（实测 19：41 / 21：41 / 20：36 都读得出）。两条信号合起来用：
       · 有 `want_time`：优先选**时间命中**且（名字也命中 或 名字那一行 OCR 为空/不可信）的行；
         如果这行名字能读出来、而且明显是别的会话 ⇒ 这一行不算（宁可找不到，不许点错）。
@@ -1090,7 +1090,7 @@ def find_row_info(img, name: str, zoom: int = 2, want_time: str = "", pane_left:
             if want:
                 # ⚠️ 时间戳在**整行拼起来**的文本里（`full`＝名字＋预览＋时间，实测 '文件传．“19：41'），
                 #    只看 `name` 永远找不到时间 ⇒ 一开始就是这么写错的（按时间定位一直返回 None）。
-                # ⚠️ 2026-09-16 修：比较必须走 `row_time_match`（两侧同口径归一化）——原来这里
+                # ⚠️ 比较必须走 `row_time_match`（两侧同口径归一化）——原来这里
                 #    目标是 `01:03`、读到的归一成 `1:03`，**10 点以前的时刻永远配不上**（见 `hhmm`）。
                 _blob = str(r.get("full") or "") + " " + nm
                 hit_t = row_time_match(_blob, want)
@@ -1102,13 +1102,13 @@ def find_row_info(img, name: str, zoom: int = 2, want_time: str = "", pane_left:
                 except Exception:
                     got = ""
                 if got and not matches(got, name):
-                    # ⛔ 2026-09-16 修（真缺陷）：**单字母名字会被 OCR 读成别的字**（实测 E → 「巷」），
+                    # ⛔ （真缺陷）：**单字母名字会被 OCR 读成别的字**（实测 E → 「巷」），
                     #    "名字明显不是它"这条防误配守卫于是把**唯一正确的那一行**否掉 ⇒ `switch_chat_posted`
                     #    报"没定位到 E"，而 E 恰恰就是当前打开的那一行（真帧实测：该行 OCR『巷01：03』）。
                     #    ⇒ 只有目标名**短到 OCR 认不准**（≤2 字）时，才允许在"时间精确命中 **且** 该时刻在
                     #    整张列表里唯一"的前提下放行——两条独立证据 + 唯一性，点错会话的口子没有开。
                     try:
-                        _blob = lambda r2: (str(r2.get("full") or "") + " " + str(r2.get("name") or ""))  # noqa: E731
+                        _blob = lambda r2: (str(r2.get("full") or "") + " " + str(r2.get("name") or "")) # noqa: E731
                         _same = [r2 for r2 in rows if row_time_match(_blob(r2), want)]
                     except Exception:
                         _same = []
@@ -1125,10 +1125,10 @@ def find_row_info(img, name: str, zoom: int = 2, want_time: str = "", pane_left:
                 continue
             if not matches(nm, name):
                 continue
-            # ⚠️ 单字/单字母名字必须**复核这一行的名字行**（2026-09-13 实测假阳性：目标行是第 2 行，
+            # ⚠️ 单字/单字母名字必须**复核这一行的名字行**（目标行是第 2 行，
             #    而第 3 行"宋孟"的预览里带着草稿内容 `[草稿]EE` ⇒ 放宽后的前缀匹配把**宋孟那一行**认成了 E，
             #    点下去打开了别的会话）。复核用 `name_of_row()`（只 OCR 名字那一行、zoom=3）。
-            # ⛔ 2026-09-14 修：原来这里要 `norm(got) == norm(name)` **裸全等**，可 E 那种行的**名字行**
+            # ⛔ 原来这里要 `norm(got) == norm(name)` **裸全等**，可 E 那种行的**名字行**
             #    会被 OCR 成 `[草稿]EE`（草稿标记＋名字＋草稿内容）⇒ 裸全等永远不等 ⇒ 单字母会话
             #    **根本切不过去**（⑤ 重发实测：列表里明明有 `[草稿]EE`，这里全否、`switch_chat_posted`
             #    报"没定位到 E"，白滚了 6 轮）。改成跟 `matches()` 同一套口径（剥「草稿/draft」前缀，
@@ -1153,7 +1153,7 @@ def find_row_info(img, name: str, zoom: int = 2, want_time: str = "", pane_left:
 def row_time_read(img, y_abs: int, time_hr: int = 130, left=None) -> str:
     """**按坐标**读某个活动行的右侧时间戳（正读不到就**反相**再读一次）。返回 `H:MM`，认不出给 ''。
 
-    ⚠️ 为什么必须补（2026-09-16 跨机 r16/r17）：活动行是**白字绿底**，`session_rows()` 经常整行读不出
+    ⚠️ 为什么必须补：活动行是**白字绿底**，`session_rows()` 经常整行读不出
     ⇒ `row_time_at()` 走"最近的 OCR 行"就取不到 ⇒ `_row_time_conflict()` 判不了 ⇒ 收紧后的身份闸
     **常态 fail-closed**（对面实测：r16 四次观测只有两次读得出、r17 四次只有一次）。用户可用性被吃掉一大块。
     ⇒ 直接对那一行的**右侧时间栏**做两次 OCR（正常 + 反相，反相是为了白字绿底）。
@@ -1172,11 +1172,11 @@ def row_time_read(img, y_abs: int, time_hr: int = 130, left=None) -> str:
         crop = img.crop(box)
         if crop.width < 20 or crop.height < 10:
             return ""
-        # 丙-9 B：时间栏两次尝试都走预处理管线（白字绿底 ⇒ invert=True；正读侧二值化即可）
+        # B：时间栏两次尝试都走预处理管线（白字绿底 ⇒ invert=True；正读侧二值化即可）
         for _inv in (False, True):
             g = preprocess_ink(crop, zoom=3, invert=_inv)
             txt = "".join(str(i) for i, *_ in recognize_dual(g))
-            # 与 row_time_match 同口径（丙-9 A2）：OCR 读数先过错字映射再提候选（`19:4O` 这类否则必丢帧）
+            # 与 row_time_match 同口径：OCR 读数先过错字映射再提候选（`19:4O` 这类否则必丢帧）
             for m in _time_re.finditer(_fix_time_typo(txt)):
                 t = hhmm(m.group(0))
                 if t:
@@ -1228,7 +1228,7 @@ def green_bands(img, min_ratio: float = 0.30, min_h: int = 28,
                 x0: int = None, x1: int = None) -> list:
     """**纯像素**扫"绿底行"：返回 `[{'y0','y1','y_abs','score'}...]`（按 score 降序）。
 
-    为什么必须按像素（2026-09-16 本机实测，真缺陷）：当前打开的那一行是**白字绿底**，
+    为什么必须按像素：当前打开的那一行是**白字绿底**，
     WinRT OCR 在整幅识别里**根本读不出这一行**（实测 1139×890 帧：列表 8 行里独缺高亮那行）⇒
     `highlight()` / `highlight_relative()` 只能在"读得出的行"里挑绿最多的，而**绿色头像**
     （微信/微信团队那种绿底图标）会贡献 0.14~0.22 的假绿 ⇒ 高亮行被判成头像绿的那一行。实测：
@@ -1282,7 +1282,7 @@ def green_bands(img, min_ratio: float = 0.30, min_h: int = 28,
 def _green_x(img):
     """**不含头像**的那一段取样窗 `(x0, x1)`：面板左沿往左 144~14 px（列表右半段，纯背景）。
 
-    ⚠️ 2026-09-21（第六轮 **V-R6-11**）：左沿改走**唯一入口** `ch.pane_left_for(img)`
+    ⚠️ 左沿改走**唯一入口** `ch.pane_left_for(img)`
     （老口径 + 结构锚交叉校验）——原来这里各自调 `detect_pane_left`，老口径过冲时取样窗
     会整块搬进聊天区（实测给 `(457,587)` / 真值应是 `(160,350)`）。
     """
@@ -1301,11 +1301,10 @@ def _green_x(img):
 def _is_green(r: int, g: int, b: int) -> bool:
     """这一像素算不算"微信活动会话行的绿底"。
 
-    ⚠️ 2026-09-16 晚改（跨机 r14 的**最值钱一条**）：对面那台的活动行底色实测 **RGB(169,212,196)**
+    ⚠️ 对面那台的活动行底色实测 **RGB(169,212,196)**
     ——**浅绿**！而老实现只认本机实测的深绿 `(81,167,116) ± 34` ⇒ 三通道差 88/45/80 全部超差 ⇒
     命中 0（`green_row_ratio=0.000`、`highlight()=None`）。**影响链**：绿底读不到 ⇒ `chat_is_open` /
     `_active_row_time_ok` 永远 False ⇒ `switch_chat_posted` 的"确认变绿底"这一步**天生不可能成功**
-    ⇒ 投递前置掉到 `no_ref`（r12 那次 16 秒真鼠标事故的触发链里就有这一环）。
     ⇒ 判据改成"**绿占优**"这条与具体色值无关的性质：`g` 明显大于 `r`（≥12）且大于 `b`（≥10）且不太暗。
     两台实测都过：本机 (81,167,116) → 86/51 ✓；对面 (169,212,196) → 43/16 ✓。
     反例（必须挡住）：面板灰底 (237,237,239) → 0/-2 ✗；浅蓝 (150,180,220) → g-b=-40 ✗；青色 (180,220,220) → 0 ✗。
@@ -1314,7 +1313,7 @@ def _is_green(r: int, g: int, b: int) -> bool:
         r, g, b = int(r), int(g), int(b)
         if (abs(r - GREEN[0]) <= GREEN_TOL and abs(g - GREEN[1]) <= GREEN_TOL
                 and abs(b - GREEN[2]) <= GREEN_TOL):
-            return True                            # 本机那种深绿（老口径，保留）
+            return True # 本机那种深绿（老口径，保留）
         return (g - r) >= 12 and (g - b) >= 10 and g >= 140
     except Exception:
         return False
@@ -1323,7 +1322,7 @@ def _is_green(r: int, g: int, b: int) -> bool:
 def green_row_ratio(img, y_abs: int, half: int = 6) -> float:
     """**不含头像**的那一段里，某一行 y 的绿底占比。
 
-    为什么要单列（2026-09-16 本机实测·真缺陷）：`_green_at` 的取样窗 `[pane_left-240, pane_left-10]`
+    为什么要单列：`_green_at` 的取样窗 `[pane_left-240, pane_left-10]`
     **含头像列**，而微信/微信团队那种**绿色头像**会给出 0.14~0.22 的假绿 ⇒ 拿它挑"高亮行"会挑中
     **头像绿**的那一行（实测：当前打开的是「宋孟」，`chat_is_open` 报的却是「微信…」）。右半段没有头像，
     绿底行实测 0.93、普通行 0.00 —— 差两个量级，随便定阈值都分得开。
@@ -1365,7 +1364,7 @@ def _band_name(img, y_abs: int) -> str:
         crop = img.crop(_name_box(img, int(y_abs)))
         if crop.width < 8 or crop.height < 6:
             return ""
-        # 丙-9 B：反相路径改走预处理管线（反色还原+二值化）；丙-9 A1：读空由 RapidOCR 补
+        # B：反相路径改走预处理管线（反色还原+二值化）； A1：读空由 RapidOCR 补
         inv = preprocess_ink(crop, zoom=3, invert=True)
         return clean("".join(str(i[0]) for i in recognize_dual(inv))).strip()
     except Exception:
@@ -1375,10 +1374,10 @@ def _band_name(img, y_abs: int) -> str:
 def highlight(img, min_green: float = 0.12):
     """当前**绿底高亮行**（＝打开的会话行）：返回 `{'y_abs','score','name'}`，没有则 None（只读）。
 
-    ⚠️ 阈值为什么是 0.12：实测高亮行占比随帧质量在 **0.18~0.74** 之间跳（2026-09-13 同一窗口连续测），
+    ⚠️ 阈值为什么是 0.12：实测高亮行占比随帧质量在 **0.18~0.74** 之间跳，
        而普通行只有 **0.00~0.01** ⇒ 0.12 仍留十倍余量；用 0.20 会把"真高亮但帧偏糊"的那一帧判成没有。
 
-    ⚠️ 2026-09-16 改：**先用像素法**（`green_bands`）——高亮行是白字绿底、OCR 读不出，
+    ⚠️ **先用像素法**（`green_bands`）——高亮行是白字绿底、OCR 读不出，
        老口径（按 OCR 行量绿）会把绿色头像那一行当高亮行（实测把「宋孟」认成「微信…」）。
        OCR 行那条路留作**兜底**（换主题/毛玻璃时像素法可能量不到，此时老口径至少不至于全瞎）。
     """
@@ -1392,7 +1391,7 @@ def highlight(img, min_green: float = 0.12):
                     "name": _band_name(img, b0["y_abs"]), "why": "像素法（绿底带 %d~%d）" % (b0["y0"], b0["y1"])}
         best, score = None, 0.0
         for r in session_rows(img):
-            sc = green_row_ratio(img, r["y_abs"])          # ⚠️ 头像绿不算（见 green_row_ratio）
+            sc = green_row_ratio(img, r["y_abs"]) # ⚠️ 头像绿不算（见 green_row_ratio）
             if sc > score:
                 best, score = r, sc
         if best is not None and score >= max(0.3, float(min_green)):
@@ -1407,7 +1406,7 @@ def highlight_wide(img, min_ratio: float = 0.35, x_lo: int = None, x_hi: int = N
                    pane_left: int = 0):
     """**只看"横跨整行"的绿底**来判高亮行（专治"头像绿"把 `highlight()` 带偏）。
 
-    为什么另开一条（2026-09-21 真机实测，代价＝六轮实验全白做）：「文件传输助手」的头像是**绿色方块**，
+    为什么另开一条：「文件传输助手」的头像是**绿色方块**，
     而高亮行也是绿底 ⇒ `highlight()`（走 `green_bands`，扫的是整行宽度、含头像列）把
     **"头像绿 + 高亮行绿底"合并成一条 120~217 的带**，中心 168 落在头像那一行 ——
     报出来的"当前会话"是错的，据此做的"换一行点"实际点的是**已经开着的那一行** ⇒ 全部假阴性。
@@ -1443,8 +1442,7 @@ def highlight_wide(img, min_ratio: float = 0.35, x_lo: int = None, x_hi: int = N
             c = 0
             for x in xs:
                 r, g, b = px[x, y]
-                # ⚠️ 2026-09-21（第六轮 **V-R6-12**）：绿判据必须与同模块 `_is_green` **共用一套** ——
-                #    原来这里写的是 `g > r+25 and g > b+25`，跨机实测的活动行**浅绿** (169,212,196)
+                # ⚠️ 绿判据必须与同模块 `_is_green` **共用一套** ——
                 #    会被它判 False（212 > 196+25=221 不成立）⇒ 那台机器上这条守卫恒 None。
                 if _is_green(r, g, b):
                     c += 1
@@ -1468,10 +1466,10 @@ def highlight_relative(img, min_top: float = 0.05, ratio: float = 2.5) -> tuple:
     """**相对**判据找高亮行：绿底最强的行 vs 次强行（返回 `(行 或 None, 说明)`）。
 
     为什么不用绝对阈值：帧质量会让真高亮的占比在 0.18~0.74 之间跳，绝对阈值总会在某一帧误杀
-    （2026-09-13 实测：判 0.20 时把占比 0.159 的真高亮判成"没有高亮"）。相对比较稳得多——
+    。相对比较稳得多——
     实测高亮行 0.159 / 其余行 0.000：要求「最高 ≥ min_top 且 ≥ ratio × 次高」即可。
 
-    ⚠️ 2026-09-16：主路改像素法（同 `highlight`）；**绿底行占比 ≥0.6 时按"足够强的绝对证据"直接认**
+    ⚠️ 主路改像素法（同 `highlight`）；**绿底行占比 ≥0.6 时按"足够强的绝对证据"直接认**
     （像素法下真高亮是 0.93、普通行 0.00，不存在 2.5 倍那条线卡住自己的情形）。
     """
     try:
@@ -1510,16 +1508,15 @@ def norm_alnum(s: str) -> str:
     return _nz(s)
 
 
-MIN_HIT = 8            # 放行的**最短命中片段**（归一化后字数）——低于它一律不算"认出内容"
-MIN_RATIO = 0.3        # 或者命中占针长的这个比例（长针允许按比例放宽）
+MIN_HIT = 8 # 放行的**最短命中片段**（归一化后字数）——低于它一律不算"认出内容"
+MIN_RATIO = 0.3 # 或者命中占针长的这个比例（长针允许按比例放宽）
 
 
 def low_entropy(s: str) -> bool:
     """串是不是"低熵"（纯数字/日期/版本号这类）⇒ 它**不能当"认出内容"的证据**。
 
-    为什么（2026-09-16 跨机 r10 实测抓到的 fail-open）：目标会话**根本没开**，闸门却被一条
+    为什么：目标会话**根本没开**，闸门却被一条
     **6 字的日期串 `202609`（相似度 1.000）**满足、判了 True ⇒ 最后一道闸在最需要它的场景失效，
-    正是 2026-09-13「发错会话」事故要防的那类风险。日期/构建号在会话列表和聊天区里到处都有。
     """
     t = str(s or "")
     d = "".join(ch for ch in t if ch.isdigit())
@@ -1529,14 +1526,13 @@ def low_entropy(s: str) -> bool:
 def content_match(pane: str, needle: str) -> bool:
     """聊天区 OCR 文本里能不能认出「目标会话最近的内容」——**按内容认会话**，不靠名字。
 
-    为什么需要（2026-09-13 发错会话事故）：名字判据会骗人——群聊行的预览里带着**发言人前缀**
+    为什么需要：名字判据会骗人——群聊行的预览里带着**发言人前缀**
     （`E: 提交信息…`），被当成"会话名 = E"后就点进了那个群。内容比对不依赖任何名字：
     把目标会话最近一条**文本**拿来，在当前聊天区里找它的显著片段即可。
 
-    ⚠️ 2026-09-16 加两道下界（跨机 r10 实测的 fail-open）：①**最短命中 `MIN_HIT=8` 字**；②**低熵串不算
-    命中**（纯数字/日期/版本号，见 `low_entropy`）。判否是安全的（fail-closed），判错才是事故。
+    ⚠️ ①**最短命中 `MIN_HIT=8` 字**；②**低熵串不算
 
-    ⛔ 2026-09-16 晚**再修一次**（跨机 r11 报告：过修成反向问题·误杀真信号）：原来片段下界写的是
+    ⛔ 晚**再修一次**：原来片段下界写的是
     `need = max(MIN_HIT, 针长 × 30%)`，而**长针**（对面那台聊天区里是**上千字的报告**、屏幕只可见
     142~334 字）**永远凑不出 300 字的命中** ⇒ 实测「12 字 / 相似度 1.000」的真信号被**误杀**（①③ 两组
     都判 False）。⇒ **去掉比例门**：比例下界只对短针才有意义，而短针本来就被 `MIN_HIT` 兜住；
@@ -1547,7 +1543,7 @@ def content_match(pane: str, needle: str) -> bool:
     a, b = _nz(pane), _nz(needle)
     if len(a) < MIN_HIT or len(b) < MIN_HIT:
         return False
-    if low_entropy(b):                             # 纯数字的针本身不作为证据
+    if low_entropy(b): # 纯数字的针本身不作为证据
         return False
     if len(b) >= 16 and b[:16] in a:
         return True
@@ -1555,14 +1551,14 @@ def content_match(pane: str, needle: str) -> bool:
         # ⚠️ **没有** `n < need` 这道比例门（见上面那段：长针会被它误杀）
         if n > len(b):
             continue
-        # ⛔ 2026-09-16 晚再修（跨机 r14 报的边界）：短窗口原来用 `step = n//2`（n=8 ⇒ 步长 4）会**跳着扫**，
+        # ⛔ 短窗口原来用 `step = n//2`（n=8 ⇒ 步长 4）会**跳着扫**，
         #    于是"针里第 3 个字开始的那 8 个字"永远扫不到 ⇒ 实测出现"8 字/相似度 1.00 却判 False"的怪相
         #    （`best_partial` 是**逐个偏移**扫的，所以它报得出 8/1.00 —— 两条口径不一致本身就是线索）。
         #    ⇒ 短窗口（≤12）一律**逐字扫**；长窗口保持步长以省时间。
         step = 1 if n <= 12 else max(1, n // 2)
         for i in range(0, max(0, len(b) - n) + 1, step):
             frag = b[i:i + n]
-            if low_entropy(frag):                  # 片段全是数字 ⇒ 跳过（巧合）
+            if low_entropy(frag): # 片段全是数字 ⇒ 跳过（巧合）
                 continue
             if frag in a:
                 return True
@@ -1574,7 +1570,7 @@ def content_match(pane: str, needle: str) -> bool:
         if blk.size >= MIN_HIT and not low_entropy(seg):
             return True
         return sm.ratio() > 0.5
-    except TypeError:                              # 老版本 difflib 没有 autojunk 参数
+    except TypeError: # 老版本 difflib 没有 autojunk 参数
         import difflib
         return difflib.SequenceMatcher(None, a, b).ratio() > 0.5
 
@@ -1582,7 +1578,7 @@ def content_match(pane: str, needle: str) -> bool:
 def best_partial(pane: str, needle: str) -> tuple:
     """针在聊天区文本里的**最好匹配情况** ⇒ `(最长命中片段长度, difflib 相似度, 命中片段)`。
 
-    为什么要有它（2026-09-16 跨机需求②「内容级闸的 OCR 口径」）：内容级身份闸判否时，我们只报
+    为什么要有它：内容级身份闸判否时，我们只报
     「聊天区里没有…」，可**"根本没有信号"与"信号被阈值判掉"是两种失败**——前者该判否，后者说明
     阈值/归一化有问题。把它算出来打进失败信息，就能一眼分开（这条口径本项目已有同名教训）。
     """
@@ -1605,7 +1601,7 @@ def best_partial(pane: str, needle: str) -> tuple:
 def pane_text(img, limit: int = 200, zoom: int = 2) -> str:
     """聊天区（面板左沿往右那一块）的 OCR 文字摘要——判"当前打开的是谁 / 切会话发没发生"（只读）。
 
-    ⛔ 2026-09-14 修（⑤ 重发实测）：原来是**单帧 + 原尺寸**读一次，实测在"聊天区全是文件卡"的那一屏
+    ⛔ （⑤ 重发实测）：原来是**单帧 + 原尺寸**读一次，实测在"聊天区全是文件卡"的那一屏
     读出**空串** ⇒ 内容级身份闸拿到空证据（于是有了 `chat_identity_ok` 里"读不到就返回 None"那条）。
     现在两件事：①放大 `zoom` 倍再认（小字放大显著提识别率，与会话行同一套路）；
     ②整块读不到就**分三段**各认一次（覆盖"中间被一张大图/文件卡隔开"的屏）。
@@ -1628,7 +1624,7 @@ def pane_text(img, limit: int = 200, zoom: int = 2) -> str:
             crop = img.crop(b)
             if zoom and int(zoom) > 1:
                 crop = crop.resize((crop.width * int(zoom), crop.height * int(zoom)))
-            # 丙-9 A1：聊天区全文是强档证据 ⇒ 读空由 RapidOCR 补读（B 管线不加——普通深字浅底，二值化无益）
+            # A1：聊天区全文是强档证据 ⇒ 读空由 RapidOCR 补读（B 管线不加——普通深字浅底，二值化无益）
             return "".join(str(i[0]) for i in recognize_dual(crop))
 
         txt = _read(box)
@@ -1652,10 +1648,10 @@ def find_row_scrolled(capture_fn, find_fn, scroll_fn=None, max_steps: int = 6,
                       budget_s=None) -> tuple:
     """**先看当前视野，找不到就平滑下滚再找**（后台：`scroll_fn` 由调用方注入投递滚轮，不碰鼠标）。
 
-    为什么要滚（用户 2026-09-13 原话：「你滚得太不顺滑了，**一下一下地滚，导致没有看到**」）：
+    为什么要滚：
     截图一次只覆盖会话列表露出来的那几行 ⇒ 目标在下面时**永远找不到**；要一格一格连滚、每轮重新读图。
     这里把「捕获 / 查找 / 滚动」三个动作都做成注入式，判据可以完全脱机自测（`chat_ocr_selftest`）。
-    **时间预算**（2026-09-14 加）：最坏情况本来是 7 轮 × 3 帧 ＝ 21 次 OCR，卡起来就是几分钟；
+    **时间预算**：最坏情况本来是 7 轮 × 3 帧 ＝ 21 次 OCR，卡起来就是几分钟；
     现在整段共用一个 `budget_s`（默认 `timeout_s()`），用完即停并在过程串里写明。
     返回 `(info 或 None, 过程说明)`。
     """
@@ -1700,10 +1696,10 @@ def capture_best(gui=None, frames: int = 3, img=None, good_rows: int = 8,
                  budget_s=None) -> object:
     """多抓几帧，挑「会话列表读到行数最多」的那帧返回（只读，不碰鼠标）。
 
-    为什么需要（2026-09-13 实测）：同一窗口连续抓图，OCR 行数会在 **2 行 ↔ 13 行**之间跳——
+    为什么需要：同一窗口连续抓图，OCR 行数会在 **2 行 ↔ 13 行**之间跳——
     抓到没渲染完/被遮挡的那一帧时，会话列表几乎读不出来 ⇒ 单帧判定会得出"找不到该会话"的**假结论**。
     宁可多抓两帧（每帧约 0.3s），也不要拿一帧坏图下结论。
-    **时间预算**（2026-09-14 加）：整段共用 `budget_s`（默认 `timeout_s()`），用完就拿已拿到的最好那帧走。
+    **时间预算**：整段共用 `budget_s`（默认 `timeout_s()`），用完就拿已拿到的最好那帧走。
     """
     best, best_n = None, -1
     tok = begin_window(budget_s)
@@ -1736,7 +1732,7 @@ def current_chat_name(img=None, gui=None, min_green: float = 0.12, retries: int 
        （同一张图里会话列表的名字/预览/时间戳都读得出）⇒ 用**会话列表 + 绿底高亮行**这两个独立信号。
     ⚠️ 抓图会**偶发拿到没渲染完的一帧**（实测：同一次调用里 `detect_pane_left=0`、只识别到 2 行、
        找不到绿底；紧接着再抓就正常 331/13 行/0.96）⇒ 自己抓图时**重试几帧、取最好的一帧**。
-    ⛔ **硬超时**（2026-09-14 加，测机手册 ④）：整段共用 `budget_s`（默认 `timeout_s()`＝25 秒）。
+    ⛔ **硬超时**：整段共用 `budget_s`（默认 `timeout_s()`＝25 秒）。
        实测本函数曾卡 **8 分 19 秒**（根因：库的 8 秒 asyncio 软超时取消不了 WinRT 原生操作）。
        到点就停、返回 `("", 原因)`——调用方必须按"**判据不可用**"处理（不放行发送），
        绝不许把它当成"画面上没有这个会话"。OCR 卡住的痕迹同时留在 `health()` / `recent_timeout()` 里。
@@ -1757,7 +1753,7 @@ def current_chat_name(img=None, gui=None, min_green: float = 0.12, retries: int 
                 best = ("", "抓图失败")
             else:
                 rows = session_rows(use)
-                # ⚠️ 2026-09-16：**先像素法**定高亮行——当前打开的那行是白字绿底、OCR 读不出它，
+                # ⚠️ **先像素法**定高亮行——当前打开的那行是白字绿底、OCR 读不出它，
                 #    只按 OCR 行量绿会被**绿色头像**领跑（实测把「宋孟」认成「微信…」）。
                 bands = green_bands(use, min_ratio=max(0.30, float(min_green)), min_h=28)
                 if bands:
@@ -1765,7 +1761,7 @@ def current_chat_name(img=None, gui=None, min_green: float = 0.12, retries: int 
                     if name:
                         return name, "绿底带 y=%d~%d 占比 %.2f（像素法）· 名字 OCR=%r" % (
                             bands[0]["y0"], bands[0]["y1"], bands[0]["score"], name[:16])
-                    if len(rows) > best_rows:      # 高亮行认出来了但名字读不出 ⇒ 说清"认得出行、读不出名"
+                    if len(rows) > best_rows: # 高亮行认出来了但名字读不出 ⇒ 说清"认得出行、读不出名"
                         best_rows = len(rows)
                         best = ("", "绿底带在 y=%d~%d（占比 %.2f）但那一行名字 OCR 读不出（白字绿底）"
                                 % (bands[0]["y0"], bands[0]["y1"], bands[0]["score"]))
@@ -1775,7 +1771,7 @@ def current_chat_name(img=None, gui=None, min_green: float = 0.12, retries: int 
                 else:
                     pick, score = None, 0.0
                     for r in rows:
-                        sc = green_row_ratio(use, r["y_abs"])   # ⚠️ 头像绿不算（见 green_row_ratio）
+                        sc = green_row_ratio(use, r["y_abs"]) # ⚠️ 头像绿不算（见 green_row_ratio）
                         if sc > score:
                             pick, score = r, sc
                     if pick is not None and score >= max(0.3, float(min_green)):
@@ -1796,17 +1792,17 @@ def current_chat_name(img=None, gui=None, min_green: float = 0.12, retries: int 
 
 
 # ————————————————— 「搜索」入口：**两套 UI 都要认** —————————————————
-# 用户 2026-09-13 口径：「没有搜索框了，只有搜索的一个图标，摁了之后才有搜索框」+
+# +
 # 「我另外一台电脑是有搜索框的，你要把两套 UI 的兼容做好」⇒ 入口有两种形态，都得能定位：
 #   · **box**（老 UI / 另一台机）：顶部直接摆着搜索框（占位文本「搜索」/「Search」）⇒ 点文字
 #   · **icon**（本机 4.1.15.8 实测）：顶部**只有放大镜图标**（旁边还有「＋」圆圈），点它才展开搜索框
 # 自检优先级：**先认字**（读到"搜索"就一定是 box 形态，点它最稳）→ 读不到再**认图标**
 # （标题带里的深色连通块：放大镜是其中最靠左、宽高都 ≈ 30px 的那个；「＋」在它右边）。
-SEARCH_BAND = (30, 135)              # 兜底用的标题带（正常走 `_search_band()` 现算）
-PANEL_TOP_MAX = 170                  # 会话列表面板上沿的搜索上限（超过就认为没找到）
-SEARCH_ICON_W = (9, 46)              # 图标横向宽度合理区间
-SEARCH_ICON_H = (9, 46)              # 图标纵向高度合理区间
-# ⚡ 2026-09-18 晚加（现场 `wechatauto_logs\fail\20260918-220433_search_entry\probe.json`）：
+SEARCH_BAND = (30, 135) # 兜底用的标题带（正常走 `_search_band()` 现算）
+PANEL_TOP_MAX = 170 # 会话列表面板上沿的搜索上限（超过就认为没找到）
+SEARCH_ICON_W = (9, 46) # 图标横向宽度合理区间
+SEARCH_ICON_H = (9, 46) # 图标纵向高度合理区间
+# ⚡ 晚加（现场 `wechatauto_logs\fail\20260918-220433_search_entry\probe.json`）：
 #   那一帧的候选块全是 **9×10 / 10×10 / 11×17 / 9×9** —— 那是**文字碎片的连通域**（会话行的字），
 #   而"最上一排最靠左"正好挑中 (65,97) 9×10 ⇒ 一枪点到会话列表上（点到哪行就切到哪个会话）。
 #   实测真图标：放大镜 21×21 / 22×21、「＋」24×24 / 12×12 ⇒ 加**最小边长**判据（小于 14px 一律不是图标）。
@@ -1816,7 +1812,7 @@ SEARCH_ICON_MIN = 14
 def _panel_top(img, x0, x1, light: int = 205, need: float = 0.8):
     """会话列表**面板的上沿**：跳过窗口顶部那条（浅灰或深灰的）标题栏带，返回第一个足够亮的 y。
 
-    为什么必须有这一步（2026-09-13 实测）：`PrintWindow` 抓到的帧**有的带上标题栏、有的不带**——
+    为什么必须有这一步：`PrintWindow` 抓到的帧**有的带上标题栏、有的不带**——
     带上时 y∈[0,45] 是一整条通宽深色（实测灰值 117），`_dark_blocks` 会把它并成**一个 234×105
     的大块**（超宽高，被滤掉），而标题栏下面的放大镜/加号反而**一个都认不出来**。
     """
@@ -1887,7 +1883,7 @@ def _rail_right(img, max_frac: float = 0.25, dark: int = 120, need: float = 0.6)
 def _dark_blocks(img, x0, y0, x1, y1, thr: int = 150, min_px: int = 14):
     """标题带里的深色块：**二维连通域**（不是按列投影）。
 
-    2026-09-13 实测：按列投影时，窗口标题栏那条通宽深色带会和它下面的图标**并成一个大块**
+    按列投影时，窗口标题栏那条通宽深色带会和它下面的图标**并成一个大块**
     ⇒ 图标一个都认不出。二维连通域能把"上面一条带、下面两个图标"干净地分开。
     返回 [(cx, cy, w, h)]（绝对坐标）。
     """
@@ -1945,12 +1941,12 @@ def _dark_blocks(img, x0, y0, x1, y1, thr: int = 150, min_px: int = 14):
 def pick_search_icon(cands):
     """从"标题带里的深色块"里挑出**搜索入口**：返回 `(cx, cy, bw, bh, why)`，挑不出给 None。
 
-    ⚠️ 2026-09-16 晚加（跨机 r11 实测的误点）：对面那台 `_rail_right()` 返回 **0**（导航栏右沿没测出来），
+    ⚠️ 对面那台 `_rail_right()` 返回 **0**（导航栏右沿没测出来），
     于是"最上一排最靠左"选到的正是**导航栏那一块**——`#0(47,76) 24×45`，**竖长条**；真正的搜索入口在
     `#1(242,71) 21×21`（旁还有 `#2(242,71) 11×11` 的「＋」）。⇒ 加一条**形状判据**（两台机器的实测都指向它）：
     先把"竖长条"排掉（`h > 1.6·w`），再在剩下的**方块**里取"最上面那一排最靠左"。
     实测形状：放大镜 21×21 / 22×21（长宽比 ≈1.0）、「＋」24×24 / 12×12、导航栏块 24×45（≈1.9）。
-    ⚡ 2026-09-18 晚再加**最小边长**（`SEARCH_ICON_MIN`）：9~11px 那批是**文字碎片**，见常量处的现场取证。
+    ⚡ 晚再加**最小边长**（`SEARCH_ICON_MIN`）：9~11px 那批是**文字碎片**，见常量处的现场取证。
     """
     try:
         if not cands:
@@ -1962,8 +1958,8 @@ def pick_search_icon(cands):
         square = [b for b in big if b[3] <= 1.6 * max(1, b[2])]
         pool = square or list(big)
         top = min(b[1] for b in pool)
-        row = [b for b in pool if b[1] <= top + 14]      # 同一排（图标行）
-        # ⚠️ 同 x 的并列块**按面积从大到小**取（跨机 r12 报的潜在坑）：放大镜与「＋」常常**同 x**
+        row = [b for b in pool if b[1] <= top + 14] # 同一排（图标行）
+        # ⚠️ 同 x 的并列块**按面积从大到小**取：放大镜与「＋」常常**同 x**
         #    （实测 242,71 上叠着 21×21 与 11×11 两个块），若 OCR/连通域给出的顺序颠倒，"最靠左"就会
         #    选中那个 11×11 的碎片 ⇒ 点歪。⇒ 排序键＝(x 升序, 面积降序)。
         row.sort(key=lambda b: (b[0], -(b[2] * b[3])))
@@ -1978,15 +1974,15 @@ def pick_search_icon(cands):
         return None
 
 
-SEARCH_BOX_MIN_W = 90      # 搜索框最小宽度（125% 实测 ≈110px）
-SEARCH_BOX_MIN_H = 22      # 搜索框最小高度
-SEARCH_BOX_LIGHT = 243     # 搜索框填充的亮度下限（白框；面板底色只有 ~237）
+SEARCH_BOX_MIN_W = 90 # 搜索框最小宽度（125% 实测 ≈110px）
+SEARCH_BOX_MIN_H = 22 # 搜索框最小高度
+SEARCH_BOX_LIGHT = 243 # 搜索框填充的亮度下限（白框；面板底色只有 ~237）
 
 
 def search_box_rect(img, left=None):
     """在会话列表**标题带**里找"搜索框"那个圆角矩形（**几何判据，不读字**）。返回 `(x0,y0,x1,y1)` 或 None。
 
-    ⚠️ 为什么必须有它（2026-09-16 跨机 r12/r13 的铁证）：对面那台（微信 4.1.13.65 / 125%）**本来就有搜索框**，
+    ⚠️ 为什么必须有它：对面那台（微信 4.1.13.65 / 125%）**本来就有搜索框**，
     但 ①占位文本被 OCR 读成 `…` ⇒ "读到「搜索」字样才认 box"这条**永远不成立**；②框里那个放大镜字形是
     **浅灰细线**，`_dark_blocks`（阈值 150、≥14 像素）也量不到 ⇒ 于是回落到"认图标"，选中的其实是**框右边的「＋」**
     ——他们那份 205×205 的"搜索浮层"帧打开的是「发起群聊 / 添加朋友 / 写笔记」菜单，这就是铁证。
@@ -2001,7 +1997,7 @@ def search_box_rect(img, left=None):
         if yb1 - yb0 < 18 or x1c - x0c < 120:
             return None
         # ⚠️ 自检＝"该列**白像素总数占比**"，阈值取**背景与峰值的中间值**（不是固定值、也不是中位数倍数）：
-        #    2026-09-16 在对面真实帧上实测两轮才定下来——①固定 0.55：他们那条带高 78px、框只占 ~30px
+        # 在对面真实帧上实测两轮才定下来——①固定 0.55：他们那条带高 78px、框只占 ~30px
         #    ⇒ 白占比只有 0.29~0.36，**永远认不出**；②"3×中位数"：他们的搜索框占了跨度的一半以上 ⇒
         #    中位数本身就有 0.28 ⇒ 阈值 0.85，**一个列都不剩**。正解＝背景≈0.00、框≈0.36，取两者中间。
         fracs = []
@@ -2018,7 +2014,7 @@ def search_box_rect(img, left=None):
         thr = max(0.16, bg + (peak - bg) * 0.5)
         box_like = [i for i, f in enumerate(fracs) if f >= thr]
         best_span, i, n_all = None, 0, len(box_like)
-        while i < n_all:                              # 取最长的一段连续列
+        while i < n_all: # 取最长的一段连续列
             j = i
             while j + 1 < n_all and box_like[j + 1] == box_like[j] + 1:
                 j += 1
@@ -2064,7 +2060,6 @@ def find_search_entry(img, left=None, zoom: int = 2):
     except Exception:
         pass
     # ② 几何自检：**认那个白底圆角矩形**（不依赖占位文本，也不依赖放大镜字形——
-    #    跨机 r12/r13 实测：对面那台占位文本读成 `…`、放大镜是浅灰细线，两条老路都认不出，
     #    结果点到了框右边的「＋」）。两台 UI 都成立；本机 icon 形态没有框 ⇒ 直接跳过。
     try:
         _bx = search_box_rect(img, left=left)
@@ -2075,7 +2070,7 @@ def find_search_entry(img, left=None, zoom: int = 2):
                            % (_bx[2] - _bx[0], _bx[3] - _bx[1])}
     except Exception:
         pass
-    # ⓪ 第二道闸（2026-09-18 晚，现场 20260918-220433）：帧**本身就是搜索窗画面**时，
+    # ⓪ 第二道闸：帧**本身就是搜索窗画面**时，
     #    绝不许在它里面挑"搜索入口"（那帧里没有图标，只有搜索结果的文字碎片）。
     #    放在 box 两条之后：box 形态的帧里正常会读到「搜索」二字，不能被这条误杀。
     try:
@@ -2098,13 +2093,13 @@ def find_search_entry(img, left=None, zoom: int = 2):
                 continue
             cands.append((cx, cy, bw, bh))
         if cands:
-            _pick = pick_search_icon(cands)             # ⚠️ 形状自检（排掉导航栏那种竖长条）见函数注释
+            _pick = pick_search_icon(cands) # ⚠️ 形状自检（排掉导航栏那种竖长条）见函数注释
             if _pick:
                 cx, cy, bw, bh, _whyp = _pick
                 return {"variant": "icon", "x": cx, "y": cy,
                         "why": "%s，导航栏右沿 %d" % (_whyp, rail),
                         "cands": cands,
-                        # 观测口径（2026-09-16 跨机需求⑤）：把**全部候选块**写成一行文字，失败时随结果返回——
+                        # 观测口径：把**全部候选块**写成一行文字，失败时随结果返回——
                         # 对面报"点到顶部「＋」"时，我这边能看到"候选里到底有几个块、选了第几个"。
                         "cand_txt": " · ".join("#%d(%d,%d,%dx%d)" % (i, c[0], c[1], c[2], c[3])
                                                for i, c in enumerate(cands))}
@@ -2117,7 +2112,7 @@ def toolbar_first_icon(img, pane_left: int = 0, band_h: int = 96,
                        thr: int = 40, wmax: int = 70) -> tuple:
     """输入栏**工具栏那一行**里最左边那个字形（笑脸）的中心 → `(cx, cy)` 或 None。
 
-    ⚡ 2026-09-18 晚加（现场：窗口被改成 947×972 后，老的比例法 `0.324·w = 306` 落在输入框**左边**的
+    ⚡ 窗口被改成 947×972 后，老的比例法 `0.324·w = 306` 落在输入框**左边**的
     空白处 ⇒ 点了没反应、表情面板从此**一次都没开出来**；而笑脸实际在 379）。
     实测口径：笑脸与输入框左沿的距离基本恒定（本机 331→379 ≈ 48px），而"占整幅的比例"会随窗口宽高比
     变化 ⇒ **一律在帧里现量**：工具栏行里最左边那个深色连通块就是笑脸（它右边依次是方块/文件夹/剪刀/语音）。
@@ -2174,10 +2169,10 @@ def toolbar_first_icon(img, pane_left: int = 0, band_h: int = 96,
                 if (b[2] - b[0] + 1) >= 10 and (b[3] - b[1] + 1) >= 8 and (b[2] - b[0] + 1) <= wmax]
         if not good:
             return None
-        b = min(good, key=lambda t: t[0])                 # 最左边那一块（＝笑脸）
+        b = min(good, key=lambda t: t[0]) # 最左边那一块（＝笑脸）
         cx = (b[0] + b[2]) // 2
         cy = (b[1] + b[3]) // 2
-        if abs(cy - (H - 50)) > 60:                       # 不在"输入栏下沿"那一条上 ⇒ 认错东西了
+        if abs(cy - (H - 50)) > 60: # 不在"输入栏下沿"那一条上 ⇒ 认错东西了
             return None
         return (int(cx), int(cy))
     except Exception:
@@ -2187,7 +2182,7 @@ def toolbar_first_icon(img, pane_left: int = 0, band_h: int = 96,
 def loose_matches(a: str, b: str, thresh: float = 0.7, need: int = 3) -> bool:
     """**宽容**判"这两个名字是不是同一个"（用于 OCR 会吃掉 emoji/符号的场合）。
 
-    ⚡ 2026-09-18 深夜现场：群名 `海绵宝宝の吸🈲课堂` 被 OCR 读成 `海绵宝宝吸课堂`（丢了 🈲 与 の）
+    ⚡ 群名 `海绵宝宝の吸🈲课堂` 被 OCR 读成 `海绵宝宝吸课堂`（丢了 🈲 与 の）
     ⇒ 严格匹配判否 ⇒ 按键走格一路走过头（24 格都没认出来）。⇒ 补一条按**字符集合**算的 Jaccard
     （只保留 CJK 与字母数字；共同字符 ≥ need 且相似度 ≥ thresh）。
     ⛔ 它只用于"走格/找行时确认"，**发送闸一律不接它**（发送仍要强档证据 / 内容级复核）。
@@ -2226,7 +2221,7 @@ def band_diff(a, b) -> float:
 
 
 POPOVER_MARKERS = ("最近在搜", "搜索网络结果", "搜索", "联系人", "群聊", "聊天记录", "公众号", "视频号")
-# ⛔ 「＋」菜单的条目（2026-09-16 跨机 r12 铁证）：他们那份 205×205 的"搜索浮层"帧，画面其实是
+# ⛔ 「＋」菜单的条目：他们那份 205×205 的"搜索浮层"帧，画面其实是
 #    「发起群聊 / 添加朋友 / 写笔记」——因为老自检只查 `群聊` 这一个词，而 `发起群聊` **包含**它 ⇒ 误判成
 #    搜索浮层。⇒ 命中这些菜单条目 ≥2 条就**直接判不是搜索浮层**（黑名单优先于白名单）。
 PLUS_MENU_ITEMS = ("发起群聊", "添加朋友", "写笔记", "扫一扫", "收付款", "拍一拍")
@@ -2248,7 +2243,7 @@ def looks_like_search_popover(img) -> tuple:
     except Exception as e:
         return False, "OCR 失败：%s" % e
     # ⛔ 黑名单优先：「＋」菜单（发起群聊/添加朋友/写笔记…）**不是**搜索浮层——它含「群聊」二字，
-    #    会被下面的白名单误判（跨机 r12 的 205×205 帧就是这么被当成搜索浮层的）。
+    # 会被下面的白名单误判。
     _hit_menu = [m for m in PLUS_MENU_ITEMS if m in txt]
     if len(_hit_menu) >= 2:
         return False, "这是「＋」菜单（%s），不是搜索浮层" % "、".join(_hit_menu[:3])
@@ -2264,7 +2259,7 @@ POPOVER_SECTIONS = ("联系", "群聊", "最常", "聊天记录", "Contacts", "G
 def looks_like_search_window_frame(img, strip_h: int = 56) -> tuple:
     """这张"渲染区"帧是不是**搜索窗自己的画面**（查顶部标题条）→ `(bool, 依据)`。
 
-    ⚡ 2026-09-18 晚加（现场 `wechatauto_logs\\fail\\20260918-220433_search_entry\\shot.png`）：
+    ⚡ 晚加（现场 `wechatauto_logs\\fail\\20260918-220433_search_entry\\shot.png`）：
     那张号称"主窗渲染区"的帧，画面其实是微信的**独立「搜索聊天记录」窗**（标题条就在顶部）。
     ⇒ 在这种帧里**根本不该找搜索入口**：里面全是搜索结果的文字碎片，"最上一排最靠左"会挑到
     9~21px 的字块 ⇒ 一枪点到会话行/搜索输入区。根因已在 `chat_header._OCCLUDE_ALLOW` 修（同进程
@@ -2285,7 +2280,7 @@ def looks_like_search_window_frame(img, strip_h: int = 56) -> tuple:
 def find_popover_row(img, name: str, zoom: int = 2):
     """在**搜索浮层**的截图里找目标那一行，返回 {'x','y','why'}（浮层客户区坐标）或 None。
 
-    实测口径（2026-09-13，本机 4.1.15.8，浮层 552×891）：
+    实测口径：
       · 分区标题「联系人」在 (54,112)，**第一行＝头像 + 名字（名字在 x≈122）**，行中心 ≈ 标题下方 60px；
       · 右边 (≈0.86·w) 有个 ⓘ 按钮 ⇒ 落点固定取 **0.35·w**，绝不碰右边那半；
       · 单字母名字（如「E」）OCR 会读成别的（这次读成 'O'）⇒ 名字命中用**整体相等**判、不相等就退到
@@ -2311,7 +2306,7 @@ def find_popover_row(img, name: str, zoom: int = 2):
                     sec_y, sec_name = cy, k
                     break
     if sec_y is not None:
-        # ⚠️ 段的标题**不一定是「联系人」**（2026-09-13 实测：同一个搜索词，浮层有时给的是
+        # ⚠️ 段的标题**不一定是「联系人」**（同一个搜索词，浮层有时给的是
         #    「最常使用」→ 结果行，有时是「联系人」；而单字母名字（E）OCR 根本读不出来）
         #    ⇒ 只要认到**任一段标题**，就取它下面第一行（实测行中心 ≈ 标题下方 55px）；
         #      点到的是不是目标会话，仍由点完之后的**内容级复核**说了算（错行 ⇒ 不发送）。

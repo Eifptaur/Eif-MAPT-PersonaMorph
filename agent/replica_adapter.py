@@ -1,6 +1,6 @@
 """wechatauto-replica 适配层 —— **唯一**允许触碰该库私有 API 的地方。
 
-为什么要这一层（2026-09-13 W1）
+为什么要这一层
 ------------------------------
 我们原先散着调它三个私有接口：
   - `WeChatDB._db_files`（实例属性：[(rel, path, size)]）—— 在 `_load_nicknames` / `_load_groups` 里遍历
@@ -29,7 +29,7 @@ _SQLITE_MAGIC = b"SQLite format 3\x00"
 def fix_page1_plaintext_header() -> str:
     """把驱动库「页 1 是不是明文头」的判断改成**按磁盘事实**判。
 
-    ⛔ 真事（2026-09-22，另一位维护者在**别人机器上**实测）：`wechatauto/db.py::_decrypt_page(enc_key, page, 1)`
+    ⛔ 真事：`wechatauto/db.py::_decrypt_page(enc_key, page, 1)`
       只要 `len(enc_key) == 48` 就认定这是 `cipher_plaintext_header_size` 明文头模式，把**文件里那 16
       个字节原样**当明文头拼回去。可在那台机器上那个库是**全加密**的 —— 那 16 字节是密文 salt
       ⇒ 拼出来的页 1 头是坏的 ⇒ 库报「**数据库合并失败(文件被微信并发改写)**」，而**与并发毫无关系**
@@ -42,7 +42,7 @@ def fix_page1_plaintext_header() -> str:
     """
     try:
         from wechatauto import db as _wdb
-    except Exception as _e:                                        # noqa: BLE001
+    except Exception as _e: # noqa: BLE001
         return "no_lib:%s" % type(_e).__name__
     _orig = getattr(_wdb, "_decrypt_page", None)
     if not callable(_orig):
@@ -55,7 +55,7 @@ def fix_page1_plaintext_header() -> str:
     if not callable(_aes):
         return "skip:no_aes"
 
-    def _decrypt_page(enc_key, page, pgno):                        # noqa: ANN001
+    def _decrypt_page(enc_key, page, pgno): # noqa: ANN001
         if int(pgno) != 1:
             return _orig(enc_key, page, pgno)
         try:
@@ -65,21 +65,21 @@ def fix_page1_plaintext_header() -> str:
             key = enc_key[:32] if len(enc_key) == 48 else enc_key
             body = _aes(key, iv, page[16: _page_sz - _reserve])
             return (head if plain else _SQLITE_MAGIC) + body + b"\x00" * _reserve
-        except Exception:                                          # noqa: BLE001
-            return _orig(enc_key, page, pgno)                      # 兜底：退回原实现，绝不更坏
+        except Exception: # noqa: BLE001
+            return _orig(enc_key, page, pgno) # 兜底：退回原实现，绝不更坏
 
     _decrypt_page._pm_disk_fact = True
     try:
         if _ORIGINAL["fn"] is None:
-            _ORIGINAL["fn"] = _orig          # 留一份原始实现（给判据做灵敏度对照；也方便回滚）
+            _ORIGINAL["fn"] = _orig # 留一份原始实现（给判据做灵敏度对照；也方便回滚）
         _wdb._decrypt_page = _decrypt_page
-    except Exception as _e:                                        # noqa: BLE001
+    except Exception as _e: # noqa: BLE001
         return "error:%s" % type(_e).__name__
     return "patched"
 
 
 _PATCHED = {"done": False, "how": ""}
-_ORIGINAL = {"fn": None}          # 补丁前的库实现（判据要拿它做"老写法确实会坏"的灵敏度对照）
+_ORIGINAL = {"fn": None} # 补丁前的库实现（判据要拿它做"老写法确实会坏"的灵敏度对照）
 
 
 def original_decrypt_page():
@@ -92,7 +92,7 @@ def ensure_compat_patches() -> str:
     if not _PATCHED["done"]:
         try:
             _PATCHED["how"] = fix_page1_plaintext_header()
-        except Exception as _e:                                    # noqa: BLE001
+        except Exception as _e: # noqa: BLE001
             _PATCHED["how"] = "error:%s" % type(_e).__name__
         _PATCHED["done"] = True
         try:
@@ -119,9 +119,9 @@ def explain_db_error(e) -> str:
 
 # ---- 版本口径 ---------------------------------------------------------------
 PKG = "wechatauto-replica"
-MIN_VERSION = "1.1.5.1"      # 低于它：不支持（老接口语义不同）
-KNOWN_GOOD = "1.2.2.2"       # 本仓库实测通过并据此改写调用点的版本
-MAX_TESTED = "1.2.2.2"       # 高于它：只警告（未实测），不阻断
+MIN_VERSION = "1.1.5.1" # 低于它：不支持（老接口语义不同）
+KNOWN_GOOD = "1.2.2.2" # 本仓库实测通过并据此改写调用点的版本
+MAX_TESTED = "1.2.2.2" # 高于它：只警告（未实测），不阻断
 
 
 def ver_tuple(v) -> tuple:
@@ -177,8 +177,8 @@ def has_api(obj, name: str) -> bool:
 def capabilities(db) -> dict:
     """能力位：调用点据此决定走哪条支路（判据也用它做机械断言）。"""
     return {
-        "msg_conns": has_api(db, "_msg_conns"),     # 1.2.x：跨分片全量
-        "msg_conn": has_api(db, "_msg_conn"),       # 1.1.x：只取第一个命中分片
+        "msg_conns": has_api(db, "_msg_conns"), # 1.2.x：跨分片全量
+        "msg_conn": has_api(db, "_msg_conn"), # 1.1.x：只取第一个命中分片
         "db_files": hasattr(db, "_db_files"),
         "open_shard": has_api(db, "_open"),
         "get_groups": has_api(db, "get_groups"),
@@ -204,7 +204,7 @@ def iter_shards(db):
 def missing_key_shards(db) -> list:
     """列出**当前没有可用密钥**的分片 rel。
 
-    为什么要它（2026-09-16 网友 A 的报告：`KeyError: 'message\\media 1.db'`）：微信会**懒创建**
+    为什么要它：微信会**懒创建**
     新分片（收到媒体就多一个 `media N.db`），而驱动库的密钥表是它 `__init__` 时的快照
     ⇒ 新分片没密钥 ⇒ 库自己的 `_open()`（`db.py:1311` 直接 `self._keys[rel]`）**抛 KeyError 且它不兜**
     ⇒ 读消息 / 会话头 / 投递回读整条链全断（他报的"白名单设置不了、读取会话失败"就是这个）。
@@ -225,7 +225,7 @@ def refresh_shards(db) -> dict:
     调用时机：①接入时（一次，见 `WeChatAdapter._init_db`）②`open_shard` 撞上 KeyError 时
     ③以后若加「重新校准密钥」按钮也走这里。
 
-    ⚠️ **二级兜底（2026-09-16 网友 A 的 `KeyError: message\\media 1.db`）**：补不回来的分片
+    ⚠️ **二级兜底**：补不回来的分片
     **从分片表里摘掉**（只影响那个分片的内容），换整条链可用 —— 因为驱动库**内部**遍历
     `_db_files` 时会挨个 `_open()`，一个没密钥的分片就能把「读消息 / 会话头 / 投递发送 / 群列表」
     一起打死，而它自己不兜。摘掉是**有代价的补救**，所以必须留痕（`dropped` 由调用方记日志/显示）。
@@ -262,11 +262,11 @@ def refresh_shards(db) -> dict:
 def open_shard(db, rel):
     """打开某个分片（收口 `_open`）；调用方负责 close。**拿不到就返回 None**（跳过这个分片）。
 
-    ⚠️ 2026-09-16（网友 A 的 `KeyError: 'message\\media 1.db'`）：驱动库对"没有密钥的分片"不兜。
+    ⚠️ （网友 A 的 `KeyError: 'message\\media 1.db'`）：驱动库对"没有密钥的分片"不兜。
     这里先补一次密钥再试；仍不行就如实返回 None —— 一个懒创建的媒体分片不该把整条链打死
     （调用方都已在 try 里用连接，None 会被它们当成"这个分片读不了"跳过）。
     """
-    ensure_compat_patches()      # ⛔ 读任何页之前先把"页 1 模式"补丁装上（2026-09-22）
+    ensure_compat_patches() # ⛔ 读任何页之前先把"页 1 模式"补丁装上
     try:
         return db._open(rel)
     except KeyError:
@@ -299,10 +299,9 @@ def contact_db_rel(db):
 def load_nickname_map(db) -> dict:
     """wxid -> 显示名 的整表映射（老 `_load_nicknames` 的唯一实现，走适配层）。
 
-    ⛔ 2026-09-21 修（第九轮 **V-R9-7** · P1）：原来**三类失败全部静默返回 `{}`**（`rel is None`
-    直接 return、查询异常 `except: pass`）—— 而 2026-09-20 那次同族修复只改了 `load_groups`
+    ⛔ 原来**三类失败全部静默返回 `{}`**（`rel is None`
+    直接 return、查询异常 `except: pass`）—— 而 那次同族修复只改了 `load_groups`
     与 `load_privates`（都改成"真失败就抛"）⇒ `wechat._load_nicknames` 的 `_cap["contacts"]`
-    一个字节都记不到、昵称静默退化成 wxid、"登记大号按昵称"永远匹配不上（用户报过的
     「无法识别我的大号」）。⇒ 与那两条同口径：**真失败就抛**（由 `wechat._load_nicknames`
     记进 `_cap` 并如实显示）；查询成功但确实一个联系人都没有 ⇒ 返回空表（那是事实）。
     """
@@ -324,9 +323,9 @@ def load_nickname_map(db) -> dict:
 
 
 def load_groups(db) -> list:
-    """群列表 [{'name','wxid'}]：**两个来源取并集**（2026-09-22 修「只认到一个群」）。
+    """群列表 [{'name','wxid'}]：**两个来源取并集**。
 
-    ⛔ 为什么必须并集（B站网友实测：「我拉她进了两个群，只能检测到一个」）：两条来源**各自会漏**——
+    ⛔ 为什么必须并集（B站网友实测）：两条来源**各自会漏**——
       ① 驱动库 `get_groups()` 读的是 `contact.db` 的 **`chat_room` 表**：它只收录"已经展开过群成员/
          进过通讯录"的群聊，**刚被拉进去、还没点开过的群可能压根不在那张表里**；
       ② `contact` 表的 `@chatroom` 行更全（会话列表里出现过的群都在），但拿不到群主/成员数。
@@ -336,7 +335,7 @@ def load_groups(db) -> list:
     失败语义不变：**两路都失败才抛**（由 `wechat._load_groups` 记进 `_cap` 并如实显示）；
     只有一路成功 ⇒ 返回它并允许另一路为空（errs 里留着原因，供上层诊断）。
 
-    ⛔ 2026-09-20 修（网友 v0920-1227 报「**微信已连接却找不到群聊**」，截图里控制台写着
+    ⛔ （网友 v0920-1227 报「**微信已连接却找不到群聊**」，截图里控制台写着
       「没读到任何群聊：请先在「运行状态」确认微信已连接」）：这里原来把**两条路都失败**的情况
       用 `except Exception: pass` 悄悄吞成"0 个群" —— 于是上层 `wechat._cap["groups"]` **永远拿不到
       fail**（它只在真抛异常时才记），`groups_fn` 便返回 `ok:True + groups:[]`，控制台据此把用户
@@ -347,13 +346,13 @@ def load_groups(db) -> list:
       **查询成功、确实一个群都没有**才返回空列表（那是事实，不是错误）。
     """
     errs = []
-    found = []          # [(wxid, name)] —— 两个来源都往里追加，最后按 wxid 去重合并
+    found = [] # [(wxid, name)] —— 两个来源都往里追加，最后按 wxid 去重合并
     ok_src = 0
     # ── 来源①：驱动库 get_groups()（contact.db 的 chat_room 表；新群可能还没有）────────────
     if has_api(db, "get_groups"):
         try:
             rows = db.get_groups() or []
-            ok_src += 1                       # 调用本身没抛＝这条路可用（给 0 条也是"可用且为空"）
+            ok_src += 1 # 调用本身没抛＝这条路可用（给 0 条也是"可用且为空"）
             n0 = 0
             for r in rows:
                 try:
@@ -398,7 +397,7 @@ def load_groups(db) -> list:
             continue
         seen.add(wxid)
         out.append({"name": contact_names.get(wxid) or name, "wxid": wxid})
-    for wxid, name in contact_names.items():      # ② 里有、① 里没有的群（＝被短路的那些）
+    for wxid, name in contact_names.items(): # ② 里有、① 里没有的群（＝被短路的那些）
         if wxid not in seen:
             seen.add(wxid)
             out.append({"name": name, "wxid": wxid})
@@ -416,7 +415,7 @@ _SYS_CONTACTS = {
 def load_privates(db) -> list:
     """列出**私聊联系人**（非群、非系统号）。
 
-    用途（2026-09-16 用户原话）：「他也许是那种私聊的想法，**大号跟小号对谈**，相当于借一个智能体
+    用途
     进来跟自己聊天，这个应该也可以做吧」—— 原来监听目标**只来自群列表**，私聊根本不在监听范围里。
     只读 `contact` 表；**只排掉** `@chatroom` 与已知系统号 —— 不做"只留 wxid_ 开头"那种硬过滤，
     因为自定义微信号不是 wxid_ 开头，滤掉会把真人漏掉。
@@ -424,7 +423,7 @@ def load_privates(db) -> list:
     out = []
     rel = contact_db_rel(db)
     if rel is None:
-        # ⛔ 2026-09-20：与 `load_groups` 同族 —— 原来这里返回空列表，把"找不到联系人库"
+        # ⛔ 与 `load_groups` 同族 —— 原来这里返回空列表，把"找不到联系人库"
         #   说成"没有私聊联系人"。现在如实抛（由 `wechat._load_privates` 记进 `_cap`）。
         raise RuntimeError("找不到联系人库 contact.db")
     conn = None
@@ -489,10 +488,10 @@ def find_server_id_local_id(db, user, server_id):
 def patch_driver_quirks() -> list:
     """给驱动库打"我们这侧的补丁"（**不改 site-packages 文件**，所以随包在别的机器上也生效）。
 
-    ⚠️ 2026-09-18 实测踩到的第三方真 bug：`wechatauto/guia.py` 全文**没有 `import threading`**，
+    ⚠️ 踩到的第三方真 bug：`wechatauto/guia.py` 全文**没有 `import threading`**，
     却在布局校准里用了 `threading` ⇒ 一旦触发「输入框探测连续失败 → 自动重新校准布局」，
     校准必然抛 `name 'threading' is not defined` 被吞成一行 debug 日志 ⇒ **校准永远不生效**。
-    现场日志（2026-09-18 03:43:22）：
+    现场日志：
         `未检测到输入框` → `输入框探测连续失败，自动重新校准布局…` → `布局校准失败：name 'threading' is not defined`
 
     ⇒ 做法：**在导入后把缺的名字注入该模块**（幂等，重复调用无害）。返回 (模块名, 注入的名字) 列表。
@@ -511,7 +510,7 @@ def patch_driver_quirks() -> list:
                     pass
     except Exception:
         pass
-    # 🔴 2026-09-18：**顺手把"置前/置顶"的闸上到库的类上**（在造 WeChatGUI 之前调用本函数）。
+    # 🔴 **顺手把"置前/置顶"的闸上到库的类上**（在造 WeChatGUI 之前调用本函数）。
     #   为什么放在这里：`WeChatGUI.__init__` 里就会 `calibrate_layout() → bring_to_front()`
     #   （窗口尺寸与上次校准差 >15% 时），实例级上闸来不及 ⇒ 必须**类级**、且在构造之前。
     try:
@@ -528,21 +527,21 @@ def selfcheck() -> list:
     rep = version_report()
     rows = [{"item": "适配层版本", "ok": rep["ok"], "detail": rep["note"]}]
     try:
-        from wechatauto import WeChatDB  # noqa: F401
+        from wechatauto import WeChatDB # noqa: F401
         rows.append({"item": "驱动库可导入", "ok": True, "detail": "from wechatauto import WeChatDB"})
-    except Exception as e:  # pragma: no cover
+    except Exception as e: # pragma: no cover
         rows.append({"item": "驱动库可导入", "ok": False, "detail": str(e)})
     try:
         _patched = patch_driver_quirks()
         rows.append({"item": "驱动库补丁（缺名字注入）", "ok": True,
                      "detail": ("已注入 " + "、".join(_patched)) if _patched else "无需注入（该库已自带）"})
-    except Exception as e:  # pragma: no cover
+    except Exception as e: # pragma: no cover
         rows.append({"item": "驱动库补丁（缺名字注入）", "ok": False, "detail": str(e)})
     return rows
 
 
-# ── 正文还原：把"库里存着、读法只给类型标签"的消息正文解出来（2026-09-14）─────────────
-# 为什么必须有这一层（既有口径：障原话：「我每次都是把你的话复制到微信发过去了，但是随后你好像就
+# ── 正文还原：把"库里存着、读法只给类型标签"的消息正文解出来─────────────
+# 为什么必须有这一层（既有口径：障
 # 不太能正常识别并操作了」）——**实测机制**：
 #   · 微信 4.x 把**长文本与文件卡**的 `content` **zstd 压缩**存库（实测 local_id=703 是 1791 字节的
 #     zstd 帧，magic `28 b5 2f fd`）；
@@ -557,7 +556,7 @@ ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
 def zstd_module():
     """运行时自带的 zstd 实现（实测 `zstandard 0.25.0` 随驱动库一起装进来了）。"""
     try:
-        import zstandard  # type: ignore
+        import zstandard # type: ignore
         return zstandard
     except Exception:
         return None
@@ -585,13 +584,13 @@ def recover_text(raw) -> str:
         z = zstd_module()
         if z is None:
             return ""
-        try:                                   # 一次性解（带输出上限，防解压炸弹）
+        try: # 一次性解（带输出上限，防解压炸弹）
             return z.ZstdDecompressor().decompress(
                 b, max_output_size=8 * 1024 * 1024).decode("utf-8", "replace")
         except Exception:
-            try:                               # 流式兜底（有些帧只能在流式 API 下解）
+            try: # 流式兜底（有些帧只能在流式 API 下解）
                 import io
-                # ⛔ 2026-09-21 修（第十轮 **V-R10-11**）：流式兜底原来**没有上限** —— 审计实测
+                # ⛔ 流式兜底原来**没有上限** —— 审计实测
                 #   403 字节的帧解出 12MB、1299 字节解出 40MB（把上面那句 `max_output_size=8MB`
                 #   整个绕穿）。⇒ 改成**读的时候就卡住**：多读一个字节发现超限就判失败。
                 _cap = 8 * 1024 * 1024

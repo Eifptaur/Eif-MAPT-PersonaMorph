@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""「微信数据目录」判据（2026-09-18 立，起因＝用户反馈原文）。
+"""「微信数据目录」判据。
 
-反馈原文（2026-09-18 22:23，控制台「反馈」面板）：
+反馈原文：
     「能不能让我自己选微信的地址，自己自定义的地址他检测不到，移动回默认地址后好了，
       但是监听后没反应，重启后又连接不上了，通过文件夹中的脚本检查出来的报告显示，
       他回我之前自定义的地址里去看文件了」
@@ -38,9 +38,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
-from agent import config as C          # noqa: E402
-from agent import wechat as W          # noqa: E402
-from agent import wechat_dir as D      # noqa: E402
+from agent import config as C # noqa: E402
+from agent import wechat as W # noqa: E402
+from agent import wechat_dir as D # noqa: E402
 
 PASS = FAIL = 0
 
@@ -95,7 +95,7 @@ try:
     ok("没填 ⇒ 不可用且有原因", a4["ok"] is False and bool(str(a4["why"]).strip()), a4["why"])
     a5 = D.check(os.path.join(good, "wxid_judge0001", "db_storage"))
     ok("填到 db_storage 这一层也算对（既有口径：填哪一层都算对）", a5["ok"] is True, str(a5)[:90])
-    a6 = D.check("%TEMP%")     # 环境变量要展开（既有 `_expand_path` 口径）
+    a6 = D.check("%TEMP%") # 环境变量要展开（既有 `_expand_path` 口径）
     ok("路径里的环境变量会被展开后再判", a6["path"] and "%TEMP%" not in a6["path"], a6["path"][:70])
 
     print("── A2. 账号层（2026-09-19 加：网友反馈「大号能连、小号连不上」）──")
@@ -172,10 +172,10 @@ try:
 
     print("── C. 旧路径必须失效（本反馈的核心）──")
     _patch_cands(cands_all)
-    before = D.decide(old_dir)            # 模拟：用户原来把"自定义地址"填成旧目录
+    before = D.decide(old_dir) # 模拟：用户原来把"自定义地址"填成旧目录
     ok("先确认旧配置生效", D._same(before["effective"], old_dir) and before["src"] == "config",
        "%s / %s" % (before["effective"], before["src"]))
-    after = D.decide(new_dir)             # 配置改成新目录之后
+    after = D.decide(new_dir) # 配置改成新目录之后
     ok("配置一改，用的是**新**目录", D._same(after["effective"], new_dir) and after["src"] == "config",
        "%s / %s" % (after["effective"], after["src"]))
     _tries = [d for d, _s in W.db_open_tries(new_dir)]
@@ -299,7 +299,7 @@ try:
     ok("报告不再因为库打不开而整段退化成取不到",
        "_how_err" in _rep and "打不开或取不到" in _rep)
 
-    print("── G. 两个号都静默：`switched()` 与 `pick_account()` 必须同一结论（V-R10-28，P1）──")
+    print("── G. 两个号都静默：`switched()` 与 `pick_account()` 必须同一结论──")
     # 现场：用户切到 B 号后 B 号**短期没收到消息** ⇒ 旧规则④（`others` 为空就 `return out`）**永不跟切**
     #   ⇒ 继续读 A 号旧库、**无任何异常**；而同一夹具下 `pick_account()` 能挑对号
     #   ⇒ **同一事实两条路相反**。修法＝让两条路走同一个判定（switched 认 pick_account 的答案）。
@@ -320,8 +320,8 @@ try:
         return os.path.join(parent, acct)
 
     _p2 = os.path.join(ROOT_TMP, "both_idle")
-    _mk2(_p2, "wxid_OLD_1111", db_age_h=0.05, wal_age_h=0.5)     # 切走的号：主库刚被 checkpoint
-    _mk2(_p2, "wxid_LIVE_2222", db_age_h=50.0, wal_age_h=0.2)    # 在用的号：-wal 更晚（12 分钟前）
+    _mk2(_p2, "wxid_OLD_1111", db_age_h=0.05, wal_age_h=0.5) # 切走的号：主库刚被 checkpoint
+    _mk2(_p2, "wxid_LIVE_2222", db_age_h=50.0, wal_age_h=0.2) # 在用的号：-wal 更晚（12 分钟前）
     _pk2 = D.pick_account(_p2)
     ok("两个号**都没在写**时，pick_account 按「-wal 更晚」挑中在用的那个",
        _pk2.get("name") == "wxid_LIVE_2222", str(_pk2.get("why"))[:100])
@@ -342,8 +342,8 @@ try:
        _others_old == [])
     # 规则②（我自己还在写就不切）是**唯一**保留的保守分支：多开时两个号同时活着，不许每 15 秒重连
     _p3 = os.path.join(ROOT_TMP, "mine_live")
-    _mk2(_p3, "wxid_A_1111", db_age_h=5.0, wal_age_h=0.0005)     # 我读的号刚写过
-    _mk2(_p3, "wxid_B_2222", db_age_h=5.0, wal_age_h=0.0001)     # 另一个号写得更晚
+    _mk2(_p3, "wxid_A_1111", db_age_h=5.0, wal_age_h=0.0005) # 我读的号刚写过
+    _mk2(_p3, "wxid_B_2222", db_age_h=5.0, wal_age_h=0.0001) # 另一个号写得更晚
     ok("规则②（多开防抖，**故意**不跟 pick_account 动）：我这号 -wal 还新鲜 ⇒ 不切",
        D.switched("wxid_A_1111", _p3, pin="").get("stale") is False
        and D.pick_account(_p3).get("name") == "wxid_B_2222",
@@ -371,14 +371,14 @@ try:
         C.CONFIG_FILE = tmp_cfg
         with open(tmp_cfg, "w", encoding="utf-8") as _f:
             json.dump({"wechat": {"db_dir": old_dir}}, _f, ensure_ascii=False)
-        C.reload_config()                       # 先让内存里装的是旧值
+        C.reload_config() # 先让内存里装的是旧值
         with open(tmp_cfg, "w", encoding="utf-8") as _f:
             json.dump({"wechat": {"db_dir": new_dir}}, _f, ensure_ascii=False)
         C.get_config = _legacy_get
         _legacy_val = str((C.get_config().get("wechat") or {}).get("db_dir") or "")
         ok("阴性对照：旧版实现（内存不失效）确实还返回旧值 ⇒ C 段那条判据抓得住回归",
            _legacy_val == old_dir, _legacy_val)
-        _legacy_dec = D.decide(None)            # explicit=None ⇒ 现读当前配置
+        _legacy_dec = D.decide(None) # explicit=None ⇒ 现读当前配置
         ok("阴性对照：旧缓存下决策层拿到的也是旧目录（回归会从决策层就红）",
            D._same(_legacy_dec["configured"], old_dir), _legacy_dec["configured"])
     finally:
@@ -389,7 +389,7 @@ finally:
     C.set_config(_saved_cfg)
     shutil.rmtree(ROOT_TMP, ignore_errors=True)
 
-print("\n── E. 扫盘探到就**自动记住**（2026-09-22，作者：「不用测这测那」）──")
+print("\n── E. 扫盘探到就**自动记住**──")
 _sv_save = D.save
 # ⚠️ 判据自己跑在 `PM_JUDGE_NO_PROC=1` 下（run_all_selftests 会给子判据带）⇒ E1 要验"真去写了"就得
 #   先把它拿掉，跑完再还回去（E7 专门验"判据环境下不写"）。

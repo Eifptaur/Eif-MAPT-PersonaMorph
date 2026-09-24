@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""「点一下」也不许动用户鼠标 —— `ui_adapt.click` 的档位闸门判据（2026-09-22 立）。
+"""「点一下」也不许动用户鼠标 —— `ui_adapt.click` 的档位闸门判据。
 
 **为什么要它**：真机四项复测第一枪就抓到一条**红线违例**：打开表情面板时，
 `ui_adapt.click()` 里是**无条件** `gui.wx_click()`（库的真实鼠标 = `SetCursorPos` + `mouse_event`）
@@ -23,12 +23,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
-except Exception:                                                # noqa: BLE001
+except Exception: # noqa: BLE001
     pass
 
-import _srcmatch as _sm                                          # noqa: E402
-from agent import ui_adapt as UA                                 # noqa: E402
-from agent import input_backend as IB                            # noqa: E402
+import _srcmatch as _sm # noqa: E402
+from agent import ui_adapt as UA # noqa: E402
+from agent import input_backend as IB # noqa: E402
 
 PASS, FAIL = [0], [0]
 

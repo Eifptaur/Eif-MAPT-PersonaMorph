@@ -2,7 +2,7 @@
 """Qt 最小原生壳 —— 主窗口。
 
 =====================================================================
-这个原型要回答的问题（用户拍板'先做最小壳验证'）
+这个原型要回答的问题
 =====================================================================
 「先只做最小原生壳：一个真窗口 + 导航分组树 + 1 张设置卡 + 状态徽章 + 二次确认弹窗。
   用来看手感与代价。」
@@ -31,17 +31,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import config_io  # noqa: E402  丙-4：面板读写 config.json 的桥（save→set 同 webui 次序）
+import config_io # noqa: E402 面板读写 config.json 的桥（save→set 同 webui 次序）
 
-from PySide6.QtCore import QEvent, QPointF, QSize, Qt, QTimer  # noqa: E402
-from PySide6.QtGui import (  # noqa: E402
+from PySide6.QtCore import QEvent, QPointF, QSize, Qt, QTimer # noqa: E402
+from PySide6.QtGui import ( # noqa: E402
     QColor,
     QGuiApplication,
     QIcon,
     QPainter,
     QPixmap,
 )
-from PySide6.QtWidgets import (  # noqa: E402
+from PySide6.QtWidgets import ( # noqa: E402
     QApplication,
     QFrame,
     QHBoxLayout,
@@ -57,13 +57,13 @@ from PySide6.QtWidgets import (  # noqa: E402
     QWidget,
 )
 
-from confirm import ConfirmDialog  # noqa: E402
-from cursor_fx import WhaleCursor  # noqa: E402
-from heal import Health, Probe, plan_for, probe_backend  # noqa: E402
-from ocean import OceanWaves, paint_backdrop  # noqa: E402
-from panels_qt import BATCH_SECS, build_panel  # noqa: E402
-from stylekit_qt import THEMES, Tokens, apply_font_to_app, qfont, resolve_family, rgba  # noqa: E402
-from widgets import (  # noqa: E402
+from confirm import ConfirmDialog # noqa: E402
+from cursor_fx import WhaleCursor # noqa: E402
+from heal import Health, Probe, plan_for, probe_backend # noqa: E402
+from ocean import OceanWaves, paint_backdrop # noqa: E402
+from panels_qt import BATCH_SECS, build_panel # noqa: E402
+from stylekit_qt import THEMES, Tokens, apply_font_to_app, qfont, resolve_family, rgba # noqa: E402
+from widgets import ( # noqa: E402
     Badge,
     Btn,
     Card,
@@ -90,7 +90,7 @@ def set_per_monitor_dpi() -> str:
     Qt6 默认已经是 PerMonitorV2，这里显式再钉一遍，并把实际值回报出来供截图取证。
     """
     try:
-        import ctypes  # noqa: PLC0415
+        import ctypes # noqa: PLC0415
         # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 == -4
         ctypes.windll.user32.SetThreadDpiAwarenessContext(ctypes.c_void_p(-4))
     except Exception:
@@ -106,7 +106,7 @@ def set_per_monitor_dpi() -> str:
 
 # 5 组 27 项 —— 组名 / key / 项名 / 顺序逐项抄自 agent/console_html.py 的
 # <aside class="side">（nav 区，L936 起），hint 摘自各面板 <div class="desc"> 第一句。
-# **以 web 源码为唯一真值**：不自造组名、不用比喻命名（用户 2026-09-23 口径：
+# **以 web 源码为唯一真值**：不自造组名、不用比喻命名（
 # 分区按功能来；文案对齐 web 侧朴素直给的口吻）。
 # selftest 会运行时解析 web 源码与这份 NAV 全等比对 —— 手抄过时/写错会直接红。
 NAV: list[tuple[str, str, list[tuple[str, str, str]]]] = [
@@ -159,7 +159,7 @@ def _whale_tr():
     只读不改：这里是原型侧的"只读消费者"。读不到（文件缺失/语法错误）就退化为恒等函数，
     切鲸语 = 不换文案，界面不崩。
     """
-    import importlib.util  # noqa: PLC0415
+    import importlib.util # noqa: PLC0415
 
     p = Path(__file__).resolve().parents[1] / "agent" / "whale_text.py"
     try:
@@ -171,7 +171,7 @@ def _whale_tr():
             return mod.NAV.get(s) or mod.DICT.get(s) or s
 
         return tr
-    except Exception:  # noqa: BLE001
+    except Exception: # noqa: BLE001
         return lambda s: s
 
 
@@ -183,26 +183,26 @@ class Shell(QWidget):
         super().__init__()
         self.t = t
         self.text_style = str(config_io.read_path("ui.text_style", "normal") or "normal")
-        # ui.text_style 轴：normal / whale（丙-4 起从真配置初始化，不再硬编码 normal）
+        # ui.text_style 轴：normal / whale
         # 主题跟随的「上次见过的值」基线 = config 当前值（不是本壳初始主题）：
         # 这样初始主题 ≠ config 值的多 Shell 场景（shoot 取证）不会被跟随逻辑拽回。
         self._theme_seen = str(config_io.read_path("ui.theme", "") or "")
-        self._orig_texts: dict = {}  # 鲸语切换的原文缓存（控件重建后清空）
+        self._orig_texts: dict = {} # 鲸语切换的原文缓存（控件重建后清空）
         # ── 鲸落视觉本体（ocean.py）：底图 + tint + 三层波浪，只在 whale 主题启用 ──
-        self._wp_path: Path | None = None      # 当前底图来源（含自定义背景判路）
-        self._wp_src: "QPixmap | None" = None  # 原图
+        self._wp_path: Path | None = None # 当前底图来源（含自定义背景判路）
+        self._wp_src: "QPixmap | None" = None # 原图
         self._wp_scaled: "QPixmap | None" = None
-        self._wp_scaled_for = None             # (w, h, dpr) 重缩放判据
-        self._backdrop_on = False              # whale + 底图可用 才 True
-        self.setWindowTitle("群相 控制台")   # 落位适配：正式壳不再是「原型」（app.py 启动器同名兜底）
-        # 丙-5 #6：任务栏/窗口图标用透明底完整鲸鱼（真机问题⑨：显示的是进程图标）
+        self._wp_scaled_for = None # (w, h, dpr) 重缩放判据
+        self._backdrop_on = False # whale + 底图可用 才 True
+        self.setWindowTitle("群相 控制台") # 落位适配：正式壳不再是「原型」（app.py 启动器同名兜底）
+        # #6：任务栏/窗口图标用透明底完整鲸鱼（真机问题⑨：显示的是进程图标）
         icon = QIcon(str(Path(__file__).resolve().parents[1] / "assets" / "icon-whale.png"))
         self.setWindowIcon(icon)
-        # 丙-5 #5：去系统边框（对齐微信）—— 拖拽/边缘 resize/贴边走 nativeEvent
+        # #5：去系统边框（对齐微信）—— 拖拽/边缘 resize/贴边走 nativeEvent
         # 的 WM_NCHITTEST（原生 HTCAPTION 才有 Aero Snap、Win+方向键、双击最大化）；
         # 叉号不进顶栏 —— 「停止」承担关停语义，关窗=收进托盘（关窗≠停机）。
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
-        # ⛔ 丙-10 P0-5 真机实锤：默认 mouseMoveEvent 只在**按住鼠标键拖动**时来 ——
+        # ⛔ P0-5 真机实锤：默认 mouseMoveEvent 只在**按住鼠标键拖动**时来 ——
         #   波纹要跟着光标自由移动就必须开 mouseTracking（web 侧波纹随鼠标即动，
         #   没有「必须先按住」这一说）。不开就只在拖窗口时才见波纹，等于失效。
         self.setMouseTracking(True)
@@ -212,19 +212,18 @@ class Shell(QWidget):
         self._setup_tray(icon)
         # 视觉本体与鱼光标：建在 _restyle 之前（_restyle 要按 backdrop 分支）
         self._ocean = OceanWaves(self)
-        # 丙-10 P0-5：鼠标波纹 —— 与 _ocean **并列的独立对象**（各自 Timer、互不牵连）。
-        # 取证结论：Qt 侧原本从未实现波纹（不是丙-8 I 误伤）；web 侧是 SVG 滤镜
-        # （feTurbulence/feDisplacementMap），Qt 无等价能力 ⇒ 按用户拍板做原生近似。
-        from wavefx import WaveFX  # noqa: PLC0415
+        # P0-5：鼠标波纹 —— 与 _ocean **并列的独立对象**（各自 Timer、互不牵连）。
+        # 取证结论：Qt 侧原本从未实现波纹；web 侧是 SVG 滤镜
+        from wavefx import WaveFX # noqa: PLC0415
 
         self._wavefx = WaveFX(self)
         self._wavefx.set_enabled(bool(self._wavefx._cfg.get("enabled", True)))
-        # 丙-10 P0-5：应用级兜住鼠标移动（内容层会先吃事件，见 eventFilter 说明）
+        # P0-5：应用级兜住鼠标移动（内容层会先吃事件，见 eventFilter 说明）
         QApplication.instance().installEventFilter(self)
         self._cursor = WhaleCursor(Path(__file__).resolve().parents[1], parent=self)
-        # 丙-6 #12：中键滚轮模式（web PM_WHEEL 完整迁移）—— 注入 WhaleCursor，
+        # #12：中键滚轮模式（web PM_WHEEL 完整迁移）—— 注入 WhaleCursor，
         # 事件委托见 cursor_fx.eventFilter；fallback = 当前页 QScrollArea（web scrollerAt 兜底）。
-        from pm_wheel import WheelMode  # noqa: PLC0415
+        from pm_wheel import WheelMode # noqa: PLC0415
 
         self._cursor.wheel = WheelMode(
             self._cursor, self.t,
@@ -241,11 +240,11 @@ class Shell(QWidget):
         self._probe_timer.timeout.connect(self._probe)
         self._probe_timer.start(4000)
         QTimer.singleShot(300, self._probe)
-        # 丙-6 #13：更新公告条首拉（web updbar 语义 = 页面加载时 GET /api/update 一次；
+        # #13：更新公告条首拉（web updbar 语义 = 页面加载时 GET /api/update 一次；
         # 9 源竞速可能拖到秒级，后台线程拉）。
-        self._upd_state: dict | None = None     # 最近一次 /api/update 真值（_rebuild 恢复用）
+        self._upd_state: dict | None = None # 最近一次 /api/update 真值（_rebuild 恢复用）
         QTimer.singleShot(600, self._upd_first_check)
-        # 丙-7 #16：暂停/恢复 —— 方向唯一依据 = /api/status 的 paused 字段
+        # #16：暂停/恢复 —— 方向唯一依据 = /api/status 的 paused 字段
         # （web 血泪注释：不许读按钮文字做依据），独立 8 秒轻轮询（web loadStatus
         # 同款间隔）。_pause_busy = 点击防重入（web busy 守卫同款）。
         self._paused = False
@@ -255,7 +254,7 @@ class Shell(QWidget):
         self._pause_timer.setInterval(8000)
         self._pause_timer.timeout.connect(self._poll_paused)
         self._pause_timer.start()
-        # 丙-8 P0-A①：面板徽章全量接线 —— 一个 8 秒轮询拉 /api/status
+        # P0-A①：面板徽章全量接线 —— 一个 8 秒轮询拉 /api/status
         # （+ /api/personas 人设计数），按 panels_qt.badge_for 的 web 同款
         # 口径分发到 27 个面板徽章。旧病根：徽章建出来后全文件无 set，
         # 用户永远看到「读取中」。
@@ -273,19 +272,19 @@ class Shell(QWidget):
         自定义文件缺失 ⇒ 回默认海，不白屏。"""
         root = Path(__file__).resolve().parents[1]
         try:
-            from agent.config import get_config  # noqa: PLC0415
+            from agent.config import get_config # noqa: PLC0415
 
             custom = (get_config().get("ui") or {}).get("background") == "custom"
-        except Exception:  # noqa: BLE001
+        except Exception: # noqa: BLE001
             custom = False
         if custom:
             try:
-                from agent.config import DATA_DIR  # noqa: PLC0415
+                from agent.config import DATA_DIR # noqa: PLC0415
 
                 p = Path(DATA_DIR) / "ui_bg.jpg"
                 if p.exists():
                     return p
-            except Exception:  # noqa: BLE001
+            except Exception: # noqa: BLE001
                 pass
         return root / "assets" / "wallpaper" / "ocean1.jpg"
 
@@ -296,7 +295,7 @@ class Shell(QWidget):
         self._wp_path = src
         pm = QPixmap(str(src)) if src.exists() else QPixmap()
         self._wp_src = None if pm.isNull() else pm
-        self._wp_scaled_for = None   # 来源变了 ⇒ 强制重缩放
+        self._wp_scaled_for = None # 来源变了 ⇒ 强制重缩放
 
     def _rescale_wp(self) -> None:
         """cover 缩放缓存（30fps 每帧只做 1:1 贴图，缩放只在尺寸变化时做一次）。"""
@@ -306,7 +305,7 @@ class Shell(QWidget):
         key = (self.width(), self.height(), self.devicePixelRatioF())
         if key == self._wp_scaled_for and self._wp_scaled is not None:
             return
-        from ocean import cover_pixmap  # noqa: PLC0415
+        from ocean import cover_pixmap # noqa: PLC0415
 
         self._wp_scaled = cover_pixmap(self._wp_src, self.width(), self.height(), self.devicePixelRatioF())
         self._wp_scaled_for = key
@@ -314,60 +313,60 @@ class Shell(QWidget):
     def _refresh_backdrop(self) -> None:
         """whale 主题 + 底图可用 ⇒ 开画卷（静底图）；其余主题回到原 flat 底。
 
-        丙-8 I（2026-09-24 用户拍板）：**三层海浪动效砍掉**——只留 ocean.jpg
+         I：**三层海浪动效砍掉**——只留 ocean.jpg
         静底图 + tint。动画 Timer 永不再启动（CPU 同步受益：30fps 局部重绘
         整条链消失）；OceanWaves 类与瓦片渲染保留为设计资产/取证对象。"""
         self._rescale_wp()
         self._backdrop_on = self.t.key == "whale" and self._wp_scaled is not None
-        self._ocean.set_active(False)   # 波浪动效已砍：任何主题都不再转
+        self._ocean.set_active(False) # 波浪动效已砍：任何主题都不再转
 
     def _watch_config(self) -> None:
         """4 秒一跳的配置跟随（挂在探活定时器上）：web 面板改了光标/背景/主题，这里跟上。"""
         try:
             self._cursor.refresh_from_config()
-        except Exception:  # noqa: BLE001
+        except Exception: # noqa: BLE001
             pass
-        # 丙-10 P0-5：波纹参数即时生效（web 侧「应用水光波纹设置」同款语义）
+        # P0-5：波纹参数即时生效（web 侧「应用水光波纹设置」同款语义）
         try:
             if getattr(self, "_wavefx", None) is not None:
                 self._wavefx.refresh_from_config()
-        except Exception:  # noqa: BLE001
+        except Exception: # noqa: BLE001
             pass
-        # 主题跟随（丙-4）：**外部**（web 面板/别的进程）改了 ui.theme 才跟 ——
+        # 主题跟随：**外部**（web 面板/别的进程）改了 ui.theme 才跟 ——
         # 判据是「与上次见过的值不同」，不是「与当前主题不同」：后者会把多 Shell
         # 异构场景（shoot 取证每镜头一主题）和本壳自己切的现场统统拽回 config
-        # 旧值（2026-09-23 实测翻车）。Qt 无 system 跟随，映射表外的键不动。
+        # 旧值。Qt 无 system 跟随，映射表外的键不动。
         try:
             th = str(config_io.read_path("ui.theme", "") or "")
             if th and th != self._theme_seen:
                 self._theme_seen = th
                 if th in THEMES and th != self.t.key:
                     self._switch_theme(th, persist=False)
-        except Exception:  # noqa: BLE001
+        except Exception: # noqa: BLE001
             pass
         wp_before = self._wp_path
         self._load_wallpaper()
         if wp_before != self._wp_path or self._wp_scaled is None:
             self._refresh_backdrop()
 
-    def paintEvent(self, ev) -> None:  # noqa: N802
+    def paintEvent(self, ev) -> None: # noqa: N802
         p = QPainter(self)
         if self._backdrop_on and self._wp_scaled is not None:
             paint_backdrop(p, self.width(), self.height(), self._wp_scaled)
         else:
             p.fillRect(self.rect(), self.t.q("bg"))
-        # 丙-10 P0-5：鼠标波纹画在**内容之上**（与 OceanWaves 的壁纸层并列且解耦）
+        # P0-5：鼠标波纹画在**内容之上**（与 OceanWaves 的壁纸层并列且解耦）
         try:
             if getattr(self, "_wavefx", None) is not None:
                 self._wavefx.paint(p, self.width(), self.height(), self.devicePixelRatioF())
-        except Exception:  # noqa: BLE001   波纹绘制失败绝不能拖垮窗口
+        except Exception: # noqa: BLE001   波纹绘制失败绝不能拖垮窗口
             pass
 
-    def mouseMoveEvent(self, ev) -> None:  # noqa: N802  丙-10 P0-5：光标处投石
+    def mouseMoveEvent(self, ev) -> None: # noqa: N802 P0-5：光标处投石
         self._wave_from_pos(QPointF(ev.position()))
         super().mouseMoveEvent(ev)
 
-    def eventFilter(self, obj, ev) -> bool:  # noqa: N802  丙-10 P0-5：穿透取鼠标
+    def eventFilter(self, obj, ev) -> bool: # noqa: N802 P0-5：穿透取鼠标
         """内容层（滚动区/标签）会先吃掉 mouseMove ⇒ 光靠 Shell.mouseMoveEvent
         收不到「光标在内容上移动」。这里在**应用级**再兜一层：任何鼠标移动事件
         落到本窗口区域内时都转给波纹，保证 web 同款「随鼠标即动」。
@@ -379,7 +378,7 @@ class Shell(QWidget):
                 gpos = ev.globalPosition()
                 if self.rect().contains(self.mapFromGlobal(gpos.toPoint())):
                     self._wave_from_pos(QPointF(gpos) - QPointF(self.mapToGlobal(self.rect().topLeft())))
-        except Exception:  # noqa: BLE001
+        except Exception: # noqa: BLE001
             pass
         return super().eventFilter(obj, ev)
 
@@ -388,56 +387,56 @@ class Shell(QWidget):
         try:
             if getattr(self, "_wavefx", None) is not None:
                 self._wavefx.on_mouse_move(local)
-        except Exception:  # noqa: BLE001
+        except Exception: # noqa: BLE001
             pass
 
-    def resizeEvent(self, ev) -> None:  # noqa: N802
+    def resizeEvent(self, ev) -> None: # noqa: N802
         super().resizeEvent(ev)
         self._rescale_wp()
         self._ocean.invalidate()
         try:
-            self._wavefx.sync_overlay()   # 丙-30：波纹覆盖层跟随窗口几何
-        except Exception:  # noqa: BLE001
+            self._wavefx.sync_overlay() # 波纹覆盖层跟随窗口几何
+        except Exception: # noqa: BLE001
             pass
-        # 丙-7 #17：最大化/还原的画法随窗口态切换（双击顶栏的原生最大化
+        # #17：最大化/还原的画法随窗口态切换（双击顶栏的原生最大化
         # 不走 _toggle_max，挂在 resize 上才盖得住所有进入最大化的路径）
         btn = getattr(self, "btn_max", None)
         if btn is not None:
             btn.update()
 
-    def showEvent(self, ev) -> None:  # noqa: N802
+    def showEvent(self, ev) -> None: # noqa: N802
         super().showEvent(ev)
-        self._ocean.set_active(False)   # 丙-8 I：波浪动效已砍，show 也不再转
-        self._apply_round_corners()     # 丙-8 M：Win11 圆角 / Win10 方角回退
-        self._ensure_resize_style()     # 丙-13：注入 WS_THICKFRAME（能拖不能缩的真根因）
+        self._ocean.set_active(False) # 波浪动效已砍，show 也不再转
+        self._apply_round_corners() # M：Win11 圆角 / Win10 方角回退
+        self._ensure_resize_style() # 注入 WS_THICKFRAME（能拖不能缩的真根因）
 
     def _apply_round_corners(self) -> None:
-        """丙-8 M：Win11 走 DWM 圆角（DWMWA_WINDOW_CORNER_PREFERENCE = 33，ROUND = 2）。
+        """ M：Win11 走 DWM 圆角（DWMWA_WINDOW_CORNER_PREFERENCE = 33，ROUND = 2）。
 
         一次设置整个窗口生命周期有效 —— showEvent 重复调是幂等的，成本可忽略。
         Win10 上 dwmapi 没有这个属性（返回 E_INVALIDARG）或根本不是 Windows
         （AttributeError）→ **优雅回退方角**：不引 SetWindowRgn 锯齿方案
-        （丙-8 兼容性审计备案口径：DWM 合成的圆角带抗锯齿，region 裁出来的没有）。
+        。
         """
         try:
-            import ctypes  # noqa: PLC0415
+            import ctypes # noqa: PLC0415
 
             hwnd = int(self.winId())
-            val = ctypes.c_int(2)   # DWMWCP_ROUND
+            val = ctypes.c_int(2) # DWMWCP_ROUND
             ctypes.windll.dwmapi.DwmSetWindowAttribute(
                 ctypes.c_void_p(hwnd), 33, ctypes.byref(val), ctypes.sizeof(val))
-        except Exception:  # noqa: BLE001 — Win10/非 Windows：方角即回退
+        except Exception: # noqa: BLE001 — Win10/非 Windows：方角即回退
             pass
 
     _resize_style_done = False
-    _thickframe_ok = False   # 丙-14：注入成功才处理 NCCALCSIZE；逃生门/失败时完全跳过
+    _thickframe_ok = False # 注入成功才处理 NCCALCSIZE；逃生门/失败时完全跳过
 
     def _ensure_resize_style(self) -> None:
-        """丙-13（真机反馈「面板能拖动、不能缩放」）：给无边框窗注入 WS_THICKFRAME。
+        """（真机反馈「面板能拖动、不能缩放」）：给无边框窗注入 WS_THICKFRAME。
 
         根因：FramelessWindowHint 在 Windows 上 = WS_POPUP —— **没有 THICKFRAME 的窗口，
         Windows 会忽略一切 HT*(HTLEFT/HTRIGHT/HTBOTTOMRIGHT…) 缩放请求**；而 HTCAPTION
-        拖动不需要 THICKFRAME ⇒「能拖、不能缩」。丙-10 P0-4 把 `_hit_test`/`nativeEvent`
+        拖动不需要 THICKFRAME ⇒「能拖、不能缩」。 P0-4 把 `_hit_test`/`nativeEvent`
         的 Python 层修对了（selftest 八方向全绿），但 Windows 样式层不放行照样缩不动 ——
         同一个坑的第二次：**「Python 逻辑层全绿 ≠ Windows 层接受」**。
         配方：showEvent 注入 WS_THICKFRAME + `nativeEvent` 吃掉 WM_NCCALCSIZE 的边框区
@@ -446,13 +445,13 @@ class Shell(QWidget):
         if Shell._resize_style_done:
             return
         if os.environ.get("QT_NO_THICKFRAME"):
-            # 丙-14 逃生门：QT_NO_THICKFRAME=1 ⇒ 完全跳过注入与 NCCALCSIZE 接管，
-            # 回到「能拖不能缩」的改前安全态。作者真机出现过「重新拉起后黑屏」，
+            # 逃生门：QT_NO_THICKFRAME=1 ⇒ 完全跳过注入与 NCCALCSIZE 接管，
+            # 回到「能拖不能缩」的改前安全态。，
             # 该开关用于秒级自救与二分定位（黑屏是否与本配方相关）。
             Shell._resize_style_done = True
             return
         try:
-            import ctypes  # noqa: PLC0415
+            import ctypes # noqa: PLC0415
 
             hwnd = int(self.winId())
             if not hwnd:
@@ -469,14 +468,14 @@ class Shell(QWidget):
                 user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0020)
             Shell._thickframe_ok = True
             Shell._resize_style_done = True
-        except Exception:  # noqa: BLE001 — 非 Windows / 注入失败：保持现状（不缩放也不崩）
+        except Exception: # noqa: BLE001 — 非 Windows / 注入失败：保持现状（不缩放也不崩）
             Shell._resize_style_done = True
 
-    def hideEvent(self, ev) -> None:  # noqa: N802
+    def hideEvent(self, ev) -> None: # noqa: N802
         super().hideEvent(ev)
-        self._ocean.set_active(False)   # CPU 纪律：看不见就不转
+        self._ocean.set_active(False) # CPU 纪律：看不见就不转
 
-    # ------------------------------------------------------------ 窗口壳（丙-5 #5）
+    # ------------------------------------------------------------ 窗口壳
 
     def _toggle_max(self) -> None:
         if self.isMaximized():
@@ -484,16 +483,15 @@ class Shell(QWidget):
         else:
             self.showMaximized()
 
-    def nativeEvent(self, etype, message):  # noqa: N802
+    def nativeEvent(self, etype, message): # noqa: N802
         """WM_NCHITTEST —— 无边框窗口的「原生手感」一刀切：
         顶栏空白=HTCAPTION（原生拖拽 + 双击最大化 + Aero Snap + Win+方向键贴边，
-        这正是工单要的「尽量原生」）；四边四角=HT*（原生 resize）；
         顶栏上的按钮/分段器、内容区一律放回默认（HTCLIENT，能点能动）。
         非 Windows 平台直接放行。
 
-        ⚠️ 丙-8 P0-B 根治（离屏逐点采样实锤，_c8_hitprobe.py）：
+        ⚠️ P0-B 根治（离屏逐点采样实锤，_c8_hitprobe.py）：
         老顺序「先放行控件、后判边缘热区」有两个结构性死区——
-          ① 丙-5 #7 每页套 QScrollArea 后内容控件铺满四缘：左缘命中 Side、
+          ① #7 每页套 QScrollArea 后内容控件铺满四缘：左缘命中 Side、
              右缘命中页面滚动条（宽 6px 恰好躺在 8px 热区里）、下缘命中页面
              QLabel ⇒ on_widget 恒 True ⇒ 四边四角分支**永远到不了**，
              用户实测「不能放大缩小」；
@@ -504,42 +502,42 @@ class Shell(QWidget):
           · 顶栏子树内命中只放行**可交互**控件（按钮/输入/下拉/滚动条/鲸鱼徽章/
             更新胶囊/popover），纯显示 QLabel（含状态徽章）穿透为 HTCAPTION。
         判定核心抽在 _hit_test()（gp=窗口逻辑坐标）——取证脚本 _c8_hitprobe.py
-        直接调它，保证「生产代码与取证代码同一逻辑」（丙-8 教训：脚本内复刻
+        直接调它，保证「生产代码与取证代码同一逻辑」（ 教训：脚本内复刻
         一套只会原地踏步）。
         """
         if etype == b"windows_generic_MSG":
             try:
-                import ctypes.wintypes as wt  # noqa: PLC0415
+                import ctypes.wintypes as wt # noqa: PLC0415
 
-                # ⛔ 丙-10 P0-4 真机实锤根因（_c10_real.py 真窗口跑出来）：
+                # ⛔ P0-4 真机实锤根因（_c10_real.py 真窗口跑出来）：
                 #   `QCursor` 属于 **QtGui**，不在 QtCore —— 原写法
                 #   `from PySide6.QtCore import QCursor` 每次都 ImportError，
                 #   被本函数外层 except 吞掉 → 直接 return False,0（HTCLIENT）
                 #   ⇒ **真机上 WM_NCHITTEST 永远走不到命中判定**，拖拽/缩放全失效。
-                #   丙-8 的 offscreen 单测直接调 _hit_test() 绕过了 nativeEvent，
+                # 的 offscreen 单测直接调 _hit_test() 绕过了 nativeEvent，
                 #   所以「逻辑对、真机废」。修：正确模块 + 把导入提到 try 外，
                 #   避免它与命中判定共享的 except 互相掩盖。
-                from PySide6.QtGui import QCursor  # noqa: PLC0415
+                from PySide6.QtGui import QCursor # noqa: PLC0415
 
                 msg = wt.MSG.from_address(int(message))
                 if msg.message == 0x0083 and Shell._thickframe_ok:
-                    # WM_NCCALCSIZE —— 丙-13/丙-19：仅 THICKFRAME 注入成功后才接管；
+                    # WM_NCCALCSIZE —— /仅 THICKFRAME 注入成功后才接管；
                     # 逃生门（QT_NO_THICKFRAME）或注入失败时完全放行 Qt 默认处理。
-                    # ⛔ 丙-19（作者真机「全屏顶部白条、三边露桌面」根因实锤，_c19_maxprobe）：
+                    # ⛔ 
                     #   本机实测 THICKFRAME 窗口最大化时 **窗口 rect = 屏幕原生尺寸**
                     #   （frame=[0,0,1707,1067] == native，系统**不做**边框外扩）；
                     #   此前按「系统会外扩一圈」的假设在最大化时把客户区 RECT 内缩 dx
                     #   ⇒ 客户区变成 [7,8,1693,1052] —— 四周那圈 7-8px 就是白条+漏边。
                     #   ⇒ 最大化**不做任何内缩**：客户区 = 窗口 rect = 铺满屏幕。
                     #     （若个别机器真有外扩行为，代价只是内容贴边，也好过白条。）
-                    if msg.wParam:                   # wParam=TRUE ⇒ 系统要画 non-client 边框区
-                        return True, 0               # 0 = 客户区=整个窗口（无边框视觉保住）
+                    if msg.wParam: # wParam=TRUE ⇒ 系统要画 non-client 边框区
+                        return True, 0 # 0 = 客户区=整个窗口（无边框视觉保住）
                     return False, 0
-                if msg.message == 0x0084:            # WM_NCHITTEST
-                    gp = self.mapFromGlobal(QCursor.pos())   # 全程 Qt 逻辑坐标，免 DPI 换算
+                if msg.message == 0x0084: # WM_NCHITTEST
+                    gp = self.mapFromGlobal(QCursor.pos()) # 全程 Qt 逻辑坐标，免 DPI 换算
                     r = self._hit_test(gp)
-                    # 丙-10 P0-4：真机诊断开关（QT_HITTEST_LOG=1 时逐次落日志）。
-                    # 丙-8 的 offscreen 单测证明了 _hit_test **逻辑**对，但真机复验仍失效
+                    # P0-4：真机诊断开关（QT_HITTEST_LOG=1 时逐次落日志）。
+                    # 的 offscreen 单测证明了 _hit_test **逻辑**对，但真机复验仍失效
                     # ⇒ 必须看清真机上到底有没有走到这里、etype/message 是什么。
                     if os.environ.get("QT_HITTEST_LOG"):
                         try:
@@ -548,25 +546,25 @@ class Shell(QWidget):
                                 _f.write("WM_NCHITTEST gp=(%d,%d) hit=%s -> %s\n"
                                          % (gp.x(), gp.y(),
                                             type(self.childAt(gp)).__name__, r))
-                        except Exception:  # noqa: BLE001
+                        except Exception: # noqa: BLE001
                             pass
-                    if r is None:                    # 放行：默认处理（HTCLIENT）
+                    if r is None: # 放行：默认处理（HTCLIENT）
                         return False, 0
-                    # ⛔ 丙-10 P0-4 真机实锤的第 2 个根因（同一次真机跑出来）：
+                    # ⛔ P0-4 真机实锤的第 2 个根因（同一次真机跑出来）：
                     #   `_hit_test` 返回的是 **_HT 的键名字符串**（"top"/"left"…），
                     #   原写法 `self._HT[r[0]]` 把它当成元组取首元素 ⇒ 得到 't' ⇒
                     #   KeyError，被外层 except 吞掉 → return False,0（HTCLIENT）
                     #   ⇒ 真机拖拽/缩放**永远失效**。正确写法是 `self._HT[r]`。
                     return True, self._HT[r]
-            except Exception:  # noqa: BLE001   命中测试失败绝不能拖垮窗口
+            except Exception: # noqa: BLE001   命中测试失败绝不能拖垮窗口
                 if os.environ.get("QT_HITTEST_LOG"):
                     try:
-                        import traceback  # noqa: PLC0415
+                        import traceback # noqa: PLC0415
 
                         with open(Path(__file__).resolve().parents[1] / "logs" / "hittest.log", "a",
                                   encoding="utf-8") as _f:
                             _f.write("nativeEvent 异常（etype=%r）：\n%s\n" % (etype, traceback.format_exc()))
-                    except Exception:  # noqa: BLE001
+                    except Exception: # noqa: BLE001
                         pass
                 return False, 0
         return super().nativeEvent(etype, message)
@@ -579,7 +577,7 @@ class Shell(QWidget):
         """WM_NCHITTEST 判定核心。gp=窗口内 Qt 逻辑坐标；返回 _HT 键名，
         None=放行系统默认（HTCLIENT）。offscreen 可直接调（取证/断言共用）。
         顺序与根因见 nativeEvent docstring。"""
-        from PySide6.QtWidgets import (  # noqa: PLC0415
+        from PySide6.QtWidgets import ( # noqa: PLC0415
             QAbstractButton,
             QAbstractSlider,
             QComboBox,
@@ -591,7 +589,7 @@ class Shell(QWidget):
         hit = self.childAt(gp)
         # ① 四边四角热区（比控件命中优先 —— 见上，内容铺满后
         #    「先放行控件」会让边缘永远 HTCLIENT）。
-        # ⛔ 丙-10 P0-4 真机实锤第 3 处（team-lead 亲验复现，6/8 命中）：
+        # ⛔ P0-4 真机实锤第 3 处（team-lead 亲验复现，6/8 命中）：
         #   右缘此前被**整条无条件豁免**给滚动条 ⇒ right/bottomright 死区。
         #   上一版收窄成 `_on_scrollbar()` 仍没修好——因为内容区的竖向滚动条
         #   高 660px、**纵向覆盖整个内容区**（实测窗口坐标 x=[1094,1100)
@@ -607,13 +605,13 @@ class Shell(QWidget):
             """若右缘那一列压着**可见的竖向滚动条**，返回它在窗口坐标里的左边界 x；
             否则 None（右缘没有滚动条挡路，整条热区都能缩放）。
 
-            ⛔ 不能用 `childAt(gp)` 判（丙-10 返工实锤）：热区里只有滚动条**本体**
+            ⛔ 不能用 `childAt(gp)` 判：热区里只有滚动条**本体**
               那 6px 的 childAt 才是滚动条；热区更靠内的部分拿到的是内容 QFrame
                ⇒ 用 childAt 判会漏掉「右缘被挡」这个事实，加宽逻辑永远不触发。
                ⇒ 改成**几何反查**：直接遍历右缘那一列的可见竖向滚动条。
             """
             try:
-                from PySide6.QtWidgets import QScrollBar  # noqa: PLC0415
+                from PySide6.QtWidgets import QScrollBar # noqa: PLC0415
 
                 for sb in self.findChildren(QScrollBar):
                     if not sb.isVisible() or sb.orientation() != Qt.Orientation.Vertical:
@@ -626,7 +624,7 @@ class Shell(QWidget):
                     # 该滚动条是否压在右缘热区内、且纵向覆盖当前光标
                     if x1 > w - m and x0 < w and y0 <= gp.y() <= y1:
                         return float(x0)
-            except Exception:  # noqa: BLE001
+            except Exception: # noqa: BLE001
                 pass
             return None
 
@@ -666,13 +664,13 @@ class Shell(QWidget):
             while cur is not None and cur is not bar:
                 if isinstance(cur, (QAbstractButton, QAbstractSlider,
                                     QComboBox, QLineEdit)):
-                    return None                   # 可交互：默认处理，能点能动
+                    return None # 可交互：默认处理，能点能动
                 if cur.objectName() in ("UpdPill", "Popover"):
-                    return None                   # 更新胶囊/下滑面板（自管鼠标）
+                    return None # 更新胶囊/下滑面板（自管鼠标）
                 if type(cur).__name__ == "WhaleBadge":
-                    return None                   # 鲸鱼徽章有拖拽交互
+                    return None # 鲸鱼徽章有拖拽交互
                 cur = cur.parentWidget()
-            return "caption"                      # 纯显示 QLabel：当标题栏拖
+            return "caption" # 纯显示 QLabel：当标题栏拖
         # ③ 内容区控件照旧放行（按钮/输入/滚动全不受影响）
         if hit is not None and hit is not bar:
             return None
@@ -690,7 +688,7 @@ class Shell(QWidget):
         self._tray = None
         try:
             if not QSystemTrayIcon.isSystemTrayAvailable():
-                return   # 无托盘环境（服务器/精简系统）：关窗退回真关，机器人不受影响
+                return # 无托盘环境（服务器/精简系统）：关窗退回真关，机器人不受影响
             menu = QMenu(self)
             # 全局 QSS 的 QWidget{background:transparent} 会把弹窗打成透明 —— 菜单自带上底
             t = self.t
@@ -701,7 +699,7 @@ class Shell(QWidget):
             )
             menu.addAction("显示主窗", self._tray_show)
             menu.addSeparator()
-            menu.addAction("停止", self._tray_stop)     # 与顶栏「停止」同一确认流
+            menu.addAction("停止", self._tray_stop) # 与顶栏「停止」同一确认流
             self._tray = QSystemTrayIcon(icon, self)
             self._tray.setContextMenu(menu)
             self._tray.setToolTip("群相 控制台 —— 机器人正在跑，点图标回到主窗")
@@ -709,8 +707,8 @@ class Shell(QWidget):
                 lambda r: self._tray_show()
                 if r == QSystemTrayIcon.ActivationReason.DoubleClick else None)
             self._tray.show()
-        except Exception:  # noqa: BLE001
-            self._tray = None   # 托盘失败不拦启动
+        except Exception: # noqa: BLE001
+            self._tray = None # 托盘失败不拦启动
 
     def _tray_show(self) -> None:
         self.show()
@@ -724,25 +722,25 @@ class Shell(QWidget):
             self._tray_show()
         self._bot_stop()
 
-    def closeEvent(self, ev) -> None:  # noqa: N802
+    def closeEvent(self, ev) -> None: # noqa: N802
         """Alt+F4 / 任务栏关闭 = 收进托盘（web 版口径：关窗≠停机）。
         真正的关停在「停止」钮：POST /api/shutdown 带打字门槛确认。"""
         if getattr(self, "_tray", None) is not None and self._tray.isVisible():
             ev.ignore()
             self.hide()
-            self._ocean.set_active(False)   # CPU 纪律：藏起来就停画
+            self._ocean.set_active(False) # CPU 纪律：藏起来就停画
             self._tray.showMessage(
                 "群相 控制台", "机器人还在跑，窗口收进托盘了。点托盘图标可再打开。",
                 QSystemTrayIcon.MessageIcon.Information, 3000)
             return
-        ev.accept()   # 无托盘环境：退回真关（机器人主循环在另一条线程，不受影响）
+        ev.accept() # 无托盘环境：退回真关（机器人主循环在另一条线程，不受影响）
 
     # ------------------------------------------------------------ 结构
 
     def _build(self) -> None:
         # 复用已有顶层布局（_rebuild 重建时 QWidget 的 d->layout 指针卸不掉，
         # 再 QVBoxLayout(self) 会撞 "already has a layout" 警告且新布局装不上，
-        # 重建后整窗失去几何管理 —— 2026-09-23 主题跟随功能实测踩中）。
+        # 重建后整窗失去几何管理 —— 主题跟随功能实测踩中）。
         root = self.layout()
         if root is None:
             root = QVBoxLayout(self)
@@ -758,11 +756,11 @@ class Shell(QWidget):
         body.addWidget(self._build_main(), 1)
         root.addLayout(body, 1)
 
-        # 丙-5 #4 加固 + #7 滚动页：画卷是 Shell.paintEvent 整窗画的（z 序最底），
+        # #4 加固 + #7 滚动页：画卷是 Shell.paintEvent 整窗画的（z 序最底），
         # 内容区能不能透出海取决于中间容器的底。全局 QSS 已把 QWidget 打透明，
         # 但 QScrollArea 的 viewport 在真机/不同平台上有 palette 兜底
         # （qt_scrollarea_viewport 的 Base 色），显式点名最稳 —— 覆盖侧栏与
-        # 全部页面滚动区（丙-5 #7 起每页都套了 QScrollArea）。
+        # 全部页面滚动区。
         for sc in self.findChildren(QScrollArea):
             vp = sc.viewport()
             vp.setStyleSheet("background:transparent;")
@@ -772,14 +770,14 @@ class Shell(QWidget):
     def _build_titlebar(self) -> QWidget:
         bar = QFrame()
         bar.setObjectName("TitleBar")
-        self.titlebar = bar      # nativeEvent 命中测试要用（空白区=HTCAPTION）
+        self.titlebar = bar # nativeEvent 命中测试要用（空白区=HTCAPTION）
         bar.setFixedHeight(60)
         lay = QHBoxLayout(bar)
         lay.setContentsMargins(14, 4, 14, 4)
         lay.setSpacing(10)
 
         # 顶栏鲸鱼徽章 —— web 侧 `.whale-badge` 的 Qt 复刻（52×52 近黑底 + 真图，icons 不手画）
-        from widgets import WhaleBadge  # noqa: PLC0415
+        from widgets import WhaleBadge # noqa: PLC0415
 
         lay.addWidget(WhaleBadge())
 
@@ -788,16 +786,16 @@ class Shell(QWidget):
         name.setStyleSheet(f"color:{self.t.tx};background:transparent;")
         lay.addWidget(name)
 
-        ver = QLabel("原生界面 v1.0")   # 落位适配：版本标签摘掉「原型」字样
+        ver = QLabel("原生界面 v1.0") # 落位适配：版本标签摘掉「原型」字样
         ver.setFont(qfont(self.t, 11))
         ver.setStyleSheet(f"color:{self.t.tx2};background:transparent;")
         lay.addWidget(ver)
 
-        # 更新公告胶囊（丙-6 #13 接真值 + 丙-7 #14 形态改造）：顶栏只留胶囊，
-        # 点开从下方滑出面板（notes 逐条 + 三按钮 + 进度态）—— 丙-6 把三按钮
+        # 更新公告胶囊：顶栏只留胶囊，
+        # 点开从下方滑出面板（notes 逐条 + 三按钮 + 进度态）—— 把三按钮
         # 塞进顶栏是设计失误（用户截图：三按钮挤成墨块；web 真值 updBar 本是
-        # 顶栏下方独立一行）。API 链路沿用丙-6，只换 UI 形态。
-        from updbar import UpdateBar  # noqa: PLC0415
+        # 顶栏下方独立一行）。API 链路沿用只换 UI 形态。
+        from updbar import UpdateBar # noqa: PLC0415
 
         self.updbar = UpdateBar(self.t)
         self.updbar.apply_state(getattr(self, "_upd_state", None))
@@ -805,14 +803,14 @@ class Shell(QWidget):
 
         lay.addStretch(1)
 
-        # ── 外观切换图标（丙-7 #15，用户点单：文案 + 主题「本质上都属于一种界面
+        # ── 外观切换图标（ #15，用户点单：文案 + 主题「本质上都属于一种界面
         # 切换」，常态收起只显示图标，点开弹出切换组）──
         # 控件复用现有 Segmented，只是从顶栏搬进 Popover（改动最小）。
-        import icons as _icons  # noqa: PLC0415
+        import icons as _icons # noqa: PLC0415
 
         self.btn_look = QPushButton(bar)
         self.btn_look.setFixedSize(36, 34)
-        self.btn_look.setIcon(QIcon(_icons.appearance_pixmap(self.t.tx, 20)))   # 丙-8 F：tx2 太灰，提亮到全亮字色
+        self.btn_look.setIcon(QIcon(_icons.appearance_pixmap(self.t.tx, 20))) # F：tx2 太灰，提亮到全亮字色
         self.btn_look.setIconSize(QSize(20, 20))
         self.btn_look.setToolTip("外观切换（文案 / 主题）")
         self.btn_look.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -825,14 +823,14 @@ class Shell(QWidget):
         lay.addWidget(self.btn_look)
 
         # 外观 popover：挂在 titlebar 下（主题重建销毁顶栏时面板随葬，不留幽灵浮层）
-        from popover import Popover  # noqa: PLC0415
+        from popover import Popover # noqa: PLC0415
 
         self._look_pop = Popover(self.t, parent=bar)
         cap_tx = QLabel("文案")
         cap_tx.setFont(qfont(self.t, 10.5))
         cap_tx.setStyleSheet(f"color:{self.t.tx3};background:transparent;")
         self._look_pop.add(cap_tx)
-        from widgets import Segmented  # noqa: PLC0415
+        from widgets import Segmented # noqa: PLC0415
 
         self.style_seg = Segmented(
             self.t, [("normal", "正常"), ("whale", "鲸语")], value=getattr(self, "text_style", "normal")
@@ -855,8 +853,8 @@ class Shell(QWidget):
         self.st_top = Badge(self.t, "idle", "读取中")
         lay.addWidget(self.st_top)
 
-        # ── 暂停/恢复（丙-7 #16，web 真值 L755/L4180/L5714）──
-        # web 控制台顶栏一直有 pauseBtn，丙-3~6 落位时漏了（用户抓的）。
+        # ── 暂停/恢复──
+        # web 控制台顶栏一直有 pauseBtn，~6 落位时漏了（用户抓的）。
         # 语义：暂停 = 进程活着只是不回任何消息（≠ 停止 = 进程退出）⇒
         # 轻按钮 ghost 档、不需要危险确认。方向唯一依据 = /api/status 的
         # paused 字段（web 血泪注释：不许读按钮文字做依据）。
@@ -865,7 +863,7 @@ class Shell(QWidget):
         self.btn_pause.clicked.connect(self._on_pause_click)
         lay.addWidget(self.btn_pause)
 
-        # 机器人控制（丙-5 #3）：重启/停止 —— web 侧顶栏同款动作，走原生确认弹窗。
+        # 机器人控制：重启/停止 —— web 侧顶栏同款动作，走原生确认弹窗。
         # 路由是 /api/restart、/api/shutdown（POST），经 agent_bridge.post_api 发出，
         # agent/ 一行不改。danger 红钮只给「停止」—— 它不可一键反悔。
         self.btn_restart = Btn("重启", self.t, "ghost")
@@ -876,9 +874,9 @@ class Shell(QWidget):
         self.btn_stop.clicked.connect(self._bot_stop)
         lay.addWidget(self.btn_stop)
 
-        # 窗口控制（丙-5 #5 无边框体系 + 丙-7 #17 重绘）：自绘 IconBtn ——
+        # 窗口控制：自绘 IconBtn ——
         # 最小化=粗横线、最大化/还原=直角方框（还原态双框交叠），无边框无底色
-        # hover 浅底，笔画 2px（用户：更简约、粗一点）。**没有叉号** ——
+        # hover 浅底，笔画 2px。**没有叉号** ——
         # 关窗≠停机：Alt+F4/任务栏关闭收进托盘，真正的关停语义在「停止」钮。
         self.btn_min = IconBtn(self.t, "min", bar)
         self.btn_min.setToolTip("最小化")
@@ -909,9 +907,9 @@ class Shell(QWidget):
         wl.addWidget(self.find)
         lay.addWidget(wrap)
 
-        # 丙-31：状态框 1:1 复刻 web `.side .status`（console_html.py L517-519）——
+        # 状态框 1:1 复刻 web `.side .status`（console_html.py L517-519）——
         #   background=blue-soft / border=**blue-line**（此前拿 blue 当边框 ⇒ 一圈亮蓝，
-        #   作者批「丑陋」）/ radius 10 / padding 10 12；标题 b 13px 蓝；正文 p 12px。
+        # ）/ radius 10 / padding 10 12；标题 b 13px 蓝；正文 p 12px。
         sbox = QFrame()
         sbox.setObjectName("SideStatusBox")
         sbox.setStyleSheet(
@@ -925,12 +923,12 @@ class Shell(QWidget):
         t_cap.setFont(qfont(self.t, 13, 600))
         t_cap.setStyleSheet(f"color:{self.t.blue};")
         sv.addWidget(t_cap)
-        self.side_status = QLabel("未连接")   # web 真值初值（console_html.py L929）
+        self.side_status = QLabel("未连接") # web 真值初值（console_html.py L929）
         self.side_status.setFont(qfont(self.t, self.t.body_size - 1))
         self.side_status.setStyleSheet(f"color:{self.t.tx2};")
         self.side_status.setWordWrap(True)
         sv.addWidget(self.side_status)
-        # 丙-32：左右各缩 10px（作者：顶着导航栏左右「过犹不及」，只要一点点）——
+        # 左右各缩 10px——
         #   搜索框同款做法（wrap+margins），视觉上与下方导航对齐但略收。
         swrap = QWidget()
         swl = QHBoxLayout(swrap)
@@ -976,21 +974,21 @@ class Shell(QWidget):
         web 侧 27 个 sec 本是同一滚动页里显隐切换；原生壳用 QStackedWidget
         做真正的换页 —— 这是"切页"这个交互在 Qt 里比 web 侧更直接的地方。
 
-        丙-8 J（性能取证实锤：主题切换 _rebuild 全量重建 27 面板 19-21s，
+         J（性能取证实锤：主题切换 _rebuild 全量重建 27 面板 19-21s，
         真机 3-5s 卡顿真因）改**惰性构建**：启动只建 "bot" 主面板，
         其余 sec 记入 _lazy，首次点击导航（_go）时现场构建 —— 页面切换
         本身 13-24ms 从来不卡，卡的是把没看过的面板也提前建了。
         """
-        from PySide6.QtWidgets import QStackedWidget  # noqa: PLC0415
+        from PySide6.QtWidgets import QStackedWidget # noqa: PLC0415
 
         self.stack = QStackedWidget()
         self._page_of: dict[str, int] = {"bot": 0}
-        self._lazy: set[str] = set(BATCH_SECS) - {"bot"}   # 未建 sec 记账，首访现场建
+        self._lazy: set[str] = set(BATCH_SECS) - {"bot"} # 未建 sec 记账，首访现场建
         self.stack.addWidget(self._wrap_scroll(self._build_bot_panel()))
         return self.stack
 
     def _ensure_page(self, sec: str) -> None:
-        """丙-8 J：sec 页面惰性构建 —— 首次导航到才建（一次构建永久复用）。"""
+        """ J：sec 页面惰性构建 —— 首次导航到才建（一次构建永久复用）。"""
         if sec not in getattr(self, "_lazy", set()):
             return
         self._lazy.discard(sec)
@@ -1000,7 +998,7 @@ class Shell(QWidget):
 
     @staticmethod
     def _wrap_scroll(page: QWidget) -> QScrollArea:
-        """页面套滚动容器（丙-5 #7 叠字根治）。
+        """页面套滚动容器。
 
         真机问题①的根因不是 DPI：主面板/模型页等内容**超一屏**时，
         页面 QVBoxLayout 把压缩量全打在可压缩的标签/描述上 —— 标签与描述
@@ -1030,7 +1028,7 @@ class Shell(QWidget):
             )
         )
 
-        # ── 设置卡：四行全接真配置（web sec-bot 同款键位，丙-4）──
+        # ── 设置卡：四行全接真配置──
         #   机器人昵称→wechat.bot_nickname / 自我称呼→persona.self_nickname /
         #   响应档位→store.context_tier（后端 float() 消费，1-4 离散）/
         #   鲸语模式→ui.text_style（保存后走顶栏同一条 _apply_text_style 路径）。
@@ -1160,15 +1158,15 @@ class Shell(QWidget):
             self.bot_note.setText(f"已保存 {time.strftime('%H:%M:%S')}")
             self.bot_note.setStyleSheet(f"color:{self.t.ok};border:none;")
             if style != self.text_style and hasattr(self, "style_seg"):
-                self.style_seg._pick(style)  # noqa: SLF001  同包内复用（发 changed 即应用）
+                self.style_seg._pick(style) # noqa: SLF001  同包内复用（发 changed 即应用）
         else:
             self.bot_note.setText(f"没保存成：{msg}")
             self.bot_note.setStyleSheet(f"color:{self.t.err};border:none;")
 
     # ------------------------------------------------------------ 小零件
 
-    def _line(self, text: str, placeholder: str = "") -> "QLineEdit":  # noqa: F821
-        from PySide6.QtWidgets import QLineEdit  # noqa: PLC0415
+    def _line(self, text: str, placeholder: str = "") -> "QLineEdit": # noqa: F821
+        from PySide6.QtWidgets import QLineEdit # noqa: PLC0415
 
         e = QLineEdit(text)
         e.setPlaceholderText(placeholder)
@@ -1191,17 +1189,17 @@ class Shell(QWidget):
 
     # ------------------------------------------------------------ 主题切换
 
-    # ------------------------------------------------------------ 切换动效（丙-5 #9）
+    # ------------------------------------------------------------ 切换动效
 
     def _animate_page_in(self, page: QWidget) -> None:
-        """页面切换轻淡入：150ms OutCubic（工单禁弹跳一族），可打断 ——
+        """页面切换轻淡入：150ms OutCubic（禁弹跳一族），可打断 ——
         重入时先停旧动画、复位旧 effect，绝不叠加两层透明度。"""
-        from PySide6.QtCore import (  # noqa: PLC0415
+        from PySide6.QtCore import ( # noqa: PLC0415
             QAbstractAnimation,
             QEasingCurve,
             QPropertyAnimation,
         )
-        from PySide6.QtWidgets import QGraphicsOpacityEffect  # noqa: PLC0415
+        from PySide6.QtWidgets import QGraphicsOpacityEffect # noqa: PLC0415
 
         old = getattr(self, "_page_anim", None)
         if old is not None:
@@ -1222,18 +1220,18 @@ class Shell(QWidget):
         self._page_anim, self._page_effect = an, eff
 
     def _crossfade_snapshot(self) -> None:
-        """旧帧抓取（丙-5 #9 第一步）—— 必须在改样式/重建**之前**调。"""
+        """旧帧抓取—— 必须在改样式/重建**之前**调。"""
         self._fade_pm = self.grab()
 
     def _crossfade_play(self) -> None:
-        """交叉淡入（丙-5 #9 第二步）：新 UI 就位后，旧帧盖顶 180ms 淡出。
+        """交叉淡入：新 UI 就位后，旧帧盖顶 180ms 淡出。
 
         web 侧交叉淡入的 Qt 等价物 —— 换主题是整套样式重建（_rebuild），
         做不了逐帧插值，就用旧相盖顶淡出。动效不阻塞输入（纯视觉层，
         事件穿透），再切一次时新 veil 直接盖上（可打断）。
         """
-        from PySide6.QtCore import QEasingCurve, QPropertyAnimation  # noqa: PLC0415
-        from PySide6.QtWidgets import QGraphicsOpacityEffect, QLabel  # noqa: PLC0415
+        from PySide6.QtCore import QEasingCurve, QPropertyAnimation # noqa: PLC0415
+        from PySide6.QtWidgets import QGraphicsOpacityEffect, QLabel # noqa: PLC0415
 
         pm = getattr(self, "_fade_pm", None)
         if pm is None:
@@ -1244,7 +1242,7 @@ class Shell(QWidget):
         veil.setGeometry(self.rect())
         veil.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         veil.show()
-        veil.raise_()        # _rebuild 后新控件 z 序更高 —— veil 必须再抬到最上
+        veil.raise_() # _rebuild 后新控件 z 序更高 —— veil 必须再抬到最上
         eff = QGraphicsOpacityEffect(veil)
         veil.setGraphicsEffect(eff)
         an = QPropertyAnimation(eff, b"opacity", self)
@@ -1254,7 +1252,7 @@ class Shell(QWidget):
         an.setEndValue(0.0)
         an.finished.connect(self._fade_veil_done)
         an.start()
-        self._fade_veil = veil   # 保活到动画完；重入时旧 veil 被新的盖住、各自收敛
+        self._fade_veil = veil # 保活到动画完；重入时旧 veil 被新的盖住、各自收敛
 
     def _fade_veil_done(self) -> None:
         """淡出完成：清引用（防悬挂）+ 删覆盖层。"""
@@ -1267,8 +1265,7 @@ class Shell(QWidget):
         """现场换主题 —— 不用重启。
 
         persist=True（顶栏用户切换）：主题也写回 config.ui.theme —— 不写的话
-        4 秒后主题跟随会把现场切回 config 旧值（2026-09-23 light/dark 截图
-        全组翻车的现场教训），且重启不保持。persist=False（_watch_config
+        4 秒后主题跟随会把现场切回 config 旧值（light/dark 截图
         跟随路径）：值本来就来自 config，不回写。
         ⚠️ 这正是 Qt 的**代价**所在：换主题要重建整套样式表（下面 `_restyle`），
            而 web 侧只是换一个 `data-theme` 属性、浏览器自己重画。
@@ -1277,12 +1274,12 @@ class Shell(QWidget):
            ⇒ 这条就是"Qt 的迭代成本"的具体形状，别只在文档里说。
         """
         self.t = THEMES[key]
-        self._crossfade_snapshot()   # 丙-5 #9：旧帧先抓（新样式还没生效）
+        self._crossfade_snapshot() # #9：旧帧先抓（新样式还没生效）
         if persist:
             try:
                 config_io.write_patch({"ui.theme": key})
-                self._theme_seen = key   # 自己写的自己认，别让跟随逻辑再切一遍
-            except Exception:  # noqa: BLE001
+                self._theme_seen = key # 自己写的自己认，别让跟随逻辑再切一遍
+            except Exception: # noqa: BLE001
                 pass
         # 记住状态再重建
         kept_find = self.find.text()
@@ -1293,15 +1290,15 @@ class Shell(QWidget):
         for (_it, g, _s, _l) in self.items:
             if g.title in closed and not g.collapsed:
                 g.toggle()
-        # 惰性构建（丙-8 J）：重建后页栈只有 bot —— 当前页现场建回，别把人弹回主页
+        # 惰性构建：重建后页栈只有 bot —— 当前页现场建回，别把人弹回主页
         self._ensure_page(cur)
         idx = self._page_of.get(cur)
         if idx is not None and idx != 0:
             self.stack.setCurrentIndex(idx)
         for it, _g, s, _l in self.items:
-            it.set_active(s == cur)   # 重建后 items 全新，active 高亮要手动还回去
+            it.set_active(s == cur) # 重建后 items 全新，active 高亮要手动还回去
         apply_font_to_app(QApplication.instance(), self.t)
-        self._crossfade_play()   # 新 UI 就位后旧帧淡出（丙-5 #9）
+        self._crossfade_play() # 新 UI 就位后旧帧淡出
 
     def _groups(self) -> list[NavGroup]:
         seen: list[NavGroup] = []
@@ -1311,7 +1308,7 @@ class Shell(QWidget):
         return seen
 
     def _close_transient_popups(self) -> None:
-        """收回全部临时浮层（丙-10 P1：切主题时 Qt.Popup 独立顶层窗闪一下）。
+        """收回全部临时浮层。
 
         浮层两类：
           · 壳自己的 `self._look_pop`（外观选择）；
@@ -1329,16 +1326,16 @@ class Shell(QWidget):
                 p = getattr(pill, "pop", None)
                 if p is not None:
                     cands.append(p)
-        except Exception:  # noqa: BLE001
+        except Exception: # noqa: BLE001
             pass
         for w in cands:
             try:
                 cp = getattr(w, "close_pop", None)
                 if callable(cp):
-                    cp()                      # UpdPill.pop 的自收起（带 try 守卫）
+                    cp() # UpdPill.pop 的自收起（带 try 守卫）
                 elif w.isVisible():
                     w.close()
-            except Exception:  # noqa: BLE001
+            except Exception: # noqa: BLE001
                 pass
 
     def _rebuild(self) -> None:
@@ -1349,7 +1346,7 @@ class Shell(QWidget):
            就多积几百个控件。这里补上第二层：布局里的子布局也逐 widget
            deleteLater（Qt 父删子递归，页栈整棵随之销毁）。
         """
-        # ⛔ 丙-10 P1（切界面闪小窗）：Qt.Popup 浮层（外观选择 / 更新胶囊）
+        # ⛔ P1（切界面闪小窗）：Qt.Popup 浮层（外观选择 / 更新胶囊）
         #   是**独立顶层窗**，deleteLater 销毁父控件要等到下一轮事件循环才生效，
         #   而顶层窗在这中间仍画在屏幕上 ⇒ 切主题时肉眼看到「闪一下小窗」。
         #   ⇒ 拆旧控件之前先把所有可见浮层收回（父还在，close 稳）。
@@ -1368,7 +1365,7 @@ class Shell(QWidget):
         # 注：顶层布局对象本身卸不掉（QWidget 没有公开的卸载 API，QObject setParent
         # 动不了 d->layout 指针）—— 所以 _build 改为「有布局就复用」，不再新建。
         self._build()
-        # ⛔ 丙-10 P0-1（真机复验：鲸鱼→浅色后导航/顶栏仍深灰）：**顺序错了**——
+        # ⛔ P0-1（真机复验：鲸鱼→浅色后导航/顶栏仍深灰）：**顺序错了**——
         #   `_restyle` 按 `self._backdrop_on` 选样式表（True 套写死的深蓝玻璃
         #   `rgba(8,24,46,178)`/`rgba(12,34,62,219)`），而 `_backdrop_on` 只在
         #   `_refresh_backdrop()` 里更新 ⇒ 原来「先 _restyle 再 _refresh_backdrop」时，
@@ -1393,7 +1390,7 @@ class Shell(QWidget):
         **不自己另编一份** —— 两份必然漂移（whale_text.py 头部原话）。
         只换字典里真实存在的键，对不上就保持原文 —— 与 web 侧行为一致（键对不上 = 不换）。
         """
-        from PySide6.QtWidgets import QCheckBox, QLineEdit, QPushButton  # noqa: PLC0415
+        from PySide6.QtWidgets import QCheckBox, QLineEdit, QPushButton # noqa: PLC0415
 
         self.text_style = key
         if not hasattr(self, "_orig_texts") or not self._orig_texts:
@@ -1401,7 +1398,7 @@ class Shell(QWidget):
             # 切换器本体不参与翻译（"正常/鲸语/主题名"不是内容文案）
             skip = {id(self.style_seg), id(self.theme_seg)}
             # ⚠️ PySide6 的 findChildren 不收类型元组（PyQt 才行）——传了直接
-            #    TypeError，鲸语切换一点就崩（2026-09-23 鲸语截图脚本实锤）。
+            # TypeError，鲸语切换一点就崩。
             #    逐类型扫再合并，语义不变。
             kids: list = []
             for typ in (QLabel, QPushButton, QCheckBox):
@@ -1479,10 +1476,10 @@ class Shell(QWidget):
         )
 
     def _toggle_tight(self) -> None:
-        """丙-5 #8 → 丙-8 E（用户拍板）：收起=**纯图标侧栏**——
+        """ #8 → E：收起=**纯图标侧栏**——
         按钮只显示 » 图标（点了=展开）；分组头整行隐藏（不留首字）；
         导航项清文字只留图标、图标放大一档 16→20、行距加宽。展开全部还原。"""
-        import icons as _icons  # noqa: PLC0415
+        import icons as _icons # noqa: PLC0415
 
         cur = self.btn_tight.text().startswith("‹")
         side = self.find.parentWidget().parentWidget()
@@ -1490,11 +1487,11 @@ class Shell(QWidget):
         for _it, g, _sec, _label in self.items:
             g.set_tight(cur)
             _it.set_tight(cur)
-        if cur:    # 将收起
+        if cur: # 将收起
             self.btn_tight.setText("")
             self.btn_tight.setIcon(QIcon(_icons.chevs_pixmap(self.t.tx2, collapsed=True)))
             self.btn_tight.setToolTip("展开侧栏")
-        else:      # 将展开
+        else: # 将展开
             self.btn_tight.setIcon(QIcon())
             self.btn_tight.setText("‹ 收起")
             self.btn_tight.setToolTip("")
@@ -1512,29 +1509,29 @@ class Shell(QWidget):
             it.setVisible(q in hay)
         for g in self._groups():
             if q and g.collapsed:
-                g.toggle()  # 搜索时自动展开，否则"搜到了但看不见"
+                g.toggle() # 搜索时自动展开，否则"搜到了但看不见"
 
     def _go(self, sec: str, label: str) -> None:
         for it, _g, s, _l in self.items:
             it.set_active(s == sec)
         self.st_panel.set("info", label)
-        # 惰性构建（丙-8 J）：首次导航到才建页，之后 setCurrentIndex 直达
+        # 惰性构建：首次导航到才建页，之后 setCurrentIndex 直达
         self._ensure_page(sec)
         idx = getattr(self, "_page_of", {}).get(sec)
         if idx is not None:
             self.stack.setCurrentIndex(idx)
-            self._animate_page_in(self.stack.currentWidget())   # 丙-5 #9 轻淡入
+            self._animate_page_in(self.stack.currentWidget()) # #9 轻淡入
 
     def _probe(self) -> None:
         """探一次后台，把结果翻译成界面上该说的话。
 
-        ⛔ 丙-15 卡顿根治：原写法在 **UI 线程**同步跑 `probe_backend`
+        ⛔ 卡顿根治：原写法在 **UI 线程**同步跑 `probe_backend`
         （timeout=1.2s，_probe_timer 每 4 秒一次）—— 后端慢/刚重启/抖动时，
-        用户切面板的动作正好撞上探活窗口 ⇒ 「每切一项卡 1 秒」（作者真机复述）。
+        用户切面板的动作正好撞上探活窗口 ⇒ 「每切一项卡 1 秒」。
         改与 _poll_paused/_poll_badges 同款 box+thread 模式：后台线程拉，
         主线程落地；busy 守卫防止慢响应时堆线程。
         """
-        from agent_bridge import current_url  # noqa: PLC0415
+        from agent_bridge import current_url # noqa: PLC0415
 
         if getattr(self, "_probe_busy", False):
             return
@@ -1545,13 +1542,13 @@ class Shell(QWidget):
         def _work() -> None:
             try:
                 box["val"] = probe_backend(url)
-            except Exception:  # noqa: BLE001
+            except Exception: # noqa: BLE001
                 box["val"] = None
             finally:
                 self._probe_busy = False
                 box["done"] = True
 
-        import threading as _th  # noqa: PLC0415
+        import threading as _th # noqa: PLC0415
 
         _th.Thread(target=_work, daemon=True, name="probe").start()
 
@@ -1561,22 +1558,22 @@ class Shell(QWidget):
                 return
             if box["val"] is not None:
                 self._show_probe(box["val"])
-            self._watch_config()   # 顺跳：光标/壁纸跟随 config（web 面板改了 4 秒内生效）
+            self._watch_config() # 顺跳：光标/壁纸跟随 config（web 面板改了 4 秒内生效）
 
         QTimer.singleShot(120, _apply)
 
     def _upd_first_check(self) -> None:
-        """丙-6 #13：更新公告条首拉。web updbar = 页面加载时拉一次（不做周期轮询）；
+        """ #13：更新公告条首拉。web updbar = 页面加载时拉一次（不做周期轮询）；
         /api/update 背后是 9 源竞速，可能拖到秒级 —— 后台线程拉，主线程落地。"""
         box: dict = {"done": False, "val": None}
 
         def _work() -> None:
-            from config_io import get_json  # noqa: PLC0415
+            from config_io import get_json # noqa: PLC0415
 
             box["val"] = get_json("/api/update", timeout=10.0)
             box["done"] = True
 
-        import threading as _th  # noqa: PLC0415
+        import threading as _th # noqa: PLC0415
 
         _th.Thread(target=_work, daemon=True, name="upd-first").start()
 
@@ -1591,19 +1588,19 @@ class Shell(QWidget):
 
         QTimer.singleShot(150, _apply)
 
-    # ------------------------------------------------------------ 暂停/恢复（丙-7 #16）
+    # ------------------------------------------------------------ 暂停/恢复
 
     def _poll_paused(self) -> None:
         """拉一次 /api/status，把顶层 paused 字段落到按钮（web loadStatus 同款）。"""
         box: dict = {"done": False, "val": None}
 
         def _work() -> None:
-            from config_io import get_json  # noqa: PLC0415
+            from config_io import get_json # noqa: PLC0415
 
             box["val"] = get_json("/api/status", timeout=5.0)
             box["done"] = True
 
-        import threading as _th  # noqa: PLC0415
+        import threading as _th # noqa: PLC0415
 
         _th.Thread(target=_work, daemon=True, name="status-poll").start()
 
@@ -1630,7 +1627,7 @@ class Shell(QWidget):
             btn.setToolTip("机器人现在不会回复任何消息；点这个恢复收发"
                            if paused else "暂停后机器人不回复任何消息（进程还活着，不是停止）")
 
-    # ------------------------------------------------------------ 面板徽章（丙-8 P0-A①）
+    # ------------------------------------------------------------ 面板徽章
 
     def _poll_badges(self) -> None:
         """一个后台线程拉 /api/status（+ /api/personas 人设计数），落地到
@@ -1639,7 +1636,7 @@ class Shell(QWidget):
         box: dict = {"done": False, "st": None, "pn": None}
 
         def _work() -> None:
-            from config_io import get_json  # noqa: PLC0415
+            from config_io import get_json # noqa: PLC0415
 
             box["st"] = get_json("/api/status", timeout=5.0)
             try:
@@ -1647,11 +1644,11 @@ class Shell(QWidget):
                 ps = r.get("personas") if isinstance(r, dict) else None
                 if isinstance(ps, list):
                     box["pn"] = len(ps)
-            except Exception:  # noqa: BLE001
+            except Exception: # noqa: BLE001
                 pass
             box["done"] = True
 
-        import threading as _th  # noqa: PLC0415
+        import threading as _th # noqa: PLC0415
 
         _th.Thread(target=_work, daemon=True, name="badge-poll").start()
 
@@ -1665,7 +1662,7 @@ class Shell(QWidget):
         QTimer.singleShot(150, _apply)
 
     def _apply_side_status(self, s: dict) -> None:
-        """侧栏微信连接状态（丙-18 批1 收尾；web #sideStatus :3476-3491 同款语义）。
+        """侧栏微信连接状态。
 
         连接态 / 失败短原因 / 监听目标 0 警告 / 启动时间；tooltip = 全文原因 +
         重试次数 + 逐步诊断（web 把逐步诊断同时铺进微信面板，Qt 后续对齐）。
@@ -1685,8 +1682,8 @@ class Shell(QWidget):
         if started:
             txt += " · 启动于 " + started
         lab.setText(txt)
-        # 丙-31：web 真值不给状态行上色——`.side .status p{font-size:12px;color:var(--tx2)}`
-        #   恒为灰字（console_html.py L519）。此前按连接态换 ok/warn ⇒ 绿/黄字，作者批「太丑」。
+        # web 真值不给状态行上色——`.side .status p{font-size:12px;color:var(--tx2)}`
+        # 恒为灰字（console_html.py L519）。此前按连接态换 ok/warn ⇒ 绿/黄字，。
         lab.setStyleSheet(f"color:{self.t.tx2};background:transparent;")
         tip = ("已接上微信客户端" if s.get("wechat_connected")
                else str(wa.get("reason") or "还没拿到失败原因（等一次接入尝试，或看日志）")
@@ -1706,10 +1703,10 @@ class Shell(QWidget):
         persona 单独处理：web stPersona 数的是 DOM 列表，Qt 等价 = /api/personas
         的列表长度（数不到就不覆盖，保持面板本地态）。
         """
-        import panels_qt as pq  # noqa: PLC0415
+        import panels_qt as pq # noqa: PLC0415
 
-        pq.refresh_status_rows(s)   # 丙-18 批1：面板内状态位跟随 8s 轮询刷新（「读不到」主治）
-        self._apply_side_status(s)  # 丙-18 批1 收尾：侧栏微信连接状态（web #sideStatus 同款）
+        pq.refresh_status_rows(s) # 面板内状态位跟随 8s 轮询刷新（「读不到」主治）
+        self._apply_side_status(s) # 收尾：侧栏微信连接状态（web #sideStatus 同款）
 
         bot_badge = getattr(self, "st_panel", None)
         if bot_badge is not None:
@@ -1745,14 +1742,13 @@ class Shell(QWidget):
           · 点下去立刻禁用 + 「暂停中…/恢复中…」防连点
           · 成功就地翻转（不等轮询）+ 徽章如实
           · 失败恢复原状并如实报错（toast 的 Qt 等价 = 按钮处 QToolTip）
-          · 恢复路径补刀 /api/risk recover（V-R10-24：paused.flag 与
+          · 恢复路径补刀 /api/risk recover（paused.flag 与
             risk.paused 两把钥匙一起清，否则用户点「恢复」看着好了、
             实际还在停发；补刀失败不影响主结果）
-        暂停 ≠ 停止：进程活着只是不回消息 ⇒ 无危险确认（工单口径）。
         """
         if self._pause_busy:
             return
-        want = not self._paused          # 当前在跑 ⇒ 这一下是想暂停
+        want = not self._paused # 当前在跑 ⇒ 这一下是想暂停
         self._pause_busy = True
         btn = self.btn_pause
         btn.setEnabled(False)
@@ -1760,12 +1756,12 @@ class Shell(QWidget):
         box: dict = {"done": False, "r": None}
 
         def _work() -> None:
-            from agent_bridge import post_json  # noqa: PLC0415
+            from agent_bridge import post_json # noqa: PLC0415
 
             box["r"] = post_json("/api/pause" if want else "/api/resume", {})
             box["done"] = True
 
-        import threading as _th  # noqa: PLC0415
+        import threading as _th # noqa: PLC0415
 
         _th.Thread(target=_work, daemon=True, name="pause-toggle").start()
 
@@ -1779,23 +1775,23 @@ class Shell(QWidget):
             ok = isinstance(r, dict) and r.get("ok") is not False
             if not ok:
                 why = r.get("why") if isinstance(r, dict) else None
-                self._apply_paused(self._paused)     # 失败恢复原状（按钮文字/使能）
+                self._apply_paused(self._paused) # 失败恢复原状（按钮文字/使能）
                 QToolTip.showText(
                     btn.mapToGlobal(btn.rect().center()),
                     "没切成：%s" % (why or "没连上后台（状态没有改变）"), btn)
                 return
-            self._paused = want                      # 就地翻转，不等轮询（web 同款）
+            self._paused = want # 就地翻转，不等轮询（web 同款）
             btn.setText("恢复" if want else "暂停")
             # 状态徽章立即如实（探活循环随后按 /api/status 刷回同一结论）
             self.st_top.set("idle" if want else "ok", "已暂停" if want else "后台在跑")
             if not want:
                 # 恢复补刀（web L5719-5721 同款；失败不遮主结果）
                 def _recover() -> None:
-                    from agent_bridge import post_json  # noqa: PLC0415
+                    from agent_bridge import post_json # noqa: PLC0415
 
                     try:
                         post_json("/api/risk", {"action": "recover"})
-                    except Exception:  # noqa: BLE001
+                    except Exception: # noqa: BLE001
                         pass
 
                 _th.Thread(target=_recover, daemon=True, name="risk-recover").start()
@@ -1811,7 +1807,7 @@ class Shell(QWidget):
             "err": "没连上",
             "warn": "状态不明",
         }.get(lvl, "读取中")
-        # 丙-7 #16：暂停中徽章如实 —— 进程活着（探活 ok）但不回任何消息
+        # #16：暂停中徽章如实 —— 进程活着（探活 ok）但不回任何消息
         # （web L5724 同款：runText 显示「已暂停」）。下轮 /api/status 轮询
         # 会把按钮文案刷回同一结论。
         if lvl == "ok" and getattr(self, "_paused", False):
@@ -1838,7 +1834,7 @@ class Shell(QWidget):
             )
         )
 
-    # ------------------------------------------------------------ 机器人控制（丙-5 #3）
+    # ------------------------------------------------------------ 机器人控制
 
     def _fire_api(self, api: str, done) -> None:
         """后台线程发 POST，不冻结界面（网络调用可能拖到 5 秒超时）。
@@ -1846,9 +1842,9 @@ class Shell(QWidget):
         结果经 150ms 轮询交回主线程 —— 跨线程直接摸 Qt 控件是禁区。
         `done(ok, note)` 一定在主线程被恰好调用一次。
         """
-        import threading  # noqa: PLC0415
+        import threading # noqa: PLC0415
 
-        from agent_bridge import post_api  # noqa: PLC0415
+        from agent_bridge import post_api # noqa: PLC0415
 
         box: dict = {"ok": None, "note": ""}
 
@@ -1892,13 +1888,13 @@ class Shell(QWidget):
 
         def _done(ok: bool, note: str) -> None:
             if ok:
-                return  # 探活循环接手：新进程起来后徽章自动回「后台在跑」
+                return # 探活循环接手：新进程起来后徽章自动回「后台在跑」
             self.st_top.set("warn", "重启失败", note)
 
         self._fire_api("/api/restart", _done)
 
     def _bot_stop(self) -> None:
-        """停止机器人 → POST /api/shutdown（丙-8 D：用户拍板「一个弹窗就已足够」
+        """停止机器人 → POST /api/shutdown（ D：
         —— 去掉打字门槛，弹窗里直接「确定停止」一键确认；后果说明保留。
         打字门槛只留给「清空全部记忆」这类不可逆操作）。
 
@@ -1928,7 +1924,7 @@ class Shell(QWidget):
 
         def _done(ok: bool, note: str) -> None:
             if ok:
-                return  # 进程马上会死，不需要再刷任何界面
+                return # 进程马上会死，不需要再刷任何界面
             self.st_top.set("err", "停止失败", note)
 
         self._fire_api("/api/shutdown", _done)
@@ -1977,7 +1973,7 @@ class _Combo(QWidget):
 
     def __init__(self, items: list[str], t: Tokens, parent: QWidget | None = None):
         super().__init__(parent)
-        from PySide6.QtWidgets import QComboBox  # noqa: PLC0415
+        from PySide6.QtWidgets import QComboBox # noqa: PLC0415
 
         self.t = t
         lay = QHBoxLayout(self)

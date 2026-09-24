@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""判据：会话档案读失败**不许**用空壳覆盖原文件（第四轮审计 V-R4-6，P1）。
+"""判据：会话档案读失败**不许**用空壳覆盖原文件。
 
 跑法： runtime\\python\\python.exe scripts\\store_archive_selftest.py   退出码 0=全过 / 1=有失败
 
@@ -23,8 +23,8 @@ try:
 except Exception:
     pass
 
-from agent import store as store_mod                                          # noqa: E402
-from agent.store import ChatStore                                             # noqa: E402
+from agent import store as store_mod # noqa: E402
+from agent.store import ChatStore # noqa: E402
 
 PASS, FAIL = [], []
 
@@ -75,7 +75,7 @@ def main():
                                                           {"id": 2, "text": "第二条"}]},
                                             ensure_ascii=False))
         # `store.py` 用的是**内置** `open` ⇒ 要打桩就打在 builtins 上（模块里没有 `open` 这个名字）
-        import builtins                                                       # noqa: E402
+        import builtins # noqa: E402
 
         _orig_open = builtins.open
 
@@ -110,7 +110,7 @@ def main():
         ok("⑤ `_load_chat` 里有隔离动作（`corrupt-`）与 `os.replace`", "corrupt-" in _body and "os.replace(" in _body)
         ok("⑤ `_save_chat` 见到 `_loadFailed` 就**直接返回、不写盘**",
            "_loadFailed" in _src[_src.find("def _save_chat("):][:600])
-        # ⑤ 可执行反向锚（V-R7-5 #2）：上面两条只 grep 源码文本 —— 分支被写死（`if False:`）时
+        # ⑤ 可执行反向锚：上面两条只 grep 源码文本 —— 分支被写死（`if False:`）时
         # 文本还在、判据照样绿。这里真调一次带 `_loadFailed` 的 `_save_chat`，断言**一个文件都不写**。
         _fd = tempfile.mkdtemp(prefix="pm_store_failwrite_")
         store_mod.MESSAGES_DIR = _fd
@@ -135,7 +135,7 @@ def main():
         ok("⑥ 反例锚：老写法（except pass ⇒ 返回空壳）确实会被判不合格",
            ("_loadFailed" not in _OLD) and ("corrupt-" not in _OLD) and ("except Exception:\n        pass" in _OLD))
 
-        # ── ⑦ S-1：不同 chat_key 不许撞同一个档案文件（第四轮审计候选）──
+        # ── ⑦ S-1：不同 chat_key 不许撞同一个档案文件──
         #    老实现只做字符替换 ⇒ `group:wxid_a-b` 与 `group:wxid_a_b` 撞成一个文件、互相覆盖。
         _k1, _k2 = "group:wxid_a-b", "group:wxid_a_b"
         ok("⑦ 反例锚：老归一化对这两个 key 确实同名（不靠哈希就区分不开）",
@@ -164,8 +164,8 @@ def main():
            and len(ChatStore().recent("group:legacy_nohash", limit=5)) == 1,
            sorted(_listed7))
 
-        # ── ⑧ 第五轮回执 V-R5A-5 / V-R5A-6 / V-R5B-2 / V-R5A-7：迁移 · 幽灵会话 · 结构修复 ──
-        _W = "wxid_" + "deadbeef"          # 运行时拼：别让出包 PII 闸门当成真账号
+        # ── ⑧ 回执 / / / 迁移 · 幽灵会话 · 结构修复 ──
+        _W = "wxid_" + "deadbeef" # 运行时拼：别让出包 PII 闸门当成真账号
         _w("group:" + _W, json.dumps({"messages": [{"id": 1, "text": "合法尾巴"}]},
                                              ensure_ascii=False))
         ok("⑧ 文件名推导**不许**把合法 wxid 的尾巴削掉（`wxid_xxx` → `group:wxid` 是错的）",
@@ -218,7 +218,7 @@ def main():
         store_mod.MESSAGES_DIR = _keep
         shutil.rmtree(tmp, ignore_errors=True)
 
-    # ── V-R6-25：老命名残留**不许串群**（老档案里的 chat_key 与请求的不一致 ⇒ 当它不存在）──
+    # ── 老命名残留**不许串群**（老档案里的 chat_key 与请求的不一致 ⇒ 当它不存在）──
     _keep3 = store_mod.MESSAGES_DIR
     _tmp3 = tempfile.mkdtemp(prefix="pm_store_v25_")
     try:
@@ -230,13 +230,13 @@ def main():
             f.write(json.dumps({"chat_key": _kb, "next_local_id": 9,
                                 "messages": [{"id": 1, "text": "别人的话"}]}, ensure_ascii=False))
         _got = store_mod.chat_file_existing(_ka)
-        ok("V-R6-25 老档案里的 chat_key 与请求的不一致 ⇒ **不拿它当这个会话的档案**（防串群）",
+        ok("老档案里的 chat_key 与请求的不一致 ⇒ **不拿它当这个会话的档案**（防串群）",
            _got == store_mod.chat_file(_ka) and _got != _lg, _got)
         # 正向对照：内容一致的老档案照样能用（老用户不丢档案）
         with open(_lg, "w", encoding="utf-8") as f:
             f.write(json.dumps({"chat_key": _ka, "next_local_id": 1, "messages": []},
                                ensure_ascii=False))
-        ok("V-R6-25b 正向对照：chat_key 一致的老档案**照样认**（老用户不丢档案）",
+        ok("b 正向对照：chat_key 一致的老档案**照样认**（老用户不丢档案）",
            store_mod.chat_file_existing(_ka) == _lg, store_mod.chat_file_existing(_ka))
     finally:
         store_mod.MESSAGES_DIR = _keep3
