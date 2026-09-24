@@ -41,19 +41,23 @@ DEFAULT_BASE = "http://127.0.0.1:3210/"
 
 
 def join_url(base: str, path: str = "", q: str = "") -> str:
-    """统一 URL 拼接 —— **path 必须落在 query 之前**。
+    """统一 URL 拼接 —— **path 必须落在 query 之前，且全 URL 只允许一个 `?`**。
 
     本模块拼出的 base 自带 `?token=…` 查询（_config_base / logs/console.url）。
     老写法「base 去尾斜杠后直接接路径」会把路径塞进 query ——
     实测 `/?token=x/api/status` → 401（token 连同后面的 /api/status 一起被
     当成 query 解析），这就是真机首跑全界面「状态不明」的根因。
-    错误拼法 HTTP 401 / 正确拼法 HTTP 200。
 
     全 Qt 侧访问后端 URL 一律走本函数：
-        join_url(base, "/api/status")            # GET/POST 接口
-        join_url(base, "/api/config", "k=v")     # 追加额外查询参数
-    口径：摘掉 base 自带 query 得 root → root 去尾斜杠 → 拼 path →
-    拼 query（base 自带在前、调用方追加在后，& 连接）。
+        join_url(base, "/api/status")                  # GET/POST 接口
+        join_url(base, "/api/config", "k=v")           # 追加额外查询参数
+        join_url(base, "/api/wechat-groups?refresh=1") # path 自带 query 也合法
+    口径：摘掉 base 自带 query 得 root → root 去尾斜杠 → 摘掉 path 自带 query
+    → 拼 path → 三段 query（base 自带 / path 自带 / 调用方追加）按序用 & 合并。
+    path 自带 query 若不合并、直接往尾上再加 `?token=`，会拼出
+    `?refresh=1?token=x` —— 服务器把 `1?token=x` 当成一个参数值，token 丢失
+    ⇒ 鉴权 401（真机「刷新群列表 401」事故根因，症状检验器 /api/verify?id=
+    与会话列表 /api/sessions?limit= 同源中招）。
     """
     b = (base or "").strip()
     if "?" in b:
@@ -64,10 +68,15 @@ def join_url(base: str, path: str = "", q: str = "") -> str:
     p = (path or "").strip()
     if p and not p.startswith("/"):
         p = "/" + p
+    p_q = ""
+    if "?" in p:
+        p, p_q = p.split("?", 1)
     url = root + p
     qs = base_q
+    if p_q:
+        qs = (qs + "&" + p_q) if qs else p_q
     if q:
-        qs = (base_q + "&" + q) if base_q else q
+        qs = (qs + "&" + q) if qs else q
     if qs:
         url += "?" + qs
     return url
@@ -221,6 +230,13 @@ def _selftest() -> list[tuple[str, bool, str]]:
     j = join_url("http://127.0.0.1:3210/?token=abc", "")
     out.append(("join_url: 空 path 只留 root+query",
                 j == "http://127.0.0.1:3210?token=abc", j))
+    # 真机 401 事故：path 自带 query 不得产生双 ?（token 被吞进前一个参数值 ⇒ 鉴权必挂）
+    j = join_url("http://127.0.0.1:3210/?token=abc", "/api/wechat-groups?refresh=1")
+    out.append(("join_url: path 自带 query 并入统一 query（双 ? 会 401）",
+                j == "http://127.0.0.1:3210/api/wechat-groups?token=abc&refresh=1", j))
+    j = join_url("http://127.0.0.1:3210/?token=abc", "/api/verify?id=v1")
+    out.append(("join_url: /api/verify?id= 同样并入（症状检验器同源事故）",
+                j.count("?") == 1 and "id=v1" in j and "token=abc" in j, j))
     # 链路防回归：resolve 出来的真 base 喂 join_url，path 必须不进 query
     b, _src = resolve_base_url()
     j = join_url(b, "/api/status")

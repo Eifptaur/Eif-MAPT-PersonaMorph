@@ -1784,6 +1784,17 @@ def t_hotfix1() -> None:
     ck("config_io.get_json 支持 err_box 错误透出（超时/连不上可区分，不再一律「后台没连上」）",
        "err_box" in io_src and 'err_box["err"]' in io_src, "")
 
+    # 真机 401 事故复现：path 自带 query 经 join_url 后全 URL 只能有一个 ?
+    # （原双 ? 把 token 吞进前一个参数值 → 鉴权必 401，刷新群列表/症状检验器/会话列表同源中招）
+    from addr import join_url # noqa: PLC0415
+    j1 = join_url("http://127.0.0.1:3210/?token=abc", "/api/wechat-groups?refresh=1")
+    ck("join_url: 刷新群列表 URL 只有一个 ? 且 token 在位（原双 ? 丢 token → 401）",
+       j1.count("?") == 1 and "token=abc" in j1 and "refresh=1" in j1, j1)
+    j2 = join_url("http://127.0.0.1:3210/?token=abc", "/api/verify?id=v1")
+    ck("join_url: /api/verify?id=（症状检验器）与 /api/sessions?limit=（会话列表）同口径不再双 ?",
+       j2.count("?") == 1 and join_url("http://127.0.0.1:3210/?token=abc",
+                                       "/api/sessions?limit=30").count("?") == 1, j2)
+
 
 def main() -> int:
     for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
