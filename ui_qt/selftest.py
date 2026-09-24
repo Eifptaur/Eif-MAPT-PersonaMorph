@@ -2951,12 +2951,517 @@ def t_veradv() -> None:
             pass
 
 
+def t_g5() -> None:
+    """批4第五组全链路真跑：generic 面板剩余动作清零。
+
+    model（keySave 打码拒绝/真存三连、keyReset）+ wechat（目录探测/保存/回落/官网）
+    + tools（导出弹窗复制另存、导入文件/粘贴/覆盖、重扫+清单卡联动、看问题、引导弹窗）
+    + media（fsAdd、irGuide）+ tts/videogen（引导弹窗）+ wavefx（收集 binds 落盘）。
+
+    手法同 t_veradv：假后端 + patch current_url/QDialog.exec/QFileDialog/
+    QDesktopServices.openUrl/config_io.write_patch（防测试真写本机 config.json）。
+    GUIDES 文本断言全部动态取自 _web_guides()（web 是唯一源，不复制）。
+    """
+    import json as _json # noqa: PLC0415
+    import os # noqa: PLC0415
+    import tempfile as _tf # noqa: PLC0415
+    import threading as _th # noqa: PLC0415
+    import time as _time # noqa: PLC0415
+    from http.server import BaseHTTPRequestHandler, HTTPServer # noqa: PLC0415
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtGui import QDesktopServices # noqa: PLC0415
+    from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QFileDialog, # noqa: PLC0415
+                                   QLabel, QPlainTextEdit)
+
+    import agent_bridge # noqa: PLC0415
+    import config_io # noqa: PLC0415
+    import panels_qt # noqa: PLC0415
+    import panels_custom # noqa: PLC0415
+    from panels_custom import _GUIDE_KEY_OF, _web_guides, ACT_CUSTOM # noqa: PLC0415
+    from stylekit_qt import THEMES # noqa: PLC0415
+    from widgets import Btn # noqa: PLC0415
+
+    QApplication.instance() or QApplication([])
+
+    # ── 注册表与引导解析器（不发请求的静态断言先锁） ──
+    need = {"keySave", "keyReset", "wxDirProbe", "wxDirSave", "wxOpenSite", "utExport",
+            "utImport", "utReload", "utBarProblems", "fsAdd", "wavefxApply",
+            "utGuide", "utBarGuide", "ttsGuide", "igGuide", "vgGuide", "vsGuide",
+            "irGuide", "fsGuide"}
+    ck("g5 注册表：19 个新 aid 全部接入（ACT_CUSTOM 33 键），wxRecheck 保持不接（web 死按钮如实 stub）",
+       need <= set(ACT_CUSTOM) and len(ACT_CUSTOM) == 33 and "wxRecheck" not in ACT_CUSTOM,
+       "ACT_CUSTOM=%d 缺=%s" % (len(ACT_CUSTOM), sorted(need - set(ACT_CUSTOM))))
+    guides = _web_guides()
+    ck("g5 GUIDES 运行时解析：9 键与 web 一致（tools 6 步 1 复制；voice 复制=pip install pilk）",
+       set(guides) == {"tools", "voice", "tts", "image", "forward", "video", "imggen",
+                       "file", "wechat"}
+       and len(guides["tools"]["steps"]) == 6 and len(guides["tools"]["copy"]) == 1
+       and guides["voice"]["copy"] == [("复制安装命令", "pip install pilk")],
+       "keys=%s" % sorted(guides))
+    ck("g5 引导映射：8 个说明按钮 aid → web GUIDES 键（utGuide/utBarGuide 同指 tools）",
+       set(_GUIDE_KEY_OF) == {"utGuide", "utBarGuide", "ttsGuide", "igGuide", "vgGuide",
+                              "vsGuide", "irGuide", "fsGuide"}
+       and _GUIDE_KEY_OF["utGuide"] == "tools" and _GUIDE_KEY_OF["utBarGuide"] == "tools"
+       and _GUIDE_KEY_OF["irGuide"] == "image", str(_GUIDE_KEY_OF))
+
+    # ── 假后端 ──
+    calls: list = []
+    patch_calls: list = []
+    opened: list = []
+    wx_save = {"fail": False}
+    ut_state = {"n2": False}
+    EXPORT_TEXT = '{"tools":[{"name":"weather","host":"api.weather.com","usage":"输入城市名"}]}'
+    DOC_JSON = ('{"name":"weather","host":"api.weather.com",'
+                '"whitelist":["api.weather.com"],"desc":"查天气"}')
+    IMPORT_RESP = {"ok": True, "added": ["weather"], "replaced": [],
+                   "skipped": [{"name": "old_tool", "why": "同名工具已存在",
+                                "fix": "勾「覆盖同名」"}]}
+
+    class _H(BaseHTTPRequestHandler):
+        def _send(self, obj): # noqa: N802
+            body = _json.dumps(obj).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self): # noqa: N802
+            calls.append(self.path)
+            if "/api/config" in self.path:
+                self._send({"ok": True,
+                            "api": {"api_key": "old-key", "provider_keys": {"deepseek": "old"}}})
+            elif "/api/wechat/dir" in self.path:
+                self._send({"ok": True, "now": "C:/WxFiles",
+                            "candidates": [
+                                {"path": "C:/FakeHome/WeChat Files", "usable": True, "dbs": 7},
+                                {"path": "C:/Nope", "usable": False, "why": "没有找到库文件"}]})
+            elif "/api/tools/reload" in self.path:
+                self._send({"ok": True, "tools": {
+                    "tools": [{"name": "weather"}, {"name": "translate"}],
+                    "problems": [{"file": "a.json", "why": "域名不在白名单"}]}})
+            elif "/api/tools/export" in self.path:
+                self._send({"ok": True, "text": EXPORT_TEXT})
+            elif "/api/tools/toggle" in self.path:
+                self._send({"ok": True})
+            elif "/api/status" in self.path:
+                tools = [{"name": "weather", "enabled": True, "source": "第三方",
+                          "host": "api.weather.com", "calls": 3, "errors": 0}]
+                if ut_state["n2"]:
+                    tools.append({"name": "translate", "enabled": False, "host": "fanyi.jd.com",
+                                  "calls": 2, "errors": 1, "usage": "输入句子"})
+                self._send({"ok": True, "user_tools": {
+                    "enabled": True, "dir": "tools.d", "tools": tools, "ticked": 1,
+                    "counts_total": 5,
+                    "problems": [{"file": "a.json", "why": "域名不在白名单", "code_label": "域名",
+                                  "code": "host", "fix": "把域名加进白名单"}]}})
+            else:
+                self._send({"ok": True})
+
+        def do_POST(self): # noqa: N802
+            n = int(self.headers.get("Content-Length") or 0)
+            try:
+                body = _json.loads(self.rfile.read(n).decode("utf-8", "replace")) if n else {}
+            except Exception: # noqa: BLE001
+                body = {}
+            calls.append(self.path + "#" + _json.dumps(body, ensure_ascii=False))
+            if "/api/config" in self.path:
+                self._send({"ok": True})
+            elif "/api/test-api" in self.path:
+                self._send({"ok": True, "latency_ms": 234})
+            elif "/api/wechat/dir" in self.path:
+                if wx_save["fail"]:
+                    self._send({"ok": False, "error": "这个目录用不了",
+                                "fallback": "C:/Default/WeChat Files"})
+                else:
+                    self._send({"ok": True, "wechat_dir": {
+                        "now": "C:/FakeHome/WeChat Files",
+                        "hint": "机器人会从这里读聊天记录"}})
+            elif "/api/tools/import" in self.path:
+                self._send(IMPORT_RESP)
+            elif "/api/file_search/add" in self.path:
+                self._send({"ok": True, "note": "目录已加入，共 12 个文件可搜"})
+            else:
+                self._send({"ok": True})
+
+        def log_message(self, *a): # noqa: N802
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), _H)
+    port = srv.server_address[1]
+    _th.Thread(target=srv.serve_forever, daemon=True, name="fake-be-g5").start()
+
+    _orig_url = agent_bridge.current_url
+    agent_bridge.current_url = lambda: "http://127.0.0.1:%d/?token=tk" % port
+    exec_dlgs: list = []
+    mode = {"ok": True}
+    _orig_exec = QDialog.exec
+
+    def _fake_exec(self, *a, **k):
+        exec_dlgs.append(self)
+        if mode["ok"] and hasattr(self, "btn_ok"):
+            self.btn_ok.click()
+        return self.result()
+
+    QDialog.exec = _fake_exec
+
+    tmp_fd, open_json = _tf.mkstemp(suffix=".json")
+    os.write(tmp_fd, DOC_JSON.encode("utf-8"))
+    os.close(tmp_fd)
+    tmp_fd2, save_json = _tf.mkstemp(suffix=".json")
+    os.close(tmp_fd2)
+    _orig_gofn = QFileDialog.getOpenFileName
+    _orig_gsf = QFileDialog.getSaveFileName
+    QFileDialog.getOpenFileName = staticmethod(lambda *a, **k: (open_json, ""))
+    QFileDialog.getSaveFileName = staticmethod(lambda *a, **k: (save_json, ""))
+    _orig_open = QDesktopServices.openUrl
+    QDesktopServices.openUrl = staticmethod(lambda url: opened.append(url.toString()))
+
+    def _fake_wpatch(patch):
+        patch_calls.append(patch)
+        return True, "已保存并生效（测试拦截）"
+
+    _orig_wpatch = config_io.write_patch
+    config_io.write_patch = _fake_wpatch
+
+    t = THEMES["whale"]
+
+    def _aid(page, aid):
+        return [b for b in page.findChildren(Btn) if b.property("web_action") == aid][0]
+
+    def _roww(page, pred):
+        for r, w in (getattr(page, "_c8_binds", None) or []):
+            if pred(r):
+                return w
+        return None
+
+    def _posts(prefix):
+        """POST 记录 bodies —— GET 记录无 '#'；join_url 把 token 插在 api 后，
+        故不能按 'path#body' 前缀直接匹配，要按 '#' 切开取前段判前缀。"""
+        return [_json.loads(c.split("#", 1)[1]) for c in calls
+                if "#" in c and c.split("#", 1)[0].startswith(prefix)]
+
+    def _has_post(prefix):
+        return any("#" in c and c.split("#", 1)[0].startswith(prefix) for c in calls)
+
+    def _wait(pred, timeout=6.0):
+        end = _time.time() + timeout
+        while _time.time() < end:
+            QApplication.processEvents()
+            if pred():
+                return True
+            _time.sleep(0.03)
+        QApplication.processEvents()
+        return pred()
+
+    def _guide_case(page, aid, key):
+        g = guides[key]
+        exec_dlgs.clear()
+        _aid(page, aid).click()
+        QApplication.processEvents()
+        dlg = exec_dlgs[-1]
+        labels = [l.text() for l in dlg.findChildren(QLabel)]
+        steps = [x for x in labels if x.startswith("· ")]
+        copies = [b for b in dlg.findChildren(Btn) if b.text() == "复制"]
+        ck("g5 %s 引导弹窗：标题/引子/步骤（%d 条）/复制钮（%d 个）与 web GUIDES 一致，知道了可关"
+           % (aid, len(g["steps"]), len(g["copy"])),
+           dlg.windowTitle() == g["title"] and len(steps) == len(g["steps"])
+           and len(copies) == len(g["copy"])
+           and g["intro"].replace("**", "") in labels,
+           "title=%r steps=%d/%d copy=%d/%d" % (dlg.windowTitle(), len(steps), len(g["steps"]),
+                                                len(copies), len(g["copy"])))
+
+    try:
+        # ── model 页：keySave / keyReset ──
+        wrap_m = panels_qt.build_panel(t, "model")
+        mp = wrap_m.widget()
+        mp.show()
+        QApplication.processEvents()
+        key_w = _roww(mp, lambda r: r.cfg == "api.api_key")
+        prov_combo = _roww(mp, lambda r: r.kind == "select" and "厂商" in r.label)
+        idx = next((i for i in range(prov_combo.count())
+                    if str(prov_combo.itemData(i)) not in ("", "custom")), 0)
+        prov_combo.setCurrentIndex(idx)
+        prov = str(prov_combo.currentData() or "")
+
+        key_w.setText("••••6Kd2")
+        calls.clear()
+        _aid(mp, "keySave").click()
+        QApplication.processEvents()
+        note_ks = _aid(mp, "keySave").property("c8_note")
+        _wait(lambda: "打码值" in note_ks.text())
+        ck("g5 keySave：打码值拒绝（不读不写不发请求）",
+           "Key 为空或仍是打码值，未保存" in note_ks.text()
+           and not _posts("/api/config"),
+           note_ks.text() + " calls=%s" % [c for c in calls if "config" in c])
+
+        key_w.setText("sk-test-abc123")
+        calls.clear()
+        _aid(mp, "keySave").click()
+        _wait(lambda: _has_post("/api/test-api"))
+        _wait(lambda: "测试连通成功" in note_ks.text())
+        cfg_posts = _posts("/api/config")
+        body = cfg_posts[-1] if cfg_posts else {}
+        ck("g5 keySave 真值：GET config → POST 全量（api_key=%s + provider_keys[%s]）→ POST test-api 延迟回显"
+           % (prov, prov),
+           body.get("api", {}).get("api_key") == "sk-test-abc123"
+           and body.get("api", {}).get("provider_keys", {}).get(prov) == "sk-test-abc123"
+           and _has_post("/api/test-api")
+           and "密钥 已保存" in note_ks.text() and "测试连通成功（234ms）" in note_ks.text(),
+           "prov=%r note=%r body_api=%s" % (prov, note_ks.text(), body.get("api")))
+
+        _aid(mp, "keyReset").click()
+        QApplication.processEvents()
+        ck("g5 keyReset：清空 Key 输入框（纯本地不发请求）",
+           key_w.text() == "", repr(key_w.text()))
+
+        # ── wechat 页：目录探测/保存/回落/官网 ──
+        wrap_w = panels_qt.build_panel(t, "wechat")
+        wp = wrap_w.widget()
+        wp.show()
+        QApplication.processEvents()
+        dir_w = _roww(wp, lambda r: r.cfg == "wechat.db_dir")
+        dir_w.setText("C:/WxFiles")
+
+        calls.clear()
+        _aid(wp, "wxDirProbe").click()
+        note_dp = _aid(wp, "wxDirProbe").property("c8_note")
+        _wait(lambda: "已探完" in note_dp.text())
+        ck("g5 wxDirProbe：GET /api/wechat/dir?path=…，回显当前读 + 候选（✔ 可用带库文件数 / ✘ 带原因）",
+           any(c.startswith("/api/wechat/dir?") and "path=" in c for c in calls)
+           and "当前在读：C:/WxFiles" in note_dp.text()
+           and "✔ C:/FakeHome/WeChat Files，可用，7 个库文件" in note_dp.text()
+           and "✘ C:/Nope，没有找到库文件" in note_dp.text(),
+           note_dp.text() + " calls=%s" % [c for c in calls if "wechat/dir" in c])
+
+        calls.clear()
+        _aid(wp, "wxDirSave").click()
+        note_ds = _aid(wp, "wxDirSave").property("c8_note")
+        _wait(lambda: "已保存" in note_ds.text())
+        ck("g5 wxDirSave 成功：POST {path}，回显现在读的目录 + 服务端 hint",
+           any(b.get("path") == "C:/WxFiles" for b in _posts("/api/wechat/dir"))
+           and "已保存，现在读的是：C:/FakeHome/WeChat Files" in note_ds.text()
+           and "机器人会从这里读聊天记录" in note_ds.text(),
+           note_ds.text())
+
+        wx_save["fail"] = True
+        calls.clear()
+        _aid(wp, "wxDirSave").click()
+        _wait(lambda: "回落" in note_ds.text())
+        ck("g5 wxDirSave 失败：ok=false → 如实报错 + 回落目录说明",
+           "失败：这个目录用不了，当前会回落到 C:/Default/WeChat Files" in note_ds.text(),
+           note_ds.text())
+        wx_save["fail"] = False
+
+        opened.clear()
+        _aid(wp, "wxOpenSite").click()
+        QApplication.processEvents()
+        note_os = _aid(wp, "wxOpenSite").property("c8_note")
+        ck("g5 wxOpenSite：系统浏览器打开 weixin.qq.com + 提醒可手动复制",
+           opened == ["https://weixin.qq.com/"]
+           and "已尝试打开官网：https://weixin.qq.com/" in note_os.text(),
+           str(opened) + " note=" + note_os.text())
+
+        # ── tools 页：清单卡/看问题/引导/导出/导入/重扫 ──
+        wrap_t = panels_qt.build_panel(t, "tools")
+        tp = wrap_t.widget()
+        tp.show()
+        QApplication.processEvents()
+        _wait(lambda: any(cb.text() == "weather" for cb in tp.findChildren(QCheckBox)),
+              timeout=8.0) # appendix 首载（400ms 延时 + 线程）
+        prob_lb = tp.findChild(QLabel, "utProblemsQt")
+        ck("g5 tools 清单卡首载：/api/status user_tools → 工具勾选行 + 问题清单带 fix 提示",
+           any(cb.text() == "weather" for cb in tp.findChildren(QCheckBox))
+           and prob_lb is not None and "域名不在白名单" in prob_lb.text()
+           and "把域名加进白名单" in prob_lb.text(),
+           str([cb.text() for cb in tp.findChildren(QCheckBox) if cb.text()]))
+
+        _aid(tp, "utBarProblems").click()
+        QApplication.processEvents()
+        note_bp = _aid(tp, "utBarProblems").property("c8_note")
+        ck("g5 utBarProblems（看问题）：utProblemsQt 锚点在场，回显已滚动到可见",
+           prob_lb is not None and "已滚动到可见" in note_bp.text(), note_bp.text())
+
+        _guide_case(tp, "utGuide", "tools")
+
+        # utExport：弹窗全文 + 复制 + 另存
+        exec_dlgs.clear()
+        calls.clear()
+        _aid(tp, "utExport").click()
+        _wait(lambda: exec_dlgs and exec_dlgs[-1].windowTitle() == "导出全部工具")
+        edlg = exec_dlgs[-1] if exec_dlgs else None
+        eta = edlg.findChildren(QPlainTextEdit)[0] if edlg else None
+        ck("g5 utExport：GET /api/tools/export → 弹窗（标题/全文只读 textarea 内容一致）",
+           any("/api/tools/export" in c for c in calls) and edlg is not None
+           and eta is not None and eta.toPlainText() == EXPORT_TEXT,
+           "dlg=%r ta=%r" % (edlg.windowTitle() if edlg else None,
+                             eta.toPlainText()[:40] if eta else None))
+        [b for b in edlg.findChildren(Btn) if b.text() == "复制文档"][0].click()
+        QApplication.processEvents()
+        ck("g5 utExport 复制文档：剪贴板 = 导出全文，回显「已复制到剪贴板」",
+           QApplication.clipboard().text() == EXPORT_TEXT
+           and any(l.text() == "已复制到剪贴板" for l in edlg.findChildren(QLabel)),
+           QApplication.clipboard().text()[:40])
+        [b for b in edlg.findChildren(Btn) if b.text() == "另存为 .json"][0].click()
+        QApplication.processEvents()
+        saved = ""
+        try:
+            saved = open(save_json, encoding="utf-8").read()
+        except OSError:
+            pass
+        ck("g5 utExport 另存为：假对话框选路径 → .json 落盘内容与全文一致，回显已保存到",
+           saved == EXPORT_TEXT
+           and any(l.text().startswith("已保存到 ") for l in edlg.findChildren(QLabel)),
+           "saved=%r" % saved[:40])
+
+        # utImport：空文本护栏 → 文件读入 → 真发（overwrite + skipped 回显 + 清单卡联动）
+        mode["ok"] = True
+        exec_dlgs.clear()
+        calls.clear()
+        _aid(tp, "utImport").click()
+        _wait(lambda: exec_dlgs and exec_dlgs[-1].windowTitle().startswith("导入工具"))
+        dlg1 = exec_dlgs[-1]
+        res1 = [l for l in dlg1.findChildren(QLabel) if l.text() == "先选文件、或把内容贴进来"]
+        ck("g5 utImport 空文本护栏：直接点导入 → 提示先选文件/贴内容，不发请求",
+           bool(res1) and not _posts("/api/tools/import"),
+           str([l.text() for l in dlg1.findChildren(QLabel)]))
+
+        mode["ok"] = False
+        exec_dlgs.clear()
+        _aid(tp, "utImport").click()
+        QApplication.processEvents()
+        dlg2 = exec_dlgs[-1]
+        ta2 = dlg2.findChildren(QPlainTextEdit)[0]
+        res2 = [l for l in dlg2.findChildren(QLabel) if not l.text()][0]
+        [b for b in dlg2.findChildren(Btn) if b.text() == "选 .json 文件…"][0].click()
+        QApplication.processEvents()
+        ck("g5 utImport 文件读入：假对话框选 .json → textarea = 文件内容，回显已读入+字符数",
+           ta2.toPlainText() == DOC_JSON and "已读入 " in res2.text() and "字符" in res2.text(),
+           "ta=%r res=%r" % (ta2.toPlainText()[:30], res2.text()))
+        [cb for cb in dlg2.findChildren(QCheckBox) if cb.text() == "覆盖同名工具"][0].setChecked(True)
+        ut_state["n2"] = True # 导入完成后清单卡钩子重载时应拿到第二个工具
+        calls.clear()
+        dlg2.btn_ok.click()
+        _wait(lambda: _has_post("/api/tools/import"))
+        _wait(lambda: "新增：weather" in res2.text())
+        imp_posts = _posts("/api/tools/import")
+        imp_body = imp_posts[-1] if imp_posts else {}
+        _wait(lambda: any(cb.text() == "translate" for cb in tp.findChildren(QCheckBox)),
+              timeout=8.0) # 钩子重载清单卡 → 新工具行出现
+        ck("g5 utImport 真发：POST {text, overwrite:true}，回显 新增/跳过（带 fix），go 恢复，清单卡联动刷新",
+           imp_body == {"text": DOC_JSON, "overwrite": True}
+           and "新增：weather" in res2.text() and "跳过 old_tool" in res2.text()
+           and "同名工具已存在" in res2.text()
+           and dlg2.btn_ok.text() == "导入"
+           and any(cb.text() == "translate" for cb in tp.findChildren(QCheckBox)),
+           "body=%s res=%r" % (_json.dumps(imp_body, ensure_ascii=False)[:80], res2.text()))
+
+        calls.clear()
+        _aid(tp, "utReload").click()
+        note_ur = _aid(tp, "utReload").property("c8_note")
+        _wait(lambda: "清单已重扫" in note_ur.text())
+        ck("g5 utReload：GET /api/tools/reload，回显数量与问题数并指路面板",
+           any("/api/tools/reload" in c for c in calls)
+           and "清单已重扫：2 个工具，1 条问题（看面板）" in note_ur.text(),
+           note_ur.text())
+        _aid(tp, "utReload").click() # 二连点验证清单卡不叠行
+        _wait(lambda: "清单已重扫：2 个工具，1 条问题（看面板）" in note_ur.text())
+        for _ in range(25):
+            QApplication.processEvents()
+            _time.sleep(0.02)
+        wcs = [cb for cb in tp.findChildren(QCheckBox) if cb.text() == "weather"]
+        tcs = [cb for cb in tp.findChildren(QCheckBox) if cb.text() == "translate"]
+        ck("g5 utReload 联动清单卡：重扫两次后工具行各 1 份（先清后建不叠行）",
+           len(wcs) == 1 and len(tcs) == 1, "weather=%d translate=%d" % (len(wcs), len(tcs)))
+
+        # ── media 页：irGuide / fsAdd ──
+        wrap_d = panels_qt.build_panel(t, "media")
+        dp = wrap_d.widget()
+        dp.show()
+        QApplication.processEvents()
+        _guide_case(dp, "irGuide", "image")
+        _guide_case(dp, "vsGuide", "voice")
+        ck("g5 vsGuide 弹窗：可复制安装命令行（pip install pilk）在场（voice 键的 copy）",
+           any(l.text() == "pip install pilk" for l in exec_dlgs[-1].findChildren(QLabel)),
+           str([l.text() for l in exec_dlgs[-1].findChildren(QLabel)])[:120])
+
+        fs_w = _roww(dp, lambda r: r.kind == "text" and r.label == "可搜目录")
+        fs_w.setText("")
+        calls.clear()
+        _aid(dp, "fsAdd").click()
+        note_fa = _aid(dp, "fsAdd").property("c8_note")
+        QApplication.processEvents()
+        ck("g5 fsAdd 空目录护栏：warn 提示先填目录，不发请求",
+           "先填一个目录" in note_fa.text() and not _posts("/api/file_search/add"),
+           note_fa.text())
+        fs_w.setText("D:/下载")
+        _aid(dp, "fsAdd").click()
+        _wait(lambda: "目录已加入" in note_fa.text())
+        ck("g5 fsAdd 真发：POST {dir} → 回显服务端 note，完成后清空输入行",
+           any(b.get("dir") == "D:/下载" for b in _posts("/api/file_search/add"))
+           and "目录已加入，共 12 个文件可搜" in note_fa.text() and fs_w.text() == "",
+           note_fa.text() + " fs=%r" % fs_w.text())
+
+        # ── tts 页 / videogen 页：引导弹窗 ──
+        wrap_s = panels_qt.build_panel(t, "tts")
+        sp = wrap_s.widget()
+        sp.show()
+        QApplication.processEvents()
+        _guide_case(sp, "ttsGuide", "tts")
+        ck("g5 ttsGuide 弹窗：可复制模板行 = web tts copy 原文（动态取自 GUIDES，不复制进 Qt）",
+           guides["tts"]["copy"] and any(l.text() == guides["tts"]["copy"][0][1]
+                                         for l in exec_dlgs[-1].findChildren(QLabel)),
+           str(guides["tts"]["copy"]))
+
+        wrap_v = panels_qt.build_panel(t, "videogen")
+        vp2 = wrap_v.widget()
+        vp2.show()
+        QApplication.processEvents()
+        _guide_case(vp2, "vgGuide", "video")
+
+        # ── wavefx 页：收集 binds 落盘 ──
+        wrap_f = panels_qt.build_panel(t, "wavefx")
+        fp = wrap_f.widget()
+        fp.show()
+        QApplication.processEvents()
+        sc_w = _roww(fp, lambda r: r.cfg == "ui.wave_fx.scale")
+        sp_w = _roww(fp, lambda r: r.cfg == "ui.wave_fx.speed")
+        sc_w.setText("17")
+        sp_w.setText("3.5")
+        patch_calls.clear()
+        _aid(fp, "wavefxApply").click()
+        note_wf = _aid(fp, "wavefxApply").property("c8_note")
+        _wait(lambda: "水光波纹已应用" in note_wf.text())
+        p0 = patch_calls[0] if patch_calls else {}
+        ck("g5 wavefxApply：收集本页 ui.wave_fx.* 全部 9 行 → write_patch flat 点路径（scale=17 speed=3.5）",
+           len(patch_calls) == 1 and len(p0) == 9
+           and all(k.startswith("ui.wave_fx.") for k in p0)
+           and p0.get("ui.wave_fx.scale") == 17 and p0.get("ui.wave_fx.speed") == 3.5
+           and isinstance(p0.get("ui.wave_fx.enabled"), bool)
+           and "水光波纹已应用" in note_wf.text(),
+           str(p0) + " note=" + note_wf.text())
+    finally:
+        QFileDialog.getOpenFileName = _orig_gofn
+        QFileDialog.getSaveFileName = _orig_gsf
+        QDesktopServices.openUrl = _orig_open
+        config_io.write_patch = _orig_wpatch
+        agent_bridge.current_url = _orig_url
+        QDialog.exec = _orig_exec
+        srv.shutdown()
+        for f in (open_json, save_json):
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+
+
 def main() -> int:
     for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
                t_visual, t_badges, t_status_chain, t_bot_controls, t_window_chrome, t_dpi_motion,
                t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch, t_bootstrap32, t_ocr9,
                t_c10, t_c13, t_hotfix1, t_hotfix2, t_catmgr, t_medialocal, t_commfb,
-               t_veradv):
+               t_veradv, t_g5):
         try:
             fn()
         except Exception as e: # noqa: BLE001

@@ -3113,6 +3113,7 @@ def _tools_utlist_appendix(t: Tokens, page: QWidget) -> None:
     card.body.addWidget(ut_stat)
     ut_prob = desc(t, "")
     ut_prob.setWordWrap(True)
+    ut_prob.setObjectName("utProblemsQt") # 「看问题」按钮的滚动锚点
     card.body.addWidget(ut_prob)
     host = QWidget()
     host.setStyleSheet("background:transparent;")
@@ -3137,6 +3138,11 @@ def _tools_utlist_appendix(t: Tokens, page: QWidget) -> None:
             if not box["done"]:
                 QTimer.singleShot(300, _apply)
                 return
+            while v.count(): # 重扫/导入后重载：先清掉上一轮的动态行
+                it = v.takeAt(0)
+                w = it.widget()
+                if w is not None:
+                    w.deleteLater()
             ut = box.get("ut")
             if not isinstance(ut, dict):
                 ut_stat.setText("清单现状读取失败（后台没连上）")
@@ -3201,9 +3207,12 @@ def _tools_utlist_appendix(t: Tokens, page: QWidget) -> None:
                     rh.addWidget(uh)
                 v.addWidget(roww)
 
+        QTimer.singleShot(300, _apply) # 首次调度：此前只有 done=false 的重试链，_apply 从未启动（清单卡永远「读取中」）
+
     import threading as _th # noqa: PLC0415
     import urllib.parse as _up # noqa: PLC0415
 
+    page._ut_reload = _load # 「重新加载清单」/「导入」完成后重载本卡（panels_custom._act_ut_reload 调）
     QTimer.singleShot(400, _load)
 
 
@@ -4169,6 +4178,626 @@ def _act_cursor_save(btn, note) -> None:
     _post_action_raw(btn, note, _run, "保存中…")
 
 
+# ── 批4第五组：generic 面板剩余动作 ─────────────────────────────────────
+# model keySave/keyReset、wechat 数据目录/官网、tools 导出导入重扫、
+# media 可搜目录、wavefx 应用、应用内说明弹窗（GUIDES）。全部对齐 web onclick。
+
+
+def _js_unescape(s: str) -> str:
+    """JS 单引号字符串字面量 → 原文（\\n 换行、\\' 引号、\\\\ 反斜杠等）。"""
+    import re as _re # noqa: PLC0415
+
+    def _sub(m) -> str:
+        c = m.group(1)
+        return {"n": "\n", "t": "\t", "r": "\r"}.get(c, c)
+
+    return _re.sub(r"\\(.)", _sub, s, flags=_re.S)
+
+
+_GUIDES_CACHE: dict | None = None
+
+
+def _js_array_span(blk: str, name: str) -> str:
+    """取 `name: [ ... ]` 括号内原文 —— 引号感知的配对扫描
+    （模板串里含 `"],` 这类序列，正则非贪婪会提前截断）。"""
+    i = blk.find(name + ": [")
+    if i < 0:
+        return ""
+    j = i + len(name) + 3 # 跳过 "name: ["（开括号已消费，depth 从 1 起算）
+    depth = 1
+    ins = False
+    k = j
+    while k < len(blk):
+        ch = blk[k]
+        if ins:
+            if ch == "\\":
+                k += 2
+                continue
+            if ch == "'":
+                ins = False
+        elif ch == "'":
+            ins = True
+        elif ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth -= 1
+            if depth == 0:
+                return blk[j:k]
+        k += 1
+    return ""
+
+
+def _web_guides() -> dict:
+    """解析 console_html.py 的 GUIDES 对象（web 应用内引导真值）。
+
+    文本以 web 为唯一源、运行时解析，不往 Qt 复制一份——web 改了引导词
+    这里自动跟。解析失败降级为空 dict（按钮如实提示「没有这条引导」）。
+    """
+    global _GUIDES_CACHE
+    if _GUIDES_CACHE is not None:
+        return _GUIDES_CACHE
+    import re as _re # noqa: PLC0415
+
+    out: dict = {}
+    try:
+        txt = Path(sec_meta.WEB_PATH).read_text(encoding="utf-8")
+        i = txt.find("const GUIDES = ")
+        j = txt.find("\n};", i)
+        seg = txt[i:j] if 0 <= i < j else ""
+        marks = [(m.group(1), m.start()) for m in _re.finditer(r"\n  (\w+): \{", seg)]
+        for n, (k, s) in enumerate(marks):
+            blk = seg[s:marks[n + 1][1] if n + 1 < len(marks) else len(seg)]
+            g: dict = {"title": "", "intro": "", "steps": [], "copy": []}
+            m = _re.search(r"title: '((?:[^'\\]|\\.)*)'", blk)
+            if m:
+                g["title"] = _js_unescape(m.group(1))
+            m = _re.search(r"intro: '((?:[^'\\]|\\.)*)'", blk)
+            if m:
+                g["intro"] = _js_unescape(m.group(1))
+            sspan = _js_array_span(blk, "steps")
+            if sspan:
+                g["steps"] = [_js_unescape(x)
+                              for x in _re.findall(r"'((?:[^'\\]|\\.)*)'", sspan)]
+            cspan = _js_array_span(blk, "copy")
+            if cspan:
+                labels = _re.findall(r"label: '((?:[^'\\]|\\.)*)'", cspan)
+                texts = _re.findall(r"text: '((?:[^'\\]|\\.)*)'", cspan)
+                g["copy"] = [(_js_unescape(a), _js_unescape(b)) for a, b in zip(labels, texts)]
+            out[k] = g
+    except Exception: # noqa: BLE001
+        out = {}
+    _GUIDES_CACHE = out
+    return out
+
+
+_GUIDE_KEY_OF = {
+    "utGuide": "tools", "utBarGuide": "tools", "ttsGuide": "tts", "igGuide": "imggen",
+    "vgGuide": "video", "vsGuide": "voice", "irGuide": "image", "fsGuide": "file",
+}
+
+
+def _card_dialog(t: Tokens, btn, title: str, width: int = 640):
+    """confirm.ConfirmDialog 同款壳（无边框+半透明+卡片+模态）的通用构造。
+
+    供说明/导入/导出等交互弹窗复用；返回 (dlg, 内容布局)。调用方负责 exec()。
+    """
+    from PySide6.QtWidgets import QDialog # noqa: PLC0415
+
+    dlg = QDialog(btn.window())
+    dlg.setWindowTitle(title)
+    dlg.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
+    dlg.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+    dlg.setModal(True)
+    outer = QVBoxLayout(dlg)
+    outer.setContentsMargins(0, 0, 0, 0)
+    card = QFrame()
+    card.setObjectName("C8CardDlg")
+    card.setStyleSheet(
+        f"#C8CardDlg{{background:{t.card};border:1px solid {t.bd};"
+        f"border-radius:{t.radius_card + 2}px;}}")
+    outer.addWidget(card)
+    v = QVBoxLayout(card)
+    v.setContentsMargins(24, 22, 24, 18)
+    v.setSpacing(12)
+    head = QLabel(title)
+    head.setFont(qfont(t, 16, 600))
+    head.setWordWrap(True)
+    head.setStyleSheet(f"color:{t.tx};background:transparent;")
+    v.addWidget(head)
+    dlg.resize(width, 200)
+    return dlg, v
+
+
+def _dlg_note(t: Tokens) -> QLabel:
+    """弹窗内的次要说明/结果行（灰字，可换行）。"""
+    lb = QLabel("")
+    lb.setFont(qfont(t, t.body_size - 1))
+    lb.setWordWrap(True)
+    lb.setStyleSheet(f"color:{t.tx3};background:transparent;")
+    return lb
+
+
+def _guide_open(key: str, btn, note) -> None:
+    """web openGuide 对齐：说明弹窗（标题/引子/步骤/可复制模板/知道了）。"""
+    t = getattr(btn, "t", None)
+    if t is None:
+        return
+    g = _web_guides().get(key) or {}
+    if not g.get("title"):
+        if note is not None:
+            _c8_say(note, t, "没有这条引导", "warn")
+        return
+    from PySide6.QtWidgets import QApplication # noqa: PLC0415
+
+    dlg, v = _card_dialog(t, btn, g["title"])
+    if g["intro"]:
+        il = QLabel(g["intro"].replace("**", ""))
+        il.setFont(qfont(t, t.body_size))
+        il.setWordWrap(True)
+        il.setStyleSheet(f"color:{t.tx2};background:transparent;")
+        v.addWidget(il)
+    for s in g["steps"]:
+        sl = QLabel("· " + s.replace("**", ""))
+        sl.setFont(qfont(t, t.body_size))
+        sl.setWordWrap(True)
+        sl.setStyleSheet(f"color:{t.tx2};background:transparent;")
+        v.addWidget(sl)
+    for label, text in g["copy"]:
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        code = QLabel(text)
+        code.setFont(qfont(t, t.body_size - 1))
+        code.setWordWrap(True)
+        code.setStyleSheet(
+            f"color:{t.tx};background:rgba(127,127,127,40);"
+            "border-radius:8px;padding:8px 10px;")
+        row.addWidget(code, 1)
+        cp = Btn("复制", t, role="ghost")
+
+        def _copy(checked=False, _tx=text, _b=cp) -> None:
+            QApplication.clipboard().setText(_tx)
+            _b.setText("已复制")
+            QTimer.singleShot(1200, lambda: _b.setText("复制"))
+
+        cp.clicked.connect(_copy)
+        row.addWidget(cp)
+        v.addLayout(row)
+    rowh = QHBoxLayout()
+    rowh.addStretch(1)
+    okb = Btn("知道了", t, role="primary")
+    okb.clicked.connect(dlg.accept)
+    dlg.btn_ok = okb # 测试钩子：与 ConfirmDialog 同名
+    rowh.addWidget(okb)
+    v.addLayout(rowh)
+    dlg.exec()
+
+
+def _act_guide(key: str):
+    """说明按钮 handler 工厂（aid → GUIDES key 绑定）。"""
+    def _h(btn, note) -> None:
+        _guide_open(key, btn, note)
+    return _h
+
+
+def _act_key_save(btn, note) -> None:
+    """web keySave 对齐：只保存 Key 并与当前厂商关联（GET config → 改 → POST 全量），
+    成功后立即 POST /api/test-api 让用户当场看到能不能跑。空值/打码值不保存。"""
+    from agent_bridge import post_json # noqa: PLC0415
+
+    t = getattr(btn, "t", None)
+    if note is None or t is None:
+        return
+    page = _c8_page_of(btn)
+    key_w = _c8_find_row(page, lambda r: r.cfg == "api.api_key")
+    prov_w = _c8_find_row(page, lambda r: r.kind == "select" and "厂商" in r.label)
+    k = (key_w.text() if key_w is not None else "").strip()
+    prov = str(prov_w.currentData() or "") if prov_w is not None else ""
+    if not k or "••••" in k or k.startswith("sk-***"):
+        _c8_say(note, t, "Key 为空或仍是打码值，未保存", "warn")
+        return
+
+    def _run() -> str:
+        cfg = config_io.get_json("/api/config", timeout=10.0)
+        if not isinstance(cfg, dict):
+            raise Exception("读不到当前配置")
+        api = cfg.setdefault("api", {})
+        if not isinstance(api, dict):
+            raise Exception("配置里 api 段不是对象")
+        api["api_key"] = k
+        if prov and prov != "custom":
+            pk = api.setdefault("provider_keys", {})
+            if not isinstance(pk, dict):
+                pk = api["provider_keys"] = {}
+            pk[prov] = k
+        post_json("/api/config", cfg, timeout=20.0)
+        msg = "密钥 已保存（%s）" % (prov or "custom")
+        try:
+            tr = post_json("/api/test-api", {}, timeout=60.0) or {}
+            msg += ("，测试连通成功（%sms）" % tr.get("latency_ms")) if tr.get("ok") \
+                else ("，但测试失败：%s" % (tr.get("error") or "未知原因"))
+        except Exception as e: # noqa: BLE001
+            msg += "，但测试失败：%s" % e
+        return msg
+
+    _post_action_raw(btn, note, _run, "保存中…")
+
+
+def _act_key_reset(btn, note) -> None:
+    """web keyReset 对齐：清空 Key 输入框（纯本地，不发请求）。"""
+    page = _c8_page_of(btn)
+    key_w = _c8_find_row(page, lambda r: r.cfg == "api.api_key")
+    if key_w is not None:
+        key_w.setText("")
+        key_w.setFocus()
+
+
+def _act_wx_dir_probe(btn, note) -> None:
+    """web wxDirProbe 对齐：GET /api/wechat/dir（带当前输入作提示路径）→
+    回显「当前读 + 候选清单」（web renderWechatDir 的文字版，含可用/库文件数）。"""
+    import urllib.parse as _up # noqa: PLC0415
+
+    page = _c8_page_of(btn)
+    dir_w = _c8_find_row(page, lambda r: r.cfg == "wechat.db_dir")
+    p = (dir_w.text() if dir_w is not None else "").strip()
+
+    def _run() -> str:
+        r = config_io.get_json("/api/wechat/dir" + ("?path=" + _up.quote(p) if p else ""),
+                               timeout=30.0) or {}
+        lines = ["已探完，下面列出候选目录"]
+        if r.get("now"):
+            lines.append("当前在读：" + str(r["now"]))
+        cs = r.get("candidates")
+        if isinstance(cs, list):
+            for c in cs[:8]:
+                if not isinstance(c, dict):
+                    continue
+                usable = c.get("usable")
+                if usable is None:
+                    usable = c.get("ok")
+                lines.append("✔ %s，可用，%s 个库文件" % (c.get("path") or "", c.get("dbs") or 0)
+                             if usable else "✘ %s，%s" % (c.get("path") or "", c.get("why") or "不可用"))
+            if len(cs) > 8:
+                lines.append("…共 %d 条候选" % len(cs))
+        return "\n".join(lines)
+
+    _post_action_raw(btn, note, _run, "探测中…（要翻微信目录，可能要几秒）")
+
+
+def _act_wx_dir_save(btn, note) -> None:
+    """web wxDirSave 对齐：POST /api/wechat/dir {path}（空=自动检测），失败说回落。"""
+    from agent_bridge import post_json # noqa: PLC0415
+
+    page = _c8_page_of(btn)
+    dir_w = _c8_find_row(page, lambda r: r.cfg == "wechat.db_dir")
+    p = (dir_w.text() if dir_w is not None else "").strip()
+
+    def _run() -> str:
+        r = post_json("/api/wechat/dir", {"path": p}, timeout=30.0) or {}
+        if r.get("ok") is False:
+            raise Exception("%s%s" % (r.get("error") or "这个目录用不了",
+                                      ("，当前会回落到 %s" % r["fallback"]) if r.get("fallback") else ""))
+        wd = r.get("wechat_dir") if isinstance(r.get("wechat_dir"), dict) else r
+        msg = "已保存，现在读的是：%s" % (wd.get("now") or "自动检测到的目录")
+        if wd.get("hint"):
+            msg += "。" + str(wd["hint"])
+        return msg
+
+    _post_action_raw(btn, note, _run, "保存中…")
+
+
+def _act_wx_open_site(btn, note) -> None:
+    """web wxOpenSite 对齐：系统浏览器打开微信官网（web 的 official_url 来自
+    服务端注入，Qt 用官方固定址，文案同款提醒可手动复制）。"""
+    from PySide6.QtCore import QUrl # noqa: PLC0415
+    from PySide6.QtGui import QDesktopServices # noqa: PLC0415
+
+    t = getattr(btn, "t", None)
+    u = "https://weixin.qq.com/"
+    try:
+        QDesktopServices.openUrl(QUrl(u))
+    except Exception: # noqa: BLE001
+        pass
+    if note is not None and t is not None:
+        _c8_say(note, t, "已尝试打开官网：%s（打不开就手动复制到浏览器）" % u, "ok")
+
+
+def _act_ut_reload(btn, note) -> None:
+    """web utReload 对齐：GET /api/tools/reload 重扫清单 → 回显数量，
+    并触发下方清单卡重载（page._ut_reload 钩子）。"""
+    page = _c8_page_of(btn)
+
+    def _run() -> str:
+        r = config_io.get_json("/api/tools/reload", timeout=30.0) or {}
+        tt = r.get("tools") if isinstance(r.get("tools"), dict) else {}
+        n = len(tt.get("tools") or [])
+        bad = len(tt.get("problems") or [])
+        return "清单已重扫：%d 个工具%s" % (n, ("，%d 条问题（看面板）" % bad) if bad else "")
+
+    def _done() -> None:
+        hook = getattr(page, "_ut_reload", None)
+        if callable(hook):
+            try:
+                hook()
+            except Exception: # noqa: BLE001
+                pass
+
+    _post_action_raw(btn, note, _run, "重扫中…", done=_done)
+
+
+def _act_ut_export(btn, note) -> None:
+    """web utExportDlg 对齐：GET /api/tools/export → 文档弹窗
+    （全文可复制 + 另存为 .json + 关闭）。"""
+    from PySide6.QtWidgets import QApplication, QFileDialog # noqa: PLC0415
+
+    t = getattr(btn, "t", None)
+    if note is None or t is None:
+        return
+    btn.setEnabled(False)
+    _c8_say(note, t, "正在生成导出文档…")
+    box: dict = {"done": False, "r": None, "err": None}
+
+    def _work() -> None:
+        try:
+            box["r"] = config_io.get_json("/api/tools/export", timeout=30.0)
+        except Exception as e: # noqa: BLE001
+            box["err"] = str(e)
+        box["done"] = True
+
+    import threading as _th # noqa: PLC0415
+
+    _th.Thread(target=_work, daemon=True, name="ut-export").start()
+
+    def _apply() -> None:
+        if not box["done"]:
+            QTimer.singleShot(150, _apply)
+            return
+        btn.setEnabled(True)
+        r = box["r"]
+        if box["err"] or not isinstance(r, dict) or not r.get("ok"):
+            _c8_say(note, t, "导出失败：%s" % (box["err"] or (r or {}).get("why")
+                                              or (r or {}).get("error") or "未知原因"), "err")
+            return
+        _c8_say(note, t, "")
+        dlg, v = _card_dialog(t, btn, "导出全部工具")
+        intro = QLabel("这是一份可以直接发给别人的文档：对方在自己的控制台点「导入工具」"
+                       "贴上/选中它，就等于装上了。文档里只有清单本身（地址、白名单、说明、"
+                       "用法、示例），不含你的任何本机信息。")
+        intro.setFont(qfont(t, t.body_size))
+        intro.setWordWrap(True)
+        intro.setStyleSheet(f"color:{t.tx2};background:transparent;")
+        v.addWidget(intro)
+        ta = QPlainTextEdit(str(r.get("text") or ""))
+        ta.setReadOnly(True)
+        ta.setFont(qfont(t, t.body_size - 1))
+        ta.setMinimumHeight(180)
+        v.addWidget(ta)
+        res = _dlg_note(t)
+        v.addWidget(res)
+        rowh = QHBoxLayout()
+        bcopy = Btn("复制文档", t, role="ghost")
+
+        def _copy(checked=False) -> None:
+            QApplication.clipboard().setText(ta.toPlainText())
+            res.setText("已复制到剪贴板")
+
+        bcopy.clicked.connect(_copy)
+        rowh.addWidget(bcopy)
+        bsave = Btn("另存为 .json", t, role="ghost")
+
+        def _save(checked=False) -> None:
+            f, _ = QFileDialog.getSaveFileName(dlg, "另存为", "my-tools.json", "JSON (*.json)")
+            if not f:
+                return
+            try:
+                Path(f).write_text(ta.toPlainText(), encoding="utf-8")
+                res.setText("已保存到 " + f)
+            except Exception as e: # noqa: BLE001
+                res.setText("保存失败：%s" % e)
+
+        bsave.clicked.connect(_save)
+        rowh.addWidget(bsave)
+        rowh.addStretch(1)
+        bclose = Btn("关闭", t, role="primary")
+        bclose.clicked.connect(dlg.accept)
+        dlg.btn_ok = bclose
+        rowh.addWidget(bclose)
+        v.addLayout(rowh)
+        dlg.exec()
+
+    QTimer.singleShot(150, _apply)
+
+
+def _act_ut_import(btn, note) -> None:
+    """web utImportDlg 对齐：选 .json 或贴文 → POST /api/tools/import
+    {text, overwrite} → 新增/替换/跳过逐条回显（导入只写清单，不执行代码）。"""
+    from PySide6.QtWidgets import QFileDialog # noqa: PLC0415
+
+    t = getattr(btn, "t", None)
+    if t is None:
+        return
+    from agent_bridge import post_json # noqa: PLC0415
+
+    dlg, v = _card_dialog(t, btn, "导入工具 ＝ 把一份文档变成插件")
+    intro = QLabel("选一个别人给你的 .json，或把内容贴进下面。导入只做一件事：把清单校验后"
+                   "写进 tools.d/ ——不执行任何代码、不下载任何东西；域名白名单必填、"
+                   "内网/本机地址照旧一律拒。同名工具默认不动它（要替换就勾「覆盖同名」）。")
+    intro.setFont(qfont(t, t.body_size))
+    intro.setWordWrap(True)
+    intro.setStyleSheet(f"color:{t.tx2};background:transparent;")
+    v.addWidget(intro)
+    opt = QCheckBox("覆盖同名工具")
+    opt.setFont(qfont(t, t.body_size))
+    opt.setStyleSheet(f"color:{t.tx2};background:transparent;")
+    v.addWidget(opt)
+    pick = Btn("选 .json 文件…", t, role="ghost")
+    v.addWidget(pick)
+    ta = QPlainTextEdit()
+    ta.setPlaceholderText("也可以把文档内容粘在这里…")
+    ta.setFont(qfont(t, t.body_size - 1))
+    ta.setMinimumHeight(120)
+    v.addWidget(ta)
+    res = _dlg_note(t)
+    v.addWidget(res)
+
+    def _pick(checked=False) -> None:
+        f, _ = QFileDialog.getOpenFileName(dlg, "选择工具文档", "", "JSON (*.json)")
+        if not f:
+            return
+        try:
+            txt = Path(f).read_text(encoding="utf-8")
+        except Exception as e: # noqa: BLE001
+            res.setText("读文件失败：%s" % e)
+            return
+        ta.setPlainText(txt)
+        res.setText("已读入 %s（%d 字符），按「导入」写入。" % (Path(f).name, len(txt)))
+
+    pick.clicked.connect(_pick)
+
+    def _lines(r: dict) -> str:
+        out: list = []
+        if r.get("error"):
+            out.append("没成功：" + str(r["error"]))
+        if r.get("added"):
+            out.append("新增：" + "、".join(str(x) for x in r["added"]))
+        if r.get("replaced"):
+            out.append("替换：" + "、".join(str(x) for x in r["replaced"]))
+        for s in r.get("skipped") or []:
+            if isinstance(s, dict):
+                out.append("跳过 %s：%s%s" % (s.get("name") or "", s.get("why") or "",
+                                             ("　→ %s" % s["fix"]) if s.get("fix") else ""))
+        if r.get("note"):
+            out.append(str(r["note"]))
+        return "\n".join(out) or "没有可导入的内容"
+
+    go = Btn("导入", t, role="primary")
+    rowh = QHBoxLayout()
+    rowh.addWidget(go)
+    rowh.addStretch(1)
+    bclose = Btn("关闭", t, role="ghost")
+    bclose.clicked.connect(dlg.accept)
+    rowh.addWidget(bclose)
+    v.addLayout(rowh)
+
+    def _go(checked=False) -> None:
+        text = ta.toPlainText()
+        if not text.strip():
+            res.setText("先选文件、或把内容贴进来")
+            return
+        go.setEnabled(False)
+        go.setText("导入中…")
+        box: dict = {"done": False, "r": None, "err": None}
+
+        def _work() -> None:
+            try:
+                box["r"] = post_json("/api/tools/import",
+                                     {"text": text, "overwrite": bool(opt.isChecked())},
+                                     timeout=60.0)
+            except Exception as e: # noqa: BLE001
+                box["err"] = str(e)
+            box["done"] = True
+
+        import threading as _th # noqa: PLC0415
+
+        _th.Thread(target=_work, daemon=True, name="ut-import").start()
+
+        def _apply() -> None:
+            if not box["done"]:
+                QTimer.singleShot(150, _apply)
+                return
+            go.setEnabled(True)
+            go.setText("导入")
+            if box["err"]:
+                res.setText("导入失败：" + box["err"])
+                return
+            r = box["r"] if isinstance(box["r"], dict) else {}
+            res.setText(_lines(r))
+            page = _c8_page_of(btn)
+            hook = getattr(page, "_ut_reload", None)
+            if callable(hook):
+                try:
+                    QTimer.singleShot(0, hook)
+                except Exception: # noqa: BLE001
+                    pass
+
+        QTimer.singleShot(150, _apply)
+
+    go.clicked.connect(_go)
+    dlg.btn_ok = go # 测试钩子
+    dlg.exec()
+
+
+def _act_fs_add(btn, note) -> None:
+    """web fsAdd 对齐：读「可搜目录」行 → POST /api/file_search/add {dir} → 清空输入。"""
+    from agent_bridge import post_json # noqa: PLC0415
+
+    t = getattr(btn, "t", None)
+    if note is None or t is None:
+        return
+    page = _c8_page_of(btn)
+    dir_w = _c8_find_row(page, lambda r: r.kind == "text" and r.label == "可搜目录")
+    d = (dir_w.text() if dir_w is not None else "").strip()
+    if not d:
+        _c8_say(note, t, "先填一个目录，比如 D:\\下载", "warn")
+        return
+
+    def _run() -> str:
+        r = post_json("/api/file_search/add", {"dir": d}, timeout=15.0) or {}
+        return str(r.get("note") or "已加入目录")
+
+    def _done() -> None:
+        if dir_w is not None:
+            dir_w.clear()
+
+    _post_action_raw(btn, note, _run, "加入中…", done=_done)
+
+
+def _act_wavefx_apply(btn, note) -> None:
+    """web wavefxApply 对齐：收集本页 ui.wave_fx.* 行 → 落盘 → 即时生效。"""
+    from panels_qt import _SKIP, _ctrl_value # noqa: PLC0415
+
+    t = getattr(btn, "t", None)
+    if note is None or t is None:
+        return
+    page = _c8_page_of(btn)
+    patch: dict = {}
+    for r, w in (getattr(page, "_c8_binds", None) or []):
+        if (r.cfg or "").startswith("ui.wave_fx."):
+            val = _ctrl_value(r, w)
+            if val is not _SKIP:
+                patch[r.cfg] = val
+    if not patch:
+        _c8_say(note, t, "没有可应用的参数", "warn")
+        return
+
+    def _run() -> str:
+        ok, msg = config_io.write_patch(patch)
+        if not ok:
+            raise Exception(msg)
+        return "水光波纹已应用"
+
+    _post_action_raw(btn, note, _run, "应用中…")
+
+
+def _act_ut_problems(btn, note) -> None:
+    """web utBarProblems 对齐（scrollIntoView utProblems）：滚动到问题清单。"""
+    from PySide6.QtWidgets import QScrollArea # noqa: PLC0415
+
+    t = getattr(btn, "t", None)
+    page = _c8_page_of(btn)
+    prob = page.findChild(QLabel, "utProblemsQt") if page is not None else None
+    if note is None or t is None:
+        return
+    if prob is None:
+        _c8_say(note, t, "问题清单还没生成（等下方卡片加载）", "warn")
+        return
+    p = prob.parentWidget()
+    while p is not None and not isinstance(p, QScrollArea):
+        p = p.parentWidget()
+    if isinstance(p, QScrollArea):
+        p.ensureWidgetVisible(prob, 0, 60)
+    _c8_say(note, t, "问题清单在下方卡片里（已滚动到可见）", "ok")
+
+
 ACT_CUSTOM = {
     "fbSubmit": (_fb_submit,
                  "真接后端：/api/feedback/submit（校验内容/邮箱；被限流时不清空输入框）"),
@@ -4198,6 +4827,45 @@ ACT_CUSTOM = {
                     "真接后端：/api/cursor/reset（清自定义残留文件并写回默认配置）"),
     "cursorSaveBtn": (_act_cursor_save,
                       "真接后端：/api/cursor/upload（选图后保存并生效）"),
+    # ── 批4第五组：generic 面板剩余动作 ──
+    "keySave": (_act_key_save,
+                "真接后端：保存 Key 并与当前厂商关联，保存后立即测试连通（空值/打码值不保存）"),
+    "keyReset": (_act_key_reset,
+                 "清空 Key 输入框（不发请求，填好新 Key 再点「保存 Key」）"),
+    "wxDirProbe": (_act_wx_dir_probe,
+                   "真接后端：/api/wechat/dir 自动探测微信数据目录，列出候选与库文件数"),
+    "wxDirSave": (_act_wx_dir_save,
+                  "真接后端：/api/wechat/dir 保存当前填的目录并重探（失败会说明回落目录）"),
+    "wxOpenSite": (_act_wx_open_site,
+                   "打开微信官网 weixin.qq.com（系统浏览器）"),
+    "utExport": (_act_ut_export,
+                 "真接后端：/api/tools/export 生成可分享的工具清单文档（可复制/另存 .json）"),
+    "utImport": (_act_ut_import,
+                 "真接后端：/api/tools/import 把工具文档校验后写进 tools.d/（不执行任何代码）"),
+    "utReload": (_act_ut_reload,
+                 "真接后端：/api/tools/reload 重扫清单并刷新下方卡片"),
+    "utBarProblems": (_act_ut_problems,
+                      "滚动到下方问题清单（哪些工具没装上、为什么）"),
+    "fsAdd": (_act_fs_add,
+              "真接后端：/api/file_search/add 把填的目录加入可搜目录"),
+    "wavefxApply": (_act_wavefx_apply,
+                    "保存本页水光波纹参数并即时生效"),
+    "irGuide": (_act_guide(_GUIDE_KEY_OF["irGuide"]),
+                "打开应用内引导：怎么放图"),
+    "vsGuide": (_act_guide(_GUIDE_KEY_OF["vsGuide"]),
+                "打开应用内引导：语音链路怎么用"),
+    "fsGuide": (_act_guide(_GUIDE_KEY_OF["fsGuide"]),
+                "打开应用内引导：怎么让机器人发文件"),
+    "ttsGuide": (_act_guide(_GUIDE_KEY_OF["ttsGuide"]),
+                "打开应用内引导：为什么发出去是文件、不是语音条"),
+    "igGuide": (_act_guide(_GUIDE_KEY_OF["igGuide"]),
+                "打开应用内引导：怎么接一个生图后端"),
+    "vgGuide": (_act_guide(_GUIDE_KEY_OF["vgGuide"]),
+                "打开应用内引导：怎么接视频后端"),
+    "utGuide": (_act_guide(_GUIDE_KEY_OF["utGuide"]),
+                "打开应用内引导：怎么加工具 / 自己写一个"),
+    "utBarGuide": (_act_guide(_GUIDE_KEY_OF["utBarGuide"]),
+                   "打开应用内引导：怎么加工具"),
 }
 
 
