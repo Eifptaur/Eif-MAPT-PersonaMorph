@@ -14,8 +14,9 @@ window.__dshWhaleWidget = true
 //       contenteditable 反而是 false —— 只认前两种会让挂件在新版 DSH 上**完全不初始化**，
 //       见 issue #123）。检测到才继续，否则不碰 DOM、不注册监听。
 function dshwIsChatRoot(r) {
+  if (!r) r = document.body        // ← 群相移植补丁 v1（唯一改动；必须在空守卫**之前**——
+                                   //    0.3.13 起首行是 `!r → return false`，补丁放后面就是死代码）
   if (!r || !r.querySelector) return false
-  if (!r) r = document.body        // ← 群相移植补丁 v1（唯一改动）
   return !!(
     r.querySelector('textarea') ||
     r.querySelector('[contenteditable="true"]') ||

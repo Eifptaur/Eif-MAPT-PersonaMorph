@@ -396,41 +396,48 @@ class WebUI:
     # ── 小鲸鱼挂件路由（/dsh-whale/*，实现与原版插件一致的接口）───────────
 
     def _whale_get(self, handler, path: str, query: str):
-        """GET /dsh-whale/* 分发。handler 是当前 HTTP Handler（带 _json/_bytes）。"""
+        """GET /dsh-whale/* 分发。handler 是当前 HTTP Handler（带 _json/_bytes）。
+
+        ⛔ 所有响应都带 `cors=True`：挂件页是 NavigateToString 内联页（**不透明
+        来源**），widget.js 里的 fetch/图片请求全部跨源打到本端口——没有
+        `Access-Control-Allow-Origin: *` 就被浏览器整体拦掉，表现为"本体出现、
+        余额/音效/角色图全挂"。口令已在 URL 里鉴权，放行 `*` 不放大暴露面。
+        """
         whale = self.whale
         if whale is None:
-            return handler._json({"error": "not found"}, 404)
+            return handler._json({"error": "not found"}, 404, cors=True)
         if path == "/dsh-whale/balance.json":
             try:
-                handler._json(whale.balance_payload())
+                handler._json(whale.balance_payload(), cors=True)
             except Exception as e:
-                handler._json({"ok": False, "error": str(e)[:200]})
+                handler._json({"ok": False, "error": str(e)[:200]}, cors=True)
         elif path == "/dsh-whale/size.json":
-            handler._json(whale.size_payload())
+            handler._json(whale.size_payload(), cors=True)
         elif path == "/dsh-whale/last-turn.json":
-            handler._json(whale.last_turn_payload())
+            handler._json(whale.last_turn_payload(), cors=True)
         elif path == "/dsh-whale/image.png":
-            handler._bytes(whale.asset_bytes("DSniang1.png") or b"", "image/png")
+            handler._bytes(whale.asset_bytes("DSniang1.png") or b"", "image/png", cors=True)
         elif path == "/dsh-whale/rua.gif":
-            handler._bytes(whale.asset_bytes("rua.gif") or b"", "image/gif")
+            handler._bytes(whale.asset_bytes("rua.gif") or b"", "image/gif", cors=True)
         elif path in ("/dsh-whale/sound/press.mp3", "/dsh-whale/sound/release.mp3"):
             kind = "press" if path.endswith("press.mp3") else "release"
             sound_set = (parse_qs(query).get("set") or [""])[0]
             data = whale.sound_bytes(kind, sound_set)
-            handler._bytes(data or b"", "audio/mpeg")
+            handler._bytes(data or b"", "audio/mpeg", cors=True)
         elif path == "/dsh-whale/widget.js":
-            handler._bytes(self._whale_js_injected(), "application/javascript; charset=utf-8")
+            handler._bytes(self._whale_js_injected(), "application/javascript; charset=utf-8",
+                           cors=True)
         elif path in ("/dsh-whale/bubble.json", "/dsh-whale/audio.json"):
             # 上游 0.3.x 新增：泡泡 / 音频配置（纯配置，本移植版能落地 ⇒ 真存真读）
             try:
-                handler._json(whale.cfg_payload(os.path.basename(path)))
+                handler._json(whale.cfg_payload(os.path.basename(path)), cors=True)
             except Exception as e:
-                handler._json({"ok": False, "error": str(e)[:200]})
+                handler._json({"ok": False, "error": str(e)[:200]}, cors=True)
         elif path in tuple("/dsh-whale/" + n for n in whale._UNSUPPORTED):
             # 上游 0.3.x 有、本移植版没有的：**如实说不支持**（客户端会保留默认值 ⇒ 干净降级）
-            handler._json(whale.unsupported(path.rsplit("/", 1)[-1]))
+            handler._json(whale.unsupported(path.rsplit("/", 1)[-1]), cors=True)
         else:
-            handler._json({"error": "not found"}, 404)
+            handler._json({"error": "not found"}, 404, cors=True)
 
     def _whale_js_injected(self) -> bytes:
         """返回注入口令后的挂件脚本字节（带缓存）。"""
@@ -635,12 +642,14 @@ class WebUI:
             def log_message(self, fmt, *args):
                 pass # 静默，避免刷屏
 
-            def _bytes(self, body, ctype="application/octet-stream", code=200):
+            def _bytes(self, body, ctype="application/octet-stream", code=200, cors=False):
                 if not body:
                     body = b""
                 self.send_response(code)
                 self.send_header("Content-Type", ctype)
                 self.send_header("Content-Length", str(len(body)))
+                if cors: # /dsh-whale/* 会被不透明来源的挂件页请求（需 CORS 放行）
+                    self.send_header("Access-Control-Allow-Origin", "*")
                 self.send_header("Cache-Control", "no-store")
                 self.end_headers()
                 self.wfile.write(body)
@@ -694,11 +703,13 @@ class WebUI:
                 except Exception:
                     pass
 
-            def _json(self, obj, code=200):
+            def _json(self, obj, code=200, cors=False):
                 body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
                 self.send_response(code)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
+                if cors: # /dsh-whale/* 会被不透明来源的挂件页 fetch（需 CORS 放行）
+                    self.send_header("Access-Control-Allow-Origin", "*")
                 if code == 200:
                     self._set_session_cookie() # 成功响应才种 cookie（在状态行/Server/Date 之后）
                 self.end_headers()
@@ -1009,6 +1020,21 @@ class WebUI:
                     return self._json({"error": "unauthorized"}, 401)
                 self._handle_body_request()
 
+            def do_OPTIONS(self):
+                """CORS 预检（仅 /dsh-whale/*）—— 挂件页是不透明来源，widget 的
+                POST/PUT 带 JSON 体必触发预检；不答 204 就整批请求被拦。
+                预检本身不带口令（浏览器规范），真正鉴权仍在各真实请求上。"""
+                path = urlparse(self.path).path
+                if not path.startswith("/dsh-whale/"):
+                    return self._json({"error": "not found"}, 404)
+                self.send_response(204)
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
+                self.send_header("Access-Control-Allow-Headers", "Content-Type")
+                self.send_header("Access-Control-Max-Age", "600")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
             def do_PUT(self):
                 # 小鲸鱼挂件前端用 PUT 保存配置（fetch SIZE_URL, {method:'PUT'}）
                 if not self._auth_ok():
@@ -1061,21 +1087,21 @@ class WebUI:
                 if path == "/dsh-whale/size.json":
                     # 小鲸鱼挂件配置保存（前端 PUT）
                     if parent.whale is None:
-                        self._json({"error": "not found"}, 404)
+                        self._json({"error": "not found"}, 404, cors=True)
                     else:
                         try:
-                            self._json(parent.whale.save_size(data))
+                            self._json(parent.whale.save_size(data), cors=True)
                         except Exception as e:
-                            self._json({"ok": False, "error": str(e)}, 500)
+                            self._json({"ok": False, "error": str(e)}, 500, cors=True)
                 elif path in ("/dsh-whale/bubble.json", "/dsh-whale/audio.json"):
                     # 上游 0.3.x 新增：泡泡 / 音频配置保存（纯配置 ⇒ 本移植版真存）
                     if parent.whale is None:
-                        self._json({"error": "not found"}, 404)
+                        self._json({"error": "not found"}, 404, cors=True)
                     else:
                         try:
-                            self._json(parent.whale.save_cfg(os.path.basename(path), data))
+                            self._json(parent.whale.save_cfg(os.path.basename(path), data), cors=True)
                         except Exception as e:
-                            self._json({"ok": False, "error": str(e)}, 500)
+                            self._json({"ok": False, "error": str(e)}, 500, cors=True)
                 # 原：elif path == "/api/test-api": ⇒ 已搬到 agent/routes.py → _rapi_test_api（/api/test-api）
                 # 原：elif path == "/api/poke-test": ⇒ 已搬到 agent/routes.py → _rapi_poke_test（/api/poke-test）
                 # 原：elif path == "/api/verifiers": ⇒ 已搬到 agent/routes.py → _rapi_verifiers（/api/verifiers）

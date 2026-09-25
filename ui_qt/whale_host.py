@@ -479,6 +479,11 @@ def build_host_html(port: int, token: str) -> str:
     base = "http://127.0.0.1:%d" % port
     return (
         "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+        # ⛔ **必须有 <base>**：本页是 NavigateToString 内联页（不透明来源），
+        # widget.js 里的相对请求（/dsh-whale/image.png、role-image.png、音效…）
+        # 没有可解析的基准 ⇒ 全部落空。<base> 把基准指到控制台端口，相对路径
+        # 与 web 控制台页面完全同解。
+        "<base href='" + base + "/'>"
         "<style>html,body{margin:0;padding:0;background:transparent;"
         "overflow:hidden;width:100%;height:100%}"
         "#dshw-composer-seat{position:fixed;left:-9999px;top:-9999px;"
