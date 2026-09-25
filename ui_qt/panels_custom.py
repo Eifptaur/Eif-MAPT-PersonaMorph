@@ -51,7 +51,7 @@ import config_io
 import sec_meta
 from confirm import ConfirmDialog
 from stylekit_qt import SHAPE_CIRCLE, Tokens, pill, qfont, rgba, status_colors
-from widgets import Badge, Btn, Card, ElideLabel, Field, FlowBox, Switch, desc, h2
+from widgets import Badge, Btn, Card, ElideLabel, Field, FlowBox, Switch, desc, h2, row_label
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[0]
@@ -219,8 +219,7 @@ def overview_panel(t: Tokens) -> QWidget:
                    "openrouter": "OpenRouter"}
     fc_box: dict = {"prices": None}
     f_row1 = QHBoxLayout()
-    lb_v = desc(t, "厂商")
-    lb_v.setMinimumWidth(120)
+    lb_v = row_label(t, "厂商")
     fc_vendor = QComboBox()
     fc_vendor.addItem("加载中…", "")
     fc_model = QComboBox()
@@ -235,8 +234,7 @@ def overview_panel(t: Tokens) -> QWidget:
     for key, label, dft in (("msgs", "每日消息数", "200"), ("tin", "每消息输入用量", "800"),
                             ("tout", "每消息输出用量", "800")):
         r = QHBoxLayout()
-        lb = desc(t, label)
-        lb.setMinimumWidth(120)
+        lb = row_label(t, label)
         e = QLineEdit(dft)
         e.setMaximumWidth(140)
         f_inputs[key] = e
@@ -245,8 +243,7 @@ def overview_panel(t: Tokens) -> QWidget:
         r.addStretch(1)
         card_f.body.addLayout(r)
     f_row2 = QHBoxLayout()
-    lb_p = desc(t, "时段")
-    lb_p.setMinimumWidth(120)
+    lb_p = row_label(t, "时段")
     fc_peak = QComboBox()
     fc_peak.addItem("空闲（夜间/周末）", "0")
     fc_peak.addItem("高峰（工作日 9-12 / 14-18）", "1")
@@ -1204,8 +1201,7 @@ def check_panel(t: Tokens) -> QWidget:
     card_pk = Card(t)
     card_pk.body.addWidget(h2(t, "拍一拍检测"))
     pk_row1 = QHBoxLayout()
-    lb_g = desc(t, "目标群")
-    lb_g.setMinimumWidth(120)
+    lb_g = row_label(t, "目标群")
     pk_group = QComboBox()
     pk_group.addItem("自动（最近有人发言的群）", "")
     pk_group.setMinimumWidth(260)
@@ -1410,8 +1406,7 @@ def check_panel(t: Tokens) -> QWidget:
 
     def _mk_video_row(label: str) -> object:
         row = QHBoxLayout()
-        name = desc(t, label)
-        name.setMinimumWidth(190)
+        name = row_label(t, label, 190)
         bd = Badge(t, "idle", "读取中")
         row.addWidget(name)
         row.addWidget(bd)

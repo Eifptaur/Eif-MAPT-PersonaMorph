@@ -256,10 +256,13 @@ class Shell(QWidget):
         self._load_wallpaper()
         self._refresh_backdrop()
         # 右下角鲸鱼挂件（上游 DeepSeek-Balance-Whale-Widget 的 Qt 等价物：
-        # 余额/今日已用/每轮消耗，点击刷新、可拖拽；数据与位置自持，随 Shell 显隐）
+        # 余额/今日已用/每轮消耗，点击刷新、可拖拽；数据与位置自持）
+        # ⛔ **不给 parent**：Windows 会把「有主」的工具窗在主窗最小化时一起藏掉 ——
+        # 用户点名要「控制台最小化了挂件还能显示」。独立顶层窗不受主窗显隐牵连；
+        # 生命周期由 closeEvent（真关）显式收尾，托盘路径挂件照常浮着。
         from whale_widget import WhaleWidget # noqa: PLC0415
 
-        self.whale = WhaleWidget(self.t, parent=self)
+        self.whale = WhaleWidget(self.t)
         self.whale.show()
         self._restyle()
         self._cursor.refresh_from_config()
@@ -534,9 +537,9 @@ class Shell(QWidget):
     def hideEvent(self, ev) -> None: # noqa: N802
         super().hideEvent(ev)
         self._ocean.set_active(False) # CPU 纪律：看不见就不转
-        w = getattr(self, "whale", None)
-        if w is not None:
-            w.hide() # 收托盘/最小化时挂件一起藏（不留幽灵浮层）
+        # ⛔ 挂件**不跟着藏**（用户点名：控制台最小化/收托盘，挂件还要能看）。
+        #    挂件已是独立顶层窗（构造时不给 parent），主窗显隐本就牵不动它；
+        #    这里任何 hide 都不要再发 —— 收托盘后它继续浮在桌面上。
 
     # ------------------------------------------------------------ 窗口壳
 
@@ -796,6 +799,14 @@ class Shell(QWidget):
                 "群相 控制台", "机器人还在跑，窗口收进托盘了。点托盘图标可再打开。",
                 QSystemTrayIcon.MessageIcon.Information, 3000)
             return
+        # 真关：挂件是独立顶层窗（无 parent），必须显式带走 —— 否则 WebView2
+        # 控制器没人 Close，浏览器进程会变成杀不掉的孤儿（whale_host 注解）。
+        w = getattr(self, "whale", None)
+        if w is not None:
+            try:
+                w.close()
+            except Exception: # noqa: BLE001 — 收尾失败不挡退出
+                pass
         ev.accept() # 无托盘环境：退回真关（机器人主循环在另一条线程，不受影响）
 
     # ------------------------------------------------------------ 结构

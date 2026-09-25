@@ -86,6 +86,9 @@ class WhaleWidget(QWidget):
         # 页面加载是否失败 —— 与「控制器是否就绪」分开记：paintEvent 靠它决定
         # 要不要画降级卡（只看 `_host.ok` 时，半成品状态会留一个纯黑窗口）。
         self._load_failed = False
+        # 页面是否回报「鲸鱼本体渲染出来了」—— 与 _load_failed 互斥推进：
+        # boot ok=True 会浇灭 watchdog，False 则直接转降级。
+        self._boot_ok = False
         self.restyle(t)
 
         # 位置：上次拖到哪就还在哪；没有记录落右下角
@@ -199,11 +202,48 @@ class WhaleWidget(QWidget):
             # 这里收下来挪窗口。**不再**给子窗加 WS_EX_TRANSPARENT —— 那会让
             # 页内控件（减号、原版菜单）一起收不到点击。
             self._host.on_drag(self._on_pagedrag)
+            # 启动回报：页面轮询原版挂件本体，出现了/超时了都告诉我们 ——
+            # 超时（ok=False）说明"页面加载成功但鲸鱼没画"，必须降级成提示卡，
+            # 否则就是一只全透明的空窗（「挂件没看到」的真实成因之一）。
+            self._host.on_boot(self._on_pageboot)
             self._host.when_ready(self._after_host_ready)
         except Exception as e:  # noqa: BLE001 — 任何异常都降级，不拖垮主界面
             self._err = "%s: %s" % (type(e).__name__, e)
             self._host = None
             self.update()
+
+    def _on_pageboot(self, ok: bool) -> None:
+        """页面的启动结论：鲸鱼本体出现了（True）或轮询耗尽没出现（False）。"""
+        if ok:
+            self._boot_ok = True
+            return
+        # 页面导航成功但原版脚本始终没渲染本体（composer 探测没过 / 脚本异常）。
+        # 此刻窗口是全透明的 ⇒ 用户什么都看不到。降级成提示卡 + 让出事件。
+        self._err = "挂件脚本已加载，但 6 秒内没有渲染出本体（请重启控制台重试）"
+        self._load_failed = True
+        self._keep_draggable()
+        self.update()
+
+    def _boot_watchdog(self) -> None:
+        """页面迟迟不发 boot 结论的兜底（单次定时器，非自链）。
+
+        注入脚本本身可能没跑起来（极端情况）⇒ 永远等不到 boot 消息。8 秒后
+        仍无结论且无其他失败标记 ⇒ 按启动失败降级。宁可达观检查三遍再动手，
+        也不能让用户守着一只看不见的空窗。
+        """
+        try:
+            if self._boot_ok or self._load_failed:
+                return
+            if self._host is None or not self._host.ok:
+                return
+            self._err = "挂件页面无响应（未收到启动回报，请重启控制台重试）"
+            self._load_failed = True
+            self._keep_draggable()
+            self.update()
+        except RuntimeError:
+            pass # 控件已销毁（关窗），一切无需再做
+        except Exception:  # noqa: BLE001
+            pass
 
     def _on_pagedrag(self, dx: int, dy: int, ended: bool) -> None:
         """页面报告的拖动位移 → 挪窗口；`ended` 时落盘位置。
@@ -270,6 +310,10 @@ class WhaleWidget(QWidget):
             if not host.navigate_to_string(build_host_html(port, token)):
                 self._err = host.error
                 self._load_failed = True
+            else:
+                # 导航成功 ≠ 鲸鱼画出来了。8 秒内等不到页面的启动结论就降级
+                #（单次定时器，非自链；见 _boot_watchdog 注解）。
+                QTimer.singleShot(8000, self._boot_watchdog)
         except Exception as e:  # noqa: BLE001
             self._err = "%s: %s" % (type(e).__name__, e)
             self._load_failed = True

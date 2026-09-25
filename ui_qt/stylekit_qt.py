@@ -45,19 +45,21 @@ _RGBA_RE = re.compile(
 
 
 def _c(hexstr: str) -> QColor:
-    """`#RRGGBB` / `#RRGGBBAA` / `rgba(...)` 统一 QColor。
+    """`#RRGGBB` / `#AARRGGBB` / `rgba(...)` 统一 QColor。
 
     坑⑥：QColor 不认 CSS 的 rgba(r,g,b,a) 串
     （valid=False，后续 .name() 静默出 #000000 纯黑）——
     「读取中」徽章深底黑字、whale 导航图标发灰，根子都是它。
-    而 QSS 原串路径里 rgba() 能被 Qt 样式表自己解析，只有走 QColor
-    的消费点会炸，症状"看地方发病"。
     在这里手动拆 rgba()，token 保持与 web CSS 变量同音的原文，两侧消费都安全。
+
+    ⛔ 九位十六进制按 **`#AARRGGBB`**（透明度最前）拆 —— 与 Qt 样式表、
+    QColor.name(HexArgb) 同一序（r13 实测钉死；r11 的注解曾写反成 RRGGBBAA，
+    token 十六进制化之后再过 _c() 会被二次搅乱：「读取中」徽章字色 α 跑到
+    245、RGB 变灰蓝，就是这处把 AARRGGBB 的 token 当 RRGGBBAA 读了一轮）。
     """
     s = hexstr.strip()
     if s.startswith("#") and len(s) == 9:
-        # #RRGGBBAA → Qt 的 #AARRGGBB 不吃，手动拆
-        r, g, b, a = (int(s[i : i + 2], 16) for i in (1, 3, 5, 7))
+        a, r, g, b = (int(s[i : i + 2], 16) for i in (1, 3, 5, 7))
         return QColor(r, g, b, a)
     m = _RGBA_RE.match(s)
     if m:
@@ -86,26 +88,27 @@ def rgba(c: QColor, alpha: int) -> QColor:
 
 
 def qss(c) -> str:
-    """把颜色落成 **QSS 解析器认得的** 字面量。
+    """把颜色落成 **Qt 样式表解析器认得的** 字面量。
 
-    Qt 样式表的颜色文法比 CSS 窄一档，两处不等价：
+    ⛔ Qt 样式表的八位十六进制是 **`#AARRGGBB`（透明度在最前）** —— 和 CSS 的
+    `#RRGGBBAA` 相反，与 `QColor.name(HexArgb)` 同序。这是 r12 用像素实测钉死的：
+    `border:1px solid #aad7ff42`（本意=淡蓝 #aad7ff、α=26%）被 Qt 读成
+    「α=0xaa(67%) + RGB=#d7ff42」⇒ 渲染出 `#dcf77b` 一圈**黄绿描边**、
+    半透明次级文字全部泛绿（用户实锤「为什么用这种绿色？很丑」的根因）。
+    （r11 的注解把序写反了，就是那轮引入的污染 —— 本注解以实测证据为准。）
 
-    · **不吃 `rgba(r,g,b,a)` 函数式写法**（那是 CSS 的）。Qt 只认 `#RGB`/`#RRGGBB`/
-      `#RRGGBBAA`（**注意八位是 RRGGBBAA，不是 CSS 习惯的 AARRGGBB**）与少量
-      `rgb()`；写成 `rgba(170,215,255,0.26)` 会让**整条规则**解析失败，Qt 静默
-      回落系统默认皮肤 —— 症状就是「明明写了 border-radius:999px，画出来还是方框」。
-    · `QColor.name(HexArgb)` 产出的是 `#AARRGGBB`，**通道序与 Qt 的八位正好相反**，
-      直接插进 QSS 同样解析失败。
-
-    所以它不能只当字符串用，必须过一遍解析再按 Qt 的序重组。参数兼顾 QColor 与
-    `#RRGGBB` / `#RRGGBBAA` / `rgba(...)` 三种来源。
+    另外不要把 `rgba(r,g,b,0.26)` 这类 CSS 原文直接插 QSS：小数透明度的解析
+    行为不可靠（r11 实测过整条规则不生效、回落系统默认皮肤）。统一走本函数
+    落成定值十六进制。参数兼顾 QColor 与 `#RRGGBB` / `#AARRGGBB` / `rgba(...)`
+    三种来源。
     """
     c = c if isinstance(c, QColor) else _c(str(c))
     if not c.isValid():
         return "transparent"
     if c.alpha() >= 255:
         return "#%02x%02x%02x" % (c.red(), c.green(), c.blue())
-    return "#%02x%02x%02x%02x" % (c.red(), c.green(), c.blue(), c.alpha())
+    # 八位 = AARRGGBB：alpha 在最前（与 QColor.name(HexArgb) 同序，可直接替代）
+    return "#%02x%02x%02x%02x" % (c.alpha(), c.red(), c.green(), c.blue())
 
 
 def _qssify_tokens() -> None:

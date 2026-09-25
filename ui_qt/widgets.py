@@ -364,9 +364,11 @@ class Btn(QPushButton):
                    底色再走一档（web: translateY(1px) scale(.975) 的 Qt 等价物）
         · danger 字色用 err_tx（亮色档）—— dark 上拿主 err 当字色会沉进背景（用户实报的对比度缺陷）
 
-        ⚠️ 所有颜色一律过 `qss()` 转成 Qt 字面量，**不能**直接插 `QColor.name(HexArgb)`
-        ——那是 `#AARRGGBB`，Qt 的八位是 `#RRGGBBAA`，通道序反了同样让整条规则解析
-        失败回落默认皮肤（实锤：ghost 的 pressed 描边曾写成 `#ff93daff`）。
+        ⚠️ 所有颜色一律过 `qss()` 转成 Qt 字面量，**不能**拿 `QColor` 的 rgba()
+        CSS 原文直接插 —— Qt 样式表八位十六进制是 `#AARRGGBB`（透明度最前），
+        小数透明度的 rgba() 函数式写法解析行为也不可靠（r11 曾让整条规则不生效
+        回落默认皮肤；r12 又曾把序写反成 RRGGBBAA ⇒ 半透明色全变黄绿，r13 以
+        像素实测钉死：唯一正确的序就是 AARRGGBB）。
         """
         t, r = self.t, self.role
         # 半径按**真实尺寸**算（见 _sync_radius）—— 不写死数字：Qt 的上限是
@@ -1041,6 +1043,30 @@ def desc(t: Tokens, text: str) -> QLabel:
     lb.setFont(qfont(t, t.body_size - 0.5))
     lb.setStyleSheet(f"color:{t.tx3};background:transparent;")
     return _wrap_capable(lb)
+
+
+def row_label(t: Tokens, text: str, min_w: int = 120) -> QWidget:
+    """行首标签 —— 要放进 QHBoxLayout 与输入框并排的那一种。
+
+    ⛔ 为什么不能拿 `desc()` 直接塞行首再 `setMinimumWidth()`：desc 走
+    `_wrap_capable`（水平策略 **Ignored**），而 Qt 布局对 Ignored 策略**完全无视
+    显式 minimumWidth**（qSmartMinSize 对 Ignored 直接给 0 宽）⇒ 布局以为标签占
+    0px、把输入框排在 x+spacing，标签本体却被 minimumWidth 钳在 120px 宽 ——
+    两者叠字（实测费用计算器「每[200]消息数」「厂[Anthropic]商」、拍一拍
+    「目标群」、视频通路四行同病，离屏探针量出 2700px² 相交）。
+    修法与 Field 同款：标签包进**普通策略**的容器，容器的 setMinimumWidth 才会被
+    布局真正尊重；标签在容器里照旧可换行、不撑页面最小宽。
+    """
+    box = QWidget()
+    box.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+    box.setStyleSheet("background:transparent;")
+    box.setMinimumWidth(int(min_w))
+    lay = QVBoxLayout(box)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(2)
+    lay.addWidget(desc(t, text))
+    lay.addStretch(1)
+    return box
 
 
 # ---------------------------------------------------------------- 顶栏两件

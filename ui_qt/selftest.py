@@ -7588,6 +7588,157 @@ def t_r11_whale_drag() -> None:
        _r == "", "live=%d ret=%r" % (_live_port, _r))
 
 
+def t_r13_regress() -> None:
+    """r13 自检：三件用户实锤问题的回归闸。
+
+    A. **八位十六进制通道序** —— Qt 样式表是 `#AARRGGBB`（透明度最前）。
+       r11 曾按 `#RRGGBBAA` 写反 ⇒ 所有半透明 token 被读成「高透明度黄绿色」
+       （实测 `#aad7ff42` 渲染成 `#dcf77b` 描边、次级文字全泛绿，用户：
+       「为什么用这种绿色？很丑」）。此序一旦再写反，全主题颜色即污染。
+    B. **行首标签叠字** —— `desc()`（Ignored 策略）直接塞 QHBoxLayout 行首 +
+       setMinimumWidth 对布局无效（Ignored ⇒ 最小宽按 0 算，控件本体却被
+       minimumWidth 钳宽）⇒ 标签与输入框叠字（费用计算器/拍一拍/视频通路）。
+       修法 row_label：包普通策略容器，容器最小宽才被布局尊重。
+    C. **挂件全透明空窗** —— 页面导航成功但鲸鱼本体没渲染时窗口 100% 透明，
+       用户什么都看不到（「没看到挂件」）。修法：页面轮询本体、超时发
+       boot(ok=false)，宿主降级提示卡；另有 8s 单次 watchdog 兜底。
+    D. **控制台最小化挂件还在** —— 挂件改独立顶层窗（无 parent），hideEvent
+       不再连带隐藏；真关时 closeEvent 显式带走（否则 WebView2 成孤儿）。
+    """
+    import ast as _ast
+    import inspect as _inspect
+
+    from PySide6.QtGui import QColor # noqa: PLC0415
+    from PySide6.QtWidgets import QApplication, QLabel # noqa: PLC0415
+
+    QApplication.instance() or QApplication([])
+
+    import stylekit_qt as sk # noqa: PLC0415
+    from widgets import row_label # noqa: PLC0415
+
+    # ---- A. 通道序 ---------------------------------------------------------
+    ck("r13 qss() 八位十六进制 = AARRGGBB（透明度在最前；写反则半透明色全变黄绿）",
+       sk.qss(QColor(0x30, 0x50, 0x70, 0x42)) == "#42305070",
+       sk.qss(QColor(0x30, 0x50, 0x70, 0x42)))
+
+    ck("r13 鲸鱼主题 bd 已固化为 #42aad7ff（26% 淡蓝；r12 前 #aad7ff42 渲染成黄绿）",
+       sk.THEMES["whale"].bd == "#42aad7ff", sk.THEMES["whale"].bd)
+
+    ck("r13 qss() 对不透明色仍输出六位（不引入多余字节）",
+       sk.qss(QColor(0x6f, 0xcf, 0xff)) == "#6fcfff", "")
+
+    ck("r13 _c() 拆九位十六进制同走 AARRGGBB（拆反则 α 跑到 245、RGB 变灰蓝）",
+       (lambda _c: (_c.alpha(), _c.red(), _c.green(), _c.blue())
+        == (199, 200, 224, 245))(sk._c("#c7c8e0f5")),
+       (lambda _c: "a=%d rgb=#%02x%02x%02x" % (_c.alpha(), _c.red(), _c.green(), _c.blue()))(
+           sk._c("#c7c8e0f5")))
+
+    # ---- B. 叠字（真构建概览页量几何）--------------------------------------
+    from panels_custom import overview_panel # noqa: PLC0415
+
+    page = overview_panel(sk.THEMES["whale"])
+    host = _host_of(page)
+    app = QApplication.instance()
+    host.resize(1080, 1100)
+    host.show()
+    app.processEvents()
+    app.processEvents()
+
+    lab_rects = {}
+    for lb in page.findChildren(QLabel):
+        if lb.text() in ("厂商", "每日消息数", "每消息输入用量", "每消息输出用量", "时段"):
+            tl = lb.mapTo(host, lb.rect().topLeft())
+            lab_rects[lb.text()] = (tl.x(), tl.y(), tl.x() + lb.width(), tl.y() + lb.height())
+
+    from PySide6.QtWidgets import QComboBox, QLineEdit # noqa: PLC0415
+
+    bad = 0
+    details = []
+    for w in page.findChildren(QLineEdit) + page.findChildren(QComboBox):
+        tl = w.mapTo(host, w.rect().topLeft())
+        r = (tl.x(), tl.y(), tl.x() + w.width(), tl.y() + w.height())
+        for name, lr in lab_rects.items():
+            if abs(lr[1] - r[1]) < 30: # 同一行
+                ix = min(lr[2], r[2]) - max(lr[0], r[0])
+                iy = min(lr[3], r[3]) - max(lr[1], r[1])
+                if ix > 0 and iy > 0:
+                    bad += 1
+                    details.append("%s∩%s %dpx²" % (name, type(w).__name__, ix * iy))
+    ck("r13 概览页标签与输入框零相交（Ignored 策略下 minimumWidth 对布局无效的叠字病）",
+       bad == 0, "; ".join(details) or "全部行间隙正常")
+
+    # row_label 本体：容器最小宽被布局尊重（这正是 desc() 直接上场时办不到的）
+    from PySide6.QtWidgets import QWidget as _QW # noqa: PLC0415
+
+    _rl = row_label(sk.THEMES["whale"], "测试标签", 140)
+    _box = _QW()
+    _bl = __import__("PySide6.QtWidgets", fromlist=["QVBoxLayout"]).QVBoxLayout(_box)
+    _bl.addWidget(_rl)
+    host2 = _QW()
+    _bl2 = __import__("PySide6.QtWidgets", fromlist=["QHBoxLayout"]).QHBoxLayout(host2)
+    _bl2.addWidget(_rl)
+    _bl2.addWidget(_QW())
+    host2.resize(400, 60)
+    host2.show()
+    app.processEvents()
+    ck("r13 row_label 容器最小宽被布局尊重（≥140，desc() 直上时会被压成 0 ⇒ 叠字）",
+       _rl.width() >= 140, "w=%d" % _rl.width())
+    host2.close()
+
+    # ---- C. 挂件启动回报链 --------------------------------------------------
+    from whale_host import WhaleHostWebView, build_host_html # noqa: PLC0415
+    from whale_widget import WhaleWidget # noqa: PLC0415
+
+    _html = build_host_html(3210, "tk")
+    ck("r13 宿主页轮询发 boot 结论（ok=true 出本体 / ok=false 预算耗尽）",
+       "pm:'boot'" in _html and "ok:true" in _html and "ok:false" in _html, "")
+
+    ck("r13 宿主暴露 on_boot 并在消息分发里处理 boot",
+       hasattr(WhaleHostWebView, "on_boot")
+       and '"boot"' in _inspect.getsource(WhaleHostWebView._on_web_message), "")
+
+    _om = _inspect.getsource(WhaleWidget._on_pageboot)
+    ck("r13 boot=false ⇒ 降级提示卡 + 让出事件（不给全透明空窗）",
+       "_load_failed" in _om and "_keep_draggable" in _om, "")
+
+    _wd = _inspect.getsource(WhaleWidget._boot_watchdog)
+    ck("r13 watchdog 是单次兜底（boot 已成功或已失败则直接退出，不重复降级）",
+       "_boot_ok or self._load_failed" in _wd, "")
+
+    _ah = _inspect.getsource(WhaleWidget._after_host_ready)
+    ck("r13 导航成功才挂 watchdog（8000ms 单次，非自链）",
+       "singleShot(8000" in _ah, "")
+
+    # ---- D. 最小化不藏挂件 --------------------------------------------------
+    import shell as _shell # noqa: PLC0415
+
+    _he = _inspect.getsource(_shell.Shell.hideEvent)
+    ck("r13 hideEvent 不再隐藏挂件（控制台最小化/收托盘挂件仍显示 = 用户点名要求）",
+       "whale.hide" not in _he, "")
+
+    _ce = _inspect.getsource(_shell.Shell.closeEvent)
+    ck("r13 真关路径显式带走挂件（无 parent 后必须 close，否则 WebView2 成孤儿）",
+       "whale" in _ce and ".close()" in _ce, "")
+
+    _init = _inspect.getsource(_shell.Shell.__init__)
+    ck("r13 挂件构造不带 parent（有主工具窗会被主窗最小化连带藏掉）",
+       "WhaleWidget(self.t)" in _init and "parent=self" not in
+       _init.split("WhaleWidget(self.t)")[1][:20], "")
+
+    host.close()
+
+
+def _host_of(page):  # noqa: ANN001
+    """给页面套一个宿主容器（叠字检测要用同坐标系）。"""
+    from PySide6.QtWidgets import QVBoxLayout, QWidget # noqa: PLC0415
+
+    host = QWidget()
+    lay = QVBoxLayout(host)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.addWidget(page)
+    return host
+
+
 def t_r11_placeholders() -> None:
     """r11 自检：「占位卡死」与「清容器残留」两条链的回归闸。
 
@@ -7698,7 +7849,8 @@ def main() -> int:
                    t_c10, t_c13, t_hotfix1, t_hotfix2, t_catmgr, t_medialocal, t_commfb,
                    t_veradv, t_g5, t_g6, t_g7, t_g8, t_g9, t_g10, t_g11, t_g12, t_g13, t_g14,
                    t_g15, t_g16, t_g17, t_g18, t_g19, t_g20, t_g21, t_g22, t_ocr_fuzzy,
-                   t_audit_r3, t_r10_drag, t_r11_whale_drag, t_r11_placeholders):
+                   t_audit_r3, t_r10_drag, t_r11_whale_drag, t_r13_regress,
+                   t_r11_placeholders):
             try:
                 fn()
             except Exception as e: # noqa: BLE001

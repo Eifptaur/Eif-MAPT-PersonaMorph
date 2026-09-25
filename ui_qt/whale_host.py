@@ -70,6 +70,8 @@ class WhaleHostWebView:
         self._on_ready = None
         # 拖动转发回调：`fn(dx, dy, ended)`，由上层（Qt 侧）设置。
         self._on_drag = None
+        # 启动回报回调：`fn(ok)` —— 页面轮询鲸鱼本体的结论（True=渲染出来了）。
+        self._on_boot = None
         # 回调对象必须持引用：comtypes 的 COMObject 被 GC 后指针即失效。
         self._keep: list = []
         self._init()
@@ -229,9 +231,11 @@ class WhaleHostWebView:
             self._trans_err = self._trans_err or ("drag-wire: %s" % e)
 
     def _on_web_message(self, raw: str) -> None:
-        """解析页面发来的消息（只认拖动那两条），转交 `on_drag` 回调。
+        """解析页面发来的消息，转交对应回调。
 
-        消息形如 `{"pm":"drag","dx":12,"dy":-3}` / `{"pm":"dragend"}`。
+        消息形如 `{"pm":"drag","dx":12,"dy":-3}` / `{"pm":"dragend"}` /
+        `{"pm":"boot","ok":true|false}`（页面轮询 `.dshwv-root` 的结论，
+        false = 脚本加载了但鲸鱼本体始终没渲染 —— 上层据此降级，不给全透明空窗）。
         解析失败一律静默 —— 这是尽力而为的交互增强，不能让一条脏消息把挂件搞崩。
         """
         try:
@@ -243,14 +247,19 @@ class WhaleHostWebView:
         if not isinstance(msg, dict):
             return
         kind = msg.get("pm")
-        cb = self._on_drag
-        if cb is None:
-            return
         try:
             if kind == "drag":
-                cb(int(msg.get("dx", 0)), int(msg.get("dy", 0)), False)
+                cb = self._on_drag
+                if cb is not None:
+                    cb(int(msg.get("dx", 0)), int(msg.get("dy", 0)), False)
             elif kind == "dragend":
-                cb(0, 0, True)
+                cb = self._on_drag
+                if cb is not None:
+                    cb(0, 0, True)
+            elif kind == "boot":
+                cb = self._on_boot
+                if cb is not None:
+                    cb(bool(msg.get("ok")))
         except Exception:  # noqa: BLE001
             pass
 
@@ -369,6 +378,16 @@ class WhaleHostWebView:
         必须在 `when_ready` 之前或之后都行 —— 回调只在收到页面消息时才被读。
         """
         self._on_drag = cb
+
+    def on_boot(self, cb) -> None:  # noqa: ANN001
+        """注册启动回报回调 `fn(ok)`。
+
+        页面注入脚本在轮询原版挂件本体（`.dshwv-root`）：出现了发 `ok=True`；
+        轮询预算耗尽（约 6 秒）还没出现发 `ok=False` —— 那意味着"页面加载成功
+        但鲸鱼没画出来"，上层应降级成提示卡，否则用户对着一个全透明空窗
+        （这正是"挂件没看到"的一种真实成因）。
+        """
+        self._on_boot = cb
 
     def navigate_to_string(self, html: str) -> bool:
         """内联页面（避免依赖磁盘临时文件；脚本用 file:// 引本地 js 会撞来源限制）。"""
@@ -506,6 +525,9 @@ def build_host_html(port: int, token: str) -> str:
         # 收起/展开逻辑：藏的是原版挂件本体（.dshwv-root），不是整个页面 ——
         # 页面留着，原版脚本继续跑（余额照样刷新），只是看不见。
         "<script>(function(){"
+        "function post(msg){try{"
+        "if(window.chrome&&window.chrome.webview)window.chrome.webview.postMessage(msg);"
+        "}catch(e){}}"
         "function rootEl(){return document.querySelector('.dshwv-root')}"
         "function setCollapsed(on){"
         "document.body.classList.toggle('pm-collapsed',!!on);"
@@ -541,9 +563,6 @@ def build_host_html(port: int, token: str) -> str:
         "el.closest('.dshwv-menu-btn')||el.closest('[class*=mask]')||"
         "el.closest('[class*=pop]')||el.closest('[class*=menu]'));"
         "}"
-        "function post(msg){try{"
-        "if(window.chrome&&window.chrome.webview)window.chrome.webview.postMessage(msg);"
-        "}catch(e){}}"
         "document.addEventListener('mousedown',function(e){"
         "if(e.button!==0)return;"
         "if(isInteractive(e.target))return;"
@@ -569,9 +588,13 @@ def build_host_html(port: int, token: str) -> str:
         "try{want=localStorage.getItem('pm-whale-collapsed')==='1';}catch(e){}"
         "if(want)setCollapsed(true);"
         # 原版挂件是异步建的（脚本 defer + 内部等 composer），root 晚于本脚本出现；
-        # 用有上限的轮询等它，避免无界定时器在页面销毁后空转。
+        # 用有上限的轮询等它。轮询的**副产物**就是启动回报：root 出现（ok=true）
+        # 或预算耗尽（ok=false，约 6 秒）都发给宿主 —— ok=false 时上层降级成
+        # 提示卡，避免「页面加载成功但鲸鱼没画」的全透明空窗（用户：挂件没看到）。
         "var n=0;var t=setInterval(function(){n++;wire();"
-        "if(n>=40||rootEl())clearInterval(t);},150);"
+        "if(rootEl()){clearInterval(t);post({pm:'boot',ok:true});}"
+        "else if(n>=40){clearInterval(t);post({pm:'boot',ok:false});}"
+        "},150);"
         "}"
         "if(document.readyState==='loading')"
         "document.addEventListener('DOMContentLoaded',boot);else boot();"
