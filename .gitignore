@@ -75,3 +75,8 @@ config.json.bak*
 
 # 工作数据（本地助手缓存）
 .workbuddy/
+
+# ── 开发产物区（探针/审计/交接/裁决/一次性脚本，不进产品仓库）──
+# 产品根只留产品本体与一键启动；开发期一切诊断产物落在 dev-workspace/ 下。
+dev-workspace/
+exports/

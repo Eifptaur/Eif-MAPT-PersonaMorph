@@ -31,6 +31,131 @@ from PySide6.QtWidgets import (
 from stylekit_qt import Tokens, mix, qfont, rgba, status_colors
 
 
+# ---------------------------------------------------------------- 弹窗拖拽
+
+
+class DraggableDialog:
+    """给无边框弹窗加「按住任意非交互处即可拖动」的混入。
+
+    用户点单：「所有弹窗都要可挪动，按住任意位置（除文字显示区域）都能挪」。
+
+    做法（**不是**在顶栏加一条拖拽带 —— 那样只能拖顶栏，且要改每个弹窗的布局）：
+      · 在 dialog 上装事件过滤器，拦截落在**背景**上的按下/移动；
+      · 判据是「按到的那个控件是不是"可交互"」——按钮/输入框/下拉/滚动条/列表
+        放行（它们有自己的按下语义），纯文字 QLabel 与空白区则拿来拖窗；
+      · 位移 > 4px 才真正移动（否则会把单击当拖拽，按钮 hover 感会丢）。
+
+    ⚠️ **MRO 顺序必须是 (DraggableDialog, QDialog)，不能反**：
+    PySide6 的 `QObject`/`QWidget` 自带 `eventFilter`（Python 侧可见），
+    写成 `(QDialog, DraggableDialog)` 时 MRO 里 QDialog 在前 ⇒ 本类的
+    eventFilter **被永久影子化**，一个事件都收不到（本趟实测踩过：
+    `_D.eventFilter is QDialog.eventFilter == True`）。用 `_drag_dialog_cls()`
+    构造即可避免这个坑。
+    """
+
+    #: 拖拽阈值（px）—— 小于它视为点击，不移动窗口
+    _DRAG_SLOP = 4
+
+    def enable_drag(self) -> None: # noqa: ANN201
+        """在 `self`（一个 QDialog）上挂拖拽。构造末尾调用一次即可。"""
+        self._drag_origin = None
+        self._drag_win = None
+        self._drag_moved = False
+        self.installEventFilter(self)
+        # 递归给已经建好的子控件也装上（后建的靠 _drag_childInit 兜底没必要 ——
+        # Qt 的事件过滤装在 dialog 上，子控件的鼠标事件会**冒泡**到 dialog，
+        # 所以只装一次即可；见 _drag_isInteractive 的「是否放行」判据）。
+        return self
+
+    # -- 命中的控件是不是"要自己处理鼠标"的？是则放行，不拖窗 --------------
+    @staticmethod
+    def _drag_isInteractive(w) -> bool: # noqa: ANN001
+        from PySide6.QtWidgets import ( # noqa: PLC0415
+            QAbstractButton, QAbstractItemView, QAbstractSlider, QComboBox,
+            QLineEdit, QScrollBar, QTextEdit,
+        )
+
+        if w is None:
+            return False
+        if isinstance(w, (QAbstractButton, QLineEdit, QComboBox, QAbstractSlider,
+                          QAbstractItemView, QScrollBar, QTextEdit)):
+            return True
+        # 可选中文本的 QLabel：用户要能划选 ⇒ 放行（不吃掉它的选择语义）
+        if isinstance(w, QLabel) and (w.textInteractionFlags()
+                                      & Qt.TextInteractionFlag.TextSelectableByMouse):
+            return True
+        return False
+
+    def _drag_target(self, obj): # noqa: ANN001
+        """从命中的子控件往上找，直到挂在 dialog 直接子级上 —— 沿路看有没有交互件。"""
+        w = obj
+        while w is not None and w is not self:
+            if self._drag_isInteractive(w):
+                return None
+            w = w.parent()
+        return self if w is self else None
+
+    def _drag_child_at(self, gp): # noqa: ANN001
+        """在全局点 `gp` 命中的**最深**子控件（排除自身与滚动条内部件）。
+
+        ⚠️ 为什么不能只信 `_drag_target(obj)` 的 obj：Qt 的鼠标事件会**沿父链
+        上抛**——用户在按钮上按下时，`notify()` 会先给按钮、再给 dialog 各发一次，
+        过滤器两趟都收得到。第二趟的 `obj is self` ⇒ `_drag_target` 直接判「可拖」
+        ⇒ 明明按的是按钮却能把窗拖走。所以必须再问一次「这一点落在谁身上」。
+        """
+        child = self.childAt(self.mapFromGlobal(gp))
+        return child
+
+    def eventFilter(self, obj, ev): # noqa: ANN001, N802
+        from PySide6.QtCore import QEvent # noqa: PLC0415
+
+        et = ev.type()
+        if et == QEvent.Type.MouseButtonPress:
+            # 两重判据（缺一会把「按按钮」也当拖窗，见 _drag_child_at 注解）：
+            #   ① 事件上抛到本 dialog 的那一趟（obj is self）也要看命中的子控件；
+            #   ② 命中点是交互件 ⇒ 放行，不记 origin。
+            gp = ev.globalPosition().toPoint()
+            hit = self._drag_child_at(gp)
+            if (ev.button() == Qt.MouseButton.LeftButton
+                    and self._drag_target(hit) is self
+                    and self._drag_target(obj) is self):
+                self._drag_origin = gp
+                self._drag_win = self.pos()
+                self._drag_moved = False
+            return False # 不吞事件：让下层照常收到（按钮 hover 等）
+        if et == QEvent.Type.MouseMove:
+            # Note：这里**不再重判**命中件 —— 拖动过程中指针必然滑出原来那块背景、
+            # 压到按钮/输入框上；中途改判会让拖拽一顿一顿（甚至半路停死）。
+            # 起点已在 Press 时定死，Move 只认这一趟拖拽。
+            if self._drag_origin is not None:
+                gp = ev.globalPosition().toPoint()
+                d = gp - self._drag_origin
+                if not self._drag_moved and (abs(d.x()) + abs(d.y())) < self._DRAG_SLOP:
+                    return False
+                self._drag_moved = True
+                if self._drag_win is not None:
+                    self.move(self._drag_win + d)
+                return True # 已进入拖拽 ⇒ 吞掉，避免下层误判为划选
+        elif et in (QEvent.Type.MouseButtonRelease,
+                    QEvent.Type.WindowDeactivate, QEvent.Type.Hide):
+            self._drag_origin = None
+            self._drag_moved = False
+        return False
+
+
+def drag_dialog_cls(name: str = "DragDialog"):
+    """造一个「可拖动的 QDialog」子类，**基类顺序已摆正**。
+
+    ⚠️ 别自己写 `class X(QDialog, DraggableDialog)` —— MRO 会让 QDialog 的
+    eventFilter 影子化本混入（实测一个事件都收不到）。这里统一 `(DraggableDialog,
+    QDialog)`。用 `type(name, (DraggableDialog, QDialog), {})` 需要 QDialog 已在
+    作用域内，故延迟到调用时导入。
+    """
+    from PySide6.QtWidgets import QDialog # noqa: PLC0415
+
+    return type(name, (DraggableDialog, QDialog), {})
+
+
 # ---------------------------------------------------------------- 基础卡片
 
 
@@ -124,7 +249,9 @@ class Btn(QPushButton):
         · danger 字色用 err_tx（亮色档）—— dark 上拿主 err 当字色会沉进背景（用户实报的对比度缺陷）
         """
         t, r = self.t, self.role
-        rad = t.radius_btn
+        # 按钮一律胶囊（用户裁定「所有方框改胶囊」）—— 用 radius_pill 而不是
+        # radius_btn：后者是通用小圆角，表格/容器/列表行也在用，不能一起抬。
+        rad = t.radius_pill
         # L：按压态要「一眼可辨」——底色往字色轴压一档（亮主题=变深、
         # 暗主题=提亮一档，都是暗色 UI 的标准按压惯例），描边同步加深。
         # web 侧 translateY(1px) scale(.975) 在 QSS 里没有 transform 等价物，
@@ -481,7 +608,7 @@ class SearchBox(QLineEdit):
         self.setClearButtonEnabled(True)
         self.setStyleSheet(
             f"QLineEdit{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
-            f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;"
+            f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_pill}px;"
             f"padding:0 10px;}}"
             f"QLineEdit:focus{{border:1px solid {t.blue};}}"
         )
@@ -881,9 +1008,9 @@ class Segmented(QWidget):
         off = t.tx2
         self.setStyleSheet(
             f"QWidget#Seg{{background:{mix(t.q('bg'), t.q('tx'), 0.08).name(QColor.NameFormat.HexArgb)};"
-            f"border:1px solid {t.bd};border-radius:{t.radius_btn}px;}}"
+            f"border:1px solid {t.bd};border-radius:{t.radius_pill}px;}}"
             f"QWidget#SegKnob{{background:{knob_bg};border:1px solid {knob_bd};"
-            f"border-radius:{max(2, t.radius_btn - 2)}px;}}"
+            f"border-radius:{t.radius_pill}px;}}"
             "QPushButton{background:transparent;border:none;color:" + off + ";padding:0;}"
             f"QPushButton:hover{{color:{t.tx};}}"
             f"QPushButton:pressed{{color:{t.blue};}}" # L 按压给色反馈

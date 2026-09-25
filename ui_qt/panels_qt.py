@@ -220,7 +220,7 @@ class Combo(QComboBox):
         self.setFont(qfont(t, t.body_size))
         self.setStyleSheet(
             f"QComboBox{{background:{_hex(rgba(t.q('tx'), 16))};"
-            f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:0 10px;}}"
+            f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_pill}px;padding:0 10px;}}"
             f"QComboBox::drop-down{{border:none;width:22px;}}"
             f"QComboBox QAbstractItemView{{background:{'#0E2136' if t.glass else t.card};"
             f"color:{t.tx};border:1px solid {t.bd};selection-background-color:{t.blue_soft};}}"
@@ -544,12 +544,15 @@ def _open_group_pick(t: Tokens, line, note, groups: list) -> None:
         return any(w and (w in text) for w in cur)
 
     # ── 壳：无边框 + 半透明 + 卡片 QFrame（confirm.py 同款三件套）
-    dlg = QDialog(line.window())
+    from widgets import drag_dialog_cls # noqa: PLC0415
+
+    dlg = drag_dialog_cls("PickGroupsDialog")(line.window())
     dlg.setWindowTitle("选择监听的群")
     dlg.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
     dlg.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
     dlg.setModal(True)
     dlg.resize(460, 520)
+    dlg.enable_drag() # 可拖动（用户点单：所有弹窗都能按背景挪）
 
     outer = QVBoxLayout(dlg)
     outer.setContentsMargins(0, 0, 0, 0)
@@ -910,21 +913,95 @@ def _btn_stub(b) -> None:
     QMessageBox.information(b, "这个动作在网页控制台", msg)
 
 
-_STATUS_ROWS: list = [] # 面板内 status 行注册表 [(label, status_id)]——跟随全局轮询刷新
+_STATUS_ROWS: list = [] # 面板内 status 行注册表 [(_Weak)<label>, status_id]——跟随全局轮询刷新
+
+_APPENDIX_REFRESHERS: list = [] # 附录卡自刷新回调 [[回调, 存活判据控件]]——跟随全局轮询
+
+
+def _alive(w) -> bool: # noqa: ANN001
+    """C++ 侧对象还在不在。
+
+    ⛔ 为什么非判不可：面板被重建/关闭后，注册表里的 QLabel/QWidget 只是 Python
+    侧还活着（被 list 引用），其 **C++ 对象已被析构**——`setText` 抛
+    `RuntimeError: Internal C++ object already deleted`。更坏的是附录卡的刷新
+    闭包：它一进去就先发一趟 `config_io.get_json("/api/status", timeout=10.0)`，
+    对象早死了它**照样把 10 秒的阻塞请求打完**才去碰死控件。
+    面板建一次注册一份、注册表从不清空 ⇒ 跑一长串用例会攒出几十个死闭包，
+    8 秒轮询变成几十趟 10 秒阻塞串烧，事件循环再也空不下来（全量自检偶发挂死的真凶）。
+
+    判活用 `shiboken6.isValid`；不可用时退回「调一个无害 getter 看抛不抛 RuntimeError」。
+    """
+    if w is None:
+        return False
+    try:
+        import shiboken6 # noqa: PLC0415
+
+        return bool(shiboken6.isValid(w))
+    except Exception: # noqa: BLE001
+        try:
+            w.objectName()
+            return True
+        except RuntimeError:
+            return False
+
+
+def _register_prune(reg: list, entry, anchor_idx: int = -1) -> None: # noqa: ANN001
+    """注册并顺手清理已死条目（防止注册表随面板重建无限增长）。
+
+    `anchor_idx` 指出条目里「哪个位置是存活判据控件」（status 行是 `[0]`＝label，
+    附录卡是 `[1]`＝anchor 控件）。同时按回调/控件身份去重：同一张卡重复注册
+    只留一份，避免闭包被反复追加（每追加一份就是每轮多一趟阻塞请求）。
+    """
+    reg[:] = [e for e in reg if _alive(e[anchor_idx])]
+    for e in reg:
+        if e[0] == entry[0]:
+            return
+    reg.append(entry)
+
+
+def register_appendix_refresh(fn, anchor=None) -> None: # noqa: ANN001
+    """把一张附录卡的自刷新回调挂进全局轮询（`refresh_status_rows` 会一并调用）。
+
+    为什么要这条：附录卡原来多是 `QTimer.singleShot(N, _refresh)` **只拉一次**——
+    控制台若在开页之后才起来（很常见：先开 UI 再点启动），这些卡就永远停在开页
+    那一瞬的结论（用户看到「还是检测中」的一大来源）。挂进来即可随 8 秒轮询复活。
+
+    `anchor` 是这张卡的**存活判据控件**（通常是卡里的状态标签）：控件一死，
+    本回调即从注册表摘除，不再被轮询调用（否则死回调会继续打 10 秒阻塞请求，
+    见 `_alive` 的长注解）。调用方省略 anchor 时退化为「永不摘除」——不推荐。
+    """
+    if not callable(fn):
+        return
+    _register_prune(_APPENDIX_REFRESHERS, [fn, anchor], anchor_idx=1)
 
 
 def refresh_status_rows(st) -> None:
     """全局状态刷新时同步刷新面板内 status 行。
 
-    原来 `_status_chip` 只在构建那一刻读一次 ⇒ 之后永远停在「读不到/未检测/检测中」。
-    现在注册进表，由 shell._poll_badges 的 8 秒轮询携带最新 /api/status 调用本函数；
-    st 拿不到就不动（不编数）。
+    只喂 `st`（调用方已拿到的 /api/status），**本函数自己不发请求** ——
+    附录卡的刷新回调自带取数，故只在有真值那趟催它们（读不到时不打扰）。
+    每趟先剪掉已死控件/回调，注册表不随面板重建膨胀。
     """
     if not isinstance(st, dict) or not st:
         return
-    for lab, sid in list(_STATUS_ROWS):
+
+    rows = [(lab, sid) for lab, sid in _STATUS_ROWS if _alive(lab)]
+    if len(rows) != len(_STATUS_ROWS):
+        _STATUS_ROWS[:] = rows
+    for lab, sid in rows:
         try:
             lab.setText(_status_text_for(sid, st))
+        except Exception: # noqa: BLE001
+            pass
+
+    # 附录卡自刷新（媒体组件等）：拿到真值那趟才催它们，读不到时不打扰。
+    # 先按 anchor 剪掉死卡 —— 死掉的那份连请求都不该再发（10s 阻塞）。
+    live = [e for e in _APPENDIX_REFRESHERS if _alive(e[1])]
+    if len(live) != len(_APPENDIX_REFRESHERS):
+        _APPENDIX_REFRESHERS[:] = live
+    for fn, _anchor in live:
+        try:
+            fn()
         except Exception: # noqa: BLE001
             pass
 
@@ -934,19 +1011,144 @@ def _status_chip(t: Tokens, status_id: str) -> QWidget:
 
     构建时就地读一次（后端活着即刻有值）；并注册进 `_STATUS_ROWS`，
     之后跟随 8 秒全局轮询持续刷新。
+
+    ⛔ 「页面探到值了、状态位还写检测中」的根因有两层：
+      ① 旧口径只读 _load_status() 的**进程内 3 秒缓存**——面板比状态缓存晚建、
+         或上一趟是失败结果，就地读到的就是空 ⇒ 停在占位文案；
+      ② 只挂 8 秒轮询 ⇒ 用户看到的那几秒恒为占位。
+    现在改 async-refresh：立刻按 status_id 判**是否需要哪些数据段**下发一次
+    真请求（命中进程缓存则同步即刻落地），回来必回调一次落字。占位只活到
+    第一次回调，不再是「永远检测中」。
     """
-    lab = QLabel("未检测")
+    lab = QLabel("检测中…")
     lab.setFont(qfont(t, t.body_size - 0.5))
     lab.setStyleSheet(f"color:{t.tx2};background:transparent;")
     lab.setProperty("web_status_id", status_id or "")
+    # 注册即剪：面板重建时旧标签的 C++ 对象已死，但 Python 侧还被本表引用 ——
+    # 不剪的话本表随建页次数线性涨，每轮轮询都要对一堆死 QLabel 调 setText
+    # （抛 RuntimeError 被吞，纯开销）。见 refresh_status_rows 的剪枝。
+    _register_prune(_STATUS_ROWS, [lab, status_id or ""], anchor_idx=0)
+
+    # ① 命中进程缓存的快路径：不阻塞建页，拿得到就立刻落字
     try:
         st = _load_status()
-        tip = _status_text_for(status_id, st) if st else "读取中…"
+        if st:
+            lab.setText(_status_text_for(status_id, st))
     except Exception: # noqa: BLE001
-        tip = "读不到（控制台状态未就绪）"
-    lab.setText(tip)
-    _STATUS_ROWS.append((lab, status_id or ""))
+        pass
+
+    # ② 真拉一次：按本状态位实际需要的数据段取数（status_id 缺省 ⇒ 整份）
+    _fetch_status_async(set(_status_segments(status_id or "")), lab, status_id or "")
     return lab
+
+
+# 后端 `/api/status?only=` 认识的段名（webui._rapi_status 富化段清单）。
+# 本表只用来判「这个段名后端认不认」——不认就别发这一趟（老版本后端会 400）。
+# 段名以 web 侧 loadStatus 的取数范围为准（同一份 /api/status 推导）。
+_STATUS_SEGMENTS_INSTALLED = {
+    "wechat_version", "version", "version_gate", "media", "video_read",
+    "user_tools", "input", "ui_fp", "pending_decisions", "jobs",
+}
+
+_STATUS_SEGMENTS = {
+    "wxver": "wechat_version,version",
+    "vmVer": "version",
+    "vmGate": "version_gate,version",
+    "vmDec": "version",
+    "vsWhy": "media",
+    "ttsWhy": "media",
+    "videoStat": "video_read,media",
+    "igWhy": "media",
+    "utGlobals": "user_tools",
+    "bgHead": "input",
+    "ufpHead": "ui_fp",
+    "pdStat": "pending_decisions",
+    "actStat": "jobs",
+}
+
+
+def _status_segments(status_id: str) -> str:
+    """该状态位要用到的段名（空串 = 整份 /api/status）。"""
+    return _STATUS_SEGMENTS.get(status_id, "")
+
+
+def _fetch_status_async(segments: set[str], lab, status_id: str) -> None:
+    """后台拉一次状态段 → 主线程回填标签。
+
+    失败也回调一次：把「读不到」如实写上，**不留占位**（占位=「还在检测」是
+    最误导的一种文案——它承诺后面会变，而其实这条路根本没接上）。
+    """
+    if segments and not segments <= _STATUS_SEGMENTS_INSTALLED:
+        return # 后端不认这个段名（老版本）→ 交给整份状态的常规轮询，不额外打请求
+    box: dict = {"done": False, "st": None, "err": None}
+    q = ("?only=" + ",".join(sorted(segments))) if segments else ""
+
+    def _work() -> None:
+        st, err = None, None
+        try:
+            import urllib.request # noqa: PLC0415
+
+            from addr import join_url # noqa: PLC0415
+            from agent_bridge import current_url # noqa: PLC0415
+            from console_html import PORT as _PORT # noqa: PLC0415
+
+            base = current_url()[0] if isinstance(current_url(), tuple) else current_url()
+            req = urllib.request.Request(join_url(base, "/api/status" + q),
+                                         headers={"Accept": "application/json"})
+            op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            with op.open(req, timeout=2.5) as r:
+                st = json.loads(r.read().decode("utf-8", "replace"))
+        except Exception as e: # noqa: BLE001
+            err = str(e)
+            for p in (3210, 3211):
+                try:
+                    with urllib.request.urlopen(
+                            "http://127.0.0.1:%d/api/status%s" % (int(p), q), timeout=2.5) as r:
+                        st = json.loads(r.read().decode("utf-8", "replace"))
+                    err = None
+                    break
+                except Exception: # noqa: BLE001
+                    continue
+        box["st"], box["err"], box["done"] = st, err, True
+
+    try:
+        import threading as _th # noqa: PLC0415
+
+        _th.Thread(target=_work, daemon=True, name="status-chip").start()
+    except Exception: # noqa: BLE001
+        return
+
+    def _apply() -> None:
+        # 控件已死（页面被重建/关页）⇒ 立刻退出，既不回写也不继续自链
+        if not _alive(lab):
+            return
+        if not box["done"]:
+            # ⛔ 自链必须有上限：后台线程若卡在连接上不返回，无上限重排会让这个
+            #   `singleShot` 永远占着事件循环（全量自检挂死/CPU 打满的一类真因）。
+            #   60 次 × 150ms ≈ 9s 未回 ⇒ 放弃，如实写「超时」收尾。
+            box["tries"] = box.get("tries", 0) + 1
+            if box["tries"] > 60:
+                lab.setText(_status_unreachable("timeout"))
+                return
+            QTimer.singleShot(150, _apply)
+            return
+        st = box.get("st")
+        if isinstance(st, dict) and st:
+            lab.setText(_status_text_for(status_id, st))
+        else:
+            lab.setText(_status_unreachable(box.get("err")))
+
+    QTimer.singleShot(150, _apply)
+
+
+def _status_unreachable(err) -> str: # noqa: ANN001
+    """控制台没连上时状态位该说的话 —— 不写「检测中」（不是还在测，是没接上）。"""
+    s = str(err or "")
+    if "timed out" in s.lower() or "timeout" in s.lower():
+        return "读不到：控制台响应超时（它还在启动吗）"
+    if "refused" in s.lower() or "10061" in s or "Connect" in s:
+        return "读不到：控制台没起来（先开控制台再接）"
+    return "读不到：%s" % (s[:60] or "控制台未就绪")
 
 
 def _table_row(t: Tokens, r: "sec_meta.Row", card: Card) -> QWidget:

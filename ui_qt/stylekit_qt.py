@@ -184,6 +184,11 @@ WHALE = Tokens(
     err_tx="#FFB0B0", # web --err-tx：危险按钮字色（比主 err 亮一档，深底可读）
     info="#6FCFFF",
     radius_card=18, # 控制台 .card{border-radius:18px}
+    # 按钮走胶囊档（用户裁定「所有方框改胶囊」）：≥ 控件半高 ⇒ 画出来是完整胶囊。
+    # ⚠️ 别改 radius_btn —— 它是**通用小圆角**，表格/容器/列表行也拿它用
+    #    （panels_custom 的 QTableWidget、panels_qt 的 QListWidget::item 等），
+    #    一起抬到 999 会把 200px 高的表格和内嵌方框也拉成胶囊，形状全错。
+    #    胶囊只该作用在**按钮**上，故 buttons 单独认 radius_pill。
     radius_btn=10,
     radius_pill=999,
     card_border=0,

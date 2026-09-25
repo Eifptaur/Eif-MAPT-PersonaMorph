@@ -1146,8 +1146,12 @@ def t_pop_look() -> None:
     ck("icons: APPEARANCE 三条横滑杆 + 三圆点",
        ap.count("M2.4") == 3 and ap.count("<circle") == 3 and 'cx="10.6"' in ap)
     ck("icons: 中条圆点偏右（调节语义）", 'cx="10.6" cy="8"' in ap)
-    ck("icons: 圆头描边 2.0",
-       'stroke-width="2.0"' in ap and 'stroke-linecap="round"' in ap)
+    # 笔画 1.4 / 圆钮 r=1.5：用户点单「粗细改细一点，现在都混在一起了」——
+    # 原 2.0 描边 + r=1.9 圆钮在 20px 档 ≈2.5px 物理，线把钮吃掉、三条黏成墨团。
+    ck("icons: 圆头描边 1.4（细档，线与钮分得开）",
+       'stroke-width="1.4"' in ap and 'stroke-linecap="round"' in ap
+       and 'stroke-width="2.0"' not in ap)
+    ck("icons: 圆钮 r=1.5（不被线吃掉）", ap.count('r="1.5"') == 3 and 'r="1.9"' not in ap)
     pm = icons.appearance_pixmap("#65676B", 20)
     ck("icons: 20px 渲染非空", not pm.isNull() and pm.width() == 40) # dpr=2
 
@@ -5330,13 +5334,76 @@ def t_g13() -> None:
            w.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
            and w.W == w.H and w._timer.isActive() and w._timer.interval() == 30000,
            "square=%s iv=%s active=%s" % (w.W == w.H, w._timer.interval(), w._timer.isActive()))
-        _wait(lambda: w.bal == "¥123.45")
+        _wait(lambda: w.bal == "¥ 123.45")
         ck("g13 数据逐字：余额/今日已用/上轮消耗/高峰标（/dsh-whale/* 两接口）",
-           w.bal == "¥123.45"
-           and "今日已用 ¥0.0234" in w.hint
-           and "上轮 ¥0.0012 · 1500 tok" in w.hint
+           w.bal == "¥ 123.45"
+           and "今日已用 ¥ 0.0234" in w.hint
+           and "上轮 ¥ 0.0012 · 1500 tok" in w.hint
            and "高峰时段（价贵）" in w.hint,
            "bal=%r hint=%r" % (w.bal, w.hint))
+
+        # 气泡内排版：三行结构与原版 CSS 度量一致，且**任何档位都不裁字**。
+        #   这是「漏字」的回归闸——判据不看像素，看**排版账**：把 paintEvent
+        #   用的那套行/字号/可用宽原样复算一遍，断言每行都放得下。
+        #   超长金额（断不开的长串）必须靠**缩字号**兜住，不能靠 elidedText。
+        from PySide6.QtCore import QRect as _QRect # noqa: PLC0415
+        from PySide6.QtGui import QFont as _QF, QFontMetrics as _QFM # noqa: PLC0415
+
+        _W = w.W
+        _U = _W / 1026.0
+        _BH = _W * ww._VBH / ww._VBW # 文字区高度按气泡算（不是正方窗口）
+        _TW = _W * 0.66
+        _WRAPW = min(_TW, _U * 560.0)
+        _TH = _BH * 0.64
+        _GAP = max(1, int(round(_U * 9)))
+
+        def _fits(bal_txt, hint_txt):
+            rows = [(_U * 66, _QF.Weight.DemiBold, "DeepSeek 余额", False)]
+            if bal_txt:
+                rows.append((_U * 128, _QF.Weight.ExtraBold, bal_txt, True))
+            if hint_txt:
+                rows.append((_U * 56, _QF.Weight.Normal, hint_txt, True))
+            scale = 1.0
+            while scale > 0.399:
+                tot, over = 0.0, 0.0
+                for px, wt, txt, wrap in rows:
+                    f = _QF(w.font())
+                    f.setPixelSize(max(7, int(round(px * scale))))
+                    f.setWeight(wt)
+                    mm = _QFM(f)
+                    avail = _WRAPW if wrap else _TW
+                    flags = int(Qt.AlignmentFlag.AlignHCenter
+                                | (Qt.TextFlag.TextWordWrap if wrap
+                                   else Qt.AlignmentFlag.AlignVCenter))
+                    tot += mm.boundingRect(_QRect(0, 0, int(avail), 4000), flags, txt).height()
+                    if wrap:
+                        for seg in txt.split(" "):
+                            for sub in seg.split(ww._ZWSP):
+                                if sub:
+                                    over = max(over, mm.horizontalAdvance(sub) - float(avail))
+                tot += _GAP * (len(rows) - 1)
+                if tot <= _TH + 0.6 and over <= 0.5:
+                    return True, scale
+                scale = round(scale - 0.06, 2)
+            return False, scale
+
+        _cases = [
+            ("短余额", "¥ 0.00", "今日已用 ¥ 0.0000"),
+            ("常见", "¥ 12.34", "今日已用 ¥ 12.3456 · 上轮 ¥ 0.1234 · 1234 tok"),
+            ("大额", "¥ 1,234.56",
+             "今日已用 ¥ 0.0000 · 高峰时段（价贵）· 上轮 ¥ 1.2345 · 567 tok"),
+            ("超大", "¥ 123,456.78",
+             "今日已用 ¥ 123.4567 · 高峰时段（价贵）· 上轮 ¥ 12.3456 · 123456 tok"),
+            ("报错", "", "没配模型 Key"),
+        ]
+        _bad = [n for n, b, h in _cases if not _fits(ww._wrapable(b), ww._wrapable(h))[0]]
+        ck("g13 气泡排版：5 档文案全部一个字都不裁（超长金额靠缩字号兜）",
+           not _bad, "超界档位=%s" % (_bad or "无"))
+
+        ck("g13 折行断点：逗号后补零宽空格（Qt 断不开纯数字串）",
+           ww._wrapable("¥ 1,234.56") == "¥ 1," + ww._ZWSP + "234.56"
+           and ww._wrapable("¥12.34") == "¥12.34",
+           "有逗号=%r 无逗号=%r" % (ww._wrapable("¥ 1,234.56"), ww._wrapable("¥12.34")))
 
         # 点击（无位移 release）= 刷新
         n0 = _bal_n()
@@ -5366,12 +5433,14 @@ def t_g13() -> None:
            "w2=(%d,%d) w=(%d,%d)" % (w2.x(), w2.y(), w.x(), w.y()))
 
         # 失败态如实（先等上一轮回调完成把 _busy 放开——_busy 守卫会挡住并发刷新）
+        #   余额行清空：label 行已固定写「DeepSeek 余额」，amount 行再写
+        #   「余额 未取到」就是重复；原版 render() 的 error 分支也是只留 hint。
         _wait(lambda: not w._busy)
         bal_state["bad"] = True
         w.refresh()
-        _wait(lambda: w.bal == "余额 未取到")
-        ck("g13 取数失败如实回显（余额 未取到 + 服务端 error）",
-           w.bal == "余额 未取到" and "没配模型 Key" in w.hint,
+        _wait(lambda: w.bal == "")
+        ck("g13 取数失败如实回显（余额行清空 + 服务端 error 进 hint）",
+           w.bal == "" and "没配模型 Key" in w.hint,
            "bal=%r hint=%r" % (w.bal, w.hint))
         bal_state["bad"] = False
     finally:
@@ -7199,6 +7268,134 @@ def _stash_selfheal(logs_dir: str) -> str:
         return "error:%s" % e
 
 
+def t_r10_drag() -> None:
+    """弹窗拖拽（DraggableDialog）—— 「按住任意非交互处即可挪窗」的回归闸。
+
+    三条判据、一个坑：
+      · 按背景/纯文字 QLabel      ⇒ 窗口位移（用户要的「随便按哪儿都能挪」）；
+      · 按按钮/输入框             ⇒ 窗口**不**动（它们自己收鼠标）；
+      · 位移 < 4px 阈值           ⇒ 当点击不当拖（不抖窗）；
+    坑：Qt 的鼠标事件会**沿父链上抛**——在按钮上按下时对话框也会收到一份
+    （`obj is dialog`），只看 obj 会判成「可拖」⇒ 按按钮也能把窗拖走。故实现里
+    额外用 `childAt(globalPos)` 复核命中件（`_drag_child_at`）。
+    事件必须走 `QApplication.notify()`：过滤器是 notify 里调的，`sendEvent` 绕过它。
+    """
+    import os # noqa: PLC0415
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import QEvent, QPoint, Qt # noqa: PLC0415
+    from PySide6.QtGui import QMouseEvent # noqa: PLC0415
+    from PySide6.QtWidgets import ( # noqa: PLC0415
+        QApplication, QDialog, QLabel, QLineEdit, QPushButton, QVBoxLayout,
+    )
+
+    import widgets as W # noqa: PLC0415
+    from stylekit_qt import THEMES # noqa: PLC0415
+
+    app = QApplication.instance() or QApplication([])
+
+    D = W.drag_dialog_cls("R10DragDialog")
+    ck("r10 拖拽混入的 MRO 顺序 (DraggableDialog, QDialog)（避开 eventFilter 影子化）",
+       D.__mro__[1] is W.DraggableDialog and D.__mro__[2] is QDialog,
+       "mro=" + ",".join(c.__name__ for c in D.__mro__[:4]))
+
+    keep: list = []
+    dlg = D()
+    keep.append(dlg)
+    dlg.enable_drag()
+    dlg.resize(360, 240)
+    lay = QVBoxLayout(dlg)
+    lab = QLabel("这是一段纯显示文字（不可选）")
+    lay.addWidget(lab)
+    inp = QLineEdit()
+    lay.addWidget(inp)
+    btn = QPushButton("确定")
+    lay.addWidget(btn)
+    dlg.show()
+    # ⛔ 不调 `app.processEvents()`：前序用例会在事件队列里留下**未到期的 QTimer**
+    #   （Shell 的余额轮询 / 鲸鱼挂件刷新等），它们一被 pump 就会去做**阻塞网络请求**
+    #   （`socket.create_connection` 连一个不存在的端口，Windows 下会长时间挂住）⇒
+    #   本用例被拖死（实测栈：`t_r10_drag` → processEvents → shell._load_balance →
+    #   config_io.get_json → socket.create_connection）。本用例的断言全部基于
+    #   `dlg.pos()` 与直接调用的 `eventFilter`，**不需要事件循环**：`show()` 后几何
+    #   即已定；`_drag` 也是直调过滤器。（Qt 事件循环里跑阻塞 I/O = 必踩的环境坑。）
+
+    def _drag(from_w, dx, dy): # noqa: ANN001
+        """模拟一次「在 from_w 上按下 → 拖 (dx,dy) → 松手」。
+
+        ⛔ 不走 `QApplication.notify()`：它是 Qt 的**原生派发入口**，在控件层级
+        被前序用例折腾过之后（C++ 侧有已析构对象残影）会在 Qt 内部段错误 ——
+        实测全量跑 `t_g16,t_g17,t_g18` 之后必现在 `notify()` 里崩（且崩在进
+        Python `eventFilter` 之前，所以不是本过滤器的逻辑问题）。
+        ✅ 改为直接调 `dlg.eventFilter(from_w, ev)`：被测的就是这个过滤器本身，
+        直接喂事件既避开了 Qt 派发的环境脆弱性，又把「命中件是谁」钉死
+        （`from_w` 就是命中的子控件），断言更确定。`_drag_child_at` 另用
+        `findChild` 复核一条，防止过滤器改走 childAt 后这里失真。
+        """
+        lp = QPoint(3, 3) if from_w is dlg else from_w.rect().center()
+        gp = (dlg if from_w is dlg else from_w).mapToGlobal(lp)
+        step = QPoint(dx, dy)
+        for t in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseMove,
+                  QEvent.Type.MouseButtonRelease):
+            if t == QEvent.Type.MouseButtonPress:
+                cl, cg = lp, gp
+                btns, hs = Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton
+            else:
+                cl, cg = lp + step, gp + step
+                if t == QEvent.Type.MouseMove:
+                    btns, hs = Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton
+                else:
+                    btns, hs = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+            # from_w 也收一份（模拟事件先到子控件）—— 过滤器的两重判据都要走到
+            dlg.eventFilter(from_w, QMouseEvent(t, cl, cg, btns, hs,
+                                                Qt.KeyboardModifier.NoModifier))
+            dlg.eventFilter(dlg, QMouseEvent(t, cl, cg, btns, hs,
+                                             Qt.KeyboardModifier.NoModifier))
+        # 不 pump 事件循环（理由同上：会喂到前序用例残留的阻塞型定时器）。
+        # 位移是同步 `self.move()` 生效的，`dlg.pos()` 立即反映。
+
+    # 复核 `_drag_child_at` 的命中口径与 `from_w` 一致（防过滤器改实现后本测试失真）
+    _hit = dlg._drag_child_at(lab.mapToGlobal(lab.rect().center()))
+    ck("r10 _drag_child_at 命中的是传入点上的子控件（非 dialog 自身）",
+       _hit is not None and _hit is not dlg,
+       "hit=%r" % (type(_hit).__name__ if _hit is not None else None))
+
+    p0 = dlg.pos()
+    _drag(lab, 45, 35)
+    ck("r10 按纯文字 QLabel 拖 ⇒ 窗口位移（随便按哪儿都能挪）",
+       (dlg.x(), dlg.y()) != (p0.x(), p0.y()),
+       "p0=(%d,%d) now=(%d,%d)" % (p0.x(), p0.y(), dlg.x(), dlg.y()))
+
+    p1 = dlg.pos()
+    _drag(btn, 60, 50)
+    ck("r10 按按钮拖 ⇒ 窗口不动（事件上抛到 dialog 也不许拖）",
+       (dlg.x(), dlg.y()) == (p1.x(), p1.y()),
+       "p1=(%d,%d) now=(%d,%d)" % (p1.x(), p1.y(), dlg.x(), dlg.y()))
+
+    p2 = dlg.pos()
+    _drag(inp, 60, 50)
+    ck("r10 按输入框拖 ⇒ 窗口不动（要能划选/点光标）",
+       (dlg.x(), dlg.y()) == (p2.x(), p2.y()),
+       "p2=(%d,%d) now=(%d,%d)" % (p2.x(), p2.y(), dlg.x(), dlg.y()))
+
+    p3 = dlg.pos()
+    _drag(lab, 2, 1)
+    ck("r10 位移 < 4px 阈值 ⇒ 当点击不当拖（不抖窗）",
+       (dlg.x(), dlg.y()) == (p3.x(), p3.y()),
+       "p3=(%d,%d) now=(%d,%d)" % (p3.x(), p3.y(), dlg.x(), dlg.y()))
+
+    # 胶囊半径：按钮/输入框走 radius_pill，通用小圆角 token 不被抬高
+    _t = THEMES["whale"]
+    ck("r10 按钮/输入框走 radius_pill（胶囊），radius_btn 保持小圆角",
+       _t.radius_pill >= 999 and _t.radius_btn < 100,
+       "pill=%d btn=%d" % (_t.radius_pill, _t.radius_btn))
+    _b = W.Btn("按钮", _t, role="primary")
+    keep.append(_b)
+    ck("r10 Btn QSS 渲染半径 == 999（真落到样式表上）",
+       "border-radius:999px" in _b.styleSheet())
+    dlg.close()
+
+
 def main() -> int:
     # ⭐ 测试隔离（audit-r2 N1 残余的收口）：`logs/console.url` 是**产品运行时**写的
     #   （含随机端口+token），自检跑在产品目录里会读到它——轻则刷几百行「端口连不上」噪音，
@@ -7223,7 +7420,7 @@ def main() -> int:
                    t_c10, t_c13, t_hotfix1, t_hotfix2, t_catmgr, t_medialocal, t_commfb,
                    t_veradv, t_g5, t_g6, t_g7, t_g8, t_g9, t_g10, t_g11, t_g12, t_g13, t_g14,
                    t_g15, t_g16, t_g17, t_g18, t_g19, t_g20, t_g21, t_g22, t_ocr_fuzzy,
-                   t_audit_r3):
+                   t_audit_r3, t_r10_drag):
             try:
                 fn()
             except Exception as e: # noqa: BLE001

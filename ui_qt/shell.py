@@ -82,6 +82,27 @@ from widgets import ( # noqa: E402
 # ---------------------------------------------------------------- DPI 纪律
 
 
+def _add_text_shadow(lab, blur: float = 2.4, alpha: int = 230) -> None: # noqa: ANN001
+    """给顶栏文字加「描边式」深色投影（0 偏移），在任何底图上都能把字廓出来。
+
+    ⚠️ 为什么不用 QSS：Qt 样式表**不支持 text-shadow**（写了不报错、静默丢弃 ——
+    实跑像素验证暗像素=0）。唯一可行路径是 QGraphicsDropShadowEffect。
+    0 偏移 + 小 blur = 四周一圈暗边（不是投影），正好抵消底图亮部对字边的冲刷。
+    主题重建会销毁整个顶栏，effect 随控件一起回收，不需要手工解引用。
+    """
+    try:
+        from PySide6.QtGui import QColor as _QC # noqa: PLC0415
+        from PySide6.QtWidgets import QGraphicsDropShadowEffect # noqa: PLC0415  # 在 QtWidgets，不在 QtGui
+
+        eff = QGraphicsDropShadowEffect(lab)
+        eff.setBlurRadius(float(blur))
+        eff.setOffset(0.0, 0.0) # 0 偏移 = 描边而非投影
+        eff.setColor(_QC(0, 8, 20, int(alpha)))
+        lab.setGraphicsEffect(eff)
+    except Exception: # noqa: BLE001 — 投影是增强，失败不影响文字本体
+        pass
+
+
 def set_per_monitor_dpi() -> str:
     """PerMonitorV2。
 
@@ -191,6 +212,7 @@ class Shell(QWidget):
         self._orig_texts: dict = {} # 鲸语切换的原文缓存（控件重建后清空）
         # ── 鲸落视觉本体（ocean.py）：底图 + tint + 三层波浪，只在 whale 主题启用 ──
         self._wp_path: Path | None = None # 当前底图来源（含自定义背景判路）
+        self._wp_fp = None # (path, mtime_ns, size)：换同扩展名新图也要认出来
         self._wp_src: "QPixmap | None" = None # 原图
         self._wp_scaled: "QPixmap | None" = None
         self._wp_scaled_for = None # (w, h, dpr) 重缩放判据
@@ -285,8 +307,13 @@ class Shell(QWidget):
 
     # ------------------------------------------------------------ 鲸落视觉本体
 
+    # 上传背景的落盘扩展名（后端按魔数探测后写 ui_bg.<ext>；见 webui 背景上传处理）。
+    # ⛔ 不能只认 jpg：后端存的是 ui_bg.png/webp/gif/mp4/…，只找 jpg ⇒ 上传后永远
+    #   找不到文件、静默回默认海（用户「上传背景完全无效」的根因）。
+    _BG_EXTS = ("jpg", "jpeg", "png", "webp", "gif")
+
     def _wallpaper_source(self) -> Path:
-        """底图来源：config `ui.background == 'custom'` 用上传的 data/ui_bg.jpg，
+        """底图来源：config `ui.background == 'custom'` 用上传到 data/ui_bg.<ext> 的图，
         否则默认海 assets/wallpaper/ocean1.jpg（web applyCustomBg 同款判路）。
         自定义文件缺失 ⇒ 回默认海，不白屏。"""
         root = Path(__file__).resolve().parents[1]
@@ -300,17 +327,27 @@ class Shell(QWidget):
             try:
                 from agent.config import DATA_DIR # noqa: PLC0415
 
-                p = Path(DATA_DIR) / "ui_bg.jpg"
-                if p.exists():
-                    return p
+                dd = Path(DATA_DIR)
+                for ext in self._BG_EXTS:
+                    p = dd / ("ui_bg." + ext)
+                    if p.exists():
+                        return p
             except Exception: # noqa: BLE001
                 pass
         return root / "assets" / "wallpaper" / "ocean1.jpg"
 
     def _load_wallpaper(self) -> None:
         src = self._wallpaper_source()
-        if src == self._wp_path and self._wp_src is not None:
+        # 指纹（mtime_ns, size）——只看路径不够：用户换一张**同扩展名**的图（png→png）
+        # 时路径不变，只看 path 会一直贴旧图（「换了背景没反应」的第二个坑）。
+        try:
+            stt = src.stat()
+            fp = (str(src), stt.st_mtime_ns, stt.st_size)
+        except Exception: # noqa: BLE001
+            fp = (str(src), 0, 0)
+        if fp == self._wp_fp and self._wp_src is not None:
             return
+        self._wp_fp = fp
         self._wp_path = src
         pm = QPixmap(str(src)) if src.exists() else QPixmap()
         self._wp_src = None if pm.isNull() else pm
@@ -363,9 +400,10 @@ class Shell(QWidget):
                     self._switch_theme(th, persist=False)
         except Exception: # noqa: BLE001
             pass
-        wp_before = self._wp_path
+        wp_fp_before = self._wp_fp
         self._load_wallpaper()
-        if wp_before != self._wp_path or self._wp_scaled is None:
+        # 指纹变了（换图/换扩展名/文件被改写）或还没缩放过 ⇒ 重画背景
+        if wp_fp_before != self._wp_fp or self._wp_scaled is None:
             self._refresh_backdrop()
 
     def paintEvent(self, ev) -> None: # noqa: N802
@@ -818,11 +856,17 @@ class Shell(QWidget):
         name = QLabel("群相 控制台")
         name.setFont(qfont(self.t, 14, 600, display=True))
         name.setStyleSheet(f"color:{self.t.tx};background:transparent;")
+        # 顶栏文字加一圈深色投影 —— 用户点单「顶栏那些文字对比度做强，不然又被
+        # 背景影响了」。加实顶栏底色不够：底图亮部（浪花）照样能在字边形成光晕，
+        # 把笔画吃掉。⚠️ QSS **没有** text-shadow（Qt 静默忽略，实跑像素验证
+        # 暗像素=0）⇒ 只能用 QGraphicsDropShadowEffect（0 偏移 = 描边式投影）。
+        _add_text_shadow(name, blur=2.4, alpha=230)
         lay.addWidget(name)
 
         ver = QLabel("原生界面 v1.0") # 落位适配：版本标签摘掉「原型」字样
         ver.setFont(qfont(self.t, 11))
         ver.setStyleSheet(f"color:{self.t.tx2};background:transparent;")
+        _add_text_shadow(ver, blur=2.0, alpha=200)
         lay.addWidget(ver)
 
         # 更新公告胶囊：顶栏只留胶囊，
@@ -1326,7 +1370,7 @@ class Shell(QWidget):
         e.setStyleSheet(
             f"QLineEdit{{background:{rgba(self.t.q('tx'), 0 if self.t.glass else 16).name(QColor.NameFormat.HexArgb)};"
             f"color:{self.t.tx};border:1px solid {self.t.bd};"
-            f"border-radius:{self.t.radius_btn}px;padding:0 10px;}}"
+            f"border-radius:{self.t.radius_pill}px;padding:0 10px;}}"
             f"QLineEdit:focus{{border:1px solid {self.t.blue};}}"
         )
         return e
@@ -1608,8 +1652,13 @@ class Shell(QWidget):
             #    各控件自带显式背景，全局透明只影响容器层 —— 卡片仍是半透玻璃。
             self.setStyleSheet(
                 f"QWidget{{background:transparent;}}"
-                f"#TitleBar{{background:rgba(8,24,46,178);border-bottom:1px solid {t.bd};}}"
-                f"#Side{{background:rgba(12,34,62,219);border-right:1px solid {t.bd};}}"
+                # 顶栏/侧栏压底图：**比 web 的 .7 更实**（对齐用户点单「对比度做强」）。
+                # web 有 backdrop-filter:blur(8px)（console_html.py L432）帮它把底下
+                # 的浪纹糊掉；Qt 无等价模糊 ⇒ 同样 .7 会让海水的亮/暗直接透过文字。
+                # 用 .84 顶栏 / .90 侧栏换取「顶栏文字不再被背景洗」——这是平台差异
+                # 下的有意取值，不是抄错数字（web 真值仍是 .7）。
+                f"#TitleBar{{background:rgba(7,21,42,214);border-bottom:1px solid {t.bd};}}"
+                f"#Side{{background:rgba(10,29,54,230);border-right:1px solid {t.bd};}}"
                 f"#Main{{background:transparent;}}"
                 f"QLabel{{background:transparent;color:{t.tx};}}"
                 f"QScrollArea{{background:transparent;border:none;}}"
@@ -1958,6 +2007,17 @@ class Shell(QWidget):
                 else:
                     badge.set("warn", "还没有人设",
                               "还没有人设脚本：先在上面那个入口生成或导入一个。")
+                # 本页若是「控制台没起时建的页」——它那趟 load_personas 全失败 ⇒ 列表空、
+                # 页上还写着「读不到」。现在轮询拿到真有人设了 ⇒ 就地补拉一次把表填回来
+                # （不刷新页面，用户不必自己点）。判据用「本页空 + 后端有人设」，不是时间。
+                try:
+                    loader = getattr(inner, "c12_reload_personas", None)
+                    if personas_n > 0 and callable(loader):
+                        lst = getattr(inner, "c12_list", None)
+                        if lst is not None and lst.count() == 0:
+                            loader()
+                except Exception: # noqa: BLE001
+                    pass
 
     def _on_pause_click(self) -> None:
         """暂停/恢复 → POST /api/pause 或 /api/resume。
@@ -2211,7 +2271,7 @@ class _Combo(QWidget):
         self.cb.setMinimumWidth(200)
         self.cb.setStyleSheet(
             f"QComboBox{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
-            f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:0 10px;}}"
+            f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_pill}px;padding:0 10px;}}"
             f"QComboBox::drop-down{{border:none;width:22px;}}"
             f"QComboBox QAbstractItemView{{background:{t.bg if t.key!='whale' else '#0E2136'};"
             f"color:{t.tx};border:1px solid {t.bd};selection-background-color:{t.blue_soft};}}"

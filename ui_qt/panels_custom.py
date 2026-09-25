@@ -61,6 +61,27 @@ def _hex(c) -> str:
     return c.name(QColor.NameFormat.HexArgb)
 
 
+def _qt_alive(w) -> bool:
+    """控件在 C++ 侧是否还活着。
+
+    面板重建/关页后，注册进全局轮询的闭包仍持有旧控件（Python 侧活、C++ 侧已析构）。
+    用 `shiboken6.isValid` 判活；不可用则退回「调个无害 getter 看抛不抛
+    RuntimeError」。已死 ⇒ 调用方直接退出，不发起任何阻塞请求。
+    """
+    if w is None:
+        return False
+    try:
+        import shiboken6 # noqa: PLC0415
+
+        return bool(shiboken6.isValid(w))
+    except Exception: # noqa: BLE001
+        try:
+            w.objectName()
+            return True
+        except RuntimeError:
+            return False
+
+
 def _page(t: Tokens, title: str, level: str = "idle", badge: str = "读取中"):
     """面板公共骨架：页 + 标题行 + Badge。返回 (page, lay, badge)。
 
@@ -2586,7 +2607,17 @@ def persona_panel(t: Tokens) -> QWidget:
             it.setSizeHint(QSize(max(listw.viewport().width(), 1),
                                  max(44, wdg.sizeHint().height())))
         _refit_items()
-        badge.set("info", f"{len(items)} 个" if items else "暂无人设")
+        # 空表必须说清「为什么空」：读不到（控制台没起/超时）≠ 真的没有人设。
+        # 旧口径一句 badge「暂无人设」把两类情况混成一句 ⇒ 用户以为数据没了。
+        if items:
+            badge.set("info", f"{len(items)} 个")
+            pnote.setText("")
+        elif state.get("load_err"):
+            badge.set("warn", "读不到")
+            pnote.setText("人设列表读不到：" + _read_fail_hint(state.get("load_err")))
+        else:
+            badge.set("info", "暂无人设")
+            pnote.setText("")
 
     def set_personas(items: list) -> None:
         state["items"] = list(items or [])
@@ -2690,10 +2721,13 @@ def persona_panel(t: Tokens) -> QWidget:
         分区下拉=已有分区+「自定义…」；添加角色到新分区时先落分区再落角色。"""
         from PySide6.QtWidgets import QDialog # noqa: PLC0415
 
-        dlg = QDialog(page)
+        from widgets import drag_dialog_cls # noqa: PLC0415
+
+        dlg = drag_dialog_cls("PAddDialog")(page)
         dlg.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
         dlg.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         dlg.setModal(True)
+        dlg.enable_drag() # 可拖动（用户点单：所有弹窗都能按背景挪）
         outer = QVBoxLayout(dlg)
         outer.setContentsMargins(0, 0, 0, 0)
         shell = QFrame()
@@ -2978,10 +3012,15 @@ def persona_panel(t: Tokens) -> QWidget:
                 "rate": _rate_persona, "move": _move_persona}
 
     def load_personas() -> None:
+        # err_box：/api/personas 是**唯一必需**的取数口 —— 它失败（控制台没起/超时）
+        # 时列表必空，此时绝不是「没有数据」，而是「读不到」。把原因带下去，
+        # 让 set_personas 如实写出来，别让用户对着空表猜（「人设表一片空白」）。
+        ebox: dict = {}
         try:
-            r = config_io.get_json("/api/personas", timeout=5.0)
-        except Exception: # noqa: BLE001
-            r = None
+            r = config_io.get_json("/api/personas", timeout=5.0, err_box=ebox)
+        except Exception as e: # noqa: BLE001
+            r, ebox = None, {"err": str(e)}
+        state["load_err"] = ebox.get("err")
         items = (r or {}).get("personas") or [] if isinstance(r, dict) else []
         try:
             rc = config_io.get_json("/api/personas/custom", timeout=5.0) or {}
@@ -3027,6 +3066,7 @@ def persona_panel(t: Tokens) -> QWidget:
     page.c12_list = listw
     page.c12_search = search
     page.c12_load = load_personas
+    page.c12_reload_personas = load_personas # shell 徽章轮询：本页空 + 后端有人设 ⇒ 补拉
     page.c12_handlers = handlers
     page.c12_cats_state = lambda: (list(state["built"]), dict(state["user_cats"]))
 
@@ -5539,10 +5579,16 @@ def _card_dialog(t: Tokens, btn, title: str, width: int = 640):
     """confirm.ConfirmDialog 同款壳（无边框+半透明+卡片+模态）的通用构造。
 
     供说明/导入/导出等交互弹窗复用；返回 (dlg, 内容布局)。调用方负责 exec()。
+
+    **可拖动**：用户点单「所有弹窗都要可挪动，按住任意位置（除文字显示区域）
+    都能挪」。这里统一装上 —— 全项目的说明/表单类弹窗都从这个工厂出货，
+    一处装好即全覆盖（比逐个弹窗各写一份拖拽实现可靠得多）。
     """
     from PySide6.QtWidgets import QDialog # noqa: PLC0415
 
-    dlg = QDialog(btn.window())
+    from widgets import drag_dialog_cls # noqa: PLC0415
+
+    dlg = drag_dialog_cls("CardDialog")(btn.window())
     dlg.setWindowTitle(title)
     dlg.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
     dlg.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -5568,6 +5614,7 @@ def _card_dialog(t: Tokens, btn, title: str, width: int = 640):
     head.setStyleSheet(f"color:{t.tx};background:transparent;")
     v.addWidget(head)
     dlg.resize(width, 200)
+    dlg.enable_drag() # 可拖动（见本函数 docstring）
     return dlg, v
 
 
@@ -7105,10 +7152,26 @@ def _media_components_appendix(t: Tokens, page: QWidget) -> None:
     state: dict = {"pkgs": [], "ffmpeg_missing": False, "asr_missing": False}
 
     def _refresh() -> None:
+        # ⛔ 先判存活再取数：本卡被关页/重建后，`st_lb` 的 C++ 对象已析构，而本函数
+        #   还被全局轮询表引用。若不先判，下面这趟 `timeout=10.0` 的请求照样会打完
+        #   （10 秒阻塞），最后才在 setText 上抛——攒几十个死卡就是几十趟串烧阻塞，
+        #   事件循环再也空不下来（全量自检偶发挂死的真因之一）。
+        if not _qt_alive(st_lb):
+            return
+        ebox: dict = {}
         try:
-            st = config_io.get_json("/api/status", timeout=10.0) or {}
+            st = config_io.get_json("/api/status", timeout=10.0, err_box=ebox) or {}
         except Exception as e: # noqa: BLE001
-            st_lb.setText("状态读不到：%s" % str(e)[:80])
+            ebox = {"err": str(e)}
+            st = {}
+        # ⛔ get_json 连不上时**返回 None 而不抛** ⇒ 旧写法 `st = ... or {}` 顺手吞掉，
+        #   一路掉到 `md.get(...)` 全空、最后 `lines` 为空再走 else 分支，文案变成
+        #   「组件状态读不到」——虽然不算「检测中」，但把「没连上」混成了「读不到组件」。
+        #   这里显式分派：连不上就说连不上（用户据此去开控制台）。
+        if not st:
+            st_lb.setText("组件状态读不到：" + _read_fail_hint(ebox.get("err")))
+            btn.setEnabled(False)
+            state["pkgs"] = []
             return
         md = st.get("media") or {}
         if not isinstance(md, dict):
@@ -7180,7 +7243,15 @@ def _media_components_appendix(t: Tokens, page: QWidget) -> None:
         _th_main.Thread(target=_work, daemon=True, name="media-install").start()
 
         def _apply() -> None:
+            if not _qt_alive(st_lb):
+                return # 卡已销毁 ⇒ 不再回写、不再自链
             if not box["done"]:
+                # 自链设上限（安装线程卡住时不让定时器链无限重排，占死事件循环）
+                box["tries"] = box.get("tries", 0) + 1
+                if box["tries"] > 100: # 100 × 300ms ≈ 30s
+                    st_lb.setText("安装结果读不到（超时）")
+                    btn.setEnabled(True)
+                    return
                 QTimer.singleShot(300, _apply)
                 return
             outs = box.get("outs") or []
@@ -7194,6 +7265,16 @@ def _media_components_appendix(t: Tokens, page: QWidget) -> None:
                 btn.setEnabled(True)
 
     btn.clicked.connect(_install)
+    # 跟随全局 8s 轮询：原来只 singleShot 一次 ⇒ 控制台在开页之后才起来，
+    # 这张卡就永远停在开页那一刻的结论（「还是检测中」的一个真凶）。
+    # anchor=st_lb：这张卡一被销毁，回调即从轮询表摘除，不再打 10 秒阻塞请求
+    # （注册表随建页次数膨胀 + 死卡仍发请求 = 全量自检偶发挂死的真因）。
+    try:
+        import panels_qt as _pq # noqa: PLC0415
+
+        _pq.register_appendix_refresh(_refresh, anchor=st_lb)
+    except Exception: # noqa: BLE001
+        pass
     QTimer.singleShot(600, _refresh)
 
 

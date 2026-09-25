@@ -59,14 +59,15 @@ CHEVRON = '<path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width
 
 #: 外观切换图标：三条横向调节滑杆 + 圆点钮（中条圆点偏右
 #: —— 经典「调节」语义）。涵盖「文案体系 + 主题」= 外观调节。
-#: 描边 2.0（16 视框 → 20px 顶栏档渲染 ≈2.5px 物理）—— F：1.6 太灰看不清，
-#: 与最小化/全屏（IconBtn 笔画 2px）同规格提亮；圆头。
+#: 笔画 1.4 / 圆钮 r=1.5 —— 用户点单「粗细改细一点，现在都混在一起了」：
+#: 原 2.0 描边 + r=1.9 圆钮在 20px 档 ≈2.5px 物理，线把钮吃掉、三条黏成一团墨。
+#: 1.4 描边（≈1.75px 物理）与侧栏导航图标同档，线与钮之间留出可见缝隙。
 APPEARANCE = (
     '<path d="M2.4 4h11.2M2.4 8h11.2M2.4 12h11.2" fill="none" stroke="currentColor" '
-    'stroke-width="2.0" stroke-linecap="round"/>'
-    '<circle cx="5.4" cy="4" r="1.9" fill="none" stroke="currentColor" stroke-width="2.0"/>'
-    '<circle cx="10.6" cy="8" r="1.9" fill="none" stroke="currentColor" stroke-width="2.0"/>'
-    '<circle cx="6.8" cy="12" r="1.9" fill="none" stroke="currentColor" stroke-width="2.0"/>'
+    'stroke-width="1.4" stroke-linecap="round"/>'
+    '<circle cx="5.4" cy="4" r="1.5" fill="none" stroke="currentColor" stroke-width="1.4"/>'
+    '<circle cx="10.6" cy="8" r="1.5" fill="none" stroke="currentColor" stroke-width="1.4"/>'
+    '<circle cx="6.8" cy="12" r="1.5" fill="none" stroke="currentColor" stroke-width="1.4"/>'
 )
 
 

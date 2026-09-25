@@ -37,7 +37,7 @@ from PySide6.QtWidgets import (
 )
 
 from stylekit_qt import Tokens, qfont, rgba
-from widgets import Btn
+from widgets import Btn, DraggableDialog
 
 
 # ---------------------------------------------------------------- 文案小工具
@@ -84,7 +84,7 @@ class Overlay(QDialog):
         p.end()
 
 
-class ConfirmDialog(QDialog):
+class ConfirmDialog(DraggableDialog, QDialog):
     """危险操作二次确认。
 
     可用性要点（原任务点名要的三条之一：'危险操作保留二次确认并写清后果'）：
@@ -92,6 +92,8 @@ class ConfirmDialog(QDialog):
       2. **危险按钮在右、默认焦点在"取消"** —— 手快连按回车不会误伤；
       3. 需要更谨慎时开 `typed_word` 门槛（照 GitHub 删仓库的做法）：
          必须把词打对才能点确认，防"肌肉记忆式确认"。
+
+    弹窗可拖动（DraggableDialog）：按住任意非交互处即可挪，按钮仍是按钮。
     """
 
     decided = Signal(bool)
@@ -240,6 +242,12 @@ class ConfirmDialog(QDialog):
             self.move(g.center() - self.rect().center())
         else:
             self.move(320, 260)
+
+    def showEvent(self, e): # noqa: N802
+        # 拖拽在**第一次显示后**才启用：构造期 adjustSize/_center_on 会改几何，
+        # 此时挂上没意义；显示后一句话装上（DraggableDialog 的 installEventFilter）。
+        super().showEvent(e)
+        self.enable_drag()
 
     # ------------------------------------------------------------ 行为
 

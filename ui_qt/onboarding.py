@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
 
 import config_io
 from stylekit_qt import Tokens, qfont, rgba
-from widgets import Btn, desc, h2
+from widgets import Btn, DraggableDialog, desc, h2
 
 # 进程内只弹一次（web `_onboardOnce` 的 Qt 等价）
 _ONBOARD_ONCE = False
@@ -72,8 +72,8 @@ def maybe_show(t: Tokens, shell: QWidget) -> None:
     dlg.exec()
 
 
-class _Wizard(QDialog):
-    """五步向导（无边框 + 卡片，与 confirm.ConfirmDialog 同款壳）。"""
+class _Wizard(DraggableDialog, QDialog):
+    """五步向导（无边框 + 卡片，与 confirm.ConfirmDialog 同款壳）。可拖动。"""
 
     def __init__(self, t: Tokens, shell: QWidget):
         super().__init__(shell.window())
@@ -88,6 +88,7 @@ class _Wizard(QDialog):
         self.setModal(True)
         self.setObjectName("onboard")
         self.resize(620, 460)
+        self.enable_drag() # 可拖动（用户点单：所有弹窗都能按背景挪）
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         card = QWidget()
