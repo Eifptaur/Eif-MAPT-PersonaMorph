@@ -12,6 +12,7 @@ import ctypes # ⚠️ 必须是**模块级**：`_wait_dialog_gone` / `_restore_
                        #    `import ctypes as _ct`，于是这些函数**每次都在 except 里静默失败**
                        # ——"还前台从来没生效过"
                        #    的真因就是这一行缺失，与 Windows 的前台锁无关。
+import functools
 import html
 import logging
 import os
@@ -29,12 +30,42 @@ from . import recall as recall_mod # 第 14 条：撤回事件识别（用于把
 _LEDGER = deque(maxlen=200)
 
 
+def _LEDGER_add(entry: dict) -> None:
+    try:
+        _LEDGER.append(entry)
+    except Exception:
+        pass
+
+
 def message_ledger(n: int = 30) -> list:
     """最近 n 条"消息判定台账"（每条：会话/发送者/判为谁/为什么/原文片段）。"""
     try:
         return list(_LEDGER)[-max(1, int(n)):]
     except Exception:
         return []
+
+
+def _idn_txn_scope(fn):
+    """把一次完整操作包进**会话身份事务**：进门换 token，退出（含早退/异常）作废。
+
+    背景（audit-r3 D4）：事务原来只在 `send_text` 开（显式 begin/end），其余 12 处
+    `chat_is_open` 调用点（发图 / @ / 引用 / 拍一拍 / 表情面板…）落回 `_IDN_CACHE_TTL_S`
+    秒兜底 ⇒ **跨操作可复用**正面证据（同 chat_id + 同尺寸、≤4 秒内）——上一个操作
+    验完「开着的是 A」，4 秒内下一个操作切到 B 再验 A，可能吃到上一操作的旧证据。
+    ⇒ 每个操作入口自带事务，窗口归零。
+
+    嵌套安全：内层 begin/end 只是多清一次缓存（该操作内重新验证），**绝不产生错误
+    复用**——token 一变键就不同（约束 a+c）。`_idn_scoped` 标记供自检核对接线。
+    """
+    @functools.wraps(fn)
+    def _w(self, *a, **k):
+        self._idn_txn_begin()
+        try:
+            return fn(self, *a, **k)
+        finally:
+            self._idn_txn_end()
+    _w._idn_scoped = True
+    return _w
 
 
 def _ledger_path() -> str:
@@ -3163,6 +3194,7 @@ class WeChatAdapter:
         except Exception as _e:
             log.debug("放回收起状态失败（忽略）：%s", _e)
 
+    @_idn_txn_scope
     def _open_chat_guarded(self, name: str, chat_id: str = "") -> bool:
         """把「确保目标会话就是当前会话」做成**投递优先**。
 
@@ -3782,6 +3814,50 @@ class WeChatAdapter:
         """清（约束 b：判否/异常一律清）。"""
         self._idn_cache = None
 
+    def _known_chat_names(self) -> list:
+        """DB 侧**全量已知会话名**（③′ 模糊档候选集的补全，audit-r3 D1）。
+
+        为什么必须有：③′ 原来只拿 `session_rows()`（**可见行**）当候选集，而"当前打开的
+        那一行"恰是白字绿底、OCR 最读不准的一行（E→巷）⇒ **竞争名恰好读不到**不是罕见
+        形态。实测反例：屏幕实为「工作群B」、目标「工作群A」、B 行没读出来 ⇒ 候选集里
+        没有竞争者 ⇒「唯一接近、无歧义」误判 True。⇒ 候选集必须是**可见行 ∪ 全量已知名**。
+
+        名字来源（全部读内存映射 / 缓存，零 OCR）：
+          · 群表 `_groups`（来自微信库群列表——**全量群**，不只监听群）；
+          · 联系人昵称表 `_nick_map`；
+          · 监听中的会话（`_monitored_chat_ids()` → `display_name`，自带 60s 缓存——
+            机器人真正会在其中切换的集合，竞争名几乎必出自这里）。
+        消息档案 / 记忆库的枚举**不并入**：档案键是 wxid 不是名字，展示名仍要回查上面
+        两张表 ⇒ 并入只添成本不添名字（实测取舍，如实记账）。
+
+        测试夹具常绕过 `__init__` ⇒ 一律 `getattr` 取属性，异常退空表（宁缺勿错：
+        空表只是候选集少几项，不会把歧义误判成唯一）。
+        """
+        names = set()
+        try:
+            for g in (getattr(self, "_groups", None) or []):
+                n = str((g or {}).get("name") or "").strip()
+                if n:
+                    names.add(n)
+        except Exception:
+            pass
+        try:
+            for n in (getattr(self, "_nick_map", None) or {}).values():
+                n = str(n or "").strip()
+                if n:
+                    names.add(n)
+        except Exception:
+            pass
+        try:
+            for ck in (self._monitored_chat_ids() or []):
+                n = str(self.display_name(ck) or "").strip()
+                if n and n != str(ck):
+                    names.add(n) # 纯 wxid 兜底名当不了 OCR 竞争者，不并
+        except Exception:
+            pass
+        return sorted(names)
+
+
     def chat_is_open(self, chat_id: str, gui=None, name: str = None, allow_weak: bool = False):
         """只读：当前打开的会话是不是 chat_id。返回 (bool, 说明)。
 
@@ -3846,8 +3922,13 @@ class WeChatAdapter:
             _src3 = got or _tt
             if _src3:
                 _im5 = _co3.capture_best(gui=gui or self._get_gui(), frames=2)
-                _cands = ([str(r.get("name")) for r in _co3.session_rows(_im5)
-                           if r.get("name")] if _im5 is not None else [])
+                # ⛔ D1（audit-r3）：候选集不许只用**可见行**——"当前打开的那一行"恰是
+                #   白字绿底、OCR 最读不准的一行 ⇒ 竞争名恰好读不到时歧义检不出来
+                #   （实测：屏幕实为「工作群B」、目标「工作群A」、B 行没读出来 ⇒ 误判 True）。
+                #   必须**可见行 ∪ DB 全量已知名**（读内存映射，零 OCR 成本）。
+                _vis = ([str(r.get("name")) for r in _co3.session_rows(_im5)
+                         if r.get("name")] if _im5 is not None else [])
+                _cands = list(dict.fromkeys(_vis + self._known_chat_names()))
                 if _cands and _co3.matches_fuzzy(_src3, want, _cands):
                     return self._idn_cache_put(_ck, (
                         True, "候选集模糊匹配：OCR=%r 与目标 %r 唯一接近（候选 %d 个，无歧义）"
@@ -4217,6 +4298,7 @@ class WeChatAdapter:
         except Exception:
             return False
 
+    @_idn_txn_scope
     def _click_visible_session(self, chat_id: str, name: str, gui, main: int):
         """在**当前可见的会话列表**里找目标行并投递点击（**不滚列表、不开搜索窗**）→ `(ok, why)`。
 
@@ -4399,6 +4481,7 @@ class WeChatAdapter:
         except Exception as e: # noqa: BLE001
             return False, "列表点击切会话异常：%s" % str(e)[:90]
 
+    @_idn_txn_scope
     def switch_chat_posted(self, chat_id: str, gui=None, name: str = None, confirm_s: float = 8.0):
         """**投递版切会话**：库的**只读** OCR 定位会话行 → **投递点击**那一行 → **OCR 按名字确认**已打开。
 
@@ -4797,6 +4880,7 @@ class WeChatAdapter:
             log.warning("找搜索浮层失败：%s", e)
             return None
 
+    @_idn_txn_scope
     def open_chat_by_search(self, chat_id: str, name: str = "", gui=None):
         """**投递版「搜索框找会话」**：不依赖滚动（会话列表被遮挡/目标在折叠线外时用）。
 
@@ -5101,6 +5185,7 @@ class WeChatAdapter:
             except Exception:
                 pass
 
+    @_idn_txn_scope
     def send_text_posted(self, text: str, chat_id: str = "filehelper", wait_s: float = 15.0,
                          allow_no_ref: bool = False):
         """**投递发送**：投递 WM_CHAR 打字 + 投递点「发送」按钮。
@@ -5821,6 +5906,7 @@ class WeChatAdapter:
                 pass
             return True, ""
 
+    @_idn_txn_scope
     def send_file_posted(self, chat_id: str, local_path: str, wait_s: float = 90.0, allow_repeat: bool = False,
                          confirm_open: bool = False):
         """**消息驱动发文件**（全程不动鼠标；会短暂弹出「选择文件」对话框）。
@@ -6119,6 +6205,7 @@ class WeChatAdapter:
             # 早退路径（no_ref 拒发、异常）也要放回收起状态
             _minimize_back_if_needed("投递文件链收尾")
 
+    @_idn_txn_scope
     def send_image(self, chat_id: str, local_path: str):
         """发送本地图片。返回 (ok, message)。
 
@@ -6363,8 +6450,11 @@ class WeChatAdapter:
                 # 只认「候选集唯一接近」，两候选都接近 ⇒ 歧义不认（宁漏发不误发）。
                 try:
                     _im = _co.capture_best(gui=gui or self._get_gui(), frames=2)
-                    _cands = ([str(r.get("name")) for r in _co.session_rows(_im)
-                               if r.get("name")] if _im is not None else [])
+                    # ⛔ D1（同 chat_is_open ③′）：候选集 = 可见行 ∪ DB 全量已知名——
+                    #   只用可见行时，竞争名恰好是 OCR 读不准的绿底行 ⇒ 歧义检不出来。
+                    _vis = ([str(r.get("name")) for r in _co.session_rows(_im)
+                             if r.get("name")] if _im is not None else [])
+                    _cands = list(dict.fromkeys(_vis + self._known_chat_names()))
                     if _cands and _co.matches_fuzzy(hdr, nm, _cands):
                         return True, ("候选集模糊匹配：标题带 OCR=%r 与目标 %r 唯一接近"
                                       "（候选 %d 个，无歧义；纯屏幕证据）"
@@ -9655,6 +9745,7 @@ class WeChatAdapter:
         except Exception:
             return False
 
+    @_idn_txn_scope
     def emoji_panel_open(self, group_name: str = "", chat_id: str = "") -> tuple:
         """点笑脸打开表情面板（恒定方案：先搜索群名进入会话——不管画面空不空）。返回 (ok, msg)。
 

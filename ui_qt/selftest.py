@@ -6744,6 +6744,7 @@ def t_ocr_fuzzy() -> None:
     w._idn_txn = 0
     w._group_by_wxid = {}
     w._get_gui = lambda: None
+    w._known_chat_names = lambda: [] # D1 新契约：DB 侧候选名（各场景按需覆写）
     w._active_row_time_ok = lambda chat_id, gui=None: (False, "桩：时间档不参与")
     w.current_chat_name = lambda gui=None: ("演示祥", "桩：绿底行补读（错一字）")
     try:
@@ -6775,10 +6776,44 @@ def t_ocr_fuzzy() -> None:
         _co.matches_fuzzy = _real_mf
         ck("chat_is_open：读对时档① strict 直接放行，模糊档零触达（成本不变）",
            ok3 is True and _hit["fuzzy"] == 0, "fuzzy 触达=%d" % _hit["fuzzy"])
+        # ── 场景 D/E（audit-r3 D1）：候选集必须 = 可见行 ∪ DB 已知名 ──
+        from PIL import Image as _PImD # noqa: PLC0415（⑤ 段的 _PImage 在此处之后才定义）
+        w._idn_txn_begin()
+        _orig_cb = _co.capture_best
+        _co.capture_best = lambda *a, **k: _PImD.new("RGB", (80, 40), (255, 255, 255))
+        w.current_chat_name = lambda gui=None: ("工作群B", "桩：读到了打开中的会话名")
+        _co.session_rows = lambda img: [{"name": n} for n in ["张三丰"]] # B 行不可见（绿底行读不准的形态）
+        # 场景 D：竞争名只在 DB 侧 ⇒ 候选集补全后歧义可检 ⇒ 判否（修复前误判 True 的真实反例）
+        w._known_chat_names = lambda: ["工作群B"]
+        ok4, _ = w.chat_is_open("group:x@chatroom", name="工作群A")
+        ck("chat_is_open：竞争名只在 DB（可见行没有）⇒ 候选集补全后歧义可检 ⇒ 判否（D1）",
+           ok4 is False, "ok=%s" % ok4)
+        w._idn_txn_begin()
+        # 场景 E（反差组/缺陷形态存证）：同场景把 DB 名拿掉 ⇒ 竞争者缺席 ⇒「唯一接近」误放
+        w._known_chat_names = lambda: []
+        ok5, _ = w.chat_is_open("group:x@chatroom", name="工作群A")
+        ck("chat_is_open：同场景 DB 名拿掉 ⇒ 旧形态误放 True（缺陷形态存证，反衬 D1 的作用点）",
+           ok5 is True, "ok=%s" % ok5)
     finally:
+        _co.capture_best = _orig_cb if "_orig_cb" in dir() else _co.capture_best
         _WA.current_chat_name = _orig_ccn
         _co.session_rows = _orig_srows
         _chdr.check = _orig_check
+
+    # ── ④′ _known_chat_names 单元口径（D1 补全源：群表 ∪ 昵称表 ∪ 监听会话展示名）──
+    try:
+        w2 = _WA.__new__(_WA)
+        w2._groups = [{"wxid": "g1", "name": "工作群B"}]
+        w2._nick_map = {"c1": "工作群A"}
+        w2._monitored_chat_ids = lambda: ["private:friend1", "group:unknown@chatroom"]
+        w2.display_name = lambda ck: {"private:friend1": "老友A"}.get(str(ck), str(ck))
+        _kn = set(w2._known_chat_names())
+        ck("_known_chat_names：群表 + 昵称表 + 监听会话展示名三者并入",
+           {"工作群B", "工作群A", "老友A"} <= _kn, "got=%s" % sorted(_kn))
+        ck("_known_chat_names：纯 wxid 兜底名不当 OCR 竞争者（剔除）",
+           "group:unknown@chatroom" not in _kn, "got=%s" % sorted(_kn))
+    except Exception as e: # noqa: BLE001
+        ck("_known_chat_names 单元口径不抛异常", False, "%s: %s" % (type(e).__name__, str(e)[:60]))
 
     # ── ⑤ C 步：CLAHE 增强只在主管线读空后补读（桩 recognize_dual 验编排）──
     from PIL import Image as _PImage # noqa: PLC0415
@@ -6829,6 +6864,92 @@ def t_ocr_fuzzy() -> None:
        isinstance(_st, dict) and "tier" in _st, str(_st)[:80])
 
 
+def t_audit_r3() -> None:
+    """audit-r3 落地项自检：D4 会话身份事务装饰器（语义 + 接线）+ D3 孤儿 stash 自愈。
+
+    D4 验三件事：进门换 token / 退出（含异常路径）清缓存且 token 再进位 / 返回值透传；
+    接线验 8 个非 send_text 操作入口都带 `_idn_scoped` 标记（缺一个都算漏包事务）。
+    D3 验 `_stash_selfheal` 三分支：还原 / 删陈货 / noop。
+    """
+    import tempfile # noqa: PLC0415
+    import agent.wechat as _WMod # noqa: PLC0415
+    from agent.wechat import WeChatAdapter as _WA3 # noqa: PLC0415
+
+    # ── D4 语义 ──
+    class _Op:
+        _idn_txn = 0
+        _idn_cache = None
+        _idn_txn_begin = _WA3._idn_txn_begin
+        _idn_txn_end = _WA3._idn_txn_end
+        _idn_cache_put = _WA3._idn_cache_put
+
+        @_WMod._idn_txn_scope
+        def op(self):
+            if self._idn_txn != 1:
+                raise AssertionError("进门应已换 token")
+            self._idn_cache_put(("k",), (True, "正面证据"))
+            return "ret"
+
+        @_WMod._idn_txn_scope
+        def boom(self):
+            raise RuntimeError("x")
+
+    o = _Op()
+    ck("D4 语义：进门换 token + 事务内可存正面证据 + 返回值透传 + 退出清缓存",
+       o.op() == "ret" and o._idn_cache is None and o._idn_txn == 2,
+       "txn=%s cache=%s" % (o._idn_txn, o._idn_cache))
+    try:
+        o.boom()
+    except RuntimeError:
+        pass
+    ck("D4 语义：异常路径退出同样作废（token 再进位、缓存空）",
+       o._idn_cache is None and o._idn_txn == 4, "txn=%s" % o._idn_txn)
+    _need = ("_open_chat_guarded", "_click_visible_session", "switch_chat_posted",
+             "open_chat_by_search", "send_text_posted", "send_image",
+             "send_file_posted", "emoji_panel_open")
+    _miss = [m for m in _need if not getattr(getattr(_WA3, m, None), "_idn_scoped", False)]
+    ck("D4 接线：8 个非 send_text 操作入口均已包事务（_idn_scoped 标记齐全）",
+       not _miss, "缺=%s" % _miss)
+
+    # ── D3 自愈三分支 ──
+    _td = tempfile.mkdtemp(prefix="st_sh_")
+    try:
+        open(os.path.join(_td, "console.url.selftest-stash"), "w").close()
+        ck("D3 自愈：url 缺失 + stash 在位 ⇒ 还原（上一跑没走完 finally 的形态）",
+           _stash_selfheal(_td) == "restored"
+           and os.path.exists(os.path.join(_td, "console.url"))
+           and not os.path.exists(os.path.join(_td, "console.url.selftest-stash")))
+        open(os.path.join(_td, "console.url.selftest-stash"), "w").close()
+        ck("D3 自愈：url 在 + stash 也在 ⇒ stash 是陈货，删掉",
+           _stash_selfheal(_td) == "dropped-stale"
+           and not os.path.exists(os.path.join(_td, "console.url.selftest-stash"))
+           and os.path.exists(os.path.join(_td, "console.url")))
+        ck("D3 自愈：两者都不在 ⇒ noop",
+           _stash_selfheal(_td) == "noop")
+    finally:
+        import shutil # noqa: PLC0415
+        shutil.rmtree(_td, ignore_errors=True)
+
+
+def _stash_selfheal(logs_dir: str) -> str:
+    """孤儿 stash 自愈（audit-r3 D3）：上一跑没走完 finally 就退出（强杀/断电/段错误）
+    ⇒ `console.url` 被挪进 `console.url.selftest-stash` 再没回来——产品读不到 url（静默降级），
+    下一次自检的「挪开」也扑空。规则：url 在 ⇒ stash 是陈货，删掉；url 不在而 stash 在 ⇒ 还原。
+    返回动作说明（自检断言用）。只动测试侧遗留物，产品行为不受影响。"""
+    try:
+        url = os.path.join(logs_dir, "console.url")
+        st = url + ".selftest-stash"
+        if os.path.exists(st) and not os.path.exists(url):
+            os.replace(st, url)
+            return "restored"
+        if os.path.exists(st) and os.path.exists(url):
+            os.remove(st)
+            return "dropped-stale"
+        return "noop"
+    except OSError as e:
+        return "error:%s" % e
+
+
 def main() -> int:
     # ⭐ 测试隔离（audit-r2 N1 残余的收口）：`logs/console.url` 是**产品运行时**写的
     #   （含随机端口+token），自检跑在产品目录里会读到它——轻则刷几百行「端口连不上」噪音，
@@ -6836,6 +6957,7 @@ def main() -> int:
     #   只动测试侧：产品读这个文件是正确行为，不改。
     _cu_p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "logs", "console.url")
     _cu_p = os.path.normpath(_cu_p)
+    _stash_selfheal(os.path.dirname(_cu_p)) # 先自愈孤儿 stash（D3：上一跑没还原的情形）
     _cu_stash = _cu_p + ".selftest-stash"
     _cu_moved = False
     if os.path.exists(_cu_p):
@@ -6851,7 +6973,8 @@ def main() -> int:
                    t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch, t_bootstrap32, t_ocr9,
                    t_c10, t_c13, t_hotfix1, t_hotfix2, t_catmgr, t_medialocal, t_commfb,
                    t_veradv, t_g5, t_g6, t_g7, t_g8, t_g9, t_g10, t_g11, t_g12, t_g13, t_g14,
-                   t_g15, t_g16, t_g17, t_g18, t_g19, t_g20, t_g21, t_g22, t_ocr_fuzzy):
+                   t_g15, t_g16, t_g17, t_g18, t_g19, t_g20, t_g21, t_g22, t_ocr_fuzzy,
+                   t_audit_r3):
             try:
                 fn()
             except Exception as e: # noqa: BLE001
