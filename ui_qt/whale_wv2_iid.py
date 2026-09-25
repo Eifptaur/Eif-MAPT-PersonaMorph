@@ -202,5 +202,36 @@ class ICoreWebView2CreateCoreWebView2ControllerCompletedHandler(IUnknown):
     ]
 
 
+class ICoreWebView2WebMessageReceivedEventArgs(IUnknown):
+    """`WebMessageReceived` 事件的参数 —— 取页面 `postMessage` 过来的正文。
+
+    挂件用它做**拖动转发**：WebView2 的画布是个铺满宿主窗的子 HWND，鼠标消息
+    被子窗吃掉、不冒泡给父窗的 Qt 窗口过程 ⇒ 挂件拖不动。早先给子窗加
+    `WS_EX_TRANSPARENT` 让消息穿过，代价是**页内所有控件也点不动了**。
+    正解是页面自己监听拖动、把位移 `postMessage` 出来，宿主收到再挪窗口 ——
+    这样点按钮（click）与拖窗口（move）各归各的，不互相牺牲。
+
+    只声明用到的一个成员；vtable 序按 SDK 头文件声明序，**不能错位**。
+    """
+    _iid_ = GUID("{0F99A40C-E962-4207-9E92-E3D542EFF849}")
+    _methods_ = [
+        COMMETHOD([], HRESULT, "get_Source", (["out", "retval"], POINTER(LPWSTR), "uri")),
+        COMMETHOD([], HRESULT, "get_WebMessageAsJson",
+                  (["out", "retval"], POINTER(LPWSTR), "json")),
+        COMMETHOD([], HRESULT, "TryGetWebMessageAsString",
+                  (["out", "retval"], POINTER(LPWSTR), "msg")),
+    ]
+
+
+class ICoreWebView2WebMessageReceivedEventHandler(IUnknown):
+    _iid_ = GUID("{57213F19-00E6-49FA-8E07-898EA01ECBD2}")
+    _methods_ = [
+        COMMETHOD([], HRESULT, "Invoke",
+                  (["in"], POINTER(ICoreWebView2), "sender"),
+                  (["in"], POINTER(ICoreWebView2WebMessageReceivedEventArgs), "args")),
+    ]
+
+
 CLS_ENV_HANDLER = ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler
 CLS_CTRL_HANDLER = ICoreWebView2CreateCoreWebView2ControllerCompletedHandler
+CLS_WEBMSG_HANDLER = ICoreWebView2WebMessageReceivedEventHandler

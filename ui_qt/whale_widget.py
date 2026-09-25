@@ -195,11 +195,32 @@ class WhaleWidget(QWidget):
 
             hwnd = int(self.winId())
             self._host = WhaleHostWebView(hwnd, self.W, self.H)
+            # 拖动交接：页面自己报位移（见 whale_host.build_host_html 的 dragSetup），
+            # 这里收下来挪窗口。**不再**给子窗加 WS_EX_TRANSPARENT —— 那会让
+            # 页内控件（减号、原版菜单）一起收不到点击。
+            self._host.on_drag(self._on_pagedrag)
             self._host.when_ready(self._after_host_ready)
         except Exception as e:  # noqa: BLE001 — 任何异常都降级，不拖垮主界面
             self._err = "%s: %s" % (type(e).__name__, e)
             self._host = None
             self.update()
+
+    def _on_pagedrag(self, dx: int, dy: int, ended: bool) -> None:
+        """页面报告的拖动位移 → 挪窗口；`ended` 时落盘位置。
+
+        增量语义：页面每帧只发**这一帧的增量**（绝对坐标会被子窗与宿主窗的
+        坐标系差异坑到），这里累加到 `self.pos()` 上。
+        """
+        try:
+            if ended:
+                QSettings(*_SET).setValue("whale_pos", [self.x(), self.y()])
+                return
+            if not dx and not dy:
+                return
+            p = self.pos()
+            self.move(p.x() + int(dx), p.y() + int(dy))
+        except Exception:  # noqa: BLE001 — 拖动是尽力而为，失败不影响挂件显示
+            pass
 
     def _after_host_ready(self) -> None:
         """建链结束（成功或失败）后的落点：成了就加载原版挂件页，没成就降级。
@@ -234,60 +255,38 @@ class WhaleWidget(QWidget):
                 self._load_failed = True
                 self.update()
                 return
+            # ⛔ **认人后再加载** —— 端口活着不等于「在听的是我们」。
+            #    同源上游产品（QQ agent）默认端口同为 3210；本产品被占时会**静默顺延**
+            #    到 3211/3212…，但反过来，别的程序先占了 3210 而我们还没起来时，
+            #    把地址直接递给 WebView2 就等于**把用户的挂件窗变成一个别人页面的壳**。
+            #    启动器侧早就有这道闸（launcher.cs:2936 IsOurConsole），挂件侧此前没有
+            #    —— 这是同一个漏洞的第二个入口，所以判据完全照抄启动器那份。
+            why = _not_our_console(port)
+            if why:
+                self._err = why
+                self._load_failed = True
+                self.update()
+                return
             if not host.navigate_to_string(build_host_html(port, token)):
                 self._err = host.error
                 self._load_failed = True
         except Exception as e:  # noqa: BLE001
             self._err = "%s: %s" % (type(e).__name__, e)
             self._load_failed = True
-        # 无论成败都必须让鼠标能到达 Qt 侧 —— 否则挂件永远拖不动。
-        # ⛔ 页面成功时**不能只调一次**：WebView2 的画布子窗是 `NavigateToString`
-        # 之后由内核**异步**建出来的，此刻枚举子窗多半还是空集（实测建链刚完时
-        # 子窗数为 0）。所以用一个小重试序列盯着，直到子窗出现并打上样式为止。
-        self._arm_drag_passthrough()
-        self.update()
-
-    def _arm_drag_passthrough(self) -> None:
-        """按页面的两种归宿，把「鼠标能到 Qt 侧」这件事落地。
-
-        · 页面没起来 ⇒ 一次性 hide 控制器，结束；
-        · 页面起来了 ⇒ 子窗是异步建的，**必须重试**（见下面 `_try_passthrough`
-          的次数表）；重试到成功或预算耗尽为止。
-
-        次数与间隔取一个固定小表（不是无界自链）：挂件窗生命周期短、子窗通常
-        在 100ms 内出现，6 次 × 120ms 足够；给了上限就不会出现 r11-A 里那种
-        「页面销毁后定时器还在空转」的事故。
-        """
+        # 失败态才需要让出事件；成功态的拖动走页面转发（见 `_on_pagedrag`），
+        # **不能**给子窗加 WS_EX_TRANSPARENT —— 那会把页内控件（减号、菜单）一起点死。
         if self._load_failed:
             self._keep_draggable()
-            return
-        self._pt_tries = 0
-        self._try_passthrough()
-
-    def _try_passthrough(self) -> None:
-        """尝试给 WebView2 画布子窗打透传样式；未成则按表重试（有上限）。"""
-        if self._host is None or not self._host.ok or self._load_failed:
-            return
-        try:
-            done = self._host.pass_mouse_through()
-        except Exception:  # noqa: BLE001 — 拖动是尽力而为，失败不影响主界面
-            done = False
-        if done:
-            return
-        self._pt_tries = getattr(self, "_pt_tries", 0) + 1
-        if self._pt_tries >= 6:
-            return
-        # 控件可能已被销毁（关窗/换页），打补丁前先确认还活着
-        try:
-            QTimer.singleShot(120, self._try_passthrough)
-        except Exception:  # noqa: BLE001
-            pass
+        self.update()
 
     def _keep_draggable(self) -> None:
         """**降级态专用**：把控制器收起来，让事件回到 Qt 手上。
 
-        只在「页面没起来」时用。页面成功时的透传走 `_try_passthrough` ——
-        那条路不能 hide（会把鲸鱼一起藏掉），只能给子窗加样式。
+        只在「页面没起来」时用：此时页内没有任何可点的东西，把铺满窗口的
+        WebView 子窗收掉、让 Qt 直接接鼠标，用户至少能把这块东西拖走或看清提示。
+
+        页面正常时**不走这条路** —— 拖动由页面自己报位移（`_on_pagedrag`），
+        子窗留着不动，页内控件照常可点。
         """
         try:
             host = self._host
@@ -375,6 +374,62 @@ def _server_unreachable(port: int, timeout: float = 1.2) -> str:
     except Exception as e:  # noqa: BLE001 — 探活本身失败也当"不可用"，但不影响主界面
         return "控制台端口 %d 探活失败：%s" % (int(port), e)
     return ""
+
+
+def _not_our_console(port: int, timeout: float = 1.5) -> str:
+    """**认人**：确认这个端口上应答的是本产品控制台 —— 是则返空串，否则返原因。
+
+    ⛔ 为什么必须有（用户点出的真风险）：挂件本质上就是「浏览器拉一个页面」。
+    端口上有东西应答**只说明"有人听"，不说明"是我们的"**。同源上游产品
+    （QQ agent）默认端口与本产品同为 3210 —— 它先开着、本产品还没起来时，
+    把地址递给 WebView2 就等于**把这个挂件窗变成别人程序的页面壳**。
+    启动器侧早就为此加了闸（`launcher-src/launcher.cs:2936 IsOurConsole`），
+    但**挂件是第二个入口，此前完全没有这道校验** —— 同一个洞的旁路。
+
+    判据**完全照抄启动器那份**（两处必须同口径，否则又是一处"两个理解"）：
+      ① `GET /api/version` —— 本产品 webui 专为「启动器/新实例探测旧实例」留的
+         **免认证**路由，200 且正文含 `"ver"` ⇒ 是我们（上游没有这个口）；
+         200 但没有 `ver` ⇒ **明确不是我们**（有别的 HTTP 服务在应答）；
+         非 200 ⇒ 退回 ② 再认一次。
+      ② `GET /` 首页正文非空且含「群相」/`PersonaMorph`/`persona_morph`。
+         ⚠️ 仅作兜底：鲸语模式会把页面可见文案（含 `<title>`）整段换成鲸语，
+         正文指纹会失效，所以**不作主判据**。
+
+    哲学与「自愈链」相反：这里**宁可错杀** —— 判不出的代价只是挂件降级显示提示
+    （用户从主界面再打开一次即可），错认的代价是把用户导去别的程序。
+
+    ⛔ 必须**绕代理**（`ProxyHandler({})`）：本机代理会把 127.0.0.1 也代理走
+    （实测会返回 502），不绕开就会把「代理劫持」误判成「不是我们」。
+    """
+    import urllib.error  # noqa: PLC0415
+    import urllib.request  # noqa: PLC0415
+
+    base = "http://127.0.0.1:%d" % int(port)
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+    def _get(path: str) -> tuple[int, str]:
+        try:
+            req = urllib.request.Request(base + path, headers={"Host": "127.0.0.1"})
+            with opener.open(req, timeout=timeout) as f:
+                return int(f.status), f.read(65536).decode("utf-8", "replace")
+        except urllib.error.HTTPError as e:
+            return int(e.code), ""
+        except Exception:  # noqa: BLE001 — 连不上/超时都当"拿不到"
+            return 0, ""
+
+    code, body = _get("/api/version")
+    if code == 200:
+        if '"ver"' in body:
+            return ""
+        return "端口 %d 上有 HTTP 服务应答，但不是本产品控制台" % int(port)
+    # 非 200（404/401/403…）⇒ 这个口上没有版本路由，退回首页正文兜底再认一次
+    hc, hb = _get("/")
+    if hc == 200 and hb:
+        if ("群相" in hb or "PersonaMorph" in hb
+                or "persona_morph" in hb.lower()):
+            return ""
+        return "端口 %d 被其它程序占用（像是同名端口的别的应用）" % int(port)
+    return "端口 %d 上应答的不是本产品控制台（已拒绝加载，避免显示别人的页面）" % int(port)
 
 
 def _server_addr() -> tuple[int, str]:

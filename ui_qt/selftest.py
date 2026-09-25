@@ -7410,59 +7410,165 @@ def t_r10_drag() -> None:
     dlg.close()
 
 
+def _fake_identity_cases(ww, ck) -> None:  # noqa: ANN001
+    """真起三个假 HTTP 服务，验挂件认人闸门的**判别力**（不是只看代码里有没有那行）。
+
+    场景取自启动器那份口径的关键三项：
+      A. 本产品控制台形态（/api/version 200 + `{"ver":…}`）⇒ 必须认（返空串）
+      B. 别人的产品（200 但没有 ver 字段）               ⇒ 必须拒
+      C. 别的 HTTP 服务（/api/version 404 + 正文无关）    ⇒ 必须拒
+
+    为什么真起服务而不是 mock：`_not_our_console` 的判据全在"HTTP 应答长什么样"
+    上面，mock 掉 HTTP 等于把被测逻辑一起 mock 掉了（测试通过 ≠ 功能生效的经典坑）。
+    """
+    import threading # noqa: PLC0415
+    from http.server import BaseHTTPRequestHandler, HTTPServer # noqa: PLC0415
+
+    class _H(BaseHTTPRequestHandler):
+        MODE = "ours"
+
+        def log_message(self, *a):  # noqa: ANN002
+            pass
+
+        def _send(self, code, body):  # noqa: ANN001
+            b = body.encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(b)))
+            self.end_headers()
+            try:
+                self.wfile.write(b)
+            except Exception:  # noqa: BLE001 — 客户端提前断开
+                pass
+
+        def do_GET(self):  # noqa: N802
+            mode = type(self).MODE
+            if self.path.startswith("/api/version"):
+                if mode == "ours":
+                    self._send(200, '{"ver": "9.9.9"}')
+                elif mode == "upstream":
+                    self._send(200, '{"name": "qq-agent"}')
+                else:
+                    self._send(404, "")
+                return
+            if mode == "other":
+                self._send(200, "Hello, another service")
+            else:
+                self._send(200, "PersonaMorph Console")
+            return
+
+    def _serve(mode):  # noqa: ANN001
+        cls = type("_HH", (_H,), {"MODE": mode})
+        srv = HTTPServer(("127.0.0.1", 0), cls)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        return srv, srv.server_address[1]
+
+    for mode, want_ours, label in (
+            ("ours", True, "本产品控制台（带 ver）"),
+            ("upstream", False, "别人的产品（200 无 ver）"),
+            ("other", False, "别的 HTTP 服务（404 + 正文无关）")):
+        srv, port = _serve(mode)
+        try:
+            got = ww._not_our_console(port, 1.5)
+        finally:
+            srv.shutdown()
+            srv.server_close()
+        is_ours = (got == "")
+        ck("r11 认人判别：%s => %s" % (label, "认" if want_ours else "拒"),
+           is_ours == want_ours, "port=%d got=%r" % (port, got[:60]))
+
+
 def t_r11_whale_drag() -> None:
-    """r11 自检：鲸鱼挂件「拖不动」的机制闸（静态判据，不起 WebView2）。
+    """r11 自检：鲸鱼挂件的两条机制闸 —— 「拖得动」与「不认错人」。
 
-    背景：WebView2 把画面渲染在一个铺满挂件窗的**真实子 HWND** 上。Windows
-    命中测试子窗优先 ⇒ 鼠标消息全被子窗吃掉、不冒泡给 Qt 顶层窗 ⇒
-    `mousePressEvent` 一次都不触发，用户把挂件拖不动。修法是给**子窗**加
-    `WS_EX_TRANSPARENT`（在命中测试里被跳过），消息就落到底下的 Qt 窗口。
+    ## A. 拖动为什么必须走**页面转发**而不是 `WS_EX_TRANSPARENT`
 
-    三条静态判据（不必真起浏览器，防的是"改坏了没人知道"）：
-      a. 宿主侧确实有透传能力，且**打的是子窗**（用 `EnumChildWindows` 找），
-         **不是**父窗 —— 打到父窗上会让消息穿过整个挂件落到桌面，是反向效果；
-      b. 挂件侧**成功与失败两条路都要**落到"鼠标能到 Qt"（失败 hide、成功透传），
-         并带**有上限**的重试（WebView2 子窗是异步建的，一次多半枚举不到）；
-      c. 早退判据不能只看 `host.ok`（控制器就绪 ≠ 页面加载成功）。
+    WebView2 的画面渲染在一个铺满挂件窗的**真实子 HWND** 上。Windows 命中测试
+    子窗优先 ⇒ 鼠标消息被子窗吃掉、不冒泡给 Qt 顶层窗 ⇒ `mousePressEvent`
+    一次都不触发，挂件拖不动。
+
+    给子窗加 `WS_EX_TRANSPARENT` 确实能让消息穿过去 —— 但**页面里所有控件也
+    一起收不到点击了**（减号、原版菜单全失效）。那是拿一个功能换另一个功能。
+    本项目改为**页面自己报位移**：页内监听拖动 → `postMessage` → 宿主转 Qt
+    挪窗口。点按钮是 click、拖空白是 move，互不干扰。
+
+    ## B. 认人闸门为什么必须有
+
+    端口上有东西应答**只说明"有人听"，不说明"是我们的"**。同源上游产品默认端口
+    同为 3210；它先开着、本产品还没起来时，把地址递给 WebView2 就等于**把这个
+    挂件窗变成别人程序的页面壳**。启动器侧早有这道闸（`launcher.cs` 的
+    `IsOurConsole`），挂件是**同一个洞的第二个入口**，此前完全没有校验。
+
+    全部为静态判据 + 一个真起假服务的判别验证（不起 WebView2）。
     """
     import inspect as _inspect
 
-    from whale_host import WhaleHostWebView # noqa: PLC0415
+    from whale_host import WhaleHostWebView, build_host_html # noqa: PLC0415
     from whale_widget import WhaleWidget # noqa: PLC0415
 
-    ck("r11 挂件宿主有子窗透传能力（pass_mouse_through）",
-       hasattr(WhaleHostWebView, "pass_mouse_through"))
+    # ---- A. 拖动：页面转发 -------------------------------------------------
+    _h = _inspect.getsource(WhaleHostWebView)
+    ck("r11 宿主接页面的 postMessage（add_WebMessageReceived 已接线）",
+       "add_WebMessageReceived" in _h and "_on_web_message" in _h, "")
 
-    _src = _inspect.getsource(WhaleHostWebView.pass_mouse_through)
-    ck("r11 透传打在**子窗**上（用 _canvas_hwnds 枚举，不是直接改父窗 HWND）",
-       "_canvas_hwnds" in _src and "WS_EX_TRANSPARENT" in _src,
-       "有枚举=%s 有样式=%s" % ("_canvas_hwnds" in _src, "WS_EX_TRANSPARENT" in _src))
+    ck("r11 宿主暴露 on_drag 回调接口（Qt 侧据此挪窗口）",
+       hasattr(WhaleHostWebView, "on_drag"))
 
-    _c = _inspect.getsource(WhaleHostWebView._canvas_hwnds)
-    ck("r11 子窗枚举走 EnumChildWindows（挂件窗里除 WebView2 无别的子窗）",
-       "EnumChildWindows" in _c)
+    _om = _inspect.getsource(WhaleHostWebView._on_web_message)
+    ck("r11 消息解析只认 pm=drag/dragend（脏消息静默丢弃，不炸挂件）",
+       '"drag"' in _om and '"dragend"' in _om and "json.loads" in _om, "")
 
-    _w = _inspect.getsource(WhaleWidget._try_passthrough)
-    ck("r11 成功路透传带**有上限**重试（子窗异步建，一次枚举多半为空）",
-       "_pt_tries" in _w and ">= 6" in _w,
-       "有计数=%s 有上限=%s" % ("_pt_tries" in _w, ">= 6" in _w))
+    _pg = _inspect.getsource(WhaleWidget._on_pagedrag)
+    ck("r11 页面位移走**增量**累加（绝对坐标会被子窗坐标系差异坑到）",
+       "self.pos()" in _pg and "+ int(dx)" in _pg, "")
 
-    _a = _inspect.getsource(WhaleWidget._arm_drag_passthrough)
-    ck("r11 成败两条路都保拖动（失败 hide / 成功透传）",
-       "_keep_draggable" in _a and "_try_passthrough" in _a)
+    _bw = _inspect.getsource(WhaleWidget._boot_webview)
+    ck("r11 挂件侧已接 on_drag（漏接则页面报了位移也没人挪窗）",
+       "on_drag" in _bw, "")
 
-    _p = _inspect.getsource(WhaleWidget.paintEvent)
-    ck("r11 降级卡判据含 _load_failed（只看 host.ok 会留纯黑窗、连提示都没有）",
-       "_load_failed" in _p, "")
+    # ⛔ 反向闸门：页面正常时**不许**再给子窗打 WS_EX_TRANSPARENT —— 那会把
+    # 页内控件（减号/菜单）一起点死，是本轮专门纠掉的错误做法。
+    _kr = _inspect.getsource(WhaleWidget._keep_draggable)
+    _ark = _inspect.getsource(WhaleWidget._after_host_ready)
+    ck("r11 成功态不再打子窗透传（会把页内控件一起点死）",
+       "pass_mouse_through" not in _kr and "pass_mouse_through" not in _ark
+       and "_try_passthrough" not in _ark, "")
 
-    # 黑块根因之一：挂件宿主页的脚本来自 agent 控制台端口，agent 没起来时端口
-    # 无人监听 —— NavigateToString 仍成功、页面空白 ⇒ 用户看到黑块。
-    # 必须**导航前探活**，把"没内容"与"显示失败"分开，降级卡才能给出可操作指引。
-    import socket as _sk # noqa: PLC0415
+    ck("r11 降级态仍 hide 控制器让出事件（页面没起来时页内无可点之物）",
+       "hide()" in _kr, "")
 
+    # 宿主页确实注入了拖动转发与减号
+    _html = build_host_html(3210, "tk")
+    ck("r11 宿主页含拖动转发脚本（mousedown/mousemove + postMessage）",
+       "postMessage" in _html and "mousemove" in _html and "dragSetup" in _html, "")
+    ck("r11 拖动只认非交互区（按钮/菜单/输入框的按下留给原版逻辑）",
+       "isInteractive" in _html and "closest('button')" in _html, "")
+    ck("r11 宿主页含减号与收起标记（pm-min-btn / pm-dot）",
+       "pm-min-btn" in _html and "pm-dot" in _html, "")
+    ck("r11 减号收起的是挂件本体而非整页（原版脚本照旧跑）",
+       "dshwv-root" in _html and "pm-collapsed" in _html, "")
+
+    # ---- B. 认人闸门 -------------------------------------------------------
     import whale_widget as _ww # noqa: PLC0415
 
     _a2 = _inspect.getsource(WhaleWidget._after_host_ready)
+    ck("r11 认人判在导航**之前**（认不出就不加载，绝不显示别人页面）",
+       "_not_our_console" in _a2, "")
+
+    _nc = _inspect.getsource(_ww._not_our_console)
+    ck("r11 认人主判据 = /api/version 200 且正文含 \"ver\"（与启动器同口径）",
+       "/api/version" in _nc and '"ver"' in _nc, "")
+    ck("r11 认人**绕代理**（本机代理会拦 127.0.0.1，实测返 502）",
+       "ProxyHandler({})" in _nc, "")
+    ck("r11 认人有正文兜底（鲸语模式换可见文案，只作兜底不作主判据）",
+       "群相" in _nc and "PersonaMorph" in _nc, "")
+
+    # 真起假服务验判别力：三类服务，判"是不是我们"必须判对
+    _fake_identity_cases(_ww, ck)
+
+    # ---- C. 端口探活（黑块根因之一）---------------------------------------
+    import socket as _sk # noqa: PLC0415
+
     ck("r11 导航前先探端口（agent 没起来时如实降级，不给纯黑窗）",
        "_server_unreachable" in _a2, "")
 

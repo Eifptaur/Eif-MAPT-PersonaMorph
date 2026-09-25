@@ -68,6 +68,8 @@ class WhaleHostWebView:
         self._err = ""
         self._done = False
         self._on_ready = None
+        # 拖动转发回调：`fn(dx, dy, ended)`，由上层（Qt 侧）设置。
+        self._on_drag = None
         # 回调对象必须持引用：comtypes 的 COMObject 被 GC 后指针即失效。
         self._keep: list = []
         self._init()
@@ -171,10 +173,86 @@ class WhaleHostWebView:
             self._apply_bounds()
             self._enable_transparency()
             self._wv = ctrl.get_CoreWebView2()
+            # 拖动转发要收页面的 postMessage —— 这一步没开的话页面发的消息会被
+            # 内核直接丢弃（默认是开的，但显式确认一次，免得运行库改默认值）。
+            try:
+                self._wv.get_Settings().put_IsWebMessageEnabled(True)
+            except Exception:  # noqa: BLE001 — 拿不到设置不影响页面本身
+                pass
+            self._wire_web_message()
             self._ok = True
         except Exception as e:  # noqa: BLE001
             self._err = "%s: %s" % (type(e).__name__, e)
         self._finish()
+
+    def _wire_web_message(self) -> None:
+        """接页面 `postMessage` —— 拖动转发的接收端。
+
+        页面在用户按住挂件拖动时不停把位移发过来（见 `build_host_html` 里的
+        `dragSetup`），这里收到后转成回调交给 Qt 侧挪窗口。
+
+        ⛔ 为什么不直接给子窗加 `WS_EX_TRANSPARENT` 让鼠标穿过去：那样消息确实
+        能到 Qt，但**页面里所有控件也一起收不到点击了** —— 减号、原版菜单全部
+        失效。用「页面报位移」换来的好处是：**点按钮与拖窗口互不干扰**，
+        点菜单是 click、拖空白是 move，各走各的。
+
+        回调对象必须持引用（`self._keep`）：comtypes 的 COMObject 被 GC 后
+        指针即失效，回调再进来就是野指针。
+        """
+        if self._wv is None:
+            return
+        try:
+            import ctypes
+            from ctypes import c_void_p
+
+            from comtypes import COMObject
+
+            from whale_wv2_iid import CLS_WEBMSG_HANDLER
+
+            host_ref = self
+
+            class _MsgCb(COMObject):
+                _com_interfaces_ = [CLS_WEBMSG_HANDLER]
+
+                def Invoke(self, this, sender, args):  # noqa: N802, ANN001
+                    try:
+                        raw = args.get_WebMessageAsJson() if args else ""
+                    except Exception:  # noqa: BLE001 — 取不到正文就当没这条
+                        return 0
+                    host_ref._on_web_message(raw)
+                    return 0
+
+            cb = _MsgCb()
+            self._keep.append(cb)
+            self._wv.add_WebMessageReceived(c_void_p(_comobj_ptr(cb)))
+        except Exception as e:  # noqa: BLE001 — 拿不到转发能力只是拖不动，不影响显示
+            self._trans_err = self._trans_err or ("drag-wire: %s" % e)
+
+    def _on_web_message(self, raw: str) -> None:
+        """解析页面发来的消息（只认拖动那两条），转交 `on_drag` 回调。
+
+        消息形如 `{"pm":"drag","dx":12,"dy":-3}` / `{"pm":"dragend"}`。
+        解析失败一律静默 —— 这是尽力而为的交互增强，不能让一条脏消息把挂件搞崩。
+        """
+        try:
+            import json
+
+            msg = json.loads(raw) if isinstance(raw, str) else raw
+        except Exception:  # noqa: BLE001
+            return
+        if not isinstance(msg, dict):
+            return
+        kind = msg.get("pm")
+        cb = self._on_drag
+        if cb is None:
+            return
+        try:
+            if kind == "drag":
+                cb(int(msg.get("dx", 0)), int(msg.get("dy", 0)), False)
+            elif kind == "dragend":
+                cb(0, 0, True)
+        except Exception:  # noqa: BLE001
+            pass
 
     def _enable_transparency(self) -> None:
         """把 WebView 的默认背景置为**全透明**（A=0）。
@@ -284,6 +362,14 @@ class WhaleHostWebView:
         else:
             self._on_ready = cb
 
+    def on_drag(self, cb) -> None:  # noqa: ANN001
+        """注册拖动转发回调 `fn(dx, dy, ended)`。
+
+        页面里按住挂件拖动时调用；`ended=True` 表示这一轮拖拽结束（据此落盘位置）。
+        必须在 `when_ready` 之前或之后都行 —— 回调只在收到页面消息时才被读。
+        """
+        self._on_drag = cb
+
     def navigate_to_string(self, html: str) -> bool:
         """内联页面（避免依赖磁盘临时文件；脚本用 file:// 引本地 js 会撞来源限制）。"""
         if not self._ok or self._wv is None:
@@ -321,86 +407,6 @@ class WhaleHostWebView:
                 self._ctrl.put_IsVisible(0)
         except Exception:  # noqa: BLE001
             pass
-
-    def pass_mouse_through(self) -> bool:
-        """让 WebView 的**画布子窗口把鼠标消息透出去**（挂件才拖得动）。
-
-        为什么需要：WebView2 的画面是一个铺满宿主窗的真实子 HWND。Windows 的
-        命中测试规则是「子窗口优先」，鼠标落在挂件上的消息全被子窗吃掉，
-        **不会冒泡给父 HWND 的 Qt 窗口过程** ⇒ `mousePressEvent` 一次都不触发，
-        表现就是「挂件看得见、但怎么拖都不动」。web 原版是页面内浮层，没有
-        第二层 HWND，所以原版没这个问题。
-
-        ⛔ **样式必须加在子窗口上，不是父窗口**：子窗才是吃事件的那一层。
-        加在父窗（Qt 顶层窗）上会让父窗在命中测试里被跳过 ⇒ 消息直接**穿过整个
-        挂件落到桌面**，Qt 反而更收不到，是反向效果。所以这里先枚举父窗的子窗，
-        找到 WebView2 的画布窗（类名含 `Chrome_WidgetWin` / `WebView`），
-        对它设 `WS_EX_TRANSPARENT | WS_EX_LAYERED`。
-
-        代价（如实记账）：透传之后 WebView **收不到页内鼠标**，原版挂件的
-        「点本体出菜单」会一并失效。**拖动位置记忆**是本产品的硬需求、页内菜单
-        不是必需能力，所以这里选择保拖动。
-
-        返回是否设置成功；失败只记 `_err`，不抛（拖动是尽力而为的能力）。
-        """
-        try:
-            import ctypes
-
-            GWL_EXSTYLE = -20
-            WS_EX_TRANSPARENT = 0x00000020
-            WS_EX_LAYERED = 0x00080000
-            user32 = ctypes.windll.user32
-            user32.SetWindowLongPtrW.restype = ctypes.c_ssize_t
-            user32.SetWindowLongPtrW.argtypes = [ctypes.c_void_p, ctypes.c_int,
-                                                 ctypes.c_ssize_t]
-            user32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
-
-            targets = self._canvas_hwnds()
-            if not targets:
-                self._trans_err = self._trans_err or "未找到画布子窗"
-                return False
-            SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER = 0x0002, 0x0001, 0x0004
-            SWP_FRAMECHANGED, SWP_NOACTIVATE = 0x0020, 0x0010
-            for h in targets:
-                cur = user32.GetWindowLongPtrW(ctypes.c_void_p(h), GWL_EXSTYLE)
-                want = cur | WS_EX_TRANSPARENT | WS_EX_LAYERED
-                if want != cur:
-                    user32.SetWindowLongPtrW(ctypes.c_void_p(h), GWL_EXSTYLE, want)
-                # 改扩展样式后要让它重新合成一次，否则新样式到下次重绘才生效
-                user32.SetWindowPos(
-                    ctypes.c_void_p(h), None, 0, 0, 0, 0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED
-                    | SWP_NOACTIVATE)
-            return True
-        except Exception as e:  # noqa: BLE001
-            self._err = "pass_mouse_through: %s" % e
-            return False
-
-    def _canvas_hwnds(self) -> list[int]:
-        """列出宿主窗下所有属于 WebView2 的子窗口句柄（命中测试要改的那一层）。
-
-        `hint` 一家不可靠：不同运行库版本类名有 `Chrome_WidgetWin_0`、
-        `Chrome_RenderWidgetHostHWND`、`msedgewebview2` 等多种写法。所以这里
-        **不按类名白名单硬筛**，改为：凡宿主窗的**直接/间接子窗**都是候选 ——
-        挂件窗里除了 WebView2 没有别的子窗，全给上样式即可（幂等、无副作用）。
-        """
-        import ctypes
-
-        user32 = ctypes.windll.user32
-        found: list[int] = []
-        EnumChildProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p,
-                                           ctypes.c_void_p)
-
-        def _cb(h, _l):  # noqa: ANN001
-            found.append(int(h))
-            return True
-
-        try:
-            user32.EnumChildWindows(ctypes.c_void_p(int(self.hwnd)),
-                                    EnumChildProc(_cb), None)
-        except Exception:  # noqa: BLE001
-            return []
-        return found
 
     def resize(self, width: int, height: int) -> None:
         """跟随宿主窗口改尺寸（挂件是定长的，但窗口缩放时不该留白边）。"""
@@ -451,6 +457,21 @@ def build_host_html(port: int, token: str) -> str:
 
     脚本一律走 http（`/dsh-whale/widget.js`），不用 file:// —— 后者在 WebView2 里
     会被当成不透明来源，脚本里的 fetch 全会失败。
+
+    ## 「最小化」（减号）为什么加在这一层，而不是改 widget.js
+
+    原版脚本是 vendor 来的**单一真值**（全仓库唯一改动记在 `PORT-NOTES.md`），
+    改它会立刻与 web 端分叉 —— 那就不是"1:1 照搬"了。而「显示/收起挂件」
+    本来就是**宿主窗**的职责（窗口显隐、位置记忆都在 Qt 侧），不是挂件自己的能力。
+    所以减号由本页注入：原版脚本照旧跑、照旧画，我们只在它上面浮一个自己的按钮。
+
+    位置对齐：原版菜单钮是 `.dshwv-menu-btn`，CSS 定在
+    `top:calc(40.55% + 4px);right:4px;26×26px`。减号放在**它正下方**同宽同形，
+    与"菜单调节"纵向并排（用户说的「菜单调节的旁边」）。
+
+    收起状态：点减号 ⇒ 藏掉原版挂件本体（`.dshwv-root`）与减号自身，**原地留一个
+    小圆点**。小圆点常驻可见、可点击 ⇒ 再点就放回来。留标记而不是全藏，是为了
+    「收起来之后还能找得回来」—— 挂件窗是置顶小窗，全藏等于从用户视野里消失。
     """
     base = "http://127.0.0.1:%d" % port
     return (
@@ -459,10 +480,101 @@ def build_host_html(port: int, token: str) -> str:
         "overflow:hidden;width:100%;height:100%}"
         "#dshw-composer-seat{position:fixed;left:-9999px;top:-9999px;"
         "width:1px;height:1px}"
+        # 减号：贴着原版菜单钮（.dshwv-menu-btn）正下方，同宽同形，纵向并排
+        ".pm-min-btn{position:fixed;top:calc(40.55% + 34px);right:4px;"
+        "width:26px;height:26px;border:none;border-radius:6px;"
+        "background:rgba(32,49,112,.85);color:#fff;cursor:pointer;"
+        "font:700 16px/1 'Segoe UI',sans-serif;padding:0;z-index:2147483647;"
+        "display:flex;align-items:center;justify-content:center;"
+        "transition:background .15s ease}"
+        ".pm-min-btn:hover{background:#203170}"
+        # 收起后的小圆点：常驻，再点放回挂件
+        ".pm-dot{position:fixed;right:8px;bottom:8px;width:14px;height:14px;"
+        "border-radius:50%;background:rgba(32,49,112,.7);cursor:pointer;"
+        "z-index:2147483647;display:none;"
+        "box-shadow:0 0 0 1px rgba(255,255,255,.35)}"
+        ".pm-dot:hover{background:#203170}"
+        "body.pm-collapsed .pm-min-btn{display:none}"
+        "body.pm-collapsed .pm-dot{display:block}"
         "</style></head><body>"
         # 叫醒原版挂件：它只在检测到 composer 后才启动（属性名取原版认的几种之一）
         "<div id='dshw-composer-seat'><textarea data-composer-input=''></textarea></div>"
+        "<button class='pm-min-btn' type='button' title='收起挂件'>&#8722;</button>"
+        "<div class='pm-dot' title='展开挂件'></div>"
         "<script>window.__PM_WHALE_BASE=" + repr(base) + ";</script>"
         "<script defer src='" + base + "/dsh-whale/widget.js?token=" + token + "'></script>"
+        # 收起/展开逻辑：藏的是原版挂件本体（.dshwv-root），不是整个页面 ——
+        # 页面留着，原版脚本继续跑（余额照样刷新），只是看不见。
+        "<script>(function(){"
+        "function rootEl(){return document.querySelector('.dshwv-root')}"
+        "function setCollapsed(on){"
+        "document.body.classList.toggle('pm-collapsed',!!on);"
+        "var r=rootEl(); if(r){r.style.display=on?'none':'';}"
+        "try{localStorage.setItem('pm-whale-collapsed',on?'1':'0');}catch(e){}"
+        "}"
+        "function wire(){"
+        "var b=document.querySelector('.pm-min-btn');"
+        "var d=document.querySelector('.pm-dot');"
+        "if(b&&!b.__pm){b.__pm=1;b.addEventListener('click',function(e){"
+        "e.stopPropagation();e.preventDefault();setCollapsed(true);});}"
+        "if(d&&!d.__pm){d.__pm=1;d.addEventListener('click',function(e){"
+        "e.stopPropagation();e.preventDefault();setCollapsed(false);});}"
+        "}"
+        # ── 拖动转发 ────────────────────────────────────────────────────────
+        # 为什么在页面里做：WebView2 的画面是一个铺满宿主窗的**子 HWND**，鼠标
+        # 消息被子窗吃掉、不冒泡给父窗 ⇒ Qt 侧收不到 mouseMove，挂件拖不动。
+        # 早先的做法是给子窗加 `WS_EX_TRANSPARENT` 让消息穿过去 —— 但那样
+        # **页面里所有控件都点不动了**（减号、原版菜单全失效），是拿一个功能换
+        # 另一个功能。正解是**页面自己报位移**：在页面内监听拖动，把位移通过
+        # `window.chrome.webview.postMessage` 发给宿主，Qt 侧收到再 move 窗口。
+        # 这样"页内点击"与"拖动窗口"互不干扰 —— 点按钮是 click，拖空白是 move。
+        "function dragSetup(){"
+        "if(window.__pmDrag)return;window.__pmDrag=1;"
+        "var dragging=false,ox=0,oy=0,moved=false;"
+        # 只认「落在挂件本体或页面上、且不是按钮/菜单/弹窗」的按下 —— 那些要留给原版逻辑
+        "function isInteractive(el){"
+        "if(!el||!el.closest)return false;"
+        "return !!(el.closest('button')||el.closest('input')||el.closest('select')||"
+        "el.closest('a')||el.closest('.dshwv-menu')||el.closest('.dshwv-rolelist')||"
+        "el.closest('.dshwv-audiolist')||el.closest('.dshwv-usagepanel')||"
+        "el.closest('.pm-min-btn')||el.closest('.pm-dot')||"
+        "el.closest('.dshwv-menu-btn')||el.closest('[class*=mask]')||"
+        "el.closest('[class*=pop]')||el.closest('[class*=menu]'));"
+        "}"
+        "function post(msg){try{"
+        "if(window.chrome&&window.chrome.webview)window.chrome.webview.postMessage(msg);"
+        "}catch(e){}}"
+        "document.addEventListener('mousedown',function(e){"
+        "if(e.button!==0)return;"
+        "if(isInteractive(e.target))return;"
+        "dragging=true;moved=false;ox=e.screenX;oy=e.screenY;"
+        "},true);"
+        "document.addEventListener('mousemove',function(e){"
+        "if(!dragging)return;"
+        "var dx=e.screenX-ox,dy=e.screenY-oy;"
+        "if(!moved&&(Math.abs(dx)+Math.abs(dy))<=4)return;"
+        "moved=true;"
+        # 每帧只发增量，累加交给 Qt（绝对坐标会被子窗坐标系差异坑到）
+        "post({pm:'drag',dx:dx,dy:dy});"
+        "ox=e.screenX;oy=e.screenY;"
+        "},true);"
+        "document.addEventListener('mouseup',function(){"
+        "if(dragging&&moved)post({pm:'dragend'});"
+        "dragging=false;moved=false;"
+        "},true);"
+        "}"
+        "function boot(){"
+        "wire();dragSetup();"
+        "var want=false;"
+        "try{want=localStorage.getItem('pm-whale-collapsed')==='1';}catch(e){}"
+        "if(want)setCollapsed(true);"
+        # 原版挂件是异步建的（脚本 defer + 内部等 composer），root 晚于本脚本出现；
+        # 用有上限的轮询等它，避免无界定时器在页面销毁后空转。
+        "var n=0;var t=setInterval(function(){n++;wire();"
+        "if(n>=40||rootEl())clearInterval(t);},150);"
+        "}"
+        "if(document.readyState==='loading')"
+        "document.addEventListener('DOMContentLoaded',boot);else boot();"
+        "})();</script>"
         "</body></html>"
     )
