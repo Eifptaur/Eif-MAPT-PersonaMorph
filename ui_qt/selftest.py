@@ -1319,8 +1319,11 @@ def t_ocr9() -> None:
         ck("ocr: preprocess_ink 管线存在", bool(body("preprocess_ink")))
         ck("ocr: 二值图放大用最近邻采样", "Image.NEAREST" in body("preprocess_ink"))
         ck("ocr: Otsu 阈值函数存在", bool(body("_otsu_thresh")))
-        for fn in ("header_text", "name_of_row", "_band_name", "row_time_read"):
+        for fn in ("name_of_row", "_band_name", "row_time_read"):
             ck("ocr: 强档路径 %s 接入预处理管线" % fn, "preprocess_ink(" in body(fn))
+        # header_text 的管线调用在 _header_read（单帧路径与自抓帧投票路径都经它）——两条一起锚
+        ck("ocr: 强档路径 header_text 接入预处理管线（经 _header_read）",
+           "_header_read(" in body("header_text") and "preprocess_ink(" in body("_header_read"))
         ck("ocr: pane_text 只换双引擎不叠管线", "recognize_dual(" in body("pane_text")
            and "preprocess_ink(" not in body("pane_text"))
 
@@ -6644,6 +6647,139 @@ def t_g22() -> None:
         _shutil.rmtree(tmp, ignore_errors=True)
 
 
+def t_ocr_fuzzy() -> None:
+    """OCR 升级两组判据的真跑：候选集模糊匹配（授权档兜底）+ 标题带帧间投票。
+
+    模糊档三条硬约束逐条验（距离上限挂钩长度 / 候选集唯一 / 时间词与括号数字守恒），
+    并回归「KC测试 vs 测试」子串红线（strict 与 fuzzy 都不许收）；
+    投票验编排语义（复核一致提前返 / 读空不否决 / 争议仲裁取多数 / 未决取首读）；
+    最后真调 `chat_is_open` 走一遍 ③′ 档（strict 全漏 → 模糊唯一 → 放行）。
+    """
+    import sys as _sys # noqa: PLC0415
+    from pathlib import Path as _P # noqa: PLC0415
+
+    ROOT = _P(__file__).resolve().parent.parent
+    _sys.path.insert(0, str(ROOT))
+
+    import agent.chat_ocr as _co # noqa: PLC0415
+    import agent.chat_header as _chdr # noqa: PLC0415
+    from agent.wechat import WeChatAdapter as _WA # noqa: PLC0415
+
+    # ── ① 编辑距离泛化 ──
+    ck("编辑距离≤1（abc/abd 单替换收、abc/ace 距离2 拒）",
+       _co._edit_dist_le("abc", "abd", 1) and not _co._edit_dist_le("abc", "ace", 1))
+    ck("编辑距离≤2 边界（abcde/abxyz 距离3 拒、ab?xy 容忍2 收）",
+       not _co._edit_dist_le("abcde", "abxyz", 2) and _co._edit_dist_le("abcxd", "abcye", 2))
+    ck("编辑距离 k=0 退化为全等", _co._edit_dist_le("same", "same", 0)
+       and not _co._edit_dist_le("same", "sane", 0))
+
+    # ── ② 模糊档判据矩阵（真跑 matches_fuzzy）──
+    _n = ["文件传输助手", "张三丰", "工作群A"]
+    ck("模糊档：OCR 读错一字（演示祥→演示群）且候选无歧义 ⇒ 收",
+       _co.matches_fuzzy("演示祥", "演示群", _n))
+    ck("模糊档：候选里还有另一个「演示祥」⇒ 歧义不收（宁漏发不误发）",
+       not _co.matches_fuzzy("演示祥", "演示群", ["演示祥"]))
+    ck("模糊档：两字名不参与（章三≠张三 距离1 也拒——超短名误认代价高）",
+       not _co.matches_fuzzy("章三", "张三", _n))
+    ck("模糊档：时间词指纹守恒（星期六播报 vs 星期天播报 归一后同形 ⇒ 拒）",
+       not _co.matches_fuzzy("星期天播报", "星期六播报", []))
+    ck("模糊档：目标名自带括号数字时屏幕必须带同一个数字（测试（3） vs 测试（2） ⇒ 拒）",
+       not _co.matches_fuzzy("测试（3）", "测试（2）", []))
+    ck("模糊档：长名截断形态（互为包含、短侧≥4、候选唯一）⇒ 收",
+       _co.matches_fuzzy("先期调研小组", "先期调研小组讨论群", _n))
+    ck("模糊档：子串红线保持（KC测试 vs 测试 ——距离2/包含短侧2 ⇒ strict 与 fuzzy 都不收）",
+       not _co.matches_strict("KC测试", "测试")
+       and not _co.matches_fuzzy("测试", "KC测试", [])
+       and not _co.matches_fuzzy("KC测试", "测试", []))
+    ck("模糊档：空名/全剥空 ⇒ 不收（fail-closed 照旧）",
+       not _co.matches_fuzzy("", "演示群", _n)
+       and not _co.matches_fuzzy("演示群", "", _n))
+
+    # ── ③ 标题带帧间投票（编排语义；桩 _header_read 与抓帧，zoom 循环已有真机背书）──
+    _orig_hread = _co._header_read
+    _orig_cbest = _co.capture_best
+    _orig_ccap = _co.ch.capture_image
+
+    class _FakeIm: # 假帧对象（只作占位，_header_read 已桩）
+        pass
+
+    try:
+        _co.capture_best = lambda *a, **k: _FakeIm()
+        _co.ch.capture_image = lambda *a, **k: _FakeIm()
+
+        def _run_vote(reads, confirm=2):
+            """按预置读数序列跑一次 header_text 自抓帧路径，返回 (结果, 实际消耗读数个数)。"""
+            _q = list(reads)
+            _co._header_read = lambda img, z=2: _q.pop(0) if _q else ("", 0)
+            got = _co.header_text(gui=None, confirm_frames=confirm)
+            return got, len(reads) - len(_q)
+
+        ck("投票：首读 A + 复核近形（距离≤1）⇒ 确认返 A（只耗 2 读）",
+           _run_vote([("演示群", 3), ("演示祥", 3)]) == ("演示群", 2))
+        ck("投票：首读 A + 复核读空 ⇒ 不否决返 A（读空不作为反对票）",
+           _run_vote([("演示群", 3), ("", 0)]) == ("演示群", 2))
+        ck("投票：首读 A + 复核异形 B + 仲裁 A ⇒ 返 A（多数胜出）",
+           _run_vote([("演示群", 3), ("完全不同名", 3), ("演示群", 3)]) == ("演示群", 3))
+        ck("投票：首读 A + 复核异形 B + 仲裁 B ⇒ 返 B（多数胜出，不迷信首读）",
+           _run_vote([("演示群", 3), ("完全不同名", 3), ("完全不同名", 3)]) == ("完全不同名", 3))
+        ck("投票：confirm_frames=1 ⇒ 关闭投票只读首帧（旧行为可退回）",
+           _run_vote([("演示群", 3), ("演示祥", 3)], confirm=1) == ("演示群", 1))
+        _q1 = [("演示群", 3)]
+        _co._header_read = lambda img, z=2: _q1.pop(0) if _q1 else ("", 0)
+        ck("投票：显式传 img 走单帧路径（直读返回，不进复核）",
+           _co.header_text(img=_FakeIm()) == "演示群" and not _q1)
+    finally:
+        _co._header_read = _orig_hread
+        _co.capture_best = _orig_cbest
+        _co.ch.capture_image = _orig_ccap
+
+    # ── ④ chat_is_open 真跑：strict 全漏 → ③′ 模糊档唯一接近 ⇒ 放行 ──
+    _orig_ccn = _WA.current_chat_name
+    _orig_srows = _co.session_rows
+    _orig_check = _chdr.check
+    w = _WA.__new__(_WA) # 绕过 __init__（仿后端审查探针：只补身份闸用到的状态）
+    w._gui = None
+    w._idn_cache = None
+    w._idn_txn = 0
+    w._group_by_wxid = {}
+    w._get_gui = lambda: None
+    w._active_row_time_ok = lambda chat_id, gui=None: (False, "桩：时间档不参与")
+    w.current_chat_name = lambda gui=None: ("演示祥", "桩：绿底行补读（错一字）")
+    try:
+        w._idn_txn_begin() # 开事务（与产品 send_text 同款）
+        # 场景 A：strict 全漏 → 模糊唯一 → 放行（事务已开）
+        _co.session_rows = lambda img: [{"name": n} for n in
+                                        ["文件传输助手", "张三丰", "工作群A"]]
+        _chdr.check = lambda *a, **k: {"status": "no"} # 档④ 指纹桩：不成立
+        ok, why = w.chat_is_open("group:x@chatroom", name="演示群")
+        ck("chat_is_open：strict 全漏（读错一字）→ 候选集模糊唯一接近 ⇒ 放行且说明带档名",
+           ok is True and "候选集模糊" in str(why),
+           "ok=%s why=%s" % (ok, str(why)[:60]))
+        # ⚠️ 每个场景前必须换事务 token：同键同事务内正面结论会被身份缓存复用
+        #   （产品语义正确——约束 a+c），不换 token 场景 B/C 会被场景 A 的缓存污染。
+        w._idn_txn_begin()
+        # 场景 B：候选歧义（列表里真有另一个「演示祥」）⇒ 模糊不收 ⇒ 一路判否（不误放）
+        _co.session_rows = lambda img: [{"name": n} for n in ["演示祥", "张三丰"]]
+        ok2, why2 = w.chat_is_open("group:x@chatroom", name="演示群")
+        ck("chat_is_open：候选歧义 ⇒ 模糊不收 ⇒ 判否（fail-closed 不误放）",
+           ok2 is False, "ok=%s why=%s" % (ok2, str(why2)[:50]))
+        w._idn_txn_begin()
+        # 场景 C：strict 命中回归——读对时档① 直接过，模糊档根本不该被触达
+        w.current_chat_name = lambda gui=None: ("演示群", "桩：读对了")
+        _hit = {"fuzzy": 0}
+        _real_mf = _co.matches_fuzzy
+        _co.matches_fuzzy = lambda *a, **k: (_hit.__setitem__("fuzzy", _hit["fuzzy"] + 1)
+                                             or _real_mf(*a, **k))
+        ok3, _ = w.chat_is_open("group:x@chatroom", name="演示群")
+        _co.matches_fuzzy = _real_mf
+        ck("chat_is_open：读对时档① strict 直接放行，模糊档零触达（成本不变）",
+           ok3 is True and _hit["fuzzy"] == 0, "fuzzy 触达=%d" % _hit["fuzzy"])
+    finally:
+        _WA.current_chat_name = _orig_ccn
+        _co.session_rows = _orig_srows
+        _chdr.check = _orig_check
+
+
 def main() -> int:
     # ⭐ 测试隔离（audit-r2 N1 残余的收口）：`logs/console.url` 是**产品运行时**写的
     #   （含随机端口+token），自检跑在产品目录里会读到它——轻则刷几百行「端口连不上」噪音，
@@ -6666,7 +6802,7 @@ def main() -> int:
                    t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch, t_bootstrap32, t_ocr9,
                    t_c10, t_c13, t_hotfix1, t_hotfix2, t_catmgr, t_medialocal, t_commfb,
                    t_veradv, t_g5, t_g6, t_g7, t_g8, t_g9, t_g10, t_g11, t_g12, t_g13, t_g14,
-                   t_g15, t_g16, t_g17, t_g18, t_g19, t_g20, t_g21, t_g22):
+                   t_g15, t_g16, t_g17, t_g18, t_g19, t_g20, t_g21, t_g22, t_ocr_fuzzy):
             try:
                 fn()
             except Exception as e: # noqa: BLE001

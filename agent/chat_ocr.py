@@ -574,29 +574,22 @@ def preprocess_ink(crop, zoom: int = 2, invert: bool = False, thresh: int = None
         return crop
 
 
-def header_text(img=None, gui=None, zoom: int = 2) -> str:
-    """OCR 会话头，返回识别到的文字（读不到返回 ""）。zoom＝放大倍数（小字放大后识别率更高）。
+def _header_read(img, zoom: int = 2) -> tuple:
+    """对**一帧**跑标题带读，返回 (文本, 命中的 zoom)；读空返回 ("", 0)。
 
-    ⛔ **的真缺陷（拍摄现场「点对了会话却不发图」的根因）**：放大倍数决定成败——
-       同一张截图（本机 4.1.15.8，渲染区 1191×890，会话头 `演示(3)`）：
-         `zoom=2`（老默认）⇒ **`''`（一个字都读不出）**；`zoom=3` ⇒ `'演示（3）'` 稳定命中；`zoom=4` ⇒ `''`。
-       于是「会话头标题带」这条**强档证据**长期是哑的 ⇒ `chat_is_open` 判否 ⇒
-       `send_image` 退回真鼠标路径（"只走后台"下被拒）⇒ **图片下载好了却发不出去**；
-       清空过聊天记录的会话连内容档也一起瞎（库里没有行）⇒ 全链只差这一档。
-       ⇒ 改成**多档试**：先试调用方给的 zoom，空了再依次试 3 / 4 / 2 / 5，读到就返回。
-       为了不白烧 OCR 预算：带子里几乎没墨（`_band_ink` 很低）时**直接返回 ''**，不做任何识别。
+    多档试的由来（拍摄现场「点对了会话却不发图」的根因）：放大倍数决定成败——
+    同一张截图（本机 4.1.15.8，渲染区 1191×890，会话头 `演示(3)`）：
+      `zoom=2`（老默认）⇒ **`''`（一个字都读不出）**；`zoom=3` ⇒ `'演示（3）'` 稳定命中；`zoom=4` ⇒ `''`。
+    ⇒ 先试调用方给的 zoom，空了再依次试 3 / 4 / 2 / 5，读到就返回。
+    为了不白烧 OCR 预算：带子里几乎没墨（`_band_ink` 很低）时**直接返回 ''**，不做任何识别。
     """
     try:
-        if img is None:
-            img = ch.capture_image(gui=gui)
-        if img is None:
-            return ""
         box = header_box(img)
         if box[2] - box[0] < 8 or box[3] - box[1] < 6:
-            return ""
+            return "", 0
         crop = img.crop(box)
         if _band_ink(crop) <= 0.004: # 空白带（没有会话/标题没画出来）⇒ 别烧 OCR
-            return ""
+            return "", 0
         zooms = []
         for z in (int(zoom or 0), 3, 4, 2, 5):
             if z and z > 1 and z not in zooms:
@@ -606,8 +599,64 @@ def header_text(img=None, gui=None, zoom: int = 2) -> str:
             c = preprocess_ink(crop, zoom=z, invert=False)
             got = "".join(str(i[0]) for i in recognize_dual(c)).strip()
             if got:
+                return got, z
+        return "", 0
+    except Exception:
+        return "", 0
+
+
+def header_text(img=None, gui=None, zoom: int = 2, confirm_frames: int = 2) -> str:
+    """OCR 会话头，返回识别到的文字（读不到返回 ""）。zoom＝放大倍数（小字放大后识别率更高）。
+
+    **自抓帧路径（`img=None`）带帧间投票**：先多抓挑一帧最好的（`capture_best`，防
+    "没渲染完的一帧"），读到文本后再**独立复核一帧**（间隔 0.18s 等渲染稳定）——
+    归一化相等或距离 ≤1 ⇒ 确认返回；两帧明显不同 ⇒ 第三帧仲裁取多数；复核帧读空
+    （空带/渲染抖动）不否决。实测同一画面两次读数会抖（偶发错字/漏字），投票把
+    「这一次读对、下一次读错」拉平成稳定命中。总预算 `timeout_s()` 兜底，到点拿已有结果走。
+    **显式传 `img` 时保持单帧、行为与历史完全一致**（调用方已挑好帧 / 测试注入路径）。
+    """
+    try:
+        if img is None:
+            tok = begin_window(timeout_s())
+            try:
+                im1 = capture_best(gui=gui, frames=2)
+                if im1 is None:
+                    return ""
+                got, zu = _header_read(im1, zoom)
+                if not got or confirm_frames <= 1:
+                    return got
+                _disp = [] # 与首读明显不同的复核读数（等待仲裁）
+                for _i in range(int(confirm_frames) - 1):
+                    if budget_out(tok):
+                        return got
+                    time.sleep(0.18)
+                    im2 = ch.capture_image(gui=gui)
+                    if im2 is None:
+                        continue
+                    got2, _ = _header_read(im2, zu or zoom) # 复核帧复用首读命中的 zoom
+                    if not got2:
+                        continue
+                    if norm(got2) == norm(got) or _edit_dist_le(norm(got2), norm(got), 1):
+                        return got # 复核一致（容忍一字内抖动——全半角/单字误读不计）
+                    _disp.append(got2)
+                if _disp:
+                    if not budget_out(tok):
+                        im3 = ch.capture_image(gui=gui)
+                        if im3 is not None:
+                            got3, _ = _header_read(im3, zu or zoom)
+                            if got3:
+                                if norm(got3) == norm(got) or _edit_dist_le(norm(got3), norm(got), 1):
+                                    return got
+                                if norm(got3) == norm(_disp[-1]) or _edit_dist_le(norm(got3), norm(_disp[-1]), 1):
+                                    return _disp[-1]
+                    log.info("标题带 OCR 帧间抖动且仲裁未决：取首读 %r（其余读数 %s）",
+                             got[:16], [d[:16] for d in _disp])
                 return got
-        return ""
+            finally:
+                end_window(tok)
+        # 显式传帧路径：单帧、行为与历史完全一致
+        got, _zu = _header_read(img, zoom)
+        return got
     except Exception:
         return ""
 
@@ -694,6 +743,26 @@ def _edit_dist_le1(a: str, b: str) -> bool:
         used = True
         j += 1 # 在长串里跳过一个（插入/删除）
     return True
+
+
+def _edit_dist_le(a: str, b: str, k: int) -> bool:
+    """编辑距离 ≤ k（通用版，短串小 DP）；k=1 时等价 `_edit_dist_le1`。"""
+    k = int(k)
+    if k <= 0:
+        return a == b
+    if abs(len(a) - len(b)) > k:
+        return False
+    # DP：dist[i][j] = a[:i] 与 b[:j] 的编辑距离（串都很短——会话名——O(n·m) 足够）
+    prev = list(range(len(b) + 1))
+    for i in range(1, len(a) + 1):
+        cur = [i] + [0] * len(b)
+        for j in range(1, len(b) + 1):
+            cur[j] = min(prev[j] + 1, cur[j - 1] + 1,
+                         prev[j - 1] + (0 if a[i - 1] == b[j - 1] else 1))
+        if min(cur) > k: # 整行已超限 ⇒ 后面只会更大，提前收
+            return False
+        prev = cur
+    return prev[-1] <= k
 
 
 def _hhmm_fuzzy_eq(raw: str, want: str) -> bool:
@@ -827,6 +896,95 @@ def matches(text: str, name: str) -> bool:
     if len(b) >= 2 and (b in a or a in b) and min(len(a), len(b)) >= 2:
         return True
     return False
+
+
+def _fuzzy_close(a: str, b: str) -> bool:
+    """模糊接近判（授权档兜底用）：距离上限与长度挂钩，超短名不参与。
+
+    距离上限：短名（<8 字）只容忍 1 个字的错（OCR 小字最常见的就是单字误读）；
+    长名（≥8 字）放宽到 2。≤2 字的名字不参与模糊——一个字的差异对超短名语义变化太大，
+    误认代价比漏认高（宁可 fail-closed）。
+    """
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    n = min(len(a), len(b))
+    if n < 3:
+        return False
+    return _edit_dist_le(a, b, 2 if n >= 8 else 1)
+
+
+def _fuzzy_overlaps(a: str, b: str) -> bool:
+    """模糊档认的「接近形态」之二：互为包含（长名被标题带截断/OCR 漏整段字的形态）。
+
+    与 `matches()` 的包含不同：这里只服务授权档兜底，所以要求**短侧 ≥4**（两三个字的
+    包含关系区分力太弱——「KC测试」对「测试」就是这种），且必须在 `matches_fuzzy` 的
+    候选集唯一性约束下才敢放行。
+    """
+    if not a or not b or a == b:
+        return bool(a) and a == b
+    if (b in a or a in b) and min(len(a), len(b)) >= 4:
+        return True
+    return False
+
+
+def matches_fuzzy(text: str, name: str, others) -> bool:
+    """授权档的**模糊兜底**：OCR 把名字读错 1~2 个字时仍能认对，但只认「候选集里唯一接近」。
+
+    为什么需要：`matches_strict` 要求归一化后完全相等——OCR 把「演示群」读成「演示祥」
+    （小字单字误读的典型）就整档漏掉，全链 fail-closed 成"找不到这个会话"。
+    实测严格命中约 59%，其中相当一部分 MISS 是「差一两个字」——把这部分收回来，
+    识别率问题就部分转化为匹配算法问题，不用动引擎。
+
+    三条硬约束（缺一不放，宁漏发不误发）：
+      ① 接近形态有限：归一化后编辑距离 ≤1（短名）/≤2（长名 ≥8），或互为包含且短侧 ≥4
+        （标题带物理宽度截断长名 / OCR 漏字的形态）；
+      ② **候选集唯一**：`others`（会话列表里其余可读名字）中没有任何一个与 text 同样接近
+        ——两个候选都接近 ⇒ 歧义，不敢认（这是敢放宽的底气所在，绝不能省）；
+      ③ 时间词指纹守恒 + 目标括号数字守恒（与 `matches_strict` 同款）：
+        「星期六播报」与「星期天播报」归一后都是"播报"、距离 0，就靠指纹守恒挡住；
+        目标名自己带括号数字（如 `测试(2)`）时屏幕上也必须带同一个数字。
+
+    `others` 传会话列表其余可读名字（`session_rows()` 的 name 列表，剔除空）；调用方
+    无论命中与否都应 log 一行（判据归因要能回放）。归一化剥时间词的逻辑同 `norm()`。
+    """
+    try:
+        # ③a 时间词指纹守恒（同 matches_strict 开头：剥掉的星期/相对日必须一致）
+        _fa = sorted(_week_re.findall(str(text or "")) + _rel_re.findall(str(text or "")))
+        _fb = sorted(_week_re.findall(str(name or "")) + _rel_re.findall(str(name or "")))
+        if _fa != _fb:
+            return False
+        a, b = norm(text), norm(name)
+        if not a or not b:
+            return False
+        for _p in ("草稿", "draft"):
+            if a.startswith(_p):
+                a = a[len(_p):]
+            if b.startswith(_p):
+                b = b[len(_p):]
+        if not a or not b:
+            return False
+        # ③b 目标名自带括号数字 ⇒ 屏幕上也得带同一个数字（同 matches_strict 的 ②）
+        _kb = _count_tail(name)
+        if _kb and _count_tail(text) != _kb:
+            return False
+        # ① text 与目标是否接近（距离形态或包含形态）
+        if not (_fuzzy_close(a, b) or _fuzzy_overlaps(a, b)):
+            return False
+        # ② 候选集唯一性：others 里不许再有任何名字与 text 接近（与目标同名/同归一的除外）
+        for o in (others or []):
+            no = norm(str(o or ""))
+            if not no or no == b:
+                continue
+            for _p in ("草稿", "draft"):
+                if no.startswith(_p):
+                    no = no[len(_p):]
+            if _fuzzy_close(a, no) or _fuzzy_overlaps(a, no):
+                return False
+        return True
+    except Exception:
+        return False
 
 
 # ── 会话列表：读名字 + 找绿色高亮行（两个独立信号 ⇒ 可用于"当前会话是谁"的可信自检）──

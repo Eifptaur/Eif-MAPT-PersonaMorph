@@ -3818,6 +3818,7 @@ class WeChatAdapter:
         # ② **会话头标题带 OCR**（提到第二位）—— 对面 r25 实测它有区分力
         #    （'OE' vs 'O文亻牛传输助手'，一次就能判定当前是谁），可当首选档用；
         #    r24 那次"四档兜底放行"命中的也正是这一档。
+        _tt = "" # 供 ③′ 模糊档兜底复用（档② 异常时保持空，_src3 退回只用 got）
         try:
             from . import chat_ocr as _co2
             _im4 = _co2.capture_best(gui=gui or self._get_gui(), frames=2)
@@ -3833,6 +3834,26 @@ class WeChatAdapter:
             _ok3, _why3 = self._active_row_time_ok(chat_id, gui=gui)
             if _ok3:
                 return self._idn_cache_put(_ck, (True, _why3))
+        except Exception:
+            pass
+        # ③′ **候选集模糊档**（strict 全档漏掉"读错一两个字"时的兜底，授权可用）：
+        #    把会话列表其余可读名字当候选集，只认「与 OCR 读数唯一接近」的那一个——
+        #    两个候选都接近 ⇒ 歧义不认（宁漏发不误发）。三条硬约束见
+        #    `chat_ocr.matches_fuzzy`（距离上限挂钩长度 / 候选集唯一 / 时间词与括号数字守恒）。
+        #    放在便宜档（①②③）之后：只在它们全没认出时才多花一次整列表 OCR 的成本。
+        try:
+            from . import chat_ocr as _co3
+            _src3 = got or _tt
+            if _src3:
+                _im5 = _co3.capture_best(gui=gui or self._get_gui(), frames=2)
+                _cands = ([str(r.get("name")) for r in _co3.session_rows(_im5)
+                           if r.get("name")] if _im5 is not None else [])
+                if _cands and _co3.matches_fuzzy(_src3, want, _cands):
+                    return self._idn_cache_put(_ck, (
+                        True, "候选集模糊匹配：OCR=%r 与目标 %r 唯一接近（候选 %d 个，无歧义）"
+                        % (_src3[:16], want, len(_cands))))
+                log.info("模糊档未收：OCR=%r 目标=%r 候选=%s",
+                         _src3[:16], want, [c[:12] for c in _cands[:8]])
         except Exception:
             pass
         # ④ **弱档：会话头指纹**（会假阳性 ⇒ 默认不采信）
@@ -6335,6 +6356,21 @@ class WeChatAdapter:
             # ⛔ 这是**授权档**（能不能发）⇒ 只许完全相等，不许包含
             #   （「KC测试」与「测试」互为子串时，包含判据会把回复发进另一个群）。
             _hit = _co.matches_strict(hdr, nm) if len(_b) >= 1 else (_a == _b)
+            if not _hit:
+                # 模糊兜底（同 chat_is_open 的候选集模糊档）：OCR 把名字读错一两个字时
+                # strict 会整档漏掉——那正是"图片拿到了却发不出"的高频叠加场景
+                # （用户清空记录 ⇒ 只剩这条纯屏幕证据，再读错一个字就全链无路）。
+                # 只认「候选集唯一接近」，两候选都接近 ⇒ 歧义不认（宁漏发不误发）。
+                try:
+                    _im = _co.capture_best(gui=gui or self._get_gui(), frames=2)
+                    _cands = ([str(r.get("name")) for r in _co.session_rows(_im)
+                               if r.get("name")] if _im is not None else [])
+                    if _cands and _co.matches_fuzzy(hdr, nm, _cands):
+                        return True, ("候选集模糊匹配：标题带 OCR=%r 与目标 %r 唯一接近"
+                                      "（候选 %d 个，无歧义；纯屏幕证据）"
+                                      % (str(hdr)[:20], nm[:16], len(_cands)))
+                except Exception:
+                    pass
             if _hit:
                 return True, ("会话头标题带 OCR=%r 与目标 %r 匹配（纯屏幕证据，不依赖消息行；"
                               "常见于用户清空过该会话的聊天记录）" % (str(hdr)[:20], nm[:16]))
