@@ -338,21 +338,27 @@ def online_backend() -> dict:
 def detect_local(timeout: float = 1.2, probes=None, ttl: float = 120.0) -> list:
     """探一遍常见本地生图服务（**只读 GET**，不动对方任何状态）⇒ 探到就返回可用的后端。
 
-    为什么要有它：用户 不能直接去找那些能生图的模型或者工具吗"——别让他先选型、
-    再手工填地址；本机在跑 ComfyUI/A1111/Fooocus/InvokeAI 就自己认出来。
+    为什么要有它：别让用户先自己选型、再手工填地址；本机在跑 ComfyUI/A1111/Fooocus/InvokeAI
+    就自己认出来。
 
-    ⚡ **短缓存**（默认 20 秒）：实测一次探测要 **3.6 秒**（四个端口里三个连不上时要等满
-    `timeout`）⇒ 控制台每次刷状态、`snapshot()`、`pick_backend()` 都各问一遍，面板会明显发木
-    （判据也因此在 80 秒上下徘徊）。"本机有没有生图服务"20 秒内几乎不会变，缓存完全安全。
-    传了 `probes` 的调用（测试）**不走缓存**，保证测试拿到的是即时结果。
+    ⚡ **并发探测 + 总预算**：`timeout` 是**单个探针**的超时。`LOCAL_PROBES` 有 4 个端口，
+    串行跑时"没开的端口各等满 timeout"⇒ 首次调用要 4×timeout（实测 timeout=1.2 时 5.3 秒）。
+    而本函数被 `/api/status` 的富化链（`media_status.snapshot` → `image_gen.backends`）调用，
+    那接口前端每 8 秒轮询一次 ⇒ 冷启动后第一次轮询会卡满这几秒，界面像是"后台没响应"。
+    所以这里改成 **线程池并发**（端口探测是 I/O 等待，线程池天然合适），总墙钟≈一个 timeout。
+
+    ⚡ **短缓存**（默认 120 秒）：本机有没有生图服务短时间几乎不变；不缓存则每次刷状态
+    都要探一遍。（传了 `probes` 的调用**不走缓存**，保证测试拿到即时结果。）
     """
     import urllib.request
+    from concurrent.futures import ThreadPoolExecutor
     if probes is None:
         _now = time.time()
         if _DETECT_CACHE["val"] is not None and (_now - float(_DETECT_CACHE["at"] or 0)) < float(ttl or 0):
             return [dict(x) for x in _DETECT_CACHE["val"]]
-    out = []
-    for p in (probes if probes is not None else LOCAL_PROBES):
+    _list = probes if probes is not None else LOCAL_PROBES
+
+    def _probe_one(p):
         try:
             _u = "http://127.0.0.1:%d%s" % (p["port"], p["path"])
             # 本机监听面现在要口令（Host 校验 + X-PM-Token）⇒ 探测也得带上，
@@ -362,9 +368,19 @@ def detect_local(timeout: float = 1.2, probes=None, ttl: float = 120.0) -> list:
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 code = int(getattr(r, "status", 200) or 200)
             if code < 500:
-                out.append({"id": p["id"], "kind": "local", "proto": p["proto"], "url": p["url"]})
-        except Exception:
-            continue
+                return {"id": p["id"], "kind": "local", "proto": p["proto"], "url": p["url"]}
+        except Exception: # noqa: BLE001
+            return None
+        return None
+
+    out = []
+    if _list:
+        # 按 LOCAL_PROBES 原序收集（并发跑、按序收），保证结果稳定可预期
+        with ThreadPoolExecutor(max_workers=max(1, min(len(_list), 8)),
+                                thread_name_prefix="gen-probe") as _ex:
+            for r in _ex.map(_probe_one, list(_list)):
+                if r:
+                    out.append(r)
     if probes is None:
         _DETECT_CACHE["at"], _DETECT_CACHE["val"] = time.time(), [dict(x) for x in out]
     return out

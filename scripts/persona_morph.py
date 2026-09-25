@@ -2578,20 +2578,35 @@ def main():
         try:
             if action == "list":
                 chats = []
+                # ⛔ 枚举口径 = **消息档案 ∪ 记忆目录**。
+                #   记忆落盘在 `data/memory/`，与消息档案库是两套独立存储；只用
+                #   `store.list_chats()` 的话，"消息库读不到 / 某群只留下印象没落消息档 /
+                #   手动清过 messages"时，用户**明明有印象却看不到、选不中、删不掉**。
                 try:
-                    for ck in orch.store.list_chats():
-                        mems = orch.memory.members(ck) if hasattr(orch.memory, "members") else []
-                        if not mems:
-                            continue
-                        gname = ck
-                        try:
-                            if ":" in ck:
-                                gname = wechat.group_name(ck.split(":", 1)[1])
-                        except Exception:
-                            pass
-                        chats.append({"chat_key": ck, "name": str(gname), "count": len(mems)})
+                    _keys = list(orch.store.list_chats())
+                except Exception:
+                    _keys = []
+                try:
+                    for _ck in (orch.memory.chat_keys_on_disk()
+                                if hasattr(orch.memory, "chat_keys_on_disk") else []):
+                        if _ck not in _keys:
+                            _keys.append(_ck)
                 except Exception:
                     pass
+                for ck in _keys:
+                    try:
+                        mems = orch.memory.members(ck) if hasattr(orch.memory, "members") else []
+                    except Exception:
+                        mems = []
+                    if not mems:
+                        continue
+                    gname = ck
+                    try:
+                        if ":" in ck:
+                            gname = wechat.group_name(ck.split(":", 1)[1])
+                    except Exception:
+                        pass
+                    chats.append({"chat_key": ck, "name": str(gname), "count": len(mems)})
                 members = []
                 if chat_key:
                     try:
@@ -2612,15 +2627,17 @@ def main():
             if action == "clear_all":
                 # 清除全部记忆：所有群的成员印象 + 共享记忆 + 会话日志（运行明细/对话历史）
                 try:
-                    for ck in list(orch.store.list_chats()):
-                        try:
-                            for mem_id in [str(m.get("id") or m.get("memberId") or m.get("userId") or "")
-                                           for m in (orch.memory.members(ck) or [])]:
-                                if mem_id:
-                                    orch.memory.remove(ck, "memberImpression", user_id=mem_id)
-                        except Exception:
-                            pass
-                    orch.memory.clear_all()
+                    # ⛔ 原来这里先按 `store.list_chats()` 逐群 `memory.remove(...)`：
+                    #   ① 口径依赖消息库 ⇒ "只有印象没有消息"的群漏清；
+                    #   ② `remove()` 既没给 `user_id` 也没给 `target` ⇒ 命中条件恒 False，
+                    #      这一整段其实是空转，真正干活的只有下面那句。
+                    #   ⇒ 交给 `memory.clear_all()` 一处收口（它以记忆目录为准、逐个成员档删）。
+                    n_mem = 0
+                    clear_err = ""
+                    try:
+                        n_mem = int(orch.memory.clear_all() or 0)
+                    except Exception as _e:
+                        clear_err = str(_e)
                     # 会话日志（运行明细 JSONL）
                     import glob as _glob
                     removed = 0
@@ -2635,7 +2652,11 @@ def main():
                             os.remove(_cl); removed += 1
                     except Exception:
                         pass
-                    return {"ok": True, "note": "会员印象+共享记忆+会话日志已清除（%d 个文件）" % removed}
+                    if clear_err:
+                        return {"ok": False, "error": "部分印象档读不动、没敢删：%s" % clear_err,
+                                "cleared_members": n_mem, "cleared_logs": removed}
+                    return {"ok": True, "note": "成员印象 %d 份 + 会话日志 %d 个已清除" % (n_mem, removed),
+                            "cleared_members": n_mem, "cleared_logs": removed}
                 except Exception as e:
                     return {"ok": False, "error": str(e)}
             if action == "clear_sessions":

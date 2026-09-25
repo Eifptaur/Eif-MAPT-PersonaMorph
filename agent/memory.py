@@ -125,6 +125,60 @@ def _unname_dir(name: str) -> str:
     return str(name or "").replace("memory_", "", 1)
 
 
+def _chat_dir_meta_path(dir_name: str) -> str:
+    return os.path.join(MEMORY_DIR, dir_name, "_meta.json")
+
+
+def chat_keys_on_disk() -> list:
+    """磁盘上**实际有印象数据**的会话 chat_key（不依赖消息库）。
+
+    ⛔ 为什么要有：记忆落盘在 `data/memory/`，与消息档案库（`data/messages/`）是**两套独立存储**。
+    上层若只用 `store.list_chats()` 枚举记忆页的群下拉，那么"消息库读不到 / 某群只收过消息没被
+    监听落档 / 手动清过 messages 目录"时，用户**明明有印象却看不到、选不中、删不掉** —— 数据在，
+    界面说"没有"。所以这里直接以记忆目录为准枚举。
+
+    目录名是 `_chat_dir_name()` 的**单向转义**（`group:x@chatroom` → `group_x_chatroom`），
+    无法反推 ⇒ 优先取 `_meta.json` 里回写的原始 `chat_key`；老档案没有这一项时退回
+    「文件名归一半还原」（`group_x_chatroom` → `group:x_chatroom`），够用于展示与选择
+    （`_chat_dir` 再转义回去仍是同一个目录 ⇒ 读写闭环成立）。
+    """
+    out = []
+    seen = set()
+    try:
+        names = sorted(os.listdir(MEMORY_DIR))
+    except OSError:
+        return []
+    for fn in names:
+        p = os.path.join(MEMORY_DIR, fn)
+        if not os.path.isdir(p) or fn in (".", ".."):
+            continue
+        # 这个目录里是否有真印象档（空壳目录不算一个"群"）
+        has_data = False
+        meta = {}
+        try:
+            for sub in os.listdir(p):
+                if sub == "_meta.json":
+                    meta = _read_json(os.path.join(p, sub), {}) or {}
+                    continue
+                if not sub.endswith(".json"):
+                    continue
+                raw = _read_json(os.path.join(p, sub), None)
+                if raw and (raw.get("impressions") or raw.get("userId") or raw.get("name")):
+                    has_data = True
+        except OSError:
+            continue
+        if not has_data:
+            continue
+        ck = str(meta.get("chat_key") or "").strip()
+        if not ck:
+            m = re.match(r"^(group|private)_(.+)$", fn)
+            ck = "%s:%s" % (m.group(1), m.group(2)) if m else fn
+        if ck and ck not in seen:
+            seen.add(ck)
+            out.append(ck)
+    return out
+
+
 def _member_file(chat_key: str, user_id: str, name: str = "") -> str:
     return os.path.join(_chat_dir(chat_key), _member_file_name(user_id, name))
 
@@ -154,7 +208,15 @@ class MemoryStore:
 
     def _chat_keys(self, chat_key: str) -> list:
         """互通时返回的群：勾选了 shared_groups → 只在这些群间互通（本群在内才生效）；
-        否则 share_across_groups=true 全部互通；false 仅本群。"""
+        否则 share_across_groups=true 全部互通；false 仅本群。
+
+        ⛔ 全互通档原来直接把**目录名**当 key 返回（`group_x_chatroom`）—— 目录名是
+        `_chat_dir_name()` 的单向转义，与真实 chat_key（`group:x@chatroom`）**不相等**；
+        于是 `members()` / `remove()` 拿这个假 key 去 `_chat_dir()` 再转义一次，
+        虽然大多数情况还能碰巧对回同一个目录，但凡是转义后不同的 key（含中文群名、大写 wxid、
+        点号/连字符 wxid）就会**读到空 / 删错档**。⇒ 统一用 `chat_keys_on_disk()` 拿回真实
+        chat_key（读 `_meta.json` 回写项 + 文件名归半还原），与 `members()` 的读取口径一致。
+        """
         groups = self._shared_groups()
         if groups:
             if not self._share_pool():
@@ -169,26 +231,18 @@ class MemoryStore:
             return keys if match else [chat_key]
         if not self._share_pool():
             return [chat_key]
-        try:
-            keys = []
-            base = _data_dir()
-            if os.path.isdir(base):
-                for fn in sorted(os.listdir(base)):
-                    p = os.path.join(base, fn)
-                    if os.path.isdir(p) and fn not in (".", ".."):
-                        keys.append(fn)
-            return keys or [chat_key]
-        except Exception:
-            return [chat_key]
+        keys = chat_keys_on_disk()
+        return keys or [chat_key]
 
     def _ensure_chat(self, chat_key: str) -> dict:
         if chat_key not in self.cache:
             m = {}
+            cdir = _chat_dir(chat_key)
             try:
-                for fn in os.listdir(_chat_dir(chat_key)):
+                for fn in os.listdir(cdir):
                     if not fn.endswith(".json") or fn == "_meta.json":
                         continue
-                    raw = _read_json(os.path.join(_chat_dir(chat_key), fn), None)
+                    raw = _read_json(os.path.join(cdir, fn), None)
                     if not raw:
                         continue
                     key = str(raw.get("userId")) if raw.get("userId") else "_n_" + fn
@@ -201,6 +255,17 @@ class MemoryStore:
                     }
             except FileNotFoundError:
                 pass
+            # 顺手把原始 chat_key 补写回 `_meta.json`：老档案（没有这一项）从此可被
+            # `chat_keys_on_disk()` 精确还原成真实会话，而不是退化成转义目录名。
+            if m:
+                try:
+                    mp = _meta_file(chat_key)
+                    meta = _read_json(mp, {}) or {}
+                    if not str(meta.get("chat_key") or "").strip():
+                        os.makedirs(cdir, exist_ok=True)
+                        _write_json(mp, {**meta, "chat_key": str(chat_key)})
+                except Exception:
+                    pass
             self.cache[chat_key] = m
         return self.cache[chat_key]
 
@@ -507,7 +572,8 @@ class MemoryStore:
         at = int(at or __import__("time").time() * 1000)
         os.makedirs(_chat_dir(chat_key), exist_ok=True)
         prev = _read_json(_meta_file(chat_key), {})
-        _write_json(_meta_file(chat_key), {**prev, "lastConsolidatedAt": at})
+        # 记下原始 chat_key：目录名是单向转义、无法反推，靠它才能把记忆目录对回真实会话
+        _write_json(_meta_file(chat_key), {**prev, "lastConsolidatedAt": at, "chat_key": str(chat_key)})
         m = self._ensure_chat(chat_key)
         for uid in (user_ids or []):
             key = str(uid or "").strip()
@@ -516,3 +582,54 @@ class MemoryStore:
                 continue
             mem["lastConsolidatedAt"] = at
             _write_json(_member_file(chat_key, mem.get("userId"), mem.get("name")), mem)
+
+    def clear_all(self) -> int:
+        """抹掉**全部**成员印象档（所有群、含互通池），返回清掉的成员档个数。
+
+        口径与 `chat_keys_on_disk()` 一致：**以记忆目录为准**逐个群清，不依赖消息库 ——
+        否则"消息库读不到 / 只有印象没有消息"的群会被漏掉（用户以为清干净了，其实还留着）。
+        删除逐个成员档；`_meta.json` 只清 `lastConsolidatedAt`（保留 `chat_key` 回写项，
+        否则那份原始会话标识就没了，记忆页的群名会退化成转义目录名）。
+        读不动的档**不删、跳过并计数**，绝不静默当成"清掉了"。
+        """
+        removed = 0
+        failed = 0
+        tgt = list(self.cache.keys())
+        try:
+            for fn in os.listdir(MEMORY_DIR):
+                p = os.path.join(MEMORY_DIR, fn)
+                if os.path.isdir(p) and fn not in (".", ".."):
+                    tgt.append(fn)
+        except OSError:
+            pass
+        for key in tgt:
+            cdir = _chat_dir(key) if key in self.cache else os.path.join(MEMORY_DIR, key)
+            try:
+                files = list(os.listdir(cdir))
+            except OSError:
+                continue
+            for fn in files:
+                if not fn.endswith(".json") or fn == "_meta.json":
+                    continue
+                fp = os.path.join(cdir, fn)
+                if _read_json(fp, None) is None:
+                    # 读不动（权限/被占用/坏 JSON）⇒ 不动它，如实记账
+                    failed += 1
+                    continue
+                try:
+                    os.remove(fp)
+                    removed += 1
+                except OSError:
+                    failed += 1
+            try:
+                mp = os.path.join(cdir, "_meta.json")
+                meta = _read_json(mp, {})
+                if meta:
+                    meta.pop("lastConsolidatedAt", None)
+                    _write_json(mp, meta)
+            except Exception:
+                pass
+        self.cache.clear()
+        if failed:
+            raise OSError("有 %d 个印象档读不动、没敢删（其余 %d 个已清）" % (failed, removed))
+        return removed

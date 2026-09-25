@@ -1163,7 +1163,19 @@ def check_panel(t: Tokens) -> QWidget:
             if not box["done"]:
                 QTimer.singleShot(300, _apply)
                 return
-            for g in ((box.get("r") or {}).get("groups") or []):
+            r = box.get("r")
+            groups = (r or {}).get("groups") or [] if isinstance(r, dict) else []
+            if not groups:
+                # 读失败与"确实没有群"要分开说：ok=False（微信没接上/库被占用）时
+                # 下拉空着会让人以为是"没有群可拍"。这里把原因写进提示行。
+                if not isinstance(r, dict):
+                    pk_note.setText("读不到群列表（后台没连上），可稍后重试")
+                elif r.get("ok") is False:
+                    pk_note.setText("读不到群列表：" + str(r.get("error") or "读取失败"))
+                else:
+                    pk_note.setText("没有可拍的群（先启动机器人并检测群）")
+                return
+            for g in groups:
                 if isinstance(g, dict) and g.get("wxid"):
                     pk_group.addItem(str(g.get("name") or g.get("wxid")), str(g.get("wxid")))
 
@@ -1433,6 +1445,8 @@ def sessions_panel(t: Tokens) -> QWidget:
     scard.body.addWidget(snote)
     scard.body.addWidget(desc(t, "勾选每条左侧「删」→「删除选中」＝只删这几条（同一天其他记录不动）；"
                                 "删错了点「撤销上次删除」。清空＝清全部明细（不可恢复）。"))
+    # 「原始返回」卡的渲染器晚绑定（它在下方才构建；而 load_sessions 上面就会被调用）
+    _raw_box: dict = {"fn": None}
     lay.addWidget(scard)
 
     def _sync_sel_btn() -> None:
@@ -1457,17 +1471,31 @@ def sessions_panel(t: Tokens) -> QWidget:
         _sync_sel_btn()
 
     def load_sessions() -> None:
+        _eb: dict = {}
         try:
-            r = config_io.get_json("/api/sessions?limit=30", timeout=5.0)
-        except Exception: # noqa: BLE001
+            r = config_io.get_json("/api/sessions?limit=30", timeout=5.0, err_box=_eb)
+        except Exception as e: # noqa: BLE001
             r = None
+            _eb["err"] = str(e)
         if not isinstance(r, dict):
-            snote.setText("后台没连上（或该接口未提供）。顶部状态灯恢复绿色后点「刷新」再试。")
+            snote.setText("读不到记录：" + _read_fail_hint(_eb.get("err")))
+            badge.set("err", "读不到")
+            return
+        if r.get("ok") is False:
+            # 后端活着但读档案目录失败 —— 不能显示「暂无记录」（那是"确实没有"）
+            snote.setText("读不到记录：" + str(r.get("error") or "后台读取失败")
+                          + "（这不代表没有记录，是这次没读到）")
             badge.set("err", "读不到")
             return
         state["sessions"] = r.get("sessions") or []
         snote.setText(f"读取成功 · {time.strftime('%H:%M:%S')} · {len(state['sessions'])} 条")
         _render_sessions()
+        # 「原始返回」卡与上面用的是同一份数据 ⇒ 复用这次响应，不再单独发一次请求
+        #   （原先两处各打一次 /api/sessions，白白翻倍）。
+        #   晚绑定：原始卡在 load_sessions() 首次调用之后才构建，这里先用可变引用占位。
+        _fn = _raw_box.get("fn")
+        if callable(_fn):
+            _fn(r)
 
     def _del_selected() -> None:
         sel = []
@@ -1616,16 +1644,18 @@ def sessions_panel(t: Tokens) -> QWidget:
     jnote = desc(t, "")
 
     def _refresh_raw() -> None:
-        data = config_io.get_json("/api/sessions", timeout=5.0)
-        if data is None:
-            area.setPlainText("")
-            jnote.setText("后台没连上（或该接口未提供）。")
-            return
+        # 原始返回卡不再自己发请求：它展示的就是 load_sessions 拿回来的同一份数据。
+        # 这里保留一个「重新拉一次」的入口（万一用户只想刷这块），仍走 load_sessions，
+        # 保证两处永远同源、不会一份新一份旧。
+        load_sessions()
+
+    # 把「渲染原始 JSON」注册给 load_sessions（晚绑定：本卡在其首次调用之后才建好）
+    def _render_raw(data: dict) -> None:
         text = json.dumps(data, ensure_ascii=False, indent=1)
         area.setPlainText(text[:8000] + ("\n…（截断显示前 8000 字符）" if len(text) > 8000 else ""))
         jnote.setText(f"读取成功 · {time.strftime('%H:%M:%S')}")
 
-    _refresh_raw()
+    _raw_box["fn"] = _render_raw
     jcard.body.addWidget(jnote)
     lay.addWidget(jcard)
 
@@ -2161,6 +2191,65 @@ def _async_post(page: QWidget, api: str, body: dict, on_done, timeout: float = 1
             QTimer.singleShot(300, _apply)
             return
         on_done(box.get("r"), box.get("err"))
+
+    QTimer.singleShot(300, _apply)
+
+
+def _read_fail_hint(err: object) -> str:
+    """把「连不上」的底层异常翻成一句用户能据此行动的话。
+
+    为什么要分：`get_json` 失败时统一返回 None，而 None 的原因至少有三种，
+    用户能做的事完全不同 —— 混成一句「后台没连上」会把人引向错误的排查方向：
+      · 超时（handle 慢/正忙）→ 等一会儿重试就行；
+      · 拒连（进程没起/端口变了）→ 去看顶部状态灯，多半是后台没跑；
+      · 其它（接口不存在/返回不是 JSON）→ 说清是"这个接口没给出数据"。
+    """
+    s = str(err or "").lower()
+    if "timed out" in s or "timeout" in s:
+        return "后台响应超时（可能正在忙）。稍等几秒点「刷新」再试。"
+    if "refused" in s or "connection" in s or "unreachable" in s or "10061" in s:
+        return "后台没连上（进程可能没起来）。看顶部状态灯，恢复绿色后点「刷新」再试。"
+    if "404" in s or "405" in s or "501" in s:
+        return "后台这个接口没有给出数据（版本可能不一致）。"
+    return "后台没连上（或该接口未提供）。顶部状态灯恢复绿色后点「刷新」再试。"
+
+
+def _async_post_seq(page: QWidget, api: str, bodies: list, on_done,
+                    timeout: float = 30.0) -> None:
+    """**顺序**提交多条 POST，全部结束后一次回执（box 模式，同 `_async_post`）。
+
+    为什么需要它：web 侧「清除勾选的印象」（`console_html.py:6986-6990`）是
+    **逐个成员单独 POST**、每次只带一个 `user_id` —— 因为后端
+    （`webui.py::_rapi_memory_post`）只认单值 `user_id`，没有批量协议。
+    面板要跟 web 同构就只能逐条发；逐条发又不能让 UI 线程等，所以放一个后台线程里
+    **串行**跑完，再回主线程给**一次**汇总回执。
+
+    与「并发多发」的区别：这里刻意串行 —— 记忆删除是写盘操作，并发会撞同一批文件；
+    且总条数就是用户勾选数（个位数），串行的耗时可忽略。
+
+    on_done 收 `(results, first_err)`；results 为各条响应（None 表示该条没拿到）。
+    """
+    import threading # noqa: PLC0415
+
+    from agent_bridge import post_json # noqa: PLC0415
+
+    box: dict = {"done": False, "results": [], "err": None}
+
+    def _work() -> None:
+        try:
+            for b in bodies:
+                box["results"].append(post_json(api, b, timeout=timeout))
+        except Exception as e: # noqa: BLE001
+            box["err"] = str(e)
+        box["done"] = True
+
+    threading.Thread(target=_work, daemon=True, name="c12-post-seq").start()
+
+    def _apply() -> None:
+        if not box["done"]:
+            QTimer.singleShot(300, _apply)
+            return
+        on_done(box.get("results") or [], box.get("err"))
 
     QTimer.singleShot(300, _apply)
 
@@ -3463,12 +3552,24 @@ def memory_panel(t: Tokens) -> QWidget:
 
     def load_memory(chat_key: str = "") -> None:
         state["chat_key"] = chat_key
+        _eb: dict = {}
         try:
-            r = config_io.get_json("/api/memory" + (f"?chat_key={chat_key}" if chat_key else ""), timeout=5.0)
-        except Exception: # noqa: BLE001
+            r = config_io.get_json("/api/memory" + (f"?chat_key={chat_key}" if chat_key else ""),
+                                   timeout=5.0, err_box=_eb)
+        except Exception as e: # noqa: BLE001
             r = None
+            _eb["err"] = str(e)
         if not isinstance(r, dict):
-            mnote.setText("后台没连上（或该接口未提供）。顶部状态灯恢复绿色后点「刷新」再试。")
+            # 「读不到」有两种：连不上（拒连/超时）与后端给了非 JSON。文案要能让用户动起来。
+            why = _read_fail_hint(_eb.get("err"))
+            mnote.setText(f"读不到记忆：{why}")
+            badge.set("err", "读不到")
+            return
+        # 后端活着但**读取本身失败**（记忆目录不可读/权限/占用）—— 不能显示成「读取成功 · 0 位」，
+        # 那会让用户以为"记忆是空的"（实际是没读到）。如实报错并指明这不是"没人"。
+        if r.get("ok") is False:
+            mnote.setText("读不到记忆：" + str(r.get("error") or "后台读取失败")
+                          + "（这不代表没有记忆，是这次没读到）")
             badge.set("err", "读不到")
             return
         state["chats"] = r.get("chats") or []
@@ -3489,19 +3590,31 @@ def memory_panel(t: Tokens) -> QWidget:
             fn()
 
     def load_groups() -> None:
+        _eb: dict = {}
         try:
-            r = config_io.get_json("/api/wechat-groups", timeout=5.0)
-        except Exception: # noqa: BLE001
+            r = config_io.get_json("/api/wechat-groups", timeout=5.0, err_box=_eb)
+        except Exception as e: # noqa: BLE001
             r = None
-        groups = (r or {}).get("groups") or []
+            _eb["err"] = str(e)
+        # ⛔ 读失败 ≠ 没有群：后端 ok=False 时（微信没接上 / contact.db 被占用）
+        #    也返回空 groups —— 直接说「未检测到群」会把用户引去查"为什么没群"，
+        #    而真实原因是"这次没读到"。这里按状态分开说（web 侧 loadMemGroups 只读 groups，
+        #    但 web 另有 pickGroups 判 ok 的路径；Qt 面板是唯一入口，必须自己判）。
+        if not isinstance(r, dict):
+            _clear_group_checks("读不到群列表：" + _read_fail_hint(_eb.get("err")))
+            return
+        if r.get("ok") is False:
+            reason = str(r.get("error") or "读取失败")
+            if r.get("attach_ok") is False:
+                _clear_group_checks("读不到群列表：" + reason)
+            else:
+                _clear_group_checks("群列表暂时读不到：" + reason
+                                    + "（消息收发与监听不受影响，稍后点「刷新」再试）")
+            return
+        groups = r.get("groups") or []
         saved = config_io.read_path("memory.shared_groups", [])
         saved = [str(x) for x in saved] if isinstance(saved, list) else []
-        # 清空重填（含占位提示）
-        while mem_flow.count():
-            item = mem_flow.takeAt(0)
-            w = item.widget()
-            if w is not None:
-                w.deleteLater()
+        _clear_group_checks()
         if not groups:
             mem_flow.addWidget(desc(t, "未检测到群（启动机器人并检测群后这里会列出）"))
             return
@@ -3516,6 +3629,16 @@ def memory_panel(t: Tokens) -> QWidget:
             cb.setChecked(any(s == nm or (wxid and s == wxid) for s in saved))
             cb.toggled.connect(_mg_dirty)  # 挂「改完即生效」防抖（经 _mg_box 晚绑定）
             mem_flow.addWidget(cb)
+
+    def _clear_group_checks(hint: str = "") -> None:
+        """清空共享群勾选容器；给了 hint 就在原位放一条说明（读失败时用）。"""
+        while mem_flow.count():
+            item = mem_flow.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+        if hint:
+            mem_flow.addWidget(desc(t, hint))
 
     chat_sel.currentIndexChanged.connect(_on_chat)
     mem_search.textChanged.connect(lambda: _fill_chats(mem_search.text()))
@@ -3558,11 +3681,32 @@ def memory_panel(t: Tokens) -> QWidget:
         if not d.exec():
             return
         mnote.setText(f"清除 {len(picked)} 位成员印象中…")
-        _async_post(None, "/api/memory",
-                    {"chat_key": state["chat_key"], "user_ids": picked, "scope": scope},
-                    lambda r, e: (load_memory(state["chat_key"]) or mnote.setText(
-                        f"已清除 {len(picked)} 位" if (r and r.get("ok") is not False)
-                        else f"清除失败：{e or (r or {}).get('error') or '后台没连上'}")))
+        # ⛔ 必须**逐条** POST（每次一个 user_id）：后端 `_rapi_memory_post`
+        #    （webui.py:2026/2031）只读单值 `user_id`，**没有批量协议** ——
+        #    曾一次传 `user_ids:[...]`（后端不认这个键）⇒ user_id 落空 ⇒ 一条都删不掉，
+        #    而界面照样回执「已清除」。web 侧（console_html.py:6986-6990）就是逐个循环发的。
+        #    逐条发还有个好处：`scope="this"` 时的 `left_elsewhere` 提示（后端 :2667-2671）
+        #    能逐条带回来，界面可以如实说「有几份留在别的群」。
+        bodies = [{"chat_key": state["chat_key"], "user_id": uid, "scope": scope}
+                  for uid in picked]
+
+        def _seq_done(results: list, err) -> None:
+            oks = [r for r in results if isinstance(r, dict) and r.get("ok")]
+            notes = [str(r.get("note")) for r in results
+                     if isinstance(r, dict) and r.get("note")]
+            if len(oks) == len(picked):
+                extra = ("；" + notes[0]) if notes else ""
+                mnote.setText(f"已清除 {len(picked)} 位{extra}")
+            elif oks:
+                mnote.setText(f"只清除了 {len(oks)}/{len(picked)} 位"
+                              "（其余没删掉，可点「刷新」看当前状态再试）")
+            else:
+                why = err or next((str(r.get("error")) for r in results
+                                   if isinstance(r, dict) and r.get("error")), "")
+                mnote.setText(f"清除失败：{why or '后台没连上'}")
+            load_memory(state["chat_key"])
+
+        _async_post_seq(page, "/api/memory", bodies, _seq_done, timeout=15.0)
 
     def _clear_all() -> None:
         # 对齐 web uiConfirm 口径（console_html.py:6983）：清全部记忆前二次确认
@@ -6681,12 +6825,25 @@ def _briefs_appendix(t: Tokens, page: QWidget) -> None:
         _bf_load()
 
     def _bf_chats() -> None:
-        r = config_io.get_json("/api/wechat-groups", timeout=5.0) or {}
-        groups = r.get("groups") or []
+        _eb: dict = {}
+        try:
+            r = config_io.get_json("/api/wechat-groups", timeout=5.0, err_box=_eb)
+        except Exception as e: # noqa: BLE001
+            r = None
+            _eb["err"] = str(e)
+        groups = (r or {}).get("groups") or [] if isinstance(r, dict) else []
         cur = str(bf_chat.currentData() or "")
         bf_chat.clear()
         if not groups:
-            bf_chat.addItem("（没读到群聊，可在下面手填 key）", "")
+            # 读失败与"确实没有群"分开说（下拉本来就能手填 key，这里只把原因说清）
+            if not isinstance(r, dict):
+                bf_chat.addItem("（读不到群聊：" + _read_fail_hint(_eb.get("err"))
+                                + "；可在下面手填 key）", "")
+            elif r.get("ok") is False:
+                bf_chat.addItem("（读不到群聊：" + str(r.get("error") or "读取失败")
+                                + "；可在下面手填 key）", "")
+            else:
+                bf_chat.addItem("（没读到群聊，可在下面手填 key）", "")
         for g in groups:
             wxid = str(g.get("wxid") or "")
             bf_chat.addItem(str(g.get("name") or g.get("wxid") or ""), "group:" + wxid)

@@ -4506,10 +4506,12 @@ def t_g9() -> None:
             b_sel.click()
         _wait(lambda: _n_posts("/api/memory") > n0
               and isinstance(_posts("/api/memory")[-1], dict)
-              and "user_ids" in _posts("/api/memory")[-1])
-        ck("g9 memory 清勾选：确认后 POST {user_ids, scope}",
+              and _posts("/api/memory")[-1].get("user_id"))
+        ck("g9 memory 清勾选：确认后逐条 POST {chat_key, user_id, scope}",
            isinstance(_posts("/api/memory")[-1], dict)
-           and _posts("/api/memory")[-1].get("user_ids") == ["U1"],
+           and _posts("/api/memory")[-1].get("user_id") == "U1"
+           and "scope" in _posts("/api/memory")[-1]
+           and "user_ids" not in _posts("/api/memory")[-1],
            "body=%s" % (_posts("/api/memory")[-1:],))
         # 清全部
         n0 = _n_posts("/api/memory")
@@ -6157,13 +6159,179 @@ def t_g18() -> None:
     keep.clear()
 
 
+def t_g19() -> None:
+    """健壮性专项：读不到时「别把故障说成空」+ 批量删除协议 + 探测并发。
+
+    固化的六条（都来自故障注入环境实测，见 docs/回执-健壮性专项审查.md）：
+      ① 记忆批删必须逐条带单值 user_id（后端只认这个键，`user_ids` 会被忽略）；
+      ② 群列表/记忆/记录读失败时，文案不得与「真的空」混同；
+      ③ 读失败原因要可行动（超时 vs 拒连分开）；
+      ④ `detect_local` 必须并发（串行会让 /api/status 冷启动卡 ≈4×timeout）；
+      ⑤ 会话页不再为「原始返回」卡多发一次请求。
+    """
+    import os # noqa: PLC0415
+    import sys as _sys # noqa: PLC0415
+    import time as _time # noqa: PLC0415
+    from pathlib import Path as _P # noqa: PLC0415
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication # noqa: PLC0415
+
+    QApplication.instance() or QApplication([])
+
+    import panels_custom # noqa: PLC0415
+
+    ROOT = _P(__file__).resolve().parent.parent
+    SRC = (ROOT / "ui_qt" / "panels_custom.py").read_text(encoding="utf-8")
+
+    # ① 批删协议：必须逐条 user_id，且不得再用后端不认的 user_ids
+    ck("g19 记忆批删逐条发（单值 user_id，对齐后端 _rapi_memory_post）",
+       '"user_id": uid' in SRC and '{"chat_key": state["chat_key"], "user_ids"' not in SRC,
+       "后端只读 user_id；带 user_ids 会被忽略 ⇒ 一条都删不掉")
+    ck("g19 记忆批删走顺序多发工具（_async_post_seq）",
+       "_async_post_seq(page, \"/api/memory\", bodies, _seq_done" in SRC, "")
+    ck("g19 批删部分成功如实报（不是笼统的已清除）",
+       "只清除了" in SRC, "部分失败必须说出来，不能报成全部成功")
+
+    # ② 读失败 ≠ 空：三处 wechat-groups 消费点都要判 ok
+    ck("g19 记忆页群列表判 ok（读失败不再显示『未检测到群』）",
+       'if r.get("ok") is False:' in SRC and "群列表暂时读不到" in SRC, "")
+    ck("g19 记忆页读失败文案点明『不代表没有记忆』",
+       "这不代表没有记忆" in SRC, "防把故障映射成空态")
+    ck("g19 会话页读失败文案点明『不代表没有记录』",
+       "这不代表没有记录" in SRC, "")
+    ck("g19 简报/拍一拍两处群消费点也判 ok",
+       "读不到群列表：" in SRC and SRC.count("读不到群列表：") >= 2,
+       "读不到群列表: 出现 %d 次（记忆页/简报/拍一拍）" % SRC.count("读不到群列表："))
+    ck("g19 真空态文案保留（未误伤『真的没有』）",
+       "未检测到群（启动机器人并检测群后这里会列出）" in SRC and 'badge.set("info"' in SRC,
+       "")
+
+    # ③ 读失败原因可行动（超时 vs 拒连分开）
+    ck("g19 新增 _read_fail_hint 区分超时/拒连/接口缺失",
+       "def _read_fail_hint" in SRC and "后台响应超时" in SRC and "进程可能没起来" in SRC, "")
+
+    # ④ 并发探测：detect_local 必须用线程池（串行会 4×timeout）
+    IG = (ROOT / "agent" / "image_gen.py").read_text(encoding="utf-8")
+    ck("g19 本地生图探测改并发（ThreadPoolExecutor）",
+       "ThreadPoolExecutor" in IG and "def _probe_one" in IG, "")
+    _sys.path.insert(0, str(ROOT))
+    import agent.image_gen as ig # noqa: PLC0415
+    ig._DETECT_CACHE["val"] = None
+    _t0 = _time.time()
+    ig.detect_local(timeout=0.3)  # 冷启动
+    _dt = _time.time() - _t0
+    ck("g19 冷启动探测耗时 ≈ 单个 timeout（不再 4×）",
+       _dt < 1.2, "0.3s×4 串行应为 1.29s；实测 %.2fs" % _dt)
+    ck("g19 probes= 传参不走缓存（测试拿即时结果）",
+       "probes is not None" in IG, "")
+
+    # ⑤ 会话页不再双拉 /api/sessions
+    ck("g19 原始返回卡复用同一次响应（不再单独 GET）",
+       "def _render_raw" in SRC and "_raw_box" in SRC
+       and 'config_io.get_json("/api/sessions", timeout=5.0)' not in SRC,
+       "原先 load_sessions + _refresh_raw 各打一次")
+
+
+def t_g20() -> None:
+    """能力层修复：**让读不到的东西真能读出来**，而不是加一行说明。
+
+    三条真缺陷（都经临时 DATA_DIR 实跑取证）：
+      ① 记忆落盘在 `data/memory/`，与消息档案库是两套独立存储；记忆页群下拉若只枚举
+         `store.list_chats()`，消息库读不到时用户**有印象却看不到、选不中、删不掉**；
+      ② `MemoryStore` 上**根本没有 `clear_all()`** —— 「清除全部记忆」一直抛 AttributeError
+         被吞进 `except` ⇒ 从前就没真正清过（且旧实现还漏清「只有印象没有消息」的群）；
+      ③ 全互通档下 `_chat_keys()` 把**转义目录名**当 chat_key 返回（`group:x@y` →
+         `group_x_y`），机制上可能读错/删错会话。
+    """
+    import json as _json # noqa: PLC0415
+    import os # noqa: PLC0415
+    import shutil as _shutil # noqa: PLC0415
+    import sys as _sys # noqa: PLC0415
+    import tempfile # noqa: PLC0415
+    from pathlib import Path as _P # noqa: PLC0415
+
+    ROOT = _P(__file__).resolve().parent.parent
+    _sys.path.insert(0, str(ROOT))
+
+    import agent.config as _cfg # noqa: PLC0415
+    import agent.memory as _mem # noqa: PLC0415
+
+    tmp = tempfile.mkdtemp(prefix="g20-mem-")
+    _old = (_cfg.DATA_DIR, _mem.MEMORY_DIR, _mem.HISTORY_DIR)
+    _old_cfg = _cfg.get_config
+    try:
+        _cfg.DATA_DIR = tmp
+        _mem.MEMORY_DIR = os.path.join(tmp, "memory")
+        _mem.HISTORY_DIR = os.path.join(tmp, "memory_history")
+
+        # ── ① 记忆枚举不依赖消息库 ─────────────────────────────────────
+        st = _mem.MemoryStore()
+        ck_a = "group:WXID-alpha.01@chatroom"
+        st.append(ck_a, "memberImpression", "他最近在准备面试", {"userId": "wxid_a", "target": "老张"})
+        _disk = _mem.chat_keys_on_disk()
+        ck("g20 记忆枚举只看记忆目录（消息库为空也能列出来）",
+           len(_disk) == 1 and _disk[0].startswith("group:"),
+           "chat_keys_on_disk=%s" % _disk)
+        ck("g20 枚举出的 key 能读回成员（读写闭环）",
+           [m["name"] for m in _mem.MemoryStore().members(ck_a)] == ["老张"],
+           "members=%s" % [m["name"] for m in _mem.MemoryStore().members(ck_a)])
+
+        # `_meta.json` 回写后应能**精确**还原原始 chat_key（含大写/点号/连字符）
+        st.mark_consolidated(ck_a)
+        _mp = os.path.join(_mem.MEMORY_DIR, os.listdir(_mem.MEMORY_DIR)[0], "_meta.json")
+        _meta = _json.loads(open(_mp, encoding="utf-8").read())
+        ck("g20 _meta.json 回写原始 chat_key（目录名单向转义可逆）",
+           _meta.get("chat_key") == ck_a, "meta=%s" % _meta)
+        ck("g20 回写后枚举精确等于原始 chat_key",
+           _mem.chat_keys_on_disk() == [ck_a], "got=%s" % _mem.chat_keys_on_disk())
+
+        # ── ② clear_all 真的存在且真的清干净 ───────────────────────────
+        ck("g20 MemoryStore 上存在 clear_all（旧版缺失 ⇒ 一直静默失败）",
+           hasattr(_mem.MemoryStore, "clear_all"), "")
+        _n = st.clear_all()
+        ck("g20 clear_all 返回清掉的成员档数", _n == 1, "n=%s" % _n)
+        ck("g20 clear_all 后记忆目录枚举为空（含『只有印象没有消息』的群）",
+           _mem.chat_keys_on_disk() == [], "got=%s" % _mem.chat_keys_on_disk())
+        _left = [f for f in os.listdir(os.path.join(_mem.MEMORY_DIR, os.listdir(_mem.MEMORY_DIR)[0]))
+                 if f.endswith(".json") and f != "_meta.json"]
+        ck("g20 clear_all 后成员档全删（只剩 _meta.json）", _left == [], "left=%s" % _left)
+
+        # ── ③ 全互通档用真实 chat_key，不再返回转义目录名 ───────────────
+        st2 = _mem.MemoryStore()
+        ck_b = "group:WXID-beta.02@chatroom"
+        st2.append(ck_b, "memberImpression", "爱钓鱼", {"userId": "wxid_b", "target": "老李"})
+        st2.mark_consolidated(ck_b)
+        _cfg.get_config = lambda: {"memory": {"share_across_groups": True}}
+        _keys = st2._chat_keys(ck_b)
+        ck("g20 全互通档 _chat_keys 返回真实 chat_key（非转义目录名）",
+           _keys == [ck_b], "keys=%s（转义名应为 %s）" % (_keys, "group_WXID_beta_02_chatroom"))
+        ck("g20 全互通档 members 仍能合并读出",
+           [m["name"] for m in st2.members(ck_b)] == ["老李"],
+           "members=%s" % [m["name"] for m in st2.members(ck_b)])
+
+        # ── ④ 产品层：chats 枚举 = 消息库 ∪ 记忆目录 ───────────────────
+        _src = (ROOT / "scripts" / "persona_morph.py").read_text(encoding="utf-8")
+        ck("g20 /api/memory list 的 chats 取『消息库 ∪ 记忆目录』",
+           "chat_keys_on_disk()" in _src and "_keys.append(_ck)" in _src,
+           "旧实现只有 store.list_chats()")
+        ck("g20 clear_all 分支去掉了恒不命中的逐群 remove 空转",
+           'orch.memory.remove(ck, "memberImpression", user_id=mem_id)' not in _src, "")
+        ck("g20 clear_all 如实回报清掉的数量（清不动不谎报成功）",
+           "cleared_members" in _src and "没敢删" in _src, "")
+    finally:
+        _cfg.DATA_DIR, _mem.MEMORY_DIR, _mem.HISTORY_DIR = _old
+        _cfg.get_config = _old_cfg
+        _shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main() -> int:
     for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
                t_visual, t_badges, t_status_chain, t_bot_controls, t_window_chrome, t_dpi_motion,
                t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch, t_bootstrap32, t_ocr9,
                t_c10, t_c13, t_hotfix1, t_hotfix2, t_catmgr, t_medialocal, t_commfb,
                t_veradv, t_g5, t_g6, t_g7, t_g8, t_g9, t_g10, t_g11, t_g12, t_g13, t_g14,
-               t_g15, t_g16, t_g17, t_g18):
+               t_g15, t_g16, t_g17, t_g18, t_g19, t_g20):
         try:
             fn()
         except Exception as e: # noqa: BLE001
