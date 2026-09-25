@@ -380,8 +380,8 @@ class NavItem(QPushButton):
                 f"border:none;border-left:2px solid transparent;"
                 f"border-radius:0 {t.radius_btn}px {t.radius_btn}px 0;"
                 f"text-align:left;padding:0 10px 0 12px;}}"
-                f"QPushButton:hover{{background:{rgba(t.q('tx'), 0 if t.glass else 14).name(QColor.NameFormat.HexArgb)};color:{t.tx};}}"
-                f"QPushButton:pressed{{background:{rgba(t.q('tx'), 0 if t.glass else 26).name(QColor.NameFormat.HexArgb)};color:{t.tx};}}" # L 按压加深
+                f"QPushButton:hover{{background:{rgba(t.q('tx'), 14).name(QColor.NameFormat.HexArgb)};color:{t.tx};}}"
+                f"QPushButton:pressed{{background:{rgba(t.q('tx'), 26).name(QColor.NameFormat.HexArgb)};color:{t.tx};}}" # L 按压加深
             )
 
 
@@ -480,7 +480,7 @@ class SearchBox(QLineEdit):
         self.setFixedHeight(32)
         self.setClearButtonEnabled(True)
         self.setStyleSheet(
-            f"QLineEdit{{background:{rgba(t.q('tx'), 0 if t.glass else 16).name(QColor.NameFormat.HexArgb)};"
+            f"QLineEdit{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
             f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;"
             f"padding:0 10px;}}"
             f"QLineEdit:focus{{border:1px solid {t.blue};}}"

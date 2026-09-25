@@ -84,7 +84,7 @@ def _plain_area(t: Tokens, text: str = "", placeholder: str = "", height: int = 
     e.setFont(qfont(t, t.body_size - 0.5))
     e.setFixedHeight(height)
     e.setStyleSheet(
-        f"QPlainTextEdit{{background:{_hex(rgba(t.q('tx'), 0 if t.glass else 16))};"
+        f"QPlainTextEdit{{background:{_hex(rgba(t.q('tx'), 16))};"
         f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:4px 8px;}}"
         f"QPlainTextEdit:focus{{border:1px solid {t.blue};}}"
     )
@@ -231,7 +231,7 @@ def overview_panel(t: Tokens) -> QWidget:
     fc_result.setFont(qfont(t, 12.5))
     fc_result.setWordWrap(True)
     fc_result.setStyleSheet(
-        f"color:{t.tx};background:{_hex(rgba(t.q('tx'), 0 if t.glass else 8))};"
+        f"color:{t.tx};background:{_hex(rgba(t.q('tx'), 8))};"
         f"border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:10px 12px;")
     card_f.body.addWidget(fc_result)
     lay.addWidget(card_f)
@@ -1571,7 +1571,7 @@ def sessions_panel(t: Tokens) -> QWidget:
     arc_chat.setFixedHeight(32)
     arc_chat.setFont(qfont(t, t.body_size))
     arc_chat.setStyleSheet(
-        f"QComboBox{{background:{rgba(t.q('tx'), 0 if t.glass else 16).name(QColor.NameFormat.HexArgb)};"
+        f"QComboBox{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
         f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:0 10px;}}"
         f"QComboBox::drop-down{{border:none;width:22px;}}"
         f"QComboBox QAbstractItemView{{background:{'#0E2136' if t.glass else t.card};"
@@ -2186,7 +2186,7 @@ def _bordered_list(t: Tokens, name: str, min_h: int = 200) -> QListWidget:
     lw.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     lw.setResizeMode(QListView.ResizeMode.Adjust)
     lw.setStyleSheet(
-        f"QListWidget{{background:{rgba(t.q('tx'), 0 if t.glass else 16).name(QColor.NameFormat.HexArgb)};"
+        f"QListWidget{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
         f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:4px;}}"
         f"QListWidget::item{{border-bottom:1px solid {t.bd};padding:2px 0;}}"
     )
@@ -2711,13 +2711,13 @@ def persona_panel(t: Tokens) -> QWidget:
         box.addWidget(tl)
 
         combo_style = (
-            f"QComboBox{{background:{rgba(t.q('tx'), 0 if t.glass else 16).name(QColor.NameFormat.HexArgb)};"
+            f"QComboBox{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
             f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:0 10px;}}"
             f"QComboBox::drop-down{{border:none;width:22px;}}"
             f"QComboBox QAbstractItemView{{background:{'#0E2136' if t.glass else t.card};"
             f"color:{t.tx};border:1px solid {t.bd};}}")
         line_style = (
-            f"QLineEdit{{background:{rgba(t.q('tx'), 0 if t.glass else 16).name(QColor.NameFormat.HexArgb)};"
+            f"QLineEdit{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
             f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:0 10px;}}"
             f"QLineEdit:focus{{border:1px solid {t.blue};}}")
 
@@ -2769,7 +2769,7 @@ def persona_panel(t: Tokens) -> QWidget:
         text_in.setMinimumHeight(90)
         text_in.setFont(qfont(t, t.body_size))
         text_in.setStyleSheet(
-            f"QPlainTextEdit{{background:{rgba(t.q('tx'), 0 if t.glass else 16).name(QColor.NameFormat.HexArgb)};"
+            f"QPlainTextEdit{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
             f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:4px 10px;}}")
         for w in (name_lb, name_in, text_lb, text_in):
             w.setVisible(False)
@@ -2945,7 +2945,7 @@ def persona_panel(t: Tokens) -> QWidget:
         ed = QLineEdit(str(p.get("cat") or ""))
         ed.setFont(qfont(t, 12.5))
         ed.setStyleSheet(
-            f"QLineEdit{{background:{rgba(t.q('tx'), 0 if t.glass else 16).name(QColor.NameFormat.HexArgb)};"
+            f"QLineEdit{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
             f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:6px 10px;}}")
         v.addWidget(ed)
         row = QHBoxLayout()
@@ -3533,7 +3533,7 @@ def memory_panel(t: Tokens) -> QWidget:
     chat_sel.setFixedHeight(32)
     chat_sel.setFont(qfont(t, t.body_size))
     chat_sel.setStyleSheet(
-        f"QComboBox{{background:{rgba(t.q('tx'), 0 if t.glass else 16).name(QColor.NameFormat.HexArgb)};"
+        f"QComboBox{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
         f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:0 10px;}}"
         f"QComboBox::drop-down{{border:none;width:22px;}}"
         f"QComboBox QAbstractItemView{{background:{'#0E2136' if t.glass else t.card};"
@@ -4435,7 +4435,7 @@ def _tools_utlist_appendix(t: Tokens, page: QWidget) -> None:
                 ai.setToolTip('给这个工具的参数（JSON 对象，例：{"city": "北京"}）；'
                               "它会替换 url/query/body 里的 {占位}")
                 ai.setStyleSheet(
-                    f"QLineEdit{{background:{rgba(t.q('tx'), 0 if t.glass else 16).name(QColor.NameFormat.HexArgb)};"
+                    f"QLineEdit{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
                     f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:4px 8px;}}")
                 ai.textChanged.connect(lambda txt, _k=keep: _k.__setitem__("args", txt))
                 tb = Btn("试一下", t, "ghost")
@@ -4557,7 +4557,7 @@ def _model_local_appendix(t: Tokens, page: QWidget) -> None:
                 ms = ep.get("models") or []
                 fr = QFrame()
                 fr.setStyleSheet(
-                    f"QFrame{{background:{_hex(rgba(t.q('tx'), 0 if t.glass else 8))};"
+                    f"QFrame{{background:{_hex(rgba(t.q('tx'), 8))};"
                     f"border:1px solid {t.bd};border-radius:{t.radius_btn}px;}}")
                 fv = QVBoxLayout(fr)
                 fv.setContentsMargins(10, 8, 10, 8)
@@ -4648,7 +4648,7 @@ def _sd_local_appendix(t: Tokens, page: QWidget) -> None:
     preset_sel.setFixedHeight(30)
     preset_sel.setFont(qfont(t, t.body_size))
     preset_sel.setStyleSheet(
-        f"QComboBox{{background:{rgba(t.q('tx'), 0 if t.glass else 16).name(QColor.NameFormat.HexArgb)};"
+        f"QComboBox{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
         f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:0 10px;}}"
         f"QComboBox::drop-down{{border:none;width:22px;}}"
         f"QComboBox QAbstractItemView{{background:{'#0E2136' if t.glass else t.card};"
@@ -6520,7 +6520,7 @@ def _web_search_appendix(t: Tokens, page: QWidget) -> None:
     combo.setFixedHeight(32)
     combo.setFont(qfont(t, t.body_size))
     combo.setStyleSheet(
-        f"QComboBox{{background:{rgba(t.q('tx'), 0 if t.glass else 16).name(QColor.NameFormat.HexArgb)};"
+        f"QComboBox{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
         f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:0 10px;}}"
         f"QComboBox::drop-down{{border:none;width:22px;}}"
         f"QComboBox QAbstractItemView{{background:{'#0E2136' if t.glass else t.card};"
@@ -6675,7 +6675,7 @@ def _model_provider_linkup(t: Tokens, page: QWidget) -> None:
     card.body.addWidget(h2(t, "模型厂商与模型"))
 
     def _combo_style() -> str:
-        return (f"QComboBox{{background:{rgba(t.q('tx'), 0 if t.glass else 16).name(QColor.NameFormat.HexArgb)};"
+        return (f"QComboBox{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
                 f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:0 10px;}}"
                 f"QComboBox::drop-down{{border:none;width:22px;}}"
                 f"QComboBox QAbstractItemView{{background:{'#0E2136' if t.glass else t.card};"
@@ -6711,7 +6711,7 @@ def _model_provider_linkup(t: Tokens, page: QWidget) -> None:
     medit.setFixedHeight(32)
     medit.setFont(qfont(t, t.body_size))
     medit.setStyleSheet(
-        f"QLineEdit{{background:{rgba(t.q('tx'), 0 if t.glass else 16).name(QColor.NameFormat.HexArgb)};"
+        f"QLineEdit{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
         f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:0 10px;}}")
     medit.hide()
     mrow.addWidget(mlab)
@@ -6845,7 +6845,7 @@ def _prov_key_dlg(t: Tokens, page: QWidget, prov: str, p: dict,
     ed.setFont(qfont(t, 12.5))
     ed.setPlaceholderText((str(p.get("keyHint")) if p.get("keyHint") else "") + "...")
     ed.setStyleSheet(
-        f"QLineEdit{{background:{rgba(t.q('tx'), 0 if t.glass else 16).name(QColor.NameFormat.HexArgb)};"
+        f"QLineEdit{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
         f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:6px 10px;}}")
     v.addWidget(ed)
     row = QHBoxLayout()
@@ -6885,7 +6885,7 @@ def _briefs_appendix(t: Tokens, page: QWidget) -> None:
     bf_chat.setFixedHeight(32)
     bf_chat.setFont(qfont(t, t.body_size))
     bf_chat.setStyleSheet(
-        f"QComboBox{{background:{rgba(t.q('tx'), 0 if t.glass else 16).name(QColor.NameFormat.HexArgb)};"
+        f"QComboBox{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
         f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:0 10px;}}"
         f"QComboBox::drop-down{{border:none;width:22px;}}"
         f"QComboBox QAbstractItemView{{background:{'#0E2136' if t.glass else t.card};"

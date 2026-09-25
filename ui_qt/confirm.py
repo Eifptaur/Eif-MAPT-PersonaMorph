@@ -189,7 +189,7 @@ class ConfirmDialog(QDialog):
             self.typed.setFont(qfont(t, t.body_size))
             self.typed.setFixedHeight(32)
             self.typed.setStyleSheet(
-                f"QLineEdit{{background:{rgba(t.q('tx'), 0 if t.glass else 16).name(QColor.NameFormat.HexArgb)};"
+                f"QLineEdit{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
                 f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:0 10px;}}"
                 f"QLineEdit:focus{{border:1px solid {t.err};}}"
             )

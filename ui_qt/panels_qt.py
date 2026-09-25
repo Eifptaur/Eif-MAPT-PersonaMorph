@@ -219,7 +219,7 @@ class Combo(QComboBox):
         self.setMinimumWidth(200)
         self.setFont(qfont(t, t.body_size))
         self.setStyleSheet(
-            f"QComboBox{{background:{_hex(rgba(t.q('tx'), 0 if t.glass else 16))};"
+            f"QComboBox{{background:{_hex(rgba(t.q('tx'), 16))};"
             f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:0 10px;}}"
             f"QComboBox::drop-down{{border:none;width:22px;}}"
             f"QComboBox QAbstractItemView{{background:{'#0E2136' if t.glass else t.card};"
@@ -236,7 +236,7 @@ def _line(t: Tokens, text: str = "", password: bool = False, placeholder: str = 
     if password:
         e.setEchoMode(QLineEdit.EchoMode.Password)
     e.setStyleSheet(
-        f"QLineEdit{{background:{_hex(rgba(t.q('tx'), 0 if t.glass else 16))};"
+        f"QLineEdit{{background:{_hex(rgba(t.q('tx'), 16))};"
         f"color:{t.tx};border:1px solid {t.bd};"
         f"border-radius:{t.radius_btn}px;padding:0 10px;}}"
         f"QLineEdit:focus{{border:1px solid {t.blue};}}"
@@ -250,7 +250,7 @@ def _area(t: Tokens, text: str, rows: int = 2, placeholder: str = "") -> QPlainT
     e.setFont(qfont(t, t.body_size - 0.5))
     e.setFixedHeight(20 * max(2, min(rows, 4)) + 20)
     e.setStyleSheet(
-        f"QPlainTextEdit{{background:{_hex(rgba(t.q('tx'), 0 if t.glass else 16))};"
+        f"QPlainTextEdit{{background:{_hex(rgba(t.q('tx'), 16))};"
         f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:4px 8px;}}"
         f"QPlainTextEdit:focus{{border:1px solid {t.blue};}}"
     )
@@ -578,7 +578,7 @@ def _open_group_pick(t: Tokens, line, note, groups: list) -> None:
 
     lst = QListWidget()
     lst.setStyleSheet(
-        f"QListWidget{{background:{rgba(t.q('tx'), 0 if t.glass else 10).name(QColor.NameFormat.HexArgb)};"
+        f"QListWidget{{background:{rgba(t.q('tx'), 10).name(QColor.NameFormat.HexArgb)};"
         f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_card}px;padding:4px;}}"
         f"QListWidget::item{{border-radius:{t.radius_btn}px;}}"
         f"QListWidget::item:selected{{background:{rgba(t.q('blue'), 30).name(QColor.NameFormat.HexArgb)};}}")
@@ -1081,6 +1081,92 @@ def _status_text_for(status_id: str, st: dict) -> str:
                     "已安装" if ur.get("ytdlp_ready") else "未安装")
             return out
         return "不可用：%s —— 群里发视频时会如实说读不了" % (vr.get("why") or "缺 ffmpeg")
+    if sid == "igWhy":
+        # 生图后端状态（web :3800-3808 同口径；权威=/api/status 的 media.image_gen 段）
+        md0 = st.get("media") or {}
+        if md0.get("error"):
+            return "状态读取失败：%s" % md0.get("error")
+        ig = md0.get("image_gen") or {}
+        n = len(ig.get("backends") or [])
+        if not ig.get("enabled"):
+            return "未开启（默认关）"
+        if n:
+            return "已开 · %d 个后端可用（%s）" % (
+                n, " / ".join(str(b.get("id") or "") for b in (ig.get("backends") or [])))
+        return ("已开：本机没探到生图服务、也没手填 ⇒ 调 gen_image 会如实回「还没配后端」"
+                "（常探 7860/7865/8188/9090；服务没起或端口不同都探不到）")
+    if sid == "utGlobals":
+        # 工具清单现状（web utStatLine :6828 同口径）
+        ut = st.get("user_tools") or {}
+        if not isinstance(ut, dict):
+            return "读不到"
+        if ut.get("error"):
+            return "读取失败：%s" % ut.get("error")
+        return ("总开关：%s ｜ 目录：%s ｜ 已装 %d 个 ｜ 已勾选 %d 个 ｜ 累计调用 %d 次"
+                % ("开" if ut.get("enabled") else "关（清单不加载）", ut.get("dir") or "-",
+                   len(ut.get("tools") or []), ut.get("ticked") or 0, ut.get("counts_total") or 0))
+    if sid == "vmGate":
+        # 版本门三态（web :3444-3464 同口径：true/false/读不到 分开，不许把读不到画成拦截）
+        vg = st.get("version_gate") or {}
+        allow = vg.get("allow") if isinstance(vg.get("allow"), bool) else None
+        if allow is None:
+            return "版本门读数读不到%s：不影响发送" % (
+                "（%s）" % vg.get("error") if vg.get("error") else "")
+        if allow:
+            return ("版本可用：已实测，照常发送" if vg.get("level") == "ok"
+                    else "版本可用：照常发送（这一版没实测记录，不影响使用）")
+        return "版本未实测：按严格档暂停发送（可在配置里关掉 version_gate.strict）"
+    if sid == "bgHead":
+        # 输入方式（web :3496-3504 同口径）
+        inp = st.get("input") or {}
+        if not isinstance(inp, dict) or not inp:
+            return "读不到"
+        lv = ("（%s）" % inp["level"]) if inp.get("level") else ""
+        return ("当前：真鼠标档%s · 会动光标、可能短暂置前" if inp.get("touches_cursor")
+                else "当前：投递档%s · 不动光标、不要求可见；可能短暂置前，随后自动还回") % lv
+    if sid == "ufpHead":
+        # 环境指纹（web :3561-3568 同口径）
+        f = st.get("ui_fp") or {}
+        if not isinstance(f, dict):
+            return "读不到"
+        if f.get("error"):
+            return "读不到指纹表：%s" % f.get("error")
+        ks = list((f.get("keys") or {}).keys())
+        cur = f.get("current") or ""
+        hit = (f.get("keys") or {}).get(cur) or {}
+        return ("本环境指纹 %s 条 · 共 %d 组环境 · 摘要 %s"
+                % (hit.get("n") if isinstance(hit, dict) else 0, len(ks), f.get("digest") or "-")
+                if ks else "还没有任何指纹（点右边「重新取指纹」）")
+    if sid == "pdStat":
+        # 待决台账（web :3585-3588 同口径）
+        pd = st.get("pending_decisions") or {}
+        if not isinstance(pd, dict):
+            return "读不到"
+        if pd.get("error"):
+            return "读不到待决台账：%s" % pd.get("error")
+        return ("待拍板 %d 件 · %s" % (pd.get("open") or 0, pd.get("summary") or "")
+                if pd.get("open") else "没有待拍板的事")
+    if sid == "vmDec":
+        # 适配层裁定记录（web :3597-3605 同口径）
+        vm = st.get("version") or {}
+        ds = vm.get("decisions") or []
+        if not ds:
+            return "暂无"
+        nm = {"upgrade_adapter": "去升级适配层", "update_host": "去更新本体",
+              "allow_once": "仅本次允许", "wechat_side": "微信本身要处理", "none": "什么都不做"}
+        return " ｜ ".join("%s · %s" % (nm.get(d.get("choice"), d.get("choice")),
+                                        str(d.get("when") or "")[5:16]) for d in ds)
+    if sid == "actStat":
+        # 后台作业（web :3606-3615 同口径）
+        jb = st.get("jobs") or {}
+        ks = [k for k in jb.keys() if not k.startswith("_")] if isinstance(jb, dict) else []
+        if not ks:
+            return "没有在跑的事"
+        return " ｜ ".join(
+            "%s：%s" % (k, ("正在跑" if (jb[k] or {}).get("running")
+                            else ("完成" if (jb[k] or {}).get("returncode") == 0
+                                  else "结束 rc=%s" % (jb[k] or {}).get("returncode"))))
+            for k in ks)
     return "读不到"
 
 
@@ -1152,6 +1238,9 @@ _AIDS_COVERED_ELSEWHERE = {"localProbe", "wxRecheck", "ttsProbe", "vcProbe"}
 # 假/空下拉（r8 用户实锤「模型选单依旧打不开」）。fbKind 这类「无 cfg 但有静态
 # 选项、被自定义提交真读」的活控件**不在**此列。
 _JS_OWNED_SELECT_IDS = {"providerSel", "modelSel"}
+# 这些状态位在追加区/自定义卡里有**带动作的等价物**（SD 本地服务卡有自己的状态行
+# + 启停按钮，轮询独立接口）——元数据版只是颗「永远检测中」的死芯片。
+_STATUS_COVERED_ELSEWHERE = {"sdLocalState"}
 
 
 def _row_redundant(r: "sec_meta.Row") -> bool:
@@ -1169,6 +1258,9 @@ def _row_redundant(r: "sec_meta.Row") -> bool:
     if getattr(r, "kind", "") == "select" and not getattr(r, "cfg", ""):
         if getattr(r, "html_id", "") in _JS_OWNED_SELECT_IDS or not (r.options or []):
             return True
+    if (getattr(r, "kind", "") == "status"
+            and getattr(r, "status_id", "") in _STATUS_COVERED_ELSEWHERE):
+        return True
     if getattr(r, "kind", "") != "buttons":
         return False
     acts = getattr(r, "actions", None) or []

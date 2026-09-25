@@ -900,9 +900,9 @@ def t_dpi_motion() -> None:
        and "press_border = mix(t.q(\"blue\"), t.q(\"tx\"), 0.30)" in wsrc)
     ck("Btn pressed 保留压字 1px（padding 上+1 下-1，QSS 无 transform 的等价物）",
        "padding-top:8px;padding-bottom:6px" in wsrc)
-    ck("NavItem 非 active 按压加深（tx 14→26 两档）",
+    ck("NavItem 非 active 按压加深（tx 14→26 两档；毛玻璃后按压反馈不再分主题隐藏）",
        wsrc.count("QPushButton:pressed{") >= 3 # Btn + NavItem + Segmented×2
-       and "rgba(t.q('tx'), 0 if t.glass else 26)" in wsrc)
+       and "rgba(t.q('tx'), 26)" in wsrc and "rgba(t.q('tx'), 14)" in wsrc)
     ck("Segmented 按压给色反馈（off→blue）",
        wsrc.count("QPushButton:pressed{{color:{t.blue};}}") >= 2)
 

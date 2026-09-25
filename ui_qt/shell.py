@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import config_io # noqa: E402 面板读写 config.json 的桥（save→set 同 webui 次序）
 
-from PySide6.QtCore import QEvent, QPointF, QSize, Qt, QTimer # noqa: E402
+from PySide6.QtCore import QEvent, QObject, QPointF, QSize, Qt, QTimer # noqa: E402
 from PySide6.QtGui import ( # noqa: E402
     QColor,
     QGuiApplication,
@@ -2210,7 +2210,7 @@ class _Combo(QWidget):
         self.cb.setFixedHeight(32)
         self.cb.setMinimumWidth(200)
         self.cb.setStyleSheet(
-            f"QComboBox{{background:{rgba(t.q('tx'), 0 if t.glass else 16).name(QColor.NameFormat.HexArgb)};"
+            f"QComboBox{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
             f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:0 10px;}}"
             f"QComboBox::drop-down{{border:none;width:22px;}}"
             f"QComboBox QAbstractItemView{{background:{t.bg if t.key!='whale' else '#0E2136'};"
@@ -2222,10 +2222,36 @@ class _Combo(QWidget):
 # ---------------------------------------------------------------- 入口
 
 
+class _StrayWindowProbe(QObject): # noqa: N802
+    """r9 闪窗诊断：任何**带系统边框的顶层窗口**显形时打一行到 stderr。
+
+    用户实锤「切换界面会闪一个小弹窗（带标题栏）」但抓不到是谁 —— 挂这个
+    app 级过滤器后，复现一次 stderr 里就有 [闪窗] 行（类名/对象名/标题/尺寸），
+    下一轮直接定位真凶。过滤条件：Window 型顶层 + **非** Frameless/Popup/ToolTip
+    （产品自己的弹层全是无边框，带原生标题栏的都是漏网之鱼）。
+    """
+
+    def eventFilter(self, obj, ev): # noqa: ANN001, N802
+        try:
+            if ev.type() == QEvent.Type.Show and isinstance(obj, QWidget):
+                flags = obj.windowFlags()
+                framed = not (flags & (Qt.WindowType.FramelessWindowHint
+                                       | Qt.WindowType.Popup
+                                       | Qt.WindowType.ToolTip))
+                if framed and obj.isWindow() and obj.isVisible():
+                    print("[闪窗] %s name=%r title=%r size=%dx%d" % (
+                        type(obj).__name__, obj.objectName(), obj.windowTitle(),
+                        obj.width(), obj.height()), flush=True)
+        except Exception: # noqa: BLE001 — 诊断绝不干扰主流程
+            pass
+        return False
+
+
 def main() -> int:
     set_per_monitor_dpi()
     app = QApplication(sys.argv)
     app.setApplicationName("Persona Morph Qt Proto")
+    app.installEventFilter(_StrayWindowProbe()) # r9 闪窗诊断（见类注释）
 
     key = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] in THEMES else "whale"
     t = THEMES[key]

@@ -121,14 +121,20 @@ class WhaleWidget(QWidget):
             p.setBrush(QColor("#FFFFFF"))
             p.drawRoundedRect(QRectF(6, 6, bw - 12, bh - 12), 40, 40)
 
-        # ② 鲸鱼图：右下角，边长 59.45%（原版 object-fit contain、右下对齐）
+        # ② 鲸鱼图：右下角，边长 59.45%（原版 object-fit contain、右下对齐）。
+        #    按 devicePixelRatio 放大再标 DPR —— 不做这一步高分屏会发糊（r9 用户实锤）。
         if self._whale is not None and not self._whale.isNull():
+            dpr = self.devicePixelRatioF() or 1.0
             w = self.W * _WHALE_RATIO
-            pm = self._whale.scaled(int(w), int(w), Qt.AspectRatioMode.KeepAspectRatio,
+            pm = self._whale.scaled(int(w * dpr), int(w * dpr),
+                                    Qt.AspectRatioMode.KeepAspectRatio,
                                     Qt.TransformationMode.SmoothTransformation)
-            p.drawPixmap(self.W - pm.width(), self.H - pm.height(), pm)
+            pm.setDevicePixelRatio(dpr)
+            p.drawPixmap(int(self.W - w), int(self.H - w), pm)
 
         # ③ 气泡内文字：中心 (44.25%, 36%)，区域宽 66% 高 64%（widget.js :272）
+        # ⛔ 最多两行（余额大字 + 一行小字）——原版文字区就按两行设计的，三行会
+        #   溢出气泡下缘（r9 用户截图实锤「字都出弹窗了」）⇒ hint 并作一行再省略。
         cx, cy = self.W * 0.4425, self.H * 0.36
         tw = self.W * 0.66
         th = self.H * 0.64
@@ -139,12 +145,10 @@ class WhaleWidget(QWidget):
         f_small = QFont(self.font())
         f_small.setPixelSize(max(10, int(self.W * 0.044)))
         p.setPen(_INK)
-        # 行：余额大字 / hint 小字（今日已用 · 上轮 · 高峰），最多三行
-        # ⛔ metrics 先算好再进循环——旧写法 genexpr 引用循环内才赋值的 fm，
-        #   paintEvent 每次都在文字段抛 NameError ⇒ 气泡有底、文字永远画不出来
-        #   （r8 用户实锤「挂件变成贴图」）。
         rows = [(f_amt, self.bal)]
-        rows += [(f_small, x) for x in [y for y in (self.hint or "").split("\n") if y][:2]]
+        hint_txt = " · ".join(x for x in (self.hint or "").split("\n") if x)
+        if hint_txt:
+            rows.append((f_small, hint_txt))
         metrics = [(f, QFontMetrics(f), txt) for f, txt in rows]
         total_h = sum(m.height() for _f, m, _t in metrics) + 6 * (len(metrics) - 1)
         y = area.top() + (area.height() - total_h) / 2
@@ -223,7 +227,18 @@ class WhaleWidget(QWidget):
         self.hint = "\n".join([x for x in (hint1, hint2) if x])
         self.update()
 
-    # ------------------------------------------------------------ 交互（点击刷新 / 拖拽移动）
+    # ------------------------------------------------------------ 交互（点击刷新 / 拖拽移动 / 右键菜单）
+
+    def contextMenuEvent(self, ev) -> None: # noqa: N802
+        """右键菜单 —— 原版 widget.js 菜单按钮（:286）的 Qt 等价核心项。
+        原版的音效/角色皮肤等浏览器特效项不搬（whale-widget/PORT-NOTES 明示的裁剪）；
+        余额显示三选一在顶栏「已改」里（两者独立，web 同款）。"""
+        from PySide6.QtWidgets import QMenu # noqa: PLC0415
+
+        m = QMenu(self)
+        m.addAction("刷新余额", self.refresh)
+        m.addAction("回到右下角", self.reset_position)
+        m.exec(ev.globalPos())
 
     def mousePressEvent(self, ev) -> None: # noqa: N802
         if ev.button() == Qt.MouseButton.LeftButton:
