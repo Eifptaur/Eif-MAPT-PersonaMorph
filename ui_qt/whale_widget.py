@@ -1,112 +1,91 @@
 # -*- coding: utf-8 -*-
-"""右下角鲸鱼挂件 —— 上游 DeepSeek-Balance-Whale-Widget 的**原版复刻**。
+"""右下角鲸鱼挂件 —— **原版照搬**（WebView2 承载上游 DeepSeek-Balance-Whale-Widget）。
 
-用户裁定（2026-09-25 截图）：此前 Qt 版做成了「胶囊卡片」（圆角卡 + 余额/今日已用/
-每轮消耗四行灰字）——不是原版。原版形态（whale-widget/client/widget.js :245-272
-:10293-10297）＝
-  · 透明方块（无边框无底色，默认边长 min(250px, 视口短边×0.28)）；
-  · 右下角鲸鱼图（边长的 59.45%）；
-  · 左上一只**对话气泡**（SVG：白底圆角泡 + 两粒渐小的泡，描边 #203170）；
-  · 气泡内文字（色 #536ba9、水平垂直居中）：**三行**结构 ——
-    `.dshwv-label`「DeepSeek 余额」66u/600 + `.dshwv-amount` 余额 128u/800
-    + `.dshwv-hint` 说明 56u/#9fb0d9（u = 边长/1026，即 `--dshw-u`）。
-气泡用**原版 SVG 原文**经 QSvgRenderer 渲染（同一份 path/ellipse，不手转弧线）；
-QtSvg 缺席时退化成圆角矩形泡（数据照常）。数据面照旧复用 /dsh-whale/*（余额/今日
-已用/上轮消耗/高峰提示），30s 轮询、点击刷新、拖拽换位、位置记 QSettings 全保留。
+## 为什么是"照搬"而不是"复刻"
 
-排版口径逐项对齐原版 CSS（`.dshwv-text` / `.dshwv-*` 那组规则）——**一个字都不许裁**：
-  · 三行字号全走 `u` 制（不是自拟的 W 比例），比例与原版一致；
-  · `.dshwv-text` 的 `left/top/width/height` 百分比分母是**气泡**（aspect 1026/700），
-    不是正方窗口 —— 按窗口算会把文字区撑高 1.46 倍、长文案压到鲸鱼身上；
-  · 原版 `.dshwv-text{white-space:nowrap}` 仍会被 `.dshwv-wrap{white-space:normal;
-    max-width:560u}` 覆盖（靠 `ln.w` 标记）⇒ amount/hint 走**折行**；
-  · 折行也放不下时（如超长金额断不开）逐档缩字号，绝不用 `elidedText` 截字。
+上游挂件是 636KB 的纯浏览器脚本：`widget.js` 单文件 15,179 行，含 582 处
+`createElement`、35 处 `fetch`、6 处 `AudioContext`、19 处 `localStorage`、27 处
+`canvas`，外加 11 行设置菜单（大小/音效/音量/气泡全局开关/每轮消耗提示/避让滚动条/
+宽度/px/角色/隐藏菜单按钮/资源管理）、角色导入、音效组、自定义泡泡、用量记录。
+
+用 Python 逐行重写这些**不可能一致** —— 那等于重写一个前端应用，且必然随上游版本
+漂移。能真正做到 1:1 的路子只有一条：**把它原样交给浏览器内核跑**。
+
+## 这条路的三个事实依据
+
+1. **脚本本来就是原文**：`whale-widget/client/widget.js` 是从上游 0.3.9 vendor 的，
+   全仓库唯一的改动是 `PORT-NOTES.md` 记载的一处（`dshwIsChatRoot()` 拿不到 `#root`
+   时退回 `document.body`）。web 端控制台页面就是直接 `<script defer
+   src="/dsh-whale/widget.js">` 引入的**同一份文件**，一字未改。
+2. **数据面已经齐了**：`agent/whale.py` + `agent/webui.py` 的 `/dsh-whale/*` 全套端点
+   （余额/今日已用/上轮消耗/形象图/音效/泡泡配置），token 注入逻辑在
+   `webui._whale_js_injected()` 里，脚本要什么给什么。
+3. **承载层零新增依赖**：本机已装 WebView2 运行库；产品的 `lib/` 里已 vendor
+   `Microsoft.Web.WebView2.*.dll` 与根目录 `WebView2Loader.dll`（启动器的控制台窗口
+   在用）；`comtypes` / `pywin32` 也在 `requirements.txt` 里（微信驱动依赖）。
+
+（对比：走 Qt 的 QtWebEngine 需要**完整版** PySide6 —— 精简安装的 `PySide6_Essentials`
+里 `QtWebEngineWidgets` 只有 `.pyi` 存根没有 `.pyd`，装完整包要多 234MB。）
+
+## 本模块的结构
+
+    WhaleWidget (QWidget, Qt.Tool 顶层窗)
+      └── 一个透明方窗，尺寸 = 原版 `--dshw-base`
+            └── WhaleHostWebView（whale_host.py）在窗口 HWND 上挂 WebView2，
+                加载宿主页 → 宿主页引入原版 widget.js → 挂件自己渲染
+
+**职责边界**：窗口（拖拽/位置记忆/显隐）留在本模块，浏览器（环境/控制器/加载）
+在 `whale_host.py`。挂件自身的菜单、音效、角色、用量全部由**原版脚本**负责，
+本模块不重现任何一条。
+
+## 降级
+
+WebView2 不可用（运行库被卸载、程序集缺失、初始化异常）时：
+  · 不是"白窗"，而是退回**信息卡**：贴一张原版形象的静态图 + 一行说明；
+  · 说明里给出可操作指引（装运行库），而不是静默空白。
 """
 
 from __future__ import annotations
 
-import threading
+import os
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QRect, QRectF, QSettings, Qt, QTimer
-from PySide6.QtGui import QFont, QFontMetrics, QPainter, QPixmap, QColor
+from PySide6.QtCore import QPoint, QRectF, QSettings, Qt, QTimer
+from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QWidget
 
 ROOT = Path(__file__).resolve().parent.parent
 _ASSET = ROOT / "whale-widget" / "assets" / "DSniang1.png"
 _SET = ("WXAgent", "persona-morph-ui")
 
-# 原版气泡 SVG 原文（widget.js :10293-10297 逐字；viewBox 1026×700）——
-# 白底泡体 + 拖尾两粒小泡，描边 #203170、线宽 18。
-_BUBBLE_SVG = (
-    '<svg viewBox="0 0 1026 700" preserveAspectRatio="xMidYMid meet" '
-    'xmlns="http://www.w3.org/2000/svg">'
-    '<path fill="#FFFFFF" stroke="#203170" stroke-width="18" stroke-linejoin="round" '
-    'stroke-linecap="round" d="M 827 248 A 373 232 0 1 0 81 246 A 373 232 0 0 0 301 465 '
-    'A 57 32 10 0 0 413 484 A 373 232 0 0 0 827 248 Z"/>'
-    '<ellipse cx="352" cy="561" rx="37.5" ry="26" fill="#FFFFFF" stroke="#203170" '
-    'stroke-width="18"/>'
-    '<ellipse cx="442" cy="646" rx="24.5" ry="18" fill="#FFFFFF" stroke="#203170" '
-    'stroke-width="18"/>'
-    '</svg>')
-_INK = QColor("#536ba9")       # 原版 .dshwv-text{color:#536ba9}（label/amount 同色）
-_HINT_INK = QColor("#9fb0d9")  # 原版 .dshwv-hint{color:#9fb0d9}（比正文浅一档）
-_LAB_INK = _INK                # label 与 amount 同色（原版三行共用 .dshwv-text 的 color）
-_VBW, _VBH = 1026.0, 700.0 # 气泡 viewBox（aspect 1026/700）
-_WHALE_RATIO = 0.5945 # 鲸图边长占比（widget.js :253）
-_ZWSP = "\u200b" # 零宽空格：不可见，只提供一个换行点
-
-
-def _wrapable(s: str) -> str:
-    """给**断不开的长串**补断点 —— 千分位逗号后插零宽空格。
-
-    Qt 的 `TextWordWrap` 只在空白/CJK 边界断行（逗号、句点都不算断点，与 CSS
-    一致），而 Qt 的 `drawText` 一旦给 rect 就会**裁掉**溢出部分。上游是
-    `overflow:visible`，溢出时字往外漫、一个字不丢；Qt 要做等价效果就得让它
-    真能断行。金额加千分位逗号是唯一会长到超宽的纯数字串，故只处理它。
-    零宽空格不进 `horizontalAdvance`（宽 0），量宽与显示口径都不受影响。
-    """
-    return s.replace(",", "," + _ZWSP) if "," in s else s
+# 原版边长（widget.js :245 `--dshw-base` 的 clamp 上限 = 250px）
+_BASE = 250
 
 
 class WhaleWidget(QWidget):
-    """无边框置顶小窗（原版复刻）：透明方块 + 气泡 + 鲸鱼；点击刷新、拖拽移动。"""
+    """无边框置顶小窗，内嵌 WebView2 跑**原版挂件**（点挂件本体即原版菜单）。"""
 
-    W, H = 250, 250 # 原版默认边长（widget.js :245 clamp 的桌面上限值）
+    W, H = _BASE, _BASE
 
-    def __init__(self, t, parent=None): # noqa: ANN001
+    def __init__(self, t, parent=None):  # noqa: ANN001
         super().__init__(parent)
         self.setObjectName("WhaleWidget")
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
+        # 透明窗：挂件是悬浮件，必须让底层界面透出来。
+        # 配套动作在 whale_host._enable_transparency() —— WebView2 的画面是窗口
+        # 合成出来的，不把它的 DefaultBackgroundColor 设成 A=0，内核图层就合不上，
+        # 表现是「窗口透明但鲸鱼不出现」。两者必须成对改，缺一个都不出画面。
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setFixedSize(self.W, self.H)
         self._drag0: QPoint | None = None
         self._win0: QPoint | None = None
         self._moved = False
-        self._busy = False
-
-        # 气泡内文字（原版口径：余额大字 + 说明小字，居中，#536ba9）
-        # amount 行只放金额（「DeepSeek 余额」在 label 行，原版同）——
-        # 加载态对齐原版 `render()`：`amount = '…'`、`hint = '加载中…'`。
-        self.bal = "…"
-        self.hint = "加载中…"
-
-        try:
-            pm = QPixmap(str(_ASSET))
-            self._whale = pm if not pm.isNull() else QPixmap()
-        except Exception: # noqa: BLE001 — 素材缺失时只有气泡，数据照常显示
-            self._whale = QPixmap()
-
-        # 气泡渲染器：原版 SVG 原文（QtSvg 缺席 ⇒ None，paintEvent 走圆角矩形退化）
-        self._bub = None
-        try:
-            from PySide6.QtSvg import QSvgRenderer # noqa: PLC0415
-
-            r = QSvgRenderer(QByteArray(_BUBBLE_SVG.encode("utf-8")))
-            self._bub = r if r.isValid() else None
-        except Exception: # noqa: BLE001
-            self._bub = None
-
+        self._host = None
+        self._err = ""
+        self._booted = False
+        # 页面加载是否失败 —— 与「控制器是否就绪」分开记：paintEvent 靠它决定
+        # 要不要画降级卡（只看 `_host.ok` 时，半成品状态会留一个纯黑窗口）。
+        self._load_failed = False
         self.restyle(t)
 
         # 位置：上次拖到哪就还在哪；没有记录落右下角
@@ -121,296 +100,237 @@ class WhaleWidget(QWidget):
         if not moved:
             self._move_default()
 
-        self._timer = QTimer(self)
-        self._timer.setInterval(30000) # 清单 loadBalance 30s 口径
-        self._timer.timeout.connect(self.refresh)
-        self._timer.start()
-        QTimer.singleShot(600, self.refresh) # 进窗即拉一次
-
     # ------------------------------------------------------------ 外观
 
-    def restyle(self, t) -> None: # noqa: ANN001
-        """主题切换时刷新字体（挂件是独立顶层窗，不走 Shell 的 QSS 重建）。
-
-        字体**不靠继承**：挂件虽然 `parent=Shell`，但它是 `Qt.Tool` 顶层窗，
-        一旦被单独拿出来渲染（离线探针、截图）就拿不到 Shell 的字体，
-        `self.font()` 会退回一个没有中文字形的默认族 ⇒ 气泡里全是豆腐块。
-        这里显式用主题的字体族起链（`qfont` 的回退链含 emoji 字体，
-        与产品其余部分同一套口径），离线渲染也与线上一致。
-        """
+    def restyle(self, t) -> None:  # noqa: ANN001
+        """主题切换：本模块只有降级卡用字体，原版挂件自身配色由脚本决定。"""
         self.t = t
         self._base_font = self._resolve_font(t)
+        self.update()
 
     @staticmethod
-    def _resolve_font(t): # noqa: ANN001
-        """取一套带中文回退链的基准字体；主题不可用时退回当前控件字体。"""
+    def _resolve_font(t):  # noqa: ANN001
         try:
-            from stylekit_qt import qfont # noqa: PLC0415
+            from stylekit_qt import qfont  # noqa: PLC0415
 
             return qfont(t, 16)
-        except Exception: # noqa: BLE001 — 主题对象异常不影响挂件出图
+        except Exception:  # noqa: BLE001 — 主题对象异常不影响出图
             f = QFont()
             f.setFamilies(["Microsoft YaHei UI", "Microsoft YaHei", "SimHei", "sans-serif"])
             return f
 
-    def paintEvent(self, _e) -> None: # noqa: N802
-        """原版复刻：先画气泡（原版 SVG），再画右下鲸鱼图，最后画气泡内文字。"""
+    def paintEvent(self, _e) -> None:  # noqa: N802
+        """WebView2 正常时窗口是**透明**的（画面由内核合成在窗口上）。
+
+        只有降级态才画东西 —— 一张形象图 + 一行说明，避免用户看到纯白/纯空。
+
+        ⛔ 判据是「**页面真的加载成功了**」而不是「控制器建好了」：
+        `WhaleHostWebView.ok` 只说明 WebView2 环境/控制器就绪，**不代表
+        `navigate_to_string` 成功**。早先这里只看 `.ok` ⇒ 控制器就绪但页面加载
+        失败时，Qt 侧不画降级卡、WebView2 侧没内容 ⇒ 用户看到**一个纯黑块**，
+        连「需要装 WebView2」的提示都拿不到。`load_failed` 把"页面没起来"这个
+        状态单独记下来，让降级卡能在这种半成品状态下兜底。
+        """
+        if self._host is not None and self._host.ok and not self._load_failed:
+            return
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self._paint_fallback(p)
 
-        # ① 气泡：占满窗口宽，高按 viewBox 比例（1026/700）
-        bw = float(self.W)
-        bh = bw * _VBH / _VBW
-        if self._bub is not None:
-            self._bub.render(p, QRectF(0, 0, bw, bh))
-        else: # 退化：QtSvg 缺席时给个白底圆角泡（描边同色），文字照常
-            p.setPen(QColor("#203170"))
-            p.setBrush(QColor("#FFFFFF"))
-            p.drawRoundedRect(QRectF(6, 6, bw - 12, bh - 12), 40, 40)
+    def _paint_fallback(self, p: QPainter) -> None:  # noqa: N802
+        """降级卡：形象图 + 一行说明（**给出可操作指引**，不做静默空白）。"""
+        try:
+            pm = QPixmap(str(_ASSET))
+            if not pm.isNull():
+                w = self.W * 0.6
+                pm = pm.scaled(int(w), int(w), Qt.AspectRatioMode.KeepAspectRatio,
+                               Qt.TransformationMode.SmoothTransformation)
+                p.drawPixmap(int((self.W - pm.width()) / 2), int(self.H * 0.16), pm)
+        except Exception:  # noqa: BLE001
+            pass
+        f = QFont(getattr(self, "_base_font", None) or self.font())
+        f.setPixelSize(12)
+        p.setFont(f)
+        p.setPen(QColor("#536ba9"))
+        tip = "鲸鱼挂件暂不可用"
+        sub = (self._err or "未就绪")[:60]
+        p.drawText(QRectF(8, self.H * 0.62, self.W - 16, 20),
+                   int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter), tip)
+        f.setPixelSize(10)
+        p.setFont(f)
+        p.setPen(QColor("#9fb0d9"))
+        p.drawText(QRectF(8, self.H * 0.62 + 20, self.W - 16, 46),
+                   int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop
+                       | Qt.TextFlag.TextWordWrap), sub)
 
-        # ② 鲸鱼图：右下角，边长 59.45%（原版 object-fit contain、右下对齐）。
-        #    按 devicePixelRatio 放大再标 DPR —— 不做这一步高分屏会发糊（r9 用户实锤）。
-        if self._whale is not None and not self._whale.isNull():
-            dpr = self.devicePixelRatioF() or 1.0
-            w = self.W * _WHALE_RATIO
-            pm = self._whale.scaled(int(w * dpr), int(w * dpr),
-                                    Qt.AspectRatioMode.KeepAspectRatio,
-                                    Qt.TransformationMode.SmoothTransformation)
-            pm.setDevicePixelRatio(dpr)
-            p.drawPixmap(int(self.W - w), int(self.H - w), pm)
+    # ------------------------------------------------------------ 浏览器侧
 
-        # ③ 气泡内文字：中心 (44.25%, 36%)，区域宽 66% 高 64%
-        #    ⛔ 「漏字」根因：原版 `.dshwv-text{white-space:nowrap}`（不换行、不省略），
-        #    字号按 `--dshw-u = base/1026` 缩放 —— label 66u / amount 128u /
-        #    period 104u / hint 56u。此前 Qt 侧自拟了 0.088W / 0.044W 两档 +
-        #    `elidedText(ElideRight)`，把 hint 截成「…」= 用户看到的漏字。
-        #
-        # 原版三行结构（widget.js `textBox` 子元素顺序）：
-        #   .dshwv-label「DeepSeek 余额」66u/600 + .dshwv-amount 128u/800
-        #   + .dshwv-hint 56u #9fb0d9。此前 Qt 把 label 并进 amount（「余额 ¥x」），
-        #   128u 的大字背着一串中文 ⇒ 必然超宽。
-        #
-        # 长行怎么办 —— 原版有第二套规则 `.dshwv-wrap{white-space:normal;
-        # max-width:calc(u*560);line-height:1.2}`，靠 `ln.w` 标记决定该行
-        # **换行**而不是 nowrap。Qt 侧照此分两类：
-        #   · label：nowrap（固定 6 字，永远不会溢出）；
-        #   · amount / hint：**换行**（Qt.TextWordWrap + 560u 宽上限）。
-        #
-        # ⛔ 为什么 amount 也必须是 wrap：原版 `.dshwv-text` 的 `white-space:nowrap`
-        #    被 `.dshwv-wrap` 的 `white-space:normal` 覆盖 —— 一旦某行带 `ln.w`，
-        #    该行**折行**而不是溢出。amount 走 wrap 有双重收益：
-        #      ① `¥ 123,456.78` 超宽时在 `¥ ` 后断行 —— 与浏览器一致，一个字不裁；
-        #      ② 金额本身不该无限缩字号（缩到 8px 不可读），换行比缩字更接近原版。
-        #    此前只让 hint 换行、amount 靠 nowrap+缩字号 ⇒ 超大金额缩到下限
-        #    仍超宽 22px 被 `drawText` 裁掉（探针实锤）。
-        # ⛔ 百分比的分母是**气泡**不是窗口：原版 `.dshwv-text` 挂在
-        #    `.dshwv-pop`（`aspect-ratio:1026/700`）下，`left/top/width/height`
-        #    的 `%` 全部相对 **.dshwv-pop 的盒子**解析。而 .dshwv-pop 的宽等于
-        #    `--dshw-base`（=W）、高 = `W * 700/1026`（气泡是扁的，不是正方）。
-        #    此前按 `self.H`（正方形）算 ⇒ 文字区被撑到 160px 高、中心落在
-        #    90px —— 比气泡真实的纵向中心（61px）低 29px，长 hint 就压到鲸鱼身上。
-        #    按 `bh` 算即与原版一致。
-        cx, cy = bw * 0.4425, bh * 0.36
-        tw = bw * 0.66
-        th = bh * 0.64
-        area = QRectF(cx - tw / 2, cy - th / 2, tw, th)
-        u = self.W / 1026.0 # 原版 --dshw-u（base=W）
-        wrap_w = min(tw, u * 560.0) # 原版 .dshwv-wrap max-width:560u
+    def showEvent(self, ev) -> None:  # noqa: N802
+        """首次上屏时启动浏览器侧。
 
-        def _mk(px: int, weight) -> QFont: # noqa: ANN001
-            f = QFont(getattr(self, "_base_font", None) or self.font())
-            f.setPixelSize(max(8, int(px)))
-            f.setWeight(weight)
-            return f
+        为什么放在这里而不是 `__init__` 的定时器：控制器要挂到窗口 HWND 上，
+        而**窗口没上屏时 HWND 是无效的**（实测 offscreen 下 `winId()` 是假句柄，
+        控制器直接 hr=0x80070578 E_INVALID_WINDOW_HANDLE）。`showEvent` 是
+        「窗口真的上屏了」的确定信号，比写死延时可靠。
 
-        # 行表：(字体, 文本, 颜色, 是否 wrap)
-        #   label  → nowrap（定长 6 字）
-        #   amount → wrap（超宽时在 `¥ ` 后断行 —— 原版 fmt() 就带这个空格）
-        #   hint   → wrap（多段「·」拼接，必然最长）
-        #
-        # ⛔ 换行点从哪来：Qt 的 `TextWordWrap` 只在**空白与 CJK 边界**断行，
-        #    逗号/句点**不是**断点（CSS 同理）。所以 `¥123,456.78` 这种纯数字串
-        #    在 Qt 里断不开 —— 而 Qt 的 `drawText(rect, …)` 会用 rect **裁掉**
-        #    溢出部分（浏览器是 overflow:visible 直接外溢、一个字不丢；Qt 会切字）。
-        #    两条路：① 按原版 fmt() 补上 `¥ ` 的空格（天然断点）；② 千分位逗号后
-        #    插 U+200B 零宽空格（不可见，只提供一个断点）。两条都做 ⇒ 任意长度金额
-        #    都能折行，一个字不裁。
-        lines = [(_mk(round(u * 66), QFont.Weight.DemiBold), "DeepSeek 余额", _LAB_INK, False)]
-        if self.bal:
-            lines.append((_mk(round(u * 128), QFont.Weight.ExtraBold), _wrapable(self.bal), _INK, True))
-        hint_txt = " · ".join(x for x in (self.hint or "").split("\n") if x)
-        if hint_txt:
-            lines.append((_mk(round(u * 56), QFont.Weight.Normal), _wrapable(hint_txt), _HINT_INK, True))
-
-        gap = max(1, int(round(u * 9))) # 原版 hint margin-top:9u
-
-        def _layout(scale: float) -> tuple[list, float, float]:
-            """按 scale 排一次版 → (行表, 总高, 最大溢出量)。
-
-            ⚠️ `QFontMetrics.boundingRect` 只吃 **QRect**（整型）——传 QRectF 会
-            TypeError（实测）。高用 4000 当"不限高"，取回真实需要的高度。
-
-            "溢出量"的口径（对 nowrap 与 wrap **统一**）：
-              · nowrap 行：需要宽 > 可用宽 = 溢出（drawText 会裁掉右边）；
-              · wrap  行：断行后仍有**单段比可用宽还长** = 溢出（Qt 断不开它）。
-            两种溢出都会让 `drawText` 静默裁字，所以都进 `over`，都由外层缩字号兜。
-            （实测：`¥ 123,456.78` 在 250px 底、29px 字号下，`123,` 一段就有 144px，
-             超过文字区的 136px —— 补空格与零宽空格都救不了，只能缩字号。）
-            """
-            out, total, over = [], 0.0, 0.0
-            for f, txt, col, do_wrap in lines:
-                ff = QFont(f)
-                if scale < 0.999:
-                    ff.setPixelSize(max(7, int(round(f.pixelSize() * scale))))
-                mm = QFontMetrics(ff)
-                avail = wrap_w if do_wrap else tw
-                flags = (int(Qt.AlignmentFlag.AlignHCenter)
-                         | (int(Qt.TextFlag.TextWordWrap) if do_wrap
-                            else int(Qt.AlignmentFlag.AlignVCenter)))
-                need = mm.boundingRect(QRect(0, 0, int(avail), 4000), flags, txt)
-                h = float(need.height())
-                if txt.strip() and not txt.isspace():
-                    if do_wrap:
-                        # 断行后每段都必须放得下（段 = 空白/零宽空格切出的最小块）
-                        for seg in txt.split(" "):
-                            for sub in seg.split(_ZWSP):
-                                if sub:
-                                    over = max(over, mm.horizontalAdvance(sub) - float(avail))
-                    else:
-                        over = max(over, float(need.width()) - float(avail))
-                out.append((txt, ff, col, avail, h, do_wrap))
-                total += h
-            total += gap * max(0, len(lines) - 1)
-            return out, total, over
-
-        # 逐档缩字号：**纵向塞不下**（total > 文字区高）或**横向有断不开的长段**
-        # （over > 0.5，见 _layout 的溢出口径）任一成立就缩一档。
-        # 下限 0.40：`¥ 123,456.78` 这类超长金额在 250px 底、29px 字号下，
-        # `123,` 一段就 144px（文字区仅 136px）—— 缩到 0.76 才放得下。
-        # 再长就压到 0.40（约 9px），仍不裁字。
-        scale = 1.0
-        laid, total, over = _layout(scale)
-        while (total > area.height() or over > 0.5) and scale > 0.401:
-            scale = max(0.40, scale - 0.06)
-            laid, total, over = _layout(scale)
-
-        y = area.top() + max(0.0, (area.height() - total) / 2)
-        for txt, ff, col, avail, h, do_wrap in laid:
-            p.setFont(ff)
-            p.setPen(col)
-            flags = (Qt.AlignmentFlag.AlignHCenter
-                     | (Qt.TextFlag.TextWordWrap if do_wrap else Qt.AlignmentFlag.AlignVCenter))
-            p.drawText(QRectF(area.left(), y, avail, h), int(flags), txt)
-            y += h + gap
-
-    # ------------------------------------------------------------ 数据
-
-    def refresh(self) -> None:
-        """拉一次 /dsh-whale/*（后台线程 + QTimer 回主线程同工位 _async 模式）。"""
-        if self._busy:
+        设 `PM_WHALE_NO_WEBVIEW2=1` 可完全跳过（排查主界面问题时用）。
+        """
+        super().showEvent(ev)
+        if self._booted or os.environ.get("PM_WHALE_NO_WEBVIEW2"):
             return
-        self._busy = True
-        self.bal = "…"
-        self.hint = "加载中…"
-        self.update()
-        bx: dict = {"done": False, "bal": None, "lt": None, "err": None}
+        self._booted = True
+        # 让本轮 showEvent 走完（窗口完成映射）再起，避免拿到未生效的 HWND
+        QTimer.singleShot(0, self._boot_webview)
 
-        def _work() -> None:
-            import config_io # noqa: PLC0415
+    def _boot_webview(self) -> None:
+        """建 WebView2 并把原版挂件页加载进去。
 
-            try:
-                bx["bal"] = config_io.get_json("/dsh-whale/balance.json", timeout=15.0)
-                try:
-                    bx["lt"] = config_io.get_json("/dsh-whale/last-turn.json", timeout=8.0)
-                except Exception: # noqa: BLE001 — 上轮消耗拿不到不影响余额
-                    bx["lt"] = None
-            except Exception as e: # noqa: BLE001
-                bx["err"] = str(e)
-            bx["done"] = True
+        ⛔ **建链是异步的**：`WhaleHostWebView.__init__` 返回时环境/控制器都还没
+        建好（COM 回调要等消息循环），此时 `ok` 必为 False。所以加载页面必须
+        挂在 `when_ready()` 回调上 —— 早先写成 `if not self._host.ok: 降级` 时，
+        每次都会在控制器就绪之前判失败，挂件永远出不来（连页面都没加载）。
+        """
+        try:
+            from whale_host import WhaleHostWebView, build_host_html  # noqa: PLC0415
 
-        threading.Thread(target=_work, daemon=True, name="whale-fetch").start()
+            hwnd = int(self.winId())
+            self._host = WhaleHostWebView(hwnd, self.W, self.H)
+            self._host.when_ready(self._after_host_ready)
+        except Exception as e:  # noqa: BLE001 — 任何异常都降级，不拖垮主界面
+            self._err = "%s: %s" % (type(e).__name__, e)
+            self._host = None
+            self.update()
 
-        def _apply() -> None:
-            if not bx["done"]:
-                QTimer.singleShot(300, _apply)
+    def _after_host_ready(self) -> None:
+        """建链结束（成功或失败）后的落点：成了就加载原版挂件页，没成就降级。
+
+        ⛔ `navigate_to_string` 的返回值**必须**落到 `_load_failed` 上：它只表示
+        「页面导航调用是否被接受」，失败时 `WhaleHostWebView.ok` 仍是 True。
+        不单独记这个状态，`paintEvent` 就会以为"一切正常"而不画降级卡，
+        用户拿到的是一个没有任何提示的纯黑窗口。
+        """
+        try:
+            host = self._host
+            if host is None:
+                self._load_failed = True
+                self.update()
                 return
-            self._busy = False
-            self._apply_data(bx.get("bal"), bx.get("lt"), bx.get("err"))
-
-        QTimer.singleShot(300, _apply)
-
-    def _apply_data(self, bal, lt, err) -> None: # noqa: ANN001
-        sym = "¥"
-        hint1 = hint2 = ""
-        if isinstance(bal, dict) and bal.get("ok"):
-            sym = "$" if str(bal.get("currency") or "CNY").upper() == "USD" else "¥"
-            try:
-                total = float(bal.get("totalBalance") or 0)
-            except (TypeError, ValueError):
-                total = 0.0
-            # 只放数字 —— 原版 amount 行就是纯金额（「DeepSeek 余额」在 label 行）。
-            # `"¥ 1,234.56"` 的**空格**照原版 fmt()（widget.js :12358
-            # `'¥ ' + fixed`）——它同时是唯一的天然换行点，超大金额靠它折行不裁字。
-            self.bal = "%s %s" % (sym, format(total, ",.2f"))
-            try:
-                today = float(bal.get("todayUsage") or 0)
-            except (TypeError, ValueError):
-                today = 0.0
-            hint1 = "今日已用 %s %.4f" % (sym, today)
-            hint2 = "高峰时段（价贵）" if bal.get("isPeak") else ""
-        elif isinstance(bal, dict) and bal.get("ok") is False:
-            self.bal = ""
-            hint1 = str(bal.get("error") or "没配模型 Key")[:22]
-        else:
-            self.bal = ""
-            hint1 = (str(err) if err else "后台没连上")[:22]
-        if isinstance(lt, dict) and lt.get("turn") is not None:
-            try:
-                amt = float(lt.get("amount") or 0)
-            except (TypeError, ValueError):
-                amt = 0.0
-            tok = lt.get("tokens")
-            hint2 = " ".join([x for x in (hint2, "上轮 %s %.4f%s" % (
-                sym, amt, (" · %s tok" % tok) if tok else "")) if x]).strip()
-        self.hint = "\n".join([x for x in (hint1, hint2) if x])
+            if not host.ok:
+                self._err = host.error
+                self._load_failed = True
+                self.update()
+                return
+            port, token = _server_addr()
+            # ⛔ **先探端口，再导航**。挂件页是拿 `http://127.0.0.1:<port>/dsh-whale/
+            #    widget.js` 去加载原版脚本的 —— 那个端口由 agent 侧控制台提供，
+            #    agent 没起来时端口**根本没人听**。此时 `NavigateToString` 仍返回
+            #    成功（它只管把 HTML 塞进去），页面却因为脚本 404 而**一片空白**，
+            #    用户看到的就是「一个黑块，啥都没显示」。
+            #    所以这里先做一次 TCP 探活，探不到就**如实降级**（画提示卡），
+            #    不让用户对着纯黑发愣。
+            why = _server_unreachable(port)
+            if why:
+                self._err = why
+                self._load_failed = True
+                self.update()
+                return
+            if not host.navigate_to_string(build_host_html(port, token)):
+                self._err = host.error
+                self._load_failed = True
+        except Exception as e:  # noqa: BLE001
+            self._err = "%s: %s" % (type(e).__name__, e)
+            self._load_failed = True
+        # 无论成败都必须让鼠标能到达 Qt 侧 —— 否则挂件永远拖不动。
+        # ⛔ 页面成功时**不能只调一次**：WebView2 的画布子窗是 `NavigateToString`
+        # 之后由内核**异步**建出来的，此刻枚举子窗多半还是空集（实测建链刚完时
+        # 子窗数为 0）。所以用一个小重试序列盯着，直到子窗出现并打上样式为止。
+        self._arm_drag_passthrough()
         self.update()
 
-    # ------------------------------------------------------------ 交互（点击刷新 / 拖拽移动 / 右键菜单）
+    def _arm_drag_passthrough(self) -> None:
+        """按页面的两种归宿，把「鼠标能到 Qt 侧」这件事落地。
 
-    def contextMenuEvent(self, ev) -> None: # noqa: N802
-        """右键菜单 —— 原版 widget.js 菜单按钮（:286）的 Qt 等价核心项。
-        原版的音效/角色皮肤等浏览器特效项不搬（whale-widget/PORT-NOTES 明示的裁剪）；
-        余额显示三选一在顶栏「已改」里（两者独立，web 同款）。"""
-        from PySide6.QtWidgets import QMenu # noqa: PLC0415
+        · 页面没起来 ⇒ 一次性 hide 控制器，结束；
+        · 页面起来了 ⇒ 子窗是异步建的，**必须重试**（见下面 `_try_passthrough`
+          的次数表）；重试到成功或预算耗尽为止。
 
-        m = QMenu(self)
-        m.addAction("刷新余额", self.refresh)
-        m.addAction("回到右下角", self.reset_position)
-        m.exec(ev.globalPos())
+        次数与间隔取一个固定小表（不是无界自链）：挂件窗生命周期短、子窗通常
+        在 100ms 内出现，6 次 × 120ms 足够；给了上限就不会出现 r11-A 里那种
+        「页面销毁后定时器还在空转」的事故。
+        """
+        if self._load_failed:
+            self._keep_draggable()
+            return
+        self._pt_tries = 0
+        self._try_passthrough()
 
-    def mousePressEvent(self, ev) -> None: # noqa: N802
+    def _try_passthrough(self) -> None:
+        """尝试给 WebView2 画布子窗打透传样式；未成则按表重试（有上限）。"""
+        if self._host is None or not self._host.ok or self._load_failed:
+            return
+        try:
+            done = self._host.pass_mouse_through()
+        except Exception:  # noqa: BLE001 — 拖动是尽力而为，失败不影响主界面
+            done = False
+        if done:
+            return
+        self._pt_tries = getattr(self, "_pt_tries", 0) + 1
+        if self._pt_tries >= 6:
+            return
+        # 控件可能已被销毁（关窗/换页），打补丁前先确认还活着
+        try:
+            QTimer.singleShot(120, self._try_passthrough)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _keep_draggable(self) -> None:
+        """**降级态专用**：把控制器收起来，让事件回到 Qt 手上。
+
+        只在「页面没起来」时用。页面成功时的透传走 `_try_passthrough` ——
+        那条路不能 hide（会把鲸鱼一起藏掉），只能给子窗加样式。
+        """
+        try:
+            host = self._host
+            if host is not None and host.ok:
+                host.hide()
+        except Exception:  # noqa: BLE001 — 拖动能力是尽力而为，失败不影响主界面
+            pass
+
+    # ------------------------------------------------------------ 交互
+
+    def mousePressEvent(self, ev) -> None:  # noqa: N802
         if ev.button() == Qt.MouseButton.LeftButton:
             self._drag0 = ev.globalPosition().toPoint()
             self._win0 = self.pos()
             self._moved = False
 
-    def mouseMoveEvent(self, ev) -> None: # noqa: N802
+    def mouseMoveEvent(self, ev) -> None:  # noqa: N802
         if self._drag0 is None or self._win0 is None:
             return
         d = ev.globalPosition().toPoint() - self._drag0
         if not self._moved and (abs(d.x()) + abs(d.y())) > 5:
-            self._moved = True # 位移阈值：小于它算「点击」而非拖拽
+            self._moved = True  # 位移阈值：小于它算「点击」而非拖拽
         if self._moved:
             self.move(self._win0 + d)
 
-    def mouseReleaseEvent(self, ev) -> None: # noqa: N802
-        if self._drag0 is not None:
-            if self._moved:
-                QSettings(*_SET).setValue("whale_pos", [self.x(), self.y()])
-            else:
-                self.refresh() # 点击（没拖动）= 刷新
+    def mouseReleaseEvent(self, ev) -> None:  # noqa: N802
+        if self._drag0 is not None and self._moved:
+            QSettings(*_SET).setValue("whale_pos", [self.x(), self.y()])
         self._drag0 = None
         self._win0 = None
+
+    def moveEvent(self, ev) -> None:  # noqa: N802
+        """窗口移动时通知内核重排（WebView2 不跟随父窗自动挪，会留在原地）。"""
+        super().moveEvent(ev)
+        if self._host is not None and self._host.ok:
+            self._host.resize(self.W, self.H)
+
+    def closeEvent(self, ev) -> None:  # noqa: N802
+        """**必须关控制器** —— 不关会留下杀不掉的浏览器孤儿进程。"""
+        if self._host is not None:
+            self._host.close()
+            self._host = None
+        super().closeEvent(ev)
 
     def _move_default(self) -> None:
         try:
@@ -418,10 +338,72 @@ class WhaleWidget(QWidget):
             geo = scr.availableGeometry() if scr else None
             if geo is not None:
                 self.move(geo.right() - self.W - 18, geo.bottom() - self.H - 18)
-        except Exception: # noqa: BLE001
+        except Exception:  # noqa: BLE001
             pass
 
     def reset_position(self) -> None:
-        """回到右下角（位置记忆清掉）——留给「找不到挂件了」的救援路径。"""
+        """回到右下角（位置记忆清掉）—— 留给「找不到挂件了」的救援路径。"""
         QSettings(*_SET).setValue("whale_pos", "")
         self._move_default()
+
+
+# 端口来源标记（file / config / default / fallback）—— 只为排查可观测，不参与逻辑
+_ADDR_SRC = ""
+
+
+def _server_unreachable(port: int, timeout: float = 1.2) -> str:
+    """控制台端口探活：**能连上就返回空串**，连不上返回一句人话原因。
+
+    为什么需要：挂件是 WebView2 加载的宿主页，页里 `<script src=.../widget.js>`
+    指向 `http://127.0.0.1:<port>`。这个端口由 agent 侧控制台提供 ——
+    **agent 没起来时它没人监听**，而 `NavigateToString` 依然成功返回，
+    于是页面因脚本加载失败而空白，用户眼里就是「一个黑块」。
+
+    探活放在导航之前，作用只有一个：**把"没内容可显示"和"显示失败"分开说**，
+    让降级卡能给出可操作的话（"请先启动控制台"），而不是让用户对着黑块猜。
+    """
+    import socket  # noqa: PLC0415
+
+    try:
+        s = socket.socket()
+        s.settimeout(timeout)
+        try:
+            if s.connect_ex(("127.0.0.1", int(port))) != 0:
+                return "控制台端口 %d 未在监听（请先从主界面打开一次控制台）" % int(port)
+        finally:
+            s.close()
+    except Exception as e:  # noqa: BLE001 — 探活本身失败也当"不可用"，但不影响主界面
+        return "控制台端口 %d 探活失败：%s" % (int(port), e)
+    return ""
+
+
+def _server_addr() -> tuple[int, str]:
+    """控制台监听端口与访问口令 —— 挂件脚本用它们去请求 /dsh-whale/*。
+
+    ⛔ **不自己解析端口，复用 Qt 侧唯一权威实现 `addr.resolve_base_url()`**。
+    理由：端口的权威顺序（`logs/console.url` 活性检查 → 配置 → 默认）在本产品
+    已经被踩过三次坑（webui 端口被占会**静默顺延** 3210→3211…，手拼
+    `server.port` 拼出来的地址根本没人听；写成死链还会 401/404）。`addr.py`
+    就是这条口径的**唯一实现**，自带活性检查、死链回落、空 token 守卫
+    （`join_url` 还专门修过双 `?` 把 token 吞掉的 401 事故）。
+    挂件另起一套解析 = 迟早与主界面走不同的端口 ⇒ 又是「一片空白」。
+
+    `addr.resolve_base_url()` 返回 `(url, source)`，source ∈
+    `file` / `config` / `default`；这里把 url 拆成 (port, token) 给挂件用。
+    拿不到端口时兜底 3210（与 `addr.DEFAULT_BASE` 同值，文档化默认）。
+    """
+    global _ADDR_SRC
+    try:
+        import urllib.parse as _up  # noqa: PLC0415
+
+        from addr import resolve_base_url  # noqa: PLC0415
+
+        url, src = resolve_base_url()
+        _ADDR_SRC = str(src or "")
+        u = _up.urlparse(str(url or ""))
+        port = int(u.port or 3210)
+        token = str((_up.parse_qs(u.query).get("token") or [""])[0]).strip()
+        return port, token
+    except Exception:  # noqa: BLE001 — 解析层任何异常都不该让挂件起不来
+        _ADDR_SRC = "fallback(3210)"
+        return 3210, ""

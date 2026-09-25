@@ -50,8 +50,8 @@ from PySide6.QtWidgets import (
 import config_io
 import sec_meta
 from confirm import ConfirmDialog
-from stylekit_qt import Tokens, qfont, rgba, status_colors
-from widgets import Badge, Btn, Card, Field, Switch, desc, h2
+from stylekit_qt import SHAPE_CIRCLE, Tokens, pill, qfont, rgba, status_colors
+from widgets import Badge, Btn, Card, ElideLabel, Field, FlowBox, Switch, desc, h2
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[0]
@@ -106,21 +106,24 @@ def _plain_area(t: Tokens, text: str = "", placeholder: str = "", height: int = 
     e.setFixedHeight(height)
     e.setStyleSheet(
         f"QPlainTextEdit{{background:{_hex(rgba(t.q('tx'), 16))};"
-        f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:4px 8px;}}"
+        f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_field}px;padding:4px 8px;}}"
         f"QPlainTextEdit:focus{{border:1px solid {t.blue};}}"
     )
     return e
 
 
-def _btn_row(t: Tokens, pairs: list[tuple[str, str]], hooks: list | None = None) -> QHBoxLayout:
-    """按钮排。hooks 与 pairs 等长（None = 不接），可编辑面板按钮必须真接线。"""
-    r = QHBoxLayout()
+def _btn_row(t: Tokens, pairs: list[tuple[str, str]], hooks: list | None = None) -> FlowBox:
+    """按钮排（自动换行）。hooks 与 pairs 等长（None = 不接），可编辑面板按钮必须真接线。
+
+    返回 FlowBox 而非 QHBoxLayout：一行放不下就折行，窄窗下不会把按钮压到互相重叠
+    （见 widgets.FlowBox 注解）。调用处写 `xxx.addWidget(_btn_row(...))`。
+    """
+    r = FlowBox(t, spacing=6)
     for i, (label, role) in enumerate(pairs):
         b = Btn(label, t, role)
         if hooks and hooks[i] is not None:
             b.clicked.connect(hooks[i])
-        r.addWidget(b)
-    r.addStretch(1)
+        r.add(b)
     return r
 
 
@@ -135,7 +138,14 @@ def _open_dir(p: Path) -> None:
 # ---------------------------------------------------------------- 概览（GET /api/status 真数据 + 8s 刷新）
 
 
-def _stat_cell(t: Tokens, val: str, label: str) -> QWidget:
+def _stat_cell(t: Tokens, val: str, label: str) -> tuple[QWidget, QLabel, QLabel]:
+    """统计格（大数字 + 下方小字）。返回 (格子, 大数字标签, 小字标签)。
+
+    ⚠️ 小字标签也要交回：旧版只交回 `findChildren(QLabel)[0]`（大数字），
+    那些以状态词命名的小字（如 uptime 格曾写死 "读取中"）就再没人改得动 ——
+    大数字已经刷成「2465 秒」，下面小字永远停着「读取中」，正是用户截图上
+    「大文字下面的小文字老是显示检测中」的那一类。
+    """
     w = QWidget()
     w.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
     w.setStyleSheet("background:transparent;")
@@ -151,7 +161,7 @@ def _stat_cell(t: Tokens, val: str, label: str) -> QWidget:
     s.setStyleSheet(f"color:{t.tx3};background:transparent;")
     v.addWidget(b)
     v.addWidget(s)
-    return w
+    return w, b, s
 
 
 def overview_panel(t: Tokens) -> QWidget:
@@ -163,13 +173,16 @@ def overview_panel(t: Tokens) -> QWidget:
     grid.setSpacing(8)
     keys = [
         ("run", "运行状态"), ("listen", "监听目标（群+私聊）"), ("model", "当前模型"), ("paused", "暂停开关"),
-        ("wechat", "微信连接"), ("uptime", "读取中"), ("g1", "—"), ("g2", "—"),
-        ("g3", "—"), ("g4", "—"), ("g5", "—"),
+        ("wechat", "微信连接"), ("uptime", "已运行时长"), ("g1", "群 1"), ("g2", "群 2"),
+        ("g3", "群 3"), ("g4", "群 4"), ("g5", "群 5"),
     ]
     cells: dict[str, QLabel] = {}
+    caps: dict[str, QLabel] = {}
+    seen: dict = {"ok": False} # 是否至少成功读过一次 /api/status（区分「首次读取中」与「事后读不到」）
     for i, (k, lb) in enumerate(keys):
-        cell = _stat_cell(t, "—", lb)
-        cells[k] = cell.findChildren(QLabel)[0]
+        cell, big, cap = _stat_cell(t, "—", lb)
+        cells[k] = big
+        caps[k] = cap
         grid.addWidget(cell, i // 4, i % 4)
     card.body.addLayout(grid)
     lay.addWidget(card)
@@ -186,7 +199,7 @@ def overview_panel(t: Tokens) -> QWidget:
     gtable.setFixedHeight(200)
     gtable.setStyleSheet(
         f"QTableWidget{{background:transparent;color:{t.tx};border:1px solid {t.bd};"
-        f"border-radius:{t.radius_btn}px;gridline-color:{t.bd};}}"
+        f"border-radius:{t.radius_field}px;gridline-color:{t.bd};}}"
         f"QHeaderView::section{{background:transparent;color:{t.tx2};"
         f"border:none;border-bottom:1px solid {t.bd};padding:4px;}}")
     card_g.body.addWidget(gtable)
@@ -253,7 +266,7 @@ def overview_panel(t: Tokens) -> QWidget:
     fc_result.setWordWrap(True)
     fc_result.setStyleSheet(
         f"color:{t.tx};background:{_hex(rgba(t.q('tx'), 8))};"
-        f"border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:10px 12px;")
+        f"border:1px solid {t.bd};border-radius:{t.radius_tile}px;padding:10px 12px;")
     card_f.body.addWidget(fc_result)
     lay.addWidget(card_f)
 
@@ -284,23 +297,40 @@ def overview_panel(t: Tokens) -> QWidget:
     def _fc_load() -> None:
         import threading # noqa: PLC0415 — overview_panel 内自用（check_panel 的函数级 import 不跨函数）
 
-        box: dict = {"done": False, "r": None}
+        box: dict = {"done": False, "r": None, "tries": 0}
 
         def _work() -> None:
             from agent_bridge import post_json # noqa: PLC0415
 
-            box["r"] = post_json("/api/prices", {}, timeout=12.0)
+            try:
+                box["r"] = post_json("/api/prices", {}, timeout=12.0)
+            except Exception as e: # noqa: BLE001 — 网络异常要落到 __err，不能让线程静默死掉
+                box["r"] = {"__err": str(e)}
             box["done"] = True
 
         threading.Thread(target=_work, daemon=True, name="ov-prices").start()
 
         def _apply() -> None:
+            # 存活判 + 自链上限：同 check 页 vf_state 的两条病 —— 页面重建后本闭包
+            # 仍被定时器引用，无上限重排 + setText 打在已析构控件上。
+            if not _qt_alive(fc_vendor):
+                return
             if not box["done"]:
+                box["tries"] += 1
+                if box["tries"] > 45: # 45 × 300ms ≈ 13.5s，够一次 12s 超时
+                    # 超时也要**把下拉里的「加载中…」换掉**：否则下拉一直显示
+                    # 「加载中…」，看着像还在请求，其实是永远等不到。
+                    fc_vendor.clear()
+                    fc_vendor.addItem("价目读不到（后台超时）", "")
+                    fc_note.setText("价目加载失败（后台超时没返回，可稍后重试）")
+                    return
                 QTimer.singleShot(300, _apply)
                 return
             P = box.get("r")
             if not P or P.get("__err"):
-                fc_note.setText("价目加载失败（请重启机器人在控制台重试）")
+                (fc_vendor.clear(), fc_vendor.addItem("价目读不到（后台没连上）", ""))
+                fc_note.setText("价目加载失败（" + str((P or {}).get("__err") or "后台没返回")
+                                + "），可稍后重试")
                 return
             fc_box["prices"] = P
             fc_vendor.blockSignals(True)
@@ -360,12 +390,23 @@ def overview_panel(t: Tokens) -> QWidget:
     b_calc.clicked.connect(_fc_calc)
 
     def _refresh() -> None:
+        # 首帧（还没拿到过任何数据）才写「读取中」；只要拿到过一次，后续读失败
+        # 一律写「读不到」——不然 8 秒轮询遇到一次网络抖动，整片格子会从
+        # 「运行中/2465 秒」倒退回「读取中」，看起来就是「明明有结果还显示检测中」。
+        if not _qt_alive(cells["run"]):
+            return
         st = config_io.get_json("/api/status") or {}
         if not st:
-            for lb in cells.values():
-                lb.setText("读取中")
-            badge.set("idle", "读取中")
+            if seen["ok"]:
+                for lb in cells.values():
+                    lb.setText("读不到")
+                badge.set("idle", "读不到")
+            else:
+                for lb in cells.values():
+                    lb.setText("读取中")
+                badge.set("idle", "读取中")
             return
+        seen["ok"] = True
         paused = bool(st.get("paused"))
         wx_on = bool(st.get("wechat_connected"))
         lis = st.get("listen") or {}
@@ -383,6 +424,19 @@ def overview_panel(t: Tokens) -> QWidget:
         cells["wechat"].setText("已连接" if wx_on else "没连上")
         up = st.get("uptime_s") or st.get("uptime")
         cells["uptime"].setText(f"{round(up)} 秒" if isinstance(up, (int, float)) else "—")
+        # 「群 N」格：原来 5 个格子写死 "—"、全文件无人取值 ⇒ 从上线起就是 5 块死板。
+        # 真值在 /api/status.groups（本页下面的明细表用的是同一份）——这里把目标群
+        # 逐个填进格子，不足 5 个的格子写"—"，多于 5 个的在第 5 格报总数。
+        gs0 = st.get("groups") or []
+        tgt = [str(g.get("name") or g.get("wxid") or "")
+               for g in gs0 if isinstance(g, dict) and g.get("target")]
+        for i in range(5):
+            k = "g%d" % (i + 1)
+            if i < 4:
+                cells[k].setText(tgt[i] if i < len(tgt) else "—")
+            else: # 第 5 格：还有更多就写「等 N 个」，否则填第 5 个/空
+                cells[k].setText(("等 %d 个" % len(tgt)) if len(tgt) > 5
+                                 else (tgt[4] if len(tgt) > 4 else "—"))
         badge.set("warn" if (paused or not wx_on) else "ok",
                   "已暂停" if paused else ("运行中" if wx_on else "微信没连上"))
         # 监听群明细（web group-table 同款：白名单群 + 监听/忽略 pill）
@@ -543,6 +597,7 @@ def overview_panel(t: Tokens) -> QWidget:
             w = it.widget()
             if w is not None:
                 w.deleteLater()
+                w.setParent(None) # 立刻脱离父子树（见上）
         y, m = cal_state["ym"] // 100, cal_state["ym"] % 100
         b_calym.setText("%d年%d月" % (y, m))
         import calendar as _cal # noqa: PLC0415
@@ -782,7 +837,7 @@ def overview_panel(t: Tokens) -> QWidget:
         _open_bill_dlg(bills)
 
     hooks = [lambda: _refresh(), _test_api, _export, _import, _clear_cost_sel, _clear_cost]
-    lay.addLayout(_btn_row(t, [("立即刷新", "primary"), ("测试 API 连通", "ghost"),
+    lay.addWidget(_btn_row(t, [("立即刷新", "primary"), ("测试 API 连通", "ghost"),
                                ("导出记录", "ghost"), ("迁移数据", "ghost"),
                                ("勾选删", "ghost"), ("一键删", "danger")], hooks))
     lay.addStretch(1)
@@ -835,17 +890,16 @@ def check_panel(t: Tokens) -> QWidget:
     card.body.addWidget(tip)
     lay.addWidget(card)
 
-    row1 = QHBoxLayout()
+    row1 = FlowBox(t, spacing=6)
     b_code = Btn("代码检测", t, "primary")
     b_deps = Btn("代码检测＋依赖核对", t, "ghost")
     b_deps.setToolTip("额外跑依赖版本详细核对（55 项，稍慢）")
     b_tip2 = Btn("查看进度条", t, "ghost")
     b_tip2.setToolTip("点击切换到概览查看常驻状态条（web codeCheckTip2 同款语义）")
-    row1.addWidget(b_code)
-    row1.addWidget(b_deps)
-    row1.addWidget(b_tip2)
-    row1.addStretch(1)
-    lay.addLayout(row1)
+    row1.add(b_code)
+    row1.add(b_deps)
+    row1.add(b_tip2)
+    lay.addWidget(row1)
 
     def _goto_overview() -> None:
         # web :1342 = sec-overview.scrollIntoView；原生壳是分页栈，等效 = 切到概览页
@@ -882,12 +936,11 @@ def check_panel(t: Tokens) -> QWidget:
     vf_area = _plain_area(t, "", placeholder="点上面的症状按钮，报告显示在这里（每个 1~3 秒）", height=190)
     vf_area.setReadOnly(True)
     card_vf.body.addWidget(vf_area)
-    vf_row = QHBoxLayout()
+    vf_row = FlowBox(t, spacing=6)
     b_vfcopy = Btn("复制报告", t, "ghost")
     b_vfcopy.setEnabled(False)
-    vf_row.addWidget(b_vfcopy)
-    vf_row.addStretch(1)
-    card_vf.body.addLayout(vf_row)
+    vf_row.add(b_vfcopy)
+    card_vf.body.addWidget(vf_row)
     lay.addWidget(card_vf)
 
     vf_box: dict = {"report": ""}
@@ -902,12 +955,21 @@ def check_panel(t: Tokens) -> QWidget:
         threading.Thread(target=_work, daemon=True, name="c8-verifiers").start()
 
         def _apply() -> None:
+            # 存活判 + 自链上限：页面重建/关页后本闭包仍被定时器引用，
+            # 旧写法会一直重排（无上限）并在 setText 上抛 RuntimeError
+            # （C++ 对象已删），连同「检验器清单读取中…」占位一起留在页上。
+            if not _qt_alive(vf_state):
+                return
             if not box["done"]:
+                box["tries"] = box.get("tries", 0) + 1
+                if box["tries"] > 40: # 40 × 300ms ≈ 12s，够一次 10s 超时
+                    vf_state.setText("检验器清单读不到（超时）")
+                    return
                 QTimer.singleShot(300, _apply)
                 return
             lst = (box.get("r") or {}).get("verifiers") or []
             if not lst:
-                vf_state.setText("检验器清单读不到")
+                vf_state.setText("检验器清单读不到（后台没返回清单）")
                 return
             vf_state.setText("")
             for i, v in enumerate(lst):
@@ -955,7 +1017,7 @@ def check_panel(t: Tokens) -> QWidget:
                 bg, bd, fg = status_colors(t, lv)
                 btn.setStyleSheet(
                     f"QPushButton{{background:{_hex(bg)};color:{_hex(fg)};"
-                    f"border:1px solid {_hex(bd)};border-radius:{t.radius_btn}px;padding:4px 12px;}}")
+                    f"border:1px solid {_hex(bd)};border-radius:{pill(28)}px;padding:4px 12px;}}")
 
         QTimer.singleShot(300, _apply)
 
@@ -970,14 +1032,13 @@ def check_panel(t: Tokens) -> QWidget:
     b_vfcopy.clicked.connect(_vf_copy)
     _vf_load()
 
-    row2 = QHBoxLayout()
+    row2 = FlowBox(t, spacing=6)
     b_self = Btn("点击测试", t, "primary")
     b_stop = Btn("停止检测", t, "ghost")
     b_stop.setEnabled(False)
-    row2.addWidget(b_self)
-    row2.addWidget(b_stop)
-    row2.addStretch(1)
-    lay.addLayout(row2)
+    row2.add(b_self)
+    row2.add(b_stop)
+    lay.addWidget(row2)
 
     # ── 代码检测（启动 + 轮询进度；两个触发钮共用，deps 只改启动参数）──
     code_box: dict = {"running": False}
@@ -1183,7 +1244,16 @@ def check_panel(t: Tokens) -> QWidget:
         threading.Thread(target=_work, daemon=True, name="c8-pokegroups").start()
 
         def _apply() -> None:
+            # 存活判 + 自链上限：同 _vf_load 的两条病 —— 页面重建后闭包仍被定时器
+            # 引用，无上限重排 + setText 打在已析构的 C++ 对象上（RuntimeError 被
+            # 外层 try 吞掉），下拉永远停在空、提示行永远回不到结论。
+            if not _qt_alive(pk_note):
+                return
             if not box["done"]:
+                box["tries"] = box.get("tries", 0) + 1
+                if box["tries"] > 40: # 40 × 300ms ≈ 12s，够一次 10s 超时
+                    pk_note.setText("读不到群列表（后台超时没返回），可稍后重试")
+                    return
                 QTimer.singleShot(300, _apply)
                 return
             r = box.get("r")
@@ -1198,6 +1268,8 @@ def check_panel(t: Tokens) -> QWidget:
                 else:
                     pk_note.setText("没有可拍的群（先启动机器人并检测群）")
                 return
+            # 读到群：清掉占位（否则「正在读取」会一直挂着），下拉留空提示交给占位首项
+            pk_note.setText("")
             for g in groups:
                 if isinstance(g, dict) and g.get("wxid"):
                     pk_group.addItem(str(g.get("name") or g.get("wxid")), str(g.get("wxid")))
@@ -1301,15 +1373,14 @@ def check_panel(t: Tokens) -> QWidget:
         card2.body.addWidget(roww)
 
     # web :1396 同款：重置钮 + 已完成计数（ckReset/ckCount）放清单下方
-    ck_foot = QHBoxLayout()
+    ck_foot = FlowBox(t, spacing=6)
     b_ckreset = Btn("重置勾选", t, "ghost")
     ck_count = QLabel("已完成 0 / %d" % len(items))
     ck_count.setFont(qfont(t, 12))
     ck_count.setStyleSheet(f"color:{t.tx3};background:transparent;")
-    ck_foot.addWidget(b_ckreset)
-    ck_foot.addWidget(ck_count)
-    ck_foot.addStretch(1)
-    card2.body.addLayout(ck_foot)
+    ck_foot.add(b_ckreset)
+    ck_foot.add(ck_count)
+    card2.body.addWidget(ck_foot)
 
     def _ck_recount() -> None:
         n = sum(1 for c in ck_boxes if c.isChecked())
@@ -1445,7 +1516,7 @@ def sessions_panel(t: Tokens) -> QWidget:
     # ── 运行明细卡（#sessList）──
     scard = Card(t)
     scard.body.addWidget(h2(t, "运行明细（/api/sessions）"))
-    btn_row = QHBoxLayout()
+    btn_row = FlowBox(t, spacing=6)
     b_refresh = Btn("刷新", t, "primary")
     b_refresh.setObjectName("sessRefresh")
     b_sel = Btn("删除选中", t, "danger")
@@ -1456,12 +1527,11 @@ def sessions_panel(t: Tokens) -> QWidget:
     b_undo.setEnabled(False)
     b_clear = Btn("一键清全部", t, "danger")
     b_clear.setObjectName("sessClear")
-    btn_row.addWidget(b_refresh)
-    btn_row.addWidget(b_sel)
-    btn_row.addWidget(b_undo)
-    btn_row.addWidget(b_clear)
-    btn_row.addStretch(1)
-    scard.body.addLayout(btn_row)
+    btn_row.add(b_refresh)
+    btn_row.add(b_sel)
+    btn_row.add(b_undo)
+    btn_row.add(b_clear)
+    scard.body.addWidget(btn_row)
     sess_list = _bordered_list(t, "sessList", 240)
     scard.body.addWidget(sess_list)
     snote = desc(t, "")
@@ -1807,7 +1877,7 @@ def log_panel(t: Tokens) -> QWidget:
     # P0-A②：原「清空日志」按钮移除 —— web「运行日志」区根本没有清空 API
     # （日志由后端按大小滚动），残壳按钮点了永远没反应；真要看历史用「打开日志目录」。
     hooks = [_refresh, lambda: _open_dir(ROOT / "logs")]
-    lay.addLayout(_btn_row(t, [("刷新", "primary"), ("打开日志目录", "ghost")], hooks))
+    lay.addWidget(_btn_row(t, [("刷新", "primary"), ("打开日志目录", "ghost")], hooks))
     # web autolog :7420 同款：勾选开启时每 4s 重读尾部并贴底（关掉回到手动）
     def _tick() -> None:
         if autolog.isChecked():
@@ -1878,7 +1948,7 @@ def json_panel(t: Tokens, on_save=None) -> QWidget:
         note.setText("已在浏览器打开后台当前生效的配置（/api/config）· " + time.strftime("%H:%M:%S"))
 
     hooks = [_save, _load, lambda: _open_dir(cfg_path.parent), _view_raw]
-    lay.addLayout(_btn_row(t, [("保存全部设置", "primary"), ("重新读取", "ghost"),
+    lay.addWidget(_btn_row(t, [("保存全部设置", "primary"), ("重新读取", "ghost"),
                                ("打开配置目录", "ghost"), ("新窗口查看配置", "ghost")], hooks))
     lay.addWidget(desc(t, "保存后需重启才能完全生效的部分：模型/人设/白名单等；界面与光标类即时生效。"))
     lay.addStretch(1)
@@ -2208,7 +2278,7 @@ def _bordered_list(t: Tokens, name: str, min_h: int = 200) -> QListWidget:
     lw.setResizeMode(QListView.ResizeMode.Adjust)
     lw.setStyleSheet(
         f"QListWidget{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
-        f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:4px;}}"
+        f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_field}px;padding:4px;}}"
         f"QListWidget::item{{border-bottom:1px solid {t.bd};padding:2px 0;}}"
     )
     return lw
@@ -2518,26 +2588,25 @@ def persona_panel(t: Tokens) -> QWidget:
     pcard.body.addWidget(h2(t, "人设库（/api/personas）"))
 
     # 按钮排：排序 / 恢复默认 / 恢复上个人设（对齐 web 人设选单 btns :1311-1316）
-    btn_row = QHBoxLayout()
+    btn_row = FlowBox(t, spacing=6)
     b_sort = Btn("↓ 按评估分数排序", t, "ghost")
     b_sort.setObjectName("pSort")
     b_sort_off = Btn("恢复默认顺序", t, "ghost")
     b_sort_off.setObjectName("pSortOff")
     b_restore = Btn("恢复上个人设", t, "ghost")
     b_restore.setObjectName("pRestorePrev")
-    btn_row.addWidget(b_sort)
-    btn_row.addWidget(b_sort_off)
-    btn_row.addWidget(b_restore)
-    btn_row.addStretch(1)
-    pcard.body.addLayout(btn_row)
+    btn_row.add(b_sort)
+    btn_row.add(b_sort_off)
+    btn_row.add(b_restore)
+    pcard.body.addWidget(btn_row)
 
     # 分区 chips（web #personaCats :1308，allCats/renderChips :6199-6231 同款）——
     # 人设按分区过滤（内置默认「网络热门」，自定义默认「自定义」）；
     # 分区管理（新建/删除，/api/persona/cats*）列。
-    cat_row_w = QWidget()
-    cat_row = QHBoxLayout(cat_row_w)
-    cat_row.setContentsMargins(0, 0, 0, 0)
-    cat_row.setSpacing(6)
+    # ⛔ 用 FlowBox 而非 QHBoxLayout：分区多了以后一行放不下时，QHBoxLayout 会把
+    #   每个 chip 压到最小宽 —— 几个 chip 直接叠在一起（实测「＋ 新建/添加」压在
+    #   「女神异闻录」上面）。FlowBox 一行放不下就折行，宽度自适应必须落到这儿。
+    cat_row_w = FlowBox(t, spacing=6)
     pcard.body.addWidget(cat_row_w)
 
     # 搜索框（personaSearch :1317）
@@ -2635,11 +2704,7 @@ def persona_panel(t: Tokens) -> QWidget:
         """分区 chips（web renderChips :6101 同款）：「全部」+ 各分区，点击过滤。
         用户分区（非内置、非「自定义」）chip 右侧带红 × 删除（web :6111-6130）；
         行尾「＋ 新建/添加」开新建分区/添加角色弹窗（web pCatAdd :1252）。"""
-        while cat_row.count():
-            it = cat_row.takeAt(0)
-            wdg = it.widget()
-            if wdg is not None:
-                wdg.deleteLater()
+        cat_row_w.clear()
         cats: list = []
         for p in state["items"]:
             c = p.get("cat") or ("自定义" if str(p.get("key") or "").startswith("custom") else "网络热门")
@@ -2650,7 +2715,15 @@ def persona_panel(t: Tokens) -> QWidget:
                 cats.append(c)
         built = state.get("built") or []
         for name in ["全部"] + cats:
-            chip = Btn(name, t, "ghost")
+            # ⛔ 分区名可能是用户自建的长名字（或模型生成的长分区）。给 chip 一个
+            #   上限宽 + 尾部省略号，超长分区名才不会一颗吃掉半行、把别的 chip
+            #   挤到换行之外（tooltip 存全文，鼠标一停能看到完整名）。
+            label = name if len(name) <= 14 else ""
+            chip = Btn(label, t, "ghost")
+            if not label:
+                chip = Btn(name[:12] + "…", t, "ghost")
+            chip.setToolTip(name)
+            chip.setMaximumWidth(180)
             cur = state.get("cat", "")
             active = (name == "全部" and not cur) or (name == cur and name != "全部")
             chip.setStyleSheet("border-radius:14px;padding:2px 12px;"
@@ -2659,6 +2732,8 @@ def persona_panel(t: Tokens) -> QWidget:
             # 与 web 同判据：非内置且名字不含「自定义」的分区才给 ×
             if name != "全部" and name not in built and "自定义" not in name:
                 cell = QWidget()
+                cell.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+                cell.setStyleSheet("background:transparent;")
                 cell_l = QHBoxLayout(cell)
                 cell_l.setContentsMargins(0, 0, 0, 0)
                 cell_l.setSpacing(0)
@@ -2670,15 +2745,14 @@ def persona_panel(t: Tokens) -> QWidget:
                 x.setToolTip(f"删除分区「{name}」（分区下的自定义卡会移回 自定义）")
                 x.clicked.connect(lambda _=False, n=name: _del_cat(n))
                 cell_l.addWidget(x)
-                cat_row.addWidget(cell)
+                cat_row_w.add(cell)
             else:
-                cat_row.addWidget(chip)
+                cat_row_w.add(chip)
         b_add = Btn("＋ 新建/添加", t, "ghost")
         b_add.setObjectName("pCatAdd")
         b_add.setToolTip("新建分区，或添加角色到分区")
         b_add.clicked.connect(_open_add_dialog)
-        cat_row.addWidget(b_add)
-        cat_row.addStretch(1)
+        cat_row_w.add(b_add)
 
     def _pick_cat(n: str) -> None:
         state["cat"] = "" if n == "全部" else n
@@ -2804,7 +2878,7 @@ def persona_panel(t: Tokens) -> QWidget:
         text_in.setFont(qfont(t, t.body_size))
         text_in.setStyleSheet(
             f"QPlainTextEdit{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
-            f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:4px 10px;}}")
+            f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_field}px;padding:4px 10px;}}")
         for w in (name_lb, name_in, text_lb, text_in):
             w.setVisible(False)
             box.addWidget(w)
@@ -3080,7 +3154,8 @@ def persona_panel(t: Tokens) -> QWidget:
     # ── 评分补足块（pScoreLLM / pEnrich / pWebFetch 真接后端，:1326-1336）──
     rcard = Card(t)
     rcard.body.addWidget(h2(t, "评分补足"))
-    rrow = QHBoxLayout()
+    # 一行放不下就折行；「标签+控件」成组（_pair）保证折行时标签不会和后缀控件分家。
+    rrow = FlowBox(t, spacing=8)
     b_score = Btn("模型评分", t, "ghost")
     b_score.setObjectName("pScoreLLM")
     b_enrich = Btn("模型补足", t, "ghost")
@@ -3092,15 +3167,27 @@ def persona_panel(t: Tokens) -> QWidget:
     rounds.setObjectName("pRounds")
     use_llm = Switch(t, True)
     use_llm.setObjectName("pUseLlm")
-    rrow.addWidget(b_score)
-    rrow.addWidget(b_enrich)
-    rrow.addWidget(b_wf)
-    rrow.addWidget(QLabel("补足轮数"))
-    rrow.addWidget(rounds)
-    rrow.addWidget(use_llm)
-    rrow.addWidget(QLabel("允许模型处理"))
-    rrow.addStretch(1)
-    rcard.body.addLayout(rrow)
+
+    def _pair(lb_text: str, ctrl) -> QWidget: # noqa: ANN001
+        w = QWidget()
+        w.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        w.setStyleSheet("background:transparent;")
+        h = QHBoxLayout(w)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(6)
+        lb = QLabel(lb_text)
+        lb.setFont(qfont(t, t.body_size - 0.5))
+        lb.setStyleSheet(f"color:{t.tx2};background:transparent;")
+        h.addWidget(lb)
+        h.addWidget(ctrl)
+        return w
+
+    rrow.add(b_score)
+    rrow.add(b_enrich)
+    rrow.add(b_wf)
+    rrow.add(_pair("补足轮数", rounds))
+    rrow.add(_pair("允许模型处理", use_llm))
+    rcard.body.addWidget(rrow)
     rst = QLabel("")
     rst.setObjectName("pScoreRst")
     rst.setFont(qfont(t, 12))
@@ -3269,13 +3356,12 @@ def persona_panel(t: Tokens) -> QWidget:
         b_cancel.clicked.connect(dlg.reject)
         dlg.exec()
 
-    hint_row = QHBoxLayout()
+    hint_row = FlowBox(t, spacing=6)
     b_hint = Btn("根据角色卡推荐行为档", t, "ghost")
     b_hint.setObjectName("roleHintBtn")
     b_hint.clicked.connect(_role_hint)
-    hint_row.addWidget(b_hint)
-    hint_row.addStretch(1)
-    ccard.body.addLayout(hint_row)
+    hint_row.add(b_hint)
+    ccard.body.addWidget(hint_row)
 
     custom_rules = _area(t, _as_text(config_io.read_path("persona.custom_rules")),
                          rows=2, placeholder="如：回复永远不超过 5 个字")
@@ -3292,13 +3378,12 @@ def persona_panel(t: Tokens) -> QWidget:
     # ⚠️ pp_note 别用 pnote（:1987 人设列表回显行已占用；重名会把那批闭包的回显劫到这来）。
     pp_note = desc(t, "")
     ccard.body.addWidget(pp_note)
-    p_row = QHBoxLayout()
+    p_row = FlowBox(t, spacing=6)
     b_preview = Btn("预览当前系统提示词", t, "ghost")
     b_pclear = Btn("清空补充", t, "ghost")
-    p_row.addWidget(b_preview)
-    p_row.addWidget(b_pclear)
-    p_row.addStretch(1)
-    ccard.body.addLayout(p_row)
+    p_row.add(b_preview)
+    p_row.add(b_pclear)
+    ccard.body.addWidget(p_row)
 
     def _prompt_preview() -> None:
         pp_note.setText("预览生成中…")
@@ -3429,7 +3514,6 @@ def _persona_card(t: Tokens, p: dict, handlers: dict) -> QWidget:
     from icons import INNER, svg_pixmap # noqa: PLC0415
 
     fav = Btn("", t, role="ghost")
-    fav.setFixedWidth(34)
     fav.setIcon(QIcon(svg_pixmap(
         INNER["star-filled"] if p.get("fav") else INNER["star"],
         t.warn if p.get("fav") else t.tx3, 14)))
@@ -3440,11 +3524,10 @@ def _persona_card(t: Tokens, p: dict, handlers: dict) -> QWidget:
     #   列表视口再窄「使用/删」也不会被裁出视口（不用拉宽窗口）。
     from PySide6.QtGui import QFontMetrics # noqa: PLC0415
 
-    name = QLabel(p.get("name") or "(未命名)")
+    name = ElideLabel(p.get("name") or "(未命名)")
+    name.setObjectName("personaName")
     name.setFont(qfont(t, 13, 600))
     name.setStyleSheet(f"color:{t.tx};background:transparent;")
-    name.setText(QFontMetrics(name.font()).elidedText(
-        name.text(), Qt.ElideRight, 110))
     name.setFixedWidth(122)
     sc = p.get("__score")
     sc_lb = QLabel(f"模型 {sc:.2f}" if isinstance(sc, (int, float)) else "")
@@ -3452,35 +3535,48 @@ def _persona_card(t: Tokens, p: dict, handlers: dict) -> QWidget:
     sc_lb.setStyleSheet(f"color:{t.warn};background:transparent;")
     sc_lb.setFixedWidth(78)
     use = Btn("使用", t, "ghost")
-    use.setFixedWidth(54)
+    # ⛔ 不许再写 `setFixedWidth(数字)`：中文两字按钮按字号算需 ~62px（文字 28 +
+    #    左右内边距 34），写死 54 会把字压到溢出、与邻居叠成一团（用户实报
+    #    「使用/删除/移到其他分区/评估 的字全混在一起，挤在小按钮里看不清」）。
+    #    宽度交给 sizeHint（= 文字宽 + 内边距），由 Btn 自己保证下限。
     use.clicked.connect(lambda _=False, _p=p: handlers["use"](_p))
     # 打星=为模型评估打分（web ⋯ 菜单「为模型打星」:6191 的卡片直达版）
     rate = Btn("打星", t, "ghost")
-    rate.setFixedWidth(50)
     rate.setToolTip("让模型为这条人设打一次评估分")
     rate.clicked.connect(lambda _=False, _p=p: handlers["rate"](_p))
     delete = Btn("删", t, "ghost")
-    delete.setFixedWidth(40)
+    delete.setToolTip("删除这条人设")
     delete.clicked.connect(lambda _=False, _p=p: handlers["del"](_p))
     move = Btn("移", t, "ghost")
-    move.setFixedWidth(40)
     move.setToolTip("移到其他分区（可输入新分区名自动新建）")
     move.clicked.connect(lambda _=False, _p=p: handlers["move"](_p))
-    txt = QLabel((p.get("text") or "").replace("\n", " ")[:60])
+    # 单字钮（删/移）：**正圆**，与旁边两字的胶囊一眼可分——这是「一类按钮一种
+    # 形状」在卡片行内的落点。直径要放得下单个汉字：汉字宽 ≈ 字号，加内边距 ⇒ 42。
+    # 写 34 会把字压出圆外（同「使用/打星」被挤扁的根因，只是这次是我自己踩的）。
+    for _c in (delete, move):
+        _c.set_shape(SHAPE_CIRCLE)
+        _c.set_button_size(42, 42)
+    # 星标是纯图标钮：正圆，直径跟行高对齐
+    fav.set_shape(SHAPE_CIRCLE)
+    fav.set_button_size(34, 34)
+    txt = ElideLabel((p.get("text") or "").replace("\n", " ")[:120])
+    txt.setObjectName("personaSum")
     txt.setFont(qfont(t, 11.5))
     txt.setStyleSheet(f"color:{t.tx3};background:transparent;")
-    txt.setWordWrap(True)
-    # 摘要限宽 + 最小宽 0（窄窗时先牺牲摘要、保右侧按钮完整可见）。
-    # ⛔ sizePolicy=Ignored：wordWrap QLabel 的 sizeHint 是「整行不换行」的宽度
-    #   （60 字 ≈ 400px）——行总宽被它撑出视口 ⇒ 右侧按钮被切、要手动拉宽窗口
-    #   （用户截图实锤）。Ignored 让它的 sizeHint 不参与行宽计算，stretch 照常吃余量。
+    # 单行 + 右侧省略号 + tooltip 全文（见 ElideLabel 注解：此处若换行，
+    # 60 字折成 5 行 ⇒ 行高 190px，一条就吃掉整个 220px 列表 ⇒ 「列表下面全空」）。
     txt.setMaximumWidth(300)
     txt.setMinimumWidth(0)
-    txt.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+    txt.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+    txt.setFixedHeight(max(20, int(t.body_size * 1.5)))
     # 卡片本体：水平 Expanding ⇒ setItemWidget 时随条目矩形铺满（右侧顶格，
     # 不再按 sizeHint 居左留缝——用户实锤「不是右侧顶格」）。
+    # ⛔ 行高必须**钉死**：条目的 sizeHint 高度 = 本控件的 sizeHint，任何子控件
+    #   （多行 QLabel、带换行的 tooltip 文字等）把 sizeHint 抬高一截，就会让
+    #   单条吃掉整个列表可视高度 ⇒ 用户看到「列表里只有第一条，下面全空」。
+    _row_h = max(44, int(t.body_size * 2.6))
     w.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-    w.setMinimumHeight(44)
+    w.setFixedHeight(_row_h)
     h.setContentsMargins(6, 4, 6, 4)
     h.addWidget(fav)
     h.addWidget(name)
@@ -3593,16 +3689,15 @@ def memory_panel(t: Tokens) -> QWidget:
     mcard.body.addWidget(mnote)
 
     # 清除按钮排（memClearSel / memClearAll，web :1606-1610）
-    clr_row = QHBoxLayout()
+    clr_row = FlowBox(t, spacing=6)
     b_sel = Btn("清除勾选的印象", t, "danger")
     b_sel.setObjectName("memClearSel")
     b_sel.setEnabled(False)
     b_all = Btn("清除全部", t, "danger")
     b_all.setObjectName("memClearAll")
-    clr_row.addWidget(b_sel)
-    clr_row.addWidget(b_all)
-    clr_row.addStretch(1)
-    mcard.body.addLayout(clr_row)
+    clr_row.add(b_sel)
+    clr_row.add(b_all)
+    mcard.body.addWidget(clr_row)
     lay.addWidget(mcard)
 
     def _sync_sel_btn() -> None:
@@ -3729,12 +3824,21 @@ def memory_panel(t: Tokens) -> QWidget:
             mem_flow.addWidget(cb)
 
     def _clear_group_checks(hint: str = "") -> None:
-        """清空共享群勾选容器；给了 hint 就在原位放一条说明（读失败时用）。"""
+        """清空共享群勾选容器；给了 hint 就在原位放一条说明（读失败时用）。
+
+        ⚠️ 必须 `setParent(None)` + `deleteLater()` **两个都做**：只调 deleteLater
+        时，删除事件走 Qt 的 deferred-delete 队列，若此时事件循环还没转起来
+        （面板刚建、宿主还没 show/mainloop），这个事件会被搁置——控件仍挂在
+        `memGroupsBox` 下、仍然可见，于是「加载中…」占位框在勾选框上方一直留着
+        （用户第 4 项的同类症状：占位不消失）。setParent(None) 立刻把它摘出
+        父子树（同时脱离布局与显示），deleteLater 只是让 C++ 侧回收内存。
+        """
         while mem_flow.count():
             item = mem_flow.takeAt(0)
             w = item.widget()
             if w is not None:
-                w.deleteLater()
+                w.setParent(None) # 立刻脱离父子树 → 不再可见、不再占位
+                w.deleteLater()   # C++ 侧延迟回收
         if hint:
             mem_flow.addWidget(desc(t, hint))
 
@@ -4142,6 +4246,7 @@ def _wechat_emoji_appendix(t: Tokens, page: QWidget) -> None:
             wdg = it.widget()
             if wdg is not None:
                 wdg.deleteLater()
+                wdg.setParent(None) # 立刻脱离父子树（见上）
         import urllib.parse as _up # noqa: PLC0415
         import urllib.request as _uq # noqa: PLC0415
 
@@ -4211,11 +4316,16 @@ def _wechat_emoji_appendix(t: Tokens, page: QWidget) -> None:
 
         import threading as _th # noqa: PLC0415
 
-        bx: dict = {"done": False, "rsp": None, "err": None}
+        bx: dict = {"done": False, "rsp": None, "err": None, "tries": 0}
         _th.Thread(target=_work, daemon=True, args=(bx,), name="emoji-del").start()
 
         def _apply() -> None:
+            if not _qt_alive(note): # 同上：页面销毁后本闭包仍会被定时器叫醒
+                return
             if not bx["done"]:
+                bx["tries"] += 1
+                if bx["tries"] > 25:
+                    return
                 QTimer.singleShot(150, _apply)
                 return
             note.setText(("已删除 " + name) if bx["err"] is None else ("删除失败：" + bx["err"]))
@@ -4233,11 +4343,19 @@ def _wechat_emoji_appendix(t: Tokens, page: QWidget) -> None:
 
         import threading as _th # noqa: PLC0415
 
-        bx: dict = {"done": False, "rsp": None, "err": None}
+        bx: dict = {"done": False, "rsp": None, "err": None, "tries": 0}
         _th.Thread(target=_work, daemon=True, args=(bx,), name="emoji-load").start()
 
         def _apply() -> None:
+            # 存活判 + 自链上限：本页是**可重建**的（切页/刷新），闭包挂在定时器上，
+            # 页面销毁后 `_render()` 里的 `search.text()` 会打在已析构的 QLineEdit 上
+            # （RuntimeError: Internal C++ object already deleted）。
+            if not _qt_alive(search):
+                return
             if not bx["done"]:
+                bx["tries"] += 1
+                if bx["tries"] > 25: # 25 × 150ms ≈ 3.8s，盖住 6s 超时的一半就够止损
+                    return
                 QTimer.singleShot(150, _apply)
                 return
             state["all"] = (bx["rsp"] or {}).get("emojis") or []
@@ -4353,19 +4471,29 @@ def _tools_utlist_appendix(t: Tokens, page: QWidget) -> None:
         _th.Thread(target=_work, daemon=True, name="ut-list").start()
 
         def _apply() -> None:
+            # 存活判 + 自链上限（同 check 页 vf_state）：本闭包挂在定时器上，
+            # 页面重建/关页后会继续重排并对已析构控件写文本 ⇒ 占位永不更新。
+            if not _qt_alive(v):
+                return
             if not box["done"]:
+                box["tries"] = box.get("tries", 0) + 1
+                if box["tries"] > 35: # 35 × 300ms ≈ 10.5s，够一次 8s 超时
+                    ut_stat.setText("清单现状读不到（后台超时）")
+                    return
                 QTimer.singleShot(300, _apply)
                 return
             while v.count(): # 重扫/导入后重载：先清掉上一轮的动态行
                 it = v.takeAt(0)
                 w = it.widget()
                 if w is not None:
+                    w.setParent(None) # 立刻脱离父子树（见 _clear_group_checks 注解）
                     w.deleteLater()
             # ── 可搜目录行（web :3950-3969 同款：文本 + 打开 + 移除）──
             while fs_v.count():
                 it = fs_v.takeAt(0)
                 w = it.widget()
                 if w is not None:
+                    w.setParent(None) # 立刻脱离父子树（见 _clear_group_checks 注解）
                     w.deleteLater()
             fs = box.get("fs") or {}
             ds = fs.get("dirs") or []
@@ -4589,6 +4717,7 @@ def _model_local_appendix(t: Tokens, page: QWidget) -> None:
             while lv.count():
                 it = lv.takeAt(0)
                 if it.widget():
+                    it.widget().setParent(None) # 立刻脱离父子树（只 deleteLater 时事件循环未转则被搁置，控件仍可见）
                     it.widget().deleteLater()
             for ep in (meta.get("all") or []):
                 if not isinstance(ep, dict):
@@ -4598,7 +4727,7 @@ def _model_local_appendix(t: Tokens, page: QWidget) -> None:
                 fr = QFrame()
                 fr.setStyleSheet(
                     f"QFrame{{background:{_hex(rgba(t.q('tx'), 8))};"
-                    f"border:1px solid {t.bd};border-radius:{t.radius_btn}px;}}")
+                    f"border:1px solid {t.bd};border-radius:{t.radius_tile}px;}}")
                 fv = QVBoxLayout(fr)
                 fv.setContentsMargins(10, 8, 10, 8)
                 fv.setSpacing(4)
@@ -4735,8 +4864,14 @@ def _sd_local_appendix(t: Tokens, page: QWidget) -> None:
     idle_timer = QTimer(card)
     idle_timer.setInterval(8000)
 
-    def _get(api: str, on_done, timeout: float = 8.0) -> None:
-        box: dict = {"done": False, "r": None}
+    def _get(api: str, on_done, timeout: float = 8.0, guard=None) -> None: # noqa: ANN001
+        """异步 GET → on_done(r)。
+
+        `guard` 是要写结果的控件（调用方给出）。页面重建/关页后本闭包仍挂在定时器上，
+        `on_done` 里对已析构的 C++ 对象 `setText` 会抛 RuntimeError —— 这里先探活，
+        已死就直接退出（不再回调）。不传 guard 时退回旧行为。
+        """
+        box: dict = {"done": False, "r": None, "tries": 0}
 
         def _work() -> None:
             box["r"] = config_io.get_json(api, timeout=timeout)
@@ -4745,15 +4880,21 @@ def _sd_local_appendix(t: Tokens, page: QWidget) -> None:
         _th.Thread(target=_work, daemon=True, name="sd-local-get").start()
 
         def _apply() -> None:
+            if guard is not None and not _qt_alive(guard):
+                return
             if not box["done"]:
+                box["tries"] += 1
+                if box["tries"] > 40: # 40 × 300ms ≈ 12s，够一次 8s 超时
+                    return
                 QTimer.singleShot(300, _apply)
                 return
             on_done(box.get("r"))
 
         QTimer.singleShot(300, _apply)
 
-    def _post(api: str, on_done, timeout: float = 30.0, body: dict | None = None) -> None:
-        box: dict = {"done": False, "r": None, "err": None}
+    def _post(api: str, on_done, timeout: float = 30.0, body: dict | None = None, # noqa: ANN001
+              guard=None) -> None:
+        box: dict = {"done": False, "r": None, "err": None, "tries": 0}
 
         def _work() -> None:
             try:
@@ -4766,7 +4907,12 @@ def _sd_local_appendix(t: Tokens, page: QWidget) -> None:
         _th.Thread(target=_work, daemon=True, name="sd-local-post").start()
 
         def _apply() -> None:
+            if guard is not None and not _qt_alive(guard):
+                return
             if not box["done"]:
+                box["tries"] += 1
+                if box["tries"] > 110: # 110 × 300ms ≈ 33s，盖住 30s 超时
+                    return
                 QTimer.singleShot(300, _apply)
                 return
             on_done(box.get("r"), box.get("err"))
@@ -4794,7 +4940,7 @@ def _sd_local_appendix(t: Tokens, page: QWidget) -> None:
             p.get("message") or "", _fmt_gb(done), _fmt_gb(total), pct, mbps_s, eta_s, tail))
 
     def tick() -> None:
-        _get("/api/image_gen/local/progress", lambda r: _tick_done((r or {}).get("progress")))
+        _get("/api/image_gen/local/progress", lambda r: _tick_done((r or {}).get("progress")), guard=st_lb)
 
     def _tick_done(p: dict | None) -> None:
         paint(p)
@@ -4827,7 +4973,7 @@ def _sd_local_appendix(t: Tokens, page: QWidget) -> None:
                        else "下载当前档（%s GB）" % (cur.get("gb") or "?"))
 
     def refresh() -> None:
-        _get("/api/image_gen/local", _refresh_done)
+        _get("/api/image_gen/local", _refresh_done, guard=st_lb)
 
     def _refresh_done(r) -> None:
         if r is None:
@@ -4869,9 +5015,9 @@ def _sd_local_appendix(t: Tokens, page: QWidget) -> None:
             if not dlg.exec():
                 st_lb.setText("未安装")
                 return
-            _post("/api/image_gen/local/install", _install_done, timeout=60.0)
+            _post("/api/image_gen/local/install", _install_done, timeout=60.0, guard=st_lb)
 
-        _get("/api/image_gen/local?estimate=1", _est_done, timeout=20.0)
+        _get("/api/image_gen/local?estimate=1", _est_done, timeout=20.0, guard=st_lb)
 
     def _install_done(r, e) -> None:
         if e or not isinstance(r, dict) or r.get("ok") is False:
@@ -4888,7 +5034,7 @@ def _sd_local_appendix(t: Tokens, page: QWidget) -> None:
         # 服务端等模型加载最多 60 秒 ⇒ 前端给 90 秒（web :8086-8092 假失败教训同款）
         prog_txt.setText("正在启动本地服务…（首次要加载模型，最多约 1 分钟）")
         prog_txt.show()
-        _post("/api/image_gen/local/start", _start_done, timeout=90.0)
+        _post("/api/image_gen/local/start", _start_done, timeout=90.0, guard=st_lb)
 
     def _start_done(r, e) -> None:
         if e or not isinstance(r, dict) or r.get("ok") is False:
@@ -4909,7 +5055,7 @@ def _sd_local_appendix(t: Tokens, page: QWidget) -> None:
         if state["filling"] or idx < 0:
             return
         pid = preset_sel.itemData(idx, Qt.ItemDataRole.UserRole)
-        _post("/api/image_gen/local/preset", _preset_apply, body={"preset": pid})
+        _post("/api/image_gen/local/preset", _preset_apply, body={"preset": pid}, guard=st_lb)
 
     def _stop_done(r, e) -> None:
         if e:
@@ -4920,7 +5066,7 @@ def _sd_local_appendix(t: Tokens, page: QWidget) -> None:
         refresh()
 
     def _stop() -> None:
-        _post("/api/image_gen/local/stop", _stop_done)
+        _post("/api/image_gen/local/stop", _stop_done, guard=st_lb)
 
     def _idle() -> None:
         if page.isVisible() and not state["polling"]:
@@ -6302,15 +6448,14 @@ def _community_appendix(t: Tokens, page: QWidget) -> None:
     ocard = Card(t)
     ocard.body.addWidget(h2(t, "上云（预留）· 测试连通"))
     ocard.body.addWidget(desc(t, "总开关关着时一个字节都不会上传；这里只探测接收端通不通（不带口令）。"))
-    ct_row = QHBoxLayout()
+    ct_row = FlowBox(t, spacing=6)
     b_ct1 = Btn("测试人设接收端", t, "ghost")
     b_ct1.setObjectName("cloudTestPersona")
     b_ct2 = Btn("测试名单接收端", t, "ghost")
     b_ct2.setObjectName("cloudTestBlocklist")
-    ct_row.addWidget(b_ct1)
-    ct_row.addWidget(b_ct2)
-    ct_row.addStretch(1)
-    ocard.body.addLayout(ct_row)
+    ct_row.add(b_ct1)
+    ct_row.add(b_ct2)
+    ocard.body.addWidget(ct_row)
     ct_note = desc(t, "")
     ct_note.setWordWrap(True)
     ocard.body.addWidget(ct_note)
@@ -6978,6 +7123,7 @@ def _briefs_appendix(t: Tokens, page: QWidget) -> None:
             w = it.widget()
             if w is not None:
                 w.deleteLater()
+                w.setParent(None) # 立刻脱离父子树（见上）
         chat = _bf_key()
         head = QLabel(head_text or
                       (f"{chat}：{len(active)} 条在用"

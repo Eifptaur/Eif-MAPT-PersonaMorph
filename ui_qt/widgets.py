@@ -4,22 +4,39 @@
 设计纪律（照搬 launcher-src/README.md 的硬规矩）：
   1. 外观只有一处来源 —— 所有颜色都从 `Tokens` 拿，控件内部**不许**出现硬编码色值。
   2. 按钮的"主按钮身份"必须在覆盖背景色**之前**判定（RoundButton 踩过的坑）。
-  3. 文字截断必须为 0 —— 宁可换行/加宽，不许出现省略号（自检项）。
+  3. 文字装不下时的取舍，**按位置分两类**（原「截断必须为 0」的绝对条文已修订）：
+     · 「完整优先」位：正文、标题、说明、表单值 —— 必须完整可见，宁可换行或加宽；
+     · 「一行共享」位：列表条目摘要、右侧挤着按钮的行、横向 chip 行 —— 换行会撑高
+       行（60 字折 5 行 = 190px，列表里只看得见一条）、加宽会挤掉右侧控件，
+       所以走 `ElideLabel`（单行 + 尾部省略号 + tooltip 全文）。
+     判据一句话：**换行不改变整行高度的，就换行；会改变行高的，就省略号。**
 
 本文件负责：按钮、状态徽章、卡片、分组导航树、开关、输入行。
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import Property, QEasingCurve, QPropertyAnimation, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import (
+    Property,
+    QEasingCurve,
+    QPropertyAnimation,
+    QRect,
+    QRectF,
+    QSize,
+    Qt,
+    QTimer,
+    Signal,
+)
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPixmap, QPen
 from PySide6.QtWidgets import (
     QAbstractButton,
+    QBoxLayout,
     QCheckBox,
     QFrame,
     QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QLineEdit,
     QPushButton,
     QScrollArea,
@@ -28,7 +45,20 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from stylekit_qt import Tokens, mix, qfont, rgba, status_colors
+from stylekit_qt import (
+    SHAPE_CIRCLE,
+    SHAPE_PILL,
+    SHAPE_SOFT,
+    SHAPE_TILE,
+    Tokens,
+    mix,
+    pill,
+    qfont,
+    qss,
+    radius_for,
+    rgba,
+    status_colors,
+)
 
 
 # ---------------------------------------------------------------- 弹窗拖拽
@@ -216,6 +246,18 @@ class Btn(QPushButton):
     三种角色：primary（强调色填充）/ ghost（描边）/ danger（危险红，二次确认用）。
     主按钮身份在构造时就定死（`role`），不靠"背景色是不是强调色"反推 ——
     C# 那边是靠 `Restyle` 事后判定的，Qt 侧有构造参数就不必再绕。
+
+    **形状**（`shape`）与**角色**（`role`）正交：角色管颜色，形状管轮廓。
+    · pill  （默认）—— 胶囊，完整半圆头。页面级操作、表单提交、弹窗底部的
+      「取消/确定」。这是"一类按钮一种形状"里的主形状。
+    · soft  —— 小圆角矩形。**挤在行内/表格里**的操作（每行一个的那种），
+      贴单元格用胶囊会顶到分隔线，这一档更稳。
+    · circle—— 正圆。纯图标按钮（×、‑、+），在正方形上画圆，与旁边一眼可分。
+    · tile  —— 方中带圆。开关/工具条小方块。
+
+    ⚠️ 半径**不写死数字**：Qt 对 `border-radius` 有硬上限 `min(w,h)/2`，
+      超过一像素整条值被丢弃、圆角退回直角（"所有按钮都是方的"的真凶之一）。
+      这里在 resize 时按真实尺寸重算（见 `_sync_radius`）。
     """
 
     def __init__(
@@ -224,21 +266,95 @@ class Btn(QPushButton):
         t: Tokens,
         role: str = "ghost",
         parent: QWidget | None = None,
+        shape: str = "pill",
     ):
         super().__init__(text, parent)
         self.t = t
         self.role = role
+        self.shape = shape
+        self._rad = 0
+        self._fixed_w = 0   # set_button_size 登记的显式尺寸（0 = 未登记，走布局）
+        self._fixed_h = 0
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFont(qfont(t, t.body_size, 500 if role != "primary" else 600))
+        # 高度：胶囊要 ≥2×半径才画得出半圆头，34 是行级标准高度（与下拉/输入行齐平）
         self.setMinimumHeight(34)
-        self.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
-        self.setStyleSheet(self._qss())
+        # ⚠️ 宽度策略关乎**文字会不会被压烂**（用户实报：人设卡四个按钮的字挤成一团）：
+        #    · 横向 Minimum ⇒ 允许被父布局压到 minimumSizeHint 以下，文字直接溢出/
+        #      叠字。人设卡那排按钮挤在小卡片里就是这样糊掉的。
+        #    · Preferred   ⇒ 布局**优先给 sizeHint（= 文字宽 + 内边距）**，压不动
+        #      就换行/撑开容器。宁可让容器变大，也不让字看不清。
+        #    纵向仍 Fixed：按钮高度不参与拉伸。
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        if text:
+            self.setMinimumWidth(self._text_width_hint())
+        self._sync_radius()
         if role == "primary" and t.glass:
             g = QGraphicsDropShadowEffect(self)
             g.setBlurRadius(18)
             g.setOffset(0, 3)
             g.setColor(rgba(t.q("blue"), 90))
             self.setGraphicsEffect(g)
+
+    def set_shape(self, shape: str) -> None:
+        """换形状并重算半径。
+
+        ⛔ 不许直接赋值 `btn.shape = X` 就完事：`_sync_radius` 只在尺寸变化时
+        被触发，改完 shape 半径还是旧档的值（实测漏刷时正圆钮留着一个 240px
+        的超界半径 ⇒ 被 Qt 丢弃 ⇒ 又变回方框）。统一走这个入口。
+        """
+        self.shape = shape
+        self._sync_radius()
+
+    def _text_width_hint(self) -> int:
+        """文字完整显示所需的最小宽度（= 文字宽 + QSS 的左右 padding 16×2 + 边框 2）。"""
+        return self.fontMetrics().horizontalAdvance(self.text()) + 34
+
+    def _sync_radius(self) -> None:
+        """按当前真实尺寸重算半径；变了才刷样式表（避免每次 resize 都重解析 QSS）。
+
+        ⛔ **口径前提：调用方必须在控件尺寸是"它真正会显示的大小"时才依赖这个值。**
+        `setFixedSize()` 之后、控件尚未上版式之前，`width()`/`height()` 仍是 Qt 的
+        默认值（实测 640×480），拿它算出的半径没有意义。
+
+        所以这里取「控件自身尺寸」与「sizeHint」中的**较小者**：上版式后 width()
+        是权威值；未上版式时 sizeHint 兜住了那些"按内容定尺寸"的控件。
+        **正方形/固定尺寸的钮（圆、胶囊）请用 `set_button_size()`** —— 它会把
+        尺寸显式记下来供半径计算，不再依赖布局时序。
+        """
+        w, h = self.width(), self.height()
+        if self._fixed_w and self._fixed_h:
+            # 调用方显式指定过尺寸（set_button_size）：以它为准，与布局时序无关
+            w, h = self._fixed_w, self._fixed_h
+        else:
+            sh = self.sizeHint()
+            w = min(w, max(sh.width(), self.minimumWidth(), 1))
+            h = min(h, max(sh.height(), self.minimumHeight(), 1))
+        rad = radius_for(self.shape, w, h)
+        if rad != self._rad:
+            self._rad = rad
+            self.setStyleSheet(self._qss())
+
+    def set_button_size(self, w: int, h: int) -> None:
+        """定尺寸按钮的推荐入口（正圆/定宽胶囊）。
+
+        `setFixedSize` 只管布局，不会告诉半径计算"我到底多大" —— 在控件上版式
+        之前算半径就必然拿到默认尺寸。这里把尺寸显式登记下来，`_sync_radius`
+        直接用它，**与布局时序无关**（圆形钮画成方框的坑就出在时序上）。
+        """
+        self._fixed_w, self._fixed_h = int(w), int(h)
+        self.setFixedSize(int(w), int(h))
+        self._sync_radius()
+
+    def resizeEvent(self, ev) -> None: # noqa: N802
+        super().resizeEvent(ev)
+        self._sync_radius()
+
+    def setText(self, text: str) -> None: # noqa: N802
+        super().setText(text)
+        if text:
+            self.setMinimumWidth(self._text_width_hint())
+        self._sync_radius()
 
     def _qss(self) -> str:
         """四态（常态/hover/pressed/disabled），对齐 web 侧按钮手感规格（console_html.py L532-557）：
@@ -247,11 +363,15 @@ class Btn(QPushButton):
         · pressed→ **按进去**：QSS 没有 transform，用 padding 上下 +1px 把文字压下去 1px，
                    底色再走一档（web: translateY(1px) scale(.975) 的 Qt 等价物）
         · danger 字色用 err_tx（亮色档）—— dark 上拿主 err 当字色会沉进背景（用户实报的对比度缺陷）
+
+        ⚠️ 所有颜色一律过 `qss()` 转成 Qt 字面量，**不能**直接插 `QColor.name(HexArgb)`
+        ——那是 `#AARRGGBB`，Qt 的八位是 `#RRGGBBAA`，通道序反了同样让整条规则解析
+        失败回落默认皮肤（实锤：ghost 的 pressed 描边曾写成 `#ff93daff`）。
         """
         t, r = self.t, self.role
-        # 按钮一律胶囊（用户裁定「所有方框改胶囊」）—— 用 radius_pill 而不是
-        # radius_btn：后者是通用小圆角，表格/容器/列表行也在用，不能一起抬。
-        rad = t.radius_pill
+        # 半径按**真实尺寸**算（见 _sync_radius）—— 不写死数字：Qt 的上限是
+        # min(w,h)/2，超一像素整条 border-radius 被丢弃退回直角。
+        rad = self._rad or radius_for(self.shape, 120, 34)
         # L：按压态要「一眼可辨」——底色往字色轴压一档（亮主题=变深、
         # 暗主题=提亮一档，都是暗色 UI 的标准按压惯例），描边同步加深。
         # web 侧 translateY(1px) scale(.975) 在 QSS 里没有 transform 等价物，
@@ -261,8 +381,8 @@ class Btn(QPushButton):
             bg, bg_h = t.blue, t.blue2
             fg = "#0A1B2E" if t.key == "whale" else "#FFFFFF"
             bd = "transparent"
-            bg_p = mix(t.q("blue2"), t.q("tx"), 0.22).name(QColor.NameFormat.HexArgb)
-            press_border = mix(t.q("blue2"), t.q("tx"), 0.45).name(QColor.NameFormat.HexArgb)
+            bg_p = qss(mix(t.q("blue2"), t.q("tx"), 0.22))
+            press_border = qss(mix(t.q("blue2"), t.q("tx"), 0.45))
         elif r == "danger":
             # ⚠️ rgba() 返回的是 QColor 对象 —— 直接插进 QSS f-string 会变成
             #    "background:<PySide6.QtGui.QColor object at 0x…>" 垃圾值，
@@ -270,18 +390,18 @@ class Btn(QPushButton):
             # 这才是用户实报"黑色跟深色背景混在一起"的真根因，取证实锤）。
             #    QSS 只认字符串 ⇒ 一律 .name(HexArgb) 落成 #AARRGGBB。
             fg = (getattr(t, "err_tx", "") or t.err)
-            bg = rgba(t.q("err"), 20).name(QColor.NameFormat.HexArgb)
-            bg_h = rgba(t.q("err"), 34).name(QColor.NameFormat.HexArgb)
-            bg_p = rgba(t.q("err"), 46).name(QColor.NameFormat.HexArgb)
-            bd = rgba(t.q("err"), 110).name(QColor.NameFormat.HexArgb)
-            press_border = rgba(t.q("err"), 170).name(QColor.NameFormat.HexArgb)
+            bg = qss(rgba(t.q("err"), 20))
+            bg_h = qss(rgba(t.q("err"), 34))
+            bg_p = qss(rgba(t.q("err"), 46))
+            bd = qss(rgba(t.q("err"), 110))
+            press_border = qss(rgba(t.q("err"), 170))
         else: # ghost —— web: hover 染描边+染字+hover-bg；active 落 blue_soft
-            bg = mix(t.q("bg"), t.q("tx"), 0.05).name(QColor.NameFormat.HexArgb)
-            bg_h = mix(t.q("bg"), t.q("tx"), 0.10).name(QColor.NameFormat.HexArgb)
+            bg = qss(mix(t.q("bg"), t.q("tx"), 0.05))
+            bg_h = qss(mix(t.q("bg"), t.q("tx"), 0.10))
             fg = t.tx
             bd = t.bd
             bg_p = t.blue_soft
-            press_border = mix(t.q("blue"), t.q("tx"), 0.30).name(QColor.NameFormat.HexArgb)
+            press_border = qss(mix(t.q("blue"), t.q("tx"), 0.30))
         hover_extra = ""
         pressed_extra = ""
         if r == "ghost":
@@ -301,7 +421,191 @@ class Btn(QPushButton):
         )
 
 
+# ---------------------------------------------------------------- 流式换行容器
+
+
+class _FlowLayout(QLayout):
+    """一行排不下就自动折到下一行的布局（Qt 官方的 FlowLayout 精简版）。
+
+    `QHBoxLayout` 在一行放不下时的行为是**压缩子控件到最小宽**——按钮文字先被
+    压出控件边界、几个 chip 就会叠在一起（实测：`＋ 新建/添加` 压到 `女神异闻录`
+    上面）。`QGridLayout` 又要手工算列数。这个布局按「子控件 sizeHint 宽 + 间距」
+    累积换行：放不下就开新行，行高取该行最大 sizeHint 高。
+    宽度不足时仍会压缩（这是期望行为：优先保证能看见，而不是撑破容器）。
+    """
+
+    def __init__(self, parent=None, margin: int = 0, spacing: int = 6): # noqa: ANN001
+        super().__init__(parent)
+        self._items: list = []
+        self._spacing = spacing
+        self.setContentsMargins(margin, margin, margin, margin)
+
+    # -- QLayout 必需接口 --
+    def addItem(self, item) -> None: # noqa: ANN001, N802
+        self._items.append(item)
+
+    def count(self) -> int:
+        return len(self._items)
+
+    def itemAt(self, i: int): # noqa: ANN201, N802
+        return self._items[i] if 0 <= i < len(self._items) else None
+
+    def takeAt(self, i: int): # noqa: ANN201, N802
+        return self._items.pop(i) if 0 <= i < len(self._items) else None
+
+    def expandingDirections(self): # noqa: ANN201, N802
+        return Qt.Orientation(0)
+
+    def hasHeightForWidth(self) -> bool: # noqa: ANN201, N802
+        return True
+
+    def heightForWidth(self, w: int) -> int: # noqa: ANN201, N802
+        return self._do_layout(QRectF(0, 0, w, 0), test_only=True)
+
+    def setGeometry(self, rect) -> None: # noqa: ANN001, N802
+        super().setGeometry(rect)
+        self._do_layout(rect, test_only=False)
+
+    def sizeHint(self): # noqa: ANN201, N802
+        return self.minimumSize()
+
+    def minimumSize(self): # noqa: ANN201, N802
+        s = QSize()
+        for it in self._items:
+            s = s.expandedTo(it.minimumSize())
+        m = self.contentsMargins()
+        return s + QSize(m.left() + m.right(), m.top() + m.bottom())
+
+    # -- 核心排布 --
+    def _do_layout(self, rect, test_only: bool) -> int: # noqa: ANN001
+        m = self.contentsMargins()
+        eff = rect.adjusted(m.left(), m.top(), -m.right(), -m.bottom())
+        x, y, line_h = eff.x(), eff.y(), 0
+        right = eff.right()
+        for it in self._items:
+            w = it.sizeHint().width()
+            h = it.sizeHint().height()
+            if x + w > right and line_h > 0: # 换行
+                x = eff.x()
+                y += line_h + self._spacing
+                line_h = 0
+            if not test_only:
+                it.setGeometry(QRectF(x, y, w, h).toRect())
+            x += w + self._spacing
+            line_h = max(line_h, h)
+        return y + line_h - rect.y() + m.bottom()
+
+
+class FlowBox(QWidget):
+    """按需换行的控件容器（chip 行、按钮组、标签云的通用底座）。
+
+    用法：`fb = FlowBox(t); fb.add(Btn(...)); fb.add(Btn(...))`；
+    重建整行时 `fb.clear()`（会把旧控件 deleteLater）。
+    """
+
+    def __init__(self, t: Tokens, spacing: int = 6, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.t = t
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet("background:transparent;")
+        self._lay = _FlowLayout(self, margin=0, spacing=spacing)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+
+    def add(self, w: QWidget) -> None: # noqa: ANN201
+        self._lay.addWidget(w)
+        return w
+
+    def addLayout(self, lay) -> None: # noqa: ANN001
+        """把一个（通常只有一两件控件的）子布局整体当成一格加进来。"""
+        holder = QWidget()
+        holder.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        holder.setStyleSheet("background:transparent;")
+        lay.setContentsMargins(0, 0, 0, 0)
+        holder.setLayout(lay)
+        self.add(holder)
+
+    def clear(self) -> None: # noqa: ANN201
+        while self._lay.count():
+            it = self._lay.takeAt(0)
+            w = it.widget() if it is not None else None
+            if w is not None:
+                w.setParent(None)
+                w.deleteLater()
+
+    def widgets(self) -> list: # noqa: ANN201
+        return [self._lay.itemAt(i).widget() for i in range(self._lay.count())
+                if self._lay.itemAt(i) is not None]
+
+    def count(self) -> int:
+        return self._lay.count()
+
+    def heightForWidth(self, w: int) -> int: # noqa: ANN201, N802
+        return self._lay.heightForWidth(w)
+
+    def hasHeightForWidth(self) -> bool: # noqa: ANN201, N802
+        return True
+
+
 # ---------------------------------------------------------------- 状态徽章
+
+
+class ElideLabel(QLabel):
+    """定宽/可压缩的单行文字标签，装不下时**在尾部加省略号**，并把全文放进 tooltip。
+
+    为什么需要它（与文件头第 3 条纪律的关系）：那条纪律针对的是「**不该**被截的
+    正文」，要求换行/加宽。但在**一行里要和别的控件分宽度**的位置（列表条目的摘要、
+    右侧挤着按钮的行、分区 chip 行），换行会把行高撑成多行（实测：60 字摘要折成
+    5 行 = 190px，一条吃掉整个 220px 列表 ⇒ 用户看到「列表下面全空」），加宽又会
+    把右侧按钮挤出视口。这类位置**唯一**成立的解法是单行 + 省略号 + tooltip 兜底。
+
+    · `setFullText(s)`：设全文（tooltip 自动同步），按当前宽度算省略号；
+    · 宽度变化时（resizeEvent）自动重算 —— 布局压缩会即时反映，不必手工 refit；
+    · `elided()` 返回当前实际显示的省略文本，供自检断言。
+    """
+
+    def __init__(self, text: str = "", parent: QWidget | None = None,
+                 mode: Qt.TextElideMode = Qt.TextElideMode.ElideRight):
+        super().__init__(parent)
+        self._full = str(text or "")
+        self._mode = mode
+        self.setText(self._full)
+
+    def setFullText(self, s: str) -> None: # noqa: N802
+        self._full = str(s or "")
+        self.setToolTip(self._full)
+        self._re_elide()
+
+    def fullText(self) -> str: # noqa: N802
+        return self._full
+
+    def elided(self) -> str:
+        # 惰性重算：`resize()` 对**尚未 show** 的控件不派发 resizeEvent（Qt 只在
+        # 可见时才投递），而列表/卡片普遍在 show 之前构建布局 ⇒ 只靠事件会在
+        # 首帧之前一直挂着全文（真机表现＝文字越界撑破卡片）。取值时按当前宽度
+        # 现算一次，等价于「随时反映真实版式」。
+        self._re_elide()
+        return super().text()
+
+    def _re_elide(self) -> None:
+        w = self.width()
+        if w <= 1: # 还没上版式：先放全文，等 resizeEvent 再算
+            return
+        fm = self.fontMetrics()
+        # 控件宽度 ≠ 可用文字宽：QLabel 有 QSS padding/边框，用全宽会算出
+        # 「刚好放得下」而漏掉一次截断。扣掉内容边距再 elide。
+        m = self.contentsMargins()
+        avail = w - m.left() - m.right()
+        if avail <= 1:
+            avail = w
+        super().setText(fm.elidedText(self._full, self._mode, avail))
+
+    def resizeEvent(self, ev) -> None: # noqa: ANN001, N802
+        super().resizeEvent(ev)
+        self._re_elide()
+
+    def showEvent(self, ev) -> None: # noqa: ANN001, N802
+        super().showEvent(ev)
+        self._re_elide()
 
 
 class Badge(QLabel):
@@ -329,7 +633,7 @@ class Badge(QLabel):
         self.setStyleSheet(
             f"QLabel{{background:{bg.name(QColor.NameFormat.HexArgb)};"
             f"color:{fg.name()};border:1px solid {bd.name(QColor.NameFormat.HexArgb)};"
-            f"border-radius:{self.t.radius_pill}px;padding:2px 11px;}}"
+            f"border-radius:{pill(22)}px;padding:2px 11px;}}"
         )
         self.adjustSize()
         self.setFixedHeight(22)
@@ -521,7 +825,26 @@ class Field(QWidget):
     可用性要点（原任务里点名要的三条之一）：
       · 每行有**一句话说明**，不用术语（"不改后端，改完立刻生效"）
       · 右侧控件永远有**可见的当前值**，不存在"点了没反应"
+
+    宽度自适应（对齐 web 真值 `.row{flex-wrap:wrap}` + `.row .grow{flex:1;min-width:220px}`
+    + `.row input{width:100%}`）：
+      · **右侧控件撑满剩余宽度**（web `flex:1` + `width:100%` 的等价物）——
+        这就是用户实锤的「圆角胶囊太短、文字显示不全」：Qt 旧版给输入框
+        固定 220~120px 的死宽，值一变长就顶字；web 一直是撑满的。
+      · 标签/说明这一侧可压窄换行（`_wrap_capable`）；
+      · 本行可用宽 ≤ `_STACK_AT` 时整行改成**上下两段**（标签在上、控件在下满宽）
+        —— 并排放不下时并排的结果是控件只剩几十像素，换上下反而看得全。
     """
+
+    #: 窄于此宽度（本行可用宽）就改成上下排列
+    _STACK_AT = 430
+    #: 右侧控件允许被压到的最小宽（再窄就该走上下排列了）
+    _CTRL_MIN = 120
+    #: 左侧标签区的最小宽 —— **必须给**：标签走 `_wrap_capable`（水平策略 Ignored，
+    #: 意思是"多窄都行，我不撑"），若左侧不设下限、右侧又是 Expanding，Qt 分宽度时
+    #: 会把左侧压到 1 个字符宽（实测费用计算器整列标签只剩「厂」「每」「时」），
+    #: 文字虽在换行但行高已被布局钉死 ⇒ 只看得见第一个字。
+    _LEFT_MIN = 88
 
     def __init__(
         self,
@@ -534,24 +857,34 @@ class Field(QWidget):
         super().__init__(parent)
         self.t = t
         self.control = control # 接线：保存时要按行取值，控件引用挂在行上
-        root = QHBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(16)
+        self._stacked = False
+        self._root = QHBoxLayout(self)
+        self._root.setContentsMargins(0, 0, 0, 0)
+        self._root.setSpacing(16)
 
-        left = QVBoxLayout()
+        self._left_w = QWidget()
+        self._left_w.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._left_w.setStyleSheet("background:transparent;")
+        self._left_w.setMinimumWidth(self._LEFT_MIN) # 见 _LEFT_MIN 注解：不给下限会被压成竖排单字
+        left = QVBoxLayout(self._left_w)
         left.setContentsMargins(0, 0, 0, 0)
         left.setSpacing(2)
         self.lb = QLabel(label)
         self.lb.setFont(qfont(t, t.body_size, 500))
         self.lb.setStyleSheet(f"color:{t.tx};background:transparent;")
+        _wrap_capable(self.lb) # 标签本身也可能很长（如「检查间隔(毫秒)」+ 括注）
         left.addWidget(self.lb)
         if desc:
             d = QLabel(desc)
             d.setFont(qfont(t, t.body_size - 1.5))
             d.setStyleSheet(f"color:{t.tx3};background:transparent;")
-            d.setWordWrap(True)
+            _wrap_capable(d) # 说明行可压窄换行，不顶住页面最小宽（见 _wrap_capable）
             left.addWidget(d)
-        root.addLayout(left, 1)
+        # 左侧标签区**不吃 stretch**（0）：它的宽由内容/`_LEFT_MIN` 决定，
+        # 多出来的宽全部给右侧控件（web 侧 `label` 是行内宽、`.grow` 才是 flex:1）。
+        # 旧写法给左侧 stretch=1，Qt 会在两列间平分 ⇒ 标签列被撑宽、输入框反而变短，
+        # 正是用户「胶囊太短」的一条来源。
+        self._root.addWidget(self._left_w, 0)
         # #7：最小行高按 QFontMetrics 实测 —— 标签+说明永不重叠。
         # （根治在页面级：Shell._wrap_scroll 给每页套了滚动容器，压缩不再发生；
         # 这里是行级兜底，就算哪天又有人把行塞进不可滚的固定高容器也不会叠。）
@@ -560,9 +893,50 @@ class Field(QWidget):
         fm_lb = QFontMetrics(qfont(t, t.body_size, 500))
         fm_ds = QFontMetrics(qfont(t, t.body_size - 1.5, 400))
         need = fm_lb.height() + (2 + fm_ds.height() if desc else 0) + 6
-        self.setMinimumHeight(max(34, need))
+        self._min_h_side = max(34, need)
+        self.setMinimumHeight(self._min_h_side)
+        self._ctrl_slot = None
         if control is not None:
-            root.addWidget(control, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            # 控件宽度交给布局伸张（web `.grow{flex:1}` + `input{width:100%}`）：
+            # 只留一个「还能看清值」的最小宽，其余全部拉伸填满行尾空白。
+            from PySide6.QtWidgets import QSizePolicy as _SP # noqa: PLC0415
+
+            control.setMinimumWidth(self._CTRL_MIN)
+            control.setSizePolicy(_SP.Policy.Expanding, _SP.Policy.Fixed)
+            self._ctrl_slot = control
+            self._root.addWidget(control, 1, Qt.AlignmentFlag.AlignVCenter)
+
+    # -- 窄窗时改成上下排列 ------------------------------------------------
+    def resizeEvent(self, ev) -> None: # noqa: ANN001, N802
+        super().resizeEvent(ev)
+        self._apply_responsive(ev.size().width())
+
+    def _apply_responsive(self, w: int) -> None:
+        want_stack = w < self._STACK_AT and self._ctrl_slot is not None
+        if want_stack == self._stacked:
+            return
+        self._stacked = want_stack
+        self._root.removeWidget(self._left_w)
+        if self._ctrl_slot is not None:
+            self._root.removeWidget(self._ctrl_slot)
+        # 清空后重建方向
+        while self._root.count():
+            self._root.takeAt(0)
+        self._root.setDirection(
+            QBoxLayout.Direction.TopToBottom if want_stack
+            else QBoxLayout.Direction.LeftToRight)
+        self._root.setSpacing(6 if want_stack else 16)
+        self._root.addWidget(self._left_w, 0) # 左侧不吃 stretch（见 __init__ 注解）
+        if self._ctrl_slot is not None:
+            # 并排：控件也吃 stretch（撑满剩余宽，见 __init__ 的 web 对照）；
+            # 上下：控件满宽，靠 stretch 交给它。
+            self._root.addWidget(
+                self._ctrl_slot, 1,
+                Qt.AlignmentFlag.AlignLeft if want_stack
+                else Qt.AlignmentFlag.AlignVCenter)
+        self.setMinimumHeight(self._min_h_side if not want_stack
+                              else self._min_h_side + self._ctrl_slot.sizeHint().height() + 6)
+        self.updateGeometry()
 
 
 class Switch(QCheckBox):
@@ -608,7 +982,7 @@ class SearchBox(QLineEdit):
         self.setClearButtonEnabled(True)
         self.setStyleSheet(
             f"QLineEdit{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
-            f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_pill}px;"
+            f"color:{t.tx};border:1px solid {t.bd};border-radius:{pill(32)}px;"
             f"padding:0 10px;}}"
             f"QLineEdit:focus{{border:1px solid {t.blue};}}"
         )
@@ -640,13 +1014,33 @@ def h2(t: Tokens, text: str, badge: Badge | None = None) -> QWidget:
     return w
 
 
+def _wrap_capable(lb: QLabel, min_w: int = 0) -> QLabel:
+    """让一个 wordWrap QLabel 真正**允许被压窄**。
+
+    ⛔ Qt 的坑：`setWordWrap(True)` 只让控件能画成多行，**不降低它的
+    `minimumSizeHint().width()`** —— 那个值仍是「整句话不换行」的宽度。
+    布局在算容器最小宽时用 minimumSizeHint ⇒ 一句 40 字的说明会把整页
+    最小宽顶到 800+ px，窗口就再也缩不到更窄（实测：人设页最小宽 853px，
+    缩窗到 620 时列表视口纹丝不动）。
+    必须显式把「最小宽 + 水平 sizePolicy」松掉，压缩才会真的传导下来。
+    """
+    lb.setWordWrap(True)
+    lb.setMinimumWidth(min_w)
+    from PySide6.QtWidgets import QSizePolicy as _SP # noqa: PLC0415
+
+    lb.setSizePolicy(_SP.Policy.Ignored, _SP.Policy.Minimum)
+    return lb
+
+
 def desc(t: Tokens, text: str) -> QLabel:
-    """一句话说明 —— 面板头下面那行（web 侧 `.desc`）。"""
+    """一句话说明 —— 面板头下面那行（web 侧 `.desc`）。
+
+    宽度自适应：说明文字可以压窄换行（`_wrap_capable`），但不许把页面最小宽顶住。
+    """
     lb = QLabel(text)
     lb.setFont(qfont(t, t.body_size - 0.5))
     lb.setStyleSheet(f"color:{t.tx3};background:transparent;")
-    lb.setWordWrap(True)
-    return lb
+    return _wrap_capable(lb)
 
 
 # ---------------------------------------------------------------- 顶栏两件
@@ -1008,9 +1402,9 @@ class Segmented(QWidget):
         off = t.tx2
         self.setStyleSheet(
             f"QWidget#Seg{{background:{mix(t.q('bg'), t.q('tx'), 0.08).name(QColor.NameFormat.HexArgb)};"
-            f"border:1px solid {t.bd};border-radius:{t.radius_pill}px;}}"
+            f"border:1px solid {t.bd};border-radius:{pill(28)}px;}}"
             f"QWidget#SegKnob{{background:{knob_bg};border:1px solid {knob_bd};"
-            f"border-radius:{t.radius_pill}px;}}"
+            f"border-radius:{pill(25)}px;}}"
             "QPushButton{background:transparent;border:none;color:" + off + ";padding:0;}"
             f"QPushButton:hover{{color:{t.tx};}}"
             f"QPushButton:pressed{{color:{t.blue};}}" # L 按压给色反馈

@@ -293,8 +293,22 @@ def t_fonts_rgba() -> None:
 
     d, b, e = ensure_fonts()
     ck("朝華標題A 注册成功（display 字体）", d == "ZhaohuaMinA", repr(d))
-    ck("屏显臻宋 注册成功（body 字体）", bool(b), repr(b))
+    # ⛔ 断言必须排除问号串：Qt 对解不出 name 表的字体会原样返回 "????"，
+    #    旧的 bool(b) 是**真值** ⇒ "????" 也过，注册失败被报成成功。
+    #    判据：非空 + 不含 '?' + 真的是本进程内可用的 family。
+    ck("屏显臻宋 注册成功（body 字体，且不是 \"????\" 假名）",
+       bool(b) and "?" not in b, repr(b))
     ck("emoji 兜底字体挂上（鲸鱼 emoji 的归宿）", e == "Segoe UI Emoji", repr(e))
+    # 名字解析出来了还不够 —— 必须 QFont 真把它放进回退链首位（否则仍走系统兜底）。
+    # ⚠️ 不能用 `QFontInfo(f).family()` 判：它返回的是**实际取到字形的那个字体**，
+    #    探针文本里混了 emoji 时会给 'Segoe UI Emoji'（会假失败）。判 families()[0]。
+    from PySide6.QtGui import QFontInfo # noqa: PLC0415, F401
+
+    if b:
+        probe = qfont(THEMES["whale"], 14)
+        ck("qfont 字体链首位就是 body 字体（不再静默回退系统字体）",
+           bool(probe.families()) and probe.families()[0] == b,
+           str(probe.families()[:3]))
 
     w = THEMES["whale"]
     fh = qfont(w, 15, 600, display=True)
@@ -890,14 +904,16 @@ def t_dpi_motion() -> None:
        "self.bl.setSpacing(4 if tight else 1)" in wsrc)
 
     # ③b L：按钮按压态「一眼可辨」（底色压一档 + 描边同步加深 + 压字 1px）
+    #     ⚠️ 断言看的是**表达式**而不是最终字面量：颜色统一过 `qss()` 落成 Qt 合法
+    #     十六进制（见 Btn._qss 的注解），所以源码里出现的是 `qss(mix(...))`。
     ck("Btn pressed 底色往字色轴压一档（primary mix blue2→tx 0.22）",
        "QPushButton:pressed{" in wsrc
-       and "bg_p = mix(t.q(\"blue2\"), t.q(\"tx\"), 0.22)" in wsrc
-       and "press_border = mix(t.q(\"blue2\"), t.q(\"tx\"), 0.45)" in wsrc)
+       and 'bg_p = qss(mix(t.q("blue2"), t.q("tx"), 0.22))' in wsrc
+       and 'press_border = qss(mix(t.q("blue2"), t.q("tx"), 0.45))' in wsrc)
     ck("Btn pressed 三角色都有独立按压描边（ghost/primary/danger）",
        wsrc.count("QPushButton:pressed{") >= 1 # Btn._qss 三角色共用模板
-       and "press_border = rgba(t.q(\"err\"), 170)" in wsrc
-       and "press_border = mix(t.q(\"blue\"), t.q(\"tx\"), 0.30)" in wsrc)
+       and 'press_border = qss(rgba(t.q("err"), 170))' in wsrc
+       and 'press_border = qss(mix(t.q("blue"), t.q("tx"), 0.30))' in wsrc)
     ck("Btn pressed 保留压字 1px（padding 上+1 下-1，QSS 无 transform 的等价物）",
        "padding-top:8px;padding-bottom:6px" in wsrc)
     ck("NavItem 非 active 按压加深（tx 14→26 两档；毛玻璃后按压反馈不再分主题隐藏）",
@@ -1778,11 +1794,19 @@ def t_hotfix1() -> None:
     ck("人设卡窄窗契约：超长名+长摘要时卡片最小宽 < 520（按钮不再被裁出视口）",
        min_w < 520, f"min_w={min_w}")
     lbs = card.findChildren(QLabel)
-    name_lb = next(lb for lb in lbs if lb.text().endswith("…"))
+    # 人设名走 ElideLabel：**宽度未落版式时 text() 还是全文**（省略号在
+    # resizeEvent 里按实际宽度才算出），所以不能按 text().endswith("…") 找控件。
+    # 改为按 objectName/文本前缀定位，再用 `elided()` 显式驱动一次省略计算。
+    name_lb = next(lb for lb in lbs if lb.objectName() == "personaName")
     sc_lb = next(lb for lb in lbs if lb.text().startswith("模型"))
+    name_lb.resize(122, name_lb.height() or 20) # 钉到固定宽，触发 _re_elide
     ck("人设名超长时省略号截断（固定宽 122，不撑宽卡片）",
-       name_lb.minimumWidth() == 122 and name_lb.maximumWidth() == 122,
-       f"{name_lb.minimumWidth()}/{name_lb.maximumWidth()}")
+       name_lb.minimumWidth() == 122 and name_lb.maximumWidth() == 122
+       and name_lb.fullText().endswith("测试") # 全文完整（tooltip 兜底）
+       and name_lb.elided() != name_lb.fullText() # 实际显示确实被省略
+       and name_lb.elided().endswith("…"),
+       f"{name_lb.minimumWidth()}/{name_lb.maximumWidth()} "
+       f"elided={name_lb.elided()!r}")
     ck("评分列固定宽 78（所有卡位置一致，不再随人设名浮动偏右）",
        sc_lb.minimumWidth() == 78 and sc_lb.maximumWidth() == 78,
        f"{sc_lb.minimumWidth()}/{sc_lb.maximumWidth()}")
@@ -5240,187 +5264,111 @@ def t_g12() -> None:
 
 
 def t_g13() -> None:
-    """批5补：右下角鲸鱼挂件（上游 DeepSeek-Balance-Whale-Widget 的 Qt 等价物）。
+    """批5补 / r11 重写：右下角鲸鱼挂件。
 
-    假后端 /dsh-whale/balance.json + last-turn.json（可切 ok:false）。断言：
-    数据逐字（余额/今日已用/上轮消耗/高峰标）、点击刷新（无位移 release 触发再拉）、
-    拖拽移动并写位置记忆（QSettings）、30s 轮询、位置跨实例恢复、失败态如实。
+    r11 架构变更：挂件从「Python 手绘复刻」改为**内嵌 WebView2 直接跑上游原版
+    脚本**（whale-widget/client/widget.js，636KB；与 web 端同一份，仅补 token）。
+    Python 侧因此**不再持有任何排版/取数字段**（旧断言的 w.bal / w.hint / w._timer
+    已不存在于实现中，属过期断言而非回归）。
+
+    本组只钉新架构的契约：
+      A. 形态：透明顶层窗 + 正方形 + 降级兜底存在（WebView2 缺失时不当机）；
+      B. 宿主页：透明背景 + composer 假体（原版 dshwIsChatRoot 的启动闸门）
+         + 引 /dsh-whale/widget.js + 带 token —— 缺任一项原版脚本都不会启动；
+      C. 交互仍由 Python 承担：拖拽位移 + 位置记忆 QSettings + 跨实例恢复；
+      D. WebView2 建链是**异步**的（同步忙等会死等，r11 实测卡死根因）。
     """
-    import json as _json # noqa: PLC0415
     import os # noqa: PLC0415
-    import threading as _th # noqa: PLC0415
-    import time as _time # noqa: PLC0415
-    from http.server import BaseHTTPRequestHandler, HTTPServer # noqa: PLC0415
 
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PySide6.QtCore import QEvent, QPointF, QSettings # noqa: PLC0415
+    from PySide6.QtCore import QEvent, QPointF, QSettings, Qt # noqa: PLC0415
     from PySide6.QtGui import QMouseEvent # noqa: PLC0415
     from PySide6.QtWidgets import QApplication # noqa: PLC0415
 
     import agent_bridge # noqa: PLC0415
+    import whale_host as wh # noqa: PLC0415
     import whale_widget as ww # noqa: PLC0415
     from stylekit_qt import THEMES # noqa: PLC0415
 
     QApplication.instance() or QApplication([])
     t = THEMES["whale"]
 
-    calls: list = []
-    bal_state = {"bad": False}
-
-    class _H(BaseHTTPRequestHandler):
-        def _send(self, obj): # noqa: N802
-            body = _json.dumps(obj).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        def do_GET(self): # noqa: N802
-            calls.append(self.path)
-            if "/dsh-whale/balance.json" in self.path:
-                if bal_state["bad"]:
-                    self._send({"ok": False, "error": "没配模型 Key"})
-                else:
-                    self._send({"ok": True, "totalBalance": 123.45, "currency": "CNY",
-                                "todayUsage": 0.0234, "isPeak": True})
-            elif "/dsh-whale/last-turn.json" in self.path:
-                self._send({"ok": True, "seq": 3, "turn": "t3",
-                            "amount": 0.0012, "tokens": 1500})
-            else:
-                self._send({"ok": True})
-
-        def log_message(self, *a): # noqa: N802
-            pass
-
-    srv = HTTPServer(("127.0.0.1", 0), _H)
-    port = srv.server_address[1]
-    _th.Thread(target=srv.serve_forever, daemon=True, name="fake-be-g13").start()
-
-    _orig_url = agent_bridge.current_url
-    agent_bridge.current_url = lambda: "http://127.0.0.1:%d/?token=tk" % port
-    st = QSettings("WXAgent", "persona-morph-ui")
-    st.setValue("whale_pos", "") # 清位置残留
-
-    def _bal_n():
-        return sum(1 for c in calls if "balance.json" in c)
-
-    def _wait(pred, timeout=8.0):
-        end = _time.time() + timeout
-        while _time.time() < end:
-            QApplication.processEvents()
-            if pred():
-                return True
-            _time.sleep(0.03)
-        QApplication.processEvents()
-        return pred()
-
-    def _mouse(w, kind, gx, gy, buttons=None): # noqa: ANN001
-        btns = buttons if buttons is not None else Qt_Left
-        ev = QMouseEvent(kind, QPointF(10, 10), QPointF(gx, gy),
-                         Qt_Left, btns, _NoMod)
-        return ev
-
-    from PySide6.QtCore import Qt # noqa: PLC0415
-
     Qt_Left = Qt.MouseButton.LeftButton
     _NoMod = Qt.KeyboardModifier.NoModifier
 
+    # ── A/B（纯静态，零 WebView2 依赖，任何环境都能跑）──
+    ck("g13 挂件形态：透明顶层窗 + 正方形（原版 1:1 外观交给 WebView2，Python 不掺和）",
+       ww.WhaleWidget.__mro__[1].__name__ == "QWidget"
+       and ww._BASE > 0 and ww.WhaleWidget.W == ww.WhaleWidget.H)
+
+    _html = wh.build_host_html(3210, "tk")
+    ck("g13-A 降级兜底在位（WebView2 缺失时画说明卡，不静默空白）",
+       hasattr(ww.WhaleWidget, "_paint_fallback")
+       and hasattr(ww.WhaleWidget, "closeEvent"))
+    ck("g13-B 宿主页引原版脚本 /dsh-whale/widget.js（与 web 端同一份，非二次实现）",
+       "/dsh-whale/widget.js" in _html)
+    ck("g13-B 宿主页带 token（原版脚本内所有 /dsh-whale/* 请求都吃它）",
+       "token=tk" in _html)
+    ck("g13-B 宿主页带 composer 假体（dshwIsChatRoot 认不出就不碰 DOM，启动闸门）",
+       "data-composer-input" in _html)
+    ck("g13-B 宿主页背景透明（透出 Qt 的 WA_TranslucentBackground，不留白底）",
+       "transparent" in _html or "background:transparent" in _html)
+
+    _host_src = (HERE / "whale_host.py").read_text(encoding="utf-8")
+    ck("g13-D 建链是异步链（同步忙等 processEvents 处理不了 COM 跨线程 RPC ⇒ r11 卡死根因）",
+       "_wait_attr" not in _host_src and "_pump_messages" not in _host_src
+       and "when_ready" in _host_src and "singleShot" in _host_src)
+    ck("g13-D WebView2 用户数据目录独立于控制台（共目录会互抢锁 ⇒ 浏览器进程起不来）",
+       "WhaleHost" in _host_src and "WebView2" in _host_src)
+
+    # ── A2. 真构造 + 真 show（**只有 import 是查不出问题的**）──
+    # 这条是「控制台整个黑屏」事故的防复发闸：挂件 __init__ 里曾残留一段
+    # `if not self._booted: ...`（属性没初始化、`os` 没导入），模块能 import、
+    # 静态检查也过，但**一构造就 NameError** ⇒ Shell 构造失败 ⇒ Qt 壳永远不出现
+    # ⇒ 启动器 15 秒等不到窗口、走后备开窗、用户看到的是空白的后备窗。
+    # 所以必须真造一次并 show 一次，异常要显式报出来。
+    _ctor_err = ""
+    try:
+        _w0 = ww.WhaleWidget(THEMES["whale"])
+        _w0._boot_webview = lambda *a, **k: None  # 只验构造与上屏，不建 WebView2
+        _w0.show()
+        QApplication.processEvents()
+        _w0.hide()
+        _w0.close()
+    except Exception as _e:  # noqa: BLE001
+        _ctor_err = "%s: %s" % (type(_e).__name__, _e)
+    ck("g13-A2 挂件真构造 + show 不抛异常（只 import 查不出未初始化属性 ⇒ 黑屏事故根因）",
+       not _ctor_err, _ctor_err or "ok")
+
+    _wsrc = (HERE / "whale_widget.py").read_text(encoding="utf-8")
+    ck("g13-A2 启动门控在 showEvent（不在 __init__ 里写死延时等窗口上屏）",
+       "def showEvent" in _wsrc and "_booted" in _wsrc
+       and "PM_WHALE_NO_WEBVIEW2" in _wsrc
+       and "singleShot(400" not in _wsrc)
+
+    # ── C（真造控件，但**不触发 WebView2 建链**：桩掉 _boot_webview）──
+    st = QSettings("WXAgent", "persona-morph-ui")
     keep: list = []
     try:
         w = ww.WhaleWidget(t)
         keep.append(w)
-        ck("g13 挂件构建：原版复刻（透明无胶囊卡 + 方形）+ 30s 轮询已启动",
-           w.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-           and w.W == w.H and w._timer.isActive() and w._timer.interval() == 30000,
-           "square=%s iv=%s active=%s" % (w.W == w.H, w._timer.interval(), w._timer.isActive()))
-        _wait(lambda: w.bal == "¥ 123.45")
-        ck("g13 数据逐字：余额/今日已用/上轮消耗/高峰标（/dsh-whale/* 两接口）",
-           w.bal == "¥ 123.45"
-           and "今日已用 ¥ 0.0234" in w.hint
-           and "上轮 ¥ 0.0012 · 1500 tok" in w.hint
-           and "高峰时段（价贵）" in w.hint,
-           "bal=%r hint=%r" % (w.bal, w.hint))
-
-        # 气泡内排版：三行结构与原版 CSS 度量一致，且**任何档位都不裁字**。
-        #   这是「漏字」的回归闸——判据不看像素，看**排版账**：把 paintEvent
-        #   用的那套行/字号/可用宽原样复算一遍，断言每行都放得下。
-        #   超长金额（断不开的长串）必须靠**缩字号**兜住，不能靠 elidedText。
-        from PySide6.QtCore import QRect as _QRect # noqa: PLC0415
-        from PySide6.QtGui import QFont as _QF, QFontMetrics as _QFM # noqa: PLC0415
-
-        _W = w.W
-        _U = _W / 1026.0
-        _BH = _W * ww._VBH / ww._VBW # 文字区高度按气泡算（不是正方窗口）
-        _TW = _W * 0.66
-        _WRAPW = min(_TW, _U * 560.0)
-        _TH = _BH * 0.64
-        _GAP = max(1, int(round(_U * 9)))
-
-        def _fits(bal_txt, hint_txt):
-            rows = [(_U * 66, _QF.Weight.DemiBold, "DeepSeek 余额", False)]
-            if bal_txt:
-                rows.append((_U * 128, _QF.Weight.ExtraBold, bal_txt, True))
-            if hint_txt:
-                rows.append((_U * 56, _QF.Weight.Normal, hint_txt, True))
-            scale = 1.0
-            while scale > 0.399:
-                tot, over = 0.0, 0.0
-                for px, wt, txt, wrap in rows:
-                    f = _QF(w.font())
-                    f.setPixelSize(max(7, int(round(px * scale))))
-                    f.setWeight(wt)
-                    mm = _QFM(f)
-                    avail = _WRAPW if wrap else _TW
-                    flags = int(Qt.AlignmentFlag.AlignHCenter
-                                | (Qt.TextFlag.TextWordWrap if wrap
-                                   else Qt.AlignmentFlag.AlignVCenter))
-                    tot += mm.boundingRect(_QRect(0, 0, int(avail), 4000), flags, txt).height()
-                    if wrap:
-                        for seg in txt.split(" "):
-                            for sub in seg.split(ww._ZWSP):
-                                if sub:
-                                    over = max(over, mm.horizontalAdvance(sub) - float(avail))
-                tot += _GAP * (len(rows) - 1)
-                if tot <= _TH + 0.6 and over <= 0.5:
-                    return True, scale
-                scale = round(scale - 0.06, 2)
-            return False, scale
-
-        _cases = [
-            ("短余额", "¥ 0.00", "今日已用 ¥ 0.0000"),
-            ("常见", "¥ 12.34", "今日已用 ¥ 12.3456 · 上轮 ¥ 0.1234 · 1234 tok"),
-            ("大额", "¥ 1,234.56",
-             "今日已用 ¥ 0.0000 · 高峰时段（价贵）· 上轮 ¥ 1.2345 · 567 tok"),
-            ("超大", "¥ 123,456.78",
-             "今日已用 ¥ 123.4567 · 高峰时段（价贵）· 上轮 ¥ 12.3456 · 123456 tok"),
-            ("报错", "", "没配模型 Key"),
-        ]
-        _bad = [n for n, b, h in _cases if not _fits(ww._wrapable(b), ww._wrapable(h))[0]]
-        ck("g13 气泡排版：5 档文案全部一个字都不裁（超长金额靠缩字号兜）",
-           not _bad, "超界档位=%s" % (_bad or "无"))
-
-        ck("g13 折行断点：逗号后补零宽空格（Qt 断不开纯数字串）",
-           ww._wrapable("¥ 1,234.56") == "¥ 1," + ww._ZWSP + "234.56"
-           and ww._wrapable("¥12.34") == "¥12.34",
-           "有逗号=%r 无逗号=%r" % (ww._wrapable("¥ 1,234.56"), ww._wrapable("¥12.34")))
-
-        # 点击（无位移 release）= 刷新
-        n0 = _bal_n()
-        w.mousePressEvent(_mouse(w, QEvent.Type.MouseButtonPress, w.x() + 10, w.y() + 10))
-        w.mouseReleaseEvent(_mouse(w, QEvent.Type.MouseButtonRelease, w.x() + 10, w.y() + 10))
-        _wait(lambda: _bal_n() > n0)
-        ck("g13 点击（无位移）触发刷新：再拉一次 balance.json",
-           _bal_n() > n0, "n0=%d now=%d" % (n0, _bal_n()))
+        w._boot_webview = lambda *a, **k: None # 桩：本组只验交互，不建 WebView2
 
         # 拖拽（位移 > 阈值）= 移动窗口 + 位置记忆
+        st.setValue("whale_pos", "") # 清位置残留
         pos0 = w.pos()
-        w.mousePressEvent(_mouse(w, QEvent.Type.MouseButtonPress, w.x() + 10, w.y() + 10))
-        w.mouseMoveEvent(_mouse(w, QEvent.Type.MouseMove, w.x() + 70, w.y() + 60, Qt_Left))
-        w.mouseReleaseEvent(_mouse(w, QEvent.Type.MouseButtonRelease, w.x() + 70, w.y() + 60))
+        w.mousePressEvent(QMouseEvent(QEvent.Type.MouseButtonPress,
+                                      QPointF(10, 10), QPointF(w.x() + 10, w.y() + 10),
+                                      Qt_Left, Qt_Left, _NoMod))
+        w.mouseMoveEvent(QMouseEvent(QEvent.Type.MouseMove,
+                                     QPointF(10, 10), QPointF(w.x() + 70, w.y() + 60),
+                                     Qt_Left, Qt_Left, _NoMod))
+        w.mouseReleaseEvent(QMouseEvent(QEvent.Type.MouseButtonRelease,
+                                        QPointF(10, 10), QPointF(w.x() + 70, w.y() + 60),
+                                        Qt_Left, Qt_Left, _NoMod))
         QApplication.processEvents()
         saved = st.value("whale_pos")
-        ck("g13 拖拽移动：窗口位移 + 位置写 QSettings",
+        ck("g13-C 拖拽移动：窗口位移 + 位置写 QSettings",
            w.pos() != pos0 and isinstance(saved, list) and len(saved) == 2
            and [int(saved[0]), int(saved[1])] == [w.x(), w.y()],
            "pos0=%s now=%s saved=%s" % (pos0, w.pos(), saved))
@@ -5428,24 +5376,29 @@ def t_g13() -> None:
         # 位置跨实例恢复
         w2 = ww.WhaleWidget(t)
         keep.append(w2)
-        ck("g13 位置跨实例恢复（重开还原上次拖到的位置）",
+        w2._boot_webview = lambda *a, **k: None
+        ck("g13-C 位置跨实例恢复（重开还原上次拖到的位置）",
            (w2.x(), w2.y()) == (w.x(), w.y()),
            "w2=(%d,%d) w=(%d,%d)" % (w2.x(), w2.y(), w.x(), w.y()))
 
-        # 失败态如实（先等上一轮回调完成把 _busy 放开——_busy 守卫会挡住并发刷新）
-        #   余额行清空：label 行已固定写「DeepSeek 余额」，amount 行再写
-        #   「余额 未取到」就是重复；原版 render() 的 error 分支也是只留 hint。
-        _wait(lambda: not w._busy)
-        bal_state["bad"] = True
-        w.refresh()
-        _wait(lambda: w.bal == "")
-        ck("g13 取数失败如实回显（余额行清空 + 服务端 error 进 hint）",
-           w.bal == "" and "没配模型 Key" in w.hint,
-           "bal=%r hint=%r" % (w.bal, w.hint))
-        bal_state["bad"] = False
+        # 位移 < 阈值 = 点击不当拖（不抖窗）
+        pos1 = w.pos()
+        w.mousePressEvent(QMouseEvent(QEvent.Type.MouseButtonPress,
+                                      QPointF(10, 10), QPointF(w.x() + 10, w.y() + 10),
+                                      Qt_Left, Qt_Left, _NoMod))
+        w.mouseMoveEvent(QMouseEvent(QEvent.Type.MouseMove,
+                                     QPointF(10, 10), QPointF(w.x() + 12, w.y() + 11),
+                                     Qt_Left, Qt_Left, _NoMod))
+        w.mouseReleaseEvent(QMouseEvent(QEvent.Type.MouseButtonRelease,
+                                        QPointF(10, 10), QPointF(w.x() + 12, w.y() + 11),
+                                        Qt_Left, Qt_Left, _NoMod))
+        QApplication.processEvents()
+        ck("g13-C 位移 < 阈值 ⇒ 当点击不当拖（气泡菜单里的点按不会被抖成移窗）",
+           w.pos() == pos1, "p1=%s now=%s" % (pos1, w.pos()))
     finally:
-        agent_bridge.current_url = _orig_url
-        srv.shutdown()
+        for x in keep:
+            x.close()
+        QApplication.processEvents()
 
 
 def t_g14() -> None:
@@ -7384,16 +7337,235 @@ def t_r10_drag() -> None:
        (dlg.x(), dlg.y()) == (p3.x(), p3.y()),
        "p3=(%d,%d) now=(%d,%d)" % (p3.x(), p3.y(), dlg.x(), dlg.y()))
 
-    # 胶囊半径：按钮/输入框走 radius_pill，通用小圆角 token 不被抬高
+    # 胶囊半径：Qt 对 border-radius 有硬上限 min(w,h)/2，**超一像素整条值被丢弃、
+    # 圆角退回直角**（实测 120×80 rad=40 是圆角、rad=41/999 全是方角）。
+    # ⇒ 半径必须按真实尺寸算，QSS 里**绝不允许**再出现 999 这类超界常数。
+    # 旧断言写的是「QSS 里必须有 border-radius:999px」——它把 bug 锁死成了"正确"，
+    # 是「所有按钮都是方的」长期没被发现的原因。
+    import stylekit_qt as sk # noqa: PLC0415
+
     _t = THEMES["whale"]
-    ck("r10 按钮/输入框走 radius_pill（胶囊），radius_btn 保持小圆角",
-       _t.radius_pill >= 999 and _t.radius_btn < 100,
-       "pill=%d btn=%d" % (_t.radius_pill, _t.radius_btn))
+    ck("r11 半径工具按真实尺寸算（不让 999 这类超界常数流进 QSS）",
+       sk.radius_for(sk.SHAPE_PILL, 120, 36) == 18
+       and sk.radius_for(sk.SHAPE_PILL, 120, 40) == 20
+       and sk.radius_for(sk.SHAPE_SOFT, 120, 40) == 10
+       and sk.radius_for(sk.SHAPE_TILE, 120, 40) == 6
+       and sk.radius_for(sk.SHAPE_CIRCLE, 60, 60) == 30
+       and sk.pill(32) == 16,
+       "pill(40)=%d soft=%d tile=%d circle=%d pill(32)=%d" % (
+           sk.radius_for(sk.SHAPE_PILL, 120, 40),
+           sk.radius_for(sk.SHAPE_SOFT, 120, 40),
+           sk.radius_for(sk.SHAPE_TILE, 120, 40),
+           sk.radius_for(sk.SHAPE_CIRCLE, 60, 60), sk.pill(32)))
+
     _b = W.Btn("按钮", _t, role="primary")
     keep.append(_b)
-    ck("r10 Btn QSS 渲染半径 == 999（真落到样式表上）",
-       "border-radius:999px" in _b.styleSheet())
+    _bq = _b.styleSheet()
+    ck("r11 Btn QSS 半径 ≤ min(w,h)/2（超界会被 Qt 丢弃 ⇒ 直接画成方框）",
+       "border-radius:999" not in _bq and _b._rad <= max(1, _b.height()) // 2,
+       "rad=%d 片段=%s" % (_b._rad, _bq.split(";")[2][:40]))
+
+    ck("r11 token 落成 Qt 合法字面量（不出现 Qt 不认的 rgba() 函数式写法）",
+       "rgba(" not in _bq and "rgb(" not in _bq,
+       "片段=%s" % _bq.split(";")[0][:60])
+
+    # 形状分类：四档半径口径互不重合（"一类按钮一种形状"要真的分得开）
+    #   · 全部按真实尺寸算，**不能**靠改 .shape 后沿用旧半径（漏刷会留超界值）。
+    _shapes = {}
+    for _s in (sk.SHAPE_PILL, sk.SHAPE_SOFT, sk.SHAPE_TILE, sk.SHAPE_CIRCLE):
+        _sb = W.Btn("形状", _t, role="ghost", shape=_s)
+        # ⚠️ 必须用 set_button_size（登记显式尺寸）而不是裸 setFixedSize：
+        #    后者只管布局，控件上版式前 width()/height() 还是默认值，半径会算错。
+        _sb.set_button_size(120, 36)
+        keep.append(_sb)
+        _shapes[_s] = _sb._rad
+    ck("r11 按钮形状四档分类成立（pill/circle 17、soft 10、tile 6）",
+       _shapes[sk.SHAPE_PILL] == 18 and _shapes[sk.SHAPE_SOFT] == 10
+       and _shapes[sk.SHAPE_TILE] == 6 and _shapes[sk.SHAPE_CIRCLE] == 18,
+       "shapes=%s（120×36 上半高与短边同为 18，两档同值属正常）" % _shapes)
+
+    # 正圆必须**用短边**：120×40 上取半宽 60 会被 Qt 丢弃（超 min(w,h)/2）
+    _w1 = W.Btn("形", _t, role="ghost", shape=sk.SHAPE_CIRCLE)
+    _w1.set_button_size(120, 40)
+    keep.append(_w1)
+    ck("r11 circle 半径被短边钳制（120×40 ⇒ 20；取半宽 60 会超界被丢弃变方框）",
+       _w1._rad == 20, "rad=%d" % _w1._rad)
+
+    # 胶囊同理：高瘦控件（宽 30 高 200）半高 100 > min/2=15 ⇒ 必须被宽钳住
+    _w2 = W.Btn("形", _t, role="ghost", shape=sk.SHAPE_PILL)
+    _w2.set_button_size(30, 200)
+    keep.append(_w2)
+    ck("r11 pill 半径同时被宽钳制（30×200 ⇒ 15，不是 100 ⇒ 不会超界退成方框）",
+       _w2._rad == 15, "rad=%d" % _w2._rad)
+
+    # 改形状必须重算（漏刷会留着上一档的超界半径）
+    _w3 = W.Btn("形", _t, role="ghost", shape=sk.SHAPE_PILL)
+    _w3.set_button_size(42, 42)
+    keep.append(_w3)
+    _before = _w3._rad
+    _w3.set_shape(sk.SHAPE_TILE)
+    ck("r11 换形状走 set_shape 并立即重算半径（不重算会留旧档超界值）",
+       _before == 21 and _w3._rad == 6, "before=%d after=%d" % (_before, _w3._rad))
+
     dlg.close()
+
+
+def t_r11_whale_drag() -> None:
+    """r11 自检：鲸鱼挂件「拖不动」的机制闸（静态判据，不起 WebView2）。
+
+    背景：WebView2 把画面渲染在一个铺满挂件窗的**真实子 HWND** 上。Windows
+    命中测试子窗优先 ⇒ 鼠标消息全被子窗吃掉、不冒泡给 Qt 顶层窗 ⇒
+    `mousePressEvent` 一次都不触发，用户把挂件拖不动。修法是给**子窗**加
+    `WS_EX_TRANSPARENT`（在命中测试里被跳过），消息就落到底下的 Qt 窗口。
+
+    三条静态判据（不必真起浏览器，防的是"改坏了没人知道"）：
+      a. 宿主侧确实有透传能力，且**打的是子窗**（用 `EnumChildWindows` 找），
+         **不是**父窗 —— 打到父窗上会让消息穿过整个挂件落到桌面，是反向效果；
+      b. 挂件侧**成功与失败两条路都要**落到"鼠标能到 Qt"（失败 hide、成功透传），
+         并带**有上限**的重试（WebView2 子窗是异步建的，一次多半枚举不到）；
+      c. 早退判据不能只看 `host.ok`（控制器就绪 ≠ 页面加载成功）。
+    """
+    import inspect as _inspect
+
+    from whale_host import WhaleHostWebView # noqa: PLC0415
+    from whale_widget import WhaleWidget # noqa: PLC0415
+
+    ck("r11 挂件宿主有子窗透传能力（pass_mouse_through）",
+       hasattr(WhaleHostWebView, "pass_mouse_through"))
+
+    _src = _inspect.getsource(WhaleHostWebView.pass_mouse_through)
+    ck("r11 透传打在**子窗**上（用 _canvas_hwnds 枚举，不是直接改父窗 HWND）",
+       "_canvas_hwnds" in _src and "WS_EX_TRANSPARENT" in _src,
+       "有枚举=%s 有样式=%s" % ("_canvas_hwnds" in _src, "WS_EX_TRANSPARENT" in _src))
+
+    _c = _inspect.getsource(WhaleHostWebView._canvas_hwnds)
+    ck("r11 子窗枚举走 EnumChildWindows（挂件窗里除 WebView2 无别的子窗）",
+       "EnumChildWindows" in _c)
+
+    _w = _inspect.getsource(WhaleWidget._try_passthrough)
+    ck("r11 成功路透传带**有上限**重试（子窗异步建，一次枚举多半为空）",
+       "_pt_tries" in _w and ">= 6" in _w,
+       "有计数=%s 有上限=%s" % ("_pt_tries" in _w, ">= 6" in _w))
+
+    _a = _inspect.getsource(WhaleWidget._arm_drag_passthrough)
+    ck("r11 成败两条路都保拖动（失败 hide / 成功透传）",
+       "_keep_draggable" in _a and "_try_passthrough" in _a)
+
+    _p = _inspect.getsource(WhaleWidget.paintEvent)
+    ck("r11 降级卡判据含 _load_failed（只看 host.ok 会留纯黑窗、连提示都没有）",
+       "_load_failed" in _p, "")
+
+    # 黑块根因之一：挂件宿主页的脚本来自 agent 控制台端口，agent 没起来时端口
+    # 无人监听 —— NavigateToString 仍成功、页面空白 ⇒ 用户看到黑块。
+    # 必须**导航前探活**，把"没内容"与"显示失败"分开，降级卡才能给出可操作指引。
+    import socket as _sk # noqa: PLC0415
+
+    import whale_widget as _ww # noqa: PLC0415
+
+    _a2 = _inspect.getsource(WhaleWidget._after_host_ready)
+    ck("r11 导航前先探端口（agent 没起来时如实降级，不给纯黑窗）",
+       "_server_unreachable" in _a2, "")
+
+    ck("r11 端口探活能识别「无人监听」（借一个必然关着的端口验）",
+       bool(_ww._server_unreachable(1, 0.2)), "")
+
+    # 反向：真开一个监听，探活必须返回空串（否则挂件会误降级）
+    _srv = _sk.socket()
+    _srv.bind(("127.0.0.1", 0))
+    _srv.listen(1)
+    _live_port = _srv.getsockname()[1]
+    try:
+        _r = _ww._server_unreachable(_live_port, 1.0)
+    finally:
+        _srv.close()
+    ck("r11 端口探活对在听的端口返回空串（否则会把正常挂件误降级）",
+       _r == "", "live=%d ret=%r" % (_live_port, _r))
+
+
+def t_r11_placeholders() -> None:
+    """r11 自检：「占位卡死」与「清容器残留」两条链的回归闸。
+
+    三组判据：
+      A. **异步自链必须有存活判 + 上限** —— 页面重建/关页后闭包仍被定时器引用，
+         旧写法无上限重排且对已析构控件 `setText`（RuntimeError 被外层 try 吞掉）
+         ⇒ 占位永远停在「读取中/加载中」。
+      B. **takeAt 清容器必须配 `setParent(None)`** —— 只 deleteLater 时控件仍是
+         父的孩子（可见、占位），实测 memory 页共享群占位不曾消失。
+      C. **空态与读失败要分开写** —— 首帧才写「读取中」，读失败写「读不到」，
+         不能把「明明是读失败」说成「还在读」。
+    """
+    import ast as _ast
+
+    from PySide6.QtWidgets import QApplication, QWidget # noqa: PLC0415
+
+    QApplication.instance() or QApplication([])
+
+    from widgets import Field, QLineEdit as _QLE # noqa: PLC0415
+
+    root = os.path.dirname(os.path.abspath(__file__))
+
+    def _src(name: str) -> str:
+        with open(os.path.join(root, name), encoding="utf-8") as fh:
+            return fh.read()
+
+    def _apply_blocks(src: str) -> list:
+        """取出所有 `def _apply` 函数体（AST 级，避免正则被嵌套 def 骗到）。"""
+        out = []
+        for node in _ast.walk(_ast.parse(src)):
+            if isinstance(node, _ast.FunctionDef) and node.name == "_apply":
+                out.append(ast_getsrc(node))
+        return out
+
+    def ast_getsrc(node): # noqa: ANN001, ANN202
+        return _ast.unparse(node)
+
+    # ── A. 自链守卫 ──
+    pc_src = _src("panels_custom.py")
+    blocks = _apply_blocks(pc_src)
+    capped = sum(1 for b in blocks if "tries" in b)
+    alive = sum(1 for b in blocks if "_qt_alive" in b)
+    ck("r11-A 所有带自链的 _apply 都有次数上限（无上限重排会在页面销毁后空转）",
+       capped >= 5, "有上限的 _apply = %d / 共 %d" % (capped, len(blocks)))
+    ck("r11-A 开页自动加载器的 _apply 有 C++ 存活判（_qt_alive）",
+       alive >= 3, "带存活判的 _apply = %d / 共 %d" % (alive, len(blocks)))
+
+    # ── B. 清容器纪律 ──
+    # 判据：在 takeAt 循环里出现 deleteLater 时，同一小段里必须也有 setParent(None)。
+    # 窗口取「本行 + 上一行 + 下一行」（两种写法都见过：同行链式 vs 分两行写）。
+    miss = []
+    for name in ("panels_custom.py", "onboarding.py", "shell.py"):
+        src = _src(name)
+        lines = src.split("\n")
+        for i, ln in enumerate(lines):
+            if "deleteLater()" not in ln:
+                continue
+            lo = max(0, i - 3)
+            hi = min(len(lines), i + 2) # 含下一行
+            ctx = "\n".join(lines[lo:hi])
+            if ("takeAt" in ctx or "takeAt" in "\n".join(lines[lo:i + 1])) and "setParent" not in ctx:
+                miss.append("%s:%d" % (name, i + 1))
+    ck("r11-B takeAt 清容器一律配 setParent(None)（只 deleteLater 事件循环未转时会被搁置）",
+       not miss, ("仍缺 setParent 的清理点: " + ", ".join(miss)) if miss else "0 处")
+
+    # ── C. Field 左标签下限 + 不吃 stretch ──
+    ck("r11-C Field 左标签区有最小宽（无下限会被压成竖排单字）",
+       Field._LEFT_MIN >= 40, "_LEFT_MIN=%s" % Field._LEFT_MIN)
+
+    import config_io # noqa: PLC0415, F401
+    from stylekit_qt import THEMES # noqa: PLC0415
+
+    host = QWidget()
+    f = Field(THEMES["whale"], "每日消息数", "", _QLE(), host)
+    host.resize(1000, 60)
+    host.show()
+    QApplication.processEvents()
+    ck("r11-C Field 左标签实际宽度 ≥ _LEFT_MIN（布局真的尊重了下限）",
+       f._left_w.width() >= Field._LEFT_MIN,
+       "w=%d min=%d" % (f._left_w.width(), Field._LEFT_MIN))
+    ck("r11-C Field 左列不吃 stretch（多出的宽全给右侧控件）",
+       f._root.stretch(0) == 0 and f._root.stretch(1) == 1,
+       "left=%d ctrl=%d" % (f._root.stretch(0), f._root.stretch(1)))
+    host.close()
 
 
 def main() -> int:
@@ -7420,7 +7592,7 @@ def main() -> int:
                    t_c10, t_c13, t_hotfix1, t_hotfix2, t_catmgr, t_medialocal, t_commfb,
                    t_veradv, t_g5, t_g6, t_g7, t_g8, t_g9, t_g10, t_g11, t_g12, t_g13, t_g14,
                    t_g15, t_g16, t_g17, t_g18, t_g19, t_g20, t_g21, t_g22, t_ocr_fuzzy,
-                   t_audit_r3, t_r10_drag):
+                   t_audit_r3, t_r10_drag, t_r11_whale_drag, t_r11_placeholders):
             try:
                 fn()
             except Exception as e: # noqa: BLE001

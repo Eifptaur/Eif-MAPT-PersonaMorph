@@ -30,7 +30,7 @@ from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout
 
 from confirm import ConfirmDialog
 from popover import Popover
-from stylekit_qt import Tokens, qfont, rgba
+from stylekit_qt import Tokens, pill, qfont, rgba
 from widgets import Btn
 
 
@@ -188,14 +188,14 @@ class UpdateBar(QFrame):
             self.setStyleSheet(
                 f"QFrame#UpdPill{{background:{rgba(t.q('warn'), 26).name(QColor.NameFormat.HexArgb)};"
                 f"border:1px solid {rgba(t.q('warn'), 120).name(QColor.NameFormat.HexArgb)};"
-                f"border-radius:{t.radius_pill}px;}}"
+                f"border-radius:{pill(22)}px;}}"
                 f"QFrame#UpdPill QLabel{{color:{fg};background:transparent;}}"
             )
         else:
             self.setStyleSheet(
                 f"QFrame#UpdPill{{background:{t.card};"
                 f"border:1px solid {rgba(t.q('blue'), 90).name(QColor.NameFormat.HexArgb)};"
-                f"border-radius:{t.radius_pill}px;}}"
+                f"border-radius:{pill(22)}px;}}"
                 f"QFrame#UpdPill QLabel{{color:{t.blue};background:transparent;}}"
             )
         self.setVisible(visible)

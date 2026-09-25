@@ -198,6 +198,7 @@ class _Wizard(DraggableDialog, QDialog):
             w = it.widget()
             if w is not None:
                 w.deleteLater()
+                w.setParent(None) # 立刻脱离父子树（见上）
             lay = it.layout()
             if lay is not None:
                 self._drop_layout(lay)
@@ -208,6 +209,7 @@ class _Wizard(DraggableDialog, QDialog):
             w = it.widget()
             if w is not None:
                 w.deleteLater()
+                w.setParent(None) # 立刻脱离父子树（见上）
             sub = it.layout()
             if sub is not None:
                 self._drop_layout(sub)

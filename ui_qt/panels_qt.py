@@ -37,7 +37,7 @@ from PySide6.QtWidgets import (
 import config_io
 import panels_custom
 import sec_meta
-from stylekit_qt import Tokens, qfont, rgba
+from stylekit_qt import Tokens, pill, qfont, rgba
 from widgets import Badge, Btn, Card, Field, Switch, desc, h2
 
 # 本批要建面板的 26 个 sec（27 减去机器人=主面板），顺序照 web 文档序
@@ -216,11 +216,13 @@ class Combo(QComboBox):
         if default is not None and str(default) in values:
             self.setCurrentIndex(values.index(str(default)))
         self.setFixedHeight(32)
-        self.setMinimumWidth(200)
+        # 宽度自适应：硬最小值只保「还看得清几个字」，不再用 200 把行顶死
+        # （Field._STACK_AT 之下会改成上下排列，控件满宽）。
+        self.setMinimumWidth(120)
         self.setFont(qfont(t, t.body_size))
         self.setStyleSheet(
             f"QComboBox{{background:{_hex(rgba(t.q('tx'), 16))};"
-            f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_pill}px;padding:0 10px;}}"
+            f"color:{t.tx};border:1px solid {t.bd};border-radius:{pill(32)}px;padding:0 10px;}}"
             f"QComboBox::drop-down{{border:none;width:22px;}}"
             f"QComboBox QAbstractItemView{{background:{'#0E2136' if t.glass else t.card};"
             f"color:{t.tx};border:1px solid {t.bd};selection-background-color:{t.blue_soft};}}"
@@ -232,7 +234,10 @@ def _line(t: Tokens, text: str = "", password: bool = False, placeholder: str = 
     e.setPlaceholderText(placeholder)
     e.setFont(qfont(t, t.body_size))
     e.setFixedHeight(32)
-    e.setMinimumWidth(220)
+    # 宽度自适应：见 Combo 注释 —— 120 是「还看得见值」的下限，不是版式常量；
+    # 窄于 Field._STACK_AT 时该行会改成上下排列，输入框拿满宽（用户点单：
+    # 「显示可以根据屏幕显示区域的宽度」自适应，这一条要覆盖所有输入控件）。
+    e.setMinimumWidth(120)
     if password:
         e.setEchoMode(QLineEdit.EchoMode.Password)
     e.setStyleSheet(
@@ -251,7 +256,7 @@ def _area(t: Tokens, text: str, rows: int = 2, placeholder: str = "") -> QPlainT
     e.setFixedHeight(20 * max(2, min(rows, 4)) + 20)
     e.setStyleSheet(
         f"QPlainTextEdit{{background:{_hex(rgba(t.q('tx'), 16))};"
-        f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:4px 8px;}}"
+        f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_field}px;padding:4px 8px;}}"
         f"QPlainTextEdit:focus{{border:1px solid {t.blue};}}"
     )
     return e

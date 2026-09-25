@@ -63,7 +63,7 @@ from cursor_fx import WhaleCursor # noqa: E402
 from heal import Health, Probe, plan_for, probe_backend # noqa: E402
 from ocean import OceanWaves, paint_backdrop # noqa: E402
 from panels_qt import BATCH_SECS, build_panel # noqa: E402
-from stylekit_qt import THEMES, Tokens, apply_font_to_app, qfont, resolve_family, rgba # noqa: E402
+from stylekit_qt import THEMES, Tokens, apply_font_to_app, pill, qfont, resolve_family, rgba # noqa: E402
 from widgets import ( # noqa: E402
     Badge,
     Btn,
@@ -896,8 +896,11 @@ class Shell(QWidget):
         self.bal_mask.setFixedHeight(26)
         self.bal_mask.setCursor(Qt.CursorShape.PointingHandCursor)
         self.bal_mask.setToolTip("余额显示（只改界面上的数字，不动真实余额）")
+        # 形状：26px 高的文字小钮 ⇒ **胶囊**（半高 13）。顶栏图标钮走正圆，见下方
+        # btn_look —— 「一类按钮一种形状」：文字钮=胶囊、图标钮=圆、块状=方中带圆。
         self.bal_mask.setStyleSheet(
-            "QPushButton{background:transparent;border:none;border-radius:8px;"
+            "QPushButton{background:transparent;border:none;"
+            f"border-radius:{pill(26)}px;"
             f"color:{self.t.tx3};padding:0 6px;}}"
             f"QPushButton:hover{{background:{rgba(self.t.q('tx'), 14).name(QColor.NameFormat.HexArgb)};}}"
         )
@@ -922,8 +925,11 @@ class Shell(QWidget):
         self.btn_look.setIconSize(QSize(20, 20))
         self.btn_look.setToolTip("外观切换（文案 / 主题）")
         self.btn_look.setCursor(Qt.CursorShape.PointingHandCursor)
+        # 36×34 的纯图标钮 ⇒ **正圆**（半宽 18）。旧值 8px 圆角在 36px 的方形上
+        # 只剩一点弧，肉眼就是"方框"（用户红箭头指的就是这颗）。图标钮排成一行时，
+        # 正圆 hover 底比圆角方底更好认，也和旁边的胶囊文字钮区分开。
         self.btn_look.setStyleSheet(
-            "QPushButton{background:transparent;border:none;border-radius:8px;}"
+            "QPushButton{background:transparent;border:none;border-radius:17px;}"
             f"QPushButton:hover{{background:{rgba(self.t.q('tx'), 14).name(QColor.NameFormat.HexArgb)};}}"
         )
         self.btn_look.clicked.connect(
@@ -1370,7 +1376,7 @@ class Shell(QWidget):
         e.setStyleSheet(
             f"QLineEdit{{background:{rgba(self.t.q('tx'), 0 if self.t.glass else 16).name(QColor.NameFormat.HexArgb)};"
             f"color:{self.t.tx};border:1px solid {self.t.bd};"
-            f"border-radius:{self.t.radius_pill}px;padding:0 10px;}}"
+            f"border-radius:{pill(32)}px;padding:0 10px;}}"
             f"QLineEdit:focus{{border:1px solid {self.t.blue};}}"
         )
         return e
@@ -1563,12 +1569,14 @@ class Shell(QWidget):
         while lay.count():
             it = lay.takeAt(0)
             if it.widget():
+                it.widget().setParent(None) # 立刻脱离父子树（只 deleteLater 时事件循环未转则被搁置，控件仍可见）
                 it.widget().deleteLater()
             elif it.layout():
                 sub = it.layout()
                 while sub.count():
                     sit = sub.takeAt(0)
                     if sit.widget():
+                        sit.widget().setParent(None) # 立刻脱离父子树（只 deleteLater 时事件循环未转则被搁置，控件仍可见）
                         sit.widget().deleteLater()
         # 注：顶层布局对象本身卸不掉（QWidget 没有公开的卸载 API，QObject setParent
         # 动不了 d->layout 指针）—— 所以 _build 改为「有布局就复用」，不再新建。
@@ -2271,7 +2279,7 @@ class _Combo(QWidget):
         self.cb.setMinimumWidth(200)
         self.cb.setStyleSheet(
             f"QComboBox{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
-            f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_pill}px;padding:0 10px;}}"
+            f"color:{t.tx};border:1px solid {t.bd};border-radius:{pill(32)}px;padding:0 10px;}}"
             f"QComboBox::drop-down{{border:none;width:22px;}}"
             f"QComboBox QAbstractItemView{{background:{t.bg if t.key!='whale' else '#0E2136'};"
             f"color:{t.tx};border:1px solid {t.bd};selection-background-color:{t.blue_soft};}}"
