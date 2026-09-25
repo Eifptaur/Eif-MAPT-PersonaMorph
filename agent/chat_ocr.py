@@ -886,7 +886,30 @@ def _count_tail(s: str) -> str:
     return m.group(1) if m else ""
 
 
-def matches_strict(text: str, name: str) -> bool:
+def norm_collides(name: str, others) -> bool:
+    """目标名在已知会话里是否存在「归一化同名、原名不同」的另一会话（audit-r6 D2 新发现）。
+
+    为什么要有：norm 会剥「（8）」这类装饰（现场「演示（3）」靠它认人）——但当库里
+    **真有两个**归一化同名的群（如「测试」与「测试(2)」，微信自动加、用户手写都常见），
+    装饰尾巴就从"可剥的杂音"变成**判别特征**：此时屏幕读出带尾巴的名字，可能不是目标
+    而是那个同名异饰的另一群 ⇒ 授权档必须按尾缀严格区分。
+    ⚠️ `others` 只许喂**可信名字源**（群表/昵称表/监听会话的 DB 名）——屏幕读数里
+    本身就带装饰（「演示（3）」），喂进去会把装饰误判成撞名、杀死装饰豁免。
+    """
+    try:
+        b = norm(str(name or ""))
+        if not b:
+            return False
+        for o in (others or []):
+            no = str(o or "").strip()
+            if no and no != str(name or "").strip() and norm(no) == b:
+                return True
+        return False
+    except Exception:
+        return False
+
+
+def matches_strict(text: str, name: str, others=None) -> bool:
     """**授权档**的名字判据：归一化后必须**完全相等**，不做包含。
 
     为什么要单开这一条：
@@ -907,6 +930,10 @@ def matches_strict(text: str, name: str) -> bool:
       ⚠️ 仍留一条**已知残留**（写在这里，别当成已解决）：反过来（目标是 `测试`、屏幕是 `测试(2)`）
       仍会判相等 —— 因为那个括号数字**可能真的是成员数**（现场「演示（3）」就是这一种，剥掉它
       才认得出人来）。根治要把群人数从库里取来核；在此之前这一侧宁可**漏发**也不乱发。
+      ⭐ audit-r6：上面这条残留收窄了——调用方传 `others`（**可信 DB 名**，见 `norm_collides`）
+      时，凡库里真有「归一化同名、原名不同」的另一会话，装饰尾巴升级为判别特征：
+      两侧 `_count_tail` 必须一致（`测试(2)` vs `测试` ⇒ 拒；都带同一个 `(2)` ⇒ 照旧过）。
+      没有撞名时行为与历史完全一致（「演示（3）」装饰豁免保留）。
     """
     try:
         # ⛔ `norm()` 会剥掉「星期X/周X/昨天/前天」
@@ -926,10 +953,12 @@ def matches_strict(text: str, name: str) -> bool:
         if not a or not b:
             return False
         _kb = _count_tail(name)
+        # ⭐ audit-r6：库里有归一化撞名的另一会话 ⇒ 尾巴是判别特征，两侧必须一致
+        _tail_ok = (not norm_collides(name, others)) or (_count_tail(text) == _kb)
 
         def _cnt_ok() -> bool:
-            """② 目标名带括号数字 ⇒ 屏幕上也得带同一个数字。"""
-            return (not _kb) or (_count_tail(text) == _kb)
+            """② 目标名带括号数字 ⇒ 屏幕上也得带同一个数字；撞名时 ⇒ 两侧尾巴必须一致。"""
+            return _tail_ok and ((not _kb) or (_count_tail(text) == _kb))
 
         if a == b and _cnt_ok():
             return True
@@ -998,7 +1027,7 @@ def _fuzzy_overlaps(a: str, b: str) -> bool:
     return False
 
 
-def matches_fuzzy(text: str, name: str, others) -> bool:
+def matches_fuzzy(text: str, name: str, others, db_others=None) -> bool:
     """授权档的**模糊兜底**：OCR 把名字读错 1~2 个字时仍能认对，但只认「候选集里唯一接近」。
 
     为什么需要：`matches_strict` 要求归一化后完全相等——OCR 把「演示群」读成「演示祥」
@@ -1036,9 +1065,14 @@ def matches_fuzzy(text: str, name: str, others) -> bool:
                 b = b[len(_p):]
         if not a or not b:
             return False
-        # ③b 目标名自带括号数字 ⇒ 屏幕上也得带同一个数字（同 matches_strict 的 ②）
+        # ③b 目标名自带括号数字 ⇒ 屏幕上也得带同一个数字（同 matches_strict 的 ②）；
+        #    ⭐ audit-r6：库里有归一化撞名的另一会话 ⇒ 尾巴是判别特征，两侧 `_count_tail`
+        #    必须一致——`matches_fuzzy('测试(2)','测试',…, db_others=['测试(2)'])`
+        #    由 True 改 False（那是 r5 探针证明「真名候选拦不住」的同一条，现由 ③b 拦住）。
+        #    ⚠️ 撞名判定只用 `db_others`（**可信 DB 名**）——`others` 候选池里混着屏幕
+        #    读数（「演示（3）」装饰），喂进去会把装饰误判成撞名、杀死装饰豁免。
         _kb = _count_tail(name)
-        if _kb and _count_tail(text) != _kb:
+        if (_kb or norm_collides(name, db_others)) and _count_tail(text) != _kb:
             return False
         # ① text 与目标是否接近（距离形态或包含形态）
         if not (_fuzzy_close(a, b) or _fuzzy_overlaps(a, b)):

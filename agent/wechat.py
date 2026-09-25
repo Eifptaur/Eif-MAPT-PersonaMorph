@@ -3814,30 +3814,10 @@ class WeChatAdapter:
         """清（约束 b：判否/异常一律清）。"""
         self._idn_cache = None
 
-    def _known_chat_names(self) -> list:
-        """DB 侧**全量已知会话名**（③′ 模糊档候选集的补全，audit-r3 D1）。
-
-        为什么必须有：③′ 原来只拿 `session_rows()`（**可见行**）当候选集，而"当前打开的
-        那一行"恰是白字绿底、OCR 最读不准的一行（E→巷）⇒ **竞争名恰好读不到**不是罕见
-        形态。实测反例：屏幕实为「工作群B」、目标「工作群A」、B 行没读出来 ⇒ 候选集里
-        没有竞争者 ⇒「唯一接近、无歧义」误判 True。⇒ 候选集必须是**可见行 ∪ 全量已知名**。
-
-        名字来源（全部读内存映射 / 缓存，零 OCR）：
-          · 群表 `_groups`（来自微信库群列表——**全量群**，不只监听群）；
-          · 联系人昵称表 `_nick_map`；
-          · 监听中的会话（`_monitored_chat_ids()` → `display_name`，自带 60s 缓存——
-            机器人真正会在其中切换的集合，竞争名几乎必出自这里）；
-          · 滚动「见过的会话名」`_seen_names`（audit-r4 D1 残余补法：用户**手动**打开
-            一个我们从没见过的会话 / 联系人表读不到时的私聊——三张表都答不出名字，
-            但它的行一定在会话列表里出现过且当时可读，读到就记）；
-          · 「曾作为当前会话读数出现过的名字」`_curr_seen`（audit-r5 加固：不淘汰的
-            小集合——残余场景里的竞争者正是"当前打开着的那个会话"，绿底行/标题带
-            读到过一次就永久在册；上限假设＝不同会话名自然有界）。
-        消息档案 / 记忆库的枚举**不并入**：档案键是 wxid 不是名字，展示名仍要回查上面
-        两张表 ⇒ 并入只添成本不添名字（实测取舍，如实记账）。
-
-        测试夹具常绕过 `__init__` ⇒ 一律 `getattr` 取属性，异常退空表（宁缺勿错：
-        空表只是候选集少几项，不会把歧义误判成唯一）。
+    def _db_chat_names(self) -> list:
+        """**可信 DB 名**（群表 ∪ 昵称表 ∪ 监听会话展示名）——`norm_collides` 的撞名
+        判定只用这一份（audit-r6）：屏幕读数里本身带装饰（「演示（3）」成员数），混进
+        撞名源会把装饰误判成撞名、杀死装饰豁免。异常退空表（宁缺勿错）。
         """
         names = set()
         try:
@@ -3861,15 +3841,34 @@ class WeChatAdapter:
                     names.add(n) # 纯 wxid 兜底名当不了 OCR 竞争者，不并
         except Exception:
             pass
+        return sorted(names)
+
+    def _known_chat_names(self) -> list:
+        """DB 侧**全量已知会话名**（③′ 模糊档候选集的补全，audit-r3 D1）。
+
+        为什么必须有：③′ 原来只拿 `session_rows()`（**可见行**）当候选集，而"当前打开的
+        那一行"恰是白字绿底、OCR 最读不准的一行（E→巷）⇒ **竞争名恰好读不到**不是罕见
+        形态。实测反例：屏幕实为「工作群B」、目标「工作群A」、B 行没读出来 ⇒ 候选集里
+        没有竞争者 ⇒「唯一接近、无歧义」误判 True。⇒ 候选集必须是**可见行 ∪ 全量已知名**。
+
+        名字来源（全部读内存映射 / 缓存，零 OCR）：
+          · `_db_chat_names()`：群表 `_groups`（微信库全量群）∪ 昵称表 `_nick_map` ∪
+            监听中的会话展示名（自带 60s 缓存）——**可信源**，兼作撞名判定（audit-r6）；
+          · 滚动「见过的会话名」`_seen_names`（audit-r4 D1 残余补法：用户**手动**打开
+            一个我们从没见过的会话 / 联系人表读不到时的私聊——三张表都答不出名字，
+            但它的行一定在会话列表里出现过且当时可读，读到就记）。
+            ⛔ 只喂 `session_rows()` 里**非当前高亮行**的名字（audit-r6：当前行自己的
+            读数与判据 a 同源 ⇒ 进候选集必然「a≈no」自否决，模糊档对它本来要救的场景
+            反而拒发——r5 曾把当前读数也并进来，r6 审查者实测证伪，已撤）。
+        消息档案 / 记忆库的枚举**不并入**：档案键是 wxid 不是名字，展示名仍要回查上面
+        两张表 ⇒ 并入只添成本不添名字（实测取舍，如实记账）。
+
+        测试夹具常绕过 `__init__` ⇒ 一律 `getattr` 取属性，异常退空表（宁缺勿错：
+        空表只是候选集少几项，不会把歧义误判成唯一）。
+        """
+        names = set(self._db_chat_names())
         try:
             for n in (getattr(self, "_seen_names", None) or {}):
-                n = str(n or "").strip()
-                if n:
-                    names.add(n)
-        except Exception:
-            pass
-        try:
-            for n in (getattr(self, "_curr_seen", None) or ()):
                 n = str(n or "").strip()
                 if n:
                     names.add(n)
@@ -3907,27 +3906,6 @@ class WeChatAdapter:
         except Exception:
             pass
 
-    def _seen_curr_add(self, name) -> None:
-        """「曾作为当前会话读数出现过的名字」→ **不淘汰**的小集合（audit-r5 加固）。
-
-        为什么单独一个集合：滚动集（`_seen_names`）有容量淘汰，而残余场景里最要紧的
-        竞争者恰是"当前打开着的那个会话"——绿底行（`current_chat_name`）与标题带
-        （`header_text`）都是它的读数，读到过一次就该**永久在册**（审查者 r5：
-        那才是残余场景里的竞争者）。名字自然有界（不同会话数），故不设淘汰；
-        误读变体只会增加拒发（安全方向），与分析同 `_seen_names_add`。
-        """
-        try:
-            n = str(name or "").strip()
-            if not n:
-                return
-            cs = getattr(self, "_curr_seen", None)
-            if not isinstance(cs, set):
-                cs = set()
-                self._curr_seen = cs
-            cs.add(n)
-        except Exception:
-            pass
-
 
     def chat_is_open(self, chat_id: str, gui=None, name: str = None, allow_weak: bool = False):
         """只读：当前打开的会话是不是 chat_id。返回 (bool, 说明)。
@@ -3952,14 +3930,14 @@ class WeChatAdapter:
                 log.info("命中 %.1fs 前的会话身份正面证据（不重复取帧/OCR）：%s", self._IDN_CACHE_TTL_S, _hit[1][:70])
                 return _hit
         want = name or self.display_name(chat_id) or chat_id
+        _db_names = self._db_chat_names() # 可信 DB 名：strict 撞名守恒 + fuzzy db_others（audit-r6）
         got, why = self.current_chat_name(gui=gui)
-        self._seen_curr_add(got) # D1 残余：绿底行读数＝当前会话的名字（哪怕误读），永久在册
         try:
             from . import chat_ocr as _co
             # ⛔ **授权档只许"完全相等"**（`matches` 是"互相包含"，
             #   会让「KC测试」与「测试」这种互为子串的两个群被判成同一个 ⇒ 回复发进另一个群；
             #   网友 v0919「第一个群触发、回答出现在第二个群」就是这个）。
-            if got and _co.matches_strict(got, want):
+            if got and _co.matches_strict(got, want, _db_names):
                 return self._idn_cache_put(_ck, (True, "当前会话 OCR=%r（目标 %r）· %s" % (got, want, why)))
         except Exception:
             pass
@@ -3972,12 +3950,11 @@ class WeChatAdapter:
             _im4 = _co2.capture_best(gui=gui or self._get_gui(), frames=2)
             _tt = _co2.header_text(_im4) if _im4 is not None else ""
             # ⛔ 同上 —— 标题带这一档也是**授权档**，只许完全相等（不做包含）。
-            if _tt and _co2.matches_strict(_tt, want):
+            if _tt and _co2.matches_strict(_tt, want, _db_names):
                 return self._idn_cache_put(_ck, (True, ("会话头标题带 OCR=%r 与目标 %r 匹配（不依赖活动行时间/指纹参照）"
                               % (_tt[:16], want))))
         except Exception:
             pass
-        self._seen_curr_add(_tt) # D1 残余：标题带读数＝当前会话的脑门名，同样永久在册
         # ③ 高亮行时间 × DB（有区分力：那个时刻在会话列表里必须唯一）
         try:
             _ok3, _why3 = self._active_row_time_ok(chat_id, gui=gui)
@@ -3999,11 +3976,32 @@ class WeChatAdapter:
                 #   白字绿底、OCR 最读不准的一行 ⇒ 竞争名恰好读不到时歧义检不出来
                 #   （实测：屏幕实为「工作群B」、目标「工作群A」、B 行没读出来 ⇒ 误判 True）。
                 #   必须**可见行 ∪ DB 全量已知名**（读内存映射，零 OCR 成本）。
-                _vis = ([str(r.get("name")) for r in _co3.session_rows(_im5)
-                         if r.get("name")] if _im5 is not None else [])
-                self._seen_names_add(_vis) # D1 残余：读到的行名记入滚动集，下次起进候选集
+                # ⛔ audit-r6：**当前高亮行自己的读数不进候选集**——判据 a 与它同源
+                #   （绿底行/标题带都是当前行的读数），候选里再有它 ⇒「a≈no」必判歧义，
+                #   模糊档对"点对了、错一字"的核心场景自否决（r5 的 _curr_seen 同理，
+                #   审查者端到端实测证伪已撤）。设计注释一直写「其余」，此处把排除补齐
+                #   （绿底带 y 定位，±8px 容差；量不到绿底带则不排除——宁误拒勿误放不变）。
+                _vis = []
+                if _im5 is not None:
+                    try:
+                        _bs5 = _co3.green_bands(_im5, min_ratio=0.30, min_h=28)
+                        _b5 = _bs5[0] if _bs5 else None
+                    except Exception:
+                        _b5 = None
+                    for _r in _co3.session_rows(_im5):
+                        _nm5 = str(_r.get("name") or "").strip()
+                        if not _nm5:
+                            continue
+                        if _b5 is not None:
+                            try:
+                                if (_b5["y0"] - 8) <= int(_r.get("y_abs", -10 ** 9)) <= (_b5["y1"] + 8):
+                                    continue # 当前行自己：不进候选集
+                            except Exception:
+                                pass
+                        _vis.append(_nm5)
+                self._seen_names_add(_vis) # D1 残余：读到的（非当前行）行名记入滚动集
                 _cands = list(dict.fromkeys(_vis + self._known_chat_names()))
-                if _cands and _co3.matches_fuzzy(_src3, want, _cands):
+                if _cands and _co3.matches_fuzzy(_src3, want, _cands, db_others=_db_names):
                     return self._idn_cache_put(_ck, (
                         True, "候选集模糊匹配：OCR=%r 与目标 %r 唯一接近（候选 %d 个，无歧义）"
                         % (_src3[:16], want, len(_cands))))
@@ -6517,7 +6515,8 @@ class WeChatAdapter:
             _a, _b = _co.norm(hdr), _co.norm(nm)
             # ⛔ 这是**授权档**（能不能发）⇒ 只许完全相等，不许包含
             #   （「KC测试」与「测试」互为子串时，包含判据会把回复发进另一个群）。
-            _hit = _co.matches_strict(hdr, nm) if len(_b) >= 1 else (_a == _b)
+            _dbn = self._db_chat_names() # 可信 DB 名（撞名守恒 + fuzzy db_others，audit-r6）
+            _hit = _co.matches_strict(hdr, nm, _dbn) if len(_b) >= 1 else (_a == _b)
             if not _hit:
                 # 模糊兜底（同 chat_is_open 的候选集模糊档）：OCR 把名字读错一两个字时
                 # strict 会整档漏掉——那正是"图片拿到了却发不出"的高频叠加场景
@@ -6527,11 +6526,28 @@ class WeChatAdapter:
                     _im = _co.capture_best(gui=gui or self._get_gui(), frames=2)
                     # ⛔ D1（同 chat_is_open ③′）：候选集 = 可见行 ∪ DB 全量已知名——
                     #   只用可见行时，竞争名恰好是 OCR 读不准的绿底行 ⇒ 歧义检不出来。
-                    _vis = ([str(r.get("name")) for r in _co.session_rows(_im)
-                             if r.get("name")] if _im is not None else [])
+                    # ⛔ audit-r6：当前高亮行自己的读数同样不进候选集（与判据同源 ⇒ 自否决）。
+                    _vis = []
+                    if _im is not None:
+                        try:
+                            _bs = _co.green_bands(_im, min_ratio=0.30, min_h=28)
+                            _b0 = _bs[0] if _bs else None
+                        except Exception:
+                            _b0 = None
+                        for _r in _co.session_rows(_im):
+                            _nm = str(_r.get("name") or "").strip()
+                            if not _nm:
+                                continue
+                            if _b0 is not None:
+                                try:
+                                    if (_b0["y0"] - 8) <= int(_r.get("y_abs", -10 ** 9)) <= (_b0["y1"] + 8):
+                                        continue # 当前行自己：不进候选集
+                                except Exception:
+                                    pass
+                            _vis.append(_nm)
                     self._seen_names_add(_vis) # D1 残余：同 ③′，读到即记
                     _cands = list(dict.fromkeys(_vis + self._known_chat_names()))
-                    if _cands and _co.matches_fuzzy(hdr, nm, _cands):
+                    if _cands and _co.matches_fuzzy(hdr, nm, _cands, db_others=_dbn):
                         return True, ("候选集模糊匹配：标题带 OCR=%r 与目标 %r 唯一接近"
                                       "（候选 %d 个，无歧义；纯屏幕证据）"
                                       % (str(hdr)[:20], nm[:16], len(_cands)))

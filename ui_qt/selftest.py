@@ -6832,17 +6832,45 @@ def t_ocr_fuzzy() -> None:
            and "填充043" not in w3._seen_names and "填充044" in w3._seen_names
            and "填充299" in w3._seen_names,
            "n=%d" % len(w3._seen_names))
-        # audit-r5 加固：「曾作为当前会话读数出现过的名字」→ 不淘汰小集合
-        w3._seen_curr_add("当前群甲")
-        w3._seen_curr_add("") # 空读数不记
-        w3._seen_curr_add("当前群乙")
-        _kn4 = set(w3._known_chat_names())
-        ck("_seen_curr_add：当前会话读数永久在册并进候选集（空读数不记）",
-           {"当前群甲", "当前群乙"} <= _kn4 and "" not in _kn4
-           and {"当前群甲", "当前群乙"} <= w3._curr_seen,
-           "got=%s" % sorted(_kn4)[:6])
-        ck("_seen_curr_add：不淘汰——独立于滚动集（滚动已满员淘汰，curr 仍在）",
-           "当前群甲" in w3._curr_seen and "当前群乙" in w3._curr_seen)
+        # ── 场景 G（audit-r6 ③）：当前行自己的读数不进候选集——模糊档核心场景回归 ──
+        #   生产形态：列表里就有当前行（绿底高亮），OCR 把它读错一字；r5 及以前的实现把
+        #   同源读数当候选 ⇒「a≈no」自否决（审查者端到端实测：B3 拒发 / B4 禁喂后放行）。
+        #   修后按绿底带排除当前行 ⇒ 模糊唯一接近 ⇒ 放行（r4 行为恢复）。
+        from PIL import Image as _PImG # noqa: PLC0415
+        w5 = _WA.__new__(_WA)
+        w5._gui = None
+        w5._idn_cache = None
+        w5._idn_txn = 0
+        w5._group_by_wxid = {}
+        w5._get_gui = lambda: None
+        w5._groups = []
+        w5._nick_map = {}
+        w5._monitored_chat_ids = lambda: []
+        w5.display_name = lambda ck: ""
+        w5._active_row_time_ok = lambda chat_id, gui=None: (False, "桩：时间档不参与")
+        w5.current_chat_name = lambda gui=None: ("演示祥", "桩：当前行读错一字")
+        _orig_cb3 = _co.capture_best
+        _orig_gb = _co.green_bands
+        _orig_srows3 = _co.session_rows
+        _co.capture_best = lambda *a, **k: _PImG.new("RGB", (80, 40), (255, 255, 255))
+        _co.green_bands = lambda *a, **k: [{"y0": 90, "y1": 130, "y_abs": 100, "score": 0.9}]
+        # 行结构仿生产：当前行（y=100，读错一字）+ 其他行
+        _co.session_rows = lambda img: [
+            {"name": "演示祥", "y_abs": 100}, {"name": "张三丰", "y_abs": 220},
+            {"name": "李四", "y_abs": 330}]
+        _chdr.check = lambda *a, **k: {"status": "no"}
+        w5._idn_txn_begin()
+        ok7, why7 = w5.chat_is_open("group:x@chatroom", name="演示群")
+        ck("chat_is_open：当前行读错一字且其读数在列表里 ⇒ 排除当前行后模糊唯一接近 ⇒ 放行（r6 ③ 收口）",
+           ok7 is True and "候选集模糊" in str(why7), "ok=%s why=%s" % (ok7, str(why7)[:50]))
+        ck("chat_is_open：当前行读数不进滚动 seen 集（同源不自毒）",
+           "演示祥" not in (w5._seen_names or {}), "seen=%s" % list((w5._seen_names or {}).keys())[:4])
+        # 反差组：绿底带量不到（排除失效）⇒ 同源读数混入候选 ⇒ 自否决（缺陷形态存证）
+        _co.green_bands = lambda *a, **k: []
+        w5._idn_txn_begin()
+        ok8, _ = w5.chat_is_open("group:x@chatroom", name="演示群")
+        ck("chat_is_open：反差组——绿底带量不到 ⇒ 当前行读数混入候选 ⇒ 自否决（缺陷形态存证）",
+           ok8 is False, "ok=%s" % ok8)
         # 场景 F：三表全空 + 竞争者只在 seen 集 ⇒ ③′ 走真 _known_chat_names 仍判否
         w4 = _WA.__new__(_WA)
         w4._gui = None
@@ -6871,7 +6899,75 @@ def t_ocr_fuzzy() -> None:
     finally:
         _co.capture_best = _orig_cb2 if "_orig_cb2" in dir() else _co.capture_best
         _co.session_rows = _orig_srows2 if "_orig_srows2" in dir() else _co.session_rows
-        _chdr.check = _orig_check # ④″ 场景 F 又动了它，离场还原（防泄漏进 ⑤/⑥）
+        _co.green_bands = _orig_gb if "_orig_gb" in dir() else _co.green_bands
+        _chdr.check = _orig_check # ④″ 场景 F/G 又动了它，离场还原（防泄漏进 ⑤/⑥）
+
+    # ── ④‴ D2（audit-r6 新发现）：归一化撞名 ⇒ 尾巴成判别特征；无撞名 ⇒ 装饰豁免保留 ──
+    from agent.chat_ocr import norm_collides as _nc # noqa: PLC0415
+    ck("norm_collides：库里真有同名异饰的另一群 ⇒ 撞名；自身同名不算；无同名不撞",
+       _nc("测试", ["KC测试", "测试(2)"]) is True and _nc("测试(2)", ["测试"]) is True
+       and _nc("演示", ["演示", "张三丰"]) is False and _nc("演示", []) is False)
+    ck("strict 撞名守恒：屏幕带尾缀+目标裸名（库里真有 (2)）⇒ 拒——授权档假阳性收口",
+       _co.matches_strict("测试(2)", "测试", ["测试(2)"]) is False)
+    ck("strict 撞名守恒：都带同一个 (2) ⇒ 照旧过；目标带尾缀+屏幕丢尾缀 ⇒ 照旧拒",
+       _co.matches_strict("测试(2)", "测试(2)", ["测试"]) is True
+       and _co.matches_strict("测试", "测试(2)", ["测试"]) is False)
+    ck("strict 无撞名 ⇒ 装饰豁免保留（现场「演示（3）」成员数场景不回归）",
+       _co.matches_strict("演示（3）", "演示", ["张三丰"]) is True
+       and _co.matches_strict("演示（3）", "演示") is True)
+    ck("fuzzy 撞名守恒：db_others 有 (2) ⇒ 由 True 改 False；不给 db_others ⇒ 旧行为",
+       _co.matches_fuzzy("测试(2)", "测试", ["张三丰"], db_others=["测试(2)"]) is False
+       and _co.matches_fuzzy("测试(2)", "测试", ["张三丰"]) is True)
+    # 端到端：DB 真有「测试(2)」、屏幕正确读出「测试(2)」、目标「测试」⇒ 必须判否（无误读也误发）
+    _orig_cb4 = _co.capture_best
+    _orig_gb4 = _co.green_bands
+    _orig_srows4 = _co.session_rows
+    try:
+        w6 = _WA.__new__(_WA)
+        w6._gui = None
+        w6._idn_cache = None
+        w6._idn_txn = 0
+        w6._group_by_wxid = {}
+        w6._get_gui = lambda: None
+        w6._groups = [{"wxid": "g1", "name": "测试(2)"}]
+        w6._nick_map = {}
+        w6._monitored_chat_ids = lambda: []
+        w6.display_name = lambda ck: ""
+        w6._active_row_time_ok = lambda chat_id, gui=None: (False, "桩：时间档不参与")
+        w6.current_chat_name = lambda gui=None: ("测试(2)", "桩：正确读出")
+        _co.capture_best = lambda *a, **k: _PImG.new("RGB", (80, 40), (255, 255, 255))
+        _co.green_bands = lambda *a, **k: [{"y0": 90, "y1": 130, "y_abs": 100, "score": 0.9}]
+        _co.session_rows = lambda img: [
+            {"name": "测试(2)", "y_abs": 100}, {"name": "张三丰", "y_abs": 220}]
+        _chdr.check = lambda *a, **k: {"status": "no"}
+        w6._idn_txn_begin()
+        ok9, _ = w6.chat_is_open("group:x@chatroom", name="测试")
+        ck("chat_is_open：DB 真有同名异饰群 + 屏幕正确读出带尾缀名 ⇒ 授权档判否（D2 误发收口）",
+           ok9 is False, "ok=%s" % ok9)
+        # 装饰豁免端到端：DB 无撞名、屏幕读出成员数装饰「演示（3）」⇒ 照旧放行（现场用例不回归）
+        w7 = _WA.__new__(_WA)
+        w7._gui = None
+        w7._idn_cache = None
+        w7._idn_txn = 0
+        w7._group_by_wxid = {}
+        w7._get_gui = lambda: None
+        w7._groups = []
+        w7._nick_map = {}
+        w7._monitored_chat_ids = lambda: []
+        w7.display_name = lambda ck: ""
+        w7._active_row_time_ok = lambda chat_id, gui=None: (False, "桩：时间档不参与")
+        w7.current_chat_name = lambda gui=None: ("演示（3）", "桩：成员数装饰读数")
+        _co.session_rows = lambda img: [
+            {"name": "演示（3）", "y_abs": 100}, {"name": "张三丰", "y_abs": 220}]
+        w7._idn_txn_begin()
+        ok10, why10 = w7.chat_is_open("group:x@chatroom", name="演示")
+        ck("chat_is_open：无撞名 ⇒ 装饰豁免端到端照旧放行（档① strict 命中）",
+           ok10 is True, "ok=%s why=%s" % (ok10, str(why10)[:40]))
+    finally:
+        _co.capture_best = _orig_cb4
+        _co.green_bands = _orig_gb4
+        _co.session_rows = _orig_srows4
+        _chdr.check = _orig_check
 
     # ── ⑤ C 步：CLAHE 增强只在主管线读空后补读（桩 recognize_dual 验编排）──
     from PIL import Image as _PImage # noqa: PLC0415
@@ -6986,7 +7082,13 @@ def t_audit_r3() -> None:
                     and _x.func.attr == "_idn_txn_begin":
                 return True
             # getattr(X, "_idn_txn_begin", None) 兜底形态（voice_strip r5 起）：
-            # 方法名只是字符串常量，不再是 Attribute 调用——同样算显式事务
+            # 优先结构匹配（getattr 调用 + 常量实参），整串常量兜底（r6 审查者确认
+            # 整串相等不命中 docstring，假阳性只剩"函数体内恰有裸字符串常量"，罕见）
+            if isinstance(_x, _ast.Call) and isinstance(_x.func, _ast.Name) \
+                    and _x.func.id == "getattr":
+                for _arg in _x.args:
+                    if isinstance(_arg, _ast.Constant) and _arg.value == "_idn_txn_begin":
+                        return True
             if isinstance(_x, _ast.Constant) and _x.value == "_idn_txn_begin":
                 return True
         return False
