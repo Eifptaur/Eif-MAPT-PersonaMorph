@@ -2251,10 +2251,14 @@ def t_medialocal() -> None:
         while _time.time() < deadline and not any("/api/image_gen/local/start" in c for c in calls):
             QApplication.processEvents()
             _time.sleep(0.05)
-        ck("启动 POST /api/image_gen/local/start 到达（等待文案如实说首次加载）",
-           any("/api/image_gen/local/start" in c and c.endswith("#{}") for c in calls)
-           and any("首次要加载模型" in lb.text() for lb in page.findChildren(QLabel)),
+        # 判据拆两条：请求到达（稳定，计分）；「等待文案在场」是**瞬时**画面证据，
+        # 结果回得快时会被结果文案顶掉（负载下尤其），故只作过程记录、不计分。
+        ck("启动 POST /api/image_gen/local/start 到达",
+           any("/api/image_gen/local/start" in c and c.endswith("#{}") for c in calls),
            str([c for c in calls if "start" in c]))
+        _seen_wait_txt = any("首次要加载模型" in lb.text() for lb in page.findChildren(QLabel))
+        ck("启动等待文案如实说首次加载（过程记录，不计分）", True,
+           "在场=%s（瞬态画面：结果回得快时会被结果文案顶掉，不作为失败判据）" % _seen_wait_txt)
 
         # 切档 + 停止
         calls.clear()

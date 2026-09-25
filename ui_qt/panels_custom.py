@@ -2052,6 +2052,16 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
 
         _post_action_raw(btn_pd, tk_note, _run, "读取待决台账…")
 
+    def _on_pd_web() -> None:
+        # 拍板四选一只在网页控制台有（Qt 只读展示）——给可点入口，不补一套四选一 UI
+        from PySide6.QtCore import QUrl # noqa: PLC0415
+        from PySide6.QtGui import QDesktopServices # noqa: PLC0415
+        from addr import join_url # noqa: PLC0415
+        from agent_bridge import current_url # noqa: PLC0415
+
+        QDesktopServices.openUrl(QUrl(join_url(current_url(), "/#sec-version")))
+        tk_note.setText("已在浏览器打开网页控制台（四选一在那里拍）· " + time.strftime("%H:%M:%S"))
+
     def _on_heal() -> None:
         from agent_bridge import post_json # noqa: PLC0415
 
@@ -2073,6 +2083,7 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
     btn_take.clicked.connect(_on_take)
     btn_forget.clicked.connect(_on_forget)
     btn_pd.clicked.connect(_on_pd)
+    btn_pd.clicked.connect(_on_pd_web) # 同一个按钮：读台账之外顺手给「去网页拍板」入口
     btn_heal.clicked.connect(_on_heal)
     btn_up.clicked.connect(_on_up)
 
@@ -6251,13 +6262,26 @@ def _feedback_appendix(t: Tokens, page: QWidget) -> None:
     row = QHBoxLayout()
     b_rf = Btn("刷新", t, "ghost")
     b_fl = Btn("补发积压", t, "ghost")
+    b_web = Btn("去网页加附件", t, "ghost") # Qt 壳不代持附件上传（web 为真值）——给入口不补 UI
     row.addWidget(b_rf)
     row.addWidget(b_fl)
+    row.addWidget(b_web)
     row.addStretch(1)
     card.body.addLayout(row)
     card.body.addWidget(fl_note)
     card.body.addWidget(lb)
     page.layout().addWidget(card)
+
+    def _open_web() -> None:
+        from PySide6.QtCore import QUrl as _QUrl # noqa: PLC0415
+        from PySide6.QtGui import QDesktopServices as _QDS # noqa: PLC0415
+        from addr import join_url as _join # noqa: PLC0415
+        from agent_bridge import current_url as _cur # noqa: PLC0415
+
+        _QDS.openUrl(_QUrl(_join(_cur(), "/#sec-feedback")))
+        fl_note.setText("已在浏览器打开网页控制台的反馈页（附件在那里添加）· " + time.strftime("%H:%M:%S"))
+
+    b_web.clicked.connect(_open_web)
 
     def _load() -> None:
         box: dict = {"done": False, "r": None, "err": None}

@@ -195,6 +195,7 @@ class SendQueue:
         #   **同会话短窗去重** —— 同一段文本在过去 `_DEDUP_WINDOW_S` 秒内已经给自己发过，就不再发一遍。
         #   兜的是"同一轮被重跑/重试后重复发送"这类路径（模型自己的 send 与兜底补发都走这里）。
         _dedup_since = time.time() - _DEDUP_WINDOW_S
+        _deduped = []
         try:
             _recent_self = [str((m or {}).get("text") or "") for m in
                             (self.store.recent(chat_key, limit=12, include_self=True) or [])
@@ -207,13 +208,20 @@ class SendQueue:
             for _t, _src in zip(parts, part_src):
                 if _t in _recent_self:
                     log.warning("跳过重复发送（%.0fs 内已发过同一句）：%s", _DEDUP_WINDOW_S, _t[:60])
+                    _deduped.append(_t)
                     continue
                 _kept2.append(_t)
                 _kept2_src.append(_src)
             parts = _kept2
             part_src = _kept2_src
+            # 幂等语义：**整批都是重复**时不算失败、也不抛 —— 那条内容确实在
+            # `_DEDUP_WINDOW_S` 秒内已经发出去了，对调用方而言"要发的已经发过"。
+            # 走与 `wechat.send_text` 拦截分支同口径的**幂等成功**，并按 `deduped` 分账
+            # （调用方据此**不计新增发送数、不入重试队列**，但 `append_self` 仍照旧 ——
+            # "我说过什么"的上下文应保持一致）。抛异常会把"其实已发"记成失败，是反的。
             if not parts:
-                raise RuntimeError("这一批与最近刚发过的内容重复，已跳过（防连发两次）")
+                log.info("这一批在 %.0fs 内已发过、全部命中去重 ⇒ 按幂等成功返回（不再抛）", _DEDUP_WINDOW_S)
+                return {"sent": [], "failed": [], "deduped": _deduped}
 
         # 风险闸门：**发之前**判（拦下的提示只在本机/控制台出现，绝不往微信侧发）
         from . import risk as _risk
@@ -247,23 +255,34 @@ class SendQueue:
                     # 引用 / @ 只在第一条上生效；引用是「引用最近一条消息」（近似），失败退回普通发送
                     use_at = at_user_id if is_first else None
                     use_quote = (reply_to_mid or auto_quote) if is_first else None
+                    _dd: list = [] # 接 wechat 侧的 3 秒去重标记（命中⇒这条按幂等、分账进 deduped）
                     if use_quote:
                         ok, msg = self.wechat.reply_quote(chat_id, text, target_text=reply_text,
                                                           target_sender_name=reply_sender_name)
                         if not ok:
                             log.warning("引用发送失败（第%d条），退回普通发送：%s", i + 1, msg)
-                            ok, msg = self.wechat.send_text(chat_id, text)
+                            ok, msg = self.wechat.send_text(chat_id, text, dedup_out=_dd)
                     elif use_at:
                         name = self.wechat.member_name(chat_id, use_at)
                         if name and not str(name).startswith("wxid_"):
-                            ok, msg = self.wechat.send_text_at(chat_id, name, text)
+                            ok, msg = self.wechat.send_text_at(chat_id, name, text, dedup_out=_dd)
                         else:
-                            ok, msg = self.wechat.send_text(chat_id, text)
+                            ok, msg = self.wechat.send_text(chat_id, text, dedup_out=_dd)
                     else:
-                        ok, msg = self.wechat.send_text(chat_id, text)
+                        ok, msg = self.wechat.send_text(chat_id, text, dedup_out=_dd)
                     if not ok:
                         raise RuntimeError(msg or "发送失败")
                     ts = int(time.time() * 1000)
+                    # 分账（幂等集中在一处）：命中 wechat 侧 3 秒去重 ⇒ 这条**没真发出去**，
+                    #   但内容确实在几秒前发过：`append_self` 照旧（上下文一致），
+                    #   风险窗计数**不加**（note_sent 不调），`sent` 不计、改记 `deduped`。
+                    if _dd:
+                        log.info("第%d条命中 3 秒去重（幂等，不重复发）：%s", i + 1, text[:40])
+                        _deduped.append(text)
+                        self.store.append_self(chat_key, text, ts=ts)
+                        if self.on_sent:
+                            self.on_sent(chat_key, text)
+                        continue
                     self.store.append_self(chat_key, text, ts=ts)
                     _risk.note_sent(chat_key, text) # 记账（闸门的窗口计数只认机器人出站路径）
                     if self.on_sent:
@@ -283,7 +302,7 @@ class SendQueue:
         if failed:
             print("[sender] 部分发送失败（%d/%d）：%s" % (len(failed), len(parts),
                   "；".join("第%d条「%s」：%s" % (f["index"] + 1, str(f["text"])[:20], f["error"]) for f in failed)))
-        return {"sent": sent, "failed": failed}
+        return {"sent": sent, "failed": failed, "deduped": _deduped}
 
     def send_image(self, chat_key: str, local_path: str):
         """发送一张本地图片（微信剪贴板粘贴）。"""

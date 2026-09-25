@@ -30,6 +30,12 @@ _REPLACE_TOTAL_S = 2.0
 #: 重试耗尽后仍失败的次数（模块级计数器，供判据/运维读取"是否真在丢写"）。
 REPLACE_FAILURES = {"count": 0, "last": ""}
 
+#: **可观测指标**（N4 审计项：让"热路径撞独占"这件事**看得见**，而不是只有出问题时才知道）：
+#:   `hits`    —— `os.replace` 撞共享冲突的**总次数**（含重试后成功的——冲突本身就是信号）；
+#:   `worst_s` —— 单次 replace 最坏等待秒数（从进 `_replace_retry` 到换上去/放弃）。
+#: 只增不减、无锁（单写者进程内单调计数，读侧容差即可）；控制台/运维随时可读。
+REPLACE_STATS = {"hits": 0, "worst_s": 0.0}
+
 
 def _replace_retry(tmp: str, path: str, budget_s: float | None = None) -> bool:
     """把临时档换到目标档，**撞共享冲突就退避重试**（有界）；真失败回 False。
@@ -46,23 +52,30 @@ def _replace_retry(tmp: str, path: str, budget_s: float | None = None) -> bool:
     delay = 0.002
     t0 = time.monotonic()
     last = None
-    for i in range(_REPLACE_TRIES):
-        try:
-            os.replace(tmp, path)
-            return True
-        except Exception as e: # noqa: BLE001 - 逐类判：只有共享冲突才重试
-            last = e
-            transient = isinstance(e, PermissionError) or getattr(e, "winerror", None) in (5, 32, 33)
-            if not transient:
-                break
-            if (time.monotonic() - t0) >= limit:
-                break
-            time.sleep(delay)
-            delay = min(delay * 1.6, 0.06)
-    REPLACE_FAILURES["count"] = int(REPLACE_FAILURES.get("count") or 0) + 1
-    REPLACE_FAILURES["last"] = str(last)[:200]
-    return False
-
+    try:
+        for i in range(_REPLACE_TRIES):
+            try:
+                os.replace(tmp, path)
+                return True
+            except Exception as e: # noqa: BLE001 - 逐类判：只有共享冲突才重试
+                last = e
+                transient = isinstance(e, PermissionError) or getattr(e, "winerror", None) in (5, 32, 33)
+                if transient:
+                    REPLACE_STATS["hits"] = int(REPLACE_STATS.get("hits") or 0) + 1 # 撞冲突本身就是信号（含重试成功）
+                if not transient:
+                    break
+                if (time.monotonic() - t0) >= limit:
+                    break
+                time.sleep(delay)
+                delay = min(delay * 1.6, 0.06)
+        REPLACE_FAILURES["count"] = int(REPLACE_FAILURES.get("count") or 0) + 1
+        REPLACE_FAILURES["last"] = str(last)[:200]
+        return False
+    finally:
+        # 最坏单次耗时（成功/失败都记——运维要的是"最坏发生过"，不只是"失败发生过"）
+        _spend = time.monotonic() - t0
+        if _spend > float(REPLACE_STATS.get("worst_s") or 0.0):
+            REPLACE_STATS["worst_s"] = round(_spend, 4)
 
 def quarantine(path: str, now=None) -> str:
     """把坏档**改名**成 `<path>.bad.<YYYYmmdd-HHMMSS>` 留证；返回留证文件的路径（失败回空串）。

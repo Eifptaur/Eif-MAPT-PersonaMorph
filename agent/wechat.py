@@ -1365,6 +1365,7 @@ class WeChatAdapter:
         self._self_local: dict = {}
         self._self_local_loaded = False
         self._send_recent = deque(maxlen=50) # 发送去重 (chat_id, text, ts)，防回车重试发两遍
+        self._idn_cache = None # 会话身份正面证据的事件内复用（见 chat_is_open 上方说明）
         self._poke_back_cd: dict = {} # wxid -> 上次「系统回拍」时间戳（30 分钟冷却，防连环拍）
         self._poke_playful: dict = {} # 日期(yyyy-mm-dd) -> [ts...] 主动皮一下记录（按天限频）
         self._init_db()
@@ -3302,13 +3303,18 @@ class WeChatAdapter:
         except Exception:
             return False
 
-    def send_text(self, chat_id: str, text: str):
+    def send_text(self, chat_id: str, text: str, dedup_out: list | None = None):
         """发送文本到群。返回 (ok, message)。
 
         **投递优先**：若会话头三态闸判 `ok`（确认目标会话就是当前打开的），
         直接走 `send_text_posted`（不动光标（伪激活可能短暂置前约 1~3 秒后自动还回）、不要求窗口可见）；
         否则（`mismatch`/`no_ref`/抓不到）**退回真实路径**——真实路径会先按名字打开会话，
         顺便把这个尺寸下的会话头学到手，于是**下一次就能走投递**。
+
+        **幂等语义**：3 秒内同一会话同一文本被判重复时，本函数按**幂等成功**返回
+        `(True, "重复发送已拦截…")`（那条内容确实在几秒前发出去了，对调用方而言"要发的已经发过"）。
+        调用方若需按「真发出去 / 命中拦截」分账，传 `dedup_out`（一个 list）；
+        命中拦截时会把 `True` 追加进去，未命中则不动。默认 `None` = 调用方不关心，行为不变。
         """
         # ⛔ 下面三道早退闸（停机 / 版本门 / 去重）都在
         #   `try` **之前**，本函数的 `finally` 罩不到它们 ⇒ 上一次链留下的登记（"我们为干活还原
@@ -3340,12 +3346,15 @@ class WeChatAdapter:
             pass
         if not self._dedup_send(chat_id, text):
             _minimize_back_if_needed("投递文本链收尾（含早退）")
+            if dedup_out is not None:
+                dedup_out.append(True)
             return True, "重复发送已拦截（3 秒内同一文本）"
         name = self.group_name(chat_id)
         _st_status = "没走投递档"
         _st_note = "" # 会话头三态判据的原话（台账/回执要它，别只留一个英文状态码）
         _sw_msg = "" # 投递切会话那一步的回执（用户看得懂的是它，不是状态码）
         try:
+            self._idn_txn_begin() # 本次发送事务开始：上一次的会话身份正面结论作废
             with self._send_lock: # 所有碰微信窗口的操作统一串行（发消息/引用/拍一拍/回拍不打架）
                 gui = self._get_gui()
                 if self._posted_preferred():
@@ -3473,10 +3482,16 @@ class WeChatAdapter:
             #   `_minimize_back_if_needed` 自身幂等（先清零登记）＋三条安全线（没登记/已最小化/在前台
             #   都不动），所以成功路径上链尾已放过一次也不会重复动作。
             _minimize_back_if_needed("投递文本链收尾（含早退）")
+            self._idn_txn_end() # 事务结束：清缓存（下一条消息必重验）
 
-    def send_text_at(self, chat_id: str, member_name: str, text: str):
-        """在群里 @ 成员并发送文本。返回 (ok, message)。"""
+    def send_text_at(self, chat_id: str, member_name: str, text: str, dedup_out: list | None = None):
+        """在群里 @ 成员并发送文本。返回 (ok, message)。
+
+        **幂等语义**同 `send_text`：3 秒内重复按**幂等成功**返回并（若传了 `dedup_out`）打标记。
+        """
         if not self._dedup_send(chat_id, text):
+            if dedup_out is not None:
+                dedup_out.append(True)
             return True, "重复发送已拦截（3 秒内同一文本）"
         name = self.group_name(chat_id)
         try:
@@ -3706,6 +3721,67 @@ class WeChatAdapter:
                                   "DB 回读 local_id=%s type=%s）" % (r.get("local_id"), r.get("type")))
         return None
 
+    # ── 会话身份正面证据的事件内复用（只省取帧/OCR，不放松任何证据） ─────────
+    #   背景：同一次发送事务里 `chat_is_open` 会被反复问（换档位看不同证据），每次都要
+    #   取帧 + OCR；一轮下来取帧 12 张、OCR 12 次（探针实测）。本缓存只把**刚刚已经拿到**的
+    #   正面结论在极短窗口内复用，省掉重复取帧 —— 不新增证据、不降低档位、不改判否逻辑。
+    #
+    #   四条约束（缺一不可）：
+    #     a) **键含四要素**：chat_id + 目标名 + 渲染区尺寸/DPI + 是哪一档给的正面证据。
+    #        —— 尺寸一变（窗口被拖/缩放/换显示器）或目标名一变，键就不同 ⇒ 必然失效、不会误用。
+    #     b) **只缓存正面，不缓存负面**：判否 / 异常 ⇒ 立即清空（见 `_idn_cache_invalidate`）。
+    #     c) **有效期 ≤ 单次发送事务**：靠**事务 token**（不是靠秒数）—— 发送链进门时
+    #        `_idn_txn_begin()` 换一个新 token，缓存键里带上它；事务一结束 token 变化 ⇒
+    #        上一个事务的正面结论**立刻作废**。秒数（`_IDN_CACHE_TTL_S`）只当作**兜底上限**，
+    #        防某个调用方忘了开事务时缓存长期挂着。
+    #     d) **命中必须记账**：命中时 `log.info` 一行「命中 X 秒前的正面证据」，便于日后归因。
+    _IDN_CACHE_TTL_S = 4.0
+
+    def _idn_txn_begin(self):
+        """开一次发送事务：换 token ⇒ 上一事务的一切正面结论作废（约束 c 的主判据）。"""
+        self._idn_txn = getattr(self, "_idn_txn", 0) + 1
+        self._idn_cache = None
+        return self._idn_txn
+
+    def _idn_txn_end(self):
+        """结束发送事务：清缓存 + 作废 token（下一条消息必重验）。"""
+        self._idn_txn = getattr(self, "_idn_txn", 0) + 1
+        self._idn_cache = None
+
+    def _idn_cache_key(self, chat_id, gui, name, allow_weak):
+        """构造缓存键（约束 a）。任一要素拿不到 ⇒ 返回 None（不缓存，宁可不省）。"""
+        try:
+            _g = gui or self._gui
+            r = getattr(_g, "render_rect", None) or (0, 0, 0, 0)
+            _size = (int(r[2] - r[0]), int(r[3] - r[1]))
+            _dpr = round(float(getattr(_g, "dpr", 1.0) or 1.0), 3)
+            want = name or self.display_name(chat_id) or chat_id
+            return (str(chat_id), str(want), _size, _dpr, bool(allow_weak),
+                    int(getattr(self, "_idn_txn", 0)))
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _idn_cache_get(self, key):
+        """取（约束 c：过期的顺手清掉；返回 (bool, 说明) 或 None）。"""
+        _v = getattr(self, "_idn_cache", None)
+        if not _v:
+            return None
+        _t, _k, _res = _v
+        if _k != key or (time.time() - _t) > self._IDN_CACHE_TTL_S:
+            self._idn_cache = None
+            return None
+        return _res
+
+    def _idn_cache_put(self, key, res):
+        """存（只存正面；key 为 None 时直接返回原结果，不缓存）。"""
+        if key is not None and res and res[0] is True:
+            self._idn_cache = (time.time(), key, res)
+        return res
+
+    def _idn_cache_invalidate(self):
+        """清（约束 b：判否/异常一律清）。"""
+        self._idn_cache = None
+
     def chat_is_open(self, chat_id: str, gui=None, name: str = None, allow_weak: bool = False):
         """只读：当前打开的会话是不是 chat_id。返回 (bool, 说明)。
 
@@ -3717,7 +3793,17 @@ class WeChatAdapter:
             **授权写动作的最后一道闸绝不接它**（默认 `allow_weak=False`）。
           ⇒ 顺序也据此改：先问有区分力的三档，指纹档放最后且默认不采信。
         （原注保留）OCR 拿不到帧时**不要直接判否**（否则会把"其实开着"误判成"没开"⇒ 白白退回真鼠标路径）。
+
+        **事务内复用**：本函数是纯只读，且同一次发送事务里会被反复问（换档位看不同证据）。
+        为省一整轮 OCR/取帧，最近一次**正面**结论会在极短有效期（见 `_IDN_CACHE_TTL_S`）内复用，
+        命中打日志一行便于归因。缓存只存正面、不存负面；任何一次判否或异常立即清空。
         """
+        _ck = self._idn_cache_key(chat_id, gui, name, allow_weak)
+        if _ck is not None:
+            _hit = self._idn_cache_get(_ck)
+            if _hit is not None:
+                log.info("命中 %.1fs 前的会话身份正面证据（不重复取帧/OCR）：%s", self._IDN_CACHE_TTL_S, _hit[1][:70])
+                return _hit
         want = name or self.display_name(chat_id) or chat_id
         got, why = self.current_chat_name(gui=gui)
         try:
@@ -3726,7 +3812,7 @@ class WeChatAdapter:
             #   会让「KC测试」与「测试」这种互为子串的两个群被判成同一个 ⇒ 回复发进另一个群；
             #   网友 v0919「第一个群触发、回答出现在第二个群」就是这个）。
             if got and _co.matches_strict(got, want):
-                return True, "当前会话 OCR=%r（目标 %r）· %s" % (got, want, why)
+                return self._idn_cache_put(_ck, (True, "当前会话 OCR=%r（目标 %r）· %s" % (got, want, why)))
         except Exception:
             pass
         # ② **会话头标题带 OCR**（提到第二位）—— 对面 r25 实测它有区分力
@@ -3738,15 +3824,15 @@ class WeChatAdapter:
             _tt = _co2.header_text(_im4) if _im4 is not None else ""
             # ⛔ 同上 —— 标题带这一档也是**授权档**，只许完全相等（不做包含）。
             if _tt and _co2.matches_strict(_tt, want):
-                return True, ("会话头标题带 OCR=%r 与目标 %r 匹配（不依赖活动行时间/指纹参照）"
-                              % (_tt[:16], want))
+                return self._idn_cache_put(_ck, (True, ("会话头标题带 OCR=%r 与目标 %r 匹配（不依赖活动行时间/指纹参照）"
+                              % (_tt[:16], want))))
         except Exception:
             pass
         # ③ 高亮行时间 × DB（有区分力：那个时刻在会话列表里必须唯一）
         try:
             _ok3, _why3 = self._active_row_time_ok(chat_id, gui=gui)
             if _ok3:
-                return True, _why3
+                return self._idn_cache_put(_ck, (True, _why3))
         except Exception:
             pass
         # ④ **弱档：会话头指纹**（会假阳性 ⇒ 默认不采信）
@@ -3755,11 +3841,13 @@ class WeChatAdapter:
             st = _ch.check(chat_id, gui=gui)
             if st.get("status") == "ok":
                 if allow_weak:
-                    return True, "会话头指纹判 ok（**弱档**：对面 r25 实测它对不同会话也会判 True）"
+                    return self._idn_cache_put(_ck, (True, "会话头指纹判 ok（**弱档**：对面 r25 实测它对不同会话也会判 True）"))
                 return False, ("【可重试】只有会话头指纹档成立（**弱档、会假阳性**：对面 r25 实测两个不同会话"
                                "同时判 True）⇒ 不足以确认当前会话，按**未确认**处理")
         except Exception:
             pass
+        # 判否 ⇒ 立即清掉本轮的正面缓存（约束 b：只缓存正面；一次判否即失效，防把它带进下一个档）
+        self._idn_cache_invalidate()
         return False, "当前会话 OCR=%r（目标 %r）· %s" % (got, want, why)
 
     def _ensure_main_visible(self, gui, main: int) -> bool:
