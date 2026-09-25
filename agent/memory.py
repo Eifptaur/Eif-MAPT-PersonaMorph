@@ -28,14 +28,45 @@ MEMORY_DIR = os.path.join(DATA_DIR, "memory")
 HISTORY_DIR = os.path.join(DATA_DIR, "memory_history")
 
 
+#: 目录名长度上限（字符）。Windows 单个文件名的字节上限是 255，而中文/emoji 在 UTF-8 里
+#  一个字占 3~4 字节 ⇒ 取 80 字符能保证最坏情况（全 4 字节）也只有 320 字节……所以再压到 60：
+#  60×4=240 < 255，安全。超长的一律截断 + 挂 8 位哈希尾巴（唯一性由哈希保证，见 `_chat_dir_name`）。
+_DIR_NAME_MAX = 60
+
+
 def _chat_dir_name(chat_key: str) -> str:
-    return re.sub(r"[^a-z0-9_]", "_", str(chat_key), flags=re.IGNORECASE)
+    """会话 key → 目录名（**转义 + 定长**）。
+
+    ⛔ 老实现只做转义、**不截断** ⇒ 群名一长就炸：Windows 单文件名上限 255 **字节**，
+    而中文/emoji 一个字在 UTF-8 里占 3~4 字节 ⇒ 一个 ~85 字的**中文群名**（很常见）就会
+    让 `os.makedirs` 抛 `OSError: [WinError 123] 文件名、目录名或卷标语法不正确`
+    ⇒ 记忆整个写不进去（换了台电脑/换了个长名群就复现）。
+    ⇒ 超过 `_DIR_NAME_MAX` 字符的截断，并挂上 `_key_hash(chat_key)` 8 位尾巴：
+    截断只影响"给人看"，唯一性由哈希保证 —— 与 `store.chat_file()` 同一套思路。
+    """
+    safe = re.sub(r"[^a-z0-9_]", "_", str(chat_key), flags=re.IGNORECASE)
+    if len(safe) <= _DIR_NAME_MAX:
+        return safe
+    return "%s_%s" % (safe[:_DIR_NAME_MAX], _key_hash(chat_key))
+
+
+def _key_hash(chat_key: str) -> str:
+    import hashlib
+    return hashlib.md5(str(chat_key).encode("utf-8")).hexdigest()[:8]
 
 
 def _member_file_name(user_id: str, name: str = "") -> str:
+    """成员档名。**必须定长**：wxid 通常很短，但异常输入（或含中文/emoji 的 uid）
+    一样会撞上 Windows 单文件名 255 字节上限 ⇒ 超过 `_DIR_NAME_MAX` 的截断 + 挂哈希尾巴。
+    """
     if str(user_id or "").strip():
         uid = str(user_id).strip()
-        return uid + ".json" if re.match(r"^[\w-]+$", uid) else "u_" + re.sub(r"[^a-z0-9_]", "_", uid, flags=re.IGNORECASE) + ".json"
+        if re.match(r"^[\w-]+$", uid) and len(uid) <= _DIR_NAME_MAX:
+            return uid + ".json"
+        safe = re.sub(r"[^a-z0-9_]", "_", uid, flags=re.IGNORECASE)
+        if len(safe) <= _DIR_NAME_MAX:
+            return "u_" + safe + ".json"
+        return "u_%s_%s.json" % (safe[:_DIR_NAME_MAX], _key_hash(uid))
     safe = re.sub(r"[^a-z0-9_\u4e00-\u9fa5]", "_", str(name or "unknown"), flags=re.IGNORECASE)[:40]
     return "_n_" + (safe or "unknown") + ".json"
 
@@ -171,7 +202,16 @@ def chat_keys_on_disk() -> list:
             continue
         ck = str(meta.get("chat_key") or "").strip()
         if not ck:
-            m = re.match(r"^(group|private)_(.+)$", fn)
+            # 老档案没回写 chat_key ⇒ 从目录名归半还原。⛔ 目录名可能是**截断+哈希**的
+            #   （见 `_chat_dir_name`），这种还原不回来 ⇒ 如实跳过（不编一个假 key，
+            #   编了会让"选中它"落到别的目录）。新写入路径都会回写，故只影响老档案。
+            base = fn
+            m = re.match(r"^(group|private)_(.+)_([0-9a-f]{8})$", base)
+            if m and _key_hash("%s:%s" % (m.group(1), m.group(2))) == m.group(3):
+                # 尾巴真是我们挂的哈希 ⇒ 原名被截断过，反推不回来
+                log.debug("记忆目录 %s 是截断名且无 _meta.chat_key，跳过（不编假 key）", fn)
+                continue
+            m = re.match(r"^(group|private)_(.+)$", base)
             ck = "%s:%s" % (m.group(1), m.group(2)) if m else fn
         if ck and ck not in seen:
             seen.add(ck)
@@ -253,7 +293,9 @@ class MemoryStore:
                         "updatedAt": int(raw.get("updatedAt") or 0),
                         "lastConsolidatedAt": int(raw.get("lastConsolidatedAt") or 0),
                     }
-            except FileNotFoundError:
+            except OSError:
+                # 目录不在（首次）／被换成文件／权限被收 —— 都是"这次读不到"，按空档处理，
+                # 绝不把异常抛给上层（上层只是要一份成员列表，不该因存储故障整页炸掉）。
                 pass
             # 顺手把原始 chat_key 补写回 `_meta.json`：老档案（没有这一项）从此可被
             # `chat_keys_on_disk()` 精确还原成真实会话，而不是退化成转义目录名。

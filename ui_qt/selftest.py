@@ -3797,6 +3797,11 @@ def t_g6() -> None:
            "body=%s visible=%s" % (del_posts[-1] if del_posts else None, bd.isVisible()))
 
         # ── check 页：重置勾选 + 查看进度条 ──
+        # ⛔ 先清本机 checklist 记忆（QSettings）——勾选是**跨会话持久化**的，
+        #    不清就把上一次运行剩下的勾选读回来 ⇒ 初始计数不是 0/11、勾 3 项也不是 3/11
+        #    （断言随机器历史时红时绿）。
+        from PySide6.QtCore import QSettings as _QS_g6 # noqa: PLC0415
+        _QS_g6("WXAgent", "persona-morph-ui").remove("checklist")
         wrap_c = panels_qt.build_panel(t, "check")
         cp = wrap_c.widget()
         cp.show()
@@ -3816,6 +3821,9 @@ def t_g6() -> None:
         ck("g6 重置勾选：勾 3 项计数 3/11 → 重置全部清零回到 0/11",
            bool(cnt3) and not any(c.isChecked() for c in list_cks) and bool(cnt_reset),
            "cnt3=%s reset=%s" % (bool(cnt3), bool(cnt_reset)))
+        # ⛔ 复位本机 checklist 记忆：本页断言依赖「初始 0/11」，若把本次的勾选留在 QSettings 里，
+        #    下一次进程运行读回来的就不是 0/11 ⇒ 断言随运行历史时红时绿。
+        _QS_g6("WXAgent", "persona-morph-ui").remove("checklist")
 
         b_tip2 = _btn_by_text(cp, "查看进度条")
         ck("g6 查看进度条钮在场（web codeCheckTip2 同名）",
@@ -5333,7 +5341,6 @@ def t_g14() -> None:
 
     calls: list = []
     opened: list = []
-
     class _H(BaseHTTPRequestHandler):
         def _send(self, obj): # noqa: N802
             body = _json.dumps(obj).encode("utf-8")
@@ -5402,6 +5409,19 @@ def t_g14() -> None:
         return pred()
 
     keep: list = []
+
+    def _open_guide(key, btn, note):
+        """打开一条引导弹窗并**返回它自己**。
+
+        ⛔ 不要 `exec_dlgs[-1]` 取"最后一个"：上一步动作的异步回调（note 刷新 / `_go` 切页）
+        可能晚于本步到达，把新弹窗挤到后面 ⇒ 取到**上一次的对话框**（实测 note 回显串到
+        「已打开『tools.d』」上，断言随机器负载时红时绿）。
+        """
+        _before = len(exec_dlgs)
+        panels_custom._guide_open(key, btn, note)
+        _new = exec_dlgs[_before:]
+        return _new[-1] if _new else exec_dlgs[-1]
+
     try:
         # ① GUIDES 全量 actions 解析（10 条 / 5 种 kind）
         gs = panels_custom._web_guides()
@@ -5420,8 +5440,7 @@ def t_g14() -> None:
         fake_win._go = lambda sec, lab: got.append((sec, lab))
         b.window = lambda: fake_win
         note = QLabel("")
-        panels_custom._guide_open("tools", b, note)
-        dlg = exec_dlgs[-1]
+        dlg = _open_guide("tools", b, note)
         labs = [x.text() for x in dlg.findChildren(Btn)]
         ck("g14 引导弹窗动作按钮在场（tools：生成模板 / 打开目录）",
            "生成模板清单到 tools.d/" in labs and "打开 tools.d 目录" in labs,
@@ -5443,8 +5462,7 @@ def t_g14() -> None:
            str(_posts("/api/open-path")[-1:]))
 
         # ③ test 动作（voice → GET /api/voice/test）
-        panels_custom._guide_open("voice", b, note)
-        dlg2 = exec_dlgs[-1]
+        dlg2 = _open_guide("voice", b, note)
         tb = [x for x in dlg2.findChildren(Btn) if x.objectName() == "guideAct"][0]
         tb.click()
         _wait(lambda: "识别链路可用" in note.text())
@@ -5452,8 +5470,7 @@ def t_g14() -> None:
            "识别链路可用" in note.text(), "note=%r" % note.text())
 
         # ④ goto 动作（video → window()._go('videogen')）
-        panels_custom._guide_open("video", b, note)
-        dlg3 = exec_dlgs[-1]
+        dlg3 = _open_guide("video", b, note)
         gb = [x for x in dlg3.findChildren(Btn) if x.objectName() == "guideAct"][0]
         gb.click()
         ck("g14 goto 动作：切到对应面板（videogen）+ 状态回显",
@@ -5461,8 +5478,7 @@ def t_g14() -> None:
            "got=%s note=%r" % (got, note.text()))
 
         # ⑤ openUrl 动作（wechat → 微信官网）
-        panels_custom._guide_open("wechat", b, note)
-        dlg4 = exec_dlgs[-1]
+        dlg4 = _open_guide("wechat", b, note)
         ob = next(x for x in dlg4.findChildren(Btn) if x.text() == "打开官网下载")
         ob.click()
         ck("g14 openUrl 动作：打开微信官网",
@@ -6325,13 +6341,244 @@ def t_g20() -> None:
         _shutil.rmtree(tmp, ignore_errors=True)
 
 
+def t_g21() -> None:
+    """跨环境健壮性：路径「不是目录」/「超长名」/「写不进去」时不许炸。
+
+    三处真缺陷（都经真实文件系统注入取证，对应「换台电脑就复现」的典型情形）：
+      ① `os.listdir` 只接 `FileNotFoundError` ⇒ 路径被换成**文件**时抛 `NotADirectoryError`，
+         企业管控机/杀软隔离残留常见 —— 「读不到」直接变成「整页崩」；
+      ② 群名/uid 超长 ⇒ 目录名撞 Windows 单文件名 **255 字节**上限（中文一字 3 字节，
+         ~85 字中文群名就炸）⇒ 记忆整个写不进去；
+      ③ 入站消息热路径落盘失败抛异常 ⇒ **监听线程当场挂**（用户看到「机器人突然不理人」）。
+    """
+    import os # noqa: PLC0415
+    import shutil as _shutil # noqa: PLC0415
+    import sys as _sys # noqa: PLC0415
+    import tempfile # noqa: PLC0415
+    from pathlib import Path as _P # noqa: PLC0415
+
+    ROOT = _P(__file__).resolve().parent.parent
+    _sys.path.insert(0, str(ROOT))
+
+    import agent.config as _cfg # noqa: PLC0415
+    import agent.memory as _mem # noqa: PLC0415
+    import agent.store as _store # noqa: PLC0415
+
+    tmp = tempfile.mkdtemp(prefix="g21-io-")
+    _old = (_cfg.DATA_DIR, _mem.MEMORY_DIR, _mem.HISTORY_DIR, _store.MESSAGES_DIR)
+    try:
+        _cfg.DATA_DIR = tmp
+        _mem.MEMORY_DIR = os.path.join(tmp, "memory")
+        _mem.HISTORY_DIR = os.path.join(tmp, "memory_history")
+        _store.MESSAGES_DIR = os.path.join(tmp, "messages")
+
+        def _reset_both():
+            """把两个存储根恢复成「干净目录」——上一子场景可能把它们换成了文件。"""
+            for _p in (_mem.MEMORY_DIR, _store.MESSAGES_DIR):
+                if os.path.isdir(_p):
+                    _shutil.rmtree(_p, ignore_errors=True)
+                elif os.path.exists(_p):
+                    os.remove(_p)
+                os.makedirs(_p, exist_ok=True)
+
+        _reset_both()
+        _store.ChatStore(0).append_incoming("group:s@chatroom", "m1", 1700000000000,
+                                            "wxid_a", "张三", "消息")
+        _mem.MemoryStore().append("group:s@chatroom", "memberImpression", "印象",
+                                  {"userId": "wxid_a", "target": "张三"})
+
+        # ── ① 路径被换成文件（NotADirectoryError） ───────────────────────
+        _shutil.rmtree(_store.MESSAGES_DIR, ignore_errors=True)
+        with open(_store.MESSAGES_DIR, "w", encoding="utf-8") as f:
+            f.write("not a dir")
+        try:
+            _chats = _store.ChatStore(0).list_chats()
+            ck("g21 消息路径是文件时 list_chats 不抛（NotADirectory 收口）",
+               isinstance(_chats, list), "got=%s" % _chats)
+        except Exception as e:  # noqa: BLE001
+            ck("g21 消息路径是文件时 list_chats 不抛（NotADirectory 收口）", False,
+               "EXC %s: %s" % (type(e).__name__, e))
+        try:
+            _store.ChatStore(0).append_incoming("group:s@chatroom", "m2", 1700000001000,
+                                                "wxid_a", "张三", "第二条")
+            ck("g21 消息路径是文件时 append_incoming 不抛（热路径不许崩）", True, "")
+        except Exception as e:  # noqa: BLE001
+            ck("g21 消息路径是文件时 append_incoming 不抛（热路径不许崩）", False,
+               "EXC %s: %s" % (type(e).__name__, e))
+
+        # 记忆目录也换成文件
+        if os.path.isdir(_mem.MEMORY_DIR):
+            _shutil.rmtree(_mem.MEMORY_DIR, ignore_errors=True)
+        elif os.path.exists(_mem.MEMORY_DIR):
+            os.remove(_mem.MEMORY_DIR)
+        with open(_mem.MEMORY_DIR, "w", encoding="utf-8") as f:
+            f.write("not a dir")
+        try:
+            _ks = _mem.chat_keys_on_disk()
+            _ms = _mem.MemoryStore().members("group:s@chatroom")
+            ck("g21 记忆路径是文件时枚举/读取不抛", _ks == [] and _ms == [],
+               "keys=%s members=%s" % (_ks, _ms))
+        except Exception as e:  # noqa: BLE001
+            ck("g21 记忆路径是文件时枚举/读取不抛", False, "EXC %s: %s" % (type(e).__name__, e))
+
+        # ── ② 超长群名 / 超长 uid（Windows 255 字节文件名上限） ──────────
+        _reset_both()
+        _long_ck = "group:" + ("这是一个非常长的中文群名称" * 20) + "@chatroom"
+        ck("g21 目录名有长度上限（_DIR_NAME_MAX 已定）",
+           getattr(_mem, "_DIR_NAME_MAX", 0) > 0 and len(_mem._chat_dir_name(_long_ck)) <= 80,
+           "dir=%r len=%d" % (_mem._chat_dir_name(_long_ck)[:30], len(_mem._chat_dir_name(_long_ck))))
+        try:
+            _mem.MemoryStore().append(_long_ck, "memberImpression", "内容",
+                                      {"userId": "u1", "target": "某人"})
+            _back = _mem.MemoryStore().members(_long_ck)
+            ck("g21 超长中文群名可读写（不再 OSError）", len(_back) == 1, "members=%d" % len(_back))
+        except Exception as e:  # noqa: BLE001
+            ck("g21 超长中文群名可读写（不再 OSError）", False, "EXC %s: %s" % (type(e).__name__, e))
+        # 超长 uid 也不许炸
+        try:
+            _mem.MemoryStore().append("group:short@chatroom", "memberImpression", "x",
+                                      {"userId": "U" * 300, "target": "t"})
+            ck("g21 超长 uid 不炸（成员档名也定长）",
+               len(_mem.MemoryStore().members("group:short@chatroom")) == 1, "")
+        except Exception as e:  # noqa: BLE001
+            ck("g21 超长 uid 不炸（成员档名也定长）", False, "EXC %s: %s" % (type(e).__name__, e))
+        # 超长名 + 回写 chat_key ⇒ 枚举能精确还原
+        try:
+            _mem.MemoryStore().mark_consolidated(_long_ck)
+            ck("g21 超长群名回写 chat_key 后可精确枚举",
+               _long_ck in _mem.chat_keys_on_disk(), "keys=%s" % _mem.chat_keys_on_disk()[:1])
+        except Exception as e:  # noqa: BLE001
+            ck("g21 超长群名回写 chat_key 后可精确枚举", False, "EXC %s: %s" % (type(e).__name__, e))
+
+        # ── ③ 坏档扫描：所有读路径都不抛 ────────────────────────────────
+        _bad_dir = os.path.join(_mem.MEMORY_DIR, "group_broken_chatroom")
+        os.makedirs(_bad_dir, exist_ok=True)
+        open(os.path.join(_bad_dir, "u1.json"), "w", encoding="utf-8").write("{坏 JSON")
+        open(os.path.join(_bad_dir, "u2.json"), "w", encoding="utf-8").write("")
+        _probes = [
+            ("chat_keys_on_disk", lambda: _mem.chat_keys_on_disk()),
+            ("members", lambda: _mem.MemoryStore().members("group:broken@chatroom")),
+            ("overwrite_history", lambda: _mem.MemoryStore().overwrite_history("group:broken@chatroom")),
+            ("collect_member_texts", lambda: _mem.MemoryStore().collect_member_texts("u1", "甲")),
+        ]
+        _bad = []
+        for _n, _f in _probes:
+            try:
+                _f()
+            except Exception as e:  # noqa: BLE001
+                _bad.append("%s:%s" % (_n, type(e).__name__))
+        ck("g21 坏 JSON 档下所有读路径都不抛", not _bad, "泄漏=%s" % _bad)
+        # clear_all 遇读不动的档要如实报（不谎报成功）
+        try:
+            _mem.MemoryStore().clear_all()
+            ck("g21 clear_all 遇坏档不谎报成功", False, "应当抛 OSError 说明读不动的档")
+        except OSError as e:
+            ck("g21 clear_all 遇坏档不谎报成功", "读不动" in str(e), "%s" % str(e)[:60])
+        except Exception as e:  # noqa: BLE001
+            ck("g21 clear_all 遇坏档不谎报成功", False, "异常类型意外：%s" % type(e).__name__)
+    finally:
+        _cfg.DATA_DIR, _mem.MEMORY_DIR, _mem.HISTORY_DIR, _store.MESSAGES_DIR = _old
+        _shutil.rmtree(tmp, ignore_errors=True)
+
+
+def t_g22() -> None:
+    """入站落盘热路径：会话档被瞬时独占（杀软/索引器扫档）时不许打断监听。
+
+    真实机制：`store._save_chat` 在收到消息的回调里同步跑（`scripts/persona_morph.py` 每条消息
+    调一次 `store.append_incoming`）。它原来是「裸 `<dst>.tmp` + 单次 `os.replace`」：
+    另一个进程（杀软实时扫描 / 索引器 / 另一个读者）**恰好**打开着这个档时，Windows 上
+    `os.replace` 抛 `WinError 5`，异常直接穿透到监听线程 ⇒ **机器人突然不理人**。
+    换成统一原子写（唯一临时名 + fsync + 有界退避重试）+ 热路径短等待预算后：
+    瞬时独占一波（30ms）能自愈，写入不抛、条目不丢，且等待有上限不积压。
+    """
+    import os # noqa: PLC0415
+    import shutil as _shutil # noqa: PLC0415
+    import sys as _sys # noqa: PLC0415
+    import tempfile # noqa: PLC0415
+    import threading as _th # noqa: PLC0415
+    import time as _time # noqa: PLC0415
+    from pathlib import Path as _P # noqa: PLC0415
+
+    ROOT = _P(__file__).resolve().parent.parent
+    _sys.path.insert(0, str(ROOT))
+
+    import agent.config as _cfg # noqa: PLC0415
+    import agent.store as _store # noqa: PLC0415
+
+    tmp = tempfile.mkdtemp(prefix="g22-busy-")
+    _old = (_cfg.DATA_DIR, _store.MESSAGES_DIR)
+    try:
+        _cfg.DATA_DIR = tmp
+        _store.MESSAGES_DIR = os.path.join(tmp, "messages")
+        _st = _store.ChatStore(0)
+        _key = "group:g22@chatroom"
+        _st.append_incoming(_key, "m0", 1, "wxid_a", "甲", "底稿")
+        _dst = _store.chat_file(_key)
+
+        # ⭐ 热路径必须有短等待预算（不许用统一默认 2s：等待期间监听被占住 = 消息积压）
+        _budget = getattr(_store, "_SAVE_REPLACE_BUDGET_S", None)
+        ck("g22 会话入档有热路径短等待预算（< 2s 通用默认）",
+           isinstance(_budget, (int, float)) and 0 < float(_budget) < 2.0,
+           "budget=%r" % _budget)
+
+        # 模拟另一个进程持续瞬时独占目标档（杀软扫档的典型节奏：30ms 一波 / 300ms 间隔）
+        _stop = _th.Event()
+
+        def _holder():
+            while not _stop.is_set():
+                try:
+                    _f = open(_dst, "r+b")
+                    _time.sleep(0.03)
+                    _f.close()
+                except Exception: # noqa: BLE001
+                    _time.sleep(0.002)
+                _time.sleep(0.3)
+
+        _t = _th.Thread(target=_holder, daemon=True)
+        _t.start()
+        _raised = []
+        _t0 = _time.time()
+        try:
+            for _i in range(1, 41):
+                try:
+                    _st.append_incoming(_key, "m%d" % _i, _i, "wxid_a", "甲", "第 %d 条" % _i)
+                except Exception as e: # noqa: BLE001
+                    _raised.append("%d:%s" % (_i, type(e).__name__))
+        finally:
+            _stop.set()
+            _t.join(timeout=2)
+            _elapsed = _time.time() - _t0
+
+        ck("g22 会话档被瞬时独占时写入不抛（不打断监听）", not _raised, "抛出=%s" % _raised[:3])
+
+        _cnt = 0
+        try:
+            with open(_dst, encoding="utf-8") as f:
+                _cnt = len(__import__("json").load(f).get("messages", []))
+        except Exception as e: # noqa: BLE001
+            ck("g22 会话档被瞬时独占时条目不丢", False, "读档失败 %s" % type(e).__name__)
+        else:
+            ck("g22 会话档被瞬时独占时条目不丢", _cnt == 41, "实际 %d 条（丢 %d）" % (_cnt, 41 - _cnt))
+
+        # 等待有上限 ⇒ 40 条总耗时不该接近「每条等满预算」
+        ck("g22 热路径等待有上限（40 条平均 < 150ms/条）", _elapsed < 6.0,
+           "耗时 %.2fs（平均 %.0fms/条）" % (_elapsed, _elapsed / 40 * 1000))
+
+        # 无遗留临时档（原子写自清）
+        _left = [fn for fn in os.listdir(_store.MESSAGES_DIR) if fn.endswith(".tmp")]
+        ck("g22 热路径写完后无遗留临时档", not _left, "遗留=%s" % _left[:3])
+    finally:
+        _cfg.DATA_DIR, _store.MESSAGES_DIR = _old
+        _shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main() -> int:
     for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
                t_visual, t_badges, t_status_chain, t_bot_controls, t_window_chrome, t_dpi_motion,
                t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch, t_bootstrap32, t_ocr9,
                t_c10, t_c13, t_hotfix1, t_hotfix2, t_catmgr, t_medialocal, t_commfb,
                t_veradv, t_g5, t_g6, t_g7, t_g8, t_g9, t_g10, t_g11, t_g12, t_g13, t_g14,
-               t_g15, t_g16, t_g17, t_g18, t_g19, t_g20):
+               t_g15, t_g16, t_g17, t_g18, t_g19, t_g20, t_g21, t_g22):
         try:
             fn()
         except Exception as e: # noqa: BLE001

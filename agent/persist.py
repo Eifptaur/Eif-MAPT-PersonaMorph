@@ -31,13 +31,18 @@ _REPLACE_TOTAL_S = 2.0
 REPLACE_FAILURES = {"count": 0, "last": ""}
 
 
-def _replace_retry(tmp: str, path: str) -> bool:
+def _replace_retry(tmp: str, path: str, budget_s: float | None = None) -> bool:
     """把临时档换到目标档，**撞共享冲突就退避重试**（有界）；真失败回 False。
 
     为什么要有这一步：老写法一次 `os.replace` 失败就直接返回 False
     ⇒ 竞争下 71% 的写**静默丢掉**，而调用点大多只看"没抛异常"就当写成功。
     重试解决的是"瞬时共享冲突"这一种（真·权限问题/路径被占死仍会如实回 False）。
+
+    `budget_s` 是**等待预算**：默认取 `_REPLACE_TOTAL_S`（2s，适合"写完就返回"的调用点）。
+    **热路径**（每来一条消息都要写、写的时候监听线程被占住）应传更小的值——等待本身
+    就是消息积压；宁可这一条晚一拍入档，也不要让监听停在这里。
     """
+    limit = _REPLACE_TOTAL_S if budget_s is None else float(budget_s)
     delay = 0.002
     t0 = time.monotonic()
     last = None
@@ -50,7 +55,7 @@ def _replace_retry(tmp: str, path: str) -> bool:
             transient = isinstance(e, PermissionError) or getattr(e, "winerror", None) in (5, 32, 33)
             if not transient:
                 break
-            if (time.monotonic() - t0) >= _REPLACE_TOTAL_S:
+            if (time.monotonic() - t0) >= limit:
                 break
             time.sleep(delay)
             delay = min(delay * 1.6, 0.06)
@@ -164,7 +169,8 @@ def _sweep_own_orphans(path: str, older_than_s: float = 3600.0) -> int:
     return n
 
 
-def atomic_write_json(path, data, indent: int = 1, sort_keys: bool = False) -> bool:
+def atomic_write_json(path, data, indent: int = 1, sort_keys: bool = False,
+                      replace_budget_s: float | None = None) -> bool:
     """原子写 JSON：`<path>.<pid>.<random>.tmp` → `flush` + `fsync` → `os.replace`。
 
     **为什么 tmp 名要带 pid + 随机后缀**：老写法所有落盘点共用 `<path>.tmp`，
@@ -176,6 +182,10 @@ def atomic_write_json(path, data, indent: int = 1, sort_keys: bool = False) -> b
     **竞争下不许静默丢写**：`os.replace` 撞 WinError 5/32 时走 `_replace_retry`
     有界退避重试（审计实测反复试就过）。重试后仍失败 ⇒ 清理自己的临时档、记 warn、返回 False
     （原档一个字节不动），并把这次失败记进 `REPLACE_FAILURES` 供运维/判据核对。
+
+    `replace_budget_s`：换档的等待预算（默认 2s）。**消息入档这类热路径传小值**——
+    等待期间调用线程（监听）被占住，等得越久积压越多；短预算 + 失败返回 False 让调用方
+    下一条再试，比"卡住 2 秒"更符合热路径的要求。
     """
     tmp = "%s.%d.%s.tmp" % (path, os.getpid(), secrets.token_hex(4))
     try:
@@ -187,7 +197,7 @@ def atomic_write_json(path, data, indent: int = 1, sort_keys: bool = False) -> b
             json.dump(data, f, ensure_ascii=False, indent=indent, sort_keys=bool(sort_keys))
             f.flush()
             os.fsync(f.fileno())
-        if _replace_retry(tmp, path):
+        if _replace_retry(tmp, path, replace_budget_s):
             return True
         raise OSError("os.replace 重试 %d 次仍失败：%s" % (_REPLACE_TRIES, REPLACE_FAILURES["last"]))
     except Exception as e:

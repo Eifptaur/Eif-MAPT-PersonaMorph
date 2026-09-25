@@ -23,10 +23,18 @@ import threading
 import time
 
 from .config import DATA_DIR, get_config
+from .persist import atomic_write_json
 
 log = logging.getLogger("persona-morph")
 
 MESSAGES_DIR = os.path.join(DATA_DIR, "messages")
+
+#: 会话档案换档的**等待预算**（秒）。比 `persist` 的通用默认（2s）短得多：
+#: `_save_chat` 在入站消息回调上同步跑（`scripts/persona_morph.py` 收到一条消息就调一次），
+#: 等待期间监听线程被占住 ⇒ 等得越久、积压越多。真实"瞬时独占"（杀软扫档 / 索引器）实测
+#: 30~100ms 一波即过，0.35s 足够吸收；真被占死时**宁可这条晚一拍入档**（内存状态仍正确、
+#: 下一条会再试），也不让监听停在原地。
+_SAVE_REPLACE_BUDGET_S = 0.35
 
 #: 老命名档案只迁一次（进程级；`ChatStore.list_chats()` 第一次跑时触发）
 _MIGRATED = False
@@ -242,16 +250,31 @@ def _save_chat(state: dict) -> None:
         log.warning("会话档案先前读失败（%s：%s）⇒ 本次**不写盘**（保原文件）",
                     state.get("chat_key"), str(state.get("_loadFailed"))[:80])
         return
-    os.makedirs(MESSAGES_DIR, exist_ok=True)
-    dst = chat_file(state["chat_key"])
-    if not os.path.exists(dst) and os.path.exists(chat_file_legacy(state["chat_key"])):
-        # 老命名档案 → 首次写新命名：**只写不搬**（老文件可能属于撞名的另一个会话，搬走＝抢数据）
-        log.info("会话档案改用带哈希的新命名（%s）：老文件保留在 %s，新档从它读入后另存",
-                 str(state.get("chat_key"))[:40], os.path.basename(chat_file_legacy(state["chat_key"])))
-    tmp = dst + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(state, f, ensure_ascii=False, indent=1)
-    os.replace(tmp, dst)
+    # ⛔ 落盘失败**不许把异常抛给调用方**：这里是**入站消息热路径**（`append_incoming` 每条新消息
+    #   都会走到），抛出去＝监听线程当场挂掉，用户看到的是"机器人突然不理人了"。
+    #   而真实用户电脑上 `messages` 路径**不是目录**的情形是有的：磁盘满、杀软把目录隔离成同名文件、
+    #   手工误操作……`os.makedirs(..., exist_ok=True)` 在这种情况下抛的是 `FileExistsError`
+    #   （不是 FileNotFoundError，所以老的 try 挡不住）。⇒ 整个落盘过程收口在 OSError：
+    #   写不进去就**如实记一行日志并放弃这一条**（内存里的 state 仍然正确，下一条消息会再试），
+    #   绝不把"存不下"变成"监听崩了"。
+    #
+    # ⛔ 临时档名**必须带 pid + 随机后缀**（走统一招式 `persist.atomic_write_json`），不能用
+    #   固定的 `<dst>.tmp`：多开/多线程同时写同一会话时，两个写者会打开**同一个临时档**、
+    #   内容互相穿插，`os.replace` 换上去的就是半截 JSON（实测并发写会成批丢消息 + 报
+    #   PermissionError 争用）。`atomic_write_json` 另带 fsync 与 `os.replace` 的有界退避重试。
+    try:
+        os.makedirs(MESSAGES_DIR, exist_ok=True)
+        dst = chat_file(state["chat_key"])
+        if not os.path.exists(dst) and os.path.exists(chat_file_legacy(state["chat_key"])):
+            # 老命名档案 → 首次写新命名：**只写不搬**（老文件可能属于撞名的另一个会话，搬走＝抢数据）
+            log.info("会话档案改用带哈希的新命名（%s）：老文件保留在 %s，新档从它读入后另存",
+                     str(state.get("chat_key"))[:40], os.path.basename(chat_file_legacy(state["chat_key"])))
+        if not atomic_write_json(dst, state, indent=1, replace_budget_s=_SAVE_REPLACE_BUDGET_S):
+            log.warning("会话档案写不进去（%s）⇒ 这条先不入档（内存里仍有；下一条会再试）",
+                        str(state.get("chat_key"))[:40])
+    except OSError as e:
+        log.warning("会话档案写不进去（%s：%s：%s）⇒ 这条先不入档（内存里仍有；下一条会再试）",
+                    str(state.get("chat_key"))[:40], type(e).__name__, str(e)[:80])
 
 
 class ChatStore:
@@ -299,8 +322,16 @@ class ChatStore:
                 del self.chats[k]
             for ck in files:
                 self._state(ck)
-        except FileNotFoundError:
-            pass
+        except OSError as e:
+            # ⛔ 原来只接 `FileNotFoundError` ⇒ **目录被换成文件**（`NotADirectoryError`，磁盘满/
+            #   杀软隔离残留/用户误操作都可能）、**权限被收**（`PermissionError`，企业管控电脑常见）
+            #   都会从 `os.listdir` 抛出去，把 `list_chats()` 整个打挂 ⇒ 记忆页/会话页连"读不到"
+            #   都显示不出来（界面直接空白或报错）。这些和"目录不存在"是**同一类**事实：
+            #   **这次拿不到会话列表**。⇒ 统一按 OSError 收口，返回已枚举到的部分 + 留一行日志，
+            #   让上层能用 `groups_read_error`/空表语义如实降级。
+            if not isinstance(e, FileNotFoundError):
+                log.warning("列会话失败（%s）：%s ⇒ 本次按『读不到会话列表』处理",
+                            type(e).__name__, str(e)[:100])
         return list(self.chats.keys())
 
     def append_incoming(self, chat_key: str, mid, ts, sender_id, sender_name, text, reply=None, media=None):
