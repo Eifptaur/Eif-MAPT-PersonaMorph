@@ -174,16 +174,16 @@ _pn = src("whale-widget/PORT-NOTES.md")
 ok("移植记录在位（上游版本 / 补丁 / 接口覆盖 / 许可 / 重 vendor 步骤）",
    all(k in _pn for k in ("0.3.9", "群相移植补丁 v1", "接口覆盖", "PROVENANCE", "重新 vendor")))
 ok("移植记录写明素材许可与「已获原作者同意」（继续 vendor 的前提）", "已获原作者同意" in _pn)
-_up = os.path.join(ROOT, "whale-widget", "upstream-0.3.9")
+_up = os.path.join(ROOT, "whale-widget", "upstream-0.3.13")
 ok("上游原文留档在位（README / PROVENANCE / package.json）",
-   all(os.path.exists(os.path.join(_up, f2)) for f2 in ("README-原版.md", "PROVENANCE-原版.md", "package.json")))
+   all(os.path.exists(os.path.join(_up, f2)) for f2 in ("README.md", "PROVENANCE.md", "package.json")))
 try:
     import json as _json
     _pk = _json.load(open(os.path.join(_up, "package.json"), encoding="utf-8"))
-    ok("留档那份 package.json 版本 = 0.3.9（与 PORT-NOTES 对得上）", _pk.get("version") == "0.3.9",
+    ok("留档那份 package.json 版本 = 0.3.13（与 PORT-NOTES 对得上）", _pk.get("version") == "0.3.13",
        str(_pk.get("version")))
 except Exception as e:
-    ok("留档那份 package.json 版本 = 0.3.9", False, str(e)[:60])
+    ok("留档那份 package.json 版本 = 0.3.13", False, str(e)[:60])
 _wh = src("agent/whale.py")
 ok("新端点两种处理都在：能落地的真存（bubble/audio）+ 其余如实说不支持",
    "def save_cfg" in _wh and "def unsupported" in _wh and "_UNSUPPORTED" in _wh)

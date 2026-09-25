@@ -2721,7 +2721,13 @@ def persona_panel(t: Tokens) -> QWidget:
             chip.setMaximumWidth(180)
             cur = state.get("cat", "")
             active = (name == "全部" and not cur) or (name == cur and name != "全部")
-            chip.setStyleSheet("border-radius:14px;padding:2px 12px;"
+            # ⛔ 这一句 setStyleSheet 会**整体替换** Btn 自带的 QSS（构造时写入的
+            #    ghost 字色没了）⇒ 文字色落到"最近带样式表的祖先/系统回退"——
+            #    浅色模式下渲染成白字白底，分区名整个看不见（用户实锤；emoji 能
+            #    看见是因为 emoji 字形自带颜色，恰好掩盖了"字没了"）。
+            #    修法：替换时**显式带上主题色**（与 web renderChips 的 var(--tx2/--tx) 同口径）。
+            chip.setStyleSheet(f"color:{t.tx if active else t.tx2};background:transparent;"
+                               "border-radius:14px;padding:2px 12px;"
                                + ("font-weight:700;" if active else ""))
             chip.clicked.connect(lambda _=False, n=name: _pick_cat(n))
             # 与 web 同判据：非内置且名字不含「自定义」的分区才给 ×

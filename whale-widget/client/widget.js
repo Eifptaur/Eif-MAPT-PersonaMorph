@@ -14,13 +14,8 @@ window.__dshWhaleWidget = true
 //       contenteditable 反而是 false —— 只认前两种会让挂件在新版 DSH 上**完全不初始化**，
 //       见 issue #123）。检测到才继续，否则不碰 DOM、不注册监听。
 function dshwIsChatRoot(r) {
-    // 市场页用 ReactDOM.createPortal 渲染到 document.body，若挂件在此初始化，
-    // 检测不到 composer 就直接不挂载 —— 群相控制台是普通页面、没有 #root。
-    // 补丁只放宽"页面根"：拿不到 #root 就用 document.body（约束不变：检测到 composer 之前
-    // 不碰 DOM、不注册全局监听）。
-    if (!r) r = document.body                                  // ← 群相移植补丁 v1（唯一改动）
-
   if (!r || !r.querySelector) return false
+  if (!r) r = document.body        // ← 群相移植补丁 v1（唯一改动）
   return !!(
     r.querySelector('textarea') ||
     r.querySelector('[contenteditable="true"]') ||
@@ -99,6 +94,32 @@ window.__dshWhaleInit = true
 // 衔接时机由 RELEASE_LEAD_MS 决定（0 = 正好接上；30/50 = 轻微交叠）—— 改这个数字即可按耳朵微调，
 // 不用动任何逻辑。
 var dshwvAudioCtx = null
+// v753（issue #135）：**running 状态的 AudioContext 会让系统一直挂着 PreventUserIdleSystemSleep** ——
+// macOS 上表现为"只要页面开着就不会空闲睡眠"，而且与**有没有出声无关**（context 一 running 就持有播放流）。
+// 所以空闲 DSHW_AUDIO_IDLE_MS 之后主动 suspend()；下次出声前 dshwvAudio() 里的 resume() 会自动恢复。
+// 为什么用 suspend() 而不是 close()：close() 会把 context 彻底销毁，而**任务结束音不是手势触发的**，
+// 销毁后它再也响不出来（被手势解锁过的 context 再 resume 不需要新手势，挂起是安全的）。
+var DSHW_AUDIO_IDLE_MS = 60000 // 静默多久交还系统睡眠（用户选定：1 分钟）
+var dshwvAudioSuspendT = null
+function dshwvAudioSuspendNow() {
+  try {
+    if (dshwvAudioSuspendT) { clearTimeout(dshwvAudioSuspendT); dshwvAudioSuspendT = null }
+    if (dshwvAudioCtx && dshwvAudioCtx.state === 'running') dshwvAudioCtx.suspend()
+  } catch (err) {}
+}
+function dshwvAudioIdleArm() {
+  try {
+    if (dshwvAudioSuspendT) clearTimeout(dshwvAudioSuspendT)
+    dshwvAudioSuspendT = setTimeout(function () { dshwvAudioSuspendT = null; dshwvAudioSuspendNow() }, DSHW_AUDIO_IDLE_MS)
+  } catch (err) {}
+}
+// 音效是否被**显式**关掉（v753 的显式开关）。这里刻意用 typeof 保护：
+// 本文件经常被探针按片段切出来单独 eval（例如 _v752-check 只切「音频垫片 + applySoundSet」），
+// 那些沙箱里不一定声明了 soundOn —— typeof 对未声明的标识符是安全的，裸引用会直接抛
+// ReferenceError 把整段沙箱打断。真机上 soundOn 一定存在，行为不受影响。
+function dshwvSoundOff() {
+  try { return typeof soundOn !== 'undefined' && soundOn === false } catch (err) { return false }
+}
 function dshwvAudio() {
   try {
     if (!dshwvAudioCtx) {
@@ -107,24 +128,47 @@ function dshwvAudio() {
       dshwvAudioCtx = new AC({ latencyHint: 'interactive' })
     }
     if (dshwvAudioCtx.state === 'suspended') { try { dshwvAudioCtx.resume() } catch (err) {} }
+    dshwvAudioIdleArm() // 每次（重新）进入 running 都重新计时：静默满 1 分钟就挂起
     return dshwvAudioCtx
   } catch (err) { return null }
 }
 var dshwvAudioBuffers = {} // url -> Promise<AudioBuffer>（同一片段不重复下载/解码）
 var dshwvAudioDecoded = {} // url -> AudioBuffer（解码完成后**同步可读**：起播走同步路径的关键）
+// v752：音频失败**必须看得见**。原来所有 fetch/decode 失败都被 `.catch(function(){})` 吞掉，
+// 于是"没声音"在控制台里一点痕迹都没有，只能靠猜。现在每个 URL 只 warn 一次，
+// 并把最后一次错误留在 dshwvAudioLastErr 里。
+var dshwvAudioLastErr = null
+var dshwvAudioWarned = {}
+function dshwvAudioWarn(url, err) {
+  var msg = String((err && err.message) || err || 'unknown')
+  dshwvAudioLastErr = { url: String(url || ''), error: msg, at: new Date().toISOString() }
+  if (dshwvAudioWarned[url]) return
+  dshwvAudioWarned[url] = 1
+  try { console.warn('[小鲸鱼] 音频加载/解码失败：' + url + ' → ' + msg) } catch (e) {}
+}
 function nowMs() { try { return (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now() } catch (err) { return Date.now() } }
 function dshwvAudioBuffer(url) {
   if (!url) return Promise.reject(new Error('empty url'))
   if (!dshwvAudioBuffers[url]) {
-    dshwvAudioBuffers[url] = fetch(url, { cache: 'force-cache' })
-      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer() })
+    // v752：改 no-store。原来用 force-cache —— 万一某个中间层把一次空的 204 缓存住，
+    // 之后每次点按都会复用它（表现就是"永久没声音，重启也没用"）。我们本来就有内存解码缓存，
+    // 不会因此重复下载。
+    dshwvAudioBuffers[url] = fetch(url, { cache: 'no-store' })
+      .then(function (r) {
+        // 注意：204 也满足 r.ok（2xx），必须单独挡掉，否则 0 字节会被送进 decodeAudioData
+        // → 抛 EncodingError（"Unable to decode audio data"）→ 只剩静音。
+        if (r.status === 204) throw new Error('HTTP 204（无内容：该音效槽留空、或音效组未找到）')
+        if (!r.ok) throw new Error('HTTP ' + r.status)
+        return r.arrayBuffer()
+      })
       .then(function (raw) {
+        if (!raw || raw.byteLength < 100) throw new Error('音频响应只有 ' + (raw ? raw.byteLength : 0) + ' 字节（不是有效音频）')
         var c = dshwvAudio()
         if (!c) throw new Error('no audio context')
         return new Promise(function (res, rej) { c.decodeAudioData(raw, res, rej) })
       })
       .then(function (buf) { dshwvAudioDecoded[url] = buf; return buf })
-      .catch(function (err) { delete dshwvAudioBuffers[url]; delete dshwvAudioDecoded[url]; throw err })
+      .catch(function (err) { delete dshwvAudioBuffers[url]; delete dshwvAudioDecoded[url]; dshwvAudioWarn(url, err); throw err })
   }
   return dshwvAudioBuffers[url]
 }
@@ -132,6 +176,9 @@ function dshwvAudioBuffer(url) {
 // 不预热 → 第一次点按要现 fetch+decodeAudioData，表现就是"按下音慢半拍、中间衔接发飘"。
 // URL 级缓存保证同一片段只解一次；失败静默吞掉（真正播放时还会自己重试一次）。
 function dshwvWarm(urls) {
+  // v753（issue #135）：音效关掉时**连预热都不做** —— 只跳过下面那句 dshwvAudio() 是不够的，
+  // 因为预解码走到 dshwvAudioBuffer() 里还会再调一次 dshwvAudio()，context 照样被建起来。
+  if (dshwvSoundOff()) return
   try { dshwvAudio() } catch (err) {}
   for (var i = 0; i < (urls || []).length; i++) {
     var u = urls[i]
@@ -193,9 +240,15 @@ function dshwvSound(url) {
       el._playingSince = nowMs() + delay * 1000
       var dur = Math.max(0.001, buf.duration)
       src.start(delay > 0 ? c.currentTime + delay : 0, Math.max(0, el._offset) % dur)
-    } catch (err) {}
+    } catch (err) {
+      // v749：起播抛异常（例如 AudioContext 已关闭、offset 越界）以前被完全吞掉 → 表现为"没声音但无任何报错"
+      dshwvAudioWarn(el && el._url, err)
+    }
   }
   function startSound(delaySec) {
+    // v753（issue #135）：音效开关关掉 = 全静音（含编辑器里的试听），也**不碰** AudioContext ——
+    // 否则一次试听就会把 context 转成 running、系统断言照挂。
+    if (dshwvSoundOff()) return Promise.resolve()
     var c = dshwvAudio()
     if (!c || !el._url) return Promise.resolve()
     var token = (el._token = (el._token || 0) + 1)
@@ -203,27 +256,47 @@ function dshwvSound(url) {
     // ④ 同步起播：缓冲区已预热（dshwvWarm）过 → 直接在当前任务里 start()，不再等 Promise
     var cached = dshwvAudioDecoded[el._url]
     if (cached) { beginWithBuffer(c, cached, delay); return Promise.resolve() }
-    dshwvAudioBuffer(el._url).then(function (buf) {
+    var tryUrl = el._url
+    dshwvAudioBuffer(tryUrl).then(function (buf) {
       if (token !== el._token) return // 期间被重播/暂停/换源 → 丢弃这次
       beginWithBuffer(c, buf, delay)
-    }).catch(function () {})
+    }).catch(function () {
+      // v752：首选路由取不到音频时，自动换另一条路由重试一次（两条互为备胎）。
+      // 只在失败路径上跑，不影响正常点按的同步起播时序。
+      if (!el._alt || el._url !== tryUrl || token !== el._token) return
+      var alt = el._alt
+      el._alt = ''            // 只回退一次，避免两条路由来回打转
+      el._url = alt
+      try { dshwvWarm([alt]) } catch (e) {}   // 后台预热，下次点按就能走同步路径
+      try { startSound(delay) } catch (e) {}
+    })
     return Promise.resolve()
   }
   el.play = function () { return startSound(0) }
   el.playAt = function (delaySec) { return startSound(delaySec) }
   el.pause = function () { dshwvSoundStop(el) }
+  // v752：备用路由（首选失败时自动切过去）；由 applySoundSet/playTaskEndGroupClick 填
+  el._alt = ''
   return el
 }
+
 // 自动播放策略：AudioContext 初始是 suspended，要有一次用户手势才能出声；任务结束音不是手势触发的，
 // 所以挂一次性解锁（首次点击/按键后移除）。
 try {
   var dshwvAudioUnlock = function () {
+    // v753（issue #135）：音效关掉时**不预解锁** —— 否则一次普通点击就会把 context 转成 running，
+    // 断言照挂。注意这里**不摘监听**：之后重新打开开关，下一次点击仍能完成解锁。
+    if (dshwvSoundOff()) return
     dshwvAudio()
     try { document.removeEventListener('pointerdown', dshwvAudioUnlock, true) } catch (err) {}
     try { document.removeEventListener('keydown', dshwvAudioUnlock, true) } catch (err) {}
   }
   document.addEventListener('pointerdown', dshwvAudioUnlock, true)
   document.addEventListener('keydown', dshwvAudioUnlock, true)
+  // v753（issue #135）：页面被隐藏（切标签 / 最小化）时立刻挂起，直接覆盖"开着过夜"这个场景
+  document.addEventListener('visibilitychange', function () {
+    try { if (document.hidden) dshwvAudioSuspendNow() } catch (err) {}
+  })
 } catch (err) {}
 
 var MIN_SCALE = 0.6
@@ -250,11 +323,35 @@ var css = [
   '.dshwv-root.dshwv-left{transform:scaleX(-1)}',
   '.dshwv-root.dshwv-dragging{cursor:grabbing;transition:none}',
   '.dshwv-body{position:absolute;left:0;top:0;width:100%;height:100%;transform-origin:50% 100%;transition:transform .22s cubic-bezier(.34,1.56,.64,1)}',
-  '.dshwv-img{position:absolute;right:0;bottom:0;width:59.45%;height:59.45%;display:block;pointer-events:none;-webkit-user-drag:none;user-select:none;object-fit:contain;object-position:right bottom}',
+  // v757（issue #147）：`.dshwv-img` 由 `pointer-events:none` 改为 `auto` —— 鲸鱼身体**自己接指针事件**。
+  // 原来靠"主文档监听 + isWhaleHit()"判定命中，而指针落在 `<iframe>`（如右侧栏 HTML 预览）上时
+  // 事件直接进入 iframe 自己的文档，主文档收不到 ⇒ 鲸鱼身体失联（点不动、拖不动，只有 ☰ 能用）。
+  // 代价是 img 的**矩形**（含透明边距）会吞掉点击 → 由 setupHitTest() 用命中图的**凸包**做 clip-path
+  // 裁掉透明区（凸包包含全部不透明像素，不会裁到角色本身），"点到透明处穿透到下层"的行为得以保留。
+  '.dshwv-img{position:absolute;right:0;bottom:0;width:59.45%;height:59.45%;display:block;pointer-events:auto;-webkit-user-drag:none;user-select:none;object-fit:contain;object-position:right bottom}',
+  // v751（PR #119）：光标不再写 document.body.style.cursor —— cursor 是可继承属性，写 <body> 会让 Blink
+  // 失效**整棵文档树**的样式；而它在点击链路上按下/抬手各写一次，紧接着 isWhaleHit() 的
+  // getBoundingClientRect() 与泡泡行测量的 getComputedStyle()/scrollWidth 会强制刷新样式+布局，
+  // 于是"整页样式重算"被算进了这一次点击（长会话里表现为桌宠点了卡一下、松手音延迟、跑马灯不动）。
+  // 现在光标由挂件自己的类承担：命中鲸鱼不透明像素时让 .dshwv-img 接过指针并显示 grab / grabbing。
+  // 鲸鱼区域本来就在吞指针事件（onDocPointerDown 的 isWhaleHit），这不是新增拦截；
+  // 新增影响的只有滚轮，由 onWhaleWheel 转交给指针下方真正可滚动的容器。
+  '.dshwv-root.dshwv-cursor-grab .dshwv-img{pointer-events:auto;cursor:grab}',
+  '.dshwv-root.dshwv-cursor-grabbing .dshwv-img{pointer-events:auto;cursor:grabbing}',
+  // 拖动期间握点相对挂件固定，让整个盒接过指针以保持 grabbing（类由按下时加、endDrag 摘）
+  '.dshwv-root.dshwv-dragging .dshwv-body{pointer-events:auto;cursor:grabbing}',
   '.dshwv-pop{position:absolute;left:0;top:0;width:100%;aspect-ratio:1026/700;pointer-events:none;z-index:1;--dshw-u:calc(var(--dshw-base) / 1026)}',
   // 纵深防御：泡泡容器必须透明，形状由内部 SVG 绘制；用 !important 压掉外部
   // 插件“类名子串匹配”选择器（如 aqua 的 [class*=bubble]）注入的玻璃/边框样式
   'html .dshwv-pop, html .dshwv-pop svg{background:transparent !important;border:0 !important;border-radius:0 !important;backdrop-filter:none !important;-webkit-backdrop-filter:none !important}',
+  // 纵深防御（issue #133）：宿主皮肤/主题会按**几何特征**（position:fixed + z-index≥10 +
+  // 尺寸≥120×80 + 非原生弹窗角色）把挂件方块误判成"独立插件窗"，然后注入
+  // backdrop-filter / 背景 / 边框 / 伪元素毛玻璃，把用户壁纸糊掉（实测 375×375 方块里是雾面）。
+  // 挂件是透明精灵图，根节点上任何"画底"的通道都不该存在，所以这里全部钉死为透明 ——
+  // 我们自己的 .dshwv-root 本来就只有 left/top/width/height/transform，没有背景/边框/阴影/filter，
+  // 也没有用 ::before/::after，所以这是零行为变化的加固。
+  'html .dshwv-root,body .dshwv-root{background:transparent !important;background-image:none !important;border:0 !important;outline:0 !important;box-shadow:none !important;backdrop-filter:none !important;-webkit-backdrop-filter:none !important;filter:none !important}',
+  'html .dshwv-root::before,html .dshwv-root::after{content:none !important;background:transparent !important;background-image:none !important;box-shadow:none !important;backdrop-filter:none !important;-webkit-backdrop-filter:none !important}',
   '.dshwv-pop svg{display:block;width:100%;height:100%;pointer-events:none}',
   '.dshwv-pop svg path,.dshwv-pop svg ellipse{pointer-events:none;cursor:pointer}',
   '.dshwv-pop.dshwv-pop-open svg path,.dshwv-pop.dshwv-pop-open svg ellipse{pointer-events:visiblePainted}',
@@ -1219,14 +1316,19 @@ function playTaskEndSound() {
     if (!usageSet || !usageSet.taskEnd || !usageSet.taskEnd.on || soundOn === false) return
     var sel = usageSet.taskEnd.sel || taskEndSel.value || ''
     var url = ''
+    var altUrl = ''
     if (sel.indexOf('grp:') === 0) { playTaskEndGroupClick(sel.slice(4)); return }
     if (sel.indexOf('frag:') === 0) url = '/dsh-whale/audio-fragment.wav?id=' + encodeURIComponent(sel.slice(5))
     else if (sel.indexOf('preset:') === 0) {
+      // v752：预设片段也改走片段路由（与本体按压同一套选择逻辑 + 备用路由）
       var parts = sel.split(':')
-      url = '/dsh-whale/sound/' + (parts[2] === 'release' ? 'release' : 'press') + '.mp3?set=' + parts[1]
+      var su = soundSlotUrls(parts[2] === 'release' ? 'release' : 'press', parts[1])
+      url = su.url
+      altUrl = su.alt || ''
     }
     if (!url) return
     var a = dshwvSound(url)
+    if (altUrl) a._alt = altUrl
     try { a.volume = Number(soundVol) || 0.9 } catch (err) {}
     a.play().catch(function () {})
   } catch (err) {}
@@ -1242,11 +1344,17 @@ function playTaskEndGroupClick(groupId) {
     var releaseEmpty = !!(g && g.release === '')
     if (pressEmpty && releaseEmpty) return
     var vol = Number(soundVol) || 0.9
+    // v752：任务结束音同样改走片段路由（与本体按压同一套 URL 选择 + 备用路由逻辑）——
+    // 老路由 /dsh-whale/sound/*.mp3?set=… 在部分环境会被本机那层东西拦成空的 204，
+    // 不改的话"点按有声、但每轮结束音没声"会变成同一个问题的另一半。
+    var pu = soundSlotUrls('press', groupId)
+    var ru = soundSlotUrls('release', groupId)
     // 按压留空:无按下音,直接播松开(模拟按下即松开的完整点按);松开留空:只播按压
     if (pressEmpty) {
-      if (!releaseEmpty) {
-        dshwvWarm(['/dsh-whale/sound/release.mp3?set=' + encodeURIComponent(groupId)]) // v745：先预热
-        var relOnly = dshwvSound('/dsh-whale/sound/release.mp3?set=' + encodeURIComponent(groupId))
+      if (!releaseEmpty && ru.url) {
+        dshwvWarm([ru.url]) // v745：先预热
+        var relOnly = dshwvSound(ru.url)
+        relOnly._alt = ru.alt || ''
         try { relOnly.volume = vol } catch (err) {}
         relOnly.currentTime = 0
         var pr = relOnly.play()
@@ -1254,20 +1362,20 @@ function playTaskEndGroupClick(groupId) {
       }
       return
     }
-    var press = dshwvSound('/dsh-whale/sound/press.mp3?set=' + encodeURIComponent(groupId))
+    if (!pu.url) return
+    var press = dshwvSound(pu.url)
+    press._alt = pu.alt || ''
     try { press.volume = vol } catch (err) {}
     // v745：菜单里的"点一下试听"同样先预热解码，否则第一次听有明显延迟
-    dshwvWarm([
-      '/dsh-whale/sound/press.mp3?set=' + encodeURIComponent(groupId),
-      releaseEmpty ? '' : '/dsh-whale/sound/release.mp3?set=' + encodeURIComponent(groupId),
-    ])
-    if (releaseEmpty) {
+    dshwvWarm([pu.url, releaseEmpty ? '' : ru.url])
+    if (releaseEmpty || !ru.url) {
       press.currentTime = 0
       var pp = press.play()
       if (pp && pp.catch) pp.catch(function () {})
       return
     }
-    var release = dshwvSound('/dsh-whale/sound/release.mp3?set=' + encodeURIComponent(groupId))
+    var release = dshwvSound(ru.url)
+    release._alt = ru.alt || ''
     try { release.volume = vol } catch (err) {}
     var relPlayed = false
     function playRel() {
@@ -1341,8 +1449,17 @@ var volPct = document.createElement('span')
 volPct.className = 'dshwv-volpct'
 volPct.textContent = '90%'
 volInput.addEventListener('input', function () { setVol(volInput.value) })
+// v753（issue #135）：显式「音效开关」，放在「音量」右边。滑块是 flex:1、开关是 flex:0 0 auto(16px)，
+// 所以「滑块 + 开关」合起来仍占原来滑块那一条宽度（缩掉的正好是开关与行间距的宽度），行总宽不变。
+var soundToggle = document.createElement('input')
+soundToggle.type = 'checkbox'
+soundToggle.className = 'dshwv-check'
+soundToggle.checked = true
+soundToggle.title = '音效总开关：关掉后不出声（含音效组试听），并立刻挂起音频上下文、把系统睡眠交还给你'
+soundToggle.addEventListener('change', function () { setSoundOn(soundToggle.checked) })
 var row3 = menuRow()
 row3.appendChild(menuLabel('音量'))
+row3.appendChild(soundToggle)
 row3.appendChild(volInput)
 row3.appendChild(volPct)
 var row6 = menuRow()
@@ -8576,12 +8693,22 @@ function visibleTopZ() {
   var top = 20500
   // 注意：这里必须列全 —— 少一个浮层，dshwLayerUp/下拉/提示就会低估"当前最高层"而被盖住。
   // toast 刻意不列入（它是永远的最顶层，不该让别的层去追它）。
-  var cand = [
-    bubbleMask, bubbleItemMask, moduleMask, moduleNamePromptMask,
-    cropMask, gifMask, audioCropMask, audioEditMask, resMaskEl,
-    confirmMask, snapMask, usageMask, usageMoreMask,
-    qeditEl, dshwvTplHelpEl, dshwvHintEl,
-    apiModelMaskEl, accountingMask, window.__dshwRemindMask
+  // v750（issue #131 的教训）：每个候选写成**独立取值函数**并各自 try/catch。
+  // 0.3.8 曾在这里写了一个并不存在的 `usageMask` —— 数组字面量在**构造时**就抛 ReferenceError，
+  // 于是 visibleTopZ() 每次调用都失败、又被调用方的空 catch 吞掉：自绘下拉的层级停在下拉样式表里的
+  // 60（被父窗口整层盖住，表现为"点了没反应"），dshwLayerUp() 也一起静默失效。
+  // 现在单个名字写错最多只少算那一层，不会让整条层级链失效；`_z-audit-check.mjs` 会核对
+  // 候选表里的每个标识符都真的声明过（防止同样的错再犯）。
+  var getters = [
+    function () { return bubbleMask }, function () { return bubbleItemMask },
+    function () { return moduleMask }, function () { return moduleNamePromptMask },
+    function () { return cropMask }, function () { return gifMask },
+    function () { return audioCropMask }, function () { return audioEditMask },
+    function () { return resMaskEl }, function () { return confirmMask },
+    function () { return snapMask }, function () { return usageMoreMask },
+    function () { return qeditEl }, function () { return dshwvTplHelpEl },
+    function () { return dshwvHintEl }, function () { return apiModelMaskEl },
+    function () { return accountingMask }, function () { return window.__dshwRemindMask }
   ]
   function eff(el) {
     try {
@@ -8596,17 +8723,47 @@ function visibleTopZ() {
       return isFinite(n) ? n : 0
     } catch (err) { return 0 }
   }
-  for (var i = 0; i < cand.length; i++) {
-    var n = eff(cand[i])
+  for (var i = 0; i < getters.length; i++) {
+    var n = 0
+    try { n = eff(getters[i]()) } catch (err) { n = 0 }
     if (n > top) top = n
   }
+  // v756（issue #142）：给第三方 fork / 以后的扩展模块留一个**运行时登记口** ——
+  // 它们新增的浮层不必再回上游源码里插一行，只要 `window.dshwRegisterMask(el)` 登记一次，
+  // 这里就会把它算进"当前可见最高层"（隐藏的会被 eff() 判成 0）。返回一个注销函数。
+  try {
+    var extra = dshwExtraMasks || []
+    for (var k = 0; k < extra.length; k++) {
+      var n2 = 0
+      try { n2 = eff(extra[k]) } catch (err) { n2 = 0 }
+      if (n2 > top) top = n2
+    }
+  } catch (err) {}
   return top
 }
+// 运行时登记的额外浮层（issue #142）。只存引用，不持有任何别的东西；登记失败的入口一律静默忽略。
+var dshwExtraMasks = []
+try {
+  window.dshwRegisterMask = function (el) {
+    try {
+      if (!el || dshwExtraMasks.indexOf(el) >= 0) return function () {}
+      dshwExtraMasks.push(el)
+      return function () {
+        try {
+          var i = dshwExtraMasks.indexOf(el)
+          if (i >= 0) dshwExtraMasks.splice(i, 1)
+        } catch (err) {}
+      }
+    } catch (err) { return function () {} }
+  }
+} catch (err) {}
 // 「永远在打开它的那个窗口之上」：取 本层段起点 与 当前可见最高层+10 的较大值。
 // 用在裁剪 / GIF / 音频裁剪 / 模块编辑器这些**既可能从主菜单(10000)打开、也可能从资源管理(20300)、
 // 泡泡编辑器(20500)、模型设置(29000)里打开**的窗口上 —— 固定层号在后者场景会被父窗口盖住。
 function dshwLayerUp(el, base) {
-  try { if (el && el.style) el.style.zIndex = String(Math.max(base, Math.round(visibleTopZ()) + 10)) } catch (err) {}
+  var z = base
+  try { z = Math.max(base, Math.round(visibleTopZ()) + 10) } catch (err) { z = base }
+  try { if (el && el.style) el.style.zIndex = String(z) } catch (err) {}
   return el
 }
 // 打开主要编辑器前清理可能残留的临时层级(提醒会话遗留的 moduleMask/qedit 提升与样式)
@@ -8654,7 +8811,10 @@ function dshwDropOpen(menuEl, anchorEl) {
     menuEl.style.left = Math.round(left) + 'px'
     menuEl.style.top = Math.round(r.bottom + 2) + 'px'
     // 下拉层级:高于当前所有可见弹窗/窗口(兜底不低于 26010)
-    var vTop = visibleTopZ()
+    // v750（issue #131）：visibleTopZ() 单独 try/catch —— 算不出最高层也必须把层级抬上去，
+    // 并且打一条 warn（原先异常被外层空 catch 吞掉，表现为"下拉点了没反应"且毫无线索）
+    var vTop = 20500
+    try { vTop = visibleTopZ() } catch (err) { try { console.warn('[dsh-whale] visibleTopZ 失败，下拉改用兜底层级：', err) } catch (e2) {} }
     menuEl.style.zIndex = String(Math.max(26010, Math.round(vTop) + 10))
   } catch (err) {}
 }
@@ -10380,7 +10540,12 @@ function measureBubbleCenter() {
     dshwCenterX = cx
     dshwCenterY = cy
     try {
-      var s = document.documentElement.style
+      // v751（PR #119）：写到挂件自己的 root 上，**不写 document.documentElement**。
+      // 未注册的自定义属性写在 <html> 上会让 Blink 保守失效整棵子树样式（PR 实测 12k 节点会话
+      // 一次约 160ms），而本函数在初始化、rAF、load 以及每次窗口 resize 都会跑。
+      // 消费这两个变量的 .dshwv-text/.dshwv-gif 都在 root 内（继承即可）；
+      // 编辑器预览在 root 之外，所以在 bubblePreviewInto() 里补写了两行。
+      var s = root.style
       s.setProperty('--dshw-vx', cx + '%')
       s.setProperty('--dshw-vy', cy + '%')
     } catch (err) {}
@@ -12147,6 +12312,12 @@ function bubblePreviewInto(container, mods, widthPx) {
     container.style.transform = 'none'
     container.style.transformOrigin = ''
     container.style.setProperty('--dshw-u', (W / 1026) + 'px')
+    // v751（PR #119）：预览节点在挂件 root 之外，拿不到 root 上的 --dshw-vx/--dshw-vy（以前写在 <html> 上才吃得到），
+    // 这里补一份，保证编辑器里的预览与真实泡泡同排版。
+    try {
+      container.style.setProperty('--dshw-vx', dshwCenterX + '%')
+      container.style.setProperty('--dshw-vy', dshwCenterY + '%')
+    } catch (err) {}
     // 视觉右移 10px:用左右 margin 的非对称(右侧少让),避免溢出撑出横向滚动条
     var halfGap = Math.max(0, (hostW - W) / 2)
     var shiftR = Math.min(10, Math.max(0, Math.round(halfGap)))
@@ -12669,7 +12840,14 @@ function dshwvToast(msg) {
 }
 function configSaveFailNotice(detail) {
   try { console.error('[dsh-whale] 设置保存失败:', detail) } catch (err) {}
-  dshwvToast('⚠ 设置保存失败：' + String(detail || '').slice(0, 120) +
+  // v756（issue #143）：toast 是按 HTML 设计的（其余调用点传的字面量里带 `<br>`），而这里的 detail
+  // 是**动态值**（服务端 JSON 回包的 error 字段 / fetch 异常消息），直接拼进 innerHTML 就是一处
+  // 「动态数据进 HTML 位置」。当前来源都在本地信任边界内、构造不出真实利用，但把 provider 回包、
+  // 模型名之类接进同一个 toast 时它会立刻变成真洞 —— 所以只转义这一个动态值，toast 自身的
+  // `<br>` 保留。
+  var safe = String(detail || '').slice(0, 120)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  dshwvToast('⚠ 设置保存失败：' + safe +
     '<br>已自动重试一次。若持续失败，请检查 DSH 数据目录是否可写。')
 }
 function configPayload() {
@@ -12867,7 +13045,9 @@ function setScale(v) {
 function setVol(v) {
   var next = Math.round(Math.min(1, Math.max(0, Number(v))) * 100) / 100
   soundVol = next
-  soundOn = next > 0
+  // v753（issue #135）：**不再由音量派生 soundOn**。原来"拉到 0 就等于关音效"是个没写明的隐含行为，
+  // 既让想临时静音的人被迫牺牲原来的音量值，也让"音效开关"这件事在界面上无迹可寻。
+  // 现在开关自己说了算（见 setSoundOn），音量只表示音量。
   volInput.value = String(next)
   volPct.textContent = Math.round(next * 100) + '%'
   try {
@@ -12875,6 +13055,22 @@ function setVol(v) {
     if (releaseAudio) releaseAudio.volume = next
   } catch (err) {}
   saveConfig()
+}
+// v753（issue #135）：显式音效总开关（菜单「音量」右边那个勾选框）。
+// 它同时管三件事：① 出声与否（播放路径都看 soundOn）；② 关掉时**立刻挂起** AudioContext，
+// 把系统睡眠交还给用户，而不是等 1 分钟空闲；③ 重新打开时立刻预热，恢复"点按即响"的跟手度。
+function setSoundOn(v) {
+  soundOn = v !== false
+  try { soundToggle.checked = soundOn } catch (err) {}
+  if (!soundOn) {
+    dshwvAudioSuspendNow()
+  } else {
+    try { applySoundSet() } catch (err) {}
+  }
+  try {
+    var p = saveConfig()
+    if (p && typeof p.then === 'function') p.catch(function () {})
+  } catch (err) {}
 }
 function setSoundSet(v) {
   // 支持预设组（duck/fx1）和自定义组 id
@@ -12890,6 +13086,28 @@ var pressing = false
 var pressEnded = false
 var releasePlayed = false
 // v745：不再需要 releaseTimer —— 点按时由 playReleaseAt() 在**音频线程**排期（见 pressUp）
+// —— v752：本体按压/松开音改走「片段路由」——
+// 起因：issue 里那台机器上 /dsh-whale/sound/press.mp3?set=… 会被本机的一层东西（代理/安全软件）
+// 拦成**空的 204**（响应头里没有 Date、还多出 pragma: no-cache，不是本进程发出的），
+// 0 字节送进 decodeAudioData 就抛 EncodingError → 只剩静音；
+// 而同一台机器上 /dsh-whale/audio-fragment.wav?id=<片段> 是 200 且能解码。
+// 两边的字节是**同一个文件**（预设 ya1→assets/Ya1.mp3；自定义组→它引用的那个片段），
+// 所以音色、时长、衔接时序都不变；同时少一层"组→片段"的宿主侧间接。
+// 返回 { url, alt, empty }：url=首选（片段路由）、alt=兜底（老的声音组路由，失败时自动切换）、
+// empty=true 表示该槽显式留空（'' = 该事件静音，按设计不出声）。
+function soundSlotUrls(slot, groupId) {
+  var gid = String(groupId || soundSet || 'duck')
+  if (audioGroupSlotEmpty(gid, slot)) return { url: '', alt: '', empty: true }
+  var frag = ''
+  for (var i = 0; i < audioGroups.length; i++) {
+    var g = audioGroups[i]
+    if (g && g.id === gid) { frag = String(g[slot] || ''); break }
+  }
+  var legacy = '/dsh-whale/sound/' + (slot === 'press' ? 'press' : 'release') + '.mp3?set=' + encodeURIComponent(gid)
+  // 组信息还没到（audio.json 未返回）或找不到组 → 与旧行为完全一致，走老路由
+  if (!frag) return { url: legacy, alt: '', empty: false }
+  return { url: '/dsh-whale/audio-fragment.wav?id=' + encodeURIComponent(frag), alt: legacy, empty: false }
+}
 function applySoundSet() {
   try {
     // v729：切音效组 / 开关音效时把本轮播放状态一并复位，
@@ -12897,24 +13115,25 @@ function applySoundSet() {
     pressEnded = false
     releasePlayed = false
     // 槽位显式留空(该事件静音)时,对应音频元素置空;playPress/playRelease 已判空
-    var pEmpty = audioGroupSlotEmpty(soundSet, 'press')
-    var rEmpty = audioGroupSlotEmpty(soundSet, 'release')
-    if (pEmpty) { pressAudio = null } else {
-      pressAudio = dshwvSound('/dsh-whale/sound/press.mp3?set=' + soundSet)
+    var pu = soundSlotUrls('press')
+    var ru = soundSlotUrls('release')
+    if (pu.empty) { pressAudio = null } else {
+      pressAudio = dshwvSound(pu.url)
+      pressAudio._alt = pu.alt || ''
       pressAudio.preload = 'auto'
       pressAudio.volume = soundVol
     }
-    if (rEmpty) { releaseAudio = null } else {
-      releaseAudio = dshwvSound('/dsh-whale/sound/release.mp3?set=' + soundSet)
+    if (ru.empty) { releaseAudio = null } else {
+      releaseAudio = dshwvSound(ru.url)
+      releaseAudio._alt = ru.alt || ''
       releaseAudio.preload = 'auto'
       releaseAudio.volume = soundVol
     }
     // v745：把这组的按压/松开音**预取+预解码**（Web Audio 下 preload='auto' 不解码）。
     // 预热过之后，起播走 dshwvSound 的同步路径（pointerdown 同一任务里 start），手感才贴手。
-    dshwvWarm([
-      pEmpty ? '' : '/dsh-whale/sound/press.mp3?set=' + soundSet,
-      rEmpty ? '' : '/dsh-whale/sound/release.mp3?set=' + soundSet,
-    ])
+    // ⚠️ 不变式：这里预热的 URL 必须与上面建元素用的 URL **逐字符相同**（同一个变量，不再各写一遍字面量）——
+    //    一旦"预热 A、播放 B"，点按就会退回异步解码路径，手感立刻变钝（0.3.3 那次"变钝"的根因）。
+    dshwvWarm([pu.empty ? '' : pu.url, ru.empty ? '' : ru.url])
   } catch (err) {}
 }
 function playPress() {
@@ -14437,6 +14656,12 @@ function hideAudioCrop() {
   audioCropBuffer = null
   audioCropTarget = null
   audioCropFileBase = ''
+  // v753（issue #135）：裁剪面板自己的 AudioContext 关闭面板就销毁 —— 它不复用，
+  // 留着同样是"一条一直开着的系统音频流"（重新打开面板时导入音频会重新创建，见上面的 if (!audioCropCtx)）。
+  try {
+    if (audioCropCtx) audioCropCtx.close()
+  } catch (err) {}
+  audioCropCtx = null
   try { audioCropName.value = '' } catch (err) {}
   updateAudioCropOkState()
 }
@@ -14647,31 +14872,106 @@ function setupHitTest(url) {
         var dx = 610 - dw // right bottom
         var dy = 610 - dh
         ctx.drawImage(probe, dx, dy, dw, dh)
+        // v756（issue #144）：画布读回可能被浏览器**抹白** —— Firefox 开启「隐私保护 / resistFingerprinting」
+        // 时 getImageData 会返回全透明（有些版本直接抛错）。那样 isWhaleHit 的 `data[3] > 10` 处处为假，
+        // 而 hitReady 仍为 true ⇒ 走不到矩形回退分支 ⇒ **整只挂件点不动**。
+        // 这里建立命中图时就扫一遍格子：一个不透明像素都取不到 → 判为命中图不可用，退回矩形判定。
+        var opaque = 0
+        for (var gy = 0; gy < 6; gy++) {
+          for (var gx = 0; gx < 6; gx++) {
+            var px = Math.min(609, Math.floor(dx + dw * (gx + 0.5) / 6))
+            var py = Math.min(609, Math.floor(dy + dh * (gy + 0.5) / 6))
+            if (ctx.getImageData(px, py, 1, 1).data[3] > 10) opaque++
+          }
+        }
+        if (!opaque) { hitReady = false; hitFailed = true; applyHitClip(''); return }
         hitReady = true
+        // v757（issue #147）：命中图可用 → 用不透明区域的凸包裁掉 img 的透明边距，
+        // 这样"身体自己接事件"不会把透明角落的点击也吞掉。
+        applyHitClip(buildHitClipPath())
       } catch (err) {
         hitFailed = true
+        applyHitClip('')
       }
     }
     probe.onerror = function () {
       // 图片加载失败：不能把整页当成鲸鱼命中区吞掉事件（会全页面点不动），
       // 标记失败，命中判定退回图像矩形区域。
       hitFailed = true
+      applyHitClip('')
     }
     probe.src = url || IMG_URL
   } catch (err) {}
+}
+// 退回「图像矩形」判定：命中图不可用（加载失败 / 画布读不出来）时只认挂件图片的矩形区域，
+// 绝不把整页当成命中区（那会让全页面点不动）。
+function whaleRectHit(e) {
+  try {
+    var fr = img.getBoundingClientRect()
+    if (!fr || fr.width <= 0 || fr.height <= 0) return false
+    return e.clientX >= fr.left && e.clientX <= fr.right && e.clientY >= fr.top && e.clientY <= fr.bottom
+  } catch (err) { return false }
+}
+// —— v757（issue #147）：把命中图的不透明区域做成 clip-path ——
+// `img` 现在常驻 `pointer-events:auto`（压在任何 iframe 上都能接事件），所以要靠 clip-path
+// 把透明边距裁掉，保住"点到透明处穿透到下层"。用**凸包**而不是逐像素轮廓：凸包天然包含全部
+// 不透明像素（不会裁到角色本身），点数少（几十个），且左右镜像由外层的 scaleX(-1) 一起变换。
+function applyHitClip(clip) {
+  try {
+    img.style.clipPath = clip || ''
+    img.style.webkitClipPath = clip || ''
+  } catch (err) {}
+}
+function convexHull(pts) {
+  try {
+    var p = pts.slice().sort(function (a, b) { return a[0] - b[0] || a[1] - b[1] })
+    if (p.length < 3) return null
+    var cross = function (o, a, b) { return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]) }
+    var lower = [], upper = [], i
+    for (i = 0; i < p.length; i++) {
+      while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p[i]) <= 0) lower.pop()
+      lower.push(p[i])
+    }
+    for (i = p.length - 1; i >= 0; i--) {
+      while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p[i]) <= 0) upper.pop()
+      upper.push(p[i])
+    }
+    lower.pop(); upper.pop()
+    return lower.concat(upper)
+  } catch (err) { return null }
+}
+function buildHitClipPath() {
+  try {
+    var c = hitCanvas && hitCanvas.getContext ? hitCanvas.getContext('2d') : null
+    if (!c) return ''
+    var data = c.getImageData(0, 0, 610, 610).data // 只读一次（1.5MB），别逐行读
+    var pts = []
+    for (var y = 0; y < 610; y++) {
+      var l = -1, r = -1
+      var base = y * 610 * 4
+      for (var x = 0; x < 610; x++) {
+        if (data[base + x * 4 + 3] > 10) { if (l < 0) l = x; r = x }
+      }
+      if (l >= 0) { pts.push([l, y]); pts.push([r, y]) }
+    }
+    if (pts.length < 8) return ''
+    var hull = convexHull(pts)
+    if (!hull || hull.length < 3) return ''
+    var parts = []
+    for (var k = 0; k < hull.length; k++) {
+      parts.push((hull[k][0] / 610 * 100).toFixed(2) + '% ' + (hull[k][1] / 610 * 100).toFixed(2) + '%')
+    }
+    return 'polygon(' + parts.join(', ') + ')'
+  } catch (err) {
+    return '' // 读不出来 → 不裁（退回矩形行为，与旧版一致）
+  }
 }
 function isWhaleHit(e) {
   // 命中图未就绪/失败时：绝不默认“全屏都是鲸鱼”。
   // 加载中 → 返回 false（不拦截页面）；加载失败 → 退回图像矩形区域，仅挂件区域可拖。
   if (!hitCanvas || !hitReady) {
     if (!hitFailed) return false
-    try {
-      var fr = img.getBoundingClientRect()
-      if (!fr || fr.width <= 0 || fr.height <= 0) return false
-      return e.clientX >= fr.left && e.clientX <= fr.right && e.clientY >= fr.top && e.clientY <= fr.bottom
-    } catch (err) {
-      return false
-    }
+    return whaleRectHit(e)
   }
   try {
     var r = img.getBoundingClientRect()
@@ -14680,7 +14980,16 @@ function isWhaleHit(e) {
     var ly = (e.clientY - r.top) / r.height * 610
     if (lx < 0 || ly < 0 || lx >= 610 || ly >= 610) return false
     if (state.flip) lx = 610 - lx
-    var data = hitCanvas.getContext('2d').getImageData(Math.floor(lx), Math.floor(ly), 1, 1).data
+    var data
+    try {
+      data = hitCanvas.getContext('2d').getImageData(Math.floor(lx), Math.floor(ly), 1, 1).data
+    } catch (err) {
+      // v756（issue #144）：画布读不出来（隐私保护/跨域污染）→ 立刻降级为矩形判定，
+      // 并且**记住**这个状态，后续调用直接走矩形，不再每次抛错。
+      hitReady = false
+      hitFailed = true
+      return whaleRectHit(e)
+    }
     return data[3] > 10
   } catch (err) {
     return false
@@ -14879,13 +15188,63 @@ document.addEventListener('touchstart', onDocTouchStart, { capture: true, passiv
 
 var widgetCursor = ''
 function setWidgetCursor(v) {
-  if (v !== widgetCursor) {
-    widgetCursor = v
-    try { document.body.style.cursor = v } catch (err) {}
-  }
+  if (v === widgetCursor) return
+  widgetCursor = v
+  // v751（PR #119）：光标不写 document.body.style.cursor —— cursor 是可继承属性，写 <body> 会让 Blink
+  // 失效整棵文档树的样式；而本函数在点击链路上按下/抬手各写一次，紧接着 isWhaleHit() 的
+  // getBoundingClientRect() 与泡泡行测量的 getComputedStyle()/scrollWidth 会强制刷新样式+布局 ——
+  // 整页重算就被算进了点击里。实测（见 PR #119）：5.7k 节点会话约 35ms/次、13.4k 节点约 179ms/次，
+  // 而同样一次写入只落在挂件自己子树上约 1.3ms。所以改成切换挂件自己的类，光标由 CSS 承担。
+  // 两个类必须互斥切换（只 add 不摘旧类会让光标一直停在 grabbing）。
+  try {
+    root.classList.toggle('dshwv-cursor-grab', v === 'grab')
+    root.classList.toggle('dshwv-cursor-grabbing', v === 'grabbing')
+  } catch (err) {}
 }
+// 鲸鱼图接过指针期间（见上面的 dshwv-cursor-* 类），滚轮要转交给「指针下方真正可滚动的容器」，
+// 否则桌宠会变成一块滚不动的实心区域。只做一次临时让位取元素，全程只写挂件自己的内联样式，
+// 不碰页面级样式；找不到可滚动祖先时什么都不做（此时浏览器仍按默认把滚动交给页面滚动容器）。
+function onWhaleWheel(e) {
+  try {
+    // v757（issue #147）：img 现在**常驻** pointer-events:auto，所以不再用 widgetCursor 当闸门 ——
+    // 这个监听挂在 root 上，只有挂件自己的子元素接住了事件才会触发；命中就转交。
+    if (!e || !e.target) return
+    var hit = e.target
+    if (hit !== img && !(root && root.contains && root.contains(hit))) return
+    var prev = hit.style ? hit.style.pointerEvents : ''
+    var under = null
+    try {
+      if (hit.style) hit.style.pointerEvents = 'none' // 临时让开，取出指针下方真正的页面元素
+      under = document.elementFromPoint(e.clientX, e.clientY)
+    } catch (err) {}
+    try { if (hit.style) hit.style.pointerEvents = prev } catch (err) {}
+    var sc = under
+    for (var hop = 0; sc && sc !== document.body && sc !== document.documentElement && hop < 12; hop++) {
+      var st = null
+      try { st = window.getComputedStyle(sc) } catch (err) {}
+      if (st && (st.overflowY === 'auto' || st.overflowY === 'scroll' || st.overflowY === 'overlay') &&
+          sc.scrollHeight > sc.clientHeight + 1) break
+      sc = sc.parentElement
+    }
+    if (sc && sc !== document.body && sc !== document.documentElement) {
+      var k = (e.deltaMode === 1) ? 16 : 1 // 1 = 行模式，按 16px 折算
+      if (e.deltaY) sc.scrollTop += e.deltaY * k
+      if (e.deltaX) sc.scrollLeft += e.deltaX * k
+      e.preventDefault()
+    }
+  } catch (err) {}
+}
+try { root.addEventListener('wheel', onWhaleWheel, { passive: false }) } catch (err) {}
 function onDocPointerMoveCursor(e) {
-  if (drag && drag.active) { setWidgetCursor('grabbing'); return }
+  if (drag && drag.active) {
+    // v751（PR #119）：按钮已经松开却还在"拖动中" = 这一次 pointerup 丢了（例如松手时指针在窗口外）：
+    // 不能继续强推 grabbing（光标会一直卡在"抓紧"），顺手补一次 endDrag 收尾，避免挂件继续黏着鼠标。
+    // 鼠标/触摸/笔拖动期间 e.buttons 都是 1，buttons===0 只可能意味着真的松手了。
+    // endDrag 内部还有 drag.moved 判定，所以这里传 clickAllowed=true 不会误触发点按。
+    if (!e.buttons) { try { endDrag(e, true) } catch (err) {} ; return }
+    setWidgetCursor('grabbing')
+    return
+  }
   var el = null
   try { el = document.elementFromPoint(e.clientX, e.clientY) } catch (err) {}
   if (el && el.closest && (el.closest('.dshwv-pop') || el.closest('.dshwv-menu') || el.closest('.dshwv-menu-btn') || el.closest('.dshwv-rolelist') || el.closest('.dshwv-cropmask') || el.closest('.dshwv-confirmmask') || el.closest('.dshwv-audiolist') || el.closest('.dshwv-audiomask') || el.closest('.dshwv-snapmask') || el.closest('.dshwv-bubmask') || el.closest('.dshwv-qedit') || el.closest('.dshwv-usagepanel') || el.closest('.dshwv-usage-mask') || el.closest('.dshwv-resmask') || el.closest('.dshwv-custmenu') || el.closest('.dshwv-custbtn'))) {
@@ -15048,13 +15407,19 @@ fetch(SIZE_URL, { cache: 'no-store' })
     }
     if (d && typeof d.vol === 'number') {
       soundVol = d.vol
-      soundOn = soundVol > 0
+      // v753（issue #135）：旧配置没有 sound 字段 → 沿用"音量>0 即开"的老语义；有新字段就以它为准
+      if (typeof d.sound !== 'boolean') soundOn = soundVol > 0
       volInput.value = String(soundVol)
       volPct.textContent = Math.round(soundVol * 100) + '%'
       try {
         if (pressAudio) pressAudio.volume = soundVol
         if (releaseAudio) releaseAudio.volume = soundVol
       } catch (err) {}
+    }
+    // v753：音效总开关（configPayload 一直在写 sound 字段，但以前加载时被"音量>0"覆盖掉了 → 白存）
+    if (d && typeof d.sound === 'boolean') {
+      soundOn = d.sound
+      try { soundToggle.checked = soundOn } catch (err) {}
     }
     if (d && typeof d.soundSet === 'string' && d.soundSet) {
       // 支持预设组（duck/fx1）和自定义组 id；loadAudio() 会校验自定义组是否存在

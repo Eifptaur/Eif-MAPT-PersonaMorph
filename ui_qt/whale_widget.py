@@ -70,7 +70,15 @@ class WhaleWidget(QWidget):
     def __init__(self, t, parent=None):  # noqa: ANN001
         super().__init__(parent)
         self.setObjectName("WhaleWidget")
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
+        # ⛔ **必须置顶（WindowStaysOnTopHint）**：r14 为「控制台最小化挂件还在」
+        #    去掉了 parent —— 但无主的 Tool 窗在 Windows 的 Z 序里是**普通顶层窗**，
+        #    主窗随后 show/activate 就把它压到下面；挂件又恰恰落在主窗右下角
+        #    （最大化后覆盖的位置）⇒ **被主窗整个盖住**，用户眼里「完全看不见」
+        #    （r14 引入的回归，用户重启后实锤依旧不可见）。悬浮挂件就该浮在
+        #    最上层 —— web 原版是页内浮层（z-index 9999），语义一致；不想看时
+        #    点减号收起（r12 已有）。
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool
+                            | Qt.WindowType.WindowStaysOnTopHint)
         # 透明窗：挂件是悬浮件，必须让底层界面透出来。
         # 配套动作在 whale_host._enable_transparency() —— WebView2 的画面是窗口
         # 合成出来的，不把它的 DefaultBackgroundColor 设成 A=0，内核图层就合不上，
