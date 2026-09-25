@@ -470,6 +470,18 @@ def _extract_btns(chunk: str) -> list[tuple[str, str]]:
     return acts
 
 
+def _strip_scripts(body: str) -> str:
+    """把 `<script>…</script>` 整段抹掉（等长占位，保偏移）。
+
+    为什么必须：section 正文里的 JS 模板字符串本身含 `<div class="btns">` /
+    `<button>`（如本机模型探测卡的「用这个 / 连通测试」、叮嘱列表的「删除」都是
+    JS 动态生成的）——解析器不认 script 边界就会把**模板字符串里的按钮**当成
+    静态按钮抠出来 ⇒ 页面上出现一排点了只显示「（web 侧动作）」的假按钮
+    （用户实锤截图：按型号单价的「用这个 / 连通测试 / 保存设置」整排）。
+    占位用空格保持其余偏移计算不变。"""
+    return re.sub(r"<script\b.*?</script>", lambda m: " " * (m.end() - m.start()), body, flags=re.S)
+
+
 def secs() -> dict[str, Sec]:
     """解析一次，全进程共享。web 源码变了重启即跟（原型的"诚实"边界）。"""
     global _CACHE
@@ -477,7 +489,7 @@ def secs() -> dict[str, Sec]:
         return _CACHE
     text = WEB_PATH.read_text(encoding="utf-8")
     for m in re.finditer(r'<section id="sec-([\w-]+)" class="card" data-sec>(.*?)</section>', text, re.S):
-        key, body = m.group(1), m.group(2)
+        key, body = m.group(1), _strip_scripts(m.group(2))
         hd = re.search(r'<div class="sec-hd"><h2>([^<]+)</h2>', body) or re.search(r"<h2>([^<]+)</h2>", body)
         dsc = re.search(r'<div class="desc">(.{0,400}?)</div>', body, re.S)
         sec = Sec(key=key, title=_clean(hd.group(1)) if hd else key,

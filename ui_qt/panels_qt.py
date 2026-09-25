@@ -897,10 +897,17 @@ def _btn_group(t: Tokens, actions: list[tuple[str, str]], note=None) -> QWidget:
 
 
 def _btn_stub(b) -> None:
-    """Qt 壳里 web 动作按钮的点击反馈（原型边界：不假跑 web JS）。"""
-    b.setEnabled(False)
-    b.setText(b.text() + "（web 侧动作）")
-    b.setToolTip("这个动作在 web 控制台执行；Qt 壳只做版式还原，不冒充已执行。")
+    """Qt 壳里 web 动作按钮的点击反馈（原型边界：不假跑 web JS）。
+
+    ⛔ 不再永久改按钮文字——连点几次会把「（web 侧动作）」叠成长串（用户截图实锤：
+    「用这个（web 侧动作）」）。改为弹一次说明框，说清动作 id 与去向；按钮原样保留。
+    """
+    from PySide6.QtWidgets import QMessageBox # noqa: PLC0415
+
+    _aid = str(b.property("web_action") or "")
+    msg = ("动作 id：%s\n" % _aid if _aid else "") + \
+        "这个动作的原生实现还没进桌面壳，请到网页控制台操作（顶栏可「去网页」）。"
+    QMessageBox.information(b, "这个动作在网页控制台", msg)
 
 
 _STATUS_ROWS: list = [] # 面板内 status 行注册表 [(label, status_id)]——跟随全局轮询刷新
@@ -1042,11 +1049,38 @@ def _status_text_for(status_id: str, st: dict) -> str:
         a = str(vm.get("adapter") or "").strip()
         return (("微信 %s × 适配层 %s" % (v, a or "-")) if v and v != "unknown" else "微信版本读不到")
     if sid in ("vsWhy", "ttsWhy"):
-        for k in ("tts", "voice", "voice_models"):
-            d = st.get(k)
-            if isinstance(d, dict) and d.get("ready") is not None:
-                return ("可用" if d.get("ready") else "不可用")
-        return "读不到"
+        # ⛔ 旧读法（st.tts/voice.ready）在 /api/status 里根本不存在 ⇒ 恒「读不到」
+        #   （用户截图实锤：媒体页「引擎状态 检测中…→读不到」）。真值口径对齐 web
+        #   loadStatus（console_html.py :3714-3721 / :3774-3777）：媒体组件在
+        #   `media` 段——语音转文字=media.voice、TTS=media.tts，各带 ok/why。
+        md = st.get("media") or {}
+        if not isinstance(md, dict):
+            return "读不到"
+        if md.get("error"):
+            return "状态读取失败：%s" % md.get("error")
+        # TTS 的 ok/why 在 media.tts.status 里（media_status.py :61 两层结构；web :3761 同口径）
+        d = md.get("voice") if sid == "vsWhy" else (md.get("tts") or {}).get("status")
+        if not isinstance(d, dict) or d.get("ok") is None:
+            return "读不到"
+        return (str(d.get("why") or "可用") if d.get("ok")
+                else str(d.get("why") or "不可用"))
+    if sid == "videoStat":
+        # 视频链路现状（web :3639-3656 同口径）：video_read 段 + media.video 的外链/下载器
+        vr = st.get("video_read") or {}
+        if not isinstance(vr, dict):
+            return "读不到"
+        if vr.get("ready"):
+            a = vr.get("asr") or {}
+            out = ("可用：ffmpeg 已就绪 ｜ 音频识别"
+                   + ("可用" if a.get("ok") else ("不可用（%s）" % (a.get("why") or "")))
+                   + " ｜ 默认抽 %s 帧" % ((vr.get("limits") or {}).get("default_frames") or 4))
+            ur = ((st.get("media") or {}).get("video") or {}).get("video_url") or {}
+            if isinstance(ur, dict) and ur.get("enabled") is not None:
+                out += " ｜ 外链解析：%s ｜ 下载器 yt-dlp：%s" % (
+                    "已开启" if ur.get("enabled") else "默认关闭",
+                    "已安装" if ur.get("ytdlp_ready") else "未安装")
+            return out
+        return "不可用：%s —— 群里发视频时会如实说读不了" % (vr.get("why") or "缺 ffmpeg")
     return "读不到"
 
 
@@ -1110,6 +1144,34 @@ def _cursor_extras(t: Tokens, on_save) -> Card:
     return card
 
 
+# 这些动作 id 在本页**追加区/自定义卡**里已有 Qt 原生实现——元数据行再渲染一个
+# stub 假按钮只会误导（用户点中的正是它们）。渲染时整行跳过。
+_AIDS_COVERED_ELSEWHERE = {"localProbe", "wxRecheck", "ttsProbe", "vcProbe"}
+
+
+def _row_redundant(r: "sec_meta.Row") -> bool:
+    """要不要跳过这条 buttons 行（都不渲染，整行省略）。
+
+    ① `data-save` 按钮（web 每个配置段尾部的「保存设置（…）」，无动作 id）——
+       `_cfg_panel` 页尾本来就有原生「保存设置」（同一条 _collect→write_patch
+       落盘链），再渲染一个 stub 是重复假按钮（用户截图实锤）；
+    ② 动作 id 全部落在 `_AIDS_COVERED_ELSEWHERE`（本机模型探测/微信重检/TTS 探测
+       ——追加区已原生实现）。
+    """
+    if getattr(r, "kind", "") != "buttons":
+        return False
+    acts = getattr(r, "actions", None) or []
+    if not acts:
+        return False
+    for txt, aid in acts:
+        if str(aid) in _AIDS_COVERED_ELSEWHERE:
+            continue
+        if not aid and str(txt).strip().startswith("保存"):
+            continue
+        return False
+    return True
+
+
 def _cfg_panel(t: Tokens, s: "sec_meta.Sec", on_save=None) -> QWidget:
     """配置型面板：头部 + 一张设置卡（行 × 分隔线）+ 保存行。
 
@@ -1130,12 +1192,16 @@ def _cfg_panel(t: Tokens, s: "sec_meta.Sec", on_save=None) -> QWidget:
 
     card = Card(t)
     binds: list[tuple["sec_meta.Row", QWidget]] = []
-    for i, r in enumerate(s.rows):
-        if i:
+    _placed = 0 # 实际渲染的行数（跳过冗余行时不画多余分隔线）
+    for r in s.rows:
+        if _row_redundant(r):
+            continue
+        if _placed:
             card.body.addWidget(_divider(t))
         f = _row(t, r, card, binds)
         if f is not None:
             card.body.addWidget(f)
+            _placed += 1
     lay.addWidget(card)
     # 行控件索引（Row, 控件）挂 page —— APPENDIX 追加区（本机模型探测「用这个」）按 cfg 回填
     page._c8_binds = binds

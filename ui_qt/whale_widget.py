@@ -1,17 +1,16 @@
 # -*- coding: utf-8 -*-
-"""右下角鲸鱼挂件 —— 上游 DeepSeek-Balance-Whale-Widget 的 Qt 等价物。
+"""右下角鲸鱼挂件 —— 上游 DeepSeek-Balance-Whale-Widget 的**原版复刻**。
 
-web 侧挂件是 whale-widget/client/widget.js（在浏览器 DOM 里跑，宿主 agent/whale.py
-按 /dsh-whale/* 接口供数）。Qt 无 DOM，这里用无边框置顶悬浮窗重做核心体验
-（产品自检清单第 9 项验收口径：余额 / 今日已用 / 每轮消耗，数据变化、点击刷新、可拖拽）。
-
-数据面直接复用现成接口（agent/whale.py）：
-  GET /dsh-whale/balance.json    {ok,totalBalance,currency,todayUsage,isPeak}
-  GET /dsh-whale/last-turn.json  {ok,seq,turn,amount,tokens}
-轮询 30s（对齐清单 loadBalance 30s 口径）；拖动位置记 QSettings，重开还原。
-
-与 web 挂件的明示差异：静态鲸鱼图 + 数据（不搬 gif/音效/果冻动画等浏览器特效）；
-挂件显示真实数据，不受顶栏「余额显示」模式（隐藏/改数字）影响（web 同款：两者独立）。
+用户裁定（2026-09-25 截图）：此前 Qt 版做成了「胶囊卡片」（圆角卡 + 余额/今日已用/
+每轮消耗四行灰字）——不是原版。原版形态（whale-widget/client/widget.js :245-272
+:10293-10297）＝
+  · 透明方块（无边框无底色，默认边长 min(250px, 视口短边×0.28)）；
+  · 右下角鲸鱼图（边长的 59.45%）；
+  · 左上一只**对话气泡**（SVG：白底圆角泡 + 两粒渐小的泡，描边 #203170）；
+  · 气泡内文字（色 #536ba9、水平垂直居中）：余额大字 + 说明小字。
+气泡用**原版 SVG 原文**经 QSvgRenderer 渲染（同一份 path/ellipse，不手转弧线）；
+QtSvg 缺席时退化成圆角矩形泡（数据照常）。数据面照旧复用 /dsh-whale/*（余额/今日
+已用/上轮消耗/高峰提示），30s 轮询、点击刷新、拖拽换位、位置记 QSettings 全保留。
 """
 
 from __future__ import annotations
@@ -19,20 +18,36 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QSettings, Qt, QTimer
-from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, # noqa: PLC0415
-                               QVBoxLayout, QWidget)
+from PySide6.QtCore import QByteArray, QRectF, QSettings, Qt, QTimer
+from PySide6.QtGui import QFont, QFontMetrics, QPainter, QPixmap, QColor
+from PySide6.QtWidgets import QApplication, QWidget
 
 ROOT = Path(__file__).resolve().parent.parent
 _ASSET = ROOT / "whale-widget" / "assets" / "DSniang1.png"
 _SET = ("WXAgent", "persona-morph-ui")
 
+# 原版气泡 SVG 原文（widget.js :10293-10297 逐字；viewBox 1026×700）——
+# 白底泡体 + 拖尾两粒小泡，描边 #203170、线宽 18。
+_BUBBLE_SVG = (
+    '<svg viewBox="0 0 1026 700" preserveAspectRatio="xMidYMid meet" '
+    'xmlns="http://www.w3.org/2000/svg">'
+    '<path fill="#FFFFFF" stroke="#203170" stroke-width="18" stroke-linejoin="round" '
+    'stroke-linecap="round" d="M 827 248 A 373 232 0 1 0 81 246 A 373 232 0 0 0 301 465 '
+    'A 57 32 10 0 0 413 484 A 373 232 0 0 0 827 248 Z"/>'
+    '<ellipse cx="352" cy="561" rx="37.5" ry="26" fill="#FFFFFF" stroke="#203170" '
+    'stroke-width="18"/>'
+    '<ellipse cx="442" cy="646" rx="24.5" ry="18" fill="#FFFFFF" stroke="#203170" '
+    'stroke-width="18"/>'
+    '</svg>')
+_INK = QColor("#536ba9")
+_VBW, _VBH = 1026.0, 700.0 # 气泡 viewBox（aspect 1026/700）
+_WHALE_RATIO = 0.5945 # 鲸图边长占比（widget.js :253）
+
 
 class WhaleWidget(QWidget):
-    """无边框置顶小窗：鲸鱼图 + 余额/今日已用/每轮消耗；点击刷新、拖拽移动。"""
+    """无边框置顶小窗（原版复刻）：透明方块 + 气泡 + 鲸鱼；点击刷新、拖拽移动。"""
 
-    W, H = 208, 116
+    W, H = 250, 250 # 原版默认边长（widget.js :245 clamp 的桌面上限值）
 
     def __init__(self, t, parent=None): # noqa: ANN001
         super().__init__(parent)
@@ -45,40 +60,25 @@ class WhaleWidget(QWidget):
         self._moved = False
         self._busy = False
 
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        self.card = QFrame()
-        self.card.setObjectName("WhaleCard")
-        outer.addWidget(self.card)
-        h = QHBoxLayout(self.card)
-        h.setContentsMargins(10, 8, 12, 8)
-        h.setSpacing(9)
-        self.pic = QLabel()
-        self.pic.setFixedSize(64, 64)
+        # 气泡内文字（原版口径：余额大字 + 说明小字，居中，#536ba9）
+        self.bal = "余额 …"
+        self.hint = ""
+
         try:
             pm = QPixmap(str(_ASSET))
-            if not pm.isNull():
-                self.pic.setPixmap(pm.scaled(64, 64, Qt.AspectRatioMode.KeepAspectRatio,
-                                             Qt.TransformationMode.SmoothTransformation))
-        except Exception: # noqa: BLE001 — 素材缺失时留空图，数据照常显示
-            pass
-        h.addWidget(self.pic)
-        v = QVBoxLayout()
-        v.setContentsMargins(0, 0, 0, 0)
-        v.setSpacing(2)
-        self.bal_lb = QLabel("余额 …")
-        self.today_lb = QLabel("今日已用 …")
-        self.last_lb = QLabel("每轮消耗 …")
-        self.peak_lb = QLabel("")
-        for lb in (self.bal_lb, self.today_lb, self.last_lb, self.peak_lb):
-            lb.setWordWrap(True)
-        self.bal_lb.setToolTip("点击挂件刷新；拖动可换位置")
-        self.pic.setToolTip("点击刷新余额；按住拖动换位置")
-        v.addWidget(self.bal_lb)
-        v.addWidget(self.today_lb)
-        v.addWidget(self.last_lb)
-        v.addWidget(self.peak_lb)
-        h.addLayout(v, 1)
+            self._whale = pm if not pm.isNull() else QPixmap()
+        except Exception: # noqa: BLE001 — 素材缺失时只有气泡，数据照常显示
+            self._whale = QPixmap()
+
+        # 气泡渲染器：原版 SVG 原文（QtSvg 缺席 ⇒ None，paintEvent 走圆角矩形退化）
+        self._bub = None
+        try:
+            from PySide6.QtSvg import QSvgRenderer # noqa: PLC0415
+
+            r = QSvgRenderer(QByteArray(_BUBBLE_SVG.encode("utf-8")))
+            self._bub = r if r.isValid() else None
+        except Exception: # noqa: BLE001
+            self._bub = None
 
         self.restyle(t)
 
@@ -103,19 +103,56 @@ class WhaleWidget(QWidget):
     # ------------------------------------------------------------ 外观
 
     def restyle(self, t) -> None: # noqa: ANN001
-        """主题切换时刷新样式（挂件是独立顶层窗，不走 Shell 的 QSS 重建）。"""
-        from stylekit_qt import qfont # noqa: PLC0415
-
+        """主题切换时刷新字号（挂件是独立顶层窗，不走 Shell 的 QSS 重建）。"""
         self.t = t
-        self.card.setStyleSheet(
-            f"#WhaleCard{{background:{t.card};border:1px solid {t.bd};border-radius:14px;}}")
-        self.bal_lb.setFont(qfont(t, 15, 600))
-        self.bal_lb.setStyleSheet(f"color:{t.tx};background:transparent;")
-        for lb in (self.today_lb, self.last_lb):
-            lb.setFont(qfont(t, 11))
-            lb.setStyleSheet(f"color:{t.tx2};background:transparent;")
-        self.peak_lb.setFont(qfont(t, 10.5))
-        self.peak_lb.setStyleSheet(f"color:{t.warn};background:transparent;")
+
+    def paintEvent(self, _e) -> None: # noqa: N802
+        """原版复刻：先画气泡（原版 SVG），再画右下鲸鱼图，最后画气泡内文字。"""
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # ① 气泡：占满窗口宽，高按 viewBox 比例（1026/700）
+        bw = float(self.W)
+        bh = bw * _VBH / _VBW
+        if self._bub is not None:
+            self._bub.render(p, QRectF(0, 0, bw, bh))
+        else: # 退化：QtSvg 缺席时给个白底圆角泡（描边同色），文字照常
+            p.setPen(QColor("#203170"))
+            p.setBrush(QColor("#FFFFFF"))
+            p.drawRoundedRect(QRectF(6, 6, bw - 12, bh - 12), 40, 40)
+
+        # ② 鲸鱼图：右下角，边长 59.45%（原版 object-fit contain、右下对齐）
+        if self._whale is not None and not self._whale.isNull():
+            w = self.W * _WHALE_RATIO
+            pm = self._whale.scaled(int(w), int(w), Qt.AspectRatioMode.KeepAspectRatio,
+                                    Qt.TransformationMode.SmoothTransformation)
+            p.drawPixmap(self.W - pm.width(), self.H - pm.height(), pm)
+
+        # ③ 气泡内文字：中心 (44.25%, 36%)，区域宽 66% 高 64%（widget.js :272）
+        cx, cy = self.W * 0.4425, self.H * 0.36
+        tw = self.W * 0.66
+        th = self.H * 0.64
+        area = QRectF(cx - tw / 2, cy - th / 2, tw, th)
+        f_amt = QFont(self.font())
+        f_amt.setPixelSize(max(15, int(self.W * 0.088)))
+        f_amt.setBold(True)
+        f_small = QFont(self.font())
+        f_small.setPixelSize(max(10, int(self.W * 0.044)))
+        p.setPen(_INK)
+        fm_a = QFontMetrics(f_amt)
+        fm_s = QFontMetrics(f_small)
+        # 行：余额大字 / hint 小字（今日已用 · 上轮 · 高峰），最多三行
+        rows = [(f_amt, self.bal)]
+        rows += [(f_small, x) for x in [y for y in (self.hint or "").split("\n") if y][:2]]
+        total_h = sum(fm.height() for f, _t in rows) + 6 * (len(rows) - 1)
+        y = area.top() + (area.height() - total_h) / 2
+        for f, txt in rows:
+            fm = QFontMetrics(f)
+            p.setFont(f)
+            elided = fm.elidedText(txt, Qt.ElideRight, int(tw))
+            p.drawText(QRectF(area.left(), y, area.width(), fm.height()),
+                       int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter), elided)
+            y += fm.height() + 6
 
     # ------------------------------------------------------------ 数据
 
@@ -124,7 +161,8 @@ class WhaleWidget(QWidget):
         if self._busy:
             return
         self._busy = True
-        self.bal_lb.setText("余额 刷新中…")
+        self.bal = "余额 刷新中…"
+        self.update()
         bx: dict = {"done": False, "bal": None, "lt": None, "err": None}
 
         def _work() -> None:
@@ -153,36 +191,36 @@ class WhaleWidget(QWidget):
 
     def _apply_data(self, bal, lt, err) -> None: # noqa: ANN001
         sym = "¥"
+        hint1 = hint2 = ""
         if isinstance(bal, dict) and bal.get("ok"):
             sym = "$" if str(bal.get("currency") or "CNY").upper() == "USD" else "¥"
             try:
                 total = float(bal.get("totalBalance") or 0)
             except (TypeError, ValueError):
                 total = 0.0
-            self.bal_lb.setText("%s%s" % (sym, format(total, ",.2f")))
+            self.bal = "%s%s" % (sym, format(total, ",.2f"))
             try:
                 today = float(bal.get("todayUsage") or 0)
             except (TypeError, ValueError):
                 today = 0.0
-            self.today_lb.setText("今日已用 %s%.4f" % (sym, today))
-            self.peak_lb.setText("高峰时段（价贵）" if bal.get("isPeak") else "")
+            hint1 = "今日已用 %s%.4f" % (sym, today)
+            hint2 = "高峰时段（价贵）" if bal.get("isPeak") else ""
         elif isinstance(bal, dict) and bal.get("ok") is False:
-            self.bal_lb.setText("余额 未取到")
-            self.today_lb.setText(str(bal.get("error") or "没配模型 Key")[:22])
-            self.peak_lb.setText("")
+            self.bal = "余额 未取到"
+            hint1 = str(bal.get("error") or "没配模型 Key")[:22]
         else:
-            self.bal_lb.setText("余额 —")
-            self.today_lb.setText((str(err) if err else "后台没连上")[:22])
-            self.peak_lb.setText("")
+            self.bal = "余额 —"
+            hint1 = (str(err) if err else "后台没连上")[:22]
         if isinstance(lt, dict) and lt.get("turn") is not None:
             try:
                 amt = float(lt.get("amount") or 0)
             except (TypeError, ValueError):
                 amt = 0.0
             tok = lt.get("tokens")
-            self.last_lb.setText("上轮 %s%.4f%s" % (sym, amt, (" · %s tok" % tok) if tok else ""))
-        else:
-            self.last_lb.setText("还没跑过一轮")
+            hint2 = " ".join([x for x in (hint2, "上轮 %s%.4f%s" % (
+                sym, amt, (" · %s tok" % tok) if tok else "")) if x]).strip()
+        self.hint = "\n".join([x for x in (hint1, hint2) if x])
+        self.update()
 
     # ------------------------------------------------------------ 交互（点击刷新 / 拖拽移动）
 

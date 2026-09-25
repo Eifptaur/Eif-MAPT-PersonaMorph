@@ -23,7 +23,7 @@ import re
 import time
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -35,9 +35,11 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QListView,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -2173,10 +2175,16 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
 
 
 def _bordered_list(t: Tokens, name: str, min_h: int = 200) -> QListWidget:
-    """一个带边框、可滚的动态列表容器；objectName 固定，便于自检按名取证。"""
+    """一个带边框、可滚的动态列表容器；objectName 固定，便于自检按名取证。
+
+    ⛔ 横向滚动条强制关闭 + resizeMode=Adjust（用户实锤：item 用 sizeHint 全宽时
+    会把行撑出视口 ⇒ 右侧按钮被切掉、要手动拉宽窗口）。行宽一律=视口宽，
+    行内自己用 sizePolicy 决定谁先被压缩。"""
     lw = QListWidget()
     lw.setObjectName(name)
     lw.setMinimumHeight(min_h)
+    lw.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    lw.setResizeMode(QListView.ResizeMode.Adjust)
     lw.setStyleSheet(
         f"QListWidget{{background:{rgba(t.q('tx'), 0 if t.glass else 16).name(QColor.NameFormat.HexArgb)};"
         f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:4px;}}"
@@ -2548,8 +2556,11 @@ def persona_panel(t: Tokens) -> QWidget:
         for p in show:
             it = QListWidgetItem()
             listw.addItem(it)
-            listw.setItemWidget(it, _persona_card(t, p, handlers))
-            it.setSizeHint(listw.itemWidget(it).sizeHint())
+            wdg = _persona_card(t, p, handlers)
+            listw.setItemWidget(it, wdg)
+            # ⛔ 条目只定高、不定宽——sizeHint 全宽会把行撑出视口（右侧按钮被切、
+            #   要手动拉宽窗口，用户实锤）。宽度交给视口 ⇒ 卡片右侧顶格。
+            it.setSizeHint(QSize(0, max(44, wdg.sizeHint().height())))
         badge.set("info", f"{len(items)} 个" if items else "暂无人设")
 
     def set_personas(items: list) -> None:
@@ -3345,7 +3356,7 @@ def _persona_card(t: Tokens, p: dict, handlers: dict) -> QWidget:
     w.setStyleSheet("background:transparent;")
     h = QHBoxLayout(w)
     h.setContentsMargins(6, 4, 6, 4)
-    h.setSpacing(8)
+    h.setSpacing(6)
     # 星标改项目图标库 SVG；
     #   收藏=实心金星，未收藏=灰描边星；按钮窄条 34px。
     from PySide6.QtGui import QIcon # noqa: PLC0415
@@ -3394,12 +3405,18 @@ def _persona_card(t: Tokens, p: dict, handlers: dict) -> QWidget:
     txt.setFont(qfont(t, 11.5))
     txt.setStyleSheet(f"color:{t.tx3};background:transparent;")
     txt.setWordWrap(True)
-    # 摘要限宽 + 最小宽 0（窄窗时先牺牲摘要、保右侧按钮完整可见）
-    # 。卡最小高度保证 itemWidget 不压扁。
+    # 摘要限宽 + 最小宽 0（窄窗时先牺牲摘要、保右侧按钮完整可见）。
+    # ⛔ sizePolicy=Ignored：wordWrap QLabel 的 sizeHint 是「整行不换行」的宽度
+    #   （60 字 ≈ 400px）——行总宽被它撑出视口 ⇒ 右侧按钮被切、要手动拉宽窗口
+    #   （用户截图实锤）。Ignored 让它的 sizeHint 不参与行宽计算，stretch 照常吃余量。
     txt.setMaximumWidth(300)
     txt.setMinimumWidth(0)
+    txt.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+    # 卡片本体：水平 Expanding ⇒ setItemWidget 时随条目矩形铺满（右侧顶格，
+    # 不再按 sizeHint 居左留缝——用户实锤「不是右侧顶格」）。
+    w.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
     w.setMinimumHeight(44)
-    h.setContentsMargins(6, 4, 12, 4)
+    h.setContentsMargins(6, 4, 6, 4)
     h.addWidget(fav)
     h.addWidget(name)
     h.addWidget(sc_lb)
@@ -5509,8 +5526,12 @@ def _card_dialog(t: Tokens, btn, title: str, width: int = 640):
     outer.setContentsMargins(0, 0, 0, 0)
     card = QFrame()
     card.setObjectName("C8CardDlg")
+    # ⛔ 玻璃主题下 t.card 是（近）全透明 —— 弹窗浮在正文上会和下面的字叠成一团
+    #   （用户实锤：「控制台内部的弹窗请务必一定要有底」）。弹窗必须有实色底：
+    #   玻璃主题给深海底实色 #0E2136（confirm.py 同款口径），普通主题照旧 t.card。
+    _card_bg = "#0E2136" if getattr(t, "glass", False) else t.card
     card.setStyleSheet(
-        f"#C8CardDlg{{background:{t.card};border:1px solid {t.bd};"
+        f"#C8CardDlg{{background:{_card_bg};border:1px solid {t.bd};"
         f"border-radius:{t.radius_card + 2}px;}}")
     outer.addWidget(card)
     v = QVBoxLayout(card)
@@ -6594,13 +6615,16 @@ def _provider_options_from_web() -> list[tuple[str, str]]:
 
 
 def _model_provider_linkup(t: Tokens, page: QWidget) -> None:
-    """模型厂商选择行（web :1411-1421 providerSel）+ 联动（applyProvider :4799-4828）。
+    """模型厂商选择行（web :1411-1421 providerSel）+ **模型下拉**（web :1431 modelSel +
+    renderModelSel :4790）+ 联动（applyProvider :4799-4828）。
 
-    ⛔ 厂商选择器在 web 是**纯 JS 交互控件（无 data-cfg）**——元数据渲染不覆盖，
-    这里手写补位（选项照 web 源码解析）。联动：用户切厂商 → 回填接口地址 +
-    回填已存密钥（打码值不回填，防误存）→ 按需弹密钥弹窗。
-    触发用 activated（仅用户选择才发，对齐 web change 事件语义）——
-    初始渲染与程序回填不弹窗；初始选中按接口地址反推（web providerFromBase）。
+    ⛔ 这两个选择器在 web 都是**纯 JS 交互控件（无 data-cfg）**——元数据渲染不覆盖
+    （r5 教训的原样：sec_meta 把空 `<select id="modelSel">` 解析成空下拉，用户点了
+    「啥都出不来」）。这里手写补位：厂商切 → 回填接口地址 + 回填已存密钥（打码值不
+    回填，防误存）+ **重灌模型预设**；模型落点 = `api.model`（web syncFromForm :2626
+    同键），经隐藏 QLineEdit 挂进 page._c8_binds ⇒ 与「保存设置/改完即生效」同一条链。
+    触发用 activated（仅用户选择才发，对齐 web change 事件语义）——初始渲染与程序
+    回填不弹窗；初始选中按接口地址反推（web providerFromBase）。
     """
     provs = _providers_from_web()
     opts = _provider_options_from_web()
@@ -6617,68 +6641,159 @@ def _model_provider_linkup(t: Tokens, page: QWidget) -> None:
         return
 
     card = Card(t)
-    card.body.addWidget(h2(t, "模型厂商"))
+    card.body.addWidget(h2(t, "模型厂商与模型"))
+
+    def _combo_style() -> str:
+        return (f"QComboBox{{background:{rgba(t.q('tx'), 0 if t.glass else 16).name(QColor.NameFormat.HexArgb)};"
+                f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:0 10px;}}"
+                f"QComboBox::drop-down{{border:none;width:22px;}}"
+                f"QComboBox QAbstractItemView{{background:{'#0E2136' if t.glass else t.card};"
+                f"color:{t.tx};border:1px solid {t.bd};}}")
+
     prow = QHBoxLayout()
+    plab = QLabel("厂商")
+    plab.setFont(qfont(t, t.body_size, 500))
+    plab.setStyleSheet(f"color:{t.tx};background:transparent;")
     combo = QComboBox()
     combo.setObjectName("providerSel")
     combo.setFixedHeight(32)
     combo.setFont(qfont(t, t.body_size))
-    combo.setStyleSheet(
-        f"QComboBox{{background:{rgba(t.q('tx'), 0 if t.glass else 16).name(QColor.NameFormat.HexArgb)};"
-        f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:0 10px;}}"
-        f"QComboBox::drop-down{{border:none;width:22px;}}"
-        f"QComboBox QAbstractItemView{{background:{'#0E2136' if t.glass else t.card};"
-        f"color:{t.tx};border:1px solid {t.bd};}}")
+    combo.setStyleSheet(_combo_style())
     for val, txt in opts:
         combo.addItem(txt, val)
+    prow.addWidget(plab)
     prow.addWidget(combo, 1)
     card.body.addLayout(prow)
+
+    # ── 模型行（web :1429-1434 同款版式：下拉 + 自定义手填，二选一显示）──
+    mrow = QHBoxLayout()
+    mlab = QLabel("模型")
+    mlab.setFont(qfont(t, t.body_size, 500))
+    mlab.setStyleSheet(f"color:{t.tx};background:transparent;")
+    mcombo = QComboBox()
+    mcombo.setObjectName("modelSel")
+    mcombo.setFixedHeight(32)
+    mcombo.setFont(qfont(t, t.body_size))
+    mcombo.setStyleSheet(_combo_style())
+    medit = QLineEdit()
+    medit.setPlaceholderText("自定义模型名（如 glm-4-plus）")
+    medit.setFixedHeight(32)
+    medit.setFont(qfont(t, t.body_size))
+    medit.setStyleSheet(
+        f"QLineEdit{{background:{rgba(t.q('tx'), 0 if t.glass else 16).name(QColor.NameFormat.HexArgb)};"
+        f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:0 10px;}}")
+    medit.hide()
+    mrow.addWidget(mlab)
+    mv = QVBoxLayout()
+    mv.setContentsMargins(0, 0, 0, 0)
+    mv.addWidget(mcombo)
+    mv.addWidget(medit)
+    mrow.addLayout(mv, 1)
+    card.body.addLayout(mrow)
     page.layout().addWidget(card)
 
-    # 初始选中：按接口地址反推（web providerFromBase :4788-4798 同款——
-    # 前缀匹配先到先得，匹配不上给 custom 语义位（无该选项则落第一个），空地址默认首个）
-    b = str(base_w.text() or "").strip()
-    pick = ""
-    for k, p in provs.items():
-        if k != "custom" and p.get("base") and b.startswith(str(p["base"])):
-            pick = k
-            break
-    if not pick and not b:
-        pick = "deepseek"
-    if pick:
-        for i in range(combo.count()):
-            if str(combo.itemData(i)) == pick:
-                combo.setCurrentIndex(i)
+    # 落点：隐藏 QLineEdit 挂 _c8_binds（kind=text → _ctrl_value 走 text()），
+    # combo/edit 任一变化都同步到它 ⇒ _collect / 改完即生效 自动带上 api.model。
+    from sec_meta import Row as _Row # noqa: PLC0415
+
+    bind_edit = QLineEdit()
+    bind_edit.hide()
+    page._c8_binds.append((_Row(kind="text", label="模型", cfg="api.model",
+                                hint="所选厂商的常用模型都在下拉里；不够用就手填。"), bind_edit))
+
+    def _refill_models(prov: str) -> None:
+        """按厂商重灌模型预设（web renderModelSel :4790 同款）；预设为空 ⇒ 显示手填行。"""
+        p = provs.get(prov) or {}
+        models = [str(x) for x in (p.get("models") or [])]
+        mcombo.blockSignals(True)
+        mcombo.clear()
+        if models:
+            for m in models:
+                mcombo.addItem(m, m)
+            mcombo.show()
+            medit.hide()
+        else:
+            mcombo.addItem("（无预设，请在下方手填）", "")
+            mcombo.hide()
+            medit.show()
+        mcombo.blockSignals(False)
+
+    def _sync_from_ui() -> None:
+        v = medit.text().strip() if medit.isVisible() else str(mcombo.currentData() or "")
+        if bind_edit.text() != v:
+            bind_edit.setText(v)
+
+    mcombo.activated.connect(lambda _i: _sync_from_ui())
+    medit.textChanged.connect(lambda _t: _sync_from_ui())
+
+    def _init_selection() -> None:
+        """初始：厂商按接口地址反推（web providerFromBase 同款）；模型按 cfg api.model
+        对号入座——在预设里就选中，不在（且非空）以临时项插入保留原值（不丢用户配置）。"""
+        b = str(base_w.text() or "").strip()
+        pick = ""
+        for k, p in provs.items():
+            if k != "custom" and p.get("base") and b.startswith(str(p["base"])):
+                pick = k
                 break
+        if not pick and not b:
+            pick = "deepseek"
+        if pick:
+            for i in range(combo.count()):
+                if str(combo.itemData(i)) == pick:
+                    combo.setCurrentIndex(i)
+                    break
+        _refill_models(pick or "deepseek")
+        cur = ""
+        try:
+            cur = str(config_io.read_path("api.model") or "").strip()
+        except Exception: # noqa: BLE001
+            cur = ""
+        if cur:
+            hit = -1
+            for i in range(mcombo.count()):
+                if str(mcombo.itemData(i)) == cur:
+                    hit = i
+                    break
+            if hit >= 0:
+                mcombo.setCurrentIndex(hit)
+            elif mcombo.isVisible():
+                mcombo.blockSignals(True)
+                mcombo.addItem(cur, cur)
+                mcombo.setCurrentIndex(mcombo.count() - 1)
+                mcombo.blockSignals(False)
+            else:
+                medit.setText(cur)
+        _sync_from_ui()
 
-    combo.activated.connect(lambda idx: _prov_changed(t, page, combo, idx, base_w, key_w))
-
-
-def _prov_changed(t: Tokens, page: QWidget, prov_w: QComboBox, idx: int,
-                  base_w, key_w) -> None: # noqa: ANN001
-    prov = str(prov_w.itemData(idx) or "")
-    p = _providers_from_web().get(prov)
-    if not p:
-        return
-    if p.get("base") and hasattr(base_w, "setText"):
-        base_w.setText(str(p["base"]))
-    saved = ""
-    try:
-        kv = config_io.read_path("api.provider_keys")
-        if isinstance(kv, dict):
-            saved = str(kv.get(prov) or "")
-    except Exception: # noqa: BLE001
+    def _prov_changed2(idx: int) -> None:
+        prov = str(combo.itemData(idx) or "")
+        p = provs.get(prov)
+        if not p:
+            return
+        if p.get("base") and hasattr(base_w, "setText"):
+            base_w.setText(str(p["base"]))
+        _refill_models(prov) # 厂商切 ⇒ 模型预设跟着换（web :4819 同款）
+        _sync_from_ui()
         saved = ""
-    if (saved and key_w is not None and hasattr(key_w, "setText")
-            and "••••" not in saved and not saved.startswith("sk-***")):
-        key_w.setText(saved)
-    have = str(key_w.text()).strip() if key_w is not None and hasattr(key_w, "text") else ""
-    is_masked = (not have) or ("••••" in have) or have.startswith("sk-***")
-    # web 同口径：非打码且（非 deepseek 或已有已存 Key）→ 不打扰；
-    # deepseek 首次（无已存 Key）即使输入框有值也必问一次。
-    if not is_masked and not (prov == "deepseek" and not saved):
-        return
-    _prov_key_dlg(t, page, prov, p, have, key_w)
+        try:
+            kv = config_io.read_path("api.provider_keys")
+            if isinstance(kv, dict):
+                saved = str(kv.get(prov) or "")
+        except Exception: # noqa: BLE001
+            saved = ""
+        if (saved and key_w is not None and hasattr(key_w, "setText")
+                and "••••" not in saved and not saved.startswith("sk-***")):
+            key_w.setText(saved)
+        have = str(key_w.text()).strip() if key_w is not None and hasattr(key_w, "text") else ""
+        is_masked = (not have) or ("••••" in have) or have.startswith("sk-***")
+        # web 同口径：非打码且（非 deepseek 或已有已存 Key）→ 不打扰；
+        # deepseek 首次（无已存 Key）即使输入框有值也必问一次。
+        if not is_masked and not (prov == "deepseek" and not saved):
+            return
+        _prov_key_dlg(t, page, prov, p, have, key_w)
+
+    combo.activated.connect(_prov_changed2)
+    _init_selection()
 
 
 def _prov_key_dlg(t: Tokens, page: QWidget, prov: str, p: dict,
@@ -6935,12 +7050,129 @@ def _wechat_recheck_appendix(t: Tokens, page: QWidget) -> None:
     b.clicked.connect(_recheck)
 
 
+def _media_components_appendix(t: Tokens, page: QWidget) -> None:
+    """媒体组件卡（用户点单：「要是没有，不会自己帮用户装吗」）——缺什么装什么。
+
+    数据源 = /api/status 的 media 段（media_status.snapshot）：语音解码链逐件
+    （voice.decode[].{name,ok,detail}）、下载器 yt-dlp（media.video.video_url.ytdlp_ready）。
+    pip 能装的（pilk / yt-dlp）走**产品自带运行时**的 pip 装进运行时环境（不碰系统
+    Python）；装不了的（ffmpeg 二进制 / Windows 语音识别）如实给指引，不假装装好。
+    装完自动重拉一次状态，结果原样回显。
+    """
+    card = Card(t)
+    card.body.addWidget(h2(t, "媒体组件（缺什么装什么）"))
+    st_lb = desc(t, "检测中…")
+    st_lb.setWordWrap(True)
+    card.body.addWidget(st_lb)
+    btn = Btn("一键安装缺件", t, "primary")
+    brow = QHBoxLayout()
+    brow.addWidget(btn)
+    brow.addStretch(1)
+    card.body.addLayout(brow)
+    page.layout().addWidget(card)
+
+    state: dict = {"pkgs": [], "ffmpeg_missing": False, "asr_missing": False}
+
+    def _refresh() -> None:
+        try:
+            st = config_io.get_json("/api/status", timeout=10.0) or {}
+        except Exception as e: # noqa: BLE001
+            st_lb.setText("状态读不到：%s" % str(e)[:80])
+            return
+        md = st.get("media") or {}
+        if not isinstance(md, dict):
+            st_lb.setText("状态读不到（media 段缺失）")
+            return
+        lines: list[str] = []
+        pkgs: list[str] = []
+        v = md.get("voice") or {}
+        dec = [d for d in (v.get("decode") or []) if isinstance(d, dict)]
+        dec_ok = any(d.get("ok") for d in dec)
+        if dec:
+            for d in dec:
+                lines.append("解码器 %s：%s" % (d.get("name") or "?", "可用" if d.get("ok")
+                                               else ("缺（%s）" % str(d.get("detail") or "")[:40])))
+            if not dec_ok:
+                pkgs.append("pilk")
+        else:
+            lines.append("语音解码：组件清单读不到")
+        vurl = ((md.get("video") or {}).get("video_url") or {})
+        if vurl.get("ytdlp_ready"):
+            lines.append("下载器 yt-dlp：已安装")
+        elif "ytdlp_ready" in vurl:
+            lines.append("下载器 yt-dlp：未安装（外链视频解析需要）")
+            pkgs.append("yt-dlp")
+        vr = st.get("video_read") or {}
+        if vr and not vr.get("ready"):
+            state["ffmpeg_missing"] = True
+            lines.append("ffmpeg：%s（这个装不了自动版——到 ffmpeg 官网下载后放进 PATH，"
+                         "或看「检测中心」的依赖体检）" % str(vr.get("why") or "缺")[:60])
+        asr = (vr.get("asr") or {}) if isinstance(vr, dict) else {}
+        if isinstance(asr, dict) and asr.get("ok") is False:
+            state["asr_missing"] = True
+            lines.append("音频识别：%s（Windows 功能——设置 → 时间和语言 → 语音，装完重启生效）"
+                         % str(asr.get("why") or "不可用")[:50])
+        state["pkgs"] = pkgs
+        st_lb.setText("\n".join(lines) if lines else "组件状态读不到")
+        btn.setText("一键安装缺件" + ("（%s）" % "、".join(pkgs) if pkgs else ""))
+        btn.setEnabled(bool(pkgs))
+
+    def _install() -> None:
+        pkgs = list(state.get("pkgs") or [])
+        if not pkgs:
+            st_lb.setText("没有要装的（组件都齐了）")
+            return
+        btn.setEnabled(False)
+        st_lb.setText("安装中（%s）… 走产品自带运行时的 pip，不改系统 Python" % "、".join(pkgs))
+        py = ROOT / "runtime" / "python" / "python.exe"
+        if not py.exists():
+            st_lb.setText("没找到产品运行时（%s），装不了" % py.name)
+            btn.setEnabled(True)
+            return
+        box: dict = {"done": False, "outs": []}
+
+        def _work() -> None:
+            import subprocess # noqa: PLC0415
+
+            for pkg in pkgs:
+                try:
+                    r = subprocess.run([str(py), "-m", "pip", "install", pkg],
+                                       capture_output=True, text=True, timeout=600)
+                    box["outs"].append((pkg, r.returncode == 0,
+                                        str(r.stderr or r.stdout or "")[-120:]))
+                except Exception as e: # noqa: BLE001
+                    box["outs"].append((pkg, False, str(e)[:120]))
+            box["done"] = True
+
+        import threading as _th_main # noqa: PLC0415
+
+        _th_main.Thread(target=_work, daemon=True, name="media-install").start()
+
+        def _apply() -> None:
+            if not box["done"]:
+                QTimer.singleShot(300, _apply)
+                return
+            outs = box.get("outs") or []
+            bad = [p for p, ok, _m in outs if not ok]
+            st_lb.setText("\n".join(("已装 %s ✓" % p) if ok else ("装 %s 没成功：%s" % (p, m))
+                                    for p, ok, m in outs) or "没执行")
+            if not bad:
+                st_lb.setText(st_lb.text() + "\n重查状态…")
+                _refresh()
+            else:
+                btn.setEnabled(True)
+
+    btn.clicked.connect(_install)
+    QTimer.singleShot(600, _refresh)
+
+
 APPENDIX = {
     "wechat": (_wechat_emoji_appendix, _briefs_appendix, _wechat_recheck_appendix),
     "tools": _tools_utlist_appendix,
     "model": (_model_local_appendix, _model_provider_linkup),
     "search": _web_search_appendix,
     "imggen": _sd_local_appendix,
+    "media": _media_components_appendix,
     "tts": _tts_probe_appendix,
     "community": _community_appendix,
     "feedback": _feedback_appendix,
