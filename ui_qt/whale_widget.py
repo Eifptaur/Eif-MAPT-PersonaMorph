@@ -27,6 +27,13 @@ from PySide6.QtCore import QPoint, QRectF, QSettings, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QWidget
 
+# ⛔ **模块级导入**，不能放进某个方法里：`build_host_html` 在 `_boot_webview`
+# 导入的话，`_after_host_ready`（另一个方法）里用到它就是 NameError——
+# 且该路径只有在「控制台正在运行」时才走得到（端口探活/认人两道闸会先返回），
+# 平时自检全是静态判据 ⇒ 缺陷被长期掩盖。whale_host 顶层无 ctypes/comtypes，
+# 导入即安全。
+from whale_host import WhaleHostWebView, build_host_html  # noqa: PLC0415
+
 ROOT = Path(__file__).resolve().parent.parent
 _ASSET = ROOT / "whale-widget" / "assets" / "DSniang1.png"
 _SET = ("WXAgent", "persona-morph-ui")
@@ -179,8 +186,6 @@ class WhaleWidget(QWidget):
         `if not self._host.ok: 降级` 会在控制器就绪之前误判失败。
         """
         try:
-            from whale_host import WhaleHostWebView, build_host_html  # noqa: PLC0415
-
             hwnd = int(self.winId())
             self._host = WhaleHostWebView(hwnd, self.W, self.H)
             # 拖动交接：页面自己报位移（见 whale_host.build_host_html 的 dragSetup），

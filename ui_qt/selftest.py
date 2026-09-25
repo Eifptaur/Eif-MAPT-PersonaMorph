@@ -7716,6 +7716,15 @@ def t_color_token_guard() -> None:
     ck("真关路径显式带走挂件（无 parent 后必须 close，否则 WebView2 成孤儿）",
        "whale" in _ce and ".close()" in _ce, "")
 
+    # NameError 空窗闸：_after_host_ready 用到 build_host_html，而它此前只在
+    # _boot_webview 里函数级导入 ⇒ 控制台在跑（走到该行）时 NameError ⇒ 降级卡
+    # 显示 NameError 文案。必须模块级可解析。
+    import whale_widget as _wmod # noqa: PLC0415
+
+    ck("挂件 build_host_html 模块级可解析（_after_host_ready 跨方法使用，防 NameError）",
+       hasattr(_wmod, "build_host_html") and "build_host_html" in
+       _inspect.getsource(_wmod.WhaleWidget._after_host_ready), "")
+
     _init = _inspect.getsource(_shell.Shell.__init__)
     ck("挂件构造不带 parent（有主工具窗会被主窗最小化连带藏掉）",
        "WhaleWidget(self.t)" in _init and "parent=self" not in
