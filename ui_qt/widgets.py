@@ -67,7 +67,7 @@ from stylekit_qt import (
 class DraggableDialog:
     """给无边框弹窗加「按住任意非交互处即可拖动」的混入。
 
-    用户点单：「所有弹窗都要可挪动，按住任意位置（除文字显示区域）都能挪」。
+    ：「所有弹窗都要可挪动，按住任意位置（除文字显示区域）都能挪」。
 
     做法（**不是**在顶栏加一条拖拽带 —— 那样只能拖顶栏，且要改每个弹窗的布局）：
       · 在 dialog 上装事件过滤器，拦截落在**背景**上的按下/移动；
@@ -279,7 +279,7 @@ class Btn(QPushButton):
         self.setFont(qfont(t, t.body_size, 500 if role != "primary" else 600))
         # 高度：胶囊要 ≥2×半径才画得出半圆头，34 是行级标准高度（与下拉/输入行齐平）
         self.setMinimumHeight(34)
-        # ⚠️ 宽度策略关乎**文字会不会被压烂**（用户实报：人设卡四个按钮的字挤成一团）：
+        # ⚠️ 宽度策略关乎**文字会不会被压烂**：
         #    · 横向 Minimum ⇒ 允许被父布局压到 minimumSizeHint 以下，文字直接溢出/
         #      叠字。人设卡那排按钮挤在小卡片里就是这样糊掉的。
         #    · Preferred   ⇒ 布局**优先给 sizeHint（= 文字宽 + 内边距）**，压不动
@@ -362,12 +362,12 @@ class Btn(QPushButton):
         · hover  → 浮起（主按钮换强调色底 / ghost 染描边+染字 / danger 加深红底）
         · pressed→ **按进去**：QSS 没有 transform，用 padding 上下 +1px 把文字压下去 1px，
                    底色再走一档（web: translateY(1px) scale(.975) 的 Qt 等价物）
-        · danger 字色用 err_tx（亮色档）—— dark 上拿主 err 当字色会沉进背景（用户实报的对比度缺陷）
+        · danger 字色用 err_tx（亮色档）—— dark 上拿主 err 当字色会沉进背景
 
         ⚠️ 所有颜色一律过 `qss()` 转成 Qt 字面量，**不能**拿 `QColor` 的 rgba()
         CSS 原文直接插 —— Qt 样式表八位十六进制是 `#AARRGGBB`（透明度最前），
-        小数透明度的 rgba() 函数式写法解析行为也不可靠（r11 曾让整条规则不生效
-        回落默认皮肤；r12 又曾把序写反成 RRGGBBAA ⇒ 半透明色全变黄绿，r13 以
+        小数透明度的 rgba() 函数式写法解析行为也不可靠（ 曾让整条规则不生效
+        回落默认皮肤； 又曾把序写反成 RRGGBBAA ⇒ 半透明色全变黄绿， 以
         像素实测钉死：唯一正确的序就是 AARRGGBB）。
         """
         t, r = self.t, self.role
@@ -389,7 +389,7 @@ class Btn(QPushButton):
             # ⚠️ rgba() 返回的是 QColor 对象 —— 直接插进 QSS f-string 会变成
             #    "background:<PySide6.QtGui.QColor object at 0x…>" 垃圾值，
             #    整条 QPushButton 规则解析失败 → 回落默认样式（黑字沉底，
-            # 这才是用户实报"黑色跟深色背景混在一起"的真根因，取证实锤）。
+            # 这才是"黑色跟深色背景混在一起"的真根因，取证实锤）。
             #    QSS 只认字符串 ⇒ 一律 .name(HexArgb) 落成 #AARRGGBB。
             fg = (getattr(t, "err_tx", "") or t.err)
             bg = qss(rgba(t.q("err"), 20))
@@ -831,7 +831,7 @@ class Field(QWidget):
     宽度自适应（对齐 web 真值 `.row{flex-wrap:wrap}` + `.row .grow{flex:1;min-width:220px}`
     + `.row input{width:100%}`）：
       · **右侧控件撑满剩余宽度**（web `flex:1` + `width:100%` 的等价物）——
-        这就是用户实锤的「圆角胶囊太短、文字显示不全」：Qt 旧版给输入框
+        这就是的「圆角胶囊太短、文字显示不全」：Qt 旧版给输入框
         固定 220~120px 的死宽，值一变长就顶字；web 一直是撑满的。
       · 标签/说明这一侧可压窄换行（`_wrap_capable`）；
       · 本行可用宽 ≤ `_STACK_AT` 时整行改成**上下两段**（标签在上、控件在下满宽）
@@ -884,7 +884,7 @@ class Field(QWidget):
             left.addWidget(d)
         # 左侧标签区**不吃 stretch**（0）：它的宽由内容/`_LEFT_MIN` 决定，
         # 多出来的宽全部给右侧控件（web 侧 `label` 是行内宽、`.grow` 才是 flex:1）。
-        # 旧写法给左侧 stretch=1，Qt 会在两列间平分 ⇒ 标签列被撑宽、输入框反而变短，
+        # 旧实现给左侧 stretch=1，Qt 会在两列间平分 ⇒ 标签列被撑宽、输入框反而变短，
         # 正是用户「胶囊太短」的一条来源。
         self._root.addWidget(self._left_w, 0)
         # #7：最小行高按 QFontMetrics 实测 —— 标签+说明永不重叠。

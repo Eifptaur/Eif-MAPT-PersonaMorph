@@ -91,7 +91,7 @@ class WhaleWidget:
         """按峰谷定价折算一次调用的 (成本, token 数)。
 
         ⛔ 公式搬到 `agent/model_prices.py::cost_of`（**唯一实现**，与上游 0.3.5 一致）：
-        输出侧只按 completion 计费 —— `reasoningTokens ⊆ outputTokens`，旧写法
+        输出侧只按 completion 计费 —— `reasoningTokens ⊆ outputTokens`，旧实现
         `(completion + reasoning)` 会把思考**重复计费**（上游 issue #89 / PR #83 实测偏高约一倍）。
         """
         return cost_of(usage or {}, model, ts)
@@ -164,7 +164,7 @@ class WhaleWidget:
         with self._lock:
             return dict(self._state.get("size") or {})
 
-    # ── 上游 0.3.x 新增接口（移植范围见 whale-widget/PORT-NOTES.md）──────────
+    # ── 上游 0.3.x 新增接口──────────
     # 分工：**能落地的落地**（泡泡配置 / 音频设置＝纯配置，写我们自己的 state 就行），
     # 其余（角色库 / 泡泡图片上传 / 录音包 / 多厂商余额 / 账本校正 / Codex 模式）
     # 上游是宿主侧（Node/DSH 事件系统）才有的能力，本移植版**如实回"不支持"** ——
@@ -181,7 +181,7 @@ class WhaleWidget:
     def unsupported(self, name: str) -> dict:
         """上游 0.3.x 有、本移植版没有的那批接口 —— 如实说不支持（客户端会保留默认值）。"""
         return {"ok": False, "why": "本移植版（群相控制台）暂无此能力：%s。"
-                                    "该功能依赖上游 DSH 宿主侧，等移植进度见 whale-widget/PORT-NOTES.md"
+                                    "该功能依赖上游宿主侧能力，当前版本暂未提供"
                                     % name, "unsupported": True}
 
     def cfg_payload(self, name: str) -> dict:

@@ -6,7 +6,7 @@
 
 过滤器一览（配置项都在 `image_reply.*`）：
   1 `source_rating`  分级硬约束：`explicit` 一律拒；`questionable` 默认拒（`allow_questionable=False`）
-  2 `tag_blacklist`  标签黑名单（默认含 r18/explicit/nsfw/hentai/エロ/裸/色情/福利/guro/loli 等，用户可改）
+  2 `tag_blacklist`  标签黑名单（默认含 /explicit/nsfw/hentai/エロ/裸/色情/福利/guro/loli 等，用户可改）
   3 `source_allow`   只允许配置里列出的图源
   4 `geometry`       尺寸/大小：太小（< min_side）或超过 max_mb 的丢掉
   5 `skin_ratio`     本地像素启发式：肤色像素占比超过 `skin_max_ratio`（默认 0.45）判定可疑

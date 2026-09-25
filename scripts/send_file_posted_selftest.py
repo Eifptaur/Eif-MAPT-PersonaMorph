@@ -397,7 +397,7 @@ except Exception as _e8:
     ok("_restore_fg 的 keep/clear 语义可测", False, str(_e8)[:80])
 
 print("── N. 发送/自检路径**不许悄悄退回真鼠标**──")
-# 对面 r12 原话："你自己那条 一键检验（生成报告） 在我这儿掉了真实路径、动过光标"（37.4s 一发、
+# 既有实测反馈：一键检验（生成报告）曾出现掉真实路径、动过光标（37.4s 一发、
 # 光标动了 16s，日志 '投递切会话：False → 改走真实路径'）。⇒ 真鼠标兜底改成**显式 opt-in**（默认关）。
 _segN = open(os.path.join(_ROOT, "agent", "wechat.py"), encoding="utf-8").read()
 ok("有开关实现：默认关 + 环境变量可强制关",

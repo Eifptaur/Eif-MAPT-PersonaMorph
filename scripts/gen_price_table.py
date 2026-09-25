@@ -80,7 +80,7 @@ def main() -> None:
                 " / OpenAI / Anthropic / Google / xAI / OpenRouter 等官方价格页与公开对照表（2026-09 采集）。\n")
     lines.append("> 内置价目共 **%d** 条（%s 家厂商分组），可随版本更新；控制台保存后可用 `api.model_prices` 按型号精确覆盖。\n"
                  % (len(_OFFICIAL_PRICES), len(GROUPS)))
-    lines.append("\n## 一、实测用量（2026-09-06 真实对话）\n")
+    lines.append("\n## 一、实测用量（样例对话）\n")
     lines.append("- 9 轮 / 270,092 token / 54 次 API 调用 / 总成本 **¥0.1636**；平均每轮 ≈30,010 token、**¥0.0182**；综合 ≈¥0.61/百万 token")
     lines.append("- 本机默认模型 deepseek-v4-flash-vision-exp 实测远低于按公开价估算（缓存命中 + 低价档），日常以实测为准\n")
     lines.append("## 二、内置价目全部型号（自动重算）\n")

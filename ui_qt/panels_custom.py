@@ -953,7 +953,7 @@ def check_panel(t: Tokens) -> QWidget:
 
         def _apply() -> None:
             # 存活判 + 自链上限：页面重建/关页后本闭包仍被定时器引用，
-            # 旧写法会一直重排（无上限）并在 setText 上抛 RuntimeError
+            # 旧实现会一直重排（无上限）并在 setText 上抛 RuntimeError
             # （C++ 对象已删），连同「检验器清单读取中…」占位一起留在页上。
             if not _qt_alive(vf_state):
                 return
@@ -2263,7 +2263,7 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
 def _bordered_list(t: Tokens, name: str, min_h: int = 200) -> QListWidget:
     """一个带边框、可滚的动态列表容器；objectName 固定，便于自检按名取证。
 
-    ⛔ 横向滚动条强制关闭 + resizeMode=Adjust（用户实锤：item 用 sizeHint 全宽时
+    ⛔ 横向滚动条强制关闭 + resizeMode=Adjust（：item 用 sizeHint 全宽时
     会把行撑出视口 ⇒ 右侧按钮被切掉、要手动拉宽窗口）。行宽一律=视口宽，
     行内自己用 sizePolicy 决定谁先被压缩。"""
     lw = QListWidget()
@@ -2619,7 +2619,7 @@ def persona_panel(t: Tokens) -> QWidget:
         """条目宽 = 视口宽（右侧顶格）。
 
         ⛔ QListWidget 的 itemWidget 矩形来自**条目 sizeHint**——宽度设 0 整行
-        零宽不可见（r8 用户实锤「人设库完全看不到」）；设成 sizeHint 全宽又会撑出
+        零宽不可见；设成 sizeHint 全宽又会撑出
         视口（右侧按钮被切、要手动拉宽窗口）。⇒ 宽度必须实时跟随视口，
         视口 Resize 时逐条重设（事件过滤器挂在 viewport 上）。"""
         wv = listw.viewport().width()
@@ -2723,7 +2723,7 @@ def persona_panel(t: Tokens) -> QWidget:
             active = (name == "全部" and not cur) or (name == cur and name != "全部")
             # ⛔ 这一句 setStyleSheet 会**整体替换** Btn 自带的 QSS（构造时写入的
             #    ghost 字色没了）⇒ 文字色落到"最近带样式表的祖先/系统回退"——
-            #    浅色模式下渲染成白字白底，分区名整个看不见（用户实锤；emoji 能
+            #    浅色模式下渲染成白字白底，分区名整个看不见（；emoji 能
             #    看见是因为 emoji 字形自带颜色，恰好掩盖了"字没了"）。
             #    修法：替换时**显式带上主题色**（与 web renderChips 的 var(--tx2/--tx) 同口径）。
             chip.setStyleSheet(f"color:{t.tx if active else t.tx2};background:transparent;"
@@ -2782,7 +2782,7 @@ def persona_panel(t: Tokens) -> QWidget:
         pnote.setText(f"分区「{name}」已删除")
         load_personas()
 
-    # 打星按钮已按用户裁定移除（「打星这个没用的按钮去掉」）——原 _rate_persona
+    # 打星按钮已按移除（「打星这个没用的按钮去掉」）——原 _rate_persona
     # 走 /api/personas/rate 的路径一并删除，handlers 不再含 rate。
 
     def _open_add_dialog() -> None:
@@ -2796,7 +2796,7 @@ def persona_panel(t: Tokens) -> QWidget:
         dlg.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
         dlg.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         dlg.setModal(True)
-        dlg.enable_drag() # 可拖动（用户点单：所有弹窗都能按背景挪）
+        dlg.enable_drag() # 可拖动
         outer = QVBoxLayout(dlg)
         outer.setContentsMargins(0, 0, 0, 0)
         shell = QFrame()
@@ -3531,11 +3531,11 @@ def _persona_card(t: Tokens, p: dict, handlers: dict) -> QWidget:
     sc_lb.setFixedWidth(78)
     use = Btn("使用", t, "ghost")
     # ⛔ 不许再写 `setFixedWidth(数字)`：中文两字按钮按字号算需 ~62px（文字 28 +
-    #    左右内边距 34），写死 54 会把字压到溢出、与邻居叠成一团（用户实报
+    #    左右内边距 34），写死 54 会把字压到溢出、与邻居叠成一团（
     #    「使用/删除/移到其他分区/评估 的字全混在一起，挤在小按钮里看不清」）。
     #    宽度交给 sizeHint（= 文字宽 + 内边距），由 Btn 自己保证下限。
     use.clicked.connect(lambda _=False, _p=p: handlers["use"](_p))
-    # 单字钮改**全文字钮**（用户裁定：打星按钮没用、删掉；移动/删除要完整露出，
+    # 单字钮改**全文字钮**（：打星按钮没用、删掉；移动/删除要完整露出，
     # 不再缩成单字正圆）——宽度交给 sizeHint，两字胶囊 ~62px 放得下。
     delete = Btn("删除", t, "ghost")
     delete.setToolTip("删除这条人设")
@@ -3557,7 +3557,7 @@ def _persona_card(t: Tokens, p: dict, handlers: dict) -> QWidget:
     txt.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
     txt.setFixedHeight(max(20, int(t.body_size * 1.5)))
     # 卡片本体：水平 Expanding ⇒ setItemWidget 时随条目矩形铺满（右侧顶格，
-    # 不再按 sizeHint 居左留缝——用户实锤「不是右侧顶格」）。
+    # 不再按 sizeHint 居左留缝）。
     # ⛔ 行高必须**钉死**：条目的 sizeHint 高度 = 本控件的 sizeHint，任何子控件
     #   （多行 QLabel、带换行的 tooltip 文字等）把 sizeHint 抬高一截，就会让
     #   单条吃掉整个列表可视高度 ⇒ 用户看到「列表里只有第一条，下面全空」。
@@ -4195,7 +4195,7 @@ MANUAL = {
 
 
 def _wechat_emoji_appendix(t: Tokens, page: QWidget) -> None:
-    """表情包收藏夹（web #emojiBox :6820-6890 对齐）——批3 动态列表之一。
+    """表情包收藏夹（web #emojiBox :6820-6890 对齐）。
 
     GET /api/emojis → 名称网格（显示前 60）+ 搜索过滤 + 单个删除（POST /api/emojis/delete）
     + 刷新。图片走后台 URL 拉取（/assets/emoji/<name>），拉不到降级为名称块（可用性优先）。
@@ -4354,7 +4354,7 @@ def _wechat_emoji_appendix(t: Tokens, page: QWidget) -> None:
 
 
 def _tools_utlist_appendix(t: Tokens, page: QWidget) -> None:
-    """工具清单（web sec-tools 的 utGlobals/utProblems/utList :3826-3935 对齐）——批3 动态列表。
+    """工具清单（web sec-tools 的 utGlobals/utProblems/utList :3826-3935 对齐）。
 
     数据源 = /api/status 的 user_tools 快照（tools/enabled/dir/ticked/counts_total/problems/error）；
     勾选切换 = GET /api/tools/toggle?name=&on=（routes 只注册 GET）。只读展示 + 勾选，不改配置文件。
@@ -4617,7 +4617,7 @@ def _tools_utlist_appendix(t: Tokens, page: QWidget) -> None:
 
 
 def _model_local_appendix(t: Tokens, page: QWidget) -> None:
-    """本机模型端点探测（web localProbe/localList :1444-1495 对齐）——批3 本地模型探测。
+    """本机模型端点探测（web localProbe/localList :1444-1495 对齐）。
 
     GET /api/local-models → {meta:{all:[{id,name,base_url,reachable,ms,models,error}],checked,
     elapsed_ms}, found, capability}；连通测试 = GET /api/local-models?test=1&base_url=&model=。
@@ -4765,7 +4765,7 @@ def _model_local_appendix(t: Tokens, page: QWidget) -> None:
 
 
 def _sd_local_appendix(t: Tokens, page: QWidget) -> None:
-    """本地生图后端卡（web sdLocal* :8015-8107 全套对齐）——批4 media local。
+    """本地生图后端卡（web sdLocal* :8015-8107 全套对齐）。
 
     GET /api/image_gen/local → {status:{ok,installed,why,preset,presets:[…]}}；
     ?estimate=1 → {estimate:{gb,model_gb,deps_gb,mbps,source,human,warn}}；
@@ -5596,7 +5596,7 @@ def _act_cursor_save(btn, note) -> None:
     _post_action_raw(btn, note, _run, "保存中…")
 
 
-# ── 批4第五组：generic 面板剩余动作 ─────────────────────────────────────
+# ── generic 面板剩余动作 ─────────────────────────────────────
 # model keySave/keyReset、wechat 数据目录/官网、tools 导出导入重扫、
 # media 可搜目录、wavefx 应用、应用内说明弹窗（GUIDES）。全部对齐 web onclick。
 
@@ -5712,7 +5712,7 @@ def _card_dialog(t: Tokens, btn, title: str, width: int = 640):
 
     供说明/导入/导出等交互弹窗复用；返回 (dlg, 内容布局)。调用方负责 exec()。
 
-    **可拖动**：用户点单「所有弹窗都要可挪动，按住任意位置（除文字显示区域）
+    **可拖动**：「所有弹窗都要可挪动，按住任意位置（除文字显示区域）
     都能挪」。这里统一装上 —— 全项目的说明/表单类弹窗都从这个工厂出货，
     一处装好即全覆盖（比逐个弹窗各写一份拖拽实现可靠得多）。
     """
@@ -5730,7 +5730,7 @@ def _card_dialog(t: Tokens, btn, title: str, width: int = 640):
     card = QFrame()
     card.setObjectName("C8CardDlg")
     # ⛔ 玻璃主题下 t.card 是（近）全透明 —— 弹窗浮在正文上会和下面的字叠成一团
-    #   （用户实锤：「控制台内部的弹窗请务必一定要有底」）。弹窗必须有实色底：
+    #   。弹窗必须有实色底：
     #   玻璃主题给深海底实色 #0E2136（confirm.py 同款口径），普通主题照旧 t.card。
     _card_bg = "#0E2136" if getattr(t, "glass", False) else t.card
     card.setStyleSheet(
@@ -6357,7 +6357,7 @@ ACT_CUSTOM = {
                     "真接后端：/api/cursor/reset（清自定义残留文件并写回默认配置）"),
     "cursorSaveBtn": (_act_cursor_save,
                       "真接后端：/api/cursor/upload（选图后保存并生效）"),
-    # ── 批4第五组：generic 面板剩余动作 ──
+    # ── generic 面板剩余动作 ──
     "keySave": (_act_key_save,
                 "真接后端：保存 Key 并与当前厂商关联，保存后立即测试连通（空值/打码值不保存）"),
     "keyReset": (_act_key_reset,
@@ -7261,7 +7261,7 @@ def _wechat_recheck_appendix(t: Tokens, page: QWidget) -> None:
 
 
 def _media_components_appendix(t: Tokens, page: QWidget) -> None:
-    """媒体组件卡（用户点单：「要是没有，不会自己帮用户装吗」）——缺什么装什么。
+    """媒体组件卡——缺什么装什么。
 
     数据源 = /api/status 的 media 段（media_status.snapshot）：语音解码链逐件
     （voice.decode[].{name,ok,detail}）、下载器 yt-dlp（media.video.video_url.ytdlp_ready）。
@@ -7296,7 +7296,7 @@ def _media_components_appendix(t: Tokens, page: QWidget) -> None:
         except Exception as e: # noqa: BLE001
             ebox = {"err": str(e)}
             st = {}
-        # ⛔ get_json 连不上时**返回 None 而不抛** ⇒ 旧写法 `st = ... or {}` 顺手吞掉，
+        # ⛔ get_json 连不上时**返回 None 而不抛** ⇒ 旧实现 `st = ... or {}` 顺手吞掉，
         #   一路掉到 `md.get(...)` 全空、最后 `lines` 为空再走 else 分支，文案变成
         #   「组件状态读不到」——虽然不算「检测中」，但把「没连上」混成了「读不到组件」。
         #   这里显式分派：连不上就说连不上（用户据此去开控制台）。

@@ -5,7 +5,7 @@
 
 四条红线（硬编码，连开关都没有）：
   ① 不生成真人换脸/换身体 —— `ALLOW_REAL_FACE = False`，命中真人意图直接拒；
-  ② `r18` 相关参数**根本不下发**（请求体里不构造这类字段）；
+  ② `` 相关参数**根本不下发**（请求体里不构造这类字段）；
   ③ 过滤链任一层判否**或出错** ⇒ 不发（fail-closed，不允许"过滤器坏了就放行"）；
   ④ prompt 先脱敏（手机号/身份证/银行卡/邮箱/@提及/长数字串）。
 """
@@ -436,7 +436,7 @@ def _capped(resp, max_bytes: int, what: str) -> bytes:
 
 
 def call_backend(backend: dict, prompt: str, count: int = 1, size: str = "square"):
-    """真去生图：按后端协议分发。**未接后端时不会被调用**；请求体里不构造任何 r18 字段。
+    """真去生图：按后端协议分发。**未接后端时不会被调用**；请求体里不构造任何  字段。
 
     支持四种协议：`a1111`（SD WebUI / Fooocus / InvokeAI 兼容层，POST /sdapi/v1/txt2img）·
     `pollinations`（免密钥在线，GET 一个 URL 就出图）· **`openai_image`**（OpenAI 兼容出图：

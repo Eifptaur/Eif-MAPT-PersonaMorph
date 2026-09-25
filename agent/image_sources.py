@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """随机图"在线图源"层（可插拔）：每个图源自己负责"只取安全内容"的硬约束。
 
-⇒ 本模块只解决"**从哪拿图**"，并且**每个图源在请求参数里就带上安全约束**（rating:sfw / r18=0 / 只走 SFW 端点），
+⇒ 本模块只解决"**从哪拿图**"，并且**每个图源在请求参数里就带上安全约束**（rating:sfw / =0 / 只走 SFW 端点），
    拿到图后再交给 `agent/image_filter.py` 做第二、第三道过滤（标签黑名单 / 肤色比 / 视觉模型审核）。
    两道叠加，取的是"**纵深防御**"：**任何一道说不行就不发**。
 
 图源清单（每个都能单独开关，取不到就换下一个，不抛异常）：
-  · `pixiv`    —— 经公开代理接口（lolicon setu v2）取 pixiv 作品；**强制 `r18=0`**，并自带标签过滤
+  · `pixiv`    —— 经公开代理接口（lolicon setu v2）取 pixiv 作品；**强制 `=0`**，并自带标签过滤
   · `konachan` —— 标签强制 `rating:safe`
   · `yande`    —— 标签强制 `rating:safe`
   · `safebooru`—— 站名本身就是全年龄站，仍带 `rating:safe`
@@ -318,7 +318,7 @@ def _clean_tags(tags) -> list:
 
 # ── 各图源：build_url() 只负责"带上安全参数"，parse() 负责抽出 url/标签/分级 ──────────
 def _pixiv(cfg: dict) -> tuple:
-    """lolicon setu v2 代理 pixiv；**r18=0 是硬编码**（配置里没有打开 r18 的入口）。"""
+    """lolicon setu v2 代理 pixiv；**=0 是硬编码**（配置里没有打开  的入口）。"""
     tag = str((cfg.get("tag") or "")).strip()
     q = {"r18": "0", "num": "1", "size": "regular", "excludeAI": "false"}
     if tag:

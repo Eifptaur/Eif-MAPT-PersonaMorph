@@ -88,7 +88,7 @@ class _Wizard(DraggableDialog, QDialog):
         self.setModal(True)
         self.setObjectName("onboard")
         self.resize(620, 460)
-        self.enable_drag() # 可拖动（用户点单：所有弹窗都能按背景挪）
+        self.enable_drag() # 可拖动
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         card = QWidget()

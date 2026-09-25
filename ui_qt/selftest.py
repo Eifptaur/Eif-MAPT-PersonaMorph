@@ -1029,7 +1029,7 @@ def t_wheel_nod() -> None:
     wm.on_blur()
     ck("失焦退出", wm.on is False)
 
-    # ⑤ 徽标：只标锚点+方向，不画第二条鱼（用户点单）
+    # ⑤ 徽标：只标锚点+方向，不画第二条鱼
     bsrc = (HERE / "pm_wheel.py").read_text(encoding="utf-8")
     ck("徽标自绘圆盘 + 上下三角（web show 同款）",
        "drawEllipse" in bsrc and bsrc.count("drawPolygon") >= 2)
@@ -1162,7 +1162,7 @@ def t_pop_look() -> None:
     ck("icons: APPEARANCE 三条横滑杆 + 三圆点",
        ap.count("M2.4") == 3 and ap.count("<circle") == 3 and 'cx="10.6"' in ap)
     ck("icons: 中条圆点偏右（调节语义）", 'cx="10.6" cy="8"' in ap)
-    # 笔画 1.4 / 圆钮 r=1.5：用户点单「粗细改细一点，现在都混在一起了」——
+    # 笔画 1.4 / 圆钮 r=1.5：——
     # 原 2.0 描边 + r=1.9 圆钮在 20px 档 ≈2.5px 物理，线把钮吃掉、三条黏成墨团。
     ck("icons: 圆头描边 1.4（细档，线与钮分得开）",
        'stroke-width="1.4"' in ap and 'stroke-linecap="round"' in ap
@@ -1928,7 +1928,7 @@ def t_hotfix2() -> None:
 
 
 def t_catmgr() -> None:
-    """批4第一组全链路真跑：人设分区管理（× 删除/＋新建）+ 打星 + 删除确认框。
+    """全链路真跑：人设分区管理（× 删除/＋新建）+ 打星 + 删除确认框。
 
     手法沿用 t_hotfix2 的教训：弹窗/请求类断言必须真跑（假后端 + patch
     current_url + patch QDialog.exec 驱动），源码断言只做辅助。
@@ -2065,8 +2065,8 @@ def t_catmgr() -> None:
            str([c for c in calls if "cats/del" in c]))
 
         # ④ ＋ 新建分区：弹窗构建 + 创建 → POST /api/persona/cats/save
-        # （原 ④ 打星段已随按钮移除：用户裁定「打星这个没用的按钮去掉」，
-        #   handlers 不再含 rate —— r14）
+        # （原 ④ 打星段已随按钮移除：，
+        #   handlers 不再含 rate）
         mode["ok"] = False
         exec_dlgs.clear()
         calls.clear()
@@ -2106,7 +2106,7 @@ def t_catmgr() -> None:
 
 
 def t_medialocal() -> None:
-    """批4第二组全链路真跑：本地生图后端卡（估算/安装/启动/停止/切档/进度轮询）
+    """全链路真跑：本地生图后端卡（估算/安装/启动/停止/切档/进度轮询）
     + TTS/变声连通测试卡。
 
     假后端按 path 分发，SD 安装确认走 patch 后的 ConfirmDialog.exec（自动确认），
@@ -2352,7 +2352,7 @@ def t_medialocal() -> None:
 
 
 def t_commfb() -> None:
-    """批4第三组全链路真跑：community（导出/上传/种子导入）+ feedback（三态提交/补发/状态卡）。
+    """全链路真跑：community（导出/上传/种子导入）+ feedback（三态提交/补发/状态卡）。
 
     手法同 t_catmgr / t_medialocal：假后端 + patch current_url + patch QDialog.exec
     （自动点确认）+ patch QFileDialog（假文件路径）；断言请求 payload 与行内回显。
@@ -2684,7 +2684,7 @@ def t_commfb() -> None:
 
 
 def t_veradv() -> None:
-    """批4第四组全链路真跑：vermat（放行修复/指纹取丢/拍板入口/一键修复）
+    """全链路真跑：vermat（放行修复/指纹取丢/拍板入口/一键修复）
     + advanced（布局/标定/种子/学习）+ ui（背景）+ cursor（重置/保存）。
 
     手法同 t_commfb：假后端 + patch current_url/QDialog.exec/QFileDialog/
@@ -3037,7 +3037,7 @@ def t_veradv() -> None:
 
 
 def t_g5() -> None:
-    """批4第五组全链路真跑：generic 面板剩余动作清零。
+    """全链路真跑：generic 面板剩余动作清零。
 
     model（keySave 打码拒绝/真存三连、keyReset）+ wechat（目录探测/保存/回落/官网）
     + tools（导出弹窗复制另存、导入文件/粘贴/覆盖、重扫+清单卡联动、看问题、引导弹窗）
@@ -3546,7 +3546,7 @@ def t_g5() -> None:
 
 
 def t_g6() -> None:
-    """批4第六组全链路真跑：MANUAL 面板剩余裸奔清零。
+    """全链路真跑：MANUAL 面板剩余裸奔清零。
 
     persona（prompt 预览/清空）+ overview（计费日历渲染/翻月跨年/loadDay/年份弹层、
     勾选删弹窗全流程）+ check（重置勾选+计数、查看进度条切页）+ json（新窗口查看配置）。
@@ -3893,7 +3893,7 @@ def t_g6() -> None:
         cp.show()
         QApplication.processEvents()
         list_cks = [c for c in cp.findChildren(QCheckBox)
-                    if c.objectName().startswith("ckItem")] # 批5 起有 objectName + QSettings 持久化
+                    if c.objectName().startswith("ckItem")] # 有 objectName + QSettings 持久化
         cnt0 = [l for l in cp.findChildren(QLabel) if l.text() == "已完成 0 / 11"]
         ck("g6 清单计数：11 个勾选行（objectName 同源）+ 计数标签「已完成 0 / 11」初始",
            len(list_cks) == 11 and bool(cnt0), "n=%d cnt=%s" % (len(list_cks), bool(cnt0)))
@@ -3955,7 +3955,7 @@ def t_g6() -> None:
 
 
 def t_g7() -> None:
-    """批4第七组全链路真跑：memory 编辑/深挖弹窗（memEdit/deep-profile）。
+    """全链路真跑：memory 编辑/深挖弹窗（memEdit/deep-profile）。
 
     手法同 t_g6：假后端 + patch current_url/QDialog.exec（exec 打开即返回、
     控件树留内存供驱动）。断言：编辑弹窗预填与整份覆盖（按行 trim 滤空）、
@@ -4214,7 +4214,7 @@ def t_g7() -> None:
 
 
 def t_g8() -> None:
-    """批4第八组：模型厂商下拉联动（web applyProvider :4799-4828 移植）。
+    """模型厂商下拉联动（web applyProvider :4799-4828 移植）。
 
     手法：model 页真构建（sec_meta 运行时解析真 web 源码，厂商下拉由元数据
     自动生成）+ patch config_io.read_path（隔离本机 provider_keys）+ patch
@@ -4380,7 +4380,7 @@ def t_g8() -> None:
 
 
 def t_g9() -> None:
-    """批4第九组：uiConfirm 调用点集中补（确认补齐 8 处 + 缺失动作 2 处）。
+    """uiConfirm 调用点集中补（确认补齐 8 处 + 缺失动作 2 处）。
 
     手法同 t_g7：假后端 + patch current_url/QDialog.exec（auto-click btn_ok，
     ConfirmDialog 确认自动通过）。断言九条主链：sessions 勾选删、存档真删
@@ -4635,7 +4635,7 @@ def t_g9() -> None:
            _n_posts("/api/config") > n0 and len(exec_dlgs) > 0,
            "posts=%d dlgs=%d" % (_n_posts("/api/config"), len(exec_dlgs)))
         # 移分区：行内「移动」→ prompt 弹窗（_card_dialog 无 btn_ok，不会自动确认）
-        # （r14：按钮从单字「移」改成全文字「移动」，打星钮同批移除）
+        # 
         b_mv = _btn_by_text(pp, "移动")
         ck("g9 persona 行内「移动」钮在场", b_mv is not None, "btn=%s" % b_mv)
         nd3 = len(exec_dlgs)
@@ -4693,7 +4693,7 @@ def t_g9() -> None:
 
 
 def t_g10() -> None:
-    """批4第十组（批4 收官）：roleHint 行为档推荐 + briefs 简报卡。
+    """roleHint 行为档推荐 + briefs 简报卡。
 
     手法同 t_g9：假后端 + patch current_url/read_path/write_patch/QDialog.exec。
     断言：roleHint 评估请求（text 截 2400）/推荐弹窗两下拉默认值/应用写两键
@@ -4918,7 +4918,7 @@ def t_g10() -> None:
 
 
 def t_g11() -> None:
-    """批5第一组：余额徽章（纯函数）+ 自检勾选持久化（QSettings）+ 日志自动刷新。
+    """余额徽章（纯函数）+ 自检勾选持久化（QSettings）+ 日志自动刷新。
 
     余额走 _balance_text 纯函数逐 case（web loadBalance :3208-3221 + balMask 口径）；
     勾选持久化对齐 web wxAgent.checklist localStorage（Qt 用 QSettings 跨会话记忆）；
@@ -5032,7 +5032,7 @@ def _btn_by_text_local(root, txt):
 
 
 def t_g12() -> None:
-    """批5第二组：tools 每行「试一下」+ 可搜目录行（打开/移除）。
+    """tools 每行「试一下」+ 可搜目录行（打开/移除）。
 
     手法同 t_g9：假后端 + patch current_url。断言：试一下真发 GET /api/tools/test
     （通了/没通两态如实回显）、测试不触发清单重载（/api/status 计数不变）、
@@ -5256,9 +5256,9 @@ def t_g12() -> None:
 
 
 def t_g13() -> None:
-    """批5补 / r11 重写：右下角鲸鱼挂件。
+    """自检：右下角鲸鱼挂件。
 
-    r11 架构变更：挂件从「Python 手绘复刻」改为**内嵌 WebView2 直接跑上游原版
+     架构变更：挂件从「Python 手绘复刻」改为**内嵌 WebView2 直接跑上游原版
     脚本**（whale-widget/client/widget.js，636KB；与 web 端同一份，仅补 token）。
     Python 侧因此**不再持有任何排版/取数字段**（旧断言的 w.bal / w.hint / w._timer
     已不存在于实现中，属过期断言而非回归）。
@@ -5268,7 +5268,7 @@ def t_g13() -> None:
       B. 宿主页：透明背景 + composer 假体（原版 dshwIsChatRoot 的启动闸门）
          + 引 /dsh-whale/widget.js + 带 token —— 缺任一项原版脚本都不会启动；
       C. 交互仍由 Python 承担：拖拽位移 + 位置记忆 QSettings + 跨实例恢复；
-      D. WebView2 建链是**异步**的（同步忙等会死等，r11 实测卡死根因）。
+      D. WebView2 建链是**异步**的（同步忙等会死等， 实测卡死根因）。
     """
     import os # noqa: PLC0415
 
@@ -5307,7 +5307,7 @@ def t_g13() -> None:
        "transparent" in _html or "background:transparent" in _html)
 
     _host_src = (HERE / "whale_host.py").read_text(encoding="utf-8")
-    ck("g13-D 建链是异步链（同步忙等 processEvents 处理不了 COM 跨线程 RPC ⇒ r11 卡死根因）",
+    ck("g13-D 建链是异步链（同步忙等 processEvents 处理不了 COM 跨线程 RPC ⇒ 曾因异步忙等卡死）",
        "_wait_attr" not in _host_src and "_pump_messages" not in _host_src
        and "when_ready" in _host_src and "singleShot" in _host_src)
     ck("g13-D WebView2 用户数据目录独立于控制台（共目录会互抢锁 ⇒ 浏览器进程起不来）",
@@ -5622,7 +5622,7 @@ def t_g14() -> None:
 
 
 def t_g15() -> None:
-    """批6 第二组：A 类活键 5 个在 web↔Qt 双侧齐备 + 文本行的键级类型化。
+    """A 类活键 5 个在 web↔Qt 双侧齐备 + 文本行的键级类型化。
 
     背景：`risk.quiet_hours` 这类「数组型文本行」若原样存成字符串，
     读取方（`agent/risk.py` 判 `isinstance(qh,(list,tuple))`）会**静默失效**——
@@ -5741,7 +5741,7 @@ def t_g15() -> None:
 
 
 def t_g16() -> None:
-    """批6 第三组：B 类「web 无 data-cfg 的 JS 动态下钻控件」在 Qt 侧对齐。
+    """B 类「web 无 data-cfg 的 JS 动态下钻控件」在 Qt 侧对齐。
 
     A 类缺口是「web 有控件、Qt 没渲染」；B 类是「web 用纯 JS 管一组控件
     （不发 data-cfg），元数据渲染天然盲区」——典型两处：
@@ -5903,7 +5903,7 @@ def t_g16() -> None:
     # ⑧ 勾选语义：容器内 QCheckBox 勾中 → patch 为群名 list（空勾 → []）
     if box is not None:
         # 手动塞两个勾选框（不依赖后台 /api/wechat-groups，纯测收集语义）
-        # ⛔ 清容器必须 setParent(None)（r11-B 同款）：只 deleteLater 是延迟销毁，
+        # ⛔ 清容器必须 setParent(None)：只 deleteLater 是延迟销毁，
         #    后端活着时 load_groups 已塞进真群勾选框 ⇒ 幽灵框留在 findChildren
         #    里，计数 2 变 4（后端从"没起"变"在跑"后此坑现形）。
         while box.layout().count():
@@ -5933,7 +5933,7 @@ def t_g16() -> None:
 
 
 def t_g17() -> None:
-    """批7 第一组：首次引导向导（web onboarding :5427 的 Qt 等价）。
+    """首次引导向导（web onboarding :5427 的 Qt 等价）。
 
     web 有一整套五步上手向导（选厂商/命名/勾群/恢复/体检），Qt 侧此前**完全缺失**
     ⇒ 新用户拿不到「填 Key → 起名字 → 选群 → 开始」的路径。本组钉死：
@@ -6106,7 +6106,7 @@ def t_g17() -> None:
 
 
 def t_g18() -> None:
-    """批7 第二组：键盘快捷键 + 分组折叠跨会话记忆。
+    """键盘快捷键 + 分组折叠跨会话记忆。
 
     web 侧共 6 处文档级/控件级 keydown，逐处定性后：
       · **通用快捷键只有 2 条** —— `/` 聚焦导航搜索（:7151）、Esc 清空搜索（:7122）；
@@ -7217,7 +7217,7 @@ def _stash_selfheal(logs_dir: str) -> str:
         return "error:%s" % e
 
 
-def t_r10_drag() -> None:
+def t_dialog_drag() -> None:
     """弹窗拖拽（DraggableDialog）—— 「按住任意非交互处即可挪窗」的回归闸。
 
     三条判据、一个坑：
@@ -7244,7 +7244,7 @@ def t_r10_drag() -> None:
     app = QApplication.instance() or QApplication([])
 
     D = W.drag_dialog_cls("R10DragDialog")
-    ck("r10 拖拽混入的 MRO 顺序 (DraggableDialog, QDialog)（避开 eventFilter 影子化）",
+    ck("拖拽混入的 MRO 顺序 (DraggableDialog, QDialog)（避开 eventFilter 影子化）",
        D.__mro__[1] is W.DraggableDialog and D.__mro__[2] is QDialog,
        "mro=" + ",".join(c.__name__ for c in D.__mro__[:4]))
 
@@ -7264,7 +7264,7 @@ def t_r10_drag() -> None:
     # ⛔ 不调 `app.processEvents()`：前序用例会在事件队列里留下**未到期的 QTimer**
     #   （Shell 的余额轮询 / 鲸鱼挂件刷新等），它们一被 pump 就会去做**阻塞网络请求**
     #   （`socket.create_connection` 连一个不存在的端口，Windows 下会长时间挂住）⇒
-    #   本用例被拖死（实测栈：`t_r10_drag` → processEvents → shell._load_balance →
+    #   本用例会被拖死（既有实测栈：processEvents → shell._load_balance →
     #   config_io.get_json → socket.create_connection）。本用例的断言全部基于
     #   `dlg.pos()` 与直接调用的 `eventFilter`，**不需要事件循环**：`show()` 后几何
     #   即已定；`_drag` 也是直调过滤器。（Qt 事件循环里跑阻塞 I/O = 必踩的环境坑。）
@@ -7305,31 +7305,31 @@ def t_r10_drag() -> None:
 
     # 复核 `_drag_child_at` 的命中口径与 `from_w` 一致（防过滤器改实现后本测试失真）
     _hit = dlg._drag_child_at(lab.mapToGlobal(lab.rect().center()))
-    ck("r10 _drag_child_at 命中的是传入点上的子控件（非 dialog 自身）",
+    ck("_drag_child_at 命中的是传入点上的子控件（非 dialog 自身）",
        _hit is not None and _hit is not dlg,
        "hit=%r" % (type(_hit).__name__ if _hit is not None else None))
 
     p0 = dlg.pos()
     _drag(lab, 45, 35)
-    ck("r10 按纯文字 QLabel 拖 ⇒ 窗口位移（随便按哪儿都能挪）",
+    ck("按纯文字 QLabel 拖 ⇒ 窗口位移（随便按哪儿都能挪）",
        (dlg.x(), dlg.y()) != (p0.x(), p0.y()),
        "p0=(%d,%d) now=(%d,%d)" % (p0.x(), p0.y(), dlg.x(), dlg.y()))
 
     p1 = dlg.pos()
     _drag(btn, 60, 50)
-    ck("r10 按按钮拖 ⇒ 窗口不动（事件上抛到 dialog 也不许拖）",
+    ck("按按钮拖 ⇒ 窗口不动（事件上抛到 dialog 也不许拖）",
        (dlg.x(), dlg.y()) == (p1.x(), p1.y()),
        "p1=(%d,%d) now=(%d,%d)" % (p1.x(), p1.y(), dlg.x(), dlg.y()))
 
     p2 = dlg.pos()
     _drag(inp, 60, 50)
-    ck("r10 按输入框拖 ⇒ 窗口不动（要能划选/点光标）",
+    ck("按输入框拖 ⇒ 窗口不动（要能划选/点光标）",
        (dlg.x(), dlg.y()) == (p2.x(), p2.y()),
        "p2=(%d,%d) now=(%d,%d)" % (p2.x(), p2.y(), dlg.x(), dlg.y()))
 
     p3 = dlg.pos()
     _drag(lab, 2, 1)
-    ck("r10 位移 < 4px 阈值 ⇒ 当点击不当拖（不抖窗）",
+    ck("位移 < 4px 阈值 ⇒ 当点击不当拖（不抖窗）",
        (dlg.x(), dlg.y()) == (p3.x(), p3.y()),
        "p3=(%d,%d) now=(%d,%d)" % (p3.x(), p3.y(), dlg.x(), dlg.y()))
 
@@ -7341,7 +7341,7 @@ def t_r10_drag() -> None:
     import stylekit_qt as sk # noqa: PLC0415
 
     _t = THEMES["whale"]
-    ck("r11 半径工具按真实尺寸算（不让 999 这类超界常数流进 QSS）",
+    ck("半径工具按真实尺寸算（不让 999 这类超界常数流进 QSS）",
        sk.radius_for(sk.SHAPE_PILL, 120, 36) == 18
        and sk.radius_for(sk.SHAPE_PILL, 120, 40) == 20
        and sk.radius_for(sk.SHAPE_SOFT, 120, 40) == 10
@@ -7357,11 +7357,11 @@ def t_r10_drag() -> None:
     _b = W.Btn("按钮", _t, role="primary")
     keep.append(_b)
     _bq = _b.styleSheet()
-    ck("r11 Btn QSS 半径 ≤ min(w,h)/2（超界会被 Qt 丢弃 ⇒ 直接画成方框）",
+    ck("Btn QSS 半径 ≤ min(w,h)/2（超界会被 Qt 丢弃 ⇒ 直接画成方框）",
        "border-radius:999" not in _bq and _b._rad <= max(1, _b.height()) // 2,
        "rad=%d 片段=%s" % (_b._rad, _bq.split(";")[2][:40]))
 
-    ck("r11 token 落成 Qt 合法字面量（不出现 Qt 不认的 rgba() 函数式写法）",
+    ck("token 落成 Qt 合法字面量（不出现 Qt 不认的 rgba() 函数式写法）",
        "rgba(" not in _bq and "rgb(" not in _bq,
        "片段=%s" % _bq.split(";")[0][:60])
 
@@ -7375,7 +7375,7 @@ def t_r10_drag() -> None:
         _sb.set_button_size(120, 36)
         keep.append(_sb)
         _shapes[_s] = _sb._rad
-    ck("r11 按钮形状四档分类成立（pill/circle 17、soft 10、tile 6）",
+    ck("按钮形状四档分类成立（pill/circle 17、soft 10、tile 6）",
        _shapes[sk.SHAPE_PILL] == 18 and _shapes[sk.SHAPE_SOFT] == 10
        and _shapes[sk.SHAPE_TILE] == 6 and _shapes[sk.SHAPE_CIRCLE] == 18,
        "shapes=%s（120×36 上半高与短边同为 18，两档同值属正常）" % _shapes)
@@ -7384,14 +7384,14 @@ def t_r10_drag() -> None:
     _w1 = W.Btn("形", _t, role="ghost", shape=sk.SHAPE_CIRCLE)
     _w1.set_button_size(120, 40)
     keep.append(_w1)
-    ck("r11 circle 半径被短边钳制（120×40 ⇒ 20；取半宽 60 会超界被丢弃变方框）",
+    ck("circle 半径被短边钳制（120×40 ⇒ 20；取半宽 60 会超界被丢弃变方框）",
        _w1._rad == 20, "rad=%d" % _w1._rad)
 
     # 胶囊同理：高瘦控件（宽 30 高 200）半高 100 > min/2=15 ⇒ 必须被宽钳住
     _w2 = W.Btn("形", _t, role="ghost", shape=sk.SHAPE_PILL)
     _w2.set_button_size(30, 200)
     keep.append(_w2)
-    ck("r11 pill 半径同时被宽钳制（30×200 ⇒ 15，不是 100 ⇒ 不会超界退成方框）",
+    ck("pill 半径同时被宽钳制（30×200 ⇒ 15，不是 100 ⇒ 不会超界退成方框）",
        _w2._rad == 15, "rad=%d" % _w2._rad)
 
     # 改形状必须重算（漏刷会留着上一档的超界半径）
@@ -7400,7 +7400,7 @@ def t_r10_drag() -> None:
     keep.append(_w3)
     _before = _w3._rad
     _w3.set_shape(sk.SHAPE_TILE)
-    ck("r11 换形状走 set_shape 并立即重算半径（不重算会留旧档超界值）",
+    ck("换形状走 set_shape 并立即重算半径（不重算会留旧档超界值）",
        _before == 21 and _w3._rad == 6, "before=%d after=%d" % (_before, _w3._rad))
 
     dlg.close()
@@ -7470,12 +7470,12 @@ def _fake_identity_cases(ww, ck) -> None:  # noqa: ANN001
             srv.shutdown()
             srv.server_close()
         is_ours = (got == "")
-        ck("r11 认人判别：%s => %s" % (label, "认" if want_ours else "拒"),
+        ck("认人判别：%s => %s" % (label, "认" if want_ours else "拒"),
            is_ours == want_ours, "port=%d got=%r" % (port, got[:60]))
 
 
-def t_r11_whale_drag() -> None:
-    """r11 自检：鲸鱼挂件的两条机制闸 —— 「拖得动」与「不认错人」。
+def t_whale_guard() -> None:
+    """自检：鲸鱼挂件的两条机制闸 —— 「拖得动」与「不认错人」。
 
     ## A. 拖动为什么必须走**页面转发**而不是 `WS_EX_TRANSPARENT`
 
@@ -7504,59 +7504,59 @@ def t_r11_whale_drag() -> None:
 
     # ---- A. 拖动：页面转发 -------------------------------------------------
     _h = _inspect.getsource(WhaleHostWebView)
-    ck("r11 宿主接页面的 postMessage（add_WebMessageReceived 已接线）",
+    ck("宿主接页面的 postMessage（add_WebMessageReceived 已接线）",
        "add_WebMessageReceived" in _h and "_on_web_message" in _h, "")
 
-    ck("r11 宿主暴露 on_drag 回调接口（Qt 侧据此挪窗口）",
+    ck("宿主暴露 on_drag 回调接口（Qt 侧据此挪窗口）",
        hasattr(WhaleHostWebView, "on_drag"))
 
     _om = _inspect.getsource(WhaleHostWebView._on_web_message)
-    ck("r11 消息解析只认 pm=drag/dragend（脏消息静默丢弃，不炸挂件）",
+    ck("消息解析只认 pm=drag/dragend（脏消息静默丢弃，不炸挂件）",
        '"drag"' in _om and '"dragend"' in _om and "json.loads" in _om, "")
 
     _pg = _inspect.getsource(WhaleWidget._on_pagedrag)
-    ck("r11 页面位移走**增量**累加（绝对坐标会被子窗坐标系差异坑到）",
+    ck("页面位移走**增量**累加（绝对坐标会被子窗坐标系差异坑到）",
        "self.pos()" in _pg and "+ int(dx)" in _pg, "")
 
     _bw = _inspect.getsource(WhaleWidget._boot_webview)
-    ck("r11 挂件侧已接 on_drag（漏接则页面报了位移也没人挪窗）",
+    ck("挂件侧已接 on_drag（漏接则页面报了位移也没人挪窗）",
        "on_drag" in _bw, "")
 
     # ⛔ 反向闸门：页面正常时**不许**再给子窗打 WS_EX_TRANSPARENT —— 那会把
-    # 页内控件（减号/菜单）一起点死，是本轮专门纠掉的错误做法。
+    # 页内控件（减号/菜单）一起点死。
     _kr = _inspect.getsource(WhaleWidget._keep_draggable)
     _ark = _inspect.getsource(WhaleWidget._after_host_ready)
-    ck("r11 成功态不再打子窗透传（会把页内控件一起点死）",
+    ck("成功态不再打子窗透传（会把页内控件一起点死）",
        "pass_mouse_through" not in _kr and "pass_mouse_through" not in _ark
        and "_try_passthrough" not in _ark, "")
 
-    ck("r11 降级态仍 hide 控制器让出事件（页面没起来时页内无可点之物）",
+    ck("降级态仍 hide 控制器让出事件（页面没起来时页内无可点之物）",
        "hide()" in _kr, "")
 
     # 宿主页确实注入了拖动转发与减号
     _html = build_host_html(3210, "tk")
-    ck("r11 宿主页含拖动转发脚本（mousedown/mousemove + postMessage）",
+    ck("宿主页含拖动转发脚本（mousedown/mousemove + postMessage）",
        "postMessage" in _html and "mousemove" in _html and "dragSetup" in _html, "")
-    ck("r11 拖动只认非交互区（按钮/菜单/输入框的按下留给原版逻辑）",
+    ck("拖动只认非交互区（按钮/菜单/输入框的按下留给原版逻辑）",
        "isInteractive" in _html and "closest('button')" in _html, "")
-    ck("r11 宿主页含减号与收起标记（pm-min-btn / pm-dot）",
+    ck("宿主页含减号与收起标记（pm-min-btn / pm-dot）",
        "pm-min-btn" in _html and "pm-dot" in _html, "")
-    ck("r11 减号收起的是挂件本体而非整页（原版脚本照旧跑）",
+    ck("减号收起的是挂件本体而非整页（原版脚本照旧跑）",
        "dshwv-root" in _html and "pm-collapsed" in _html, "")
 
     # ---- B. 认人闸门 -------------------------------------------------------
     import whale_widget as _ww # noqa: PLC0415
 
     _a2 = _inspect.getsource(WhaleWidget._after_host_ready)
-    ck("r11 认人判在导航**之前**（认不出就不加载，绝不显示别人页面）",
+    ck("认人判在导航**之前**（认不出就不加载，绝不显示别人页面）",
        "_not_our_console" in _a2, "")
 
     _nc = _inspect.getsource(_ww._not_our_console)
-    ck("r11 认人主判据 = /api/version 200 且正文含 \"ver\"（与启动器同口径）",
+    ck("认人主判据 = /api/version 200 且正文含 \"ver\"（与启动器同口径）",
        "/api/version" in _nc and '"ver"' in _nc, "")
-    ck("r11 认人**绕代理**（本机代理会拦 127.0.0.1，实测返 502）",
+    ck("认人**绕代理**（本机代理会拦 127.0.0.1，实测返 502）",
        "ProxyHandler({})" in _nc, "")
-    ck("r11 认人有正文兜底（鲸语模式换可见文案，只作兜底不作主判据）",
+    ck("认人有正文兜底（鲸语模式换可见文案，只作兜底不作主判据）",
        "群相" in _nc and "PersonaMorph" in _nc, "")
 
     # 真起假服务验判别力：三类服务，判"是不是我们"必须判对
@@ -7565,10 +7565,10 @@ def t_r11_whale_drag() -> None:
     # ---- C. 端口探活（黑块根因之一）---------------------------------------
     import socket as _sk # noqa: PLC0415
 
-    ck("r11 导航前先探端口（agent 没起来时如实降级，不给纯黑窗）",
+    ck("导航前先探端口（agent 没起来时如实降级，不给纯黑窗）",
        "_server_unreachable" in _a2, "")
 
-    ck("r11 端口探活能识别「无人监听」（借一个必然关着的端口验）",
+    ck("端口探活能识别「无人监听」（借一个必然关着的端口验）",
        bool(_ww._server_unreachable(1, 0.2)), "")
 
     # 反向：真开一个监听，探活必须返回空串（否则挂件会误降级）
@@ -7580,16 +7580,16 @@ def t_r11_whale_drag() -> None:
         _r = _ww._server_unreachable(_live_port, 1.0)
     finally:
         _srv.close()
-    ck("r11 端口探活对在听的端口返回空串（否则会把正常挂件误降级）",
+    ck("端口探活对在听的端口返回空串（否则会把正常挂件误降级）",
        _r == "", "live=%d ret=%r" % (_live_port, _r))
 
 
-def t_r13_regress() -> None:
-    """r13 自检：三件用户实锤问题的回归闸。
+def t_color_token_guard() -> None:
+    """自检：三件回归闸。
 
     A. **八位十六进制通道序** —— Qt 样式表是 `#AARRGGBB`（透明度最前）。
-       r11 曾按 `#RRGGBBAA` 写反 ⇒ 所有半透明 token 被读成「高透明度黄绿色」
-       （实测 `#aad7ff42` 渲染成 `#dcf77b` 描边、次级文字全泛绿，用户：
+       曾按 `#RRGGBBAA` 写反 ⇒ 所有半透明 token 被读成「高透明度黄绿色」
+       （实测 `#aad7ff42` 渲染成 `#dcf77b` 描边、次级文字全泛绿，
        「为什么用这种绿色？很丑」）。此序一旦再写反，全主题颜色即污染。
     B. **行首标签叠字** —— `desc()`（Ignored 策略）直接塞 QHBoxLayout 行首 +
        setMinimumWidth 对布局无效（Ignored ⇒ 最小宽按 0 算，控件本体却被
@@ -7613,17 +7613,17 @@ def t_r13_regress() -> None:
     from widgets import row_label # noqa: PLC0415
 
     # ---- A. 通道序 ---------------------------------------------------------
-    ck("r13 qss() 八位十六进制 = AARRGGBB（透明度在最前；写反则半透明色全变黄绿）",
+    ck("qss() 八位十六进制 = AARRGGBB（透明度在最前；写反则半透明色全变黄绿）",
        sk.qss(QColor(0x30, 0x50, 0x70, 0x42)) == "#42305070",
        sk.qss(QColor(0x30, 0x50, 0x70, 0x42)))
 
-    ck("r13 鲸鱼主题 bd 已固化为 #42aad7ff（26% 淡蓝；r12 前 #aad7ff42 渲染成黄绿）",
+    ck("鲸鱼主题 bd 已固化为 #42aad7ff（26% 淡蓝； 前 #aad7ff42 渲染成黄绿）",
        sk.THEMES["whale"].bd == "#42aad7ff", sk.THEMES["whale"].bd)
 
-    ck("r13 qss() 对不透明色仍输出六位（不引入多余字节）",
+    ck("qss() 对不透明色仍输出六位（不引入多余字节）",
        sk.qss(QColor(0x6f, 0xcf, 0xff)) == "#6fcfff", "")
 
-    ck("r13 _c() 拆九位十六进制同走 AARRGGBB（拆反则 α 跑到 245、RGB 变灰蓝）",
+    ck("_c() 拆九位十六进制同走 AARRGGBB（拆反则 α 跑到 245、RGB 变灰蓝）",
        (lambda _c: (_c.alpha(), _c.red(), _c.green(), _c.blue())
         == (199, 200, 224, 245))(sk._c("#c7c8e0f5")),
        (lambda _c: "a=%d rgb=#%02x%02x%02x" % (_c.alpha(), _c.red(), _c.green(), _c.blue()))(
@@ -7660,7 +7660,7 @@ def t_r13_regress() -> None:
                 if ix > 0 and iy > 0:
                     bad += 1
                     details.append("%s∩%s %dpx²" % (name, type(w).__name__, ix * iy))
-    ck("r13 概览页标签与输入框零相交（Ignored 策略下 minimumWidth 对布局无效的叠字病）",
+    ck("概览页标签与输入框零相交（Ignored 策略下 minimumWidth 对布局无效的叠字病）",
        bad == 0, "; ".join(details) or "全部行间隙正常")
 
     # row_label 本体：容器最小宽被布局尊重（这正是 desc() 直接上场时办不到的）
@@ -7677,7 +7677,7 @@ def t_r13_regress() -> None:
     host2.resize(400, 60)
     host2.show()
     app.processEvents()
-    ck("r13 row_label 容器最小宽被布局尊重（≥140，desc() 直上时会被压成 0 ⇒ 叠字）",
+    ck("row_label 容器最小宽被布局尊重（≥140，desc() 直上时会被压成 0 ⇒ 叠字）",
        _rl.width() >= 140, "w=%d" % _rl.width())
     host2.close()
 
@@ -7686,38 +7686,38 @@ def t_r13_regress() -> None:
     from whale_widget import WhaleWidget # noqa: PLC0415
 
     _html = build_host_html(3210, "tk")
-    ck("r13 宿主页轮询发 boot 结论（ok=true 出本体 / ok=false 预算耗尽）",
+    ck("宿主页轮询发 boot 结论（ok=true 出本体 / ok=false 预算耗尽）",
        "pm:'boot'" in _html and "ok:true" in _html and "ok:false" in _html, "")
 
-    ck("r13 宿主暴露 on_boot 并在消息分发里处理 boot",
+    ck("宿主暴露 on_boot 并在消息分发里处理 boot",
        hasattr(WhaleHostWebView, "on_boot")
        and '"boot"' in _inspect.getsource(WhaleHostWebView._on_web_message), "")
 
     _om = _inspect.getsource(WhaleWidget._on_pageboot)
-    ck("r13 boot=false ⇒ 降级提示卡 + 让出事件（不给全透明空窗）",
+    ck("boot=false ⇒ 降级提示卡 + 让出事件（不给全透明空窗）",
        "_load_failed" in _om and "_keep_draggable" in _om, "")
 
     _wd = _inspect.getsource(WhaleWidget._boot_watchdog)
-    ck("r13 watchdog 是单次兜底（boot 已成功或已失败则直接退出，不重复降级）",
+    ck("watchdog 是单次兜底（boot 已成功或已失败则直接退出，不重复降级）",
        "_boot_ok or self._load_failed" in _wd, "")
 
     _ah = _inspect.getsource(WhaleWidget._after_host_ready)
-    ck("r13 导航成功才挂 watchdog（8000ms 单次，非自链）",
+    ck("导航成功才挂 watchdog（8000ms 单次，非自链）",
        "singleShot(8000" in _ah, "")
 
     # ---- D. 最小化不藏挂件 --------------------------------------------------
     import shell as _shell # noqa: PLC0415
 
     _he = _inspect.getsource(_shell.Shell.hideEvent)
-    ck("r13 hideEvent 不再隐藏挂件（控制台最小化/收托盘挂件仍显示 = 用户点名要求）",
+    ck("hideEvent 不再隐藏挂件（控制台最小化/收托盘挂件仍显示）",
        "whale.hide" not in _he, "")
 
     _ce = _inspect.getsource(_shell.Shell.closeEvent)
-    ck("r13 真关路径显式带走挂件（无 parent 后必须 close，否则 WebView2 成孤儿）",
+    ck("真关路径显式带走挂件（无 parent 后必须 close，否则 WebView2 成孤儿）",
        "whale" in _ce and ".close()" in _ce, "")
 
     _init = _inspect.getsource(_shell.Shell.__init__)
-    ck("r13 挂件构造不带 parent（有主工具窗会被主窗最小化连带藏掉）",
+    ck("挂件构造不带 parent（有主工具窗会被主窗最小化连带藏掉）",
        "WhaleWidget(self.t)" in _init and "parent=self" not in
        _init.split("WhaleWidget(self.t)")[1][:20], "")
 
@@ -7735,14 +7735,14 @@ def _host_of(page):  # noqa: ANN001
     return host
 
 
-def t_r14_regress() -> None:
-    """r14 自检：三个用户实锤的回归闸。
+def t_button_label_guard() -> None:
+    """自检：三个回归闸。
 
-    A. **人设卡打星移除** —— 用户裁定「打星这个没用的按钮去掉」，移动/删除
+    A. **人设卡打星移除** —— ，移动/删除
        恢复全文字（不再缩成单字正圆）。防的是按钮删了、handler/字典还留死线，
        或哪天又被加回来。
     B. **安装按钮不许死点击** —— 缺件不是 pip 包时旧代码 `setEnabled(False)`，
-       按钮看着能点、点了无声（用户实锤「点击这个一键安装，没反应」）。
+       按钮看着能点、点了无声。
        现在缺件必须可点，点了给手动指引。
     C. **挂件位置越界自愈** —— QSettings 里的位置跨分辨率/换屏后可能已在
        屏幕外（实测 (1611,1431) 在 1080p 上 y 越界 ⇒「没看到挂件」）。
@@ -7752,26 +7752,26 @@ def t_r14_regress() -> None:
 
     # ---- A. 人设卡 ---------------------------------------------------------
     src = (HERE / "panels_custom.py").read_text(encoding="utf-8")
-    ck("r14 人设卡不再有「打星」按钮（用户裁定移除；注释里的历史说明不算数）",
+    ck("人设卡不再有「打星」按钮（按需求移除）",
        "rate = Btn(" not in src and "def _rate_persona" not in src
        and '"rate":' not in src, "")
 
-    ck("r14 移动/删除是全文字钮（不再缩成单字正圆）",
+    ck("移动/删除是全文字钮（不再缩成单字正圆）",
        'Btn("删除"' in src and 'Btn("移动"' in src
        and "set_button_size(42, 42)" not in src, "")
 
     # ---- B. 安装按钮 -------------------------------------------------------
     _app = src[src.index("def _media_components_appendix"):]
-    ck("r14 缺件状态含 manual（pip 装不了的也要让按钮点得动）",
+    ck("缺件状态含 manual（pip 装不了的也要让按钮点得动）",
        '"manual": []' in _app and 'state["manual"] = manual' in _app, "")
 
-    ck("r14 按钮启用条件 = pip 可装 or 有手动缺件（不许死点击）",
+    ck("按钮启用条件 = pip 可装 or 有手动缺件（不许死点击）",
        "btn.setEnabled(bool(pkgs or manual))" in _app, "")
 
     _i0 = _app.index("def _install()")
     _i1 = _app.index("btn.clicked.connect", _i0)
     _inst = _app[_i0:_i1]
-    ck("r14 点击时无 pip 缺件但有手动缺件 ⇒ 给指引而不是「都齐了」",
+    ck("点击时无 pip 缺件但有手动缺件 ⇒ 给指引而不是「都齐了」",
        "manual" in _inst and "装不了自动版" in _inst, "")
 
     # ---- C. 挂件位置自愈（功能验证，测后恢复用户原值）-----------------------
@@ -7783,7 +7783,7 @@ def t_r14_regress() -> None:
 
     _t = _sk.THEMES["whale"]
 
-    ck("r14 恢复位置前有上屏校验（_onscreen）",
+    ck("恢复位置前有上屏校验（_onscreen）",
        "_onscreen" in _inspect.getsource(_ww.WhaleWidget.__init__), "")
 
     _set = QSettings(*_ww._SET)
@@ -7796,26 +7796,26 @@ def t_r14_regress() -> None:
         scr = _QA.instance().primaryScreen()
         g = scr.availableGeometry() if scr else None
         _in = g is not None and g.contains(w1.x(), w1.y())
-        ck("r14 越界位置(1611,1431)恢复时回默认角（不落到屏幕外）",
+        ck("越界位置(1611,1431)恢复时回默认角（不落到屏幕外）",
            _in, "pos=(%d,%d) screen=%s" % (w1.x(), w1.y(), g))
 
         w1.close()
 
         _set.setValue("whale_pos", [100, 200])
         w2 = _ww.WhaleWidget(_t)
-        ck("r14 屏内位置原样保留（不乱重置用户拖放点）",
+        ck("屏内位置原样保留（不乱重置用户拖放点）",
            (w2.x(), w2.y()) == (100, 200), "pos=(%d,%d)" % (w2.x(), w2.y()))
         w2.close()
     finally:
         _set.setValue("whale_pos", _saved if _saved is not None else "")
 
 
-def t_r11_placeholders() -> None:
-    """r11 自检：「占位卡死」与「清容器残留」两条链的回归闸。
+def t_placeholder_guard() -> None:
+    """自检：「占位卡死」与「清容器残留」两条链的回归闸。
 
     三组判据：
       A. **异步自链必须有存活判 + 上限** —— 页面重建/关页后闭包仍被定时器引用，
-         旧写法无上限重排且对已析构控件 `setText`（RuntimeError 被外层 try 吞掉）
+         旧实现无上限重排且对已析构控件 `setText`（RuntimeError 被外层 try 吞掉）
          ⇒ 占位永远停在「读取中/加载中」。
       B. **takeAt 清容器必须配 `setParent(None)`** —— 只 deleteLater 时控件仍是
          父的孩子（可见、占位），实测 memory 页共享群占位不曾消失。
@@ -7852,9 +7852,9 @@ def t_r11_placeholders() -> None:
     blocks = _apply_blocks(pc_src)
     capped = sum(1 for b in blocks if "tries" in b)
     alive = sum(1 for b in blocks if "_qt_alive" in b)
-    ck("r11-A 所有带自链的 _apply 都有次数上限（无上限重排会在页面销毁后空转）",
+    ck("-A 所有带自链的 _apply 都有次数上限（无上限重排会在页面销毁后空转）",
        capped >= 5, "有上限的 _apply = %d / 共 %d" % (capped, len(blocks)))
-    ck("r11-A 开页自动加载器的 _apply 有 C++ 存活判（_qt_alive）",
+    ck("-A 开页自动加载器的 _apply 有 C++ 存活判（_qt_alive）",
        alive >= 3, "带存活判的 _apply = %d / 共 %d" % (alive, len(blocks)))
 
     # ── B. 清容器纪律 ──
@@ -7872,11 +7872,11 @@ def t_r11_placeholders() -> None:
             ctx = "\n".join(lines[lo:hi])
             if ("takeAt" in ctx or "takeAt" in "\n".join(lines[lo:i + 1])) and "setParent" not in ctx:
                 miss.append("%s:%d" % (name, i + 1))
-    ck("r11-B takeAt 清容器一律配 setParent(None)（只 deleteLater 事件循环未转时会被搁置）",
+    ck("-B takeAt 清容器一律配 setParent(None)（只 deleteLater 事件循环未转时会被搁置）",
        not miss, ("仍缺 setParent 的清理点: " + ", ".join(miss)) if miss else "0 处")
 
     # ── C. Field 左标签下限 + 不吃 stretch ──
-    ck("r11-C Field 左标签区有最小宽（无下限会被压成竖排单字）",
+    ck("-C Field 左标签区有最小宽（无下限会被压成竖排单字）",
        Field._LEFT_MIN >= 40, "_LEFT_MIN=%s" % Field._LEFT_MIN)
 
     import config_io # noqa: PLC0415, F401
@@ -7887,10 +7887,10 @@ def t_r11_placeholders() -> None:
     host.resize(1000, 60)
     host.show()
     QApplication.processEvents()
-    ck("r11-C Field 左标签实际宽度 ≥ _LEFT_MIN（布局真的尊重了下限）",
+    ck("-C Field 左标签实际宽度 ≥ _LEFT_MIN（布局真的尊重了下限）",
        f._left_w.width() >= Field._LEFT_MIN,
        "w=%d min=%d" % (f._left_w.width(), Field._LEFT_MIN))
-    ck("r11-C Field 左列不吃 stretch（多出的宽全给右侧控件）",
+    ck("-C Field 左列不吃 stretch（多出的宽全给右侧控件）",
        f._root.stretch(0) == 0 and f._root.stretch(1) == 1,
        "left=%d ctrl=%d" % (f._root.stretch(0), f._root.stretch(1)))
     host.close()
@@ -7920,8 +7920,8 @@ def main() -> int:
                    t_c10, t_c13, t_hotfix1, t_hotfix2, t_catmgr, t_medialocal, t_commfb,
                    t_veradv, t_g5, t_g6, t_g7, t_g8, t_g9, t_g10, t_g11, t_g12, t_g13, t_g14,
                    t_g15, t_g16, t_g17, t_g18, t_g19, t_g20, t_g21, t_g22, t_ocr_fuzzy,
-                   t_audit_r3, t_r10_drag, t_r11_whale_drag, t_r13_regress,
-                   t_r14_regress, t_r11_placeholders):
+                   t_audit_r3, t_dialog_drag, t_whale_guard, t_color_token_guard,
+                   t_button_label_guard, t_placeholder_guard):
             try:
                 fn()
             except Exception as e: # noqa: BLE001

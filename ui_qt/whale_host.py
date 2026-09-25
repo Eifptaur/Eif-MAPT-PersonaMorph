@@ -1,30 +1,14 @@
 # -*- coding: utf-8 -*-
-"""右下角鲸鱼挂件 —— **原版照搬**（WebView2 承载上游 widget.js 原文）。
+"""鲸鱼挂件的 WebView2 宿主：起环境 → 建控制器 → 加载挂件页，三步。
 
-为什么要这一层：上游挂件是 636KB 的纯浏览器脚本（582 处 createElement、35 处 fetch、
-6 处 AudioContext、19 处 localStorage、27 处 canvas，外加 11 行设置菜单、角色导入、
-音效、自定义泡泡、用量记录、资源管理）。用 Python 逐行重写**不可能一致** —— 那等于
-重写一个前端应用。唯一能真正 1:1 的路子就是**把它原样交给浏览器内核跑**：
+页面内容见 `build_host_html`；窗口与交互见 `whale_widget.py`。
 
-    · 数据面：宿主已有 `/dsh-whale/*` 全套端点（agent/whale.py + agent/webui.py），
-      脚本原样引入时只需给每条 URL 补 token，与 web 页面的做法**完全相同**
-      （agent/webui.py 的 `_whale_js_injected`）；
-    · 渲染面：本模块用 WebView2 起一个**独立的浏览器实例**，把挂件页内联进去，
-      再把它的窗口贴成 Qt 顶层窗的背景；
-    · 依赖面：**零新增** —— 程序集（lib/Microsoft.Web.WebView2.*.dll、
-      WebView2Loader.dll）产品本来就带（启动器的控制台窗口在用），
-      comtypes / pywin32 也在 requirements 里（微信驱动依赖）。
-
-关于「为什么不用 Qt WebEngine」：精简安装的 PySide6_Essentials **不含**
-QtWebEngineWidgets（只有 .pyi 存根），装完整版要多 234MB；而 WebView2 运行库本机
-已有、程序集已有、启动器已验证可用，是成本最低且**唯一能照搬**的路径。
-
-三个必须做对的点（此前探针踩过的坑，都在这里收掉）：
-  ① **独立 user data folder** —— 与产品控制台共用一个目录会互抢锁、浏览器进程会崩
-     （实测：共目录时 `msedgewebview2` 直接 "has stopped working"）；
+三个必须做对的边界：
+  ① **独立 user data folder** —— 与产品控制台共用一个目录会互抢目录锁，
+     浏览器进程会崩（共目录时 `msedgewebview2` 直接 "has stopped working"）；
   ② **退出必调 `Close()`** —— 不关控制器会留孤儿浏览器进程，父进程死了也不退；
-  ③ **消息泵** —— WebView2 的回调全走 STA 消息队列，Qt 的事件循环本身就是消息泵，
-     所以这里**不需要自己抽**（探针里手抽是因为没有事件循环）。
+  ③ **消息泵** —— WebView2 的回调走 STA 消息队列，Qt 的事件循环本身就是
+     消息泵，回调里只做转交（`_schedule`），重活回到事件循环再跑。
 """
 
 from __future__ import annotations
@@ -40,7 +24,7 @@ _USER_DATA = Path(os.environ.get("LOCALAPPDATA", str(ROOT))) / "PersonaMorph" / 
 
 
 def _loader_dll() -> str:
-    """WebView2Loader.dll 的绝对路径（产品根目录，与启动器同一份）。"""
+    """WebView2Loader.dll 的绝对路径（产品根目录）。"""
     return str(ROOT / "WebView2Loader.dll")
 
 
@@ -479,7 +463,7 @@ def build_host_html(port: int, token: str) -> str:
 
     ## 「最小化」（减号）为什么加在这一层，而不是改 widget.js
 
-    原版脚本是 vendor 来的**单一真值**（全仓库唯一改动记在 `PORT-NOTES.md`），
+    原版脚本是 vendor 来的**单一真值**（全仓库唯一改动记在 ``），
     改它会立刻与 web 端分叉 —— 那就不是"1:1 照搬"了。而「显示/收起挂件」
     本来就是**宿主窗**的职责（窗口显隐、位置记忆都在 Qt 侧），不是挂件自己的能力。
     所以减号由本页注入：原版脚本照旧跑、照旧画，我们只在它上面浮一个自己的按钮。
@@ -543,13 +527,11 @@ def build_host_html(port: int, token: str) -> str:
         "e.stopPropagation();e.preventDefault();setCollapsed(false);});}"
         "}"
         # ── 拖动转发 ────────────────────────────────────────────────────────
-        # 为什么在页面里做：WebView2 的画面是一个铺满宿主窗的**子 HWND**，鼠标
-        # 消息被子窗吃掉、不冒泡给父窗 ⇒ Qt 侧收不到 mouseMove，挂件拖不动。
-        # 早先的做法是给子窗加 `WS_EX_TRANSPARENT` 让消息穿过去 —— 但那样
-        # **页面里所有控件都点不动了**（减号、原版菜单全失效），是拿一个功能换
-        # 另一个功能。正解是**页面自己报位移**：在页面内监听拖动，把位移通过
-        # `window.chrome.webview.postMessage` 发给宿主，Qt 侧收到再 move 窗口。
-        # 这样"页内点击"与"拖动窗口"互不干扰 —— 点按钮是 click，拖空白是 move。
+        # 机制：WebView2 的画面是一个铺满宿主窗的**子 HWND**，鼠标消息被子窗
+        # 吃掉、不冒泡给父窗 ⇒ Qt 侧收不到 mouseMove；而给子窗加
+        # `WS_EX_TRANSPARENT` 会连页内控件一起收不到点击。所以由**页面转发**：
+        # 页内监听拖动，把位移经 `window.chrome.webview.postMessage` 发给宿主，
+        # Qt 侧收到再 move 窗口——点按钮是 click、拖空白是 move，互不干扰。
         "function dragSetup(){"
         "if(window.__pmDrag)return;window.__pmDrag=1;"
         "var dragging=false,ox=0,oy=0,moved=false;"
@@ -590,7 +572,7 @@ def build_host_html(port: int, token: str) -> str:
         # 原版挂件是异步建的（脚本 defer + 内部等 composer），root 晚于本脚本出现；
         # 用有上限的轮询等它。轮询的**副产物**就是启动回报：root 出现（ok=true）
         # 或预算耗尽（ok=false，约 6 秒）都发给宿主 —— ok=false 时上层降级成
-        # 提示卡，避免「页面加载成功但鲸鱼没画」的全透明空窗（用户：挂件没看到）。
+        # 提示卡，避免「页面加载成功但鲸鱼没画」的全透明空窗。
         "var n=0;var t=setInterval(function(){n++;wire();"
         "if(rootEl()){clearInterval(t);post({pm:'boot',ok:true});}"
         "else if(n>=40){clearInterval(t);post({pm:'boot',ok:false});}"

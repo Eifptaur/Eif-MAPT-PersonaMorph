@@ -316,7 +316,7 @@ def _row_ranges(body: str) -> list[tuple[int, int]]:
     """每个 `<div class="row">` 的 (open_start, close_start) —— 用 div 深度取自身闭合。
 
     ⛔ 这就是「按钮和选单蒸发」的修复点（旧前瞻截断的根因）：
-    旧写法用 `re.finditer(r'… (.*?)(?=<div class="row"|<div class="btns"|… )')`，结束前瞻
+    旧实现用 `re.finditer(r'… (.*?)(?=<div class="row"|<div class="btns"|… )')`，结束前瞻
     一碰到**同一个 row 内部**的 `<div class="btns">` 就提前停 ⇒ row 后半截（按钮组、
     row 内联的 `<select>`/`<input>`、hint 段落）整段丢失：人设「选单」行只剩 1 个按钮、
     「评分补足」行只有文本输入框而没有三枚按钮 + 补足轮数下拉 + 允许模型处理勾选。
@@ -480,7 +480,7 @@ def _strip_scripts(body: str) -> str:
     `<button>`（如本机模型探测卡的「用这个 / 连通测试」、叮嘱列表的「删除」都是
     JS 动态生成的）——解析器不认 script 边界就会把**模板字符串里的按钮**当成
     静态按钮抠出来 ⇒ 页面上出现一排点了只显示「（web 侧动作）」的假按钮
-    （用户实锤截图：按型号单价的「用这个 / 连通测试 / 保存设置」整排）。
+    。
     占位用空格保持其余偏移计算不变。"""
     return re.sub(r"<script\b.*?</script>", lambda m: " " * (m.end() - m.start()), body, flags=re.S)
 

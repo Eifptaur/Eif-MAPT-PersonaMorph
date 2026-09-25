@@ -258,7 +258,7 @@ class Shell(QWidget):
         # 右下角鲸鱼挂件（上游 DeepSeek-Balance-Whale-Widget 的 Qt 等价物：
         # 余额/今日已用/每轮消耗，点击刷新、可拖拽；数据与位置自持）
         # ⛔ **不给 parent**：Windows 会把「有主」的工具窗在主窗最小化时一起藏掉 ——
-        # 用户点名要「控制台最小化了挂件还能显示」。独立顶层窗不受主窗显隐牵连；
+        # 要「控制台最小化了挂件还能显示」。独立顶层窗不受主窗显隐牵连；
         # 生命周期由 closeEvent（真关）显式收尾，托盘路径挂件照常浮着。
         from whale_widget import WhaleWidget # noqa: PLC0415
 
@@ -537,7 +537,7 @@ class Shell(QWidget):
     def hideEvent(self, ev) -> None: # noqa: N802
         super().hideEvent(ev)
         self._ocean.set_active(False) # CPU 纪律：看不见就不转
-        # ⛔ 挂件**不跟着藏**（用户点名：控制台最小化/收托盘，挂件还要能看）。
+        # ⛔ 挂件**不跟着藏**。
         #    挂件已是独立顶层窗（构造时不给 parent），主窗显隐本就牵不动它；
         #    这里任何 hide 都不要再发 —— 收托盘后它继续浮在桌面上。
 
@@ -867,7 +867,7 @@ class Shell(QWidget):
         name = QLabel("群相 控制台")
         name.setFont(qfont(self.t, 14, 600, display=True))
         name.setStyleSheet(f"color:{self.t.tx};background:transparent;")
-        # 顶栏文字加一圈深色投影 —— 用户点单「顶栏那些文字对比度做强，不然又被
+        # 顶栏文字加一圈深色投影 —— 「顶栏那些文字对比度做强，不然又被
         # 背景影响了」。加实顶栏底色不够：底图亮部（浪花）照样能在字边形成光晕，
         # 把笔画吃掉。⚠️ QSS **没有** text-shadow（Qt 静默忽略，实跑像素验证
         # 暗像素=0）⇒ 只能用 QGraphicsDropShadowEffect（0 偏移 = 描边式投影）。
@@ -925,7 +925,7 @@ class Shell(QWidget):
 
         lay.addStretch(1)
 
-        # ── 外观切换图标（ #15，用户点单：文案 + 主题「本质上都属于一种界面
+        # ── 外观切换图标（ #15，：文案 + 主题「本质上都属于一种界面
         # 切换」，常态收起只显示图标，点开弹出切换组）──
         # 控件复用现有 Segmented，只是从顶栏搬进 Popover（改动最小）。
         import icons as _icons # noqa: PLC0415
@@ -1671,7 +1671,7 @@ class Shell(QWidget):
             #    各控件自带显式背景，全局透明只影响容器层 —— 卡片仍是半透玻璃。
             self.setStyleSheet(
                 f"QWidget{{background:transparent;}}"
-                # 顶栏/侧栏压底图：**比 web 的 .7 更实**（对齐用户点单「对比度做强」）。
+                # 顶栏/侧栏压底图：**比 web 的 .7 更实**。
                 # web 有 backdrop-filter:blur(8px)（console_html.py L432）帮它把底下
                 # 的浪纹糊掉；Qt 无等价模糊 ⇒ 同样 .7 会让海水的亮/暗直接透过文字。
                 # 用 .84 顶栏 / .90 侧栏换取「顶栏文字不再被背景洗」——这是平台差异
@@ -1977,7 +1977,7 @@ class Shell(QWidget):
             txt += " · 启动于 " + started
         lab.setText(txt)
         # web 真值不给状态行上色——`.side .status p{font-size:12px;color:var(--tx2)}`
-        # 恒为灰字（console_html.py L519）。此前按连接态换 ok/warn ⇒ 绿/黄字，。
+        # 恒为灰字（console_html.py L519）。此前按连接态换 ok/warn ⇒ 绿/黄字。
         lab.setStyleSheet(f"color:{self.t.tx2};background:transparent;")
         tip = ("已接上微信客户端" if s.get("wechat_connected")
                else str(wa.get("reason") or "还没拿到失败原因（等一次接入尝试，或看日志）")
@@ -2302,12 +2302,11 @@ class _Combo(QWidget):
 
 
 class _StrayWindowProbe(QObject): # noqa: N802
-    """r9 闪窗诊断：任何**带系统边框的顶层窗口**显形时打一行到 stderr。
+    """闪窗诊断：任何**带系统边框的顶层窗口**显形时打一行到 stderr。
 
-    用户实锤「切换界面会闪一个小弹窗（带标题栏）」但抓不到是谁 —— 挂这个
-    app 级过滤器后，复现一次 stderr 里就有 [闪窗] 行（类名/对象名/标题/尺寸），
-    下一轮直接定位真凶。过滤条件：Window 型顶层 + **非** Frameless/Popup/ToolTip
-    （产品自己的弹层全是无边框，带原生标题栏的都是漏网之鱼）。
+    app 级事件过滤器，复现一次 stderr 里就有 [闪窗] 行（类名/对象名/标题/尺寸），
+    用于定位"闪过的未知窗口"。过滤条件：Window 型顶层 + **非**
+    Frameless/Popup/ToolTip（产品自己的弹层全是无边框，带原生标题栏的都是外来窗）。
     """
 
     def eventFilter(self, obj, ev): # noqa: ANN001, N802

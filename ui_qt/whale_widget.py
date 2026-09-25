@@ -1,48 +1,21 @@
 # -*- coding: utf-8 -*-
-"""右下角鲸鱼挂件 —— **原版照搬**（WebView2 承载上游 DeepSeek-Balance-Whale-Widget）。
+"""右下角鲸鱼挂件窗：Qt 透明顶层小窗，内嵌 WebView2 渲染上游挂件脚本。
 
-## 为什么是"照搬"而不是"复刻"
+结构：
 
-上游挂件是 636KB 的纯浏览器脚本：`widget.js` 单文件 15,179 行，含 582 处
-`createElement`、35 处 `fetch`、6 处 `AudioContext`、19 处 `localStorage`、27 处
-`canvas`，外加 11 行设置菜单（大小/音效/音量/气泡全局开关/每轮消耗提示/避让滚动条/
-宽度/px/角色/隐藏菜单按钮/资源管理）、角色导入、音效组、自定义泡泡、用量记录。
-
-用 Python 逐行重写这些**不可能一致** —— 那等于重写一个前端应用，且必然随上游版本
-漂移。能真正做到 1:1 的路子只有一条：**把它原样交给浏览器内核跑**。
-
-## 这条路的三个事实依据
-
-1. **脚本本来就是原文**：`whale-widget/client/widget.js` 是从上游 0.3.9 vendor 的，
-   全仓库唯一的改动是 `PORT-NOTES.md` 记载的一处（`dshwIsChatRoot()` 拿不到 `#root`
-   时退回 `document.body`）。web 端控制台页面就是直接 `<script defer
-   src="/dsh-whale/widget.js">` 引入的**同一份文件**，一字未改。
-2. **数据面已经齐了**：`agent/whale.py` + `agent/webui.py` 的 `/dsh-whale/*` 全套端点
-   （余额/今日已用/上轮消耗/形象图/音效/泡泡配置），token 注入逻辑在
-   `webui._whale_js_injected()` 里，脚本要什么给什么。
-3. **承载层零新增依赖**：本机已装 WebView2 运行库；产品的 `lib/` 里已 vendor
-   `Microsoft.Web.WebView2.*.dll` 与根目录 `WebView2Loader.dll`（启动器的控制台窗口
-   在用）；`comtypes` / `pywin32` 也在 `requirements.txt` 里（微信驱动依赖）。
-
-（对比：走 Qt 的 QtWebEngine 需要**完整版** PySide6 —— 精简安装的 `PySide6_Essentials`
-里 `QtWebEngineWidgets` 只有 `.pyi` 存根没有 `.pyd`，装完整包要多 234MB。）
-
-## 本模块的结构
-
-    WhaleWidget (QWidget, Qt.Tool 顶层窗)
-      └── 一个透明方窗，尺寸 = 原版 `--dshw-base`
+    WhaleWidget (QWidget, Qt.Tool 顶层窗，置顶)
+      └── 透明方窗，边长 = 原版 `--dshw-base`（250px）
             └── WhaleHostWebView（whale_host.py）在窗口 HWND 上挂 WebView2，
                 加载宿主页 → 宿主页引入原版 widget.js → 挂件自己渲染
 
-**职责边界**：窗口（拖拽/位置记忆/显隐）留在本模块，浏览器（环境/控制器/加载）
-在 `whale_host.py`。挂件自身的菜单、音效、角色、用量全部由**原版脚本**负责，
-本模块不重现任何一条。
+职责边界：窗口（显隐/位置记忆/收起圆点）留在本模块；浏览器（环境/控制器/
+页面加载）在 `whale_host.py`；挂件自身的菜单、音效、角色、用量全部由原版
+脚本负责，本模块不重现任何一条。脚本文件 = `whale-widget/client/widget.js`
+（vendor 自上游，仅一处移植补丁，见仓库内移植记录）。
 
-## 降级
-
-WebView2 不可用（运行库被卸载、程序集缺失、初始化异常）时：
-  · 不是"白窗"，而是退回**信息卡**：贴一张原版形象的静态图 + 一行说明；
-  · 说明里给出可操作指引（装运行库），而不是静默空白。
+降级：WebView2 不可用（运行库被卸载、程序集缺失、初始化异常）、控制台端口
+不可达、页面未渲染出挂件本体时，退回**信息卡**：一张静态形象图 + 一行可操作
+说明，不留纯白/纯黑/全透明空窗。
 """
 
 from __future__ import annotations
@@ -70,13 +43,13 @@ class WhaleWidget(QWidget):
     def __init__(self, t, parent=None):  # noqa: ANN001
         super().__init__(parent)
         self.setObjectName("WhaleWidget")
-        # ⛔ **必须置顶（WindowStaysOnTopHint）**：r14 为「控制台最小化挂件还在」
+        # ⛔ **必须置顶（WindowStaysOnTopHint）**：为「控制台最小化挂件还要显示」
         #    去掉了 parent —— 但无主的 Tool 窗在 Windows 的 Z 序里是**普通顶层窗**，
         #    主窗随后 show/activate 就把它压到下面；挂件又恰恰落在主窗右下角
         #    （最大化后覆盖的位置）⇒ **被主窗整个盖住**，用户眼里「完全看不见」
-        #    （r14 引入的回归，用户重启后实锤依旧不可见）。悬浮挂件就该浮在
+        #    。悬浮挂件就该浮在
         #    最上层 —— web 原版是页内浮层（z-index 9999），语义一致；不想看时
-        #    点减号收起（r12 已有）。
+        #    点减号收起。
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool
                             | Qt.WindowType.WindowStaysOnTopHint)
         # 透明窗：挂件是悬浮件，必须让底层界面透出来。
@@ -142,10 +115,9 @@ class WhaleWidget(QWidget):
 
         ⛔ 判据是「**页面真的加载成功了**」而不是「控制器建好了」：
         `WhaleHostWebView.ok` 只说明 WebView2 环境/控制器就绪，**不代表
-        `navigate_to_string` 成功**。早先这里只看 `.ok` ⇒ 控制器就绪但页面加载
-        失败时，Qt 侧不画降级卡、WebView2 侧没内容 ⇒ 用户看到**一个纯黑块**，
-        连「需要装 WebView2」的提示都拿不到。`load_failed` 把"页面没起来"这个
-        状态单独记下来，让降级卡能在这种半成品状态下兜底。
+        `navigate_to_string` 成功**。只看 `.ok` 时，"控制器就绪但页面没内容"
+        的半成品状态两头落空：Qt 侧不画降级卡、WebView2 侧没内容 ⇒ 空窗。
+        `load_failed` 把"页面没起来"单独记下来，让降级卡在这种状态下兜底。
         """
         if self._host is not None and self._host.ok and not self._load_failed:
             return
@@ -203,8 +175,8 @@ class WhaleWidget(QWidget):
 
         ⛔ **建链是异步的**：`WhaleHostWebView.__init__` 返回时环境/控制器都还没
         建好（COM 回调要等消息循环），此时 `ok` 必为 False。所以加载页面必须
-        挂在 `when_ready()` 回调上 —— 早先写成 `if not self._host.ok: 降级` 时，
-        每次都会在控制器就绪之前判失败，挂件永远出不来（连页面都没加载）。
+        挂在 `when_ready()` 回调上 —— 在回调触发前 `ok` 恒为 False，同步判
+        `if not self._host.ok: 降级` 会在控制器就绪之前误判失败。
         """
         try:
             from whale_host import WhaleHostWebView, build_host_html  # noqa: PLC0415

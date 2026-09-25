@@ -870,7 +870,7 @@ ck("E9 控制台有这个开关 + 示例配置同步",
    and '"replay_on_resume"' in open(os.path.join(ROOT, "config.example.json"), encoding="utf-8").read())
 
 print("\n== F. 前台口径==")
-# 对面 r15 实测：投递链的伪激活会让微信**短暂真占前台**（发文字 1.8s、切会话 2.9~3.2s）后自动还回。
+# 既有实测：投递链的伪激活会让微信**短暂真占前台**（发文字 1.8s、切会话 2.9~3.2s）后自动还回。
 # ⇒ **对外文案不许写"不抢前台"**（那是过头话），必须写成"不动光标 + 可能短暂置前约 1~3 秒后自动还回"。
 #    这条同时满足用户的口径要求：能力边界必须写进**终端用户看得到的地方**。
 _CONSOLE = open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()

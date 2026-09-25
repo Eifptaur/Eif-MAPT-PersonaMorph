@@ -229,8 +229,7 @@ body.whale-anim::after{content:"";position:fixed;inset:0;z-index:-1;pointer-even
 .side.tight .nav a svg{width:22px;height:22px}
 .side.tight .nav a .lb{display:none}
 .side.tight .status{display:none}
-/* 收起/展开：**在导航里单开一栏**（
-   写的就是收起或者展开，就像之前那样」）——旧写法是绝对定位的 22×58 小把手。 */
+/* 收起/展开：在导航里单开一栏（整宽按钮），不用绝对定位的小把手。 */
 .side .nav-tg{position:static;width:100%;height:auto;margin:2px 0 8px;padding:9px 12px;
   display:flex;align-items:center;justify-content:center;gap:8px;font-size:12.5px;line-height:1;
   border-radius:8px;z-index:auto;opacity:.9}

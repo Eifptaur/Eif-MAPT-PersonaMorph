@@ -235,7 +235,7 @@ def _line(t: Tokens, text: str = "", password: bool = False, placeholder: str = 
     e.setFont(qfont(t, t.body_size))
     e.setFixedHeight(32)
     # 宽度自适应：见 Combo 注释 —— 120 是「还看得见值」的下限，不是版式常量；
-    # 窄于 Field._STACK_AT 时该行会改成上下排列，输入框拿满宽（用户点单：
+    # 窄于 Field._STACK_AT 时该行会改成上下排列，输入框拿满宽（：
     # 「显示可以根据屏幕显示区域的宽度」自适应，这一条要覆盖所有输入控件）。
     e.setMinimumWidth(120)
     if password:
@@ -557,7 +557,7 @@ def _open_group_pick(t: Tokens, line, note, groups: list) -> None:
     dlg.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
     dlg.setModal(True)
     dlg.resize(460, 520)
-    dlg.enable_drag() # 可拖动（用户点单：所有弹窗都能按背景挪）
+    dlg.enable_drag() # 可拖动
 
     outer = QVBoxLayout(dlg)
     outer.setContentsMargins(0, 0, 0, 0)
@@ -688,7 +688,7 @@ _ACT_API: dict[str, tuple] = {
     "ttsTest": ("GET", "/api/tts/test", {}), # web L7691：按当前档合成试听
     "vsTest": ("GET", "/api/voice/test", {}), # web L7707：语音链路（合成→SILK→识别）
     "selfCheck": ("POST", "/api/selfcheck", {"mode": "full"}), # web L6004：61 项环境体检
-    # ── community / feedback（批4）──
+    # ── community / feedback──
     "exportHolyshits": ("POST", "/api/community/export", {"kind": "holyshits"}), # web L7993：导出金句
     "exportFeedback": ("POST", "/api/community/export", {"kind": "feedback"}), # web L8007：导出意见反馈
     "exportMessages": ("POST", "/api/community/export", {"kind": "messages"}), # web L8008：导出聊天记录
@@ -780,7 +780,7 @@ def _act_run(aid: str, note) -> None:
                             else (" ｜ " + str(res.get("err")) if res.get("err") else "")))
         elif aid == "selfCheck":
             # selfcheck 返回项是 {status: ok/warn/fail, name, detail, hint} 形状 ——
-            # 旧写法按 c.get("ok") is False 统计 ⇒ 恒「失败 0」误导；按 status 口径改。
+            # 旧实现按 c.get("ok") is False 统计 ⇒ 恒「失败 0」误导；按 status 口径改。
             checks = [c for c in (rsp.get("checks") or []) if isinstance(c, dict)]
             if not checks:
                 note.setText(str(rsp.get("summary") or "完成"))
@@ -1442,7 +1442,7 @@ def _cursor_extras(t: Tokens, on_save) -> Card:
 _AIDS_COVERED_ELSEWHERE = {"localProbe", "wxRecheck", "ttsProbe", "vcProbe"}
 # 这两个下拉是 web **纯 JS 专属控件**（providerSel 静态选项+change 联动、modelSel
 # 动态填充），Qt 由模型页追加区原生实现（objectName 同名）——元数据行只渲染出
-# 假/空下拉（r8 用户实锤「模型选单依旧打不开」）。fbKind 这类「无 cfg 但有静态
+# 假/空下拉。fbKind 这类「无 cfg 但有静态
 # 选项、被自定义提交真读」的活控件**不在**此列。
 _JS_OWNED_SELECT_IDS = {"providerSel", "modelSel"}
 # 这些状态位在追加区/自定义卡里有**带动作的等价物**（SD 本地服务卡有自己的状态行

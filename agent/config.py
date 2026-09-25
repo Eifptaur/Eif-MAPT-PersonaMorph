@@ -193,7 +193,7 @@ DEFAULT_CONFIG = {
         "api_url": "", # mode=api 时的单个接口地址（留空＝不联网）
         "api_timeout_ms": 8000,
         # ── 在线图源（mode=online）：按顺序尝试，取不到就换下一个 ──────────────────
-        #   pixiv＝经公开代理接口取 Pixiv 作品（**强制 r18=0**）· konachan/yande＝强制 rating:safe
+        #   pixiv＝经公开代理接口取 Pixiv 作品（**强制 =0**）· konachan/yande＝强制 rating:safe
         #   safebooru/nekos＝全年龄站 · waifu＝只走 waifu.pics 的 /sfw/ 端点
         # 图源顺序＝"先试谁"（**国内源排最前** —— 
         # 好的吧，也不容易被 ban」；实测必应 0.5~2.7 秒出图、360 0.8 秒，而国际站夜里常 403/超时）。
@@ -219,7 +219,7 @@ DEFAULT_CONFIG = {
         # ── 过滤（纵深防御：任何一道说不行就不发；细节见 agent/image_filter.py）──
         "safe_only": True, # 只允许安全分级（限制级一律拒）
         "allow_questionable": False, # 是否放宽到"暧昧级"（默认否，不建议开）
-        "tag_blacklist": [], # 空＝用内置黑名单（r18/explicit/nsfw/hentai/エロ/裸/色情/福利/guro/loli…）
+        "tag_blacklist": [], # 空＝用内置黑名单（/explicit/nsfw/hentai/エロ/裸/色情/福利/guro/loli…）
         "skin_max_ratio": 0.45, # 肤色像素占比上限（本地启发式；0＝关）
         "min_side": 300, # 最小边长（太小的图丢掉）
         "vision_filter": True, # 发之前让视觉模型再看一眼（SAFE/UNSAFE；不确定按 UNSAFE 处理）
@@ -334,7 +334,7 @@ DEFAULT_CONFIG = {
         "max_chars": 4000, # 结果截断
     },
     # ── 群友要图：按需求生成（设计稿 docs/设计-群友要图-生图链条.md；实现在 agent/image_gen.py）──
-    #   七段链条＝触发→意图解析→挑后端→生成→**可插拔过滤链**→发送→回执；红线硬编码（不做真人换脸、无 r18 入口）。
+    #   七段链条＝触发→意图解析→挑后端→生成→**可插拔过滤链**→发送→回执；红线硬编码（不做真人换脸、无  入口）。
     #   backends 在控制台是一个输入框，格式 `id | local/online | url`，多个用分号分隔（image_gen.cfg() 负责解析）。
     "image_gen": {
         "enabled": False, # 总开关（默认关）
