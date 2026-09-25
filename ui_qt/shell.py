@@ -1036,6 +1036,13 @@ class Shell(QWidget):
         wl.addWidget(self.find)
         lay.addWidget(wrap)
 
+        # 导航搜索键盘交互（对齐 web `#navFind` 的 keydown，console_html.py:7122-7128）：
+        #   · `/`  全局聚焦搜索框（**输入态里不触发**，web :7151-7157 同口径）
+        #   · Esc  清空并失焦（web :7123）
+        #   · Enter 跳到当前唯一/首个可见项（web :7124-7127 点第一个候选）
+        self.find.returnPressed.connect(self._find_enter)
+        self._install_shortcuts()
+
         # 状态框 1:1 复刻 web `.side .status`（console_html.py L517-519）——
         #   background=blue-soft / border=**blue-line**（此前拿 blue 当边框 ⇒ 一圈亮蓝，
         # ）/ radius 10 / padding 10 12；标题 b 13px 蓝；正文 p 12px。
@@ -1074,6 +1081,13 @@ class Shell(QWidget):
         self.nav_lay.setSpacing(0)
 
         self.items: list[tuple[NavItem, NavGroup, str, str]] = []
+        # 分组折叠跨会话记忆（web `navGrpClosed` localStorage 的 QSettings 等价，
+        # console_html.py:7043-7067）：以「被折叠的分组标题」为键，跨进程记住。
+        from PySide6.QtCore import QSettings as _QS # noqa: PLC0415
+
+        _qs = _QS("WXAgent", "persona-morph-ui")
+        _closed_now = _qs.value("nav_grp_closed", [], type=list) or []
+        _closed_now = [str(x) for x in _closed_now]
         for title, grp_key, entries in NAV:
             g = NavGroup(self.t, title)
             for label, hint, sec in entries:
@@ -1081,6 +1095,12 @@ class Shell(QWidget):
                 it.clicked.connect(lambda _=False, s=sec, l=label: self._go(s, l))
                 g.add(it)
                 self.items.append((it, g, sec, label))
+            # 恢复折叠态（跨会话）—— 在 add 完条目之后置位，避免空组头闪烁
+            if title in _closed_now:
+                g.collapsed = True
+                g.body.setVisible(False)
+                g.gc.setPixmap(g._icons.chevron_pixmap(self.t.tx3, collapsed=True))
+            g.toggled.connect(self._on_grp_toggled)
             self.nav_lay.addWidget(g)
         self.nav_lay.addStretch(1)
 
@@ -1439,6 +1459,17 @@ class Shell(QWidget):
                 seen.append(g)
         return seen
 
+    def _on_grp_toggled(self, _collapsed: bool) -> None:
+        """分组折叠 → 写 QSettings（对齐 web saveClosed，console_html.py:7049/7066）。"""
+        from PySide6.QtCore import QSettings # noqa: PLC0415
+
+        closed = [g.title for g in self._groups() if g.collapsed]
+        QSettings("WXAgent", "persona-morph-ui").setValue("nav_grp_closed", closed)
+        # 折叠改了高度 ⇒ 让外层滚动区重算（web :7068 dispatch resize 同义）
+        sc = getattr(self, "scroll", None)
+        if sc is not None and sc.viewport() is not None:
+            sc.viewport().update()
+
     def _close_transient_popups(self) -> None:
         """收回全部临时浮层。
 
@@ -1641,6 +1672,56 @@ class Shell(QWidget):
             self.btn_tight.setToolTip("")
 
     # ------------------------------------------------------------ 交互
+
+    def _install_shortcuts(self) -> None:
+        """全局键盘快捷键（对齐 web 的两处文档级 keydown）。
+
+        web 侧 keydown 共 6 处注册，逐处定性后**只有这两条是通用快捷键**：
+          · `/`  → 聚焦导航搜索框（`console_html.py:7151-7157`，**输入态不触发**，
+                   免得在输入框里打斜杠被抢）；
+          · Esc → 清空搜索并失焦（`:7123`）—— 面板弹窗的 Esc 由各自弹窗自理，
+                   这里只管「搜索框有内容时」这一路。
+        其余 4 处：customGroup/memSearch 的 Enter 是**行内输入框**自己的键
+        （Qt 侧已由控件自身 `returnPressed` 承接）；`Escape 退光标接管`（:3036）
+        与 `ESC 全屏还原 postMessage`（:3048）是 web 专有形态（Qt 无「接管模式」/
+        无 WebView2 宿主），**不适用**。
+        """
+        from PySide6.QtGui import QKeySequence, QShortcut # noqa: PLC0415
+
+        sc_find = QShortcut(QKeySequence("/"), self)
+        sc_find.setContext(Qt.ShortcutContext.WindowShortcut)
+        sc_find.activated.connect(self._focus_find)
+        self._sc_find = sc_find
+
+        sc_esc = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
+        sc_esc.setContext(Qt.ShortcutContext.WindowShortcut)
+        sc_esc.activated.connect(self._find_escape)
+        self._sc_esc = sc_esc
+
+    def _focus_find(self) -> None:
+        """`/` 聚焦搜索框 —— 焦点已在可输入控件上时不抢（web 同口径：打斜杠不触发）。"""
+        from PySide6.QtWidgets import QLineEdit, QPlainTextEdit, QTextEdit # noqa: PLC0415
+
+        fw = QApplication.focusWidget()
+        if isinstance(fw, (QLineEdit, QPlainTextEdit, QTextEdit)) or (
+                fw is not None and fw.inherits("QAbstractSpinBox")):
+            return
+        self.find.setFocus()
+        self.find.selectAll()
+
+    def _find_escape(self) -> None:
+        """Esc：搜索框有内容 → 清空并失焦（web :7123）；无内容 → 不动（让弹窗自己接）。"""
+        if self.find.text():
+            self.find.setText("")
+            self._on_find("")
+            self.find.clearFocus()
+
+    def _find_enter(self) -> None:
+        """Enter：跳到当前首个可见导航项（web :7124-7127 点第一个候选）。"""
+        for it, _g, sec, label in self.items:
+            if it.isVisible() and self.find.text().strip():
+                self._go(sec, label)
+                return
 
     def _on_find(self, q: str) -> None:
         """导航搜索 —— 对齐 web 侧三路匹配（名字 / 分组 / 说明）。"""

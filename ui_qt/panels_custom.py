@@ -3519,6 +3519,22 @@ def memory_panel(t: Tokens) -> QWidget:
 
     chat_sel.currentIndexChanged.connect(_on_chat)
     mem_search.textChanged.connect(lambda: _fill_chats(mem_search.text()))
+
+    def _mem_search_enter() -> None:
+        """Enter：选中第一个匹配的群并加载它的印象
+        （对齐 web `#memSearch` keydown，console_html.py:7031-7037）。"""
+        kw = mem_search.text().strip().lower()
+        if not kw:
+            return
+        for i in range(chat_sel.count()):
+            if not chat_sel.itemData(i):
+                continue # 跳过「— 选择群聊 —」占位项
+            if kw in str(chat_sel.itemText(i)).lower():
+                chat_sel.setCurrentIndex(i)
+                load_memory(chat_sel.itemData(i) or "")
+                return
+
+    mem_search.returnPressed.connect(_mem_search_enter)
     b_refresh.clicked.connect(lambda: (load_memory(chat_sel.currentData() or ""), load_groups()))
 
     def _clear_sel() -> None:

@@ -6000,13 +6000,170 @@ def t_g17() -> None:
        str(onboarding._ONBOARD_ONCE))
 
 
+def t_g18() -> None:
+    """批7 第二组：键盘快捷键 + 分组折叠跨会话记忆。
+
+    web 侧共 6 处文档级/控件级 keydown，逐处定性后：
+      · **通用快捷键只有 2 条** —— `/` 聚焦导航搜索（:7151）、Esc 清空搜索（:7122）；
+      · 行内输入框 2 条 —— customGroup Enter（:2666）、memSearch Enter（:7031），
+        Qt 侧由控件自身 `returnPressed` 承接（`_chips_editor` / `_mem_search_enter`）；
+      · 2 条 **web 形态专有，不适用** —— Escape 退光标接管（:3036，Qt 无「接管模式」）、
+        ESC 全屏还原 postMessage（:3048，Qt 无 WebView2 宿主）。
+    折叠记忆对齐 web `navGrpClosed` localStorage（:7043-7067）→ Qt QSettings `nav_grp_closed`。
+    """
+    import os # noqa: PLC0415
+    from pathlib import Path as _P # noqa: PLC0415
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import QSettings # noqa: PLC0415
+    from PySide6.QtGui import QKeySequence # noqa: PLC0415
+    from PySide6.QtWidgets import QApplication, QLineEdit # noqa: PLC0415
+
+    import shell as shell_mod # noqa: PLC0415
+    from stylekit_qt import THEMES # noqa: PLC0415
+
+    QApplication.instance() or QApplication([])
+
+    ROOT = _P(__file__).resolve().parent.parent
+    WEB = (ROOT / "agent" / "console_html.py").read_text(encoding="utf-8")
+
+    # ① web 真值：6 处 keydown 逐条在册（口径变了 Qt 对齐要跟着改）
+    ck("g18 web 真值：6 处 keydown 齐备（2 通用 + 2 行内 + 2 不适用）",
+       all(s in WEB for s in (
+           "$('customGroup').addEventListener('keydown'",        # :2666 行内
+           "$('memSearch').addEventListener('keydown'",          # :7031 行内
+           "box.addEventListener('keydown'",                     # :7122 Esc/Enter
+           "document.addEventListener('keydown', (e)=>{",        # :7151 `/`
+           "window.chrome.webview.postMessage('pm-esc-exit-fullscreen')",  # :3052
+           "if(on && (ev.key === 'Escape' || ev.keyCode === 27)) stop();",  # :3036
+       )),
+       "web keydown 结构变了则 Qt 分类要重估")
+    ck("g18 web `/` 快捷键带输入态守卫（tag input/textarea/select/contentEditable）",
+       "if(tag === 'input' || tag === 'textarea' || tag === 'select'" in WEB,
+       "Qt _focus_find 的「不抢输入态」正是抄这条")
+    ck("g18 web 折叠记忆键名 navGrpClosed（localStorage）",
+       "const LSKEY = 'navGrpClosed';" in WEB and "localStorage.setItem(LSKEY" in WEB,
+       "Qt 等价物 = QSettings 键 nav_grp_closed")
+
+    # ② Qt 侧 QShortcut 齐备且序列正确
+    shell = shell_mod.Shell(THEMES["whale"])
+    keep = [shell]
+    # offscreen 下必须 show()：否则 isVisible() 全 False、焦点也不生效
+    shell.show()
+    QApplication.processEvents()
+    QSettings("WXAgent", "persona-morph-ui").remove("nav_grp_closed")
+    ck("g18 Qt 注册了 `/` 与 Esc 两条 QShortcut",
+       getattr(shell, "_sc_find", None) is not None and getattr(shell, "_sc_esc", None) is not None,
+       "")
+    ck("g18 `/` 键序列 == QKeySequence('/')",
+       shell._sc_find.key().toString() == QKeySequence("/").toString(),
+       shell._sc_find.key().toString())
+    ck("g18 `/` 作用于窗口（WindowShortcut，非全局抢系统）",
+       str(shell._sc_find.context()).endswith("WindowShortcut"),
+       str(shell._sc_find.context()))
+
+    # ③ `/` 聚焦：空态下焦到搜索框并全选
+    shell.find.clear()
+    shell.stack.setFocus()  # 非输入控件
+    QApplication.processEvents()
+    shell._focus_find()
+    QApplication.processEvents()
+    ck("g18 非输入态按 `/` → 搜索框获焦",
+       QApplication.focusWidget() is shell.find, str(QApplication.focusWidget()))
+
+    # ④ `/` 不抢输入态：焦点在某 QLineEdit 上时不改变焦点（web 同口径）
+    probe = QLineEdit(shell)
+    probe.show()
+    keep.append(probe)
+    probe.setText("abc")
+    probe.setFocus()
+    QApplication.processEvents()
+    before = QApplication.focusWidget()
+    shell._focus_find()
+    QApplication.processEvents()
+    ck("g18 输入态按 `/` → 焦点不被抢（web :7155 同口径）",
+       QApplication.focusWidget() is before is probe, str(QApplication.focusWidget()))
+
+    # ⑤ Esc：有内容 → 清空并失焦；无内容 → 不动
+    shell.find.setText("记忆")
+    shell.find.setFocus()
+    QApplication.processEvents()
+    shell._find_escape()
+    QApplication.processEvents()
+    ck("g18 Esc 有内容 → 清空", shell.find.text() == "", repr(shell.find.text()))
+    ck("g18 Esc 有内容 → 失焦",
+       QApplication.focusWidget() is not shell.find, str(QApplication.focusWidget()))
+    shell.find.clear()
+    shell.find.setFocus()
+    QApplication.processEvents()
+    fw_before = QApplication.focusWidget()
+    shell._find_escape()
+    QApplication.processEvents()
+    ck("g18 Esc 无内容 → 不动（让弹窗自接）",
+       QApplication.focusWidget() is fw_before, str(QApplication.focusWidget()))
+
+    # ⑥ navFind Enter：跳到首个可见项（web :7124 点第一个候选 <a>）
+    shell.find.setText("记忆")
+    shell._on_find("记忆")
+    QApplication.processEvents()
+    first_vis = next(((s, l) for it, _g, s, l in shell.items if it.isVisible()), None)
+    ck("g18 搜索「记忆」筛出可见项", first_vis is not None, str(first_vis))
+    got = {"sec": None, "label": None}
+    _orig_go = shell._go
+    shell._go = lambda sec, label: got.update(sec=sec, label=label)  # type: ignore[method-assign]
+    try:
+        shell._find_enter()
+    finally:
+        shell._go = _orig_go  # type: ignore[method-assign]
+    ck("g18 navFind Enter → 跳首个可见项",
+       got["sec"] == (first_vis[0] if first_vis else None) and got["sec"] is not None,
+       "got=%r first=%r" % (got, first_vis))
+    # 空搜索词时 Enter 不跳（web 只在有候选时 click）
+    shell.find.clear()
+    shell._on_find("")
+    got["sec"] = None
+    got["label"] = None
+    shell._go = lambda sec, label: got.update(sec=sec, label=label)  # type: ignore[method-assign]
+    try:
+        shell._find_enter()
+    finally:
+        shell._go = _orig_go  # type: ignore[method-assign]
+    ck("g18 navFind 空词 Enter → 不跳（无候选）", got["sec"] is None, str(got))
+
+    # ⑦ 折叠跨会话记忆：toggle → 写 QSettings；新建实例 → 恢复折叠态
+    grps = shell._groups()
+    ck("g18 侧栏存在多个导航分组", len(grps) >= 2, str(len(grps)))
+    title0 = grps[0].title
+    grps[1].toggle()  # 折叠第 2 组 → 触发 toggled → 写 QSettings
+    QApplication.processEvents()
+    saved = QSettings("WXAgent", "persona-morph-ui").value("nav_grp_closed", [], type=list) or []
+    ck("g18 折叠分组 → QSettings 记下被折叠组标题",
+       grps[1].title in [str(x) for x in saved], str(saved))
+    ck("g18 只记被折叠的（未折叠组不入册）", title0 not in [str(x) for x in saved], str(saved))
+
+    shell2 = shell_mod.Shell(THEMES["whale"])
+    shell2.show()
+    QApplication.processEvents()
+    keep.append(shell2)
+    g2 = {g.title: g for g in shell2._groups()}
+    ck("g18 新实例恢复折叠态（跨会话记忆生效）",
+       g2[grps[1].title].collapsed,
+       "collapsed=%s" % g2[grps[1].title].collapsed)
+    ck("g18 未折叠组在新实例中仍展开",
+       not g2[title0].collapsed, "collapsed=%s" % g2[title0].collapsed)
+
+    # ⑧ 清场：恢复设置，避免污染其他测试的初始折叠态
+    QSettings("WXAgent", "persona-morph-ui").remove("nav_grp_closed")
+    keep.clear()
+
+
 def main() -> int:
     for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
                t_visual, t_badges, t_status_chain, t_bot_controls, t_window_chrome, t_dpi_motion,
                t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch, t_bootstrap32, t_ocr9,
                t_c10, t_c13, t_hotfix1, t_hotfix2, t_catmgr, t_medialocal, t_commfb,
                t_veradv, t_g5, t_g6, t_g7, t_g8, t_g9, t_g10, t_g11, t_g12, t_g13, t_g14,
-               t_g15, t_g16, t_g17):
+               t_g15, t_g16, t_g17, t_g18):
         try:
             fn()
         except Exception as e: # noqa: BLE001
