@@ -705,23 +705,32 @@ def send(wechat, chat_id: str, text: str, cfg=None, timeout: float = 60.0) -> tu
     rb = c.get("record_btn") or [0.878, 0.943]
     # ⓿ 会话闸：录音只会进**当前打开**的会话 ⇒ 目标不对就先投递切过去，
     #   而投递切会话本来就有 OCR 确认（`switch_chat_posted`），成本很低。
+    #   ⭐ audit-r4 D4 收口：本函数是**独立入口**（tools.py 变声工具直调，不经过
+    #      已包事务的 send_* 入口）⇒ 会话闸段自带事务：进门换 token 作废上一操作的
+    #      正面证据（否则 ≤4s 兜底窗内跨操作复用——用户刚在别处操作过，这里可能吃到
+    #      旧结论直接开录），检查+切换共用同一事务，出门（含早退返回）作废。
+    #      `switch_chat_posted` 自带的事务在此嵌套——只多清一次缓存，无错误复用。
+    wechat._idn_txn_begin()
     try:
-        name = ""
         try:
-            name = wechat.display_name(chat_id) or chat_id
-        except Exception:
-            name = chat_id
-        okc, whyc = wechat.chat_is_open(chat_id, gui=gui, name=name)
-    except Exception as e:
-        okc, whyc = False, "会话检查不可用：%s" % str(e)[:50]
-    if not okc:
-        try:
-            oks, whys = wechat.switch_chat_posted(chat_id, gui=gui, name=name)
+            name = ""
+            try:
+                name = wechat.display_name(chat_id) or chat_id
+            except Exception:
+                name = chat_id
+            okc, whyc = wechat.chat_is_open(chat_id, gui=gui, name=name)
         except Exception as e:
-            oks, whys = False, "切会话异常：%s" % str(e)[:60]
-        if not oks:
-            return False, ("当前打开的会话不是目标会话，切不过去 ⇒ **不发语音条**"
-                           "（发错人不可逆；%s）" % str(whys)[:80]), info or {}
+            okc, whyc = False, "会话检查不可用：%s" % str(e)[:50]
+        if not okc:
+            try:
+                oks, whys = wechat.switch_chat_posted(chat_id, gui=gui, name=name)
+            except Exception as e:
+                oks, whys = False, "切会话异常：%s" % str(e)[:60]
+            if not oks:
+                return False, ("当前打开的会话不是目标会话，切不过去 ⇒ **不发语音条**"
+                               "（发错人不可逆；%s）" % str(whys)[:80]), info or {}
+    finally:
+        wechat._idn_txn_end()
     before = _latest_voice_seq(wechat, chat_id)
     base = peak = 0
     x_used = None

@@ -3826,7 +3826,10 @@ class WeChatAdapter:
           · 群表 `_groups`（来自微信库群列表——**全量群**，不只监听群）；
           · 联系人昵称表 `_nick_map`；
           · 监听中的会话（`_monitored_chat_ids()` → `display_name`，自带 60s 缓存——
-            机器人真正会在其中切换的集合，竞争名几乎必出自这里）。
+            机器人真正会在其中切换的集合，竞争名几乎必出自这里）；
+          · 滚动「见过的会话名」`_seen_names`（audit-r4 D1 残余补法：用户**手动**打开
+            一个我们从没见过的会话 / 联系人表读不到时的私聊——三张表都答不出名字，
+            但它的行一定在会话列表里出现过且当时可读，读到就记）。
         消息档案 / 记忆库的枚举**不并入**：档案键是 wxid 不是名字，展示名仍要回查上面
         两张表 ⇒ 并入只添成本不添名字（实测取舍，如实记账）。
 
@@ -3855,7 +3858,44 @@ class WeChatAdapter:
                     names.add(n) # 纯 wxid 兜底名当不了 OCR 竞争者，不并
         except Exception:
             pass
+        try:
+            for n in (getattr(self, "_seen_names", None) or {}):
+                n = str(n or "").strip()
+                if n:
+                    names.add(n)
+        except Exception:
+            pass
         return sorted(names)
+
+    _SEEN_NAMES_CAP = 64
+
+    def _seen_names_add(self, names) -> None:
+        """滚动「见过的会话名」集（audit-r4 D1 残余补法，零 OCR 成本）。
+
+        为什么要有：模糊档候选集的三张表（群表/昵称表/监听会话）都答不出名字时，
+        真实竞争会话依旧缺席 ⇒ 仍会判「唯一接近」。而竞争会话既然被打开着，它的行
+        一定在会话列表里出现过且当时可读 ⇒ **每次从 `session_rows()` 读到行名就记下**，
+        下次起它就在候选集里了。
+
+        安全方向：候选集只做**唯一性否决**，只会增加「歧义 ⇒ 不发」——陈旧名/OCR 误读
+        名混进来最坏是**漏发**（宁漏勿错），不会把"该发"误判成"发别的"。误读变体挤占
+        容量由上限滚动淘汰兜底（先进先出；时间戳留着，将来要做 TTL 淘汰直接可用）。
+        """
+        try:
+            seen = getattr(self, "_seen_names", None)
+            if not isinstance(seen, dict):
+                seen = {}
+                self._seen_names = seen
+            now = time.time()
+            for n in (names or []):
+                n = str(n or "").strip()
+                if n:
+                    if n not in seen: # 重见只刷时间戳，不挪插入位（淘汰序确定，测试可断言）
+                        seen[n] = now
+            while len(seen) > self._SEEN_NAMES_CAP:
+                del seen[next(iter(seen))] # 最先插入的先出
+        except Exception:
+            pass
 
 
     def chat_is_open(self, chat_id: str, gui=None, name: str = None, allow_weak: bool = False):
@@ -3928,6 +3968,7 @@ class WeChatAdapter:
                 #   必须**可见行 ∪ DB 全量已知名**（读内存映射，零 OCR 成本）。
                 _vis = ([str(r.get("name")) for r in _co3.session_rows(_im5)
                          if r.get("name")] if _im5 is not None else [])
+                self._seen_names_add(_vis) # D1 残余：读到的行名记入滚动集，下次起进候选集
                 _cands = list(dict.fromkeys(_vis + self._known_chat_names()))
                 if _cands and _co3.matches_fuzzy(_src3, want, _cands):
                     return self._idn_cache_put(_ck, (
@@ -5561,6 +5602,7 @@ class WeChatAdapter:
             # IsIconic=False"——拒发是早退，以前不走 `_restore_fg_until` ⇒ 放回被漏掉）
             _minimize_back_if_needed("投递文本链收尾")
 
+    @_idn_txn_scope
     def send_image_posted(self, chat_id: str, local_path: str, wait_s: float = 60.0):
         """**投递发图**（L5）：剪贴板放图（CF_DIB）→ 投递 **Ctrl+V 组合键给渲染子窗** → 投递点「发送」→ **DB 回读认图片**。
 
@@ -6454,6 +6496,7 @@ class WeChatAdapter:
                     #   只用可见行时，竞争名恰好是 OCR 读不准的绿底行 ⇒ 歧义检不出来。
                     _vis = ([str(r.get("name")) for r in _co.session_rows(_im)
                              if r.get("name")] if _im is not None else [])
+                    self._seen_names_add(_vis) # D1 残余：同 ③′，读到即记
                     _cands = list(dict.fromkeys(_vis + self._known_chat_names()))
                     if _cands and _co.matches_fuzzy(hdr, nm, _cands):
                         return True, ("候选集模糊匹配：标题带 OCR=%r 与目标 %r 唯一接近"

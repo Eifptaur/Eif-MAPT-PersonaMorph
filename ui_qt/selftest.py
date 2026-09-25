@@ -6815,6 +6815,52 @@ def t_ocr_fuzzy() -> None:
     except Exception as e: # noqa: BLE001
         ck("_known_chat_names 单元口径不抛异常", False, "%s: %s" % (type(e).__name__, str(e)[:60]))
 
+    # ── ④″ 滚动「见过的会话名」（audit-r4 D1 残余）：三表答不出的竞争者，读到过就该拦得住 ──
+    try:
+        w3 = _WA.__new__(_WA)
+        w3._groups = []
+        w3._nick_map = {}
+        w3._monitored_chat_ids = lambda: []
+        w3._seen_names_add(["工作群C", "", "工作群B"])
+        _kn3 = set(w3._known_chat_names())
+        ck("_seen_names_add：读到的行名进候选集（三表全空也并入）",
+           {"工作群C", "工作群B"} <= _kn3, "got=%s" % sorted(_kn3))
+        for _i in range(70):
+            w3._seen_names_add(["填充%03d" % _i])
+        ck("_seen_names_add：上限 64 条先进先出淘汰（重见不挪位，淘汰序确定）",
+           len(w3._seen_names) == 64 and "工作群C" not in w3._seen_names
+           and "填充000" not in w3._seen_names and "填充069" in w3._seen_names,
+           "n=%d" % len(w3._seen_names))
+        # 场景 F：三表全空 + 竞争者只在 seen 集 ⇒ ③′ 走真 _known_chat_names 仍判否
+        w4 = _WA.__new__(_WA)
+        w4._gui = None
+        w4._idn_cache = None
+        w4._idn_txn = 0
+        w4._group_by_wxid = {}
+        w4._get_gui = lambda: None
+        w4._groups = []
+        w4._nick_map = {}
+        w4._monitored_chat_ids = lambda: []
+        w4.display_name = lambda ck: ""
+        w4._active_row_time_ok = lambda chat_id, gui=None: (False, "桩：时间档不参与")
+        w4._seen_names_add(["工作群C"])
+        w4.current_chat_name = lambda gui=None: ("工作群C", "桩：读到未知会话名")
+        _orig_cb2 = _co.capture_best
+        _co.capture_best = lambda *a, **k: _PImD.new("RGB", (80, 40), (255, 255, 255))
+        _orig_srows2 = _co.session_rows
+        _co.session_rows = lambda img: [{"name": n} for n in ["张三丰"]]
+        _chdr.check = lambda *a, **k: {"status": "no"}
+        w4._idn_txn_begin()
+        ok6, _ = w4.chat_is_open("group:x@chatroom", name="工作群A")
+        ck("chat_is_open：三表全空 + 竞争者只在 seen 集 ⇒ 真 _known_chat_names 并入后歧义判否（D1 残余收口）",
+           ok6 is False, "ok=%s" % ok6)
+    except Exception as e: # noqa: BLE001
+        ck("seen 集单元与场景 F 不抛异常", False, "%s: %s" % (type(e).__name__, str(e)[:60]))
+    finally:
+        _co.capture_best = _orig_cb2 if "_orig_cb2" in dir() else _co.capture_best
+        _co.session_rows = _orig_srows2 if "_orig_srows2" in dir() else _co.session_rows
+        _chdr.check = _orig_check # ④″ 场景 F 又动了它，离场还原（防泄漏进 ⑤/⑥）
+
     # ── ⑤ C 步：CLAHE 增强只在主管线读空后补读（桩 recognize_dual 验编排）──
     from PIL import Image as _PImage # noqa: PLC0415
 
@@ -6910,6 +6956,47 @@ def t_audit_r3() -> None:
     _miss = [m for m in _need if not getattr(getattr(_WA3, m, None), "_idn_scoped", False)]
     ck("D4 接线：8 个非 send_text 操作入口均已包事务（_idn_scoped 标记齐全）",
        not _miss, "缺=%s" % _miss)
+
+    # D4 覆盖面（audit-r4）：AST 全量枚举 chat_is_open 调用点，逐一核事务覆盖——
+    # 覆盖判据：方法级祖先链上任一函数 ①是 send_text（显式事务）②带 @_idn_txn_scope
+    # ③函数体内显式调 _idn_txn_begin（voice_strip 式独立入口）。新调用点漏包 ⇒ 本条失败。
+    import ast as _ast # noqa: PLC0415
+    _root = Path(__file__).resolve().parent.parent
+    _uncov = []
+    for _rel in ("agent/wechat.py", "agent/voice_strip.py"):
+        _tree = _ast.parse((_root / _rel).read_text(encoding="utf-8"))
+        _parent = {}
+        for _n in _ast.walk(_tree):
+            for _c in _ast.iter_child_nodes(_n):
+                _parent[_c] = _n
+
+        def _chain(n):
+            out = []
+            while n in _parent:
+                n = _parent[n]
+                if isinstance(n, _ast.FunctionDef):
+                    out.append(n)
+            return out
+
+        def _has_explicit_begin(fn):
+            for _x in _ast.walk(fn):
+                if isinstance(_x, _ast.Call) and isinstance(_x.func, _ast.Attribute) \
+                        and _x.func.attr == "_idn_txn_begin":
+                    return True
+            return False
+
+        for _n in _ast.walk(_tree):
+            if isinstance(_n, _ast.Call) and isinstance(_n.func, _ast.Attribute) \
+                    and _n.func.attr == "chat_is_open":
+                _fns = _chain(_n)
+                _cov = any(f.name == "send_text"
+                           or any(getattr(d, "id", "") == "_idn_txn_scope" for d in f.decorator_list)
+                           or _has_explicit_begin(f)
+                           for f in _fns)
+                if not _cov:
+                    _uncov.append("%s:%d(%s)" % (_rel, _n.lineno, " < ".join(f.name for f in _fns[:2])))
+    ck("D4 覆盖面：AST 全量枚举 chat_is_open 调用点（wechat+voice_strip），全部包事务",
+       not _uncov, "未覆盖=%s" % _uncov)
 
     # ── D3 自愈三分支 ──
     _td = tempfile.mkdtemp(prefix="st_sh_")
