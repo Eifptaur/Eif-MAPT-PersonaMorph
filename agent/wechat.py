@@ -3972,33 +3972,11 @@ class WeChatAdapter:
             _src3 = got or _tt
             if _src3:
                 _im5 = _co3.capture_best(gui=gui or self._get_gui(), frames=2)
-                # ⛔ D1（audit-r3）：候选集不许只用**可见行**——"当前打开的那一行"恰是
-                #   白字绿底、OCR 最读不准的一行 ⇒ 竞争名恰好读不到时歧义检不出来
-                #   （实测：屏幕实为「工作群B」、目标「工作群A」、B 行没读出来 ⇒ 误判 True）。
-                #   必须**可见行 ∪ DB 全量已知名**（读内存映射，零 OCR 成本）。
-                # ⛔ audit-r6：**当前高亮行自己的读数不进候选集**——判据 a 与它同源
-                #   （绿底行/标题带都是当前行的读数），候选里再有它 ⇒「a≈no」必判歧义，
-                #   模糊档对"点对了、错一字"的核心场景自否决（r5 的 _curr_seen 同理，
-                #   审查者端到端实测证伪已撤）。设计注释一直写「其余」，此处把排除补齐
-                #   （绿底带 y 定位，±8px 容差；量不到绿底带则不排除——宁误拒勿误放不变）。
-                _vis = []
-                if _im5 is not None:
-                    try:
-                        _bs5 = _co3.green_bands(_im5, min_ratio=0.30, min_h=28)
-                        _b5 = _bs5[0] if _bs5 else None
-                    except Exception:
-                        _b5 = None
-                    for _r in _co3.session_rows(_im5):
-                        _nm5 = str(_r.get("name") or "").strip()
-                        if not _nm5:
-                            continue
-                        if _b5 is not None:
-                            try:
-                                if (_b5["y0"] - 8) <= int(_r.get("y_abs", -10 ** 9)) <= (_b5["y1"] + 8):
-                                    continue # 当前行自己：不进候选集
-                            except Exception:
-                                pass
-                        _vis.append(_nm5)
+                # ⛔ D1（audit-r3）+ audit-r6/r7：候选行排除**当前高亮行**自己的读数
+                #   （与判据 a 同源 ⇒「a≈no」自否决），绿底带量不到时按名字相似度兜底
+                #   剔除——细节见 chat_ocr.candidate_rows_excluding_active（两处共用，
+                #   r7 审查者"只改一处"建议落地时收敛）。候选集仍须并 DB 全量已知名。
+                _vis = _co3.candidate_rows_excluding_active(_im5, _src3)
                 self._seen_names_add(_vis) # D1 残余：读到的（非当前行）行名记入滚动集
                 _cands = list(dict.fromkeys(_vis + self._known_chat_names()))
                 if _cands and _co3.matches_fuzzy(_src3, want, _cands, db_others=_db_names):
@@ -6524,27 +6502,10 @@ class WeChatAdapter:
                 # 只认「候选集唯一接近」，两候选都接近 ⇒ 歧义不认（宁漏发不误发）。
                 try:
                     _im = _co.capture_best(gui=gui or self._get_gui(), frames=2)
-                    # ⛔ D1（同 chat_is_open ③′）：候选集 = 可见行 ∪ DB 全量已知名——
-                    #   只用可见行时，竞争名恰好是 OCR 读不准的绿底行 ⇒ 歧义检不出来。
-                    # ⛔ audit-r6：当前高亮行自己的读数同样不进候选集（与判据同源 ⇒ 自否决）。
-                    _vis = []
-                    if _im is not None:
-                        try:
-                            _bs = _co.green_bands(_im, min_ratio=0.30, min_h=28)
-                            _b0 = _bs[0] if _bs else None
-                        except Exception:
-                            _b0 = None
-                        for _r in _co.session_rows(_im):
-                            _nm = str(_r.get("name") or "").strip()
-                            if not _nm:
-                                continue
-                            if _b0 is not None:
-                                try:
-                                    if (_b0["y0"] - 8) <= int(_r.get("y_abs", -10 ** 9)) <= (_b0["y1"] + 8):
-                                        continue # 当前行自己：不进候选集
-                                except Exception:
-                                    pass
-                            _vis.append(_nm)
+                    # ⛔ D1（同 chat_is_open ③′）+ audit-r6/r7：候选行排除当前行自己的
+                    #   读数（同源自否决），并 DB 全量已知名——共用助手见
+                    #   chat_ocr.candidate_rows_excluding_active。
+                    _vis = _co.candidate_rows_excluding_active(_im, hdr)
                     self._seen_names_add(_vis) # D1 残余：同 ③′，读到即记
                     _cands = list(dict.fromkeys(_vis + self._known_chat_names()))
                     if _cands and _co.matches_fuzzy(hdr, nm, _cands, db_others=_dbn):

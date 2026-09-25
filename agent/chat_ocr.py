@@ -1582,6 +1582,64 @@ def _is_green(r: int, g: int, b: int) -> bool:
         return False
 
 
+def candidate_rows_excluding_active(img, a: str = "", max_fallback_dist: int = 2) -> list:
+    """会话行候选名（排除**当前高亮行**自己的读数）——③′/_screen_only_identity 共用。
+
+    为什么排除：判据 a（绿底行/标题带读数）与当前行**同源**——候选里再有它 ⇒
+    「a≈no」必判歧义 ⇒ 模糊档对"点对了、错一字"的核心场景自否决（audit-r6，
+    审查者端到端证伪；设计注释写「其余可读名字」，本函数把排除补齐）。
+
+    排除依据（按优先级）：
+      ① 像素法：`green_bands` y 带（±8px）——当前行白字绿底，像素信号最可靠；
+      ② 兜底（audit-r7 审查者建议）：量不到绿底带时，用 a 按**名字相似度**显式剔除
+        最像当前行的候选（编辑距离 ≤ `max_fallback_dist` 才剔，防误删真竞争者）——
+        减少"点对了但绿底带量不到"的误拒。
+    残余（如实记账）：绿底带量不到 + a 与从未见过的竞争名距离 ≤2 ⇒ 该竞争者唯一
+    痕迹被剔 ⇒ 可能误放（fail-closed 弱化点，窄条件，登记回执第十九节）。
+    返回行名列表（剔空）。
+    """
+    try:
+        rows = session_rows(img) if img is not None else []
+    except Exception:
+        return []
+    out = []
+    band = None
+    try:
+        bs = green_bands(img, min_ratio=0.30, min_h=28) if img is not None else []
+        band = bs[0] if bs else None
+    except Exception:
+        band = None
+    a = str(a or "").strip()
+    best, best_d = None, None
+    for r in rows:
+        nm = str(r.get("name") or "").strip()
+        if not nm:
+            continue
+        if band is not None:
+            try:
+                if (band["y0"] - 8) <= int(r.get("y_abs", -10 ** 9)) <= (band["y1"] + 8):
+                    continue # ① 当前行自己：不进候选集
+            except Exception:
+                pass
+            out.append(nm)
+            continue
+        # ② 兜底：量不到绿底带 ⇒ 记下与 a 最像的候选（距离 ≤ 上限才剔）
+        out.append(nm)
+        if a:
+            try:
+                for k in range(0, max_fallback_dist + 1):
+                    if _edit_dist_le(a, nm, k):
+                        if best_d is None or k < best_d:
+                            best, best_d = nm, k
+                        break
+            except Exception:
+                pass
+    if band is None and best is not None:
+        if best in out:
+            out.remove(best) # ② 只剔一个：最像 a 的那个
+    return out
+
+
 def green_row_ratio(img, y_abs: int, half: int = 6) -> float:
     """**不含头像**的那一段里，某一行 y 的绿底占比。
 

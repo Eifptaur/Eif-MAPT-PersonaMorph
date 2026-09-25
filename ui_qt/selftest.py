@@ -6865,12 +6865,13 @@ def t_ocr_fuzzy() -> None:
            ok7 is True and "候选集模糊" in str(why7), "ok=%s why=%s" % (ok7, str(why7)[:50]))
         ck("chat_is_open：当前行读数不进滚动 seen 集（同源不自毒）",
            "演示祥" not in (w5._seen_names or {}), "seen=%s" % list((w5._seen_names or {}).keys())[:4])
-        # 反差组：绿底带量不到（排除失效）⇒ 同源读数混入候选 ⇒ 自否决（缺陷形态存证）
+        # r7 兜底（审查者"只改一处"建议）：绿底带量不到 ⇒ 名字相似度剔除最像当前行的
+        # 候选（编辑距离 ≤2 才剔）⇒ 不再自否决（r6 时的反差组缺陷形态由此收口）
         _co.green_bands = lambda *a, **k: []
         w5._idn_txn_begin()
-        ok8, _ = w5.chat_is_open("group:x@chatroom", name="演示群")
-        ck("chat_is_open：反差组——绿底带量不到 ⇒ 当前行读数混入候选 ⇒ 自否决（缺陷形态存证）",
-           ok8 is False, "ok=%s" % ok8)
+        ok8, why8 = w5.chat_is_open("group:x@chatroom", name="演示群")
+        ck("chat_is_open：绿底带量不到 ⇒ 名字相似度兜底剔除当前行读数 ⇒ 仍放行（r7 建议落地）",
+           ok8 is True and "候选集模糊" in str(why8), "ok=%s why=%s" % (ok8, str(why8)[:50]))
         # 场景 F：三表全空 + 竞争者只在 seen 集 ⇒ ③′ 走真 _known_chat_names 仍判否
         w4 = _WA.__new__(_WA)
         w4._gui = None
@@ -6901,6 +6902,27 @@ def t_ocr_fuzzy() -> None:
         _co.session_rows = _orig_srows2 if "_orig_srows2" in dir() else _co.session_rows
         _co.green_bands = _orig_gb if "_orig_gb" in dir() else _co.green_bands
         _chdr.check = _orig_check # ④″ 场景 F/G 又动了它，离场还原（防泄漏进 ⑤/⑥）
+
+    # ── ④″′ candidate_rows_excluding_active 单元（audit-r6 排除 + r7 兜底共用助手）──
+    from agent.chat_ocr import candidate_rows_excluding_active as _crea # noqa: PLC0415
+    _imG = _PImG.new("RGB", (80, 40), (255, 255, 255))
+    _orig_gb2 = _co.green_bands
+    _orig_sr2 = _co.session_rows
+    try:
+        _co.session_rows = lambda img: [
+            {"name": "演示祥", "y_abs": 100}, {"name": "张三丰", "y_abs": 220}]
+        _co.green_bands = lambda *a, **k: [{"y0": 90, "y1": 130, "y_abs": 100, "score": 0.9}]
+        ck("candidate_rows：像素法优先——绿底带 y 定位排除当前行",
+           _crea(_imG, "演示祥") == ["张三丰"])
+        _co.green_bands = lambda *a, **k: []
+        ck("candidate_rows：绿底带量不到 ⇒ 名字相似度兜底剔最像者（距离≤2 才剔；a 远则不剔）",
+           _crea(_imG, "演示祥") == ["张三丰"]
+           and _crea(_imG, "完全不同名") == ["演示祥", "张三丰"])
+        ck("candidate_rows：a 为空 ⇒ 兜底不剔（无判据不猜）",
+           _crea(_imG, "") == ["演示祥", "张三丰"])
+    finally:
+        _co.session_rows = _orig_sr2
+        _co.green_bands = _orig_gb2
 
     # ── ④‴ D2（audit-r6 新发现）：归一化撞名 ⇒ 尾巴成判别特征；无撞名 ⇒ 装饰豁免保留 ──
     from agent.chat_ocr import norm_collides as _nc # noqa: PLC0415
