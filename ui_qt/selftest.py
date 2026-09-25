@@ -6825,12 +6825,24 @@ def t_ocr_fuzzy() -> None:
         _kn3 = set(w3._known_chat_names())
         ck("_seen_names_add：读到的行名进候选集（三表全空也并入）",
            {"工作群C", "工作群B"} <= _kn3, "got=%s" % sorted(_kn3))
-        for _i in range(70):
+        for _i in range(300):
             w3._seen_names_add(["填充%03d" % _i])
-        ck("_seen_names_add：上限 64 条先进先出淘汰（重见不挪位，淘汰序确定）",
-           len(w3._seen_names) == 64 and "工作群C" not in w3._seen_names
-           and "填充000" not in w3._seen_names and "填充069" in w3._seen_names,
+        ck("_seen_names_add：上限 256 条先进先出淘汰（重见不挪位，淘汰序确定；r5 加固 cap 64→256）",
+           len(w3._seen_names) == 256 and "工作群C" not in w3._seen_names
+           and "填充043" not in w3._seen_names and "填充044" in w3._seen_names
+           and "填充299" in w3._seen_names,
            "n=%d" % len(w3._seen_names))
+        # audit-r5 加固：「曾作为当前会话读数出现过的名字」→ 不淘汰小集合
+        w3._seen_curr_add("当前群甲")
+        w3._seen_curr_add("") # 空读数不记
+        w3._seen_curr_add("当前群乙")
+        _kn4 = set(w3._known_chat_names())
+        ck("_seen_curr_add：当前会话读数永久在册并进候选集（空读数不记）",
+           {"当前群甲", "当前群乙"} <= _kn4 and "" not in _kn4
+           and {"当前群甲", "当前群乙"} <= w3._curr_seen,
+           "got=%s" % sorted(_kn4)[:6])
+        ck("_seen_curr_add：不淘汰——独立于滚动集（滚动已满员淘汰，curr 仍在）",
+           "当前群甲" in w3._curr_seen and "当前群乙" in w3._curr_seen)
         # 场景 F：三表全空 + 竞争者只在 seen 集 ⇒ ③′ 走真 _known_chat_names 仍判否
         w4 = _WA.__new__(_WA)
         w4._gui = None
@@ -6957,46 +6969,66 @@ def t_audit_r3() -> None:
     ck("D4 接线：8 个非 send_text 操作入口均已包事务（_idn_scoped 标记齐全）",
        not _miss, "缺=%s" % _miss)
 
-    # D4 覆盖面（audit-r4）：AST 全量枚举 chat_is_open 调用点，逐一核事务覆盖——
-    # 覆盖判据：方法级祖先链上任一函数 ①是 send_text（显式事务）②带 @_idn_txn_scope
-    # ③函数体内显式调 _idn_txn_begin（voice_strip 式独立入口）。新调用点漏包 ⇒ 本条失败。
+    # D4 覆盖面（audit-r4，r5 按审查者建议升级为递归 glob）：AST 全量枚举 chat_is_open
+    # 调用点，逐一核事务覆盖——覆盖判据：方法级祖先链上任一函数 ①是 send_text（显式事务）
+    # ②带 @_idn_txn_scope ③函数体内显式调 _idn_txn_begin（voice_strip 式独立入口）。
+    # ⚠️ 已知不覆盖形态：**别名/getattr 间接调用**（如 `f = wc.chat_is_open; f(...)`）——
+    #     AST 只认 `X.chat_is_open(...)` 直接调用；新增此类形态须人工记账。
+    # agent/**/*.py 递归全扫 = 硬失败；scripts/ 与 ui_qt/ 也扫但**只提示不失败**
+    # （审查者 r5 建议：测试/脚本是夹具不是产品发送路径，出现真实调用时提示人工判断）。
     import ast as _ast # noqa: PLC0415
     _root = Path(__file__).resolve().parent.parent
-    _uncov = []
-    for _rel in ("agent/wechat.py", "agent/voice_strip.py"):
-        _tree = _ast.parse((_root / _rel).read_text(encoding="utf-8"))
-        _parent = {}
-        for _n in _ast.walk(_tree):
-            for _c in _ast.iter_child_nodes(_n):
-                _parent[_c] = _n
+    _uncov_agent, _uncov_other, _n_scanned = [], [], 0
 
-        def _chain(n):
-            out = []
-            while n in _parent:
-                n = _parent[n]
-                if isinstance(n, _ast.FunctionDef):
-                    out.append(n)
-            return out
+    def _has_explicit_begin(fn):
+        for _x in _ast.walk(fn):
+            if isinstance(_x, _ast.Call) and isinstance(_x.func, _ast.Attribute) \
+                    and _x.func.attr == "_idn_txn_begin":
+                return True
+            # getattr(X, "_idn_txn_begin", None) 兜底形态（voice_strip r5 起）：
+            # 方法名只是字符串常量，不再是 Attribute 调用——同样算显式事务
+            if isinstance(_x, _ast.Constant) and _x.value == "_idn_txn_begin":
+                return True
+        return False
 
-        def _has_explicit_begin(fn):
-            for _x in _ast.walk(fn):
-                if isinstance(_x, _ast.Call) and isinstance(_x.func, _ast.Attribute) \
-                        and _x.func.attr == "_idn_txn_begin":
-                    return True
-            return False
+    for _top, _hard in (("agent", True), ("scripts", False), ("ui_qt", False)):
+        for _p in sorted((_root / _top).rglob("*.py")):
+            try:
+                _tree = _ast.parse(_p.read_text(encoding="utf-8"))
+            except Exception: # noqa: BLE001
+                continue
+            _n_scanned += 1
+            _parent = {}
+            for _n in _ast.walk(_tree):
+                for _c in _ast.iter_child_nodes(_n):
+                    _parent[_c] = _n
 
-        for _n in _ast.walk(_tree):
-            if isinstance(_n, _ast.Call) and isinstance(_n.func, _ast.Attribute) \
-                    and _n.func.attr == "chat_is_open":
-                _fns = _chain(_n)
-                _cov = any(f.name == "send_text"
-                           or any(getattr(d, "id", "") == "_idn_txn_scope" for d in f.decorator_list)
-                           or _has_explicit_begin(f)
-                           for f in _fns)
-                if not _cov:
-                    _uncov.append("%s:%d(%s)" % (_rel, _n.lineno, " < ".join(f.name for f in _fns[:2])))
-    ck("D4 覆盖面：AST 全量枚举 chat_is_open 调用点（wechat+voice_strip），全部包事务",
-       not _uncov, "未覆盖=%s" % _uncov)
+            def _chain(n):
+                out = []
+                while n in _parent:
+                    n = _parent[n]
+                    if isinstance(n, _ast.FunctionDef):
+                        out.append(n)
+                return out
+
+            for _n in _ast.walk(_tree):
+                if isinstance(_n, _ast.Call) and isinstance(_n.func, _ast.Attribute) \
+                        and _n.func.attr == "chat_is_open":
+                    _fns = _chain(_n)
+                    _cov = any(f.name == "send_text"
+                               or any(getattr(d, "id", "") == "_idn_txn_scope" for d in f.decorator_list)
+                               or _has_explicit_begin(f)
+                               for f in _fns)
+                    if not _cov:
+                        _hit = "%s:%d(%s)" % (_p.relative_to(_root).as_posix(), _n.lineno,
+                                              " < ".join(f.name for f in _fns[:2]))
+                        (_uncov_agent if _hard else _uncov_other).append(_hit)
+    ck("D4 覆盖面：AST 递归扫 agent/**/*.py（%d 文件），chat_is_open 调用点全部包事务" % _n_scanned,
+       not _uncov_agent and _n_scanned >= 5,
+       "未覆盖=%s（另 scripts/ui_qt 提示项=%s）" % (_uncov_agent, _uncov_other))
+    import agent.voice_strip as _VS # noqa: PLC0415
+    ck("D4 接线：voice_strip.send 带显式事务标记（_idn_scoped）",
+       getattr(_VS.send, "_idn_scoped", False) is True)
 
     # ── D3 自愈三分支 ──
     _td = tempfile.mkdtemp(prefix="st_sh_")

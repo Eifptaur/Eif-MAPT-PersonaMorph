@@ -656,10 +656,21 @@ def _borrow_foreground(gui) -> int:
         return 0
 
 
+def _idn_scoped_mark(fn):
+    """audit-r5：给 `send` 打「已包会话身份事务」标记——与 wechat.py 装饰器的
+    `_idn_scoped` 同名同义（本函数是模块级函数、适配器是参数，不能用那边的装饰器；
+    标记供将来按标记清点接线时不含漏）。"""
+    fn._idn_scoped = True
+    return fn
+
+
+@_idn_scoped_mark
 def send(wechat, chat_id: str, text: str, cfg=None, timeout: float = 60.0) -> tuple:
     """发一条**真语音条**。⇒ (ok, 说明, info)
 
     流程：查三闸 → 合成 → 播进虚拟声卡（同时微信在录音）→ 点发送 → **只认 DB 回读 `type=语音`**。
+    契约（audit-r5）：`wechat` 若提供 `_idn_txn_begin/_idn_txn_end`（产品适配器必有），
+    会话闸段会包事务；缺省对象（测试桩）没有时**跳过事务不报错**（getattr 兜底）。
     """
     c = _cfg(cfg)
     if not c.get("enabled"):
@@ -710,7 +721,11 @@ def send(wechat, chat_id: str, text: str, cfg=None, timeout: float = 60.0) -> tu
     #      正面证据（否则 ≤4s 兜底窗内跨操作复用——用户刚在别处操作过，这里可能吃到
     #      旧结论直接开录），检查+切换共用同一事务，出门（含早退返回）作废。
     #      `switch_chat_posted` 自带的事务在此嵌套——只多清一次缓存，无错误复用。
-    wechat._idn_txn_begin()
+    #      audit-r5：getattr 兜底——测试桩适配器没有这对方法时跳过事务，不 AttributeError。
+    _txn_begin = getattr(wechat, "_idn_txn_begin", None)
+    _txn_end = getattr(wechat, "_idn_txn_end", None)
+    if _txn_begin:
+        _txn_begin()
     try:
         try:
             name = ""
@@ -730,7 +745,8 @@ def send(wechat, chat_id: str, text: str, cfg=None, timeout: float = 60.0) -> tu
                 return False, ("当前打开的会话不是目标会话，切不过去 ⇒ **不发语音条**"
                                "（发错人不可逆；%s）" % str(whys)[:80]), info or {}
     finally:
-        wechat._idn_txn_end()
+        if _txn_end:
+            _txn_end()
     before = _latest_voice_seq(wechat, chat_id)
     base = peak = 0
     x_used = None

@@ -3829,7 +3829,10 @@ class WeChatAdapter:
             机器人真正会在其中切换的集合，竞争名几乎必出自这里）；
           · 滚动「见过的会话名」`_seen_names`（audit-r4 D1 残余补法：用户**手动**打开
             一个我们从没见过的会话 / 联系人表读不到时的私聊——三张表都答不出名字，
-            但它的行一定在会话列表里出现过且当时可读，读到就记）。
+            但它的行一定在会话列表里出现过且当时可读，读到就记）；
+          · 「曾作为当前会话读数出现过的名字」`_curr_seen`（audit-r5 加固：不淘汰的
+            小集合——残余场景里的竞争者正是"当前打开着的那个会话"，绿底行/标题带
+            读到过一次就永久在册；上限假设＝不同会话名自然有界）。
         消息档案 / 记忆库的枚举**不并入**：档案键是 wxid 不是名字，展示名仍要回查上面
         两张表 ⇒ 并入只添成本不添名字（实测取舍，如实记账）。
 
@@ -3865,9 +3868,16 @@ class WeChatAdapter:
                     names.add(n)
         except Exception:
             pass
+        try:
+            for n in (getattr(self, "_curr_seen", None) or ()):
+                n = str(n or "").strip()
+                if n:
+                    names.add(n)
+        except Exception:
+            pass
         return sorted(names)
 
-    _SEEN_NAMES_CAP = 64
+    _SEEN_NAMES_CAP = 256
 
     def _seen_names_add(self, names) -> None:
         """滚动「见过的会话名」集（audit-r4 D1 残余补法，零 OCR 成本）。
@@ -3897,6 +3907,27 @@ class WeChatAdapter:
         except Exception:
             pass
 
+    def _seen_curr_add(self, name) -> None:
+        """「曾作为当前会话读数出现过的名字」→ **不淘汰**的小集合（audit-r5 加固）。
+
+        为什么单独一个集合：滚动集（`_seen_names`）有容量淘汰，而残余场景里最要紧的
+        竞争者恰是"当前打开着的那个会话"——绿底行（`current_chat_name`）与标题带
+        （`header_text`）都是它的读数，读到过一次就该**永久在册**（审查者 r5：
+        那才是残余场景里的竞争者）。名字自然有界（不同会话数），故不设淘汰；
+        误读变体只会增加拒发（安全方向），与分析同 `_seen_names_add`。
+        """
+        try:
+            n = str(name or "").strip()
+            if not n:
+                return
+            cs = getattr(self, "_curr_seen", None)
+            if not isinstance(cs, set):
+                cs = set()
+                self._curr_seen = cs
+            cs.add(n)
+        except Exception:
+            pass
+
 
     def chat_is_open(self, chat_id: str, gui=None, name: str = None, allow_weak: bool = False):
         """只读：当前打开的会话是不是 chat_id。返回 (bool, 说明)。
@@ -3922,6 +3953,7 @@ class WeChatAdapter:
                 return _hit
         want = name or self.display_name(chat_id) or chat_id
         got, why = self.current_chat_name(gui=gui)
+        self._seen_curr_add(got) # D1 残余：绿底行读数＝当前会话的名字（哪怕误读），永久在册
         try:
             from . import chat_ocr as _co
             # ⛔ **授权档只许"完全相等"**（`matches` 是"互相包含"，
@@ -3945,6 +3977,7 @@ class WeChatAdapter:
                               % (_tt[:16], want))))
         except Exception:
             pass
+        self._seen_curr_add(_tt) # D1 残余：标题带读数＝当前会话的脑门名，同样永久在册
         # ③ 高亮行时间 × DB（有区分力：那个时刻在会话列表里必须唯一）
         try:
             _ok3, _why3 = self._active_row_time_ok(chat_id, gui=gui)
