@@ -5827,13 +5827,186 @@ def t_g16() -> None:
         ck("g16 全不勾 → []（＝用总开关，非残留旧值）", names == ["群乙"], str(names))
 
 
+def t_g17() -> None:
+    """批7 第一组：首次引导向导（web onboarding :5427 的 Qt 等价）。
+
+    web 有一整套五步上手向导（选厂商/命名/勾群/恢复/体检），Qt 侧此前**完全缺失**
+    ⇒ 新用户拿不到「填 Key → 起名字 → 选群 → 开始」的路径。本组钉死：
+    ① 厂商清单/模型列表/Key 前缀运行时解析 web PROVIDERS（不复制）；
+    ② 五步各自的渲染与落盘（第 1 步 vendor→model→key，第 3 步群勾选，第 4/5 步）；
+    ③ 「已配置 Key 不打扰」的判定（对齐 web :5429-5432）。
+    """
+    import os # noqa: PLC0415
+    import re as _re # noqa: PLC0415
+    from pathlib import Path as _P # noqa: PLC0415
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QPlainTextEdit # noqa: PLC0415
+
+    import onboarding # noqa: PLC0415
+    import panels_custom # noqa: PLC0415
+    from stylekit_qt import THEMES # noqa: PLC0415
+
+    QApplication.instance() or QApplication([])
+    from PySide6.QtWidgets import QWidget # noqa: PLC0415
+
+    ROOT = _P(__file__).resolve().parent.parent
+    WEB = (ROOT / "agent" / "console_html.py").read_text(encoding="utf-8")
+
+    # ① web 真值：五步向导函数齐备 + 关键 id 在册
+    ck("g17 web 真值：onboarding() 与五步 id 齐备",
+       all(s in WEB for s in ("async function onboarding()", 'id="obBody"', 'id="obNext"',
+                              'id="obLater"', 'id="obProvider"', 'id="obModel"', 'id="obKey"',
+                              'id="obNick"', 'id="obResume"', 'id="obCheck"')),
+       "web 向导结构变了则 Qt 对齐口径要跟着改")
+
+    # ② 厂商清单解析 == web PROVIDERS 减去 custom（web :5439 明确 filter(k=>k!=='custom')）
+    provs = panels_custom._providers_from_web()
+    web_keys = set(_re.findall(r"^\s*(\w+):\{label:'", WEB, _re.M))
+    ck("g17 PROVIDERS 解析厂商数 == web（含 models 列表）",
+       set(provs) == web_keys and len(provs) == 16,
+       "web=%d qt=%d" % (len(web_keys), len(provs)))
+    ck("g17 每家都解析出 models（deepseek 11 / zhipu 20 / openrouter 14）",
+       len(provs.get("deepseek", {}).get("models", [])) == 11
+       and len(provs.get("zhipu", {}).get("models", [])) == 20
+       and len(provs.get("openrouter", {}).get("models", [])) == 14,
+       "deepseek=%d zhipu=%d openrouter=%d" % (
+           len(provs.get("deepseek", {}).get("models", [])),
+           len(provs.get("zhipu", {}).get("models", [])),
+           len(provs.get("openrouter", {}).get("models", []))))
+
+    # ③ Key 未配置判定（web :5429-5432 同口径）
+    ck("g17 Key 判定：空 / 占位 / 打码 / ****** → 未配置（要弹向导）",
+       all(onboarding._key_is_unconfigured(v)
+           for v in ("", "  ", "******", "sk-••••••", "在这里填你的key")),
+       "%s" % [(v, onboarding._key_is_unconfigured(v))
+               for v in ("", "******", "sk-••••••", "在这里填你的key")])
+    ck("g17 Key 判定：真实 Key → 已配置（不打扰）",
+       not onboarding._key_is_unconfigured("sk-1234567890abcdef"),
+       "%s" % onboarding._key_is_unconfigured("sk-1234567890abcdef"))
+
+    # ④ 向导构造：第 1 步厂商/模型/Key 控件就位（15 家，过滤 custom）
+    t = THEMES["whale"]
+    keep: list = []
+    shell = QWidget()
+    keep.append(shell)
+    w = onboarding._Wizard(t, shell)
+    keep.append(w)
+    ck("g17 第 1 步：厂商下拉 15 项（web 过滤掉 custom）",
+       isinstance(w.prov_w, QComboBox) and w.prov_w.count() == 15,
+       "count=%d" % w.prov_w.count())
+    ck("g17 第 1 步：切厂商联动模型列表（首项 deepseek → 11 模型）",
+       w.model_w.count() == 11 and w.model_w.itemData(0) == "deepseek-flash",
+       "n=%d first=%s" % (w.model_w.count(), w.model_w.itemData(0)))
+    ck("g17 第 1 步：Key 前缀提示随厂商（deepseek → 「sk-」）",
+       "sk-" in w.key_hint.text() and "DeepSeek" in w.key_hint.text(),
+       w.key_hint.text())
+    ck("g17 第 1 步：Key 输入框为密码框", w.key_w.echoMode() == w.key_w.EchoMode.Password,
+       str(w.key_w.echoMode()))
+
+    # ⑤ 第 1 步保存写回（api.api_key / api.model / api.base_url / provider_keys / provider 清空）
+    orig_wp = panels_custom.config_io.write_patch
+    orig_rp = panels_custom.config_io.read_path
+    captured: dict = {}
+    panels_custom.config_io.write_patch = lambda p: (captured.update(p), (True, "ok"))[1]
+    panels_custom.config_io.read_path = lambda *a, **k: ({} if a[0] == "api.provider_keys" else "")
+    try:
+        w.key_w.setText("sk-testsample")
+        w.step = 1
+        w._step1_save()
+    finally:
+        panels_custom.config_io.write_patch = orig_wp
+        panels_custom.config_io.read_path = orig_rp
+    ck("g17 第 1 步保存：写 api.api_key/api.model/api.base_url",
+       captured.get("api.api_key") == "sk-testsample"
+       and captured.get("api.model") == "deepseek-flash"
+       and captured.get("api.base_url") == "https://api.deepseek.com/v1",
+       str({k: captured.get(k) for k in ("api.api_key", "api.model", "api.base_url")}))
+    ck("g17 第 1 步保存：provider_keys 记该厂商 Key（web :5469）",
+       isinstance(captured.get("api.provider_keys"), dict)
+       and captured["api.provider_keys"].get("deepseek") == "sk-testsample",
+       str(captured.get("api.provider_keys")))
+    ck("g17 第 1 步保存：api.provider 清空（走顶层，web :5474）",
+       captured.get("api.provider") == "", repr(captured.get("api.provider")))
+    ck("g17 第 1 步保存后进入第 2 步", w.step == 2, "step=%d" % w.step)
+
+    # ⑥ 第 3 步群勾选写回 wechat.group_name_white_list（不勾则不写）
+    w._render_step3_groups([{"name": "群甲", "wxid": "wx1"}, {"name": "群乙", "wxid": "wx2"}])
+    ck("g17 第 3 步：按检测到的群逐群勾选（QCheckBox）",
+       len(w._group_cbs) == 2 and all(isinstance(c, QCheckBox) for c in w._group_cbs),
+       "n=%d" % len(w._group_cbs))
+    w._group_cbs[0].setChecked(True)
+    captured2: dict = {}
+    panels_custom.config_io.write_patch = lambda p: (captured2.update(p), (True, "ok"))[1]
+    try:
+        w.step = 3
+        w._step3_save()
+    finally:
+        panels_custom.config_io.write_patch = orig_wp
+    ck("g17 第 3 步保存：勾中群写 wechat.group_name_white_list",
+       captured2.get("wechat.group_name_white_list") == ["群甲"],
+       str(captured2.get("wechat.group_name_white_list")))
+    ck("g17 第 3 步保存后进入第 4 步", w.step == 4, "step=%d" % w.step)
+
+    # ⑦ 第 4/5 步渲染
+    w._render_step4()
+    ck("g17 第 4 步：恢复按钮 + 提示在场（开始工作）",
+       "恢复" in w.desc.text() and w.b_next.text() == "下一步",
+       w.desc.text()[:30])
+    w.step = 5
+    w._render_step5()
+    ck("g17 第 5 步：体检输出区 + 完成按钮",
+       isinstance(w.check_out, QPlainTextEdit) and w.b_next.text() == "完成",
+       w.b_next.text())
+
+    # ⑧ 已配置 Key → maybe_show 不弹（web :5429 同口径）
+    class _FakeDlg:
+        def __init__(self, *a, **k):
+            pass
+
+        def exec(self): # noqa: A003
+            return 0
+
+    orig_rp2 = onboarding.config_io.read_path
+    orig_wiz = onboarding._Wizard
+    opened = {"n": 0}
+
+    def _fake_wiz(*a, **k):
+        opened["n"] += 1
+        return _FakeDlg()
+
+    onboarding._ONBOARD_ONCE = False
+    onboarding.config_io.read_path = lambda *a, **k: "sk-real-configured-key"
+    onboarding._Wizard = _fake_wiz
+    try:
+        onboarding.maybe_show(t, shell)
+    finally:
+        onboarding.config_io.read_path = orig_rp2
+        onboarding._Wizard = orig_wiz
+    ck("g17 已配置真实 Key → 不弹向导（不打扰老用户）", opened["n"] == 0, str(opened))
+
+    # ⑨ 未配置 Key → 弹（且本进程只弹一次）
+    onboarding._ONBOARD_ONCE = False
+    onboarding.config_io.read_path = lambda *a, **k: ""
+    opened["n"] = 0
+    onboarding._Wizard = _fake_wiz
+    try:
+        onboarding.maybe_show(t, shell)
+    finally:
+        onboarding.config_io.read_path = orig_rp2
+        onboarding._Wizard = orig_wiz
+    ck("g17 未配置 Key → 弹向导（新用户进得来）", opened["n"] == 1, str(opened))
+    ck("g17 向导只弹一次（进程内 _ONBOARD_ONCE）", onboarding._ONBOARD_ONCE is True,
+       str(onboarding._ONBOARD_ONCE))
+
+
 def main() -> int:
     for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
                t_visual, t_badges, t_status_chain, t_bot_controls, t_window_chrome, t_dpi_motion,
                t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch, t_bootstrap32, t_ocr9,
                t_c10, t_c13, t_hotfix1, t_hotfix2, t_catmgr, t_medialocal, t_commfb,
                t_veradv, t_g5, t_g6, t_g7, t_g8, t_g9, t_g10, t_g11, t_g12, t_g13, t_g14,
-               t_g15, t_g16):
+               t_g15, t_g16, t_g17):
         try:
             fn()
         except Exception as e: # noqa: BLE001

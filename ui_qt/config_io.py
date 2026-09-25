@@ -135,6 +135,34 @@ def get_json(api: str, timeout: float = 1.5, err_box: dict | None = None) -> dic
         return None
 
 
+def post_json(api: str, body: dict | None = None, timeout: float = 15.0) -> dict | None:
+    """POST 后端接口（/api/resume、/api/selfcheck 等）；连不上返回 None。
+
+    与 get_json 同源：current_url() 取基址 + join_url 让 api 落在 query 之前
+    （base 可能自带 ?token=）+ 绕本地代理。body 序列化成 JSON 发。
+    """
+    try:
+        import json as _json # noqa: PLC0415
+
+        from addr import join_url # noqa: PLC0415
+        from agent_bridge import current_url # noqa: PLC0415
+
+        base = current_url()[0] if isinstance(current_url(), tuple) else current_url()
+        data = _json.dumps(body or {}).encode("utf-8")
+        req = urllib.request.Request(
+            join_url(base, api), data=data,
+            headers={"Accept": "application/json", "Content-Type": "application/json"})
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", "replace")
+        try:
+            return json.loads(raw)
+        except Exception: # noqa: BLE001
+            return {"ok": True, "raw": raw}
+    except Exception: # noqa: BLE001
+        return None
+
+
 def _selftest() -> list[tuple[str, bool, str]]:
     """模块自检：nest 组装 / 点路径读 / 阻断键 / 全量写校验（不真写盘）。"""
     import sys # noqa: PLC0415

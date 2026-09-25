@@ -6181,7 +6181,7 @@ _PROVIDERS_CACHE: dict = {}
 
 
 def _providers_from_web() -> dict:
-    """从 web 源码运行时解析 PROVIDERS 表（label/base/keyHint）——
+    """从 web 源码运行时解析 PROVIDERS 表（label/base/keyHint/models）——
     sec_meta 同款「web 源码是唯一真值」思路：web 改厂商清单，Qt 联动跟着变。
     解析失败返回空 dict（联动静默跳过，不拖垮 model 页）。"""
     if _PROVIDERS_CACHE:
@@ -6192,11 +6192,19 @@ def _providers_from_web() -> dict:
         i = src.find("const PROVIDERS = {")
         j = src.find("};", i) if i >= 0 else -1
         if i >= 0 and j > i:
-            for m in re.finditer(
-                    r"(\w+):\{label:'([^']*)',\s*base:'([^']*)',\s*keyHint:'([^']*)'",
-                    src[i:j]):
-                out[m.group(1)] = {"label": m.group(2), "base": m.group(3),
-                                   "keyHint": m.group(4)}
+            blk = src[i:j]
+            # 逐厂商：吃下从 `key:{` 到下一个 `},` 或块尾的整段（含换行的 models 数组）
+            for m in re.finditer(r"(\w+):\{(.*?)(?=\n\s*\w+:\{|$)", blk, re.S):
+                key, body = m.group(1), m.group(2)
+                lab = re.search(r"label:'([^']*)'", body)
+                bas = re.search(r"base:'([^']*)'", body)
+                kh = re.search(r"keyHint:'([^']*)'", body)
+                mm = re.search(r"models:\[(.*?)\]", body, re.S)
+                models = re.findall(r"'([^']*)'", mm.group(1)) if mm else []
+                out[key] = {"label": lab.group(1) if lab else key,
+                            "base": bas.group(1) if bas else "",
+                            "keyHint": kh.group(1) if kh else "",
+                            "models": models}
     except Exception: # noqa: BLE001
         out = {}
     _PROVIDERS_CACHE.update(out)

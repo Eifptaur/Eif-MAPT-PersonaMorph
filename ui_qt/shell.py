@@ -270,6 +270,18 @@ class Shell(QWidget):
         self._badge_timer.timeout.connect(self._poll_badges)
         self._badge_timer.start()
 
+        # 首次引导向导（web onboarding :5427 的 Qt 等价）：仅「还没配好 Key」才弹，
+        # 且本进程只弹一次。延迟到窗口立起来之后再弹，避免与首屏布局抢时机。
+        QTimer.singleShot(1500, self._maybe_onboard)
+
+    def _maybe_onboard(self) -> None:
+        try:
+            import onboarding # noqa: PLC0415
+
+            onboarding.maybe_show(self.t, self)
+        except Exception: # noqa: BLE001 — 向导失败不拖垮主窗口
+            pass
+
     # ------------------------------------------------------------ 鲸落视觉本体
 
     def _wallpaper_source(self) -> Path:
