@@ -55,6 +55,7 @@ class Row:
     kind: str
     label: str
     cfg: str = ""
+    html_id: str = "" # 控件的 HTML id（providerSel 等纯 JS 控件的识别依据）
     placeholder: str = ""
     hint: str = ""
     options: list[tuple[str, str]] = field(default_factory=list) # (value, 文案)
@@ -142,6 +143,8 @@ def _parse_row(chunk: str, label: str) -> Row:
     tag = tag_m.group(0)
     cfg_m = re.search(r'data-cfg="([\w.]+)"', chunk)
     cfg = cfg_m.group(1) if cfg_m else ""
+    idm = re.search(r'id="([\w-]+)"', tag)
+    html_id = idm.group(1) if idm else ""
     hint = _hint_of(chunk)
     if tag.startswith("<input"):
         typ_m = re.search(r'type="(\w+)"', tag)
@@ -164,7 +167,7 @@ def _parse_row(chunk: str, label: str) -> Row:
         if not opts and body_m: # 个别 option 不带 value 属性
             opts = [("", _clean(t)) for t in re.findall(r"<option[^>]*>([^<]*)</option>", body_m.group(1)) if _clean(t)]
         d = _default_of(cfg)
-        return Row("select", label, cfg, hint=hint, options=opts, default=d)
+        return Row("select", label, cfg, html_id=html_id, hint=hint, options=opts, default=d)
     if tag.startswith("<textarea"):
         return Row("textarea", label, cfg, _placeholder(tag), hint, default=_default_of(cfg))
     if tag.startswith("<div class=\"chips\""):

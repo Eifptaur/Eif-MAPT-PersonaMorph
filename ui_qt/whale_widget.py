@@ -139,20 +139,21 @@ class WhaleWidget(QWidget):
         f_small = QFont(self.font())
         f_small.setPixelSize(max(10, int(self.W * 0.044)))
         p.setPen(_INK)
-        fm_a = QFontMetrics(f_amt)
-        fm_s = QFontMetrics(f_small)
         # 行：余额大字 / hint 小字（今日已用 · 上轮 · 高峰），最多三行
+        # ⛔ metrics 先算好再进循环——旧写法 genexpr 引用循环内才赋值的 fm，
+        #   paintEvent 每次都在文字段抛 NameError ⇒ 气泡有底、文字永远画不出来
+        #   （r8 用户实锤「挂件变成贴图」）。
         rows = [(f_amt, self.bal)]
         rows += [(f_small, x) for x in [y for y in (self.hint or "").split("\n") if y][:2]]
-        total_h = sum(fm.height() for f, _t in rows) + 6 * (len(rows) - 1)
+        metrics = [(f, QFontMetrics(f), txt) for f, txt in rows]
+        total_h = sum(m.height() for _f, m, _t in metrics) + 6 * (len(metrics) - 1)
         y = area.top() + (area.height() - total_h) / 2
-        for f, txt in rows:
-            fm = QFontMetrics(f)
+        for f, m, txt in metrics:
             p.setFont(f)
-            elided = fm.elidedText(txt, Qt.ElideRight, int(tw))
-            p.drawText(QRectF(area.left(), y, area.width(), fm.height()),
+            elided = m.elidedText(txt, Qt.ElideRight, int(tw))
+            p.drawText(QRectF(area.left(), y, area.width(), m.height()),
                        int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter), elided)
-            y += fm.height() + 6
+            y += m.height() + 6
 
     # ------------------------------------------------------------ 数据
 

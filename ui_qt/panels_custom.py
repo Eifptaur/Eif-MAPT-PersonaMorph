@@ -2530,6 +2530,30 @@ def persona_panel(t: Tokens) -> QWidget:
     pcard.body.addWidget(desc(t, "星标=收藏置顶；排序按模型评估分。点「使用」即切换当前人设（重启机器人后生效）。"))
     lay.addWidget(pcard)
 
+    def _refit_items() -> None:
+        """条目宽 = 视口宽（右侧顶格）。
+
+        ⛔ QListWidget 的 itemWidget 矩形来自**条目 sizeHint**——宽度设 0 整行
+        零宽不可见（r8 用户实锤「人设库完全看不到」）；设成 sizeHint 全宽又会撑出
+        视口（右侧按钮被切、要手动拉宽窗口）。⇒ 宽度必须实时跟随视口，
+        视口 Resize 时逐条重设（事件过滤器挂在 viewport 上）。"""
+        wv = listw.viewport().width()
+        if wv <= 8:
+            return
+        for i in range(listw.count()):
+            it = listw.item(i)
+            it.setSizeHint(QSize(wv, max(44, it.sizeHint().height())))
+
+    from PySide6.QtCore import QEvent as _QEvent, QObject as _QObj # noqa: PLC0415
+
+    class _VpFit(_QObj):
+        def eventFilter(self, obj, ev): # noqa: ANN001, N802
+            if ev.type() == _QEvent.Type.Resize:
+                _refit_items()
+            return False
+
+    listw.viewport().installEventFilter(_VpFit(listw))
+
     pnote = desc(t, "")
     lay.addWidget(pnote)
 
@@ -2558,9 +2582,10 @@ def persona_panel(t: Tokens) -> QWidget:
             listw.addItem(it)
             wdg = _persona_card(t, p, handlers)
             listw.setItemWidget(it, wdg)
-            # ⛔ 条目只定高、不定宽——sizeHint 全宽会把行撑出视口（右侧按钮被切、
-            #   要手动拉宽窗口，用户实锤）。宽度交给视口 ⇒ 卡片右侧顶格。
-            it.setSizeHint(QSize(0, max(44, wdg.sizeHint().height())))
+            # 条目宽 = 视口宽（零宽不可见 / 全宽撑出视口，两个方向都是坑，见 _refit_items）
+            it.setSizeHint(QSize(max(listw.viewport().width(), 1),
+                                 max(44, wdg.sizeHint().height())))
+        _refit_items()
         badge.set("info", f"{len(items)} 个" if items else "暂无人设")
 
     def set_personas(items: list) -> None:
@@ -5710,6 +5735,12 @@ def _act_key_save(btn, note) -> None:
     page = _c8_page_of(btn)
     key_w = _c8_find_row(page, lambda r: r.cfg == "api.api_key")
     prov_w = _c8_find_row(page, lambda r: r.kind == "select" and "厂商" in r.label)
+    if prov_w is None:
+        # ⛔ 解析版「模型厂商」行已被 _row_redundant 跳过（纯 JS 控件，真控件在
+        #    追加区）⇒ 回退到追加区的 providerSel（objectName 同名）。
+        from PySide6.QtWidgets import QComboBox as _QCombo # noqa: PLC0415
+
+        prov_w = page.findChild(_QCombo, "providerSel")
     k = (key_w.text() if key_w is not None else "").strip()
     prov = str(prov_w.currentData() or "") if prov_w is not None else ""
     if not k or "••••" in k or k.startswith("sk-***"):

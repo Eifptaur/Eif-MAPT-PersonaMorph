@@ -46,6 +46,7 @@ from PySide6.QtWidgets import ( # noqa: E402
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit, # 余额显示弹窗（_balance_mask）用——漏导入会让点击时 NameError、弹窗开不出来
     QMenu,
     QPushButton,
     QScrollArea,

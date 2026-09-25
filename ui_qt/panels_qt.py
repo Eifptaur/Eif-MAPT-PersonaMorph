@@ -1147,6 +1147,11 @@ def _cursor_extras(t: Tokens, on_save) -> Card:
 # 这些动作 id 在本页**追加区/自定义卡**里已有 Qt 原生实现——元数据行再渲染一个
 # stub 假按钮只会误导（用户点中的正是它们）。渲染时整行跳过。
 _AIDS_COVERED_ELSEWHERE = {"localProbe", "wxRecheck", "ttsProbe", "vcProbe"}
+# 这两个下拉是 web **纯 JS 专属控件**（providerSel 静态选项+change 联动、modelSel
+# 动态填充），Qt 由模型页追加区原生实现（objectName 同名）——元数据行只渲染出
+# 假/空下拉（r8 用户实锤「模型选单依旧打不开」）。fbKind 这类「无 cfg 但有静态
+# 选项、被自定义提交真读」的活控件**不在**此列。
+_JS_OWNED_SELECT_IDS = {"providerSel", "modelSel"}
 
 
 def _row_redundant(r: "sec_meta.Row") -> bool:
@@ -1156,8 +1161,14 @@ def _row_redundant(r: "sec_meta.Row") -> bool:
        `_cfg_panel` 页尾本来就有原生「保存设置」（同一条 _collect→write_patch
        落盘链），再渲染一个 stub 是重复假按钮（用户截图实锤）；
     ② 动作 id 全部落在 `_AIDS_COVERED_ELSEWHERE`（本机模型探测/微信重检/TTS 探测
-       ——追加区已原生实现）。
+       ——追加区已原生实现）；
+    ③ **JS 专属 select 行**（无 data-cfg 且 id ∈ providerSel/modelSel，或既无
+       data-cfg 又无任何选项的动态填充下拉）——渲染出来是空的或换了没反应的
+       假控件，真控件在对应追加区。
     """
+    if getattr(r, "kind", "") == "select" and not getattr(r, "cfg", ""):
+        if getattr(r, "html_id", "") in _JS_OWNED_SELECT_IDS or not (r.options or []):
+            return True
     if getattr(r, "kind", "") != "buttons":
         return False
     acts = getattr(r, "actions", None) or []

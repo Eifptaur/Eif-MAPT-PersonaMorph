@@ -3245,7 +3245,11 @@ def t_g5() -> None:
         mp.show()
         QApplication.processEvents()
         key_w = _roww(mp, lambda r: r.cfg == "api.api_key")
-        prov_combo = _roww(mp, lambda r: r.kind == "select" and "厂商" in r.label)
+        # ⛔ 解析版「模型厂商」select 行已被 _row_redundant 跳过（纯 JS 控件，
+        #    元数据渲染出来既空又无主）——真控件在追加区（objectName=providerSel）。
+        from PySide6.QtWidgets import QComboBox as _QCombo # noqa: PLC0415
+
+        prov_combo = mp.findChild(_QCombo, "providerSel")
         idx = next((i for i in range(prov_combo.count())
                     if str(prov_combo.itemData(i)) not in ("", "custom")), 0)
         prov_combo.setCurrentIndex(idx)
