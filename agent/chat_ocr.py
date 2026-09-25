@@ -383,8 +383,39 @@ def _rapid_bootstrap() -> tuple:
     return False, why
 
 
+def _server_rec_path():
+    """server rec 权重路径（与包内 mobile 模型同目录，随离线包分发）；缺失/异常返回 None。
+
+    server 版（约 90MB）识别更准、推理慢约五成——RapidOCR 只做补读引擎（WinRT 读空才用），
+    慢的部分落在本来就在等 OCR 的路径上，可接受。字典内嵌在 onnx metadata
+    （`character`，6623 字符），与 mobile 同表，无需配套文件。
+    """
+    try:
+        import rapidocr_onnxruntime as _r
+        from pathlib import Path as _Path
+        p = _Path(_r.__file__).parent / "models" / "ch_PP-OCRv4_rec_server.onnx"
+        return str(p) if p.exists() and p.stat().st_size > 50_000_000 else None
+    except Exception:
+        return None
+
+
+def _want_server_rec() -> bool:
+    """配置开关：wechat.ocr_server_rec=true 才用 server 权重（默认 False＝现状 mobile，
+    零行为变化；真机量化对比后再决定要不要默认开）。"""
+    try:
+        from .config import get_config
+        return bool(((get_config() or {}).get("wechat") or {}).get("ocr_server_rec"))
+    except Exception:
+        return False
+
+
 def _rapid_engine():
-    """进程内单例 RapidOCR 引擎（首次初始化读模型 ≈1 秒，之后复用）。失败返回 None。"""
+    """进程内单例 RapidOCR 引擎（首次初始化读模型 ≈1 秒，之后复用）。失败返回 None。
+
+    权重档：配置 `wechat.ocr_server_rec=true` 且 server 权重文件在位 ⇒ 用 server rec
+    （det/cls 仍用包内 mobile——瓶颈在识别不在检测）；开启但加载失败 ⇒ 自动回退 mobile
+    并在状态里记原因，绝不因换权重让第二引擎整体不可用。
+    """
     with _rapid_lock:
         e = _rapid_state.get("engine")
         if e is not None:
@@ -398,9 +429,22 @@ def _rapid_engine():
                 return None
             try:
                 from rapidocr_onnxruntime import RapidOCR
-                _rapid_state["engine"] = RapidOCR()
+                _srv = _server_rec_path() if _want_server_rec() else None
+                if _srv:
+                    try:
+                        _rapid_state["engine"] = RapidOCR(rec_model_path=_srv)
+                        _rapid_state["tier"] = "server"
+                        _rapid_state["why"] = ""
+                    except Exception as ex: # noqa: BLE001
+                        _rapid_log("server rec 加载失败（%s: %s），回退 mobile" % (type(ex).__name__, ex))
+                        _rapid_state["engine"] = RapidOCR()
+                        _rapid_state["tier"] = "mobile"
+                        _rapid_state["why"] = "server rec 加载失败已回退 mobile"
+                else:
+                    _rapid_state["engine"] = RapidOCR()
+                    _rapid_state["tier"] = "mobile"
+                    _rapid_state["why"] = ""
                 _rapid_state["ok"] = True
-                _rapid_state["why"] = ""
             except Exception as ex: # noqa: BLE001
                 _rapid_state["ok"] = False
                 _rapid_state["why"] = "装上了但初始化失败 %s: %s" % (type(ex).__name__, ex)
@@ -409,10 +453,11 @@ def _rapid_engine():
 
 
 def rapidocr_status() -> dict:
-    """第二引擎健康快照（体检/回执用）：ready / 未自举 / 降级原因。"""
+    """第二引擎健康快照（体检/回执用）：ready / 未自举 / 降级原因 / 权重档。"""
     with _rapid_lock:
         st = _rapid_state["tried"]
         return {"tried": st, "ok": bool(_rapid_state["ok"]),
+                "tier": str(_rapid_state.get("tier") or "mobile"),
                 "why": str(_rapid_state["why"] or ("可用" if _rapid_state["ok"] else ""))}
 
 
@@ -574,6 +619,21 @@ def preprocess_ink(crop, zoom: int = 2, invert: bool = False, thresh: int = None
         return crop
 
 
+def _enhance_gray(crop):
+    """自适应对比增强（CLAHE）：光照不均/局部低对比时，全局 autocontrast+Otsu 会把暗区
+    小字打碎；CLAHE 分块直方图均衡把局部对比拉起来。只在主管线读空后作**补读**用——
+    cv2 不可用或任何异常返回 None，调用方保持原管线结果（增强绝不替代主管线）。"""
+    try:
+        import cv2
+        import numpy as np
+        g = np.asarray(crop.convert("L"))
+        clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(4, 4))
+        from PIL import Image as _Image
+        return _Image.fromarray(clahe.apply(g))
+    except Exception:
+        return None
+
+
 def _header_read(img, zoom: int = 2) -> tuple:
     """对**一帧**跑标题带读，返回 (文本, 命中的 zoom)；读空返回 ("", 0)。
 
@@ -600,6 +660,15 @@ def _header_read(img, zoom: int = 2) -> tuple:
             got = "".join(str(i[0]) for i in recognize_dual(c)).strip()
             if got:
                 return got, z
+        # C：全档读空 ⇒ CLAHE 增强后再补一轮（只补前两档，预算友好；读空本来就没读到，
+        #    多花一次值得；光照不均/低对比帧在全局 Otsu 下小字被碎掉，CLAHE 能救回来）
+        g2 = _enhance_gray(crop)
+        if g2 is not None:
+            for z in zooms[:2]:
+                c2 = preprocess_ink(g2, zoom=z, invert=False)
+                got = "".join(str(i[0]) for i in recognize_dual(c2)).strip()
+                if got:
+                    return got, z
         return "", 0
     except Exception:
         return "", 0

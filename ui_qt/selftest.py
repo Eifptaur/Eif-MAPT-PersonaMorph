@@ -6655,6 +6655,7 @@ def t_ocr_fuzzy() -> None:
     投票验编排语义（复核一致提前返 / 读空不否决 / 争议仲裁取多数 / 未决取首读）；
     最后真调 `chat_is_open` 走一遍 ③′ 档（strict 全漏 → 模糊唯一 → 放行）。
     """
+    import os # noqa: PLC0415
     import sys as _sys # noqa: PLC0415
     from pathlib import Path as _P # noqa: PLC0415
 
@@ -6778,6 +6779,54 @@ def t_ocr_fuzzy() -> None:
         _WA.current_chat_name = _orig_ccn
         _co.session_rows = _orig_srows
         _chdr.check = _orig_check
+
+    # ── ⑤ C 步：CLAHE 增强只在主管线读空后补读（桩 recognize_dual 验编排）──
+    from PIL import Image as _PImage # noqa: PLC0415
+
+    # 低对比底 + 一块「墨」（构图按 header_box 实测定位形态：300×80、带内 y38~80；
+    # 否则 _band_ink≈0 或带高不足会被早退，进不了管线）
+    _low = _PImage.new("RGB", (300, 80), (210, 210, 210))
+    for _x in range(100, 180):
+        for _y in range(45, 75):
+            _low.putpixel((_x, _y), (170, 170, 170))
+    _orig_rd = _co.recognize_dual
+    try:
+        _enh = _co._enhance_gray(_low)
+        ck("CLAHE 增强可用：低对比图返回增强灰图且尺寸不变（cv2 缺席/异常时退 None）",
+           _enh is not None and _enh.size == _low.size)
+        _calls = {"n": 0}
+
+        def _rd_seq(img, timeout=None): # 前 4 次（主管线 4 档 zoom）读空，增强补读命中
+            _calls["n"] += 1
+            return [("演示群", 3, 8, 6, 20)] if _calls["n"] > 4 else []
+
+        _co.recognize_dual = _rd_seq
+        got_z = _co._header_read(_low, zoom=2)
+        ck("header_text 读空补读：主管线全空 ⇒ CLAHE 增强后从 zooms[:2] 首档（z=2）命中（第 5 次调用），不再白烧后续档",
+           got_z == ("演示群", 2) and _calls["n"] == 5,
+           "got=%s calls=%d" % (str(got_z), _calls["n"]))
+        _calls2 = {"n": 0}
+
+        def _rd_all_empty(img, timeout=None): # 全部读空 ⇒ 补读后仍空 ⇒ 返 ("", 0)，不抛
+            _calls2["n"] += 1
+            return []
+
+        _co.recognize_dual = _rd_all_empty
+        got_z2 = _co._header_read(_low, zoom=2)
+        ck("header_text 补读也读空 ⇒ 如实返空（fail-closed 照旧，共耗 4+2 次不超预算）",
+           got_z2 == ("", 0) and _calls2["n"] == 6, "calls=%d" % _calls2["n"])
+    finally:
+        _co.recognize_dual = _orig_rd
+
+    # ── ⑥ D 步：server rec 权重可选机制（不真加载——探针已验，自检不背 4s）──
+    _srv = _co._server_rec_path()
+    ck("server rec 权重在位（包内 models 目录、>50MB、随离线包分发不进 git）",
+       _srv is not None and os.path.getsize(_srv) > 50_000_000, str(_srv))
+    ck("server 权重默认不启用（wechat.ocr_server_rec 缺省 False ⇒ 行为零变化）",
+       _co._want_server_rec() is False)
+    _st = _co.rapidocr_status()
+    ck("rapidocr_status 带 tier 字段（体检可见当前权重档）",
+       isinstance(_st, dict) and "tier" in _st, str(_st)[:80])
 
 
 def main() -> int:
