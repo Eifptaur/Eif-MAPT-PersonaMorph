@@ -248,14 +248,12 @@ class WhaleHostWebView:
             pass
 
     def _enable_transparency(self) -> None:
-        """把 WebView 的默认背景置为**全透明**（A=0）。
+        """把 WebView 画布底色设为**色键色** #010102（不透明，键由窗口抠掉）。
 
-        为什么必须做：挂件是贴在主界面右下角的悬浮件，宿主窗带 alpha（Qt 的
-        `WA_TranslucentBackground`）。而 WebView2 的画面是**窗口合成**出来的 ——
-        官方文档明确「HwndHost 派生控件不能显示在 AllowsTransparency 的窗口里」，
-        不设这一项时内核图层合不上，表现就是**窗口透明、鲸鱼不出现**。
+        机制：挂件窗走 `SetLayeredWindowAttributes` 颜色键分层（见
+        whale_widget._apply_colorkey），画布凡是画成键色的像素——即页面留白——
+        由系统抠成透明且点击穿透；鲸鱼/菜单/减号是普通颜色，正常显示与交互。
 
-        设成透明色后内核改走 DirectComposition 合成，透明窗才真正可用。
         两个硬约束：**alpha 只接受 0 或 255**（中间值 E_INVALIDARG）；
         接口要 `QueryInterface` 到 `ICoreWebView2Controller2` 才有这个方法。
 
@@ -297,7 +295,8 @@ class WhaleHostWebView:
                 return
             c2 = ctypes.cast(out, POINTER(ICoreWebView2Controller2))
             # COREWEBVIEW2_COLOR 按值传 uint32（A 在高位）；只要 A=0，RGB 无所谓
-            c2.put_DefaultBackgroundColor(0)
+            # 画布底 = 色键色（不透明 A=255；键色像素由窗口颜色键抠掉）
+            c2.put_DefaultBackgroundColor(0xFF010102)
             self._ctrl2 = c2
         except Exception as e:  # noqa: BLE001 — 降级为不透明底，不影响挂件本身
             self._ctrl2 = None
@@ -484,7 +483,7 @@ def build_host_html(port: int, token: str) -> str:
         # 没有可解析的基准 ⇒ 全部落空。<base> 把基准指到控制台端口，相对路径
         # 与 web 控制台页面完全同解。
         "<base href='" + base + "/'>"
-        "<style>html,body{margin:0;padding:0;background:transparent;"
+        "<style>html,body{margin:0;padding:0;background:#010102;"
         "overflow:hidden;width:100%;height:100%}"
         "#dshw-composer-seat{position:fixed;left:-9999px;top:-9999px;"
         "width:1px;height:1px}"

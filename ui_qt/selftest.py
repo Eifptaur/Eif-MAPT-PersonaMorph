@@ -5303,8 +5303,14 @@ def t_g13() -> None:
        "token=tk" in _html)
     ck("g13-B 宿主页带 composer 假体（dshwIsChatRoot 认不出就不碰 DOM，启动闸门）",
        "data-composer-input" in _html)
-    ck("g13-B 宿主页背景透明（透出 Qt 的 WA_TranslucentBackground，不留白底）",
-       "transparent" in _html or "background:transparent" in _html)
+    ck("g13-B 宿主页背景 = 色键色 #010102（与窗口颜色键/画布底三处同值）",
+       "background:#010102" in _html)
+    ck("g13-B 画布底 = 色键色（put_DefaultBackgroundColor 0xFF010102）",
+       "put_DefaultBackgroundColor(0xFF010102)" in
+       (HERE / "whale_host.py").read_text(encoding="utf-8"))
+    ck("g13-B 窗口颜色键在位（SetLayeredWindowAttributes + LWA_COLORKEY）",
+       "_apply_colorkey" in (HERE / "whale_widget.py").read_text(encoding="utf-8")
+       and "LWA_COLORKEY" in (HERE / "whale_widget.py").read_text(encoding="utf-8"))
 
     _host_src = (HERE / "whale_host.py").read_text(encoding="utf-8")
     ck("g13-D 建链是异步链（同步忙等 processEvents 处理不了 COM 跨线程 RPC ⇒ 曾因异步忙等卡死）",

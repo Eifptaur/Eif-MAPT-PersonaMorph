@@ -42,6 +42,29 @@ _SET = ("WXAgent", "persona-morph-ui")
 _BASE = 250
 
 
+# 色键：与 whale_host 画布底色、宿主页 body 背景三处同值（#010102）
+_KEY_COLORREF = 0x020101 # COLORREF = 0x00BBGGRR
+
+
+def _apply_colorkey(hwnd: int) -> None:
+    """给挂件窗挂**颜色键**分层：键色像素透明且点击穿透（幂等）。
+
+    三个消费点必须同值：本函数（窗口键）、whale_host 画布底色、宿主页 body 背景。
+    """
+    import ctypes
+
+    user32 = ctypes.windll.user32
+    GWL_EXSTYLE = -20
+    WS_EX_LAYERED = 0x00080000
+    LWA_COLORKEY = 0x00000001
+    _get = getattr(user32, "GetWindowLongPtrW", None) or user32.GetWindowLongW
+    _set = getattr(user32, "SetWindowLongPtrW", None) or user32.SetWindowLongW
+    style = int(_get(hwnd, GWL_EXSTYLE))
+    if not style & WS_EX_LAYERED:
+        _set(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED)
+    user32.SetLayeredWindowAttributes(hwnd, _KEY_COLORREF, 0, LWA_COLORKEY)
+
+
 class WhaleWidget(QWidget):
     """无边框置顶小窗，内嵌 WebView2 跑**原版挂件**（点挂件本体即原版菜单）。"""
 
@@ -63,7 +86,11 @@ class WhaleWidget(QWidget):
         # 配套动作在 whale_host._enable_transparency() —— WebView2 的画面是窗口
         # 合成出来的，不把它的 DefaultBackgroundColor 设成 A=0，内核图层就合不上，
         # 表现是「窗口透明但鲸鱼不出现」。两者必须成对改，缺一个都不出画面。
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        # ⛔ 不用 WA_TranslucentBackground：分层窗（逐像素 alpha）与 WebView2 的
+        # 子窗合成在本机运行库上不兼容——画布回退不透明，表现为整窗黑块。
+        # 改用**色键**方案（CEF/WebView2 透明悬浮层的标准配方）：窗口走
+        # SetLayeredWindowAttributes 颜色键，页面/画布把留白画成键色
+        # #010102 ⇒ 键色像素既透明也不接收鼠标；鲸鱼/菜单/减号正常显示与交互。
         self.setFixedSize(self.W, self.H)
         self._drag0: QPoint | None = None
         self._win0: QPoint | None = None
@@ -116,9 +143,10 @@ class WhaleWidget(QWidget):
             return f
 
     def paintEvent(self, _e) -> None:  # noqa: N802
-        """WebView2 正常时窗口是**透明**的（画面由内核合成在窗口上）。
+        """WebView2 正常时由内核合成画面（本窗口只垫**键色**底）。
 
-        只有降级态才画东西 —— 一张形象图 + 一行说明，避免用户看到纯白/纯空。
+        键色像素经窗口颜色键抠像 = 透明且点击穿透；只有降级态才画提示卡
+        （同样垫键色，卡片内容浮在桌面上）。
 
         ⛔ 判据是「**页面真的加载成功了**」而不是「控制器建好了」：
         `WhaleHostWebView.ok` 只说明 WebView2 环境/控制器就绪，**不代表
@@ -126,9 +154,10 @@ class WhaleWidget(QWidget):
         的半成品状态两头落空：Qt 侧不画降级卡、WebView2 侧没内容 ⇒ 空窗。
         `load_failed` 把"页面没起来"单独记下来，让降级卡在这种状态下兜底。
         """
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor(1, 1, 2)) # 键色铺满（与色键窗口配对）
         if self._host is not None and self._host.ok and not self._load_failed:
             return
-        p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         self._paint_fallback(p)
 
@@ -187,6 +216,7 @@ class WhaleWidget(QWidget):
         """
         try:
             hwnd = int(self.winId())
+            _apply_colorkey(hwnd)
             self._host = WhaleHostWebView(hwnd, self.W, self.H)
             # 拖动交接：页面自己报位移（见 whale_host.build_host_html 的 dragSetup），
             # 这里收下来挪窗口。**不再**给子窗加 WS_EX_TRANSPARENT —— 那会让
