@@ -1989,6 +1989,7 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
     btn_take = Btn("重新取指纹", t, "ghost")
     btn_forget = Btn("丢掉旧指纹", t, "ghost")
     btn_pd = Btn("版本不匹配怎么办", t, "ghost")
+    btn_pd.setObjectName("tkPendingDecisions")
     btn_heal = Btn("依赖自愈", t, "ghost")
     btn_up = Btn("升级适配层", t, "ghost")
     for b in (btn_take, btn_forget, btn_pd):
@@ -2054,12 +2055,16 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
 
     def _on_pd_web() -> None:
         # 拍板四选一只在网页控制台有（Qt 只读展示）——给可点入口，不补一套四选一 UI
+        # ⚠️ fragment 不能交给 join_url 的 path 槽位（会拼成 /#sec-version?token=tk，
+        #   fragment 落在 query 前）：浏览器把 ?token 一并归入 fragment ⇒ GET / 请求
+        #   就不带 token（无 Cookie ⇒ 401；有 Cookie ⇒ 页面开了但锚名匹配不上
+        #   section id，跳转照样失效）。正确形态：控制台 URL（token 已在 query）
+        #   原样 + 直接追加 #fragment 收尾。
         from PySide6.QtCore import QUrl # noqa: PLC0415
         from PySide6.QtGui import QDesktopServices # noqa: PLC0415
-        from addr import join_url # noqa: PLC0415
         from agent_bridge import current_url # noqa: PLC0415
 
-        QDesktopServices.openUrl(QUrl(join_url(current_url(), "/#sec-version")))
+        QDesktopServices.openUrl(QUrl(str(current_url() or "").strip() + "#sec-version"))
         tk_note.setText("已在浏览器打开网页控制台（四选一在那里拍）· " + time.strftime("%H:%M:%S"))
 
     def _on_heal() -> None:
@@ -6263,6 +6268,7 @@ def _feedback_appendix(t: Tokens, page: QWidget) -> None:
     b_rf = Btn("刷新", t, "ghost")
     b_fl = Btn("补发积压", t, "ghost")
     b_web = Btn("去网页加附件", t, "ghost") # Qt 壳不代持附件上传（web 为真值）——给入口不补 UI
+    b_web.setObjectName("fbWebAdd")
     row.addWidget(b_rf)
     row.addWidget(b_fl)
     row.addWidget(b_web)
@@ -6273,12 +6279,14 @@ def _feedback_appendix(t: Tokens, page: QWidget) -> None:
     page.layout().addWidget(card)
 
     def _open_web() -> None:
+        # 附件上传只在网页控制台有（Qt 壳不代持）——给入口不补 UI。
+        # fragment 不走 join_url 的 path 槽位（同 vermat 拍板入口的口径：
+        # /#sec-feedback?token=tk 会把 token 困进 fragment ⇒ 401 / 锚跳转失效）。
         from PySide6.QtCore import QUrl as _QUrl # noqa: PLC0415
         from PySide6.QtGui import QDesktopServices as _QDS # noqa: PLC0415
-        from addr import join_url as _join # noqa: PLC0415
         from agent_bridge import current_url as _cur # noqa: PLC0415
 
-        _QDS.openUrl(_QUrl(_join(_cur(), "/#sec-feedback")))
+        _QDS.openUrl(_QUrl(str(_cur() or "").strip() + "#sec-feedback"))
         fl_note.setText("已在浏览器打开网页控制台的反馈页（附件在那里添加）· " + time.strftime("%H:%M:%S"))
 
     b_web.clicked.connect(_open_web)
@@ -6296,6 +6304,12 @@ def _feedback_appendix(t: Tokens, page: QWidget) -> None:
         _th.Thread(target=_work, daemon=True, name="fb-status").start()
 
         def _apply() -> None:
+            # 延迟回调可能跨过页面生命周期（用户 300ms 内关窗/切走、测试环境页面对象
+            # 被回收）⇒ 落地前先探活，C++ 对象已删就静默放弃，不往已删控件上写。
+            try:
+                lb.isVisible()
+            except RuntimeError:
+                return
             if not box["done"]:
                 QTimer.singleShot(300, _apply)
                 return

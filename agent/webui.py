@@ -1258,6 +1258,18 @@ class WebUI:
                     if isinstance(st, dict):
                         st = dict(st)
                         st["risk"] = _risk.snapshot()
+                        # 落盘健康（N4 审计项：热路径撞独占要看得见，不能只靠翻日志考古）：
+                        # `hits` = os.replace 撞共享冲突总次数（含重试成功——冲突本身就是信号）；
+                        # `worst_s` = 单次 replace 最坏等待秒数。与 risk/bg 同风格独立成段，
+                        # 这一段挂了不影响 status 其它字段。
+                        try:
+                            from . import persist as _persist
+                            st["io_health"] = {
+                                "replace_stats": dict(getattr(_persist, "REPLACE_STATS", {})),
+                                "replace_failures": dict(getattr(_persist, "REPLACE_FAILURES", {})),
+                            }
+                        except Exception as _ioe:
+                            st["io_health"] = {"error": str(_ioe)}
                         # 当前输入后端档位（AGENTS §2.1 第 4 条：用了哪一档必须看得见）
                         st["input"] = _ib.status()
                         # 后台能力矩阵（⑥ 全后台审计）：每条路径是"全程后台"还是"真鼠标"，

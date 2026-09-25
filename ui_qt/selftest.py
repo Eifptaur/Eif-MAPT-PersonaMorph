@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 from pathlib import Path
@@ -2621,6 +2622,34 @@ def t_commfb() -> None:
            any("/api/feedback/flush" in c for c in calls)
            and "补发完成（2 条）" in page2._fb_flnote.text(),
            page2._fb_flnote.text())
+
+        # ── feedback 页「去网页加附件」入口（N6 锚：objectName 定位 + URL 形态）──
+        # URL 口径：控制台 URL（token 在 query）原样 + #sec-feedback 收尾。
+        # 不可拼成 /#sec-feedback?token=tk——浏览器把 ?token 一并归入 fragment，
+        # GET / 请求就不带 token（无 Cookie ⇒ 401；有 Cookie ⇒ 锚名匹配不上
+        # section id，跳转失效）。
+        from PySide6.QtGui import QDesktopServices as _QDS # noqa: PLC0415
+
+        _opened: list = []
+        _orig_open = _QDS.openUrl
+        _QDS.openUrl = staticmethod(lambda u: _opened.append(
+            u.toString() if hasattr(u, "toString") else str(u)))
+        try:
+            bw = page2.findChild(Btn, "fbWebAdd")
+            ck("feedback 页「去网页加附件」按钮可按 objectName=fbWebAdd 定位",
+               bw is not None, "found=%s" % (bw is not None))
+            if bw is not None:
+                _opened.clear()
+                bw.click()
+                QApplication.processEvents()
+                _wait(lambda: bool(_opened))
+                ck("去网页加附件 ⇒ openUrl 收到 <控制台URL>#sec-feedback（token 在 query、fragment 收尾）",
+                   _opened == ["http://127.0.0.1:%d/?token=tk#sec-feedback" % port],
+                   str(_opened))
+                ck("去网页加附件的回执落在独立回执行（不占状态卡）",
+                   "附件在那里添加" in page2._fb_flnote.text(), page2._fb_flnote.text())
+        finally:
+            _QDS.openUrl = _orig_open
     finally:
         QFileDialog.getOpenFileName = _orig_gofn
         agent_bridge.current_url = _orig_url
@@ -2842,6 +2871,33 @@ def t_veradv() -> None:
         ck("升级适配层：POST /api/version/action {choice:upgrade_adapter}",
            any("/api/version/action" in c and "upgrade_adapter" in c for c in calls),
            str([c for c in calls if "version/action" in c]))
+
+        # ── 拍板入口的网页跳转（N6 锚：objectName 定位 + URL 形态）──
+        # 口径同 feedback 的「去网页加附件」：控制台 URL（token 在 query）原样
+        # + #sec-version 收尾；fragment 落在 query 前会让 token 困进 fragment
+        # ⇒ 401 / 锚跳转失效。点击会同时触发读台账（GET /api/status，异步回显）
+        # 与跳转 ⇒ 跳转断言后必须等台账回显落地完，再离开 vermat 段
+        # （否则它后落地会覆盖后续按钮的回显，污染其他断言）。
+        from PySide6.QtGui import QDesktopServices as _QDS # noqa: PLC0415
+
+        _opened: list = []
+        _orig_open = _QDS.openUrl
+        _QDS.openUrl = staticmethod(lambda u: _opened.append(
+            u.toString() if hasattr(u, "toString") else str(u)))
+        try:
+            bpd = vp.findChild(Btn, "tkPendingDecisions")
+            ck("vermat「版本不匹配怎么办」按钮可按 objectName=tkPendingDecisions 定位",
+               bpd is not None, "found=%s" % (bpd is not None))
+            if bpd is not None:
+                _opened.clear()
+                bpd.click()
+                _wait(lambda: bool(_opened))
+                ck("拍板入口点击 ⇒ openUrl 收到 <控制台URL>#sec-version（token 在 query、fragment 收尾）",
+                   _opened == ["http://127.0.0.1:%d/?token=tk#sec-version" % port],
+                   str(_opened))
+                _wait(lambda: "有待拍板的事" in note_lb[0].text()) # 等异步回显落完再离场
+        finally:
+            _QDS.openUrl = _orig_open
 
         # ── advanced 页：布局/标定/种子/学习 ──
         wrap_a = panels_qt.build_panel(t, "advanced")
@@ -6571,22 +6627,56 @@ def t_g22() -> None:
         # 无遗留临时档（原子写自清）
         _left = [fn for fn in os.listdir(_store.MESSAGES_DIR) if fn.endswith(".tmp")]
         ck("g22 热路径写完后无遗留临时档", not _left, "遗留=%s" % _left[:3])
+
+        # ⭐ 可观测指标（N4 审计项）：撞独占要"看得见"——上面的瞬时独占场景真发生过，
+        #   `persist.REPLACE_STATS.hits` 必须有增长（撞了但重试成功也计数），worst_s 有读数。
+        import agent.persist as _persist # noqa: PLC0415
+
+        _rs = getattr(_persist, "REPLACE_STATS", None)
+        ck("g22 REPLACE_STATS 记到撞冲突次数（含重试成功——冲突本身就是信号）",
+           isinstance(_rs, dict) and int(_rs.get("hits") or 0) > 0,
+           "hits=%s worst_s=%s" % (( _rs or {}).get("hits"), (_rs or {}).get("worst_s")))
+        ck("g22 REPLACE_STATS.worst_s 有读数（单次最坏等待，成功失败都记）",
+           isinstance(_rs, dict) and float(_rs.get("worst_s") or 0.0) >= 0.0,
+           "worst_s=%s" % (_rs or {}).get("worst_s"))
     finally:
         _cfg.DATA_DIR, _store.MESSAGES_DIR = _old
         _shutil.rmtree(tmp, ignore_errors=True)
 
 
 def main() -> int:
-    for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
-               t_visual, t_badges, t_status_chain, t_bot_controls, t_window_chrome, t_dpi_motion,
-               t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch, t_bootstrap32, t_ocr9,
-               t_c10, t_c13, t_hotfix1, t_hotfix2, t_catmgr, t_medialocal, t_commfb,
-               t_veradv, t_g5, t_g6, t_g7, t_g8, t_g9, t_g10, t_g11, t_g12, t_g13, t_g14,
-               t_g15, t_g16, t_g17, t_g18, t_g19, t_g20, t_g21, t_g22):
+    # ⭐ 测试隔离（audit-r2 N1 残余的收口）：`logs/console.url` 是**产品运行时**写的
+    #   （含随机端口+token），自检跑在产品目录里会读到它——轻则刷几百行「端口连不上」噪音，
+    #   重则让依赖 current_url 的断言随工作区残留漂移。⇒ 开跑前把它临时挪开，收尾还原。
+    #   只动测试侧：产品读这个文件是正确行为，不改。
+    _cu_p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "logs", "console.url")
+    _cu_p = os.path.normpath(_cu_p)
+    _cu_stash = _cu_p + ".selftest-stash"
+    _cu_moved = False
+    if os.path.exists(_cu_p):
         try:
-            fn()
-        except Exception as e: # noqa: BLE001
-            ck(f"{fn.__name__} 执行未抛异常", False, f"{type(e).__name__}: {e}"[:110])
+            os.replace(_cu_p, _cu_stash)
+            _cu_moved = True
+        except OSError:
+            pass
+
+    try:
+        for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
+                   t_visual, t_badges, t_status_chain, t_bot_controls, t_window_chrome, t_dpi_motion,
+                   t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch, t_bootstrap32, t_ocr9,
+                   t_c10, t_c13, t_hotfix1, t_hotfix2, t_catmgr, t_medialocal, t_commfb,
+                   t_veradv, t_g5, t_g6, t_g7, t_g8, t_g9, t_g10, t_g11, t_g12, t_g13, t_g14,
+                   t_g15, t_g16, t_g17, t_g18, t_g19, t_g20, t_g21, t_g22):
+            try:
+                fn()
+            except Exception as e: # noqa: BLE001
+                ck(f"{fn.__name__} 执行未抛异常", False, f"{type(e).__name__}: {e}"[:110])
+    finally:
+        if _cu_moved:
+            try:
+                os.replace(_cu_stash, _cu_p)
+            except OSError:
+                pass
 
     bad = [r for r in ROWS if not r[1]]
     for name, ok, extra in ROWS:
