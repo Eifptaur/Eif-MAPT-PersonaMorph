@@ -2776,14 +2776,8 @@ def persona_panel(t: Tokens) -> QWidget:
         pnote.setText(f"分区「{name}」已删除")
         load_personas()
 
-    def _rate_persona(p: dict) -> None:
-        """为模型打星（web ⋯ 菜单「为模型打星」:6191 同款：score 固定 5）。"""
-        nm = p.get("name") or ""
-        pnote.setText(f"为「{nm}」打星中…")
-        _async_post(None, "/api/personas/rate", {"key": p.get("key"), "score": 5},
-                    lambda r, e: pnote.setText(
-                        f"已为「{nm}」打星" if not e and (not isinstance(r, dict) or r.get("ok") is not False)
-                        else f"打星失败：{e or (r or {}).get('error') or '后台没连上'}"))
+    # 打星按钮已按用户裁定移除（「打星这个没用的按钮去掉」）——原 _rate_persona
+    # 走 /api/personas/rate 的路径一并删除，handlers 不再含 rate。
 
     def _open_add_dialog() -> None:
         """新建分区 / 添加角色（web pCatAdd 弹窗 :6286-6372 的主题化移植）。
@@ -3078,7 +3072,7 @@ def persona_panel(t: Tokens) -> QWidget:
         dlg.exec()
 
     handlers = {"use": _apply_persona, "del": _del_persona, "fav": _fav_persona,
-                "rate": _rate_persona, "move": _move_persona}
+                "move": _move_persona}
 
     def load_personas() -> None:
         # err_box：/api/personas 是**唯一必需**的取数口 —— 它失败（控制台没起/超时）
@@ -3535,22 +3529,14 @@ def _persona_card(t: Tokens, p: dict, handlers: dict) -> QWidget:
     #    「使用/删除/移到其他分区/评估 的字全混在一起，挤在小按钮里看不清」）。
     #    宽度交给 sizeHint（= 文字宽 + 内边距），由 Btn 自己保证下限。
     use.clicked.connect(lambda _=False, _p=p: handlers["use"](_p))
-    # 打星=为模型评估打分（web ⋯ 菜单「为模型打星」:6191 的卡片直达版）
-    rate = Btn("打星", t, "ghost")
-    rate.setToolTip("让模型为这条人设打一次评估分")
-    rate.clicked.connect(lambda _=False, _p=p: handlers["rate"](_p))
-    delete = Btn("删", t, "ghost")
+    # 单字钮改**全文字钮**（用户裁定：打星按钮没用、删掉；移动/删除要完整露出，
+    # 不再缩成单字正圆）——宽度交给 sizeHint，两字胶囊 ~62px 放得下。
+    delete = Btn("删除", t, "ghost")
     delete.setToolTip("删除这条人设")
     delete.clicked.connect(lambda _=False, _p=p: handlers["del"](_p))
-    move = Btn("移", t, "ghost")
+    move = Btn("移动", t, "ghost")
     move.setToolTip("移到其他分区（可输入新分区名自动新建）")
     move.clicked.connect(lambda _=False, _p=p: handlers["move"](_p))
-    # 单字钮（删/移）：**正圆**，与旁边两字的胶囊一眼可分——这是「一类按钮一种
-    # 形状」在卡片行内的落点。直径要放得下单个汉字：汉字宽 ≈ 字号，加内边距 ⇒ 42。
-    # 写 34 会把字压出圆外（同「使用/打星」被挤扁的根因，只是这次是我自己踩的）。
-    for _c in (delete, move):
-        _c.set_shape(SHAPE_CIRCLE)
-        _c.set_button_size(42, 42)
     # 星标是纯图标钮：正圆，直径跟行高对齐
     fav.set_shape(SHAPE_CIRCLE)
     fav.set_button_size(34, 34)
@@ -3579,7 +3565,6 @@ def _persona_card(t: Tokens, p: dict, handlers: dict) -> QWidget:
     h.addWidget(txt, 1)
     h.addSpacing(6)
     h.addWidget(use)
-    h.addWidget(rate)
     h.addWidget(move)
     h.addWidget(delete)
     return w
@@ -7290,7 +7275,7 @@ def _media_components_appendix(t: Tokens, page: QWidget) -> None:
     card.body.addLayout(brow)
     page.layout().addWidget(card)
 
-    state: dict = {"pkgs": [], "ffmpeg_missing": False, "asr_missing": False}
+    state: dict = {"pkgs": [], "manual": []}
 
     def _refresh() -> None:
         # ⛔ 先判存活再取数：本卡被关页/重建后，`st_lb` 的 C++ 对象已析构，而本函数
@@ -7313,6 +7298,7 @@ def _media_components_appendix(t: Tokens, page: QWidget) -> None:
             st_lb.setText("组件状态读不到：" + _read_fail_hint(ebox.get("err")))
             btn.setEnabled(False)
             state["pkgs"] = []
+            state["manual"] = []
             return
         md = st.get("media") or {}
         if not isinstance(md, dict):
@@ -7320,6 +7306,7 @@ def _media_components_appendix(t: Tokens, page: QWidget) -> None:
             return
         lines: list[str] = []
         pkgs: list[str] = []
+        manual: list[str] = [] # 缺、但 pip 装不了的（按钮仍要点得动，点了给指引）
         v = md.get("voice") or {}
         dec = [d for d in (v.get("decode") or []) if isinstance(d, dict)]
         dec_ok = any(d.get("ok") for d in dec)
@@ -7327,6 +7314,8 @@ def _media_components_appendix(t: Tokens, page: QWidget) -> None:
             for d in dec:
                 lines.append("解码器 %s：%s" % (d.get("name") or "?", "可用" if d.get("ok")
                                                else ("缺（%s）" % str(d.get("detail") or "")[:40])))
+                if not d.get("ok"):
+                    manual.append(str(d.get("name") or "解码器"))
             if not dec_ok:
                 pkgs.append("pilk")
         else:
@@ -7339,22 +7328,39 @@ def _media_components_appendix(t: Tokens, page: QWidget) -> None:
             pkgs.append("yt-dlp")
         vr = st.get("video_read") or {}
         if vr and not vr.get("ready"):
-            state["ffmpeg_missing"] = True
+            manual.append("ffmpeg")
             lines.append("ffmpeg：%s（这个装不了自动版——到 ffmpeg 官网下载后放进 PATH，"
                          "或看「检测中心」的依赖体检）" % str(vr.get("why") or "缺")[:60])
         asr = (vr.get("asr") or {}) if isinstance(vr, dict) else {}
         if isinstance(asr, dict) and asr.get("ok") is False:
-            state["asr_missing"] = True
+            manual.append("Windows 语音识别")
             lines.append("音频识别：%s（Windows 功能——设置 → 时间和语言 → 语音，装完重启生效）"
                          % str(asr.get("why") or "不可用")[:50])
         state["pkgs"] = pkgs
+        state["manual"] = manual
         st_lb.setText("\n".join(lines) if lines else "组件状态读不到")
-        btn.setText("一键安装缺件" + ("（%s）" % "、".join(pkgs) if pkgs else ""))
-        btn.setEnabled(bool(pkgs))
+        # ⛔ 按钮不许在「有缺件」时禁用成死点击：缺的哪怕不是 pip 包（备用解码器/
+        #    ffmpeg），点下去也要给指引 —— 用户实测「点了没反应」的根因就是
+        #    pkgs 为空 ⇒ setEnabled(False)，按钮看着能点、点了无声。
+        if pkgs:
+            btn.setText("一键安装缺件（%s）" % "、".join(pkgs))
+        elif manual:
+            btn.setText("缺件没法自动装（看指引）")
+        else:
+            btn.setText("一键安装缺件")
+        btn.setEnabled(bool(pkgs or manual))
 
     def _install() -> None:
         pkgs = list(state.get("pkgs") or [])
-        if not pkgs:
+        manual = list(state.get("manual") or [])
+        if pkgs:
+            pass # 正常自动安装，往下走
+        elif manual:
+            st_lb.setText("这几样不是 pip 包、装不了自动版：%s。\n"
+                          "功能上能自动装的都会出现在按钮文字里；确需补齐按上面"
+                          "每行括号里的指引手动装。" % "、".join(manual))
+            return
+        else:
             st_lb.setText("没有要装的（组件都齐了）")
             return
         btn.setEnabled(False)

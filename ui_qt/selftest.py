@@ -2064,18 +2064,9 @@ def t_catmgr() -> None:
            any("/api/persona/cats/del" in c and "用户分区A" in c for c in calls),
            str([c for c in calls if "cats/del" in c]))
 
-        # ④ 打星：POST /api/personas/rate {key, score:5}（web :6191 同款）
-        calls.clear()
-        h["rate"]({"key": "p1", "name": "傲娇"})
-        deadline = _time.time() + 3.0
-        while _time.time() < deadline and not any("/api/personas/rate" in c for c in calls):
-            QApplication.processEvents()
-            _time.sleep(0.05)
-        ck("打星请求 /api/personas/rate {key, score:5} 真发（卡片「打星」钮）",
-           any("/api/personas/rate" in c and "score" in c and "p1" in c for c in calls),
-           str([c for c in calls if "rate" in c]))
-
-        # ⑤ ＋ 新建分区：弹窗构建 + 创建 → POST /api/persona/cats/save
+        # ④ ＋ 新建分区：弹窗构建 + 创建 → POST /api/persona/cats/save
+        # （原 ④ 打星段已随按钮移除：用户裁定「打星这个没用的按钮去掉」，
+        #   handlers 不再含 rate —— r14）
         mode["ok"] = False
         exec_dlgs.clear()
         calls.clear()
@@ -4643,9 +4634,10 @@ def t_g9() -> None:
         ck("g9 persona 恢复上一：确认后 POST /api/config",
            _n_posts("/api/config") > n0 and len(exec_dlgs) > 0,
            "posts=%d dlgs=%d" % (_n_posts("/api/config"), len(exec_dlgs)))
-        # 移分区：行内「移」→ prompt 弹窗（_card_dialog 无 btn_ok，不会自动确认）
-        b_mv = _btn_by_text(pp, "移")
-        ck("g9 persona 行内「移」钮在场", b_mv is not None, "btn=%s" % b_mv)
+        # 移分区：行内「移动」→ prompt 弹窗（_card_dialog 无 btn_ok，不会自动确认）
+        # （r14：按钮从单字「移」改成全文字「移动」，打星钮同批移除）
+        b_mv = _btn_by_text(pp, "移动")
+        ck("g9 persona 行内「移动」钮在场", b_mv is not None, "btn=%s" % b_mv)
         nd3 = len(exec_dlgs)
         if b_mv is not None:
             b_mv.click()
@@ -5911,10 +5903,14 @@ def t_g16() -> None:
     # ⑧ 勾选语义：容器内 QCheckBox 勾中 → patch 为群名 list（空勾 → []）
     if box is not None:
         # 手动塞两个勾选框（不依赖后台 /api/wechat-groups，纯测收集语义）
+        # ⛔ 清容器必须 setParent(None)（r11-B 同款）：只 deleteLater 是延迟销毁，
+        #    后端活着时 load_groups 已塞进真群勾选框 ⇒ 幽灵框留在 findChildren
+        #    里，计数 2 变 4（后端从"没起"变"在跑"后此坑现形）。
         while box.layout().count():
             it = box.layout().takeAt(0)
             w = it.widget()
             if w is not None:
+                w.setParent(None)
                 w.deleteLater()
         for nm in ("群甲", "群乙"):
             cb = QCheckBox(nm)
@@ -7739,6 +7735,81 @@ def _host_of(page):  # noqa: ANN001
     return host
 
 
+def t_r14_regress() -> None:
+    """r14 自检：三个用户实锤的回归闸。
+
+    A. **人设卡打星移除** —— 用户裁定「打星这个没用的按钮去掉」，移动/删除
+       恢复全文字（不再缩成单字正圆）。防的是按钮删了、handler/字典还留死线，
+       或哪天又被加回来。
+    B. **安装按钮不许死点击** —— 缺件不是 pip 包时旧代码 `setEnabled(False)`，
+       按钮看着能点、点了无声（用户实锤「点击这个一键安装，没反应」）。
+       现在缺件必须可点，点了给手动指引。
+    C. **挂件位置越界自愈** —— QSettings 里的位置跨分辨率/换屏后可能已在
+       屏幕外（实测 (1611,1431) 在 1080p 上 y 越界 ⇒「没看到挂件」）。
+       恢复时校验至少露出 60×60，越界回默认右下角；正常位置原样保留。
+    """
+    import inspect as _inspect
+
+    # ---- A. 人设卡 ---------------------------------------------------------
+    src = (HERE / "panels_custom.py").read_text(encoding="utf-8")
+    ck("r14 人设卡不再有「打星」按钮（用户裁定移除；注释里的历史说明不算数）",
+       "rate = Btn(" not in src and "def _rate_persona" not in src
+       and '"rate":' not in src, "")
+
+    ck("r14 移动/删除是全文字钮（不再缩成单字正圆）",
+       'Btn("删除"' in src and 'Btn("移动"' in src
+       and "set_button_size(42, 42)" not in src, "")
+
+    # ---- B. 安装按钮 -------------------------------------------------------
+    _app = src[src.index("def _media_components_appendix"):]
+    ck("r14 缺件状态含 manual（pip 装不了的也要让按钮点得动）",
+       '"manual": []' in _app and 'state["manual"] = manual' in _app, "")
+
+    ck("r14 按钮启用条件 = pip 可装 or 有手动缺件（不许死点击）",
+       "btn.setEnabled(bool(pkgs or manual))" in _app, "")
+
+    _i0 = _app.index("def _install()")
+    _i1 = _app.index("btn.clicked.connect", _i0)
+    _inst = _app[_i0:_i1]
+    ck("r14 点击时无 pip 缺件但有手动缺件 ⇒ 给指引而不是「都齐了」",
+       "manual" in _inst and "装不了自动版" in _inst, "")
+
+    # ---- C. 挂件位置自愈（功能验证，测后恢复用户原值）-----------------------
+    from PySide6.QtCore import QSettings # noqa: PLC0415
+
+    import stylekit_qt as _sk # noqa: PLC0415
+
+    import whale_widget as _ww # noqa: PLC0415
+
+    _t = _sk.THEMES["whale"]
+
+    ck("r14 恢复位置前有上屏校验（_onscreen）",
+       "_onscreen" in _inspect.getsource(_ww.WhaleWidget.__init__), "")
+
+    _set = QSettings(*_ww._SET)
+    _saved = _set.value("whale_pos")
+    try:
+        _set.setValue("whale_pos", [1611, 1431]) # 用户实测的越界值
+        w1 = _ww.WhaleWidget(_t)
+        from PySide6.QtWidgets import QApplication as _QA # noqa: PLC0415
+
+        scr = _QA.instance().primaryScreen()
+        g = scr.availableGeometry() if scr else None
+        _in = g is not None and g.contains(w1.x(), w1.y())
+        ck("r14 越界位置(1611,1431)恢复时回默认角（不落到屏幕外）",
+           _in, "pos=(%d,%d) screen=%s" % (w1.x(), w1.y(), g))
+
+        w1.close()
+
+        _set.setValue("whale_pos", [100, 200])
+        w2 = _ww.WhaleWidget(_t)
+        ck("r14 屏内位置原样保留（不乱重置用户拖放点）",
+           (w2.x(), w2.y()) == (100, 200), "pos=(%d,%d)" % (w2.x(), w2.y()))
+        w2.close()
+    finally:
+        _set.setValue("whale_pos", _saved if _saved is not None else "")
+
+
 def t_r11_placeholders() -> None:
     """r11 自检：「占位卡死」与「清容器残留」两条链的回归闸。
 
@@ -7850,7 +7921,7 @@ def main() -> int:
                    t_veradv, t_g5, t_g6, t_g7, t_g8, t_g9, t_g10, t_g11, t_g12, t_g13, t_g14,
                    t_g15, t_g16, t_g17, t_g18, t_g19, t_g20, t_g21, t_g22, t_ocr_fuzzy,
                    t_audit_r3, t_r10_drag, t_r11_whale_drag, t_r13_regress,
-                   t_r11_placeholders):
+                   t_r14_regress, t_r11_placeholders):
             try:
                 fn()
             except Exception as e: # noqa: BLE001

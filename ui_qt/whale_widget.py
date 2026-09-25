@@ -91,13 +91,18 @@ class WhaleWidget(QWidget):
         self._boot_ok = False
         self.restyle(t)
 
-        # 位置：上次拖到哪就还在哪；没有记录落右下角
+        # 位置：上次拖到哪就还在哪；**越界/坏记录落右下角**。
+        # ⛔ 必须校验上屏：实测 QSettings 里存过 (1611,1431) —— 在 1080p 屏上
+        #    y=1431 已在屏幕底边之外，挂件"一直在显示、只是在屏幕外面"，
+        #    用户眼里就是「没看到挂件」。位置记忆跨分辨率/换屏后天然可能越界。
         pos = QSettings(*_SET).value("whale_pos")
         moved = False
         if isinstance(pos, list) and len(pos) == 2:
             try:
-                self.move(int(pos[0]), int(pos[1]))
-                moved = True
+                x, y = int(pos[0]), int(pos[1])
+                if self._onscreen(x, y):
+                    self.move(x, y)
+                    moved = True
             except (TypeError, ValueError):
                 moved = False
         if not moved:
@@ -383,6 +388,28 @@ class WhaleWidget(QWidget):
                 self.move(geo.right() - self.W - 18, geo.bottom() - self.H - 18)
         except Exception:  # noqa: BLE001
             pass
+
+    @staticmethod
+    def _onscreen(x: int, y: int) -> bool:
+        """恢复位置前校验：这块矩形是否在**任一屏幕**上至少露出 60×60。
+
+        为什么需要：位置记忆来自上一台/上一分辨率的会话，换屏、改缩放、
+        拖到边缘时都可能存下「屏幕外」的坐标 —— 挂件照着它 move 就直接消失
+        （实测 (1611,1431) 在 1080p 上 y 已越界 ⇒ 用户「没看到挂件」）。
+        判不出来时**宁可达观**（返回 True 保持原位）：误判的代价是位置跳回
+        默认角，漏判的代价是挂件彻底看不见。
+        """
+        try:
+            scr = QApplication.instance()
+            for s in (scr.screens() if scr else []):
+                g = s.availableGeometry()
+                ix = min(x + WhaleWidget.W, g.right()) - max(x, g.left())
+                iy = min(y + WhaleWidget.H, g.bottom()) - max(y, g.top())
+                if ix >= 60 and iy >= 60:
+                    return True
+        except Exception:  # noqa: BLE001
+            return True
+        return False
 
     def reset_position(self) -> None:
         """回到右下角（位置记忆清掉）—— 留给「找不到挂件了」的救援路径。"""
