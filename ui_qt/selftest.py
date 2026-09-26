@@ -9813,6 +9813,94 @@ def t_atomic_write_guard() -> None:
             pass
 
 
+def t_inject_surface_guard() -> None:
+    """自检：**键鼠注入只有一条路**（F12）。
+
+    为什么这一族"一处错处处错"：`mouse_event` / `SetCursorPos` 是**全局输入** ——
+    系统把它派给"开枪那一刻光标所在 / 最上面那个窗口"，而它**根本不知道微信在哪**；
+    `SetCursorPos` 还会**静默失败**（返回 0、`GetLastError()`＝0，用户正在动鼠标时最常见）。
+    ⇒ 手搓的点击/滚轮会**落到用户当前真正指着的窗口（他的控制台）上**（实测事故）。
+    正确工序（`ui_adapt.click_real_at` / `wheel_real_at` 里那套）：过闸 → 落点稳定后再确一次 →
+    开枪 → 用完把光标还回去。这条工序以前在 `wechat` 里被手抄了 **5 处**（点击 3 + 滚轮 2），
+    **全都漏了"开枪前再确一次"**。
+
+    ⇒ 判据（**AST 找真实调用**，不看文本 —— 注释里写着这些名字的地方不算）：
+      ① **鼠标类**（`mouse_event` / `SetCursorPos`）只许出现在 `ui_adapt.py`（原语实现点）与
+         `input_backend.py`（注入面）；其它文件必须为 **0**；
+      ② **键盘类**（`keybd_event` / `SendInput`）留在别处的，白名单**逐条写理由**
+         （它们没有鼠标那套"落点"问题，但同样是全局输入 ⇒ 每条都要说清为什么独立）。
+    """
+    import ast as _ast # noqa: PLC0415
+
+    _root = HERE.parents[0]
+    #: 实现点/注入面：整文件豁免
+    _FILES_OK = {
+        "ui_adapt.py": "真鼠标原语（`click_real_at` / `wheel_real_at` / `heal_input` / `_cursor_restore`）都长在这里",
+        "input_backend.py": "注入面本身（投递后端与真实后端）",
+    }
+    #: 键盘类的逐条豁免：**(文件, 函数) → 理由**
+    _KB_OK = {
+        ("voice_strip.py", "_send_alt"):
+            "注入**真·右 Alt**（录音态）：要的是 `SendInput` 的扩展键语义，且前置是「微信在前台」，"
+            "消息发给焦点窗口、不动鼠标 —— 计划已定**保留独立**",
+        ("voice_strip.py", "_cancel_alt"): "同上（松开右 Alt 收尾）",
+        ("wechat.py", "_type_into_focused"):
+            "把文本打进**当前聚焦窗口**（朋友圈那种独立窗，主窗输入框不对）⇒ 需要发给焦点窗口的真键盘；"
+            "目前 `input_backend` 没有「真键盘」这一路（`MessageBackend.keys` 是投递）⇒ 记跟进项",
+        ("wechat.py", "moments_publish_text"): "误触浮层的 ESC 收尾（同上：没有共享的真键盘原语）",
+    }
+    _MOUSE = ("mouse_event", "SetCursorPos")
+    _KB = ("keybd_event", "SendInput")
+
+    def _injections(src: str):
+        """这份源码里"真实调用"的键鼠注入点 → [(函数名, 名字, 行号, 是不是鼠标类)]"""
+        out = []
+        tree = _ast.parse(src)
+        fnof = {}
+        for n in _ast.walk(tree):
+            if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+                for x in _ast.walk(n):
+                    fnof[x] = n.name
+        for n in _ast.walk(tree):
+            if not isinstance(n, _ast.Call):
+                continue
+            f = n.func
+            nm = f.attr if isinstance(f, _ast.Attribute) else (f.id if isinstance(f, _ast.Name) else "")
+            if nm in _MOUSE or nm in _KB:
+                out.append((fnof.get(n, "?"), nm, n.lineno, nm in _MOUSE))
+        return out
+
+    _mouse_bad, _kb_bad, _files = [], [], 0
+    for _f in sorted((_root / "agent").glob("*.py")):
+        _files += 1
+        if _f.name in _FILES_OK:
+            continue
+        for _fn, _nm, _ln, _is_mouse in _injections(_f.read_text(encoding="utf-8")):
+            _where = "agent/%s::%s" % (_f.name, _fn)
+            if _is_mouse:
+                _mouse_bad.append("%s:%d %s()" % (_where, _ln, _nm))
+            elif (_f.name, _fn) not in _KB_OK:
+                _kb_bad.append("%s:%d %s()" % (_where, _ln, _nm))
+    ck("鼠标注入只许出现在实现点/注入面（手搓点击会落到用户窗口上）",
+       not _mouse_bad, "越界：%s" % "、".join(_mouse_bad[:5]))
+    ck("键盘注入留在别处的都写了理由（逐条白名单）",
+       not _kb_bad, "没理由的：%s" % "、".join(_kb_bad[:5]))
+    #: 分母守卫：扫不到文件时上面两条会"全绿"
+    ck("上述扫描真的扫到了文件（分母守卫）", _files > 100, "扫到 %d 个 .py" % _files)
+    #: 白名单自身要有内容且每条理由都写得下
+    ck("豁免清单非空且理由具体", len(_FILES_OK) == 2 and len(_KB_OK) == 4
+       and all(len(str(v)) > 12 for v in list(_FILES_OK.values()) + list(_KB_OK.values())), "")
+    #: 反向控制：判定器必须**能认出**注入调用，且**不被注释/字符串骗到**
+    _probe = ('def f():\n'
+              '    """说明：这里以前写过 mouse_event(1,2,3,4,5) 与 SetCursorPos(1,2)"""\n'
+              '    # user32.mouse_event(0x0002, 0, 0, 0, 0)\n'
+              '    s = "mouse_event"\n'
+              '    u.keybd_event(0x11, 0, 0, 0)\n')
+    _pi = _injections(_probe)
+    ck("注入判定器有效：只认出那 1 条真调用（注释/字符串里的同名不认）",
+       len(_pi) == 1 and _pi[0][1] == "keybd_event", "实测 %s" % (_pi,))
+
+
 def t_default_value_guard() -> None:
     """自检：**默认表与示例文件的值差异必须逐条登记**（记三元组，值一变就红）。
 
@@ -9982,6 +10070,7 @@ def main() -> int:
                    t_gate_middle, t_cfg_wired_guard, t_delivery_ledger_guard, t_dev_dir_guard,
                    t_default_value_guard, t_dead_import_guard, t_guard_family_guard,
                    t_packaged_modules_guard, t_winops_guard, t_keys_guard, t_atomic_write_guard,
+                   t_inject_surface_guard,
                    t_whale_roles, t_whale_assets, t_whale_usage):
             try:
                 fn()

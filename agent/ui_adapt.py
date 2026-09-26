@@ -359,6 +359,101 @@ def real_guard(x: int, y: int, gui=None, extra_hwnds: tuple = ()) -> tuple:
         return False, "real_guard 异常（按「不打」处理）：%s" % str(e)[:80]
 
 
+def click_real_at(sx: int, sy: int, *, gui=None, right: bool = False, hold_ms: int = 120,
+                  settle_ms: int = 0, extra_hwnds: tuple = (), restore: bool = True,
+                  recheck: bool = True) -> tuple:
+    """在**屏幕坐标** (sx, sy) 打一枪真鼠标 —— 真鼠标档的**唯一原语**。返回 `(ok, 说明)`。
+
+    工序（顺序有意义，别省任何一步）：
+      ① `restore=True` 时先记下当前光标位置；
+      ② `real_guard`：确认这一点真属于微信（用户正在动鼠标导致 `SetCursorPos` 静默失败 ⇒ **不打**）；
+      ③ `settle_ms` 之后**再确一次**（`recheck`）：这几百毫秒里用户点到别的窗口就会把落点抢走，
+         而 `mouse_event` 是**全局输入**（它打给"开枪那一刻最上面那个窗口"，根本不知道微信在哪）
+         ⇒ 落点变了这一枪就**不打**；
+      ④ 按下 → 按住 `hold_ms` → 抬起；
+      ⑤ `restore=True` 时把光标放回①记下的位置（"用完必须还回去"是硬口径）。
+
+    ⛔ 为什么要有这个唯一原语：这条工序以前在 `wechat` 里被手抄了 **4 处**，而手抄版**全都漏了第③步**
+      （只过闸就开枪）—— 漏掉的后果是"点歪到用户的控制台/浏览器"。收口后所有真鼠标点击都走这里，
+      要改节奏/加重试只改这一处。
+
+    ⚠️ 与 `click()` 的分工：`click()` 走 `gui.wx_click`（库自己的节奏，够用于绝大多数控件）；
+      本函数用于"落点稳定性/按住时长会影响成败"的那几枪。
+    """
+    old = None
+    if restore:
+        try:
+            pt = wintypes.POINT()
+            if _user32.GetCursorPos(ctypes.byref(pt)):
+                old = (int(pt.x), int(pt.y))
+        except Exception: # noqa: BLE001
+            old = None
+    try:
+        sx, sy = int(sx), int(sy)
+        ok, why = real_guard(sx, sy, gui=gui, extra_hwnds=tuple(extra_hwnds))
+        if not ok:
+            return False, why
+        if settle_ms > 0:
+            time.sleep(int(settle_ms) / 1000.0)
+            if recheck:
+                ok2, why2 = real_guard(sx, sy, gui=gui, extra_hwnds=tuple(extra_hwnds))
+                if not ok2:
+                    return False, ("开枪前落点已经变了（%s）⇒ 这一枪没打（多半是你这几百毫秒里点/切到了别的窗口）"
+                                   % str(why2)[:70])
+        down, up = (0x0008, 0x0010) if right else (0x0002, 0x0004)
+        _user32.mouse_event(down, 0, 0, 0, 0)
+        if hold_ms > 0:
+            time.sleep(int(hold_ms) / 1000.0)
+        _user32.mouse_event(up, 0, 0, 0, 0)
+        return True, "真点 (%d,%d)（按住 %dms）" % (sx, sy, int(hold_ms))
+    except Exception as e: # noqa: BLE001
+        return False, "click_real_at 异常：%s" % str(e)[:80]
+    finally:
+        if restore and old:
+            try:
+                _user32.SetCursorPos(int(old[0]), int(old[1]))
+            except Exception: # noqa: BLE001
+                pass
+
+
+def wheel_real_at(cx: int, cy: int, notches: int, *, delta: int = -120, gap_ms: int = 120,
+                  gui=None, extra_hwnds: tuple = (), settle_ms: int = 0, stop=None) -> tuple:
+    """在**屏幕坐标** (cx, cy) 滚 `notches` 格 —— 真鼠标档的**滚轮原语**。返回 `(ok, 说明)`。
+
+    ⛔ 滚轮和点击一样是**全局输入**：光标没到位时，滚轮会滚到用户当前真正指着的那个窗口
+      （他的控制台）上 ⇒ 必须同样先过 `real_guard`（它会把光标挪到落点并确认归属）。
+
+    `delta`：一格 `120`（Windows 的 `WHEEL_DELTA`）；个别老链用的是"一格塞 900"的口径 ⇒ 保留可传。
+    `settle_ms`：过闸之后先等一会儿（刚切过去的窗口需要时间接受滚轮）。
+    `stop`：可选**无参回调**，返回真值就提前收手（滚动链要能被打断）——收手时的已滚格数会写进说明里。
+
+    ⚠️ 与点击原语一样：**不还原光标**（调用方那条链自己管；`real_guard` 已经把光标放在落点上）。
+    """
+    cx, cy = int(cx), int(cy)
+    n = max(0, int(notches))
+    try:
+        ok, why = real_guard(cx, cy, gui=gui, extra_hwnds=tuple(extra_hwnds))
+        if not ok:
+            return False, why
+        if settle_ms > 0:
+            time.sleep(int(settle_ms) / 1000.0)
+        done = 0
+        for _ in range(n):
+            if stop is not None:
+                try:
+                    if stop():
+                        return True, "已停止（已滚动 %d 格）" % done
+                except Exception: # noqa: BLE001
+                    pass
+            _user32.mouse_event(0x0800, 0, 0, int(delta), 0)
+            done += 1
+            if gap_ms > 0:
+                time.sleep(int(gap_ms) / 1000.0)
+        return True, "已滚动 %d 格" % done
+    except Exception as e: # noqa: BLE001
+        return False, "wheel_real_at 异常：%s" % str(e)[:80]
+
+
 def click_real_hold(gui, x: int, y: int, right: bool = False, settle_ms: int = 180,
                     hold_ms: int = 120, extra_hwnds: tuple = ()) -> tuple:
     """真鼠标**按住一会儿再松开**（给"只认真点"的自绘控件用），且**点完把光标放回原处**。
@@ -371,41 +466,15 @@ def click_real_hold(gui, x: int, y: int, right: bool = False, settle_ms: int = 1
 
     与 `click()` 的分工：`click()` 走 `gui.wx_click`（库自己的节奏，够用于绝大多数控件）；
     本函数用于"按住时长/落点稳定性会影响成败"的那几个。x/y 同 `click()`＝**渲染区相对**坐标。
+
+    实现在 `click_real_at()`（屏幕坐标版）：本函数只多做一步"渲染相对 → 屏幕"的换算。
     """
-    old = None
-    try:
-        pt = wintypes.POINT()
-        if _user32.GetCursorPos(ctypes.byref(pt)):
-            old = (int(pt.x), int(pt.y))
-    except Exception:
-        old = None
     try:
         sx, sy = to_click(int(x) + int(gui.origin_x), int(y) + int(gui.origin_y))
-        ok, why = real_guard(sx, sy, gui=gui, extra_hwnds=tuple(extra_hwnds))
-        if not ok:
-            return False, why
-        time.sleep(max(0, int(settle_ms)) / 1000.0)
-        # ★ 开枪前**再确认一次**：
-        #   `real_guard` 检查落点 → 真正 `mouse_event` 之间隔着 settle_ms，这几百毫秒里用户点到别的窗口
-        #   （控制台/浏览器）就会把落点抢走 —— 而 `mouse_event` 是**全局输入**，打给"开枪那一刻最上面那个窗口"，
-        #   它根本不知道微信在哪 ⇒ 必须重确一次：落点或光标变了，这一枪就**不打**。
-        ok2, why2 = real_guard(sx, sy, gui=gui, extra_hwnds=tuple(extra_hwnds))
-        if not ok2:
-            return False, ("开枪前落点已经变了（%s）⇒ 这一枪没打（多半是你这几百毫秒里点/切到了别的窗口）"
-                           % str(why2)[:70])
-        down, up = (0x0008, 0x0010) if right else (0x0002, 0x0004)
-        _user32.mouse_event(down, 0, 0, 0, 0)
-        time.sleep(max(1, int(hold_ms)) / 1000.0)
-        _user32.mouse_event(up, 0, 0, 0, 0)
-        return True, "真点 (%d,%d)（按住 %dms）" % (sx, sy, int(hold_ms))
-    except Exception as e:
+        return click_real_at(sx, sy, gui=gui, right=right, hold_ms=hold_ms,
+                             settle_ms=settle_ms, extra_hwnds=extra_hwnds, restore=True)
+    except Exception as e: # noqa: BLE001
         return False, "click_real_hold 异常：%s" % str(e)[:80]
-    finally:
-        if old:
-            try:
-                _user32.SetCursorPos(int(old[0]), int(old[1]))
-            except Exception:
-                pass
 
 
 def _restore_wechat_window(gui) -> bool:
