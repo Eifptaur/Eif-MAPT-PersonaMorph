@@ -5113,7 +5113,6 @@ def _fb_submit(btn, note) -> None:
     Qt 壳暂不做附件选择，files 恒空（附件在网页控制台里添加）。
     """
     import re as _re # noqa: PLC0415
-    import threading as _th # noqa: PLC0415
 
     from agent_bridge import post_json # noqa: PLC0415
 
@@ -5175,8 +5174,6 @@ def _fb_submit(btn, note) -> None:
 def _upload(kind: str, btn, note) -> None:
     """确认上传（web uploadSeeds / uploadFeedback 对齐）：确认框 →
     POST /api/community/upload {kind} → 已上传 X 条 / 上传失败。"""
-    import threading as _th # noqa: PLC0415
-
     from agent_bridge import post_json # noqa: PLC0415
 
     t = getattr(btn, "t", None)
@@ -6354,8 +6351,6 @@ def _feedback_appendix(t: Tokens, page: QWidget) -> None:
     「补发积压」走 _ACT_API 的 fbFlush（后台线程 + 卡内回显）。提交按钮的
     三态回显在按钮行内 note（ACT_CUSTOM._fb_submit），提交成功会联动刷新本卡。
     """
-    import threading as _th # noqa: PLC0415
-
     card = Card(t)
     card.body.addWidget(h2(t, "反馈状态"))
     card.body.addWidget(desc(t, "反馈发不出去时只存在本机，网络/邮箱修好后点「补发积压」再试；"

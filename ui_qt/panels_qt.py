@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
 import config_io
 import panels_custom
 import sec_meta
+from async_ui import run_async
 from stylekit_qt import Tokens, pill, qfont, rgba
 from widgets import Badge, Btn, Card, Field, Switch, desc, h2
 
@@ -471,30 +472,19 @@ def _chips_group_action(aid: str, line, note, t: Tokens) -> None:
     note.show()
     note.setText("正在刷新群列表（重读联系人库，微信占用时会慢，最长等 30 秒）…"
                  if aid == "refreshGroups" else "检测群聊中…")
-    box: dict = {"done": False, "val": None, "err": None}
 
-    def _work() -> None:
+    def _work(box: dict) -> None:
         try:
             box["val"] = config_io.get_json(
                 "/api/wechat-groups" + ("?refresh=1" if aid == "refreshGroups" else ""),
                 timeout=30.0, err_box=box)
         except Exception as e: # noqa: BLE001
             box["err"] = str(e)
-        box["done"] = True
 
-    import threading as _th # noqa: PLC0415
-
-    _th.Thread(target=_work, daemon=True, name="chips-groups").start()
-
-    from PySide6.QtCore import QTimer # noqa: PLC0415
-
-    def _apply() -> None:
-        if not box["done"]:
-            QTimer.singleShot(150, _apply)
-            return
-        rsp = box["val"]
+    def _apply(box: dict) -> None:
+        rsp = box.get("val")
         if not isinstance(rsp, dict):
-            err = box["err"] or ""
+            err = box.get("err") or ""
             if "timed out" in err or "timeout" in err.lower():
                 note.setText("等结果超时（30 秒）。微信正占着联系人库或群太多时会这样，"
                              "稍等再点一次；反复出现就重启微信/控制台再试。")
@@ -516,7 +506,7 @@ def _chips_group_action(aid: str, line, note, t: Tokens) -> None:
             return
         _open_group_pick(t, line, note, groups)
 
-    QTimer.singleShot(150, _apply)
+    run_async(_work, _apply, page=note.window(), interval=150, name="chips-groups")
 
 
 def _open_group_pick(t: Tokens, line, note, groups: list) -> None:
@@ -525,7 +515,6 @@ def _open_group_pick(t: Tokens, line, note, groups: list) -> None:
     无边框卡片壳 + 半透明背景 + 项目 Btn/Switch 组件 + 父窗口居中；
     必须模态 exec()（web 勾选层挂到用户点确定/取消为止）。
     """
-    from PySide6.QtCore import QTimer # noqa: PLC0415
     from PySide6.QtWidgets import ( # noqa: PLC0415
         QDialog, QFrame, QHBoxLayout, QListWidget, QListWidgetItem, QVBoxLayout,
     )
@@ -640,21 +629,12 @@ def _open_group_pick(t: Tokens, line, note, groups: list) -> None:
                     bx["rsp"] = post_json("/api/config", cfg, timeout=10.0)
             except Exception as e: # noqa: BLE001
                 bx["err"] = str(e)
-            bx["done"] = True
 
-        bx: dict = {"done": False, "rsp": None, "err": None}
-        import threading as _th # noqa: PLC0415
-
-        _th.Thread(target=_work, daemon=True, args=(bx,), name="chips-save").start()
-
-        def _apply_save() -> None:
-            if not bx["done"]:
-                QTimer.singleShot(150, _apply_save)
-                return
+        def _apply_save(bx: dict) -> None:
             note.setText("已保存群白名单（%d 个群）" % len(picked)
-                         if bx["err"] is None else "群白名单保存失败：" + bx["err"])
+                         if bx.get("err") is None else "群白名单保存失败：" + str(bx["err"]))
 
-        QTimer.singleShot(150, _apply_save)
+        run_async(_work, _apply_save, page=note.window(), interval=150, name="chips-save")
 
     ok.clicked.connect(_ok)
 
@@ -706,9 +686,8 @@ def _act_run(aid: str, note) -> None:
     method, api, body = spec
     note.show()
     note.setText("执行中…（环境体检/链路测试可能要十几秒）")
-    bx: dict = {"done": False, "rsp": None, "err": None}
 
-    def _work() -> None:
+    def _work(bx: dict) -> None:
         try:
             if method == "POST":
                 from agent_bridge import post_json # noqa: PLC0415
@@ -719,22 +698,12 @@ def _act_run(aid: str, note) -> None:
                 bx["rsp"] = config_io.get_json(api, timeout=60.0)
         except Exception as e: # noqa: BLE001
             bx["err"] = str(e)
-        bx["done"] = True
 
-    import threading as _th # noqa: PLC0415
-
-    _th.Thread(target=_work, daemon=True, name="act-" + aid).start()
-
-    from PySide6.QtCore import QTimer # noqa: PLC0415
-
-    def _apply() -> None:
-        if not bx["done"]:
-            QTimer.singleShot(150, _apply)
-            return
-        if bx["err"]:
+    def _apply(bx: dict) -> None:
+        if bx.get("err"):
             note.setText("%s 失败：%s" % (aid, bx["err"]))
             return
-        rsp = bx["rsp"] if isinstance(bx["rsp"], dict) else {}
+        rsp = bx.get("rsp") if isinstance(bx.get("rsp"), dict) else {}
         if aid == "testApi":
             note.setText(("测试连通成功（%sms）" % rsp.get("latency_ms")) if rsp.get("ok")
                          else ("测试失败：%s" % (rsp.get("error") or "未知原因")))
@@ -808,7 +777,7 @@ def _act_run(aid: str, note) -> None:
         else:
             note.setText(str(rsp.get("note") or rsp.get("summary") or "完成"))
 
-    QTimer.singleShot(150, _apply)
+    run_async(_work, _apply, page=note.window(), interval=150, name="act-" + aid)
 
 
 def _code_check_run(note, deps: bool) -> None:
@@ -818,9 +787,8 @@ def _code_check_run(note, deps: bool) -> None:
     """
     note.show()
     note.setText("代码检测启动中…")
-    bx: dict = {"done": False, "err": None, "line": "代码检测启动中…"}
 
-    def _work() -> None:
+    def _work(bx: dict) -> None:
         try:
             from agent_bridge import post_json # noqa: PLC0415
 
@@ -849,24 +817,18 @@ def _code_check_run(note, deps: bool) -> None:
                 bx["line"] = line
         except Exception as e: # noqa: BLE001
             bx["err"] = str(e)
-        finally:
-            bx["done"] = True
 
-    import threading as _th # noqa: PLC0415
+    def _tick(bx: dict) -> None:
+        note.setText(str(bx.get("line") or ""))
 
-    _th.Thread(target=_work, daemon=True, name="code-check").start()
-
-    from PySide6.QtCore import QTimer # noqa: PLC0415
-
-    def _apply() -> None:
-        note.setText(bx["line"])
-        if bx["done"]:
-            if bx["err"]:
-                note.setText("代码检测失败：" + bx["err"])
+    def _apply(bx: dict) -> None:
+        if bx.get("err"):
+            note.setText("代码检测失败：" + str(bx["err"]))
             return
-        QTimer.singleShot(300, _apply)
+        note.setText(str(bx.get("line") or ""))
 
-    QTimer.singleShot(300, _apply)
+    # 后台那个循环自己就是 45 秒左右的上限，界面按 300ms 收进度即可
+    run_async(_work, _apply, page=note.window(), interval=300, name="code-check", on_tick=_tick)
 
 
 def _btn_group(t: Tokens, actions: list[tuple[str, str]], note=None) -> QWidget:

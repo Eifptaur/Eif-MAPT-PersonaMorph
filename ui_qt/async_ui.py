@@ -98,7 +98,8 @@ def run_async(work, on_done, *, page: object = None, interval: int = 200,  # noq
     —— 按钮停在"检测中"再也不恢复，比不设上限更糟。默认 300 秒已覆盖本仓最长的那个请求
     （全套点击测试 185 秒）；**只有在被等的事情可能超过 300 秒时才需要传 `max_seconds`**。
 
-    返回 None。**不抛异常**（后台异常由 `work` 自己写进 `box`，或在这里兜住）。
+    返回 None。后台 `work` 抛出的异常**不穿透线程边界**（会打整段栈），统一记进
+    `box["_err"]`；落地体想区分"后台炸了"和"正常返回"可以读它。
     """
     import threading # noqa: PLC0415
 
@@ -107,6 +108,8 @@ def run_async(work, on_done, *, page: object = None, interval: int = 200,  # noq
     def _bg() -> None:
         try:
             work(box)
+        except Exception as e: # noqa: BLE001 — 后台异常记进 box，落地体自己决定怎么显示
+            box["_err"] = str(e)
         finally:
             box["done"] = True
 

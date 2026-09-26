@@ -8733,22 +8733,78 @@ def t_async_landing_guard() -> None:
     ck("面板销毁后异步结果不再落地（否则取已销毁控件 = 抛异常）",
        called == [], "called=%s" % (called,))
 
-    # ④ **全量口径**：手搓的"跨线程落地"只许降不许升（数到 0 才算族收口完成）。
+    # ③b 统一驱动器自己的三条护栏（文本断言只能证明"写了"，这里证明"真的那样跑"）
+    import async_ui # noqa: PLC0415
+
+    _ticks: list = []
+    _fin: list = []
+
+    def _slow(box): # noqa: ANN001, ANN202
+        _time.sleep(0.35) # 慢到至少要跨过两轮 150ms 轮询
+        box["v"] = 7
+
+    def _tick(box): # noqa: ANN001, ANN202
+        _ticks.append(box.get("v"))
+
+    def _finish(box): # noqa: ANN001, ANN202
+        _fin.append(box.get("v"))
+
+    async_ui.run_async(_slow, _finish, interval=50, name="gate-tick", on_tick=_tick)
+    _t0 = _time.monotonic()
+    while _time.monotonic() - _t0 < 2.0 and not _fin:
+        QApplication.processEvents()
+        _time.sleep(0.02)
+    ck("on_tick 在「还没跑完」时真的被调（进度回显靠它）",
+       bool(_ticks) and _fin == [7], "ticks=%d fin=%s" % (len(_ticks), _fin))
+
+    _late: list = []
+
+    def _never(box): # noqa: ANN001, ANN202
+        _time.sleep(1.2) # 比 max_seconds 长得多
+
+    async_ui.run_async(_never, lambda _b: _late.append(1), interval=20,
+                       max_seconds=0.12, name="gate-cap")
+    _t0 = _time.monotonic()
+    while _time.monotonic() - _t0 < 1.6:
+        QApplication.processEvents()
+        _time.sleep(0.02)
+    ck("轮询到 max_seconds 就停：超时的任务**不落地**（而不是永远重排）",
+       _late == [], "late=%s" % (_late,))
+
+    _errbox: list = []
+
+    def _boom_work(box): # noqa: ANN001, ANN202
+        raise ValueError("后台炸了")
+
+    async_ui.run_async(_boom_work, lambda b: _errbox.append(b.get("_err")), interval=20,
+                       name="gate-err")
+    _t0 = _time.monotonic()
+    while _time.monotonic() - _t0 < 1.0 and not _errbox:
+        QApplication.processEvents()
+        _time.sleep(0.02)
+    ck("后台异常不穿透线程边界，记进 box['_err'] 交给落地体（否则打整段栈）",
+       _errbox and "后台炸了" in str(_errbox[0]), "err=%s" % (_errbox,))
+
+    # ④ **全量口径**：手搓的"跨线程落地"**一处都不许有**（这一族已收口到 async_ui）。
     #    ⛔ 口径必须区分两类，否则会把正常的延迟重绘也算成违规（我第一版就是这么误报了 90 个）：
     #      · **需要守卫**＝函数里起了 `Thread(` ⇒ 回调在**另一个线程**落地到控件，控件可能已被销毁；
     #      · **不需要守卫**＝只有 `singleShot(`、没有 `Thread` ⇒ 那是**同面板延迟重绘**
     #        （`QTimer.singleShot(0, self._apply)` 这类），定时器挂在**面板自己**身上，
     #        Qt 会随对象销毁自动断开 ⇒ 天然安全。
     #    守卫 = 文本里出现 `_ui_alive(` / `_deliver(` / `qt_alive(` / `_alive`。
+    #    ⛔ `async_ui.py` 按文件名豁免：它是这一族的**唯一实现点**，`Thread(` 就该长在那里。
+    #      豁免的代价用下面那条"它还真的守着东西"的断言补回来。
     import ast as _ast2 # noqa: PLC0415
     import os as _o2 # noqa: PLC0415
     _qdir = _o2.path.dirname(_o2.path.abspath(__file__))
     _GUARD = ("_ui_alive(", "_deliver(", "qt_alive(", "_alive")
+    _IMPL = "async_ui.py" # 这一族的唯一实现点（见该文件头）
     _raw_sites = []
+    _all_py = 0
     for _dp, _dn, _fns in _o2.walk(_qdir):
         _dn[:] = [d for d in _dn if d not in ("__pycache__", "assets")]
         for _fn in sorted(_fns):
-            if not _fn.endswith(".py") or _fn == "selftest.py":
+            if not _fn.endswith(".py") or _fn in ("selftest.py", _IMPL):
                 continue
             _p = _o2.path.join(_dp, _fn)
             try:
@@ -8756,6 +8812,7 @@ def t_async_landing_guard() -> None:
                 _tree = _ast2.parse(_src)
             except Exception: # noqa: BLE001
                 continue
+            _all_py += 1
             _lines = _src.split("\n")
             for _n in _ast2.walk(_tree):
                 if not isinstance(_n, (_ast2.FunctionDef, _ast2.AsyncFunctionDef)):
@@ -8768,11 +8825,20 @@ def t_async_landing_guard() -> None:
                            or (isinstance(_c.func, _ast2.Name) and _c.func.id == "Thread")))
                 if _th:
                     _raw_sites.append("%s::%s" % (_o2.path.relpath(_p, _qdir).replace("\\", "/"), _n.name))
-    #: 棘轮基线：实测 44（2026-09-26，口径校准后）。**只许降**；降到 0 = 这一族收口完成。
-    ck("跨线程落地**只许降不许升**（棘轮；同面板 `singleShot` 不算）",
-       len(_raw_sites) <= 44,
-       "当前 %d / 基线 44%s" % (len(_raw_sites),
-                              ("；例：" + "、".join(_raw_sites[:4])) if _raw_sites else ""))
+    #: 棘轮已收口：这一族**硬零**（2026-09-26 迁移完成，基线 44 → 0）。
+    ck("手搓的跨线程落地**一处在哪都不许有**（族已收口到 async_ui.run_async）",
+       not _raw_sites,
+       "当前 %d 处%s" % (len(_raw_sites),
+                       ("；例：" + "、".join(_raw_sites[:4])) if _raw_sites else ""))
+    #: 分母守卫：扫不到文件时上面那条会"全绿"（写全量口径的闸门必须同时断言分母）。
+    ck("上述全量扫描真的扫到了文件（分母守卫）", _all_py >= 20, "扫到 %d 个 .py" % _all_py)
+    #: ⛔ 豁免 `async_ui.py` 的代价：它必须**真的**是唯一实现点、而且真的带护栏。
+    with open(_o2.path.join(_qdir, _IMPL), encoding="utf-8") as _fh:
+        _impl_src = _fh.read()
+    ck("async_ui 里只有两个起线程的地方（run_bg / run_async）——不许变成新的杂物间",
+       _impl_src.count("threading.Thread(") == 2, "实测 %d 处" % _impl_src.count("threading.Thread("))
+    ck("async_ui 的 run_async 自带存活判 + 轮询上限（护栏没被删）",
+       "ui_alive(page)" in _impl_src and "_left[0] <= 0" in _impl_src, "")
 
 
 def t_screen_guards() -> None:

@@ -22,12 +22,11 @@
 
 from __future__ import annotations
 
-import threading
-
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel
 
+from async_ui import run_async, run_bg
 from confirm import ConfirmDialog
 from popover import Popover
 from stylekit_qt import Tokens, pill, qfont, rgba
@@ -119,6 +118,7 @@ class UpdateBar(QFrame):
         self._cur: dict | None = None # 最近一次 /api/update 真值
         self._dismissed: tuple | None = None # 「稍后」会话抑制（status, theirs）
         self._polling = False # 更新作业轮询中（主态机让位）
+        self._poll_busy = False # 上一跳还没回来 ⇒ 这一跳跳过（别把请求叠起来）
         self._poll_iv = QTimer(self)
         self._poll_iv.setInterval(900) # web setInterval(pollJob, 900)
         self._poll_iv.timeout.connect(self._poll_once)
@@ -258,24 +258,17 @@ class UpdateBar(QFrame):
             self._style(warn=False, visible=False) # web 同款守卫（按钮已禁用，双保险）
             return
         ver = str(cur.get("theirs"))
-        box: dict = {"done": False}
 
-        def _work() -> None:
+        def _work(box: dict) -> None:
             from agent_bridge import post_json # noqa: PLC0415
 
             post_json("/api/update_skip", {"version": ver})
-            box["done"] = True
 
-        threading.Thread(target=_work, daemon=True, name="upd-skip").start()
-
-        def _poll() -> None:
-            if not box["done"]:
-                QTimer.singleShot(150, _poll)
-                return
+        def _apply(box: dict) -> None:
             self.pop.close()
             self._style(warn=False, visible=False) # web .then(hide).catch(hide)
 
-        QTimer.singleShot(150, _poll)
+        run_async(_work, _apply, page=self, interval=150, name="upd-skip")
 
     def _on_reset(self) -> None:
         """「更新闸门卡死」出口（web updReset assets/console/index.html:794-807）：被镜像
@@ -293,23 +286,16 @@ class UpdateBar(QFrame):
         d.exec()
         if not d.result_ok:
             return
-        box: dict = {"done": False, "r": None}
 
-        def _work() -> None:
+        def _work(box: dict) -> None:
             from agent_bridge import post_json # noqa: PLC0415
 
             try:
                 box["r"] = post_json("/api/update_reset", {}, timeout=15.0)
             except Exception as e: # noqa: BLE001
                 box["r"] = {"ok": False, "error": str(e)}
-            box["done"] = True
 
-        threading.Thread(target=_work, daemon=True, name="upd-reset").start()
-
-        def _poll() -> None:
-            if not box["done"]:
-                QTimer.singleShot(150, _poll)
-                return
+        def _apply(box: dict) -> None:
             r = box.get("r") or {}
             if r.get("ok"):
                 self.detail.setText("已重置（原记录 %s ⇒ 现在 %s）"
@@ -318,7 +304,7 @@ class UpdateBar(QFrame):
                 self.detail.setText("重置失败：%s"
                                     % (r.get("why") or r.get("error") or "未说明"))
 
-        QTimer.singleShot(150, _poll)
+        run_async(_work, _apply, page=self, interval=150, name="upd-reset")
 
     def _on_go(self) -> None:
         cur = self._cur or {}
@@ -342,21 +328,14 @@ class UpdateBar(QFrame):
             return # 可打断/取消，后台零影响
         self._set_progress("正在更新到 %s：准备中…" % ver)
         self._style(warn=False, visible=True)
-        box: dict = {"done": False, "r": None}
 
-        def _work() -> None:
+        def _work(box: dict) -> None:
             from agent_bridge import post_json # noqa: PLC0415
 
             box["r"] = post_json("/api/update_apply", {})
-            box["done"] = True
 
-        threading.Thread(target=_work, daemon=True, name="upd-apply").start()
-
-        def _poll() -> None:
-            if not box["done"]:
-                QTimer.singleShot(150, _poll)
-                return
-            r = box["r"]
+        def _apply(box: dict) -> None:
+            r = box.get("r")
             if not isinstance(r, dict) or r.get("ok") is False:
                 why = r.get("why") if isinstance(r, dict) else None
                 self._set_progress("更新启动失败：%s" % (why or "没连上后台（更新没有开始）"))
@@ -365,7 +344,7 @@ class UpdateBar(QFrame):
             self._polling = True
             self._poll_iv.start()
 
-        QTimer.singleShot(150, _poll)
+        run_async(_work, _apply, page=self, interval=150, name="upd-apply")
 
     # ------------------------------------------------------------ 进度双写（胶囊 + 面板）
 
@@ -379,21 +358,24 @@ class UpdateBar(QFrame):
     # ------------------------------------------------------------ 更新作业轮询（web pollJob L887-913）
 
     def _poll_once(self) -> None:
-        """轮询一跳：拉 /api/update 看 job（web pollJob 同款）。线程 + 主线程落地。"""
-        box: dict = {"done": False, "val": None}
+        """轮询一跳：拉 /api/update 看 job（web pollJob 同款）。线程 + 主线程落地。
 
-        def _work() -> None:
+        驱动是外部那个 900ms 的 `_poll_iv`（不是自链）：**一跳一次请求**。
+        加一个"上一跳没回来就跳过这一跳"的守卫 —— 原来的写法每 900ms 无条件起一条线程、
+        150ms 没回来就把结果丢掉再起下一条，后端慢时最多叠 6 条在飞；守卫之后最多 1 条。
+        """
+        if self._poll_busy:
+            return
+        self._poll_busy = True
+
+        def _work(box: dict) -> None:
             from config_io import get_json # noqa: PLC0415
 
             box["val"] = get_json("/api/update", timeout=8.0)
-            box["done"] = True
 
-        threading.Thread(target=_work, daemon=True, name="upd-poll").start()
-
-        def _apply() -> None:
-            if not box["done"]:
-                return # 还没回来 → 下个 tick（900ms）再收
-            s = box["val"]
+        def _apply(box: dict) -> None:
+            self._poll_busy = False # 这一跳收摊（无论有没有拿到）
+            s = box.get("val")
             if not isinstance(s, dict):
                 return # 拉取失败：跳过本轮（web catch return）
             j = s.get("job") or {}
@@ -412,7 +394,7 @@ class UpdateBar(QFrame):
 
                     post_api("/api/restart")
 
-                threading.Thread(target=_rs, daemon=True, name="upd-restart").start()
+                run_bg(_rs, name="upd-restart")
             elif state == "error":
                 self._set_progress("更新失败：%s（可以再点一次「立即更新」重试）"
                                    % (j.get("why") or "未知原因"), warn=True)
@@ -421,7 +403,8 @@ class UpdateBar(QFrame):
                                    + (("（%s）" % j.get("why")) if j.get("why") else "")
                                    + "，请重启控制台后重试", warn=True)
 
-        QTimer.singleShot(150, _apply)
+        # 下一次 900ms tick 会再来一遍；这里的轮询只为把这一次的结果收回来
+        run_async(_work, _apply, page=self, interval=150, name="upd-poll")
 
     def _render_running(self, j: dict) -> None:
         ver = str((self._cur or {}).get("theirs") or j.get("version") or "新版本")

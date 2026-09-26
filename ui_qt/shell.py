@@ -32,6 +32,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import config_io # noqa: E402 面板读写 config.json 的桥（save→set 同 webui 次序）
+from async_ui import run_async, run_bg # noqa: E402 跨线程落地的唯一实现点（见 async_ui 文件头）
 
 from PySide6.QtCore import QEvent, QObject, QPointF, QSize, Qt, QTimer # noqa: E402
 from PySide6.QtGui import ( # noqa: E402
@@ -1831,82 +1832,55 @@ class Shell(QWidget):
             return
         self._probe_busy = True
         url = current_url()
-        box: dict = {"done": False, "val": None}
 
-        def _work() -> None:
+        def _work(box: dict) -> None:
             try:
                 box["val"] = probe_backend(url)
             except Exception: # noqa: BLE001
                 box["val"] = None
             finally:
                 self._probe_busy = False
-                box["done"] = True
 
-        import threading as _th # noqa: PLC0415
-
-        _th.Thread(target=_work, daemon=True, name="probe").start()
-
-        def _apply() -> None:
-            if not box["done"]:
-                QTimer.singleShot(120, _apply)
-                return
-            if box["val"] is not None:
+        def _apply(box: dict) -> None:
+            if box.get("val") is not None:
                 self._show_probe(box["val"])
             self._watch_config() # 顺跳：光标/壁纸跟随 config（web 面板改了 4 秒内生效）
 
-        QTimer.singleShot(120, _apply)
+        run_async(_work, _apply, page=self, interval=120, name="probe")
 
     def _upd_first_check(self) -> None:
         """ #13：更新公告条首拉。web updbar = 页面加载时拉一次（不做周期轮询）；
         /api/update 背后是 9 源竞速，可能拖到秒级 —— 后台线程拉，主线程落地。"""
-        box: dict = {"done": False, "val": None}
 
-        def _work() -> None:
+        def _work(box: dict) -> None:
             from config_io import get_json # noqa: PLC0415
 
             box["val"] = get_json("/api/update", timeout=10.0)
-            box["done"] = True
 
-        import threading as _th # noqa: PLC0415
-
-        _th.Thread(target=_work, daemon=True, name="upd-first").start()
-
-        def _apply() -> None:
-            if not box["done"]:
-                QTimer.singleShot(150, _apply)
-                return
-            self._upd_state = box["val"] if isinstance(box["val"], dict) else None
+        def _apply(box: dict) -> None:
+            self._upd_state = box.get("val") if isinstance(box.get("val"), dict) else None
             bar = getattr(self, "updbar", None)
             if bar is not None:
                 bar.apply_state(self._upd_state)
 
-        QTimer.singleShot(150, _apply)
+        run_async(_work, _apply, page=self, interval=150, name="upd-first")
 
     # ------------------------------------------------------------ 暂停/恢复
 
     def _poll_paused(self) -> None:
         """拉一次 /api/status，把顶层 paused 字段落到按钮（web loadStatus 同款）。"""
-        box: dict = {"done": False, "val": None}
 
-        def _work() -> None:
+        def _work(box: dict) -> None:
             from config_io import get_json # noqa: PLC0415
 
             box["val"] = get_json("/api/status", timeout=5.0)
-            box["done"] = True
 
-        import threading as _th # noqa: PLC0415
-
-        _th.Thread(target=_work, daemon=True, name="status-poll").start()
-
-        def _apply() -> None:
-            if not box["done"]:
-                QTimer.singleShot(150, _apply)
-                return
-            s = box["val"]
+        def _apply(box: dict) -> None:
+            s = box.get("val")
             if isinstance(s, dict):
                 self._apply_paused(bool(s.get("paused")))
 
-        QTimer.singleShot(150, _apply)
+        run_async(_work, _apply, page=self, interval=150, name="status-poll")
 
     def _apply_paused(self, paused: bool) -> None:
         """paused 真值落地。唯一依据 = /api/status 的 paused 字段（web L4180
@@ -1927,9 +1901,8 @@ class Shell(QWidget):
         """一个后台线程拉 /api/status（+ /api/personas 人设计数），落地到
         _apply_badges 分发。拿不到就不动徽章（与 web refreshBadges 只在
         loadStatus 成功后调用同款语义），不编数。"""
-        box: dict = {"done": False, "st": None, "pn": None}
 
-        def _work() -> None:
+        def _work(box: dict) -> None:
             from config_io import get_json # noqa: PLC0415
 
             box["st"] = get_json("/api/status", timeout=5.0)
@@ -1940,20 +1913,12 @@ class Shell(QWidget):
                     box["pn"] = len(ps)
             except Exception: # noqa: BLE001
                 pass
-            box["done"] = True
 
-        import threading as _th # noqa: PLC0415
+        def _apply(box: dict) -> None:
+            if isinstance(box.get("st"), dict):
+                self._apply_badges(box["st"], box.get("pn"))
 
-        _th.Thread(target=_work, daemon=True, name="badge-poll").start()
-
-        def _apply() -> None:
-            if not box["done"]:
-                QTimer.singleShot(150, _apply)
-                return
-            if isinstance(box["st"], dict):
-                self._apply_badges(box["st"], box["pn"])
-
-        QTimer.singleShot(150, _apply)
+        run_async(_work, _apply, page=self, interval=150, name="badge-poll")
 
     def _apply_side_status(self, s: dict) -> None:
         """侧栏微信连接状态。
@@ -2058,25 +2023,16 @@ class Shell(QWidget):
         btn = self.btn_pause
         btn.setEnabled(False)
         btn.setText("恢复中…" if want else "暂停中…")
-        box: dict = {"done": False, "r": None}
 
-        def _work() -> None:
+        def _work(box: dict) -> None:
             from agent_bridge import post_json # noqa: PLC0415
 
             box["r"] = post_json("/api/pause" if want else "/api/resume", {})
-            box["done"] = True
 
-        import threading as _th # noqa: PLC0415
-
-        _th.Thread(target=_work, daemon=True, name="pause-toggle").start()
-
-        def _done() -> None:
-            if not box["done"]:
-                QTimer.singleShot(150, _done)
-                return
+        def _done(box: dict) -> None:
             self._pause_busy = False
             btn.setEnabled(True)
-            r = box["r"]
+            r = box.get("r")
             ok = isinstance(r, dict) and r.get("ok") is not False
             if not ok:
                 why = r.get("why") if isinstance(r, dict) else None
@@ -2099,9 +2055,9 @@ class Shell(QWidget):
                     except Exception: # noqa: BLE001
                         pass
 
-                _th.Thread(target=_recover, daemon=True, name="risk-recover").start()
+                run_bg(_recover, name="risk-recover")
 
-        QTimer.singleShot(150, _done)
+        run_async(_work, _done, page=self, interval=150, name="pause-toggle")
 
     def _show_probe(self, p: Probe) -> None:
         plan = plan_for(p)
@@ -2147,24 +2103,15 @@ class Shell(QWidget):
         结果经 150ms 轮询交回主线程 —— 跨线程直接摸 Qt 控件是禁区。
         `done(ok, note)` 一定在主线程被恰好调用一次。
         """
-        import threading # noqa: PLC0415
-
         from agent_bridge import post_api # noqa: PLC0415
 
-        box: dict = {"ok": None, "note": ""}
-
-        def _work() -> None:
+        def _work(box: dict) -> None:
             box["ok"], box["note"] = post_api(api)
 
-        threading.Thread(target=_work, daemon=True, name="post-" + api).start()
+        def _apply(box: dict) -> None:
+            done(box.get("ok"), box.get("note") or "")
 
-        def _poll() -> None:
-            if box["ok"] is None:
-                QTimer.singleShot(150, _poll)
-                return
-            done(box["ok"], box["note"])
-
-        QTimer.singleShot(150, _poll)
+        run_async(_work, _apply, page=self, interval=150, name="post-" + api)
 
     def _bot_restart(self) -> None:
         """重启机器人 → POST /api/restart。
