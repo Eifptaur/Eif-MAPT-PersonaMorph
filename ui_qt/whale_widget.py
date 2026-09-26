@@ -23,7 +23,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QRectF, QSettings, Qt, QTimer
+from PySide6.QtCore import QPoint, QRect, QRectF, QSettings, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QWidget
 
@@ -38,14 +38,22 @@ ROOT = Path(__file__).resolve().parent.parent
 _ASSET = ROOT / "whale-widget" / "assets" / "DSniang1.png"
 _SET = ("WXAgent", "persona-morph-ui")
 
-# 原版边长（widget.js :245 `--dshw-base` 的 clamp 上限 = 250px）
+# 原版边长（widget.js :245 `--dshw-base` 的 clamp 上限 = 250px）—— 本体与降级卡的基准
 _BASE = 250
+# 宿主窗 / 页面尺寸。本体由原版 CSS 钉在页面右下角（`.dshwv-root{right:0;bottom:0}`），
+# 多出来的部分**全是给弹层留的地方**：原版菜单 `min-width:196px`、最宽 340px 且向上
+# 展开，窗口不给余量就必然出现"菜单显示不全"。多出来的地方保持全透明、不吃鼠标。
+#
+# ⛔ 为什么只加高不加宽：原版本体尺寸 = `clamp(122, min(100vw,100vh)*0.28, 625)`，
+#    取的是**宽高里小的那个**。宽度给到 440 时 min(440,560)*0.28 ≈ 123px，与原来
+#    的 122px 基本一致；再加宽就会把本体一起顶大（宽度超过高度后由宽度决定）。
+_WIN_W, _WIN_H = 440, 560
 
 
 class WhaleWidget(QWidget):
     """无边框置顶小窗，内嵌 WebView2 跑**原版挂件**（点挂件本体即原版菜单）。"""
 
-    W, H = _BASE, _BASE
+    W, H = _WIN_W, _WIN_H
 
     def __init__(self, t, parent=None):  # noqa: ANN001
         super().__init__(parent)
@@ -81,13 +89,27 @@ class WhaleWidget(QWidget):
         # 页面是否回报「鲸鱼本体渲染出来了」—— 与 _load_failed 互斥推进：
         # boot ok=True 会浇灭 watchdog，False 则直接转降级。
         self._boot_ok = False
+        # 可命中区（页面报告的矩形，CSS 像素 = Qt 逻辑像素）。空 = 页面还没报，
+        # 由 `_veil_rects()` 退化成「本体所在的那块方形」。
+        self._veil: list = []
         self.restyle(t)
 
         # 位置：上次拖到哪就还在哪；**越界/坏记录落右下角**。
         # ⛔ 必须校验上屏：实测 QSettings 里存过 (1611,1431) —— 在 1080p 屏上
         #    y=1431 已在屏幕底边之外，挂件"一直在显示、只是在屏幕外面"，
         #    用户眼里就是「没看到挂件」。位置记忆跨分辨率/换屏后天然可能越界。
-        pos = QSettings(*_SET).value("whale_pos")
+        _st = QSettings(*_SET)
+        pos = _st.value("whale_pos")
+        # 老记录存的是「窗口左上角」，而当时窗口边长 = _BASE。窗口现在为弹层留了余量，
+        # 本体仍钉在窗口右下角 ⇒ 左上角必须往回挪同样的量，本体在屏幕上的位置才不动。
+        # 用 whale_geo 记账做成**一次性**的，否则每次启动都会再挪一次。
+        if (isinstance(pos, list) and len(pos) == 2
+                and str(_st.value("whale_geo") or "") != "2"):
+            try:
+                pos = [int(pos[0]) - (self.W - _BASE), int(pos[1]) - (self.H - _BASE)]
+            except (TypeError, ValueError):
+                pos = None
+        _st.setValue("whale_geo", "2")
         moved = False
         if isinstance(pos, list) and len(pos) == 2:
             try:
@@ -119,17 +141,28 @@ class WhaleWidget(QWidget):
             f.setFamilies(["Microsoft YaHei UI", "Microsoft YaHei", "SimHei", "sans-serif"])
             return f
 
+    def _veil_rects(self) -> list:
+        """要铺**可命中底**的矩形。
+
+        页面报来的（本体 + 当前可见弹层）优先；页面还没报就退化成「本体所在的那块
+        方形」—— 本体由原版 CSS 钉在页面右下角，所以那块方形就在窗口右下角。
+        """
+        if self._veil:
+            return self._veil
+        return [(self.W - _BASE, self.H - _BASE, _BASE, _BASE)]
+
     def paintEvent(self, _e) -> None:  # noqa: N802
-        """铺一层**极淡的可命中底**，画面由 WebView2 内核合成在它之上。
+        """在**可命中区**上铺一层极淡的底；画面由 WebView2 内核合成在它之上。
 
         ⛔ 这一层不是为了好看，是为了**让窗口能被点到**：半透明窗在 Windows 上
         按像素 alpha 做命中测试，**alpha 为零的地方鼠标消息直接穿过去**。而本窗口
-        正常态什么都不画（画面全在 WebView2 子窗里）⇒ 整块方形的 alpha 全是 0
-        ⇒ 系统眼里"没有可点的表面"，于是**连子窗也一起收不到鼠标**，表现就是
-        「看着一切正常，却点不动、拖不动」。降级态之所以一直能拖，正是因为
-        提示卡本身有像素。
-        alpha=1/255 肉眼不可见，但足以把这块方形恢复成命中区域：鲸鱼身上交给
-        页面（原版菜单、页面转发拖动），空白处落到本窗口（Qt 直接拖窗）。
+        正常态什么都不画（画面全在 WebView2 子窗里）⇒ 系统眼里"没有可点的表面"
+        ⇒ **连子窗也一起收不到鼠标**，表现就是「看着一切正常，却点不动、拖不动」。
+        降级态之所以一直能拖，正是因为提示卡本身有像素。
+
+        ⛔ 只铺在**页面报告的矩形**上（本体 + 可见弹层），不是整窗：铺到哪、哪才能
+        被点到 —— 整窗铺满等于用一块看不见的方形吃掉桌面的鼠标；只铺本体与弹层，
+        其余保持全透明，桌面照常可点。alpha=1/255 肉眼不可见。
 
         判据是「**页面真的加载成功了**」而不是「控制器建好了」：
         `WhaleHostWebView.ok` 只说明 WebView2 环境/控制器就绪，**不代表
@@ -138,21 +171,41 @@ class WhaleWidget(QWidget):
         `load_failed` 把"页面没起来"单独记下来，让降级卡在这种状态下兜底。
         """
         p = QPainter(self)
-        p.fillRect(self.rect(), QColor(0, 0, 0, 1))
+        for x, y, w, h in self._veil_rects():
+            p.fillRect(QRect(int(x), int(y), int(w), int(h)), QColor(0, 0, 0, 1))
         if self._host is not None and self._host.ok and not self._load_failed:
             return
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         self._paint_fallback(p)
 
+    def _on_rects(self, rects) -> None:  # noqa: ANN001
+        """页面报告的可命中区 → 重铺底并重绘。
+
+        页面在「本体出现/弹层开合/窗口尺寸变化」时上报（见 `whale_host.build_host_html`
+        的 `rectWatch`）。解析这里是尽力而为：脏数据一律忽略，退回默认那块方形。
+        """
+        try:
+            self._veil = [(int(x), int(y), int(w), int(h)) for (x, y, w, h) in rects]
+        except Exception:  # noqa: BLE001
+            return
+        self.update()
+
     def _paint_fallback(self, p: QPainter) -> None:  # noqa: N802
-        """降级卡：形象图 + 一行说明（**给出可操作指引**，不做静默空白）。"""
+        """降级卡：形象图 + 一行说明（**给出可操作指引**，不做静默空白）。
+
+        画在**本体所在的那块方形**（窗口右下角）里：窗口为弹层留出的余量保持透明，
+        卡片不铺过去 —— 观感上仍是一块与本体同位置的卡片。
+        """
+        ox = self.W - _BASE
+        oy = self.H - _BASE
         try:
             pm = QPixmap(str(_ASSET))
             if not pm.isNull():
-                w = self.W * 0.6
+                w = _BASE * 0.6
                 pm = pm.scaled(int(w), int(w), Qt.AspectRatioMode.KeepAspectRatio,
                                Qt.TransformationMode.SmoothTransformation)
-                p.drawPixmap(int((self.W - pm.width()) / 2), int(self.H * 0.16), pm)
+                p.drawPixmap(ox + int((_BASE - pm.width()) / 2),
+                             oy + int(_BASE * 0.16), pm)
         except Exception:  # noqa: BLE001
             pass
         f = QFont(getattr(self, "_base_font", None) or self.font())
@@ -161,12 +214,12 @@ class WhaleWidget(QWidget):
         p.setPen(QColor("#536ba9"))
         tip = "鲸鱼挂件暂不可用"
         sub = (self._err or "未就绪")[:60]
-        p.drawText(QRectF(8, self.H * 0.62, self.W - 16, 20),
+        p.drawText(QRectF(ox + 8, oy + _BASE * 0.62, _BASE - 16, 20),
                    int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter), tip)
         f.setPixelSize(10)
         p.setFont(f)
         p.setPen(QColor("#9fb0d9"))
-        p.drawText(QRectF(8, self.H * 0.62 + 20, self.W - 16, 46),
+        p.drawText(QRectF(ox + 8, oy + _BASE * 0.62 + 20, _BASE - 16, 46),
                    int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop
                        | Qt.TextFlag.TextWordWrap), sub)
 
@@ -189,6 +242,17 @@ class WhaleWidget(QWidget):
         # 让本轮 showEvent 走完（窗口完成映射）再起，避免拿到未生效的 HWND
         QTimer.singleShot(0, self._boot_webview)
 
+    def _dpr(self) -> float:
+        """当前屏幕缩放 —— WebView2 的 Bounds 收的是**物理像素**，必须乘上它。
+
+        传逻辑像素的后果：画面只铺满窗口的一角（被按 1/DPR 缩），页面视口也跟着变小，
+        弹层会比窗口更早被裁掉。
+        """
+        try:
+            return float(self.devicePixelRatioF() or 1.0)
+        except Exception:  # noqa: BLE001
+            return 1.0
+
     def _boot_webview(self) -> None:
         """建 WebView2 并把原版挂件页加载进去。
 
@@ -199,7 +263,8 @@ class WhaleWidget(QWidget):
         """
         try:
             hwnd = int(self.winId())
-            self._host = WhaleHostWebView(hwnd, self.W, self.H)
+            dpr = self._dpr()
+            self._host = WhaleHostWebView(hwnd, int(self.W * dpr), int(self.H * dpr))
             # 拖动交接：页面自己报位移（见 whale_host.build_host_html 的 dragSetup），
             # 这里收下来挪窗口。**不再**给子窗加 WS_EX_TRANSPARENT —— 那会让
             # 页内控件（减号、原版菜单）一起收不到点击。
@@ -208,6 +273,8 @@ class WhaleWidget(QWidget):
             # 超时（ok=False）说明"页面加载成功但鲸鱼没画"，必须降级成提示卡，
             # 否则就是一只全透明的空窗（「挂件没看到」的真实成因之一）。
             self._host.on_boot(self._on_pageboot)
+            # 可命中区：页面报「本体 + 可见弹层」的矩形，据此铺可命中底（见 paintEvent）。
+            self._host.on_rects(self._on_rects)
             self._host.when_ready(self._after_host_ready)
         except Exception as e:  # noqa: BLE001 — 任何异常都降级，不拖垮主界面
             self._err = "%s: %s" % (type(e).__name__, e)
@@ -421,7 +488,8 @@ class WhaleWidget(QWidget):
         """窗口移动时通知内核重排（WebView2 不跟随父窗自动挪，会留在原地）。"""
         super().moveEvent(ev)
         if self._host is not None and self._host.ok:
-            self._host.resize(self.W, self.H)
+            dpr = self._dpr()
+            self._host.resize(int(self.W * dpr), int(self.H * dpr))
 
     def closeEvent(self, ev) -> None:  # noqa: N802
         """**必须关控制器** —— 不关会留下杀不掉的浏览器孤儿进程。"""

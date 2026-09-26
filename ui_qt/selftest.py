@@ -5289,9 +5289,10 @@ def t_g13() -> None:
     _NoMod = Qt.KeyboardModifier.NoModifier
 
     # ── A/B（纯静态，零 WebView2 依赖，任何环境都能跑）──
-    ck("g13 挂件形态：透明顶层窗 + 正方形（原版 1:1 外观交给 WebView2，Python 不掺和）",
+    ck("g13 挂件形态：透明顶层窗 + 窗口不小于本体（多出来的余量给弹层，本体仍钉在右下角）",
        ww.WhaleWidget.__mro__[1].__name__ == "QWidget"
-       and ww._BASE > 0 and ww.WhaleWidget.W == ww.WhaleWidget.H)
+       and ww._BASE > 0
+       and ww.WhaleWidget.W >= ww._BASE and ww.WhaleWidget.H >= ww.WhaleWidget.W)
 
     _html = wh.build_host_html(3210, "tk")
     ck("g13-A 降级兜底在位（WebView2 缺失时画说明卡，不静默空白）",
@@ -7507,6 +7508,15 @@ def t_whale_guard() -> None:
     本项目改为**页面自己报位移**：页内监听拖动 → `postMessage` → 宿主转 Qt
     挪窗口。点按钮是 click、拖空白是 move，互不干扰。
 
+    这条链上另有两个必须做对的点（都由真实故障换来的）：
+
+      · **半透明窗的命中测试按像素 alpha**：alpha 为 0 的地方鼠标消息直接穿过去，
+        Qt 侧不画东西就等于整窗"没有可点的表面"，连子窗也一起收不到鼠标 ⇒
+        必须在提前返回之前铺一层 alpha=1 的**可命中底**，且只铺在页面报告的那几块
+        （本体 + 可见弹层）上，别把整块看不见的方形压在桌面上；
+      · **非交互区按下要取消默认动作**：鼠标在图片上按下后一移动，浏览器会进入
+        原生拖拽/选区，那期间 mousemove 不再派发 ⇒ 页面报不出位移 ⇒ 拖不动。
+
     ## B. 认人闸门为什么必须有
 
     端口上有东西应答**只说明"有人听"，不说明"是我们的"**。同源上游产品默认端口
@@ -7536,6 +7546,14 @@ def t_whale_guard() -> None:
        _i_fill != -1 and _i_ret != -1 and _i_fill < _i_ret
        and "QColor(0, 0, 0, 1)" in _pv,
        "fill@%s return@%s" % (_i_fill, _i_ret))
+    # 而且只能铺在**页面报告的那几块**上：整窗铺满＝一块看不见的方形吃掉桌面的鼠标。
+    _vr = _inspect.getsource(WhaleWidget._veil_rects)
+    ck("可命中底只铺「本体 + 可见弹层」的报告矩形（整窗铺满会吃掉桌面鼠标）",
+       "_veil" in _pv and "_veil_rects" in _pv
+       and "self.W - _BASE" in _vr and "self.rect()" not in _pv)
+    ck("WebView2 Bounds 用物理像素（传逻辑像素画面只铺满窗口一角、视口也变小）",
+       "self._dpr()" in _inspect.getsource(WhaleWidget._boot_webview)
+       and "int(self.W * dpr)" in _inspect.getsource(WhaleWidget._boot_webview))
 
     ck("宿主暴露 on_drag 回调接口（Qt 侧据此挪窗口）",
        hasattr(WhaleHostWebView, "on_drag"))
@@ -7565,6 +7583,10 @@ def t_whale_guard() -> None:
 
     # 宿主页确实注入了拖动转发与减号
     _html = build_host_html(3210, "tk")
+    ck("宿主页会上报可命中区（本体 + 弹层外接矩形，弹层开合即重报）",
+       "rectsNow" in _html and "'rects'" in _html and "rectWatch" in _html)
+    ck("宿主页在非交互区按下时取消默认动作（否则原生拖拽吞掉 mousemove ⇒ 拖不动）",
+       "e.preventDefault()" in _html and "isInteractive(e.target)" in _html)
     ck("宿主页含拖动转发脚本（mousedown/mousemove + postMessage）",
        "postMessage" in _html and "mousemove" in _html and "dragSetup" in _html, "")
     ck("拖动只认非交互区（按钮/菜单/输入框的按下留给原版逻辑）",

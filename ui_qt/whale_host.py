@@ -105,6 +105,9 @@ class WhaleHostWebView:
     """
 
     def __init__(self, hwnd: int, width: int, height: int) -> None:
+        # ⛔ width/height 是**物理像素**（设备像素）：`put_Bounds` 收的就是物理像素，
+        #    传逻辑像素会让画面只铺满窗口的一角（高 DPI 下按 1/DPR 缩），
+        #    而页面视口的 CSS 像素 = 物理 / 缩放 ⇒ 与 Qt 的逻辑坐标仍然一一对应。
         self.hwnd = int(hwnd)
         self.width = int(width)
         self.height = int(height)
@@ -122,6 +125,9 @@ class WhaleHostWebView:
         self._on_drag = None
         # 启动回报回调：`fn(ok)` —— 页面轮询鲸鱼本体的结论（True=渲染出来了）。
         self._on_boot = None
+        # 可命中区回调：`fn([[x, y, w, h], ...])` —— 页面报告的「本体 + 可见弹层」外接矩形
+        # （CSS 像素，与 Qt 逻辑坐标同刻度）。
+        self._on_rects = None
         # 回调对象必须持引用：comtypes 的 COMObject 被 GC 后指针即失效。
         self._keep: list = []
         self._init()
@@ -370,6 +376,16 @@ class WhaleHostWebView:
                 cb = self._on_drag
                 if cb is not None:
                     cb(0, 0, True)
+            elif kind == "rects":
+                # 页面报告的「本体 + 当前可见弹层」外接矩形：宿主据此铺可命中底
+                # （半透明窗按像素 alpha 做命中测试，alpha=0 的地方鼠标会穿到桌面）。
+                cb = self._on_rects
+                if cb is not None:
+                    rs = msg.get("rs")
+                    if isinstance(rs, list):
+                        clean = [[int(v) for v in r[:4]] for r in rs
+                                 if isinstance(r, (list, tuple)) and len(r) >= 4]
+                        cb(clean)
             elif kind == "boot":
                 cb = self._on_boot
                 if cb is not None:
@@ -547,6 +563,16 @@ class WhaleHostWebView:
         """
         self._on_boot = cb
 
+    def on_rects(self, cb) -> None:  # noqa: ANN001
+        """注册可命中区回调 `fn([[x, y, w, h], ...])`。
+
+        页面把「挂件本体 + 当前可见弹层」的外接矩形报上来（CSS 像素，与 Qt 逻辑
+        坐标同刻度）；宿主把这些矩形交给窗口层，窗口层只在这些矩形上铺一层
+        **alpha=1 的极淡底** —— 半透明窗按像素 alpha 做命中测试，铺到哪、哪才能
+        被点到；没铺到的地方保持全透明，鼠标照旧穿到桌面。
+        """
+        self._on_rects = cb
+
     def navigate_to_string(self, html: str) -> bool:
         """内联页面（避免依赖磁盘临时文件；脚本用 file:// 引本地 js 会撞来源限制）。"""
         if not self._ok or self._wv is None:
@@ -586,7 +612,11 @@ class WhaleHostWebView:
             pass
 
     def resize(self, width: int, height: int) -> None:
-        """跟随宿主窗口改尺寸（挂件是定长的，但窗口缩放时不该留白边）。"""
+        """跟随宿主窗口改尺寸（**物理像素**，与 `__init__` 同口径）。
+
+        WebView2 不会自己跟着父窗挪或缩放：窗口一动就得把 Bounds 重设一次，
+        否则画面留在原来的位置（挂件越拖越"飘"就是这么来的）。
+        """
         self.width, self.height = int(width), int(height)
         if self._ok and self._ctrl is not None:
             try:
@@ -727,6 +757,12 @@ def build_host_html(port: int, token: str) -> str:
         "document.addEventListener('mousedown',function(e){"
         "if(e.button!==0)return;"
         "if(isInteractive(e.target))return;"
+        # ⛔ 必须 preventDefault：鼠标在图片/文本上按下后一移动，浏览器会进入
+        # **原生拖拽/选区**，而原生拖拽期间 mousemove 不再派发 ⇒ 页面报不出位移
+        # ⇒ 宿主收不到、窗拖不动（现象＝"捏住挂件只能在窗口里晃"）。
+        # 原版只在**触摸**手势里拦这一下，鼠标这条路由宿主补上；交互区（按钮/
+        # 菜单/输入框）不拦，原版自己的拖拽排布照常。
+        "e.preventDefault();"
         "dragging=true;moved=false;ox=e.screenX;oy=e.screenY;"
         "},true);"
         "document.addEventListener('mousemove',function(e){"
@@ -743,8 +779,42 @@ def build_host_html(port: int, token: str) -> str:
         "dragging=false;moved=false;"
         "},true);"
         "}"
+        # ── 可命中区上报 ────────────────────────────────────────────────────
+        # 宿主窗是半透明窗，Windows 对它的命中测试**按像素 alpha** 走：alpha=0 的
+        # 地方鼠标直接穿到桌面。所以宿主只在本页报告的矩形上铺一层 alpha=1 的极淡底
+        # ——铺到哪、哪才能被点到，其余保持全透明（桌面照常可点）。
+        # 报的是「本体 + 当前可见弹层」的外接矩形：弹层一开/一关就重报一次。
+        "function rectsNow(){"
+        "var pad=6,out=[];"
+        "function add(el){try{"
+        "if(!el)return;var r=el.getBoundingClientRect();"
+        "if(r.width<2||r.height<2)return;"
+        "var cs=getComputedStyle(el);"
+        "if(cs.visibility==='hidden'||cs.display==='none')return;"
+        "if(parseFloat(cs.opacity)<=0.02)return;"
+        "out.push([Math.floor(r.left)-pad,Math.floor(r.top)-pad,"
+        "Math.ceil(r.width)+2*pad,Math.ceil(r.height)+2*pad]);}catch(e){}}"
+        "add(rootEl());"
+        # 弹层不用类名清单硬编码：原版所有浮层都是 dshwv- 前缀 + fixed/absolute
+        'var all=document.querySelectorAll(\'[class^="dshwv-"],'
+        '[class*=" dshwv-"]\');'
+        "for(var i=0;i<all.length && i<240;i++){var el=all[i];"
+        "try{var p=getComputedStyle(el).position;"
+        "if(p==='fixed'||p==='absolute')add(el);}catch(e){}}"
+        "return out;}"
+        "function reportRects(){"
+        "try{var r=rectsNow();var sig=JSON.stringify(r);"
+        "if(sig===window.__pmRectSig)return;window.__pmRectSig=sig;"
+        "post({pm:'rects',rs:r});}catch(e){}}"
+        "function rectWatch(){"
+        "if(window.__pmRect)return;window.__pmRect=1;"
+        "reportRects();"
+        "setInterval(reportRects,700);"
+        "['mousedown','mouseup','click','keyup'].forEach(function(k){"
+        "document.addEventListener(k,function(){setTimeout(reportRects,30);},true);});"
+        "}"
         "function boot(){"
-        "wire();dragSetup();"
+        "wire();dragSetup();rectWatch();"
         "var want=false;"
         "try{want=localStorage.getItem('pm-whale-collapsed')==='1';}catch(e){}"
         "if(want)setCollapsed(true);"
