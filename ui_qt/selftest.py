@@ -5655,9 +5655,14 @@ def t_g13() -> None:
 
         # 现场日志：挂件失败态在桌面上"什么都不显示"，没有任何现场可查 ⇒ 关键节点落盘
         _wsrc_now = (HERE / "whale_widget.py").read_text(encoding="utf-8")
-        ck("挂件关键节点落 logs/whale.log（上屏/几何/启动结论/看门狗/降级）",
+        ck("挂件关键节点落 logs/whale.log（上屏/几何/启动结论/看门狗/降级/重导航）",
            "def _diag(" in _wsrc_now and "whale.log" in _wsrc_now
-           and _wsrc_now.count("_diag(") >= 6, "count=%d" % _wsrc_now.count("_diag("))
+           and _wsrc_now.count("_diag(") >= 7, "count=%d" % _wsrc_now.count("_diag("))
+        # 页面静默失败（脚本被拦/加载挂起）要能自愈：重导航有**次数上限**，不做无界自链
+        ck("页面无回报则有限次重导航（自愈偶发加载失败，且不自链）",
+           "def _retry_page" in _wsrc_now and "_RETRY_MAX" in _wsrc_now
+           and "n > _RETRY_MAX" in _wsrc_now
+           and "build_host_html(port, token)" in _wsrc_now, "")
     finally:
         for x in keep:
             x.close()

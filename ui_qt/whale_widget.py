@@ -65,6 +65,9 @@ _FIT_CONFIRM_MS = 350
 _FIT_PAD = 10
 # 换边回执的等待上限（页面没回话就认下并补偿）
 _SIDE_CONFIRM_MS = 600
+# 页面迟迟不回报"本体已渲染"时的重导航：间隔与次数上限（自愈偶发加载失败）
+_RETRY_MS = 20000
+_RETRY_MAX = 2
 # 现场日志上限：超过就重开一份（挂件失败态在桌面上什么都不显示，没有现场可查）
 _DIAG_MAX = 256 * 1024
 
@@ -843,9 +846,11 @@ class WhaleWidget(QWidget):
                 self._err = host.error
                 self._load_failed = True
             else:
-                # 导航成功 ≠ 鲸鱼画出来了。8 秒内等不到页面的启动结论就降级
+                # 导航成功 ≠ 鲸鱼画出来了。等不到页面的启动结论就降级
                 #（单次定时器，非自链；见 _boot_watchdog 注解）。
                 QTimer.singleShot(70000, self._boot_watchdog)
+                # 到点还没回报"本体已渲染"就重导航一次（有上限）—— 见 _retry_page
+                QTimer.singleShot(_RETRY_MS, lambda: self._retry_page(port, token, 1))
         except Exception as e:  # noqa: BLE001
             self._err = "%s: %s" % (type(e).__name__, e)
             self._load_failed = True
@@ -855,6 +860,28 @@ class WhaleWidget(QWidget):
             self._keep_draggable()
             _diag("降级：%s" % (self._err or "页面未就绪"))
         self.update()
+
+    def _retry_page(self, port: int, token: str, n: int) -> None:
+        """到点仍未收到页面的"本体已渲染"回报 ⇒ 重导航一次（**有次数上限**）。
+
+        为什么要有：页面静默失败（脚本被拦、加载挂起、浏览器进程没起来）时窗口是整块
+        全透明的（现在有兜底卡兜着，但用户只能干看"正在启动"）。重导航走同一条代码路径，
+        代价一次导航，能把偶发失败自愈掉；次数封顶，避免"越等越失败"的循环。
+        """
+        try:
+            if self._boot_ok or self._load_failed:
+                return
+            host = self._host
+            if host is None or not host.ok:
+                return
+            if n > _RETRY_MAX:
+                _diag("重导航已达上限 %d 次，仍无启动回报" % _RETRY_MAX)
+                return
+            _diag("第 %d 次重导航（此前未收到页面启动回报）" % n)
+            if host.navigate_to_string(build_host_html(port, token)):
+                QTimer.singleShot(_RETRY_MS, lambda: self._retry_page(port, token, n + 1))
+        except Exception:  # noqa: BLE001 — 重试失败交给看门狗降级，不影响挂件本身
+            pass
 
     def _keep_draggable(self) -> None:
         """**降级态专用**：把控制器收起来，让事件回到 Qt 手上。
