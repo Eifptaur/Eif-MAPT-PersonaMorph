@@ -1605,7 +1605,7 @@ th{color:var(--tx2);font-weight:500}
       <div class="desc">金句/意见/聊天记录本地导出；可选上传到自配服务器；反应评分引擎让机器人越聊越有趣（防饱和）。</div>
       <div class="row"><label>评分引擎</label><input type="checkbox" data-cfg="scoring.enabled" checked><span class="hint">本地正反馈评分（零用量）；群友回应热烈→高效反应进入提示词参考</span></div>
       <div class="row"><label>种子库</label><input type="checkbox" data-cfg="scoring.seed_library" checked><span class="hint">内置有趣开场/接梗 small-sample 参考（默认开）。关掉 ⇒ 提示词里不再放这段种子；「本地高分反应」不归它管。</span></div>
-      <div class="row"><label>在线评分</label><input type="checkbox" data-cfg="scoring.online_scoring"><span class="hint">⚠️ <b>当前未接线</b>：本机没有「调 LLM 打分」这条实现，勾上也不会真去打分（评分目前全在本地算）。留着是为了不弄丢你的选择。</span></div>
+      <div class="row"><label>在线评分</label><input type="checkbox" data-cfg="scoring.online_scoring"><span class="hint"><b>当前未接线</b>：本机没有「让模型打分」这条实现，勾上也不会真去打分（评分目前全在本地算）。留着是为了不弄丢你的选择。</span></div>
       <div class="row"><label>热度衰减</label><input type="checkbox" data-cfg="scoring.heat_decay" checked><span class="hint">老梗降权、防饱和（默认开）。取消勾选 ⇒ 分数不再随时间衰减，老梗不降权。</span></div>
       <div class="row"><label>梗搜索</label><input type="checkbox" data-cfg="meme.enabled" checked><span class="hint">不懂群里的新梗时，机器人可联网查它的来龙去脉（只在真不懂时才查，默认开）</span></div>
       <div class="mid">
@@ -1950,7 +1950,7 @@ th{color:var(--tx2);font-weight:500}
         <label class="hint" style="margin-right:10px"><input type="checkbox" data-cfg="image_gen.filter_chain.blacklist"> 风格黑白名单</label>
         <label class="hint" style="margin-right:10px"><input type="checkbox" data-cfg="image_gen.filter_chain.text"> 图内文字/水印</label>
         <label class="hint"><input type="checkbox" data-cfg="image_gen.filter_chain.classifier"> 内容分类器</label>
-        <div class="hint">判否即不发（fail-closed）。「内容分类器」已接本机过滤链：判据跑不起来时如实记「未参与判定」并放行——不假装备过，也不把生图整个掐死。「图内文字/水印」只有"水印有没有留下来"这半有真判据（关掉上面「去水印」时判否）；图里写了什么字本机没有 OCR 判据 ⇒ 同样如实记「未参与判定」。</div></div></div>
+        <div class="hint">判否即不发。「内容分类器」已接本机过滤链：它自己跑不起来时会如实记「没参与判定」并放行——不假装备过，也不把生图整个掐死。「图内文字/水印」只有"水印有没有留下来"这半能真查（关掉上面「去水印」时判否）；图里写了什么字本机查不了 ⇒ 同样如实记「没参与判定」。</div></div></div>
       <div class="btns">
         <button id="igGuide" class="ghost">怎么接一个生图后端？红线是什么？</button>
         <button id="igTest" class="ghost">试一次（只跑链条，不发到任何会话）</button>
@@ -2133,7 +2133,7 @@ th{color:var(--tx2);font-weight:500}
       </div>
       <div class="hint" style="margin-top:8px">引用规则：机器人上一条消息超过「对话冷却」秒（对话已冷场）时，以「引用概率」（默认 70%）自动引用对方最近的一句话，让"新开头"更像真人接话；模型显式指定引用时以模型为准。</div>
       <div class="row"><label>系统无障碍接口 直写输入</label><input type="checkbox" data-cfg="send.uia_setvalue" checked>
-        <span class="hint">⚠️ <b>当前未接线</b>：勾与不勾目前都不改变发送行为（主发送链走的是「UIA 直进、失败回退粘贴」那一套，不由这里切换）。留着是为了不弄丢你的选择，接上后这里会写清。</span></div>
+        <span class="hint"><b>当前未接线</b>：勾与不勾目前都不改变发送行为（发送链自己会「先试系统无障碍接口直写输入框、不行再回退粘贴」，不由这里切换）。留着是为了不弄丢你的选择，接上后这里会写清。</span></div>
       <div class="row"><label>允许真鼠标兜底</label><input type="checkbox" data-cfg="input.allow_real_fallback">
         <span class="hint">默认关：投递档确认不了目标会话时<b>宁可漏发、绝不发错</b>，全程不动你的鼠标。打开＝允许机器人<b>真实移动光标、点输入框、点发送</b>（会短暂占用你的鼠标）；只建议「投递档老失败、机器空闲可托管」的场景再开，会话识别正常时不需要它。</span></div>
       <div class="btns"><button class="pri" data-save>保存设置（发送限制）</button></div>
@@ -5251,7 +5251,7 @@ const GUIDES = {
       '① 后端**不用你选**：程序会自己探本机在跑的生图服务（A1111 :7860 / ComfyUI :8188 / Fooocus :7865 / InvokeAI :9090），探到就用；想固定用某一个，在上面「生图后端」里手填即可',
       '② 在「生图后端」里按格式填：`id | local 或 online | 接口地址`，多个用分号分隔；填 online 的还要把「允许出网」打开',
       '③ 打开「总开关」+ 选一档「触发条件」（这一档真的改变给模型的指令）；风格白/黑名单用逗号分隔，黑名单命中时**生成前就拒**',
-      '④ 过滤链建议全开：判否即不发。「内容分类器」跑本机过滤链，「图内文字/水印」管"水印有没有留下来"；**判据跑不起来时如实记「未参与判定」并放行**——不假装备过，也不因为"没配视觉模型"就把生图整个掐死',
+      '④ 过滤链建议全开：判否即不发。「内容分类器」跑本机过滤链，「图内文字/水印」管"水印有没有留下来"；**它自己跑不起来时会如实记「没参与判定」并放行**——不假装备过，也不因为"没配视觉模型"就把生图整个掐死',
       '⑤ 点「试一次」跑一遍链条看结论（不会发到任何会话）；红线是硬的：不生成真人换脸/换身体、不生成成人内容'
     ],
     copy: [{label: '复制后端格式示例', text: 'comfy | local | http://127.0.0.1:8188/prompt'}],

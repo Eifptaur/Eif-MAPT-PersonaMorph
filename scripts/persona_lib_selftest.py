@@ -88,11 +88,22 @@ for cat, keys in NEW_BATCHES.items():
        any(PERSONA_CATS.get(k) == cat for k in PERSONAS))
 
 print("── C. 第一手来源与「不许编」──")
-_ledger = src(os.path.join(os.path.dirname(ROOT), "dev-workspace", "persona-morph", "docs", "人设来源台账.md"))  # 文档区已迁出产品根
+# 台账在**仓库外**（开发区，文档区已迁出产品根）⇒ 别的 checkout / 干净导出里根本没有它。
+# ⛔ 原来这里直接 `open(...)`：台账不在就**抛 FileNotFoundError 崩在中间** —— 崩了就没有汇总行，
+#    整条判据被上层判红，而真实原因只是"这份文档不在这个 checkout 里"（误报得很像产品缺陷）。
+#    ⇒ 改成**如实跳过**：说清哪一组没判、为什么；后面与台账无关的断言照旧跑。
+_LEDGER_REL = os.path.join(os.path.dirname(ROOT), "dev-workspace", "persona-morph", "docs", "人设来源台账.md")
+try:
+    _ledger = src(_LEDGER_REL)
+except OSError:
+    _ledger = None
+    print("  （跳过：人设来源台账不在 —— 它在开发区、不在仓库里 ⇒ 「台账记了出处」这一组本次不判）")
 for cat, keys in NEW_BATCHES.items():
     for k in keys:
         nm = (PERSONAS.get(k) or {}).get("name", k)
-        ok("台账里记了 %s 的出处" % nm.split("（")[0], (k in _ledger) or (nm.split("（")[0] in _ledger))
+        if _ledger is not None:
+            ok("台账里记了 %s 的出处" % nm.split("（")[0],
+               (k in _ledger) or (nm.split("（")[0] in _ledger))
         t = str((PERSONAS.get(k) or {}).get("text", ""))
         ok("%s 卡里有引用（「」原文或标注）" % nm.split("（")[0], ("「" in t and "」" in t), str(len(t)))
 _rimi = str(PERSONAS.get("rimi_bd", {}).get("text", ""))
