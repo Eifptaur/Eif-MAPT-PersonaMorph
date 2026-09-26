@@ -459,6 +459,21 @@ class WebUI:
                 handler._json(whale.cfg_payload(os.path.basename(path)), cors=True)
             except Exception as e:
                 handler._json({"ok": False, "error": str(e)[:200]}, cors=True)
+        elif path == "/dsh-whale/roles.json":
+            # 自定义角色列表（内置 default 恒在首位）
+            try:
+                handler._json(whale.roles_payload(), cors=True)
+            except Exception as e:  # noqa: BLE001
+                handler._json({"ok": False, "error": str(e)[:200]}, cors=True)
+        elif path == "/dsh-whale/role-image.png":
+            # 自定义角色图（按 id 取字节；认不出 id 就回空图，前端会保持默认形象）
+            rid = (parse_qs(query).get("id") or [""])[0]
+            data = whale.role_image_bytes(rid)
+            if data:
+                ct = ("image/gif" if data[:6] in (b"GIF87a", b"GIF89a") else "image/png")
+                handler._bytes(data, ct, cors=True)
+            else:
+                handler._bytes(b"", "image/png", cors=True)
         elif path in tuple("/dsh-whale/" + n for n in whale._UNSUPPORTED):
             # 上游 0.3.x 有、本移植版没有的：**如实说不支持**（客户端会保留默认值 ⇒ 干净降级）
             handler._json(whale.unsupported(path.rsplit("/", 1)[-1]), cors=True)
@@ -1124,6 +1139,20 @@ class WebUI:
                         try:
                             self._json(parent.whale.save_cfg(os.path.basename(path), data), cors=True)
                         except Exception as e:
+                            self._json({"ok": False, "error": str(e)}, 500, cors=True)
+                elif path in ("/dsh-whale/roles.json", "/dsh-whale/role-pin.json",
+                               "/dsh-whale/role-delete.json"):
+                    # 自定义角色：导入 / 置顶 / 删除。三者都返回**完整角色列表**，
+                    # 前端拿它整块刷新面板（契约见 agent/whale.py 的角色段注释）。
+                    if parent.whale is None:
+                        self._json({"error": "not found"}, 404, cors=True)
+                    else:
+                        try:
+                            _fn = {"/dsh-whale/roles.json": parent.whale.save_role,
+                                   "/dsh-whale/role-pin.json": parent.whale.pin_role,
+                                   "/dsh-whale/role-delete.json": parent.whale.delete_role}[path]
+                            self._json(_fn(data), cors=True)
+                        except Exception as e:  # noqa: BLE001
                             self._json({"ok": False, "error": str(e)}, 500, cors=True)
                 # 原：elif path == "/api/test-api": ⇒ 已搬到 agent/routes.py → _rapi_test_api（/api/test-api）
                 # 原：elif path == "/api/poke-test": ⇒ 已搬到 agent/routes.py → _rapi_poke_test（/api/poke-test）

@@ -25,8 +25,10 @@
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
+import re
 import threading
 import time
 
@@ -41,6 +43,10 @@ from .model_prices import ( # noqa: F401  （价目表唯一来源，见该模�
 #    dsh-whale-widget@0.3.5）。本文件只保留导入，避免"三份表互相打架"（同一个 usage 在控制台
 #    的「今日已用」与统计里算出两个数）。上游 0.3.5 的两处变更都在那个模块的抬头里写明了：
 # ①Flash 系列 降价（0.05/1.5/4.5 → 0.02/1/4）；②reasoning ⊆ output ⇒ 输出只算一次。
+
+
+# 自定义角色/素材的图片 dataURL（只认 base64 的 image/*；前端送 png 或 gif）
+_RE_IMG_DATAURL = re.compile(r"^data:(image/[A-Za-z0-9.+-]+);base64,(.+)$", re.S)
 
 
 def _today_key() -> str:
@@ -73,10 +79,11 @@ class WhaleWidget:
                 data.setdefault("size", {})
                 data.setdefault("days", {})
                 data.setdefault("lastTurn", {})
+                data.setdefault("roles", [])
                 return data
         except Exception:
             pass
-        return {"size": {}, "days": {}, "lastTurn": {}}
+        return {"size": {}, "days": {}, "lastTurn": {}, "roles": []}
 
     def _save_state(self):
         try:
@@ -170,9 +177,10 @@ class WhaleWidget:
     # 上游是宿主侧（Node/DSH 事件系统）才有的能力，本移植版**如实回"不支持"** ——
     # 不回假 `ok:true`（那会让界面显示假数据），客户端对 `ok:false` 一律保留默认值（实测代码：
     # `if (d && d.ok && d.config)` / `if (!d || !d.ok …) return`），所以界面是**干净降级**。
+    # 上游有、本移植版**确实没有**的接口（如实返回"不支持"，客户端保留默认值）。
+    # 注意：随着能力补齐，条目要从这里**删掉** —— 留在表里等于把已实现的功能继续报成"不支持"。
     _UNSUPPORTED = ("api-models.json", "usage-records.json", "usage-settings.json",
-                    "balance-adjustments.json", "roles.json", "role-image.png",
-                    "role-pin.json", "role-delete.json", "bubble-imgs.json",
+                    "balance-adjustments.json", "bubble-imgs.json",
                     "bubble-img.png", "bubble-img-upload.json", "audio-fragment.wav",
                     "sound/")
     _CFG_KEYS = {"bubble.json": ("bubble", "config"), "audio.json": ("audio", "settings")}
@@ -231,6 +239,135 @@ class WhaleWidget:
                         "turn": lt.get("turn"), "amount": lt.get("amount"),
                         "tokens": lt.get("tokens"), "ts": lt.get("ts")}
         return {"ok": True, "seq": 0, "turn": None, "amount": None, "tokens": None, "ts": None}
+
+    # ── 角色（自定义形象）──────────────────────────────────────────────────
+    #
+    # 前端契约（widget.js 实测调用）：
+    #   GET  roles.json                    → {"ok":true,"roles":[{"id","name","pinned","createdAt"}]}
+    #   POST roles.json      {name,image}  → {"ok":true,"roles":[…]}   导入（image 是 dataURL）
+    #   POST role-pin.json   {id,pinned}   → {"ok":true,"roles":[…]}   置顶
+    #   POST role-delete.json{id}          → {"ok":true,"roles":[…]}   删除
+    #   GET  role-image.png?id=X           → 图片字节
+    # ⛔ 列表里**必须**含内置的 default（前端按 `r.id === 'default'` 判定不可删），
+    #    且每项带 `createdAt`（前端导入后按它挑"最新的那个"自动切换）。
+
+    _ROLE_MAX = 40
+    _ROLE_IMG_MAX = 3 * 1024 * 1024
+
+    def _roles_dir(self) -> str:
+        d = os.path.join(self._data_dir, "roleimg")
+        try:
+            os.makedirs(d, exist_ok=True)
+        except Exception:  # noqa: BLE001
+            pass
+        return d
+
+    def _roles_list(self) -> list:
+        """角色列表（内置 default 恒在第一位）。"""
+        out = [{"id": "default", "name": "小鲸鱼", "pinned": True, "createdAt": 0}]
+        for r in (self._state.get("roles") or []):
+            if not isinstance(r, dict):
+                continue
+            rid = str(r.get("id") or "")
+            if not rid or rid == "default":
+                continue
+            out.append({"id": rid, "name": str(r.get("name") or rid)[:20],
+                        "pinned": bool(r.get("pinned")),
+                        "createdAt": int(r.get("createdAt") or 0)})
+        return out
+
+    def roles_payload(self) -> dict:
+        with self._lock:
+            return {"ok": True, "roles": self._roles_list()}
+
+    def save_role(self, obj) -> dict:
+        """导入一个自定义角色（图片以 dataURL 送来）。"""
+        if not isinstance(obj, dict):
+            return {"ok": False, "error": "missing body"}
+        name = str(obj.get("name") or "").strip()[:20] or "自定义角色"
+        m = _RE_IMG_DATAURL.match(str(obj.get("image") or ""))
+        if not m:
+            return {"ok": False, "error": "图片格式不支持（需要 png/gif/jpeg 的 dataURL）"}
+        try:
+            raw = base64.b64decode(m.group(2), validate=False)
+        except Exception:  # noqa: BLE001
+            return {"ok": False, "error": "图片解码失败"}
+        if not raw:
+            return {"ok": False, "error": "图片为空"}
+        if len(raw) > self._ROLE_IMG_MAX:
+            return {"ok": False, "error": "图片过大（上限 %d MB）"
+                    % (self._ROLE_IMG_MAX // 1024 // 1024)}
+        with self._lock:
+            roles = list(self._state.get("roles") or [])
+            if len(roles) >= self._ROLE_MAX:
+                return {"ok": False, "error": "角色数量已达上限（%d）" % self._ROLE_MAX}
+            rid = "r%s" % format(int(time.time() * 1000), "x")
+            ext = {"image/png": ".png", "image/gif": ".gif",
+                   "image/jpeg": ".jpg", "image/webp": ".webp"}.get(
+                       m.group(1).lower(), ".png")
+            try:
+                with open(os.path.join(self._roles_dir(), rid + ext), "wb") as f:
+                    f.write(raw)
+            except Exception as e:  # noqa: BLE001
+                return {"ok": False, "error": "图片写入失败：%s" % str(e)[:60]}
+            roles.append({"id": rid, "name": name, "pinned": False,
+                          "createdAt": int(time.time() * 1000), "file": rid + ext})
+            self._state["roles"] = roles
+            self._save_state()
+            return {"ok": True, "roles": self._roles_list()}
+
+    def pin_role(self, obj) -> dict:
+        if not isinstance(obj, dict):
+            return {"ok": False, "error": "missing body"}
+        rid = str(obj.get("id") or "")
+        with self._lock:
+            roles = list(self._state.get("roles") or [])
+            for r in roles:
+                if isinstance(r, dict) and str(r.get("id")) == rid:
+                    r["pinned"] = bool(obj.get("pinned"))
+                    break
+            self._state["roles"] = roles
+            self._save_state()
+            return {"ok": True, "roles": self._roles_list()}
+
+    def delete_role(self, obj) -> dict:
+        if not isinstance(obj, dict):
+            return {"ok": False, "error": "missing body"}
+        rid = str(obj.get("id") or "")
+        if not rid or rid == "default":
+            return {"ok": False, "error": "内置角色不可删除"}
+        with self._lock:
+            keep, gone = [], None
+            for r in (self._state.get("roles") or []):
+                if isinstance(r, dict) and str(r.get("id")) == rid:
+                    gone = r
+                else:
+                    keep.append(r)
+            self._state["roles"] = keep
+            self._save_state()
+            if isinstance(gone, dict) and gone.get("file"):
+                try:
+                    os.remove(os.path.join(self._roles_dir(), os.path.basename(gone["file"])))
+                except Exception:  # noqa: BLE001
+                    pass
+            return {"ok": True, "roles": self._roles_list()}
+
+    def role_image_bytes(self, role_id: str) -> bytes | None:
+        safe = os.path.basename(str(role_id or ""))
+        if not safe or safe == "default":
+            return None
+        with self._lock:
+            for r in (self._state.get("roles") or []):
+                if isinstance(r, dict) and str(r.get("id")) == safe:
+                    fn = os.path.basename(str(r.get("file") or ""))
+                    if not fn:
+                        return None
+                    try:
+                        with open(os.path.join(self._roles_dir(), fn), "rb") as f:
+                            return f.read()
+                    except Exception:  # noqa: BLE001
+                        return None
+        return None
 
     # ── 静态资源 ───────────────────────────────────────────────────────
 

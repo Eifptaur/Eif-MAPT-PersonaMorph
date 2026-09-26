@@ -8019,6 +8019,56 @@ def t_button_label_guard() -> None:
         _set.remove("")
 
 
+def t_whale_roles() -> None:
+    """自检：自定义角色这条链（导入 / 置顶 / 删除 / 取图 / 持久化）。
+
+    跑的是**产品真实代码**（`agent.whale.WhaleWidget`）—— 端点是它写的，就由它来验，
+    不另写一个"测试专用实现"（否则测试与实现各按自己理解写，全绿而功能废）。
+    数据目录用临时目录，不碰用户数据。
+    """
+    import base64 as _b64
+    import tempfile as _tf
+
+    from agent import whale as _whale # noqa: PLC0415
+
+    _tmp = _tf.mkdtemp(prefix="whale-roles-gate-")
+    _w = _whale.WhaleWidget(_tmp)
+    _png = ("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
+            "AAAADUlEQVR42mP8z8AAAwAB/AL+2QAAAABJRU5ErkJggg==")
+
+    _r0 = _w.roles_payload()
+    ck("角色列表含内置 default 且在首位（前端按 id==='default' 判定不可删）",
+       _r0.get("ok") and _r0["roles"][0]["id"] == "default", str(_r0["roles"][:1]))
+
+    _r1 = _w.save_role({"name": "测试角色", "image": _png})
+    _role = [x for x in _r1.get("roles", []) if x["id"] != "default"]
+    ck("导入角色：返回完整列表且新项带 createdAt（前端按它挑最新自动切换）",
+       _r1.get("ok") and len(_role) == 1 and _role[0].get("createdAt", 0) > 0,
+       str(_role))
+    ck("角色图按 id 取回同样的字节（真存真读）",
+       _w.role_image_bytes(_role[0]["id"]) == _b64.b64decode(_png.split(",")[1]))
+    ck("导入非 dataURL / 空体一律拒绝（不写半个垃圾文件）",
+       _w.save_role({"name": "x", "image": "http://a/b.png"}).get("ok") is False
+       and _w.save_role(None).get("ok") is False)
+
+    _r2 = _w.pin_role({"id": _role[0]["id"], "pinned": True})
+    ck("角色置顶生效",
+       [x for x in _r2["roles"] if x["id"] == _role[0]["id"]][0]["pinned"] is True)
+    _r3 = _w.delete_role({"id": _role[0]["id"]})
+    ck("删除角色：列表里消失、图片文件同时回收、内置角色不可删",
+       _r3.get("ok") and all(x["id"] != _role[0]["id"] for x in _r3["roles"])
+       and _w.delete_role({"id": "default"}).get("ok") is False)
+
+    # 再导一个（上一个已在删除用例里被删掉），然后换实例读同一目录验证持久化
+    _w.save_role({"name": "落盘验证", "image": _png})
+    _w2 = _whale.WhaleWidget(_tmp)
+    ck("换一个实例读同一目录：角色仍在（真落盘）",
+       len([x for x in _w2.roles_payload()["roles"] if x["id"] != "default"]) == 1)
+    ck("roles 系列已从「未支持」清单移除（补了能力就必须撤登记）",
+       not any(x in _whale.WhaleWidget._UNSUPPORTED for x in
+               ("roles.json", "role-image.png", "role-pin.json", "role-delete.json")))
+
+
 def t_placeholder_guard() -> None:
     """自检：「占位卡死」与「清容器残留」两条链的回归闸。
 
@@ -8172,7 +8222,8 @@ def main() -> int:
                    t_veradv, t_g5, t_g6, t_g7, t_g8, t_g9, t_g10, t_g11, t_g12, t_g13, t_g14,
                    t_g15, t_g16, t_g17, t_g18, t_g19, t_g20, t_g21, t_g22, t_ocr_fuzzy,
                    t_audit_r3, t_dialog_drag, t_whale_guard, t_color_token_guard,
-                   t_button_label_guard, t_placeholder_guard, t_dupdef_guard):
+                   t_button_label_guard, t_placeholder_guard, t_dupdef_guard,
+                   t_whale_roles):
             try:
                 fn()
             except Exception as e: # noqa: BLE001
