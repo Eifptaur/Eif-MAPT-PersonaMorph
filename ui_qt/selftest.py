@@ -5270,10 +5270,11 @@ def t_g13() -> None:
       C. 交互仍由 Python 承担：拖拽位移 + 位置记忆 QSettings + 跨实例恢复；
       D. WebView2 建链是**异步**的（同步忙等会死等， 实测卡死根因）。
     """
+    import inspect as _inspect # noqa: PLC0415
     import os # noqa: PLC0415
 
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PySide6.QtCore import QEvent, QPointF, QSettings, Qt # noqa: PLC0415
+    from PySide6.QtCore import QEvent, QPoint, QPointF, QSettings, Qt # noqa: PLC0415
     from PySide6.QtGui import QMouseEvent # noqa: PLC0415
     from PySide6.QtWidgets import QApplication # noqa: PLC0415
 
@@ -5289,10 +5290,15 @@ def t_g13() -> None:
     _NoMod = Qt.KeyboardModifier.NoModifier
 
     # ── A/B（纯静态，零 WebView2 依赖，任何环境都能跑）──
-    ck("g13 挂件形态：透明顶层窗 + 窗口不小于本体（多出来的余量给弹层，本体仍钉在右下角）",
+    # ⛔ 窗口宽度是**冻结量**：本体尺寸 `--dshw-base = clamp(122, min(250, min(100vw,100vh)
+    #    * 0.28), 625)` 取宽高里小的那个 ⇒ 窗口一加宽就把本体一起顶大。所以断言
+    #    "宽 = 冻结常量、高 ≥ 宽、本体兜底尺寸明显小于窗口"。
+    ck("g13 挂件形态：透明顶层窗；窗口宽冻结（加宽会顶大本体）、高有余量给弹层",
        ww.WhaleWidget.__mro__[1].__name__ == "QWidget"
-       and ww._BASE > 0
-       and ww.WhaleWidget.W >= ww._BASE and ww.WhaleWidget.H >= ww.WhaleWidget.W)
+       and ww.WhaleWidget.W == ww._WIN_W and ww.WhaleWidget.H >= ww.WhaleWidget.W
+       and 0 < ww._WHALE_FALLBACK < ww.WhaleWidget.W
+       and "setFixedSize(self.width(), th)" in _inspect.getsource(ww.WhaleWidget._fit_confirm),
+       "W=%s _WIN_W=%s" % (ww.WhaleWidget.W, ww._WIN_W))
 
     _html = wh.build_host_html(3210, "tk")
     ck("g13-A 降级兜底在位（WebView2 缺失时画说明卡，不静默空白）",
@@ -5304,6 +5310,26 @@ def t_g13() -> None:
        "token=tk" in _html)
     ck("g13-B 宿主页带 composer 假体（dshwIsChatRoot 认不出就不碰 DOM，启动闸门）",
        "data-composer-input" in _html)
+    # 几何真值三件套：本体的视口矩形、弹层相对**本体**的溢出量、弹层是否开着。
+    # 前两个是宿主侧一切几何计算（吸附/翻转/落位/长高）的唯一依据。
+    ck("g13-B 宿主页上报几何真值（本体矩形 rr + 弹层溢出量 need + 弹层开关 pop）",
+       "function rootRect(" in _html and "function popInfo(" in _html
+       and "rr:rr" in _html and "need:pi.n" in _html and "pop:pi.pop" in _html)
+    # ⛔ 溢出量必须相对**本体**求：相对窗口求的话，窗口一长溢出量就归零 ⇒ 宿主缩回去
+    #    ⇒ 上游 resize→settle 又把本体重贴到视口边缘 ⇒ 死循环（菜单上下弹动）。
+    ck("g13-B 弹层溢出量按本体求值（对窗口尺寸/本体位置都是不变量 ⇒ 不自反馈震荡）",
+       "if(b.left<l){v=Math.round(l-b.left)" in _html
+       and "if(b.top<t){v=Math.round(t-b.top)" in _html
+       and "out.pop=true" in _html)
+    # 本体在窗口内可左右换边：上游把本体钉死在视口右下、弹层一律朝左展开，本体贴屏幕
+    # 左缘时窗口得挂到屏幕外、菜单被裁一半。换边用 `!important` 压住上游 `express()`
+    # 写的行内 `left/top`（行内样式只输给同源的重要声明）。
+    ck("g13-B 本体贴边可切换，且用 !important 压住上游写的行内 left/top",
+       "body.pm-side-left .dshwv-root{left:0!important" in _html
+       and "body.pm-side-right .dshwv-root{left:auto!important" in _html
+       and "window.__pmSetSide=function" in _html)
+    ck("g13-B 宿主把「贴哪一边」真的发给页面（execute_script 调 __pmSetSide）",
+       "__pmSetSide" in _inspect.getsource(ww.WhaleWidget._set_side))
     _host_src = (HERE / "whale_host.py").read_text(encoding="utf-8")
     ck("g13-B 宿主页背景透明（半透明窗透出桌面，不留色块）",
        "background:transparent" in _html)
@@ -5380,10 +5406,12 @@ def t_g13() -> None:
                                         Qt_Left, Qt_Left, _NoMod))
         QApplication.processEvents()
         saved = st.value("whale_anchor")
-        ck("g13-C 拖拽移动：窗口位移 + 位置落盘（记**本体右下角**，与窗口尺寸无关）",
+        _ar = w._whale_rect()
+        ck("g13-C 拖拽移动：窗口位移 + 位置落盘（记**本体右下角**，与窗口尺寸/贴边方向无关）",
            w.pos() != pos0 and isinstance(saved, list) and len(saved) == 2
-           and [int(saved[0]), int(saved[1])] == [w.x() + w.W, w.y() + w.H],
-           "pos0=%s now=%s saved=%s" % (pos0, w.pos(), saved))
+           and [int(saved[0]), int(saved[1])] == [_ar.x() + _ar.width(),
+                                                 _ar.y() + _ar.height()],
+           "pos0=%s now=%s saved=%s whale=%s" % (pos0, w.pos(), saved, _ar))
 
         # 位置跨实例恢复
         w2 = ww.WhaleWidget(t)
@@ -5408,58 +5436,147 @@ def t_g13() -> None:
         ck("g13-C 位移 < 阈值 ⇒ 当点击不当拖（气泡菜单里的点按不会被抖成移窗）",
            w.pos() == pos1, "p1=%s now=%s" % (pos1, w.pos()))
 
-        # 拖动（Qt 侧）：页面说"在本体上按下了" ⇒ 之后由 Qt 自己的移动事件挪窗
+        # 拖动（Qt 侧）：页面说"在本体上按下了" ⇒ 之后按**本体**的绝对位置跟手挪窗。
+        # ⛔ 位置一律按本体算，不按窗口：本体在窗口内会左右换边（贴屏幕哪半就钉哪边），
+        #    窗口左上角与本体左上角不是同一个点 —— 拿窗口当锚会在换边/吸附时跳一截。
         _w4 = ww.WhaleWidget(t)
         keep.append(_w4)
         _w4._boot_webview = lambda *a, **k: None
-        _w4._grab_mouse = lambda: None # 离屏不真抢系统捕获
-        _w4.move(300, 200)
-        _w4._on_pagedrag("begin")
-        _p1 = _w4.pos()
-        _w4.mouseMoveEvent(QMouseEvent(QEvent.Type.MouseMove, QPointF(10, 10),
-                                       QPointF(_w4.x() + 80, _w4.y() + 60),
-                                       Qt_Left, Qt_Left, _NoMod))
-        QApplication.processEvents()
-        _moved_ok = _w4.pos() != _p1
-        _w4._on_pagedrag("end")
-        ck("拖动走 Qt：按下后 Qt 的移动事件真的挪窗，松手即收尾并停表",
-           _moved_ok and not _w4._drag_timer.isActive() and _w4._drag_cursor is None,
-           "pos=%s timer=%s" % (_w4.pos(), _w4._drag_timer.isActive()))
+        _g4 = _w4.screen().availableGeometry()
+        _ww4 = _w4._whale_size()[0]
+        _w4._set_side("right")
+        _w4._place_whale((_g4.left() + _g4.right()) // 2, (_g4.top() + _g4.bottom()) // 2)
+        _real_cursor, _real_ctypes = ww.QCursor, ww.ctypes
 
-        # 贴边吸附 + 自动翻转（纯几何决策，喂窗口 x 看结果）——
+        class _Cur:
+            p = QPoint(600, 500)
+
+            @staticmethod
+            def pos():
+                return _Cur.p
+
+        class _U32:
+            @staticmethod
+            def GetAsyncKeyState(_v):
+                return 0x8000 # 左键恒"按下"
+
+        class _WDL:
+            user32 = _U32()
+
+        class _CT:
+            windll = _WDL()
+
+        try:
+            ww.QCursor = _Cur
+            ww.ctypes = _CT
+            _w4._on_pagedrag("begin")
+            _p1 = _w4._whale_rect().topLeft()
+            _Cur.p = QPoint(600 + 60, 500 + 40) # 光标右 60、下 40
+            _w4._drag_tick()
+            _after = _w4._whale_rect().topLeft()
+            _moved_ok = (_after.x() - _p1.x(), _after.y() - _p1.y()) == (60, 40)
+            _w4._on_pagedrag("end")
+        finally:
+            ww.QCursor = _real_cursor
+            ww.ctypes = _real_ctypes
+        ck("拖动走 Qt：按下后按**本体**绝对位置 1:1 跟手挪窗，松手即收尾并停表",
+           _moved_ok and not _w4._drag_timer.isActive() and _w4._drag_cursor is None,
+           "from=%s to=%s timer=%s" % (_p1, _after, _w4._drag_timer.isActive()))
+
+        # 页面报几何时不得再动位置：拖动中位置归 _drag_tick 独占，两边都挪就是抖
+        _w4._drag_cursor = QPoint(0, 0)
+        _w4._user_moved = True # 用户已接手摆放：首次上报不该再按记忆/默认角重排
+        _before_rect = _w4._whale_rect()
+        _w4._on_rects([[0, 0, 10, 10]], [0, 0, _ww4, _ww4], [0, 0, 0, 0], False)
+        QApplication.processEvents()
+        ck("拖动中不受页面几何上报干扰（拖动独占挪窗，避免两条公式互殴）",
+           _w4._whale_rect() == _before_rect, "%s -> %s" % (_before_rect, _w4._whale_rect()))
+        _w4._drag_cursor = None
+
+        # 贴边吸附 + 自动翻转（纯几何决策，喂**本体左上角**的自由位置看结果）——
         # 规则照抄原版：贴左必翻、贴右不翻、自由时按"图像中心在屏幕左半/右半"。
+        # ⛔ 判据必须是**本体自己的矩形**：本体尺寸随视口变（440×560 窗里只有 ≈123px），
+        #    拿窗口宽度或某个常量当体宽，吸附点会差出一百多像素 ⇒ 拖到边缘"卡住"、
+        #    吸附"时灵时不灵"。
         w5 = ww.WhaleWidget(t)
         keep.append(w5)
         w5._boot_webview = lambda *a, **k: None
         _g = w5.screen().availableGeometry()
-        _off = w5.width() - ww._BASE # 本体左沿相对窗口左沿的偏移
-        _lx, _lf = w5._snap_geometry(_g.left() - _off + 10) # 本体离左边界 10px
-        _rx, _rf = w5._snap_geometry(_g.right() - ww._BASE - _off - 9) # 离右边界 9px
-        # 中间：既不贴边、又分别落在屏幕左半/右半（翻转应跟着变）
-        _mx1, _mf1 = w5._snap_geometry(_g.left() + 60)
-        _mx2, _mf2 = w5._snap_geometry(_g.left() + 150)
-        ck("贴边吸附：贴左沿必翻、贴右沿不翻、中间不吸附",
-           _lx == _g.left() - _off and _lf is True
-           and _rx == _g.right() + 1 - ww._BASE - _off and _rf is False
-           and _mx1 == _g.left() + 60 and _mx2 == _g.left() + 150,
-           "L=(%s,%s) R=(%s,%s) M1=(%s,%s) M2=(%s,%s)"
-           % (_lx, _lf, _rx, _rf, _mx1, _mf1, _mx2, _mf2))
-        ck("自由摆放时按图像中心在屏幕左半/右半决定翻面（左半翻、右半不翻）",
-           _mf1 is True and _mf2 is False, "M1=%s M2=%s" % (_mf1, _mf2))
+        _bw = w5._whale_size()[0]
+        _sp = w5._SNAP_PX
+        _lx, _ls, _lf = w5._snap_geometry(_g.left() + 10)
+        _rx, _rs, _rf = w5._snap_geometry(_g.right() + 1 - _bw - 9)
+        _nx, _ns, _nf = w5._snap_geometry(_g.left() + _sp + 1) # 刚出吸附区
+        _mx1, _ms1, _mf1 = w5._snap_geometry(_g.left() + 60)
+        _mx2, _ms2, _mf2 = w5._snap_geometry(_g.right() - _bw - 60)
+        ck("贴边吸附：本体离边 10px 吸附到边（贴左必翻、贴右不翻）、出带即脱开",
+           _lx == _g.left() and _ls == "left" and _lf is True
+           and _rx == _g.right() + 1 - _bw and _rs == "right" and _rf is False
+           and _nx == _g.left() + _sp + 1 and _mx1 == _g.left() + 60
+           and _mx2 == _g.right() - _bw - 60,
+           "L=(%s,%s,%s) R=(%s,%s,%s) N=%s M=(%s,%s)" % (_lx, _ls, _lf, _rx, _rs, _rf,
+                                                         _nx, _mx1, _mx2))
+        ck("自由摆放按图像中心在屏幕左/右半定边与翻面（左半→钉窗口左边并翻）",
+           _ms1 == "left" and _mf1 is True and _ms2 == "right" and _mf2 is False,
+           "M1=(%s,%s) M2=(%s,%s)" % (_ms1, _mf1, _ms2, _mf2))
         ck("翻转走原版自己的 dshwv-left 类（不改原版代码，只切类）",
            "dshwv-left" in (HERE / "whale_widget.py").read_text(encoding="utf-8"), "")
 
-        # 窗口自适应：内容（弹层）要多少空间就长多少，本体在屏幕上的位置不动
+        # 窗口长高：弹层相对**本体**要多少竖向空间就长多少，只增不减、宽度冻结。
+        # ⛔ 判据相对本体求值才无环：窗口一长，上游页面自己的 resize→settle 会把本体
+        #    重贴到视口边缘、上报的矩形跟着变；若按"矩形有没有超出窗口"判，就会
+        #    grow→重贴→矩形变化→shrink→… 无限弹动（用户看到的菜单上下弹动）。
         w3 = ww.WhaleWidget(t)
         keep.append(w3)
         w3._boot_webview = lambda *a, **k: None
-        w3.move(300, 200)
-        b0 = (w3.x() + w3.width(), w3.y() + w3.height())
-        w3._fit_window([[-120, -80, 300, 300]]) # 内容向上/向左伸出 120/80
-        b1 = (w3.x() + w3.width(), w3.y() + w3.height())
-        ck("窗口跟着内容长（向上/向左扩 + 8px 余量），本体右下角不动",
-           w3.width() == ww._WIN_W + 128 and w3.height() == ww._WIN_H + 88 and b0 == b1,
-           "size=(%d,%d) before=%s after=%s" % (w3.width(), w3.height(), b0, b1))
+        _b3 = w3._whale_size()[1]
+        w3._pop = True
+        w3._need = [0, 300, 0, 0] # 只伸出 300：本体兜底 123 ⇒ 仍装得下
+        w3._fit_window(); w3._fit_confirm()
+        ck("长高有死区：小幅弹层不折腾窗口（不为几像素反复改尺寸）",
+           (w3.width(), w3.height()) == (ww._WIN_W, ww._WIN_H),
+           "size=(%d,%d)" % (w3.width(), w3.height()))
+        _keep_rect = w3._whale_rect()
+        w3._need = [0, 900, 0, 0] # 需要 123+900+10（再大也超不过屏幕可用高）
+        for _ in range(6): # 连喂六拍（模拟页面每次重贴后重报同一个 need）
+            w3._fit_window()
+            w3._fit_confirm()
+            QApplication.processEvents()
+        _want_h = min(_b3 + 900 + ww._FIT_PAD,
+                      w3.screen().availableGeometry().height())
+        ck("窗口跟着弹层长高（相对本体算需求，上限=屏幕可用高），本体屏幕位置不动、宽度冻结",
+           w3.height() == _want_h and w3.width() == ww._WIN_W
+           and w3._whale_rect() == _keep_rect,
+           "size=(%d,%d) want_h=%d whale=%s" % (w3.width(), w3.height(),
+                                                _want_h, w3._whale_rect()))
+        _h_after_grow = w3.height()
+        w3._need = [0, 0, 0, 0]
+        w3._pop = False
+        for _ in range(6): # 弹层关掉也不许缩：缩会把向上展开的菜单从顶部裁掉
+            w3._fit_window()
+            w3._fit_confirm()
+            QApplication.processEvents()
+        ck("弹层关掉后窗口不缩（缩会让窗口上沿下移、裁掉菜单上半部分）",
+           w3.height() == _h_after_grow, "h=%d -> %d" % (_h_after_grow, w3.height()))
+
+        # ⛔ 弹动闸门：窗口一改尺寸，上游页面自己的 `resize → settle()` 会把本体重新
+        #    贴到视口边缘、上报矩形跟着变。若尺寸判据是"矩形有没有超出窗口"，就会
+        #    grow → 重贴 → 矩形变化 → shrink → … 无限弹动（用户看到的菜单上下弹动、
+        #    上半部分被窗口上沿裁掉）。这里连喂八拍"本体每次都换位置、但相对本体的
+        #    溢出量不变"，窗口尺寸必须**单调不减且很快停住**。
+        w6 = ww.WhaleWidget(t)
+        keep.append(w6)
+        w6._boot_webview = lambda *a, **k: None
+        _sizes = []
+        for _i in range(8):
+            _wy = 60 + _i * 37 # 页面每次重贴后本体的新位置
+            w6._on_rects([[_i, _wy, 120, 120]], [_i, _wy, 123, 123], [0, 700, 0, 0], True)
+            w6._fit_confirm() # 模拟复核拍落地
+            QApplication.processEvents()
+            _sizes.append(w6.height())
+        ck("页面重贴本体不再带出窗口尺寸震荡（修正后：单调不减、且最多变一次）",
+           _sizes == sorted(_sizes) and len(set(_sizes)) <= 2,
+           "heights=%s" % (_sizes,))
     finally:
         for x in keep:
             x.close()
@@ -7606,7 +7723,8 @@ def t_whale_guard() -> None:
     _vr = _inspect.getsource(WhaleWidget._veil_rects)
     ck("可命中底只铺「本体 + 可见弹层」的报告矩形（整窗铺满会吃掉桌面鼠标）",
        "_veil" in _pv and "_veil_rects" in _pv
-       and "self.width() - _BASE" in _vr and "self.rect()" not in _pv)
+       and "_whale_offset" in _vr and "_whale_size" in _vr
+       and "self.rect()" not in _pv)
     ck("宿主暴露 on_drag 回调接口（Qt 侧据此挪窗口）",
        hasattr(WhaleHostWebView, "on_drag"))
 
@@ -7629,9 +7747,24 @@ def t_whale_guard() -> None:
     _bw = _inspect.getsource(WhaleWidget._boot_webview)
     ck("挂件侧已接 on_drag（漏接则页面报了位移也没人挪窗）",
        "on_drag" in _bw, "")
-    ck("窗口跟着内容自适应（弹层要多少长就长多少，本体位置不动）",
-       "need_t" in _inspect.getsource(WhaleWidget._fit_window)
-       and "setFixedSize" in _inspect.getsource(WhaleWidget._fit_window))
+    # ⛔ 窗口尺寸的判据必须相对**本体**求值，且**只长不缩**、**宽度冻结**：
+    #    尺寸一变，上游页面 `resize → settle()` 会把本体重贴到视口边缘、上报矩形跟着
+    #    变；若按"矩形有没有超出窗口"判，就是 grow→重贴→矩形变化→shrink→… 死循环
+    #    （用户看到的菜单上下弹动、上半部分被窗口上沿裁掉）。缩回同样不行：窗口上沿
+    #    下移会把向上展开的菜单裁掉。宽度冻结则是因为本体尺寸取 `min(100vw,100vh)`。
+    _fw = _inspect.getsource(WhaleWidget._fit_window)
+    _fc = _inspect.getsource(WhaleWidget._fit_confirm)
+    ck("窗口长高：判据相对本体（need[1] + 本体高）、宽度冻结、只增不减",
+       "self._need[1]" in _fw and "_whale_size" in _fw
+       and "setFixedSize(self.width(), th)" in _fc
+       and "th <= self._fit_h" in _fc and "_fit_pending" in _fw, "")
+    # ⛔ 只看向上溢出：布局是底锚结构，窗口长高只往上长 ⇒ 朝下伸出的弹层长高帮不上，
+    #    而长高会让窗口上沿上移、多占屏幕。所以 need[3] 只记录、不参与长高。
+    ck("朝下溢出（need[3]）不参与长高（底锚结构下长高对它无效，只会多占屏）",
+       "self._need[3]" not in _fw and "self._need[3]" not in _fc, "")
+    ck("长高前留一拍复核（瞬时元素不该把窗口撑大）、落地前把本体位置放回原位",
+       "_FIT_CONFIRM_MS" in _fw and "_fit_confirm" in _fw
+       and "_place_whale" in _fc and "self._pop" in _fc, "")
 
     # ---- D. 音效地址的口令注入 ---------------------------------------------
     # 原版有一处音效地址是**字符串拼**出来的，注入最容易在这里出错（口令插进路径
@@ -7711,11 +7844,19 @@ def t_whale_guard() -> None:
     WhaleHostWebView._calibrate_bounds(_s3, 100, 2.0) # 只校准一次，不反复抖
     ck("校准只做一次（避免每来一条上报就重设 Bounds）",
        _s3.applied == [1.5], "%s" % (_s3.applied,))
-    ck("位置记忆记的是**本体右下角**（窗口尺寸再变，本体也不会被顶到屏幕外）",
+    ck("位置记忆记的是**本体右下角**（窗口尺寸/贴边方向再变，本体也不会被顶到屏幕外）",
        "whale_anchor" in _inspect.getsource(WhaleWidget._read_anchor)
-       and "+ self.width()" in _inspect.getsource(WhaleWidget._save_anchor))
+       and "_whale_rect" in _inspect.getsource(WhaleWidget._save_anchor)
+       and "self.width()" not in _inspect.getsource(WhaleWidget._save_anchor))
     ck("上屏校验按**本体**判（按整窗判会让「左上角露一点」过关、本体却在屏幕外）",
-       "self.width() - _BASE" in _inspect.getsource(WhaleWidget._onscreen))
+       "_onscreen" in _inspect.getsource(WhaleWidget.__init__)
+       and "_whale_size" in _inspect.getsource(WhaleWidget._onscreen)
+       and "self.width()" not in _inspect.getsource(WhaleWidget._onscreen))
+    ck("几何真值收口在一处（页面上报 → _take_geom → 本体矩形/溢出量/弹层开关）",
+       "rr" in _inspect.getsource(WhaleHostWebView._take_geom)
+       and "need" in _inspect.getsource(WhaleHostWebView._take_geom)
+       and "pop" in _inspect.getsource(WhaleHostWebView._take_geom)
+       and "whale_rect" in _inspect.getsource(WhaleHostWebView.__init__))
     ck("拖动在 **window 捕获段**拦下（原版自带页内拖动，晚一步就会被它抢走手势）",
        "window.addEventListener('pointerdown'" in _html
        and "e.stopPropagation()" in _html and "dragbegin" in _html
@@ -8009,9 +8150,20 @@ def t_button_label_guard() -> None:
 
         _set.setValue("whale_anchor", [400, 400])
         w2 = _ww.WhaleWidget(_t)
+        _r2 = w2._whale_rect()
         ck("屏内锚点原样保留（把**本体**放回你拖到的那一点）",
-           (w2.x() + w2.W, w2.y() + w2.H) == (400, 400),
-           "anchor=(%d,%d)" % (w2.x() + w2.W, w2.y() + w2.H))
+           (_r2.x() + _r2.width(), _r2.y() + _r2.height()) == (400, 400),
+           "anchor=(%d,%d) whale=%s" % (_r2.x() + _r2.width(),
+                                        _r2.y() + _r2.height(), _r2))
+        # 锚点独立于"本体贴窗口哪一边"：换边只改窗口位置，本体的屏幕位置一点不动。
+        # （若把锚点记在窗口角上，换边就会把本体挪走 —— 这是"挂件跑到屏幕外"的老病根。）
+        _win_before = w2.pos()
+        w2._set_side("left")
+        w2._apply_anchor()
+        _r3 = w2._whale_rect()
+        ck("锚点是本体的锚：换贴边方向后本体屏幕位置不变、窗口位置跟着补偿",
+           (_r3.x(), _r3.y()) == (_r2.x(), _r2.y()) and w2.pos() != _win_before,
+           "whale %s -> %s, win %s -> %s" % (_r2, _r3, _win_before, w2.pos()))
         w2.close()
     finally:
         if _set_keep is not None:

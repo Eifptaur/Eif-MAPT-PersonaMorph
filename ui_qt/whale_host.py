@@ -128,9 +128,16 @@ class WhaleHostWebView:
         self._on_drag = None
         # 启动回报回调：`fn(ok)` —— 页面轮询鲸鱼本体的结论（True=渲染出来了）。
         self._on_boot = None
+        # 换边回执回调：`fn(side)` —— 页面确认"本体已钉到哪一边"。
+        self._on_side = None
         # 可命中区回调：`fn([[x, y, w, h], ...])` —— 页面报告的「本体 + 可见弹层」外接矩形
         # （CSS 像素，与 Qt 逻辑坐标同刻度）。
         self._on_rects = None
+        # 页面报告的几何真值：本体视口矩形 [x,y,w,h]、弹层相对本体的四向溢出量、
+        # 是否有弹层开着。宿主侧一切"本体几何"计算都读这里（见 whale_widget）。
+        self.whale_rect = None
+        self.need = [0, 0, 0, 0]
+        self.pop_open = False
         # 回调对象必须持引用：comtypes 的 COMObject 被 GC 后指针即失效。
         self._keep: list = []
         self._init()
@@ -384,19 +391,47 @@ class WhaleHostWebView:
                 # （半透明窗按像素 alpha 做命中测试，alpha=0 的地方鼠标会穿到桌面）。
                 # 一并带上的视口尺寸用于**自校准 Bounds 口径**（见 _calibrate_bounds）。
                 self._calibrate_bounds(msg.get("vw"), msg.get("dpr"))
+                self._take_geom(msg)
                 cb = self._on_rects
                 if cb is not None:
                     rs = msg.get("rs")
                     if isinstance(rs, list):
                         clean = [[int(v) for v in r[:4]] for r in rs
                                  if isinstance(r, (list, tuple)) and len(r) >= 4]
-                        cb(clean)
+                        cb(clean, self.whale_rect, self.need, self.pop_open)
             elif kind == "boot":
                 cb = self._on_boot
                 if cb is not None:
                     cb(bool(msg.get("ok")))
+            elif kind == "side":
+                # 换边回执：宿主据此才把窗口挪过去补偿偏移（见 whale_widget._set_side）
+                cb = self._on_side
+                if cb is not None:
+                    cb(str(msg.get("s") or ""))
         except Exception:  # noqa: BLE001
             pass
+
+    def _take_geom(self, msg: dict) -> None:
+        """收下页面报的几何真值：本体矩形 / 弹层溢出量 / 弹层是否打开。
+
+        ⛔ 这些是宿主算吸附、翻转、窗口尺寸、位置记忆的**唯一依据**。本体尺寸随视口
+        变化（`--dshw-base = clamp(122px, min(250px, min(100vw,100vh)*0.28), 625px)`
+        —— 440×560 的窗口里本体只有 ≈123px，不等于窗口尺寸），所以任何"按常量猜
+        本体有多大"的写法都会错：吸附会提前一百多像素触发、拖到边缘像被卡住。
+        """
+        try:
+            rr = msg.get("rr")
+            if isinstance(rr, (list, tuple)) and len(rr) >= 4:
+                self.whale_rect = [int(v) for v in rr[:4]]
+        except (TypeError, ValueError):
+            pass
+        try:
+            nd = msg.get("need")
+            if isinstance(nd, (list, tuple)) and len(nd) >= 4:
+                self.need = [max(0, int(v)) for v in nd[:4]]
+        except (TypeError, ValueError):
+            pass
+        self.pop_open = bool(msg.get("pop"))
 
     def _setup_dcomp(self) -> None:
         """建 DComp 设备/目标/视觉，把 WebView 画面挂进本窗口的合成树。
@@ -615,14 +650,27 @@ class WhaleHostWebView:
         self._on_boot = cb
 
     def on_rects(self, cb) -> None:  # noqa: ANN001
-        """注册可命中区回调 `fn([[x, y, w, h], ...])`。
+        """注册几何回调 `fn(rects, whale, need, pop)`。
 
         页面把「挂件本体 + 当前可见弹层」的外接矩形报上来（CSS 像素，与 Qt 逻辑
         坐标同刻度）；宿主把这些矩形交给窗口层，窗口层只在这些矩形上铺一层
         **alpha=1 的极淡底** —— 半透明窗按像素 alpha 做命中测试，铺到哪、哪才能
         被点到；没铺到的地方保持全透明，鼠标照旧穿到桌面。
+
+        另外三个是几何真值（也存成 `WhaleHostWebView` 的同名属性）：
+        `whale` = 本体的视口矩形 `[x,y,w,h]`；`need` = 弹层相对本体的四向溢出量
+        `[左,上,右,下]`；`pop` = 是否有弹层开着。
         """
         self._on_rects = cb
+
+    def on_side(self, cb) -> None:  # noqa: ANN001
+        """注册换边回执回调 `fn(side)`。
+
+        宿主让页面把本体改钉到窗口左/右边（`window.__pmSetSide`）之后，页面会回一条
+        `{pm:'side',s:'left'|'right'}`；宿主**收到回执才**补偿窗口位置 —— 两边不同步
+        的那一瞬间本体在屏幕上会跳 300 多像素。
+        """
+        self._on_side = cb
 
     def navigate_to_string(self, html: str) -> bool:
         """内联页面（避免依赖磁盘临时文件；脚本用 file:// 引本地 js 会撞来源限制）。"""
@@ -763,7 +811,19 @@ def build_host_html(port: int, token: str) -> str:
         ".pm-dot:hover{background:#2b3f7d}"
         "body.pm-collapsed .pm-min-btn{display:none}"
         "body.pm-collapsed .pm-dot{display:block}"
-        "</style></head><body>"
+        # ── 本体贴哪一边 ─────────────────────────────────────────────────
+        # 上游把本体钉死在视口右下（`right:0;bottom:0`），菜单向上、面板向下展开，
+        # 水平方向一律朝**左**展开。宿主窗只有 440 宽：本体若贴屏幕左缘，窗口就得
+        # 挂到屏幕外，菜单跟着被裁掉一半。
+        # 所以由宿主按"本体在屏幕哪半"决定把本体钉在视口的左还是右 —— 窗口始终留在
+        # 屏内，菜单永远朝屏幕内侧展开。
+        # ⛔ 必须用 `!important`：上游 `express()` 会把 `left/top` 写成**行内样式**，
+        #    行内样式只输给同源的 `!important` 声明。这样上游的重排不会把本体拽回去。
+        "body.pm-side-left .dshwv-root{left:0!important;right:auto!important;"
+        "top:auto!important;bottom:0!important}"
+        "body.pm-side-right .dshwv-root{left:auto!important;right:0!important;"
+        "top:auto!important;bottom:0!important}"
+        "</style></head><body class='pm-side-right'>"
         # 叫醒原版挂件：它只在检测到 composer 后才启动（属性名取原版认的几种之一）
         "<div id='dshw-composer-seat'><textarea data-composer-input=''></textarea></div>"
         "<button class='pm-min-btn' type='button' title='收起挂件'>&#8722;</button>"
@@ -822,6 +882,12 @@ def build_host_html(port: int, token: str) -> str:
         "el.closest('.dshwv-menu-btn')||el.closest('[class*=mask]')||"
         "el.closest('[class*=pop]')||el.closest('[class*=menu]'));"
         "}"
+        # 本体贴哪一边 —— 宿主按"本体在屏幕哪半"调用；见上方 pm-side-* 样式说明。
+        "window.__pmSetSide=function(s){try{"
+        "var L=(s==='left');"
+        "document.body.classList.toggle('pm-side-left',L);"
+        "document.body.classList.toggle('pm-side-right',!L);"
+        "}catch(e){}};"
         "window.addEventListener('pointerdown',function(e){"
         "if(e.button!==0)return;"
         "if(isInteractive(e.target))return;"
@@ -862,14 +928,53 @@ def build_host_html(port: int, token: str) -> str:
         "try{var p=getComputedStyle(el).position;"
         "if(p==='fixed'||p==='absolute')add(el);}catch(e){}}"
         "return out;}"
+        # 本体的视口矩形 —— 宿主拿它当**几何真值**（吸附/翻转/位置记忆全按它算）。
+        # ⛔ 不能用常量猜本体尺寸：`--dshw-base = clamp(122, min(250, min(100vw,100vh)
+        #    * 0.28), 625)`，440×560 的窗口里本体只有 ≈123px，不是窗口尺寸。
+        "function rootRect(){"
+        "try{var r=rootEl();if(!r)return null;var b=r.getBoundingClientRect();"
+        "if(b.width<2||b.height<2)return null;"
+        "return [Math.floor(b.left),Math.floor(b.top),"
+        "Math.ceil(b.width),Math.ceil(b.height)];}catch(e){return null}}"
+        # 弹层相对**本体**的四个方向溢出量 + "有没有弹层开着"。
+        # ⛔ 这个量对"窗口尺寸"与"上游把本体重贴到视口某一边"都是不变量 —— 所以它
+        #    可以安全地当窗口尺寸的判据。反之用"矩形有没有超出窗口"判，会在
+        #    宿主改尺寸 → 上游 resize 重贴本体 → 矩形变化 → 再改尺寸 之间形成
+        #    自反馈震荡（表现＝菜单随窗口上下弹动、上半部分被窗口上沿裁掉）。
+        "function popInfo(){"
+        "var out={pop:false,n:[0,0,0,0]};"
+        "try{var rr=rootRect();if(!rr)return out;"
+        "var R=rootEl();"
+        'var all=document.querySelectorAll(\'[class^="dshwv-"],'
+        '[class*=" dshwv-"]\');'
+        "var l=rr[0],t=rr[1],r0=rr[0]+rr[2],b0=rr[1]+rr[3];"
+        "for(var i=0;i<all.length&&i<240;i++){var el=all[i];"
+        "if(el===R)continue;"
+        "try{var cs=getComputedStyle(el);"
+        "if(cs.visibility==='hidden'||cs.display==='none')continue;"
+        "if(parseFloat(cs.opacity)<=0.02)continue;"
+        "if(cs.position!=='fixed'&&cs.position!=='absolute')continue;"
+        "var b=el.getBoundingClientRect();"
+        "if(b.width<2||b.height<2)continue;"
+        "if(b.left>=l-1&&b.top>=t-1&&b.right<=r0+1&&b.bottom<=b0+1)continue;"
+        "out.pop=true;"
+        "var v=0;"
+        "if(b.left<l){v=Math.round(l-b.left);if(v>out.n[0])out.n[0]=v;}"
+        "if(b.top<t){v=Math.round(t-b.top);if(v>out.n[1])out.n[1]=v;}"
+        "if(b.right>r0){v=Math.round(b.right-r0);if(v>out.n[2])out.n[2]=v;}"
+        "if(b.bottom>b0){v=Math.round(b.bottom-b0);if(v>out.n[3])out.n[3]=v;}"
+        "}catch(e){}}"
+        "}catch(e){}return out}"
         "function reportRects(){"
-        "try{var r=rectsNow();var meta=[window.innerWidth,window.devicePixelRatio];"
+        "try{var r=rectsNow();var pi=popInfo();var rr=rootRect();"
+        "var meta=[window.innerWidth,window.devicePixelRatio,pi.pop,rr,pi.n];"
         # 视口尺寸一并带上：宿主用它**自校准 Bounds 口径**（传逻辑像素还是物理像素，
         # 随运行库而异；传错会让画面整块画到窗口之外 = 用户"啥都看不到"）。
         # 视口也进签名，窗口尺寸一变就会重报一次。
         "var sig=JSON.stringify([r,meta]);"
         "if(sig===window.__pmRectSig)return;window.__pmRectSig=sig;"
-        "post({pm:'rects',rs:r,vw:window.innerWidth,dpr:window.devicePixelRatio});"
+        "post({pm:'rects',rs:r,vw:window.innerWidth,dpr:window.devicePixelRatio,"
+        "pop:pi.pop,rr:rr,need:pi.n});"
         "}catch(e){}}"
         "function rectWatch(){"
         "if(window.__pmRect)return;window.__pmRect=1;"
