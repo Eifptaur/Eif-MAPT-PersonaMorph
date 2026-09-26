@@ -9064,6 +9064,80 @@ def t_cfg_wired_guard() -> None:
        "seed_library" in _inspect.getsource(_pr._funny_reference), "")
 
 
+#: 「产品代码里出现本地草稿目录名」的文件白名单 —— **每一条都要写清为什么它不会坏事**。
+#   为什么要有这条闸门：那个目录是**本地草稿**（不入库、不进包），用户机器上根本不存在。
+#   所以产品代码里只要**把它当路径用**（拼接/创建/读写），在用户那里就是"指向一个不存在的目录"，
+#   而它又是 gitignore 的 ⇒ 本地跑一次就静默留痕、`git status` 还看不见，最容易被忽略。
+#   实测踩过三处：编译脚本每次跑都把该目录建回产品根；两个判据脚本往它下面写夹具。
+#   ⚠️ 注释/取证引用（`xxx.py` 这种出处标注）**不算问题**，出包闸门对它们只报非致命 warn。
+DEV_DIR_KNOWERS = {
+    "agent/update_apply.py": "更新链的 NEVER_TOUCH 白名单：语义是「别碰它」，不是「用它」",
+    "agent/bg_status.py": "后台能力矩阵的**证据出处**字符串（内部诊断数据，控制台不显示 evidence 字段）",
+    "agent/wechat.py": "注释里的取证出处",
+    "agent/prompt.py": "注释里的取证出处",
+    "agent/input_audit.py": "注释里的取证出处",
+    "ui_qt/__init__.py": "注释：说明本目录由原型提升而来",
+    "scripts/pack_online.py": "出包闸门自己要认这个目录名（EXCLUDE 规则 + 「开发资料引用」规则本身）",
+    "scripts/click_guard_selftest.py": "只读探针：判断某个开发脚本在不在（有 exists 守卫，不在就跳过）",
+    "scripts/update_check_selftest.py": "同上（有 exists 守卫）",
+    "scripts/file_btn_probe.py": "随包入口脚本的用法示例（注释）",
+    "scripts/proc_window_selftest.py": "注释里的取证出处",
+    "scripts/switch_chat_probe.py": "注释：解释为什么要有这个随包入口",
+    "ui_qt/selftest.py": "本闸门自己要认这个目录名（与出包闸门的 EXCLUDE 规则同理）",
+}
+
+
+def t_dev_dir_guard() -> None:
+    """自检：**产品代码不许把本地草稿目录当路径用**（用户机器上不存在它）。
+
+    判据分两半：
+      ① `agent/` `ui_qt/` `scripts/` 里出现该目录名的文件必须都在白名单里（新增即红，
+         逼写理由 —— 白名单是"审查过的清单"，不是"允许清单"）；
+      ② 编译脚本（`.ps1` / `.cmd`）里**一个都不许有**：它们每跑一次就会把目录建回产品根，
+         是唯一一种"会自己制造开发目录"的代码。
+    """
+    import ast as _ast # noqa: PLC0415
+    import os as _o # noqa: PLC0415
+
+    _root = _o.path.dirname(_o.path.dirname(_o.path.abspath(__file__)))
+    _NAME = "_scratch"
+
+    def _knows(path):
+        try:
+            _t = _ast.parse(open(path, encoding="utf-8", errors="ignore").read())
+        except Exception: # noqa: BLE001
+            return 0
+        return sum(1 for _n in _ast.walk(_t)
+                   if isinstance(_n, _ast.Constant) and isinstance(_n.value, str)
+                   and _NAME in _n.value)
+
+    _extra = []
+    for _sub in ("agent", "ui_qt", "scripts"):
+        for _dp, _dn, _fns in _o.walk(_o.path.join(_root, _sub)):
+            _dn[:] = [d for d in _dn if d not in ("__pycache__", "assets", "data", "logs")]
+            for _fn in _fns:
+                if not _fn.endswith(".py"):
+                    continue
+                _rel = _o.path.relpath(_o.path.join(_dp, _fn), _root).replace("\\", "/")
+                if _knows(_o.path.join(_dp, _fn)) and _rel not in DEV_DIR_KNOWERS:
+                    _extra.append(_rel)
+    ck("① 出现本地草稿目录名的文件都在白名单里（新增即红，逼写理由）",
+       not _extra, "；".join(_extra[:6])[:180])
+    ck("白名单本身有内容（这条闸门还在真的守着东西）",
+       len(DEV_DIR_KNOWERS) >= 5, "%d 个文件" % len(DEV_DIR_KNOWERS))
+
+    _scripts = []
+    for _fn in sorted(_o.listdir(_root)):
+        if _fn.endswith((".ps1", ".cmd")):
+            try:
+                if _NAME in open(_o.path.join(_root, _fn), encoding="utf-8", errors="ignore").read():
+                    _scripts.append(_fn)
+            except OSError:
+                pass
+    ck("② 编译脚本里一个都不许有（它们每跑一次就会把开发目录建回产品根）",
+       not _scripts, "；".join(_scripts)[:150])
+
+
 def t_delivery_ledger_guard() -> None:
     """自检：**"已发送"记账必须在真的发出去之后**（不许谎报送达）。
 
@@ -9170,7 +9244,7 @@ def main() -> int:
                    t_audit_r3, t_dialog_drag, t_whale_guard, t_color_token_guard,
                    t_button_label_guard, t_placeholder_guard, t_dupdef_guard,
                    t_attr_shadow_guard, t_async_landing_guard, t_screen_guards,
-                   t_gate_middle, t_cfg_wired_guard, t_delivery_ledger_guard,
+                   t_gate_middle, t_cfg_wired_guard, t_delivery_ledger_guard, t_dev_dir_guard,
                    t_whale_roles, t_whale_assets, t_whale_usage):
             try:
                 fn()

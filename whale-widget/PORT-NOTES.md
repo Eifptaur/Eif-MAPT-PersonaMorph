@@ -55,5 +55,5 @@ Codex 本地会话统计）。移植版**不回假 `ok:true`**（那会让界面
 3. 更新 `upstream-<版本>/`（README / PROVENANCE / package.json）；
 4. 对账 `agent/model_prices.py`：上游 `lib/index.js` 顶端的价目表与 `isPeakTime`，有变就改（**只改这一处**）；
 5. 跑 `py -3 scripts\whale_widget_selftest.py`（G 段会拦住"忘了打补丁/换错版本"）；
-6. 想实测：`runtime\python\python.exe _scratch\_live_whale_widget.py` 起隔离台（**不连微信、不发消息**），
-   浏览器打开它打印的 URL，看右下角挂件在不在、点一下菜单出不出来。
+6. 想实测：起控制台后跑 `一键启动.exe`，挂件窗应当自己出现 —— 看右下角挂件在不在、点一下菜单出不出来。
+   挂件**只跟控制台通信**（不连微信、不发消息），所以随手开关它不会打扰任何会话。

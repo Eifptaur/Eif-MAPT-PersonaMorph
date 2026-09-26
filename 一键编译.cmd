@@ -9,7 +9,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0build.ps1"
 echo.
 echo ==========================================
 echo  Result: 0 = OK, 2 = csc not found, 3 = missing source/lib
-echo  Full log: _scratch\build-latest.log
+echo  Full log: logs\build-latest.log
 echo ==========================================
 echo.
 pause

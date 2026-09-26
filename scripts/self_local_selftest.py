@@ -23,6 +23,7 @@
 """
 import os
 import sys
+import tempfile
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -69,8 +70,10 @@ class _Shim(object):
         return self._path
 
 
-TMP = os.path.join(ROOT, "_scratch", "tmp-self-local")
-os.makedirs(TMP, exist_ok=True)
+# ⛔ 夹具目录**不落仓库**：以前写 `ROOT/_scratch/tmp-self-local` ⇒ 跑一次自检就在产品根里
+#    造出 `_scratch/` 并留下文件；`_scratch/` 是 gitignore 的，`git status` 还看不出来（静默留痕）。
+#    ⇒ 换系统临时目录，跑完不在仓库里留任何东西。
+TMP = tempfile.mkdtemp(prefix="pm-self-local-")
 DBF = os.path.join(TMP, "self_local_ids.json")
 if os.path.exists(DBF):
     os.remove(DBF)

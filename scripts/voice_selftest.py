@@ -13,6 +13,7 @@
 """
 import os
 import sys
+import tempfile
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -69,9 +70,12 @@ else:
     ok("期望文本与听到文本非空", bool(loop["expect"]) and bool(loop["text"]))
 
 print("── C. fail-closed ──")
-t, err, info = voice.transcribe_silk(os.path.join(ROOT, "_scratch", "不存在.silk"))
+# ⛔ 这几个"不存在的路径 / 垃圾文件"夹具**不落仓库**：以前写 `ROOT/_scratch/…` ⇒ 跑一次就在
+#    产品根里造出 `_scratch/`（gitignore 的目录，`git status` 看不出来）。改用系统临时目录。
+_TMPD = tempfile.mkdtemp(prefix="pm-voice-")
+t, err, info = voice.transcribe_silk(os.path.join(_TMPD, "不存在.silk"))
 ok("文件不存在 ⇒ 空文本 + 明确原因", t == "" and "不存在" in err, err[:60])
-junk = os.path.join(ROOT, "_scratch", "junk_probe.silk")
+junk = os.path.join(_TMPD, "junk_probe.silk")
 with open(junk, "wb") as fh:
     fh.write(b"\x02#!SILK_V3" + b"\x00" * 200)
 try:
@@ -79,7 +83,7 @@ try:
     ok("垃圾 SILK ⇒ 不崩、不编造文本", t2 == "", "err=%s" % (err2[:60] or "(空)"))
 except Exception as e:
     ok("垃圾 SILK ⇒ 不崩、不编造文本", False, "抛了 %s: %s" % (type(e).__name__, e))
-_audit = os.path.join(ROOT, "_scratch", "音" + "频") # 不存在的目录，确认不抛异常
+_audit = os.path.join(_TMPD, "音" + "频") # 不存在的目录，确认不抛异常
 try:
     os.remove(junk)
 except OSError:
@@ -94,7 +98,17 @@ try:
     voice.recognizers = lambda: [{"name": "Windows 内置 SAPI 文件听写", "ok": False, "detail": "probe"}]
     st2 = voice.status()
     ok("三解码器全挂 ⇒ status.ok=False", st2["ok"] is False, st2["why"][:60])
-    t3, err3, _ = voice.transcribe_silk(os.path.join(ROOT, "_scratch", "voice-test", "round.silk"))
+    # 这一条要测的是**「文件在、但引擎全挂」**⇒ 夹具文件必须**真的存在**：
+    # `voice.transcribe_silk` 有意把"文件在不在"判在"有没有引擎"**前面**（见 `agent/voice.py:327`
+    # 的注释：没解码器时老顺序会先报"没有可用引擎"，把一个"路径写错了"的问题说成引擎问题）。
+    # ⚠️ 以前这里指向开发目录里一个**真实存在的**夹具文件；开发目录移出产品根之后，这条用例就
+    # 静默变成在测"文件不存在"了 —— 断言与它实际走的分支不符（实测抓到）。现在自带夹具、不依赖外部文件。
+    _VFIX = os.path.join(_TMPD, "voice-test")
+    os.makedirs(_VFIX, exist_ok=True)
+    _VPROBE = os.path.join(_VFIX, "round.silk")
+    with open(_VPROBE, "wb") as _fh:
+        _fh.write(b"\x02#!SILK_V3" + b"\x00" * 200)
+    t3, err3, _ = voice.transcribe_silk(_VPROBE)
     ok("没引擎 ⇒ 空文本 + 明确原因（不是编的文本）", t3 == "" and "没有可用引擎" in err3, err3[:70])
 finally:
     voice.decoders, voice.recognizers = _real_dec, _real_rec

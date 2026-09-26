@@ -7,7 +7,10 @@ $ErrorActionPreference = 'Continue'
 $root = $PSScriptRoot
 Set-Location $root
 
-$logDir = Join-Path $root '_scratch'
+# ⛔ 日志目录**必须是产品自己的**：以前指到本地的草稿目录（不入库、不进包的那一个）⇒ 编译脚本
+#    每跑一次就在产品根里把那个目录重新建出来，用户/开发者一编译就冒出一个开发目录。
+#    改到 `logs/`（产品自己的运行日志目录，同样不入库、不进包），编译日志与运行日志放一起也更好找。
+$logDir = Join-Path $root 'logs'
 if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
 $log = Join-Path $logDir 'build-latest.log'
 "===== BUILD $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') =====" | Out-File -FilePath $log -Encoding utf8
