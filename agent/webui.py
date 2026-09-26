@@ -739,2653 +739,7 @@ class WebUI:
 
         parent = self
 
-        class Handler(BaseHTTPRequestHandler):
-            server_version = "Persona Morph/1.0"
-
-            def log_message(self, fmt, *args):
-                pass # 静默，避免刷屏
-
-            def _bytes(self, body, ctype="application/octet-stream", code=200, cors=False):
-                if not body:
-                    body = b""
-                self.send_response(code)
-                self.send_header("Content-Type", ctype)
-                self.send_header("Content-Length", str(len(body)))
-                if cors: # /dsh-whale/* 会被不透明来源的挂件页请求（需 CORS 放行）
-                    self.send_header("Access-Control-Allow-Origin", "*")
-                self.send_header("Cache-Control", "no-store")
-                self.end_headers()
-                self.wfile.write(body)
-
-            def _auth_ok(self):
-                # ⛔ **光有口令还不够** ——
-                #    浏览器里的任何页面都能向本机端口"发"请求（CORS 只挡读不挡发），DNS rebinding
-                #    还能让外域解析到 127.0.0.1 后带着**外域 Host** 打进来 ⇒ Host 必须是回环。
-                #    判据实现见 agent/local_guard.py（本地生图服务用同一份，别再各写一套）。
-                if not local_guard.host_ok(self.headers.get("Host")):
-                    return False
-                token = str(get_config().get("server", {}).get("token") or "").strip()
-                if not token:
-                    # 旧行为是「空口令 = 放行」，等于控制台裸奔（本机任何进程、任何网页都能进）。
-                    # 现在：拒绝 + 明确告诉怎么修（口令在启动时自动生成，见 scripts/persona_morph.py）。
-                    try:
-                        if not getattr(self.server, "_warned_no_token", False):
-                            self.server._warned_no_token = True
-                            logging.getLogger("persona-morph").warning(
-                                "控制台访问口令为空 ⇒ 已拒绝全部请求。请重启机器人（会自动生成口令），"
-                                "或在 config.json 的 server.token 里手填一个。")
-                    except Exception:
-                        pass
-                    return False
-                # ① 会话 Cookie（登录后 URL 不带 token，防他人复制地址登入）
-                try:
-                    for m in re.findall(r"(?:^|;\s*)wxauth=([^;]+)", str(self.headers.get("Cookie") or "")):
-                        # ⛔ 口令比较原来是 `==`（逐字符早停）
-                        #   ⇒ 理论上可被计时侧信道逐位猜出。改成**常数时间比较**。
-                        if _hmac.compare_digest(str(m).strip(), token):
-                            return True
-                except Exception:
-                    pass
-                # ② 支持 ?token= 或 Authorization: Bearer
-                q = urlparse(self.path).query
-                from urllib.parse import parse_qs
-                if any(_hmac.compare_digest(str(x), token) for x in parse_qs(q).get("token", [])):
-                    return True
-                auth = str(self.headers.get("Authorization", "") or "")
-                if auth.startswith("Bearer ") and _hmac.compare_digest(auth[7:], token):
-                    return True
-                return False
-
-            def _set_session_cookie(self):
-                """登录成功时种会话 Cookie（HttpOnly，防 JS 读取）。
-                注意：必须在 send_response() 之后调用（先 send_header 会让 Set-Cookie 排到状态行前面，响应直接坏掉）。"""
-                try:
-                    token = str(get_config().get("server", {}).get("token") or "").strip()
-                    self.send_header("Set-Cookie", "wxauth=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000" % token)
-                except Exception:
-                    pass
-
-            def _json(self, obj, code=200, cors=False):
-                body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
-                self.send_response(code)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Content-Length", str(len(body)))
-                if cors: # /dsh-whale/* 会被不透明来源的挂件页 fetch（需 CORS 放行）
-                    self.send_header("Access-Control-Allow-Origin", "*")
-                if code == 200:
-                    self._set_session_cookie() # 成功响应才种 cookie（在状态行/Server/Date 之后）
-                self.end_headers()
-                self.wfile.write(body)
-
-            def _archive_view(self):
-                """存档屏蔽：列消息（带 recalled/blocked 标记）/ 屏蔽名单 / 读数。
-
-                **真因＝这条路由原来只注册在 POST 分支里**（它和 `/api/config`（保存配置）同一条
-                `elif` 链），而控制台前端用的是 **GET**（`getJSON('/api/archive')`）⇒ **每次都 404**
-                ⇒ 前端 catch 到就弹"读会话列表失败"。**整个「屏蔽存档」面板因此一直是死的**
-                （列表那一步也走 GET）。⇒ 抽成这一个方法，**GET 与 POST 都接**（一个能力一处实现）。
-                """
-                from . import archive_filter as _af
-                st = getattr(parent, "store", None)
-                if st is None:
-                    # 还没就绪：屏蔽名单本身是**磁盘数据**，没有 store 也能给出名单 ⇒ 回 `ok:True` +
-                    # 空会话列表 + 一句"正在连接"，由前端静默重试；**不要回 `ok:False`**
-                    # （前端会当失败弹红字，用户看到的就是"error 但又能连上"）。
-                    self._json({"ok": True, "chats": [], "snapshot": _af.snapshot(None),
-                                "note": "正在连接微信（会话列表稍后自动刷新）"})
-                    return
-                q = parse_qs(urlparse(self.path).query)
-                ck = str((q.get("chat_key") or [""])[0]).strip()
-                lim = int((q.get("limit") or ["30"])[0] or 30)
-                # ⛔ 名单可能是按**群名**写的 ⇒ 把"会话名解析器"传进去，否则面板恒报"命中 0 个"
-                def _name_of(_ck):
-                    try:
-                        _w = getattr(parent, "wechat", None)
-                        if _w is None and hasattr(parent, "wechat_box"):
-                            _w = (parent.wechat_box or [None])[0]
-                        if _w is None:
-                            return ""
-                        return str(_w.display_name(str(_ck).split(":", 1)[-1]) or "")
-                    except Exception:
-                        return ""
-                out = {"ok": True, "snapshot": _af.snapshot(st, name_of=_name_of),
-                       "chats": _af.chat_options(st)}
-                if ck:
-                    out.update(_af.list_chat(st, ck, limit=max(1, min(200, lim))))
-                self._json(out)
-
-            # ── 两条链共用的小动作──────────────────
-            # ⛔ 这一批路由历史上**只注册在一条链里**，
-            #   而控制台前端用的偏偏是另一条 ⇒ 每次都 **404**（前端 `getJSON` 在 `!r.ok` 时抛，
-            #   只接住原始 JSON 的调用点就把 `{"error": "not found"}` 当文案弹出来，看着像"没反应"）。
-            #   本轮实测踩到 **6 处**：
-            #     · 后端只有 GET、前端发 POST：`/api/file_search/add` · `/api/file_search/del`
-            #       · `/api/tools/new_manifest` · `/api/ui_fingerprint/take` · `/api/ui_fingerprint/forget`
-            #     · 后端只有 POST 链、前端发 GET：`/api/prompt/preview`
-            #   ⇒ 一律抽成方法，两条链调**同一份**（照 `/api/archive` 那次的修法，别再各写一遍）。
-            def _file_search_dirs(self, data, path, query=""):
-                """管理"可搜目录"（面板上加入/移除）。GET 从查询串取 `dir`，POST 从 JSON 体取。"""
-                try:
-                    from . import file_search as _fsd
-                    from .config import get_config as _gc4, save_config as _scv4, set_config as _sc4
-                    d = ""
-                    if isinstance(data, dict):
-                        d = str(data.get("dir") or "")
-                    if not d:
-                        _q4 = parse_qs(str(query or ""))
-                        d = str((_q4.get("dir") or [""])[0])
-                    d = d.strip()
-                    c4 = _gc4()
-                    c4.setdefault("file_search", {})
-                    cur = [str(x) for x in (c4["file_search"].get("dirs") or [])]
-                    if str(path).endswith("/add"):
-                        if d and d not in cur:
-                            cur.append(d)
-                        note = ("已加入：%s" % d) if d else "没给目录"
-                    else:
-                        cur = [x for x in cur if x != d]
-                        note = ("已移除：%s" % d) if d else "没给目录"
-                    c4["file_search"]["dirs"] = cur
-                    _sc4(c4)
-                    _scv4(c4)
-                    self._json({"ok": True, "note": note, "file_search": _fsd.snapshot()})
-                except Exception as e: # noqa: BLE001
-                    self._json({"ok": False, "error": str(e)})
-
-            def _tools_new_manifest(self):
-                """「怎么加工具」弹窗的一键动作：在 tools.d/ 里生成一份可编辑模板。"""
-                try:
-                    from . import user_tools as _ut5
-                    p, why = _ut5.write_template()
-                    self._json({"ok": bool(p), "path": p or "", "why": why,
-                                "note": "改完点「重新加载清单」，再勾选即可；坏清单会在面板里逐条列出"})
-                except Exception as e: # noqa: BLE001
-                    self._json({"ok": False, "error": str(e)})
-
-            def _ui_fingerprint_take(self, data=None, query=""):
-                """「重新取指纹」：给图标库里的命名目标各取一份 dHash 指纹（只**看**不点）。"""
-                try:
-                    from . import ui_fingerprint as _ufp
-                    from . import wechat as _wx3
-                    names_raw = str((data or {}).get("names") or "") if isinstance(data, dict) else ""
-                    if not names_raw:
-                        _q5 = parse_qs(str(query or ""))
-                        names_raw = str((_q5.get("names") or [""])[0])
-                    names = [s for s in names_raw.split(",") if s.strip()]
-                    gui = _wx3.WeChatAdapter()._get_gui()
-                    r = _ufp.take(gui, names or None)
-                    self._json({"ok": True, "result": r, "status": _ufp.hits(),
-                                "digest": _ufp.digest()})
-                except Exception as e: # noqa: BLE001
-                    self._json({"ok": False, "error": str(e)})
-
-            def _ui_fingerprint_forget(self, data=None, query=""):
-                """丢掉旧指纹（`key` 可选：给就只丢那一个）。"""
-                try:
-                    from . import ui_fingerprint as _ufp2
-                    k = str((data or {}).get("key") or "") if isinstance(data, dict) else ""
-                    if not k:
-                        _q6 = parse_qs(str(query or ""))
-                        k = str((_q6.get("key") or [""])[0])
-                    self._json({"ok": True, "result": _ufp2.forget(k or None), "status": _ufp2.hits()})
-                except Exception as e: # noqa: BLE001
-                    self._json({"ok": False, "error": str(e)})
-
-            def _prompt_preview(self):
-                """系统提示词编辑（第 11 条）：让用户看见"此刻真正送出的系统提示词"。"""
-                try:
-                    from . import system_prompt as _spv
-                    self._json(_spv.preview())
-                except Exception as e: # noqa: BLE001
-                    self._json({"ok": False, "error": str(e)}, 500)
-
-            def _briefs_api(self, data, method="GET"):
-                """预设信息：**按会话**提前设定的背景事实（读/增/删/清到期）。
-
-                GET `?chat=<key>` ⇒ 本会话的条目（**只读本会话**）；不带 chat ⇒ 只给"哪些会话设过 + 计数"。
-                POST `{action: add|del|prune, chat, text?, until?, always?, id?}`。
-                两条链共用这一份实现。
-                文案与代价（会随该会话的请求发给模型；相关判断是字面匹配）写在控制台面板那一行。
-                """
-                try:
-                    from . import briefs as _br
-                except Exception as e: # noqa: BLE001
-                    return self._json({"ok": False, "error": "预设信息模块不可用：%s" % e})
-                _d = data if isinstance(data, dict) else {}
-                if str(method).upper() == "GET":
-                    chat = str(_d.get("chat") or "").strip()
-                    if not chat:
-                        return self._json({"ok": True, "chats": _br.all_counts()})
-                    d = _br.list_for(chat)
-                    d["error"] = ""
-                    return self._json(d)
-                act = str(_d.get("action") or "").strip()
-                chat = str(_d.get("chat") or "").strip()
-                if act == "add":
-                    r = _br.add(chat, _d.get("text"), _d.get("until"), bool(_d.get("always")))
-                elif act == "del":
-                    r = _br.remove(chat, _d.get("id"))
-                elif act == "prune":
-                    r = {"ok": True, "dropped": _br.prune(chat or None)}
-                else:
-                    r = {"ok": False, "why": "未知动作：%s（只支持 add / del / prune）" % (act or "（空）")}
-                try:
-                    if r.get("ok") and act in ("add", "del", "prune"):
-                        r["list"] = _br.list_for(chat)
-                except Exception:
-                    pass
-                return self._json(r)
-
-            def _personas_favs(self):
-                """人设星标集合（读）。⛔ 前端用 **GET** 读它，而实现原先只在 POST 链里
-                ⇒ 每次都 404，而前端那处是 `try{…}catch(e){}` **静默失败** ⇒ 星标在面板上
-                **永远显示不出来**（点了收藏、刷新后还是没星）。两条链共用这一份。"""
-                try:
-                    import json as _json
-                    try:
-                        with open(parent._data_path("persona_favs.json"), "r", encoding="utf-8") as f:
-                            favs = _json.load(f)
-                    except Exception:
-                        favs = {}
-                    self._json({"ok": True, "favs": favs})
-                except Exception as e: # noqa: BLE001
-                    self._json({"ok": False, "error": str(e)})
-
-            def do_GET(self):
-                parsed = urlparse(self.path)
-                path = parsed.path
-                # ⛔ `data` 原来**只在 `do_POST` 里定义**，
-                #   而 do_GET 里有三处分支读 `data.get(...)`（本地生图的 `/api/image_gen/local/install`、
-                #   历史目录、打开路径）⇒ **必抛 NameError**，再被外层 `except` 吞成
-                #   `{ok:false, "error":"name 'data' is not defined"}` —— 4 条 GET 路由白坏，界面上还看不出来。
-                #   GET 没有请求体 ⇒ 用**查询串**当 data（`?dir=…&allow_online=1` 这类调用照样能用）。
-                try:
-                    data = {k: (v[0] if isinstance(v, list) and v else v)
-                            for k, v in parse_qs(parsed.query).items()}
-                except Exception:
-                    data = {}
-                # 静态素材（图标/光标图）免认证：<img> 不带 token，但素材不含隐私
-                # ⛔ 这三条**免认证**路由原来**不校验 Host**
-                #   （`_auth_ok` 才校验）⇒ 外域页面/DNS rebinding 能带着外域 Host 读它们（版本号泄露 + 探测本机是否有本产品）。
-                #   ⇒ 免认证 ≠ 免 Host 校验：先过同一份回环校验再放行。
-                if path.startswith("/assets/") or path.startswith("/wallpaper/") or path == "/api/version":
-                    if not local_guard.host_ok(self.headers.get("Host")):
-                        return self._json({"error": "bad host"}, 403)
-                if path.startswith("/assets/"):
-                    return parent._serve_asset(path, self)
-                if path.startswith("/wallpaper/"):
-                    return parent._serve_wallpaper(path, self, parsed.query)
-                if path == "/api/version":
-                    # 免认证版本指纹（启动器/新实例探测旧实例用；不含隐私）
-                    self._json({"ver": parent._build_tag()})
-                    return
-                if not self._auth_ok():
-                    return self._json({"error": "unauthorized"}, 401)
-                if path == "/api/update":
-                    # 更新检查（**只读**）：拉清单判五态。口径＝拉不到/没配 ⇒ off（界面什么都不显示）、
-                    # 清单坏了 ⇒ error 如实说、有新版 ⇒ newer + notes。**公告只在本机 UI，绝不往微信侧发**。
-                    try:
-                        from . import update_check as _uc
-                        from . import update_apply as _ua
-                        _st = _uc.state()
-                        _st["job"] = _ua.job() # 自更新作业的实时进度（控制台按钮轮询这里）
-                        self._json(_st)
-                    except Exception as _e:
-                        self._json({"status": "error", "why": "更新检查不可用：%s" % str(_e)[:60]})
-                    return
-                # 防窥视：地址栏乱码路径（单段 /aB3$xy…，无 API/静态前缀）也返回控制台页面
-                if path == "/" or path == "/index.html":
-                    pass # 正常控制台页
-                elif path.startswith("/api/") or path.startswith("/dsh-whale/") \
-                        or path.startswith("/assets/") or path.startswith("/wallpaper/"):
-                    pass # 正常 API/静态路由（下方继续匹配）
-                elif "/" not in path[1:]:
-                    # 单段乱码路径 → 当控制台页
-                    import re as _repath
-                    if not _repath.fullmatch(r"/[A-Za-z0-9#$~_\-]{6,64}", path):
-                        return self._json({"error": "not found"}, 404)
-                    path = "/"
-                else:
-                    return self._json({"error": "not found"}, 404)
-                if path in ("/", "/index.html"):
-                    token = str(get_config().get("server", {}).get("token") or "").strip()
-                    body = HTML.replace("__TKN__", token)
-                    body = body.replace("__VER__", parent._build_tag())
-                    # 鲸语字典随页面下发（**一份来源**）：前端 applyWhale 用它处理"动态刷新出来的文案"
-                    # （暂停/恢复/状态行等），静态部分由 _apply_whale 在服务端就换好。两种模式都下发。
-                    try:
-                        import json as _json
-                        body = body.replace("__WHALE_TXT__", _json.dumps(WHALE_DICT, ensure_ascii=False))
-                    except Exception:
-                        body = body.replace("__WHALE_TXT__", "{}")
-                    body = parent._apply_whale(body)
-                    body = body.encode("utf-8")
-                    self.send_response(200)
-                    self.send_header("Content-Type", "text/html; charset=utf-8")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
-                    self._set_session_cookie() # 必须在 send_response 之后（Set-Cookie 排在状态行/Server/Date 后）
-                    self.end_headers()
-                    self.wfile.write(body)
-                elif path.startswith("/dsh-whale/"):
-                    parent._whale_get(self, path, parsed.query)
-                # 原：elif path == "/api/voice/probe": ⇒ 已搬到 agent/routes.py → _rapi_voice_probe（/api/voice/probe）
-                # 原：elif path == "/api/voice/vc-probe": ⇒ 已搬到 agent/routes.py → _rapi_voice_vc_probe（/api/voice/vc-probe）
-                # 原：elif path == "/api/local-models": ⇒ 已搬到 agent/routes.py → _rapi_local_models（/api/local-models）
-                # 原：elif path == "/api/verifiers": ⇒ 已搬到 agent/routes.py → _rapi_verifiers（/api/verifiers）
-                # 原：elif path == "/api/verify": ⇒ 已搬到 agent/routes.py → _rapi_verify（/api/verify）
-                # 原：elif path == "/api/config": ⇒ 已搬到 agent/routes.py → _rapi_config（/api/config）
-                # 原：elif path == "/api/memory": ⇒ 已搬到 agent/routes.py → _rapi_memory（/api/memory）
-                # 原：elif path == "/api/sessions": ⇒ 已搬到 agent/routes.py → _rapi_sessions（/api/sessions）
-                # 原：elif path == "/api/status": ⇒ 已搬到 agent/routes.py → _rapi_status（/api/status）
-                # 原：elif path in ("/api/file_search/add", "/api/file_search/del"): ⇒ 已搬到 agent/routes.py → _rapi_file_search_add（/api/file_search/add, /api/file_search/del）
-                # 原：elif path == "/api/briefs": ⇒ 已搬到 agent/routes.py → _rapi_briefs（/api/briefs）
-                # 原：elif path == "/api/tools/new_manifest": ⇒ 已搬到 agent/routes.py → _rapi_tools_new_manifest（/api/tools/new_manifest）
-                # 原：elif path == "/api/tools/reload": ⇒ 已搬到 agent/routes.py → _rapi_tools_reload（/api/tools/reload）
-                # 原：elif path == "/api/tools/toggle": ⇒ 已搬到 agent/routes.py → _rapi_tools_toggle（/api/tools/toggle）
-                # 原：elif path == "/api/ui_fingerprint/take": ⇒ 已搬到 agent/routes.py → _rapi_ui_fingerprint_take（/api/ui_fingerprint/take）
-                # 原：elif path == "/api/ui_fingerprint/forget": ⇒ 已搬到 agent/routes.py → _rapi_ui_fingerprint_forget（/api/ui_fingerprint/forget）
-                # 原：elif path == "/api/prompt/preview": ⇒ 已搬到 agent/routes.py → _rapi_prompt_preview（/api/prompt/preview）
-                # 原：elif path == "/api/personas/favs": ⇒ 已搬到 agent/routes.py → _rapi_personas_favs（/api/personas/favs）
-                # 原：elif path == "/api/image_gen/local": ⇒ 已搬到 agent/routes.py → _rapi_image_gen_local（/api/image_gen/local）
-                # 原：elif path == "/api/image_gen/local/progress": ⇒ 已搬到 agent/routes.py → _rapi_image_gen_local_progress（/api/image_gen/local/progress）
-                # 原：elif path == "/api/image_gen/local/install": ⇒ 已搬到 agent/routes.py → _rapi_image_gen_local_install（/api/image_gen/local/install）
-                # 原：elif path == "/api/image_gen/local/start": ⇒ 已搬到 agent/routes.py → _rapi_image_gen_local_start（/api/image_gen/local/start）
-                # 原：elif path == "/api/image_gen/local/stop": ⇒ 已搬到 agent/routes.py → _rapi_image_gen_local_stop（/api/image_gen/local/stop）
-                # 原：elif path == "/api/image_gen/test": ⇒ 已搬到 agent/routes.py → _rapi_image_gen_test（/api/image_gen/test）
-                # 原：elif path == "/api/tts/test": ⇒ 已搬到 agent/routes.py → _rapi_tts_test（/api/tts/test）
-                # 原：elif path == "/api/voice/test": ⇒ 已搬到 agent/routes.py → _rapi_voice_test（/api/voice/test）
-                # 原：elif path == "/api/wechat/recheck": ⇒ 已搬到 agent/routes.py → _rapi_wechat_recheck（/api/wechat/recheck）
-                # 原：elif path == "/api/wechat/dir": ⇒ 已搬到 agent/routes.py → _rapi_wechat_dir（/api/wechat/dir）
-                # 原：elif path == "/api/version/allow": ⇒ 已搬到 agent/routes.py → _rapi_version_allow（/api/version/allow）
-                # 原：elif path == "/api/balance": ⇒ 已搬到 agent/routes.py → _rapi_balance（/api/balance）
-                # 原：elif path == "/api/logs": ⇒ 已搬到 agent/routes.py → _rapi_logs（/api/logs）
-                # 原：elif path == "/api/wechat-groups": ⇒ 已搬到 agent/routes.py → _rapi_wechat_groups（/api/wechat-groups）
-                # 原：elif path == "/api/emojis": ⇒ 已搬到 agent/routes.py → _rapi_emojis（/api/emojis）
-                # 原：elif path == "/api/personas/scores": ⇒ 已搬到 agent/routes.py → _rapi_personas_scores（/api/personas/scores）
-                # 原：elif path == "/api/feedback": ⇒ 已搬到 agent/routes.py → _rapi_feedback（/api/feedback）
-                # 原：elif path == "/api/personas": ⇒ 已搬到 agent/routes.py → _rapi_personas（/api/personas）
-                # 原：elif path == "/api/persona/cats": ⇒ 已搬到 agent/routes.py → _rapi_persona_cats（/api/persona/cats）
-                # 原：elif path == "/api/personas/custom": ⇒ 已搬到 agent/routes.py → _rapi_personas_custom（/api/personas/custom）
-                # 原：elif path == "/api/ui-layout": ⇒ 已搬到 agent/routes.py → _rapi_ui_layout（/api/ui-layout）
-                # 原：elif path == "/api/ui/recalibrate": ⇒ 已搬到 agent/routes.py → _rapi_ui_recalibrate（/api/ui/recalibrate）
-                # 原：elif path == "/api/open-path": ⇒ 已搬到 agent/routes.py → _rapi_open_path（/api/open-path）
-                # 原：elif path == "/api/selfcheck-stop": ⇒ 已搬到 agent/routes.py → _rapi_selfcheck_stop（/api/selfcheck-stop）
-                # 原：elif path == "/api/archive": ⇒ 已搬到 agent/routes.py → _rapi_archive（/api/archive）
-                elif self._dispatch(path, data, parsed, "GET"):
-                    pass # 路由表命中（唯一分派点，见 agent/routes.py）
-                else:
-                    self._json({"error": "not found"}, 404)
-
-            def do_POST(self):
-                if not self._auth_ok():
-                    return self._json({"error": "unauthorized"}, 401)
-                self._handle_body_request()
-
-            def do_OPTIONS(self):
-                """CORS 预检（仅 /dsh-whale/*）—— 挂件页是不透明来源，widget 的
-                POST/PUT 带 JSON 体必触发预检；不答 204 就整批请求被拦。
-                预检本身不带口令（浏览器规范），真正鉴权仍在各真实请求上。"""
-                path = urlparse(self.path).path
-                if not path.startswith("/dsh-whale/"):
-                    return self._json({"error": "not found"}, 404)
-                self.send_response(204)
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
-                self.send_header("Access-Control-Allow-Headers", "Content-Type")
-                self.send_header("Access-Control-Max-Age", "600")
-                self.send_header("Content-Length", "0")
-                self.end_headers()
-
-            def do_PUT(self):
-                # 小鲸鱼挂件前端用 PUT 保存配置（fetch SIZE_URL, {method:'PUT'}）
-                if not self._auth_ok():
-                    return self._json({"error": "unauthorized"}, 401)
-                self._handle_body_request()
-
-            def _handle_body_request(self):
-                parsed = urlparse(self.path) # 补：与 do_GET 对称
-                path = urlparse(self.path).path
-                # ⛔ 原来按 `Content-Length` **全收** ——
-                #   实测 64MB 全读进内存；更糟的是"声明 200MB、只发 1MB"会把处理线程**卡死**
-                #   （守着一个永远读不满的体）。⇒ 加**上限**（超限直接 413，不再读了），
-                #   并把读取本身容错（客户端半途断开 ⇒ 当空体，交给各路由自己报错）。
-                _MAX_BODY = 8 * 1024 * 1024
-                try:
-                    length = int(self.headers.get("Content-Length") or 0)
-                except Exception:
-                    length = 0
-                if length < 0 or length > _MAX_BODY:
-                    # ⛔ **负的 `Content-Length` 也要拒** ——
-                    #   老写法只挡"太大"，而 `self.rfile.read(-1)` 的语义是**读到底**
-                    #   （本轮实测 `BufferedReader.read(-1)` 读满 100000 字节）⇒ 上限形同虚设。
-                    #   （可达性诚实说明：`do_POST`/`do_PUT` 第一句就是口令校验，只有本机控制台
-                    #    能走到这里；但口径必须闭合。）
-                    return self._json({"error": "请求体过大或长度非法（上限 %d 字节）" % _MAX_BODY}, 413)
-                try:
-                    raw = self.rfile.read(length) if length else b"{}"
-                except Exception:
-                    raw = b"{}"
-                try:
-                    data = json.loads(raw.decode("utf-8")) if raw else {}
-                except Exception:
-                    data = {}
-                # 原：if path == "/api/update_skip": ⇒ 已搬到 agent/routes.py → _rapi_update_skip（/api/update_skip）
-                # 原：elif path == "/api/update_apply": ⇒ 已搬到 agent/routes.py → _rapi_update_apply（/api/update_apply）
-                # 原：elif path == "/api/update_reset": ⇒ 已搬到 agent/routes.py → _rapi_update_reset（/api/update_reset）
-                # 原：elif path == "/api/risk": ⇒ 已搬到 agent/routes.py → _rapi_risk（/api/risk）
-                # 原：elif path == "/api/version/action": ⇒ 已搬到 agent/routes.py → _rapi_version_action（/api/version/action）
-                # 原：elif path == "/api/decide": ⇒ 已搬到 agent/routes.py → _rapi_decide（/api/decide）
-                # 原：elif path == "/api/config": ⇒ 已搬到 agent/routes.py → _rapi_config（/api/config）
-                # 原：elif path == "/api/wechat/dir": ⇒ 已搬到 agent/routes.py → _rapi_wechat_dir（/api/wechat/dir）
-                # 原：elif path == "/api/archive": ⇒ 已搬到 agent/routes.py → _rapi_archive（/api/archive）
-                # 原：elif path in ("/api/archive/block", "/api/archive/unblock", "/api/archive/delete"): ⇒ 已搬到 agent/routes.py → _rapi_archive_block（/api/archive/block, /api/archive/delete, /api/archive/unblock）
-                # 原：elif path == "/api/cloud/test": ⇒ 已搬到 agent/routes.py → _rapi_cloud_test（/api/cloud/test）
-                # 原：elif path == "/api/prompt/preview": ⇒ 已搬到 agent/routes.py → _rapi_prompt_preview（/api/prompt/preview）
-                # 原：elif path == "/api/cursor/upload": ⇒ 已搬到 agent/routes.py → _rapi_cursor_upload（/api/cursor/upload）
-                # 原：elif path == "/api/cursor/reset": ⇒ 已搬到 agent/routes.py → _rapi_cursor_reset（/api/cursor/reset）
-                # 原：elif path == "/api/memory": ⇒ 已搬到 agent/routes.py → _rapi_memory（/api/memory）
-                # 原：elif path == "/api/sessions": ⇒ 已搬到 agent/routes.py → _rapi_sessions（/api/sessions）
-                if path == "/dsh-whale/usage-settings.json":
-                    # 前端 PUT 的是**改动项**（局部合并）
-                    if parent.whale is None:
-                        self._json({"error": "not found"}, 404, cors=True)
-                    else:
-                        try:
-                            self._json(parent.whale.save_usage_settings(data), cors=True)
-                        except Exception as e:  # noqa: BLE001
-                            self._json({"ok": False, "error": str(e)}, 500, cors=True)
-                elif path == "/dsh-whale/balance-adjustments.json":
-                    if parent.whale is None:
-                        self._json({"error": "not found"}, 404, cors=True)
-                    else:
-                        try:
-                            self._json(parent.whale.balance_adjustments(data), cors=True)
-                        except Exception as e:  # noqa: BLE001
-                            self._json({"ok": False, "error": str(e)}, 500, cors=True)
-                if path == "/dsh-whale/size.json":
-                    # 小鲸鱼挂件配置保存（前端 PUT）
-                    if parent.whale is None:
-                        self._json({"error": "not found"}, 404, cors=True)
-                    else:
-                        try:
-                            self._json(parent.whale.save_size(data), cors=True)
-                        except Exception as e:
-                            self._json({"ok": False, "error": str(e)}, 500, cors=True)
-                elif path == "/dsh-whale/bubble.json":
-                    # 泡泡纯配置保存（有上限，存完回显）
-                    if parent.whale is None:
-                        self._json({"error": "not found"}, 404, cors=True)
-                    else:
-                        try:
-                            self._json(parent.whale.save_cfg("bubble.json", data), cors=True)
-                        except Exception as e:
-                            self._json({"ok": False, "error": str(e)}, 500, cors=True)
-                elif path == "/dsh-whale/audio.json":
-                    # 音频是**动作式**：save-group / pin-group / delete-group
-                    if parent.whale is None:
-                        self._json({"error": "not found"}, 404, cors=True)
-                    else:
-                        try:
-                            self._json(parent.whale.audio_action(data), cors=True)
-                        except Exception as e:
-                            self._json({"ok": False, "error": str(e)}, 500, cors=True)
-                elif path == "/dsh-whale/bubble-img-upload.json":
-                    # 泡泡图上传/删除（返回整份图库，前端据此刷新）
-                    if parent.whale is None:
-                        self._json({"error": "not found"}, 404, cors=True)
-                    else:
-                        try:
-                            self._json(parent.whale.bubble_img_action(data), cors=True)
-                        except Exception as e:
-                            self._json({"ok": False, "error": str(e)}, 500, cors=True)
-                elif path == "/dsh-whale/api-models.json":
-                    # 自定义 API 模型：动作式（save / delete）
-                    if parent.whale is None:
-                        self._json({"error": "not found"}, 404, cors=True)
-                    else:
-                        try:
-                            self._json(parent.whale.api_models_action(data), cors=True)
-                        except Exception as e:  # noqa: BLE001
-                            self._json({"ok": False, "error": str(e)}, 500, cors=True)
-                elif path in ("/dsh-whale/roles.json", "/dsh-whale/role-pin.json",
-                               "/dsh-whale/role-delete.json"):
-                    # 自定义角色：导入 / 置顶 / 删除。三者都返回**完整角色列表**，
-                    # 前端拿它整块刷新面板（契约见 agent/whale.py 的角色段注释）。
-                    if parent.whale is None:
-                        self._json({"error": "not found"}, 404, cors=True)
-                    else:
-                        try:
-                            _fn = {"/dsh-whale/roles.json": parent.whale.save_role,
-                                   "/dsh-whale/role-pin.json": parent.whale.pin_role,
-                                   "/dsh-whale/role-delete.json": parent.whale.delete_role}[path]
-                            self._json(_fn(data), cors=True)
-                        except Exception as e:  # noqa: BLE001
-                            self._json({"ok": False, "error": str(e)}, 500, cors=True)
-                # 原：elif path == "/api/test-api": ⇒ 已搬到 agent/routes.py → _rapi_test_api（/api/test-api）
-                # 原：elif path == "/api/poke-test": ⇒ 已搬到 agent/routes.py → _rapi_poke_test（/api/poke-test）
-                # 原：elif path == "/api/verifiers": ⇒ 已搬到 agent/routes.py → _rapi_verifiers（/api/verifiers）
-                # 原：elif path == "/api/verify": ⇒ 已搬到 agent/routes.py → _rapi_verify（/api/verify）
-                # 原：elif path == "/api/selfcheck": ⇒ 已搬到 agent/routes.py → _rapi_selfcheck（/api/selfcheck）
-                # 原：elif path == "/api/prices": ⇒ 已搬到 agent/routes.py → _rapi_prices（/api/prices）
-                # 原：elif path == "/api/data/export": ⇒ 已搬到 agent/routes.py → _rapi_data_export（/api/data/export）
-                # 原：elif path == "/api/data/import": ⇒ 已搬到 agent/routes.py → _rapi_data_import（/api/data/import）
-                # 原：elif path == "/api/wechat-groups": ⇒ 已搬到 agent/routes.py → _rapi_wechat_groups（/api/wechat-groups）
-                # 原：elif path == "/api/community/export": ⇒ 已搬到 agent/routes.py → _rapi_community_export（/api/community/export）
-                # 原：elif path == "/api/community/upload": ⇒ 已搬到 agent/routes.py → _rapi_community_upload（/api/community/upload）
-                # 原：elif path == "/api/scoring/import": ⇒ 已搬到 agent/routes.py → _rapi_scoring_import（/api/scoring/import）
-                # 原：elif path == "/api/scoring/stats": ⇒ 已搬到 agent/routes.py → _rapi_scoring_stats（/api/scoring/stats）
-                # 原：elif path == "/api/learning/start": ⇒ 已搬到 agent/routes.py → _rapi_learning_start（/api/learning/start）
-                # 原：elif path == "/api/learning/evaluate": ⇒ 已搬到 agent/routes.py → _rapi_learning_evaluate（/api/learning/evaluate）
-                # 原：elif path == "/api/pause": ⇒ 已搬到 agent/routes.py → _rapi_pause（/api/pause）
-                # 原：elif path == "/api/image_gen/local/install": ⇒ 已搬到 agent/routes.py → _rapi_image_gen_local_install（/api/image_gen/local/install）
-                # 原：elif path == "/api/image_gen/local/preset": ⇒ 已搬到 agent/routes.py → _rapi_image_gen_local_preset（/api/image_gen/local/preset）
-                # 原：elif path == "/api/image_gen/local/start": ⇒ 已搬到 agent/routes.py → _rapi_image_gen_local_start（/api/image_gen/local/start）
-                # 原：elif path == "/api/image_gen/local/stop": ⇒ 已搬到 agent/routes.py → _rapi_image_gen_local_stop（/api/image_gen/local/stop）
-                # 原：elif path == "/api/resume": ⇒ 已搬到 agent/routes.py → _rapi_resume（/api/resume）
-                # 原：elif path == "/api/watermark/reset": ⇒ 已搬到 agent/routes.py → _rapi_watermark_reset（/api/watermark/reset）
-                # 原：elif path == "/api/shutdown": ⇒ 已搬到 agent/routes.py → _rapi_shutdown（/api/shutdown）
-                # 原：elif path == "/api/restart": ⇒ 已搬到 agent/routes.py → _rapi_restart（/api/restart）
-                # 原：elif path == "/api/persona/behavior-recommend": ⇒ 已搬到 agent/routes.py → _rapi_persona_behavior_recommend（/api/persona/behavior-recommend）
-                # 原：elif path == "/api/sessions/delete": ⇒ 已搬到 agent/routes.py → _rapi_sessions_delete（/api/sessions/delete）
-                # 原：elif path == "/api/sessions/restore": ⇒ 已搬到 agent/routes.py → _rapi_sessions_restore（/api/sessions/restore）
-                # 原：elif path == "/api/stats/cal_clear": ⇒ 已搬到 agent/routes.py → _rapi_stats_cal_clear（/api/stats/cal_clear）
-                # 原：elif path == "/api/stats/cal_list": ⇒ 已搬到 agent/routes.py → _rapi_stats_cal_list（/api/stats/cal_list）
-                # 原：elif path == "/api/stats/cal_delete": ⇒ 已搬到 agent/routes.py → _rapi_stats_cal_delete（/api/stats/cal_delete）
-                # 原：elif path == "/api/stats/cal": ⇒ 已搬到 agent/routes.py → _rapi_stats_cal（/api/stats/cal）
-                # 原：elif path == "/api/emojis/delete": ⇒ 已搬到 agent/routes.py → _rapi_emojis_delete（/api/emojis/delete）
-                # 原：elif path == "/api/code-check": ⇒ 已搬到 agent/routes.py → _rapi_code_check（/api/code-check）
-                # 原：elif path == "/api/code-check/progress": ⇒ 已搬到 agent/routes.py → _rapi_code_check_progress（/api/code-check/progress）
-                # 原：elif path == "/api/feedback/submit": ⇒ 已搬到 agent/routes.py → _rapi_feedback_submit（/api/feedback/submit）
-                # 原：elif path == "/api/feedback/flush": ⇒ 已搬到 agent/routes.py → _rapi_feedback_flush（/api/feedback/flush）
-                # 原：elif path == "/api/persona/cats/save": ⇒ 已搬到 agent/routes.py → _rapi_persona_cats_save（/api/persona/cats/save）
-                # 原：elif path == "/api/persona/cats/del": ⇒ 已搬到 agent/routes.py → _rapi_persona_cats_del（/api/persona/cats/del）
-                # 原：elif path == "/api/persona/score": ⇒ 已搬到 agent/routes.py → _rapi_persona_score（/api/persona/score）
-                # 原：elif path == "/api/personas/custom": ⇒ 已搬到 agent/routes.py → _rapi_personas_custom（/api/personas/custom）
-                # 原：elif path == "/api/personas/custom/del": ⇒ 已搬到 agent/routes.py → _rapi_personas_custom_del（/api/personas/custom/del）
-                # 原：elif path == "/api/memory/deep-profile": ⇒ 已搬到 agent/routes.py → _rapi_memory_deep_profile（/api/memory/deep-profile）
-                # 原：elif path == "/api/persona/ai-enrich": ⇒ 已搬到 agent/routes.py → _rapi_persona_ai_enrich（/api/persona/ai-enrich）
-                # 原：elif path == "/api/persona/web-fetch": ⇒ 已搬到 agent/routes.py → _rapi_persona_web_fetch（/api/persona/web-fetch）
-                # 原：elif path == "/api/ui/background": ⇒ 已搬到 agent/routes.py → _rapi_ui_background（/api/ui/background）
-                # 原：elif path == "/api/personas/favs": ⇒ 已搬到 agent/routes.py → _rapi_personas_favs（/api/personas/favs）
-                # 原：elif path == "/api/briefs": ⇒ 已搬到 agent/routes.py → _rapi_briefs（/api/briefs）
-                # 原：elif path == "/api/personas/fav": ⇒ 已搬到 agent/routes.py → _rapi_personas_fav（/api/personas/fav）
-                # 原：elif path == "/api/personas/rate": ⇒ 已搬到 agent/routes.py → _rapi_personas_rate（/api/personas/rate）
-                # 原：elif path == "/api/selfcheck-stop": ⇒ 已搬到 agent/routes.py → _rapi_selfcheck_stop（/api/selfcheck-stop）
-                # 原：elif path == "/api/ui/recalibrate": ⇒ 已搬到 agent/routes.py → _rapi_ui_recalibrate（/api/ui/recalibrate）
-                # 原：elif path == "/api/open-path": ⇒ 已搬到 agent/routes.py → _rapi_open_path（/api/open-path）
-                # ⛔ 这四条**后端原先只注册在 do_GET 链**，而控制台前端发的是
-                #   POST ⇒ 每次都 404（`_handle_body_request` 的末尾 else），界面上只弹一句
-                #   `{"error": "not found"}` 或者干脆没反应。现在两条链调同一份实现。
-                # 原：elif path in ("/api/file_search/add", "/api/file_search/del"): ⇒ 已搬到 agent/routes.py → _rapi_file_search_add（/api/file_search/add, /api/file_search/del）
-                # 原：elif path == "/api/tools/new_manifest": ⇒ 已搬到 agent/routes.py → _rapi_tools_new_manifest（/api/tools/new_manifest）
-                # 原：elif path == "/api/ui_fingerprint/take": ⇒ 已搬到 agent/routes.py → _rapi_ui_fingerprint_take（/api/ui_fingerprint/take）
-                # 原：elif path == "/api/ui_fingerprint/forget": ⇒ 已搬到 agent/routes.py → _rapi_ui_fingerprint_forget（/api/ui_fingerprint/forget）
-                elif self._dispatch(path, data, parsed, "POST"):
-                    pass # 路由表命中（唯一分派点，见 agent/routes.py）
-                else:
-                    self._json({"error": "not found"}, 404)
-
-# ── 路由表分派──
-
-            def _dispatch(self, path, data, parsed, method):
-                """**唯一分派点**：查 `agent/routes.ROUTES`（路径 → 方法 → 处理函数名）。
-
-                只认表里**成对存在**的 (路径, 方法)：命中就调用并返回 True；
-                否则返回 False，交回原来那条 `if/elif` 链（没搬的路由行为一个字不变）。
-                """
-                try:
-                    from .routes import HANDLERS as _R # ⚠️ 是 HANDLERS（路径→方法→函数名），不是 ROUTES（声明）
-                except Exception: # noqa: BLE001
-                    return False
-                row = _R.get(path)
-                if not isinstance(row, dict):
-                    return False
-                fn = row.get(method)
-                if not fn:
-                    return False
-                try:
-                    getattr(self, fn)(path, data, parsed, method)
-                except Exception as e: # noqa: BLE001
-                    self._json({"ok": False, "error": str(e)}, 500)
-                return True
-
-
-            def _rapi_voice_probe(self, path, data, parsed, method):
-                # 原 do_GET:953
-                try:
-                    from . import voice_models as _vmod
-                    _q2 = parse_qs(parsed.query)
-                    self._json(dict({"ok": True}, **_vmod.probe((_q2.get("url") or [""])[0])))
-                except Exception as _e2:
-                    self._json({"ok": False, "error": str(_e2)}, 500)
-
-            def _rapi_voice_vc_probe(self, path, data, parsed, method):
-                # 原 do_GET:961
-                try:
-                    from . import voice_models as _vmod
-                    _q3 = parse_qs(parsed.query)
-                    self._json(dict({"ok": True}, **_vmod.probe_vc((_q3.get("url") or [""])[0])))
-                except Exception as _e3:
-                    self._json({"ok": False, "error": str(_e3)}, 500)
-
-            def _rapi_local_models(self, path, data, parsed, method):
-                # 原 do_GET:969
-                try:
-                    from . import local_models as _lm
-                    _q = parse_qs(parsed.query)
-                    if (_q.get("test") or [""])[0] == "1":
-                        self._json(dict({"ok": True}, **_lm.test_chat(
-                            (_q.get("base_url") or [""])[0], (_q.get("model") or [""])[0])))
-                    else:
-                        _found, _meta = _lm.discover()
-                        self._json({"ok": True, "found": _found, "meta": _meta,
-                                    "capability": _lm.CAPABILITY_NOTE})
-                except Exception as _e:
-                    self._json({"ok": False, "error": str(_e)}, 500)
-
-            def _rapi_verifiers(self, path, data, parsed, method):
-                # 原 do_GET:984
-                try:
-                    from . import verifiers as _vf
-                    self._json({"ok": True, "verifiers": _vf.catalog()})
-                except Exception as e: # noqa: BLE001
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_verify(self, path, data, parsed, method):
-                # 原 do_GET:991
-                try:
-                    from urllib.parse import urlparse as _up, parse_qs as _pq
-                    from . import verifiers as _vf
-                    _q = _pq(_up(self.path).query)
-                    # ⛔ 把**运行中实例**的
-                    #   `_db_how` 与 `_cap` 喂给检验器 —— 否则"我读的是不是正在写的那个号"
-                    #   与"哪张表读失败了"（「消息库读不到」那条链的核心）只能判假绿。
-                    try:
-                        _wo = _current_wx(parent)
-                        _vf.set_runtime_how(getattr(_wo, "_db_how", None),
-                                            getattr(_wo, "_cap", None))
-                    except Exception:
-                        pass
-                    self._json(_vf.run(str((_q.get("id") or [""])[0] or "")))
-                except Exception as e: # noqa: BLE001
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_config(self, path, data, parsed, method):
-                # 原 do_GET:1008
-                self._json(parent.masked_config())
-
-            def _rapi_memory(self, path, data, parsed, method):
-                # 原 do_GET:1010
-                q = parse_qs(parsed.query)
-                chat_key = (q.get("chat_key") or [""])[0]
-                try:
-                    self._json(parent.memory_fn("list", chat_key))
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_sessions(self, path, data, parsed, method):
-                # 原 do_GET:1018
-                q = parse_qs(parsed.query)
-                try:
-                    self._json({"ok": True, "sessions": parent.sessions_fn(
-                        int((q.get("limit") or ["30"])[0]))})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_status(self, path, data, parsed, method):
-                # 原 do_GET:1026
-                st = parent.status_provider()
-                try:
-                    from . import risk as _risk
-                    from . import input_backend as _ib
-                    from . import version_matrix as _vm
-                    from . import dep_heal as _dh
-                    if isinstance(st, dict):
-                        st = dict(st)
-                        st["risk"] = _risk.snapshot()
-                        # 落盘健康（N4 审计项：热路径撞独占要看得见，不能只靠翻日志考古）：
-                        # `hits` = os.replace 撞共享冲突总次数（含重试成功——冲突本身就是信号）；
-                        # `worst_s` = 单次 replace 最坏等待秒数。与 risk/bg 同风格独立成段，
-                        # 这一段挂了不影响 status 其它字段。
-                        try:
-                            from . import persist as _persist
-                            st["io_health"] = {
-                                "replace_stats": dict(getattr(_persist, "REPLACE_STATS", {})),
-                                "replace_failures": dict(getattr(_persist, "REPLACE_FAILURES", {})),
-                            }
-                        except Exception as _ioe:
-                            st["io_health"] = {"error": str(_ioe)}
-                        # 当前输入后端档位（AGENTS §2.1 第 4 条：用了哪一档必须看得见）
-                        st["input"] = _ib.status()
-                        # 后台能力矩阵（⑥ 全后台审计）：每条路径是"全程后台"还是"真鼠标"，
-                        # 单一事实源在 agent/bg_status.py —— 控制台照它显示，不另写一份。
-                        try:
-                            from . import bg_status as _bg
-                            st["bg"] = _bg.status()
-                        except Exception as _be:
-                            st["bg"] = {"paths": [], "error": str(_be)}
-                        # 「我自己是谁」：
-                        # `wechat.py` 只从驱动库的 `get_self_info()` 拿自己的账号，**拿不到时那一串
-                        # "这条是不是我发的"判断会静默失效**（会回自己/@ 自己不理）。这里如实暴露：
-                        # `ok=False` ⇒ 控制台**写"没认出来"**，不许装没事。
-                        try:
-                            _wx = None
-                            for _n in ("wechat", "adapter", "wx", "wxadapter", "bot", "worker"):
-                                _o = getattr(parent, _n, None)
-                                if _o is not None and hasattr(_o, "self_identity"):
-                                    _wx = _o
-                                    break
-                            st["self"] = (_wx.self_identity() if _wx is not None
-                                          else {"ok": False, "why": "还拿不到微信实例（机器人未启动？）"})
-                        except Exception as _se:
-                            st["self"] = {"ok": False, "why": str(_se)}
-                        # 「我的其他账号（大号）」：
-                        # 登记了几项、昵称有几项**真在群成员里匹配上了**、当前反应档位 —— 摆出来让用户核对。
-                        try:
-                            st["owner"] = (_wx.owner_status() if _wx is not None
-                                           and hasattr(_wx, "owner_status")
-                                           else {"count": 0, "mode": "know", "why": "还拿不到微信实例（机器人未启动？）"})
-                        except Exception as _oe:
-                            st["owner"] = {"count": 0, "mode": "know", "why": str(_oe)}
-                        # 图标指纹表（⑦ 点击正确性）：按 微信版本×尺寸×DPI 存了几条、什么时候取的
-                        try:
-                            from . import ui_fingerprint as _ufp
-                            st["ui_fp"] = _ufp.hits()
-                            st["ui_fp"]["digest"] = _ufp.digest()
-                        except Exception as _fe:
-                            st["ui_fp"] = {"keys": {}, "error": str(_fe)}
-                        # 版本能力矩阵 + 版本门（W7：版本变了要出横幅、按未验证处理）
-                        # ⛔ 这两行原来跟其它富化段挤在
-                        #   **同一个大 try** 里，任何别的段抛异常都会把它们**一起丢掉** ⇒ 前端拿到
-                        #   `version/version_gate` 缺失 ⇒ 把"读不到"画成红字
-                        #   「版本未实测：按严格档暂停发送（可在配置里关掉 version_gate.strict）」
-                        #   ⇒ 把用户指去改一个根本没拦他的开关。⇒ 各自单独一层 try，
-                        #   出错就放 **`allow=None`（读不到）**，绝不是 False（不许发）。
-                        from . import version_gate as _vg2
-                        try:
-                            st["version"] = _vm.current()
-                        except Exception as _vme:
-                            st["version"] = {"wechat": "unknown", "adapter": "",
-                                             "error": str(_vme)[:80]}
-                        try:
-                            st["version_gate"] = _vg2.status()
-                        except Exception as _vge:
-                            st["version_gate"] = {"allow": None, "level": "unknown",
-                                                  "error": str(_vge)[:80]}
-                        # 出站闸门读数（内部故障话术拦截 / 去重窗）——前端横幅要显示，见 console_html
-                        try:
-                            from . import sender as _sd3
-                            st["outbound_gate"] = _sd3.outbound_gate_status()
-                        except Exception as _oe:
-                            st["outbound_gate"] = {"blocked_internal": 0, "error": str(_oe)[:60]}
-                        # 待决单（⑦ 版本不匹配四选一）：门没过就把这件事开成一张单，控制台据此弹模态。
-                        # 开单是幂等的（同一对版本只开一次、问过就不再问），所以这里每次轮询调用是安全的。
-                        try:
-                            from . import pending_decisions as _pd
-                            _pnd = _vg2.pending()
-                            _pit = _pnd.get("item") or {}
-                            st["pending_decisions"] = {
-                                "open": len(_pd.open_items()),
-                                "summary": _pd.summary(),
-                                "needed": bool(_pnd.get("needed")),
-                                "item": _pit if str(_pit.get("status")) == "open" else None,
-                            }
-                        except Exception as _pe:
-                            st["pending_decisions"] = {"open": 0, "error": str(_pe)}
-                        # 一键动作的后台作业（⑦）：升级适配层 / 更新本体 都是分钟级，
-                        # 起在后台线程里（agent/jobs.py），这里把状态给控制台显示跑到哪、成没成。
-                        try:
-                            from . import jobs as _jobs
-                            st["jobs"] = _jobs.status().get("jobs") or {}
-                        except Exception as _je:
-                            st["jobs"] = {"_error": str(_je)}
-                        # 微信装没装
-                        try:
-                            from .wechat import wechat_version_info as _wvi
-                            _wi = _wvi() or {}
-                            st["wechat_install"] = _wi.get("install") or {
-                                "state": _wi.get("state") or "unknown",
-                                "installed": bool(_wi.get("installed")),
-                                "detail": _wi.get("detail") or "",
-                                "official_url": "https://weixin.qq.com/",
-                                "action": "none"}
-                        except Exception as _e:
-                            st["wechat_install"] = {"state": "unknown", "installed": False,
-                                                    "detail": "检测异常：" + str(_e),
-                                                    "official_url": "https://weixin.qq.com/",
-                                                    "action": "none"}
-                        # 微信数据目录：
-                        # 这一项报的是**当前实际在读的目录**（不是配置值），还带上"你填的那个为什么
-                        # 没用、现在回落到哪"。控制台「微信数据目录」那一行直接显示它。
-                        try:
-                            from . import wechat_dir as _wdir_s
-                            _wxo = _current_wx(parent)
-                            st["wechat_dir"] = _wdir_s.status(
-                                how=getattr(_wxo, "_db_how", None) if _wxo is not None else None,
-                                dir_info=getattr(_wxo, "_db_dir_info", None) if _wxo is not None else None)
-                        except Exception as _wde:
-                            st["wechat_dir"] = {"ok": False, "effective": "", "src": "?",
-                                                "now": "取不到", "candidates": [],
-                                                "text": "取不到微信数据目录状态",
-                                                "note": "取不到微信数据目录状态：%s" % _wde}
-                        # 依赖体检（盯项目运行时的 site-packages，不是当前进程）
-                        st["deps"] = {"summary": _dh.summary_line(),
-                                      "offline_available": _dh.offline_available(),
-                                      "source": _dh.probe_source()}
-                        # 媒体与语音（能力 A/B/C）：引擎链实测状态 + 图库现状 + 转发开关
-                        try:
-                            from . import media_status as _ms
-                            st["media"] = _ms.snapshot()
-                        except Exception as _e2:
-                            st["media"] = {"error": str(_e2)}
-                        # 上云（预留接口）：端点三态 + 是否配了 Token
-                        try:
-                            from . import cloud as _cl2
-                            st["cloud"] = _cl2.snapshot()
-                        except Exception as _e11:
-                            st["cloud"] = {"error": str(_e11)}
-                        # 图/文/视频分流 + 视频读取（第 20 条）
-                        try:
-                            from . import model_routes as _mrt
-                            from . import video_read as _vrd
-                            st["model_routes"] = _mrt.snapshot()
-                            st["video_read"] = _vrd.snapshot()
-                        except Exception as _e10:
-                            st["model_routes"] = {"error": str(_e10)}
-                        # 存档屏蔽（第 10 条）：名单 + 存档里被屏蔽的条数
-                        try:
-                            from . import archive_filter as _af2
-                            st["archive"] = _af2.snapshot(getattr(parent, "store", None))
-                        except Exception as _e9:
-                            st["archive"] = {"error": str(_e9)}
-                        # 计时提醒 + 节假日问候（第 12/13 条）
-                        try:
-                            from . import timers as _tmr
-                            from . import holidays as _hol2
-                            st["timers"] = _tmr.snapshot()
-                            st["holiday"] = _hol2.snapshot()
-                        except Exception as _e8:
-                            st["timers"] = {"error": str(_e8)}
-                        # 响应等级三件（第 15/16/18 条）：档位模式 / 峰谷映射 / 指令禁言现状
-                        try:
-                            from . import tier_control as _tcl
-                            st["tier"] = _tcl.snapshot()
-                        except Exception as _e7:
-                            st["tier"] = {"error": str(_e7)}
-                        # 备选模型（第 3 条）：清单 + 最近一次"改用备选"的现场
-                        try:
-                            from .llm import fallback_status as _fbs
-                            st["fallback"] = _fbs()
-                        except Exception as _e6:
-                            st["fallback"] = {"error": str(_e6)}
-                        # 撤回剔除（第 14 条）：已剔除多少条 + 最近一条的现场
-                        try:
-                            from . import recall as _rcl
-                            st["recall"] = _rcl.summary()
-                        except Exception as _e5:
-                            st["recall"] = {"error": str(_e5)}
-                        # 本地文件搜索（找文件并发送）：现场读目录状态 + 台账
-                        try:
-                            from . import file_search as _fsx
-                            st["file_search"] = _fsx.snapshot()
-                        except Exception as _e4:
-                            st["file_search"] = {"error": str(_e4)}
-                        # 自定义工具（工具与插件面板）：清单现场扫 + 调用统计
-                        try:
-                            from . import user_tools as _ut2
-                            st["user_tools"] = _ut2.snapshot()
-                        except Exception as _e3:
-                            st["user_tools"] = {"error": str(_e3)}
-                except Exception as _se:
-                    # ⛔ **富化段出错不许悄悄丢** —— 至少把"读不到"如实放进去，
-                    #   让前端能区分「读数读不到」与「真的不许发」（`allow=None` vs `False`）。
-                    try:
-                        if isinstance(st, dict):
-                            st.setdefault("version", {"wechat": "unknown", "adapter": "",
-                                                      "error": str(_se)[:80]})
-                            st.setdefault("version_gate", {"allow": None, "level": "unknown",
-                                                           "error": str(_se)[:80]})
-                            st["status_error"] = str(_se)[:120]
-                    except Exception:
-                        pass
-                self._json(st)
-
-            def _rapi_file_search_add(self, path, data, parsed, method):
-                # 原 do_GET:1230
-                self._file_search_dirs(data, path, parsed.query)
-
-            def _rapi_briefs(self, path, data, parsed, method):
-                # 原 do_GET:1233
-                self._briefs_api(data, "GET")
-
-            def _rapi_tools_new_manifest(self, path, data, parsed, method):
-                # 原 do_GET:1237
-                self._tools_new_manifest()
-
-            def _rapi_tools_reload(self, path, data, parsed, method):
-                # 原 do_GET:1239
-                try:
-                    from . import user_tools as _ut3
-                    snap = _ut3.snapshot()
-                    self._json({"ok": True, "tools": snap,
-                                "note": "清单已重扫；正在跑的会话在下一轮构建工具清单时生效"})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_tools_toggle(self, path, data, parsed, method):
-                # 原 do_GET:1248
-                try:
-                    from . import user_tools as _ut4
-                    q = parse_qs(urlparse(self.path).query)
-                    nm = str((q.get("name") or [""])[0])
-                    on = str((q.get("on") or ["1"])[0]) not in ("0", "false", "False", "")
-                    ok_t, why_t = _ut4.set_enabled(nm, on)
-                    self._json({"ok": bool(ok_t), "why": why_t, "tools": _ut4.snapshot()})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_tools_export(self, path, data, parsed, method):
-                # 把工具导出成**一份文档**（只生成文本：不写文件、不访问网络）
-                try:
-                    from . import user_tools as _ut6
-                    q = parse_qs(urlparse(self.path).query)
-                    nm = str((q.get("name") or [""])[0]).strip().lower()
-                    text, why = _ut6.export_text(nm)
-                    self._json({"ok": bool(text), "name": nm, "text": text, "why": why,
-                                "note": "把这份文档发给别人，对方在「工具与插件」点「导入工具」就能加上。"})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_tools_test(self, path, data, parsed, method):
-                # （③b「插件加到软件里的引导」配套）：勾选之前先「试一下」。
-                # 复用**唯一执行点** `user_tools.call()`（只发 HTTP、域名白名单、内网永远拒），
-                # 这里不另写一条出网路径——否则那条路不会被既有判据约束到。
-                try:
-                    from . import user_tools as _ut5
-                    q = parse_qs(urlparse(self.path).query)
-                    nm = str((q.get("name") or [""])[0]).strip().lower()
-                    raw = str((q.get("args") or ["{}"])[0]).strip() or "{}"
-                    try:
-                        args = json.loads(raw)
-                    except Exception as e:
-                        self._json({"ok": False, "error": "参数不是合法 JSON：%s" % e})
-                        return
-                    if not isinstance(args, dict):
-                        self._json({"ok": False, "error": '参数必须是一个 JSON 对象，例如 {"city": "北京"}'})
-                        return
-                    hit = [t for t in _ut5.load()[0] if t.get("name") == nm]
-                    if not hit:
-                        self._json({"ok": False, "error": "没找到自定义工具「%s」——先点「重新加载清单」，"
-                                                           "看它是不是作为坏清单列在下面了" % (nm or "?")})
-                        return
-                    t0 = time.time()
-                    r = _ut5.call(hit[0], args)
-                    self._json({"ok": not r.get("is_error"), "is_error": bool(r.get("is_error")),
-                                "name": nm, "host": (urlparse(str(hit[0].get("url") or "")).hostname or ""),
-                                "ms": int((time.time() - t0) * 1000),
-                                "content": str(r.get("content") or ""),
-                                "note": "这次是**真发了一次 HTTP**（也会记进调用次数）；模型每用一次同样记一次。"})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_ui_fingerprint_take(self, path, data, parsed, method):
-                # 原 do_GET:1259
-                self._ui_fingerprint_take(data, parsed.query)
-
-            def _rapi_ui_fingerprint_forget(self, path, data, parsed, method):
-                # 原 do_GET:1262
-                self._ui_fingerprint_forget(data, parsed.query)
-
-            def _rapi_prompt_preview(self, path, data, parsed, method):
-                # 原 do_GET:1264
-                self._prompt_preview()
-
-            def _rapi_personas_favs(self, path, data, parsed, method):
-                # 原 do_GET:1267
-                self._personas_favs()
-
-            def _rapi_image_gen_local(self, path, data, parsed, method):
-                # 原 do_GET:1271
-                try:
-                    from urllib.parse import parse_qs as _pq, urlparse as _up
-                    from . import sd_local as _sd
-                    _qs = _pq(_up(self.path).query)
-                    _out = {"ok": True, "status": _sd.status()}
-                    if str((_qs.get("estimate") or ["0"])[0]).lower() not in ("", "0", "false"):
-                        _out["estimate"] = _sd.estimate(do_probe=True)
-                    self._json(_out)
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_image_gen_local_progress(self, path, data, parsed, method):
-                # 原 do_GET:1284
-                try:
-                    from . import sd_local as _sd
-                    self._json({"ok": True, "progress": _sd.progress(), "status": _sd.status()})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_image_gen_local_install(self, path, data, parsed, method):
-                # 原 do_GET:1291
-                try:
-                    from . import sd_local as _sd
-                    _ao = _truthy(data.get("allow_online"))
-                    _ok, _why, _info = _sd.install_async(allow_online=(None if _ao is None else bool(_ao)))
-                    self._json({"ok": bool(_ok), "note": _why, "info": _info, "progress": _sd.progress()})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_image_gen_local_start(self, path, data, parsed, method):
-                # 原 do_GET:1300
-                try:
-                    from . import sd_local as _sd
-                    _ok, _why = _sd.start_server()
-                    self._json({"ok": bool(_ok), "note": _why})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_image_gen_local_stop(self, path, data, parsed, method):
-                # 原 do_GET:1307
-                try:
-                    from . import sd_local as _sd
-                    _ok, _why = _sd.stop_server()
-                    self._json({"ok": bool(_ok), "note": _why})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_image_gen_test(self, path, data, parsed, method):
-                # 原 do_GET:1314
-                try:
-                    from . import image_gen as _ig
-                    _r = _ig.generate("", "帮我画一张两只猫的图")
-                    self._json({"ok": bool(_r.get("ok")), "result": _r})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_tts_test(self, path, data, parsed, method):
-                # 原 do_GET:1321
-                try:
-                    from . import voice_models as _vm
-                    txt = "这是一条语音回复的试听"
-                    try:
-                        q = parse_qs(urlparse(self.path).query)
-                        if (q.get("text") or [""])[0]:
-                            txt = str((q.get("text") or [""])[0])[:120]
-                    except Exception:
-                        pass
-                    p, err, info = _vm.make(txt)
-                    _inf = dict(info or {})
-                    _be = str(_inf.get("engine") or _vm.backend())
-                    self._json({"ok": bool(p), "path": p or "", "err": err or "",
-                                "info": _inf, "engine": _be,
-                                "size": (os.path.getsize(p) if p and os.path.exists(p) else 0),
-                                "note": "试听只做合成，不会发送；发出去的是音频文件，不是微信语音条。"
-                                        "当前这一档＝%s" % _be})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_voice_test(self, path, data, parsed, method):
-                # 原 do_GET:1344
-                try:
-                    from . import voice as _vt
-                    r = _vt.selftest_loop()
-                    self._json({"ok": bool(r.get("ok")), "result": r})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_wechat_recheck(self, path, data, parsed, method):
-                # 原 do_GET:1352
-                try:
-                    from .wechat import wechat_version_info as _wvi2
-                    info = _wvi2() or {}
-                    self._json({"ok": True, "version": info, "install": info.get("install") or {}})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_wechat_dir(self, path, data, parsed, method):
-                # 原 do_GET:1359
-                try:
-                    from . import wechat_dir as _wdir2
-                    _q4 = parse_qs(parsed.query)
-                    _extra = (_q4.get("path") or [""])[0]
-                    _r4 = _wdir2.status(_current_dir_how(parent),
-                                        explicit=(_extra or None))
-                    _r4["candidates"] = _wdir2.probe(_extra or "").get("candidates") or []
-                    _r4["ok"] = True
-                    self._json(_r4)
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)}, 500)
-
-            def _rapi_version_allow(self, path, data, parsed, method):
-                # 原 do_GET:1374
-                try:
-                    from . import version_gate as _vg3
-                    _vg3.allow_session("console")
-                    self._json({"ok": True, "gate": _vg3.status()})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_balance(self, path, data, parsed, method):
-                # 原 do_GET:1381
-                try:
-                    self._json(parent.balance_fn())
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_logs(self, path, data, parsed, method):
-                # 原 do_GET:1386
-                self._json({"lines": list(parent.log_buffer)})
-
-            def _rapi_wechat_groups(self, path, data, parsed, method):
-                # 原 do_GET:1388
-                try:
-                    _rf2 = ""
-                    try:
-                        from urllib.parse import urlparse as _up4, parse_qs as _pq4
-                        _rf2 = str((_pq4(_up4(self.path).query).get("refresh") or [""])[0] or "").lower()
-                    except Exception:
-                        _rf2 = ""
-                    if _rf2 in ("1", "true", "yes", "on"):
-                        _o4 = _current_wx(parent)
-                        if _o4 is not None and hasattr(_o4, "refresh_groups"):
-                            try:
-                                _o4.refresh_groups()
-                            except Exception as _e4:
-                                self._json({"ok": False, "attach_ok": True, "degraded": True,
-                                            "error": ("重读群列表失败（联系人库被微信占用？）⇒ "
-                                                      "消息收发不受影响；稍等几秒再试。（%s）"
-                                                      % str(_e4)[:100]), "groups": []})
-                                return
-                    self._json(parent.groups_fn())
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e), "groups": []})
-
-            def _rapi_emojis(self, path, data, parsed, method):
-                # 原 do_GET:1411
-                try:
-                    self._json({"ok": True, "emojis": parent.emojis_fn()})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e), "emojis": []})
-
-            def _rapi_personas_scores(self, path, data, parsed, method):
-                # 原 do_GET:1417
-                try:
-                    self._json(parent.persona_scores_fn())
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_feedback(self, path, data, parsed, method):
-                # 原 do_GET:1423
-                try:
-                    from . import feedback as FB
-                    st = FB.stats()
-                    st["ok"] = True
-                    st["recent"] = [{"id": it.get("id"), "kind": it.get("kind"),
-                                     "at_h": it.get("at_h"), "sent_h": it.get("sent_h", ""),
-                                     "text": str(it.get("text") or "")[:60]}
-                                    for it in sorted(FB._read_all(), key=lambda x: x.get("at") or 0)[-5:]]
-                    self._json(st)
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_personas(self, path, data, parsed, method):
-                # 原 do_GET:1436
-                try:
-                    from agent.persona import PERSONAS, PERSONA_CATS
-                    self._json({"ok": True, "personas": [
-                        {"key": k, "name": v.get("name") or k, "text": v.get("text") or "",
-                         "cat": PERSONA_CATS.get(k, "🔥 网络热门")}
-                        for k, v in PERSONAS.items()]})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_persona_cats(self, path, data, parsed, method):
-                # 原 do_GET:1446
-                try:
-                    import json as _json
-                    _p = os.path.join(parent._asset_root, "..", "data", "persona_cats.json")
-                    try:
-                        with open(_p, "r", encoding="utf-8") as f:
-                            user_cats = _json.load(f)
-                    except Exception:
-                        user_cats = {}
-                    from agent.persona import PERSONA_CATS
-                    built = sorted(set(PERSONA_CATS.values()))
-                    self._json({"ok": True, "built": built,
-                                "user": [{"name": k, "desc": (v or {}).get("desc", "")} for k, v in user_cats.items()]})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_personas_custom(self, path, data, parsed, method):
-                # 原 do_GET:1462
-                try:
-                    import json as _json
-                    _p = os.path.join(parent._asset_root, "..", "data", "custom_personas.json")
-                    try:
-                        with open(_p, "r", encoding="utf-8") as f:
-                            items = _json.load(f)
-                    except Exception:
-                        items = {}
-                    self._json({"ok": True, "custom": [
-                        {"key": k, "name": (v or {}).get("name", k), "text": (v or {}).get("text", ""),
-                         "cat": (v or {}).get("cat") or "📝 自定义"}
-                        for k, v in items.items()]})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_ui_layout(self, path, data, parsed, method):
-                # 原 do_GET:1478
-                try:
-                    from agent.wechat_ui import _load_layout
-                    self._json({"ok": True, "layout": _load_layout()})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_ui_recalibrate(self, path, data, parsed, method):
-                # 原 do_GET:1485
-                try:
-                    self._json(parent.recalibrate_fn())
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_open_path(self, path, data, parsed, method):
-                # 原 do_GET:1491
-                try:
-                    self._json(parent.open_path_fn(str(data.get("path") or "")))
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_selfcheck_stop(self, path, data, parsed, method):
-                # 原 do_GET:1497
-                try:
-                    parent.selfcheck_stop_fn()
-                    self._json({"ok": True})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_archive(self, path, data, parsed, method):
-                # 原 do_GET:1504
-                try:
-                    self._archive_view()
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)}, 500)
-
-# ── 路由表分派──
-
-            def _rapi_update_skip_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1038
-                try:
-                    from . import update_check as _uc
-                    self._json(_uc.skip_version(str((data or {}).get("version") or "")))
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)[:80]}, 500)
-
-            def _rapi_update_apply_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1045
-                try:
-                    from . import update_apply as _ua
-                    self._json(_ua.start_async())
-                except Exception as e:
-                    self._json({"ok": False, "why": "起不动更新作业：%s" % str(e)[:80]}, 500)
-
-            def _rapi_update_reset_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1055
-                try:
-                    from . import update_check as _uc_r
-                    self._json(_uc_r.reset_seen_version())
-                except Exception as e:
-                    self._json({"ok": False, "why": "重置失败：%s" % str(e)[:80]}, 500)
-
-            def _rapi_risk_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1064
-                try:
-                    from . import risk as _risk
-                    act = str((data or {}).get("action") or "show")
-                    if act == "pause":
-                        _risk.pause(str((data or {}).get("reason") or "手动暂停"))
-                    elif act == "resume":
-                        _risk.resume()
-                    elif act == "recover":
-                        # ⛔ `risk.recover()`
-                        #   原来**全仓零调用者**（B 线复核时点出：它只活在模块里）——
-                        #   而它干的事跟 `resume()` 不是一件：**两套停机开关一起清**
-                        #   （config 的 `risk.paused` + 控制台横幅认的 `data/paused.flag`），
-                        #   坏档 fail-closed 把用户锁住时，这就是那把"一键恢复"的钥匙。
-                        _risk.recover()
-                    self._json({"ok": True, "risk": _risk.snapshot()})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)}, 500)
-
-            def _rapi_version_action_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1083
-                try:
-                    from . import version_gate as _vg6
-                    r = _vg6.run_action(str((data or {}).get("choice") or ""),
-                                        str((data or {}).get("id") or ""))
-                    self._json({"ok": bool(r.get("ok")), "result": r,
-                                "message": str(r.get("message") or "")})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)}, 500)
-
-            def _rapi_decide_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1095
-                try:
-                    from . import version_gate as _vg5
-                    r = _vg5.decide(str((data or {}).get("id") or ""),
-                                    str((data or {}).get("choice") or ""),
-                                    note=str((data or {}).get("note") or ""))
-                    _msg5 = str((r.get("action") or {}).get("message") or "")
-                    self._json({"ok": True, "result": r, "message": _msg5})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)}, 500)
-
-            def _rapi_config_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1108
-                try:
-                    new_cfg = data if isinstance(data, dict) and data else get_config()
-                    # 部分字段保存不丢段：与当前配置深合并（新值优先，缺失键保留旧值）
-                    # 注意：deep_merge 返回全新深拷贝，绝不能原地改 _current_config，
-                    # 否则 _protect_secrets 拿到的"旧值"已被掩码写脏，真实 key 会丢失。
-                    new_cfg = deep_merge(get_config(), new_cfg)
-                    _protect_secrets(new_cfg) # 掩码值不覆盖真实密钥
-                    # 「微信数据目录」**手动指定必须过校验**：
-                    # 不过关就不写盘，把原因与回落目标返回给控制台显示。
-                    _bad_dir = _wechat_dir_conflict(new_cfg)
-                    if _bad_dir:
-                        self._json(_bad_dir)
-                    else:
-                        # ⛔ （对标 CowAgent 的"配置写回失败**只许告警、不许停用/改动能力**"）：
-                        #   原来是**先 `set_config` 再 `save_config`** ⇒ 落盘失败时抛异常、控制台如实报
-                        #   `{ok:false}`，可**内存里那份已经被换掉了**——于是"这项能力实际上是开着的"，
-                        #   用户却被告知没保存；重启后它又悄悄变回旧的（状态前后不一致，最难查）。
-                        #   ⇒ 顺序倒过来：**先落盘、成了再换内存**（盘与内存要么一起新、要么一起旧）。
-                        save_config(new_cfg)
-                        set_config(new_cfg)
-                        if parent.on_save:
-                            parent.on_save(new_cfg)
-                        self._json({"ok": True})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)}, 500)
-
-            def _rapi_wechat_dir_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1134
-                try:
-                    from . import wechat_dir as _wdir3
-                    _p3 = str((data or {}).get("path") or "")
-                    _r3 = _wdir3.save(_p3, on_save=parent.on_save)
-                    # 保存后**立即重探一遍**并把候选回显
-                    _st3 = _wdir3.status(_current_dir_how(parent))
-                    _st3["candidates"] = _wdir3.probe(_p3).get("candidates") or []
-                    _r3["wechat_dir"] = _st3
-                    self._json(_r3)
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)}, 500)
-
-            def _rapi_archive_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1148
-                try:
-                    self._archive_view()
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)}, 500)
-
-            def _rapi_archive_block_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1155
-                try:
-                    from . import archive_filter as _af
-                    st = getattr(parent, "store", None)
-                    if st is None:
-                        self._json({"ok": False, "error": "机器人未启动：拿不到存档句柄"})
-                    else:
-                        ck = str((data or {}).get("chat_key") or "").strip()
-                        ids = (data or {}).get("ids") or []
-                        if not ck:
-                            self._json({"ok": False, "error": "chat_key 不能为空"})
-                        elif path.endswith("block"):
-                            self._json(_af.block(st, ck, ids, reason=str((data or {}).get("reason") or "面板操作")))
-                        elif path.endswith("unblock"):
-                            self._json(_af.unblock(st, ck, ids))
-                        else:
-                            self._json(_af.delete(st, ck, ids))
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)}, 500)
-
-            def _rapi_cloud_test_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1175
-                try:
-                    from . import cloud as _cl
-                    which = str((data or {}).get("which") or "")
-                    url = str((data or {}).get("url") or "")
-                    self._json(_cl.probe(which=which, url=url))
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)}, 500)
-
-            def _rapi_prompt_preview_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1184
-                self._prompt_preview()
-
-            def _rapi_cursor_upload_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1188
-                try:
-                    import base64
-                    b64 = str(data.get("image") or "")
-                    if len(b64) > 12 * 1024 * 1024:
-                        return self._json({"ok": False, "error": "图片过大（≤8MB 源图）"}, 400)
-                    if b64.startswith("data:"):
-                        b64 = b64.split(",", 1)[1]
-                    img = base64.b64decode(b64)
-                    if not img.startswith(b"\x89PNG") and not img.startswith(b"\xff\xd8"):
-                        return self._json({"ok": False, "error": "仅支持 PNG/JPEG 图片"}, 400)
-                    # 强制 ≤64px（CSS 光标在部分 DPI 下 128 会变糊/超限兼容不佳；64 最稳）+ RGBA 透明保底
-                    from PIL import Image as _PILImg
-                    import io as _io
-                    try:
-                        _im = _PILImg.open(_io.BytesIO(img)).convert("RGBA")
-                        _im.thumbnail((64, 64), _PILImg.LANCZOS)
-                        _buf = _io.BytesIO()
-                        _im.save(_buf, "PNG", optimize=True)
-                        _img_out = _buf.getvalue()
-                    except Exception:
-                        return self._json({"ok": False, "error": "图片解析失败，请换 PNG/JPEG"}, 400)
-                    with open(os.path.join(parent._asset_root, "custom-cursor.png"), "wb") as f:
-                        f.write(_img_out)
-                    # 同步生成"点头帧"（点击时换帧，与默认光标同机制）
-                    try:
-                        _nod = _im.rotate(10, resample=_PILImg.BICUBIC, expand=False, fillcolor=(0, 0, 0, 0))
-                        _nod.thumbnail((60, 58), _PILImg.LANCZOS)
-                        _nc = _PILImg.new("RGBA", (64, 64), (0, 0, 0, 0))
-                        _nc.paste(_nod, (2, 6), _nod)
-                        _nb = _io.BytesIO()
-                        _nc.save(_nb, "PNG", optimize=True)
-                        with open(os.path.join(parent._asset_root, "custom-cursor-nod.png"), "wb") as f:
-                            f.write(_nb.getvalue())
-                    except Exception:
-                        pass
-                    self._json({"ok": True, "note": "自定义光标已保存（≤64px PNG，含点头帧）"})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)}, 500)
-
-            def _rapi_cursor_reset_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1229
-                try:
-                    _p = os.path.join(parent._asset_root, "custom-cursor.png")
-                    if os.path.exists(_p):
-                        os.remove(_p)
-                    self._json({"ok": True})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)}, 500)
-
-            def _rapi_memory_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1238
-                try:
-                    action = str(data.get("action") or "delete")
-                    if action == "update":
-                        r = parent.memory_fn("update", str(data.get("chat_key") or ""),
-                                             str(data.get("user_id") or ""),
-                                             str(data.get("name") or ""),
-                                             data.get("contents") or [])
-                    else:
-                        r = parent.memory_fn(action, str(data.get("chat_key") or ""),
-                                             str(data.get("user_id") or ""),
-                                             scope=str(data.get("scope") or "all"))
-                    self._json(r)
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)}, 500)
-
-            def _rapi_sessions_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1254
-                try:
-                    self._json({"ok": True, "sessions": parent.sessions_fn(
-                        int(data.get("limit") or 30))})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)}, 500)
-
-            def _rapi_test_api_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1279
-                try:
-                    if parent.test_api_fn:
-                        self._json(parent.test_api_fn())
-                    else:
-                        self._json({"ok": False, "error": "未提供 test_api_fn"})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_poke_test_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1287
-                try:
-                    self._json(parent.poke_test_fn(str(data.get("group_wxid") or ""),
-                                                   bool(data.get("verify_only"))))
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_verifiers_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1295
-                try:
-                    from . import verifiers as _vf
-                    self._json({"ok": True, "verifiers": _vf.catalog()})
-                except Exception as e: # noqa: BLE001
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_verify_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1302
-                try:
-                    from urllib.parse import urlparse as _up, parse_qs as _pq
-                    from . import verifiers as _vf
-                    _q = _pq(_up(self.path).query)
-                    # ⛔ 同上一处 —— 把运行中
-                    #   实例的 `_db_how` 与 `_cap` 都喂给检验器，"我读的是不是正在写的那个号"
-                    #   与"哪张表读失败了"才有铁证（否则只能判假绿）。
-                    try:
-                        _wo2 = _current_wx(parent)
-                        _vf.set_runtime_how(getattr(_wo2, "_db_how", None),
-                                            getattr(_wo2, "_cap", None))
-                    except Exception:
-                        pass
-                    self._json(_vf.run(str((_q.get("id") or [""])[0] or "")))
-                except Exception as e: # noqa: BLE001
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_selfcheck_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1320
-                try:
-                    _mode = "code" if str((data or {}).get("mode") or "") == "code" else "full"
-                    self._json(parent.selfcheck_fn(_mode))
-                except Exception as e:
-                    self._json({"ok": False, "checks": [], "summary": str(e)})
-
-            def _rapi_prices_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1328
-                try:
-                    from . import llm as _llm_mod
-                    self._json(getattr(_llm_mod, "_OFFICIAL_PRICES", {}) or {})
-                except Exception as _e:
-                    self._json({"__err": str(_e)})
-
-            def _rapi_data_export_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1335
-                try:
-                    self._bytes(_data_export(ROOT), "application/zip")
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_data_import_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1341
-                try:
-                    self._json(_data_import(ROOT, raw if isinstance(raw, (bytes, bytearray)) else b""))
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_wechat_groups_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1347
-                try:
-                    _rf = ""
-                    try:
-                        from urllib.parse import urlparse as _up3, parse_qs as _pq3
-                        _rf = str((_pq3(_up3(self.path).query).get("refresh") or [""])[0] or "").lower()
-                    except Exception:
-                        _rf = ""
-                    if _rf in ("1", "true", "yes", "on"):
-                        _o3 = _current_wx(parent)
-                        if _o3 is None or not hasattr(_o3, "refresh_groups"):
-                            self._json({"ok": False, "attach_ok": False,
-                                        "error": "微信还没接上 ⇒ 没法重读群列表", "groups": []})
-                            return
-                        try:
-                            _o3.refresh_groups()
-                        except Exception as _e3:
-                            self._json({"ok": False, "attach_ok": True, "degraded": True,
-                                        "error": ("重读群列表失败（联系人库 contact.db 被微信占用？）⇒ "
-                                                  "消息收发与监听不受影响；稍等几秒再点一次。（%s）"
-                                                  % str(_e3)[:100]), "groups": []})
-                            return
-                        # ⛔ 刷完必须**重算监听目标**（否则新群不进 targets、
-                        #   显示名还是 wxid，界面同时给出"读到 N 个群 / 监听目标 0 个"两个结论）。
-                        try:
-                            _rt = getattr(parent, "refresh_targets_fn", None)
-                            if callable(_rt):
-                                _rt("控制台「刷新群列表」")
-                        except Exception as _e3b:
-                            print("重算监听目标失败（不影响群列表本身）：%s" % str(_e3b)[:80])
-                    self._json(parent.groups_fn())
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e), "groups": []})
-
-            def _rapi_community_export_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1382
-                try:
-                    if not parent.community_export_fn:
-                        self._json({"ok": False, "error": "未提供导出功能"})
-                    else:
-                        self._json(parent.community_export_fn(str(data.get("kind") or "holyshits")))
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)}, 500)
-
-            def _rapi_community_upload_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1391
-                try:
-                    if not parent.community_upload_fn:
-                        self._json({"ok": False, "error": "未提供上传功能"})
-                    else:
-                        self._json(parent.community_upload_fn(data))
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)}, 500)
-
-            def _rapi_scoring_import_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1400
-                try:
-                    if not parent.scoring_import_fn:
-                        self._json({"ok": False, "error": "未提供评分导入"})
-                    else:
-                        self._json(parent.scoring_import_fn(str(data.get("text") or "")))
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)}, 500)
-
-            def _rapi_scoring_stats_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1409
-                try:
-                    from agent.scoring import stats as _s
-                    self._json({"ok": True, "data": _s()})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)}, 500)
-
-            def _rapi_learning_start_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1415
-                try:
-                    from agent.config import get_config as _gc, save_config as _sc
-                    _c = _gc()
-                    # 默认卡判定：未自定义角色文本 / 名称是内置小鲸鱼
-                    _role = str(_c.get("persona", {}).get("role_text") or "").strip()
-                    _name = str(_c.get("persona", {}).get("bot_name") or "").strip()
-                    if _role or (_name and "小鲸鱼" not in _name and "小鲷鱼" not in _name):
-                        self._json({"ok": False,
-                                    "error": "机器学习（金句素材库训练/学习评估）仅默认角色卡（小鲸鱼）可用——其他角色卡不应用机器学习，防止 OOC；联网收集/模型补足不受限"})
-                        return
-                    _c.setdefault("scoring", {})["enabled"] = True; _sc(_c)
-                    self._json({"ok": True, "note": "✅ 机器学习已开启：之后每条发言，群友24h内热烈回应(接话/追问/@)会为该话术加分，冷场降权；会话越久越贴合。评分引擎已在工作。（默认角色卡·小鲸鱼）"})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_learning_evaluate_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1431
-                try:
-                    from agent import llm
-                    from agent.scoring import top_reactions
-                    rxns = top_reactions(14)
-                    # 只取"机器人自己发的、群友反响好"的话术；剔除系统/平台侧文本（如"撤回/一拍/xx加入了"这类非机器人发言）
-                    import re as _re
-                    _JUNK = ("撤回", "拍一拍", "拍拍", "加入了", "邀请", "退出了", "对方撤回", "你撤回", "以上是", "语音", "图片", "[表情]")
-                    rxns = [r for r in rxns if str(r.get("text") or "").strip() and not any(j in str(r.get("text") or "") for j in _JUNK)]
-                    if rxns:
-                        lines = ["下面是我【机器人自己发的】、且群友反响好的话术（含热度分，供评估学习效果）："]
-                        for r in rxns:
-                            lines.append("- “%s”（热度 %.2f)" % (str(r.get("text") or "")[:60], float(r.get("score") or 0)))
-                        sample = "\n".join(lines)
-                    else:
-                        sample = "（当前没有可评估的机器人高反应发言——请让机器人多聊、等群友有热烈回应后评分引擎再积累。）"
-                    RULES = """【机器学习效果评分细则】（每维 0~100.00 精确到百分位，总分=8 维加权均值，保留 2 位小数）
-对上面【机器人自己发的】话术评分，绝不把系统提示/用户消息当机器人发言。
-维度：
-度(12%)：像真人口吻，无AI腔/总结腔；
-度(16%)：有梗、机灵、让人想接；
-贴合(20%)：是不是该角色会说的话（绝不换魂）；
-度(12%)：接话时机、回球、处理冷场/被调侃；
-气息(12%)：是不是有"真人日常"的味道，而非机械应答；
-力(10%)：有没有抓住群里细节/梗/前后文；
-感(10%)：长短句、停顿、分条像不像真人打字；
-真实(8%)：用词口语化、不书面、不列点。
-不许给整分/整五/整十（如 80.00/85.00/90.00 一律不得出现）——每个维度必须按真实感受给出带小数的分数（如 84.37、79.15、91.03），百分位不得为 0。
-（务必）：
-自然=X.XX 有趣=X.XX 人设=X.XX 机敏=X.XX 生活=X.XX 观察=X.XX 节奏=X.XX 口语=X.XX
-X.XX
-习前的对话质量提升幅度：XX.X%
-评：……（并指出哪一维进步最明显）
-"""
-                    sys = [{"role": "system", "content": RULES}, {"role": "user", "content": sample}]
-                    r = llm.chat_completion(sys, temperature=0.2)
-                    out = (r.get("message") or {}).get("content", "")
-                    # 校验：若所有分都是整分（百分位全 0），强制重试一次并警告
-                    import re as _re2
-                    nums = _re2.findall(r"=(\d+\.\d{2})", out)
-                    if nums and all(n.endswith(".00") or n.endswith(".50") for n in nums):
-                        sys2 = sys + [{"role": "assistant", "content": out},
-                                      {"role": "user", "content": "你上面的分数全是整分/半整分，违反细则。请重新按真实细微差异打分，每维必须带非零百分位（如 84.37），禁止 80.00/85.00 之类的整分。"}]
-                        r2 = llm.chat_completion(sys2, temperature=0.3)
-                        out = (r2.get("message") or {}).get("content", "") or out
-                    self._json({"ok": True, "eval": out,
-                                "note": "已按8维细则(model评分)评估，分数精确到百分位（禁止整分）；仅评机器人发言"})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_pause_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1481
-                parent.pause_fn()
-                self._json({"ok": True})
-
-            def _rapi_image_gen_local_install_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1484
-                try:
-                    from . import sd_local as _sd
-                    _ao = data.get("allow_online")
-                    _ok, _why, _info = _sd.install_async(allow_online=(None if _ao is None else bool(_ao)),
-                                                         pid=str(data.get("preset") or ""))
-                    self._json({"ok": bool(_ok), "note": _why, "info": _info, "progress": _sd.progress()})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_image_gen_local_preset_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1494
-                try:
-                    from . import sd_local as _sd
-                    _ok, _why = _sd.set_preset(str(data.get("preset") or ""))
-                    self._json({"ok": bool(_ok), "note": _why, "status": _sd.status()})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_image_gen_local_start_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1502
-                try:
-                    from . import sd_local as _sd
-                    _ok, _why = _sd.start_server()
-                    self._json({"ok": bool(_ok), "note": _why})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_image_gen_local_stop_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1509
-                try:
-                    from . import sd_local as _sd
-                    _ok, _why = _sd.stop_server()
-                    self._json({"ok": bool(_ok), "note": _why})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_resume_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1516
-                parent.resume_fn()
-                self._json({"ok": True})
-
-            def _rapi_watermark_reset_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1519
-                try:
-                    r = parent.watermark_reset_fn() or {"ok": True}
-                    self._json(r if isinstance(r, dict) else {"ok": True})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)}, 500)
-
-            def _rapi_shutdown_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1527
-                self._json({"ok": True, "note": "正在停止机器人…"})
-                try:
-                    parent.shutdown_fn() # 写 stopped.flag + 杀看门狗 + os._exit(0)
-                except Exception:
-                    pass  # 清理型：静默合法
-                try:
-                    import os as _o, subprocess
-                    subprocess.run(["taskkill", "/F", "/PID", str(_o.getpid())],
-                                   capture_output=True, creationflags=0x08000000)
-                except Exception:
-                    pass
-
-            def _rapi_restart_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1541
-                self._json({"ok": True, "note": "正在后台重启机器人…"})
-                threading.Timer(0.5, parent.restart_fn).start()
-
-            def _rapi_persona_behavior_recommend_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1545
-                try:
-                    from agent.behavior_recommend import recommend as _br
-                    _txt = str(data.get("text") or "")
-                    if not _txt.strip():
-                        # 唯一实现：与 build_system_prompt 同一套回落（不再各写一份、也不再读死键 prefer_key）
-                        from agent.prompt import role_text_of
-                        _txt = role_text_of()
-                    local = _br(_txt)
-                    res = dict(local)
-                    res["via"] = "local"
-                    if data.get("llm", True) and _txt.strip():
-                        try:
-                            from agent import llm
-                            _rules = (
-                                "你是行为风格评估员。根据角色卡文本，评出机器人作为群友的行为档（只依据角色本体，禁止编造）。\n"
-                                "输出严格 JSON：{\"participation\":\"low|medium|high\",\"sticker\":0-3,\"reason\":\"一句话说明\"}\n"
-                                "维度：participation=参与度（low 安静旁观/medium 普通群友/high 话多活跃）；"
-                                "sticker=表情包接受度（0 不爱发/1 偶尔/2 较多/3 爱好者）；"
-                                "规则：说话极简/高冷/庄重类必为 low~medium 且 sticker≤1；话痨/气氛组/爱玩梗类为 high 且 sticker≥2；"
-                                "每维必须给出确定值，不得写不确定。只输出 JSON。\n\n角色卡：\n" + _txt[:2400]
-                            )
-                            _r = llm.chat_completion([{"role": "user", "content": _rules}], temperature=0.1)
-                            _c = str((_r.get("message") or {}).get("content", ""))
-                            import re as _re3, json as _json3
-                            _m = _re3.search(r"\{.*\}", _c, _re3.S)
-                            if _m:
-                                _d = _json3.loads(_m.group(0))
-                                _p = str(_d.get("participation") or "")
-                                if _p in ("low", "medium", "high"):
-                                    res["participation"] = _p
-                                    res["via"] = "llm"
-                                _sv = str(_d.get("sticker"))
-                                if _sv.strip() in ("0", "1", "2", "3"):
-                                    res["sticker"] = int(_sv)
-                                res["reason"] = str(_d.get("reason") or "")
-                        except Exception:
-                            pass
-                    self._json(res)
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_sessions_delete_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1588
-                try:
-                    import re as _re2
-                    import time as _t9
-                    _sd = os.path.join(parent._data_path("sessions"))
-                    _troot = os.path.join(parent._data_path("_trash"), "sessions")
-                    _stamp = _t9.strftime("%Y%m%d-%H%M%S")
-                    _items = []
-                    for _it in (data.get("items") or []):
-                        _d = str((_it or {}).get("date") or "")
-                        _ts = str((_it or {}).get("ts") or "")
-                        if _re2.match(r"^\d{4}-\d{2}-\d{2}$", _d) and _ts:
-                            _items.append((_d, _ts))
-                    _dates = [str(d) for d in (data.get("dates") or [])
-                              if _re2.match(r"^\d{4}-\d{2}-\d{2}$", str(d))]
-                    if not _items and not _dates:
-                        return self._json({"ok": False, "error": "没有有效的记录"})
-                    _backup = {}
-                    _removed, _kept_days, _whole = 0, [], []
-                    # ① 先整体备份要动的那些天（原文件照抄一份，供「撤销」）
-                    _touch = sorted({d for d, _ in _items} | set(_dates))
-                    for _d in _touch:
-                        _f = os.path.join(_sd, _d + ".jsonl")
-                        if not os.path.exists(_f):
-                            continue
-                        try:
-                            os.makedirs(_troot, exist_ok=True)
-                            _b = os.path.join(_troot, "%s.jsonl.%s" % (_d, _stamp))
-                            with open(_f, "rb") as _src, open(_b, "wb") as _dst:
-                                _dst.write(_src.read())
-                            _backup[_d] = _b
-                        except Exception:
-                            pass
-                    # ② 按天处理：整文件搬（老 dates 参数）或**剔掉指定 ts**（新 items 参数）
-                    for _d in set(_dates):
-                        _f = os.path.join(_sd, _d + ".jsonl")
-                        if os.path.exists(_f):
-                            try:
-                                os.remove(_f)
-                                _whole.append(_d)
-                            except Exception:
-                                pass  # 清理型：静默合法
-                    _per_day = {}
-                    for _d, _ts in _items:
-                        _per_day.setdefault(_d, set()).add(_ts)
-                    # ⭐ （
-                    #   『我说什么而他回什么』的这一段…从根上就是错的」）：
-                    #   在这上面删的是**这一轮对话**，所以**同时把对应的会话历史删掉**
-                    #   （模型的上下文来自 `data/messages/<会话>.json`，只删 sessions 等于没删）。
-                    from . import history_prune as _hp
-                    _all_entries = _hp.load_recent_entries(_sd, 100)
-                    _deleted_entries = []
-                    for _d, _tss in _per_day.items():
-                        _f = os.path.join(_sd, _d + ".jsonl")
-                        if not os.path.exists(_f):
-                            continue
-                        try:
-                            with open(_f, "r", encoding="utf-8") as fh:
-                                _lines = fh.readlines()
-                            _keep, _hit = [], 0
-                            for _ln in _lines:
-                                _s = _ln.strip()
-                                if not _s:
-                                    continue
-                                try:
-                                    _e = json.loads(_s)
-                                except Exception:
-                                    _keep.append(_ln)
-                                    continue
-                                if str(_e.get("ts") or "") in _tss:
-                                    _hit += 1
-                                    _deleted_entries.append(_e)
-                                    continue
-                                _keep.append(_ln if _ln.endswith("\n") else _ln + "\n")
-                            if _hit:
-                                # 自己拼 `<path>.tmp` 的话，两个写者会撞同一个临时档；
-                                #   崩溃留下的孤儿也没人清 ⇒ 走统一的原子写（唯一临时名 + fsync + replace）
-                                if not persist.atomic_write_text(_f, "".join(_keep), newline="\n"):
-                                    raise IOError("日志重写没写进磁盘（原档未动）：%s" % _f)
-                                _removed += _hit
-                                _kept_days.append(_d)
-                        except Exception:
-                            pass
-                    if not _removed and not _whole:
-                        return self._json({"ok": False, "error": "没有匹配到要删的记录（可能刚被删过或文件已不存在）"})
-                    # ③ 把这些轮次覆盖的**会话历史**也删掉（并把整份存档备份进 _trash/messages）
-                    _hres = {"removed": 0, "chats": {}, "backed": []}
-                    try:
-                        _hres = _hp.prune_for_deleted_runs(
-                            getattr(parent, "store", None), _all_entries, _deleted_entries,
-                            trash_root=os.path.join(parent._data_path("_trash"), "messages"),
-                            stamp=_stamp)
-                    except Exception as _e10:
-                        _hres = {"removed": 0, "chats": {}, "backed": [], "error": str(_e10)[:80]}
-                    _note = ("已删除 %d 条记录" % _removed) if _removed else ("已删除 %d 天的记录" % len(_whole))
-                    if _hres.get("removed"):
-                        _note += "，并清掉对应的对话历史 %d 条（它之后不会再拿这些旧话当真）" % _hres["removed"]
-                    # ⛔ 备份失败 ⇒ 那些会话**这次没删**（不可撤销的删除不做），如实说
-                    _bk_fail = _hres.get("backupFailed") or []
-                    if _bk_fail:
-                        _note += ("；有 %d 个会话**没备份成功** ⇒ 它们的历史这次**没删**"
-                                  "（撤销必须真能撤销）" % len(_bk_fail))
-                    self._json({"ok": True, "note": _note, "removed": _removed,
-                                "whole_days": _whole, "days": sorted(set(_kept_days) | set(_whole)),
-                                "history_removed": _hres.get("removed", 0),
-                                "history_backup_failed": len(_bk_fail),
-                                "history_chats": _hres.get("chats", {}),
-                                "undo": _stamp if _backup else "",
-                                "backed": sorted(_backup)})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_sessions_restore_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1703
-                try:
-                    import glob as _gl
-                    import re as _re3
-                    _u = str(data.get("undo") or "")
-                    if not _re3.match(r"^\d{8}-\d{6}$", _u):
-                        return self._json({"ok": False, "error": "撤销凭据无效"})
-                    _sd = os.path.join(parent._data_path("sessions"))
-                    _troot = os.path.join(parent._data_path("_trash"), "sessions")
-                    _n = 0
-                    for _b in _gl.glob(os.path.join(_troot, "*.jsonl." + _u)):
-                        _name = os.path.basename(_b)
-                        _day = _name.split(".jsonl.")[0]
-                        if not _re3.match(r"^\d{4}-\d{2}-\d{2}$", _day):
-                            continue
-                        try:
-                            os.makedirs(_sd, exist_ok=True)
-                            with open(_b, "rb") as _src, open(os.path.join(_sd, _day + ".jsonl"), "wb") as _dst:
-                                _dst.write(_src.read())
-                            os.remove(_b)
-                            _n += 1
-                        except Exception:
-                            pass
-                    if not _n:
-                        return self._json({"ok": False, "error": "找不到可撤销的备份（可能已撤销过）"})
-                    # ⭐ 撤销时**连对话历史一起还原**（同一次删除在 `_trash/messages/`
-                    #   里也备了整份存档；两份用一个 stamp 绑定）
-                    _hn = 0
-                    try:
-                        from . import history_prune as _hp2
-                        _hn = _hp2.restore_history(
-                            os.path.join(parent._data_path("_trash"), "messages"), _u)
-                    except Exception:
-                        _hn = 0
-                    _note2 = "已撤销，恢复了 %d 天的记录" % _n
-                    if _hn:
-                        _note2 += " + %d 个会话的对话历史" % _hn
-                    self._json({"ok": True, "note": _note2, "restored": _n,
-                                "history_restored": _hn})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_stats_cal_clear_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1745
-                try:
-                    import glob as _gl
-                    _sd = parent._data_path("sessions")
-                    _n = 0
-                    for _f in _gl.glob(os.path.join(_sd, "????-??-??.jsonl")):
-                        try:
-                            os.remove(_f); _n += 1
-                        except Exception:
-                            pass
-                    _p = parent._data_path("usage_stats.json")
-                    if os.path.exists(_p):
-                        import json as _j2
-                        with open(_p, "r", encoding="utf-8") as f:
-                            _us = _j2.load(f)
-                        _us["history"] = []
-                        _us["day"] = {"sessions": 0, "calls": 0, "tokens": 0, "sent": 0, "cost": 0.0}
-                        _us["period"] = {"sessions": 0, "calls": 0, "tokens": 0, "sent": 0, "cost": 0.0}
-                        _us["total"] = {"sessions": 0, "calls": 0, "tokens": 0, "sent": 0, "cost": 0.0}
-                        if not persist.atomic_write_json(_p, _us, indent=1):
-                            raise IOError("写盘失败（原档一个字节都没动）：%s" % _p)
-                    self._json({"ok": True, "note": "已清空计费历史（%d 天记录全部删除，累计归零）" % _n})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_stats_cal_list_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1770
-                try:
-                    import json as _j2, glob as _gl
-                    _sd = parent._data_path("sessions")
-                    _days = {}
-                    for _f in _gl.glob(os.path.join(_sd, "????-??-??.jsonl")):
-                        _day = os.path.basename(_f)[:10]
-                        if not re.match(r"^\d{4}-\d{2}-\d{2}$", _day):
-                            continue
-                        _d = _days.setdefault(_day, {"tokens": 0, "cost": 0.0, "calls": 0,
-                                                     "sessions": 0, "sent": 0})
-                        try:
-                            with open(_f, encoding="utf-8") as fh:
-                                for _ln in fh:
-                                    _ln = _ln.strip()
-                                    if not _ln:
-                                        continue
-                                    try:
-                                        _o = _j2.loads(_ln)
-                                        _d["tokens"] += int(_o.get("tokens") or 0)
-                                        _d["cost"] += float(_o.get("cost") or 0)
-                                        _d["calls"] += int(_o.get("calls") or 0)
-                                        _d["sessions"] += 1
-                                        if _o.get("reply"):
-                                            _d["sent"] += 1
-                                    except Exception:
-                                        pass
-                        except Exception:
-                            pass
-                    # 同日期内多文件合并（罕见）
-                    _out = []
-                    for _day, _d in sorted(_days.items(), reverse=True):
-                        for k in ("tokens", "calls", "sessions", "sent"):
-                            _d[k] = int(_d[k])
-                        _d["cost"] = round(float(_d["cost"]), 4)
-                        _out.append({"day": _day, **_d})
-                    # 旧版 period 归档（history 的 start/end 字段）也并入
-                    _p = parent._data_path("usage_stats.json")
-                    if os.path.exists(_p):
-                        with open(_p, "r", encoding="utf-8") as f:
-                            _us = _j2.load(f)
-                        for h in _us.get("history") or []:
-                            if not isinstance(h, dict):
-                                continue
-                            day = str(h.get("day") or h.get("start") or "")[:10]
-                            if not re.match(r"^\d{4}-\d{2}-\d{2}$", day):
-                                continue
-                            if any(x["day"] == day for x in _out):
-                                continue # 已有按天记录
-                            _out.append({"day": day, "tokens": int(h.get("tokens") or 0),
-                                         "cost": round(float(h.get("cost") or 0), 4),
-                                         "calls": int(h.get("calls") or 0),
-                                         "sessions": int(h.get("sessions") or 0),
-                                         "sent": int(h.get("sent") or 0)})
-                    _out.sort(key=lambda x: x["day"], reverse=True)
-                    self._json({"ok": True, "bills": _out})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_stats_cal_delete_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1829
-                try:
-                    import json as _j2, glob as _gl
-                    _days = set(str(d) for d in (data.get("days") or [])
-                                if re.match(r"^\d{4}-\d{2}-\d{2}$", str(d)))
-                    if not _days:
-                        return self._json({"ok": False, "error": "没有有效的日期"})
-                    _sd = parent._data_path("sessions")
-                    _gone = []
-                    _del_days = {} # day -> sums（删除前算好，用于回补累计）
-                    for _f in _gl.glob(os.path.join(_sd, "????-??-??.jsonl")):
-                        _day = os.path.basename(_f)[:10]
-                        if _day not in _days:
-                            continue
-                        agg = {"tokens": 0, "cost": 0.0, "calls": 0, "sessions": 0, "sent": 0}
-                        try:
-                            with open(_f, encoding="utf-8") as fh:
-                                for _ln in fh:
-                                    _ln = _ln.strip()
-                                    if not _ln:
-                                        continue
-                                    try:
-                                        _o = _j2.loads(_ln)
-                                        agg["tokens"] += int(_o.get("tokens") or 0)
-                                        agg["cost"] += float(_o.get("cost") or 0)
-                                        agg["calls"] += int(_o.get("calls") or 0)
-                                        agg["sessions"] += 1
-                                        if _o.get("reply"):
-                                            agg["sent"] += 1
-                                    except Exception:
-                                        pass
-                        except Exception:
-                            pass
-                        _del_days[_day] = agg
-                        try:
-                            os.remove(_f)
-                            _gone.append(_day)
-                        except Exception:
-                            pass  # 清理型：静默合法
-                    if not _gone:
-                        # 没有对应文件：尝试只清历史归档
-                        _gone = list(_days)
-                    # 回补 usage_stats：删除天对应的 累计/周期/今日
-                    _p = parent._data_path("usage_stats.json")
-                    if os.path.exists(_p):
-                        with open(_p, "r", encoding="utf-8") as f:
-                            _us = _j2.load(f)
-                        _us["history"] = [h for h in (_us.get("history") or [])
-                                          if not isinstance(h, dict)
-                                          or str(h.get("day") or h.get("start") or "")[:10] not in _days]
-                        _today = time.strftime("%Y-%m-%d")
-                        for _k in ("total", "period"):
-                            _t = _us.get(_k) or {}
-                            for _day, agg in _del_days.items():
-                                _t["tokens"] = max(0, int(_t.get("tokens") or 0) - int(agg["tokens"]))
-                                _t["cost"] = max(0.0, float(_t.get("cost") or 0) - float(agg["cost"]))
-                                _t["calls"] = max(0, int(_t.get("calls") or 0) - int(agg["calls"]))
-                                _t["sessions"] = max(0, int(_t.get("sessions") or 0) - int(agg["sessions"]))
-                                _t["sent"] = max(0, int(_t.get("sent") or 0) - int(agg["sent"]))
-                            _us[_k] = _t
-                        if _today in _del_days:
-                            _t = _us.get("day") or {}
-                            agg = _del_days[_today]
-                            _t["tokens"] = max(0, int(_t.get("tokens") or 0) - int(agg["tokens"]))
-                            _t["cost"] = max(0.0, float(_t.get("cost") or 0) - float(agg["cost"]))
-                            _t["calls"] = max(0, int(_t.get("calls") or 0) - int(agg["calls"]))
-                            _t["sessions"] = max(0, int(_t.get("sessions") or 0) - int(agg["sessions"]))
-                            _t["sent"] = max(0, int(_t.get("sent") or 0) - int(agg["sent"]))
-                            _us["day"] = _t
-                        if not persist.atomic_write_json(_p, _us, indent=1):
-                            raise IOError("写盘失败（原档一个字节都没动）：%s" % _p)
-                    self._json({"ok": True,
-                                "note": "已删除 %d 天的计费日志（%s）" % (len(_gone), ", ".join(sorted(_gone)[:12])),
-                                "removed": sorted(_gone)})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_stats_cal_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1906
-                try:
-                    import json as _j
-                    d = str(data.get("d") or "")
-                    # ⛔ `d` 原来**不校验**就拼进文件名
-                    #   （`d + ".jsonl"`）⇒ `d="../../config"` 这类能读到 data/ 之外的 .jsonl 形状的路径。
-                    #   ⇒ 只收严格 `YYYY-MM-DD`（`cal_list` 那边早就这么判了，这里漏了）。
-                    if not cal_date_ok(d):
-                        return self._json({"error": "bad date"}, 400)
-                    _sf = os.path.join(parent._data_path("sessions"), (d + ".jsonl"))
-                    agg = {"date": d, "sessions": 0, "tokens": 0, "cost": 0.0, "calls": 0, "sent": 0}
-                    if d and os.path.exists(_sf):
-                        with open(_sf, encoding="utf-8") as fh:
-                            for line in fh:
-                                line = line.strip()
-                                if not line:
-                                    continue
-                                try:
-                                    o = _j.loads(line)
-                                    agg["sessions"] += 1
-                                    agg["tokens"] += int(o.get("tokens") or 0)
-                                    agg["cost"] += float(o.get("cost") or 0)
-                                    agg["calls"] += int(o.get("calls") or 0)
-                                    if o.get("reply"):
-                                        agg["sent"] += 1
-                                except Exception:
-                                    pass
-                    self._json({"ok": True, **agg})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_emojis_delete_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1937
-                try:
-                    import urllib.parse as _up
-                    name = _up.unquote(str(data.get("name") or ""))
-                    emoji_dir = parent._data_path("emojis")
-                    fp = os.path.join(emoji_dir, os.path.basename(name))
-                    if os.path.exists(fp):
-                        os.remove(fp)
-                        self._json({"ok": True})
-                    else:
-                        self._json({"ok": False, "error": "文件不存在：" + name})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_code_check_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1951
-                try:
-                    # ⛔ 删掉这里的 `import threading`（已知现象）：
-                    #    Python 的规则是**函数体内只要有 import 该名字，整个函数里它就是局部变量**
-                    #    ⇒ 本函数早得多的分支（`/api/restart`，第 1420 行那句 `threading.Timer`）
-                    #    会在赋值前引用它，抛 `UnboundLocalError: local variable 'threading'
-                    #    referenced before assignment` ⇒ **「重启」按钮点了没反应**（HTTP 还回
-                    #    200「正在后台重启机器人…」，所以前端看不出错）。模块顶部第 12 行本来就有
-                    #    `import threading`，这里不需要再导一次。
-                    from agent.code_check import run as _code_run
-                    def _bg():
-                        try:
-                            _code_run._res = _code_run(bool(data.get("deps")))
-                        except Exception as e:
-                            _code_run._res = {"ok": False, "checks": [], "summary": "代码检测失败：%s" % e}
-                        _code_run._done = True
-                    # 若上一次已彻底完成，则清掉旧结果以便重跑
-                    if getattr(_code_run, "_done", False) or getattr(_code_run, "_res", None):
-                        _code_run._done = False
-                        _code_run._res = None
-                    threading.Thread(target=_bg, daemon=True).start()
-                    self._json({"ok": True, "started": True})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_code_check_progress_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1976
-                try:
-                    from agent.code_check import run as _code_run
-                    done = bool(getattr(_code_run, "_done", False))
-                    self._json({"ok": True, "done": done,
-                                "progress": getattr(_code_run, "_prog", None),
-                                "items": list(getattr(_code_run, "_checks", None) or []) if not done else None,
-                                "result": getattr(_code_run, "_res", None) if done else None})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_feedback_submit_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:1987
-                try:
-                    from . import feedback as FB
-                    # 环境一律**服务端现取**（不信前端传上来的那点东西）：已知现象：「用不了」时，
-                    # "微信到底连上没有、卡在哪一步"是最关键的定位信息 ⇒ 每条反馈都带上。
-                    _att = {}
-                    try:
-                        _att = (self.status_provider() or {}).get("wechat_attach") or {}
-                    except Exception:
-                        _att = {}
-                    env = {"wechat": str((data.get("env") or {}).get("wechat") or "")[:60],
-                           "ui": str((data.get("env") or {}).get("ui") or "")[:40],
-                           "attach": {"short": str(_att.get("short") or ""),
-                                      "step": str(_att.get("step") or ""),
-                                      "tries": int(_att.get("tries") or 0),
-                                      "detail": str(_att.get("reason") or "")[:400],
-                                      "steps": list(_att.get("steps") or [])}}
-                    # ⛔ 
-                    #   兼容性那段**自动带上** —— 用户点一下反馈就够了，不用跑体检、不用点
-                    #   检验器、不用去「报告」文件夹找文件。内容是**白名单脱敏**的（见
-                    #   `compat.attach_text`：不带群名/昵称/路径/消息内容）。
-                    #   关掉它：`config.json` → `feedback.attach_compat = false`（面板上也写着）。
-                    try:
-                        if as_bool((get_config().get("feedback") or {}).get("attach_compat", True)):
-                            from . import compat as _cpfb
-                            env["compat"] = _cpfb.attach_text()
-                    except Exception:
-                        pass
-                    # 附件：
-                    # 前端把文件读成 base64 一起 POST 上来；这里只做**总量闸**，具体上限与落盘在 FB 里。
-                    _files = data.get("files")
-                    if not isinstance(_files, list):
-                        _files = []
-                    _b64 = sum(len(str((f or {}).get("data") or ""))
-                               for f in _files if isinstance(f, dict))
-                    if _b64 > 40 * 1024 * 1024:
-                        self._json({"ok": False, "state": "error",
-                                    "why": "附件加起来太大了（合计不超过 20MB）"})
-                    else:
-                        self._json(FB.submit(str(data.get("kind") or "其他"),
-                                             str(data.get("text") or ""),
-                                             str(data.get("contact") or ""), env, _files))
-                except Exception as e:
-                    self._json({"ok": False, "state": "error", "why": str(e)})
-
-            def _rapi_feedback_flush_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:2032
-                try:
-                    from . import feedback as FB
-                    self._json(FB.flush())
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_persona_cats_save_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:2039
-                try:
-                    import json as _json
-                    _p = os.path.join(parent._asset_root, "..", "data", "persona_cats.json")
-                    try:
-                        with open(_p, "r", encoding="utf-8") as f:
-                            user_cats = _json.load(f)
-                    except Exception:
-                        user_cats = {}
-                    name = str(data.get("name") or "").strip()
-                    if not name:
-                        self._json({"ok": False, "error": "分区名不能为空"})
-                    else:
-                        cur = user_cats.get(name, {}) or {}
-                        cur["desc"] = str(data.get("desc") or cur.get("desc") or "")
-                        user_cats[name] = cur
-                        if not persist.atomic_write_json(_p, user_cats, indent=1):
-                            raise IOError("写盘失败（原档一个字节都没动）：%s" % _p)
-                        self._json({"ok": True})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_persona_cats_del_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:2061
-                try:
-                    import json as _json
-                    cats_p = os.path.join(parent._asset_root, "..", "data", "persona_cats.json")
-                    pers_p = os.path.join(parent._asset_root, "..", "data", "custom_personas.json")
-                    name = str(data.get("name") or "").strip()
-                    try:
-                        with open(cats_p, "r", encoding="utf-8") as f:
-                            user_cats = _json.load(f)
-                    except Exception:
-                        user_cats = {}
-                    user_cats.pop(name, None)
-                    if not persist.atomic_write_json(cats_p, user_cats, indent=1):
-                        raise IOError("写盘失败（原档一个字节都没动）：%s" % cats_p)
-                    # 该分区下的卡移到默认
-                    try:
-                        with open(pers_p, "r", encoding="utf-8") as f:
-                            items = _json.load(f)
-                    except Exception:
-                        items = {}
-                    for k, v in items.items():
-                        if (v or {}).get("cat") == name:
-                            v["cat"] = "📝 自定义"
-                    if not persist.atomic_write_json(pers_p, items, indent=1):
-                        raise IOError("写盘失败（原档一个字节都没动）：%s" % pers_p)
-                    self._json({"ok": True})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_persona_score_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:2090
-                try:
-                    self._json(parent.persona_score_custom_fn(str(data.get("text") or ""),
-                                                              bool(data.get("llm"))))
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_personas_custom_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:2097
-                try:
-                    import json as _json
-                    _p = os.path.join(parent._asset_root, "..", "data", "custom_personas.json")
-                    items = {}
-                    try:
-                        with open(_p, "r", encoding="utf-8") as f:
-                            items = _json.load(f)
-                    except Exception:
-                        pass
-                    key = str(data.get("key") or "")
-                    name = str(data.get("name") or "").strip()
-                    text = str(data.get("text") or "").strip()
-                    cat = str(data.get("cat") or "").strip() or "📝 自定义"
-                    if not text:
-                        self._json({"ok": False, "error": "角色文本不能为空"})
-                    else:
-                        if not key:
-                            key = "custom_" + str(int(time.time()))
-                        cur = items.get(key, {}) or {}
-                        cur["name"] = name or cur.get("name") or "自定义"
-                        if text:
-                            cur["text"] = text
-                        cur["cat"] = cat
-                        items[key] = cur
-                        if not persist.atomic_write_json(_p, items, indent=1):
-                            raise IOError("写盘失败（原档一个字节都没动）：%s" % _p)
-                        self._json({"ok": True, "key": key})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_personas_custom_del_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:2128
-                try:
-                    import json as _json
-                    _p = os.path.join(parent._asset_root, "..", "data", "custom_personas.json")
-                    try:
-                        with open(_p, "r", encoding="utf-8") as f:
-                            items = _json.load(f)
-                    except Exception:
-                        items = {}
-                    items.pop(str(data.get("key") or ""), None)
-                    if not persist.atomic_write_json(_p, items, indent=1):
-                        raise IOError("写盘失败（原档一个字节都没动）：%s" % _p)
-                    self._json({"ok": True})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_memory_deep_profile_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:2144
-                try:
-                    from agent import memory as _mem
-                    wxid = str((data or {}).get("user_id") or "").strip()
-                    name = str((data or {}).get("name") or "").strip()
-                    if not wxid and not name:
-                        raise ValueError("缺少成员标识")
-                    mm = _mem.MemoryStore()
-                    texts = mm.collect_member_texts(wxid, name)
-                    if not texts:
-                        self._json({"ok": False, "note": "该成员暂无印象记录（机器人还没留意过 TA）；先让机器人在群里互动积累"})
-                    else:
-                        # 提炼（全部基于真实记录，不做虚构）
-                        import collections as _co
-                        import re as _re
-                        emojis = _co.Counter()
-                        for t in texts:
-                            for ch in t:
-                                if ord(ch) > 0x2600:
-                                    emojis[ch] += 1
-                        top_emoji = [("%s×%d" % (e, c)) for e, c in emojis.most_common(5)]
-                        lens = [len(t) for t in texts]
-                        avg_len = int(sum(lens) / max(1, len(lens)))
-                        ends = _co.Counter()
-                        for t in texts:
-                            tail = t.strip()[-2:] if len(t.strip()) >= 2 else t.strip()
-                            if tail:
-                                ends[tail] += 1
-                        top_ends = ["%s×%d" % (e, c) for e, c in ends.most_common(5)]
-                        profile = ("【群友深度印象 · 由 %d 条真实记录自动整理（未做虚构）】\n"
-                                    "高频符号/表情：%s\n平均句长：%d 字；常用结尾语气：%s\n"
-                                    "真实原话示例（逐字保留）：\n%s" %
-                                    (len(texts), "、".join(top_emoji) or "无", avg_len,
-                                     "、".join(top_ends) or "—",
-                                     "\n".join("· %s" % t[:80] for t in texts[:6])))
-                        self._json({"ok": True, "count": len(texts), "text": profile, "note": "已整理；可点「追加为印象」写入记忆"})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_persona_ai_enrich_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:2183
-                try:
-                    self._json(parent.persona_ai_enrich_fn(str(data.get("name") or ""),
-                                                           str(data.get("text") or ""),
-                                                           int(data.get("rounds") or 1)))
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_persona_web_fetch_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:2190
-                try:
-                    from . import web_search as _ws
-                    name = str((data or {}).get("name") or "").strip()
-                    if not name:
-                        raise ValueError("请填写角色名")
-                    results, notes = [], []
-                    for q in (name + " 经典语录", name + " 访谈 原话", name + " 名言 金句"):
-                        try:
-                            r = _ws.web_search(q)
-                            items = (r or {}).get("results") or (r or {}).get("items") or []
-                            ans = (r or {}).get("answer")
-                            if ans:
-                                notes.append(str(ans)[:300])
-                            for it in items[:6]:
-                                results.append({
-                                    "title": str(it.get("title") or "")[:120],
-                                    "url": str(it.get("url") or ""),
-                                    "snippet": str(it.get("snippet") or "")[:300]})
-                        except Exception as e:
-                            notes.append("查询「%s」失败：%s" % (q[:16], str(e)[:80]))
-                    quotes = []
-                    seen = set()
-                    for it in results:
-                        for seg in (it["snippet"] + " " + it["title"]).split("。"):
-                            seg = seg.strip(" \n\t·")
-                            if not seg or len(seg) < 4 or len(seg) > 200:
-                                continue
-                            if any(c in seg for c in ("“", "”", "「", "」", "\"", "\u201c", "\u201d")) and seg not in seen:
-                                seen.add(seg)
-                                quotes.append(seg)
-                    if not results:
-                        self._json({"ok": False, "name": name,
-                                    "note": "未检索到第一手资料（搜索引擎无相关真实资料）；请人工核实后再填入，切勿编造"})
-                    else:
-                        self._json({"ok": True, "name": name, "results": results[:20],
-                                    "quotes": quotes[:10], "notes": notes[:5],
-                                    "note": "以上均为搜索引擎返回的真实资料摘要（含来源链接，未做任何编造）；请人工核对后提取进角色卡。"})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_ui_background_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:2231
-                try:
-                    import base64 as _b64
-                    _p = parent._data_path("ui_bg.jpg")
-                    if data.get("clear"):
-                        if os.path.exists(_p):
-                            os.remove(_p)
-                        try:
-                            from agent.config import get_config as _gc, save_config as _sc
-                            _c = _gc(); _c.setdefault("ui", {})["background"] = ""; _sc(_c)
-                        except Exception:
-                            pass
-                        self._json({"ok": True, "note": "已恢复默认背景"})
-                    else:
-                        raw = str(data.get("data") or "")
-                        if "base64," in raw[:60]:
-                            raw = raw.split("base64,", 1)[1]
-                        raw = re.sub(r"[\s\r\n]", "", raw) # 清洗空白
-                        raw += "=" * (-len(raw) % 4) # padding 补全
-                        try:
-                            img_bytes = _b64.b64decode(raw, validate=False)
-                        except Exception:
-                            raise ValueError("base64 解码失败（文件数据损坏？请重试）")
-                        # 格式探测（图片 + 视频全兼容：png/jpg/jpeg/webp/gif/mp4/webm/ogg）
-                        head = img_bytes[:64]
-                        mime = ""
-                        if head[:8] == b"\x89PNG\r\n\x1a\n":
-                            mime, ext, is_video = "image/png", "png", False
-                        elif head[:3] == b"\xff\xd8\xff":
-                            mime, ext, is_video = "image/jpeg", "jpg", False
-                        elif head[:12] == b"RIFF" and head[8:12] == b"WEBP":
-                            mime, ext, is_video = "image/webp", "webp", False
-                        elif head[:6] in (b"GIF87a", b"GIF89a"):
-                            mime, ext, is_video = "image/gif", "gif", False
-                        elif head[4:12] == b"ftypmp4" or head[4:12] == b"ftypisom" or b"ftyp" in head[4:12]:
-                            mime, ext, is_video = "video/mp4", "mp4", True
-                        elif head[:4] == b"\x1aE\xdf\xa3":
-                            mime, ext, is_video = "video/webm", "webm", True
-                        elif head[:4] == b"OggS":
-                            mime, ext, is_video = "video/ogg", "ogg", True
-                        else:
-                            raise ValueError("格式无法识别：图片支持 PNG/JPEG/WEBP/GIF；视频支持 MP4/WEBM/OGG")
-                        _p2 = parent._data_path("ui_bg." + ext)
-                        with open(_p2, "wb") as _fw:
-                            _fw.write(img_bytes)
-                        # 清掉旧的其他扩展（避免残留）
-                        for _old in ("jpg", "png", "webp", "gif", "mp4", "webm", "ogg"):
-                            if _old != ext:
-                                try:
-                                    _oo = parent._data_path("ui_bg." + _old)
-                                    if os.path.exists(_oo):
-                                        os.remove(_oo)
-                                except Exception:
-                                    pass
-                        try:
-                            from agent.config import get_config as _gc, save_config as _sc
-                            _c = _gc(); _c.setdefault("ui", {})["background"] = "custom"; _c.setdefault("ui", {})["bg_type"] = "video" if is_video else "image"; _sc(_c)
-                        except Exception:
-                            pass
-                        self._json({"ok": True, "note": "背景已保存并应用"})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e).split("\n")[0][:140] or "图片处理失败"})
-
-            def _rapi_personas_favs_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:2295
-                self._personas_favs()
-
-            def _rapi_briefs_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:2298
-                self._briefs_api(data, "POST")
-
-            def _rapi_personas_fav_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:2301
-                try:
-                    import json as _json
-                    try:
-                        with open(parent._data_path("persona_favs.json"), "r", encoding="utf-8") as f:
-                            favs = _json.load(f)
-                    except Exception:
-                        favs = {}
-                    k = str(data.get("key") or "")
-                    if data.get("fav"):
-                        favs[k] = 1
-                    else:
-                        favs.pop(k, None)
-                    with open(parent._data_path("persona_favs.json"), "w", encoding="utf-8") as f:
-                        _json.dump(favs, f, ensure_ascii=False, indent=1)
-                    self._json({"ok": True})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_personas_rate_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:2320
-                try:
-                    self._json(parent.persona_rate_fn(str(data.get("key") or ""),
-                                                      data.get("score"),
-                                                      str(data.get("note") or "")))
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_selfcheck_stop_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:2328
-                try:
-                    parent.selfcheck_stop_fn()
-                    self._json({"ok": True})
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_ui_recalibrate_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:2335
-                try:
-                    self._json(parent.recalibrate_fn())
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_open_path_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:2341
-                try:
-                    self._json(parent.open_path_fn(str(data.get("path") or "")))
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_file_search_add_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:2350
-                self._file_search_dirs(data, path, urlparse(self.path).query)
-
-            def _rapi_tools_new_manifest_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:2352
-                self._tools_new_manifest()
-
-            def _rapi_tools_import_post(self, path, data, parsed, method):
-                # **导入＝把文档变成插件**（只写 tools.d/*.json；校验走同一套 validate）
-                try:
-                    from . import user_tools as _ut8
-                    text = str((data or {}).get("text") or "")
-                    if not text.strip():
-                        self._json({"ok": False, "error": "没有内容：选一个 .json，或把文档粘进来"})
-                        return
-                    r = _ut8.import_text(text, overwrite=as_bool((data or {}).get("overwrite")))
-                    r["tools"] = _ut8.snapshot()
-                    self._json(r)
-                except Exception as e:
-                    self._json({"ok": False, "error": str(e)})
-
-            def _rapi_ui_fingerprint_take_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:2354
-                self._ui_fingerprint_take(data, urlparse(self.path).query)
-
-            def _rapi_ui_fingerprint_forget_post(self, path, data, parsed, method):
-                # 原 _handle_body_request:2356
-                self._ui_fingerprint_forget(data, urlparse(self.path).query)
+        Handler = _make_handler(parent)
 
 
 
@@ -3433,3 +787,2665 @@ X.XX
             self._server = None
 
 
+
+
+
+def _make_handler(parent):
+    """构建控制台请求处理器（原来是 `WebUI.start()` 里的**嵌套类**）。
+
+    为什么搬出来：`start()` 的职责是「起服务器」，而它原来 2715 行里有 2647 行是这个类的定义
+    ⇒ 巨类**藏在函数体里**，既读不动、也没法按功能继续拆。
+    为什么用工厂包着：类体里有 **110 处**引用 `parent`（＝那个 `WebUI` 实例），那是**闭包**抓的
+    `start()` 局部变量；包一层工厂 ⇒ 闭包语义**一字不改**（零行为变化），
+    比把 110 处改成显式属性引用安全得多。
+    ⚠️ 记账：这一步让 `start()` 回到 68 行，但「单函数 ≥300 行」的指标**没有改善**
+    （2647 行移到了这里）—— 真正的拆分（137 个方法按功能分模块）需要真机冒烟，属后续独立工作。
+    """
+    class Handler(BaseHTTPRequestHandler):
+        server_version = "Persona Morph/1.0"
+
+        def log_message(self, fmt, *args):
+            pass # 静默，避免刷屏
+
+        def _bytes(self, body, ctype="application/octet-stream", code=200, cors=False):
+            if not body:
+                body = b""
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            if cors: # /dsh-whale/* 会被不透明来源的挂件页请求（需 CORS 放行）
+                self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _auth_ok(self):
+            # ⛔ **光有口令还不够** ——
+            #    浏览器里的任何页面都能向本机端口"发"请求（CORS 只挡读不挡发），DNS rebinding
+            #    还能让外域解析到 127.0.0.1 后带着**外域 Host** 打进来 ⇒ Host 必须是回环。
+            #    判据实现见 agent/local_guard.py（本地生图服务用同一份，别再各写一套）。
+            if not local_guard.host_ok(self.headers.get("Host")):
+                return False
+            token = str(get_config().get("server", {}).get("token") or "").strip()
+            if not token:
+                # 旧行为是「空口令 = 放行」，等于控制台裸奔（本机任何进程、任何网页都能进）。
+                # 现在：拒绝 + 明确告诉怎么修（口令在启动时自动生成，见 scripts/persona_morph.py）。
+                try:
+                    if not getattr(self.server, "_warned_no_token", False):
+                        self.server._warned_no_token = True
+                        logging.getLogger("persona-morph").warning(
+                            "控制台访问口令为空 ⇒ 已拒绝全部请求。请重启机器人（会自动生成口令），"
+                            "或在 config.json 的 server.token 里手填一个。")
+                except Exception:
+                    pass
+                return False
+            # ① 会话 Cookie（登录后 URL 不带 token，防他人复制地址登入）
+            try:
+                for m in re.findall(r"(?:^|;\s*)wxauth=([^;]+)", str(self.headers.get("Cookie") or "")):
+                    # ⛔ 口令比较原来是 `==`（逐字符早停）
+                    #   ⇒ 理论上可被计时侧信道逐位猜出。改成**常数时间比较**。
+                    if _hmac.compare_digest(str(m).strip(), token):
+                        return True
+            except Exception:
+                pass
+            # ② 支持 ?token= 或 Authorization: Bearer
+            q = urlparse(self.path).query
+            from urllib.parse import parse_qs
+            if any(_hmac.compare_digest(str(x), token) for x in parse_qs(q).get("token", [])):
+                return True
+            auth = str(self.headers.get("Authorization", "") or "")
+            if auth.startswith("Bearer ") and _hmac.compare_digest(auth[7:], token):
+                return True
+            return False
+
+        def _set_session_cookie(self):
+            """登录成功时种会话 Cookie（HttpOnly，防 JS 读取）。
+            注意：必须在 send_response() 之后调用（先 send_header 会让 Set-Cookie 排到状态行前面，响应直接坏掉）。"""
+            try:
+                token = str(get_config().get("server", {}).get("token") or "").strip()
+                self.send_header("Set-Cookie", "wxauth=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000" % token)
+            except Exception:
+                pass
+
+        def _json(self, obj, code=200, cors=False):
+            body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            if cors: # /dsh-whale/* 会被不透明来源的挂件页 fetch（需 CORS 放行）
+                self.send_header("Access-Control-Allow-Origin", "*")
+            if code == 200:
+                self._set_session_cookie() # 成功响应才种 cookie（在状态行/Server/Date 之后）
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _archive_view(self):
+            """存档屏蔽：列消息（带 recalled/blocked 标记）/ 屏蔽名单 / 读数。
+
+            **真因＝这条路由原来只注册在 POST 分支里**（它和 `/api/config`（保存配置）同一条
+            `elif` 链），而控制台前端用的是 **GET**（`getJSON('/api/archive')`）⇒ **每次都 404**
+            ⇒ 前端 catch 到就弹"读会话列表失败"。**整个「屏蔽存档」面板因此一直是死的**
+            （列表那一步也走 GET）。⇒ 抽成这一个方法，**GET 与 POST 都接**（一个能力一处实现）。
+            """
+            from . import archive_filter as _af
+            st = getattr(parent, "store", None)
+            if st is None:
+                # 还没就绪：屏蔽名单本身是**磁盘数据**，没有 store 也能给出名单 ⇒ 回 `ok:True` +
+                # 空会话列表 + 一句"正在连接"，由前端静默重试；**不要回 `ok:False`**
+                # （前端会当失败弹红字，用户看到的就是"error 但又能连上"）。
+                self._json({"ok": True, "chats": [], "snapshot": _af.snapshot(None),
+                            "note": "正在连接微信（会话列表稍后自动刷新）"})
+                return
+            q = parse_qs(urlparse(self.path).query)
+            ck = str((q.get("chat_key") or [""])[0]).strip()
+            lim = int((q.get("limit") or ["30"])[0] or 30)
+            # ⛔ 名单可能是按**群名**写的 ⇒ 把"会话名解析器"传进去，否则面板恒报"命中 0 个"
+            def _name_of(_ck):
+                try:
+                    _w = getattr(parent, "wechat", None)
+                    if _w is None and hasattr(parent, "wechat_box"):
+                        _w = (parent.wechat_box or [None])[0]
+                    if _w is None:
+                        return ""
+                    return str(_w.display_name(str(_ck).split(":", 1)[-1]) or "")
+                except Exception:
+                    return ""
+            out = {"ok": True, "snapshot": _af.snapshot(st, name_of=_name_of),
+                   "chats": _af.chat_options(st)}
+            if ck:
+                out.update(_af.list_chat(st, ck, limit=max(1, min(200, lim))))
+            self._json(out)
+
+        # ── 两条链共用的小动作──────────────────
+        # ⛔ 这一批路由历史上**只注册在一条链里**，
+        #   而控制台前端用的偏偏是另一条 ⇒ 每次都 **404**（前端 `getJSON` 在 `!r.ok` 时抛，
+        #   只接住原始 JSON 的调用点就把 `{"error": "not found"}` 当文案弹出来，看着像"没反应"）。
+        #   本轮实测踩到 **6 处**：
+        #     · 后端只有 GET、前端发 POST：`/api/file_search/add` · `/api/file_search/del`
+        #       · `/api/tools/new_manifest` · `/api/ui_fingerprint/take` · `/api/ui_fingerprint/forget`
+        #     · 后端只有 POST 链、前端发 GET：`/api/prompt/preview`
+        #   ⇒ 一律抽成方法，两条链调**同一份**（照 `/api/archive` 那次的修法，别再各写一遍）。
+        def _file_search_dirs(self, data, path, query=""):
+            """管理"可搜目录"（面板上加入/移除）。GET 从查询串取 `dir`，POST 从 JSON 体取。"""
+            try:
+                from . import file_search as _fsd
+                from .config import get_config as _gc4, save_config as _scv4, set_config as _sc4
+                d = ""
+                if isinstance(data, dict):
+                    d = str(data.get("dir") or "")
+                if not d:
+                    _q4 = parse_qs(str(query or ""))
+                    d = str((_q4.get("dir") or [""])[0])
+                d = d.strip()
+                c4 = _gc4()
+                c4.setdefault("file_search", {})
+                cur = [str(x) for x in (c4["file_search"].get("dirs") or [])]
+                if str(path).endswith("/add"):
+                    if d and d not in cur:
+                        cur.append(d)
+                    note = ("已加入：%s" % d) if d else "没给目录"
+                else:
+                    cur = [x for x in cur if x != d]
+                    note = ("已移除：%s" % d) if d else "没给目录"
+                c4["file_search"]["dirs"] = cur
+                _sc4(c4)
+                _scv4(c4)
+                self._json({"ok": True, "note": note, "file_search": _fsd.snapshot()})
+            except Exception as e: # noqa: BLE001
+                self._json({"ok": False, "error": str(e)})
+
+        def _tools_new_manifest(self):
+            """「怎么加工具」弹窗的一键动作：在 tools.d/ 里生成一份可编辑模板。"""
+            try:
+                from . import user_tools as _ut5
+                p, why = _ut5.write_template()
+                self._json({"ok": bool(p), "path": p or "", "why": why,
+                            "note": "改完点「重新加载清单」，再勾选即可；坏清单会在面板里逐条列出"})
+            except Exception as e: # noqa: BLE001
+                self._json({"ok": False, "error": str(e)})
+
+        def _ui_fingerprint_take(self, data=None, query=""):
+            """「重新取指纹」：给图标库里的命名目标各取一份 dHash 指纹（只**看**不点）。"""
+            try:
+                from . import ui_fingerprint as _ufp
+                from . import wechat as _wx3
+                names_raw = str((data or {}).get("names") or "") if isinstance(data, dict) else ""
+                if not names_raw:
+                    _q5 = parse_qs(str(query or ""))
+                    names_raw = str((_q5.get("names") or [""])[0])
+                names = [s for s in names_raw.split(",") if s.strip()]
+                gui = _wx3.WeChatAdapter()._get_gui()
+                r = _ufp.take(gui, names or None)
+                self._json({"ok": True, "result": r, "status": _ufp.hits(),
+                            "digest": _ufp.digest()})
+            except Exception as e: # noqa: BLE001
+                self._json({"ok": False, "error": str(e)})
+
+        def _ui_fingerprint_forget(self, data=None, query=""):
+            """丢掉旧指纹（`key` 可选：给就只丢那一个）。"""
+            try:
+                from . import ui_fingerprint as _ufp2
+                k = str((data or {}).get("key") or "") if isinstance(data, dict) else ""
+                if not k:
+                    _q6 = parse_qs(str(query or ""))
+                    k = str((_q6.get("key") or [""])[0])
+                self._json({"ok": True, "result": _ufp2.forget(k or None), "status": _ufp2.hits()})
+            except Exception as e: # noqa: BLE001
+                self._json({"ok": False, "error": str(e)})
+
+        def _prompt_preview(self):
+            """系统提示词编辑（第 11 条）：让用户看见"此刻真正送出的系统提示词"。"""
+            try:
+                from . import system_prompt as _spv
+                self._json(_spv.preview())
+            except Exception as e: # noqa: BLE001
+                self._json({"ok": False, "error": str(e)}, 500)
+
+        def _briefs_api(self, data, method="GET"):
+            """预设信息：**按会话**提前设定的背景事实（读/增/删/清到期）。
+
+            GET `?chat=<key>` ⇒ 本会话的条目（**只读本会话**）；不带 chat ⇒ 只给"哪些会话设过 + 计数"。
+            POST `{action: add|del|prune, chat, text?, until?, always?, id?}`。
+            两条链共用这一份实现。
+            文案与代价（会随该会话的请求发给模型；相关判断是字面匹配）写在控制台面板那一行。
+            """
+            try:
+                from . import briefs as _br
+            except Exception as e: # noqa: BLE001
+                return self._json({"ok": False, "error": "预设信息模块不可用：%s" % e})
+            _d = data if isinstance(data, dict) else {}
+            if str(method).upper() == "GET":
+                chat = str(_d.get("chat") or "").strip()
+                if not chat:
+                    return self._json({"ok": True, "chats": _br.all_counts()})
+                d = _br.list_for(chat)
+                d["error"] = ""
+                return self._json(d)
+            act = str(_d.get("action") or "").strip()
+            chat = str(_d.get("chat") or "").strip()
+            if act == "add":
+                r = _br.add(chat, _d.get("text"), _d.get("until"), bool(_d.get("always")))
+            elif act == "del":
+                r = _br.remove(chat, _d.get("id"))
+            elif act == "prune":
+                r = {"ok": True, "dropped": _br.prune(chat or None)}
+            else:
+                r = {"ok": False, "why": "未知动作：%s（只支持 add / del / prune）" % (act or "（空）")}
+            try:
+                if r.get("ok") and act in ("add", "del", "prune"):
+                    r["list"] = _br.list_for(chat)
+            except Exception:
+                pass
+            return self._json(r)
+
+        def _personas_favs(self):
+            """人设星标集合（读）。⛔ 前端用 **GET** 读它，而实现原先只在 POST 链里
+            ⇒ 每次都 404，而前端那处是 `try{…}catch(e){}` **静默失败** ⇒ 星标在面板上
+            **永远显示不出来**（点了收藏、刷新后还是没星）。两条链共用这一份。"""
+            try:
+                import json as _json
+                try:
+                    with open(parent._data_path("persona_favs.json"), "r", encoding="utf-8") as f:
+                        favs = _json.load(f)
+                except Exception:
+                    favs = {}
+                self._json({"ok": True, "favs": favs})
+            except Exception as e: # noqa: BLE001
+                self._json({"ok": False, "error": str(e)})
+
+        def do_GET(self):
+            parsed = urlparse(self.path)
+            path = parsed.path
+            # ⛔ `data` 原来**只在 `do_POST` 里定义**，
+            #   而 do_GET 里有三处分支读 `data.get(...)`（本地生图的 `/api/image_gen/local/install`、
+            #   历史目录、打开路径）⇒ **必抛 NameError**，再被外层 `except` 吞成
+            #   `{ok:false, "error":"name 'data' is not defined"}` —— 4 条 GET 路由白坏，界面上还看不出来。
+            #   GET 没有请求体 ⇒ 用**查询串**当 data（`?dir=…&allow_online=1` 这类调用照样能用）。
+            try:
+                data = {k: (v[0] if isinstance(v, list) and v else v)
+                        for k, v in parse_qs(parsed.query).items()}
+            except Exception:
+                data = {}
+            # 静态素材（图标/光标图）免认证：<img> 不带 token，但素材不含隐私
+            # ⛔ 这三条**免认证**路由原来**不校验 Host**
+            #   （`_auth_ok` 才校验）⇒ 外域页面/DNS rebinding 能带着外域 Host 读它们（版本号泄露 + 探测本机是否有本产品）。
+            #   ⇒ 免认证 ≠ 免 Host 校验：先过同一份回环校验再放行。
+            if path.startswith("/assets/") or path.startswith("/wallpaper/") or path == "/api/version":
+                if not local_guard.host_ok(self.headers.get("Host")):
+                    return self._json({"error": "bad host"}, 403)
+            if path.startswith("/assets/"):
+                return parent._serve_asset(path, self)
+            if path.startswith("/wallpaper/"):
+                return parent._serve_wallpaper(path, self, parsed.query)
+            if path == "/api/version":
+                # 免认证版本指纹（启动器/新实例探测旧实例用；不含隐私）
+                self._json({"ver": parent._build_tag()})
+                return
+            if not self._auth_ok():
+                return self._json({"error": "unauthorized"}, 401)
+            if path == "/api/update":
+                # 更新检查（**只读**）：拉清单判五态。口径＝拉不到/没配 ⇒ off（界面什么都不显示）、
+                # 清单坏了 ⇒ error 如实说、有新版 ⇒ newer + notes。**公告只在本机 UI，绝不往微信侧发**。
+                try:
+                    from . import update_check as _uc
+                    from . import update_apply as _ua
+                    _st = _uc.state()
+                    _st["job"] = _ua.job() # 自更新作业的实时进度（控制台按钮轮询这里）
+                    self._json(_st)
+                except Exception as _e:
+                    self._json({"status": "error", "why": "更新检查不可用：%s" % str(_e)[:60]})
+                return
+            # 防窥视：地址栏乱码路径（单段 /aB3$xy…，无 API/静态前缀）也返回控制台页面
+            if path == "/" or path == "/index.html":
+                pass # 正常控制台页
+            elif path.startswith("/api/") or path.startswith("/dsh-whale/") \
+                    or path.startswith("/assets/") or path.startswith("/wallpaper/"):
+                pass # 正常 API/静态路由（下方继续匹配）
+            elif "/" not in path[1:]:
+                # 单段乱码路径 → 当控制台页
+                import re as _repath
+                if not _repath.fullmatch(r"/[A-Za-z0-9#$~_\-]{6,64}", path):
+                    return self._json({"error": "not found"}, 404)
+                path = "/"
+            else:
+                return self._json({"error": "not found"}, 404)
+            if path in ("/", "/index.html"):
+                token = str(get_config().get("server", {}).get("token") or "").strip()
+                body = HTML.replace("__TKN__", token)
+                body = body.replace("__VER__", parent._build_tag())
+                # 鲸语字典随页面下发（**一份来源**）：前端 applyWhale 用它处理"动态刷新出来的文案"
+                # （暂停/恢复/状态行等），静态部分由 _apply_whale 在服务端就换好。两种模式都下发。
+                try:
+                    import json as _json
+                    body = body.replace("__WHALE_TXT__", _json.dumps(WHALE_DICT, ensure_ascii=False))
+                except Exception:
+                    body = body.replace("__WHALE_TXT__", "{}")
+                body = parent._apply_whale(body)
+                body = body.encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+                self._set_session_cookie() # 必须在 send_response 之后（Set-Cookie 排在状态行/Server/Date 后）
+                self.end_headers()
+                self.wfile.write(body)
+            elif path.startswith("/dsh-whale/"):
+                parent._whale_get(self, path, parsed.query)
+            # 原：elif path == "/api/voice/probe": ⇒ 已搬到 agent/routes.py → _rapi_voice_probe（/api/voice/probe）
+            # 原：elif path == "/api/voice/vc-probe": ⇒ 已搬到 agent/routes.py → _rapi_voice_vc_probe（/api/voice/vc-probe）
+            # 原：elif path == "/api/local-models": ⇒ 已搬到 agent/routes.py → _rapi_local_models（/api/local-models）
+            # 原：elif path == "/api/verifiers": ⇒ 已搬到 agent/routes.py → _rapi_verifiers（/api/verifiers）
+            # 原：elif path == "/api/verify": ⇒ 已搬到 agent/routes.py → _rapi_verify（/api/verify）
+            # 原：elif path == "/api/config": ⇒ 已搬到 agent/routes.py → _rapi_config（/api/config）
+            # 原：elif path == "/api/memory": ⇒ 已搬到 agent/routes.py → _rapi_memory（/api/memory）
+            # 原：elif path == "/api/sessions": ⇒ 已搬到 agent/routes.py → _rapi_sessions（/api/sessions）
+            # 原：elif path == "/api/status": ⇒ 已搬到 agent/routes.py → _rapi_status（/api/status）
+            # 原：elif path in ("/api/file_search/add", "/api/file_search/del"): ⇒ 已搬到 agent/routes.py → _rapi_file_search_add（/api/file_search/add, /api/file_search/del）
+            # 原：elif path == "/api/briefs": ⇒ 已搬到 agent/routes.py → _rapi_briefs（/api/briefs）
+            # 原：elif path == "/api/tools/new_manifest": ⇒ 已搬到 agent/routes.py → _rapi_tools_new_manifest（/api/tools/new_manifest）
+            # 原：elif path == "/api/tools/reload": ⇒ 已搬到 agent/routes.py → _rapi_tools_reload（/api/tools/reload）
+            # 原：elif path == "/api/tools/toggle": ⇒ 已搬到 agent/routes.py → _rapi_tools_toggle（/api/tools/toggle）
+            # 原：elif path == "/api/ui_fingerprint/take": ⇒ 已搬到 agent/routes.py → _rapi_ui_fingerprint_take（/api/ui_fingerprint/take）
+            # 原：elif path == "/api/ui_fingerprint/forget": ⇒ 已搬到 agent/routes.py → _rapi_ui_fingerprint_forget（/api/ui_fingerprint/forget）
+            # 原：elif path == "/api/prompt/preview": ⇒ 已搬到 agent/routes.py → _rapi_prompt_preview（/api/prompt/preview）
+            # 原：elif path == "/api/personas/favs": ⇒ 已搬到 agent/routes.py → _rapi_personas_favs（/api/personas/favs）
+            # 原：elif path == "/api/image_gen/local": ⇒ 已搬到 agent/routes.py → _rapi_image_gen_local（/api/image_gen/local）
+            # 原：elif path == "/api/image_gen/local/progress": ⇒ 已搬到 agent/routes.py → _rapi_image_gen_local_progress（/api/image_gen/local/progress）
+            # 原：elif path == "/api/image_gen/local/install": ⇒ 已搬到 agent/routes.py → _rapi_image_gen_local_install（/api/image_gen/local/install）
+            # 原：elif path == "/api/image_gen/local/start": ⇒ 已搬到 agent/routes.py → _rapi_image_gen_local_start（/api/image_gen/local/start）
+            # 原：elif path == "/api/image_gen/local/stop": ⇒ 已搬到 agent/routes.py → _rapi_image_gen_local_stop（/api/image_gen/local/stop）
+            # 原：elif path == "/api/image_gen/test": ⇒ 已搬到 agent/routes.py → _rapi_image_gen_test（/api/image_gen/test）
+            # 原：elif path == "/api/tts/test": ⇒ 已搬到 agent/routes.py → _rapi_tts_test（/api/tts/test）
+            # 原：elif path == "/api/voice/test": ⇒ 已搬到 agent/routes.py → _rapi_voice_test（/api/voice/test）
+            # 原：elif path == "/api/wechat/recheck": ⇒ 已搬到 agent/routes.py → _rapi_wechat_recheck（/api/wechat/recheck）
+            # 原：elif path == "/api/wechat/dir": ⇒ 已搬到 agent/routes.py → _rapi_wechat_dir（/api/wechat/dir）
+            # 原：elif path == "/api/version/allow": ⇒ 已搬到 agent/routes.py → _rapi_version_allow（/api/version/allow）
+            # 原：elif path == "/api/balance": ⇒ 已搬到 agent/routes.py → _rapi_balance（/api/balance）
+            # 原：elif path == "/api/logs": ⇒ 已搬到 agent/routes.py → _rapi_logs（/api/logs）
+            # 原：elif path == "/api/wechat-groups": ⇒ 已搬到 agent/routes.py → _rapi_wechat_groups（/api/wechat-groups）
+            # 原：elif path == "/api/emojis": ⇒ 已搬到 agent/routes.py → _rapi_emojis（/api/emojis）
+            # 原：elif path == "/api/personas/scores": ⇒ 已搬到 agent/routes.py → _rapi_personas_scores（/api/personas/scores）
+            # 原：elif path == "/api/feedback": ⇒ 已搬到 agent/routes.py → _rapi_feedback（/api/feedback）
+            # 原：elif path == "/api/personas": ⇒ 已搬到 agent/routes.py → _rapi_personas（/api/personas）
+            # 原：elif path == "/api/persona/cats": ⇒ 已搬到 agent/routes.py → _rapi_persona_cats（/api/persona/cats）
+            # 原：elif path == "/api/personas/custom": ⇒ 已搬到 agent/routes.py → _rapi_personas_custom（/api/personas/custom）
+            # 原：elif path == "/api/ui-layout": ⇒ 已搬到 agent/routes.py → _rapi_ui_layout（/api/ui-layout）
+            # 原：elif path == "/api/ui/recalibrate": ⇒ 已搬到 agent/routes.py → _rapi_ui_recalibrate（/api/ui/recalibrate）
+            # 原：elif path == "/api/open-path": ⇒ 已搬到 agent/routes.py → _rapi_open_path（/api/open-path）
+            # 原：elif path == "/api/selfcheck-stop": ⇒ 已搬到 agent/routes.py → _rapi_selfcheck_stop（/api/selfcheck-stop）
+            # 原：elif path == "/api/archive": ⇒ 已搬到 agent/routes.py → _rapi_archive（/api/archive）
+            elif self._dispatch(path, data, parsed, "GET"):
+                pass # 路由表命中（唯一分派点，见 agent/routes.py）
+            else:
+                self._json({"error": "not found"}, 404)
+
+        def do_POST(self):
+            if not self._auth_ok():
+                return self._json({"error": "unauthorized"}, 401)
+            self._handle_body_request()
+
+        def do_OPTIONS(self):
+            """CORS 预检（仅 /dsh-whale/*）—— 挂件页是不透明来源，widget 的
+            POST/PUT 带 JSON 体必触发预检；不答 204 就整批请求被拦。
+            预检本身不带口令（浏览器规范），真正鉴权仍在各真实请求上。"""
+            path = urlparse(self.path).path
+            if not path.startswith("/dsh-whale/"):
+                return self._json({"error": "not found"}, 404)
+            self.send_response(204)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Access-Control-Max-Age", "600")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def do_PUT(self):
+            # 小鲸鱼挂件前端用 PUT 保存配置（fetch SIZE_URL, {method:'PUT'}）
+            if not self._auth_ok():
+                return self._json({"error": "unauthorized"}, 401)
+            self._handle_body_request()
+
+        def _handle_body_request(self):
+            parsed = urlparse(self.path) # 补：与 do_GET 对称
+            path = urlparse(self.path).path
+            # ⛔ 原来按 `Content-Length` **全收** ——
+            #   实测 64MB 全读进内存；更糟的是"声明 200MB、只发 1MB"会把处理线程**卡死**
+            #   （守着一个永远读不满的体）。⇒ 加**上限**（超限直接 413，不再读了），
+            #   并把读取本身容错（客户端半途断开 ⇒ 当空体，交给各路由自己报错）。
+            _MAX_BODY = 8 * 1024 * 1024
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except Exception:
+                length = 0
+            if length < 0 or length > _MAX_BODY:
+                # ⛔ **负的 `Content-Length` 也要拒** ——
+                #   老写法只挡"太大"，而 `self.rfile.read(-1)` 的语义是**读到底**
+                #   （本轮实测 `BufferedReader.read(-1)` 读满 100000 字节）⇒ 上限形同虚设。
+                #   （可达性诚实说明：`do_POST`/`do_PUT` 第一句就是口令校验，只有本机控制台
+                #    能走到这里；但口径必须闭合。）
+                return self._json({"error": "请求体过大或长度非法（上限 %d 字节）" % _MAX_BODY}, 413)
+            try:
+                raw = self.rfile.read(length) if length else b"{}"
+            except Exception:
+                raw = b"{}"
+            try:
+                data = json.loads(raw.decode("utf-8")) if raw else {}
+            except Exception:
+                data = {}
+            # 原：if path == "/api/update_skip": ⇒ 已搬到 agent/routes.py → _rapi_update_skip（/api/update_skip）
+            # 原：elif path == "/api/update_apply": ⇒ 已搬到 agent/routes.py → _rapi_update_apply（/api/update_apply）
+            # 原：elif path == "/api/update_reset": ⇒ 已搬到 agent/routes.py → _rapi_update_reset（/api/update_reset）
+            # 原：elif path == "/api/risk": ⇒ 已搬到 agent/routes.py → _rapi_risk（/api/risk）
+            # 原：elif path == "/api/version/action": ⇒ 已搬到 agent/routes.py → _rapi_version_action（/api/version/action）
+            # 原：elif path == "/api/decide": ⇒ 已搬到 agent/routes.py → _rapi_decide（/api/decide）
+            # 原：elif path == "/api/config": ⇒ 已搬到 agent/routes.py → _rapi_config（/api/config）
+            # 原：elif path == "/api/wechat/dir": ⇒ 已搬到 agent/routes.py → _rapi_wechat_dir（/api/wechat/dir）
+            # 原：elif path == "/api/archive": ⇒ 已搬到 agent/routes.py → _rapi_archive（/api/archive）
+            # 原：elif path in ("/api/archive/block", "/api/archive/unblock", "/api/archive/delete"): ⇒ 已搬到 agent/routes.py → _rapi_archive_block（/api/archive/block, /api/archive/delete, /api/archive/unblock）
+            # 原：elif path == "/api/cloud/test": ⇒ 已搬到 agent/routes.py → _rapi_cloud_test（/api/cloud/test）
+            # 原：elif path == "/api/prompt/preview": ⇒ 已搬到 agent/routes.py → _rapi_prompt_preview（/api/prompt/preview）
+            # 原：elif path == "/api/cursor/upload": ⇒ 已搬到 agent/routes.py → _rapi_cursor_upload（/api/cursor/upload）
+            # 原：elif path == "/api/cursor/reset": ⇒ 已搬到 agent/routes.py → _rapi_cursor_reset（/api/cursor/reset）
+            # 原：elif path == "/api/memory": ⇒ 已搬到 agent/routes.py → _rapi_memory（/api/memory）
+            # 原：elif path == "/api/sessions": ⇒ 已搬到 agent/routes.py → _rapi_sessions（/api/sessions）
+            if path == "/dsh-whale/usage-settings.json":
+                # 前端 PUT 的是**改动项**（局部合并）
+                if parent.whale is None:
+                    self._json({"error": "not found"}, 404, cors=True)
+                else:
+                    try:
+                        self._json(parent.whale.save_usage_settings(data), cors=True)
+                    except Exception as e:  # noqa: BLE001
+                        self._json({"ok": False, "error": str(e)}, 500, cors=True)
+            elif path == "/dsh-whale/balance-adjustments.json":
+                if parent.whale is None:
+                    self._json({"error": "not found"}, 404, cors=True)
+                else:
+                    try:
+                        self._json(parent.whale.balance_adjustments(data), cors=True)
+                    except Exception as e:  # noqa: BLE001
+                        self._json({"ok": False, "error": str(e)}, 500, cors=True)
+            if path == "/dsh-whale/size.json":
+                # 小鲸鱼挂件配置保存（前端 PUT）
+                if parent.whale is None:
+                    self._json({"error": "not found"}, 404, cors=True)
+                else:
+                    try:
+                        self._json(parent.whale.save_size(data), cors=True)
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)}, 500, cors=True)
+            elif path == "/dsh-whale/bubble.json":
+                # 泡泡纯配置保存（有上限，存完回显）
+                if parent.whale is None:
+                    self._json({"error": "not found"}, 404, cors=True)
+                else:
+                    try:
+                        self._json(parent.whale.save_cfg("bubble.json", data), cors=True)
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)}, 500, cors=True)
+            elif path == "/dsh-whale/audio.json":
+                # 音频是**动作式**：save-group / pin-group / delete-group
+                if parent.whale is None:
+                    self._json({"error": "not found"}, 404, cors=True)
+                else:
+                    try:
+                        self._json(parent.whale.audio_action(data), cors=True)
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)}, 500, cors=True)
+            elif path == "/dsh-whale/bubble-img-upload.json":
+                # 泡泡图上传/删除（返回整份图库，前端据此刷新）
+                if parent.whale is None:
+                    self._json({"error": "not found"}, 404, cors=True)
+                else:
+                    try:
+                        self._json(parent.whale.bubble_img_action(data), cors=True)
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)}, 500, cors=True)
+            elif path == "/dsh-whale/api-models.json":
+                # 自定义 API 模型：动作式（save / delete）
+                if parent.whale is None:
+                    self._json({"error": "not found"}, 404, cors=True)
+                else:
+                    try:
+                        self._json(parent.whale.api_models_action(data), cors=True)
+                    except Exception as e:  # noqa: BLE001
+                        self._json({"ok": False, "error": str(e)}, 500, cors=True)
+            elif path in ("/dsh-whale/roles.json", "/dsh-whale/role-pin.json",
+                           "/dsh-whale/role-delete.json"):
+                # 自定义角色：导入 / 置顶 / 删除。三者都返回**完整角色列表**，
+                # 前端拿它整块刷新面板（契约见 agent/whale.py 的角色段注释）。
+                if parent.whale is None:
+                    self._json({"error": "not found"}, 404, cors=True)
+                else:
+                    try:
+                        _fn = {"/dsh-whale/roles.json": parent.whale.save_role,
+                               "/dsh-whale/role-pin.json": parent.whale.pin_role,
+                               "/dsh-whale/role-delete.json": parent.whale.delete_role}[path]
+                        self._json(_fn(data), cors=True)
+                    except Exception as e:  # noqa: BLE001
+                        self._json({"ok": False, "error": str(e)}, 500, cors=True)
+            # 原：elif path == "/api/test-api": ⇒ 已搬到 agent/routes.py → _rapi_test_api（/api/test-api）
+            # 原：elif path == "/api/poke-test": ⇒ 已搬到 agent/routes.py → _rapi_poke_test（/api/poke-test）
+            # 原：elif path == "/api/verifiers": ⇒ 已搬到 agent/routes.py → _rapi_verifiers（/api/verifiers）
+            # 原：elif path == "/api/verify": ⇒ 已搬到 agent/routes.py → _rapi_verify（/api/verify）
+            # 原：elif path == "/api/selfcheck": ⇒ 已搬到 agent/routes.py → _rapi_selfcheck（/api/selfcheck）
+            # 原：elif path == "/api/prices": ⇒ 已搬到 agent/routes.py → _rapi_prices（/api/prices）
+            # 原：elif path == "/api/data/export": ⇒ 已搬到 agent/routes.py → _rapi_data_export（/api/data/export）
+            # 原：elif path == "/api/data/import": ⇒ 已搬到 agent/routes.py → _rapi_data_import（/api/data/import）
+            # 原：elif path == "/api/wechat-groups": ⇒ 已搬到 agent/routes.py → _rapi_wechat_groups（/api/wechat-groups）
+            # 原：elif path == "/api/community/export": ⇒ 已搬到 agent/routes.py → _rapi_community_export（/api/community/export）
+            # 原：elif path == "/api/community/upload": ⇒ 已搬到 agent/routes.py → _rapi_community_upload（/api/community/upload）
+            # 原：elif path == "/api/scoring/import": ⇒ 已搬到 agent/routes.py → _rapi_scoring_import（/api/scoring/import）
+            # 原：elif path == "/api/scoring/stats": ⇒ 已搬到 agent/routes.py → _rapi_scoring_stats（/api/scoring/stats）
+            # 原：elif path == "/api/learning/start": ⇒ 已搬到 agent/routes.py → _rapi_learning_start（/api/learning/start）
+            # 原：elif path == "/api/learning/evaluate": ⇒ 已搬到 agent/routes.py → _rapi_learning_evaluate（/api/learning/evaluate）
+            # 原：elif path == "/api/pause": ⇒ 已搬到 agent/routes.py → _rapi_pause（/api/pause）
+            # 原：elif path == "/api/image_gen/local/install": ⇒ 已搬到 agent/routes.py → _rapi_image_gen_local_install（/api/image_gen/local/install）
+            # 原：elif path == "/api/image_gen/local/preset": ⇒ 已搬到 agent/routes.py → _rapi_image_gen_local_preset（/api/image_gen/local/preset）
+            # 原：elif path == "/api/image_gen/local/start": ⇒ 已搬到 agent/routes.py → _rapi_image_gen_local_start（/api/image_gen/local/start）
+            # 原：elif path == "/api/image_gen/local/stop": ⇒ 已搬到 agent/routes.py → _rapi_image_gen_local_stop（/api/image_gen/local/stop）
+            # 原：elif path == "/api/resume": ⇒ 已搬到 agent/routes.py → _rapi_resume（/api/resume）
+            # 原：elif path == "/api/watermark/reset": ⇒ 已搬到 agent/routes.py → _rapi_watermark_reset（/api/watermark/reset）
+            # 原：elif path == "/api/shutdown": ⇒ 已搬到 agent/routes.py → _rapi_shutdown（/api/shutdown）
+            # 原：elif path == "/api/restart": ⇒ 已搬到 agent/routes.py → _rapi_restart（/api/restart）
+            # 原：elif path == "/api/persona/behavior-recommend": ⇒ 已搬到 agent/routes.py → _rapi_persona_behavior_recommend（/api/persona/behavior-recommend）
+            # 原：elif path == "/api/sessions/delete": ⇒ 已搬到 agent/routes.py → _rapi_sessions_delete（/api/sessions/delete）
+            # 原：elif path == "/api/sessions/restore": ⇒ 已搬到 agent/routes.py → _rapi_sessions_restore（/api/sessions/restore）
+            # 原：elif path == "/api/stats/cal_clear": ⇒ 已搬到 agent/routes.py → _rapi_stats_cal_clear（/api/stats/cal_clear）
+            # 原：elif path == "/api/stats/cal_list": ⇒ 已搬到 agent/routes.py → _rapi_stats_cal_list（/api/stats/cal_list）
+            # 原：elif path == "/api/stats/cal_delete": ⇒ 已搬到 agent/routes.py → _rapi_stats_cal_delete（/api/stats/cal_delete）
+            # 原：elif path == "/api/stats/cal": ⇒ 已搬到 agent/routes.py → _rapi_stats_cal（/api/stats/cal）
+            # 原：elif path == "/api/emojis/delete": ⇒ 已搬到 agent/routes.py → _rapi_emojis_delete（/api/emojis/delete）
+            # 原：elif path == "/api/code-check": ⇒ 已搬到 agent/routes.py → _rapi_code_check（/api/code-check）
+            # 原：elif path == "/api/code-check/progress": ⇒ 已搬到 agent/routes.py → _rapi_code_check_progress（/api/code-check/progress）
+            # 原：elif path == "/api/feedback/submit": ⇒ 已搬到 agent/routes.py → _rapi_feedback_submit（/api/feedback/submit）
+            # 原：elif path == "/api/feedback/flush": ⇒ 已搬到 agent/routes.py → _rapi_feedback_flush（/api/feedback/flush）
+            # 原：elif path == "/api/persona/cats/save": ⇒ 已搬到 agent/routes.py → _rapi_persona_cats_save（/api/persona/cats/save）
+            # 原：elif path == "/api/persona/cats/del": ⇒ 已搬到 agent/routes.py → _rapi_persona_cats_del（/api/persona/cats/del）
+            # 原：elif path == "/api/persona/score": ⇒ 已搬到 agent/routes.py → _rapi_persona_score（/api/persona/score）
+            # 原：elif path == "/api/personas/custom": ⇒ 已搬到 agent/routes.py → _rapi_personas_custom（/api/personas/custom）
+            # 原：elif path == "/api/personas/custom/del": ⇒ 已搬到 agent/routes.py → _rapi_personas_custom_del（/api/personas/custom/del）
+            # 原：elif path == "/api/memory/deep-profile": ⇒ 已搬到 agent/routes.py → _rapi_memory_deep_profile（/api/memory/deep-profile）
+            # 原：elif path == "/api/persona/ai-enrich": ⇒ 已搬到 agent/routes.py → _rapi_persona_ai_enrich（/api/persona/ai-enrich）
+            # 原：elif path == "/api/persona/web-fetch": ⇒ 已搬到 agent/routes.py → _rapi_persona_web_fetch（/api/persona/web-fetch）
+            # 原：elif path == "/api/ui/background": ⇒ 已搬到 agent/routes.py → _rapi_ui_background（/api/ui/background）
+            # 原：elif path == "/api/personas/favs": ⇒ 已搬到 agent/routes.py → _rapi_personas_favs（/api/personas/favs）
+            # 原：elif path == "/api/briefs": ⇒ 已搬到 agent/routes.py → _rapi_briefs（/api/briefs）
+            # 原：elif path == "/api/personas/fav": ⇒ 已搬到 agent/routes.py → _rapi_personas_fav（/api/personas/fav）
+            # 原：elif path == "/api/personas/rate": ⇒ 已搬到 agent/routes.py → _rapi_personas_rate（/api/personas/rate）
+            # 原：elif path == "/api/selfcheck-stop": ⇒ 已搬到 agent/routes.py → _rapi_selfcheck_stop（/api/selfcheck-stop）
+            # 原：elif path == "/api/ui/recalibrate": ⇒ 已搬到 agent/routes.py → _rapi_ui_recalibrate（/api/ui/recalibrate）
+            # 原：elif path == "/api/open-path": ⇒ 已搬到 agent/routes.py → _rapi_open_path（/api/open-path）
+            # ⛔ 这四条**后端原先只注册在 do_GET 链**，而控制台前端发的是
+            #   POST ⇒ 每次都 404（`_handle_body_request` 的末尾 else），界面上只弹一句
+            #   `{"error": "not found"}` 或者干脆没反应。现在两条链调同一份实现。
+            # 原：elif path in ("/api/file_search/add", "/api/file_search/del"): ⇒ 已搬到 agent/routes.py → _rapi_file_search_add（/api/file_search/add, /api/file_search/del）
+            # 原：elif path == "/api/tools/new_manifest": ⇒ 已搬到 agent/routes.py → _rapi_tools_new_manifest（/api/tools/new_manifest）
+            # 原：elif path == "/api/ui_fingerprint/take": ⇒ 已搬到 agent/routes.py → _rapi_ui_fingerprint_take（/api/ui_fingerprint/take）
+            # 原：elif path == "/api/ui_fingerprint/forget": ⇒ 已搬到 agent/routes.py → _rapi_ui_fingerprint_forget（/api/ui_fingerprint/forget）
+            elif self._dispatch(path, data, parsed, "POST"):
+                pass # 路由表命中（唯一分派点，见 agent/routes.py）
+            else:
+                self._json({"error": "not found"}, 404)
+
+# ── 路由表分派──
+
+        def _dispatch(self, path, data, parsed, method):
+            """**唯一分派点**：查 `agent/routes.ROUTES`（路径 → 方法 → 处理函数名）。
+
+            只认表里**成对存在**的 (路径, 方法)：命中就调用并返回 True；
+            否则返回 False，交回原来那条 `if/elif` 链（没搬的路由行为一个字不变）。
+            """
+            try:
+                from .routes import HANDLERS as _R # ⚠️ 是 HANDLERS（路径→方法→函数名），不是 ROUTES（声明）
+            except Exception: # noqa: BLE001
+                return False
+            row = _R.get(path)
+            if not isinstance(row, dict):
+                return False
+            fn = row.get(method)
+            if not fn:
+                return False
+            try:
+                getattr(self, fn)(path, data, parsed, method)
+            except Exception as e: # noqa: BLE001
+                self._json({"ok": False, "error": str(e)}, 500)
+            return True
+
+
+        def _rapi_voice_probe(self, path, data, parsed, method):
+            # 原 do_GET:953
+            try:
+                from . import voice_models as _vmod
+                _q2 = parse_qs(parsed.query)
+                self._json(dict({"ok": True}, **_vmod.probe((_q2.get("url") or [""])[0])))
+            except Exception as _e2:
+                self._json({"ok": False, "error": str(_e2)}, 500)
+
+        def _rapi_voice_vc_probe(self, path, data, parsed, method):
+            # 原 do_GET:961
+            try:
+                from . import voice_models as _vmod
+                _q3 = parse_qs(parsed.query)
+                self._json(dict({"ok": True}, **_vmod.probe_vc((_q3.get("url") or [""])[0])))
+            except Exception as _e3:
+                self._json({"ok": False, "error": str(_e3)}, 500)
+
+        def _rapi_local_models(self, path, data, parsed, method):
+            # 原 do_GET:969
+            try:
+                from . import local_models as _lm
+                _q = parse_qs(parsed.query)
+                if (_q.get("test") or [""])[0] == "1":
+                    self._json(dict({"ok": True}, **_lm.test_chat(
+                        (_q.get("base_url") or [""])[0], (_q.get("model") or [""])[0])))
+                else:
+                    _found, _meta = _lm.discover()
+                    self._json({"ok": True, "found": _found, "meta": _meta,
+                                "capability": _lm.CAPABILITY_NOTE})
+            except Exception as _e:
+                self._json({"ok": False, "error": str(_e)}, 500)
+
+        def _rapi_verifiers(self, path, data, parsed, method):
+            # 原 do_GET:984
+            try:
+                from . import verifiers as _vf
+                self._json({"ok": True, "verifiers": _vf.catalog()})
+            except Exception as e: # noqa: BLE001
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_verify(self, path, data, parsed, method):
+            # 原 do_GET:991
+            try:
+                from urllib.parse import urlparse as _up, parse_qs as _pq
+                from . import verifiers as _vf
+                _q = _pq(_up(self.path).query)
+                # ⛔ 把**运行中实例**的
+                #   `_db_how` 与 `_cap` 喂给检验器 —— 否则"我读的是不是正在写的那个号"
+                #   与"哪张表读失败了"（「消息库读不到」那条链的核心）只能判假绿。
+                try:
+                    _wo = _current_wx(parent)
+                    _vf.set_runtime_how(getattr(_wo, "_db_how", None),
+                                        getattr(_wo, "_cap", None))
+                except Exception:
+                    pass
+                self._json(_vf.run(str((_q.get("id") or [""])[0] or "")))
+            except Exception as e: # noqa: BLE001
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_config(self, path, data, parsed, method):
+            # 原 do_GET:1008
+            self._json(parent.masked_config())
+
+        def _rapi_memory(self, path, data, parsed, method):
+            # 原 do_GET:1010
+            q = parse_qs(parsed.query)
+            chat_key = (q.get("chat_key") or [""])[0]
+            try:
+                self._json(parent.memory_fn("list", chat_key))
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_sessions(self, path, data, parsed, method):
+            # 原 do_GET:1018
+            q = parse_qs(parsed.query)
+            try:
+                self._json({"ok": True, "sessions": parent.sessions_fn(
+                    int((q.get("limit") or ["30"])[0]))})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_status(self, path, data, parsed, method):
+            # 原 do_GET:1026
+            st = parent.status_provider()
+            try:
+                from . import risk as _risk
+                from . import input_backend as _ib
+                from . import version_matrix as _vm
+                from . import dep_heal as _dh
+                if isinstance(st, dict):
+                    st = dict(st)
+                    st["risk"] = _risk.snapshot()
+                    # 落盘健康（N4 审计项：热路径撞独占要看得见，不能只靠翻日志考古）：
+                    # `hits` = os.replace 撞共享冲突总次数（含重试成功——冲突本身就是信号）；
+                    # `worst_s` = 单次 replace 最坏等待秒数。与 risk/bg 同风格独立成段，
+                    # 这一段挂了不影响 status 其它字段。
+                    try:
+                        from . import persist as _persist
+                        st["io_health"] = {
+                            "replace_stats": dict(getattr(_persist, "REPLACE_STATS", {})),
+                            "replace_failures": dict(getattr(_persist, "REPLACE_FAILURES", {})),
+                        }
+                    except Exception as _ioe:
+                        st["io_health"] = {"error": str(_ioe)}
+                    # 当前输入后端档位（AGENTS §2.1 第 4 条：用了哪一档必须看得见）
+                    st["input"] = _ib.status()
+                    # 后台能力矩阵（⑥ 全后台审计）：每条路径是"全程后台"还是"真鼠标"，
+                    # 单一事实源在 agent/bg_status.py —— 控制台照它显示，不另写一份。
+                    try:
+                        from . import bg_status as _bg
+                        st["bg"] = _bg.status()
+                    except Exception as _be:
+                        st["bg"] = {"paths": [], "error": str(_be)}
+                    # 「我自己是谁」：
+                    # `wechat.py` 只从驱动库的 `get_self_info()` 拿自己的账号，**拿不到时那一串
+                    # "这条是不是我发的"判断会静默失效**（会回自己/@ 自己不理）。这里如实暴露：
+                    # `ok=False` ⇒ 控制台**写"没认出来"**，不许装没事。
+                    try:
+                        _wx = None
+                        for _n in ("wechat", "adapter", "wx", "wxadapter", "bot", "worker"):
+                            _o = getattr(parent, _n, None)
+                            if _o is not None and hasattr(_o, "self_identity"):
+                                _wx = _o
+                                break
+                        st["self"] = (_wx.self_identity() if _wx is not None
+                                      else {"ok": False, "why": "还拿不到微信实例（机器人未启动？）"})
+                    except Exception as _se:
+                        st["self"] = {"ok": False, "why": str(_se)}
+                    # 「我的其他账号（大号）」：
+                    # 登记了几项、昵称有几项**真在群成员里匹配上了**、当前反应档位 —— 摆出来让用户核对。
+                    try:
+                        st["owner"] = (_wx.owner_status() if _wx is not None
+                                       and hasattr(_wx, "owner_status")
+                                       else {"count": 0, "mode": "know", "why": "还拿不到微信实例（机器人未启动？）"})
+                    except Exception as _oe:
+                        st["owner"] = {"count": 0, "mode": "know", "why": str(_oe)}
+                    # 图标指纹表（⑦ 点击正确性）：按 微信版本×尺寸×DPI 存了几条、什么时候取的
+                    try:
+                        from . import ui_fingerprint as _ufp
+                        st["ui_fp"] = _ufp.hits()
+                        st["ui_fp"]["digest"] = _ufp.digest()
+                    except Exception as _fe:
+                        st["ui_fp"] = {"keys": {}, "error": str(_fe)}
+                    # 版本能力矩阵 + 版本门（W7：版本变了要出横幅、按未验证处理）
+                    # ⛔ 这两行原来跟其它富化段挤在
+                    #   **同一个大 try** 里，任何别的段抛异常都会把它们**一起丢掉** ⇒ 前端拿到
+                    #   `version/version_gate` 缺失 ⇒ 把"读不到"画成红字
+                    #   「版本未实测：按严格档暂停发送（可在配置里关掉 version_gate.strict）」
+                    #   ⇒ 把用户指去改一个根本没拦他的开关。⇒ 各自单独一层 try，
+                    #   出错就放 **`allow=None`（读不到）**，绝不是 False（不许发）。
+                    from . import version_gate as _vg2
+                    try:
+                        st["version"] = _vm.current()
+                    except Exception as _vme:
+                        st["version"] = {"wechat": "unknown", "adapter": "",
+                                         "error": str(_vme)[:80]}
+                    try:
+                        st["version_gate"] = _vg2.status()
+                    except Exception as _vge:
+                        st["version_gate"] = {"allow": None, "level": "unknown",
+                                              "error": str(_vge)[:80]}
+                    # 出站闸门读数（内部故障话术拦截 / 去重窗）——前端横幅要显示，见 console_html
+                    try:
+                        from . import sender as _sd3
+                        st["outbound_gate"] = _sd3.outbound_gate_status()
+                    except Exception as _oe:
+                        st["outbound_gate"] = {"blocked_internal": 0, "error": str(_oe)[:60]}
+                    # 待决单（⑦ 版本不匹配四选一）：门没过就把这件事开成一张单，控制台据此弹模态。
+                    # 开单是幂等的（同一对版本只开一次、问过就不再问），所以这里每次轮询调用是安全的。
+                    try:
+                        from . import pending_decisions as _pd
+                        _pnd = _vg2.pending()
+                        _pit = _pnd.get("item") or {}
+                        st["pending_decisions"] = {
+                            "open": len(_pd.open_items()),
+                            "summary": _pd.summary(),
+                            "needed": bool(_pnd.get("needed")),
+                            "item": _pit if str(_pit.get("status")) == "open" else None,
+                        }
+                    except Exception as _pe:
+                        st["pending_decisions"] = {"open": 0, "error": str(_pe)}
+                    # 一键动作的后台作业（⑦）：升级适配层 / 更新本体 都是分钟级，
+                    # 起在后台线程里（agent/jobs.py），这里把状态给控制台显示跑到哪、成没成。
+                    try:
+                        from . import jobs as _jobs
+                        st["jobs"] = _jobs.status().get("jobs") or {}
+                    except Exception as _je:
+                        st["jobs"] = {"_error": str(_je)}
+                    # 微信装没装
+                    try:
+                        from .wechat import wechat_version_info as _wvi
+                        _wi = _wvi() or {}
+                        st["wechat_install"] = _wi.get("install") or {
+                            "state": _wi.get("state") or "unknown",
+                            "installed": bool(_wi.get("installed")),
+                            "detail": _wi.get("detail") or "",
+                            "official_url": "https://weixin.qq.com/",
+                            "action": "none"}
+                    except Exception as _e:
+                        st["wechat_install"] = {"state": "unknown", "installed": False,
+                                                "detail": "检测异常：" + str(_e),
+                                                "official_url": "https://weixin.qq.com/",
+                                                "action": "none"}
+                    # 微信数据目录：
+                    # 这一项报的是**当前实际在读的目录**（不是配置值），还带上"你填的那个为什么
+                    # 没用、现在回落到哪"。控制台「微信数据目录」那一行直接显示它。
+                    try:
+                        from . import wechat_dir as _wdir_s
+                        _wxo = _current_wx(parent)
+                        st["wechat_dir"] = _wdir_s.status(
+                            how=getattr(_wxo, "_db_how", None) if _wxo is not None else None,
+                            dir_info=getattr(_wxo, "_db_dir_info", None) if _wxo is not None else None)
+                    except Exception as _wde:
+                        st["wechat_dir"] = {"ok": False, "effective": "", "src": "?",
+                                            "now": "取不到", "candidates": [],
+                                            "text": "取不到微信数据目录状态",
+                                            "note": "取不到微信数据目录状态：%s" % _wde}
+                    # 依赖体检（盯项目运行时的 site-packages，不是当前进程）
+                    st["deps"] = {"summary": _dh.summary_line(),
+                                  "offline_available": _dh.offline_available(),
+                                  "source": _dh.probe_source()}
+                    # 媒体与语音（能力 A/B/C）：引擎链实测状态 + 图库现状 + 转发开关
+                    try:
+                        from . import media_status as _ms
+                        st["media"] = _ms.snapshot()
+                    except Exception as _e2:
+                        st["media"] = {"error": str(_e2)}
+                    # 上云（预留接口）：端点三态 + 是否配了 Token
+                    try:
+                        from . import cloud as _cl2
+                        st["cloud"] = _cl2.snapshot()
+                    except Exception as _e11:
+                        st["cloud"] = {"error": str(_e11)}
+                    # 图/文/视频分流 + 视频读取（第 20 条）
+                    try:
+                        from . import model_routes as _mrt
+                        from . import video_read as _vrd
+                        st["model_routes"] = _mrt.snapshot()
+                        st["video_read"] = _vrd.snapshot()
+                    except Exception as _e10:
+                        st["model_routes"] = {"error": str(_e10)}
+                    # 存档屏蔽（第 10 条）：名单 + 存档里被屏蔽的条数
+                    try:
+                        from . import archive_filter as _af2
+                        st["archive"] = _af2.snapshot(getattr(parent, "store", None))
+                    except Exception as _e9:
+                        st["archive"] = {"error": str(_e9)}
+                    # 计时提醒 + 节假日问候（第 12/13 条）
+                    try:
+                        from . import timers as _tmr
+                        from . import holidays as _hol2
+                        st["timers"] = _tmr.snapshot()
+                        st["holiday"] = _hol2.snapshot()
+                    except Exception as _e8:
+                        st["timers"] = {"error": str(_e8)}
+                    # 响应等级三件（第 15/16/18 条）：档位模式 / 峰谷映射 / 指令禁言现状
+                    try:
+                        from . import tier_control as _tcl
+                        st["tier"] = _tcl.snapshot()
+                    except Exception as _e7:
+                        st["tier"] = {"error": str(_e7)}
+                    # 备选模型（第 3 条）：清单 + 最近一次"改用备选"的现场
+                    try:
+                        from .llm import fallback_status as _fbs
+                        st["fallback"] = _fbs()
+                    except Exception as _e6:
+                        st["fallback"] = {"error": str(_e6)}
+                    # 撤回剔除（第 14 条）：已剔除多少条 + 最近一条的现场
+                    try:
+                        from . import recall as _rcl
+                        st["recall"] = _rcl.summary()
+                    except Exception as _e5:
+                        st["recall"] = {"error": str(_e5)}
+                    # 本地文件搜索（找文件并发送）：现场读目录状态 + 台账
+                    try:
+                        from . import file_search as _fsx
+                        st["file_search"] = _fsx.snapshot()
+                    except Exception as _e4:
+                        st["file_search"] = {"error": str(_e4)}
+                    # 自定义工具（工具与插件面板）：清单现场扫 + 调用统计
+                    try:
+                        from . import user_tools as _ut2
+                        st["user_tools"] = _ut2.snapshot()
+                    except Exception as _e3:
+                        st["user_tools"] = {"error": str(_e3)}
+            except Exception as _se:
+                # ⛔ **富化段出错不许悄悄丢** —— 至少把"读不到"如实放进去，
+                #   让前端能区分「读数读不到」与「真的不许发」（`allow=None` vs `False`）。
+                try:
+                    if isinstance(st, dict):
+                        st.setdefault("version", {"wechat": "unknown", "adapter": "",
+                                                  "error": str(_se)[:80]})
+                        st.setdefault("version_gate", {"allow": None, "level": "unknown",
+                                                       "error": str(_se)[:80]})
+                        st["status_error"] = str(_se)[:120]
+                except Exception:
+                    pass
+            self._json(st)
+
+        def _rapi_file_search_add(self, path, data, parsed, method):
+            # 原 do_GET:1230
+            self._file_search_dirs(data, path, parsed.query)
+
+        def _rapi_briefs(self, path, data, parsed, method):
+            # 原 do_GET:1233
+            self._briefs_api(data, "GET")
+
+        def _rapi_tools_new_manifest(self, path, data, parsed, method):
+            # 原 do_GET:1237
+            self._tools_new_manifest()
+
+        def _rapi_tools_reload(self, path, data, parsed, method):
+            # 原 do_GET:1239
+            try:
+                from . import user_tools as _ut3
+                snap = _ut3.snapshot()
+                self._json({"ok": True, "tools": snap,
+                            "note": "清单已重扫；正在跑的会话在下一轮构建工具清单时生效"})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_tools_toggle(self, path, data, parsed, method):
+            # 原 do_GET:1248
+            try:
+                from . import user_tools as _ut4
+                q = parse_qs(urlparse(self.path).query)
+                nm = str((q.get("name") or [""])[0])
+                on = str((q.get("on") or ["1"])[0]) not in ("0", "false", "False", "")
+                ok_t, why_t = _ut4.set_enabled(nm, on)
+                self._json({"ok": bool(ok_t), "why": why_t, "tools": _ut4.snapshot()})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_tools_export(self, path, data, parsed, method):
+            # 把工具导出成**一份文档**（只生成文本：不写文件、不访问网络）
+            try:
+                from . import user_tools as _ut6
+                q = parse_qs(urlparse(self.path).query)
+                nm = str((q.get("name") or [""])[0]).strip().lower()
+                text, why = _ut6.export_text(nm)
+                self._json({"ok": bool(text), "name": nm, "text": text, "why": why,
+                            "note": "把这份文档发给别人，对方在「工具与插件」点「导入工具」就能加上。"})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_tools_test(self, path, data, parsed, method):
+            # （③b「插件加到软件里的引导」配套）：勾选之前先「试一下」。
+            # 复用**唯一执行点** `user_tools.call()`（只发 HTTP、域名白名单、内网永远拒），
+            # 这里不另写一条出网路径——否则那条路不会被既有判据约束到。
+            try:
+                from . import user_tools as _ut5
+                q = parse_qs(urlparse(self.path).query)
+                nm = str((q.get("name") or [""])[0]).strip().lower()
+                raw = str((q.get("args") or ["{}"])[0]).strip() or "{}"
+                try:
+                    args = json.loads(raw)
+                except Exception as e:
+                    self._json({"ok": False, "error": "参数不是合法 JSON：%s" % e})
+                    return
+                if not isinstance(args, dict):
+                    self._json({"ok": False, "error": '参数必须是一个 JSON 对象，例如 {"city": "北京"}'})
+                    return
+                hit = [t for t in _ut5.load()[0] if t.get("name") == nm]
+                if not hit:
+                    self._json({"ok": False, "error": "没找到自定义工具「%s」——先点「重新加载清单」，"
+                                                       "看它是不是作为坏清单列在下面了" % (nm or "?")})
+                    return
+                t0 = time.time()
+                r = _ut5.call(hit[0], args)
+                self._json({"ok": not r.get("is_error"), "is_error": bool(r.get("is_error")),
+                            "name": nm, "host": (urlparse(str(hit[0].get("url") or "")).hostname or ""),
+                            "ms": int((time.time() - t0) * 1000),
+                            "content": str(r.get("content") or ""),
+                            "note": "这次是**真发了一次 HTTP**（也会记进调用次数）；模型每用一次同样记一次。"})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_ui_fingerprint_take(self, path, data, parsed, method):
+            # 原 do_GET:1259
+            self._ui_fingerprint_take(data, parsed.query)
+
+        def _rapi_ui_fingerprint_forget(self, path, data, parsed, method):
+            # 原 do_GET:1262
+            self._ui_fingerprint_forget(data, parsed.query)
+
+        def _rapi_prompt_preview(self, path, data, parsed, method):
+            # 原 do_GET:1264
+            self._prompt_preview()
+
+        def _rapi_personas_favs(self, path, data, parsed, method):
+            # 原 do_GET:1267
+            self._personas_favs()
+
+        def _rapi_image_gen_local(self, path, data, parsed, method):
+            # 原 do_GET:1271
+            try:
+                from urllib.parse import parse_qs as _pq, urlparse as _up
+                from . import sd_local as _sd
+                _qs = _pq(_up(self.path).query)
+                _out = {"ok": True, "status": _sd.status()}
+                if str((_qs.get("estimate") or ["0"])[0]).lower() not in ("", "0", "false"):
+                    _out["estimate"] = _sd.estimate(do_probe=True)
+                self._json(_out)
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_image_gen_local_progress(self, path, data, parsed, method):
+            # 原 do_GET:1284
+            try:
+                from . import sd_local as _sd
+                self._json({"ok": True, "progress": _sd.progress(), "status": _sd.status()})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_image_gen_local_install(self, path, data, parsed, method):
+            # 原 do_GET:1291
+            try:
+                from . import sd_local as _sd
+                _ao = _truthy(data.get("allow_online"))
+                _ok, _why, _info = _sd.install_async(allow_online=(None if _ao is None else bool(_ao)))
+                self._json({"ok": bool(_ok), "note": _why, "info": _info, "progress": _sd.progress()})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_image_gen_local_start(self, path, data, parsed, method):
+            # 原 do_GET:1300
+            try:
+                from . import sd_local as _sd
+                _ok, _why = _sd.start_server()
+                self._json({"ok": bool(_ok), "note": _why})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_image_gen_local_stop(self, path, data, parsed, method):
+            # 原 do_GET:1307
+            try:
+                from . import sd_local as _sd
+                _ok, _why = _sd.stop_server()
+                self._json({"ok": bool(_ok), "note": _why})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_image_gen_test(self, path, data, parsed, method):
+            # 原 do_GET:1314
+            try:
+                from . import image_gen as _ig
+                _r = _ig.generate("", "帮我画一张两只猫的图")
+                self._json({"ok": bool(_r.get("ok")), "result": _r})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_tts_test(self, path, data, parsed, method):
+            # 原 do_GET:1321
+            try:
+                from . import voice_models as _vm
+                txt = "这是一条语音回复的试听"
+                try:
+                    q = parse_qs(urlparse(self.path).query)
+                    if (q.get("text") or [""])[0]:
+                        txt = str((q.get("text") or [""])[0])[:120]
+                except Exception:
+                    pass
+                p, err, info = _vm.make(txt)
+                _inf = dict(info or {})
+                _be = str(_inf.get("engine") or _vm.backend())
+                self._json({"ok": bool(p), "path": p or "", "err": err or "",
+                            "info": _inf, "engine": _be,
+                            "size": (os.path.getsize(p) if p and os.path.exists(p) else 0),
+                            "note": "试听只做合成，不会发送；发出去的是音频文件，不是微信语音条。"
+                                    "当前这一档＝%s" % _be})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_voice_test(self, path, data, parsed, method):
+            # 原 do_GET:1344
+            try:
+                from . import voice as _vt
+                r = _vt.selftest_loop()
+                self._json({"ok": bool(r.get("ok")), "result": r})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_wechat_recheck(self, path, data, parsed, method):
+            # 原 do_GET:1352
+            try:
+                from .wechat import wechat_version_info as _wvi2
+                info = _wvi2() or {}
+                self._json({"ok": True, "version": info, "install": info.get("install") or {}})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_wechat_dir(self, path, data, parsed, method):
+            # 原 do_GET:1359
+            try:
+                from . import wechat_dir as _wdir2
+                _q4 = parse_qs(parsed.query)
+                _extra = (_q4.get("path") or [""])[0]
+                _r4 = _wdir2.status(_current_dir_how(parent),
+                                    explicit=(_extra or None))
+                _r4["candidates"] = _wdir2.probe(_extra or "").get("candidates") or []
+                _r4["ok"] = True
+                self._json(_r4)
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)}, 500)
+
+        def _rapi_version_allow(self, path, data, parsed, method):
+            # 原 do_GET:1374
+            try:
+                from . import version_gate as _vg3
+                _vg3.allow_session("console")
+                self._json({"ok": True, "gate": _vg3.status()})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_balance(self, path, data, parsed, method):
+            # 原 do_GET:1381
+            try:
+                self._json(parent.balance_fn())
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_logs(self, path, data, parsed, method):
+            # 原 do_GET:1386
+            self._json({"lines": list(parent.log_buffer)})
+
+        def _rapi_wechat_groups(self, path, data, parsed, method):
+            # 原 do_GET:1388
+            try:
+                _rf2 = ""
+                try:
+                    from urllib.parse import urlparse as _up4, parse_qs as _pq4
+                    _rf2 = str((_pq4(_up4(self.path).query).get("refresh") or [""])[0] or "").lower()
+                except Exception:
+                    _rf2 = ""
+                if _rf2 in ("1", "true", "yes", "on"):
+                    _o4 = _current_wx(parent)
+                    if _o4 is not None and hasattr(_o4, "refresh_groups"):
+                        try:
+                            _o4.refresh_groups()
+                        except Exception as _e4:
+                            self._json({"ok": False, "attach_ok": True, "degraded": True,
+                                        "error": ("重读群列表失败（联系人库被微信占用？）⇒ "
+                                                  "消息收发不受影响；稍等几秒再试。（%s）"
+                                                  % str(_e4)[:100]), "groups": []})
+                            return
+                self._json(parent.groups_fn())
+            except Exception as e:
+                self._json({"ok": False, "error": str(e), "groups": []})
+
+        def _rapi_emojis(self, path, data, parsed, method):
+            # 原 do_GET:1411
+            try:
+                self._json({"ok": True, "emojis": parent.emojis_fn()})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e), "emojis": []})
+
+        def _rapi_personas_scores(self, path, data, parsed, method):
+            # 原 do_GET:1417
+            try:
+                self._json(parent.persona_scores_fn())
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_feedback(self, path, data, parsed, method):
+            # 原 do_GET:1423
+            try:
+                from . import feedback as FB
+                st = FB.stats()
+                st["ok"] = True
+                st["recent"] = [{"id": it.get("id"), "kind": it.get("kind"),
+                                 "at_h": it.get("at_h"), "sent_h": it.get("sent_h", ""),
+                                 "text": str(it.get("text") or "")[:60]}
+                                for it in sorted(FB._read_all(), key=lambda x: x.get("at") or 0)[-5:]]
+                self._json(st)
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_personas(self, path, data, parsed, method):
+            # 原 do_GET:1436
+            try:
+                from agent.persona import PERSONAS, PERSONA_CATS
+                self._json({"ok": True, "personas": [
+                    {"key": k, "name": v.get("name") or k, "text": v.get("text") or "",
+                     "cat": PERSONA_CATS.get(k, "🔥 网络热门")}
+                    for k, v in PERSONAS.items()]})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_persona_cats(self, path, data, parsed, method):
+            # 原 do_GET:1446
+            try:
+                import json as _json
+                _p = os.path.join(parent._asset_root, "..", "data", "persona_cats.json")
+                try:
+                    with open(_p, "r", encoding="utf-8") as f:
+                        user_cats = _json.load(f)
+                except Exception:
+                    user_cats = {}
+                from agent.persona import PERSONA_CATS
+                built = sorted(set(PERSONA_CATS.values()))
+                self._json({"ok": True, "built": built,
+                            "user": [{"name": k, "desc": (v or {}).get("desc", "")} for k, v in user_cats.items()]})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_personas_custom(self, path, data, parsed, method):
+            # 原 do_GET:1462
+            try:
+                import json as _json
+                _p = os.path.join(parent._asset_root, "..", "data", "custom_personas.json")
+                try:
+                    with open(_p, "r", encoding="utf-8") as f:
+                        items = _json.load(f)
+                except Exception:
+                    items = {}
+                self._json({"ok": True, "custom": [
+                    {"key": k, "name": (v or {}).get("name", k), "text": (v or {}).get("text", ""),
+                     "cat": (v or {}).get("cat") or "📝 自定义"}
+                    for k, v in items.items()]})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_ui_layout(self, path, data, parsed, method):
+            # 原 do_GET:1478
+            try:
+                from agent.wechat_ui import _load_layout
+                self._json({"ok": True, "layout": _load_layout()})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_ui_recalibrate(self, path, data, parsed, method):
+            # 原 do_GET:1485
+            try:
+                self._json(parent.recalibrate_fn())
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_open_path(self, path, data, parsed, method):
+            # 原 do_GET:1491
+            try:
+                self._json(parent.open_path_fn(str(data.get("path") or "")))
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_selfcheck_stop(self, path, data, parsed, method):
+            # 原 do_GET:1497
+            try:
+                parent.selfcheck_stop_fn()
+                self._json({"ok": True})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_archive(self, path, data, parsed, method):
+            # 原 do_GET:1504
+            try:
+                self._archive_view()
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)}, 500)
+
+# ── 路由表分派──
+
+        def _rapi_update_skip_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1038
+            try:
+                from . import update_check as _uc
+                self._json(_uc.skip_version(str((data or {}).get("version") or "")))
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)[:80]}, 500)
+
+        def _rapi_update_apply_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1045
+            try:
+                from . import update_apply as _ua
+                self._json(_ua.start_async())
+            except Exception as e:
+                self._json({"ok": False, "why": "起不动更新作业：%s" % str(e)[:80]}, 500)
+
+        def _rapi_update_reset_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1055
+            try:
+                from . import update_check as _uc_r
+                self._json(_uc_r.reset_seen_version())
+            except Exception as e:
+                self._json({"ok": False, "why": "重置失败：%s" % str(e)[:80]}, 500)
+
+        def _rapi_risk_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1064
+            try:
+                from . import risk as _risk
+                act = str((data or {}).get("action") or "show")
+                if act == "pause":
+                    _risk.pause(str((data or {}).get("reason") or "手动暂停"))
+                elif act == "resume":
+                    _risk.resume()
+                elif act == "recover":
+                    # ⛔ `risk.recover()`
+                    #   原来**全仓零调用者**（B 线复核时点出：它只活在模块里）——
+                    #   而它干的事跟 `resume()` 不是一件：**两套停机开关一起清**
+                    #   （config 的 `risk.paused` + 控制台横幅认的 `data/paused.flag`），
+                    #   坏档 fail-closed 把用户锁住时，这就是那把"一键恢复"的钥匙。
+                    _risk.recover()
+                self._json({"ok": True, "risk": _risk.snapshot()})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)}, 500)
+
+        def _rapi_version_action_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1083
+            try:
+                from . import version_gate as _vg6
+                r = _vg6.run_action(str((data or {}).get("choice") or ""),
+                                    str((data or {}).get("id") or ""))
+                self._json({"ok": bool(r.get("ok")), "result": r,
+                            "message": str(r.get("message") or "")})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)}, 500)
+
+        def _rapi_decide_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1095
+            try:
+                from . import version_gate as _vg5
+                r = _vg5.decide(str((data or {}).get("id") or ""),
+                                str((data or {}).get("choice") or ""),
+                                note=str((data or {}).get("note") or ""))
+                _msg5 = str((r.get("action") or {}).get("message") or "")
+                self._json({"ok": True, "result": r, "message": _msg5})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)}, 500)
+
+        def _rapi_config_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1108
+            try:
+                new_cfg = data if isinstance(data, dict) and data else get_config()
+                # 部分字段保存不丢段：与当前配置深合并（新值优先，缺失键保留旧值）
+                # 注意：deep_merge 返回全新深拷贝，绝不能原地改 _current_config，
+                # 否则 _protect_secrets 拿到的"旧值"已被掩码写脏，真实 key 会丢失。
+                new_cfg = deep_merge(get_config(), new_cfg)
+                _protect_secrets(new_cfg) # 掩码值不覆盖真实密钥
+                # 「微信数据目录」**手动指定必须过校验**：
+                # 不过关就不写盘，把原因与回落目标返回给控制台显示。
+                _bad_dir = _wechat_dir_conflict(new_cfg)
+                if _bad_dir:
+                    self._json(_bad_dir)
+                else:
+                    # ⛔ （对标 CowAgent 的"配置写回失败**只许告警、不许停用/改动能力**"）：
+                    #   原来是**先 `set_config` 再 `save_config`** ⇒ 落盘失败时抛异常、控制台如实报
+                    #   `{ok:false}`，可**内存里那份已经被换掉了**——于是"这项能力实际上是开着的"，
+                    #   用户却被告知没保存；重启后它又悄悄变回旧的（状态前后不一致，最难查）。
+                    #   ⇒ 顺序倒过来：**先落盘、成了再换内存**（盘与内存要么一起新、要么一起旧）。
+                    save_config(new_cfg)
+                    set_config(new_cfg)
+                    if parent.on_save:
+                        parent.on_save(new_cfg)
+                    self._json({"ok": True})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)}, 500)
+
+        def _rapi_wechat_dir_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1134
+            try:
+                from . import wechat_dir as _wdir3
+                _p3 = str((data or {}).get("path") or "")
+                _r3 = _wdir3.save(_p3, on_save=parent.on_save)
+                # 保存后**立即重探一遍**并把候选回显
+                _st3 = _wdir3.status(_current_dir_how(parent))
+                _st3["candidates"] = _wdir3.probe(_p3).get("candidates") or []
+                _r3["wechat_dir"] = _st3
+                self._json(_r3)
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)}, 500)
+
+        def _rapi_archive_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1148
+            try:
+                self._archive_view()
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)}, 500)
+
+        def _rapi_archive_block_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1155
+            try:
+                from . import archive_filter as _af
+                st = getattr(parent, "store", None)
+                if st is None:
+                    self._json({"ok": False, "error": "机器人未启动：拿不到存档句柄"})
+                else:
+                    ck = str((data or {}).get("chat_key") or "").strip()
+                    ids = (data or {}).get("ids") or []
+                    if not ck:
+                        self._json({"ok": False, "error": "chat_key 不能为空"})
+                    elif path.endswith("block"):
+                        self._json(_af.block(st, ck, ids, reason=str((data or {}).get("reason") or "面板操作")))
+                    elif path.endswith("unblock"):
+                        self._json(_af.unblock(st, ck, ids))
+                    else:
+                        self._json(_af.delete(st, ck, ids))
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)}, 500)
+
+        def _rapi_cloud_test_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1175
+            try:
+                from . import cloud as _cl
+                which = str((data or {}).get("which") or "")
+                url = str((data or {}).get("url") or "")
+                self._json(_cl.probe(which=which, url=url))
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)}, 500)
+
+        def _rapi_prompt_preview_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1184
+            self._prompt_preview()
+
+        def _rapi_cursor_upload_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1188
+            try:
+                import base64
+                b64 = str(data.get("image") or "")
+                if len(b64) > 12 * 1024 * 1024:
+                    return self._json({"ok": False, "error": "图片过大（≤8MB 源图）"}, 400)
+                if b64.startswith("data:"):
+                    b64 = b64.split(",", 1)[1]
+                img = base64.b64decode(b64)
+                if not img.startswith(b"\x89PNG") and not img.startswith(b"\xff\xd8"):
+                    return self._json({"ok": False, "error": "仅支持 PNG/JPEG 图片"}, 400)
+                # 强制 ≤64px（CSS 光标在部分 DPI 下 128 会变糊/超限兼容不佳；64 最稳）+ RGBA 透明保底
+                from PIL import Image as _PILImg
+                import io as _io
+                try:
+                    _im = _PILImg.open(_io.BytesIO(img)).convert("RGBA")
+                    _im.thumbnail((64, 64), _PILImg.LANCZOS)
+                    _buf = _io.BytesIO()
+                    _im.save(_buf, "PNG", optimize=True)
+                    _img_out = _buf.getvalue()
+                except Exception:
+                    return self._json({"ok": False, "error": "图片解析失败，请换 PNG/JPEG"}, 400)
+                with open(os.path.join(parent._asset_root, "custom-cursor.png"), "wb") as f:
+                    f.write(_img_out)
+                # 同步生成"点头帧"（点击时换帧，与默认光标同机制）
+                try:
+                    _nod = _im.rotate(10, resample=_PILImg.BICUBIC, expand=False, fillcolor=(0, 0, 0, 0))
+                    _nod.thumbnail((60, 58), _PILImg.LANCZOS)
+                    _nc = _PILImg.new("RGBA", (64, 64), (0, 0, 0, 0))
+                    _nc.paste(_nod, (2, 6), _nod)
+                    _nb = _io.BytesIO()
+                    _nc.save(_nb, "PNG", optimize=True)
+                    with open(os.path.join(parent._asset_root, "custom-cursor-nod.png"), "wb") as f:
+                        f.write(_nb.getvalue())
+                except Exception:
+                    pass
+                self._json({"ok": True, "note": "自定义光标已保存（≤64px PNG，含点头帧）"})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)}, 500)
+
+        def _rapi_cursor_reset_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1229
+            try:
+                _p = os.path.join(parent._asset_root, "custom-cursor.png")
+                if os.path.exists(_p):
+                    os.remove(_p)
+                self._json({"ok": True})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)}, 500)
+
+        def _rapi_memory_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1238
+            try:
+                action = str(data.get("action") or "delete")
+                if action == "update":
+                    r = parent.memory_fn("update", str(data.get("chat_key") or ""),
+                                         str(data.get("user_id") or ""),
+                                         str(data.get("name") or ""),
+                                         data.get("contents") or [])
+                else:
+                    r = parent.memory_fn(action, str(data.get("chat_key") or ""),
+                                         str(data.get("user_id") or ""),
+                                         scope=str(data.get("scope") or "all"))
+                self._json(r)
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)}, 500)
+
+        def _rapi_sessions_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1254
+            try:
+                self._json({"ok": True, "sessions": parent.sessions_fn(
+                    int(data.get("limit") or 30))})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)}, 500)
+
+        def _rapi_test_api_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1279
+            try:
+                if parent.test_api_fn:
+                    self._json(parent.test_api_fn())
+                else:
+                    self._json({"ok": False, "error": "未提供 test_api_fn"})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_poke_test_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1287
+            try:
+                self._json(parent.poke_test_fn(str(data.get("group_wxid") or ""),
+                                               bool(data.get("verify_only"))))
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_verifiers_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1295
+            try:
+                from . import verifiers as _vf
+                self._json({"ok": True, "verifiers": _vf.catalog()})
+            except Exception as e: # noqa: BLE001
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_verify_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1302
+            try:
+                from urllib.parse import urlparse as _up, parse_qs as _pq
+                from . import verifiers as _vf
+                _q = _pq(_up(self.path).query)
+                # ⛔ 同上一处 —— 把运行中
+                #   实例的 `_db_how` 与 `_cap` 都喂给检验器，"我读的是不是正在写的那个号"
+                #   与"哪张表读失败了"才有铁证（否则只能判假绿）。
+                try:
+                    _wo2 = _current_wx(parent)
+                    _vf.set_runtime_how(getattr(_wo2, "_db_how", None),
+                                        getattr(_wo2, "_cap", None))
+                except Exception:
+                    pass
+                self._json(_vf.run(str((_q.get("id") or [""])[0] or "")))
+            except Exception as e: # noqa: BLE001
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_selfcheck_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1320
+            try:
+                _mode = "code" if str((data or {}).get("mode") or "") == "code" else "full"
+                self._json(parent.selfcheck_fn(_mode))
+            except Exception as e:
+                self._json({"ok": False, "checks": [], "summary": str(e)})
+
+        def _rapi_prices_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1328
+            try:
+                from . import llm as _llm_mod
+                self._json(getattr(_llm_mod, "_OFFICIAL_PRICES", {}) or {})
+            except Exception as _e:
+                self._json({"__err": str(_e)})
+
+        def _rapi_data_export_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1335
+            try:
+                self._bytes(_data_export(ROOT), "application/zip")
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_data_import_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1341
+            try:
+                self._json(_data_import(ROOT, raw if isinstance(raw, (bytes, bytearray)) else b""))
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_wechat_groups_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1347
+            try:
+                _rf = ""
+                try:
+                    from urllib.parse import urlparse as _up3, parse_qs as _pq3
+                    _rf = str((_pq3(_up3(self.path).query).get("refresh") or [""])[0] or "").lower()
+                except Exception:
+                    _rf = ""
+                if _rf in ("1", "true", "yes", "on"):
+                    _o3 = _current_wx(parent)
+                    if _o3 is None or not hasattr(_o3, "refresh_groups"):
+                        self._json({"ok": False, "attach_ok": False,
+                                    "error": "微信还没接上 ⇒ 没法重读群列表", "groups": []})
+                        return
+                    try:
+                        _o3.refresh_groups()
+                    except Exception as _e3:
+                        self._json({"ok": False, "attach_ok": True, "degraded": True,
+                                    "error": ("重读群列表失败（联系人库 contact.db 被微信占用？）⇒ "
+                                              "消息收发与监听不受影响；稍等几秒再点一次。（%s）"
+                                              % str(_e3)[:100]), "groups": []})
+                        return
+                    # ⛔ 刷完必须**重算监听目标**（否则新群不进 targets、
+                    #   显示名还是 wxid，界面同时给出"读到 N 个群 / 监听目标 0 个"两个结论）。
+                    try:
+                        _rt = getattr(parent, "refresh_targets_fn", None)
+                        if callable(_rt):
+                            _rt("控制台「刷新群列表」")
+                    except Exception as _e3b:
+                        print("重算监听目标失败（不影响群列表本身）：%s" % str(_e3b)[:80])
+                self._json(parent.groups_fn())
+            except Exception as e:
+                self._json({"ok": False, "error": str(e), "groups": []})
+
+        def _rapi_community_export_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1382
+            try:
+                if not parent.community_export_fn:
+                    self._json({"ok": False, "error": "未提供导出功能"})
+                else:
+                    self._json(parent.community_export_fn(str(data.get("kind") or "holyshits")))
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)}, 500)
+
+        def _rapi_community_upload_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1391
+            try:
+                if not parent.community_upload_fn:
+                    self._json({"ok": False, "error": "未提供上传功能"})
+                else:
+                    self._json(parent.community_upload_fn(data))
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)}, 500)
+
+        def _rapi_scoring_import_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1400
+            try:
+                if not parent.scoring_import_fn:
+                    self._json({"ok": False, "error": "未提供评分导入"})
+                else:
+                    self._json(parent.scoring_import_fn(str(data.get("text") or "")))
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)}, 500)
+
+        def _rapi_scoring_stats_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1409
+            try:
+                from agent.scoring import stats as _s
+                self._json({"ok": True, "data": _s()})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)}, 500)
+
+        def _rapi_learning_start_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1415
+            try:
+                from agent.config import get_config as _gc, save_config as _sc
+                _c = _gc()
+                # 默认卡判定：未自定义角色文本 / 名称是内置小鲸鱼
+                _role = str(_c.get("persona", {}).get("role_text") or "").strip()
+                _name = str(_c.get("persona", {}).get("bot_name") or "").strip()
+                if _role or (_name and "小鲸鱼" not in _name and "小鲷鱼" not in _name):
+                    self._json({"ok": False,
+                                "error": "机器学习（金句素材库训练/学习评估）仅默认角色卡（小鲸鱼）可用——其他角色卡不应用机器学习，防止 OOC；联网收集/模型补足不受限"})
+                    return
+                _c.setdefault("scoring", {})["enabled"] = True; _sc(_c)
+                self._json({"ok": True, "note": "✅ 机器学习已开启：之后每条发言，群友24h内热烈回应(接话/追问/@)会为该话术加分，冷场降权；会话越久越贴合。评分引擎已在工作。（默认角色卡·小鲸鱼）"})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_learning_evaluate_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1431
+            try:
+                from agent import llm
+                from agent.scoring import top_reactions
+                rxns = top_reactions(14)
+                # 只取"机器人自己发的、群友反响好"的话术；剔除系统/平台侧文本（如"撤回/一拍/xx加入了"这类非机器人发言）
+                import re as _re
+                _JUNK = ("撤回", "拍一拍", "拍拍", "加入了", "邀请", "退出了", "对方撤回", "你撤回", "以上是", "语音", "图片", "[表情]")
+                rxns = [r for r in rxns if str(r.get("text") or "").strip() and not any(j in str(r.get("text") or "") for j in _JUNK)]
+                if rxns:
+                    lines = ["下面是我【机器人自己发的】、且群友反响好的话术（含热度分，供评估学习效果）："]
+                    for r in rxns:
+                        lines.append("- “%s”（热度 %.2f)" % (str(r.get("text") or "")[:60], float(r.get("score") or 0)))
+                    sample = "\n".join(lines)
+                else:
+                    sample = "（当前没有可评估的机器人高反应发言——请让机器人多聊、等群友有热烈回应后评分引擎再积累。）"
+                RULES = """【机器学习效果评分细则】（每维 0~100.00 精确到百分位，总分=8 维加权均值，保留 2 位小数）
+对上面【机器人自己发的】话术评分，绝不把系统提示/用户消息当机器人发言。
+维度：
+度(12%)：像真人口吻，无AI腔/总结腔；
+度(16%)：有梗、机灵、让人想接；
+贴合(20%)：是不是该角色会说的话（绝不换魂）；
+度(12%)：接话时机、回球、处理冷场/被调侃；
+气息(12%)：是不是有"真人日常"的味道，而非机械应答；
+力(10%)：有没有抓住群里细节/梗/前后文；
+感(10%)：长短句、停顿、分条像不像真人打字；
+真实(8%)：用词口语化、不书面、不列点。
+不许给整分/整五/整十（如 80.00/85.00/90.00 一律不得出现）——每个维度必须按真实感受给出带小数的分数（如 84.37、79.15、91.03），百分位不得为 0。
+（务必）：
+自然=X.XX 有趣=X.XX 人设=X.XX 机敏=X.XX 生活=X.XX 观察=X.XX 节奏=X.XX 口语=X.XX
+X.XX
+习前的对话质量提升幅度：XX.X%
+评：……（并指出哪一维进步最明显）
+"""
+                sys = [{"role": "system", "content": RULES}, {"role": "user", "content": sample}]
+                r = llm.chat_completion(sys, temperature=0.2)
+                out = (r.get("message") or {}).get("content", "")
+                # 校验：若所有分都是整分（百分位全 0），强制重试一次并警告
+                import re as _re2
+                nums = _re2.findall(r"=(\d+\.\d{2})", out)
+                if nums and all(n.endswith(".00") or n.endswith(".50") for n in nums):
+                    sys2 = sys + [{"role": "assistant", "content": out},
+                                  {"role": "user", "content": "你上面的分数全是整分/半整分，违反细则。请重新按真实细微差异打分，每维必须带非零百分位（如 84.37），禁止 80.00/85.00 之类的整分。"}]
+                    r2 = llm.chat_completion(sys2, temperature=0.3)
+                    out = (r2.get("message") or {}).get("content", "") or out
+                self._json({"ok": True, "eval": out,
+                            "note": "已按8维细则(model评分)评估，分数精确到百分位（禁止整分）；仅评机器人发言"})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_pause_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1481
+            parent.pause_fn()
+            self._json({"ok": True})
+
+        def _rapi_image_gen_local_install_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1484
+            try:
+                from . import sd_local as _sd
+                _ao = data.get("allow_online")
+                _ok, _why, _info = _sd.install_async(allow_online=(None if _ao is None else bool(_ao)),
+                                                     pid=str(data.get("preset") or ""))
+                self._json({"ok": bool(_ok), "note": _why, "info": _info, "progress": _sd.progress()})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_image_gen_local_preset_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1494
+            try:
+                from . import sd_local as _sd
+                _ok, _why = _sd.set_preset(str(data.get("preset") or ""))
+                self._json({"ok": bool(_ok), "note": _why, "status": _sd.status()})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_image_gen_local_start_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1502
+            try:
+                from . import sd_local as _sd
+                _ok, _why = _sd.start_server()
+                self._json({"ok": bool(_ok), "note": _why})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_image_gen_local_stop_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1509
+            try:
+                from . import sd_local as _sd
+                _ok, _why = _sd.stop_server()
+                self._json({"ok": bool(_ok), "note": _why})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_resume_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1516
+            parent.resume_fn()
+            self._json({"ok": True})
+
+        def _rapi_watermark_reset_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1519
+            try:
+                r = parent.watermark_reset_fn() or {"ok": True}
+                self._json(r if isinstance(r, dict) else {"ok": True})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)}, 500)
+
+        def _rapi_shutdown_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1527
+            self._json({"ok": True, "note": "正在停止机器人…"})
+            try:
+                parent.shutdown_fn() # 写 stopped.flag + 杀看门狗 + os._exit(0)
+            except Exception:
+                pass  # 清理型：静默合法
+            try:
+                import os as _o, subprocess
+                subprocess.run(["taskkill", "/F", "/PID", str(_o.getpid())],
+                               capture_output=True, creationflags=0x08000000)
+            except Exception:
+                pass
+
+        def _rapi_restart_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1541
+            self._json({"ok": True, "note": "正在后台重启机器人…"})
+            threading.Timer(0.5, parent.restart_fn).start()
+
+        def _rapi_persona_behavior_recommend_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1545
+            try:
+                from agent.behavior_recommend import recommend as _br
+                _txt = str(data.get("text") or "")
+                if not _txt.strip():
+                    # 唯一实现：与 build_system_prompt 同一套回落（不再各写一份、也不再读死键 prefer_key）
+                    from agent.prompt import role_text_of
+                    _txt = role_text_of()
+                local = _br(_txt)
+                res = dict(local)
+                res["via"] = "local"
+                if data.get("llm", True) and _txt.strip():
+                    try:
+                        from agent import llm
+                        _rules = (
+                            "你是行为风格评估员。根据角色卡文本，评出机器人作为群友的行为档（只依据角色本体，禁止编造）。\n"
+                            "输出严格 JSON：{\"participation\":\"low|medium|high\",\"sticker\":0-3,\"reason\":\"一句话说明\"}\n"
+                            "维度：participation=参与度（low 安静旁观/medium 普通群友/high 话多活跃）；"
+                            "sticker=表情包接受度（0 不爱发/1 偶尔/2 较多/3 爱好者）；"
+                            "规则：说话极简/高冷/庄重类必为 low~medium 且 sticker≤1；话痨/气氛组/爱玩梗类为 high 且 sticker≥2；"
+                            "每维必须给出确定值，不得写不确定。只输出 JSON。\n\n角色卡：\n" + _txt[:2400]
+                        )
+                        _r = llm.chat_completion([{"role": "user", "content": _rules}], temperature=0.1)
+                        _c = str((_r.get("message") or {}).get("content", ""))
+                        import re as _re3, json as _json3
+                        _m = _re3.search(r"\{.*\}", _c, _re3.S)
+                        if _m:
+                            _d = _json3.loads(_m.group(0))
+                            _p = str(_d.get("participation") or "")
+                            if _p in ("low", "medium", "high"):
+                                res["participation"] = _p
+                                res["via"] = "llm"
+                            _sv = str(_d.get("sticker"))
+                            if _sv.strip() in ("0", "1", "2", "3"):
+                                res["sticker"] = int(_sv)
+                            res["reason"] = str(_d.get("reason") or "")
+                    except Exception:
+                        pass
+                self._json(res)
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_sessions_delete_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1588
+            try:
+                import re as _re2
+                import time as _t9
+                _sd = os.path.join(parent._data_path("sessions"))
+                _troot = os.path.join(parent._data_path("_trash"), "sessions")
+                _stamp = _t9.strftime("%Y%m%d-%H%M%S")
+                _items = []
+                for _it in (data.get("items") or []):
+                    _d = str((_it or {}).get("date") or "")
+                    _ts = str((_it or {}).get("ts") or "")
+                    if _re2.match(r"^\d{4}-\d{2}-\d{2}$", _d) and _ts:
+                        _items.append((_d, _ts))
+                _dates = [str(d) for d in (data.get("dates") or [])
+                          if _re2.match(r"^\d{4}-\d{2}-\d{2}$", str(d))]
+                if not _items and not _dates:
+                    return self._json({"ok": False, "error": "没有有效的记录"})
+                _backup = {}
+                _removed, _kept_days, _whole = 0, [], []
+                # ① 先整体备份要动的那些天（原文件照抄一份，供「撤销」）
+                _touch = sorted({d for d, _ in _items} | set(_dates))
+                for _d in _touch:
+                    _f = os.path.join(_sd, _d + ".jsonl")
+                    if not os.path.exists(_f):
+                        continue
+                    try:
+                        os.makedirs(_troot, exist_ok=True)
+                        _b = os.path.join(_troot, "%s.jsonl.%s" % (_d, _stamp))
+                        with open(_f, "rb") as _src, open(_b, "wb") as _dst:
+                            _dst.write(_src.read())
+                        _backup[_d] = _b
+                    except Exception:
+                        pass
+                # ② 按天处理：整文件搬（老 dates 参数）或**剔掉指定 ts**（新 items 参数）
+                for _d in set(_dates):
+                    _f = os.path.join(_sd, _d + ".jsonl")
+                    if os.path.exists(_f):
+                        try:
+                            os.remove(_f)
+                            _whole.append(_d)
+                        except Exception:
+                            pass  # 清理型：静默合法
+                _per_day = {}
+                for _d, _ts in _items:
+                    _per_day.setdefault(_d, set()).add(_ts)
+                # ⭐ （
+                #   『我说什么而他回什么』的这一段…从根上就是错的」）：
+                #   在这上面删的是**这一轮对话**，所以**同时把对应的会话历史删掉**
+                #   （模型的上下文来自 `data/messages/<会话>.json`，只删 sessions 等于没删）。
+                from . import history_prune as _hp
+                _all_entries = _hp.load_recent_entries(_sd, 100)
+                _deleted_entries = []
+                for _d, _tss in _per_day.items():
+                    _f = os.path.join(_sd, _d + ".jsonl")
+                    if not os.path.exists(_f):
+                        continue
+                    try:
+                        with open(_f, "r", encoding="utf-8") as fh:
+                            _lines = fh.readlines()
+                        _keep, _hit = [], 0
+                        for _ln in _lines:
+                            _s = _ln.strip()
+                            if not _s:
+                                continue
+                            try:
+                                _e = json.loads(_s)
+                            except Exception:
+                                _keep.append(_ln)
+                                continue
+                            if str(_e.get("ts") or "") in _tss:
+                                _hit += 1
+                                _deleted_entries.append(_e)
+                                continue
+                            _keep.append(_ln if _ln.endswith("\n") else _ln + "\n")
+                        if _hit:
+                            # 自己拼 `<path>.tmp` 的话，两个写者会撞同一个临时档；
+                            #   崩溃留下的孤儿也没人清 ⇒ 走统一的原子写（唯一临时名 + fsync + replace）
+                            if not persist.atomic_write_text(_f, "".join(_keep), newline="\n"):
+                                raise IOError("日志重写没写进磁盘（原档未动）：%s" % _f)
+                            _removed += _hit
+                            _kept_days.append(_d)
+                    except Exception:
+                        pass
+                if not _removed and not _whole:
+                    return self._json({"ok": False, "error": "没有匹配到要删的记录（可能刚被删过或文件已不存在）"})
+                # ③ 把这些轮次覆盖的**会话历史**也删掉（并把整份存档备份进 _trash/messages）
+                _hres = {"removed": 0, "chats": {}, "backed": []}
+                try:
+                    _hres = _hp.prune_for_deleted_runs(
+                        getattr(parent, "store", None), _all_entries, _deleted_entries,
+                        trash_root=os.path.join(parent._data_path("_trash"), "messages"),
+                        stamp=_stamp)
+                except Exception as _e10:
+                    _hres = {"removed": 0, "chats": {}, "backed": [], "error": str(_e10)[:80]}
+                _note = ("已删除 %d 条记录" % _removed) if _removed else ("已删除 %d 天的记录" % len(_whole))
+                if _hres.get("removed"):
+                    _note += "，并清掉对应的对话历史 %d 条（它之后不会再拿这些旧话当真）" % _hres["removed"]
+                # ⛔ 备份失败 ⇒ 那些会话**这次没删**（不可撤销的删除不做），如实说
+                _bk_fail = _hres.get("backupFailed") or []
+                if _bk_fail:
+                    _note += ("；有 %d 个会话**没备份成功** ⇒ 它们的历史这次**没删**"
+                              "（撤销必须真能撤销）" % len(_bk_fail))
+                self._json({"ok": True, "note": _note, "removed": _removed,
+                            "whole_days": _whole, "days": sorted(set(_kept_days) | set(_whole)),
+                            "history_removed": _hres.get("removed", 0),
+                            "history_backup_failed": len(_bk_fail),
+                            "history_chats": _hres.get("chats", {}),
+                            "undo": _stamp if _backup else "",
+                            "backed": sorted(_backup)})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_sessions_restore_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1703
+            try:
+                import glob as _gl
+                import re as _re3
+                _u = str(data.get("undo") or "")
+                if not _re3.match(r"^\d{8}-\d{6}$", _u):
+                    return self._json({"ok": False, "error": "撤销凭据无效"})
+                _sd = os.path.join(parent._data_path("sessions"))
+                _troot = os.path.join(parent._data_path("_trash"), "sessions")
+                _n = 0
+                for _b in _gl.glob(os.path.join(_troot, "*.jsonl." + _u)):
+                    _name = os.path.basename(_b)
+                    _day = _name.split(".jsonl.")[0]
+                    if not _re3.match(r"^\d{4}-\d{2}-\d{2}$", _day):
+                        continue
+                    try:
+                        os.makedirs(_sd, exist_ok=True)
+                        with open(_b, "rb") as _src, open(os.path.join(_sd, _day + ".jsonl"), "wb") as _dst:
+                            _dst.write(_src.read())
+                        os.remove(_b)
+                        _n += 1
+                    except Exception:
+                        pass
+                if not _n:
+                    return self._json({"ok": False, "error": "找不到可撤销的备份（可能已撤销过）"})
+                # ⭐ 撤销时**连对话历史一起还原**（同一次删除在 `_trash/messages/`
+                #   里也备了整份存档；两份用一个 stamp 绑定）
+                _hn = 0
+                try:
+                    from . import history_prune as _hp2
+                    _hn = _hp2.restore_history(
+                        os.path.join(parent._data_path("_trash"), "messages"), _u)
+                except Exception:
+                    _hn = 0
+                _note2 = "已撤销，恢复了 %d 天的记录" % _n
+                if _hn:
+                    _note2 += " + %d 个会话的对话历史" % _hn
+                self._json({"ok": True, "note": _note2, "restored": _n,
+                            "history_restored": _hn})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_stats_cal_clear_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1745
+            try:
+                import glob as _gl
+                _sd = parent._data_path("sessions")
+                _n = 0
+                for _f in _gl.glob(os.path.join(_sd, "????-??-??.jsonl")):
+                    try:
+                        os.remove(_f); _n += 1
+                    except Exception:
+                        pass
+                _p = parent._data_path("usage_stats.json")
+                if os.path.exists(_p):
+                    import json as _j2
+                    with open(_p, "r", encoding="utf-8") as f:
+                        _us = _j2.load(f)
+                    _us["history"] = []
+                    _us["day"] = {"sessions": 0, "calls": 0, "tokens": 0, "sent": 0, "cost": 0.0}
+                    _us["period"] = {"sessions": 0, "calls": 0, "tokens": 0, "sent": 0, "cost": 0.0}
+                    _us["total"] = {"sessions": 0, "calls": 0, "tokens": 0, "sent": 0, "cost": 0.0}
+                    if not persist.atomic_write_json(_p, _us, indent=1):
+                        raise IOError("写盘失败（原档一个字节都没动）：%s" % _p)
+                self._json({"ok": True, "note": "已清空计费历史（%d 天记录全部删除，累计归零）" % _n})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_stats_cal_list_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1770
+            try:
+                import json as _j2, glob as _gl
+                _sd = parent._data_path("sessions")
+                _days = {}
+                for _f in _gl.glob(os.path.join(_sd, "????-??-??.jsonl")):
+                    _day = os.path.basename(_f)[:10]
+                    if not re.match(r"^\d{4}-\d{2}-\d{2}$", _day):
+                        continue
+                    _d = _days.setdefault(_day, {"tokens": 0, "cost": 0.0, "calls": 0,
+                                                 "sessions": 0, "sent": 0})
+                    try:
+                        with open(_f, encoding="utf-8") as fh:
+                            for _ln in fh:
+                                _ln = _ln.strip()
+                                if not _ln:
+                                    continue
+                                try:
+                                    _o = _j2.loads(_ln)
+                                    _d["tokens"] += int(_o.get("tokens") or 0)
+                                    _d["cost"] += float(_o.get("cost") or 0)
+                                    _d["calls"] += int(_o.get("calls") or 0)
+                                    _d["sessions"] += 1
+                                    if _o.get("reply"):
+                                        _d["sent"] += 1
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
+                # 同日期内多文件合并（罕见）
+                _out = []
+                for _day, _d in sorted(_days.items(), reverse=True):
+                    for k in ("tokens", "calls", "sessions", "sent"):
+                        _d[k] = int(_d[k])
+                    _d["cost"] = round(float(_d["cost"]), 4)
+                    _out.append({"day": _day, **_d})
+                # 旧版 period 归档（history 的 start/end 字段）也并入
+                _p = parent._data_path("usage_stats.json")
+                if os.path.exists(_p):
+                    with open(_p, "r", encoding="utf-8") as f:
+                        _us = _j2.load(f)
+                    for h in _us.get("history") or []:
+                        if not isinstance(h, dict):
+                            continue
+                        day = str(h.get("day") or h.get("start") or "")[:10]
+                        if not re.match(r"^\d{4}-\d{2}-\d{2}$", day):
+                            continue
+                        if any(x["day"] == day for x in _out):
+                            continue # 已有按天记录
+                        _out.append({"day": day, "tokens": int(h.get("tokens") or 0),
+                                     "cost": round(float(h.get("cost") or 0), 4),
+                                     "calls": int(h.get("calls") or 0),
+                                     "sessions": int(h.get("sessions") or 0),
+                                     "sent": int(h.get("sent") or 0)})
+                _out.sort(key=lambda x: x["day"], reverse=True)
+                self._json({"ok": True, "bills": _out})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_stats_cal_delete_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1829
+            try:
+                import json as _j2, glob as _gl
+                _days = set(str(d) for d in (data.get("days") or [])
+                            if re.match(r"^\d{4}-\d{2}-\d{2}$", str(d)))
+                if not _days:
+                    return self._json({"ok": False, "error": "没有有效的日期"})
+                _sd = parent._data_path("sessions")
+                _gone = []
+                _del_days = {} # day -> sums（删除前算好，用于回补累计）
+                for _f in _gl.glob(os.path.join(_sd, "????-??-??.jsonl")):
+                    _day = os.path.basename(_f)[:10]
+                    if _day not in _days:
+                        continue
+                    agg = {"tokens": 0, "cost": 0.0, "calls": 0, "sessions": 0, "sent": 0}
+                    try:
+                        with open(_f, encoding="utf-8") as fh:
+                            for _ln in fh:
+                                _ln = _ln.strip()
+                                if not _ln:
+                                    continue
+                                try:
+                                    _o = _j2.loads(_ln)
+                                    agg["tokens"] += int(_o.get("tokens") or 0)
+                                    agg["cost"] += float(_o.get("cost") or 0)
+                                    agg["calls"] += int(_o.get("calls") or 0)
+                                    agg["sessions"] += 1
+                                    if _o.get("reply"):
+                                        agg["sent"] += 1
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
+                    _del_days[_day] = agg
+                    try:
+                        os.remove(_f)
+                        _gone.append(_day)
+                    except Exception:
+                        pass  # 清理型：静默合法
+                if not _gone:
+                    # 没有对应文件：尝试只清历史归档
+                    _gone = list(_days)
+                # 回补 usage_stats：删除天对应的 累计/周期/今日
+                _p = parent._data_path("usage_stats.json")
+                if os.path.exists(_p):
+                    with open(_p, "r", encoding="utf-8") as f:
+                        _us = _j2.load(f)
+                    _us["history"] = [h for h in (_us.get("history") or [])
+                                      if not isinstance(h, dict)
+                                      or str(h.get("day") or h.get("start") or "")[:10] not in _days]
+                    _today = time.strftime("%Y-%m-%d")
+                    for _k in ("total", "period"):
+                        _t = _us.get(_k) or {}
+                        for _day, agg in _del_days.items():
+                            _t["tokens"] = max(0, int(_t.get("tokens") or 0) - int(agg["tokens"]))
+                            _t["cost"] = max(0.0, float(_t.get("cost") or 0) - float(agg["cost"]))
+                            _t["calls"] = max(0, int(_t.get("calls") or 0) - int(agg["calls"]))
+                            _t["sessions"] = max(0, int(_t.get("sessions") or 0) - int(agg["sessions"]))
+                            _t["sent"] = max(0, int(_t.get("sent") or 0) - int(agg["sent"]))
+                        _us[_k] = _t
+                    if _today in _del_days:
+                        _t = _us.get("day") or {}
+                        agg = _del_days[_today]
+                        _t["tokens"] = max(0, int(_t.get("tokens") or 0) - int(agg["tokens"]))
+                        _t["cost"] = max(0.0, float(_t.get("cost") or 0) - float(agg["cost"]))
+                        _t["calls"] = max(0, int(_t.get("calls") or 0) - int(agg["calls"]))
+                        _t["sessions"] = max(0, int(_t.get("sessions") or 0) - int(agg["sessions"]))
+                        _t["sent"] = max(0, int(_t.get("sent") or 0) - int(agg["sent"]))
+                        _us["day"] = _t
+                    if not persist.atomic_write_json(_p, _us, indent=1):
+                        raise IOError("写盘失败（原档一个字节都没动）：%s" % _p)
+                self._json({"ok": True,
+                            "note": "已删除 %d 天的计费日志（%s）" % (len(_gone), ", ".join(sorted(_gone)[:12])),
+                            "removed": sorted(_gone)})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_stats_cal_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1906
+            try:
+                import json as _j
+                d = str(data.get("d") or "")
+                # ⛔ `d` 原来**不校验**就拼进文件名
+                #   （`d + ".jsonl"`）⇒ `d="../../config"` 这类能读到 data/ 之外的 .jsonl 形状的路径。
+                #   ⇒ 只收严格 `YYYY-MM-DD`（`cal_list` 那边早就这么判了，这里漏了）。
+                if not cal_date_ok(d):
+                    return self._json({"error": "bad date"}, 400)
+                _sf = os.path.join(parent._data_path("sessions"), (d + ".jsonl"))
+                agg = {"date": d, "sessions": 0, "tokens": 0, "cost": 0.0, "calls": 0, "sent": 0}
+                if d and os.path.exists(_sf):
+                    with open(_sf, encoding="utf-8") as fh:
+                        for line in fh:
+                            line = line.strip()
+                            if not line:
+                                continue
+                            try:
+                                o = _j.loads(line)
+                                agg["sessions"] += 1
+                                agg["tokens"] += int(o.get("tokens") or 0)
+                                agg["cost"] += float(o.get("cost") or 0)
+                                agg["calls"] += int(o.get("calls") or 0)
+                                if o.get("reply"):
+                                    agg["sent"] += 1
+                            except Exception:
+                                pass
+                self._json({"ok": True, **agg})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_emojis_delete_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1937
+            try:
+                import urllib.parse as _up
+                name = _up.unquote(str(data.get("name") or ""))
+                emoji_dir = parent._data_path("emojis")
+                fp = os.path.join(emoji_dir, os.path.basename(name))
+                if os.path.exists(fp):
+                    os.remove(fp)
+                    self._json({"ok": True})
+                else:
+                    self._json({"ok": False, "error": "文件不存在：" + name})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_code_check_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1951
+            try:
+                # ⛔ 删掉这里的 `import threading`（已知现象）：
+                #    Python 的规则是**函数体内只要有 import 该名字，整个函数里它就是局部变量**
+                #    ⇒ 本函数早得多的分支（`/api/restart`，第 1420 行那句 `threading.Timer`）
+                #    会在赋值前引用它，抛 `UnboundLocalError: local variable 'threading'
+                #    referenced before assignment` ⇒ **「重启」按钮点了没反应**（HTTP 还回
+                #    200「正在后台重启机器人…」，所以前端看不出错）。模块顶部第 12 行本来就有
+                #    `import threading`，这里不需要再导一次。
+                from agent.code_check import run as _code_run
+                def _bg():
+                    try:
+                        _code_run._res = _code_run(bool(data.get("deps")))
+                    except Exception as e:
+                        _code_run._res = {"ok": False, "checks": [], "summary": "代码检测失败：%s" % e}
+                    _code_run._done = True
+                # 若上一次已彻底完成，则清掉旧结果以便重跑
+                if getattr(_code_run, "_done", False) or getattr(_code_run, "_res", None):
+                    _code_run._done = False
+                    _code_run._res = None
+                threading.Thread(target=_bg, daemon=True).start()
+                self._json({"ok": True, "started": True})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_code_check_progress_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1976
+            try:
+                from agent.code_check import run as _code_run
+                done = bool(getattr(_code_run, "_done", False))
+                self._json({"ok": True, "done": done,
+                            "progress": getattr(_code_run, "_prog", None),
+                            "items": list(getattr(_code_run, "_checks", None) or []) if not done else None,
+                            "result": getattr(_code_run, "_res", None) if done else None})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_feedback_submit_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:1987
+            try:
+                from . import feedback as FB
+                # 环境一律**服务端现取**（不信前端传上来的那点东西）：已知现象：「用不了」时，
+                # "微信到底连上没有、卡在哪一步"是最关键的定位信息 ⇒ 每条反馈都带上。
+                _att = {}
+                try:
+                    _att = (self.status_provider() or {}).get("wechat_attach") or {}
+                except Exception:
+                    _att = {}
+                env = {"wechat": str((data.get("env") or {}).get("wechat") or "")[:60],
+                       "ui": str((data.get("env") or {}).get("ui") or "")[:40],
+                       "attach": {"short": str(_att.get("short") or ""),
+                                  "step": str(_att.get("step") or ""),
+                                  "tries": int(_att.get("tries") or 0),
+                                  "detail": str(_att.get("reason") or "")[:400],
+                                  "steps": list(_att.get("steps") or [])}}
+                # ⛔ 
+                #   兼容性那段**自动带上** —— 用户点一下反馈就够了，不用跑体检、不用点
+                #   检验器、不用去「报告」文件夹找文件。内容是**白名单脱敏**的（见
+                #   `compat.attach_text`：不带群名/昵称/路径/消息内容）。
+                #   关掉它：`config.json` → `feedback.attach_compat = false`（面板上也写着）。
+                try:
+                    if as_bool((get_config().get("feedback") or {}).get("attach_compat", True)):
+                        from . import compat as _cpfb
+                        env["compat"] = _cpfb.attach_text()
+                except Exception:
+                    pass
+                # 附件：
+                # 前端把文件读成 base64 一起 POST 上来；这里只做**总量闸**，具体上限与落盘在 FB 里。
+                _files = data.get("files")
+                if not isinstance(_files, list):
+                    _files = []
+                _b64 = sum(len(str((f or {}).get("data") or ""))
+                           for f in _files if isinstance(f, dict))
+                if _b64 > 40 * 1024 * 1024:
+                    self._json({"ok": False, "state": "error",
+                                "why": "附件加起来太大了（合计不超过 20MB）"})
+                else:
+                    self._json(FB.submit(str(data.get("kind") or "其他"),
+                                         str(data.get("text") or ""),
+                                         str(data.get("contact") or ""), env, _files))
+            except Exception as e:
+                self._json({"ok": False, "state": "error", "why": str(e)})
+
+        def _rapi_feedback_flush_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:2032
+            try:
+                from . import feedback as FB
+                self._json(FB.flush())
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_persona_cats_save_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:2039
+            try:
+                import json as _json
+                _p = os.path.join(parent._asset_root, "..", "data", "persona_cats.json")
+                try:
+                    with open(_p, "r", encoding="utf-8") as f:
+                        user_cats = _json.load(f)
+                except Exception:
+                    user_cats = {}
+                name = str(data.get("name") or "").strip()
+                if not name:
+                    self._json({"ok": False, "error": "分区名不能为空"})
+                else:
+                    cur = user_cats.get(name, {}) or {}
+                    cur["desc"] = str(data.get("desc") or cur.get("desc") or "")
+                    user_cats[name] = cur
+                    if not persist.atomic_write_json(_p, user_cats, indent=1):
+                        raise IOError("写盘失败（原档一个字节都没动）：%s" % _p)
+                    self._json({"ok": True})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_persona_cats_del_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:2061
+            try:
+                import json as _json
+                cats_p = os.path.join(parent._asset_root, "..", "data", "persona_cats.json")
+                pers_p = os.path.join(parent._asset_root, "..", "data", "custom_personas.json")
+                name = str(data.get("name") or "").strip()
+                try:
+                    with open(cats_p, "r", encoding="utf-8") as f:
+                        user_cats = _json.load(f)
+                except Exception:
+                    user_cats = {}
+                user_cats.pop(name, None)
+                if not persist.atomic_write_json(cats_p, user_cats, indent=1):
+                    raise IOError("写盘失败（原档一个字节都没动）：%s" % cats_p)
+                # 该分区下的卡移到默认
+                try:
+                    with open(pers_p, "r", encoding="utf-8") as f:
+                        items = _json.load(f)
+                except Exception:
+                    items = {}
+                for k, v in items.items():
+                    if (v or {}).get("cat") == name:
+                        v["cat"] = "📝 自定义"
+                if not persist.atomic_write_json(pers_p, items, indent=1):
+                    raise IOError("写盘失败（原档一个字节都没动）：%s" % pers_p)
+                self._json({"ok": True})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_persona_score_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:2090
+            try:
+                self._json(parent.persona_score_custom_fn(str(data.get("text") or ""),
+                                                          bool(data.get("llm"))))
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_personas_custom_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:2097
+            try:
+                import json as _json
+                _p = os.path.join(parent._asset_root, "..", "data", "custom_personas.json")
+                items = {}
+                try:
+                    with open(_p, "r", encoding="utf-8") as f:
+                        items = _json.load(f)
+                except Exception:
+                    pass
+                key = str(data.get("key") or "")
+                name = str(data.get("name") or "").strip()
+                text = str(data.get("text") or "").strip()
+                cat = str(data.get("cat") or "").strip() or "📝 自定义"
+                if not text:
+                    self._json({"ok": False, "error": "角色文本不能为空"})
+                else:
+                    if not key:
+                        key = "custom_" + str(int(time.time()))
+                    cur = items.get(key, {}) or {}
+                    cur["name"] = name or cur.get("name") or "自定义"
+                    if text:
+                        cur["text"] = text
+                    cur["cat"] = cat
+                    items[key] = cur
+                    if not persist.atomic_write_json(_p, items, indent=1):
+                        raise IOError("写盘失败（原档一个字节都没动）：%s" % _p)
+                    self._json({"ok": True, "key": key})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_personas_custom_del_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:2128
+            try:
+                import json as _json
+                _p = os.path.join(parent._asset_root, "..", "data", "custom_personas.json")
+                try:
+                    with open(_p, "r", encoding="utf-8") as f:
+                        items = _json.load(f)
+                except Exception:
+                    items = {}
+                items.pop(str(data.get("key") or ""), None)
+                if not persist.atomic_write_json(_p, items, indent=1):
+                    raise IOError("写盘失败（原档一个字节都没动）：%s" % _p)
+                self._json({"ok": True})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_memory_deep_profile_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:2144
+            try:
+                from agent import memory as _mem
+                wxid = str((data or {}).get("user_id") or "").strip()
+                name = str((data or {}).get("name") or "").strip()
+                if not wxid and not name:
+                    raise ValueError("缺少成员标识")
+                mm = _mem.MemoryStore()
+                texts = mm.collect_member_texts(wxid, name)
+                if not texts:
+                    self._json({"ok": False, "note": "该成员暂无印象记录（机器人还没留意过 TA）；先让机器人在群里互动积累"})
+                else:
+                    # 提炼（全部基于真实记录，不做虚构）
+                    import collections as _co
+                    import re as _re
+                    emojis = _co.Counter()
+                    for t in texts:
+                        for ch in t:
+                            if ord(ch) > 0x2600:
+                                emojis[ch] += 1
+                    top_emoji = [("%s×%d" % (e, c)) for e, c in emojis.most_common(5)]
+                    lens = [len(t) for t in texts]
+                    avg_len = int(sum(lens) / max(1, len(lens)))
+                    ends = _co.Counter()
+                    for t in texts:
+                        tail = t.strip()[-2:] if len(t.strip()) >= 2 else t.strip()
+                        if tail:
+                            ends[tail] += 1
+                    top_ends = ["%s×%d" % (e, c) for e, c in ends.most_common(5)]
+                    profile = ("【群友深度印象 · 由 %d 条真实记录自动整理（未做虚构）】\n"
+                                "高频符号/表情：%s\n平均句长：%d 字；常用结尾语气：%s\n"
+                                "真实原话示例（逐字保留）：\n%s" %
+                                (len(texts), "、".join(top_emoji) or "无", avg_len,
+                                 "、".join(top_ends) or "—",
+                                 "\n".join("· %s" % t[:80] for t in texts[:6])))
+                    self._json({"ok": True, "count": len(texts), "text": profile, "note": "已整理；可点「追加为印象」写入记忆"})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_persona_ai_enrich_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:2183
+            try:
+                self._json(parent.persona_ai_enrich_fn(str(data.get("name") or ""),
+                                                       str(data.get("text") or ""),
+                                                       int(data.get("rounds") or 1)))
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_persona_web_fetch_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:2190
+            try:
+                from . import web_search as _ws
+                name = str((data or {}).get("name") or "").strip()
+                if not name:
+                    raise ValueError("请填写角色名")
+                results, notes = [], []
+                for q in (name + " 经典语录", name + " 访谈 原话", name + " 名言 金句"):
+                    try:
+                        r = _ws.web_search(q)
+                        items = (r or {}).get("results") or (r or {}).get("items") or []
+                        ans = (r or {}).get("answer")
+                        if ans:
+                            notes.append(str(ans)[:300])
+                        for it in items[:6]:
+                            results.append({
+                                "title": str(it.get("title") or "")[:120],
+                                "url": str(it.get("url") or ""),
+                                "snippet": str(it.get("snippet") or "")[:300]})
+                    except Exception as e:
+                        notes.append("查询「%s」失败：%s" % (q[:16], str(e)[:80]))
+                quotes = []
+                seen = set()
+                for it in results:
+                    for seg in (it["snippet"] + " " + it["title"]).split("。"):
+                        seg = seg.strip(" \n\t·")
+                        if not seg or len(seg) < 4 or len(seg) > 200:
+                            continue
+                        if any(c in seg for c in ("“", "”", "「", "」", "\"", "\u201c", "\u201d")) and seg not in seen:
+                            seen.add(seg)
+                            quotes.append(seg)
+                if not results:
+                    self._json({"ok": False, "name": name,
+                                "note": "未检索到第一手资料（搜索引擎无相关真实资料）；请人工核实后再填入，切勿编造"})
+                else:
+                    self._json({"ok": True, "name": name, "results": results[:20],
+                                "quotes": quotes[:10], "notes": notes[:5],
+                                "note": "以上均为搜索引擎返回的真实资料摘要（含来源链接，未做任何编造）；请人工核对后提取进角色卡。"})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_ui_background_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:2231
+            try:
+                import base64 as _b64
+                _p = parent._data_path("ui_bg.jpg")
+                if data.get("clear"):
+                    if os.path.exists(_p):
+                        os.remove(_p)
+                    try:
+                        from agent.config import get_config as _gc, save_config as _sc
+                        _c = _gc(); _c.setdefault("ui", {})["background"] = ""; _sc(_c)
+                    except Exception:
+                        pass
+                    self._json({"ok": True, "note": "已恢复默认背景"})
+                else:
+                    raw = str(data.get("data") or "")
+                    if "base64," in raw[:60]:
+                        raw = raw.split("base64,", 1)[1]
+                    raw = re.sub(r"[\s\r\n]", "", raw) # 清洗空白
+                    raw += "=" * (-len(raw) % 4) # padding 补全
+                    try:
+                        img_bytes = _b64.b64decode(raw, validate=False)
+                    except Exception:
+                        raise ValueError("base64 解码失败（文件数据损坏？请重试）")
+                    # 格式探测（图片 + 视频全兼容：png/jpg/jpeg/webp/gif/mp4/webm/ogg）
+                    head = img_bytes[:64]
+                    mime = ""
+                    if head[:8] == b"\x89PNG\r\n\x1a\n":
+                        mime, ext, is_video = "image/png", "png", False
+                    elif head[:3] == b"\xff\xd8\xff":
+                        mime, ext, is_video = "image/jpeg", "jpg", False
+                    elif head[:12] == b"RIFF" and head[8:12] == b"WEBP":
+                        mime, ext, is_video = "image/webp", "webp", False
+                    elif head[:6] in (b"GIF87a", b"GIF89a"):
+                        mime, ext, is_video = "image/gif", "gif", False
+                    elif head[4:12] == b"ftypmp4" or head[4:12] == b"ftypisom" or b"ftyp" in head[4:12]:
+                        mime, ext, is_video = "video/mp4", "mp4", True
+                    elif head[:4] == b"\x1aE\xdf\xa3":
+                        mime, ext, is_video = "video/webm", "webm", True
+                    elif head[:4] == b"OggS":
+                        mime, ext, is_video = "video/ogg", "ogg", True
+                    else:
+                        raise ValueError("格式无法识别：图片支持 PNG/JPEG/WEBP/GIF；视频支持 MP4/WEBM/OGG")
+                    _p2 = parent._data_path("ui_bg." + ext)
+                    with open(_p2, "wb") as _fw:
+                        _fw.write(img_bytes)
+                    # 清掉旧的其他扩展（避免残留）
+                    for _old in ("jpg", "png", "webp", "gif", "mp4", "webm", "ogg"):
+                        if _old != ext:
+                            try:
+                                _oo = parent._data_path("ui_bg." + _old)
+                                if os.path.exists(_oo):
+                                    os.remove(_oo)
+                            except Exception:
+                                pass
+                    try:
+                        from agent.config import get_config as _gc, save_config as _sc
+                        _c = _gc(); _c.setdefault("ui", {})["background"] = "custom"; _c.setdefault("ui", {})["bg_type"] = "video" if is_video else "image"; _sc(_c)
+                    except Exception:
+                        pass
+                    self._json({"ok": True, "note": "背景已保存并应用"})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e).split("\n")[0][:140] or "图片处理失败"})
+
+        def _rapi_personas_favs_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:2295
+            self._personas_favs()
+
+        def _rapi_briefs_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:2298
+            self._briefs_api(data, "POST")
+
+        def _rapi_personas_fav_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:2301
+            try:
+                import json as _json
+                try:
+                    with open(parent._data_path("persona_favs.json"), "r", encoding="utf-8") as f:
+                        favs = _json.load(f)
+                except Exception:
+                    favs = {}
+                k = str(data.get("key") or "")
+                if data.get("fav"):
+                    favs[k] = 1
+                else:
+                    favs.pop(k, None)
+                with open(parent._data_path("persona_favs.json"), "w", encoding="utf-8") as f:
+                    _json.dump(favs, f, ensure_ascii=False, indent=1)
+                self._json({"ok": True})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_personas_rate_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:2320
+            try:
+                self._json(parent.persona_rate_fn(str(data.get("key") or ""),
+                                                  data.get("score"),
+                                                  str(data.get("note") or "")))
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_selfcheck_stop_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:2328
+            try:
+                parent.selfcheck_stop_fn()
+                self._json({"ok": True})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_ui_recalibrate_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:2335
+            try:
+                self._json(parent.recalibrate_fn())
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_open_path_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:2341
+            try:
+                self._json(parent.open_path_fn(str(data.get("path") or "")))
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_file_search_add_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:2350
+            self._file_search_dirs(data, path, urlparse(self.path).query)
+
+        def _rapi_tools_new_manifest_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:2352
+            self._tools_new_manifest()
+
+        def _rapi_tools_import_post(self, path, data, parsed, method):
+            # **导入＝把文档变成插件**（只写 tools.d/*.json；校验走同一套 validate）
+            try:
+                from . import user_tools as _ut8
+                text = str((data or {}).get("text") or "")
+                if not text.strip():
+                    self._json({"ok": False, "error": "没有内容：选一个 .json，或把文档粘进来"})
+                    return
+                r = _ut8.import_text(text, overwrite=as_bool((data or {}).get("overwrite")))
+                r["tools"] = _ut8.snapshot()
+                self._json(r)
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_ui_fingerprint_take_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:2354
+            self._ui_fingerprint_take(data, urlparse(self.path).query)
+
+        def _rapi_ui_fingerprint_forget_post(self, path, data, parsed, method):
+            # 原 _handle_body_request:2356
+            self._ui_fingerprint_forget(data, urlparse(self.path).query)
+    return Handler
