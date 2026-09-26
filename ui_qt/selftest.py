@@ -8069,6 +8069,83 @@ def t_whale_roles() -> None:
                ("roles.json", "role-image.png", "role-pin.json", "role-delete.json")))
 
 
+def t_whale_assets() -> None:
+    """自检：挂件「气泡图库 + 音效组」这条链（都跑产品真实代码 + 临时目录）。
+
+    ⛔ 这两样都是**动作式**接口（不是"存一坨 JSON"）：
+      音频 action = save-group / pin-group / delete-group / upload-fragment / delete-fragment；
+      气泡图     action = upload / delete。
+      响应必须带**整份列表**（前端拿它整块刷新，且多处读 `d.fragments`）。
+    """
+    import base64 as _b64
+    import tempfile as _tf
+
+    from agent import whale as _wh # noqa: PLC0415
+
+    _tmp = _tf.mkdtemp(prefix="whale-assets-gate-")
+    _w = _wh.WhaleWidget(_tmp)
+    _png = ("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
+            "AAAADUlEQVR42mP8z8AAAwAB/AL+2QAAAABJRU5ErkJggg==")
+    _wav = "data:audio/wav;base64," + _b64.b64encode(
+        b"RIFF$\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00"
+        b"\x44\xac\x00\x00\x88X\x01\x00\x02\x00\x10\x00data\x00\x00\x00\x00").decode()
+
+    # ── 气泡图库 ──
+    _r = _w.bubble_img_action({"action": "upload", "name": "图", "data": _png})
+    _bid = (_r.get("images") or [{}])[0].get("id")
+    ck("气泡图上传：响应带整份图库、字节能按 id 取回",
+       _r.get("ok") and len(_r.get("images", [])) == 1
+       and _w.bubble_img_bytes(_bid) == _b64.b64decode(_png.split(",")[1]))
+    ck("气泡图上传非图片被拒（不落半个垃圾文件）",
+       _w.bubble_img_action({"action": "upload", "data": "不是图片"}).get("ok") is False)
+    _r2 = _w.bubble_img_action({"action": "delete", "id": _bid})
+    ck("气泡图删除：列表清空且文件回收",
+       _r2.get("ok") and _r2["images"] == [] and _w.bubble_img_bytes(_bid) is None)
+
+    # ── 音效组（动作式）──
+    _a0 = _w.audio_payload()
+    ck("音频初始两组预设且带 preset 标记（前端据此禁删）",
+       [g["id"] for g in _a0["groups"]] == ["duck", "fx1"]
+       and all(g["preset"] for g in _a0["groups"]))
+    _a1 = _w.audio_action({"action": "upload-fragment", "name": "片段", "audio": _wav})
+    _fid = (_a1.get("fragments") or [{}])[0].get("id")
+    ck("音频片段上传：响应带 fragments（前端多处读 d.fragments）",
+       _a1.get("ok") and len(_a1.get("fragments", [])) == 1, str(_a1.get("fragments")))
+    _a2 = _w.audio_action({"action": "save-group", "name": "我的组",
+                           "press": "frag:" + str(_fid), "release": ""})
+    _grp = [g for g in _a2["groups"] if not g["preset"]]
+    ck("新建音效组：槽位按前端约定存（空串 = 该事件静音）",
+       _a2.get("ok") and _grp and _grp[0]["press"] == "frag:" + str(_fid)
+       and _grp[0]["release"] == "")
+    _gid = _grp[0]["id"] if _grp else ""
+    ck("音效组置顶 / 预设组不可删",
+       [g for g in _w.audio_action({"action": "pin-group", "id": _gid,
+                                    "pinned": True})["groups"]
+        if g["id"] == _gid][0]["pinned"] is True
+       and _w.audio_action({"action": "delete-group", "id": "duck"}).get("ok") is False)
+
+    # ── 声音真的取得到字节（不是"配置存了但没声音"）──
+    ck("预设片段按名字取到随包素材（ya1 → Ya1.mp3）",
+       len(_w.audio_fragment_bytes("ya1") or b"") > 1000)
+    ck("自定义组的按压音 = 该组槽位片段；槽位留空则静音（None，不报错）",
+       _w.sound_bytes("press", _gid) == _b64.b64decode(_wav.split(",")[1])
+       and _w.sound_bytes("release", _gid) is None)
+    ck("内置两组照旧有声音", bool(_w.sound_bytes("press", "duck"))
+       and bool(_w.sound_bytes("release", "fx1")))
+
+    # ── 落盘 ──
+    # 上面把这张气泡图删掉了，这里再放一张，专验持久化
+    _w.bubble_img_action({"action": "upload", "name": "落盘图", "data": _png})
+    _w2 = _wh.WhaleWidget(_tmp)
+    ck("换实例：片段与气泡图都还在（真落盘）",
+       len(_w2.audio_payload()["fragments"]) == 1
+       and len(_w2.bubble_imgs_payload()["images"]) == 1)
+    ck("这批端点已从「未支持」清单移除（补了能力必须撤登记）",
+       not any(x in _wh.WhaleWidget._UNSUPPORTED for x in
+               ("bubble-imgs.json", "bubble-img.png", "bubble-img-upload.json",
+                "audio-fragment.wav")))
+
+
 def t_placeholder_guard() -> None:
     """自检：「占位卡死」与「清容器残留」两条链的回归闸。
 
@@ -8223,7 +8300,7 @@ def main() -> int:
                    t_g15, t_g16, t_g17, t_g18, t_g19, t_g20, t_g21, t_g22, t_ocr_fuzzy,
                    t_audit_r3, t_dialog_drag, t_whale_guard, t_color_token_guard,
                    t_button_label_guard, t_placeholder_guard, t_dupdef_guard,
-                   t_whale_roles):
+                   t_whale_roles, t_whale_assets):
             try:
                 fn()
             except Exception as e: # noqa: BLE001

@@ -47,6 +47,7 @@ from .model_prices import ( # noqa: F401  （价目表唯一来源，见该模�
 
 # 自定义角色/素材的图片 dataURL（只认 base64 的 image/*；前端送 png 或 gif）
 _RE_IMG_DATAURL = re.compile(r"^data:(image/[A-Za-z0-9.+-]+);base64,(.+)$", re.S)
+_RE_AUDIO_DATAURL = re.compile(r"^data:(audio/[A-Za-z0-9.+-]+);base64,(.+)$", re.S)
 
 
 def _today_key() -> str:
@@ -80,10 +81,13 @@ class WhaleWidget:
                 data.setdefault("days", {})
                 data.setdefault("lastTurn", {})
                 data.setdefault("roles", [])
+                data.setdefault("assets", {})
+                data.setdefault("audioGroups", [])
                 return data
         except Exception:
             pass
-        return {"size": {}, "days": {}, "lastTurn": {}, "roles": []}
+        return {"size": {}, "days": {}, "lastTurn": {}, "roles": [],
+                "assets": {}, "audioGroups": []}
 
     def _save_state(self):
         try:
@@ -180,8 +184,7 @@ class WhaleWidget:
     # 上游有、本移植版**确实没有**的接口（如实返回"不支持"，客户端保留默认值）。
     # 注意：随着能力补齐，条目要从这里**删掉** —— 留在表里等于把已实现的功能继续报成"不支持"。
     _UNSUPPORTED = ("api-models.json", "usage-records.json", "usage-settings.json",
-                    "balance-adjustments.json", "bubble-imgs.json",
-                    "bubble-img.png", "bubble-img-upload.json", "audio-fragment.wav",
+                    "balance-adjustments.json", 
                     "sound/")
     _CFG_KEYS = {"bubble.json": ("bubble", "config"), "audio.json": ("audio", "settings")}
     _CFG_MAX = 256 * 1024 # 配置上限（防一个前端 bug 把 state 撑爆）
@@ -240,6 +243,111 @@ class WhaleWidget:
                         "tokens": lt.get("tokens"), "ts": lt.get("ts")}
         return {"ok": True, "seq": 0, "turn": None, "amount": None, "tokens": None, "ts": None}
 
+    # ── 素材库（角色图 / 气泡图 / 音频片段共用一套）────────────────────────
+    #
+    # 三种"用户自己导入的东西"形状完全一样：上传一个 dataURL → 得到 id → 能列、能删、能按 id
+    # 取字节。所以共用一份存储：索引进状态文件的 `assets.<kind>`，字节落 `<数据目录>/<子目录>/`。
+    # kind ∈ {"role","bubble","audio"}。
+
+    _ASSET_DIRS = {"role": "roleimg", "bubble": "bubbleimg", "audio": "audiofrag"}
+    _ASSET_MAX = 3 * 1024 * 1024
+
+    def _assets_dir(self, kind: str) -> str:
+        d = os.path.join(self._data_dir, self._ASSET_DIRS.get(kind, "assets"))
+        try:
+            os.makedirs(d, exist_ok=True)
+        except Exception:  # noqa: BLE001
+            pass
+        return d
+
+    def _assets(self, kind: str) -> list:
+        try:
+            got = (self._state.get("assets") or {}).get(kind)
+        except Exception:  # noqa: BLE001
+            got = None
+        return list(got) if isinstance(got, list) else []
+
+    def _assets_set(self, kind: str, items: list) -> None:
+        assets = dict(self._state.get("assets") or {})
+        assets[kind] = items
+        self._state["assets"] = assets
+
+    def asset_save(self, kind: str, name: str, data_url: str,
+                   extra: dict | None = None, limit: int = 60) -> dict:
+        """存一份素材。失败一律给原因（不写半个垃圾文件）。"""
+        m = _RE_IMG_DATAURL.match(str(data_url or "")) or _RE_AUDIO_DATAURL.match(str(data_url or ""))
+        if not m:
+            return {"ok": False, "error": "素材格式不支持（需要 base64 的 dataURL）"}
+        try:
+            raw = base64.b64decode(m.group(2), validate=False)
+        except Exception:  # noqa: BLE001
+            return {"ok": False, "error": "素材解码失败"}
+        if not raw:
+            return {"ok": False, "error": "素材为空"}
+        if len(raw) > self._ASSET_MAX:
+            return {"ok": False, "error": "素材过大（上限 %d MB）"
+                    % (self._ASSET_MAX // 1024 // 1024)}
+        with self._lock:
+            items = self._assets(kind)
+            if len(items) >= limit:
+                return {"ok": False, "error": "数量已达上限（%d）" % limit}
+            aid = "%s%s" % (kind[0], format(int(time.time() * 1000), "x"))
+            ext = {"image/png": ".png", "image/gif": ".gif", "image/jpeg": ".jpg",
+                   "image/webp": ".webp", "audio/mpeg": ".mp3", "audio/wav": ".wav",
+                   "audio/x-wav": ".wav", "audio/mp4": ".m4a", "audio/ogg": ".ogg"}.get(
+                       m.group(1).lower(), ".bin")
+            try:
+                with open(os.path.join(self._assets_dir(kind), aid + ext), "wb") as f:
+                    f.write(raw)
+            except Exception as e:  # noqa: BLE001
+                return {"ok": False, "error": "素材写入失败：%s" % str(e)[:60]}
+            item = {"id": aid, "name": str(name or aid)[:40], "file": aid + ext,
+                    "createdAt": int(time.time() * 1000), "size": len(raw),
+                    "mime": m.group(1).lower()}
+            if isinstance(extra, dict):
+                item.update(extra)
+            items.append(item)
+            self._assets_set(kind, items)
+            self._save_state()
+            return {"ok": True, "item": item, "items": items}
+
+    def asset_delete(self, kind: str, aid: str) -> bool:
+        aid = str(aid or "")
+        if not aid:
+            return False
+        with self._lock:
+            keep, gone = [], None
+            for it in self._assets(kind):
+                if isinstance(it, dict) and str(it.get("id")) == aid:
+                    gone = it
+                else:
+                    keep.append(it)
+            self._assets_set(kind, keep)
+            self._save_state()
+            if isinstance(gone, dict) and gone.get("file"):
+                try:
+                    os.remove(os.path.join(self._assets_dir(kind),
+                                           os.path.basename(str(gone["file"]))))
+                except Exception:  # noqa: BLE001
+                    pass
+            return gone is not None
+
+    def asset_store_bytes(self, kind: str, aid: str) -> bytes | None:
+        aid = os.path.basename(str(aid or ""))
+        if not aid:
+            return None
+        for it in self._assets(kind):
+            if isinstance(it, dict) and str(it.get("id")) == aid:
+                fn = os.path.basename(str(it.get("file") or ""))
+                if not fn:
+                    return None
+                try:
+                    with open(os.path.join(self._assets_dir(kind), fn), "rb") as f:
+                        return f.read()
+                except Exception:  # noqa: BLE001
+                    return None
+        return None
+
     # ── 角色（自定义形象）──────────────────────────────────────────────────
     #
     # 前端契约（widget.js 实测调用）：
@@ -252,24 +360,14 @@ class WhaleWidget:
     #    且每项带 `createdAt`（前端导入后按它挑"最新的那个"自动切换）。
 
     _ROLE_MAX = 40
-    _ROLE_IMG_MAX = 3 * 1024 * 1024
-
-    def _roles_dir(self) -> str:
-        d = os.path.join(self._data_dir, "roleimg")
-        try:
-            os.makedirs(d, exist_ok=True)
-        except Exception:  # noqa: BLE001
-            pass
-        return d
 
     def _roles_list(self) -> list:
-        """角色列表（内置 default 恒在第一位）。"""
         out = [{"id": "default", "name": "小鲸鱼", "pinned": True, "createdAt": 0}]
-        for r in (self._state.get("roles") or []):
+        for r in self._assets("role"):
             if not isinstance(r, dict):
                 continue
             rid = str(r.get("id") or "")
-            if not rid or rid == "default":
+            if not rid:
                 continue
             out.append({"id": rid, "name": str(r.get("name") or rid)[:20],
                         "pinned": bool(r.get("pinned")),
@@ -281,39 +379,13 @@ class WhaleWidget:
             return {"ok": True, "roles": self._roles_list()}
 
     def save_role(self, obj) -> dict:
-        """导入一个自定义角色（图片以 dataURL 送来）。"""
         if not isinstance(obj, dict):
             return {"ok": False, "error": "missing body"}
         name = str(obj.get("name") or "").strip()[:20] or "自定义角色"
-        m = _RE_IMG_DATAURL.match(str(obj.get("image") or ""))
-        if not m:
-            return {"ok": False, "error": "图片格式不支持（需要 png/gif/jpeg 的 dataURL）"}
-        try:
-            raw = base64.b64decode(m.group(2), validate=False)
-        except Exception:  # noqa: BLE001
-            return {"ok": False, "error": "图片解码失败"}
-        if not raw:
-            return {"ok": False, "error": "图片为空"}
-        if len(raw) > self._ROLE_IMG_MAX:
-            return {"ok": False, "error": "图片过大（上限 %d MB）"
-                    % (self._ROLE_IMG_MAX // 1024 // 1024)}
+        got = self.asset_save("role", name, obj.get("image"), limit=self._ROLE_MAX)
+        if not got.get("ok"):
+            return {"ok": False, "error": got.get("error")}
         with self._lock:
-            roles = list(self._state.get("roles") or [])
-            if len(roles) >= self._ROLE_MAX:
-                return {"ok": False, "error": "角色数量已达上限（%d）" % self._ROLE_MAX}
-            rid = "r%s" % format(int(time.time() * 1000), "x")
-            ext = {"image/png": ".png", "image/gif": ".gif",
-                   "image/jpeg": ".jpg", "image/webp": ".webp"}.get(
-                       m.group(1).lower(), ".png")
-            try:
-                with open(os.path.join(self._roles_dir(), rid + ext), "wb") as f:
-                    f.write(raw)
-            except Exception as e:  # noqa: BLE001
-                return {"ok": False, "error": "图片写入失败：%s" % str(e)[:60]}
-            roles.append({"id": rid, "name": name, "pinned": False,
-                          "createdAt": int(time.time() * 1000), "file": rid + ext})
-            self._state["roles"] = roles
-            self._save_state()
             return {"ok": True, "roles": self._roles_list()}
 
     def pin_role(self, obj) -> dict:
@@ -321,12 +393,12 @@ class WhaleWidget:
             return {"ok": False, "error": "missing body"}
         rid = str(obj.get("id") or "")
         with self._lock:
-            roles = list(self._state.get("roles") or [])
-            for r in roles:
-                if isinstance(r, dict) and str(r.get("id")) == rid:
-                    r["pinned"] = bool(obj.get("pinned"))
+            items = self._assets("role")
+            for it in items:
+                if isinstance(it, dict) and str(it.get("id")) == rid:
+                    it["pinned"] = bool(obj.get("pinned"))
                     break
-            self._state["roles"] = roles
+            self._assets_set("role", items)
             self._save_state()
             return {"ok": True, "roles": self._roles_list()}
 
@@ -336,38 +408,147 @@ class WhaleWidget:
         rid = str(obj.get("id") or "")
         if not rid or rid == "default":
             return {"ok": False, "error": "内置角色不可删除"}
+        self.asset_delete("role", rid)
         with self._lock:
-            keep, gone = [], None
-            for r in (self._state.get("roles") or []):
-                if isinstance(r, dict) and str(r.get("id")) == rid:
-                    gone = r
-                else:
-                    keep.append(r)
-            self._state["roles"] = keep
-            self._save_state()
-            if isinstance(gone, dict) and gone.get("file"):
-                try:
-                    os.remove(os.path.join(self._roles_dir(), os.path.basename(gone["file"])))
-                except Exception:  # noqa: BLE001
-                    pass
             return {"ok": True, "roles": self._roles_list()}
 
     def role_image_bytes(self, role_id: str) -> bytes | None:
-        safe = os.path.basename(str(role_id or ""))
-        if not safe or safe == "default":
-            return None
+        return self.asset_store_bytes("role", role_id)
+
+    # ── 气泡图库 ───────────────────────────────────────────────────────────
+    #
+    #   GET  bubble-imgs.json                    → {"ok":true,"images":[{"id","name"}]}
+    #   POST bubble-img-upload.json {action:'upload',name,data} → {"ok":true,"images":[…]}
+    #   POST bubble-img-upload.json {action:'delete',id}        → {"ok":true,"images":[…]}
+    #   GET  bubble-img.png?id=X                 → 图片字节
+
+    def bubble_imgs_payload(self) -> dict:
         with self._lock:
-            for r in (self._state.get("roles") or []):
-                if isinstance(r, dict) and str(r.get("id")) == safe:
-                    fn = os.path.basename(str(r.get("file") or ""))
-                    if not fn:
-                        return None
-                    try:
-                        with open(os.path.join(self._roles_dir(), fn), "rb") as f:
-                            return f.read()
-                    except Exception:  # noqa: BLE001
-                        return None
-        return None
+            imgs = [{"id": str(x.get("id")), "name": str(x.get("name") or "")}
+                    for x in self._assets("bubble") if isinstance(x, dict) and x.get("id")]
+            return {"ok": True, "images": imgs}
+
+    def bubble_img_action(self, obj) -> dict:
+        if not isinstance(obj, dict):
+            return {"ok": False, "error": "missing body"}
+        action = str(obj.get("action") or "upload")
+        if action == "delete":
+            self.asset_delete("bubble", obj.get("id"))
+            return self.bubble_imgs_payload()
+        got = self.asset_save("bubble", obj.get("name") or "", obj.get("data"))
+        if not got.get("ok"):
+            return {"ok": False, "error": got.get("error")}
+        return self.bubble_imgs_payload()
+
+    def bubble_img_bytes(self, img_id: str) -> bytes | None:
+        return self.asset_store_bytes("bubble", img_id)
+
+    # ── 音效（组 + 片段）───────────────────────────────────────────────────
+    #
+    #   GET  audio.json → {"ok":true,"groups":[{id,name,press,release,preset,pinned}],
+    #                       "fragments":[{id,name,preset}]}
+    #   POST audio.json {action:'save-group', id?, name, press, release} → {"ok":true,"groups":[…]}
+    #   POST audio.json {action:'pin-group',     id, pinned}             → {"ok":true,"groups":[…]}
+    #   POST audio.json {action:'delete-group',  id}                     → {"ok":true,"groups":[…]}
+    #   GET  audio-fragment.wav?id=X → 片段字节（槽位存的是片段 id，或用户上传的 'frag:xxx'）
+    # ⛔ 内置两组（duck / fx1）不可删（前端也按 preset 判定）；用户组的上传片段走素材库。
+
+    _AUDIO_PRESETS = (
+        {"id": "duck", "name": "小黄鸭", "press": "", "release": "", "preset": True, "pinned": True},
+        {"id": "fx1", "name": "音效1", "press": "", "release": "", "preset": True, "pinned": False},
+    )
+
+    def _audio_groups(self) -> list:
+        out = [dict(g) for g in self._AUDIO_PRESETS]
+        for g in (self._state.get("audioGroups") or []):
+            if not isinstance(g, dict) or not g.get("id"):
+                continue
+            if str(g.get("id")) in ("duck", "fx1"):
+                continue
+            out.append({"id": str(g.get("id")), "name": str(g.get("name") or g.get("id"))[:20],
+                        "press": str(g.get("press") or ""), "release": str(g.get("release") or ""),
+                        "preset": False, "pinned": bool(g.get("pinned"))})
+        return out
+
+    def audio_payload(self) -> dict:
+        with self._lock:
+            frags = [{"id": str(x.get("id")), "name": str(x.get("name") or ""), "preset": False}
+                     for x in self._assets("audio") if isinstance(x, dict) and x.get("id")]
+            return {"ok": True, "groups": self._audio_groups(), "fragments": frags}
+
+    def audio_action(self, obj) -> dict:
+        if not isinstance(obj, dict):
+            return {"ok": False, "error": "missing body"}
+        action = str(obj.get("action") or "")
+        if action == "save-group":
+            name = str(obj.get("name") or "").strip()[:20]
+            if not name:
+                return {"ok": False, "error": "组名不能为空"}
+            with self._lock:
+                groups = [g for g in (self._state.get("audioGroups") or [])
+                          if isinstance(g, dict)]
+                gid = str(obj.get("id") or "") or ("g%s" % format(int(time.time() * 1000), "x"))
+                found = None
+                for g in groups:
+                    if str(g.get("id")) == gid:
+                        found = g
+                        break
+                payload = {"id": gid, "name": name,
+                           "press": str(obj.get("press") or ""),
+                           "release": str(obj.get("release") or "")}
+                if found is None:
+                    payload["pinned"] = False
+                    payload["createdAt"] = int(time.time() * 1000)
+                    groups.append(payload)
+                else:
+                    payload["pinned"] = bool(found.get("pinned"))
+                    payload["createdAt"] = int(found.get("createdAt") or 0)
+                    found.update(payload)
+                self._state["audioGroups"] = groups
+                self._save_state()
+            return self.audio_payload()
+        if action == "pin-group":
+            gid = str(obj.get("id") or "")
+            with self._lock:
+                for g in (self._state.get("audioGroups") or []):
+                    if isinstance(g, dict) and str(g.get("id")) == gid:
+                        g["pinned"] = bool(obj.get("pinned"))
+                        break
+                self._save_state()
+            return self.audio_payload()
+        if action == "delete-group":
+            gid = str(obj.get("id") or "")
+            if gid in ("duck", "fx1"):
+                return {"ok": False, "error": "内置音效组不可删除"}
+            with self._lock:
+                self._state["audioGroups"] = [
+                    g for g in (self._state.get("audioGroups") or [])
+                    if not (isinstance(g, dict) and str(g.get("id")) == gid)]
+                self._save_state()
+            return self.audio_payload()
+        if action == "upload-fragment":
+            # 前端送的是 {name, audio: dataURL}（注意字段名是 audio，不是 data）
+            got = self.asset_save("audio", obj.get("name") or "", obj.get("audio"))
+            if not got.get("ok"):
+                return {"ok": False, "error": got.get("error")}
+            return self.audio_payload()
+        if action == "delete-fragment":
+            self.asset_delete("audio", obj.get("id"))
+            return self.audio_payload()
+        return {"ok": False, "error": "未知动作：%s" % action[:20]}
+
+    def audio_fragment_bytes(self, frag_id: str) -> bytes | None:
+        """片段的字节：用户上传的（id 形如 `frag:xxx`）走素材库；预设片段走随包素材。"""
+        fid = os.path.basename(str(frag_id or ""))
+        if not fid:
+            return None
+        if fid.startswith("frag:"):
+            return self.asset_store_bytes("audio", fid[5:])
+        got = self.asset_store_bytes("audio", fid) # 兼容"不带前缀的素材库 id"
+        if got is not None:
+            return got
+        preset = {"ya1": "Ya1.mp3", "ya2": "Ya2.mp3", "d1": "D1.mp3", "d2": "D2.mp3"}
+        return self.asset_bytes(preset.get(fid.lower(), ""))
 
     # ── 静态资源 ───────────────────────────────────────────────────────
 
@@ -382,11 +563,23 @@ class WhaleWidget:
             return None
 
     def sound_bytes(self, kind: str, sound_set: str) -> bytes | None:
-        """按压/松手音效：press→Ya1/D1，release→Ya2/D2。"""
+        """按压/松手音效。
+
+        ⛔ 顺序：**先看用户自定义组的槽位**（值是该组的片段 id，空串 = 显式静音），
+        取不到再回落内置两组（duck→Ya1/Ya2，fx1→D1/D2）。前端 v752 之后首选"片段路由"
+        （`audio-fragment.wav`），老路由是它的兜底 —— 两条都得通，声音才不会时有时无。
+        """
+        gid = str(sound_set or "duck")
+        for g in self._audio_groups():
+            if g.get("id") == gid and not g.get("preset"):
+                slot = str(g.get(kind) or "")
+                if slot == "":
+                    return None # 显式留空 = 该事件静音
+                return self.audio_fragment_bytes(slot)
         table = {
             ("press", "duck"): "Ya1.mp3",
             ("release", "duck"): "Ya2.mp3",
             ("press", "fx1"): "D1.mp3",
             ("release", "fx1"): "D2.mp3",
         }
-        return self.asset_bytes(table.get((kind, sound_set if sound_set == "fx1" else "duck"), ""))
+        return self.asset_bytes(table.get((kind, gid if gid == "fx1" else "duck"), ""))

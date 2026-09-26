@@ -453,8 +453,29 @@ class WebUI:
         elif path == "/dsh-whale/widget.js":
             handler._bytes(self._whale_js_injected(), "application/javascript; charset=utf-8",
                            cors=True)
-        elif path in ("/dsh-whale/bubble.json", "/dsh-whale/audio.json"):
-            # 上游 0.3.x 新增：泡泡 / 音频配置（纯配置，本移植版能落地 ⇒ 真存真读）
+        elif path == "/dsh-whale/audio.json":
+            # 音频是**动作式**接口（组 + 片段），不是"一坨配置" —— 见 whale.audio_payload
+            try:
+                handler._json(whale.audio_payload(), cors=True)
+            except Exception as e:  # noqa: BLE001
+                handler._json({"ok": False, "error": str(e)[:200]}, cors=True)
+        elif path == "/dsh-whale/bubble-imgs.json":
+            try:
+                handler._json(whale.bubble_imgs_payload(), cors=True)
+            except Exception as e:  # noqa: BLE001
+                handler._json({"ok": False, "error": str(e)[:200]}, cors=True)
+        elif path == "/dsh-whale/bubble-img.png":
+            bid = (parse_qs(query).get("id") or [""])[0]
+            data = whale.bubble_img_bytes(bid)
+            handler._bytes(data or b"", "image/png", cors=True)
+        elif path == "/dsh-whale/audio-fragment.wav":
+            fid = (parse_qs(query).get("id") or [""])[0]
+            data = whale.audio_fragment_bytes(fid)
+            ct = ("audio/wav" if str(fid).lower().endswith(".wav") or
+                  (data or b"")[:4] == b"RIFF" else "audio/mpeg")
+            handler._bytes(data or b"", ct, cors=True)
+        elif path == "/dsh-whale/bubble.json":
+            # 泡泡**纯配置**（与音频不同，它没有动作语义）
             try:
                 handler._json(whale.cfg_payload(os.path.basename(path)), cors=True)
             except Exception as e:
@@ -1131,13 +1152,31 @@ class WebUI:
                             self._json(parent.whale.save_size(data), cors=True)
                         except Exception as e:
                             self._json({"ok": False, "error": str(e)}, 500, cors=True)
-                elif path in ("/dsh-whale/bubble.json", "/dsh-whale/audio.json"):
-                    # 上游 0.3.x 新增：泡泡 / 音频配置保存（纯配置 ⇒ 本移植版真存）
+                elif path == "/dsh-whale/bubble.json":
+                    # 泡泡纯配置保存（有上限，存完回显）
                     if parent.whale is None:
                         self._json({"error": "not found"}, 404, cors=True)
                     else:
                         try:
-                            self._json(parent.whale.save_cfg(os.path.basename(path), data), cors=True)
+                            self._json(parent.whale.save_cfg("bubble.json", data), cors=True)
+                        except Exception as e:
+                            self._json({"ok": False, "error": str(e)}, 500, cors=True)
+                elif path == "/dsh-whale/audio.json":
+                    # 音频是**动作式**：save-group / pin-group / delete-group
+                    if parent.whale is None:
+                        self._json({"error": "not found"}, 404, cors=True)
+                    else:
+                        try:
+                            self._json(parent.whale.audio_action(data), cors=True)
+                        except Exception as e:
+                            self._json({"ok": False, "error": str(e)}, 500, cors=True)
+                elif path == "/dsh-whale/bubble-img-upload.json":
+                    # 泡泡图上传/删除（返回整份图库，前端据此刷新）
+                    if parent.whale is None:
+                        self._json({"error": "not found"}, 404, cors=True)
+                    else:
+                        try:
+                            self._json(parent.whale.bubble_img_action(data), cors=True)
                         except Exception as e:
                             self._json({"ok": False, "error": str(e)}, 500, cors=True)
                 elif path in ("/dsh-whale/roles.json", "/dsh-whale/role-pin.json",
