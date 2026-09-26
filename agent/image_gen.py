@@ -32,6 +32,9 @@ DEFAULTS = {
     "backends": [], # [{"id","kind":"local|online","url","timeout"}...]（空＝没后端）
     "style_allow": [], # 用户自填的风格白名单关键词（空＝不限）
     "style_block": [], # 风格黑名单关键词
+    # 各层默认开。⚠️ 「text」与「classifier」这两层**不能是"永远判否的桩"**：默认开着而判不出
+    #    ⇒ 整链判否 ⇒ 每张图都发不出去（用户只能把两者一起关掉，内容过滤名存实亡）。
+    #    现在的口径是：有真判据就真判，判不出来如实记「未参与判定」并放行（见 _f_text/_f_classifier）。
     "filter_chain": {"size": True, "dup": True, "blacklist": True, "text": True, "classifier": True},
 }
 
@@ -642,9 +645,28 @@ def _f_dup(path: str, meta: dict):
     return True, "sha256 未重复"
 
 
+#: 已知会往产物上盖水印带的后端（免密钥那条）。`strip_watermark` 只对它们动刀。
+_WM_BACKENDS = ("pollinations",)
+
+
 def _f_text(path: str, meta: dict):
-    """图里如果有文字（水印/二维码提醒），按未验证处理 ⇒ 判否（除非用户关掉这一层）。"""
-    return None, "图片文字/水印检查尚未接（按 fail-closed 处理：默认不放行）"
+    """图内文字/水印：只做**本机真有判据**的那半，另一半如实记「未参与判定」。
+
+    ⛔ 老实现是 `return None, "图片文字/水印检查尚未接（按 fail-closed 处理：默认不放行）"`
+    —— 一个**从不工作的桩**，而 `DEFAULTS` 里这一层默认**开着** ⇒ 默认配置下**每一张图都被它拦下**
+    （现场实证：只能把这一层和「内容分类器」一起关掉，于是内容过滤名存实亡）。
+    这与"过滤"正相反：能判的判，判不出来的**说清**并放行（与「内容分类器」同口径）。
+
+    水印半是**真判据**：免密钥那条后端（`pollinations` 无 token）的产物右下角一定带水印带，
+    由 `generate()` 先按 `image_gen.strip_watermark` 裁掉 ⇒ 若产物来自已知盖水印的后端、而用户
+    又把「去水印」关了，那水印**确实还在图上**（可验证的事实，不是猜）⇒ 判否并给出两条出路。
+    文字半（图里写了什么字）本机没有 OCR/视觉判据 ⇒ 不假装检查过。
+    """
+    bid = str((meta or {}).get("backend") or "").lower()
+    if bid in _WM_BACKENDS and cfg().get("strip_watermark", True) is False:
+        return False, ("产物来自已知盖水印的后端（%s），且「去水印」被关掉 ⇒ 水印留在图上，判否"
+                       "（在控制台打开「去水印」，或换一个不带水印的后端）" % bid)
+    return True, "图内文字无 OCR 判据 ⇒ 未参与判定（不假装把关）；水印按「去水印」设置处理"
 
 
 def _f_classifier(path: str, meta: dict):

@@ -102,6 +102,14 @@ class _Stub(object):
     def _idn_txn_end(self):
         return None
 
+    # 去重闸（`send_text_posted` 入口会调）：本夹具测"发送前的准备/闸门"，去重语义不在范围内
+    # ⇒ 一律放行、记账空操作。漏了它 ⇒ 被吞成"三态=异常"，整条判据歪掉。
+    def _dedup_send(self, chat_id, text):
+        return True
+
+    def _dedup_mark(self, chat_id, text):
+        return None
+
     # 身份缓存/事务族的空实现：真适配器上这些是真方法，本夹具**不构造真适配器**（那会去连微信）
     # ⇒ 桩成"不缓存、不失效"，让被测链按判据照走。漏了它们 ⇒ `chat_is_open` 内部抛
     # `AttributeError` 被吞成"会话头三态=异常" ⇒ 断言全歪（判据链静默失效的老病）。

@@ -160,6 +160,41 @@ try:
        json.dumps(_clu[0] if _clu else _resu[-1], ensure_ascii=False)[:130])
 finally:
     _ifp.check = _keep_check
+# ⛔ 「图内文字/水印」层**不能是"永远判否的桩"**：它在 `DEFAULTS` 里默认**开着**，一个恒判否的桩
+#    ⇒ 默认配置下每一张图都被它拦下（现场实证：只能把这一层和「内容分类器」一起关掉 ⇒ 内容过滤名存实亡）。
+#    现在的口径：**只有"水印有没有留下来"这半有真判据**（后端是不是已知盖水印的 + 用户有没有关掉「去水印」），
+#    文字半本机没有 OCR 判据 ⇒ 如实记「未参与判定」并放行。
+settxt, restxt = IG.run_filters(good_png, {"prompt": "猫"})
+_tx = [r for r in restxt if r["name"] == "text"]
+ok("「图内文字/水印」层不是恒判否的桩（默认开着时整链能过，不掐死生图）",
+   settxt is True and bool(_tx) and _tx[0]["ok"] is True,
+   json.dumps(_tx[0], ensure_ascii=False)[:130] if _tx else "")
+ok("文字半如实记「未参与判定」（本机没有 OCR 判据，不假装把关过）",
+   bool(_tx) and "未参与判定" in str(_tx[0]["why"]),
+   str(_tx[0]["why"])[:120] if _tx else "")
+# 水印半是**真判据**：产物来自已知盖水印的后端、用户又把「去水印」关了 ⇒ 水印确实还在图上 ⇒ 判否
+set_cfg(enabled=True, strip_watermark=False,
+        filter_chain={"size": True, "dup": True, "blacklist": True, "text": True, "classifier": False})
+_wmk, _reswk = IG.run_filters(good_png, {"prompt": "猫", "backend": "pollinations"})
+_twk = [r for r in _reswk if r["name"] == "text"]
+ok("已知盖水印的后端 + 关掉「去水印」⇒ 判否（水印真的还在图上，不是猜）",
+   _wmk is False and bool(_twk) and _twk[0]["ok"] is False,
+   str(_twk[0]["why"])[:120] if _twk else "")
+set_cfg(enabled=True, strip_watermark=False,
+        filter_chain={"size": True, "dup": True, "blacklist": True, "text": True, "classifier": False})
+_oktw, _restw = IG.run_filters(good_png, {"prompt": "猫", "backend": "zhipu"})
+_ttw = [r for r in _restw if r["name"] == "text"]
+ok("本来就不带水印的后端（要 key 那几家）⇒ 不被水印半拦下",
+   bool(_ttw) and _ttw[0]["ok"] is True, str(_ttw[0]["why"])[:120] if _ttw else "")
+# ⛔ 用户级性质（这条是正面闸门，不是"某层没判否"的处数统计）：**默认配置下整链必须能过**。
+#    任何一层只要是"恒判否的桩"，默认配置下整条生图链就全废（而用户看到的只是"图发不出去"）。
+#    所以这里直接用 `DEFAULTS`（全层默认开）跑一张正常图，要求整链通过。
+set_cfg()
+_dok, _dres = IG.run_filters(good_png, {"prompt": "猫"})
+ok("默认配置（各层默认全开）下整链能过 —— 没有一层是「恒判否的桩」",
+   _dok is True,
+   json.dumps([r for r in _dres if r.get("ok") is not True], ensure_ascii=False)[:160])
+set_cfg(enabled=True, filter_chain={"size": True, "dup": True, "blacklist": True, "text": True, "classifier": True})
 oks, _ = IG.run_filters(small_png, {"prompt": "猫"})
 ok("尺寸过小 ⇒ 判否", oks is False)
 okb, resb = IG.run_filters(bad_txt, {"prompt": "猫"})

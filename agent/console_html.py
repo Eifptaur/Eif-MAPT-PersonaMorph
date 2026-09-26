@@ -1950,7 +1950,7 @@ th{color:var(--tx2);font-weight:500}
         <label class="hint" style="margin-right:10px"><input type="checkbox" data-cfg="image_gen.filter_chain.blacklist"> 风格黑白名单</label>
         <label class="hint" style="margin-right:10px"><input type="checkbox" data-cfg="image_gen.filter_chain.text"> 图内文字/水印</label>
         <label class="hint"><input type="checkbox" data-cfg="image_gen.filter_chain.classifier"> 内容分类器</label>
-        <div class="hint">**关掉任何一层都会让"不确定"变成"照发"**——「图内文字/水印」和「内容分类器」现在还没接，所以默认开着时它们判不出来 ⇒ 整链判否、不发（fail-closed）。</div></div></div>
+        <div class="hint">判否即不发（fail-closed）。「内容分类器」已接本机过滤链：判据跑不起来时如实记「未参与判定」并放行——不假装备过，也不把生图整个掐死。「图内文字/水印」只有"水印有没有留下来"这半有真判据（关掉上面「去水印」时判否）；图里写了什么字本机没有 OCR 判据 ⇒ 同样如实记「未参与判定」。</div></div></div>
       <div class="btns">
         <button id="igGuide" class="ghost">怎么接一个生图后端？红线是什么？</button>
         <button id="igTest" class="ghost">试一次（只跑链条，不发到任何会话）</button>
@@ -5251,7 +5251,7 @@ const GUIDES = {
       '① 后端**不用你选**：程序会自己探本机在跑的生图服务（A1111 :7860 / ComfyUI :8188 / Fooocus :7865 / InvokeAI :9090），探到就用；想固定用某一个，在上面「生图后端」里手填即可',
       '② 在「生图后端」里按格式填：`id | local 或 online | 接口地址`，多个用分号分隔；填 online 的还要把「允许出网」打开',
       '③ 打开「总开关」+ 选一档「触发条件」（这一档真的改变给模型的指令）；风格白/黑名单用逗号分隔，黑名单命中时**生成前就拒**',
-      '④ 过滤链建议全开：「图内文字/水印」和「内容分类器」现在还没接，开着时它们判不出来 ⇒ **整链判否、不发**（这是我们故意的：不确定就不发）',
+      '④ 过滤链建议全开：判否即不发。「内容分类器」跑本机过滤链，「图内文字/水印」管"水印有没有留下来"；**判据跑不起来时如实记「未参与判定」并放行**——不假装备过，也不因为"没配视觉模型"就把生图整个掐死',
       '⑤ 点「试一次」跑一遍链条看结论（不会发到任何会话）；红线是硬的：不生成真人换脸/换身体、不生成成人内容'
     ],
     copy: [{label: '复制后端格式示例', text: 'comfy | local | http://127.0.0.1:8188/prompt'}],

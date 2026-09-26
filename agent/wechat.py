@@ -3490,7 +3490,10 @@ class WeChatAdapter:
                             log.info("投递前置未满足（%s）且投递切会话未成功", st["status"])
                     except Exception as e:
                         log.info("投递优先判定异常：%s", e)
-                        _st_status = "异常:%s" % type(e).__name__
+                        # ⛔ 只写**类型名**会把"具体缺什么"丢掉：AttributeError 的属性名、KeyError 的键
+                        #    都在 `str(e)` 里 ⇒ 现场只看到"异常:AttributeError"，排查看不出缺哪个成员。
+                        #    ⇒ 类型 + 简述一起写（截断，不改变"异常了"这个结论本身）。
+                        _st_status = "异常:%s(%s)" % (type(e).__name__, str(e)[:80])
                 if not self._real_fallback_allowed():
                     # 这条是"消息进来了、回复却发不出去"最常见的一跳 ⇒ 记台账，
                     # 让控制台「症状检验器 · 它不回复」能把它摆出来（原来只有日志文件里一行）。

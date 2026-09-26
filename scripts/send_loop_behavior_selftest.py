@@ -105,7 +105,12 @@ class _FakeBackend(ib.MessageBackend):
         return True, ""
 
     def keys(self, hwnd, vks, hold_ms=30):
-        self.scn.calls.append(("keys", tuple(int(v) for v in vks)))
+        kv = tuple(int(v) for v in vks)
+        self.scn.calls.append(("keys", kv))
+        # ⛔ 只有**回车**才是"发送那一枪"。发送链在打字前会先清输入框残留（Ctrl+A + Backspace），
+        #    那是**准备动作**，不是开枪 —— 把它也算一枪，剧本的读数时序会整体挪位（枪数/命中枪次全歪）。
+        if 0x0D not in kv:
+            return True, ""
         return self.scn.send_attempt("keys", hwnd)
 
 
@@ -286,26 +291,43 @@ _r1, _w1, _c1 = run(_s1)
 #   现在只要回执里出现「校验本身出错」就说明**闸里的代码又炸了**（新口径下还会拒发 ⇒ 一条都发不出去）。
 ok("身份闸在 status=ok 这一档真的跑完、没有把自己炸掉（否则回执会写「校验本身出错」）",
    "校验本身出错" not in str(_w1), str(_w1)[:90])
-_front = [c[0] for c in _c1.calls[:3]]
-ok("顺序＝click(聚焦) → send_text(打字) → keys(回车)",
-   _front == ["click", "send_text", "keys"], str(_front))
+_names = [c[0] for c in _c1.calls]
+_i_tx = _names.index("send_text") if "send_text" in _names else -1
+# "枪"＝回车那一键（清残留也用 keys，别把它当枪）
+_i_ent = next((i for i, c in enumerate(_c1.calls)
+               if c[0] == "keys" and c[1] == (0x0D,)), -1)
+ok("顺序＝click(聚焦) → [清残留] → send_text(打字) → 回车(开枪)",
+   bool(_names) and _names[0] == "click" and _i_tx > 0 and -1 < _i_tx < _i_ent,
+   "%s  打字@%d 回车@%d" % (str(_names[:6]), _i_tx, _i_ent))
+# ⛔ 打字前那一步是**故意加的**：上一轮所有枪都落空时字会留在输入框里，不清就会与新字串成一条发出去。
+ok("有残留 ⇒ 先清空（Ctrl+A + Backspace）再打字",
+   [c[0] for c in _c1.calls[:3]] == ["click", "keys", "keys"]
+   and _c1.calls[1][1] == (0x11, 0x41) and _c1.calls[2][1] == (0x08,),
+   str(_c1.calls[:3]))
 ok("聚焦点＝**现算出来的**输入框上半部分（不是按比例猜）",
    _c1.calls[0][1] == _c1.focus_pt, "%s vs %s" % (_c1.calls[0][1], _c1.focus_pt))
 ok("聚焦落点**必须在工具栏带（0.92·h）之上**",
    _c1.calls[0][1][1] < int(90 + 890 * 0.92),
    "y=%s 上限=%d" % (_c1.calls[0][1][1], int(90 + 890 * 0.92)))
-ok("打字用的就是本次文本", _c1.calls[1][1] == _c1.text, str(_c1.calls[1][1])[:24])
+_tx = [c[1] for c in _c1.calls if c[0] == "send_text"]
+ok("打字用的就是本次文本", _tx == [_c1.text], str(_tx)[:40])
 
 print("── A2. 量不到输入框 ⇒ **一枪都不下**，发送照走 ──")
 _rA, _wA, _cA = run(_s1, mode="nobody")
-ok("量不到 ⇒ 直接打字，没有那一次 click",
-   [c[0] for c in _cA.calls[:2]] == ["send_text", "keys"], str([c[0] for c in _cA.calls[:2]]))
+ok("量不到 ⇒ 不下聚焦那一枪（随后打字 + 回车照走）",
+   all(c[0] != "click" for c in _cA.calls)
+   and [c[0] for c in _cA.calls
+        if not (c[0] == "keys" and c[1] in ((0x11, 0x41), (0x08,)))] == ["send_text", "keys"],
+   str([c[0] for c in _cA.calls]))
 ok("仍然判成功（靠打字 + 回车，DB 回读照跑）", _rA == W.V_OK, "%r" % (str(_rA),))
 
 print("── A3. 现算落点掉进工具栏带（✂ 那一排）⇒ 按红线跳过这一枪 ──")
 _rB, _wB, _cB = run(_s1, mode="toolbar")
-ok("落点在工具栏带 ⇒ 同样不下这一枪",
-   [c[0] for c in _cB.calls[:2]] == ["send_text", "keys"], str([c[0] for c in _cB.calls[:2]]))
+ok("落点在工具栏带 ⇒ 同样不下这一枪（随后打字 + 回车照走）",
+   all(c[0] != "click" for c in _cB.calls)
+   and [c[0] for c in _cB.calls
+        if not (c[0] == "keys" and c[1] in ((0x11, 0x41), (0x08,)))] == ["send_text", "keys"],
+   str([c[0] for c in _cB.calls]))
 
 print("── A4. 阳性对照：打完字输入框上沿带深色点 = 0 ⇒ 如实判失败，不许再猜点补一枪 ──")
 _rC, _wC, _cC = run(_s1, ink=0)
@@ -314,6 +336,9 @@ ok("文案点明「输入框没吃到字」+「不许按比例猜点」",
    ("没吃到字" in _wC) and ("猜点" in _wC), _wC)
 ok("失败后**没有**再补一枪（枪序只有 click + send_text）",
    [c[0] for c in _cC.calls] == ["click", "send_text"], str([c[0] for c in _cC.calls]))
+ok("没残留就不清（ink=0 时不存在那张清空键）",
+   not any(c[0] == "keys" and c[1] in ((0x11, 0x41), (0x08,)) for c in _cC.calls),
+   str([c[0] for c in _cC.calls]))
 
 print("── B. 第一枪（回车）就成功：判成功、且**不许**再多打枪 ──")
 ok("判 V_OK", _r1 == W.V_OK, "result=%r" % (str(_r1),))
