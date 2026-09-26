@@ -156,9 +156,13 @@ def _local_save(key: str, rec: dict) -> None:
         pass
 
 
-#: 这些原因**不算"版本对发不出去"**（是身份/环境/用户态的问题，换版本也没用）
+#: 这些原因**不算"版本对发不出去"**（是身份/环境/用户态/策略的问题，换版本也没用）
+#: ⚠️ `foreground_not_target` 也在里面：它的成因是"按最高目标不动用户鼠标"的那道闸没放开
+#:   （投递没成 + 没显式开真鼠标兜底），**与微信版本的能力无关** ⇒ 喂进"版本能力失败"自证计数
+#:   会把一批策略性跳过误升级成 `no_measured_local`。
 _NOT_CAPABILITY = ("identity_unconfirmed", "halted", "busy", "filtered", "no_interactive_desktop",
-                   "no_capture", "db_unreadable", "access_denied", "auth_rejected", "key_missing")
+                   "no_capture", "db_unreadable", "access_denied", "auth_rejected", "key_missing",
+                   "foreground_not_target")
 
 
 def note_send_result(ok: bool, why: str = "", wechat: str = "", adapter: str = "") -> None:

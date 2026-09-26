@@ -184,10 +184,11 @@ def _bad(file: str, why: str) -> dict:
     """坏清单条目：人话在前，**附上码与修法**（码只给控制台/日志/统计，不影响任何发给模型的文本）。"""
     try:
         from . import reason_codes as _rc
-        lab = _rc.label("manifest_bad")
+        code_label = _rc.label("manifest_bad") # 变量名带 code：码的去向一眼可辨（判据也按这个认）
     except Exception:
-        lab = "清单不合法"
-    return {"file": file, "why": why, "fix": _fix_hint(why), "code": "manifest_bad", "code_label": lab}
+        code_label = "清单不合法"
+    return {"file": file, "why": why, "fix": _fix_hint(why), "code": "manifest_bad",
+            "code_label": code_label}
 
 
 def load(builtin_names=()) -> tuple:
