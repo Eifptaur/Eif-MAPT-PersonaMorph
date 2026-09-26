@@ -46,10 +46,10 @@ print("")
 mem_src = io.open(os.path.join(ROOT, "agent", "memory.py"), encoding="utf-8").read()
 page = io.open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
 
-seg_members = mem_src.split("def members(")[1].split("def remove(")[0]
-seg_elsewhere = mem_src.split("def elsewhere(")[1].split("\n    def ")[0] if "def elsewhere(" in mem_src else ""
-seg_remove = mem_src.split("def remove(")[1].split("def elsewhere(")[0] \
-    if "def elsewhere(" in mem_src else mem_src.split("def remove(")[1].split("def replace_member(")[0]
+seg_members = _srcslice.from_func(mem_src, "members").split("def remove(")[0]
+seg_elsewhere = _srcslice.from_func(mem_src, "elsewhere").split("\n    def ")[0] if "def elsewhere(" in mem_src else ""
+seg_remove = _srcslice.from_func(mem_src, "remove").split("def elsewhere(")[0] \
+    if "def elsewhere(" in mem_src else _srcslice.from_func(mem_src, "remove").split("def replace_member(")[0]
 
 print("── A. 读取与删除必须同一口径 ──")
 ok("members 用 _chat_keys 展开（互通时合并所有群）", "_chat_keys(chat_key)" in seg_members)

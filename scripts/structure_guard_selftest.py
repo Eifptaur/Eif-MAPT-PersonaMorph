@@ -79,7 +79,7 @@ REGISTERED = {
 #: 判据侧"用 `def` 行当**文本切片边界**"的棘轮基线（只许降）。
 #: 这类写法靠"函数在文件里的位置"定边界 ⇒ 函数一旦被搬位置，就会**崩**或**静默切错**
 #: （判据含义悄悄变了、甚至因为别处的文字而假绿）。能机械改写的都已换成 `_srcslice` 的 AST 锚点。
-JUDGE_TEXT_ANCHOR_BASE = 120
+JUDGE_TEXT_ANCHOR_BASE = 115
 
 #: 其中**仍属"可机械改写形态"但有意留下**的（按文件计数；表与实测必须**完全一致**）。
 #: 留下的三类理由：① 切片目标是**片段**（再对片段做 AST 解析会语法错）；
@@ -90,13 +90,11 @@ JUDGE_KEEP = {
     ("scripts/background_selftest.py", 1),
     ("scripts/config_mask_selftest.py", 1),
     ("scripts/console_open_selftest.py", 1),
-    ("scripts/memory_selftest.py", 4),
     ("scripts/misdelivery_selftest.py", 1),
     ("scripts/self_local_selftest.py", 3),
     ("scripts/send_fail_reason_selftest.py", 1),
     ("scripts/send_file_posted_selftest.py", 2),
     ("scripts/send_guard_selftest.py", 4),
-    ("scripts/send_loop_behavior_selftest.py", 1),
     ("scripts/send_verdict_selftest.py", 2),
     ("scripts/store_archive_selftest.py", 1),
     ("scripts/webui_route_selftest.py", 1),

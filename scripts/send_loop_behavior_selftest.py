@@ -428,7 +428,7 @@ _src_w = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 ok("`_send_text_fast` 存在", "def _send_text_fast(" in _src_w)
 ok("它排在「聚焦输入栏」那一枪**之前**（能省掉点框）",
    _src_w.index("self._send_text_fast(") < _src_w.index("投递聚焦输入栏"))
-_seg_f = _src_w.split("def _send_text_fast(")[1]
+_seg_f = _srcslice.from_func(_src_w, "_send_text_fast")
 _seg_f = _seg_f[:_seg_f.find("\n    def ", 10)]
 ok("**全程不点任何东西**（不点输入框、不点发送按钮）",
    "backend.click(" not in _seg_f and "_click_posted(" not in _seg_f)

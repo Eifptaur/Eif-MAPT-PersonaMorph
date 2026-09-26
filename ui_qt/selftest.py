@@ -20,9 +20,6 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-#: 判据共用件在**同仓 `scripts/`**（`_srcslice`：按 AST 取函数源码，不用文本边界）
-sys.path.insert(0, str(HERE.parents[0] / "scripts"))
-import _srcslice
 
 #: 控制台页面本体的**数据文件**（真值）。⛔ 页面已从 `agent/console_html.py` 外置到这里：
 #  加载器只剩几十行，凡是"去页面源码里找某段 HTML/JS/CSS"的判据都必须读这个文件。
