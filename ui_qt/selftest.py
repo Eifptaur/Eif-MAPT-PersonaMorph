@@ -8704,6 +8704,19 @@ def t_async_landing_guard() -> None:
        "before=%s after=%s" % (_before, pc._ui_alive(le)))
     ck("没有绑定控件（None）时不误判为已死", pc._ui_alive(None) is True, "")
 
+    # ①b 两种存活判：问的问题不同 ⇒ 对 None 的口径**相反**。都收口在 async_ui 一处并排写着，
+    #    谁按自己的理解再造一个（比如 panels_custom 里又出现 `def _qt_alive`）就红。
+    import async_ui as _au # noqa: PLC0415
+
+    _pc_src = (HERE / "panels_custom.py").read_text(encoding="utf-8")
+    ck("两种存活判对 None 口径相反（落地判 True / 取控件判 False）",
+       _au.ui_alive(None) is True and _au.widget_alive(None) is False,
+       "ui=%s widget=%s" % (_au.ui_alive(None), _au.widget_alive(None)))
+    ck("存活判只有 async_ui 一处实现（`_qt_alive` 不再在别处被重新定义）",
+       "def _qt_alive" not in _pc_src and "def _ui_alive" not in _pc_src, "")
+    ck("两种判活对「已销毁控件」结论一致（都判死）",
+       _au.widget_alive(le) is False and _au.ui_alive(le) is False, "")
+
     # ② 回调真抛 RuntimeError ⇒ 必须被吞掉（面板没了，没有界面要更新）
     def _boom(*_a):  # noqa: ANN002, ANN202
         raise RuntimeError("libshiboken: Internal C++ object already deleted")

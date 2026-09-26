@@ -51,12 +51,41 @@ def ui_alive(w: object) -> bool:
     """
     if w is None:
         return True
+    return _cpp_alive(w, default=True)
+
+
+def widget_alive(w: object) -> bool:
+    """「这个具体控件还在吗」—— 给**还没拿到结果就先用**的场合（轮询起点、请求前置判）。
+
+    ⛔ 与 `ui_alive` 的**唯一区别**在 None 的含义，别看错：
+      · `ui_alive(None) is True` —— "我没绑定宿主"，那是**落地**场景，没宿主就没有界面要更新，
+        当成活着（结果直接丢给回调，由 `deliver` 兜底）；
+      · `widget_alive(None) is False` —— "这个控件变量还是 None"，说明页面构造没走到那一步，
+        此时**不该发起请求**（发出去也没地方放结果）。
+    两个问题的答案不同，所以是两个函数，不是同一个函数的两种写法。
+    """
+    if w is None:
+        return False
+    return _cpp_alive(w, default=False)
+
+
+def _cpp_alive(w: object, *, default: bool) -> bool:
+    """C++ 侧是否还活着。拿不到 shiboken 就退回「调个无害 getter 看抛不抛 RuntimeError」。
+
+    `default` 是"两种判活手段都用不上"时的兜底值（调用方各自的口径，见上面两个函数）。
+    """
     try:
         import shiboken6 # noqa: PLC0415
 
         return bool(shiboken6.isValid(w))
-    except Exception: # noqa: BLE001 — 拿不到 shiboken 就当它活着，由 deliver 兜底
-        return True
+    except Exception: # noqa: BLE001 — 没有 shiboken：退回"碰一下看抛不抛"
+        try:
+            w.objectName()
+            return True
+        except RuntimeError:
+            return False
+        except Exception: # noqa: BLE001
+            return default
 
 
 def deliver(on_done, *args) -> None: # noqa: ANN001

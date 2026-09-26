@@ -49,7 +49,13 @@ from PySide6.QtWidgets import (
 
 import config_io
 import sec_meta
-from async_ui import deliver as _deliver, run_async, run_bg, ui_alive as _ui_alive
+from async_ui import (
+    deliver as _deliver,
+    run_async,
+    run_bg,
+    ui_alive as _ui_alive,
+    widget_alive as _qt_alive,
+)
 from confirm import ConfirmDialog
 from stylekit_qt import SHAPE_CIRCLE, Tokens, pill, qfont, rgba, status_colors
 from widgets import Badge, Btn, Card, ElideLabel, Field, FlowBox, Switch, desc, h2, row_label
@@ -62,25 +68,8 @@ def _hex(c) -> str:
     return c.name(QColor.NameFormat.HexArgb)
 
 
-def _qt_alive(w) -> bool:
-    """控件在 C++ 侧是否还活着。
-
-    面板重建/关页后，注册进全局轮询的闭包仍持有旧控件（Python 侧活、C++ 侧已析构）。
-    用 `shiboken6.isValid` 判活；不可用则退回「调个无害 getter 看抛不抛
-    RuntimeError」。已死 ⇒ 调用方直接退出，不发起任何阻塞请求。
-    """
-    if w is None:
-        return False
-    try:
-        import shiboken6 # noqa: PLC0415
-
-        return bool(shiboken6.isValid(w))
-    except Exception: # noqa: BLE001
-        try:
-            w.objectName()
-            return True
-        except RuntimeError:
-            return False
+#: 存活判（`_qt_alive` / `_ui_alive`）实现在 `async_ui`：两者对 None 的口径**相反**，
+#  放在一处并排写清区别，避免各自按自己的理解再写一遍（见 async_ui.widget_alive 的说明）。
 
 
 def _page(t: Tokens, title: str, level: str = "idle", badge: str = "读取中"):
