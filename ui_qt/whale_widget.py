@@ -71,6 +71,7 @@ class WhaleWidget(QWidget):
         self._drag0: QPoint | None = None
         self._win0: QPoint | None = None
         self._moved = False
+        self._lbtn = False # 物理左键是否按住（注入给内核的 MOVE 要带这个状态）
         self._host = None
         self._err = ""
         self._booted = False
@@ -241,32 +242,6 @@ class WhaleWidget(QWidget):
         except Exception:  # noqa: BLE001
             pass
 
-    # ---- 输入注入（合成承载专用；窗口化承载下 host.send_mouse 是空操作）----
-    _K_MOVE = 512 # WM_MOUSEMOVE
-    _K_LDOWN = 513 # WM_LBUTTONDOWN
-    _K_LUP = 514 # WM_LBUTTONUP
-    _K_LEAVE = 675 # WM_MOUSELEAVE
-
-    def mousePressEvent(self, ev) -> None:  # noqa: N802
-        if self._host is not None and ev.button() == Qt.MouseButton.LeftButton:
-            self._host.send_mouse(self._K_LDOWN, int(ev.position().x()), int(ev.position().y()))
-        super().mousePressEvent(ev)
-
-    def mouseReleaseEvent(self, ev) -> None:  # noqa: N802
-        if self._host is not None and ev.button() == Qt.MouseButton.LeftButton:
-            self._host.send_mouse(self._K_LUP, int(ev.position().x()), int(ev.position().y()))
-        super().mouseReleaseEvent(ev)
-
-    def mouseMoveEvent(self, ev) -> None:  # noqa: N802
-        if self._host is not None:
-            self._host.send_mouse(self._K_MOVE, int(ev.position().x()), int(ev.position().y()))
-        super().mouseMoveEvent(ev)
-
-    def leaveEvent(self, ev) -> None:  # noqa: N802
-        if self._host is not None:
-            self._host.send_mouse(self._K_LEAVE, -1, -1)
-        super().leaveEvent(ev)
-
     def _on_pagedrag(self, dx: int, dy: int, ended: bool) -> None:
         """页面报告的拖动位移 → 挪窗口；`ended` 时落盘位置。
 
@@ -362,27 +337,78 @@ class WhaleWidget(QWidget):
             pass
 
     # ------------------------------------------------------------ 交互
+    #
+    # 鼠标一律**先转发给内核**（合成承载没有子窗替我们收事件，必须显式注入；
+    # 窗口化承载下 `send_mouse` 是空操作，事件本来就由子窗直给页面）。
+    # 拖动归谁则看承载方式 —— 判据只有一条：**会不会同时收到同一个事件**。
+    _K_MOVE = 512 # WM_MOUSEMOVE
+    _K_LDOWN = 513 # WM_LBUTTONDOWN
+    _K_LUP = 514 # WM_LBUTTONUP
+    _K_LEAVE = 675 # WM_MOUSELEAVE
+    _MK_LBUTTON = 1 # 注入左键拖动时要带上「左键仍按下」的状态位
+
+    def _page_drives_drag(self) -> bool:
+        """这一拍的事件是否**已经**由页面推动拖动 —— 是则 Qt 不再插手。
+
+        · 合成承载（无子窗）：宿主与页面会**同时**拿到同一个鼠标事件，
+          两边都挪窗就是双倍位移 ⇒ 只让页面驱动（页内监听 → postMessage）；
+        · 窗口化承载：页面与 Qt 是**互斥**的两条命中路径（子窗吃到就轮不到
+          Qt，只有画布透明像素穿透时才轮到 Qt），谁收到谁拖，互不冲突 ⇒
+          Qt 照常顶上，用户抓空白处也能把挂件拖走；
+        · 页面没起来（降级态）：WebView 已被 `_keep_draggable()` 收起，
+          由 Qt 接全部鼠标 ⇒ 一定不交给页面。
+        """
+        host = self._host
+        if host is None or not getattr(host, "_composition", False):
+            return False
+        return bool(host.ok and not self._load_failed)
+
+    def _inject(self, kind: int, ev, vkeys: int = 0) -> None:  # noqa: ANN001
+        """把当前鼠标事件转给内核（合成承载专用；窗口化下是空操作）。"""
+        try:
+            if self._host is not None:
+                self._host.send_mouse(kind, int(ev.position().x()),
+                                      int(ev.position().y()), vkeys)
+        except Exception:  # noqa: BLE001 — 注入是尽力而为，失败不影响窗口自身
+            pass
 
     def mousePressEvent(self, ev) -> None:  # noqa: N802
         if ev.button() == Qt.MouseButton.LeftButton:
-            self._drag0 = ev.globalPosition().toPoint()
-            self._win0 = self.pos()
-            self._moved = False
+            self._lbtn = True
+            self._inject(self._K_LDOWN, ev, self._MK_LBUTTON)
+            if not self._page_drives_drag():
+                self._drag0 = ev.globalPosition().toPoint()
+                self._win0 = self.pos()
+                self._moved = False
+        super().mousePressEvent(ev)
 
     def mouseMoveEvent(self, ev) -> None:  # noqa: N802
+        # 注入的 MOVE 要带真实按键状态（内核据此判断「这是拖动还是悬停」），
+        # 与「谁负责挪窗」无关 —— 所以看物理左键，不看 `_drag0`。
+        self._inject(self._K_MOVE, ev, self._MK_LBUTTON if self._lbtn else 0)
         if self._drag0 is None or self._win0 is None:
             return
         d = ev.globalPosition().toPoint() - self._drag0
         if not self._moved and (abs(d.x()) + abs(d.y())) > 5:
-            self._moved = True  # 位移阈值：小于它算「点击」而非拖拽
+            self._moved = True # 位移阈值：小于它算「点击」而非拖拽
         if self._moved:
             self.move(self._win0 + d)
+        super().mouseMoveEvent(ev)
 
     def mouseReleaseEvent(self, ev) -> None:  # noqa: N802
+        if ev.button() == Qt.MouseButton.LeftButton:
+            self._inject(self._K_LUP, ev)
+            self._lbtn = False
         if self._drag0 is not None and self._moved:
             QSettings(*_SET).setValue("whale_pos", [self.x(), self.y()])
         self._drag0 = None
         self._win0 = None
+        super().mouseReleaseEvent(ev)
+
+    def leaveEvent(self, ev) -> None:  # noqa: N802
+        if self._host is not None:
+            self._host.send_mouse(self._K_LEAVE, -1, -1)
+        super().leaveEvent(ev)
 
     def moveEvent(self, ev) -> None:  # noqa: N802
         """窗口移动时通知内核重排（WebView2 不跟随父窗自动挪，会留在原地）。"""

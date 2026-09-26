@@ -5309,9 +5309,15 @@ def t_g13() -> None:
     ck("g13-B 合成承载在位（put_RootVisualTarget + SendMouseInput + Environment3 QI）",
        "put_RootVisualTarget" in _host_src and "SendMouseInput" in _host_src
        and "ICoreWebView2Environment3" in _host_src)
-    ck("g13-B 窗口化画布 A=0（用户实测该配置鲸鱼正常渲染）",
-       "put_DefaultBackgroundColor(0)" in _host_src
-       and "_enable_transparency()" in _host_src)
+    # 画布透明在窗口化承载下走 Controller2 的 DefaultBackgroundColor（vtable 槽 27，
+    # 裸调用）。它与宿主窗的半透明属性是**一对**：画布不透明 ⇒ 半透明窗透出来的是
+    # 内核自己的底色（黑/白块）；窗口不半透明 ⇒ 画布的透明处没有东西可透。
+    # 所以断言成对，且锚定真实调用形态（QI 的 IID + 槽位 + A=0），不锚定函数名。
+    _wsrc_t = (HERE / "whale_widget.py").read_text(encoding="utf-8")
+    ck("g13-B 画布 A=0 与宿主窗半透明**成对**在位（缺一即黑块或鲸鱼不出现）",
+       "C979903E-D4CA-4228-92EB-47EE3FA96EAB" in _host_src
+       and "vtbl[27]" in _host_src and "put(c2_addr, 0)" in _host_src
+       and "WA_TranslucentBackground" in _wsrc_t)
 
     _host_src = (HERE / "whale_host.py").read_text(encoding="utf-8")
     ck("g13-D 建链是异步链（同步忙等 processEvents 处理不了 COM 跨线程 RPC ⇒ 曾因异步忙等卡死）",
@@ -5347,6 +5353,9 @@ def t_g13() -> None:
 
     # ── C（真造控件，但**不触发 WebView2 建链**：桩掉 _boot_webview）──
     st = QSettings("WXAgent", "persona-morph-ui")
+    # 位置记忆属于**用户现场状态**：本组要写它来验跨实例恢复，跑完必须还原，
+    # 否则自检会把用户拖过的位置改成测试用的坐标。
+    _pos_keep = st.value("whale_pos")
     keep: list = []
     try:
         w = ww.WhaleWidget(t)
@@ -5397,6 +5406,7 @@ def t_g13() -> None:
     finally:
         for x in keep:
             x.close()
+        st.setValue("whale_pos", _pos_keep or "")
         QApplication.processEvents()
 
 
@@ -7913,6 +7923,48 @@ def t_placeholder_guard() -> None:
     host.close()
 
 
+def t_dupdef_guard() -> None:
+    """自检：类内**同名方法重复定义**（后者静默覆盖前者 ⇒ 前一份是死码）。
+
+    这类缺陷不报错、不告警：模块照常 import，静态检查也过，但写在前面那份实现
+    永远跑不到。实测形态：`whale_widget.WhaleWidget` 的鼠标处理器各定义了两份
+    ——「把鼠标转发给内核」那份被后面「拖动窗口」那份整体覆盖 ⇒ 按合成承载跑的
+    输入注入一次都没生效过（功能静默失效，代码却在）。
+
+    判据完全机械化：AST 全量扫 `ui_qt/*.py`，属性 setter/getter 与 overload
+    这类**同名是合法**的形态显式排除。
+    """
+    import ast # noqa: PLC0415
+
+    bad = []
+    for p in sorted(HERE.glob("*.py")):
+        if p.name == "selftest.py":
+            continue
+        try:
+            tree = ast.parse(p.read_text(encoding="utf-8"))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            seen: dict = {}
+            for f in node.body:
+                if not isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                decs = [ast.unparse(d) for d in f.decorator_list]
+                if any(("." + k) in d for d in decs
+                       for k in ("setter", "getter", "deleter")):
+                    continue
+                if any("overload" in d for d in decs):
+                    continue
+                seen.setdefault(f.name, []).append(f.lineno)
+            for name, lns in seen.items():
+                if len(lns) > 1:
+                    bad.append("%s:%s.%s@%s" % (p.name, node.name, name, lns))
+    ck("全量无「类内同名方法重复定义」（后者静默覆盖前者 = 死码）",
+       not bad, "; ".join(bad[:4]) or "ok")
+
+
 def main() -> int:
     # ⭐ 测试隔离（audit-r2 N1 残余的收口）：`logs/console.url` 是**产品运行时**写的
     #   （含随机端口+token），自检跑在产品目录里会读到它——轻则刷几百行「端口连不上」噪音，
@@ -7938,7 +7990,7 @@ def main() -> int:
                    t_veradv, t_g5, t_g6, t_g7, t_g8, t_g9, t_g10, t_g11, t_g12, t_g13, t_g14,
                    t_g15, t_g16, t_g17, t_g18, t_g19, t_g20, t_g21, t_g22, t_ocr_fuzzy,
                    t_audit_r3, t_dialog_drag, t_whale_guard, t_color_token_guard,
-                   t_button_label_guard, t_placeholder_guard):
+                   t_button_label_guard, t_placeholder_guard, t_dupdef_guard):
             try:
                 fn()
             except Exception as e: # noqa: BLE001

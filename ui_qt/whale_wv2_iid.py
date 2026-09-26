@@ -275,7 +275,7 @@ class ICoreWebView2CompositionController(IUnknown):
                   (["in"], c_uint32, "eventKind"),
                   (["in"], c_uint32, "virtualKeys"),
                   (["in"], c_uint32, "mouseData"),
-                  (["in"], POINTER(POINT), "point")),
+                  (["in"], POINT, "point"))  # ⛔ POINT 按值传（头文件原文），按指针传=坐标变野指针
     ]
 
 
