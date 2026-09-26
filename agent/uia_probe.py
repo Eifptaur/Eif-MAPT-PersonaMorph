@@ -125,7 +125,6 @@ def _collect_nodes(max_nodes=800, max_depth=8) -> dict:
     hwnd = None
     try:
         import ctypes
-        from ctypes import wintypes
         u32 = ctypes.windll.user32
         for cls in (WECHAT_UI_MAP["main_window"]["win32_class"],):
             hwnd = int(u32.FindWindowW(cls, None) or 0)

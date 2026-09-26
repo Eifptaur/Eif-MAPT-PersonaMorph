@@ -20,7 +20,6 @@ import json
 import os
 import re
 import subprocess
-import time
 import urllib.error
 import urllib.request
 

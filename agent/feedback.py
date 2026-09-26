@@ -175,7 +175,6 @@ def _cfg() -> dict:
 
 def _version() -> str:
     try:
-        import io
         import re
         p = os.path.join(ROOT, "agent", "console_html.py")
         mt = os.path.getmtime(p)

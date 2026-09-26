@@ -28,7 +28,6 @@ from __future__ import annotations
 import ctypes
 import logging
 import os
-import subprocess
 import time
 from ctypes import wintypes
 

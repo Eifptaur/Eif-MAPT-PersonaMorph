@@ -774,7 +774,6 @@ class WebUI:
                     return False
                 # ① 会话 Cookie（登录后 URL 不带 token，防他人复制地址登入）
                 try:
-                    import http.cookies as _hc
                     for m in re.findall(r"(?:^|;\s*)wxauth=([^;]+)", str(self.headers.get("Cookie") or "")):
                         # ⛔ 口令比较原来是 `==`（逐字符早停）
                         #   ⇒ 理论上可被计时侧信道逐位猜出。改成**常数时间比较**。
@@ -3255,7 +3254,6 @@ X.XX
                         except Exception:
                             raise ValueError("base64 解码失败（文件数据损坏？请重试）")
                         # 格式探测（图片 + 视频全兼容：png/jpg/jpeg/webp/gif/mp4/webm/ogg）
-                        import io as _io2
                         head = img_bytes[:64]
                         mime = ""
                         if head[:8] == b"\x89PNG\r\n\x1a\n":

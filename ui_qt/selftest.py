@@ -9157,6 +9157,71 @@ DEF_VS_EXAMPLE_OK = {
 }
 
 
+#: 全仓「未用 import」的**棘轮基线**（只许降不许升）。
+#   口径（都是实测踩出来的，别改）：
+#     · `from __future__ import annotations` **不计** —— 那是**编译指令**，不是被引用的名字；
+#       不排除它的话，每轮都会被 86 条同款误报淹没（实测：137 条里 86 条是它）。
+#     · 带 `# noqa` 的行**不计** —— 那是**故意不用**的（探可选依赖 / 探模块可用性 / 显式 re-export 契约）。
+#     · 判定 = 该文件里这个名字的 `Name(Load)` 与 `X.属性` 访问**都为 0**。
+#   基线来历：本闸门**自己的口径**（`agent/` + `ui_qt/` + `scripts/` 全扫）在本轮删掉 10 处
+#   单名 `import X` 之后实测 **74**。（探索阶段的探针只覆盖了 `agent/`，去伪后是 51 —— 两个数
+#   **不可比**，别拿它们对账；要降基线就用**本闸门**的新读数。）
+DEAD_IMPORT_BASELINE = 74
+
+
+def t_dead_import_guard() -> None:
+    """自检：**全仓未用 import 只许降不许升**（棘轮）。
+
+    为什么值得一条常驻闸门：未用 import 是"最便宜的那类赘余"——删它零风险、但没人会顺手删；
+    而它堆着会**掩护真问题**（读者分不清"这个 import 是忘了删，还是探可用性"）。
+    本闸门把"当前还有多少"钉成棘轮：清一批就往下降一格，新增则当场红。
+    """
+    import ast as _ast # noqa: PLC0415
+    import os as _o # noqa: PLC0415
+
+    _root = _o.path.dirname(_o.path.dirname(_o.path.abspath(__file__)))
+    _skip_dirs = ("__pycache__", "assets", "data", "logs", "runtime", "archived-from-root")
+    _found = []   # (相对路径, 行号, 名字)
+
+    for _sub in ("agent", "ui_qt", "scripts"):
+        for _dp, _dn, _fns in _o.walk(_o.path.join(_root, _sub)):
+            _dn[:] = [d for d in _dn if d not in _skip_dirs]
+            for _fn in sorted(_fns):
+                if not _fn.endswith(".py"):
+                    continue
+                _p = _o.path.join(_dp, _fn)
+                try:
+                    _lines = open(_p, encoding="utf-8", errors="ignore").read().split("\n")
+                    _tree = _ast.parse("\n".join(_lines))
+                except Exception: # noqa: BLE001
+                    continue
+                # 文件里所有"被载入的名字"（含属性访问的基名）
+                _used = set()
+                for _n in _ast.walk(_tree):
+                    if isinstance(_n, _ast.Name) and isinstance(_n.ctx, _ast.Load):
+                        _used.add(_n.id)
+                    elif isinstance(_n, _ast.Attribute) and isinstance(_n.value, _ast.Name):
+                        _used.add(_n.value.id)
+                for _n in _ast.walk(_tree):
+                    if not isinstance(_n, (_ast.Import, _ast.ImportFrom)):
+                        continue
+                    if isinstance(_n, _ast.ImportFrom) and _n.module == "__future__":
+                        continue          # 编译指令，不算
+                    _src_line = _lines[_n.lineno - 1] if _n.lineno <= len(_lines) else ""
+                    if "noqa" in _src_line:
+                        continue          # 故意不用（探可用性 / 可选依赖 / re-export 契约）
+                    for _a in _n.names:
+                        _nm = _a.asname or _a.name.split(".")[0]
+                        if _nm != "*" and _nm not in _used:
+                            _found.append((_o.path.relpath(_p, _root).replace("\\", "/"), _n.lineno, _nm))
+
+    _n = len(_found)
+    ck("未用 import 只许降不许升（棘轮；`__future__` 与 `noqa` 不计）",
+       _n <= DEAD_IMPORT_BASELINE,
+       "当前 %d / 基线 %d%s" % (_n, DEAD_IMPORT_BASELINE,
+                              ("；例：" + "、".join("%s:%s" % (f, nm) for f, _l, nm in _found[:4])) if _found else ""))
+
+
 def t_default_value_guard() -> None:
     """自检：**默认表与示例文件的值差异必须逐条登记**（记三元组，值一变就红）。
 
@@ -9323,7 +9388,7 @@ def main() -> int:
                    t_button_label_guard, t_placeholder_guard, t_dupdef_guard,
                    t_attr_shadow_guard, t_async_landing_guard, t_screen_guards,
                    t_gate_middle, t_cfg_wired_guard, t_delivery_ledger_guard, t_dev_dir_guard,
-                   t_default_value_guard,
+                   t_default_value_guard, t_dead_import_guard,
                    t_whale_roles, t_whale_assets, t_whale_usage):
             try:
                 fn()

@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import time
 
 REJECT_LOG_REL = os.path.join("data", "image_rejected.jsonl")

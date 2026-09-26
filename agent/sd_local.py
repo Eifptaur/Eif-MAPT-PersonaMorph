@@ -15,7 +15,6 @@
   · **合计约 10.8 GB；加上解压/安装/首次加载，整条链约 20 分钟**
   · 首次加载模型进显存 **14.7 秒**；出图 1024² 四步 **13~33 秒**
 """
-import json
 import os
 import re
 import subprocess
