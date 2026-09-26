@@ -87,7 +87,7 @@ _web = src(os.path.join("agent", "webui.py"))
 ok("E2 四个端点都在（状态/进度/安装/起停）",
    all(x in _web for x in ("/api/image_gen/local", "/api/image_gen/local/progress",
                            "/api/image_gen/local/install", "/api/image_gen/local/start")))
-_ch = src(os.path.join("agent", "console_html.py"))
+_ch = src(os.path.join("assets", "console", "index.html"))
 ok("E3 控制台有：状态行 + 进度条 + 安装/启动/停止三个按钮",
    'id="sdLocalState"' in _ch and 'id="sdLocalFill"' in _ch
    and all(('id="%s"' % i) in _ch for i in ("sdLocalInstall", "sdLocalStart", "sdLocalStop")))

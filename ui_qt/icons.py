@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""导航图标 —— **与 web 控制台同一份 path 数据**（agent/console_html.py L939-985 抄录）。
+"""导航图标 —— **与 web 控制台同一份 path 数据**（agent/assets/console/index.html L939-985 抄录）。
 
 单一来源纪律：web 侧的每个导航项都配了一枚 16×16 描边 SVG（stroke="currentColor"），
 Qt 侧用 QtSvg 渲染**同一份 path**，渲染前把 currentColor 替换成目标色 ——

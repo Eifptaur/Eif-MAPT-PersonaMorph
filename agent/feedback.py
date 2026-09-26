@@ -176,7 +176,7 @@ def _cfg() -> dict:
 def _version() -> str:
     try:
         import re
-        p = os.path.join(ROOT, "agent", "console_html.py")
+        p = os.path.join(ROOT, "assets", "console", "index.html")
         mt = os.path.getmtime(p)
         return time.strftime("%m%d-%H%M", time.localtime(mt))
     except Exception:

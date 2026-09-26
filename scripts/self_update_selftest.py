@@ -388,7 +388,7 @@ try:
 
     print("── K. 接线（源码级，防以后改回去）──")
     _web = open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
-    _con = open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+    _con = open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
     _uc = open(os.path.join(ROOT, "agent", "update_check.py"), encoding="utf-8").read()
     _post_seg = _web[_web.index("def do_POST(self):"):]
     ok('/api/update_apply' in _post_seg and 'update_apply as _ua' in _post_seg,
@@ -479,7 +479,7 @@ finally:
 # 落盘侧：被拒的清单**不许**入账（否则一次异常回包就把闸顶死）
 _src_uc11 = io.open(os.path.join(ROOT, "agent", "update_check.py"), encoding="utf-8").read()
 _src_w11 = io.open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
-_src_c11 = io.open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+_src_c11 = io.open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
 # ⛔ 源码子串断言**抓不住**"那道守卫永不成立"
 #   （`state()` 不把 `kind` 抄进 `out` ⇒ `out.get("kind")` 恒 None ⇒ `not ...` 恒真）。换成**行为锚**。
 _far_r12 = {"base": {"version": "2099.9.9", "url": "https://github.com/x/y.zip"}, "announce": {}}

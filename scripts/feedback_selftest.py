@@ -53,7 +53,7 @@ def src(rel):
     return io.open(os.path.join(ROOT, rel), encoding="utf-8").read()
 
 
-HTML = src("agent/console_html.py")
+HTML = src("assets/console/index.html")
 
 print("── A. 左导航单开一栏 ──")
 ok("导航有 #sec-feedback 入口", 'href="#sec-feedback"' in HTML)
@@ -302,7 +302,7 @@ finally:
     WU.get_config = _real_get_cfg
 
 print("\n── G. 反馈栏只给用户看该看的──")
-_ui = src("agent/console_html.py")
+_ui = src("assets/console/index.html")
 ok("简单区只有 类型 / 内容 / 提交",
    'id="fbKind"' in _ui and 'id="fbText"' in _ui and 'id="fbSubmit"' in _ui, "")
 _i_adv = _ui.find('id="fbAdv"')
@@ -397,7 +397,7 @@ print("\n── I. 附件与联系邮箱──")
 import base64 as _b64 # noqa: E402
 import shutil as _shutil # noqa: E402
 
-_ui2 = src("agent/console_html.py")
+_ui2 = src("assets/console/index.html")
 ok("界面有「图片/文件」这一行与选择按钮",
    'id="fbPick"' in _ui2 and 'id="fbFileInput"' in _ui2 and ">选择图片或文件<" in _ui2, "")
 ok("文件选择框允许多选（一次能带好几个）",

@@ -205,7 +205,7 @@ def main():
     print("== D. 接线与文案 ==")
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     pm = open(os.path.join(root, "scripts", "persona_morph.py"), encoding="utf-8").read()
-    html = open(os.path.join(root, "agent", "console_html.py"), encoding="utf-8").read()
+    html = open(os.path.join(root, "assets", "console", "index.html"), encoding="utf-8").read()
     wui = open(os.path.join(root, "agent", "webui.py"), encoding="utf-8").read()
     cfg_py = open(os.path.join(root, "agent", "config.py"), encoding="utf-8").read()
     cex = open(os.path.join(root, "config.example.json"), encoding="utf-8").read()

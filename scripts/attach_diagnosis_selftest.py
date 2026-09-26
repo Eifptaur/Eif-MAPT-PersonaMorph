@@ -245,7 +245,7 @@ ok("db_open 失败时，那句诊断**后面附了分档结论**（不再只有�
    "磁盘上" in str([s for s in _g["steps"] if s["key"] == "db_open"][0]["detail"]),
    str([s for s in _g["steps"] if s["key"] == "db_open"][0]["detail"])[:120])
 
-_ch2 = _src(os.path.join("agent", "console_html.py"))
+_ch2 = _src(os.path.join("assets", "console", "index.html"))
 
 _i_w = _ch2.index('id="sec-wechat"')
 _i_n = _ch2.index('<section id="sec-', _i_w + 10)
@@ -449,7 +449,7 @@ ok("重算读的是**当前配置**，不是启动时的闭包快照（否则重
    and "resolve_groups(_gs" in _ct_code # W-1：选群收口到解析器（按 wxid 认群）
    and 'g["name"]' not in _ct_code # 旧的名字匹配不许再出现
    and "whitelist" not in _ct_code)
-_ch = _src(os.path.join("agent", "console_html.py"))
+_ch = _src(os.path.join("assets", "console", "index.html"))
 ok("控制台侧栏显示短原因 + 悬停看逐步诊断",
    "_wa.short" in _ch and "_wa.steps.map(" in _ch)
 _ui = _src(os.path.join("agent", "webui.py"))

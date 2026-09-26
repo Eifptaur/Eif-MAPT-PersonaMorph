@@ -276,7 +276,7 @@ ok("提示词在该能力打开时给出 gen_image 规则", "gen_image(request="
 ok("提示词写明红线（换脸/成人内容不生成也不照做）", "真人换脸" in _pr and "不要照做" in _pr)
 
 print("⑧ UI 映射：能力必须有可点的面（面板 / 键 / 引导 / 端点 / 只读状态）")
-_html = open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+_html = open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
 _web = open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
 ok("控制台有「群友要图」面板", 'id="sec-imggen"' in _html)
 for _k in ("enabled", "trigger_mode", "backends", "online_allowed", "max_count", "style_allow", "style_block"):

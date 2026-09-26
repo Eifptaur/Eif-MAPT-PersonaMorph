@@ -42,7 +42,7 @@ import _srcmatch as _sm # noqa: E402 空白容忍的源码断言
 SRC_WECHAT = io.open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
 SRC_IB = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                    "agent", "input_backend.py"), encoding="utf-8").read()
-SRC_CONSOLE = io.open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+SRC_CONSOLE = io.open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
 SRC_WEBUI = io.open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
 SRC_CFG = io.open(os.path.join(ROOT, "agent", "config.py"), encoding="utf-8").read()
 SRC_UIADAPT = io.open(os.path.join(ROOT, "agent", "ui_adapt.py"), encoding="utf-8").read()
@@ -388,7 +388,7 @@ ck("B22 空档等待放宽到秒级（切会话 8s / 发送 6s），不再是 1.
    and _sm.has(SRC_WECHAT, "_wait_user_pause(max_s=6.0, idle=0.9)"))
 _SRC_TOOLS = io.open(os.path.join(ROOT, "agent", "tools.py"), encoding="utf-8").read()
 _SRC_CFG = io.open(os.path.join(ROOT, "agent", "config.py"), encoding="utf-8").read()
-_SRC_CONSOLE2 = io.open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+_SRC_CONSOLE2 = io.open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
 _EX = io.open(os.path.join(ROOT, "config.example.json"), encoding="utf-8").read()
 ck("B22a 发表情方式＝可选项（config 默认 auto + 默认档说明三种取值）",
    _sm.has(_SRC_CFG, '"emoji_send_mode": "auto"') and _sm.has(_EX, '"emoji_send_mode": "auto"'))
@@ -875,7 +875,7 @@ print("\n== F. 前台口径==")
 # 既有实测：投递链的伪激活会让微信**短暂真占前台**（发文字 1.8s、切会话 2.9~3.2s）后自动还回。
 # ⇒ **对外文案不许写"不抢前台"**（那是过头话），必须写成"不动光标 + 可能短暂置前约 1~3 秒后自动还回"。
 #    这条同时满足用户的口径要求：能力边界必须写进**终端用户看得到的地方**。
-_CONSOLE = open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+_CONSOLE = open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
 _REPORT = open(os.path.join(ROOT, "scripts", "collect_report.py"), encoding="utf-8").read()
 _BG = open(os.path.join(ROOT, "agent", "bg_status.py"), encoding="utf-8").read()
 ck("F1 控制台不再写「不抢前台」，改成实测口径", "不抢前台" not in _CONSOLE and "短暂置前" in _CONSOLE)

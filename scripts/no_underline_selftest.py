@@ -19,7 +19,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 
 TARGETS = [
-    os.path.join(ROOT, 'agent', 'console_html.py'),
+    os.path.join(ROOT, 'assets', 'console', 'index.html'),
     os.path.join(ROOT, 'agent', 'webui.py'),
 ]
 LAUNCHER_DIR = os.path.join(ROOT, 'launcher-src')
@@ -62,7 +62,7 @@ for p, t in texts.items():
 ok('前端源码里没有下划线写法', not hits, ' | '.join(hits[:4]))
 
 print('── C. 全局 a 规则显式 none ──')
-console = texts.get(os.path.join(ROOT, 'agent', 'console_html.py'), '')
+console = texts.get(os.path.join(ROOT, 'assets', 'console', 'index.html'), '')
 ok('全局 a{…} 明确写 text-decoration:none',
    re.search(r'(^|\n)\s*a\{[^}]*text-decoration\s*:\s*none', console) is not None)
 ok('链接各态（hover/focus/visited/active）都不带下划线',
@@ -78,11 +78,14 @@ print('── E. CSS 花括号配平（孤儿声明行＝声明被浏览器静�
 # 先生报的"下划线"根因就是这个：某次改 `.nav a{…}` 时 transition 那行提前写了 `}`，
 # 后面 `text-decoration:none;font-size;margin` 变成孤儿声明、被浏览器整段丢掉 ⇒ 导航链接露出默认下划线。
 # 花括号不配平能机械抓到这类错误，自检不需要真机渲染。
-css_blocks = re.findall(r'"""(.*?)"""', console, re.S)
+# ⚠️ 样式块的口径随外置改过：页面 HTML/JS 从 `console_html.py` 的三引号字面量
+#    搬到了 `assets/console/index.html`，那里**没有三引号**了 ⇒ 改成按 `<style>` 标签抠，
+#    语义不变（要的仍是一整段 CSS 源码，用来数花括号配平）。
+css_blocks = re.findall(r'<style[^>]*>(.*?)</style>', console, re.S)
 css = next((b for b in css_blocks if '.nav a{' in b), '')
 opens = css.count('{')
 closes = css.count('}')
-ok('CSS 花括号配平（三引号样式块内）', bool(css) and opens == closes and opens > 50, '块长 {} 字符 / {{={} }}={}'.format(len(css), opens, closes))
+ok('CSS 花括号配平（<style> 块内）', bool(css) and opens == closes and opens > 50, '块长 {} 字符 / {{={} }}={}'.format(len(css), opens, closes))
 
 print('== [no-underline] 判据：{} 通过 / {} 失败 =='.format(PASS, FAIL))
 sys.exit(1 if FAIL else 0)

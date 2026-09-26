@@ -519,7 +519,7 @@ def t_visual() -> None:
 def t_badges() -> None:
     """ P0-A①⑤：面板徽章全量接线。
     旧病根：Badge 建出来后全文件无 set 调用 —— 用户永远看到「读取中」。
-    现在 badge_for = web refreshBadges（console_html.py L3302-3427）的 Qt
+    现在 badge_for = web refreshBadges（assets/console/index.html L3302-3427）的 Qt
     口径，同一份 /api/status 推导；Shell._poll_badges 8 秒分发。
     这里断言状态机核心分支 + 接线源码（端到端取证另有 _c8_badgeprobe.py）。"""
     import panels_qt as pq # noqa: PLC0415
@@ -1706,7 +1706,7 @@ def t_c10() -> None:
       "_blank_mode 恒 False、透镜恒全窗）",
        "def _hit_deep(" in wsrc and "_hit_deep(" in _body(wsrc, "_blank_mode")
        and "_hit_deep(" in _body(wsrc, "_lens_rect"))
-    # ── 侧栏状态框 1:1 复刻（web .side .status，console_html.py L517-519/L929）
+    # ── 侧栏状态框 1:1 复刻（web .side .status，assets/console/index.html L517-519/L929）
     ck("c31: 状态框描边用 blue_line token（web --blue-line；此前拿 blue 当边框⇒一圈亮蓝）",
        "self.t.blue_line" in _body(ssrc, "_build_side"))
     ck("c31: 状态正文恒 tx2 灰",
@@ -8995,7 +8995,7 @@ def t_cfg_wired_guard() -> None:
     import re as _re # noqa: PLC0415
 
     _root = _o.path.dirname(_o.path.dirname(_o.path.abspath(__file__)))
-    _console = _o.path.join(_root, "agent", "console_html.py")
+    _console = _o.path.join(_root, "assets", "console", "index.html")
     try:
         _src = open(_console, encoding="utf-8", errors="ignore").read()
     except OSError as _e:

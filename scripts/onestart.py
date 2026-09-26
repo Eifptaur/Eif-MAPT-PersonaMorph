@@ -267,7 +267,7 @@ def _mark_browser_opened():
 def _build_tag_local():
     try:
         import datetime
-        mt = os.path.getmtime(os.path.join(ROOT, "agent", "console_html.py"))
+        mt = os.path.getmtime(os.path.join(ROOT, "assets", "console", "index.html"))
         return "b." + datetime.datetime.fromtimestamp(mt).strftime("%m%d-%H%M")
     except Exception:
         return "b?"

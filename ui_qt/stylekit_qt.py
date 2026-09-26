@@ -161,7 +161,7 @@ class Tokens:
     blue: str
     blue2: str
     blue_soft: str
-    # web --blue-line（console_html.py L32/68/95 三主题各值）——侧栏状态框描边、
+    # web --blue-line（assets/console/index.html L32/68/95 三主题各值）——侧栏状态框描边、
     # chips 描边等「蓝系弱描边」专用。此前 Qt 缺这个 token，shell 拿 blue 当边框 ⇒
     # 状态框一圈亮蓝，的复刻走样其一。
     blue_line: str
@@ -232,7 +232,7 @@ WHALE = Tokens(
     label="鲸落（默认）",
     bg="#0A1B2E",
     # 对齐 web 真值 —— 画卷（ocean1.jpg+tint）透出后，
-    # 玻璃卡必须用 web 的浅蓝调才读得对（console_html.py L35 --card / L36 --bd）。
+    # 玻璃卡必须用 web 的浅蓝调才读得对（assets/console/index.html L35 --card / L36 --bd）。
     # 旧值 rgba(255,255,255,.055) 在纯深底上够用，垫在实拍海浪上会发灰。
     # I：波浪动效砍掉后卡片仍偏透→ .10 → .14
     # R9：.14 在实拍海浪上「和底混一起」⇒ 改**深色毛玻璃**：

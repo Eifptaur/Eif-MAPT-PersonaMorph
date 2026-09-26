@@ -49,7 +49,7 @@ def skip(name, why):
 
 # ── A 静态 ───────────────────────────────────────────────────────────────
 print("[A] 静态：页面逻辑 / 素材 / 探针入口")
-SRC_C = open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+SRC_C = open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
 SRC_L = open(os.path.join(ROOT, "launcher-src", "launcher.cs"), encoding="utf-8").read()
 
 ck("A1 页面有「点一下换歪头帧」的监听", "addEventListener('mousedown'" in SRC_C and "applyNod()" in SRC_C)

@@ -261,7 +261,7 @@ try:
     ok("POST 保存后会**立即重探**并把候选回显（不靠刷新页面）",
        '_st3["candidates"] = _wdir3.probe(' in _ui)
     ok("/api/config 保存时会拦下不可用的数据目录", "_wechat_dir_conflict" in _ui)
-    _ch = _src(os.path.join("agent", "console_html.py"))
+    _ch = _src(os.path.join("assets", "console", "index.html"))
     _i_w = _ch.index('id="sec-wechat"')
     _i_n = _ch.index('<section id="sec-', _i_w + 10)
     _seg = _ch[_i_w:_i_n]

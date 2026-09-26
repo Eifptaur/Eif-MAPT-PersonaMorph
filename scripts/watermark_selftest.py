@@ -184,7 +184,7 @@ def main():
                encoding="utf-8").read()
     ok("WebUI 有 POST /api/watermark/reset 这条路",
        'elif path == "/api/watermark/reset":' in _ui and "parent.watermark_reset_fn()" in _ui)
-    _ch = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "agent", "console_html.py"),
+    _ch = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets", "console", "index.html"),
                encoding="utf-8").read()
     ok("控制台有按钮并打这个接口（含二次确认）",
        'id="wmReset"' in _ch and "getJSON('/api/watermark/reset'" in _ch and "uiConfirm('重新对齐监听水位？" in _ch)

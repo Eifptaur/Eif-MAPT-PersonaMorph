@@ -71,7 +71,7 @@ ok("包版本不一致 ⇒ 不跳过（照常拉起 watchdog）", "if existing i
 ok("日志说清是旧包残留", "旧包残留实例" in OS_)
 
 print("── D. 文案：用户不可见处不许出现「覆盖解压」这类『让用户手动解压』的说法 ──")
-_files = ["README.md", "agent/console_html.py", "launcher-src/launcher.cs", "launcher-src/close.cs",
+_files = ["README.md", "assets/console/index.html", "launcher-src/launcher.cs", "launcher-src/close.cs",
           "AGENTS.md",
           # ⭐ 这两处也是**用户能看到的** —— installer.ps1 的 Set-State 文案会原样显示在
           # 「一键启动」窗口里。

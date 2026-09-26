@@ -37,7 +37,7 @@ def ck(name, cond, extra=""):
     print("  %s %s%s" % ("PASS" if cond else "FAIL", name, (" · " + extra) if extra else ""))
 
 
-src = io.open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+src = io.open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
 # 只取勾选框那一族规则（从自研注释到 focus-visible 之后）
 _i = src.find("自研勾选框")
 # ⚠️ 取样窗口必须**收到本块结尾**：第一版写死 +2600 字符，把隔壁 `.pri` 的渐变色也吃进来了

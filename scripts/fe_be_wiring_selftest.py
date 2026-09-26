@@ -49,7 +49,7 @@ def ok(name, cond, extra=""):
 
 
 WEBUI = io.open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
-CONSOLE = io.open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+CONSOLE = io.open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
 FUNC = re.compile(r"^(\s*)def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 PATHPART = re.compile(r"""["'](/api/[A-Za-z0-9_\-/.]*)["']""")
 CALLSELF = re.compile(r"self\.(_[A-Za-z_][A-Za-z0-9_]*)\s*\(")
@@ -138,7 +138,7 @@ for method, url in uniq:
         missing.append((method, url, [l for l, m2, u2 in fe_calls if u2 == url and m2 == method]))
 ok("A1 前端 %d 个「方法+路径」组合，全部能在对应链里找到（GET→do_GET｜POST/PUT→body 链）"
    % len(uniq), not missing,
-   "缺路由：" + "; ".join("%s %s（console_html.py:%s）" % (m, u, ",".join(map(str, ls)))
+   "缺路由：" + "; ".join("%s %s（assets/console/index.html:%s）" % (m, u, ",".join(map(str, ls)))
                           for m, u, ls in missing[:6]))
 
 # 反向锚（源码级）：那 6 条共享动作必须**两条链都能应答**（删任一侧的调用就会掉出集合）

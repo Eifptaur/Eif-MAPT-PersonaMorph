@@ -114,7 +114,7 @@ ok("send_image_posted 里调了 compress_if_needed", "compress_if_needed(local_p
 ok("异常时回退原图（不改 local_path 之外的行为）", "压缩环节异常" in _w)
 
 print("⑦ UI 映射：能力必须有可点的面（面板 + 键 + 只读状态）")
-_html = open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+_html = open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
 _ms = open(os.path.join(ROOT, "agent", "media_status.py"), encoding="utf-8").read()
 for _k in ("enabled", "max_px", "max_mb", "quality"):
     ok("控制台绑定了 send.image_compress.%s" % _k, ('data-cfg="send.image_compress.%s"' % _k) in _html)

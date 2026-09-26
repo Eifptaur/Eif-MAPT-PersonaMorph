@@ -220,7 +220,7 @@ try:
     ok("配置里有 video_gen 段且默认关", vc.get("enabled") is False and vc.get("trigger_mode") == "on_request")
     ex = json.load(open("config.example.json", encoding="utf-8"))
     ok("config.example.json 同步有这一段", ex.get("video_gen") == vc)
-    H = open("agent/console_html.py", encoding="utf-8").read()
+    H = open("assets/console/index.html", encoding="utf-8").read()
     for k in ("video_gen.enabled", "video_gen.trigger_mode", "video_gen.backends",
               "video_gen.online_allowed", "video_gen.seconds_default", "video_gen.comfy_workflow"):
         ok("控制台有 %s" % k, ('data-cfg="%s"' % k) in H)

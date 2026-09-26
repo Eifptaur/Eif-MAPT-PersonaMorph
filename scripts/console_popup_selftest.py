@@ -47,7 +47,7 @@ def skip(name, why=""):
     print("  SKIP {}  [{}]".format(name, why))
 
 
-src = io.open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+src = io.open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
 
 
 def strip_js_comments(s):

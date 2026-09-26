@@ -36,7 +36,11 @@ def ok(name, cond, detail=""):
 
 from agent import config as C # noqa: E402
 
-SCAN_DIRS = ("agent", "scripts", "launcher-src")
+# ⚠️ `assets/console` 必须在扫描面里：控制台页面的 HTML/JS **外置**到
+#    `assets/console/index.html` 之后，页面自己读的那些键（`ui.obscure_url`、`ui.wave_fx.*`、
+#    `send.uia_setvalue`…）只有在这个文件里才找得到 ⇒ 不扫它会把它们**误判成"谁都不读"的死键**。
+#    （`.html` 本来就在 `TEXT_EXT` 里，加目录即可。）
+SCAN_DIRS = ("agent", "scripts", "launcher-src", "assets/console")
 SCAN_ROOT_FILES = ("persona_morph.py", "onestart.py")
 TEXT_EXT = (".py", ".js", ".html", ".cs", ".css", ".json", ".md")
 SERVER_READ_RE = re.compile(r"""\[\s*["']([a-z_][a-z0-9_]*)["']\s*\]|\.get\(\s*["']([a-z_][a-z0-9_]*)["']""")

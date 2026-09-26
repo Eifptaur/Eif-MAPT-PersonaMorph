@@ -3,7 +3,7 @@
 
 对齐 web 控制台的海洋动态背景（agent/console_html.py，**web 源码是唯一真值**）：
   · 底图    assets/wallpaper/ocean1.jpg cover 铺满（web body 默认 --bgimg）
-  · tint    web --bg 的 160° 三站深蓝渐变（console_html.py L33）罩在底图上
+  · tint    web --bg 的 160° 三站深蓝渐变（assets/console/index.html L33）罩在底图上
   · 波浪    `.ocean-wave` 三层 SVG（L729-731 路径逐值抄入；L316-321 动画参数）：
             w1 9s 正向 / w2 14s 逆向 · 整层 opacity .7 / w3 20s 正向 · opacity .45；
             高度 40vh、整体 opacity .95；w1 另有浪尖高光描边（白 .9、宽 5）。
@@ -28,7 +28,7 @@ from PySide6.QtGui import (
     QPixmap,
 )
 
-# 三层波浪参数 —— 逐值抄自 console_html.py L729-731（path）与 L318-320（动画）。
+# 三层波浪参数 —— 逐值抄自 assets/console/index.html L729-731（path）与 L318-320（动画）。
 # 绘制顺序 = web DOM 顺序（w3 最先 = 最底层）。元组：
 # (baseline_y, ctrl1_y, ctrl2_y, fill_rgba, layer_opacity, duration_s, reverse)
 _WAVE_LAYERS: tuple[tuple[int, int, int, tuple[int, int, int, int], float, float, bool], ...] = (
@@ -43,7 +43,7 @@ _WAVE_OPACITY = 0.95 # web .ocean-wave{opacity:.95}
 
 
 def tint_gradient(w: float, h: float) -> QLinearGradient:
-    """web --bg 的 160° 深蓝 tint（console_html.py L33 逐值抄入）。
+    """web --bg 的 160° 深蓝 tint（assets/console/index.html L33 逐值抄入）。
 
     CSS `linear-gradient(160deg, A, B 45%, C)`：160° ⇒ 渐变方向朝下略偏右
     （屏幕坐标 y 向下：方向 = (sin160°, -cos160°) = (0.342, 0.940)）。

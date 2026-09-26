@@ -297,7 +297,7 @@ print("\n── C11. 检验器的**前端映射**──")
 #   症状按钮是从 `/api/verifiers`（`catalog()`）动态建的，所以新条目会自己出现（这半是通的）；
 #   可「◐ 部分通过 / ○ 没测到」的含义、以及**后端判决到界面状态的映射**（哪一格卡住）**完全没有**，
 #   用户点完十个症状，界面上全是同一个样子。这一节把"通的"和"该有的"一起钉住。
-_ch11 = open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+_ch11 = open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
 _cat11 = V.catalog()
 ok("C11a 症状入口是**数据驱动**的：清单来自 `catalog()`，含「消息库读不到」",
    any(v.get("id") == "db_unreadable" for v in _cat11)
@@ -597,7 +597,7 @@ finally:
 
 print("── E. 接线：两个 API + 面板 + 复制按钮 ──")
 _W = io.open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
-_C = io.open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+_C = io.open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
 ok("webui 有 /api/verifiers", '"/api/verifiers"' in _W)
 ok("webui 有 /api/verify（带 id 查询串）", '"/api/verify"' in _W and "_vf.run(" in _W)
 ok("控制台有面板容器 + 复制按钮", 'id="vfBtns"' in _C and 'id="vfCopy"' in _C and 'id="vfResult"' in _C)

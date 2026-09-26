@@ -166,7 +166,7 @@ print("\n[G] 配置键 / 控制台字段 / HTTP 路由")
 KEYS = ["vc_url", "vc_mode", "vc_params", "vc_json_field", "vc_fail_open"]
 ck("G1 五个配置键都在 DEFAULT_CONFIG", all(k in D["voice_reply"] for k in KEYS),
    str([k for k in KEYS if k not in D["voice_reply"]]))
-_ch = io.open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+_ch = io.open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
 ck("G2 控制台有对应输入项", all(('data-cfg="voice_reply.%s"' % k) in _ch for k in KEYS))
 ck("G3 控制台有变声连通测试按钮", 'id="vcProbe"' in _ch and "/api/voice/vc-probe" in _ch)
 _wu = io.open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()

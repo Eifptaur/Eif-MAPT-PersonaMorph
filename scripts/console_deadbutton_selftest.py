@@ -23,7 +23,7 @@ for _s in (sys.stdout, sys.stderr):
         pass
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SRC = os.path.join(ROOT, "agent", "console_html.py")
+SRC = os.path.join(ROOT, "assets", "console", "index.html")
 
 PASS = 0
 FAIL = 0

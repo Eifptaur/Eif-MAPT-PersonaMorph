@@ -34,7 +34,7 @@ def check(name, cond, detail=""):
 
 
 # ═══════════ A. 控制台映射审计 ═══════════
-src = io.open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+src = io.open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
 mapped = set(re.findall(r'data-cfg="([^"]+)"', src))
 special_ui = {
     "wechat.group_name_white_list": "群列表 chips",
@@ -276,7 +276,7 @@ except Exception as e:
 try:
     _wx_src = io.open(os.path.join(ROOT, "scripts", "persona_morph.py"), encoding="utf-8").read()
     _web_src = io.open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
-    _html_src = io.open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+    _html_src = io.open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
     check("真鼠标一键检验已删除（后端入口）",
           "ui_test_fn" not in _wx_src and "_UI_TEST_LIST" not in _wx_src and "ui_stop_fn" not in _wx_src)
     check("真鼠标一键检验已删除（路由）", "/api/ui-test" not in _web_src)

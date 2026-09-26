@@ -55,7 +55,7 @@ def rd(p):
 lc = rd("launcher-src/launcher.cs")
 wg_src = rd("launcher-src/wingliphs.cs")
 sk = rd("launcher-src/stylekit.cs")
-page = rd("agent/console_html.py")
+page = rd("assets/console/index.html")
 
 print("== 窗口/控制台外观判据 ==")
 
@@ -209,7 +209,7 @@ ok("真值表：暂停中点一下 ⇒ 恢复（调 resume、状态变运行中�
    and _t1["btn"] == "暂停" and _t1["run"] == "运行中", _t1)
 
 print("\n── 顶栏状态行──")
-_page = open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+_page = open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
 _pm = open(os.path.join(ROOT, "scripts", "persona_morph.py"), encoding="utf-8").read()
 ok("后台真的给了监听数（listen.groups / listen.privates）",
    _sm.has(_pm, '"listen": {"groups"') and '"privates"' in _pm)

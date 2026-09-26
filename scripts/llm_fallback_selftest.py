@@ -245,7 +245,7 @@ def main():
     print("== E. 接线断言（源码级）==")
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     src = open(os.path.join(root, "agent", "llm.py"), encoding="utf-8").read()
-    html = open(os.path.join(root, "agent", "console_html.py"), encoding="utf-8").read()
+    html = open(os.path.join(root, "assets", "console", "index.html"), encoding="utf-8").read()
     wui = open(os.path.join(root, "agent", "webui.py"), encoding="utf-8").read()
     cfg = open(os.path.join(root, "agent", "config.py"), encoding="utf-8").read()
     cex = open(os.path.join(root, "config.example.json"), encoding="utf-8").read()

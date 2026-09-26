@@ -126,7 +126,7 @@ def main():
            pv["system"] == pr.build_system_prompt() and pv["chars"] == len(pv["system"]), pv["chars"])
         ok("预览同时报模块状态与自定义字数",
            len(pv["modules"]) == 3 and pv["custom_chars"] == len("第二版。"))
-        html = open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+        html = open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
         wui = open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
         cfg_py = open(os.path.join(ROOT, "agent", "config.py"), encoding="utf-8").read()
         cex = open(os.path.join(ROOT, "config.example.json"), encoding="utf-8").read()

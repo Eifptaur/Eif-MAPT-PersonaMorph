@@ -215,7 +215,7 @@ def main():
     wx = open(os.path.join(root, "agent", "wechat.py"), encoding="utf-8").read()
     pm = open(os.path.join(root, "scripts", "persona_morph.py"), encoding="utf-8").read()
     cfg = open(os.path.join(root, "agent", "config.py"), encoding="utf-8").read()
-    html = open(os.path.join(root, "agent", "console_html.py"), encoding="utf-8").read()
+    html = open(os.path.join(root, "assets", "console", "index.html"), encoding="utf-8").read()
     ok("normalize 里认撤回", "recall_mod.parse_recall" in wx)
     ok("认撤回在「自己发的跳过」之前（自己撤回才不会被丢）",
        wx.find("recall_mod.parse_recall") < wx.find('if str(sender_id) in ("2", "3")'))

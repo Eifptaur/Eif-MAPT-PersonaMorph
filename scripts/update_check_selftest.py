@@ -193,7 +193,7 @@ finally:
 
 print("\n[U9] 控制台「更新公告」条：分支齐、按钮各有各的行为、不弹窗")
 # 以前这条公告**一条自检都没有**（后端五态有自检，前端公告条全靠肉眼）。
-_H = open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+_H = open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
 _W = open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
 _i = _H.find('id="updBar"')
 # ⚠️ **第二次栽在"固定字数窗口"上**（上一版是 2600 字，注释就写在下面）：

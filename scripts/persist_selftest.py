@@ -909,7 +909,7 @@ def _s13_risk_oneclick_recover(TMP):
 
     print("\n== ⑮ 收尾：`recover()` 必须有真调用者（一键恢复） ==")
     _ui15 = _read(os.path.join(ROOT, "agent", "webui.py"))
-    _ch15 = _read(os.path.join(ROOT, "agent", "console_html.py"))
+    _ch15 = _read(os.path.join(ROOT, "assets", "console", "index.html"))
     check("⑮ `POST /api/risk` 支持 `action=recover`（不再只是模块里的死函数）",
           SM.has(_ui15, 'act == "recover"') and SM.has(_ui15, "_risk.recover()"))
     check("⑮ 控制台点「恢复」时补一发 recover（两套停机开关一起清）",

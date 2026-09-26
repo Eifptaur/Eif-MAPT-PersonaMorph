@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""更新公告 —— web updbar（agent/console_html.py L806-880）的 Qt 复刻。
+"""更新公告 —— web updbar（agent/assets/console/index.html L806-880）的 Qt 复刻。
 
  #13：拆掉 shell.py:473 的假条，接真值四态机 + 三按钮（join_url 口径）。
  #14：**形态改造** —— 把三按钮塞进 60px 顶栏是总调度自认的设计缺陷
-（web 真值里 updBar 本是顶栏下方独立一行，console_html.py L760-767 全屏宽度；
+（web 真值里 updBar 本是顶栏下方独立一行，assets/console/index.html L760-767 全屏宽度；
 用户截图里三按钮挤成墨块）。按改为「胶囊 + 下滑 popover」：
 
   · 顶栏常态只留一个胶囊：`有新版本 {theirs}` / `更新源异常` /
@@ -278,7 +278,7 @@ class UpdateBar(QFrame):
         QTimer.singleShot(150, _poll)
 
     def _on_reset(self) -> None:
-        """「更新闸门卡死」出口（web updReset console_html.py:794-807）：被镜像
+        """「更新闸门卡死」出口（web updReset assets/console/index.html:794-807）：被镜像
         改过的清单会把本机记的「见过的最高版本」顶上天，此后真版本全判回滚
         ⇒ 这个按钮只清这一个键；结果如实回显，绝不假装成功。"""
         d = ConfirmDialog(

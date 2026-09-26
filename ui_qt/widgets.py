@@ -352,7 +352,7 @@ class Btn(QPushButton):
         self._sync_radius()
 
     def _qss(self) -> str:
-        """四态（常态/hover/pressed/disabled），对齐 web 侧按钮手感规格（console_html.py L532-557）：
+        """四态（常态/hover/pressed/disabled），对齐 web 侧按钮手感规格（assets/console/index.html L532-557）：
 
         · hover  → 浮起（主按钮换强调色底 / ghost 染描边+染字 / danger 加深红底）
         · pressed→ **按进去**：QSS 没有 transform，用 padding 上下 +1px 把文字压下去 1px，

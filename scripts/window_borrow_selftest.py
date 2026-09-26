@@ -170,7 +170,7 @@ ok("input_backend.active 也 touch（命中缓存的后端也要算活动）",
 _cfg = open(os.path.join(ROOT, "agent", "config.py"), encoding="utf-8").read()
 ok("config 默认值里有 restore_window_after_use 且默认 True",
    '"restore_window_after_use": True' in _cfg)
-_cn = open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+_cn = open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
 ok("控制台有这个开关的 UI（不许只存在于 config）",
    "ui.restore_window_after_use" in _cn)
 _ex = open(os.path.join(ROOT, "config.example.json"), encoding="utf-8").read()

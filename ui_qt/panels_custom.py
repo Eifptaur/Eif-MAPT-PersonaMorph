@@ -1651,7 +1651,7 @@ def sessions_panel(t: Tokens) -> QWidget:
         if not sel:
             snote.setText("请先勾选要删除的记录")
             return
-        # 对齐 web uiConfirm 口径（console_html.py:4280）：删除运行记录前二次确认
+        # 对齐 web uiConfirm 口径（assets/console/index.html:4280）：删除运行记录前二次确认
         from confirm import ConfirmDialog # noqa: PLC0415
         d = ConfirmDialog(
             t, page, "删除选中的运行记录",
@@ -1870,7 +1870,7 @@ def _arc_action(t: Tokens, parent: QWidget, chat_key: str, mid, action: str,
            "delete": "/api/archive/delete"}.get(action)
     if not api:
         return
-    # 对齐 web uiConfirm 口径（console_html.py:4570）：真删存档前二次确认
+    # 对齐 web uiConfirm 口径（assets/console/index.html:4570）：真删存档前二次确认
     #   （屏蔽/解除可逆，web 也不确认，直接发）。
     if action == "delete":
         from confirm import ConfirmDialog # noqa: PLC0415
@@ -2011,7 +2011,7 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
     """ P0-3：版本能力矩阵（web `sec-vermat` 真值）+ 顶部「版本与更新」卡。
 
     两件事：
-      3a. **矩阵三态**（allowed / 实测 / 严格档拦停，web console_html.py:3346 口径）——
+      3a. **矩阵三态**（allowed / 实测 / 严格档拦停，web assets/console/index.html:3346 口径）——
           从 `/api/status` 的 `version_gate` + `version` 取真值，绝不显示「检测中」占位。
       3b. **版本与更新卡**—— 顶栏胶囊点「稍后」
           只关 popover、不等于不再提示；这一张卡**常驻**，显示当前版本 / 有无新版 /
@@ -2416,7 +2416,7 @@ def _async_post_seq(page: QWidget, api: str, bodies: list, on_done,
                     timeout: float = 30.0) -> None:
     """**顺序**提交多条 POST，全部结束后一次回执（box 模式，同 `_async_post`）。
 
-    为什么需要它：web 侧「清除勾选的印象」（`console_html.py:6986-6990`）是
+    为什么需要它：web 侧「清除勾选的印象」（`assets/console/index.html:6986-6990`）是
     **逐个成员单独 POST**、每次只带一个 `user_id` —— 因为后端
     （`webui.py::_rapi_memory_post`）只认单值 `user_id`，没有批量协议。
     面板要跟 web 同构就只能逐条发；逐条发又不能让 UI 线程等，所以放一个后台线程里
@@ -2562,7 +2562,7 @@ def _append_save(t: Tokens, lay, binds: list, badge: Badge) -> None:
                     patch[cfg] = ctrl.toPlainText()
                 elif kind == "groups":
                     # 多选勾选容器（共享群）：勾中的群名列表，对齐 web
-                    # syncMemGroupsToCfg（console_html.py:5993）——只收选中项，
+                    # syncMemGroupsToCfg（assets/console/index.html:5993）——只收选中项，
                     # 全不勾 = 空列表（= 用上方「共享记忆池」总开关）。
                     names: list[str] = []
                     for cb in ctrl.findChildren(QCheckBox):
@@ -2664,7 +2664,7 @@ def _append_save(t: Tokens, lay, binds: list, badge: Badge) -> None:
 
 def persona_panel(t: Tokens) -> QWidget:
     """人设与响应 —— 一次解掉的四件事
-      · 人设列表：读 /api/personas（照 console_html.py:6180 同款接口，合并 custom/scores），
+      · 人设列表：读 /api/personas（照 assets/console/index.html:6180 同款接口，合并 custom/scores），
         逐张卡：星标 / 人设名 / 模型分 / 使用 / 删除（web #personaList :1318）。
       · 搜索框：personaSearch（:1317）—— textChanged 实时过滤列表（对齐 web L6259）。
       · 排序按钮：pSort WPS 三态（高→低 / 低→高 / 默认，:1312）+ pSortOff（:1314）
@@ -3088,7 +3088,7 @@ def persona_panel(t: Tokens) -> QWidget:
         if not (prev.get("name") or prev.get("text")):
             pnote.setText("还没有可恢复的人设（先「使用」过一次）")
             return
-        # 对齐 web uiConfirm 口径（console_html.py:6271）：恢复上个人设前二次确认
+        # 对齐 web uiConfirm 口径（assets/console/index.html:6271）：恢复上个人设前二次确认
         from confirm import ConfirmDialog # noqa: PLC0415
         d = ConfirmDialog(
             t, page, "恢复上一个人设",
@@ -3119,7 +3119,7 @@ def persona_panel(t: Tokens) -> QWidget:
         if not (p.get("key") or "").startswith("custom"):
             pnote.setText("仅自定义角色可删除（内置/默认角色不可删）")
             return
-        # 对齐 web uiConfirm 口径（console_html.py:6195）：删除自定义角色前二次确认
+        # 对齐 web uiConfirm 口径（assets/console/index.html:6195）：删除自定义角色前二次确认
         dlg = ConfirmDialog(
             t, page, "删除自定义角色", f"删除自定义角色「{p.get('name') or ''}」？",
             ["该角色会从人设列表移除（不能撤销）"], confirm_label="删除")
@@ -3140,7 +3140,7 @@ def persona_panel(t: Tokens) -> QWidget:
         _render()
 
     def _move_persona(p: dict) -> None:
-        # web mvBtn（console_html.py:6237-6247，uiPrompt「移到哪个分区」）：
+        # web mvBtn（assets/console/index.html:6237-6247，uiPrompt「移到哪个分区」）：
         # 输入已有分区名或新名字自动新建 → POST /api/personas/custom 带 cat。
         cats = sorted(set(list(state.get("built") or [])
                           + list((state.get("user_cats") or {}).keys())))
@@ -3865,7 +3865,7 @@ def memory_panel(t: Tokens) -> QWidget:
         _render_members()
 
     # 共享群（memGroupsBox）：GET /api/wechat-groups + memory.shared_groups 回填
-    # （对齐 web loadMemGroups，console_html.py:5949）——每个群一个勾选框，
+    # （对齐 web loadMemGroups，assets/console/index.html:5949）——每个群一个勾选框，
     # 勾选状态按已存 shared_groups 匹配（兼容存「群名」或「wxid」，web :5961 同款）。
     # 「改完即生效」防抖钩子在下方 _append_save 里建好后才可挂 → 用可变引用晚绑定。
     _mg_box: dict = {"dirty": None}
@@ -3940,7 +3940,7 @@ def memory_panel(t: Tokens) -> QWidget:
 
     def _mem_search_enter() -> None:
         """Enter：选中第一个匹配的群并加载它的印象
-        （对齐 web `#memSearch` keydown，console_html.py:7031-7037）。"""
+        （对齐 web `#memSearch` keydown，assets/console/index.html:7031-7037）。"""
         kw = mem_search.text().strip().lower()
         if not kw:
             return
@@ -3966,7 +3966,7 @@ def memory_panel(t: Tokens) -> QWidget:
             mnote.setText("请先勾选要清除的成员")
             return
         scope = "this" if mem_scope.currentData() == "this" else "all"
-        # 对齐 web uiConfirm 口径（console_html.py:6968）：批量清除前二次确认
+        # 对齐 web uiConfirm 口径（assets/console/index.html:6968）：批量清除前二次确认
         from confirm import ConfirmDialog # noqa: PLC0415
         d = ConfirmDialog(
             t, page, "清除勾选的成员印象",
@@ -3979,7 +3979,7 @@ def memory_panel(t: Tokens) -> QWidget:
         # ⛔ 必须**逐条** POST（每次一个 user_id）：后端 `_rapi_memory_post`
         #    （webui.py:2026/2031）只读单值 `user_id`，**没有批量协议** ——
         #    曾一次传 `user_ids:[...]`（后端不认这个键）⇒ user_id 落空 ⇒ 一条都删不掉，
-        #    而界面照样回执「已清除」。web 侧（console_html.py:6986-6990）就是逐个循环发的。
+        #    而界面照样回执「已清除」。web 侧（assets/console/index.html:6986-6990）就是逐个循环发的。
         #    逐条发还有个好处：`scope="this"` 时的 `left_elsewhere` 提示（后端 :2667-2671）
         #    能逐条带回来，界面可以如实说「有几份留在别的群」。
         bodies = [{"chat_key": state["chat_key"], "user_id": uid, "scope": scope}
@@ -4004,7 +4004,7 @@ def memory_panel(t: Tokens) -> QWidget:
         _async_post_seq(page, "/api/memory", bodies, _seq_done, timeout=15.0)
 
     def _clear_all() -> None:
-        # 对齐 web uiConfirm 口径（console_html.py:6983）：清全部记忆前二次确认
+        # 对齐 web uiConfirm 口径（assets/console/index.html:6983）：清全部记忆前二次确认
         from confirm import ConfirmDialog # noqa: PLC0415
         d = ConfirmDialog(
             t, page, "清除全部记忆",
@@ -4037,7 +4037,7 @@ def memory_panel(t: Tokens) -> QWidget:
 
     ccard.body.addWidget(_divider_local(t))
     ccard.body.addWidget(h2(t, "共享群（可选，memGroupsBox）"))
-    # 多选勾选组 —— 对齐 web #memGroupsBox（console_html.py:1573-1576 / 5949-6001）：
+    # 多选勾选组 —— 对齐 web #memGroupsBox（assets/console/index.html:1573-1576 / 5949-6001）：
     # 每个检测到的群一个勾选框，勾中的群名写回 memory.shared_groups（list[str]）。
     mem_groups = QWidget()
     mem_groups.setObjectName("memGroupsBox")
@@ -4127,7 +4127,7 @@ def _member_card(t: Tokens, m: dict, chat_key: str, reload_fn, sync_fn,
 
 
 def _del_member(t: Tokens, parent: QWidget, chat_key: str, m: dict, reload_fn) -> None:
-    # 对齐 web uiConfirm 口径（console_html.py:6895）：删成员全部印象前二次确认
+    # 对齐 web uiConfirm 口径（assets/console/index.html:6895）：删成员全部印象前二次确认
     from confirm import ConfirmDialog # noqa: PLC0415
     d = ConfirmDialog(
         t, parent, "删除成员印象",
@@ -4390,7 +4390,7 @@ def _wechat_emoji_appendix(t: Tokens, page: QWidget) -> None:
         _set_grid(lst[:60])
 
     def _del(name: str) -> None:
-        # 对齐 web uiConfirm 口径（console_html.py:6755）：删表情前二次确认
+        # 对齐 web uiConfirm 口径（assets/console/index.html:6755）：删表情前二次确认
         from confirm import ConfirmDialog # noqa: PLC0415
         d = ConfirmDialog(
             t, page, "删除表情", f"删除表情「{name}」？",

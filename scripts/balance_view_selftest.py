@@ -63,7 +63,7 @@ print("── C. 接线与界面 ──")
 _pm = src("scripts/persona_morph.py")
 ok("balance_fn 走 balance_view.mask（唯一实现）",
    "from agent.balance_view import mask as _mask" in _pm and "_ui.get(\"balance_display\")" in _pm, "")
-_ui = src("agent/console_html.py")
+_ui = src("assets/console/index.html")
 ok("余额胶囊旁边有那个按钮（一键隐藏/一键改）",
    'id="balMask"' in _ui and "余额显示" in _ui, "")
 ok("按钮里写明「只改界面上的数字，真实余额一点都不动」", "真实余额一点都不动" in _ui, "")

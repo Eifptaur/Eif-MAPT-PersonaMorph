@@ -223,7 +223,7 @@ def main():
        "当前会话" in defs["set_timer"]["description"] and "3 条" in defs["set_timer"]["description"])
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     pm = open(os.path.join(root, "scripts", "persona_morph.py"), encoding="utf-8").read()
-    html = open(os.path.join(root, "agent", "console_html.py"), encoding="utf-8").read()
+    html = open(os.path.join(root, "assets", "console", "index.html"), encoding="utf-8").read()
     wui = open(os.path.join(root, "agent", "webui.py"), encoding="utf-8").read()
     cfg_py = open(os.path.join(root, "agent", "config.py"), encoding="utf-8").read()
     cex = open(os.path.join(root, "config.example.json"), encoding="utf-8").read()

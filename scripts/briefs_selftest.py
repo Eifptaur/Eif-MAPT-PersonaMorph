@@ -115,7 +115,7 @@ def main():
            _sm.has(_wb, 'self._briefs_api(data, "GET")'))
         ok("POST 链注册了同一个处理器（不是只挂一条链）",
            _sm.has(_wb, 'self._briefs_api(data, "POST")'))
-        _ch = io.open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+        _ch = io.open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
         ok("控制台有面板（选择会话 + 内容 + 截止日期 + 添加 + 列表）",
            all(k in _ch for k in ("bfChat", "bfText", "bfUntil", "bfAdd", "bfList")))
         ok("面板上把代价写清楚（会随该会话请求发给模型；字面匹配）",

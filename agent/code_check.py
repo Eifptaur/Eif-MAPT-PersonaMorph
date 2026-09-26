@@ -170,7 +170,7 @@ def run(verbose_deps: bool = False) -> dict:
     # 11) 版本构建号
     try:
         add("界面·控制台版本", "ok", "b." + __import__("datetime").datetime.fromtimestamp(
-            os.path.getmtime(os.path.join(ROOT, "agent", "console_html.py"))).strftime("%m%d-%H%M"))
+            os.path.getmtime(os.path.join(ROOT, "assets", "console", "index.html"))).strftime("%m%d-%H%M"))
     except Exception as e:
         add("界面·控制台版本", "fail", str(e)[:120])
 
@@ -204,7 +204,7 @@ def run(verbose_deps: bool = False) -> dict:
     _wui = _src("agent/webui.py")
     _wechat = _src("agent/wechat.py")
     _ui = _src("agent/wechat_ui.py")
-    _html = _src("agent/console_html.py")
+    _html = _src("assets/console/index.html")
     _cp = _src("agent/persona.py")
     _pr = _src("agent/persona_enrich.py")
 

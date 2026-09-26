@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """监听目标解析：**按 wxid 认群**，群名只当"给人看"和老配置的兼容入口。
 
-⛔ 审计候选 **W-1**（`console_html.py:2334/2336/2338/2380`、`scripts/persona_morph.py:1626`、
+⛔ 审计候选 **W-1**（`assets/console/index.html:2334/2336/2338/2380`、`scripts/persona_morph.py:1626`、
 `persona_morph.py:642` 三处都拿**群名**当身份）：两个同名群 ⇒ **勾一个＝监听两个**；
 运行明细里两间群同名 ⇒ 「这条回复挂在群 X 名下」无法唯一确定是哪一间（网友的串群报障就卡在这一层）。
 

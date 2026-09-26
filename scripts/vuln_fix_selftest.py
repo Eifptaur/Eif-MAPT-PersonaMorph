@@ -957,7 +957,7 @@ finally:
     uc._read_installed = _real_installed
     uc.fetch_any = _real_fetch2
     uc._read_state, uc._write_state = _real_rs, _real_ws
-_ch_src = io.open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+_ch_src = io.open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
 ok("控制台也认这个新状态（前端后端一体，否则后端说了界面也不显示）",
    "s.status === 'pending'" in _ch_src, "见 console_html.py 更新条")
 ok("…半装时**禁止**「不再提醒这个版本」（否则会把这条提醒永久消音）",

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""中键滚轮模式 —— web `PM_WHEEL`（agent/console_html.py L2994-3093，用户
+"""中键滚轮模式 —— web `PM_WHEEL`（agent/assets/console/index.html L2994-3093，用户
 亲自点单实现）的 Qt 复刻。唯一真值 = 那段源码，参数与语义逐条照搬：
 
   · 常量   BASE=3.4 px/帧（≈200px/s）· GAIN=0.26 · MAXV=44 · DEAD=10；
@@ -33,7 +33,7 @@ from PySide6.QtWidgets import QAbstractScrollArea, QApplication, QWidget
 sys.path.insert(0, str(Path(__file__).resolve().parent)) # 嵌入式 runtime._pth 不放脚本目录
 from stylekit_qt import Tokens, rgba # noqa: E402
 
-BASE = 3.4 # web PM_WHEEL BASE（console_html.py L3005）：px/帧，≈200px/s
+BASE = 3.4 # web PM_WHEEL BASE（assets/console/index.html L3005）：px/帧，≈200px/s
 GAIN = 0.26 # web GAIN：出死区后的线性增益
 MAXV = 44.0 # web MAXV：速度上限（px/帧）
 DEAD = 10.0 # web DEAD：死区半径（px）
@@ -253,7 +253,7 @@ def _selftest() -> list[tuple[str, bool, str]]:
     def ck(name: str, cond: bool, extra: str = "") -> None:
         out.append((name, bool(cond), extra))
 
-    # 参数与 web 真值逐一对照（console_html.py L3005-3006）
+    # 参数与 web 真值逐一对照（assets/console/index.html L3005-3006）
     ck("wheel: BASE=3.4", BASE == 3.4)
     ck("wheel: GAIN=0.26", GAIN == 0.26)
     ck("wheel: MAXV=44", MAXV == 44.0)

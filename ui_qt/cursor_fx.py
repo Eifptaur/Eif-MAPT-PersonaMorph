@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""鱼光标全家桶 —— web `WHALE_CURSOR`（agent/console_html.py L2856-2979）的 Qt 复刻。
+"""鱼光标全家桶 —— web `WHALE_CURSOR`（agent/assets/console/index.html L2856-2979）的 Qt 复刻。
 
 语义逐条对齐 web 源码（唯一真值）：
   · 开关    `ui.whale_cursor`（默认开，只有显式 false 才关；web `!== false` 口径）
@@ -28,7 +28,7 @@ from PySide6.QtCore import QEvent, QObject, Qt, QTimer
 from PySide6.QtGui import QCursor, QPixmap, QTransform
 from PySide6.QtWidgets import QApplication
 
-SPIN_FRAMES = 24 # web SPIN_FRAMES（console_html.py L2912）
+SPIN_FRAMES = 24 # web SPIN_FRAMES（assets/console/index.html L2912）
 SPIN_MS = 22 # web SPIN_MS（24 × 22 ≈ 530ms 一圈）
 NOD_MS_DEFAULT = 400
 NOD_MS_DEBUG = 1500 # PM_CURSOR_NOD_DEBUG=1 → 真机定因开关（肉眼必见，机制通不通一锤定音）
@@ -285,7 +285,7 @@ class WhaleCursor(QObject):
             self._mode = ""
 
     def spin_to(self, deg: float) -> None:
-        """相位驱动换帧（web spinTo 同款，console_html.py L2950-2956）：
+        """相位驱动换帧（web spinTo 同款，assets/console/index.html L2950-2956）：
         帧号变了才换，帧没备好/光标关了不动。滚轮模式专用路径，不动 _mode。"""
         if not self._frames:
             return

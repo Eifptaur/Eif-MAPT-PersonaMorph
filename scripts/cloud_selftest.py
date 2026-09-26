@@ -285,7 +285,7 @@ def main():
            and any(e["id"] == "persona" and e["configured"] for e in snap["endpoints"]), snap["enabled"])
         ok("快照只说 token 有没有，不回显 token 值",
            snap["token_set"] is True and "TOKEN-SECRET-9f3a" not in json.dumps(snap, ensure_ascii=False), "")
-        html = open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+        html = open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
         wui = open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
         cfg_py = open(os.path.join(ROOT, "agent", "config.py"), encoding="utf-8").read()
         doc = os.path.join(os.path.join(os.path.dirname(ROOT), "dev-workspace", "persona-morph"), "docs", "上云接口契约.md")  # 文档区已迁出产品根

@@ -93,7 +93,7 @@ ok("mode=skip 时直接跳过", '"skip"' in src)
 ok("与「识别自己账号」是两件事（self_identity 仍在）", "self_identity" in src and "is_owner" in src)
 
 print("\n── F. 界面能看到──")
-page = io.open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+page = io.open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
 ok("有登记框", 'data-cfg="wechat.owner_accounts"' in page)
 ok("有反应档位下拉", 'data-cfg="wechat.owner_mode"' in page)
 ok("三个档位都在", all(('value="%s"' % m) in page for m in ("know", "skip", "off")))

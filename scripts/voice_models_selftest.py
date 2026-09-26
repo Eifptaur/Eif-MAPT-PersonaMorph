@@ -150,7 +150,7 @@ print("\n── E. 接线与 UI ──")
 tools = io.open(os.path.join(ROOT, "agent", "tools.py"), encoding="utf-8").read()
 ok("生产路径走 voice_models（_vm.make / _vm.status）", "_vm.make(text)" in tools and "_vm.status()" in tools)
 ok("生产路径不再直接用 tts.make", "_tts.make(" not in tools and "_tts.status(" not in tools)
-page = io.open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+page = io.open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
 for k in ("voice_reply.backend", "voice_reply.http_url", "voice_reply.http_json_field"):
     ok("面板有 %s" % k, ('data-cfg="%s"' % k) in page)
 ok("面板写明「不通会如实报错」", "不会假装发过" in page or "如实报错" in page)

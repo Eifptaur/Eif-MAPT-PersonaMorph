@@ -58,7 +58,7 @@ LEGACY = ("deepseek-v4-flash-vision-exp", "deepseek-v4-flash", "deepseek-v4-flas
           "deepseek-v4-pro-0813", "deepseek-chat", "deepseek-reasoner")
 
 print("── A. 官方现售名都在控制台模型栏里 ──")
-_html = src("agent/console_html.py")
+_html = src("assets/console/index.html")
 _m = re.search(r"deepseek:\{label:'DeepSeek', base:'[^']*', keyHint:'[^']*',\s*models:\[([^\]]*)\]", _html)
 _list = [x.strip().strip("'") for x in _m.group(1).split(",")] if _m else []
 ok("取到模型栏清单", len(_list) >= 5, str(len(_list)))
@@ -96,7 +96,7 @@ ok("示例配置也是正名", '"model": "deepseek-flash"' in _ex)
 _st = src("scripts/selftest.py")
 ok("视觉提示认得 deepseek-flash（不会误报『疑似非视觉模型』）",
    "deepseek-flash" in _st.split("_VISION_OK")[1][:200])
-_hint = src("agent/console_html.py")
+_hint = src("assets/console/index.html")
 ok("界面里的模型示例提示也换成正名（不再教用户填旧名）",
    "deepseek-v4-flash-vision-exp" in _hint or "deepseek-flash" in _hint)
 _fc = src("scripts/fullcheck.py")

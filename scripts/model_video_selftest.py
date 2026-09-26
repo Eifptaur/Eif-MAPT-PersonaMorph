@@ -141,7 +141,7 @@ def main():
     ok("read_video 工具注册了", "read_video" in defs)
     ok("工具描述写明「读不了就说读不了、别假装看过」",
        "绝不假装看过" in defs["read_video"]["description"] and "照实说读不了" in defs["read_video"]["description"])
-    html = open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+    html = open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
     wui = open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
     cfg_py = open(os.path.join(ROOT, "agent", "config.py"), encoding="utf-8").read()
     cex = open(os.path.join(ROOT, "config.example.json"), encoding="utf-8").read()

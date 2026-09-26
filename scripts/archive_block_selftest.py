@@ -105,7 +105,7 @@ def main():
            and any(o.get("only_in_blocklist") for o in opts), [o["chat_key"] for o in opts])
 
         wui = open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
-        html = open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+        html = open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
         pm = open(os.path.join(ROOT, "scripts", "persona_morph.py"), encoding="utf-8").read()
         cfg_py = open(os.path.join(ROOT, "agent", "config.py"), encoding="utf-8").read()
         cex = open(os.path.join(ROOT, "config.example.json"), encoding="utf-8").read()

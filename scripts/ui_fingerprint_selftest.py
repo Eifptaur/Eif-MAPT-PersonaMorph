@@ -181,7 +181,7 @@ SRC_WU = io.open(os.path.join(ROOT, "agent", "wechat_ui.py"), encoding="utf-8").
 ck("D7 hit() 接了自校验（点前先比指纹）",
    "ui_fingerprint" in SRC_WU and "verdict is False" in SRC_WU)
 
-SRC_C = io.open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+SRC_C = io.open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
 SRC_W = io.open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
 ck("D8 控制台有指纹行 + 两颗按钮", all(s in SRC_C for s in ('id="ufpHead"', 'id="ufpTake"', 'id="ufpForget"')))
 ck("D9 后端有取指纹 / 丢指纹两个路由",

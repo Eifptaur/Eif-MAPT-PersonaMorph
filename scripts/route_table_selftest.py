@@ -164,7 +164,7 @@ ok("A2 非字面分支也登记在案（代码 %d 个 · 表里 PATTERNS %d 条�
    len(PATTERNS) == NPATT, "PATTERNS=%d" % len(PATTERNS))
 
 print("== B. 前端契约：页面调的每个「方法+路径」都必须被表覆盖 ==")
-_console = io.open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+_console = io.open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
 CL = _console.splitlines()
 CALL = re.compile(r"""(getJSON|postJSON|putJSON|delJSON|fetch)\s*\(\s*([`'"])([^`'"]+)\2""")
 METHOD = re.compile(r"""method\s*:\s*['"](\w+)['"]""")

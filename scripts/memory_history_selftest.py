@@ -60,7 +60,7 @@ ok("审计是机械集合差（dropped/added 逐字算，不做语义猜测）",
    _sm.has(_src, '"dropped": [x for x in b if x not in a]') and _sm.has(_src, '"added": [x for x in a if x not in b]'))
 _pm = io.open(os.path.join(ROOT, "scripts", "persona_morph.py"), encoding="utf-8").read()
 ok("记忆页那条接口把 audit 带出来了", _sm.has(_pm, "overwrite_history(chat_key, 20)", '"audit": audit'))
-_page = io.open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+_page = io.open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
 ok("记忆页有显示位 #memAudit", 'id="memAudit"' in _page)
 ok("文案点明丢了几条、去哪儿捞", _sm.has(_page, "最近一次自动整理丢了", "可捞回"))
 

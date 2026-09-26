@@ -108,7 +108,7 @@ finally:
     W.get_config = _orig
 
 print("── C. 单点来源 + 服务端注入 ──")
-_html_src = io.open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+_html_src = io.open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
 _web_src = io.open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
 ok("前端不再手写字典（只剩注入位）",
    "const WHALE_TXT = {" not in _html_src and "__WHALE_TXT__" in _html_src)

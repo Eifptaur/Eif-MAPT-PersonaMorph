@@ -66,7 +66,7 @@ _E_MIN = 0.35
 # on_mouse_move 注释；这里 energy 仅用于「分档可分辨」的可观测量，仍对齐 web 的
 # 鼠标速度联动语义）。400px/s ≈ 手匀速小幅度移动。
 _V_REF = 400.0
-# EMA 系数（对齐 web console_html.py:6612 `m*0.7 + v*0.3`）
+# EMA 系数（对齐 web assets/console/index.html:6612 `m*0.7 + v*0.3`）
 _EMA_KEEP = 0.7
 
 # web 同款默认（与 agent/config.py ui.wave_fx 一致）
@@ -627,8 +627,8 @@ class WaveFX(QObject):
 
         # ---- 噪声（fractalNoise 等价；0.5x 网格生成 → repeat 上采样）----
         ph = self._ph
-        fx = 0.008 + 0.004 * math.sin(ph * 0.9) # web console_html.py:6646 同款
-        fy = 0.011 + 0.005 * math.cos(ph * 0.7) # web console_html.py:6647 同款
+        fx = 0.008 + 0.004 * math.sin(ph * 0.9) # web assets/console/index.html:6646 同款
+        fy = 0.011 + 0.005 * math.cos(ph * 0.7) # web assets/console/index.html:6647 同款
         pw = max(1, int(dev_w * _PROC_SCALE))
         phh = max(1, int(dev_h * _PROC_SCALE))
         plxs = np.arange(pw, dtype=np.float32)[None, :] * (rect_logical.width() / pw)

@@ -682,7 +682,7 @@ else:
     skip("H. 自家控制台窗口探针", "没编译出 一键启动.exe")
 
 print("── I. 左导航间距──")
-_html = src("agent/console_html.py")
+_html = src("assets/console/index.html")
 from agent import console_html as _CH # noqa: E402
 _css = _CH.HTML.split("<style>", 1)[1].split("</style>", 1)[0]
 _i = _css.rfind(".side .nav a{") # 生效的是最后一条同选择器规则
@@ -768,7 +768,7 @@ print("")
 print("── L. 「重启后页面自己连回来」（2026-09-18 用户实测后加）──")
 # 真因：控制台**没有任何周期性状态轮询**，也没有"重启后重连"的判断 —— 而页面文案早就写着
 #      「正在重启，页面稍后会自己连回来」⇒ **承诺没有实现**。这三条钉住它别再退化。
-_ch = src("agent/console_html.py")
+_ch = src("assets/console/index.html")
 ok("L1 有周期性状态轮询（外部重启/改状态后页面会自己更新）",
    _sm.has(_ch, "__statusPoll = setInterval"), "")
 ok("L2 服务器换进程（started_at 变）⇒ 页面自己重载",

@@ -31,7 +31,7 @@ from agent.config import deep_merge # noqa: E402
 PASS, FAIL = [], []
 HTML = CH.HTML
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SRC = open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+SRC = open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
 
 
 def ok(name, cond, detail=""):

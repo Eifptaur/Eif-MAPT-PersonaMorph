@@ -50,7 +50,7 @@ BATCH_SECS = sec_meta.SECS_OF_THIS_BATCH
 def badge_for(sec: str, st: dict) -> tuple[str, str, str] | None:
     """面板徽章真值：sec 键 + 一份 /api/status → (level, text, tip)。
 
-    口径逐条对齐 web `refreshBadges`（console_html.py L3302-3427）——同一份
+    口径逐条对齐 web `refreshBadges`（assets/console/index.html L3302-3427）——同一份
     数据源（/api/status），同一套判断，同一套短文案（≤8 字）；细节进 tip。
     web 侧的差异如实记录：
       · stImggen/stVideogen/stTools/stVermat/stSessions/stMemory/stServer 七个
@@ -417,7 +417,7 @@ def _chips_editor(t: Tokens, r: "sec_meta.Row") -> QWidget:
     """web chips 勾选组（群白名单等）→ 可编辑输入 + 行内按钮。
 
     值语义对齐 web：list[str]（编辑框里逗号分隔展示，保存时 split 回 list）。
-    「检测群聊并勾选 / 刷新群列表」按 web 原版真接线（console_html.py:2806-2842）：
+    「检测群聊并勾选 / 刷新群列表」按 web 原版真接线（assets/console/index.html:2806-2842）：
     点检测 → 拉 /api/wechat-groups → 弹窗勾选 → 确定 = 写回 + **当场保存**
     （GET /api/config → 改 wechat.group_name_white_list → POST 全量，web L2827 同款）。
     """
@@ -1533,7 +1533,7 @@ def _cfg_panel(t: Tokens, s: "sec_meta.Sec", on_save=None) -> QWidget:
     note.setFont(qfont(t, 12.5))
     note.setStyleSheet(f"color:{t.tx3};background:transparent;")
 
-    # ── 改完即生效── web 顶栏 autoApplyChk（console_html.py L753，
+    # ── 改完即生效── web 顶栏 autoApplyChk（assets/console/index.html L753，
     # 默认勾选、状态记本机）的 Qt 等价：勾上后本面板任何控件改动，防抖 600ms
     # 自动 write_patch（与手动保存同一条深合并落盘链路），不用再点「保存设置」。
     from PySide6.QtCore import QSettings, QTimer as _QTimer # noqa: PLC0415

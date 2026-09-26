@@ -265,7 +265,7 @@ try:
     ck("G4 同会话短窗去重在位（_DEDUP_WINDOW_S + 与最近自己发过的文本比对）",
        "_DEDUP_WINDOW_S" in _ssrc and "跳过重复发送" in _ssrc and "include_self=True" in _ssrc)
     _wsrc = io.open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
-    _csrc = io.open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+    _csrc = io.open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
     ck("G5 后端把闸门读数暴露给前端（/api/status 的 outbound_gate）",
        "outbound_gate" in _wsrc and "outbound_gate_status" in _ssrc)
     ck("G5b 前端横幅会显示「拦下了几条内部故障话术」",

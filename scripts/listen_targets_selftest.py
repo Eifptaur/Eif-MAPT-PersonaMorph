@@ -101,7 +101,7 @@ def main():
 
     print("── E. 收口：三处调用点都走这一个解析器（前端后端一体）──")
     PM = open(os.path.join(ROOT, "scripts", "persona_morph.py"), encoding="utf-8").read()
-    CT = open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+    CT = open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
     ok("E1 启动时的选群走 `listen_targets.resolve_groups`", "listen_targets.resolve_groups(groups, whitelist, deny)" in PM)
     ok("E2 保存配置后重算也走同一个解析器（两处不许各写一份匹配）",
        PM.count("listen_targets.resolve_groups(") >= 2, PM.count("listen_targets.resolve_groups("))
@@ -186,7 +186,7 @@ def main():
     ok("G3 晚接入/配置保存这条路上，`describe(read_failed=…)` 也带**真因**",
        "read_failed=_read_failed" in _ct and "groups_read_error" in _ct)
     # G4：向导的重试按钮带 `?refresh=1`（原来是假重试：走内存缓存）
-    _con = open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+    _con = open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
     ok("G4 向导「重试读取」带 `?refresh=1`",
        "_obForceRefresh" in _con and "?refresh=1" in _con)
     # G5：昵称表的三类失败要**如实抛**（不再静默 `{}`）

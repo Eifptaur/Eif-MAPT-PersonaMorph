@@ -1098,14 +1098,14 @@ class Shell(QWidget):
         wl.addWidget(self.find)
         lay.addWidget(wrap)
 
-        # 导航搜索键盘交互（对齐 web `#navFind` 的 keydown，console_html.py:7122-7128）：
+        # 导航搜索键盘交互（对齐 web `#navFind` 的 keydown，assets/console/index.html:7122-7128）：
         #   · `/`  全局聚焦搜索框（**输入态里不触发**，web :7151-7157 同口径）
         #   · Esc  清空并失焦（web :7123）
         #   · Enter 跳到当前唯一/首个可见项（web :7124-7127 点第一个候选）
         self.find.returnPressed.connect(self._find_enter)
         self._install_shortcuts()
 
-        # 状态框 1:1 复刻 web `.side .status`（console_html.py L517-519）——
+        # 状态框 1:1 复刻 web `.side .status`（assets/console/index.html L517-519）——
         #   background=blue-soft / border=**blue-line**（此前拿 blue 当边框 ⇒ 一圈亮蓝，
         # ）/ radius 10 / padding 10 12；标题 b 13px 蓝；正文 p 12px。
         sbox = QFrame()
@@ -1121,7 +1121,7 @@ class Shell(QWidget):
         t_cap.setFont(qfont(self.t, 13, 600))
         t_cap.setStyleSheet(f"color:{self.t.blue};")
         sv.addWidget(t_cap)
-        self.side_status = QLabel("未连接") # web 真值初值（console_html.py L929）
+        self.side_status = QLabel("未连接") # web 真值初值（assets/console/index.html L929）
         self.side_status.setFont(qfont(self.t, self.t.body_size - 1))
         self.side_status.setStyleSheet(f"color:{self.t.tx2};")
         self.side_status.setWordWrap(True)
@@ -1144,7 +1144,7 @@ class Shell(QWidget):
 
         self.items: list[tuple[NavItem, NavGroup, str, str]] = []
         # 分组折叠跨会话记忆（web `navGrpClosed` localStorage 的 QSettings 等价，
-        # console_html.py:7043-7067）：以「被折叠的分组标题」为键，跨进程记住。
+        # assets/console/index.html:7043-7067）：以「被折叠的分组标题」为键，跨进程记住。
         from PySide6.QtCore import QSettings as _QS # noqa: PLC0415
 
         _qs = _QS("WXAgent", "persona-morph-ui")
@@ -1522,7 +1522,7 @@ class Shell(QWidget):
         return seen
 
     def _on_grp_toggled(self, _collapsed: bool) -> None:
-        """分组折叠 → 写 QSettings（对齐 web saveClosed，console_html.py:7049/7066）。"""
+        """分组折叠 → 写 QSettings（对齐 web saveClosed，assets/console/index.html:7049/7066）。"""
         from PySide6.QtCore import QSettings # noqa: PLC0415
 
         closed = [g.title for g in self._groups() if g.collapsed]
@@ -1667,12 +1667,12 @@ class Shell(QWidget):
         if getattr(self, "_backdrop_on", False):
             # ── 画卷模式（whale + 底图可用）：全局透明让 Shell.paintEvent 透出来，
             #    顶栏/侧栏用 web 同款深蓝玻璃压住底图（--topbar rgba(8,24,46,.7) /
-            #    --bg-solid rgba(12,34,62,.86)，console_html.py L39/L34）。
+            #    --bg-solid rgba(12,34,62,.86)，assets/console/index.html L39/L34）。
             #    各控件自带显式背景，全局透明只影响容器层 —— 卡片仍是半透玻璃。
             self.setStyleSheet(
                 f"QWidget{{background:transparent;}}"
                 # 顶栏/侧栏压底图：**比 web 的 .7 更实**。
-                # web 有 backdrop-filter:blur(8px)（console_html.py L432）帮它把底下
+                # web 有 backdrop-filter:blur(8px)（assets/console/index.html L432）帮它把底下
                 # 的浪纹糊掉；Qt 无等价模糊 ⇒ 同样 .7 会让海水的亮/暗直接透过文字。
                 # 用 .84 顶栏 / .90 侧栏换取「顶栏文字不再被背景洗」——这是平台差异
                 # 下的有意取值，不是抄错数字（web 真值仍是 .7）。
@@ -1746,7 +1746,7 @@ class Shell(QWidget):
         """全局键盘快捷键（对齐 web 的两处文档级 keydown）。
 
         web 侧 keydown 共 6 处注册，逐处定性后**只有这两条是通用快捷键**：
-          · `/`  → 聚焦导航搜索框（`console_html.py:7151-7157`，**输入态不触发**，
+          · `/`  → 聚焦导航搜索框（`assets/console/index.html:7151-7157`，**输入态不触发**，
                    免得在输入框里打斜杠被抢）；
           · Esc → 清空搜索并失焦（`:7123`）—— 面板弹窗的 Esc 由各自弹窗自理，
                    这里只管「搜索框有内容时」这一路。
@@ -1977,7 +1977,7 @@ class Shell(QWidget):
             txt += " · 启动于 " + started
         lab.setText(txt)
         # web 真值不给状态行上色——`.side .status p{font-size:12px;color:var(--tx2)}`
-        # 恒为灰字（console_html.py L519）。此前按连接态换 ok/warn ⇒ 绿/黄字。
+        # 恒为灰字（assets/console/index.html L519）。此前按连接态换 ok/warn ⇒ 绿/黄字。
         lab.setStyleSheet(f"color:{self.t.tx2};background:transparent;")
         tip = ("已接上微信客户端" if s.get("wechat_connected")
                else str(wa.get("reason") or "还没拿到失败原因（等一次接入尝试，或看日志）")
@@ -2041,7 +2041,7 @@ class Shell(QWidget):
     def _on_pause_click(self) -> None:
         """暂停/恢复 → POST /api/pause 或 /api/resume。
 
-        对齐 web pauseBtn.onclick（console_html.py L5702-5730）全语义：
+        对齐 web pauseBtn.onclick（assets/console/index.html L5702-5730）全语义：
           · 方向 = 用户这一下**想要**的结果状态（wantPaused = not paused；
             web 原话：判据必须钉住这个方向，第一版调反过）
           · 点下去立刻禁用 + 「暂停中…/恢复中…」防连点

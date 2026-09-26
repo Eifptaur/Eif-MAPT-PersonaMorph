@@ -37,7 +37,7 @@ def ok(name, cond, detail=""):
 
 
 W = open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
-H = open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+H = open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
 
 
 def seg(src, start, end, what):

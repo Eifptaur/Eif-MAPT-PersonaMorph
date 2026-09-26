@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""首次引导向导 —— 五步上手（对齐 web `onboarding()`，console_html.py:5427-5570）。
+"""首次引导向导 —— 五步上手（对齐 web `onboarding()`，assets/console/index.html:5427-5570）。
 
 触发时机与 web 一致：配置载入后调用，**仅当「还没配好 Key」才弹**
 （打码 `••••` / 占位符 / 空 → 弹；真实 Key → 不打扰）。五步：

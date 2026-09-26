@@ -42,7 +42,7 @@ print("记忆删除判据")
 print("")
 
 mem_src = io.open(os.path.join(ROOT, "agent", "memory.py"), encoding="utf-8").read()
-page = io.open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+page = io.open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
 
 seg_members = mem_src.split("def members(")[1].split("def remove(")[0]
 seg_elsewhere = mem_src.split("def elsewhere(")[1].split("\n    def ")[0] if "def elsewhere(" in mem_src else ""

@@ -116,7 +116,7 @@ _tl = src(os.path.join("agent", "tools.py"))
 ok("D4 工具按形态分流：strip ⇒ 走 voice_strip.send", "_vs.send(ctx.get(\"wechat\")" in _tl)
 ok("D5 前提不齐时**如实回退并说明**（不许静默降级）",
    "_strip_note" in _tl and "为什么这次是文件" in _tl)
-_ch = src(os.path.join("agent", "console_html.py"))
+_ch = src(os.path.join("assets", "console", "index.html"))
 ok("D6 控制台给出形态选项（真语音条 / 音频文件）",
    'data-cfg="voice_reply.form"' in _ch and "真语音条（微信语音气泡，推荐）" in _ch
    and "音频文件（点开才能听的那种）" in _ch)

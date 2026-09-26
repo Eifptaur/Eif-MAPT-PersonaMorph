@@ -40,7 +40,7 @@ def ok(name, cond, detail=""):
 
 
 W = open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
-H = open(os.path.join(ROOT, "agent", "console_html.py"), encoding="utf-8").read()
+H = open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
 G = open(os.path.join(ROOT, "agent", "version_gate.py"), encoding="utf-8").read()
 M = open(os.path.join(ROOT, "agent", "version_matrix.py"), encoding="utf-8").read()
 
