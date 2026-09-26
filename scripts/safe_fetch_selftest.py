@@ -724,8 +724,13 @@ def _section_L27():
         except Exception:
             _old_ok27 = False # 连接层拿到的是 "pinned.test" ⇒ 夹具拒 ⇒ 老写法必失败
         _old_targets = [str(a[0]) for a in _conn27]
-        ok("L27d 反例锚（灵敏度）：**同一判据**下老写法连的是域名 ⇒ 必红（不靠预置计数）",
-           _old_ok27 is False and bool(_old_targets) and not all(_ip_literal(t) for t in _old_targets),
+        # ⚠️ 灵敏度只看"**同一夹具下老写法必失败**"（`_old_ok27 is False`）。
+        #   原来还额外断言"老写法连的是**域名**"，但**夹具打不到那一层**：`urlopen` 的域名是它
+        #   内部解析掉的，`create_connection` 这一层记录到的已经是解析后的 IP（实测 `['127.0.0.1']`）
+        #   ⇒ 那半条断言永远不成立（既不是产品问题、也不是夹具能修的）。真正的差别在"解析几次"，
+        #   而那一层本判据的加固侧已经由 L27a/L27b 的"连接目标是 IP 字面量"守着。
+        ok("L27d 反例锚（灵敏度）：**同一判据**下老写法过不去 ⇒ 必红（不靠预置计数）",
+           _old_ok27 is False,
            "老写法成功=%s 连接目标=%s" % (_old_ok27, _old_targets[:3]))
     finally:
         socket.getaddrinfo = _real_gai27

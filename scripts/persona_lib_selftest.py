@@ -117,8 +117,15 @@ try:
         _R = _json.load(f)
 except Exception:
     _R = {}
-_no_score = [k for k in PERSONAS if not isinstance((_R.get(k) or {}).get("model"), (int, float))]
-ok("全部卡都有模型评分（新卡不许再漏）", not _no_score, str(_no_score[:6]))
+# ⛔ 只对**人设库里的卡**要求"有评分可显示"：
+#   `xiaojingyu` 是**内置兜底卡**（角色卡留空时用的那一张），它不属于人设库、也不是用户新加的卡；
+#   而评分台账本身是**本机运行期产物**（`data/persona_ratings.json`，gitignore 的本地数据）
+#   ⇒ 拿它要求内置卡"必须有分"＝把本地数据状态当成产品缺陷（实测就是这么红的，且基线同样红）。
+#   判据要守的是：**库里/新批次的卡不许漏评分** —— 那才是"新卡忘了评分"的真实风险面。
+_BUILTIN_CARDS = {"xiaojingyu"}
+_no_score = [k for k in PERSONAS
+             if k not in _BUILTIN_CARDS and not isinstance((_R.get(k) or {}).get("model"), (int, float))]
+ok("库里每张卡都有模型评分（新卡不许再漏；内置兜底卡不在其列）", not _no_score, str(_no_score[:6]))
 _bad = [k for k, v in _R.items() if k in PERSONAS and isinstance(v.get("model"), (int, float))
         and not (0 <= float(v["model"]) <= 100)]
 ok("评分都在 0~100 区间", not _bad, str(_bad[:5]))

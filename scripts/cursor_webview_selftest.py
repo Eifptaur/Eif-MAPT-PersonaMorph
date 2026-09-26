@@ -76,8 +76,12 @@ ck("A11 帧走 dataURL，**不拼 ?v=Date.now()**（每帧换 URL 会让光标�
    "setStyle(frames[" in _SPIN and "Date.now()" not in _SPIN, _SPIN[:0] or "spin() 内无 Date.now")
 ck("A12 转完一圈回到默认帧", "clearInterval(spinTimer); spinTimer = null; apply(); return;" in SRC_C)
 ck("A13 帧没备好时退回「点头」（不许按了没反应）", "if(spin()) return;" in SRC_C and "applyNod();" in SRC_C)
-ck("A14 中键**吃掉浏览器原生自动滚动**（否则光标被浏览器接管，只看得到「闪」）",
-   "ev.preventDefault()" in SRC_C and "原生自动滚动" in SRC_C)
+# ⛔ 只钉**行为**（中键分支里真的调了 `preventDefault`），**不钉注释文案**：
+#   这半句原来还要求源码里出现「原生自动滚动」这句注释 —— 注释是随时会被改写的说明文字，
+#   钉它＝给判据绑一个会自然漂移的量（实测就是这么红的：`ev.preventDefault()` 一直都在，
+#   只是旁边那句注释被重写了）。要钉的语义是"**我们吃掉了浏览器自己的那个行为**"。
+ck("A14 中键**吃掉浏览器原生行为**（否则光标被浏览器接管，只看得到「闪」）",
+   "ev.preventDefault()" in SRC_C)
 ck("A15 帧备好没有对外可读（判据/探针要能等到它，否则假红）",
    "framesReady: ()=>frames.length > 0" in SRC_C and "frameIdx: ()=>lastSpinIdx" in SRC_C)
 # ── 自研「滚轮模式」：中键要**真的滚**（
@@ -121,6 +125,15 @@ if os.path.exists(_EXE):
     _EXE = os.path.join(_exe_dir14, "一键启动.exe")
 if not os.path.exists(_EXE):
     skip("B 活体探针", "一键启动.exe 不存在（先编译）")
+elif os.environ.get("PM_JUDGE_NO_PROC") == "1":
+    # ⛔ 与 `whale` / `console_chrome` / `voice_models` **同一口径**：全量跑分器
+    #   （`run_all_selftests.py`）会给每个判据设 `PM_JUDGE_NO_PROC=1`，意思是
+    #   **"真起进程 / 真开端口"那几段别跑**（跑分器注释里点名了这几族，本判据以前漏加）
+    #   ⇒ 于是它在全量里真起了一个 WebView2 窗口、跑完 20 条活体断言全红，
+    #   而单跑（不带这个变量）是能真起真收的。
+    #   这里补上：**跳过时打一行 SKIP、绝不冒充通过**；A 段（静态源码判据）照旧全跑。
+    skip("B 活体探针", "PM_JUDGE_NO_PROC=1 ⇒ 跳过真起 WebView2 窗口跑探针那半"
+                       "（A 段静态判据已判；要真跑请手动单跑本脚本，不带这个变量）")
 else:
     print("[B] 活体：在自家 WebView2 窗口里真跑一遍")
     from agent import webui as W

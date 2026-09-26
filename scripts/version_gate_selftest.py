@@ -116,10 +116,24 @@ print("── C. 接线：三个 send 入口都要问门 ──")
 W = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8", errors="replace").read()
 n = len(re.findall(r"version_gate as _vg", W))
 ok("三个 send 入口都接了门", n >= 3, "命中 %d 处" % n)
+def _method_body(src, sig):
+    """取 `sig` 那个方法的方法体（到下一条同级 `def ` 为止）。
+
+    ⛔ **别用固定字符窗口**：方法会变长，窗口写死就会老化 —— 实测踩到过（加了几段注释后
+    `version_gate` 被推到 1462 字符外，而窗口是 1400 ⇒ 这条断言假红，产品其实一字没改）。
+    这与 `_srcmatch.has()` 的教训是同一类：**判据不许依赖"代码长度/缩进"这种会自然漂移的量**。
+    """
+    i = src.find(sig)
+    if i < 0:
+        return ""
+    j = src.find("\n    def ", i + len(sig))
+    return src[i:j] if j > i else src[i:]
+
+
 for sig in ("def send_text(", "def send_image(", "def send_file_posted("):
-    i = W.find(sig)
-    seg = W[i:i + 1400] if i >= 0 else ""
-    ok("%s 里就问门" % sig.split("(")[0].replace("def ", ""), "version_gate" in seg)
+    seg = _method_body(W, sig)
+    ok("%s 里就问门" % sig.split("(")[0].replace("def ", ""), "version_gate" in seg,
+       "方法体 %d 字符" % len(seg))
 
 print("── D. 控制台与端点 ──")
 WEB = open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8", errors="replace").read()

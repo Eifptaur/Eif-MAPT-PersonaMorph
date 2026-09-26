@@ -80,6 +80,14 @@ class _Slow(BaseHTTPRequestHandler):
             pass
 
 
+# ⛔ 夹具的本地 HTTP 服务会**故意被客户端提前断开**（超时用例就是不等回包），
+#   而 `socketserver` 默认把这种 `ConnectionResetError` 的 traceback 打到 stderr ⇒
+#   在全量跑分器眼里它长得像"判据崩了"（实测：本判据 rc=0、断言 13/0 全过，却因为这条噪音被判红）。
+#   判据要的是断言结果，不是服务器的异常栈 ⇒ 把这个已知无害的噪音静音
+#   （与 `cursor_webview_selftest` 处理同一问题的做法一致）。
+import socketserver as _ss
+_ss.BaseServer.handle_error = lambda *a, **k: None
+
 _srv = HTTPServer(("127.0.0.1", 0), _Slow)
 _port = _srv.server_port
 threading.Thread(target=_srv.serve_forever, daemon=True).start()
