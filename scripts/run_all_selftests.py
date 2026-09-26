@@ -66,7 +66,8 @@ def _parse(out: str):
     return None, None
 
 
-_HEAVY = re.compile(r"(console_|cursor_|whale|voice_models|local_models|restart_button|decide_link|_ui_selftest)")
+_HEAVY = re.compile(r"(console_|cursor_|whale|voice_models|local_models|restart_button|decide_link|_ui_selftest|"
+                    r"first_boot_smoke)")
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
 _BELOW_NORMAL = 0x00004000 if os.name == "nt" else 0 # 别跟用户抢 CPU：全套默认低优先级
 
