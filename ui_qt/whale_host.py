@@ -692,13 +692,16 @@ def build_host_html(port: int, token: str) -> str:
         "overflow:hidden;width:100%;height:100%}"
         "#dshw-composer-seat{position:fixed;left:-9999px;top:-9999px;"
         "width:1px;height:1px}"
-        # 减号：贴着原版菜单钮（.dshwv-menu-btn）正下方，同宽同形，纵向并排
-        ".pm-min-btn{position:fixed;top:calc(40.55% + 34px);right:4px;"
+        # 减号：贴着原版菜单钮（.dshwv-menu-btn）正下方，同宽同形，纵向并排。
+        # ⛔ 用 `position:absolute` 且**挂进原版本体内部**（见 wire()）：原版菜单钮是
+        #    `top:calc(40.55% + 4px)`，那是相对**本体**的百分比。减号若留在 body 上按
+        #    视口算百分比，窗口一变高（给弹层留余量）它就飘到窗口中间、离开鲸鱼。
+        ".pm-min-btn{position:absolute;top:calc(40.55% + 34px);right:4px;"
         "width:26px;height:26px;border:none;border-radius:6px;"
         "background:rgba(32,49,112,.85);color:#fff;cursor:pointer;"
         "font:700 16px/1 'Segoe UI',sans-serif;padding:0;z-index:2147483647;"
         "display:flex;align-items:center;justify-content:center;"
-        "transition:background .15s ease}"
+        "pointer-events:auto;transition:background .15s ease}"
         ".pm-min-btn:hover{background:#203170}"
         # 收起后的小圆点：常驻，再点放回挂件
         ".pm-dot{position:fixed;right:8px;bottom:8px;width:14px;height:14px;"
@@ -725,11 +728,16 @@ def build_host_html(port: int, token: str) -> str:
         "function setCollapsed(on){"
         "document.body.classList.toggle('pm-collapsed',!!on);"
         "var r=rootEl(); if(r){r.style.display=on?'none':'';}"
-        "try{localStorage.setItem('pm-whale-collapsed',on?'1':'0');}catch(e){}"
+        # ⛔ 收起状态**不跨启动保持**：挂件是控制台的卫星窗，收起状态一旦落盘，
+        #    下次启动就只剩一个 14px 的小圆点 —— 用户眼里就是「挂件不见了」。
+        #    原版 web 端能持久化是因为控制台页面一直在，桌面小窗不能这么干。
         "}"
         "function wire(){"
         "var b=document.querySelector('.pm-min-btn');"
         "var d=document.querySelector('.pm-dot');"
+        "var r=rootEl();"
+        # 减号挂进本体内部：百分比才相对本体算（见上方 CSS 注解），并跟着本体一起挪/藏
+        "if(b&&r&&b.parentNode!==r){try{r.appendChild(b);}catch(e){}}"
         "if(b&&!b.__pm){b.__pm=1;b.addEventListener('click',function(e){"
         "e.stopPropagation();e.preventDefault();setCollapsed(true);});}"
         "if(d&&!d.__pm){d.__pm=1;d.addEventListener('click',function(e){"
@@ -795,6 +803,10 @@ def build_host_html(port: int, token: str) -> str:
         "out.push([Math.floor(r.left)-pad,Math.floor(r.top)-pad,"
         "Math.ceil(r.width)+2*pad,Math.ceil(r.height)+2*pad]);}catch(e){}}"
         "add(rootEl());"
+        # 我们自己注入的控件（减号 / 收起小圆点 / 等待卡）也要圈进去 —— 它们不是
+        # dshwv- 前缀，靠下面那条通配选择器捞不到；漏了它们就等于"点不动减号"。
+        "var mine=document.querySelectorAll('.pm-min-btn,.pm-dot,#pm-wait-card');"
+        "for(var k=0;k<mine.length;k++)add(mine[k]);"
         # 弹层不用类名清单硬编码：原版所有浮层都是 dshwv- 前缀 + fixed/absolute
         'var all=document.querySelectorAll(\'[class^="dshwv-"],'
         '[class*=" dshwv-"]\');'
@@ -815,9 +827,6 @@ def build_host_html(port: int, token: str) -> str:
         "}"
         "function boot(){"
         "wire();dragSetup();rectWatch();"
-        "var want=false;"
-        "try{want=localStorage.getItem('pm-whale-collapsed')==='1';}catch(e){}"
-        "if(want)setCollapsed(true);"
         # 原版挂件是异步建的（脚本 defer + 内部等 composer），root 晚于本脚本
         # 出现——且冷启动可能远超 6 秒。轮询分两段：0~6s 找不到就先发
         # boot(false)（宿主亮出**页内**提示卡，不藏页面），之后继续后台轮询——

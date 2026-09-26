@@ -5353,13 +5353,14 @@ def t_g13() -> None:
        and "singleShot(400" not in _wsrc)
 
     # ── C（真造控件，但**不触发 WebView2 建链**：桩掉 _boot_webview）──
-    st = QSettings("WXAgent", "persona-morph-ui")
-    # 位置记忆属于**用户现场状态**：本组要写它来验跨实例恢复，跑完必须还原，
-    # 否则自检会把用户拖过的位置改成测试用的坐标。
-    _pos_keep = st.value("whale_pos")
-    # 清残留必须**在建窗之前**：建窗时才读位置，晚一步就等于拿上一跑的坐标当起点 ——
-    # 起点会一跑一跑地往屏幕边缘漂，漂到越界后 "跨实例恢复" 这条就会假失败。
-    st.setValue("whale_pos", "")
+    # ⛔ 位置记忆是**用户现场状态**：本组跑在**独立的 QSettings 作用域**里，绝不碰
+    #    用户自己的位置。旧做法是"先备份用户的值、写测试值、跑完还原"，看上去稳妥，
+    #    实际把用户的挂件位置改坏过一次（标记与位置分两个键，还原只还了一个）——
+    #    真实后果是"挂件整块落到屏幕外，只剩一个减号"。隔离作用域从根上免掉这类事故。
+    _set_keep = getattr(ww, "_SET", None)
+    ww._SET = ("WXAgent-selftest", "persona-morph-whale-selftest")
+    st = QSettings(*ww._SET)
+    st.remove("") # 从干净状态起跑（避免上一次自检的残留当起点）
     keep: list = []
     try:
         w = ww.WhaleWidget(t)
@@ -5378,10 +5379,10 @@ def t_g13() -> None:
                                         QPointF(10, 10), QPointF(w.x() + 70, w.y() + 60),
                                         Qt_Left, Qt_Left, _NoMod))
         QApplication.processEvents()
-        saved = st.value("whale_pos")
-        ck("g13-C 拖拽移动：窗口位移 + 位置写 QSettings",
+        saved = st.value("whale_anchor")
+        ck("g13-C 拖拽移动：窗口位移 + 位置落盘（记**本体右下角**，与窗口尺寸无关）",
            w.pos() != pos0 and isinstance(saved, list) and len(saved) == 2
-           and [int(saved[0]), int(saved[1])] == [w.x(), w.y()],
+           and [int(saved[0]), int(saved[1])] == [w.x() + w.W, w.y() + w.H],
            "pos0=%s now=%s saved=%s" % (pos0, w.pos(), saved))
 
         # 位置跨实例恢复
@@ -5409,7 +5410,9 @@ def t_g13() -> None:
     finally:
         for x in keep:
             x.close()
-        st.setValue("whale_pos", _pos_keep or "")
+        if _set_keep is not None:
+            ww._SET = _set_keep
+        st.remove("") # 清掉自检作用域，别留残留给下一次
         QApplication.processEvents()
 
 
@@ -7587,6 +7590,17 @@ def t_whale_guard() -> None:
        "rectsNow" in _html and "'rects'" in _html and "rectWatch" in _html)
     ck("宿主页在非交互区按下时取消默认动作（否则原生拖拽吞掉 mousemove ⇒ 拖不动）",
        "e.preventDefault()" in _html and "isInteractive(e.target)" in _html)
+    ck("可命中区包含**我们自己注入的控件**（漏了减号就等于「点不动减号」）",
+       "querySelectorAll('.pm-min-btn,.pm-dot,#pm-wait-card')" in _html)
+    ck("减号挂进原版本体内（百分比相对本体算，窗口变高也不会飘离鲸鱼）",
+       ".pm-min-btn{position:absolute" in _html and "appendChild(b)" in _html)
+    ck("收起状态不落盘（落盘了下一次启动只剩一个小圆点 = 「挂件不见了」）",
+       "pm-whale-collapsed" not in _html)
+    ck("位置记忆记的是**本体右下角**（窗口尺寸再变，本体也不会被顶到屏幕外）",
+       "whale_anchor" in _inspect.getsource(WhaleWidget._read_anchor)
+       and "+ self.W" in _inspect.getsource(WhaleWidget._save_anchor))
+    ck("上屏校验按**本体**判（按整窗判会让「左上角露一点」过关、本体却在屏幕外）",
+       "WhaleWidget.W - _BASE" in _inspect.getsource(WhaleWidget._onscreen))
     ck("宿主页含拖动转发脚本（mousedown/mousemove + postMessage）",
        "postMessage" in _html and "mousemove" in _html and "dragSetup" in _html, "")
     ck("拖动只认非交互区（按钮/菜单/输入框的按下留给原版逻辑）",
@@ -7836,7 +7850,7 @@ def t_button_label_guard() -> None:
     ck("点击时无 pip 缺件但有手动缺件 ⇒ 给指引而不是「都齐了」",
        "manual" in _inst and "装不了自动版" in _inst, "")
 
-    # ---- C. 挂件位置自愈（功能验证，测后恢复用户原值）-----------------------
+    # ---- C. 挂件位置自愈（功能验证；跑在**独立 QSettings 作用域**里）----------
     from PySide6.QtCore import QSettings # noqa: PLC0415
 
     import stylekit_qt as _sk # noqa: PLC0415
@@ -7848,28 +7862,36 @@ def t_button_label_guard() -> None:
     ck("恢复位置前有上屏校验（_onscreen）",
        "_onscreen" in _inspect.getsource(_ww.WhaleWidget.__init__), "")
 
+    # ⛔ 用独立作用域：位置记忆是用户现场状态，自检不能写它（旧做法"写用户值再还原"
+    #    曾把用户的挂件位置改坏成屏幕外，直接导致"挂件不见了"）。
+    _set_keep = getattr(_ww, "_SET", None)
+    _ww._SET = ("WXAgent-selftest", "persona-morph-whale-selftest")
     _set = QSettings(*_ww._SET)
-    _saved = _set.value("whale_pos")
+    _set.remove("")
     try:
-        _set.setValue("whale_pos", [1611, 1431]) # 用户实测的越界值
+        # 位置记忆以**本体右下角**为锚；这里给一个必然越界的锚点
+        _set.setValue("whale_anchor", [1861, 1681])
         w1 = _ww.WhaleWidget(_t)
         from PySide6.QtWidgets import QApplication as _QA # noqa: PLC0415
 
         scr = _QA.instance().primaryScreen()
         g = scr.availableGeometry() if scr else None
         _in = g is not None and g.contains(w1.x(), w1.y())
-        ck("越界位置(1611,1431)恢复时回默认角（不落到屏幕外）",
+        ck("越界锚点恢复时回默认角（不落到屏幕外）",
            _in, "pos=(%d,%d) screen=%s" % (w1.x(), w1.y(), g))
 
         w1.close()
 
-        _set.setValue("whale_pos", [100, 200])
+        _set.setValue("whale_anchor", [400, 400])
         w2 = _ww.WhaleWidget(_t)
-        ck("屏内位置原样保留（不乱重置用户拖放点）",
-           (w2.x(), w2.y()) == (100, 200), "pos=(%d,%d)" % (w2.x(), w2.y()))
+        ck("屏内锚点原样保留（把**本体**放回你拖到的那一点）",
+           (w2.x() + w2.W, w2.y() + w2.H) == (400, 400),
+           "anchor=(%d,%d)" % (w2.x() + w2.W, w2.y() + w2.H))
         w2.close()
     finally:
-        _set.setValue("whale_pos", _saved if _saved is not None else "")
+        if _set_keep is not None:
+            _ww._SET = _set_keep
+        _set.remove("")
 
 
 def t_placeholder_guard() -> None:

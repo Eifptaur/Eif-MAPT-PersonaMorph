@@ -98,27 +98,14 @@ class WhaleWidget(QWidget):
         # ⛔ 必须校验上屏：实测 QSettings 里存过 (1611,1431) —— 在 1080p 屏上
         #    y=1431 已在屏幕底边之外，挂件"一直在显示、只是在屏幕外面"，
         #    用户眼里就是「没看到挂件」。位置记忆跨分辨率/换屏后天然可能越界。
-        _st = QSettings(*_SET)
-        pos = _st.value("whale_pos")
-        # 老记录存的是「窗口左上角」，而当时窗口边长 = _BASE。窗口现在为弹层留了余量，
-        # 本体仍钉在窗口右下角 ⇒ 左上角必须往回挪同样的量，本体在屏幕上的位置才不动。
-        # 用 whale_geo 记账做成**一次性**的，否则每次启动都会再挪一次。
-        if (isinstance(pos, list) and len(pos) == 2
-                and str(_st.value("whale_geo") or "") != "2"):
-            try:
-                pos = [int(pos[0]) - (self.W - _BASE), int(pos[1]) - (self.H - _BASE)]
-            except (TypeError, ValueError):
-                pos = None
-        _st.setValue("whale_geo", "2")
+        anchor = self._read_anchor(QSettings(*_SET))
         moved = False
-        if isinstance(pos, list) and len(pos) == 2:
-            try:
-                x, y = int(pos[0]), int(pos[1])
-                if self._onscreen(x, y):
-                    self.move(x, y)
-                    moved = True
-            except (TypeError, ValueError):
-                moved = False
+        if anchor is not None:
+            x = int(anchor[0]) - self.W
+            y = int(anchor[1]) - self.H
+            if self._onscreen(x, y):
+                self.move(x, y)
+                moved = True
         if not moved:
             self._move_default()
 
@@ -324,7 +311,7 @@ class WhaleWidget(QWidget):
         """
         try:
             if ended:
-                QSettings(*_SET).setValue("whale_pos", [self.x(), self.y()])
+                self._save_anchor(self.x(), self.y())
                 return
             if not dx and not dy:
                 return
@@ -474,7 +461,7 @@ class WhaleWidget(QWidget):
             self._inject(self._K_LUP, ev)
             self._lbtn = False
         if self._drag0 is not None and self._moved:
-            QSettings(*_SET).setValue("whale_pos", [self.x(), self.y()])
+            self._save_anchor(self.x(), self.y())
         self._drag0 = None
         self._win0 = None
         super().mouseReleaseEvent(ev)
@@ -498,31 +485,76 @@ class WhaleWidget(QWidget):
             self._host = None
         super().closeEvent(ev)
 
+    # ------------------------------------------------------------ 位置记忆
+
+    @staticmethod
+    def _read_anchor(st) -> list | None:  # noqa: ANN001
+        """读位置记忆 —— **以「本体右下角」为锚**（锚点与窗口尺寸无关）。
+
+        ⛔ 为什么不记窗口左上角：本体是原版 CSS 钉在窗口**右下角**的，窗口尺寸一变
+        （比如为弹层留余量），同一个左上角对应的本体位置就跟着变 —— 一不小心就把
+        本体顶到屏幕外面去（真实事故：窗口从 250 变 440×560 后，本体整块落在屏幕
+        下方，用户看到「只剩一个减号悬在那儿」）。锚点记在**本体**上，改窗口尺寸
+        与本体位置无关。
+
+        老记录存的是「窗口左上角」（当年窗口边长 = _BASE）⇒ 一次性换算：锚 =
+        老左上角 + (_BASE, _BASE)。换算只读不写，下次拖拽就会把锚点落盘。
+        """
+        a = st.value("whale_anchor")
+        if isinstance(a, list) and len(a) == 2:
+            try:
+                return [int(a[0]), int(a[1])]
+            except (TypeError, ValueError):
+                return None
+        p = st.value("whale_pos")
+        if isinstance(p, list) and len(p) == 2:
+            try:
+                return [int(p[0]) + _BASE, int(p[1]) + _BASE]
+            except (TypeError, ValueError):
+                return None
+        return None
+
+    def _save_anchor(self, x: int, y: int) -> None:
+        """把「本体右下角」落盘（拖动结束时调用）。
+
+        本体由原版 CSS 钉在窗口右下角 ⇒ 本体的右下角就是**窗口的右下角**，
+        所以这里存 `窗口左上角 + 窗口尺寸`。
+        """
+        try:
+            QSettings(*_SET).setValue("whale_anchor",
+                                      [int(x) + self.W, int(y) + self.H])
+        except Exception:  # noqa: BLE001 — 位置记忆失败不影响挂件显示
+            pass
+
     def _move_default(self) -> None:
+        """默认位置：**本体**的右下角距屏幕右下角 18px（不是窗口角 —— 窗口比本体大）。"""
         try:
             scr = QApplication.primaryScreen()
             geo = scr.availableGeometry() if scr else None
             if geo is not None:
-                self.move(geo.right() - self.W - 18, geo.bottom() - self.H - 18)
+                ax = int(geo.right()) - 18
+                ay = int(geo.bottom()) - 18
+                self.move(ax - self.W, ay - self.H)
         except Exception:  # noqa: BLE001
             pass
 
     @staticmethod
     def _onscreen(x: int, y: int) -> bool:
-        """恢复位置前校验：这块矩形是否在**任一屏幕**上至少露出 60×60。
+        """上屏校验：**本体所在的那块方形**是否在任一屏幕上至少露出 60×60。
 
-        为什么需要：位置记忆来自上一台/上一分辨率的会话，换屏、改缩放、
-        拖到边缘时都可能存下「屏幕外」的坐标 —— 挂件照着它 move 就直接消失
-        （实测 (1611,1431) 在 1080p 上 y 已越界 ⇒ 用户「没看到挂件」）。
-        判不出来时**宁可达观**（返回 True 保持原位）：误判的代价是位置跳回
-        默认角，漏判的代价是挂件彻底看不见。
+        ⛔ 判据必须是本体、不是整个窗口：窗口为弹层留了大片透明余量，按窗口判的话
+        "左上角刚好露一点"也算通过，而本体（钉在窗口右下角）可能整个在屏幕外 ——
+        用户看到的就是「挂件不见了」。
+        判不出来时**宁可达观**（返回 True 保持原位）：误判的代价是位置跳回默认角，
+        漏判的代价是挂件彻底看不见。
         """
         try:
             scr = QApplication.instance()
+            bx, by = x + WhaleWidget.W - _BASE, y + WhaleWidget.H - _BASE
             for s in (scr.screens() if scr else []):
                 g = s.availableGeometry()
-                ix = min(x + WhaleWidget.W, g.right()) - max(x, g.left())
-                iy = min(y + WhaleWidget.H, g.bottom()) - max(y, g.top())
+                ix = min(bx + _BASE, g.right()) - max(bx, g.left())
+                iy = min(by + _BASE, g.bottom()) - max(by, g.top())
                 if ix >= 60 and iy >= 60:
                     return True
         except Exception:  # noqa: BLE001
@@ -531,7 +563,9 @@ class WhaleWidget(QWidget):
 
     def reset_position(self) -> None:
         """回到右下角（位置记忆清掉）—— 留给「找不到挂件了」的救援路径。"""
-        QSettings(*_SET).setValue("whale_pos", "")
+        _st = QSettings(*_SET)
+        _st.setValue("whale_anchor", "")
+        _st.setValue("whale_pos", "")
         self._move_default()
 
 
