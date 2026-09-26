@@ -5309,8 +5309,8 @@ def t_g13() -> None:
     ck("g13-B 合成承载在位（put_RootVisualTarget + SendMouseInput + Environment3 QI）",
        "put_RootVisualTarget" in _host_src and "SendMouseInput" in _host_src
        and "ICoreWebView2Environment3" in _host_src)
-    ck("g13-B 画布真透明（合成承载下 put_DefaultBackgroundColor(0)）",
-       "put_DefaultBackgroundColor(0)" in _host_src)
+    ck("g13-B 窗口化画布不设 A=0（本机运行时下会整管线透明=挂件消失）",
+       "put_DefaultBackgroundColor(0)" not in _host_src)
 
     _host_src = (HERE / "whale_host.py").read_text(encoding="utf-8")
     ck("g13-D 建链是异步链（同步忙等 processEvents 处理不了 COM 跨线程 RPC ⇒ 曾因异步忙等卡死）",

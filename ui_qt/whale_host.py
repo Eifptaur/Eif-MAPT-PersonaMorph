@@ -280,12 +280,17 @@ class WhaleHostWebView:
                 self._setup_dcomp()
                 cctl.put_IsVisible(1)
                 self._apply_bounds_on(cctl)
-                self._ctrl2.put_DefaultBackgroundColor(0xFFFFFFFF) # 对照实验：不透明白
+                # ⛔ put_DefaultBackgroundColor 在合成承载下必崩（comtypes/裸调皆崩，
+                #    对照不透明白也崩）⇒ 跳过；合成内容自带 alpha，直接看默认效果。
             else:
                 ctrl.put_IsVisible(1)
                 self._apply_bounds()
                 self._wv = ctrl.get_CoreWebView2()
-                self._enable_transparency()
+                # ⛔ 不调 put_DefaultBackgroundColor(0)：本机运行时（151.x）窗口化
+                #    承载下它虽返回 S_OK，但整个渲染管线变全透明（红块/鲸鱼/全部
+                #    内容 alpha=0，实测红块消失）⇒ 挂件"闪一下就消失"。
+                #    画布保持默认不透明白/黑，鲸鱼照常渲染与交互；透明承载待
+                #    合成承载（PM_WHALE_COMPOSITION=1）成熟后再开。
             # 拖动转发要收页面的 postMessage —— 这一步没开的话页面发的消息会被
             # 内核直接丢弃（默认是开的，但显式确认一次，免得运行库改默认值）。
             try:
@@ -435,7 +440,7 @@ class WhaleHostWebView:
             return
         try:
             pt = ctypes.wintypes.POINT(int(x), int(y))
-            cc.SendMouseInput(int(kind), int(vkeys), 0, ctypes.byref(pt))
+            cc.SendMouseInput(int(kind), int(vkeys), 0, pt) # POINT 按值
         except Exception:  # noqa: BLE001 — 输入注入尽力而为
             pass
 
