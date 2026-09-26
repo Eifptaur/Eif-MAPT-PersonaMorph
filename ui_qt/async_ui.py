@@ -22,7 +22,8 @@
 （打整段栈、视版本直接终止应用，用户看到的是「面板用着用着整个没了」）。
 而 44 遍手抄里，只要有一遍漏了，用户就可能**只在那一个面板上**遇到闪退 —— 极难复现、极难归因。
 
-⇒ 收口到本文件一处：**新写异步一律走 `run_async()`**，不要再手抄 box+Thread+轮询。
+⇒ 收口到本文件一处：**新写异步一律走 `run_async()`**（只发不落地走 `run_bg()`），
+不要再手抄 box+Thread+轮询。
 本文件是这一族的**唯一实现点**，因此 `selftest.t_async_landing_guard` 的全量扫描按文件名豁免它；
 其余任何文件里再出现"函数体内 `Thread(` 且没有存活判"的写法都算违规。
 
@@ -30,7 +31,7 @@
 --------------------------
 1. **存活判**：`page` 传进来之后，落地前先问 `ui_alive(page)`；面板没了 ⇒ **丢弃这次落地**
    （那个面板已经不在了，没有任何界面需要更新）。
-2. **自链轮询有上限**：`tries` 到顶就停并记一笔，**不许无限重排**（任务永不完成时会把事件循环占住）。
+2. **自链轮询有上限**：`max_seconds` 到点就停，**不许无限重排**（任务永不完成时会把事件循环占住）。
 3. **落地异常一律吞掉**：`RuntimeError`（控件已销毁）与其它异常都不许穿透到 UI 线程。
 
 ⚠️ 与 web 的对应：web 侧这些调用都是 `fetch(...).then(cb).catch(...)`，**不存在"控件已销毁"这一档**
@@ -69,15 +70,33 @@ def deliver(on_done, *args) -> None: # noqa: ANN001
         pass
 
 
+def run_bg(work, *, name: str = "async-bg") -> None: # noqa: ANN001
+    """只把活丢到后台线程，**没有界面落地**（"发一条请求、不关心结果"那种）。
+
+    为什么要给它一个统一写法：手搓的 `Thread(...)` 会被全量棘轮判成"跨线程落地没守卫"，
+    读的人还得逐个确认它其实根本不落地。走这里，形态一眼就能分类。
+    """
+    import threading # noqa: PLC0415
+
+    threading.Thread(target=work, daemon=True, name=name).start()
+
+
 def run_async(work, on_done, *, page: object = None, interval: int = 200,  # noqa: ANN001
-              tries: int = 400, name: str = "async-ui") -> None:
+              max_seconds: float = 300.0, name: str = "async-ui", on_tick=None) -> None:
     """后台跑 `work(box)`，完成后在**主线程**把 `box` 交给 `on_done(box)`。
 
     · `work(box)` 在后台线程执行：自己往 `box` 里写结果（约定见文件头）；
     · `on_done(box)` 在主线程执行：读 `box` 并落地到控件；
     · `page`：这一批控件的宿主（面板/窗口）。**销毁后结果不再落地**；
-    · `interval × tries`：自链轮询的总时限（默认 200ms × 400 = 80 秒），到顶就停并记账；
-    · `name`：后台线程名（只看日志时用得上）。
+    · `interval`：主线程轮询间隔（毫秒）；`max_seconds` 是**总时限**（见下）；
+    · `name`：后台线程名（只看日志时用得上）；
+    · `on_tick(box)`：可选。**还没跑完时**每轮在主线程调一次 —— 给"进度条 / 边跑边回显"
+      这类界面用（读写 box 里的中间量即可，落地同样有存活判兜底）。
+
+    ⛔ **为什么时限用秒而不是"轮询次数"**：轮询链必须在"被等的那个请求自己的超时"之后
+    才到顶。若按次数给（比如 400 次 × 300ms = 120 秒），某个 185 秒的检测就永远等不到落地
+    —— 按钮停在"检测中"再也不恢复，比不设上限更糟。默认 300 秒已覆盖本仓最长的那个请求
+    （全套点击测试 185 秒）；**只有在被等的事情可能超过 300 秒时才需要传 `max_seconds`**。
 
     返回 None。**不抛异常**（后台异常由 `work` 自己写进 `box`，或在这里兜住）。
     """
@@ -93,7 +112,7 @@ def run_async(work, on_done, *, page: object = None, interval: int = 200,  # noq
 
     threading.Thread(target=_bg, daemon=True, name=name).start()
 
-    _left = [int(tries)]
+    _left = [max(1, int(float(max_seconds) * 1000.0 / max(1, int(interval))))]
 
     def _poll() -> None:
         if not box["done"]:
@@ -105,6 +124,8 @@ def run_async(work, on_done, *, page: object = None, interval: int = 200,  # noq
                 # 到顶就停：**不许无限重排**（任务永不完成时会把事件循环占住）。
                 # 不抛异常、不改界面 —— 与"面板已销毁"同款处置：没有结果就不落地。
                 return
+            if on_tick is not None:
+                deliver(on_tick, box)
             QTimer.singleShot(interval, _poll)
             return
         if not ui_alive(page):

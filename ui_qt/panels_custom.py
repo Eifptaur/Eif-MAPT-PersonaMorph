@@ -49,7 +49,7 @@ from PySide6.QtWidgets import (
 
 import config_io
 import sec_meta
-from async_ui import deliver as _deliver, run_async, ui_alive as _ui_alive
+from async_ui import deliver as _deliver, run_async, run_bg, ui_alive as _ui_alive
 from confirm import ConfirmDialog
 from stylekit_qt import SHAPE_CIRCLE, Tokens, pill, qfont, rgba, status_colors
 from widgets import Badge, Btn, Card, ElideLabel, Field, FlowBox, Switch, desc, h2, row_label
@@ -461,29 +461,22 @@ def overview_panel(t: Tokens) -> QWidget:
 
     def _test_api() -> None:
         note2.setText("测试 API 连通中…")
-        box: dict = {"done": False, "r": None, "err": None}
 
-        def _work() -> None:
+        def _work(box: dict) -> None:
             from agent_bridge import post_json # noqa: PLC0415
             try:
                 box["r"] = post_json("/api/test-api", {}, timeout=60.0)
             except Exception as e: # noqa: BLE001
                 box["err"] = str(e)
-            box["done"] = True
 
-        import threading as _th # noqa: PLC0415
-        _th.Thread(target=_work, daemon=True, name="c8-test-api").start()
-
-        def _apply() -> None:
-            if not box["done"]:
-                QTimer.singleShot(300, _apply)
-                return
+        def _apply(box: dict) -> None:
             r = box.get("r") or {}
             if r.get("ok"):
                 note2.setText(f"连通：延迟 {r.get('latency_ms')}ms，模型 {r.get('model')}：{r.get('reply')}")
             else:
                 note2.setText(f"测试失败：{r.get('error') or box.get('err') or '后台没连上'}")
-        QTimer.singleShot(300, _apply)
+
+        run_async(_work, _apply, page=page, interval=300, name="c8-test-api")
 
     def _raw_post(path: str, data: bytes | None, ctype: str, timeout: float) -> bytes:
         """二进制 POST（导出 zip / 导入上传）—— post_json 只回 dict，这里走 urllib。"""
@@ -594,27 +587,20 @@ def overview_panel(t: Tokens) -> QWidget:
         if not d.exec():
             return
         note2.setText("删除中…")
-        box: dict = {"done": False, "r": None, "err": None}
 
-        def _work() -> None:
+        def _work(box: dict) -> None:
             from agent_bridge import post_json # noqa: PLC0415
             try:
                 box["r"] = post_json("/api/stats/cal_clear", {}, timeout=30.0)
             except Exception as e: # noqa: BLE001
                 box["err"] = str(e)
-            box["done"] = True
 
-        import threading as _th # noqa: PLC0415
-        _th.Thread(target=_work, daemon=True, name="c8-cal-clear").start()
-
-        def _apply() -> None:
-            if not box["done"]:
-                QTimer.singleShot(300, _apply)
-                return
+        def _apply(box: dict) -> None:
             r = box.get("r") or {}
             note2.setText("已清空计费历史" if r.get("ok") else
                           f"失败：{r.get('error') or box.get('err') or '后台没连上'}")
-        QTimer.singleShot(300, _apply)
+
+        run_async(_work, _apply, page=page, interval=300, name="c8-cal-clear")
 
     # ── 计费日历（web renderCal/loadDay/calPrev/calNext/年份弹层 真值 :4016-4101）──
     # 周一起始 + 当月天数 + 今天描边 + 翻月跨年进位；点日期 POST /api/stats/cal {d}。
@@ -1038,18 +1024,11 @@ def check_panel(t: Tokens) -> QWidget:
         vf_state.setText("正在检查：%s…" % btn.text())
         vf_area.setPlainText("正在检查：%s…" % btn.text())
         b_vfcopy.setEnabled(False)
-        box: dict = {"done": False, "r": None}
 
-        def _work() -> None:
+        def _work(box: dict) -> None:
             box["r"] = post_json("/api/verify?id=%s" % vid, {}, timeout=60.0)
-            box["done"] = True
 
-        threading.Thread(target=_work, daemon=True, name="c8-verify").start()
-
-        def _apply() -> None:
-            if not box["done"]:
-                QTimer.singleShot(300, _apply)
-                return
+        def _apply(box: dict) -> None:
             r = box.get("r") or {}
             # web 同款四档判决映射：ok===false→卡住 / partial→部分通过 / ok===true→通过 / 其余→没测到
             st = ("fail" if r.get("ok") is False else
@@ -1072,7 +1051,7 @@ def check_panel(t: Tokens) -> QWidget:
                     f"QPushButton{{background:{_hex(bg)};color:{_hex(fg)};"
                     f"border:1px solid {_hex(bd)};border-radius:{pill(28)}px;padding:4px 12px;}}")
 
-        QTimer.singleShot(300, _apply)
+        run_async(_work, _apply, page=page, interval=300, name="c8-verify")
 
     def _vf_copy() -> None:
         from PySide6.QtWidgets import QApplication # noqa: PLC0415
@@ -1105,16 +1084,13 @@ def check_panel(t: Tokens) -> QWidget:
         badge.set("info", "检测中")
         area.setPlainText("===== 代码检测（进行中…）=====")
         tip.setText("代码检测启动中…")
-        box: dict = {"started": False, "done": False,
-                     "items": [], "prog": None, "result": None, "err": None}
 
-        def _work() -> None:
+        def _work(box: dict) -> None:
             try:
                 post_json("/api/code-check", {"deps": bool(deps)}, timeout=15.0)
                 box["started"] = True
             except Exception as e: # noqa: BLE001
                 box["err"] = f"启动失败：{e}"
-                box["done"] = True
                 return
             for _i in range(300): # web 同款上限 300 轮
                 try:
@@ -1130,11 +1106,8 @@ def check_panel(t: Tokens) -> QWidget:
                         box["result"] = pr.get("result")
                         break
                 time.sleep(0.15) # web 150ms 同款
-            box["done"] = True
 
-        threading.Thread(target=_work, daemon=True, name="c8-code-check").start()
-
-        def _render_running() -> None:
+        def _render_running(box: dict) -> None:
             items = box.get("items") or []
             if items:
                 lines = ["===== 代码检测（进行中…）=====", ""]
@@ -1143,17 +1116,16 @@ def check_panel(t: Tokens) -> QWidget:
                     lines.append(f"{mark} {c.get('name')}：{c.get('detail')}")
                 area.setPlainText("\n".join(lines))
 
-        def _apply() -> None:
-            if not box["done"]:
-                if box.get("started"):
-                    prg = box.get("prog") or {}
-                    d, tt = prg.get("done") or 0, prg.get("total") or 0
-                    cur = str(prg.get("current") or "")
-                    pct = f"{round(d / tt * 100)}%" if tt else "0%"
-                    tip.setText(f"检测中 {pct} · {cur}" if cur else f"检测中 {pct}")
-                    _render_running()
-                QTimer.singleShot(300, _apply) # web 150ms 轮询，UI 300ms 足够顺
-                return
+        def _tick(box: dict) -> None:
+            if box.get("started"):
+                prg = box.get("prog") or {}
+                d, tt = prg.get("done") or 0, prg.get("total") or 0
+                cur = str(prg.get("current") or "")
+                pct = f"{round(d / tt * 100)}%" if tt else "0%"
+                tip.setText(f"检测中 {pct} · {cur}" if cur else f"检测中 {pct}")
+                _render_running(box)
+
+        def _apply(box: dict) -> None:
             if box.get("err"):
                 area.setPlainText("代码检测失败：" + box["err"])
                 tip.setText("代码检测失败：" + box["err"])
@@ -1171,7 +1143,7 @@ def check_panel(t: Tokens) -> QWidget:
             b_code.setEnabled(True)
             b_deps.setEnabled(True)
 
-        QTimer.singleShot(300, _apply)
+        run_async(_work, _apply, page=page, interval=300, name="c8-code-check", on_tick=_tick)
 
     b_code.clicked.connect(lambda: _run_code(False))
     b_deps.clicked.connect(lambda: _run_code(True))
@@ -1189,21 +1161,14 @@ def check_panel(t: Tokens) -> QWidget:
         area.setPlainText("点击测试中（约 40~70 秒：环境/配置/点击 + 程序鼠标操作，"
                           "期间请勿动鼠标；可随时点「停止检测」）…")
         tip.setText("进行中约 40~70 秒（可随时「停止检测」）")
-        box: dict = {"done": False, "r": None, "err": None}
 
-        def _work() -> None:
+        def _work(box: dict) -> None:
             try:
                 box["r"] = post_json("/api/selfcheck", {}, timeout=185.0)
             except Exception as e: # noqa: BLE001
                 box["err"] = str(e)
-            box["done"] = True
 
-        threading.Thread(target=_work, daemon=True, name="c8-selfcheck").start()
-
-        def _apply() -> None:
-            if not box["done"]:
-                QTimer.singleShot(300, _apply)
-                return
+        def _apply(box: dict) -> None:
             if box.get("err"):
                 area.setPlainText("检测失败：" + box["err"])
                 tip.setText("检测失败：" + box["err"])
@@ -1222,33 +1187,25 @@ def check_panel(t: Tokens) -> QWidget:
             b_stop.setEnabled(False)
             self_box["running"] = False
 
-        QTimer.singleShot(300, _apply)
+        # 被等的事最长 185 秒（全套点击测试），落在 run_async 默认的 300 秒预算内
+        run_async(_work, _apply, page=page, interval=300, name="c8-selfcheck")
 
     def _stop() -> None:
         # 停止请求走后台线程 —— 原来主线程直连 post_json(timeout=10)，
         # 后端慢时整窗冻结最长十秒（全项目扫描出的唯一主线程网络点）。
         tip.setText("正在发送停止请求…")
-        st_box: dict = {"done": False, "err": None}
 
-        def _work() -> None:
+        def _work(box: dict) -> None:
             try:
                 post_json("/api/selfcheck-stop", {}, timeout=10.0)
             except Exception as e: # noqa: BLE001
-                st_box["err"] = str(e)
-            st_box["done"] = True
+                box["err"] = str(e)
 
-        import threading as _thst # noqa: PLC0415
+        def _apply(box: dict) -> None:
+            tip.setText("已发出停止请求（当前检测项跑完即停）" if box.get("err") is None
+                        else f"停止失败：{box.get('err')}")
 
-        _thst.Thread(target=_work, daemon=True, name="selfcheck-stop").start()
-
-        def _ap() -> None:
-            if not st_box["done"]:
-                QTimer.singleShot(150, _ap)
-                return
-            tip.setText("已发出停止请求（当前检测项跑完即停）" if st_box["err"] is None
-                        else f"停止失败：{st_box['err']}")
-
-        QTimer.singleShot(150, _ap)
+        run_async(_work, _apply, page=page, interval=150, name="selfcheck-stop")
 
     b_self.clicked.connect(_run_self)
     b_stop.clicked.connect(_stop)
@@ -1337,18 +1294,11 @@ def check_panel(t: Tokens) -> QWidget:
         pk_detail.setText("")
         body = {"group_wxid": str(pk_group.currentData() or ""),
                 "verify_only": bool(pk_only.isChecked())}
-        box: dict = {"done": False, "r": None}
 
-        def _work() -> None:
+        def _work(box: dict) -> None:
             box["r"] = post_json("/api/poke-test", body, timeout=60.0)
-            box["done"] = True
 
-        threading.Thread(target=_work, daemon=True, name="c8-poketest").start()
-
-        def _apply() -> None:
-            if not box["done"]:
-                QTimer.singleShot(300, _apply)
-                return
+        def _apply(box: dict) -> None:
             r = box.get("r") or {}
             pk_note.setText(str(r.get("message") or r.get("error") or "(无结果)"))
             tgt = r.get("target") or {}
@@ -1363,7 +1313,7 @@ def check_panel(t: Tokens) -> QWidget:
             pk_detail.setText("\n".join(lines))
             b_poke.setEnabled(True)
 
-        QTimer.singleShot(300, _apply)
+        run_async(_work, _apply, page=page, interval=300, name="c8-poketest")
 
     b_poke.clicked.connect(_run_poke)
 
@@ -2039,27 +1989,16 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
     lay.addWidget(upd)
 
     def _fetch(cb) -> None:
-        import threading # noqa: PLC0415
-
-        box: dict = {}
-
-        def _work() -> None:
+        def _work(box: dict) -> None:
             try:
                 box["v"] = config_io.get_json("/api/update", timeout=8.0)
             except Exception: # noqa: BLE001
                 box["v"] = None
 
-        threading.Thread(target=_work, daemon=True, name="vermat-upd").start()
+        def _apply(box: dict) -> None:
+            cb(box.get("v"))
 
-        def _poll() -> None:
-            if "v" in box:
-                tim.stop()
-                cb(box["v"])
-
-        tim = QTimer(page)
-        tim.setInterval(150)
-        tim.timeout.connect(_poll)
-        tim.start()
+        run_async(_work, _apply, page=page, interval=150, name="vermat-upd")
 
     def _render_upd(v) -> None:
         try:
@@ -2088,10 +2027,8 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
             except Exception: # noqa: BLE001
                 pass
 
-        import threading # noqa: PLC0415
-
-        threading.Thread(target=_work, daemon=True, name="vermat-apply").start()
         vline.setText("已发起更新；进度看顶栏胶囊（失败会在这里如实说明）。")
+        run_bg(_work, name="vermat-apply")
 
     def _on_check() -> None:
         vline.setText("检查中…")
@@ -2267,34 +2204,25 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
     def _on_allow() -> None:
         # web vmAllow（:7594-7601）：GET /api/version/allow 写「本次允许发送」的
         # 会话期放行（重启失效，不落配置）；成败都如实回显，不假成功。
-        bx: dict = {"done": False, "r": None, "err": None}
-
-        def _work() -> None:
-            try:
-                bx["r"] = config_io.get_json("/api/version/allow", timeout=15.0)
-            except Exception as e: # noqa: BLE001
-                bx["err"] = str(e)
-            bx["done"] = True
-
-        import threading # noqa: PLC0415
-
-        threading.Thread(target=_work, daemon=True, name="vermat-allow").start()
         gate_lb.setText("放行请求发送中…")
         gate_lb.setStyleSheet(f"color:{t.tx3};background:transparent;")
 
-        def _apply() -> None:
-            if not bx["done"]:
-                QTimer.singleShot(150, _apply)
-                return
-            if bx["err"]:
-                gate_lb.setText("放行失败：%s" % bx["err"])
+        def _work(box: dict) -> None:
+            try:
+                box["r"] = config_io.get_json("/api/version/allow", timeout=15.0)
+            except Exception as e: # noqa: BLE001
+                box["err"] = str(e)
+
+        def _apply(box: dict) -> None:
+            if box.get("err"):
+                gate_lb.setText("放行失败：%s" % box["err"])
                 gate_lb.setStyleSheet(f"color:{t.err};background:transparent;")
                 return
             gate_lb.setText("已放行（只对本次运行有效）：发送会按未验证版本对继续，"
                             "出问题就在本页点「升级适配层」（产品后台自己装）。")
             gate_lb.setStyleSheet(f"color:{t.ok};background:transparent;")
 
-        QTimer.singleShot(150, _apply)
+        run_async(_work, _apply, page=page, interval=150, name="vermat-allow")
 
     btn_allow.clicked.connect(_on_allow)
     page._c10_mtx_refresh = _render_mtx
@@ -4433,15 +4361,8 @@ def _tools_utlist_appendix(t: Tokens, page: QWidget) -> None:
                     % (_up.quote(name), _up.quote(ai.text() or "{}")), timeout=90.0)
             except Exception as e: # noqa: BLE001
                 bx["err"] = str(e)
-            bx["done"] = True
 
-        bx: dict = {"done": False, "r": None, "err": None}
-        _th.Thread(target=_work, daemon=True, args=(bx,), name="ut-test").start()
-
-        def _apply_test() -> None:
-            if not bx["done"]:
-                QTimer.singleShot(300, _apply_test)
-                return
+        def _apply_test(bx: dict) -> None:
             r = bx.get("r") if isinstance(bx.get("r"), dict) else {}
             if bx.get("err"):
                 keep["err"] = True
@@ -4458,7 +4379,8 @@ def _tools_utlist_appendix(t: Tokens, page: QWidget) -> None:
             tb.setEnabled(True)
             tb.setText("试一下")
 
-        QTimer.singleShot(300, _apply_test)
+        # 被等的事最长 90 秒（这个工具自己的超时设置），落在 run_async 默认预算内
+        run_async(_work, _apply_test, page=page, interval=300, name="ut-test")
 
     def _fs_del(dir_path: str) -> None:
         """web :3961-3967：POST /api/file_search/del {dir} → 回显服务端 note + 重载清单。"""
@@ -4685,41 +4607,27 @@ def _model_local_appendix(t: Tokens, page: QWidget) -> None:
 
     def _test_local(base_url: str, model: str, out) -> None:
         out.setText("测试中……")
-        box: dict = {"done": False, "r": None}
 
-        def _work() -> None:
+        def _work(box: dict) -> None:
             box["r"] = config_io.get_json(
                 "/api/local-models?test=1&base_url=%s&model=%s"
                 % (_up2.quote(base_url), _up2.quote(model)), timeout=20.0)
-            box["done"] = True
 
-        _th2.Thread(target=_work, daemon=True, name="local-test").start()
-
-        def _apply() -> None:
-            if not box["done"]:
-                QTimer.singleShot(300, _apply)
-                return
+        def _apply(box: dict) -> None:
             d = box.get("r") or {}
             out.setText(("能对话 · %sms · 回显「%s」 · %s" % (d.get("ms"), d.get("reply") or "", d.get("note") or ""))
                         if d.get("ok") else ("失败：%s" % (d.get("error") or "未知")))
 
-        QTimer.singleShot(300, _apply)
+        run_async(_work, _apply, page=page, interval=300, name="local-test")
 
     def _probe() -> None:
         b_probe.setEnabled(False)
         probe_hint.setText("探测中（每端点 1.2s 超时，并发）…")
-        box: dict = {"done": False, "d": None}
 
-        def _work() -> None:
+        def _work(box: dict) -> None:
             box["d"] = config_io.get_json("/api/local-models", timeout=25.0)
-            box["done"] = True
 
-        _th2.Thread(target=_work, daemon=True, name="local-probe").start()
-
-        def _apply() -> None:
-            if not box["done"]:
-                QTimer.singleShot(300, _apply)
-                return
+        def _apply(box: dict) -> None:
             b_probe.setEnabled(True)
             d = box.get("d") or {}
             meta = d.get("meta") or {}
@@ -4779,9 +4687,8 @@ def _model_local_appendix(t: Tokens, page: QWidget) -> None:
             probe_hint.setText(("发现 %d 个可用端点" % len(found)) if found
                                else "没发现本机端点（没装或没启动都算正常）")
 
-        QTimer.singleShot(300, _apply)
+        run_async(_work, _apply, page=page, interval=300, name="local-probe")
 
-    import threading as _th2 # noqa: PLC0415
     import urllib.parse as _up2 # noqa: PLC0415
 
     b_probe.clicked.connect(_probe)
@@ -5098,7 +5005,6 @@ def _tts_probe_appendix(t: Tokens, page: QWidget) -> None:
     找不到回退 config 现值）→ GET /api/voice/probe?url= / /api/voice/vc-probe?url=，
     回显 通/不通/失败；测试中按钮禁用（web disabled 同款）。
     """
-    import threading as _th # noqa: PLC0415
     import urllib.parse as _up # noqa: PLC0415
 
     card = Card(t)
@@ -5133,22 +5039,15 @@ def _tts_probe_appendix(t: Tokens, page: QWidget) -> None:
         def _run() -> None:
             b.setEnabled(False)
             out.setText("测试中…")
-            box: dict = {"done": False, "r": None, "err": None}
 
-            def _work() -> None:
+            def _work(box: dict) -> None:
                 try:
                     box["r"] = config_io.get_json(
                         "%s?url=%s" % (api, _up.quote(_url())), timeout=30.0)
                 except Exception as e: # noqa: BLE001
                     box["err"] = str(e)
-                box["done"] = True
 
-            _th.Thread(target=_work, daemon=True, name="voice-probe").start()
-
-            def _apply() -> None:
-                if not box["done"]:
-                    QTimer.singleShot(300, _apply)
-                    return
+            def _apply(box: dict) -> None:
                 b.setEnabled(True)
                 d = box.get("r") if isinstance(box.get("r"), dict) else {}
                 if box.get("err"):
@@ -5164,7 +5063,7 @@ def _tts_probe_appendix(t: Tokens, page: QWidget) -> None:
                     out.setText("不通：%s" % (d.get("why") or "未知原因"))
                     out.setStyleSheet(f"color:{t.err};background:transparent;")
 
-            QTimer.singleShot(300, _apply)
+            run_async(_work, _apply, page=page, interval=300, name="voice-probe")
 
         b.clicked.connect(_run)
 
@@ -5236,28 +5135,21 @@ def _fb_submit(btn, note) -> None:
         return
     btn.setEnabled(False)
     _c8_say(note, t, "提交中…")
-    box: dict = {"done": False, "r": None, "err": None}
 
-    def _work() -> None:
+    def _work(box: dict) -> None:
         try:
             box["r"] = post_json("/api/feedback/submit",
                                  {"kind": kind, "text": text, "contact": contact, "files": []},
                                  timeout=30.0)
         except Exception as e: # noqa: BLE001
             box["err"] = str(e)
-        box["done"] = True
 
-    _th.Thread(target=_work, daemon=True, name="fb-submit").start()
-
-    def _apply() -> None:
-        if not box["done"]:
-            QTimer.singleShot(150, _apply)
-            return
+    def _apply(box: dict) -> None:
         btn.setEnabled(True)
-        if box["err"]:
+        if box.get("err"):
             _c8_say(note, t, str(box["err"]), "err")
             return
-        d = box["r"] if isinstance(box["r"], dict) else {}
+        d = box.get("r") if isinstance(box.get("r"), dict) else {}
         via = {"smtp": "邮件", "webhook": "推送到你的群/设备", "upload_url": "网址"}.get(
             d.get("via"), "已送出")
         n = ("，带 %s 个附件" % d.get("files")) if d.get("files") else ""
@@ -5277,7 +5169,7 @@ def _fb_submit(btn, note) -> None:
         if rl is not None:
             rl()
 
-    QTimer.singleShot(150, _apply)
+    run_async(_work, _apply, page=page, interval=150, name="fb-submit")
 
 
 def _upload(kind: str, btn, note) -> None:
@@ -5300,33 +5192,26 @@ def _upload(kind: str, btn, note) -> None:
         return
     btn.setEnabled(False)
     _c8_say(note, t, "上传中…")
-    box: dict = {"done": False, "r": None, "err": None}
 
-    def _work() -> None:
+    def _work(box: dict) -> None:
         try:
             box["r"] = post_json("/api/community/upload", {"kind": kind}, timeout=30.0)
         except Exception as e: # noqa: BLE001
             box["err"] = str(e)
-        box["done"] = True
 
-    _th.Thread(target=_work, daemon=True, name="community-upload").start()
-
-    def _apply() -> None:
-        if not box["done"]:
-            QTimer.singleShot(150, _apply)
-            return
+    def _apply(box: dict) -> None:
         btn.setEnabled(True)
-        if box["err"]:
+        if box.get("err"):
             _c8_say(note, t, "上传失败：%s" % box["err"], "err")
             return
-        d = box["r"] if isinstance(box["r"], dict) else {}
+        d = box.get("r") if isinstance(box.get("r"), dict) else {}
         if d.get("ok"):
             head = "意见已上传" if kind == "feedback" else "已上传"
             _c8_say(note, t, "%s %s 条" % (head, d.get("count") or d.get("uploaded") or 0), "ok")
         else:
             _c8_say(note, t, "上传失败：%s" % (d.get("error") or "未配置"), "err")
 
-    QTimer.singleShot(150, _apply)
+    run_async(_work, _apply, page=btn.window(), interval=150, name="community-upload")
 
 
 def _upload_seeds(btn, note) -> None:
@@ -5339,8 +5224,6 @@ def _upload_feedback(btn, note) -> None:
 
 def _seed_import_post(btn, note, text: str, ok_prefix: str) -> None:
     """导入种子库的公共发送段：POST /api/scoring/import {text} → 计数回显。"""
-    import threading as _th # noqa: PLC0415
-
     from agent_bridge import post_json # noqa: PLC0415
 
     t = getattr(btn, "t", None)
@@ -5348,33 +5231,26 @@ def _seed_import_post(btn, note, text: str, ok_prefix: str) -> None:
         return
     btn.setEnabled(False)
     _c8_say(note, t, "导入中…")
-    box: dict = {"done": False, "r": None, "err": None}
 
-    def _work() -> None:
+    def _work(box: dict) -> None:
         try:
             box["r"] = post_json("/api/scoring/import", {"text": text}, timeout=30.0)
         except Exception as e: # noqa: BLE001
             box["err"] = str(e)
-        box["done"] = True
 
-    _th.Thread(target=_work, daemon=True, name="seed-import").start()
-
-    def _apply() -> None:
-        if not box["done"]:
-            QTimer.singleShot(150, _apply)
-            return
+    def _apply(box: dict) -> None:
         btn.setEnabled(True)
-        if box["err"]:
+        if box.get("err"):
             _c8_say(note, t, "导入失败：%s" % box["err"], "err")
             return
-        d = box["r"] if isinstance(box["r"], dict) else {}
+        d = box.get("r") if isinstance(box.get("r"), dict) else {}
         if d.get("ok"):
             suffix = "（查重后）" if ok_prefix.startswith("从文件") else ""
             _c8_say(note, t, "%s %s 条%s" % (ok_prefix, d.get("imported"), suffix), "ok")
         else:
             _c8_say(note, t, "失败：%s" % (d.get("error") or ""), "err")
 
-    QTimer.singleShot(150, _apply)
+    run_async(_work, _apply, page=_c8_page_of(btn), interval=150, name="seed-import")
 
 
 def _seed_import(btn, note) -> None:
@@ -5415,37 +5291,28 @@ def _seed_import_file(btn, note) -> None:
 def _post_action_raw(btn, note, run, busy: str = "执行中…", done=None) -> None:
     """按钮动作的公共发送段：run() 在后台线程跑（成功返回回显文案，失败抛异常）；
     busy/结果回显 note（主线程落地）；done 在落定后回调（恢复按钮文字等）。"""
-    import threading as _th # noqa: PLC0415
-
     t = getattr(btn, "t", None)
     if note is None or t is None:
         return
     btn.setEnabled(False)
     _c8_say(note, t, busy)
-    box: dict = {"done": False, "msg": None, "err": None}
 
-    def _work() -> None:
+    def _work(box: dict) -> None:
         try:
             box["msg"] = run()
         except Exception as e: # noqa: BLE001
             box["err"] = str(e)
-        box["done"] = True
 
-    _th.Thread(target=_work, daemon=True, name="act-custom").start()
-
-    def _apply() -> None:
-        if not box["done"]:
-            QTimer.singleShot(150, _apply)
-            return
+    def _apply(box: dict) -> None:
         btn.setEnabled(True)
         if done is not None:
             done()
-        if box["err"]:
+        if box.get("err"):
             _c8_say(note, t, "失败：%s" % box["err"], "err")
             return
-        _c8_say(note, t, str(box["msg"]), "ok")
+        _c8_say(note, t, str(box.get("msg")), "ok")
 
-    QTimer.singleShot(150, _apply)
+    run_async(_work, _apply, page=btn.window(), interval=150, name="act-custom")
 
 
 def _act_ui_layout_reload(btn, note) -> None:
@@ -6087,27 +5954,18 @@ def _act_ut_export(btn, note) -> None:
         return
     btn.setEnabled(False)
     _c8_say(note, t, "正在生成导出文档…")
-    box: dict = {"done": False, "r": None, "err": None}
 
-    def _work() -> None:
+    def _work(box: dict) -> None:
         try:
             box["r"] = config_io.get_json("/api/tools/export", timeout=30.0)
         except Exception as e: # noqa: BLE001
             box["err"] = str(e)
-        box["done"] = True
 
-    import threading as _th # noqa: PLC0415
-
-    _th.Thread(target=_work, daemon=True, name="ut-export").start()
-
-    def _apply() -> None:
-        if not box["done"]:
-            QTimer.singleShot(150, _apply)
-            return
+    def _apply(box: dict) -> None:
         btn.setEnabled(True)
-        r = box["r"]
-        if box["err"] or not isinstance(r, dict) or not r.get("ok"):
-            _c8_say(note, t, "导出失败：%s" % (box["err"] or (r or {}).get("why")
+        r = box.get("r")
+        if box.get("err") or not isinstance(r, dict) or not r.get("ok"):
+            _c8_say(note, t, "导出失败：%s" % (box.get("err") or (r or {}).get("why")
                                               or (r or {}).get("error") or "未知原因"), "err")
             return
         _c8_say(note, t, "")
@@ -6157,7 +6015,7 @@ def _act_ut_export(btn, note) -> None:
         v.addLayout(rowh)
         dlg.exec()
 
-    QTimer.singleShot(150, _apply)
+    run_async(_work, _apply, page=btn.window(), interval=150, name="ut-export")
 
 
 def _act_ut_import(btn, note) -> None:
@@ -6238,32 +6096,18 @@ def _act_ut_import(btn, note) -> None:
             return
         go.setEnabled(False)
         go.setText("导入中…")
-        box: dict = {"done": False, "r": None, "err": None}
 
-        def _work() -> None:
+        def _work(box: dict) -> None:
             try:
                 box["r"] = post_json("/api/tools/import",
                                      {"text": text, "overwrite": bool(opt.isChecked())},
                                      timeout=60.0)
             except Exception as e: # noqa: BLE001
                 box["err"] = str(e)
-            box["done"] = True
 
-        import threading as _th # noqa: PLC0415
-
-        _th.Thread(target=_work, daemon=True, name="ut-import").start()
-
-        def _apply() -> None:
-            if not box["done"]:
-                QTimer.singleShot(150, _apply)
-                return
-            go.setEnabled(True)
-            go.setText("导入")
-            if box["err"]:
-                res.setText("导入失败：" + box["err"])
-                return
-            r = box["r"] if isinstance(box["r"], dict) else {}
-            res.setText(_lines(r))
+        def _apply(box: dict) -> None:
+            # 刷新钩子先跑：它落在主页面（工具列表重载），是这个动作真正的结果，
+            # 不该因为"用户等不及把弹窗关了"而丢掉（弹窗本身关了就关了吧）。
             page = _c8_page_of(btn)
             hook = getattr(page, "_ut_reload", None)
             if callable(hook):
@@ -6271,8 +6115,15 @@ def _act_ut_import(btn, note) -> None:
                     QTimer.singleShot(0, hook)
                 except Exception: # noqa: BLE001
                     pass
+            go.setEnabled(True)
+            go.setText("导入")
+            if box.get("err"):
+                res.setText("导入失败：" + box["err"])
+                return
+            r = box.get("r") if isinstance(box.get("r"), dict) else {}
+            res.setText(_lines(r))
 
-        QTimer.singleShot(150, _apply)
+        run_async(_work, _apply, page=btn.window(), interval=150, name="ut-import")
 
     go.clicked.connect(_go)
     dlg.btn_ok = go # 测试钩子
@@ -6545,32 +6396,18 @@ def _feedback_appendix(t: Tokens, page: QWidget) -> None:
     b_web.clicked.connect(_open_web)
 
     def _load() -> None:
-        box: dict = {"done": False, "r": None, "err": None}
-
-        def _work() -> None:
+        def _work(box: dict) -> None:
             try:
                 box["r"] = config_io.get_json("/api/feedback", timeout=15.0)
             except Exception as e: # noqa: BLE001
                 box["err"] = str(e)
-            box["done"] = True
 
-        _th.Thread(target=_work, daemon=True, name="fb-status").start()
-
-        def _apply() -> None:
-            # 延迟回调可能跨过页面生命周期（用户 300ms 内关窗/切走、测试环境页面对象
-            # 被回收）⇒ 落地前先探活，C++ 对象已删就静默放弃，不往已删控件上写。
-            try:
-                lb.isVisible()
-            except RuntimeError:
-                return
-            if not box["done"]:
-                QTimer.singleShot(300, _apply)
-                return
-            if box["err"]:
+        def _apply(box: dict) -> None:
+            if box.get("err"):
                 lb.setText("读不到反馈状态：%s" % box["err"])
                 lb.setStyleSheet(f"color:{t.err};background:transparent;")
                 return
-            d = box["r"] if isinstance(box["r"], dict) else {}
+            d = box.get("r") if isinstance(box.get("r"), dict) else {}
             if d.get("ok") is False:
                 lb.setText("读不到反馈状态：%s" % (d.get("error") or ""))
                 lb.setStyleSheet(f"color:{t.err};background:transparent;")
@@ -6593,7 +6430,7 @@ def _feedback_appendix(t: Tokens, page: QWidget) -> None:
             lb.setText((msg + ("\n" if msg else "") + rec))
             lb.setStyleSheet(f"color:{t.warn if bad else t.tx3};background:transparent;")
 
-        QTimer.singleShot(300, _apply)
+        run_async(_work, _apply, page=page, interval=300, name="fb-status")
 
     def _flush() -> None:
         """补发积压（web fbFlush 对齐）。
