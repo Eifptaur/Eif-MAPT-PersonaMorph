@@ -25,7 +25,7 @@ except Exception: # noqa: BLE001
     pass
 
 import _srcmatch as _sm # noqa: E402
-from agent.routes import ROUTES, PATTERNS # noqa: E402
+from agent.routes import ROUTES, PATTERNS, HANDLERS # noqa: E402
 
 PASS, FAIL = [0], [0]
 
@@ -207,6 +207,43 @@ _src_routes = io.open(os.path.join(ROOT, "agent", "routes.py"), encoding="utf-8"
 ok("D3 Phase B（物理合并）的三个机械陷阱写进了表文件的备注（不然下一批会重新踩）",
    _sm.has(_src_routes, "body[-1].end_lineno") and _sm.has(_src_routes, "Handler") \
    and _sm.has(_src_routes, "类体内") and _sm.has(_src_routes, "插入下标"))
+
+print("== E. 声明 ↔ 实现（「声明了却没人接」与「接了却没声明」双向为 0）==")
+#    为什么要这一轴：前面几条只对账"表 ↔ 链 ↔ 前端"，而**表里的函数名到底存不存在**、
+#    **有实现却忘了接线**这两件事没人管 —— 那正是"声明了却恒空实现"那一类缺陷的入口
+#    （用户按表调 ⇒ 404，或者能力写了却永远走不到）。
+def _handler_names():
+    out = {}
+    for _path, _m in HANDLERS.items():
+        for _meth, _h in _m.items():
+            out.setdefault(_h, []).append("%s %s" % (_path, _meth))
+    return out
+
+_W_SRC = io.open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
+_W_METHODS = set(re.findall(r"^\s*def (\w+)\(", _W_SRC, re.M))
+_names = _handler_names()
+_missing = sorted("%s（%s）" % (h, "、".join(v[:2])) for h, v in _names.items() if h not in _W_METHODS)
+ok("E1 `HANDLERS` 指的每个函数名都在 `webui.py` 里有实定义（指了不存在的名字 ⇒ 按表调就 404）",
+   not _missing, "缺失：%s" % _missing[:5])
+_rapi = sorted(re.findall(r"^\s*def (_rapi_\w+)\(", _W_SRC, re.M))
+_unwired = [x for x in _rapi if x not in _names]
+ok("E2 `webui.py` 里每个 `_rapi_*` 都被接线（有实现却没进表 ⇒ 那个能力永远走不到）",
+   not _unwired, "未接线：%s" % _unwired[:6])
+#: E3：只声明、没有 HANDLERS 条目的路径必须**落在登记的类别里**（不是"漏搬"）
+_ROUTES_ONLY = sorted(set(ROUTES) - set(HANDLERS))
+_ALLOW = ("/", "/index.html", "/api/update", "/api/version")   # 静态页 + 探活/版本（刻意留链上）
+_bad_only = [x for x in _ROUTES_ONLY
+             if not (x in _ALLOW or x.startswith("/dsh-whale/"))]
+ok("E3 只声明、没搬进 `HANDLERS` 的路径都是登记过的类别（静态页 / 挂件资源 / 探活接口）",
+   not _bad_only, "没登记的：%s" % _bad_only[:6])
+#: 分母守卫：三条都得真的扫到东西
+ok("E4 分母守卫（方法数/接线数/差集规模都要像样）",
+   len(_W_METHODS) > 120 and len(_rapi) > 80 and len(_names) > 80,
+   "方法 %d · _rapi %d · 已接线 %d" % (len(_W_METHODS), len(_rapi), len(_names)))
+#: 反向控制：判定器必须**能认出**"指了不存在的名字"（拿合成数据试）
+_fake = {"x": {"GET": "_这个函数不存在"}}
+ok("E5 反向控制：合成一条「指向不存在的函数」必须被判出来",
+   bool([h for h in _fake["x"].values() if h not in _W_METHODS]), "")
 
 print("== 路由表判据：%d 通过 / %d 失败 ==" % (PASS[0], FAIL[0]))
 sys.exit(1 if FAIL[0] else 0)
