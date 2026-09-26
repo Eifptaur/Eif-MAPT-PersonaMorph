@@ -286,7 +286,6 @@ print("── B. `send_text_at` / `send_image` / `_get_gui` 自愈：还原与�
 
 import ctypes as _ct_b # noqa: E402
 import collections as _coll_b # noqa: E402
-import importlib as _il_b # noqa: E402
 
 BTN_MAIN = 4242
 _FAKE_NAMES_B = ("IsWindow", "IsIconic", "IsWindowVisible", "GetForegroundWindow",

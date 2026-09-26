@@ -22,7 +22,6 @@ os.chdir(ROOT)
 import _srcmatch as _SM # noqa: E402
 from agent import chat_header as CH # noqa: E402
 from agent import chat_ocr as CO # noqa: E402
-from agent import input_backend as IB # noqa: E402
 from agent import sender as SD # noqa: E402
 from agent import wechat as W # noqa: E402
 

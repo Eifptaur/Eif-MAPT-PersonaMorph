@@ -51,7 +51,6 @@ from PySide6.QtWidgets import ( # noqa: E402
     QMenu,
     QPushButton,
     QScrollArea,
-    QSizePolicy,
     QStackedWidget,
     QSystemTrayIcon,
     QToolTip,
@@ -893,9 +892,6 @@ class Shell(QWidget):
 
         # ── 余额徽章（web balance-badge :703 + loadBalance :3208-3221 + 30s 轮询 :7419）──
         #    显示模式（照实/隐藏/改数字）存 config 的 ui.balance_*，只改显示不动真实余额。
-        import config_io as _cio # noqa: PLC0415
-        from panels_custom import _balance_text # noqa: PLC0415
-
         self.bal_badge = QLabel("余额 查询中…")
         self.bal_badge.setObjectName("balanceBadge")
         self.bal_badge.setFont(qfont(self.t, 11.5))

@@ -100,7 +100,6 @@ print("── E. 更新后的接管：**必须真 spawn 才退场**（2026-09-22
 # `except Exception: pass` 吞掉，随后**照旧 os._exit(0)** ⇒ "更新装好了、没人接替、机器人被杀、
 # 控制台无法访问"。⇒ 这里改**行为断言**，并带一条反例锚。
 import tempfile # noqa: E402
-import types # noqa: E402
 import importlib.util # noqa: E402
 
 _spec_u = importlib.util.spec_from_file_location("_ua_probe", os.path.join(ROOT, "agent", "update_apply.py"))

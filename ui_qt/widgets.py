@@ -1328,7 +1328,7 @@ class Segmented(QWidget):
         self._buttons: list[QPushButton] = []
         self._anim = None
 
-        from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QRect # noqa: PLC0415
+        from PySide6.QtCore import QRect # noqa: PLC0415
         from PySide6.QtGui import QFontMetrics # noqa: PLC0415
 
         # #7（真机问题③「鲸落高亮框裁一半」）：

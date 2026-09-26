@@ -5712,7 +5712,6 @@ def t_g14() -> None:
     import os # noqa: PLC0415
     import threading as _th # noqa: PLC0415
     import time as _time # noqa: PLC0415
-    import types # noqa: PLC0415
     from http.server import BaseHTTPRequestHandler, HTTPServer # noqa: PLC0415
     from pathlib import Path as _P # noqa: PLC0415
 
@@ -8785,18 +8784,21 @@ def t_async_landing_guard() -> None:
        _late == [], "late=%s" % (_late,))
 
     _errbox: list = []
+    _ran: list = [] # 桩真的跑过没有（否则"没落地"可能是桩压根没执行，会把我引向错误方向）
 
     def _boom_work(box): # noqa: ANN001, ANN202
+        _ran.append(1)
         raise ValueError("后台炸了")
 
     async_ui.run_async(_boom_work, lambda b: _errbox.append(b.get("_err")), interval=20,
                        name="gate-err")
     _t0 = _time.monotonic()
-    while _time.monotonic() - _t0 < 1.0 and not _errbox:
+    while _time.monotonic() - _t0 < 2.5 and not _errbox: # 整包跑时前面堆的定时器会把调度拖慢
         QApplication.processEvents()
         _time.sleep(0.02)
     ck("后台异常不穿透线程边界，记进 box['_err'] 交给落地体（否则打整段栈）",
-       _errbox and "后台炸了" in str(_errbox[0]), "err=%s" % (_errbox,))
+       _errbox and "后台炸了" in str(_errbox[0]),
+       "err=%s 桩跑过=%s 用时=%.2fs" % (_errbox, len(_ran), _time.monotonic() - _t0))
 
     # ④ **全量口径**：手搓的"跨线程落地"**一处都不许有**（这一族已收口到 async_ui）。
     #    ⛔ 口径必须区分两类，否则会把正常的延迟重绘也算成违规（我第一版就是这么误报了 90 个）：
@@ -8937,7 +8939,6 @@ def t_screen_guards() -> None:
         _sh.rmtree(_tmp, ignore_errors=True)
 
     # ④ 覆盖层清理只碰"输入体验"
-    import agent.ui_adapt as _ua # noqa: PLC0415
 
     _ua_src = (HERE.parent / "agent" / "ui_adapt.py").read_text(encoding="utf-8")
     ck("覆盖层清理按标题收窄到「输入体验」（否则会把用户的「设置」窗口关掉）",
@@ -9282,16 +9283,18 @@ DEF_VS_EXAMPLE_OK = {
 }
 
 
-#: 全仓「未用 import」的**棘轮基线**（只许降不许升）。
+#: 全仓「未用 import」的**棘轮基线**（只许降不许升；已收到 0）。
 #   口径（都是实测踩出来的，别改）：
 #     · `from __future__ import annotations` **不计** —— 那是**编译指令**，不是被引用的名字；
 #       不排除它的话，每轮都会被 86 条同款误报淹没（实测：137 条里 86 条是它）。
-#     · 带 `# noqa` 的行**不计** —— 那是**故意不用**的（探可选依赖 / 探模块可用性 / 显式 re-export 契约）。
+#     · 只有**明说"不用"**的 noqa 才豁免：`# noqa: F401` 或**不带码的裸 `# noqa`**。
+#       ⛔ **`# noqa: PLC0415` 不豁免** —— 它说的是"这个 import 不在模块顶层"，**与用没用无关**。
+#       拿它当豁免等于"所有函数内 import 免检"：实测这一个字之差，让 **14 处函数内死导入**长期隐身
+#       （其中一处是 `from console_html import PORT as _PORT`，那个名字**从来不存在**，
+#       被 except 吞掉后静默把整条快路径降级成硬编码端口兜底）。
 #     · 判定 = 该文件里这个名字的 `Name(Load)` 与 `X.属性` 访问**都为 0**。
-#   基线来历：本闸门**自己的口径**（`agent/` + `ui_qt/` + `scripts/` 全扫）实测 ——
-#   C2 第一批（10 处）后 74 ⇒ C2 第二批（产品侧 15 处，含整行删除与"不用的那个名字"精确摘除）后 **59**。
-#   ⛔ 探索阶段的探针只覆盖 `agent/`、去伪后是 51 —— 与上面两个数**口径不同、不可比**，别拿它们对账；
-#   要降基线就用**本闸门**的新读数。
+#   基线来历（本闸门口径：`agent/` + `ui_qt/` + `scripts/` 全扫，口径不同不可比）：
+#     C2 第一批后 74 ⇒ 第二批后 59 ⇒ 第三批后 34 ⇒ C2 收口 **0** ⇒ 本轮补上"函数内"口径后仍 **0**。
 DEAD_IMPORT_BASELINE = 0
 
 #: **人工确认要保留**的未用 import（`(相对路径, 名字): 为什么它不能删`）。
@@ -9326,6 +9329,7 @@ def t_dead_import_guard() -> None:
     _root = _o.path.dirname(_o.path.dirname(_o.path.abspath(__file__)))
     _skip_dirs = ("__pycache__", "assets", "data", "logs", "runtime", "archived-from-root")
     _found = []   # (相对路径, 行号, 名字)
+    _scanned_imports = 0 # 分母：真扫过多少条 import 语句（含函数内的）
 
     for _sub in ("agent", "ui_qt", "scripts"):
         for _dp, _dn, _fns in _o.walk(_o.path.join(_root, _sub)):
@@ -9351,9 +9355,15 @@ def t_dead_import_guard() -> None:
                         continue
                     if isinstance(_n, _ast.ImportFrom) and _n.module == "__future__":
                         continue          # 编译指令，不算
+                    _scanned_imports += 1
                     _src_line = _lines[_n.lineno - 1] if _n.lineno <= len(_lines) else ""
-                    if "noqa" in _src_line:
-                        continue          # 故意不用（探可用性 / 可选依赖 / re-export 契约）
+                    # ⛔ 只有"明说不用"才豁免：带 `F401` 的 noqa，或**不带码的裸 `# noqa`**。
+                    #   `noqa: PLC0415`（"不在顶层"）/ `E402` 说的是位置，**与用没用无关** ⇒ 不豁免，
+                    #   否则函数内 import 整类免检（实测这一个字之差让 14 处死导入长期隐身）。
+                    if "noqa" in _src_line.lower():
+                        _ntail = _src_line.lower().split("noqa", 1)[1]
+                        if "f401" in _ntail or ":" not in _ntail:
+                            continue
                     _rel = _o.path.relpath(_p, _root).replace("\\", "/")
                     for _a in _n.names:
                         _nm = _a.asname or _a.name.split(".")[0]
@@ -9364,10 +9374,14 @@ def t_dead_import_guard() -> None:
                         _found.append((_rel, _n.lineno, _nm))
 
     _n = len(_found)
-    ck("未用 import 只许降不许升（棘轮；`__future__` 与 `noqa` 不计）",
+    ck("未用 import 只许降不许升（棘轮；`__future__` 与「明说不用」的 noqa 不计）",
        _n <= DEAD_IMPORT_BASELINE,
        "当前 %d / 基线 %d%s" % (_n, DEAD_IMPORT_BASELINE,
                               ("；例：" + "、".join("%s:%s" % (f, nm) for f, _l, nm in _found[:4])) if _found else ""))
+    #: 分母守卫：口径改成"含函数内"以后，必须证明**真的扫到了函数内的 import**
+    #  （否则把 noqa 规则一收紧、扫描面一缩，这条闸门会因"什么都没扫到"而全绿）。
+    ck("上述全量扫描覆盖到足量 import 语句（分母守卫，含函数内）",
+       _scanned_imports >= 1500, "扫到 %d 条" % _scanned_imports)
 
 
 def t_default_value_guard() -> None:

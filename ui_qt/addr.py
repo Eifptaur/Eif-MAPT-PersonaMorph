@@ -172,7 +172,6 @@ def _selftest() -> list[tuple[str, bool, str]]:
                     f"{src} {url}"))
 
     # 现场二：文件指向真活端口（本机临时起一个）⇒ 以文件为准
-    import threading # noqa: PLC0415
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.bind(("127.0.0.1", 0))
     srv.listen(1)

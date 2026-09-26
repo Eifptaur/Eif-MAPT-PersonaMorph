@@ -232,7 +232,6 @@ ok("反证：引导文案里不再有「合成全程在本机，内容不出网�
 
 # ── H. 兜底分支（离线自检：替身掉网络那一段） ────────────────────────────────
 sect("H. edge 失败时的两条路（兜底 / 如实报错）")
-import importlib # noqa: E402
 from agent import tts as _T # noqa: E402
 _save_edge, _save_tts = VM._edge_make, _T.make
 try:

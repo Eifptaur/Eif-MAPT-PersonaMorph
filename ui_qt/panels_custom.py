@@ -2728,8 +2728,6 @@ def persona_panel(t: Tokens) -> QWidget:
     def _open_add_dialog() -> None:
         """新建分区 / 添加角色（web pCatAdd 弹窗 :6286-6372 的主题化移植）。
         分区下拉=已有分区+「自定义…」；添加角色到新分区时先落分区再落角色。"""
-        from PySide6.QtWidgets import QDialog # noqa: PLC0415
-
         from widgets import drag_dialog_cls # noqa: PLC0415
 
         dlg = drag_dialog_cls("PAddDialog")(page)
@@ -3457,8 +3455,6 @@ def _persona_card(t: Tokens, p: dict, handlers: dict) -> QWidget:
     # 窄窗契约：name/sc 固定宽 → 评分列紧跟人设名、位置稳定不浮动；
     #   txt 最小宽 0 可被布局压缩；卡片最小宽压到 ~400px，
     #   列表视口再窄「使用/删」也不会被裁出视口（不用拉宽窗口）。
-    from PySide6.QtGui import QFontMetrics # noqa: PLC0415
-
     name = ElideLabel(p.get("name") or "(未命名)")
     name.setObjectName("personaName")
     name.setFont(qfont(t, 13, 600))
@@ -4693,7 +4689,6 @@ def _sd_local_appendix(t: Tokens, page: QWidget) -> None:
     空闲每 8s 刷新状态（web setInterval 8000 同款）。
     """
     import threading as _th # noqa: PLC0415
-    import urllib.parse as _up # noqa: PLC0415
 
     from PySide6.QtWidgets import QComboBox, QProgressBar # noqa: PLC0415
 
@@ -5592,8 +5587,6 @@ def _card_dialog(t: Tokens, btn, title: str, width: int = 640):
     都能挪」。这里统一装上 —— 全项目的说明/表单类弹窗都从这个工厂出货，
     一处装好即全覆盖（比逐个弹窗各写一份拖拽实现可靠得多）。
     """
-    from PySide6.QtWidgets import QDialog # noqa: PLC0415
-
     from widgets import drag_dialog_cls # noqa: PLC0415
 
     dlg = drag_dialog_cls("CardDialog")(btn.window())

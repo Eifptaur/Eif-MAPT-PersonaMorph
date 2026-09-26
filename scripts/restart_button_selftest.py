@@ -27,7 +27,6 @@ sys.path.insert(0, ROOT)
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
 from agent import webui as W # noqa: E402
-from agent.config import get_config # noqa: E402
 
 PASS = FAIL = 0
 

@@ -347,7 +347,6 @@ def _selftest() -> list[tuple[str, bool, str]]:
                 _map(urllib.error.URLError(ConnectionRefusedError(10061, "refused"))).health is Health.REFUSED, ""))
 
     # 2) 空闲端口挑选：占一个口，再要它，必须让开
-    import threading # noqa: PLC0415
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("127.0.0.1", 8777))

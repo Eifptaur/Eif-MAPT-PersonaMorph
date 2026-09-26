@@ -40,7 +40,6 @@ def ok(name, cond, detail=""):
 import json # noqa: E402
 
 from agent import tools as T # noqa: E402
-from agent import wechat as W # noqa: E402
 from agent.wechat import WeChatAdapter # noqa: E402
 
 print("── A. 消息管线带 media ──")

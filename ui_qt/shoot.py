@@ -38,8 +38,7 @@ os.environ.setdefault(
     str(Path(os.environ.get("TEMP", os.environ.get("TMP", "/tmp"))) / "qt-shoot-config.json"),
 )
 
-from PySide6.QtCore import QSize, Qt # noqa: E402
-from PySide6.QtGui import QGuiApplication # noqa: E402
+from PySide6.QtCore import Qt # noqa: E402
 from PySide6.QtWidgets import QApplication # noqa: E402
 
 OUT = HERE / "shots"

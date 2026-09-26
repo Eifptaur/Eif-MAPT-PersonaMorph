@@ -516,7 +516,7 @@ def _open_group_pick(t: Tokens, line, note, groups: list) -> None:
     必须模态 exec()（web 勾选层挂到用户点确定/取消为止）。
     """
     from PySide6.QtWidgets import ( # noqa: PLC0415
-        QDialog, QFrame, QHBoxLayout, QListWidget, QListWidgetItem, QVBoxLayout,
+        QFrame, QHBoxLayout, QListWidget, QListWidgetItem, QVBoxLayout,
     )
 
     cur = {x.strip() for x in line.text().replace("，", ",").split(",") if x.strip()}
@@ -1057,7 +1057,6 @@ def _fetch_status_async(segments: set[str], lab, status_id: str) -> None:
 
             from addr import join_url # noqa: PLC0415
             from agent_bridge import current_url # noqa: PLC0415
-            from console_html import PORT as _PORT # noqa: PLC0415
 
             base = current_url()[0] if isinstance(current_url(), tuple) else current_url()
             req = urllib.request.Request(join_url(base, "/api/status" + q),
@@ -1174,13 +1173,12 @@ def _load_status() -> dict:
     if now - _STATUS_FAIL_TS < 30.0:
         return {}
     st = {}
-    try:
-        import urllib.request # noqa: PLC0415
+    import urllib.request # noqa: PLC0415
 
-        from console_html import PORT as _PORT # noqa: PLC0415
-    except Exception: # noqa: BLE001
-        _PORT = 3210
-    for p in (_PORT, 3210, 3211):
+    # ⛔ 这里不要去别处问"控制台端口"：候选就这两个（与启动器的顺延一致）。
+    #   原先写的是 `from console_html import PORT as _PORT` —— 那个名字**从来不存在**，
+    #   被 except 吞掉后静默退回 3210：看着像"兼容老版本"，其实每次都在走兜底。
+    for p in (3210, 3211):
         try:
             with urllib.request.urlopen("http://127.0.0.1:%d/api/status" % int(p), timeout=0.8) as r:
                 st = json.loads(r.read().decode("utf-8", "replace"))

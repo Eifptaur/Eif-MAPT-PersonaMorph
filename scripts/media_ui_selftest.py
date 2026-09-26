@@ -34,7 +34,6 @@ def ok(name, cond, detail=""):
 
 
 from agent import console_html as CH # noqa: E402
-from agent import webui as WU # noqa: E402
 
 HTML = CH.HTML
 print("── A. 导航与分区 ──")
