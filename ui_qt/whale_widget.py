@@ -98,6 +98,7 @@ class WhaleWidget(QWidget):
         self._drag_cursor: QPoint | None = None
         self._drag_win: QPoint | None = None
         self._drag_t0 = 0.0
+        self._flip_left: bool | None = None # 本体镜像态（原版 dshwv-left）
         self._drag_timer = QTimer(self)
         self._drag_timer.setInterval(16)
         self._drag_timer.timeout.connect(self._drag_tick)
@@ -190,7 +191,65 @@ class WhaleWidget(QWidget):
         #    进而调 put_Bounds —— 在 WebView2 的事件回调里同步调它的 API 是官方明令
         #    避免的重入（可能死锁或不生效）。
         QTimer.singleShot(0, lambda rs=list(self._veil): self._fit_window(rs))
+        self._snap_and_flip(force=True)
         self.update()
+
+    # -------------------------------------------------- 贴边吸附 + 自动翻转
+
+    _SNAP_PX = 40 # 距屏幕左/右边缘多近就吸附
+
+    def _snap_geometry(self, x: int) -> tuple:  # noqa: ANN201
+        """给定窗口左上角 x，算出（吸附后的 x, 是否需要镜像）。
+
+        规则**照抄原版**（widget.js 的吸附/`refreshFlip`）：贴左必翻、贴右不翻，
+        自由摆放时按「图像中心在屏幕左半还是右半」判断 —— 结果都是让本体朝屏幕内侧。
+        窗口比本体大得多，所以按**本体**的矩形算，不按窗口算。
+        """
+        try:
+            scr = self.screen()
+            g = scr.availableGeometry() if scr is not None else None
+            if g is None:
+                return int(x), False
+            bw = _BASE
+            bx = int(x) + self.width() - bw # 本体左沿（屏幕坐标）
+            if bx - g.left() <= self._SNAP_PX:
+                return int(g.left() - (self.width() - bw)), True
+            if g.right() - (bx + bw) <= self._SNAP_PX:
+                return int(g.right() + 1 - bw - (self.width() - bw)), False
+            return int(x), (bx + bw / 2.0) < (g.left() + g.right()) / 2.0
+        except Exception:  # noqa: BLE001
+            return int(x), False
+
+    def _snap_and_flip(self, force: bool = False) -> None:
+        """贴屏幕左右边缘 + 到边自动翻转（每拍都按当前几何重算一次，天然幂等）。"""
+        try:
+            nx, flip = self._snap_geometry(self.x())
+            if nx != self.x():
+                self.move(nx, self.y())
+            self._set_flip(flip, force)
+        except Exception:  # noqa: BLE001 — 吸附/翻转是锦上添花，失败不影响拖动
+            pass
+
+    def _set_flip(self, want_left: bool, force: bool = False) -> None:
+        """让本体镜像 / 不镜像 —— 原版用 `dshwv-left` 这个类表达镜像（scaleX(-1)）。
+
+        翻转靠一段脚本切类：屏幕几何只有 Qt 知道，而原版自己那套翻转是按**视口**算的
+        （在我们的窗口里等于没有），所以由宿主按屏幕几何决定后下发。`force` 用于对抗
+        原版自身重排时把类切回去。
+        """
+        if not force and getattr(self, "_flip_left", None) == want_left:
+            return
+        self._flip_left = want_left
+        host = self._host
+        if host is None or not host.ok:
+            return
+        try:
+            host.execute_script(
+                "(function(){try{var r=document.querySelector('.dshwv-root');"
+                "if(r)r.classList.toggle('dshwv-left',%s);}catch(e){}})();"
+                % ("true" if want_left else "false"))
+        except Exception:  # noqa: BLE001
+            pass
 
     def _fit_window(self, rects) -> None:  # noqa: ANN001
         """窗口跟着内容长：弹层需要多少空间就长多少，**本体在屏幕上的位置不动**。
@@ -403,6 +462,7 @@ class WhaleWidget(QWidget):
         self._drag_win = None
         self._drag0 = None
         self._win0 = None
+        self._snap_and_flip()
         self._save_anchor(self.x(), self.y())
 
     def _drag_tick(self) -> None:
@@ -423,6 +483,7 @@ class WhaleWidget(QWidget):
                 self._end_drag() # 上限：任何自链都必须有终止条件
                 return
             self.move(self._drag_win + (QCursor.pos() - self._drag_cursor))
+            self._snap_and_flip()
         except Exception:  # noqa: BLE001
             try:
                 self._end_drag()

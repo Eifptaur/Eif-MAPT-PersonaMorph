@@ -5426,6 +5426,29 @@ def t_g13() -> None:
            _moved_ok and not _w4._drag_timer.isActive() and _w4._drag_cursor is None,
            "pos=%s timer=%s" % (_w4.pos(), _w4._drag_timer.isActive()))
 
+        # 贴边吸附 + 自动翻转（纯几何决策，喂窗口 x 看结果）——
+        # 规则照抄原版：贴左必翻、贴右不翻、自由时按"图像中心在屏幕左半/右半"。
+        w5 = ww.WhaleWidget(t)
+        keep.append(w5)
+        w5._boot_webview = lambda *a, **k: None
+        _g = w5.screen().availableGeometry()
+        _off = w5.width() - ww._BASE # 本体左沿相对窗口左沿的偏移
+        _lx, _lf = w5._snap_geometry(_g.left() - _off + 10) # 本体离左边界 10px
+        _rx, _rf = w5._snap_geometry(_g.right() - ww._BASE - _off - 9) # 离右边界 9px
+        # 中间：既不贴边、又分别落在屏幕左半/右半（翻转应跟着变）
+        _mx1, _mf1 = w5._snap_geometry(_g.left() + 60)
+        _mx2, _mf2 = w5._snap_geometry(_g.left() + 150)
+        ck("贴边吸附：贴左沿必翻、贴右沿不翻、中间不吸附",
+           _lx == _g.left() - _off and _lf is True
+           and _rx == _g.right() + 1 - ww._BASE - _off and _rf is False
+           and _mx1 == _g.left() + 60 and _mx2 == _g.left() + 150,
+           "L=(%s,%s) R=(%s,%s) M1=(%s,%s) M2=(%s,%s)"
+           % (_lx, _lf, _rx, _rf, _mx1, _mf1, _mx2, _mf2))
+        ck("自由摆放时按图像中心在屏幕左半/右半决定翻面（左半翻、右半不翻）",
+           _mf1 is True and _mf2 is False, "M1=%s M2=%s" % (_mf1, _mf2))
+        ck("翻转走原版自己的 dshwv-left 类（不改原版代码，只切类）",
+           "dshwv-left" in (HERE / "whale_widget.py").read_text(encoding="utf-8"), "")
+
         # 窗口自适应：内容（弹层）要多少空间就长多少，本体在屏幕上的位置不动
         w3 = ww.WhaleWidget(t)
         keep.append(w3)
