@@ -372,10 +372,15 @@ class WebUI:
         return pat.sub(_swap, head) + tail
 
     def _build_tag(self):
-        """构建号（方便辨别新旧实例：console_html.py 修改时间 + 启动概率）。"""
+        """构建号（方便辨别新旧实例：界面模板文件的修改时间 + 启动概率）。
+
+        ⛔ 取的是**模板数据文件**的时间，不是加载器 `.py` 的 —— 页面内容搬去那里之后
+        加载器几乎不变，看它等于每次都是同一个构建号。路径从加载器取，别在这里再写一遍。
+        """
         try:
-            mt = os.path.getmtime(_HTML_SRC if "_HTML_SRC" in globals() else os.path.join(
-                os.path.dirname(os.path.abspath(__file__)), "console_html.py"))
+            from . import console_html as _ch
+
+            mt = os.path.getmtime(_ch._ASSET)
             import datetime
             return "b." + datetime.datetime.fromtimestamp(mt).strftime("%m%d-%H%M")
         except Exception:

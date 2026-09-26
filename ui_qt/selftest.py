@@ -21,6 +21,11 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+#: 控制台页面本体的**数据文件**（真值）。⛔ 页面已从 `agent/console_html.py` 外置到这里：
+#  加载器只剩几十行，凡是"去页面源码里找某段 HTML/JS/CSS"的判据都必须读这个文件。
+#  它的**行号与迁移前的 .py 逐行相同**（前 10 行占位），所以按行号切的判据不用改数字。
+WEB_PAGE = HERE.parents[0] / "assets" / "console" / "index.html"
+
 ROWS: list[tuple[str, bool, str]] = []
 
 
@@ -46,17 +51,17 @@ def t_syntax() -> None:
 # ---------------------------------------------------------------- 2. 导航结构与 web 侧同构
 
 def _nav_truth_from_web() -> list[tuple[str, str, list[tuple[str, str]]]]:
-    """运行时解析 agent/console_html.py 的 <nav id=nav>，拿到导航真值。
+    """运行时解析控制台页面的 <nav id=nav>，拿到导航真值。
 
     这是「与 web 侧一致」的唯一权威来源。旧版判据把组名手抄在 selftest 里
     （want_groups = ["天天用", ...]），原型自己编一套比喻命名也能绿 —— 假对齐。
     组名/组序/项名/项序/sec 锚点全部以 web 源码为准全等比对。
     """
-    web_path = HERE.parents[0] / "agent" / "console_html.py"
+    web_path = WEB_PAGE
     text = web_path.read_text(encoding="utf-8")
     m = re.search(r'<nav class="nav" id="nav">(.*?)</nav>', text, re.S)
     if m is None:
-        raise AssertionError("console_html.py 里找不到 <nav id=nav> —— 解析器要跟版式走")
+        raise AssertionError("页面里找不到 <nav id=nav> —— 解析器要跟版式走")
     out: list[tuple[str, str, list[tuple[str, str]]]] = []
     for chunk in re.split(r'<div class="nav-grp" data-grp="', m.group(1))[1:]:
         key = re.match(r'(\w+)"', chunk).group(1)
@@ -1415,7 +1420,7 @@ def t_ocr9() -> None:
            len(str(_cfgex.get("input", {}).get("_note_allow_real_fallback", ""))) >= 40)
         ck("ocr9D: web 控制台有真鼠标兜底开关（data-cfg 绑定）",
            'data-cfg="input.allow_real_fallback"'
-           in (root / "agent" / "console_html.py").read_text(encoding="utf-8"))
+           in WEB_PAGE.read_text(encoding="utf-8"))
         ck("ocr9D: 新文案同步进 whale_text 字典",
            "允许真鼠标兜底" in (root / "agent" / "whale_text.py").read_text(encoding="utf-8"))
         _rd = (root / "使用说明.md").read_text(encoding="utf-8")
@@ -5949,7 +5954,7 @@ def t_g15() -> None:
     QApplication.instance() or QApplication([])
 
     ROOT = _P(__file__).resolve().parent.parent
-    WEB = (ROOT / "agent" / "console_html.py").read_text(encoding="utf-8")
+    WEB = WEB_PAGE.read_text(encoding="utf-8")
     EX = _json.loads((ROOT / "config.example.json").read_text(encoding="utf-8"))
 
     K5 = ("risk.quiet_hours", "risk.escalate_after", "meme.enabled",
@@ -6073,7 +6078,7 @@ def t_g16() -> None:
     QApplication.instance() or QApplication([])
 
     ROOT = _P(__file__).resolve().parent.parent
-    WEB = (ROOT / "agent" / "console_html.py").read_text(encoding="utf-8")
+    WEB = WEB_PAGE.read_text(encoding="utf-8")
 
     # ① web 真值：两处 JS 动态区确实无 data-cfg（证「B 类盲区」成立）
     ck("g16 web 真值：#wsKey/#wsModel/#wsEngine 等确无 data-cfg（B 类盲区成立）",
@@ -6261,7 +6266,7 @@ def t_g17() -> None:
     from PySide6.QtWidgets import QWidget # noqa: PLC0415
 
     ROOT = _P(__file__).resolve().parent.parent
-    WEB = (ROOT / "agent" / "console_html.py").read_text(encoding="utf-8")
+    WEB = WEB_PAGE.read_text(encoding="utf-8")
 
     # ① web 真值：五步向导函数齐备 + 关键 id 在册
     ck("g17 web 真值：onboarding() 与五步 id 齐备",
@@ -6435,7 +6440,7 @@ def t_g18() -> None:
     QApplication.instance() or QApplication([])
 
     ROOT = _P(__file__).resolve().parent.parent
-    WEB = (ROOT / "agent" / "console_html.py").read_text(encoding="utf-8")
+    WEB = WEB_PAGE.read_text(encoding="utf-8")
 
     # ① web 真值：6 处 keydown 逐条在册（口径变了 Qt 对齐要跟着改）
     ck("g18 web 真值：6 处 keydown 齐备（2 通用 + 2 行内 + 2 不适用）",
@@ -9018,7 +9023,7 @@ def t_cfg_wired_guard() -> None:
             for _fn in _fns:
                 if not _fn.endswith(".py") or "selftest" in _fn:
                     continue
-                _p = _o2.path.join(_dp, _fn)
+                _p = _o.path.join(_dp, _fn)
                 if _p.endswith(_o.path.join("agent", "config.py")):
                     continue # ⛔ 声明处不是消费方
                 try:
@@ -9159,8 +9164,8 @@ def t_dev_dir_guard() -> None:
             for _fn in _fns:
                 if not _fn.endswith(".py"):
                     continue
-                _rel = _o.path.relpath(_o2.path.join(_dp, _fn), _root).replace("\\", "/")
-                if _knows(_o2.path.join(_dp, _fn)) and _rel not in DEV_DIR_KNOWERS:
+                _rel = _o.path.relpath(_o.path.join(_dp, _fn), _root).replace("\\", "/")
+                if _knows(_o.path.join(_dp, _fn)) and _rel not in DEV_DIR_KNOWERS:
                     _extra.append(_rel)
     ck("① 出现本地草稿目录名的文件都在白名单里（新增即红，逼写理由）",
        not _extra, "；".join(_extra[:6])[:180])
@@ -9249,7 +9254,7 @@ def t_dead_import_guard() -> None:
             for _fn in sorted(_fns):
                 if not _fn.endswith(".py"):
                     continue
-                _p = _o2.path.join(_dp, _fn)
+                _p = _o.path.join(_dp, _fn)
                 try:
                     _lines = open(_p, encoding="utf-8", errors="ignore").read().split("\n")
                     _tree = _ast.parse("\n".join(_lines))

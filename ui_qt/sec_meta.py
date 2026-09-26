@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-WEB_PATH = HERE.parents[0] / "agent" / "console_html.py"
+WEB_PATH = HERE.parents[0] / "assets" / "console" / "index.html"
 CFG_PATH = HERE.parents[0] / "config.example.json"
 
 # 本棒要建面板的 26 个 sec（27 减去机器人=主面板），顺序照 secs() 的 web 文档序。

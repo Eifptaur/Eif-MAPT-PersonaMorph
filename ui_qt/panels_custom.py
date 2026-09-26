@@ -49,6 +49,7 @@ from PySide6.QtWidgets import (
 
 import config_io
 import sec_meta
+from async_ui import deliver as _deliver, run_async, ui_alive as _ui_alive
 from confirm import ConfirmDialog
 from stylekit_qt import SHAPE_CIRCLE, Tokens, pill, qfont, rgba, status_colors
 from widgets import Badge, Btn, Card, ElideLabel, Field, FlowBox, Switch, desc, h2, row_label
@@ -2334,63 +2335,20 @@ def _bordered_list(t: Tokens, name: str, min_h: int = 200) -> QListWidget:
     return lw
 
 
-def _ui_alive(w: object) -> bool:
-    """异步回调落地前问一次「那个控件还在吗」。
-
-    面板被关掉、或主题重建（`_rebuild` 会把整棵页栈 `setParent(None)` + `deleteLater`）
-    之后，回调里再取控件数据会抛 `RuntimeError: Internal C++ object already deleted`。
-    在 PySide6 里那是**未捕获异常**：打整段栈，视版本还会直接终止应用，而用户看到的
-    只是「面板用着用着整个没了」。传 None 表示调用方没绑定控件（此时靠 `_deliver` 兜底）。
-    """
-    if w is None:
-        return True
-    try:
-        import shiboken6 # noqa: PLC0415
-
-        return bool(shiboken6.isValid(w))
-    except Exception: # noqa: BLE001 — 拿不到 shiboken 就当它活着，由 _deliver 兜底
-        return True
-
-
-def _deliver(on_done, *args) -> None: # noqa: ANN001
-    """把后台结果交给 UI 回调；回调途中控件已被销毁就丢弃这一次落地。
-
-    丢弃是正确行为：那个面板已经不在了，没有任何界面需要更新（也没有地方报错）。
-    """
-    try:
-        on_done(*args)
-    except RuntimeError: # 控件已销毁
-        pass
-
-
 def _async_post(page: QWidget, api: str, body: dict, on_done, timeout: float = 120.0) -> None:
     """后台线程 POST（对齐 web 同款接口），UI 只在主线程落地（box 模式）。"""
-    import threading # noqa: PLC0415
-
     from agent_bridge import post_json # noqa: PLC0415
 
-    box: dict = {"done": False, "r": None, "err": None}
-
-    def _work() -> None:
+    def _work(box: dict) -> None:
         try:
             box["r"] = post_json(api, body, timeout=timeout)
         except Exception as e: # noqa: BLE001
             box["err"] = str(e)
-        box["done"] = True
 
-    threading.Thread(target=_work, daemon=True, name="c12-post").start()
+    def _apply(box: dict) -> None:
+        on_done(box.get("r"), box.get("err"))
 
-    def _apply() -> None:
-        if not box["done"]:
-            if not _ui_alive(page):
-                return # 面板没了就别再轮询（否则是一条没有终点的自链）
-            QTimer.singleShot(300, _apply)
-            return
-        if not _ui_alive(page):
-            return
-        _deliver(on_done, box.get("r"), box.get("err"))
-
-    QTimer.singleShot(300, _apply)
+    run_async(_work, _apply, page=page, interval=300, name="c12-post")
 
 
 def _read_fail_hint(err: object) -> str:
@@ -2427,33 +2385,19 @@ def _async_post_seq(page: QWidget, api: str, bodies: list, on_done,
 
     on_done 收 `(results, first_err)`；results 为各条响应（None 表示该条没拿到）。
     """
-    import threading # noqa: PLC0415
-
     from agent_bridge import post_json # noqa: PLC0415
 
-    box: dict = {"done": False, "results": [], "err": None}
-
-    def _work() -> None:
+    def _work(box: dict) -> None:
         try:
             for b in bodies:
-                box["results"].append(post_json(api, b, timeout=timeout))
+                box.setdefault("results", []).append(post_json(api, b, timeout=timeout))
         except Exception as e: # noqa: BLE001
             box["err"] = str(e)
-        box["done"] = True
 
-    threading.Thread(target=_work, daemon=True, name="c12-post-seq").start()
+    def _apply(box: dict) -> None:
+        on_done(box.get("results") or [], box.get("err"))
 
-    def _apply() -> None:
-        if not box["done"]:
-            if not _ui_alive(page):
-                return
-            QTimer.singleShot(300, _apply)
-            return
-        if not _ui_alive(page):
-            return
-        _deliver(on_done, box.get("results") or [], box.get("err"))
-
-    QTimer.singleShot(300, _apply)
+    run_async(_work, _apply, page=page, interval=300, name="c12-post-seq")
 
 
 def _async_get(api: str, on_done, timeout: float = 30.0,
@@ -2462,30 +2406,16 @@ def _async_get(api: str, on_done, timeout: float = 30.0,
 
     `page` 可选：绑定了面板就顺带做存活判（面板没了就不再轮询/落地）。
     """
-    import threading # noqa: PLC0415
-
-    box: dict = {"done": False, "r": None, "err": None}
-
-    def _work() -> None:
+    def _work(box: dict) -> None:
         try:
             box["r"] = config_io.get_json(api, timeout=timeout)
         except Exception as e: # noqa: BLE001
             box["err"] = str(e)
-        box["done"] = True
 
-    threading.Thread(target=_work, daemon=True, name="c12-get").start()
+    def _apply(box: dict) -> None:
+        on_done(box.get("r"), box.get("err"))
 
-    def _apply() -> None:
-        if not box["done"]:
-            if not _ui_alive(page):
-                return
-            QTimer.singleShot(300, _apply)
-            return
-        if not _ui_alive(page):
-            return
-        _deliver(on_done, box.get("r"), box.get("err"))
-
-    QTimer.singleShot(300, _apply)
+    run_async(_work, _apply, page=page, interval=300, name="c12-get")
 
 
 def _post_chain(seq: list, on_done, timeout: float = 15.0,
@@ -2497,13 +2427,9 @@ def _post_chain(seq: list, on_done, timeout: float = 15.0,
 
     `page` 可选：绑定了面板就顺带做存活判（面板没了就不再轮询/落地）。
     """
-    import threading # noqa: PLC0415
-
     from agent_bridge import post_json # noqa: PLC0415
 
-    box: dict = {"r": None, "err": None, "done": False}
-
-    def _work() -> None:
+    def _work(box: dict) -> None:
         for api, body in seq:
             try:
                 r = post_json(api, body, timeout=timeout)
@@ -2514,21 +2440,11 @@ def _post_chain(seq: list, on_done, timeout: float = 15.0,
             if isinstance(r, dict) and r.get("ok") is False:
                 box["err"] = r.get("error") or "请求被拒绝"
                 break
-        box["done"] = True
 
-    threading.Thread(target=_work, daemon=True, name="c12-post-chain").start()
+    def _apply(box: dict) -> None:
+        on_done(box.get("r"), box.get("err"))
 
-    def _apply() -> None:
-        if not box["done"]:
-            if not _ui_alive(page):
-                return
-            QTimer.singleShot(300, _apply)
-            return
-        if not _ui_alive(page):
-            return
-        _deliver(on_done, box.get("r"), box.get("err"))
-
-    QTimer.singleShot(300, _apply)
+    run_async(_work, _apply, page=page, interval=300, name="c12-post-chain")
 
 
 def _append_save(t: Tokens, lay, binds: list, badge: Badge) -> None:
@@ -6723,7 +6639,7 @@ def _providers_from_web() -> dict:
         return _PROVIDERS_CACHE
     out: dict = {}
     try:
-        src = (ROOT / "agent" / "console_html.py").read_text(encoding="utf-8")
+        src = (ROOT / "assets" / "console" / "index.html").read_text(encoding="utf-8")
         i = src.find("const PROVIDERS = {")
         j = src.find("};", i) if i >= 0 else -1
         if i >= 0 and j > i:
@@ -6750,7 +6666,7 @@ def _ws_options_from_web() -> list[tuple[str, str]]:
     """解析联网搜索引擎选择器的选项（value, 文案）——web sec-search 的静态
     `<option>` 清单（#wsProvider），选项序与文案随 web 源码走。解析失败返回空。"""
     try:
-        src = (ROOT / "agent" / "console_html.py").read_text(encoding="utf-8")
+        src = (ROOT / "assets" / "console" / "index.html").read_text(encoding="utf-8")
         i = src.find('<select data-cfg="web_search.provider" id="wsProvider">')
         j = src.find("</select>", i) if i >= 0 else -1
         if i < 0 or j < 0:
@@ -6919,7 +6835,7 @@ def _provider_options_from_web() -> list[tuple[str, str]]:
     """解析 web 厂商选择器的选项（value, 文案）——web :1412-1421 的静态
     <option> 清单，选项序与文案随 web 源码走。解析失败返回空（行不建）。"""
     try:
-        src = (ROOT / "agent" / "console_html.py").read_text(encoding="utf-8")
+        src = (ROOT / "assets" / "console" / "index.html").read_text(encoding="utf-8")
         i = src.find('<select id="providerSel">')
         j = src.find("</select>", i) if i >= 0 else -1
         if i < 0 or j < 0:
