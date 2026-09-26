@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import ctypes
 from ctypes import POINTER, c_int32, c_uint32, c_void_p
-from ctypes.wintypes import BOOL, HWND, LPCWSTR, LPWSTR
+from ctypes.wintypes import BOOL, HWND, LPCWSTR, LPWSTR, POINT
 
 from comtypes import COMMETHOD, GUID, HRESULT, IUnknown
 
@@ -230,6 +230,112 @@ class ICoreWebView2WebMessageReceivedEventHandler(IUnknown):
                   (["in"], POINTER(ICoreWebView2), "sender"),
                   (["in"], POINTER(ICoreWebView2WebMessageReceivedEventArgs), "args")),
     ]
+
+
+class ICoreWebView2Environment2(ICoreWebView2Environment):
+    _iid_ = GUID("{20944379-6DCF-41D6-A0A0-ABC0FC50DE0D}")
+    _methods_ = [
+        COMMETHOD([], HRESULT, "CreateWebResourceRequest",
+                  (["in"], LPCWSTR, "uri"), (["in"], LPCWSTR, "method"),
+                  (["in"], LPCWSTR, "content"), (["in"], LPCWSTR, "headers"),
+                  (["out", "retval"], POINTER(c_void_p), "request")),
+    ]
+
+
+class ICoreWebView2Environment3(ICoreWebView2Environment2):
+    _iid_ = GUID("{80A22AE3-BE7C-4CE2-AFE1-5A50056CDEEB}")
+    _methods_ = [
+        COMMETHOD([], HRESULT, "CreateCoreWebView2CompositionController",
+                  (["in"], HWND, "parentWindow"),
+                  (["in"], c_void_p, "handler")),
+        COMMETHOD([], HRESULT, "CreateCoreWebView2PointerInfo",
+                  (["out", "retval"], POINTER(c_void_p), "value")),
+    ]
+
+
+class ICoreWebView2CompositionController(IUnknown):
+    """合成承载控制器 —— 无子窗、WebView 画面渲染进宿主的 DComp 视觉树。
+
+    窗口化承载在本机上与半透明分层窗不兼容（画布回退不透明黑块）；合成承载
+    是官方唯一给真透明的路径。vtable = Controller 全部方法 + 本接口自有方法
+    （序按 SDK 头文件，勿动）。输入不走子窗 —— 宿主收鼠标后用
+    `SendMouseInput` 显式注入。
+    """
+
+    _iid_ = GUID("{3DF9B733-B9AE-4A15-86B4-EB9EE9826469}")
+    # ⛔ 官方头文件实锤：本接口**直接继承 IUnknown**（不继承 Controller！），
+    #    vtable = QI/AddRef/Release + 自有方法（get_RootVisualTarget=槽3）。
+    #    IsVisible/Bounds/CoreWebView2 从同一对象 QueryInterface 取。
+    _methods_ = [
+        COMMETHOD([], HRESULT, "get_RootVisualTarget",
+                  (["out", "retval"], POINTER(c_void_p), "target")),
+        COMMETHOD([], HRESULT, "put_RootVisualTarget",
+                  (["in"], c_void_p, "target")),
+        COMMETHOD([], HRESULT, "SendMouseInput",
+                  (["in"], c_uint32, "eventKind"),
+                  (["in"], c_uint32, "virtualKeys"),
+                  (["in"], c_uint32, "mouseData"),
+                  (["in"], POINTER(POINT), "point")),
+    ]
+
+
+class ICoreWebView2CreateCoreWebView2CompositionControllerCompletedHandler(IUnknown):
+    _iid_ = GUID("{02FAB84B-1428-4FB7-AD45-1B2E64736184}")
+    _methods_ = [
+        COMMETHOD([], HRESULT, "Invoke",
+                  (["in"], HRESULT, "errorCode"),
+                  (["in"], POINTER(ICoreWebView2CompositionController),
+                   "createdController")),
+    ]
+
+
+# ---- DirectComposition（dcomp.h；IID 与方法序按系统头文件原文）----
+class IDCompositionTarget(IUnknown):
+    _iid_ = GUID("{EACDD04C-117E-4E17-88F4-D1B12B0E3D89}")
+    _methods_ = [
+        COMMETHOD([], HRESULT, "SetRoot", (["in"], c_void_p, "visual")),
+    ]
+
+
+class IDCompositionVisual(IUnknown):
+    _iid_ = GUID("{4D93059D-097B-4651-9A60-F0F25116E2F3}")
+    _methods_ = [
+        COMMETHOD([], HRESULT, "SetOffsetX", (["in"], c_void_p, "v")),
+        COMMETHOD([], HRESULT, "SetOffsetXAnim", (["in"], c_void_p, "v")),
+        COMMETHOD([], HRESULT, "SetOffsetY", (["in"], c_void_p, "v")),
+        COMMETHOD([], HRESULT, "SetOffsetYAnim", (["in"], c_void_p, "v")),
+        COMMETHOD([], HRESULT, "SetTransform", (["in"], c_void_p, "v")),
+        COMMETHOD([], HRESULT, "SetTransformAnim", (["in"], c_void_p, "v")),
+        COMMETHOD([], HRESULT, "SetTransformParent", (["in"], c_void_p, "v")),
+        COMMETHOD([], HRESULT, "SetEffect", (["in"], c_void_p, "v")),
+        COMMETHOD([], HRESULT, "SetBitmapInterpolationMode", (["in"], c_uint32, "v")),
+        COMMETHOD([], HRESULT, "SetBorderMode", (["in"], c_uint32, "v")),
+        COMMETHOD([], HRESULT, "SetClip", (["in"], c_void_p, "v")),
+        COMMETHOD([], HRESULT, "SetClipRect", (["in"], c_void_p, "v")),
+        COMMETHOD([], HRESULT, "SetContent", (["in"], c_void_p, "v")),
+        COMMETHOD([], HRESULT, "AddVisual",
+                  (["in"], c_void_p, "visual"), (["in"], BOOL, "insertAbove"),
+                  (["in"], c_void_p, "referenceVisual")),
+    ]
+
+
+class IDCompositionDevice(IUnknown):
+    _iid_ = GUID("{C37EA93A-E7AA-450D-B16F-9746CB0407F3}")
+    _methods_ = [
+        COMMETHOD([], HRESULT, "Commit"),
+        COMMETHOD([], HRESULT, "WaitForCommitCompletion"),
+        COMMETHOD([], HRESULT, "GetFrameStatistics",
+                  (["out"], c_void_p, "statistics")),
+        COMMETHOD([], HRESULT, "CreateTargetForHwnd",
+                  (["in"], HWND, "hwnd"), (["in"], BOOL, "topmost"),
+                  (["out", "retval"], POINTER(c_void_p), "target")),
+        COMMETHOD([], HRESULT, "CreateVisual",
+                  (["out", "retval"], POINTER(c_void_p), "visual")),
+    ]
+
+
+CLS_COMPOSITION_CTRL_HANDLER = (
+    ICoreWebView2CreateCoreWebView2CompositionControllerCompletedHandler)
 
 
 CLS_ENV_HANDLER = ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler

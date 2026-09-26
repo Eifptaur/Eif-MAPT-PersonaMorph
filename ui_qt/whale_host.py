@@ -28,6 +28,38 @@ def _loader_dll() -> str:
     return str(ROOT / "WebView2Loader.dll")
 
 
+def _ptr_val(x) -> int:
+    """comtypes 对 void* 出参的返回形态不稳定（int / bytes / POINTER 都出现过）
+    —— 统一折算成地址整数，调用方不再关心形态。"""
+    if x is None:
+        return 0
+    if isinstance(x, int):
+        return x
+    if isinstance(x, (bytes, bytearray)):
+        import traceback
+        traceback.print_stack(file=sys.stderr)
+        print("_ptr_val bytes:", bytes(x)[:8], file=sys.stderr, flush=True)
+        return int.from_bytes(bytes(x)[:8], "little")
+    try:
+        return ctypes.cast(x, c_void_p).value or 0
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def _addref_com(ptr) -> None:
+    """对 COM 指针手动 AddRef 一次（回调借出的引用要跨拍使用时必须）。"""
+    import ctypes
+    from ctypes import c_void_p, POINTER
+
+    addr = ctypes.cast(ptr, c_void_p).value
+    print("[addref] addr=%s" % (hex(addr) if addr else None), sys.stderr, flush=True)
+    if not addr:
+        return
+    vtbl = ctypes.cast(addr, POINTER(POINTER(c_void_p))).contents
+    addref = ctypes.WINFUNCTYPE(ctypes.c_ulong, c_void_p)(vtbl[1])
+    addref(addr)
+
+
 class WhaleHostWebView:
     """WebView2 宿主（非 Qt 控件）—— 只管「起环境 → 建控制器 → 加载页面」三步。
 
@@ -52,6 +84,8 @@ class WhaleHostWebView:
         self._err = ""
         self._done = False
         self._on_ready = None
+        self._composition = False # 窗口化承载默认；建链时按运行库能力切换
+        self._cc = None # 合成控制器（仅合成承载）
         # 拖动转发回调：`fn(dx, dy, ended)`，由上层（Qt 侧）设置。
         self._on_drag = None
         # 启动回报回调：`fn(ok)` —— 页面轮询鲸鱼本体的结论（True=渲染出来了）。
@@ -126,7 +160,50 @@ class WhaleHostWebView:
 
         from comtypes import COMObject
 
-        from whale_wv2_iid import CLS_CTRL_HANDLER, ICoreWebView2Controller
+        from whale_wv2_iid import (CLS_COMPOSITION_CTRL_HANDLER,
+                                   CLS_CTRL_HANDLER,
+                                   ICoreWebView2CompositionController,
+                                   ICoreWebView2Controller,
+                                   ICoreWebView2Environment3)
+
+        # 合成承载（真透明 + 宿主显式注入输入）目前为**实验开关**：
+        # PM_WHALE_COMPOSITION=1 时启用；默认走窗口化承载（鲸鱼可见、底色不透明）。
+        # 合成链的运行库对象多接口 QI 还有一个访问违例待解（见 trans_err 诊断）。
+        want_comp = os.environ.get("PM_WHALE_COMPOSITION") == "1"
+        env3 = None
+        if want_comp:
+            try:
+                env3 = self._env.QueryInterface(ICoreWebView2Environment3)
+            except Exception:  # noqa: BLE001
+                env3 = None
+        self._composition = env3 is not None
+        self._cc = None
+
+        if self._composition:
+            self._ctrl_holder: dict = {"ctrl": None, "hr": None}
+            self_ref = self
+
+            class _CCCb(COMObject):
+                _com_interfaces_ = [CLS_COMPOSITION_CTRL_HANDLER]
+
+                def Invoke(self, this, hr, ctrl):  # noqa: N802, ANN001
+                    self_ref._ctrl_holder["hr"] = hr
+                    if hr == 0 and ctrl:
+                        # ⛔ 回调给出的引用**只保证 Invoke 期间有效**（后续我们
+                        #   调度到事件循环下一拍才使用）⇒ 必须先 AddRef 占住，
+                        #   否则控制器在两拍之间被释放 = use-after-free。
+                        _addref_com(ctrl)
+                        self_ref._ctrl_holder["ctrl"] = ctrl
+                    self_ref._schedule(self_ref._after_ctrl)
+                    return 0
+
+            cb = _CCCb()
+            self._keep.append(cb)
+            hr = env3.CreateCoreWebView2CompositionController(
+                self.hwnd, c_void_p(_comobj_ptr(cb)))
+            if hr != 0:
+                raise OSError("合成控制器创建失败 hr=0x%08X" % (hr & 0xFFFFFFFF))
+            return
 
         self._ctrl_holder: dict = {"ctrl": None, "hr": None}
         self_ref = self
@@ -155,9 +232,26 @@ class WhaleHostWebView:
             if ctrl is None:
                 raise TimeoutError("控制器回调未返回（hr=%s）" % self._ctrl_holder.get("hr"))
             self._ctrl = ctrl
+            if self._composition:
+                from whale_wv2_iid import ICoreWebView2Controller2
+                self._cc = ctrl  # 合成回调给出的就是 CompositionController
+                try:
+                    self._setup_dcomp()
+                except Exception:
+                    import traceback
+                    traceback.print_exc(file=sys.stderr)
+                    raise
+                self._trans_err = ""
+                try:
+                    c2 = self._cc.QueryInterface(ICoreWebView2Controller2)
+                    c2.put_DefaultBackgroundColor(0) # 合成承载支持真透明（A=0）
+                    self._ctrl2 = c2
+                except Exception as e:  # noqa: BLE001 — 透明失败不影响显示链
+                    self._trans_err = "%s: %s" % (type(e).__name__, e)
             ctrl.put_IsVisible(1)
             self._apply_bounds()
-            self._enable_transparency()
+            if not self._composition:
+                self._enable_transparency()
             self._wv = ctrl.get_CoreWebView2()
             # 拖动转发要收页面的 postMessage —— 这一步没开的话页面发的消息会被
             # 内核直接丢弃（默认是开的，但显式确认一次，免得运行库改默认值）。
@@ -247,58 +341,85 @@ class WhaleHostWebView:
         except Exception:  # noqa: BLE001
             pass
 
+    def _setup_dcomp(self) -> None:
+        """建 DComp 设备/目标/视觉，把 WebView 画面挂进本窗口的合成树。
+
+        顺序（文档约定）：CreateTargetForHwnd → CreateVisual → target.SetRoot
+        → 控制器 put_RootVisualTarget → Commit。任一步失败抛给上层降级。
+        """
+        import ctypes
+        from ctypes import POINTER, c_void_p
+
+        from whale_wv2_iid import (IDCompositionDevice, IDCompositionTarget,
+                                   IDCompositionVisual)
+
+        dcomp = ctypes.WinDLL("dcomp.dll")
+        dcomp.DCompositionCreateDevice.restype = ctypes.c_long
+        dcomp.DCompositionCreateDevice.argtypes = [c_void_p, c_void_p, c_void_p]
+
+        class _GUID(ctypes.Structure):
+            _fields_ = [("d1", ctypes.c_uint32), ("d2", ctypes.c_uint16),
+                        ("d3", ctypes.c_uint16), ("d4", ctypes.c_ubyte * 8)]
+
+        g = _GUID()
+        if ctypes.windll.ole32.CLSIDFromString(
+                str(IDCompositionDevice._iid_), ctypes.byref(g)) != 0:
+            raise OSError("DComp IID 解析失败")
+        dev = c_void_p()
+        hr = dcomp.DCompositionCreateDevice(None, ctypes.byref(g), ctypes.byref(dev))
+        if hr != 0 or not dev.value:
+            raise OSError("DCompositionCreateDevice hr=0x%08X" % (hr & 0xFFFFFFFF))
+        self._dcdev = ctypes.cast(dev, POINTER(IDCompositionDevice))
+
+        # ⛔ comtypes 对 void* 出参的返回形态不稳定（int / bytes / POINTER 都出现过）
+        #    —— 统一走 _ptr_val 折算地址；后续调用只传**地址整数**，不对包装指针
+        #    再做 int()（comtypes 指针的 int() 会把内容字节当字面量）。
+        _tgt_addr = _ptr_val(self._dcdev.CreateTargetForHwnd(self.hwnd, True))
+        _root_addr = _ptr_val(self._dcdev.CreateVisual())
+        _web_addr = _ptr_val(self._dcdev.CreateVisual())
+        self._dctarget = ctypes.cast(_tgt_addr, POINTER(IDCompositionTarget))
+        # 官方结构（WebView2APISample BuildDCompTreeUsingVisual）：
+        #   target.SetRoot(根视觉) → 根视觉.AddVisual(webview子视觉)
+        #   → 控制器 put_RootVisualTarget(**子视觉**) → Commit。
+        # 单视觉直接挂 target 会被 WebView2 判为树结构不合法（fail-fast）。
+        self._dcroot = ctypes.cast(_root_addr, POINTER(IDCompositionVisual))
+        self._dcweb = ctypes.cast(_web_addr, POINTER(IDCompositionVisual))
+        self._dctarget.SetRoot(c_void_p(_root_addr))
+        self._dcroot.AddVisual(c_void_p(_web_addr), True, None)
+        self._cc.put_RootVisualTarget(c_void_p(_web_addr))
+        self._dcdev.Commit()
+
+    def send_mouse(self, kind: int, x: int, y: int, vkeys: int = 0) -> None:
+        """把宿主窗收到的鼠标事件注入 WebView（合成承载没有子窗替我们收）。"""
+        import ctypes
+        import ctypes.wintypes
+
+        cc = getattr(self, "_cc", None)
+        if cc is None:
+            return
+        try:
+            pt = ctypes.wintypes.POINT(int(x), int(y))
+            cc.SendMouseInput(int(kind), int(vkeys), 0, ctypes.byref(pt))
+        except Exception:  # noqa: BLE001 — 输入注入尽力而为
+            pass
+
     def _enable_transparency(self) -> None:
-        """把 WebView 画布底色设为**色键色** #010102（不透明，键由窗口抠掉）。
+        """窗口化承载的兜底透明：画布默认背景置 A=0。
 
-        机制：挂件窗走 `SetLayeredWindowAttributes` 颜色键分层（见
-        whale_widget._apply_colorkey），画布凡是画成键色的像素——即页面留白——
-        由系统抠成透明且点击穿透；鲸鱼/菜单/减号是普通颜色，正常显示与交互。
-
-        两个硬约束：**alpha 只接受 0 或 255**（中间值 E_INVALIDARG）；
-        接口要 `QueryInterface` 到 `ICoreWebView2Controller2` 才有这个方法。
-
-        这里走**裸 vtable 调用**而不是 comtypes 的 `QueryInterface` 封装：
-        后者对 `ctypes` cast 出来的 POINTER 对象行为不确定，而 QueryInterface
-        本来就是 IUnknown 的第 0 项，直接按 vtable 位置调最稳（实证脚本同法）。
-
-        拿不到 Controller2（旧运行库）不算致命 —— 退化成不透明底，挂件照常出来，
-        只是背景不透。所以这里**不抛异常**、不因此判建链失败。
-
-        ⚠️ 但也不能**静默**：透明失败与"页面没渲染"在用户眼里都是「一个黑块」，
-        不分清就没法排查。失败原因记进 `self._trans_err`，由上层决定是否展示。
+        仅合成承载不可用（运行库过旧）时才会走到这里；合成承载自身的透明
+        在 `_after_ctrl` 里直接设（画布 A=0，逐像素 alpha）。alpha 只接受
+        0 或 255（中间值 E_INVALIDARG）。失败不致命 —— 降级不透明底，
+        原因记 `_trans_err` 供上层展示。
         """
         self._ctrl2 = None
         self._trans_err = ""
         try:
-            import ctypes
-            from ctypes import POINTER, c_void_p
-
             from whale_wv2_iid import ICoreWebView2Controller2
 
-            ptr = ctypes.cast(self._ctrl, c_void_p).value
-
-            class _GUID(ctypes.Structure):
-                _fields_ = [("d1", ctypes.c_uint32), ("d2", ctypes.c_uint16),
-                            ("d3", ctypes.c_uint16), ("d4", ctypes.c_ubyte * 8)]
-
-            g = _GUID()
-            if ctypes.windll.ole32.CLSIDFromString(
-                    str(ICoreWebView2Controller2._iid_), ctypes.byref(g)) != 0:
-                self._trans_err = "IID 解析失败"
-                return
-            vtbl = ctypes.cast(ptr, POINTER(POINTER(c_void_p))).contents
-            _qi = ctypes.WINFUNCTYPE(ctypes.c_long, c_void_p, POINTER(_GUID),
-                                     POINTER(c_void_p))(vtbl[0])
-            out = c_void_p()
-            if _qi(ptr, ctypes.byref(g), ctypes.byref(out)) != 0 or not out.value:
-                self._trans_err = "QueryInterface 未拿到 Controller2"
-                return
-            c2 = ctypes.cast(out, POINTER(ICoreWebView2Controller2))
-            # COREWEBVIEW2_COLOR 按值传 uint32（A 在高位）；只要 A=0，RGB 无所谓
-            # 画布底 = 色键色（不透明 A=255；键色像素由窗口颜色键抠掉）
-            c2.put_DefaultBackgroundColor(0xFF010102)
+            c2 = self._ctrl.QueryInterface(ICoreWebView2Controller2)
+            c2.put_DefaultBackgroundColor(0)
             self._ctrl2 = c2
-        except Exception as e:  # noqa: BLE001 — 降级为不透明底，不影响挂件本身
+        except Exception as e:  # noqa: BLE001
             self._ctrl2 = None
             self._trans_err = "%s: %s" % (type(e).__name__, e)
 
@@ -483,7 +604,7 @@ def build_host_html(port: int, token: str) -> str:
         # 没有可解析的基准 ⇒ 全部落空。<base> 把基准指到控制台端口，相对路径
         # 与 web 控制台页面完全同解。
         "<base href='" + base + "/'>"
-        "<style>html,body{margin:0;padding:0;background:#010102;"
+        "<style>html,body{margin:0;padding:0;background:transparent;"
         "overflow:hidden;width:100%;height:100%}"
         "#dshw-composer-seat{position:fixed;left:-9999px;top:-9999px;"
         "width:1px;height:1px}"
