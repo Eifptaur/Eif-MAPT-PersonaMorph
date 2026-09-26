@@ -54,12 +54,21 @@ SKIP_EXT = {".png", ".jpg", ".jpeg", ".gif", ".ico", ".woff", ".woff2", ".ttf", 
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
 
 
-def tracked_files():
+#: ⛔ 本文件必须从扫描面里排除：它把"要抓的模式"**当数据写在源码里**（正则 + 反向控制样本）
+#: ⇒ 扫它等于**自指**（自己把自己数成违规）。豁免要付代价：见 B/C 段的"豁免面就这一个文件"断言
+#: + 分母守卫。⚠️ 上一版没排除，是因为当时它还没 commit（`git ls-files` 查不到它）⇒ 一次都没红过，
+#: 直到出包后按 §6-1 对**包内**再扫一次才暴露。
+SELF_REL = "scripts/privacy_scan_selftest.py"
+
+
+def tracked_files(exclude_self=True):
     out = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, check=True,
                          creationflags=_NO_WINDOW).stdout.decode("utf-8").split("\n")
     for rel in out:
         rel = rel.strip()
         if not rel or os.path.splitext(rel)[1].lower() in SKIP_EXT:
+            continue
+        if exclude_self and rel == SELF_REL:
             continue
         if os.path.isfile(os.path.join(ROOT, rel.replace("/", os.sep))):
             yield rel
@@ -100,6 +109,10 @@ def main():
         print("      %s:%d  %s" % (rel, ln, line))
 
     print("== C. 分母与白名单 ==")
+    _excluded = len([r for r in tracked_files(exclude_self=False)
+                     if r == SELF_REL])
+    ok("豁免面就本文件一个（模式写在源码里 ⇒ 必须自排除；但豁免不许扩大）",
+       _excluded == 1, "排除了 %d 个" % _excluded)
     ok("分母守卫：真扫到了足够多的成品文件", n >= 300, "扫到 %d 个" % n)
     ok("扫描面里每个文件都真读出来了（读不出来的必须响亮地红，不许静默跳过）",
        not unreadable, "读不出来 %d 个：%s" % (len(unreadable), "、".join(unreadable[:3])))
