@@ -1181,9 +1181,11 @@ def _close_stale_file_dialogs() -> int:
 def wx_version_for_gate() -> str:
     """给**版本门**用的当前微信版本号（读不到就返回空串 ⇒ 门自己按"未验证"处理）。
 
-    ⚠️ 为什么要有这个函数：三处发送入口调 `version_gate.check("send")` 时
+    ⚠️ 为什么要有这个函数：抓到的现场是三处发送入口调版本门时
     **都没把版本传进去**，而 `check()` 内部是 `w = wechat or "unknown"` ⇒ 门**永远**回
     "读不到微信版本（微信没在跑？）"、**每一次自动发送都被拦**（微信明明在跑）。
+    ⇒ 三处入口现在都走 `guards.version()`，**参数在那一处统一传**：
+      **改 `guards.version` 时别把这个 `wechat=` 参数丢掉**（丢了就回到"每次都拦"）。
     """
     try:
         return str((wechat_version_info() or {}).get("version") or "")
@@ -3337,23 +3339,18 @@ class WeChatAdapter:
     def _real_fallback_allowed(self) -> bool:
         """投递档确认不了目标会话时，**允不允许退回真鼠标/真键盘（L0）**——默认 **False**。
 
-        工具——投递切会话失败后自动退回真实路径 ⇒ **动了 16 秒光标**（日志：`真实路径结束后已把光标还原到
-        (1763,586)`）。这与最高目标②（不抢鼠标）③（不打扰你（可能短暂置前约 1~3 秒后自动还回））直接冲突，而且是在用户机器上由**只读体检**
-        触发的。⇒ 三条：
+        为什么要有这个开关：一次**只读体检**触发的那条链——投递切会话失败后自动退回真实路径 ⇒
+        **动了 16 秒光标**（日志：`真实路径结束后已把光标还原到 (1763,586)`）。这与最高目标
+        ②（不抢鼠标）③（不打扰你（可能短暂置前约 1~3 秒后自动还回））直接冲突，而且是在用户机器上
+        由只读操作触发的。⇒ 三条口径（与 `ui_adapt.click()` 的"这一枪能不能用真鼠标"是**同一个问题**，
+        所以两处共用 `guards.real_mouse()` 那一份实现；原来各抄了一遍）：
           ① 默认 **False**（不退回），要真鼠标必须在 config 里显式打开 `input.allow_real_fallback=true`；
           ② 环境变量 `WXAGENT_REAL_FALLBACK=0` 可以**强制关**（自检/诊断路径用它兜底，无视 config）；
           ③ 不退回时**要说清为什么**（返回消息里带"投递档确认不了 + 没开真鼠标兜底"），不许静默失败。
         """
-        try:
-            if str(os.environ.get("WXAGENT_REAL_FALLBACK", "")).strip() == "0":
-                return False
-        except Exception:
-            pass
-        try:
-            cfg = get_config() or {}
-            return bool((cfg.get("input") or {}).get("allow_real_fallback", False))
-        except Exception:
-            return False
+        from .guards import real_mouse
+
+        return real_mouse()
 
     def send_text(self, chat_id: str, text: str, dedup_out: list | None = None):
         """发送文本到群。返回 (ok, message)。
@@ -3387,15 +3384,12 @@ class WeChatAdapter:
         except Exception:
             pass
         # W7 版本门：没实测过的版本对默认暂停自动发送（控制台可临时放行）
-        try:
-            from . import version_gate as _vg
-            _g = _vg.check("send", wechat=wx_version_for_gate())
-            if not _g["allow"]:
-                _vg.note_blocked("send", _g["reason"]) # 记账：控制台横幅与日志都要看得见
-                _minimize_back_if_needed("投递文本链收尾（含早退）")
-                return False, _g["reason"]
-        except Exception:
-            pass
+        from .guards import version as _gate_version
+
+        _g_ok, _g_why = _gate_version(
+            "send", cleanup=lambda: _minimize_back_if_needed("投递文本链收尾（含早退）"))
+        if not _g_ok:
+            return False, _g_why
         if not self._dedup_send(chat_id, text):
             _minimize_back_if_needed("投递文本链收尾（含早退）")
             if dedup_out is not None:
@@ -6069,14 +6063,11 @@ class WeChatAdapter:
         实测**完全无效**（微信 4.1.15.8 不收），别再往那条路上试。
         """
         # W7 版本门：没实测过的版本对默认暂停自动发送（控制台可临时放行）
-        try:
-            from . import version_gate as _vg
-            _g = _vg.check("send", wechat=wx_version_for_gate())
-            if not _g["allow"]:
-                _vg.note_blocked("send", _g["reason"]) # 记账：控制台横幅与日志都要看得见
-                return False, _g["reason"]
-        except Exception:
-            pass
+        from .guards import version as _gate_version
+
+        _g_ok, _g_why = _gate_version("send")
+        if not _g_ok:
+            return False, _g_why
         # OCR 总时间窗（测机手册 ④）：这一笔发送链的 OCR 总预算（超时按"自检不可用"处理）
         from . import chat_ocr as _co
         _co.begin_window(_co.SEND_WINDOW_S)
@@ -6361,14 +6352,11 @@ class WeChatAdapter:
         拿不到正面证据才退回真实路径（那条会用真鼠标，用完保管光标）。
         """
         # W7 版本门：没实测过的版本对默认暂停自动发送（控制台可临时放行）
-        try:
-            from . import version_gate as _vg
-            _g = _vg.check("send", wechat=wx_version_for_gate())
-            if not _g["allow"]:
-                _vg.note_blocked("send", _g["reason"]) # 记账：控制台横幅与日志都要看得见
-                return False, _g["reason"]
-        except Exception:
-            pass
+        from .guards import version as _gate_version
+
+        _g_ok, _g_why = _gate_version("send")
+        if not _g_ok:
+            return False, _g_why
         name = self.display_name(chat_id)
         try:
             with self._send_lock:

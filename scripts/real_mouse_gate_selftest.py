@@ -29,6 +29,7 @@ except Exception: # noqa: BLE001
 import _srcmatch as _sm # noqa: E402
 from agent import ui_adapt as UA # noqa: E402
 from agent import input_backend as IB # noqa: E402
+from agent import config as cfg_mod # noqa: E402
 
 PASS, FAIL = [0], [0]
 
@@ -75,12 +76,17 @@ class FakePosted(object):
 
 
 def _run(cfg, posted_ok=True, env=None):
-    """跑一次 click()，返回 (结果, 假gui, 假投递后端, SetCursorPos 调用表)。"""
+    """跑一次 click()，返回 (结果, 假gui, 假投递后端, SetCursorPos 调用表)。
+
+    ⛔ **打桩要打在"真源"上**：真鼠标那两问的实现已收口到 `agent/guards.py`，
+    它读的是 `agent.config.get_config`（唯一真源）。只打 `ui_adapt.get_config` 是**打不到**的 ——
+    闸看不见这个桩，会按真实配置（默认关）拒绝，于是"开了兜底也不走真鼠标"（假红）。
+    """
     g = FakeGui()
     p = FakePosted(posted_ok)
     real = IB.RealInputBackend(gui=g)
     _sv = (UA.ensure_point, UA.get_config, UA._user32, IB.select_backend,
-           os.environ.get("WXAGENT_REAL_FALLBACK"))
+           os.environ.get("WXAGENT_REAL_FALLBACK"), cfg_mod.get_config)
     moves = []
 
     class _U(object):
@@ -95,8 +101,10 @@ def _run(cfg, posted_ok=True, env=None):
 
     try:
         UA.ensure_point = lambda *a, **k: (True, "判据放行")
-        UA.get_config = lambda: {"input": {"allow_real_fallback": bool(cfg)},
-                                 "wechat": {}, "ui": {}}
+        _fake = lambda: {"input": {"allow_real_fallback": bool(cfg)}, # noqa: E731
+                         "wechat": {}, "ui": {}}
+        UA.get_config = _fake
+        cfg_mod.get_config = _fake # ⛔ 闸读的是这一处（唯一真源），只打上面那个等于没打
         UA._user32 = _U
         IB.select_backend = lambda cfg=None, gui=None: (p if not cfg else real)
         if env is None:
@@ -107,6 +115,7 @@ def _run(cfg, posted_ok=True, env=None):
         r = UA.click(g, 100, 200)
     finally:
         (UA.ensure_point, UA.get_config, UA._user32, IB.select_backend) = _sv[:4]
+        cfg_mod.get_config = _sv[5]
         if _sv[4] is None:
             os.environ.pop("WXAGENT_REAL_FALLBACK", None)
         else:

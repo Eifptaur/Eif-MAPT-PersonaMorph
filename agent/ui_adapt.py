@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import ctypes
 import logging
-import os
 import time
 from ctypes import wintypes
 
@@ -525,18 +524,11 @@ def fg_allowed() -> tuple:
 
     只有"明确要走真鼠标"的档位才允许（`wechat.background_only=False` **且**
     `input.allow_real_fallback=True`）；缺键、读配置失败一律按**拒绝**处理（fail-closed）。
-    两个键的默认值就是安全的一侧（config.py：`background_only=True` / `allow_real_fallback=False`）。
+    实现在 `guards.foreground()`（与真鼠标谓词放在一起，并钉了"这一问严格强于真鼠标那一问"）。
     """
-    try:
-        from .config import get_config
-        cfg = get_config() or {}
-        if bool((cfg.get("wechat") or {}).get("background_only", True)):
-            return False, "wechat.background_only=开（默认：全程后台）"
-        if not bool((cfg.get("input") or {}).get("allow_real_fallback", False)):
-            return False, "input.allow_real_fallback=关（默认：不许真鼠标兜底）"
-        return True, ""
-    except Exception as e:
-        return False, "读配置失败（按拒绝处理）：%s" % str(e)[:40]
+    from .guards import foreground
+
+    return foreground()
 
 
 def fg_refused() -> dict:
@@ -790,19 +782,12 @@ def _cursor_restore(pos, why: str = "") -> bool:
 def _real_mouse_allowed() -> bool:
     """这一枪允许用**真鼠标**吗（默认**不允许**）。
 
-    口径与 `WeChatAdapter._real_fallback_allowed()` 一致（那一处是发送链的闸门）：
-      · `WXAGENT_REAL_FALLBACK=0` ⇒ **强制关**（自检/诊断路径用它兜底，无视 config）；
-      · 否则看 `input.allow_real_fallback`（默认 False）。
+    实现在 `guards.real_mouse()`。⚠️ 与 `WeChatAdapter._real_fallback_allowed()` 是**同一个问题**，
+    所以它们共用那一份实现（这两处原来各抄了一遍，逐字相同）。
     """
-    try:
-        if str(os.environ.get("WXAGENT_REAL_FALLBACK", "")).strip() == "0":
-            return False
-    except Exception: # noqa: BLE001
-        pass
-    try:
-        return bool((get_config().get("input") or {}).get("allow_real_fallback", False))
-    except Exception: # noqa: BLE001
-        return False
+    from .guards import real_mouse
+
+    return real_mouse()
 
 
 def click(gui, x: int, y: int, right: bool = False, scale=None, extra_hwnds: tuple = (), heal: bool = True) -> tuple:

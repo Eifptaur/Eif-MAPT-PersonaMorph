@@ -9317,6 +9317,47 @@ DEAD_IMPORT_KEEP = {
 }
 
 
+def t_packaged_modules_guard() -> None:
+    """自检：**产品模块必须都在 git 里**（否则出包静默少文件）。
+
+    ⛔ 出包器（`scripts/pack_online.py`）的候选集是 **`git ls-files`**（只发**已跟踪**的文件）——
+    这条设计本身是对的（不会把临时垃圾打进包），但它带来一个**静默**后果：
+    **新写的产品模块只要还没 commit，就不会进包**，而打包器照样 `exit 0`
+    （它的"必需文件"断言只认一张固定清单）。
+    实测踩到：新增 `agent/guards.py` 后立刻出包 ⇒ 包里**没有**这个文件，
+    而发送链在运行时才 `from .guards import …` ⇒ 用户那边是"点发送就报错"，本地全量自检全绿。
+
+    ⇒ 判据就是一句话：`agent/` 与 `ui_qt/` 下**工作区里的每个 .py 都在 `git ls-files` 里**。
+      未跟踪 = 忘了入库 = 出包会少它。
+    """
+    import subprocess # noqa: PLC0415
+
+    _root = HERE.parents[0]
+    try:
+        _out = subprocess.run(["git", "ls-files", "-z"], cwd=str(_root), capture_output=True,
+                              check=True).stdout.decode("utf-8", "replace")
+    except Exception as e: # noqa: BLE001
+        ck("能取到 git 跟踪清单（取不到就没法判这条，不能静默变绿）", False, str(e)[:80])
+        return
+    _tracked = {p for p in _out.split("\x00") if p}
+    #: 分母守卫：清单至少要有这个量级，否则"空集 ⇒ 全绿"
+    ck("git 跟踪清单非空且量级正常（分母守卫）", len(_tracked) > 200, "%d 个文件" % len(_tracked))
+    _untracked = []
+    for _sub in ("agent", "ui_qt"):
+        _d = _root / _sub
+        if not _d.is_dir():
+            continue
+        for _f in sorted(_d.glob("*.py")):
+            _rel = "%s/%s" % (_sub, _f.name)
+            if _rel not in _tracked:
+                _untracked.append(_rel)
+    ck("产品模块全在 git 里（未 commit 的新模块不进包 ⇒ 用户那边用到才报错）",
+       not _untracked, "未跟踪：%s" % "、".join(_untracked[:6]))
+    #: 反向控制：这条判据必须**能认出未跟踪文件**（拿一个必然不在清单里的名字试）
+    ck("未跟踪判定器有效（编一个不存在的模块名必须被判未跟踪）",
+       "agent/__绝不存在的模块__.py" not in _tracked, "")
+
+
 def t_dead_import_guard() -> None:
     """自检：**全仓未用 import 只许降不许升**（棘轮）。
 
@@ -9383,6 +9424,192 @@ def t_dead_import_guard() -> None:
     #  （否则把 noqa 规则一收紧、扫描面一缩，这条闸门会因"什么都没扫到"而全绿）。
     ck("上述全量扫描覆盖到足量 import 语句（分母守卫，含函数内）",
        _scanned_imports >= 1500, "扫到 %d 条" % _scanned_imports)
+
+
+def t_guard_family_guard() -> None:
+    """自检：**发送链守卫族**的唯一实现点与真值表（F3）。
+
+    这一族的判据是"一处错会不会处处错"，实测两种形态（都在收口前真实存在）：
+      · **真鼠标谓词两份逐字相同的实现**：`ui_adapt._real_mouse_allowed()` 与
+        `WeChatAdapter._real_fallback_allowed()`（环境变量强制关 → 看 `input.allow_real_fallback` → 异常即拒绝）；
+      · **版本门那段八行抄了三遍**（文本链 / 表情链 / 图片链），且三处早退收尾还不一样。
+
+    ⛔ 最容易改错的是"两问合一"：`foreground()`（能不能置前/置顶）在 `real_mouse()`
+    （能不能用真鼠标）的条件上多一条 `wechat.background_only`，是**严格更强**的那一问。
+    合并两问 = 放宽 = 抢用户窗口，所以本闸门用**真值表**把"前者 ⇒ 后者"钉死。
+    """
+    import os # noqa: PLC0415
+
+    from agent import guards # noqa: PLC0415
+
+    _root = HERE.parents[0]
+    _cfg_mod = _root / "agent" / "config.py"
+
+    # ① 真值表：四种配置组合 × 环境变量，逐个对"两问"的期望值
+    #    期望口径（fail-closed）：`real_mouse()` 只看 input.allow_real_fallback（环境变量可强制关）；
+    #    `foreground()` 在它之上**多一条** wechat.background_only=False ⇒ 严格更强。
+    _real = None
+    try:
+        from agent import config as _cfgm # noqa: PLC0415
+
+        _real = _cfgm.get_config
+        _env_key = guards.ENV_REAL_FALLBACK
+        os.environ.pop(_env_key, None)
+        # (background_only, allow_real_fallback, 期望 foreground, 期望 real_mouse)
+        _rows = [
+            (True, False, False, False),   # 默认档：两问都拒
+            (True, True, False, True),     # ⚠️ 分叉行：开了真鼠标兜底但没关背景优先
+            (False, False, False, False),  # 关了背景优先、没开真鼠标：两问都拒
+            (False, True, True, True),     # 两个都开：两问都放行
+        ]
+        _bad = []
+        for _bo, _ar, _want_fg, _want_rm in _rows:
+            _cfgm.get_config = lambda bo=_bo, ar=_ar: { # 打桩：只喂这两个键
+                "wechat": {"background_only": bo}, "input": {"allow_real_fallback": ar}}
+            _g_fg = bool(guards.foreground()[0])
+            _g_rm = bool(guards.real_mouse())
+            if (_g_fg, _g_rm) != (_want_fg, _want_rm):
+                _bad.append("bg=%s ar=%s ⇒ 得(%s,%s) 期望(%s,%s)"
+                            % (_bo, _ar, _g_fg, _g_rm, _want_fg, _want_rm))
+        ck("真值表四行：两问的判定与登记的一致（含已知分叉行）",
+           not _bad, "；".join(_bad[:3]))
+        # 不变式：置前那一问**严格更强** ⇒ 它放行时真鼠标那一问必放行。
+        # 合并两问 = 放宽 = 抢用户窗口，所以这条必须恒成立。
+        _cfgm.get_config = lambda: {"wechat": {"background_only": False},
+                                    "input": {"allow_real_fallback": True}}
+        _both = (guards.foreground()[0], guards.real_mouse())
+        ck("`foreground()` 为真 ⇒ `real_mouse()` 必为真（合并两问＝放宽＝抢用户窗口，不许合）",
+           _both == (True, True), "得 %s" % (_both,))
+        # ⚠️ 已知分叉（登记在计划的待改语义清单里，**语义变更单独一轮**）：这一行两问结论相反。
+        #   钉住它：将来谁改了口径，这一条会明确变红，提醒把登记一起改。
+        _cfgm.get_config = lambda: {"wechat": {"background_only": True},
+                                    "input": {"allow_real_fallback": True}}
+        _split = (bool(guards.foreground()[0]), bool(guards.real_mouse()))
+        ck("已知分叉：`background_only=True` + `allow_real_fallback=True` 时两问结论相反"
+           "（wechat 那条链拒、ui_adapt.click 那条链许）",
+           _split == (False, True), "得 %s" % (_split,))
+        # 环境变量强制关：两问都必须拒（自检/诊断路径靠它兜底）
+        _cfgm.get_config = lambda: {"wechat": {"background_only": False},
+                                    "input": {"allow_real_fallback": True}}
+        os.environ[_env_key] = "0"
+        ck("`%s=0` 强制关真鼠标（无视配置）：两问都拒" % _env_key,
+           guards.real_mouse() is False and guards.foreground()[0] is False, "")
+        os.environ.pop(_env_key, None)
+        # 读配置抛异常 ⇒ fail-closed（两问都拒）
+        def _boom(): # noqa: ANN202
+            raise RuntimeError("配置读不到")
+        _cfgm.get_config = _boom
+        ck("读配置失败 ⇒ 两问都按拒绝处理（fail-closed，不悄悄放行）",
+           guards.real_mouse() is False and guards.foreground()[0] is False, "")
+    finally:
+        if _real is not None:
+            from agent import config as _cfgm2 # noqa: PLC0415
+
+            _cfgm2.get_config = _real
+
+    # ② 实现点唯一：判断逻辑（读哪些键）只许在 guards 里，其余两处只许**转发**
+    def _forward_only(src: str, fname: str) -> bool:
+        """该函数体是不是**纯转发**（只有导入/返回，没有自己的判断）。"""
+        import ast as _a # noqa: PLC0415
+        for _n in _a.walk(_a.parse(src)):
+            if isinstance(_n, _a.FunctionDef) and _n.name == fname:
+                for _st in _n.body:
+                    if isinstance(_st, (_a.Import, _a.ImportFrom, _a.Return, _a.Expr)):
+                        continue
+                    return False # 出现赋值/if/… ⇒ 它自己也在判
+                return True
+        return False
+
+    def _reads_key(src: str, key: str) -> int:
+        """数"**真的去读**这个配置键"的地方（`.get("键", …)`）。
+
+        ⛔ 不能用 `"键" in 文本` 数：docstring 里的说明也算，会把"解释"误判成"实现"
+        （实测：`guards.py` 里提 `background_only` 6 次，只有 1 次是真读）。
+        """
+        import ast as _a # noqa: PLC0415
+        _n = 0
+        for _x in _a.walk(_a.parse(src)):
+            if (isinstance(_x, _a.Call) and isinstance(_x.func, _a.Attribute)
+                    and _x.func.attr == "get" and _x.args
+                    and isinstance(_x.args[0], _a.Constant)
+                    and _x.args[0].value == key):
+                _n += 1
+        return _n
+
+    _ua = (_root / "agent" / "ui_adapt.py").read_text(encoding="utf-8")
+    _wx = (_root / "agent" / "wechat.py").read_text(encoding="utf-8")
+    _gd = (_root / "agent" / "guards.py").read_text(encoding="utf-8")
+    ck("置前闸只有一处实现（`ui_adapt.fg_allowed` 只许是转发）",
+       _gd.count("def foreground") == 1 and _forward_only(_ua, "fg_allowed"),
+       "gd=%d ua 转发=%s" % (_gd.count("def foreground"), _forward_only(_ua, "fg_allowed")))
+    #: ⭐ 这一条才是真正的去重判据：两个键的**读取**只许在 guards 一处。
+    #  "两处各读一遍配置"就是历史上那次分叉的根因（`wechat` 读一次、`ui_adapt` 再读一次）。
+    ck("真鼠标两个键的**读取**只许在 guards 一处（两处各读一遍＝分叉根因）",
+       _reads_key(_gd, "allow_real_fallback") == 1 and _reads_key(_gd, "background_only") == 1
+       and _reads_key(_ua, "allow_real_fallback") == 0 and _reads_key(_ua, "background_only") == 0
+       and _reads_key(_wx, "allow_real_fallback") == 0,
+       "gd=%d/%d ua=%d/%d wx=%d" % (_reads_key(_gd, "allow_real_fallback"),
+                                    _reads_key(_gd, "background_only"),
+                                    _reads_key(_ua, "allow_real_fallback"),
+                                    _reads_key(_ua, "background_only"),
+                                    _reads_key(_wx, "allow_real_fallback")))
+    #: 分母/反向控制：这个计数器必须**数得出来**（否则恒 0 也看不出来）
+    ck("「读键」计数器有效（对一份真实现的样本文本必须数到 1）",
+       _reads_key('x = (cfg.get("input") or {}).get("allow_real_fallback", False)', "allow_real_fallback") == 1, "")
+    #: 分母/反向控制：那个"纯转发"判定器必须**能认出**真实现（否则它永远返回 True 也看不出来）
+    ck("「纯转发」判定器能认出真实现（把 guards 里的实现喂给它必须判否）",
+       _forward_only(_gd, "foreground") is False, "")
+    ck("真鼠标谓词只有一处实现（另两处必须是转发，不许再读一遍配置）",
+       _gd.count("def real_mouse") == 1
+       and "ENV_REAL_FALLBACK" in _gd
+       and 'os.environ.get("WXAGENT_REAL_FALLBACK"' not in _ua
+       and 'os.environ.get("WXAGENT_REAL_FALLBACK"' not in _wx
+       and _ua.count("from .guards import real_mouse") == 1
+       and _wx.count("from .guards import real_mouse") == 1, "")
+    ck("版本门那段不再手抄：发送链上不许再有 `version_gate` 的别名导入（只许 `guards.version`）",
+       _wx.count("from . import version_gate as") == 0 and _wx.count("note_blocked") == 0
+       and _wx.count("_gate_version") == 6 and _gd.count("def version(") == 1, "")
+
+    # ③ 行为金标准：桩驱动三情形（收口前后必须逐条相同）
+    from agent import version_gate as _vg # noqa: PLC0415
+    from agent import wechat as _wxm # noqa: PLC0415
+
+    _save_v, _save_w = _vg.check, _wxm.wx_version_for_gate
+    _save_note, _save_cmd = _vg.note_blocked, getattr(_vg, "action_cmd", None)
+    _noted: list = []
+    _cleaned: list = []
+    try:
+        _wxm.wx_version_for_gate = lambda: "9.9.9"
+        _vg.note_blocked = lambda m, r: _noted.append((m, r))
+        # (a) 放行
+        _vg.check = lambda *a, **k: {"allow": True, "reason": ""}
+        ck("版本门：放行时不记账、不跑收尾、返回 (True, \"\")",
+           guards.version("send", cleanup=lambda: _cleaned.append(1)) == (True, "")
+           and not _noted and not _cleaned, "noted=%s cleaned=%s" % (_noted, _cleaned))
+        # (b) 拒发
+        _calls: list = []
+        _vg.check = lambda *a, **k: {"allow": False, "reason": "没实测"}
+        _r = guards.version("send", cleanup=lambda: (_calls.append(1), _cleaned.append(1))[0])
+        ck("版本门：拒发时**记账一次 + 跑一次调用方的收尾**，并把原因原样带回去",
+           _r == (False, "没实测") and _noted == [("send", "没实测")] and _calls == [1],
+           "r=%s noted=%s calls=%s" % (_r, _noted, _calls))
+        # (c) 查门自己抛异常
+        def _vgboom(*_a, **_k): # noqa: ANN202
+            raise RuntimeError("门炸了")
+        _vg.check = _vgboom
+        ck("版本门：查门抛异常 ⇒ 按**放行**处理（与收口前三处写法同口径）",
+           guards.version("send") == (True, ""), "")
+        # (d) 收尾抛异常 ⇒ 拒绝被吞掉（**已知的 fail-open**，钉住它：改口径的那一轮会看到这条变红）
+        _vg.check = lambda *a, **k: {"allow": False, "reason": "没实测"}
+        _noted.clear()
+
+        def _cleanup_boom(): # noqa: ANN202
+            raise RuntimeError("收尾炸了")
+        ck("版本门：收尾抛异常时拒绝被吞掉、消息照发（**已知 fail-open**，非本轮修）",
+           guards.version("send", cleanup=_cleanup_boom) == (True, ""), "")
+    finally:
+        _vg.check, _wxm.wx_version_for_gate = _save_v, _save_w
+        _vg.note_blocked = _save_note
 
 
 def t_default_value_guard() -> None:
@@ -9551,7 +9778,8 @@ def main() -> int:
                    t_button_label_guard, t_placeholder_guard, t_dupdef_guard,
                    t_attr_shadow_guard, t_async_landing_guard, t_screen_guards,
                    t_gate_middle, t_cfg_wired_guard, t_delivery_ledger_guard, t_dev_dir_guard,
-                   t_default_value_guard, t_dead_import_guard,
+                   t_default_value_guard, t_dead_import_guard, t_guard_family_guard,
+                   t_packaged_modules_guard,
                    t_whale_roles, t_whale_assets, t_whale_usage):
             try:
                 fn()

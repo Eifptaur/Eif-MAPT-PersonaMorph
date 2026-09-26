@@ -112,10 +112,21 @@ print("── B. 放行不许落盘（重启就失效）──")
 G = open(os.path.join(ROOT, "agent", "version_gate.py"), encoding="utf-8", errors="replace").read()
 ok("version_gate 里没有写文件/写配置", (re.search(r"open\(", G) is None) and ("json.dump" not in G) and ("SaveKey" not in G))
 
-print("── C. 接线：三个 send 入口都要问门 ──")
+print("── C. 接线：三个 send 入口都要问门（收口后 = 都经唯一实现点 `guards.version`）──")
 W = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8", errors="replace").read()
-n = len(re.findall(r"version_gate as _vg", W))
-ok("三个 send 入口都接了门", n >= 3, "命中 %d 处" % n)
+GD = open(os.path.join(ROOT, "agent", "guards.py"), encoding="utf-8", errors="replace").read()
+# ⛔ 这一组原来断言的是"方法体里出现 `version_gate`" —— 那是**绑实现形态**：
+#   问门那段被收口到唯一实现点（`guards.version`）之后，它必然假红。
+#   意图不变、形态跟着走：三个入口都**经那一处**问门。
+n = len(re.findall(r"from \.guards import version as _gate_version", W))
+ok("三个 send 入口都接了门（经唯一实现点）", n >= 3, "命中 %d 处" % n)
+#: ⭐ 真正要钉住的不变量：**版本号必须传进门**。
+#   踩过的坑：三处入口调 `check("send")` 都没传版本 ⇒ 门永远回"读不到微信版本"、
+#   每一次自动发送都被拦。现在参数在唯一实现点里传，所以锚也钉在那里。
+ok("版本号传进了门（`wechat=wx_version_for_gate()` 在唯一实现点里，丢了就回到「每次都拦」）",
+   "wechat=wx_version_for_gate()" in GD)
+
+
 def _method_body(src, sig):
     """取 `sig` 那个方法的方法体（到下一条同级 `def ` 为止）。
 
@@ -130,9 +141,13 @@ def _method_body(src, sig):
     return src[i:j] if j > i else src[i:]
 
 
+#: 分母/反向控制：切分函数必须**切得出东西**，否则下面三条"找不到门"会一起静默变绿。
+ok("方法体切分有效（给个不存在的签名必须切出空串）",
+   _method_body(W, "def 这个签名不存在(") == "" and len(_method_body(W, "def send_text(")) > 100)
+
 for sig in ("def send_text(", "def send_image(", "def send_file_posted("):
     seg = _method_body(W, sig)
-    ok("%s 里就问门" % sig.split("(")[0].replace("def ", ""), "version_gate" in seg,
+    ok("%s 里就问门" % sig.split("(")[0].replace("def ", ""), "_gate_version(" in seg,
        "方法体 %d 字符" % len(seg))
 
 print("── D. 控制台与端点 ──")

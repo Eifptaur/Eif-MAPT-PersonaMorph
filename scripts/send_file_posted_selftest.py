@@ -400,9 +400,12 @@ print("── N. 发送/自检路径**不许悄悄退回真鼠标**──")
 # 既有实测反馈：一键检验（生成报告）曾出现掉真实路径、动过光标（37.4s 一发、
 # 光标动了 16s，日志 '投递切会话：False → 改走真实路径'）。⇒ 真鼠标兜底改成**显式 opt-in**（默认关）。
 _segN = open(os.path.join(_ROOT, "agent", "wechat.py"), encoding="utf-8").read()
-ok("有开关实现：默认关 + 环境变量可强制关",
-   _sm.has(_segN, "def _real_fallback_allowed") and _sm.has(_segN, 'get("allow_real_fallback", False)')
-   and "WXAGENT_REAL_FALLBACK" in _segN)
+_gdN = open(os.path.join(_ROOT, "agent", "guards.py"), encoding="utf-8").read()
+# ⛔ 判断逻辑（默认关 + 环境变量强制关）已收口到唯一实现点 `agent/guards.py`：
+#   wechat 侧只留转发，所以"读哪个键"的锚要钉在 guards 上（钉 wechat 会假红）。
+ok("有开关实现：默认关 + 环境变量可强制关（实现收口在 guards，wechat 侧是转发）",
+   _sm.has(_segN, "def _real_fallback_allowed") and _segN.count("from .guards import real_mouse") == 1
+   and _sm.has(_gdN, 'get("allow_real_fallback", False)') and "WXAGENT_REAL_FALLBACK" in _gdN)
 _cfgN = open(os.path.join(_ROOT, "agent", "config.py"), encoding="utf-8").read()
 ok("config 默认值＝False，并把事故写在注释里",
    _sm.has(_cfgN, '"allow_real_fallback": False') and _sm.has(_cfgN, "动了 16 秒光标"))
@@ -422,20 +425,32 @@ try:
     _adN = _WN.WeChatAdapter.__new__(_WN.WeChatAdapter)
     _env_old = _osN.environ.get("WXAGENT_REAL_FALLBACK")
     _cfg_old = _WN.get_config
+    from agent import config as _cfgmN # ⛔ 闸读的是这一处（唯一真源）
+    _real_cfgN = _cfgmN.get_config
     _osN.environ.pop("WXAGENT_REAL_FALLBACK", None)
-    _WN.get_config = lambda: {}
+    _cfgN_fake = lambda: {}
+    _WN.get_config = _cfgN_fake
+    _cfgmN.get_config = _cfgN_fake
     ok("默认（配置里没这个键）⇒ **不退回**", _adN._real_fallback_allowed() is False)
-    _WN.get_config = lambda: {"input": {"allow_real_fallback": True}}
+    _cfgN_on = lambda: {"input": {"allow_real_fallback": True}}
+    _WN.get_config = _cfgN_on
+    _cfgmN.get_config = _cfgN_on
     ok("显式打开 ⇒ 允许", _adN._real_fallback_allowed() is True)
     _osN.environ["WXAGENT_REAL_FALLBACK"] = "0"
     ok("环境变量=0 ⇒ 强制关（自检路径用）", _adN._real_fallback_allowed() is False)
-    _WN.get_config = _cfg_old
-    if _env_old is None:
-        _osN.environ.pop("WXAGENT_REAL_FALLBACK", None)
-    else:
-        _osN.environ["WXAGENT_REAL_FALLBACK"] = _env_old
 except Exception as _eN:
     ok("_real_fallback_allowed 行为可测", False, str(_eN)[:80])
+finally:
+    # 还原**两处**打的桩：只还原 wechat 那一处，后面几组判据会带着假配置跑
+    try:
+        _WN.get_config = _cfg_old
+        _cfgmN.get_config = _real_cfgN
+        if _env_old is None:
+            _osN.environ.pop("WXAGENT_REAL_FALLBACK", None)
+        else:
+            _osN.environ["WXAGENT_REAL_FALLBACK"] = _env_old
+    except NameError: # 上面还没跑到赋值就抛了
+        pass
 
 print("── O. 内容像还不够：**活动行时间**要跟目标对得上──")
 _segO = open(os.path.join(_ROOT, "agent", "wechat.py"), encoding="utf-8").read()

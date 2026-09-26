@@ -144,7 +144,9 @@ ok("`voice_strip.send` 顶部过「只走后台」闸（真鼠标+真键盘的�
    "background_only_reason(\"发真语音条\")" in _V)
 ok("类级包装覆盖 `_get_uia`（它一旦被调就会把微信顶到前）",
    '("_get_uia", None)' in _U and "def harden_gui_class" in _U)
-ok("闸实现自身在读配置失败时 fail-closed", "读配置失败（按拒绝处理）" in _U)
+_G = io.open(os.path.join(ROOT, "agent", "guards.py"), encoding="utf-8").read()
+ok("闸实现自身在读配置失败时 fail-closed（实现在唯一实现点 guards 里）",
+   _G.count("读配置失败（按拒绝处理）") == 1 and _G.count("def foreground") == 1)
 
 print("\n==== 前台静态审计判据：%d 通过 / %d 失败 ====" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
