@@ -91,6 +91,34 @@ def main():
     ok("反向控制：目标是**别的**群 ⇒ 仍必须报出『文字落到了 X 里』（兜底不能失效）",
        bool(got) and got[0] == WXID, str(got))
 
+    print("== F. 取库助手：带前缀的 chat_key 也要能读到消息 ==")
+    # ⛔ 库是按**裸 id** 索引的 ⇒ 拿 `group:<wxid>` 直接查会**一条都读不到**（不报错、静默空）
+    #    ⇒ 发送链的"唯一成功判据"（回读到新行）永远失败 ⇒ 三枪全打（群里出现**重复消息**）。
+    s3 = Stub()
+    s3._db = _Db()          # 只认裸 wxid
+    ok("带前缀的 chat_key 也能读到消息（★本轮修的那条）", len(s3._db_messages("group:" + WXID)) == 1,
+       str(len(s3._db_messages("group:" + WXID))))
+    ok("裸 id 照旧读得到（不回归）", len(s3._db_messages(WXID)) == 1, "")
+    ok("两边都查不到时返回空表（不是抛异常、也不是编数据）",
+       s3._db_messages("group:999@chatroom") == [], "")
+
+    class _DbBoom:
+        """假库：**读就抛**（模拟库坏/密钥缺）。"""
+
+        def get_messages(self, cid, limit=4):
+            raise RuntimeError("库读不出来（夹具）")
+
+    s4 = Stub()
+    s4._db = _DbBoom()
+    _raised = False
+    try:
+        s4._db_messages("group:" + WXID)
+    except RuntimeError:
+        _raised = True
+    # ⛔ 这条是**别的判据抓出来的**（`watermark_selftest` ①）：一旦把"读失败"吞成"没有消息"，
+    #    `latest_seq_ex` 就会把读失败当成水位 0 ⇒ 从最旧历史重放（P1 审计修过的点）。别退回那个坑。
+    ok("两种形态**都读失败** ⇒ 原样抛（不许吞成『没有消息』）", _raised, "")
+
     print("== 会话键→展示名判据：%d 通过 / %d 失败 ==" % (PASS[0], FAIL[0]))
     return 0 if FAIL[0] == 0 else 1
 

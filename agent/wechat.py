@@ -1499,7 +1499,7 @@ class WeChatAdapter:
             if mk is None and self._usable_key_count() <= 0:
                 return False, ("既没拿到主密钥、也没有任何能过页1校验的缓存密钥 ⇒ 回读通道不可信"
                                "（拿到的可能是旧副本）")
-            rows = self._db.get_messages(chat_id, limit=1) or []
+            rows = self._db_messages(chat_id, limit=1)
             wal = self._newest_wal_mtime()
             # 第二道闸：**活库现在还在写吗**。这道闸只在"刚发完、没等到新行"的上下文里被问
             # （三个调用点都是发送链），所以"库在动、而我们读不到这个会话的新行"才是可疑信号。
@@ -1957,6 +1957,34 @@ class WeChatAdapter:
         g = self._group_by_wxid.get(wxid) or self._group_by_wxid.get(self._bare_key(wxid))
         return g["name"] if g else wxid
 
+    def _db_messages(self, chat_id: str, limit: int = 12) -> list:
+        """按会话取库里的消息 —— **两种键形态都试**（先原样、再剥前缀）。
+
+        ⛔ 为什么必须有它：消息库（`get_messages`）是按**裸 id** 索引的，而产品自己的 chat_key
+        是 `"group:" + wxid` ⇒ 直接拿带前缀的 key 查库**一条都读不到**（不报错、静默返回空）。
+        后果远不止"读不到"：发送链的**唯一成功判据**就是"在目标会话回读到本次内容" ⇒
+        读不到 ⇒ **三枪全打**（群里出现**重复消息**）+ `send_text` 永远返回"未证实"
+        （真发实测复现：一条测试消息在群里出现两条一模一样的）。
+
+        ⛔ **不许把"读失败"吞成"没有消息"**：调用方（尤其 `latest_seq_ex`）就靠这个区分
+        「读不出来」与「确实还没消息」——吞掉会把"读失败"变成水位 0 ⇒ 从最旧历史重放。
+        ⇒ 只有**两种键形态都真的抛异常**时才把异常原样抛出去；任一形态读成功（哪怕没有行）都算读懂。
+        """
+        err = None
+        for k in (chat_id, self._bare_key(chat_id)):
+            try:
+                rows = list(self._db.get_messages(k, limit=max(int(limit), 1)) or [])
+            except Exception as exc: # noqa: BLE001
+                if err is None:
+                    err = exc
+                continue
+            if rows:
+                return rows
+            err = None      # 这一形态**读成功**（只是没有行）⇒ 不算"读失败"
+        if err is not None:
+            raise err
+        return []
+
     def member_name(self, chat_id: str, wxid: str) -> str:
         """解析成员展示名（用于 @）。"""
         if not wxid:
@@ -1972,7 +2000,7 @@ class WeChatAdapter:
         而且 0 水位**永不自愈**。⇒ 返回 `(ok, seq, why)`：`ok=False` 时调用方**绝不许拿 seq 当水位**。
         """
         try:
-            msgs = self._db.get_messages(wxid, limit=1)
+            msgs = self._db_messages(wxid, limit=1)
             return True, (int(msgs[0]["sort_seq"]) if msgs else 0), ""
         except Exception as _e:
             # `_cap` 让「点击测试」把原因原样报出来；warning **限频 60 秒**
@@ -3710,7 +3738,7 @@ class WeChatAdapter:
         base = base_rows
         if base is None:
             try:
-                base = list(self._db.get_messages(chat_id, limit=3) or [])
+                base = list(self._db_messages(chat_id, limit=3) or [])
             except Exception:
                 base = []
         base_ids = {str(r.get("local_id")) for r in base}
@@ -3741,7 +3769,7 @@ class WeChatAdapter:
         while time.time() < deadline:
             time.sleep(0.3)
             try:
-                rows = list(self._db.get_messages(chat_id, limit=3) or [])
+                rows = list(self._db_messages(chat_id, limit=3) or [])
             except Exception:
                 rows = []
             for r in rows:
@@ -4225,7 +4253,7 @@ class WeChatAdapter:
         if not chat_id:
             return 0
         try:
-            rows = self._db.get_messages(chat_id, limit=1) or []
+            rows = self._db_messages(chat_id, limit=1)
             return int(rows[0].get("create_time") or 0)
         except Exception:
             return 0
@@ -4707,7 +4735,7 @@ class WeChatAdapter:
             # 名字只有一个字母的会话（E）靠 OCR 认不稳，而行右侧的时间戳读得准（实测）。
             _want_time = ""
             try:
-                _last = self._db.get_messages(chat_id, limit=1) or []
+                _last = self._db_messages(chat_id, limit=1) or []
                 if _last:
                     _lt = time.localtime(int(_last[0].get("create_time") or 0))
                     if _lt.tm_yday == time.localtime().tm_yday: # 今天的消息 ⇒ 行上显示 HH:MM
@@ -5447,7 +5475,7 @@ class WeChatAdapter:
 
             def _rows():
                 try:
-                    return list(self._db.get_messages(chat_id, limit=12) or [])
+                    return list(self._db_messages(chat_id, limit=12) or [])
                 except Exception:
                     return []
 
@@ -5477,7 +5505,7 @@ class WeChatAdapter:
             #   的行 ⇒ 判为已发出，**不再打字**（宁可少发一次，也不要重复发 —— 重复发是对外可见的）。
             #   读不到库 ⇒ 维持老行为（照旧回退老链），不因为这次核对而拒发。
             try:
-                _rows_chk = list(self._db.get_messages(chat_id, limit=4) or [])
+                _rows_chk = list(self._db_messages(chat_id, limit=4) or [])
             except Exception:
                 _rows_chk = []
             _now_ms = int(time.time() * 1000)
@@ -5734,7 +5762,7 @@ class WeChatAdapter:
 
             def _rows():
                 try:
-                    return list(self._db.get_messages(chat_id, limit=8) or [])
+                    return list(self._db_messages(chat_id, limit=8) or [])
                 except Exception:
                     return []
 
@@ -6132,7 +6160,7 @@ class WeChatAdapter:
 
             def _rows():
                 try:
-                    return list(self._db.get_messages(chat_id, limit=6) or [])
+                    return list(self._db_messages(chat_id, limit=6) or [])
                 except Exception:
                     return []
 
@@ -6377,7 +6405,7 @@ class WeChatAdapter:
     def last_text_of(self, chat_id: str, limit: int = 8) -> str:
         """取目标会话最近一条**文本**内容（给内容级身份核对当指纹用）。"""
         try:
-            for r in (self._db.get_messages(chat_id, limit=limit) or []):
+            for r in (self._db_messages(chat_id, limit=limit) or []):
                 c = str(r.get("content") or "").strip()
                 if len(c) >= 6 and not c.startswith("<msg"):
                     return c
@@ -6399,7 +6427,7 @@ class WeChatAdapter:
         """
         out = []
         try:
-            for r in (self._db.get_messages(chat_id, limit=max(int(limit), 1)) or []):
+            for r in (self._db_messages(chat_id, limit=max(int(limit), 1)) or []):
                 c = str(r.get("content") or "").strip()
                 # ⚠️ 图片/文件/引用这类消息的 content 是**原始报文**：有的以 `<msg` 开头，有的以
                 # `<?xml version="1.0"?>` 开头（只判 `<msg` 会漏掉后者 ⇒ 指纹表
@@ -6435,7 +6463,7 @@ class WeChatAdapter:
     def recent_file_title(self, chat_id: str, limit: int = 6) -> str:
         """目标会话最近若干条里最后一条**文件/链接卡**的标题（取不到返回空串）。"""
         try:
-            for r in (self._db.get_messages(chat_id, limit=max(int(limit), 1)) or []):
+            for r in (self._db_messages(chat_id, limit=max(int(limit), 1)) or []):
                 c = str(r.get("content") or "")
                 if c.startswith("<msg") and "<title>" in c:
                     m = re.findall(r"<title>(.*?)</title>", c, re.S)
@@ -6881,7 +6909,7 @@ class WeChatAdapter:
         if not _pane:
             return False, "聊天区没读到任何文字", []
         try:
-            rows = self._db.get_messages(chat_id, limit=max(int(limit), 1)) or []
+            rows = self._db_messages(chat_id, limit=max(int(limit), 1)) or []
         except Exception as e:
             return False, "读不到目标会话的消息（%s）" % str(e)[:40], []
         want = set()
@@ -6937,7 +6965,7 @@ class WeChatAdapter:
         拿不到时间就退回别的指纹，不许瞎凑）。
         """
         try:
-            rows = self._db.get_messages(chat_id, limit=1) or []
+            rows = self._db_messages(chat_id, limit=1)
             if not rows:
                 return ""
             lt = time.localtime(int(rows[0].get("create_time") or 0))
@@ -7095,7 +7123,7 @@ class WeChatAdapter:
         """目标会话最近若干条消息的**全部文字**（含文件卡的 `<title>`）——给弱指纹用。"""
         out = []
         try:
-            for r in (self._db.get_messages(chat_id, limit=max(1, int(limit))) or []):
+            for r in (self._db_messages(chat_id, limit=max(1, int(limit))) or []):
                 c = str(r.get("content") or "")
                 if c.startswith("<msg"):
                     for m in re.findall(r"<title>(.*?)</title>", c, re.S):
@@ -8476,7 +8504,7 @@ class WeChatAdapter:
         不依赖控制台存档——任何群只要有群友说过话即可（诊断选群用）。
         """
         try:
-            for raw in self._db.get_messages(chat_id, limit=60):
+            for raw in self._db_messages(chat_id, limit=60):
                 norm = self.normalize(raw, chat_id)
                 if not norm:
                     continue
@@ -8494,7 +8522,7 @@ class WeChatAdapter:
         按序取第一条匹配即最新；曾误用 reversed() 取到最旧——已修。
         """
         try:
-            raws = self._db.get_messages(chat_id, limit=60)
+            raws = self._db_messages(chat_id, limit=60)
             for raw in raws: # 最新在前，第一条匹配即最新
                 norm = self.normalize(raw, chat_id)
                 if norm and str(norm.get("sender_id") or "") == str(wxid):
@@ -8515,7 +8543,7 @@ class WeChatAdapter:
         """
         out = []
         try:
-            for raw in self._db.get_messages(chat_id, limit=60):
+            for raw in self._db_messages(chat_id, limit=60):
                 norm = self.normalize(raw, chat_id)
                 if not norm or str(norm.get("sender_id") or "") != str(wxid):
                     continue
@@ -8772,7 +8800,7 @@ class WeChatAdapter:
         try:
             from collections import Counter
             from . import chat_header as _ch
-            rows = self._db.get_messages(chat_id, limit=3) if chat_id else []
+            rows = self._db_messages(chat_id, limit=3) if chat_id else []
             if not rows:
                 return None, None, "读不到会话消息 ⇒ 不猜点"
             newest = rows[0]
@@ -9554,7 +9582,7 @@ class WeChatAdapter:
             if not target_text.strip():
                 # 引用「最近一条群友消息」：从数据库取最新文本做定位
                 try:
-                    for raw in self._db.get_messages(chat_id, limit=20):
+                    for raw in self._db_messages(chat_id, limit=20):
                         norm = self.normalize(raw, chat_id)
                         if norm and str(norm.get("sender_id") or "").startswith("wxid_") \
                                 and str(norm.get("text") or "").strip():
@@ -9674,7 +9702,7 @@ class WeChatAdapter:
                 time.sleep(0.8)
                 if not text.strip():
                     # 未指定文本 → 取数据库最近一条群友消息
-                    for raw in self._db.get_messages(chat_id, limit=20):
+                    for raw in self._db_messages(chat_id, limit=20):
                         norm = self.normalize(raw, chat_id)
                         if norm and str(norm.get("sender_id") or "").startswith("wxid_") \
                                 and str(norm.get("text") or "").strip():

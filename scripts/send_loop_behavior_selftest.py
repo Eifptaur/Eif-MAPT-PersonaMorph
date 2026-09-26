@@ -143,6 +143,10 @@ class _Stub(object):
         self._send_lock = threading.RLock()
         self._pick_last = {"pt": None, "at": 0.0}
         self._row_click_last = {"pt": None, "at": 0.0}
+        # ⛔ 桩必须照真类补齐"发送链会调到的方法"（本文件自己的教训：漏了会被吞成 AttributeError 假象）：
+        #    · `_bare_key` / `_db_messages`：取消息统一走后者，它内部两种键形态都试；
+        self._bare_key = lambda k: W.WeChatAdapter._bare_key(self, k)
+        self._db_messages = lambda cid, limit=12: W.WeChatAdapter._db_messages(self, cid, limit)
 
     def _get_gui(self):
         return self._gui
@@ -435,7 +439,8 @@ ok("**全程不点任何东西**（不点输入框、不点发送按钮）",
 ok("顺序＝投字 → 80ms → 投回车 → **立刻还前台**",
    "time.sleep(0.08)" in _seg_f and "VK_RETURN" in _seg_f and "快路径（打完立刻还）" in _seg_f)
 ok("成功**只认 DB 回读**，没等到就 `return None`（回退老链，不谎报）",
-   "get_messages(chat_id, limit=3)" in _seg_f and "return None" in _seg_f)
+   # 取消息已统一走 `_db_messages`（两种键形态都试）⇒ 这里锚**统一入口**，不是旧的裸调用。
+   "_db_messages(chat_id, limit=3)" in _seg_f and "return None" in _seg_f)
 ok("快路径失败后**原样回退老链**（多枪兜底还在）", "回退老链" in _src_w)
 
 print("── I2. 快路径超时后**不许立刻重复打字**──")
