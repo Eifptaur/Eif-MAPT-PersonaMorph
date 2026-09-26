@@ -19,7 +19,7 @@ import logging
 import os
 import time
 
-from .config import ROOT, get_config
+from .config import ROOT
 
 log = logging.getLogger("persona-morph")
 

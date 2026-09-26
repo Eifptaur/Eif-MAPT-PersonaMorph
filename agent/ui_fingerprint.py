@@ -121,7 +121,6 @@ def dhash(img_or_pixels, size=(HASH_W, HASH_H)) -> str:
     而 dHash 只关心"亮暗梯度"，对位移与缩放都稳。
     """
     try:
-        from PIL import Image
         img = img_or_pixels
         if not hasattr(img, "convert"):
             return "" # 不是图像（None/坏输入）⇒ 空指纹，绝不编一个"看起来像"的哈希出来

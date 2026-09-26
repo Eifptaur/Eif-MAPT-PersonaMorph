@@ -18,9 +18,9 @@ from urllib.parse import parse_qs, urlparse
 from . import persist # 原子写（唯一临时名 + fsync + os.replace）
 from .config import as_bool, deep_merge, get_config, save_config, set_config
 from . import local_guard # 回环 Host 校验（与本地生图服务共用同一份实现）
-from .whale_text import DICT as WHALE_DICT, SKIP as WHALE_SKIP
+from .whale_text import DICT as WHALE_DICT
 from .console_html import HTML # 界面模板（蓝白设计，设置项全量，独立文件便于改版）
-from .util import mask_secret, redact_secrets
+from .util import mask_secret
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """收藏表情语义选择：从收藏列表（文件名=语义）挑最合适的一个序号。
 模型判别（离线可缓存）；无模型时用本地规则（按关键词/默认 0）。"""
-import os, glob, json, re
+import os, glob, re
 
 EMOJI_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "emojis")
 

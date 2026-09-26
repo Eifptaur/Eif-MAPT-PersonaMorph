@@ -28,7 +28,6 @@ import urllib.parse
 import urllib.request
 from urllib.parse import urlsplit, urljoin
 
-from .config import get_config
 
 log = logging.getLogger("persona-morph")
 

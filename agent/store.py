@@ -22,7 +22,7 @@ import re
 import threading
 import time
 
-from .config import DATA_DIR, get_config
+from .config import DATA_DIR
 from .persist import atomic_write_json
 
 log = logging.getLogger("persona-morph")

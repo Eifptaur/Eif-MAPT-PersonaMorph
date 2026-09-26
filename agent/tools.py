@@ -13,7 +13,7 @@ import os as _os
 import time
 
 from .config import get_config
-from .util import normalize_message_list, unquote_json_string
+from .util import normalize_message_list
 from .web_search import web_search, web_fetch
 
 # 与 wechat.py 同一个 logger 名 ⇒ 发送失败的每一行都进主日志，排障时能在同一处看到

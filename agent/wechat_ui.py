@@ -25,7 +25,7 @@ import time
 from typing import Callable
 
 from . import persist
-from .config import get_config, DATA_DIR
+from .config import DATA_DIR
 
 log = logging.getLogger("persona-morph")
 

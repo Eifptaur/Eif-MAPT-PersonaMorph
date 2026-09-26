@@ -20,7 +20,7 @@ import os
 import time
 import wave
 
-from .config import ROOT, get_config
+from .config import get_config
 
 #: 进录音态后"发送"那个绿簇：默认取渲染区右下（老实测 (0.927, 0.924) 量级）
 DEFAULT_SEND = (0.932, 0.945)

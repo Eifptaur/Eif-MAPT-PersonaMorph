@@ -16,7 +16,7 @@ import threading
 import time
 
 from .config import get_config
-from .util import format_clock_time, md_to_plain, rand_int, sleep, split_for_wx
+from .util import format_clock_time, md_to_plain, rand_int, split_for_wx
 
 log = logging.getLogger("persona-morph")
 

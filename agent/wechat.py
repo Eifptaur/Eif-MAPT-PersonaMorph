@@ -1560,7 +1560,7 @@ class WeChatAdapter:
 
     def _init_db(self):
         try:
-            from wechatauto import WeChatDB, MediaDownloader
+            from wechatauto import MediaDownloader
         except ImportError as e:
             raise WeChatError("未安装 wechatauto：请先安装依赖（pip install -r requirements.txt）。%s" % e)
         # ⛔ **在读任何页之前**把"页 1 明文头按磁盘事实判"的兼容补丁装上——
