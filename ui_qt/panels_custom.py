@@ -154,6 +154,21 @@ def _stat_cell(t: Tokens, val: str, label: str) -> tuple[QWidget, QLabel, QLabel
     return w, b, s
 
 
+
+def _raw_post(path: str, data: bytes | None, ctype: str, timeout: float) -> bytes:
+    """二进制 POST（导出 zip / 导入上传）—— post_json 只回 dict，这里走 urllib。"""
+    import urllib.request as ur # noqa: PLC0415
+    from addr import join_url # noqa: PLC0415
+    from agent_bridge import current_url # noqa: PLC0415
+
+    url = join_url(current_url(), path)
+    opener = ur.build_opener(ur.ProxyHandler({})) # 绕代理（全 ui_qt 口径）
+    req = ur.Request(url, data=data, headers={"Content-Type": ctype} if data else {})
+    with opener.open(req, timeout=timeout) as resp:
+        return resp.read()
+
+
+
 def overview_panel(t: Tokens) -> QWidget:
     s = sec_meta.get("overview")
     page, lay, badge = _page(t, s.title)
@@ -467,17 +482,6 @@ def overview_panel(t: Tokens) -> QWidget:
 
         run_async(_work, _apply, page=page, interval=300, name="c8-test-api")
 
-    def _raw_post(path: str, data: bytes | None, ctype: str, timeout: float) -> bytes:
-        """二进制 POST（导出 zip / 导入上传）—— post_json 只回 dict，这里走 urllib。"""
-        import urllib.request as ur # noqa: PLC0415
-        from addr import join_url # noqa: PLC0415
-        from agent_bridge import current_url # noqa: PLC0415
-
-        url = join_url(current_url(), path)
-        opener = ur.build_opener(ur.ProxyHandler({})) # 绕代理（全 ui_qt 口径）
-        req = ur.Request(url, data=data, headers={"Content-Type": ctype} if data else {})
-        with opener.open(req, timeout=timeout) as resp:
-            return resp.read()
 
     def _export() -> None:
         from PySide6.QtWidgets import QFileDialog # noqa: PLC0415
@@ -4679,6 +4683,15 @@ def _model_local_appendix(t: Tokens, page: QWidget) -> None:
     b_probe.clicked.connect(_probe)
 
 
+
+def _fmt_gb(b) -> str:
+    try:
+        return "%.2f GB" % (float(b) / 1073741824.0)
+    except Exception: # noqa: BLE001
+        return "?"
+
+
+
 def _sd_local_appendix(t: Tokens, page: QWidget) -> None:
     """本地生图后端卡（web sdLocal* :8015-8107 全套对齐）。
 
@@ -4692,11 +4705,6 @@ def _sd_local_appendix(t: Tokens, page: QWidget) -> None:
 
     from PySide6.QtWidgets import QComboBox, QProgressBar # noqa: PLC0415
 
-    def _fmt_gb(b) -> str:
-        try:
-            return "%.2f GB" % (float(b) / 1073741824.0)
-        except Exception: # noqa: BLE001
-            return "?"
 
     card = Card(t)
     card.body.addWidget(h2(t, "本地生图后端（可选；装完全在本机跑、不出网）"))

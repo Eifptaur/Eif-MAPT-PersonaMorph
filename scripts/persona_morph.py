@@ -1664,6 +1664,493 @@ def persona_llm_score(card, name=""):
         return {"ok": False, "error": str(e)[:150]}
 
 
+
+def _collect_targets(wc):
+    """按**当前配置**重算 (全部群, 监听目标)。启动、晚接入、配置保存后共用一份，避免三处漂移。
+
+    ⚠️ （网友报「我把群勾选了…概览的状态改变不了」）：这里原来读的是**启动时**的
+    闭包变量 `whitelist` / `deny` / `_pmode` ⇒ 保存配置后即使重算也还是老口径（等于白算）。
+    现在一律现读配置 —— 改了勾选就能立刻生效，不用重启。
+    """
+    try:
+        _cfg_now = get_config() or {}
+    except Exception:
+        _cfg_now = {}
+    _wl = (_cfg_now.get("wechat") or {}).get("group_name_white_list") or []
+    _deny = set((_cfg_now.get("deny") or {}).get("groups") or [])
+    _mode = str((_cfg_now.get("wechat") or {}).get("private_chat") or "owner_only")
+    try:
+        _gs = wc.list_groups() or []
+        # ⛔ 单一来源：为什么没读到群列表 —— 走 `wechat.groups_read_error()`（与启动那一次同一个口径）
+        try:
+            _cap_g = str(wc.groups_read_error() or "")
+        except Exception:
+            _cap_g = ""
+            try:
+                _cap_g = str((getattr(wc, "_cap", {}) or {}).get("groups") or "")
+            except Exception:
+                _cap_g = ""
+    except Exception as _e:
+        log.warning("取群列表失败：%s", _e)
+        _gs, _cap_g = [], "%s: %s" % (type(_e).__name__, str(_e)[:60])
+    _res = listen_targets.resolve_groups(_gs, _wl, _deny) # W-1：按 wxid 认群（同上）
+    _t = _res["groups"]
+    # ⛔ 
+    #   ①**目标为 0 这件事在这里现算**（原来只在启动那一次写 `_ATTACH["targets_zero"]=True`，
+    #     是个**单向闩锁**：启动时微信没开（最常见）就永久报警，即便群列表后来恢复了 ——
+    #     归因与事实矛盾）；
+    #   ②`describe` 的**真因**（群列表读失败）在这里也要传 —— 晚接入/配置保存走的是本函数，
+    #     原来只有启动那一次传真因（审计点名"归因一致性三处"）；
+    #   ③“刷新群列表”之后要能走到这里（见 webui 的 refresh 回调）。
+    _read_failed = ""
+    if not wc:
+        _read_failed = "微信还没接上"
+    elif str(_cap_g).startswith("fail"):
+        _read_failed = str(_cap_g)[5:140]
+    try:
+        log.info("%s", listen_targets.describe(_t, _res, read_failed=_read_failed))
+    except Exception:
+        pass
+    try:
+        _ATTACH["targets_zero"] = bool(not _t)
+        if not _t:
+            _why = ("（群列表这次**没读到**：%s）" % _read_failed) if _read_failed else ""
+            log.warning("⚠️ 监听目标 0 个 ⇒ **群里 @ 它也不会回**：去控制台「微信」面板勾选要听的群，"
+                        "或把「群名白名单」留空＝监听所有群。%s", _why)
+    except Exception:
+        pass
+    try:
+        _p2 = [] if _mode == "off" else (wc.list_private_targets() or [])
+    except Exception as _e:
+        log.warning("私聊目标发现失败（不影响群）：%s", _e)
+        _p2 = []
+    if _p2:
+        _t += [{"name": c.get("name") or c.get("wxid"), "wxid": c.get("wxid")} for c in _p2]
+    return _gs, _t
+
+
+def _tool_llm_count(usage, system=""):
+    """把工具类 LLM 调用（评分/补足/总结/测试等任一 LLM 调用）记入 tool_usage.json（其它工具消耗）。"""
+    try:
+        import json as _json
+        u = usage or {}
+        toks = int(u.get("total_tokens") or u.get("prompt_tokens") or 0)
+        if not toks:
+            return
+        cost = 0.0
+        try:
+            ptok = int(u.get("prompt_tokens") or 0)
+            ctok = int(u.get("completion_tokens") or 0)
+            cost = (ptok * 0.000002 + ctok * 0.000008)
+        except Exception:
+            pass
+        p = os.path.join(ROOT, "data", "tool_usage.json")
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                d = _json.load(f)
+        except Exception:
+            d = {}
+        if not d.get("base_cost"):
+            # 首次记账（本进程启动后第一条）→ 基准=这条之前的值（0）
+            d["base_cost"] = 0.0
+            d["base_tokens"] = 0
+        d["tokens"] = int(d.get("tokens") or 0) + toks
+        d["cost"] = round(float(d.get("cost") or 0) + cost, 4)
+        d["n"] = int(d.get("n") or 0) + 1
+        d["last"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        with open(p, "w", encoding="utf-8") as f:
+            _json.dump(d, f, ensure_ascii=False, indent=1)
+    except Exception:
+        pass
+
+
+def test_api_fn():
+    start = time.time()
+    resp = chat_completion([{"role": "user", "content": "ping，请只回复 pong"}])
+    latency = int((time.time() - start) * 1000)
+    return {"ok": True, "latency_ms": latency, "model": resp.get("model"),
+            "reply": str(resp.get("message", {}).get("content", ""))[:200]}
+
+
+def balance_fn():
+    """余额查询（叠一层**显示伪装**）。
+
+    把金额改掉，但是实际上还是那么多」⇒ 只改返回给界面的数字（`ui.balance_display`：
+    real / hide / fake），**真实余额与账目一律不动**。逻辑在 `agent/balance_view.py`（可单测）。
+    """
+    try:
+        _b = query_balance()
+    except Exception as _e:
+        return {"error": str(_e)[:120]}
+    try:
+        from agent.balance_view import mask as _mask
+        _ui = (get_config() or {}).get("ui") or {}
+        return _mask(_b, _ui.get("balance_display") or "real", _ui.get("balance_fake") or "")
+    except Exception as _e2:
+        log.debug("余额显示伪装失败（照实返回）：%s", _e2)
+        return _b
+
+
+def persona_scores_fn():
+    """角色评分表：系统自动贴合分（scripts/persona_check 同算法）+ 用户已打分。"""
+    try:
+        from agent.persona import PERSONAS
+        import sys as _sys
+        _sys.path.insert(0, ROOT)
+        from scripts import persona_check # 保证算法单一来源
+        ratings = {}
+        try:
+            import json as _json
+            with open(os.path.join(ROOT, "data", "persona_ratings.json"), "r", encoding="utf-8") as f:
+                ratings = _json.load(f)
+        except Exception:
+            ratings = {}
+        rows = []
+        for k, c in PERSONAS.items():
+            r = persona_check.evaluate(k, c)
+            u = ratings.get(k) or {}
+            rows.append({"key": k, "name": c.get("name") or k,
+                         "sys": r["score"], "silent": r["silent"],
+                         "user": u.get("score"), "model": u.get("model"),
+                         "model_reason": u.get("model_reason", ""),
+                         "note": u.get("note", "")})
+        # 自定义卡（编辑区/自定义人设）的模型分在评分表中同步显示（模型评分按钮写入 __custom__）
+        cu = ratings.get("__custom__") or {}
+        if cu.get("model") is not None:
+            rows.append({"key": "__custom__", "name": "自定义卡（编辑区）",
+                         "sys": 0, "silent": False,
+                         "user": cu.get("score"), "model": cu.get("model"),
+                         "model_reason": cu.get("model_reason", ""), "note": cu.get("note", "")})
+        rows.sort(key=lambda x: -x["sys"])
+        return {"ok": True, "rows": rows, "total": len(rows)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def persona_rate_fn(key, score, note=""):
+    """用户打分（1-5）落盘 data/persona_ratings.json。"""
+    try:
+        import json as _json
+        p = os.path.join(ROOT, "data", "persona_ratings.json")
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                ratings = _json.load(f)
+        except Exception:
+            ratings = {}
+        try:
+            s = int(score) if score not in (None, "") else None
+            s = s if s is None else max(1, min(5, s))
+        except Exception:
+            s = None
+        ratings[key] = {"score": s, "note": str(note or "")[:200],
+                        "ts": time.strftime("%Y-%m-%d %H:%M:%S")}
+        with open(p, "w", encoding="utf-8") as f:
+            _json.dump(ratings, f, ensure_ascii=False, indent=1)
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def _persona_llm_score(card, name=""):
+    """与「模型评分」按钮同一把尺子——实现已提到模块级 persona_llm_score（判据直接调真身）。"""
+    return persona_llm_score(card, name)
+
+
+def community_export_fn(kind="holyshits"):
+    """导出：金句/意见/聊天记录 → 本地文件（export_dir 可配）。"""
+    try:
+        from agent.scoring import seed_library
+    except Exception:
+        seed_library = lambda: []
+    try:
+        cfg = get_config().get("community", {}) or {}
+        out_dir = os.path.join(ROOT, str(cfg.get("export_dir") or "exports"))
+        os.makedirs(out_dir, exist_ok=True)
+        ts = time.strftime("%Y%m%d-%H%M%S")
+        if kind == "holyshits":
+            lines = seed_library()
+            path = os.path.join(out_dir, "holyshits-%s.txt" % ts)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("# 金句（种子库，含内置+导入）\n" + "\n".join(lines))
+            return {"ok": True, "path": path, "count": len(lines)}
+        if kind == "feedback":
+            # 意见反馈导出（feedback 复述存到 sessions.jsonl 里，简化：导出会话里的反馈）
+            path = os.path.join(out_dir, "feedback-%s.json" % ts)
+            rows = []
+            try:
+                import glob
+                for fp in glob.glob(os.path.join(ROOT, "data", "sessions", "*.jsonl")):
+                    with open(fp, "r", encoding="utf-8", errors="ignore") as f:
+                        for line in f:
+                            try:
+                                j = json.loads(line)
+                            except Exception:
+                                continue
+                            if j.get("feedbacks"):
+                                rows.append({"ts": j.get("ts"), "chat": j.get("chat_name"),
+                                             "feedbacks": j.get("feedbacks")})
+            except Exception:
+                pass
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(rows, f, ensure_ascii=False, indent=1)
+            return {"ok": True, "path": path, "count": len(rows)}
+        if kind == "persona_ratings":
+            # 角色评分表导出（系统分 + 用户分；可再上传到社区）
+            try:
+                with open(os.path.join(ROOT, "data", "persona_ratings.json"), "r", encoding="utf-8") as f:
+                    ratings = json.load(f)
+            except Exception:
+                ratings = {}
+            try:
+                from scripts import persona_check
+                from agent.persona import PERSONAS
+                rows = []
+                for k, c in PERSONAS.items():
+                    r = persona_check.evaluate(k, c)
+                    u = ratings.get(k) or {}
+                    rows.append({"key": k, "name": c.get("name") or k, "sys": r["score"],
+                                 "user": u.get("score"), "note": u.get("note", "")})
+            except Exception:
+                rows = []
+            path = os.path.join(out_dir, "persona_ratings-%s.json" % ts)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(rows, f, ensure_ascii=False, indent=1)
+            return {"ok": True, "path": path, "count": len(rows)}
+        # 聊天记录导出
+        path = os.path.join(out_dir, "messages-%s.json" % ts)
+        export_chats = {}
+        try:
+            import glob
+            for fp in glob.glob(os.path.join(ROOT, "data", "messages", "*.json")):
+                try:
+                    with open(fp, "r", encoding="utf-8") as f:
+                        d = json.load(f)
+                    if isinstance(d, dict) and d.get("messages"):
+                        # ⛔ S-1：档案文件名已带哈希尾巴 ⇒ 用档案里的 chat_key 当键（可读、稳定），
+                        # 老档案/读不到才退回文件名。
+                        export_chats[str(d.get("chat_key") or os.path.basename(fp))] = d.get("messages")
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(export_chats, f, ensure_ascii=False, indent=1)
+        return {"ok": True, "path": path, "count": sum(len(v) for v in export_chats.values())}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def community_upload_fn(data):
+    """社区分享：POST 到可配置 URL（upload_enabled + 对应 URL，默认关）→ 仅提示未配置。"""
+    try:
+        cfg = get_config().get("community", {}) or {}
+        if not cfg.get("upload_enabled"):
+            return {"ok": False, "error": "社区上传未开启（community.upload_enabled=false）"}
+        kind = str(data.get("kind") or "")
+        url = str(cfg.get("holyshits_upload_url") or "") if kind == "holyshits" else str(cfg.get("feedback_upload_url") or "")
+        if not url:
+            return {"ok": False, "error": "未配置 %s 上传 URL" % kind}
+        import requests as _req
+        payload = data.get("payload") or {}
+        r = _req.post(url, json=payload, timeout=10)
+        r.raise_for_status()
+        return {"ok": True, "resp": r.text[:200]}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def scoring_import_fn(text):
+    """导入金句进评分种子库。"""
+    try:
+        from agent.scoring import import_seeds
+        n = import_seeds(text)
+        return {"ok": True, "imported": n}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def _recalibrate_ui(orch):
+    """控制台「重新标定」：接管鼠标一次，自动检测微信侧栏图标序列并写 ui_layout.json。"""
+    try:
+        from agent import wechat_ui
+        gui = orch.wechat._get_gui()
+        lay = wechat_ui.calibrate_ui(gui)
+        if lay.get("sidebar_items"):
+            return {"ok": True, "count": len(lay["sidebar_items"])}
+        return {"ok": False, "error": "标定未检测到侧栏图标（微信窗口可见？请确保微信在前台后重试）"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def _open_export_path(path):
+    """打开导出文件/文件夹所在位置（不存在时创建目录；绝对/相对均支持）。"""
+    try:
+        import os
+        import subprocess
+        p = str(path or "").strip() or "exports"
+        if not os.path.isabs(p):
+            p = os.path.join(ROOT, p)
+        if os.path.isdir(p):
+            os.makedirs(p, exist_ok=True)
+            os.startfile(p)
+            return {"ok": True}
+        d = os.path.dirname(p)
+        if not os.path.isdir(d):
+            os.makedirs(d, exist_ok=True)
+        if os.path.exists(p):
+            subprocess.Popen(["explorer", "/select,", os.path.abspath(p)],
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        else:
+            os.startfile(d)
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+
+def persona_score_custom_fn(text, llm=False):
+    """自定义角色卡评分：默认本地（零 token）；llm=True 时交给模型结合角色设定评分。
+    分数全部来自对卡文本的实际分析（口头禅/口吻/AI 腔/占位符等），非凭空。"""
+    try:
+        if not (text or "").strip():
+            return {"ok": False, "error": "角色文本为空"}
+        if llm:
+            sc = _persona_llm_score(text)
+            if not sc.get("ok"):
+                return {"ok": False, "error": sc.get("error", "评分失败")}
+            score = sc["score"]
+            reason = sc["reason"]
+            # 写回评分表（模型分独立字段，UI 卡片显示）
+            try:
+                import json as _j2
+                _rp = os.path.join(ROOT, "data", "persona_ratings.json")
+                try:
+                    with open(_rp, "r", encoding="utf-8") as f:
+                        _rts = _j2.load(f)
+                except Exception:
+                    _rts = {}
+                _cur = dict(_rts.get("__custom__") or {})
+                _cur["model"] = score
+                _cur["model_reason"] = reason
+                _rts["__custom__"] = _cur
+                with open(_rp, "w", encoding="utf-8") as f:
+                    _j2.dump(_rts, f, ensure_ascii=False, indent=1)
+            except Exception:
+                pass
+            return {"ok": True, "score": score, "reason": reason,
+                    "dims": sc["dims"], "via": "llm"}
+        from scripts import persona_check
+        r = persona_check.score_text(text)
+        return {"ok": True, "score": r["score"], "reason": persona_check.fit_desc(r), "via": "local",
+                "detail": {"chars": r["chars"], "quotes": r["quote"],
+                           "silent": r["silent"]}}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def persona_ai_enrich_fn(name, text="", rounds=1):
+    """模型补足（轮数可调）：每轮=「先确认角色本人 + 引用角色真实原话」→按人设重写→严格评分→分升则下一轮。
+    评分与"模型评分"按钮同一把尺子（RULES_TEXT 唯一权威细则，含网梗重罚/精度铁律/从严基线/缺陷压分）；
+    最终文本再做 3 次严格复评取中位（抑制忽高忽低），分数永不虚高。"""
+    try:
+        if not (name or "").strip():
+            return {"ok": False, "error": "请先填角色名"}
+        from agent.llm import chat_completion
+        cur = (text or "").strip()
+        # 联网检索该角色第一手真实资料（语录/访谈/事迹摘要）；补足与评分都以它为唯一事实来源
+        web_notes = ""
+        try:
+            from agent import web_search as _ws
+            _items = []
+            for _q in (name + " 经典语录 名言", name + " 访谈 原话 言论"):
+                try:
+                    _r = _ws.web_search(_q)
+                    _items += (_r or {}).get("results") or (_r or {}).get("items") or []
+                except Exception:
+                    pass
+            _lines = []
+            for _it in _items[:12]:
+                for _f in ("snippet", "title"):
+                    _seg = str(_it.get(_f) or "").strip()
+                    if _seg:
+                        _lines.append(_seg[:180])
+            _lines = _lines[:12]
+            if _lines:
+                web_notes = "\n".join("· " + l for l in _lines)
+        except Exception:
+            pass
+        web_block = ("\n【真实资料（联网检索结果原文摘录，作为唯一事实来源）】\n"
+                     + (web_notes or "（未检索到该角色第一手资料——补足时严禁编造台词/事迹，只能按口吻写并标注（拟））")
+                     + "\n补足与评分只基于以上真实资料与本角色卡；超出真实资料的台词/事迹一律视为编造 → 0 分处理。\n")
+        last_score = None
+        trace = []
+        for rnd in range(1, max(1, min(3, int(rounds or 1))) + 1):
+            prompt = (
+                "你是角色塑造专家。请让下面的机器人角色卡**更像角色本人脱口而出**——最高标准是「就是本人！」\n"
+                + web_block +
+                "【第一步·先认识本人】凭你对该角色的真实认知（游戏/动画/小说/影视原台词），先写出："
+                "1) 他是谁（作品+身份）；2) 他最要说出口的【真实台词/口头禅 3~5 条】——必须是他在原作品里说过的原话或原话样式（例：「Rules are made to be broken… like buildings!」），"
+                "**禁止自编台词冒充原话**；若你不确定原话，写「按其口吻」并直接按该角色语气造，但标注（拟）。\n"
+                "【第二步·重写卡片】只做三件事：\n"
+                "① 口头禅/台词改用【第一步的原话】为骨架（能精确引用就精确引用，含翻译+原语）；\n"
+                "② 按该角色的说话习惯重写「说话规则」（短句/分条/被@必回/不用Markdown）；\n"
+                "③ 重写 3 个对话示例（群友在吗/今天好累/再来一句），每句像本人原话口吻。\n"
+                # 已知现象
+                # 而且你也要尽量把这个功能导向那个方向」⇒ 补足只许"加固辨识度"，不许把角色改成通用人格。
+                "【第三步·守住原卡的辨识度（硬要求）】当前卡里**任何已经确认的真实台词/口癖/称呼方式都必须保留原样**"
+                "（那是这个角色的指纹）；补充可以，替换成自造内容不行。改完之后逐条自检："
+                "把名字盖住，还能认出是谁吗？认不出说明被改成了通用人格，重做。\n"
+                "禁止：不要围绕夸奖/评分/逐条打分做优化；不要把角色改得不像本人以迎合任何标准；"
+                "不要写通用套话；不要给古装/名著/严肃/沉重角色塞当代网络梗（V我50/6/草/yyds/退钱/先吃饭 等任何流行语都不行）。直接输出完整新角色卡（纯文本，含 # 角色卡：<名>）。\n\n"
+                "角色名：%s\n当前卡：\n%s" % (name, cur[:2200])
+            )
+            r = chat_completion([{"role": "user", "content": prompt}])
+            _tool_llm_count(r.get("usage"))
+            card = ((r.get("message") or {}).get("content") or "").strip()
+            if len(card) < 120:
+                break
+            # 去掉模型输出的"第一步/第二步"脚手架，只保留最终角色卡
+            if "第一步" in card or "第二步" in card:
+                import re as _re
+                _idx = card.rfind("# 角色卡：")
+                if _idx > 0:
+                    card = card[_idx:].strip()
+                else:
+                    _m2 = _re.search(r"(?ms)(?:第二步[^\n]*)\n{1,3}", card)
+                    if _m2:
+                        card = card[_m2.end():].strip()
+            from agent.persona_enrich import enrich as _enrich
+            card = _enrich(card)
+            # 补足轮次评分：与「模型评分」同一严格尺子（网梗/模板/占位缺陷必须如实压分）
+            sc = _persona_llm_score(card, name)
+            score = sc.get("score") if sc.get("ok") else None
+            trace.append({"round": rnd, "score": score, "chars": len(card)})
+            if score is not None and last_score is not None and score <= last_score:
+                # 分数未升 → 保留上一轮结果，停止
+                break
+            last_score = score
+            cur = card
+        # 最终复评（3 次中位）：抑制单次评分波动（忽高忽低）
+        med = []
+        for _ in range(3):
+            sc = _persona_llm_score(cur, name)
+            if sc.get("ok"):
+                med.append(sc)
+        final_score = None
+        if med:
+            med.sort(key=lambda x: x["score"])
+            final_score = med[len(med) // 2]
+            last_score = final_score["score"]
+        return {"ok": True, "text": cur,
+                "score": last_score,
+                "reason": final_score["reason"] if final_score else "（暂无）",
+                "rounds_done": len(trace), "trace": trace,
+                "note": "（最终分=3次严格复评中位，不含虚高）" if final_score else ""}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+
 def main():
     # 注意：不要在 pythonw 下调用 os.system("chcp")——会弹出控制台窗口（闪窗）。
     # 代码已用 UTF-8 模式运行（-X utf8 / 编码头），无需 chcp。
@@ -1860,68 +2347,6 @@ def main():
         log.info("私聊档位=off ⇒ 不监听私聊")
     log.info("监听目标合计 %d 个（群 %d + 私聊 %d）", len(targets), len(targets) - len(_pt), len(_pt))
 
-    def _collect_targets(wc):
-        """按**当前配置**重算 (全部群, 监听目标)。启动、晚接入、配置保存后共用一份，避免三处漂移。
-
-        ⚠️ （网友报「我把群勾选了…概览的状态改变不了」）：这里原来读的是**启动时**的
-        闭包变量 `whitelist` / `deny` / `_pmode` ⇒ 保存配置后即使重算也还是老口径（等于白算）。
-        现在一律现读配置 —— 改了勾选就能立刻生效，不用重启。
-        """
-        try:
-            _cfg_now = get_config() or {}
-        except Exception:
-            _cfg_now = {}
-        _wl = (_cfg_now.get("wechat") or {}).get("group_name_white_list") or []
-        _deny = set((_cfg_now.get("deny") or {}).get("groups") or [])
-        _mode = str((_cfg_now.get("wechat") or {}).get("private_chat") or "owner_only")
-        try:
-            _gs = wc.list_groups() or []
-            # ⛔ 单一来源：为什么没读到群列表 —— 走 `wechat.groups_read_error()`（与启动那一次同一个口径）
-            try:
-                _cap_g = str(wc.groups_read_error() or "")
-            except Exception:
-                _cap_g = ""
-                try:
-                    _cap_g = str((getattr(wc, "_cap", {}) or {}).get("groups") or "")
-                except Exception:
-                    _cap_g = ""
-        except Exception as _e:
-            log.warning("取群列表失败：%s", _e)
-            _gs, _cap_g = [], "%s: %s" % (type(_e).__name__, str(_e)[:60])
-        _res = listen_targets.resolve_groups(_gs, _wl, _deny) # W-1：按 wxid 认群（同上）
-        _t = _res["groups"]
-        # ⛔ 
-        #   ①**目标为 0 这件事在这里现算**（原来只在启动那一次写 `_ATTACH["targets_zero"]=True`，
-        #     是个**单向闩锁**：启动时微信没开（最常见）就永久报警，即便群列表后来恢复了 ——
-        #     归因与事实矛盾）；
-        #   ②`describe` 的**真因**（群列表读失败）在这里也要传 —— 晚接入/配置保存走的是本函数，
-        #     原来只有启动那一次传真因（审计点名"归因一致性三处"）；
-        #   ③“刷新群列表”之后要能走到这里（见 webui 的 refresh 回调）。
-        _read_failed = ""
-        if not wc:
-            _read_failed = "微信还没接上"
-        elif str(_cap_g).startswith("fail"):
-            _read_failed = str(_cap_g)[5:140]
-        try:
-            log.info("%s", listen_targets.describe(_t, _res, read_failed=_read_failed))
-        except Exception:
-            pass
-        try:
-            _ATTACH["targets_zero"] = bool(not _t)
-            if not _t:
-                _why = ("（群列表这次**没读到**：%s）" % _read_failed) if _read_failed else ""
-                log.warning("⚠️ 监听目标 0 个 ⇒ **群里 @ 它也不会回**：去控制台「微信」面板勾选要听的群，"
-                            "或把「群名白名单」留空＝监听所有群。%s", _why)
-        except Exception:
-            pass
-        try:
-            _p2 = [] if _mode == "off" else (wc.list_private_targets() or [])
-        except Exception as _e:
-            log.warning("私聊目标发现失败（不影响群）：%s", _e)
-            _p2 = []
-        if _p2:
-            _t += [{"name": c.get("name") or c.get("wxid"), "wxid": c.get("wxid")} for c in _p2]
-        return _gs, _t
 
     def _reset_watermark():
         """把每个监听群的「已处理水位」对齐到当前最新（**用户零操作版**：不删文件、不用重启）。
@@ -1988,39 +2413,6 @@ def main():
     # ── Web 控制台 ─────────────────────────────────────────────────────
     target_wxids = {g["wxid"] for g in targets}
 
-    def _tool_llm_count(usage, system=""):
-        """把工具类 LLM 调用（评分/补足/总结/测试等任一 LLM 调用）记入 tool_usage.json（其它工具消耗）。"""
-        try:
-            import json as _json
-            u = usage or {}
-            toks = int(u.get("total_tokens") or u.get("prompt_tokens") or 0)
-            if not toks:
-                return
-            cost = 0.0
-            try:
-                ptok = int(u.get("prompt_tokens") or 0)
-                ctok = int(u.get("completion_tokens") or 0)
-                cost = (ptok * 0.000002 + ctok * 0.000008)
-            except Exception:
-                pass
-            p = os.path.join(ROOT, "data", "tool_usage.json")
-            try:
-                with open(p, "r", encoding="utf-8") as f:
-                    d = _json.load(f)
-            except Exception:
-                d = {}
-            if not d.get("base_cost"):
-                # 首次记账（本进程启动后第一条）→ 基准=这条之前的值（0）
-                d["base_cost"] = 0.0
-                d["base_tokens"] = 0
-            d["tokens"] = int(d.get("tokens") or 0) + toks
-            d["cost"] = round(float(d.get("cost") or 0) + cost, 4)
-            d["n"] = int(d.get("n") or 0) + 1
-            d["last"] = time.strftime("%Y-%m-%d %H:%M:%S")
-            with open(p, "w", encoding="utf-8") as f:
-                _json.dump(d, f, ensure_ascii=False, indent=1)
-        except Exception:
-            pass
 
     # 注册全局用量记账：任何 LLM 调用（评分/补足/摘要/测试…）都进"其它工具消耗"（本次=本进程启动以来）
     from agent.llm import set_usage_hook as _set_hook
@@ -2123,30 +2515,7 @@ def main():
         except Exception as e:
             return {"error": str(e)[:120]}
 
-    def test_api_fn():
-        start = time.time()
-        resp = chat_completion([{"role": "user", "content": "ping，请只回复 pong"}])
-        latency = int((time.time() - start) * 1000)
-        return {"ok": True, "latency_ms": latency, "model": resp.get("model"),
-                "reply": str(resp.get("message", {}).get("content", ""))[:200]}
 
-    def balance_fn():
-        """余额查询（叠一层**显示伪装**）。
-
-        把金额改掉，但是实际上还是那么多」⇒ 只改返回给界面的数字（`ui.balance_display`：
-        real / hide / fake），**真实余额与账目一律不动**。逻辑在 `agent/balance_view.py`（可单测）。
-        """
-        try:
-            _b = query_balance()
-        except Exception as _e:
-            return {"error": str(_e)[:120]}
-        try:
-            from agent.balance_view import mask as _mask
-            _ui = (get_config() or {}).get("ui") or {}
-            return _mask(_b, _ui.get("balance_display") or "real", _ui.get("balance_fake") or "")
-        except Exception as _e2:
-            log.debug("余额显示伪装失败（照实返回）：%s", _e2)
-            return _b
 
     # 一键体检取消标志（前端「停止检测」设置；体检循环每步检查）
     _selfcheck_cancel = [False]
@@ -2155,207 +2524,6 @@ def main():
         _selfcheck_cancel[0] = True
 
 
-    def persona_scores_fn():
-        """角色评分表：系统自动贴合分（scripts/persona_check 同算法）+ 用户已打分。"""
-        try:
-            from agent.persona import PERSONAS
-            import sys as _sys
-            _sys.path.insert(0, ROOT)
-            from scripts import persona_check # 保证算法单一来源
-            ratings = {}
-            try:
-                import json as _json
-                with open(os.path.join(ROOT, "data", "persona_ratings.json"), "r", encoding="utf-8") as f:
-                    ratings = _json.load(f)
-            except Exception:
-                ratings = {}
-            rows = []
-            for k, c in PERSONAS.items():
-                r = persona_check.evaluate(k, c)
-                u = ratings.get(k) or {}
-                rows.append({"key": k, "name": c.get("name") or k,
-                             "sys": r["score"], "silent": r["silent"],
-                             "user": u.get("score"), "model": u.get("model"),
-                             "model_reason": u.get("model_reason", ""),
-                             "note": u.get("note", "")})
-            # 自定义卡（编辑区/自定义人设）的模型分在评分表中同步显示（模型评分按钮写入 __custom__）
-            cu = ratings.get("__custom__") or {}
-            if cu.get("model") is not None:
-                rows.append({"key": "__custom__", "name": "自定义卡（编辑区）",
-                             "sys": 0, "silent": False,
-                             "user": cu.get("score"), "model": cu.get("model"),
-                             "model_reason": cu.get("model_reason", ""), "note": cu.get("note", "")})
-            rows.sort(key=lambda x: -x["sys"])
-            return {"ok": True, "rows": rows, "total": len(rows)}
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
-
-    def persona_rate_fn(key, score, note=""):
-        """用户打分（1-5）落盘 data/persona_ratings.json。"""
-        try:
-            import json as _json
-            p = os.path.join(ROOT, "data", "persona_ratings.json")
-            try:
-                with open(p, "r", encoding="utf-8") as f:
-                    ratings = _json.load(f)
-            except Exception:
-                ratings = {}
-            try:
-                s = int(score) if score not in (None, "") else None
-                s = s if s is None else max(1, min(5, s))
-            except Exception:
-                s = None
-            ratings[key] = {"score": s, "note": str(note or "")[:200],
-                            "ts": time.strftime("%Y-%m-%d %H:%M:%S")}
-            with open(p, "w", encoding="utf-8") as f:
-                _json.dump(ratings, f, ensure_ascii=False, indent=1)
-            return {"ok": True}
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
-
-    def _persona_llm_score(card, name=""):
-        """与「模型评分」按钮同一把尺子——实现已提到模块级 persona_llm_score（判据直接调真身）。"""
-        return persona_llm_score(card, name)
-
-    def persona_score_custom_fn(text, llm=False):
-        """自定义角色卡评分：默认本地（零 token）；llm=True 时交给模型结合角色设定评分。
-        分数全部来自对卡文本的实际分析（口头禅/口吻/AI 腔/占位符等），非凭空。"""
-        try:
-            if not (text or "").strip():
-                return {"ok": False, "error": "角色文本为空"}
-            if llm:
-                sc = _persona_llm_score(text)
-                if not sc.get("ok"):
-                    return {"ok": False, "error": sc.get("error", "评分失败")}
-                score = sc["score"]
-                reason = sc["reason"]
-                # 写回评分表（模型分独立字段，UI 卡片显示）
-                try:
-                    import json as _j2
-                    _rp = os.path.join(ROOT, "data", "persona_ratings.json")
-                    try:
-                        with open(_rp, "r", encoding="utf-8") as f:
-                            _rts = _j2.load(f)
-                    except Exception:
-                        _rts = {}
-                    _cur = dict(_rts.get("__custom__") or {})
-                    _cur["model"] = score
-                    _cur["model_reason"] = reason
-                    _rts["__custom__"] = _cur
-                    with open(_rp, "w", encoding="utf-8") as f:
-                        _j2.dump(_rts, f, ensure_ascii=False, indent=1)
-                except Exception:
-                    pass
-                return {"ok": True, "score": score, "reason": reason,
-                        "dims": sc["dims"], "via": "llm"}
-            from scripts import persona_check
-            r = persona_check.score_text(text)
-            return {"ok": True, "score": r["score"], "reason": persona_check.fit_desc(r), "via": "local",
-                    "detail": {"chars": r["chars"], "quotes": r["quote"],
-                               "silent": r["silent"]}}
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
-
-    def persona_ai_enrich_fn(name, text="", rounds=1):
-        """模型补足（轮数可调）：每轮=「先确认角色本人 + 引用角色真实原话」→按人设重写→严格评分→分升则下一轮。
-        评分与"模型评分"按钮同一把尺子（RULES_TEXT 唯一权威细则，含网梗重罚/精度铁律/从严基线/缺陷压分）；
-        最终文本再做 3 次严格复评取中位（抑制忽高忽低），分数永不虚高。"""
-        try:
-            if not (name or "").strip():
-                return {"ok": False, "error": "请先填角色名"}
-            from agent.llm import chat_completion
-            cur = (text or "").strip()
-            # 联网检索该角色第一手真实资料（语录/访谈/事迹摘要）；补足与评分都以它为唯一事实来源
-            web_notes = ""
-            try:
-                from agent import web_search as _ws
-                _items = []
-                for _q in (name + " 经典语录 名言", name + " 访谈 原话 言论"):
-                    try:
-                        _r = _ws.web_search(_q)
-                        _items += (_r or {}).get("results") or (_r or {}).get("items") or []
-                    except Exception:
-                        pass
-                _lines = []
-                for _it in _items[:12]:
-                    for _f in ("snippet", "title"):
-                        _seg = str(_it.get(_f) or "").strip()
-                        if _seg:
-                            _lines.append(_seg[:180])
-                _lines = _lines[:12]
-                if _lines:
-                    web_notes = "\n".join("· " + l for l in _lines)
-            except Exception:
-                pass
-            web_block = ("\n【真实资料（联网检索结果原文摘录，作为唯一事实来源）】\n"
-                         + (web_notes or "（未检索到该角色第一手资料——补足时严禁编造台词/事迹，只能按口吻写并标注（拟））")
-                         + "\n补足与评分只基于以上真实资料与本角色卡；超出真实资料的台词/事迹一律视为编造 → 0 分处理。\n")
-            last_score = None
-            trace = []
-            for rnd in range(1, max(1, min(3, int(rounds or 1))) + 1):
-                prompt = (
-                    "你是角色塑造专家。请让下面的机器人角色卡**更像角色本人脱口而出**——最高标准是「就是本人！」\n"
-                    + web_block +
-                    "【第一步·先认识本人】凭你对该角色的真实认知（游戏/动画/小说/影视原台词），先写出："
-                    "1) 他是谁（作品+身份）；2) 他最要说出口的【真实台词/口头禅 3~5 条】——必须是他在原作品里说过的原话或原话样式（例：「Rules are made to be broken… like buildings!」），"
-                    "**禁止自编台词冒充原话**；若你不确定原话，写「按其口吻」并直接按该角色语气造，但标注（拟）。\n"
-                    "【第二步·重写卡片】只做三件事：\n"
-                    "① 口头禅/台词改用【第一步的原话】为骨架（能精确引用就精确引用，含翻译+原语）；\n"
-                    "② 按该角色的说话习惯重写「说话规则」（短句/分条/被@必回/不用Markdown）；\n"
-                    "③ 重写 3 个对话示例（群友在吗/今天好累/再来一句），每句像本人原话口吻。\n"
-                    # 已知现象
-                    # 而且你也要尽量把这个功能导向那个方向」⇒ 补足只许"加固辨识度"，不许把角色改成通用人格。
-                    "【第三步·守住原卡的辨识度（硬要求）】当前卡里**任何已经确认的真实台词/口癖/称呼方式都必须保留原样**"
-                    "（那是这个角色的指纹）；补充可以，替换成自造内容不行。改完之后逐条自检："
-                    "把名字盖住，还能认出是谁吗？认不出说明被改成了通用人格，重做。\n"
-                    "禁止：不要围绕夸奖/评分/逐条打分做优化；不要把角色改得不像本人以迎合任何标准；"
-                    "不要写通用套话；不要给古装/名著/严肃/沉重角色塞当代网络梗（V我50/6/草/yyds/退钱/先吃饭 等任何流行语都不行）。直接输出完整新角色卡（纯文本，含 # 角色卡：<名>）。\n\n"
-                    "角色名：%s\n当前卡：\n%s" % (name, cur[:2200])
-                )
-                r = chat_completion([{"role": "user", "content": prompt}])
-                _tool_llm_count(r.get("usage"))
-                card = ((r.get("message") or {}).get("content") or "").strip()
-                if len(card) < 120:
-                    break
-                # 去掉模型输出的"第一步/第二步"脚手架，只保留最终角色卡
-                if "第一步" in card or "第二步" in card:
-                    import re as _re
-                    _idx = card.rfind("# 角色卡：")
-                    if _idx > 0:
-                        card = card[_idx:].strip()
-                    else:
-                        _m2 = _re.search(r"(?ms)(?:第二步[^\n]*)\n{1,3}", card)
-                        if _m2:
-                            card = card[_m2.end():].strip()
-                from agent.persona_enrich import enrich as _enrich
-                card = _enrich(card)
-                # 补足轮次评分：与「模型评分」同一严格尺子（网梗/模板/占位缺陷必须如实压分）
-                sc = _persona_llm_score(card, name)
-                score = sc.get("score") if sc.get("ok") else None
-                trace.append({"round": rnd, "score": score, "chars": len(card)})
-                if score is not None and last_score is not None and score <= last_score:
-                    # 分数未升 → 保留上一轮结果，停止
-                    break
-                last_score = score
-                cur = card
-            # 最终复评（3 次中位）：抑制单次评分波动（忽高忽低）
-            med = []
-            for _ in range(3):
-                sc = _persona_llm_score(cur, name)
-                if sc.get("ok"):
-                    med.append(sc)
-            final_score = None
-            if med:
-                med.sort(key=lambda x: x["score"])
-                final_score = med[len(med) // 2]
-                last_score = final_score["score"]
-            return {"ok": True, "text": cur,
-                    "score": last_score,
-                    "reason": final_score["reason"] if final_score else "（暂无）",
-                    "rounds_done": len(trace), "trace": trace,
-                    "note": "（最终分=3次严格复评中位，不含虚高）" if final_score else ""}
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
 
     def selfcheck_fn(mode="full"):
         """一键体检：mode="full" = 环境/配置/点击 + 程序鼠标操作检验（约 40~70 秒）；
@@ -2892,151 +3060,10 @@ def main():
         save_config(cfg)
         log.info("已自动生成控制台访问口令（%d 位，保存在 config.json 的 server.token）", len(server_cfg["token"]))
 
-    def community_export_fn(kind="holyshits"):
-        """导出：金句/意见/聊天记录 → 本地文件（export_dir 可配）。"""
-        try:
-            from agent.scoring import seed_library
-        except Exception:
-            seed_library = lambda: []
-        try:
-            cfg = get_config().get("community", {}) or {}
-            out_dir = os.path.join(ROOT, str(cfg.get("export_dir") or "exports"))
-            os.makedirs(out_dir, exist_ok=True)
-            ts = time.strftime("%Y%m%d-%H%M%S")
-            if kind == "holyshits":
-                lines = seed_library()
-                path = os.path.join(out_dir, "holyshits-%s.txt" % ts)
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write("# 金句（种子库，含内置+导入）\n" + "\n".join(lines))
-                return {"ok": True, "path": path, "count": len(lines)}
-            if kind == "feedback":
-                # 意见反馈导出（feedback 复述存到 sessions.jsonl 里，简化：导出会话里的反馈）
-                path = os.path.join(out_dir, "feedback-%s.json" % ts)
-                rows = []
-                try:
-                    import glob
-                    for fp in glob.glob(os.path.join(ROOT, "data", "sessions", "*.jsonl")):
-                        with open(fp, "r", encoding="utf-8", errors="ignore") as f:
-                            for line in f:
-                                try:
-                                    j = json.loads(line)
-                                except Exception:
-                                    continue
-                                if j.get("feedbacks"):
-                                    rows.append({"ts": j.get("ts"), "chat": j.get("chat_name"),
-                                                 "feedbacks": j.get("feedbacks")})
-                except Exception:
-                    pass
-                with open(path, "w", encoding="utf-8") as f:
-                    json.dump(rows, f, ensure_ascii=False, indent=1)
-                return {"ok": True, "path": path, "count": len(rows)}
-            if kind == "persona_ratings":
-                # 角色评分表导出（系统分 + 用户分；可再上传到社区）
-                try:
-                    with open(os.path.join(ROOT, "data", "persona_ratings.json"), "r", encoding="utf-8") as f:
-                        ratings = json.load(f)
-                except Exception:
-                    ratings = {}
-                try:
-                    from scripts import persona_check
-                    from agent.persona import PERSONAS
-                    rows = []
-                    for k, c in PERSONAS.items():
-                        r = persona_check.evaluate(k, c)
-                        u = ratings.get(k) or {}
-                        rows.append({"key": k, "name": c.get("name") or k, "sys": r["score"],
-                                     "user": u.get("score"), "note": u.get("note", "")})
-                except Exception:
-                    rows = []
-                path = os.path.join(out_dir, "persona_ratings-%s.json" % ts)
-                with open(path, "w", encoding="utf-8") as f:
-                    json.dump(rows, f, ensure_ascii=False, indent=1)
-                return {"ok": True, "path": path, "count": len(rows)}
-            # 聊天记录导出
-            path = os.path.join(out_dir, "messages-%s.json" % ts)
-            export_chats = {}
-            try:
-                import glob
-                for fp in glob.glob(os.path.join(ROOT, "data", "messages", "*.json")):
-                    try:
-                        with open(fp, "r", encoding="utf-8") as f:
-                            d = json.load(f)
-                        if isinstance(d, dict) and d.get("messages"):
-                            # ⛔ S-1：档案文件名已带哈希尾巴 ⇒ 用档案里的 chat_key 当键（可读、稳定），
-                            # 老档案/读不到才退回文件名。
-                            export_chats[str(d.get("chat_key") or os.path.basename(fp))] = d.get("messages")
-                    except Exception:
-                        continue
-            except Exception:
-                pass
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(export_chats, f, ensure_ascii=False, indent=1)
-            return {"ok": True, "path": path, "count": sum(len(v) for v in export_chats.values())}
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
 
-    def community_upload_fn(data):
-        """社区分享：POST 到可配置 URL（upload_enabled + 对应 URL，默认关）→ 仅提示未配置。"""
-        try:
-            cfg = get_config().get("community", {}) or {}
-            if not cfg.get("upload_enabled"):
-                return {"ok": False, "error": "社区上传未开启（community.upload_enabled=false）"}
-            kind = str(data.get("kind") or "")
-            url = str(cfg.get("holyshits_upload_url") or "") if kind == "holyshits" else str(cfg.get("feedback_upload_url") or "")
-            if not url:
-                return {"ok": False, "error": "未配置 %s 上传 URL" % kind}
-            import requests as _req
-            payload = data.get("payload") or {}
-            r = _req.post(url, json=payload, timeout=10)
-            r.raise_for_status()
-            return {"ok": True, "resp": r.text[:200]}
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
 
-    def scoring_import_fn(text):
-        """导入金句进评分种子库。"""
-        try:
-            from agent.scoring import import_seeds
-            n = import_seeds(text)
-            return {"ok": True, "imported": n}
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
 
-    def _recalibrate_ui(orch):
-        """控制台「重新标定」：接管鼠标一次，自动检测微信侧栏图标序列并写 ui_layout.json。"""
-        try:
-            from agent import wechat_ui
-            gui = orch.wechat._get_gui()
-            lay = wechat_ui.calibrate_ui(gui)
-            if lay.get("sidebar_items"):
-                return {"ok": True, "count": len(lay["sidebar_items"])}
-            return {"ok": False, "error": "标定未检测到侧栏图标（微信窗口可见？请确保微信在前台后重试）"}
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
 
-    def _open_export_path(path):
-        """打开导出文件/文件夹所在位置（不存在时创建目录；绝对/相对均支持）。"""
-        try:
-            import os
-            import subprocess
-            p = str(path or "").strip() or "exports"
-            if not os.path.isabs(p):
-                p = os.path.join(ROOT, p)
-            if os.path.isdir(p):
-                os.makedirs(p, exist_ok=True)
-                os.startfile(p)
-                return {"ok": True}
-            d = os.path.dirname(p)
-            if not os.path.isdir(d):
-                os.makedirs(d, exist_ok=True)
-            if os.path.exists(p):
-                subprocess.Popen(["explorer", "/select,", os.path.abspath(p)],
-                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            else:
-                os.startfile(d)
-            return {"ok": True}
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
 
     try:
         _LLM_COUNT_HOOK[0] = _tool_llm_count

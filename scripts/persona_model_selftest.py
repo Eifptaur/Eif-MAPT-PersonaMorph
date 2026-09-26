@@ -18,6 +18,7 @@
   py -3 scripts/persona_model_selftest.py           # 只跑静态
   py -3 scripts/persona_model_selftest.py --live    # 加上真机对照（约两次评分调用）
 """
+import ast
 import io
 import os
 import sys
@@ -65,8 +66,12 @@ ok("评分函数是模块级真身（判据调的就是产品在用的那份）"
 ok("解析要求精确到分（0.01）且禁抄示例", "0.01 精度" in SRC and "禁止抄示例" in SRC)
 
 print("── B. 补足：真实资料为唯一事实来源 + 禁自编 ──")
-_i = SRC.index("def persona_ai_enrich_fn(")
-_enrich_blk = SRC[_i:_i + 6000]
+# ⚠️ 按 **AST 取跨度**，不要用"起点往后 N 个字符"的窗口：函数一旦在文件里换位置或变长变短，
+#    窗口会盖到别的代码上 ⇒ 断言可能因为别处的文字而**假绿**（或反过来假红）。
+_src_lines = SRC.split("\n")
+_en_node = next(n for n in ast.walk(ast.parse(SRC))
+                if isinstance(n, ast.FunctionDef) and n.name == "persona_ai_enrich_fn")
+_enrich_blk = "\n".join(_src_lines[_en_node.lineno - 1:_en_node.end_lineno])
 ok("补足先检索该角色的语录/访谈原文", "经典语录 名言" in _enrich_blk and "访谈 原话 言论" in _enrich_blk)
 ok("prompt 里声明「真实资料＝唯一事实来源」", "作为唯一事实来源" in _enrich_blk)
 ok("禁止自编台词冒充原话（不确定要标注（拟））",

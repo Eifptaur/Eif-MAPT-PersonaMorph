@@ -155,8 +155,12 @@ ok("`/api/restart` 仍走 restart_fn（没被顺手改成别的）",
 
 print("── D. 重启那一跳的**顺序**（重启后必须再起一个新实例；旧窗必须能正常关闭）──")
 _pm = io.open(os.path.join(ROOT, "scripts", "persona_morph.py"), encoding="utf-8").read()
-_i_rf = _pm.index("def restart_fn():")
-_rf = _pm[_i_rf:_pm.index("def community_export_fn", _i_rf)]
+# ⚠️ 按 **AST 取跨度**，不要拿"下一个 def 行"当函数边界：一旦有函数被搬进/搬出这个文件，
+#    那个边界要么找不到（判据崩），要么切到别人身上（**静默**改变了这段判据的含义）。
+_pm_lines = _pm.split("\n")
+_rf_node = next(n for n in ast.walk(ast.parse(_pm))
+                if isinstance(n, ast.FunctionDef) and n.name == "restart_fn")
+_rf = "\n".join(_pm_lines[_rf_node.lineno - 1:_rf_node.end_lineno])
 # ⚠️ 必须**先把注释行去掉**再数/找名字：这段的注释里就写着 `_spawn_watchdog()` / `orch.shutdown()`
 #    （解释老顺序错在哪）⇒ 直接 `index/count` 会命中注释，判据假红（本文件第 150 行的同款坑）。
 _rf_code = "\n".join(l for l in _rf.splitlines() if not l.strip().startswith("#"))

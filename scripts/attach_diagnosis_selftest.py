@@ -13,6 +13,7 @@
 本判据守住的：五步各卡一次都要报对 step/action；诊断**只读**（不许出现任何输入/窗口 API）；
 三处接线（启动接入 / 循环重试 / 状态下发 / 反馈 env）不许被以后改回去。
 """
+import ast
 import os
 import sys
 import types
@@ -439,7 +440,12 @@ ok("配置保存后会**就地重算监听目标**（on_save 接线，不再只�
    "on_save=lambda _new_cfg: _refresh_targets(" in _pm and "def _refresh_targets(why=" in _pm)
 ok("重算会**就地更新** target_wxids（status_provider 按它算「这个群是不是监听目标」）",
    "target_wxids.clear()" in _pm and 'target_wxids.update(g["wxid"] for g in targets' in _pm)
-_ct_seg = _pm[_pm.index("def _collect_targets(wc):"):_pm.index("def _refresh_targets(why=")]
+# ⚠️ 按 **AST 取跨度**，不要用"下一个 def 行"当边界：函数一旦在文件里**换了位置**，
+#    这段切片会悄悄变成"从它到另一个函数之间的一大片"（不报错，但判据的含义已经变了）。
+_pm_lines_ct = _pm.split("\n")
+_ct_node = next(n for n in ast.walk(ast.parse(_pm))
+                if isinstance(n, ast.FunctionDef) and n.name == "_collect_targets")
+_ct_seg = "\n".join(_pm_lines_ct[_ct_node.lineno - 1:_ct_node.end_lineno])
 # ⚠️ 先切掉文档字符串再看：那段 docstring 里**正好写着**旧的闭包变量名（解释改了什么）
 #    ⇒ 直接 `"whitelist" not in seg` 会假红（本文件第 150 行记过同款坑）
 _ct_parts = _ct_seg.split('"""')
