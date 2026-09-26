@@ -154,7 +154,6 @@ def _stat_cell(t: Tokens, val: str, label: str) -> tuple[QWidget, QLabel, QLabel
     return w, b, s
 
 
-
 def _raw_post(path: str, data: bytes | None, ctype: str, timeout: float) -> bytes:
     """二进制 POST（导出 zip / 导入上传）—— post_json 只回 dict，这里走 urllib。"""
     import urllib.request as ur # noqa: PLC0415
@@ -166,7 +165,6 @@ def _raw_post(path: str, data: bytes | None, ctype: str, timeout: float) -> byte
     req = ur.Request(url, data=data, headers={"Content-Type": ctype} if data else {})
     with opener.open(req, timeout=timeout) as resp:
         return resp.read()
-
 
 
 def overview_panel(t: Tokens) -> QWidget:
@@ -4683,13 +4681,11 @@ def _model_local_appendix(t: Tokens, page: QWidget) -> None:
     b_probe.clicked.connect(_probe)
 
 
-
 def _fmt_gb(b) -> str:
     try:
         return "%.2f GB" % (float(b) / 1073741824.0)
     except Exception: # noqa: BLE001
         return "?"
-
 
 
 def _sd_local_appendix(t: Tokens, page: QWidget) -> None:

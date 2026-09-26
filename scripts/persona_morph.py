@@ -1664,7 +1664,6 @@ def persona_llm_score(card, name=""):
         return {"ok": False, "error": str(e)[:150]}
 
 
-
 def _collect_targets(wc):
     """按**当前配置**重算 (全部群, 监听目标)。启动、晚接入、配置保存后共用一份，避免三处漂移。
 
@@ -2007,7 +2006,6 @@ def _open_export_path(path):
         return {"ok": False, "error": str(e)}
 
 
-
 def persona_score_custom_fn(text, llm=False):
     """自定义角色卡评分：默认本地（零 token）；llm=True 时交给模型结合角色设定评分。
     分数全部来自对卡文本的实际分析（口头禅/口吻/AI 腔/占位符等），非凭空。"""
@@ -2148,7 +2146,6 @@ def persona_ai_enrich_fn(name, text="", rounds=1):
                 "note": "（最终分=3次严格复评中位，不含虚高）" if final_score else ""}
     except Exception as e:
         return {"ok": False, "error": str(e)}
-
 
 
 def main():
@@ -2516,13 +2513,11 @@ def main():
             return {"error": str(e)[:120]}
 
 
-
     # 一键体检取消标志（前端「停止检测」设置；体检循环每步检查）
     _selfcheck_cancel = [False]
 
     def selfcheck_stop_fn():
         _selfcheck_cancel[0] = True
-
 
 
     def selfcheck_fn(mode="full"):
@@ -3059,10 +3054,6 @@ def main():
         server_cfg["token"] = secrets.token_urlsafe(24) # 32 位强随机（字母数字-_）
         save_config(cfg)
         log.info("已自动生成控制台访问口令（%d 位，保存在 config.json 的 server.token）", len(server_cfg["token"]))
-
-
-
-
 
 
     try:
