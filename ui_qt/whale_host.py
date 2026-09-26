@@ -754,12 +754,13 @@ def build_host_html(port: int, token: str) -> str:
         "display:flex;align-items:center;justify-content:center;"
         "pointer-events:auto;transition:background .15s ease}"
         ".pm-min-btn:hover{background:#203170}"
-        # 收起后的小圆点：常驻，再点放回挂件
-        ".pm-dot{position:fixed;right:8px;bottom:8px;width:14px;height:14px;"
-        "border-radius:50%;background:rgba(32,49,112,.7);cursor:pointer;"
+        # 收起后的小圆点：常驻、可点（放回挂件）、**也可拖**（拖动整个挂件窗）。
+        # 底色比原来深一档、直径大一点点（14→16），配一圈更亮的描边让它更显眼。
+        ".pm-dot{position:fixed;right:8px;bottom:8px;width:16px;height:16px;"
+        "border-radius:50%;background:rgba(14,22,52,.94);cursor:pointer;"
         "z-index:2147483647;display:none;"
-        "box-shadow:0 0 0 1px rgba(255,255,255,.35)}"
-        ".pm-dot:hover{background:#203170}"
+        "box-shadow:0 0 0 1px rgba(255,255,255,.5),0 0 6px rgba(0,0,0,.45)}"
+        ".pm-dot:hover{background:#2b3f7d}"
         "body.pm-collapsed .pm-min-btn{display:none}"
         "body.pm-collapsed .pm-dot{display:block}"
         "</style></head><body>"
@@ -817,7 +818,7 @@ def build_host_html(port: int, token: str) -> str:
         "return !!(el.closest('button')||el.closest('input')||el.closest('select')||"
         "el.closest('a')||el.closest('.dshwv-menu')||el.closest('.dshwv-rolelist')||"
         "el.closest('.dshwv-audiolist')||el.closest('.dshwv-usagepanel')||"
-        "el.closest('.pm-min-btn')||el.closest('.pm-dot')||"
+        "el.closest('.pm-min-btn')||"
         "el.closest('.dshwv-menu-btn')||el.closest('[class*=mask]')||"
         "el.closest('[class*=pop]')||el.closest('[class*=menu]'));"
         "}"

@@ -7666,6 +7666,13 @@ def t_whale_guard() -> None:
        "rectsNow" in _html and "'rects'" in _html and "rectWatch" in _html)
     ck("宿主页在非交互区按下时取消默认动作（否则原生拖拽吞掉 mousemove ⇒ 拖不动）",
        "e.preventDefault()" in _html and "isInteractive(e.target)" in _html)
+    ck("收起小圆点更深、稍大（14→16px，底色改成更深的深蓝）",
+       "width:16px;height:16px" in _html and "rgba(14,22,52,.94)" in _html, "")
+    # 只看 isInteractive 那一段（全文里 .pm-dot 也会出现在 click 判定里，不能整串判）
+    _ii = _html[_html.index("function isInteractive(el){"):][:420]
+    ck("小圆点不算交互区 ⇒ 它是拖动把手（单击仍由捕获段的 click 负责展开）",
+       ".pm-dot" not in _ii and ".pm-min-btn" in _ii
+       and "t.closest('.pm-dot')" in _html, "")
     ck("可命中区包含**我们自己注入的控件**（漏了减号就等于「点不动减号」）",
        "querySelectorAll('.pm-min-btn,.pm-dot,#pm-wait-card')" in _html)
     ck("减号挂进原版本体内（百分比相对本体算，窗口变高也不会飘离鲸鱼）",
