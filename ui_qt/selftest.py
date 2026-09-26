@@ -8728,6 +8728,47 @@ def t_async_landing_guard() -> None:
     ck("面板销毁后异步结果不再落地（否则取已销毁控件 = 抛异常）",
        called == [], "called=%s" % (called,))
 
+    # ④ **全量口径**：手搓的"跨线程落地"只许降不许升（数到 0 才算族收口完成）。
+    #    ⛔ 口径必须区分两类，否则会把正常的延迟重绘也算成违规（我第一版就是这么误报了 90 个）：
+    #      · **需要守卫**＝函数里起了 `Thread(` ⇒ 回调在**另一个线程**落地到控件，控件可能已被销毁；
+    #      · **不需要守卫**＝只有 `singleShot(`、没有 `Thread` ⇒ 那是**同面板延迟重绘**
+    #        （`QTimer.singleShot(0, self._apply)` 这类），定时器挂在**面板自己**身上，
+    #        Qt 会随对象销毁自动断开 ⇒ 天然安全。
+    #    守卫 = 文本里出现 `_ui_alive(` / `_deliver(` / `qt_alive(` / `_alive`。
+    import ast as _ast2 # noqa: PLC0415
+    import os as _o2 # noqa: PLC0415
+    _qdir = _o2.path.dirname(_o2.path.abspath(__file__))
+    _GUARD = ("_ui_alive(", "_deliver(", "qt_alive(", "_alive")
+    _raw_sites = []
+    for _dp, _dn, _fns in _o2.walk(_qdir):
+        _dn[:] = [d for d in _dn if d not in ("__pycache__", "assets")]
+        for _fn in sorted(_fns):
+            if not _fn.endswith(".py") or _fn == "selftest.py":
+                continue
+            _p = _o2.path.join(_dp, _fn)
+            try:
+                _src = open(_p, encoding="utf-8", errors="ignore").read()
+                _tree = _ast2.parse(_src)
+            except Exception: # noqa: BLE001
+                continue
+            _lines = _src.split("\n")
+            for _n in _ast2.walk(_tree):
+                if not isinstance(_n, (_ast2.FunctionDef, _ast2.AsyncFunctionDef)):
+                    continue
+                _body = "\n".join(_lines[_n.lineno - 1:(_n.end_lineno or _n.lineno)])
+                if any(_g in _body for _g in _GUARD):
+                    continue
+                _th = sum(1 for _c in _ast2.walk(_n) if isinstance(_c, _ast2.Call) and
+                          ((isinstance(_c.func, _ast2.Attribute) and _c.func.attr == "Thread")
+                           or (isinstance(_c.func, _ast2.Name) and _c.func.id == "Thread")))
+                if _th:
+                    _raw_sites.append("%s::%s" % (_o2.path.relpath(_p, _qdir).replace("\\", "/"), _n.name))
+    #: 棘轮基线：实测 44（2026-09-26，口径校准后）。**只许降**；降到 0 = 这一族收口完成。
+    ck("跨线程落地**只许降不许升**（棘轮；同面板 `singleShot` 不算）",
+       len(_raw_sites) <= 44,
+       "当前 %d / 基线 44%s" % (len(_raw_sites),
+                              ("；例：" + "、".join(_raw_sites[:4])) if _raw_sites else ""))
+
 
 def t_screen_guards() -> None:
     """自检：功能筛查这一批修复的机械闸门（每条都对应一个真实缺陷）。
@@ -8977,7 +9018,7 @@ def t_cfg_wired_guard() -> None:
             for _fn in _fns:
                 if not _fn.endswith(".py") or "selftest" in _fn:
                     continue
-                _p = _o.path.join(_dp, _fn)
+                _p = _o2.path.join(_dp, _fn)
                 if _p.endswith(_o.path.join("agent", "config.py")):
                     continue # ⛔ 声明处不是消费方
                 try:
@@ -9118,8 +9159,8 @@ def t_dev_dir_guard() -> None:
             for _fn in _fns:
                 if not _fn.endswith(".py"):
                     continue
-                _rel = _o.path.relpath(_o.path.join(_dp, _fn), _root).replace("\\", "/")
-                if _knows(_o.path.join(_dp, _fn)) and _rel not in DEV_DIR_KNOWERS:
+                _rel = _o.path.relpath(_o2.path.join(_dp, _fn), _root).replace("\\", "/")
+                if _knows(_o2.path.join(_dp, _fn)) and _rel not in DEV_DIR_KNOWERS:
                     _extra.append(_rel)
     ck("① 出现本地草稿目录名的文件都在白名单里（新增即红，逼写理由）",
        not _extra, "；".join(_extra[:6])[:180])
@@ -9208,7 +9249,7 @@ def t_dead_import_guard() -> None:
             for _fn in sorted(_fns):
                 if not _fn.endswith(".py"):
                     continue
-                _p = _o.path.join(_dp, _fn)
+                _p = _o2.path.join(_dp, _fn)
                 try:
                     _lines = open(_p, encoding="utf-8", errors="ignore").read().split("\n")
                     _tree = _ast.parse("\n".join(_lines))
