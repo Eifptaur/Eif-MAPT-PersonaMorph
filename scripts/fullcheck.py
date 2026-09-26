@@ -155,10 +155,9 @@ config._current_config["store"]["group_blocklist"] = {"g": ["小明"]}
 r = resolve_context_tier([{"sender_name": "小明", "sender_id": "x", "text": "聊鲸鱼"}],
                          wechat_nickname="小鲸鱼", chat_key="g", group_name="g")
 check("黑名单剔除", not r["should_respond"])
-from agent.scoring import DEFAULT_SEEDS, _decay, HEAT_HALF_LIFE_MS
+from agent.scoring import _decay, HEAT_HALF_LIFE_MS
 try:
     from agent.persona import PERSONAS
-    from agent.persona_enrich import enrich_all
     check("角色卡 >= 50 且唯一", len(PERSONAS) >= 50 and len(set(v.get("name") for v in PERSONAS.values())) == len(PERSONAS))
     check("角色卡均含通用说话规则", all("说话规则（群聊通用）" in (v.get("text") or "") for v in PERSONAS.values()))
     check("沉默类含必要对话扩展", "必要对话扩展" in PERSONAS["link_zelda"]["text"] and "必要对话扩展" in PERSONAS["kongqishi"]["text"])
@@ -252,7 +251,7 @@ except Exception as e:
 
 # ═══════════ I. UI 图标库 & 行为引擎 ═══════════
 try:
-    from agent.wechat_ui import ICONS, calibrate_ui, hit, achieve, _load_layout
+    from agent.wechat_ui import ICONS, _load_layout
     check("图标库元素 >= 11", len(ICONS) >= 11, "count=%d" % len(ICONS))
     check("图标库含搜索/发送/收藏/朋友圈(实测确认入口)", {"search.box", "input.send", "sidebar.collection", "sidebar.moments"} <= set(ICONS))
     check("图标库标定文件存在", bool(_load_layout().get("sidebar_items")))

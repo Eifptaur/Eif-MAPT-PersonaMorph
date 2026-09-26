@@ -12,7 +12,6 @@
 判据自己起控制台、自己抓页面（与 `whale_selftest.py` D 段同一套路），不联网、不碰微信。
 用法：py -3 scripts/console_copy_selftest.py
 """
-import json
 import os
 import re
 import socket

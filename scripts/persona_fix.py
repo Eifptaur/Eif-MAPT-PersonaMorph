@@ -101,6 +101,5 @@ if __name__ == "__main__":
     else:
         main()
         from agent.persona import PERSONAS
-        from agent.config import save_config
         # 回写补足后的 text（仅当有改动）；PERSONAS 是内存 dict，回写文件需按需
         print("全量 done")

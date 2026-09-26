@@ -12,7 +12,6 @@
 """
 import os
 import sys
-import time
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

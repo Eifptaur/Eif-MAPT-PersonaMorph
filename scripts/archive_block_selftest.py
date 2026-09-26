@@ -7,7 +7,6 @@ C 按条清除（**必须点名 id**，空 ids 一律拒绝 = 不做"顺手清�
 """
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import sys

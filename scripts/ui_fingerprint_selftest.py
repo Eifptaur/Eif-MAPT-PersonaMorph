@@ -10,7 +10,6 @@
 用法：py -3 scripts\\ui_fingerprint_selftest.py   （非零退出＝有失败）
 """
 import io
-import json
 import os
 import sys
 import tempfile

@@ -14,7 +14,6 @@
 
 用法：py -3 scripts/ui_arch_selftest.py
 """
-import io
 import os
 import re
 import sys

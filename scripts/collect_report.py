@@ -24,7 +24,6 @@ import ctypes
 import json
 import os
 import platform
-import subprocess
 import sys
 import threading
 import time
@@ -193,7 +192,6 @@ def sec_wechat():
         except Exception as e:
             lines.append("  版本检测失败: %s" % e)
     try:
-        import glob
         exes = []
         for pat in ("C:/Program Files/Tencent/WeChat/Weixin.exe", "C:/Program Files (x86)/Tencent/WeChat/Weixin.exe",
                     "D:/WX/Weixin/Weixin.exe", "M:/WX/Weixin/Weixin.exe"):

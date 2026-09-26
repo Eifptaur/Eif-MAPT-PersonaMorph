@@ -15,11 +15,9 @@
 import ast
 import io
 import re
-import json
 import os
 import socket
 import sys
-import threading
 import time
 import urllib.request
 

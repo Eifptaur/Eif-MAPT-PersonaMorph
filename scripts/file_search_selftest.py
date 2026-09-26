@@ -12,7 +12,6 @@
   ⑤ UI 映射：控制台里有「本地文件」栏（开关/可搜目录增删/触发条件/上限/引导按钮）+ 三处端点接线
   ⑥ 引导与触发条件：GUIDES 里有 file 那条且有入口按钮；`file_search.trigger_mode` 真的改变提示词
 """
-import json
 import os
 import shutil
 import sys

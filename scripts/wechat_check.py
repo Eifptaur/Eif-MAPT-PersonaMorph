@@ -19,7 +19,6 @@ r"""微信版本 + 关键依赖版本检查与自动修正（本脚本；用户�
   · 关键 pip 依赖（psutil/uiautomation/pywin32/zstandard 等）→ 按 requirements 最低版本校验+自动升级。
 """
 import os
-import re
 import subprocess
 import sys
 

@@ -13,7 +13,6 @@
 用法：py -3 scripts/feedback_selftest.py
 """
 import io
-import json
 import os
 import re
 import sys

@@ -21,7 +21,6 @@ import sys
 import threading
 import time
 import random
-import webbrowser
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 
@@ -54,11 +53,11 @@ from agent.session_log import SessionLog
 from agent.stats import UsageStats
 from agent.store import ChatStore
 from agent.tools import build_tool_defs, execute_tool, to_openai_tools
-from agent.wechat import (WeChatAdapter, WeChatError, wechat_version_info,
+from agent.wechat import (WeChatAdapter, wechat_version_info,
                           attach_diagnosis, attach_short_reason, _user32_is_visible)
 from agent.whale import WhaleWidget
 from agent.webui import WebUI
-from agent.util import mask_url_token, pick_browser, redact_secrets
+from agent.util import mask_url_token, redact_secrets
 # 输入审计（**只记录、不改行为**，且只在 WXAGENT_INPUT_AUDIT=1 时安装；生产默认零开销）——
 # 为定位「机器人发消息那一刻微信自己弹截图」而挂：它把 SendInput/keybd_event/mouse_event/
 # SetCursorPos/PostMessageW 的每次调用连同**发起方的文件:行号**写进 data/input_audit.log。
@@ -2896,7 +2895,7 @@ def main():
     def community_export_fn(kind="holyshits"):
         """导出：金句/意见/聊天记录 → 本地文件（export_dir 可配）。"""
         try:
-            from agent.scoring import seed_library, stats as _scoring_stats
+            from agent.scoring import seed_library
         except Exception:
             seed_library = lambda: []
         try:

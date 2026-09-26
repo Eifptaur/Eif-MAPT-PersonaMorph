@@ -10,7 +10,6 @@ B. **原因码要铺到"拒发/被丢"的账本上**（不只是工具层兜一�
 """
 
 import io
-import json
 import os
 import sys
 import tempfile

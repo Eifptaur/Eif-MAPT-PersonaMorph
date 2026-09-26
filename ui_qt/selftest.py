@@ -9167,7 +9167,7 @@ DEF_VS_EXAMPLE_OK = {
 #   C2 第一批（10 处）后 74 ⇒ C2 第二批（产品侧 15 处，含整行删除与"不用的那个名字"精确摘除）后 **59**。
 #   ⛔ 探索阶段的探针只覆盖 `agent/`、去伪后是 51 —— 与上面两个数**口径不同、不可比**，别拿它们对账；
 #   要降基线就用**本闸门**的新读数。
-DEAD_IMPORT_BASELINE = 34
+DEAD_IMPORT_BASELINE = 0
 
 #: **人工确认要保留**的未用 import（`(相对路径, 名字): 为什么它不能删`）。
 #   收的都是"**import 本身就是那件事**"的形态 —— AST 只会说"这个名字没被用到"，
@@ -9181,6 +9181,8 @@ DEAD_IMPORT_KEEP = {
         "同上（同一句探可用性）",
     ("agent/wechat_ui.py", "Image"):
         "探 PIL 可用性：`try:` 的**整个函数体只有这一行 import**，删掉就是空 try（SyntaxError）",
+    ("scripts/wgc_probe.py", "winsdk"):
+        "探可选依赖：`try: import winsdk` 紧邻的 `except` 打印「winsdk / capture 命名空间不可用」⇒ import 即探测",
     ("agent/verifiers.py", "_pr"):
         "在 `try:` 内且疑有预热/副作用语义；**证据不足不删**（宁可留着 + 记账，也不凭 AST 计数动手）",
 }

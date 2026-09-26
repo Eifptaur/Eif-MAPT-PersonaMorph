@@ -13,7 +13,6 @@
 用法：`py -3 scripts\\whale_widget_selftest.py`
 """
 import os
-import re
 import sys
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")

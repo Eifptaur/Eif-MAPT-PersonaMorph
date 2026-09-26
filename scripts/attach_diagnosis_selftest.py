@@ -14,7 +14,6 @@
 三处接线（启动接入 / 循环重试 / 状态下发 / 反馈 env）不许被以后改回去。
 """
 import os
-import re
 import sys
 import types
 
