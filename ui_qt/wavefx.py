@@ -52,7 +52,7 @@ import os
 import time
 
 import numpy as np
-from PySide6.QtCore import QObject, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer
+from PySide6.QtCore import QObject, QPoint, QPointF, QRect, QRectF, Qt, QTimer
 from PySide6.QtGui import QImage, QPainter
 from PySide6.QtWidgets import QGraphicsEffect, QWidget
 

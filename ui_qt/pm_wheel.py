@@ -27,7 +27,7 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QPointF, QRectF, Qt, QTimer
-from PySide6.QtGui import QBrush, QColor, QPainter, QPen, QPolygonF
+from PySide6.QtGui import QBrush, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import QAbstractScrollArea, QApplication, QWidget
 
 sys.path.insert(0, str(Path(__file__).resolve().parent)) # 嵌入式 runtime._pth 不放脚本目录

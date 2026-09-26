@@ -7159,7 +7159,6 @@ class WeChatAdapter:
 
     def _chat_obj(self, chat_id: str):
         """构造 wechatauto Chat（复用当前 db/gui），用于表情截图。"""
-        from wechatauto import WeChat # 提供 ChatWith 等（实际以 Chat 为主）
         from wechatauto.wx import Chat
         name = self.group_name(chat_id) or chat_id
         gui = self._get_gui()

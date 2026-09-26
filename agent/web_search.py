@@ -7,7 +7,7 @@ import json
 import os
 import re
 import time
-from urllib.parse import quote, urlencode, urlparse, parse_qsl, urlunparse
+from urllib.parse import urlencode
 
 import requests
 

@@ -210,7 +210,6 @@ class WhaleHostWebView:
 
         from whale_wv2_iid import (CLS_COMPOSITION_CTRL_HANDLER,
                                    CLS_CTRL_HANDLER,
-                                   ICoreWebView2CompositionController,
                                    ICoreWebView2Controller,
                                    ICoreWebView2Environment3)
 
@@ -281,10 +280,8 @@ class WhaleHostWebView:
                 raise TimeoutError("控制器回调未返回（hr=%s）" % self._ctrl_holder.get("hr"))
             self._ctrl = ctrl
             if self._composition:
-                from whale_wv2_iid import (ICoreWebView2CompositionController,
-                                           ICoreWebView2Controller,
-                                           ICoreWebView2Controller2,
-                                           ICoreWebView2)
+                from whale_wv2_iid import (ICoreWebView2Controller,
+                                           ICoreWebView2Controller2)
                 self._cc = ctrl  # 合成回调给出的就是 CompositionController
                 cctl = _qi_raw(self._cc,
                                "{4D00C0D1-9434-4EB6-8078-8697A560334F}",

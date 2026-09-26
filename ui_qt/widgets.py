@@ -27,7 +27,7 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPixmap, QPen
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPixmap, QPen
 from PySide6.QtWidgets import (
     QAbstractButton,
     QBoxLayout,
@@ -39,17 +39,12 @@ from PySide6.QtWidgets import (
     QLayout,
     QLineEdit,
     QPushButton,
-    QScrollArea,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
 from stylekit_qt import (
-    SHAPE_CIRCLE,
-    SHAPE_PILL,
-    SHAPE_SOFT,
-    SHAPE_TILE,
     Tokens,
     mix,
     pill,

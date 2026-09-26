@@ -16,10 +16,10 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QAbstractAnimation, QEasingCurve, QPoint, QPropertyAnimation, Qt
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtGui import QPainter, QPen
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QVBoxLayout, QWidget
 
-from stylekit_qt import Tokens, rgba
+from stylekit_qt import Tokens
 
 DUR_MS = 220
 DROP_PX = 10 # 下滑行程

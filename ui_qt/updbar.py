@@ -26,7 +26,7 @@ import threading
 
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel
 
 from confirm import ConfirmDialog
 from popover import Popover

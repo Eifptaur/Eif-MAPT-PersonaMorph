@@ -9167,7 +9167,23 @@ DEF_VS_EXAMPLE_OK = {
 #   C2 第一批（10 处）后 74 ⇒ C2 第二批（产品侧 15 处，含整行删除与"不用的那个名字"精确摘除）后 **59**。
 #   ⛔ 探索阶段的探针只覆盖 `agent/`、去伪后是 51 —— 与上面两个数**口径不同、不可比**，别拿它们对账；
 #   要降基线就用**本闸门**的新读数。
-DEAD_IMPORT_BASELINE = 59
+DEAD_IMPORT_BASELINE = 34
+
+#: **人工确认要保留**的未用 import（`(相对路径, 名字): 为什么它不能删`）。
+#   收的都是"**import 本身就是那件事**"的形态 —— AST 只会说"这个名字没被用到"，
+#   看不出它在 `try:` 里被当作探测用。
+DEAD_IMPORT_KEEP = {
+    ("agent/code_check.py", "stop_requested"):
+        "探可用性：`try: from agent.wechat_ui import ...` 的**紧邻 except 就是**「不可用」分支 ⇒ import 即测试，没有后续使用",
+    ("agent/code_check.py", "request_stop"):
+        "同上（同一句探可用性）",
+    ("agent/code_check.py", "clear_stop"):
+        "同上（同一句探可用性）",
+    ("agent/wechat_ui.py", "Image"):
+        "探 PIL 可用性：`try:` 的**整个函数体只有这一行 import**，删掉就是空 try（SyntaxError）",
+    ("agent/verifiers.py", "_pr"):
+        "在 `try:` 内且疑有预热/副作用语义；**证据不足不删**（宁可留着 + 记账，也不凭 AST 计数动手）",
+}
 
 
 def t_dead_import_guard() -> None:
@@ -9211,10 +9227,14 @@ def t_dead_import_guard() -> None:
                     _src_line = _lines[_n.lineno - 1] if _n.lineno <= len(_lines) else ""
                     if "noqa" in _src_line:
                         continue          # 故意不用（探可用性 / 可选依赖 / re-export 契约）
+                    _rel = _o.path.relpath(_p, _root).replace("\\", "/")
                     for _a in _n.names:
                         _nm = _a.asname or _a.name.split(".")[0]
-                        if _nm != "*" and _nm not in _used:
-                            _found.append((_o.path.relpath(_p, _root).replace("\\", "/"), _n.lineno, _nm))
+                        if _nm == "*" or _nm in _used:
+                            continue
+                        if (_rel, _nm) in DEAD_IMPORT_KEEP:
+                            continue      # 人工确认保留（`import` 本身就是探测/契约）
+                        _found.append((_rel, _n.lineno, _nm))
 
     _n = len(_found)
     ck("未用 import 只许降不许升（棘轮；`__future__` 与 `noqa` 不计）",
