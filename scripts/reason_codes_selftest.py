@@ -278,7 +278,7 @@ def main():
             os.remove(_pp)
             os.rmdir(_pd)
         except OSError:
-            pass
+            pass  # 清理型：静默合法
     ok("扫描器有效：条件位报 1 条、去向不明报 1 条、合规那条不报"
        "（否则「没扫到」＝「扫不到」，两条闸门都会假绿）",
        len(_pc) == 1 and len(_pl) == 1

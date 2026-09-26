@@ -330,7 +330,7 @@ class WhaleWidget:
                     os.remove(os.path.join(self._assets_dir(kind),
                                            os.path.basename(str(gone["file"]))))
                 except Exception:  # noqa: BLE001
-                    pass
+                    pass  # 清理型：静默合法
             return gone is not None
 
     def asset_store_bytes(self, kind: str, aid: str) -> bytes | None:

@@ -212,7 +212,7 @@ def dismiss_overlays(wechat_hwnds: tuple = ()) -> list:
         try:
             _user32.PostMessageW(h, 0x0010, 0, 0) # WM_CLOSE
         except Exception:
-            pass
+            pass  # 清理型：静默合法
         try:
             _user32.ShowWindow(h, 0) # SW_HIDE
         except Exception:
@@ -844,7 +844,7 @@ def _cursor_restore(pos, why: str = "") -> bool:
         try:
             log.warning("真鼠标档：还原光标异常（%s）：%s", why, e)
         except Exception: # noqa: BLE001
-            pass
+            pass  # 清理型：静默合法
         return False
 
 

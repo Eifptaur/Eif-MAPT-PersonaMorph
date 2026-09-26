@@ -123,7 +123,7 @@ def main():
         try:
             sleeper.terminate()
         except Exception:
-            pass
+            pass  # 清理型：静默合法
 
     print("\n[二] 源码级看守（防下次被人顺手改回死代码）")
     src = open(os.path.join(ROOT, "scripts", "watchdog.py"), encoding="utf-8").read()

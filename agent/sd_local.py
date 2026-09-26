@@ -348,7 +348,7 @@ def _drop_pidfile() -> None:
     try:
         os.remove(_pidfile())
     except Exception:
-        pass
+        pass  # 清理型：静默合法
 
 
 def kill_stale_owner(port: int) -> tuple:

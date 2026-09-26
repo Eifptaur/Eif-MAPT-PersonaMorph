@@ -74,7 +74,7 @@ def _cache_pick(cache_dir: str, chat_id: str = "", keep: int = 40) -> str:
             try:
                 os.remove(old)
             except OSError:
-                pass
+                pass  # 清理型：静默合法
     files = files[:keep]
     last = str((_load_recent() or {}).get("last") or "")
     pool = [f for f in files if f != last] or files
@@ -387,7 +387,7 @@ def fetch_filtered(cfg: dict, root: str = None, chat_id: str = "", tag: str = ""
                         try:
                             os.remove(path)
                         except OSError:
-                            pass
+                            pass  # 清理型：静默合法
                     return
                 if derr:
                     if "TimeoutError" in derr: # 慢源别每次都来占位（短冷却，不是判死刑）
@@ -401,7 +401,7 @@ def fetch_filtered(cfg: dict, root: str = None, chat_id: str = "", tag: str = ""
                 try:
                     os.remove(path) # 被拒的临时文件不留
                 except OSError:
-                    pass
+                    pass  # 清理型：静默合法
                 q.put(("err", src, why))
             except Exception as e:
                 q.put(("err", src, "取图异常：%s: %s" % (type(e).__name__, str(e)[:80])))

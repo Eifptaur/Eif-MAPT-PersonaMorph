@@ -275,7 +275,7 @@ class InstanceLock:
             try:
                 _k32.CloseHandle(self.handle)
             except Exception:
-                pass
+                pass  # 清理型：静默合法
             self.handle = None
         if self.fd is not None:
             try:
@@ -286,7 +286,7 @@ class InstanceLock:
             try:
                 os.close(self.fd)
             except Exception:
-                pass
+                pass  # 清理型：静默合法
             self.fd = None
         if self.acquired and self.lock_path:
             try:

@@ -477,7 +477,7 @@ class MemoryStore:
                     try:
                         os.remove(_member_file(key, mem.get("userId"), mem.get("name")))
                     except Exception:
-                        pass
+                        pass  # 清理型：静默合法
                 else:
                     mem["updatedAt"] = int(__import__("time").time() * 1000)
                     _write_json(_member_file(key, mem.get("userId"), mem.get("name")), mem)

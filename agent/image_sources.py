@@ -555,5 +555,5 @@ def download(url: str, dest_dir: str, max_mb: float = 8.0, timeout_ms: int = DEF
                 try:
                     os.remove(q) # 半截文件不留
                 except OSError:
-                    pass
+                    pass  # 清理型：静默合法
         return None, "下载失败：%s: %s" % (type(e).__name__, str(e)[:110])

@@ -320,7 +320,7 @@ _nowp2 = os.path.join(tmp, "u12state.json")
 try:
     os.remove(_nowp2)
 except Exception:
-    pass
+    pass  # 清理型：静默合法
 _real_state_path = UC._state_path
 UC._state_path = lambda: _nowp2
 try:

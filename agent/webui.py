@@ -309,7 +309,7 @@ def _port_taken(host: str, port: int, timeout: float = 0.35) -> bool:
         try:
             s.close()
         except Exception: # noqa: BLE001
-            pass
+            pass  # 清理型：静默合法
 
 
 class WebUI:
@@ -2518,7 +2518,7 @@ X.XX
                 try:
                     parent.shutdown_fn() # 写 stopped.flag + 杀看门狗 + os._exit(0)
                 except Exception:
-                    pass
+                    pass  # 清理型：静默合法
                 try:
                     import os as _o, subprocess
                     subprocess.run(["taskkill", "/F", "/PID", str(_o.getpid())],
@@ -2616,7 +2616,7 @@ X.XX
                                 os.remove(_f)
                                 _whole.append(_d)
                             except Exception:
-                                pass
+                                pass  # 清理型：静默合法
                     _per_day = {}
                     for _d, _ts in _items:
                         _per_day.setdefault(_d, set()).add(_ts)
@@ -2855,7 +2855,7 @@ X.XX
                             os.remove(_f)
                             _gone.append(_day)
                         except Exception:
-                            pass
+                            pass  # 清理型：静默合法
                     if not _gone:
                         # 没有对应文件：尝试只清历史归档
                         _gone = list(_days)

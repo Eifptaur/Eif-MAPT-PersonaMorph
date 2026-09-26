@@ -288,7 +288,7 @@ def main():
             try:
                 os.remove(PID_FILE)
             except Exception:
-                pass
+                pass  # 清理型：静默合法
             return 0
         _t0 = time.time()
         rc = None

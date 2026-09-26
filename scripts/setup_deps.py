@@ -111,7 +111,7 @@ def _run_stream(cmd, idle_limit=IDLE_LIMIT):
                 try:
                     p.kill()
                 except Exception:
-                    pass
+                    pass  # 清理型：静默合法
                 print("\n[超时] 连续 %d 秒没有任何输出，已终止（再点一次「一键启动」会接着装，"
                       "已下完的不会重下）。" % idle_limit)
                 return 1, "".join(tail)
@@ -135,7 +135,7 @@ def _run_stream(cmd, idle_limit=IDLE_LIMIT):
     try:
         p.stdout.close()
     except Exception:
-        pass
+        pass  # 清理型：静默合法
     return int(p.returncode or 0), "".join(tail)
 
 

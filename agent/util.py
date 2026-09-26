@@ -189,7 +189,7 @@ def take_console_lock(seconds: float = CONSOLE_LOCK_SECONDS, root: str = "") -> 
             try:
                 os.remove(mk) # 过期锁：清掉再抢
             except Exception:
-                pass
+                pass  # 清理型：静默合法
         fd = os.open(mk, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         os.write(fd, ("%r %d" % (time.time(), os.getpid())).encode("ascii", "replace"))
         os.close(fd)

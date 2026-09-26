@@ -87,7 +87,7 @@ _audit = os.path.join(_TMPD, "音" + "频") # 不存在的目录，确认不抛�
 try:
     os.remove(junk)
 except OSError:
-    pass
+    pass  # 清理型：静默合法
 
 print("── D. 没引擎时不假装 ──")
 _real_dec, _real_rec = voice.decoders, voice.recognizers

@@ -147,7 +147,7 @@ def prune_media() -> dict:
                 try:
                     items.append((os.path.getmtime(p), os.path.getsize(p), p))
                 except Exception:
-                    continue
+                    continue  # 清理型：静默合法
         items.sort(key=lambda x: x[0])
         total = sum(x[1] for x in items)
         keep_n, keep_b = int(ATTACH["keep_files"]), int(ATTACH["keep_bytes"])

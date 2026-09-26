@@ -127,7 +127,7 @@ def main():
             try:
                 os.remove(os.path.join(DATA, name))
             except Exception:
-                pass
+                pass  # 清理型：静默合法
         elif pid and pid != os.getpid():
             failed += 1
     # 回退：老进程没有 pid 文件时按命令行特征找

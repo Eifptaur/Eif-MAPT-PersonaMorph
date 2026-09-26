@@ -543,7 +543,7 @@ def generate(request_text: str, prompt: str = None):
             try:
                 os.remove(f) # 不过就删掉，绝不留在盘上
             except Exception:
-                pass
+                pass  # 清理型：静默合法
     if not kept:
         return {"ok": False, "files": [], "why": "生成的东西没过过滤链（原因见 notes）", "notes": notes}
     return {"ok": True, "files": kept, "why": "", "notes": notes, "seconds": it["seconds"]}

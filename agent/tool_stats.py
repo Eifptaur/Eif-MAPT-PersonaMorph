@@ -67,7 +67,7 @@ def reset() -> None:
         try:
             os.remove(PATH)
         except OSError:
-            pass
+            pass  # 清理型：静默合法
 
 
 if __name__ == "__main__":

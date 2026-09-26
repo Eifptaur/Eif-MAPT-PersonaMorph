@@ -652,7 +652,7 @@ def _restore_fg(hwnd: int = 0, note: str = "", keep: bool = False) -> None:
             try:
                 _FG_STASH.update({"hwnd": 0, "at": 0.0})
             except Exception:
-                pass
+                pass  # 清理型：静默合法
 
 
 # —— 最小化状态还原——
@@ -3152,7 +3152,7 @@ class WeChatAdapter:
         try:
             self._restore_after_send(before)
         except Exception:
-            pass
+            pass  # 清理型：静默合法
 
     def _restore_after_send(self, before_fg):
         """发送完成后把微信送回后台：取消置顶 → 恢复用户窗口 → 兜底放底/最小化。"""
@@ -3164,7 +3164,7 @@ class WeChatAdapter:
         try:
             gui.restore_zorder()
         except Exception:
-            pass
+            pass  # 清理型：静默合法
         time.sleep(0.15)
         # 2) 微信仍是前台（发送成功的通常情况）→ 恢复用户之前用的窗口
         fg = int(user32.GetForegroundWindow() or 0)
@@ -6215,7 +6215,7 @@ class WeChatAdapter:
                 try:
                     dlg.GetPattern(auto.PatternId.WindowPattern).Close()
                 except Exception:
-                    pass
+                    pass  # 清理型：静默合法
                 return False, "文件对话框里找不到文件名输入框"
             try:
                 _okw, _whyw = _fill_dialog_name(int(hwnd), os.path.abspath(local_path))
@@ -11032,7 +11032,7 @@ def _pm_prune_dead_key_entries(db_dir: str, account: str, log_it: bool = True) -
                     log.info("密钥缓存里 %d 条分片在账号 %s 里已经不存在（例：%s）⇒ 已提前摘掉，"
                              "免得开库时抛 KeyError（其余密钥一个不动）", len(dead), account, dead[0])
                 except Exception:
-                    pass
+                    pass  # 清理型：静默合法
         except Exception:
             continue
     return n

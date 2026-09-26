@@ -86,7 +86,7 @@ def write_build(value: str, path: str = "") -> str:
                     try:
                         _os.remove(_os.path.join(_d, _n))
                     except OSError:
-                        pass
+                        pass  # 清理型：静默合法
     except Exception:
         pass
     return str(value)

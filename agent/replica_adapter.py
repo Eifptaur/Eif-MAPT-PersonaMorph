@@ -282,7 +282,7 @@ def close_all(conns):
         try:
             c.close()
         except Exception:
-            pass
+            pass  # 清理型：静默合法
 
 
 def contact_db_rel(db):

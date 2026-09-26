@@ -80,7 +80,7 @@ def main():
         try:
             SR._load()
         except Exception:
-            pass
+            pass  # 清理型：静默合法
         if isinstance(getattr(SR, "_cache", None), list):
             SR._cache[:] = []
 

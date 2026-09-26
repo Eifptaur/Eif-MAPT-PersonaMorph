@@ -122,7 +122,7 @@ def recover(reason: str = "上次进程留下的借用") -> bool:
         try:
             os.remove(p)
         except Exception:
-            pass
+            pass  # 清理型：静默合法
         return False
     hwnd = int(d.get("hwnd") or 0)
     rect = list(d.get("rect") or [])
@@ -131,7 +131,7 @@ def recover(reason: str = "上次进程留下的借用") -> bool:
         try:
             os.remove(p)
         except Exception:
-            pass
+            pass  # 清理型：静默合法
         return False
     # ⛔ 用户第二次投诉「**启动的时候就调，这么大**」⇒ 陈旧记录不许再往用户窗口上套。
     #   这条记录只有在「窗口此刻仍停在我们钉的那一版」时才算"上次被强杀留下的借用"；
@@ -151,7 +151,7 @@ def recover(reason: str = "上次进程留下的借用") -> bool:
         try:
             os.remove(p)
         except Exception:
-            pass
+            pass  # 清理型：静默合法
         log.info("窗口借用记录已陈旧，不套回用户窗口：%s", _stale)
         return False
     with _lock:

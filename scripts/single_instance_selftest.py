@@ -202,7 +202,7 @@ for p in (child, dummy, pysleep):
     try:
         p.kill()
     except Exception:
-        pass
+        pass  # 清理型：静默合法
 
 # ── C12：接线断言（改完不接线＝白做）──────────────────────────
 def src(rel):

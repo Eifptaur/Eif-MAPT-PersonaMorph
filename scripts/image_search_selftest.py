@@ -252,7 +252,7 @@ finally:
     try:
         os.remove(_old_img)
     except Exception:
-        pass
+        pass  # 清理型：静默合法
 
 # G4 一批里随机挑（`limit=1` 时同一标签永远同一张，那张被过滤链拦掉就永远过不去）
 ok("booru 系与 safebooru 都取了**一批**再随机挑（limit=20 + random.choice）",

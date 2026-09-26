@@ -84,7 +84,7 @@ try:
     try:
         os.remove(_tmp)
     except Exception:
-        pass
+        pass  # 清理型：静默合法
     _real_cfg = FB._cfg
     _real_lim = dict(FB.LIMIT)
     FB.LIMIT.update({"per_minute": 999, "per_hour": 999, "per_day": 999}) # 本节只验三态；限流见 E 节
@@ -181,7 +181,7 @@ finally:
     try:
         os.remove(_tmp)
     except Exception:
-        pass
+        pass  # 清理型：静默合法
 
 print("── D. 个人信息不进代码/包 ──")
 ok("代码里没有真实收件邮箱", MAIL_A not in HTML and MAIL_B not in src("agent/feedback.py"))
@@ -233,7 +233,7 @@ try:
         try:
             os.remove(_p)
         except Exception:
-            pass
+            pass  # 清理型：静默合法
     FB.FEEDBACK_FILE = _tmp3
     FB.REJECT_FILE = _rej3
     FB.LIMIT.update({"per_minute": 2, "per_hour": 999, "per_day": 999, "dup_window_s": 600})
@@ -261,7 +261,7 @@ finally:
         try:
             os.remove(_p)
         except Exception:
-            pass
+            pass  # 清理型：静默合法
 
 print("── F. 凭据不原样回到浏览器──")
 from agent import webui as WU # noqa: E402
@@ -423,7 +423,7 @@ try:
         try:
             os.remove(_p)
         except Exception:
-            pass
+            pass  # 清理型：静默合法
     _shutil.rmtree(_mdir, ignore_errors=True)
     FB.MEDIA_DIR = _mdir
     FB.FEEDBACK_FILE = _tmp4
@@ -554,7 +554,7 @@ finally:
         try:
             os.remove(_p)
         except Exception:
-            pass
+            pass  # 清理型：静默合法
     _shutil.rmtree(_mdir, ignore_errors=True)
 
 print("\n── J. 常驻公告 + 「不用你测」（**原话\n"

@@ -71,7 +71,7 @@ def rm_url_file():
     try:
         os.remove(U.console_url_path())
     except Exception:
-        pass
+        pass  # 清理型：静默合法
 
 
 def _live_ok(url):
@@ -208,7 +208,7 @@ def _jsrv_accept(): # 真把连接收掉，免得 backlog 满后被判成"死链
                 try:
                     _c.close()
                 except Exception:
-                    pass
+                    pass  # 清理型：静默合法
             except Exception:
                 break
     _t = _jth.Thread(target=_loop)
@@ -321,7 +321,7 @@ finally:
     try:
         _srv.close() # 收掉本节自己起的那个探活监听（不留后台套接字）
     except Exception:
-        pass
+        pass  # 清理型：静默合法
     # 这里原来 `rm_url_file()`（删产品那份地址文件）——删它对本节断言毫无用处，
     #   只会让后面的 E 段读不到文件、并把产品推到"只能靠配置兜底"的路上。改为不动它。
 
@@ -331,7 +331,7 @@ try:
     try:
         os.remove(U.console_lock_path())
     except Exception:
-        pass
+        pass  # 清理型：静默合法
     ok("第一次拿到锁", U.take_console_lock() is True)
     ok("同一把锁 90 秒内第二次拿不到", U.take_console_lock() is False)
     ok("锁新鲜度可读（fresh=True）", U.console_lock_fresh() is True)
@@ -368,7 +368,7 @@ finally:
     try:
         os.remove(U.console_lock_path())
     except Exception:
-        pass
+        pass  # 清理型：静默合法
 
 print("── E. 端到端：真起一个控制台，用落盘的地址访问必须 200（空口令地址必须 401）──")
 try:
@@ -587,7 +587,7 @@ try:
         try:
             _hold.close()
         except Exception:
-            pass
+            pass  # 清理型：静默合法
         shutil.rmtree(_iso2, ignore_errors=True)
 except Exception as _e2b:
     skip("E2 端口顺延一致性", "起不了控制台：%s" % _e2b)

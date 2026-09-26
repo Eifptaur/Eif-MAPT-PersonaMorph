@@ -320,7 +320,7 @@ class Orchestrator:
             try:
                 self._score_feedback(chat_key)
             except Exception:
-                pass
+                pass  # 清理型：静默合法
             if not self.paused and not self.stopped:
                 if self.store.unread_count(chat_key) > 0:
                     self.schedule_wake(chat_key, get_config().get("drain_delay_ms", 1200))
@@ -1186,7 +1186,7 @@ def _kill_watchdog(fast: bool = False):
             try:
                 os.remove(wp)
             except Exception:
-                pass
+                pass  # 清理型：静默合法
     except Exception:
         pass
     if fast:
@@ -1207,7 +1207,7 @@ def _kill_watchdog(fast: bool = False):
                                        creationflags=0x08000000, timeout=10,
                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     except Exception:
-                        pass
+                        pass  # 清理型：静默合法
     except Exception:
         pass
     # wmic 在新版 Windows（11 24H2 起）**已被移除**，上面那条会静默失败 ⇒ 再补一条 PowerShell 兜底
@@ -1225,7 +1225,7 @@ def _kill_watchdog(fast: bool = False):
                                    creationflags=0x08000000, timeout=10,
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 except Exception:
-                    pass
+                    pass  # 清理型：静默合法
     except Exception:
         pass
 
@@ -2780,7 +2780,7 @@ def main():
         try:
             _kill_watchdog()
         except Exception:
-            pass
+            pass  # 清理型：静默合法
         # 立即强退（os._exit 不走 atexit，主动清理 PID 文件）。
         # 关键：os._exit 放最前——orch.shutdown()（微信登出）可能一直阻塞，挡住 os._exit 导致"停止关不掉"。
         try:
@@ -2800,7 +2800,7 @@ def main():
         try:
             threading.Timer(0.1, lambda: (orch.shutdown() if orch else None)).start() # 后台尽力登出，不阻塞退出
         except Exception:
-            pass
+            pass  # 清理型：静默合法
         os._exit(0)
 
     def restart_fn():

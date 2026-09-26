@@ -143,7 +143,7 @@ def decode_silk(silk_path: str, wav_path: str = "") -> tuple:
             try:
                 os.remove(pcm)
             except OSError:
-                pass
+                pass  # 清理型：静默合法
             if good and os.path.exists(wav_path) and os.path.getsize(wav_path) > 44:
                 return wav_path, ""
             return None, err or "pilk 解出来是空文件"
@@ -281,7 +281,7 @@ def recognize_wav(wav_path: str, max_seconds: int = 60) -> tuple:
             try:
                 fs.Close()
             except Exception:
-                pass
+                pass  # 清理型：静默合法
             text = "".join(x for x in ev.hits if x).strip()
             if text:
                 return text, ""

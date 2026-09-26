@@ -512,7 +512,7 @@ def _concat_wavs(paths, timeout: int, fast_flags=None):
         try:
             os.remove(n)
         except Exception:
-            pass
+            pass  # 清理型：静默合法
     return out, ""
 
 

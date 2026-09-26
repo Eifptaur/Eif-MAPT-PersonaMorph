@@ -709,7 +709,7 @@ def run_once(manifest=None, zip_path=None, target=ROOT, dry=False, progress=None
         try:
             os.remove(zip_path)
         except Exception:
-            pass
+            pass  # 清理型：静默合法
     # ⛔ **V4**：`apply_full(dry=True)` 返回的 detail 是 `{"dry": True}`（**没有** status
     #   键），而下面原来只判 `detail.get("status") != "current"` ⇒ `None != "current"` 成立 ⇒
     #   **干跑也被当成"真装成功"** ⇒ 拉起新看门狗 + `os._exit(0)` **把正在跑的机器人杀掉**

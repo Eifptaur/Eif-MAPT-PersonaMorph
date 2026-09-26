@@ -238,7 +238,7 @@ def _close_quiet(resp) -> None:
     try:
         resp.close()
     except Exception:
-        pass
+        pass  # 清理型：静默合法
 
 
 def _is_private_ip(ip_str: str) -> bool:
@@ -400,13 +400,13 @@ def _pinned_exchange(scheme, host, port, path, ip, method="GET", data=None, head
                 try:
                     fh.close()
                 except Exception:
-                    pass
+                    pass  # 清理型：静默合法
         body = b"" if out_path else bytes(buf)
     finally:
         try:
             conn.close()
         except Exception:
-            pass
+            pass  # 清理型：静默合法
     return {"status": status, "headers": hdrs, "location": location, "content_type": ctype,
             "body": body, "truncated": truncated, "bytes": got, "path": out_path or ""}
 
@@ -459,7 +459,7 @@ def _exchange_head(scheme, host, port, path, ip, headers=None, timeout=None):
         try:
             conn.close()
         except Exception:
-            pass
+            pass  # 清理型：静默合法
 
 
 def pinned_head(url, headers=None, timeout=None, max_redirects=MAX_REDIRECTS):

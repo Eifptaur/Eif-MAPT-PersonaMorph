@@ -342,7 +342,7 @@ def close_subwindow(gui, hwnd, retries: int = 3) -> bool:
             try:
                 user32.PostMessageW(int(hwnd), _msg, _wp, 0)
             except Exception:
-                pass
+                pass  # 清理型：静默合法
             time.sleep(0.4)
             try:
                 if not user32.IsWindowVisible(int(hwnd)):
