@@ -18,10 +18,18 @@
 静态拆完**不敢直接发**（要真机冒烟逐段验），所以先钉"不许新增一个"；
 每拆掉一个，把 `BASE_COUNT` 减一、从 `REGISTERED` 里删掉那一行。
 新增一处 ≥300 行的函数 ⇒ 本闸门当场红 ⇒ 要么拆掉，要么**显式登记并写明为什么不拆**。
+
+F 段守的是**另一种、可以零风险消掉的长**：长函数里若有"**闭包面为 0 的顶层嵌套 def/class**"，
+那种块**随时可以整体搬到模块级**（不抓宿主任何局部 ⇒ 搬走不改变任何解析结果），
+留着只是让宿主更读不动。这类块必须为 **0**：
+  · 判"闭包面为 0"用 `symtable` 的 `is_free`（**按作用域**求，不能用 `ast.walk` 求名字交集 —— 会被嵌套作用域污染）；
+  · 只看**顶层**嵌套块（在 `if`/`try` 里的搬出去会变成"无条件定义"，不是等价搬家）；
+  · 只看 ≥300 行的函数（短函数里就近放一个 helper 是正常的可读性选择）。
 """
 import ast
 import io
 import os
+import symtable
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -48,23 +56,22 @@ SKIP_DIRS = {"__pycache__", "assets", "whale-widget", "upstream"}
 BIG = 300
 
 #: 棘轮基线：**只许降**。每拆掉一处 → 减一（并同步从 REGISTERED 删除）
-BASE_COUNT = 11
+BASE_COUNT = 10
 
 #: 点名清单：这一处的 `(相对路径, 函数名)`。清单与实测**必须完全一致** ——
 #: 少一个（说明有处缩到 <300 行却没人改清单）或多一个（说明新长出一处没人拆）都判红。
 #: 想在表里加条目，就得先回答"为什么不拆"。
 REGISTERED = {
     ("agent/webui.py", "_make_handler"): "控制台 137 个路由方法的处理器类；按功能分模块需真机冒烟",
-    ("scripts/persona_morph.py", "main"): "启动→监听→唤醒→巡检的主流程；拆分要动主循环",
+    ("scripts/persona_morph.py", "main"): "启动→监听→唤醒→巡检的主流程（已搬走 14 个可自由搬走的嵌套函数）",
     ("ui_qt/panels_custom.py", "persona_panel"): "人设面板构建；按面板拆文件待做",
     ("ui_qt/panels_custom.py", "overview_panel"): "总览面板构建",
     ("ui_qt/panels_custom.py", "check_panel"): "体检面板构建",
-    ("agent/tools.py", "_builtin_tool_defs"): "内置工具声明表（长但平铺）",
-    ("agent/wechat.py", "send_text_posted"): "发送链主流程（含清残留）",
+    ("agent/tools.py", "_builtin_tool_defs"): "内置工具声明表（一条 return，长但平铺 ⇒ 明确不拆）",
+    ("agent/wechat.py", "send_text_posted"): "发送链主流程（一条 397 行 try，拆要传大量局部状态）",
     ("scripts/onestart.py", "main"): "一键启动编排",
     ("ui_qt/panels_custom.py", "memory_panel"): "记忆面板构建",
-    ("agent/wechat.py", "open_chat_by_search"): "按搜索打开会话",
-    ("ui_qt/panels_custom.py", "_sd_local_appendix"): "本地绘图面板附属区",
+    ("agent/wechat.py", "open_chat_by_search"): "按搜索打开会话（一条 279 行 try）",
 }
 
 #: 豁免面的**分母**（豁免测试文件但这几棵树不许被改窄到"什么都没扫到"）
@@ -96,6 +103,54 @@ def big_functions_of(tree):
 def big_functions(src):
     """同 `big_functions_of`，但入参是源码文本（反向控制用）。"""
     return big_functions_of(ast.parse(src))
+
+
+def _read(rel):
+    return io.open(os.path.join(ROOT, rel), encoding="utf-8", errors="ignore").read()
+
+
+def find_owner(tree, name):
+    """→ 该名字对应的函数节点（**不限层级**：模块级函数与类方法都要能查到）。"""
+    hits = [n for n in ast.walk(tree)
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == name]
+    return hits
+
+
+def liftable_blocks(src, rel, fname):
+    """→ [(嵌套块名, 行数)]：`fname` 的**顶层**嵌套 def/class 里，**闭包面为 0** 的那些。
+
+    这类块与宿主函数零耦合 ⇒ 可以整体搬到模块级且不改变任何解析结果（"等价搬家"）。
+    口径：`symtable` 里该块上 `is_free()` 为真的名字 = 它从**外层函数作用域**抓的名字。
+    宿主不限层级（模块级函数与类方法都算）—— 方法里同样可能藏着这种块。
+    """
+    hits = find_owner(ast.parse(src), fname)
+    if not hits:
+        return []
+    owner = hits[0]
+    direct = {c.name: c for c in owner.body
+              if isinstance(c, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))}
+
+    def _walk(t):
+        yield t
+        for c in t.get_children():
+            yield from _walk(c)
+
+    tab = None
+    for t in _walk(symtable.symtable(src, rel, "exec")):
+        if t.get_name() == fname and t.get_type() == "function":
+            tab = t
+            break
+    if tab is None:
+        return []
+    out = []
+    for c in tab.get_children():
+        if c.get_type() not in ("function", "class") or c.get_name() not in direct:
+            continue
+        if [s for s in c.get_symbols() if s.is_free()]:
+            continue
+        node = direct[c.get_name()]
+        out.append((c.get_name(), (node.end_lineno or node.lineno) - node.lineno + 1))
+    return sorted(out, key=lambda r: -r[1])
 
 
 def collect():
@@ -179,6 +234,35 @@ def main():
     ok("反向控制：测试文件识别有效（豁免口径可复核）",
        is_test_file("scripts/x_selftest.py") and is_test_file("ui_qt/selftest.py")
        and not is_test_file("agent/webui.py") and not is_test_file("scripts/store.py"), "")
+
+    print("== F. 长函数里的「可自由搬走的整块」==")
+    lifts, found, dup = [], 0, []
+    for rel, name in sorted(REGISTERED):
+        try:
+            src = _read(rel)
+            hits = find_owner(ast.parse(src), name)
+            if hits:
+                found += 1
+            if len(hits) > 1:
+                dup.append("%s::%s×%d" % (rel, name, len(hits)))
+            for nm, span in liftable_blocks(src, rel, name):
+                lifts.append("%s::%s::%s(%d 行)" % (rel, name, nm, span))
+        except Exception as exc:  # noqa: BLE001
+            lifts.append("%s::%s 读不出来：%s" % (rel, name, exc))
+    ok("分母守卫：登记在册的长函数都真的找到了（不然 F 段会因空集全绿）",
+       found == len(REGISTERED), "找到 %d / 登记 %d" % (found, len(REGISTERED)))
+    ok("名字唯一：登记的函数名在各自文件里只有一个（否则查到的是另一个同名函数）",
+       not dup, "重名 %d 处：%s" % (len(dup), "、".join(dup[:3])))
+    ok("长函数里没有「闭包面为 0 的顶层嵌套块」（那种块随时能整体搬走，留着只是更难读）",
+       not lifts, "还剩 %d 个：%s" % (len(lifts), "、".join(lifts[:4])))
+    _probe = ("def outer():\n"
+              "    def freeable():\n        return 1\n"
+              "    x = 2\n"
+              "    def bound():\n        return x\n"
+              "    return freeable, bound\n")
+    _got = [nm for nm, _s in liftable_blocks(_probe, "probe.py", "outer")]
+    ok("反向控制：可搬性判据只认「自由名 0 个」那一个（抓了宿主局部的不认）",
+       _got == ["freeable"], "实测 %s" % _got)
 
     print("== 结构体量判据：%d 通过 / %d 失败 ==" % (PASS[0], FAIL[0]))
     return 0 if FAIL[0] == 0 else 1
