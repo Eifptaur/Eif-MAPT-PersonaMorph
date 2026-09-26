@@ -314,7 +314,7 @@ class WhaleHostWebView:
         """接页面 `postMessage` —— 拖动转发的接收端。
 
         页面在用户按住挂件拖动时不停把位移发过来（见 `build_host_html` 里的
-        `dragSetup`），这里收到后转成回调交给 Qt 侧挪窗口。
+        页内 window 捕获段的 pointerdown），这里收到后转成回调交给 Qt 侧跟光标挪窗。
 
         ⛔ 为什么不直接给子窗加 `WS_EX_TRANSPARENT` 让鼠标穿过去：那样消息确实
         能到 Qt，但**页面里所有控件也一起收不到点击了** —— 减号、原版菜单全部
@@ -804,17 +804,13 @@ def build_host_html(port: int, token: str) -> str:
         "}catch(err){}},true);"
         "}"
         "}"
-        # ── 拖动转发 ────────────────────────────────────────────────────────
-        # 机制：WebView2 的画面是一个铺满宿主窗的**子 HWND**，鼠标消息被子窗
-        # 吃掉、不冒泡给父窗 ⇒ Qt 侧收不到 mouseMove；而给子窗加
-        # `WS_EX_TRANSPARENT` 会连页内控件一起收不到点击。所以由**页面转发**：
-        # 页内只报「开始拖 / 松手」两个状态，**位置由宿主跟真实光标算** ——
-        # 页面的坐标是 CSS 像素，换算到屏幕像素的比例随缩放/内核口径而异（实测症状
-        # 就是"捏住本体只能在窗口里晃一晃"），所以一条位移都不传，彻底绕开换算。
-        # 点按钮是 click、拖本体/空白是拖动，互不干扰。
-        "function dragSetup(){"
-        "if(window.__pmDrag)return;window.__pmDrag=1;"
-        "var dragging=false;"
+        # ── 拖动：抢在**原版之前**（window 捕获段）把按下接管过来 ────────────
+        # ⛔ 原版自带一套「拖动鲸鱼改页内位置」：按下本体后它会把本体在**视口里**挪走
+        #    （`express()` 写 `root.style.left/top`，配整套 pointerdown/move/up 与位置落盘）。
+        #    桌面版里这正是「按住挂件只能在宿主窗内移动」的来源 —— 挪的是画面里的本体，
+        #    不是窗口。所以必须在 **window 捕获段**（比原版的 document 捕获更早）把这一次
+        #    按下拦下：既不让它的页内拖动启动，也立刻告诉宿主「开始跟光标拖窗」。
+        #    交互区（按钮/菜单/输入框）不拦，原版功能照常。
         "function isInteractive(el){"
         "if(!el||!el.closest)return false;"
         "return !!(el.closest('button')||el.closest('input')||el.closest('select')||"
@@ -824,17 +820,18 @@ def build_host_html(port: int, token: str) -> str:
         "el.closest('.dshwv-menu-btn')||el.closest('[class*=mask]')||"
         "el.closest('[class*=pop]')||el.closest('[class*=menu]'));"
         "}"
-        "document.addEventListener('mousedown',function(e){"
+        "window.addEventListener('pointerdown',function(e){"
         "if(e.button!==0)return;"
         "if(isInteractive(e.target))return;"
-        "e.preventDefault();"
-        "dragging=true;post({pm:'dragbegin'});"
+        # stopPropagation：原版的页内拖动挂在 document 捕获段 —— 拦下它就根本启动不了；
+        # preventDefault：连带取消原生拖拽/选区（那会吞掉后续事件）。
+        "e.stopPropagation();e.preventDefault();"
+        "window.__pmDragOn=1;"
+        "post({pm:'dragbegin'});"
         "},true);"
-        "document.addEventListener('mouseup',function(){"
-        "if(dragging)post({pm:'dragend'});"
-        "dragging=false;"
+        "window.addEventListener('pointerup',function(){"
+        "if(window.__pmDragOn){window.__pmDragOn=0;post({pm:'dragend'});}"
         "},true);"
-        "}"
         "function rectsNow(){"
         "var pad=6,out=[];"
         "function add(el){try{"
@@ -874,7 +871,7 @@ def build_host_html(port: int, token: str) -> str:
         "document.addEventListener(k,function(){setTimeout(reportRects,30);},true);});"
         "}"
         "function boot(){"
-        "wire();dragSetup();rectWatch();"
+        "wire();rectWatch();"
         # 原版挂件是异步建的（脚本 defer + 内部等 composer），root 晚于本脚本
         # 出现——且冷启动可能远超 6 秒。轮询分两段：0~6s 找不到就先发
         # boot(false)（宿主亮出**页内**提示卡，不藏页面），之后继续后台轮询——

@@ -7686,8 +7686,12 @@ def t_whale_guard() -> None:
        and "+ self.width()" in _inspect.getsource(WhaleWidget._save_anchor))
     ck("上屏校验按**本体**判（按整窗判会让「左上角露一点」过关、本体却在屏幕外）",
        "self.width() - _BASE" in _inspect.getsource(WhaleWidget._onscreen))
-    ck("宿主页含拖动转发脚本（按下即报 dragbegin + postMessage，位置由宿主跟真实光标）",
-       "dragbegin" in _html and "postMessage" in _html and "dragSetup" in _html, "")
+    ck("拖动在 **window 捕获段**拦下（原版自带页内拖动，晚一步就会被它抢走手势）",
+       "window.addEventListener('pointerdown'" in _html
+       and "e.stopPropagation()" in _html and "dragbegin" in _html
+       and "isInteractive" in _html, "")
+    ck("原版那套页内拖动函数不再被调用（`dragSetup` 已随拦截点搬迁删除）",
+       "dragSetup" not in _html, "")
     ck("减号/圆点挂在 document **捕获**段（挂本体上会被原版自己的捕获处理截掉）",
        "__pmBtn" in _html and "addEventListener('click'" in _html
        and "t.closest('.pm-min-btn')" in _html, "")
