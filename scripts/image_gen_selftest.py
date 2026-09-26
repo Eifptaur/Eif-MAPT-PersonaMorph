@@ -16,6 +16,10 @@ sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
 from PIL import Image # noqa: E402
+# 判据隔离（收口在 `scripts/_iso14.py` 一处）：必须在 `from agent import …` 之前调。
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # `_iso14` 在 scripts/ 下
+import _iso14 # noqa: E402
+_iso14.all_()
 from agent import image_gen as IG # noqa: E402
 from agent import config as CFG # noqa: E402
 from agent.config import DEFAULT_CONFIG # noqa: E402
@@ -473,7 +477,20 @@ try:
        bool(_r13b.get("files")) and len(_ip_conn13) >= 1,
        "files=%s 连接目标=%s" % (len(_r13b.get("files") or []), _conn13[:4]))
 except Exception as _e13:
-    ok("② 回链下载时每次都连已校验的 IP", False, "跑不起来：%s" % str(_e13)[:100])
+    # 「**夹具**跑不起来」不等于「产品没做到」：这条夹具要连的是个假域名（`pinned.test`），
+    # 而本机配了代理时它会被代理截走 ⇒ 造出 HTTP 502（实测）。断言要证的是"回链那一跳钉 IP"
+    # 这件事本身，跟代理无关。
+    # ⇒ **传输/网络类**失败如实**跳过并说明**（判据与读者都知道这次没验到、也不算通过）；
+    #    **其它异常仍然判否** —— 那才可能是产品真坏了（比如 `call_backend` 抛了别的错）。
+    _t13 = type(_e13).__name__
+    _m13 = str(_e13)
+    _net13 = any(_k in _t13 for _k in ("HTTPError", "URLError", "Timeout", "Connection", "socket")) \
+        or any(_k in _m13 for _k in ("502", "503", "504", "Bad Gateway", "timed out", "proxy", "Proxy"))
+    if _net13:
+        print("  SKIP ② 回链下载时每次都连已校验的 IP  [夹具跑不起来（%s: %s）"
+              "⇒ 本次没验到，不算通过]" % (_t13, _m13[:60]))
+    else:
+        ok("② 回链下载时每次都连已校验的 IP", False, "跑不起来：%s" % _m13[:100])
 finally:
     _sock13.getaddrinfo = _real_gai13
     _sock13.create_connection = _real_conn13

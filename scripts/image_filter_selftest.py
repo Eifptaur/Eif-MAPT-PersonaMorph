@@ -18,6 +18,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from PIL import Image, ImageDraw # noqa: E402
 
+# 判据隔离（收口在 `scripts/_iso14.py` 一处）：必须在 `from agent import …` 之前调。
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # `_iso14` 在 scripts/ 下
+import _iso14 # noqa: E402
+_iso14.all_()
 from agent import image_filter as fl # noqa: E402
 
 PASS = FAIL = 0

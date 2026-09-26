@@ -30,6 +30,11 @@ try:
 except Exception:
     pass
 
+# 判据隔离（收口在 `scripts/_iso14.py` 一处）：**必须在 `from agent import …` 之前**调，
+# 否则跑一次判据就改了产品的 `data/` —— 全量跑分器的"产品目录洁净度总闸"会点名并判红。
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # `_iso14` 在 scripts/ 下
+import _iso14 # noqa: E402
+_iso14.all_()
 from agent import wechat as W # noqa: E402
 
 PASS = FAIL = 0

@@ -114,6 +114,28 @@ def console_lock() -> bool:
     return _run("console_lock", _do)
 
 
+def image_reject_log() -> bool:
+    """被拒图记录（`data/image_rejected.jsonl`）。
+
+    ⚠️ 这一条是**全量跑分器总闸**抓出来的：`image_filter._log_reject` 与本文件里已补的那几处一样，
+    往产品 `data/` 追加一行就会被对账看见（连"只留最近 200 条"的回写也算改动）。
+    补法：把那个**相对路径常量**换成绝对临时路径 —— `os.path.join(root, 绝对路径)` 会直接取绝对那段，
+    所以不用改产品代码里任何一处 join。
+    """
+    def _do():
+        from agent import image_filter as f
+        f.REJECT_LOG_REL = path("image_rejected.jsonl")
+    return _run("image_reject_log", _do)
+
+
+def model_routes_stats() -> bool:
+    """模型路由统计（`data/model_routes_stats.json`，控制台可见）。"""
+    def _do():
+        from agent import model_routes as m
+        m.stats_path = lambda: path("model_routes_stats.json")
+    return _run("model_routes_stats", _do)
+
+
 def all_() -> str:
     """把上面全部打上（各自独立成败，失败记进 `MISSED`）。返回隔离目录。"""
     MISSED.clear()
@@ -123,4 +145,6 @@ def all_() -> str:
     update_state()
     window_borrow()
     console_lock()
+    image_reject_log()
+    model_routes_stats()
     return ISO
