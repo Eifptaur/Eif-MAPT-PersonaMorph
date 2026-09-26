@@ -804,13 +804,14 @@ def build_host_html(port: int, token: str) -> str:
         "}catch(err){}},true);"
         "}"
         "}"
-        # ── 拖动：抢在**原版之前**（window 捕获段）把按下接管过来 ────────────
-        # ⛔ 原版自带一套「拖动鲸鱼改页内位置」：按下本体后它会把本体在**视口里**挪走
-        #    （`express()` 写 `root.style.left/top`，配整套 pointerdown/move/up 与位置落盘）。
-        #    桌面版里这正是「按住挂件只能在宿主窗内移动」的来源 —— 挪的是画面里的本体，
-        #    不是窗口。所以必须在 **window 捕获段**（比原版的 document 捕获更早）把这一次
-        #    按下拦下：既不让它的页内拖动启动，也立刻告诉宿主「开始跟光标拖窗」。
-        #    交互区（按钮/菜单/输入框）不拦，原版功能照常。
+        # ── 拖动：只在**指针真的移动**之后接管 ──────────────────────────────
+        # ⛔ 两个坑都要绕开：
+        #   ① 原版自带「拖动鲸鱼改页内位置」（`express()` 写 `root.style.left/top`）——
+        #      按住本体是它在挪本体（现象＝"只能在宿主窗内移动"）。所以必须在**它之前**
+        #      （window 捕获段，比它的 document 捕获更早）把这一次拖动拦下。
+        #   ② 但**不能一按下就抢**：宿主一抢鼠标捕获（SetCapture），内核就收不到"抬起"，
+        #      `click` 事件永远不会产生 ⇒ 原版的"单击本体弹气泡"全废（用户实测）。
+        # ⇒ 做法：按下只记录，指针累计移动超过阈值才认定"这是拖动"并接管；单击原样放行。
         "function isInteractive(el){"
         "if(!el||!el.closest)return false;"
         "return !!(el.closest('button')||el.closest('input')||el.closest('select')||"
@@ -823,13 +824,19 @@ def build_host_html(port: int, token: str) -> str:
         "window.addEventListener('pointerdown',function(e){"
         "if(e.button!==0)return;"
         "if(isInteractive(e.target))return;"
-        # stopPropagation：原版的页内拖动挂在 document 捕获段 —— 拦下它就根本启动不了；
-        # preventDefault：连带取消原生拖拽/选区（那会吞掉后续事件）。
-        "e.stopPropagation();e.preventDefault();"
+        "window.__pmPend={x:e.clientX,y:e.clientY};"
+        "},true);"
+        "window.addEventListener('pointermove',function(e){"
+        "var p=window.__pmPend;"
+        "if(!p||window.__pmDragOn)return;"
+        "if(Math.abs(e.clientX-p.x)+Math.abs(e.clientY-p.y)<=4)return;"
+        # 到这里才认定是拖动：拦下原版的页内拖动 + 取消原生拖拽，并请宿主接管
         "window.__pmDragOn=1;"
+        "e.stopPropagation();e.preventDefault();"
         "post({pm:'dragbegin'});"
         "},true);"
         "window.addEventListener('pointerup',function(){"
+        "window.__pmPend=null;"
         "if(window.__pmDragOn){window.__pmDragOn=0;post({pm:'dragend'});}"
         "},true);"
         "function rectsNow(){"

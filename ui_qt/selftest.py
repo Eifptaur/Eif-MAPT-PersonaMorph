@@ -7690,6 +7690,9 @@ def t_whale_guard() -> None:
        "window.addEventListener('pointerdown'" in _html
        and "e.stopPropagation()" in _html and "dragbegin" in _html
        and "isInteractive" in _html, "")
+    ck("**按下不抢、移动超阈值才接管**（一按下就抢会让内核收不到抬起 ⇒ click 永不产生）",
+       "__pmPend" in _html and "pointermove" in _html
+       and "<=4)return" in _html, "")
     ck("原版那套页内拖动函数不再被调用（`dragSetup` 已随拦截点搬迁删除）",
        "dragSetup" not in _html, "")
     ck("减号/圆点挂在 document **捕获**段（挂本体上会被原版自己的捕获处理截掉）",
