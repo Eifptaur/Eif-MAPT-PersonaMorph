@@ -85,7 +85,6 @@ def _addref_com(ptr) -> None:
     from ctypes import c_void_p, POINTER
 
     addr = ctypes.cast(ptr, c_void_p).value
-    print("[addref] addr=%s" % (hex(addr) if addr else None), sys.stderr, flush=True)
     if not addr:
         return
     vtbl = ctypes.cast(addr, POINTER(POINTER(c_void_p))).contents
@@ -277,24 +276,16 @@ class WhaleHostWebView:
                 self._ctrl2 = _qi_raw(self._cc,
                                       "{C979903E-D4CA-4228-92EB-47EE3FA96EAB}",
                                       ICoreWebView2Controller2)
-                print("[step] QI Controller2 ok", file=sys.stderr, flush=True)
                 self._wv = cctl.get_CoreWebView2() # 官方顺序：先拿 WebView 再建树
-                print("[step] get_CoreWebView2 ok", file=sys.stderr, flush=True)
                 self._setup_dcomp()
-                print("[step] dcomp ok", file=sys.stderr, flush=True)
                 cctl.put_IsVisible(1)
-                print("[step] IsVisible ok", file=sys.stderr, flush=True)
                 self._apply_bounds_on(cctl)
-                print("[step] Bounds ok", file=sys.stderr, flush=True)
                 self._ctrl2.put_DefaultBackgroundColor(0xFFFFFFFF) # 对照实验：不透明白
-                print("[step] 画布透明 ok", file=sys.stderr, flush=True)
             else:
                 ctrl.put_IsVisible(1)
                 self._apply_bounds()
                 self._wv = ctrl.get_CoreWebView2()
                 self._enable_transparency()
-                print("[step] 窗口化透明 trans_err=%r" % self._trans_err,
-                      file=sys.stderr, flush=True)
             # 拖动转发要收页面的 postMessage —— 这一步没开的话页面发的消息会被
             # 内核直接丢弃（默认是开的，但显式确认一次，免得运行库改默认值）。
             try:
