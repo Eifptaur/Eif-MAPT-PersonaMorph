@@ -49,10 +49,8 @@ from .model_prices import ( # noqa: F401  （价目表唯一来源，见该模�
 _RE_IMG_DATAURL = re.compile(r"^data:(image/[A-Za-z0-9.+-]+);base64,(.+)$", re.S)
 _RE_AUDIO_DATAURL = re.compile(r"^data:(audio/[A-Za-z0-9.+-]+);base64,(.+)$", re.S)
 
-
 def _today_key() -> str:
     return time.strftime("%Y-%m-%d")
-
 
 class WhaleWidget:
     """小鲸鱼挂件服务端：记账 + 每轮消耗 + 前端配置持久化。"""
@@ -83,11 +81,14 @@ class WhaleWidget:
                 data.setdefault("roles", [])
                 data.setdefault("assets", {})
                 data.setdefault("audioGroups", [])
+                data.setdefault("usageSettings", {})
+                data.setdefault("apiModels", [])
                 return data
         except Exception:
             pass
         return {"size": {}, "days": {}, "lastTurn": {}, "roles": [],
-                "assets": {}, "audioGroups": []}
+                "assets": {}, "audioGroups": [],
+                "usageSettings": {}, "apiModels": []}
 
     def _save_state(self):
         try:
@@ -183,9 +184,8 @@ class WhaleWidget:
     # `if (d && d.ok && d.config)` / `if (!d || !d.ok …) return`），所以界面是**干净降级**。
     # 上游有、本移植版**确实没有**的接口（如实返回"不支持"，客户端保留默认值）。
     # 注意：随着能力补齐，条目要从这里**删掉** —— 留在表里等于把已实现的功能继续报成"不支持"。
-    _UNSUPPORTED = ("api-models.json", "usage-records.json", "usage-settings.json",
-                    "balance-adjustments.json", 
-                    "sound/")
+    _UNSUPPORTED = ("sound/",)  # 上游这个"目录式"入口没有对应实现；press/release 两条老路由由 webui 显式处理
+
     _CFG_KEYS = {"bubble.json": ("bubble", "config"), "audio.json": ("audio", "settings")}
     _CFG_MAX = 256 * 1024 # 配置上限（防一个前端 bug 把 state 撑爆）
 
@@ -549,6 +549,204 @@ class WhaleWidget:
             return got
         preset = {"ya1": "Ya1.mp3", "ya2": "Ya2.mp3", "d1": "D1.mp3", "d2": "D2.mp3"}
         return self.asset_bytes(preset.get(fid.lower(), ""))
+
+    # ── 用量设置 / 用量记录 ────────────────────────────────────────────────
+    #
+    # 前端契约（widget.js）：
+    #   GET  usage-settings.json → {"ok":true,"settings":{taskEnd,alert,budget,models}}
+    #   PUT  usage-settings.json  {patch…} → {"ok":true,"settings":{…}}   （**局部合并**）
+    #   GET  usage-records.json  → {"ok":true,"settings":{…},
+    #                               "today":{"total","currency","label"},
+    #                               "all":{"days":[{"date","total","currency"}],"events":[…]}}
+    #   ⛔ usage-records 里**也带 settings**（前端两处都从它刷新设置缓存）——漏了会让
+    #      设置面板回到默认值。
+
+    _USAGE_DEFAULT = {"taskEnd": True, "alert": True, "budget": 0, "models": {}}
+
+    def usage_settings(self) -> dict:
+        out = dict(self._USAGE_DEFAULT)
+        got = self._state.get("usageSettings")
+        if isinstance(got, dict):
+            out.update(got)
+            if not isinstance(out.get("models"), dict):
+                out["models"] = {}
+        return out
+
+    def save_usage_settings(self, patch) -> dict:
+        """PUT 是**局部合并**（前端只发改动的那几项）。"""
+        if not isinstance(patch, dict):
+            return {"ok": False, "error": "missing body"}
+        with self._lock:
+            cur = self.usage_settings()
+            for k, v in patch.items():
+                if k == "models" and isinstance(v, dict):
+                    models = dict(cur.get("models") or {})
+                    for mid, mv in v.items():
+                        if isinstance(mv, dict):
+                            base = dict(models.get(mid) or {})
+                            base.update(mv)
+                            models[mid] = base
+                        else:
+                            models[mid] = mv
+                    cur["models"] = models
+                else:
+                    cur[k] = v
+            self._state["usageSettings"] = cur
+            self._save_state()
+        return {"ok": True, "settings": self.usage_settings()}
+
+    def usage_records_payload(self) -> dict:
+        """用量记录：今日 + 全部（数据来源就是本机的每日账本，最近 30 天）。"""
+        with self._lock:
+            days = dict(self._state.get("days") or {})
+            today = _today_key()
+            today_total = round(float(days.get(today) or 0.0), 6)
+            rows = []
+            for k in sorted(days.keys())[-30:]:
+                rows.append({"date": k, "total": round(float(days.get(k) or 0.0), 6),
+                             "currency": "CNY"})
+            lt = self._state.get("lastTurn") or {}
+            events = []
+            if lt:
+                ts = int(lt.get("ts") or 0)
+                events.append({"ts": ts, "turn": int(lt.get("turn") or 0),
+                               "amount": round(float(lt.get("amount") or 0.0), 6),
+                               "tokens": int(lt.get("tokens") or 0),
+                               "currency": "CNY", "label": "本地估算",
+                               "date": time.strftime("%Y-%m-%d", time.localtime(ts / 1000.0))
+                               if ts else today})
+            return {"ok": True, "settings": self.usage_settings(),
+                    "today": {"total": today_total, "currency": "CNY",
+                              "label": "本地估算", "models": {}, "modelTotal": today_total},
+                    "all": {"days": rows, "events": events}}
+
+    # ── 自定义 API 模型（动作式）───────────────────────────────────────────
+    #
+    #   GET  api-models.json → {"ok":true,"models":[…],"templates":[…]}
+    #   POST api-models.json {action:'save', model:{…}, keyValue?} → {"ok":true,"models":[…]}
+    #   POST api-models.json {action:'delete', id}                 → {"ok":true,"models":[…]}
+    # 说明：上游会去各家厂商的余额接口取数（`balance.url`）；本移植版**只用本机账本**
+    #       给每个模型挂上今日消耗与合计（`balance`/`todayUsage` 如实反映"我们这边记的账"），
+    #       不去外部拉取 —— 少一层网络，也不会把密钥拿去请求第三方。
+    #       密钥（keyValue）**只存引用名**，不落明文。
+
+    _MODEL_TEMPLATES = (
+        {"id": "deepseek", "name": "DeepSeek", "baseUrl": "https://api.deepseek.com/v1"},
+        {"id": "openai", "name": "OpenAI", "baseUrl": "https://api.openai.com/v1"},
+        {"id": "moonshot", "name": "Moonshot", "baseUrl": "https://api.moonshot.cn/v1"},
+        {"id": "custom", "name": "自定义（OpenAI 兼容）", "baseUrl": ""},
+    )
+
+    def _models_list(self) -> list:
+        with self._lock:
+            days = self._state.get("days") or {}
+            today_total = round(float(days.get(_today_key()) or 0.0), 6)
+            total = round(sum(float(v or 0) for v in days.values()), 6)
+            out = []
+            for m in (self._state.get("apiModels") or []):
+                if not isinstance(m, dict) or not m.get("id"):
+                    continue
+                item = dict(m)
+                item.pop("keyValue", None) # 不落明文密钥
+                item["todayUsage"] = today_total
+                item["usageTotal"] = total
+                item["usageCurrency"] = "CNY"
+                item["usageSource"] = "local"
+                out.append(item)
+            return out
+
+    def api_models_payload(self) -> dict:
+        return {"ok": True, "models": self._models_list(),
+                "templates": [dict(t) for t in self._MODEL_TEMPLATES]}
+
+    def api_models_action(self, body) -> dict:
+        if not isinstance(body, dict):
+            return {"ok": False, "error": "missing body"}
+        action = str(body.get("action") or "")
+        if action == "save":
+            model = body.get("model")
+            if not isinstance(model, dict) or not str(model.get("name") or "").strip():
+                return {"ok": False, "error": "模型名不能为空"}
+            with self._lock:
+                items = [m for m in (self._state.get("apiModels") or [])
+                         if isinstance(m, dict)]
+                mid = str(model.get("id") or "") or ("m%s" % format(
+                    int(time.time() * 1000), "x"))
+                clean = {k: v for k, v in model.items() if k != "id"}
+                clean["id"] = mid
+                clean["name"] = str(clean.get("name") or "")[:40]
+                # 密钥只留"有个值"这个事实，不存明文（前端给的是 keyValue）
+                if str(body.get("keyValue") or "").strip():
+                    clean["keySet"] = True
+                found = None
+                for m in items:
+                    if str(m.get("id")) == mid:
+                        found = m
+                        break
+                if found is None:
+                    items.append(clean)
+                else:
+                    found.update(clean)
+                self._state["apiModels"] = items
+                self._save_state()
+            return self.api_models_payload()
+        if action == "delete":
+            mid = str(body.get("id") or "")
+            with self._lock:
+                self._state["apiModels"] = [
+                    m for m in (self._state.get("apiModels") or [])
+                    if not (isinstance(m, dict) and str(m.get("id")) == mid)]
+                self._save_state()
+            return self.api_models_payload()
+        return {"ok": False, "error": "未知动作：%s" % action[:20]}
+
+    # ── 余额微调（本地口径）───────────────────────────────────────────────
+    #
+    #   PUT balance-adjustments.json {modelId, day, revision, action, credits,
+    #                                 otherDebits, confirmed}
+    #     → {"ok":true,"summary":{"day","currentBalance","currency","amount","source","label"}}
+    # 上游这套是"对着厂商账单人工对账"；本移植版**不去外部拉余额**，口径改成：
+    #   用户填的 credits/otherDebits 落成**该模型该日的人工账**，余额 = 人工账 − 本机记录的
+    #   当日消耗；summary 里如实标 `source: "manual"`，不冒充厂商数字。
+    #   action='reset' 清掉该日人工账。
+
+    def balance_adjustments(self, body) -> dict:
+        if not isinstance(body, dict):
+            return {"ok": False, "error": "missing body"}
+        mid = str(body.get("modelId") or "")
+        day = str(body.get("day") or _today_key())
+        action = str(body.get("action") or "save")
+
+        def _num(v) -> float:
+            try:
+                return float(str(v).strip() or 0)
+            except Exception:  # noqa: BLE001
+                return 0.0
+
+        with self._lock:
+            adj = dict(self._state.get("balanceAdjust") or {})
+            key = "%s|%s" % (mid, day)
+            if action == "reset":
+                adj.pop(key, None)
+                self._state["balanceAdjust"] = adj
+                self._save_state()
+                amount, credits, debits = 0.0, 0.0, 0.0
+            else:
+                if not bool(body.get("confirmed")):
+                    return {"ok": False, "error": "请先勾选确认（核对过账单）"}
+                credits, debits = _num(body.get("credits")), _num(body.get("otherDebits"))
+                amount = round(credits + debits, 6)
+                adj[key] = {"modelId": mid, "day": day, "credits": credits,
+                            "otherDebits": debits, "amount": amount,
+                            "revision": body.get("revision"),
+                            "at": int(time.time() * 1000)}
+                self._state["balanceAdjust"] = adj
+                self._save_state()
+            used = round(float((self._state.get("days") or {}).get(day) or 0.0), 6)
+        return {"ok": True,
+                "summary": {"day": day, "currentBalance": round(amount - used, 6),
+                            "currency": "CNY", "amount": amount,
+                            "source": "manual", "label": "人工对账（本地）"}}
 
     # ── 静态资源 ───────────────────────────────────────────────────────
 

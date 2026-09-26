@@ -480,6 +480,21 @@ class WebUI:
                 handler._json(whale.cfg_payload(os.path.basename(path)), cors=True)
             except Exception as e:
                 handler._json({"ok": False, "error": str(e)[:200]}, cors=True)
+        elif path == "/dsh-whale/usage-settings.json":
+            try:
+                handler._json({"ok": True, "settings": whale.usage_settings()}, cors=True)
+            except Exception as e:  # noqa: BLE001
+                handler._json({"ok": False, "error": str(e)[:200]}, cors=True)
+        elif path == "/dsh-whale/usage-records.json":
+            try:
+                handler._json(whale.usage_records_payload(), cors=True)
+            except Exception as e:  # noqa: BLE001
+                handler._json({"ok": False, "error": str(e)[:200]}, cors=True)
+        elif path == "/dsh-whale/api-models.json":
+            try:
+                handler._json(whale.api_models_payload(), cors=True)
+            except Exception as e:  # noqa: BLE001
+                handler._json({"ok": False, "error": str(e)[:200]}, cors=True)
         elif path == "/dsh-whale/roles.json":
             # 自定义角色列表（内置 default 恒在首位）
             try:
@@ -1143,6 +1158,23 @@ class WebUI:
                 # 原：elif path == "/api/cursor/reset": ⇒ 已搬到 agent/routes.py → _rapi_cursor_reset（/api/cursor/reset）
                 # 原：elif path == "/api/memory": ⇒ 已搬到 agent/routes.py → _rapi_memory（/api/memory）
                 # 原：elif path == "/api/sessions": ⇒ 已搬到 agent/routes.py → _rapi_sessions（/api/sessions）
+                if path == "/dsh-whale/usage-settings.json":
+                    # 前端 PUT 的是**改动项**（局部合并）
+                    if parent.whale is None:
+                        self._json({"error": "not found"}, 404, cors=True)
+                    else:
+                        try:
+                            self._json(parent.whale.save_usage_settings(data), cors=True)
+                        except Exception as e:  # noqa: BLE001
+                            self._json({"ok": False, "error": str(e)}, 500, cors=True)
+                elif path == "/dsh-whale/balance-adjustments.json":
+                    if parent.whale is None:
+                        self._json({"error": "not found"}, 404, cors=True)
+                    else:
+                        try:
+                            self._json(parent.whale.balance_adjustments(data), cors=True)
+                        except Exception as e:  # noqa: BLE001
+                            self._json({"ok": False, "error": str(e)}, 500, cors=True)
                 if path == "/dsh-whale/size.json":
                     # 小鲸鱼挂件配置保存（前端 PUT）
                     if parent.whale is None:
@@ -1178,6 +1210,15 @@ class WebUI:
                         try:
                             self._json(parent.whale.bubble_img_action(data), cors=True)
                         except Exception as e:
+                            self._json({"ok": False, "error": str(e)}, 500, cors=True)
+                elif path == "/dsh-whale/api-models.json":
+                    # 自定义 API 模型：动作式（save / delete）
+                    if parent.whale is None:
+                        self._json({"error": "not found"}, 404, cors=True)
+                    else:
+                        try:
+                            self._json(parent.whale.api_models_action(data), cors=True)
+                        except Exception as e:  # noqa: BLE001
                             self._json({"ok": False, "error": str(e)}, 500, cors=True)
                 elif path in ("/dsh-whale/roles.json", "/dsh-whale/role-pin.json",
                                "/dsh-whale/role-delete.json"):

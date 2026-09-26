@@ -8146,6 +8146,79 @@ def t_whale_assets() -> None:
                 "audio-fragment.wav")))
 
 
+def t_whale_usage() -> None:
+    """自检：挂件「用量设置 / 用量记录 / API 模型表 / 余额微调」（产品真实代码 + 临时目录）。
+
+    前端隐式要求（漏了就"看着有、其实白"）：
+      · usage-settings 的 PUT 是**局部合并**（前端只发改动项）；
+      · **usage-records 里也要带 settings**（前端两处从它刷设置缓存）；
+      · all.days 的字段名是 date/total/currency（前端按 date 排序画柱图）；
+      · api-models 是**动作式**（save/delete），且**密钥不落明文**。
+    """
+    import tempfile as _tf
+
+    from agent import whale as _wh # noqa: PLC0415
+
+    _tmp = _tf.mkdtemp(prefix="whale-usage-gate-")
+    _w = _wh.WhaleWidget(_tmp)
+
+    _s0 = _w.usage_settings()
+    ck("用量设置默认齐备（taskEnd/alert/budget/models 一个都不能少）",
+       all(k in _s0 for k in ("taskEnd", "alert", "budget", "models")), str(_s0))
+    _r = _w.save_usage_settings({"budget": 5, "models": {"m1": {"alert": False}}})
+    _r2 = _w.save_usage_settings({"models": {"m1": {"budget": 2}}})
+    ck("用量设置 PUT 是**局部合并**（只发改动项、同模型多次改不丢前值）",
+       _r["ok"] and _r2["settings"]["budget"] == 5
+       and _r2["settings"]["models"]["m1"] == {"alert": False, "budget": 2},
+       str(_r2["settings"]))
+
+    _w.note_call("deepseek-flash", {"prompt_tokens": 100000, "completion_tokens": 200000})
+    _w.note_turn_done()
+    _rec = _w.usage_records_payload()
+    ck("用量记录 today 有数（前端据它改「今日已用」并给标签）",
+       _rec["today"]["total"] > 0 and _rec["today"]["label"], str(_rec["today"]))
+    ck("用量记录 all.days 字段名 = date/total/currency（前端按 date 排序画柱图）",
+       _rec["all"]["days"] and set(_rec["all"]["days"][-1]) >= {"date", "total", "currency"},
+       str(_rec["all"]["days"][-1]))
+    ck("⛔ usage-records 里也带 settings（前端两处从它刷设置，漏了设置会回默认）",
+       isinstance(_rec.get("settings"), dict) and _rec["settings"].get("budget") == 5)
+
+    _p0 = _w.api_models_payload()
+    ck("模型表初始给模板", _p0["ok"] and len(_p0["templates"]) >= 2
+       and _p0["models"] == [], str([t["id"] for t in _p0["templates"]]))
+    _p1 = _w.api_models_action({"action": "save", "keyValue": "sk-should-not-persist",
+                                "model": {"name": "我的模型", "provider": "deepseek"}})
+    _m = (_p1.get("models") or [{}])[0]
+    ck("新建模型带**本机用量**（今日/合计），且**密钥不落明文**",
+       _p1.get("ok") and _m.get("todayUsage", 0) > 0 and _m.get("keySet") is True
+       and "keyValue" not in _m, str({k: _m.get(k) for k in ("name", "keySet")}))
+    _mid = _m.get("id")
+    _p2 = _w.api_models_action({"action": "save", "model": {"id": _mid, "name": "改名"}})
+    ck("按 id 保存是更新而非新增；空名被拒",
+       len(_p2["models"]) == 1 and _p2["models"][0]["name"] == "改名"
+       and _w.api_models_action({"action": "save", "model": {"name": " "}}).get("ok") is False)
+    ck("删除模型", _w.api_models_action({"action": "delete", "id": _mid})["models"] == [])
+
+    _b1 = _w.balance_adjustments({"modelId": "m1", "day": "2026-09-26", "credits": "10",
+                                  "otherDebits": "0", "confirmed": True})
+    ck("余额微调：填了并确认才落地，回 summary 且标 source=manual（不冒充厂商数字）",
+       _b1.get("ok") and _b1["summary"]["amount"] == 10.0
+       and _b1["summary"]["source"] == "manual", str(_b1.get("summary")))
+    ck("余额微调：没勾确认一律拒绝（防误改账）",
+       _w.balance_adjustments({"modelId": "m1", "day": "2026-09-26",
+                               "credits": "5"}).get("ok") is False)
+    ck("余额微调：reset 清掉该日人工账",
+       _w.balance_adjustments({"modelId": "m1", "day": "2026-09-26",
+                               "action": "reset"})["summary"]["amount"] == 0.0)
+
+    _w2 = _wh.WhaleWidget(_tmp)
+    ck("换实例：用量设置与今日账本仍在（真落盘）",
+       _w2.usage_settings()["budget"] == 5
+       and _w2.usage_records_payload()["today"]["total"] > 0)
+    ck("挂件端点已全部接通：未支持清单只剩目录式 sound/",
+       _wh.WhaleWidget._UNSUPPORTED == ("sound/",), str(_wh.WhaleWidget._UNSUPPORTED))
+
+
 def t_placeholder_guard() -> None:
     """自检：「占位卡死」与「清容器残留」两条链的回归闸。
 
@@ -8300,7 +8373,7 @@ def main() -> int:
                    t_g15, t_g16, t_g17, t_g18, t_g19, t_g20, t_g21, t_g22, t_ocr_fuzzy,
                    t_audit_r3, t_dialog_drag, t_whale_guard, t_color_token_guard,
                    t_button_label_guard, t_placeholder_guard, t_dupdef_guard,
-                   t_whale_roles, t_whale_assets):
+                   t_whale_roles, t_whale_assets, t_whale_usage):
             try:
                 fn()
             except Exception as e: # noqa: BLE001
