@@ -16,6 +16,7 @@ import io
 import json
 import os
 import random
+import shutil
 import subprocess
 import sys
 import time
@@ -235,7 +236,16 @@ def main():
                not left and not wait_to,
                "残留 pid：%s%s" % ("、".join(sorted(left)[:4]),
                                    "（且 taskkill 后 15s 未退出）" if wait_to else ""))
-    print("  副本目录（不自动删，供复盘）：%s" % root)
+    # ⛔ 副本要**自己清掉**：解出来的是整包（≈500MB），每跑一次留一个 = 资源泄漏。
+    #    需要留档复盘时设 `PM_SMOKE_KEEP=1`。
+    if os.environ.get("PM_SMOKE_KEEP") == "1":
+        print("  副本目录（PM_SMOKE_KEEP=1，保留供复盘）：%s" % root)
+    else:
+        shutil.rmtree(root, ignore_errors=True)
+        if os.path.exists(root):
+            print("  ⚠️ 副本未能删除（可能有文件被占用）：%s" % root)
+        else:
+            print("  副本已清理（要留档请设 PM_SMOKE_KEEP=1）")
     print("== 首启冒烟判据：%d 通过 / %d 失败 / %d 跳过 ==" % (PASS[0], FAIL[0], SKIP[0]))
     return 0 if FAIL[0] == 0 else 1
 
