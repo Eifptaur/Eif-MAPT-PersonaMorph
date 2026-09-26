@@ -5408,6 +5408,24 @@ def t_g13() -> None:
         ck("g13-C 位移 < 阈值 ⇒ 当点击不当拖（气泡菜单里的点按不会被抖成移窗）",
            w.pos() == pos1, "p1=%s now=%s" % (pos1, w.pos()))
 
+        # 拖动（Qt 侧）：页面说"在本体上按下了" ⇒ 之后由 Qt 自己的移动事件挪窗
+        _w4 = ww.WhaleWidget(t)
+        keep.append(_w4)
+        _w4._boot_webview = lambda *a, **k: None
+        _w4._grab_mouse = lambda: None # 离屏不真抢系统捕获
+        _w4.move(300, 200)
+        _w4._on_pagedrag("begin")
+        _p1 = _w4.pos()
+        _w4.mouseMoveEvent(QMouseEvent(QEvent.Type.MouseMove, QPointF(10, 10),
+                                       QPointF(_w4.x() + 80, _w4.y() + 60),
+                                       Qt_Left, Qt_Left, _NoMod))
+        QApplication.processEvents()
+        _moved_ok = _w4.pos() != _p1
+        _w4._on_pagedrag("end")
+        ck("拖动走 Qt：按下后 Qt 的移动事件真的挪窗，松手即收尾并停表",
+           _moved_ok and not _w4._drag_timer.isActive() and _w4._drag_cursor is None,
+           "pos=%s timer=%s" % (_w4.pos(), _w4._drag_timer.isActive()))
+
         # 窗口自适应：内容（弹层）要多少空间就长多少，本体在屏幕上的位置不动
         w3 = ww.WhaleWidget(t)
         keep.append(w3)
@@ -7574,11 +7592,17 @@ def t_whale_guard() -> None:
        '"dragbegin"' in _om and '"dragend"' in _om and "json.loads" in _om, "")
 
     _pg = _inspect.getsource(WhaleWidget._on_pagedrag)
-    ck("拖动改成**跟真实光标**（页面坐标换算随缩放/内核而异 ⇒ 不再传位移，只报开始/结束）",
-       "_drag_cursor" in _pg and "_drag_win" in _pg and "QCursor.pos()" in _pg, "")
-    ck("跟光标挪窗有终止条件（左键一松就自己收尾，页面漏报 mouseup 也不会卡住）",
-       "GetAsyncKeyState" in _inspect.getsource(WhaleWidget._drag_tick)
-       and "self._drag_timer.stop()" in _pg, "")
+    _tk = _inspect.getsource(WhaleWidget._drag_tick)
+    _gm = _inspect.getsource(WhaleWidget._grab_mouse)
+    ck("拖动走 Qt 侧：页面只说按下，宿主用 SetCapture 把鼠标消息收回本窗口",
+       "SetCapture" in _gm and "ReleaseCapture" in _inspect.getsource(
+           WhaleWidget._release_mouse) and "_drag_cursor" in _pg, "")
+    ck("捕获只在真窗口上抢（没上屏时不搅乱系统鼠标）",
+       "self.isVisible()" in _gm, "")
+    ck("拖动有终止条件：按键全松 / 拖过 60 秒 / 页面报松手 —— 都不会占着捕获不放",
+       "GetAsyncKeyState" in _tk and "_end_drag" in _tk
+       and "> 60" in _tk and "self._drag_timer.stop()" in _inspect.getsource(
+           WhaleWidget._end_drag), "")
     _bw = _inspect.getsource(WhaleWidget._boot_webview)
     ck("挂件侧已接 on_drag（漏接则页面报了位移也没人挪窗）",
        "on_drag" in _bw, "")

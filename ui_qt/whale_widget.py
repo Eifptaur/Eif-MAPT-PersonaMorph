@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import time
 from pathlib import Path
 
 from PySide6.QtCore import QPoint, QRect, QRectF, QSettings, Qt, QTimer
@@ -96,6 +97,7 @@ class WhaleWidget(QWidget):
         # 页面转发拖动：页面只说开始/结束，位置由**跟真实光标**的定时器算（见 _drag_tick）
         self._drag_cursor: QPoint | None = None
         self._drag_win: QPoint | None = None
+        self._drag_t0 = 0.0
         self._drag_timer = QTimer(self)
         self._drag_timer.setInterval(16)
         self._drag_timer.timeout.connect(self._drag_tick)
@@ -344,48 +346,86 @@ class WhaleWidget(QWidget):
         except Exception:  # noqa: BLE001
             pass
 
-    def _on_pagedrag(self, kind: str) -> None:
-        """页面报告「在本体上开始拖 / 松手」→ 由**宿主跟着真实光标**挪窗。
+    # ------------------------------------------------------------ 拖动（Qt 侧）
+    #
+    # 为什么**彻底**改到 Qt 侧：页面报的开始/结束要一路 postMessage → COM 回调 → Qt，
+    # 而拖动中的位置过去靠"宿主每 16ms 读光标"补 —— 真机上仍不跟手（时序与投递都不可靠）。
+    # 现在改成：页面只负责说一句"在本体上按下了"（且不是按在按钮/菜单上），
+    # 宿主随即用 **`SetCapture` 把鼠标消息在系统层面收回本窗口** —— 此后所有移动/松手
+    # 都由 Windows 直接投给 Qt，用 Qt 自己的全局坐标挪窗：1:1、不经内核、不依赖任何页面事件。
 
-        ⛔ 为什么不用页面报的位移：页面给的是 CSS 像素坐标，换算到物理/逻辑像素的
-        比例随系统缩放与内核口径而异（实测症状就是"捏住本体只能在窗口里晃一晃"）。
-        改成「页面只说开始/结束，宿主每 16ms 读一次真实光标」——与页面坐标完全无关，
-        鼠标走到哪窗走到哪，1:1，且不依赖任何换算。
-        """
+    def _on_pagedrag(self, kind: str) -> None:
+        """页面说「本体上按下 / 松手」→ 由 Qt 接手拖（系统级捕获）。"""
         try:
             if kind == "begin":
-                self._drag_cursor = QCursor.pos()
+                self._drag_cursor = QCursor.pos() # 锚点：按下那一刻的光标
                 self._drag_win = self.pos()
+                self._drag0 = QCursor.pos() # 复用 Qt 自己的拖动逻辑（mouseMoveEvent）
+                self._win0 = self.pos()
+                self._moved = False
+                self._drag_t0 = time.monotonic()
+                # ⛔ 跳出 WebView2 的事件回调再抢捕获：抢捕获本身是普通 user32 调用，
+                #    但此刻内核正在处理这次按下，等一拍再抢更稳（不让内核半路丢消息）。
+                QTimer.singleShot(0, self._grab_mouse)
                 if not self._drag_timer.isActive():
                     self._drag_timer.start(16)
             else:
-                if self._drag_timer.isActive():
-                    self._drag_timer.stop()
-                self._drag_cursor = None
-                self._drag_win = None
-                self._save_anchor(self.x(), self.y())
+                self._end_drag()
         except Exception:  # noqa: BLE001 — 拖动是尽力而为，失败不影响挂件显示
             pass
 
+    def _grab_mouse(self) -> None:
+        """把鼠标消息在系统层面收回本窗口（拖动期间不再经过 WebView2）。
+
+        ⛔ 只在**真的上屏**时抢：没上屏就抢等于把一个不存在的窗口设成捕获窗口，
+        会把系统的鼠标消息搅乱。
+        """
+        try:
+            if not self.isVisible():
+                return
+            ctypes.windll.user32.SetCapture(ctypes.c_void_p(int(self.winId())))
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _release_mouse(self) -> None:
+        """交还鼠标捕获（拖动结束；不还的话内核再也收不到鼠标）。"""
+        try:
+            ctypes.windll.user32.ReleaseCapture()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _end_drag(self) -> None:
+        """结束拖动：停计时器、还捕获、落盘位置。"""
+        if self._drag_timer.isActive():
+            self._drag_timer.stop()
+        self._release_mouse()
+        self._drag_cursor = None
+        self._drag_win = None
+        self._drag0 = None
+        self._win0 = None
+        self._save_anchor(self.x(), self.y())
+
     def _drag_tick(self) -> None:
-        """跟光标挪窗（16ms 一拍）。左键已松开就自动收尾 —— 页面漏报 mouseup
-        （比如松手时鼠标在别的窗口上）也不会卡在"一直在拖"的状态里。"""
+        """拖动期间的兜底：①按"位置=Cursor-锚点"绝对定位挪窗（与 Qt 自己那条路幂等，
+        不会双倍位移）；②按键已全部松开、或拖得过久就自动收尾 —— 页面漏报松手也不会
+        卡在"一直在拖"的状态里（也不会一直占着鼠标捕获）。"""
         try:
             if self._drag_cursor is None or self._drag_win is None:
                 self._drag_timer.stop()
                 return
+            _u = ctypes.windll.user32
             # ⛔ 左右键都要看：鼠标左右键互换（左手习惯）时，浏览器里的"左键"对应的是
             #    物理右键 —— 只看 VK_LBUTTON 会在按下的那一刻就判"已松手"⇒ 拖动刚起步就断。
-            _u = ctypes.windll.user32
             if not ((_u.GetAsyncKeyState(1) | _u.GetAsyncKeyState(2)) & 0x8000):
-                self._on_pagedrag("end")
+                self._end_drag()
                 return
-            d = QCursor.pos() - self._drag_cursor
-            if d.x() or d.y():
-                self.move(self._drag_win + d)
+            if time.monotonic() - self._drag_t0 > 60:
+                self._end_drag() # 上限：任何自链都必须有终止条件
+                return
+            self.move(self._drag_win + (QCursor.pos() - self._drag_cursor))
         except Exception:  # noqa: BLE001
             try:
-                self._drag_timer.stop()
+                self._end_drag()
             except Exception:  # noqa: BLE001
                 pass
 
@@ -529,10 +569,9 @@ class WhaleWidget(QWidget):
         if ev.button() == Qt.MouseButton.LeftButton:
             self._inject(self._K_LUP, ev)
             self._lbtn = False
-        if self._drag0 is not None and self._moved:
-            self._save_anchor(self.x(), self.y())
-        self._drag0 = None
-        self._win0 = None
+        # 捕获在我们手上时，松手一定由 Qt 收到 —— 用它统一收尾（停表、还捕获、落盘位置）
+        if self._drag_cursor is not None or self._drag0 is not None:
+            self._end_drag()
         super().mouseReleaseEvent(ev)
 
     def leaveEvent(self, ev) -> None:  # noqa: N802
