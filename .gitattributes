@@ -10,3 +10,13 @@
 # 显示中文。出包闸门（scripts/pack_online.py）会独立再检一次。
 *.cmd text eol=crlf
 *.bat text eol=crlf
+
+# 数据文件行尾钉 LF（2026-09-26 外置控制台页面/人设库时定）
+#
+# 为什么这两处必须钉死：它们是**被程序读进来当值用**的数据文件（不是源码）。
+# `assets/console/index.html` 更进一步 —— 它的**行号**被全仓 139 处注释当"对齐坐标"引用
+# （数据文件前 10 行是占位，就是为了让行号与迁移前的 agent/console_html.py 逐行相同）。
+# 若某些机器上被转成 CRLF，虽然加载器走"通用换行"仍能读对内容，但**文件行尾在仓库里就不确定了**
+# ⇒ 跨机比对/逐字节校验会莫名其妙地对不上。钉成 LF：任何人 clone 下来都是 LF。
+assets/console/index.html text eol=lf
+assets/persona/cards.json text eol=lf
