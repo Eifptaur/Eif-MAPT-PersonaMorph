@@ -63,10 +63,9 @@ class WhaleWidget(QWidget):
         # 配套动作在 whale_host._enable_transparency() —— WebView2 的画面是窗口
         # 合成出来的，不把它的 DefaultBackgroundColor 设成 A=0，内核图层就合不上，
         # 表现是「窗口透明但鲸鱼不出现」。两者必须成对改，缺一个都不出画面。
-        # 合成承载：WebView 无子窗、画面进 DComp 视觉树（DComp 目标绑窗后，
-        # 窗口内容=合成树，其 alpha 由 DWM 直接合成到桌面——窗口**不能**再挂
-        # WS_EX_LAYERED/半透明属性，否则合成树被绕开回到不透明）。
-        # self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        # 半透明窗：降级卡浮在桌面上（无灰块底）。合成承载下 WebView 无子窗、
+        # 画面进 DComp 视觉树，同样与此属性兼容（画面 alpha 由 DWM 合成）。
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setMouseTracking(True) # 无按键的移动也要收（hover/拖动中段）
         self.setFixedSize(self.W, self.H)
         self._drag0: QPoint | None = None

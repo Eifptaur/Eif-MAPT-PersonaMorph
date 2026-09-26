@@ -31,6 +31,9 @@ def _loader_dll() -> str:
 def _ptr_val(x) -> int:
     """comtypes 对 void* 出参的返回形态不稳定（int / bytes / POINTER 都出现过）
     —— 统一折算成地址整数，调用方不再关心形态。"""
+    import ctypes
+    from ctypes import c_void_p
+
     if x is None:
         return 0
     if isinstance(x, int):
@@ -44,6 +47,36 @@ def _ptr_val(x) -> int:
         return ctypes.cast(x, c_void_p).value or 0
     except Exception:  # noqa: BLE001
         return 0
+
+
+def _qi_raw(ptr, iid_str: str, itype):
+    """手写 QueryInterface：返回按 itype 包装的接口指针。
+
+    不用 comtypes 的 QueryInterface —— 它对回调借出再 AddRef 的指针会返回
+    错误类型的包装（实测）。vtbl[0] = QI，与官方 C 调用同构。
+    """
+    import ctypes
+    from ctypes import POINTER, c_void_p
+
+    addr = _ptr_val(ptr)
+    if not addr:
+        raise OSError("QI 空指针")
+
+    class _GUID(ctypes.Structure):
+        _fields_ = [("d1", ctypes.c_uint32), ("d2", ctypes.c_uint16),
+                    ("d3", ctypes.c_uint16), ("d4", ctypes.c_ubyte * 8)]
+
+    g = _GUID()
+    if ctypes.windll.ole32.CLSIDFromString(iid_str, ctypes.byref(g)) != 0:
+        raise OSError("IID 解析失败: %s" % iid_str)
+    vtbl = ctypes.cast(addr, POINTER(POINTER(c_void_p))).contents
+    qi = ctypes.WINFUNCTYPE(ctypes.c_long, c_void_p, POINTER(_GUID),
+                            POINTER(c_void_p))(vtbl[0])
+    out = c_void_p()
+    hr = qi(addr, ctypes.byref(g), ctypes.byref(out))
+    if hr != 0 or not out.value:
+        raise OSError("QI %s 失败 hr=0x%08X" % (iid_str, hr & 0xFFFFFFFF))
+    return ctypes.cast(out, POINTER(itype))
 
 
 def _addref_com(ptr) -> None:
@@ -233,26 +266,35 @@ class WhaleHostWebView:
                 raise TimeoutError("控制器回调未返回（hr=%s）" % self._ctrl_holder.get("hr"))
             self._ctrl = ctrl
             if self._composition:
-                from whale_wv2_iid import ICoreWebView2Controller2
+                from whale_wv2_iid import (ICoreWebView2CompositionController,
+                                           ICoreWebView2Controller,
+                                           ICoreWebView2Controller2,
+                                           ICoreWebView2)
                 self._cc = ctrl  # 合成回调给出的就是 CompositionController
-                try:
-                    self._setup_dcomp()
-                except Exception:
-                    import traceback
-                    traceback.print_exc(file=sys.stderr)
-                    raise
-                self._trans_err = ""
-                try:
-                    c2 = self._cc.QueryInterface(ICoreWebView2Controller2)
-                    c2.put_DefaultBackgroundColor(0) # 合成承载支持真透明（A=0）
-                    self._ctrl2 = c2
-                except Exception as e:  # noqa: BLE001 — 透明失败不影响显示链
-                    self._trans_err = "%s: %s" % (type(e).__name__, e)
-            ctrl.put_IsVisible(1)
-            self._apply_bounds()
-            if not self._composition:
+                cctl = _qi_raw(self._cc,
+                               "{4D00C0D1-9434-4EB6-8078-8697A560334F}",
+                               ICoreWebView2Controller)
+                self._ctrl2 = _qi_raw(self._cc,
+                                      "{C979903E-D4CA-4228-92EB-47EE3FA96EAB}",
+                                      ICoreWebView2Controller2)
+                print("[step] QI Controller2 ok", file=sys.stderr, flush=True)
+                self._wv = cctl.get_CoreWebView2() # 官方顺序：先拿 WebView 再建树
+                print("[step] get_CoreWebView2 ok", file=sys.stderr, flush=True)
+                self._setup_dcomp()
+                print("[step] dcomp ok", file=sys.stderr, flush=True)
+                cctl.put_IsVisible(1)
+                print("[step] IsVisible ok", file=sys.stderr, flush=True)
+                self._apply_bounds_on(cctl)
+                print("[step] Bounds ok", file=sys.stderr, flush=True)
+                self._ctrl2.put_DefaultBackgroundColor(0xFFFFFFFF) # 对照实验：不透明白
+                print("[step] 画布透明 ok", file=sys.stderr, flush=True)
+            else:
+                ctrl.put_IsVisible(1)
+                self._apply_bounds()
+                self._wv = ctrl.get_CoreWebView2()
                 self._enable_transparency()
-            self._wv = ctrl.get_CoreWebView2()
+                print("[step] 窗口化透明 trans_err=%r" % self._trans_err,
+                      file=sys.stderr, flush=True)
             # 拖动转发要收页面的 postMessage —— 这一步没开的话页面发的消息会被
             # 内核直接丢弃（默认是开的，但显式确认一次，免得运行库改默认值）。
             try:
@@ -354,8 +396,11 @@ class WhaleHostWebView:
                                    IDCompositionVisual)
 
         dcomp = ctypes.WinDLL("dcomp.dll")
-        dcomp.DCompositionCreateDevice.restype = ctypes.c_long
-        dcomp.DCompositionCreateDevice.argtypes = [c_void_p, c_void_p, c_void_p]
+        # ⛔ 必须用 **DCompositionCreateDevice2**（v2 API，内部自建 D3D 渲染设备）
+        #    —— v1 的 DCompositionCreateDevice 是 GDI 后端，承载不了 WebView2 的
+        #    D3D 内容（官方样例同款，动态加载避免静态依赖）。
+        dcomp.DCompositionCreateDevice2.restype = ctypes.c_long
+        dcomp.DCompositionCreateDevice2.argtypes = [c_void_p, c_void_p, c_void_p]
 
         class _GUID(ctypes.Structure):
             _fields_ = [("d1", ctypes.c_uint32), ("d2", ctypes.c_uint16),
@@ -366,7 +411,7 @@ class WhaleHostWebView:
                 str(IDCompositionDevice._iid_), ctypes.byref(g)) != 0:
             raise OSError("DComp IID 解析失败")
         dev = c_void_p()
-        hr = dcomp.DCompositionCreateDevice(None, ctypes.byref(g), ctypes.byref(dev))
+        hr = dcomp.DCompositionCreateDevice2(None, ctypes.byref(g), ctypes.byref(dev))
         if hr != 0 or not dev.value:
             raise OSError("DCompositionCreateDevice hr=0x%08X" % (hr & 0xFFFFFFFF))
         self._dcdev = ctypes.cast(dev, POINTER(IDCompositionDevice))
@@ -414,16 +459,31 @@ class WhaleHostWebView:
         self._ctrl2 = None
         self._trans_err = ""
         try:
+            import ctypes
+            from ctypes import POINTER, c_void_p
+
             from whale_wv2_iid import ICoreWebView2Controller2
 
-            c2 = self._ctrl.QueryInterface(ICoreWebView2Controller2)
-            c2.put_DefaultBackgroundColor(0)
+            addr = _ptr_val(self._ctrl)
+            c2 = _qi_raw(self._ctrl,
+                         "{C979903E-D4CA-4228-92EB-47EE3FA96EAB}",
+                         ICoreWebView2Controller2)
+            # ⛔ put 也用**裸 vtable 调用**：comtypes 包装的接口指针在本机调用
+            #    会 AV（同参数裸调正常），模式与上方 AddRef 完全同构。
+            c2_addr = _ptr_val(c2)
+            vtbl = ctypes.cast(c2_addr, POINTER(POINTER(c_void_p))).contents
+            put = ctypes.WINFUNCTYPE(ctypes.c_long, c_void_p,
+                                     ctypes.c_uint32)(vtbl[27])
+            put(c2_addr, 0) # A=0 → 画布全透明
             self._ctrl2 = c2
         except Exception as e:  # noqa: BLE001
             self._ctrl2 = None
             self._trans_err = "%s: %s" % (type(e).__name__, e)
 
     def _apply_bounds(self) -> None:
+        self._apply_bounds_on(self._ctrl)
+
+    def _apply_bounds_on(self, ctrl) -> None:
         import ctypes
         from ctypes import c_void_p
 
@@ -431,7 +491,7 @@ class WhaleHostWebView:
             _fields_ = [("left", ctypes.c_int32), ("top", ctypes.c_int32),
                         ("right", ctypes.c_int32), ("bottom", ctypes.c_int32)]
 
-        self._ctrl.put_Bounds(
+        ctrl.put_Bounds(
             ctypes.cast(ctypes.byref(RECT(0, 0, self.width, self.height)), c_void_p))
 
     def _schedule(self, fn) -> None:  # noqa: ANN001
