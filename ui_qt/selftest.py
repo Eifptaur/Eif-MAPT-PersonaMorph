@@ -7118,7 +7118,7 @@ def t_ocr_fuzzy() -> None:
         _co.matches_fuzzy = _real_mf
         ck("chat_is_open：读对时档① strict 直接放行，模糊档零触达（成本不变）",
            ok3 is True and _hit["fuzzy"] == 0, "fuzzy 触达=%d" % _hit["fuzzy"])
-        # ── 场景 D/E（audit-r3 D1）：候选集必须 = 可见行 ∪ DB 已知名 ──
+        # ── 场景 D/E（D1）：候选集必须 = 可见行 ∪ DB 已知名 ──
         from PIL import Image as _PImD # noqa: PLC0415（⑤ 段的 _PImage 在此处之后才定义）
         w._idn_txn_begin()
         _orig_cb = _co.capture_best
@@ -7159,7 +7159,7 @@ def t_ocr_fuzzy() -> None:
     except Exception as e: # noqa: BLE001
         ck("_known_chat_names 单元口径不抛异常", False, "%s: %s" % (type(e).__name__, str(e)[:60]))
 
-    # ── ④″ 滚动「见过的会话名」（audit-r4 D1 残余）：三表答不出的竞争者，读到过就该拦得住 ──
+    # ── ④″ 滚动「见过的会话名」（D1 残余）：三表答不出的竞争者，读到过就该拦得住 ──
     try:
         w3 = _WA.__new__(_WA)
         w3._groups = []
@@ -7176,7 +7176,7 @@ def t_ocr_fuzzy() -> None:
            and "填充043" not in w3._seen_names and "填充044" in w3._seen_names
            and "填充299" in w3._seen_names,
            "n=%d" % len(w3._seen_names))
-        # ── 场景 G（audit-r6 ③）：当前行自己的读数不进候选集——模糊档核心场景回归 ──
+        # ── 场景 G（③）：当前行自己的读数不进候选集——模糊档核心场景回归 ──
         #   生产形态：列表里就有当前行（绿底高亮），OCR 把它读错一字；r5 及以前的实现把
         #   同源读数当候选 ⇒「a≈no」自否决（审查者端到端实测：B3 拒发 / B4 禁喂后放行）。
         #   修后按绿底带排除当前行 ⇒ 模糊唯一接近 ⇒ 放行（r4 行为恢复）。
@@ -7247,7 +7247,7 @@ def t_ocr_fuzzy() -> None:
         _co.green_bands = _orig_gb if "_orig_gb" in dir() else _co.green_bands
         _chdr.check = _orig_check # ④″ 场景 F/G 又动了它，离场还原（防泄漏进 ⑤/⑥）
 
-    # ── ④″′ candidate_rows_excluding_active 单元（audit-r6 排除 + r7 兜底共用助手）──
+    # ── ④″′ candidate_rows_excluding_active 单元（排除 + 兜底共用助手）──
     from agent.chat_ocr import candidate_rows_excluding_active as _crea # noqa: PLC0415
     _imG = _PImG.new("RGB", (80, 40), (255, 255, 255))
     _orig_gb2 = _co.green_bands
@@ -7268,7 +7268,7 @@ def t_ocr_fuzzy() -> None:
         _co.session_rows = _orig_sr2
         _co.green_bands = _orig_gb2
 
-    # ── ④‴ D2（audit-r6 新发现）：归一化撞名 ⇒ 尾巴成判别特征；无撞名 ⇒ 装饰豁免保留 ──
+    # ── ④‴ D2（新发现）：归一化撞名 ⇒ 尾巴成判别特征；无撞名 ⇒ 装饰豁免保留 ──
     from agent.chat_ocr import norm_collides as _nc # noqa: PLC0415
     ck("norm_collides：库里真有同名异饰的另一群 ⇒ 撞名；自身同名不算；无同名不撞",
        _nc("测试", ["KC测试", "测试(2)"]) is True and _nc("测试(2)", ["测试"]) is True
@@ -7385,7 +7385,7 @@ def t_ocr_fuzzy() -> None:
 
 
 def t_audit_r3() -> None:
-    """audit-r3 落地项自检：D4 会话身份事务装饰器（语义 + 接线）+ D3 孤儿 stash 自愈。
+    """落地项自检：D4 会话身份事务装饰器（语义 + 接线）+ D3 孤儿 stash 自愈。
 
     D4 验三件事：进门换 token / 退出（含异常路径）清缓存且 token 再进位 / 返回值透传；
     接线验 8 个非 send_text 操作入口都带 `_idn_scoped` 标记（缺一个都算漏包事务）。
@@ -7431,7 +7431,7 @@ def t_audit_r3() -> None:
     ck("D4 接线：8 个非 send_text 操作入口均已包事务（_idn_scoped 标记齐全）",
        not _miss, "缺=%s" % _miss)
 
-    # D4 覆盖面（audit-r4，r5 按审查者建议升级为递归 glob）：AST 全量枚举 chat_is_open
+    # D4 覆盖面（按审查者建议升级为递归 glob）：AST 全量枚举 chat_is_open
     # 调用点，逐一核事务覆盖——覆盖判据：方法级祖先链上任一函数 ①是 send_text（显式事务）
     # ②带 @_idn_txn_scope ③函数体内显式调 _idn_txn_begin（voice_strip 式独立入口）。
     # ⚠️ 已知不覆盖形态：**别名/getattr 间接调用**（如 `f = wc.chat_is_open; f(...)`）——
@@ -7519,7 +7519,7 @@ def t_audit_r3() -> None:
 
 
 def _stash_selfheal(logs_dir: str) -> str:
-    """孤儿 stash 自愈（audit-r3 D3）：上一跑没走完 finally 就退出（强杀/断电/段错误）
+    """孤儿 stash 自愈（D3）：上一跑没走完 finally 就退出（强杀/断电/段错误）
     ⇒ `console.url` 被挪进 `console.url.selftest-stash` 再没回来——产品读不到 url（静默降级），
     下一次自检的「挪开」也扑空。规则：url 在 ⇒ stash 是陈货，删掉；url 不在而 stash 在 ⇒ 还原。
     返回动作说明（自检断言用）。只动测试侧遗留物，产品行为不受影响。"""
@@ -10103,7 +10103,7 @@ def t_delivery_ledger_guard() -> None:
 
 
 def main() -> int:
-    # ⭐ 测试隔离（audit-r2 N1 残余的收口）：`logs/console.url` 是**产品运行时**写的
+    # ⭐ 测试隔离（N1 残余的收口）：`logs/console.url` 是**产品运行时**写的
     #   （含随机端口+token），自检跑在产品目录里会读到它——轻则刷几百行「端口连不上」噪音，
     #   重则让依赖 current_url 的断言随工作区残留漂移。⇒ 开跑前把它临时挪开，收尾还原。
     #   只动测试侧：产品读这个文件是正确行为，不改。

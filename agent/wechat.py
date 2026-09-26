@@ -49,7 +49,7 @@ def message_ledger(n: int = 30) -> list:
 def _idn_txn_scope(fn):
     """把一次完整操作包进**会话身份事务**：进门换 token，退出（含早退/异常）作废。
 
-    背景（audit-r3 D4）：事务原来只在 `send_text` 开（显式 begin/end），其余 12 处
+    背景（D4）：事务原来只在 `send_text` 开（显式 begin/end），其余 12 处
     `chat_is_open` 调用点（发图 / @ / 引用 / 拍一拍 / 表情面板…）落回 `_IDN_CACHE_TTL_S`
     秒兜底 ⇒ **跨操作可复用**正面证据（同 chat_id + 同尺寸、≤4 秒内）——上一个操作
     验完「开着的是 A」，4 秒内下一个操作切到 B 再验 A，可能吃到上一操作的旧证据。
@@ -1494,7 +1494,7 @@ class WeChatAdapter:
             # "通道坏了"。但 `master_key=None` 是**常态**（见 `_usable_key_count` 的注释），
             # 本机实测：master_key=None + 20 把缓存密钥全过页1校验 + 真读到最新消息 ⇒ 通道是好的。
             # 老自检的后果是**每台机器都永远判"不可用"**，"没等到新行"一律被降级成"未证实"
-            # （对面 r22 核心②就是这么来的）。新自检：既没主密钥、又没有一把可用缓存密钥，才算不可信。
+            # （核心②就是这么来的）。新自检：既没主密钥、又没有一把可用缓存密钥，才算不可信。
             mk = getattr(self._db, "master_key", "?")
             if mk is None and self._usable_key_count() <= 0:
                 return False, ("既没拿到主密钥、也没有任何能过页1校验的缓存密钥 ⇒ 回读通道不可信"
@@ -3807,7 +3807,7 @@ class WeChatAdapter:
 
     def _db_chat_names(self) -> list:
         """**可信 DB 名**（群表 ∪ 昵称表 ∪ 监听会话展示名）——`norm_collides` 的撞名
-        判定只用这一份（audit-r6）：屏幕读数里本身带装饰（「演示（3）」成员数），混进
+        判定只用这一份：屏幕读数里本身带装饰（「演示（3）」成员数），混进
         撞名源会把装饰误判成撞名、杀死装饰豁免。异常退空表（宁缺勿错）。
         """
         names = set()
@@ -3838,7 +3838,7 @@ class WeChatAdapter:
         """**全量已知会话名**：DB 可信名 ∪ 屏幕上读到过的会话行名。
 
         两个用途（都用同一份集合，避免"候选集"与"撞名源"两套口径）：
-          · ③′ 模糊档候选集的补全（audit-r3 D1，下段说明）；
+          · ③′ 模糊档候选集的补全（D1，下段说明）；
           · **撞名判定的候选源**（`chat_is_open` / `_screen_only_identity` 传给
             `matches_strict(others=…)` / `matches_fuzzy(db_others=…)`）：屏幕读数里出现过
             的撞名会话也算竞争名，否则"只在会话列表里出现过、库里没有"的同名变体会漏判
@@ -3856,11 +3856,11 @@ class WeChatAdapter:
 
         名字来源（全部读内存映射 / 缓存，零 OCR）：
           · `_db_chat_names()`：群表 `_groups`（微信库全量群）∪ 昵称表 `_nick_map` ∪
-            监听中的会话展示名（自带 60s 缓存）——**可信源**，兼作撞名判定（audit-r6）；
-          · 滚动「见过的会话名」`_seen_names`（audit-r4 D1 残余补法：用户**手动**打开
+            监听中的会话展示名（自带 60s 缓存）——**可信源**，兼作撞名判定；
+          · 滚动「见过的会话名」`_seen_names`（D1 残余补法：用户**手动**打开
             一个我们从没见过的会话 / 联系人表读不到时的私聊——三张表都答不出名字，
             但它的行一定在会话列表里出现过且当时可读，读到就记）。
-            ⛔ 只喂 `session_rows()` 里**非当前高亮行**的名字（audit-r6：当前行自己的
+            ⛔ 只喂 `session_rows()` 里**非当前高亮行**的名字（当前行自己的
             读数与判据 a 同源 ⇒ 进候选集必然「a≈no」自否决，模糊档对它本来要救的场景
             反而拒发——r5 曾把当前读数也并进来，r6 审查者实测证伪，已撤）。
         消息档案 / 记忆库的枚举**不并入**：档案键是 wxid 不是名字，展示名仍要回查上面
@@ -3882,7 +3882,7 @@ class WeChatAdapter:
     _SEEN_NAMES_CAP = 256
 
     def _seen_names_add(self, names) -> None:
-        """滚动「见过的会话名」集（audit-r4 D1 残余补法，零 OCR 成本）。
+        """滚动「见过的会话名」集（D1 残余补法，零 OCR 成本）。
 
         为什么要有：模糊档候选集的三张表（群表/昵称表/监听会话）都答不出名字时，
         真实竞争会话依旧缺席 ⇒ 仍会判「唯一接近」。而竞争会话既然被打开着，它的行
@@ -3945,9 +3945,9 @@ class WeChatAdapter:
                 return self._idn_cache_put(_ck, (True, "当前会话 OCR=%r（目标 %r）· %s" % (got, want, why)))
         except Exception:
             pass
-        # ② **会话头标题带 OCR**（提到第二位）—— 对面 r25 实测它有区分力
+        # ② **会话头标题带 OCR**（提到第二位）—— 实测它有区分力
         #    （'OE' vs 'O文亻牛传输助手'，一次就能判定当前是谁），可当首选档用；
-        #    r24 那次"四档兜底放行"命中的也正是这一档。
+        #    那一次"四档兜底放行"命中的也正是这一档。
         _tt = "" # 供 ③′ 模糊档兜底复用（档② 异常时保持空，_src3 退回只用 got）
         try:
             from . import chat_ocr as _co2
@@ -3976,7 +3976,7 @@ class WeChatAdapter:
             _src3 = got or _tt
             if _src3:
                 _im5 = _co3.capture_best(gui=gui or self._get_gui(), frames=2)
-                # ⛔ D1（audit-r3）+ audit-r6/r7：候选行排除**当前高亮行**自己的读数
+                # ⛔ D1+ /r7：候选行排除**当前高亮行**自己的读数
                 #   （与判据 a 同源 ⇒「a≈no」自否决），绿底带量不到时按名字相似度兜底
                 #   剔除——细节见 chat_ocr.candidate_rows_excluding_active（两处共用，
                 #   r7 审查者"只改一处"建议落地时收敛）。候选集仍须并 DB 全量已知名。
@@ -3997,8 +3997,8 @@ class WeChatAdapter:
             st = _ch.check(chat_id, gui=gui)
             if st.get("status") == "ok":
                 if allow_weak:
-                    return self._idn_cache_put(_ck, (True, "会话头指纹判 ok（**弱档**：对面 r25 实测它对不同会话也会判 True）"))
-                return False, ("【可重试】只有会话头指纹档成立（**弱档、会假阳性**：对面 r25 实测两个不同会话"
+                    return self._idn_cache_put(_ck, (True, "会话头指纹判 ok（**弱档**：实测它对不同会话也会判 True）"))
+                return False, ("【可重试】只有会话头指纹档成立（**弱档、会假阳性**：实测两个不同会话"
                                "同时判 True）⇒ 不足以确认当前会话，按**未确认**处理")
         except Exception:
             pass
@@ -5292,7 +5292,7 @@ class WeChatAdapter:
                 _st = _ch.check(chat_id)
                 # ⛔ （用户追问
                 #   不发错的会发错，对的会发错」）：**指纹是弱档，不许单独授权发消息**。
-                #   `chat_is_open` 里早就写明"对面 r25 实测两个不同会话同时判 True，授权写动作的最后一道闸
+                #   `chat_is_open` 里早就写明"实测两个不同会话同时判 True，授权写动作的最后一道闸
                 #   绝不接它"—— 但这条发送链一直拿 `_ch.check`（纯指纹）的 ok 当放行依据 ⇒ 自相矛盾，
                 #   一假阳性就把消息发进另一个会话（＝"对的会发错"）。
                 #   ⇒ 指纹 ok 时**再要一档有区分力的证据**（名字 OCR / 会话头标题带 OCR / 活动行时间×DB）；
@@ -5321,7 +5321,7 @@ class WeChatAdapter:
                 if _st["status"] == "mismatch":
                     # 🔴 （拍摄现场 02:09：三句文字回复全被拒发、群里只有图没有话）：
                     #   日志原文「投递切会话后发送失败：会话头不匹配，拒绝投递（防发错会话）：相似度 0.530 < 0.90」。
-                    #   **指纹是弱档**（对面 r25 实测它对不同会话也判 True＝会假阳性；同理参照过期/空白帧会
+                    #   **指纹是弱档**（实测它对不同会话也判 True＝会假阳性；同理参照过期/空白帧会
                     #   假阴性），它不该有单独否决**强档**证据的权力 —— 而同一刻 `chat_is_open` 的强档里
                     #   「会话头标题带 OCR='演示（3）'」明明是命中的。⇒ 判 mismatch 时**先问强档**
                     #   （名字 OCR / 会话头标题带 / 高亮行时间×DB，都是能回答"现在是谁"的证据）：
@@ -5630,7 +5630,7 @@ class WeChatAdapter:
                         self._learn_chat_header(chat_id, gui=gui)
                         return V_OK, "投递发送成功（第 %d 枪：%s；DB 回读 local_id=%s type=%s）" % (
                             _i, _how, head.get("local_id"), head.get("type"))
-                    # 这条"宽松成功"以前**不学参照** ⇒ 对面 r23 实测：A 枪走这条分支
+                    # 这条"宽松成功"以前**不学参照** ⇒ 实测：A 枪走这条分支
                     # 返回 ok，紧接着同一尺寸再发**仍报 no_ref**。能走到这里说明身份闸已放行 ⇒ 学参照安全。
                     self._learn_chat_header(chat_id, gui=gui)
                     return V_OK, "DB 有新行但内容与本次不一致（第 %d 枪：%s；local_id=%s，可能上一条刚写库）" % (
@@ -5663,7 +5663,7 @@ class WeChatAdapter:
         except Exception as e:
             return False, str(e)
         finally:
-            # 早退路径也要放回收起状态（对面 r23 反馈：被 no_ref 拒发时"1.5s 后查
+            # 早退路径也要放回收起状态（反馈：被 no_ref 拒发时"1.5s 后查
             # IsIconic=False"——拒发是早退，以前不走 `_restore_fg_until` ⇒ 放回被漏掉）
             _minimize_back_if_needed("投递文本链收尾")
 
@@ -6554,7 +6554,7 @@ class WeChatAdapter:
                 # 只认「候选集唯一接近」，两候选都接近 ⇒ 歧义不认（宁漏发不误发）。
                 try:
                     _im = _co.capture_best(gui=gui or self._get_gui(), frames=2)
-                    # ⛔ D1（同 chat_is_open ③′）+ audit-r6/r7：候选行排除当前行自己的
+                    # ⛔ D1（同 chat_is_open ③′）+ /r7：候选行排除当前行自己的
                     #   读数（同源自否决），并 DB 全量已知名——共用助手见
                     #   chat_ocr.candidate_rows_excluding_active。
                     _vis = _co.candidate_rows_excluding_active(_im, hdr)

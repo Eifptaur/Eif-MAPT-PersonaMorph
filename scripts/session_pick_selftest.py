@@ -492,7 +492,7 @@ ok("第二道证据二选一：聊天区出现同一时间 **或** 该时刻在�
    _sm.has(_w_src, "if _pane_hit or _uniq:") and _sm.has(_w_src, "_uniq = (_n == 1)")
    and _sm.has(_w_src, "def _active_row_time_ok"))
 
-print("\n── F. 时间口径：10 点以前的时刻也要能按时间定位（r11 实测根因）──")
+print("\n── F. 时间口径：10 点以前的时刻也要能按时间定位（实测根因）──")
 # ⛔ 根因（两次 ABORT 的直接原因）：`find_row_info` 把**目标时间**（`strftime('%H:%M')`
 #    ＝`01:03`）与**读到的**时间（归一成 `'%d:%02d'`＝`1:03`）**直接比字符串** ⇒ 上午 0~9 点永不相等。
 #    E 那种单字母会话名字读不出来、**时间档是唯一信号** ⇒ 表现成"列表里明明有 E，滚 6 轮也定位不到"。
@@ -511,7 +511,7 @@ ok("find_row_info 的时间比较走同一个口径（源码断言）",
    _sm.has(_co_src, "want = hhmm(want_time)") and _sm.has(_co_src, "hit_t = row_time_match(_blob, want)"))
 ok("wechat 侧的 _norm_hhmm 只有一处实现（委托 chat_ocr.hhmm）", _sm.has(_w_src, "return _co.hhmm(s)"))
 
-print("── G. 绿底行按像素找：高亮行是白字绿底、OCR 读不出它（r11 实测根因）──")
+print("── G. 绿底行按像素找：高亮行是白字绿底、OCR 读不出它（实测根因）──")
 # ⛔ `highlight` / `highlight_relative` / `current_chat_name` 都在**OCR 行**里挑绿最多的，
 #    而当前打开的那一行是**白字绿底**——整幅 OCR 里根本没有这一行（实测 8 行独缺高亮行）⇒
 #    只能挑到"头像绿"的行（实测把「宋孟」认成「微信…」）。现在主路改成**纯像素扫绿底带**。
@@ -536,7 +536,7 @@ try:
 except Exception as _e:
     ok("绿底带判据可跑", False, "%s: %s" % (type(_e).__name__, _e))
 
-print("── H. 单字母名字被 OCR 读成别的字时，仍要能定位那一行（r11 实测根因③）──")
+print("── H. 单字母名字被 OCR 读成别的字时，仍要能定位那一行（实测根因③）──")
 # ⛔ E 是当前打开的那一行，整行 OCR＝『巷01：03』——名字被读成「巷」，
 #    "名字明显不是它 ⇒ 不算"这条防误配守卫于是把**唯一正确的行**否掉 ⇒ 报"没定位到 E"。
 #    修法：目标名 ≤2 字（短到 OCR 认不准）且**该时刻在整张列表里唯一**时放行。

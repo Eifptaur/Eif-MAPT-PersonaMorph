@@ -574,7 +574,7 @@ def main():
                     help="本次进程内放行版本门（等价于控制台点「本次允许发送」）⇒ 让 --send-test 真跑一次")
     ap.add_argument("--open", action="store_true",
                     help="跑完打开报告目录（⚠️ 会把资源管理器弹到前台 ⇒ 两个 .cmd 已不再默认带它；"
-                         "跨机 r13 实测：带上它跑完，t=27.4s 前台被切到「报告」窗口）")
+                         "实测：带上它跑完，t=27.4s 前台被切到「报告」窗口）")
     args = ap.parse_args()
 
     if args.allow_send:

@@ -236,7 +236,7 @@ ck("B17 三条会抓图的投递链都在入口调了它（切会话 / 搜索框
    _srcslice.from_func(SRC_WECHAT, "switch_chat_posted")[:4000].count("_ensure_main_visible") >= 1
    and _srcslice.from_func(SRC_WECHAT, "open_chat_by_search")[:4000].count("_ensure_main_visible") >= 1
    and _srcslice.from_func(SRC_WECHAT, "send_text_posted")[:4000].count("_ensure_main_visible") >= 1)
-# B17′~B17c 用完要把"为干活还原出来的"主窗**放回收起状态**（对面 r22 验收 FAIL 项：
+# B17′~B17c 用完要把"为干活还原出来的"主窗**放回收起状态**（验收 FAIL 项：
 #   不激活还原 ✓、还前台 ✓，但结束后 `IsIconic=False` ⇒ 用户的微信从"收在任务栏"变成"摊在桌面上"）
 ck("B17a 还原时登记了「这是为干活还原的」",
    _sm.has(SRC_WECHAT, "_MINIMIZED_BY_US = int(main)"))
@@ -558,7 +558,7 @@ ck("B23d config.example.json 同步了这个键",
 ck("B23e bg_status（单一事实源）的说明与新默认一致",
    "scroll_list_fallback" in BG.__doc__ or "scroll_list_fallback" in io.open(
        os.path.join(ROOT, "agent", "bg_status.py"), encoding="utf-8").read())
-# B17d~B17g 破 `no_ref` 死锁（对面 r23 现场：参照只在"发送成功之后"才学，而 `no_ref`
+# B17d~B17g 破 `no_ref` 死锁（现场：参照只在"发送成功之后"才学，而 `no_ref`
 #   直接拒发 ⇒ 永远拒、永远学不到；A 枪走"宽松成功"分支同样不学 ⇒ 全日志没有一次学会参照的记录）
 _ST = _srcslice.from_func(SRC_WECHAT, "send_text_posted")
 # ⚠️ 原来这里是 `[:16000]` 硬切 —— 发文字这个函数太长，16000 字会**切进
@@ -569,7 +569,7 @@ ck("B17d 指纹档给不出结论时改用四档证据兜底（否则 no_ref 死
    _sm.has(_ST, "self.chat_is_open(chat_id, gui=gui)"))
 ck("B17e 四档放行后顺手补参照（破死锁的钥匙）",
    "放行时补参照" in _ST)
-ck("B17f 宽松成功分支也学参照（对面 r23 的 A 枪走的就是这条）",
+ck("B17f 宽松成功分支也学参照（A 枪走的就是这条）",
    _ST.count("self._learn_chat_header(chat_id, gui=gui)") >= 2)
 ck("B17g 两条投递链的收尾（含早退路径）都放回收起状态",
    '_minimize_back_if_needed("投递文本链收尾")' in SRC_WECHAT
@@ -610,7 +610,7 @@ ck("B24e 三枪都没打出去 ⇒ 如实报「三枪都没打出去」，不冒
 # B20~B21 档位强弱（r25 对面实测：会话头指纹档**会假阳性**——当前明明开着「E」时
 #   `chat_is_open("filehelper")` 也返回 True；而 r24 我刚把这个函数接进身份闸的兜底 ⇒ 等于给"发错
 #   会话"开了一道缝。⇒ 指纹档降级为弱档、默认不采信；标题带档提为首选（对面实测它有区分力：
-#   'OE' vs 'O文亻牛传输助手'，且 r24 那次 A1 命中的正是这一档）。
+#   'OE' vs 'O文亻牛传输助手'，且 那一次 A1 命中的正是这一档）。
 _CIS = _srcslice.from_func(SRC_WECHAT, "chat_is_open")[:4600]
 ck("B20 会话头指纹档降级为弱档、默认不采信（只有 allow_weak 时才认）",
    "allow_weak" in _CIS and "弱档" in _CIS

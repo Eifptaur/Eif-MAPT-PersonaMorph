@@ -75,7 +75,7 @@ def _mk(rows=None, err=None, master_key="k", wal=None, keys=None, bad_keys=()):
 print("── B. db_alive：判据可用性自检 ──")
 # `master_key=None` **不再是**判不可用的理由——它是**常态**（库只在"内存扫描"
 # 那层成功时才给 master_key 赋值，走缓存密钥时一直是 None），只要缓存密钥能过页1 HMAC 校验，
-# 回读就是可信的（本机实测：None + 20 把密钥全过 + 真读到最新消息）。对面 r22 核心②的"未证实"
+# 回读就是可信的（本机实测：None + 20 把密钥全过 + 真读到最新消息）。核心②的"未证实"
 # 正是老口径（`if mk is None: return False`）造成的。
 a = _mk(rows=[{"create_time": int(time.time())}], master_key=None)
 alive, why = a.db_alive("filehelper")

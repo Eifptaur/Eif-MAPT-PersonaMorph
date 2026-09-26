@@ -45,7 +45,7 @@ opencv-python>=5.0.0.93
 # 装不上时仍按 `voice_reply.edge_fallback`（默认开）退回系统声音并写明，不静默。
 edge-tts>=6.1.0
 
-# ── 视频外链下载（丙-11 A2，2026-09-24）：B 站/抖音/快手/小红书/YouTube 通用抽取器 ──
+# ── 视频外链下载：B 站/抖音/快手/小红书/YouTube 通用抽取器 ──
 # `agent/bilibili.py::ytdlp_bin()` 先查 `runtime/python/Scripts/yt-dlp.exe`（本行装的就是它），
 # 再退回 PATH。没装时视频外链解析会**如实报「下载器未安装」**，绝不假装能下。
 yt-dlp>=2024.1.1
