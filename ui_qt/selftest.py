@@ -1001,6 +1001,32 @@ def t_wheel_nod() -> None:
     from PySide6.QtWidgets import QScrollArea # noqa: PLC0415
 
     wc = cursor_fx.WhaleCursor(HERE.parents[0])
+    # ⛔ 左键点头必须**真的播放**：`self._nod`（歪头帧属性）曾遮蔽同名方法 `_nod()`，
+    #    于是每次左键按下抛 `TypeError: 'QCursor' object is not callable` —— 效果从未生效，
+    #    每个鼠标事件还多一条异常。判据：真发一次左键按下，必须不抛且 override cursor
+    #    真的换成歪头帧（尺寸 = 底图 ×1.3，用来区分它是不是底图）。
+    from PySide6.QtCore import QEvent as _QE # noqa: PLC0415
+    from PySide6.QtCore import QPointF as _QPF # noqa: PLC0415
+    from PySide6.QtCore import Qt as _Qt # noqa: PLC0415
+    from PySide6.QtGui import QMouseEvent as _QME # noqa: PLC0415
+
+    wc.enabled = True
+    wc._rebuild(False)
+    _nod_err = ""
+    try:
+        wc.eventFilter(None, _QME(_QE.Type.MouseButtonPress, _QPF(1, 1), _QPF(1, 1),
+                                  _Qt.MouseButton.LeftButton, _Qt.MouseButton.LeftButton,
+                                  _Qt.KeyboardModifier.NoModifier))
+    except Exception as _e: # noqa: BLE001
+        _nod_err = "%s: %s" % (type(_e).__name__, _e)
+    _cur = QApplication.overrideCursor()
+    ck("左键点头真的播放（不抛异常 + override cursor 换成歪头帧）",
+       not _nod_err and wc._mode == "nod" and _cur is not None
+       and wc._nod is not None and _cur.pixmap().size() == wc._nod.pixmap().size(),
+       "err=%s mode=%s cur=%s" % (_nod_err, wc._mode,
+                                  _cur.pixmap().size() if _cur is not None else None))
+    wc._nod_end()
+    wc.enabled = False
     page = QScrollArea()
     inner = QWidget()
     inner.setMinimumSize(200, 2000) # 内容超一屏 ⇒ maximum>0 真可滚
@@ -7041,6 +7067,7 @@ def t_ocr_fuzzy() -> None:
     _orig_ccn = _WA.current_chat_name
     _orig_srows = _co.session_rows
     _orig_check = _chdr.check
+    _orig_crex = getattr(_co, "candidate_rows_excluding_active", None)
     w = _WA.__new__(_WA) # 绕过 __init__（仿后端审查探针：只补身份闸用到的状态）
     w._gui = None
     w._idn_cache = None
@@ -7055,6 +7082,14 @@ def t_ocr_fuzzy() -> None:
         # 场景 A：strict 全漏 → 模糊唯一 → 放行（事务已开）
         _co.session_rows = lambda img: [{"name": n} for n in
                                         ["文件传输助手", "张三丰", "工作群A"]]
+        # ⛔ 候选集这一闸要**确定**：产品链里它由「真抓一帧 → 排除当前高亮行」得到
+        #   （`candidate_rows_excluding_active` 要真像素），而自检环境抓不抓得到画面
+        #   取决于**跑这一拍时的屏幕状态** ⇒ 候选集时有时无 ⇒ 本条判据在全量里偶发假失败
+        #   （长期挂账的 `chat_is_open` 波动就是这个）。本用例要验的是**模糊档**与
+        #   **候选集口径**，"排除高亮行"另有断言 ⇒ 这里只把"抓帧"这一步摘掉，
+        #   候选名一律取各场景自己桩好的 `session_rows`。
+        _co.candidate_rows_excluding_active = (
+            lambda img, src: [r["name"] for r in _co.session_rows(img)])
         _chdr.check = lambda *a, **k: {"status": "no"} # 档④ 指纹桩：不成立
         ok, why = w.chat_is_open("group:x@chatroom", name="演示群")
         ck("chat_is_open：strict 全漏（读错一字）→ 候选集模糊唯一接近 ⇒ 放行且说明带档名",
@@ -7101,6 +7136,8 @@ def t_ocr_fuzzy() -> None:
         _co.capture_best = _orig_cb if "_orig_cb" in dir() else _co.capture_best
         _WA.current_chat_name = _orig_ccn
         _co.session_rows = _orig_srows
+        if _orig_crex is not None:
+            _co.candidate_rows_excluding_active = _orig_crex
         _chdr.check = _orig_check
 
     # ── ④′ _known_chat_names 单元口径（D1 补全源：群表 ∪ 昵称表 ∪ 监听会话展示名）──
@@ -8585,6 +8622,213 @@ def t_dupdef_guard() -> None:
        not bad, "; ".join(bad[:4]) or "ok")
 
 
+def t_attr_shadow_guard() -> None:
+    """自检：类内**实例属性名与类内方法名同名**（属性遮蔽方法 ⇒ 实例上调不动）。
+
+    这类缺陷不报错、不告警：模块照常 import、静态检查也过，但 `self.X()` 每次执行都抛
+    `TypeError`（属性可能是 None，也可能是普通对象）。实测形态：`cursor_fx.WhaleCursor`
+    里 `self._nod`（歪头帧 QCursor）遮蔽了同名方法 `_nod()` ⇒ 左键「点头」效果从未播放，
+    而每个鼠标事件都要抛一次异常（现场 `data/runtime.log` 被这一条刷到 890KB）。
+
+    判据机械化：AST 全量扫 `ui_qt/` 与 `agent/` 下每个类，取「类体里有 `def X`」∩
+    「类体里有 `self.X = ...`」。
+    """
+    import ast # noqa: PLC0415
+
+    bad = []
+    for d in (HERE, HERE.parent / "agent"):
+        for p in sorted(d.glob("*.py")):
+            if p.name == "selftest.py":
+                continue
+            try:
+                tree = ast.parse(p.read_text(encoding="utf-8"))
+            except SyntaxError:
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ClassDef):
+                    continue
+                methods = {f.name for f in node.body
+                           if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))}
+                if not methods:
+                    continue
+                for sub in ast.walk(node):
+                    tgt = getattr(sub, "targets", None)
+                    if not tgt or len(tgt) != 1:
+                        continue
+                    t0 = tgt[0]
+                    if (isinstance(t0, ast.Attribute) and isinstance(t0.value, ast.Name)
+                            and t0.value.id == "self" and t0.attr in methods):
+                        bad.append("%s:%s.%s@%s" % (p.name, node.name, t0.attr, t0.lineno))
+    ck("全量无「实例属性遮蔽同类方法」（属性是 QCursor/None 时 self.X() 每次必抛）",
+       not bad, "; ".join(bad[:4]) or "ok")
+
+
+def t_async_landing_guard() -> None:
+    """自检：异步回调**落地时控件已被销毁**不许抛异常。
+
+    实测形态：面板发起请求 → 用户切页/换主题（`Shell._rebuild` 把整棵页栈
+    `setParent(None)` + `deleteLater`）→ 请求回来时回调仍然落地，去取已销毁的控件 ⇒
+    `RuntimeError: libshiboken: Internal C++ object (QLineEdit) already deleted`。
+    PySide6 里这是**未捕获异常**：打整段栈，视版本直接终止应用，而用户看到的只是
+    「面板用着用着整个没了」（现场 `data/runtime.log` 里抓到过完整栈）。
+
+    判据三条：①存活判能认出已销毁控件；②回调真抛 RuntimeError 时被吞掉；
+    ③端到端——面板销毁后异步结果不再落地。
+    """
+    import os # noqa: PLC0415
+    import time as _time # noqa: PLC0415
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QLineEdit # noqa: PLC0415
+
+    QApplication.instance() or QApplication([])
+
+    import agent_bridge # noqa: PLC0415
+    import panels_custom as pc # noqa: PLC0415
+
+    # ① 存活判。⛔ 这里必须用 `shiboken6.delete()` 立刻销毁 C++ 对象：`deleteLater()`
+    #    只是投一个延迟删除事件，**没有跑起来的事件循环时它不会落地**（`processEvents()`
+    #    不解 DeferredDelete）⇒ 用 deleteLater 做的"已销毁"在自检里是假的。
+    import shiboken6 # noqa: PLC0415
+
+    le = QLineEdit()
+    _before = pc._ui_alive(le)
+    shiboken6.delete(le)
+    ck("异步落地前的存活判能识别「已销毁控件」",
+       _before is True and pc._ui_alive(le) is False,
+       "before=%s after=%s" % (_before, pc._ui_alive(le)))
+    ck("没有绑定控件（None）时不误判为已死", pc._ui_alive(None) is True, "")
+
+    # ② 回调真抛 RuntimeError ⇒ 必须被吞掉（面板没了，没有界面要更新）
+    def _boom(*_a):  # noqa: ANN002, ANN202
+        raise RuntimeError("libshiboken: Internal C++ object already deleted")
+
+    _boom_err = ""
+    try:
+        pc._deliver(_boom, 1, 2)
+    except Exception as _e: # noqa: BLE001
+        _boom_err = str(_e)
+    ck("_deliver 吞掉「控件已销毁」的回调异常（不炸 UI 线程）", not _boom_err, _boom_err)
+
+    # ③ 端到端：面板销毁后异步结果不再落地
+    called: list = []
+    page = QLineEdit()
+    _real = agent_bridge.post_json
+    agent_bridge.post_json = lambda *_a, **_k: {"ok": True} # 打桩打在 agent_bridge 上
+    try:
+        pc._async_post(page, "/api/x", {}, lambda r, e: called.append(r))
+        shiboken6.delete(page) # 立刻销毁（真事件循环里 deleteLater 落地的等价物）
+        QApplication.processEvents()
+        _t0 = _time.monotonic()
+        while _time.monotonic() - _t0 < 1.4 and not called:
+            QApplication.processEvents()
+            _time.sleep(0.05)
+    finally:
+        agent_bridge.post_json = _real
+    ck("面板销毁后异步结果不再落地（否则取已销毁控件 = 抛异常）",
+       called == [], "called=%s" % (called,))
+
+
+def t_screen_guards() -> None:
+    """自检：功能筛查这一批修复的机械闸门（每条都对应一个真实缺陷）。
+
+    · 端口顺延真的生效（`SO_REUSEADDR` 下"绑一下试试"试不出来 ⇒ 先探监听者）
+    · 发送去重「查/记分离」（失败了不留记录 ⇒ 重试不会被当重复吞掉）
+    · 记忆目录名带哈希（不同 chat_key 不再撞同一个目录）
+    · 覆盖层清理只认输入体验的标题（不再误关用户的「设置」窗口）
+    · HTTP 401/403 有专属原因码（不再落到 unknown）
+    """
+    import os # noqa: PLC0415
+    import socket as _sk # noqa: PLC0415
+    import tempfile as _tf # noqa: PLC0415
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication # noqa: PLC0415
+
+    QApplication.instance() or QApplication([])
+
+    from agent import reason_codes as _rc  # noqa: PLC0415
+
+    # ① 端口占用探测：真起一个监听者，再问一次
+    srv = _sk.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    _live = srv.getsockname()[1]
+    s2 = _sk.socket()
+    s2.bind(("127.0.0.1", 0))
+    _free = s2.getsockname()[1]
+    s2.close()
+    import agent.webui as _web # noqa: PLC0415
+
+    ck("端口占用探测能认出「有人在听」",
+       _web._port_taken("127.0.0.1", _live) is True
+       and _web._port_taken("127.0.0.1", _free) is False,
+       "live=%s free=%s" % (_live, _free))
+    srv.close()
+    ck("顺延逻辑以探测结果为准（不再靠「绑一下试试」——SO_REUSEADDR 下试不出来）",
+       "if _port_taken(host, cand)" in (
+           HERE.parent / "agent" / "webui.py").read_text(encoding="utf-8"), "")
+
+    # ② 去重查/记分离
+    from collections import deque # noqa: PLC0415
+
+    from agent import wechat as _wx # noqa: PLC0415
+
+    a = _wx.WeChatAdapter.__new__(_wx.WeChatAdapter)
+    a._send_recent = deque(maxlen=50)
+    _r1 = a._dedup_send("c1", "hi")
+    _r2 = a._dedup_send("c1", "hi") # 还没记 ⇒ 仍允许（失败重试不该被吞）
+    a._dedup_mark("c1", "hi")
+    _r3 = a._dedup_send("c1", "hi") # 记过 ⇒ 拦
+    _r4 = a._dedup_send("c2", "hi") # 别的会话 ⇒ 放行
+    ck("发送去重「查/记分离」：没记就放行、记过才拦、按会话分账",
+       _r1 is True and _r2 is True and _r3 is False and _r4 is True,
+       "r=%s%s%s%s" % (_r1, _r2, _r3, _r4))
+
+    # ③ 记忆目录名带哈希（不同 chat_key 不许撞同一个目录）
+    import agent.memory as _mem # noqa: PLC0415
+
+    ck("记忆目录名按 chat_key 哈希区分（`a-b` 与 `a_b` 不再撞同一个目录）",
+       _mem._chat_dir_name("group:wxid_a-b") != _mem._chat_dir_name("group:wxid_a_b"),
+       "%s / %s" % (_mem._chat_dir_name("group:wxid_a-b"),
+                    _mem._chat_dir_name("group:wxid_a_b")))
+    # 老目录必须继续被认（否则用户视角＝"记忆没了"）
+    _tmp = _tf.mkdtemp(prefix="mem-dir-gate-")
+    _keep_dir = _mem.MEMORY_DIR
+    try:
+        _mem.MEMORY_DIR = _tmp
+        _legacy = os.path.join(_tmp, _mem._chat_dir_name_legacy("group:abc@chatroom"))
+        os.makedirs(_legacy, exist_ok=True)
+        ck("记忆目录换命名后仍认老目录（读写闭环不丢已有数据）",
+           os.path.normcase(_mem._chat_dir("group:abc@chatroom")) == os.path.normcase(_legacy),
+           _mem._chat_dir("group:abc@chatroom"))
+        ck("新会话落新命名（唯一性由哈希保证）",
+           os.path.basename(_mem._chat_dir("group:newone@chatroom")).endswith(
+               _mem._key_hash("group:newone@chatroom")), "")
+    finally:
+        _mem.MEMORY_DIR = _keep_dir
+        import shutil as _sh # noqa: PLC0415
+
+        _sh.rmtree(_tmp, ignore_errors=True)
+
+    # ④ 覆盖层清理只碰"输入体验"
+    import agent.ui_adapt as _ua # noqa: PLC0415
+
+    _ua_src = (HERE.parent / "agent" / "ui_adapt.py").read_text(encoding="utf-8")
+    ck("覆盖层清理按标题收窄到「输入体验」（否则会把用户的「设置」窗口关掉）",
+       "_OVERLAY_TITLES" in _ua_src
+       and "not any(k in _t for k in _OVERLAY_TITLES)" in _ua_src, "")
+    ck("手写画布那一类不受标题白名单限制（它没有「输入体验」标题）",
+       '"ShellHandwritingCanvas"' in _ua_src, "")
+
+    # ⑤ 401/403 有专属原因码
+    ck("HTTP 401/403 归到 auth_rejected（不再落到 unknown）",
+       _rc.classify("HTTP 401 Unauthorized") == "auth_rejected"
+       and _rc.classify("403 Forbidden") == "auth_rejected"
+       and _rc.classify("鉴权失败：token 无效") == "auth_rejected",
+       _rc.classify("HTTP 401 Unauthorized"))
+
+
 def main() -> int:
     # ⭐ 测试隔离（audit-r2 N1 残余的收口）：`logs/console.url` 是**产品运行时**写的
     #   （含随机端口+token），自检跑在产品目录里会读到它——轻则刷几百行「端口连不上」噪音，
@@ -8611,6 +8855,7 @@ def main() -> int:
                    t_g15, t_g16, t_g17, t_g18, t_g19, t_g20, t_g21, t_g22, t_ocr_fuzzy,
                    t_audit_r3, t_dialog_drag, t_whale_guard, t_color_token_guard,
                    t_button_label_guard, t_placeholder_guard, t_dupdef_guard,
+                   t_attr_shadow_guard, t_async_landing_guard, t_screen_guards,
                    t_whale_roles, t_whale_assets, t_whale_usage):
             try:
                 fn()

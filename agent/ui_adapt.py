@@ -42,14 +42,22 @@ _user32 = ctypes.windll.user32
 # 系统叠层窗口的类名（全屏置顶、吃点击，需要清理）
 _OVERLAY_CLASSES = (
     "ShellHandwritingCanvas", # Windows 手写输入画布（TabTip 宿主）
-    "Windows.UI.Core.CoreWindow", # Windows 输入体验
+    "Windows.UI.Core.CoreWindow", # ⚠️ 这是**一大类**（见下），不能只按类名关
 )
+
+#: `Windows.UI.Core.CoreWindow` 里我们**只认**这些标题（小写包含匹配）。
+#   ⛔ 该类名下住着用户的**「设置」/「照片」/「计算器」**…… 只按类名 `WM_CLOSE` + 隐藏
+#   ＝会把用户正开着的窗口关掉（用户视角＝"我的设置被莫名其妙关了"，而且它可能正在被用）。
+#   要清的只有中文输入法的「输入体验」（词条/标点候选面板），按标题白名单收窄。
+_OVERLAY_TITLES = ("windows input experience", "windows 输入体验", "输入体验", "input experience")
 
 # 永远不动的窗口类
 _SKIP_CLASSES = ("Progman", "WorkerW", "Shell_TrayWnd", "MSCTFIME UI", "IME",
                  "kugou_ui")
 
 _cache = {"scale": None}
+#: 坐标换算系数异常只警告一次（避免刷屏）
+_SCALE_WARNED = [False]
 
 
 def _config_ui() -> dict:
@@ -112,8 +120,19 @@ def coord_scale(override=None) -> float:
 
 
 def to_click(x: float | int, y: float | int, scale=None) -> tuple:
-    """把「截图/OCR 空间」坐标换算为「鼠标空间」坐标。"""
+    """把「截图/OCR 空间」坐标换算为「鼠标空间」坐标。
+
+    ⚠️ 本机实测这两个空间是 **1:1**（`_lock_dpi()` 把进程锁成 dpi_aware 后 `detect_scale()`
+    恒 1.0，这里的除算等于恒等）；但若 DPI 锁失败、`detect_scale()` 又检测到 1.5，
+    这个除算会让**所有点击整体点偏**（按 1.5 缩放）。
+    不擅自改公式（真机上无法离线复现那条组合，盲改风险更大），改为**把潜伏变显性**：
+    系数不为 1 时落一条 WARNING，现场就能看见。
+    """
     s = coord_scale(scale)
+    if abs(float(s) - 1.0) > 1e-9 and not _SCALE_WARNED[0]:
+        _SCALE_WARNED[0] = True
+        log.warning("坐标换算系数 = %s（≠1）⇒ 所有点击会按该系数缩放；"
+                    "若点击位置系统性偏移，先查 DPI 感知（_lock_dpi）是否生效", s)
     return int(round(float(x) / s)), int(round(float(y) / s))
 
 
@@ -183,18 +202,25 @@ def dismiss_overlays(wechat_hwnds: tuple = ()) -> list:
 
     # 1) 系统输入叠加层：先 WM_CLOSE + 隐藏；TabTip 宿主再 taskkill 兜底
     for h, cls, title, pid, rect in wins:
-        if cls in _OVERLAY_CLASSES:
-            handled.append(("overlay", cls, title[:50], pid))
-            try:
-                _user32.PostMessageW(h, 0x0010, 0, 0) # WM_CLOSE
-            except Exception:
-                pass
-            try:
-                _user32.ShowWindow(h, 0) # SW_HIDE
-            except Exception:
-                pass
-            cleaned += 1
-            time.sleep(0.2)
+        if cls not in _OVERLAY_CLASSES:
+            continue
+        # ⛔ `Windows.UI.Core.CoreWindow` 是 Windows 的一大类（设置/照片/计算器都在里面）——
+        #    只按类名关窗会把用户正开着的窗口 `WM_CLOSE` 掉。按标题白名单收窄到"输入体验"。
+        if cls == "Windows.UI.Core.CoreWindow":
+            _t = str(title or "").strip().lower()
+            if not any(k in _t for k in _OVERLAY_TITLES):
+                continue
+        handled.append(("overlay", cls, title[:50], pid))
+        try:
+            _user32.PostMessageW(h, 0x0010, 0, 0) # WM_CLOSE
+        except Exception:
+            pass
+        try:
+            _user32.ShowWindow(h, 0) # SW_HIDE
+        except Exception:
+            pass
+        cleaned += 1
+        time.sleep(0.2)
     if cleaned:
         time.sleep(0.6)
         # 注意：不 taskkill TabTip/TextInputHost——那是触控键盘宿主，

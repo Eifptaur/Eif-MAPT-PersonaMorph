@@ -240,7 +240,7 @@ class WhaleCursor(QObject):
                 # web mousedown 非 1 键 = 退出滚轮模式（本键自己的行为继续——左键接着点头）
                 w.stop()
             if btn == Qt.MouseButton.LeftButton and self._mode != "spin":
-                self._nod()
+                self._play_nod()
         return False
 
     def _push(self, cur: QCursor) -> None:
@@ -258,7 +258,13 @@ class WhaleCursor(QObject):
         if app is not None and app.overrideCursor() is not None:
             app.restoreOverrideCursor()
 
-    def _nod(self) -> None:
+    def _play_nod(self) -> None:
+        """播一次"歪头"：推上放大帧并起计时，到点自动收回。
+
+        ⛔ 方法名不能叫 `_nod` —— 实例属性 `self._nod`（歪头帧本身）会遮蔽同名方法，
+        调用点每次执行都抛 `TypeError: 'QCursor' object is not callable`（效果不生效 +
+        每个鼠标事件一条异常）。
+        """
         if self._nod is None: # 歪头帧没备好 → 不动（不闪系统箭头）
             return
         self._push(self._nod)

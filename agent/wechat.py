@@ -3094,10 +3094,15 @@ class WeChatAdapter:
             pass
 
     def _dedup_send(self, chat_id: str, text: str) -> bool:
-        """3 秒内对同一会话发送完全相同的文本 → 视为重复点击重试，直接跳过。
+        """3 秒内对同一会话发送完全相同的文本 → 视为重复，返回 False。**只查不记。**
 
-        微信 UIA 发送的「输入框未及时清空 → 重试回车」会把同一条发两遍，
-        这里做硬拦截（正常没人会在 3 秒内发两条一模一样的）。
+        微信发送的「输入框未及时清空 → 重试回车」会把同一条发两遍，这里做硬拦截
+        （正常没人会在 3 秒内发两条一模一样的）。
+
+        ⛔ 老实现在这里就 `append` 记录了 ⇒ 如果这次**发送失败**（消息没出去），3 秒内
+        重试同一条文本会被判成"重复"，而调用方拿到的是**幂等成功**
+        （`return True, "重复发送已拦截"`）⇒ 用户视角＝这条消息**永远没发出去**（静默丢消息）。
+        ⇒ 拆成「查（本函数）+ 记（`_dedup_mark`）」，只有确认发成功才记。
         """
         t = str(text or "").strip()
         if not t:
@@ -3109,8 +3114,24 @@ class WeChatAdapter:
         for ck, ct, ts in self._send_recent:
             if ck == key[0] and ct == key[1] and (now - ts) < 3.0:
                 return False
-        self._send_recent.append((key[0], key[1], now))
         return True
+
+    def _dedup_mark(self, chat_id: str, text: str) -> None:
+        """把一次**已确认发成功**的发送记进去（去重窗 3 秒）。
+
+        与 `_dedup_send` 配对使用：失败路径**不会**留下记录，所以"失败了再试一次"不会被
+        误判成重复。
+        """
+        t = str(text or "").strip()
+        if not t:
+            return
+        try:
+            while (self._send_recent
+                   and time.time() - self._send_recent[0][2] > 30):
+                self._send_recent.popleft()
+            self._send_recent.append((str(chat_id), t, time.time()))
+        except Exception:  # noqa: BLE001 — 记账失败不影响发送本身
+            pass
 
     # ── 前台管控：整批发送只置前一次，全部发完才恢复用户窗口 ─────────────
     _fg_depth = 0
@@ -3418,6 +3439,7 @@ class WeChatAdapter:
                             ok, msg = self.send_text_posted(text, chat_id)
                             if ok:
                                 self._mark_sent(text)
+                                self._dedup_mark(chat_id, text)
                                 return True, "%s（投递档 L5）" % msg
                             log.info("投递发送失败，退回真实路径：%s", msg)
                         else:
@@ -3462,6 +3484,7 @@ class WeChatAdapter:
                                 ok, msg = self.send_text_posted(text, chat_id, allow_no_ref=True)
                                 if ok:
                                     self._mark_sent(text)
+                                    self._dedup_mark(chat_id, text)
                                     return True, "%s（投递档 L5 · 先投递切会话 + OCR 确认）" % msg
                                 log.info("投递切会话后发送失败：%s", msg)
                             log.info("投递前置未满足（%s）且投递切会话未成功", st["status"])
@@ -3499,6 +3522,7 @@ class WeChatAdapter:
                 ok = bool(getattr(r, "is_success", False))
                 if ok:
                     self._mark_sent(text)
+                    self._dedup_mark(chat_id, text)
                     self._learn_chat_header(chat_id, gui=gui) # 让下次能走投递
                 return ok, _resp_msg(r)
         except Exception as e:
@@ -3533,6 +3557,7 @@ class WeChatAdapter:
                 ok = bool(getattr(r, "is_success", False))
                 if ok:
                     self._mark_sent(text)
+                    self._dedup_mark(chat_id, text)
                 return ok, _resp_msg(r)
         except Exception as e:
             return False, str(e)
@@ -5250,6 +5275,11 @@ class WeChatAdapter:
         _halt = _control_halt() # 暂停/停止闸：**已开工的链也要停**
         if _halt:
             return False, _halt
+        # ⛔ 去重闸：投递链此前**没有它** ⇒ 同一条文本会被发两遍（用户报过"连发两次"）。
+        #    与 `send_text` 同口径：3 秒内同会话同文本按幂等成功返回（只有真发出去了才计数，
+        #    记录写在成功落点的 `_dedup_mark`）。
+        if not self._dedup_send(chat_id, text):
+            return True, "重复发送已拦截（3 秒内同一文本）"
         # ⚡ 用户在全屏游戏/演示/静默时段 ⇒ **这一次不发**（投递打字会伪激活、把游戏踢出全屏）。
         #   等他最多 8s（快速 Alt-Tab 不丢消息），仍忙就如实返回原因（日志与控制台可见，不静默吞掉）。
         _busy_s = self._busy_reason("投递发送", wait_s=8.0)
@@ -5487,6 +5517,23 @@ class WeChatAdapter:
                     time.sleep(0.3)
             except Exception as _e:
                 log.info("投递聚焦输入栏失败（继续尝试打字）：%s", _e)
+            # ⛔ 打字前先看输入框里有没有**残留**：残留 + 新字会被串成一条发出去
+            #    （实测 `'hello'` → `'hellohello'`）。上一条消息若所有枪都落空，字就留在
+            #    框里，下一轮直接续写在后面 —— 收信人看到的是两条消息粘成一条（发错内容）。
+            #    量不到帧（-1/None）时**不动手**：宁可维持旧行为，也不按比例猜位置乱按键。
+            _box0 = _probe_input_box_frame(gui)
+            if _box0:
+                _ink0 = _input_ink(gui, _box0)
+                if _ink0 > 0:
+                    log.info("输入框有残留（上沿条带深色点 %d）⇒ 先清空再打字（否则两轮会串成一条）",
+                             _ink0)
+                    try:
+                        backend.keys(main, (ib.VK_CONTROL, 0x41)) # Ctrl+A 全选
+                        time.sleep(0.08)
+                        backend.keys(main, (0x08,)) # Backspace 删（固定退格数是猜数，全选后删不猜）
+                        time.sleep(0.12)
+                    except Exception as _e:
+                        log.warning("清空输入框失败（继续打字，但可能串字）：%s", _e)
             ok, why = backend.send_text(main, text)
             if not ok:
                 return False, "投递打字失败：%s" % why
@@ -5543,6 +5590,7 @@ class WeChatAdapter:
             #   ⇒ 口径改成：**开枪那一刻就记进回声表**（不等回读）；回读成功后再记一次也无害（幂等）。
             try:
                 self._mark_sent(text)
+                self._dedup_mark(chat_id, text)
             except Exception as _e:
                 log.debug("开枪前记回声失败（继续）：%s", _e)
             for _i in range(1, 4): # 最多 3 枪（与上游 click_send 的重试次数同口径）
@@ -5644,6 +5692,9 @@ class WeChatAdapter:
                 local_path, _cnote = _ic.compress_if_needed(local_path)
             except Exception as _e:
                 _cnote = "压缩环节异常（%s），原样发送" % type(_e).__name__
+            if _cnote:
+                # ⛔ 这个说明原来算了没人用（回执口径要求"压了/没压都看得见"）⇒ 落日志。
+                log.info("发图压缩说明：%s", _cnote)
             ok_open, why_open = self.chat_is_open(chat_id, gui=gui)
             if not ok_open:
                 return False, "投递发图要求目标会话已打开：%s" % why_open
@@ -9544,6 +9595,7 @@ class WeChatAdapter:
             # 引用模式下输入框探测（全宽白区+分界线）常失败，这正是「引用发送失败」的根因
             if self._uia_quote_finish(gui, text):
                 self._mark_sent(text)
+                self._dedup_mark(chat_id, text)
                 self._scroll_to_bottom(gui)
                 return True, "已引用并发送"
             # 🔴 
@@ -9557,6 +9609,7 @@ class WeChatAdapter:
             _p_ok, _p_why = self.send_text_posted(text, chat_id, allow_no_ref=True)
             if _p_ok:
                 self._mark_sent(text)
+                self._dedup_mark(chat_id, text)
                 self._scroll_to_bottom(gui)
                 return True, "已引用并发送"
             log.info("引用·投递发送未成（%s）", str(_p_why)[:110])
@@ -9580,6 +9633,7 @@ class WeChatAdapter:
                 self._scroll_to_bottom(gui)
                 return False, "发送失败"
             self._mark_sent(text)
+            self._dedup_mark(chat_id, text)
             self._scroll_to_bottom(gui)
             return True, "已引用并发送"
         except Exception as e:

@@ -853,9 +853,12 @@ def _wait_voice(wechat, chat_id: str, before, timeout: float = 12.0) -> tuple:
     """
     t0 = time.time()
     last = None
+    _reads = 0 # 成功读库次数
+    _db_err = "" # 读库失败原因：**读失败 ≠ 没发出去**，超时时必须分开说
     while time.time() - t0 < timeout:
         try:
             rows = wechat._db.get_messages(chat_id, limit=20) or []
+            _reads += 1
             for row in rows:
                 if str(row.get("type") or "") == "语音":
                     cur = row.get("local_id") or row.get("id")
@@ -863,7 +866,12 @@ def _wait_voice(wechat, chat_id: str, before, timeout: float = 12.0) -> tuple:
                     if before in (None, 0) or (cur and str(cur) != str(before)):
                         return True, "DB 回读确认：新语音条 local_id=%s" % cur
                     break # 最新那条还是旧的 ⇒ 继续等（微信写库要几秒）
-        except Exception:
-            pass
+        except Exception as _e: # noqa: BLE001 — 记下原因，别让"读失败"变成"没发出去"
+            _db_err = "%s: %s" % (type(_e).__name__, _e)
         time.sleep(1.0)
+    if not _reads:
+        # ⛔ 一次都没读成功 ⇒ 判据不可用。此时说"没发出去"会让上层按回退设置再发一个文件
+        #    （重复/内容不符），所以如实说"判据不可用、请按现场确认"。
+        return False, ("判据不可用：这 %.0f 秒里**一次都没读成功**会话库（%s）⇒ "
+                       "不能据此判断语音发出去了没有" % (timeout, _db_err or "未知原因"))
     return False, "等了 %.0f 秒，DB 里没出现新语音条（最新还是 %s）" % (timeout, last)

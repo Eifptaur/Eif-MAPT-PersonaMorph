@@ -288,6 +288,30 @@ def _wechat_dir_conflict(new_cfg: dict) -> dict:
             "wechat_dir": _wdir.status(explicit=old)}
 
 
+def _port_taken(host: str, port: int, timeout: float = 0.35) -> bool:
+    """这个端口上**已经有人在听**吗（连接试探：不占端口、不改任何状态）。
+
+    ⛔ 为什么不用"绑一下试试"：`http.server.HTTPServer.allow_reuse_address = 1`，而 Windows
+    上 SO_REUSEADDR 会让**第二次绑同一个端口也成功** ⇒ 试不出来（本机实测两个
+    ThreadingHTTPServer 能同时听同一端口）。connect 能直接问出"有没有监听者"。
+    只探本机回环 —— 控制台只服务本机。
+    """
+    import socket as _s
+
+    s = _s.socket()
+    try:
+        s.settimeout(float(timeout))
+        return s.connect_ex((("127.0.0.1" if host in ("", "0.0.0.0", "::") else host),
+                             int(port))) == 0
+    except Exception: # noqa: BLE001 — 探不出来就当空闲（宁可去试绑，也别跳过所有端口）
+        return False
+    finally:
+        try:
+            s.close()
+        except Exception: # noqa: BLE001
+            pass
+
+
 class WebUI:
     """启动一个仅监听本机的 HTTP 服务，提供设置/状态/日志/测试 API 接口。"""
 
@@ -3363,10 +3387,18 @@ X.XX
 
 
         # 端口自适应：被占用则顺延
+        # ⛔ 不能只靠 `except OSError`：`http.server.HTTPServer.allow_reuse_address = 1`，
+        #    而 Windows 上 SO_REUSEADDR 会让**第二次绑同一个端口也成功** ⇒ 这段顺延逻辑
+        #    形同虚设、两个服务同时听同一个端口（启动器/挂件可能连到另一个实例；
+        #    本机实测：两个 ThreadingHTTPServer 同端口并存 ⇒ "端口被占则顺延"从未发生过）。
+        #    ⇒ 先探"有没有人在听"，再绑（探不到的端口才认为是空闲）。
         for offset in range(20):
+            cand = port + offset
+            if _port_taken(host, cand):
+                continue
             try:
-                self._server = ThreadingHTTPServer((host, port + offset), Handler)
-                self.port = port + offset
+                self._server = ThreadingHTTPServer((host, cand), Handler)
+                self.port = cand
                 break
             except OSError:
                 continue

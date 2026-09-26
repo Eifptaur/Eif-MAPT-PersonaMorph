@@ -35,15 +35,27 @@ _DIR_NAME_MAX = 60
 
 
 def _chat_dir_name(chat_key: str) -> str:
-    """会话 key → 目录名（**转义 + 定长**）。
+    """会话 key → 目录名（**转义 + 定长 + 短哈希**）。
 
-    ⛔ 老实现只做转义、**不截断** ⇒ 群名一长就炸：Windows 单文件名上限 255 **字节**，
-    而中文/emoji 一个字在 UTF-8 里占 3~4 字节 ⇒ 一个 ~85 字的**中文群名**（很常见）就会
-    让 `os.makedirs` 抛 `OSError: [WinError 123] 文件名、目录名或卷标语法不正确`
-    ⇒ 记忆整个写不进去（换了台电脑/换了个长名群就复现）。
-    ⇒ 超过 `_DIR_NAME_MAX` 字符的截断，并挂上 `_key_hash(chat_key)` 8 位尾巴：
-    截断只影响"给人看"，唯一性由哈希保证 —— 与 `store.chat_file()` 同一套思路。
+    ⛔ 两代缺陷叠在这一个函数上：
+    ① 最早只做转义、不截断 ⇒ 群名一长就炸（Windows 单文件名上限 255 **字节**，中文/emoji
+       一个字占 3~4 字节 ⇒ ~85 字的中文群名就让 `os.makedirs` 抛 `OSError: WinError 123`），
+       记忆整个写不进去；
+    ② 修① 时只在**超长**时挂哈希，短 key 只做转义 ⇒ **不同 chat_key 会撞同一个目录**：
+       `group:wxid_a-b` 与 `group:wxid_a_b` 都归一成 `group_wxid_a_b` ⇒ 两个群的印象/记忆
+       写进同一份文件（用户视角＝"两个群的记忆串了"，与 `store.chat_file()` 当年那个
+       "两个会话共用一个档案、互相覆盖"是同一个病）。
+    ⇒ 现在**一律**挂 `_key_hash(chat_key)` 的 8 位尾巴（与 `store.chat_file()` 同口径）：
+       归一化只用来"给人看"，唯一性由哈希保证。老目录靠 `_chat_dir()` 的向后兼容继续用。
     """
+    safe = re.sub(r"[^a-z0-9_]", "_", str(chat_key), flags=re.IGNORECASE)
+    if len(safe) > _DIR_NAME_MAX:
+        safe = safe[:_DIR_NAME_MAX]
+    return "%s_%s" % (safe, _key_hash(chat_key))
+
+
+def _chat_dir_name_legacy(chat_key: str) -> str:
+    """**只有超长才挂哈希**的老命名（向后兼容用，不写新数据）。"""
     safe = re.sub(r"[^a-z0-9_]", "_", str(chat_key), flags=re.IGNORECASE)
     if len(safe) <= _DIR_NAME_MAX:
         return safe
@@ -92,10 +104,24 @@ def _write_json(file, value):
 
 
 def _chat_dir(chat_key: str) -> str:
+    """会话的记忆目录：**老目录优先沿用**，没有才用新命名建。
+
+    ⛔ 为什么必须认老目录：目录名换新命名（一律挂哈希）之后，已有用户的旧目录若不认，
+    读侧会看到空目录 ⇒ 用户视角＝"印象/记忆全没了"。所以这里先看老命名是否已经在磁盘上，
+    在就继续用它（读写闭环不变、零迁移风险）；新会话才落新命名（唯一性由哈希保证，
+    从此不会再出现"两个群共用一份记忆"）。
+    """
+    legacy = os.path.join(MEMORY_DIR, _chat_dir_name_legacy(chat_key))
+    if os.path.isdir(legacy):
+        return legacy
     return os.path.join(MEMORY_DIR, _chat_dir_name(chat_key))
 
 
 def _history_file(chat_key: str) -> str:
+    """会话的历史档（`.jsonl`）：与 `_chat_dir()` 同口径 —— 老文件优先沿用。"""
+    legacy = os.path.join(HISTORY_DIR, "%s.jsonl" % _chat_dir_name_legacy(chat_key))
+    if os.path.exists(legacy):
+        return legacy
     return os.path.join(HISTORY_DIR, "%s.jsonl" % _chat_dir_name(chat_key))
 
 

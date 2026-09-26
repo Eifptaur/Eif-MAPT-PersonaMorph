@@ -780,7 +780,26 @@ def _exec_send_message(ctx, args):
             return _ok({"sent": len(result["sent"]), "failed": _why, "note": note})
         return _ok({"sent": len(result["sent"]), "note": note})
     except Exception as e:
-        return _err(str(e))
+        _emsg = str(e)
+        # ⛔ 身份类拒发**整批抛异常**（`send_text_batch` 全失败即 raise），根本走不到上面的
+        #    "部分失败"分支 ⇒ 这类**从来没进过重试队列**（那句"判不了就晚点补发"在生产里
+        #    等于不存在，`_queued` 恒为 0）。这里补上入口：可重试的整批失败 = 整批排队。
+        try:
+            from . import send_retry as _sr
+            if _sr.retryable(_emsg):
+                _qn = 0
+                for _t in (messages or []):
+                    _tx = str(_t or "")
+                    if _tx.strip() and _sr.enqueue(ctx["chat_key"], _tx, _emsg).get("ok"):
+                        _qn += 1
+                if _qn:
+                    log.warning("整批拒发（%s）⇒ %d 条已排进重试队列（现场清楚后自动补发）",
+                                _emsg[:120], _qn)
+                    return _err("%s（其中 %d 条属于「现场没认准」，已排进重试队列，"
+                                "不要重发）" % (_emsg, _qn))
+        except Exception as _e: # noqa: BLE001 — 入队失败不该改变原始错误
+            log.warning("整批重试入队失败（不影响本次返回）：%s", _e)
+        return _err(_emsg)
 
 
 def _exec_get_recent(ctx, args):

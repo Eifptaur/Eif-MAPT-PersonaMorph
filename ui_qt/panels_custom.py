@@ -2279,6 +2279,35 @@ def _bordered_list(t: Tokens, name: str, min_h: int = 200) -> QListWidget:
     return lw
 
 
+def _ui_alive(w: object) -> bool:
+    """异步回调落地前问一次「那个控件还在吗」。
+
+    面板被关掉、或主题重建（`_rebuild` 会把整棵页栈 `setParent(None)` + `deleteLater`）
+    之后，回调里再取控件数据会抛 `RuntimeError: Internal C++ object already deleted`。
+    在 PySide6 里那是**未捕获异常**：打整段栈，视版本还会直接终止应用，而用户看到的
+    只是「面板用着用着整个没了」。传 None 表示调用方没绑定控件（此时靠 `_deliver` 兜底）。
+    """
+    if w is None:
+        return True
+    try:
+        import shiboken6 # noqa: PLC0415
+
+        return bool(shiboken6.isValid(w))
+    except Exception: # noqa: BLE001 — 拿不到 shiboken 就当它活着，由 _deliver 兜底
+        return True
+
+
+def _deliver(on_done, *args) -> None: # noqa: ANN001
+    """把后台结果交给 UI 回调；回调途中控件已被销毁就丢弃这一次落地。
+
+    丢弃是正确行为：那个面板已经不在了，没有任何界面需要更新（也没有地方报错）。
+    """
+    try:
+        on_done(*args)
+    except RuntimeError: # 控件已销毁
+        pass
+
+
 def _async_post(page: QWidget, api: str, body: dict, on_done, timeout: float = 120.0) -> None:
     """后台线程 POST（对齐 web 同款接口），UI 只在主线程落地（box 模式）。"""
     import threading # noqa: PLC0415
@@ -2298,9 +2327,13 @@ def _async_post(page: QWidget, api: str, body: dict, on_done, timeout: float = 1
 
     def _apply() -> None:
         if not box["done"]:
+            if not _ui_alive(page):
+                return # 面板没了就别再轮询（否则是一条没有终点的自链）
             QTimer.singleShot(300, _apply)
             return
-        on_done(box.get("r"), box.get("err"))
+        if not _ui_alive(page):
+            return
+        _deliver(on_done, box.get("r"), box.get("err"))
 
     QTimer.singleShot(300, _apply)
 
@@ -2357,15 +2390,23 @@ def _async_post_seq(page: QWidget, api: str, bodies: list, on_done,
 
     def _apply() -> None:
         if not box["done"]:
+            if not _ui_alive(page):
+                return
             QTimer.singleShot(300, _apply)
             return
-        on_done(box.get("results") or [], box.get("err"))
+        if not _ui_alive(page):
+            return
+        _deliver(on_done, box.get("results") or [], box.get("err"))
 
     QTimer.singleShot(300, _apply)
 
 
-def _async_get(api: str, on_done, timeout: float = 30.0) -> None:
-    """后台线程 GET（_async_post 同款 box 模式）——预览类只读接口用。"""
+def _async_get(api: str, on_done, timeout: float = 30.0,
+               page: QWidget | None = None) -> None:
+    """后台线程 GET（_async_post 同款 box 模式）——预览类只读接口用。
+
+    `page` 可选：绑定了面板就顺带做存活判（面板没了就不再轮询/落地）。
+    """
     import threading # noqa: PLC0415
 
     box: dict = {"done": False, "r": None, "err": None}
@@ -2381,18 +2422,25 @@ def _async_get(api: str, on_done, timeout: float = 30.0) -> None:
 
     def _apply() -> None:
         if not box["done"]:
+            if not _ui_alive(page):
+                return
             QTimer.singleShot(300, _apply)
             return
-        on_done(box.get("r"), box.get("err"))
+        if not _ui_alive(page):
+            return
+        _deliver(on_done, box.get("r"), box.get("err"))
 
     QTimer.singleShot(300, _apply)
 
 
-def _post_chain(seq: list, on_done, timeout: float = 15.0) -> None:
+def _post_chain(seq: list, on_done, timeout: float = 15.0,
+                page: QWidget | None = None) -> None:
     """后台线程按序 POST 多个请求，UI 只在主线程落地（box 模式，_async_post 同款）。
 
     用途：「添加角色到新分区」=先落分区再落角色（web :6356-6361 两连跳同款）；
     任一步失败即停，全部完成后回调 on_done(最后响应, 错误)。
+
+    `page` 可选：绑定了面板就顺带做存活判（面板没了就不再轮询/落地）。
     """
     import threading # noqa: PLC0415
 
@@ -2417,9 +2465,13 @@ def _post_chain(seq: list, on_done, timeout: float = 15.0) -> None:
 
     def _apply() -> None:
         if not box["done"]:
+            if not _ui_alive(page):
+                return
             QTimer.singleShot(300, _apply)
             return
-        on_done(box.get("r"), box.get("err"))
+        if not _ui_alive(page):
+            return
+        _deliver(on_done, box.get("r"), box.get("err"))
 
     QTimer.singleShot(300, _apply)
 

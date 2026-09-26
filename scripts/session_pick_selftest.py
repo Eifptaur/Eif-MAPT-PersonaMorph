@@ -201,6 +201,15 @@ class _FakeSelf:
     def chat_identity_ok(self, chat_id, gui=None):
         return (False, "stub")
 
+    # 会话身份事务（`agent/wechat.py::_idn_txn_scope` 装饰器会调这两个）：
+    # 本夹具测的是"换窗重试顺序"，事务清缓存与它无关，桩成空操作即可。
+    # ⛔ 漏了它们 ⇒ 装饰器一进函数就 `AttributeError`，本判据整段跑不起来（判据链断开）。
+    def _idn_txn_begin(self):
+        return None
+
+    def _idn_txn_end(self):
+        return None
+
 
 try:
     IB.find_render_child = lambda m: 0
@@ -693,8 +702,9 @@ _w5 = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
 _seg5 = _w5[_w5.index("def chat_is_open"):]
 _seg5 = _seg5[:_seg5.find("\n    def ", 10)]
 ok("chat_is_open 接了标题带 OCR 这一档（源码）",
-   "header_text(" in _seg5 and _sm.has(_seg5, "matches_strict(_tt, want)"))
-ok("给不出证据时不误判（读不到就往下走）", _sm.has(_seg5, "if _tt and _co2.matches_strict(_tt, want)"))
+   "header_text(" in _seg5 and _sm.has(_seg5, "matches_strict(_tt, want")
+   and _sm.has(_seg5, "if _tt and"))
+ok("给不出证据时不误判（读不到就往下走）", _sm.has(_seg5, "if _tt and _co2.matches_strict(_tt, want"))
 try:
     from agent import chat_ocr as _co5
     from agent import wechat as _W5b
@@ -708,8 +718,14 @@ try:
        _ad5.chat_is_open("x", gui=object(), name="某会话")[0] is True,
        str(_ad5.chat_is_open("x", gui=object(), name="某会话")))
     _co5.header_text = lambda img=None, gui=None, zoom=2: ""
+    # ⛔ 判据①：`chat_is_open` 会**缓存正面结论**（约束 b：只缓存正面，一次判否即失效）。
+    #    上面那条已判过 True 并写进缓存 ⇒ 不先失效缓存的话下面两条"应当判否"的用例
+    #    会直接吃上一条的缓存结论 ⇒ 假失败。真实链路由 `_idn_txn_scope` 在每个操作入口
+    #    换 token 保证窗口归零，这里是手工桩调用，得自己清。
+    _ad5._idn_cache_invalidate()
     ok("标题带读不出 ⇒ 不误判（仍判否）", _ad5.chat_is_open("x", gui=object(), name="某会话")[0] is False)
     _co5.header_text = lambda img=None, gui=None, zoom=2: "O别人"
+    _ad5._idn_cache_invalidate()
     ok("标题带是别的会话 ⇒ 判否", _ad5.chat_is_open("x", gui=object(), name="某会话")[0] is False)
     # ⛔ 标题带这一档也是**授权档** ⇒ 只认"完全相等（容忍 1 个前导 OCR 噪声字符）"，
     #   不许"互相包含"——否则名字互为子串的两个群（`KC测试` 与 `测试`）会被判成同一个，回复发错群。
