@@ -99,6 +99,15 @@ def main():
 
     print("== D. 只读 + 零打扰 ==")
     _d0d, _d0l = _snap_dir(os.path.join(ROOT, "data")), _snap_dir(os.path.join(ROOT, "logs"))
+    # ⛔ 跑之前先探"这台机器现在有没有人在用鼠标"：有 ⇒ 光标那半**根本量不出来**，如实 SKIP。
+    #    为什么前置探而不是事后比：人手一动就是**单步**位移，事后一次对照采样分不清
+    #    "外部在动" 与 "我们自己动了鼠标"（实测全量并发跑时 (2261,825)->(2299,885) 就是用户在动鼠标）。
+    import time as _tp
+    _act = [_fg_cursor()]
+    for _ in range(4):
+        _tp.sleep(0.2)
+        _act.append(_fg_cursor())
+    _machine_busy = any(a and b and a[1:] != b[1:] for a, b in zip(_act, _act[1:]))
     _fg0 = _fg_cursor()
     _rows2 = CP.smoke()
     _fg1 = _fg_cursor()
@@ -113,19 +122,30 @@ def main():
             ok("零打扰：跑冒烟矩阵期间**前台窗口**没变", False, "%s -> %s" % (_fg0, _fg1))
         else:
             # 只有光标变了：可能是**外部**在动鼠标（人手 / 别的程序 / 并发跑的其它判据）。
-            # ⛔ 原来直接判否 ⇒ 在全量并发跑时**必然假红**（实测：`(6,-12)` 的位移，而冒烟矩阵
-            #   本身一条都不动光标）。⇒ 做一次**对照采样**：不跑冒烟矩阵、只等一小会再采样；
-            #   对照期间光标**也在动** ⇒ 这台机上量不出"零打扰"，如实 SKIP（不算通过）。
-            import time as _t13
-            _t13.sleep(0.25)
-            _fg2 = _fg_cursor()
-            if _fg2 and _fg2[1:] != _fg1[1:]:
-                print("  SKIP 零打扰·光标那半  [光标在被外部持续移动（%s -> %s -> %s）"
-                      "⇒ 本次量不出，不算通过]" % (_fg0[1:], _fg1[1:], _fg2[1:]))
+            # ⛔ 先看**开跑前**的探测结果：那时就有人在动 ⇒ 本次量不出"零打扰"，如实 SKIP。
+            #   再补一次对照采样兜底（开跑后才有动作的情况）。
+            if _machine_busy:
+                print("  SKIP 零打扰·光标那半  [开跑前就有人在动鼠标（%s）⇒ 本次量不出，不算通过]"
+                      % " -> ".join(str(x[1:]) for x in _act if x))
             else:
-                ok("零打扰：跑冒烟矩阵期间光标没动", False, "%s -> %s" % (_fg0, _fg1))
+                import time as _t13
+                _t13.sleep(0.25)
+                _fg2 = _fg_cursor()
+                if _fg2 and _fg2[1:] != _fg1[1:]:
+                    print("  SKIP 零打扰·光标那半  [光标在被外部持续移动（%s -> %s -> %s）"
+                          "⇒ 本次量不出，不算通过]" % (_fg0[1:], _fg1[1:], _fg2[1:]))
+                else:
+                    ok("零打扰：跑冒烟矩阵期间光标没动", False, "%s -> %s" % (_fg0, _fg1))
     else:
         print("  SKIP 零打扰断言（这台机器读不到前台/光标）")
+
+    # ⛔ 光标那半在"有人在用机器"时**量不出来**（人手一动就是单步位移，无法与自身归因）
+    #    ⇒ 牙齿靠这条**源级**断言补上：冒烟矩阵这条路径不许出现任何"移动/点击"的调用
+    #    （与它自己的 docstring「只读、不动窗口、不写文件」一致）。源级断言不会因环境而抖。
+    _cpsrc = io.open(os.path.join(ROOT, "agent", "compat.py"), encoding="utf-8").read()
+    _banned = [w for w in ("SetCursorPos", "mouse_event", "SendInput", "click_real_at",
+                           "wheel_real_at", "click_real_hold") if w in _cpsrc]
+    ok("源级：冒烟矩阵**不含任何移动光标 / 点击的调用**", not _banned, "命中：%s" % _banned)
 
     print("== E. 接线：报告里也要有这一节 ==")
     _cr = io.open(os.path.join(ROOT, "scripts", "collect_report.py"), encoding="utf-8").read()

@@ -1938,8 +1938,23 @@ class WeChatAdapter:
                 continue
         return out
 
+    def _bare_key(self, chat_id: str) -> str:
+        """把产品的 `chat_key` 形态剥成**裸 id**（群表/昵称表都是按裸 id 索引的）。
+
+        ⛔ 为什么必须有它：产品里到处用 `"group:" + wxid` 当 chat_key（`persona_morph` 的会话键就
+        是这么构造的），而 `_group_by_wxid` / `_nick_map` 的键是**裸 id** ⇒ 不剥前缀就永远查不到，
+        于是 `group_name()` 会**原样把 key 返回**当成"群名"。后果不是显示难看，而是**功能坏掉**：
+        `switch_chat_posted` / `open_chat_by_search` 拿这个"名字"去搜索会话、并拿它做 OCR 名字比对
+        ⇒ 永远匹配不上 ⇒ 群消息在"还没学过会话头参照"时**无法自助切会话**（真发实测复现）。
+        """
+        s = str(chat_id or "")
+        for pre in ("group:", "private:", "chat:", "contact:"):
+            if s.startswith(pre) and len(s) > len(pre):
+                return s[len(pre):]
+        return s
+
     def group_name(self, wxid: str) -> str:
-        g = self._group_by_wxid.get(wxid)
+        g = self._group_by_wxid.get(wxid) or self._group_by_wxid.get(self._bare_key(wxid))
         return g["name"] if g else wxid
 
     def member_name(self, chat_id: str, wxid: str) -> str:
@@ -3534,16 +3549,17 @@ class WeChatAdapter:
         """会话展示名：群名 → 联系人昵称（含 filehelper→文件传输助手）→ 兜底 wxid。
 
         ⚠️ `group_name()` 只认**群**，对 `filehelper` / 联系人会原样返回 wxid
-        。
+        。产品的 `chat_key` 常带 `group:` 前缀 ⇒ 这里先剥前缀再查两张表（否则会把 key 当名字）。
         """
+        _bare = self._bare_key(chat_id)
         try:
-            g = self._group_by_wxid.get(chat_id)
+            g = self._group_by_wxid.get(chat_id) or self._group_by_wxid.get(_bare)
             if g and g.get("name"):
                 return str(g["name"])
         except Exception:
             pass
         try:
-            n = (self._nick_map or {}).get(str(chat_id))
+            n = (self._nick_map or {}).get(str(chat_id)) or (self._nick_map or {}).get(_bare)
             if n:
                 return str(n)
         except Exception:
@@ -10234,7 +10250,12 @@ class WeChatAdapter:
                     nm = str(it.get("nickname") or it.get("name") or it.get("remark") or "")
                 else:
                     cid, nm = str(it or ""), ""
-                if cid and cid != str(chat_id):
+                # ⛔ 排除"目标会话自己"时必须**归一化键形态**：群表里的 cid 是**裸 wxid**
+                #    （`58471307405@chatroom`），而调用方传进来的 `chat_id` 是产品的 chat_key
+                #    （`group:58471307405@chatroom`）⇒ 直接 `!=` **永远成立** ⇒ 目标会话被当成
+                #    "别的会话"，于是**自己刚发对的那条**被误报成「发错会话」并立刻停手
+                #    （真发实测复现：消息确实进了目标群，却被判成发错会话）。
+                if cid and self._bare_key(cid) != self._bare_key(chat_id):
                     cands.append((cid, nm))
         now = int(time.time())
         for cid, nm in cands:
