@@ -9901,6 +9901,68 @@ def t_inject_surface_guard() -> None:
        len(_pi) == 1 and _pi[0][1] == "keybd_event", "实测 %s" % (_pi,))
 
 
+def t_foreground_borrow_guard() -> None:
+    """自检：**借前台必须配还**，且"读前台"与"借前台"不是同一件事（F4）。
+
+    口径先校准（实测）：这一族里那 4 个名字是**三个不同问题**，不是一个问题的四份实现 ——
+      · `notify_ui.foreground()`：**读**当前前台句柄（getter）；
+      · `wechat._fg_enter()/_fg_exit()`：**引用计数式**借用（`fg_hold` 上下文管理器 + `_send_with_foreground`
+        的 try/finally），支持嵌套 —— 发送链用；
+      · `wechat._restore_fg(hwnd, note, keep)`：**时间点式**还前台（模块级 `_FG_STASH` + `keep` 语义，
+        "写文件名那一步抢了前台就立刻还一次"）—— 文件对话框链用；
+      · `guards.foreground()`：**判据**（能不能置前）—— C6 建的，与上面三者都不同。
+    ⇒ **无可合并的重复**（合并两套还前台机制＝改行为）；本闸门守的是"配对"这条硬要求：
+      借了不还 = 用户的窗口被留在前台。
+
+    ⛔ 判据必须**先剥注释与 docstring**：`_send_with_foreground` 的注释里就写着 `_fg_enter()`，
+      直接数文本会把注释算成一次调用 ⇒ 假报"不配对"（写这条闸门时真踩了一次）。
+    """
+    import ast as _ast # noqa: PLC0415
+
+    _root = HERE.parents[0]
+    _src = (_root / "agent" / "wechat.py").read_text(encoding="utf-8")
+    _tree = _ast.parse(_src)
+    _pairs, _bad = [], []
+    for _n in _ast.walk(_tree):
+        if not isinstance(_n, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+            continue
+        # 去掉 docstring 与注释行后再数（注释里提到 `_fg_enter()` 不算调用）
+        _body = (_ast.get_source_segment(_src, _n) or "")
+        if _n.body and isinstance(_n.body[0], _ast.Expr) and isinstance(
+                getattr(_n.body[0], "value", None), _ast.Constant):
+            _ds = _n.body[0].value.value
+            if isinstance(_ds, str) and _ds:
+                _body = _body.replace(_ds, "")
+        _body = "\n".join(_x for _x in _body.split("\n") if not _x.strip().startswith("#"))
+        _ent, _exi = _body.count("_fg_enter()"), _body.count("_fg_exit()")
+        if _ent or _exi:
+            _pairs.append("%s(%d/%d)" % (_n.name, _ent, _exi))
+            if _ent != _exi:
+                _bad.append("%s enter=%d exit=%d" % (_n.name, _ent, _exi))
+    ck("借前台与还前台**逐个函数配平**（借了不还＝把用户窗口留在前台）",
+       not _bad, "不配对：%s" % "；".join(_bad[:4]) + " ｜ 全部：%s" % "、".join(_pairs[:6]))
+    #: 分母守卫：得真的找到借用点
+    ck("上述扫描真的扫到了借用点（分母守卫 ≥2）", len(_pairs) >= 2, "命中 %s" % "、".join(_pairs))
+    #: 反向控制：判定器必须**能认出**不配对（拿一份"只 enter 不 exit"的样本试）
+    _probe = "def f(self):\n    self._fg_enter()\n    return 1\n"
+
+    def _count(_text):
+        _b = "\n".join(_x for _x in _text.split("\n") if not _x.strip().startswith("#"))
+        return _b.count("_fg_enter()"), _b.count("_fg_exit()")
+    ck("「配平」判定器有效（只 enter 不 exit 的样本必须被判不平）",
+       _count(_probe)[0] == 1 and _count(_probe)[1] == 0
+       and _count("    # self._fg_enter()\n")[0] == 0, "")
+    #: 同名异义登记：`notify_ui.foreground` 是**读**，不许被写成"借"
+    _nu = (_root / "agent" / "notify_ui.py").read_text(encoding="utf-8")
+    _nf = ""
+    for _n in _ast.walk(_ast.parse(_nu)):
+        if isinstance(_n, _ast.FunctionDef) and _n.name == "foreground":
+            _nf = _ast.get_source_segment(_nu, _n) or ""
+    ck("`notify_ui.foreground` 仍是**读**前台（不抢前台、不还前台）——与 `_fg_enter` 同名异义、不许合并",
+       bool(_nf) and "GetForegroundWindow" in _nf and "SetForegroundWindow" not in _nf
+       and "_fg_enter" not in _nf, _nf.strip().split("\n")[0][:60] if _nf else "没找到该函数")
+
+
 def t_default_value_guard() -> None:
     """自检：**默认表与示例文件的值差异必须逐条登记**（记三元组，值一变就红）。
 
@@ -10070,7 +10132,7 @@ def main() -> int:
                    t_gate_middle, t_cfg_wired_guard, t_delivery_ledger_guard, t_dev_dir_guard,
                    t_default_value_guard, t_dead_import_guard, t_guard_family_guard,
                    t_packaged_modules_guard, t_winops_guard, t_keys_guard, t_atomic_write_guard,
-                   t_inject_surface_guard,
+                   t_inject_surface_guard, t_foreground_borrow_guard,
                    t_whale_roles, t_whale_assets, t_whale_usage):
             try:
                 fn()
