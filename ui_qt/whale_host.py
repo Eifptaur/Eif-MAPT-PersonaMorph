@@ -745,17 +745,33 @@ def build_host_html(port: int, token: str) -> str:
         "var want=false;"
         "try{want=localStorage.getItem('pm-whale-collapsed')==='1';}catch(e){}"
         "if(want)setCollapsed(true);"
-        # 原版挂件是异步建的（脚本 defer + 内部等 composer），root 晚于本脚本出现；
-        # 用有上限的轮询等它。轮询的**副产物**就是启动回报：root 出现（ok=true）
-        # 或预算耗尽（ok=false，约 6 秒）都发给宿主 —— ok=false 时上层降级成
-        # 提示卡，避免「页面加载成功但鲸鱼没画」的全透明空窗。
-        "var n=0;var t=setInterval(function(){n++;wire();"
-        "if(rootEl()){clearInterval(t);post({pm:'boot',ok:true});}"
-        "else if(n>=40){clearInterval(t);post({pm:'boot',ok:false});}"
-        "},150);"
+        # 原版挂件是异步建的（脚本 defer + 内部等 composer），root 晚于本脚本
+        # 出现——且冷启动可能远超 6 秒。轮询分两段：0~6s 找不到就先发
+        # boot(false)（宿主亮出**页内**提示卡，不藏页面），之后继续后台轮询——
+        # root 一旦出现（哪怕 30 秒后）就移除提示卡再发 boot(true)。
+        # 「慢启动」的鲸鱼本体出现时能自动切回来，不再被永久藏掉。
+        "var told=false;var card=false;var n=0;"
+        "var t=setInterval(function(){n++;wire();"
+        "if(rootEl()){clearInterval(t);"
+        "var c=document.getElementById('pm-wait-card');if(c)c.remove();"
+        "post({pm:'boot',ok:true});return;}"
+        "if(n>=24&&!told){told=true;post({pm:'boot',ok:false});}"
+        "if(n>=24&&!card){card=true;wire();"
+        "var d=document.createElement('div');d.id='pm-wait-card';"
+        "d.style.cssText='position:fixed;left:0;top:0;width:100%;height:100%;"
+        "z-index:2147483646;display:flex;flex-direction:column;align-items:center;"
+        "justify-content:center;gap:10px;font-size:12px;color:#9fb6cf;"
+        "text-align:center;padding:0 18px;box-sizing:border-box;"
+        "background:rgba(8,20,40,0.55);border-radius:12px;';"
+        "d.innerHTML='<img src=\'/dsh-whale/image.png?token=@TOKEN@\'"
+        " style=\'width:96px;border-radius:12px;\'>"
+        "<div>正在等待挂件脚本渲染…<br>控制台需保持运行</div>';"
+        "document.body.appendChild(d);}"
+        "},250);"
+        "setTimeout(function(){clearInterval(t);},61000);"
         "}"
         "if(document.readyState==='loading')"
         "document.addEventListener('DOMContentLoaded',boot);else boot();"
         "})();</script>"
         "</body></html>"
-    )
+    ).replace("@TOKEN@", str(token or ""))

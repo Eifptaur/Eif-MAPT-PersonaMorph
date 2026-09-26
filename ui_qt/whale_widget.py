@@ -207,19 +207,21 @@ class WhaleWidget(QWidget):
             self.update()
 
     def _on_pageboot(self, ok: bool) -> None:
-        """页面的启动结论：鲸鱼本体出现了（True）或轮询耗尽没出现（False）。"""
+        """页面的启动结论：鲸鱼本体出现了（True）或暂未出现（False）。
+
+        ⛔ boot=False **不再藏宿主页**：页面自己会在等待期显示页内提示卡，
+        并继续后台轮询——鲸鱼本体一旦渲染出来（慢启动可能远超 6 秒），
+        页面会再发 boot(True)，卡片自动切回鲸鱼。藏掉宿主页 = 把"迟到的
+        鲸鱼"也一起藏掉（实测慢启动超 6 秒会被永久藏掉）。
+        """
         if ok:
             self._boot_ok = True
-            return
-        # 页面导航成功但原版脚本始终没渲染本体（composer 探测没过 / 脚本异常）。
-        # 此刻窗口是全透明的 ⇒ 用户什么都看不到。降级成提示卡 + 让出事件。
-        self._err = "挂件脚本已加载，但 6 秒内没有渲染出本体（请重启控制台重试）"
-        self._load_failed = True
-        self._keep_draggable()
+        else:
+            self._boot_ok = False
         self.update()
 
     def _boot_watchdog(self) -> None:
-        """页面迟迟不发 boot 结论的兜底（单次定时器，非自链）。
+        """页面迟迟不发 boot 结论的兜底（70 秒，等页面 60s 轮询预算走完）。
 
         注入脚本本身可能没跑起来（极端情况）⇒ 永远等不到 boot 消息。8 秒后
         仍无结论且无其他失败标记 ⇒ 按启动失败降级。宁可达观检查三遍再动手，
@@ -333,7 +335,7 @@ class WhaleWidget(QWidget):
             else:
                 # 导航成功 ≠ 鲸鱼画出来了。8 秒内等不到页面的启动结论就降级
                 #（单次定时器，非自链；见 _boot_watchdog 注解）。
-                QTimer.singleShot(8000, self._boot_watchdog)
+                QTimer.singleShot(70000, self._boot_watchdog)
         except Exception as e:  # noqa: BLE001
             self._err = "%s: %s" % (type(e).__name__, e)
             self._load_failed = True

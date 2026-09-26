@@ -7700,16 +7700,17 @@ def t_color_token_guard() -> None:
        and '"boot"' in _inspect.getsource(WhaleHostWebView._on_web_message), "")
 
     _om = _inspect.getsource(WhaleWidget._on_pageboot)
-    ck("boot=false ⇒ 降级提示卡 + 让出事件（不给全透明空窗）",
-       "_load_failed" in _om and "_keep_draggable" in _om, "")
+    ck("boot=false ⇒ 不藏宿主页（页内提示卡 + 后台续等，迟到的鲸鱼能切回）",
+       "_load_failed" not in _om and "_keep_draggable" not in _om
+       and "_boot_ok = False" in _om, "")
 
     _wd = _inspect.getsource(WhaleWidget._boot_watchdog)
     ck("watchdog 是单次兜底（boot 已成功或已失败则直接退出，不重复降级）",
        "_boot_ok or self._load_failed" in _wd, "")
 
     _ah = _inspect.getsource(WhaleWidget._after_host_ready)
-    ck("导航成功才挂 watchdog（8000ms 单次，非自链）",
-       "singleShot(8000" in _ah, "")
+    ck("导航成功才挂 watchdog（70s 单次，等页面 60s 轮询预算走完）",
+       "singleShot(70000" in _ah, "")
 
     # ---- D. 最小化不藏挂件 --------------------------------------------------
     import shell as _shell # noqa: PLC0415
