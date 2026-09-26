@@ -126,7 +126,7 @@ def set_per_monitor_dpi() -> str:
 # ---------------------------------------------------------------- 导航数据
 
 
-# 5 组 27 项 —— 组名 / key / 项名 / 顺序逐项抄自 agent/console_html.py 的
+# 5 组 27 项 —— 组名 / key / 项名 / 顺序逐项抄自 assets/console/index.html 的
 # <aside class="side">（nav 区，L936 起），hint 摘自各面板 <div class="desc"> 第一句。
 # **以 web 源码为唯一真值**：不自造组名、不用比喻命名（
 # 分区按功能来；文案对齐 web 侧朴素直给的口吻）。

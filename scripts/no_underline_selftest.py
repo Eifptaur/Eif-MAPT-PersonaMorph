@@ -9,7 +9,7 @@
   ③ 链接的 hover/focus/visited/active 也不带下划线
   ④ 导航 `a` 规则同样显式 none（历史遗留在 `.nav a` 上的那几个）
 
-扫的面：`agent/console_html.py`（控制台页面本体）＋ `agent/webui.py`（另一处内联 CSS/图标注）＋ `launcher-src/*.cs`（WebView2 外壳，不涉排版但一起扫以防手写 Html）
+扫的面：`assets/console/index.html`（控制台页面本体）＋ `agent/webui.py`（另一处内联 CSS/图标注）＋ `launcher-src/*.cs`（WebView2 外壳，不涉排版但一起扫以防手写 Html）
 """
 import os
 import re

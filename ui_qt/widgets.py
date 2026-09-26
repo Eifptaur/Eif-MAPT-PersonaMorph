@@ -1142,7 +1142,7 @@ class WhaleBadge(QLabel):
     。
     ⚠️ 银灰白鲸图**必须配近黑底** —— 浅底上会糊成一片（MEMORY 已记，light 稿踩过）。
 
-    交互（web 控制台既有彩蛋的真值复刻，真源 agent/console_html.py 4907-5214，实现全在 whale_anim.py）：
+    交互（web 控制台既有彩蛋的真值复刻，真源 assets/console/index.html 4907-5214，实现全在 whale_anim.py）：
       · 悬停果冻     —— 7 帧逐帧弹跳（QPropertyAnimation 驱动 jelly_step，帧序列=JELLY_POSES）
       · 按下拖动     —— 本体变淡到 0.12，浮层克隆跟手（速度拉伸 + 挣扎摆尾，QTimer 驱动衰减）
       · 松手三选一   —— 蠕动 / 纸飞机 / 扎地，种子化随机（seed 参数 → 测试可复现）

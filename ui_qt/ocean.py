@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """鲸落视觉本体 —— 海底画卷（壁纸 + tint）与三层海浪动画。
 
-对齐 web 控制台的海洋动态背景（agent/console_html.py，**web 源码是唯一真值**）：
+对齐 web 控制台的海洋动态背景（assets/console/index.html，**web 源码是唯一真值**）：
   · 底图    assets/wallpaper/ocean1.jpg cover 铺满（web body 默认 --bgimg）
   · tint    web --bg 的 160° 三站深蓝渐变（assets/console/index.html L33）罩在底图上
   · 波浪    `.ocean-wave` 三层 SVG（L729-731 路径逐值抄入；L316-321 动画参数）：

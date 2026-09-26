@@ -9094,7 +9094,8 @@ def t_cfg_wired_guard() -> None:
 
     # 收集"真消费方"。三处必须是**非消费方**，否则分母全绿：
     #   · `agent/config.py` —— 默认表里出现只说明"声明过"；
-    #   · `agent/console_html.py` —— 它就是 UI 自己；
+    #   · `assets/console/index.html` —— 它就是 UI 自己（页面已从 `console_html.py` 外置到
+    #     仓库根的 `assets/`，而下面只扫 `agent` / `scripts` 两棵树 ⇒ 它天然不在池子里）；
     #   · `*selftest*` —— 判据引用不算产品消费。
     _pool = {}
     for _sub in ("agent", "scripts"):

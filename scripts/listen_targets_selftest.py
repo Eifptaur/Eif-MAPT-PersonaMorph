@@ -4,7 +4,7 @@
 
 跑法： runtime\\python\\python.exe scripts\\listen_targets_selftest.py   退出码 0=全过 / 1=有失败
 
-为什么（审计给的现场）：勾选框（`console_html.py`）存的是 `g.name`、选群（`persona_morph.py`）比的是
+为什么（审计给的现场）：勾选框（`assets/console/index.html`）存的是 `g.name`、选群（`persona_morph.py`）比的是
 `g["name"] in _wl`、运行明细只写 `group_name(chat_id)` ⇒ **两个同名群「勾一个＝监听两个」**，
 明细里两间群同名 ⇒「这条回复挂在群 X 名下」无法唯一确定是哪一间（网友的串群报障卡在这一层）。
 

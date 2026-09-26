@@ -2227,7 +2227,7 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
 # 这三个面板在 web 侧核心是「动态列表」——由 JS 从 /api/personas / /api/memory
 # / /api/sessions 拉取后再渲染进 #personaList / #memTable / #sessList，静态 HTML
 # 里没有这些列表，元数据驱动（sec_meta/_cfg_panel）永远做不出来 ⇒ 必须手写挂 MANUAL。
-# 所有后端接口名**照抄** agent/console_html.py 里的 JS 绑定（见各函数出处注释），
+# 所有后端接口名**照抄** assets/console/index.html 里的 JS 绑定（见各函数出处注释），
 # 不自己编接口、不造死按钮。
 
 # ---------------------------------------------------------------- 公共小工具（仅本文件内用）
@@ -3570,7 +3570,7 @@ def memory_panel(t: Tokens) -> QWidget:
       · memRefresh（:1599）/ memClearSel（清除勾选的印象）/ memClearAll（清除全部）；
       · 下方叠 memory 可写配置（summarize_on_exit / consolidate_enabled /
         share_across_groups）+ 共享群勾选（memGroupsBox，GET /api/wechat-groups）。
-    接口名照抄 console_html.py 的 loadMemory（:6969）/ 清除块（:7065）。"""
+    接口名照抄 assets/console/index.html 的 loadMemory（:6969）/ 清除块（:7065）。"""
     s = sec_meta.get("memory")
     page, lay, badge = _page(t, s.title, "idle", "读取中")
     lay.addWidget(desc(t, s.desc or "每个群友的长期印象，机器人回复时会参考。"))
@@ -5517,7 +5517,7 @@ def _js_array_span(blk: str, name: str) -> str:
 
 
 def _web_guides() -> dict:
-    """解析 console_html.py 的 GUIDES 对象（web 应用内引导真值）。
+    """解析 assets/console/index.html 的 GUIDES 对象（web 应用内引导真值）。
 
     文本以 web 为唯一源、运行时解析，不往 Qt 复制一份——web 改了引导词
     这里自动跟。解析失败降级为空 dict（按钮如实提示「没有这条引导」）。

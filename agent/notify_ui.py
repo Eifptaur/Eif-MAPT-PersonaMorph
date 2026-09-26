@@ -32,7 +32,7 @@ from .config import ROOT
 log = logging.getLogger("persona-morph")
 
 # ── 「哪个窗口是我们的控制台」的唯一判据──
-# 唯一权威口径＝控制台窗口标题「群相 控制台」。这个串在三处同源：`agent/console_html.py` 的
+# 唯一权威口径＝控制台窗口标题「群相 控制台」。这个串在三处同源：`assets/console/index.html` 的
 # `<title>群相 控制台</title>`、`launcher-src/launcher.cs:1165` 的 `StyleKit.Apply(this, "群相 控制台")`、
 # 以及 `launcher.cs:1250` 的 `Ui.ConsoleWindowAlive()`（它本来就按这个串判，exe 那边口径是对的）。
 CONSOLE_CAPTION = "群相 控制台"

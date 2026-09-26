@@ -2,7 +2,7 @@
 """控制台「死按钮」判据。
 
 。
-真因：`agent/console_html.py` 里 `<button id="sessSelDel" class="danger" disabled>` **出生就带 `disabled`**，
+真因：`assets/console/index.html` 里 `<button id="sessSelDel" class="danger" disabled>` **出生就带 `disabled`**，
 而**全文件没有任何一行设置过 `sessSelDel.disabled`** —— 勾选谁也不亮，按钮一辈子按不了、功能等于不存在。
 
 判据（通用，不针对某一个按钮）：**凡是 HTML 里出生带 `disabled` 的按钮，必须在 JS 里有一处把它点亮**

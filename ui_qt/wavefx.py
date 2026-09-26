@@ -4,7 +4,7 @@
 「那个波纹特效不理想……你做的这个确实是涟漪了，但是我想要的那个效果好像没有
 （指的是界面波动）」+「再看看页面设置的各种效果强度啊，各种调节项是否能真正生效」。
 
-## web 真值（agent/console_html.py，只读）
+## web 真值（assets/console/index.html，只读）
 - `#cardWave2` = `feTurbulence`(分形噪声) + `feDisplacementMap`(按噪声位移像素)：
   `out = in[x + scale*(R-0.5), y + scale*(G-0.5)]`，xChannelSelector=R, yChannelSelector=G。
 - `#waveLens` 是 fixed 层，`backdrop-filter: url(#cardWave2)` 取**背后真实像素**做位移
@@ -580,7 +580,7 @@ class WaveFX(QObject):
         ⛔ 入参必须是 **无 DPR** 的 QImage（raw=设备像素）——带 DPR 的图会让 scaled()
         产出更大的原始缓冲、bits() 按逻辑数读 ⇒ 剪切+半块处理。
 
-        对齐 web 真值三件套（console_html.py #cardWave2 / waveMaskAt / #waveLens）：
+        对齐 web 真值三件套（assets/console/index.html #cardWave2 / waveMaskAt / #waveLens）：
         1. 位移场 = fractalNoise 等价的平滑 value noise（2 八度、seed 固定），
            baseFrequency 逐帧呼吸（fx=0.008+0.004·sin(0.9φ)，cycles/逻辑px，web 同款）；
         2. feDisplacementMap 语义 out = in + scale·(R−0.5)（scale=17·(1+0.38·sin(1.3φ))

@@ -70,7 +70,7 @@ def post_api(api: str, timeout: float = 5.0, base: str = "") -> tuple[bool, str]
 
     返回 (ok, 说明)。**连接在响应读完前被切断也算送达** ——
     /api/shutdown 的实现是响应一发出就写 stopped.flag + `os._exit(0)`，
-    客户端几乎必然读不到完整响应（web 侧 console_html.py 对同款行为
+    客户端几乎必然读不到完整响应（web 侧 assets/console/index.html 对同款行为
     早有注释）。所以按异常类型细分：
     远端主动断开（RemoteDisconnected 一族）= 请求已被后台处理，算成功；
     拒绝连接 = 服务没在跑，算失败。任何路径都不抛异常 ——

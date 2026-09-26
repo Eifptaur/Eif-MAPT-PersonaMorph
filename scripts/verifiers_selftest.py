@@ -325,7 +325,7 @@ try:
     # ⛔ 把"**抠不到**"与"**语义错**"分成两条 ——
     #   老写法一旦 `console_html.py` 那段换了写法（缩进/引号/换行），C11e2 会以"四档映射错了"的
     #   面目变红（把人引到错方向）。现在先报"夹具失效，请更新抠取锚"。
-    ok("C11e2a 夹具：能从 `console_html.py` 里**抠到**那段判决映射（抠不到＝夹具失效，不是产品错）",
+    ok("C11e2a 夹具：能从 `assets/console/index.html` 里**抠到**那段判决映射（抠不到＝夹具失效，不是产品错）",
        "r.ok === false" in _js11 and "'unknown'" in _js11, _js11[:80].replace("\n", " "))
     _node11 = os.path.join(tempfile.mkdtemp(prefix="pm-vfjs-"), "m.js")
     with io.open(_node11, "w", encoding="utf-8") as _f:
@@ -340,7 +340,7 @@ try:
     ok("C11e2b 行为级：四种结果 ⇒ 四档状态（`没测到` 必须落 `unknown`，不许落 `ok`）",
        all(g == w for _i, g, w in _got11), str(_got11))
 except Exception as _e11:
-    ok("C11e2a 夹具：能从 `console_html.py` 里抠到那段判决映射", False, "抠取失败：%s" % str(_e11)[:80])
+    ok("C11e2a 夹具：能从 `assets/console/index.html` 里抠到那段判决映射", False, "抠取失败：%s" % str(_e11)[:80])
 # 反例锚：老写法（只把 report 塞进 <pre>、不设状态、没有图例）用**同一条判据**判不合格
 _OLDUI11 = ("pre.textContent=(r&&r.report)||JSON.stringify(r,null,1);\n"
             "        if(cp) cp.disabled=!(r&&r.report);\n")

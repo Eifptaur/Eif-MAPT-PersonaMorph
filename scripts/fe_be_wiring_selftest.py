@@ -9,7 +9,7 @@
 又实测抓到 **6 处**（方向相反：五条只有 GET、前端发 POST；一条只有 POST、前端发 GET）。
 
 判据两条腿：
-  A. **静态对账**（全量、机械）：把 `agent/console_html.py` 里每个 API 调用的**真方法**
+  A. **静态对账**（全量、机械）：把 `assets/console/index.html` 里每个 API 调用的**真方法**
      （`getJSON(url,{method:'POST'})` 里的 method，不是 helper 名）抠出来，逐条断言它能在
      `webui.py` 的**对应链**里找到该路径（含"链 → 共用方法"的一跳）。
      反向锚：把任一镜像分支删掉 ⇒ 本条立刻红。

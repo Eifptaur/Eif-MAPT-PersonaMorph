@@ -2,7 +2,7 @@
 """通用面板构建器 —— 输入 sec 键，产出对齐 web 版式的 QWidget。
 
   web 侧控制台的配置行带 `data-cfg="点.path"`、控件类型写在 HTML 标签上；
-  本文件不手抄任何配置项 —— 运行时从 `sec_meta.py`（解析 console_html.py）
+  本文件不手抄任何配置项 —— 运行时从 `sec_meta.py`（解析 assets/console/index.html）
   拿行元数据，按「键类型 → 控件类型」映射批量生成：
       text/password/number/range → QLineEdit（password 打码）
       checkbox                   → Switch（widgets 自绘开关）
@@ -1218,7 +1218,7 @@ def _status_text_for(status_id: str, st: dict) -> str:
     if sid in ("vsWhy", "ttsWhy"):
         # ⛔ 旧读法（st.tts/voice.ready）在 /api/status 里根本不存在 ⇒ 恒「读不到」
         #   （用户截图实锤：媒体页「引擎状态 检测中…→读不到」）。真值口径对齐 web
-        #   loadStatus（console_html.py :3714-3721 / :3774-3777）：媒体组件在
+        #   loadStatus（assets/console/index.html :3714-3721 / :3774-3777）：媒体组件在
         #   `media` 段——语音转文字=media.voice、TTS=media.tts，各带 ok/why。
         md = st.get("media") or {}
         if not isinstance(md, dict):

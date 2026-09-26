@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""鲸鱼徽章动效 —— web 鲸鱼闭包（agent/console_html.py 4907-5214 只读真值）的 Qt 直译。
+"""鲸鱼徽章动效 —— web 鲸鱼闭包（assets/console/index.html 4907-5214 只读真值）的 Qt 直译。
 
 拖动/返回全由"浮层"承担（挂 Shell 窗口层、窗口局部坐标跟随），本体留在顶栏原槽只做变淡/恢复；
 气泡与鲸图同画布分层（气泡先画 ⇒ z 恒在下）；km 系数解析只写在本文件 km_for() 一处。
@@ -120,7 +120,7 @@ class FlyOverlay(QLabel):
             p.restore()
 
     @staticmethod
-    def _paint_plane(p: QPainter) -> None: # 纸飞机 —— web 同一条 SVG path（console_html.py 5108）逐点直画
+    def _paint_plane(p: QPainter) -> None: # 纸飞机 —— web 同一条 SVG path（assets/console/index.html 5108）逐点直画
         p.scale(58 / 64, 58 / 64)
         p.translate(-32, -20)
         for pts, fill, alpha, stroke in (

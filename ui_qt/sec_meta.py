@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """sec 键元数据层 —— 从 web 控制台源码**运行时解析**出每个面板的行结构。
 
-  `agent/console_html.py` 的每个 `<section id="sec-…">` 里，每行配置都带
+  `assets/console/index.html` 的每个 `<section id="sec-…">` 里，每行配置都带
   `data-cfg="点.path"`，控件类型就写在 HTML 标签上（input type / select /
   textarea / chips）。⇒ web 侧的「键元数据」就藏在这份 HTML 里，
   它就是版式与内容的唯一真值。
@@ -11,7 +11,7 @@
   ⇒ 默认值不另编：从 `config.example.json` 按点路径回填（web 侧 data-cfg
     的回填逻辑同源）。
 
-本文件只读：**不 import 产品的任何写接口**，只读两个文件（console_html.py /
+本文件只读：**不 import 产品的任何写接口**，只读两个文件（assets/console/index.html /
 config.example.json），一行产品代码不动。
 """
 
