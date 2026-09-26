@@ -5275,7 +5275,7 @@ def t_g13() -> None:
 
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtCore import QEvent, QPoint, QPointF, QSettings, Qt # noqa: PLC0415
-    from PySide6.QtGui import QMouseEvent # noqa: PLC0415
+    from PySide6.QtGui import QImage, QMouseEvent # noqa: PLC0415
     from PySide6.QtWidgets import QApplication # noqa: PLC0415
 
     import agent_bridge # noqa: PLC0415
@@ -5577,6 +5577,87 @@ def t_g13() -> None:
         ck("页面重贴本体不再带出窗口尺寸震荡（修正后：单调不减、且最多变一次）",
            _sizes == sorted(_sizes) and len(set(_sizes)) <= 2,
            "heights=%s" % (_sizes,))
+
+        # ⛔ 「整块方形完全透明 ⇒ 用户看不见」闸门：控制器就绪、页面却一片空白时，
+        #    若 paintEvent 只看 host.ok 就提前返回，窗口既没有画面也没有提示卡 ——
+        #    用户看到的就是"挂件不见了"（且要等 70 秒看门狗才降级）。判据改成
+        #    "页面亲自确认本体已渲染"（_boot_ok），在那之前一律画卡兜底。
+        def _nz(im):
+            n = 0
+            for _y in range(0, im.height(), 3):
+                for _x in range(0, im.width(), 3):
+                    if ((im.pixel(_x, _y) >> 24) & 0xFF) > 8:
+                        n += 1
+            return n
+
+        class _FakeHost:
+            """替身宿主：本闸门只验 paintEvent 的判据，任何宿主调用都收下不作声。"""
+
+            ok = True
+            error = ""
+
+            def close(self):  # noqa: ANN201
+                pass
+
+            def hide(self):  # noqa: ANN201
+                pass
+
+            def resize(self, *a, **k):  # noqa: ANN002, ANN003, ANN201
+                pass
+
+            def notify_moved(self):  # noqa: ANN201
+                pass
+
+            def execute_script(self, *a, **k):  # noqa: ANN002, ANN003, ANN201
+                return True
+
+            def send_mouse(self, *a, **k):  # noqa: ANN002, ANN003, ANN201
+                pass
+
+        w7 = ww.WhaleWidget(t)
+        keep.append(w7)
+        w7._boot_webview = lambda *a, **k: None
+        w7._host = _FakeHost()
+        w7._load_failed = False
+        w7._boot_ok = False
+        _im0 = QImage(w7.width(), w7.height(), QImage.Format.Format_ARGB32)
+        _im0.fill(0)
+        w7.render(_im0, QPoint(0, 0))
+        _n_pending = _nz(_im0)
+        w7._boot_ok = True
+        _im1 = QImage(w7.width(), w7.height(), QImage.Format.Format_ARGB32)
+        _im1.fill(0)
+        w7.render(_im1, QPoint(0, 0))
+        _n_ready = _nz(_im1)
+        ck("页面没确认渲染前一律画卡（否则整块方形全透明 = 用户完全看不见）",
+           _n_pending > 50 and _n_ready == 0,
+           "待启动像素=%d 就绪像素=%d" % (_n_pending, _n_ready))
+        ck("兜底卡文案分两态（未确认时说「正在启动」，失败时才说不可用）",
+           "正在启动挂件" in _inspect.getsource(ww.WhaleWidget._paint_fallback)
+           and "暂不可用" in _inspect.getsource(ww.WhaleWidget._paint_fallback), "")
+
+        # ⛔ 页面才是"本体贴哪一边"的真值：本地偏移与页面不一致时（回执丢了/脚本没跑/
+        #    页面重载）会差 300 多像素 —— 足以把本体整个放到屏幕外。每收到一次几何上报
+        #    就对齐一次，且本体真实屏幕位置不变。
+        w8 = ww.WhaleWidget(t)
+        keep.append(w8)
+        w8._boot_webview = lambda *a, **k: None
+        w8._user_moved = True # 跳过按锚点重排，本闸门只验"方向校正"
+        w8._side = "right"
+        _px_before = w8.x() # 页面说：本体在窗口左沿 ⇒ 本体真实屏幕 x
+        w8._on_rects([[0, 300, 130, 130]], [0, 300, 123, 123], [0, 0, 0, 0], False)
+        QApplication.processEvents()
+        ck("本体贴边方向以**页面上报**为准（本地不一致时认页面，本体真实位置不动）",
+           w8._side == "left" and w8._whale_rect().x() == _px_before
+           and w8._whale_rect().x() == w8.x(),
+           "side=%s 窗口 x=%d 本体 x=%d 期望=%d"
+           % (w8._side, w8.x(), w8._whale_rect().x(), _px_before))
+
+        # 现场日志：挂件失败态在桌面上"什么都不显示"，没有任何现场可查 ⇒ 关键节点落盘
+        _wsrc_now = (HERE / "whale_widget.py").read_text(encoding="utf-8")
+        ck("挂件关键节点落 logs/whale.log（上屏/几何/启动结论/看门狗/降级）",
+           "def _diag(" in _wsrc_now and "whale.log" in _wsrc_now
+           and _wsrc_now.count("_diag(") >= 6, "count=%d" % _wsrc_now.count("_diag("))
     finally:
         for x in keep:
             x.close()

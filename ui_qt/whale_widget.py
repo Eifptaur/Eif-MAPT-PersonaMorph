@@ -65,6 +65,27 @@ _FIT_CONFIRM_MS = 350
 _FIT_PAD = 10
 # 换边回执的等待上限（页面没回话就认下并补偿）
 _SIDE_CONFIRM_MS = 600
+# 现场日志上限：超过就重开一份（挂件失败态在桌面上什么都不显示，没有现场可查）
+_DIAG_MAX = 256 * 1024
+
+
+def _diag(msg: str) -> None:
+    """把挂件的关键状态追加到 `logs/whale.log`（有上限；任何失败静默）。
+
+    为什么需要：挂件出问题时的表现是"屏幕上什么都不显示"，既没有报错也没有日志 ——
+    事后完全无从判断链路走到了哪一步（窗口在不在、几何对不对、页面报没报）。
+    这里只记功能状态（窗口矩形/本体矩形/贴边方向/页面回报），不记任何过程信息。
+    """
+    try:
+        d = ROOT / "logs"
+        d.mkdir(parents=True, exist_ok=True)
+        p = d / "whale.log"
+        if p.exists() and p.stat().st_size > _DIAG_MAX:
+            p.unlink()
+        with open(p, "a", encoding="utf-8") as f:
+            f.write("%s %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), msg))
+    except Exception:  # noqa: BLE001 — 记日志失败绝不能影响挂件本身
+        pass
 
 
 class WhaleWidget(QWidget):
@@ -325,16 +346,18 @@ class WhaleWidget(QWidget):
         被点到 —— 整窗铺满等于用一块看不见的方形吃掉桌面的鼠标；只铺本体与弹层，
         其余保持全透明，桌面照常可点。alpha=1/255 肉眼不可见。
 
-        判据是「**页面真的加载成功了**」而不是「控制器建好了」：
-        `WhaleHostWebView.ok` 只说明 WebView2 环境/控制器就绪，**不代表
-        `navigate_to_string` 成功**。只看 `.ok` 时，"控制器就绪但页面没内容"
-        的半成品状态两头落空：Qt 侧不画降级卡、WebView2 侧没内容 ⇒ 空窗。
-        `load_failed` 把"页面没起来"单独记下来，让降级卡在这种状态下兜底。
+        判据是「**页面真的把本体画出来了**」而不是「控制器建好了」：
+        `WhaleHostWebView.ok` 只说明 WebView2 环境/控制器就绪，**不代表页面加载成功、
+        更不代表鲸鱼画出来了**。只看 `.ok` 时，"控制器就绪但页面一片空白"的状态两头
+        落空：Qt 侧不画卡、页面侧没有内容 ⇒ **整块方形完全透明**，用户眼里就是
+        「挂件不见了」——而且要等到 70 秒 watchog 才降级。所以这里要求 `_boot_ok`
+        （页面亲自确认本体已渲染）才让位给内核画面；在那之前一律画卡兜底。
         """
         p = QPainter(self)
         for x, y, w, h in self._veil_rects():
             p.fillRect(QRect(int(x), int(y), int(w), int(h)), QColor(0, 0, 0, 1))
-        if self._host is not None and self._host.ok and not self._load_failed:
+        if (self._host is not None and self._host.ok and not self._load_failed
+                and self._boot_ok):
             return
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         self._paint_fallback(p)
@@ -369,6 +392,30 @@ class WhaleWidget(QWidget):
         QTimer.singleShot(0, self._after_geom)
         self.update()
 
+    def _reconcile_side(self) -> None:
+        """用页面上报的本体横向位置校正「本体钉在窗口哪一边」。
+
+        页面才是真值：本地偏移是按"我们以为的那一边"算的。一旦页面并没有真的换边
+        （回执丢了、脚本没跑、页面被重载），本地偏移就与事实差 300 多像素 —— 足以把
+        本体整个放到屏幕外（"完全看不见"的一种成因）。所以每收到一次几何上报就对齐一次：
+        与页面不一致就认页面的，并把窗口挪回来，本体在屏幕上不动。
+        """
+        if self._pending_side is not None or self._whale is None:
+            return # 换边在途：等回执，别与它抢
+        if self._drag_cursor is not None:
+            return # 拖动中位置归 `_drag_tick` 独占（此刻动窗会跟光标打架）
+        try:
+            wx, wy, ww, wh = (int(v) for v in self._whale[:4])
+        except (TypeError, ValueError, IndexError):
+            return
+        want = "left" if (wx + ww / 2.0) < self.width() / 2.0 else "right"
+        if want == self._side:
+            return
+        keep = QRect(self.x() + wx, self.y() + wy, ww, wh) # 页面上报的位置 = 真值
+        self._side = want
+        self._place_whale(keep.x(), keep.y())
+        _diag("校正贴边方向 → %s（页面本体 x=%d，窗口宽=%d）" % (want, wx, self.width()))
+
     def _after_geom(self) -> None:
         """页面几何到手后统一落布局（已跳出 WebView2 回调）。"""
         if not self._anchor_applied and self._whale is not None:
@@ -380,7 +427,11 @@ class WhaleWidget(QWidget):
                 # 有位置记忆就按记忆放；没有就按默认角重放（兜底尺寸是猜的）
                 if not self._apply_anchor():
                     self._move_default()
+            _diag("几何上报：whale=%s need=%s pop=%s 窗口=(%d,%d)%dx%d side=%s fit_h=%d"
+                  % (self._whale, self._need, self._pop, self.x(), self.y(),
+                     self.width(), self.height(), self._side, self._fit_h))
         self._fit_window()
+        self._reconcile_side()
         # 拖动中位置归 `_drag_tick` 独占；此刻再吸附会把它拽回去（拖动抖动/卡顿的来源）
         if self._drag_cursor is None:
             self._snap_and_flip(force=True)
@@ -541,8 +592,13 @@ class WhaleWidget(QWidget):
         f.setPixelSize(12)
         p.setFont(f)
         p.setPen(QColor("#536ba9"))
-        tip = "鲸鱼挂件暂不可用"
-        sub = (self._err or "未就绪")[:60]
+        if self._load_failed:
+            tip = "鲸鱼挂件暂不可用"
+            sub = (self._err or "未就绪")[:60]
+        else:
+            # 还没收到页面的"本体已渲染"回报：**如实说在启动**，不冒充故障。
+            tip = "正在启动挂件…"
+            sub = "若长时间停在这里，请确认控制台正在运行"
         p.drawText(QRectF(ox + 8, oy + card * 0.62, card - 16, 20),
                    int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter), tip)
         f.setPixelSize(10)
@@ -568,6 +624,9 @@ class WhaleWidget(QWidget):
         if self._booted or os.environ.get("PM_WHALE_NO_WEBVIEW2"):
             return
         self._booted = True
+        _diag("上屏：窗口=(%d,%d) %dx%d 锚点=%r 本体=%s"
+              % (self.x(), self.y(), self.width(), self.height(),
+                 self._read_anchor(QSettings(*_SET)), self._whale))
         # 让本轮 showEvent 走完（窗口完成映射）再起，避免拿到未生效的 HWND
         QTimer.singleShot(0, self._boot_webview)
 
@@ -614,6 +673,7 @@ class WhaleWidget(QWidget):
             self._boot_ok = True
         else:
             self._boot_ok = False
+        _diag("页面启动结论：ok=%s" % ok)
         self.update()
 
     def _boot_watchdog(self) -> None:
@@ -630,6 +690,8 @@ class WhaleWidget(QWidget):
                 return
             self._err = "挂件页面无响应（未收到启动回报，请重启控制台重试）"
             self._load_failed = True
+            _diag("看门狗超时：70 秒未收到页面启动回报（窗口几何=(%d,%d)%dx%d）"
+                  % (self.x(), self.y(), self.width(), self.height()))
             self._keep_draggable()
             self.update()
         except RuntimeError:
@@ -791,6 +853,7 @@ class WhaleWidget(QWidget):
         # **不能**给子窗加 WS_EX_TRANSPARENT —— 那会把页内控件（减号、菜单）一起点死。
         if self._load_failed:
             self._keep_draggable()
+            _diag("降级：%s" % (self._err or "页面未就绪"))
         self.update()
 
     def _keep_draggable(self) -> None:
