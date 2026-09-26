@@ -5407,6 +5407,18 @@ def t_g13() -> None:
         QApplication.processEvents()
         ck("g13-C 位移 < 阈值 ⇒ 当点击不当拖（气泡菜单里的点按不会被抖成移窗）",
            w.pos() == pos1, "p1=%s now=%s" % (pos1, w.pos()))
+
+        # 窗口自适应：内容（弹层）要多少空间就长多少，本体在屏幕上的位置不动
+        w3 = ww.WhaleWidget(t)
+        keep.append(w3)
+        w3._boot_webview = lambda *a, **k: None
+        w3.move(300, 200)
+        b0 = (w3.x() + w3.width(), w3.y() + w3.height())
+        w3._fit_window([[-120, -80, 300, 300]]) # 内容向上/向左伸出 120/80
+        b1 = (w3.x() + w3.width(), w3.y() + w3.height())
+        ck("窗口跟着内容长（向上/向左扩 + 8px 余量），本体右下角不动",
+           w3.width() == ww._WIN_W + 128 and w3.height() == ww._WIN_H + 88 and b0 == b1,
+           "size=(%d,%d) before=%s after=%s" % (w3.width(), w3.height(), b0, b1))
     finally:
         for x in keep:
             x.close()
@@ -7553,21 +7565,42 @@ def t_whale_guard() -> None:
     _vr = _inspect.getsource(WhaleWidget._veil_rects)
     ck("可命中底只铺「本体 + 可见弹层」的报告矩形（整窗铺满会吃掉桌面鼠标）",
        "_veil" in _pv and "_veil_rects" in _pv
-       and "self.W - _BASE" in _vr and "self.rect()" not in _pv)
+       and "self.width() - _BASE" in _vr and "self.rect()" not in _pv)
     ck("宿主暴露 on_drag 回调接口（Qt 侧据此挪窗口）",
        hasattr(WhaleHostWebView, "on_drag"))
 
     _om = _inspect.getsource(WhaleHostWebView._on_web_message)
-    ck("消息解析只认 pm=drag/dragend（脏消息静默丢弃，不炸挂件）",
-       '"drag"' in _om and '"dragend"' in _om and "json.loads" in _om, "")
+    ck("消息解析只认 pm=dragbegin/dragend（脏消息静默丢弃，不炸挂件）",
+       '"dragbegin"' in _om and '"dragend"' in _om and "json.loads" in _om, "")
 
     _pg = _inspect.getsource(WhaleWidget._on_pagedrag)
-    ck("页面位移走**增量**累加（绝对坐标会被子窗坐标系差异坑到）",
-       "self.pos()" in _pg and "+ int(dx)" in _pg, "")
-
+    ck("拖动改成**跟真实光标**（页面坐标换算随缩放/内核而异 ⇒ 不再传位移，只报开始/结束）",
+       "_drag_cursor" in _pg and "_drag_win" in _pg and "QCursor.pos()" in _pg, "")
+    ck("跟光标挪窗有终止条件（左键一松就自己收尾，页面漏报 mouseup 也不会卡住）",
+       "GetAsyncKeyState" in _inspect.getsource(WhaleWidget._drag_tick)
+       and "self._drag_timer.stop()" in _pg, "")
     _bw = _inspect.getsource(WhaleWidget._boot_webview)
     ck("挂件侧已接 on_drag（漏接则页面报了位移也没人挪窗）",
        "on_drag" in _bw, "")
+    ck("窗口跟着内容自适应（弹层要多少长就长多少，本体位置不动）",
+       "need_t" in _inspect.getsource(WhaleWidget._fit_window)
+       and "setFixedSize" in _inspect.getsource(WhaleWidget._fit_window))
+
+    # ---- D. 音效地址的口令注入 ---------------------------------------------
+    # 原版有一处音效地址是**字符串拼**出来的，注入最容易在这里出错（口令插进路径
+    # 中间 ⇒ 既不是有效路径也没有有效口令 ⇒ 音效无声）。把注入器真跑一遍在真实片段上。
+    # 项目内的既有口径是 `from agent import webui`（webui 内部有相对导入，
+    # 顶层 `import webui` 会因缺包上下文而失败）。
+    import agent.webui as _webui # noqa: PLC0415
+
+    _snip = ("var legacy = '/dsh-whale/sound/' + (slot === 'press' ? 'press' : 'release')"
+             " + '.mp3?set=' + encodeURIComponent(gid)")
+    _out = _webui._inject_whale_token(_snip, "TK") # noqa: SLF001
+    ck("音效拼接地址注入后仍然合法（前缀不被改、口令补在 .mp3? 之后）",
+       "'/dsh-whale/sound/' +" in _out and "'.mp3?token=TK&set='" in _out, _out[:110])
+    _out2 = _webui._inject_whale_token("fetch('/dsh-whale/image.png?v=2')", "TK") # noqa: SLF001
+    ck("完整路径照旧注入口令（修音效不能把别的请求弄坏）",
+       "'/dsh-whale/image.png?token=TK&v=2'" in _out2, _out2[:110])
 
     # ⛔ 反向闸门：页面正常时**不许**再给子窗打 WS_EX_TRANSPARENT —— 那会把
     # 页内控件（减号/菜单）一起点死。
@@ -7626,9 +7659,9 @@ def t_whale_guard() -> None:
        _s3.applied == [1.5], "%s" % (_s3.applied,))
     ck("位置记忆记的是**本体右下角**（窗口尺寸再变，本体也不会被顶到屏幕外）",
        "whale_anchor" in _inspect.getsource(WhaleWidget._read_anchor)
-       and "+ self.W" in _inspect.getsource(WhaleWidget._save_anchor))
+       and "+ self.width()" in _inspect.getsource(WhaleWidget._save_anchor))
     ck("上屏校验按**本体**判（按整窗判会让「左上角露一点」过关、本体却在屏幕外）",
-       "WhaleWidget.W - _BASE" in _inspect.getsource(WhaleWidget._onscreen))
+       "self.width() - _BASE" in _inspect.getsource(WhaleWidget._onscreen))
     ck("宿主页含拖动转发脚本（mousedown/mousemove + postMessage）",
        "postMessage" in _html and "mousemove" in _html and "dragSetup" in _html, "")
     ck("拖动只认非交互区（按钮/菜单/输入框的按下留给原版逻辑）",

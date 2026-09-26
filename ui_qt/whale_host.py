@@ -371,14 +371,14 @@ class WhaleHostWebView:
             return
         kind = msg.get("pm")
         try:
-            if kind == "drag":
+            if kind == "dragbegin":
                 cb = self._on_drag
                 if cb is not None:
-                    cb(int(msg.get("dx", 0)), int(msg.get("dy", 0)), False)
+                    cb("begin")
             elif kind == "dragend":
                 cb = self._on_drag
                 if cb is not None:
-                    cb(0, 0, True)
+                    cb("end")
             elif kind == "rects":
                 # 页面报告的「本体 + 当前可见弹层」外接矩形：宿主据此铺可命中底
                 # （半透明窗按像素 alpha 做命中测试，alpha=0 的地方鼠标会穿到桌面）。
@@ -785,11 +785,13 @@ def build_host_html(port: int, token: str) -> str:
         # 机制：WebView2 的画面是一个铺满宿主窗的**子 HWND**，鼠标消息被子窗
         # 吃掉、不冒泡给父窗 ⇒ Qt 侧收不到 mouseMove；而给子窗加
         # `WS_EX_TRANSPARENT` 会连页内控件一起收不到点击。所以由**页面转发**：
-        # 页内监听拖动，把位移经 `window.chrome.webview.postMessage` 发给宿主，
-        # Qt 侧收到再 move 窗口——点按钮是 click、拖空白是 move，互不干扰。
+        # 页内只报「开始拖 / 松手」两个状态，**位置由宿主跟真实光标算** ——
+        # 页面的坐标是 CSS 像素，换算到屏幕像素的比例随缩放/内核口径而异（实测症状
+        # 就是"捏住本体只能在窗口里晃一晃"），所以一条位移都不传，彻底绕开换算。
+        # 点按钮是 click、拖本体/空白是拖动，互不干扰。
         "function dragSetup(){"
         "if(window.__pmDrag)return;window.__pmDrag=1;"
-        "var dragging=false,ox=0,oy=0,moved=false;"
+        "var dragging=false,ox=0,oy=0,begun=false;"
         # 只认「落在挂件本体或页面上、且不是按钮/菜单/弹窗」的按下 —— 那些要留给原版逻辑
         "function isInteractive(el){"
         "if(!el||!el.closest)return false;"
@@ -804,25 +806,23 @@ def build_host_html(port: int, token: str) -> str:
         "if(e.button!==0)return;"
         "if(isInteractive(e.target))return;"
         # ⛔ 必须 preventDefault：鼠标在图片/文本上按下后一移动，浏览器会进入
-        # **原生拖拽/选区**，而原生拖拽期间 mousemove 不再派发 ⇒ 页面报不出位移
-        # ⇒ 宿主收不到、窗拖不动（现象＝"捏住挂件只能在窗口里晃"）。
+        # **原生拖拽/选区**，那期间 mousemove 不再派发 ⇒ 页面连"开始拖"都报不出来
+        # ⇒ 宿主不知道要跟光标（现象＝"捏住挂件只能在窗口里晃"）。
         # 原版只在**触摸**手势里拦这一下，鼠标这条路由宿主补上；交互区（按钮/
         # 菜单/输入框）不拦，原版自己的拖拽排布照常。
         "e.preventDefault();"
-        "dragging=true;moved=false;ox=e.screenX;oy=e.screenY;"
+        "dragging=true;begun=false;ox=e.screenX;oy=e.screenY;"
         "},true);"
         "document.addEventListener('mousemove',function(e){"
         "if(!dragging)return;"
         "var dx=e.screenX-ox,dy=e.screenY-oy;"
-        "if(!moved&&(Math.abs(dx)+Math.abs(dy))<=4)return;"
-        "moved=true;"
-        # 每帧只发增量，累加交给 Qt（绝对坐标会被子窗坐标系差异坑到）
-        "post({pm:'drag',dx:dx,dy:dy});"
-        "ox=e.screenX;oy=e.screenY;"
+        # 阈值：小于它算「点击」不算拖（免得点一下本体就把窗口挪歪）
+        "if(!begun&&(Math.abs(dx)+Math.abs(dy))<=4)return;"
+        "if(!begun){begun=true;post({pm:'dragbegin'});}"
         "},true);"
         "document.addEventListener('mouseup',function(){"
-        "if(dragging&&moved)post({pm:'dragend'});"
-        "dragging=false;moved=false;"
+        "if(dragging&&begun)post({pm:'dragend'});"
+        "dragging=false;begun=false;"
         "},true);"
         "}"
         # ── 可命中区上报 ────────────────────────────────────────────────────

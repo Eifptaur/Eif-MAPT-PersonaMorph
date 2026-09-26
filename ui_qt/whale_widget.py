@@ -20,11 +20,12 @@
 
 from __future__ import annotations
 
+import ctypes
 import os
 from pathlib import Path
 
 from PySide6.QtCore import QPoint, QRect, QRectF, QSettings, Qt, QTimer
-from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
+from PySide6.QtGui import QColor, QCursor, QFont, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QWidget
 
 # ⛔ **模块级导入**，不能放进某个方法里：`build_host_html` 在 `_boot_webview`
@@ -92,6 +93,14 @@ class WhaleWidget(QWidget):
         # 可命中区（页面报告的矩形，CSS 像素 = Qt 逻辑像素）。空 = 页面还没报，
         # 由 `_veil_rects()` 退化成「本体所在的那块方形」。
         self._veil: list = []
+        # 页面转发拖动：页面只说开始/结束，位置由**跟真实光标**的定时器算（见 _drag_tick）
+        self._drag_cursor: QPoint | None = None
+        self._drag_win: QPoint | None = None
+        self._drag_timer = QTimer(self)
+        self._drag_timer.setInterval(16)
+        self._drag_timer.timeout.connect(self._drag_tick)
+        # 窗口自适应：内容（弹层）需要多少空间就长多少，本体在屏幕上的位置不动
+        self._fit_size = (self.W, self.H)
         self.restyle(t)
 
         # 位置：上次拖到哪就还在哪；**越界/坏记录落右下角**。
@@ -101,8 +110,8 @@ class WhaleWidget(QWidget):
         anchor = self._read_anchor(QSettings(*_SET))
         moved = False
         if anchor is not None:
-            x = int(anchor[0]) - self.W
-            y = int(anchor[1]) - self.H
+            x = int(anchor[0]) - self.width()
+            y = int(anchor[1]) - self.height()
             if self._onscreen(x, y):
                 self.move(x, y)
                 moved = True
@@ -136,7 +145,7 @@ class WhaleWidget(QWidget):
         """
         if self._veil:
             return self._veil
-        return [(self.W - _BASE, self.H - _BASE, _BASE, _BASE)]
+        return [(self.width() - _BASE, self.height() - _BASE, _BASE, _BASE)]
 
     def paintEvent(self, _e) -> None:  # noqa: N802
         """在**可命中区**上铺一层极淡的底；画面由 WebView2 内核合成在它之上。
@@ -166,7 +175,7 @@ class WhaleWidget(QWidget):
         self._paint_fallback(p)
 
     def _on_rects(self, rects) -> None:  # noqa: ANN001
-        """页面报告的可命中区 → 重铺底并重绘。
+        """页面报告的可命中区 → 重铺底 + 按内容需要调整窗口大小，然后重绘。
 
         页面在「本体出现/弹层开合/窗口尺寸变化」时上报（见 `whale_host.build_host_html`
         的 `rectWatch`）。解析这里是尽力而为：脏数据一律忽略，退回默认那块方形。
@@ -175,7 +184,46 @@ class WhaleWidget(QWidget):
             self._veil = [(int(x), int(y), int(w), int(h)) for (x, y, w, h) in rects]
         except Exception:  # noqa: BLE001
             return
+        self._fit_window(rects)
         self.update()
+
+    def _fit_window(self, rects) -> None:  # noqa: ANN001
+        """窗口跟着内容长：弹层需要多少空间就长多少，**本体在屏幕上的位置不动**。
+
+        ⛔ 为什么必须做：窗口就是页面视口，比视口大的东西（原版菜单固定在鲸鱼**上方**
+        展开）只能被裁掉 —— 用户实测"把挂件放到屏幕上方菜单就显示不全"。
+        做法是向上/向左扩，同时把窗口左上角往回挪同样的量：本体钉在窗口右下角，
+        所以它在屏幕上的位置一动不动。缩回时按「基础尺寸 + 所需余量」算，窗口不会
+        一直占一大块；变化小于 4px 不动手，避免来回抖。
+        上限取屏幕可用区（再大也看不见，还会把窗口顶出屏幕）。
+        """
+        try:
+            need_l = max(0, -min(int(r[0]) for r in rects))
+            need_t = max(0, -min(int(r[1]) for r in rects))
+        except (ValueError, TypeError, IndexError):
+            return
+        pad = 8
+        tw = _WIN_W + need_l + (pad if need_l else 0)
+        th = _WIN_H + need_t + (pad if need_t else 0)
+        try:
+            scr = self.screen()
+            g = scr.availableGeometry() if scr is not None else None
+        except Exception:  # noqa: BLE001
+            g = None
+        if g is not None:
+            tw, th = min(tw, int(g.width())), min(th, int(g.height()))
+        tw, th = int(tw), int(th)
+        cw, ch = self._fit_size
+        if abs(tw - cw) < 4 and abs(th - ch) < 4:
+            return
+        self._fit_size = (tw, th)
+        nx, ny = self.x() + cw - tw, self.y() + ch - th # 保持右下角不动
+        if g is not None: # 别把窗口顶出屏幕（顶出去的部分等于不存在）
+            nx, ny = max(int(g.left()), nx), max(int(g.top()), ny)
+        self.setFixedSize(tw, th)
+        self.move(nx, ny)
+        if self._host is not None and self._host.ok:
+            self._host.resize(tw, th)
 
     def _paint_fallback(self, p: QPainter) -> None:  # noqa: N802
         """降级卡：形象图 + 一行说明（**给出可操作指引**，不做静默空白）。
@@ -183,8 +231,8 @@ class WhaleWidget(QWidget):
         画在**本体所在的那块方形**（窗口右下角）里：窗口为弹层留出的余量保持透明，
         卡片不铺过去 —— 观感上仍是一块与本体同位置的卡片。
         """
-        ox = self.W - _BASE
-        oy = self.H - _BASE
+        ox = self.width() - _BASE
+        oy = self.height() - _BASE
         try:
             pm = QPixmap(str(_ASSET))
             if not pm.isNull():
@@ -241,7 +289,7 @@ class WhaleWidget(QWidget):
             hwnd = int(self.winId())
             # 传**逻辑像素**：`put_Bounds` 到底按逻辑还是物理解释随运行库而异，
             # 宿主会用页面视口自校准（见 whale_host._calibrate_bounds），这里不猜。
-            self._host = WhaleHostWebView(hwnd, self.W, self.H)
+            self._host = WhaleHostWebView(hwnd, self.width(), self.height())
             # 拖动交接：页面自己报位移（见 whale_host.build_host_html 的 dragSetup），
             # 这里收下来挪窗口。**不再**给子窗加 WS_EX_TRANSPARENT —— 那会让
             # 页内控件（减号、原版菜单）一起收不到点击。
@@ -293,22 +341,47 @@ class WhaleWidget(QWidget):
         except Exception:  # noqa: BLE001
             pass
 
-    def _on_pagedrag(self, dx: int, dy: int, ended: bool) -> None:
-        """页面报告的拖动位移 → 挪窗口；`ended` 时落盘位置。
+    def _on_pagedrag(self, kind: str) -> None:
+        """页面报告「在本体上开始拖 / 松手」→ 由**宿主跟着真实光标**挪窗。
 
-        增量语义：页面每帧只发**这一帧的增量**（绝对坐标会被子窗与宿主窗的
-        坐标系差异坑到），这里累加到 `self.pos()` 上。
+        ⛔ 为什么不用页面报的位移：页面给的是 CSS 像素坐标，换算到物理/逻辑像素的
+        比例随系统缩放与内核口径而异（实测症状就是"捏住本体只能在窗口里晃一晃"）。
+        改成「页面只说开始/结束，宿主每 16ms 读一次真实光标」——与页面坐标完全无关，
+        鼠标走到哪窗走到哪，1:1，且不依赖任何换算。
         """
         try:
-            if ended:
+            if kind == "begin":
+                self._drag_cursor = QCursor.pos()
+                self._drag_win = self.pos()
+                if not self._drag_timer.isActive():
+                    self._drag_timer.start(16)
+            else:
+                if self._drag_timer.isActive():
+                    self._drag_timer.stop()
+                self._drag_cursor = None
+                self._drag_win = None
                 self._save_anchor(self.x(), self.y())
-                return
-            if not dx and not dy:
-                return
-            p = self.pos()
-            self.move(p.x() + int(dx), p.y() + int(dy))
         except Exception:  # noqa: BLE001 — 拖动是尽力而为，失败不影响挂件显示
             pass
+
+    def _drag_tick(self) -> None:
+        """跟光标挪窗（16ms 一拍）。左键已松开就自动收尾 —— 页面漏报 mouseup
+        （比如松手时鼠标在别的窗口上）也不会卡在"一直在拖"的状态里。"""
+        try:
+            if self._drag_cursor is None or self._drag_win is None:
+                self._drag_timer.stop()
+                return
+            if not (ctypes.windll.user32.GetAsyncKeyState(1) & 0x8000):
+                self._on_pagedrag("end")
+                return
+            d = QCursor.pos() - self._drag_cursor
+            if d.x() or d.y():
+                self.move(self._drag_win + d)
+        except Exception:  # noqa: BLE001
+            try:
+                self._drag_timer.stop()
+            except Exception:  # noqa: BLE001
+                pass
 
     def _after_host_ready(self) -> None:
         """建链结束（成功或失败）后的落点：成了就加载原版挂件页，没成就降级。
@@ -465,7 +538,7 @@ class WhaleWidget(QWidget):
         """窗口移动时通知内核重排（WebView2 不跟随父窗自动挪，会留在原地）。"""
         super().moveEvent(ev)
         if self._host is not None and self._host.ok:
-            self._host.resize(self.W, self.H)
+            self._host.resize(self.width(), self.height())
 
     def closeEvent(self, ev) -> None:  # noqa: N802
         """**必须关控制器** —— 不关会留下杀不掉的浏览器孤儿进程。"""
@@ -511,7 +584,7 @@ class WhaleWidget(QWidget):
         """
         try:
             QSettings(*_SET).setValue("whale_anchor",
-                                      [int(x) + self.W, int(y) + self.H])
+                                      [int(x) + self.width(), int(y) + self.height()])
         except Exception:  # noqa: BLE001 — 位置记忆失败不影响挂件显示
             pass
 
@@ -523,12 +596,11 @@ class WhaleWidget(QWidget):
             if geo is not None:
                 ax = int(geo.right()) - 18
                 ay = int(geo.bottom()) - 18
-                self.move(ax - self.W, ay - self.H)
+                self.move(ax - self.width(), ay - self.height())
         except Exception:  # noqa: BLE001
             pass
 
-    @staticmethod
-    def _onscreen(x: int, y: int) -> bool:
+    def _onscreen(self, x: int, y: int) -> bool:
         """上屏校验：**本体所在的那块方形**是否在任一屏幕上至少露出 60×60。
 
         ⛔ 判据必须是本体、不是整个窗口：窗口为弹层留了大片透明余量，按窗口判的话
@@ -539,7 +611,7 @@ class WhaleWidget(QWidget):
         """
         try:
             scr = QApplication.instance()
-            bx, by = x + WhaleWidget.W - _BASE, y + WhaleWidget.H - _BASE
+            bx, by = x + self.width() - _BASE, y + self.height() - _BASE
             for s in (scr.screens() if scr else []):
                 g = s.availableGeometry()
                 ix = min(bx + _BASE, g.right()) - max(bx, g.left())

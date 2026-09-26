@@ -111,8 +111,34 @@ def _data_import(root: str, body: bytes) -> dict:
             "note": "新导入 %d 条记录（覆盖 %d 个日期文件，同内容自动去重）" % (added, len(days))}
 
 # 给挂件脚本（whale-widget/client/widget.js）注入访问口令：把脚本里的 /dsh-whale/*
-# 绝对路径都补上 ?token=xxx，保证前端轮询/音频请求都带上口令
+# 绝对路径都补上 ?token=xxx，保证前端轮询/音频请求都带上口令。
+# ⛔ 脚本里有一处音效地址是**拼**出来的 ——
+#    `'/dsh-whale/sound/' + (press|release) + '.mp3?set=' + gid` —— 用"任意非引号字符"
+#    的老写法会停在最后那个 `/` 前面，把口令插进路径中间 ⇒ 拼成
+#    `/dsh-whale/sound/?token=…press.mp3`（既不是有效路径、也没有有效口令）⇒ 音效无声。
+#    所以半截路径要在替换函数里显式跳过（见 _inj），拼接点由 _SOUND_Q_INJECT 补口令。
 _WHALE_URL_RE = re.compile(r"(/dsh-whale/[^'\"\s?]+)(\?[^'\"\s]*)?")
+# 拼接式音效地址的落点：口令补在 `.mp3?` 之后、`set=` 之前，
+# 最终 URL = `/dsh-whale/sound/press.mp3?token=…&set=duck` —— 路径与口令都成立。
+_SOUND_Q_INJECT = ("'.mp3?set='", "'.mp3?token=%s&set='")
+
+
+def _inject_whale_token(js: str, token: str) -> str:
+    """给挂件脚本里的 `/dsh-whale/*` 地址补上访问口令。
+
+    ⛔ 半截路径**不碰**：脚本里的音效地址是「前缀 + 变量」拼出来的
+    （`'/dsh-whale/sound/' + slot + '.mp3?set=' + gid`），前缀以 `/` 结尾 —— 往它
+    后面塞口令会拼出 `/dsh-whale/sound/?token=…press.mp3`，路径与口令双双失效 ⇒
+    音效无声。这类拼接点的口令由 `_SOUND_Q_INJECT` 在拼接处补。
+    """
+    def _inj(m):
+        base, q = m.group(1), (m.group(2) or "")[1:]
+        if base.endswith("/"):
+            return m.group(0)
+        return base + "?token=" + token + ("&" + q if q else "")
+
+    js = _WHALE_URL_RE.sub(_inj, js)
+    return js.replace(_SOUND_Q_INJECT[0], _SOUND_Q_INJECT[1] % token)
 
 _MASKED_MARK = "••••"
 
@@ -452,10 +478,7 @@ class WebUI:
         except Exception:
             return b""
         if token:
-            def _inj(m):
-                base, q = m.group(1), (m.group(2) or "")[1:]
-                return base + "?token=" + token + ("&" + q if q else "")
-            js = _WHALE_URL_RE.sub(_inj, js)
+            js = _inject_whale_token(js, token)
         body = js.encode("utf-8")
         if len(self._whale_js_cache) > 4:
             self._whale_js_cache.clear()
