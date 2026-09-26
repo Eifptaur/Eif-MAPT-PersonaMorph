@@ -73,7 +73,7 @@ def main():
     ok("英文形态认得出", a5 and a5["who"] == "Mike")
     a6 = rc.parse_recall(XML_PEER.encode("utf-8"))
     ok("bytes 形态（库给的是 bytes）也认", bool(a6) and a6["svrid"] == 7788990011223344)
-    ok("「拍一拍」系统消息不被认成撤回", rc.parse_recall('"E" 拍了拍 "群deepseek"') is None)
+    ok("「拍一拍」系统消息不被认成撤回", rc.parse_recall('"E" 拍了拍 "示例群"') is None)
     ok("普通聊天里出现「撤回」两字不误判", rc.parse_recall("我发错了，已经撤回了") is None)
     ok("普通聊天里出现「撤回了一条消息」但不是整句也不误判",
        rc.parse_recall("他昨天说 撤回了一条消息 之后就没说话了") is None)

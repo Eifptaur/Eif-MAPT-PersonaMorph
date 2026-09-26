@@ -358,8 +358,8 @@ def _s5_risk_failclosed(TMP):
 # ── ⑥ 节日问候：写失败留日志 + 不重发 ───────────────────────────────────
 def _s6_holiday_no_resend(TMP):
     print("== ⑥ 状态写失败 ⇒ 留日志 + 内存标记 ⇒ 不再重发 ==")
-    groups = [{"name": "群deepseek", "wxid": "wxid_a"}]
-    hcfg = {"holiday": {"mode": "active", "greet_chats": ["群deepseek"]}}
+    groups = [{"name": "示例群", "wxid": "wxid_a"}]
+    hcfg = {"holiday": {"mode": "active", "greet_chats": ["示例群"]}}
     day_ts = time.mktime((2026, 10, 1, 10, 0, 0, 0, 0, -1)) # 国庆节 · 10:00（时段内）
     H.custom_path = lambda: os.path.join(TMP, "no_such_holidays.json") # 不读产品 data
 
@@ -389,7 +389,7 @@ def _s6_holiday_no_resend(TMP):
     check("⑥ 反向：写盘失败后，同一轮/下一轮**不再重发**（内存标记挡住了 20 秒一轮的重发）",
           H.due_greetings(hcfg, groups, now=time.mktime((2026, 12, 25, 10, 0, 0, 0, 0, -1))) == [])
     check("⑥ 反向：阳性对照仍在（没把整条路堵死——同一天别的会话照发）",
-          len(H.due_greetings(hcfg, [{"name": "群deepseek", "wxid": "wxid_b"}],
+          len(H.due_greetings(hcfg, [{"name": "示例群", "wxid": "wxid_b"}],
                               now=time.mktime((2026, 12, 25, 10, 0, 0, 0, 0, -1)))) == 1)
 
 
@@ -708,7 +708,7 @@ def _s11_quarantine_fail_no_overwrite(TMP):
     H.state_path = lambda: hpath
     try:
         with _FailQuarantine(hpath):
-            H.mark_greeted("2026-10-01", "群deepseek")
+            H.mark_greeted("2026-10-01", "示例群")
         h_ok = (not os.path.exists(hpath + ".bad.json"))
     finally:
         H.state_path = _real_hp

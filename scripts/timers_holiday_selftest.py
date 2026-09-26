@@ -188,29 +188,29 @@ def main():
     ok("用户在 data/holidays.json 里能新增节日", holidays.named("2026-09-13") == "自家纪念日")
     ok("用户自定义优先于内置", holidays.named("2026-02-17") == "农历新年")
 
-    groups = [{"name": "群deepseek", "wxid": "wxid_a"}, {"name": "别的群", "wxid": "wxid_b"}]
+    groups = [{"name": "示例群", "wxid": "wxid_a"}, {"name": "别的群", "wxid": "wxid_b"}]
     mid_autumn = ts(2026, 9, 25, 10, 0)
     ok("passive（默认）⇒ 一条都不主动发",
-       holidays.due_greetings({"holiday": {"mode": "passive", "greet_chats": ["群deepseek"]}}, groups,
+       holidays.due_greetings({"holiday": {"mode": "passive", "greet_chats": ["示例群"]}}, groups,
                               now=mid_autumn) == [])
     ok("active 但白名单为空 ⇒ 也不发（防节日变群发）",
        holidays.due_greetings({"holiday": {"mode": "active", "greet_chats": []}}, groups, now=mid_autumn) == [])
-    due = holidays.due_greetings({"holiday": {"mode": "active", "greet_chats": ["群deepseek"]}}, groups,
+    due = holidays.due_greetings({"holiday": {"mode": "active", "greet_chats": ["示例群"]}}, groups,
                                  now=mid_autumn)
     ok("active + 白名单 + 节日 + 时段内 ⇒ 只给名单里的会话发", len(due) == 1 and due[0]["chat_key"] == "group:wxid_a", due)
     ok("问候文本用上了节日名", "中秋节" in due[0]["text"] and "快乐" in due[0]["text"], due[0]["text"])
     holidays.mark_greeted(due[0]["day"], due[0]["chat_key"])
     ok("同一天同一会话只问候一次（第二次不再出现）",
-       holidays.due_greetings({"holiday": {"mode": "active", "greet_chats": ["群deepseek"]}}, groups,
+       holidays.due_greetings({"holiday": {"mode": "active", "greet_chats": ["示例群"]}}, groups,
                               now=mid_autumn) == [])
     ok("时段外（23 点）不发",
-       holidays.due_greetings({"holiday": {"mode": "active", "greet_chats": ["群deepseek"]}}, groups,
+       holidays.due_greetings({"holiday": {"mode": "active", "greet_chats": ["示例群"]}}, groups,
                               now=ts(2026, 9, 26, 23, 0)) == [])
     ok("非节日不发",
-       holidays.due_greetings({"holiday": {"mode": "active", "greet_chats": ["群deepseek"]}}, groups,
+       holidays.due_greetings({"holiday": {"mode": "active", "greet_chats": ["示例群"]}}, groups,
                               now=ts(2026, 9, 20, 10, 0)) == [])
     ok("起始小时可调（调到 20 点时 10 点不发）",
-       holidays.due_greetings({"holiday": {"mode": "active", "greet_chats": ["群deepseek"], "greet_hour": 20}},
+       holidays.due_greetings({"holiday": {"mode": "active", "greet_chats": ["示例群"], "greet_hour": 20}},
                               groups, now=mid_autumn) == [])
 
     print("== D. 红线与接线 ==")
@@ -256,7 +256,7 @@ def main():
 
     print("== E. 端到端：工具 → 落盘 → 巡检真发出 ==")
     timers.path = lambda: os.path.join(tmp, "timers3.json")
-    ctx = {"chat_key": "group:e2e", "self_nickname": "群deepseek"}
+    ctx = {"chat_key": "group:e2e", "self_nickname": "示例群"}
     out = T._exec_set_timer(ctx, {"note": "开会", "minutes": 5})
     blob = json.dumps(out, ensure_ascii=False)
     ok("工具调用真的写进了待触发表", "已记下" in blob and len(timers.list_all("group:e2e")) == 1, blob[:120])

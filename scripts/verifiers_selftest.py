@@ -414,14 +414,14 @@ try:
     ok("C7c 没样本时是**说明格（None）**并写清「没测到」",
        len(_c7) == 1 and _c7[0]["ok"] is None and "没测到" in _c7[0]["detail"], str(_c7))
     io.open(_ttJ.FILE, "w", encoding="utf-8").write(
-        '{"chat": "g1", "kind": "tier", "at": "群昵称甲", "known": "群deepseek"}\n')
+        '{"chat": "g1", "kind": "tier", "at": "群昵称甲", "known": "示例群"}\n')
     _c7b = [c for c in V.run("no_reply")["checks"] if c["name"] == "群里最近 @ 的名字它认得"]
     ok("C7d 名字**对不上** ⇒ 仍不判坏（那个 @ 也可能是 @ 别人的），但两个名字都进报告 + 给出动作",
        len(_c7b) == 1 and _c7b[0]["ok"] is None
-       and ("群昵称甲" in _c7b[0]["detail"]) and ("群deepseek" in _c7b[0]["detail"])
+       and ("群昵称甲" in _c7b[0]["detail"]) and ("示例群" in _c7b[0]["detail"])
        and ("群昵称" in _c7b[0]["detail"]), _c7b[0]["detail"][:120] if _c7b else "")
     io.open(_ttJ.FILE, "w", encoding="utf-8").write(
-        '{"chat": "g1", "kind": "tier", "at": "群deepseek", "known": "群deepseek"}\n')
+        '{"chat": "g1", "kind": "tier", "at": "示例群", "known": "示例群"}\n')
     _c7c = [c for c in V.run("no_reply")["checks"] if c["name"] == "群里最近 @ 的名字它认得"]
     ok("C7e 名字**一致** ⇒ 判 True（同一判定器翻面 ⇒ 它有灵敏度）",
        len(_c7c) == 1 and _c7c[0]["ok"] is True, str(_c7c))

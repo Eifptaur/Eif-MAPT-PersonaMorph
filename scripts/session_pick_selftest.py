@@ -38,7 +38,7 @@ from agent import wechat as W # noqa: E402
 print("── A2. 名字切分：单字母会话名（E）以前永远配不上 ──")
 ok("OCR 行「E:提交信息还．“」切成名字 E", CO.split_name("E:提交信息还．“") == "E", repr(CO.split_name("E:提交信息还．“")))
 ok("切完能吃 matches（单字母只走完全相等分支）", CO.matches(CO.split_name("E:提交信息还"), "E"))
-ok("普通群名不受影响", CO.split_name("群deepseek") == "群deepseek", repr(CO.split_name("群deepseek")))
+ok("普通群名不受影响", CO.split_name("示例群") == "示例群", repr(CO.split_name("示例群")))
 ok("名字后面的时间先被 clean 掉", CO.split_name("腾讯新闻14：47").startswith("腾讯新闻"),
    repr(CO.split_name("腾讯新闻14：47")))
 ok("session_rows 用的是切过的名字（源码断言）", _sm.has(open(os.path.join("agent", "chat_ocr.py"), encoding="utf-8").read(), 'r["name"] = split_name(r["name"])'))

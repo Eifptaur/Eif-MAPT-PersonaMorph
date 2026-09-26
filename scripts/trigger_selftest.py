@@ -210,7 +210,7 @@ _ld = _tmp2.mkdtemp(prefix="pm_ledger_")
 _old_root = W.ROOT
 ad5 = W.WeChatAdapter.__new__(W.WeChatAdapter)
 ad5._self_wxid = _WXID
-ad5._self_nickname = "群deepseek"
+ad5._self_nickname = "示例群"
 ad5._recent_sent = deque(maxlen=10)
 ad5._recent_sent.append(("来了 别催了", time.time()))
 try:

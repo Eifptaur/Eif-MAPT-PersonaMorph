@@ -194,7 +194,7 @@ def main():
     try:
         fake = _FakeAd()
         # 正例：锚点用 E 的真消息文本 ⇒ 必须落到 E 的头像方块内
-        loc = fake._send_poke_locate(_FakeGUI(), "E", ["。。。", "@群deepseek 说话！"], scroll=False)
+        loc = fake._send_poke_locate(_FakeGUI(), "E", ["。。。", "@示例群 说话！"], scroll=False)
         ok("⑦ 正例：锚点命中 ⇒ 返回头像方块中心", loc is not None and loc[:2] == (386, 220), loc)
         blk = getattr(fake, "_poke_block", None)
         ok("⑦ 正例：落点在命中的头像方块内",
@@ -209,12 +209,12 @@ def main():
         loc3 = fake._send_poke_locate(_FakeGUI(), "E", [], scroll=False)
         ok("⑦ 负例：没有锚点 ⇒ 不返回任何点", loc3 is None, loc3)
         # 负例：**只有系统提示**（居中、无头像）⇒ 不许拿它认人
-        #   现场：`「E」拍拍「群deepseek」` 与锚点模糊相似度 0.593 > 0.5 ⇒ 曾被当成 E 的消息行
+        #   现场：`「E」拍拍「示例群」` 与锚点模糊相似度 0.593 > 0.5 ⇒ 曾被当成 E 的消息行
         _old_rec2 = _co_mod.recognize
         _co_mod.recognize = lambda image, timeout=None: [
-            ("「E」拍拍「群deepseek」", 656 - _PL, 517 - _TOP, 6, 17)]
+            ("「E」拍拍「示例群」", 656 - _PL, 517 - _TOP, 6, 17)]
         try:
-            loc4 = fake._send_poke_locate(_FakeGUI(), "E", ["群deepseek 说话！"], scroll=False)
+            loc4 = fake._send_poke_locate(_FakeGUI(), "E", ["示例群 说话！"], scroll=False)
             why4 = getattr(fake, "_poke_locate_why", "")
         finally:
             _co_mod.recognize = _old_rec2
@@ -291,15 +291,15 @@ def main():
     # 
     #    **因为有些人可能自定义拍一拍信息**」⇒ 认**方向词**，不认"拍了拍"这个固定串。
     from agent.wechat import poke_text_is_mine as _ptm
-    _N = "群deepseek"
+    _N = "示例群"
     _cases = [
         ("我拍拍「E」", "E", True, "真机 DB 原文（我发起）"),
-        ("「E」拍拍「群deepseek」", "E", False, "真机 DB 原文（别人拍我）"),
+        ("「E」拍拍「示例群」", "E", False, "真机 DB 原文（别人拍我）"),
         ('你拍了拍"E"', "E", True, "界面文案"),
         ("我拍了拍「E」的肩膀", "E", True, "自定义后缀（我发起）"),
-        ("「E」拍了拍「群deepseek」的肩膀", "E", False, "自定义后缀（别人拍我）"),
-        ('"群deepseek" 拍了拍 "E"', "E", True, "主语是我"),
-        ('"E" 拍了拍 "群deepseek"', "E", False, "主语是对方"),
+        ("「E」拍了拍「示例群」的肩膀", "E", False, "自定义后缀（别人拍我）"),
+        ('"示例群" 拍了拍 "E"', "E", True, "主语是我"),
+        ('"E" 拍了拍 "示例群"', "E", False, "主语是对方"),
         ("", "E", False, "空串"),
     ]
     _bad = []

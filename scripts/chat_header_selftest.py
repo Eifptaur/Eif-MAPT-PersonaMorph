@@ -62,7 +62,7 @@ ck("H2c 面板左沿在不同窗口宽度下也能测（会话列表是固定像
    "测得 %d" % ch.detect_pane_left(fake_window("文件传输助手", size=(900, 680))))
 
 fa = ch.fingerprint(fake_window("文件传输助手"))
-fb = ch.fingerprint(fake_window("群deepseek"))
+fb = ch.fingerprint(fake_window("示例群"))
 ck("H3 指纹维数固定＝BINS", len(fa) == ch.BINS == len(fb), "%d 维" % len(fa))
 ck("H4 同一会话（同图）相似度＝1.0",
    abs(ch.similarity(fa, ch.fingerprint(fake_window("文件传输助手"))) - 1.0) < 1e-9)
@@ -85,10 +85,10 @@ with tempfile.TemporaryDirectory() as td:
     ch.remember("filehelper", fb, note="覆盖测试", path=p)
     ck("S4 同会话重复 remember 是覆盖（不累积）",
        ch.reference("filehelper", p) == fb and len(ch.load(p)) == 1)
-    img = fake_window("群deepseek")
+    img = fake_window("示例群")
     ch.remember("filehelper", ch.fingerprint(img), path=p)
     ck("S5 参照＝当前 ⇒ 匹配", ch.match(ch.reference("filehelper", p), ch.fingerprint(img)) is True)
-    ch.remember("filehelper", fa, path=p) # 参照换成"文件传输助手"，当前图是"群deepseek"
+    ch.remember("filehelper", fa, path=p) # 参照换成"文件传输助手"，当前图是"示例群"
     ck("S6 参照≠当前 ⇒ 不匹配（这就是防发错会话的那道闸）",
        ch.match(ch.reference("filehelper", p), ch.fingerprint(img)) is False)
     # —— 分尺寸记忆——
@@ -517,8 +517,8 @@ if fp1:
     fp2 = ch.capture()
     s = ch.similarity(fp1, fp2) if fp2 else 0.0
     print("  INFO 当前会话头指纹 %d 维；两次抓取相似度 %.3f（稳定性）" % (len(fp1), s))
-    other = ch.fingerprint(fake_window("群deepseek"))
-    print("  INFO 与合成「群deepseek」相似度 %.3f（应明显低于阈值 %.2f）"
+    other = ch.fingerprint(fake_window("示例群"))
+    print("  INFO 与合成「示例群」相似度 %.3f（应明显低于阈值 %.2f）"
           % (ch.similarity(fp1, other), ch.DEFAULT_THRESHOLD))
 else:
     print("  INFO 这次没抓到（微信窗口不可见/未开）——不算失败")

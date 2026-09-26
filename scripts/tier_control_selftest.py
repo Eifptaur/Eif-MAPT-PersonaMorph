@@ -83,7 +83,7 @@ def main():
 
     print("== B. 指令禁言（@机器人 + 指令）==")
     ok("「@机器人 禁言」⇒ 默认 30 分钟",
-       tc.parse_command("@群deepseek 禁言") == {"action": "mute", "minutes": 30})
+       tc.parse_command("@示例群 禁言") == {"action": "mute", "minutes": 30})
     ok("「禁言 15」⇒ 15 分钟", tc.parse_command("@bot 禁言 15")["minutes"] == 15)
     ok("「禁言 15 分钟」也认", tc.parse_command("@bot 禁言15分钟")["minutes"] == 15)
     ok("「闭嘴 / 闭麦 / 静一静」都算禁言",
@@ -151,51 +151,51 @@ def main():
     try:
         use(cfg_with())
         clock(9, 30)
-        r0 = pr.resolve_context_tier(entries("我们上线了新产品"), "群deepseek", "", "", roll=0, chat_key="group:gA")
+        r0 = pr.resolve_context_tier(entries("我们上线了新产品"), "示例群", "", "", roll=0, chat_key="group:gA")
         ok("阴性对照：没开峰谷、没禁言时，关键词照旧触发 2 档",
            r0["should_respond"] and r0["tier"] == 2 and r0["tier_source"] == "全局档位", r0)
         use(cfg_with(tier_schedule=sched))
         clock(9, 30)
-        r1 = pr.resolve_context_tier(entries("我们上线了新产品"), "群deepseek", "", "", roll=0, chat_key="group:gA")
+        r1 = pr.resolve_context_tier(entries("我们上线了新产品"), "示例群", "", "", roll=0, chat_key="group:gA")
         ok("峰谷映射命中 2 档 ⇒ 关键词仍触发（与全局一致）", r1["tier"] == 2 and "峰谷映射" in r1["tier_source"], r1)
         clock(23, 30)
-        r1b = pr.resolve_context_tier(entries("我们上线了新产品"), "群deepseek", "", "", roll=0, chat_key="group:gA")
+        r1b = pr.resolve_context_tier(entries("我们上线了新产品"), "示例群", "", "", roll=0, chat_key="group:gA")
         ok("同一张表、时间走到跨午夜静默窗口 ⇒ 此刻不回应（证明真的按时间切）",
            not r1b["should_respond"] and "静默" in r1b["reason"], r1b)
         clock(9, 30)
         use(cfg_with(tier_schedule={"enabled": True, "table": [{"from": "00:00", "to": "23:59", "tier": 1}]}))
-        r2 = pr.resolve_context_tier(entries("我们上线了新产品"), "群deepseek", "", "", roll=0, chat_key="group:gA")
+        r2 = pr.resolve_context_tier(entries("我们上线了新产品"), "示例群", "", "", roll=0, chat_key="group:gA")
         ok("峰谷映射 1 档 ⇒ 关键词/随机都不触发（只回艾特）",
            not r2["should_respond"] and r2["tier"] == 0 and "峰谷映射" in r2["tier_source"], r2)
-        r2b = pr.resolve_context_tier(entries("@群deepseek 在吗"), "群deepseek", "", "", roll=0, chat_key="group:gA")
+        r2b = pr.resolve_context_tier(entries("@示例群 在吗"), "示例群", "", "", roll=0, chat_key="group:gA")
         ok("峰谷映射 1 档时，被艾特仍然回", r2b["should_respond"] and r2b["tier"] == 1, r2b)
         use(cfg_with(tier_schedule={"enabled": True, "table": [{"from": "00:00", "to": "23:59", "tier": 0}]}))
-        r3 = pr.resolve_context_tier(entries("@群deepseek 在吗"), "群deepseek", "", "", roll=0, chat_key="group:gA")
+        r3 = pr.resolve_context_tier(entries("@示例群 在吗"), "示例群", "", "", roll=0, chat_key="group:gA")
         ok("峰谷映射 0 档 ⇒ 该时段完全不回应（连艾特也不回，reason 说明是静默）",
            not r3["should_respond"] and "静默" in r3["reason"], r3)
         use(cfg_with(tier_cmd_admins=["群主"]))
         tc.mute("group:gA", 10, by="群主")
-        r4 = pr.resolve_context_tier(entries("我们上线了新产品"), "群deepseek", "", "", roll=0, chat_key="group:gA")
+        r4 = pr.resolve_context_tier(entries("我们上线了新产品"), "示例群", "", "", roll=0, chat_key="group:gA")
         ok("指令禁言 ⇒ 档位固定降到 1 档（关键词不再触发）",
            not r4["should_respond"] and "指令禁言" in r4["tier_source"], r4)
-        r5 = pr.resolve_context_tier(entries("@群deepseek 在吗"), "群deepseek", "", "", roll=0, chat_key="group:gA")
+        r5 = pr.resolve_context_tier(entries("@示例群 在吗"), "示例群", "", "", roll=0, chat_key="group:gA")
         ok("指令禁言期间：艾特仍然回（这正是「1 档」的含义）",
            r5["should_respond"] and r5["tier"] == 1 and "指令禁言" in r5["tier_source"], r5)
         ok("禁言是按会话的：另一个群不受影响",
-           pr.resolve_context_tier(entries("我们上线了新产品"), "群deepseek", "", "", roll=0,
+           pr.resolve_context_tier(entries("我们上线了新产品"), "示例群", "", "", roll=0,
                                    chat_key="group:gB")["should_respond"])
         tc.unmute("group:gA")
         use(cfg_with(context_slider_pos=0.05))
-        rs = pr.resolve_context_tier(entries("我们上线了新产品"), "群deepseek", "", "", roll=0, chat_key="group:gA")
+        rs = pr.resolve_context_tier(entries("我们上线了新产品"), "示例群", "", "", roll=0, chat_key="group:gA")
         ok("tier_mode=fixed ⇒ 滑条被忽略（档位还是全局的 2 档）",
            rs["should_respond"] and rs["tier"] == 2, rs)
         use(cfg_with(context_slider_pos=0.05, tier_mode="slider"))
-        rs2 = pr.resolve_context_tier(entries("我们上线了新产品"), "群deepseek", "", "", roll=0, chat_key="group:gA")
+        rs2 = pr.resolve_context_tier(entries("我们上线了新产品"), "示例群", "", "", roll=0, chat_key="group:gA")
         ok("tier_mode=slider ⇒ 滑条照旧生效（阴性对照：老行为没被砍）",
            rs2["tier_source"] == "全局档位" and rs2["tier"] != 2, rs2)
         use(cfg_with())
         ok("每个返回值都带 tier_source（控制台/日志能说清为什么是这个档）",
-           all("tier_source" in pr.resolve_context_tier(entries(), "群deepseek", "", "", roll=99, chat_key="group:gA")
+           all("tier_source" in pr.resolve_context_tier(entries(), "示例群", "", "", roll=99, chat_key="group:gA")
                for _ in [0]))
     finally:
         cfgmod.get_config = real_cfg_get

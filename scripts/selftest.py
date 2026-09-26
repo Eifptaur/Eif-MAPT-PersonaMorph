@@ -143,28 +143,28 @@ try:
     check("超长切分", len(split_for_wx("中" * 2500, 2000)) == 2)
     check("滑条→档位", slider_to_tier(55)["tier"] == 3 and slider_to_tier(95)["tier"] == 4)
     check("消息列表归一", normalize_message_list('["a","b"]') == ["a", "b"])
-    check("@ 识别", is_at_me("@群deepseek 你好", self_nickname="群deepseek", bot_name="小鲸鱼"))
-    check("@ 识别(负例)", not is_at_me("今天天气不错", self_nickname="群deepseek", bot_name="小鲸鱼"))
+    check("@ 识别", is_at_me("@示例群 你好", self_nickname="示例群", bot_name="小鲸鱼"))
+    check("@ 识别(负例)", not is_at_me("今天天气不错", self_nickname="示例群", bot_name="小鲸鱼"))
     # ── @ 识别的边界──────
-    #   老实现是纯子串：`@群deepseek小助手` 会被判成"@ 我" ⇒ 白唤醒一次模型。这几条钉住新口径。
-    _N = {"self_nickname": "群deepseek", "bot_name": "小鲸鱼"}
+    #   老实现是纯子串：`@示例群小助手` 会被判成"@ 我" ⇒ 白唤醒一次模型。这几条钉住新口径。
+    _N = {"self_nickname": "示例群", "bot_name": "小鲸鱼"}
     check("@ 识别：别人名字以我昵称开头 ⇒ **不算 @ 我**",
-          not is_at_me("@群deepseek小助手 帮我看下", **_N))
+          not is_at_me("@示例群小助手 帮我看下", **_N))
     check("@ 识别：微信的真分隔符 U+2005 ⇒ 算 @ 我",
-          is_at_me("@群deepseek\u2005你好", **_N))
-    check("@ 识别：标点分隔也算", is_at_me("@群deepseek,你好", **_N))
+          is_at_me("@示例群\u2005你好", **_N))
+    check("@ 识别：标点分隔也算", is_at_me("@示例群,你好", **_N))
     check("@ 识别：大小写不敏感", is_at_me("@DEEPSEEK 你好", self_nickname="DeepSeek", bot_name="小鲸鱼"))
     check("@ 识别：@ 与昵称之间有空格 ⇒ 不算（微信不会这么写）",
-          not is_at_me("@ 群deepseek 你好", **_N))
+          not is_at_me("@ 示例群 你好", **_N))
     check("@ 识别：@ 全部人 不算 @ 我", not is_at_me("@所有人 开会了", **_N))
 
     cfg = get_config()
     cfg["store"]["context_tier"] = 1
     r = resolve_context_tier([{"id": 1, "mid": 1, "ts": 1, "sender_id": "x", "sender_name": "u", "text": "闲聊", "self": False, "media": [], "reply": None}],
-                             "群deepseek", "小鲸鱼", "self")
+                             "示例群", "小鲸鱼", "self")
     check("1档未艾特不响应", not r["should_respond"])
-    r = resolve_context_tier([{"id": 1, "mid": 1, "ts": 1, "sender_id": "x", "sender_name": "u", "text": "@群deepseek 在吗", "self": False, "media": [], "reply": None}],
-                             "群deepseek", "小鲸鱼", "self")
+    r = resolve_context_tier([{"id": 1, "mid": 1, "ts": 1, "sender_id": "x", "sender_name": "u", "text": "@示例群 在吗", "self": False, "media": [], "reply": None}],
+                             "示例群", "小鲸鱼", "self")
     check("1档艾特响应", r["should_respond"] and r["tier"] == 1)
 
     st = ChatStore(0)
@@ -187,8 +187,8 @@ try:
     check("系统提示含安全规则", "安全规则" in sysp and "send_message" in sysp)
     userp = build_user_prompt({
         "chat_key": "group:g1", "kind": "group", "chat_id": "g1", "chat_name": "测试群",
-        "trigger_entries": [{"id": 1, "mid": 1, "ts": 1, "sender_id": "wxid_a", "sender_name": "张三", "text": "@群deepseek 你好", "self": False, "media": [], "reply": None}],
-        "store": st, "memory": mem, "self_nickname": "群deepseek", "self_last_message_at": 0,
+        "trigger_entries": [{"id": 1, "mid": 1, "ts": 1, "sender_id": "wxid_a", "sender_name": "张三", "text": "@示例群 你好", "self": False, "media": [], "reply": None}],
+        "store": st, "memory": mem, "self_nickname": "示例群", "self_last_message_at": 0,
         "last_message_at": 1, "recent_count": 1, "run_seq": 1, "more_unread_during_run": False,
         "context_limit": 20, "session": {"past_state_count": 0},
     })

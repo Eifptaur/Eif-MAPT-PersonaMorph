@@ -143,7 +143,7 @@ print("[C] 三档：引用我 / 接我的话头 —— 不吃随机数")
 
 
 def tier(msgs, trigger, roll=99, **kw):
-    return P.resolve_context_tier(trigger, "小鲸鱼", "群deepseek", "me", roll=roll,
+    return P.resolve_context_tier(trigger, "小鲸鱼", "示例群", "me", roll=roll,
                                  chat_key="group:g1", store=FakeStore(msgs), **kw)
 
 
