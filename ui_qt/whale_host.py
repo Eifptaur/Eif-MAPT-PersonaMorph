@@ -286,11 +286,9 @@ class WhaleHostWebView:
                 ctrl.put_IsVisible(1)
                 self._apply_bounds()
                 self._wv = ctrl.get_CoreWebView2()
-                # ⛔ 不调 put_DefaultBackgroundColor(0)：本机运行时（151.x）窗口化
-                #    承载下它虽返回 S_OK，但整个渲染管线变全透明（红块/鲸鱼/全部
-                #    内容 alpha=0，实测红块消失）⇒ 挂件"闪一下就消失"。
-                #    画布保持默认不透明白/黑，鲸鱼照常渲染与交互；透明承载待
-                #    合成承载（PM_WHALE_COMPOSITION=1）成熟后再开。
+                # 画布底色 = 鲸落深色（不透明）——与挂件主题一致，鲸鱼浮在其上。
+                # （A=0 透明在本机窗口化承载下会整管线 alpha=0 = 全不可见，禁用。）
+                self._enable_transparency()
             # 拖动转发要收页面的 postMessage —— 这一步没开的话页面发的消息会被
             # 内核直接丢弃（默认是开的，但显式确认一次，免得运行库改默认值）。
             try:
