@@ -12,6 +12,7 @@
   · 全程零副作用：不 import 真窗口、不 sleep 真时间（假时钟）、不写盘、不碰用户的微信。
 """
 import os
+import threading
 import sys
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -131,9 +132,65 @@ class _Stub(object):
         self._scn = scn
         self._db = _FakeDB(scn)
         self._gui = _FakeGui()
+        # 与被测链共用的实例状态（同上：漏了会被吞成 AttributeError 假象）
+        self._send_lock = threading.RLock()
+        self._pick_last = {"pt": None, "at": 0.0}
+        self._row_click_last = {"pt": None, "at": 0.0}
 
     def _get_gui(self):
         return self._gui
+
+    # 会话身份事务：`wechat._idn_txn_scope` 装饰器在函数入口/出口调这两个。
+    # ⛔ 漏了它们 ⇒ 装饰器一进函数就 `AttributeError`，整段判据**跑不起来**（判据链静默死掉）。
+    # 本夹具测的是发送循环的重试/放弃行为，事务清缓存与它无关 ⇒ 桩成空操作。
+    def _idn_txn_begin(self):
+        return None
+
+    def _idn_txn_end(self):
+        return None
+
+    # 去重闸：`send_text_posted` 入口会调它（防同一条被发两遍）。本夹具测的是"发送循环的重试/放弃"，
+    # 不是去重语义 ⇒ 一律放行、记账空操作（否则同文本的第二枪会被当成重复而走不到被测分支）。
+    def _dedup_send(self, chat_id, text):
+        return True
+
+    def _dedup_mark(self, chat_id, text):
+        return None
+
+    # 身份缓存/事务族的空实现：真适配器上这些是真方法，本夹具**不构造真适配器**（那会去连微信）
+    # ⇒ 桩成"不缓存、不失效"，让被测链按判据照走。漏了它们 ⇒ `chat_is_open` 内部抛
+    # `AttributeError` 被吞成"会话头三态=异常" ⇒ 断言全歪（判据链静默失效的老病）。
+    _IDN_CACHE_TTL_S = 4.0
+
+    def _idn_cache_key(self, *a, **k):
+        return None
+
+    def _idn_cache_get(self, *a, **k):
+        return None
+
+    def _idn_cache_put(self, *a, **k):
+        return None
+
+    def _idn_cache_invalidate(self, *a, **k):
+        return None
+
+    def current_chat_name(self, gui=None):
+        return ("", "stub：本夹具不读真实会话名")
+
+    def display_name(self, cid):
+        return "演示群"
+
+    def db_alive(self):
+        return (True, "stub")
+
+    def _active_row_time_ok(self, chat_id, gui=None):
+        return (False, "stub：时间档不参与")
+
+    def _known_chat_names(self):
+        return []
+
+    def _seen_names_add(self, names):
+        return None
 
     def _ensure_main_visible(self, gui, main):
         return None

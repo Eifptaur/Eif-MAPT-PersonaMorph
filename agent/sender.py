@@ -298,10 +298,28 @@ class SendQueue:
                     failed.append({"index": i, "text": text, "error": str(e),
                                    "src": (part_src[i] if i < len(part_src) else text)})
         if failed and not sent:
-            raise RuntimeError("；".join("第%d条「%s」：%s" % (f["index"] + 1, str(f["text"])[:20], f["error"]) for f in failed))
+            _why = "；".join("第%d条「%s」：%s" % (f["index"] + 1, str(f["text"])[:20], f["error"])
+                            for f in failed)
+            # 喂给版本门的"本机自证"：整批一条都没出去 ⇒ 记一次能力类失败（连续到阈值就改判）
+            try:
+                from . import version_gate as _vg2
+
+                _vg2.note_send_result(False, _why)
+            except Exception: # noqa: BLE001 — 喂自证失败不影响发送本身
+                pass
+            raise RuntimeError(_why)
         if failed:
             print("[sender] 部分发送失败（%d/%d）：%s" % (len(failed), len(parts),
-                  "；".join("第%d条「%s」：%s" % (f["index"] + 1, str(f["text"])[:20], f["error"]) for f in failed)))
+                  "；".join("第%d条「%s」：%s" % (f["index"] + 1, str(f["text"])[:20], f["error"])
+                            for f in failed)))
+        # 只要有任意一条真的出去了 ⇒ 这对版本"能发"（自证计数清零）
+        if sent:
+            try:
+                from . import version_gate as _vg3
+
+                _vg3.note_send_result(True)
+            except Exception: # noqa: BLE001
+                pass
         return {"sent": sent, "failed": failed, "deduped": _deduped}
 
     def send_image(self, chat_key: str, local_path: str):

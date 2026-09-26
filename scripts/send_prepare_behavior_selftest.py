@@ -82,12 +82,60 @@ class _Stub(object):
     def __init__(self, scn):
         self.scn = scn
         self._send_lock = threading.RLock()
+        # 与被测链共用的实例状态：漏了就是 `AttributeError` 被吞成"三态=异常"（判据全歪）
+        self._db = getattr(scn, "db", None)
+        self._pick_last = {"pt": None, "at": 0.0}
+        self._row_click_last = {"pt": None, "at": 0.0}
 
     def group_name(self, chat_id):
         return "演示群"
 
     def _get_gui(self):
         return self.scn.gui
+
+    # 会话身份事务：`wechat._idn_txn_scope` 装饰器在函数入口/出口调这两个。
+    # ⛔ 漏了它们 ⇒ 装饰器一进函数就 `AttributeError`，整段判据**跑不起来**（判据链静默死掉）。
+    # 本夹具测的是"发送前的准备/闸门行为"，事务清缓存与它无关 ⇒ 桩成空操作。
+    def _idn_txn_begin(self):
+        return None
+
+    def _idn_txn_end(self):
+        return None
+
+    # 身份缓存/事务族的空实现：真适配器上这些是真方法，本夹具**不构造真适配器**（那会去连微信）
+    # ⇒ 桩成"不缓存、不失效"，让被测链按判据照走。漏了它们 ⇒ `chat_is_open` 内部抛
+    # `AttributeError` 被吞成"会话头三态=异常" ⇒ 断言全歪（判据链静默失效的老病）。
+    _IDN_CACHE_TTL_S = 4.0
+
+    def _idn_cache_key(self, *a, **k):
+        return None
+
+    def _idn_cache_get(self, *a, **k):
+        return None
+
+    def _idn_cache_put(self, *a, **k):
+        return None
+
+    def _idn_cache_invalidate(self, *a, **k):
+        return None
+
+    def current_chat_name(self, gui=None):
+        return ("", "stub：本夹具不读真实会话名")
+
+    def display_name(self, cid):
+        return "演示群"
+
+    def db_alive(self):
+        return (True, "stub")
+
+    def _active_row_time_ok(self, chat_id, gui=None):
+        return (False, "stub：时间档不参与")
+
+    def _known_chat_names(self):
+        return []
+
+    def _seen_names_add(self, names):
+        return None
 
     def _dedup_send(self, chat_id, text):
         return True

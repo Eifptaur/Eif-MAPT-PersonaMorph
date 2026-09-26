@@ -59,6 +59,16 @@ def run(verbose_deps: bool = False) -> dict:
         run._check_count = len(checks)
         run._checks = checks # 实时进度项（前端逐项滚动显示，无需等报告结束）
 
+    # 0) 生图内容过滤档位（**只报事实**，不判好坏）：哪几层在线、视觉审核开没开。
+    #    用户出于自己的取舍关掉视觉审核时这里会如实写"视觉审核关"——那是他的选择，不是缺陷。
+    try:
+        from . import image_filter as _ifc
+
+        _line = _ifc.tier_line()
+        add("生图·内容过滤档位", "ok" if "视觉审核在" in _line else "warn", _line)
+    except Exception as e: # noqa: BLE001
+        add("生图·内容过滤档位", "warn", "读不出：%s" % type(e).__name__)
+
     # 1) Python 编译检查（内联全量）
     ok, detail = _compile_all()
     add("Python 全量编译", "ok" if ok else "fail", "全部通过" if ok else detail,

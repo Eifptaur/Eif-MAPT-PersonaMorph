@@ -140,8 +140,26 @@ okf, resf = IG.run_filters(good_png, {"prompt": "猫"})
 ok("三层开着且都过 ⇒ ok=True", okf is True, json.dumps([r for r in resf if r.get("skipped") is None], ensure_ascii=False)[:120])
 set_cfg(enabled=True, filter_chain={"size": True, "dup": True, "blacklist": True, "text": True, "classifier": True})
 okd, resd = IG.run_filters(good_png, {"prompt": "猫"})
-ok("分类器未接（判不出）⇒ 整链判否", okd is False and any(r["name"] == "classifier" and r["ok"] is None for r in resd),
-   json.dumps(resd[-1], ensure_ascii=False))
+# ⛔ 这一层的口径已改（用户拍板）：以前是"分类器**未接** ⇒ 判不出 ⇒ 整链判否"（一个从不工作的桩：
+#    用户关掉它 ⇒ 内容过滤名存实亡；开着它 ⇒ 所有图都发不出去）。现在它接 `image_filter.PIPELINE`
+#    的真链，**真参与判定**；判据跑不起来时如实写"未参与判定"并放行（可用优先，不假装检查过）。
+_cl = [r for r in resd if r["name"] == "classifier"]
+ok("分类器层**真参与判定**（不再是「未接 ⇒ 判不出」的桩）",
+   bool(_cl) and _cl[0]["ok"] is True and "未接" not in str(_cl[0]["why"]),
+   json.dumps(_cl[0] if _cl else resd[-1], ensure_ascii=False)[:130])
+# 判据不可用时：如实说"未参与判定"，**不假装检查过**，也不把用户的生图功能掐死
+from agent import image_filter as _ifp
+
+_keep_check = _ifp.check
+try:
+    _ifp.check = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("synthetic"))
+    _oku, _resu = IG.run_filters(good_png, {"prompt": "猫"})
+    _clu = [r for r in _resu if r["name"] == "classifier"]
+    ok("判据不可用 ⇒ 如实写「未参与判定」（不假装检查过、也不整链判否）",
+       _oku is True and bool(_clu) and "未参与判定" in str(_clu[0]["why"]),
+       json.dumps(_clu[0] if _clu else _resu[-1], ensure_ascii=False)[:130])
+finally:
+    _ifp.check = _keep_check
 oks, _ = IG.run_filters(small_png, {"prompt": "猫"})
 ok("尺寸过小 ⇒ 判否", oks is False)
 okb, resb = IG.run_filters(bad_txt, {"prompt": "猫"})

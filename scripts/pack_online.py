@@ -38,7 +38,8 @@ ZIP_TOP = "persona morph"
 EXCLUDE = (
     "AGENTS.md", # 开发守则：含红线自述与既有口径：，不随包发
     "docs/", # 开发资料：任务清单 / changelog 归档
-    "whale-widget/upstream-0.3.9/", # 上游原文留档（README/PROVENANCE/package.json）＝开发资料，不随包发
+    "whale-widget/upstream-0.3.13/", # 上游原文留档（README/PROVENANCE/package.json）＝开发资料，不随包发
+    "ui_qt-probes/", # 一次性探针目录（同族历史探针都在 dev-workspace）＝开发资料，不随包发
     "whale-widget/assets/DSniang02.png", # 备用整图：我们的路由用不到（image.png 走 DSniang1.png）
     "whale-widget/assets/DSH2.png", # 上游 README 展示图：程序不用（1.1MB，别白占包体积）
     # ⛔ 这四件**只被上游留档文档引用**，`agent/whale.py` 已把同族

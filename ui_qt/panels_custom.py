@@ -503,30 +503,85 @@ def overview_panel(t: Tokens) -> QWidget:
                                             "迁移包 (*.zip)")
         if not p:
             return
+        # 选完路径立刻回显，再把「取整包 + 落盘」挪去后台线程 ——
+        # 原写法在主线程同步跑满 120s 预算，期间整个控制台窗口动不了。
         note2.setText("导出中…")
-        try:
-            blob = _raw_post("/api/data/export", None, "", 120.0)
-            Path(p).write_bytes(blob)
-            note2.setText(f"已导出记录（计费+对话）→ {p}")
-        except Exception as e: # noqa: BLE001
-            note2.setText(f"导出失败：{e}")
+        box: dict = {"done": False, "err": None, "tries": 0}
+
+        def _work() -> None:
+            try:
+                Path(p).write_bytes(_raw_post("/api/data/export", None, "", 120.0))
+            except Exception as e: # noqa: BLE001
+                box["err"] = str(e)
+            box["done"] = True
+
+        import threading as _th # noqa: PLC0415
+        _th.Thread(target=_work, daemon=True, name="c8-data-export").start()
+
+        def _land() -> None:
+            note2.setText(f"导出失败：{box['err']}" if box["err"]
+                          else f"已导出记录（计费+对话）→ {p}")
+
+        def _apply() -> None:
+            # 存活判 + 自链上限：面板被重建/关掉后本闭包仍被定时器引用，
+            # 无上限重排会一直占着事件循环。
+            if not _ui_alive(page):
+                return
+            if not box["done"]:
+                box["tries"] += 1
+                if box["tries"] > 500: # 500 × 300ms ≈ 150s，盖住 120s 超时
+                    box["err"] = "后台超时没返回（可稍后重试）"
+                    _deliver(_land)
+                    return
+                QTimer.singleShot(300, _apply)
+                return
+            _deliver(_land)
+        QTimer.singleShot(300, _apply)
 
     def _import() -> None:
         from PySide6.QtWidgets import QFileDialog # noqa: PLC0415
         p, _f = QFileDialog.getOpenFileName(page, "选迁移包", "", "迁移包 (*.zip)")
         if not p:
             return
+        # 与 _export 同理：读包 + 上传 + 解析是分钟级 I/O，不能占着 UI 线程。
         note2.setText("迁移中（合并到当前数据，按内容去重）…")
-        try:
-            import json as _j # noqa: PLC0415
-            blob = Path(p).read_bytes()
-            resp = _raw_post("/api/data/import", blob, "application/zip", 180.0)
-            j = _j.loads(resp.decode("utf-8", errors="replace"))
-            note2.setText(f"迁移完成：{j.get('note') or 'ok'}" if j.get("ok")
-                          else f"迁移失败：{j.get('error') or '未知'}")
+        box: dict = {"done": False, "ok": False, "note": "", "err": None, "tries": 0}
+
+        def _work() -> None:
+            try:
+                import json as _j # noqa: PLC0415
+                resp = _raw_post("/api/data/import", Path(p).read_bytes(), "application/zip", 180.0)
+                j = _j.loads(resp.decode("utf-8", errors="replace"))
+                box["ok"] = bool(j.get("ok"))
+                box["note"] = (j.get("note") or "ok") if box["ok"] else (j.get("error") or "未知")
+            except Exception as e: # noqa: BLE001
+                box["err"] = str(e)
+            box["done"] = True
+
+        import threading as _th # noqa: PLC0415
+        _th.Thread(target=_work, daemon=True, name="c8-data-import").start()
+
+        def _land() -> None:
+            if box["err"]:
+                note2.setText(f"迁移失败：{box['err']}")
+                return
+            note2.setText(f"迁移完成：{box['note']}" if box["ok"] else f"迁移失败：{box['note']}")
             _refresh()
-        except Exception as e: # noqa: BLE001
-            note2.setText(f"迁移失败：{e}")
+
+        def _apply() -> None:
+            # 存活判 + 自链上限：同 _export。
+            if not _ui_alive(page):
+                return
+            if not box["done"]:
+                box["tries"] += 1
+                if box["tries"] > 700: # 700 × 300ms ≈ 210s，盖住 180s 超时
+                    box["err"] = "后台超时没返回（可稍后重试）"
+                    _deliver(_land)
+                    return
+                QTimer.singleShot(300, _apply)
+                return
+            _deliver(_land)
+        QTimer.singleShot(300, _apply)
 
     def _clear_cost() -> None:
         from confirm import ConfirmDialog # noqa: PLC0415

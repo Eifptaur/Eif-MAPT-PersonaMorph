@@ -151,9 +151,16 @@ ok("没有链作用域装饰器（`_chain_scoped`）", "_chain_scoped" not in _S
 ok("没有把 `chat_is_open` / `chat_identity_ok` 的调用改去别的包装",
    _SRC.count("self.chat_is_open(") >= 8 and _SRC.count("self.chat_identity_ok(") >= 5,
    "%d / %d" % (_SRC.count("self.chat_is_open("), _SRC.count("self.chat_identity_ok(")))
-_AB = os.path.join(ROOT, "_scratch", "_live_ab_speed.py")
-ok("A/B 活体脚本还在（下一轮提速改法必须再跑它一次）", os.path.exists(_AB),
-   "缺 %s" % _AB)
+_AB_CANDS = (
+    os.path.join(ROOT, "_scratch", "_live_ab_speed.py"),
+    # 发布前清理会把开发草稿区**移出**产品根（存档在 dev-workspace，可移回）⇒ 两处都认，
+    # 判据要的是"这个活体脚本还找得到"，不是"它必须在产品根的某个固定位置"。
+    os.path.join(os.path.dirname(ROOT), "dev-workspace", "persona-morph",
+                 "archived-from-root", "scratch", "_live_ab_speed.py"),
+)
+ok("A/B 活体脚本还在（下一轮提速改法必须再跑它一次）",
+   any(os.path.exists(p) for p in _AB_CANDS),
+   "两处都没有：%s" % " / ".join(_AB_CANDS))
 
 print("\n==== 点偏防护判据：%d 通过 / %d 失败 ====" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

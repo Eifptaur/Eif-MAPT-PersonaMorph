@@ -3311,7 +3311,7 @@ def t_g5() -> None:
            and not _posts("/api/config"),
            note_ks.text() + " calls=%s" % [c for c in calls if "config" in c])
 
-        key_w.setText("sk-test-abc123")
+        key_w.setText("sk-fx1")
         calls.clear()
         _aid(mp, "keySave").click()
         _wait(lambda: _has_post("/api/test-api"))
@@ -3320,8 +3320,8 @@ def t_g5() -> None:
         body = cfg_posts[-1] if cfg_posts else {}
         ck("g5 keySave 真值：GET config → POST 全量（api_key=%s + provider_keys[%s]）→ POST test-api 延迟回显"
            % (prov, prov),
-           body.get("api", {}).get("api_key") == "sk-test-abc123"
-           and body.get("api", {}).get("provider_keys", {}).get(prov) == "sk-test-abc123"
+           body.get("api", {}).get("api_key") == "sk-fx1"
+           and body.get("api", {}).get("provider_keys", {}).get(prov) == "sk-fx1"
            and _has_post("/api/test-api")
            and "密钥 已保存" in note_ks.text() and "测试连通成功（234ms）" in note_ks.text(),
            "prov=%r note=%r body_api=%s" % (prov, note_ks.text(), body.get("api")))
@@ -6292,8 +6292,8 @@ def t_g17() -> None:
        "%s" % [(v, onboarding._key_is_unconfigured(v))
                for v in ("", "******", "sk-••••••", "在这里填你的key")])
     ck("g17 Key 判定：真实 Key → 已配置（不打扰）",
-       not onboarding._key_is_unconfigured("sk-1234567890abcdef"),
-       "%s" % onboarding._key_is_unconfigured("sk-1234567890abcdef"))
+       not onboarding._key_is_unconfigured("sk-fx2"),
+       "%s" % onboarding._key_is_unconfigured("sk-fx2"))
 
     # ④ 向导构造：第 1 步厂商/模型/Key 控件就位（15 家，过滤 custom）
     t = THEMES["whale"]
@@ -6321,20 +6321,20 @@ def t_g17() -> None:
     panels_custom.config_io.write_patch = lambda p: (captured.update(p), (True, "ok"))[1]
     panels_custom.config_io.read_path = lambda *a, **k: ({} if a[0] == "api.provider_keys" else "")
     try:
-        w.key_w.setText("sk-testsample")
+        w.key_w.setText("sk-fx3")
         w.step = 1
         w._step1_save()
     finally:
         panels_custom.config_io.write_patch = orig_wp
         panels_custom.config_io.read_path = orig_rp
     ck("g17 第 1 步保存：写 api.api_key/api.model/api.base_url",
-       captured.get("api.api_key") == "sk-testsample"
+       captured.get("api.api_key") == "sk-fx3"
        and captured.get("api.model") == "deepseek-flash"
        and captured.get("api.base_url") == "https://api.deepseek.com/v1",
        str({k: captured.get(k) for k in ("api.api_key", "api.model", "api.base_url")}))
     ck("g17 第 1 步保存：provider_keys 记该厂商 Key（web :5469）",
        isinstance(captured.get("api.provider_keys"), dict)
-       and captured["api.provider_keys"].get("deepseek") == "sk-testsample",
+       and captured["api.provider_keys"].get("deepseek") == "sk-fx3",
        str(captured.get("api.provider_keys")))
     ck("g17 第 1 步保存：api.provider 清空（走顶层，web :5474）",
        captured.get("api.provider") == "", repr(captured.get("api.provider")))
@@ -6386,7 +6386,7 @@ def t_g17() -> None:
         return _FakeDlg()
 
     onboarding._ONBOARD_ONCE = False
-    onboarding.config_io.read_path = lambda *a, **k: "sk-real-configured-key"
+    onboarding.config_io.read_path = lambda *a, **k: "sk-fx4"
     onboarding._Wizard = _fake_wiz
     try:
         onboarding.maybe_show(t, shell)
@@ -8461,7 +8461,7 @@ def t_whale_usage() -> None:
     _p0 = _w.api_models_payload()
     ck("模型表初始给模板", _p0["ok"] and len(_p0["templates"]) >= 2
        and _p0["models"] == [], str([t["id"] for t in _p0["templates"]]))
-    _p1 = _w.api_models_action({"action": "save", "keyValue": "sk-should-not-persist",
+    _p1 = _w.api_models_action({"action": "save", "keyValue": "sk-fx5",
                                 "model": {"name": "我的模型", "provider": "deepseek"}})
     _m = (_p1.get("models") or [{}])[0]
     ck("新建模型带**本机用量**（今日/合计），且**密钥不落明文**",
@@ -8829,6 +8829,104 @@ def t_screen_guards() -> None:
        _rc.classify("HTTP 401 Unauthorized"))
 
 
+def t_gate_middle() -> None:
+    """自检：两条"折中口径"的机械判据。
+
+    ① **版本门**：实测 `status='no'` 的组合**不再被当绿灯**（以前 `measured=True` 就直接 `level=ok`，
+       什么都不说），但也**不拦** —— 按"能发就发"照发，同时记账 + 说清楚；本机连续 3 次
+       能力类失败 ⇒ 升级为"本机实测发不出去"（给可照做的动作，仍然照发）；成功一次即清零。
+    ② **内容过滤**：本地提示词闸只认**正面命中**（不搞"判不出就拒"）；`_f_classifier` 不再是
+       那个"从不工作的桩"（接真链，且判据不可用时如实说"未参与判定"而不是假装检查过）。
+    """
+    import inspect as _inspect # noqa: PLC0415
+    import os # noqa: PLC0415
+    import tempfile as _tf # noqa: PLC0415
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+    from agent import image_filter as _if # noqa: PLC0415
+    from agent import reason_codes as _rc # noqa: PLC0415
+    from agent import version_gate as _vg # noqa: PLC0415
+    from agent import version_matrix as _vm # noqa: PLC0415
+    from agent import store as _store # noqa: PLC0415
+
+    # ① 本地提示词闸：正面命中才拦，未命中一定放行
+    _hit = _if.f_prompt_banned("画一张色情露骨的裸体图")
+    _pass = _if.f_prompt_banned("窗台上的橘猫在晒太阳")
+    ck("本地提示词闸：命中才拦、未命中必放行（不搞「判不出就拒」）",
+       _hit[0] is False and _hit[1] and _pass == (True, ""), "%s / %s" % (_hit, _pass))
+    ck("内容过滤档位可读（自检/日志要它一句话说清哪几层在线）",
+       "本地提示词闸" in _if.tier_line() and "内容过滤" in _if.tier_line(), _if.tier_line()[:70])
+
+    # ② 版本门：no 档照发但可见；连续失败本机自证
+    _tmp = _tf.mkdtemp(prefix="vg-middle-gate-")
+    _keep_data = getattr(_store, "DATA_DIR", None)
+    try:
+        _store.DATA_DIR = _tmp
+        _data = {"runs": [{"wechat": "9.9.9", "adapter": "1.0",
+                           "caps": {"send_text": {"status": "no"}}, "when": "synthetic"}]}
+        _keep_load = _vm.load
+        _vm.load = lambda path=None: dict(_data) # noqa: ARG005
+        try:
+            _g = _vm.gate(_data, "9.9.9", "1.0", facts="")
+            ck("矩阵把 status=no 报上来（以前它不参与任何判定 ⇒ 门把它当绿灯）",
+               _g.get("no_caps") == ["send_text"] and _g.get("measured") is True,
+               "no_caps=%s measured=%s" % (_g.get("no_caps"), _g.get("measured")))
+            _r = _vg.check("send", wechat="9.9.9", adapter="1.0")
+            ck("实测发不出去 ⇒ **照发**（allow=True）但**不是绿灯**（level=no_measured）+ 说清原因",
+               _r.get("allow") is True and _r.get("level") == "no_measured"
+               and "照发" in str(_r.get("reason") or ""),
+               "level=%s allow=%s" % (_r.get("level"), _r.get("allow")))
+            ck("这一档要记账（控制台横幅读得到）", _vg.no_measured_stat().get("count", 0) >= 1,
+               str(_vg.no_measured_stat().get("count")))
+            _why = "等待超时" # 归类为 timeout（能力类，不是身份/暂停/内容类）
+            ck("喂进自证的原因确实是能力类（否则本闸门测不到东西）",
+               _rc.classify(_why) not in _vg._NOT_CAPABILITY, _rc.classify(_why))
+            for _i in range(_vg._LOCAL_FAIL_NEED):
+                _vg.note_send_result(False, _why, wechat="9.9.9", adapter="1.0")
+            ck("连续 %d 次能力类失败 ⇒ 本机自证「发不出去」落盘" % _vg._LOCAL_FAIL_NEED,
+               str(_vg.local_state("9.9.9", "1.0").get("status")) == "no",
+               str(_vg.local_state("9.9.9", "1.0")))
+            _r2 = _vg.check("send", wechat="9.9.9", adapter="1.0")
+            ck("本机自证档：仍照发（allow=True），原因里给可照做的动作",
+               _r2.get("allow") is True and _r2.get("level") == "no_measured_local"
+               and "升级适配层" in str(_r2.get("reason") or ""),
+               "level=%s" % _r2.get("level"))
+            _vg.note_send_result(True, wechat="9.9.9", adapter="1.0") # 成功一次
+            ck("成功一次即清零（结论跟着现场走，不靠一次观测定终身）",
+               _vg.local_state("9.9.9", "1.0") == {}, str(_vg.local_state("9.9.9", "1.0")))
+            _vg.note_send_result(False, "当前会话没认准", wechat="9.9.9", adapter="1.0")
+            _vg.note_send_result(False, "当前会话没认准", wechat="9.9.9", adapter="1.0")
+            _vg.note_send_result(False, "当前会话没认准", wechat="9.9.9", adapter="1.0")
+            ck("身份类失败**不喂**这条自证（别把身份问题记成版本问题）",
+               _vg.local_state("9.9.9", "1.0") == {}, str(_vg.local_state("9.9.9", "1.0")))
+        finally:
+            _vm.load = _keep_load
+    finally:
+        if _keep_data is not None:
+            _store.DATA_DIR = _keep_data
+        import shutil as _sh # noqa: PLC0415
+
+        _sh.rmtree(_tmp, ignore_errors=True)
+
+    # ③ 生图内容层：不再是"从不工作的桩"
+    _png = str(HERE.parent / "assets" / "icon-whale.png")
+    try:
+        from agent import image_gen as _ig # noqa: PLC0415
+
+        _fn = _ig._f_classifier
+        # ⚠️ 断言锚在**代码形态**（导入语句），不锚"有没有某名词"—— 本函数 docstring 里
+        #    就写着老实现长什么样，按名词判会把自己判红。
+        ck("内容层已接真链（不再是那个从不工作的桩）",
+           "from . import image_filter" in _inspect.getsource(_fn), "")
+        if os.path.exists(_png):
+            _ok, _why = _fn(_png, {})
+            ck("内容层对一张真图给出**明确结论**（不是「未接」）",
+               isinstance(_ok, bool) and "未接" not in str(_why), "%s / %s" % (_ok, str(_why)[:50]))
+    except Exception as _e: # noqa: BLE001
+        ck("内容层可调用", False, "%s: %s" % (type(_e).__name__, _e))
+
+
 def main() -> int:
     # ⭐ 测试隔离（audit-r2 N1 残余的收口）：`logs/console.url` 是**产品运行时**写的
     #   （含随机端口+token），自检跑在产品目录里会读到它——轻则刷几百行「端口连不上」噪音，
@@ -8856,6 +8954,7 @@ def main() -> int:
                    t_audit_r3, t_dialog_drag, t_whale_guard, t_color_token_guard,
                    t_button_label_guard, t_placeholder_guard, t_dupdef_guard,
                    t_attr_shadow_guard, t_async_landing_guard, t_screen_guards,
+                   t_gate_middle,
                    t_whale_roles, t_whale_assets, t_whale_usage):
             try:
                 fn()

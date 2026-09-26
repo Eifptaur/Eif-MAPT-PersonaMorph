@@ -648,8 +648,25 @@ def _f_text(path: str, meta: dict):
 
 
 def _f_classifier(path: str, meta: dict):
-    """涉黄/涉政/暴力分类器**尚未接**⇒ 返回 None ⇒ 整链判否。"""
-    return None, "内容分类器未接（按 fail-closed 处理：不确定不发）"
+    """内容层：跑 `image_filter` 的**真**过滤链（图源评级 / 标签 / 肤色比 / 视觉审核，各层可按配置关）。
+
+    ⛔ 老实现是 `return None, "内容分类器未接（按 fail-closed 处理）"` —— 一个**从不工作的桩**：
+    用户关掉它 ⇒ 内容过滤名存实亡；用户开着它 ⇒ **所有图都发不出去**。两条都不是"过滤"。
+    现在改成跑真实的那套链（`image_filter.PIPELINE`，各层独立可关）：
+      · 任一层判否 ⇒ 不发，并说清是哪一层、为什么；
+      · 判据**跑不起来**（依赖缺/文件读不了）⇒ 如实记"未参与判定"并放行 ——
+        不因为"我们没配视觉模型"就把用户的生图功能整个掐死（可用优先）。
+    """
+    try:
+        from . import image_filter as _if
+
+        r = _if.check(path, meta or {}, cfg())
+        if r.get("ok"):
+            return True, "内容层通过（%s）" % str(r.get("reason") or "")[:60]
+        return False, "%s 判否：%s" % (str(r.get("rejected_by") or "内容层"),
+                                      str(r.get("reason") or "")[:80])
+    except Exception as e:  # noqa: BLE001 — 判据不可用 ≠ 判否（如实说，不假装检查过）
+        return True, "内容层判据不可用（%s）⇒ 未参与判定" % type(e).__name__
 
 
 CHAIN = (("size", _f_size), ("dup", _f_dup), ("blacklist", _f_blacklist),
@@ -739,6 +756,18 @@ def generate(chat_id: str, request_text: str, out_dir: str = None):
         return {"ok": False, "why": "涉及真人换脸/换身体，这个功能不提供（红线，没有开关）", "intent": intent}
     if intent.get("nsfw"):
         return {"ok": False, "why": "请求涉及成人内容，不生成（红线）", "intent": intent}
+    # 本地提示词闸（离线、零成本、**只认明确命中**）：视觉分类器要花 token 且可能没配，
+    # 没它的时候这是唯一一道内容判据 ⇒ 放在生成**之前**拦（省一次调用，也不把图生成出来）。
+    try:
+        from . import image_filter as _if0
+
+        _pm_ok, _pm_why = _if0.f_prompt_banned(
+            "%s %s" % (intent.get("subject") or "", intent.get("style") or
+                       intent.get("style_hint") or ""))
+        if not _pm_ok:
+            return {"ok": False, "why": _pm_why, "intent": intent}
+    except Exception:  # noqa: BLE001 — 闸自身异常不拦（它只是"能拦就拦"的补充判据）
+        pass
     n = min(max(1, int(intent.get("count") or 1)), max(1, int(c.get("max_count") or 1)))
     backend, why = pick_backend()
     if not backend:

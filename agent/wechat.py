@@ -3868,7 +3868,19 @@ class WeChatAdapter:
         return sorted(names)
 
     def _known_chat_names(self) -> list:
-        """DB 侧**全量已知会话名**（③′ 模糊档候选集的补全，audit-r3 D1）。
+        """**全量已知会话名**：DB 可信名 ∪ 屏幕上读到过的会话行名。
+
+        两个用途（都用同一份集合，避免"候选集"与"撞名源"两套口径）：
+          · ③′ 模糊档候选集的补全（audit-r3 D1，下段说明）；
+          · **撞名判定的候选源**（`chat_is_open` / `_screen_only_identity` 传给
+            `matches_strict(others=…)` / `matches_fuzzy(db_others=…)`）：屏幕读数里出现过
+            的撞名会话也算竞争名，否则"只在会话列表里出现过、库里没有"的同名变体会漏判
+            —— 目标是「测试」而屏幕读到「测试(2)」时，括号数字会被当成员数剥掉 ⇒ 判成
+            同一个会话 ⇒ 不切会话直接把回复发进另一个群。两处来源必须**同源**：`others`
+            与 `db_others` 都用这一份，否则 strict 拦住了、fuzzy 兜底又把它放回来。
+            ⚠️ 并进来的只是**会话行**读数（`candidate_rows_excluding_active` 喂入，不是
+            会话头那种「演示（3）」成员数装饰）。代价：`_seen_names` 里若真混进与目标
+            同归一化的装饰变体，"装饰豁免"会收紧成拒发（宁漏发不误发，方向安全）。
 
         为什么必须有：③′ 原来只拿 `session_rows()`（**可见行**）当候选集，而"当前打开的
         那一行"恰是白字绿底、OCR 最读不准的一行（E→巷）⇒ **竞争名恰好读不到**不是罕见
@@ -3954,14 +3966,15 @@ class WeChatAdapter:
                 log.info("命中 %.1fs 前的会话身份正面证据（不重复取帧/OCR）：%s", self._IDN_CACHE_TTL_S, _hit[1][:70])
                 return _hit
         want = name or self.display_name(chat_id) or chat_id
-        _db_names = self._db_chat_names() # 可信 DB 名：strict 撞名守恒 + fuzzy db_others（audit-r6）
+        # 撞名源＝DB 可信名 ∪ 屏幕上读到过的会话行名（strict/fuzzy 同源，说明见 _known_chat_names）
+        _coll_names = self._known_chat_names()
         got, why = self.current_chat_name(gui=gui)
         try:
             from . import chat_ocr as _co
             # ⛔ **授权档只许"完全相等"**（`matches` 是"互相包含"，
             #   会让「KC测试」与「测试」这种互为子串的两个群被判成同一个 ⇒ 回复发进另一个群；
             #   网友 v0919「第一个群触发、回答出现在第二个群」就是这个）。
-            if got and _co.matches_strict(got, want, _db_names):
+            if got and _co.matches_strict(got, want, _coll_names):
                 return self._idn_cache_put(_ck, (True, "当前会话 OCR=%r（目标 %r）· %s" % (got, want, why)))
         except Exception:
             pass
@@ -3974,7 +3987,7 @@ class WeChatAdapter:
             _im4 = _co2.capture_best(gui=gui or self._get_gui(), frames=2)
             _tt = _co2.header_text(_im4) if _im4 is not None else ""
             # ⛔ 同上 —— 标题带这一档也是**授权档**，只许完全相等（不做包含）。
-            if _tt and _co2.matches_strict(_tt, want, _db_names):
+            if _tt and _co2.matches_strict(_tt, want, _coll_names):
                 return self._idn_cache_put(_ck, (True, ("会话头标题带 OCR=%r 与目标 %r 匹配（不依赖活动行时间/指纹参照）"
                               % (_tt[:16], want))))
         except Exception:
@@ -4003,7 +4016,7 @@ class WeChatAdapter:
                 _vis = _co3.candidate_rows_excluding_active(_im5, _src3)
                 self._seen_names_add(_vis) # D1 残余：读到的（非当前行）行名记入滚动集
                 _cands = list(dict.fromkeys(_vis + self._known_chat_names()))
-                if _cands and _co3.matches_fuzzy(_src3, want, _cands, db_others=_db_names):
+                if _cands and _co3.matches_fuzzy(_src3, want, _cands, db_others=_coll_names):
                     return self._idn_cache_put(_ck, (
                         True, "候选集模糊匹配：OCR=%r 与目标 %r 唯一接近（候选 %d 个，无歧义）"
                         % (_src3[:16], want, len(_cands))))
@@ -5398,7 +5411,36 @@ class WeChatAdapter:
                     # 顺手把该尺寸的参照学到手 —— 这一步就是破死锁的钥匙
                     log.info("放行时补参照：%s", self._learn_chat_header(chat_id, gui=gui))
                 if _st["status"] in ("no_ref", "no_capture") and allow_no_ref:
-                    log.info("会话头未校验（调用方显式允许，%s）：%s", _st["status"], _st["note"])
+                    # ⛔ `allow_no_ref=True` 只是**调用方声明**，它本身不是屏幕证据：`_open_chat_guarded`
+                    #   走**搜索路线**时，内容级判据不可用会按弱证据计切成功（见 `open_chat_by_search`），
+                    #   该声明于是在"只有弱证据"的会话上放行发送 ⇒ 文字可能打进当时开着的另一个会话。
+                    #   ⇒ 声明档**再要一条当场证据**（拿不准就不发，但不拦已有证据的正常路径）：
+                    #   内容级（`chat_identity_ok`）与强档（`chat_is_open`：名字 OCR / 会话头标题带 /
+                    #   活动行时间×DB）**任一**成立就照旧放行；两条都给不出才拒发（可重试）。
+                    #   正常路径不变：`send_text` 先过「名字档确认」、`reply_quote` 进门过
+                    #   `_open_chat_guarded` 的强档，都能由下面这一问拿回同一个正面证据。
+                    try:
+                        _idnA, _idnA_why = self.chat_identity_ok(chat_id, gui=gui)
+                        _strA, _strA_why = ((True, "内容级已确认，不必再问强档")
+                                            if _idnA is True else self.chat_is_open(chat_id, gui=gui))
+                        if _idnA is True or _strA:
+                            log.info("会话头未校验（调用方显式允许，%s）⇒ 当场复核放行：内容级=%s；强档=%s",
+                                     _st["status"], str(_idnA_why)[:80], str(_strA_why)[:100])
+                        else:
+                            note_switch_fail("投递发送前当场复核未过",
+                                             "声明档=%s｜内容级：%s｜强档：%s"
+                                             % (_st["status"], str(_idnA_why)[:120], str(_strA_why)[:120]))
+                            log.warning("调用方声明可发（allow_no_ref=True，%s），但当场复核**内容级与强档都"
+                                        "给不出**（内容级：%s；强档：%s）⇒ 这条不发：宁可漏发，绝不发错会话",
+                                        _st["status"], str(_idnA_why)[:80], str(_strA_why)[:80])
+                            return False, ("【可重试】调用方声明可发，但当场**内容级证据与强档证据都没有**"
+                                           "（内容级：%s；强档：%s）⇒ 这条不发（拿不准就不发）：把目标会话"
+                                           "在微信里点开、或让它有一条文字消息，再重试。"
+                                           % (str(_idnA_why)[:70], str(_strA_why)[:70]))
+                    except Exception as _eA:
+                        note_switch_fail("投递发送前当场复核异常", str(_eA)[:140])
+                        return False, ("【可重试】调用方声明可发，但当场复核**自身出错**（%s）⇒ 这条不发"
+                                       "（拿不准就不发，不把「闸没过」当「闸过了」）" % str(_eA)[:80])
             except Exception as _e:
                 # ⛔ （审计 （P1）**）：**闸门自己出错 ≠ 闸门放行** ——
                 #   原来是 `log.warning("会话头校验跳过")` 之后**继续往下发送**，
@@ -6543,8 +6585,9 @@ class WeChatAdapter:
             _a, _b = _co.norm(hdr), _co.norm(nm)
             # ⛔ 这是**授权档**（能不能发）⇒ 只许完全相等，不许包含
             #   （「KC测试」与「测试」互为子串时，包含判据会把回复发进另一个群）。
-            _dbn = self._db_chat_names() # 可信 DB 名（撞名守恒 + fuzzy db_others，audit-r6）
-            _hit = _co.matches_strict(hdr, nm, _dbn) if len(_b) >= 1 else (_a == _b)
+            # 撞名候选源同 `chat_is_open`：DB 可信名 ∪ 屏幕上读到过的会话行名（见那里的说明）。
+            _colln = self._known_chat_names()
+            _hit = _co.matches_strict(hdr, nm, _colln) if len(_b) >= 1 else (_a == _b)
             if not _hit:
                 # 模糊兜底（同 chat_is_open 的候选集模糊档）：OCR 把名字读错一两个字时
                 # strict 会整档漏掉——那正是"图片拿到了却发不出"的高频叠加场景
@@ -6558,7 +6601,7 @@ class WeChatAdapter:
                     _vis = _co.candidate_rows_excluding_active(_im, hdr)
                     self._seen_names_add(_vis) # D1 残余：同 ③′，读到即记
                     _cands = list(dict.fromkeys(_vis + self._known_chat_names()))
-                    if _cands and _co.matches_fuzzy(hdr, nm, _cands, db_others=_dbn):
+                    if _cands and _co.matches_fuzzy(hdr, nm, _cands, db_others=_colln):
                         return True, ("候选集模糊匹配：标题带 OCR=%r 与目标 %r 唯一接近"
                                       "（候选 %d 个，无歧义；纯屏幕证据）"
                                       % (str(hdr)[:20], nm[:16], len(_cands)))

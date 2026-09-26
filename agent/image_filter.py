@@ -205,6 +205,49 @@ def enabled_names(cfg: dict) -> list:
     return [n for n, _f, costly in PIPELINE if (not costly) or conf.get("vision_filter", True)]
 
 
+#: 本地提示词闸：**只认明确命中**（命中才拦；判不出不拦）。
+#   分五类，键是给用户看的类别名；值是关键词（中英各留常见的，不追求穷尽）。
+BANNED_PROMPT = {
+    "未成年性化": ("萝莉", "幼女", "小学生", "未成年", "loli", "lolita", "child", "underage",
+                   "shota", "正太色情"),
+    "色情露骨": ("裸体", "全裸", "色情", "做爱", "性交", "porn", "nude", "nsfw", "explicit"),
+    "暴力血腥": ("分尸", "斩首", "虐杀", "血腥", "gore", "behead", "dismember", "massacre"),
+    "违禁物品": ("炸弹制作", "制毒", "枪支买卖", "冰毒配方", "bomb making", "make meth",
+                 "buy gun"),
+    "自伤": ("自杀方法", "割腕", "how to kill myself", "suicide method"),
+}
+
+
+def f_prompt_banned(prompt: str) -> tuple:
+    """对**提示词**跑一次本地禁用词闸，返回 `(True, "")` 放行 / `(False, 原因)` 命中。
+
+    ⛔ 为什么不并进 `PIPELINE`：那一链是**图片级**判据（要图出来才能跑），而这一道在**生成前**
+    就该拦（省一次调用、也不把不该出的图生成出来）；且它**离线、零成本、只做正面命中**，
+    与"判不出就拒"的 fail-closed 语义无关 —— 不命中一定放行，不会把正常请求掐死。
+    视觉分类器（`f_vision`）要花 token 且用户可能没配；没它的时候本闸是**唯一**一道内容判据。
+    """
+    s = str(prompt or "").lower()
+    if not s.strip():
+        return True, ""
+    for cat, words in BANNED_PROMPT.items():
+        for w in words:
+            if w in s:
+                return False, "提示词命中本地禁用词（%s：%s）⇒ 不生成" % (cat, w)
+    return True, ""
+
+
+def tier_line(cfg: dict = None) -> str:
+    """当前内容过滤处在哪一档（给自检/日志一句人话，不猜、不美化）。"""
+    try:
+        names = enabled_names(cfg)
+        conf = _cfg(cfg)
+        vis = "视觉审核在" if conf.get("vision_filter", True) else "视觉审核关"
+        return ("内容过滤：%d 道在线（%s）；%s；另有本地提示词闸（始终在线，仅正面命中才拦）"
+                % (len(names), "、".join(names), vis))
+    except Exception as e:  # noqa: BLE001
+        return "内容过滤档位读不出：%s" % type(e).__name__
+
+
 def check(path: str, meta: dict = None, cfg: dict = None, root: str = None, log_reject: bool = True) -> dict:
     """跑一遍过滤链。返回 {'ok':bool, 'reason':str, 'trace':[(名字, ok, 说明)], 'rejected_by':str}"""
     ctx = {"root": root or _root(), "cfg": cfg}

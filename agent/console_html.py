@@ -2091,6 +2091,11 @@ th{color:var(--tx2);font-weight:500}
         <div id="fbFileList" class="hint"></div>
       </div></div>
       <div class="btns"><button id="fbSubmit" class="pri">提交</button><span class="hint" id="fbRst"></span></div>
+      <div class="btns" style="margin-top:6px">
+        <button id="fbFlush" class="ghost">补发还没发出去的</button>
+        <button id="fbReload" class="ghost">重载状态</button>
+        <span class="hint">发不出去或想刷新时用：「补发」把卡在本机、还没发出去的反馈再发一次；「重载」刷新上面的状态与提交记录。</span>
+      </div>
 
       <div style="margin-top:12px"><button id="fbAdvBtn" class="ghost">更多（联系邮箱 / 提交记录）</button></div>
       <div id="fbAdv" style="display:none">
@@ -2194,6 +2199,7 @@ th{color:var(--tx2);font-weight:500}
           <button id="actUp" class="ghost">升级适配层</button>
         </div>
         <div class="hint">两条都在后台跑，跑完这一行显示结果 · 都不动微信本体。</div>
+        <div id="depHint" class="hint" style="margin-top:2px"></div>
       </div></div>
     </section>
 <section id="sec-server" class="card" data-sec>
@@ -3350,12 +3356,22 @@ function refreshBadges(s){
       setSt('stServer', 'info', '本机 ' + (location.port || '?'),
             '控制台只听本机（端口 ' + (location.port || '?') + '）；改监听地址或口令要重启控制台才生效。');
     }catch(e){}
-    /* 人设：有没有人设可用（与「人设」面板的列表同一个 DOM 来源） */
+    /* 人设：徽章口径与列表一致 —— 卡片的 tag 里没有可用选择器（卡片是 div，
+       旧选择器恒数到 0），所以只读 render() 写进 #personaList.dataset 的
+       「过滤后命中数 / 总数」，过滤生效时徽章就报命中的那几个。 */
     try{
       const pl = document.getElementById('personaList');
-      const n = pl ? pl.querySelectorAll('tr, .persona-item, li, .pcard').length : 0;
-      setSt('stPersona', n ? 'ok' : 'warn', n ? (n + ' 个人设') : '还没有人设',
-            n ? ('人设库里有 ' + n + ' 个人设，选中一个它就是机器人说话的身份。') : '还没有人设脚本：先在上面那个入口生成或导入一个。');
+      const ds = (pl && pl.dataset) || {};
+      const tot = parseInt(ds.total, 10) || 0;
+      const shown = ds.shown === undefined ? tot : (parseInt(ds.shown, 10) || 0);
+      if(ds.filtered === '1'){
+        setSt('stPersona', shown ? 'ok' : 'warn',
+              shown ? ('命中 ' + shown + ' / 共 ' + tot + ' 个人设') : '没有命中的人设',
+              '当前搜索/分区过滤后显示 ' + shown + ' 个（共 ' + tot + ' 个）。');
+      }else{
+        setSt('stPersona', tot ? 'ok' : 'warn', tot ? (tot + ' 个人设') : '还没有人设',
+              tot ? ('人设库里有 ' + tot + ' 个人设，选中一个它就是机器人说话的身份。') : '还没有人设脚本：先在上面那个入口生成或导入一个。');
+      }
     }catch(e){}
   }catch(e){}
 }
@@ -6067,18 +6083,6 @@ function syncMemGroupsToCfg(){
   };
 })();
 
-/* ── 角色评分表（已并入人设选单 v2 卡片；此块仅保留导出入口）── */
-(async function(){
-  const exp = document.getElementById('rateExport');
-  if(!exp) return;
-  exp.onclick = async ()=>{
-    try{
-      const r = await getJSON('/api/community/export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:'persona_ratings'})});
-      toast(r.ok ? '评分已导出' : '导出失败');
-    }catch(e){ toast('导出失败：'+e.message); }
-  };
-})();
-
 /* ── 人设选单 v2（分区 chips + 两行卡[系统分/用户打分/描述] + 新建分区/添加角色）── */
 (async function(){
   const box = document.getElementById('personaList');
@@ -6173,8 +6177,31 @@ function syncMemGroupsToCfg(){
       show = show.slice().sort((a,b)=> ((scores[b.key]||{}).model||0) - ((scores[a.key]||{}).model||0));
     }
     show = show.slice().sort((a,b)=> ((favs[a.key]?0:1) - (favs[b.key]?0:1)));
+    // 徽章/提示口径与列表一致：列表卡片是 div，refreshBadges 数不到，所以把
+    // 「过滤后命中数 / 总数」写进 dataset 交它读；过滤生效时徽章就报命中的那几个。
+    box.dataset.total = String(all.length);
+    box.dataset.shown = String(show.length);
+    box.dataset.filtered = (q || curCat) ? '1' : '0';
+    if(q || curCat){
+      setSt('stPersona', show.length ? 'ok' : 'warn',
+            show.length ? ('命中 ' + show.length + ' / 共 ' + all.length + ' 个人设') : '没有命中的人设',
+            '当前搜索/分区过滤后显示 ' + show.length + ' 个（共 ' + all.length + ' 个）。');
+    }else{
+      setSt('stPersona', all.length ? 'ok' : 'warn',
+            all.length ? (all.length + ' 个人设') : '还没有人设',
+            all.length ? ('人设库里有 ' + all.length + ' 个人设，选中一个它就是机器人说话的身份。')
+                       : '还没有人设脚本：先在上面那个入口生成或导入一个。');
+    }
     box.innerHTML = '';
-    if(!show.length){ box.innerHTML = '<span class="hint">没有匹配</span>'; return; }
+    if(!show.length){
+      // 与表情页同款口径：把「搜的什么」原样回显，并给出下一步动作，
+      // 而不是只留一句「没有匹配」让人以为人设被删了。
+      const why = q ? ('没有匹配「' + esc(q) + '」的人设——换个词，或清空搜索框看全部 ' + all.length + ' 个')
+                    : (curCat ? ('「' + esc(curCat) + '」分区下还没有人设——点右上「＋ 新建/添加」把角色加进来')
+                              : '还没有人设');
+      box.innerHTML = '<span class="hint">' + why + '</span>';
+      return;
+    }
     show.forEach(p=>{
       const sc = scores[p.key] || {};
       const model = sc.model;

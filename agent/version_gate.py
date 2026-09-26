@@ -77,6 +77,142 @@ def clear_allow() -> None:
 #   门的行为本身是对的（fail-closed 是红线），错在**用户看不见**：他只看到"机器人不回话"。
 #   ⇒ 每一次被拦都要记账 + 给一句能照做的话，并让控制台能一眼看到（横幅 + 一键放行）。
 _blocked = {"count": 0, "last_reason": "", "last_at": 0.0, "capability": ""}
+# 「实测发不出去」的记账（与"被拦下"分开记：这一档**并不拦**，只是要让用户看得见）
+_no_measured = {"count": 0, "last_reason": "", "last_at": 0.0, "caps": []}
+# 本机自证：连续失败到阈值 ⇒ 把"本机实测发不出去"落盘（换机器/换版本仍在，直到有一次成功）
+_LOCAL_FAIL_NEED = 3
+_local_fail = {"key": "", "n": 0}
+
+
+def note_no_measured(caps, reason: str = "") -> None:  # noqa: ANN001
+    """记一笔"这一版对面实测发不出去，但我们**照发**了"。
+
+    为什么要单独记：这一档的口径是「能发就发」（不拦），但**不能当没这回事** ——
+    控制台横幅与报告要读得出"你现在跑的是一个已知发不出去的组合"。
+    """
+    try:
+        with _lock:
+            _no_measured["count"] = int(_no_measured.get("count") or 0) + 1
+            _no_measured["caps"] = [str(c) for c in (caps or [])][:6]
+            _no_measured["last_reason"] = str(reason or "")[:200]
+            _no_measured["last_at"] = time.time()
+    except Exception:
+        pass
+
+
+def no_measured_stat() -> dict:
+    with _lock:
+        return dict(_no_measured)
+
+
+def _local_path() -> str:
+    from .store import DATA_DIR
+    import os as _os
+
+    return _os.path.join(DATA_DIR, "version_local.json")
+
+
+def _local_all() -> dict:
+    try:
+        from .persist import load_checked
+
+        # ⛔ `load_checked` 返回的是 **(值, 可覆盖)** 两元组（不是三元组）—— 解包错就被下面的
+        #    except 吞掉 ⇒ 自证结论**读不出来**（落盘了也当没有）。形状以 persist 的实现为准。
+        data, _writable = load_checked(_local_path(), {})
+        return dict(data or {})
+    except Exception:
+        return {}
+
+
+def local_state(wechat: str = "", adapter: str = "") -> dict:
+    """本机对"当前这对版本"的自证结论：`{}` = 没结论；否则 `{status:'no', at, why, fails}`。"""
+    w = wechat or current_wechat_version() or "unknown"
+    try:
+        from . import version_matrix as vm
+
+        a = adapter or vm.adapter_version()
+    except Exception:
+        a = str(adapter or "")
+    return dict(_local_all().get("%s|%s" % (w, a)) or {})
+
+
+def _local_save(key: str, rec: dict) -> None:
+    try:
+        import os as _os
+
+        from .persist import atomic_write_json
+
+        data = _local_all()
+        data[key] = rec
+        path = _local_path()
+        # ⛔ 目录不存在时必须先建：`data/` 还没被创建过（全新安装/自检临时目录）时，
+        #    写盘会抛 ⇒ 被本函数的 except 吞掉 ⇒ **自证结论永远落不了盘**（静默失效）。
+        try:
+            _os.makedirs(_os.path.dirname(path), exist_ok=True)
+        except Exception:
+            pass
+        atomic_write_json(path, data, indent=1)
+    except Exception:
+        pass
+
+
+#: 这些原因**不算"版本对发不出去"**（是身份/环境/用户态的问题，换版本也没用）
+_NOT_CAPABILITY = ("identity_unconfirmed", "halted", "busy", "filtered", "no_interactive_desktop",
+                   "no_capture", "db_unreadable", "access_denied", "auth_rejected", "key_missing")
+
+
+def note_send_result(ok: bool, why: str = "", wechat: str = "", adapter: str = "") -> None:
+    """把一次发送的真实结果喂回来 —— 这是"不能完全不管"的那一半。
+
+    连续 `_LOCAL_FAIL_NEED` 次**能力类**失败 ⇒ 把"本机实测发不出去"落盘；之后门会以
+    `no_measured_local` 档提示（**仍然照发**，但会把可照做的动作写在原因里）。
+    任何一次成功都清零 —— 结论跟着现场走，不靠一次观测定终身。
+    """
+    try:
+        w = wechat or current_wechat_version() or "unknown"
+        from . import version_matrix as vm
+
+        a = adapter or vm.adapter_version()
+        key = "%s|%s" % (w, a)
+        if ok:
+            with _lock:
+                _local_fail["key"], _local_fail["n"] = key, 0
+            if _local_all().get(key):
+                data = _local_all()
+                data.pop(key, None)
+                try:
+                    from .persist import atomic_write_json
+
+                    atomic_write_json(_local_path(), data, indent=1)
+                except Exception:
+                    pass
+            return
+        code = ""
+        try:
+            from . import reason_codes as _rc
+
+            code = str(_rc.classify(why) or "")
+        except Exception:
+            code = ""
+        if code in _NOT_CAPABILITY or not str(why or "").strip():
+            return # 不是"版本对发不出去"那类 ⇒ 不喂给这条自证（别把身份问题记成版本问题）
+        with _lock:
+            if _local_fail.get("key") != key:
+                _local_fail["key"], _local_fail["n"] = key, 0
+            _local_fail["n"] = int(_local_fail.get("n") or 0) + 1
+            n = _local_fail["n"]
+        if n >= _LOCAL_FAIL_NEED:
+            _local_save(key, {"status": "no", "at": time.time(), "fails": n,
+                              "why": str(why or "")[:200], "code": code})
+            try:
+                from .util import get_logger
+                get_logger().warning(
+                    "本机连续 %d 次发不出去（%s × %s）⇒ 记为本机实测发不出去：%s",
+                    n, w, a, str(why or "")[:160])
+            except Exception:
+                pass
+    except Exception:
+        pass
 
 
 def note_blocked(capability: str, reason: str) -> None:
@@ -151,6 +287,25 @@ def check(capability: str = "send", wechat: str = "", adapter: str = "") -> dict
         _basis = str(g.get("basis") or "")
         _bnote = str(g.get("basis_note") or "")
         if g.get("measured"):
+            _no = [str(c) for c in (g.get("no_caps") or [])]
+            _loc = local_state(w, a)
+            if str(_loc.get("status") or "") == "no":
+                # 本机自证档：**仍然照发**（能发就发），但把"已知发不出去"与可照做的动作说清楚
+                return {"level": "no_measured_local", "allow": True, "wechat": w, "adapter": a,
+                        "basis": _basis, "no_caps": _no,
+                        "reason": ("**本机实测这对版本发不出去**（%s × %s，连续 %s 次失败：%s）⇒ "
+                                   "仍照发；建议控制台「版本」面板点「升级适配层」，"
+                                   "或改用真鼠标档再试（输入档可切换）。"
+                                   % (w, a, _loc.get("fails") or "?", str(_loc.get("why") or "")[:80]))}
+            if _no:
+                # 对面实测 `no`（以前这一档被判成绿灯、什么都不说）⇒ 现在**照发但记账 + 说清楚**
+                note_no_measured(_no, "实测发不出去：%s" % "、".join(_no))
+                return {"level": "no_measured", "allow": True, "wechat": w, "adapter": a,
+                        "basis": _basis, "no_caps": _no,
+                        "reason": ("微信 %s × 适配层 %s 的实测结论里「%s」**这一版发不出去** ⇒ "
+                                   "按「能发就发」照发（已记账）；本机连发 3 次不出去会自动改判为"
+                                   "「本机实测」并给处理动作%s"
+                                   % (w, a, "、".join(_no), ("（%s）" % _bnote) if _bnote else ""))}
             return {"level": "ok", "allow": True, "wechat": w, "adapter": a, "basis": _basis,
                     "reason": "版本对已实测（%s × %s）%s" % (w, a, ("；" + _bnote) if _bnote else "")}
         if not _strict():
@@ -185,6 +340,8 @@ def status() -> dict:
     st = check()
     st["allowed_session"] = is_allowed()
     st["blocked"] = blocked_stat() # 被拦了几次 + 最后一次为什么（控制台横幅读它）
+    st["no_measured"] = no_measured_stat() # "实测发不出去但我们照发了"几次（横幅也读它）
+    st["local"] = local_state() # 本机自证结论（空 = 没结论）
     return st
 
 

@@ -193,18 +193,25 @@ def gate(data: dict, wechat: str, adapter: str, facts: str = "") -> dict:
     if not run:
         return {
             "measured": False, "partial": False, "wechat": wechat, "adapter": adapter,
-            "scope": [], "missing": list(REQUIRED_CAPS), "when": "", "basis": _basis,
+            "scope": [], "missing": list(REQUIRED_CAPS), "no_caps": [], "when": "", "basis": _basis,
             "advice": ("微信 %s × 适配层 %s **没有实测记录**：发送这类动窗口/动键盘的能力按未验证处理 —— "
                        "控制台出横幅、默认降到真鼠标档或暂停自动发送，等跑一次实测再放开" % (wechat, adapter)),
         }
     caps = run.get("caps") or {}
     missing = [c for c in REQUIRED_CAPS
                if str((caps.get(c) or {}).get("status") or "unknown") == "unknown"]
+    # 必需能力里**明确实测为 no**（测过、结论是"用不了"）的那几个。
+    # ⛔ 与 `missing`（unknown＝还没结论）分开：`unknown` 走"未实测"三态，`no` 是**已经知道不成**。
+    #    以前 `no` 不参与任何判定 ⇒ 门把它当绿灯（`measured=True`）放行，用户看不到任何提示。
+    #    现在只把它**报上来**，是否拦由上层按"能发就发 + 可见 + 自证"的口径决定。
+    no_caps = [c for c in REQUIRED_CAPS
+               if str((caps.get(c) or {}).get("status") or "").lower() == "no"]
     scope = list(run.get("scope") or caps.keys())
     if missing:
         return {
             "measured": False, "partial": True, "wechat": wechat, "adapter": adapter,
-            "scope": scope, "missing": missing, "when": str(run.get("when") or ""),
+            "scope": scope, "missing": missing, "no_caps": no_caps,
+            "when": str(run.get("when") or ""),
             "basis": _basis, "basis_note": _bnote,
             "advice": ("微信 %s × 适配层 %s **只实测了部分能力**（%s），必需能力「%s」还没有结论 ⇒ "
                        "按**未实测**处理：发送前仍需用户放行%s" % (
@@ -212,7 +219,8 @@ def gate(data: dict, wechat: str, adapter: str, facts: str = "") -> dict:
                            ("（%s）" % _bnote) if _bnote else "")),
         }
     return {"measured": True, "partial": False, "wechat": wechat, "adapter": adapter,
-            "scope": scope, "missing": [], "advice": "", "when": str(run.get("when") or ""),
+            "scope": scope, "missing": [], "no_caps": no_caps, "advice": "",
+            "when": str(run.get("when") or ""),
             "basis": _basis, "basis_note": _bnote}
 
 
