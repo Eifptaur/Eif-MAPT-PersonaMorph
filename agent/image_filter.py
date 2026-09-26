@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
 
 REJECT_LOG_REL = os.path.join("data", "image_rejected.jsonl")
 
@@ -289,7 +290,7 @@ def _log_reject(path, meta, cfg, name, why, ctx, root=None) -> None:
         tmp = p + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
             fh.writelines(keep[-200:])
-        os.replace(tmp, p)
+        persist.replace_into(tmp, p)
     except Exception:
         pass
 

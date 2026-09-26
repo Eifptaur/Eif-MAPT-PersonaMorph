@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
 
 IS_WIN = os.name == "nt"
 
@@ -209,7 +210,7 @@ class InstanceLock:
             tmp = self.lock_path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 f.write(str(os.getpid()))
-            os.replace(tmp, self.lock_path)
+            persist.replace_into(tmp, self.lock_path)
             return ""
         except Exception as e:
             return "锁文件写入失败（不影响判据，只是少一份给人和旧脚本看的证据）：%s" % e

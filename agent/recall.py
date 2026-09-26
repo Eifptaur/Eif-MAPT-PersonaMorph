@@ -28,6 +28,7 @@ import threading
 import time
 
 from .config import DATA_DIR
+from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
 
 _lock = threading.RLock()
 
@@ -189,7 +190,7 @@ def _write_stats(rec: dict) -> None:
             tmp = STATS_PATH + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(cur, f, ensure_ascii=False, indent=1)
-            os.replace(tmp, STATS_PATH)
+            persist.replace_into(tmp, STATS_PATH)
         except Exception:
             pass
 

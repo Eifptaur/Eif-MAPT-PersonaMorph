@@ -21,6 +21,7 @@ import threading
 import time
 
 from .config import DATA_DIR
+from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
 
 _lock = threading.RLock()
 
@@ -66,7 +67,7 @@ def _save(state: dict) -> None:
             state["updatedAt"] = int(time.time() * 1000)
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(state, f, ensure_ascii=False, indent=1)
-            os.replace(tmp, state_path())
+            persist.replace_into(tmp, state_path())
         except Exception:
             pass
 

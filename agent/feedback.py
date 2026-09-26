@@ -32,6 +32,7 @@ from email.header import Header
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FEEDBACK_FILE = os.path.join(ROOT, "data", "feedback.jsonl")
@@ -210,7 +211,7 @@ def _write_all(items: list) -> bool:
         with open(tmp, "w", encoding="utf-8") as f:
             for it in items:
                 f.write(json.dumps(it, ensure_ascii=False) + "\n")
-        os.replace(tmp, FEEDBACK_FILE)
+        persist.replace_into(tmp, FEEDBACK_FILE)
         return True
     except Exception:
         return False

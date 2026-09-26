@@ -43,7 +43,7 @@ def _save(data: dict):
         tmp = SCORE_FILE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=1)
-        os.replace(tmp, SCORE_FILE)
+        persist.replace_into(tmp, SCORE_FILE)
     except Exception:
         pass
 
@@ -77,6 +77,7 @@ def _decay(score: float, last_ts: float, now: float) -> float:
 
 import json as _json
 import os as _os
+from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
 
 _SEED_FILE = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "data", "seed_library.json")
 

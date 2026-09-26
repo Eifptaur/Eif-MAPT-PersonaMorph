@@ -77,6 +77,24 @@ def _replace_retry(tmp: str, path: str, budget_s: float | None = None) -> bool:
         if _spend > float(REPLACE_STATS.get("worst_s") or 0.0):
             REPLACE_STATS["worst_s"] = round(_spend, 4)
 
+def replace_into(tmp: str, path: str, budget_s: float | None = None) -> None:
+    """把临时档换到目标档（`os.replace` 的**直替版**：带退避重试，失败仍**抛**）。
+
+    ⛔ 为什么要有它，而不是让各处直接写 `os.replace(tmp, path)`：
+      Windows 上目标档只要被**任何人**打开着（杀毒/索引器/另一个写者/读者句柄），
+      `os.replace` 就撞 WinError 5/32 —— 实测 20 线程 × 10 写里 **66% 直接失败**，
+      而共享冲突是**瞬时**的（退避一下基本都能过）。裸调用点各自 `except` 掉或忽略返回值
+      ⇒ 「写没写进去」没人知道（审计原话：竞争下 71% 的写静默丢掉）。
+
+    **语义与裸 `os.replace` 一致**（失败抛 `OSError`，不再多一种"返回 False 被忽略"的坑），
+    只多了"先重试再抛"。要"不抛、自己看返回值"的场合用 `_replace_retry`。
+    """
+    if _replace_retry(tmp, path, budget_s):
+        return
+    raise OSError("换档重试 %d 次仍失败（%s ⇒ %s）：%s"
+                  % (_REPLACE_TRIES, tmp, path, str(REPLACE_FAILURES.get("last") or "")[:120]))
+
+
 def quarantine(path: str, now=None) -> str:
     """把坏档**改名**成 `<path>.bad.<YYYYmmdd-HHMMSS>` 留证；返回留证文件的路径（失败回空串）。
 

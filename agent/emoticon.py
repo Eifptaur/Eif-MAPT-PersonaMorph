@@ -28,6 +28,7 @@ import logging
 import os
 import re
 import time
+from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
 
 log = logging.getLogger("persona-morph")
 
@@ -198,7 +199,7 @@ def save_cached_key(wxid: str, seed, key: bytes) -> None:
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump({"wxid": str(wxid or ""), "seed": str(seed), "key": key.hex(),
                        "at": int(time.time())}, fh, ensure_ascii=False)
-        os.replace(tmp, p)
+        persist.replace_into(tmp, p)
     except Exception as e: # noqa: BLE001
         log.debug("表情 key 落盘失败（本次进程内仍生效）：%s", e)
 

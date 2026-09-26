@@ -13,6 +13,7 @@ import json
 import os
 import threading
 import time
+from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PATH = os.path.join(ROOT, "data", "tool_stats.json")
@@ -49,7 +50,7 @@ def note(name: str, ok: bool = True) -> None:
             tmp = PATH + ".tmp"
             with open(tmp, "w", encoding="utf-8") as fh:
                 json.dump(d, fh, ensure_ascii=False, indent=1)
-            os.replace(tmp, PATH)
+            persist.replace_into(tmp, PATH)
         except Exception:
             pass
 

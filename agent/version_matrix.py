@@ -22,6 +22,7 @@ import os
 import time
 
 from .config import ROOT
+from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
 
 log = logging.getLogger("persona-morph")
 
@@ -259,7 +260,7 @@ def save(data: dict, path: str | None = None) -> str:
         json.dump(data, f, ensure_ascii=False, indent=1)
         f.flush()
         os.fsync(f.fileno())
-    os.replace(tmp, p)
+    persist.replace_into(tmp, p)
     return p
 
 

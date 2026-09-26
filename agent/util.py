@@ -7,6 +7,7 @@ import os
 import random
 import re
 import time
+from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
 
 WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
 
@@ -104,7 +105,7 @@ def write_console_url(url: str, root: str = "") -> bool:
         tmp = p + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             f.write(str(url or ""))
-        os.replace(tmp, p)
+        persist.replace_into(tmp, p)
         _tighten_console_url_acl(p) # 口令文件只许本人读
         return True
     except Exception:

@@ -27,6 +27,7 @@ import threading
 import time
 
 from .config import DATA_DIR
+from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
 
 log = logging.getLogger("persona-morph")
 
@@ -83,7 +84,7 @@ def _save(items: list) -> str:
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump({"items": items, "when": time.strftime("%Y-%m-%d %H:%M:%S")},
                       fh, ensure_ascii=False, indent=1)
-        os.replace(tmp, PATH)
+        persist.replace_into(tmp, PATH)
         return ""
     except Exception as e:
         return "%s: %s" % (type(e).__name__, str(e)[:60])

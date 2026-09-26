@@ -21,6 +21,7 @@ import io
 import json
 import os
 import time
+from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(ROOT, "data")
@@ -264,7 +265,7 @@ def save(db: dict, path: str = None) -> bool:
         tmp = p + ".tmp"
         with io.open(tmp, "w", encoding="utf-8", newline="\n") as f:
             json.dump(db, f, ensure_ascii=False, indent=1)
-        os.replace(tmp, p)
+        persist.replace_into(tmp, p)
         return True
     except Exception:
         return False

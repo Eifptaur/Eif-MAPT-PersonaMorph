@@ -23,6 +23,7 @@ import threading
 import time
 
 from .config import DATA_DIR
+from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
 
 log = logging.getLogger("persona-morph")
 
@@ -81,7 +82,7 @@ def _save(d: dict) -> None:
             json.dump(d, f, ensure_ascii=False, indent=1)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp, PATH)
+        persist.replace_into(tmp, PATH)
     except Exception as e: # noqa: BLE001
         # ⛔ 原来只有 DEBUG ⇒ "之后再也写不进盘"这件事在日志里看不见
         log.warning("点击目标偏好写失败（忽略，不影响切会话）：%s", e)

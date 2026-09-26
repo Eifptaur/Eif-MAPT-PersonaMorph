@@ -12,6 +12,7 @@ import os
 import threading
 import time
 from datetime import datetime, timedelta
+from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
 
 _PERIODS = ("daily", "weekly", "monthly")
 _HISTORY_MAX = 24
@@ -135,6 +136,6 @@ class UsageStats:
             tmp = self.path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(self.data, f, ensure_ascii=False, indent=1)
-            os.replace(tmp, self.path)
+            persist.replace_into(tmp, self.path)
         except Exception:
             pass

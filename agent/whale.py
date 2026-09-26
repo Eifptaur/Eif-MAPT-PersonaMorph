@@ -37,6 +37,7 @@ from .model_prices import ( # noqa: F401  （价目表唯一来源，见该模�
     BASE_PRICE, PRO_PRICE, PRICING, PEAK_HOURS,
     price_for, is_peak_time, cost_of, usage_parts, billable_output,
 )
+from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
 
 # ── 峰谷定价 / 计费口径 ─────────────────────────────────────────────────────
 # ⛔ 价目表**不再写在本文件**，全部来自 `agent/model_prices.py`（照抄上游
@@ -95,7 +96,7 @@ class WhaleWidget:
             tmp = self._state_path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(self._state, f, ensure_ascii=False, indent=1)
-            os.replace(tmp, self._state_path)
+            persist.replace_into(tmp, self._state_path)
         except Exception:
             pass
 

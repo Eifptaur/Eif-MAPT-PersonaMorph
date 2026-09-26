@@ -32,6 +32,10 @@ import time
 import urllib.parse
 import urllib.request
 import zipfile
+try: # 常规：作为 `agent.update_apply` 导入
+    from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
+except ImportError: # ⛔ 本模块会被判据**按文件路径单独加载**（scripts/direct_update_selftest.py）
+    from agent import persist # 那种加载方式没有包上下文 ⇒ 相对导入必失败，退回顶层包名导入
 
 log = logging.getLogger(__name__)
 
@@ -165,7 +169,7 @@ def _dl_once(url: str, dest: str, timeout: float, progress=None):
                         progress(got, total)
                     except Exception:
                         pass
-        os.replace(dest + ".part", dest) # 半截文件不许冒充成品
+        persist.replace_into(dest + ".part", dest) # 半截文件不许冒充成品
         return True, ""
     except Exception as e:
         try:
@@ -264,7 +268,7 @@ def write_local_state(target: str, version: str, tree: str, extra=None) -> dict:
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(d, fh, ensure_ascii=False, indent=2)
         fh.write("\n")
-    os.replace(tmp, p)
+    persist.replace_into(tmp, p)
     return d
 
 

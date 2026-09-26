@@ -25,6 +25,7 @@ import urllib.request
 import uuid
 
 from .safe_fetch import FetchError, validate_url
+from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
 
 UA = "PersonaMorph/1.0 (+random image; safe-mode)"
 DEFAULT_TIMEOUT_MS = 9000
@@ -539,7 +540,7 @@ def download(url: str, dest_dir: str, max_mb: float = 8.0, timeout_ms: int = DEF
                         raise RuntimeError("图片超过 %.0fMB 上限，已放弃" % max_mb)
                     fh.write(buf)
         final = p[:-5] # 去掉 .part
-        os.replace(p, final)
+        persist.replace_into(p, final)
         p = final
         try:
             from PIL import Image

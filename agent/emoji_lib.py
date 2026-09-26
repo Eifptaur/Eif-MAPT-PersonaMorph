@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
 
 INDEX_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                           "data", "emoji_index.json")
@@ -33,7 +34,7 @@ def _save(d: dict) -> None:
     tmp = INDEX_PATH + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(d, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, INDEX_PATH)
+    persist.replace_into(tmp, INDEX_PATH)
 
 
 def refresh_meta() -> dict:

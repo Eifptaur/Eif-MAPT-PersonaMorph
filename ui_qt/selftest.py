@@ -9731,6 +9731,88 @@ def t_keys_guard() -> None:
        and _mem._chat_dir_name("group:wxid_a-b").startswith("group_wxid_a_b_"), "")
 
 
+def t_atomic_write_guard() -> None:
+    """自检：**换档只走 `persist.replace_into`**（F7 原子写族）。
+
+    为什么这一族"一处错处处错"：Windows 上目标档只要被任何人打开着（杀毒/索引器/另一个写者/
+    读者句柄），`os.replace` 就撞 WinError 5/32 —— 实测 20 线程 × 10 写里 **66% 直接失败**，
+    而共享冲突是**瞬时**的（退避一下基本都能过）。裸调用点各自 `except` 掉或忽略返回值
+    ⇒「写没写进去」没人知道（审计原话：竞争下 **71% 的写静默丢掉**）。
+    ⇒ 实测 **33 处**"写 tmp → 换档 / 发布 .part"已收口到 `persist.replace_into`（语义与裸
+      `os.replace` 一致：失败**抛**，只多了先重试）。
+
+    ⇒ 判据：`agent/` 里裸 `os.replace(` 只许出现在**白名单**里，且白名单每条都要写清理由
+      —— 剩下的都是**改名/轮转/留证**（语义不是"写档发布"），它们该由坏档隔离族（`persist.quarantine`）收。
+    """
+    import os as _os # noqa: PLC0415
+
+    _root = HERE.parents[0]
+    #: ⛔ 白名单：**(文件, 行号含义) → 理由**。只收"不是写档发布"的那几种。
+    _EXEMPT = {
+        "agent/persist.py": "实现点自身（`_replace_retry` 里那句就是这套配方的心脏；`quarantine` 是改名留证）",
+        "agent/briefs.py": "手搓坏档留证（`<p>.bad.<ts>` 改名）——归坏档隔离族，不是写档",
+        "agent/store.py": "档案归档/坏档改名（`p → dst` / `p → q`），不是写档发布",
+        "agent/send_retry.py": "重试队列读不动时把队档改名留证（`.bad.<ts>`），归坏档隔离族",
+        "agent/thought_trace.py": "日志轮转（`FILE → FILE.1` 备份换名），不是写档发布",
+    }
+    def _naked_in(text: str, rel: str = "") -> list:
+        """这份文本里"裸换档"的行（注释行不算）。判据只此一处口径，正向与反向控制共用。"""
+        out = []
+        for _i, _l in enumerate(text.split("\n"), 1):
+            _s = _l.strip()
+            if _s.startswith("#") or "os.replace(" not in _s:
+                continue
+            out.append("%s:%d" % (rel, _i))
+        return out
+
+    _naked, _files = [], 0
+    for _f in sorted((_root / "agent").glob("*.py")):
+        _files += 1
+        _rel = "agent/%s" % _f.name
+        if _rel in _EXEMPT:
+            continue
+        _naked += _naked_in(_f.read_text(encoding="utf-8"), _rel)
+    ck("换档只走 `persist.replace_into`（裸 `os.replace` 竞争下会静默丢写）",
+       not _naked, "裸换档：%s" % "、".join(_naked[:5]))
+    #: 分母守卫：扫不到文件时上面那条会"全绿"
+    ck("上述扫描真的扫到了文件（分母守卫）", _files > 100, "扫到 %d 个 .py" % _files)
+    #: 白名单自身要有内容且**每条都有理由**（否则白名单会变成垃圾桶）
+    ck("白名单每条都写了理由（且不是空表）",
+       bool(_EXEMPT) and all(len(str(v)) > 8 for v in _EXEMPT.values()), "%d 条" % len(_EXEMPT))
+    #: 反向控制：判据必须**能认出**裸换档、且**不误伤**注释里的同名写法
+    ck("「裸换档」判定器有效：正例报 1 条、注释里的同名写法报 0 条",
+       len(_naked_in("    os.replace(tmp, path)\n")) == 1
+       and len(_naked_in("    # os.replace(tmp, path)\n")) == 0, "")
+    #: ⭐ 行为契约：`replace_into` 失败要**抛**（与裸 `os.replace` 同语义，不许变成"返 False 被忽略"）
+    from agent import persist as _ps # noqa: PLC0415
+    import tempfile as _tf # noqa: PLC0415
+
+    _raised = ""
+    _td = _tf.mkdtemp(prefix="atomic-gate-")
+    try:
+        try:
+            _ps.replace_into(_os.path.join(_td, "_不存在.tmp"),
+                             _os.path.join(_td, "_不存在.json"), budget_s=0.01)
+        except Exception as e: # noqa: BLE001
+            _raised = type(e).__name__
+        ck("`persist.replace_into` 失败时**抛**（与裸 `os.replace` 同语义，不给\"返 False 被忽略\"留口子）",
+           _raised in ("OSError", "FileNotFoundError"), "实测 %s" % (_raised or "没抛！"))
+        #: 反向控制：同一函数**能成功**换档（否则上一条可能只是"任何调用都抛"）
+        _a, _b = _os.path.join(_td, "_a.tmp"), _os.path.join(_td, "_b.json")
+        with open(_a, "w", encoding="utf-8") as _fh:
+            _fh.write("x")
+        _ps.replace_into(_a, _b, budget_s=0.05)
+        ck("反向控制：同一函数在正常换档时**能成功**（不是恒抛）",
+           _os.path.exists(_b) and not _os.path.exists(_a), "")
+    finally:
+        try:
+            for _x in _os.listdir(_td):
+                _os.remove(_os.path.join(_td, _x))
+            _os.rmdir(_td)
+        except OSError:
+            pass
+
+
 def t_default_value_guard() -> None:
     """自检：**默认表与示例文件的值差异必须逐条登记**（记三元组，值一变就红）。
 
@@ -9899,7 +9981,7 @@ def main() -> int:
                    t_attr_shadow_guard, t_async_landing_guard, t_screen_guards,
                    t_gate_middle, t_cfg_wired_guard, t_delivery_ledger_guard, t_dev_dir_guard,
                    t_default_value_guard, t_dead_import_guard, t_guard_family_guard,
-                   t_packaged_modules_guard, t_winops_guard, t_keys_guard,
+                   t_packaged_modules_guard, t_winops_guard, t_keys_guard, t_atomic_write_guard,
                    t_whale_roles, t_whale_assets, t_whale_usage):
             try:
                 fn()

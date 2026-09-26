@@ -37,6 +37,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NAME_RE = re.compile(r"^[a-z_][a-z0-9_]{2,30}$")
@@ -400,7 +401,7 @@ def set_enabled(name: str, on: bool) -> tuple:
             tmp = p + ".tmp"
             with open(tmp, "w", encoding="utf-8") as fh:
                 json.dump(mf, fh, ensure_ascii=False, indent=2)
-            os.replace(tmp, p)
+            persist.replace_into(tmp, p)
             return True, "%s 已%s（下次构建工具清单时生效）" % (n, "启用" if on else "停用")
         except Exception as e:
             return False, "写清单失败：%s: %s" % (type(e).__name__, str(e)[:80])

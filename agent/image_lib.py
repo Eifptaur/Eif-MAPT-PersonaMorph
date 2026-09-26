@@ -18,6 +18,7 @@ import random
 import threading as _threading
 import time
 import urllib.request
+from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
 
 IMAGE_EXT = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")
 
@@ -48,7 +49,7 @@ def _save_recent(d: dict, root: str = None) -> None:
         tmp = p + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(d, fh, ensure_ascii=False)
-        os.replace(tmp, p) # 原子替换，避免半截文件
+        persist.replace_into(tmp, p) # 原子替换，避免半截文件
     except Exception:
         pass
 

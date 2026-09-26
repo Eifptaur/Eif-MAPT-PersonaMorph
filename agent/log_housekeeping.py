@@ -20,6 +20,7 @@
 import os
 import shutil
 import time
+from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
 
 # (路径相对项目根, 单文件上限字节, 保留尾部字节)
 LOG_LIMITS = [
@@ -61,7 +62,7 @@ def trim_file(path: str, max_bytes: int, keep_bytes: int) -> int:
         with open(tmp, "wb") as fh:
             fh.write(MARK.encode("utf-8"))
             fh.write(tail)
-        os.replace(tmp, path)
+        persist.replace_into(tmp, path)
         return size - (len(tail) + len(MARK.encode("utf-8")))
     except OSError:
         return 0

@@ -25,6 +25,7 @@ from collections import deque
 from .config import ROOT, get_config
 from . import replica_adapter # W1：驱动库（wechatauto-replica）私有 API 的唯一收口点 + 版本守卫
 from . import recall as recall_mod # 第 14 条：撤回事件识别（用于把已进上下文的消息剔除）
+from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
 
 
 _LEDGER = deque(maxlen=200)
@@ -1008,7 +1009,7 @@ def _switch_fails_write(item: dict) -> None:
                 _tmp = p + ".tmp"
                 with open(_tmp, "w", encoding="utf-8") as fh:
                     fh.writelines(_keep)
-                os.replace(_tmp, p)
+                persist.replace_into(_tmp, p)
         except Exception:
             pass
     except Exception as _e_sfw: # 写失败留痕（不再静默）
@@ -2238,7 +2239,7 @@ class WeChatAdapter:
                             "rows": {k: [[i, c, int(t)] for i, c, t in v]
                                      for k, v in self._self_local.items()}},
                            fh, ensure_ascii=False)
-            os.replace(tmp, p)
+            persist.replace_into(tmp, p)
         except Exception as e:
             log.debug("自我行号落盘失败（本次进程内仍然生效）：%s", e)
 
@@ -2386,7 +2387,7 @@ class WeChatAdapter:
                             "nickname": self._self_nickname or "",
                             "from": "echo", "sample": str(sample or "")[:40],
                             "at": int(time.time() * 1000)}, fh, ensure_ascii=False, indent=1)
-            os.replace(tmp, p)
+            persist.replace_into(tmp, p)
         except Exception as e:
             log.warning("自我识别落盘失败（本次进程内仍然生效）：%s", e)
         try:
@@ -6006,7 +6007,7 @@ class WeChatAdapter:
                 tmp = fp + ".tmp"
                 with open(tmp, "w", encoding="utf-8") as f:
                     _json.dump(data, f, ensure_ascii=False)
-                os.replace(tmp, fp)
+                persist.replace_into(tmp, fp)
             except Exception as e:
                 log.warning("发文件去重台账写盘失败（不影响本次发送）：%s", e)
             return True, ""
@@ -11033,7 +11034,7 @@ def _pm_prune_dead_key_entries(db_dir: str, account: str, log_it: bool = True) -
             tmp = p + ".tmp"
             with open(tmp, "w", encoding="utf-8") as fh:
                 _json.dump(d, fh, indent=2)
-            os.replace(tmp, p)
+            persist.replace_into(tmp, p)
             n += len(dead)
             if log_it:
                 try:
@@ -11110,7 +11111,7 @@ def _pm_drop_stale_key_entry(db, rel) -> int:
             tmp = p + ".tmp"
             with open(tmp, "w", encoding="utf-8") as fh:
                 _json.dump(d, fh, indent=2)
-            os.replace(tmp, p)
+            persist.replace_into(tmp, p)
             n += 1
         except Exception:
             continue

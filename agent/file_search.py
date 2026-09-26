@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import time
+from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "AppData", "$RECYCLE.BIN",
@@ -170,7 +171,7 @@ def note_sent(path: str, chat_id: str = "") -> None:
         tmp = p + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(d, fh, ensure_ascii=False, indent=1)
-        os.replace(tmp, p)
+        persist.replace_into(tmp, p)
     except Exception:
         pass
 

@@ -91,7 +91,7 @@ def is_fallback_eligible(error) -> bool:
 def _note_fallback(info: dict, error) -> None:
     """记一笔"这次用的是备选模型"（控制台读数 + 复盘用）。任何异常都不许影响主流程。"""
     import json
-    import os
+
     rec = {"ts": int(time.time() * 1000), "used": info.get("used"), "from": info.get("from"),
            "tried": info.get("tried") or [],
            "error": str(getattr(error, "message", None) or error or "")[:200]}
@@ -111,7 +111,7 @@ def _note_fallback(info: dict, error) -> None:
         tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(cur, f, ensure_ascii=False, indent=1)
-        os.replace(tmp, path)
+        persist.replace_into(tmp, path)
     except Exception:
         pass
 
@@ -631,6 +631,7 @@ def estimate_cost(usage: dict, model: str | None = None) -> dict:
 
 import time as _time
 from urllib.parse import urlsplit
+from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
 
 _balance_cache = {"ts": 0.0, "data": None}
 
